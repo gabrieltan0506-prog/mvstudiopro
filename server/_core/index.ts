@@ -2,6 +2,7 @@ import "dotenv/config";
 // 必须在任何图像处理模块之前载入：全局限制 sharp/libvips 内存（0911 OOM 事故）
 import "./sharpLimits.js";
 import express from "express";
+import { registerPhotoTemporaryMedia } from "../routers/photoTemporaryMedia";
 import { createServer } from "http";
 import net from "net";
 import { nanoid } from "nanoid";
@@ -53,6 +54,7 @@ import { registerWeixinChannelsCollectorHttpRoutes } from "../routers/weixinChan
 import { registerSupervisorSessionRoutes } from "../routers/supervisorSession";
 import { saveVideoShortLink } from "../services/video-short-links";
 import { bootstrapGrowthTrendScheduler } from "../growth/trendScheduler";
+import { startVercelPreviewScheduler, stopVercelPreviewScheduler } from "../ops/vercelPreviewScheduler";
 import workflowJobsHandler from "../../api/jobs";
 import blobPutImageHandler from "../../api/blob-put-image";
 import exportHandler from "../../api/export";
@@ -243,6 +245,7 @@ async function startServer() {
   // File upload
   app.use(uploadRouter);
   registerAuthApiRoutes(app);
+  registerPhotoTemporaryMedia(app);
   registerSmsAuthRoutes(app);
   registerSpeechApiRoutes(app);
   registerEnterpriseAgentUploadRoutes(app);
@@ -1029,6 +1032,7 @@ async function startServer() {
     import("../services/paidJobLedger").then(({ startPaidJobLedgerReaper }) => {
       startPaidJobLedgerReaper();
     }).catch(() => {});
+    startVercelPreviewScheduler();
     if (isGrowthTrendSchedulerDisabled()) {
       console.warn("[growth.scheduler] disabled by DISABLE_GROWTH_TREND_SCHEDULER");
     } else {
@@ -1048,6 +1052,7 @@ async function startServer() {
   const handleShutdown = (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
+    stopVercelPreviewScheduler();
     console.warn(`[server] 收到 ${signal} 信号，开始优雅退出 + 兜底退积分…`);
     const forceExitTimer = setTimeout(() => {
       console.warn("[server] 兜底退积分超时（10s），强制退出 process");

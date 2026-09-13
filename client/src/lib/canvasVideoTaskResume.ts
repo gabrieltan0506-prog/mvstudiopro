@@ -1,3 +1,5 @@
+import { finishEditedMusicMvShot } from "./canvasMusicMvGuards";
+import { rememberMusicMvOutput } from "./canvasMusicMvWorkflow";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import { mergeManhuaMediaVersions } from "@/lib/manhuaMediaVersions";
 import { emptyManhuaClipQualityChecks } from "@shared/manhuaClipQuality";
@@ -38,6 +40,7 @@ function cleanUrl(value: unknown): string {
 export function canvasVideoTaskInputFingerprint(block: CanvasBlock): string {
   return JSON.stringify({
     kind: block.kind,
+    musicMvShot: block.musicMvShot ? { ...block.musicMvShot, outputs: undefined, activeTask: undefined, referenceImages: block.musicMvShot.referenceImages.map(row => [row.id, row.gcsUri || row.url]) } : null,
     episodeIndex: block.episodeIndex ?? null,
     parentId: block.parentId ?? null,
     prompt: block.prompt,
@@ -65,7 +68,11 @@ export function captureCanvasVideoTaskResumeSnapshot(
     blockId: block.id,
     taskId,
     selectedOutputUrl: cleanUrl(block.outputUrl),
-    inputFingerprint: canvasVideoTaskInputFingerprint(block),
+    inputFingerprint: block.musicMvShot
+      ? block.musicMvShot.activeTask?.taskId === taskId
+        ? block.musicMvShot.activeTask.inputFingerprint
+        : `unknown-mv-submission:${taskId}`
+      : canvasVideoTaskInputFingerprint(block),
   };
 }
 
@@ -79,7 +86,11 @@ export function retainCanvasVideoTaskResumeSnapshots(
     const captured = captureCanvasVideoTaskResumeSnapshot(block);
     if (!captured) continue;
     const key = JSON.stringify([captured.blockId, captured.taskId]);
-    next.set(key, previous.get(key) || captured);
+    const remembered = previous.get(key);
+    // 首次 taskId 回调与持久绑定可能分次到达；原提交指纹一旦可用便替换内存推断，仍保留最初选择快照。
+    next.set(key, remembered && block.musicMvShot?.activeTask?.taskId === captured.taskId
+      ? { ...remembered, inputFingerprint: captured.inputFingerprint }
+      : remembered || captured);
   }
   return next;
 }
@@ -96,8 +107,8 @@ export function resolveCanvasVideoTaskResume(
 ): CanvasVideoTaskResumeResolution | null {
   if (!current || current.id !== snapshot.blockId) return null;
   if (String(current.videoTaskId || "").trim() !== snapshot.taskId) return null;
-  if (canvasVideoTaskInputFingerprint(current) !== snapshot.inputFingerprint)
-    return null;
+  const inputChanged = canvasVideoTaskInputFingerprint(current) !== snapshot.inputFingerprint;
+  if (inputChanged && !current.musicMvShot) return null;
   if (!response.transportOk || response.payloadOk === false) return null;
 
   const status = String(response.status || "").trim();
@@ -124,6 +135,11 @@ export function resolveCanvasVideoTaskResume(
     // “成功”但没有可播放结果仍是未决态；不能写 done，也不能擦除原片。
     if (!videoUrl) return null;
 
+    if (inputChanged && current.musicMvShot) {
+      return { outcome: "succeeded", selectedNewOutput: false,
+        patch: finishEditedMusicMvShot(current, videoUrl, [videoUrl]) };
+    }
+
     const currentOutputUrl = cleanUrl(current.outputUrl);
     const userChangedSelection =
       currentOutputUrl !== snapshot.selectedOutputUrl;
@@ -147,6 +163,7 @@ export function resolveCanvasVideoTaskResume(
       outcome: "succeeded",
       selectedNewOutput,
       patch: {
+        ...rememberMusicMvOutput(current, videoUrl, snapshot.taskId),
         videoTaskStatus: "succeeded",
         outputUrl: selectedOutputUrl,
         outputUrls,
@@ -182,6 +199,8 @@ export function resolveCanvasVideoTaskResume(
       },
     };
   }
+
+  if (inputChanged) return null;
 
   if (
     status === "queued" ||

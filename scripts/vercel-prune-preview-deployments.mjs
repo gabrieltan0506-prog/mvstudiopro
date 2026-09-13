@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // 真实请求仅允许在 Fly 内执行；导出的编排函数供纯离线替身验证。
-import { appendFileSync, mkdirSync, rmdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import { normalizeKeepDays, selectPrunableDeployments } from "./vercelPruneSelect.mjs";
+import { acquirePruneLock } from "./vercelPruneLock.mjs";
 
 const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const text = (value) => typeof value === "string" && value.trim().length > 0;
@@ -11,7 +12,8 @@ const preview = (value) => record(value) && Object.hasOwn(value, "target")
   && (value.target === null || value.target === "preview");
 
 export async function runPrune({ request, audit, project = "mvstudiopro", apply = false,
-  keepDays = 7, failedKeepDays = 1, maxDeletes = 190, now = Date.now }) {
+  keepDays = 7, failedKeepDays = 1, maxDeletes = 190, now = Date.now,
+  beforeDelete = async () => {} }) {
   if (typeof request !== "function" || typeof audit !== "function") throw Error("必须提供请求与审计实现");
   if (!text(project)) throw Error("项目标识为空");
   if (!Number.isInteger(maxDeletes) || maxDeletes < 1 || maxDeletes > 190) throw Error("每次最多删除 190 个部署");
@@ -31,8 +33,8 @@ export async function runPrune({ request, audit, project = "mvstudiopro", apply 
       throw Error("项目身份不匹配，停止清理");
     }
     if (!record(p.targets)) throw Error("当前部署保护集缺失，停止清理");
-    // 这是当前同时有 production/preview 项目的保守清理策略，并非官方必填 schema。
-    for (const key of ["production", "preview"]) {
+    // 空预览项目允许没有 preview 目标；生产保护集仍必须非空。
+    for (const key of ["production"]) {
       if (!record(p.targets[key]) || !text(p.targets[key].id)) {
         throw Error(`无法确认当前 ${key} 部署，停止清理`);
       }
@@ -79,6 +81,7 @@ export async function runPrune({ request, audit, project = "mvstudiopro", apply 
   for (let i = 0; i < candidates.length; i++) {
     if (result.attempted >= maxDeletes) { result.remaining = candidates.length - i; break; }
     const d = candidates[i];
+    await beforeDelete();
     // 必须紧邻每次删除重读，不能沿用枚举前、上一轮或前一个对象的保护集。
     const live = await resolveLiveProductionIds();
     if (live.has(d.uid)) {
@@ -122,42 +125,64 @@ export async function runPrune({ request, audit, project = "mvstudiopro", apply 
   return result;
 }
 
-async function main() {
+export async function executePrune({ apply = false, signal, root = "/data/vercel-prune-audit" } = {}) {
   // 此校验防误运行，不把可伪造的环境变量当作远端鉴权机制。
   if (process.env.FLY_APP_NAME !== "mvstudiopro" || !process.env.FLY_MACHINE_ID) {
     throw Error("真实清理仅允许在 mvstudiopro 的 Fly 服务端运行；本机请运行离线测试");
   }
-  const apply = process.argv.includes("--apply");
-  if (apply && !process.argv.includes("--maintenance-window-confirmed")) {
-    throw Error("真删前必须确认无发布/promote 在途，并在执行全程维持维护窗口");
-  }
-  const token = process.env.VERCEL_TOKEN;
-  if (!token) throw Error("Fly 服务端缺少 VERCEL_TOKEN，停止；不得导出或在本机配置");
-  const root = "/data/vercel-prune-audit";
   mkdirSync(root, { recursive: true });
-  const lock = `${root}/active.lock`;
-  // 同一 Fly 卷上防重复清理；异常退出留下锁须先核实旧任务状态，不自动抢锁。
-  mkdirSync(lock);
   const receipt = `${root}/${Date.now()}-${randomUUID()}.jsonl`;
   const audit = async event => appendFileSync(receipt, JSON.stringify({ at: new Date().toISOString(), ...event }) + "\n", { mode: 0o600, flush: true });
+  await audit({ event: "started", apply });
+  const token = process.env.VERCEL_TOKEN;
+  if (!token) { await audit({ event: "aborted", reason: "missing-token" }); throw Object.assign(Error("Fly 服务端缺少 VERCEL_TOKEN"), { receipt }); }
+  const boot = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+  let release;
+  try { release = acquirePruneLock(root, { machine: process.env.FLY_MACHINE_ID, boot, pid: process.pid, receipt }); }
+  catch (error) { await audit({ event: "aborted", reason: "lock-unavailable" }); error.receipt = receipt; throw error; }
+  let attemptedDelete = false;
   try {
+    const timeout = AbortSignal.timeout(20 * 60_000);
     const request = async (path, init) => {
+      if (init.method === "DELETE") attemptedDelete = true;
       const url = new URL(path, "https://api.vercel.com");
       if (url.origin !== "https://api.vercel.com") throw Error("禁止非预期上游");
-      if (process.env.VERCEL_TEAM_ID) url.searchParams.set("teamId", process.env.VERCEL_TEAM_ID);
-      return fetch(url, { ...init, redirect: "error", signal: AbortSignal.timeout(30_000),
+      url.searchParams.set("teamId", "team_Ufhs4eiVYHpuryokmvrlzHIf");
+      return fetch(url, { ...init, redirect: "error", signal: AbortSignal.any([timeout, AbortSignal.timeout(30_000), ...(signal ? [signal] : [])]),
         headers: { Authorization: `Bearer ${token}` } });
     };
+    const beforeDelete = async () => {
+      // 按状态查询是否存在在途构建，不能只看最近一页未筛选的部署。
+      for (const state of ["BUILDING", "QUEUED", "INITIALIZING"]) {
+        const query = new URLSearchParams({ projectId: "prj_7y3mwOmGqVDHRkQYWZLmmBinkSvI", state, limit: "1" });
+        const response = await request(`/v6/deployments?${query}`, { method: "GET" });
+        if (!response.ok) throw Error(`构建状态读取失败：HTTP ${response.status}`);
+        const body = await response.json();
+        if (!record(body) || !Array.isArray(body.deployments)) throw Error("构建状态结构未知");
+        if (body.deployments.length) {
+          await audit({ event: "deferred", reason: "active-deployment", state });
+          throw Object.assign(Error("存在在途部署，延期清理"), { code: "PRUNE_DEFERRED" });
+        }
+      }
+    };
+    await beforeDelete();
     const result = await runPrune({ request, audit, apply,
-      keepDays: process.env.KEEP_DAYS, failedKeepDays: process.env.FAILED_KEEP_DAYS });
+      project: "prj_7y3mwOmGqVDHRkQYWZLmmBinkSvI", beforeDelete,
+      keepDays: 7, failedKeepDays: 1 });
     console.log(JSON.stringify({ ...result, receipt }));
+    return { ...result, receipt };
   } catch (error) {
     await audit({ event: "aborted", message: "执行中止；按同一回执逐项核对，勿盲目重试" });
+    error.attemptedDelete = attemptedDelete;
+    error.receipt = receipt;
     throw error;
   } finally {
-    rmdirSync(lock);
+    release();
   }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch(() => { console.error("清理中止。核对 Fly 审计回执；未自动重试、未导出凭证。"); process.exitCode = 1; });
+  const apply = process.argv.includes("--apply");
+  if (apply && !process.argv.includes("--maintenance-window-confirmed")) {
+    console.error("清理中止：手动真删须确认维护窗口"); process.exitCode = 1;
+  } else executePrune({ apply }).catch(() => { console.error("清理中止。核对 Fly 审计回执；未自动重试、未导出凭证。"); process.exitCode = 1; });
 }

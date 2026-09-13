@@ -1,0 +1,154 @@
+vite v7.1.9 building for production...
+transforming...
+✓ 3588 modules transformed.
+rendering chunks...
+[plugin vite:reporter] 
+(!) /private/tmp/mvs-music-mv-canvas-0913/shared/manhuaKeyartEditFusion.ts is dynamically imported by /private/tmp/mvs-music-mv-canvas-0913/client/src/lib/canvasRunBlock.ts but also statically imported by /private/tmp/mvs-music-mv-canvas-0913/client/src/lib/canvasDramaStudio.ts, /private/tmp/mvs-music-mv-canvas-0913/client/src/lib/canvasRunBlock.ts, /private/tmp/mvs-music-mv-canvas-0913/client/src/pages/OmniCanvas.tsx, /private/tmp/mvs-music-mv-canvas-0913/shared/manhuaKeyartSlimPrompt.ts, dynamic import will not move module into another chunk.
+
+[plugin vite:reporter] 
+(!) /private/tmp/mvs-music-mv-canvas-0913/client/src/lib/canvasDocumentText.ts is dynamically imported by /private/tmp/mvs-music-mv-canvas-0913/client/src/lib/canvasRunBlock.ts but also statically imported by /private/tmp/mvs-music-mv-canvas-0913/client/src/components/canvas/FreeformCanvas.tsx, /private/tmp/mvs-music-mv-canvas-0913/client/src/lib/canvasDramaStudio.ts, dynamic import will not move module into another chunk.
+
+[plugin vite:reporter] 
+(!) /private/tmp/mvs-music-mv-canvas-0913/shared/manhuaAtReference.ts is dynamically imported by /private/tmp/mvs-music-mv-canvas-0913/client/src/lib/canvasRunBlock.ts but also statically imported by /private/tmp/mvs-music-mv-canvas-0913/client/src/components/ManhuaScriptWorkbench.tsx, /private/tmp/mvs-music-mv-canvas-0913/client/src/pages/OmniCanvas.tsx, dynamic import will not move module into another chunk.
+
+[plugin vite:reporter] 
+(!) /private/tmp/mvs-music-mv-canvas-0913/shared/manhuaShotContinuity.ts is dynamically imported by /private/tmp/mvs-music-mv-canvas-0913/client/src/lib/canvasDramaStudio.ts, /private/tmp/mvs-music-mv-canvas-0913/client/src/lib/canvasDramaStudio.ts but also statically imported by /private/tmp/mvs-music-mv-canvas-0913/client/src/pages/OmniCanvas.tsx, dynamic import will not move module into another chunk.
+
+computing gzip size...
+dist/index.html                                           378.62 kB │ gzip: 110.79 kB
+dist/assets/MVAnalysis-BdYAYcKU.css                         0.75 kB │ gzip:   0.29 kB
+dist/assets/index-BSa3u2fc.css                            533.49 kB │ gzip:  66.86 kB
+dist/assets/__vite-browser-external-BIHI7g3E.js             0.03 kB │ gzip:   0.05 kB
+dist/assets/useIsTrialUser-1z7VV0xV.js                      0.19 kB │ gzip:   0.19 kB
+dist/assets/index-ClsbEfoZ.js                               0.23 kB │ gzip:   0.18 kB
+dist/assets/GrowthCampRedirect-CWdCDA-s.js                  0.26 kB │ gzip:   0.23 kB
+dist/assets/chevron-down-l_qMF5MN.js                        0.30 kB │ gzip:   0.25 kB
+dist/assets/chevron-right-cYi9Hoer.js                       0.30 kB │ gzip:   0.25 kB
+dist/assets/chevron-left-CltROQfb.js                        0.30 kB │ gzip:   0.25 kB
+dist/assets/play-BfT_RQ3u.js                                0.30 kB │ gzip:   0.25 kB
+dist/assets/plus-DbMMM0Bm.js                                0.32 kB │ gzip:   0.26 kB
+dist/assets/music-2-D2-Yiyk2.js                             0.33 kB │ gzip:   0.27 kB
+dist/assets/arrow-down-BEong7o8.js                          0.33 kB │ gzip:   0.26 kB
+dist/assets/arrow-left-C7N-BAUU.js                          0.33 kB │ gzip:   0.27 kB
+dist/assets/search-CiNcHVL1.js                              0.34 kB │ gzip:   0.27 kB
+dist/assets/circle-check-CAH1VJxJ.js                        0.34 kB │ gzip:   0.27 kB
+dist/assets/circle-play-D7DBwoSa.js                         0.36 kB │ gzip:   0.28 kB
+dist/assets/index-DFZGvOik.js                               0.36 kB │ gzip:   0.29 kB
+dist/assets/user-FGaV2z4Z.js                                0.37 kB │ gzip:   0.29 kB
+dist/assets/rotate-ccw-C86Snwla.js                          0.37 kB │ gzip:   0.29 kB
+dist/assets/circle-x-BGIGtiSF.js                            0.37 kB │ gzip:   0.28 kB
+dist/assets/trending-up-BXoxDNHc.js                         0.37 kB │ gzip:   0.29 kB
+dist/assets/lock-BgPk0XpH.js                                0.38 kB │ gzip:   0.29 kB
+dist/assets/star-CM0bdHOR.js                                0.38 kB │ gzip:   0.29 kB
+dist/assets/dollar-sign-B1UcV27L.js                         0.39 kB │ gzip:   0.30 kB
+dist/assets/briefcase-Bsqt4tM1.js                           0.39 kB │ gzip:   0.30 kB
+dist/assets/target-0KbshKSW.js                              0.39 kB │ gzip:   0.26 kB
+dist/assets/heart-BRtGIkgb.js                               0.41 kB │ gzip:   0.31 kB
+dist/assets/globe-DuseDt4X.js                               0.41 kB │ gzip:   0.30 kB
+dist/assets/camera-DkDtYVC9.js                              0.42 kB │ gzip:   0.31 kB
+dist/assets/cloud-upload-Co2yciXT.js                        0.42 kB │ gzip:   0.31 kB
+dist/assets/compass-cN2zH1hV.js                             0.42 kB │ gzip:   0.31 kB
+dist/assets/eye-hLWvvunc.js                                 0.42 kB │ gzip:   0.30 kB
+dist/assets/calendar-BoYWjrLm.js                            0.43 kB │ gzip:   0.31 kB
+dist/assets/zap-BdD55Eq2.js                                 0.43 kB │ gzip:   0.31 kB
+dist/assets/eraser-BnSNxCIo.js                              0.44 kB │ gzip:   0.32 kB
+dist/assets/shield-Dq6222x5.js                              0.44 kB │ gzip:   0.33 kB
+dist/assets/pencil-CEe1lWhg.js                              0.45 kB │ gzip:   0.33 kB
+dist/assets/book-open-DFUn3HUx.js                           0.45 kB │ gzip:   0.31 kB
+dist/assets/flame-CbtdChTE.js                               0.45 kB │ gzip:   0.33 kB
+dist/assets/coins-Dt-_bWM7.js                               0.45 kB │ gzip:   0.33 kB
+dist/assets/ResearchHubRedirect-8mnoD46A.js                 0.45 kB │ gzip:   0.32 kB
+dist/assets/file-up-Bvux1_Qh.js                             0.47 kB │ gzip:   0.31 kB
+dist/assets/file-down-DHjq1pVH.js                           0.47 kB │ gzip:   0.32 kB
+dist/assets/users-Bblsovem.js                               0.47 kB │ gzip:   0.32 kB
+dist/assets/scissors-BmNmUusC.js                            0.48 kB │ gzip:   0.32 kB
+dist/assets/competitorResearchBeta-D6Hue7XX.js              0.49 kB │ gzip:   0.40 kB
+dist/assets/shield-check-DiXhKUX9.js                        0.49 kB │ gzip:   0.35 kB
+dist/assets/refresh-ccw-B8cTivuw.js                         0.49 kB │ gzip:   0.33 kB
+dist/assets/bot-DlidNVtr.js                                 0.50 kB │ gzip:   0.33 kB
+dist/assets/layout-dashboard-7Rzu-JmM.js                    0.52 kB │ gzip:   0.31 kB
+dist/assets/mic-vocal-ChsV7f-U.js                           0.52 kB │ gzip:   0.38 kB
+dist/assets/trash-2-C8tt8Q1C.js                             0.53 kB │ gzip:   0.35 kB
+dist/assets/crown-DtTbAj2S.js                               0.53 kB │ gzip:   0.36 kB
+dist/assets/aperture-DM8jeI77.js                            0.58 kB │ gzip:   0.36 kB
+dist/assets/film-y1RDizYp.js                                0.58 kB │ gzip:   0.35 kB
+dist/assets/building-2-G6S0mF63.js                          0.61 kB │ gzip:   0.35 kB
+dist/assets/rocket-Bv1tm3Ge.js                              0.62 kB │ gzip:   0.41 kB
+dist/assets/trophy-BwaX6XQo.js                              0.63 kB │ gzip:   0.39 kB
+dist/assets/wand-sparkles-DbR-n0X6.js                       0.68 kB │ gzip:   0.40 kB
+dist/assets/useComposition-w7-GIeWJ.js                      0.76 kB │ gzip:   0.37 kB
+dist/assets/database-CZVR80rn.js                            0.78 kB │ gzip:   0.38 kB
+dist/assets/bug-CXaGg9Ma.js                                 0.84 kB │ gzip:   0.47 kB
+dist/assets/mic-BPtWCHc1.js                                 0.98 kB │ gzip:   0.44 kB
+dist/assets/agentPricing-BjBukHhO.js                        1.04 kB │ gzip:   0.68 kB
+dist/assets/textarea-Da2uom7v.js                            1.15 kB │ gzip:   0.61 kB
+dist/assets/badge-BliWlJ1v.js                               1.17 kB │ gzip:   0.58 kB
+dist/assets/index-DR_OmgSM.js                               1.28 kB │ gzip:   0.64 kB
+dist/assets/input-Cg4uVNA-.js                               1.31 kB │ gzip:   0.66 kB
+dist/assets/growthMusic-CvdHeqxC.js                         1.79 kB │ gzip:   1.06 kB
+dist/assets/canvasGptImage2JobInput-qi9h1yCY.js             1.99 kB │ gzip:   0.89 kB
+dist/assets/AgentInsufficientCreditsDialog-DizngbNq.js      2.14 kB │ gzip:   0.84 kB
+dist/assets/pdfHtmlOptimize-Bn4o7ONY.js                     2.93 kB │ gzip:   1.02 kB
+dist/assets/SupervisorAccess-BWbmauMj.js                    3.27 kB │ gzip:   1.31 kB
+dist/assets/VoiceInputButton-iOAU9r9q.js                    3.35 kB │ gzip:   1.72 kB
+dist/assets/index-B5f-NWQo.js                               3.49 kB │ gzip:   1.58 kB
+dist/assets/tabs-BGIR480D.js                                3.69 kB │ gzip:   1.54 kB
+dist/assets/TrialWatermarkImage-C-hnhn2w.js                 3.99 kB │ gzip:   1.79 kB
+dist/assets/TemplatesLibrary-C6jObmfi.js                    5.05 kB │ gzip:   1.56 kB
+dist/assets/RemixLanding-Df6M7xrA.js                        6.40 kB │ gzip:   2.18 kB
+dist/assets/manhuaAssetZipImport-BGHF7t0b.js                7.56 kB │ gzip:   3.37 kB
+dist/assets/PaymentHistory-SrrXRpI7.js                      8.48 kB │ gzip:   2.32 kB
+dist/assets/ResearchHubPage-C72TiFvH.js                     8.72 kB │ gzip:   3.19 kB
+dist/assets/CreationManager-D50cFmjm.js                    10.22 kB │ gzip:   3.01 kB
+dist/assets/Navbar-DBsooOXw.js                             11.39 kB │ gzip:   3.20 kB
+dist/assets/MyWorks-DGsy7nsK.js                            12.76 kB │ gzip:   3.91 kB
+dist/assets/PlatformIpMatrixPage-BVLpnkpr.js               13.17 kB │ gzip:   4.00 kB
+dist/assets/CompetitorRadarPage-ydh9i7Gt.js                13.45 kB │ gzip:   4.19 kB
+dist/assets/Dashboard-1MvDgim8.js                          14.35 kB │ gzip:   3.92 kB
+dist/assets/hailuoOpenRouterModels-BpjJ173Y.js             17.30 kB │ gzip:   8.15 kB
+dist/assets/SupervisorDeepResearchPage-C6PXcRJF.js         18.95 kB │ gzip:   4.53 kB
+dist/assets/TemplatePicker-DjlgE9Bt.js                     19.08 kB │ gzip:   5.18 kB
+dist/assets/dropdown-menu-DJKtpbqq.js                      19.14 kB │ gzip:   5.81 kB
+dist/assets/TeamManagement-DQ92ixYt.js                     19.18 kB │ gzip:   4.41 kB
+dist/assets/VipTrackerPage-TL5mLta1.js                     19.42 kB │ gzip:   5.48 kB
+dist/assets/WorkspaceStudio-siXqpuhh.js                    19.70 kB │ gzip:   5.58 kB
+dist/assets/CreativePage-yBY9dSFs.js                       22.11 kB │ gzip:   8.33 kB
+dist/assets/AnalysisView-DPnxjxNX.js                       22.18 kB │ gzip:   5.70 kB
+dist/assets/select-BMRMM1A9.js                             22.37 kB │ gzip:   7.55 kB
+dist/assets/purify.es-B5CD4DQe.js                          22.90 kB │ gzip:   8.84 kB
+dist/assets/jobs-Cd2fshvz.js                               24.28 kB │ gzip:  10.72 kB
+dist/assets/QuotaExhaustedModal-CzcBdKwh.js                26.11 kB │ gzip:   5.72 kB
+dist/assets/researchHubRoutes-BgkjIH6X.js                  27.00 kB │ gzip:   8.23 kB
+dist/assets/VFXEngine-2FGas8xx.js                          27.61 kB │ gzip:   7.48 kB
+dist/assets/RemixStudio-BzTAjtGY.js                        30.85 kB │ gzip:   8.15 kB
+dist/assets/Showcase-Ctz_YCXG.js                           31.13 kB │ gzip:   8.31 kB
+dist/assets/Pricing-D9P2-uJr.js                            31.28 kB │ gzip:   7.84 kB
+dist/assets/AgentJobMonitor-DVMWIyFj.js                    31.33 kB │ gzip:   9.05 kB
+dist/assets/AdminPanel-BmIdJT_Y.js                         43.55 kB │ gzip:  10.17 kB
+dist/assets/EnterpriseAgentDetail-90UfQEUB.js              44.01 kB │ gzip:  11.24 kB
+dist/assets/TestLab-DlIDio3-.js                            48.34 kB │ gzip:  10.24 kB
+dist/assets/EnterpriseAgentManager-DF6wSqu1.js             49.15 kB │ gzip:  16.25 kB
+dist/assets/ResearchPage-DnQAlDYF.js                       50.96 kB │ gzip:  12.35 kB
+dist/assets/EnterpriseAgentPlayground-DfECB-4B.js          52.69 kB │ gzip:  15.93 kB
+dist/assets/schemas-DrScIBws.js                            54.71 kB │ gzip:  14.65 kB
+dist/assets/Storyboard-BF1EekPS.js                         62.92 kB │ gzip:  14.74 kB
+dist/assets/platformCoverDrProLs-C2KR_NcW.js               63.28 kB │ gzip:  17.84 kB
+dist/assets/MyReportsPage-hp5wLQUQ.js                      74.02 kB │ gzip:  20.99 kB
+dist/assets/GodViewPage-pSmYcUrm.js                        92.37 kB │ gzip:  24.32 kB
+dist/assets/WorkflowNodes-BMCVLKX6.js                     112.06 kB │ gzip:  22.52 kB
+dist/assets/storyboardLightingEmotion-DRpQAWnW.js         121.02 kB │ gzip:  42.81 kB
+dist/assets/PlatformReportDashboard-BPx7Mqhs.js           130.67 kB │ gzip:  33.43 kB
+dist/assets/index.es-BvvjTKfb.js                          159.64 kB │ gzip:  53.54 kB
+dist/assets/html2canvas.esm-B0tyYwQk.js                   202.36 kB │ gzip:  48.04 kB
+dist/assets/MVAnalysis-B6cSd5HS.js                        230.75 kB │ gzip:  57.66 kB
+dist/assets/jspdf.es.min-cIenHcf6.js                      390.05 kB │ gzip: 128.65 kB
+dist/assets/RadarChart-BkSac87m.js                        420.19 kB │ gzip: 112.25 kB
+dist/assets/index-CD7XLMG-.js                             798.83 kB │ gzip: 241.93 kB
+dist/assets/PlatformPage-B4WUtSyR.js                    1,214.12 kB │ gzip: 360.02 kB
+dist/assets/OmniCanvas-BGPKGJ_t.js                      1,835.76 kB │ gzip: 575.47 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 35.04s

@@ -1,3 +1,4 @@
+import { signGsUriV4ReadUrl } from "./gcs";
 /**
  * 漫剧成片坞：配乐 + 同源 Final Render。
  * 供 Fly jobs worker 异步执行；前端经 Vercel→Fly 短请求入队后轮询 GET /api/jobs/:id。
@@ -45,6 +46,7 @@ export type ManhuaAssembleFinalInput = {
   musicDuration?: number;
   musicProvider?: string;
   musicVolume?: number;
+  musicOnly?: boolean;
   musicFadeInSec?: number;
   musicFadeOutSec?: number;
   transition?: string;
@@ -189,7 +191,13 @@ export async function runManhuaAssembleFinal(
   }
 
   // 配乐必须在配乐间由用户另行确认；合成只复用选定音轨，不隐式调用上游。
-  const musicUrl = s(raw.musicUrl).trim();
+  const durableMusicUrl = s(raw.musicUrl).trim();
+  const musicUrl = raw.musicOnly === true && durableMusicUrl.startsWith("gs://")
+    ? signGsUriV4ReadUrl(durableMusicUrl, 3600) : durableMusicUrl;
+  if (raw.musicOnly === true) {
+    sceneVideos = sceneVideos.map(scene => ({ ...scene, url: scene.url.startsWith("gs://") ? signGsUriV4ReadUrl(scene.url, 3600) : scene.url }));
+  }
+  if (raw.musicOnly === true && !musicUrl) throw new Error("MV 合成缺少选定歌曲，未开始渲染");
   const musicPrompt = "";
   const musicProviderUsed = "";
 
@@ -207,6 +215,7 @@ export async function runManhuaAssembleFinal(
   const finalVideoUrl = await renderWorkflowFinalVideo({
     onSubtitleTimeline: timeline => { subtitleTimeline = timeline; },
     preserveSourceAudio: true,
+    musicOnly: raw.musicOnly === true,
     sceneVideos: sceneVideos.map((sv) => ({
       subtitleSource: sv.subtitleSource,
       subtitleShotIndex: sv.subtitleShotIndex,

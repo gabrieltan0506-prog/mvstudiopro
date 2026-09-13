@@ -1,3 +1,4 @@
+import { cachePhotoTemporaryMedia, triggerTemporaryDownload } from "@/lib/photoTemporaryMedia";
 import { mergeNativeProposalListAndDetail } from "@/lib/manhuaLearnResultUi";
 import { readOpenAiImageVariantPref } from "@/lib/openaiImageVariantPref";
 import OpenAiImageVariantSwitch from "@/components/OpenAiImageVariantSwitch";
@@ -8174,6 +8175,18 @@ export default function PlatformPage() {
   const exportKnowledgeCardPdfMutation = trpc.mvAnalysis.exportKnowledgeCardPdf.useMutation();
   const [knowledgeCardPdfBusy, setKnowledgeCardPdfBusy] = useState(false);
   const [knowledgeCardPdfUrl, setKnowledgeCardPdfUrl] = useState<string | null>(null);
+  const [knowledgeCardDownloading, setKnowledgeCardDownloading] = useState<number | null>(null);
+  const downloadKnowledgeCardImage = async (url: string, index: number) => {
+    if (knowledgeCardDownloading !== null) return;
+    setKnowledgeCardDownloading(index);
+    try {
+      const localUrl = await cachePhotoTemporaryMedia(url, "image");
+      triggerTemporaryDownload(localUrl, `knowledge-card-p${index + 1}.png`);
+      toast.success("下载已准备好，临时链接保留12小时");
+    } catch (e) { toast.error(e instanceof Error ? e.message : "下载准备失败，请重试"); }
+    finally { setKnowledgeCardDownloading(null); }
+  };
+
   /** 正在生成中的页序（0-based）：占位块显示「生成中」，补出按钮对在途页禁用，避免同一页重复扣费 */
   const [knowledgeCardInflight, setKnowledgeCardInflight] = useState<number[]>([]);
   /** 当前出图批次号：旧批次的在途页返回后不得覆盖新批次的结果/在途标记 */
@@ -8225,16 +8238,16 @@ export default function PlatformPage() {
     }
   };
 
-  /** 整套导出 PDF：服务端归一尺寸拼页落 GCS，这里只拿签名链打开 */
+  /** PDF保留GCS存档，下载时由服务端转存Fly临时空间。 */
   const downloadKnowledgeCardPdf = async (urls: string[]) => {
     if (!urls.length || knowledgeCardPdfBusy) return;
     setKnowledgeCardPdfBusy(true);
     try {
       const res = await exportKnowledgeCardPdfMutation.mutateAsync({ imageUrls: urls, title: extractInfographicSubjectFromUserCopy(customNoteText) });
-      // 弹窗可能被浏览器拦截：同时把链接留在页面上可点
-      setKnowledgeCardPdfUrl(res.url);
-      // 带 noopener 的 window.open 规范上恒返回 null，不据此判断是否打开成功；链接始终留在页面上
-      window.open(res.url, "_blank", "noopener,noreferrer");
+      // 临时下载链接同时留在页面上，便于再次下载。
+      const downloadUrl = await cachePhotoTemporaryMedia(res.url, "pdf");
+      setKnowledgeCardPdfUrl(downloadUrl);
+      triggerTemporaryDownload(downloadUrl, "knowledge-cards.pdf");
       toast.success(`PDF 已生成（${res.pageCount} 页），可点「打开 / 下载 PDF」`);
     } catch (e) {
       const raw = String((e as { message?: string })?.message || "");
@@ -16207,16 +16220,15 @@ export default function PlatformPage() {
                         }}
                       />
                       <div className="flex justify-end">
-                        <a
-                          href={url}
-                          download={`knowledge-card-p${idx + 1}.png`}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <button
+                          type="button"
+                          onClick={() => void downloadKnowledgeCardImage(url, idx)}
+                          disabled={knowledgeCardDownloading !== null}
                           className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[rgba(73,230,255,0.15)]"
                         >
                           <Download className="h-4 w-4" />
-                          下载第 {idx + 1} 页
-                        </a>
+                          {knowledgeCardDownloading === idx ? "正在准备下载…" : `下载第 ${idx + 1} 页`}
+                        </button>
                       </div>
                     </div>
                   ) : knowledgeCardInflight.includes(idx) ? (

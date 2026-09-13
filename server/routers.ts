@@ -1,3 +1,5 @@
+import { canvasMusicMvRouter } from "./routers/canvasMusicMv";
+import { canvasMusicMvAssembleRouter } from "./routers/canvasMusicMvAssemble";
 import { buildManhuaDirectionCanonFromSelection } from "../shared/manhuaDirectionCanonLibrary.js";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
@@ -2975,6 +2977,9 @@ function buildManhuaBgmJobResponse(
           gcsUri,
           previewUrl: signGsUriV4ReadUrl(gcsUri, 24 * 3600),
           bytes: Math.max(0, Number(variant.bytes) || 0),
+          durationSec: Number(variant.durationSec) > 0 ? Number(variant.durationSec) : null,
+          sha256: typeof variant.sha256 === "string" ? variant.sha256 : null,
+          musicId: typeof variant.musicId === "string" ? variant.musicId : null,
           structure:
             variant.structure && typeof variant.structure === "object" && !Array.isArray(variant.structure)
               ? variant.structure
@@ -2999,6 +3004,8 @@ function buildManhuaBgmJobResponse(
 }
 
 export const appRouter = router({
+  canvasMusicMv: canvasMusicMvRouter,
+  canvasMusicMvAssemble: canvasMusicMvAssembleRouter,
   // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
   system: systemRouter,
   usage: usageRouter,

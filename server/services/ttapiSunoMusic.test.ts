@@ -32,6 +32,28 @@ describe("ttapiSunoMusic（Suno v6 · TTAPI 网关客户端）", () => {
     delete process.env.TTAPI_KEY;
   });
 
+  it("歌曲请求保留歌词，先保存原始响应再解析，归档失败不重发", async () => {
+    const evidence: Array<{ kind: string; body: string }> = [];
+    reply = () => ({ status: 200, body: { status: "SUCCESS", data: { jobId: JOB } } });
+    const req = { model: "suno-v6" as const, style: "国风", title: "夜雨", prompt: "[Verse]\n夜雨落在旧城墙", instrumental: false };
+    await createTtapiSunoTask(req, { evidence: async entry => { evidence.push(entry); } });
+    expect(JSON.parse(calls[0]!.init!.body as string)).toMatchObject({ prompt: req.prompt, instrumental: false });
+    expect(evidence.map(e => e.kind)).toEqual(["request", "raw", "parsed"]);
+    expect(JSON.parse(evidence[1]!.body)).toEqual(JSON.parse(evidence[2]!.body));
+    await expect(createTtapiSunoTask(req, { evidence: async e => { if (e.kind === "raw") throw new Error("storage unavailable"); } })).rejects.toMatchObject({ submissionUnknown: true });
+    expect(calls).toHaveLength(2);
+  });
+
+  it("同音频地址的不同候选仍全部保留", async () => {
+    reply = () => ({ status: 200, body: { status: "SUCCESS", data: { musics: [
+      { musicId: "candidate-a", audioUrl: "https://cdn/same.mp3" },
+      { musicId: "candidate-b", audioUrl: "https://cdn/same.mp3" },
+    ] } } });
+    const result = await getTtapiSunoTask(`ttapi:${JOB}`);
+    expect(result).toMatchObject({ status: "completed", audioUrls: ["https://cdn/same.mp3", "https://cdn/same.mp3"], missing: 0 });
+    expect(result.musics.map(m => m.musicId)).toEqual(["candidate-a", "candidate-b"]);
+  });
+
   it("未配置 TTAPI_KEY 即不可用；task id 前缀区分来源，往返一致", () => {
     delete process.env.TTAPI_KEY;
     expect(isTtapiSunoReady()).toBe(false);

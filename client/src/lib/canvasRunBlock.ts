@@ -1344,6 +1344,7 @@ export async function runCanvasBlock(
   seedance25ThreadId?: string;
   seedance25WebThreadLink?: string;
 }> {
+  if (block.kind === "music") throw new Error("请在音乐节点中选择生成音乐、分镜或合成阶段");
   if (runOptions?.pilotRun) {
     if (
       block.kind !== "video" || !block.id.startsWith("clip-") ||
@@ -1362,6 +1363,18 @@ export async function runCanvasBlock(
   }
   // 出片前统一重签上传件签名链（0908 EvoLink「input media could not be downloaded」：
   // 60 分钟签名在上传与提交之间过期）。同一 gcsUri 只签一次；失败退回原链不挡提交。
+  if (block.kind === "video" && block.musicMvShot) {
+    const fresh = new Map<string, string>();
+    for (const image of block.musicMvShot.referenceImages) {
+      const url = image.gcsUri ? await resolveCanvasMaterialUrl(image.gcsUri) : image.url;
+      if (!/^https:\/\//.test(url)) throw new Error("MV 参考图暂不可用，未提交生成");
+      fresh.set(image.url.split("?")[0]!, url);
+    }
+    const resign = (url: string | undefined) => url ? fresh.get(url.split("?")[0]!) || url : undefined;
+    block = { ...block, refImageUrl: resign(block.refImageUrl), editFusionUrls: block.editFusionUrls?.map(url => resign(url)!) };
+    // 分镜已明确选择参考；空引用不从父音乐节点补入其他人物/场景。
+    upstream = { ...upstream, visionImages: [] };
+  }
   const assetResigner = createCanvasAssetResigner(block.uploadedAssets);
   if (block.kind === "video" || block.kind === "image") {
     block = await resignCanvasBlockUploadedReferences(block, assetResigner);
@@ -1423,7 +1436,7 @@ export async function runCanvasBlock(
   const isClipBlock = block.id.startsWith("clip-");
   const mergedPrompt = formatCanvasUpstreamPrompt(
     prompt || "请根据上游内容完成本步骤生成。",
-    isKeyartBlock || isClipBlock ? [] : effectiveTexts,
+    isKeyartBlock || isClipBlock || block.musicMvShot ? [] : effectiveTexts,
   );
 
   if (block.kind === "text" || block.kind === "copy_organize") {

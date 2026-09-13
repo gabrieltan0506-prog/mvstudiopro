@@ -1,0 +1,308 @@
+
+ RUN  v2.1.9 /private/tmp/mvs-music-mv-canvas-0913
+
+ ✓ server/services/manhuaScoringRoom.test.ts (17 tests) 332ms
+ ✓ client/src/lib/canvasVideoTaskResume.test.ts (15 tests) 52ms
+stdout | client/src/lib/canvasRunBlock.referenceIntent.test.ts > 普通视频参考职责不被自动改写 > 逐句声音从真实节点进入视频请求，不要求普通画布具备关键帧
+[canvasRunBlock] video · id=video-audio-reference · videoModel=seedance-2.5 · stills=0 · continuity=false · directorPass=true · promptChars=16
+
+stdout | client/src/lib/canvasRunBlock.segmentRefs.test.ts > 漫剧工厂段级参考进出片请求（无网络） > 白模现签后排 @视频1、接力片在后；母轨作唯一音轨；提示词带段参考引导句
+[canvasRunBlock] video · id=clip-e01-g02 · videoModel=seedance-2.5 · stills=1 · continuity=true · directorPass=true · promptChars=59
+[canvasRunBlock] clip continuity · prevTailFrames=0 · window=4s
+
+stdout | client/src/lib/canvasRunBlock.segmentRefs.test.ts > 漫剧工厂段级参考进出片请求（无网络） > 白模现签后排 @视频1、接力片在后；母轨作唯一音轨；提示词带段参考引导句
+[canvasRunBlock] clip image-bind · assets=0 · kept=1 · urls=1 · bind=@图片1为本段构图与光色基准。全程保持各主体脸、服、场与上表一致，只按秒轴改动作/口型/运镜。
+[canvasRunBlock] seedance25 · provider=evolink · workMode=reference_to_video
+
+stdout | client/src/lib/canvasRunBlock.segmentRefs.test.ts > 漫剧工厂段级参考进出片请求（无网络） > 现签失败退回已存链，不挡出片
+[canvasRunBlock] video · id=clip-e01-g02 · videoModel=seedance-2.5 · stills=1 · continuity=true · directorPass=true · promptChars=59
+[canvasRunBlock] clip continuity · prevTailFrames=0 · window=4s
+[canvasRunBlock] clip image-bind · assets=0 · kept=1 · urls=1 · bind=@图片1为本段构图与光色基准。全程保持各主体脸、服、场与上表一致，只按秒轴改动作/口型/运镜。
+[canvasRunBlock] seedance25 · provider=evolink · workMode=reference_to_video
+
+stdout | client/src/lib/canvasRunBlock.segmentRefs.test.ts > 漫剧工厂段级参考进出片请求（无网络） > 已采用逐句配音的段挂了母轨后，只送母轨一条音频
+[canvasRunBlock] video · id=clip-e01-g02 · videoModel=seedance-2.5 · stills=1 · continuity=true · directorPass=true · promptChars=59
+[canvasRunBlock] clip continuity · prevTailFrames=0 · window=4s
+[canvasRunBlock] clip image-bind · assets=0 · kept=1 · urls=1 · bind=@图片1为本段构图与光色基准。全程保持各主体脸、服、场与上表一致，只按秒轴改动作/口型/运镜。
+[canvasRunBlock] seedance25 · provider=evolink · workMode=reference_to_video
+
+stdout | client/src/lib/canvasRunBlock.segmentRefs.test.ts > 漫剧工厂段级参考进出片请求（无网络） > Wan 3.0 段预混母轨挂上后（cue 仍启用）出片不再被「逐段音轨」拦死，母轨现签作唯一音频
+[canvasRunBlock] video · id=clip-e01-g02 · videoModel=wan-3.0 · stills=1 · continuity=true · directorPass=true · promptChars=59
+[canvasRunBlock] clip continuity · prevTailFrames=0 · window=4s
+[canvasRunBlock] clip image-bind · assets=0 · kept=1 · urls=1 · bind=@图片1为本段构图与光色基准。全程保持各主体脸、服、场与上表一致，只按秒轴改动作/口型/运镜。
+[canvasRunBlock] video · id=clip-e01-g02 · videoModel=wan-3.0 · stills=1 · continuity=true · directorPass=true · promptChars=59
+[canvasRunBlock] clip continuity · prevTailFrames=0 · window=4s
+[canvasRunBlock] clip image-bind · assets=0 · kept=1 · urls=1 · bind=@图片1为本段构图与光色基准。全程保持各主体脸、服、场与上表一致，只按秒轴改动作/口型/运镜。
+[canvasRunBlock] video · id=clip-e01-g02 · videoModel=wan-3.0 · stills=1 · continuity=true · directorPass=true · promptChars=59
+[canvasRunBlock] clip continuity · prevTailFrames=0 · window=4s
+[canvasRunBlock] clip image-bind · assets=0 · kept=1 · urls=1 · bind=@图片1为本段构图与光色基准。全程保持各主体脸、服、场与上表一致，只按秒轴改动作/口型/运镜。
+
+stdout | client/src/lib/canvasRunBlock.segmentRefs.test.ts > 漫剧工厂段级参考进出片请求（无网络） > 10 秒试片不注入白模与母轨
+[canvasRunBlock] video · id=clip-e01-g02 · videoModel=seedance-2.5 · stills=1 · continuity=false · directorPass=true · promptChars=28
+[canvasRunBlock] clip image-bind · assets=0 · kept=1 · urls=1 · bind=@图片1为本段构图与光色基准。全程保持各主体脸、服、场与上表一致，只按秒轴改动作/口型/运镜。
+[canvasRunBlock] seedance25 · provider=evolink · workMode=reference_to_video
+
+stdout | client/src/lib/canvasRunBlock.segmentRefs.test.ts > 漫剧工厂段级参考进出片请求（无网络） > Seedance 2.0 系同样注入（OpenRouter 视频/音频各 ≤3 条）
+[canvasRunBlock] video · id=clip-e01-g02 · videoModel=seedance-2.0 · stills=1 · continuity=false · directorPass=true · promptChars=59
+[canvasRunBlock] clip image-bind · assets=0 · kept=1 · urls=1 · bind=@图片1为本段构图与光色基准。全程保持各主体脸、服、场与上表一致，只按秒轴改动作/口型/运镜。
+
+stdout | client/src/lib/canvasRunBlock.segmentRefs.test.ts > 漫剧工厂段级参考进出片请求（无网络） > Wan 3.0：≤15 s 的白模/母轨才送，白模排 Reference video 1、母轨现签作唯一音频
+[canvasRunBlock] video · id=clip-e01-g02 · videoModel=wan-3.0 · stills=1 · continuity=true · directorPass=true · promptChars=59
+[canvasRunBlock] clip continuity · prevTailFrames=0 · window=4s
+[canvasRunBlock] clip image-bind · assets=0 · kept=1 · urls=1 · bind=@图片1为本段构图与光色基准。全程保持各主体脸、服、场与上表一致，只按秒轴改动作/口型/运镜。
+[canvasRunBlock] video · id=clip-e01-g02 · videoModel=wan-3.0 · stills=1 · continuity=true · directorPass=true · promptChars=59
+[canvasRunBlock] clip continuity · prevTailFrames=0 · window=4s
+[canvasRunBlock] clip image-bind · assets=0 · kept=1 · urls=1 · bind=@图片1为本段构图与光色基准。全程保持各主体脸、服、场与上表一致，只按秒轴改动作/口型/运镜。
+[canvasRunBlock] video · id=clip-e01-g02 · videoModel=wan-3.0 · stills=1 · continuity=true · directorPass=true · promptChars=59
+[canvasRunBlock] clip continuity · prevTailFrames=0 · window=4s
+[canvasRunBlock] clip image-bind · assets=0 · kept=1 · urls=1 · bind=@图片1为本段构图与光色基准。全程保持各主体脸、服、场与上表一致，只按秒轴改动作/口型/运镜。
+
+stderr | client/src/lib/canvasRunBlock.segmentRefs.test.ts > 漫剧工厂段级参考进出片请求（无网络） > Wan 3.0：≤15 s 的白模/母轨才送，白模排 Reference video 1、母轨现签作唯一音频
+[canvasRunBlock] 段白模超出 wan-3.0 参考上限 15s 或时长未知，本次不送
+[canvasRunBlock] 段白模超出 wan-3.0 参考上限 15s 或时长未知，本次不送
+
+stdout | client/src/lib/canvasRunBlock.segmentRefs.test.ts > 漫剧工厂段级参考进出片请求（无网络） > 视频延长模式同样不注入白模/母轨：延长的必须是本段成片
+[canvasRunBlock] video · id=clip-e01-g02 · videoModel=seedance-2.5 · stills=1 · continuity=false · directorPass=true · promptChars=59
+[canvasRunBlock] clip image-bind · assets=0 · kept=1 · urls=1 · bind=@图片1为本段构图与光色基准。全程保持各主体脸、服、场与上表一致，只按秒轴改动作/口型/运镜。
+[canvasRunBlock] seedance25 · provider=evolink · workMode=reference_to_video
+
+ ✓ client/src/lib/canvasRunBlock.segmentRefs.test.ts (11 tests) 260ms
+stdout | client/src/lib/canvasRunBlock.referenceIntent.test.ts > 普通视频参考职责不被自动改写 > 逐句声音从真实节点进入视频请求，不要求普通画布具备关键帧
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=0 · bind=
+[canvasRunBlock] seedance25 · provider=evolink · workMode=reference_to_video
+
+stdout | client/src/lib/canvasRunBlock.referenceIntent.test.ts > 普通视频参考职责不被自动改写 > seedance-2.0-mini 的身份参考保持动作正文与图片顺序，不注入场景静帧或微动
+[canvasRunBlock] video · id=video-reference-intent · videoModel=seedance-2.0-mini · stills=2 · continuity=false · directorPass=true · promptChars=56
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=2 · bind=
+
+stdout | client/src/lib/canvasRunBlock.referenceIntent.test.ts > 普通视频参考职责不被自动改写 > minimax-hailuo-3 的身份参考保持动作正文与图片顺序，不注入场景静帧或微动
+[canvasRunBlock] video · id=video-reference-intent · videoModel=minimax-hailuo-3 · stills=2 · continuity=false · directorPass=true · promptChars=56
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=2 · bind=
+
+stdout | client/src/lib/canvasRunBlock.referenceIntent.test.ts > 普通视频参考职责不被自动改写 > happyhorse-1.1 的身份参考保持动作正文与图片顺序，不注入场景静帧或微动
+[canvasRunBlock] video · id=video-reference-intent · videoModel=happyhorse-1.1 · stills=1 · continuity=false · directorPass=true · promptChars=56
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=1 · bind=
+
+stdout | client/src/lib/canvasRunBlock.referenceIntent.test.ts > 普通视频参考职责不被自动改写 > wan-3.0 的身份参考保持动作正文与图片顺序，不注入场景静帧或微动
+[canvasRunBlock] video · id=video-reference-intent · videoModel=wan-3.0 · stills=2 · continuity=false · directorPass=true · promptChars=56
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=2 · bind=
+
+stdout | client/src/lib/canvasRunBlock.referenceIntent.test.ts > 普通视频参考职责不被自动改写 > seedance-2.0-mini 保留用户显式首帧、静帧及动作指令
+[canvasRunBlock] video · id=video-explicit-first-frame · videoModel=seedance-2.0-mini · stills=1 · continuity=false · directorPass=true · promptChars=36
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=1 · bind=
+
+stdout | client/src/lib/canvasRunBlock.referenceIntent.test.ts > 普通视频参考职责不被自动改写 > minimax-hailuo-3 保留用户显式首帧、静帧及动作指令
+[canvasRunBlock] video · id=video-explicit-first-frame · videoModel=minimax-hailuo-3 · stills=1 · continuity=false · directorPass=true · promptChars=36
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=1 · bind=
+
+stdout | client/src/lib/canvasRunBlock.referenceIntent.test.ts > 普通视频参考职责不被自动改写 > happyhorse-1.1 保留用户显式首帧、静帧及动作指令
+[canvasRunBlock] video · id=video-explicit-first-frame · videoModel=happyhorse-1.1 · stills=1 · continuity=false · directorPass=true · promptChars=36
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=1 · bind=
+
+stdout | client/src/lib/canvasRunBlock.referenceIntent.test.ts > 普通视频参考职责不被自动改写 > wan-3.0 保留用户显式首帧、静帧及动作指令
+[canvasRunBlock] video · id=video-explicit-first-frame · videoModel=wan-3.0 · stills=1 · continuity=false · directorPass=true · promptChars=36
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=1 · bind=
+
+stdout | client/src/lib/canvasRunBlock.referenceIntent.test.ts > 普通视频参考职责不被自动改写 > seedance-2.0-mini 无图时维持原请求资格，不捏造参考静帧
+[canvasRunBlock] video · id=video-no-reference · videoModel=seedance-2.0-mini · stills=0 · continuity=false · directorPass=true · promptChars=46
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=0 · bind=
+
+stdout | client/src/lib/canvasRunBlock.referenceIntent.test.ts > 普通视频参考职责不被自动改写 > minimax-hailuo-3 无图时维持原请求资格，不捏造参考静帧
+[canvasRunBlock] video · id=video-no-reference · videoModel=minimax-hailuo-3 · stills=0 · continuity=false · directorPass=true · promptChars=46
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=0 · bind=
+
+stdout | client/src/lib/canvasRunBlock.referenceIntent.test.ts > 普通视频参考职责不被自动改写 > happyhorse-1.1 无图时维持原请求资格，不捏造参考静帧
+[canvasRunBlock] video · id=video-no-reference · videoModel=happyhorse-1.1 · stills=0 · continuity=false · directorPass=true · promptChars=46
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=0 · bind=
+
+stdout | client/src/lib/canvasRunBlock.referenceIntent.test.ts > 普通视频参考职责不被自动改写 > wan-3.0 无图时维持原请求资格，不捏造参考静帧
+[canvasRunBlock] video · id=video-no-reference · videoModel=wan-3.0 · stills=0 · continuity=false · directorPass=true · promptChars=46
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=0 · bind=
+
+stdout | client/src/lib/canvasRunBlock.referenceIntent.test.ts > 普通视频参考职责不被自动改写 > 普通节点接力保留原连续性说明，尾帧先于身份图进入实际请求
+[canvasRunBlock] video · id=video-continuity-intent · videoModel=seedance-2.0-mini · stills=1 · continuity=true · directorPass=true · promptChars=131
+[canvasRunBlock] clip continuity · prevTailFrames=1 · window=4s
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=2 · bind=
+
+stdout | client/src/lib/canvasRunBlock.referenceIntent.test.ts > 普通视频参考职责不被自动改写 > 普通与clip对照：工厂静帧职责仍实际出站，正文及图片不丢失
+[canvasRunBlock] video · id=video-ordinary-comparison · videoModel=seedance-2.0-mini · stills=1 · continuity=false · directorPass=true · promptChars=46
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=1 · bind=
+[canvasRunBlock] video · id=clip-e01-g01 · videoModel=seedance-2.0-mini · stills=1 · continuity=false · directorPass=true · promptChars=46
+[canvasRunBlock] clip image-bind · assets=0 · kept=1 · urls=1 · bind=@图片1为本段构图与光色基准。全程保持各主体脸、服、场与上表一致，只按秒轴改动作/口型/运镜。
+
+stdout | client/src/lib/canvasRunBlock.referenceIntent.test.ts > Seedance 2.5 多模态参考：勾选视频是站位参考，不是上一段成片 > 不抽尾帧、不追加镜头连续性提示，视频原样进 videoUrls
+[canvasRunBlock] video · id=video-seedance25-reference · videoModel=seedance-2.5 · stills=1 · continuity=false · directorPass=true · promptChars=46
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=1 · bind=
+[canvasRunBlock] seedance25 · provider=evolink · workMode=reference_to_video
+
+stdout | client/src/lib/canvasRunBlock.referenceIntent.test.ts > Seedance 2.5 多模态参考：勾选视频是站位参考，不是上一段成片 > 2.5 上游连线的上一段成片仍按接力：抽尾帧、加连续性提示、视频进 videoUrls
+[canvasRunBlock] video · id=video-seedance25-linked-continuity · videoModel=seedance-2.5 · stills=0 · continuity=true · directorPass=true · promptChars=131
+[canvasRunBlock] clip continuity · prevTailFrames=1 · window=4s
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=1 · bind=
+[canvasRunBlock] seedance25 · provider=evolink · workMode=reference_to_video
+
+stdout | client/src/lib/canvasRunBlock.referenceIntent.test.ts > Seedance 2.5 多模态参考：勾选视频是站位参考，不是上一段成片 > 2.0 档勾选视频仍按上一段成片接力（行为不变）
+[canvasRunBlock] video · id=video-seedance20-continuity · videoModel=seedance-2.0-mini · stills=1 · continuity=true · directorPass=true · promptChars=131
+[canvasRunBlock] clip continuity · prevTailFrames=1 · window=4s
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=2 · bind=
+
+stdout | client/src/lib/canvasRunBlock.referenceIntent.test.ts > Seedance 2.5：无扩展名的上传视频按上传记录 kind 进 videoUrls > refVideoUrl 无 .mp4 后缀但 uploadedAssets 标记为 video 时不丢
+[canvasRunBlock] video · id=video-seedance25-noext · videoModel=seedance-2.5 · stills=1 · continuity=false · directorPass=true · promptChars=46
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=1 · bind=
+[canvasRunBlock] seedance25 · provider=evolink · workMode=reference_to_video
+
+stdout | client/src/lib/canvasRunBlock.referenceIntent.test.ts > Seedance 2.5：用户参考视频与上游接力成片并存时，用户视频是 @视频1 > videoUrls 顺序为 [用户勾选视频, 上游接力视频]
+[canvasRunBlock] video · id=video-seedance25-both · videoModel=seedance-2.5 · stills=0 · continuity=true · directorPass=true · promptChars=131
+[canvasRunBlock] clip continuity · prevTailFrames=1 · window=4s
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=1 · bind=
+[canvasRunBlock] seedance25 · provider=evolink · workMode=reference_to_video
+
+stdout | client/src/lib/canvasRunBlock.referenceIntent.test.ts > Seedance 2.5：refVideoUrl 为空但上传记录里有视频时，视频仍进 videoUrls > uploadedAssets 兜底不静默丢视频
+[canvasRunBlock] video · id=video-seedance25-uploaded-only · videoModel=seedance-2.5 · stills=1 · continuity=false · directorPass=true · promptChars=46
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=1 · bind=
+[canvasRunBlock] seedance25 · provider=evolink · workMode=reference_to_video
+
+stdout | client/src/lib/canvasRunBlock.referenceIntent.test.ts > Seedance 2.5：重跑不继承本节点旧成片 > reference_to_video 重跑不带旧成片
+[canvasRunBlock] video · id=video-seedance25-rerun · videoModel=seedance-2.5 · stills=1 · continuity=false · directorPass=true · promptChars=46
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=1 · bind=
+[canvasRunBlock] seedance25 · provider=evolink · workMode=reference_to_video
+
+stdout | client/src/lib/canvasRunBlock.referenceIntent.test.ts > Seedance 2.5：重跑不继承本节点旧成片 > 未显式选模式时，旧成片也不参与模式推断（只按用户参考推断）
+[canvasRunBlock] video · id=video-seedance25-rerun-infer · videoModel=seedance-2.5 · stills=1 · continuity=false · directorPass=true · promptChars=46
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=1 · bind=
+[canvasRunBlock] seedance25 · provider=evolink · workMode=image_to_video
+
+stdout | client/src/lib/canvasRunBlock.referenceIntent.test.ts > Seedance 2.5：重跑不继承本节点旧成片 > video_extend 仍以本节点旧成片为源片（延长依赖它）
+[canvasRunBlock] video · id=video-seedance25-extend · videoModel=seedance-2.5 · stills=0 · continuity=false · directorPass=true · promptChars=46
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=0 · bind=
+[canvasRunBlock] seedance25 · provider=evolink · workMode=video_extend
+
+ ✓ client/src/lib/canvasRunBlock.referenceIntent.test.ts (25 tests) 439ms
+ ✓ client/src/lib/manhuaCloudDraftSync.test.ts (14 tests) 183ms
+ ✓ server/services/ttapiSunoMusic.test.ts (12 tests) 191ms
+ ✓ client/src/lib/canvasTypes.test.ts (21 tests) 99ms
+ ✓ shared/manhuaCloudDraft.test.ts (11 tests) 130ms
+ ✓ client/src/lib/canvasDramaStudio.test.ts (97 tests) 3243ms
+   ✓ canvasDramaStudio factory > pipeline 在已有 reverse 的整集入口消费与审阅相同的资产编译上下文 468ms
+   ✓ canvasDramaStudio factory > Wan 同一次 pipeline 自动重试复用提交键，下一次显式重跑换新键 1225ms
+ ✓ server/services/manhuaAssembleFinalService.audio.test.ts (19 tests) 32ms
+ ✓ server/routers/canvasMusicMvAssemble.test.ts (8 tests) 106ms
+ ✓ shared/manhuaCloudDraft.roundtrip.test.ts (6 tests) 158ms
+stdout | client/src/lib/canvasMusicMvWorkflow.test.ts > MV 分镜编译到真实视频出站请求（全离线） > 5.2秒与5.1秒镜头均提交6秒，只带各自指定图且不带整首音频
+[canvasRunBlock] video · id=mvshot-music-root-00000000-0000-4000-8000-000000000001-1 · videoModel=seedance-2.0-mini · stills=2 · continuity=false · directorPass=false · promptChars=504
+
+stdout | client/src/lib/canvasMusicMvWorkflow.test.ts > MV 分镜编译到真实视频出站请求（全离线） > 5.2秒与5.1秒镜头均提交6秒，只带各自指定图且不带整首音频
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=1 · bind=
+[canvasRunBlock] video · id=mvshot-music-root-00000000-0000-4000-8000-000000000001-2 · videoModel=seedance-2.0-mini · stills=2 · continuity=false · directorPass=false · promptChars=507
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=1 · bind=
+
+stdout | client/src/lib/canvasMusicMvWorkflow.test.ts > MV 分镜编译到真实视频出站请求（全离线） > 未选参考的镜头不会静默采用音乐父节点的任意图片
+[canvasRunBlock] video · id=mvshot-music-root-00000000-0000-4000-8000-000000000001-1 · videoModel=seedance-2.0-mini · stills=0 · continuity=false · directorPass=false · promptChars=502
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=0 · bind=
+
+stdout | client/src/lib/canvasMusicMvWorkflow.test.ts > MV 分镜编译到真实视频出站请求（全离线） > 完整云恢复后凭选定图的GCS身份续签，过期URL不得进入POST
+[canvasRunBlock] video · id=mvshot-music-root-00000000-0000-4000-8000-000000000001-1 · videoModel=seedance-2.0-mini · stills=2 · continuity=false · directorPass=false · promptChars=504
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=1 · bind=
+
+ ✓ client/src/lib/canvasMusicMvWorkflow.test.ts (4 tests) 196ms
+stdout | server/vercel-api-core/renderMusicOnly.integration.test.ts > MV 仅歌曲合成真实媒体 > 共享任务参数经真实服务与渲染器保留完整歌曲，所有片段原声均移除
+真实MV仅歌曲合成回执 {"testMedia":"虚构正弦媒体，非歌曲或付费产物","file":"/var/folders/vl/bg8584qs3qz228dh8k68pwn00000gn/T/music-only-proof-dRh1Rq/final-0.mp4","elapsedMs":5666,"probe":{"programs":[],"stream_groups":[],"streams":[{"codec_type":"video","duration":"4.000000","nb_frames":"120"},{"codec_type":"audio","duration":"4.010000","nb_frames":"189"}],"format":{"duration":"4.010000","size":"72786"}},"windows":[{"start":0.4,"rms":0.08820900773061847,"source440":0.000035206565495028315,"source880":0.00003687455088611257,"song1400":0.1247286805649046},{"start":2.8,"rms":0.08845663523404719,"source440":0.00003108131476973634,"source880":0.00003082623448095605,"song1400":0.12508768365608394},{"start":3.6,"rms":0.08823191297668677,"source440":0.00003220848865353584,"source880":0.00003245612467280121,"song1400":0.12477389861585175}],"controlWindows":[{"start":0.4,"rms":0.12500527908717635,"source440":0.12434885466662321,"source880":0.000039012599439915035,"song1400":0.12556653836454212},{"start":2.8,"rms":0.12540771414184057,"source440":0.000035305231639864145,"source880":0.12577078657592936,"song1400":0.12498993879975932}],"sha256":"6c8432fa8723eb60d0dce192023f5dd7f44acf3afebb6148c8d5831075657e3f","renderTempDirectoriesRemoved":2}
+
+ ✓ client/src/lib/canvasRunBlock.videoEdit.test.ts (8 tests) 190ms
+ ✓ server/services/manhuaAssembleAccess.test.ts (18 tests) 4914ms
+   ✓ 合成真实入口鉴权（执行源码，不发网络） > 只读能力握手在供应商配置读取前返回现价，POST拒绝且没有任何副作用 666ms
+   ✓ 合成真实入口鉴权（执行源码，不发网络） > 旧同步入口匿名401、他人403、登录409；三者都不会运行渲染 330ms
+   ✓ 合成真实入口鉴权（执行源码，不发网络） > 真实 worker 拒绝匿名、他人任务和未领取任务，拒绝前零账户/计费/渲染调用 811ms
+   ✓ 合成真实入口鉴权（执行源码，不发网络） > 真实 worker 外层 success 的落库／退款／无重排 431ms
+   ✓ 合成真实入口鉴权（执行源码，不发网络） > 真实 worker 外层 save_failed 的落库／退款／无重排 338ms
+   ✓ 合成真实入口鉴权（执行源码，不发网络） > 真实 worker 外层 timeout 的落库／退款／无重排 498ms
+   ✓ 合成真实入口鉴权（执行源码，不发网络） > 真实 worker 外层 settlement_pending 的落库／退款／无重排 486ms
+stdout | server/jobs/manhuaBgmRefundRecovery.test.ts
+[OAuth] Initialized with baseURL: 
+
+stderr | server/jobs/manhuaBgmRefundRecovery.test.ts
+[OAuth] ERROR: OAUTH_SERVER_URL is not configured! Set OAUTH_SERVER_URL environment variable.
+
+ ✓ server/routers/canvasMusicMv.test.ts (6 tests) 36ms
+ ✓ client/src/lib/manhuaCanvasLayout.test.ts (6 tests) 84ms
+ ✓ client/src/lib/canvasMusicMv.browser.test.ts (5 tests) 17029ms
+   ✓ 独立音乐MV真实视图（虚构任务边界） > 两版音乐→选版→两镜分镜→缺镜拒合成→真实铺节点与逐镜执行→最终节点回写 3187ms
+   ✓ 独立音乐MV真实视图（虚构任务边界） > 刷新恢复音乐原任务只查询，不重新提交音乐；已成功镜头不重新制作 3120ms
+   ✓ 音乐 MV 拒绝与参考恢复真实视图 > 明确建单拒绝后允许重新提交；未知网络错误保留原编号 1637ms
+   ✓ 音乐 MV 拒绝与参考恢复真实视图 > 云恢复保留持久参考，删除末张或显式移除正确清空 2374ms
+   ✓ 缺失候选提示持久显示，不隐式重发补单 2416ms
+ ✓ client/src/lib/canvasMusicMv.persistence.test.ts (4 tests) 88ms
+ ✓ server/jobs/manhuaBgmJobInput.test.ts (7 tests) 192ms
+ ✓ server/services/canvasMusicMvMedia.test.ts (8 tests) 31ms
+ ✓ client/src/lib/canvasMusicMvRecovery.test.ts (4 tests) 96ms
+stdout | server/jobs/runner.manhuaBgmV6Settlement.test.ts
+[OAuth] Initialized with baseURL: 
+
+stderr | server/jobs/runner.manhuaBgmV6Settlement.test.ts
+[OAuth] ERROR: OAUTH_SERVER_URL is not configured! Set OAUTH_SERVER_URL environment variable.
+
+ ✓ shared/manhuaAssembleJobInput.test.ts (2 tests) 7ms
+ ✓ client/src/lib/canvasMusicMvGuards.test.ts (3 tests) 7ms
+stderr | server/jobs/manhuaBgmRefundRecovery.test.ts > 配乐补退：失败→真实重排→正常领取→补退成功 > 退款失败→真的回到队列→被正常 claim 领走→幂等补退成功，全程不重扣不重发
+[manhua-bgm] 建单失败退款未完成（已留 refund_pending，可补退）: db down
+
+stdout | server/vercel-api-core/renderMusicOnly.integration.test.ts > MV 仅歌曲合成真实媒体 > 十个0.53秒窗口先测独立取帧累积，再测绝对时间差分消除误差
+真实MV分数镜长回执 {"targetDuration":5.3,"expectedFrames":159,"original":{"file":"/var/folders/vl/bg8584qs3qz228dh8k68pwn00000gn/T/music-only-proof-dRh1Rq/final-2.mp4","frames":160,"durationSec":5.333333,"audioDurationSec":5.333,"windows":[0.53,0.53,0.53,0.53,0.5300000000000002,0.5299999999999998,0.5299999999999998,0.5300000000000002,0.5300000000000002,0.5300000000000002],"tail":{"start":5.05,"rms":0.08824926727715901,"source440":0.000031769115175441647,"source880":0.00003181523111866263,"song1400":0.12479845655625431}},"cumulative":{"file":"/var/folders/vl/bg8584qs3qz228dh8k68pwn00000gn/T/music-only-proof-dRh1Rq/final-3.mp4","frames":159,"durationSec":5.3,"audioDurationSec":5.312,"windows":[0.5333333333333333,0.5333333333333333,0.5333333333333333,0.5333333333333333,0.5333333333333333,0.5,0.5333333333333333,0.5333333333333333,0.5333333333333333,0.5333333333333333],"tail":{"start":5.05,"rms":0.08824926727715901,"source440":0.000031769115175441647,"source880":0.00003181523111866263,"song1400":0.12479845655625431}}}
+
+ ✓ server/vercel-api-core/renderMusicOnly.integration.test.ts (3 tests) 15584ms
+   ✓ MV 仅歌曲合成真实媒体 > 共享任务参数经真实服务与渲染器保留完整歌曲，所有片段原声均移除 5677ms
+   ✓ MV 仅歌曲合成真实媒体 > 十个0.53秒窗口先测独立取帧累积，再测绝对时间差分消除误差 9145ms
+stderr | server/jobs/manhuaBgmRefundRecovery.test.ts > 配乐补退：失败→真实重排→正常领取→补退成功 > 团队扣费：teamId / teamMemberId 落盘并原样退回
+[manhua-bgm] 建单失败退款未完成（已留 refund_pending，可补退）: db down
+
+stderr | server/jobs/manhuaBgmRefundRecovery.test.ts > 配乐补退：失败→真实重排→正常领取→补退成功 > 重排写库失败：不静默吞掉，任务落 failed 让人工接手
+[manhua-bgm] 建单失败退款未完成（已留 refund_pending，可补退）: db down
+
+ ✓ server/services/manhuaAssembleBilling.test.ts (10 tests) 46ms
+stderr | server/jobs/manhuaBgmRefundRecovery.test.ts > 配乐补退：失败→真实重排→正常领取→补退成功 > 重排写库失败：不静默吞掉，任务落 failed 让人工接手
+[manhua-bgm] 补退重排未持久化，转人工: 配乐退款重排未持久化，请人工核对原任务
+
+ ✓ server/jobs/runner.manhuaBgmV6Settlement.test.ts (6 tests) 1537ms
+   ✓ 配乐 v6（TTAPI）真实 worker 控制流：未知建单不退不重发 > 对账检查点写入失败仍不退款，已有提交意图阻止第二次POST 1505ms
+stderr | server/jobs/manhuaBgmRefundRecovery.test.ts > 配乐补退：失败→真实重排→正常领取→补退成功 > refund_completed 写库失败：下轮按同一退款键幂等补退，不重复扣费
+[manhua-bgm] 建单失败退款未完成（已留 refund_pending，可补退）: db write failed
+
+stderr | server/jobs/manhuaBgmRefundRecovery.test.ts > 配乐补退：失败→真实重排→正常领取→补退成功 > refund_completed 写库失败：下轮按同一退款键幂等补退，不重复扣费
+[manhua-bgm] 补退仍未成功，保持 refund_pending: db write failed
+
+stderr | server/jobs/manhuaBgmRefundRecovery.test.ts > 配乐补退：失败→真实重排→正常领取→补退成功 > refund_completed 写库失败：下轮按同一退款键幂等补退，不重复扣费
+[manhua-bgm] 补退仍未成功，保持 refund_pending: db write failed
+
+ ✓ server/vercel-api-core/renderSourceAudio.test.ts (10 tests) 27817ms
+   ✓ 漫剧原声合成（本地真实 ffmpeg，无模型/网络） > 31 秒长镜自动三分后不因 0.1 秒舍入丢失尾帧，原声总长仍对齐 20889ms
+   ✓ 漫剧原声合成（本地真实 ffmpeg，无模型/网络） > 粗剪跨段重排同时改变真实画面和原声，不仅是请求数组变了 1413ms
+   ✓ 漫剧原声合成（本地真实 ffmpeg，无模型/网络） > 字幕回执取实际源长而非标注时长，并跟随跨段重排和真实淡化 1002ms
+   ✓ 漫剧原声合成（本地真实 ffmpeg，无模型/网络） > 手动裁切取到后半段真实原声；有声、无声、不同帧率片段拼接后不串位 1206ms
+   ✓ 漫剧原声合成（本地真实 ffmpeg，无模型/网络） > 淡化转场同步混合原声，短镜也不会被一秒转场吞光 686ms
+   ✓ 漫剧原声合成（本地真实 ffmpeg，无模型/网络） > 短配乐叠加而非替换原声，错误标注的0.2秒时长和-shortest均不得截尾 562ms
+   ✓ 漫剧原声合成（本地真实 ffmpeg，无模型/网络） > 同源两镜仅下载一次，全部媒体下载携带取消时限 613ms
+   ✓ 漫剧原声合成（本地真实 ffmpeg，无模型/网络） > 静帧保持等长静音并保留前段声音，缺损裁切明确失败 617ms
+stderr | server/jobs/manhuaBgmRefundRecovery.test.ts > 配乐补退：失败→真实重排→正常领取→补退成功 > refund_completed 写库失败：下轮按同一退款键幂等补退，不重复扣费
+[manhua-bgm] 补退仍未成功，保持 refund_pending: db write failed
+
+stderr | server/jobs/manhuaBgmRefundRecovery.test.ts > 配乐补退：失败→真实重排→正常领取→补退成功 > 重试用尽：不再承诺自动补退，改口人工核对
+[manhua-bgm] 建单失败退款未完成（已留 refund_pending，可补退）: db down
+
+stderr | server/jobs/manhuaBgmRefundRecovery.test.ts > 配乐补退：失败→真实重排→正常领取→补退成功 > 重试用尽：不再承诺自动补退，改口人工核对
+[manhua-bgm] 补退仍未成功，保持 refund_pending: db down
+
+stderr | server/jobs/manhuaBgmRefundRecovery.test.ts > 配乐补退：失败→真实重排→正常领取→补退成功 > 重试用尽：不再承诺自动补退，改口人工核对
+[manhua-bgm] 补退仍未成功，保持 refund_pending: db down
+
+stderr | server/jobs/manhuaBgmRefundRecovery.test.ts > 配乐补退：失败→真实重排→正常领取→补退成功 > 重试用尽：不再承诺自动补退，改口人工核对
+[manhua-bgm] 补退仍未成功，保持 refund_pending: db down
+
+ ✓ server/jobs/manhuaBgmRefundRecovery.test.ts (7 tests) 7628ms
+   ✓ 配乐补退：失败→真实重排→正常领取→补退成功 > 重排写库失败：不静默吞掉，任务落 failed 让人工接手 1513ms
+   ✓ 配乐补退：失败→真实重排→正常领取→补退成功 > refund_completed 写库失败：下轮按同一退款键幂等补退，不重复扣费 6026ms
+
+ Test Files  29 passed (29)
+      Tests  367 passed (367)
+   Start at  10:56:27
+   Duration  30.50s (transform 13.81s, setup 0ms, collect 70.60s, tests 80.71s, environment 18ms, prepare 7.49s)
+

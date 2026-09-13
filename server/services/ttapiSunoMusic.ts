@@ -116,11 +116,15 @@ export function decodeTtapiSunoTaskId(taskId: string): string | null {
   return JOB_ID_RE.test(id) ? id : null;
 }
 
-async function ttapiFetch(path: string, init: { method?: "GET" | "POST"; body?: string; abortSignal?: AbortSignal }): Promise<unknown> {
+/** 原始响应须先持久化，再解析；调用方提供服务端归档器。 */
+export type TtapiSunoEvidenceSink = (entry: { kind: "request" | "raw" | "parsed"; body: string; path: string; httpStatus?: number }) => Promise<void>;
+
+async function ttapiFetch(path: string, init: { method?: "GET" | "POST"; body?: string; abortSignal?: AbortSignal; evidence?: TtapiSunoEvidenceSink }): Promise<unknown> {
   const key = getTtapiKey();
   if (!key) throw new TtapiSunoRequestError("not_configured", false);
   const submitting = init.method === "POST";
   if (init.abortSignal?.aborted) throw new TtapiSunoRequestError("rejected", false);
+  if (init.body) await init.evidence?.({ kind: "request", body: init.body, path });
   let res: Response;
   let text: string;
   try {
@@ -132,6 +136,7 @@ async function ttapiFetch(path: string, init: { method?: "GET" | "POST"; body?: 
       redirect: "error",
     });
     text = await res.text();
+    await init.evidence?.({ kind: "raw", body: text, path, httpStatus: res.status });
   } catch {
     // POST 可能已被上游接受，断线/读取响应失败不能解释为没有建单。
     throw new TtapiSunoRequestError("unconfirmed", submitting);
@@ -141,7 +146,9 @@ async function ttapiFetch(path: string, init: { method?: "GET" | "POST"; body?: 
     throw new TtapiSunoRequestError("rejected", submitting && (res.status >= 500 || res.status === 408), res.status);
   }
   try {
-    return JSON.parse(text);
+    const parsed = JSON.parse(text);
+    await init.evidence?.({ kind: "parsed", body: JSON.stringify(parsed), path, httpStatus: res.status });
+    return parsed;
   } catch {
     throw new TtapiSunoRequestError("invalid_response", submitting, res.status);
   }
@@ -179,7 +186,7 @@ function isHttpsUrl(v: string | undefined): v is string {
 /** 只发一次 POST；调用方拿到 task id 后必须先持久化（与 EvoLink 通道同一纪律） */
 export async function createTtapiSunoTask(
   req: TtapiSunoCustomRequest,
-  opts: { abortSignal?: AbortSignal } = {},
+  opts: { abortSignal?: AbortSignal; evidence?: TtapiSunoEvidenceSink } = {},
 ): Promise<{ taskId: string; jobId: string; mv: string }> {
   assertTtapiSunoRequest(req);
   const mv = resolveTtapiSunoMv(req.model);
@@ -198,6 +205,7 @@ export async function createTtapiSunoTask(
       audio_format: "mp3",
     }),
     abortSignal: opts.abortSignal,
+    evidence: opts.evidence,
   });
   const root = asRecord(raw);
   const jobId = String(asRecord(root?.data)?.jobId || "").trim();
@@ -221,17 +229,17 @@ export type TtapiSunoTaskState =
 /** Suno 一次生成惯例出两首；TTAPI 文档示例只列一首，少于两首记 missing，不把已出的丢掉 */
 export const TTAPI_SUNO_EXPECTED_VARIANTS = 2;
 
-export async function getTtapiSunoTask(taskId: string, opts: { abortSignal?: AbortSignal } = {}): Promise<TtapiSunoTaskState> {
+export async function getTtapiSunoTask(taskId: string, opts: { abortSignal?: AbortSignal; evidence?: TtapiSunoEvidenceSink } = {}): Promise<TtapiSunoTaskState> {
   const jobId = decodeTtapiSunoTaskId(taskId);
   if (!jobId) throw new Error("不是 TTAPI 配乐的任务号");
-  const raw = await ttapiFetch(`${TTAPI_SUNO_FETCH_PATH}?jobId=${encodeURIComponent(jobId)}`, { abortSignal: opts.abortSignal });
+  const raw = await ttapiFetch(`${TTAPI_SUNO_FETCH_PATH}?jobId=${encodeURIComponent(jobId)}`, { abortSignal: opts.abortSignal, evidence: opts.evidence });
   const root = asRecord(raw);
   const status = String(root?.status || "").toUpperCase();
   const musics = pickMusics(raw);
   const progressRaw = String(asRecord(root?.data)?.progress ?? "").replace("%", "");
   const progress = Math.max(0, Math.min(100, Math.floor(Number(progressRaw) || 0)));
   if (status === "SUCCESS") {
-    const audioUrls = Array.from(new Set(musics.map((m) => m.audioUrl).filter(isHttpsUrl)));
+    const audioUrls = musics.map((m) => m.audioUrl).filter(isHttpsUrl);
     if (!audioUrls.length) {
       return { status: "failed", musics, reason: "配乐生成完成但没有音频地址，请保留原任务供服务端核对" };
     }

@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
-import type { CanvasBlock } from "@/lib/canvasTypes";
+import { defaultCanvasBlock, type CanvasBlock } from "@/lib/canvasTypes";
+import { buildLocalCloudDraftSnapshot, cloudDraftBlocksToCanvas, serializeCloudDraftForUpload } from "./manhuaCloudDraftSync";
+import { parseManhuaCloudDraftPayload } from "@shared/manhuaCloudDraft";
 import {
   emptyManhuaClipQualityChecks,
   type ManhuaClipQualityReport,
 } from "@shared/manhuaClipQuality";
 import {
+  canvasVideoTaskInputFingerprint,
   captureCanvasVideoTaskResumeSnapshot,
   retainCanvasVideoTaskResumeSnapshots,
   resolveCanvasVideoTaskResume,
@@ -358,5 +361,75 @@ describe("canvasVideoTaskResume", () => {
       outputUrl: original.outputUrl,
       outputUrls: original.outputUrls,
     });
+  });
+});
+
+
+describe("MV 在途改稿后刷新恢复", () => {
+  function pendingMv(): CanvasBlock {
+    const submitted: CanvasBlock = { ...defaultCanvasBlock("video", 0, 0), id: "mvshot-persisted", prompt: "原镜头动作", status: "running",
+      videoTaskId: "original-task", videoTaskEngine: "seedance-2.0-mini", videoTaskStatus: "running",
+      musicMvShot: { planRequestId: "00000000-0000-4000-8000-000000000001", audioId: "song", shotId: "shot-1", startSec: 0, endSec: 6, referenceImages: [] } };
+    submitted.musicMvShot = { ...submitted.musicMvShot!, activeTask: { taskId: "original-task", inputFingerprint: canvasVideoTaskInputFingerprint(submitted) } };
+    return submitted;
+  }
+  function roundtrip(source: CanvasBlock): CanvasBlock {
+    const cloud = buildLocalCloudDraftSnapshot({ writerSession: {}, blocks: [source], edges: [] });
+    return cloudDraftBlocksToCanvas(parseManhuaCloudDraftPayload(serializeCloudDraftForUpload(cloud))!.canvas.blocks)[0];
+  }
+  it("改稿→云往返→旧成功仅存历史，原任务收终态但不冒充新稿", () => {
+    const submitted = pendingMv();
+    const restored = roundtrip({ ...submitted, prompt: "完全不同的新动作" });
+    const snapshot = captureCanvasVideoTaskResumeSnapshot(restored)!;
+    expect(snapshot.inputFingerprint).toBe(submitted.musicMvShot!.activeTask!.inputFingerprint);
+    expect(snapshot.inputFingerprint).not.toBe(canvasVideoTaskInputFingerprint(restored));
+    const result = resolveCanvasVideoTaskResume(restored, snapshot, { transportOk: true, payloadOk: true, status: "succeeded", videoUrl: "https://test.invalid/old-task-result.mp4" }, NOW)!;
+    const resolved = { ...restored, ...result.patch };
+    expect(result.selectedNewOutput).toBe(false);
+    expect(resolved.prompt).toBe("完全不同的新动作");
+    expect(resolved.outputUrl).toBeUndefined();
+    expect(resolved.outputUrls).toContain("https://test.invalid/old-task-result.mp4");
+    expect(resolved.musicMvShot?.outputs).toContainEqual({ taskId: "original-task", url: "https://test.invalid/old-task-result.mp4" });
+    expect(resolved.videoTaskStatus).toBe("succeeded");
+    expect(resolved.status).not.toBe("running");
+  });
+  it("未改稿跨刷新仍正常选择完成结果，输出登记不改变输入指纹", () => {
+    const restored = roundtrip(pendingMv());
+    const snapshot = captureCanvasVideoTaskResumeSnapshot(restored)!;
+    expect(canvasVideoTaskInputFingerprint(restored)).toBe(snapshot.inputFingerprint);
+    const result = resolveCanvasVideoTaskResume(restored, snapshot, { transportOk: true, payloadOk: true, status: "succeeded", videoUrl: "https://test.invalid/result.mp4" }, NOW)!;
+    expect(result.selectedNewOutput).toBe(true);
+    expect(result.patch.outputUrl).toBe("https://test.invalid/result.mp4");
+    expect(result.patch.status).toBe("done");
+    expect(canvasVideoTaskInputFingerprint({ ...restored, ...result.patch })).toBe(snapshot.inputFingerprint);
+  });
+  it("改稿后旧任务失败或对账终态也结束轮询，保留新稿与旧输出", () => {
+    for (const status of ["failed", "reconcile_manual"]) {
+      const restored = roundtrip({ ...pendingMv(), prompt: "新版", outputUrl: "https://test.invalid/accepted.mp4", outputUrls: ["https://test.invalid/accepted.mp4"] });
+      const snapshot = captureCanvasVideoTaskResumeSnapshot(restored)!;
+      const result = resolveCanvasVideoTaskResume(restored, snapshot, { transportOk: true, payloadOk: true, status, error: "原任务失败" }, NOW)!;
+      const resolved = { ...restored, ...result.patch };
+      expect(resolved.videoTaskStatus).toBe(status);
+      expect(resolved.status).toBe("error");
+      expect(resolved.prompt).toBe("新版");
+      expect(resolved.outputUrl).toBe("https://test.invalid/accepted.mp4");
+    }
+  });
+  it("任务号先到、持久指纹后到时升级恢复身份，不沿用未知内存推断", () => {
+    const submitted = pendingMv();
+    const early = { ...submitted, musicMvShot: { ...submitted.musicMvShot!, activeTask: undefined } };
+    const initial = retainCanvasVideoTaskResumeSnapshots(new Map(), [early]);
+    const upgraded = retainCanvasVideoTaskResumeSnapshots(initial, [{ ...submitted, prompt: "已改稿" }]);
+    const snapshot = Array.from(upgraded.values())[0];
+    expect(snapshot.inputFingerprint).toBe(submitted.musicMvShot!.activeTask!.inputFingerprint);
+    expect(snapshot.selectedOutputUrl).toBe("");
+  });
+  it("缺少持久提交指纹的旧MV任务只恢复历史，不默认认领当前稿", () => {
+    const source = pendingMv(); source.musicMvShot = { ...source.musicMvShot!, activeTask: undefined };
+    const snapshot = captureCanvasVideoTaskResumeSnapshot(source)!;
+    const result = resolveCanvasVideoTaskResume(source, snapshot, { transportOk: true, payloadOk: true, status: "succeeded", videoUrl: "https://test.invalid/unknown-original.mp4" }, NOW)!;
+    expect(result.selectedNewOutput).toBe(false);
+    expect(result.patch.outputUrl).toBeUndefined();
+    expect(result.patch.videoTaskStatus).toBe("succeeded");
   });
 });

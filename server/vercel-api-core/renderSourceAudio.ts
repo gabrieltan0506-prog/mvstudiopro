@@ -98,6 +98,8 @@ export async function renderSourceAudioFinal(
   tmpDir: string
 ): Promise<string> {
   if (!input.sceneVideos.length) throw new Error("至少需要一个成片素材");
+  if (input.musicOnly === true && !String(input.musicUrl || "").trim())
+    throw new Error("MV 合成缺少选定歌曲，未开始渲染");
   if (
     input.voiceUrl ||
     input.sceneVideos.some(
@@ -281,7 +283,7 @@ export async function renderSourceAudioFinal(
       `afade=t=out:st=${Math.max(0, timeline - fadeOut)}:d=${fadeOut}`
     );
   // duration=first 以原片为准；短配乐补静音，不得通过 -shortest 截掉视频。
-  const filter = `[1:a]${musicFilters.join(",")},apad[m];[0:a][m]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95:level=0[aout]`;
+  const filter = `[0:a]volume=${input.musicOnly === true ? 0 : 1}[source];[1:a]${musicFilters.join(",")},apad[m];[source][m]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95:level=0[aout]`;
   const final = path.join(tmpDir, "source-audio-final.mp4");
   await mediaTool("ffmpeg", [
     "-y",

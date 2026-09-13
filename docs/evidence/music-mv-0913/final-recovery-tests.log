@@ -1,0 +1,11 @@
+
+ RUN  v2.1.9 /private/tmp/mvs-music-mv-canvas-0913
+
+ ✓ client/src/lib/canvasMusicMvGuards.test.ts (3 tests) 13ms
+ ✓ client/src/lib/canvasVideoTaskResume.test.ts (15 tests) 43ms
+
+ Test Files  2 passed (2)
+      Tests  18 passed (18)
+   Start at  10:58:56
+   Duration  2.91s (transform 1.28s, setup 0ms, collect 2.88s, tests 56ms, environment 2ms, prepare 449ms)
+
