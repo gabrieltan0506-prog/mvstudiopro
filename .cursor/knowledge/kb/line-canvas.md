@@ -321,3 +321,8 @@ PR1444保留草稿；两批代码dd7a18ad/be0beec1已推。固定全仓5732过/2
 - 6文件60项、独立4文件36项及真实effect/JSX通过；类型与无增量前后端构建退出0，全仓5210通过/4跳过/2旧CLI失败。新版原页面尚未验，不重购已有图；用户明确要求可读状态由代理自行核查。证据见docs/manhua-asset-preview-refresh-0908.md。
 
 - 03:37更新：#1416双端发布34155671105成功，原页面恢复同一1536×1024候选、七参考保留；四尾质量仍未过。后续费用入口超时，不把超时冒充弹窗存在。三条资产编辑操作改页面内确认并补同步共享锁，确认等待期资产/项目/用户变化会安全取消；九文件156项及六项离线弹窗通过，类型/无增量前后端构建通过，全仓5226过/4跳过/2旧CLI失败。新版确认尚未线上验收，不宣称任务刷新自动回填或超时自动退款。证据见docs/manhua-asset-fee-confirmation-0908.md。
+
+
+## 每日Vercel Preview清理修复 2026-09-13T13:42:50
+
+用户明确要求补好自动清理。隔离worktree /private/tmp/mvs-vercel-preview-daily-0913，分支fix/vercel-preview-daily-0913，基于main cda8f95c。Fly实际凭证已加载；服务端Vercel项目查询HTTP200，真实ID和team固定。已接入index启动/停机入口，每日北京时间10:40，正常Preview7天/失败1天，状态持久到/data/vercel-prune-audit/daily-YYYY-MM-DD.json，零DELETE在途部署延期15分钟，完成或未知结果不当日重放。新运行器固定项目/团队，每删前查询BUILDING/QUEUED/INITIALIZING，三状态在Fly真实v6查询均HTTP200/count0。独立审查发现锁恢复竞态并已修复为独占recovery.guard，9项锁测试通过。当前清理18项+锁9项、Vitest三文件27项均通过；非增量类型检查进行中。未提交/推送/部署，未假称生产定时已生效。残余：外部promote极短竞态；恢复guard持有中崩溃可能需人工核实。
