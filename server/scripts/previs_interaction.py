@@ -14,7 +14,7 @@ def validate_interactions(spec):
     occupied = {}
     ids = set()
     for event in events:
-        if event['id'] in ids or event['kind'] not in ('strike_recoil', 'strike_guard'):
+        if event['id'] in ids or event['kind'] not in ('strike_recoil', 'strike_guard', 'sword_guard'):
             raise ValueError('互动编号重复或动作类型无效')
         ids.add(event['id'])
         if event['actorId'] == event['targetActorId']:
@@ -60,6 +60,8 @@ def apply_interactions(events, frame, poses, transforms, ik):
     """输入同一帧所有人的局部骨点；统一修改双方，且与角色枚举顺序无关。"""
     t = (frame-1)/24
     for event in events:
+        if event['kind'] == 'sword_guard':
+            continue
         start, contact, end = (event[k] for k in ('startSec', 'contactSec', 'endSec'))
         if not start < t < end:
             continue
@@ -101,6 +103,8 @@ def measure_interactions(events, rigs, scene, update):
     by_id = {actor['id']: rig for actor, rig, *_ in rigs}
     result = []
     for event in events:
+        if event['kind'] == 'sword_guard':
+            continue
         frame = math.floor(event['contactSec']*24+.5)+1
         scene.frame_set(frame)
         update()
