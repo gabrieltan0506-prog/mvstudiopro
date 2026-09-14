@@ -12,6 +12,7 @@ import { httpBatchLink } from "@trpc/client";
 import superjson from "superjson";
 import { trpc } from "@/lib/trpc";
 import { buildManhuaWriterSession } from "@shared/manhuaWriterSession";
+import { buildManhuaProjectBible } from "@shared/manhuaProjectBible";
 import { buildManhuaEpisodeSegmentPlanFixtureMarkdown } from "@shared/manhuaEpisodeSegmentPlan";
 import { recordManhuaKeyartLookOutput } from "@shared/manhuaKeyartLookState";
 import { trySaveLocalCanvas } from "@/lib/manhuaCloudDraftSync";
@@ -50,6 +51,40 @@ const denseBody = (a: string, b: string) =>
 const episodeBody = `${denseBody("山神破庙", "鹤影湖")}\n\n${buildManhuaEpisodeSegmentPlanFixtureMarkdown()}`;
 const episodeBody2 = `${denseBody("鹤影湖", "山神破庙")}\n\n${buildManhuaEpisodeSegmentPlanFixtureMarkdown()}`;
 
+const WRITER_PACK = {
+  seriesTitle: "鹤归",
+  logline: "少主寻鹤归宗，与守约者相峙。",
+  charactersMd: CHARACTERS_MD,
+  propsMd: PROPS_MD,
+  locationsMd: LOCATIONS_MD,
+  episodes: [
+    { index: 1, title: "破庙对峙", body: episodeBody, endHook: "神像眼缝渗出金光。" },
+    { index: 2, title: "湖上问剑", body: episodeBody2, endHook: "湖心浮起第二枚玉扣。" },
+  ],
+  rawMarkdown: `# 鹤归\n\n少主寻鹤归宗，与守约者相峙。\n\n### 第1集 · 破庙对峙\n片尾钩子：神像眼缝渗出金光。\n\n${episodeBody}\n\n### 第2集 · 湖上问剑\n片尾钩子：湖心浮起第二枚玉扣。\n\n${episodeBody2}`,
+  episodeCount: 2,
+};
+
+/**
+ * 试片审核闸要求**已确认的项目圣经**（useManhuaPilotReview 读 confirmedAt 算
+ * projectVersion；缺了就抛「请先确认当前剧本并等待审核记录加载」）。
+ * 这里用产品自己的 buildManhuaProjectBible 建一份，不手搓结构。
+ */
+const PROJECT_BIBLE = buildManhuaProjectBible({
+  topic: "鹤归",
+  pack: WRITER_PACK,
+  cast: {
+    lane: "ancient",
+    characterIds: [],
+    ancientArchetypeIds: [],
+    artStyleId: "",
+    propIds: [],
+    wardrobePropContinuityIds: [],
+  },
+  focusEpisode: 1,
+  confirmedAt: "2026-09-15T00:00:00.000Z",
+});
+
 const session = buildManhuaWriterSession({
   topic: "鹤归",
   brief: "少主寻鹤归宗",
@@ -60,19 +95,8 @@ const session = buildManhuaWriterSession({
   // 不声明就会把预置的 2.5 编辑段降级成默认档并清掉 2.5 专属字段
   // （这是实测出来的产品行为，不是缺陷）。
   videoModel: "seedance-2.5",
-  writerPack: {
-    seriesTitle: "鹤归",
-    logline: "少主寻鹤归宗，与守约者相峙。",
-    charactersMd: CHARACTERS_MD,
-    propsMd: PROPS_MD,
-    locationsMd: LOCATIONS_MD,
-    episodes: [
-      { index: 1, title: "破庙对峙", body: episodeBody, endHook: "神像眼缝渗出金光。" },
-      { index: 2, title: "湖上问剑", body: episodeBody2, endHook: "湖心浮起第二枚玉扣。" },
-    ],
-    rawMarkdown: `# 鹤归\n\n少主寻鹤归宗，与守约者相峙。\n\n### 第1集 · 破庙对峙\n片尾钩子：神像眼缝渗出金光。\n\n${episodeBody}\n\n### 第2集 · 湖上问剑\n片尾钩子：湖心浮起第二枚玉扣。\n\n${episodeBody2}`,
-    episodeCount: 2,
-  },
+  writerPack: WRITER_PACK,
+  projectBible: PROJECT_BIBLE,
 });
 
 /** 纯本地算出「已铺段 + 静帧就绪」的画布，不发任何请求 */
@@ -94,9 +118,9 @@ function buildSeededCanvas() {
     spawned.edges,
     reverse.id,
   );
-  // 关键静帧标记为「已出图」。页面挂载后会用它自己的口径重算 required，
-  // 所以这里把 look/source 状态先按产出登记一次，具体是否算「当前」由页面判定；
-  // 测试会先读页面判定结果，判定为不当前就明确失败，不假装验过。
+  // 起始状态＝「静帧已按当前口径出过图」（真实用户跑完静帧那一步就是这个状态）。
+  // 主项验的是它之后的链路：确认 → 点真实「运行」→ POST 与确认一致。
+  // 注意这份回执能不能挺过本机地址迁移，正是 0915 修掉的那个缺陷所在。
   const ready = expanded.blocks.map((b) => {
     if (!b.id.startsWith("keyart-")) return b;
     const outputUrl = `https://example.com/${b.id}.jpg`;
@@ -159,6 +183,23 @@ window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(typeof input === "string" ? input : (input as Request).url ?? input);
   const method = (init?.method || "GET").toUpperCase();
 
+  // 试片审核状态：GET /api/jobs?op=manhuaPilotStatus...
+  // 回「已批准」，于是段成片不按 10 秒试片跑（也就不会被试片闸拦）。
+  if (method === "GET" && /[?&]op=manhuaPilotStatus/.test(url)) {
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        review: {
+          status: "approved",
+          taskId: "fixture-pilot-task",
+          outputUrl: "https://example.com/pilot.mp4",
+          updatedAt: "2026-09-15T00:00:00.000Z",
+        },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }
+
   // 轮询：/api/jobs/:jobId
   const pollMatch = /\/api\/jobs\/([^/?#]+)$/.exec(url);
   if (method === "GET" && pollMatch) {
@@ -194,6 +235,21 @@ window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       status: 200,
       headers: { "content-type": "application/json" },
     });
+  }
+
+  // 试片审核闸要求有登录用户（useManhuaPilotReview 的 input.userId），
+  // 没有就抛「请先确认当前剧本并等待审核记录加载」，段成片根本走不到出站。
+  // useAuth 读的是 /api/me（不是 /api/auth/me），回包就是用户对象本身。
+  if (/\/api\/me(\?|$)/.test(url)) {
+    return new Response(
+      JSON.stringify({
+        id: 90001,
+        email: "fixture@test.invalid",
+        role: "admin",
+        credits: 999999,
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
   }
 
   return new Response(JSON.stringify([{ result: { data: null } }]), {

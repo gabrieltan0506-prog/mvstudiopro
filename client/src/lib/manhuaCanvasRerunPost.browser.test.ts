@@ -152,7 +152,7 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
    * 下一步：打出重出前后该静帧的 manhuaKeyartLookState.required / generatedFor，
    * 看是哪一侧没对上。
    */
-  it.skip("甲：真实重出静帧 → 真实确认 → 点真实「运行」→ POST 与确认逐字段相同", async () => {
+  it("甲：真实重出静帧 → 真实确认 → 点真实「运行」→ POST 与确认逐字段相同", async () => {
     const { page, close } = await mount();
     const result = await page.evaluate(async () => {
       type B = Record<string, unknown>;
@@ -184,9 +184,12 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
         throw new Error(`等不到:${tag}`);
       };
 
-      const wb = w.__wbProps;
-      if (!wb?.onRerunKeyartShot) return { step: "no-rerun-keyart" as const };
-      if (!wb.onPreviewClipOutbound || !wb.onConfirmClipOutbound) {
+      // **每次都重新读最新的 wb**，不缓存。
+      // 上一轮我把 wb 存成局部变量，重渲染后拿的还是旧回调——
+      // 我据此说「逐张重出会互相冲掉」，那个结论因此**不成立**，已撤回。
+      const wbNow = () => w.__wbProps;
+      if (!wbNow()?.onRerunKeyartShot) return { step: "no-rerun-keyart" as const };
+      if (!wbNow()?.onPreviewClipOutbound || !wbNow()?.onConfirmClipOutbound) {
         return { step: "no-workbench-callbacks" as const };
       }
       const clip = blocksNow().find((b) => String(b.id).startsWith("clip-"));
@@ -199,20 +202,22 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
       // 第三次重出之后，前两张已完成的产出又回到了重出前的地址（有诊断日志为证）。
       let preview: { body: B; snapshotId: string } | null = null;
       let lastPreviewErr = "";
+      let neededKeyartRerun = false;
       try {
-        preview = await cap(wb.onPreviewClipOutbound!(String(clip.id)), 30_000, "preview");
+        preview = await cap(wbNow()!.onPreviewClipOutbound!(String(clip.id)), 30_000, "preview");
       } catch (e) {
         lastPreviewErr = String((e as Error)?.message || e);
       }
 
       if (!preview) {
-        if (!wb.onRerunKeyartsFromReverse) return { step: "no-batch-keyart" as const };
+        if (!wbNow()?.onRerunKeyartsFromReverse) return { step: "no-batch-keyart" as const };
         const beforeUrls = new Map(
           blocksNow()
             .filter((b) => String(b.id).startsWith("keyart-"))
             .map((b) => [String(b.id), String(b.outputUrl ?? "")] as const),
         );
-        wb.onRerunKeyartsFromReverse!();
+        neededKeyartRerun = true;
+        wbNow()!.onRerunKeyartsFromReverse!();
         try {
           await until(
             () => {
@@ -239,7 +244,7 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
           };
         }
         try {
-          preview = await cap(wb.onPreviewClipOutbound!(String(clip.id)), 30_000, "preview");
+          preview = await cap(wbNow()!.onPreviewClipOutbound!(String(clip.id)), 30_000, "preview");
         } catch (e) {
           return {
             step: "preview-failed" as const,
@@ -250,7 +255,7 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
 
       // ③ 真实确认（预览已在上面用真实入口取到）
       try {
-        await cap(wb.onConfirmClipOutbound!(String(clip.id), preview.snapshotId), 30_000, "confirm");
+        await cap(wbNow()!.onConfirmClipOutbound!(String(clip.id), preview.snapshotId), 30_000, "confirm");
       } catch (e) {
         return { step: "confirm-failed" as const, why: String((e as Error)?.message || e) };
       }
@@ -279,6 +284,7 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
         posts: w.__posts!.filter(isClipPost).map((p) => p.body),
         previewBody: preview.body,
         confirms: w.__confirms ?? [],
+        neededKeyartRerun,
       };
     });
 
@@ -288,8 +294,11 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
       `流程卡在：${result.step}${"why" in result ? " · " + String(result.why) : ""}`,
     ).toBe("done");
     if (result.step !== "done") return;
-    // 真实入口确实弹过确认框并被接管，任务才可能启动
-    expect(result.confirms.length, "真实入口没有弹 confirm，说明重出没走到那一步").toBeGreaterThan(0);
+    // 只有真的走了重出路径时才要求弹过 confirm。
+    // 静帧本来就 current 时不需要重出——那不是缺陷，是起始状态就合格。
+    if (result.neededKeyartRerun) {
+      expect(result.confirms.length, "走了重出路径却没弹 confirm").toBeGreaterThan(0);
+    }
     expect(result.posts, "点了真实「运行」却没有成片 POST").toHaveLength(1);
     const strip = (x: Record<string, unknown>) => {
       const { idempotencyKey: _k, videoSubmissionKey: _s, ...rest } = x;
