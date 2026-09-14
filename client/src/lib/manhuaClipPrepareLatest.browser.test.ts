@@ -91,7 +91,7 @@ describe("页面行为：画布拿到的准备／确认回调必须是最新的"
     });
     expect(shape).toEqual({ hasPrepare: true, hasGate: true });
     await page.close();
-  });
+  }, 180_000);
 
   it("调用**真实页面**的确认闸：拿到完整 scope 身份（不是手写同形实现）", async () => {
     page = await mount();
@@ -107,7 +107,7 @@ describe("页面行为：画布拿到的准备／确认回调必须是最新的"
     );
     expect(scope.blockId).toBe("clip-e01-g01");
     await page.close();
-  });
+  }, 180_000);
 
   it("切集（writerFocusEpisode 是准备函数的真实依赖）后，画布收到的是新一版准备函数", async () => {
     // 复审 P2 说的就是这种情况：仅准备函数的依赖变化、其它 props 不变时，
@@ -145,5 +145,5 @@ describe("页面行为：画布拿到的准备／确认回调必须是最新的"
     expect(result.quiet, "取基线时页面还在异步 settle，这条用例不作数").toBe(true);
     expect(result.changed, "切集之后画布拿到的还是同一个准备函数（旧闭包）").toBe(true);
     await page.close();
-  });
-}, 180_000);
+  }, 180_000);
+});

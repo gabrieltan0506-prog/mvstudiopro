@@ -387,6 +387,10 @@ describe("真实画布回调重跑：POST 必须与工作台确认逐字段相�
     })) as (id: string) => Promise<void>;
 
     await run(blockId);
+    // 不能只看零 POST：必须是**这个**原因拒的
+    expect(runErrors.join("｜")).toMatch(
+      /提示词、模型、时长或参考素材在确认之后发生了变化，本次未提交、未扣费/,
+    );
     expect(bodies).toEqual([]);
   });
 
