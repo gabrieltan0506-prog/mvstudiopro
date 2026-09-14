@@ -29,6 +29,13 @@ type Result = {
   requestId: string;
   spec: ManhuaPrevisSpec;
   report?: { warnings?: string[] };
+  layerBundle?: {
+    gcsUri: string;
+    url?: string;
+    bytes: number;
+    sha256: string;
+    format: "previs-layers-v1";
+  };
 };
 export type PrevisResponse = {
   jobId: string;
@@ -131,6 +138,34 @@ export function ManhuaPrevisStudioView({
     latest.current.block.id === clipId;
   const edit = (spec: ManhuaPrevisSpec) => {
     if (disabled || pendingId || lock.current) return false;
+    if (spec.waterEmergence) {
+      const water = spec.waterEmergence;
+      const base = water.events[0]?.crossSec ?? 1;
+      let nextCross = water.events.length
+        ? Math.max(...water.events.map(e => e.crossSec)) + 0.25
+        : 1;
+      spec = {
+        ...spec,
+        waterEmergence: {
+          ...water,
+          events: spec.actors.map(
+            (actor, i) =>
+              water.events.find(e => e.actorId === actor.id) ?? {
+                actorId: actor.id,
+                crossSec:
+                  water.mode === "staggered"
+                    ? (nextCross += 0.25) - 0.25
+                    : base,
+                riseSec: 1.25,
+                height: 2.8,
+                waveRadius: 1.5,
+                waveHeight: 1.8,
+                waveDurationSec: 2.5,
+              }
+          ),
+        },
+      };
+    }
     return publish({ ...studio, spec });
   };
   function consume(response: PrevisResponse) {
@@ -162,6 +197,14 @@ export function ManhuaPrevisStudioView({
         result.clipId !== response.params.clipId
       ) {
         setError("产物回执不完整，请查询原任务");
+        return;
+      }
+      if (
+        response.params.spec.exportLayers &&
+        (!result.layerBundle?.url?.startsWith("https://") ||
+          result.layerBundle.format !== "previs-layers-v1")
+      ) {
+        setError("遮罩与深度层包回执未确认，请查询原任务；不要重复生成");
         return;
       }
       setPreview({ ...result, spec: response.params.spec });
@@ -264,7 +307,10 @@ export function ManhuaPrevisStudioView({
             !result.url ||
             result.durationSec !== response.params.spec.durationSec ||
             result.requestId !== response.params.requestId ||
-            result.clipId !== block.id
+            result.clipId !== block.id ||
+            (response.params.spec.exportLayers &&
+              (!result.layerBundle?.url?.startsWith("https://") ||
+                result.layerBundle.format !== "previs-layers-v1"))
           )
             continue;
           const take = {
@@ -323,12 +369,35 @@ export function ManhuaPrevisStudioView({
   ) =>
     edit({
       ...studio.spec,
-      actors: studio.spec.actors.map((a, i) =>
-        i === index ? { ...a, ...patch } : a
-      ),
+      actors: studio.spec.actors.map((a, i) => {
+        if (i !== index) return a;
+        const next = { ...a, ...patch };
+        if (next.motionRoute?.length && !("motionRoute" in patch))
+          next.motionRoute = next.motionRoute.map((node, j) => ({
+            ...node,
+            ...(j === 0
+              ? { position: next.start, facingDeg: next.facingDeg }
+              : {}),
+            ...(j === next.motionRoute!.length - 1
+              ? { position: next.end }
+              : {}),
+          }));
+        return next;
+      }),
     });
   function adopt(take: Studio["history"][number]) {
     if (disabled || pendingId || busy) return;
+    if (
+      take.spec.exportLayers &&
+      (preview?.requestId !== take.requestId ||
+        !preview.layerBundle?.url?.startsWith("https://") ||
+        preview.layerBundle.format !== "previs-layers-v1")
+    ) {
+      setError(
+        "请先预览查询这条原任务，确认遮罩与深度层包后再采用；不要重复生成"
+      );
+      return;
+    }
     const old = block.manhuaSegmentRefs?.previs;
     const reference: ManhuaSegmentReferenceEntry = {
       url: take.url,
@@ -602,6 +671,7 @@ export function ManhuaPrevisStudioView({
                   actorEdit(index, {
                     shape: e.target.value as "human" | "horse",
                     actions: [],
+                    weapon: undefined,
                     creature: undefined,
                     riggedModel: undefined,
                   })
@@ -610,6 +680,33 @@ export function ManhuaPrevisStudioView({
                 <option value="human">人体关节</option>
                 <option value="horse">四足白模</option>
               </select>
+              <label className="text-xs text-white/70">
+                持械
+                <select
+                  className={field}
+                  aria-label={`角色${index + 1}持械`}
+                  value={actor.weapon ?? "none"}
+                  disabled={disabled || Boolean(pendingId)}
+                  onChange={e =>
+                    actorEdit(index, {
+                      weapon:
+                        e.target.value === "practice_sword"
+                          ? "practice_sword"
+                          : undefined,
+                    })
+                  }
+                >
+                  <option value="none">空手</option>
+                  <option
+                    value="practice_sword"
+                    disabled={
+                      actor.shape !== "human" || Boolean(actor.riggedModel)
+                    }
+                  >
+                    右手练习剑
+                  </option>
+                </select>
+              </label>
               {numeric(
                 "朝向角度",
                 actor.facingDeg,
@@ -637,6 +734,151 @@ export function ManhuaPrevisStudioView({
               )}
             </div>
           </details>
+          <section
+            className="space-y-2 rounded border border-white/15 p-2"
+            data-previs-route={actor.id}
+          >
+            <label className="text-xs text-white/70">
+              <input
+                type="checkbox"
+                aria-label={`角色${index + 1}分段运动轨`}
+                disabled={disabled || Boolean(pendingId)}
+                checked={Boolean(actor.motionRoute)}
+                onChange={e =>
+                  actorEdit(index, {
+                    motionRoute: e.target.checked
+                      ? [
+                          {
+                            timeSec: 0,
+                            position: [...actor.start],
+                            facingDeg: actor.facingDeg,
+                          },
+                          {
+                            timeSec: (studio.spec.durationSec * 24 - 1) / 24,
+                            position: [...actor.end],
+                            facingDeg: actor.facingDeg,
+                          },
+                        ]
+                      : undefined,
+                  })
+                }
+              />
+              分段站位与转身
+            </label>
+            {actor.motionRoute && (
+              <>
+                <p className="text-xs text-white/60">
+                  设置每个时刻的站位和朝向；启用后按这些节点运动。可用于进场、退让与换对手，路线不会自动避让。首末位置同步原起终点，时刻按视频帧对齐。
+                </p>
+                {actor.motionRoute.map((node, j) => {
+                  const patchNode = (value: Partial<typeof node>) => {
+                    const nodes = actor.motionRoute!.map((row, k) =>
+                      k === j ? { ...row, ...value } : row
+                    );
+                    actorEdit(index, {
+                      motionRoute: nodes,
+                      ...(j === 0
+                        ? {
+                            start: nodes[0].position,
+                            facingDeg: nodes[0].facingDeg,
+                          }
+                        : {}),
+                      ...(j === nodes.length - 1
+                        ? { end: nodes[j].position }
+                        : {}),
+                    });
+                  };
+                  return (
+                    <div key={j} className="flex flex-wrap gap-2">
+                      {numeric(
+                        `路线${index + 1}节点${j + 1}秒位`,
+                        node.timeSec,
+                        n => patchNode({ timeSec: Math.round(n * 24) / 24 }),
+                        1 / 24
+                      )}
+                      {[0, 1].map(axis =>
+                        numeric(
+                          `路线${index + 1}节点${j + 1}${"XY"[axis]}`,
+                          node.position[axis],
+                          n => {
+                            const position = [...node.position] as [
+                              number,
+                              number,
+                            ];
+                            position[axis] = n;
+                            patchNode({ position });
+                          }
+                        )
+                      )}
+                      {numeric(
+                        `路线${index + 1}节点${j + 1}朝向`,
+                        node.facingDeg,
+                        n => patchNode({ facingDeg: n }),
+                        5
+                      )}
+                      {j > 0 && j < actor.motionRoute!.length - 1 && (
+                        <button
+                          className={button}
+                          disabled={disabled || Boolean(pendingId)}
+                          onClick={() =>
+                            actorEdit(index, {
+                              motionRoute: actor.motionRoute!.filter(
+                                (_, k) => k !== j
+                              ),
+                            })
+                          }
+                        >
+                          移除路线节点
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+                <button
+                  className={button}
+                  disabled={
+                    disabled ||
+                    Boolean(pendingId) ||
+                    actor.motionRoute.length >= 12 ||
+                    actor.motionRoute.length < 2
+                  }
+                  onClick={() => {
+                    const nodes = actor.motionRoute!;
+                    let longest = 0;
+                    for (let j = 1; j < nodes.length - 1; j++)
+                      if (
+                        nodes[j + 1].timeSec - nodes[j].timeSec >
+                        nodes[longest + 1].timeSec - nodes[longest].timeSec
+                      )
+                        longest = j;
+                    const a = nodes[longest],
+                      b = nodes[longest + 1];
+                    let angle = ((b.facingDeg - a.facingDeg + 540) % 360) - 180;
+                    if (angle === -180) angle = 180;
+                    const facing =
+                      ((a.facingDeg + angle / 2 + 540) % 360) - 180;
+                    actorEdit(index, {
+                      motionRoute: [
+                        ...nodes.slice(0, longest + 1),
+                        {
+                          timeSec:
+                            Math.round((a.timeSec + b.timeSec) * 12) / 24,
+                          position: [
+                            (a.position[0] + b.position[0]) / 2,
+                            (a.position[1] + b.position[1]) / 2,
+                          ],
+                          facingDeg: facing,
+                        },
+                        ...nodes.slice(longest + 1),
+                      ],
+                    });
+                  }}
+                >
+                  添加路线节点
+                </button>
+              </>
+            )}
+          </section>
           {actor.shape === "horse" ? (
             <div className="space-y-2 rounded border border-white/15 p-2">
               <label className="flex gap-2 text-xs">
@@ -777,7 +1019,9 @@ export function ManhuaPrevisStudioView({
       <button
         className={button}
         disabled={
-          disabled || Boolean(pendingId) || studio.spec.actors.length >= 6
+          disabled ||
+          Boolean(pendingId) ||
+          studio.spec.actors.length >= (studio.spec.waterEmergence ? 3 : 6)
         }
         onClick={() =>
           edit({
@@ -798,6 +1042,261 @@ export function ManhuaPrevisStudioView({
       >
         添加角色
       </button>
+      <section
+        className="space-y-2 rounded border border-white/15 p-2"
+        data-previs-effects
+      >
+        <p className="text-xs text-cyan-100">爆点与烟雾 · 事件编排</p>
+        <p className="text-xs text-white/60">
+          最多四个事件、三人八秒。用于验证触发、漂移、遮挡与局部受光；几何烟火不代表真实破坏、碎片或人物受力。
+        </p>
+        {(studio.spec.effects ?? []).map((event, index) => {
+          const patch = (value: Partial<typeof event>) =>
+            edit({
+              ...studio.spec,
+              effects: studio.spec.effects!.map((e, i) =>
+                i === index ? { ...e, ...value } : e
+              ),
+            });
+          return (
+            <div
+              key={event.id}
+              className="flex flex-wrap gap-2 rounded border border-white/15 p-2"
+            >
+              <label className="text-xs text-white/70">
+                事件{index + 1}
+                <select
+                  aria-label={`特效${index + 1}类型`}
+                  className={field}
+                  disabled={disabled || Boolean(pendingId)}
+                  value={event.kind}
+                  onChange={e =>
+                    patch({ kind: e.target.value as "explosion" | "smoke" })
+                  }
+                >
+                  <option value="explosion">爆点闪光与烟团</option>
+                  <option value="smoke">烟团</option>
+                </select>
+              </label>
+              {numeric(
+                `特效${index + 1}开始`,
+                event.startSec,
+                n => patch({ startSec: Math.round(n * 24) / 24 }),
+                1 / 24
+              )}
+              {numeric(
+                `特效${index + 1}时长`,
+                event.durationSec,
+                n => patch({ durationSec: Math.round(n * 24) / 24 }),
+                1 / 24
+              )}
+              {[0, 1, 2].map(axis =>
+                numeric(
+                  `特效${index + 1}位置${"XYZ"[axis]}`,
+                  event.origin[axis],
+                  n => {
+                    const origin = [...event.origin] as [
+                      number,
+                      number,
+                      number,
+                    ];
+                    origin[axis] = n;
+                    patch({ origin });
+                  }
+                )
+              )}
+              {numeric(`特效${index + 1}横向倍率`, event.radius, n =>
+                patch({ radius: n })
+              )}
+              {numeric(`特效${index + 1}纵向倍率`, event.height, n =>
+                patch({ height: n })
+              )}
+              {[0, 1].map(axis =>
+                numeric(
+                  `特效${index + 1}烟团漂移${"XY"[axis]}`,
+                  event.wind[axis],
+                  n => {
+                    const wind = [...event.wind] as [number, number];
+                    wind[axis] = n;
+                    patch({ wind });
+                  }
+                )
+              )}
+              <button
+                className={button}
+                disabled={disabled || Boolean(pendingId)}
+                onClick={() =>
+                  edit({
+                    ...studio.spec,
+                    effects: studio.spec.effects!.filter((_, i) => i !== index),
+                  })
+                }
+              >
+                移除特效事件
+              </button>
+            </div>
+          );
+        })}
+        <button
+          className={button}
+          disabled={
+            disabled ||
+            Boolean(pendingId) ||
+            (studio.spec.effects?.length ?? 0) >= 4
+          }
+          onClick={() =>
+            edit({
+              ...studio.spec,
+              effects: [
+                ...(studio.spec.effects ?? []),
+                {
+                  id: crypto.randomUUID(),
+                  kind: "explosion",
+                  startSec: 0.5,
+                  durationSec: Math.min(
+                    2,
+                    Math.floor((studio.spec.durationSec - 0.55) * 24) / 24
+                  ),
+                  origin: [0, 0, 0.3],
+                  radius: 1,
+                  height: 1.5,
+                  wind: [0, 0],
+                },
+              ],
+            })
+          }
+        >
+          添加特效事件
+        </button>
+        <label className="flex gap-2 text-xs text-white/70">
+          <input
+            type="checkbox"
+            aria-label="输出合成辅助层"
+            checked={Boolean(studio.spec.exportLayers)}
+            disabled={disabled || Boolean(pendingId)}
+            onChange={e => {
+              if (e.target.checked)
+                edit({ ...studio.spec, exportLayers: true });
+              else {
+                const { exportLayers: _layers, ...rest } = studio.spec;
+                edit(rest);
+              }
+            }}
+          />
+          输出人物／特效几何遮罩与深度（增加本次渲染时间）
+        </label>
+      </section>
+      <section
+        className="space-y-2 rounded border border-white/15 p-2"
+        data-previs-water
+      >
+        <p className="text-xs text-cyan-100">多人出水 · 动作与浪花预演</p>
+        <p className="text-xs text-white/60">
+          当前支持最多三人、八秒。预演人物腾空、独立浪花范围与时序，水体质感需后续制作。先将人体角色设为原地站位；出水暂不混合持械、短打或已绑定模型。
+        </p>
+        <label className="text-xs text-white/70">
+          出水节奏
+          <select
+            aria-label="出水节奏"
+            className={field}
+            disabled={disabled || Boolean(pendingId)}
+            value={studio.spec.waterEmergence?.mode ?? "none"}
+            onChange={e => {
+              if (e.target.value === "none") {
+                const { waterEmergence: _water, ...rest } = studio.spec;
+                edit(rest);
+                return;
+              }
+              const mode = e.target.value as "simultaneous" | "staggered";
+              const previous = studio.spec.waterEmergence;
+              const base = previous?.events[0]?.crossSec ?? 1;
+              edit({
+                ...studio.spec,
+                waterEmergence: {
+                  mode,
+                  events: studio.spec.actors.map((a, i) => ({
+                    ...(previous?.events.find(
+                      event => event.actorId === a.id
+                    ) ?? {
+                      actorId: a.id,
+                      riseSec: 1.25,
+                      height: 2.8,
+                      waveRadius: 1.5,
+                      waveHeight: 1.8,
+                      waveDurationSec: 2.5,
+                    }),
+                    crossSec: base + (mode === "staggered" ? i * 0.25 : 0),
+                  })),
+                },
+              });
+            }}
+          >
+            <option value="none">不启用</option>
+            <option value="simultaneous">同时冲出</option>
+            <option value="staggered">错峰冲出</option>
+          </select>
+        </label>
+        {studio.spec.waterEmergence?.events.map((event, index) => {
+          const patch = (value: Partial<typeof event>) =>
+            edit({
+              ...studio.spec,
+              waterEmergence: {
+                ...studio.spec.waterEmergence!,
+                events: studio.spec.waterEmergence!.events.map((row, i) =>
+                  i === index ? { ...row, ...value } : row
+                ),
+              },
+            });
+          const name =
+            studio.spec.actors.find(a => a.id === event.actorId)?.nameZh ??
+            "已移除角色";
+          return (
+            <div key={event.actorId} className="flex flex-wrap gap-2">
+              <span className="text-xs text-white/70">{name}</span>
+              {numeric(
+                `出水${index + 1}破水秒位`,
+                event.crossSec,
+                n => {
+                  const crossSec = Math.round(n * 24) / 24;
+                  if (studio.spec.waterEmergence!.mode === "simultaneous")
+                    edit({
+                      ...studio.spec,
+                      waterEmergence: {
+                        ...studio.spec.waterEmergence!,
+                        events: studio.spec.waterEmergence!.events.map(row => ({
+                          ...row,
+                          crossSec,
+                        })),
+                      },
+                    });
+                  else patch({ crossSec });
+                },
+                1 / 24
+              )}
+              {numeric(`出水${index + 1}上升时长`, event.riseSec, n =>
+                patch({ riseSec: Math.round(n * 24) / 24 })
+              )}
+              {numeric(`出水${index + 1}腾空高度`, event.height, n =>
+                patch({ height: n })
+              )}
+              {numeric(`出水${index + 1}浪花半径`, event.waveRadius, n =>
+                patch({ waveRadius: n })
+              )}
+              {numeric(`出水${index + 1}浪花高度`, event.waveHeight, n =>
+                patch({ waveHeight: n })
+              )}
+              {numeric(`出水${index + 1}浪花时长`, event.waveDurationSec, n =>
+                patch({ waveDurationSec: Math.round(n * 24) / 24 })
+              )}
+            </div>
+          );
+        })}
+        {studio.spec.waterEmergence && (
+          <p className="text-xs text-white/60">
+            增减角色会同步出水轨；站位、镜头和已有参考不会自动覆盖。
+          </p>
+        )}
+      </section>
       <section
         className="space-y-2 rounded border border-white/15 p-2"
         data-previs-interactions
@@ -864,6 +1363,9 @@ export function ManhuaPrevisStudioView({
               >
                 <option value="strike_recoil">胸前接触后缩</option>
                 <option value="strike_guard">抬手接触格挡</option>
+                <option value="sword_guard">
+                  持剑交叉格挡（双方需装备练习剑）
+                </option>
               </select>
               {numeric(
                 "互动开始",
@@ -935,7 +1437,7 @@ export function ManhuaPrevisStudioView({
           添加双人互动
         </button>
         <p className="text-xs text-white/60">
-          请人工审阅双方距离和朝向。不可达接触会明确失败；同一时段不能叠加该角色的独立动作。
+          请人工审阅双方距离和朝向。持剑格挡须双方选择右手练习剑，结束后回到准备姿态；剑体仅用于动作预演。不可达接触会明确失败，同一时段不能叠加独立动作。
         </p>
       </section>
       <details>
@@ -1087,6 +1589,18 @@ export function ManhuaPrevisStudioView({
           >
             采用为本段参考
           </button>
+          {preview?.requestId === take.requestId &&
+            preview.layerBundle?.url?.startsWith("https://") && (
+              <a
+                className={button}
+                href={preview.layerBundle.url}
+                download="遮罩与深度层包.zip"
+                target="_blank"
+                rel="noreferrer"
+              >
+                下载遮罩与深度层包
+              </a>
+            )}
         </div>
       ))}
       {studio.referenceHistory.map((entry, i) => (

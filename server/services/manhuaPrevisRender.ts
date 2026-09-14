@@ -17,6 +17,11 @@ import {
 } from "../../shared/manhuaPrevis";
 import { uploadBufferToGcs } from "./gcs";
 import { validatePrevisReport } from "./manhuaPrevisReport";
+import {
+  buildPrevisLayerBundle,
+  LAYER_META_LIMIT,
+  type PrevisLayerBundle,
+} from "./manhuaPrevisLayers";
 import { preparePrevisModels } from "./manhuaPrevisModels";
 export type { PrevisRenderReport } from "./manhuaPrevisReport";
 
@@ -410,6 +415,113 @@ export async function renderManhuaPrevis(
       contentType: "video/mp4",
       signal: options.signal,
     });
+    let layerBundle: PrevisLayerBundle | undefined;
+    if (input.spec.exportLayers) {
+      const layerArgs = [
+        "--background",
+        "--factory-startup",
+        "--disable-autoexec",
+        "--threads",
+        "2",
+        "--python-exit-code",
+        "1",
+        "--python",
+        path.resolve("server/scripts/render_previs_layers.py"),
+        "--",
+        path.resolve(dir, "scene.blend"),
+        path.resolve(specPath),
+        path.resolve(dir),
+      ];
+      let rawMeta: Buffer | undefined;
+      try {
+        await d.run(
+          d.useXvfb ? "xvfb-run" : d.blender,
+          d.useXvfb ? ["-a", d.blender, ...layerArgs] : layerArgs,
+          options.signal
+        );
+      } finally {
+        // 即使脚本中途失败也先保全未完成清单；不再次启动层渲染。
+        try {
+          rawMeta = await readBoundedArtifact(
+            path.join(dir, "layers/meta.json"),
+            0,
+            LAYER_META_LIMIT,
+            "分层原始清单体积异常，文件保留待检查"
+          );
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+        if (rawMeta) {
+          const original = await d.upload({
+            objectName: `${prefix}/layers.meta.json`,
+            buffer: rawMeta,
+            contentType: "application/json",
+            signal: AbortSignal.timeout(30_000),
+          });
+          await d.upload({
+            objectName: `${prefix}/layers.meta-evidence.json`,
+            buffer: Buffer.from(
+              JSON.stringify({
+                requestId: input.requestId,
+                clipId: input.clipId,
+                raw: {
+                  gcsUri: original.gcsUri,
+                  bytes: rawMeta.length,
+                  sha256: sha(rawMeta),
+                },
+              })
+            ),
+            contentType: "application/json",
+            signal: AbortSignal.timeout(30_000),
+          });
+        }
+      }
+      if (!rawMeta) throw Error("分层原始清单缺失");
+      // 可解析清单先另存，再执行完整性和PNG门禁；失败也不丢已得到的解析JSON。
+      const parsedLayerMeta: unknown = JSON.parse(rawMeta.toString("utf8"));
+      const normalized = Buffer.from(JSON.stringify(parsedLayerMeta));
+      const parsedMeta = await d.upload({
+        objectName: `${prefix}/layers.meta.parsed.json`,
+        buffer: normalized,
+        contentType: "application/json",
+        signal: AbortSignal.timeout(30_000),
+      });
+      await d.upload({
+        objectName: `${prefix}/layers.meta.parsed-evidence.json`,
+        buffer: Buffer.from(
+          JSON.stringify({
+            requestId: input.requestId,
+            clipId: input.clipId,
+            parsed: {
+              gcsUri: parsedMeta.gcsUri,
+              bytes: normalized.length,
+              sha256: sha(normalized),
+              rawSha256: sha(rawMeta),
+            },
+          })
+        ),
+        contentType: "application/json",
+        signal: AbortSignal.timeout(30_000),
+      });
+      const bundle = await buildPrevisLayerBundle(
+        path.join(dir, "layers"),
+        rawMeta,
+        input.spec,
+        sha(blend)
+      );
+      const object = await d.upload({
+        objectName: `${prefix}/layer-bundle.zip`,
+        buffer: bundle.bytes,
+        contentType: "application/zip",
+        signal: options.signal,
+      });
+      layerBundle = {
+        gcsUri: object.gcsUri,
+        bytes: bundle.bytes.length,
+        sha256: sha(bundle.bytes),
+        format: "previs-layers-v1",
+      };
+    }
     const result = {
       userId,
       scopeId: input.scopeId,
@@ -431,6 +543,7 @@ export async function renderManhuaPrevis(
       clipId: input.clipId,
       requestId: input.requestId,
       spec: input.spec,
+      ...(layerBundle ? { layerBundle } : {}),
     };
     // 先把完整回执存证，再交给 worker 落库；数据库暂时失败不应丢掉已生成产物。
     const resultBytes = Buffer.from(JSON.stringify(result));

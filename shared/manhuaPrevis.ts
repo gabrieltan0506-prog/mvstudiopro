@@ -1,5 +1,10 @@
 /** 动作白模配置：只有数据，没有用户 Python／命令／任意素材 URL。 */
 import { z } from "zod";
+import {
+  previsEffectsSchema,
+  previsEffectsDraftSchema,
+  validatePrevisEffects,
+} from "./manhuaPrevisEffects";
 import { previsRiggedModelSchema } from "./manhuaPrevisRig";
 
 const point = z.tuple([
@@ -9,7 +14,7 @@ const point = z.tuple([
 export const previsInteractionSchema = z
   .object({
     id: z.string().min(1).max(100),
-    kind: z.enum(["strike_recoil", "strike_guard"]),
+    kind: z.enum(["strike_recoil", "strike_guard", "sword_guard"]),
     actorId: z.string().min(1).max(100),
     targetActorId: z.string().min(1).max(100),
     startSec: z.number().finite().min(0).max(30),
@@ -18,6 +23,25 @@ export const previsInteractionSchema = z
   })
   .strict();
 export type PrevisInteraction = z.infer<typeof previsInteractionSchema>;
+/** 出水预演使用独立几何浪，不承诺物理流体效果。 */
+export const previsWaterEventSchema = z
+  .object({
+    actorId: z.string().min(1).max(100),
+    crossSec: z.number().finite().min(0.5).max(30),
+    riseSec: z.number().finite().min(0.5).max(3),
+    height: z.number().finite().min(0.5).max(5),
+    waveRadius: z.number().finite().min(0.4).max(2.5),
+    waveHeight: z.number().finite().min(0.3).max(3),
+    waveDurationSec: z.number().finite().min(0.5).max(4),
+  })
+  .strict();
+export const previsWaterEmergenceSchema = z
+  .object({
+    mode: z.enum(["simultaneous", "staggered"]),
+    events: z.array(previsWaterEventSchema).min(1).max(3),
+  })
+  .strict();
+export type PrevisWaterEmergence = z.infer<typeof previsWaterEmergenceSchema>;
 export const previsCreatureSchema = z
   .object({
     preset: z.literal("four_tail_black_wings"),
@@ -49,12 +73,26 @@ export const PREVIS_ACTION_LABELS = {
   guard: "抬臂保护",
   recoil: "受惊后缩",
 } as const;
+export const previsMotionRouteNodeSchema = z
+  .object({
+    timeSec: z.number().finite().min(0).max(30),
+    position: point,
+    facingDeg: z.number().finite().min(-180).max(180),
+  })
+  .strict();
+/** 最短角差；正反180度都固定沿正向旋转。 */
+export function previsShortestAngleDeg(from: number, to: number): number {
+  const delta = (((to - from) % 360) + 360) % 360;
+  return delta > 180 ? delta - 360 : delta;
+}
 export const previsActorSchema = z
   .object({
     id: z.string().min(1).max(100),
     nameZh: z.string().trim().min(1).max(80),
     /** 仅标明对应的项目角色；不声称为无骨骼 GLB 自动蒙皮。 */
     assetRef: z.string().max(160).optional(),
+    weapon: z.literal("practice_sword").optional(),
+    motionRoute: z.array(previsMotionRouteNodeSchema).min(2).max(12).optional(),
     creature: previsCreatureSchema.optional(),
     riggedModel: previsRiggedModelSchema.optional(),
     shape: z.enum(["human", "horse"]),
@@ -89,6 +127,9 @@ const manhuaPrevisSpecBaseSchema = z
     actors: z.array(previsActorSchema).min(1).max(6),
     interactions: z.array(previsInteractionSchema).max(24).optional(),
     scriptSource: previsScriptSourceSchema.optional(),
+    waterEmergence: previsWaterEmergenceSchema.optional(),
+    effects: previsEffectsSchema.optional(),
+    exportLayers: z.literal(true).optional(),
     cameras: z
       .array(
         z
@@ -112,6 +153,23 @@ const draftPoint = z.tuple([draftNumber, draftNumber]);
 const draftCameraPoint = z.tuple([draftNumber, draftNumber, draftNumber]);
 export const manhuaPrevisDraftSchema = manhuaPrevisSpecBaseSchema.extend({
   durationSec: draftNumber,
+  effects: previsEffectsDraftSchema.optional(),
+  waterEmergence: previsWaterEmergenceSchema
+    .extend({
+      events: z
+        .array(
+          previsWaterEventSchema.extend({
+            crossSec: draftNumber,
+            riseSec: draftNumber,
+            height: draftNumber,
+            waveRadius: draftNumber,
+            waveHeight: draftNumber,
+            waveDurationSec: draftNumber,
+          })
+        )
+        .max(6),
+    })
+    .optional(),
   interactions: z
     .array(
       previsInteractionSchema.extend({
@@ -131,6 +189,16 @@ export const manhuaPrevisDraftSchema = manhuaPrevisSpecBaseSchema.extend({
         moveStartSec: draftNumber,
         moveEndSec: draftNumber,
         facingDeg: draftNumber,
+        motionRoute: z
+          .array(
+            previsMotionRouteNodeSchema.extend({
+              timeSec: draftNumber,
+              position: draftPoint,
+              facingDeg: draftNumber,
+            })
+          )
+          .max(12)
+          .optional(),
         creature: previsCreatureSchema
           .extend({
             transformStartSec: draftNumber,
@@ -227,6 +295,9 @@ export function previsCapacityIssueZh(
 
 export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
   (spec, ctx) => {
+    validatePrevisEffects(spec, ctx);
+    if (spec.exportLayers && (spec.durationSec > 8 || spec.actors.length > 3))
+      ctx.addIssue({ code: "custom", message: "分层输出限3人8秒以内" });
     // 能力边界先判：超预算的作业会在 600 秒生产时限里烧满十分钟还交不出视频（0911 实测）
     const capacityIssue = previsCapacityIssueZh(spec);
     if (capacityIssue) ctx.addIssue({ code: "custom", message: capacityIssue });
@@ -298,17 +369,161 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
             path: ["actors", i, "actions", j],
           });
       });
+      if (actor.motionRoute) {
+        const route = actor.motionRoute;
+        const issue = (message: string) =>
+          ctx.addIssue({
+            code: "custom",
+            message,
+            path: ["actors", i, "motionRoute"],
+          });
+        if (spec.waterEmergence || actor.riggedModel || actor.creature)
+          issue("分段路线暂不能与出水、绑定模型或显形混用");
+        const first = route[0],
+          last = route.at(-1)!;
+        if (
+          !first ||
+          !last ||
+          first.timeSec !== 0 ||
+          Math.abs(last.timeSec - (spec.durationSec * 24 - 1) / 24) > 1e-8 ||
+          first.position.some((v, k) => v !== actor.start[k]) ||
+          last.position.some((v, k) => v !== actor.end[k]) ||
+          first.facingDeg !== actor.facingDeg
+        )
+          issue(
+            "路线首节点须为0秒并对应起点和初始朝向，末节点须对应最后一帧和终点"
+          );
+        route.forEach((node, j) => {
+          if (
+            Math.abs(node.timeSec * 24 - Math.round(node.timeSec * 24)) > 1e-6
+          )
+            issue("路线秒位须对齐24帧");
+          if (!j) return;
+          const previous = route[j - 1],
+            dt = node.timeSec - previous.timeSec;
+          if (dt < 0.25 - 1e-8) issue("路线节点须严格递增且至少间隔四分之一秒");
+          if (
+            dt > 0 &&
+            (1.5 *
+              Math.hypot(
+                ...node.position.map((v, k) => v - previous.position[k])
+              )) /
+              dt >
+              1.2 + 1e-8
+          )
+            issue("分段路线峰值速度不能超过每秒1.2米，请延长区间或缩短路线");
+          if (
+            dt > 0 &&
+            (1.5 *
+              Math.abs(
+                previsShortestAngleDeg(previous.facingDeg, node.facingDeg)
+              )) /
+              dt >
+              120 + 1e-8
+          )
+            issue("转向峰值速度不能超过每秒120度，请延长区间");
+        });
+      }
       const distance = Math.hypot(
         actor.end[0] - actor.start[0],
         actor.end[1] - actor.start[1]
       );
-      if (distance / (actor.moveEndSec - actor.moveStartSec) > 1.2)
+      if (
+        !actor.motionRoute &&
+        distance / (actor.moveEndSec - actor.moveStartSec) > 1.2
+      )
         ctx.addIssue({
           code: "custom",
           message: "白模行走速度过快，请延长移动时间或缩短路线",
           path: ["actors", i],
         });
     });
+    spec.actors.forEach((actor, i) => {
+      if (
+        actor.weapon &&
+        (actor.shape !== "human" ||
+          actor.riggedModel ||
+          actor.actions.some(a => a.kind !== "idle"))
+      )
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "练习剑仅支持人体白模待机与持剑格挡，不能叠加徒手动作或绑定模型",
+          path: ["actors", i, "weapon"],
+        });
+    });
+    const water = spec.waterEmergence;
+    if (water) {
+      const issue = (message: string, index?: number) =>
+        ctx.addIssue({
+          code: "custom",
+          message,
+          path:
+            index === undefined
+              ? ["waterEmergence"]
+              : ["waterEmergence", "events", index],
+        });
+      if (spec.actors.length > 3 || spec.durationSec > 8)
+        issue("当前出水预演最多3人、8秒，请缩短片长或减少角色");
+      const ids = new Set(water.events.map(e => e.actorId));
+      if (
+        ids.size !== water.events.length ||
+        water.events.length !== spec.actors.length ||
+        spec.actors.some(a => !ids.has(a.id))
+      )
+        issue("每个现有角色必须且只能绑定一条出水事件");
+      if (spec.interactions?.length) issue("出水预演暂不能叠加双人接触事件");
+      spec.actors.forEach(actor => {
+        if (
+          actor.shape !== "human" ||
+          actor.weapon ||
+          actor.creature ||
+          actor.riggedModel ||
+          actor.actions.some(a => a.kind !== "idle") ||
+          actor.start.some((v, i) => v !== actor.end[i])
+        )
+          issue(
+            "出水预演仅支持固定平面站位的人体白模，不能叠加持械、绑定模型、显形或独立动作"
+          );
+      });
+      const lastSec = (spec.durationSec * 24 - 1) / 24;
+      water.events.forEach((event, i) => {
+        if (
+          [event.crossSec, event.riseSec, event.waveDurationSec].some(
+            t => Math.abs(t * 24 - Math.round(t * 24)) > 1e-6
+          )
+        )
+          issue("出水、上升及浪花时长须对齐24帧", i);
+        if (
+          event.crossSec + event.riseSec > lastSec + 1e-8 ||
+          event.crossSec + event.waveDurationSec > lastSec + 1e-8
+        )
+          issue("上升与浪花结束须落在最后一个实际视频帧内", i);
+        for (const previous of water.events.slice(0, i)) {
+          const frameGap = Math.abs(
+            Math.round(event.crossSec * 24) - Math.round(previous.crossSec * 24)
+          );
+          if (water.mode === "simultaneous" ? frameGap !== 0 : frameGap < 1)
+            issue(
+              water.mode === "simultaneous"
+                ? "同时出水的角色须在同一帧破水"
+                : "错峰出水的角色须至少间隔一帧",
+              i
+            );
+          const actor = spec.actors.find(a => a.id === event.actorId);
+          const other = spec.actors.find(a => a.id === previous.actorId);
+          const separation = event.waveRadius + previous.waveRadius + 0.1;
+          if (
+            actor &&
+            other &&
+            actor.start.every(
+              (v, axis) => Math.abs(v - other.start[axis]) + 1e-8 < separation
+            )
+          )
+            issue("独立浪花范围过近，请拉开角色站位或缩小浪花半径", i);
+        }
+      });
+    }
     const interactions = spec.interactions ?? [];
     if (
       new Set(interactions.map(event => event.id)).size !== interactions.length
@@ -332,6 +547,16 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
         ctx.addIssue({
           code: "custom",
           message: "双人互动必须绑定两个不同的现有人体角色",
+          path,
+        });
+      if (
+        event.kind === "sword_guard"
+          ? !actor?.weapon || !target?.weapon
+          : actor?.weapon || target?.weapon
+      )
+        ctx.addIssue({
+          code: "custom",
+          message: "持剑格挡须双方装备练习剑；持剑角色不能使用徒手接触事件",
           path,
         });
       if (actor?.riggedModel || target?.riggedModel)
@@ -532,12 +757,38 @@ export function formatPrevisMotionGuide(spec: ManhuaPrevisSpec): string {
     "参考中的关节姿态、落脚、蓄力—出手—回收及保护反应按对应秒位读取；不继承白模外形。",
     ...spec.actors.map(
       (a, index) =>
-        `白模角色${index + 1}对应${a.nameZh}${a.assetRef ? `（${a.assetRef}）` : ""}：${a.actions.length ? a.actions.map(x => `${x.startSec}—${x.endSec}秒${PREVIS_ACTION_LABELS[x.kind]}`).join("；") : "按参考站位和步态"}。`
+        `白模角色${index + 1}对应${a.nameZh}${a.assetRef ? `（${a.assetRef}）` : ""}：${spec.waterEmergence ? "按下方出水时间与竖直轨迹" : a.actions.length ? a.actions.map(x => `${x.startSec}—${x.endSec}秒${PREVIS_ACTION_LABELS[x.kind]}`).join("；") : "按参考站位和步态"}。`
     ),
+    ...spec.actors
+      .filter(a => a.motionRoute)
+      .map(
+        a =>
+          `${a.nameZh}分段路线：${a.motionRoute!.map(node => `${node.timeSec}秒位置（${node.position.join("，")}），朝向${node.facingDeg}度`).join("；")}。节点间平滑移动与短弧转向；相差180度固定正向旋转。路线不代表自动避碰，需按实际预演检查人物及武器穿插。`
+      ),
+    ...(spec.effects ?? []).map(
+      e =>
+        `${e.startSec}—${e.startSec + e.durationSec}秒，${e.kind === "explosion" ? "爆点闪光与烟团" : "烟团"}位于（${e.origin.join("，")}），横向缩放${e.radius}倍、纵向缩放${e.height}倍（不是最大包络尺寸），烟团水平漂移（${e.wind.join("，")}）米。跟随参考中可见事件与遮挡；几何预演不表示已完成物理破坏。`
+    ),
+    ...(spec.waterEmergence
+      ? [
+          `出水节奏：${spec.waterEmergence.mode === "simultaneous" ? "同时冲出" : "错峰冲出"}。水面高度为0；镜头以整体气势为主，不要求看清每个人。每人独立冲击浪，保持世界空间及画面投影分离，不互相遮挡或汇合。`,
+          ...spec.waterEmergence.events.map(event => {
+            const actor = spec.actors.find(a => a.id === event.actorId)!;
+            return `${actor.nameZh}：${event.crossSec}秒头部首先破水，随后${event.riseSec}秒竖直上升，${event.crossSec + event.riseSec}秒根节点达到水面上${event.height}米；独立浪花${event.crossSec}—${event.crossSec + event.waveDurationSec}秒，最大半径${event.waveRadius}米、高${event.waveHeight}米。`;
+          }),
+          "本地几何浪花仅约束时序、运动方向与独立分离，不代表真实水质或最终流体效果。",
+        ]
+      : []),
+    ...spec.actors
+      .filter(a => a.weapon)
+      .map(
+        a =>
+          `${a.nameZh}右手持剑，手柄随手腕，参考只约束动作与比例，武器外观按该角色道具参考。`
+      ),
     ...(spec.interactions ?? []).map(event => {
       const actor = spec.actors.find(a => a.id === event.actorId)!;
       const target = spec.actors.find(a => a.id === event.targetActorId)!;
-      return `${event.startSec}—${event.endSec}秒，${actor.nameZh}向${target.nameZh}出手，${event.contactSec}秒${event.kind === "strike_guard" ? "双手接触格挡" : "触及胸前后受方后缩"}；双方按同一事件时序，不拆成无关动作。`;
+      return `${event.startSec}—${event.endSec}秒，${actor.nameZh}向${target.nameZh}出手，${event.contactSec}秒${event.kind === "sword_guard" ? "双方右手持剑，剑刃交叉格挡；接触后受方卸力、双方回收至持剑准备姿态" : event.kind === "strike_guard" ? "双手接触格挡" : "触及胸前后受方后缩"}；双方按同一事件时序，不拆成无关动作。`;
     }),
     ...spec.actors
       .filter(actor => actor.creature)

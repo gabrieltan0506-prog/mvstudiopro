@@ -1,6 +1,18 @@
 /** 渲染与恢复共用的真实报告门禁，不能以存证哈希代替动作验收。 */
 import { z } from "zod";
 import {
+  effectsReportSchema,
+  validateEffectsReport,
+} from "./manhuaPrevisEffectsReport";
+import {
+  routeReportSchema,
+  validateRouteReport,
+} from "./manhuaPrevisRouteReport";
+import {
+  waterReportSchema,
+  validateWaterReport,
+} from "./manhuaPrevisWaterReport";
+import {
   previsCreatureSchema,
   type ManhuaPrevisRequest,
 } from "../../shared/manhuaPrevis";
@@ -119,12 +131,44 @@ export const previsReportSchema = z
       )
       .max(6)
       .optional(),
+    waterEmergence: waterReportSchema.optional(),
+    motionRoutes: routeReportSchema.optional(),
+    effects: effectsReportSchema.optional(),
+    weapons: z
+      .array(
+        z
+          .object({
+            actorId: z.string().min(1),
+            preset: z.literal("practice_sword"),
+            bladeLength: z.literal(0.75),
+            samples: z
+              .array(
+                z
+                  .object({
+                    frame: z.number().int().min(1).max(720),
+                    wrist: point,
+                    bladeBase: point,
+                    bladeTip: point,
+                    contactPoint: point,
+                    gripError: z.number().finite().nonnegative().max(0.005),
+                    handEndError: z.number().finite().nonnegative().max(0.005),
+                    offscreen: z.boolean(),
+                  })
+                  .strict()
+              )
+              .min(48)
+              .max(720),
+          })
+          .strict()
+      )
+      .max(6)
+      .optional(),
     interactions: z
       .array(
         z
           .object({
             id: z.string().min(1),
-            kind: z.enum(["strike_recoil", "strike_guard"]),
+            kind: z.enum(["strike_recoil", "strike_guard", "sword_guard"]),
             actorId: z.string().min(1),
             targetActorId: z.string().min(1),
             contactFrame: z.number().int().min(1).max(720),
@@ -267,6 +311,34 @@ export function validatePrevisReport(
     if (creature.stages.at(-1)?.progress !== 1)
       throw new Error("白模尾翼未完整展开");
   }
+  const weapons = report.weapons ?? [];
+  const armed = spec.actors.filter(a => a.weapon);
+  if (
+    weapons.length !== armed.length ||
+    new Set(weapons.map(w => w.actorId)).size !== weapons.length
+  )
+    throw new Error("持剑逐帧报告缺失或重复");
+  for (const actor of armed) {
+    const weapon = weapons.find(w => w.actorId === actor.id);
+    if (!weapon || weapon.samples.length !== report.frames)
+      throw new Error("持剑逐帧报告不完整");
+    weapon.samples.forEach((sample, index) => {
+      const distance = (a: number[], b: number[]) =>
+        Math.hypot(...a.map((v, i) => v - b[i]));
+      if (
+        sample.frame !== index + 1 ||
+        Math.abs(distance(sample.bladeBase, sample.bladeTip) - 0.75) > 0.005 ||
+        Math.abs(distance(sample.wrist, sample.bladeBase) - 0.09) > 0.005 ||
+        Math.abs(
+          distance(
+            sample.contactPoint,
+            sample.bladeBase.map((v, i) => (v + sample.bladeTip[i]) / 2)
+          ) - 0.025
+        ) > 0.00001
+      )
+        throw new Error("剑体尺寸或持握位置与回执不一致");
+    });
+  }
   const expected = spec.interactions ?? [];
   const measured = report.interactions ?? [];
   if (
@@ -285,6 +357,23 @@ export function validatePrevisReport(
       actual.contactFrame > report.frames
     )
       throw new Error("白模双人交互报告与动作不一致");
+    if (event.kind === "sword_guard") {
+      for (const [id, measuredPoint] of [
+        [event.actorId, actual.actualPoint],
+        [event.targetActorId, actual.targetPoint],
+      ] as const) {
+        const sample = weapons.find(w => w.actorId === id)?.samples[
+          actual.contactFrame - 1
+        ];
+        if (
+          !sample ||
+          Math.hypot(
+            ...measuredPoint.map((v, i) => v - sample.contactPoint[i])
+          ) > 0.00001
+        )
+          throw new Error("剑刃接触点与同帧剑体证据不一致");
+      }
+    }
     const distance = Math.hypot(
       ...actual.actualPoint.map(
         (value, index) => value - actual.targetPoint[index]
@@ -297,5 +386,8 @@ export function validatePrevisReport(
     )
       throw new Error("白模双人交互接触检查未通过");
   }
+  validateWaterReport(report.waterEmergence, spec);
+  validateRouteReport(report.motionRoutes, spec);
+  validateEffectsReport(report.effects, spec);
   return report;
 }

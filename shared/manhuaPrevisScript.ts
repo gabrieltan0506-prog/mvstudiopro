@@ -54,6 +54,24 @@ export function compilePrevisScriptDraft(input: {
     notes: [],
     errors: [],
   };
+  if (currentSpec.effects?.length || currentSpec.exportLayers) {
+    result.errors.push(
+      "当前特效与分层设置需手动调整；剧本动作草案暂不覆盖已有配置"
+    );
+    return result;
+  }
+  if (currentSpec.actors.some(a => a.motionRoute)) {
+    result.errors.push(
+      "当前分段运动轨需在角色设置中调整；剧本动作草案暂不改写该轨道，已有配置保留"
+    );
+    return result;
+  }
+  if (currentSpec.waterEmergence) {
+    result.errors.push(
+      "当前出水轨需在出水设置中调整；剧本动作草案暂不改写出水轨，已有配置保留"
+    );
+    return result;
+  }
   if (!shots.length) {
     result.errors.push("本段没有真实分镜动作，不能生成草案");
     return result;
@@ -205,13 +223,26 @@ export function compilePrevisScriptDraft(input: {
         continue;
       }
       const attackPattern =
-        mention(a) + "(?:向|朝|对)" + targetPattern +
+        mention(a) +
+        "(?:向|朝|对)" +
+        targetPattern +
         "(?:的胸前|胸前)?(?:出拳|出手|挥拳|攻击|击打)|" +
-        mention(a) + "(?:出拳击中|挥拳击中|一拳打向|一拳击中)" + targetPattern;
+        mention(a) +
+        "(?:出拳击中|挥拳击中|一拳打向|一拳击中)" +
+        targetPattern;
       const reactionPattern = guard
         ? targetPattern + "(?:抬臂|举手|抬手)?(?:格挡|挡住)"
-        : targetPattern + "(?:(?:受击|中拳|被击中)(?:后缩|后仰|踉跄)?|后缩|后仰|踉跄)";
-      if (!new RegExp("^(?:" + attackPattern + ")(?:随后|接着|然后)?" + reactionPattern + "$").test(sentence)) {
+        : targetPattern +
+          "(?:(?:受击|中拳|被击中)(?:后缩|后仰|踉跄)?|后缩|后仰|踉跄)";
+      if (
+        !new RegExp(
+          "^(?:" +
+            attackPattern +
+            ")(?:随后|接着|然后)?" +
+            reactionPattern +
+            "$"
+        ).test(sentence)
+      ) {
         reject("同镜还有未支持或重复的动作，不能将部分匹配当作整镜完成");
         continue;
       }
@@ -246,8 +277,11 @@ export function compilePrevisScriptDraft(input: {
       continue;
     }
     const wholeAction = new RegExp(
-      "^" + mention(present[0]) + "(?:缓慢|缓缓|轻轻|迅速|快速|原地)?" +
-      matches[0][1].source + "(?:一次)?$"
+      "^" +
+        mention(present[0]) +
+        "(?:缓慢|缓缓|轻轻|迅速|快速|原地)?" +
+        matches[0][1].source +
+        "(?:一次)?$"
     );
     if (!wholeAction.test(sentence)) {
       reject("含否定、重复或未支持动作，不能将部分匹配当作整镜完成");
