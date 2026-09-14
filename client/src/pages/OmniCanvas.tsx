@@ -23,7 +23,14 @@ import {
   makeCanvasBlockId,
   normalizeCanvasBlock,
 } from "@/lib/canvasTypes";
-import { runCanvasBlock, runGptImage2, type CanvasRunDeps } from "@/lib/canvasRunBlock";
+import {
+  manhuaOutboundConfirmationFingerprint,
+  previewCanvasBlockOutbound,
+  runCanvasBlock,
+  runGptImage2,
+  type CanvasRunDeps,
+  type ManhuaOutboundConfirmation,
+} from "@/lib/canvasRunBlock";
 import { resolveOpenAiImageLaneForBlockId } from "@shared/openaiImageLane";
 import { copyText } from "@/lib/copyText";
 import { cropManhuaSheet2x2 } from "@/lib/manhuaSheetCropApi";
@@ -3772,6 +3779,73 @@ export default function OmniCanvas() {
       explicitWriterVideoModel,
     ],
   );
+
+  /**
+   * 生成前确认的归属身份。三项必填——缺省 null 身份会让换账号/换项目/换节点
+   * 拿到同一个确认指纹。项目身份用「剧名@编剧确认时刻」：重新确认编剧稿等于新版本，
+   * 旧确认理应随之失效。
+   */
+  const manhuaOutboundScope = useCallback(
+    (blockId: string) => ({
+      userId: user?.id != null ? String(user.id) : "",
+      projectId: projectBible
+        ? `${projectBible.seriesTitle}@${projectBible.confirmedAt}`
+        : "unconfirmed",
+      blockId,
+    }),
+    [user?.id, projectBible],
+  );
+
+  /**
+   * 算出某一段**真正会发出去**的内容，交给工作台的生成前确认展示。
+   * 走的是生产代码路径本身（同一份组装、同一个请求体构造函数），不是另写一套预览逻辑；
+   * 在真正下单那一刻回卷，因此不建单、不扣费。不支持的模式会抛出明确原因，由界面展示。
+   */
+  /**
+   * 用户在生成前确认过的段。键是节点 id。
+   * 用 ref 而不是 state：runFactory 是长跑异步，读 state 会拿到闭包里的旧值。
+   */
+  const outboundConfirmationsRef = useRef<Record<string, ManhuaOutboundConfirmation>>({});
+  const [outboundConfirmedAtByBlock, setOutboundConfirmedAtByBlock] = useState<
+    Record<string, number>
+  >({});
+  const confirmClipOutbound = useCallback(
+    async (blockId: string) => {
+      const block = blocksRef.current.find((item) => item.id === blockId);
+      if (!block) throw new Error("该段节点已不存在，请刷新后重试");
+      const preview = await previewCanvasBlockOutbound(runDeps, block);
+      if (preview.compile.blocked || preview.compile.fatalZh) {
+        throw new Error(
+          preview.compile.fatalZh ||
+            `出站校验未通过，未确认：${preview.compile.issues
+              .map((issue) => issue.detailZh)
+              .join("；")}`,
+        );
+      }
+      const scope = manhuaOutboundScope(blockId);
+      const confirmedAt = Date.now();
+      outboundConfirmationsRef.current = {
+        ...outboundConfirmationsRef.current,
+        [blockId]: {
+          fingerprint: manhuaOutboundConfirmationFingerprint(preview, scope),
+          scope,
+          confirmedAt,
+        },
+      };
+      setOutboundConfirmedAtByBlock((prev) => ({ ...prev, [blockId]: confirmedAt }));
+    },
+    [runDeps, manhuaOutboundScope],
+  );
+
+  const previewClipOutbound = useCallback(
+    async (blockId: string) => {
+      const block = blocksRef.current.find((item) => item.id === blockId);
+      if (!block) throw new Error("该段节点已不存在，请刷新后重试");
+      return previewCanvasBlockOutbound(runDeps, block);
+    },
+    [runDeps],
+  );
+
 
   const setDirectorBoardMainForEpisode = useCallback(
     (episodeIndex: number, entry: { gcsUri: string; url?: string } | null) => {
@@ -7974,6 +8048,9 @@ export default function OmniCanvas() {
               maxRetries: opts?.pilotRun ? 0 : opts?.maxRetries,
               stopOnError: opts?.pilotRun ? true : opts?.stopOnError,
               pilotRun: opts?.pilotRun === true,
+              // 单段、批量、重跑都从这里下发：确认过的段在发请求前逐字比对，变了就中止不扣费
+              resolveOutboundConfirmation: (blockId) =>
+                outboundConfirmationsRef.current[blockId],
               signal: ac.signal,
               onBlocksChange: (next) => {
                 workingBlocks = next;
@@ -9024,6 +9101,9 @@ export default function OmniCanvas() {
                 }
               >
                 <ManhuaScriptWorkbench
+                  onPreviewClipOutbound={previewClipOutbound}
+                  onConfirmClipOutbound={confirmClipOutbound}
+                  outboundConfirmedAtByBlock={outboundConfirmedAtByBlock}
                   immersive={immersiveWorkbench}
                   onAdvisorSelectionChange={setAdvisorSelection}
                   blocks={blocks}

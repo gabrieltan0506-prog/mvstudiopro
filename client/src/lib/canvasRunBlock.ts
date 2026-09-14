@@ -1448,6 +1448,27 @@ class CanvasOutboundPreviewSignal extends Error {
   }
 }
 
+/**
+ * 用户在生成前确认过的那一份。
+ * fingerprint 由 {@link manhuaOutboundConfirmationFingerprint} 算出，绑定 scope 身份。
+ */
+export type ManhuaOutboundConfirmation = {
+  fingerprint: string;
+  scope: CanvasOutboundConfirmationScope;
+  /** 确认时刻，便于界面显示与排查；不参与比对 */
+  confirmedAt: number;
+};
+
+/** 确认与实际出站不一致时抛这个：**在发请求之前**，不建单不扣费 */
+export class ManhuaOutboundConfirmationMismatchError extends Error {
+  readonly reasonZh: string;
+  constructor(reasonZh: string) {
+    super(reasonZh);
+    this.name = "ManhuaOutboundConfirmationMismatchError";
+    this.reasonZh = reasonZh;
+  }
+}
+
 /** 预览不支持该组合时抛这个，调用方据 reasonZh 直接展示，不做任何生产动作 */
 export class CanvasOutboundPreviewUnsupportedError extends Error {
   readonly reasonZh: string;
@@ -1552,6 +1573,11 @@ export function normalizeOutboundRefUrlForFingerprint(raw: unknown): string {
 /** 每次提交都不同、与用户所见内容无关的字段；只排除这些，其余全部计入 */
 const OUTBOUND_FINGERPRINT_EXCLUDED_KEYS = new Set(["idempotencyKey"]);
 
+/**
+ * 递归归一：嵌套对象也按键排序。
+ * 只做顶层排序的话，`manhuaPilot: { a, b }` 与 `{ b, a }` 这种等价结构会被判成不同，
+ * 用户什么都没改却被告知确认失效。数组顺序**保留**——参考素材的顺序本身有语义。
+ */
 function normalizeFingerprintValue(key: string, value: unknown): unknown {
   if (value === undefined) return undefined;
   if (key === "imageUrl") return normalizeOutboundRefUrlForFingerprint(value);
@@ -1560,16 +1586,31 @@ function normalizeFingerprintValue(key: string, value: unknown): unknown {
       ? value.map((item) => normalizeOutboundRefUrlForFingerprint(item))
       : value;
   }
-  return value;
+  return sortNestedKeys(value);
 }
 
+function sortNestedKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => sortNestedKeys(item));
+  if (!value || typeof value !== "object") return value;
+  const source = value as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(source).sort()) {
+    if (source[key] !== undefined) out[key] = sortNestedKeys(source[key]);
+  }
+  return out;
+}
+
+/**
+ * 确认归属。**三项都是必填**——可选会被省略，一旦省略就退化成缺省 null 身份，
+ * 换账号、换项目、换节点都拿到同一个指纹（0914 复审明确要求不得使用缺省 null 身份）。
+ */
 export type CanvasOutboundConfirmationScope = {
   /** 谁确认的；换账号不得沿用 */
-  userId?: string | number | null;
+  userId: string | number;
   /** 哪个项目／哪份云草稿 */
-  projectId?: string | null;
+  projectId: string;
   /** 哪个节点 */
-  blockId?: string | null;
+  blockId: string;
 };
 
 /**
@@ -1584,7 +1625,7 @@ export type CanvasOutboundConfirmationScope = {
  */
 export function manhuaOutboundConfirmationFingerprint(
   preview: Pick<CanvasOutboundPreview, "engine" | "body">,
-  scope?: CanvasOutboundConfirmationScope,
+  scope: CanvasOutboundConfirmationScope,
 ): string {
   const body = preview.body as Record<string, unknown>;
   const shaped: Record<string, unknown> = {};
@@ -1596,9 +1637,9 @@ export function manhuaOutboundConfirmationFingerprint(
   return JSON.stringify({
     engine: preview.engine,
     scope: {
-      userId: scope?.userId === undefined || scope?.userId === null ? null : String(scope.userId),
-      projectId: scope?.projectId ? String(scope.projectId) : null,
-      blockId: scope?.blockId ? String(scope.blockId) : null,
+      userId: String(scope.userId),
+      projectId: String(scope.projectId),
+      blockId: String(scope.blockId),
     },
     request: shaped,
   });
@@ -1640,6 +1681,12 @@ export async function runCanvasBlock(
      * 只由 previewCanvasBlockOutbound 使用；不写节点、不建单、不扣费。
      */
     previewOnly?: boolean;
+    /**
+     * 用户确认过的那一份。传了就**在发请求之前**重算指纹逐字比对，
+     * 不一致直接中止：不建单、不扣费、旧产物不动、不自动改参数重下单。
+     * 单段、批量、重跑都从 runCanvasBlock 出站，所以这一处就是全部提交入口的共同闸。
+     */
+    confirmation?: ManhuaOutboundConfirmation;
   },
 ): Promise<{
   outputText?: string;
@@ -2564,6 +2611,24 @@ export async function runCanvasBlock(
         } as const;
         const seedanceFirstFrame =
           useSeedance25 && workMode === "text_to_video" ? undefined : seedStill;
+        if (runOptions?.confirmation && !runOptions?.previewOnly) {
+          // 与预览同源：同一个构造函数、同一个指纹算法。
+          const settled = buildSeedanceCanvasRequestBody(
+            finalPrompt,
+            seedanceFirstFrame,
+            ar,
+            seedanceOpts,
+          );
+          const actual = manhuaOutboundConfirmationFingerprint(
+            { engine: videoModel, body: settled.body },
+            runOptions.confirmation.scope,
+          );
+          if (actual !== runOptions.confirmation.fingerprint) {
+            throw new ManhuaOutboundConfirmationMismatchError(
+              "提示词、模型、时长或参考素材在确认之后发生了变化，本次未提交、未扣费。请重新查看生成前确认并再次确认。",
+            );
+          }
+        }
         if (runOptions?.previewOnly) {
           // 生成前确认：组装已经全部走完（含转 https、重签段参考、刷新已登记成片链），
           // 在这里回卷，不发请求、不建单、不扣费。

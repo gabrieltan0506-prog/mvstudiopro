@@ -70,7 +70,12 @@ import {
   parseManhuaEpisodeSegmentPlanFromMarkdown,
   type ManhuaEpisodeSegmentPlan,
 } from "@shared/manhuaEpisodeSegmentPlan";
-import { newWanSubmissionKey, runCanvasBlock, type CanvasRunDeps } from "./canvasRunBlock";
+import {
+  newWanSubmissionKey,
+  runCanvasBlock,
+  type CanvasRunDeps,
+  type ManhuaOutboundConfirmation,
+} from "./canvasRunBlock";
 import { mapWithConcurrency } from "./canvasUpload";
 import { MANHUA_DRAMA_DEFAULT_PROMPTS } from "@shared/videoReversePrompt";
 import {
@@ -3855,6 +3860,13 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   onBlocksChange?: (blocks: CanvasBlock[]) => void;
   /** 本次执行是首段 10 秒试片；只约束成片载荷，不修改草稿中的独立分镜原文。 */
   pilotRun?: boolean;
+  /**
+   * 生成前确认查询器：按节点 id 返回用户确认过的那一份。
+   * 返回 undefined 表示这一段没有确认记录——**照旧提交**（沿用原行为，本期不改门槛），
+   * 返回了就由 runCanvasBlock 在发请求前逐字比对，不一致中止、不扣费。
+   * 单段、批量、重跑都经这里下发，所以三条入口是同一套校验。
+   */
+  resolveOutboundConfirmation?: (blockId: string) => ManhuaOutboundConfirmation | undefined;
   onStageStart?: (blockId: string, index: number, total: number, label: string) => void;
   onStageDone?: (blockId: string, index: number, total: number, label: string) => void;
   /** 单节点最终失败（含关键静帧批量中的一张） */
@@ -4436,7 +4448,11 @@ export async function runManhuaDramaFactoryPipeline(opts: {
             visionImages,
             texts,
           },
-          { videoSubmissionKey, pilotRun: opts.pilotRun === true && stage === "clip" },
+          {
+            videoSubmissionKey,
+            pilotRun: opts.pilotRun === true && stage === "clip",
+            confirmation: opts.resolveOutboundConfirmation?.(blockId),
+          },
         );
         if (preparedVideoEdit && !String(out.outputUrl || out.outputUrls?.[0] || "").trim()) {
           throw new Error("未取得视频编辑结果，原片已保留；请先核对任务记录，不要重复提交");

@@ -612,6 +612,27 @@ type Props = {
   onFocusBlock?: (blockId: string) => void;
   /** 0903 原地 image-2 改图：返回新图 URL；抛错=失败（由本组件展示错误）。 */
   onEditImageBlock?: (input: { blockId: string; prompt: string }) => Promise<string>;
+  /**
+   * 生成前确认：算出该段**真正会发出去**的请求内容。
+   *
+   * 面板里原本展示的是节点上存的 prompt，而出站前还要过引擎方言与格式层
+   * （Seedance 还会把 @图N 还原成 @图片N），两者不是同一个串。
+   * 由持有 CanvasRunDeps 的画布页传入；本组件只展示，不发起生成。
+   */
+  onPreviewClipOutbound?: (blockId: string) => Promise<{
+    body: Record<string, unknown>;
+    compile: { text: string; blocked: boolean; fatalZh?: string; issues: Array<{ detailZh: string }> };
+    durationSec: number;
+    refCounts: { image: number; video: number; audio: number };
+    refs: { imageUrls: string[]; videoUrls: string[]; audioUrls: string[] };
+  }>;
+  /**
+   * 确认这一段的出站内容。确认后到真正生成之间若提示词、模型、时长或参考素材有变化，
+   * 运行前核对会中止本次提交、不扣费。出站校验未通过时拒绝确认并抛出原因。
+   */
+  onConfirmClipOutbound?: (blockId: string) => Promise<void>;
+  /** 各段确认时刻（毫秒）；用于显示「已确认」状态 */
+  outboundConfirmedAtByBlock?: Record<string, number>;
   /** 确认编剧后：整屏编辑器壳（无圆角卡片、三栏占满视口） */
   immersive?: boolean;
   /**
@@ -979,6 +1000,9 @@ export default function ManhuaScriptWorkbench({
   onConfirmOutline,
   onOpenWriterEditor,
   onAdvisorSelectionChange,
+  onPreviewClipOutbound,
+  onConfirmClipOutbound,
+  outboundConfirmedAtByBlock,
   assetsSkipped: _assetsSkippedProp,
   onAssetsSkippedChange: _onAssetsSkippedChange,
   workflowPhase: workflowPhaseProp,
@@ -1103,6 +1127,58 @@ export default function ManhuaScriptWorkbench({
   const activeArtStyleId: ManhuaArtStyleId = normalizeManhuaArtStyleId(artStyleId);
   const [shotIndex, setShotIndex] = useState(0);
   const [clipPromptReviewOpen, setClipPromptReviewOpen] = useState(false);
+  /**
+   * 每段的「实际出站内容」。按段按需计算——展开时一次性给所有段算会重复续签、
+   * 且面板一打开就发一串请求。键是节点 id。
+   */
+  const [clipOutboundPreview, setClipOutboundPreview] = useState<
+    Record<
+      string,
+      | { state: "loading" }
+      | { state: "error"; messageZh: string }
+      | {
+          state: "ready";
+          promptText: string;
+          blocked: boolean;
+          issuesZh: string[];
+          durationSec: number;
+          refs: { imageUrls: string[]; videoUrls: string[]; audioUrls: string[] };
+        }
+    >
+  >({});
+  const loadClipOutboundPreview = useCallback(
+    async (blockId: string) => {
+      if (!onPreviewClipOutbound || !blockId) return;
+      setClipOutboundPreview((prev) => ({ ...prev, [blockId]: { state: "loading" } }));
+      try {
+        const preview = await onPreviewClipOutbound(blockId);
+        setClipOutboundPreview((prev) => ({
+          ...prev,
+          [blockId]: {
+            state: "ready",
+            promptText: String(preview.compile.text || ""),
+            blocked: Boolean(preview.compile.blocked || preview.compile.fatalZh),
+            issuesZh: preview.compile.fatalZh
+              ? [preview.compile.fatalZh]
+              : (preview.compile.issues || []).map((issue) => issue.detailZh),
+            durationSec: preview.durationSec,
+            refs: preview.refs,
+          },
+        }));
+      } catch (error) {
+        // 不支持的模式与编译失败都走这里：**明确显示原因，不静默跳过确认**。
+        setClipOutboundPreview((prev) => ({
+          ...prev,
+          [blockId]: {
+            state: "error",
+            messageZh:
+              error instanceof Error ? error.message : "无法取得实际出站内容",
+          },
+        }));
+      }
+    },
+    [onPreviewClipOutbound],
+  );
   const [audioStudioOpen, setAudioStudioOpen] = useState(false);
   const [previsStudioOpen,setPrevisStudioOpen] = useState(false);
   /** 免费裁字弹层：拖框选保留区，框外（含烧字边缘）裁掉 */
@@ -8070,6 +8146,116 @@ export default function ManhuaScriptWorkbench({
                           </>
                         );
                       })()}
+                      {onPreviewClipOutbound && row.clip?.id ? (
+                        (() => {
+                          const blockId = row.clip.id;
+                          const preview = clipOutboundPreview[blockId];
+                          return (
+                            <div
+                              data-manhua-clip-outbound={row.segmentIndex}
+                              className="mt-1.5 rounded border border-white/10 bg-black/25 p-1.5"
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-1">
+                                <span className="text-[9px] font-semibold text-white/60">
+                                  实际发送内容
+                                </span>
+                                <div className="flex items-center gap-1">
+                                  {outboundConfirmedAtByBlock?.[blockId] ? (
+                                    <span className="rounded bg-emerald-500/25 px-1 py-px text-[8px] font-semibold text-emerald-50">
+                                      已确认
+                                    </span>
+                                  ) : null}
+                                  <button
+                                    type="button"
+                                    className="rounded border border-white/15 px-1.5 py-0.5 text-[9px] text-white/70 hover:bg-white/5 disabled:opacity-50"
+                                    disabled={preview?.state === "loading"}
+                                    onClick={() => void loadClipOutboundPreview(blockId)}
+                                  >
+                                    {preview?.state === "loading"
+                                      ? "正在核对…"
+                                      : preview
+                                        ? "重新核对"
+                                        : "查看实际发送内容"}
+                                  </button>
+                                  {onConfirmClipOutbound &&
+                                  preview?.state === "ready" &&
+                                  !preview.blocked ? (
+                                    <button
+                                      type="button"
+                                      className="rounded border border-emerald-300/40 bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-50 hover:bg-emerald-500/25"
+                                      onClick={() => {
+                                        void onConfirmClipOutbound(blockId).catch((error) => {
+                                          setClipOutboundPreview((prev) => ({
+                                            ...prev,
+                                            [blockId]: {
+                                              state: "error",
+                                              messageZh:
+                                                error instanceof Error
+                                                  ? error.message
+                                                  : "确认失败",
+                                            },
+                                          }));
+                                        });
+                                      }}
+                                    >
+                                      {outboundConfirmedAtByBlock?.[blockId]
+                                        ? "重新确认"
+                                        : "确认这一段"}
+                                    </button>
+                                  ) : null}
+                                </div>
+                              </div>
+                              {!preview ? (
+                                <div className="mt-1 text-[9px] text-white/40">
+                                  上面显示的是节点里存的文本；真正发给引擎的会再过一层编译（方言、
+                                  引用编号、时长与参考数量校验）。发车前请点开核对。
+                                </div>
+                              ) : preview.state === "error" ? (
+                                <div className="mt-1 rounded bg-amber-500/15 px-1.5 py-1 text-[9px] text-amber-50">
+                                  {preview.messageZh}
+                                </div>
+                              ) : preview.state === "ready" ? (
+                                <div className="mt-1 space-y-1">
+                                  {preview.blocked ? (
+                                    <div className="rounded bg-red-500/25 px-1.5 py-1 text-[9px] font-semibold text-red-50">
+                                      出站校验未通过，这一段现在点生成会被拦下、不会扣费：
+                                      {preview.issuesZh.join("；")}
+                                    </div>
+                                  ) : preview.issuesZh.length ? (
+                                    <div className="rounded bg-white/5 px-1.5 py-1 text-[9px] text-white/60">
+                                      提示：{preview.issuesZh.join("；")}
+                                    </div>
+                                  ) : null}
+                                  <div className="text-[9px] text-white/45">
+                                    目标 {preview.durationSec}s · 参考 图
+                                    {preview.refs.imageUrls.length}／视频
+                                    {preview.refs.videoUrls.length}／音频
+                                    {preview.refs.audioUrls.length}（按实际发送顺序）
+                                  </div>
+                                  <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-black/40 p-1.5 text-[9px] leading-relaxed text-white/80">
+                                    {preview.promptText}
+                                  </pre>
+                                  {preview.refs.imageUrls.length ||
+                                  preview.refs.videoUrls.length ||
+                                  preview.refs.audioUrls.length ? (
+                                    <ol className="space-y-0.5 text-[9px] text-white/50">
+                                      {[
+                                        ...preview.refs.imageUrls.map((u, i) => [`@图片${i + 1}`, u] as const),
+                                        ...preview.refs.videoUrls.map((u, i) => [`@视频${i + 1}`, u] as const),
+                                        ...preview.refs.audioUrls.map((u, i) => [`@audio${i + 1}`, u] as const),
+                                      ].map(([tag, url]) => (
+                                        <li key={`${tag}-${url}`} className="truncate" title={url}>
+                                          {tag} · {url}
+                                        </li>
+                                      ))}
+                                    </ol>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })()
+                      ) : null}
                     </div>
                   ))}
                   <div className="flex flex-wrap gap-1.5 pt-0.5">
