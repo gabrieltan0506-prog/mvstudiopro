@@ -1,6 +1,7 @@
 import "dotenv/config";
 // 必须在任何图像处理模块之前载入：全局限制 sharp/libvips 内存（0911 OOM 事故）
 import "./sharpLimits.js";
+import { registerGcsTransfer } from "../routers/gcsTransfer";
 import express from "express";
 import { createServer } from "http";
 import net from "net";
@@ -104,7 +105,7 @@ function applyApiCors(req: express.Request, res: express.Response) {
   res.header("Access-Control-Allow-Origin", origin);
   res.header("Vary", "Origin");
   res.header("Access-Control-Allow-Credentials", "true");
-  res.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.header("Access-Control-Allow-Methods", req.path === "/gcs-transfer" || req.path === "/api/gcs-transfer" ? "GET,PUT,HEAD,OPTIONS" : "GET,POST,OPTIONS");
   res.header("Access-Control-Max-Age", "86400");
   res.header(
     "Access-Control-Allow-Headers",
@@ -227,9 +228,6 @@ async function startServer() {
   // 视频分块入口先鉴权并自行限制请求体，不能经过通用大 JSON 解析器。
   app.use(manhuaLocalVideoUploadRouter);
   // Keep JSON/urlencoded limits aligned with larger creator uploads and long debug payloads.
-  app.use(express.json({ limit: "650mb" }));
-  app.use(express.urlencoded({ limit: "650mb", extended: true }));
-
   // Global CORS middleware for all API routes
   app.use("/api", (req, res, next) => {
     applyApiCors(req, res);
@@ -238,6 +236,10 @@ async function startServer() {
     }
     next();
   });
+  registerGcsTransfer(app);
+  app.use(express.json({ limit: "650mb" }));
+  app.use(express.urlencoded({ limit: "650mb", extended: true }));
+
   // OAuth callback under /api/oauth/callback
   registerOAuthRoutes(app);
   // File upload

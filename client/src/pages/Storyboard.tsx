@@ -1,3 +1,4 @@
+import { gcsTransferUrl } from "@/lib/gcsTransfer";
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
@@ -463,7 +464,7 @@ export default function StoryboardPage() {
 
   const triggerDownload = (url: string, filename: string) => {
     const a = document.createElement('a');
-    a.href = url;
+    a.href = gcsTransferUrl(url);
     a.download = filename;
     a.target = '_blank';
     a.rel = 'noopener noreferrer';

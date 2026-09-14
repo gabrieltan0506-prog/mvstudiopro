@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { gcsTransferUrl } from "@/lib/gcsTransfer";
 import React, { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { ExpiryWarningBanner, CreationHistoryPanel, FavoriteButton } from "@/components/CreationManager";
 import { useLocation, Link } from "wouter";
@@ -582,9 +583,9 @@ export default function VirtualIdol() {
                           <ModelViewer src={glbUrl} />
                         </div>
                         <div className="flex items-center gap-2">
-                          <a href={glbUrl} download="virtual_idol.glb" className="px-4 py-2 bg-gradient-to-r from-cyan-500/80 to-blue-600/80 rounded-lg text-sm font-medium hover:from-cyan-400 hover:to-blue-500 transition-all duration-300 hover:scale-[1.03] active:scale-[0.97] hover:shadow-lg hover:shadow-cyan-500/20">下载 GLB</a>
-                          {objUrl && <a href={objUrl} download="virtual_idol.obj" className="px-4 py-2 bg-white/[0.06] border border-white/[0.08] rounded-lg text-sm text-white/60 hover:bg-white/[0.1] transition-all duration-300">下载 OBJ</a>}
-                          {textureUrl3D && <a href={textureUrl3D} download="virtual_idol_texture.png" className="px-4 py-2 bg-white/[0.06] border border-white/[0.08] rounded-lg text-sm text-white/60 hover:bg-white/[0.1] transition-all duration-300">下载贴图</a>}
+                          <a href={gcsTransferUrl(glbUrl)} download="virtual_idol.glb" className="px-4 py-2 bg-gradient-to-r from-cyan-500/80 to-blue-600/80 rounded-lg text-sm font-medium hover:from-cyan-400 hover:to-blue-500 transition-all duration-300 hover:scale-[1.03] active:scale-[0.97] hover:shadow-lg hover:shadow-cyan-500/20">下载 GLB</a>
+                          {objUrl && <a href={gcsTransferUrl(objUrl)} download="virtual_idol.obj" className="px-4 py-2 bg-white/[0.06] border border-white/[0.08] rounded-lg text-sm text-white/60 hover:bg-white/[0.1] transition-all duration-300">下载 OBJ</a>}
+                          {textureUrl3D && <a href={gcsTransferUrl(textureUrl3D)} download="virtual_idol_texture.png" className="px-4 py-2 bg-white/[0.06] border border-white/[0.08] rounded-lg text-sm text-white/60 hover:bg-white/[0.1] transition-all duration-300">下载贴图</a>}
                         </div>
                       </div>
                     )}

@@ -1,6 +1,7 @@
 // @ts-nocheck
+import { gcsTransferUrl, isGcsTransferUrl } from "@/lib/gcsTransfer";
 import { useLocation, Link } from "wouter";
-import { Film, ZoomIn, Zap, Palette, Film, Rotate3d, Check, Timer, Loader2, Play, Download, ArrowLeft, CheckCircle, Wand2 } from "lucide-react";
+import { Film, ZoomIn, Zap, Palette, Rotate3d, Check, Timer, Loader2, Play, Download, ArrowLeft, CheckCircle, Wand2 } from "lucide-react";
 import { useState, useCallback, useRef } from "react";
 import { toast } from "sonner";
 
@@ -112,7 +113,8 @@ export default function IntroPreviewPage() {
   const handleDownloadVideo = useCallback(async (videoUrl: string, title: string) => {
     setDownloading(videoUrl);
     try {
-      const response = await fetch(videoUrl);
+      const response = await fetch(gcsTransferUrl(videoUrl), { credentials: isGcsTransferUrl(videoUrl) ? "include" : "same-origin" });
+      if (!response.ok) throw new Error(`下载失败 (${response.status})`);
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");

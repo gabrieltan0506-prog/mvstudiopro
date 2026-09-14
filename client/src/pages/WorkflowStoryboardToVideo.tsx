@@ -1,3 +1,4 @@
+import { gcsTransferUrl, isGcsTransferUrl } from "@/lib/gcsTransfer";
 import React, { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { readGrowthHandoff } from "@/lib/growthHandoff";
@@ -577,7 +578,7 @@ export default function WorkflowStoryboardToVideo() {
 
   function exportStoryboardImage(imageUrl: string) {
     const a = document.createElement("a");
-    a.href = toAssetDisplayUrl(imageUrl);
+    a.href = isGcsTransferUrl(imageUrl) ? gcsTransferUrl(imageUrl) : toAssetDisplayUrl(imageUrl);
     a.target = "_blank";
     a.rel = "noreferrer";
     a.download = `storyboard-${Date.now()}.jpg`;

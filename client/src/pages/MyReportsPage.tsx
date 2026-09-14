@@ -1,3 +1,4 @@
+import { gcsTransferUrl, isGcsTransferUrl } from "@/lib/gcsTransfer";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import {
@@ -725,7 +726,8 @@ export default function MyReportsPage() {
         "Content-Type": "text/html; charset=utf-8",
         ...(uploadMeta.requiredHeaders || {}),
       };
-      const putRes = await fetch(uploadMeta.uploadUrl, {
+      const putRes = await fetch(gcsTransferUrl(uploadMeta.uploadUrl), {
+        credentials: isGcsTransferUrl(uploadMeta.uploadUrl) ? "include" : "same-origin",
         method: "PUT",
         headers: putHeaders,
         body: html,

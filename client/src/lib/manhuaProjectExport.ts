@@ -1,3 +1,4 @@
+import { gcsTransferUrl, isGcsTransferUrl } from "@/lib/gcsTransfer";
 /**
  * 漫剧成片坞：扫描画布产物 + 浏览器 JSZip 工程包导出（不含长片拼接）。
  */
@@ -511,7 +512,7 @@ export type ExportManhuaProjectZipResult = {
 };
 
 async function fetchAsArrayBuffer(url: string): Promise<ArrayBuffer> {
-  const resp = await fetch(url);
+  const resp = await fetch(gcsTransferUrl(url), { credentials: isGcsTransferUrl(url) ? "include" : "same-origin" });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   return resp.arrayBuffer();
 }

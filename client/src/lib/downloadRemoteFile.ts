@@ -1,13 +1,5 @@
-/**
- * 直接下载远端产物（成片 mp4 / 静帧图）。
- *
- * 不能只写 <a download>：产物是 GCS 签名地址，跨域时 download 属性会被浏览器
- * 忽略，点了变成跳走播放，用户以为按钮坏了。所以先抓成 blob 再下，拿得到
- * 文件名也拿得到进度可控性。
- *
- * 抓不到就退回开新标签页——签名过期或 CORS 没开时至少还能右键另存，
- * 而不是点了毫无反应。
- */
+import { gcsTransferUrl, isGcsTransferUrl } from "./gcsTransfer";
+/** 远端产物下载：GCS经Fly转发，失败明确报错，不回退GCS直连。 */
 
 export type DownloadRemoteFileResult = {
   ok: boolean;
@@ -45,7 +37,7 @@ export async function downloadRemoteFile(
   if (!/^https?:\/\//i.test(src)) throw new Error("下载地址无效");
   const filename = guessRemoteFileName(src, fileNameBase);
   try {
-    const resp = await fetch(src);
+    const resp = await fetch(gcsTransferUrl(src), { credentials: isGcsTransferUrl(src) ? "include" : "same-origin" });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const blob = await resp.blob();
     const objectUrl = URL.createObjectURL(blob);
@@ -58,7 +50,8 @@ export async function downloadRemoteFile(
     // 立刻 revoke 会让 Safari 下到半路断掉，给一段缓冲
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
     return { ok: true, via: "blob" };
-  } catch {
+  } catch (error) {
+    if (isGcsTransferUrl(src)) throw error;
     window.open(src, "_blank", "noopener,noreferrer");
     return { ok: false, via: "fallback" };
   }

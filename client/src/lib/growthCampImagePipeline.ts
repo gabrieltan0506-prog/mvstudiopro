@@ -1,3 +1,4 @@
+import { gcsTransferUrl, isGcsTransferUrl } from "@/lib/gcsTransfer";
 import { createJob, pollJobUntilTerminal, type JobStatus } from "@/lib/jobs";
 import type { GrowthAnalysisScores, GrowthCampModel } from "@shared/growth";
 import { mergeGrowthAnalysesDeterministic, parseGrowthAnalysisScores } from "@shared/growth";
@@ -292,7 +293,8 @@ export async function uploadFileToSignedUrl(params: {
 }): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("PUT", params.uploadUrl, true);
+    xhr.open("PUT", gcsTransferUrl(params.uploadUrl), true);
+    if (isGcsTransferUrl(params.uploadUrl)) xhr.withCredentials = true;
 
     xhr.upload.onprogress = (event) => {
       if (!event.lengthComputable) return;

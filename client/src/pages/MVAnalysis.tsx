@@ -1,3 +1,4 @@
+import { gcsTransferUrl, isGcsTransferUrl } from "@/lib/gcsTransfer";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
@@ -814,7 +815,8 @@ async function uploadFileToSignedUrl(params: {
 }) {
   return new Promise<void>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("PUT", params.uploadUrl, true);
+    xhr.open("PUT", gcsTransferUrl(params.uploadUrl), true);
+    if (isGcsTransferUrl(params.uploadUrl)) xhr.withCredentials = true;
 
     xhr.upload.onprogress = (event) => {
       if (!event.lengthComputable) return;

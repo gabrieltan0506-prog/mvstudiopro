@@ -1,3 +1,4 @@
+import { gcsTransferUrl } from "@/lib/gcsTransfer";
 import { mergeNativeProposalListAndDetail } from "@/lib/manhuaLearnResultUi";
 import { readOpenAiImageVariantPref } from "@/lib/openaiImageVariantPref";
 import OpenAiImageVariantSwitch from "@/components/OpenAiImageVariantSwitch";
@@ -16187,7 +16188,7 @@ export default function PlatformPage() {
                         {knowledgeCardPdfBusy ? "正在合成 PDF…" : `整套下载 PDF（${customNoteImages.filter(Boolean).length} 页 · 统一 3840×2160）`}
                       </button>
                       {knowledgeCardPdfUrl ? (
-                        <a href={knowledgeCardPdfUrl} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-[#8cefff] underline">打开 / 下载 PDF</a>
+                        <a href={gcsTransferUrl(knowledgeCardPdfUrl)} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-[#8cefff] underline">打开 / 下载 PDF</a>
                       ) : null}
                       <span className="text-[11px] text-[#c9c0e6]/45">单张下载见各页右下角</span>
                     </div>
@@ -16208,7 +16209,7 @@ export default function PlatformPage() {
                       />
                       <div className="flex justify-end">
                         <a
-                          href={url}
+                          href={gcsTransferUrl(url)}
                           download={`knowledge-card-p${idx + 1}.png`}
                           target="_blank"
                           rel="noopener noreferrer"
@@ -16251,7 +16252,7 @@ export default function PlatformPage() {
                       />
                       <div className="flex justify-end">
                         <a
-                          href={customNoteImageUpper}
+                          href={gcsTransferUrl(customNoteImageUpper)}
                           download="storyboard-2x4.png"
                           target="_blank"
                           rel="noopener noreferrer"
@@ -16566,7 +16567,7 @@ export default function PlatformPage() {
                       />
                       <div className="flex justify-center">
                         <a
-                          href={customTopicCoverUrl}
+                          href={gcsTransferUrl(customTopicCoverUrl)}
                           download="custom-topic-cover.png"
                           target="_blank"
                           rel="noopener noreferrer"
@@ -16590,7 +16591,7 @@ export default function PlatformPage() {
                       />
                       <div className="flex justify-end">
                         <a
-                          href={customTopicStoryboardUrl}
+                          href={gcsTransferUrl(customTopicStoryboardUrl)}
                           download={`custom-topic-storyboard-${customTopicGridVariant}.png`}
                           target="_blank"
                           rel="noopener noreferrer"
@@ -16867,7 +16868,7 @@ export default function PlatformPage() {
                           设为参考人像
                         </button>
                         <a
-                          href={url}
+                          href={gcsTransferUrl(url)}
                           download={`custom-matting-${customMattingAspect.replace(":", "x")}-${idx + 1}.png`}
                           target="_blank"
                           rel="noopener noreferrer"

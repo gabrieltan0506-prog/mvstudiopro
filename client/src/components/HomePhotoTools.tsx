@@ -1,3 +1,4 @@
+import { gcsTransferUrl } from "@/lib/gcsTransfer";
 import { useEffect, useRef, useState } from "react";
 import {
   Download,
@@ -464,7 +465,7 @@ export default function HomePhotoTools() {
             {result.label} · 实扣 {result.credits} 积分
           </span>
           <a
-            href={result.url}
+            href={gcsTransferUrl(result.url)}
             download={resultDownloadName(result.label, "png")}
             target="_blank"
             rel="noreferrer"
@@ -712,7 +713,7 @@ export default function HomePhotoTools() {
                   {videoResult.label} · 实扣 {videoResult.credits} 积分
                 </span>
                 <a
-                  href={videoResult.url}
+                  href={gcsTransferUrl(videoResult.url)}
                   download={resultDownloadName(videoResult.label, "mp4")}
                   target="_blank"
                   rel="noreferrer"

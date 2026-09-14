@@ -1,3 +1,4 @@
+import { gcsTransferUrl } from "@/lib/gcsTransfer";
 import React, { useMemo, useRef, useState } from "react";
 import { withFlyHealthGate } from "@/lib/flyHealthGate";
 import { flyHealthProbeOriginForUrl, withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
@@ -1227,7 +1228,7 @@ export default function TestLab() {
               <div style={{ fontWeight: 900, marginBottom: 8 }}>结果视频</div>
               <video controls src={videoUrl} style={{ width: "100%", borderRadius: 14, background: "black" }} />
               <div style={{ marginTop: 10 }}>
-                <a href={videoUrl} target="_blank" rel="noreferrer" style={{ color: "white" }}>打开 / 下载视频</a>
+                <a href={gcsTransferUrl(videoUrl)} target="_blank" rel="noreferrer" style={{ color: "white" }}>打开 / 下载视频</a>
               </div>
             </div>
           ) : null}
