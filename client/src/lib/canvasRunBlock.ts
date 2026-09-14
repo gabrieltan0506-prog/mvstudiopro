@@ -1448,6 +1448,57 @@ class CanvasOutboundPreviewSignal extends Error {
   }
 }
 
+/** 预览不支持该组合时抛这个，调用方据 reasonZh 直接展示，不做任何生产动作 */
+export class CanvasOutboundPreviewUnsupportedError extends Error {
+  readonly reasonZh: string;
+  constructor(reasonZh: string) {
+    super(reasonZh);
+    this.name = "CanvasOutboundPreviewUnsupportedError";
+    this.reasonZh = reasonZh;
+  }
+}
+
+/**
+ * 生成前预览目前只覆盖「普通 Seedance 段成片」这一条路径。
+ *
+ * **必须在进入任何生产路径或外部调用之前判定**：原片编辑会在 block.kind==="video" 之后
+ * 立刻进入 runSeedanceProductVideo；Wan / H3 / HappyHorse 与非视频块各有自己的提交点，
+ * 都绕不到后面的预览回卷。把不支持的组合放到末尾才拒绝就太晚了——
+ * 那等于让预览真的发出付费请求。
+ *
+ * 返回 null 表示支持；否则返回中文原因。
+ */
+export function resolveCanvasOutboundPreviewUnsupportedReason(
+  block: Pick<CanvasBlock, "kind" | "videoModel" | "musicMvShot"> & Record<string, unknown>,
+): string | null {
+  if (block.kind !== "video") {
+    return `生成前预览目前只支持段成片节点，当前节点类型：${String(block.kind || "未知")}`;
+  }
+  if (block.musicMvShot) {
+    return "生成前预览暂不支持音乐 MV 镜头节点";
+  }
+  if (isManhuaVideoEditBlock(block as CanvasBlock)) {
+    return "生成前预览暂不支持原片编辑节点";
+  }
+  // 延长与编辑共用 2.5 的 workMode 契约，但没有专门谓词；凡是显式指定了
+  // 非「普通生成」的工作模式，一律不在本期预览范围内。
+  const declaredWorkMode = String(
+    (block as Record<string, unknown>).seedance25WorkMode ?? "",
+  ).trim();
+  if (declaredWorkMode && declaredWorkMode !== "text_to_video" && declaredWorkMode !== "reference_to_video") {
+    return `生成前预览暂不支持该工作模式：${declaredWorkMode}`;
+  }
+  const videoModel = normalizeCanvasVideoModel(block.videoModel);
+  if (
+    isCanvasWan30VideoModel(videoModel) ||
+    isCanvasHailuoH3VideoModel(videoModel) ||
+    isCanvasHappyHorseVideoModel(videoModel)
+  ) {
+    return `生成前预览暂不支持该成片引擎：${videoModel}`;
+  }
+  return null;
+}
+
 export type CanvasOutboundPreview = {
   engine: string;
   /** 真正会 POST 出去的请求体 */
@@ -1460,35 +1511,97 @@ export type CanvasOutboundPreview = {
 };
 
 /**
- * 出站确认指纹：由**真正会发出去的请求体**算出。
+ * 临时签名参数：同一个对象每次续签都会变，但内容没变。
+ * 只剥这些，**不对任意外链一概去 query**——外链的 query 可能代表不同内容。
+ */
+const GCS_V4_SIGNING_PARAMS = [
+  "X-Goog-Algorithm",
+  "X-Goog-Credential",
+  "X-Goog-Date",
+  "X-Goog-Expires",
+  "X-Goog-SignedHeaders",
+  "X-Goog-Signature",
+];
+
+/**
+ * 把参考素材地址规范成「语义身份」，用于确认指纹。
  *
- * 用途是「用户确认过的那一份 == 真正提交的那一份」。提示词、模型、时长、分辨率、
- * 画幅、工作模式或任意一条参考素材变化，指纹都会变，旧确认随之失效。
- * 不含 idempotencyKey 这类每次运行都不同、与用户所见内容无关的字段。
+ * 预览与生成各自都会重新续签（freshManhuaSegmentReferenceUrl / createCanvasAssetResigner），
+ * 若指纹直接含完整 URL，用户什么都没改也会因为签名时间变化被判成旧确认失效。
+ * 所以只对**可识别的 GCS 签名链**剥掉 V4 签名参数，保留 host + 路径 + 其余 query
+ * （generation 等版本参数留着：换版本必须失效）。其它地址原样保留。
+ */
+export function normalizeOutboundRefUrlForFingerprint(raw: unknown): string {
+  const value = String(raw ?? "").trim();
+  if (!value) return "";
+  let parsed: URL;
+  try {
+    parsed = new URL(value, "https://placeholder.invalid");
+  } catch {
+    return value;
+  }
+  const isGcsSigned =
+    /(^|\.)storage\.googleapis\.com$/i.test(parsed.hostname) &&
+    GCS_V4_SIGNING_PARAMS.some((key) => parsed.searchParams.has(key));
+  if (!isGcsSigned) return value;
+  for (const key of GCS_V4_SIGNING_PARAMS) parsed.searchParams.delete(key);
+  parsed.searchParams.sort();
+  return `${parsed.origin}${parsed.pathname}${parsed.search}`;
+}
+
+/** 每次提交都不同、与用户所见内容无关的字段；只排除这些，其余全部计入 */
+const OUTBOUND_FINGERPRINT_EXCLUDED_KEYS = new Set(["idempotencyKey"]);
+
+function normalizeFingerprintValue(key: string, value: unknown): unknown {
+  if (value === undefined) return undefined;
+  if (key === "imageUrl") return normalizeOutboundRefUrlForFingerprint(value);
+  if (key === "imageUrls" || key === "videoUrls" || key === "audioUrls") {
+    return Array.isArray(value)
+      ? value.map((item) => normalizeOutboundRefUrlForFingerprint(item))
+      : value;
+  }
+  return value;
+}
+
+export type CanvasOutboundConfirmationScope = {
+  /** 谁确认的；换账号不得沿用 */
+  userId?: string | number | null;
+  /** 哪个项目／哪份云草稿 */
+  projectId?: string | null;
+  /** 哪个节点 */
+  blockId?: string | null;
+};
+
+/**
+ * 出站确认指纹：由**真正会发出去的请求体**加上业务归属算出。
+ *
+ * 口径是**黑名单**不是白名单——请求体里除了每次都变的提交 nonce，其余字段全部计入。
+ * 白名单写法漏过 episodeIndex / clipIndex / manhuaPilot，会让换集、换段、换项目、
+ * 换试片身份的请求得到同一个指纹（0914 审查实测复现）。
+ *
+ * 参考素材地址先过 {@link normalizeOutboundRefUrlForFingerprint}：
+ * 同一对象重新签名不失效，换对象或换版本失效。
  */
 export function manhuaOutboundConfirmationFingerprint(
   preview: Pick<CanvasOutboundPreview, "engine" | "body">,
+  scope?: CanvasOutboundConfirmationScope,
 ): string {
   const body = preview.body as Record<string, unknown>;
-  const pick = [
-    "prompt",
-    "imageUrl",
-    "imageUrls",
-    "videoUrls",
-    "audioUrls",
-    "resolution",
-    "aspectRatio",
-    "duration",
-    "version",
-    "workMode",
-    "generateAudio",
-    "editSourceDurationSec",
-  ] as const;
-  const shaped: Record<string, unknown> = { engine: preview.engine };
-  for (const key of pick) {
-    if (body[key] !== undefined) shaped[key] = body[key];
+  const shaped: Record<string, unknown> = {};
+  for (const key of Object.keys(body).sort()) {
+    if (OUTBOUND_FINGERPRINT_EXCLUDED_KEYS.has(key)) continue;
+    const normalized = normalizeFingerprintValue(key, body[key]);
+    if (normalized !== undefined) shaped[key] = normalized;
   }
-  return JSON.stringify(shaped);
+  return JSON.stringify({
+    engine: preview.engine,
+    scope: {
+      userId: scope?.userId === undefined || scope?.userId === null ? null : String(scope.userId),
+      projectId: scope?.projectId ? String(scope.projectId) : null,
+      blockId: scope?.blockId ? String(scope.blockId) : null,
+    },
+    request: shaped,
+  });
 }
 
 /**
@@ -1501,6 +1614,9 @@ export async function previewCanvasBlockOutbound(
   upstream: CanvasUpstreamContext = { visionImages: [], texts: [] },
   runOptions?: { videoSubmissionKey?: string; pilotRun?: boolean },
 ): Promise<CanvasOutboundPreview> {
+  // 先拒绝再执行：不支持的组合一步都不许往生产路径走。
+  const unsupported = resolveCanvasOutboundPreviewUnsupportedReason(block);
+  if (unsupported) throw new CanvasOutboundPreviewUnsupportedError(unsupported);
   try {
     await runCanvasBlock(deps, block, upstream, { ...runOptions, previewOnly: true });
   } catch (error) {
@@ -1537,6 +1653,12 @@ export async function runCanvasBlock(
   seedance25ThreadId?: string;
   seedance25WebThreadLink?: string;
 }> {
+  if (runOptions?.previewOnly) {
+    // 双保险：即便有人绕过 previewCanvasBlockOutbound 直接传 previewOnly，
+    // 也必须在任何外部调用之前拒绝，不能靠调用方守规矩。
+    const unsupported = resolveCanvasOutboundPreviewUnsupportedReason(block);
+    if (unsupported) throw new CanvasOutboundPreviewUnsupportedError(unsupported);
+  }
   if (block.kind === "music") throw new Error("请在音乐节点中选择生成音乐、分镜或合成阶段");
   if (runOptions?.pilotRun) {
     if (
