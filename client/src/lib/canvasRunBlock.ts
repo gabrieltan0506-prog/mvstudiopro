@@ -97,6 +97,7 @@ import {
 import {
   formatPromptForEngine,
   hasBlockingFormatIssues,
+  type FormatIssue,
 } from "@shared/promptFormatLayer";
 import {
   extractManhuaMentionedAssetTags,
@@ -644,17 +645,44 @@ function parseClipIndexFromBlockId(id: string): number | undefined {
  * 成片提示词唯一出站编译器：只做确定性方言转换与硬校验，不发请求、不扣费。
  * 生产路径禁用敏感词静默替换，避免对白与剧情在用户不知情时被改写。
  */
-export function compileManhuaVideoPromptForOutbound(input: {
+export type ManhuaOutboundPromptCompileInput = {
   prompt: string;
   engine: CompilerEngineId | string;
   durationSec?: number;
   imageRefCount?: number;
   videoRefCount?: number;
   audioRefCount?: number;
-}): string {
+};
+
+export type ManhuaOutboundPromptCompileResult = {
+  /** 真正会发出去的提示词全文；blocked 时仍给出，便于确认界面指出问题所在 */
+  text: string;
+  issues: FormatIssue[];
+  /** true = 出站校验不通过，生产路径会抛错、不建单不扣费 */
+  blocked: boolean;
+  /** 引擎缺编译规则这类连编译都进不去的情况 */
+  fatalZh?: string;
+  engine?: CompilerEngineId;
+};
+
+/**
+ * 出站提示词编译（**不抛错**版本）。
+ *
+ * 生成前确认界面要展示的必须是这一份——节点上存的 prompt 与真正发出去的不是同一个串：
+ * Seedance 会先过 renderManhuaClipPromptForSeedance，再按引擎/时长/参考数量重排格式，
+ * 出口还要把 @图N 还原成 @图片N。预览与下单共用本函数，避免两套逻辑各自漂移。
+ */
+export function tryCompileManhuaVideoPromptForOutbound(
+  input: ManhuaOutboundPromptCompileInput,
+): ManhuaOutboundPromptCompileResult {
   const engine = normalizeCompilerEngineId(input.engine);
   if (!engine) {
-    throw new Error("当前成片引擎缺少提示词编译规则");
+    return {
+      text: String(input.prompt || ""),
+      issues: [],
+      blocked: true,
+      fatalZh: "当前成片引擎缺少提示词编译规则",
+    };
   }
   const seedanceSource = engine.startsWith("seedance-")
     ? renderManhuaClipPromptForSeedance(input.prompt)
@@ -666,15 +694,29 @@ export function compileManhuaVideoPromptForOutbound(input: {
     audioRefCount: input.audioRefCount,
     applyCensorReplacements: false,
   });
-  if (hasBlockingFormatIssues(formatted.issues)) {
-    throw new Error(
-      `成片提示词未通过出站校验：${formatted.issues.map((issue) => issue.detailZh).join("；")}`,
-    );
-  }
   // 生产绑定层按官方素材类型标记生成 @图片N；格式层内部统一成 @图N 后在出口还原。
-  return engine.startsWith("seedance-")
+  const text = engine.startsWith("seedance-")
     ? formatted.text.replace(/@图(\d+)/g, "@图片$1")
     : formatted.text;
+  return {
+    text,
+    issues: formatted.issues,
+    blocked: hasBlockingFormatIssues(formatted.issues),
+    engine,
+  };
+}
+
+export function compileManhuaVideoPromptForOutbound(
+  input: ManhuaOutboundPromptCompileInput,
+): string {
+  const result = tryCompileManhuaVideoPromptForOutbound(input);
+  if (result.fatalZh) throw new Error(result.fatalZh);
+  if (result.blocked) {
+    throw new Error(
+      `成片提示词未通过出站校验：${result.issues.map((issue) => issue.detailZh).join("；")}`,
+    );
+  }
+  return result.text;
 }
 
 /** 段级绑定与最终取图共用同一上限，防止 2.5 在任一前置层退回 9。 */
@@ -685,6 +727,128 @@ export function resolveManhuaCanvasVideoImageReferenceMax(videoModelRaw: unknown
   if (isCanvasWan30VideoModel(videoModel)) return WAN30_REFERENCE_MAX.image;
   if (videoModel === "seedance-2.5") return SEEDANCE_25_REFERENCE_MAX.image;
   return SEEDANCE_REFERENCE_MAX.image;
+}
+
+export type SeedanceCanvasRequestOptions = {
+    imageUrls?: string[];
+    videoUrls?: string[];
+    /** 角色声线参考 mp3/wav（最多 3） */
+    audioUrls?: string[];
+    version?: "2.0-mini" | "2.0" | "2.0-fast" | "2.5";
+    /** 段目标秒数；缺省从 prompt「目标时长」解析 */
+    duration?: number;
+    /** 2.5 官方五模式 → 服务端 EvoLink 真路由 */
+    workMode?: SeedanceEvolinkMode;
+    /**
+     * 漫剧编剧室的集号／段号。服务端据此走整集折算段价，
+     * 不透传就只能按自由画布单段计价（提示词里的「第 N 段」出线前会被换成
+     * 普通括号，且用户可改，反解不可靠）。
+     */
+    episodeIndex?: number;
+    clipIndex?: number;
+    /** video_edit 专用：主片（videoUrls[0]）探测时长——edit 产出与主片等长，服务端按它计费 */
+    editSourceDurationSec?: number;
+    /**
+     * 输出画质，默认 720p。标准档（2.0）可选到 4K，单价按像素翻倍（见 canvasGenerationPricing）；
+     * 快速档与 2.5 加长仍固定 720p，由服务端 normalize 兜住。
+     */
+    resolution?: CanvasVideoResolution;
+    manhuaPilot?: ManhuaPilotSubmission;
+    idempotencyKey?: string;
+};
+
+export type SeedanceCanvasRequestPreview = {
+  /** 真正 POST 出去的请求体；预览与下单取同一份，不另造一套 */
+  body: Record<string, unknown>;
+  /** 出站编译结果（含未通过原因）；blocked 时生产路径会抛错、不建单不扣费 */
+  compile: ManhuaOutboundPromptCompileResult;
+  version: "2.0-mini" | "2.0" | "2.0-fast" | "2.5";
+  durationSec: number;
+  /** 去重后的真实参考数量，与编译入参同源 */
+  refCounts: { image: number; video: number; audio: number };
+};
+
+/**
+ * Seedance 出站请求体构造（**纯函数，无副作用、不发请求**）。
+ *
+ * 与 buildHailuo3CanvasRequestBody / buildWan30RequestBody 同一模式。
+ * 抽出来是为了让「生成前确认」能拿到与真正提交**逐字段相同**的内容：
+ * 引擎、时长钳制、去重后的参考数量都在这里算，预览不得自己猜默认值。
+ */
+export function buildSeedanceCanvasRequestBody(
+  prompt: string,
+  imageUrl: string | undefined,
+  aspectRatio: "9:16" | "16:9",
+  opts?: SeedanceCanvasRequestOptions,
+): SeedanceCanvasRequestPreview {
+  const imageUrls = (opts?.imageUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
+  const videoUrls = (opts?.videoUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
+  const audioUrls = (opts?.audioUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
+  const version =
+    opts?.version === "2.5"
+      ? "2.5"
+      : opts?.version === "2.0-fast"
+        ? "2.0-fast"
+        : opts?.version === "2.0-mini"
+          ? "2.0-mini"
+          : "2.0";
+  const fromPrompt = parseManhuaClipTargetDurationSec(prompt);
+  const durationRaw = opts?.duration ?? fromPrompt ?? undefined;
+  // Mini 与 2.0 同为 4–15s 上限，复用 OpenRouter 档的钳制；2.5 才到 30s
+  const duration =
+    version === "2.5"
+      ? clampSeedanceDuration("2.5", durationRaw)
+      : clampSeedanceOpenRouterDuration(durationRaw);
+  const workMode =
+    version === "2.5"
+      ? normalizeSeedance25EvolinkMode(opts?.workMode, { imageUrls, videoUrls, audioUrls })
+      : undefined;
+  const episodeIndex = Number(opts?.episodeIndex);
+  const clipIndex = Number(opts?.clipIndex);
+  const compilerEngine: CompilerEngineId = `seedance-${version}`;
+  const refCounts = {
+    image: new Set(
+      [imageUrl, ...imageUrls].map((url) => String(url || "").trim()).filter(Boolean),
+    ).size,
+    video: videoUrls.length,
+    audio: audioUrls.length,
+  };
+  const compile = tryCompileManhuaVideoPromptForOutbound({
+    prompt,
+    engine: compilerEngine,
+    durationSec: duration,
+    imageRefCount: refCounts.image,
+    videoRefCount: refCounts.video,
+    audioRefCount: refCounts.audio,
+  });
+  const body: Record<string, unknown> = {
+    // 方言与引用上限只在出线这一刻统一把关；上面的时长解析仍认【第N段·Xs】。
+    prompt: compile.text,
+    imageUrl: imageUrl || imageUrls[0] || undefined,
+    // 配额按版本分流：2.5 官方收图 30/视频 10/音频 10，2.0 系 9/3/3。
+    imageUrls: imageUrls.length
+      ? imageUrls.slice(0, version === "2.5" ? 30 : SEEDANCE_REFERENCE_MAX.image)
+      : undefined,
+    videoUrls: videoUrls.length
+      ? videoUrls.slice(0, version === "2.5" ? 10 : SEEDANCE_REFERENCE_MAX.video)
+      : undefined,
+    audioUrls: audioUrls.length
+      ? audioUrls.slice(0, version === "2.5" ? 10 : SEEDANCE_REFERENCE_MAX.audio)
+      : undefined,
+    resolution: normalizeCanvasVideoResolution(opts?.resolution),
+    aspectRatio,
+    duration,
+    editSourceDurationSec: opts?.editSourceDurationSec || undefined,
+    // 产品口径：只用引擎自带 Audio on，暂不另开后期配音 API
+    generateAudio: true,
+    version,
+    ...(opts?.manhuaPilot ? { manhuaPilot: opts.manhuaPilot } : {}),
+    ...(opts?.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
+    ...(version === "2.5" ? { workMode } : {}),
+    ...(Number.isFinite(episodeIndex) && episodeIndex > 0 ? { episodeIndex } : {}),
+    ...(Number.isFinite(clipIndex) && clipIndex > 0 ? { clipIndex } : {}),
+  };
+  return { body, compile, version, durationSec: duration, refCounts };
 }
 
 async function runSeedanceProductVideo(
@@ -723,76 +887,22 @@ async function runSeedanceProductVideo(
   // 与 Creative / TestLab 一致：直连 Fly/api 子域，避免 www→Vercel→Fly 反代 ~120s 被 ROUTER_EXTERNAL 腰斩
   const seedanceUrl = withLongJobsFlyDirect("/api/jobs?op=seedanceI2V");
   const probeOrigin = flyHealthProbeOriginForUrl(seedanceUrl);
-  const imageUrls = (opts?.imageUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
-  const videoUrls = (opts?.videoUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
-  const audioUrls = (opts?.audioUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
-  const version =
-    opts?.version === "2.5"
-      ? "2.5"
-      : opts?.version === "2.0-fast"
-        ? "2.0-fast"
-        : opts?.version === "2.0-mini"
-          ? "2.0-mini"
-          : "2.0";
-  const fromPrompt = parseManhuaClipTargetDurationSec(prompt);
-  const durationRaw = opts?.duration ?? fromPrompt ?? undefined;
-  // Mini 与 2.0 同为 4–15s 上限，复用 OpenRouter 档的钳制；2.5 才到 30s
-  const duration =
-    version === "2.5"
-      ? clampSeedanceDuration("2.5", durationRaw)
-      : clampSeedanceOpenRouterDuration(durationRaw);
-  // 服务端要按登录用户扣积分（2.5 还要校验正式会员），三档一律带登录态
-  const workMode =
-    version === "2.5"
-      ? normalizeSeedance25EvolinkMode(opts?.workMode, { imageUrls, videoUrls, audioUrls })
-      : undefined;
-  const episodeIndex = Number(opts?.episodeIndex);
-  const clipIndex = Number(opts?.clipIndex);
-  const compilerEngine: CompilerEngineId = `seedance-${version}`;
-  const outboundPrompt = compileManhuaVideoPromptForOutbound({
-    prompt,
-    engine: compilerEngine,
-    durationSec: duration,
-    imageRefCount: new Set(
-      [imageUrl, ...imageUrls].map((url) => String(url || "").trim()).filter(Boolean),
-    ).size,
-    videoRefCount: videoUrls.length,
-    audioRefCount: audioUrls.length,
-  });
+  // 请求体由纯构造函数产出，生成前确认界面调的是同一个函数——预览与出站不会各走一套。
+  const prepared = buildSeedanceCanvasRequestBody(prompt, imageUrl, aspectRatio, opts);
+  if (prepared.compile.fatalZh) throw new Error(prepared.compile.fatalZh);
+  if (prepared.compile.blocked) {
+    throw new Error(
+      `成片提示词未通过出站校验：${prepared.compile.issues
+        .map((issue) => issue.detailZh)
+        .join("；")}`,
+    );
+  }
   const res = await withFlyHealthGate(probeOrigin, () =>
     fetch(seedanceUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({
-        // 方言与引用上限只在出线这一刻统一把关；上面的时长解析仍认【第N段·Xs】。
-        prompt: outboundPrompt,
-        imageUrl: imageUrl || imageUrls[0] || undefined,
-        // 配额按版本分流：2.5 官方收图 30/视频 10/音频 10，2.0 系 9/3/3。
-        // 原先无版本区分统一按 9/3/3 切，2.5 的高配额在出线口被砍——
-        // 参考图是人物锁定的命根，30 席给锁脸+服装+场景+道具才够摆
-        imageUrls: imageUrls.length
-          ? imageUrls.slice(0, version === "2.5" ? 30 : SEEDANCE_REFERENCE_MAX.image)
-          : undefined,
-        videoUrls: videoUrls.length
-          ? videoUrls.slice(0, version === "2.5" ? 10 : SEEDANCE_REFERENCE_MAX.video)
-          : undefined,
-        audioUrls: audioUrls.length
-          ? audioUrls.slice(0, version === "2.5" ? 10 : SEEDANCE_REFERENCE_MAX.audio)
-          : undefined,
-        resolution: normalizeCanvasVideoResolution(opts?.resolution),
-        aspectRatio,
-        duration,
-        editSourceDurationSec: opts?.editSourceDurationSec || undefined,
-        // 产品口径：只用引擎自带 Audio on，暂不另开后期配音 API
-        generateAudio: true,
-        version,
-        ...(opts?.manhuaPilot ? { manhuaPilot: opts.manhuaPilot } : {}),
-        ...(opts?.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
-        ...(version === "2.5" ? { workMode } : {}),
-        ...(Number.isFinite(episodeIndex) && episodeIndex > 0 ? { episodeIndex } : {}),
-        ...(Number.isFinite(clipIndex) && clipIndex > 0 ? { clipIndex } : {}),
-      }),
+      body: JSON.stringify(prepared.body),
     }),
   );
   const text = await res.text();
@@ -1322,6 +1432,84 @@ export function formatCanvasUpstreamPrompt(basePrompt: string, upstreamTexts: st
   return `${trimmed}\n\n【引用上游文本】\n${upstreamSection}`;
 }
 
+/**
+ * 生成前确认用的出站预览信号。
+ *
+ * 参考素材是在 runCanvasBlock 内部逐层解析出来的（转 https、重签段参考、刷新已登记成片链），
+ * 预览若自己再解析一遍必然与真正提交漂移。所以预览走的是**同一条生产代码路径**，
+ * 只是在真正下单那一刻用这个信号回卷——因此预览不会发起任何付费调用。
+ */
+class CanvasOutboundPreviewSignal extends Error {
+  readonly preview: CanvasOutboundPreview;
+  constructor(preview: CanvasOutboundPreview) {
+    super("canvas_outbound_preview");
+    this.name = "CanvasOutboundPreviewSignal";
+    this.preview = preview;
+  }
+}
+
+export type CanvasOutboundPreview = {
+  engine: string;
+  /** 真正会 POST 出去的请求体 */
+  body: Record<string, unknown>;
+  compile: ManhuaOutboundPromptCompileResult;
+  durationSec: number;
+  refCounts: { image: number; video: number; audio: number };
+  /** 逐条列出真实参与的参考素材地址，供确认界面展示 */
+  refs: { imageUrls: string[]; videoUrls: string[]; audioUrls: string[] };
+};
+
+/**
+ * 出站确认指纹：由**真正会发出去的请求体**算出。
+ *
+ * 用途是「用户确认过的那一份 == 真正提交的那一份」。提示词、模型、时长、分辨率、
+ * 画幅、工作模式或任意一条参考素材变化，指纹都会变，旧确认随之失效。
+ * 不含 idempotencyKey 这类每次运行都不同、与用户所见内容无关的字段。
+ */
+export function manhuaOutboundConfirmationFingerprint(
+  preview: Pick<CanvasOutboundPreview, "engine" | "body">,
+): string {
+  const body = preview.body as Record<string, unknown>;
+  const pick = [
+    "prompt",
+    "imageUrl",
+    "imageUrls",
+    "videoUrls",
+    "audioUrls",
+    "resolution",
+    "aspectRatio",
+    "duration",
+    "version",
+    "workMode",
+    "generateAudio",
+    "editSourceDurationSec",
+  ] as const;
+  const shaped: Record<string, unknown> = { engine: preview.engine };
+  for (const key of pick) {
+    if (body[key] !== undefined) shaped[key] = body[key];
+  }
+  return JSON.stringify(shaped);
+}
+
+/**
+ * 走生产路径算出「这一段现在按下生成会发出去什么」，**不发请求、不建单、不扣费**。
+ * 编译未通过时 compile.blocked 为 true 并带上原因，由确认界面展示。
+ */
+export async function previewCanvasBlockOutbound(
+  deps: CanvasRunDeps,
+  block: CanvasBlock,
+  upstream: CanvasUpstreamContext = { visionImages: [], texts: [] },
+  runOptions?: { videoSubmissionKey?: string; pilotRun?: boolean },
+): Promise<CanvasOutboundPreview> {
+  try {
+    await runCanvasBlock(deps, block, upstream, { ...runOptions, previewOnly: true });
+  } catch (error) {
+    if (error instanceof CanvasOutboundPreviewSignal) return error.preview;
+    throw error;
+  }
+  throw new Error("当前引擎暂不支持生成前出站预览");
+}
+
 export async function runCanvasBlock(
   deps: CanvasRunDeps,
   block: CanvasBlock,
@@ -1331,6 +1519,11 @@ export async function runCanvasBlock(
     videoSubmissionKey?: string;
     /** 仅本次首段试片的执行约束，不写入节点、草稿或供应商字段。 */
     pilotRun?: boolean;
+    /**
+     * 生成前确认：走完整组装后在下单那一刻回卷，返回真实出站请求体。
+     * 只由 previewCanvasBlockOutbound 使用；不写节点、不建单、不扣费。
+     */
+    previewOnly?: boolean;
   },
 ): Promise<{
   outputText?: string;
@@ -2211,11 +2404,7 @@ export async function runCanvasBlock(
           outVideos = outVideos.slice(0, SEEDANCE_REFERENCE_MAX.video);
           outAudios = outAudios.slice(0, SEEDANCE_REFERENCE_MAX.audio);
         }
-        const seedanceOut = await runSeedanceProductVideo(
-          finalPrompt,
-          useSeedance25 && workMode === "text_to_video" ? undefined : seedStill,
-          ar,
-          {
+        const seedanceOpts = {
           imageUrls: outImages.length ? outImages : undefined,
           videoUrls: outVideos.length ? outVideos : undefined,
           audioUrls: outAudios.length ? outAudios : undefined,
@@ -2231,12 +2420,45 @@ export async function runCanvasBlock(
           workMode: useSeedance25 ? workMode : undefined,
           manhuaPilot,
           idempotencyKey: submissionKey,
-          onTaskId: (taskId) => deps.onVideoTaskCreated?.(block.id, { taskId, engine: videoModel }),
+          onTaskId: (taskId: string) =>
+            deps.onVideoTaskCreated?.(block.id, { taskId, engine: videoModel }),
           editSourceDurationSec,
           episodeIndex: block.episodeIndex,
           clipIndex: parseClipIndexFromBlockId(block.id),
-            resolution: block.videoResolution,
-          },
+          resolution: block.videoResolution,
+        } as const;
+        const seedanceFirstFrame =
+          useSeedance25 && workMode === "text_to_video" ? undefined : seedStill;
+        if (runOptions?.previewOnly) {
+          // 生成前确认：组装已经全部走完（含转 https、重签段参考、刷新已登记成片链），
+          // 在这里回卷，不发请求、不建单、不扣费。
+          const prepared = buildSeedanceCanvasRequestBody(
+            finalPrompt,
+            seedanceFirstFrame,
+            ar,
+            seedanceOpts,
+          );
+          throw new CanvasOutboundPreviewSignal({
+            engine: videoModel,
+            body: prepared.body,
+            compile: prepared.compile,
+            durationSec: prepared.durationSec,
+            refCounts: prepared.refCounts,
+            refs: {
+              imageUrls: [
+                ...(seedanceFirstFrame ? [seedanceFirstFrame] : []),
+                ...outImages,
+              ],
+              videoUrls: [...outVideos],
+              audioUrls: [...outAudios],
+            },
+          });
+        }
+        const seedanceOut = await runSeedanceProductVideo(
+          finalPrompt,
+          seedanceFirstFrame,
+          ar,
+          seedanceOpts,
         );
         url = seedanceOut.videoUrl;
         if (useSeedance25) {
