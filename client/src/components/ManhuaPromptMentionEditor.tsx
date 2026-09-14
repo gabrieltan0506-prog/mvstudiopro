@@ -1,3 +1,4 @@
+import { ManhuaAssetImage } from "@/components/ManhuaAssetImage";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -262,7 +263,7 @@ export default function ManhuaPromptMentionEditor({
                 } ${m.ready ? "" : "opacity-50"}`}
               >
                 {thumb ? (
-                  <img
+                  <ManhuaAssetImage
                     src={thumb}
                     alt=""
                     className="h-6 w-6 shrink-0 rounded object-cover"
