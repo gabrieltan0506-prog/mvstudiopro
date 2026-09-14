@@ -1431,6 +1431,64 @@ async function runWan30(
   throw new Error(json.error || json.message || "成片生成失败");
 }
 
+export type HappyHorseRequestInput = {
+  prompt: string;
+  imageUrl: string;
+  aspectRatio: "9:16" | "16:9";
+  duration?: number;
+  resolution?: string;
+  episodeIndex?: number;
+  clipIndex?: number;
+  imageUrls?: string[];
+};
+
+/**
+ * HappyHorse 出站准备（**纯函数、不发请求**）。同其余引擎的准备器。
+ *
+ * 它原本只有 runHappyHorse 里内联的 body，没有可复用的构造层，
+ * 于是成了确认闸的免检通道（0914 审查 P1：未支持模式仍是免检通道）。
+ * 这里把 body 抽出来，提交点与预览共用。
+ */
+export function prepareHappyHorseOutbound(
+  input: HappyHorseRequestInput,
+): CanvasEngineOutboundPreparation {
+  const imageUrls = Array.from(
+    new Set(
+      [input.imageUrl, ...(input.imageUrls || [])]
+        .map((url) => String(url || "").trim())
+        .filter(Boolean),
+    ),
+  ).slice(0, HAPPYHORSE_REFERENCE_MAX.image);
+  const duration = clampHappyHorseCanvasDuration(input.duration);
+  const resolution = normalizeHappyHorseCanvasResolution(input.resolution);
+  const compile = tryCompileManhuaVideoPromptForOutbound({
+    prompt: input.prompt,
+    engine: "happyhorse",
+    durationSec: duration,
+    imageRefCount: imageUrls.length,
+    videoRefCount: 0,
+    audioRefCount: 0,
+  });
+  const body: Record<string, unknown> = {
+    prompt: compile.text,
+    imageUrl: input.imageUrl,
+    ...(imageUrls.length ? { imageUrls } : {}),
+    aspectRatio: input.aspectRatio,
+    duration,
+    resolution,
+    ...(Number(input.episodeIndex) > 0 ? { episodeIndex: Number(input.episodeIndex) } : {}),
+    ...(Number(input.clipIndex) > 0 ? { clipIndex: Number(input.clipIndex) } : {}),
+  };
+  return {
+    engine: "happyhorse",
+    body,
+    compile,
+    durationSec: duration,
+    refCounts: { image: imageUrls.length, video: 0, audio: 0 },
+    refSlots: { imageUrls: [...imageUrls], videoUrls: [], audioUrls: [] },
+  };
+}
+
 /** Happy Horse 1.1 · OpenRouter（首帧图生；时长 5/10/15，最长 15s） */
 async function runHappyHorse(
   prompt: string,
@@ -1586,20 +1644,20 @@ export type ManhuaOutboundGate = {
 /**
  * 这一段是否必须走生成前确认。
  *
- * 范围＝**漫剧段成片（clip-*）且该组合可预览**（普通 Seedance）。
- * 可预览是前提：不支持预览就无法产生确认，若也强制要求，等于把 Wan / 海螺 /
- * 原片编辑这些**既有在用的流程**直接封死——那不是修漏洞，是砍功能。
+ * 范围＝**漫剧段成片（clip-* 的 video 节点）**，只看任务契约本身。
  *
- * ⚠️ 已知缺口，需产品拍板：确认之后把引擎改成 Wan/H3、或转成原片编辑，
- * 会离开本闸的覆盖范围。彻底堵死要么给这些引擎补预览出口，
- * 要么产品上禁止段成片使用它们。当前**不静默放行也不擅自封功能**，
- * 而是把缺口写在这里并在交接里列为待拍板项。
+ * 上一轮写成「且该组合可预览」，等于把「预览还没实现」隐式解释成「允许无确认提交」——
+ * 换个引擎或转成延长就成了免检通道（0914 审查 P1）。判定要求与实现覆盖是两件事：
+ * 要求由产品意图决定，实现没跟上就该拒绝，不该放行。
+ *
+ * 音乐 MV、图片、文案等非漫剧段成片不在范围内，按各自原契约运行。
  */
 export function requiresManhuaOutboundConfirmation(
   block: Pick<CanvasBlock, "kind" | "id" | "videoModel" | "musicMvShot">,
 ): boolean {
   if (block.kind !== "video" || !String(block.id || "").startsWith("clip-")) return false;
-  return resolveCanvasOutboundPreviewUnsupportedReason(block as never) === null;
+  if (block.musicMvShot) return false;
+  return true;
 }
 
 function assertManhuaOutboundGate(
@@ -1679,11 +1737,34 @@ function settleManhuaOutbound(
   runOptions:
     | {
         previewOnly?: boolean;
+        enforceOutboundConfirmation?: boolean;
         outboundGate?: ManhuaOutboundGate;
+        resolveOutboundGate?: (blockId: string) => ManhuaOutboundGate | undefined;
       }
     | undefined,
+  /** 这一次真正在提交的节点与执行账号；提交边界复核要用 */
+  submitting?: {
+    block: Pick<CanvasBlock, "kind" | "id" | "videoModel" | "musicMvShot">;
+    executingUserId: string;
+  },
 ): void {
-  const gate = runOptions?.outboundGate;
+  // **在真正提交这一刻重新取一次闸**，不是沿用函数开头那个快照。
+  // 开头到这里之间有续签、鉴权、媒体探测等 await，用户可能已经换账号、
+  // 换项目、载入另一份草稿——入口现读不等于提交时现读（0914 审查 P1）。
+  const gate = submitting
+    ? (runOptions?.resolveOutboundGate?.(submitting.block.id) ?? runOptions?.outboundGate)
+    : runOptions?.outboundGate;
+
+  if (
+    submitting &&
+    !runOptions?.previewOnly &&
+    runOptions?.enforceOutboundConfirmation &&
+    requiresManhuaOutboundConfirmation(submitting.block)
+  ) {
+    // 身份、节点、执行账号、世代——整套在提交边界再判一次。
+    assertManhuaOutboundGate(submitting.block, gate, submitting.executingUserId);
+  }
+
   if (gate?.confirmation && !runOptions?.previewOnly) {
     // **用 currentScope 重算**——拿确认记录自带的 scope 算等于自己和自己比。
     const actual = manhuaOutboundConfirmationFingerprint(
@@ -1736,13 +1817,12 @@ export class CanvasOutboundPreviewUnsupportedError extends Error {
  * **必须在进入任何生产路径或外部调用之前判定**：各引擎各有自己的提交点，
  * 把不支持的组合放到末尾才拒绝就太晚了——那等于让预览真的发出付费请求。
  *
- * 覆盖范围（C 项补齐）：普通 Seedance、Seedance 2.5 原片编辑、Wan 3.0、海螺 H3。
- * 每一条都在自己的提交点之前调 settleManhuaOutbound，预览由那里统一回卷。
- * 产品拍板是「保留引擎、补预览出口、不砍功能」，所以这里不是靠禁用来堵漏。
+ * 覆盖范围：所有视频成片引擎与工作模式——普通 Seedance、Seedance 2.5 的
+ * 原片编辑与延长、Wan 3.0、海螺 H3、HappyHorse。每一条都在自己的提交点之前
+ * 调 settleManhuaOutbound，预览由那里统一回卷。
+ * 产品拍板是「保留引擎、补预览出口、不砍功能」，所以这里不靠禁用堵漏。
  *
- * 仍不支持：HappyHorse（没有共用准备器，其提交点未接结算点）、
- * seedance 2.5 的 video_extend（延长口径与编辑不同，尚未接）、音乐 MV、非视频块。
- * 这几项**据实列在这里**，不是「暂时写着」——没接就是没接。
+ * 不支持的只剩：音乐 MV 镜头与非视频块——它们本来就不是漫剧段成片。
  *
  * 返回 null 表示支持；否则返回中文原因。
  */
@@ -1755,25 +1835,8 @@ export function resolveCanvasOutboundPreviewUnsupportedReason(
   if (block.musicMvShot) {
     return "生成前预览暂不支持音乐 MV 镜头节点";
   }
-  const videoModel = normalizeCanvasVideoModel(block.videoModel);
-  if (isCanvasHappyHorseVideoModel(videoModel)) {
-    return `生成前预览暂不支持该成片引擎：${videoModel}`;
-  }
-  if (isManhuaVideoEditBlock(block as CanvasBlock)) {
-    // 原片编辑已接结算点，可预览。
-    return null;
-  }
-  const declaredWorkMode = String(
-    (block as Record<string, unknown>).seedance25WorkMode ?? "",
-  ).trim();
-  if (
-    declaredWorkMode &&
-    declaredWorkMode !== "text_to_video" &&
-    declaredWorkMode !== "reference_to_video" &&
-    declaredWorkMode !== "video_edit"
-  ) {
-    return `生成前预览暂不支持该工作模式：${declaredWorkMode}`;
-  }
+  // 四条引擎（Seedance 普通／2.5 原片编辑与延长／Wan 3.0／海螺 H3／HappyHorse）
+  // 都已接 settleManhuaOutbound，预览由那里统一回卷。
   return null;
 }
 
@@ -1969,6 +2032,11 @@ export async function runCanvasBlock(
      */
     outboundGate?: ManhuaOutboundGate;
     /**
+     * **提交边界现读**当前闸。产品入口应传它而不是 outboundGate 快照：
+     * 快照在长跑的 await 期间会过期，清空确认 ref 之后旧对象仍然「有效」。
+     */
+    resolveOutboundGate?: (blockId: string) => ManhuaOutboundGate | undefined;
+    /**
      * 由**产品生成入口**声明：这一次是用户发起的付费段成片。
      * 声明了就强制要求确认——缺确认、身份不符一律在任何付费分支之前拒绝。
      *
@@ -2002,8 +2070,13 @@ export async function runCanvasBlock(
     runOptions?.enforceOutboundConfirmation &&
     requiresManhuaOutboundConfirmation(block)
   ) {
-    // 放在这里：早于原片编辑、Wan/H3 与普通 Seedance 的任何一个提交点。
-    assertManhuaOutboundGate(block, runOptions?.outboundGate, String(deps.userId || ""));
+    // 早拒：不合格的在任何外部调用之前就挡掉，省掉无谓的续签与探测。
+    // 真正的把关在每个提交点的 settleManhuaOutbound 里**再现读一次**。
+    assertManhuaOutboundGate(
+      block,
+      runOptions?.resolveOutboundGate?.(block.id) ?? runOptions?.outboundGate,
+      String(deps.userId || ""),
+    );
   }
   if (block.kind === "music") throw new Error("请在音乐节点中选择生成音乐、分镜或合成阶段");
   if (runOptions?.pilotRun) {
@@ -2345,6 +2418,7 @@ export async function runCanvasBlock(
           engine: "seedance-2.5",
         },
         runOptions,
+        { block, executingUserId: String(deps.userId || "") },
       );
       const edited = await runSeedanceProductVideo(editPrompt, undefined, ar, editOpts);
       return {
@@ -2741,6 +2815,7 @@ export async function runCanvasBlock(
             ...wanOpts,
           }),
           runOptions,
+          { block, executingUserId: String(deps.userId || "") },
         );
         url = await runWan30(wanPrompt, wanImages, ar, {
           ...wanOpts,
@@ -2754,13 +2829,24 @@ export async function runCanvasBlock(
         }
         // 0825 r2v：取图口径与 Wan 相同（块上收集的参考图集）；≥2 张服务端自动切多图参考
         const hhImages = httpsImages.length ? httpsImages : ([firstFrame].filter(Boolean) as string[]);
-        url = await runHappyHorse(seedancePrompt, firstFrame, ar, {
+        const hhOpts = {
           duration: clipDuration,
           resolution: block.videoResolution,
           episodeIndex: block.episodeIndex,
           clipIndex: parseClipIndexFromBlockId(block.id),
           imageUrls: hhImages,
-        });
+        } as const;
+        settleManhuaOutbound(
+          prepareHappyHorseOutbound({
+            prompt: seedancePrompt,
+            imageUrl: firstFrame,
+            aspectRatio: ar,
+            ...hhOpts,
+          }),
+          runOptions,
+          { block, executingUserId: String(deps.userId || "") },
+        );
+        url = await runHappyHorse(seedancePrompt, firstFrame, ar, hhOpts);
       } else if (useHailuoH3) {
         // H3：OpenRouter 仅图参考（首帧 + input_references）；不传 Seedance 专属音/视频参考
         const h3Opts = {
@@ -2780,6 +2866,7 @@ export async function runCanvasBlock(
             ...h3Opts,
           }),
           runOptions,
+          { block, executingUserId: String(deps.userId || "") },
         );
         url = await runHailuo3(seedancePrompt, seedStill, ar, {
           ...h3Opts,
@@ -2957,6 +3044,7 @@ export async function runCanvasBlock(
             engine: videoModel,
           },
           runOptions,
+          { block, executingUserId: String(deps.userId || "") },
         );
         const seedanceOut = await runSeedanceProductVideo(
           finalPrompt,

@@ -4506,7 +4506,9 @@ export async function runManhuaDramaFactoryPipeline(opts: {
             // 先决条件已闭合：预览与运行共用 prepareManhuaFactoryClipInput（A 项），
             // 当前身份与快照有效期统一管理（B 项），各引擎接同一个结算点（C 项）。
             enforceOutboundConfirmation: stage === "clip",
-            outboundGate: opts.resolveOutboundGate?.(blockId),
+            // 传 getter 不传快照：批量跑几分钟，提交边界必须拿当时的身份与确认，
+            // 而不是这一轮循环开始时抓的那一份（0914 审查 P1：在途只拿到旧 scope 快照）。
+            resolveOutboundGate: opts.resolveOutboundGate,
           },
         );
         if (preparedVideoEdit && !String(out.outputUrl || out.outputUrls?.[0] || "").trim()) {

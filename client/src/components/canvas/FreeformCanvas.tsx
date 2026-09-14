@@ -1725,10 +1725,20 @@ export default function FreeformCanvas({
         } : runDepsWithPlan;
         // clip-* 走同一道闸：本画布没有确认界面，缺确认时明确指回工作台，
         // 而不是静默放行（旧写法直接 runCanvasBlock，整条确认逻辑绕过去了）。
+        //
+        // **强制与否只看任务本身是不是漫剧段成片，不看调用方有没有传回调。**
+        // 上一轮写成 `isManhuaClip && Boolean(resolveManhuaOutboundGate)`，
+        // 结果漏传回调的那个挂载点反而把门禁关掉了（审查 P1，实有第三处漏传）。
         const isManhuaClip = String(runBlockPayload.id || "").startsWith("clip-");
+        if (isManhuaClip && !resolveManhuaOutboundGate) {
+          throw new Error(
+            "这个画布没有接入生成前确认，漫剧段成片不能从这里提交，本次未提交、未扣费。请回剧本工作台生成。",
+          );
+        }
         const out = await runCanvasBlock(submittedDeps, runBlockPayload, { visionImages, texts }, {
-          enforceOutboundConfirmation: isManhuaClip && Boolean(resolveManhuaOutboundGate),
-          outboundGate: isManhuaClip ? resolveManhuaOutboundGate?.(blockId) : undefined,
+          enforceOutboundConfirmation: isManhuaClip,
+          // 提交边界会再读一次；这里给的是 getter 不是快照。
+          resolveOutboundGate: isManhuaClip ? resolveManhuaOutboundGate : undefined,
         });
         // MV镜头允许编辑，但旧请求结果只进入历史，不能覆盖已改过的新稿。
         if (blockId.startsWith("mvshot-")) {

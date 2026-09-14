@@ -312,6 +312,7 @@ import {
   applyManhuaVideoEditInstruction,
   clearManhuaVideoEditOperation,
   mergeManhuaMediaVersions,
+  isManhuaVideoEditBlock,
 } from "@/lib/manhuaMediaVersions";
 import {
   hasFailedManhuaVideoEdit,
@@ -3837,6 +3838,32 @@ export default function OmniCanvas() {
       : "unconfirmed",
   };
 
+  /**
+   * 按**这一次操作本身**派生准备与试片口径，不拿全局试片状态一刀切。
+   *
+   * 原片编辑／延长走的是已有原片，本来就不是新试片：
+   * 若当前集的试片还没批准，旧写法会给编辑预览也带上 pilotRun，
+   * 被执行器的「10 秒试片不能代替原片编辑或延长」直接拒掉，
+   * 于是编辑这一段**永远取不到确认**（0914 审查 P2）。
+   */
+  const deriveClipOperationOptions = useCallback(
+    (block: CanvasBlock | undefined) => {
+      const workMode = String(
+        (block as Record<string, unknown> | undefined)?.seedance25WorkMode ?? "",
+      ).trim();
+      const isEdit = Boolean(block && isManhuaVideoEditBlock(block));
+      const isExtend = workMode === "video_extend";
+      return {
+        // 编辑是单目标的「已备原片」运行，上游图/文不参与；与编排器同口径。
+        preparedVideoEdit: isEdit,
+        // 只有新生成片段才谈试片
+        pilotRun:
+          !isEdit && !isExtend && activePilotGateEntry?.status !== "approved",
+      };
+    },
+    [activePilotGateEntry?.status],
+  );
+
   /** 取当前归属。**每次调用都重新读 ref**，绝不缓存。 */
   const manhuaOutboundScope = useCallback(
     (blockId: string): CanvasOutboundConfirmationScope => ({
@@ -3894,6 +3921,7 @@ export default function OmniCanvas() {
       const scopeAtStart = manhuaOutboundScope(blockId);
       const block = blocksRef.current.find((item) => item.id === blockId);
       if (!block) throw new Error("该段节点已不存在，请刷新后重试");
+      const operation = deriveClipOperationOptions(block);
       // 确认也必须走同一份工厂准备，否则确认的是另一份输入
       const { preparedBlock, upstream } = await prepareManhuaFactoryClipInput({
         blocks: blocksRef.current,
@@ -3903,10 +3931,10 @@ export default function OmniCanvas() {
         stage: "clip",
         episodeIndex: getBlockEpisodeIndex(block) ?? writerFocusEpisode,
         shotContinuity,
-        preparedVideoEdit: false,
+        preparedVideoEdit: operation.preparedVideoEdit,
       });
       const preview = await previewCanvasBlockOutbound(runDeps, preparedBlock, upstream, {
-        pilotRun: activePilotGateEntry?.status !== "approved",
+        pilotRun: operation.pilotRun,
       });
       if (preview.compile.blocked || preview.compile.fatalZh) {
         throw new Error(
@@ -3945,10 +3973,10 @@ export default function OmniCanvas() {
       runDeps,
       manhuaOutboundScope,
       sameManhuaOutboundScope,
+      deriveClipOperationOptions,
       edges,
       shotContinuity,
       writerFocusEpisode,
-      activePilotGateEntry?.status,
     ],
   );
 
@@ -3959,6 +3987,7 @@ export default function OmniCanvas() {
       const scopeAtStart = manhuaOutboundScope(blockId);
       const block = blocksRef.current.find((item) => item.id === blockId);
       if (!block) throw new Error("该段节点已不存在，请刷新后重试");
+      const operation = deriveClipOperationOptions(block);
       // **与真正运行共用同一份工厂准备**：不能再拿裸节点算预览。
       // 运行时会补最近上游图、上段末帧接力与段内关键静帧，并做造型/原镜门禁；
       // 裸节点算出来的指纹与编排后真正发出的请求对不上（0914 审查 P1-4）。
@@ -3970,11 +3999,12 @@ export default function OmniCanvas() {
         stage: "clip",
         episodeIndex: getBlockEpisodeIndex(block) ?? writerFocusEpisode,
         shotContinuity,
-        preparedVideoEdit: false,
+        preparedVideoEdit: operation.preparedVideoEdit,
       });
       const preview = await previewCanvasBlockOutbound(runDeps, preparedBlock, upstream, {
-        // 首段未批准时工厂按 10 秒试片跑，预览必须同口径
-        pilotRun: activePilotGateEntry?.status !== "approved",
+        // 首段未批准时工厂按 10 秒试片跑，预览必须同口径；
+        // 但编辑／延长不是新试片，由 deriveClipOperationOptions 判定。
+        pilotRun: operation.pilotRun,
       });
       const scopeNow = manhuaOutboundScope(blockId);
       if (!sameManhuaOutboundScope(scopeAtStart, scopeNow)) {
@@ -3993,10 +4023,10 @@ export default function OmniCanvas() {
       runDeps,
       manhuaOutboundScope,
       sameManhuaOutboundScope,
+      deriveClipOperationOptions,
       edges,
       shotContinuity,
       writerFocusEpisode,
-      activePilotGateEntry?.status,
     ],
   );
 
@@ -11918,6 +11948,10 @@ export default function OmniCanvas() {
               </span>
             </div>
           <FreeformCanvas
+            resolveManhuaOutboundGate={(blockId) => ({
+              currentScope: manhuaOutboundScope(blockId),
+              confirmation: outboundConfirmationsRef.current[blockId],
+            })}
             projectAssetRefs={customAssetRefs}
             blocks={blocks}
             edges={edges}

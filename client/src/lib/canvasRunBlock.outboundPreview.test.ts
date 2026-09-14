@@ -209,14 +209,9 @@ describe("预览安全：不支持的组合在任何外部调用之前拒绝", (
     return calls;
   }
 
-  // 仍不支持的组合。C 项给 Wan / 海螺 / 原片编辑补了预览出口，它们移到下面的正向用例；
-  // 这里剩下的是**确实没接**的，不是写着好看的。
+  // 所有视频成片引擎与工作模式都已接结算点，剩下不支持的只有
+  // 「本来就不是漫剧段成片」的：音乐 MV 镜头与非视频块。
   const cases: Array<[string, Record<string, unknown>]> = [
-    [
-      "原片延长节点",
-      { id: "clip-e01-g02", videoModel: "seedance-2.5", seedance25WorkMode: "video_extend" },
-    ],
-    ["HappyHorse", { videoModel: "happyhorse" }],
     ["音乐 MV 镜头", { musicMvShot: { referenceImages: [] } }],
   ];
 
@@ -253,6 +248,16 @@ describe("预览安全：不支持的组合在任何外部调用之前拒绝", (
   const supported: Array<[string, Record<string, unknown>, string]> = [
     ["Wan 3.0", { videoModel: "wan-3.0" }, "wan-3.0"],
     ["海螺 H3", { videoModel: "minimax-hailuo-3" }, "minimax-hailuo-3"],
+    ["HappyHorse", { videoModel: "happyhorse" }, "happyhorse"],
+    [
+      "Seedance 2.5 原片延长",
+      {
+        videoModel: "seedance-2.5",
+        seedance25WorkMode: "video_extend",
+        refVideoUrl: "https://test.invalid/source.mp4",
+      },
+      "seedance-2.5",
+    ],
   ];
   it.each(supported)(
     "%s：可预览，拿到真实请求体，且零外部调用",
@@ -292,7 +297,7 @@ describe("预览安全：不支持的组合在任何外部调用之前拒绝", (
 
   it("即便绕过预览入口直接传 previewOnly，不支持的组合仍在内部拒绝", async () => {
     const calls = forbidEverything();
-    const block = makeBlock({ videoModel: "happyhorse" });
+    const block = makeBlock({ musicMvShot: { referenceImages: [] } });
     await expect(
       runCanvasBlock(deps, block as never, undefined, { previewOnly: true } as never),
     ).rejects.toBeInstanceOf(CanvasOutboundPreviewUnsupportedError);
@@ -539,6 +544,91 @@ describe("运行前核对确认：缺确认、换身份、改输入都不下单"
         outboundGate: { currentScope: currentScopeFor(block.id), confirmation },
       } as never),
     ).rejects.toBeInstanceOf(ManhuaOutboundConfirmationMismatchError);
+    expect(bodies).toEqual([]);
+  });
+
+  // —— 0914 ee65736b 审查补测：免检通道与在途切换 ——
+
+  it.each([
+    ["HappyHorse", { videoModel: "happyhorse" }],
+    [
+      "Seedance 2.5 原片延长",
+      {
+        videoModel: "seedance-2.5",
+        seedance25WorkMode: "video_extend",
+        refVideoUrl: "https://test.invalid/source.mp4",
+      },
+    ],
+  ])("%s 段成片：从未确认过，零 POST", async (_label, over) => {
+    const block = makeBlock(over);
+    // 判定只看任务契约，不看预览实现到哪一步
+    expect(requiresManhuaOutboundConfirmation(block as never)).toBe(true);
+    const bodies = captureOutbound();
+    await expect(
+      runCanvasBlock(deps, block as never, undefined, {
+        enforceOutboundConfirmation: true,
+        outboundGate: { currentScope: currentScopeFor(block.id) },
+      } as never),
+    ).rejects.toBeInstanceOf(ManhuaOutboundConfirmationMissingError);
+    expect(bodies).toEqual([]);
+  });
+
+  it.each([
+    ["延长", { seedance25WorkMode: "video_extend", refVideoUrl: "https://test.invalid/s.mp4" }],
+    ["HappyHorse", { videoModel: "happyhorse" }],
+  ])("已确认普通片之后切到%s：旧确认失效，零 POST", async (_label, over) => {
+    const block = makeBlock();
+    const confirmation = await confirmFor(block);
+    const switched = { ...block, ...over };
+    const bodies = captureOutbound();
+    await expect(
+      runCanvasBlock(deps, switched as never, undefined, {
+        enforceOutboundConfirmation: true,
+        outboundGate: { currentScope: currentScopeFor(block.id), confirmation },
+      } as never),
+    ).rejects.toBeInstanceOf(ManhuaOutboundConfirmationMismatchError);
+    expect(bodies).toEqual([]);
+  });
+
+  it("在途切账号：早拒通过之后再切，提交边界仍拦下，零 POST", async () => {
+    // 审查 P1：入口现读不等于提交时现读。
+    // runCanvasBlock 的函数体同步跑到第一个 await 为止，早拒在那之前，
+    // 所以这里同步改 userId，改的正是「早拒之后、提交之前」这段窗口。
+    const block = makeBlock();
+    const confirmation = await confirmFor(block);
+    const bodies = captureOutbound();
+    let userId = "7";
+    const gate = () => ({
+      currentScope: currentScopeFor(block.id, { userId }),
+      confirmation,
+    });
+    const running = runCanvasBlock(deps, block as never, undefined, {
+      enforceOutboundConfirmation: true,
+      resolveOutboundGate: gate,
+    } as never);
+    userId = "999";
+    await expect(running).rejects.toBeInstanceOf(ManhuaOutboundConfirmationMismatchError);
+    expect(bodies).toEqual([]);
+  });
+
+  it("在途清空确认（世代自增）：旧 gate 对象不得继续有效，零 POST", async () => {
+    // 函数开头读到的是「有确认、世代一致」，通过早拒；
+    // 随后工作区被重载（epoch 自增、确认被清空），提交边界必须察觉。
+    const block = makeBlock();
+    const confirmation = await confirmFor(block);
+    const bodies = captureOutbound();
+    let epoch = 1;
+    const gate = () => ({
+      currentScope: currentScopeFor(block.id, { epoch }),
+      confirmation: epoch === 1 ? confirmation : undefined,
+    });
+    const running = runCanvasBlock(deps, block as never, undefined, {
+      enforceOutboundConfirmation: true,
+      resolveOutboundGate: gate,
+    } as never);
+    // 同步紧接着发生：早拒已经过了，提交边界还没到
+    epoch = 2;
+    await expect(running).rejects.toBeInstanceOf(ManhuaOutboundConfirmationMissingError);
     expect(bodies).toEqual([]);
   });
 
