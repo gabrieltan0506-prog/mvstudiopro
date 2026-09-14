@@ -1522,6 +1522,8 @@ export function requiresManhuaOutboundConfirmation(
 function assertManhuaOutboundGate(
   block: Pick<CanvasBlock, "kind" | "id" | "videoModel" | "musicMvShot">,
   gate: ManhuaOutboundGate | undefined,
+  /** 真正执行这一次提交的账号（deps.userId），与 currentScope 交叉核对 */
+  executingUserId: string,
 ): asserts gate is ManhuaOutboundGate & { confirmation: ManhuaOutboundConfirmation } {
   if (!gate?.confirmation) {
     throw new ManhuaOutboundConfirmationMissingError(
@@ -1530,14 +1532,53 @@ function assertManhuaOutboundGate(
   }
   const a = gate.currentScope;
   const b = gate.confirmation.scope;
-  if (String(a.userId) !== String(b.userId) || a.projectId !== b.projectId || a.blockId !== b.blockId) {
+
+  // 身份必须完整。空账号／空工作区／未确认编剧稿都不是有效身份，
+  // 不能靠「两边都空所以相等」混过去（0914 复审：不得使用缺省 null 身份）。
+  if (
+    !String(a.userId).trim() ||
+    !String(a.workspaceId).trim() ||
+    !String(a.projectVersion).trim() ||
+    a.projectVersion === "unconfirmed" ||
+    !Number.isFinite(Number(a.epoch))
+  ) {
+    throw new ManhuaOutboundConfirmationMismatchError(
+      "当前账号或项目身份不完整，无法校验生成前确认，本次未提交、未扣费。",
+    );
+  }
+
+  // currentScope 必须确实指向**这一个**节点。gate 是按 blockId 取出来的，
+  // 但取错／传错时旧写法不会发现（0914 审查点名：收到 block 却不核 blockId）。
+  if (String(a.blockId) !== String(block.id)) {
+    throw new ManhuaOutboundConfirmationMismatchError(
+      "确认闸拿到的节点与本次执行的节点不一致，本次未提交、未扣费。",
+    );
+  }
+
+  // 与真正执行提交的账号交叉核对：currentScope 来自界面上下文，
+  // deps.userId 是入队 jobs 时真正写进去的人，两者不一致就是上下文串了。
+  if (String(executingUserId || "").trim() && String(executingUserId) !== String(a.userId)) {
+    throw new ManhuaOutboundConfirmationMismatchError(
+      "当前登录账号与确认时的账号不一致，本次未提交、未扣费。请重新查看并确认。",
+    );
+  }
+
+  if (
+    String(a.userId) !== String(b.userId) ||
+    String(a.workspaceId) !== String(b.workspaceId) ||
+    String(a.projectVersion) !== String(b.projectVersion) ||
+    String(a.blockId) !== String(b.blockId)
+  ) {
     throw new ManhuaOutboundConfirmationMismatchError(
       "确认记录属于另一个账号／项目／节点，本次未提交、未扣费。请在当前上下文重新查看并确认。",
     );
   }
-  if (!String(a.userId).trim() || !String(a.projectId).trim() || a.projectId === "unconfirmed") {
+
+  // 世代不同＝这份工作区在确认之后被整份换掉（载入云草稿／导入备份／清空）。
+  // 指纹里已经含 epoch，这里再显式判一次是为了给出说得清的原因。
+  if (Number(a.epoch) !== Number(b.epoch)) {
     throw new ManhuaOutboundConfirmationMismatchError(
-      "当前账号或项目身份不完整，无法校验生成前确认，本次未提交、未扣费。",
+      "工作区在你确认之后被重新载入过，旧确认已失效，本次未提交、未扣费。请重新查看并确认。",
     );
   }
 }
@@ -1684,16 +1725,35 @@ function sortNestedKeys(value: unknown): unknown {
 }
 
 /**
- * 确认归属。**三项都是必填**——可选会被省略，一旦省略就退化成缺省 null 身份，
+ * 确认归属。**每一项都是必填**——可选会被省略，一旦省略就退化成缺省 null 身份，
  * 换账号、换项目、换节点都拿到同一个指纹（0914 复审明确要求不得使用缺省 null 身份）。
+ *
+ * 关于 workspaceId 的实际口径（0914 查证，不是假定）：
+ * 漫剧云草稿在服务端**每个用户只有一份**——`manhua_cloud_drafts` 在 `userId` 上建了
+ * 唯一索引（server/db.ts），GCS 侧也按 userId 寻址，`manhuaCloudDraft.get/upsert`
+ * 全部只以 `ctx.user.id` 取用，请求与回包里都没有草稿 id。
+ * 所以系统里**确实不存在独立的项目 ID**，工作区身份就等于「该用户的那一份草稿」。
+ * 这不是省事的近似，是当前存储契约本身；哪天支持多项目，这里换成真正的草稿 id 即可。
+ *
+ * 因此把空间身份与版本身份**分开**：workspaceId 是空间（存储实体），
+ * projectVersion 是版本（编剧确认稿）。剧名＋确认时刻只能当版本线索，
+ * 单独拿它当唯一空间身份是错的（0914 审查明确指出）。
  */
 export type CanvasOutboundConfirmationScope = {
   /** 谁确认的；换账号不得沿用 */
   userId: string | number;
-  /** 哪个项目／哪份云草稿 */
-  projectId: string;
+  /** 哪一份工作区（＝该用户的漫剧云草稿，见上方查证） */
+  workspaceId: string;
+  /** 哪一版编剧确认稿；重新确认编剧稿＝新版本，旧确认失效 */
+  projectVersion: string;
   /** 哪个节点 */
   blockId: string;
+  /**
+   * 本地上下文世代。整份工作区被**换掉**时自增（载入云草稿、导入备份、切账号、
+   * 清空画布）。用途是让**在途**的预览／确认失效：异步 await 期间用户切走了，
+   * 迟到的回执不能写回，也不能拿旧快照批准新工作区的内容。
+   */
+  epoch: number;
 };
 
 /**
@@ -1721,8 +1781,12 @@ export function manhuaOutboundConfirmationFingerprint(
     engine: preview.engine,
     scope: {
       userId: String(scope.userId),
-      projectId: String(scope.projectId),
+      workspaceId: String(scope.workspaceId),
+      projectVersion: String(scope.projectVersion),
       blockId: String(scope.blockId),
+      // epoch 计入指纹：工作区被换掉之后，旧快照 id 自然对不上新算出来的，
+      // 迟到的确认与展示过的 snapshotId 一起失效，不用靠调用方各自记得去比。
+      epoch: Number(scope.epoch),
     },
     request: shaped,
   });
@@ -1806,7 +1870,7 @@ export async function runCanvasBlock(
     requiresManhuaOutboundConfirmation(block)
   ) {
     // 放在这里：早于原片编辑、Wan/H3 与普通 Seedance 的任何一个提交点。
-    assertManhuaOutboundGate(block, runOptions?.outboundGate);
+    assertManhuaOutboundGate(block, runOptions?.outboundGate, String(deps.userId || ""));
   }
   if (block.kind === "music") throw new Error("请在音乐节点中选择生成音乐、分镜或合成阶段");
   if (runOptions?.pilotRun) {

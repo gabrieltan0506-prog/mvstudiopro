@@ -37,7 +37,13 @@ afterEach(() => {
 const deps = { userRole: "admin" as const, optimizeCopy: async () => "" };
 
 /** 确认归属三项必填：省略会退化成缺省身份，换账号/项目/节点拿到同一指纹 */
-const TEST_SCOPE = { userId: "7", projectId: "proj-a", blockId: "blk-1" } as const;
+const TEST_SCOPE = {
+  userId: "7",
+  workspaceId: "manhua-cloud-draft:7",
+  projectVersion: "proj-a",
+  blockId: "blk-1",
+  epoch: 1,
+} as const;
 
 function makeBlock(over: Record<string, unknown> = {}) {
   return {
@@ -82,7 +88,13 @@ describe("生成前确认与实际出站同源", () => {
     expect(noNetwork).not.toHaveBeenCalled();
 
     // 实跑：抓出真正提交的请求体。段成片强制确认，所以先按同一份预览确认再跑。
-    const scope = { userId: "7", projectId: "proj-a", blockId: block.id };
+    const scope = {
+      userId: "7",
+      workspaceId: "manhua-cloud-draft:7",
+      projectVersion: "proj-a",
+      blockId: block.id,
+      epoch: 1,
+    };
     const confirmation = {
       fingerprint: manhuaOutboundConfirmationFingerprint(preview, scope),
       scope,
@@ -281,8 +293,17 @@ describe("确认指纹覆盖完整业务身份", () => {
   });
 
   it("换项目 / 换节点 / 换账号失效", () => {
-    const s = { userId: "7", projectId: "proj-a", blockId: "blk-1" };
-    expect(fp(base, s)).not.toBe(fp(base, { ...s, projectId: "proj-b" }));
+    const s = {
+      userId: "7",
+      workspaceId: "manhua-cloud-draft:7",
+      projectVersion: "proj-a",
+      blockId: "blk-1",
+      epoch: 1,
+    };
+    expect(fp(base, s)).not.toBe(fp(base, { ...s, projectVersion: "proj-b" }));
+    expect(fp(base, s)).not.toBe(fp(base, { ...s, workspaceId: "manhua-cloud-draft:8" }));
+    // 工作区被整份换掉：同样的内容也必须换指纹
+    expect(fp(base, s)).not.toBe(fp(base, { ...s, epoch: 2 }));
     expect(fp(base, s)).not.toBe(fp(base, { ...s, blockId: "blk-2" }));
     expect(fp(base, s)).not.toBe(fp(base, { ...s, userId: "8" }));
   });
@@ -370,10 +391,15 @@ describe("嵌套结构等价不该误判失效", () => {
  */
 describe("运行前核对确认：缺确认、换身份、改输入都不下单", () => {
   /** 当前上下文的 scope，和确认记录分开给——这是审查要求的关键 */
-  const currentScopeFor = (blockId: string, over: Record<string, string> = {}) => ({
+  const currentScopeFor = (
+    blockId: string,
+    over: Record<string, string | number> = {},
+  ) => ({
     userId: "7",
-    projectId: "proj-a",
+    workspaceId: "manhua-cloud-draft:7",
+    projectVersion: "proj-a",
     blockId,
+    epoch: 1,
     ...over,
   });
 
@@ -462,6 +488,56 @@ describe("运行前核对确认：缺确认、换身份、改输入都不下单"
     expect(result.outputUrl).toBe("https://test.invalid/result.mp4");
   });
 
+  it("保留旧确认，只让工作区换代（载入云草稿等）：零 POST", async () => {
+    const block = makeBlock();
+    const confirmation = await confirmFor(block);
+    const bodies = captureOutbound();
+    await expect(
+      runCanvasBlock(deps, block as never, undefined, {
+        enforceOutboundConfirmation: true,
+        outboundGate: {
+          currentScope: currentScopeFor(block.id, { epoch: 2 }),
+          confirmation,
+        },
+      } as never),
+    ).rejects.toThrow(/工作区在你确认之后被重新载入过/);
+    expect(bodies).toEqual([]);
+  });
+
+  it("闸拿到的 currentScope 指向别的节点：零 POST", async () => {
+    // 审查点名：assert 收到 block 却不核 a.blockId === block.id。
+    // 这里确认记录与 currentScope 内部自洽（都是 clip-e01-g09），
+    // 唯独跟真正在执行的 block 不是同一个——旧写法察觉不到。
+    const block = makeBlock();
+    const bodies = captureOutbound();
+    const otherScope = currentScopeFor("clip-e01-g09");
+    await expect(
+      runCanvasBlock(deps, block as never, undefined, {
+        enforceOutboundConfirmation: true,
+        outboundGate: {
+          currentScope: otherScope,
+          confirmation: { fingerprint: "x", scope: otherScope, confirmedAt: 1 },
+        },
+      } as never),
+    ).rejects.toThrow(/确认闸拿到的节点与本次执行的节点不一致/);
+    expect(bodies).toEqual([]);
+  });
+
+  it("真正执行提交的账号与确认账号不一致：零 POST", async () => {
+    // currentScope 与确认记录完全一致，但 deps.userId（入队 jobs 时真正写进去的人）
+    // 是另一个账号——上下文串了，不能靠界面那一侧自说自话。
+    const block = makeBlock();
+    const confirmation = await confirmFor(block);
+    const bodies = captureOutbound();
+    await expect(
+      runCanvasBlock({ ...deps, userId: "999" } as never, block as never, undefined, {
+        enforceOutboundConfirmation: true,
+        outboundGate: { currentScope: currentScopeFor(block.id), confirmation },
+      } as never),
+    ).rejects.toThrow(/当前登录账号与确认时的账号不一致/);
+    expect(bodies).toEqual([]);
+  });
+
   // 以下三条：**确认记录原样保留**，只切换当前上下文
   it("保留旧确认，只换当前账号：零 POST", async () => {
     const block = makeBlock();
@@ -487,7 +563,7 @@ describe("运行前核对确认：缺确认、换身份、改输入都不下单"
       runCanvasBlock(deps, block as never, undefined, {
         enforceOutboundConfirmation: true,
         outboundGate: {
-          currentScope: currentScopeFor(block.id, { projectId: "proj-b" }),
+          currentScope: currentScopeFor(block.id, { projectVersion: "proj-b" }),
           confirmation,
         },
       } as never),
@@ -515,7 +591,11 @@ describe("运行前核对确认：缺确认、换身份、改输入都不下单"
     const block = makeBlock();
     const confirmation = await confirmFor(block);
     const bodies = captureOutbound();
-    for (const bad of [{ userId: "" }, { projectId: "unconfirmed" }]) {
+    for (const bad of [
+      { userId: "" },
+      { workspaceId: "" },
+      { projectVersion: "unconfirmed" },
+    ]) {
       await expect(
         runCanvasBlock(deps, block as never, undefined, {
           enforceOutboundConfirmation: true,

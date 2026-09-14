@@ -30,6 +30,7 @@ import {
   runGptImage2,
   type CanvasRunDeps,
   type ManhuaOutboundConfirmation,
+  type CanvasOutboundConfirmationScope,
 } from "@/lib/canvasRunBlock";
 import { resolveOpenAiImageLaneForBlockId } from "@shared/openaiImageLane";
 import { copyText } from "@/lib/copyText";
@@ -721,6 +722,31 @@ export default function OmniCanvas() {
   const [blocks, setBlocks] = useState<CanvasBlock[]>(initial.blocks);
   const blocksRef = useRef(blocks);
   blocksRef.current = blocks;
+
+  /**
+   * 生成前确认的存放处。**整块提前到这里**，因为画布被整份换掉的地方
+   * （载入云草稿、重铺集、清剧、导入备份、删节点）分散在文件各处，
+   * 都要能调到 bumpManhuaOutboundEpoch；放在后面会撞上 TDZ。
+   *
+   * 一律用 ref 而不是 state：工厂编排是长跑异步，读 state 会拿到闭包里的旧值——
+   * 这正是 0914 审查指出的「currentScope 只是形参独立，生产时未保证最新」。
+   */
+  const outboundConfirmationsRef = useRef<Record<string, ManhuaOutboundConfirmation>>({});
+  const [outboundConfirmedAtByBlock, setOutboundConfirmedAtByBlock] = useState<
+    Record<string, number>
+  >({});
+  /**
+   * 上下文世代。画布被**整份换掉**时自增，让在途的预览／确认一并失效：
+   * await 期间用户切走了，迟到的回执不能写回，旧快照也不能拿来批准新内容。
+   * 节点内容的普通改动不需要靠它——内容变了请求体就变，指纹自然对不上。
+   */
+  const manhuaOutboundEpochRef = useRef(1);
+  const bumpManhuaOutboundEpoch = useCallback(() => {
+    manhuaOutboundEpochRef.current += 1;
+    // 世代变了，旧确认一律作废：宁可让用户重看一次，也不能放旧确认过去。
+    outboundConfirmationsRef.current = {};
+    setOutboundConfirmedAtByBlock((prev) => (Object.keys(prev).length ? {} : prev));
+  }, []);
   const [edges, setEdges] = useState<CanvasEdge[]>(initial.edges);
   const [factoryBusy, setFactoryBusy] = useState(false);
   /** 剧本工作台优先；已确认编剧时强制工作台（旧 session 若停在表单会像「UI 没改」） */
@@ -2393,6 +2419,8 @@ export default function OmniCanvas() {
     const nextEdges = draft.canvas.edges as CanvasEdge[];
     setBlocks(nextBlocks);
     setEdges(nextEdges);
+    // 画布被整份换掉：旧的生成前确认一律作废，在途的预览／确认也一并失效。
+    bumpManhuaOutboundEpoch();
     // 云端仍是 https：旁路写入本机库，并尽量立刻用本机 blob 回灌显示
     scheduleCacheCanvasMediaToLocalStore(nextBlocks);
     void (async () => {
@@ -3782,20 +3810,71 @@ export default function OmniCanvas() {
   );
 
   /**
-   * 生成前确认的归属身份。三项必填——缺省 null 身份会让换账号/换项目/换节点
-   * 拿到同一个确认指纹。项目身份用「剧名@编剧确认时刻」：重新确认编剧稿等于新版本，
-   * 旧确认理应随之失效。
+   * **最新**运行上下文。每次渲染同步刷新这个 ref，异步长跑一律从这里读。
+   *
+   * 为什么不能再用 useCallback 闭包：工厂编排跑几分钟，中途用户换账号、
+   * 重新确认编剧稿、载入另一份云草稿，闭包里还是启动那一刻的旧值——
+   * 补 hook 依赖只能让**新的**调用拿到新值，救不了**在途**的那一次
+   * （0914 审查 P1-2 原话：生产时未保证最新）。
+   *
+   * workspaceId 的口径是查过存储契约的，不是猜的：漫剧云草稿每个用户只有一份
+   * （`manhua_cloud_drafts` 在 userId 上是唯一索引，GCS 也按 userId 寻址，
+   * `manhuaCloudDraft.get/upsert` 只认 ctx.user.id，回包里没有草稿 id），
+   * 所以工作区身份就是「该用户的那一份草稿」。剧名@确认时刻只是**版本**线索，
+   * 单独拿它当空间身份是错的，因此分成 workspaceId 与 projectVersion 两项。
    */
+  const manhuaOutboundContextRef = useRef({
+    userId: "",
+    workspaceId: "",
+    projectVersion: "unconfirmed",
+  });
+  manhuaOutboundContextRef.current = {
+    userId: user?.id != null ? String(user.id) : "",
+    // 没有登录就没有工作区身份。留空，由闸口明确拒绝，不编一个假 id 糊过去。
+    workspaceId: user?.id != null ? `manhua-cloud-draft:${user.id}` : "",
+    projectVersion: projectBible
+      ? `${projectBible.seriesTitle}@${projectBible.confirmedAt}`
+      : "unconfirmed",
+  };
+
+  /** 取当前归属。**每次调用都重新读 ref**，绝不缓存。 */
   const manhuaOutboundScope = useCallback(
-    (blockId: string) => ({
-      userId: user?.id != null ? String(user.id) : "",
-      projectId: projectBible
-        ? `${projectBible.seriesTitle}@${projectBible.confirmedAt}`
-        : "unconfirmed",
+    (blockId: string): CanvasOutboundConfirmationScope => ({
+      userId: manhuaOutboundContextRef.current.userId,
+      workspaceId: manhuaOutboundContextRef.current.workspaceId,
+      projectVersion: manhuaOutboundContextRef.current.projectVersion,
       blockId,
+      epoch: manhuaOutboundEpochRef.current,
     }),
-    [user?.id, projectBible],
+    [],
   );
+
+  /** 两个归属是不是同一个（不含 blockId 之外的顺序差异） */
+  const sameManhuaOutboundScope = useCallback(
+    (a: CanvasOutboundConfirmationScope, b: CanvasOutboundConfirmationScope) =>
+      String(a.userId) === String(b.userId) &&
+      String(a.workspaceId) === String(b.workspaceId) &&
+      String(a.projectVersion) === String(b.projectVersion) &&
+      String(a.blockId) === String(b.blockId) &&
+      Number(a.epoch) === Number(b.epoch),
+    [],
+  );
+
+  /**
+   * 归属一变（换账号／重新确认编剧稿），旧确认全部作废。
+   * 不能只靠 confirmedAt 表示有效——审查原话：确认状态不能只用 confirmedAt 表示有效。
+   */
+  const lastOutboundIdentityRef = useRef("");
+  useEffect(() => {
+    const identity = `${manhuaOutboundContextRef.current.userId}|${manhuaOutboundContextRef.current.workspaceId}|${manhuaOutboundContextRef.current.projectVersion}`;
+    if (!lastOutboundIdentityRef.current) {
+      lastOutboundIdentityRef.current = identity;
+      return;
+    }
+    if (lastOutboundIdentityRef.current === identity) return;
+    lastOutboundIdentityRef.current = identity;
+    bumpManhuaOutboundEpoch();
+  }, [user?.id, projectBible, bumpManhuaOutboundEpoch]);
 
   /**
    * 算出某一段**真正会发出去**的内容，交给工作台的生成前确认展示。
@@ -3803,20 +3882,16 @@ export default function OmniCanvas() {
    * 在真正下单那一刻回卷，因此不建单、不扣费。不支持的模式会抛出明确原因，由界面展示。
    */
   /**
-   * 用户在生成前确认过的段。键是节点 id。
-   * 用 ref 而不是 state：runFactory 是长跑异步，读 state 会拿到闭包里的旧值。
-   */
-  const outboundConfirmationsRef = useRef<Record<string, ManhuaOutboundConfirmation>>({});
-  const [outboundConfirmedAtByBlock, setOutboundConfirmedAtByBlock] = useState<
-    Record<string, number>
-  >({});
-  /**
    * 确认这一段。**只接受用户当前正在看的那一份**：
    * 调用方把展示时拿到的 snapshotId 传回来，这里重新准备一次再比对，
    * 不一致就拒绝并要求重新查看——否则用户看的是 A、批准的却是 B。
    */
   const confirmClipOutbound = useCallback(
     async (blockId: string, shownSnapshotId: string) => {
+      // await 之前先捕获当时的归属；await 之后再取一次比对。
+      // 中间用户可能换账号、重新确认编剧稿、载入另一份云草稿——
+      // 迟到的这一次不能写回，也不能拿旧世代的快照批准新工作区的内容。
+      const scopeAtStart = manhuaOutboundScope(blockId);
       const block = blocksRef.current.find((item) => item.id === blockId);
       if (!block) throw new Error("该段节点已不存在，请刷新后重试");
       // 确认也必须走同一份工厂准备，否则确认的是另一份输入
@@ -3842,10 +3917,21 @@ export default function OmniCanvas() {
         );
       }
       const scope = manhuaOutboundScope(blockId);
+      if (!sameManhuaOutboundScope(scopeAtStart, scope)) {
+        throw new Error(
+          "你在确认过程中切换了账号或项目，本次确认已作废、未提交。请重新查看最新内容再确认。",
+        );
+      }
       const fingerprint = manhuaOutboundConfirmationFingerprint(preview, scope);
       if (!shownSnapshotId || shownSnapshotId !== fingerprint) {
         throw new Error(
           "这一段的内容在你查看之后又变了，已取消本次确认。请重新点「查看实际发送内容」核对最新的一份再确认。",
+        );
+      }
+      // 写 ref 之前最后再核一次世代：上面几行到这里之间仍可能被切走。
+      if (manhuaOutboundEpochRef.current !== scope.epoch) {
+        throw new Error(
+          "工作区在你确认过程中被重新载入，本次确认已作废、未提交。请重新查看最新内容再确认。",
         );
       }
       const confirmedAt = Date.now();
@@ -3858,6 +3944,7 @@ export default function OmniCanvas() {
     [
       runDeps,
       manhuaOutboundScope,
+      sameManhuaOutboundScope,
       edges,
       shotContinuity,
       writerFocusEpisode,
@@ -3867,6 +3954,9 @@ export default function OmniCanvas() {
 
   const previewClipOutbound = useCallback(
     async (blockId: string) => {
+      // 与确认同一口径：load 前捕获归属，await 后对照最新，不一致就弃置这次结果。
+      // 否则跨项目同 blockId 的迟到回执会把新预览覆盖掉（0914 审查 P1-3）。
+      const scopeAtStart = manhuaOutboundScope(blockId);
       const block = blocksRef.current.find((item) => item.id === blockId);
       if (!block) throw new Error("该段节点已不存在，请刷新后重试");
       // **与真正运行共用同一份工厂准备**：不能再拿裸节点算预览。
@@ -3886,19 +3976,23 @@ export default function OmniCanvas() {
         // 首段未批准时工厂按 10 秒试片跑，预览必须同口径
         pilotRun: activePilotGateEntry?.status !== "approved",
       });
+      const scopeNow = manhuaOutboundScope(blockId);
+      if (!sameManhuaOutboundScope(scopeAtStart, scopeNow)) {
+        throw new Error(
+          "你在读取过程中切换了账号或项目，这份内容已不属于当前工作区。请重新查看。",
+        );
+      }
       // snapshotId 就是这一份内容在当前归属下的指纹：确认时拿它比对，
       // 保证「用户看到的那一份」才是被批准的那一份。
       return {
         ...preview,
-        snapshotId: manhuaOutboundConfirmationFingerprint(
-          preview,
-          manhuaOutboundScope(blockId),
-        ),
+        snapshotId: manhuaOutboundConfirmationFingerprint(preview, scopeNow),
       };
     },
     [
       runDeps,
       manhuaOutboundScope,
+      sameManhuaOutboundScope,
       edges,
       shotContinuity,
       writerFocusEpisode,
@@ -4600,6 +4694,8 @@ export default function OmniCanvas() {
       const next = replaceManhuaEpisodeChain(blocks, edges, spawned, continuity.episodeIndex);
       setBlocks(next.blocks);
       setEdges(next.edges);
+      // 画布被整份换掉：旧的生成前确认一律作废，在途的预览／确认也一并失效。
+      bumpManhuaOutboundEpoch();
       saveCanvasState(next.blocks, next.edges);
       remapDockSelectionAfterSpawn(next.blocks, continuity.episodeIndex);
       if (hasOtherEpisodes) {
@@ -4862,6 +4958,8 @@ export default function OmniCanvas() {
         if (abortRef.current) abortRef.current.abort();
         setBlocks(nextBlocks);
         setEdges(nextEdges);
+        // 画布被整份换掉：旧的生成前确认一律作废，在途的预览／确认也一并失效。
+        bumpManhuaOutboundEpoch();
         saveCanvasState(nextBlocks, nextEdges);
         setDockSelectedIds(new Set());
         setWorkflowPhase("outline");
@@ -5156,6 +5254,8 @@ export default function OmniCanvas() {
         if (abortRef.current) abortRef.current.abort();
         setBlocks(cleaned.blocks);
         setEdges(cleaned.edges);
+        // 画布被整份换掉：旧的生成前确认一律作废，在途的预览／确认也一并失效。
+        bumpManhuaOutboundEpoch();
         saveCanvasState(cleaned.blocks, cleaned.edges);
         setDockSelectedIds(new Set());
         setWorkflowPhase("outline");
@@ -5374,6 +5474,8 @@ export default function OmniCanvas() {
     if (abortRef.current) abortRef.current.abort();
     setBlocks(cleaned.blocks);
     setEdges(cleaned.edges);
+    // 画布被整份换掉：旧的生成前确认一律作废，在途的预览／确认也一并失效。
+    bumpManhuaOutboundEpoch();
     saveCanvasState(cleaned.blocks, cleaned.edges);
     setDockSelectedIds(new Set());
     setWorkflowPhase("outline");
@@ -5564,6 +5666,8 @@ export default function OmniCanvas() {
     };
     setBlocks(next.blocks);
     setEdges(next.edges);
+    // 画布被整份换掉：旧的生成前确认一律作废，在途的预览／确认也一并失效。
+    bumpManhuaOutboundEpoch();
     saveCanvasState(next.blocks, next.edges);
     remapDockSelectionAfterSpawn(next.blocks, continuity.episodeIndex);
     const tips = [
@@ -5792,6 +5896,8 @@ export default function OmniCanvas() {
     const nextEdges = [...cleaned.edges, ...spawned.edges];
     setBlocks(nextBlocks);
     setEdges(nextEdges);
+    // 画布被整份换掉：旧的生成前确认一律作废，在途的预览／确认也一并失效。
+    bumpManhuaOutboundEpoch();
     saveCanvasState(nextBlocks, nextEdges);
     // 铺板后预勾选各集 story，便于立刻用「成片坞已勾选集」跑多集
     setDockSelectedIds(
@@ -6579,6 +6685,8 @@ export default function OmniCanvas() {
       const nextEdges = edges.filter((e) => !kill.has(e.fromId) && !kill.has(e.toId));
       setBlocks(nextBlocks);
       setEdges(nextEdges);
+      // 画布被整份换掉：旧的生成前确认一律作废，在途的预览／确认也一并失效。
+      bumpManhuaOutboundEpoch();
       saveCanvasState(nextBlocks, nextEdges);
     },
     [blocks, edges],
@@ -8372,6 +8480,9 @@ export default function OmniCanvas() {
       segmentCapacityModeByEpisode,
       // 审查 P1：整板跑之前的同步设置要用当前选的导演卡
       activeDirectionCanon,
+      // 审查 P1-2 点名漏掉的一项。它现在读 ref、依赖为空，本身稳定；
+      // 列进来是为了别再出现「闭包里少一项就拿到旧上下文」这类问题。
+      manhuaOutboundScope,
     ],
   );
 
