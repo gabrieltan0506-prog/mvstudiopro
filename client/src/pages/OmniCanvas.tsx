@@ -161,6 +161,7 @@ import { assertValidManhuaGlbFile } from "@/lib/manhuaGlbImport";
 import { applyManhua3dBinding, createManhua3dOperationGuard } from "@/lib/manhua3dBinding";
 import {
   MANHUA_FACTORY_STAGE_LABEL_ZH,
+  prepareManhuaFactoryClipInput,
   MANHUA_FACTORY_STAGE_ORDER,
   MANHUA_SERIES_SPAWN_MAX,
   applyFactoryPrefsToBlocks,
@@ -3818,7 +3819,20 @@ export default function OmniCanvas() {
     async (blockId: string, shownSnapshotId: string) => {
       const block = blocksRef.current.find((item) => item.id === blockId);
       if (!block) throw new Error("该段节点已不存在，请刷新后重试");
-      const preview = await previewCanvasBlockOutbound(runDeps, block);
+      // 确认也必须走同一份工厂准备，否则确认的是另一份输入
+      const { preparedBlock, upstream } = await prepareManhuaFactoryClipInput({
+        blocks: blocksRef.current,
+        edges,
+        blockId,
+        fallbackBlock: block,
+        stage: "clip",
+        episodeIndex: getBlockEpisodeIndex(block) ?? writerFocusEpisode,
+        shotContinuity,
+        preparedVideoEdit: false,
+      });
+      const preview = await previewCanvasBlockOutbound(runDeps, preparedBlock, upstream, {
+        pilotRun: activePilotGateEntry?.status !== "approved",
+      });
       if (preview.compile.blocked || preview.compile.fatalZh) {
         throw new Error(
           preview.compile.fatalZh ||
@@ -3841,14 +3855,37 @@ export default function OmniCanvas() {
       };
       setOutboundConfirmedAtByBlock((prev) => ({ ...prev, [blockId]: confirmedAt }));
     },
-    [runDeps, manhuaOutboundScope],
+    [
+      runDeps,
+      manhuaOutboundScope,
+      edges,
+      shotContinuity,
+      writerFocusEpisode,
+      activePilotGateEntry?.status,
+    ],
   );
 
   const previewClipOutbound = useCallback(
     async (blockId: string) => {
       const block = blocksRef.current.find((item) => item.id === blockId);
       if (!block) throw new Error("该段节点已不存在，请刷新后重试");
-      const preview = await previewCanvasBlockOutbound(runDeps, block);
+      // **与真正运行共用同一份工厂准备**：不能再拿裸节点算预览。
+      // 运行时会补最近上游图、上段末帧接力与段内关键静帧，并做造型/原镜门禁；
+      // 裸节点算出来的指纹与编排后真正发出的请求对不上（0914 审查 P1-4）。
+      const { preparedBlock, upstream } = await prepareManhuaFactoryClipInput({
+        blocks: blocksRef.current,
+        edges,
+        blockId,
+        fallbackBlock: block,
+        stage: "clip",
+        episodeIndex: getBlockEpisodeIndex(block) ?? writerFocusEpisode,
+        shotContinuity,
+        preparedVideoEdit: false,
+      });
+      const preview = await previewCanvasBlockOutbound(runDeps, preparedBlock, upstream, {
+        // 首段未批准时工厂按 10 秒试片跑，预览必须同口径
+        pilotRun: activePilotGateEntry?.status !== "approved",
+      });
       // snapshotId 就是这一份内容在当前归属下的指纹：确认时拿它比对，
       // 保证「用户看到的那一份」才是被批准的那一份。
       return {
@@ -3859,7 +3896,14 @@ export default function OmniCanvas() {
         ),
       };
     },
-    [runDeps, manhuaOutboundScope],
+    [
+      runDeps,
+      manhuaOutboundScope,
+      edges,
+      shotContinuity,
+      writerFocusEpisode,
+      activePilotGateEntry?.status,
+    ],
   );
 
 
