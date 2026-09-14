@@ -87,3 +87,19 @@ export function buildOldPhotoRestorePrompt(): string {
     "禁止美颜换脸、改变体型、增删人物或物件、凭空补造文字、裁切画面、添加边框、标志或水印。",
   ].join("\n");
 }
+
+/** 照片动画按用户选择固定模型；历史任务的清晰度与价格保持可读。 */
+export const HOME_PHOTO_VIDEO_MODELS = ["seedance-2.0", "wan-3.0"] as const;
+export type HomePhotoVideoModel = (typeof HOME_PHOTO_VIDEO_MODELS)[number];
+export const HOME_PHOTO_VIDEO_MODEL_LABELS: Record<HomePhotoVideoModel, string> = {
+  "seedance-2.0": "Seedance 2.0",
+  "wan-3.0": "Wan 3.0",
+};
+export function isHomePhotoVideoModel(value: unknown): value is HomePhotoVideoModel {
+  return HOME_PHOTO_VIDEO_MODELS.includes(value as HomePhotoVideoModel);
+}
+export function homePhotoVideoImageLimits(model: HomePhotoVideoModel) {
+  return model === "wan-3.0"
+    ? { maxBytes: 20_000_000, minEdge: 240, maxEdge: 8000, maxRatio: 8 }
+    : { maxBytes: 30_000_000, minEdge: 300, maxEdge: 6000, maxRatio: 2.5 };
+}

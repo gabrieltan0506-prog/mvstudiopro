@@ -18,7 +18,10 @@ export type PostProdJobRow = {
 
 export function buildPostProdJobResponse(
   job: PostProdJobRow,
-  signUrl: (gsUri: string, expiresSeconds: number) => string = signGsUriV4ReadUrl,
+  signUrl: (
+    gsUri: string,
+    expiresSeconds: number
+  ) => string = signGsUriV4ReadUrl
 ) {
   if (!job) return null;
 
@@ -33,10 +36,41 @@ export function buildPostProdJobResponse(
       : null;
 
   let output = originalOutput;
-  const gcsUri = typeof originalOutput?.gcsUri === "string" ? originalOutput.gcsUri : "";
+  const gcsUri =
+    typeof originalOutput?.gcsUri === "string" ? originalOutput.gcsUri : "";
   if (output && gcsUri.startsWith("gs://")) {
     // gcsUri 优先:读链按 gcsUri 现签,不依赖落库时的旧地址
     output = { ...output, url: signUrl(gcsUri, 7 * 24 * 3600) };
+  }
+
+  // 分层包只给已鉴权预演任务的同一对象前缀现签；不沿用旧URL。
+  if (
+    output &&
+    input.action === "manhua_previs" &&
+    job.provider === "blender-previs"
+  ) {
+    const bundle = output.layerBundle;
+    if (bundle && typeof bundle === "object" && !Array.isArray(bundle)) {
+      const { url: _oldUrl, ...layer } = bundle as Record<string, unknown>;
+      const expected = gcsUri.startsWith("gs://")
+        ? gcsUri.slice(0, gcsUri.lastIndexOf("/") + 1) + "layer-bundle.zip"
+        : "";
+      output = { ...output, layerBundle: layer };
+      if (
+        expected &&
+        layer.gcsUri === expected &&
+        layer.format === "previs-layers-v1" &&
+        typeof layer.sha256 === "string" &&
+        /^[a-f0-9]{64}$/.test(layer.sha256) &&
+        typeof layer.bytes === "number" &&
+        layer.bytes > 0 &&
+        layer.bytes <= 64 * 1024 * 1024
+      )
+        output = {
+          ...output,
+          layerBundle: { ...layer, url: signUrl(expected, 7 * 24 * 3600) },
+        };
+    }
   }
 
   return {

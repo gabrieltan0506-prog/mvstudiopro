@@ -11,9 +11,19 @@ args = sys.argv[sys.argv.index('--') + 1:]
 spec = json.loads(Path(args[0]).read_text())
 out = Path(args[1])
 out.mkdir(parents=True, exist_ok=True)
-bpy.ops.object.select_all(action='SELECT')
-bpy.ops.object.delete(use_global=False)
+# 受控生成场景须同时清理隐藏对象；按选择删除会遗漏上一轮隐藏的水花。
+for existing in list(bpy.context.scene.objects):
+    bpy.data.objects.remove(existing, do_unlink=True)
 scene = bpy.context.scene
+water_head_heights={}
+has_routes=any(a.get('motionRoute') for a in spec['actors'])
+if has_routes:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from previs_route import route_pose, measure_routes
+water_events={e['actorId']:e for e in spec.get('waterEmergence',{}).get('events',[])}
+if water_events:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from previs_water import root_z, build_water, measure_water
 scene.render.engine = 'BLENDER_WORKBENCH'
 scene.render.resolution_x, scene.render.resolution_y = (960, 540) if spec['aspect'] == '16:9' else (540, 960)
 scene.render.resolution_percentage = 100
@@ -67,8 +77,8 @@ def mesh(name, a, b, radius, mat, sphere=False):
     obj.data.materials.append(mat)
     return obj
 
-ground = material('地面', (.23,.25,.27))
-obj = mesh('地面', (0,0,-.12), (0,0,0), 16, ground)
+ground = material('水面' if water_events else '地面', (.06,.22,.30) if water_events else (.23,.25,.27))
+obj = mesh('地面', (0,0,-.12), (0,0,0), 64 if water_events else 16, ground)
 
 def smooth(value):
     u = max(0., min(1., value))
@@ -76,12 +86,15 @@ def smooth(value):
 
 def position(actor, frame):
     t = (frame-1)/24
+    if actor.get('motionRoute'): return route_pose(actor,t)[0]
     u = max(0., min(1., (t-actor['moveStartSec'])/(actor['moveEndSec']-actor['moveStartSec'])))
+    z=root_z(water_events[actor['id']],t,water_head_heights[actor['id']]) if actor['id'] in water_head_heights else 0
     return Vector((actor['start'][0]*(1-u)+actor['end'][0]*u,
-                   actor['start'][1]*(1-u)+actor['end'][1]*u, 0))
+                   actor['start'][1]*(1-u)+actor['end'][1]*u, z))
 
 def transform(actor, frame):
-    return Matrix.Translation(position(actor, frame)) @ Matrix.Rotation(math.radians(actor['facingDeg']), 4, 'Z')
+    facing=route_pose(actor,(frame-1)/24)[1] if actor.get('motionRoute') else actor['facingDeg']
+    return Matrix.Translation(position(actor, frame)) @ Matrix.Rotation(math.radians(facing), 4, 'Z')
 
 def ik(hip, end, l1, l2, bend):
     delta = end-hip
@@ -155,6 +168,9 @@ def foot_offsets(actor):
 
 def plan_contacts(actor):
     offsets=foot_offsets(actor)
+    if actor['id'] in water_events:
+        return ({f:{key:transform(actor,f) @ Vector((*offset,.065)) for key,offset in offsets.items()} for f in range(1,scene.frame_end+1)},
+                {f:[] for f in range(1,scene.frame_end+1)})
     anchors={key:transform(actor,1) @ Vector((*offset,.065)) for key,offset in offsets.items()}
     result={}
     stance={}
@@ -176,22 +192,30 @@ def plan_contacts(actor):
 
 events=[]
 interaction_poses={}
-if spec.get('interactions'):
+sword_handles=[]
+has_swords=any(a.get('weapon') for a in spec['actors'])
+if spec.get('interactions') or has_swords:
     # Blender --python 不保证脚本所在目录位于sys.path；只添加服务器固定目录。
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from previs_interaction import validate_interactions, apply_interactions, measure_interactions
+    from previs_sword import validate_swords, apply_swords, build_swords, measure_swords
+    validate_swords(spec)
     events=validate_interactions(spec)
     interaction_contacts={a['id']:plan_contacts(a) for a in spec['actors']}
     for frame in range(1,scene.frame_end+1):
         poses={a['id']:points(a,frame,interaction_contacts[a['id']][0][frame]) for a in spec['actors']}
         transforms={a['id']:transform(a,frame) for a in spec['actors']}
         apply_interactions(events,frame,poses,transforms,ik)
+        if has_swords: apply_swords(spec,frame,poses,transforms,ik)
         interaction_poses[frame]=poses
 
 rigs=[]
 for index,actor in enumerate(spec['actors']):
     contacts,stance=plan_contacts(actor)
     rest=points(actor,1,contacts[1])
+    if actor['id'] in water_events:
+        water_head_heights[actor['id']]=float(rest['head'][1].z)
+        contacts,stance=plan_contacts(actor)
     data=bpy.data.armatures.new(actor['id'])
     rig=bpy.data.objects.new(actor['id'],data)
     scene.collection.objects.link(rig)
@@ -219,9 +243,12 @@ for index,actor in enumerate(spec['actors']):
     max_error=0.
     for frame in range(1,scene.frame_end+1):
         scene.frame_set(frame)
+        previous_rotation=rig.rotation_euler.copy()
         rig.matrix_world=transform(actor,frame)
+        if actor.get('motionRoute') and frame>1:
+            rig.rotation_euler.make_compatible(previous_rotation)
         rig.keyframe_insert('location',frame=frame);rig.keyframe_insert('rotation_euler',frame=frame)
-        frame_points=interaction_poses[frame][actor['id']] if events else points(actor,frame,contacts[frame])
+        frame_points=interaction_poses[frame][actor['id']] if events or has_swords else points(actor,frame,contacts[frame])
         for name,(a,b) in frame_points.items():
             pb=rig.pose.bones[name]
             d=b-a
@@ -234,6 +261,10 @@ for index,actor in enumerate(spec['actors']):
     if max_error>.005: raise ValueError('关节落点不可达，请缩短路线或延长移动区间')
     rigs.append((actor,rig,contacts,stance,max_error))
 
+water_handles=build_water(spec,rigs,scene) if water_events else None
+if has_swords:
+    sword_handles=build_swords(spec,rigs,scene)
+
 # 附件/角色只从受控配置和服务端侧载清单构建；无配置不改变旧场景。
 creatures=[]
 models=[]
@@ -245,7 +276,7 @@ if any(actor.get('creature') for actor in spec['actors']):
     for actor,rig,contacts,_stance,_error in rigs:
         if actor.get('creature'):
             handle=build_creature(actor,rig,scene,lambda f,a=actor,c=contacts:
-                interaction_poses[f][a['id']] if events else points(a,f,c[f]))
+                interaction_poses[f][a['id']] if events or has_swords else points(a,f,c[f]))
             creatures.append(handle)
 if any(actor.get('riggedModel') for actor in spec['actors']):
     from previs_rigged_model import inspect_glb, import_rigged_model, retarget_from_source, apply_performance
@@ -331,6 +362,12 @@ for shot in spec['cameras']:
     for f in (begin,end):
         for prop in ('location','rotation_euler'):camera.keyframe_insert(prop,frame=f)
         camera.data.keyframe_insert('lens',frame=f)
+
+effect_handles=[]
+if spec.get('effects'):
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from previs_effects import build_effects, measure_effects
+    effect_handles=build_effects(spec,scene)
 
 # 整数帧已烘焙；跨版本兼容 legacy Action 与 layered Action，只处理相机插值。
 def curves(action):
@@ -452,6 +489,12 @@ for actor,rig,contacts,stance,error in rigs:
     if offscreen:report['warnings'].append(actor['nameZh']+'存在头或脚出画，请人工审查镜头覆盖')
 if events:
     report['interactions']=measure_interactions(events,rigs,scene,bpy.context.view_layer.update)
+if has_swords:
+    report['weapons'], sword_contacts = measure_swords(sword_handles,events,scene)
+    report['interactions'] = report.get('interactions',[]) + sword_contacts
+    report['interactions'].sort(key=lambda row: next(i for i,e in enumerate(events) if e['id']==row['id']))
+    for weapon in report['weapons']:
+        if any(s['offscreen'] for s in weapon['samples']): report['warnings'].append('练习剑存在出画，请调整机位并审查')
 if creatures or models:
     def offscreen_frames(vertices):
         outside=[]
@@ -479,7 +522,19 @@ if creatures or models:
             report['models'].append(item)
             report['warnings'].append(item['boundaryZh'])
             if item['offscreenFrames']: report['warnings'].append('带骨角色网格存在出画，请调整机位后重新预演')
+if effect_handles:
+    report['effects']=measure_effects(effect_handles,scene)
+    report['warnings'].extend(sorted(set(row['boundaryZh'] for row in report['effects'])))
+if has_routes:
+    report['motionRoutes']=measure_routes(spec,rigs,scene)
+if water_handles:
+    report['waterEmergence']=measure_water(water_handles,rigs,scene)
+    report['warnings'].append(report['waterEmergence']['boundaryZh'])
 (out/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))
+if water_handles and (report['waterEmergence']['overlaps'] or report['waterEmergence']['offscreenFrames']):
+    raise ValueError('独立浪花存在重叠或出画，请调整站位和机位')
+if any(max(s['gripError'],s['handEndError'])>.005 for w in report.get('weapons',[]) for s in w['samples']):
+    raise ValueError('持剑绑定误差未过验收')
 if any(row['contactError']>.005 for row in report.get('interactions',[])):
     raise ValueError('双人互动实际接触误差未过验收')
 if any(actor['stanceDrift']>.005 for actor in report['actors']):

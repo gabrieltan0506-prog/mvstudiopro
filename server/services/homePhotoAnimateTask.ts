@@ -1,3 +1,4 @@
+import { SubmitRejectedError } from "./submitOutcomeErrors.js";
 /**
  * 首页照片动画：异步任务（落盘 + 短轮询 + 部署后续跑）。
  *
@@ -13,6 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   HOME_PHOTO_ANIMATE_DEFAULT_RESOLUTION,
+  type HomePhotoVideoModel,
   homePhotoAnimateCredits,
   isHomePhotoAnimateDuration,
   isHomePhotoAnimateResolution,
@@ -58,6 +60,8 @@ import {
 } from "./bailianHappyHorseVideo.js";
 import { mirrorSeedanceMp4ToGcsSignedUrl } from "./seedanceVideo.js";
 
+import { isHomePhotoVideoConfigured, submitHomePhotoVideo, pollHomePhotoVideo } from "./homePhotoVideo.js";
+
 const TASK_TYPE = "homePhotoAnimate" as const;
 const PRIMARY_DIR =
   process.env.HOME_PHOTO_ANIMATE_TASK_DIR || "/data/growth/home-photo-animate";
@@ -78,6 +82,10 @@ export type HomePhotoAnimateTaskRecord = {
   status: HomePhotoAnimateTaskStatus;
   creditsCharged: number;
   imageUrl: string;
+  modelChoice?: HomePhotoVideoModel;
+  inputImage?: { bytes: number; width: number; height: number; sha256: string };
+  submissionStartedAt?: string;
+  ledgerReady?: boolean;
   prompt: string;
   duration: HomePhotoAnimateDuration;
   resolution: HomePhotoAnimateResolution;
@@ -321,6 +329,13 @@ async function advanceTask(taskId: string): Promise<HomePhotoAnimateTaskRecord |
       return task;
     }
 
+    if (task.ledgerReady === false) {
+      // 旧进程在账本登记窗口退出：尚未允许提交上游，重启时按原扣款退回。
+      if (Date.parse(task.createdAt) < Date.now() - process.uptime() * 1000) {
+        return failTask(task, "任务在提交前被中断，本次未生成，积分按原路径退回");
+      }
+      return task;
+    }
     await heartbeatActiveJob(task.taskId, TASK_TYPE).catch(() => {});
 
     // 0825 拆百炼三通道：EvoLink → OpenRouter → WaveSpeed（用户拍板顺序）。
@@ -329,7 +344,26 @@ async function advanceTask(taskId: string): Promise<HomePhotoAnimateTaskRecord |
       task.pollingUrl || task.bailianTaskId || task.evolinkTaskId || task.wavespeedPredictionId,
     );
     if (!hasHandle) {
+      if (task.modelChoice && task.submissionStartedAt) {
+        task.status = "reconcile_manual";
+        task.error = "上次提交结果尚未确认，已停止重复生成并转对账";
+        await writeTask(task);
+        await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {});
+        return task;
+      }
       try {
+        if (task.modelChoice) {
+          task.submissionStartedAt = new Date().toISOString();
+          try { await writeTask(task); } catch { throw new SubmitRejectedError("提交前保存失败，未发送生成请求"); }
+          const submitted = await submitHomePhotoVideo({ taskId: task.taskId,
+            modelChoice: task.modelChoice, imageUrl: task.imageUrl, prompt: task.prompt, duration: task.duration });
+          task.evolinkTaskId = submitted.evolinkTaskId;
+          task.model = submitted.model;
+          task.status = "running";
+          task.startedAt = task.submissionStartedAt;
+          await writeTask(task);
+          return task;
+        }
         const routed = await submitHappyHorseViaChannels({
           prompt: task.prompt,
           imageUrl: task.imageUrl,
@@ -394,7 +428,8 @@ async function advanceTask(taskId: string): Promise<HomePhotoAnimateTaskRecord |
         return task;
       } catch (error) {
         // unknown = 上游可能已建单：转对账、不退款（与 canvasVideoTask 同一铁律）
-        if ((error as { kind?: string } | null)?.kind === "unknown") {
+        if ((error as { kind?: string } | null)?.kind === "unknown" ||
+            (task.modelChoice && task.submissionStartedAt && (error as { kind?: string } | null)?.kind !== "rejected")) {
           task.status = "reconcile_manual";
           task.error = "照片动画提交结果无法确认，为避免重复生成已停止自动重试，转人工对账";
           task.finishedAt = new Date().toISOString();
@@ -431,7 +466,16 @@ async function advanceTask(taskId: string): Promise<HomePhotoAnimateTaskRecord |
     }
 
     if (task.evolinkTaskId) {
-      const snap = await pollEvolinkVideoTaskOnce(task.evolinkTaskId, "HappyHorse");
+      let snap;
+      try {
+        snap = task.modelChoice
+          ? await pollHomePhotoVideo(task.taskId, task.evolinkTaskId)
+          : await pollEvolinkVideoTaskOnce(task.evolinkTaskId, "HappyHorse");
+      } catch {
+        task.error = "照片动画查询或回执保存暂不可用，正在等待恢复";
+        await writeTask(task);
+        return task;
+      }
       if (snap.state === "running") {
         task.status = "running";
         await writeTask(task);
@@ -552,17 +596,20 @@ async function advanceTask(taskId: string): Promise<HomePhotoAnimateTaskRecord |
 }
 
 export async function createHomePhotoAnimateTask(input: {
+  taskId?: string;
   userId: number;
   creditsCharged: number;
   /** 扣款来源快照（API 扣费时生成），必须透传进任务与账本 */
   deduct?: PaidJobDeductSnapshot;
   imageUrl: string;
+  modelChoice?: HomePhotoVideoModel;
+  inputImage?: { bytes: number; width: number; height: number; sha256: string };
   prompt: string;
   duration: number;
   resolution: string;
   aspectRatio?: string;
 }): Promise<HomePhotoAnimateTaskRecord> {
-  if (!isAnyHappyHorseChannelConfigured()) {
+  if (!(input.modelChoice ? isHomePhotoVideoConfigured() : isAnyHappyHorseChannelConfigured())) {
     throw new Error("视频服务暂不可用，请稍后重试");
   }
   if (!isHomePhotoAnimateDuration(input.duration)) {
@@ -579,7 +626,10 @@ export async function createHomePhotoAnimateTask(input: {
     );
   }
 
-  const taskId = `hpa_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
+  const taskId = input.taskId || `hpa_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
+  if (!/^hpa_[a-zA-Z0-9_-]+$/.test(taskId)) throw new Error("任务编号无效");
+  const existing = await readTask(taskId);
+  if (existing) return existing;
   const now = new Date().toISOString();
   const task: HomePhotoAnimateTaskRecord = {
     taskId,
@@ -588,6 +638,9 @@ export async function createHomePhotoAnimateTask(input: {
     creditsCharged: Math.max(0, Number(input.creditsCharged) || 0),
     deduct: input.deduct,
     imageUrl: String(input.imageUrl || "").trim(),
+    modelChoice: input.modelChoice,
+    ledgerReady: false,
+    inputImage: input.inputImage,
     prompt:
       String(input.prompt || "").trim().slice(0, 500) ||
       "让照片中的人物做自然、克制的微动作，保持身份、脸部特征、服装、背景与原始构图稳定；动作连贯，镜头稳定，不新增人物或物件。",
@@ -597,7 +650,18 @@ export async function createHomePhotoAnimateTask(input: {
     createdAt: now,
     updatedAt: now,
   };
-  await writeTask(task);
+  const dir = await getTaskDir();
+  if (input.modelChoice && dir !== PRIMARY_DIR) throw new Error("任务持久化空间不可用，本次不提交生成");
+  const file = taskPath(dir, taskId);
+  const tmp = `${file}.create.${randomUUID()}`;
+  await fs.writeFile(tmp, JSON.stringify(task));
+  try { await fs.link(tmp, file); }
+  catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    const same = await readTask(taskId);
+    if (!same) throw new Error("任务创建记录不可读");
+    return same;
+  } finally { await fs.unlink(tmp).catch(() => {}); }
   try {
   await registerActiveJob({
     jobId: taskId,
@@ -605,7 +669,7 @@ export async function createHomePhotoAnimateTask(input: {
       userId: input.userId,
       creditsBilled: task.creditsCharged,
       action: `首页照片人物动起来（${resolution} · ${input.duration}s）`,
-      externalApiCostHint: "openrouter happyhorse-1.1",
+      externalApiCostHint: input.modelChoice || "legacy happyhorse-1.1",
       metadata: {
         imageUrl: task.imageUrl.slice(0, 200),
         duration: task.duration,
@@ -622,6 +686,9 @@ export async function createHomePhotoAnimateTask(input: {
     await writeTask(task).catch(() => {});
     throw new Error("paid_job_ledger_register_failed");
   }
+
+  task.ledgerReady = true;
+  await writeTask(task);
 
   // 立即推进一轮（尽量在本请求内完成上游提交），然后靠 worker/status 续跑
   void advanceTask(taskId).catch((error) => {

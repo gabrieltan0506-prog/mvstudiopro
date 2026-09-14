@@ -5,6 +5,11 @@ import { z } from "zod";
 import { manhuaPrevisRequestSchema } from "../../shared/manhuaPrevis";
 import { getGcsBucketName, inspectGcsObjectBounded } from "./gcs";
 import type { PostProdJobRow } from "./postProdJobResponse";
+import {
+  layerBundleSchema,
+  validatePrevisLayerBundle,
+  LAYER_ZIP_LIMIT,
+} from "./manhuaPrevisLayers";
 import { previsReportSchema, validatePrevisReport } from "./manhuaPrevisReport";
 
 export type PrevisRecoveryRow = NonNullable<PostProdJobRow> & {
@@ -67,6 +72,7 @@ const resultSchema = z
     probeSha256: digest,
     sceneSha256: digest,
     report: previsReportSchema,
+    layerBundle: layerBundleSchema.optional(),
   })
   .strict();
 
@@ -216,6 +222,32 @@ export async function recoverPrevisResult(
     });
     if (scene.byteLength < 1000 || scene.sha256 !== result.sceneSha256)
       return row;
+    if (Boolean(input.spec.exportLayers) !== Boolean(result.layerBundle))
+      return row;
+    if (result.layerBundle) {
+      if (result.layerBundle.gcsUri !== prefix + "layer-bundle.zip") return row;
+      const chunks: Buffer[] = [];
+      let received = 0;
+      const stored = await d.inspect({
+        gcsUri: prefix + "layer-bundle.zip",
+        maxBytes: LAYER_ZIP_LIMIT,
+        timeoutMs: 30000,
+        onChunk: chunk => {
+          received += chunk.length;
+          if (received > LAYER_ZIP_LIMIT) throw Error("分层ZIP超限");
+          chunks.push(Buffer.from(chunk));
+        },
+      });
+      const content = Buffer.concat(chunks);
+      if (
+        stored.byteLength !== result.layerBundle.bytes ||
+        stored.sha256 !== result.layerBundle.sha256 ||
+        content.length !== result.layerBundle.bytes ||
+        sha(content) !== result.layerBundle.sha256
+      )
+        return row;
+      await validatePrevisLayerBundle(content, input.spec, result.sceneSha256);
+    }
     return (await d.save(row, result)) ?? row;
   } catch {
     // 缺失、损坏或存储暂不可用时保留原失败；绝不再次购买或渲染。

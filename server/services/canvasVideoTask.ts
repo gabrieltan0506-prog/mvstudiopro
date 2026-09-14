@@ -1,3 +1,4 @@
+import { SubmitRejectedError } from "./submitOutcomeErrors.js";
 /**
  * 画布成片异步任务（Seedance OpenRouter / Hailuo / Happy Horse /
  * Seedance 2.5 BytePlus 主路径 + EvoLink fallback）。
@@ -176,6 +177,8 @@ export type CanvasVideoTaskRecord = {
   upscaleSourceUrl?: string;
   upscaleTarget?: WavespeedUpscaleTarget;
   wavespeedPredictionId?: string;
+  /** 超分发送前落盘，崩溃后无句柄只能对账，禁止重投。 */
+  upscaleSubmissionStartedAt?: string;
   /** wan30:提交上游的随机种子,复现用 */
   seed?: number;
   /** wan30:连续 404 计数——创建后最终一致性只容忍有限次,防无效单白轮数小时(审查 P2) */
@@ -913,7 +916,10 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
     const source = String(task.upscaleSourceUrl || "").trim();
     if (!source) throw new Error("缺少要放大的视频地址");
     if (!task.upscaleTarget) throw new Error("缺少高清放大目标档");
+    task.upscaleSubmissionStartedAt = new Date().toISOString();
+    try { await writeTask(task); } catch { throw new SubmitRejectedError("提交前保存失败，未发送超分请求"); }
     const submitted = await submitWavespeedVideoUpscale({
+      taskId: task.taskId,
       videoUrl: source,
       target: task.upscaleTarget,
     });
@@ -945,6 +951,14 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
     }
 
     await heartbeatActiveJob(task.taskId, TASK_TYPE).catch(() => {});
+
+    if (task.engine === "wavespeed-upscale" && task.upscaleSubmissionStartedAt && !task.wavespeedPredictionId) {
+      task.status = "reconcile_manual";
+      task.error = "超分提交结果尚未确认，已停止重复提交并转对账";
+      await writeTask(task);
+      await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {});
+      return task;
+    }
 
     const createdMs = Date.parse(task.createdAt) || Date.now();
     const deadlineMs = maxPollMs(task.engine);
@@ -991,10 +1005,14 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
           return after;
         }
       } catch (error) {
-        return failTask(
-          task,
-          error instanceof Error ? error.message : "成片创建失败",
-        );
+        if (task.engine === "wavespeed-upscale" && task.upscaleSubmissionStartedAt && (error as { kind?: string })?.kind !== "rejected") {
+          task.status = "reconcile_manual";
+          task.error = "超分提交结果尚未确认，已转对账，请勿重复提交";
+          await writeTask(task);
+          await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {});
+          return task;
+        }
+        return failTask(task, error instanceof Error ? error.message : "成片创建失败");
       }
     }
 

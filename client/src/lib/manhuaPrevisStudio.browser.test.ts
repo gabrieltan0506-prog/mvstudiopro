@@ -20,7 +20,7 @@ beforeAll(async () => {
       const f=globalThis.fixture={submits:[],gets:[],lists:[],updates:[],mode:'success',getResult:null};
       f.old={url:'https://offline.invalid/old.mp4',gcsUri:'gs://test/old.mp4',updatedAt:'2026-09-01T00:00:00Z'};
       f.makeBlock=(scope='11111111-1111-4111-8111-111111111111')=>({id:'clip-e01-g01',previsStudio:createManhuaPrevisStudio(10,scope),manhuaSegmentRefs:{previs:f.old}});
-      f.response=(input)=>({jobId:'prv_test_job',status:'succeeded',params:input,output:{requestId:input.requestId,clipId:input.clipId,spec:input.spec,durationSec:input.spec.durationSec,gcsUri:'gs://test/unrelated-storage-folder/output.mp4',url:'https://offline.invalid/new.mp4',report:{warnings:['离线测试，不代表动作质量验收']}}});
+      f.response=(input)=>({jobId:'prv_test_job',status:'succeeded',params:input,output:{requestId:input.requestId,clipId:input.clipId,spec:input.spec,durationSec:input.spec.durationSec,gcsUri:'gs://test/unrelated-storage-folder/output.mp4',url:'https://offline.invalid/new.mp4',report:{warnings:['离线测试，不代表动作质量验收']},...(input.spec.exportLayers?{layerBundle:{gcsUri:'gs://test/layer-bundle.zip',url:'https://offline.invalid/layers.zip',format:'previs-layers-v1',bytes:1234,sha256:'a'.repeat(64)}}:{})}});
       const services={submit:async input=>{f.submits.push(structuredClone(input));if(f.mode==='defer')return new Promise(resolve=>f.resolveSubmit=resolve);if(f.mode==='unknown')throw Error('离线模拟断网');const response=f.response(input);if(globalThis.keyedFixture)f.getResult=response;return response;},get:async id=>{f.gets.push(id);return f.getResult;},list:async (...args)=>{f.lists.push(args);if(f.mode==='defer-list')return new Promise(resolve=>f.resolveList=resolve);return {items:[],nextCursor:null};}};
       function App(){const [block,setBlock]=useState(()=>globalThis.keyedFixture?{...f.makeBlock(),previsStudio:undefined}:f.makeBlock());const [characters,setCharacters]=useState([{id:'character-mo',label:'墨屠'}]);const [shots,setShots]=useState([]);f.block=block;f.setBlock=setBlock;f.characters=characters;f.setCharacters=setCharacters;f.shots=shots;f.setShots=setShots;return <ManhuaPrevisStudioView key={globalThis.keyedFixture?block.id+':'+(block.previsStudio?.scopeId??'new'):undefined} block={block} characters={characters} sourceShots={shots} services={services} onChange={(studio,reference)=>{f.updates.push({studio:structuredClone(studio),reference});if(f.rejectSave)return false;setBlock(current=>({...current,previsStudio:studio,manhuaSegmentRefs:reference?{...current.manhuaSegmentRefs,previs:reference}:current.manhuaSegmentRefs}));return true;}}/>;}
       createRoot(document.getElementById('root')).render(globalThis.strictFixture?<StrictMode><App/></StrictMode>:<App/>);
@@ -957,6 +957,441 @@ it("日常表演修改保留旧坐标与专业参数，移动注视选项不可�
     expect(await page.evaluate(() => (window as any).fixture.submits)).toEqual(
       []
     );
+  } finally {
+    await page.close();
+  }
+});
+
+it("持剑配置通过真实控件提交，采用时保留剑刃时序和旧参考", async () => {
+  const page = await open();
+  await page.evaluate(() => {
+    const f = (window as any).fixture;
+    const block = f.makeBlock();
+    const a = block.previsStudio.spec.actors[0];
+    a.actions = [];
+    a.start = [-0.7, 0];
+    a.end = [-0.7, 0];
+    a.facingDeg = 0;
+    block.previsStudio.spec.actors.push({
+      ...structuredClone(a),
+      id: "actor-2",
+      nameZh: "角色2",
+      start: [0.7, 0],
+      end: [0.7, 0],
+      facingDeg: 180,
+    });
+    f.setBlock(block);
+  });
+  await page.waitForSelector('[aria-label="角色2持械"]');
+  await page.select('[aria-label="角色1持械"]', "practice_sword");
+  await page.select('[aria-label="角色2持械"]', "practice_sword");
+  await page.evaluate(() =>
+    Array.from(document.querySelectorAll("button"))
+      .find(b => b.textContent?.trim() === "添加双人互动")!
+      .click()
+  );
+  await page.select('[aria-label="互动1反应"]', "sword_guard");
+  await click(page, "确认生成动作白模");
+  await page.waitForFunction(
+    () => (window as any).fixture.submits.length === 1
+  );
+  const submitted = await page.evaluate(
+    () => (window as any).fixture.submits[0].spec
+  );
+  expect(submitted.actors.map((a: any) => a.weapon)).toEqual([
+    "practice_sword",
+    "practice_sword",
+  ]);
+  expect(submitted.interactions[0].kind).toBe("sword_guard");
+  await page.waitForFunction(
+    () => (window as any).fixture.block.previsStudio.history.length === 1
+  );
+  await click(page, "采用为本段参考");
+  await settle(page);
+  expect(
+    await page.evaluate(
+      () => (window as any).fixture.block.manhuaSegmentRefs.previs.motionGuideZh
+    )
+  ).toContain("剑刃交叉格挡");
+  expect(
+    await page.evaluate(
+      () =>
+        (window as any).fixture.block.previsStudio.referenceHistory[0].gcsUri
+    )
+  ).toBe("gs://test/old.mp4");
+  await click(page, "恢复旧参考 1");
+  await settle(page);
+  expect(
+    await page.evaluate(
+      () => (window as any).fixture.block.manhuaSegmentRefs.previs.gcsUri
+    )
+  ).toBe("gs://test/old.mp4");
+  await page.close();
+});
+
+it("多人出水节奏真实编辑、提交、采用保留同一轨道与旧参考", async () => {
+  const page = await open();
+  try {
+    await page.evaluate(() => {
+      const f = (window as any).fixture;
+      const spec = f.block.previsStudio.spec;
+      f.setBlock({
+        ...f.block,
+        previsStudio: {
+          ...f.block.previsStudio,
+          spec: {
+            ...spec,
+            durationSec: 5,
+            actors: [-4, 0, 4].map((x, i) => ({
+              ...spec.actors[0],
+              id: "water-" + i,
+              nameZh: "角色" + i,
+              start: [x, 0],
+              end: [x, 0],
+              moveEndSec: 5,
+            })),
+            cameras: [
+              {
+                startSec: 0,
+                endSec: 5,
+                position: [0, -22, 8],
+                target: [0, 0, 1.8],
+                lens: 35,
+              },
+            ],
+          },
+        },
+      });
+    });
+    await settle(page);
+    await page.select('[aria-label="出水节奏"]', "simultaneous");
+    await settle(page);
+    expect(
+      await page.evaluate(() =>
+        (
+          window as any
+        ).fixture.block.previsStudio.spec.waterEmergence.events.map(
+          (e: any) => e.crossSec
+        )
+      )
+    ).toEqual([1, 1, 1]);
+    await page.select('[aria-label="出水节奏"]', "staggered");
+    await settle(page);
+    expect(
+      await page.evaluate(() =>
+        (
+          window as any
+        ).fixture.block.previsStudio.spec.waterEmergence.events.map(
+          (e: any) => e.crossSec
+        )
+      )
+    ).toEqual([1, 1.25, 1.5]);
+    await page.evaluate(() => {
+      const labels = Array.from(document.querySelectorAll("legend"));
+      const group = labels.find(e =>
+        e.textContent?.includes("角色1")
+      )?.parentElement;
+      const remove = Array.from(group?.querySelectorAll("button") ?? []).find(
+        b => b.textContent?.trim() === "移除角色"
+      );
+      if (!remove) throw Error("未找到中间角色移除按钮");
+      remove.click();
+    });
+    await settle(page);
+    await click(page, "添加角色");
+    await settle(page);
+    expect(
+      await page.evaluate(() =>
+        (
+          window as any
+        ).fixture.block.previsStudio.spec.waterEmergence.events.map(
+          (e: any) => e.crossSec
+        )
+      )
+    ).toEqual([1, 1.5, 1.75]);
+    // 新增角色仍沿用原站位编辑；为本地出水验收设为分离位置。
+    await page.evaluate(() => {
+      const f = (window as any).fixture;
+      const b = f.block;
+      const s = b.previsStudio.spec;
+      s.actors[2] = { ...s.actors[2], start: [0, 0], end: [0, 0] };
+      f.setBlock({ ...b, previsStudio: { ...b.previsStudio, spec: { ...s } } });
+    });
+    await settle(page);
+    await click(page, "确认生成动作白模");
+    await settle(page);
+    const submitted = await page.evaluate(
+      () => (window as any).fixture.submits
+    );
+    expect(submitted).toHaveLength(1);
+    expect(submitted[0].spec.waterEmergence.mode).toBe("staggered");
+    await click(page, "采用为本段参考");
+    await settle(page);
+    const result = await page.evaluate(() => {
+      const f = (window as any).fixture;
+      return {
+        studio: f.block.previsStudio,
+        reference: f.block.manhuaSegmentRefs.previs,
+      };
+    });
+    expect(result.studio.history[0].spec.waterEmergence).toEqual(
+      submitted[0].spec.waterEmergence
+    );
+    expect(result.studio.referenceHistory[0].gcsUri).toBe("gs://test/old.mp4");
+    expect(result.reference.motionGuideZh).toContain("破水");
+  } finally {
+    await page.close();
+  }
+});
+
+it("分段站位与转身通过控件编辑，提交采用保留全部节点", async () => {
+  const page = await open();
+  try {
+    await page.click('[aria-label="角色1分段运动轨"]');
+    await settle(page);
+    await click(page, "添加路线节点");
+    await settle(page);
+    await page.evaluate(() => {
+      const el = document.querySelector<HTMLInputElement>(
+        '[aria-label="路线1节点3朝向"]'
+      )!;
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value"
+      )!.set!.call(el, "90");
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await settle(page);
+    const route = await page.evaluate(
+      () =>
+        (window as any).fixture.block.previsStudio.spec.actors[0].motionRoute
+    );
+    expect(route).toHaveLength(3);
+    expect(route[2].facingDeg).toBe(90);
+    await click(page, "确认生成动作白模");
+    await settle(page);
+    expect(
+      await page.evaluate(
+        () => (window as any).fixture.submits[0].spec.actors[0].motionRoute
+      )
+    ).toEqual(route);
+    await click(page, "采用为本段参考");
+    await settle(page);
+    expect(
+      await page.evaluate(
+        () =>
+          (window as any).fixture.block.manhuaSegmentRefs.previs.motionGuideZh
+      )
+    ).toContain("90");
+    expect(
+      await page.evaluate(
+        () =>
+          (window as any).fixture.block.previsStudio.referenceHistory[0].gcsUri
+      )
+    ).toBe("gs://test/old.mp4");
+  } finally {
+    await page.close();
+  }
+});
+
+it("爆点烟雾与分层开关进入提交，原单查询产物可下载层包", async () => {
+  const page = await open();
+  try {
+    await page.evaluate(() => {
+      const f = (window as any).fixture,
+        b = f.block,
+        s = b.previsStudio.spec;
+      f.setBlock({
+        ...b,
+        previsStudio: {
+          ...b.previsStudio,
+          spec: {
+            ...s,
+            durationSec: 4,
+            actors: s.actors.map((a: any) => ({ ...a, moveEndSec: 4 })),
+            cameras: s.cameras.map((c: any) => ({ ...c, endSec: 4 })),
+          },
+        },
+      });
+    });
+    await settle(page);
+    await click(page, "添加特效事件");
+    await click(page, "添加特效事件");
+    await settle(page);
+    await page.select('[aria-label="特效2类型"]', "smoke");
+    await page.click('[aria-label="输出合成辅助层"]');
+    await settle(page);
+    await click(page, "确认生成动作白模");
+    await settle(page);
+    const spec = await page.evaluate(
+      () => (window as any).fixture.submits[0].spec
+    );
+    expect(spec.effects.map((e: any) => e.kind)).toEqual([
+      "explosion",
+      "smoke",
+    ]);
+    expect(spec.exportLayers).toBe(true);
+    const link = await page.$eval('a[download="遮罩与深度层包.zip"]', a =>
+      a.getAttribute("href")
+    );
+    expect(link).toBe("https://offline.invalid/layers.zip");
+    await click(page, "采用为本段参考");
+    await settle(page);
+    expect(
+      await page.evaluate(
+        () =>
+          (window as any).fixture.block.manhuaSegmentRefs.previs.motionGuideZh
+      )
+    ).toContain("爆点闪光");
+  } finally {
+    await page.close();
+  }
+});
+
+it("缺失层包的成功回执不可采用且保留原任务编号", async () => {
+  const page = await open();
+  try {
+    await page.evaluate(() => {
+      const f = (window as any).fixture,
+        b = f.block,
+        s = b.previsStudio.spec;
+      const response = f.response;
+      f.response = (input: any) => {
+        const r = response(input);
+        delete r.output.layerBundle;
+        return r;
+      };
+      f.setBlock({
+        ...b,
+        previsStudio: {
+          ...b.previsStudio,
+          spec: {
+            ...s,
+            exportLayers: true,
+            durationSec: 4,
+            actors: s.actors.map((a: any) => ({ ...a, moveEndSec: 4 })),
+            cameras: s.cameras.map((c: any) => ({ ...c, endSec: 4 })),
+          },
+        },
+      });
+    });
+    await settle(page);
+    await click(page, "确认生成动作白模");
+    await settle(page);
+    const current = await page.evaluate(() => {
+      const f = (window as any).fixture;
+      return {
+        submits: f.submits,
+        gets: f.gets,
+        studio: f.block.previsStudio,
+        ref: f.block.manhuaSegmentRefs.previs,
+      };
+    });
+    expect(current.submits).toHaveLength(1);
+    expect(current.studio.pending.requestId).toBe(current.submits[0].requestId);
+    expect(current.studio.history).toHaveLength(0);
+    expect(current.ref.url).toBe("https://offline.invalid/old.mp4");
+    expect(await page.$eval('[role="alert"]', e => e.textContent)).toContain(
+      "不要重复生成"
+    );
+    expect(
+      await page.$$eval(
+        "button",
+        bs => bs.filter(b => b.textContent === "采用为本段参考").length
+      )
+    ).toBe(0);
+    expect(
+      current.gets.every((id: string) => id === current.submits[0].requestId)
+    ).toBe(true);
+  } finally {
+    await page.close();
+  }
+});
+
+it("历史恢复过滤缺层成功行，不加入可采用候选或自动提交", async () => {
+  const page = await open();
+  try {
+    await page.evaluate(() => {
+      (window as any).fixture.mode = "defer-list";
+    });
+    await click(page, "恢复本段历史");
+    await settle(page);
+    await page.evaluate(() => {
+      const f = (window as any).fixture,
+        s = structuredClone(f.block.previsStudio.spec);
+      s.exportLayers = true;
+      s.durationSec = 4;
+      s.actors.forEach((a: any) => (a.moveEndSec = 4));
+      s.cameras.forEach((c: any) => (c.endSec = 4));
+      const input = {
+        requestId: "22222222-2222-4222-8222-222222222222",
+        scopeId: f.block.previsStudio.scopeId,
+        clipId: f.block.id,
+        spec: s,
+      };
+      const response = f.response(input);
+      delete response.output.layerBundle;
+      f.resolveList({ items: [response], nextCursor: null });
+    });
+    await settle(page);
+    expect(
+      await page.evaluate(() => {
+        const f = (window as any).fixture;
+        return {
+          n: f.block.previsStudio.history.length,
+          submits: f.submits.length,
+          url: f.block.manhuaSegmentRefs.previs.url,
+        };
+      })
+    ).toEqual({ n: 0, submits: 0, url: "https://offline.invalid/old.mp4" });
+  } finally {
+    await page.close();
+  }
+});
+
+it("重载的分层历史须查询同一原单确认层包后才能采用", async () => {
+  const page = await open();
+  try {
+    await page.evaluate(() => {
+      const f = (window as any).fixture,
+        b = f.block,
+        s = structuredClone(b.previsStudio.spec);
+      s.exportLayers = true;
+      s.durationSec = 4;
+      s.actors.forEach((a: any) => (a.moveEndSec = 4));
+      s.cameras.forEach((c: any) => (c.endSec = 4));
+      f.setBlock({
+        ...b,
+        previsStudio: {
+          ...b.previsStudio,
+          history: [
+            {
+              jobId: "prv_saved",
+              requestId: "22222222-2222-4222-8222-222222222222",
+              gcsUri: "gs://test/preview.mp4",
+              url: "https://offline.invalid/saved.mp4",
+              durationSec: 4,
+              createdAt: "2026-09-13",
+              spec: s,
+            },
+          ],
+        },
+      });
+    });
+    await settle(page);
+    await click(page, "采用为本段参考");
+    await settle(page);
+    expect(
+      await page.evaluate(
+        () => (window as any).fixture.block.manhuaSegmentRefs.previs.url
+      )
+    ).toBe("https://offline.invalid/old.mp4");
+    expect(await page.$eval('[role="alert"]', e => e.textContent)).toContain(
+      "预览"
+    );
+    expect(
+      await page.evaluate(() => (window as any).fixture.submits.length)
+    ).toBe(0);
   } finally {
     await page.close();
   }

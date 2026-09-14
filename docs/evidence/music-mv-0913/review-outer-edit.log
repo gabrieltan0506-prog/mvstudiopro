@@ -1,0 +1,18 @@
+
+ RUN  v2.1.9 /private/tmp/mvs-music-mv-canvas-0913
+
+ ✓ client/src/lib/canvasMusicMvRecovery.test.ts (5 tests) 10ms
+ ✓ client/src/lib/canvasMusicMv.persistence.test.ts (4 tests) 14ms
+ ✓ client/src/lib/canvasMusicMv.browser.test.ts (6 tests) 5163ms
+   ✓ 独立音乐MV真实视图（虚构任务边界） > 两版音乐→选版→两镜分镜→缺镜拒合成→真实铺节点与逐镜执行→最终节点回写 740ms
+   ✓ 独立音乐MV真实视图（虚构任务边界） > 刷新恢复音乐原任务只查询，不重新提交音乐；已成功镜头不重新制作 717ms
+   ✓ 音乐 MV 拒绝与参考恢复真实视图 > 明确建单拒绝后允许重新提交；未知网络错误保留原编号 377ms
+   ✓ 音乐 MV 拒绝与参考恢复真实视图 > 云恢复保留持久参考，删除末张或显式移除正确清空 527ms
+   ✓ 缺失候选提示持久显示，不隐式重发补单 551ms
+   ✓ 分镜网络未知不允许新轮，服务器确认失败后保留原输入并显式开始新轮 769ms
+
+ Test Files  3 passed (3)
+      Tests  15 passed (15)
+   Start at  11:44:13
+   Duration  5.68s (transform 467ms, setup 0ms, collect 1.52s, tests 5.19s, environment 0ms, prepare 171ms)
+

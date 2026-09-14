@@ -1,8 +1,9 @@
+import { canvasMusicMvShotBindingSchema, type CanvasMusicMvShotBinding, normalizeCanvasMusicMvState, type CanvasMusicMvState } from "@shared/canvasMusicMv";
 import type { LucideIcon } from "lucide-react";
 import { canvasAudioStudioSchema, type CanvasAudioStudio } from "@shared/canvasAudioStudio";
 import { manhuaPrevisStudioSchema, type ManhuaPrevisStudio } from "@shared/manhuaPrevis";
 import { normalizeManhuaTimelineOrder } from "@shared/manhuaEditOrder";
-import { Clapperboard, FileText, Image as ImageIcon, LayoutTemplate, Video } from "lucide-react";
+import { Clapperboard, FileText, Image as ImageIcon, LayoutTemplate, Video, Music } from "lucide-react";
 import type { ManhuaClipQualityReport } from "@shared/manhuaClipQuality";
 import { normalizeManhuaKeyartLookState } from "@shared/manhuaKeyartLookState";
 import { normalizeManhuaAutoSegmentBinding, type ManhuaAutoSegmentBinding } from "@shared/manhuaAutoSegment";
@@ -14,7 +15,7 @@ import {
 } from "@shared/manhuaFinalPostProd";
 import { normalizeSeedance25EvolinkMode } from "@shared/seedanceEvolinkModels";
 
-export type CanvasBlockKind = "text" | "image" | "video" | "copy_organize" | "video_reverse";
+export type CanvasBlockKind = "text" | "image" | "video" | "copy_organize" | "video_reverse" | "music";
 
 /**
  * 画布文本主力：OpenRouter Kimi K3（`kimi-k3`）；
@@ -217,6 +218,8 @@ export type CanvasBlock = {
   manhuaSegmentRefs?: import("@shared/manhuaSegmentReference").ManhuaSegmentReferences;
   /** 逐句对白、原曲/裁片候选与显式采用状态；不依赖临时上传列表。 */
   audioStudio?: CanvasAudioStudio;
+  musicMv?: CanvasMusicMvState;
+  musicMvShot?: CanvasMusicMvShotBinding;
   previsStudio?: ManhuaPrevisStudio;
   /** Seedance 2.5 官方五模式；兼容历史 XYQ 草稿值 */
   seedance25WorkMode?: CanvasSeedance25WorkMode;
@@ -295,6 +298,12 @@ export const CANVAS_KIND_META: Record<
   CanvasBlockKind,
   { label: string; hint: string; icon: LucideIcon; color: string }
 > = {
+  music: {
+    label: "音乐与 MV",
+    hint: "整首音乐 → MV 分镜 → 镜头成片",
+    icon: Music,
+    color: "from-pink-500/30 to-violet-600/10",
+  },
   text: {
     label: "文本生成",
     hint: "脚本、旁白、品牌文案",
@@ -362,6 +371,7 @@ export const DEFAULT_CANVAS_VIDEO_MODEL: CanvasVideoModel = "seedance-2.0-mini";
 
 /** 自由画布「添加节点」：不露出 text/copy_organize（工厂内部仍用 text 跑剧本） */
 export const SPAWN_KIND_OPTIONS: Array<{ kind: CanvasBlockKind; label: string; hint: string }> = [
+  { kind: "music", label: "音乐与 MV", hint: "生成整首音乐，再制作 MV" },
   { kind: "image", label: "图片生成", hint: "JSON 导演中台→生图" },
   { kind: "video", label: "视频生成", hint: "成片引擎 · 多图参考 + 运镜/动作/对白" },
   { kind: "video_reverse", label: "编导分镜/反推", hint: "有片拉片 / 无片按节拍补全" },
@@ -379,7 +389,9 @@ export function defaultCanvasBlock(kind: CanvasBlockKind, x: number, y: number, 
     y,
     parentId,
     prompt:
-      kind === "copy_organize"
+      kind === "music"
+        ? "创作一首完整歌曲，描述主题、情绪、曲风和演唱要求。"
+        : kind === "copy_organize"
         ? "把以下零散要点整理成小红书发布稿 + 封面主副标 + 2×4 分镜提纲…"
         : kind === "text"
           ? "写一段 15 秒竖屏短视频旁白，语气自然、有钩子。"
@@ -393,13 +405,14 @@ export function defaultCanvasBlock(kind: CanvasBlockKind, x: number, y: number, 
     videoModel: DEFAULT_CANVAS_VIDEO_MODEL,
     aspectRatio: "9:16",
     imageMode: "generate",
-    width: CANVAS_BLOCK_DEFAULT_WIDTH,
-    height: CANVAS_BLOCK_DEFAULT_HEIGHT,
+    width: kind === "music" ? 720 : CANVAS_BLOCK_DEFAULT_WIDTH,
+    height: kind === "music" ? 720 : CANVAS_BLOCK_DEFAULT_HEIGHT,
     imageBatchCount: 1,
     // 漫剧工厂是主入口：默认综合多张角色/场景静帧；纯文生可在节点内显式切换。
     seedance25WorkMode: kind === "video" ? "reference_to_video" : undefined,
     uploadedAssets: [],
     outputUrls: [],
+    musicMv: kind === "music" ? { status: "idle", candidates: [] } : undefined,
     status: "idle",
   };
 }
@@ -517,6 +530,8 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
 
   return {
     ...withVideo,
+    musicMv: block.musicMv == null ? undefined : normalizeCanvasMusicMvState(block.musicMv),
+    musicMvShot: block.musicMvShot == null ? undefined : canvasMusicMvShotBindingSchema.parse(block.musicMvShot),
     audioStudio: block.audioStudio == null ? undefined : canvasAudioStudioSchema.parse(block.audioStudio),
     previsStudio: block.previsStudio == null ? undefined : manhuaPrevisStudioSchema.parse(block.previsStudio),
     manhuaKeyartLookState: normalizeManhuaKeyartLookState(block.manhuaKeyartLookState),
@@ -625,6 +640,16 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
 }
 
 export function resolveBlockHandoffText(block: CanvasBlock): string {
+  if (block.kind === "music" && block.musicMv) {
+    const state = normalizeCanvasMusicMvState(block.musicMv);
+    const selected = state.candidates.find(item => item.id === state.selectedCandidateId);
+    return [
+      block.outputText?.trim() || block.prompt?.trim(),
+      selected ? `已选音乐：${selected.title || selected.id}；实际时长 ${selected.durationSec} 秒。` : undefined,
+      state.lyrics ? `歌词：\n${state.lyrics}` : undefined,
+      state.plan ? `MV 分镜：\n${JSON.stringify(state.plan)}` : undefined,
+    ].filter(Boolean).join("\n\n");
+  }
   const output = block.outputText?.trim();
   if (output) return output;
   return block.prompt?.trim() || "";
@@ -745,7 +770,7 @@ export function isCanvasVisionImageAsset(asset: CanvasUploadedAsset): boolean {
 
 export function isCanvasDocumentAsset(asset: CanvasUploadedAsset): boolean {
   if (asset.kind === "document") return true;
-  if (asset.kind === "image" || asset.kind === "video") return false;
+  if (asset.kind === "image" || asset.kind === "video" || asset.kind === "audio") return false;
   const name = `${asset.fileName || ""} ${asset.url || ""}`;
   if (/\.(pdf|txt|md|markdown)(\?|$)/i.test(name)) return true;
   if (asset.mimeType === "application/pdf" || asset.mimeType?.startsWith("text/")) return true;
@@ -780,17 +805,19 @@ function appendVisionFromBlock(
 
   const addUrl = (url: string) => {
     if (!url || seen.has(url)) return;
-    // 生成结果若是视频 URL，勿当 vision 图
-    if (/\.(mp4|mov|webm|m4v)(\?|$)/i.test(url)) return;
+    // 音视频输出不能作为视觉图片，包含音乐节点无扩展名的媒体端点。
+    if (/\.(mp4|mov|webm|m4v|mp3|wav|m4a|aac|ogg|flac|opus)(\?|$)/i.test(url)) return;
     seen.add(url);
     items.push({ url });
   };
 
   for (const asset of block.uploadedAssets ?? []) addAsset(asset);
-  if (block.outputUrls?.length) {
-    for (const u of block.outputUrls) addUrl(u);
-  } else if (block.outputUrl) {
-    addUrl(block.outputUrl);
+  if (block.kind !== "music") {
+    if (block.outputUrls?.length) {
+      for (const u of block.outputUrls) addUrl(u);
+    } else if (block.outputUrl) {
+      addUrl(block.outputUrl);
+    }
   }
   if (block.refImageUrl) addUrl(block.refImageUrl);
 }
@@ -859,8 +886,13 @@ export function resolveNearestUpstreamImageUrl(
   const blockMap = new Map(blocks.map((b) => [b.id, b]));
   const incoming = buildCanvasIncomingMap(blocks, edges);
 
-  const pickFromBlock = (block: CanvasBlock): string | undefined =>
-    block.outputUrls?.find(Boolean) || block.outputUrl || block.refImageUrl;
+  const pickFromBlock = (block: CanvasBlock): string | undefined => {
+    const candidates = block.kind === "music"
+      ? [block.refImageUrl]
+      : [...(block.outputUrls || []), block.outputUrl, block.refImageUrl];
+    return candidates.find((url): url is string =>
+      typeof url === "string" && Boolean(url) && !/\.(mp3|wav|m4a|aac|ogg|flac|opus)(\?|$)/i.test(url));
+  };
 
   const queue: string[] = getCanvasDirectPredecessors(blockId, blockMap, incoming);
   const seen = new Set<string>([blockId]);

@@ -123,3 +123,12 @@ describe("漫剧配乐任务 Schema", () => {
     ).toThrow();
   });
 });
+
+it("歌曲歌词参与确认摘要，不能用同一编号恢复另一首歌词", () => {
+  const song = { ...brief, model: "suno-v6", instrumental: false, negative_tags: "", prompt: "[Verse]\n风吹过城门，我仍在等你" };
+  const first = buildManhuaBgmJobInput({ billingRequestId: uuid, brief: song });
+  expect(first.params.brief.instrumental).toBe(false);
+  expect(first.params.brief.prompt).toBe(song.prompt);
+  const changed = buildManhuaBgmJobInput({ billingRequestId: uuid, brief: { ...song, prompt: "[Verse]\n今夜无人归来" } });
+  expect(isSameManhuaBgmSubmission(first, changed)).toBe(false);
+});

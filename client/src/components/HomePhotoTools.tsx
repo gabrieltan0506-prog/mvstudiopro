@@ -11,9 +11,14 @@ import {
   Video,
 } from "lucide-react";
 import { toast } from "sonner";
+import { usePhotoAnimationTask } from "@/lib/usePhotoAnimationTask";
+import HomePhotoVideoUpscale from "./HomePhotoVideoUpscale";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
-import { uploadOneCanvasAsset } from "@/lib/canvasUpload";
+import {
+  uploadPhotoTemporaryMedia,
+  cachePhotoTemporaryMedia,
+} from "@/lib/photoTemporaryMedia";
 import { withFlyHealthGate } from "@/lib/flyHealthGate";
 import {
   buildUpscaleConfirmation,
@@ -27,7 +32,9 @@ import {
   HOME_OLD_PHOTO_RESTORE_CREDITS,
   HOME_PHOTO_ANIMATE_DEFAULT_RESOLUTION,
   HOME_PHOTO_ANIMATE_DURATIONS,
-  HOME_PHOTO_ANIMATE_RESOLUTIONS,
+  HOME_PHOTO_VIDEO_MODELS,
+  HOME_PHOTO_VIDEO_MODEL_LABELS,
+  type HomePhotoVideoModel,
   homePhotoAnimateCredits,
   type HomePhotoAnimateDuration,
   type HomePhotoAnimateResolution,
@@ -35,10 +42,17 @@ import {
 import { imageUpscaleTotalCredits } from "@shared/plans";
 
 type PhotoAspect = "square" | "portrait" | "landscape";
-type ImageResult = { url: string; label: string; credits: number };
+type ImageResult = {
+  url: string;
+  label: string;
+  credits: number;
+  aspect?: PhotoAspect;
+};
+type PhotoTool = "upscale" | "restore" | "animate";
+type SourceChoice = "original" | "upscale" | "restore";
 type ActiveOperation = "upload" | "upscale" | "restore" | "animate";
 
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 30_000_000;
 const UPSCALE_2X_CREDITS = imageUpscaleTotalCredits(
   "homePhotoUpscaleBase",
   "x2"
@@ -66,11 +80,14 @@ function resultDownloadName(label: string, extension: "png" | "mp4") {
 }
 
 export default function HomePhotoTools() {
-  const { isAuthenticated, refresh } = useAuth({ autoFetch: true });
+  const { user, isAuthenticated, refresh } = useAuth({ autoFetch: true });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [sourceUrl, setSourceUrl] = useState("");
   const [previewUrl, setPreviewUrl] = useState("");
   const [sourceName, setSourceName] = useState("");
+  const [sourceChoices, setSourceChoices] = useState<
+    Record<PhotoTool, SourceChoice>
+  >({ upscale: "original", restore: "original", animate: "original" });
   const [sourceAspect, setSourceAspect] = useState<PhotoAspect>("square");
   const [uploading, setUploading] = useState(false);
   const [upscaleBusy, setUpscaleBusy] = useState<"x2" | "x4" | null>(null);
@@ -78,16 +95,25 @@ export default function HomePhotoTools() {
   const [restoreResult, setRestoreResult] = useState<ImageResult | null>(null);
   const [motionPrompt, setMotionPrompt] = useState("");
   const [duration, setDuration] = useState<HomePhotoAnimateDuration>(5);
-  const [resolution, setResolution] = useState<HomePhotoAnimateResolution>(
+  const [modelChoice, setModelChoice] =
+    useState<HomePhotoVideoModel>("seedance-2.0");
+  const [resolution] = useState<HomePhotoAnimateResolution>(
     HOME_PHOTO_ANIMATE_DEFAULT_RESOLUTION
   );
   const [animateBusy, setAnimateBusy] = useState(false);
   const [videoResult, setVideoResult] = useState<ImageResult | null>(null);
+  const animation = usePhotoAnimationTask(user?.id, (url, credits, seconds) => {
+    setVideoResult({
+      url,
+      credits,
+      label: `照片人物动画 720p · ${seconds} 秒`,
+    });
+    refresh();
+  });
   const operationLockRef = useRef<ActiveOperation | null>(null);
   const [activeOperation, setActiveOperation] =
     useState<ActiveOperation | null>(null);
 
-  const getSignedUrl = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const restoreMutation = trpc.homePhotoTools.restoreOldPhoto.useMutation();
 
   useEffect(() => {
@@ -96,13 +122,28 @@ export default function HomePhotoTools() {
     };
   }, [previewUrl]);
 
-  function requireReadyPhoto(): boolean {
+  function inputFor(tool: PhotoTool) {
+    const selected = sourceChoices[tool];
+    const result =
+      selected === "upscale"
+        ? upscaleResult
+        : selected === "restore"
+          ? restoreResult
+          : null;
+    return {
+      url: result?.url || sourceUrl,
+      preview: result?.url || previewUrl,
+      aspect: result?.aspect || sourceAspect,
+    };
+  }
+
+  function requireReadyPhoto(tool: PhotoTool): boolean {
     if (!isAuthenticated) {
       toast.error("请先登录后再使用照片工具");
       window.location.href = "/login";
       return false;
     }
-    if (!sourceUrl) {
+    if (!inputFor(tool).url) {
       toast.error("请先上传一张照片");
       fileInputRef.current?.click();
       return false;
@@ -130,28 +171,25 @@ export default function HomePhotoTools() {
       return;
     }
     if (file.size > MAX_IMAGE_BYTES) {
-      toast.error("图片不能超过 10MB");
+      toast.error("图片不能超过 30MB");
       return;
     }
     if (!beginOperation("upload")) return;
 
     setUploading(true);
-    setUpscaleResult(null);
-    setRestoreResult(null);
-    setVideoResult(null);
+
     try {
       const aspect = await detectPhotoAspect(file);
-      const asset = await uploadOneCanvasAsset({
-        file,
-        index: 0,
-        getSignedUploadUrl: input => getSignedUrl.mutateAsync(input),
-      });
-      if (asset.kind !== "image" || !asset.url)
-        throw new Error("上传结果不是有效图片");
+      const asset = await uploadPhotoTemporaryMedia(file);
       setSourceUrl(asset.url);
       setPreviewUrl(asset.previewUrl || asset.url);
       setSourceName(file.name);
       setSourceAspect(aspect);
+      setSourceChoices({
+        upscale: "original",
+        restore: "original",
+        animate: "original",
+      });
       toast.success("照片上传完成");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "照片上传失败");
@@ -163,17 +201,20 @@ export default function HomePhotoTools() {
   }
 
   async function runUpscale(factor: "x2" | "x4") {
-    if (!requireReadyPhoto()) return;
+    if (!requireReadyPhoto("upscale")) return;
+    const input = inputFor("upscale");
     const credits = factor === "x2" ? UPSCALE_2X_CREDITS : UPSCALE_4X_CREDITS;
     if (!beginOperation("upscale")) return;
     setUpscaleBusy(factor);
     try {
-      const assessment = await detectImageBlurRisk(previewUrl || sourceUrl);
-      const confirmed = window.confirm(buildUpscaleConfirmation({
-        factorLabel: factor === "x2" ? "2×" : "4×",
-        credits,
-        assessment,
-      }));
+      const assessment = await detectImageBlurRisk(input.preview || input.url);
+      const confirmed = window.confirm(
+        buildUpscaleConfirmation({
+          factorLabel: factor === "x2" ? "2×" : "4×",
+          credits,
+          assessment,
+        })
+      );
       if (!confirmed) return;
 
       // 异步：立刻拿 taskId，后台跑 Gemini；短轮询，避免同步长连接被 120s/部署掐断
@@ -185,12 +226,12 @@ export default function HomePhotoTools() {
           headers: { "Content-Type": "application/json" },
           credentials: "include",
           body: JSON.stringify({
-            imageUrl: sourceUrl,
+            imageUrl: input.url,
             upscaleFactor: factor,
             qualityWarningAccepted: assessment.isLikelyBlurry,
             sourceBlurScore: assessment.score,
           }),
-        }),
+        })
       );
       const raw = await response.text();
       let created: {
@@ -216,11 +257,11 @@ export default function HomePhotoTools() {
 
       if (!imageUrl && created.taskId) {
         const statusEndpoint = withLongJobsFlyDirect(
-          `/api/jobs?op=homePhotoUpscaleStatus&taskId=${encodeURIComponent(created.taskId)}`,
+          `/api/jobs?op=homePhotoUpscaleStatus&taskId=${encodeURIComponent(created.taskId)}`
         );
         const deadline = Date.now() + 15 * 60_000;
         while (Date.now() < deadline) {
-          await new Promise((r) => setTimeout(r, 5_000));
+          await new Promise(r => setTimeout(r, 5_000));
           const statusRes = await fetch(statusEndpoint, {
             method: "GET",
             credentials: "include",
@@ -248,34 +289,36 @@ export default function HomePhotoTools() {
             break;
           }
           if (statusJson.status === "failed") {
-            throw new Error(
-              statusJson.error || "高清放大失败，积分已自动退回",
-            );
+            throw new Error(statusJson.error || "高清放大失败，积分已自动退回");
           }
         }
       }
 
       if (!imageUrl) {
         throw new Error(
-          "高清放大仍在处理中，请稍后在「我的作品」查看，或稍后再试",
+          "高清放大仍在处理中，请稍后在「我的作品」查看，或稍后再试"
         );
       }
 
       const label = `高清放大 ${factor === "x2" ? "2×" : "4×"}`;
       setUpscaleResult({
-        url: imageUrl,
+        url: await cachePhotoTemporaryMedia(imageUrl, "image"),
         label,
         credits: creditsUsed,
+        aspect: input.aspect,
       });
-      setSourceUrl(imageUrl);
-      setPreviewUrl(imageUrl);
-      setSourceName(`${label}结果（当前素材）`);
       refresh();
-      toast.success(`${label}完成，已自动作为下一步素材`);
+      toast.success(`${label}完成，可下载或在其他功能中选择此结果`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "高清放大失败";
-      if (/abort|Failed to fetch|NetworkError|load failed|connection closed/i.test(message)) {
-        toast.error("连接中断（服务可能正在更新）。若已扣积分将自动退回，请稍后重试");
+      if (
+        /abort|Failed to fetch|NetworkError|load failed|connection closed/i.test(
+          message
+        )
+      ) {
+        toast.error(
+          "连接中断（服务可能正在更新）。若已扣积分将自动退回，请稍后重试"
+        );
       } else {
         toast.error(message);
       }
@@ -286,7 +329,8 @@ export default function HomePhotoTools() {
   }
 
   async function runRestore() {
-    if (!requireReadyPhoto()) return;
+    if (!requireReadyPhoto("restore")) return;
+    const input = inputFor("restore");
     if (
       !window.confirm(
         `确认修复并自然上色，扣除 ${HOME_OLD_PHOTO_RESTORE_CREDITS} 积分吗？`
@@ -296,25 +340,22 @@ export default function HomePhotoTools() {
     if (!beginOperation("restore")) return;
     try {
       const result = await restoreMutation.mutateAsync({
-        imageUrl: sourceUrl,
-        aspect: sourceAspect,
+        imageUrl: input.url,
+        aspect: input.aspect,
       });
       if (!result.success || !result.imageUrl)
         throw new Error(result.error || "老照片修复失败");
       setRestoreResult({
-        url: result.imageUrl,
+        url: await cachePhotoTemporaryMedia(result.imageUrl, "image"),
         label: "老照片修复上色",
         credits: result.creditsUsed,
+        aspect: result.aspect || input.aspect,
       });
-      setSourceUrl(result.imageUrl);
-      setPreviewUrl(result.imageUrl);
-      setSourceName("老照片修复上色结果（当前素材）");
-      setSourceAspect(result.aspect || sourceAspect);
       refresh();
       toast.success(
         result.autoCropApplied
-          ? "已自动裁切照片边界并完成修复，上色图已作为下一步素材"
-          : "老照片修复上色完成，已自动作为下一步素材"
+          ? "已自动裁切照片边界并完成修复，可下载或自行选择使用结果"
+          : "老照片修复上色完成，原图保留"
       );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "老照片修复失败");
@@ -324,7 +365,8 @@ export default function HomePhotoTools() {
   }
 
   async function runAnimation() {
-    if (!requireReadyPhoto()) return;
+    if (!requireReadyPhoto("animate")) return;
+    const input = inputFor("animate");
     const credits = homePhotoAnimateCredits(duration, resolution);
     if (
       !window.confirm(
@@ -334,114 +376,24 @@ export default function HomePhotoTools() {
       return;
     if (!beginOperation("animate")) return;
     setAnimateBusy(true);
-    setVideoResult(null);
     try {
-      const endpoint = withLongJobsFlyDirect("/api/jobs?op=homePhotoAnimate");
-      const probeOrigin = flyHealthProbeOriginForUrl(endpoint);
-      const response = await withFlyHealthGate(probeOrigin, () =>
-        fetch(endpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({
-            imageUrl: sourceUrl,
-            prompt: motionPrompt.trim(),
-            duration,
-            resolution,
-            aspectRatio:
-              sourceAspect === "portrait"
-                ? "9:16"
-                : sourceAspect === "landscape"
-                  ? "16:9"
-                  : "1:1",
-          }),
-        }),
+      await animation.submit(
+        {
+          imageUrl: input.url,
+          prompt: motionPrompt.trim(),
+          modelChoice,
+          duration,
+          resolution,
+          aspectRatio:
+            input.aspect === "portrait"
+              ? "9:16"
+              : input.aspect === "landscape"
+                ? "16:9"
+                : "1:1",
+        },
+        credits,
+        duration
       );
-      const raw = await response.text();
-      let created: {
-        ok?: boolean;
-        async?: boolean;
-        taskId?: string;
-        status?: string;
-        videoUrl?: string;
-        creditsUsed?: number;
-        resolution?: HomePhotoAnimateResolution;
-        error?: string;
-      } = {};
-      try {
-        created = JSON.parse(raw) as typeof created;
-      } catch {
-        throw new Error(`照片动画生成失败：${raw.slice(0, 120)}`);
-      }
-      if (!response.ok || !created.ok) {
-        throw new Error(created.error || "照片动画生成失败");
-      }
-
-      let videoUrl = String(created.videoUrl || "").trim();
-      let creditsUsed = Number(created.creditsUsed || credits);
-      let resultResolution = created.resolution || resolution;
-
-      // 异步任务：短轮询状态，避免单条长连接被部署掐断后整单作废
-      if (!videoUrl && created.taskId) {
-        const statusEndpoint = withLongJobsFlyDirect(
-          `/api/jobs?op=homePhotoAnimateStatus&taskId=${encodeURIComponent(created.taskId)}`,
-        );
-        const deadline = Date.now() + 20 * 60_000;
-        while (Date.now() < deadline) {
-          await new Promise((r) => setTimeout(r, 5_000));
-          const statusRes = await fetch(statusEndpoint, {
-            method: "GET",
-            credentials: "include",
-            cache: "no-store",
-          });
-          const statusRaw = await statusRes.text();
-          let statusJson: {
-            ok?: boolean;
-            /** 与服务端 HomePhotoAnimateTaskStatus 对齐,不再当任意字符串用 */
-            status?: "queued" | "running" | "succeeded" | "failed" | "reconcile_manual";
-            videoUrl?: string;
-            creditsUsed?: number;
-            resolution?: HomePhotoAnimateResolution;
-            error?: string;
-          } = {};
-          try {
-            statusJson = JSON.parse(statusRaw) as typeof statusJson;
-          } catch {
-            continue;
-          }
-          if (!statusRes.ok || !statusJson.ok) {
-            throw new Error(statusJson.error || "照片动画进度查询失败");
-          }
-          if (statusJson.status === "succeeded" && statusJson.videoUrl) {
-            videoUrl = String(statusJson.videoUrl).trim();
-            creditsUsed = Number(statusJson.creditsUsed || creditsUsed);
-            resultResolution = statusJson.resolution || resultResolution;
-            break;
-          }
-          if (statusJson.status === "failed") {
-            throw new Error(statusJson.error || "照片动画生成失败，积分已自动退回");
-          }
-          // 七审 P1-4:服务端已转人工对账=终态,不再空轮询 20 分钟骗自己"仍在生成"
-          if (statusJson.status === "reconcile_manual") {
-            throw new Error(
-              statusJson.error ||
-                `照片动画状态无法自动确认，已转人工对账。任务号：${created.taskId}`,
-            );
-          }
-        }
-      }
-
-      if (!videoUrl) {
-        throw new Error("照片动画仍在生成中，请稍后在「我的作品」查看，或稍后再试");
-      }
-
-      setVideoResult({
-        url: videoUrl,
-        label: `照片人物动画 ${resultResolution} · ${duration} 秒`,
-        credits: creditsUsed,
-      });
-      refresh();
-      toast.success("照片人物动画生成完成");
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "照片动画生成失败";
@@ -477,6 +429,34 @@ export default function HomePhotoTools() {
       </div>
     ) : null;
 
+  function sourceSelector(tool: PhotoTool) {
+    return (
+      <label className="mt-4 flex flex-wrap items-center gap-2 text-xs text-white/65">
+        使用照片
+        <select
+          aria-label={`${tool === "upscale" ? "高清放大" : tool === "restore" ? "修复上色" : "照片动画"}输入照片`}
+          value={sourceChoices[tool]}
+          disabled={activeOperation !== null}
+          onChange={event =>
+            setSourceChoices(current => ({
+              ...current,
+              [tool]: event.target.value as SourceChoice,
+            }))
+          }
+          className="rounded-lg border border-white/15 bg-[#171725] px-3 py-2 text-white"
+        >
+          <option value="original">
+            {sourceName ? `上传原图：${sourceName}` : "请先上传照片"}
+          </option>
+          {upscaleResult && (
+            <option value="upscale">{upscaleResult.label}结果</option>
+          )}
+          {restoreResult && <option value="restore">修复上色结果</option>}
+        </select>
+      </label>
+    );
+  }
+
   return (
     <section
       id="photo-tools"
@@ -490,13 +470,10 @@ export default function HomePhotoTools() {
           让回忆重新穿越，也重新有生命
         </h2>
         <p className="mt-4 text-sm leading-7 text-white/55 sm:text-base">
-          一张旧照片，不只可以变清晰，也可以重新有颜色、重新有生命。上传照片，一键高清放大
-          2×/4×，
-          修复划痕与褪色并自然上色；再写下一句你想看到的动作，让照片里的人轻轻转身、微笑、挥手，
-          把停在过去的一瞬，变成今天还能播放的记忆。
+          上传照片后，自由选择高清放大、修复上色或照片动起来。三个功能都可以单独使用，无需按顺序操作。
         </p>
         <p className="mt-2 text-xs text-white/35">
-          手机拍到桌面或相框也无需手动裁切；每一步的结果会自动成为下一步素材。
+          原图始终保留。需要继续处理时，在对应功能中自行选择原图、放大结果或上色结果。
         </p>
       </div>
 
@@ -541,7 +518,7 @@ export default function HomePhotoTools() {
                 {uploading ? "正在上传照片…" : "上传一张照片开始"}
               </div>
               <div className="text-xs text-white/40">
-                支持 JPG、PNG、WebP，最大 10MB
+                支持 JPG、PNG、WebP，最大 30MB；各功能提交限制单独检查
               </div>
             </div>
           )}
@@ -563,6 +540,7 @@ export default function HomePhotoTools() {
                 </p>
               </div>
             </div>
+            {sourceSelector("upscale")}
             <div className="mt-5 grid grid-cols-2 gap-2">
               {(["x2", "x4"] as const).map(factor => {
                 const credits =
@@ -601,6 +579,7 @@ export default function HomePhotoTools() {
                 </p>
               </div>
             </div>
+            {sourceSelector("restore")}
             <button
               type="button"
               onClick={() => void runRestore()}
@@ -633,6 +612,7 @@ export default function HomePhotoTools() {
               </p>
             </div>
           </div>
+          {sourceSelector("animate")}
           <div className="mt-5 grid gap-3 lg:grid-cols-[1fr_auto]">
             <textarea
               value={motionPrompt}
@@ -666,29 +646,32 @@ export default function HomePhotoTools() {
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <span className="mr-1 text-xs font-semibold text-white/45">
-              输出清晰度
+              生成模型 · 720p
             </span>
-            {HOME_PHOTO_ANIMATE_RESOLUTIONS.map(item => (
+            {HOME_PHOTO_VIDEO_MODELS.map(item => (
               <button
                 key={item}
                 type="button"
-                onClick={() => setResolution(item)}
+                onClick={() => setModelChoice(item)}
                 disabled={activeOperation !== null}
                 className={`rounded-lg border px-3 py-2 text-xs font-bold transition ${
-                  resolution === item
+                  modelChoice === item
                     ? "border-violet-300/55 bg-violet-400/18 text-white"
                     : "border-white/10 bg-white/5 text-white/55 hover:bg-white/8"
                 }`}
               >
-                {item}
-                {item === "1080p" ? " · +20%" : " · 默认"}
+                {HOME_PHOTO_VIDEO_MODEL_LABELS[item]}
               </button>
             ))}
           </div>
           <button
             type="button"
             onClick={() => void runAnimation()}
-            disabled={activeOperation !== null}
+            disabled={
+              activeOperation !== null ||
+              !animation.ready ||
+              Boolean(animation.pending)
+            }
             className="mt-3 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[linear-gradient(135deg,#8b5cf6,#ec4899)] px-5 text-sm font-black text-white shadow-lg shadow-violet-950/30 transition hover:brightness-110 disabled:opacity-50"
           >
             {animateBusy ? (
@@ -700,6 +683,25 @@ export default function HomePhotoTools() {
               ? "正在让照片动起来，请保持页面开启…"
               : `生成 ${resolution} · ${duration} 秒照片动画 · ${homePhotoAnimateCredits(duration, resolution)} 积分`}
           </button>
+          {animation.message && (
+            <p role="status" className="mt-3 text-sm text-white/70">
+              {animation.message}
+            </p>
+          )}
+          {animation.pending?.taskId && (
+            <p className="mt-1 break-all text-xs text-white/45">
+              任务编号：{animation.pending.taskId}
+            </p>
+          )}
+          {animation.pending?.status === "failed" && (
+            <button
+              type="button"
+              onClick={animation.clearFailed}
+              className="mt-2 text-sm text-violet-300"
+            >
+              已查看失败结果，返回生成
+            </button>
+          )}
           {videoResult ? (
             <div className="mt-4 overflow-hidden rounded-xl border border-white/10 bg-black/30">
               <video
@@ -729,6 +731,10 @@ export default function HomePhotoTools() {
           </p>
         </article>
       </div>
+      <p className="mt-4 text-sm text-amber-200/80">
+        照片和视频在下载空间保留12小时，请及时下载保存；到期自动删除临时副本。
+      </p>
+      <HomePhotoVideoUpscale generatedVideoUrl={videoResult?.url} />
     </section>
   );
 }
