@@ -44,6 +44,7 @@ import {
 } from "@shared/manhuaAssetImageGate";
 import {
   applyManhuaRerunCompilePatch,
+  type ManhuaRerunCompileResult,
   compileManhuaAssetSheetPromptForRerun,
   isManhuaAssetSheetBlockId,
   isManhuaClipBlockId,
@@ -3854,6 +3855,8 @@ export default function OmniCanvas() {
       const isEdit = Boolean(block && isManhuaVideoEditBlock(block));
       const isExtend = workMode === "video_extend";
       return {
+        isEdit,
+        isExtend,
         // 编辑是单目标的「已备原片」运行，上游图/文不参与；与编排器同口径。
         preparedVideoEdit: isEdit,
         // 只有新生成片段才谈试片
@@ -3874,18 +3877,55 @@ export default function OmniCanvas() {
    * 那是给生产补它没有的步骤，什么也没证明。现在入口统一，
    * 「确认的那一份 === 真正发出去的那一份」由结构保证，不靠测试凑。
    */
+  /**
+   * compileManhuaRerun 定义在本函数之后，用 ref 取当前实现，避开 TDZ；
+   * 同时保证长跑 await 期间读到的是**当前**语义（复审 P2 的同一条要求）。
+   */
+  const compileManhuaRerunRef = useRef<
+    ((block: CanvasBlock) => Promise<
+      | (ManhuaRerunCompileResult & { videoRunPatch?: Partial<CanvasBlock> })
+      | null
+    >) | null
+  >(null);
+
   const prepareManhuaClipRunInput = useCallback(
     async (blockId: string) => {
       const block = blocksRef.current.find((item) => item.id === blockId);
       if (!block) throw new Error("该段节点已不存在，请刷新后重试");
       const operation = deriveClipOperationOptions(block);
+
+      // **按操作类型分流的重编译，全在入口内完成。**
+      //
+      // 普通重生成才按当前字段重编译（走 compileManhuaRerun → ensureManhuaFragmentClips，
+      // 其中包含 clearManhuaVideoEditOperation 与关键图新鲜度检查）。
+      // 原片编辑／延长**不重编译**：那条路会把操作清成普通生成，
+      // 用户确认的是「改这段原片」，发出去的却变成「重新生成一段」（0914 复审 P1）。
+      //
+      // 结果**不写回 state**：用一份就地替换的 blocks 传进准备器，
+      // 避免「setState 之后立刻读 blocksRef」拿到还没更新的节点。
+      let sourceBlock = block;
+      if (!operation.preparedVideoEdit && !operation.isExtend) {
+        const compiled = await compileManhuaRerunRef.current?.(block);
+        if (compiled?.prompt?.trim()) {
+          sourceBlock = {
+            ...block,
+            ...applyManhuaRerunCompilePatch(compiled),
+            ...(compiled.videoRunPatch ?? {}),
+          } as CanvasBlock;
+        }
+      }
+      const workingBlocks =
+        sourceBlock === block
+          ? blocksRef.current
+          : blocksRef.current.map((item) => (item.id === blockId ? sourceBlock : item));
+
       const { preparedBlock, upstream } = await prepareManhuaFactoryClipInput({
-        blocks: blocksRef.current,
+        blocks: workingBlocks,
         edges,
         blockId,
-        fallbackBlock: block,
+        fallbackBlock: sourceBlock,
         stage: "clip",
-        episodeIndex: getBlockEpisodeIndex(block) ?? writerFocusEpisode,
+        episodeIndex: getBlockEpisodeIndex(sourceBlock) ?? writerFocusEpisode,
         shotContinuity,
         preparedVideoEdit: operation.preparedVideoEdit,
       });
@@ -4445,6 +4485,7 @@ export default function OmniCanvas() {
       writerVideoModel,
     ],
   );
+  compileManhuaRerunRef.current = compileManhuaRerun as never;
 
   const handleBlocksChange = useCallback(
     (next: CanvasBlock[] | ((prev: CanvasBlock[]) => CanvasBlock[])) => {

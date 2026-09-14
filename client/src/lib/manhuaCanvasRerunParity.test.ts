@@ -36,7 +36,11 @@ import { testOutboundScope } from "./__testutils__/manhuaOutboundGate";
 import { recordManhuaKeyartLookOutput } from "@shared/manhuaKeyartLookState";
 import type { CanvasBlock, CanvasEdge } from "./canvasTypes";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  runErrors.length = 0;
+  genericRecompileCalls.length = 0;
+});
 
 /** 从真实源码里抽出 runBlock 回调，不复刻 */
 function extractRunBlock(): string {
@@ -125,19 +129,44 @@ function buildGraph() {
   };
 }
 
-/** 生产唯一入口的**同一份实现**（OmniCanvas 里注入给画布的就是它） */
+/**
+ * 与生产 `prepareManhuaClipRunInput` **同形**的实现：
+ * 按操作类型分流——普通重生成才走通用重编译，编辑／延长不走；
+ * 结果不写回 state，用就地替换的 blocks 传给准备器。
+ */
 function makePrepareClipRun(
   blocks: CanvasBlock[],
   edges: CanvasEdge[],
   pilotRun: boolean,
+  compileRerun?: (b: CanvasBlock) => Promise<{ prompt: string } | null>,
 ) {
   return async (blockId: string) => {
     const block = blocks.find((b) => b.id === blockId)!;
+    const workMode = String(
+      (block as Record<string, unknown>).seedance25WorkMode ?? "",
+    ).trim();
+    const isEdit = workMode === "video_edit";
+    const isExtend = workMode === "video_extend";
+    let sourceBlock = block;
+    if (!isEdit && !isExtend && compileRerun) {
+      const compiled = await compileRerun(block);
+      if (compiled?.prompt?.trim()) {
+        sourceBlock = { ...block, prompt: compiled.prompt } as CanvasBlock;
+      }
+    }
+    const workingBlocks =
+      sourceBlock === block
+        ? blocks
+        : blocks.map((b) => (b.id === blockId ? sourceBlock : b));
     const { preparedBlock, upstream } = await prepareManhuaFactoryClipInput({
-      blocks, edges, blockId, fallbackBlock: block,
-      stage: "clip", episodeIndex: 1, preparedVideoEdit: false,
+      blocks: workingBlocks, edges, blockId, fallbackBlock: sourceBlock,
+      stage: "clip", episodeIndex: 1, preparedVideoEdit: isEdit,
     });
-    return { preparedBlock, upstream, runOptions: { pilotRun } };
+    return {
+      preparedBlock,
+      upstream,
+      runOptions: { pilotRun: !isEdit && !isExtend && pilotRun },
+    };
   };
 }
 
@@ -147,6 +176,11 @@ const stripNonce = (body: Record<string, unknown>) => {
 };
 
 /** 执行真实 runBlock 所需的上下文；只有与本测试相关的才给真实实现 */
+/** 记录通用重编译被调到了哪些节点；clip 必须一个都不在里面 */
+const genericRecompileCalls: string[] = [];
+/** 真实回调把异常吞进 toast；测试要看得见，否则「零 POST」会掩盖别的错误 */
+const runErrors: string[] = [];
+
 function makeContext(over: Record<string, unknown>) {
   const noop = () => {};
   return {
@@ -167,7 +201,10 @@ function makeContext(over: Record<string, unknown>) {
     resolveKeyartShotIndex: () => 1,
     resolveClipSegmentIndex: () => 1,
     resolvePreviousSegmentClipUrl: () => undefined,
-    projectVideoReferenceFailurePatch: () => ({}),
+    // 把真实异常原文透出来，不然「零 POST」会掩盖别的错误（复审点名）
+    projectVideoReferenceFailurePatch: (opt: { error?: unknown }) => ({
+      error: opt?.error instanceof Error ? opt.error.message : String(opt?.error ?? "未知错误"),
+    }),
     isCanvasUploadableFile: () => false,
     recordManhuaKeyartLookOutput: () => undefined,
     patchBlock: () => {},
@@ -176,9 +213,35 @@ function makeContext(over: Record<string, unknown>) {
     rememberMusicMvOutput: () => ({}),
     mergeManhuaMediaVersions: (x: unknown) => x,
     applyManhuaRerunCompilePatch: (c: { prompt: string }) => ({ prompt: c.prompt }),
-    toast: { error: noop, message: noop, success: noop },
+    toast: {
+      error: (msg: unknown, opt?: unknown) => {
+        const text = `${String(msg)} ${JSON.stringify(opt ?? "")}`;
+        console.error("[runBlock toast.error]", text);
+        runErrors.push(text);
+      },
+      message: (msg: unknown) => runErrors.push(String(msg)),
+      success: noop,
+    },
     projectAssetRefs: [],
-    compileManhuaRerun: undefined,
+    // **不再设成 undefined**（复审点名）。这里给的是一个会把编辑操作清掉的
+    // 重编译实现——生产里通用重编译正是这么干的。clip 必须在它之前分流，
+    // 否则用户确认的「改这段原片」会被改写成「重新生成一段」。
+    compileManhuaRerun: async (b: CanvasBlock) => {
+      genericRecompileCalls.push(b.id);
+      return {
+        prompt: `${String(b.prompt || "")}\n[通用重编译改写过]`,
+        beforePrompt: String(b.prompt || ""),
+        afterPrompt: `${String(b.prompt || "")}\n[通用重编译改写过]`,
+        stashOutputUrls: [],
+        changed: true,
+        videoRunPatch: {
+          // 通用重编译会清掉编辑身份——这正是要防的
+          seedance25WorkMode: undefined,
+          seedance25RefVideoUrls: undefined,
+          refVideoUrl: undefined,
+        },
+      };
+    },
     referencePreparationRef: { current: new Set<string>() },
     setPreparingReferenceIds: noop,
     referenceMountedRef: { current: true },
@@ -191,6 +254,9 @@ function makeContext(over: Record<string, unknown>) {
     MANHUA_CLIP_CONTINUITY_HINT_ZH: "【镜头连续性】",
     MANHUA_CLIP_CROSS_SEGMENT_TRANSITION_HINT_ZH: "【跨段转场】",
     ...over,
+    // 生产用每次渲染刷新的 ref 读这两个回调（复审 P2），harness 照同一形状给
+    prepareManhuaClipRunRef: { current: over.prepareManhuaClipRun },
+    resolveManhuaOutboundGateRef: { current: over.resolveManhuaOutboundGate },
   };
 }
 
@@ -253,6 +319,7 @@ describe("真实画布回调重跑：POST 必须与工作台确认逐字段相�
 
     await run(blockId);
 
+    expect(runErrors, "真实画布回调报错了").toEqual([]);
     expect(bodies, "真实画布回调没有发出请求").toHaveLength(1);
     expect(stripNonce(bodies[0]!)).toEqual(stripNonce(preview.body));
   });
@@ -295,6 +362,7 @@ describe("真实画布回调重跑：POST 必须与工作台确认逐字段相�
     })) as (id: string) => Promise<void>;
     await run(blockId);
 
+    expect(runErrors, "真实画布回调报错了").toEqual([]);
     expect(bodies, "真实画布回调没有发出请求").toHaveLength(1);
     expect(stripNonce(bodies[0]!)).toEqual(stripNonce(preview.body));
   });
@@ -320,6 +388,70 @@ describe("真实画布回调重跑：POST 必须与工作台确认逐字段相�
 
     await run(blockId);
     expect(bodies).toEqual([]);
+  });
+
+  it.each([
+    ["原片编辑", "video_edit"],
+    ["原片延长", "video_extend"],
+  ])("%s：真实画布 POST 保住原片与指令，且 === 工作台确认的那一份", async (_label, mode) => {
+    const { blocks, edges, clipIds } = buildGraph();
+    const blockId = clipIds[0]!;
+    const source = "https://example.com/original.mp4";
+    const edited = blocks.map((b) =>
+      b.id === blockId
+        ? ({
+            ...b,
+            videoModel: "seedance-2.5",
+            seedance25WorkMode: mode,
+            seedance25RefVideoUrls: [source],
+            refVideoUrl: source,
+            prompt: `${b.prompt}\n【视频编辑指令】把第 3 秒的剑光调暗`,
+          } as CanvasBlock)
+        : b,
+    );
+
+    // 工作台确认：试片**未批准**，编辑／延长仍不得被套上 pilotRun
+    const { preview, scope, confirmation } = await workbenchConfirm(
+      edited, edges, blockId, true,
+    );
+
+    const bodies = captureOutbound();
+    const run = runInNewContext(extractRunBlock(), makeContext({
+      blocks: edited, edges,
+      blocksRef: { current: edited },
+      prepareManhuaClipRun: makePrepareClipRun(edited, edges, true),
+      resolveManhuaOutboundGate: () => ({ currentScope: scope, confirmation }),
+      runDepsWithPlan: deps,
+      runDeps: deps,
+    })) as (id: string) => Promise<void>;
+    await run(blockId);
+
+    expect(runErrors, "真实画布回调报错了").toEqual([]);
+    expect(bodies).toHaveLength(1);
+    // clip 不得进通用重编译——那条路会把编辑身份清掉
+    expect(genericRecompileCalls).toEqual([]);
+    const body = bodies[0]! as Record<string, unknown>;
+    expect(body.workMode).toBe(mode);
+    expect(body.videoUrls).toEqual([source]);
+    expect(String(body.prompt || "")).toContain("剑光调暗");
+    expect(stripNonce(body)).toEqual(stripNonce(preview.body));
+  });
+
+  it("普通重生成：clip 仍不进通用重编译（重编译由统一入口内部按操作做）", async () => {
+    const { blocks, edges, clipIds } = buildGraph();
+    const blockId = clipIds[0]!;
+    const { scope, confirmation } = await workbenchConfirm(blocks, edges, blockId, false);
+    captureOutbound();
+    const run = runInNewContext(extractRunBlock(), makeContext({
+      blocks, edges,
+      blocksRef: { current: blocks },
+      prepareManhuaClipRun: makePrepareClipRun(blocks, edges, false),
+      resolveManhuaOutboundGate: () => ({ currentScope: scope, confirmation }),
+      runDepsWithPlan: deps,
+      runDeps: deps,
+    })) as (id: string) => Promise<void>;
+    await run(blockId);
+    expect(genericRecompileCalls, "clip 不该走画布的通用重编译").toEqual([]);
   });
 
   it("没接准备入口的画布：clip 直接拒绝，零 POST", async () => {

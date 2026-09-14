@@ -2096,9 +2096,13 @@ export async function runCanvasBlock(
   ) {
     // 早拒：不合格的在任何外部调用之前就挡掉，省掉无谓的续签与探测。
     // 真正的把关在每个提交点的 settleManhuaOutbound 里**再现读一次**。
+    // 取闸口径与最终守卫**完全一致**：配了 getter 就以 getter 为准，
+    // 返回 undefined 按缺闸处理，不回退旧 snapshot（0914 复审建议直接统一）。
     assertManhuaOutboundGate(
       block,
-      runOptions?.resolveOutboundGate?.(block.id) ?? runOptions?.outboundGate,
+      runOptions?.resolveOutboundGate
+        ? runOptions.resolveOutboundGate(block.id)
+        : runOptions?.outboundGate,
       String(deps.userId || ""),
     );
   }

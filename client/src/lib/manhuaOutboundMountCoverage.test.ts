@@ -39,9 +39,7 @@ describe("三个画布挂载都接确认闸", () => {
   });
 
   it("FreeformCanvas 在 clip 且没接闸／没接准备入口时明确拒绝，而不是放行", () => {
-    expect(freeform).toMatch(
-      /isManhuaClip\s*&&\s*\(!resolveManhuaOutboundGate\s*\|\|\s*!prepareManhuaClipRun\)/,
-    );
+    expect(freeform).toMatch(/isManhuaClip\s*&&\s*\(!resolveGateNow\s*\|\|\s*!prepareClipNow\)/);
     expect(freeform).toContain("这个画布没有接入生成前确认");
   });
 
@@ -59,18 +57,41 @@ describe("三个画布挂载都接确认闸", () => {
   it("画布 clip 重跑消费准备入口的结果，而不是自己 collect 一套", () => {
     // 0914 复审：上一轮画布不走工厂准备也不传 pilotRun，
     // 我却在测试里替它补上——现在由生产结构保证。
-    expect(freeform).toMatch(/await prepareManhuaClipRun!\(blockId\)/);
+    expect(freeform).toMatch(/await prepareClipNow!\(blockId\)/);
     expect(freeform).toMatch(/clipRun \? clipRun\.preparedBlock : runBlockPayload/);
     expect(freeform).toMatch(/\.\.\.\(clipRun\?\.runOptions \?\? \{\}\)/);
   });
 
   it("画布走的是提交边界现读的 getter，不是快照", () => {
-    expect(freeform).toMatch(/resolveOutboundGate:\s*isManhuaClip\s*\?\s*resolveManhuaOutboundGate/);
+    expect(freeform).toMatch(/resolveOutboundGate:\s*isManhuaClip\s*\?\s*resolveGateNow/);
   });
 
   it("编排器也传 getter 而不是快照", () => {
     const studio = readFileSync(new URL("./canvasDramaStudio.ts", import.meta.url), "utf8");
     expect(studio).toMatch(/resolveOutboundGate:\s*opts\.resolveOutboundGate/);
     expect(studio).not.toMatch(/outboundGate:\s*opts\.resolveOutboundGate\?\.\(/);
+  });
+
+  it("clip 在通用重编译之前分流：编辑/延长的操作身份不会被清掉", () => {
+    // 0914 复审 P1：通用重编译走 ensureManhuaFragmentClips，
+    // 其中 clearManhuaVideoEditOperation 会把编辑/延长改写成普通生成。
+    expect(freeform).toMatch(/if \(compileManhuaRerun && !isManhuaClipBlock\)/);
+    expect(freeform).toMatch(/const isManhuaClipBlock = String\(block\.id \|\| ""\)\.startsWith\("clip-"\)/);
+  });
+
+  it("runBlock 依赖表含准备入口与确认闸", () => {
+    const body = freeform.slice(freeform.indexOf("const runBlock = useCallback"));
+    // 依赖数组是该 useCallback 的收尾：从 "\n    [\n" 到紧随其后的 "\n  );"
+    const start = body.indexOf("\n    [\n");
+    const end = body.indexOf("\n  );", start);
+    expect(start, "找不到 runBlock 的依赖数组").toBeGreaterThan(0);
+    const arr = body.slice(start, end);
+    expect(arr).toContain("prepareManhuaClipRun");
+    expect(arr).toContain("resolveManhuaOutboundGate");
+  });
+
+  it("早拒与最终守卫取闸口径一致：配了 getter 就不回退快照", () => {
+    const runBlockSrc = readFileSync(new URL("./canvasRunBlock.ts", import.meta.url), "utf8");
+    expect(runBlockSrc).not.toMatch(/resolveOutboundGate\?\.\(block\.id\)\s*\?\?\s*runOptions\?\.outboundGate/);
   });
 });
