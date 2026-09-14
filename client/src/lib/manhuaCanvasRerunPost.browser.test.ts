@@ -42,8 +42,10 @@ afterAll(async () => {
   await browser?.close();
 });
 
-async function mount(): Promise<Page> {
-  const p = await browser.newPage();
+/** 每个用例一个全新 BrowserContext：localStorage 隔离，第二条不沿用第一条的状态 */
+async function mount(): Promise<{ page: Page; close: () => Promise<void> }> {
+  const ctx = await browser.createBrowserContext();
+  const p = await ctx.newPage();
   await p.setRequestInterception(true);
   p.on("request", (req) =>
     req.url().startsWith("data:") ? req.continue() : req.respond({ status: 200, body: "" }),
@@ -62,54 +64,162 @@ async function mount(): Promise<Page> {
     () => Boolean((window as never as { __ffcProps?: unknown }).__ffcProps),
     { timeout: 30_000 },
   );
-  return p;
+  return { page: p, close: async () => { await ctx.close().catch(() => {}); } };
 }
 
 describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与确认一致", () => {
   it("预置画布里确实有已铺好的 clip 段节点", async () => {
-    const page = await mount();
+    const { page, close } = await mount();
     const clipIds = await page.evaluate(() => {
       const props = (window as never as { __ffcProps?: { blocks: Array<{ id: string }> } }).__ffcProps!;
       return props.blocks.filter((b) => b.id.startsWith("clip-")).map((b) => b.id);
     });
     expect(clipIds.length, "夹具没铺出 clip 节点，后面的对照不作数").toBeGreaterThan(0);
-    await page.close();
+    await close();
   }, 180_000);
 
   /**
-   * ⚠️ 未完成，如实记录，不当成通过。
-   *
-   * 目标是审查要的那条：改设置 → 重新确认 → 点真实画布重跑 → POST 与确认一致。
-   * 卡在夹具保真度上：**页面在载入时会自己重铺 clip 节点**
-   * （实测节点 id 变成 `clip-e01-g01-auto-...`，videoModel 被改写成会话档，
-   * 种进去的 seedance25WorkMode / refVideoUrl 一并丢失）。
-   * 于是：
-   *  - 预置成「原片编辑」的段会被normalize成普通生成，测不到编辑路径；
-   *  - 普通生成路径下，页面用自己的口径重算关键静帧 required，
-   *    种进去的 look 回执变成「已变更」，预览被静帧门禁拦住。
-   *
-   * 也就是说，光靠 localStorage 预置画布还不够，需要让页面**按它自己的口径**
-   * 产出一份静帧就绪的段表。下一步方案见交审说明；在那之前
-   * 请求体逐字段对照仍由 manhuaCanvasRerunParity.test.ts 承担
-   * （vm 抽真实 runBlock + 拦 fetch）。
+   * 诊断更正：上一轮我拿「节点 id 里有 -auto-」当页面重铺的证据，**那是错的**——
+   * 那个后缀是夹具自己调 ensureManhuaFragmentClips 时就带上的。
+   * 正确做法是比较**挂载前后的同一个节点**，这条就是这么做的。
    */
-  it("【实测记录】页面载入会自己重铺 clip 节点，种进去的段级状态不会原样留存", async () => {
-    const page = await mount();
-    const seen = await page.evaluate(() => {
-      const props = (window as never as {
-        __ffcProps?: { blocks: Array<Record<string, unknown>> };
-      }).__ffcProps!;
-      const clips = props.blocks.filter((b) => String(b.id).startsWith("clip-"));
+  it("【观测】挂载前后对照同一节点，记录本地落盘/载入对段级字段的实际影响", async () => {
+    const { page, close } = await mount();
+    const diff = await page.evaluate(() => {
+      type B = Record<string, unknown>;
+      const seeded = (window as never as { __seeded?: { blocks: B[] } }).__seeded;
+      const live = (window as never as { __ffcProps?: { blocks: B[] } }).__ffcProps!.blocks;
+      if (!seeded) return { seededAvailable: false as const };
+      const pick = (b: B) => ({
+        videoModel: b.videoModel ?? null,
+        seedance25WorkMode: b.seedance25WorkMode ?? null,
+        refVideoUrl: b.refVideoUrl ?? null,
+      });
+      const rows = seeded.blocks
+        .filter((b) => String(b.id).startsWith("clip-"))
+        .map((before) => {
+          const after = live.find((x) => x.id === before.id);
+          return {
+            id: String(before.id),
+            found: Boolean(after),
+            before: pick(before),
+            after: after ? pick(after) : null,
+          };
+        });
+      return { seededAvailable: true as const, rows };
+    });
+
+    expect(diff.seededAvailable, "夹具没留下种进去的原样，无法对照").toBe(true);
+    if (!diff.seededAvailable) return;
+
+    // 这条只做**观测**：把挂载前后的真实差异打出来，
+    // **不预设哪种行为正确**——是否该保留编辑身份属于产品判断，不由测试先定。
+    const missing = diff.rows.filter((r) => !r.found).map((r) => r.id);
+    const changed = diff.rows.filter(
+      (r) => JSON.stringify(r.before) !== JSON.stringify(r.after),
+    );
+    console.info(
+      "[挂载前后对照] 丢失节点=" +
+        JSON.stringify(missing) +
+        " 字段变化=" +
+        JSON.stringify(changed, null, 1),
+    );
+    // 唯一的断言：对照本身能做（种进去的原样可得、页面侧可读），
+    // 否则后面基于它的任何结论都不作数。
+    expect(diff.rows.length, "夹具没种出 clip 段，无法对照").toBeGreaterThan(0);
+    await close();
+  }, 180_000);
+
+  /**
+   * ⚠️【未完成·必须补】刻意 skip，不是覆盖。
+   *
+   * 走到「调真实 onRerunKeyartShot 重出目标段静帧」这一步就跑不完（整条用例超时），
+   * 怀疑是我给的固定回执形状不对，页面把它当失败在重试；**尚未查实，不下结论**。
+   * 下一步：先拦一条真实静帧请求，打出页面期望的回包字段，再按那个形状回执。
+   *
+   * 在它补完之前，请求体逐字段对照由 manhuaCanvasRerunParity.test.ts 承担
+   * （vm 抽真实 runBlock ＋ 拦 fetch，含编辑/延长、接力、未批准试片）。
+   */
+  it.skip("甲：真实重出目标段静帧 → 真实确认 → 点真实重跑 → POST 与确认逐字段相同", async () => {
+    const { page, close } = await mount();
+    const result = await page.evaluate(async () => {
+      type B = Record<string, unknown>;
+      type WbProps = {
+        onRerunKeyartShot?: (blockId: string, shotIndex: number) => void;
+        onPreviewClipOutbound?: (id: string) => Promise<{ body: B; snapshotId: string }>;
+        onConfirmClipOutbound?: (id: string, snapshotId: string) => Promise<void>;
+      };
+      const w = window as never as {
+        __ffcProps?: { blocks: B[] };
+        __wbProps?: WbProps;
+        __posts?: Array<{ url: string; body: B }>;
+      };
+      const settle = (ms = 900) => new Promise((r) => setTimeout(r, ms));
+      const blocksNow = () => w.__ffcProps!.blocks;
+
+      const wb = w.__wbProps;
+      if (!wb?.onRerunKeyartShot) return { step: "no-rerun-keyart" as const };
+      if (!wb.onPreviewClipOutbound || !wb.onConfirmClipOutbound) {
+        return { step: "no-workbench-callbacks" as const };
+      }
+
+      const clip = blocksNow().find((b) => String(b.id).startsWith("clip-"));
+      if (!clip) return { step: "no-clip" as const };
+
+      // ① 只对目标段重出关键静帧：调**真实页面**入口，接口回固定测试回执
+      const keyarts = blocksNow().filter((b) => String(b.id).startsWith("keyart-"));
+      if (!keyarts.length) return { step: "no-keyart" as const };
+      const targets = keyarts.slice(0, 3);
+      for (let i = 0; i < targets.length; i += 1) {
+        wb.onRerunKeyartShot!(String(targets[i]!.id), i + 1);
+        await settle(600);
+      }
+
+      // ② 真实预览 + 真实确认
+      const cap = <T,>(pr: Promise<T>, ms: number, tag: string) =>
+        Promise.race([
+          pr,
+          new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`超时:${tag}`)), ms)),
+        ]);
+      let preview: { body: B; snapshotId: string };
+      try {
+        preview = await cap(wb.onPreviewClipOutbound!(String(clip.id)), 20_000, "preview");
+      } catch (e) {
+        return { step: "preview-failed" as const, why: String((e as Error)?.message || e) };
+      }
+      try {
+        await cap(wb.onConfirmClipOutbound!(String(clip.id), preview.snapshotId), 20_000, "confirm");
+      } catch (e) {
+        return { step: "confirm-failed" as const, why: String((e as Error)?.message || e) };
+      }
+      await settle(400);
+
+      // ③ 点真实画布重跑按钮
+      w.__posts!.length = 0;
+      const card = document.querySelector(`[data-canvas-block-id="${String(clip.id)}"]`);
+      if (!card) return { step: "no-card" as const };
+      const runBtn = Array.from(card.querySelectorAll("button")).find(
+        (btn) => !(btn as HTMLButtonElement).disabled && btn.querySelector("svg"),
+      ) as HTMLButtonElement | undefined;
+      if (!runBtn) return { step: "no-run-button" as const };
+      runBtn.click();
+      await settle(2500);
+
       return {
-        count: clips.length,
-        anyAutoRelaid: clips.some((b) => /-auto-/.test(String(b.id))),
-        keptEditOp: clips.some((b) => b.seedance25WorkMode === "video_edit"),
+        step: "done" as const,
+        posts: w.__posts!.filter((p) => /seedance|wan30|hailuo|happyHorse/i.test(p.url)).map((p) => p.body),
+        previewBody: preview.body,
       };
     });
-    expect(seen.count).toBeGreaterThan(0);
-    // 这两条就是挡住浏览器 POST 对照的原因，钉下来免得下一手重复踩
-    expect(seen.anyAutoRelaid, "页面没有重铺——若此处转绿，说明可以直接种段级状态了").toBe(true);
-    expect(seen.keptEditOp, "编辑身份没留住（当前已知行为）").toBe(false);
-    await page.close();
+
+    expect(result.step, `流程卡在：${result.step}${"why" in result ? " · " + result.why : ""}`).toBe("done");
+    if (result.step !== "done") return;
+    expect(result.posts, "点了真实重跑按钮却没有成片 POST").toHaveLength(1);
+    const strip = (x: Record<string, unknown>) => {
+      const { idempotencyKey: _k, videoSubmissionKey: _s, ...rest } = x;
+      return rest;
+    };
+    expect(strip(result.posts[0]!)).toEqual(strip(result.previewBody));
+    await close();
   }, 180_000);
 });

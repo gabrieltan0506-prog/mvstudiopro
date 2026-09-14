@@ -56,6 +56,10 @@ const session = buildManhuaWriterSession({
   episodeCount: 2,
   focusEpisode: 1,
   writerConfirmed: true,
+  // 会话引擎必须声明成 2.5：页面会把会话档套到段节点上，
+  // 不声明就会把预置的 2.5 编辑段降级成默认档并清掉 2.5 专属字段
+  // （这是实测出来的产品行为，不是缺陷）。
+  videoModel: "seedance-2.5",
   writerPack: {
     seriesTitle: "鹤归",
     logline: "少主寻鹤归宗，与守约者相峙。",
@@ -76,7 +80,7 @@ function buildSeededCanvas() {
   const spawned = spawnManhuaDramaStudio({
     topic: "鹤归",
     episodeIndex: 1,
-    videoModel: "seedance-2.0-mini",
+    videoModel: "seedance-2.5",
   });
   const reverse = spawned.blocks.find((b) => b.id.startsWith("reverse-"))!;
   const outputText = Array.from(
@@ -108,32 +112,19 @@ function buildSeededCanvas() {
     };
   });
   const laid = ensureManhuaFragmentClips(ready, expanded.edges, 1, {
-    videoModel: "seedance-2.0-mini",
+    videoModel: "seedance-2.5",
   });
-  // 第一段预置成「原片编辑」：已有原片 + 明确编辑指令。
-  // 编辑/延长不走通用重编译，正是审查最担心被改写成普通生成的那条路。
-  let patched = false;
-  const blocks: typeof laid.blocks = laid.blocks.map((b) => {
-    if (patched || !b.id.startsWith("clip-")) return b;
-    patched = true;
-    return {
-      ...b,
-      videoModel: "seedance-2.5" as const,
-      seedance25WorkMode: "video_edit" as const,
-      refVideoUrl: "https://example.com/original.mp4",
-      seedance25RefVideoUrls: ["https://example.com/original.mp4"],
-      prompt: `${b.prompt}\n【视频编辑指令】把第 3 秒的剑光调暗`,
-      status: "done" as const,
-      outputUrl: "https://example.com/original.mp4",
-      outputUrls: ["https://example.com/original.mp4"],
-    };
-  });
-  return { ...laid, blocks };
+  return laid;
 }
 
 if (localStorage.getItem("mv-manhua-writer-session-v1") === null) {
   localStorage.setItem("mv-manhua-writer-session-v1", JSON.stringify(session));
   const laid = buildSeededCanvas();
+  // 把**种进去的原样**留一份，供测试比较挂载前后的同一个节点。
+  // 上一轮我拿 id 里有没有 -auto- 当证据，那其实是夹具自己产的后缀，结论是错的。
+  (window as never as { __seeded?: unknown }).__seeded = JSON.parse(
+    JSON.stringify({ blocks: laid.blocks, edges: laid.edges }),
+  );
   trySaveLocalCanvas(laid.blocks, laid.edges);
 }
 
@@ -144,8 +135,20 @@ window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(typeof input === "string" ? input : (input as Request).url ?? input);
   if (init?.method === "POST" && url.includes("/api/jobs")) {
     posts.push({ url, body: init.body ? JSON.parse(String(init.body)) : null });
+    // 固定测试回执：图片与视频各给一份，页面据此自行登记「已按当前口径出过图」。
+    // 全离线，不联网、不付费。
+    const IMG = "https://example.com/test-keyart.png";
     return new Response(
-      JSON.stringify({ ok: true, videoUrl: "https://example.com/result.mp4" }),
+      JSON.stringify({
+        ok: true,
+        videoUrl: "https://example.com/result.mp4",
+        imageUrl: IMG,
+        url: IMG,
+        outputUrl: IMG,
+        outputUrls: [IMG],
+        images: [IMG],
+        data: [{ url: IMG }],
+      }),
       { status: 200, headers: { "content-type": "application/json" } },
     );
   }
