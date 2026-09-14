@@ -149,6 +149,8 @@ function harness(
     }),
     resolveManhuaDirectorStrategyContract: () => null,
     markManhuaDirectorBoardOverlaysForReview: (value: unknown) => value,
+    // B 项：画布被整份换掉时作废旧的生成前确认；生产回调里会调它
+    bumpManhuaOutboundEpoch: vi.fn(),
     saveCanvasState: vi.fn(),
     saveManhuaDirectorBoardMainByEpisode: vi.fn(),
     saveManhuaDirectorBoardBySegment: vi.fn(),

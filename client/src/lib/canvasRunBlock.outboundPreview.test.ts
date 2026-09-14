@@ -209,18 +209,14 @@ describe("预览安全：不支持的组合在任何外部调用之前拒绝", (
     return calls;
   }
 
-  // 原片编辑／延长按仓库真实契约构造：id 以 clip- 开头 + 2.5 + 明确 workMode
+  // 仍不支持的组合。C 项给 Wan / 海螺 / 原片编辑补了预览出口，它们移到下面的正向用例；
+  // 这里剩下的是**确实没接**的，不是写着好看的。
   const cases: Array<[string, Record<string, unknown>]> = [
-    [
-      "原片编辑节点",
-      { id: "clip-e01-g02", videoModel: "seedance-2.5", seedance25WorkMode: "video_edit" },
-    ],
     [
       "原片延长节点",
       { id: "clip-e01-g02", videoModel: "seedance-2.5", seedance25WorkMode: "video_extend" },
     ],
-    ["Wan 3.0", { videoModel: "wan-3.0" }],
-    ["海螺 H3", { videoModel: "minimax-hailuo-3" }],
+    ["HappyHorse", { videoModel: "happyhorse" }],
     ["音乐 MV 镜头", { musicMvShot: { referenceImages: [] } }],
   ];
 
@@ -246,15 +242,57 @@ describe("预览安全：不支持的组合在任何外部调用之前拒绝", (
     }
   });
 
-  it("普通 Seedance 段成片才放行", () => {
+  it("普通 Seedance 段成片放行", () => {
     expect(
       resolveCanvasOutboundPreviewUnsupportedReason(makeBlock() as never),
     ).toBeNull();
   });
 
-  it("即便绕过预览入口直接传 previewOnly，runCanvasBlock 内部也拒绝", async () => {
+  // C 项：保留引擎、补预览出口。这三条是「能预览」的正向证据，
+  // 且必须同样零外部调用——补出口不等于放松预览不得付费这条。
+  const supported: Array<[string, Record<string, unknown>, string]> = [
+    ["Wan 3.0", { videoModel: "wan-3.0" }, "wan-3.0"],
+    ["海螺 H3", { videoModel: "minimax-hailuo-3" }, "minimax-hailuo-3"],
+  ];
+  it.each(supported)(
+    "%s：可预览，拿到真实请求体，且零外部调用",
+    async (_label, over, engine) => {
+      const calls = forbidEverything();
+      const onVideoTaskCreated = vi.fn();
+      const block = makeBlock(over);
+      const preview = await previewCanvasBlockOutbound(
+        { userRole: "admin", optimizeCopy: async () => "", onVideoTaskCreated },
+        block as never,
+      );
+      expect(preview.engine).toBe(engine);
+      expect(String(preview.body.prompt || "")).toBeTruthy();
+      expect(calls).toEqual([]);
+      expect(onVideoTaskCreated).not.toHaveBeenCalled();
+    },
+  );
+
+  it("原片编辑：可预览，请求体是 video_edit，且零外部调用", async () => {
     const calls = forbidEverything();
-    const block = makeBlock({ videoModel: "wan-3.0" });
+    const block = makeBlock({
+      id: "clip-e01-g02",
+      videoModel: "seedance-2.5",
+      seedance25WorkMode: "video_edit",
+      refVideoUrl: "https://test.invalid/source.mp4",
+      prompt: "原生成稿\n【视频编辑指令】把第 3 秒的剑光调暗",
+    });
+    const preview = await previewCanvasBlockOutbound(
+      { userRole: "admin", optimizeCopy: async () => "" },
+      block as never,
+    );
+    expect(preview.engine).toBe("seedance-2.5");
+    expect(preview.body.workMode).toBe("video_edit");
+    expect(preview.body.videoUrls).toEqual(["https://test.invalid/source.mp4"]);
+    expect(calls).toEqual([]);
+  });
+
+  it("即便绕过预览入口直接传 previewOnly，不支持的组合仍在内部拒绝", async () => {
+    const calls = forbidEverything();
+    const block = makeBlock({ videoModel: "happyhorse" });
     await expect(
       runCanvasBlock(deps, block as never, undefined, { previewOnly: true } as never),
     ).rejects.toBeInstanceOf(CanvasOutboundPreviewUnsupportedError);
@@ -439,42 +477,69 @@ describe("运行前核对确认：缺确认、换身份、改输入都不下单"
   });
 
   /**
-   * ⚠️ 已知缺口，如实记录，不当成通过。
-   *
-   * 确认闸的范围是「可预览的 Seedance 段成片」。Wan / 海螺 / 原片编辑不支持预览，
-   * 也就无法产生确认；若对它们也强制要求，等于把这些**既有在用的流程**直接封死，
-   * 那不是修漏洞是砍功能。所以当前它们落在闸外。
-   *
-   * 后果：用户确认之后把引擎改成 Wan、或转成原片编辑，会离开本闸覆盖范围。
-   * 彻底堵死要么给这些引擎补预览出口，要么产品上禁止段成片使用它们——待拍板。
+   * C 项闭合：上一轮这里有两条「已知缺口」测试，如实记录 Wan 与原片编辑不在闸内。
+   * 现在两条路径都接了共用结算点，缺口不存在了，于是改成正向覆盖——
+   * 不是把断言放宽，是同一件事从「没有」变成「有」。
    */
-  it("【已知缺口】Wan 段成片当前不在确认闸范围内，会照常提交", async () => {
-    const bodies: unknown[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string, init?: RequestInit) => {
-        bodies.push({ url, body: init?.body ? JSON.parse(String(init.body)) : null });
-        return new Response(
-          JSON.stringify({ ok: true, videoUrl: "https://test.invalid/result.mp4" }),
-        );
-      }),
-    );
+  it("Wan 段成片：缺确认时零 POST", async () => {
     const block = makeBlock({ videoModel: "wan-3.0" });
-    expect(requiresManhuaOutboundConfirmation(block as never)).toBe(false);
-    await runCanvasBlock(deps, block as never, undefined, {
-      outboundGate: { currentScope: currentScopeFor(block.id) },
-    } as never);
-    // 它确实发出去了——这正是缺口本身，记录在案
-    expect(bodies.length).toBeGreaterThan(0);
+    expect(requiresManhuaOutboundConfirmation(block as never)).toBe(true);
+    const bodies = captureOutbound();
+    await expect(
+      runCanvasBlock(deps, block as never, undefined, {
+        enforceOutboundConfirmation: true,
+        outboundGate: { currentScope: currentScopeFor(block.id) },
+      } as never),
+    ).rejects.toBeInstanceOf(ManhuaOutboundConfirmationMissingError);
+    expect(bodies).toEqual([]);
   });
 
-  it("【已知缺口】原片编辑同样不在闸范围内", () => {
+  it("海螺 H3 段成片：缺确认时零 POST", async () => {
+    const block = makeBlock({ videoModel: "minimax-hailuo-3" });
+    expect(requiresManhuaOutboundConfirmation(block as never)).toBe(true);
+    const bodies = captureOutbound();
+    await expect(
+      runCanvasBlock(deps, block as never, undefined, {
+        enforceOutboundConfirmation: true,
+        outboundGate: { currentScope: currentScopeFor(block.id) },
+      } as never),
+    ).rejects.toBeInstanceOf(ManhuaOutboundConfirmationMissingError);
+    expect(bodies).toEqual([]);
+  });
+
+  it("原片编辑：已在闸范围内，缺确认时零 POST", async () => {
     const block = makeBlock({
       id: "clip-e01-g02",
       videoModel: "seedance-2.5",
       seedance25WorkMode: "video_edit",
+      refVideoUrl: "https://test.invalid/source.mp4",
+      prompt: "原生成稿\n【视频编辑指令】把第 3 秒的剑光调暗",
     });
-    expect(requiresManhuaOutboundConfirmation(block as never)).toBe(false);
+    expect(requiresManhuaOutboundConfirmation(block as never)).toBe(true);
+    const bodies = captureOutbound();
+    await expect(
+      runCanvasBlock(deps, block as never, undefined, {
+        enforceOutboundConfirmation: true,
+        outboundGate: { currentScope: currentScopeFor(block.id) },
+      } as never),
+    ).rejects.toBeInstanceOf(ManhuaOutboundConfirmationMissingError);
+    expect(bodies).toEqual([]);
+  });
+
+  it("确认之后把引擎从 Seedance 改成 Wan：旧确认失效，零 POST", async () => {
+    // 上一轮审查点名的逃逸路线：确认完再换引擎就离开闸范围。
+    // 现在换引擎＝请求体变了＝指纹对不上，直接拦。
+    const block = makeBlock();
+    const confirmation = await confirmFor(block);
+    const switched = { ...block, videoModel: "wan-3.0" };
+    const bodies = captureOutbound();
+    await expect(
+      runCanvasBlock(deps, switched as never, undefined, {
+        enforceOutboundConfirmation: true,
+        outboundGate: { currentScope: currentScopeFor(block.id), confirmation },
+      } as never),
+    ).rejects.toBeInstanceOf(ManhuaOutboundConfirmationMismatchError);
+    expect(bodies).toEqual([]);
   });
 
   it("确认后未改动：正常提交", async () => {

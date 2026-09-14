@@ -70,7 +70,7 @@ import {
 } from "@shared/canvasGenerationPricing";
 import { isCanvasUploadableFile, inferCanvasAssetKindFromFileName, takeFilesFromInput, uploadCanvasFilesParallel, uploadOneCanvasAsset, CANVAS_UPLOAD_CONCURRENCY } from "@/lib/canvasUpload";
 import { loadCanvasDocumentTexts } from "@/lib/canvasDocumentText";
-import { runCanvasBlock, type CanvasRunDeps } from "@/lib/canvasRunBlock";
+import { runCanvasBlock, type CanvasRunDeps, type ManhuaOutboundGate } from "@/lib/canvasRunBlock";
 import {
   collectManhuaEpisodeSegmentPromptsForVoiceGate,
   countManhuaClipAssetEdges,
@@ -296,6 +296,12 @@ type FreeformCanvasProps = {
   onBlocksChange: (blocks: BlocksUpdater) => void;
   onEdgesChange: (edges: CanvasEdge[]) => void;
   runDeps: CanvasRunDeps;
+  /**
+   * 漫剧段成片（clip-*）的生成前确认闸。由拥有确认记录的页面注入。
+   * 审查点名：画布里的 clip 重跑也是真实付费出口，不能只堵工厂那一条。
+   * 不传＝该画布没有漫剧段（音乐 MV、图片、文案等），按原契约运行。
+   */
+  resolveManhuaOutboundGate?: (blockId: string) => ManhuaOutboundGate;
   /** 外部请求选中并滚入视口（成片坞定位） */
   focusBlockId?: string | null;
   onFocusBlockConsumed?: () => void;
@@ -773,6 +779,7 @@ export default function FreeformCanvas({
   onBlocksChange,
   onEdgesChange,
   runDeps,
+  resolveManhuaOutboundGate,
   focusBlockId,
   onFocusBlockConsumed,
   presentation = "full",
@@ -1716,7 +1723,13 @@ export default function FreeformCanvas({
               } : row));
           },
         } : runDepsWithPlan;
-        const out = await runCanvasBlock(submittedDeps, runBlockPayload, { visionImages, texts });
+        // clip-* 走同一道闸：本画布没有确认界面，缺确认时明确指回工作台，
+        // 而不是静默放行（旧写法直接 runCanvasBlock，整条确认逻辑绕过去了）。
+        const isManhuaClip = String(runBlockPayload.id || "").startsWith("clip-");
+        const out = await runCanvasBlock(submittedDeps, runBlockPayload, { visionImages, texts }, {
+          enforceOutboundConfirmation: isManhuaClip && Boolean(resolveManhuaOutboundGate),
+          outboundGate: isManhuaClip ? resolveManhuaOutboundGate?.(blockId) : undefined,
+        });
         // MV镜头允许编辑，但旧请求结果只进入历史，不能覆盖已改过的新稿。
         if (blockId.startsWith("mvshot-")) {
           const current = blocksRef.current.find(row => row.id === blockId);

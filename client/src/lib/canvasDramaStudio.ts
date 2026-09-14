@@ -4501,12 +4501,11 @@ export async function runManhuaDramaFactoryPipeline(opts: {
           {
             videoSubmissionKey,
             pilotRun: opts.pilotRun === true && stage === "clip",
-            // ⚠️ 暂不在编排器开启强制：编排器会在内部给节点补参考（最近参考、上段末帧、
-            // 段内关键帧覆盖 refImageUrl 等），从裸节点算出的确认指纹与编排后真正发出的
-            // 请求对不上，开了会把正常流程全拦死。
-            // 先决条件是「预览与运行共用同一份工厂单段准备」（审查 P1-4），
-            // 那一步做完再打开这里。能力已具备，仅未启用。
-            enforceOutboundConfirmation: false,
+            // 漫剧段成片：**强制生成前确认**。单段、批量、重跑都从这里下发，
+            // 调用方不能自己决定传不传——闸绑在这一层，不在各调用点。
+            // 先决条件已闭合：预览与运行共用 prepareManhuaFactoryClipInput（A 项），
+            // 当前身份与快照有效期统一管理（B 项），各引擎接同一个结算点（C 项）。
+            enforceOutboundConfirmation: stage === "clip",
             outboundGate: opts.resolveOutboundGate?.(blockId),
           },
         );

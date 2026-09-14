@@ -7,8 +7,9 @@ import {
   runManhuaDramaFactoryPipeline,
   spawnManhuaDramaStudio,
 } from "./canvasDramaStudio";
-import { previewCanvasBlockOutbound } from "./canvasRunBlock";
+import { manhuaOutboundConfirmationFingerprint, previewCanvasBlockOutbound } from "./canvasRunBlock";
 import { recordManhuaKeyartLookOutput } from "@shared/manhuaKeyartLookState";
+import { gateFromConfirmations, testOutboundScope } from "./__testutils__/manhuaOutboundGate";
 
 /**
  * 审查 P1-4：预览必须和**经工厂编排后真正发出去的请求**一致。
@@ -123,6 +124,16 @@ describe("预览与真实工厂出站一致", () => {
     const preview = await previewCanvasBlockOutbound(deps, preparedBlock, upstream);
     expect(noNetwork).not.toHaveBeenCalled();
 
+    // 拿这份**用户看到的**预览直接生成确认记录，再交给编排器。
+    // 于是本用例同时证明两件事：预览体 === 真正 POST 体；
+    // 且由预览得到的确认能通过生产门禁（门禁已启用，没有确认这里会零 POST）。
+    const scope = testOutboundScope(blockId);
+    const confirmation = {
+      fingerprint: manhuaOutboundConfirmationFingerprint(preview, scope),
+      scope,
+      confirmedAt: Date.now(),
+    };
+
     // 实跑：经真实编排器
     const bodies = captureSeedancePosts();
     await runManhuaDramaFactoryPipeline({
@@ -136,6 +147,7 @@ describe("预览与真实工厂出站一致", () => {
       preservePreparedTargetBlocks: true,
       maxRetries: 0,
       ensureOptions: { videoModel: "seedance-2.0-mini" },
+      resolveOutboundGate: gateFromConfirmations({ [blockId]: confirmation }),
     });
 
     expect(bodies).toHaveLength(1);

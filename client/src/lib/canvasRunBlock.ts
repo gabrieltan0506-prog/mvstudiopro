@@ -719,6 +719,20 @@ export function compileManhuaVideoPromptForOutbound(
   return result.text;
 }
 
+/**
+ * 编译未通过就抛，**错误文案与 {@link compileManhuaVideoPromptForOutbound} 完全一致**。
+ * 各引擎的薄包装共用它，免得每处各写一句笼统的「编译未通过」，
+ * 把「参考图上限 10」这类说得清的原因吞掉。
+ */
+function throwIfOutboundCompileBlocked(result: ManhuaOutboundPromptCompileResult): void {
+  if (result.fatalZh) throw new Error(result.fatalZh);
+  if (result.blocked) {
+    throw new Error(
+      `成片提示词未通过出站校验：${result.issues.map((issue) => issue.detailZh).join("；")}`,
+    );
+  }
+}
+
 /** 段级绑定与最终取图共用同一上限，防止 2.5 在任一前置层退回 9。 */
 export function resolveManhuaCanvasVideoImageReferenceMax(videoModelRaw: unknown): number {
   const videoModel = normalizeCanvasVideoModel(videoModelRaw);
@@ -755,6 +769,21 @@ export type SeedanceCanvasRequestOptions = {
     resolution?: CanvasVideoResolution;
     manhuaPilot?: ManhuaPilotSubmission;
     idempotencyKey?: string;
+};
+
+/**
+ * 各引擎出站准备的**统一形状**。Seedance / 海螺 H3 / Wan 3.0 的准备器都返回它，
+ * 于是「算指纹、比对确认、回卷预览」只需要一处实现（见 settleManhuaOutbound），
+ * 不必每加一个引擎就抄一遍格式规则——上一轮审查点名的就是这种抄第二套。
+ */
+export type CanvasEngineOutboundPreparation = {
+  engine: string;
+  /** 真正 POST 出去的请求体 */
+  body: Record<string, unknown>;
+  compile: ManhuaOutboundPromptCompileResult;
+  durationSec: number;
+  refCounts: { image: number; video: number; audio: number };
+  refSlots: { imageUrls: string[]; videoUrls: string[]; audioUrls: string[] };
 };
 
 export type SeedanceCanvasRequestPreview = {
@@ -965,7 +994,7 @@ async function runSeedanceProductVideo(
   throw new Error(json.error || json.message || "成片生成失败");
 }
 
-export function buildHailuo3CanvasRequestBody(input: {
+export type Hailuo3CanvasRequestInput = {
   prompt: string;
   imageUrl?: string;
   imageUrls?: string[];
@@ -976,7 +1005,18 @@ export function buildHailuo3CanvasRequestBody(input: {
   clipIndex?: number;
   manhuaPilot?: ManhuaPilotSubmission;
   idempotencyKey?: string;
-}): Record<string, unknown> {
+};
+
+/**
+ * 海螺 H3 出站准备（**纯函数、不发请求**）。与 Seedance 的准备器同形：
+ * 同一份去重、同一次时长钳制、同一个编译，预览与真正提交取同一份结果。
+ *
+ * 拆成「准备 + 薄包装」是 C 项要求：预览要能拿到编译未通过的原因**而不是被抛出去**，
+ * 所以准备用不抛的 tryCompile，抛错留给下面那个薄包装（既有调用方契约不变）。
+ */
+export function prepareHailuo3CanvasOutbound(
+  input: Hailuo3CanvasRequestInput,
+): CanvasEngineOutboundPreparation {
   const imageUrls = Array.from(
     new Set(
       [input.imageUrl, ...(input.imageUrls || [])]
@@ -985,15 +1025,16 @@ export function buildHailuo3CanvasRequestBody(input: {
     ),
   );
   const duration = clampHailuoOpenRouterDuration(input.duration);
-  return {
-    prompt: compileManhuaVideoPromptForOutbound({
-      prompt: input.prompt,
-      engine: "minimax-hailuo-3",
-      durationSec: duration,
-      imageRefCount: imageUrls.length,
-      videoRefCount: 0,
-      audioRefCount: 0,
-    }),
+  const compile = tryCompileManhuaVideoPromptForOutbound({
+    prompt: input.prompt,
+    engine: "minimax-hailuo-3",
+    durationSec: duration,
+    imageRefCount: imageUrls.length,
+    videoRefCount: 0,
+    audioRefCount: 0,
+  });
+  const body: Record<string, unknown> = {
+    prompt: compile.text,
     imageUrl: imageUrls[0] || undefined,
     imageUrls: imageUrls.length ? imageUrls : undefined,
     aspectRatio: input.aspectRatio,
@@ -1005,6 +1046,23 @@ export function buildHailuo3CanvasRequestBody(input: {
     ...(Number(input.episodeIndex) > 0 ? { episodeIndex: Number(input.episodeIndex) } : {}),
     ...(Number(input.clipIndex) > 0 ? { clipIndex: Number(input.clipIndex) } : {}),
   };
+  return {
+    engine: "minimax-hailuo-3",
+    body,
+    compile,
+    durationSec: duration,
+    refCounts: { image: imageUrls.length, video: 0, audio: 0 },
+    refSlots: { imageUrls: [...imageUrls], videoUrls: [], audioUrls: [] },
+  };
+}
+
+/** 旧契约：只要请求体，编译未通过就抛。内部走同一个准备器，不另算一套。 */
+export function buildHailuo3CanvasRequestBody(
+  input: Hailuo3CanvasRequestInput,
+): Record<string, unknown> {
+  const prepared = prepareHailuo3CanvasOutbound(input);
+  throwIfOutboundCompileBlocked(prepared.compile);
+  return prepared.body;
 }
 
 /** MiniMax H3 · OpenRouter（画质由服务端归一；时长 5–15s） */
@@ -1205,7 +1263,7 @@ export function newWanSubmissionKey(blockId: string): string {
 }
 
 /** Wan 请求体构建器:抽出为纯函数,让测试能断言真实 POST 载荷(三审 P0-1) */
-export function buildWan30RequestBody(input: {
+export type Wan30RequestInput = {
   prompt: string;
   images: string[];
   aspectRatio: "9:16" | "16:9";
@@ -1218,7 +1276,12 @@ export function buildWan30RequestBody(input: {
   idempotencyKey?: string;
   manhuaPilot?: ManhuaPilotSubmission;
   seed?: number;
-}): Record<string, unknown> {
+};
+
+/** Wan 3.0 出站准备（**纯函数、不发请求**）。同 {@link prepareHailuo3CanvasOutbound}。 */
+export function prepareWan30Outbound(
+  input: Wan30RequestInput,
+): CanvasEngineOutboundPreparation {
   const images = Array.from(
     new Set(input.images.map((url) => String(url || "").trim()).filter(Boolean)),
   );
@@ -1229,15 +1292,16 @@ export function buildWan30RequestBody(input: {
     new Set((input.videoUrls || []).map((url) => String(url || "").trim()).filter(Boolean)),
   );
   const duration = clampWan30Duration(input.duration);
-  return {
-    prompt: compileManhuaVideoPromptForOutbound({
-      prompt: input.prompt,
-      engine: "wan-3.0",
-      durationSec: duration,
-      imageRefCount: images.length,
-      videoRefCount: videoUrls.length,
-      audioRefCount: audioUrls.length,
-    }),
+  const compile = tryCompileManhuaVideoPromptForOutbound({
+    prompt: input.prompt,
+    engine: "wan-3.0",
+    durationSec: duration,
+    imageRefCount: images.length,
+    videoRefCount: videoUrls.length,
+    audioRefCount: audioUrls.length,
+  });
+  const body: Record<string, unknown> = {
+    prompt: compile.text,
     imageUrl: images[0],
     imageUrls: images,
     videoUrls,
@@ -1252,6 +1316,25 @@ export function buildWan30RequestBody(input: {
     ...(input.manhuaPilot ? { manhuaPilot: input.manhuaPilot } : {}),
     ...(Number.isFinite(Number(input.seed)) ? { seed: Math.floor(Number(input.seed)) } : {}),
   };
+  return {
+    engine: "wan-3.0",
+    body,
+    compile,
+    durationSec: duration,
+    refCounts: { image: images.length, video: videoUrls.length, audio: audioUrls.length },
+    refSlots: {
+      imageUrls: [...images],
+      videoUrls: [...videoUrls],
+      audioUrls: [...audioUrls],
+    },
+  };
+}
+
+/** 旧契约：只要请求体，编译未通过就抛。内部走同一个准备器，不另算一套。 */
+export function buildWan30RequestBody(input: Wan30RequestInput): Record<string, unknown> {
+  const prepared = prepareWan30Outbound(input);
+  throwIfOutboundCompileBlocked(prepared.compile);
+  return prepared.body;
 }
 
 /** Wan 3.0（公测）· WaveSpeed reference-to-video：可直出 30s；公测排队时间较长 */
@@ -1583,6 +1666,50 @@ function assertManhuaOutboundGate(
   }
 }
 
+/**
+ * **所有引擎共用的出站结算点**：算指纹、比对确认、预览回卷，只此一处。
+ *
+ * 每条引擎分支在**真正提交之前**调它一次，传入自己准备器的产出。
+ * 返回表示可以继续提交；否则抛 mismatch 或预览信号。
+ * 之所以要收在一起：上一轮把这段逻辑只写在普通 Seedance 分支里，
+ * 结果换 Wan/海螺/原片编辑就绕过去了（0914 审查 P1-1）。
+ */
+function settleManhuaOutbound(
+  prepared: CanvasEngineOutboundPreparation,
+  runOptions:
+    | {
+        previewOnly?: boolean;
+        outboundGate?: ManhuaOutboundGate;
+      }
+    | undefined,
+): void {
+  const gate = runOptions?.outboundGate;
+  if (gate?.confirmation && !runOptions?.previewOnly) {
+    // **用 currentScope 重算**——拿确认记录自带的 scope 算等于自己和自己比。
+    const actual = manhuaOutboundConfirmationFingerprint(
+      { engine: prepared.engine, body: prepared.body },
+      gate.currentScope,
+    );
+    if (actual !== gate.confirmation.fingerprint) {
+      throw new ManhuaOutboundConfirmationMismatchError(
+        "提示词、模型、时长或参考素材在确认之后发生了变化，本次未提交、未扣费。请重新查看生成前确认并再次确认。",
+      );
+    }
+  }
+  if (runOptions?.previewOnly) {
+    // 组装已经全部走完（含转 https、重签段参考、刷新已登记成片链），在这里回卷：
+    // 不发请求、不建单、不扣费。
+    throw new CanvasOutboundPreviewSignal({
+      engine: prepared.engine,
+      body: prepared.body,
+      compile: prepared.compile,
+      durationSec: prepared.durationSec,
+      refCounts: prepared.refCounts,
+      refs: prepared.refSlots,
+    });
+  }
+}
+
 /** 确认与实际出站不一致时抛这个：**在发请求之前**，不建单不扣费 */
 export class ManhuaOutboundConfirmationMismatchError extends Error {
   readonly reasonZh: string;
@@ -1604,12 +1731,18 @@ export class CanvasOutboundPreviewUnsupportedError extends Error {
 }
 
 /**
- * 生成前预览目前只覆盖「普通 Seedance 段成片」这一条路径。
+ * 生成前预览覆盖哪些组合。
  *
- * **必须在进入任何生产路径或外部调用之前判定**：原片编辑会在 block.kind==="video" 之后
- * 立刻进入 runSeedanceProductVideo；Wan / H3 / HappyHorse 与非视频块各有自己的提交点，
- * 都绕不到后面的预览回卷。把不支持的组合放到末尾才拒绝就太晚了——
- * 那等于让预览真的发出付费请求。
+ * **必须在进入任何生产路径或外部调用之前判定**：各引擎各有自己的提交点，
+ * 把不支持的组合放到末尾才拒绝就太晚了——那等于让预览真的发出付费请求。
+ *
+ * 覆盖范围（C 项补齐）：普通 Seedance、Seedance 2.5 原片编辑、Wan 3.0、海螺 H3。
+ * 每一条都在自己的提交点之前调 settleManhuaOutbound，预览由那里统一回卷。
+ * 产品拍板是「保留引擎、补预览出口、不砍功能」，所以这里不是靠禁用来堵漏。
+ *
+ * 仍不支持：HappyHorse（没有共用准备器，其提交点未接结算点）、
+ * seedance 2.5 的 video_extend（延长口径与编辑不同，尚未接）、音乐 MV、非视频块。
+ * 这几项**据实列在这里**，不是「暂时写着」——没接就是没接。
  *
  * 返回 null 表示支持；否则返回中文原因。
  */
@@ -1622,24 +1755,24 @@ export function resolveCanvasOutboundPreviewUnsupportedReason(
   if (block.musicMvShot) {
     return "生成前预览暂不支持音乐 MV 镜头节点";
   }
-  if (isManhuaVideoEditBlock(block as CanvasBlock)) {
-    return "生成前预览暂不支持原片编辑节点";
+  const videoModel = normalizeCanvasVideoModel(block.videoModel);
+  if (isCanvasHappyHorseVideoModel(videoModel)) {
+    return `生成前预览暂不支持该成片引擎：${videoModel}`;
   }
-  // 延长与编辑共用 2.5 的 workMode 契约，但没有专门谓词；凡是显式指定了
-  // 非「普通生成」的工作模式，一律不在本期预览范围内。
+  if (isManhuaVideoEditBlock(block as CanvasBlock)) {
+    // 原片编辑已接结算点，可预览。
+    return null;
+  }
   const declaredWorkMode = String(
     (block as Record<string, unknown>).seedance25WorkMode ?? "",
   ).trim();
-  if (declaredWorkMode && declaredWorkMode !== "text_to_video" && declaredWorkMode !== "reference_to_video") {
-    return `生成前预览暂不支持该工作模式：${declaredWorkMode}`;
-  }
-  const videoModel = normalizeCanvasVideoModel(block.videoModel);
   if (
-    isCanvasWan30VideoModel(videoModel) ||
-    isCanvasHailuoH3VideoModel(videoModel) ||
-    isCanvasHappyHorseVideoModel(videoModel)
+    declaredWorkMode &&
+    declaredWorkMode !== "text_to_video" &&
+    declaredWorkMode !== "reference_to_video" &&
+    declaredWorkMode !== "video_edit"
   ) {
-    return `生成前预览暂不支持该成片引擎：${videoModel}`;
+    return `生成前预览暂不支持该工作模式：${declaredWorkMode}`;
   }
   return null;
 }
@@ -2193,7 +2326,7 @@ export async function runCanvasBlock(
       if (!source) throw new Error("请先选择本次要修改的原片");
       const editPrompt = compileManhuaVideoEditPrompt(block.prompt);
       const editSourceDurationSec = (await probeVideoDurationSec(source)) || undefined;
-      const edited = await runSeedanceProductVideo(editPrompt, undefined, ar, {
+      const editOpts: SeedanceCanvasRequestOptions = {
         version: "2.5",
         workMode: "video_edit",
         videoUrls: [source],
@@ -2203,7 +2336,17 @@ export async function runCanvasBlock(
         resolution: block.videoResolution,
         episodeIndex: block.episodeIndex,
         clipIndex: parseClipIndexFromBlockId(block.id),
-      });
+      };
+      // 原片编辑也走同一道闸。上一轮它在 block.kind==="video" 之后立刻提交，
+      // 整条确认逻辑都绕过去了（0914 审查 P1-1 实测复现过）。
+      settleManhuaOutbound(
+        {
+          ...buildSeedanceCanvasRequestBody(editPrompt, undefined, ar, editOpts),
+          engine: "seedance-2.5",
+        },
+        runOptions,
+      );
+      const edited = await runSeedanceProductVideo(editPrompt, undefined, ar, editOpts);
       return {
         outputUrl: edited.videoUrl,
         lastFrameUrl: await captureManhuaClipResultTail(deps, block.id, edited.videoUrl),
@@ -2579,7 +2722,7 @@ export async function runCanvasBlock(
           .filter(Boolean)
           .join("\n")
           .trim();
-        url = await runWan30(wanPrompt, wanImages, ar, {
+        const wanOpts = {
           videoUrls: wanVideoUrls,
           audioUrls: wanAudioUrls,
           duration: clipDurationRaw ?? 30,
@@ -2588,6 +2731,19 @@ export async function runCanvasBlock(
           clipIndex: parseClipIndexFromBlockId(block.id),
           idempotencyKey: submissionKey,
           manhuaPilot,
+        } as const;
+        // 与 Seedance 同一道闸：准备器产出 → 共用结算点 → 才提交。
+        settleManhuaOutbound(
+          prepareWan30Outbound({
+            prompt: wanPrompt,
+            images: wanImages,
+            aspectRatio: ar,
+            ...wanOpts,
+          }),
+          runOptions,
+        );
+        url = await runWan30(wanPrompt, wanImages, ar, {
+          ...wanOpts,
           onTaskId: (taskId) =>
             deps.onVideoTaskCreated?.(block.id, { taskId, engine: "wan-3.0" }),
         });
@@ -2607,7 +2763,7 @@ export async function runCanvasBlock(
         });
       } else if (useHailuoH3) {
         // H3：OpenRouter 仅图参考（首帧 + input_references）；不传 Seedance 专属音/视频参考
-        url = await runHailuo3(seedancePrompt, seedStill, ar, {
+        const h3Opts = {
           imageUrls: httpsImages.length ? httpsImages : undefined,
           duration: clipDuration,
           resolution: block.videoResolution,
@@ -2615,6 +2771,18 @@ export async function runCanvasBlock(
           clipIndex: parseClipIndexFromBlockId(block.id),
           manhuaPilot,
           idempotencyKey: submissionKey,
+        } as const;
+        settleManhuaOutbound(
+          prepareHailuo3CanvasOutbound({
+            prompt: seedancePrompt,
+            imageUrl: seedStill,
+            aspectRatio: ar,
+            ...h3Opts,
+          }),
+          runOptions,
+        );
+        url = await runHailuo3(seedancePrompt, seedStill, ar, {
+          ...h3Opts,
           onTaskId: (taskId) => deps.onVideoTaskCreated?.(block.id, { taskId, engine: videoModel }),
         });
       } else {
@@ -2777,45 +2945,19 @@ export async function runCanvasBlock(
         } as const;
         const seedanceFirstFrame =
           useSeedance25 && workMode === "text_to_video" ? undefined : seedStill;
-        const gate = runOptions?.outboundGate;
-        if (gate?.confirmation && !runOptions?.previewOnly) {
-          // 与预览同源：同一个构造函数、同一个指纹算法。
-          // **用 currentScope 重算**——用确认记录自带的 scope 算等于自己和自己比。
-          const settled = buildSeedanceCanvasRequestBody(
-            finalPrompt,
-            seedanceFirstFrame,
-            ar,
-            seedanceOpts,
-          );
-          const actual = manhuaOutboundConfirmationFingerprint(
-            { engine: videoModel, body: settled.body },
-            gate.currentScope,
-          );
-          if (actual !== gate.confirmation.fingerprint) {
-            throw new ManhuaOutboundConfirmationMismatchError(
-              "提示词、模型、时长或参考素材在确认之后发生了变化，本次未提交、未扣费。请重新查看生成前确认并再次确认。",
-            );
-          }
-        }
-        if (runOptions?.previewOnly) {
-          // 生成前确认：组装已经全部走完（含转 https、重签段参考、刷新已登记成片链），
-          // 在这里回卷，不发请求、不建单、不扣费。
-          const prepared = buildSeedanceCanvasRequestBody(
-            finalPrompt,
-            seedanceFirstFrame,
-            ar,
-            seedanceOpts,
-          );
-          throw new CanvasOutboundPreviewSignal({
+        // 与预览同源：同一个准备器、同一个结算点。
+        settleManhuaOutbound(
+          {
+            ...buildSeedanceCanvasRequestBody(
+              finalPrompt,
+              seedanceFirstFrame,
+              ar,
+              seedanceOpts,
+            ),
             engine: videoModel,
-            body: prepared.body,
-            compile: prepared.compile,
-            durationSec: prepared.durationSec,
-            refCounts: prepared.refCounts,
-            // 直接用构造函数产出的最终槽位表，不再自己拼首帧 + outImages（会重复计一格）
-            refs: prepared.refSlots,
-          });
-        }
+          },
+          runOptions,
+        );
         const seedanceOut = await runSeedanceProductVideo(
           finalPrompt,
           seedanceFirstFrame,

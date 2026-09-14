@@ -9676,6 +9676,10 @@ export default function OmniCanvas() {
                   previewCanvas={
                     <div className="absolute inset-0 overflow-hidden">
                       <FreeformCanvas
+                        resolveManhuaOutboundGate={(blockId) => ({
+                          currentScope: manhuaOutboundScope(blockId),
+                          confirmation: outboundConfirmationsRef.current[blockId],
+                        })}
                         projectAssetRefs={customAssetRefs}
                         fillContainer
                         blocks={blocks}
@@ -11221,6 +11225,10 @@ export default function OmniCanvas() {
                     </div>
                     <div className="min-h-[360px] md:min-h-[480px]">
                       <FreeformCanvas
+                        resolveManhuaOutboundGate={(blockId) => ({
+                          currentScope: manhuaOutboundScope(blockId),
+                          confirmation: outboundConfirmationsRef.current[blockId],
+                        })}
                         projectAssetRefs={customAssetRefs}
                         blocks={blocks}
                         edges={edges}
