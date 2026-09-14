@@ -467,6 +467,52 @@ describe("真实画布回调重跑：POST 必须与工作台确认逐字段相�
       runDeps: deps,
     })) as (id: string) => Promise<void>;
     await run(blockId);
+    expect(runErrors.join("｜")).toMatch(
+      /这个画布没有接入生成前确认，漫剧段成片不能从这里提交，本次未提交、未扣费/,
+    );
+    expect(bodies).toEqual([]);
+  });
+
+  it("保留旧确认、换到另一个账号：拒绝原因是身份不符，零 POST", async () => {
+    const { blocks, edges, clipIds } = buildGraph();
+    const blockId = clipIds[0]!;
+    const { scope, confirmation } = await workbenchConfirm(blocks, edges, blockId, false);
+    const bodies = captureOutbound();
+    const run = runInNewContext(extractRunBlock(), makeContext({
+      blocks, edges,
+      blocksRef: { current: blocks },
+      prepareManhuaClipRun: makePrepareClipRun(blocks, edges, false),
+      // 确认记录原样保留，只切当前账号
+      resolveManhuaOutboundGate: () => ({
+        currentScope: { ...scope, userId: "another-user" },
+        confirmation,
+      }),
+      runDepsWithPlan: deps,
+      runDeps: deps,
+    })) as (id: string) => Promise<void>;
+    await run(blockId);
+    expect(runErrors.join("｜")).toMatch(/账号|项目|节点/);
+    expect(bodies).toEqual([]);
+  });
+
+  it("工作区换代（epoch 自增）：拒绝原因是工作区被重新载入，零 POST", async () => {
+    const { blocks, edges, clipIds } = buildGraph();
+    const blockId = clipIds[0]!;
+    const { scope, confirmation } = await workbenchConfirm(blocks, edges, blockId, false);
+    const bodies = captureOutbound();
+    const run = runInNewContext(extractRunBlock(), makeContext({
+      blocks, edges,
+      blocksRef: { current: blocks },
+      prepareManhuaClipRun: makePrepareClipRun(blocks, edges, false),
+      resolveManhuaOutboundGate: () => ({
+        currentScope: { ...scope, epoch: Number(scope.epoch) + 1 },
+        confirmation,
+      }),
+      runDepsWithPlan: deps,
+      runDeps: deps,
+    })) as (id: string) => Promise<void>;
+    await run(blockId);
+    expect(runErrors.join("｜")).toMatch(/工作区在你确认之后被重新载入过/);
     expect(bodies).toEqual([]);
   });
 });
