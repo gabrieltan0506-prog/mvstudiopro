@@ -294,3 +294,59 @@ describe("HappyHorse：预览 === 真正 POST", () => {
     expect(bodies).toEqual([]);
   });
 });
+
+/**
+ * 0914 复审点名：runDeps 提供 authorizeManhuaClip 时，执行器另有
+ * `useHappyHorse && manhuaPilot` 的拒绝路径；不能只凭执行器单测
+ * 就宣布「工作台 HappyHorse 已可用」。这里把真实边界钉下来。
+ */
+describe("HappyHorse 的产品授权边界", () => {
+  it("带试片提交身份时：产品层直接拒绝，零 POST", async () => {
+    const block = makeBlock({
+      videoModel: "happyhorse-1.1",
+      refImageUrl: "https://test.invalid/first.png",
+    });
+    const bodies = captureOutbound();
+    await expect(
+      runCanvasBlock(
+        {
+          ...deps,
+          // 真实契约：返回 ManhuaPilotSubmission（projectVersion 是 64 位十六进制）
+          authorizeManhuaClip: async () => ({
+            projectVersion: "a".repeat(64),
+            episodeIndex: 1,
+            segmentIndex: 1,
+            intent: "pilot" as const,
+          }),
+        } as never,
+        block as never,
+        undefined,
+        { pilotRun: true } as never,
+      ),
+    ).rejects.toThrow(/未接入试片审核/);
+    expect(bodies).toEqual([]);
+  });
+
+  it("不带试片身份时可以提交（确认闸仍然要过）", async () => {
+    const block = makeBlock({
+      videoModel: "happyhorse-1.1",
+      refImageUrl: "https://test.invalid/first.png",
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("预览不得发起任何请求");
+    }));
+    const preview = await previewCanvasBlockOutbound(deps, block as never);
+    const scope = scopeOf(block.id);
+    const confirmation = {
+      fingerprint: manhuaOutboundConfirmationFingerprint(preview, scope),
+      scope,
+      confirmedAt: Date.now(),
+    };
+    const bodies = captureOutbound();
+    await runCanvasBlock(deps, block as never, undefined, {
+      enforceOutboundConfirmation: true,
+      resolveOutboundGate: () => ({ currentScope: scope, confirmation }),
+    } as never);
+    expect(bodies).toHaveLength(1);
+  });
+});

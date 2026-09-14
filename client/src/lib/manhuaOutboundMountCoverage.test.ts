@@ -38,9 +38,30 @@ describe("三个画布挂载都接确认闸", () => {
     expect(freeform).toMatch(/enforceOutboundConfirmation:\s*isManhuaClip\s*,/);
   });
 
-  it("FreeformCanvas 在 clip 且没接闸时明确拒绝，而不是放行", () => {
-    expect(freeform).toMatch(/isManhuaClip\s*&&\s*!resolveManhuaOutboundGate/);
+  it("FreeformCanvas 在 clip 且没接闸／没接准备入口时明确拒绝，而不是放行", () => {
+    expect(freeform).toMatch(
+      /isManhuaClip\s*&&\s*\(!resolveManhuaOutboundGate\s*\|\|\s*!prepareManhuaClipRun\)/,
+    );
     expect(freeform).toContain("这个画布没有接入生成前确认");
+  });
+
+  it("每一处挂载也都传了生产唯一准备入口 prepareManhuaClipRun", () => {
+    const mounts = omni.split("<FreeformCanvas").slice(1);
+    const missing: number[] = [];
+    mounts.forEach((tail, i) => {
+      const end = tail.search(/\/>|>\s*\n/);
+      const attrs = tail.slice(0, end < 0 ? 2000 : end);
+      if (!attrs.includes("prepareManhuaClipRun")) missing.push(i + 1);
+    });
+    expect(missing, `第 ${missing.join("、")} 处挂载没接准备入口`).toEqual([]);
+  });
+
+  it("画布 clip 重跑消费准备入口的结果，而不是自己 collect 一套", () => {
+    // 0914 复审：上一轮画布不走工厂准备也不传 pilotRun，
+    // 我却在测试里替它补上——现在由生产结构保证。
+    expect(freeform).toMatch(/await prepareManhuaClipRun!\(blockId\)/);
+    expect(freeform).toMatch(/clipRun \? clipRun\.preparedBlock : runBlockPayload/);
+    expect(freeform).toMatch(/\.\.\.\(clipRun\?\.runOptions \?\? \{\}\)/);
   });
 
   it("画布走的是提交边界现读的 getter，不是快照", () => {

@@ -302,6 +302,16 @@ type FreeformCanvasProps = {
    * 不传＝该画布没有漫剧段（音乐 MV、图片、文案等），按原契约运行。
    */
   resolveManhuaOutboundGate?: (blockId: string) => ManhuaOutboundGate;
+  /**
+   * 漫剧段成片（clip-*）的**生产唯一准备入口**，由页面注入。
+   * 画布不再自己 collect 一套：工作台确认与这里的重跑必须是同一份准备，
+   * 否则确认的和发出去的不是同一个请求（0914 复审 P1）。
+   */
+  prepareManhuaClipRun?: (blockId: string) => Promise<{
+    preparedBlock: CanvasBlock;
+    upstream: { visionImages: Array<{ url: string }>; texts: string[] };
+    runOptions: { pilotRun?: boolean };
+  }>;
   /** 外部请求选中并滚入视口（成片坞定位） */
   focusBlockId?: string | null;
   onFocusBlockConsumed?: () => void;
@@ -780,6 +790,7 @@ export default function FreeformCanvas({
   onEdgesChange,
   runDeps,
   resolveManhuaOutboundGate,
+  prepareManhuaClipRun,
   focusBlockId,
   onFocusBlockConsumed,
   presentation = "full",
@@ -1730,16 +1741,25 @@ export default function FreeformCanvas({
         // 上一轮写成 `isManhuaClip && Boolean(resolveManhuaOutboundGate)`，
         // 结果漏传回调的那个挂载点反而把门禁关掉了（审查 P1，实有第三处漏传）。
         const isManhuaClip = String(runBlockPayload.id || "").startsWith("clip-");
-        if (isManhuaClip && !resolveManhuaOutboundGate) {
+        if (isManhuaClip && (!resolveManhuaOutboundGate || !prepareManhuaClipRun)) {
           throw new Error(
             "这个画布没有接入生成前确认，漫剧段成片不能从这里提交，本次未提交、未扣费。请回剧本工作台生成。",
           );
         }
-        const out = await runCanvasBlock(submittedDeps, runBlockPayload, { visionImages, texts }, {
-          enforceOutboundConfirmation: isManhuaClip,
-          // 提交边界会再读一次；这里给的是 getter 不是快照。
-          resolveOutboundGate: isManhuaClip ? resolveManhuaOutboundGate : undefined,
-        });
+        // clip-* 走**生产唯一准备入口**：与工作台确认同一份准备、同一套试片/编辑口径。
+        // 画布原来自己 collect 上游图、也不传 pilotRun，于是确认的与发出的可能不是同一份。
+        const clipRun = isManhuaClip ? await prepareManhuaClipRun!(blockId) : null;
+        const out = await runCanvasBlock(
+          submittedDeps,
+          clipRun ? clipRun.preparedBlock : runBlockPayload,
+          clipRun ? clipRun.upstream : { visionImages, texts },
+          {
+            ...(clipRun?.runOptions ?? {}),
+            enforceOutboundConfirmation: isManhuaClip,
+            // 提交边界会再读一次；这里给的是 getter 不是快照。
+            resolveOutboundGate: isManhuaClip ? resolveManhuaOutboundGate : undefined,
+          },
+        );
         // MV镜头允许编辑，但旧请求结果只进入历史，不能覆盖已改过的新稿。
         if (blockId.startsWith("mvshot-")) {
           const current = blocksRef.current.find(row => row.id === blockId);
