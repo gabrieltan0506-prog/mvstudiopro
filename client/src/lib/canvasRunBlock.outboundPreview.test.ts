@@ -248,7 +248,8 @@ describe("预览安全：不支持的组合在任何外部调用之前拒绝", (
   const supported: Array<[string, Record<string, unknown>, string]> = [
     ["Wan 3.0", { videoModel: "wan-3.0" }, "wan-3.0"],
     ["海螺 H3", { videoModel: "minimax-hailuo-3" }, "minimax-hailuo-3"],
-    ["HappyHorse", { videoModel: "happyhorse" }, "happyhorse"],
+    // 规范 id 是 happyhorse-1.1；指纹含引擎，这里必须用规范 id 断言
+    ["HappyHorse", { videoModel: "happyhorse" }, "happyhorse-1.1"],
     [
       "Seedance 2.5 原片延长",
       {

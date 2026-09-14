@@ -10,6 +10,8 @@ import {
 import { manhuaOutboundConfirmationFingerprint, previewCanvasBlockOutbound } from "./canvasRunBlock";
 import { recordManhuaKeyartLookOutput } from "@shared/manhuaKeyartLookState";
 import { gateFromConfirmations, testOutboundScope } from "./__testutils__/manhuaOutboundGate";
+import { applyManhuaRerunCompilePatch } from "@shared/manhuaCanvasRerunCompile";
+import type { CanvasBlock, CanvasEdge } from "./canvasTypes";
 
 /**
  * 审查 P1-4：预览必须和**经工厂编排后真正发出去的请求**一致。
@@ -188,5 +190,137 @@ describe("预览与真实工厂出站一致", () => {
       preparedVideoEdit: false,
     });
     expect(JSON.stringify(blocks)).toBe(before);
+  });
+});
+
+/**
+ * 0914 复审：「工作台确认 → 画布重跑」的请求对照属于 C 项验收，不能推到 D。
+ *
+ * 画布重跑不是直接跑节点：FreeformCanvas 先调 OmniCanvas 的 compileManhuaRerun
+ * 按当前字段重编译提示词，再把 videoRunPatch 打上去才提交。
+ * 所以真正要证的是：**用户在工作台确认的那一份，和画布重跑真正发出去的那一份，
+ * 是不是同一份**。不同就意味着确认永远对不上，clip 重跑等于被废掉。
+ */
+describe("工作台确认 与 画布重跑 的请求对照", () => {
+  /** 复刻 compileManhuaRerun 的 clip 分支：fresh 来自同一个 ensureManhuaFragmentClips */
+  function canvasRerunBlock(
+    blocks: CanvasBlock[],
+    edges: CanvasEdge[],
+    blockId: string,
+  ) {
+    const ensured = ensureManhuaFragmentClips(blocks, edges, 1, {
+      videoModel: "seedance-2.0-mini",
+    });
+    const fresh = ensured.blocks.find((b) => b.id === blockId);
+    expect(fresh, "重跑重编译拿不到 fresh 节点").toBeTruthy();
+    const source = blocks.find((b) => b.id === blockId)!;
+    const compiled = {
+      prompt: String(fresh!.prompt || "").trim(),
+      beforePrompt: String(source.prompt || ""),
+      afterPrompt: String(fresh!.prompt || "").trim(),
+      stashOutputUrls: [],
+      changed: String(source.prompt || "").trim() !== String(fresh!.prompt || "").trim(),
+    };
+    return {
+      ...source,
+      ...applyManhuaRerunCompilePatch(compiled),
+      // 与新生成稿同批透传，否则会留下上一轮的 workMode 与原片绑定
+      videoModel: fresh!.videoModel,
+      seedance25WorkMode: fresh!.seedance25WorkMode,
+      seedance25RefVideoUrls: fresh!.seedance25RefVideoUrls,
+      refVideoUrl: fresh!.refVideoUrl,
+    } as CanvasBlock;
+  }
+
+  it("普通生成：工作台预览体 === 画布重跑提交体", async () => {
+    const { blocks, edges, clipIds } = buildFactoryGraph();
+    const blockId = clipIds[0]!;
+    const block = blocks.find((b) => b.id === blockId)!;
+
+    const noNetwork = vi.fn(async () => {
+      throw new Error("预览不得发起任何请求");
+    });
+    vi.stubGlobal("fetch", noNetwork);
+
+    // 工作台那一侧：共用工厂准备 → 生产路径预览
+    const { preparedBlock, upstream } = await prepareManhuaFactoryClipInput({
+      blocks, edges, blockId, fallbackBlock: block,
+      stage: "clip", episodeIndex: 1, preparedVideoEdit: false,
+    });
+    const workbench = await previewCanvasBlockOutbound(deps, preparedBlock, upstream);
+
+    // 画布那一侧：先按当前字段重编译，再走同一条预览出口取真正会发的那一份
+    const rerun = canvasRerunBlock(blocks, edges, blockId);
+    const { preparedBlock: rerunPrepared, upstream: rerunUpstream } =
+      await prepareManhuaFactoryClipInput({
+        blocks: blocks.map((b) => (b.id === blockId ? rerun : b)),
+        edges, blockId, fallbackBlock: rerun,
+        stage: "clip", episodeIndex: 1, preparedVideoEdit: false,
+      });
+    const canvas = await previewCanvasBlockOutbound(deps, rerunPrepared, rerunUpstream);
+
+    expect(noNetwork).not.toHaveBeenCalled();
+    expect(stripNonce(canvas.body)).toEqual(stripNonce(workbench.body));
+  });
+
+  it("未批准试片：两侧同样按 10 秒口径，仍逐字段相同", async () => {
+    const { blocks, edges, clipIds } = buildFactoryGraph();
+    const blockId = clipIds[0]!;
+    const block = blocks.find((b) => b.id === blockId)!;
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("预览不得发起任何请求");
+    }));
+
+    const { preparedBlock, upstream } = await prepareManhuaFactoryClipInput({
+      blocks, edges, blockId, fallbackBlock: block,
+      stage: "clip", episodeIndex: 1, preparedVideoEdit: false,
+    });
+    const workbench = await previewCanvasBlockOutbound(deps, preparedBlock, upstream, {
+      pilotRun: true,
+    });
+
+    const rerun = canvasRerunBlock(blocks, edges, blockId);
+    const { preparedBlock: rp, upstream: ru } = await prepareManhuaFactoryClipInput({
+      blocks: blocks.map((b) => (b.id === blockId ? rerun : b)),
+      edges, blockId, fallbackBlock: rerun,
+      stage: "clip", episodeIndex: 1, preparedVideoEdit: false,
+    });
+    const canvas = await previewCanvasBlockOutbound(deps, rp, ru, { pilotRun: true });
+
+    expect(stripNonce(canvas.body)).toEqual(stripNonce(workbench.body));
+    expect(canvas.durationSec).toBe(10);
+  });
+
+  it("出站正文由段计划推导：改节点文本不影响出站，改引擎才失效", async () => {
+    // 这条是**实测出来的真实契约**，不是我想当然：
+    // 画布重跑会按当前字段重编译，prepare 也会按段计划重算正文，
+    // 所以光改节点里存的 prompt 文本，出站那一份不变——旧确认理应仍然有效。
+    // 真正会改变出站的（引擎、时长、参考素材）才让确认失效。
+    const { blocks, edges, clipIds } = buildFactoryGraph();
+    const blockId = clipIds[0]!;
+    const block = blocks.find((b) => b.id === blockId)!;
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("预览不得发起任何请求");
+    }));
+    const scope = testOutboundScope(blockId);
+
+    const previewOf = async (patched: CanvasBlock) => {
+      const { preparedBlock, upstream } = await prepareManhuaFactoryClipInput({
+        blocks: blocks.map((b) => (b.id === blockId ? patched : b)),
+        edges, blockId, fallbackBlock: patched,
+        stage: "clip", episodeIndex: 1, preparedVideoEdit: false,
+      });
+      return previewCanvasBlockOutbound(deps, preparedBlock, upstream);
+    };
+
+    const base = manhuaOutboundConfirmationFingerprint(await previewOf(block), scope);
+
+    const textOnly = { ...block, prompt: `${block.prompt}\n0–3s：临时加一句。` } as CanvasBlock;
+    expect(manhuaOutboundConfirmationFingerprint(await previewOf(textOnly), scope)).toBe(base);
+
+    const engineChanged = { ...block, videoModel: "seedance-2.5" } as CanvasBlock;
+    expect(
+      manhuaOutboundConfirmationFingerprint(await previewOf(engineChanged), scope),
+    ).not.toBe(base);
   });
 });

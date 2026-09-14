@@ -13,6 +13,11 @@ import {
   SEEDANCE_REFERENCE_MAX,
 } from "./seedanceOpenRouterModels.js";
 import { WAN30_REFERENCE_MAX } from "./wanWavespeedModels.js";
+import {
+  CANVAS_VIDEO_MODEL_HAPPYHORSE_1_1,
+  HAPPYHORSE_CANVAS_DURATION,
+  HAPPYHORSE_REFERENCE_MAX,
+} from "./happyHorseOpenRouterModels.js";
 
 export type ShotDialogue = {
   speakerZh: string;
@@ -66,6 +71,7 @@ export type CompilerEngineId =
   | "seedance-2.0-fast"
   | "seedance-2.5"
   | "wan-3.0"
+  | typeof CANVAS_VIDEO_MODEL_HAPPYHORSE_1_1
   | typeof CANVAS_VIDEO_MODEL_HAILUO_H3;
 
 export type ReadyCompilerEngineId = CompilerEngineId;
@@ -157,6 +163,28 @@ export const COMPILER_ENGINE_LIMITS = {
       total: HAILUO_REFERENCE_MAX.image,
     },
     dialect: "h3",
+    status: "ready",
+  },
+  [CANVAS_VIDEO_MODEL_HAPPYHORSE_1_1]: {
+    /**
+     * HappyHorse 此前**没有登记编译规则**，于是 runHappyHorse 自己
+     * renderManhuaClipPromptForSeedance 了一遍——预览与真正发出的串对不上
+     * （0914 复审离线深比较实测）。
+     *
+     * 方言定为 seedance 不是新发明：生产从第一天起送出去的就是 Seedance 渲染器
+     * 的产物（含 @图片N 绑定），这里只是把既有事实登记下来，让预览与提交走同一条。
+     * 时长与参考上限取 HappyHorse 自己的口径（5/10/15 秒；仅首帧一张图）。
+     */
+    minSegmentSec: HAPPYHORSE_CANVAS_DURATION.min,
+    maxSegmentSec: HAPPYHORSE_CANVAS_DURATION.max,
+    requiresIntegerSegmentSec: true,
+    references: {
+      image: HAPPYHORSE_REFERENCE_MAX.image,
+      video: 0,
+      audio: 0,
+      total: HAPPYHORSE_REFERENCE_MAX.image,
+    },
+    dialect: "seedance",
     status: "ready",
   },
   "wan-3.0": {

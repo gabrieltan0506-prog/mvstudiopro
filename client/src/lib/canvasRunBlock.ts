@@ -81,6 +81,7 @@ import {
   HAPPYHORSE_REFERENCE_MAX,
   isCanvasHappyHorseVideoModel,
   normalizeHappyHorseCanvasResolution,
+  CANVAS_VIDEO_MODEL_HAPPYHORSE_1_1,
 } from "@shared/happyHorseOpenRouterModels";
 import { clampManhuaClipDurationSecForVideoModel } from "@shared/manhuaSeedanceLayout";
 import { stripManhuaPromptSlop } from "@shared/manhuaDirectingWorkflow";
@@ -93,6 +94,7 @@ import {
 import {
   normalizeCompilerEngineId,
   type CompilerEngineId,
+  COMPILER_ENGINE_LIMITS,
 } from "@shared/manhuaShotIR";
 import {
   formatPromptForEngine,
@@ -684,7 +686,10 @@ export function tryCompileManhuaVideoPromptForOutbound(
       fatalZh: "当前成片引擎缺少提示词编译规则",
     };
   }
-  const seedanceSource = engine.startsWith("seedance-")
+  // 按**方言**判定，不按 id 前缀：HappyHorse 登记为 seedance 方言
+  // （生产一直送 Seedance 渲染器的产物），id 却不以 seedance- 开头。
+  const usesSeedanceDialect = COMPILER_ENGINE_LIMITS[engine].dialect === "seedance";
+  const seedanceSource = usesSeedanceDialect
     ? renderManhuaClipPromptForSeedance(input.prompt)
     : input.prompt;
   const formatted = formatPromptForEngine(seedanceSource, engine, {
@@ -695,7 +700,7 @@ export function tryCompileManhuaVideoPromptForOutbound(
     applyCensorReplacements: false,
   });
   // 生产绑定层按官方素材类型标记生成 @图片N；格式层内部统一成 @图N 后在出口还原。
-  const text = engine.startsWith("seedance-")
+  const text = usesSeedanceDialect
     ? formatted.text.replace(/@图(\d+)/g, "@图片$1")
     : formatted.text;
   return {
@@ -930,6 +935,8 @@ async function runSeedanceProductVideo(
     manhuaPilot?: ManhuaPilotSubmission;
     idempotencyKey?: string;
     onTaskId?: (taskId: string) => void;
+    /** 健康门等待结束、fetch 紧前的最终核对 */
+    beforeSubmit?: OutboundSubmitGuard;
   },
 ): Promise<SeedanceProductVideoResult> {
   // 与 Creative / TestLab 一致：直连 Fly/api 子域，避免 www→Vercel→Fly 反代 ~120s 被 ROUTER_EXTERNAL 腰斩
@@ -945,14 +952,16 @@ async function runSeedanceProductVideo(
         .join("；")}`,
     );
   }
-  const res = await withFlyHealthGate(probeOrigin, () =>
-    fetch(seedanceUrl, {
+  const res = await withFlyHealthGate(probeOrigin, () => {
+    // 健康等待已结束；这里到 fetch 之间不得再 await（0914 复审 P1）
+    opts?.beforeSubmit?.();
+    return fetch(seedanceUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
       body: JSON.stringify(prepared.body),
-    }),
-  );
+    });
+  });
   const text = await res.text();
   let json: {
     videoUrl?: string;
@@ -1080,6 +1089,8 @@ async function runHailuo3(
     manhuaPilot?: ManhuaPilotSubmission;
     idempotencyKey?: string;
     onTaskId?: (taskId: string) => void;
+    /** 健康门等待结束、fetch 紧前的最终核对 */
+    beforeSubmit?: OutboundSubmitGuard;
   },
 ): Promise<string> {
   const hailuoUrl = withLongJobsFlyDirect("/api/jobs?op=hailuo3Video");
@@ -1096,15 +1107,16 @@ async function runHailuo3(
     manhuaPilot: opts?.manhuaPilot,
     idempotencyKey: opts?.idempotencyKey,
   });
-  const res = await withFlyHealthGate(probeOrigin, () =>
-    fetch(hailuoUrl, {
+  const res = await withFlyHealthGate(probeOrigin, () => {
+    opts?.beforeSubmit?.();
+    return fetch(hailuoUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       // 服务端已要求登录（H3 成片会真实扣费），必须带上登录态。
       credentials: "include",
       body: JSON.stringify(requestBody),
-    }),
-  );
+    });
+  });
   const text = await res.text();
   let json: {
     videoUrl?: string;
@@ -1355,6 +1367,8 @@ async function runWan30(
     seed?: number;
     /** 拿到 taskId 立即回调(先持久化再慢慢轮询) */
     onTaskId?: (taskId: string) => void;
+    /** 健康门等待结束、fetch 紧前的最终核对 */
+    beforeSubmit?: OutboundSubmitGuard;
   },
 ): Promise<string> {
   const wanUrl = withLongJobsFlyDirect("/api/jobs?op=wan30Video");
@@ -1363,31 +1377,32 @@ async function runWan30(
   if (!images.length) {
     throw new Error("Wan 3.0 成片需要至少一张参考图（请先出静帧或上传参考）");
   }
-  const res = await withFlyHealthGate(probeOrigin, () =>
-    fetch(wanUrl, {
+  // 载荷统一走 buildWan30RequestBody：提交键/seed 必须真实入 POST（三审 P0-1）。
+  // 先构造好再进健康门，核对与 fetch 之间不留任何计算。
+  const wanBody = buildWan30RequestBody({
+    // Wan 无 Seedance 的 @图片N 硬绑定语法，提示词由调用方按 Wan 口径编译，不过 Seedance 渲染器
+    prompt,
+    images,
+    aspectRatio,
+    videoUrls: opts?.videoUrls,
+    audioUrls: opts?.audioUrls,
+    duration: opts?.duration,
+    resolution: opts?.resolution,
+    episodeIndex: opts?.episodeIndex,
+    clipIndex: opts?.clipIndex,
+    idempotencyKey: opts?.idempotencyKey,
+    manhuaPilot: opts?.manhuaPilot,
+    seed: opts?.seed,
+  });
+  const res = await withFlyHealthGate(probeOrigin, () => {
+    opts?.beforeSubmit?.();
+    return fetch(wanUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      // 载荷统一走 buildWan30RequestBody:提交键/seed 必须真实入 POST(三审 P0-1),测试直接断言构建器输出
-      body: JSON.stringify(
-        buildWan30RequestBody({
-          // Wan 无 Seedance 的 @图片N 硬绑定语法,提示词由调用方按 Wan 口径编译,不过 Seedance 渲染器
-          prompt,
-          images,
-          aspectRatio,
-          videoUrls: opts?.videoUrls,
-          audioUrls: opts?.audioUrls,
-          duration: opts?.duration,
-          resolution: opts?.resolution,
-          episodeIndex: opts?.episodeIndex,
-          clipIndex: opts?.clipIndex,
-          idempotencyKey: opts?.idempotencyKey,
-          manhuaPilot: opts?.manhuaPilot,
-          seed: opts?.seed,
-        }),
-      ),
-    }),
-  );
+      body: JSON.stringify(wanBody),
+    });
+  });
   const text = await res.text();
   let json: {
     videoUrl?: string;
@@ -1463,7 +1478,7 @@ export function prepareHappyHorseOutbound(
   const resolution = normalizeHappyHorseCanvasResolution(input.resolution);
   const compile = tryCompileManhuaVideoPromptForOutbound({
     prompt: input.prompt,
-    engine: "happyhorse",
+    engine: CANVAS_VIDEO_MODEL_HAPPYHORSE_1_1,
     durationSec: duration,
     imageRefCount: imageUrls.length,
     videoRefCount: 0,
@@ -1480,7 +1495,7 @@ export function prepareHappyHorseOutbound(
     ...(Number(input.clipIndex) > 0 ? { clipIndex: Number(input.clipIndex) } : {}),
   };
   return {
-    engine: "happyhorse",
+    engine: CANVAS_VIDEO_MODEL_HAPPYHORSE_1_1,
     body,
     compile,
     durationSec: duration,
@@ -1489,41 +1504,30 @@ export function prepareHappyHorseOutbound(
   };
 }
 
-/** Happy Horse 1.1 · OpenRouter（首帧图生；时长 5/10/15，最长 15s） */
+/**
+ * Happy Horse 1.1 · OpenRouter（首帧图生；时长 5/10/15，最长 15s）
+ *
+ * **只负责提交**：请求体由 {@link prepareHappyHorseOutbound} 产出并原样序列化。
+ * 上一版这里另有一套内联构造（自行 renderManhuaClipPromptForSeedance），
+ * 与预览算出来的那份**不是同一个串**——确认核对的是前一份，发出去的是后一份
+ * （0914 复审离线深比较实测）。现在删掉，统一由准备器产出。
+ */
 async function runHappyHorse(
-  prompt: string,
-  imageUrl: string,
-  aspectRatio: "9:16" | "16:9",
-  opts?: {
-    duration?: number;
-    resolution?: string;
-    episodeIndex?: number;
-    clipIndex?: number;
-    /** 0825 自由画布 r2v：多图参考（≤9）；≥2 张时服务端自动切多图参考模式 */
-    imageUrls?: string[];
-  },
+  preparedBody: Record<string, unknown>,
+  beforeSubmit?: OutboundSubmitGuard,
 ): Promise<string> {
   const hhUrl = withLongJobsFlyDirect("/api/jobs?op=happyHorseVideo");
   const probeOrigin = flyHealthProbeOriginForUrl(hhUrl);
-  const duration = clampHappyHorseCanvasDuration(opts?.duration);
-  const resolution = normalizeHappyHorseCanvasResolution(opts?.resolution);
-  const res = await withFlyHealthGate(probeOrigin, () =>
-    fetch(hhUrl, {
+  const res = await withFlyHealthGate(probeOrigin, () => {
+    // 健康等待已结束，这里到 fetch 之间不得再 await
+    beforeSubmit?.();
+    return fetch(hhUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({
-        prompt: renderManhuaClipPromptForSeedance(prompt),
-        imageUrl,
-        ...(opts?.imageUrls?.length ? { imageUrls: opts.imageUrls.slice(0, 9) } : {}),
-        aspectRatio,
-        duration,
-        resolution,
-        ...(Number(opts?.episodeIndex) > 0 ? { episodeIndex: Number(opts?.episodeIndex) } : {}),
-        ...(Number(opts?.clipIndex) > 0 ? { clipIndex: Number(opts?.clipIndex) } : {}),
-      }),
-    }),
-  );
+      body: JSON.stringify(preparedBody),
+    });
+  });
   const text = await res.text();
   let json: {
     videoUrl?: string;
@@ -1725,6 +1729,12 @@ function assertManhuaOutboundGate(
 }
 
 /**
+ * 提交守卫：健康门等待结束后、`fetch` 紧前同步调用一次。
+ * 通过即可提交；不通过抛错，未建单未扣费。
+ */
+export type OutboundSubmitGuard = () => void;
+
+/**
  * **所有引擎共用的出站结算点**：算指纹、比对确认、预览回卷，只此一处。
  *
  * 每条引擎分支在**真正提交之前**调它一次，传入自己准备器的产出。
@@ -1747,36 +1757,49 @@ function settleManhuaOutbound(
     block: Pick<CanvasBlock, "kind" | "id" | "videoModel" | "musicMvShot">;
     executingUserId: string;
   },
-): void {
-  // **在真正提交这一刻重新取一次闸**，不是沿用函数开头那个快照。
-  // 开头到这里之间有续签、鉴权、媒体探测等 await，用户可能已经换账号、
-  // 换项目、载入另一份草稿——入口现读不等于提交时现读（0914 审查 P1）。
-  const gate = submitting
-    ? (runOptions?.resolveOutboundGate?.(submitting.block.id) ?? runOptions?.outboundGate)
-    : runOptions?.outboundGate;
+): OutboundSubmitGuard {
+  /**
+   * 最终核对。**必须在健康门等待结束之后、`fetch` 紧前同步执行**，
+   * 而且它与 fetch 之间不得再有 await。
+   *
+   * 0914 复审实测：只在这里（settle 处）核对还不够——settle 之后还要
+   * `await ensureFlyAppReady`，用户在那段等待里撤销确认，POST 照样发出去了。
+   * 所以 settle 把核对逻辑打包成这个函数交给各 runner，由 runner 在
+   * `withFlyHealthGate` 的回调内部调用；调完立刻 fetch。
+   */
+  const guardBeforeSubmit = () => {
+    // 每次调用都重新取闸，不复用任何早先抓到的对象。
+    const gateNow = submitting
+      ? runOptions?.resolveOutboundGate
+        ? // 配置了 getter 就以它为准：返回 undefined 按「缺闸」处理，
+          // 不再回退旧 snapshot（否则撤销确认反而被快照救活）。
+          runOptions.resolveOutboundGate(submitting.block.id)
+        : runOptions?.outboundGate
+      : runOptions?.outboundGate;
 
-  if (
-    submitting &&
-    !runOptions?.previewOnly &&
-    runOptions?.enforceOutboundConfirmation &&
-    requiresManhuaOutboundConfirmation(submitting.block)
-  ) {
-    // 身份、节点、执行账号、世代——整套在提交边界再判一次。
-    assertManhuaOutboundGate(submitting.block, gate, submitting.executingUserId);
-  }
-
-  if (gate?.confirmation && !runOptions?.previewOnly) {
-    // **用 currentScope 重算**——拿确认记录自带的 scope 算等于自己和自己比。
-    const actual = manhuaOutboundConfirmationFingerprint(
-      { engine: prepared.engine, body: prepared.body },
-      gate.currentScope,
-    );
-    if (actual !== gate.confirmation.fingerprint) {
-      throw new ManhuaOutboundConfirmationMismatchError(
-        "提示词、模型、时长或参考素材在确认之后发生了变化，本次未提交、未扣费。请重新查看生成前确认并再次确认。",
-      );
+    if (
+      submitting &&
+      runOptions?.enforceOutboundConfirmation &&
+      requiresManhuaOutboundConfirmation(submitting.block)
+    ) {
+      assertManhuaOutboundGate(submitting.block, gateNow, submitting.executingUserId);
     }
-  }
+    if (gateNow?.confirmation) {
+      // **用 currentScope 重算**——拿确认记录自带的 scope 算等于自己和自己比。
+      const actual = manhuaOutboundConfirmationFingerprint(
+        { engine: prepared.engine, body: prepared.body },
+        gateNow.currentScope,
+      );
+      if (actual !== gateNow.confirmation.fingerprint) {
+        throw new ManhuaOutboundConfirmationMismatchError(
+          "提示词、模型、时长或参考素材在确认之后发生了变化，本次未提交、未扣费。请重新查看生成前确认并再次确认。",
+        );
+      }
+    }
+  };
+
+  // 早拒：不合格的在健康探测与续签之前就挡掉，省掉无谓的外部往返。
+  if (!runOptions?.previewOnly) guardBeforeSubmit();
   if (runOptions?.previewOnly) {
     // 组装已经全部走完（含转 https、重签段参考、刷新已登记成片链），在这里回卷：
     // 不发请求、不建单、不扣费。
@@ -1789,6 +1812,7 @@ function settleManhuaOutbound(
       refs: prepared.refSlots,
     });
   }
+  return guardBeforeSubmit;
 }
 
 /** 确认与实际出站不一致时抛这个：**在发请求之前**，不建单不扣费 */
@@ -2412,7 +2436,7 @@ export async function runCanvasBlock(
       };
       // 原片编辑也走同一道闸。上一轮它在 block.kind==="video" 之后立刻提交，
       // 整条确认逻辑都绕过去了（0914 审查 P1-1 实测复现过）。
-      settleManhuaOutbound(
+      const editGuard = settleManhuaOutbound(
         {
           ...buildSeedanceCanvasRequestBody(editPrompt, undefined, ar, editOpts),
           engine: "seedance-2.5",
@@ -2420,7 +2444,10 @@ export async function runCanvasBlock(
         runOptions,
         { block, executingUserId: String(deps.userId || "") },
       );
-      const edited = await runSeedanceProductVideo(editPrompt, undefined, ar, editOpts);
+      const edited = await runSeedanceProductVideo(editPrompt, undefined, ar, {
+        ...editOpts,
+        beforeSubmit: editGuard,
+      });
       return {
         outputUrl: edited.videoUrl,
         lastFrameUrl: await captureManhuaClipResultTail(deps, block.id, edited.videoUrl),
@@ -2807,7 +2834,7 @@ export async function runCanvasBlock(
           manhuaPilot,
         } as const;
         // 与 Seedance 同一道闸：准备器产出 → 共用结算点 → 才提交。
-        settleManhuaOutbound(
+        const wanGuard = settleManhuaOutbound(
           prepareWan30Outbound({
             prompt: wanPrompt,
             images: wanImages,
@@ -2819,6 +2846,7 @@ export async function runCanvasBlock(
         );
         url = await runWan30(wanPrompt, wanImages, ar, {
           ...wanOpts,
+          beforeSubmit: wanGuard,
           onTaskId: (taskId) =>
             deps.onVideoTaskCreated?.(block.id, { taskId, engine: "wan-3.0" }),
         });
@@ -2836,17 +2864,20 @@ export async function runCanvasBlock(
           clipIndex: parseClipIndexFromBlockId(block.id),
           imageUrls: hhImages,
         } as const;
-        settleManhuaOutbound(
-          prepareHappyHorseOutbound({
-            prompt: seedancePrompt,
-            imageUrl: firstFrame,
-            aspectRatio: ar,
-            ...hhOpts,
-          }),
-          runOptions,
-          { block, executingUserId: String(deps.userId || "") },
-        );
-        url = await runHappyHorse(seedancePrompt, firstFrame, ar, hhOpts);
+        const hhPrepared = prepareHappyHorseOutbound({
+          prompt: seedancePrompt,
+          imageUrl: firstFrame,
+          aspectRatio: ar,
+          ...hhOpts,
+        });
+        const hhGuard = settleManhuaOutbound(hhPrepared, runOptions, {
+          block,
+          executingUserId: String(deps.userId || ""),
+        });
+        // 与其余引擎同口径：编译未通过就拦，不截断也不照发
+        throwIfOutboundCompileBlocked(hhPrepared.compile);
+        // 原样提交准备器产出的那一份，不再另构造
+        url = await runHappyHorse(hhPrepared.body, hhGuard);
       } else if (useHailuoH3) {
         // H3：OpenRouter 仅图参考（首帧 + input_references）；不传 Seedance 专属音/视频参考
         const h3Opts = {
@@ -2858,7 +2889,7 @@ export async function runCanvasBlock(
           manhuaPilot,
           idempotencyKey: submissionKey,
         } as const;
-        settleManhuaOutbound(
+        const h3Guard = settleManhuaOutbound(
           prepareHailuo3CanvasOutbound({
             prompt: seedancePrompt,
             imageUrl: seedStill,
@@ -2870,6 +2901,7 @@ export async function runCanvasBlock(
         );
         url = await runHailuo3(seedancePrompt, seedStill, ar, {
           ...h3Opts,
+          beforeSubmit: h3Guard,
           onTaskId: (taskId) => deps.onVideoTaskCreated?.(block.id, { taskId, engine: videoModel }),
         });
       } else {
@@ -3033,7 +3065,7 @@ export async function runCanvasBlock(
         const seedanceFirstFrame =
           useSeedance25 && workMode === "text_to_video" ? undefined : seedStill;
         // 与预览同源：同一个准备器、同一个结算点。
-        settleManhuaOutbound(
+        const seedanceGuard = settleManhuaOutbound(
           {
             ...buildSeedanceCanvasRequestBody(
               finalPrompt,
@@ -3050,7 +3082,7 @@ export async function runCanvasBlock(
           finalPrompt,
           seedanceFirstFrame,
           ar,
-          seedanceOpts,
+          { ...seedanceOpts, beforeSubmit: seedanceGuard },
         );
         url = seedanceOut.videoUrl;
         if (useSeedance25) {
