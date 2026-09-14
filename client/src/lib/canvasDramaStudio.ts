@@ -74,7 +74,7 @@ import {
   newWanSubmissionKey,
   runCanvasBlock,
   type CanvasRunDeps,
-  type ManhuaOutboundConfirmation,
+  type ManhuaOutboundGate,
 } from "./canvasRunBlock";
 import { mapWithConcurrency } from "./canvasUpload";
 import { MANHUA_DRAMA_DEFAULT_PROMPTS } from "@shared/videoReversePrompt";
@@ -3861,12 +3861,13 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   /** 本次执行是首段 10 秒试片；只约束成片载荷，不修改草稿中的独立分镜原文。 */
   pilotRun?: boolean;
   /**
-   * 生成前确认查询器：按节点 id 返回用户确认过的那一份。
-   * 返回 undefined 表示这一段没有确认记录——**照旧提交**（沿用原行为，本期不改门槛），
-   * 返回了就由 runCanvasBlock 在发请求前逐字比对，不一致中止、不扣费。
-   * 单段、批量、重跑都经这里下发，所以三条入口是同一套校验。
+   * 生成前确认闸：按节点 id 返回「当前归属 + 该段的确认记录」。
+   *
+   * **不是可选安全闸**——漫剧段成片缺确认会被 runCanvasBlock 直接拒绝。
+   * currentScope 必须由调用方按**当前**账号/项目/节点给出，不能从确认记录里读回来。
+   * 单段、批量、重跑都经这里下发，每段各取各的确认。
    */
-  resolveOutboundConfirmation?: (blockId: string) => ManhuaOutboundConfirmation | undefined;
+  resolveOutboundGate?: (blockId: string) => ManhuaOutboundGate | undefined;
   onStageStart?: (blockId: string, index: number, total: number, label: string) => void;
   onStageDone?: (blockId: string, index: number, total: number, label: string) => void;
   /** 单节点最终失败（含关键静帧批量中的一张） */
@@ -4451,7 +4452,13 @@ export async function runManhuaDramaFactoryPipeline(opts: {
           {
             videoSubmissionKey,
             pilotRun: opts.pilotRun === true && stage === "clip",
-            confirmation: opts.resolveOutboundConfirmation?.(blockId),
+            // ⚠️ 暂不在编排器开启强制：编排器会在内部给节点补参考（最近参考、上段末帧、
+            // 段内关键帧覆盖 refImageUrl 等），从裸节点算出的确认指纹与编排后真正发出的
+            // 请求对不上，开了会把正常流程全拦死。
+            // 先决条件是「预览与运行共用同一份工厂单段准备」（审查 P1-4），
+            // 那一步做完再打开这里。能力已具备，仅未启用。
+            enforceOutboundConfirmation: false,
+            outboundGate: opts.resolveOutboundGate?.(blockId),
           },
         );
         if (preparedVideoEdit && !String(out.outputUrl || out.outputUrls?.[0] || "").trim()) {

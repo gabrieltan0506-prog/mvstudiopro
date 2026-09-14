@@ -3809,8 +3809,13 @@ export default function OmniCanvas() {
   const [outboundConfirmedAtByBlock, setOutboundConfirmedAtByBlock] = useState<
     Record<string, number>
   >({});
+  /**
+   * 确认这一段。**只接受用户当前正在看的那一份**：
+   * 调用方把展示时拿到的 snapshotId 传回来，这里重新准备一次再比对，
+   * 不一致就拒绝并要求重新查看——否则用户看的是 A、批准的却是 B。
+   */
   const confirmClipOutbound = useCallback(
-    async (blockId: string) => {
+    async (blockId: string, shownSnapshotId: string) => {
       const block = blocksRef.current.find((item) => item.id === blockId);
       if (!block) throw new Error("该段节点已不存在，请刷新后重试");
       const preview = await previewCanvasBlockOutbound(runDeps, block);
@@ -3823,14 +3828,16 @@ export default function OmniCanvas() {
         );
       }
       const scope = manhuaOutboundScope(blockId);
+      const fingerprint = manhuaOutboundConfirmationFingerprint(preview, scope);
+      if (!shownSnapshotId || shownSnapshotId !== fingerprint) {
+        throw new Error(
+          "这一段的内容在你查看之后又变了，已取消本次确认。请重新点「查看实际发送内容」核对最新的一份再确认。",
+        );
+      }
       const confirmedAt = Date.now();
       outboundConfirmationsRef.current = {
         ...outboundConfirmationsRef.current,
-        [blockId]: {
-          fingerprint: manhuaOutboundConfirmationFingerprint(preview, scope),
-          scope,
-          confirmedAt,
-        },
+        [blockId]: { fingerprint, scope, confirmedAt },
       };
       setOutboundConfirmedAtByBlock((prev) => ({ ...prev, [blockId]: confirmedAt }));
     },
@@ -3841,9 +3848,18 @@ export default function OmniCanvas() {
     async (blockId: string) => {
       const block = blocksRef.current.find((item) => item.id === blockId);
       if (!block) throw new Error("该段节点已不存在，请刷新后重试");
-      return previewCanvasBlockOutbound(runDeps, block);
+      const preview = await previewCanvasBlockOutbound(runDeps, block);
+      // snapshotId 就是这一份内容在当前归属下的指纹：确认时拿它比对，
+      // 保证「用户看到的那一份」才是被批准的那一份。
+      return {
+        ...preview,
+        snapshotId: manhuaOutboundConfirmationFingerprint(
+          preview,
+          manhuaOutboundScope(blockId),
+        ),
+      };
     },
-    [runDeps],
+    [runDeps, manhuaOutboundScope],
   );
 
 
@@ -8048,9 +8064,12 @@ export default function OmniCanvas() {
               maxRetries: opts?.pilotRun ? 0 : opts?.maxRetries,
               stopOnError: opts?.pilotRun ? true : opts?.stopOnError,
               pilotRun: opts?.pilotRun === true,
-              // 单段、批量、重跑都从这里下发：确认过的段在发请求前逐字比对，变了就中止不扣费
-              resolveOutboundConfirmation: (blockId) =>
-                outboundConfirmationsRef.current[blockId],
+              // 单段、批量、重跑都从这里下发。currentScope 按**当前**账号/项目/节点现算，
+              // 不从确认记录里读回来——那样等于自己和自己比。
+              resolveOutboundGate: (blockId) => ({
+                currentScope: manhuaOutboundScope(blockId),
+                confirmation: outboundConfirmationsRef.current[blockId],
+              }),
               signal: ac.signal,
               onBlocksChange: (next) => {
                 workingBlocks = next;

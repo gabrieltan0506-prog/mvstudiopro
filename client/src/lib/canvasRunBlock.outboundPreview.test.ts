@@ -3,6 +3,8 @@ import { defaultCanvasBlock } from "./canvasTypes";
 import {
   CanvasOutboundPreviewUnsupportedError,
   ManhuaOutboundConfirmationMismatchError,
+  ManhuaOutboundConfirmationMissingError,
+  requiresManhuaOutboundConfirmation,
   manhuaOutboundConfirmationFingerprint,
   normalizeOutboundRefUrlForFingerprint,
   previewCanvasBlockOutbound,
@@ -40,7 +42,7 @@ const TEST_SCOPE = { userId: "7", projectId: "proj-a", blockId: "blk-1" } as con
 function makeBlock(over: Record<string, unknown> = {}) {
   return {
     ...defaultCanvasBlock("video", 0, 0),
-    id: "video-outbound-preview",
+    id: "clip-e01-g01",
     videoModel: "seedance-2.5" as const,
     prompt:
       "【第1段·10s】0–10s：阿菁在甲板上拔剑格挡，刃口相接后半步卸力。@图片1提供人物身份。",
@@ -79,9 +81,18 @@ describe("生成前确认与实际出站同源", () => {
     const preview = await previewCanvasBlockOutbound(deps, block);
     expect(noNetwork).not.toHaveBeenCalled();
 
-    // 实跑：抓出真正提交的请求体
+    // 实跑：抓出真正提交的请求体。段成片强制确认，所以先按同一份预览确认再跑。
+    const scope = { userId: "7", projectId: "proj-a", blockId: block.id };
+    const confirmation = {
+      fingerprint: manhuaOutboundConfirmationFingerprint(preview, scope),
+      scope,
+      confirmedAt: Date.now(),
+    };
     const bodies = captureOutbound();
-    await runCanvasBlock(deps, block);
+    await runCanvasBlock(deps, block, undefined, {
+      enforceOutboundConfirmation: true,
+      outboundGate: { currentScope: scope, confirmation },
+    } as never);
     expect(bodies).toHaveLength(1);
 
     // idempotencyKey 每次运行都不同，且与用户所见内容无关，比对时剔除
@@ -357,120 +368,225 @@ describe("嵌套结构等价不该误判失效", () => {
  * 第三阶段：生成前确认必须在**发请求之前**被重新核对。
  * 单段、批量、重跑都经 runCanvasBlock 出站，所以闸设在提交口，绕不过去。
  */
-describe("运行前核对确认：变了就不下单", () => {
+describe("运行前核对确认：缺确认、换身份、改输入都不下单", () => {
+  /** 当前上下文的 scope，和确认记录分开给——这是审查要求的关键 */
+  const currentScopeFor = (blockId: string, over: Record<string, string> = {}) => ({
+    userId: "7",
+    projectId: "proj-a",
+    blockId,
+    ...over,
+  });
+
   const confirmFor = async (block: ReturnType<typeof makeBlock>) => {
     vi.stubGlobal("fetch", vi.fn(async () => {
       throw new Error("预览不得发起任何请求");
     }));
     const preview = await previewCanvasBlockOutbound(deps, block as never);
+    const scope = currentScopeFor(block.id);
     return {
-      fingerprint: manhuaOutboundConfirmationFingerprint(preview, TEST_SCOPE),
-      scope: TEST_SCOPE,
+      fingerprint: manhuaOutboundConfirmationFingerprint(preview, scope),
+      scope,
       confirmedAt: Date.now(),
     };
   };
+
+  it("完全没有确认记录：拒绝且一次 POST 都没有", async () => {
+    const bodies = captureOutbound();
+    const block = makeBlock();
+    await expect(
+      runCanvasBlock(deps, block as never, undefined, {
+        enforceOutboundConfirmation: true,
+        outboundGate: { currentScope: currentScopeFor(block.id) },
+      } as never),
+    ).rejects.toBeInstanceOf(ManhuaOutboundConfirmationMissingError);
+    expect(bodies).toEqual([]);
+  });
+
+  it("产品入口声明了强制，却连 gate 都没传：同样拒绝", async () => {
+    const bodies = captureOutbound();
+    await expect(
+      runCanvasBlock(deps, makeBlock() as never, undefined, {
+        enforceOutboundConfirmation: true,
+      } as never),
+    ).rejects.toBeInstanceOf(ManhuaOutboundConfirmationMissingError);
+    expect(bodies).toEqual([]);
+  });
+
+  /**
+   * ⚠️ 已知缺口，如实记录，不当成通过。
+   *
+   * 确认闸的范围是「可预览的 Seedance 段成片」。Wan / 海螺 / 原片编辑不支持预览，
+   * 也就无法产生确认；若对它们也强制要求，等于把这些**既有在用的流程**直接封死，
+   * 那不是修漏洞是砍功能。所以当前它们落在闸外。
+   *
+   * 后果：用户确认之后把引擎改成 Wan、或转成原片编辑，会离开本闸覆盖范围。
+   * 彻底堵死要么给这些引擎补预览出口，要么产品上禁止段成片使用它们——待拍板。
+   */
+  it("【已知缺口】Wan 段成片当前不在确认闸范围内，会照常提交", async () => {
+    const bodies: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        bodies.push({ url, body: init?.body ? JSON.parse(String(init.body)) : null });
+        return new Response(
+          JSON.stringify({ ok: true, videoUrl: "https://test.invalid/result.mp4" }),
+        );
+      }),
+    );
+    const block = makeBlock({ videoModel: "wan-3.0" });
+    expect(requiresManhuaOutboundConfirmation(block as never)).toBe(false);
+    await runCanvasBlock(deps, block as never, undefined, {
+      outboundGate: { currentScope: currentScopeFor(block.id) },
+    } as never);
+    // 它确实发出去了——这正是缺口本身，记录在案
+    expect(bodies.length).toBeGreaterThan(0);
+  });
+
+  it("【已知缺口】原片编辑同样不在闸范围内", () => {
+    const block = makeBlock({
+      id: "clip-e01-g02",
+      videoModel: "seedance-2.5",
+      seedance25WorkMode: "video_edit",
+    });
+    expect(requiresManhuaOutboundConfirmation(block as never)).toBe(false);
+  });
 
   it("确认后未改动：正常提交", async () => {
     const block = makeBlock();
     const confirmation = await confirmFor(block);
     const bodies = captureOutbound();
     const result = await runCanvasBlock(deps, block as never, undefined, {
-      confirmation,
+      outboundGate: { currentScope: currentScopeFor(block.id), confirmation },
     } as never);
     expect(bodies).toHaveLength(1);
     expect(result.outputUrl).toBe("https://test.invalid/result.mp4");
   });
 
-  it("确认后改提示词：中止且一次请求都不发", async () => {
-    const confirmation = await confirmFor(makeBlock());
-    const bodies = captureOutbound();
-    const changed = makeBlock({ prompt: "【第1段·10s】改成收剑后退，不再格挡。" });
-    await expect(
-      runCanvasBlock(deps, changed as never, undefined, { confirmation } as never),
-    ).rejects.toBeInstanceOf(ManhuaOutboundConfirmationMismatchError);
-    expect(bodies).toEqual([]);
-  });
-
-  it("确认后改模型：中止且零请求", async () => {
-    const confirmation = await confirmFor(makeBlock());
-    const bodies = captureOutbound();
-    await expect(
-      runCanvasBlock(deps, makeBlock({ videoModel: "seedance-2.0" }) as never, undefined, {
-        confirmation,
-      } as never),
-    ).rejects.toBeInstanceOf(ManhuaOutboundConfirmationMismatchError);
-    expect(bodies).toEqual([]);
-  });
-
-  it("确认后改参考素材：中止且零请求", async () => {
-    const confirmation = await confirmFor(makeBlock());
-    const bodies = captureOutbound();
-    await expect(
-      runCanvasBlock(
-        deps,
-        makeBlock({ refImageUrl: "https://test.invalid/another.png" }) as never,
-        undefined,
-        { confirmation } as never,
-      ),
-    ).rejects.toBeInstanceOf(ManhuaOutboundConfirmationMismatchError);
-    expect(bodies).toEqual([]);
-  });
-
-  it("换账号：旧确认失效，零请求", async () => {
+  // 以下三条：**确认记录原样保留**，只切换当前上下文
+  it("保留旧确认，只换当前账号：零 POST", async () => {
     const block = makeBlock();
     const confirmation = await confirmFor(block);
     const bodies = captureOutbound();
     await expect(
       runCanvasBlock(deps, block as never, undefined, {
-        confirmation: { ...confirmation, scope: { ...TEST_SCOPE, userId: "999" } },
+        enforceOutboundConfirmation: true,
+        outboundGate: {
+          currentScope: currentScopeFor(block.id, { userId: "999" }),
+          confirmation,
+        },
       } as never),
     ).rejects.toBeInstanceOf(ManhuaOutboundConfirmationMismatchError);
     expect(bodies).toEqual([]);
   });
 
-  it("换项目：旧确认失效，零请求", async () => {
+  it("保留旧确认，只换当前项目：零 POST", async () => {
     const block = makeBlock();
     const confirmation = await confirmFor(block);
     const bodies = captureOutbound();
     await expect(
       runCanvasBlock(deps, block as never, undefined, {
-        confirmation: { ...confirmation, scope: { ...TEST_SCOPE, projectId: "proj-b" } },
+        enforceOutboundConfirmation: true,
+        outboundGate: {
+          currentScope: currentScopeFor(block.id, { projectId: "proj-b" }),
+          confirmation,
+        },
       } as never),
     ).rejects.toBeInstanceOf(ManhuaOutboundConfirmationMismatchError);
     expect(bodies).toEqual([]);
   });
 
-  it("换节点：旧确认失效，零请求", async () => {
+  it("保留旧确认，只换当前节点：零 POST", async () => {
     const block = makeBlock();
     const confirmation = await confirmFor(block);
     const bodies = captureOutbound();
     await expect(
       runCanvasBlock(deps, block as never, undefined, {
-        confirmation: { ...confirmation, scope: { ...TEST_SCOPE, blockId: "blk-other" } },
+        enforceOutboundConfirmation: true,
+        outboundGate: {
+          currentScope: currentScopeFor("clip-e01-g09"),
+          confirmation,
+        },
       } as never),
     ).rejects.toBeInstanceOf(ManhuaOutboundConfirmationMismatchError);
     expect(bodies).toEqual([]);
   });
 
-  it("中止之后不自动改参数重下单：仍然零请求", async () => {
-    const confirmation = await confirmFor(makeBlock());
+  it("空账号或未确认项目：身份不完整，拒绝且零 POST", async () => {
+    const block = makeBlock();
+    const confirmation = await confirmFor(block);
+    const bodies = captureOutbound();
+    for (const bad of [{ userId: "" }, { projectId: "unconfirmed" }]) {
+      await expect(
+        runCanvasBlock(deps, block as never, undefined, {
+          enforceOutboundConfirmation: true,
+          outboundGate: {
+            currentScope: { ...confirmation.scope, ...bad },
+            confirmation: { ...confirmation, scope: { ...confirmation.scope, ...bad } },
+          },
+        } as never),
+      ).rejects.toBeInstanceOf(ManhuaOutboundConfirmationMismatchError);
+    }
+    expect(bodies).toEqual([]);
+  });
+
+  it("确认后改提示词 / 改模型 / 改参考素材：全部中止且零 POST", async () => {
+    const block = makeBlock();
+    const confirmation = await confirmFor(block);
+    const bodies = captureOutbound();
+    const variants = [
+      makeBlock({ prompt: "【第1段·10s】改成收剑后退。" }),
+      makeBlock({ videoModel: "seedance-2.0" }),
+      makeBlock({ refImageUrl: "https://test.invalid/another.png" }),
+    ];
+    for (const changed of variants) {
+      await expect(
+        runCanvasBlock(deps, changed as never, undefined, {
+          enforceOutboundConfirmation: true,
+        outboundGate: { currentScope: currentScopeFor(block.id), confirmation },
+        } as never),
+      ).rejects.toThrow();
+    }
+    expect(bodies).toEqual([]);
+  });
+
+  it("中止之后不自动改参数重下单：重试仍然零 POST", async () => {
+    const block = makeBlock();
+    const confirmation = await confirmFor(block);
     const bodies = captureOutbound();
     const changed = makeBlock({ prompt: "【第1段·10s】改了。" });
-    await expect(
-      runCanvasBlock(deps, changed as never, undefined, { confirmation } as never),
-    ).rejects.toThrow();
-    await expect(
-      runCanvasBlock(deps, changed as never, undefined, { confirmation } as never),
-    ).rejects.toThrow();
+    for (let i = 0; i < 2; i += 1) {
+      await expect(
+        runCanvasBlock(deps, changed as never, undefined, {
+          enforceOutboundConfirmation: true,
+        outboundGate: { currentScope: currentScopeFor(block.id), confirmation },
+        } as never),
+      ).rejects.toThrow();
+    }
     expect(bodies).toEqual([]);
   });
+});
 
-  it("同一份确认可用于批量里的同一段重复提交（幂等键不同不影响）", async () => {
-    const block = makeBlock();
-    const confirmation = await confirmFor(block);
-    const bodies = captureOutbound();
-    await runCanvasBlock(deps, block as never, undefined, { confirmation } as never);
-    await runCanvasBlock(deps, block as never, undefined, { confirmation } as never);
-    expect(bodies).toHaveLength(2);
+/** 0914 审查 P2：首帧常已在 imageUrls 里，再算一格会让 UI 编号比实际多 */
+describe("参考槽位表不重复计首帧", () => {
+  it("首帧与 imageUrls 重复时只占一格，且 refCounts 与槽位表同源", async () => {
+    const same = "https://test.invalid/identity.png";
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("预览不得发起任何请求");
+    }));
+    const preview = await previewCanvasBlockOutbound(
+      deps,
+      makeBlock({ refImageUrl: same, uploadedAssets: [{ kind: "image", url: same, fileName: "a.png" }] }) as never,
+    );
+    const unique = new Set(preview.refs.imageUrls);
+    expect(preview.refs.imageUrls.length).toBe(unique.size);
+    expect(preview.refCounts.image).toBe(preview.refs.imageUrls.length);
+  });
+
+  it("槽位表顺序即实际发送顺序，首帧排第一", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("预览不得发起任何请求");
+    }));
+    const preview = await previewCanvasBlockOutbound(deps, makeBlock() as never);
+    expect(preview.refs.imageUrls[0]).toBe(String(preview.body.imageUrl || ""));
   });
 });

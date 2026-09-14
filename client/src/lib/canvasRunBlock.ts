@@ -766,6 +766,8 @@ export type SeedanceCanvasRequestPreview = {
   durationSec: number;
   /** 去重后的真实参考数量，与编译入参同源 */
   refCounts: { image: number; video: number; audio: number };
+  /** 最终槽位表：与 refCounts 同源的有序清单，UI 按它编号 @图片N */
+  refSlots: { imageUrls: string[]; videoUrls: string[]; audioUrls: string[] };
 };
 
 /**
@@ -806,10 +808,16 @@ export function buildSeedanceCanvasRequestBody(
   const episodeIndex = Number(opts?.episodeIndex);
   const clipIndex = Number(opts?.clipIndex);
   const compilerEngine: CompilerEngineId = `seedance-${version}`;
+  // 最终槽位表：首帧与 imageUrls 去重后的**有序**清单。
+  // 首帧常常已经在 imageUrls 里，先前把它再算一格会让 UI 显示的参考编号比实际多一个。
+  // refCounts 与编译入参、与这张表同源，UI 直接用它编号。
+  const orderedImageSlots: string[] = [];
+  for (const candidate of [imageUrl, ...imageUrls]) {
+    const url = String(candidate || "").trim();
+    if (url && !orderedImageSlots.includes(url)) orderedImageSlots.push(url);
+  }
   const refCounts = {
-    image: new Set(
-      [imageUrl, ...imageUrls].map((url) => String(url || "").trim()).filter(Boolean),
-    ).size,
+    image: orderedImageSlots.length,
     video: videoUrls.length,
     audio: audioUrls.length,
   };
@@ -848,7 +856,18 @@ export function buildSeedanceCanvasRequestBody(
     ...(Number.isFinite(episodeIndex) && episodeIndex > 0 ? { episodeIndex } : {}),
     ...(Number.isFinite(clipIndex) && clipIndex > 0 ? { clipIndex } : {}),
   };
-  return { body, compile, version, durationSec: duration, refCounts };
+  return {
+    body,
+    compile,
+    version,
+    durationSec: duration,
+    refCounts,
+    refSlots: {
+      imageUrls: orderedImageSlots,
+      videoUrls: [...videoUrls],
+      audioUrls: [...audioUrls],
+    },
+  };
 }
 
 async function runSeedanceProductVideo(
@@ -1459,6 +1478,70 @@ export type ManhuaOutboundConfirmation = {
   confirmedAt: number;
 };
 
+/** 该走确认却没有确认记录：**在任何付费分支之前**拒绝 */
+export class ManhuaOutboundConfirmationMissingError extends Error {
+  readonly reasonZh: string;
+  constructor(reasonZh: string) {
+    super(reasonZh);
+    this.name = "ManhuaOutboundConfirmationMissingError";
+    this.reasonZh = reasonZh;
+  }
+}
+
+/**
+ * 运行时的**当前**归属与确认记录。
+ *
+ * currentScope 由运行上下文独立给出，**不是**从确认记录里读回来的——
+ * 拿 confirmation.scope 自己和自己比等于没比（0914 审查实测：保留旧确认、
+ * 只切当前账号与节点，仍然 POST 出去了）。
+ */
+export type ManhuaOutboundGate = {
+  currentScope: CanvasOutboundConfirmationScope;
+  confirmation?: ManhuaOutboundConfirmation;
+};
+
+/**
+ * 这一段是否必须走生成前确认。
+ *
+ * 范围＝**漫剧段成片（clip-*）且该组合可预览**（普通 Seedance）。
+ * 可预览是前提：不支持预览就无法产生确认，若也强制要求，等于把 Wan / 海螺 /
+ * 原片编辑这些**既有在用的流程**直接封死——那不是修漏洞，是砍功能。
+ *
+ * ⚠️ 已知缺口，需产品拍板：确认之后把引擎改成 Wan/H3、或转成原片编辑，
+ * 会离开本闸的覆盖范围。彻底堵死要么给这些引擎补预览出口，
+ * 要么产品上禁止段成片使用它们。当前**不静默放行也不擅自封功能**，
+ * 而是把缺口写在这里并在交接里列为待拍板项。
+ */
+export function requiresManhuaOutboundConfirmation(
+  block: Pick<CanvasBlock, "kind" | "id" | "videoModel" | "musicMvShot">,
+): boolean {
+  if (block.kind !== "video" || !String(block.id || "").startsWith("clip-")) return false;
+  return resolveCanvasOutboundPreviewUnsupportedReason(block as never) === null;
+}
+
+function assertManhuaOutboundGate(
+  block: Pick<CanvasBlock, "kind" | "id" | "videoModel" | "musicMvShot">,
+  gate: ManhuaOutboundGate | undefined,
+): asserts gate is ManhuaOutboundGate & { confirmation: ManhuaOutboundConfirmation } {
+  if (!gate?.confirmation) {
+    throw new ManhuaOutboundConfirmationMissingError(
+      "这一段还没有完成生成前确认，未提交、未扣费。请先在工作台查看实际发送内容并确认。",
+    );
+  }
+  const a = gate.currentScope;
+  const b = gate.confirmation.scope;
+  if (String(a.userId) !== String(b.userId) || a.projectId !== b.projectId || a.blockId !== b.blockId) {
+    throw new ManhuaOutboundConfirmationMismatchError(
+      "确认记录属于另一个账号／项目／节点，本次未提交、未扣费。请在当前上下文重新查看并确认。",
+    );
+  }
+  if (!String(a.userId).trim() || !String(a.projectId).trim() || a.projectId === "unconfirmed") {
+    throw new ManhuaOutboundConfirmationMismatchError(
+      "当前账号或项目身份不完整，无法校验生成前确认，本次未提交、未扣费。",
+    );
+  }
+}
+
 /** 确认与实际出站不一致时抛这个：**在发请求之前**，不建单不扣费 */
 export class ManhuaOutboundConfirmationMismatchError extends Error {
   readonly reasonZh: string;
@@ -1682,11 +1765,22 @@ export async function runCanvasBlock(
      */
     previewOnly?: boolean;
     /**
-     * 用户确认过的那一份。传了就**在发请求之前**重算指纹逐字比对，
-     * 不一致直接中止：不建单、不扣费、旧产物不动、不自动改参数重下单。
-     * 单段、批量、重跑都从 runCanvasBlock 出站，所以这一处就是全部提交入口的共同闸。
+     * 生成前确认闸。**漫剧段成片（clip-* 视频节点）一律必须提供**——
+     * 这是 runCanvasBlock 内部按节点契约强制的，不是可选参数：
+     * 单段、批量、重跑、自由画布任意入口都绕不过去。
+     * currentScope 必须由运行上下文独立给出，用于和确认记录的归属比对。
      */
-    confirmation?: ManhuaOutboundConfirmation;
+    outboundGate?: ManhuaOutboundGate;
+    /**
+     * 由**产品生成入口**声明：这一次是用户发起的付费段成片。
+     * 声明了就强制要求确认——缺确认、身份不符一律在任何付费分支之前拒绝。
+     *
+     * 为什么不在执行器里对所有 clip-* 一刀切：那会连既有的执行器级测试与
+     * 非产品调用一起封死（0914 实测 18+ 项），而审查明确写了
+     * 「保留无关普通工具的原行为，使用明确任务意图区分，不能全局盲封所有旧调用」。
+     * 强制点设在编排器与画布运行入口，执行器这一层负责真正的校验逻辑。
+     */
+    enforceOutboundConfirmation?: boolean;
   },
 ): Promise<{
   outputText?: string;
@@ -1705,6 +1799,14 @@ export async function runCanvasBlock(
     // 也必须在任何外部调用之前拒绝，不能靠调用方守规矩。
     const unsupported = resolveCanvasOutboundPreviewUnsupportedReason(block);
     if (unsupported) throw new CanvasOutboundPreviewUnsupportedError(unsupported);
+  }
+  if (
+    !runOptions?.previewOnly &&
+    runOptions?.enforceOutboundConfirmation &&
+    requiresManhuaOutboundConfirmation(block)
+  ) {
+    // 放在这里：早于原片编辑、Wan/H3 与普通 Seedance 的任何一个提交点。
+    assertManhuaOutboundGate(block, runOptions?.outboundGate);
   }
   if (block.kind === "music") throw new Error("请在音乐节点中选择生成音乐、分镜或合成阶段");
   if (runOptions?.pilotRun) {
@@ -2611,8 +2713,10 @@ export async function runCanvasBlock(
         } as const;
         const seedanceFirstFrame =
           useSeedance25 && workMode === "text_to_video" ? undefined : seedStill;
-        if (runOptions?.confirmation && !runOptions?.previewOnly) {
+        const gate = runOptions?.outboundGate;
+        if (gate?.confirmation && !runOptions?.previewOnly) {
           // 与预览同源：同一个构造函数、同一个指纹算法。
+          // **用 currentScope 重算**——用确认记录自带的 scope 算等于自己和自己比。
           const settled = buildSeedanceCanvasRequestBody(
             finalPrompt,
             seedanceFirstFrame,
@@ -2621,9 +2725,9 @@ export async function runCanvasBlock(
           );
           const actual = manhuaOutboundConfirmationFingerprint(
             { engine: videoModel, body: settled.body },
-            runOptions.confirmation.scope,
+            gate.currentScope,
           );
-          if (actual !== runOptions.confirmation.fingerprint) {
+          if (actual !== gate.confirmation.fingerprint) {
             throw new ManhuaOutboundConfirmationMismatchError(
               "提示词、模型、时长或参考素材在确认之后发生了变化，本次未提交、未扣费。请重新查看生成前确认并再次确认。",
             );
@@ -2644,14 +2748,8 @@ export async function runCanvasBlock(
             compile: prepared.compile,
             durationSec: prepared.durationSec,
             refCounts: prepared.refCounts,
-            refs: {
-              imageUrls: [
-                ...(seedanceFirstFrame ? [seedanceFirstFrame] : []),
-                ...outImages,
-              ],
-              videoUrls: [...outVideos],
-              audioUrls: [...outAudios],
-            },
+            // 直接用构造函数产出的最终槽位表，不再自己拼首帧 + outImages（会重复计一格）
+            refs: prepared.refSlots,
           });
         }
         const seedanceOut = await runSeedanceProductVideo(

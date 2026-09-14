@@ -620,6 +620,8 @@ type Props = {
    * 由持有 CanvasRunDeps 的画布页传入；本组件只展示，不发起生成。
    */
   onPreviewClipOutbound?: (blockId: string) => Promise<{
+    /** 这一份内容的标识；确认时原样回传，保证批准的就是用户看到的那一份 */
+    snapshotId: string;
     body: Record<string, unknown>;
     compile: { text: string; blocked: boolean; fatalZh?: string; issues: Array<{ detailZh: string }> };
     durationSec: number;
@@ -630,7 +632,7 @@ type Props = {
    * 确认这一段的出站内容。确认后到真正生成之间若提示词、模型、时长或参考素材有变化，
    * 运行前核对会中止本次提交、不扣费。出站校验未通过时拒绝确认并抛出原因。
    */
-  onConfirmClipOutbound?: (blockId: string) => Promise<void>;
+  onConfirmClipOutbound?: (blockId: string, shownSnapshotId: string) => Promise<void>;
   /** 各段确认时刻（毫秒）；用于显示「已确认」状态 */
   outboundConfirmedAtByBlock?: Record<string, number>;
   /** 确认编剧后：整屏编辑器壳（无圆角卡片、三栏占满视口） */
@@ -1138,6 +1140,7 @@ export default function ManhuaScriptWorkbench({
       | { state: "error"; messageZh: string }
       | {
           state: "ready";
+          snapshotId: string;
           promptText: string;
           blocked: boolean;
           issuesZh: string[];
@@ -1146,16 +1149,22 @@ export default function ManhuaScriptWorkbench({
         }
     >
   >({});
+  /** 代际号：迟到的预览回执不得覆盖更新的一份 */
+  const clipOutboundGenerationRef = useRef<Record<string, number>>({});
   const loadClipOutboundPreview = useCallback(
     async (blockId: string) => {
       if (!onPreviewClipOutbound || !blockId) return;
+      const generation = (clipOutboundGenerationRef.current[blockId] || 0) + 1;
+      clipOutboundGenerationRef.current[blockId] = generation;
       setClipOutboundPreview((prev) => ({ ...prev, [blockId]: { state: "loading" } }));
       try {
         const preview = await onPreviewClipOutbound(blockId);
+        if (clipOutboundGenerationRef.current[blockId] !== generation) return;
         setClipOutboundPreview((prev) => ({
           ...prev,
           [blockId]: {
             state: "ready",
+            snapshotId: preview.snapshotId,
             promptText: String(preview.compile.text || ""),
             blocked: Boolean(preview.compile.blocked || preview.compile.fatalZh),
             issuesZh: preview.compile.fatalZh
@@ -1166,6 +1175,7 @@ export default function ManhuaScriptWorkbench({
           },
         }));
       } catch (error) {
+        if (clipOutboundGenerationRef.current[blockId] !== generation) return;
         // 不支持的模式与编译失败都走这里：**明确显示原因，不静默跳过确认**。
         setClipOutboundPreview((prev) => ({
           ...prev,
@@ -8184,7 +8194,10 @@ export default function ManhuaScriptWorkbench({
                                       type="button"
                                       className="rounded border border-emerald-300/40 bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-50 hover:bg-emerald-500/25"
                                       onClick={() => {
-                                        void onConfirmClipOutbound(blockId).catch((error) => {
+                                        void onConfirmClipOutbound(
+                                          blockId,
+                                          preview.snapshotId,
+                                        ).catch((error) => {
                                           setClipOutboundPreview((prev) => ({
                                             ...prev,
                                             [blockId]: {
