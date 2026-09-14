@@ -128,30 +128,74 @@ if (localStorage.getItem("mv-manhua-writer-session-v1") === null) {
   trySaveLocalCanvas(laid.blocks, laid.edges);
 }
 
-/** 全离线：tRPC 回空；成片提交记录下来并回一个成功回执，绝不连生产 */
+/**
+ * 全离线接管网络。**按仓库真实的任务合同**回执，不是随手编一个 ok:true：
+ *   POST /api/jobs            → { jobId }
+ *   GET  /api/jobs/:jobId     → { status: "succeeded", output: {...} }
+ * 上一轮我给的是 { ok:true, imageUrl }，两处都不符合合同，
+ * 于是 pollJobUntilTerminal 会一直轮询（默认最长 14 分钟），整条用例必然超时。
+ *
+ * 真实入口还会弹 window.confirm，这里一并确认（见下方 window.confirm 覆盖）。
+ */
 const posts: Array<{ url: string; body: unknown }> = [];
 (window as never as { __posts?: typeof posts }).__posts = posts;
+
+const TEST_IMAGE = "https://example.com/test-keyart.png";
+const TEST_VIDEO = "https://example.com/test-clip.mp4";
+let jobSeq = 0;
+/** jobId → 该任务的产物；GET 轮询时按它回 output */
+const jobOutputs = new Map<string, Record<string, unknown>>();
+
+// 真实入口会 window.confirm（例如「只重跑第N镜静帧…继续？」）。
+// 不接管的话任务根本不会启动，后面全是空等。
+const confirmCalls: string[] = [];
+(window as never as { __confirms?: string[] }).__confirms = confirmCalls;
+window.confirm = ((message?: string) => {
+  confirmCalls.push(String(message ?? ""));
+  return true;
+}) as typeof window.confirm;
+
 window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(typeof input === "string" ? input : (input as Request).url ?? input);
-  if (init?.method === "POST" && url.includes("/api/jobs")) {
-    posts.push({ url, body: init.body ? JSON.parse(String(init.body)) : null });
-    // 固定测试回执：图片与视频各给一份，页面据此自行登记「已按当前口径出过图」。
-    // 全离线，不联网、不付费。
-    const IMG = "https://example.com/test-keyart.png";
-    return new Response(
-      JSON.stringify({
-        ok: true,
-        videoUrl: "https://example.com/result.mp4",
-        imageUrl: IMG,
-        url: IMG,
-        outputUrl: IMG,
-        outputUrls: [IMG],
-        images: [IMG],
-        data: [{ url: IMG }],
-      }),
-      { status: 200, headers: { "content-type": "application/json" } },
-    );
+  const method = (init?.method || "GET").toUpperCase();
+
+  // 轮询：/api/jobs/:jobId
+  const pollMatch = /\/api\/jobs\/([^/?#]+)$/.exec(url);
+  if (method === "GET" && pollMatch) {
+    const jobId = decodeURIComponent(pollMatch[1]!);
+    const output = jobOutputs.get(jobId) ?? { imageUrl: TEST_IMAGE };
+    return new Response(JSON.stringify({ status: "succeeded", output }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
   }
+
+  // 建单：POST /api/jobs（含 ?op= 的直连成片路由）
+  if (method === "POST" && url.includes("/api/jobs")) {
+    const body = init?.body ? JSON.parse(String(init.body)) : null;
+    posts.push({ url, body });
+    // 直连成片路由（/api/jobs?op=seedanceI2V 等）是同步回结果的那一类
+    if (/[?&]op=/.test(url)) {
+      return new Response(JSON.stringify({ ok: true, videoUrl: TEST_VIDEO }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    jobSeq += 1;
+    const jobId = `test-job-${jobSeq}`;
+    const type = String((body as { type?: string } | null)?.type ?? "");
+    jobOutputs.set(
+      jobId,
+      /video|clip|seedance|wan|hailuo|happy/i.test(type)
+        ? { videoUrl: TEST_VIDEO, outputUrl: TEST_VIDEO, outputUrls: [TEST_VIDEO] }
+        : { imageUrl: TEST_IMAGE, outputUrl: TEST_IMAGE, outputUrls: [TEST_IMAGE], images: [TEST_IMAGE] },
+    );
+    return new Response(JSON.stringify({ jobId }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
   return new Response(JSON.stringify([{ result: { data: null } }]), {
     status: 200,
     headers: { "content-type": "application/json" },

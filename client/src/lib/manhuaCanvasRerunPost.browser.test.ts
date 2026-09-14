@@ -131,21 +131,34 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
   }, 180_000);
 
   /**
-   * ⚠️【未完成·必须补】刻意 skip，不是覆盖。
+   * ⚠️【未完成·必须补】刻意 skip，不是覆盖。**当前卡点已收敛，记录在此。**
    *
-   * 走到「调真实 onRerunKeyartShot 重出目标段静帧」这一步就跑不完（整条用例超时），
-   * 怀疑是我给的固定回执形状不对，页面把它当失败在重试；**尚未查实，不下结论**。
-   * 下一步：先拦一条真实静帧请求，打出页面期望的回包字段，再按那个形状回执。
+   * 本轮按审查四条修完之后，失败点从「整条 180s 超时」推进到一个明确位置：
+   *  1. window.confirm 已接管 —— 真实入口确实弹了「只重跑第N镜静帧…继续？」并被确认；
+   *  2. 任务合同已按仓库真实口径接：POST /api/jobs → { jobId }，
+   *     GET /api/jobs/:id → { status: "succeeded", output }。改对之后不再空转轮询；
+   *  3. 不再用固定睡眠，改成轮询真实状态；
+   *  4. 精确点击节点内文案为「运行」的按钮。
    *
-   * 在它补完之前，请求体逐字段对照由 manhuaCanvasRerunParity.test.ts 承担
-   * （vm 抽真实 runBlock ＋ 拦 fetch，含编辑/延长、接力、未批准试片）。
+   * 途中两个实测结论（有诊断日志）：
+   *  - 页面会把回执图落成本机 blob:，所以不能按「产出 URL 含测试文件名」判完成；
+   *  - **逐张**调 onRerunKeyartShot 会互相冲掉：第三次重出之后，
+   *    前两张已完成的产出又回到了重出前的地址。因此改走批量入口
+   *    onRerunKeyartsFromReverse。
+   *
+   * 现在的卡点：批量重出**能跑完**（全部静帧换了产出、不再 running），
+   * 但真实预览仍报「本段原稿或造型已变更，请先重出对应关键静帧」。
+   * 也就是**造型/原镜回执没有被登记成 current**。原因尚未查实，不下结论。
+   * 下一步：打出重出前后该静帧的 manhuaKeyartLookState.required / generatedFor，
+   * 看是哪一侧没对上。
    */
-  it.skip("甲：真实重出目标段静帧 → 真实确认 → 点真实重跑 → POST 与确认逐字段相同", async () => {
+  it.skip("甲：真实重出静帧 → 真实确认 → 点真实「运行」→ POST 与确认逐字段相同", async () => {
     const { page, close } = await mount();
     const result = await page.evaluate(async () => {
       type B = Record<string, unknown>;
       type WbProps = {
         onRerunKeyartShot?: (blockId: string, shotIndex: number) => void;
+        onRerunKeyartsFromReverse?: () => void;
         onPreviewClipOutbound?: (id: string) => Promise<{ body: B; snapshotId: string }>;
         onConfirmClipOutbound?: (id: string, snapshotId: string) => Promise<void>;
       };
@@ -153,68 +166,131 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
         __ffcProps?: { blocks: B[] };
         __wbProps?: WbProps;
         __posts?: Array<{ url: string; body: B }>;
+        __confirms?: string[];
       };
-      const settle = (ms = 900) => new Promise((r) => setTimeout(r, ms));
       const blocksNow = () => w.__ffcProps!.blocks;
+      const cap = <T,>(pr: Promise<T>, ms: number, tag: string) =>
+        Promise.race([
+          pr,
+          new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`超时:${tag}`)), ms)),
+        ]);
+      /** 轮询等待真实状态，不用固定睡眠 */
+      const until = async (fn: () => boolean, ms: number, tag: string) => {
+        const t0 = Date.now();
+        while (Date.now() - t0 < ms) {
+          if (fn()) return;
+          await new Promise((r) => setTimeout(r, 150));
+        }
+        throw new Error(`等不到:${tag}`);
+      };
 
       const wb = w.__wbProps;
       if (!wb?.onRerunKeyartShot) return { step: "no-rerun-keyart" as const };
       if (!wb.onPreviewClipOutbound || !wb.onConfirmClipOutbound) {
         return { step: "no-workbench-callbacks" as const };
       }
-
       const clip = blocksNow().find((b) => String(b.id).startsWith("clip-"));
       if (!clip) return { step: "no-clip" as const };
 
-      // ① 只对目标段重出关键静帧：调**真实页面**入口，接口回固定测试回执
-      const keyarts = blocksNow().filter((b) => String(b.id).startsWith("keyart-"));
-      if (!keyarts.length) return { step: "no-keyart" as const };
-      const targets = keyarts.slice(0, 3);
-      for (let i = 0; i < targets.length; i += 1) {
-        wb.onRerunKeyartShot!(String(targets[i]!.id), i + 1);
-        await settle(600);
+      // ①② 先试一次真实预览；不通过就走真实「按原稿重出静帧」入口一次性重出，
+      // 再等**全部静帧真的完成**（轮询真实状态，不用固定睡眠）。
+      //
+      // 为什么不逐张：实测逐张调 onRerunKeyartShot 会互相冲掉——
+      // 第三次重出之后，前两张已完成的产出又回到了重出前的地址（有诊断日志为证）。
+      let preview: { body: B; snapshotId: string } | null = null;
+      let lastPreviewErr = "";
+      try {
+        preview = await cap(wb.onPreviewClipOutbound!(String(clip.id)), 30_000, "preview");
+      } catch (e) {
+        lastPreviewErr = String((e as Error)?.message || e);
       }
 
-      // ② 真实预览 + 真实确认
-      const cap = <T,>(pr: Promise<T>, ms: number, tag: string) =>
-        Promise.race([
-          pr,
-          new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`超时:${tag}`)), ms)),
-        ]);
-      let preview: { body: B; snapshotId: string };
-      try {
-        preview = await cap(wb.onPreviewClipOutbound!(String(clip.id)), 20_000, "preview");
-      } catch (e) {
-        return { step: "preview-failed" as const, why: String((e as Error)?.message || e) };
+      if (!preview) {
+        if (!wb.onRerunKeyartsFromReverse) return { step: "no-batch-keyart" as const };
+        const beforeUrls = new Map(
+          blocksNow()
+            .filter((b) => String(b.id).startsWith("keyart-"))
+            .map((b) => [String(b.id), String(b.outputUrl ?? "")] as const),
+        );
+        wb.onRerunKeyartsFromReverse!();
+        try {
+          await until(
+            () => {
+              const ks = blocksNow().filter((b) => String(b.id).startsWith("keyart-"));
+              if (!ks.length) return false;
+              if (ks.some((k) => k.status === "running")) return false;
+              // 所有静帧都必须换过产出（页面会把回执落成本机 blob:）
+              return ks.every((k) => {
+                const url = String(k.outputUrl ?? "");
+                return Boolean(url) && url !== (beforeUrls.get(String(k.id)) ?? "");
+              });
+            },
+            120_000,
+            "静帧批量重出完成",
+          );
+        } catch (e) {
+          return {
+            step: "keyart-not-done" as const,
+            why: String((e as Error)?.message || e),
+            confirms: w.__confirms ?? [],
+            keyartsNow: blocksNow()
+              .filter((x) => String(x.id).startsWith("keyart-"))
+              .map((x) => ({ id: x.id, status: x.status, out: String(x.outputUrl ?? "").slice(0, 28) })),
+          };
+        }
+        try {
+          preview = await cap(wb.onPreviewClipOutbound!(String(clip.id)), 30_000, "preview");
+        } catch (e) {
+          return {
+            step: "preview-failed" as const,
+            why: String((e as Error)?.message || e) || lastPreviewErr,
+          };
+        }
       }
+
+      // ③ 真实确认（预览已在上面用真实入口取到）
       try {
-        await cap(wb.onConfirmClipOutbound!(String(clip.id), preview.snapshotId), 20_000, "confirm");
+        await cap(wb.onConfirmClipOutbound!(String(clip.id), preview.snapshotId), 30_000, "confirm");
       } catch (e) {
         return { step: "confirm-failed" as const, why: String((e as Error)?.message || e) };
       }
-      await settle(400);
 
-      // ③ 点真实画布重跑按钮
+      // ④ 精确点击该节点内文案为「运行」的按钮
       w.__posts!.length = 0;
       const card = document.querySelector(`[data-canvas-block-id="${String(clip.id)}"]`);
       if (!card) return { step: "no-card" as const };
       const runBtn = Array.from(card.querySelectorAll("button")).find(
-        (btn) => !(btn as HTMLButtonElement).disabled && btn.querySelector("svg"),
+        (btn) => (btn.textContent || "").trim() === "运行",
       ) as HTMLButtonElement | undefined;
       if (!runBtn) return { step: "no-run-button" as const };
+      if (runBtn.disabled) return { step: "run-button-disabled" as const };
       runBtn.click();
-      await settle(2500);
+
+      // ⑤ 等真实成片 POST 出现，同样不用固定睡眠
+      const isClipPost = (p: { url: string }) => /[?&]op=/.test(p.url);
+      try {
+        await until(() => w.__posts!.some(isClipPost), 60_000, "成片 POST");
+      } catch (e) {
+        return { step: "no-post" as const, why: String((e as Error)?.message || e) };
+      }
 
       return {
         step: "done" as const,
-        posts: w.__posts!.filter((p) => /seedance|wan30|hailuo|happyHorse/i.test(p.url)).map((p) => p.body),
+        posts: w.__posts!.filter(isClipPost).map((p) => p.body),
         previewBody: preview.body,
+        confirms: w.__confirms ?? [],
       };
     });
 
-    expect(result.step, `流程卡在：${result.step}${"why" in result ? " · " + result.why : ""}`).toBe("done");
+    if (result.step !== "done") console.info("[甲诊断] " + JSON.stringify(result, null, 1).slice(0, 2000));
+    expect(
+      result.step,
+      `流程卡在：${result.step}${"why" in result ? " · " + String(result.why) : ""}`,
+    ).toBe("done");
     if (result.step !== "done") return;
-    expect(result.posts, "点了真实重跑按钮却没有成片 POST").toHaveLength(1);
+    // 真实入口确实弹过确认框并被接管，任务才可能启动
+    expect(result.confirms.length, "真实入口没有弹 confirm，说明重出没走到那一步").toBeGreaterThan(0);
+    expect(result.posts, "点了真实「运行」却没有成片 POST").toHaveLength(1);
     const strip = (x: Record<string, unknown>) => {
       const { idempotencyKey: _k, videoSubmissionKey: _s, ...rest } = x;
       return rest;
