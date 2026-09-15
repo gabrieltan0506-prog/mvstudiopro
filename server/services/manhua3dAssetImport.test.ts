@@ -119,6 +119,25 @@ describe("manhua3dAssetImport · GLB 解析", () => {
     ).rejects.toThrow("network_down");
   });
 
+  it("1467 R2 坏样本：JSON 块非 UTF-8 → invalid_glb_json（不抛）；bufferView 越界 / 引用不存在的 buffer / accessor 指向不存在的 bufferView → glb_buffer_view_out_of_range", () => {
+    const good = buildGlb({ asset: { version: "2.0" }, nodes: [{ mesh: 0 }], meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }] });
+    const jsonLength = good.readUInt32LE(12);
+    const corrupt = Buffer.from(good);
+    corrupt[20 + jsonLength - 1] = 0xff; // JSON 块最后一个填充字节改成非法 UTF-8
+    expect(inspectGlbBytes(corrupt)).toMatchObject({ ok: false, reasonCode: "invalid_glb_json" });
+
+    const mesh = { nodes: [{ mesh: 0 }], meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }] };
+    const bin = Buffer.alloc(8);
+    const overflow = buildGlb({ asset: { version: "2.0" }, ...mesh, buffers: [{ byteLength: 8 }], bufferViews: [{ buffer: 0, byteOffset: 4, byteLength: 8 }] }, bin);
+    expect(inspectGlbBytes(overflow)).toMatchObject({ ok: false, reasonCode: "glb_buffer_view_out_of_range" });
+    const missingBuffer = buildGlb({ asset: { version: "2.0" }, ...mesh, buffers: [{ byteLength: 8 }], bufferViews: [{ buffer: 3, byteLength: 4 }] }, bin);
+    expect(inspectGlbBytes(missingBuffer)).toMatchObject({ ok: false, reasonCode: "glb_buffer_view_out_of_range" });
+    const danglingAccessor = buildGlb({ asset: { version: "2.0" }, ...mesh, buffers: [{ byteLength: 8 }], bufferViews: [{ buffer: 0, byteLength: 8 }], accessors: [{ bufferView: 5, componentType: 5126, count: 1, type: "VEC3" }] }, bin);
+    expect(inspectGlbBytes(danglingAccessor)).toMatchObject({ ok: false, reasonCode: "glb_buffer_view_out_of_range" });
+    const inRange = buildGlb({ asset: { version: "2.0" }, ...mesh, buffers: [{ byteLength: 8 }], bufferViews: [{ buffer: 0, byteOffset: 4, byteLength: 4 }], accessors: [{ bufferView: 0, componentType: 5126, count: 1, type: "SCALAR" }] }, bin);
+    expect(inspectGlbBytes(inRange).ok).toBe(true);
+  });
+
   it("summarize 对缺字段/坏索引文档稳健，不伪造骨名", () => {
     const summary = summarizeGltfDocument({ skins: [{ joints: [99, -1, "x"] }], nodes: [{}] });
     expect(summary.skeleton).toMatchObject({ hasArmature: false, skinCount: 1, boneNames: [] });

@@ -158,6 +158,26 @@ describe("manhua3dAssetTask", () => {
     expect(onDisk.createdAt).toBe("2026-09-15T00:00:00.000Z");
   });
 
+  it("1467 R2 采用并发：两次同时 adopt 只写一次（revision 都是 2、adoptedAt 相同）；锁被别的实例占住 → busy，锁过期 → 接管", async () => {
+    const verified = await importManhua3dAsset({ userId: 7, sourceJobId: SOURCE.taskId, assetRef: SOURCE.assetRef, units: "m", axis: "y_up" });
+    const [x, y] = await Promise.all([adoptManhua3dAsset(verified.assetId, 7), adoptManhua3dAsset(verified.assetId, 7)]);
+    expect(x).toEqual(y);
+    expect(x.revision).toBe(2);
+    const onDisk = JSON.parse(await fs.readFile(path.join(dir, `${verified.assetId}.json`), "utf8")) as { revision: number; verification: { checkedAt?: string } };
+    expect(onDisk.revision).toBe(2);
+    expect(onDisk.verification.checkedAt).toBe(verified.verification.checkedAt);
+
+    const other = await importManhua3dAsset({ userId: 7, sourceJobId: SOURCE.taskId, assetRef: SOURCE.assetRef, units: "cm", axis: "z_up" });
+    const lockPath = path.join(dir, `${other.assetId}.json.lock`);
+    await fs.writeFile(lockPath, "other-instance");
+    await expect(adoptManhua3dAsset(other.assetId, 7)).rejects.toThrow("manhua3d_asset_busy");
+    expect((await getManhua3dAsset(other.assetId, 7))?.adoptedAt).toBeUndefined();
+    const stale = new Date(Date.now() - 60_000);
+    await fs.utimes(lockPath, stale, stale);
+    expect((await adoptManhua3dAsset(other.assetId, 7)).revision).toBe(2);
+    await expect(fs.stat(lockPath)).rejects.toThrow();
+  });
+
   it("坏记录文件当不存在，不返回半个资产", async () => {
     await fs.writeFile(path.join(dir, "m3da_broken.json"), JSON.stringify({ userId: 7, assetId: "m3da_broken" }));
     expect(await getManhua3dAsset("m3da_broken", 7)).toBeNull();

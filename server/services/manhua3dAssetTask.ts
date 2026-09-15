@@ -265,21 +265,56 @@ export async function listManhua3dAssetsForJob(sourceJobId: string, userId: numb
   return found.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
-/** 采用：只有 verified 才能采用；重复采用幂等；采用会推进 revision。 */
+const ADOPT_LOCK_STALE_MS = 30_000;
+const ADOPT_LOCK_ATTEMPTS = 20;
+const ADOPT_LOCK_RETRY_MS = 25;
+
+/**
+ * 读—改—写的排他段（1467 R2）：文件系统没有 CAS，用 `wx` 锁文件把 adopt 串行化，
+ * 两实例同时采用同一 assetId 时第二个在锁内重读到 adoptedAt 直接幂等返回，不会写出两份不同 revision。
+ * 锁超过 30s 视为持有者已死，接管；拿不到锁抛 manhua3d_asset_busy（路由回 CONFLICT，客户端可重试）。
+ */
+async function withRecordLock<T>(assetId: string, fn: () => Promise<T>): Promise<T> {
+  await ensureStore();
+  const lockPath = `${recordPath(assetId)}.lock`;
+  for (let attempt = 0; attempt < ADOPT_LOCK_ATTEMPTS; attempt += 1) {
+    try {
+      await fs.writeFile(lockPath, `${process.pid}:${Date.now()}`, { flag: "wx" });
+      try {
+        return await fn();
+      } finally {
+        await fs.rm(lockPath, { force: true });
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") throw error;
+      const stat = await fs.stat(lockPath).catch(() => null);
+      if (stat && Date.now() - stat.mtimeMs > ADOPT_LOCK_STALE_MS) {
+        await fs.rm(lockPath, { force: true });
+        continue;
+      }
+      await new Promise(resolve => setTimeout(resolve, ADOPT_LOCK_RETRY_MS));
+    }
+  }
+  throw new Error("manhua3d_asset_busy");
+}
+
+/** 采用：只有 verified 才能采用；重复采用幂等；采用会推进 revision。锁内重读，跨实例也只写一次。 */
 export async function adoptManhua3dAsset(assetId: string, userId: number): Promise<Manhua3dAssetRecord> {
   const id = String(assetId || "").trim();
-  const record = ASSET_ID_PATTERN.test(id) ? await readRecord(id) : null;
-  if (!record || record.userId !== userId) throw new Error("manhua3d_asset_not_found");
-  if (record.verification.status !== "verified") throw new Error("manhua3d_asset_not_verified");
-  if (record.adoptedAt) return toView(record);
-  const next: StoredManhua3dAsset = {
-    ...record,
-    adoptedAt: isoNow(),
-    updatedAt: isoNow(),
-    revision: record.revision + 1,
-  };
-  await writeRecord(next);
-  return toView(next);
+  const before = ASSET_ID_PATTERN.test(id) ? await readRecord(id) : null;
+  if (!before || before.userId !== userId) throw new Error("manhua3d_asset_not_found");
+  if (before.verification.status !== "verified") throw new Error("manhua3d_asset_not_verified");
+  if (before.adoptedAt) return toView(before);
+  return withRecordLock(id, async () => {
+    const record = await readRecord(id);
+    if (!record || record.userId !== userId) throw new Error("manhua3d_asset_not_found");
+    if (record.verification.status !== "verified") throw new Error("manhua3d_asset_not_verified");
+    if (record.adoptedAt) return toView(record);
+    const stamp = isoNow();
+    const next: StoredManhua3dAsset = { ...record, adoptedAt: stamp, updatedAt: stamp, revision: record.revision + 1 };
+    await writeRecord(next);
+    return toView(next);
+  });
 }
 
 export function setManhua3dAssetDependenciesForTests(overrides: Partial<Manhua3dAssetDependencies>): void {

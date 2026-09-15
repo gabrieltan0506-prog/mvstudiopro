@@ -37,6 +37,9 @@ export function mapManhua3dAssetError(error: unknown): never {
   if (message === "manhua3d_asset_forbidden") {
     throw new TRPCError({ code: "FORBIDDEN", message: "只能操作本人的三维资产" });
   }
+  if (message === "manhua3d_asset_busy") {
+    throw new TRPCError({ code: "CONFLICT", message: "该资产正被另一次操作占用，请稍后重试" });
+  }
   if (message === "manhua3d_asset_not_verified") {
     throw new TRPCError({ code: "CONFLICT", message: "资产尚未通过校验（缺单位/轴向或被拒），不能采用" });
   }

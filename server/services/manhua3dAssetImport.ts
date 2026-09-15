@@ -34,6 +34,7 @@ export const MANHUA_3D_ASSET_REJECT_REASONS = {
   glb_too_large: "GLB 超过 250 MB 上限",
   glb_no_mesh: "模型里没有任何网格，不能当资产用",
   glb_unsupported_required_extension: "模型要求的 glTF 扩展当前链路不支持",
+  glb_buffer_view_out_of_range: "GLB 的 bufferView/accessor 越界（引用不存在的 buffer 或超出其长度）",
 } as const;
 export type Manhua3dAssetRejectCode = keyof typeof MANHUA_3D_ASSET_REJECT_REASONS;
 
@@ -140,6 +141,33 @@ export function summarizeGltfDocument(doc: Record<string, unknown>): {
   };
 }
 
+/**
+ * bufferView / accessor 越界只统计不解释会让坏文件进 verified，Blender 导入时才炸（1467 R2）。
+ * 只做整数范围核对：buffer 索引存在、byteOffset+byteLength ≤ buffer.byteLength、accessor.bufferView 存在。
+ */
+export function findGltfBufferViewViolation(doc: Record<string, unknown>): string | null {
+  const buffers = asArray(doc.buffers).map(b => Number(asRecord(b).byteLength));
+  const views = asArray(doc.bufferViews);
+  for (let i = 0; i < views.length; i += 1) {
+    const view = asRecord(views[i]);
+    const bufferIndex = Number(view.buffer);
+    if (!Number.isInteger(bufferIndex) || bufferIndex < 0 || bufferIndex >= buffers.length) return `bufferView[${i}].buffer`;
+    const byteOffset = view.byteOffset === undefined ? 0 : Number(view.byteOffset);
+    const byteLength = Number(view.byteLength);
+    if (!Number.isInteger(byteOffset) || byteOffset < 0 || !Number.isInteger(byteLength) || byteLength < 0) return `bufferView[${i}]`;
+    const bufferLength = buffers[bufferIndex]!;
+    if (!Number.isFinite(bufferLength) || byteOffset + byteLength > bufferLength) return `bufferView[${i}] 超出 buffer[${bufferIndex}]`;
+  }
+  const accessors = asArray(doc.accessors);
+  for (let i = 0; i < accessors.length; i += 1) {
+    const accessor = asRecord(accessors[i]);
+    if (accessor.bufferView === undefined) continue;
+    const viewIndex = Number(accessor.bufferView);
+    if (!Number.isInteger(viewIndex) || viewIndex < 0 || viewIndex >= views.length) return `accessor[${i}].bufferView`;
+  }
+  return null;
+}
+
 function rejectFor(code: Manhua3dAssetRejectCode): Manhua3dGlbInspection {
   return { ok: false, reasonCode: code, reasonZh: MANHUA_3D_ASSET_REJECT_REASONS[code] };
 }
@@ -158,6 +186,7 @@ export function inspectGlbBytes(
     if (message in MANHUA_3D_ASSET_REJECT_REASONS) return rejectFor(message as Manhua3dAssetRejectCode);
     return rejectFor("invalid_glb_json");
   }
+  if (findGltfBufferViewViolation(doc)) return rejectFor("glb_buffer_view_out_of_range");
   const summary = summarizeGltfDocument(doc);
   if (summary.geometry.meshCount === 0 || summary.geometry.primitiveCount === 0) return rejectFor("glb_no_mesh");
   if (summary.geometry.extensionsRequired.some(ext => UNSUPPORTED_REQUIRED_EXTENSIONS.has(ext))) {
