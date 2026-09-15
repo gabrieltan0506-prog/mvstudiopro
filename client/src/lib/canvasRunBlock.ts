@@ -81,6 +81,7 @@ import {
   HAPPYHORSE_REFERENCE_MAX,
   isCanvasHappyHorseVideoModel,
   normalizeHappyHorseCanvasResolution,
+  CANVAS_VIDEO_MODEL_HAPPYHORSE_1_1,
 } from "@shared/happyHorseOpenRouterModels";
 import { clampManhuaClipDurationSecForVideoModel } from "@shared/manhuaSeedanceLayout";
 import { stripManhuaPromptSlop } from "@shared/manhuaDirectingWorkflow";
@@ -93,10 +94,12 @@ import {
 import {
   normalizeCompilerEngineId,
   type CompilerEngineId,
+  COMPILER_ENGINE_LIMITS,
 } from "@shared/manhuaShotIR";
 import {
   formatPromptForEngine,
   hasBlockingFormatIssues,
+  type FormatIssue,
 } from "@shared/promptFormatLayer";
 import {
   extractManhuaMentionedAssetTags,
@@ -240,6 +243,72 @@ function dataUrlToJpegFile(dataUrl: string, name: string): File | null {
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   return new File([bytes], name, { type: mime });
+}
+
+/**
+ * 把本机展示地址（blob: / local-media:）**先溯源回 https 原链**。
+ *
+ * 0915 审查实证的缺陷：`toHttpsImageUrls` 本来就会做这件事，
+ * 但参考池在到它之前就按 `^https?://` 筛过一遍，
+ * 回灌后的 blob:/local-media: 参考在筛选那一步就被静默丢掉了，
+ * 于是「来源映射明明正确，却报缺图片」。
+ *
+ * 所以溯源必须发生在**筛选、去重、容量分配之前**。
+ * 溯不回 https 的原样返回，交给后面的筛选照常拒绝——
+ * 绝不把 blob: 直接发给供应商。
+ */
+function traceCanvasRefToHttpsSource(url: unknown): string {
+  const u = String(url || "").trim();
+  if (!u) return "";
+  if (u.startsWith("blob:") || isLocalMediaPointer(u)) {
+    return String(resolveUrlForCloudSync(u) || "").trim() || u;
+  }
+  return u;
+}
+
+/** 可提交的出站参考协议：https(s) 绝对链，或 data:image */
+function isSubmittableRefUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url) || url.startsWith("data:image/");
+}
+
+/**
+ * 参考地址规范化的**唯一顺序**（0915 复审要求，静帧/资产/导演板共用）：
+ *   本机溯源 → 合法站内路径绝对化 → （调用方再做）协议校验 → 去重 → 容量/绑定规划
+ *
+ * 只在某一处补第二次转换是不够的：
+ * 溯源可能得到 `/manhua-assets/x.png` 这类站内相对路径，
+ * 不绝对化就会被紧接着的协议筛选当成非法地址丢掉（0915 复审 P2 实测）。
+ */
+function normalizeCanvasRefSource(url: unknown): string {
+  const traced = traceCanvasRefToHttpsSource(url);
+  if (!traced) return "";
+  return String(absolutizeManhuaAssetUrl(traced) || traced).trim();
+}
+
+/**
+ * 用户**显式选过**的参考，解析失败时不许静默丢掉。
+ *
+ * 0915 复审实测：只要还有另一张有效图，preview 就照常成功，
+ * 那张解析不出来的引用凭空消失——用户看到的和实际发出的不是一回事。
+ * 「引擎允许不带图」是另一回事，不能拿来替「已选的图可以丢」。
+ *
+ * 这里只对**存在但解析失败**的报错；本来就没有参考的合法文生视频不受影响。
+ * 既不把 blob: 发出去，也不自动上传或重买兜底。
+ */
+function assertExplicitRefsResolvable(
+  entries: Array<{ slotZh: string; raw: string; resolved: string }>,
+): void {
+  const broken = entries.filter(
+    (e) => String(e.raw || "").trim() && !isSubmittableRefUrl(e.resolved),
+  );
+  if (!broken.length) return;
+  const detail = broken
+    .map((e) => `${e.slotZh}：${e.raw.slice(0, 80)}`)
+    .join("；");
+  throw new Error(
+    `这些已选参考解析不到可提交的来源，本次未提交、未扣费：${detail}。` +
+      `请重新选择或重新上传该参考（本机缓存地址无法直接发给生成方）。`,
+  );
 }
 
 async function toHttpsImageUrls(
@@ -644,19 +713,49 @@ function parseClipIndexFromBlockId(id: string): number | undefined {
  * 成片提示词唯一出站编译器：只做确定性方言转换与硬校验，不发请求、不扣费。
  * 生产路径禁用敏感词静默替换，避免对白与剧情在用户不知情时被改写。
  */
-export function compileManhuaVideoPromptForOutbound(input: {
+export type ManhuaOutboundPromptCompileInput = {
   prompt: string;
   engine: CompilerEngineId | string;
   durationSec?: number;
   imageRefCount?: number;
   videoRefCount?: number;
   audioRefCount?: number;
-}): string {
+};
+
+export type ManhuaOutboundPromptCompileResult = {
+  /** 真正会发出去的提示词全文；blocked 时仍给出，便于确认界面指出问题所在 */
+  text: string;
+  issues: FormatIssue[];
+  /** true = 出站校验不通过，生产路径会抛错、不建单不扣费 */
+  blocked: boolean;
+  /** 引擎缺编译规则这类连编译都进不去的情况 */
+  fatalZh?: string;
+  engine?: CompilerEngineId;
+};
+
+/**
+ * 出站提示词编译（**不抛错**版本）。
+ *
+ * 生成前确认界面要展示的必须是这一份——节点上存的 prompt 与真正发出去的不是同一个串：
+ * Seedance 会先过 renderManhuaClipPromptForSeedance，再按引擎/时长/参考数量重排格式，
+ * 出口还要把 @图N 还原成 @图片N。预览与下单共用本函数，避免两套逻辑各自漂移。
+ */
+export function tryCompileManhuaVideoPromptForOutbound(
+  input: ManhuaOutboundPromptCompileInput,
+): ManhuaOutboundPromptCompileResult {
   const engine = normalizeCompilerEngineId(input.engine);
   if (!engine) {
-    throw new Error("当前成片引擎缺少提示词编译规则");
+    return {
+      text: String(input.prompt || ""),
+      issues: [],
+      blocked: true,
+      fatalZh: "当前成片引擎缺少提示词编译规则",
+    };
   }
-  const seedanceSource = engine.startsWith("seedance-")
+  // 按**方言**判定，不按 id 前缀：HappyHorse 登记为 seedance 方言
+  // （生产一直送 Seedance 渲染器的产物），id 却不以 seedance- 开头。
+  const usesSeedanceDialect = COMPILER_ENGINE_LIMITS[engine].dialect === "seedance";
+  const seedanceSource = usesSeedanceDialect
     ? renderManhuaClipPromptForSeedance(input.prompt)
     : input.prompt;
   const formatted = formatPromptForEngine(seedanceSource, engine, {
@@ -666,15 +765,43 @@ export function compileManhuaVideoPromptForOutbound(input: {
     audioRefCount: input.audioRefCount,
     applyCensorReplacements: false,
   });
-  if (hasBlockingFormatIssues(formatted.issues)) {
-    throw new Error(
-      `成片提示词未通过出站校验：${formatted.issues.map((issue) => issue.detailZh).join("；")}`,
-    );
-  }
   // 生产绑定层按官方素材类型标记生成 @图片N；格式层内部统一成 @图N 后在出口还原。
-  return engine.startsWith("seedance-")
+  const text = usesSeedanceDialect
     ? formatted.text.replace(/@图(\d+)/g, "@图片$1")
     : formatted.text;
+  return {
+    text,
+    issues: formatted.issues,
+    blocked: hasBlockingFormatIssues(formatted.issues),
+    engine,
+  };
+}
+
+export function compileManhuaVideoPromptForOutbound(
+  input: ManhuaOutboundPromptCompileInput,
+): string {
+  const result = tryCompileManhuaVideoPromptForOutbound(input);
+  if (result.fatalZh) throw new Error(result.fatalZh);
+  if (result.blocked) {
+    throw new Error(
+      `成片提示词未通过出站校验：${result.issues.map((issue) => issue.detailZh).join("；")}`,
+    );
+  }
+  return result.text;
+}
+
+/**
+ * 编译未通过就抛，**错误文案与 {@link compileManhuaVideoPromptForOutbound} 完全一致**。
+ * 各引擎的薄包装共用它，免得每处各写一句笼统的「编译未通过」，
+ * 把「参考图上限 10」这类说得清的原因吞掉。
+ */
+function throwIfOutboundCompileBlocked(result: ManhuaOutboundPromptCompileResult): void {
+  if (result.fatalZh) throw new Error(result.fatalZh);
+  if (result.blocked) {
+    throw new Error(
+      `成片提示词未通过出站校验：${result.issues.map((issue) => issue.detailZh).join("；")}`,
+    );
+  }
 }
 
 /** 段级绑定与最终取图共用同一上限，防止 2.5 在任一前置层退回 9。 */
@@ -685,6 +812,162 @@ export function resolveManhuaCanvasVideoImageReferenceMax(videoModelRaw: unknown
   if (isCanvasWan30VideoModel(videoModel)) return WAN30_REFERENCE_MAX.image;
   if (videoModel === "seedance-2.5") return SEEDANCE_25_REFERENCE_MAX.image;
   return SEEDANCE_REFERENCE_MAX.image;
+}
+
+export type SeedanceCanvasRequestOptions = {
+    imageUrls?: string[];
+    videoUrls?: string[];
+    /** 角色声线参考 mp3/wav（最多 3） */
+    audioUrls?: string[];
+    version?: "2.0-mini" | "2.0" | "2.0-fast" | "2.5";
+    /** 段目标秒数；缺省从 prompt「目标时长」解析 */
+    duration?: number;
+    /** 2.5 官方五模式 → 服务端 EvoLink 真路由 */
+    workMode?: SeedanceEvolinkMode;
+    /**
+     * 漫剧编剧室的集号／段号。服务端据此走整集折算段价，
+     * 不透传就只能按自由画布单段计价（提示词里的「第 N 段」出线前会被换成
+     * 普通括号，且用户可改，反解不可靠）。
+     */
+    episodeIndex?: number;
+    clipIndex?: number;
+    /** video_edit 专用：主片（videoUrls[0]）探测时长——edit 产出与主片等长，服务端按它计费 */
+    editSourceDurationSec?: number;
+    /**
+     * 输出画质，默认 720p。标准档（2.0）可选到 4K，单价按像素翻倍（见 canvasGenerationPricing）；
+     * 快速档与 2.5 加长仍固定 720p，由服务端 normalize 兜住。
+     */
+    resolution?: CanvasVideoResolution;
+    manhuaPilot?: ManhuaPilotSubmission;
+    idempotencyKey?: string;
+};
+
+/**
+ * 各引擎出站准备的**统一形状**。Seedance / 海螺 H3 / Wan 3.0 的准备器都返回它，
+ * 于是「算指纹、比对确认、回卷预览」只需要一处实现（见 settleManhuaOutbound），
+ * 不必每加一个引擎就抄一遍格式规则——上一轮审查点名的就是这种抄第二套。
+ */
+export type CanvasEngineOutboundPreparation = {
+  engine: string;
+  /** 真正 POST 出去的请求体 */
+  body: Record<string, unknown>;
+  compile: ManhuaOutboundPromptCompileResult;
+  durationSec: number;
+  refCounts: { image: number; video: number; audio: number };
+  refSlots: { imageUrls: string[]; videoUrls: string[]; audioUrls: string[] };
+};
+
+export type SeedanceCanvasRequestPreview = {
+  /** 真正 POST 出去的请求体；预览与下单取同一份，不另造一套 */
+  body: Record<string, unknown>;
+  /** 出站编译结果（含未通过原因）；blocked 时生产路径会抛错、不建单不扣费 */
+  compile: ManhuaOutboundPromptCompileResult;
+  version: "2.0-mini" | "2.0" | "2.0-fast" | "2.5";
+  durationSec: number;
+  /** 去重后的真实参考数量，与编译入参同源 */
+  refCounts: { image: number; video: number; audio: number };
+  /** 最终槽位表：与 refCounts 同源的有序清单，UI 按它编号 @图片N */
+  refSlots: { imageUrls: string[]; videoUrls: string[]; audioUrls: string[] };
+};
+
+/**
+ * Seedance 出站请求体构造（**纯函数，无副作用、不发请求**）。
+ *
+ * 与 buildHailuo3CanvasRequestBody / buildWan30RequestBody 同一模式。
+ * 抽出来是为了让「生成前确认」能拿到与真正提交**逐字段相同**的内容：
+ * 引擎、时长钳制、去重后的参考数量都在这里算，预览不得自己猜默认值。
+ */
+export function buildSeedanceCanvasRequestBody(
+  prompt: string,
+  imageUrl: string | undefined,
+  aspectRatio: "9:16" | "16:9",
+  opts?: SeedanceCanvasRequestOptions,
+): SeedanceCanvasRequestPreview {
+  const imageUrls = (opts?.imageUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
+  const videoUrls = (opts?.videoUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
+  const audioUrls = (opts?.audioUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
+  const version =
+    opts?.version === "2.5"
+      ? "2.5"
+      : opts?.version === "2.0-fast"
+        ? "2.0-fast"
+        : opts?.version === "2.0-mini"
+          ? "2.0-mini"
+          : "2.0";
+  const fromPrompt = parseManhuaClipTargetDurationSec(prompt);
+  const durationRaw = opts?.duration ?? fromPrompt ?? undefined;
+  // Mini 与 2.0 同为 4–15s 上限，复用 OpenRouter 档的钳制；2.5 才到 30s
+  const duration =
+    version === "2.5"
+      ? clampSeedanceDuration("2.5", durationRaw)
+      : clampSeedanceOpenRouterDuration(durationRaw);
+  const workMode =
+    version === "2.5"
+      ? normalizeSeedance25EvolinkMode(opts?.workMode, { imageUrls, videoUrls, audioUrls })
+      : undefined;
+  const episodeIndex = Number(opts?.episodeIndex);
+  const clipIndex = Number(opts?.clipIndex);
+  const compilerEngine: CompilerEngineId = `seedance-${version}`;
+  // 最终槽位表：首帧与 imageUrls 去重后的**有序**清单。
+  // 首帧常常已经在 imageUrls 里，先前把它再算一格会让 UI 显示的参考编号比实际多一个。
+  // refCounts 与编译入参、与这张表同源，UI 直接用它编号。
+  const orderedImageSlots: string[] = [];
+  for (const candidate of [imageUrl, ...imageUrls]) {
+    const url = String(candidate || "").trim();
+    if (url && !orderedImageSlots.includes(url)) orderedImageSlots.push(url);
+  }
+  const refCounts = {
+    image: orderedImageSlots.length,
+    video: videoUrls.length,
+    audio: audioUrls.length,
+  };
+  const compile = tryCompileManhuaVideoPromptForOutbound({
+    prompt,
+    engine: compilerEngine,
+    durationSec: duration,
+    imageRefCount: refCounts.image,
+    videoRefCount: refCounts.video,
+    audioRefCount: refCounts.audio,
+  });
+  const body: Record<string, unknown> = {
+    // 方言与引用上限只在出线这一刻统一把关；上面的时长解析仍认【第N段·Xs】。
+    prompt: compile.text,
+    imageUrl: imageUrl || imageUrls[0] || undefined,
+    // 配额按版本分流：2.5 官方收图 30/视频 10/音频 10，2.0 系 9/3/3。
+    imageUrls: imageUrls.length
+      ? imageUrls.slice(0, version === "2.5" ? 30 : SEEDANCE_REFERENCE_MAX.image)
+      : undefined,
+    videoUrls: videoUrls.length
+      ? videoUrls.slice(0, version === "2.5" ? 10 : SEEDANCE_REFERENCE_MAX.video)
+      : undefined,
+    audioUrls: audioUrls.length
+      ? audioUrls.slice(0, version === "2.5" ? 10 : SEEDANCE_REFERENCE_MAX.audio)
+      : undefined,
+    resolution: normalizeCanvasVideoResolution(opts?.resolution),
+    aspectRatio,
+    duration,
+    editSourceDurationSec: opts?.editSourceDurationSec || undefined,
+    // 产品口径：只用引擎自带 Audio on，暂不另开后期配音 API
+    generateAudio: true,
+    version,
+    ...(opts?.manhuaPilot ? { manhuaPilot: opts.manhuaPilot } : {}),
+    ...(opts?.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
+    ...(version === "2.5" ? { workMode } : {}),
+    ...(Number.isFinite(episodeIndex) && episodeIndex > 0 ? { episodeIndex } : {}),
+    ...(Number.isFinite(clipIndex) && clipIndex > 0 ? { clipIndex } : {}),
+  };
+  return {
+    body,
+    compile,
+    version,
+    durationSec: duration,
+    refCounts,
+    refSlots: {
+      imageUrls: orderedImageSlots,
+      videoUrls: [...videoUrls],
+      audioUrls: [...audioUrls],
+    },
+  };
 }
 
 async function runSeedanceProductVideo(
@@ -718,83 +1001,33 @@ async function runSeedanceProductVideo(
     manhuaPilot?: ManhuaPilotSubmission;
     idempotencyKey?: string;
     onTaskId?: (taskId: string) => void;
+    /** 健康门等待结束、fetch 紧前的最终核对 */
+    beforeSubmit?: OutboundSubmitGuard;
   },
 ): Promise<SeedanceProductVideoResult> {
   // 与 Creative / TestLab 一致：直连 Fly/api 子域，避免 www→Vercel→Fly 反代 ~120s 被 ROUTER_EXTERNAL 腰斩
   const seedanceUrl = withLongJobsFlyDirect("/api/jobs?op=seedanceI2V");
   const probeOrigin = flyHealthProbeOriginForUrl(seedanceUrl);
-  const imageUrls = (opts?.imageUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
-  const videoUrls = (opts?.videoUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
-  const audioUrls = (opts?.audioUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
-  const version =
-    opts?.version === "2.5"
-      ? "2.5"
-      : opts?.version === "2.0-fast"
-        ? "2.0-fast"
-        : opts?.version === "2.0-mini"
-          ? "2.0-mini"
-          : "2.0";
-  const fromPrompt = parseManhuaClipTargetDurationSec(prompt);
-  const durationRaw = opts?.duration ?? fromPrompt ?? undefined;
-  // Mini 与 2.0 同为 4–15s 上限，复用 OpenRouter 档的钳制；2.5 才到 30s
-  const duration =
-    version === "2.5"
-      ? clampSeedanceDuration("2.5", durationRaw)
-      : clampSeedanceOpenRouterDuration(durationRaw);
-  // 服务端要按登录用户扣积分（2.5 还要校验正式会员），三档一律带登录态
-  const workMode =
-    version === "2.5"
-      ? normalizeSeedance25EvolinkMode(opts?.workMode, { imageUrls, videoUrls, audioUrls })
-      : undefined;
-  const episodeIndex = Number(opts?.episodeIndex);
-  const clipIndex = Number(opts?.clipIndex);
-  const compilerEngine: CompilerEngineId = `seedance-${version}`;
-  const outboundPrompt = compileManhuaVideoPromptForOutbound({
-    prompt,
-    engine: compilerEngine,
-    durationSec: duration,
-    imageRefCount: new Set(
-      [imageUrl, ...imageUrls].map((url) => String(url || "").trim()).filter(Boolean),
-    ).size,
-    videoRefCount: videoUrls.length,
-    audioRefCount: audioUrls.length,
-  });
-  const res = await withFlyHealthGate(probeOrigin, () =>
-    fetch(seedanceUrl, {
+  // 请求体由纯构造函数产出，生成前确认界面调的是同一个函数——预览与出站不会各走一套。
+  const prepared = buildSeedanceCanvasRequestBody(prompt, imageUrl, aspectRatio, opts);
+  if (prepared.compile.fatalZh) throw new Error(prepared.compile.fatalZh);
+  if (prepared.compile.blocked) {
+    throw new Error(
+      `成片提示词未通过出站校验：${prepared.compile.issues
+        .map((issue) => issue.detailZh)
+        .join("；")}`,
+    );
+  }
+  const res = await withFlyHealthGate(probeOrigin, () => {
+    // 健康等待已结束；这里到 fetch 之间不得再 await（0914 复审 P1）
+    opts?.beforeSubmit?.();
+    return fetch(seedanceUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({
-        // 方言与引用上限只在出线这一刻统一把关；上面的时长解析仍认【第N段·Xs】。
-        prompt: outboundPrompt,
-        imageUrl: imageUrl || imageUrls[0] || undefined,
-        // 配额按版本分流：2.5 官方收图 30/视频 10/音频 10，2.0 系 9/3/3。
-        // 原先无版本区分统一按 9/3/3 切，2.5 的高配额在出线口被砍——
-        // 参考图是人物锁定的命根，30 席给锁脸+服装+场景+道具才够摆
-        imageUrls: imageUrls.length
-          ? imageUrls.slice(0, version === "2.5" ? 30 : SEEDANCE_REFERENCE_MAX.image)
-          : undefined,
-        videoUrls: videoUrls.length
-          ? videoUrls.slice(0, version === "2.5" ? 10 : SEEDANCE_REFERENCE_MAX.video)
-          : undefined,
-        audioUrls: audioUrls.length
-          ? audioUrls.slice(0, version === "2.5" ? 10 : SEEDANCE_REFERENCE_MAX.audio)
-          : undefined,
-        resolution: normalizeCanvasVideoResolution(opts?.resolution),
-        aspectRatio,
-        duration,
-        editSourceDurationSec: opts?.editSourceDurationSec || undefined,
-        // 产品口径：只用引擎自带 Audio on，暂不另开后期配音 API
-        generateAudio: true,
-        version,
-        ...(opts?.manhuaPilot ? { manhuaPilot: opts.manhuaPilot } : {}),
-        ...(opts?.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
-        ...(version === "2.5" ? { workMode } : {}),
-        ...(Number.isFinite(episodeIndex) && episodeIndex > 0 ? { episodeIndex } : {}),
-        ...(Number.isFinite(clipIndex) && clipIndex > 0 ? { clipIndex } : {}),
-      }),
-    }),
-  );
+      body: JSON.stringify(prepared.body),
+    });
+  });
   const text = await res.text();
   let json: {
     videoUrl?: string;
@@ -836,7 +1069,7 @@ async function runSeedanceProductVideo(
   throw new Error(json.error || json.message || "成片生成失败");
 }
 
-export function buildHailuo3CanvasRequestBody(input: {
+export type Hailuo3CanvasRequestInput = {
   prompt: string;
   imageUrl?: string;
   imageUrls?: string[];
@@ -847,7 +1080,18 @@ export function buildHailuo3CanvasRequestBody(input: {
   clipIndex?: number;
   manhuaPilot?: ManhuaPilotSubmission;
   idempotencyKey?: string;
-}): Record<string, unknown> {
+};
+
+/**
+ * 海螺 H3 出站准备（**纯函数、不发请求**）。与 Seedance 的准备器同形：
+ * 同一份去重、同一次时长钳制、同一个编译，预览与真正提交取同一份结果。
+ *
+ * 拆成「准备 + 薄包装」是 C 项要求：预览要能拿到编译未通过的原因**而不是被抛出去**，
+ * 所以准备用不抛的 tryCompile，抛错留给下面那个薄包装（既有调用方契约不变）。
+ */
+export function prepareHailuo3CanvasOutbound(
+  input: Hailuo3CanvasRequestInput,
+): CanvasEngineOutboundPreparation {
   const imageUrls = Array.from(
     new Set(
       [input.imageUrl, ...(input.imageUrls || [])]
@@ -856,15 +1100,16 @@ export function buildHailuo3CanvasRequestBody(input: {
     ),
   );
   const duration = clampHailuoOpenRouterDuration(input.duration);
-  return {
-    prompt: compileManhuaVideoPromptForOutbound({
-      prompt: input.prompt,
-      engine: "minimax-hailuo-3",
-      durationSec: duration,
-      imageRefCount: imageUrls.length,
-      videoRefCount: 0,
-      audioRefCount: 0,
-    }),
+  const compile = tryCompileManhuaVideoPromptForOutbound({
+    prompt: input.prompt,
+    engine: "minimax-hailuo-3",
+    durationSec: duration,
+    imageRefCount: imageUrls.length,
+    videoRefCount: 0,
+    audioRefCount: 0,
+  });
+  const body: Record<string, unknown> = {
+    prompt: compile.text,
     imageUrl: imageUrls[0] || undefined,
     imageUrls: imageUrls.length ? imageUrls : undefined,
     aspectRatio: input.aspectRatio,
@@ -876,6 +1121,23 @@ export function buildHailuo3CanvasRequestBody(input: {
     ...(Number(input.episodeIndex) > 0 ? { episodeIndex: Number(input.episodeIndex) } : {}),
     ...(Number(input.clipIndex) > 0 ? { clipIndex: Number(input.clipIndex) } : {}),
   };
+  return {
+    engine: "minimax-hailuo-3",
+    body,
+    compile,
+    durationSec: duration,
+    refCounts: { image: imageUrls.length, video: 0, audio: 0 },
+    refSlots: { imageUrls: [...imageUrls], videoUrls: [], audioUrls: [] },
+  };
+}
+
+/** 旧契约：只要请求体，编译未通过就抛。内部走同一个准备器，不另算一套。 */
+export function buildHailuo3CanvasRequestBody(
+  input: Hailuo3CanvasRequestInput,
+): Record<string, unknown> {
+  const prepared = prepareHailuo3CanvasOutbound(input);
+  throwIfOutboundCompileBlocked(prepared.compile);
+  return prepared.body;
 }
 
 /** MiniMax H3 · OpenRouter（画质由服务端归一；时长 5–15s） */
@@ -893,6 +1155,8 @@ async function runHailuo3(
     manhuaPilot?: ManhuaPilotSubmission;
     idempotencyKey?: string;
     onTaskId?: (taskId: string) => void;
+    /** 健康门等待结束、fetch 紧前的最终核对 */
+    beforeSubmit?: OutboundSubmitGuard;
   },
 ): Promise<string> {
   const hailuoUrl = withLongJobsFlyDirect("/api/jobs?op=hailuo3Video");
@@ -909,15 +1173,16 @@ async function runHailuo3(
     manhuaPilot: opts?.manhuaPilot,
     idempotencyKey: opts?.idempotencyKey,
   });
-  const res = await withFlyHealthGate(probeOrigin, () =>
-    fetch(hailuoUrl, {
+  const res = await withFlyHealthGate(probeOrigin, () => {
+    opts?.beforeSubmit?.();
+    return fetch(hailuoUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       // 服务端已要求登录（H3 成片会真实扣费），必须带上登录态。
       credentials: "include",
       body: JSON.stringify(requestBody),
-    }),
-  );
+    });
+  });
   const text = await res.text();
   let json: {
     videoUrl?: string;
@@ -1076,7 +1341,7 @@ export function newWanSubmissionKey(blockId: string): string {
 }
 
 /** Wan 请求体构建器:抽出为纯函数,让测试能断言真实 POST 载荷(三审 P0-1) */
-export function buildWan30RequestBody(input: {
+export type Wan30RequestInput = {
   prompt: string;
   images: string[];
   aspectRatio: "9:16" | "16:9";
@@ -1089,7 +1354,12 @@ export function buildWan30RequestBody(input: {
   idempotencyKey?: string;
   manhuaPilot?: ManhuaPilotSubmission;
   seed?: number;
-}): Record<string, unknown> {
+};
+
+/** Wan 3.0 出站准备（**纯函数、不发请求**）。同 {@link prepareHailuo3CanvasOutbound}。 */
+export function prepareWan30Outbound(
+  input: Wan30RequestInput,
+): CanvasEngineOutboundPreparation {
   const images = Array.from(
     new Set(input.images.map((url) => String(url || "").trim()).filter(Boolean)),
   );
@@ -1100,15 +1370,16 @@ export function buildWan30RequestBody(input: {
     new Set((input.videoUrls || []).map((url) => String(url || "").trim()).filter(Boolean)),
   );
   const duration = clampWan30Duration(input.duration);
-  return {
-    prompt: compileManhuaVideoPromptForOutbound({
-      prompt: input.prompt,
-      engine: "wan-3.0",
-      durationSec: duration,
-      imageRefCount: images.length,
-      videoRefCount: videoUrls.length,
-      audioRefCount: audioUrls.length,
-    }),
+  const compile = tryCompileManhuaVideoPromptForOutbound({
+    prompt: input.prompt,
+    engine: "wan-3.0",
+    durationSec: duration,
+    imageRefCount: images.length,
+    videoRefCount: videoUrls.length,
+    audioRefCount: audioUrls.length,
+  });
+  const body: Record<string, unknown> = {
+    prompt: compile.text,
     imageUrl: images[0],
     imageUrls: images,
     videoUrls,
@@ -1123,6 +1394,25 @@ export function buildWan30RequestBody(input: {
     ...(input.manhuaPilot ? { manhuaPilot: input.manhuaPilot } : {}),
     ...(Number.isFinite(Number(input.seed)) ? { seed: Math.floor(Number(input.seed)) } : {}),
   };
+  return {
+    engine: "wan-3.0",
+    body,
+    compile,
+    durationSec: duration,
+    refCounts: { image: images.length, video: videoUrls.length, audio: audioUrls.length },
+    refSlots: {
+      imageUrls: [...images],
+      videoUrls: [...videoUrls],
+      audioUrls: [...audioUrls],
+    },
+  };
+}
+
+/** 旧契约：只要请求体，编译未通过就抛。内部走同一个准备器，不另算一套。 */
+export function buildWan30RequestBody(input: Wan30RequestInput): Record<string, unknown> {
+  const prepared = prepareWan30Outbound(input);
+  throwIfOutboundCompileBlocked(prepared.compile);
+  return prepared.body;
 }
 
 /** Wan 3.0（公测）· WaveSpeed reference-to-video：可直出 30s；公测排队时间较长 */
@@ -1143,6 +1433,8 @@ async function runWan30(
     seed?: number;
     /** 拿到 taskId 立即回调(先持久化再慢慢轮询) */
     onTaskId?: (taskId: string) => void;
+    /** 健康门等待结束、fetch 紧前的最终核对 */
+    beforeSubmit?: OutboundSubmitGuard;
   },
 ): Promise<string> {
   const wanUrl = withLongJobsFlyDirect("/api/jobs?op=wan30Video");
@@ -1151,31 +1443,32 @@ async function runWan30(
   if (!images.length) {
     throw new Error("Wan 3.0 成片需要至少一张参考图（请先出静帧或上传参考）");
   }
-  const res = await withFlyHealthGate(probeOrigin, () =>
-    fetch(wanUrl, {
+  // 载荷统一走 buildWan30RequestBody：提交键/seed 必须真实入 POST（三审 P0-1）。
+  // 先构造好再进健康门，核对与 fetch 之间不留任何计算。
+  const wanBody = buildWan30RequestBody({
+    // Wan 无 Seedance 的 @图片N 硬绑定语法，提示词由调用方按 Wan 口径编译，不过 Seedance 渲染器
+    prompt,
+    images,
+    aspectRatio,
+    videoUrls: opts?.videoUrls,
+    audioUrls: opts?.audioUrls,
+    duration: opts?.duration,
+    resolution: opts?.resolution,
+    episodeIndex: opts?.episodeIndex,
+    clipIndex: opts?.clipIndex,
+    idempotencyKey: opts?.idempotencyKey,
+    manhuaPilot: opts?.manhuaPilot,
+    seed: opts?.seed,
+  });
+  const res = await withFlyHealthGate(probeOrigin, () => {
+    opts?.beforeSubmit?.();
+    return fetch(wanUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      // 载荷统一走 buildWan30RequestBody:提交键/seed 必须真实入 POST(三审 P0-1),测试直接断言构建器输出
-      body: JSON.stringify(
-        buildWan30RequestBody({
-          // Wan 无 Seedance 的 @图片N 硬绑定语法,提示词由调用方按 Wan 口径编译,不过 Seedance 渲染器
-          prompt,
-          images,
-          aspectRatio,
-          videoUrls: opts?.videoUrls,
-          audioUrls: opts?.audioUrls,
-          duration: opts?.duration,
-          resolution: opts?.resolution,
-          episodeIndex: opts?.episodeIndex,
-          clipIndex: opts?.clipIndex,
-          idempotencyKey: opts?.idempotencyKey,
-          manhuaPilot: opts?.manhuaPilot,
-          seed: opts?.seed,
-        }),
-      ),
-    }),
-  );
+      body: JSON.stringify(wanBody),
+    });
+  });
   const text = await res.text();
   let json: {
     videoUrl?: string;
@@ -1219,41 +1512,88 @@ async function runWan30(
   throw new Error(json.error || json.message || "成片生成失败");
 }
 
-/** Happy Horse 1.1 · OpenRouter（首帧图生；时长 5/10/15，最长 15s） */
+export type HappyHorseRequestInput = {
+  prompt: string;
+  imageUrl: string;
+  aspectRatio: "9:16" | "16:9";
+  duration?: number;
+  resolution?: string;
+  episodeIndex?: number;
+  clipIndex?: number;
+  imageUrls?: string[];
+};
+
+/**
+ * HappyHorse 出站准备（**纯函数、不发请求**）。同其余引擎的准备器。
+ *
+ * 它原本只有 runHappyHorse 里内联的 body，没有可复用的构造层，
+ * 于是成了确认闸的免检通道（0914 审查 P1：未支持模式仍是免检通道）。
+ * 这里把 body 抽出来，提交点与预览共用。
+ */
+export function prepareHappyHorseOutbound(
+  input: HappyHorseRequestInput,
+): CanvasEngineOutboundPreparation {
+  const imageUrls = Array.from(
+    new Set(
+      [input.imageUrl, ...(input.imageUrls || [])]
+        .map((url) => String(url || "").trim())
+        .filter(Boolean),
+    ),
+  ).slice(0, HAPPYHORSE_REFERENCE_MAX.image);
+  const duration = clampHappyHorseCanvasDuration(input.duration);
+  const resolution = normalizeHappyHorseCanvasResolution(input.resolution);
+  const compile = tryCompileManhuaVideoPromptForOutbound({
+    prompt: input.prompt,
+    engine: CANVAS_VIDEO_MODEL_HAPPYHORSE_1_1,
+    durationSec: duration,
+    imageRefCount: imageUrls.length,
+    videoRefCount: 0,
+    audioRefCount: 0,
+  });
+  const body: Record<string, unknown> = {
+    prompt: compile.text,
+    imageUrl: input.imageUrl,
+    ...(imageUrls.length ? { imageUrls } : {}),
+    aspectRatio: input.aspectRatio,
+    duration,
+    resolution,
+    ...(Number(input.episodeIndex) > 0 ? { episodeIndex: Number(input.episodeIndex) } : {}),
+    ...(Number(input.clipIndex) > 0 ? { clipIndex: Number(input.clipIndex) } : {}),
+  };
+  return {
+    engine: CANVAS_VIDEO_MODEL_HAPPYHORSE_1_1,
+    body,
+    compile,
+    durationSec: duration,
+    refCounts: { image: imageUrls.length, video: 0, audio: 0 },
+    refSlots: { imageUrls: [...imageUrls], videoUrls: [], audioUrls: [] },
+  };
+}
+
+/**
+ * Happy Horse 1.1 · OpenRouter（首帧图生；时长 5/10/15，最长 15s）
+ *
+ * **只负责提交**：请求体由 {@link prepareHappyHorseOutbound} 产出并原样序列化。
+ * 上一版这里另有一套内联构造（自行 renderManhuaClipPromptForSeedance），
+ * 与预览算出来的那份**不是同一个串**——确认核对的是前一份，发出去的是后一份
+ * （0914 复审离线深比较实测）。现在删掉，统一由准备器产出。
+ */
 async function runHappyHorse(
-  prompt: string,
-  imageUrl: string,
-  aspectRatio: "9:16" | "16:9",
-  opts?: {
-    duration?: number;
-    resolution?: string;
-    episodeIndex?: number;
-    clipIndex?: number;
-    /** 0825 自由画布 r2v：多图参考（≤9）；≥2 张时服务端自动切多图参考模式 */
-    imageUrls?: string[];
-  },
+  preparedBody: Record<string, unknown>,
+  beforeSubmit?: OutboundSubmitGuard,
 ): Promise<string> {
   const hhUrl = withLongJobsFlyDirect("/api/jobs?op=happyHorseVideo");
   const probeOrigin = flyHealthProbeOriginForUrl(hhUrl);
-  const duration = clampHappyHorseCanvasDuration(opts?.duration);
-  const resolution = normalizeHappyHorseCanvasResolution(opts?.resolution);
-  const res = await withFlyHealthGate(probeOrigin, () =>
-    fetch(hhUrl, {
+  const res = await withFlyHealthGate(probeOrigin, () => {
+    // 健康等待已结束，这里到 fetch 之间不得再 await
+    beforeSubmit?.();
+    return fetch(hhUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({
-        prompt: renderManhuaClipPromptForSeedance(prompt),
-        imageUrl,
-        ...(opts?.imageUrls?.length ? { imageUrls: opts.imageUrls.slice(0, 9) } : {}),
-        aspectRatio,
-        duration,
-        resolution,
-        ...(Number(opts?.episodeIndex) > 0 ? { episodeIndex: Number(opts?.episodeIndex) } : {}),
-        ...(Number(opts?.clipIndex) > 0 ? { clipIndex: Number(opts?.clipIndex) } : {}),
-      }),
-    }),
-  );
+      body: JSON.stringify(preparedBody),
+    });
+  });
   const text = await res.text();
   let json: {
     videoUrl?: string;
@@ -1322,6 +1662,444 @@ export function formatCanvasUpstreamPrompt(basePrompt: string, upstreamTexts: st
   return `${trimmed}\n\n【引用上游文本】\n${upstreamSection}`;
 }
 
+/**
+ * 生成前确认用的出站预览信号。
+ *
+ * 参考素材是在 runCanvasBlock 内部逐层解析出来的（转 https、重签段参考、刷新已登记成片链），
+ * 预览若自己再解析一遍必然与真正提交漂移。所以预览走的是**同一条生产代码路径**，
+ * 只是在真正下单那一刻用这个信号回卷——因此预览不会发起任何付费调用。
+ */
+class CanvasOutboundPreviewSignal extends Error {
+  readonly preview: CanvasOutboundPreview;
+  constructor(preview: CanvasOutboundPreview) {
+    super("canvas_outbound_preview");
+    this.name = "CanvasOutboundPreviewSignal";
+    this.preview = preview;
+  }
+}
+
+/**
+ * 用户在生成前确认过的那一份。
+ * fingerprint 由 {@link manhuaOutboundConfirmationFingerprint} 算出，绑定 scope 身份。
+ */
+export type ManhuaOutboundConfirmation = {
+  fingerprint: string;
+  scope: CanvasOutboundConfirmationScope;
+  /** 确认时刻，便于界面显示与排查；不参与比对 */
+  confirmedAt: number;
+};
+
+/** 该走确认却没有确认记录：**在任何付费分支之前**拒绝 */
+export class ManhuaOutboundConfirmationMissingError extends Error {
+  readonly reasonZh: string;
+  constructor(reasonZh: string) {
+    super(reasonZh);
+    this.name = "ManhuaOutboundConfirmationMissingError";
+    this.reasonZh = reasonZh;
+  }
+}
+
+/**
+ * 运行时的**当前**归属与确认记录。
+ *
+ * currentScope 由运行上下文独立给出，**不是**从确认记录里读回来的——
+ * 拿 confirmation.scope 自己和自己比等于没比（0914 审查实测：保留旧确认、
+ * 只切当前账号与节点，仍然 POST 出去了）。
+ */
+export type ManhuaOutboundGate = {
+  currentScope: CanvasOutboundConfirmationScope;
+  confirmation?: ManhuaOutboundConfirmation;
+};
+
+/**
+ * 这一段是否必须走生成前确认。
+ *
+ * 范围＝**漫剧段成片（clip-* 的 video 节点）**，只看任务契约本身。
+ *
+ * 上一轮写成「且该组合可预览」，等于把「预览还没实现」隐式解释成「允许无确认提交」——
+ * 换个引擎或转成延长就成了免检通道（0914 审查 P1）。判定要求与实现覆盖是两件事：
+ * 要求由产品意图决定，实现没跟上就该拒绝，不该放行。
+ *
+ * 音乐 MV、图片、文案等非漫剧段成片不在范围内，按各自原契约运行。
+ */
+export function requiresManhuaOutboundConfirmation(
+  block: Pick<CanvasBlock, "kind" | "id" | "videoModel" | "musicMvShot">,
+): boolean {
+  if (block.kind !== "video" || !String(block.id || "").startsWith("clip-")) return false;
+  if (block.musicMvShot) return false;
+  return true;
+}
+
+function assertManhuaOutboundGate(
+  block: Pick<CanvasBlock, "kind" | "id" | "videoModel" | "musicMvShot">,
+  gate: ManhuaOutboundGate | undefined,
+  /** 真正执行这一次提交的账号（deps.userId），与 currentScope 交叉核对 */
+  executingUserId: string,
+): asserts gate is ManhuaOutboundGate & { confirmation: ManhuaOutboundConfirmation } {
+  if (!gate?.confirmation) {
+    throw new ManhuaOutboundConfirmationMissingError(
+      "这一段还没有完成生成前确认，未提交、未扣费。请先在工作台查看实际发送内容并确认。",
+    );
+  }
+  const a = gate.currentScope;
+  const b = gate.confirmation.scope;
+
+  // 身份必须完整。空账号／空工作区／未确认编剧稿都不是有效身份，
+  // 不能靠「两边都空所以相等」混过去（0914 复审：不得使用缺省 null 身份）。
+  if (
+    !String(a.userId).trim() ||
+    !String(a.workspaceId).trim() ||
+    !String(a.projectVersion).trim() ||
+    a.projectVersion === "unconfirmed" ||
+    !Number.isFinite(Number(a.epoch))
+  ) {
+    throw new ManhuaOutboundConfirmationMismatchError(
+      "当前账号或项目身份不完整，无法校验生成前确认，本次未提交、未扣费。",
+    );
+  }
+
+  // currentScope 必须确实指向**这一个**节点。gate 是按 blockId 取出来的，
+  // 但取错／传错时旧写法不会发现（0914 审查点名：收到 block 却不核 blockId）。
+  if (String(a.blockId) !== String(block.id)) {
+    throw new ManhuaOutboundConfirmationMismatchError(
+      "确认闸拿到的节点与本次执行的节点不一致，本次未提交、未扣费。",
+    );
+  }
+
+  // 与真正执行提交的账号交叉核对：currentScope 来自界面上下文，
+  // deps.userId 是入队 jobs 时真正写进去的人，两者不一致就是上下文串了。
+  if (String(executingUserId || "").trim() && String(executingUserId) !== String(a.userId)) {
+    throw new ManhuaOutboundConfirmationMismatchError(
+      "当前登录账号与确认时的账号不一致，本次未提交、未扣费。请重新查看并确认。",
+    );
+  }
+
+  if (
+    String(a.userId) !== String(b.userId) ||
+    String(a.workspaceId) !== String(b.workspaceId) ||
+    String(a.projectVersion) !== String(b.projectVersion) ||
+    String(a.blockId) !== String(b.blockId)
+  ) {
+    throw new ManhuaOutboundConfirmationMismatchError(
+      "确认记录属于另一个账号／项目／节点，本次未提交、未扣费。请在当前上下文重新查看并确认。",
+    );
+  }
+
+  // 世代不同＝这份工作区在确认之后被整份换掉（载入云草稿／导入备份／清空）。
+  // 指纹里已经含 epoch，这里再显式判一次是为了给出说得清的原因。
+  if (Number(a.epoch) !== Number(b.epoch)) {
+    throw new ManhuaOutboundConfirmationMismatchError(
+      "工作区在你确认之后被重新载入过，旧确认已失效，本次未提交、未扣费。请重新查看并确认。",
+    );
+  }
+}
+
+/**
+ * 提交守卫：健康门等待结束后、`fetch` 紧前同步调用一次。
+ * 通过即可提交；不通过抛错，未建单未扣费。
+ */
+export type OutboundSubmitGuard = () => void;
+
+/**
+ * **所有引擎共用的出站结算点**：算指纹、比对确认、预览回卷，只此一处。
+ *
+ * 每条引擎分支在**真正提交之前**调它一次，传入自己准备器的产出。
+ * 返回表示可以继续提交；否则抛 mismatch 或预览信号。
+ * 之所以要收在一起：上一轮把这段逻辑只写在普通 Seedance 分支里，
+ * 结果换 Wan/海螺/原片编辑就绕过去了（0914 审查 P1-1）。
+ */
+function settleManhuaOutbound(
+  prepared: CanvasEngineOutboundPreparation,
+  runOptions:
+    | {
+        previewOnly?: boolean;
+        enforceOutboundConfirmation?: boolean;
+        outboundGate?: ManhuaOutboundGate;
+        resolveOutboundGate?: (blockId: string) => ManhuaOutboundGate | undefined;
+      }
+    | undefined,
+  /** 这一次真正在提交的节点与执行账号；提交边界复核要用 */
+  submitting?: {
+    block: Pick<CanvasBlock, "kind" | "id" | "videoModel" | "musicMvShot">;
+    executingUserId: string;
+  },
+): OutboundSubmitGuard {
+  /**
+   * 最终核对。**必须在健康门等待结束之后、`fetch` 紧前同步执行**，
+   * 而且它与 fetch 之间不得再有 await。
+   *
+   * 0914 复审实测：只在这里（settle 处）核对还不够——settle 之后还要
+   * `await ensureFlyAppReady`，用户在那段等待里撤销确认，POST 照样发出去了。
+   * 所以 settle 把核对逻辑打包成这个函数交给各 runner，由 runner 在
+   * `withFlyHealthGate` 的回调内部调用；调完立刻 fetch。
+   */
+  const guardBeforeSubmit = () => {
+    // 每次调用都重新取闸，不复用任何早先抓到的对象。
+    const gateNow = submitting
+      ? runOptions?.resolveOutboundGate
+        ? // 配置了 getter 就以它为准：返回 undefined 按「缺闸」处理，
+          // 不再回退旧 snapshot（否则撤销确认反而被快照救活）。
+          runOptions.resolveOutboundGate(submitting.block.id)
+        : runOptions?.outboundGate
+      : runOptions?.outboundGate;
+
+    if (
+      submitting &&
+      runOptions?.enforceOutboundConfirmation &&
+      requiresManhuaOutboundConfirmation(submitting.block)
+    ) {
+      assertManhuaOutboundGate(submitting.block, gateNow, submitting.executingUserId);
+    }
+    if (gateNow?.confirmation) {
+      // **用 currentScope 重算**——拿确认记录自带的 scope 算等于自己和自己比。
+      const actual = manhuaOutboundConfirmationFingerprint(
+        { engine: prepared.engine, body: prepared.body },
+        gateNow.currentScope,
+      );
+      if (actual !== gateNow.confirmation.fingerprint) {
+        throw new ManhuaOutboundConfirmationMismatchError(
+          "提示词、模型、时长或参考素材在确认之后发生了变化，本次未提交、未扣费。请重新查看生成前确认并再次确认。",
+        );
+      }
+    }
+  };
+
+  // 早拒：不合格的在健康探测与续签之前就挡掉，省掉无谓的外部往返。
+  if (!runOptions?.previewOnly) guardBeforeSubmit();
+  if (runOptions?.previewOnly) {
+    // 组装已经全部走完（含转 https、重签段参考、刷新已登记成片链），在这里回卷：
+    // 不发请求、不建单、不扣费。
+    throw new CanvasOutboundPreviewSignal({
+      engine: prepared.engine,
+      body: prepared.body,
+      compile: prepared.compile,
+      durationSec: prepared.durationSec,
+      refCounts: prepared.refCounts,
+      refs: prepared.refSlots,
+    });
+  }
+  return guardBeforeSubmit;
+}
+
+/** 确认与实际出站不一致时抛这个：**在发请求之前**，不建单不扣费 */
+export class ManhuaOutboundConfirmationMismatchError extends Error {
+  readonly reasonZh: string;
+  constructor(reasonZh: string) {
+    super(reasonZh);
+    this.name = "ManhuaOutboundConfirmationMismatchError";
+    this.reasonZh = reasonZh;
+  }
+}
+
+/** 预览不支持该组合时抛这个，调用方据 reasonZh 直接展示，不做任何生产动作 */
+export class CanvasOutboundPreviewUnsupportedError extends Error {
+  readonly reasonZh: string;
+  constructor(reasonZh: string) {
+    super(reasonZh);
+    this.name = "CanvasOutboundPreviewUnsupportedError";
+    this.reasonZh = reasonZh;
+  }
+}
+
+/**
+ * 生成前预览覆盖哪些组合。
+ *
+ * **必须在进入任何生产路径或外部调用之前判定**：各引擎各有自己的提交点，
+ * 把不支持的组合放到末尾才拒绝就太晚了——那等于让预览真的发出付费请求。
+ *
+ * 覆盖范围：所有视频成片引擎与工作模式——普通 Seedance、Seedance 2.5 的
+ * 原片编辑与延长、Wan 3.0、海螺 H3、HappyHorse。每一条都在自己的提交点之前
+ * 调 settleManhuaOutbound，预览由那里统一回卷。
+ * 产品拍板是「保留引擎、补预览出口、不砍功能」，所以这里不靠禁用堵漏。
+ *
+ * 不支持的只剩：音乐 MV 镜头与非视频块——它们本来就不是漫剧段成片。
+ *
+ * 返回 null 表示支持；否则返回中文原因。
+ */
+export function resolveCanvasOutboundPreviewUnsupportedReason(
+  block: Pick<CanvasBlock, "kind" | "videoModel" | "musicMvShot"> & Record<string, unknown>,
+): string | null {
+  if (block.kind !== "video") {
+    return `生成前预览目前只支持段成片节点，当前节点类型：${String(block.kind || "未知")}`;
+  }
+  if (block.musicMvShot) {
+    return "生成前预览暂不支持音乐 MV 镜头节点";
+  }
+  // 四条引擎（Seedance 普通／2.5 原片编辑与延长／Wan 3.0／海螺 H3／HappyHorse）
+  // 都已接 settleManhuaOutbound，预览由那里统一回卷。
+  return null;
+}
+
+export type CanvasOutboundPreview = {
+  engine: string;
+  /** 真正会 POST 出去的请求体 */
+  body: Record<string, unknown>;
+  compile: ManhuaOutboundPromptCompileResult;
+  durationSec: number;
+  refCounts: { image: number; video: number; audio: number };
+  /** 逐条列出真实参与的参考素材地址，供确认界面展示 */
+  refs: { imageUrls: string[]; videoUrls: string[]; audioUrls: string[] };
+};
+
+/**
+ * 临时签名参数：同一个对象每次续签都会变，但内容没变。
+ * 只剥这些，**不对任意外链一概去 query**——外链的 query 可能代表不同内容。
+ */
+const GCS_V4_SIGNING_PARAMS = [
+  "X-Goog-Algorithm",
+  "X-Goog-Credential",
+  "X-Goog-Date",
+  "X-Goog-Expires",
+  "X-Goog-SignedHeaders",
+  "X-Goog-Signature",
+];
+
+/**
+ * 把参考素材地址规范成「语义身份」，用于确认指纹。
+ *
+ * 预览与生成各自都会重新续签（freshManhuaSegmentReferenceUrl / createCanvasAssetResigner），
+ * 若指纹直接含完整 URL，用户什么都没改也会因为签名时间变化被判成旧确认失效。
+ * 所以只对**可识别的 GCS 签名链**剥掉 V4 签名参数，保留 host + 路径 + 其余 query
+ * （generation 等版本参数留着：换版本必须失效）。其它地址原样保留。
+ */
+export function normalizeOutboundRefUrlForFingerprint(raw: unknown): string {
+  const value = String(raw ?? "").trim();
+  if (!value) return "";
+  let parsed: URL;
+  try {
+    parsed = new URL(value, "https://placeholder.invalid");
+  } catch {
+    return value;
+  }
+  const isGcsSigned =
+    /(^|\.)storage\.googleapis\.com$/i.test(parsed.hostname) &&
+    GCS_V4_SIGNING_PARAMS.some((key) => parsed.searchParams.has(key));
+  if (!isGcsSigned) return value;
+  for (const key of GCS_V4_SIGNING_PARAMS) parsed.searchParams.delete(key);
+  parsed.searchParams.sort();
+  return `${parsed.origin}${parsed.pathname}${parsed.search}`;
+}
+
+/** 每次提交都不同、与用户所见内容无关的字段；只排除这些，其余全部计入 */
+const OUTBOUND_FINGERPRINT_EXCLUDED_KEYS = new Set(["idempotencyKey"]);
+
+/**
+ * 递归归一：嵌套对象也按键排序。
+ * 只做顶层排序的话，`manhuaPilot: { a, b }` 与 `{ b, a }` 这种等价结构会被判成不同，
+ * 用户什么都没改却被告知确认失效。数组顺序**保留**——参考素材的顺序本身有语义。
+ */
+function normalizeFingerprintValue(key: string, value: unknown): unknown {
+  if (value === undefined) return undefined;
+  if (key === "imageUrl") return normalizeOutboundRefUrlForFingerprint(value);
+  if (key === "imageUrls" || key === "videoUrls" || key === "audioUrls") {
+    return Array.isArray(value)
+      ? value.map((item) => normalizeOutboundRefUrlForFingerprint(item))
+      : value;
+  }
+  return sortNestedKeys(value);
+}
+
+function sortNestedKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => sortNestedKeys(item));
+  if (!value || typeof value !== "object") return value;
+  const source = value as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(source).sort()) {
+    if (source[key] !== undefined) out[key] = sortNestedKeys(source[key]);
+  }
+  return out;
+}
+
+/**
+ * 确认归属。**每一项都是必填**——可选会被省略，一旦省略就退化成缺省 null 身份，
+ * 换账号、换项目、换节点都拿到同一个指纹（0914 复审明确要求不得使用缺省 null 身份）。
+ *
+ * 关于 workspaceId 的实际口径（0914 查证，不是假定）：
+ * 漫剧云草稿在服务端**每个用户只有一份**——`manhua_cloud_drafts` 在 `userId` 上建了
+ * 唯一索引（server/db.ts），GCS 侧也按 userId 寻址，`manhuaCloudDraft.get/upsert`
+ * 全部只以 `ctx.user.id` 取用，请求与回包里都没有草稿 id。
+ * 所以系统里**确实不存在独立的项目 ID**，工作区身份就等于「该用户的那一份草稿」。
+ * 这不是省事的近似，是当前存储契约本身；哪天支持多项目，这里换成真正的草稿 id 即可。
+ *
+ * 因此把空间身份与版本身份**分开**：workspaceId 是空间（存储实体），
+ * projectVersion 是版本（编剧确认稿）。剧名＋确认时刻只能当版本线索，
+ * 单独拿它当唯一空间身份是错的（0914 审查明确指出）。
+ */
+export type CanvasOutboundConfirmationScope = {
+  /** 谁确认的；换账号不得沿用 */
+  userId: string | number;
+  /** 哪一份工作区（＝该用户的漫剧云草稿，见上方查证） */
+  workspaceId: string;
+  /** 哪一版编剧确认稿；重新确认编剧稿＝新版本，旧确认失效 */
+  projectVersion: string;
+  /** 哪个节点 */
+  blockId: string;
+  /**
+   * 本地上下文世代。整份工作区被**换掉**时自增（载入云草稿、导入备份、切账号、
+   * 清空画布）。用途是让**在途**的预览／确认失效：异步 await 期间用户切走了，
+   * 迟到的回执不能写回，也不能拿旧快照批准新工作区的内容。
+   */
+  epoch: number;
+};
+
+/**
+ * 出站确认指纹：由**真正会发出去的请求体**加上业务归属算出。
+ *
+ * 口径是**黑名单**不是白名单——请求体里除了每次都变的提交 nonce，其余字段全部计入。
+ * 白名单写法漏过 episodeIndex / clipIndex / manhuaPilot，会让换集、换段、换项目、
+ * 换试片身份的请求得到同一个指纹（0914 审查实测复现）。
+ *
+ * 参考素材地址先过 {@link normalizeOutboundRefUrlForFingerprint}：
+ * 同一对象重新签名不失效，换对象或换版本失效。
+ */
+export function manhuaOutboundConfirmationFingerprint(
+  preview: Pick<CanvasOutboundPreview, "engine" | "body">,
+  scope: CanvasOutboundConfirmationScope,
+): string {
+  const body = preview.body as Record<string, unknown>;
+  const shaped: Record<string, unknown> = {};
+  for (const key of Object.keys(body).sort()) {
+    if (OUTBOUND_FINGERPRINT_EXCLUDED_KEYS.has(key)) continue;
+    const normalized = normalizeFingerprintValue(key, body[key]);
+    if (normalized !== undefined) shaped[key] = normalized;
+  }
+  return JSON.stringify({
+    engine: preview.engine,
+    scope: {
+      userId: String(scope.userId),
+      workspaceId: String(scope.workspaceId),
+      projectVersion: String(scope.projectVersion),
+      blockId: String(scope.blockId),
+      // epoch 计入指纹：工作区被换掉之后，旧快照 id 自然对不上新算出来的，
+      // 迟到的确认与展示过的 snapshotId 一起失效，不用靠调用方各自记得去比。
+      epoch: Number(scope.epoch),
+    },
+    request: shaped,
+  });
+}
+
+/**
+ * 走生产路径算出「这一段现在按下生成会发出去什么」，**不发请求、不建单、不扣费**。
+ * 编译未通过时 compile.blocked 为 true 并带上原因，由确认界面展示。
+ */
+export async function previewCanvasBlockOutbound(
+  deps: CanvasRunDeps,
+  block: CanvasBlock,
+  upstream: CanvasUpstreamContext = { visionImages: [], texts: [] },
+  runOptions?: { videoSubmissionKey?: string; pilotRun?: boolean },
+): Promise<CanvasOutboundPreview> {
+  // 先拒绝再执行：不支持的组合一步都不许往生产路径走。
+  const unsupported = resolveCanvasOutboundPreviewUnsupportedReason(block);
+  if (unsupported) throw new CanvasOutboundPreviewUnsupportedError(unsupported);
+  try {
+    await runCanvasBlock(deps, block, upstream, { ...runOptions, previewOnly: true });
+  } catch (error) {
+    if (error instanceof CanvasOutboundPreviewSignal) return error.preview;
+    throw error;
+  }
+  throw new Error("当前引擎暂不支持生成前出站预览");
+}
+
 export async function runCanvasBlock(
   deps: CanvasRunDeps,
   block: CanvasBlock,
@@ -1331,6 +2109,33 @@ export async function runCanvasBlock(
     videoSubmissionKey?: string;
     /** 仅本次首段试片的执行约束，不写入节点、草稿或供应商字段。 */
     pilotRun?: boolean;
+    /**
+     * 生成前确认：走完整组装后在下单那一刻回卷，返回真实出站请求体。
+     * 只由 previewCanvasBlockOutbound 使用；不写节点、不建单、不扣费。
+     */
+    previewOnly?: boolean;
+    /**
+     * 生成前确认闸。**漫剧段成片（clip-* 视频节点）一律必须提供**——
+     * 这是 runCanvasBlock 内部按节点契约强制的，不是可选参数：
+     * 单段、批量、重跑、自由画布任意入口都绕不过去。
+     * currentScope 必须由运行上下文独立给出，用于和确认记录的归属比对。
+     */
+    outboundGate?: ManhuaOutboundGate;
+    /**
+     * **提交边界现读**当前闸。产品入口应传它而不是 outboundGate 快照：
+     * 快照在长跑的 await 期间会过期，清空确认 ref 之后旧对象仍然「有效」。
+     */
+    resolveOutboundGate?: (blockId: string) => ManhuaOutboundGate | undefined;
+    /**
+     * 由**产品生成入口**声明：这一次是用户发起的付费段成片。
+     * 声明了就强制要求确认——缺确认、身份不符一律在任何付费分支之前拒绝。
+     *
+     * 为什么不在执行器里对所有 clip-* 一刀切：那会连既有的执行器级测试与
+     * 非产品调用一起封死（0914 实测 18+ 项），而审查明确写了
+     * 「保留无关普通工具的原行为，使用明确任务意图区分，不能全局盲封所有旧调用」。
+     * 强制点设在编排器与画布运行入口，执行器这一层负责真正的校验逻辑。
+     */
+    enforceOutboundConfirmation?: boolean;
   },
 ): Promise<{
   outputText?: string;
@@ -1344,6 +2149,29 @@ export async function runCanvasBlock(
   seedance25ThreadId?: string;
   seedance25WebThreadLink?: string;
 }> {
+  if (runOptions?.previewOnly) {
+    // 双保险：即便有人绕过 previewCanvasBlockOutbound 直接传 previewOnly，
+    // 也必须在任何外部调用之前拒绝，不能靠调用方守规矩。
+    const unsupported = resolveCanvasOutboundPreviewUnsupportedReason(block);
+    if (unsupported) throw new CanvasOutboundPreviewUnsupportedError(unsupported);
+  }
+  if (
+    !runOptions?.previewOnly &&
+    runOptions?.enforceOutboundConfirmation &&
+    requiresManhuaOutboundConfirmation(block)
+  ) {
+    // 早拒：不合格的在任何外部调用之前就挡掉，省掉无谓的续签与探测。
+    // 真正的把关在每个提交点的 settleManhuaOutbound 里**再现读一次**。
+    // 取闸口径与最终守卫**完全一致**：配了 getter 就以 getter 为准，
+    // 返回 undefined 按缺闸处理，不回退旧 snapshot（0914 复审建议直接统一）。
+    assertManhuaOutboundGate(
+      block,
+      runOptions?.resolveOutboundGate
+        ? runOptions.resolveOutboundGate(block.id)
+        : runOptions?.outboundGate,
+      String(deps.userId || ""),
+    );
+  }
   if (block.kind === "music") throw new Error("请在音乐节点中选择生成音乐、分镜或合成阶段");
   if (runOptions?.pilotRun) {
     if (
@@ -1665,7 +2493,7 @@ export async function runCanvasBlock(
       if (!source) throw new Error("请先选择本次要修改的原片");
       const editPrompt = compileManhuaVideoEditPrompt(block.prompt);
       const editSourceDurationSec = (await probeVideoDurationSec(source)) || undefined;
-      const edited = await runSeedanceProductVideo(editPrompt, undefined, ar, {
+      const editOpts: SeedanceCanvasRequestOptions = {
         version: "2.5",
         workMode: "video_edit",
         videoUrls: [source],
@@ -1675,6 +2503,20 @@ export async function runCanvasBlock(
         resolution: block.videoResolution,
         episodeIndex: block.episodeIndex,
         clipIndex: parseClipIndexFromBlockId(block.id),
+      };
+      // 原片编辑也走同一道闸。上一轮它在 block.kind==="video" 之后立刻提交，
+      // 整条确认逻辑都绕过去了（0914 审查 P1-1 实测复现过）。
+      const editGuard = settleManhuaOutbound(
+        {
+          ...buildSeedanceCanvasRequestBody(editPrompt, undefined, ar, editOpts),
+          engine: "seedance-2.5",
+        },
+        runOptions,
+        { block, executingUserId: String(deps.userId || "") },
+      );
+      const edited = await runSeedanceProductVideo(editPrompt, undefined, ar, {
+        ...editOpts,
+        beforeSubmit: editGuard,
       });
       return {
         outputUrl: edited.videoUrl,
@@ -1798,57 +2640,7 @@ export async function runCanvasBlock(
         }
       }
       // 节点只含 id；path 从 deps 后台表解析，绝不依赖提示词里的网址
-      const requestedAssetRows = isClip
-        ? parseManhuaAssetImageBindBlock(block.prompt || motionPrompt)
-        : [];
-      const assetRows = isClip
-        ? resolveManhuaAssetImageBindRows(
-            requestedAssetRows,
-            deps.manhuaAssetPathById,
-          ).map((r) => {
-            const abs = absolutizeManhuaAssetUrl(r.path) || r.path;
-            /**
-             * 跨集场景挂的是四视角拼板切片，按本段机位换那一格：俯拍段喂平视图
-             * 等于让引擎自己想象俯视下的地面动线，空间锁就白锁了。
-             */
-            const tiles = deps.manhuaAssetTileUrlsById?.[r.id];
-            if (!tiles) return { ...r, path: abs };
-            const picked = resolveManhuaSceneTileUrl(abs, tiles, motionPrompt);
-            return { ...r, path: absolutizeManhuaAssetUrl(picked.url) || picked.url };
-          })
-        : [];
-      const requiredLookRows = requestedAssetRows.filter((row) => row.tag.startsWith("@服装"));
-      if (requiredLookRows.some((row) => !assetRows.some((resolved) => resolved.id === row.id))) {
-        throw new Error("本段所选造型的参考图已失效，请重新挂图并确认；本次未提交生成。");
-      }
-      const mentionedTags = isClip
-        ? extractManhuaMentionedAssetTags(motionPrompt)
-        : [];
-      /**
-       * @引用闭环（@图NN）：解析成真 URL 进 imageUrls；断链硬拦——
-       * 红 chip 只是提示，跑到这一步还断就必须炸，绝不静默出错脸。
-       */
-      const { applyManhuaAtReferencesToClip } = await import("@shared/manhuaAtReference");
-      const atRefApplied =
-        isClip && deps.manhuaAtReferenceEntries?.length
-          ? applyManhuaAtReferencesToClip({
-              promptText: String(block.prompt || motionPrompt || ""),
-              index: deps.manhuaAtReferenceEntries,
-              bindings: block.atRefBindings || null,
-            })
-          : null;
-      if (atRefApplied?.missing.length) {
-        throw new Error(
-          `@引用断链：@${atRefApplied.missing.join("、@")} 指到的资产不存在，请在审阅框修正或删除该引用后再出片`,
-        );
-      }
-      const absStills = [
-        ...(atRefApplied?.imageUrls || []),
-        ...stillPool.map((u) => absolutizeManhuaAssetUrl(u) || u),
-      ].filter(
-        (u, i, arr) =>
-          (/^https?:\/\//i.test(u) || u.startsWith("data:image/")) && arr.indexOf(u) === i,
-      );
+      // ——— 引用清单登记（必须早于任何过滤）———
       // clip-eNN-... → 集号；没有导演板表或解不出集号时 boardUrl 就是空串，不影响既有行为
       const clipEpisodeMatch = /^[a-z_]+-e(\d{2})-/i.exec(block.id);
       const clipEpisodeNo = clipEpisodeMatch ? Number.parseInt(clipEpisodeMatch[1]!, 10) : null;
@@ -1856,7 +2648,7 @@ export async function runCanvasBlock(
       const clipLocalSegNo = clipEpisodeNo
         ? resolveClipLocalSegmentIndex(block.id, block.prompt, clipEpisodeNo)
         : null;
-      const boardUrl =
+      const rawBoardUrl =
         isClip && clipEpisodeNo
           ? String(
               (clipLocalSegNo != null
@@ -1865,10 +2657,158 @@ export async function runCanvasBlock(
             ).trim() ||
             String(deps.manhuaDirectorBoardUrlByEpisode?.[clipEpisodeNo] || "").trim()
           : "";
+
+      const requestedAssetRows = isClip
+        ? parseManhuaAssetImageBindBlock(block.prompt || motionPrompt)
+        : [];
+      /**
+       * @引用闭环（@图NN）：解析成真 URL 进 imageUrls；断链硬拦——
+       * 红 chip 只是提示，跑到这一步还断就必须炸，绝不静默出错脸。
+       */
+      const { applyManhuaAtReferencesToClip, resolveManhuaAtReferences } = await import(
+        "@shared/manhuaAtReference"
+      );
+      /**
+       * @图：**不再用 entries.length 跳过**——索引为空时也要解析提示词 token，
+       * 才能把断链如实报成 missing，而不是当作「没有 @图」。
+       *
+       * 注意 applyManhuaAtReferencesToClip 的 imageUrls 按 /^https?:/ 过滤过，
+       * 本机引用在那里既不出现也不算 missing，两头都不报就丢了；
+       * 所以登记用的是下面**未过滤的语义解析结果**，
+       * 这里的 atRefApplied 只取 missing 一项（其余产物已不再被消费）。
+       */
+      const atRefPromptText = String(block.prompt || motionPrompt || "");
+      const atRefApplied = isClip
+        ? applyManhuaAtReferencesToClip({
+            promptText: atRefPromptText,
+            index: deps.manhuaAtReferenceEntries || [],
+            bindings: block.atRefBindings || null,
+          })
+        : null;
+      /**
+       * 登记用的是**未按协议过滤的语义解析结果**。
+       * applyManhuaAtReferencesToClip 的 imageUrls 已经滤过一遍，
+       * 溯不回来源的 @图 在那里既不出现、也不算 missing——两头都不报，就丢了。
+       */
+      const atRefRawResolved = isClip
+        ? resolveManhuaAtReferences({
+            text: atRefPromptText,
+            index: deps.manhuaAtReferenceEntries || [],
+            bindings: block.atRefBindings || null,
+          }).resolved.filter((e) => e.kind === "image")
+        : [];
+      if (atRefApplied?.missing.length) {
+        throw new Error(
+          `@引用断链：@${atRefApplied.missing.join("、@")} 指到的资产不存在，请在审阅框修正或删除该引用后再出片`,
+        );
+      }
+      /**
+       * **先把语义选择全部做完**（含场景切片按本段机位选格），再登记、再校验。
+       *
+       * 0915 复审 P1 实测：切片替换发生在清单校验之后，
+       * 选中的那一格若断链，会被后面的 assetRows.filter 静默删掉——
+       * 「只消费清单已解析值」当时并没有兑现。
+       */
+      const resolvedAssetRows = isClip
+        ? resolveManhuaAssetImageBindRows(
+            requestedAssetRows,
+            deps.manhuaAssetPathById
+              ? Object.fromEntries(
+                  Object.entries(deps.manhuaAssetPathById).map(([id, path]) => [
+                    id,
+                    normalizeCanvasRefSource(path) || String(path ?? ""),
+                  ]),
+                )
+              : deps.manhuaAssetPathById,
+          ).map((r) => {
+            const abs = normalizeCanvasRefSource(r.path) || r.path;
+            /**
+             * 跨集场景挂的是四视角拼板切片，按本段机位换那一格：俯拍段喂平视图
+             * 等于让引擎自己想象俯视下的地面动线，空间锁就白锁了。
+             */
+            const tiles = deps.manhuaAssetTileUrlsById?.[r.id];
+            if (!tiles) return { ...r, path: abs, tileSlot: "" as string };
+            const picked = resolveManhuaSceneTileUrl(abs, tiles, motionPrompt);
+            return {
+              ...r,
+              path: normalizeCanvasRefSource(picked.url) || picked.url,
+              tileSlot: String((picked as { slot?: string }).slot || ""),
+            };
+          })
+        : [];
+
+      /**
+       * **本次真正会被引用的东西，先整理成一张带槽位的清单，再统一解析校验。**
+       *
+       * 0915 复审点名：此前是逐处补漏——静帧补了、资产表补了，导演板又漏；
+       * 而且资产行在进到断言之前就被 resolveManhuaAssetImageBindRows
+       * （内部 isBindableAssetPath）过滤掉了，断链资产照旧静默消失。
+       *
+       * 所以顺序固定为：**登记清单 → 统一解析 → 统一校验 → 之后才允许任何过滤**。
+       * 新增引用类型只要登记进这张清单，就自动获得同样的失败语义。
+       */
+      type ExplicitRefKind = "atref" | "still" | "asset" | "board";
+      const explicitRefManifest: Array<{
+        /** 稳定键：下游一律按它筛选，中文 slotZh 只用于报错展示 */
+        kind: ExplicitRefKind;
+        slotZh: string;
+        raw: string;
+        resolved: string;
+      }> = [
+        // 用未过滤的解析结果登记：token 带上，断链时报得出是哪一个 @图
+        ...atRefRawResolved.map((e) => ({
+          kind: "atref" as const,
+          slotZh: `@引用图 @${e.token}`,
+          raw: String(e.url || ""),
+        })),
+        ...stillPool.map((raw) => ({
+          kind: "still" as const,
+          slotZh: "参考静帧",
+          raw: String(raw || ""),
+        })),
+        // 资产：按**提示词里请求了什么**登记，而不是按解析器留下了什么——
+        // 否则断链的那一行在登记之前就没了。
+        // 已选场景切片用**最终那一格**登记；断链切片必须报出场景与切片槽位。
+        ...requestedAssetRows.map((row) => {
+          const finalRow = resolvedAssetRows.find((r) => r.id === row.id);
+          const tileSlot = String((finalRow as { tileSlot?: string } | undefined)?.tileSlot || "");
+          return {
+            kind: "asset" as const,
+            slotZh: `资产图 ${row.tag}${tileSlot ? `·切片${tileSlot}` : ""}`,
+            raw: String(
+              finalRow?.path || deps.manhuaAssetPathById?.[row.id] || row.path || "",
+            ),
+          };
+        }),
+        ...(rawBoardUrl
+          ? [{ kind: "board" as const, slotZh: "导演板", raw: rawBoardUrl }]
+          : []),
+      ].map((e) => ({ ...e, resolved: normalizeCanvasRefSource(e.raw) }));
+      // 已选但解析不到可提交来源的，在这里就报清楚；不进入后面任何一层过滤
+      assertExplicitRefsResolvable(explicitRefManifest);
+
+      const resolvedOf = (raw: string) =>
+        explicitRefManifest.find((e) => e.raw === raw)?.resolved || normalizeCanvasRefSource(raw);
+      const boardUrl = rawBoardUrl ? resolvedOf(rawBoardUrl) : "";
+      // 资产行在清单之后不得再解析：下游只消费这里定下来的 path。
+      const assetRows = resolvedAssetRows;
+      const requiredLookRows = requestedAssetRows.filter((row) => row.tag.startsWith("@服装"));
+      if (requiredLookRows.some((row) => !assetRows.some((resolved) => resolved.id === row.id))) {
+        throw new Error("本段所选造型的参考图已失效，请重新挂图并确认；本次未提交生成。");
+      }
+      const mentionedTags = isClip
+        ? extractManhuaMentionedAssetTags(motionPrompt)
+        : [];
+      // 静帧直接取清单里已解析好的值：协议校验 → 去重，不再自己解析一遍
+      const absStills = explicitRefManifest
+        .filter((e) => e.kind === "atref" || e.kind === "still")
+        .map((e) => e.resolved)
+        .filter((u, i, arr) => isSubmittableRefUrl(u) && arr.indexOf(u) === i);
       // 成片硬绑：末帧 → 资产定妆 → 本段静帧 → 导演板（URL 只进 API imageUrls）
       const bindPlan = isClip
         ? planManhuaClipSeedanceImageBind({
-            assetRows: assetRows.filter((r) => /^https?:\/\//i.test(r.path)),
+            // 资产行在上面已按统一顺序规范化过，这里只做协议校验
+            assetRows: assetRows.filter((r) => isSubmittableRefUrl(r.path)),
             stillUrls: absStills,
             tailUrls: tailFrames,
             mentionedTags,
@@ -2051,7 +2991,7 @@ export async function runCanvasBlock(
           .filter(Boolean)
           .join("\n")
           .trim();
-        url = await runWan30(wanPrompt, wanImages, ar, {
+        const wanOpts = {
           videoUrls: wanVideoUrls,
           audioUrls: wanAudioUrls,
           duration: clipDurationRaw ?? 30,
@@ -2060,6 +3000,21 @@ export async function runCanvasBlock(
           clipIndex: parseClipIndexFromBlockId(block.id),
           idempotencyKey: submissionKey,
           manhuaPilot,
+        } as const;
+        // 与 Seedance 同一道闸：准备器产出 → 共用结算点 → 才提交。
+        const wanGuard = settleManhuaOutbound(
+          prepareWan30Outbound({
+            prompt: wanPrompt,
+            images: wanImages,
+            aspectRatio: ar,
+            ...wanOpts,
+          }),
+          runOptions,
+          { block, executingUserId: String(deps.userId || "") },
+        );
+        url = await runWan30(wanPrompt, wanImages, ar, {
+          ...wanOpts,
+          beforeSubmit: wanGuard,
           onTaskId: (taskId) =>
             deps.onVideoTaskCreated?.(block.id, { taskId, engine: "wan-3.0" }),
         });
@@ -2070,16 +3025,30 @@ export async function runCanvasBlock(
         }
         // 0825 r2v：取图口径与 Wan 相同（块上收集的参考图集）；≥2 张服务端自动切多图参考
         const hhImages = httpsImages.length ? httpsImages : ([firstFrame].filter(Boolean) as string[]);
-        url = await runHappyHorse(seedancePrompt, firstFrame, ar, {
+        const hhOpts = {
           duration: clipDuration,
           resolution: block.videoResolution,
           episodeIndex: block.episodeIndex,
           clipIndex: parseClipIndexFromBlockId(block.id),
           imageUrls: hhImages,
+        } as const;
+        const hhPrepared = prepareHappyHorseOutbound({
+          prompt: seedancePrompt,
+          imageUrl: firstFrame,
+          aspectRatio: ar,
+          ...hhOpts,
         });
+        const hhGuard = settleManhuaOutbound(hhPrepared, runOptions, {
+          block,
+          executingUserId: String(deps.userId || ""),
+        });
+        // 与其余引擎同口径：编译未通过就拦，不截断也不照发
+        throwIfOutboundCompileBlocked(hhPrepared.compile);
+        // 原样提交准备器产出的那一份，不再另构造
+        url = await runHappyHorse(hhPrepared.body, hhGuard);
       } else if (useHailuoH3) {
         // H3：OpenRouter 仅图参考（首帧 + input_references）；不传 Seedance 专属音/视频参考
-        url = await runHailuo3(seedancePrompt, seedStill, ar, {
+        const h3Opts = {
           imageUrls: httpsImages.length ? httpsImages : undefined,
           duration: clipDuration,
           resolution: block.videoResolution,
@@ -2087,6 +3056,20 @@ export async function runCanvasBlock(
           clipIndex: parseClipIndexFromBlockId(block.id),
           manhuaPilot,
           idempotencyKey: submissionKey,
+        } as const;
+        const h3Guard = settleManhuaOutbound(
+          prepareHailuo3CanvasOutbound({
+            prompt: seedancePrompt,
+            imageUrl: seedStill,
+            aspectRatio: ar,
+            ...h3Opts,
+          }),
+          runOptions,
+          { block, executingUserId: String(deps.userId || "") },
+        );
+        url = await runHailuo3(seedancePrompt, seedStill, ar, {
+          ...h3Opts,
+          beforeSubmit: h3Guard,
           onTaskId: (taskId) => deps.onVideoTaskCreated?.(block.id, { taskId, engine: videoModel }),
         });
       } else {
@@ -2224,11 +3207,7 @@ export async function runCanvasBlock(
           outVideos = outVideos.slice(0, SEEDANCE_REFERENCE_MAX.video);
           outAudios = outAudios.slice(0, SEEDANCE_REFERENCE_MAX.audio);
         }
-        const seedanceOut = await runSeedanceProductVideo(
-          finalPrompt,
-          useSeedance25 && workMode === "text_to_video" ? undefined : seedStill,
-          ar,
-          {
+        const seedanceOpts = {
           imageUrls: outImages.length ? outImages : undefined,
           videoUrls: outVideos.length ? outVideos : undefined,
           audioUrls: outAudios.length ? outAudios : undefined,
@@ -2244,12 +3223,34 @@ export async function runCanvasBlock(
           workMode: useSeedance25 ? workMode : undefined,
           manhuaPilot,
           idempotencyKey: submissionKey,
-          onTaskId: (taskId) => deps.onVideoTaskCreated?.(block.id, { taskId, engine: videoModel }),
+          onTaskId: (taskId: string) =>
+            deps.onVideoTaskCreated?.(block.id, { taskId, engine: videoModel }),
           editSourceDurationSec,
           episodeIndex: block.episodeIndex,
           clipIndex: parseClipIndexFromBlockId(block.id),
-            resolution: block.videoResolution,
+          resolution: block.videoResolution,
+        } as const;
+        const seedanceFirstFrame =
+          useSeedance25 && workMode === "text_to_video" ? undefined : seedStill;
+        // 与预览同源：同一个准备器、同一个结算点。
+        const seedanceGuard = settleManhuaOutbound(
+          {
+            ...buildSeedanceCanvasRequestBody(
+              finalPrompt,
+              seedanceFirstFrame,
+              ar,
+              seedanceOpts,
+            ),
+            engine: videoModel,
           },
+          runOptions,
+          { block, executingUserId: String(deps.userId || "") },
+        );
+        const seedanceOut = await runSeedanceProductVideo(
+          finalPrompt,
+          seedanceFirstFrame,
+          ar,
+          { ...seedanceOpts, beforeSubmit: seedanceGuard },
         );
         url = seedanceOut.videoUrl;
         if (useSeedance25) {

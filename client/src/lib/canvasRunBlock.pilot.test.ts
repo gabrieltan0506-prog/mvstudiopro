@@ -15,6 +15,7 @@ vi.mock("./longJobsFlyOrigin", () => ({
 import { compileManhuaPilotPrompt } from "@shared/manhuaPilotGate";
 import { defaultCanvasBlock, type CanvasBlock } from "./canvasTypes";
 import { runCanvasBlock } from "./canvasRunBlock";
+import { confirmClipLikeUser, gateFromConfirmations } from "./__testutils__/manhuaOutboundGate";
 import { runManhuaDramaFactoryPipeline, spawnManhuaDramaStudio, expandManhuaShotKeyartsAfterReverse, ensureManhuaFragmentClips, resolveManhuaFragmentRunTargets } from "./canvasDramaStudio";
 import { buildManhuaAssetLockRegistry, buildManhuaAssetPathById } from "@shared/manhuaAssetLockRegistry";
 import { confirmManhuaSegmentLookBindingSource } from "@shared/manhuaCharacterLookSets";
@@ -122,11 +123,20 @@ describe("首段试片的实际出站载荷（仅虚构网络边界）", () => {
   it("编排入口同样不能绕过审核，失败不提交和不删除独立分镜", async () => {
     const { block, blocks, edges } = preparedPipelineFixture("0–30s：原稿保留。");
     const authorize = vi.fn(async () => { throw new Error("请先审阅并批准试片"); });
+    const deps = { userRole: "admin" as const, userId: "test-user", optimizeCopy: async () => "", authorizeManhuaClip: authorize };
+    // 门禁已启用：先按用户真实动作取得确认（共用准备 → 生产路径预览 → 同一指纹算法）。
+    // 确认这一步不带这个必然抛错的 authorize——用户是先看内容再去过试片审核，
+    // 本用例要验的是「审核失败就不提交」，不是让确认卡在审核上。
+    const confirmation = await confirmClipLikeUser({
+      deps: { userRole: "admin", userId: "test-user", optimizeCopy: async () => "" },
+      blocks, edges, blockId: block.id,
+    });
     const result = await runManhuaDramaFactoryPipeline({
-      deps: { userRole: "admin", optimizeCopy: async () => "", authorizeManhuaClip: authorize },
+      deps,
       blocks, edges, episodeIndex: 1, untilStage: "clip", forceFromStage: "clip",
       fragmentShotIndex: 1, targetBlockIds: [block.id], preservePreparedTargetBlocks: true, maxRetries: 0,
       ensureOptions: { videoModel: "seedance-2.5" },
+      resolveOutboundGate: gateFromConfirmations({ [block.id]: confirmation }),
     });
     expect(result.errors.length).toBeGreaterThan(0);
     expect(authorize).toHaveBeenCalledTimes(1);
@@ -193,12 +203,16 @@ describe("首段试片的实际出站载荷（仅虚构网络边界）", () => {
 
   it("实际编排核把试片约束传到最终请求，但保留节点中的独立分镜原稿", async () => {
     const { block, blocks, edges } = preparedPipelineFixture("0–6s：灯笼亮起。\n6–12s：人物停步。\n12–30s：后段石桥断裂。");
+    const deps = { userRole: "admin" as const, userId: "test-user", optimizeCopy: async () => "" };
+    // 试片口径也必须一致：确认时就按 pilotRun 预览，否则指纹与真正提交对不上
+    const confirmation = await confirmClipLikeUser({ deps, blocks, edges, blockId: block.id, pilotRun: true });
     const result = await runManhuaDramaFactoryPipeline({
-      deps: { userRole: "admin", optimizeCopy: async () => "" },
+      deps,
       blocks, edges, episodeIndex: 1,
       untilStage: "clip", forceFromStage: "clip", fragmentShotIndex: 1,
       targetBlockIds: [block.id], preservePreparedTargetBlocks: true,
       pilotRun: true, maxRetries: 0, ensureOptions: { videoModel: "seedance-2.5" },
+      resolveOutboundGate: gateFromConfirmations({ [block.id]: confirmation }),
     });
     expect(result.errors).toEqual([]);
     expect(result.completedIds).toEqual([block.id]);

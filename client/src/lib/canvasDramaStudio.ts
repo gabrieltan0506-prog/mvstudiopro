@@ -70,7 +70,13 @@ import {
   parseManhuaEpisodeSegmentPlanFromMarkdown,
   type ManhuaEpisodeSegmentPlan,
 } from "@shared/manhuaEpisodeSegmentPlan";
-import { newWanSubmissionKey, runCanvasBlock, type CanvasRunDeps } from "./canvasRunBlock";
+import type { ManhuaShotContinuityPrefs } from "@shared/manhuaShotContinuity";
+import {
+  newWanSubmissionKey,
+  runCanvasBlock,
+  type CanvasRunDeps,
+  type ManhuaOutboundGate,
+} from "./canvasRunBlock";
 import { mapWithConcurrency } from "./canvasUpload";
 import { MANHUA_DRAMA_DEFAULT_PROMPTS } from "@shared/videoReversePrompt";
 import {
@@ -3833,6 +3839,126 @@ function unverifiedEditedClipQuality(summary: string): ManhuaClipQualityReport {
  * 顺序自动跑漫剧工厂：每步用最新 working snapshot 收集上游。
  * skipDone=true 时跳过已完成节点，便于中断后续跑。
  */
+/**
+ * 工厂单段准备：把「真正提交之前对节点做的全部改写」集中到一处。
+ *
+ * 生成前确认必须和真正运行看到同一份输入。运行时这里会做四类改写，
+ * 而从裸节点算出的预览**看不到它们**，于是确认指纹与真实请求对不上：
+ *   ① 最近上游图覆盖 refImageUrl；
+ *   ② 上段末帧接力：refVideoUrl、把已登记外部成片的 gcsUri 挂进 uploadedAssets、
+ *      提示词追加「【连续】承上段末帧脸服场」；
+ *   ③ 段内关键静帧作多图参考，并带两道门禁（原稿分镜变更 / 造型变更直接抛错、不提交）；
+ *   ④ 上游视觉图与文本的收集。
+ *
+ * **不生成、不计费、不写任务、不修改传入的 blocks**；只做读取与纯计算
+ * （文档正文读取是只读的）。预览与真正 pipeline 共用本函数。
+ */
+export async function prepareManhuaFactoryClipInput(input: {
+  blocks: CanvasBlock[];
+  edges: CanvasEdge[];
+  blockId: string;
+  /** 找不到时的兜底节点（pipeline 里是本轮 block） */
+  fallbackBlock: CanvasBlock;
+  stage: string | null;
+  episodeIndex?: number | null;
+  shotContinuity?: Partial<ManhuaShotContinuityPrefs> | null;
+  /** 原片编辑已在上游备好时，跳过上游收集与接力改写 */
+  preparedVideoEdit: boolean;
+}): Promise<{
+  preparedBlock: CanvasBlock;
+  upstream: { visionImages: ReturnType<typeof collectVisionImages>; texts: string[] };
+}> {
+  const { blocks: working, edges, blockId, fallbackBlock, stage, preparedVideoEdit } = input;
+  const opts = { shotContinuity: input.shotContinuity, episodeIndex: input.episodeIndex };
+  const current = working.find((b) => b.id === blockId) || fallbackBlock;
+  const visionImages = preparedVideoEdit ? [] : collectVisionImages(blockId, working, edges);
+  const nearestRef =
+    !preparedVideoEdit && (current.kind === "image" || current.kind === "video")
+      ? current.refImageUrl || resolveNearestUpstreamImageUrl(blockId, working, edges)
+      : current.refImageUrl;
+  let runBlockPayload =
+    nearestRef && nearestRef !== current.refImageUrl
+      ? { ...current, refImageUrl: nearestRef }
+      : current;
+  const { normalizeManhuaShotContinuityPrefs } = await import("@shared/manhuaShotContinuity");
+  const shotCont = normalizeManhuaShotContinuityPrefs(opts.shotContinuity);
+  // 静帧硬接力已在上方 keyart 并行批次处理；此处串行路径不会再出现 keyart
+
+  // 段成片读取当前计划的上一段，自动编号为集内段号。
+  if (stage === "clip" && !preparedVideoEdit) {
+    const epForSeg = getBlockEpisodeIndex(runBlockPayload) ?? opts.episodeIndex ?? 1;
+    const localSeg = resolveClipLocalSegmentIndex(blockId, runBlockPayload.prompt, epForSeg);
+    let prevClipUrl: string | undefined;
+    if (shotCont.clipFromPrevTail && !runBlockPayload.refVideoUrl) {
+      prevClipUrl = resolvePreviousSegmentClipUrl(working, epForSeg, localSeg, { segmentIndexIsLocal: true });
+    }
+    if (prevClipUrl) {
+      const basePrompt = String(runBlockPayload.prompt || "");
+      const needCont = !/【连续】|镜头连续性/.test(basePrompt);
+      // 上段若是登记进来的外部成片（60 分钟签名链），把它的 gcsUri 一并挂到本段上传记录，
+      // 出片前统一重签才盖得到接力片；否则一小时后供应商拉不到媒体。
+      const prevRegistered = working.find(
+        (b) =>
+          b.id.startsWith("clip-") &&
+          b.outputUrl === prevClipUrl &&
+          b.manhuaSegmentRefs?.registered?.gcsUri &&
+          b.manhuaSegmentRefs.registered.url === prevClipUrl,
+      )?.manhuaSegmentRefs?.registered;
+      const prevAsset = prevRegistered?.gcsUri && !(runBlockPayload.uploadedAssets || []).some((a) => a.url === prevClipUrl)
+        ? [{
+            id: `continuity-registered-${localSeg}`,
+            url: prevClipUrl,
+            previewUrl: prevClipUrl,
+            fileName: prevRegistered.fileName || "prev-registered-clip.mp4",
+            gcsUri: prevRegistered.gcsUri,
+            kind: "video" as const,
+            mimeType: "video/mp4",
+          }]
+        : [];
+      runBlockPayload = {
+        ...runBlockPayload,
+        refVideoUrl: prevClipUrl,
+        ...(prevAsset.length ? { uploadedAssets: [...(runBlockPayload.uploadedAssets || []), ...prevAsset] } : {}),
+        prompt: stripManhuaPromptSlop(
+          [basePrompt, needCont ? "【连续】承上段末帧脸服场，勿跳棚。" : ""]
+            .filter(Boolean)
+            .join("\n"),
+        ),
+      };
+    }
+    // 段内静帧作多图参考：画风跟图走，提示词不再复述画风
+    const segKeyarts = working
+      .filter(
+        (b) =>
+          b.id.startsWith("keyart-") &&
+          (getBlockEpisodeIndex(b) ?? 1) === epForSeg &&
+          episodeSegmentContainsShot(working, epForSeg, localSeg, resolveKeyartShotIndex(b.id, b.prompt), runBlockPayload.videoModel),
+      )
+      .sort(sortKeyartBlocks);
+    const segUrls = segKeyarts.map((b) => mediaUrlOf(b)).filter(Boolean) as string[];
+    if (segKeyarts.some(keyart => !isManhuaKeyartLookCurrent({ ...keyart, manhuaKeyartLookState: keyart.manhuaKeyartSourceState }))) {
+      throw new Error("原稿分镜已变更或旧图尚未核对原镜身份，请先重出对应关键静帧；原图保留，本次未提交视频。");
+    }
+    if (segKeyarts.some((keyart) => !isManhuaKeyartLookCurrent(keyart))) {
+      throw new Error("本段造型已变更，请先重出对应关键静帧；原图已保留，本次未提交视频。");
+    }
+    if (segUrls.length) {
+      runBlockPayload = {
+        ...runBlockPayload,
+        refImageUrl: segUrls[0],
+        editFusionUrls: segUrls.slice(1).slice(0, 15),
+      };
+    }
+  }
+
+  const docTexts =
+    current.kind === "text" || current.kind === "copy_organize"
+      ? await loadCanvasDocumentTexts(collectDocumentAssets(blockId, working, edges))
+      : [];
+  const texts = preparedVideoEdit ? [] : [...collectUpstreamTexts(blockId, working, edges), ...docTexts];
+  return { preparedBlock: runBlockPayload, upstream: { visionImages, texts } };
+}
+
 export async function runManhuaDramaFactoryPipeline(opts: {
   deps: CanvasRunDeps;
   blocks: CanvasBlock[];
@@ -3855,6 +3981,14 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   onBlocksChange?: (blocks: CanvasBlock[]) => void;
   /** 本次执行是首段 10 秒试片；只约束成片载荷，不修改草稿中的独立分镜原文。 */
   pilotRun?: boolean;
+  /**
+   * 生成前确认闸：按节点 id 返回「当前归属 + 该段的确认记录」。
+   *
+   * **不是可选安全闸**——漫剧段成片缺确认会被 runCanvasBlock 直接拒绝。
+   * currentScope 必须由调用方按**当前**账号/项目/节点给出，不能从确认记录里读回来。
+   * 单段、批量、重跑都经这里下发，每段各取各的确认。
+   */
+  resolveOutboundGate?: (blockId: string) => ManhuaOutboundGate | undefined;
   onStageStart?: (blockId: string, index: number, total: number, label: string) => void;
   onStageDone?: (blockId: string, index: number, total: number, label: string) => void;
   /** 单节点最终失败（含关键静帧批量中的一张） */
@@ -4330,92 +4464,20 @@ export async function runManhuaDramaFactoryPipeline(opts: {
         break;
       }
       try {
-        const current = working.find((b) => b.id === blockId) || block;
-        const visionImages = preparedVideoEdit ? [] : collectVisionImages(blockId, working, edges);
-        const nearestRef =
-          !preparedVideoEdit && (current.kind === "image" || current.kind === "video")
-            ? current.refImageUrl || resolveNearestUpstreamImageUrl(blockId, working, edges)
-            : current.refImageUrl;
-        let runBlockPayload =
-          nearestRef && nearestRef !== current.refImageUrl
-            ? { ...current, refImageUrl: nearestRef }
-            : current;
-        const { normalizeManhuaShotContinuityPrefs } = await import("@shared/manhuaShotContinuity");
-        const shotCont = normalizeManhuaShotContinuityPrefs(opts.shotContinuity);
-        // 静帧硬接力已在上方 keyart 并行批次处理；此处串行路径不会再出现 keyart
-
-        // 段成片读取当前计划的上一段，自动编号为集内段号。
-        if (stage === "clip" && !preparedVideoEdit) {
-          const epForSeg = getBlockEpisodeIndex(runBlockPayload) ?? opts.episodeIndex ?? 1;
-          const localSeg = resolveClipLocalSegmentIndex(blockId, runBlockPayload.prompt, epForSeg);
-          let prevClipUrl: string | undefined;
-          if (shotCont.clipFromPrevTail && !runBlockPayload.refVideoUrl) {
-            prevClipUrl = resolvePreviousSegmentClipUrl(working, epForSeg, localSeg, { segmentIndexIsLocal: true });
-          }
-          if (prevClipUrl) {
-            const basePrompt = String(runBlockPayload.prompt || "");
-            const needCont = !/【连续】|镜头连续性/.test(basePrompt);
-            // 上段若是登记进来的外部成片（60 分钟签名链），把它的 gcsUri 一并挂到本段上传记录，
-            // 出片前统一重签才盖得到接力片；否则一小时后供应商拉不到媒体。
-            const prevRegistered = working.find(
-              (b) =>
-                b.id.startsWith("clip-") &&
-                b.outputUrl === prevClipUrl &&
-                b.manhuaSegmentRefs?.registered?.gcsUri &&
-                b.manhuaSegmentRefs.registered.url === prevClipUrl,
-            )?.manhuaSegmentRefs?.registered;
-            const prevAsset = prevRegistered?.gcsUri && !(runBlockPayload.uploadedAssets || []).some((a) => a.url === prevClipUrl)
-              ? [{
-                  id: `continuity-registered-${localSeg}`,
-                  url: prevClipUrl,
-                  previewUrl: prevClipUrl,
-                  fileName: prevRegistered.fileName || "prev-registered-clip.mp4",
-                  gcsUri: prevRegistered.gcsUri,
-                  kind: "video" as const,
-                  mimeType: "video/mp4",
-                }]
-              : [];
-            runBlockPayload = {
-              ...runBlockPayload,
-              refVideoUrl: prevClipUrl,
-              ...(prevAsset.length ? { uploadedAssets: [...(runBlockPayload.uploadedAssets || []), ...prevAsset] } : {}),
-              prompt: stripManhuaPromptSlop(
-                [basePrompt, needCont ? "【连续】承上段末帧脸服场，勿跳棚。" : ""]
-                  .filter(Boolean)
-                  .join("\n"),
-              ),
-            };
-          }
-          // 段内静帧作多图参考：画风跟图走，提示词不再复述画风
-          const segKeyarts = working
-            .filter(
-              (b) =>
-                b.id.startsWith("keyart-") &&
-                (getBlockEpisodeIndex(b) ?? 1) === epForSeg &&
-                episodeSegmentContainsShot(working, epForSeg, localSeg, resolveKeyartShotIndex(b.id, b.prompt), runBlockPayload.videoModel),
-            )
-            .sort(sortKeyartBlocks);
-          const segUrls = segKeyarts.map((b) => mediaUrlOf(b)).filter(Boolean) as string[];
-          if (segKeyarts.some(keyart => !isManhuaKeyartLookCurrent({ ...keyart, manhuaKeyartLookState: keyart.manhuaKeyartSourceState }))) {
-            throw new Error("原稿分镜已变更或旧图尚未核对原镜身份，请先重出对应关键静帧；原图保留，本次未提交视频。");
-          }
-          if (segKeyarts.some((keyart) => !isManhuaKeyartLookCurrent(keyart))) {
-            throw new Error("本段造型已变更，请先重出对应关键静帧；原图已保留，本次未提交视频。");
-          }
-          if (segUrls.length) {
-            runBlockPayload = {
-              ...runBlockPayload,
-              refImageUrl: segUrls[0],
-              editFusionUrls: segUrls.slice(1).slice(0, 15),
-            };
-          }
-        }
-
-        const docTexts =
-          current.kind === "text" || current.kind === "copy_organize"
-            ? await loadCanvasDocumentTexts(collectDocumentAssets(blockId, working, edges))
-            : [];
-        const texts = preparedVideoEdit ? [] : [...collectUpstreamTexts(blockId, working, edges), ...docTexts];
+        // 生成前确认与真正运行共用同一份准备：改这里就两边一起改，不会再漂移。
+        const { preparedBlock: runBlockPayload, upstream: preparedUpstream } =
+          await prepareManhuaFactoryClipInput({
+            blocks: working,
+            edges,
+            blockId,
+            fallbackBlock: block,
+            stage,
+            episodeIndex: opts.episodeIndex,
+            shotContinuity: opts.shotContinuity,
+            preparedVideoEdit,
+          });
+        const visionImages = preparedUpstream.visionImages;
+        const texts = preparedUpstream.texts;
         const out = await runCanvasBlock(
           {
             ...opts.deps,
@@ -4436,7 +4498,18 @@ export async function runManhuaDramaFactoryPipeline(opts: {
             visionImages,
             texts,
           },
-          { videoSubmissionKey, pilotRun: opts.pilotRun === true && stage === "clip" },
+          {
+            videoSubmissionKey,
+            pilotRun: opts.pilotRun === true && stage === "clip",
+            // 漫剧段成片：**强制生成前确认**。单段、批量、重跑都从这里下发，
+            // 调用方不能自己决定传不传——闸绑在这一层，不在各调用点。
+            // 先决条件已闭合：预览与运行共用 prepareManhuaFactoryClipInput（A 项），
+            // 当前身份与快照有效期统一管理（B 项），各引擎接同一个结算点（C 项）。
+            enforceOutboundConfirmation: stage === "clip",
+            // 传 getter 不传快照：批量跑几分钟，提交边界必须拿当时的身份与确认，
+            // 而不是这一轮循环开始时抓的那一份（0914 审查 P1：在途只拿到旧 scope 快照）。
+            resolveOutboundGate: opts.resolveOutboundGate,
+          },
         );
         if (preparedVideoEdit && !String(out.outputUrl || out.outputUrls?.[0] || "").trim()) {
           throw new Error("未取得视频编辑结果，原片已保留；请先核对任务记录，不要重复提交");

@@ -180,6 +180,8 @@ function confirmHarness(name: string, allowBatch = true, directionSelection: Man
       wardrobePropContinuityIds: [],
     }),
     saveCanvasState: saved,
+    // B 项：画布被整份换掉时作废旧的生成前确认
+    bumpManhuaOutboundEpoch: vi.fn(),
     remapDockSelectionAfterSpawn: vi.fn(),
     pushDebug: vi.fn(),
     window: { confirm: vi.fn(() => allowBatch), setTimeout: vi.fn() },

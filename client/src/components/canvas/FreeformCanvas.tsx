@@ -70,7 +70,7 @@ import {
 } from "@shared/canvasGenerationPricing";
 import { isCanvasUploadableFile, inferCanvasAssetKindFromFileName, takeFilesFromInput, uploadCanvasFilesParallel, uploadOneCanvasAsset, CANVAS_UPLOAD_CONCURRENCY } from "@/lib/canvasUpload";
 import { loadCanvasDocumentTexts } from "@/lib/canvasDocumentText";
-import { runCanvasBlock, type CanvasRunDeps } from "@/lib/canvasRunBlock";
+import { runCanvasBlock, type CanvasRunDeps, type ManhuaOutboundGate } from "@/lib/canvasRunBlock";
 import {
   collectManhuaEpisodeSegmentPromptsForVoiceGate,
   countManhuaClipAssetEdges,
@@ -296,6 +296,22 @@ type FreeformCanvasProps = {
   onBlocksChange: (blocks: BlocksUpdater) => void;
   onEdgesChange: (edges: CanvasEdge[]) => void;
   runDeps: CanvasRunDeps;
+  /**
+   * 漫剧段成片（clip-*）的生成前确认闸。由拥有确认记录的页面注入。
+   * 审查点名：画布里的 clip 重跑也是真实付费出口，不能只堵工厂那一条。
+   * 不传＝该画布没有漫剧段（音乐 MV、图片、文案等），按原契约运行。
+   */
+  resolveManhuaOutboundGate?: (blockId: string) => ManhuaOutboundGate;
+  /**
+   * 漫剧段成片（clip-*）的**生产唯一准备入口**，由页面注入。
+   * 画布不再自己 collect 一套：工作台确认与这里的重跑必须是同一份准备，
+   * 否则确认的和发出去的不是同一个请求（0914 复审 P1）。
+   */
+  prepareManhuaClipRun?: (blockId: string) => Promise<{
+    preparedBlock: CanvasBlock;
+    upstream: { visionImages: Array<{ url: string }>; texts: string[] };
+    runOptions: { pilotRun?: boolean };
+  }>;
   /** 外部请求选中并滚入视口（成片坞定位） */
   focusBlockId?: string | null;
   onFocusBlockConsumed?: () => void;
@@ -773,6 +789,8 @@ export default function FreeformCanvas({
   onBlocksChange,
   onEdgesChange,
   runDeps,
+  resolveManhuaOutboundGate,
+  prepareManhuaClipRun,
   focusBlockId,
   onFocusBlockConsumed,
   presentation = "full",
@@ -1570,6 +1588,20 @@ export default function FreeformCanvas({
     };
   }, [activeVideoTaskKey, authUser?.id]);
 
+  /**
+   * 漫剧确认闸与准备入口用**每次渲染刷新的 ref** 读。
+   *
+   * 0914 复审 P2：runBlock 的依赖表原来不含这两个回调，页面侧准备口径
+   * （连续性设置、集号、试片状态）变了而其它 props 没变时，
+   * runBlock 仍捕获旧的准备函数——工作台用新口径确认、画布还用旧口径，
+   * 结果是确认对不上被拒。依赖表补齐之外再走 ref，
+   * 长跑 await 期间也拿得到当前语义。
+   */
+  const prepareManhuaClipRunRef = useRef(prepareManhuaClipRun);
+  prepareManhuaClipRunRef.current = prepareManhuaClipRun;
+  const resolveManhuaOutboundGateRef = useRef(resolveManhuaOutboundGate);
+  resolveManhuaOutboundGateRef.current = resolveManhuaOutboundGate;
+
   const runBlock = useCallback(
     async (blockId: string) => {
       if (referencePreparationRef.current.has(blockId)) return;
@@ -1586,7 +1618,13 @@ export default function FreeformCanvas({
       }
       // 漫剧节点重跑：按当前字段/资产重编译 prompt，旧产物进暂存（禁止复用旧稿）
       let workingBlock = block;
-      if (compileManhuaRerun) {
+      // **clip-* 在这里就分流**，不进通用重编译。
+      // 通用重编译走 ensureManhuaFragmentClips，它会对既有节点调
+      // clearManhuaVideoEditOperation，把原片编辑/延长改写成普通生成；
+      // 之后再读统一准备，读到的已经不是用户确认的那个操作了（0914 复审 P1）。
+      // 段成片的重编译与关键图新鲜度检查都由 prepareManhuaClipRun 内部按操作类型完成。
+      const isManhuaClipBlock = String(block.id || "").startsWith("clip-");
+      if (compileManhuaRerun && !isManhuaClipBlock) {
         const mustRecompile =
           /^(charsheet|sceneplate|propsheet|propplate|keyart|clip)-/i.test(block.id);
         try {
@@ -1716,7 +1754,34 @@ export default function FreeformCanvas({
               } : row));
           },
         } : runDepsWithPlan;
-        const out = await runCanvasBlock(submittedDeps, runBlockPayload, { visionImages, texts });
+        // clip-* 走同一道闸：本画布没有确认界面，缺确认时明确指回工作台，
+        // 而不是静默放行（旧写法直接 runCanvasBlock，整条确认逻辑绕过去了）。
+        //
+        // **强制与否只看任务本身是不是漫剧段成片，不看调用方有没有传回调。**
+        // 上一轮写成 `isManhuaClip && Boolean(resolveManhuaOutboundGate)`，
+        // 结果漏传回调的那个挂载点反而把门禁关掉了（审查 P1，实有第三处漏传）。
+        const isManhuaClip = String(runBlockPayload.id || "").startsWith("clip-");
+        const resolveGateNow = resolveManhuaOutboundGateRef.current;
+        const prepareClipNow = prepareManhuaClipRunRef.current;
+        if (isManhuaClip && (!resolveGateNow || !prepareClipNow)) {
+          throw new Error(
+            "这个画布没有接入生成前确认，漫剧段成片不能从这里提交，本次未提交、未扣费。请回剧本工作台生成。",
+          );
+        }
+        // clip-* 走**生产唯一准备入口**：与工作台确认同一份准备、同一套试片/编辑口径。
+        // 画布原来自己 collect 上游图、也不传 pilotRun，于是确认的与发出的可能不是同一份。
+        const clipRun = isManhuaClip ? await prepareClipNow!(blockId) : null;
+        const out = await runCanvasBlock(
+          submittedDeps,
+          clipRun ? clipRun.preparedBlock : runBlockPayload,
+          clipRun ? clipRun.upstream : { visionImages, texts },
+          {
+            ...(clipRun?.runOptions ?? {}),
+            enforceOutboundConfirmation: isManhuaClip,
+            // 提交边界会再读一次；这里给的是 getter 不是快照。
+            resolveOutboundGate: isManhuaClip ? resolveGateNow : undefined,
+          },
+        );
         // MV镜头允许编辑，但旧请求结果只进入历史，不能覆盖已改过的新稿。
         if (blockId.startsWith("mvshot-")) {
           const current = blocksRef.current.find(row => row.id === blockId);
@@ -1786,6 +1851,9 @@ export default function FreeformCanvas({
       runDepsWithPlan,
       compileManhuaRerun,
       projectAssetRefs,
+      // 0914 复审 P2：这两个原来漏在依赖之外
+      prepareManhuaClipRun,
+      resolveManhuaOutboundGate,
     ],
   );
 
