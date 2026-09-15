@@ -1,5 +1,7 @@
 /**
- * 武打运镜文法 → 白模相机编排（0915 拉片提炼，见知识库《0915-武打运镜文法》）。
+ * 激烈动作运镜文法 → 白模相机编排（0915 拉片提炼，见知识库《0915-武打运镜文法》）。
+ * 适用：武打、斗法（法术/远程）、追逐、爆破、出水登船——同一条因果链 准备→发力→接触→反应→恢复，
+ * 差别只在「接触点」：近身=兵器/身体相接；斗法=法术命中受方；出水=破水面。
  *
  * 规则（硬桥硬马档）：
  *   建立 1.5–2s → 起手侧中景（轻推）→ 接触仰角固定机位 0.5–1s（切在接触前 5 帧）
@@ -33,6 +35,8 @@ export type ManhuaCameraChoreographyInput = {
   style?: ManhuaCameraStyle;
   /** 单段最多镜数（previs 合同 8） */
   maxCuts?: number;
+  /** 每个事件的交手方式：melee 近身（默认）/ ranged 斗法·远程（施法起手手部特写、命中在受方侧） */
+  eventManner?: Record<string, "melee" | "ranged">;
 };
 
 export const MANHUA_CAMERA_MAX_CUTS = 8;
@@ -94,11 +98,20 @@ export function choreographManhuaCameras(input: ManhuaCameraChoreographyInput): 
     }
     if (e.kind === "attack" || e.kind === "land") {
       const windupStart = fr(Math.max(0, cue.windupStartSec));
+      const ranged = input.eventManner?.[e.eventId] === "ranged";
       if (contactStart - windupStart >= MIN_CUT_SEC) {
-        drafts.push({ kind: "windup", eventId: e.eventId, startSec: windupStart, endSec: contactStart, position: pt(a[0] + side[0] * 3, a[1] + side[1] * 3, 1.4), target: pt(a[0], a[1], 1.2), lens: 40, noteZh: `${e.actorId} 起手：侧面中景`, priority: 2 });
+        drafts.push(
+          ranged
+            ? { kind: "windup", eventId: e.eventId, startSec: windupStart, endSec: contactStart, position: pt(a[0] + dir[0] * 1.2 + side[0] * 0.8, a[1] + dir[1] * 1.2 + side[1] * 0.8, 1.3), target: pt(a[0] + dir[0] * 0.5, a[1] + dir[1] * 0.5, 1.2), lens: 55, noteZh: `${e.actorId} 施法起手：手部/法印特写`, priority: 2 }
+            : { kind: "windup", eventId: e.eventId, startSec: windupStart, endSec: contactStart, position: pt(a[0] + side[0] * 3, a[1] + side[1] * 3, 1.4), target: pt(a[0], a[1], 1.2), lens: 40, noteZh: `${e.actorId} 起手：侧面中景`, priority: 2 },
+        );
       }
-      // 接触：低机位仰角、固定机位，切在接触前 5 帧
-      drafts.push({ kind: "contact", eventId: e.eventId, startSec: contactStart, endSec: contactEnd, position: pt(a[0] - dir[0] * 1.2 + side[0] * 1.6, a[1] - dir[1] * 1.2 + side[1] * 1.6, 0.6), target: pt(b[0], b[1], 1.3), lens: e.kind === "land" ? 35 : 45, noteZh: e.kind === "land" ? "登船落地：仰角" : `接触：仰角固定机位（切在接触前 ${CONTACT_LEAD_FRAMES} 帧）`, priority: 4 });
+      // 接触：近身=攻方侧低机位仰角；斗法=受方侧低机位全景看命中与余波；都是固定机位，切在接触前 5 帧
+      drafts.push(
+        ranged
+          ? { kind: "contact", eventId: e.eventId, startSec: contactStart, endSec: contactEnd, position: pt(b[0] + dir[0] * 2.5 + side[0] * 2.2, b[1] + dir[1] * 2.5 + side[1] * 2.2, 0.7), target: pt(b[0], b[1], 1.2), lens: 32, noteZh: `法术命中 ${other ?? ""}：受方侧低机位全景（切在接触前 ${CONTACT_LEAD_FRAMES} 帧）`, priority: 4 }
+          : { kind: "contact", eventId: e.eventId, startSec: contactStart, endSec: contactEnd, position: pt(a[0] - dir[0] * 1.2 + side[0] * 1.6, a[1] - dir[1] * 1.2 + side[1] * 1.6, 0.6), target: pt(b[0], b[1], 1.3), lens: e.kind === "land" ? 35 : 45, noteZh: e.kind === "land" ? "登船落地：仰角" : `接触：仰角固定机位（切在接触前 ${CONTACT_LEAD_FRAMES} 帧）`, priority: 4 },
+      );
       const recoverEnd = fr(Math.min(D, Math.max(contactEnd + MIN_CUT_SEC, cue.recoverEndSec)));
       if (other && e.kind === "attack") {
         // 反应特写：受方先
