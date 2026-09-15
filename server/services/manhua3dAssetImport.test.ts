@@ -66,7 +66,7 @@ describe("manhua3dAssetImport · GLB 解析", () => {
     expect(result.geometry.animationCount).toBe(1);
 
     const renamed = structuredClone(RIGGED_DOC);
-    renamed.nodes[1] = { name: "Hips" };
+    (renamed.nodes as Array<Record<string, unknown>>)[1] = { name: "Hips" };
     const partial = inspectGlbBytes(buildGlb(renamed));
     expect(partial.ok && partial.skeleton.previsRigCompatible).toBe(false);
     expect(partial.ok && partial.skeleton.missingPrevisBones).toEqual(["pelvis"]);

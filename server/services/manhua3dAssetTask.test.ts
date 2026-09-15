@@ -142,6 +142,6 @@ describe("manhua3dAssetTask", () => {
     resetManhua3dAssetDependenciesForTests();
     vi.stubEnv("LUX3D_CN_API_KEY", "");
     vi.stubEnv("LUX3D_GLOBAL_API_KEY", "");
-    expect(getManhua3dLux3dCapability().reasonCode).toBe("no_server_credentials");
+    expect(getManhua3dLux3dCapability()).toMatchObject({ available: false, reasonCode: "no_server_credentials" });
   });
 });

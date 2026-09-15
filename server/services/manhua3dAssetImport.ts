@@ -104,7 +104,7 @@ export function summarizeGltfDocument(doc: Record<string, unknown>): {
     }
   }
   const boneNames: string[] = [];
-  for (const index of [...jointIndexes].sort((a, b) => a - b)) {
+  for (const index of Array.from(jointIndexes).sort((a, b) => a - b)) {
     if (boneNames.length >= MAX_BONE_NAMES) break;
     boneNames.push(cleanName(asRecord(nodes[index]).name) || `joint_${index}`);
   }
