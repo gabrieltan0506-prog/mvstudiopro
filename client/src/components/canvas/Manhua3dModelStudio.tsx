@@ -52,6 +52,37 @@ export function manhua3dModelStageOf(c: Manhua3dModelStudioCharacter, rigged: bo
   }
 }
 
+/** 按钮与面板共用的计数口径（1468 R1）：就绪 = ready 或 rigged（阶段判定后，blocked 的人即使有旧模型也不算） */
+export function manhua3dModelCounts(characters: Manhua3dModelStudioCharacter[], riggedIds: readonly string[]): { total: number; ready: number; rigged: number } {
+  const stages = characters.map((c) => manhua3dModelStageOf(c, riggedIds.includes(c.id)).stage);
+  return {
+    total: characters.length,
+    ready: stages.filter((st) => st === "ready" || st === "rigged").length,
+    rigged: stages.filter((st) => st === "rigged").length,
+  };
+}
+
+/**
+ * 批量建模：串行提交，**任一失败不中断其余**（1468 R1：原先 for-await 里一人抛错整批停）。
+ * 返回失败名单让 UI 留着勾选供重试；成功的从勾选里去掉。
+ */
+export async function runManhua3dBatch(
+  ids: readonly string[],
+  onGenerate: (id: string) => void | Promise<void>,
+): Promise<{ succeeded: string[]; failed: Array<{ id: string; messageZh: string }> }> {
+  const succeeded: string[] = [];
+  const failed: Array<{ id: string; messageZh: string }> = [];
+  for (const id of ids) {
+    try {
+      await onGenerate(id);
+      succeeded.push(id);
+    } catch (error) {
+      failed.push({ id, messageZh: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return { succeeded, failed };
+}
+
 const STAGE_CLASS: Record<Stage, string> = {
   blocked: "bg-white/10 text-white/60",
   none: "bg-white/10",
@@ -68,17 +99,13 @@ export function Manhua3dModelStudio(props: Props) {
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [confirmBatch, setConfirmBatch] = useState(false);
   const [batchBusy, setBatchBusy] = useState(false);
+  const [batchFailures, setBatchFailures] = useState<Array<{ id: string; messageZh: string }>>([]);
 
   const rows = useMemo(
     () => characters.map((c) => ({ c, ...manhua3dModelStageOf(c, riggedIds.includes(c.id)) })),
     [characters, riggedIds],
   );
-  const counts = useMemo(() => {
-    const total = rows.length;
-    const ready = rows.filter((r) => r.stage === "ready" || r.stage === "rigged").length;
-    const rigged = rows.filter((r) => r.stage === "rigged").length;
-    return { total, ready, rigged };
-  }, [rows]);
+  const counts = useMemo(() => manhua3dModelCounts(characters, riggedIds), [characters, riggedIds]);
   const buildable = rows.filter((r) => (r.stage === "none" || r.stage === "failed") && !busyIds.includes(r.c.id));
   const selectedBuildable = buildable.filter((r) => selected.has(r.c.id));
 
@@ -87,11 +114,10 @@ export function Manhua3dModelStudio(props: Props) {
     setBatchBusy(true);
     setConfirmBatch(false);
     try {
-      // 串行提交：每人一单，任一失败不影响其余；不重复提交已在跑的
-      for (const r of selectedBuildable) {
-        await onGenerate(r.c.id);
-      }
-      setSelected(new Set());
+      // 串行提交：每人一单，任一失败不影响其余；失败的留在勾选里供重试
+      const result = await runManhua3dBatch(selectedBuildable.map((r) => r.c.id), onGenerate);
+      setBatchFailures(result.failed);
+      setSelected(new Set(result.failed.map((f) => f.id)));
     } finally {
       setBatchBusy(false);
     }
@@ -168,6 +194,11 @@ export function Manhua3dModelStudio(props: Props) {
           );
         })}
       </ul>
+      {batchFailures.length ? (
+        <p className="mt-2 text-[11px] text-amber-100" data-batch-failures>
+          上一批 {batchFailures.length} 人提交失败（其余已提交）：{batchFailures.map((f) => `${characters.find((c) => c.id === f.id)?.labelZh ?? f.id}：${f.messageZh}`).join("；")}
+        </p>
+      ) : null}
       {onGenerate && buildable.length ? (
         <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]" data-batch-bar>
           <button type="button" className={btn} disabled={disabled} onClick={() => setSelected(new Set(buildable.map((r) => r.c.id)))}>

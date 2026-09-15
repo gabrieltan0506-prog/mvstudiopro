@@ -74,3 +74,44 @@ describe("动作计划 → 白模规格草案", () => {
     expect(d.issuesZh.join("\n")).toContain("不在本镜在场名单");
   });
 });
+
+describe("1468 R1 · 边界：秒位吸附与短镜出水", () => {
+  const plan = buildBoatFight();
+  const { shots } = splitManhuaActionPlanForPrevis(plan);
+  const isFrame = (t: number) => Math.abs(t * 24 - Math.round(t * 24)) < 1e-6;
+
+  it("接触点贴着镜头两端：吸附 24 帧后仍 startSec < contactSec < endSec ≤ durationSec，且都在帧上", () => {
+    const shot = shots.find((s) => s.sourceShotId === "ap_shot_1")!;
+    const nearEdges = {
+      ...shot,
+      events: [
+        { eventId: "e_head", kind: "attack" as const, actorId: MAN, targetActorId: WOMAN, outcome: "hit", slowMotionIntent: false,
+          phases: [{ kind: "windup" as const, sourceStartSec: 0, sourceEndSec: 0.05 }, { kind: "contact" as const, sourceStartSec: 0.05, sourceEndSec: 0.1 }, { kind: "recover" as const, sourceStartSec: 0.1, sourceEndSec: 0.2 }] },
+        { eventId: "e_tail", kind: "attack" as const, actorId: WOMAN, targetActorId: MAN, outcome: "blocked", slowMotionIntent: false,
+          phases: [{ kind: "windup" as const, sourceStartSec: 5.9, sourceEndSec: 5.95 }, { kind: "contact" as const, sourceStartSec: 5.95, sourceEndSec: 5.98 }, { kind: "recover" as const, sourceStartSec: 5.98, sourceEndSec: 6 }] },
+      ],
+    };
+    const d = manhuaPrevisDraftFromExecutableShot({ plan, shot: nearEdges as typeof shot, resolvedCamera: cam(6), aspect: "16:9" });
+    const D = d.timing.durationSec;
+    expect(d.spec).not.toBeNull();
+    for (const i of d.spec!.interactions!) {
+      expect(i.startSec).toBeLessThan(i.contactSec);
+      expect(i.contactSec).toBeLessThan(i.endSec);
+      expect(i.endSec).toBeLessThanOrEqual(D);
+      expect([i.startSec, i.contactSec, i.endSec].every(isFrame)).toBe(true);
+    }
+  });
+
+  it("出水点贴着镜尾（浪花 1.5s 放不下）：不抛，spec 为 null 且带回合同原因；出水点仍不越过 durationSec", () => {
+    const water = shots.find((s) => s.kind === "water_emerge")!;
+    const late = {
+      ...water,
+      events: water.events.map((e) => (e.kind === "emerge"
+        ? { ...e, phases: [{ kind: "windup" as const, sourceStartSec: water.sourceSpan.endSec - 0.3, sourceEndSec: water.sourceSpan.endSec - 0.1 }, { kind: "contact" as const, sourceStartSec: water.sourceSpan.endSec - 0.1, sourceEndSec: water.sourceSpan.endSec }] }
+        : e)),
+    };
+    const d = manhuaPrevisDraftFromExecutableShot({ plan, shot: late as typeof water, resolvedCamera: cam(6), aspect: "9:16" });
+    expect(d.spec).toBeNull();
+    expect(d.issuesZh.join("\n")).toMatch(/最后一个实际视频帧|上升与浪花/);
+  });
+});

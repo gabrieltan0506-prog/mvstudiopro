@@ -106,6 +106,8 @@ export function ManhuaPrevisStudioView({
   const [initial] = useState(
     () => block.previsStudio ?? createManhuaPrevisStudio()
   );
+  // 高级数字表折叠只由**初始**有无草案决定；之后跟着用户手动开合走，草案出现/消失不会把正在编辑的表收起来（1468 R1）
+  const [advancedOpen, setAdvancedOpen] = useState(() => !actionPlanDrafts.length);
   const studio = block.previsStudio ?? initial;
   const latest = useRef({ studio, onChange, services, disabled, block });
   latest.current = { studio, onChange, services, disabled, block };
@@ -637,7 +639,7 @@ export function ManhuaPrevisStudioView({
           </select>
         </label>
       </div>
-      <details open={!actionPlanDrafts.length} className="space-y-2" data-previs-advanced>
+      <details open={advancedOpen} onToggle={(e) => setAdvancedOpen(e.currentTarget.open)} className="space-y-2" data-previs-advanced>
         <summary className="text-xs text-cyan-100">高级参数 · 数字表（站位 / 动作 / 特效 / 出水 / 短打）</summary>
       {studio.spec.actors.map((actor, index) => (
         <fieldset

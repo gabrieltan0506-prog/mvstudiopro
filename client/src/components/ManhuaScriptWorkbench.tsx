@@ -33,7 +33,7 @@ import { VIDEO_MODEL_OPTIONS, type CanvasBlock } from "@/lib/canvasTypes";
 import { CanvasAudioStudio } from "@/components/canvas/CanvasAudioStudio";
 import { ManhuaPrevisStudio } from "@/components/canvas/ManhuaPrevisStudio";
 import { ManhuaActionTimeline } from "@/components/canvas/ManhuaActionTimeline";
-import { Manhua3dModelStudio } from "@/components/canvas/Manhua3dModelStudio";
+import { Manhua3dModelStudio, manhua3dModelCounts } from "@/components/canvas/Manhua3dModelStudio";
 import { splitManhuaActionPlanForPrevis } from "@shared/manhuaActionPlanSplit";
 import { manhuaPrevisDraftFromExecutableShot } from "@shared/manhuaPrevisFromActionPlan";
 import type { ManhuaActionPlan } from "@shared/manhuaActionPlan";
@@ -3373,7 +3373,7 @@ export default function ManhuaScriptWorkbench({
           )}
           {onGenerateAsset3d || onImportAsset3d ? <button type="button" data-manhua-action="open-3d-model-studio" disabled={Boolean(factoryBusy)}
             className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
-            onClick={()=>setModelStudioOpen(value=>!value)}>3D 模型（就绪 {modelStudioCharacters.filter(c=>c.eligibility.currentModel3d?.status==="succeeded").length}/{modelStudioCharacters.length}）</button> : null}
+            onClick={()=>setModelStudioOpen(value=>!value)}>3D 模型（就绪 {manhua3dModelCounts(modelStudioCharacters, riggedAssetIds).ready}/{modelStudioCharacters.length}）</button> : null}
           {modelStudioOpen ? <Manhua3dModelStudio
             characters={modelStudioCharacters}
             busyIds={asset3dBusyIds}
