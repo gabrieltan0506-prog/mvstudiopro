@@ -132,6 +132,7 @@ describe("建单序列四层计数（真实任务文件层）", () => {
     ledger: ReturnType<typeof fakeLedger>;
     taskInput?: Record<string, unknown>;
     crashAfterCharge?: boolean;
+    chargeFails?: boolean;
     now?: () => number;
     leaseMs?: number;
   }) {
@@ -150,6 +151,11 @@ describe("建单序列四层计数（真实任务文件层）", () => {
       return { kind, taskId: step.kind === "existing_task" ? step.taskId : undefined };
     }
     // 扣费：按 intentId 幂等（与 chargeCanvasVideoCredits 的 marker 同性质）
+    if (input.chargeFails) {
+      // 站点在 !charged.ok 分支：释放占位后返回错误（不扣费不建单）
+      await intent.releaseCanvasIntentLease({ store, userId, intentId: input.intentId, holderId: input.holder, now: input.now });
+      return { kind: "charge_failed" as const, taskId: undefined };
+    }
     const charged = input.ledger.charge(`marker:${userId}:${input.intentId}`, 118);
     const fenced = await intent.updateCanvasIntentStage({ store, userId, intentId: input.intentId, holderId: input.holder, stage: "charged", chargeKey: `marker:${userId}:${input.intentId}`, now: input.now, leaseMs: input.leaseMs });
     if (!fenced) return { kind: "fenced" as const, taskId: undefined };
@@ -212,6 +218,20 @@ describe("建单序列四层计数（真实任务文件层）", () => {
     expect(b.kind).toBe("409");
     expect(ledger.deductions()).toBe(1);
     expect(await taskFiles()).toHaveLength(1);
+  });
+
+  it("扣费失败（余额不足/服务异常）后释放占位：充值后立刻重试能接管，不空等 60 秒；总扣费 1 任务 1", async () => {
+    const ledger = fakeLedger();
+    let t = 1_000_000;
+    const now = () => t;
+    const failed = await runSite({ intentId: "gi_seq_rel", holder: "A", ledger, chargeFails: true, now });
+    expect(failed.kind).toBe("charge_failed");
+    expect(ledger.deductions()).toBe(0);
+    t += 10; // 几乎立刻重试（不到 60 秒）
+    const retry = await runSite({ intentId: "gi_seq_rel", holder: "B", ledger, now });
+    expect(retry.kind).toBe("created");
+    expect(await taskFiles()).toHaveLength(1);
+    expect(ledger.deductions()).toBe(1);
   });
 
   it("fencing：A 占位后租约过期，B 接管并建单；A 迟到推进 charged 被拒 → A 不建单；总任务 1、扣费 1", async () => {

@@ -21,6 +21,7 @@ import {
   computeServerRequestDigest,
   lookupCanvasIntent,
   planCanvasIntentJobStep,
+  releaseCanvasIntentLease,
   renewCanvasIntentLease,
   updateCanvasIntentStage,
 } from "./canvasGenerationIntent";
@@ -396,3 +397,28 @@ describe("planCanvasIntentJobStep：裁决 → 建单点动作（纯映射）", 
     if (!e.proceed && e.kind === "existing_task") expect(e.taskId).toBe("cv_reserved_1");
   });
 });
+
+describe("扣费失败后释放占位（R1 1464-08）", () => {
+  it("释放后别的执行体**立刻**能接管，不用等租约；stage/taskId 不变", async () => {
+    let t = 1_000_000;
+    const now = () => t;
+    const first = await acquireCanvasIntent(mk({ requestDigest: "d1", holderId: "A", now, leaseMs: 60_000 }));
+    if (first.kind !== "acquired") throw new Error("setup");
+    // 未释放：B 只能 creating
+    expect((await acquireCanvasIntent(mk({ requestDigest: "d1", holderId: "B", now }))).kind).toBe("creating");
+    expect(await releaseCanvasIntentLease(mk({ requestDigest: "d1", holderId: "A", now }))).toBe(true);
+    t += 1; // 几乎同时
+    const got = await acquireCanvasIntent(mk({ requestDigest: "d1", holderId: "B", now }));
+    expect(got.kind).toBe("took_over");
+    if (got.kind !== "took_over") return;
+    expect(got.record.taskId).toBe(first.record.taskId);
+    expect(got.record.stage).toBe("reserved");
+  });
+
+  it("非持有者释放不了别人的占位", async () => {
+    await acquireCanvasIntent(mk({ requestDigest: "d1", holderId: "A" }));
+    expect(await releaseCanvasIntentLease(mk({ requestDigest: "d1", holderId: "B" }))).toBe(false);
+    expect((await acquireCanvasIntent(mk({ requestDigest: "d1", holderId: "C" }))).kind).toBe("creating");
+  });
+});
+

@@ -1129,6 +1129,19 @@ async function releasePilotOnIntentReject(
     : reply.body;
 }
 
+/**
+ * 扣费失败（402 / 403 / 503）后释放占位租约（R1 1464-08）：下一次点击能立刻接管，不用空等 60 秒。
+ * 不动 stage / taskId；503 若其实已扣成功，重试时按 marker 幂等命中，不二扣。
+ */
+async function releaseCanvasIntentAfterChargeFailure(input: {
+  userId: number;
+  intentId: string;
+  holderId: string;
+}): Promise<void> {
+  const m = await import("../server/services/canvasGenerationIntent.js");
+  await m.releaseCanvasIntentLease(input).catch(() => false);
+}
+
 /** 被 fencing 出局时的回复：这次生成已由另一执行者持有，客户端按意图查询即可，不重复扣费 */
 function canvasIntentFencedReply(intentId: string): { status: number; body: Record<string, unknown> } {
   return {
@@ -2059,6 +2072,7 @@ async function runSeedance25EvolinkJob(
       idempotencyKey: intentId,
     });
     if (!charged.ok) {
+      await releaseCanvasIntentAfterChargeFailure({ userId: access.userId, intentId, holderId: intentGate.holderId });
       const stateError = await settlePreparedManhuaPilotChargeFailure(
         preparedPilot,
         access.userId,
@@ -4444,6 +4458,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             teamMemberId: "teamMemberId" in out ? out.teamMemberId : undefined,
           };
         } catch (deductError) {
+          await releaseCanvasIntentAfterChargeFailure({ userId: viewer.userId, intentId, holderId: intentGate.holderId });
           const { InsufficientCreditsError } = await import("../server/credits.js");
           if (deductError instanceof InsufficientCreditsError) {
             return res.status(402).json({
@@ -4641,6 +4656,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           videoModel: CANVAS_VIDEO_MODEL_HAILUO_H3,
         });
         if (!charged.ok) {
+          await releaseCanvasIntentAfterChargeFailure({ userId: hailuoViewer.userId, intentId, holderId: intentGate.holderId });
           const stateError = await settlePreparedManhuaPilotChargeFailure(
             preparedPilot,
             hailuoViewer.userId,
@@ -4866,6 +4882,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           resolution,
         });
         if (!charged.ok) {
+          await releaseCanvasIntentAfterChargeFailure({ userId: wanViewer.userId, intentId, holderId: intentGate.holderId });
           const stateError = await settlePreparedManhuaPilotChargeFailure(
             preparedPilot,
             wanViewer.userId,
@@ -5023,6 +5040,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           resolution,
         });
         if (!charged.ok) {
+          await releaseCanvasIntentAfterChargeFailure({ userId: hhViewer.userId, intentId, holderId: intentGate.holderId });
           return res.status(charged.status).json({ ok: false, error: charged.error });
         }
         try {
@@ -5720,6 +5738,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             videoModel: billingVideoModel,
           });
           if (!charged.ok) {
+            await releaseCanvasIntentAfterChargeFailure({ userId: intentViewerId, intentId, holderId: intentGate.holderId });
             const stateError = await settlePreparedManhuaPilotChargeFailure(
               preparedPilot,
               pilotViewerId,
@@ -5944,6 +5963,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           label,
         });
         if (!chargedMini.ok) {
+          await releaseCanvasIntentAfterChargeFailure({ userId: intentViewerId, intentId, holderId: intentGate.holderId });
           const stateError = await settlePreparedManhuaPilotChargeFailure(
             preparedPilot,
             pilotViewerId,

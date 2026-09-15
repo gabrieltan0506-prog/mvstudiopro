@@ -93,6 +93,15 @@ describe("建单入口必须全部经过意图裁决", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("扣费失败分支必须释放占位租约（R1 1464-08）：每个建单点上方都能找到 releaseCanvasIntentAfterChargeFailure", () => {
+    const offenders: number[] = [];
+    createSites().forEach((line) => {
+      const seg = LINES.slice(Math.max(0, line - 260), line).join("\n");
+      if (!/releaseCanvasIntentAfterChargeFailure\(/.test(seg)) offenders.push(line);
+    });
+    expect(offenders).toEqual([]);
+  });
+
   it("建单必须复用裁决层预留的 taskId，不许现场新造", () => {
     const offenders: number[] = [];
     createSites().forEach((line) => {

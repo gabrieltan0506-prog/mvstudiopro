@@ -315,6 +315,34 @@ export async function acquireCanvasIntent(input: {
   return { kind: "unreadable", reasonZh: "生成记录状态不确定，请稍后重试" };
 }
 
+/**
+ * 扣费**失败**（402 余额不足 / 503 结果未确认 / 403 等）后释放占位：把租约置为已过期，
+ * 下一次点击（充值后重试、或同一用户再点）能立刻接管，不用空等 60 秒（R1 1464-08）。
+ * 只动租约不动 stage、不动 taskId：若 503 其实已扣成功，重试时 chargeCanvasVideoCredits
+ * 按 marker 幂等命中 alreadyCharged，不会二扣；预留 taskId 也沿用。
+ * 带 holderId 的 CAS：非持有者释放不了别人的占位。
+ */
+export async function releaseCanvasIntentLease(input: {
+  store?: CanvasIntentStore;
+  userId: number;
+  intentId: string;
+  holderId: string;
+  now?: () => number;
+}): Promise<boolean> {
+  const store = await storeOf(input.store);
+  const clock = input.now ?? (() => Date.now());
+  const res = await store.casUpdate({
+    userId: input.userId,
+    intentId: input.intentId,
+    expectHolderId: input.holderId,
+    patch: {
+      leaseExpiresAt: new Date(clock() - 1).toISOString(),
+      updatedAt: new Date(clock()).toISOString(),
+    },
+  });
+  return res.kind === "updated";
+}
+
 /** 更新占位阶段（扣费后 / 建单后各调一次），供崩溃恢复凭据 */
 export async function updateCanvasIntentStage(input: {
   store?: CanvasIntentStore;
