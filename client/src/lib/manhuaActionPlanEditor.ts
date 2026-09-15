@@ -30,6 +30,12 @@ import {
   type ManhuaResolvedLanding,
 } from "@shared/manhuaActionPlanBindings";
 import { manhuaPresentationDurationSec, validateManhuaShotTimeMap, type ManhuaTimeMapIssue } from "@shared/manhuaActionPlanTiming";
+import {
+  defaultManhuaPrevisCapability,
+  splitManhuaActionPlanForPrevis,
+  type ManhuaPrevisCapability,
+  type ManhuaSplitIssue,
+} from "@shared/manhuaActionPlanSplit";
 
 export type ManhuaActionPlanSourceShot = { index: number; durationSec: number; actionZh?: string };
 export type ManhuaActionPlanActorInput = { id: string; label: string; canonAnchorId?: string };
@@ -78,6 +84,49 @@ export function createManhuaActionPlanFromSegment(input: {
     initialStates: {},
     shots,
     executionRanges: [],
+  });
+}
+
+/** 计划里属于某段的镜头（按 sourceBinding.segmentIndex） */
+export function manhuaPlanShotsForSegment(plan: ManhuaActionPlan, segmentIndex: number): ManhuaPlanShot[] {
+  const seg = Math.max(1, Math.floor(segmentIndex) || 1);
+  return plan.shots.filter((s) => s.sourceBinding?.segmentIndex === seg);
+}
+
+/**
+ * 把另一段的分镜**追加**进本集既有计划（R3 1466-04）。
+ * 计划按集存、时间轴按段开：没有这条路径时，第 2 段想编排只能删掉第 1 段的计划重建——那是丢数据。
+ * 追加不动既有镜头；displayIndex 接着排；本段已有镜头则拒绝（不静默覆盖）。审批随 planRevision 自然失效。
+ */
+export function appendManhuaSegmentToPlan(
+  plan: ManhuaActionPlan,
+  input: { segmentIndex: number; shots: ManhuaActionPlanSourceShot[]; sourceRevision?: string },
+): ManhuaActionPlan {
+  const seg = Math.max(1, Math.floor(input.segmentIndex) || 1);
+  if (manhuaPlanShotsForSegment(plan, seg).length) throw new Error(`第 ${seg} 段已在本集计划里，不能重复追加`);
+  const ep = plan.episodeIndex;
+  const nextShots: ManhuaPlanShot[] = input.shots
+    .filter((s) => Number.isFinite(s.durationSec) && s.durationSec > 0)
+    .slice(0, 120)
+    .map((s, i) => ({
+      shotId: manhuaActionPlanShotId(ep, seg, s.index),
+      displayIndex: plan.shots.length + i + 1,
+      sourceBinding: {
+        episodeIndex: ep,
+        segmentIndex: seg,
+        sourceShotIndex: s.index,
+        ...(input.sourceRevision ? { sourceRevision: input.sourceRevision } : {}),
+      },
+      timeMap: { sourceDurationSec: Math.min(120, s.durationSec), spans: [] },
+      confirm: "draft",
+      actorChanges: [],
+      events: [],
+    }));
+  if (!nextShots.length) throw new Error("本段没有可编排的分镜（时长为 0）");
+  if (plan.shots.length + nextShots.length > 120) throw new Error("本集计划镜头数超过 120 上限");
+  return reseal(plan, (draft) => {
+    draft.shots = [...draft.shots, ...nextShots];
+    return draft;
   });
 }
 
@@ -291,6 +340,8 @@ export type ManhuaActionPlanReadiness = {
   /** 执行口径的绑定问题 */
   bindingIssues: ManhuaBindingIssue[];
   timeMapIssues: Array<{ shotId: string; issue: ManhuaTimeMapIssue }>;
+  /** 拆镜器（白模能力上限）问题：服务端 prepare 的 capability 层同一函数同一能力表，这里先报（R3 1466-05） */
+  splitIssues: ManhuaSplitIssue[];
   /** 没有任何事件、也没人在场的镜头：合同允许，但交白模没意义，这里如实拦 */
   emptyShotIds: string[];
   /** 还没点「已确认」的镜头：确认所见 = 实际提交，未确认不执行 */
@@ -302,11 +353,14 @@ export type ManhuaActionPlanReadiness = {
 export function summarizeManhuaActionPlanReadiness(
   plan: ManhuaActionPlan,
   context: ManhuaActionPlanBindingContext | null | undefined,
+  capability: ManhuaPrevisCapability = defaultManhuaPrevisCapability(),
 ): ManhuaActionPlanReadiness {
   const ctx = context ?? { landings: [], cameras: [] };
   const planIssuesExec = validateManhuaActionPlan(plan, "execution");
   const bindingIssues = validateManhuaActionPlanBindings(plan, ctx, "execution");
   const timeMapIssues = plan.shots.flatMap((s) => validateManhuaShotTimeMap(s.timeMap).map((issue) => ({ shotId: s.shotId, issue })));
+  // 与服务端 prepare 第 4 层同一函数、同一默认能力表：时间轴不能在拆镜会拒的情况下显示「可交白模执行」
+  const splitIssues = planIssuesExec.some((i) => i.severity === "error") ? [] : splitManhuaActionPlanForPrevis(plan, capability).issues;
   const emptyShotIds = plan.shots
     .filter((s) => {
       if (s.events.length) return false;
@@ -321,12 +375,14 @@ export function summarizeManhuaActionPlanReadiness(
     planIssues: planIssuesExec,
     bindingIssues,
     timeMapIssues,
+    splitIssues,
     emptyShotIds,
     unconfirmedShotIds,
     executionBlocked:
       planIssuesExec.some((i) => i.severity === "error") ||
       hasBlockingManhuaBindingIssues(bindingIssues) ||
       timeMapIssues.length > 0 ||
+      splitIssues.length > 0 ||
       emptyShotIds.length > 0 ||
       unconfirmedShotIds.length > 0,
     presentationTotalSec: plan.shots.reduce((acc, s) => acc + manhuaPresentationDurationSec(s.timeMap), 0),

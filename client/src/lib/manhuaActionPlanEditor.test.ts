@@ -3,7 +3,9 @@ import { isManhuaPlanApprovalCurrent } from "@shared/manhuaActionPlan";
 import type { ManhuaActionPlanBindingContext } from "@shared/manhuaActionPlanBindings";
 import {
   addManhuaActionEvent,
+  appendManhuaSegmentToPlan,
   approveManhuaActionPlan,
+  manhuaPlanShotsForSegment,
   createManhuaActionPlanFromSegment,
   manhuaActionEventFromDraft,
   manhuaLandingOptionsForShot,
@@ -130,5 +132,27 @@ describe("manhuaActionPlanEditor", () => {
     expect(summarizeManhuaActionPlanReadiness(withLand, moved).referencesValid).toBe(false);
     // 2D 落点在执行口径下被拦（不冒充 world）
     expect(summarizeManhuaActionPlanReadiness(withLand, ctx).bindingIssues.map((i) => i.code)).toContain("landing_world_point_required");
+  });
+});
+
+describe("R3 1466-04 · 计划按集存、时间轴按段开：追加不丢别段", () => {
+  it("第 2 段已有计划时追加第 3 段：旧镜一个不少、新镜接着编号、审批失效；同段重复追加被拒", () => {
+    const approved = approveManhuaActionPlan(base(), "2026-09-15T21:00:00+08:00");
+    expect(isManhuaPlanApprovalCurrent(approved)).toBe(true);
+    const seg3 = [
+      { index: 1, durationSec: 5, actionZh: "追击" },
+      { index: 2, durationSec: 4, actionZh: "收势" },
+    ];
+    const merged = appendManhuaSegmentToPlan(approved, { segmentIndex: 3, shots: seg3 });
+    expect(merged.shots.slice(0, 3).map((s) => s.shotId)).toEqual(approved.shots.map((s) => s.shotId));
+    expect(manhuaPlanShotsForSegment(merged, 2)).toHaveLength(3);
+    expect(manhuaPlanShotsForSegment(merged, 3).map((s) => [s.shotId, s.displayIndex])).toEqual([
+      ["ap_shot_e1_s3_t1", 4],
+      ["ap_shot_e1_s3_t2", 5],
+    ]);
+    expect(merged.actionPlanId).toBe(approved.actionPlanId);
+    expect(isManhuaPlanApprovalCurrent(merged)).toBe(false);
+    expect(() => appendManhuaSegmentToPlan(merged, { segmentIndex: 3, shots: seg3 })).toThrow(/已在本集计划里/);
+    expect(() => appendManhuaSegmentToPlan(merged, { segmentIndex: 4, shots: [{ index: 1, durationSec: 0 }] })).toThrow(/时长为 0/);
   });
 });

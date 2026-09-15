@@ -128,6 +128,24 @@ describe("prepareManhuaActionExecution · 四人船战", () => {
     expect(summarizeManhuaActionPlanReadiness(variants[2]!.plan, goodContext()).emptyShotIds).toEqual(["ap_shot_empty"]);
   });
 
+  it("1466 R3：时间轴 readiness 与 prepare 对「可执行」结论一致——默认能力表两边放行；更严能力表（出水 ≤2 人）两边同码拦下", () => {
+    const plan = buildBoatFight({ withSourceBindings: true, extraEmerge: true });
+    const okReadiness = summarizeManhuaActionPlanReadiness(plan, goodContext());
+    const okPrepare = prepareManhuaActionExecution({ plan, context: goodContext() });
+    expect(okReadiness.executionBlocked).toBe(false);
+    expect(okReadiness.splitIssues).toEqual([]);
+    expect(okPrepare.ok).toBe(true);
+
+    const strict = { ...defaultManhuaPrevisCapability(), waterMaxActors: 2 };
+    const blockedReadiness = summarizeManhuaActionPlanReadiness(plan, goodContext(), strict);
+    const blockedPrepare = prepareManhuaActionExecution({ plan, context: goodContext(), capability: strict });
+    expect(blockedReadiness.executionBlocked).toBe(true);
+    expect(blockedPrepare.ok).toBe(false);
+    if (blockedPrepare.ok) return;
+    expect(blockedPrepare.stage).toBe("capability");
+    expect(blockedReadiness.splitIssues.map((i) => i.code)).toEqual(blockedPrepare.splitIssues.map((i) => i.code));
+  });
+
   it("approval 不是总门禁：未审批的计划只要证据齐全仍可准备，approvalCurrent=false 如实带回", () => {
     const r = prepareManhuaActionExecution({ plan: buildBoatFight({ withSourceBindings: true }), context: goodContext() });
     expect(r.ok).toBe(true);

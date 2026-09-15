@@ -13,9 +13,11 @@ import type { ManhuaActionPlanBindingContext } from "@shared/manhuaActionPlanBin
 import { manhuaPresentationDurationSec } from "@shared/manhuaActionPlanTiming";
 import {
   addManhuaActionEvent,
+  appendManhuaSegmentToPlan,
   approveManhuaActionPlan,
   createManhuaActionPlanFromSegment,
   manhuaLandingOptionsForShot,
+  manhuaPlanShotsForSegment,
   removeManhuaActionEvent,
   setManhuaActionEventOutcome,
   setManhuaActorPresence,
@@ -129,6 +131,8 @@ export function ManhuaActionTimeline(props: Props) {
   };
 
   const readiness = useMemo(() => (plan ? summarizeManhuaActionPlanReadiness(plan, props.bindingContext) : null), [plan, props.bindingContext]);
+  // 计划按集存、时间轴按段开：本段还没进计划时给「追加」入口，不让用户删掉别段的计划重建（R3 1466-04）
+  const segmentShotCount = plan ? manhuaPlanShotsForSegment(plan, props.segmentIndex).length : 0;
   const actorLabel = useMemo(() => {
     const m = new Map(props.actors.map((a) => [a.id, a.label] as const));
     return (id: string) => plan?.actors.find((a) => a.actorId === id)?.nameZh ?? m.get(id) ?? id;
@@ -165,7 +169,7 @@ export function ManhuaActionTimeline(props: Props) {
   return (
     <section className="w-full rounded-xl border border-cyan-300/25 bg-[#0c121d] p-3 text-white" data-manhua-action-timeline>
       <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
-        <span className="text-cyan-100">第 {plan.episodeIndex} 集 · 动作节奏</span>
+        <span className="text-cyan-100">第 {plan.episodeIndex} 集 · 动作节奏（当前第 {props.segmentIndex} 段 {segmentShotCount} 镜 / 全集 {plan.shots.length} 镜）</span>
         <span className="rounded bg-white/10 px-1.5 py-0.5">呈现合计 {readiness!.presentationTotalSec.toFixed(1)}s</span>
         <span className={`rounded px-1.5 py-0.5 ${readiness!.approvalCurrent ? "bg-emerald-500/25" : plan.approval ? "bg-amber-500/25" : "bg-white/10"}`} data-approval-state={readiness!.approvalCurrent ? "current" : plan.approval ? "stale" : "none"}>
           {readiness!.approvalCurrent ? "审批有效" : plan.approval ? "审批已失效（内容改过）" : "未审批"}
@@ -174,16 +178,30 @@ export function ManhuaActionTimeline(props: Props) {
           {readiness!.referencesValid ? "落点/相机引用一致" : "导演板落点或相机已变，需重确认"}
         </span>
         <span className={`rounded px-1.5 py-0.5 ${readiness!.executionBlocked ? "bg-amber-500/25" : "bg-emerald-500/25"}`} data-execution-state={readiness!.executionBlocked ? "blocked" : "ready"}>
-          {readiness!.executionBlocked ? `执行前还缺 ${readiness!.planIssues.filter((i) => i.severity === "error").length + readiness!.bindingIssues.filter((i) => i.severity === "error").length + readiness!.timeMapIssues.length + readiness!.emptyShotIds.length + readiness!.unconfirmedShotIds.length} 项` : "可交白模执行"}
+          {readiness!.executionBlocked ? `执行前还缺 ${readiness!.planIssues.filter((i) => i.severity === "error").length + readiness!.bindingIssues.filter((i) => i.severity === "error").length + readiness!.timeMapIssues.length + readiness!.splitIssues.length + readiness!.emptyShotIds.length + readiness!.unconfirmedShotIds.length} 项` : "可交白模执行"}
         </span>
         <span className="ml-auto flex gap-1">
           <button type="button" className={btn} disabled={disabled || !past.length} onClick={undo}>撤销</button>
           <button type="button" className={btn} disabled={disabled || !future.length} onClick={redo}>重做</button>
           <button type="button" className={btn} disabled={disabled || readiness!.approvalCurrent} onClick={() => commit(() => approveManhuaActionPlan(plan, new Date().toISOString()))}>审批本版</button>
-          <button type="button" className={btnWarn} disabled={disabled} onClick={() => { if (window.confirm("删除本段动作计划？可撤销。")) commit(() => null); }}>删除计划</button>
+          <button type="button" className={btnWarn} disabled={disabled} onClick={() => { if (window.confirm(`删除第 ${plan.episodeIndex} 集整份动作计划（含所有段，共 ${plan.shots.length} 镜）？可撤销。`)) commit(() => null); }}>删除本集计划</button>
         </span>
       </div>
       {error ? <p className="mb-2 text-[11px] text-red-200">{error}</p> : null}
+      {!segmentShotCount ? (
+        <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-amber-100" data-manhua-action-segment-missing>
+          <span>第 {props.segmentIndex} 段还没进本集计划。</span>
+          <button
+            type="button"
+            className={btn}
+            disabled={disabled || !props.sourceShots.length}
+            onClick={() => commit(() => appendManhuaSegmentToPlan(plan, { segmentIndex: props.segmentIndex, shots: props.sourceShots }))}
+          >
+            把本段分镜追加到本集计划
+          </button>
+          {!props.sourceShots.length ? <span>本段还没有分镜，先确认分段剧本。</span> : null}
+        </div>
+      ) : null}
       {readiness!.executionBlocked ? (
         <details className="mb-2 text-[11px] text-amber-100">
           <summary>还缺什么（执行口径）</summary>
@@ -191,6 +209,7 @@ export function ManhuaActionTimeline(props: Props) {
             {readiness!.planIssues.filter((i) => i.severity === "error").map((i, n) => <li key={`p${n}`}>{i.messageZh}</li>)}
             {readiness!.bindingIssues.filter((i) => i.severity === "error").map((i, n) => <li key={`b${n}`}>{i.messageZh}</li>)}
             {readiness!.timeMapIssues.map((t, n) => <li key={`t${n}`}>{t.shotId}：{t.issue.messageZh}</li>)}
+            {readiness!.splitIssues.map((i, n) => <li key={`s${n}`}>{i.messageZh}</li>)}
             {readiness!.emptyShotIds.length ? <li>空镜（无事件且无人在场）：{readiness!.emptyShotIds.length} 个</li> : null}
             {readiness!.unconfirmedShotIds.length ? <li>未点「已确认」的镜头：{readiness!.unconfirmedShotIds.length} 个</li> : null}
           </ul>
