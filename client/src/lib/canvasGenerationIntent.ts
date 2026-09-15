@@ -308,3 +308,84 @@ export function resolveCanvasIntentForRun(input: {
     conflict,
   };
 }
+
+/* ────────────────────── 与出站确认指纹的衔接 ────────────────────── */
+
+/** FNV-1a 32 位；客户端没有同步 sha，摘要只作本地关联键，不是密码学承诺 */
+function fnv1a32(str: string, seed: number): number {
+  let h = seed >>> 0;
+  for (let i = 0; i < str.length; i += 1) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+
+/**
+ * 从出站确认指纹得到**意图摘要**。
+ *
+ * 指纹是 `JSON.stringify({ engine, scope: { userId, workspaceId, projectVersion, blockId, epoch }, request })`
+ * （canvasRunBlock.ts `manhuaOutboundConfirmationFingerprint`）。确认要跟 epoch 走——刷新、
+ * 换代都该重新确认；但**意图**不该：刷新之后同一份输入再发，必须复用同一个意图，
+ * 否则服务端看到的是"新意图同内容"→ 再建一单再扣一次费。所以这里去掉 epoch 与 projectVersion，
+ * 只留「谁、哪个工作区、哪个节点、什么引擎、什么请求」。
+ *
+ * 解析不了的指纹原样哈希，不猜。
+ */
+export function canvasIntentDigestFromOutboundFingerprint(fingerprint: string): string {
+  let basis = fingerprint;
+  try {
+    const parsed = JSON.parse(fingerprint) as {
+      engine?: unknown;
+      request?: unknown;
+      scope?: { userId?: unknown; workspaceId?: unknown; blockId?: unknown };
+    };
+    if (parsed && typeof parsed === "object") {
+      basis = JSON.stringify({
+        engine: parsed.engine,
+        scope: {
+          userId: parsed.scope?.userId,
+          workspaceId: parsed.scope?.workspaceId,
+          blockId: parsed.scope?.blockId,
+        },
+        request: parsed.request,
+      });
+    }
+  } catch {
+    // 非 JSON：直接哈希原串
+  }
+  const a = fnv1a32(basis, 0x811c9dc5).toString(16).padStart(8, "0");
+  const b = fnv1a32(basis, 0x9747b28c).toString(16).padStart(8, "0");
+  return `fp_${a}${b}`;
+}
+
+/**
+ * 回写意图状态（拿到任务号 / 发出 / 未知 / 结算）。**尽力而为，不抛**：
+ * 这些回写都发生在 POST 之后，存储失败不能反过来把已发出的请求变成"没发"。
+ */
+export function markCanvasIntentStatus(
+  storage: CanvasIntentStorageLike,
+  intentId: string,
+  blockId: string,
+  patch: { status: CanvasIntentStatus; taskId?: string; engine?: string; now: number },
+): CanvasGenerationIntent | null {
+  try {
+    const store = loadCanvasIntentStore(storage);
+    const found = (store.byBlock[blockId] || []).find((x) => x.intentId === intentId);
+    if (!found) return null;
+    // 终态不回退：已 settled 的不再被迟到的 submitted/acknowledged 改回去
+    if (found.status === "settled" && patch.status !== "settled") return found;
+    const next: CanvasGenerationIntent = {
+      ...found,
+      status: patch.status,
+      ...(patch.taskId ? { taskId: patch.taskId } : {}),
+      ...(patch.engine ? { engine: patch.engine } : {}),
+      updatedAt: patch.now,
+    };
+    storage.setItem(CANVAS_GENERATION_INTENT_LS_KEY, JSON.stringify(upsertCanvasIntent(store, next)));
+    return next;
+  } catch {
+    return null;
+  }
+}
+

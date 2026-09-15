@@ -301,7 +301,7 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
     }
     expect(result.posts, "点了真实「运行」却没有成片 POST").toHaveLength(1);
     const strip = (x: Record<string, unknown>) => {
-      const { idempotencyKey: _k, videoSubmissionKey: _s, ...rest } = x;
+      const { idempotencyKey: _k, videoSubmissionKey: _s, intentId: _i, ...rest } = x;
       return rest;
     };
     expect(strip(result.posts[0]!)).toEqual(strip(result.previewBody));
@@ -547,7 +547,7 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
     if (result.step !== "done") return;
 
     const strip = (x: Record<string, unknown>) => {
-      const { idempotencyKey: _k, videoSubmissionKey: _s, ...rest } = x;
+      const { idempotencyKey: _k, videoSubmissionKey: _s, intentId: _i, ...rest } = x;
       return rest;
     };
     // 设置真的改了，A 与 B 的出站内容必须不同——否则这条没有证明力
