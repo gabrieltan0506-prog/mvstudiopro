@@ -43,6 +43,23 @@ describe("武打运镜文法 → 白模相机", () => {
     expect(cameras.some((c) => c.kind === "land_high" && c.position[2] > 3)).toBe(true);
   });
 
+  it("斗法档：施法起手手部特写（lens 55）、命中镜在受方侧低机位全景（lens 32）；反应特写仍在", () => {
+    const shot = shots.find((s) => s.sourceShotId === "ap_shot_1")!;
+    const timing = manhuaPrevisTimingForExecutableShot(shot, cam(6));
+    // 施法起手要有 ≥ 半秒才有起手镜：把 1b 的起手提前到 1.2s（夹具里起手只有 0.46s）
+    const cues = timing.contactCues.map((c) => (c.eventId === "ap_evt_1b" ? { ...c, windupStartSec: 1.2 } : c));
+    const { cameras } = choreographManhuaCameras({ durationSec: timing.durationSec, events: shot.events, cues, actorPositions: positions, eventManner: { ap_evt_1b: "ranged" } });
+    const spell = cameras.find((c) => c.kind === "contact" && c.eventId === "ap_evt_1b")!;
+    expect(spell.lens).toBe(32);
+    expect(spell.position[2]).toBeLessThan(0.9);
+    // 命中镜机位靠受方（MAN 在 -1.25）而不是攻方（WOMAN 在 1.25）
+    expect(spell.position[0]).toBeLessThan(0);
+    const melee = cameras.find((c) => c.kind === "contact" && c.eventId === "ap_evt_1a")!;
+    expect(melee.lens).toBe(45);
+    expect(cameras.some((c) => c.kind === "windup" && c.eventId === "ap_evt_1b" && c.lens === 55)).toBe(true);
+    expect(cameras.filter((c) => c.kind === "reaction").length).toBeGreaterThan(0);
+  });
+
   it("无事件 → 单一默认全景；镜数超上限 → 丢最低优先级并写明", () => {
     const empty = choreographManhuaCameras({ durationSec: 4, events: [], cues: [], actorPositions: positions });
     expect(empty.cameras).toHaveLength(1);
