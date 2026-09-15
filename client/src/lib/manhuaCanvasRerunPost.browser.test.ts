@@ -323,7 +323,7 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
    * 本机媒体记录没建立 source→pointer 映射所致。交给审查核实。
    * 它与 0915 修掉的那条（回执迁移漏了原镜）属于同一族问题：地址迁移时谁跟着走。
    */
-  it.skip("确认 A → 改设置为 B → 旧确认被拒 → 重新确认 B → 实际 POST 等于 B", async () => {
+  it("确认 A → 改设置为 B → 旧确认被拒 → 重新确认 B → 实际 POST 等于 B", async () => {
     // 这一条补的是「重渲染之后画布真的消费了**新**准备结果」。
     // 用真实设置「导演包主卡」做 A→B：它会改到出站正文，
     // 所以 A 的确认在 B 之下必须失效，重新确认后发出去的必须是 B。
@@ -355,6 +355,7 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
         }
         throw new Error(`等不到:${tag}`);
       };
+      const staleErrors: string[] = [];
       const clickRun = (clipId: string) => {
         const card = document.querySelector(`[data-canvas-block-id="${clipId}"]`);
         if (!card) return "no-card";
@@ -369,9 +370,13 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
 
       // 段号（clip-e01-gNN-...）比节点 id 稳：改设置可能让页面重铺、换掉 id。
       const segOf = (id: string) => /^clip-e\d+-g(\d+)/.exec(id)?.[1] ?? "";
-      const firstClip = w.__ffcProps!.blocks.find((x) => String(x.id).startsWith("clip-"));
-      if (!firstClip) return { step: "no-clip" as const };
-      const seg = segOf(String(firstClip.id));
+      // **用第二段**：首段没有「上一段」，切尾帧接力未必改到请求，
+      // 那样就证明不了「消费了新设置」（0915 审查点名）。
+      const clips = w.__ffcProps!.blocks
+        .filter((x) => String(x.id).startsWith("clip-"))
+        .sort((x, y) => Number(segOf(String(x.id))) - Number(segOf(String(y.id))));
+      if (clips.length < 2) return { step: "need-two-clips" as const };
+      const seg = segOf(String(clips[1]!.id));
       /** 每次都按段号重新定位，不复用旧 id */
       const clipIdNow = () =>
         String(
@@ -382,10 +387,23 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
       const clipId = clipIdNow();
       if (!clipId) return { step: "no-clip" as const };
 
-      // ① 确认 A
+      // ① 确认 A。
+      // 挂载后本机媒体回灌还在跑，预览与确认之间内容会变（确认就会被正确地拒掉）。
+      // 所以先等**快照稳定**：连续两次预览拿到同一个 snapshotId 才算落定。
       let a: { body: B; snapshotId: string };
       try {
-        a = await wbNow().onPreviewClipOutbound!(clipId);
+        const t0 = Date.now();
+        let prev = await wbNow().onPreviewClipOutbound!(clipId);
+        for (;;) {
+          await settle(500);
+          const cur = await wbNow().onPreviewClipOutbound!(clipId);
+          if (cur.snapshotId === prev.snapshotId) {
+            a = cur;
+            break;
+          }
+          prev = cur;
+          if (Date.now() - t0 > 30_000) throw new Error("等不到:预览快照稳定");
+        }
         await wbNow().onConfirmClipOutbound!(clipId, a.snapshotId);
       } catch (e) {
         return { step: "confirm-a-failed" as const, why: String((e as Error)?.message || e) };
@@ -428,31 +446,15 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
       if (clicked1 !== "clicked") return { step: "run-a-failed" as const, why: clicked1 };
       await settle(2000);
       const postsAfterStale = w.__posts!.filter(isClipPost).length;
+      // 失败原因会被 patchOne 写进节点的 error 字段，直接读它，比拦 toast 稳
+      const afterStale = w.__ffcProps!.blocks.find((x) => String(x.id) === clipAfterChange);
+      const staleReason = String((afterStale as B | undefined)?.error ?? "");
+      if (staleReason) staleErrors.push(staleReason);
 
       // ④ 重新确认 B
-      // 本机媒体回灌是异步的：回灌后静帧产出会换成 blob:，
-      // 段节点的 refImageUrl 要等它一起对齐。没对齐就预览，参考会被判为取不到。
-      // 这是**页面状态还没落定**，不是缺陷，所以这里等它落定再预览。
-      try {
-        await until(
-          () => {
-            const c = w.__ffcProps!.blocks.find((x) => String(x.id) === clipAfterChange);
-            const ref = String(c?.refImageUrl ?? "");
-            if (!ref) return false;
-            const keyartUrls = new Set(
-              w.__ffcProps!.blocks
-                .filter((x) => String(x.id).startsWith("keyart-"))
-                .map((x) => String(x.outputUrl ?? "")),
-            );
-            return keyartUrls.has(ref);
-          },
-          30_000,
-          "段参考与静帧产出对齐",
-        );
-      } catch (e) {
-        return { step: "refs-not-settled" as const, why: String((e as Error)?.message || e) };
-      }
-
+      // 不再需要「等段参考与静帧产出对齐」那道权宜等待：
+      // 0915 修掉「本机参考被提前过滤」之后，准备器会自己把 blob:/local-media:
+      // 溯源回 https，参考不会再被丢。
       let bPrev: { body: B; snapshotId: string };
       try {
         bPrev = await wbNow().onPreviewClipOutbound!(clipAfterChange);
@@ -483,6 +485,24 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
 
       // ⑤ 再点运行，抓真实 POST
       w.__posts!.length = 0;
+      // 上一次被拒的运行可能还没落定，按钮仍 disabled；等它可点再点（不用固定睡眠）
+      try {
+        await until(
+          () => {
+            const card = document.querySelector(`[data-canvas-block-id="${clipAfterChange}"]`);
+            const btn = card
+              ? (Array.from(card.querySelectorAll("button")).find(
+                  (x) => (x.textContent || "").trim() === "运行",
+                ) as HTMLButtonElement | undefined)
+              : undefined;
+            return Boolean(btn && !btn.disabled);
+          },
+          30_000,
+          "运行按钮恢复可点",
+        );
+      } catch (e) {
+        return { step: "run-b-blocked" as const, why: String((e as Error)?.message || e) };
+      }
       const clicked2 = clickRun(clipAfterChange);
       if (clicked2 !== "clicked") return { step: "run-b-failed" as const, why: clicked2 };
       try {
@@ -496,6 +516,7 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
         settingChanged:
           JSON.stringify(wbNow().shotContinuity ?? null) !== JSON.stringify(before),
         postsAfterStale,
+        staleErrors,
         bodyA: a.body,
         bodyB: bPrev.body,
         posts: w.__posts!.filter(isClipPost).map((p) => p.body),
@@ -519,7 +540,12 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
       strip(result.bodyB),
       "改设置之后出站内容没变，这条用例证明不了任何事",
     ).not.toEqual(strip(result.bodyA));
-    // 旧确认在新设置下必须被拒：零 POST
+    // 零 POST 不等于确认闸生效：必须是**确认失效**这个原因拒的，
+    // 排除缺参考、其它异常或还在等待（0915 审查点名）。
+    expect(
+      result.staleErrors.join("｜"),
+      `旧确认被拒的原因不是「确认失效」：${result.staleErrors.join("｜") || "（没有任何错误，可能只是还没跑）"}`,
+    ).toMatch(/在确认之后发生了变化|确认记录属于另一个|还没有完成生成前确认|工作区在你确认之后被重新载入过/);
     expect(result.postsAfterStale, "旧确认在设置改变后仍然发出了请求").toBe(0);
     // 重新确认之后，真正发出去的就是 B
     expect(result.posts).toHaveLength(1);

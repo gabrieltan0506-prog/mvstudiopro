@@ -138,7 +138,23 @@ function buildSeededCanvas() {
   const laid = ensureManhuaFragmentClips(ready, expanded.edges, 1, {
     videoModel: "seedance-2.5",
   });
-  return laid;
+  // 第一段种成「已出片」：第二段的「上一段尾帧接力」才有东西可接，
+  // 切这个设置才会真的改到第二段的出站内容（否则 A/B 一模一样，测不出东西）。
+  const PREV_CLIP = "https://example.com/clip-seg1.mp4";
+  const PREV_TAIL = "https://example.com/clip-seg1-tail.png";
+  let patched = false;
+  const blocks: typeof laid.blocks = laid.blocks.map((b) => {
+    if (patched || !b.id.startsWith("clip-")) return b;
+    patched = true;
+    return {
+      ...b,
+      status: "done" as const,
+      outputUrl: PREV_CLIP,
+      outputUrls: [PREV_CLIP],
+      lastFrameUrl: PREV_TAIL,
+    };
+  });
+  return { ...laid, blocks };
 }
 
 if (localStorage.getItem("mv-manhua-writer-session-v1") === null) {
@@ -165,6 +181,21 @@ const posts: Array<{ url: string; body: unknown }> = [];
 (window as never as { __posts?: typeof posts }).__posts = posts;
 
 const TEST_IMAGE = "https://example.com/test-keyart.png";
+/**
+ * 1×1 PNG。图片请求必须回**真能解码的图片**：
+ * 回兜底 JSON 会被本机媒体库当成图片缓存成 blob，后面判不出问题（0915 审查点名）。
+ */
+const PNG_1X1_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+function pngResponse(): Response {
+  const bin = atob(PNG_1X1_BASE64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+  return new Response(bytes, {
+    status: 200,
+    headers: { "content-type": "image/png" },
+  });
+}
 const TEST_VIDEO = "https://example.com/test-clip.mp4";
 let jobSeq = 0;
 /** jobId → 该任务的产物；GET 轮询时按它回 output */
@@ -250,6 +281,11 @@ window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       }),
       { status: 200, headers: { "content-type": "application/json" } },
     );
+  }
+
+  // 图片资源请求：回真实可解码 PNG，不要让兜底 JSON 被缓存成图片 blob
+  if (/\.(png|jpe?g|webp|gif)(\?|$)/i.test(url) || url.includes("test-keyart")) {
+    return pngResponse();
   }
 
   return new Response(JSON.stringify([{ result: { data: null } }]), {

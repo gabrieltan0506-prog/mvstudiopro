@@ -245,6 +245,27 @@ function dataUrlToJpegFile(dataUrl: string, name: string): File | null {
   return new File([bytes], name, { type: mime });
 }
 
+/**
+ * 把本机展示地址（blob: / local-media:）**先溯源回 https 原链**。
+ *
+ * 0915 审查实证的缺陷：`toHttpsImageUrls` 本来就会做这件事，
+ * 但参考池在到它之前就按 `^https?://` 筛过一遍，
+ * 回灌后的 blob:/local-media: 参考在筛选那一步就被静默丢掉了，
+ * 于是「来源映射明明正确，却报缺图片」。
+ *
+ * 所以溯源必须发生在**筛选、去重、容量分配之前**。
+ * 溯不回 https 的原样返回，交给后面的筛选照常拒绝——
+ * 绝不把 blob: 直接发给供应商。
+ */
+function traceCanvasRefToHttpsSource(url: unknown): string {
+  const u = String(url || "").trim();
+  if (!u) return "";
+  if (u.startsWith("blob:") || isLocalMediaPointer(u)) {
+    return String(resolveUrlForCloudSync(u) || "").trim() || u;
+  }
+  return u;
+}
+
 async function toHttpsImageUrls(
   deps: CanvasRunDeps,
   urls: string[],
@@ -2618,13 +2639,17 @@ export async function runCanvasBlock(
           `@引用断链：@${atRefApplied.missing.join("、@")} 指到的资产不存在，请在审阅框修正或删除该引用后再出片`,
         );
       }
+      // **先溯源再筛选**：回灌后的 blob: / local-media: 必须在这一步换回 https，
+      // 否则下面这道协议筛选会把它们直接丢掉（0915 审查实证）。
       const absStills = [
         ...(atRefApplied?.imageUrls || []),
         ...stillPool.map((u) => absolutizeManhuaAssetUrl(u) || u),
-      ].filter(
-        (u, i, arr) =>
-          (/^https?:\/\//i.test(u) || u.startsWith("data:image/")) && arr.indexOf(u) === i,
-      );
+      ]
+        .map((u) => traceCanvasRefToHttpsSource(u))
+        .filter(
+          (u, i, arr) =>
+            (/^https?:\/\//i.test(u) || u.startsWith("data:image/")) && arr.indexOf(u) === i,
+        );
       // clip-eNN-... → 集号；没有导演板表或解不出集号时 boardUrl 就是空串，不影响既有行为
       const clipEpisodeMatch = /^[a-z_]+-e(\d{2})-/i.exec(block.id);
       const clipEpisodeNo = clipEpisodeMatch ? Number.parseInt(clipEpisodeMatch[1]!, 10) : null;
@@ -2644,7 +2669,10 @@ export async function runCanvasBlock(
       // 成片硬绑：末帧 → 资产定妆 → 本段静帧 → 导演板（URL 只进 API imageUrls）
       const bindPlan = isClip
         ? planManhuaClipSeedanceImageBind({
-            assetRows: assetRows.filter((r) => /^https?:\/\//i.test(r.path)),
+            // 同理：资产路径也先溯源，再按协议筛
+            assetRows: assetRows
+              .map((r) => ({ ...r, path: traceCanvasRefToHttpsSource(r.path) }))
+              .filter((r) => /^https?:\/\//i.test(r.path)),
             stillUrls: absStills,
             tailUrls: tailFrames,
             mentionedTags,
