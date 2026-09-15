@@ -1,5 +1,6 @@
 import { collectPreparedRigProfiles } from "@/lib/manhuaPrevisProfiles";
 import ManhuaAutoRigEditor from "@/components/canvas/ManhuaAutoRigEditor";
+import Manhua3dAssetImportPanel from "@/components/canvas/Manhua3dAssetImportPanel";
 import type { AutoRigAdoptedModel } from "@shared/manhuaAutoRig";
 /**
  * 剧本工作台：左=本集资产 · 中=一集剧本+按段静帧 · 右=预览 · 底=集/段时间线
@@ -6390,6 +6391,13 @@ export default function ManhuaScriptWorkbench({
                                       onClick={() => setAutoRigAssetId(ref.id)}>
                                       人体绑骨 · 校正与另存
                                     </button>
+                                  ) : null}
+                                  {model3dEligibility.eligible && currentModel3d?.status === "succeeded" ? (
+                                    <Manhua3dAssetImportPanel
+                                      sourceJobId={currentModel3d.taskId}
+                                      assetRef={ref.id}
+                                      disabled={Boolean(factoryBusy) || asset3dBusyIds.includes(ref.id)}
+                                    />
                                   ) : null}
                                   {!model3dEligibility.eligible ? (
                                     <p className="text-[9px] leading-3 text-amber-100/75">
