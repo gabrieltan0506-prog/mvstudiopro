@@ -566,6 +566,16 @@ export async function rehydrateBlocksFromLocalMedia(blocks: CanvasBlock[]): Prom
             ...b,
             outputUrl,
             manhuaKeyartLookState: remapManhuaKeyartLookOutput(b, outputUrl),
+            // 原镜回执与造型回执必须同步迁移。只迁前者的话，图片换成本机地址后
+            // manhuaKeyartSourceState.generatedUrl 仍指向旧地址，
+            // isManhuaWorkbenchKeyartCurrent 就判这张静帧「已变更」，
+            // 段成片因此一直被门禁拦住（0915 审查离线复现）。
+            // 复用同一个 remap：它只迁地址、不碰 generatedFor，
+            // 「历史兜底或失败不得获得生成回执」这条语义原样保留。
+            manhuaKeyartSourceState: remapManhuaKeyartLookOutput(
+              { manhuaKeyartLookState: b.manhuaKeyartSourceState, outputUrl: b.outputUrl },
+              outputUrl,
+            ),
             refImageUrl,
             outputUrls: outputUrls || [],
             editFusionUrls,
@@ -598,6 +608,11 @@ export function applyLocalMediaPointersToBlocks(blocks: CanvasBlock[]): CanvasBl
       ...b,
       outputUrl,
       manhuaKeyartLookState: remapManhuaKeyartLookOutput(b, outputUrl),
+      // 同上：原镜回执一并迁地址，不改 generatedFor
+      manhuaKeyartSourceState: remapManhuaKeyartLookOutput(
+        { manhuaKeyartLookState: b.manhuaKeyartSourceState, outputUrl: b.outputUrl },
+        outputUrl,
+      ),
       refImageUrl,
       outputUrls,
       editFusionUrls: editFusionUrls.length ? editFusionUrls : undefined,

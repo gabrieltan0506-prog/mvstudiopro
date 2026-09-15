@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { confirmClipLikeUser, gateFromConfirmations } from "./__testutils__/manhuaOutboundGate";
 
 const media = vi.hoisted(() => ({
   tailFrames: vi.fn(async (_url: string, _options?: unknown) => ({
@@ -80,11 +81,16 @@ describe("已有成片编辑的真实出站请求（无网络）", () => {
       outputUrls: [source],
       lastFrameUrl: "https://test.invalid/old-tail.png",
     };
+    // 原片编辑现在也在门禁范围内：先按用户真实动作取得确认
+    const confirmation = await confirmClipLikeUser({
+      deps, blocks: [block], edges: [], blockId: block.id,
+    });
     const result = await runManhuaDramaFactoryPipeline({
       deps, blocks: [block], edges: [], episodeIndex: 1,
       untilStage: "clip", fragmentShotIndex: 2,
       targetBlockIds: [block.id], preservePreparedTargetBlocks: true,
       ensureOptions: { videoModel: "wan-3.0" },
+      resolveOutboundGate: gateFromConfirmations({ [block.id]: confirmation }),
     });
     expect(result.errors).toEqual([]);
     expect(result.completedIds).toEqual([block.id]);
