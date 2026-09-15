@@ -197,3 +197,40 @@ export async function pollLux3dTaskOnce(
       return { state: "reconcile", error: `Lux3D 未知状态 ${String(env.d.status)}` };
   }
 }
+
+/** task/list：提交结果未知时的恢复手段——按创建时间窗找回自己账号的任务，不重发 */
+export type Lux3dTaskListItem = { taskId: string; status: 0 | 1 | 3 | 4 | 6; createdMs: number; lastModifiedMs: number };
+
+export async function listLux3dTasks(
+  query: { page?: number; pageSize?: number; status?: 0 | 1 | 3 | 4; startMs?: number; endMs?: number },
+  region: Lux3dRegion,
+  deps: Partial<Lux3dDeps> = {},
+): Promise<{ items: Lux3dTaskListItem[]; total: number } | { error: string }> {
+  const d = { ...defaultDeps(), ...deps };
+  const cred = d.credential === undefined ? resolveLux3dCredential(region) : d.credential;
+  if (!cred) return { error: "Lux3D 查询通道未配置" };
+  const qs = new URLSearchParams();
+  qs.set("page", String(Math.max(1, Math.floor(query.page ?? 1))));
+  qs.set("pagesize", String(Math.min(100, Math.max(1, Math.floor(query.pageSize ?? 50)))));
+  if (query.status !== undefined) qs.set("status", String(query.status));
+  if (query.startMs !== undefined) qs.set("starttime", String(Math.floor(query.startMs)));
+  if (query.endMs !== undefined) qs.set("endtime", String(Math.floor(query.endMs)));
+  let response: Response;
+  try {
+    response = await d.fetch(`${LUX3D_API_BASE[cred.region]}/lux3d/v1/generate/task/list?${qs.toString()}`, {
+      headers: { Authorization: cred.key },
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (error) {
+    return { error: `Lux3D 列表请求失败：${error instanceof Error ? error.name : "fetch_error"}` };
+  }
+  const env = (await response.json().catch(() => null)) as Lux3dEnvelope<{ items?: Array<{ taskId?: number; status?: number; created?: number; lastModified?: number }>; total?: number } | null> | null;
+  if (!response.ok || !env || env.c !== "0" || !env.d) return { error: `Lux3D 列表返回不合合同（HTTP ${response.status}，c=${env?.c ?? "?"}）` };
+  const items: Lux3dTaskListItem[] = [];
+  for (const it of env.d.items ?? []) {
+    const status = Number(it.status);
+    if (it.taskId === undefined || ![0, 1, 3, 4, 6].includes(status)) continue;
+    items.push({ taskId: String(it.taskId), status: status as Lux3dTaskListItem["status"], createdMs: Number(it.created) || 0, lastModifiedMs: Number(it.lastModified) || 0 });
+  }
+  return { items, total: Number(env.d.total) || items.length };
+}

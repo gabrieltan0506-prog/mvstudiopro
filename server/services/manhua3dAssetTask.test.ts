@@ -192,7 +192,7 @@ describe("manhua3dAssetTask", () => {
       importFallback: true,
     });
     setManhua3dAssetDependenciesForTests({ hasLux3dCredential: region => region === "cn" });
-    expect(getManhua3dLux3dCapability()).toMatchObject({ available: false, reasonCode: "adapter_not_wired", importFallback: true });
+    expect(getManhua3dLux3dCapability()).toMatchObject({ available: true, canResumeTasks: true, canSubmitGeneration: false, importFallback: true });
   });
 
   it("生产依赖只看凭证有无，不读值；本测试进程未设 key 时为无凭证", () => {

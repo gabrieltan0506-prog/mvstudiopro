@@ -136,8 +136,8 @@ function assetIdFor(input: {
 }
 
 /**
- * Lux3D 服务端能力：本 PR 未接 HTTP 适配器，因此无论有无凭证都是“不可用”，只是原因不同。
- * 这是真实状态，前端据此显示原因并引导走导入链，不是空按钮。
+ * Lux3D 服务端能力：无凭证 → 不可用（真实状态，前端据此引导走导入链）；有凭证 → 可续查/找回任务，
+ * 但新生成不在本能力里表达（需单独授权）。
  */
 export function getManhua3dLux3dCapability(): Manhua3dLux3dCapability {
   const regions = (Object.keys(LUX3D_CREDENTIAL_ENV) as Array<keyof typeof LUX3D_CREDENTIAL_ENV>).filter(
@@ -151,12 +151,13 @@ export function getManhua3dLux3dCapability(): Manhua3dLux3dCapability {
       importFallback: true,
     };
   }
-  // TODO(PR-3 后续)：接 server/services/lux3dAdapter.ts（GET /lux3d/v1/generate/task/get 续查）后才可能返回 available:true；
-  // 新生成仍需单独授权，canSubmitGeneration 保持 false。
+  // 适配器已接（server/services/lux3dAdapter.ts：create / task get / task list）。
+  // 可用 = 能续查与找回已有任务；新生成仍需单独授权，canSubmitGeneration 恒 false（能力表达在 schema 里就是 literal false）。
   return {
-    available: false,
-    reasonCode: "adapter_not_wired",
-    reasonZh: "服务端已有 Lux3D 凭证，但任务适配器尚未接通；可先导入已有 GLB",
+    available: true,
+    regions: regions.map(region => (region === "cn" ? "cn" : "international")) as Array<"cn" | "international">,
+    canResumeTasks: true,
+    canSubmitGeneration: false,
     importFallback: true,
   };
 }
