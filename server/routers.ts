@@ -187,6 +187,7 @@ import { manhuaAgentLoopRouter } from "./routers/manhuaAgentLoop";
 import { manhuaAssetShareRouter } from "./routers/manhuaAssetShare";
 import { manhuaViralTemplateRouter } from "./routers/manhuaViralTemplate";
 import { manhua3dRouter } from "./routers/manhua3d";
+import { manhua3dAssetRouter } from "./routers/manhua3dAsset";
 import { generateGeminiImage, isGeminiImageAvailable } from "./gemini-image";
 import {
   deductCredits,
@@ -3041,6 +3042,7 @@ export const appRouter = router({
   manhuaAgentLoop: manhuaAgentLoopRouter,
   manhuaViralTemplate: manhuaViralTemplateRouter,
   manhua3d: manhua3dRouter,
+  manhua3dAsset: manhua3dAssetRouter,
   videoParser: router({
     parse: protectedProcedure
       .input(z.object({ url: z.string().url() }))
