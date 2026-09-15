@@ -162,6 +162,14 @@ import {
 import { assertValidManhuaGlbFile } from "@/lib/manhuaGlbImport";
 import { applyManhua3dBinding, createManhua3dOperationGuard } from "@/lib/manhua3dBinding";
 import {
+  loadManhuaActionPlans,
+  manhuaActionPlanForEpisode,
+  normalizeManhuaActionPlans,
+  saveManhuaActionPlans,
+  type ManhuaActionPlansByEpisode,
+} from "@/lib/manhuaActionPlanStore";
+import { buildManhuaActionPlanBindingContext } from "@/lib/manhuaActionPlanAdapter";
+import {
   MANHUA_FACTORY_STAGE_LABEL_ZH,
   prepareManhuaFactoryClipInput,
   MANHUA_FACTORY_STAGE_ORDER,
@@ -816,6 +824,18 @@ export default function OmniCanvas() {
     useState<ManhuaDirectorBoardBySegment>(loadManhuaDirectorBoardBySegment);
   const [directorBoardMotionOverlayBySegment, setDirectorBoardMotionOverlayBySegment] =
     useState<ManhuaDirectorBoardOverlayBySegment>(loadManhuaDirectorBoardOverlayBySegment);
+  /** 0915 动作计划（PR-2）：集号 → 计划；唯一状态源在这里，修改自动让旧审批失效（planRevision 变） */
+  const [manhuaActionPlans, setManhuaActionPlans] = useState<ManhuaActionPlansByEpisode>(() => loadManhuaActionPlans().plans);
+  const setManhuaActionPlanForEpisode = useCallback((episodeIndex: number, plan: import("@shared/manhuaActionPlan").ManhuaActionPlan | null) => {
+    const key = String(Math.max(1, Math.floor(episodeIndex) || 1));
+    setManhuaActionPlans((prev) => {
+      const next = { ...prev };
+      if (plan) next[key] = plan;
+      else delete next[key];
+      saveManhuaActionPlans(next);
+      return next;
+    });
+  }, []);
   const directorBoardUrlByEpisodeSegment = useMemo(
     () => directorBoardHttpsByEpisodeSegment(directorBoardBySegment),
     [directorBoardBySegment],
@@ -1056,6 +1076,17 @@ export default function OmniCanvas() {
   const [clearSeriesWithBackup, setClearSeriesWithBackup] = useState(true);
   const [writerFocusEpisode, setWriterFocusEpisode] = useState(() =>
     Math.max(1, Math.floor(Number(initialWriterSession?.focusEpisode) || 1)),
+  );
+  /**
+   * 动作计划绑定上下文：只从本集导演板 overlay 解析（屏幕点如实给 screen；相机路径无秒数 → 未解析）。
+   * previs 相机与 ShotIR 相机的登记待接（PR-2 断点，见知识库）。
+   */
+  const manhuaActionPlanBindingContext = useMemo(
+    () =>
+      buildManhuaActionPlanBindingContext({
+        overlays: Object.values(directorBoardMotionOverlayBySegment[writerFocusEpisode] || {}),
+      }),
+    [directorBoardMotionOverlayBySegment, writerFocusEpisode],
   );
   const activePilotVideoModel = useMemo(
     () => resolveManhuaEpisodeClipVideoModel(
@@ -2526,6 +2557,13 @@ export default function OmniCanvas() {
     saveManhuaDirectorBoardMainByEpisode(restoredBoardMain);
     saveManhuaDirectorBoardBySegment(restoredBoardSegments);
     saveManhuaDirectorBoardOverlayBySegment(restoredBoardOverlays);
+    // 动作计划随云稿整体替换；不合合同的条目不静默删，提示集号
+    const restoredActionPlans = normalizeManhuaActionPlans(draft.manhuaActionPlans);
+    setManhuaActionPlans(restoredActionPlans.plans);
+    saveManhuaActionPlans(restoredActionPlans.plans);
+    if (restoredActionPlans.warnings.length) {
+      toast.warning(`有 ${restoredActionPlans.warnings.length} 集动作计划不合当前合同，已保留原稿未载入：${restoredActionPlans.warnings.map((w) => `第 ${w.episodeKey} 集`).join("、")}`);
+    }
     // 跨专案幽灵防线（用户实测「清都清不掉」的根）：恢复数据里旧都市专案的
     // 库选角/道具/manual 标志，会在每次登录云同步时无条件写回，把种子库 CP
     //（沈清辞/傅临渊）与都市演示道具复活到古风专案。守卫口径：会话 cast 已是
@@ -2974,7 +3012,7 @@ export default function OmniCanvas() {
       clientUpdatedAt,
     });
     // 手动上传按钮从这个 ref 取当前工作区快照
-    latestDraftSnapshotRef.current = { writerSession, blocks, edges, factoryPrefs, clientUpdatedAt };
+    latestDraftSnapshotRef.current = { writerSession, blocks, edges, factoryPrefs, clientUpdatedAt, manhuaActionPlans };
 
     // 备份手动化（用户 2026-08-10 拍板）：防抖自动上传拆除——云备份只在用户
     // 点「上传备份」时发生。本机 persistManhuaDraftLocally 双写保留（防刷新丢失，
@@ -3022,6 +3060,8 @@ export default function OmniCanvas() {
     artStyleManual,
     // 审查 P2：本机双写快照里已经带 directionSelection，依赖也要带，否则只改导演卡不落盘
     directionSelection,
+    // 1466 R1：快照里带 manhuaActionPlans，依赖也要带，否则只改时间轴再点「上传备份」传的是旧计划
+    manhuaActionPlans,
     syncCloudDraftPayload,
   ]);
 
@@ -5048,6 +5088,9 @@ export default function OmniCanvas() {
         saveManhuaDirectorBoardBySegment({});
         setDirectorBoardMotionOverlayBySegment({});
         saveManhuaDirectorBoardOverlayBySegment({});
+        // 1466 R1：动作计划引用旧剧的集/段/镜与导演板落点，换剧或清空时随导演板一并清
+        setManhuaActionPlans({});
+        saveManhuaActionPlans({});
       } else {
         const overlaysForReview = markManhuaDirectorBoardOverlaysForReview(
           directorBoardMotionOverlayBySegment,
@@ -5359,6 +5402,9 @@ export default function OmniCanvas() {
         saveManhuaDirectorBoardBySegment({});
         setDirectorBoardMotionOverlayBySegment({});
         saveManhuaDirectorBoardOverlayBySegment({});
+        // 1466 R1：动作计划引用旧剧的集/段/镜与导演板落点，换剧或清空时随导演板一并清
+        setManhuaActionPlans({});
+        saveManhuaActionPlans({});
       } else {
         const overlaysForReview = markManhuaDirectorBoardOverlaysForReview(
           directorBoardMotionOverlayBySegment,
@@ -5559,6 +5605,9 @@ export default function OmniCanvas() {
     saveManhuaDirectorBoardBySegment({});
     setDirectorBoardMotionOverlayBySegment({});
     saveManhuaDirectorBoardOverlayBySegment({});
+    // 1466 R1：动作计划引用旧剧的集/段/镜与导演板落点，换剧或清空时随导演板一并清
+    setManhuaActionPlans({});
+    saveManhuaActionPlans({});
     materializedBoardIdsRef.current.clear();
     setWriterFocusEpisode(1);
     setWriterImportDraft("");
@@ -9381,6 +9430,9 @@ export default function OmniCanvas() {
                   episodeCount={writerEpisodeCount}
                   focusEpisode={writerFocusEpisode}
                   onFocusEpisode={setWriterFocusEpisode}
+                  manhuaActionPlan={manhuaActionPlanForEpisode(manhuaActionPlans, writerFocusEpisode)}
+                  manhuaActionPlanBindingContext={manhuaActionPlanBindingContext}
+                  onChangeManhuaActionPlan={setManhuaActionPlanForEpisode}
                   characterIds={selectedCharacterIds}
                   ancientArchetypeIds={factoryAncientArchetypeIds}
                   sceneId={factorySceneId || recommendedScene?.id}

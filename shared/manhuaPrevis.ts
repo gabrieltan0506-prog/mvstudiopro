@@ -254,6 +254,11 @@ export const manhuaPrevisDraftSchema = manhuaPrevisSpecBaseSchema.extend({
  * 不让用户等满十分钟再拿到一个空结果。性能改进后按新实测调这个数字。
  */
 export const PREVIS_RENDER_UNIT_BUDGET = 2700;
+/** 出水预演硬限：人数与秒数。拆镜器（manhuaActionPlanSplit）从这里读，不重抄数字。 */
+export const PREVIS_WATER_MAX_ACTORS = 3;
+export const PREVIS_WATER_MAX_SEC = 8;
+/** 预算换算用的采样帧率（与 previsRenderCostUnits 一致） */
+export const PREVIS_BUDGET_FPS = 24;
 
 /** 该 spec 的渲染成本单位：帧数 × 角色数 */
 export function previsRenderCostUnits(spec: {
@@ -463,8 +468,8 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
               ? ["waterEmergence"]
               : ["waterEmergence", "events", index],
         });
-      if (spec.actors.length > 3 || spec.durationSec > 8)
-        issue("当前出水预演最多3人、8秒，请缩短片长或减少角色");
+      if (spec.actors.length > PREVIS_WATER_MAX_ACTORS || spec.durationSec > PREVIS_WATER_MAX_SEC)
+        issue(`当前出水预演最多${PREVIS_WATER_MAX_ACTORS}人、${PREVIS_WATER_MAX_SEC}秒，请缩短片长或减少角色`);
       const ids = new Set(water.events.map(e => e.actorId));
       if (
         ids.size !== water.events.length ||

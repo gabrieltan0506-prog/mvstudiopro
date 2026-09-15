@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildManhuaCloudDraftPayload,
   parseManhuaCloudDraftPayload,
   sanitizeManhuaCloudDraftBlock,
   serializeManhuaCloudDraftPayload,
   type ManhuaCloudDraftPayload,
 } from "./manhuaCloudDraft";
+import { isManhuaPlanApprovalCurrent, sealManhuaActionPlan } from "./manhuaActionPlan";
 import { MANHUA_MEDIA_HISTORY_MAX, capManhuaMediaHistory } from "./manhuaMediaHistoryCap";
 
 /**
@@ -188,3 +190,61 @@ describe("manhuaCloudDraft · 稳定图链与任务字段往返", () => {
     );
   });
 });
+
+describe("manhuaCloudDraft · 动作计划按集往返（PR-2）", () => {
+  const plan = () =>
+    sealManhuaActionPlan({
+      actionPlanId: "ap_ep1",
+      episodeIndex: 1,
+      actors: [{ actorId: "ap_a", nameZh: "阿菁" }, { actorId: "ap_b", nameZh: "墨屠" }],
+      initialStates: {
+        ap_a: { presence: "onstage", at: { space: "screen", x: 0.3, y: 0.7 }, heldProps: [] },
+        ap_b: { presence: "onstage", at: { space: "screen", x: 0.6, y: 0.7 }, heldProps: [] },
+      },
+      shots: [{ shotId: "ap_s1", displayIndex: 1, timeMap: { sourceDurationSec: 5, spans: [] }, confirm: "confirmed", actorChanges: [], events: [] }],
+      executionRanges: [],
+    });
+
+  it("build → serialize → parse：计划与审批原样存活，planRevision 不变", () => {
+    const p = plan();
+    const approved = { ...p, approval: { approvedRevision: p.planRevision, approvedAtIso: new Date(0).toISOString() } };
+    const payload = buildManhuaCloudDraftPayload({
+      writerSession: {} as never, blocks: [], edges: [],
+      manhuaActionPlans: { "1": approved },
+    });
+    expect(payload.manhuaActionPlans?.["1"]?.planRevision).toBe(p.planRevision);
+    const parsed = parseManhuaCloudDraftPayload(serializeManhuaCloudDraftPayload(payload));
+    const back = parsed?.manhuaActionPlans?.["1"];
+    expect(back?.planRevision).toBe(p.planRevision);
+    expect(back && isManhuaPlanApprovalCurrent(back)).toBe(true);
+    expect(parsed?.manhuaActionPlanWarnings).toBeUndefined();
+  });
+
+  it("旧稿没有 manhuaActionPlans → null，不补造 unplanned 计划", () => {
+    const parsed = parseManhuaCloudDraftPayload(JSON.stringify({
+      format: "mv-manhua-cloud-draft-v1", clientUpdatedAt: new Date(0).toISOString(), writerSession: {}, canvas: { blocks: [], edges: [] },
+    }));
+    expect(parsed?.manhuaActionPlans).toBeNull();
+  });
+
+  it("不合合同的计划不静默删：记警告并保留其它集", () => {
+    const good = plan();
+    const parsed = parseManhuaCloudDraftPayload(JSON.stringify({
+      format: "mv-manhua-cloud-draft-v1", clientUpdatedAt: new Date(0).toISOString(), writerSession: {}, canvas: { blocks: [], edges: [] },
+      manhuaActionPlans: { "1": good, "2": { format: "mv-manhua-action-plan-v1", actionPlanId: "ap_bad", episodeIndex: 2, actors: [] } },
+    }));
+    expect(parsed?.manhuaActionPlans?.["1"]?.actionPlanId).toBe("ap_ep1");
+    expect(parsed?.manhuaActionPlans?.["2"]).toBeUndefined();
+    expect(parsed?.manhuaActionPlanWarnings?.map((w) => w.episodeKey)).toEqual(["2"]);
+  });
+
+  it("键与 episodeIndex 不一致 → 警告，不放进错的集", () => {
+    const parsed = parseManhuaCloudDraftPayload(JSON.stringify({
+      format: "mv-manhua-cloud-draft-v1", clientUpdatedAt: new Date(0).toISOString(), writerSession: {}, canvas: { blocks: [], edges: [] },
+      manhuaActionPlans: { "3": plan() },
+    }));
+    expect(parsed?.manhuaActionPlans).toBeNull();
+    expect(parsed?.manhuaActionPlanWarnings?.[0]?.messageZh).toMatch(/不一致/);
+  });
+});
+

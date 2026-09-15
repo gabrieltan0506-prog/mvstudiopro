@@ -2,6 +2,7 @@
  * 漫剧云端草稿：剧本、静帧与已有视频的恢复元数据；不存视频字节。
  */
 
+import { parseManhuaActionPlan, type ManhuaActionPlan } from "./manhuaActionPlan.js";
 import { canvasMusicMvShotBindingSchema, type CanvasMusicMvShotBinding, normalizeCanvasMusicMvState, type CanvasMusicMvState } from "./canvasMusicMv";
 import { capManhuaMediaHistory } from "./manhuaMediaHistoryCap";
 import { normalizeManhuaTimelineOrder } from "./manhuaEditOrder.js";
@@ -156,7 +157,45 @@ export type ManhuaCloudDraftPayload = {
     edges: ManhuaCloudDraftEdge[];
   };
   factoryPrefs?: Record<string, unknown> | null;
+  /**
+   * 0915 动作计划（PR-2）：按集号保存，键为 String(episodeIndex)。
+   * 没有条目的集 = unplanned（旧稿不补造）；审批记录随计划一起往返。
+   */
+  manhuaActionPlans?: Record<string, ManhuaActionPlan> | null;
+  /** 读回时不合合同的计划**不静默删**：在这里列出集号与原因，前端提示 */
+  manhuaActionPlanWarnings?: Array<{ episodeKey: string; messageZh: string }>;
 };
+
+/** 按集校验一组动作计划：合法的保留，不合法的记警告（不静默删、不补造） */
+export function sanitizeManhuaActionPlans(raw: unknown): {
+  plans: Record<string, ManhuaActionPlan> | null;
+  warnings: Array<{ episodeKey: string; messageZh: string }>;
+} {
+  const warnings: Array<{ episodeKey: string; messageZh: string }> = [];
+  if (!raw || typeof raw !== "object") return { plans: null, warnings };
+  const plans: Record<string, ManhuaActionPlan> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const episodeKey = String(key).trim();
+    if (!/^\d+$/.test(episodeKey)) {
+      warnings.push({ episodeKey, messageZh: "集号键不是正整数，已忽略" });
+      continue;
+    }
+    const parsed = parseManhuaActionPlan(value, "draft");
+    if (!parsed.ok) {
+      warnings.push({
+        episodeKey,
+        messageZh: parsed.issues.slice(0, 3).map((i) => i.messageZh).join("；") || "动作计划不合合同",
+      });
+      continue;
+    }
+    if (String(parsed.plan.episodeIndex) !== episodeKey) {
+      warnings.push({ episodeKey, messageZh: `计划的 episodeIndex=${parsed.plan.episodeIndex} 与键 ${episodeKey} 不一致` });
+      continue;
+    }
+    plans[episodeKey] = parsed.plan;
+  }
+  return { plans: Object.keys(plans).length ? plans : null, warnings };
+}
 
 function isHttpUrl(u: unknown): u is string {
   const s = String(u || "").trim();
@@ -543,6 +582,7 @@ export function buildManhuaCloudDraftPayload(input: {
   blocks: unknown[];
   edges: unknown[];
   factoryPrefs?: Record<string, unknown> | null;
+  manhuaActionPlans?: Record<string, ManhuaActionPlan> | null;
 }): ManhuaCloudDraftPayload {
   const clientUpdatedAt = new Date(
     input.clientUpdatedAt || Date.now()
@@ -571,6 +611,13 @@ export function buildManhuaCloudDraftPayload(input: {
       : undefined,
     canvas: { blocks, edges },
     factoryPrefs: input.factoryPrefs || null,
+    ...(() => {
+      const ap = sanitizeManhuaActionPlans(input.manhuaActionPlans);
+      return {
+        manhuaActionPlans: ap.plans,
+        ...(ap.warnings.length ? { manhuaActionPlanWarnings: ap.warnings } : {}),
+      };
+    })(),
   };
 }
 
@@ -622,6 +669,13 @@ export function parseManhuaCloudDraftPayload(
       o.factoryPrefs && typeof o.factoryPrefs === "object"
         ? (o.factoryPrefs as Record<string, unknown>)
         : null,
+    ...(() => {
+      const ap = sanitizeManhuaActionPlans((o as { manhuaActionPlans?: unknown }).manhuaActionPlans);
+      return {
+        manhuaActionPlans: ap.plans,
+        ...(ap.warnings.length ? { manhuaActionPlanWarnings: ap.warnings } : {}),
+      };
+    })(),
   };
 }
 
