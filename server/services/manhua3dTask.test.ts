@@ -160,6 +160,50 @@ describe("manhua3dTask", () => {
     expect(submit).toHaveBeenCalledTimes(1);
   });
 
+  it("多视角任务走 submitMultiview（顺序原样），与单图任务不同 taskId；视角集合换版本也是新任务；缺 multiviewVersion 直接拒", async () => {
+    const submit = vi.fn().mockResolvedValue({ predictionId: "pred-single" });
+    const submitMultiview = vi
+      .fn()
+      .mockResolvedValueOnce({ predictionId: "pred-mv-a" })
+      .mockResolvedValueOnce({ predictionId: "pred-mv-b" });
+    setManhua3dTaskDependenciesForTests({
+      isConfigured: () => true,
+      submit,
+      submitMultiview,
+      poll: vi.fn().mockResolvedValue({ state: "running", status: "processing" }),
+    });
+    const base = {
+      userId: 7,
+      assetRef: "character:black-horse",
+      sourceVersion: "sha256:source-v1",
+      sourceImageUrl: "https://assets.test/black-horse-front.png",
+    };
+    const views = [
+      "https://assets.test/v/front.png",
+      "https://assets.test/v/left.png",
+      "https://assets.test/v/back.png",
+      "https://assets.test/v/right.png",
+    ];
+    const single = await createManhua3dTask(base);
+    const mv = await createManhua3dTask({ ...base, multiviewImageUrls: views, multiviewVersion: "views:v1" });
+    expect(mv.taskId).not.toBe(single.taskId);
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(submitMultiview).toHaveBeenCalledTimes(1);
+    expect(submitMultiview.mock.calls[0]?.[0]).toMatchObject({ images: views });
+    const again = await createManhua3dTask({ ...base, multiviewImageUrls: views, multiviewVersion: "views:v1" });
+    expect(again.taskId).toBe(mv.taskId);
+    expect(submitMultiview).toHaveBeenCalledTimes(1);
+    const v2 = await createManhua3dTask({ ...base, multiviewImageUrls: views, multiviewVersion: "views:v2" });
+    expect(v2.taskId).not.toBe(mv.taskId);
+    expect(submitMultiview).toHaveBeenCalledTimes(2);
+    await expect(
+      createManhua3dTask({ ...base, multiviewImageUrls: views })
+    ).rejects.toThrow("invalid_manhua_3d_multiview_input");
+    await expect(
+      createManhua3dTask({ ...base, multiviewImageUrls: views.slice(0, 1), multiviewVersion: "views:v3" })
+    ).rejects.toThrow("invalid_manhua_3d_multiview_input");
+  });
+
   it("同一来源用不同质量选项会产生不同任务，避免错误复用", async () => {
     const submit = vi
       .fn()

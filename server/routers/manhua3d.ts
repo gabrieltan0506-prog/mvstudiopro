@@ -130,6 +130,35 @@ export const manhua3dRouter = router({
       }
     }),
 
+  /** 0916 多视角：2–4 张正交视角（前/左/后/右）→ Tripo H3.1 multiview-to-3d；同价位量级（detailed ≈$0.30） */
+  submitMultiview: adminProcedure
+    .input(
+      z.object({
+        assetRef: z.string().trim().min(1).max(160),
+        sourceVersion: z.string().trim().min(1).max(4_096),
+        sourceImageUrl: httpsUrl,
+        multiviewImageUrls: z.array(httpsUrl).min(2).max(4),
+        multiviewImageGcsUris: z.array(z.string().trim().regex(/^gs:\/\//)).max(4).optional(),
+        multiviewVersion: z.string().trim().min(1).max(4_096),
+        options: optionsSchema.optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      try {
+        return await createManhua3dTask({
+          userId: ctx.user.id,
+          assetRef: input.assetRef,
+          sourceVersion: input.sourceVersion,
+          sourceImageUrl: input.sourceImageUrl,
+          multiviewImageUrls: input.multiviewImageUrls,
+          multiviewImageGcsUris: input.multiviewImageGcsUris,
+          multiviewVersion: input.multiviewVersion,
+          options: input.options,
+        });
+      } catch (error) {
+        return mapManhua3dTaskError(error);
+      }
+    }),
   retry: adminProcedure
     .input(z.object({ taskId: z.string().trim().min(8).max(100) }))
     .mutation(async ({ ctx, input }) => {

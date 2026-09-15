@@ -18,10 +18,12 @@ import {
   pollWavespeedTripo3dOnce,
   isWavespeedTripo3dConfigured,
   submitWavespeedTripo3d,
+  submitWavespeedTripo3dMultiview,
   type TripoH31Orientation,
   type TripoH31Quality,
   type TripoH31TextureAlignment,
   type WavespeedTripo3dInput,
+  type WavespeedTripo3dMultiviewInput,
   type WavespeedTripo3dPollSnapshot,
 } from "./wavespeedTripo3d.js";
 
@@ -64,6 +66,14 @@ export type Manhua3dTaskRecord = {
   assetRef: string;
   sourceVersion: string;
   sourceImageUrl: string;
+  /**
+   * 0916 多视角：正交视角图签名 URL，顺序 前/左/后/右（2–4 张）。有它就走 multiview-to-3d。
+   * 签名 URL 会轮换：有 gs:// 时提交前重签，不拿过期链接出站。
+   */
+  multiviewImageUrls?: string[];
+  multiviewImageGcsUris?: string[];
+  /** 视角图集合的稳定版本（调用方按视角图 gs:// 或内容摘要算），进幂等摘要 */
+  multiviewVersion?: string;
   status: Manhua3dTaskStatus;
   options: Manhua3dTaskOptions;
   predictionId?: string;
@@ -103,6 +113,7 @@ export type Manhua3dTaskView = Pick<
 type Manhua3dTaskDependencies = {
   isConfigured: () => boolean;
   submit: (input: WavespeedTripo3dInput) => Promise<{ predictionId: string }>;
+  submitMultiview: (input: WavespeedTripo3dMultiviewInput) => Promise<{ predictionId: string }>;
   poll: (predictionId: string) => Promise<WavespeedTripo3dPollSnapshot>;
   downloadGlb: (url: string) => Promise<Buffer>;
   uploadGlb: typeof uploadBufferToGcs;
@@ -125,6 +136,7 @@ type Manhua3dTaskDependencies = {
 const productionDependencies: Manhua3dTaskDependencies = {
   isConfigured: isWavespeedTripo3dConfigured,
   submit: submitWavespeedTripo3d,
+  submitMultiview: submitWavespeedTripo3dMultiview,
   poll: pollWavespeedTripo3dOnce,
   downloadGlb: downloadGlb,
   uploadGlb: uploadBufferToGcs,
@@ -187,6 +199,7 @@ function idempotencyDigest(input: {
   assetRef: string;
   sourceVersion: string;
   options: Manhua3dTaskOptions;
+  multiviewVersion?: string;
 }): string {
   return createHash("sha256")
     .update(
@@ -195,6 +208,8 @@ function idempotencyDigest(input: {
         input.assetRef,
         input.sourceVersion,
         input.options,
+        // 多视角与单图是不同的任务；不同视角集合也是不同任务
+        ...(input.multiviewVersion ? ["multiview", input.multiviewVersion] : []),
       ])
     )
     .digest("hex");
@@ -353,6 +368,22 @@ function importedGlbObjectName(input: {
   return `manhua-3d/u${input.userId}/imports/${safePart(input.assetRef)}/${input.sha256}/model.glb`;
 }
 
+/** 提交前把视角图重签成新鲜读链（有 gs:// 才重签；没有就用记录里的 https） */
+async function resolveMultiviewImageUrls(record: Manhua3dTaskRecord): Promise<string[]> {
+  const urls = record.multiviewImageUrls || [];
+  const gcs = record.multiviewImageGcsUris || [];
+  const out: string[] = [];
+  for (let i = 0; i < urls.length; i += 1) {
+    const gs = gcs[i];
+    if (gs && /^gs:\/\//i.test(gs)) {
+      out.push(await dependencies.signGlb(gs, 2 * 60 * 60));
+    } else {
+      out.push(urls[i]!);
+    }
+  }
+  return out;
+}
+
 function toView(record: Manhua3dTaskRecord): Manhua3dTaskView {
   const {
     taskId,
@@ -482,10 +513,15 @@ export async function advanceManhua3dTask(
       record.startedAt = record.startedAt || isoNow();
       await writeRecord(record);
       try {
-        const submitted = await dependencies.submit({
-          image: record.sourceImageUrl,
-          ...record.options,
-        });
+        const submitted = record.multiviewImageUrls?.length
+          ? await dependencies.submitMultiview({
+              images: await resolveMultiviewImageUrls(record),
+              ...record.options,
+            })
+          : await dependencies.submit({
+              image: record.sourceImageUrl,
+              ...record.options,
+            });
         record.predictionId = submitted.predictionId;
         record.status = "running";
         record.errorZh = undefined;
@@ -594,6 +630,10 @@ export async function createManhua3dTask(input: {
   sourceVersion: string;
   sourceImageUrl: string;
   options?: Partial<Manhua3dTaskOptions>;
+  /** 0916 多视角：2–4 张 https，顺序 前/左/后/右；给了就走 multiview-to-3d */
+  multiviewImageUrls?: string[];
+  multiviewImageGcsUris?: string[];
+  multiviewVersion?: string;
 }): Promise<Manhua3dTaskView> {
   const assetRef = String(input.assetRef || "").trim();
   const sourceVersion = String(input.sourceVersion || "").trim();
@@ -602,6 +642,21 @@ export async function createManhua3dTask(input: {
     throw new Error("invalid_user_id");
   if (!assetRef || !sourceVersion || !/^https:\/\//i.test(sourceImageUrl)) {
     throw new Error("invalid_manhua_3d_task_input");
+  }
+  const multiviewImageUrls = (input.multiviewImageUrls || []).map(u => String(u || "").trim());
+  const multiviewImageGcsUris = (input.multiviewImageGcsUris || []).map(u => String(u || "").trim());
+  const multiviewVersion = String(input.multiviewVersion || "").trim();
+  if (multiviewImageUrls.length) {
+    if (
+      multiviewImageUrls.length < 2 ||
+      multiviewImageUrls.length > 4 ||
+      multiviewImageUrls.some(u => !/^https:\/\//i.test(u)) ||
+      (multiviewImageGcsUris.length && multiviewImageGcsUris.length !== multiviewImageUrls.length) ||
+      !multiviewVersion
+    ) {
+      // 视角集合没有稳定版本就没法幂等：不猜，直接拒
+      throw new Error("invalid_manhua_3d_multiview_input");
+    }
   }
   if (!dependencies.isConfigured()) {
     // 缺凭证时上游明确没有出站可能，必须在建任务前失败；不能伪装成“结果未知”。
@@ -614,6 +669,7 @@ export async function createManhua3dTask(input: {
     assetRef,
     sourceVersion,
     options,
+    ...(multiviewImageUrls.length ? { multiviewVersion } : {}),
   });
   const taskId = `m3d_${digest.slice(0, 24)}`;
   const now = isoNow();
@@ -623,6 +679,13 @@ export async function createManhua3dTask(input: {
     assetRef,
     sourceVersion,
     sourceImageUrl,
+    ...(multiviewImageUrls.length
+      ? {
+          multiviewImageUrls,
+          ...(multiviewImageGcsUris.length ? { multiviewImageGcsUris } : {}),
+          multiviewVersion,
+        }
+      : {}),
     status: "queued",
     options,
     createdAt: now,

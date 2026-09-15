@@ -42,6 +42,32 @@ describe("manhua3dRouter", () => {
     mocks.retryManhua3dTask.mockReset().mockResolvedValue(taskView);
   });
 
+  it("管理员可提交多视角任务：2–4 张 https，参数透传；少于 2 张被 zod 拒", async () => {
+    const admin = manhua3dRouter.createCaller(ctx("admin"));
+    const views = ["https://assets.test/v/front.png", "https://assets.test/v/left.png", "https://assets.test/v/back.png"];
+    await admin.submitMultiview({
+      assetRef: "character:black-horse",
+      sourceVersion: "sha256:test-v1",
+      sourceImageUrl: "https://assets.test/black-horse-front.png",
+      multiviewImageUrls: views,
+      multiviewImageGcsUris: ["gs://b/f.png", "gs://b/l.png", "gs://b/b.png"],
+      multiviewVersion: "views:v1",
+      options: { geometryQuality: "detailed" },
+    });
+    expect(mocks.createManhua3dTask).toHaveBeenCalledWith(
+      expect.objectContaining({ multiviewImageUrls: views, multiviewVersion: "views:v1", multiviewImageGcsUris: ["gs://b/f.png", "gs://b/l.png", "gs://b/b.png"] })
+    );
+    await expect(
+      admin.submitMultiview({
+        assetRef: "character:black-horse",
+        sourceVersion: "sha256:test-v1",
+        sourceImageUrl: "https://assets.test/black-horse-front.png",
+        multiviewImageUrls: views.slice(0, 1),
+        multiviewVersion: "views:v1",
+      })
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
   it("普通用户不能提交或查询三维任务", async () => {
     const caller = manhua3dRouter.createCaller(ctx("user"));
     await expect(

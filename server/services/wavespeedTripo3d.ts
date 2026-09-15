@@ -3,6 +3,11 @@ import { getWavespeedApiKey } from "./wavespeedVideoUpscale.js";
 
 export const WAVESPEED_TRIPO_H31_IMAGE_TO_3D_PATH =
   "/api/v3/tripo3d/h3.1/image-to-3d" as const;
+/** 0916 探针验证：同一 H3.1，喂 2–4 张正交视角（顺序 前/左/后/右，前视必填），背面侧面不再靠猜 */
+export const WAVESPEED_TRIPO_H31_MULTIVIEW_TO_3D_PATH =
+  "/api/v3/tripo3d/h3.1/multiview-to-3d" as const;
+export const WAVESPEED_TRIPO_MULTIVIEW_MIN = 2;
+export const WAVESPEED_TRIPO_MULTIVIEW_MAX = 4;
 
 export type TripoH31Quality = "standard" | "detailed";
 export type TripoH31TextureAlignment = "original_image" | "geometry";
@@ -84,6 +89,35 @@ export function buildWavespeedTripo3dBody(
 
 export function isWavespeedTripo3dConfigured(): boolean {
   return Boolean(getWavespeedApiKey());
+}
+
+export type WavespeedTripo3dMultiviewInput = Omit<WavespeedTripo3dInput, "image"> & {
+  /** 顺序固定 前/左/后/右；至少 2 张，第一张（前视）必填 */
+  images: string[];
+};
+
+export function buildWavespeedTripo3dMultiviewBody(
+  input: WavespeedTripo3dMultiviewInput
+): Record<string, unknown> {
+  const images = (input.images || []).map(u => String(u || "").trim());
+  if (images.length < WAVESPEED_TRIPO_MULTIVIEW_MIN || images.length > WAVESPEED_TRIPO_MULTIVIEW_MAX) {
+    throw new Error("tripo3d_multiview_needs_2_to_4_images");
+  }
+  if (images.some(u => !/^https:\/\//i.test(u))) {
+    throw new Error("tripo3d_multiview_images_must_be_https");
+  }
+  const { image: _drop, ...rest } = buildWavespeedTripo3dBody({ ...input, image: images[0]! });
+  return { images, ...rest };
+}
+
+export async function submitWavespeedTripo3dMultiview(
+  input: WavespeedTripo3dMultiviewInput
+): Promise<{ predictionId: string }> {
+  return submitWavespeedPredictionRequest(
+    WAVESPEED_TRIPO_H31_MULTIVIEW_TO_3D_PATH,
+    buildWavespeedTripo3dMultiviewBody(input),
+    "三维资产（多视角）"
+  );
 }
 
 export async function submitWavespeedTripo3d(
