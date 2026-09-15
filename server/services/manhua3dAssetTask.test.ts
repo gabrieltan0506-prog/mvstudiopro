@@ -139,6 +139,14 @@ describe("manhua3dAssetTask", () => {
       await fs.copyFile(path.join(otherDir, `${competitor.assetId}.json`), path.join(String(savedDir), `${competitor.assetId}.json`));
       vi.stubEnv("MANHUA_3D_ASSET_DIR", String(savedDir));
       await fs.rm(otherDir, { recursive: true, force: true });
+      // 回到本进程：换一个**不同**的时钟，若本进程 rename 覆盖，盘上 createdAt 会变成 2027（反证依据）
+      resetManhua3dAssetDependenciesForTests();
+      setManhua3dAssetDependenciesForTests({
+        resolveSourceGlb: async () => SOURCE,
+        downloadGlb: async () => GOOD_GLB,
+        hasLux3dCredential: () => false,
+        now: () => new Date("2027-01-01T00:00:00.000Z"),
+      });
       return GOOD_GLB;
     });
     const mine = await importManhua3dAsset({ userId: 7, sourceJobId: SOURCE.taskId, assetRef: SOURCE.assetRef, units: "m", axis: "y_up" });
