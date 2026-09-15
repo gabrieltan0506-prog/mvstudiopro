@@ -121,6 +121,35 @@ describe("manhua3dAssetTask", () => {
     );
   });
 
+  it("1467 R1 跨进程并发：另一实例在本进程下载期间先落盘 → 本进程不覆盖，读回赢家记录（排他创建，同 manhua3dTask）", async () => {
+    let competitor: Awaited<ReturnType<typeof importManhua3dAsset>> | null = null;
+    download.mockImplementationOnce(async () => {
+      // 模拟另一实例：它已经完成同 assetId 的导入并写盘（内存 inflight 对它不可见）
+      const savedDir = process.env.MANHUA_3D_ASSET_DIR;
+      const otherDir = await fs.mkdtemp(path.join(os.tmpdir(), "manhua3d-asset-other-"));
+      vi.stubEnv("MANHUA_3D_ASSET_DIR", otherDir);
+      resetManhua3dAssetDependenciesForTests();
+      setManhua3dAssetDependenciesForTests({
+        resolveSourceGlb: async () => SOURCE,
+        downloadGlb: async () => GOOD_GLB,
+        hasLux3dCredential: () => false,
+        now: () => new Date("2026-09-15T00:00:00.000Z"),
+      });
+      competitor = await importManhua3dAsset({ userId: 7, sourceJobId: SOURCE.taskId, assetRef: SOURCE.assetRef, units: "m", axis: "y_up" });
+      await fs.copyFile(path.join(otherDir, `${competitor.assetId}.json`), path.join(String(savedDir), `${competitor.assetId}.json`));
+      vi.stubEnv("MANHUA_3D_ASSET_DIR", String(savedDir));
+      await fs.rm(otherDir, { recursive: true, force: true });
+      return GOOD_GLB;
+    });
+    const mine = await importManhua3dAsset({ userId: 7, sourceJobId: SOURCE.taskId, assetRef: SOURCE.assetRef, units: "m", axis: "y_up" });
+    expect(competitor).not.toBeNull();
+    // 赢家的时间戳（固定 2026-09-15）被保留，说明本进程没有 rename 覆盖
+    expect(mine.createdAt).toBe("2026-09-15T00:00:00.000Z");
+    expect(mine).toEqual(competitor);
+    const onDisk = JSON.parse(await fs.readFile(path.join(dir, `${mine.assetId}.json`), "utf8")) as { createdAt: string };
+    expect(onDisk.createdAt).toBe("2026-09-15T00:00:00.000Z");
+  });
+
   it("坏记录文件当不存在，不返回半个资产", async () => {
     await fs.writeFile(path.join(dir, "m3da_broken.json"), JSON.stringify({ userId: 7, assetId: "m3da_broken" }));
     expect(await getManhua3dAsset("m3da_broken", 7)).toBeNull();

@@ -85,6 +85,22 @@ async function writeRecord(record: StoredManhua3dAsset): Promise<void> {
   await fs.rename(temporary, target);
 }
 
+/**
+ * 首次落盘走排他创建（与 manhua3dTask.createRecordExclusive 同口径）：
+ * 跨实例/跨进程同 assetId 并发导入时只有一个写入者，输家读回赢家的记录，不用 rename 覆盖。
+ * 1467 R1：原先 rename 覆盖，两个实例各写各的 createdAt/checkedAt，后写者盖掉先写者。
+ */
+async function createRecordExclusive(record: StoredManhua3dAsset): Promise<boolean> {
+  await ensureStore();
+  try {
+    await fs.writeFile(recordPath(record.assetId), JSON.stringify(record, null, 2), { flag: "wx" });
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "EEXIST") return false;
+    throw error;
+  }
+}
+
 /** 读到的记录必须过 schema；坏文件当不存在，绝不返回半个资产。 */
 async function readRecord(assetId: string): Promise<StoredManhua3dAsset | null> {
   await ensureStore();
@@ -209,7 +225,14 @@ export async function importManhua3dAsset(input: {
     };
     // 写盘前再过一遍 schema：verified 却缺几何这类矛盾在这里就拦下，不落坏记录。
     manhua3dAssetRecordSchema.parse(toView(record));
-    await writeRecord(record);
+    if (!(await createRecordExclusive(record))) {
+      // 另一实例先落盘：以它的为准（同 assetId = 同人同任务同单位轴向，内容等价）
+      const winner = await readRecord(assetId);
+      if (winner && winner.userId === input.userId) return toView(winner);
+      if (winner) throw new Error("manhua3d_asset_forbidden");
+      // 文件存在却读不回（坏文件）：用本次结果覆盖修复
+      await writeRecord(record);
+    }
     return toView(record);
   })();
   inflight.set(assetId, operation);
