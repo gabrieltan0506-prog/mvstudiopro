@@ -7,6 +7,7 @@ import {
   SubmitUnknownError,
 } from "./submitOutcomeErrors.js";
 import {
+  advanceManhua3dTask,
   assertGlbBuffer,
   createManhua3dTask,
   downloadGlb,
@@ -219,8 +220,9 @@ describe("manhua3dTask", () => {
     expect(withEmpty.taskId).toBe(plain.taskId);
     expect(submit).toHaveBeenCalledTimes(1);
     expect(submitMultiview).not.toHaveBeenCalled();
-    expect(plain).not.toHaveProperty("multiviewImageUrls");
+    expect(plain).not.toHaveProperty("multiviewImageCount");
     expect(plain).not.toHaveProperty("multiviewVersion");
+    expect(plain).not.toHaveProperty("multiviewImageGcsUris");
   });
 
   it("1469 R1 重试：多视角任务失败后重试仍走 submitMultiview（提交前按 gs:// 重签），不退回单图；视图带 multiview 标记", async () => {
@@ -246,7 +248,10 @@ describe("manhua3dTask", () => {
     });
     expect(failed.status).toBe("failed");
     expect(failed.multiviewVersion).toBe("views:v1");
-    expect(failed.multiviewImageUrls).toEqual(views);
+    // 视图只回稳定身份与张数，不回会过期的签名 URL（1469 R2）
+    expect(failed.multiviewImageCount).toBe(2);
+    expect(failed.multiviewImageGcsUris).toEqual(gcs);
+    expect(failed).not.toHaveProperty("multiviewImageUrls");
     expect(submitMultiview.mock.calls[0]?.[0]).toMatchObject({ images: gcs.map((g) => `https://signed.test/${g.replace("gs://", "")}?fresh=1`) });
 
     const retried = await retryManhua3dTask(failed.taskId, 7);
@@ -255,6 +260,68 @@ describe("manhua3dTask", () => {
     expect(submit).not.toHaveBeenCalled();
     expect(submitMultiview).toHaveBeenCalledTimes(2);
     expect(signGlb).toHaveBeenCalledWith("gs://b/front.png", 2 * 60 * 60);
+  });
+
+  it("1469 R2 ③ 视角图签名失败：没有任何出站 → failed（可重试），不是 reconcile_manual；signGlb 恢复后重试走 submitMultiview", async () => {
+    const submitMultiview = vi.fn().mockResolvedValue({ predictionId: "pred-mv-after-sign" });
+    const signGlb = vi
+      .fn()
+      .mockImplementationOnce(() => { throw new Error("kms unavailable"); })
+      .mockImplementation((gs: string) => `https://signed.test/${gs.replace("gs://", "")}`);
+    setManhua3dTaskDependenciesForTests({
+      isConfigured: () => true,
+      submit: vi.fn(),
+      submitMultiview,
+      signGlb: signGlb as never,
+      poll: vi.fn().mockResolvedValue({ state: "running", status: "processing" }),
+    });
+    const failed = await createManhua3dTask({
+      userId: 7, assetRef: "character:black-horse", sourceVersion: "sha256:mv-sign-v1",
+      sourceImageUrl: "https://assets.test/black-horse-front.png",
+      multiviewImageUrls: ["https://assets.test/v/front.png", "https://assets.test/v/left.png"],
+      multiviewImageGcsUris: ["gs://b/front.png", "gs://b/left.png"], multiviewVersion: "views:v1",
+    });
+    expect(failed.status).toBe("failed");
+    expect(failed.errorZh).toContain("未提交上游");
+    expect(submitMultiview).not.toHaveBeenCalled();
+    const retried = await retryManhua3dTask(failed.taskId, 7);
+    expect(retried?.status).toBe("running");
+    expect(submitMultiview).toHaveBeenCalledTimes(1);
+  });
+
+  it("1469 R2 ② 已有 predictionId 的多视角任务：worker 推进只 poll，不再提交任何一路", async () => {
+    const submit = vi.fn();
+    const submitMultiview = vi.fn().mockResolvedValue({ predictionId: "pred-mv-poll" });
+    const poll = vi.fn().mockResolvedValue({ state: "running", status: "processing" });
+    setManhua3dTaskDependenciesForTests({ isConfigured: () => true, submit, submitMultiview, poll });
+    const created = await createManhua3dTask({
+      userId: 7, assetRef: "character:black-horse", sourceVersion: "sha256:mv-poll-v1",
+      sourceImageUrl: "https://assets.test/black-horse-front.png",
+      multiviewImageUrls: ["https://assets.test/v/front.png", "https://assets.test/v/left.png"], multiviewVersion: "views:v1",
+    });
+    expect(created.status).toBe("running");
+    const advanced = await advanceManhua3dTask(created.taskId);
+    expect(advanced?.status).toBe("running");
+    expect(poll).toHaveBeenCalledWith("pred-mv-poll");
+    expect(submitMultiview).toHaveBeenCalledTimes(1);
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("1469 R2 ⑤ 幂等：同 multiviewVersion、不同 options → 不同任务", async () => {
+    const submitMultiview = vi.fn().mockResolvedValueOnce({ predictionId: "a" }).mockResolvedValueOnce({ predictionId: "b" });
+    setManhua3dTaskDependenciesForTests({
+      isConfigured: () => true, submit: vi.fn(), submitMultiview,
+      poll: vi.fn().mockResolvedValue({ state: "running", status: "processing" }),
+    });
+    const base = {
+      userId: 7, assetRef: "character:black-horse", sourceVersion: "sha256:mv-opt-v1",
+      sourceImageUrl: "https://assets.test/black-horse-front.png",
+      multiviewImageUrls: ["https://assets.test/v/front.png", "https://assets.test/v/left.png"], multiviewVersion: "views:v1",
+    };
+    const std = await createManhua3dTask({ ...base, options: { geometryQuality: "standard" } });
+    const det = await createManhua3dTask({ ...base, options: { geometryQuality: "detailed" } });
+    expect(det.taskId).not.toBe(std.taskId);
+    expect(submitMultiview).toHaveBeenCalledTimes(2);
   });
 
   it("同一来源用不同质量选项会产生不同任务，避免错误复用", async () => {

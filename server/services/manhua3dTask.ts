@@ -97,9 +97,9 @@ export type Manhua3dTaskView = Pick<
   | "assetRef"
   | "sourceVersion"
   | "sourceImageUrl"
-  /** 0916 多视角：前端据此分辨任务类型；视角图 URL 会轮换，仅展示用 */
-  | "multiviewImageUrls"
+  /** 0916 多视角：前端据此分辨任务类型。只回稳定身份（版本 / gs://）与张数，不回会过期的签名 URL（1469 R2） */
   | "multiviewVersion"
+  | "multiviewImageGcsUris"
   | "status"
   | "predictionId"
   | "glbGcsUri"
@@ -111,7 +111,7 @@ export type Manhua3dTaskView = Pick<
   | "createdAt"
   | "updatedAt"
   | "finishedAt"
->;
+> & { multiviewImageCount?: number };
 
 type Manhua3dTaskDependencies = {
   isConfigured: () => boolean;
@@ -394,6 +394,7 @@ function toView(record: Manhua3dTaskRecord): Manhua3dTaskView {
     sourceVersion,
     sourceImageUrl,
     multiviewImageUrls,
+    multiviewImageGcsUris,
     multiviewVersion,
     status,
     predictionId,
@@ -412,7 +413,13 @@ function toView(record: Manhua3dTaskRecord): Manhua3dTaskView {
     assetRef,
     sourceVersion,
     sourceImageUrl,
-    ...(multiviewImageUrls?.length ? { multiviewImageUrls: [...multiviewImageUrls], multiviewVersion } : {}),
+    ...(multiviewImageUrls?.length
+      ? {
+          multiviewImageCount: multiviewImageUrls.length,
+          multiviewVersion,
+          ...(multiviewImageGcsUris?.length ? { multiviewImageGcsUris: [...multiviewImageGcsUris] } : {}),
+        }
+      : {}),
     status,
     predictionId,
     glbGcsUri,
@@ -513,15 +520,25 @@ export async function advanceManhua3dTask(
     }
 
     if (!record.predictionId) {
+      // 1469 R2：视角图重签是**本地**动作，放在预落 reconcile_manual 之前——签名失败没有任何出站，
+      // 必须是可重试的 failed，而不是「提交结果不确定」的人工对账（那会把任务卡死、连 retry 都被禁）。
+      let multiviewImages: string[] | null = null;
+      if (record.multiviewImageUrls?.length) {
+        try {
+          multiviewImages = await resolveMultiviewImageUrls(record);
+        } catch (error) {
+          return markFailed(record, "视角图签名失败，未提交上游，可重试", error);
+        }
+      }
       // POST 前先落“待人工对账”。若进程恰在出站后、句柄落盘前退出，重启也绝不重复建单。
       record.status = "reconcile_manual";
       record.errorZh = "提交结果正在确认，为避免重复生成不会自动重试";
       record.startedAt = record.startedAt || isoNow();
       await writeRecord(record);
       try {
-        const submitted = record.multiviewImageUrls?.length
+        const submitted = multiviewImages
           ? await dependencies.submitMultiview({
-              images: await resolveMultiviewImageUrls(record),
+              images: multiviewImages,
               ...record.options,
             })
           : await dependencies.submit({
