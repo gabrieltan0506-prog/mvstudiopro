@@ -75,9 +75,11 @@ function capturePosts() {
 describe("批量：依赖变化 → 暂停等新确认", () => {
   it("确认后上游静帧换了图：该段零 POST、标待重新确认、进 awaitingConfirmationIds；下游依赖段暂停不跑", async () => {
     const { blocks, edges, clipIds } = buildFactoryGraph();
-    expect(clipIds.length).toBeGreaterThan(1);
+    expect(clipIds.length).toBeGreaterThan(2);
     const first = clipIds[0]!;
     const second = clipIds[1]!;
+    // R1 1464-07：第 3 段不直接依赖第 1 段，但靠尾帧接力依赖第 2 段；第 2 段被暂停没出片，第 3 段也必须暂停
+    const third = clipIds[2]!;
     // 段间没有显式边：第 2 段靠「上段尾帧接力」（默认开）依赖第 1 段。只跑这两段，避免把文本阶段带进来
     const edgesWithDep = edges;
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("确认阶段不得联网"); }));
@@ -115,7 +117,7 @@ describe("批量：依赖变化 → 暂停等新确认", () => {
       episodeIndex: 1,
       untilStage: "clip",
       forceFromStage: "clip",
-      targetBlockIds: [first, second],
+      targetBlockIds: [first, second, third],
       maxRetries: 2, // 有重试额度也不许重试确认失效
       ensureOptions: { videoModel: "seedance-2.0-mini" },
       resolveOutboundGate: gateFromConfirmations(confirmations),
@@ -136,11 +138,17 @@ describe("批量：依赖变化 → 暂停等新确认", () => {
     expect(firstAfter.error).toMatch(/待重新确认/);
     expect(out.completedIds).not.toContain(first);
     // 第 2 段：根本没开跑（不是跑了失败），记入暂停名单，节点上写明原因
-    expect(out.pausedDownstreamIds).toEqual([second]);
+    expect(out.pausedDownstreamIds).toEqual([second, third]);
     expect(started).not.toContain(second);
     expect(skipped).toContain(second);
     expect(out.completedIds).not.toContain(second);
     expect(out.blocks.find((b) => b.id === second)!.error).toMatch(/上游段待重新确认/);
+    // 第 3 段：沿接力链传递暂停——不能拿第 2 段的旧尾帧接着发；仍然零 POST
+    expect(started).not.toContain(third);
+    expect(skipped).toContain(third);
+    expect(out.completedIds).not.toContain(third);
+    expect(out.blocks.find((b) => b.id === third)!.error).toMatch(/上游段待重新确认/);
+    expect(posts).toHaveLength(0);
   }, 30_000);
 
   it("确认仍有效时照常提交：对照组，证明上一条不是被别的门挡住", async () => {

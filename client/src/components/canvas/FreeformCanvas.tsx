@@ -71,6 +71,7 @@ import {
 import { isCanvasUploadableFile, inferCanvasAssetKindFromFileName, takeFilesFromInput, uploadCanvasFilesParallel, uploadOneCanvasAsset, CANVAS_UPLOAD_CONCURRENCY } from "@/lib/canvasUpload";
 import { loadCanvasDocumentTexts } from "@/lib/canvasDocumentText";
 import { runCanvasBlock, type CanvasRunDeps, type ManhuaOutboundGate } from "@/lib/canvasRunBlock";
+import { resolveCanvasIntentStatusReply, selectCanvasIntentRecoveryCandidates } from "@/lib/canvasIntentRecovery";
 import {
   collectManhuaEpisodeSegmentPromptsForVoiceGate,
   countManhuaClipAssetEdges,
@@ -902,6 +903,13 @@ export default function FreeformCanvas({
   );
   /** patchOne 声明在后,经 ref 间接引用避免 TDZ;渲染期同步赋值,不会漏拍 */
   const patchOneRef = useRef<((id: string, patch: Partial<CanvasBlock>) => void) | null>(null);
+  /**
+   * D（0915）/ R1 1464-05：本会话自己创建或推进过的意图。刷新恢复 effect 跳过它们——
+   * 包装层刚标 submitted、POST 还在路上时去问状态只会 404，不能据此把在途意图判成 settled。
+   */
+  const sessionIntentIdsRef = useRef<Set<string>>(new Set());
+  /** 本次挂载已经问过状态的意图（503 / 瞬态保持核实中，下次挂载再问） */
+  const queriedIntentIdsRef = useRef<Set<string>>(new Set());
   const blocksRef = useRef(blocks);
   const onBlocksChangeRef = useRef(onBlocksChange);
   const videoResumeSnapshotsRef = useRef({
@@ -926,6 +934,7 @@ export default function FreeformCanvas({
       },
       // D（0915）：意图状态随节点持久化，驱动六态芯片；刷新后由下方恢复 effect 按 intentId 查已提交任务
       onCanvasIntentChanged: (blockId: string, intent: { intentId: string; status: CanvasBlock["videoIntentStatus"] }) => {
+        sessionIntentIdsRef.current.add(intent.intentId);
         runDeps.onCanvasIntentChanged?.(blockId, intent as never);
         patchOneRef.current?.(blockId, { videoIntentId: intent.intentId, videoIntentStatus: intent.status });
       },
@@ -1600,44 +1609,33 @@ export default function FreeformCanvas({
    * - 读不出来（503）→ 保持核实中，下次挂载再问。
    */
   const pendingIntentKey = JSON.stringify(
-    blocks
-      .filter(
-        (b) =>
-          b.videoIntentId &&
-          !b.videoTaskId &&
-          (b.videoIntentStatus === "submitted" ||
-            b.videoIntentStatus === "unverified" ||
-            b.videoIntentStatus === "acknowledged"),
-      )
-      .map((b) => [b.id, b.videoIntentId]),
+    selectCanvasIntentRecoveryCandidates(blocks, {
+      sessionIntentIds: sessionIntentIdsRef.current,
+      queriedIntentIds: queriedIntentIdsRef.current,
+    }).map((c) => [c.blockId, c.intentId]),
   );
   useEffect(() => {
     const pairs = JSON.parse(pendingIntentKey) as Array<[string, string]>;
     if (!pairs.length) return;
     let cancelled = false;
     for (const [blockId, intentId] of pairs) {
+      // 先记「问过」再发请求：同一挂载内不重复问；本会话在途的意图已在候选阶段被排除
+      queriedIntentIdsRef.current.add(intentId);
       void (async () => {
         try {
           const res = await fetch(
             withLongJobsFlyDirect(`/api/jobs?op=canvasIntentStatus&intentId=${encodeURIComponent(intentId)}`),
             { credentials: "include", cache: "no-store" },
           );
-          const j = (await res.json().catch(() => ({}))) as {
-            ok?: boolean; pending?: boolean; code?: string; taskId?: string; status?: string; engine?: string;
-          };
+          const j = (await res.json().catch(() => ({}))) as Parameters<typeof resolveCanvasIntentStatusReply>[2];
           if (cancelled) return;
-          if (res.status === 404 && j.code === "intent_not_found") {
+          const resolution = resolveCanvasIntentStatusReply(res.status, res.ok, j);
+          if (resolution.kind === "settle") {
             patchOneRef.current?.(blockId, { videoIntentStatus: "settled" });
-            return;
+          } else if (resolution.kind === "attach") {
+            patchOneRef.current?.(blockId, resolution.patch);
           }
-          if (!res.ok || !j.ok || j.pending !== false || !j.taskId) return; // 仍在核实：不动
-          patchOneRef.current?.(blockId, {
-            videoTaskId: j.taskId,
-            videoTaskEngine: j.engine,
-            videoTaskStatus:
-              j.status === "succeeded" || j.status === "failed" || j.status === "queued" ? j.status : "running",
-            videoIntentStatus: "acknowledged",
-          });
+          // keep：仍在核实，不动
         } catch {
           /* 瞬态：保持核实中 */
         }

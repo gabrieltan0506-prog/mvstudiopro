@@ -4469,9 +4469,36 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       continue;
     }
 
+    /**
+     * 本段的下游 = 图上的子节点 ∪ 接力依赖：段间没有显式边，「上段尾帧接力」开着时
+     * 下一段吃本段尾帧。只算还没完成、且在本批里的。
+     */
+    const downstreamOf = (fromId: string, fromIndex: number): string[] => {
+      const tailContinuity = opts.shotContinuity?.clipFromPrevTail !== false;
+      const nextClip =
+        stageKeyFromBlockId(fromId) === "clip" && tailContinuity
+          ? orderedIds.slice(fromIndex + 1).find((id) => stageKeyFromBlockId(id) === "clip")
+          : undefined;
+      return Array.from(
+        new Set([...collectDownstreamIds(edges, fromId), ...(nextClip ? [nextClip] : [])]),
+      ).filter((id) => orderedIds.includes(id) && !completedIds.includes(id) && id !== fromId);
+    };
     if (pausedIds.has(blockId)) {
-      // 上游待重新确认：本段不跑、不算完成，记入暂停名单
+      // 上游待重新确认：本段不跑、不算完成，记入暂停名单。
+      // R1 1464-07：暂停要沿依赖链**传递**——本段没出片，它的下一段就不能拿旧尾帧接着发；
+      // 否则第 3 段会吃第 2 段（被暂停、未重出）的陈旧尾帧。
       if (!pausedDownstreamIds.includes(blockId)) pausedDownstreamIds.push(blockId);
+      const chained = downstreamOf(blockId, i).filter((id) => !pausedIds.has(id));
+      for (const id of chained) pausedIds.add(id);
+      if (chained.length) {
+        publish(
+          working.map((b) =>
+            chained.includes(b.id)
+              ? { ...b, status: "error" as const, error: "上游段待重新确认，本段暂停，未提交未扣费" }
+              : b,
+          ),
+        );
+      }
       opts.onStageSkip?.(blockId, label);
       i += 1;
       continue;
@@ -4661,15 +4688,8 @@ export async function runManhuaDramaFactoryPipeline(opts: {
         // 本段没提交没扣费，等用户重新确认。它的下游依赖段一并暂停（上游产物都没定，
         // 下游不能拿旧尾帧/旧静帧接着发）；与它无依赖关系的段按既有策略继续。
         awaitingConfirmationIds.push(blockId);
-        // 下游 = 图上的子节点 ∪ 接力依赖：段间没有显式边，「上段尾帧接力」开着时下一段吃本段尾帧
-        const tailContinuity = opts.shotContinuity?.clipFromPrevTail !== false;
-        const nextClip =
-          stage === "clip" && tailContinuity
-            ? orderedIds.slice(i + 1).find((id) => stageKeyFromBlockId(id) === "clip")
-            : undefined;
-        const downstream = Array.from(
-          new Set([...collectDownstreamIds(edges, blockId), ...(nextClip ? [nextClip] : [])]),
-        ).filter((id) => orderedIds.includes(id) && !completedIds.includes(id) && id !== blockId);
+        // 下游 = 图上的子节点 ∪ 接力依赖（见 downstreamOf）；再往下的链在轮到它们时由暂停分支继续传递
+        const downstream = downstreamOf(blockId, i);
         for (const id of downstream) pausedIds.add(id);
         if (downstream.length) {
           publish(
