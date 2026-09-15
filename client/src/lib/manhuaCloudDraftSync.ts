@@ -527,6 +527,8 @@ export function buildLocalCloudDraftSnapshot(input: {
   edges: unknown[];
   factoryPrefs?: Record<string, unknown> | null;
   clientUpdatedAt?: string;
+  /** 0915 动作计划（PR-2）：顶层字段，随快照上云；缺省不补造 */
+  manhuaActionPlans?: Record<string, import("@shared/manhuaActionPlan").ManhuaActionPlan> | null;
 }): ManhuaCloudDraftPayload {
   const blocks = Array.isArray(input.blocks)
     ? blocksForCloudDraftSync(input.blocks as CanvasBlock[])
@@ -537,6 +539,7 @@ export function buildLocalCloudDraftSnapshot(input: {
     blocks,
     edges: input.edges,
     factoryPrefs: input.factoryPrefs,
+    manhuaActionPlans: input.manhuaActionPlans ?? null,
   });
 }
 

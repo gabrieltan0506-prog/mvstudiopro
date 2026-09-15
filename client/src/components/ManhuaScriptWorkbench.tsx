@@ -32,6 +32,9 @@ import {
 import { VIDEO_MODEL_OPTIONS, type CanvasBlock } from "@/lib/canvasTypes";
 import { CanvasAudioStudio } from "@/components/canvas/CanvasAudioStudio";
 import { ManhuaPrevisStudio } from "@/components/canvas/ManhuaPrevisStudio";
+import { ManhuaActionTimeline } from "@/components/canvas/ManhuaActionTimeline";
+import type { ManhuaActionPlan } from "@shared/manhuaActionPlan";
+import type { ManhuaActionPlanBindingContext } from "@shared/manhuaActionPlanBindings";
 import {
   collectManhuaCharacterSheetUrlById,
   collectManhuaEpisodeSegmentPromptsForVoiceGate,
@@ -592,6 +595,11 @@ type Props = {
   /** 在工厂内按当前段保存声音，不跳转到自由画布。 */
   onUpdateClipAudioStudio?: (clipId: string, studio: NonNullable<CanvasBlock["audioStudio"]>) => void;
   onUpdateClipPrevisStudio?: (clipId:string,studio:NonNullable<CanvasBlock["previsStudio"]>,reference?:ManhuaSegmentReferenceEntry)=>void|boolean;
+  /** 0915 动作节奏（PR-2）：本集动作计划；OmniCanvas 是唯一状态源，这里只展示与回传 */
+  manhuaActionPlan?: ManhuaActionPlan | null;
+  /** 导演板落点/相机解析结果（适配器产物），时间轴据此挑落点与判引用是否仍一致 */
+  manhuaActionPlanBindingContext?: ManhuaActionPlanBindingContext | null;
+  onChangeManhuaActionPlan?: (episodeIndex: number, plan: ManhuaActionPlan | null) => void;
   /** 配音间「一键预混母轨」出好后挂到本段 manhuaSegmentRefs（slot 固定 master） */
   onSetClipSegmentReference?: (clipId: string, slot: "master", entry: ManhuaSegmentReferenceEntry) => void;
   onResumeFromFailure?: () => void;
@@ -1101,6 +1109,9 @@ export default function ManhuaScriptWorkbench({
   onUpdateClipPrompt,
   onUpdateClipAudioStudio,
   onUpdateClipPrevisStudio,
+  manhuaActionPlan,
+  manhuaActionPlanBindingContext,
+  onChangeManhuaActionPlan,
   onSetClipSegmentReference,
   onResumeFromFailure,
   onRerunKeyartsFromReverse,
@@ -1191,6 +1202,7 @@ export default function ManhuaScriptWorkbench({
   );
   const [audioStudioOpen, setAudioStudioOpen] = useState(false);
   const [previsStudioOpen,setPrevisStudioOpen] = useState(false);
+  const [actionTimelineOpen, setActionTimelineOpen] = useState(false);
   /** 免费裁字弹层：拖框选保留区，框外（含烧字边缘）裁掉 */
   const [cropTarget, setCropTarget] = useState<{ id: string; url: string; labelZh: string } | null>(null);
   const [cropRect, setCropRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
@@ -3350,6 +3362,18 @@ export default function ManhuaScriptWorkbench({
               onChange={(studio,reference)=>onUpdateClipPrevisStudio(activeClip.id,studio,reference)}/>
               :<p className="text-xs text-amber-100">请先确认分段剧本并建立本段成片节点；此操作不会生成付费成片。</p>}
           </div>:null}
+          {onChangeManhuaActionPlan ? <button type="button" data-manhua-action="open-action-timeline" disabled={Boolean(factoryBusy)}
+            className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
+            onClick={()=>setActionTimelineOpen(value=>!value)}>本段动作节奏</button> : null}
+          {actionTimelineOpen&&onChangeManhuaActionPlan ? <ManhuaActionTimeline
+            episodeIndex={focusEpisode}
+            segmentIndex={activeSegNo}
+            plan={manhuaActionPlan ?? null}
+            sourceShots={(activeSegment?.shots||[]).map(shot=>({index:shot.index,durationSec:shot.durationSec,actionZh:shot.actionZh}))}
+            actors={assetLockRegistry.byRole.character.map(a=>({id:a.id,label:a.labelZh}))}
+            bindingContext={manhuaActionPlanBindingContext ?? null}
+            disabled={Boolean(factoryBusy)}
+            onChange={(plan)=>onChangeManhuaActionPlan(focusEpisode, plan)}/> : null}
           {onUpdateClipAudioStudio ? (
             <button type="button" data-manhua-action="open-audio-studio"
               disabled={Boolean(factoryBusy)}
