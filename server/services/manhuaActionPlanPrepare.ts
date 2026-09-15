@@ -210,6 +210,25 @@ export function prepareManhuaActionExecution(input: {
   const plan = parsed.plan;
   const warningsZh = parsed.warnings.map((w) => w.messageZh);
 
+  // 1b. 与时间轴 readiness（manhuaActionPlanEditor.summarizeManhuaActionPlanReadiness）同口径：
+  //     未确认镜头 / 空镜头在客户端会 executionBlocked，服务端不能比它松——
+  //     否则「确认所见 = 实际提交」只在 UI 成立（1466 R1）。
+  const gateIssues: ManhuaActionPlanIssue[] = [];
+  for (const shot of plan.shots) {
+    if (shot.confirm !== "confirmed") {
+      gateIssues.push({ code: "shot_not_confirmed", severity: "error", shotId: shot.shotId, messageZh: `镜头 ${shot.shotId} 尚未确认，不能执行` });
+    }
+    if (!shot.events.length) {
+      const snapshot = compileManhuaShotSnapshot(plan, shot.shotId) ?? {};
+      if (!Object.values(snapshot).some((st) => st.presence === "onstage")) {
+        gateIssues.push({ code: "shot_empty", severity: "error", shotId: shot.shotId, messageZh: `镜头 ${shot.shotId} 没有事件也没人在场，不能交白模` });
+      }
+    }
+  }
+  if (gateIssues.length) {
+    return fail("plan", "有镜头未确认或为空，不能执行", { planIssues: gateIssues });
+  }
+
   // 2. 绑定上下文形状
   const ctxParsed = manhuaActionPlanBindingContextSchema.safeParse(input.context);
   if (!ctxParsed.success) {

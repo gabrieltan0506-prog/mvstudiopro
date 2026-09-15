@@ -70,6 +70,36 @@ describe("prepareManhuaActionExecution · 四人船战", () => {
     expect(water.offstage.length).toBe(2);
   });
 
+  it("1466 R1：与时间轴 readiness 同口径——有镜头未确认 → plan 层 shot_not_confirmed；空镜（无事件无人在场）→ shot_empty；证据齐全也不放行", () => {
+    const base = buildBoatFight({ withSourceBindings: true });
+    const unconfirmed = sealManhuaActionPlan({
+      ...base,
+      shots: base.shots.map((s, i) => (i === 1 ? { ...s, confirm: "draft" as const } : s)),
+    });
+    const r1 = prepareManhuaActionExecution({ plan: unconfirmed, context: goodContext() });
+    expect(r1.ok).toBe(false);
+    if (r1.ok) return;
+    expect(r1.stage).toBe("plan");
+    expect(r1.planIssues.map((i) => i.code)).toEqual(["shot_not_confirmed"]);
+    expect(r1.planIssues[0]!.shotId).toBe(base.shots[1]!.shotId);
+
+    // 末尾追加一镜：全员已离场、无事件 → 空镜
+    const last = base.shots[base.shots.length - 1]!;
+    const emptyShot = {
+      ...structuredClone(last),
+      shotId: "ap_shot_empty",
+      displayIndex: last.displayIndex + 1,
+      events: [],
+      actorChanges: base.actors.map((a) => ({ actorId: a.actorId, next: { presence: "exited" as const, whereaboutsZh: "退场" } })),
+    };
+    const withEmpty = sealManhuaActionPlan({ ...base, shots: [...base.shots, emptyShot] });
+    const r2 = prepareManhuaActionExecution({ plan: withEmpty, context: goodContext() });
+    expect(r2.ok).toBe(false);
+    if (r2.ok) return;
+    expect(r2.stage).toBe("plan");
+    expect(r2.planIssues.map((i) => i.code)).toContain("shot_empty");
+  });
+
   it("approval 不是总门禁：未审批的计划只要证据齐全仍可准备，approvalCurrent=false 如实带回", () => {
     const r = prepareManhuaActionExecution({ plan: buildBoatFight({ withSourceBindings: true }), context: goodContext() });
     expect(r.ok).toBe(true);

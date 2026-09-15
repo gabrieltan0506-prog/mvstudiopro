@@ -3060,6 +3060,8 @@ export default function OmniCanvas() {
     artStyleManual,
     // 审查 P2：本机双写快照里已经带 directionSelection，依赖也要带，否则只改导演卡不落盘
     directionSelection,
+    // 1466 R1：快照里带 manhuaActionPlans，依赖也要带，否则只改时间轴再点「上传备份」传的是旧计划
+    manhuaActionPlans,
     syncCloudDraftPayload,
   ]);
 
@@ -5086,6 +5088,9 @@ export default function OmniCanvas() {
         saveManhuaDirectorBoardBySegment({});
         setDirectorBoardMotionOverlayBySegment({});
         saveManhuaDirectorBoardOverlayBySegment({});
+        // 1466 R1：动作计划引用旧剧的集/段/镜与导演板落点，换剧或清空时随导演板一并清
+        setManhuaActionPlans({});
+        saveManhuaActionPlans({});
       } else {
         const overlaysForReview = markManhuaDirectorBoardOverlaysForReview(
           directorBoardMotionOverlayBySegment,
@@ -5397,6 +5402,9 @@ export default function OmniCanvas() {
         saveManhuaDirectorBoardBySegment({});
         setDirectorBoardMotionOverlayBySegment({});
         saveManhuaDirectorBoardOverlayBySegment({});
+        // 1466 R1：动作计划引用旧剧的集/段/镜与导演板落点，换剧或清空时随导演板一并清
+        setManhuaActionPlans({});
+        saveManhuaActionPlans({});
       } else {
         const overlaysForReview = markManhuaDirectorBoardOverlaysForReview(
           directorBoardMotionOverlayBySegment,
@@ -5597,6 +5605,9 @@ export default function OmniCanvas() {
     saveManhuaDirectorBoardBySegment({});
     setDirectorBoardMotionOverlayBySegment({});
     saveManhuaDirectorBoardOverlayBySegment({});
+    // 1466 R1：动作计划引用旧剧的集/段/镜与导演板落点，换剧或清空时随导演板一并清
+    setManhuaActionPlans({});
+    saveManhuaActionPlans({});
     materializedBoardIdsRef.current.clear();
     setWriterFocusEpisode(1);
     setWriterImportDraft("");

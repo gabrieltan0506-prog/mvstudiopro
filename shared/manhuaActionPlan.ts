@@ -675,7 +675,11 @@ export type ManhuaActionPlanIssueCode =
   | "execution_range_dangling_shot"
   | "execution_range_duplicate_shot"
   | "revision_mismatch"
-  | "approval_stale";
+  | "approval_stale"
+  /** 执行准备（服务端）与时间轴 readiness 同口径：未点「已确认」的镜头不执行 */
+  | "shot_not_confirmed"
+  /** 无事件且无人在场的镜头：合同允许，但交白模没意义 */
+  | "shot_empty";
 
 export type ManhuaActionPlanIssue = {
   code: ManhuaActionPlanIssueCode;
