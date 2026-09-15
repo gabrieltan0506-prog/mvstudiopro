@@ -172,3 +172,58 @@ describe("资产图：规范化必须早于 resolveManhuaAssetImageBindRows", ()
     expect(all.includes("blob:"), "出站里出现了 blob:").toBe(false);
   });
 });
+
+/**
+ * 0915 复审新增两条：逐处补漏改成**统一清单**之后，这两种形态必须一起被覆盖。
+ */
+describe("引用清单：资产与导演板一起走同一套解析与失败语义", () => {
+  const clipWithAsset = (over: Record<string, unknown> = {}) => ({
+    id: "clip-e01-g01",
+    kind: "video" as const,
+    prompt:
+      "【资产·Image对照】\n@角色1|id=c1|label=黑奇|kind=角色|duty=identity\n\n【秒轴】\n0–10s：黑奇自梁上落地。",
+    videoModel: "seedance-2.5",
+    aspectRatio: "9:16" as const,
+    episodeIndex: 1,
+    refImageUrl: "https://example.com/still-ok.jpg",
+    ...over,
+  });
+
+  it("断链资产：即便另有有效静帧，也必须明确报错而不是悄悄少一张", async () => {
+    // 旧行为：resolveManhuaAssetImageBindRows 先按 isBindableAssetPath 过滤，
+    // 整行消失；只要还有静帧，预览照常成功——用户看到的和实际发出的不是一回事。
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("预览不得发起任何请求");
+    }));
+    await expect(
+      previewCanvasBlockOutbound(
+        { ...deps, manhuaAssetPathById: { c1: "blob:http://localhost/asset-no-source" } } as never,
+        clipWithAsset() as never,
+      ),
+    ).rejects.toThrow(/已选参考解析不到可提交的来源[\s\S]*资产图 @角色1/);
+  });
+
+  it("导演板是本机地址：溯源后必须进参考列表，不能漏接", async () => {
+    const display = "blob:http://localhost/board-e01";
+    rememberLocalMediaDisplay({
+      displayUrl: display,
+      pointer: makeLocalMediaPointer("rec-board"),
+      sourceUrl: "https://example.com/board-e01.png",
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("预览不得发起任何请求");
+    }));
+
+    const preview = await previewCanvasBlockOutbound(
+      {
+        ...deps,
+        manhuaAssetPathById: { c1: "https://example.com/char-c1.png" },
+        manhuaDirectorBoardUrlByEpisode: { 1: display },
+      } as never,
+      clipWithAsset() as never,
+    );
+    const all = JSON.stringify([preview.body, preview.refs]);
+    expect(all.includes("board-e01.png"), "导演板漏接规范化，没进参考列表").toBe(true);
+    expect(all.includes("blob:"), "出站里出现了 blob:").toBe(false);
+  });
+});

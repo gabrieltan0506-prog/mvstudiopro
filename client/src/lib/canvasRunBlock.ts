@@ -2640,14 +2640,73 @@ export async function runCanvasBlock(
         }
       }
       // 节点只含 id；path 从 deps 后台表解析，绝不依赖提示词里的网址
+      // ——— 引用清单登记（必须早于任何过滤）———
+      // clip-eNN-... → 集号；没有导演板表或解不出集号时 boardUrl 就是空串，不影响既有行为
+      const clipEpisodeMatch = /^[a-z_]+-e(\d{2})-/i.exec(block.id);
+      const clipEpisodeNo = clipEpisodeMatch ? Number.parseInt(clipEpisodeMatch[1]!, 10) : null;
+      // 段级板优先、集级兜底（与 ensureManhuaFragmentClips 同口径）；g 号可能是全集连续，折回本集段号
+      const clipLocalSegNo = clipEpisodeNo
+        ? resolveClipLocalSegmentIndex(block.id, block.prompt, clipEpisodeNo)
+        : null;
+      const rawBoardUrl =
+        isClip && clipEpisodeNo
+          ? String(
+              (clipLocalSegNo != null
+                ? deps.manhuaDirectorBoardUrlByEpisodeSegment?.[clipEpisodeNo]?.[clipLocalSegNo]
+                : "") || "",
+            ).trim() ||
+            String(deps.manhuaDirectorBoardUrlByEpisode?.[clipEpisodeNo] || "").trim()
+          : "";
+
       const requestedAssetRows = isClip
         ? parseManhuaAssetImageBindBlock(block.prompt || motionPrompt)
         : [];
-      // 资产路径表必须**先规范化再交给解析器**：
-      // resolveManhuaAssetImageBindRows 内部经 isBindableAssetPath，
-      // 它已把 blob: / local-media: 排除掉，之后再 map 补溯源救不回被删的行
-      //（0915 复审 P1 实测：身份图整行消失，只剩静帧）。
-      // 规范化放在客户端这一侧，shared 纯模块不必依赖浏览器媒体库。
+      /**
+       * @引用闭环（@图NN）：解析成真 URL 进 imageUrls；断链硬拦——
+       * 红 chip 只是提示，跑到这一步还断就必须炸，绝不静默出错脸。
+       */
+      const { applyManhuaAtReferencesToClip } = await import("@shared/manhuaAtReference");
+      const atRefApplied =
+        isClip && deps.manhuaAtReferenceEntries?.length
+          ? applyManhuaAtReferencesToClip({
+              promptText: String(block.prompt || motionPrompt || ""),
+              index: deps.manhuaAtReferenceEntries,
+              bindings: block.atRefBindings || null,
+            })
+          : null;
+      if (atRefApplied?.missing.length) {
+        throw new Error(
+          `@引用断链：@${atRefApplied.missing.join("、@")} 指到的资产不存在，请在审阅框修正或删除该引用后再出片`,
+        );
+      }
+      /**
+       * **本次真正会被引用的东西，先整理成一张带槽位的清单，再统一解析校验。**
+       *
+       * 0915 复审点名：此前是逐处补漏——静帧补了、资产表补了，导演板又漏；
+       * 而且资产行在进到断言之前就被 resolveManhuaAssetImageBindRows
+       * （内部 isBindableAssetPath）过滤掉了，断链资产照旧静默消失。
+       *
+       * 所以顺序固定为：**登记清单 → 统一解析 → 统一校验 → 之后才允许任何过滤**。
+       * 新增引用类型只要登记进这张清单，就自动获得同样的失败语义。
+       */
+      const explicitRefManifest: Array<{ slotZh: string; raw: string; resolved: string }> = [
+        ...(atRefApplied?.imageUrls || []).map((raw) => ({ slotZh: "@引用图", raw: String(raw || "") })),
+        ...stillPool.map((raw) => ({ slotZh: "参考静帧", raw: String(raw || "") })),
+        // 资产：按**提示词里请求了什么**登记，而不是按解析器留下了什么——
+        // 否则断链的那一行在登记之前就没了。
+        ...requestedAssetRows.map((row) => ({
+          slotZh: `资产图 ${row.tag}`,
+          raw: String(deps.manhuaAssetPathById?.[row.id] ?? row.path ?? ""),
+        })),
+        ...(rawBoardUrl ? [{ slotZh: "导演板", raw: rawBoardUrl }] : []),
+      ].map((e) => ({ ...e, resolved: normalizeCanvasRefSource(e.raw) }));
+      // 已选但解析不到可提交来源的，在这里就报清楚；不进入后面任何一层过滤
+      assertExplicitRefsResolvable(explicitRefManifest);
+
+      const resolvedOf = (raw: string) =>
+        explicitRefManifest.find((e) => e.raw === raw)?.resolved || normalizeCanvasRefSource(raw);
+      const boardUrl = rawBoardUrl ? resolvedOf(rawBoardUrl) : "";
+      // 资产路径表用清单里已解析好的值，解析器拿到的就是可绑定路径
       const normalizedAssetPathById = deps.manhuaAssetPathById
         ? Object.fromEntries(
             Object.entries(deps.manhuaAssetPathById).map(([id, path]) => [
@@ -2679,51 +2738,11 @@ export async function runCanvasBlock(
       const mentionedTags = isClip
         ? extractManhuaMentionedAssetTags(motionPrompt)
         : [];
-      /**
-       * @引用闭环（@图NN）：解析成真 URL 进 imageUrls；断链硬拦——
-       * 红 chip 只是提示，跑到这一步还断就必须炸，绝不静默出错脸。
-       */
-      const { applyManhuaAtReferencesToClip } = await import("@shared/manhuaAtReference");
-      const atRefApplied =
-        isClip && deps.manhuaAtReferenceEntries?.length
-          ? applyManhuaAtReferencesToClip({
-              promptText: String(block.prompt || motionPrompt || ""),
-              index: deps.manhuaAtReferenceEntries,
-              bindings: block.atRefBindings || null,
-            })
-          : null;
-      if (atRefApplied?.missing.length) {
-        throw new Error(
-          `@引用断链：@${atRefApplied.missing.join("、@")} 指到的资产不存在，请在审阅框修正或删除该引用后再出片`,
-        );
-      }
-      // 统一顺序：本机溯源 → 站内路径绝对化 → 协议校验 → 去重。
-      // 三步缺一不可：只溯源不绝对化，站内相对路径会被协议筛选丢掉（复审 P2）。
-      const explicitStillRefs = [
-        ...(atRefApplied?.imageUrls || []).map((raw) => ({ slotZh: "@引用图", raw })),
-        ...stillPool.map((raw) => ({ slotZh: "参考静帧", raw })),
-      ].map((e) => ({ ...e, resolved: normalizeCanvasRefSource(e.raw) }));
-      // 用户已经选过的参考解析不出来时明确报错，不静默丢（复审 P1）
-      assertExplicitRefsResolvable(explicitStillRefs);
-      const absStills = explicitStillRefs
+      // 静帧直接取清单里已解析好的值：协议校验 → 去重，不再自己解析一遍
+      const absStills = explicitRefManifest
+        .filter((e) => e.slotZh === "@引用图" || e.slotZh === "参考静帧")
         .map((e) => e.resolved)
         .filter((u, i, arr) => isSubmittableRefUrl(u) && arr.indexOf(u) === i);
-      // clip-eNN-... → 集号；没有导演板表或解不出集号时 boardUrl 就是空串，不影响既有行为
-      const clipEpisodeMatch = /^[a-z_]+-e(\d{2})-/i.exec(block.id);
-      const clipEpisodeNo = clipEpisodeMatch ? Number.parseInt(clipEpisodeMatch[1]!, 10) : null;
-      // 段级板优先、集级兜底（与 ensureManhuaFragmentClips 同口径）；g 号可能是全集连续，折回本集段号
-      const clipLocalSegNo = clipEpisodeNo
-        ? resolveClipLocalSegmentIndex(block.id, block.prompt, clipEpisodeNo)
-        : null;
-      const boardUrl =
-        isClip && clipEpisodeNo
-          ? String(
-              (clipLocalSegNo != null
-                ? deps.manhuaDirectorBoardUrlByEpisodeSegment?.[clipEpisodeNo]?.[clipLocalSegNo]
-                : "") || "",
-            ).trim() ||
-            String(deps.manhuaDirectorBoardUrlByEpisode?.[clipEpisodeNo] || "").trim()
-          : "";
       // 成片硬绑：末帧 → 资产定妆 → 本段静帧 → 导演板（URL 只进 API imageUrls）
       const bindPlan = isClip
         ? planManhuaClipSeedanceImageBind({
