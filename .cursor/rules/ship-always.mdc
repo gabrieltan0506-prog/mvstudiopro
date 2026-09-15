@@ -99,8 +99,8 @@
 ### 2.5 PR 多轮审查走收敛台账（硬）
 
 同一 PR 已有审查意见、需要修复复验，或要求两轮内收敛时：**用一张追加式台账**，
-放在该 PR 的审查材料目录下。技能与模板：`~/.claude/skills/review-convergence-ledger/`
-（Codex 侧对应 `~/.codex/skills/`）。
+放在该 PR 的审查材料目录下。技能与模板按运行时取：Claude Code
+`~/.claude/skills/review-convergence-ledger/`，Codex `~/.agents/skills/review-convergence-ledger/`。
 
 1. **一个逻辑缺陷一个稳定 finding ID**，只追加事件、不改写历史。相同触发条件、
    根因与影响范围**不得换 ID 重报**；位置变了但根因相同沿用原 ID。
@@ -115,8 +115,17 @@
 5. **「已加测试」型 CLOSED 需反证**：在安全且可逆的条件下撤销修复或注入等价退化，
    目标测试必须变红。**不得在共享工作树做破坏性变异**；无法安全变异时记录限制，
    改用针对性负向断言。
-6. 生成下一轮前置摘要：
-   `python3 ~/.claude/skills/review-convergence-ledger/scripts/review_preamble.py <台账.md>`
+6. **前置摘要脚本是便利工具，不是门禁。** 有就用，按运行时选路径：
+
+   ```bash
+   # Claude Code
+   python3 ~/.claude/skills/review-convergence-ledger/scripts/review_preamble.py <台账.md>
+   # Codex
+   python3 ~/.agents/skills/review-convergence-ledger/scripts/review_preamble.py <台账.md>
+   ```
+
+   **脚本不存在、路径不同或跑不通时，改为人工整理台账摘要，审查照常进行。**
+   缺脚本不构成阻断，也不作为跳过台账的理由——**要求的是台账本身，不是这个脚本。**
 
 台账**不替代**完整 diff、跨层调用链核对、在途任务与部署门禁检查，也不替代
 第三节「禁止默认代合」——合并仍等用户当轮明文。
