@@ -227,3 +227,142 @@ describe("引用清单：资产与导演板一起走同一套解析与失败语�
     expect(all.includes("blob:"), "出站里出现了 blob:").toBe(false);
   });
 });
+
+/**
+ * 0915 复审新增两条：@图 与场景切片也必须走同一张清单。
+ * 按复审要求覆盖：@图 已映射／无映射／空索引；切片 合法 HTTPS／已映射本机／无映射。
+ */
+describe("@图 与场景切片：同一套解析与失败语义", () => {
+  const clipAt = (over: Record<string, unknown> = {}) => ({
+    id: "clip-e01-g01",
+    kind: "video" as const,
+    prompt: "0–10s：@图01 里的黑奇自梁上落地。",
+    videoModel: "seedance-2.5",
+    aspectRatio: "9:16" as const,
+    episodeIndex: 1,
+    refImageUrl: "https://example.com/still-ok.jpg",
+    ...over,
+  });
+  const atEntry = (url: string) => [
+    { token: "图01", kind: "image" as const, tag: "@角色1", labelZh: "黑奇", url },
+  ];
+
+  it("@图 已映射的本机引用：溯源后必须进出站（不能只剩静帧）", async () => {
+    const display = "blob:http://localhost/at-image-01";
+    rememberLocalMediaDisplay({
+      displayUrl: display,
+      pointer: makeLocalMediaPointer("rec-at1"),
+      sourceUrl: "https://example.com/at-image-01.png",
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("预览不得发起任何请求");
+    }));
+    const preview = await previewCanvasBlockOutbound(
+      { ...deps, manhuaAtReferenceEntries: atEntry(display) } as never,
+      clipAt() as never,
+    );
+    const all = JSON.stringify([preview.body, preview.refs]);
+    expect(all.includes("at-image-01.png"), "@图 在登记之前就被协议过滤掉了").toBe(true);
+    expect(all.includes("blob:")).toBe(false);
+  });
+
+  it("@图 无映射：报出具体拒因，不静默丢", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("预览不得发起任何请求");
+    }));
+    await expect(
+      previewCanvasBlockOutbound(
+        {
+          ...deps,
+          manhuaAtReferenceEntries: atEntry("blob:http://localhost/at-no-source"),
+        } as never,
+        clipAt() as never,
+      ),
+      // 必须是**清单**拦下的，并报出是哪一个 @图；
+      // 不接受走 @引用断链 那条替代路径蒙混过关。
+    ).rejects.toThrow(/已选参考解析不到可提交的来源[\s\S]*@引用图 @图01/);
+  });
+
+  it("@图 索引为空：断链要如实报 missing，不能当作没有 @图", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("预览不得发起任何请求");
+    }));
+    await expect(
+      previewCanvasBlockOutbound(
+        { ...deps, manhuaAtReferenceEntries: [] } as never,
+        clipAt() as never,
+      ),
+    ).rejects.toThrow(/@引用断链/);
+  });
+
+  const sceneClip = {
+    id: "clip-e01-g01",
+    kind: "video" as const,
+    prompt:
+      "【资产·Image对照】\n@场景1|id=s1|label=破庙|kind=场景\n\n【秒轴】\n0–10s：鸟瞰破庙全景。",
+    videoModel: "seedance-2.5",
+    aspectRatio: "9:16" as const,
+    episodeIndex: 1,
+    refImageUrl: "https://example.com/still-ok.jpg",
+  };
+
+  it("切片是合法 HTTPS：正常选用", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("预览不得发起任何请求");
+    }));
+    const preview = await previewCanvasBlockOutbound(
+      {
+        ...deps,
+        manhuaAssetPathById: { s1: "https://example.com/scene-s1.png" },
+        manhuaAssetTileUrlsById: { s1: { bottomRight: "https://example.com/tile-br.png" } },
+      } as never,
+      sceneClip as never,
+    );
+    const all = JSON.stringify([preview.body, preview.refs]);
+    expect(all.includes("scene-s1.png") || all.includes("tile-br.png")).toBe(true);
+  });
+
+  it("选中的切片是已映射本机地址：溯源后进出站", async () => {
+    const display = "blob:http://localhost/tile-br";
+    rememberLocalMediaDisplay({
+      displayUrl: display,
+      pointer: makeLocalMediaPointer("rec-tile"),
+      sourceUrl: "https://example.com/tile-br-source.png",
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("预览不得发起任何请求");
+    }));
+    const preview = await previewCanvasBlockOutbound(
+      {
+        ...deps,
+        manhuaAssetPathById: { s1: "https://example.com/scene-s1.png" },
+        manhuaAssetTileUrlsById: { s1: { bottomRight: display, topLeft: display } },
+      } as never,
+      sceneClip as never,
+    );
+    const all = JSON.stringify([preview.body, preview.refs]);
+    expect(all.includes("tile-br-source.png"), "已映射切片没进出站").toBe(true);
+    expect(all.includes("blob:")).toBe(false);
+  });
+
+  it("选中的切片断链：报出场景与切片槽位，不因为另有静帧就放行", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("预览不得发起任何请求");
+    }));
+    await expect(
+      previewCanvasBlockOutbound(
+        {
+          ...deps,
+          manhuaAssetPathById: { s1: "https://example.com/scene-s1.png" },
+          manhuaAssetTileUrlsById: {
+            s1: {
+              bottomRight: "blob:http://localhost/tile-no-source",
+              topLeft: "blob:http://localhost/tile-no-source",
+            },
+          },
+        } as never,
+        sceneClip as never,
+      ),
+    ).rejects.toThrow(/已选参考解析不到可提交的来源[\s\S]*@场景1/);
+  });
+});

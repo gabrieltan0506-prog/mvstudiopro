@@ -2665,20 +2665,78 @@ export async function runCanvasBlock(
        * @引用闭环（@图NN）：解析成真 URL 进 imageUrls；断链硬拦——
        * 红 chip 只是提示，跑到这一步还断就必须炸，绝不静默出错脸。
        */
-      const { applyManhuaAtReferencesToClip } = await import("@shared/manhuaAtReference");
-      const atRefApplied =
-        isClip && deps.manhuaAtReferenceEntries?.length
-          ? applyManhuaAtReferencesToClip({
-              promptText: String(block.prompt || motionPrompt || ""),
-              index: deps.manhuaAtReferenceEntries,
-              bindings: block.atRefBindings || null,
-            })
-          : null;
+      const { applyManhuaAtReferencesToClip, resolveManhuaAtReferences } = await import(
+        "@shared/manhuaAtReference"
+      );
+      /**
+       * @图：**不再用 entries.length 跳过**——索引为空时也要解析提示词 token，
+       * 才能把断链如实报成 missing，而不是当作「没有 @图」。
+       *
+       * 注意 applyManhuaAtReferencesToClip 的 imageUrls 按 /^https?:/ 过滤过，
+       * 本机引用在那里既不出现也不算 missing，两头都不报就丢了；
+       * 所以登记用的是下面**未过滤的语义解析结果**，
+       * 这里的 atRefApplied 只取 missing 一项（其余产物已不再被消费）。
+       */
+      const atRefPromptText = String(block.prompt || motionPrompt || "");
+      const atRefApplied = isClip
+        ? applyManhuaAtReferencesToClip({
+            promptText: atRefPromptText,
+            index: deps.manhuaAtReferenceEntries || [],
+            bindings: block.atRefBindings || null,
+          })
+        : null;
+      /**
+       * 登记用的是**未按协议过滤的语义解析结果**。
+       * applyManhuaAtReferencesToClip 的 imageUrls 已经滤过一遍，
+       * 溯不回来源的 @图 在那里既不出现、也不算 missing——两头都不报，就丢了。
+       */
+      const atRefRawResolved = isClip
+        ? resolveManhuaAtReferences({
+            text: atRefPromptText,
+            index: deps.manhuaAtReferenceEntries || [],
+            bindings: block.atRefBindings || null,
+          }).resolved.filter((e) => e.kind === "image")
+        : [];
       if (atRefApplied?.missing.length) {
         throw new Error(
           `@引用断链：@${atRefApplied.missing.join("、@")} 指到的资产不存在，请在审阅框修正或删除该引用后再出片`,
         );
       }
+      /**
+       * **先把语义选择全部做完**（含场景切片按本段机位选格），再登记、再校验。
+       *
+       * 0915 复审 P1 实测：切片替换发生在清单校验之后，
+       * 选中的那一格若断链，会被后面的 assetRows.filter 静默删掉——
+       * 「只消费清单已解析值」当时并没有兑现。
+       */
+      const resolvedAssetRows = isClip
+        ? resolveManhuaAssetImageBindRows(
+            requestedAssetRows,
+            deps.manhuaAssetPathById
+              ? Object.fromEntries(
+                  Object.entries(deps.manhuaAssetPathById).map(([id, path]) => [
+                    id,
+                    normalizeCanvasRefSource(path) || String(path ?? ""),
+                  ]),
+                )
+              : deps.manhuaAssetPathById,
+          ).map((r) => {
+            const abs = normalizeCanvasRefSource(r.path) || r.path;
+            /**
+             * 跨集场景挂的是四视角拼板切片，按本段机位换那一格：俯拍段喂平视图
+             * 等于让引擎自己想象俯视下的地面动线，空间锁就白锁了。
+             */
+            const tiles = deps.manhuaAssetTileUrlsById?.[r.id];
+            if (!tiles) return { ...r, path: abs, tileSlot: "" as string };
+            const picked = resolveManhuaSceneTileUrl(abs, tiles, motionPrompt);
+            return {
+              ...r,
+              path: normalizeCanvasRefSource(picked.url) || picked.url,
+              tileSlot: String((picked as { slot?: string }).slot || ""),
+            };
+          })
+        : [];
+
       /**
        * **本次真正会被引用的东西，先整理成一张带槽位的清单，再统一解析校验。**
        *
@@ -2689,16 +2747,42 @@ export async function runCanvasBlock(
        * 所以顺序固定为：**登记清单 → 统一解析 → 统一校验 → 之后才允许任何过滤**。
        * 新增引用类型只要登记进这张清单，就自动获得同样的失败语义。
        */
-      const explicitRefManifest: Array<{ slotZh: string; raw: string; resolved: string }> = [
-        ...(atRefApplied?.imageUrls || []).map((raw) => ({ slotZh: "@引用图", raw: String(raw || "") })),
-        ...stillPool.map((raw) => ({ slotZh: "参考静帧", raw: String(raw || "") })),
+      type ExplicitRefKind = "atref" | "still" | "asset" | "board";
+      const explicitRefManifest: Array<{
+        /** 稳定键：下游一律按它筛选，中文 slotZh 只用于报错展示 */
+        kind: ExplicitRefKind;
+        slotZh: string;
+        raw: string;
+        resolved: string;
+      }> = [
+        // 用未过滤的解析结果登记：token 带上，断链时报得出是哪一个 @图
+        ...atRefRawResolved.map((e) => ({
+          kind: "atref" as const,
+          slotZh: `@引用图 @${e.token}`,
+          raw: String(e.url || ""),
+        })),
+        ...stillPool.map((raw) => ({
+          kind: "still" as const,
+          slotZh: "参考静帧",
+          raw: String(raw || ""),
+        })),
         // 资产：按**提示词里请求了什么**登记，而不是按解析器留下了什么——
         // 否则断链的那一行在登记之前就没了。
-        ...requestedAssetRows.map((row) => ({
-          slotZh: `资产图 ${row.tag}`,
-          raw: String(deps.manhuaAssetPathById?.[row.id] ?? row.path ?? ""),
-        })),
-        ...(rawBoardUrl ? [{ slotZh: "导演板", raw: rawBoardUrl }] : []),
+        // 已选场景切片用**最终那一格**登记；断链切片必须报出场景与切片槽位。
+        ...requestedAssetRows.map((row) => {
+          const finalRow = resolvedAssetRows.find((r) => r.id === row.id);
+          const tileSlot = String((finalRow as { tileSlot?: string } | undefined)?.tileSlot || "");
+          return {
+            kind: "asset" as const,
+            slotZh: `资产图 ${row.tag}${tileSlot ? `·切片${tileSlot}` : ""}`,
+            raw: String(
+              finalRow?.path || deps.manhuaAssetPathById?.[row.id] || row.path || "",
+            ),
+          };
+        }),
+        ...(rawBoardUrl
+          ? [{ kind: "board" as const, slotZh: "导演板", raw: rawBoardUrl }]
+          : []),
       ].map((e) => ({ ...e, resolved: normalizeCanvasRefSource(e.raw) }));
       // 已选但解析不到可提交来源的，在这里就报清楚；不进入后面任何一层过滤
       assertExplicitRefsResolvable(explicitRefManifest);
@@ -2706,31 +2790,8 @@ export async function runCanvasBlock(
       const resolvedOf = (raw: string) =>
         explicitRefManifest.find((e) => e.raw === raw)?.resolved || normalizeCanvasRefSource(raw);
       const boardUrl = rawBoardUrl ? resolvedOf(rawBoardUrl) : "";
-      // 资产路径表用清单里已解析好的值，解析器拿到的就是可绑定路径
-      const normalizedAssetPathById = deps.manhuaAssetPathById
-        ? Object.fromEntries(
-            Object.entries(deps.manhuaAssetPathById).map(([id, path]) => [
-              id,
-              normalizeCanvasRefSource(path) || String(path ?? ""),
-            ]),
-          )
-        : deps.manhuaAssetPathById;
-      const assetRows = isClip
-        ? resolveManhuaAssetImageBindRows(
-            requestedAssetRows,
-            normalizedAssetPathById,
-          ).map((r) => {
-            const abs = normalizeCanvasRefSource(r.path) || r.path;
-            /**
-             * 跨集场景挂的是四视角拼板切片，按本段机位换那一格：俯拍段喂平视图
-             * 等于让引擎自己想象俯视下的地面动线，空间锁就白锁了。
-             */
-            const tiles = deps.manhuaAssetTileUrlsById?.[r.id];
-            if (!tiles) return { ...r, path: abs };
-            const picked = resolveManhuaSceneTileUrl(abs, tiles, motionPrompt);
-            return { ...r, path: normalizeCanvasRefSource(picked.url) || picked.url };
-          })
-        : [];
+      // 资产行在清单之后不得再解析：下游只消费这里定下来的 path。
+      const assetRows = resolvedAssetRows;
       const requiredLookRows = requestedAssetRows.filter((row) => row.tag.startsWith("@服装"));
       if (requiredLookRows.some((row) => !assetRows.some((resolved) => resolved.id === row.id))) {
         throw new Error("本段所选造型的参考图已失效，请重新挂图并确认；本次未提交生成。");
@@ -2740,7 +2801,7 @@ export async function runCanvasBlock(
         : [];
       // 静帧直接取清单里已解析好的值：协议校验 → 去重，不再自己解析一遍
       const absStills = explicitRefManifest
-        .filter((e) => e.slotZh === "@引用图" || e.slotZh === "参考静帧")
+        .filter((e) => e.kind === "atref" || e.kind === "still")
         .map((e) => e.resolved)
         .filter((u, i, arr) => isSubmittableRefUrl(u) && arr.indexOf(u) === i);
       // 成片硬绑：末帧 → 资产定妆 → 本段静帧 → 导演板（URL 只进 API imageUrls）
