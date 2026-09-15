@@ -7,29 +7,7 @@ import {
   readGlbJsonDocument,
   summarizeGltfDocument,
 } from "./manhua3dAssetImport.js";
-
-/** 自造最小合法 GLB：JSON chunk + 可选 BIN chunk，按 4 字节对齐。 */
-export function buildGlb(doc: Record<string, unknown>, payload = Buffer.alloc(0)): Buffer {
-  const json = Buffer.from(JSON.stringify(doc));
-  const jsonPadded = Math.ceil(json.byteLength / 4) * 4;
-  const jsonHeader = Buffer.alloc(8);
-  jsonHeader.writeUInt32LE(jsonPadded, 0);
-  jsonHeader.writeUInt32LE(0x4e4f534a, 4);
-  const jsonChunk = Buffer.concat([jsonHeader, json, Buffer.alloc(jsonPadded - json.byteLength, 0x20)]);
-  let body = jsonChunk;
-  if (payload.byteLength) {
-    const binPadded = Math.ceil(payload.byteLength / 4) * 4;
-    const binHeader = Buffer.alloc(8);
-    binHeader.writeUInt32LE(binPadded, 0);
-    binHeader.writeUInt32LE(0x004e4942, 4);
-    body = Buffer.concat([jsonChunk, binHeader, payload, Buffer.alloc(binPadded - payload.byteLength)]);
-  }
-  const header = Buffer.alloc(12);
-  header.write("glTF", 0, "ascii");
-  header.writeUInt32LE(2, 4);
-  header.writeUInt32LE(12 + body.byteLength, 8);
-  return Buffer.concat([header, body]);
-}
+import { buildGlb } from "./manhua3dAssetGlbFixture.js";
 
 const MESH_DOC = {
   asset: { version: "2.0", generator: "test-gen" },
