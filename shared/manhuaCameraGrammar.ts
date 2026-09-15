@@ -85,7 +85,9 @@ export function choreographManhuaCameras(input: ManhuaCameraChoreographyInput): 
     const a: Vec2 = input.actorPositions[e.actorId] ?? center;
     const other = counterpartOf(e);
     const b: Vec2 = other ? (input.actorPositions[other] ?? center) : center;
-    const dir = norm(sub(b, a)); // 攻方 → 受方
+    // 攻方 → 受方；攻受同点（距离 0）时 norm 会得到零向量，机位/目标全部塌到同一点 → 用舞台朝向 +Y 兜底（1470 R1）
+    const delta = sub(b, a);
+    const dir: Vec2 = Math.hypot(delta[0], delta[1]) < 1e-6 ? [0, 1] : norm(delta);
     const side = perp(dir);
     const contactStart = fr(Math.max(0, cue.contactSec - CONTACT_LEAD_FRAMES * FRAME));
     const contactEnd = fr(Math.min(D, Math.max(contactStart + MIN_CUT_SEC, Math.min(cue.contactSec + 1.0, cue.recoverEndSec))));
