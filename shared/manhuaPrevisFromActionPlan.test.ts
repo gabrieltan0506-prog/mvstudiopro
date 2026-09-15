@@ -1,0 +1,76 @@
+import { describe, expect, it } from "vitest";
+import { A, B, MAN, WOMAN, buildBoatFight } from "./manhuaActionPlanBoatFightFixture";
+import { splitManhuaActionPlanForPrevis } from "./manhuaActionPlanSplit";
+import { manhuaPrevisSpecSchema } from "./manhuaPrevis";
+import { manhuaPrevisDraftFromExecutableShot } from "./manhuaPrevisFromActionPlan";
+
+const cam = (endSec: number) => ({
+  source: "previs_cameras" as const,
+  sourceShotRef: "pv",
+  sourceRevision: "r",
+  coverage: { startSec: 0, endSec },
+  coverageBasis: "source" as const,
+  sampling: { kind: "discrete" as const, fps: 24 },
+  timedSamplesAvailable: true,
+});
+
+describe("动作计划 → 白模规格草案", () => {
+  const plan = buildBoatFight();
+  const { shots } = splitManhuaActionPlanForPrevis(plan);
+
+  it("镜1 男女交锋：两条互动、时间来自 timing、持剑 → sword_guard；过生产 schema", () => {
+    const shot = shots.find((s) => s.sourceShotId === "ap_shot_1")!;
+    const d = manhuaPrevisDraftFromExecutableShot({ plan, shot, resolvedCamera: cam(6), aspect: "16:9", links: [{ actorId: MAN, assetRef: "asset_man" }] });
+    expect(d.issuesZh).toEqual([]);
+    expect(d.spec).not.toBeNull();
+    expect(manhuaPrevisSpecSchema.safeParse(d.spec).success).toBe(true);
+    expect(d.spec!.durationSec).toBe(6);
+    expect(d.spec!.actors.map((a) => a.id)).toEqual([MAN, WOMAN]);
+    expect(d.spec!.actors[0]!.assetRef).toBe("asset_man");
+    expect(d.spec!.actors.every((a) => a.weapon === "practice_sword")).toBe(true);
+    // phases(0,2)：起手 0–0.67，接触 0.67–1.33，卸力 1.33–2
+    const it2 = d.spec!.interactions!;
+    expect(it2.map((i) => [i.id, i.kind, i.actorId, i.targetActorId])).toEqual([
+      ["ap_evt_1a", "sword_guard", MAN, WOMAN],
+      ["ap_evt_1b", "sword_guard", WOMAN, MAN],
+    ]);
+    // 秒位吸附到 24 帧：0.6667 → 16/24
+    expect(it2[0]!.startSec).toBe(0);
+    expect(it2[0]!.contactSec).toBeCloseTo(16 / 24, 9);
+    expect(it2[0]!.endSec).toBeCloseTo(2, 9);
+    expect(it2[1]!.startSec).toBeCloseTo(2, 9);
+    expect(it2[1]!.contactSec).toBeCloseTo(2 + 16 / 24, 9);
+    expect(it2[1]!.endSec).toBeCloseTo(4, 9);
+    expect(d.summaryZh.some((s) => s.includes("站位为默认排布"))).toBe(true);
+    expect(d.summaryZh.some((s) => s.includes("默认全景机位"))).toBe(true);
+  });
+
+  it("出水镜：只有出水者在场，浪花事件按接触点，错峰；画外去向进摘要", () => {
+    const shot = shots.find((s) => s.kind === "water_emerge")!;
+    const d = manhuaPrevisDraftFromExecutableShot({ plan, shot, resolvedCamera: cam(6), aspect: "9:16" });
+    expect(d.spec).not.toBeNull();
+    expect(d.spec!.actors.map((a) => a.id).sort()).toEqual([A, B].sort());
+    expect(d.spec!.waterEmergence?.mode).toBe("staggered");
+    expect(d.spec!.waterEmergence?.events.map((e) => e.actorId)).toEqual([A, B]);
+    expect(d.spec!.waterEmergence?.events.every((e) => e.riseSec >= 0.5 && e.riseSec <= 3)).toBe(true);
+    expect(d.summaryZh.some((s) => s.startsWith("画外"))).toBe(true);
+    expect(d.spec!.interactions).toBeUndefined();
+  });
+
+  it("镜3 四人两组交锋：对手都在场 → 两条互动；无相机采样 → 带回相机问题但仍给默认机位", () => {
+    const shot = shots.find((s) => s.sourceShotId === "ap_shot_3")!;
+    const d = manhuaPrevisDraftFromExecutableShot({ plan, shot, resolvedCamera: null, aspect: "16:9" });
+    expect(d.spec!.interactions?.map((i) => `${i.actorId}>${i.targetActorId}`)).toEqual([`${MAN}>${A}`, `${WOMAN}>${B}`]);
+    expect(d.issuesZh.some((s) => s.includes("相机"))).toBe(true);
+    expect(d.spec!.cameras).toHaveLength(1);
+    expect(d.spec!.cameras[0]!.endSec).toBe(d.spec!.durationSec);
+  });
+
+  it("对手不在场 → 该互动不进规格并如实报出", () => {
+    const shot = shots.find((s) => s.sourceShotId === "ap_shot_1")!;
+    const broken = { ...shot, onstageActorIds: [MAN], offstage: [...shot.offstage, { actorId: WOMAN, presence: "offstage" as const, whereaboutsZh: "船尾" }] };
+    const d = manhuaPrevisDraftFromExecutableShot({ plan, shot: broken, resolvedCamera: cam(6), aspect: "16:9" });
+    expect(d.spec?.interactions).toBeUndefined();
+    expect(d.issuesZh.join("\n")).toContain("不在本镜在场名单");
+  });
+});
