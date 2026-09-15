@@ -2466,6 +2466,10 @@ export default function ManhuaScriptWorkbench({
       customAssetRefs,
     ],
   );
+  const riggedAssetIds = useMemo(
+    () => collectPreparedRigProfiles(blocks, assetLockRegistry.byRole.character.map((a) => ({ id: a.id, label: a.labelZh }))).map((p) => p.assetRef),
+    [blocks, assetLockRegistry.byRole.character],
+  );
   /** 0915 PR-4：本段动作计划 → 白模草案（只取本段镜头；无计划则空） */
   const previsDraftsFromPlan = useMemo(() => {
     if (!manhuaActionPlan) return [];
@@ -3377,6 +3381,7 @@ export default function ManhuaScriptWorkbench({
             onGenerate={onGenerateAsset3d}
             onImport={onImportAsset3d}
             onPreview={(_id, url, labelZh)=>setModel3dPreview({ url, labelZh })}
+            riggedIds={riggedAssetIds}
             onRig={onApplyRiggedModel ? (id)=>setAutoRigAssetId(id) : undefined}/> : null}
           {onUpdateClipPrevisStudio ? <button type="button" data-manhua-action="open-previs-studio" disabled={Boolean(factoryBusy)}
             className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
