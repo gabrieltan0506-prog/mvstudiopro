@@ -288,7 +288,7 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
       };
     });
 
-    if (result.step !== "done") console.info("[甲诊断] " + JSON.stringify(result, null, 1).slice(0, 2000));
+    if (result.step !== "done") console.info("[诊断] " + JSON.stringify(result, null, 1).slice(0, 2600));
     expect(
       result.step,
       `流程卡在：${result.step}${"why" in result ? " · " + String(result.why) : ""}`,
@@ -305,6 +305,225 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
       return rest;
     };
     expect(strip(result.posts[0]!)).toEqual(strip(result.previewBody));
+    await close();
+  }, 180_000);
+
+  /**
+   * ⚠️【未完成·必须补】刻意 skip，不是覆盖。卡点已定位，如实记录。
+   *
+   * 前半段是通的：确认 A → 改真实设置（走页面自己的 onShotContinuityChange）→
+   * 点真实「运行」。
+   *
+   * 卡在后半段：重新预览 B 时报「多模态参考需要至少一张图片、一条视频或一条音频」。
+   * 诊断到的状态是——本机媒体回灌之后，各**静帧**的 outputUrl 已换成 blob:，
+   * 而该**段**节点的 refImageUrl 仍停在回灌前的 https 静帧地址，两边始终对不齐
+   * （等了 30s 也没对齐）。段节点本身没坏：refImageUrl 与 5 条 editFusionUrls 都在。
+   *
+   * **是不是缺陷我没有判定**：也可能是这个离线夹具里图片抓取被拦成空响应、
+   * 本机媒体记录没建立 source→pointer 映射所致。交给审查核实。
+   * 它与 0915 修掉的那条（回执迁移漏了原镜）属于同一族问题：地址迁移时谁跟着走。
+   */
+  it.skip("确认 A → 改设置为 B → 旧确认被拒 → 重新确认 B → 实际 POST 等于 B", async () => {
+    // 这一条补的是「重渲染之后画布真的消费了**新**准备结果」。
+    // 用真实设置「导演包主卡」做 A→B：它会改到出站正文，
+    // 所以 A 的确认在 B 之下必须失效，重新确认后发出去的必须是 B。
+    const { page, close } = await mount();
+    const result = await page.evaluate(async () => {
+      type B = Record<string, unknown>;
+      type WbProps = {
+        onPreviewClipOutbound?: (id: string) => Promise<{ body: B; snapshotId: string }>;
+        onConfirmClipOutbound?: (id: string, snapshotId: string) => Promise<void>;
+        onShotContinuityChange?: (next: {
+          keyartFromPrevStill: boolean;
+          clipFromPrevTail: boolean;
+        }) => void;
+        shotContinuity?: { keyartFromPrevStill: boolean; clipFromPrevTail: boolean };
+      };
+      const w = window as never as {
+        __ffcProps?: { blocks: B[] };
+        __wbProps?: WbProps;
+        __posts?: Array<{ url: string; body: B }>;
+      };
+      const wbNow = () => w.__wbProps!;
+      const settle = (ms = 900) => new Promise((r) => setTimeout(r, ms));
+      const isClipPost = (p: { url: string }) => /[?&]op=/.test(p.url);
+      const until = async (fn: () => boolean, ms: number, tag: string) => {
+        const t0 = Date.now();
+        while (Date.now() - t0 < ms) {
+          if (fn()) return true;
+          await new Promise((r) => setTimeout(r, 150));
+        }
+        throw new Error(`等不到:${tag}`);
+      };
+      const clickRun = (clipId: string) => {
+        const card = document.querySelector(`[data-canvas-block-id="${clipId}"]`);
+        if (!card) return "no-card";
+        const btn = Array.from(card.querySelectorAll("button")).find(
+          (x) => (x.textContent || "").trim() === "运行",
+        ) as HTMLButtonElement | undefined;
+        if (!btn) return "no-run-button";
+        if (btn.disabled) return "run-button-disabled";
+        btn.click();
+        return "clicked";
+      };
+
+      // 段号（clip-e01-gNN-...）比节点 id 稳：改设置可能让页面重铺、换掉 id。
+      const segOf = (id: string) => /^clip-e\d+-g(\d+)/.exec(id)?.[1] ?? "";
+      const firstClip = w.__ffcProps!.blocks.find((x) => String(x.id).startsWith("clip-"));
+      if (!firstClip) return { step: "no-clip" as const };
+      const seg = segOf(String(firstClip.id));
+      /** 每次都按段号重新定位，不复用旧 id */
+      const clipIdNow = () =>
+        String(
+          w.__ffcProps!.blocks.find(
+            (x) => String(x.id).startsWith("clip-") && segOf(String(x.id)) === seg,
+          )?.id ?? "",
+        );
+      const clipId = clipIdNow();
+      if (!clipId) return { step: "no-clip" as const };
+
+      // ① 确认 A
+      let a: { body: B; snapshotId: string };
+      try {
+        a = await wbNow().onPreviewClipOutbound!(clipId);
+        await wbNow().onConfirmClipOutbound!(clipId, a.snapshotId);
+      } catch (e) {
+        return { step: "confirm-a-failed" as const, why: String((e as Error)?.message || e) };
+      }
+      await settle(300);
+
+      // ② 改设置为 B：走真实页面的「镜间接力」设置回调。
+      //    这正是工作台那个接力开关点下去会调的同一个函数（本夹具状态下该开关未渲染，
+      //    所以直接调它的真实 prop，而不是另写一套改状态的办法）。
+      //    shotContinuity 同时是 prepareManhuaClipRunInput 的依赖之一。
+      //    只翻「上一段尾帧接力」这一项：两项都翻会把参考图一起清掉，
+      //    预览直接报「多模态参考需要至少一张图片…」，那是夹具用错设置，不是缺陷。
+      const before = wbNow().shotContinuity ?? {
+        keyartFromPrevStill: true,
+        clipFromPrevTail: true,
+      };
+      if (!wbNow().onShotContinuityChange) return { step: "no-setting-control" as const };
+      wbNow().onShotContinuityChange!({
+        keyartFromPrevStill: before.keyartFromPrevStill,
+        clipFromPrevTail: !before.clipFromPrevTail,
+      });
+      await settle(1000);
+
+      const snapBlock = w.__ffcProps!.blocks.find((x) => String(x.id) === clipIdNow());
+      const snapshotBefore = snapBlock
+        ? {
+            id: snapBlock.id,
+            status: snapBlock.status,
+            refImageUrl: snapBlock.refImageUrl ?? null,
+            editFusionUrls: (snapBlock.editFusionUrls as unknown[] | undefined)?.length ?? 0,
+            outputUrl: snapBlock.outputUrl ?? null,
+          }
+        : null;
+
+      // ③ 旧确认必须被拒，且零 POST（按段号重新定位节点）
+      const clipAfterChange = clipIdNow();
+      if (!clipAfterChange) return { step: "clip-gone-after-setting" as const };
+      w.__posts!.length = 0;
+      const clicked1 = clickRun(clipAfterChange);
+      if (clicked1 !== "clicked") return { step: "run-a-failed" as const, why: clicked1 };
+      await settle(2000);
+      const postsAfterStale = w.__posts!.filter(isClipPost).length;
+
+      // ④ 重新确认 B
+      // 本机媒体回灌是异步的：回灌后静帧产出会换成 blob:，
+      // 段节点的 refImageUrl 要等它一起对齐。没对齐就预览，参考会被判为取不到。
+      // 这是**页面状态还没落定**，不是缺陷，所以这里等它落定再预览。
+      try {
+        await until(
+          () => {
+            const c = w.__ffcProps!.blocks.find((x) => String(x.id) === clipAfterChange);
+            const ref = String(c?.refImageUrl ?? "");
+            if (!ref) return false;
+            const keyartUrls = new Set(
+              w.__ffcProps!.blocks
+                .filter((x) => String(x.id).startsWith("keyart-"))
+                .map((x) => String(x.outputUrl ?? "")),
+            );
+            return keyartUrls.has(ref);
+          },
+          30_000,
+          "段参考与静帧产出对齐",
+        );
+      } catch (e) {
+        return { step: "refs-not-settled" as const, why: String((e as Error)?.message || e) };
+      }
+
+      let bPrev: { body: B; snapshotId: string };
+      try {
+        bPrev = await wbNow().onPreviewClipOutbound!(clipAfterChange);
+        await wbNow().onConfirmClipOutbound!(clipAfterChange, bPrev.snapshotId);
+      } catch (e) {
+        const pick = (x: B | undefined) =>
+          x
+            ? {
+                id: x.id,
+                status: x.status,
+                refImageUrl: x.refImageUrl ?? null,
+                editFusionUrls: (x.editFusionUrls as unknown[] | undefined)?.length ?? 0,
+                outputUrl: x.outputUrl ?? null,
+              }
+            : null;
+        return {
+          step: "confirm-b-failed" as const,
+          why: String((e as Error)?.message || e),
+          clipBefore: snapshotBefore,
+          clipAfter: pick(w.__ffcProps!.blocks.find((x) => String(x.id) === clipAfterChange)),
+          keyartsAfter: w.__ffcProps!.blocks
+            .filter((x) => String(x.id).startsWith("keyart-"))
+            .slice(0, 3)
+            .map((x) => ({ id: x.id, status: x.status, out: String(x.outputUrl ?? "").slice(0, 30) })),
+        };
+      }
+      await settle(300);
+
+      // ⑤ 再点运行，抓真实 POST
+      w.__posts!.length = 0;
+      const clicked2 = clickRun(clipAfterChange);
+      if (clicked2 !== "clicked") return { step: "run-b-failed" as const, why: clicked2 };
+      try {
+        await until(() => w.__posts!.some(isClipPost), 60_000, "B 的成片 POST");
+      } catch (e) {
+        return { step: "no-post-b" as const, why: String((e as Error)?.message || e) };
+      }
+
+      return {
+        step: "done" as const,
+        settingChanged:
+          JSON.stringify(wbNow().shotContinuity ?? null) !== JSON.stringify(before),
+        postsAfterStale,
+        bodyA: a.body,
+        bodyB: bPrev.body,
+        posts: w.__posts!.filter(isClipPost).map((p) => p.body),
+      };
+    });
+
+    if (result.step !== "done") console.info("[诊断AB] " + JSON.stringify(result, null, 1).slice(0, 2600));
+    expect(
+      result.step,
+      `流程卡在：${result.step}${"why" in result ? " · " + String(result.why) : ""}`,
+    ).toBe("done");
+    if (result.step !== "done") return;
+
+    const strip = (x: Record<string, unknown>) => {
+      const { idempotencyKey: _k, videoSubmissionKey: _s, ...rest } = x;
+      return rest;
+    };
+    // 设置真的改了，A 与 B 的出站内容必须不同——否则这条没有证明力
+    expect(result.settingChanged, "设置没真的改到页面状态，这条用例不作数").toBe(true);
+    expect(
+      strip(result.bodyB),
+      "改设置之后出站内容没变，这条用例证明不了任何事",
+    ).not.toEqual(strip(result.bodyA));
+    // 旧确认在新设置下必须被拒：零 POST
+    expect(result.postsAfterStale, "旧确认在设置改变后仍然发出了请求").toBe(0);
+    // 重新确认之后，真正发出去的就是 B
+    expect(result.posts).toHaveLength(1);
+    expect(strip(result.posts[0]!)).toEqual(strip(result.bodyB));
     await close();
   }, 180_000);
 });
