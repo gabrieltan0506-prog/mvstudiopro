@@ -99,7 +99,7 @@ function captureSeedancePosts() {
 }
 
 const stripNonce = (body: Record<string, unknown>) => {
-  const { idempotencyKey: _k, ...rest } = body;
+  const { idempotencyKey: _k, intentId: _i, ...rest } = body;
   return rest;
 };
 

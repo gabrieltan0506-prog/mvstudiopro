@@ -31,6 +31,93 @@ let _billingChargeKeyIndexReady = false;
 let _lastIndexRecheckAt = 0;
 const INDEX_RECHECK_BACKOFF_MS = 30_000;
 
+/**
+ * 生成意图占位表（0915 D 线，用户拍板进数据库）：扣费前的跨实例排他占位。
+ * 没有它，api/jobs 的建单入口必须 fail-closed——不回退文件实现（那只在同一文件系统内排他）。
+ */
+let _canvasIntentTableReady = false;
+let _lastIntentRecheckAt = 0;
+
+export function isCanvasIntentTableReady(): boolean {
+  return _canvasIntentTableReady;
+}
+
+/** 严格校验：当前 schema + 目标表 + 唯一 + 有效 + 两列 (userId, intentId) 都在索引里 */
+async function verifyCanvasIntentTable(
+  db: NonNullable<Awaited<ReturnType<typeof drizzle>>>,
+): Promise<boolean> {
+  const check = await db.execute(sql`
+    SELECT count(DISTINCT a.attname) AS n
+    FROM pg_index i
+    JOIN pg_class c ON c.oid = i.indexrelid
+    JOIN pg_class t ON t.oid = i.indrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (i.indkey)
+    WHERE c.relname = 'canvas_generation_intents_user_intent_uniq'
+      AND t.relname = 'canvas_generation_intents'
+      AND n.nspname = current_schema()
+      AND i.indisunique = true
+      AND i.indisvalid = true
+      AND a.attname IN ('userId', 'intentId')
+  `);
+  const rows = (check as { rows?: Array<{ n?: unknown }> })?.rows;
+  return Array.isArray(rows) && Number(rows[0]?.n) === 2;
+}
+
+export async function reverifyCanvasIntentTable(): Promise<boolean> {
+  if (_canvasIntentTableReady) return true;
+  const now = Date.now();
+  if (now - _lastIntentRecheckAt < INDEX_RECHECK_BACKOFF_MS) return false;
+  _lastIntentRecheckAt = now;
+  try {
+    const db = await getDb();
+    if (!db) return false;
+    await ensureCanvasGenerationIntentsTable(db);
+    return _canvasIntentTableReady;
+  } catch {
+    _canvasIntentTableReady = false;
+    return false;
+  }
+}
+
+/** 幂等建表 + 唯一索引 + 严格查证；失败 fail-closed（建单入口拒绝，不回退文件） */
+async function ensureCanvasGenerationIntentsTable(
+  db: NonNullable<Awaited<ReturnType<typeof drizzle>>>,
+) {
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "canvas_generation_intents" (
+        "id" serial PRIMARY KEY,
+        "intentId" varchar(160) NOT NULL,
+        "userId" integer NOT NULL,
+        "operation" varchar(64) NOT NULL,
+        "requestDigest" varchar(64) NOT NULL,
+        "stage" varchar(16) NOT NULL,
+        "chargeKey" varchar(120),
+        "taskId" varchar(160) NOT NULL,
+        "holderId" varchar(120) NOT NULL,
+        "leaseExpiresAt" timestamptz NOT NULL,
+        "createdAt" timestamptz NOT NULL DEFAULT now(),
+        "updatedAt" timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS "canvas_generation_intents_user_intent_uniq"
+        ON "canvas_generation_intents" ("userId", "intentId")
+    `);
+    _canvasIntentTableReady = await verifyCanvasIntentTable(db);
+    if (!_canvasIntentTableReady) {
+      console.error("[Database] ❌ 生成意图表唯一索引校验失败：视频建单入口将 fail-closed 直到就绪");
+    }
+  } catch (e) {
+    _canvasIntentTableReady = false;
+    console.error(
+      "[Database] ❌ ensure canvas_generation_intents 失败（建单将 fail-closed）:",
+      e instanceof Error ? e.message.slice(0, 200) : e,
+    );
+  }
+}
+
 /** 计费幂等索引是否已验证存在：没有它扣费与带键退款必须 fail-closed */
 export function isBillingChargeKeyIndexReady(): boolean {
   return _billingChargeKeyIndexReady;
@@ -330,6 +417,7 @@ export async function getDb() {
       await ensurePlatformOfficialCampaignsTable(_db);
       await ensureManhuaCloudDraftsTable(_db);
       await ensureManhuaCommunityAssetsTable(_db);
+      await ensureCanvasGenerationIntentsTable(_db);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;

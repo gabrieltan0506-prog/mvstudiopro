@@ -171,7 +171,7 @@ function makePrepareClipRun(
 }
 
 const stripNonce = (body: Record<string, unknown>) => {
-  const { idempotencyKey: _k, videoSubmissionKey: _s, ...rest } = body as Record<string, unknown>;
+  const { idempotencyKey: _k, videoSubmissionKey: _s, intentId: _i, ...rest } = body as Record<string, unknown>;
   return rest;
 };
 

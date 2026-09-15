@@ -254,6 +254,23 @@ export type CanvasBlock = {
   videoTaskEngine?: string;
   videoTaskStatus?: "queued" | "running" | "succeeded" | "failed" | "timed_out_pending_reconcile" | "reconcile_manual";
   /**
+   * D（0915）：这一次生成的**意图**（与出站确认分开；意图不是批准凭证）。
+   * 刷新后凭它只能**恢复已提交的任务**（按 intentId 查服务端），不能免确认重发。
+   * videoIntentStatus 驱动 UI 六态：待确认 / 提交中 / 核实中 / 运行 / 完成 / 已确认失败。
+   */
+  videoIntentId?: string;
+  videoIntentStatus?: "pending_submit" | "submitted" | "acknowledged" | "unverified" | "settled";
+  /**
+   * 0915 审查第 6 条：提前进入共享契约，供后续镜头级修复 / 版本失效 / 终审使用；
+   * 本批只保证往返（写入、云草稿不丢），不赋予语义。
+   * - videoTakeId：一次产出版本的稳定身份（同一任务可能多次重出）
+   * - videoInputFingerprint：提交那一刻的输入指纹（canvasVideoTaskInputFingerprint 口径）
+   * - manhuaActionPlanRevision：本段绑定的动作计划版本（PR-2 接线后生效）
+   */
+  videoTakeId?: string;
+  videoInputFingerprint?: string;
+  manhuaActionPlanRevision?: string;
+  /**
    * 上一版剧本留下的产物：换剧本时不删、只归档。
    *
    * 视频生成是全链最贵的一步，静帧次之。旧做法是重扩写就把整条工厂链连同

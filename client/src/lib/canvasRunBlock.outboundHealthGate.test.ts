@@ -249,8 +249,17 @@ describe("HappyHorse：预览 === 真正 POST", () => {
     } as never);
 
     expect(bodies).toHaveLength(1);
-    // 全字段深比较，不是只看几个键、更不是比较规范化之后的字符串
-    expect(bodies[0]!.body).toEqual(preview.body);
+    // 全字段深比较，不是只看几个键、更不是比较规范化之后的字符串。
+    // idempotencyKey / intentId 标识"这一次提交"，预览与实跑各自一把，比对时剔除（G2 补键后才有）。
+    const strip = (body: Record<string, unknown>) => {
+      const { idempotencyKey: _k, intentId: _i, ...rest } = body;
+      return rest;
+    };
+    expect(strip(bodies[0]!.body as Record<string, unknown>)).toEqual(strip(preview.body));
+    // G2：HappyHorse 此前根本不带键；现在必须带，且两把同值
+    const posted = bodies[0]!.body as Record<string, unknown>;
+    expect(typeof posted.idempotencyKey).toBe("string");
+    expect(posted.intentId).toBe(posted.idempotencyKey);
     expect((bodies[0]!.body as Record<string, unknown>).prompt).toBe(preview.body.prompt);
   });
 

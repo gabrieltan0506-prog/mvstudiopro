@@ -2,6 +2,15 @@ import { DEFAULT_CANVAS_VIDEO_MODEL, isCanvasWan30VideoModel, normalizeCanvasVid
 import { compileCanvasAudioBindings } from "@shared/canvasAudioStudio";
 import { isLocalMediaPointer, resolveUrlForCloudSync } from "./manhuaLocalMediaStore";
 import { withFlyHealthGate } from "./flyHealthGate";
+import {
+  canvasIntentDigestFromOutboundFingerprint,
+  loadCanvasIntentStore,
+  markCanvasIntentStatus,
+  persistCanvasIntent,
+  resolveCanvasIntentForRun,
+  type CanvasGenerationIntent,
+  type CanvasIntentStorageLike,
+} from "./canvasGenerationIntent";
 import { flyHealthProbeOriginForUrl, withLongJobsFlyDirect } from "./longJobsFlyOrigin";
 import { probeVideoDurationSec } from "./videoUpscaleApi";
 import { createJobSameOrigin, pollJobUntilTerminal } from "./jobs";
@@ -192,6 +201,13 @@ export type CanvasRunDeps = {
   uploadImageFile?: (file: File) => Promise<string>;
   /** 入队 jobs 时写入 userId（与 assemble 一致；可空串） */
   userId?: string;
+  /**
+   * D（0915）：生成意图落盘处。缺省用 window.localStorage；测试注入内存存储；
+   * 显式传 null 表示本调用方不做意图登记（非产品路径）。
+   */
+  canvasIntentStorage?: CanvasIntentStorageLike | null;
+  /** 意图创建 / 复用 / 状态变化时回调，供 UI 显示「提交中 / 核实中」等 */
+  onCanvasIntentChanged?: (blockId: string, intent: CanvasGenerationIntent) => void;
   /** 角色声线参考（从有声成片抠出）；成片时按 @角色 挂 audio_url */
   characterVoiceLocks?: ManhuaCharacterVoiceLock[] | null;
   /** 参考音频·全集参考（软·可选）：BGM/对白口音基准；不硬锁、不挡出片 */
@@ -700,6 +716,46 @@ async function pollCanvasVideoTask(
 }
 
 /**
+ * 服务端 202「同一次生成正在创建中」：**不是失败，也不是新单入口**。
+ * 按意图轮询 canvasIntentStatus 直到任务号出现；只有「意图不存在」才当失败。
+ * 503（记录读不出来）继续核实，不当失败——那正是禁止自动重建的场景。
+ */
+async function awaitCanvasIntentTaskId(intentId: string, opts?: { timeoutMs?: number }): Promise<string> {
+  const endpoint = withLongJobsFlyDirect(
+    `/api/jobs?op=canvasIntentStatus&intentId=${encodeURIComponent(intentId)}`,
+  );
+  const deadline = Date.now() + Math.max(30_000, Number(opts?.timeoutMs) || 3 * 60_000);
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 3_000));
+    const r = await fetch(endpoint, { method: "GET", credentials: "include", cache: "no-store" });
+    const raw = await r.text();
+    let j: { ok?: boolean; pending?: boolean; taskId?: string; code?: string; error?: string } = {};
+    try {
+      j = JSON.parse(raw) as typeof j;
+    } catch {
+      continue;
+    }
+    if (r.status === 404 && j.code === "intent_not_found") {
+      throw new Error("这次生成没有留下记录，本次未建单；请重新查看生成前确认后再试");
+    }
+    if (!r.ok || !j.ok) continue;
+    if (j.pending === false && j.taskId) return String(j.taskId);
+  }
+  throw new Error("这次生成仍在核实中，未重复提交；请稍后刷新查看，不要再次点击生成");
+}
+
+/** 响应是 202 / pending 时按意图等任务号；否则返回 null 让 runner 走原路径 */
+async function resolvePendingCanvasIntentTaskId(
+  res: { status: number },
+  json: { pending?: boolean; intentId?: string },
+): Promise<string | null> {
+  if (!(res.status === 202 || json.pending === true)) return null;
+  const intentId = String(json.intentId || "").trim();
+  if (!intentId) throw new Error("服务端返回创建中但没有意图编号，未重复提交；请稍后刷新查看");
+  return awaitCanvasIntentTaskId(intentId);
+}
+
+/**
  * 从漫剧 clip 节点 id（`clip-e01-g03`）取段号，随请求体上报便于服务端记账与排错。
  * 集号本身走 `block.episodeIndex`，不依赖 id 解析。
  */
@@ -840,6 +896,8 @@ export type SeedanceCanvasRequestOptions = {
     resolution?: CanvasVideoResolution;
     manhuaPilot?: ManhuaPilotSubmission;
     idempotencyKey?: string;
+    /** 生成意图 ID（与 idempotencyKey 同值）；服务端按它做扣费前裁决 */
+    intentId?: string;
 };
 
 /**
@@ -952,6 +1010,7 @@ export function buildSeedanceCanvasRequestBody(
     version,
     ...(opts?.manhuaPilot ? { manhuaPilot: opts.manhuaPilot } : {}),
     ...(opts?.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
+    ...(opts?.intentId ? { intentId: opts.intentId } : {}),
     ...(version === "2.5" ? { workMode } : {}),
     ...(Number.isFinite(episodeIndex) && episodeIndex > 0 ? { episodeIndex } : {}),
     ...(Number.isFinite(clipIndex) && clipIndex > 0 ? { clipIndex } : {}),
@@ -1000,6 +1059,8 @@ async function runSeedanceProductVideo(
     resolution?: CanvasVideoResolution;
     manhuaPilot?: ManhuaPilotSubmission;
     idempotencyKey?: string;
+    /** 生成意图 ID（与 idempotencyKey 同值）；服务端按它做扣费前裁决 */
+    intentId?: string;
     onTaskId?: (taskId: string) => void;
     /** 健康门等待结束、fetch 紧前的最终核对 */
     beforeSubmit?: OutboundSubmitGuard;
@@ -1037,6 +1098,8 @@ async function runSeedanceProductVideo(
     async?: boolean;
     taskId?: string;
     workMode?: SeedanceEvolinkMode;
+    pending?: boolean;
+    intentId?: string;
   } = {};
   try {
     json = JSON.parse(text) as typeof json;
@@ -1046,6 +1109,12 @@ async function runSeedanceProductVideo(
         ? "成片网关超时，请稍后重试（已尽量直连长任务 API）"
         : `成片生成失败：${text.slice(0, 160)}`,
     );
+  }
+  const pendingTaskId = await resolvePendingCanvasIntentTaskId(res, json);
+  if (pendingTaskId) {
+    opts?.onTaskId?.(pendingTaskId);
+    const polled = await pollCanvasVideoTask(pendingTaskId);
+    return { videoUrl: polled.videoUrl, workMode: polled.workMode };
   }
   if (!res.ok || !json.ok) {
     throw new Error(json.error || json.message || "成片生成失败");
@@ -1080,6 +1149,8 @@ export type Hailuo3CanvasRequestInput = {
   clipIndex?: number;
   manhuaPilot?: ManhuaPilotSubmission;
   idempotencyKey?: string;
+  /** 生成意图 ID（与 idempotencyKey 同值）；服务端按它做扣费前裁决 */
+  intentId?: string;
 };
 
 /**
@@ -1118,6 +1189,7 @@ export function prepareHailuo3CanvasOutbound(
     generateAudio: true,
     ...(input.manhuaPilot ? { manhuaPilot: input.manhuaPilot } : {}),
     ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+    ...(input.intentId ? { intentId: input.intentId } : {}),
     ...(Number(input.episodeIndex) > 0 ? { episodeIndex: Number(input.episodeIndex) } : {}),
     ...(Number(input.clipIndex) > 0 ? { clipIndex: Number(input.clipIndex) } : {}),
   };
@@ -1154,6 +1226,8 @@ async function runHailuo3(
     clipIndex?: number;
     manhuaPilot?: ManhuaPilotSubmission;
     idempotencyKey?: string;
+    /** 生成意图 ID（与 idempotencyKey 同值）；服务端按它做扣费前裁决 */
+    intentId?: string;
     onTaskId?: (taskId: string) => void;
     /** 健康门等待结束、fetch 紧前的最终核对 */
     beforeSubmit?: OutboundSubmitGuard;
@@ -1172,6 +1246,7 @@ async function runHailuo3(
     clipIndex: opts?.clipIndex,
     manhuaPilot: opts?.manhuaPilot,
     idempotencyKey: opts?.idempotencyKey,
+    intentId: opts?.intentId,
   });
   const res = await withFlyHealthGate(probeOrigin, () => {
     opts?.beforeSubmit?.();
@@ -1191,6 +1266,8 @@ async function runHailuo3(
     ok?: boolean;
     async?: boolean;
     taskId?: string;
+    pending?: boolean;
+    intentId?: string;
   } = {};
   try {
     json = JSON.parse(text) as typeof json;
@@ -1200,6 +1277,11 @@ async function runHailuo3(
         ? "成片网关超时，请稍后重试（已尽量直连长任务 API）"
         : `成片生成失败：${text.slice(0, 160)}`,
     );
+  }
+  const pendingTaskId = await resolvePendingCanvasIntentTaskId(res, json);
+  if (pendingTaskId) {
+    opts?.onTaskId?.(pendingTaskId);
+    return (await pollCanvasVideoTask(pendingTaskId)).videoUrl;
   }
   if (!res.ok || !json.ok) {
     throw new Error(json.error || json.message || "成片生成失败");
@@ -1352,6 +1434,8 @@ export type Wan30RequestInput = {
   episodeIndex?: number;
   clipIndex?: number;
   idempotencyKey?: string;
+  /** 生成意图 ID（与 idempotencyKey 同值）；服务端按它做扣费前裁决 */
+  intentId?: string;
   manhuaPilot?: ManhuaPilotSubmission;
   seed?: number;
 };
@@ -1391,6 +1475,7 @@ export function prepareWan30Outbound(
     ...(Number(input.episodeIndex) > 0 ? { episodeIndex: Number(input.episodeIndex) } : {}),
     ...(Number(input.clipIndex) > 0 ? { clipIndex: Number(input.clipIndex) } : {}),
     ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+    ...(input.intentId ? { intentId: input.intentId } : {}),
     ...(input.manhuaPilot ? { manhuaPilot: input.manhuaPilot } : {}),
     ...(Number.isFinite(Number(input.seed)) ? { seed: Math.floor(Number(input.seed)) } : {}),
   };
@@ -1429,6 +1514,8 @@ async function runWan30(
     clipIndex?: number;
     /** 稳定幂等键:同节点同内容重试复用同键,防双击双扣费(审查 P1) */
     idempotencyKey?: string;
+    /** 生成意图 ID（与 idempotencyKey 同值）；服务端按它做扣费前裁决 */
+    intentId?: string;
     manhuaPilot?: ManhuaPilotSubmission;
     seed?: number;
     /** 拿到 taskId 立即回调(先持久化再慢慢轮询) */
@@ -1457,6 +1544,7 @@ async function runWan30(
     episodeIndex: opts?.episodeIndex,
     clipIndex: opts?.clipIndex,
     idempotencyKey: opts?.idempotencyKey,
+    intentId: opts?.intentId,
     manhuaPilot: opts?.manhuaPilot,
     seed: opts?.seed,
   });
@@ -1477,6 +1565,8 @@ async function runWan30(
     ok?: boolean;
     async?: boolean;
     taskId?: string;
+    pending?: boolean;
+    intentId?: string;
   } = {};
   try {
     json = JSON.parse(text) as typeof json;
@@ -1486,6 +1576,15 @@ async function runWan30(
         ? "成片网关超时，请稍后重试（已尽量直连长任务 API）"
         : `成片生成失败：${text.slice(0, 160)}`,
     );
+  }
+  const pendingTaskId = await resolvePendingCanvasIntentTaskId(res, json);
+  if (pendingTaskId) {
+    try {
+      opts?.onTaskId?.(pendingTaskId);
+    } catch {
+      /* 回写失败不阻塞生成 */
+    }
+    return (await pollCanvasVideoTask(pendingTaskId, { timeoutMs: 200 * 60_000 })).videoUrl;
   }
   if (!res.ok || !json.ok) {
     throw new Error(json.error || json.message || "成片生成失败");
@@ -1521,6 +1620,9 @@ export type HappyHorseRequestInput = {
   episodeIndex?: number;
   clipIndex?: number;
   imageUrls?: string[];
+  /** G2 补键：HappyHorse 此前不带幂等键，同内容重发会出两单 */
+  idempotencyKey?: string;
+  intentId?: string;
 };
 
 /**
@@ -1559,6 +1661,8 @@ export function prepareHappyHorseOutbound(
     resolution,
     ...(Number(input.episodeIndex) > 0 ? { episodeIndex: Number(input.episodeIndex) } : {}),
     ...(Number(input.clipIndex) > 0 ? { clipIndex: Number(input.clipIndex) } : {}),
+    ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+    ...(input.intentId ? { intentId: input.intentId } : {}),
   };
   return {
     engine: CANVAS_VIDEO_MODEL_HAPPYHORSE_1_1,
@@ -1602,6 +1706,8 @@ async function runHappyHorse(
     ok?: boolean;
     async?: boolean;
     taskId?: string;
+    pending?: boolean;
+    intentId?: string;
   } = {};
   try {
     json = JSON.parse(text) as typeof json;
@@ -1612,6 +1718,8 @@ async function runHappyHorse(
         : `成片生成失败：${text.slice(0, 160)}`,
     );
   }
+  const pendingTaskId = await resolvePendingCanvasIntentTaskId(res, json);
+  if (pendingTaskId) return (await pollCanvasVideoTask(pendingTaskId)).videoUrl;
   if (!res.ok || !json.ok) {
     throw new Error(json.error || json.message || "成片生成失败");
   }
@@ -1816,6 +1924,8 @@ function settleManhuaOutbound(
         enforceOutboundConfirmation?: boolean;
         outboundGate?: ManhuaOutboundGate;
         resolveOutboundGate?: (blockId: string) => ManhuaOutboundGate | undefined;
+        /** 由 runCanvasBlock 包装层注入：fetch 紧前把意图标成「已发出」 */
+        intentTracker?: { submitted: () => void };
       }
     | undefined,
   /** 这一次真正在提交的节点与执行账号；提交边界复核要用 */
@@ -1833,7 +1943,7 @@ function settleManhuaOutbound(
    * 所以 settle 把核对逻辑打包成这个函数交给各 runner，由 runner 在
    * `withFlyHealthGate` 的回调内部调用；调完立刻 fetch。
    */
-  const guardBeforeSubmit = () => {
+  const guardBeforeSubmit = (phase?: "early") => {
     // 每次调用都重新取闸，不复用任何早先抓到的对象。
     const gateNow = submitting
       ? runOptions?.resolveOutboundGate
@@ -1862,10 +1972,13 @@ function settleManhuaOutbound(
         );
       }
     }
+    // 核对全过、fetch 紧前：意图进入「已发出」。此后网络断了也不能当没发（禁止自动重建）。
+    // 早拒那一次不算发出——那时还没过健康门。
+    if (phase !== "early") runOptions?.intentTracker?.submitted();
   };
 
   // 早拒：不合格的在健康探测与续签之前就挡掉，省掉无谓的外部往返。
-  if (!runOptions?.previewOnly) guardBeforeSubmit();
+  if (!runOptions?.previewOnly) guardBeforeSubmit("early");
   if (runOptions?.previewOnly) {
     // 组装已经全部走完（含转 https、重签段参考、刷新已登记成片链），在这里回卷：
     // 不发请求、不建单、不扣费。
@@ -1981,7 +2094,8 @@ export function normalizeOutboundRefUrlForFingerprint(raw: unknown): string {
 }
 
 /** 每次提交都不同、与用户所见内容无关的字段；只排除这些，其余全部计入 */
-const OUTBOUND_FINGERPRINT_EXCLUDED_KEYS = new Set(["idempotencyKey"]);
+// intentId 与 idempotencyKey 同值同性质：标识这一次提交，不是用户所见内容
+const OUTBOUND_FINGERPRINT_EXCLUDED_KEYS = new Set(["idempotencyKey", "intentId"]);
 
 /**
  * 递归归一：嵌套对象也按键排序。
@@ -2100,7 +2214,141 @@ export async function previewCanvasBlockOutbound(
   throw new Error("当前引擎暂不支持生成前出站预览");
 }
 
+type CanvasIntentRun = {
+  intent: CanvasGenerationIntent;
+  submitted: () => void;
+  acknowledged: (taskId: string, engine: string) => void;
+  settled: () => void;
+  failed: (error: unknown) => void;
+};
+
+function defaultCanvasIntentStorage(): CanvasIntentStorageLike | null {
+  try {
+    const ls = (globalThis as { localStorage?: CanvasIntentStorageLike }).localStorage;
+    return ls && typeof ls.getItem === "function" ? ls : null;
+  } catch {
+    return null;
+  }
+}
+
+function isLikelyNetworkError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return error instanceof TypeError || /Failed to fetch|NetworkError|Load failed|network|timeout|超时/i.test(msg);
+}
+
+/**
+ * D（0915）：给这一次视频生成登记**生成意图**——同步、在第一个 await 之前。
+ *
+ * - 预览不建意图（不是付费提交）；调用方显式传 canvasIntentStorage=null 也不建。
+ * - 没有出站确认（非产品路径 / 非 clip）：不建，沿用旧的每次新键行为。
+ * - 有确认：owner = currentScope 的 userId + workspaceId + blockId；
+ *   digest = 确认指纹去掉 epoch / projectVersion（刷新后同一份输入仍是同一个意图）。
+ * - 同 owner 同 digest 且未结算 → **复用**（重试、双击、刷新都不另起一单）；
+ *   forceNewIntent 才新建；输入变了自然是新 digest → 新意图，旧意图保留供查询。
+ * - 落盘失败 → 抛 CanvasIntentPersistError，**发送前中止**：存不下等于没有可恢复的意图。
+ */
+function resolveCanvasIntentForBlockRun(
+  deps: CanvasRunDeps,
+  block: CanvasBlock,
+  runOptions:
+    | {
+        previewOnly?: boolean;
+        videoSubmissionKey?: string;
+        forceNewIntent?: boolean;
+        outboundGate?: ManhuaOutboundGate;
+        resolveOutboundGate?: (blockId: string) => ManhuaOutboundGate | undefined;
+      }
+    | undefined,
+): CanvasIntentRun | null {
+  if (runOptions?.previewOnly) return null;
+  if (deps.canvasIntentStorage === null) return null;
+  const gate = runOptions?.resolveOutboundGate
+    ? runOptions.resolveOutboundGate(block.id)
+    : runOptions?.outboundGate;
+  const fingerprint = gate?.confirmation?.fingerprint;
+  if (!fingerprint || !gate?.currentScope) return null;
+  const storage = deps.canvasIntentStorage ?? defaultCanvasIntentStorage();
+  if (!storage) return null;
+
+  const owner = {
+    userId: String(gate.currentScope.userId),
+    workspaceId: String(gate.currentScope.workspaceId),
+    blockId: block.id,
+  };
+  const resolved = resolveCanvasIntentForRun({
+    store: loadCanvasIntentStore(storage),
+    owner,
+    requestDigest: canvasIntentDigestFromOutboundFingerprint(fingerprint),
+    now: Date.now(),
+    forceNew: runOptions?.forceNewIntent === true,
+  });
+  // 调用方给了固定键（批量内自动重试复用同键）且没有可复用的在途意图：一键一意图，采用它当 ID
+  const intent =
+    !resolved.reused && runOptions?.videoSubmissionKey
+      ? { ...resolved.intent, intentId: runOptions.videoSubmissionKey }
+      : resolved.intent;
+  persistCanvasIntent(storage, intent); // 抛 CanvasIntentPersistError → 调用方在发送前停下
+  deps.onCanvasIntentChanged?.(block.id, intent);
+
+  const mark = (patch: { status: CanvasGenerationIntent["status"]; taskId?: string; engine?: string }) => {
+    const next = markCanvasIntentStatus(storage, intent.intentId, block.id, { ...patch, now: Date.now() });
+    if (next) deps.onCanvasIntentChanged?.(block.id, next);
+  };
+  let sent = false;
+  return {
+    intent,
+    submitted: () => {
+      sent = true;
+      mark({ status: "submitted" });
+    },
+    acknowledged: (taskId, engine) => mark({ status: "acknowledged", taskId, engine }),
+    settled: () => mark({ status: "settled" }),
+    failed: (error) => {
+      // 没发出去就失败（确认不符 / 编译不过 / 健康门）：这次意图作废，下次同输入照常新建
+      if (!sent) {
+        mark({ status: "settled" });
+        return;
+      }
+      // 已发出：网络层错误 → 未知，**禁止自动重建**；服务端明确拒绝 → 保持 submitted，由恢复查询裁决
+      if (isLikelyNetworkError(error)) mark({ status: "unverified" });
+    },
+  };
+}
+
+/**
+ * 产品入口。**先登记生成意图再进执行器**（同步、无 await），把意图 ID 当提交键下发：
+ * 所有 runner 的 idempotencyKey / intentId 都是它，服务端据此在扣费前裁决。
+ */
 export async function runCanvasBlock(
+  deps: CanvasRunDeps,
+  block: CanvasBlock,
+  upstream: CanvasUpstreamContext = { visionImages: [], texts: [] },
+  runOptions?: Parameters<typeof runCanvasBlockInner>[3],
+): Promise<Awaited<ReturnType<typeof runCanvasBlockInner>>> {
+  const intentRun = block.kind === "video" ? resolveCanvasIntentForBlockRun(deps, block, runOptions) : null;
+  if (!intentRun) return runCanvasBlockInner(deps, block, upstream, runOptions);
+  const trackedDeps: CanvasRunDeps = {
+    ...deps,
+    onVideoTaskCreated: (createdBlockId, info) => {
+      if (createdBlockId === block.id) intentRun.acknowledged(info.taskId, info.engine);
+      deps.onVideoTaskCreated?.(createdBlockId, info);
+    },
+  };
+  try {
+    const out = await runCanvasBlockInner(trackedDeps, block, upstream, {
+      ...runOptions,
+      videoSubmissionKey: intentRun.intent.intentId,
+      intentTracker: intentRun,
+    });
+    intentRun.settled();
+    return out;
+  } catch (error) {
+    intentRun.failed(error);
+    throw error;
+  }
+}
+
+async function runCanvasBlockInner(
   deps: CanvasRunDeps,
   block: CanvasBlock,
   upstream: CanvasUpstreamContext = { visionImages: [], texts: [] },
@@ -2136,6 +2384,10 @@ export async function runCanvasBlock(
      * 强制点设在编排器与画布运行入口，执行器这一层负责真正的校验逻辑。
      */
     enforceOutboundConfirmation?: boolean;
+    /** 用户**明确再次生成**：即使输入相同也开新意图，避免同一份输入永远只能生成一次 */
+    forceNewIntent?: boolean;
+    /** 内部：由 runCanvasBlock 包装层注入，runner 在 fetch 紧前调 submitted() */
+    intentTracker?: { submitted: () => void };
   },
 ): Promise<{
   outputText?: string;
@@ -2482,6 +2734,9 @@ export async function runCanvasBlock(
 
   if (block.kind === "video") {
     const ar = block.aspectRatio;
+    // 提交键 = 生成意图 ID（包装层已登记）或调用方固定键；缺省每次新键。
+    // 上提到分支顶部：原片编辑 / HappyHorse 此前不带键（审查 G2），同内容重发会出两单。
+    const submissionKey = runOptions?.videoSubmissionKey || newWanSubmissionKey(block.id);
     if (isManhuaVideoEditBlock(block)) {
       const access = resolveSeedance25Access({ plan: deps.userPlan, role: deps.userRole });
       if (!access.allowed) throw new Error(access.message || "当前账号未开放高级视频编辑");
@@ -2503,6 +2758,8 @@ export async function runCanvasBlock(
         resolution: block.videoResolution,
         episodeIndex: block.episodeIndex,
         clipIndex: parseClipIndexFromBlockId(block.id),
+        idempotencyKey: submissionKey,
+        intentId: submissionKey,
       };
       // 原片编辑也走同一道闸。上一轮它在 block.kind==="video" 之后立刻提交，
       // 整条确认逻辑都绕过去了（0914 审查 P1-1 实测复现过）。
@@ -2567,7 +2824,6 @@ export async function runCanvasBlock(
       ? stripManhuaAssetUrlsFromPrompt(appendManhuaClipEngineOptics(compiledMotion))
       : compiledMotion;
     const videoModel = normalizeCanvasVideoModel(block.videoModel || DEFAULT_CANVAS_VIDEO_MODEL);
-    const submissionKey = runOptions?.videoSubmissionKey || newWanSubmissionKey(block.id);
     let manhuaPilot: ManhuaPilotSubmission | undefined;
     if (isClip && deps.authorizeManhuaClip) {
       const episodeIndex = Number(block.episodeIndex) || Number(block.id.match(/^clip-e(\d+)-/)?.[1]) || 1;
@@ -2999,6 +3255,7 @@ export async function runCanvasBlock(
           episodeIndex: block.episodeIndex,
           clipIndex: parseClipIndexFromBlockId(block.id),
           idempotencyKey: submissionKey,
+          intentId: submissionKey,
           manhuaPilot,
         } as const;
         // 与 Seedance 同一道闸：准备器产出 → 共用结算点 → 才提交。
@@ -3031,6 +3288,8 @@ export async function runCanvasBlock(
           episodeIndex: block.episodeIndex,
           clipIndex: parseClipIndexFromBlockId(block.id),
           imageUrls: hhImages,
+          idempotencyKey: submissionKey,
+          intentId: submissionKey,
         } as const;
         const hhPrepared = prepareHappyHorseOutbound({
           prompt: seedancePrompt,
@@ -3056,6 +3315,7 @@ export async function runCanvasBlock(
           clipIndex: parseClipIndexFromBlockId(block.id),
           manhuaPilot,
           idempotencyKey: submissionKey,
+          intentId: submissionKey,
         } as const;
         const h3Guard = settleManhuaOutbound(
           prepareHailuo3CanvasOutbound({
@@ -3223,6 +3483,7 @@ export async function runCanvasBlock(
           workMode: useSeedance25 ? workMode : undefined,
           manhuaPilot,
           idempotencyKey: submissionKey,
+          intentId: submissionKey,
           onTaskId: (taskId: string) =>
             deps.onVideoTaskCreated?.(block.id, { taskId, engine: videoModel }),
           editSourceDurationSec,

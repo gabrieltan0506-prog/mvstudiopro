@@ -107,9 +107,9 @@ describe("生成前确认与实际出站同源", () => {
     } as never);
     expect(bodies).toHaveLength(1);
 
-    // idempotencyKey 每次运行都不同，且与用户所见内容无关，比对时剔除
+    // idempotencyKey / intentId 每次运行都不同（标识这一次提交），与用户所见内容无关，比对时剔除
     const strip = (body: Record<string, unknown>) => {
-      const { idempotencyKey: _k, ...rest } = body;
+      const { idempotencyKey: _k, intentId: _i, ...rest } = body;
       return rest;
     };
     expect(strip(preview.body)).toEqual(strip(bodies[0]!));

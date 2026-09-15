@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { resolveManhuaAssembleAccess } from "../server/services/manhuaAssembleAccess.js";
 import { CREDIT_COSTS } from "../server/plans.js";
 import type { PaidJobDeductSnapshot } from "../server/services/paidJobLedger.js";
+import type { CanvasIntentJobStep } from "../server/services/canvasGenerationIntent.js";
 import sharp from "sharp";
 import { get as getLegacyPublicBlob } from "@vercel/blob";
 import { putPublicStoredMedia as put, isPublicStoredObjectPath, signPublicStoredMediaRedirect } from "../server/services/publicStoredMedia";
@@ -1019,6 +1020,236 @@ function assertManhuaPilotMetadataPresent(
   }
 }
 
+/**
+ * D 线（0915）：建单前的意图裁决，**扣费之前**调用，七个建单点共用。
+ * 决策全部来自 server/services/canvasGenerationIntent.ts；这里只把入参组起来。
+ * 摘要由服务端按将要建单的内容字段算（黑名单口径），客户端摘要不作事实。
+ */
+async function gateCanvasIntentBeforeCharge(input: {
+  userId: number;
+  intentId: string;
+  operation: string;
+  /** 将要传给 createCanvasVideoTask 的内容字段（不含计费/归属/任务号） */
+  taskInput: Record<string, unknown>;
+}): Promise<{ holderId: string; step: CanvasIntentJobStep; taskId: string }> {
+  const m = await import("../server/services/canvasGenerationIntent.js");
+  const holderId = m.newCanvasIntentHolderId();
+  const decision = await m.acquireCanvasIntent({
+    userId: input.userId,
+    intentId: input.intentId,
+    operation: input.operation,
+    requestDigest: m.computeCanvasTaskInputDigest(input.taskInput),
+    holderId,
+    // 试片 registry 已预留的任务号沿用，不另造第二个号
+    reservedTaskId: s(input.taskInput.taskId || "").trim() || undefined,
+  });
+  const step = m.planCanvasIntentJobStep(decision, input.intentId);
+  return { holderId, step, taskId: step.proceed ? step.taskId : "" };
+}
+
+/** 裁决要求直接回复时的载荷：existing_task 还原既有任务；其余按 step 给的状态码 */
+async function canvasIntentStepReply(
+  step: CanvasIntentJobStep,
+  userId: number,
+): Promise<{ status: number; body: Record<string, unknown> } | null> {
+  if (step.proceed) return null;
+  if (step.kind === "reply") return { status: step.status, body: step.body };
+  const { peekCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
+  const task = await peekCanvasVideoTask(step.taskId, userId);
+  if (!task) {
+    // 意图说任务已建、任务记录却不在：不一致，**不新建**，交人核对
+    return {
+      status: 503,
+      body: {
+        ok: false,
+        code: "intent_unreadable",
+        intentId: step.intentId,
+        error: "任务记录待核对，已停止重复生成；请稍后刷新状态",
+      },
+    };
+  }
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      async: true,
+      taskId: task.taskId,
+      status: task.status,
+      videoUrl: task.videoUrl || undefined,
+      engine: task.engine,
+      provider: "existing",
+      creditsUsed: task.creditsCharged,
+      intentId: step.intentId,
+    },
+  };
+}
+
+/**
+ * 扣费后 / 建单后各记一次阶段，供崩溃恢复凭据。
+ *
+ * **这是 fencing 点**：阶段推进是带 holderId 的条件 UPDATE。租约过期被别人接管后，
+ * 旧执行者迟到的推进影响 0 行 → 返回 false。调用方在 `charged` 这一步拿到 false
+ * **必须停下不建单**——扣费本身按 marker 幂等不会双扣，但若旧执行者继续建单/提交上游，
+ * 就成了两个执行者各自推进同一次生成。建单点由静态守门保证检查了返回值。
+ */
+async function markCanvasIntentStage(input: {
+  userId: number;
+  intentId: string;
+  holderId: string;
+  stage: "charged" | "task_created";
+  chargeKey?: string;
+}): Promise<boolean> {
+  const m = await import("../server/services/canvasGenerationIntent.js");
+  const out = await m.updateCanvasIntentStage(input).catch(() => null);
+  if (!out) {
+    console.warn(`[canvasIntent] stage=${input.stage} 未写入（已被接管或存储不可用） intent=${input.intentId}`);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * 裁决层在扣费前拒绝（409 / 503）时，试片 registry 的 submitting 预留必须释放：
+ * 零扣费、零建单，不该留一个两分钟后变 reconcile_manual 的孤儿预留。
+ * 202 / 既有任务不释放——那是同一次生成在别处推进。返回最终回复体。
+ */
+async function releasePilotOnIntentReject(
+  prepared: PreparedManhuaPilot,
+  userId: number,
+  reply: { status: number; body: Record<string, unknown> },
+): Promise<Record<string, unknown>> {
+  if (reply.body.ok === true) return reply.body;
+  const releaseError = await markPreparedManhuaPilotFailed(
+    prepared,
+    userId,
+    `扣费前裁决拒绝：${String(reply.body.error || "")}`,
+  );
+  return releaseError
+    ? { ...reply.body, error: `${String(reply.body.error || "")}；${releaseError}` }
+    : reply.body;
+}
+
+/**
+ * 扣费失败（402 / 403 / 503）后释放占位租约（R1 1464-08）：下一次点击能立刻接管，不用空等 60 秒。
+ * 不动 stage / taskId；503 若其实已扣成功，重试时按 marker 幂等命中，不二扣。
+ */
+async function releaseCanvasIntentAfterChargeFailure(input: {
+  userId: number;
+  intentId: string;
+  holderId: string;
+}): Promise<void> {
+  const m = await import("../server/services/canvasGenerationIntent.js");
+  await m.releaseCanvasIntentLease(input).catch(() => false);
+}
+
+/** 被 fencing 出局时的回复：这次生成已由另一执行者持有，客户端按意图查询即可，不重复扣费 */
+function canvasIntentFencedReply(intentId: string): { status: number; body: Record<string, unknown> } {
+  return {
+    status: 202,
+    body: {
+      ok: true,
+      async: true,
+      pending: true,
+      intentId,
+      status: "creating",
+      message: "同一次生成已由另一执行者接管，请稍候查询结果；本次未重复扣费",
+    },
+  };
+}
+
+/**
+ * Seedance 2.5 主链是**对象返回**、由 `canvas` / `seedance25` 两个 op 统一落 HTTP。
+ * 裁决层的 202「creating」与 fencing 202 必须以 `pending: true + intentId` 原样到达客户端
+ * （客户端 `resolvePendingCanvasIntentTaskId` 只认 HTTP 202 或 `pending === true`），
+ * 不能被压成 200 无 taskId。既有任务则按主链正常形态回（带 intentId）。
+ */
+type Seedance25PendingReply = {
+  ok: true;
+  async: true;
+  pending: true;
+  intentId: string;
+  status: "creating";
+  leaseExpiresAt?: string;
+  message?: string;
+};
+
+function seedance25ReplyFromIntentBody(
+  status: number,
+  body: Record<string, unknown>,
+  shape: { resolution: "480p" | "720p" | "1080p"; duration: number; workMode: string },
+):
+  | Seedance25PendingReply
+  | {
+      ok: true;
+      async: true;
+      taskId: string;
+      status: string;
+      credits: number;
+      resolution: "480p" | "720p" | "1080p";
+      duration: number;
+      workMode: string;
+      videoUrl?: string;
+      provider?: string;
+      intentId?: string;
+      pending?: false;
+    } {
+  if (status === 202 || body.pending === true) {
+    return {
+      ok: true,
+      async: true,
+      pending: true,
+      intentId: s(body.intentId || ""),
+      status: "creating",
+      ...(body.leaseExpiresAt ? { leaseExpiresAt: s(body.leaseExpiresAt) } : {}),
+      ...(body.message ? { message: s(body.message) } : {}),
+    };
+  }
+  return {
+    ok: true,
+    async: true,
+    taskId: s(body.taskId || ""),
+    status: s(body.status || ""),
+    credits: Number(body.creditsUsed) || 0,
+    resolution: shape.resolution,
+    duration: shape.duration,
+    workMode: shape.workMode,
+    ...(body.videoUrl ? { videoUrl: s(body.videoUrl) } : {}),
+    ...(body.provider ? { provider: s(body.provider) } : {}),
+    ...(body.intentId ? { intentId: s(body.intentId) } : {}),
+  };
+}
+
+/** 两个 op 共用：把 2.5 主链结果落成 HTTP（202 pending 原样透传） */
+function sendSeedance25Result(
+  res: VercelResponse,
+  result: Awaited<ReturnType<typeof runSeedance25EvolinkJob>>,
+) {
+  if (!result.ok) {
+    return res.status(result.status).json({
+      ok: false,
+      error: result.error,
+      version: "2.5",
+      ...(result.paidOnly ? { paidOnly: true } : {}),
+    });
+  }
+  if (result.pending === true) {
+    return res.status(202).json({ ...result, version: "2.5" });
+  }
+  return res.status(200).json({
+    ok: true,
+    async: true,
+    taskId: result.taskId,
+    status: result.status,
+    videoUrl: result.videoUrl || undefined,
+    version: "2.5",
+    workMode: result.workMode,
+    resolution: result.resolution,
+    duration: result.duration,
+    creditsUsed: result.credits,
+    ...(result.intentId ? { intentId: result.intentId } : {}),
+  });
+}
+
 function manhuaPilotTaskFields(prepared: PreparedManhuaPilot): Record<string, unknown> {
   if (prepared.kind !== "pilot" && prepared.kind !== "full") return {};
   return {
@@ -1549,7 +1780,11 @@ async function runSeedance25EvolinkJob(
       workMode: string;
       videoUrl?: string;
       provider?: string;
+      /** D（0915）：意图裁决命中既有任务时回带，客户端据此关联本地意图 */
+      intentId?: string;
+      pending?: false;
     }
+  | Seedance25PendingReply
 > {
   const access = await assertSeedance25PaidAccess(req);
   if (!access.ok) return { ...access, paidOnly: true };
@@ -1772,13 +2007,72 @@ async function runSeedance25EvolinkJob(
       (preparedPilot.kind === "pilot" ? preparedPilot.idempotencyKey : "") ||
       String((body as Record<string, unknown>).idempotencyKey || "").trim() ||
       `srv25_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
+    // D（0915）：意图裁决先于扣费。试片以 registry 键为准；否则认客户端 intentId；缺省等于旧 requestKey
+    const intentId =
+      (preparedPilot.kind === "pilot" ? preparedPilot.idempotencyKey : "") ||
+      String((body as Record<string, unknown>).intentId || "").trim() ||
+      requestKey;
+    const taskInput = {
+      ...manhuaPilotTaskFields(preparedPilot),
+      engine: resolveSeedance25CanvasEngine(mode, {
+        // 共享信号（覆盖 photoreal-age/、photoreal-gen/ 等派生路径），与 2.0 路由同口径；
+        // EvoLink 缺配置的 photoreal 已在扣费前 503，这里选中 EvoLink 引擎必有配置
+        photoreal: isPhotorealRequest,
+      }),
+      label,
+      prompt,
+      imageUrl,
+      imageUrls,
+      videoUrls,
+      // 上方扣费前契约校验用已签地址；任务保存长期身份，恢复/回落时再验权现签。
+      audioUrls: audioReferences,
+      aspectRatio,
+      duration: providerDuration,
+      resolution,
+      generateAudio,
+      workMode: mode,
+    };
+    const intentGate = await gateCanvasIntentBeforeCharge({
+      userId: access.userId,
+      intentId,
+      operation: "seedance25Video",
+      taskInput,
+    });
+    const intentReply = await canvasIntentStepReply(intentGate.step, access.userId);
+    if (intentReply) {
+      // 试片预留在扣费之前被裁决层挡回（409 冲突 / 503 读不出来）：**零扣费**，
+      // 必须释放 registry 里的 submitting 预留，否则两分钟后被 refreshUnderLock 判成
+      // reconcile_manual，一次数据库瞬断就把试片锁进人工核对（R1 审查 1464-06）。
+      if (intentReply.body.ok !== true) {
+        const releaseError = await markPreparedManhuaPilotFailed(
+          preparedPilot,
+          access.userId,
+          `扣费前裁决拒绝：${String(intentReply.body.error || "")}`,
+        );
+        return {
+          ok: false,
+          status: intentReply.status,
+          error: releaseError
+            ? `${String(intentReply.body.error || "")}；${releaseError}`
+            : String(intentReply.body.error || ""),
+        };
+      }
+      // 本函数是对象返回、由两个 op 统一落 HTTP：202 creating 与既有任务都要保住
+      // pending / intentId，否则调用方会把 creating 压成 200 无 taskId，客户端当失败（R1 1464-04）
+      return seedance25ReplyFromIntentBody(intentReply.status, intentReply.body, {
+        resolution,
+        duration: providerDuration,
+        workMode: mode,
+      });
+    }
     const charged = await chargeCanvasVideoCredits(req, {
       durationSec: duration,
       episodeIndex: body.episodeIndex,
       label,
-      idempotencyKey: requestKey,
+      idempotencyKey: intentId,
     });
     if (!charged.ok) {
+      await releaseCanvasIntentAfterChargeFailure({ userId: access.userId, intentId, holderId: intentGate.holderId });
       const stateError = await settlePreparedManhuaPilotChargeFailure(
         preparedPilot,
         access.userId,
@@ -1787,31 +2081,37 @@ async function runSeedance25EvolinkJob(
       return stateError ? { ...charged, status: 503, error: `${charged.error}；${stateError}` } : charged;
     }
 
+    // fencing：被接管的旧执行者在这里出局，不得继续建单
+    const intentCharged = await markCanvasIntentStage({
+      userId: access.userId,
+      intentId,
+      holderId: intentGate.holderId,
+      stage: "charged",
+      chargeKey: charged.chargeKey,
+    });
+    if (!intentCharged) {
+      const fenced = canvasIntentFencedReply(intentId);
+      return seedance25ReplyFromIntentBody(fenced.status, fenced.body, {
+        resolution,
+        duration: providerDuration,
+        workMode: mode,
+      });
+    }
     const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
     try {
       const task = await createCanvasVideoTask({
-        ...manhuaPilotTaskFields(preparedPilot),
+        ...taskInput,
+        taskId: intentGate.taskId,
         userId: charged.userId,
         creditsCharged: charged.credits,
         deduct: charged.deduct,
-        idempotencyKey: requestKey,
-        engine: resolveSeedance25CanvasEngine(mode, {
-          // 共享信号（覆盖 photoreal-age/、photoreal-gen/ 等派生路径），与 2.0 路由同口径；
-          // EvoLink 缺配置的 photoreal 已在扣费前 503，这里选中 EvoLink 引擎必有配置
-          photoreal: isPhotorealRequest,
-        }),
-        label,
-        prompt,
-        imageUrl,
-        imageUrls,
-        videoUrls,
-        // 上方扣费前契约校验用已签地址；任务保存长期身份，恢复/回落时再验权现签。
-        audioUrls: audioReferences,
-        aspectRatio,
-        duration: providerDuration,
-        resolution,
-        generateAudio,
-        workMode: mode,
+        idempotencyKey: intentId,
+      });
+      await markCanvasIntentStage({
+        userId: access.userId,
+        intentId,
+        holderId: intentGate.holderId,
+        stage: "task_created",
       });
       await reconcilePreparedManhuaPilotTask(preparedPilot, task);
       return {
@@ -4112,7 +4412,26 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
        */
       const idemKey =
         s(b.idempotencyKey || "").trim() || `upscale:${videoUrl}:${target}`;
-      const marker = chargeMarkerFor(viewer.userId, idemKey);
+      // D（0915）：意图裁决先于扣费；扣费 marker 与建单键都跟 intentId 走（缺省即旧 idemKey）
+      const intentId = s(b.intentId || q.intentId || "").trim() || idemKey;
+      const taskInput = {
+        engine: "wavespeed-upscale" as const,
+        label,
+        prompt: "",
+        duration: durationSec,
+        resolution: target,
+        upscaleSourceUrl: measured.verifiedSourceUrl,
+        upscaleTarget: target,
+      };
+      const intentGate = await gateCanvasIntentBeforeCharge({
+        userId: viewer.userId,
+        intentId,
+        operation: "videoUpscale",
+        taskInput,
+      });
+      const intentReply = await canvasIntentStepReply(intentGate.step, viewer.userId);
+      if (intentReply) return res.status(intentReply.status).json(intentReply.body);
+      const marker = chargeMarkerFor(viewer.userId, intentId);
       const { deductCreditsAmount, refundCredits } = await import("../server/credits.js");
       let charged = 0;
       let reusedPriorCharge = false;
@@ -4139,6 +4458,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             teamMemberId: "teamMemberId" in out ? out.teamMemberId : undefined,
           };
         } catch (deductError) {
+          await releaseCanvasIntentAfterChargeFailure({ userId: viewer.userId, intentId, holderId: intentGate.holderId });
           const { InsufficientCreditsError } = await import("../server/credits.js");
           if (deductError instanceof InsufficientCreditsError) {
             return res.status(402).json({
@@ -4150,20 +4470,33 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           return res.status(503).json({ ok: false, error: "扣费服务暂不可用，本次未扣费，请稍后重试" });
         }
       }
+      // fencing：被接管的旧执行者在这里出局，不得继续建单
+      const intentCharged = await markCanvasIntentStage({
+        userId: viewer.userId,
+        intentId,
+        holderId: intentGate.holderId,
+        stage: "charged",
+        chargeKey: marker,
+      });
+      if (!intentCharged) {
+        const fenced = canvasIntentFencedReply(intentId);
+        return res.status(fenced.status).json(fenced.body);
+      }
       try {
         const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
         const task = await createCanvasVideoTask({
+          ...taskInput,
+          taskId: intentGate.taskId,
           userId: viewer.userId,
           creditsCharged: charged,
-          engine: "wavespeed-upscale",
-          label,
-          prompt: "",
-          duration: durationSec,
-          resolution: target,
-          idempotencyKey: idemKey,
+          idempotencyKey: intentId,
           deduct,
-          upscaleSourceUrl: measured.verifiedSourceUrl,
-          upscaleTarget: target,
+        });
+        await markCanvasIntentStage({
+          userId: viewer.userId,
+          intentId,
+          holderId: intentGate.holderId,
+          stage: "task_created",
         });
         return res.status(200).json({
           ok: true,
@@ -4284,8 +4617,38 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           (preparedPilot.kind === "pilot" ? preparedPilot.idempotencyKey : "") ||
           s(b.idempotencyKey || q.idempotencyKey || "").trim() ||
           `srvh3_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
+        // D（0915）：意图裁决先于扣费。试片以 registry 键为准；否则认客户端 intentId；缺省等于旧 requestKey
+        const intentId =
+          (preparedPilot.kind === "pilot" ? preparedPilot.idempotencyKey : "") ||
+          s(b.intentId || q.intentId || "").trim() ||
+          requestKey;
+        const taskInput = {
+          ...manhuaPilotTaskFields(preparedPilot),
+          engine: "hailuo-openrouter" as const,
+          label,
+          prompt,
+          imageUrl,
+          imageUrls,
+          aspectRatio,
+          duration,
+          resolution,
+          generateAudio,
+        };
+        const intentGate = await gateCanvasIntentBeforeCharge({
+          userId: hailuoViewer.userId,
+          intentId,
+          operation: "hailuo3Video",
+          taskInput,
+        });
+        const intentReply = await canvasIntentStepReply(intentGate.step, hailuoViewer.userId);
+        if (intentReply) {
+          // 409/503 零扣费：释放试片 submitting 预留（R1 1464-06）；202/既有任务不释放
+          return res
+            .status(intentReply.status)
+            .json(await releasePilotOnIntentReject(preparedPilot, hailuoViewer.userId, intentReply));
+        }
         const charged = await chargeCanvasVideoCredits(req, {
-          idempotencyKey: requestKey,
+          idempotencyKey: intentId,
           durationSec: duration,
           episodeIndex: b.episodeIndex,
           label,
@@ -4293,6 +4656,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           videoModel: CANVAS_VIDEO_MODEL_HAILUO_H3,
         });
         if (!charged.ok) {
+          await releaseCanvasIntentAfterChargeFailure({ userId: hailuoViewer.userId, intentId, holderId: intentGate.holderId });
           const stateError = await settlePreparedManhuaPilotChargeFailure(
             preparedPilot,
             hailuoViewer.userId,
@@ -4304,22 +4668,32 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           });
         }
         try {
+          // fencing：被接管的旧执行者在这里出局，不得继续建单
+          const intentCharged = await markCanvasIntentStage({
+            userId: hailuoViewer.userId,
+            intentId,
+            holderId: intentGate.holderId,
+            stage: "charged",
+            chargeKey: charged.chargeKey,
+          });
+          if (!intentCharged) {
+            const fenced = canvasIntentFencedReply(intentId);
+            return res.status(fenced.status).json(fenced.body);
+          }
           const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
           const task = await createCanvasVideoTask({
-            ...manhuaPilotTaskFields(preparedPilot),
+            ...taskInput,
+            taskId: intentGate.taskId,
             userId: charged.userId,
             creditsCharged: charged.credits,
             deduct: charged.deduct,
-            idempotencyKey: requestKey,
-            engine: "hailuo-openrouter",
-            label,
-            prompt,
-            imageUrl,
-            imageUrls,
-            aspectRatio,
-            duration,
-            resolution,
-            generateAudio,
+            idempotencyKey: intentId,
+          });
+          await markCanvasIntentStage({
+            userId: hailuoViewer.userId,
+            intentId,
+            holderId: intentGate.holderId,
+            stage: "task_created",
           });
           await reconcilePreparedManhuaPilotTask(preparedPilot, task);
           return res.status(200).json({
@@ -4465,14 +4839,50 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           (preparedPilot.kind === "pilot" ? preparedPilot.idempotencyKey : "") ||
           s(b.idempotencyKey || q.idempotencyKey || "").trim() ||
           `srvwan_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
+        // D（0915）：意图裁决先于扣费。试片以 registry 键为准；否则认客户端 intentId；缺省等于旧 requestKey
+        const intentId =
+          (preparedPilot.kind === "pilot" ? preparedPilot.idempotencyKey : "") ||
+          s(b.intentId || q.intentId || "").trim() ||
+          requestKey;
+        const taskInput = {
+          ...manhuaPilotTaskFields(preparedPilot),
+          engine: "wan30-auto" as const,
+          label,
+          prompt,
+          imageUrl: imageUrls[0],
+          imageUrls,
+          audioUrls,
+          videoUrls,
+          aspectRatio,
+          duration,
+          resolution,
+          generateAudio: b.generateAudio !== false,
+          ...(Number.isFinite(Number(b.seed)) && Number(b.seed) >= 0 && Number(b.seed) <= 2147483647
+            ? { seed: Math.floor(Number(b.seed)) }
+            : {}),
+        };
+        const intentGate = await gateCanvasIntentBeforeCharge({
+          userId: wanViewer.userId,
+          intentId,
+          operation: "wan30Video",
+          taskInput,
+        });
+        const intentReply = await canvasIntentStepReply(intentGate.step, wanViewer.userId);
+        if (intentReply) {
+          // 409/503 零扣费：释放试片 submitting 预留（R1 1464-06）；202/既有任务不释放
+          return res
+            .status(intentReply.status)
+            .json(await releasePilotOnIntentReject(preparedPilot, wanViewer.userId, intentReply));
+        }
         const charged = await chargeCanvasVideoCredits(req, {
-          idempotencyKey: requestKey,
+          idempotencyKey: intentId,
           durationSec: duration,
           episodeIndex: b.episodeIndex,
           label,
           resolution,
         });
         if (!charged.ok) {
+          await releaseCanvasIntentAfterChargeFailure({ userId: wanViewer.userId, intentId, holderId: intentGate.holderId });
           const stateError = await settlePreparedManhuaPilotChargeFailure(
             preparedPilot,
             wanViewer.userId,
@@ -4484,27 +4894,32 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           });
         }
         try {
+          // fencing：被接管的旧执行者在这里出局，不得继续建单
+          const intentCharged = await markCanvasIntentStage({
+            userId: wanViewer.userId,
+            intentId,
+            holderId: intentGate.holderId,
+            stage: "charged",
+            chargeKey: charged.chargeKey,
+          });
+          if (!intentCharged) {
+            const fenced = canvasIntentFencedReply(intentId);
+            return res.status(fenced.status).json(fenced.body);
+          }
           const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
           const task = await createCanvasVideoTask({
-            ...manhuaPilotTaskFields(preparedPilot),
+            ...taskInput,
+            taskId: intentGate.taskId,
             userId: charged.userId,
             creditsCharged: charged.credits,
             deduct: charged.deduct,
-            idempotencyKey: requestKey,
-            engine: "wan30-auto",
-            label,
-            prompt,
-            imageUrl: imageUrls[0],
-            imageUrls,
-            audioUrls,
-            videoUrls,
-            aspectRatio,
-            duration,
-            resolution,
-            generateAudio: b.generateAudio !== false,
-            ...(Number.isFinite(Number(b.seed)) && Number(b.seed) >= 0 && Number(b.seed) <= 2147483647
-              ? { seed: Math.floor(Number(b.seed)) }
-              : {}),
+            idempotencyKey: intentId,
+          });
+          await markCanvasIntentStage({
+            userId: wanViewer.userId,
+            intentId,
+            holderId: intentGate.holderId,
+            stage: "task_created",
           });
           await reconcilePreparedManhuaPilotTask(preparedPilot, task);
           return res.status(200).json({
@@ -4558,7 +4973,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           error: "当前生成档未接入试片审核，请先选择受支持的漫剧成片引擎",
         });
       }
-      if (!(await resolveJobUser(req))) {
+      const hhViewer = await resolveJobUser(req);
+      if (!hhViewer) {
         return res.status(401).json({ ok: false, error: "请先登录后再生成成片" });
       }
       const prompt =
@@ -4595,32 +5011,65 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         const requestKey =
           s(b.idempotencyKey || q.idempotencyKey || "").trim() ||
           `srvhh_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
+        // D（0915）：意图裁决先于扣费。试片以 registry 键为准；否则认客户端 intentId；缺省等于旧 requestKey
+        const intentId = s(b.intentId || q.intentId || "").trim() || requestKey;
+        const taskInput = {
+          engine: "happyhorse-auto" as const,
+          label,
+          prompt,
+          imageUrl,
+          imageUrls: hhImageUrls,
+          aspectRatio,
+          duration,
+          resolution,
+          generateAudio: true,
+        };
+        const intentGate = await gateCanvasIntentBeforeCharge({
+          userId: hhViewer.userId,
+          intentId,
+          operation: "happyHorseVideo",
+          taskInput,
+        });
+        const intentReply = await canvasIntentStepReply(intentGate.step, hhViewer.userId);
+        if (intentReply) return res.status(intentReply.status).json(intentReply.body);
         const charged = await chargeCanvasVideoCredits(req, {
-          idempotencyKey: requestKey,
+          idempotencyKey: intentId,
           durationSec: duration,
           episodeIndex: b.episodeIndex,
           label,
           resolution,
         });
         if (!charged.ok) {
+          await releaseCanvasIntentAfterChargeFailure({ userId: hhViewer.userId, intentId, holderId: intentGate.holderId });
           return res.status(charged.status).json({ ok: false, error: charged.error });
         }
         try {
+          // fencing：被接管的旧执行者在这里出局，不得继续建单
+          const intentCharged = await markCanvasIntentStage({
+            userId: hhViewer.userId,
+            intentId,
+            holderId: intentGate.holderId,
+            stage: "charged",
+            chargeKey: charged.chargeKey,
+          });
+          if (!intentCharged) {
+            const fenced = canvasIntentFencedReply(intentId);
+            return res.status(fenced.status).json(fenced.body);
+          }
           const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
           const task = await createCanvasVideoTask({
+            ...taskInput,
+            taskId: intentGate.taskId,
             userId: charged.userId,
             creditsCharged: charged.credits,
             deduct: charged.deduct,
-            idempotencyKey: requestKey,
-            engine: "happyhorse-auto",
-            label,
-            prompt,
-            imageUrl,
-            imageUrls: hhImageUrls,
-            aspectRatio,
-            duration,
-            resolution,
-            generateAudio: true,
+            idempotencyKey: intentId,
+          });
+          await markCanvasIntentStage({
+            userId: hhViewer.userId,
+            intentId,
+            holderId: intentGate.holderId,
+            stage: "task_created",
           });
           return res.status(200).json({
             ok: true,
@@ -5057,26 +5506,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       /** Seedance 2.5 正式版：五种 EvoLink 路由，共用计费与异步任务主链。 */
       if (productVersion === "2.5") {
         const result = await runSeedance25EvolinkJob(req, b, q, "画布 Seedance 2.5");
-        if (!result.ok) {
-          return res.status(result.status).json({
-            ok: false,
-            error: result.error,
-            version: "2.5",
-            ...(result.paidOnly ? { paidOnly: true } : {}),
-          });
-        }
-        return res.status(200).json({
-          ok: true,
-          async: true,
-          taskId: result.taskId,
-          status: result.status,
-          videoUrl: result.videoUrl || undefined,
-          version: "2.5",
-          workMode: result.workMode,
-          resolution: result.resolution,
-          duration: result.duration,
-          creditsUsed: result.credits,
-        });
+        return sendSeedance25Result(res, result);
       }
       const aspectRatio = s(b.aspectRatio || q.aspectRatio || "16:9").trim() || "16:9";
       const generateAudio = !(
@@ -5260,8 +5690,46 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             (preparedPilot.kind === "pilot" ? preparedPilot.idempotencyKey : "") ||
             s(b.idempotencyKey || q.idempotencyKey || "").trim() ||
             `srv20_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
+          const intentViewerId = pilotViewerId || (await resolveJobUser(req))?.userId || 0;
+          if (!intentViewerId) return res.status(401).json({ ok: false, error: "请先登录后再生成成片" });
+          // D（0915）：意图裁决先于扣费。试片以 registry 键为准；否则认客户端 intentId；缺省等于旧 requestKey
+          const intentId =
+            (preparedPilot.kind === "pilot" ? preparedPilot.idempotencyKey : "") ||
+            s(b.intentId || q.intentId || "").trim() ||
+            requestKey;
+          const taskInput = {
+            ...manhuaPilotTaskFields(preparedPilot),
+            engine: (photorealToEvolink ? "seedance20-evolink" : "seedance-openrouter") as
+              | "seedance20-evolink"
+              | "seedance-openrouter",
+            label,
+            prompt,
+            imageUrl,
+            imageUrls,
+            // 连续性素材：EvoLink reference-to-video 收 0–3 条视频；OpenRouter 路径不消费无副作用
+            videoUrls,
+            audioUrls,
+            aspectRatio,
+            duration: durationSec,
+            resolution,
+            generateAudio,
+            seedanceVersion: (productVersion === "2.0-fast" ? "2.0-fast" : "2.0") as "2.0-fast" | "2.0",
+          };
+          const intentGate = await gateCanvasIntentBeforeCharge({
+            userId: intentViewerId,
+            intentId,
+            operation: "seedanceI2V",
+            taskInput,
+          });
+          const intentReply = await canvasIntentStepReply(intentGate.step, intentViewerId);
+          if (intentReply) {
+            // 409/503 零扣费：释放试片 submitting 预留（R1 1464-06）；202/既有任务不释放
+            return res
+              .status(intentReply.status)
+              .json(await releasePilotOnIntentReject(preparedPilot, intentViewerId, intentReply));
+          }
           const charged = await chargeCanvasVideoCredits(req, {
-            idempotencyKey: requestKey,
+            idempotencyKey: intentId,
             durationSec,
             episodeIndex: b.episodeIndex,
             resolution,
@@ -5270,6 +5738,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             videoModel: billingVideoModel,
           });
           if (!charged.ok) {
+            await releaseCanvasIntentAfterChargeFailure({ userId: intentViewerId, intentId, holderId: intentGate.holderId });
             const stateError = await settlePreparedManhuaPilotChargeFailure(
               preparedPilot,
               pilotViewerId,
@@ -5281,26 +5750,32 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             });
           }
           try {
+            // fencing：被接管的旧执行者在这里出局，不得继续建单
+            const intentCharged = await markCanvasIntentStage({
+              userId: intentViewerId,
+              intentId,
+              holderId: intentGate.holderId,
+              stage: "charged",
+              chargeKey: charged.chargeKey,
+            });
+            if (!intentCharged) {
+              const fenced = canvasIntentFencedReply(intentId);
+              return res.status(fenced.status).json(fenced.body);
+            }
             const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
             const task = await createCanvasVideoTask({
-              ...manhuaPilotTaskFields(preparedPilot),
+              ...taskInput,
+              taskId: intentGate.taskId,
               userId: charged.userId,
               creditsCharged: charged.credits,
               deduct: charged.deduct,
-              idempotencyKey: requestKey,
-              engine: photorealToEvolink ? "seedance20-evolink" : "seedance-openrouter",
-              label,
-              prompt,
-              imageUrl,
-              imageUrls,
-              // 连续性素材：EvoLink reference-to-video 收 0–3 条视频；OpenRouter 路径不消费无副作用
-              videoUrls,
-              audioUrls,
-              aspectRatio,
-              duration: durationSec,
-              resolution,
-              generateAudio,
-              seedanceVersion: productVersion === "2.0-fast" ? "2.0-fast" : "2.0",
+              idempotencyKey: intentId,
+            });
+            await markCanvasIntentStage({
+              userId: intentViewerId,
+              intentId,
+              holderId: intentGate.holderId,
+              stage: "task_created",
             });
             await reconcilePreparedManhuaPilotTask(preparedPilot, task);
             return res.status(200).json({
@@ -5444,8 +5919,43 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           (preparedPilot.kind === "pilot" ? preparedPilot.idempotencyKey : "") ||
           s(b.idempotencyKey || q.idempotencyKey || "").trim() ||
           `srvmini_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
+        const intentViewerId = pilotViewerId || (await resolveJobUser(req))?.userId || 0;
+        if (!intentViewerId) return res.status(401).json({ ok: false, error: "请先登录后再生成成片" });
+        // D（0915）：意图裁决先于扣费。试片以 registry 键为准；否则认客户端 intentId；缺省等于旧 requestKey
+        const intentId =
+          (preparedPilot.kind === "pilot" ? preparedPilot.idempotencyKey : "") ||
+          s(b.intentId || q.intentId || "").trim() ||
+          requestKey;
+        const taskInput = {
+          ...manhuaPilotTaskFields(preparedPilot),
+          engine: "seedance-mini-evolink" as const,
+          label,
+          prompt,
+          imageUrl,
+          imageUrls,
+          videoUrls,
+          audioUrls,
+          aspectRatio,
+          duration: durationSec,
+          resolution,
+          generateAudio,
+          seedanceVersion: "2.0-mini" as const,
+        };
+        const intentGate = await gateCanvasIntentBeforeCharge({
+          userId: intentViewerId,
+          intentId,
+          operation: "seedanceMiniI2V",
+          taskInput,
+        });
+        const intentReply = await canvasIntentStepReply(intentGate.step, intentViewerId);
+        if (intentReply) {
+          // 409/503 零扣费：释放试片 submitting 预留（R1 1464-06）；202/既有任务不释放
+          return res
+            .status(intentReply.status)
+            .json(await releasePilotOnIntentReject(preparedPilot, intentViewerId, intentReply));
+        }
         const chargedMini = await chargeCanvasVideoCredits(req, {
-          idempotencyKey: requestKey,
+          idempotencyKey: intentId,
           durationSec,
           episodeIndex: b.episodeIndex,
           resolution,
@@ -5453,6 +5963,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           label,
         });
         if (!chargedMini.ok) {
+          await releaseCanvasIntentAfterChargeFailure({ userId: intentViewerId, intentId, holderId: intentGate.holderId });
           const stateError = await settlePreparedManhuaPilotChargeFailure(
             preparedPilot,
             pilotViewerId,
@@ -5464,25 +5975,32 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           });
         }
         try {
+          // fencing：被接管的旧执行者在这里出局，不得继续建单
+          const intentCharged = await markCanvasIntentStage({
+            userId: intentViewerId,
+            intentId,
+            holderId: intentGate.holderId,
+            stage: "charged",
+            chargeKey: chargedMini.chargeKey,
+          });
+          if (!intentCharged) {
+            const fenced = canvasIntentFencedReply(intentId);
+            return res.status(fenced.status).json(fenced.body);
+          }
           const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
           const task = await createCanvasVideoTask({
-            ...manhuaPilotTaskFields(preparedPilot),
+            ...taskInput,
+            taskId: intentGate.taskId,
             userId: chargedMini.userId,
             creditsCharged: chargedMini.credits,
             deduct: chargedMini.deduct,
-            idempotencyKey: requestKey,
-            engine: "seedance-mini-evolink",
-            label,
-            prompt,
-            imageUrl,
-            imageUrls,
-            videoUrls,
-            audioUrls,
-            aspectRatio,
-            duration: durationSec,
-            resolution,
-            generateAudio,
-            seedanceVersion: "2.0-mini",
+            idempotencyKey: intentId,
+          });
+          await markCanvasIntentStage({
+            userId: intentViewerId,
+            intentId,
+            holderId: intentGate.holderId,
+            stage: "task_created",
           });
           await reconcilePreparedManhuaPilotTask(preparedPilot, task);
           return res.status(200).json({
@@ -5531,26 +6049,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         return res.status(405).json({ ok: false, error: "Method not allowed" });
       }
       const result = await runSeedance25EvolinkJob(req, b, q, "Seedance 2.5");
-      if (!result.ok) {
-        return res.status(result.status).json({
-          ok: false,
-          error: result.error,
-          version: "2.5",
-          ...(result.paidOnly ? { paidOnly: true } : {}),
-        });
-      }
-      return res.status(200).json({
-        ok: true,
-        async: true,
-        taskId: result.taskId,
-        status: result.status,
-        videoUrl: result.videoUrl || undefined,
-        version: "2.5",
-        workMode: result.workMode,
-        resolution: result.resolution,
-        duration: result.duration,
-        creditsUsed: result.credits,
-      });
+      return sendSeedance25Result(res, result);
     }
 
     if (op === "manhuaPilotStatus") {
@@ -5602,6 +6101,61 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       }
     }
 
+    /**
+     * D（0915）：按意图查恢复。客户端收到 202 creating / 断网丢回执后用它核实，
+     * **不诱导重新生成**。授权依据是登录态 + 服务端归属；不需要重新批准生成。
+     */
+    if (op === "canvasIntentStatus") {
+      if (req.method !== "GET" && req.method !== "POST") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const intentId = s(b.intentId || q.intentId || "").trim();
+      if (!intentId) return res.status(400).json({ ok: false, error: "缺少生成意图编号" });
+      const viewer = await resolveJobUser(req);
+      if (!viewer) return res.status(401).json({ ok: false, error: "请先登录后再查询进度" });
+      const { lookupCanvasIntent } = await import("../server/services/canvasGenerationIntent.js");
+      const found = await lookupCanvasIntent({ userId: viewer.userId, intentId });
+      if (found.kind === "none") {
+        return res.status(404).json({ ok: false, code: "intent_not_found", error: "没有这次生成的记录" });
+      }
+      if (found.kind === "unreadable") {
+        return res.status(503).json({ ok: false, code: "intent_unreadable", error: found.reasonZh });
+      }
+      const rec = found.record;
+      if (rec.stage !== "task_created") {
+        // 占位中 / 已扣费未建单：都是「正在核实」，不是失败
+        return res.status(200).json({
+          ok: true,
+          pending: true,
+          intentId,
+          stage: rec.stage,
+          leaseExpiresAt: rec.leaseExpiresAt,
+          updatedAt: rec.updatedAt,
+        });
+      }
+      const { peekCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
+      const task = await peekCanvasVideoTask(rec.taskId, viewer.userId);
+      if (!task) {
+        return res.status(503).json({
+          ok: false,
+          code: "intent_unreadable",
+          intentId,
+          error: "任务记录待核对，已停止重复生成；请稍后刷新状态",
+        });
+      }
+      return res.status(200).json({
+        ok: true,
+        pending: false,
+        intentId,
+        stage: rec.stage,
+        taskId: task.taskId,
+        status: task.status,
+        videoUrl: task.videoUrl || undefined,
+        error: task.error || undefined,
+        engine: task.engine,
+        creditsUsed: task.creditsCharged,
+      });
+    }
     if (op === "canvasVideoStatus") {
       if (req.method !== "GET" && req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });

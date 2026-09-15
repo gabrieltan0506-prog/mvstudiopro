@@ -72,6 +72,8 @@ import {
 } from "@shared/manhuaEpisodeSegmentPlan";
 import type { ManhuaShotContinuityPrefs } from "@shared/manhuaShotContinuity";
 import {
+  ManhuaOutboundConfirmationMismatchError,
+  ManhuaOutboundConfirmationMissingError,
   newWanSubmissionKey,
   runCanvasBlock,
   type CanvasRunDeps,
@@ -3667,6 +3669,23 @@ export function buildEpisodeQualityExpectedContext(opts: {
     .slice(0, 5000);
 }
 
+/** 从某节点出发、沿 edges 可达的全部下游节点（传递闭包，不含自身） */
+function collectDownstreamIds(edges: CanvasEdge[], fromId: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>([fromId]);
+  const queue = [fromId];
+  while (queue.length) {
+    const cur = queue.shift()!;
+    for (const e of edges) {
+      if (e.fromId !== cur || seen.has(e.toId)) continue;
+      seen.add(e.toId);
+      out.push(e.toId);
+      queue.push(e.toId);
+    }
+  }
+  return out;
+}
+
 function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string): CanvasBlock[] {
   const stage = stageKeyFromBlockId(justFinishedId);
   if (stage !== "reverse") return working;
@@ -3790,6 +3809,13 @@ export type ManhuaFactoryPipelineResult = {
   completedIds: string[];
   skippedIds: string[];
   errors: Array<{ id: string; message: string }>;
+  /**
+   * D（0915）：本批里「依赖已变化 / 缺确认」而**暂停等新确认**的段。
+   * 这些段没有提交、没有扣费；其下游依赖段一并暂停（记在 pausedDownstreamIds）。
+   * 已提交的段继续查原任务，不撤销。恢复由用户重新确认后再跑，不自动续发。
+   */
+  awaitingConfirmationIds: string[];
+  pausedDownstreamIds: string[];
 };
 
 /** 仅当前集当前段、明确单目标的已准备编辑免走生成准备；不借另一节点绕过。 */
@@ -3995,6 +4021,11 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   onStageError?: (blockId: string, label: string, message: string) => void;
   onStageSkip?: (blockId: string, label: string) => void;
   onStageRetry?: (blockId: string, label: string, attempt: number, message: string) => void;
+  /**
+   * D（0915）：某段在提交前发现确认已失效（依赖产物变了 / 没有确认）。
+   * 编排器不重试、不续发该段及其下游；调用方据此提示「待重新确认」。
+   */
+  onAwaitConfirmation?: (blockId: string, reasonZh: string, pausedDownstreamIds: string[]) => void;
   signal?: AbortSignal;
   /** 同集镜间接力 A/B；默认双开 */
   shotContinuity?: {
@@ -4041,6 +4072,8 @@ export async function runManhuaDramaFactoryPipeline(opts: {
         id: opts.targetBlockIds?.[0] || "clip-",
         message: "视频编辑目标、集段或原片不匹配，请重新选择一个已有片段；本次未提交",
       }],
+      awaitingConfirmationIds: [],
+      pausedDownstreamIds: [],
     };
   }
   /** 工厂内 ensure/反推展开必须吃同一张导演板表，禁止只靠工作台审阅路径传参 */
@@ -4145,6 +4178,8 @@ export async function runManhuaDramaFactoryPipeline(opts: {
             message: `第 ${shotTag} 镜静帧节点未就绪，请先确认简报并生成分镜画面（只补本镜，勿整集重跑）`,
           },
         ],
+        awaitingConfirmationIds: [],
+        pausedDownstreamIds: [],
       };
     }
   }
@@ -4164,6 +4199,9 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   const completedIds: string[] = [];
   const skippedIds: string[] = [];
   const errors: Array<{ id: string; message: string }> = [];
+  const awaitingConfirmationIds: string[] = [];
+  const pausedDownstreamIds: string[] = [];
+  const pausedIds = new Set<string>();
 
   const publish = (next: CanvasBlock[]) => {
     working = next;
@@ -4431,6 +4469,40 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       continue;
     }
 
+    /**
+     * 本段的下游 = 图上的子节点 ∪ 接力依赖：段间没有显式边，「上段尾帧接力」开着时
+     * 下一段吃本段尾帧。只算还没完成、且在本批里的。
+     */
+    const downstreamOf = (fromId: string, fromIndex: number): string[] => {
+      const tailContinuity = opts.shotContinuity?.clipFromPrevTail !== false;
+      const nextClip =
+        stageKeyFromBlockId(fromId) === "clip" && tailContinuity
+          ? orderedIds.slice(fromIndex + 1).find((id) => stageKeyFromBlockId(id) === "clip")
+          : undefined;
+      return Array.from(
+        new Set([...collectDownstreamIds(edges, fromId), ...(nextClip ? [nextClip] : [])]),
+      ).filter((id) => orderedIds.includes(id) && !completedIds.includes(id) && id !== fromId);
+    };
+    if (pausedIds.has(blockId)) {
+      // 上游待重新确认：本段不跑、不算完成，记入暂停名单。
+      // R1 1464-07：暂停要沿依赖链**传递**——本段没出片，它的下一段就不能拿旧尾帧接着发；
+      // 否则第 3 段会吃第 2 段（被暂停、未重出）的陈旧尾帧。
+      if (!pausedDownstreamIds.includes(blockId)) pausedDownstreamIds.push(blockId);
+      const chained = downstreamOf(blockId, i).filter((id) => !pausedIds.has(id));
+      for (const id of chained) pausedIds.add(id);
+      if (chained.length) {
+        publish(
+          working.map((b) =>
+            chained.includes(b.id)
+              ? { ...b, status: "error" as const, error: "上游段待重新确认，本段暂停，未提交未扣费" }
+              : b,
+          ),
+        );
+      }
+      opts.onStageSkip?.(blockId, label);
+      i += 1;
+      continue;
+    }
     if (!preparedVideoEdit && skipDone && !mustRerun && blockLooksDone(block)) {
       skippedIds.push(blockId);
       opts.onStageSkip?.(blockId, label);
@@ -4458,6 +4530,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
         : undefined;
     let lastMessage = "生成失败";
     let succeeded = false;
+    let awaitingConfirmation = false;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       if (opts.signal?.aborted) {
         lastMessage = "已取消";
@@ -4571,6 +4644,15 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       } catch (e: unknown) {
         lastMessage = e instanceof Error ? e.message : "生成失败";
         if (lastMessage === "已取消" || opts.signal?.aborted) break;
+        // D：确认失效（依赖产物变了 / 缺确认）不是瞬时错误——不重试、不续发，交回用户重新确认
+        if (
+          e instanceof ManhuaOutboundConfirmationMismatchError ||
+          e instanceof ManhuaOutboundConfirmationMissingError
+        ) {
+          awaitingConfirmation = true;
+          lastMessage = `待重新确认：${lastMessage}`;
+          break;
+        }
         if (attempt < maxRetries && isTransientFactoryError(lastMessage)) {
           opts.onStageRetry?.(blockId, label, attempt + 1, lastMessage);
           publish(
@@ -4602,7 +4684,26 @@ export async function runManhuaDramaFactoryPipeline(opts: {
         errors.push({ id: blockId, message: lastMessage });
       }
       if (lastMessage === "已取消" || opts.signal?.aborted) break;
-      if (stopOnError) break;
+      if (awaitingConfirmation) {
+        // 本段没提交没扣费，等用户重新确认。它的下游依赖段一并暂停（上游产物都没定，
+        // 下游不能拿旧尾帧/旧静帧接着发）；与它无依赖关系的段按既有策略继续。
+        awaitingConfirmationIds.push(blockId);
+        // 下游 = 图上的子节点 ∪ 接力依赖（见 downstreamOf）；再往下的链在轮到它们时由暂停分支继续传递
+        const downstream = downstreamOf(blockId, i);
+        for (const id of downstream) pausedIds.add(id);
+        if (downstream.length) {
+          publish(
+            working.map((b) =>
+              downstream.includes(b.id)
+                ? { ...b, status: "error" as const, error: "上游段待重新确认，本段暂停，未提交未扣费" }
+                : b,
+            ),
+          );
+        }
+        opts.onAwaitConfirmation?.(blockId, lastMessage, downstream);
+      } else if (stopOnError) {
+        break;
+      }
     }
     i += 1;
   }
@@ -4751,5 +4852,5 @@ export async function runManhuaDramaFactoryPipeline(opts: {
     }
   }
 
-  return { blocks: working, completedIds, skippedIds, errors };
+  return { blocks: working, completedIds, skippedIds, errors, awaitingConfirmationIds, pausedDownstreamIds };
 }

@@ -28,6 +28,14 @@ vi.mock("../services/openrouterHailuoVideo.js", () => ({
   isOpenRouterHailuoConfigured: () => true,
 }));
 vi.mock("../db.js", () => ({ getDb: async () => null }));
+// D（0915）：建单点前的意图裁决走数据库占位；本文件刻意无 DB（getDb=null），
+// 生产口径下会 fail-closed 拒绝付费建单（与扣费需 DB 一致）。这里用内存占位存储，
+// 让试片路由的扣费/建单/退款语义照常被验，同时不放松生产的 fail-closed。
+vi.mock("../services/canvasIntentStore.js", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("../services/canvasIntentStore")>();
+  const store = new mod.MemoryCanvasIntentStore();
+  return { ...mod, getDefaultCanvasIntentStore: async () => store };
+});
 vi.mock("../services/paidJobLedger.js", () => ({
   registerActiveJob: async () => {},
   refundCreditsOnFailure: boundary.refund,
