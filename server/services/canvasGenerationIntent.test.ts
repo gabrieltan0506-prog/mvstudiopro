@@ -327,15 +327,24 @@ describe("creating 崩溃后的安全接管（凭租约，不凭猜）", () => {
 });
 
 describe("charged_pending_task 恢复到同一任务", () => {
-  it("扣费后崩溃：恢复时拿回**同一个预留 taskId** 与 chargeKey，不二扣不换任务", async () => {
-    const first = await acquireCanvasIntent(mk({ requestDigest: "d1", holderId: "A" }));
+  it("扣费后崩溃：恢复者先接管持有权，拿回**同一个预留 taskId** 与 chargeKey，不二扣不换任务", async () => {
+    let t = 1_000_000;
+    const now = () => t;
+    const first = await acquireCanvasIntent(mk({ requestDigest: "d1", holderId: "A", now, leaseMs: 1000 }));
     if (first.kind !== "acquired") throw new Error("setup");
-    await updateCanvasIntentStage({ ...mk({ requestDigest: "d1", holderId: "A" }), stage: "charged", chargeKey: "ck_1" });
-    const again = await acquireCanvasIntent(mk({ requestDigest: "d1", holderId: "B" }));
+    await updateCanvasIntentStage({ ...mk({ requestDigest: "d1", holderId: "A", now, leaseMs: 1000 }), stage: "charged", chargeKey: "ck_1" });
+    // 租约未过期：别的执行体只能 creating（A 可能正要建单）
+    expect((await acquireCanvasIntent(mk({ requestDigest: "d1", holderId: "B", now }))).kind).toBe("creating");
+    t += 2000;
+    const again = await acquireCanvasIntent(mk({ requestDigest: "d1", holderId: "B", now }));
     expect(again.kind).toBe("charged_pending_task");
     if (again.kind !== "charged_pending_task") return;
     expect(again.record.taskId).toBe(first.record.taskId);
     expect(again.record.chargeKey).toBe("ck_1");
+    // 持有权已转给 B：A 的迟到推进被拒，B 的能过（否则 B 会被自己的 fencing 挡住，任务永久卡住）
+    expect(again.record.holderId).toBe("B");
+    expect(await updateCanvasIntentStage({ ...mk({ requestDigest: "d1", holderId: "A", now }), stage: "task_created" })).toBeNull();
+    expect((await updateCanvasIntentStage({ ...mk({ requestDigest: "d1", holderId: "B", now }), stage: "task_created" }))?.stage).toBe("task_created");
   });
 
   it("charged 状态即使租约过期也走恢复路径，不退化成接管新建", async () => {

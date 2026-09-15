@@ -255,14 +255,37 @@ export async function acquireCanvasIntent(input: {
   if (existing.stage === "task_created" && existing.taskId) {
     return { kind: "existing_task", record: withFormat(existing), taskId: existing.taskId };
   }
+  const nowIso = new Date(clock()).toISOString();
+  const leaseAlive = Date.parse(existing.leaseExpiresAt) > clock();
+
   if (existing.stage === "charged") {
-    // 已扣费未建单：无论租约死活都交给调用方走「核既有扣费 → 用预留 taskId 建单」，
-    // 因为这一步不重复花钱，早点把任务补出来比干等更安全
-    return { kind: "charged_pending_task", record: withFormat(existing) };
+    // 已扣费未建单。**恢复者必须先拿到持有权**，否则它后面的 charged CAS（fencing）会失败，
+    // 谁都建不了单、任务永远卡住——离线四层计数测试 #8 抓出来的真缺陷。
+    if (existing.holderId === input.holderId) {
+      // 同一执行体重入（同进程重试）：直接继续
+      return { kind: "charged_pending_task", record: withFormat(existing) };
+    }
+    if (leaseAlive) {
+      // 原持有者可能正要建单：不抢，让客户端按意图查询
+      return { kind: "creating", record: withFormat(existing), leaseExpiresAt: existing.leaseExpiresAt };
+    }
+    const taken = await store.casUpdate({
+      userId: input.userId,
+      intentId: input.intentId,
+      expectHolderId: existing.holderId,
+      requireLeaseExpiredBefore: nowIso,
+      patch: { holderId: input.holderId, leaseExpiresAt: new Date(clock() + leaseMs).toISOString(), updatedAt: nowIso },
+    });
+    if (taken.kind === "updated") return { kind: "charged_pending_task", record: withFormat(taken.row) };
+    if (taken.kind === "unreadable") return taken;
+    const again = await store.get(input.userId, input.intentId);
+    if (again.kind === "ok") {
+      return { kind: "creating", record: withFormat(again.row), leaseExpiresAt: again.row.leaseExpiresAt };
+    }
+    return { kind: "unreadable", reasonZh: "生成记录状态不确定，请稍后重试" };
   }
 
-  const nowIso = new Date(clock()).toISOString();
-  if (Date.parse(existing.leaseExpiresAt) > clock()) {
+  if (leaseAlive) {
     // reserved 且租约有效：别人可能只是慢——**不补建、不接管**
     return { kind: "creating", record: withFormat(existing), leaseExpiresAt: existing.leaseExpiresAt };
   }
