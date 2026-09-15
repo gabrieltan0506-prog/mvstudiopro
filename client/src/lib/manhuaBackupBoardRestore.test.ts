@@ -119,6 +119,12 @@ function setup() {
     setDirectorBoardMainByEpisode: setMain,
     setDirectorBoardBySegment: setSegment,
     setDirectorBoardMotionOverlayBySegment: setOverlays,
+    // #1466 起板图段后面紧跟动作计划整体替换（同一段源码）；这里只桩掉存储与提示，不改恢复分支本体
+    draft: {} as Record<string, unknown>,
+    normalizeManhuaActionPlans: (raw: unknown) => ({ plans: (raw as Record<string, unknown> | null) ?? {}, warnings: [] as unknown[] }),
+    setManhuaActionPlans: vi.fn(),
+    saveManhuaActionPlans: vi.fn(),
+    toast: { warning: vi.fn(), message: vi.fn(), error: vi.fn(), success: vi.fn() },
   };
   const execute = new Function("prefs", ...Object.keys(deps), compiled);
   return {

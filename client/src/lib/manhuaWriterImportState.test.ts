@@ -155,6 +155,8 @@ function harness(
     saveManhuaDirectorBoardMainByEpisode: vi.fn(),
     saveManhuaDirectorBoardBySegment: vi.fn(),
     saveManhuaDirectorBoardOverlayBySegment: vi.fn(),
+    // #1466 R1：换系列时动作计划随导演板一并清（setManhuaActionPlans 由上面的 set* 正则自动接管）
+    saveManhuaActionPlans: vi.fn(),
   };
   return {
     state,

@@ -4,6 +4,7 @@ import { ManhuaPrevisRigControls } from "./ManhuaPrevisRigControls";
 import { trpc } from "@/lib/trpc";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import type { ManhuaSegmentReferenceEntry } from "@shared/manhuaSegmentReference";
+import { applyManhuaPrevisDraftToStudio, type ManhuaPrevisDraftFromPlan } from "@shared/manhuaPrevisFromActionPlan";
 import {
   createManhuaPrevisStudio,
   formatPrevisMotionGuide,
@@ -56,6 +57,8 @@ export type PrevisServices = {
 type Props = {
   block: CanvasBlock;
   disabled?: boolean;
+  /** 0915 PR-4：从动作节奏时间轴生成的白模草案（每可执行镜一条）；有它就不必手填数字表 */
+  actionPlanDrafts?: ManhuaPrevisDraftFromPlan[];
   characters: Array<{
     id: string;
     label: string;
@@ -98,10 +101,13 @@ export function ManhuaPrevisStudioView({
   services,
   sourceShots = [],
   profiles = [],
+  actionPlanDrafts = [],
 }: Props & { services: PrevisServices }) {
   const [initial] = useState(
     () => block.previsStudio ?? createManhuaPrevisStudio()
   );
+  // 高级数字表折叠只由**初始**有无草案决定；之后跟着用户手动开合走，草案出现/消失不会把正在编辑的表收起来（1468 R1）
+  const [advancedOpen, setAdvancedOpen] = useState(() => !actionPlanDrafts.length);
   const studio = block.previsStudio ?? initial;
   const latest = useRef({ studio, onChange, services, disabled, block });
   latest.current = { studio, onChange, services, disabled, block };
@@ -558,6 +564,38 @@ export function ManhuaPrevisStudioView({
           ) : null}
         </section>
       ) : null}
+      {actionPlanDrafts.length ? (
+        <section className="space-y-2 rounded border border-cyan-300/30 p-2" data-previs-action-plan-drafts>
+          <p className="text-xs text-cyan-100">从动作节奏生成白模草案 · 不调用付费模型</p>
+          <p className="text-xs text-white/60">
+            时间轴上排好的起手/接触/卸力已换算成白模时序（对齐 24 帧）。站位与机位为默认值，套用后可在「高级参数」微调；套用不提交渲染。
+          </p>
+          {actionPlanDrafts.map((d) => (
+            <div key={d.executableShotId} className="space-y-1 rounded border border-white/15 p-2" data-draft-shot={d.executableShotId}>
+              <p className="text-xs text-white/85">
+                {d.executableShotId} · {d.kind === "water_emerge" ? "出水" : d.kind === "engagement" ? "交锋" : "过渡"} · 源 {d.timing.durationSec}s
+              </p>
+              {d.summaryZh.map((line, i) => (
+                <p key={i} className="text-[11px] text-white/70">{line}</p>
+              ))}
+              {d.issuesZh.map((line, i) => (
+                <p key={`i${i}`} className="text-[11px] text-amber-100">{line}</p>
+              ))}
+              <button
+                className={button}
+                disabled={disabled || Boolean(pendingId) || busy || !d.spec}
+                title={d.spec ? "把这镜的白模规格套用到下方（可撤销：规格历史里可回退）" : "草案未过白模合同，先按上面提示修时间轴"}
+                onClick={() => {
+                  // 先压历史再替换：「恢复上一份动作配置」才能回退（1468 R2）
+                  if (d.spec && !disabled && !pendingId && !lock.current) publish(applyManhuaPrevisDraftToStudio(studio, d.spec));
+                }}
+              >
+                套用这镜到白模规格
+              </button>
+            </div>
+          ))}
+        </section>
+      ) : null}
       {studio.specHistory?.length ? (
         <button
           className={button}
@@ -602,6 +640,8 @@ export function ManhuaPrevisStudioView({
           </select>
         </label>
       </div>
+      <details open={advancedOpen} onToggle={(e) => setAdvancedOpen(e.currentTarget.open)} className="space-y-2" data-previs-advanced>
+        <summary className="text-xs text-cyan-100">高级参数 · 数字表（站位 / 动作 / 特效 / 出水 / 短打）</summary>
       {studio.spec.actors.map((actor, index) => (
         <fieldset
           key={actor.id}
@@ -1440,6 +1480,7 @@ export function ManhuaPrevisStudioView({
           请人工审阅双方距离和朝向。持剑格挡须双方选择右手练习剑，结束后回到准备姿态；剑体仅用于动作预演。不可达接触会明确失败，同一时段不能叠加独立动作。
         </p>
       </section>
+      </details>
       <details>
         <summary className="text-xs text-cyan-100">
           专业调度 · 相机与切镜
