@@ -42,7 +42,7 @@ describe("动作计划 → 白模规格草案", () => {
     expect(it2[1]!.contactSec).toBeCloseTo(2 + 16 / 24, 9);
     expect(it2[1]!.endSec).toBeCloseTo(4, 9);
     expect(d.summaryZh.some((s) => s.includes("站位为默认排布"))).toBe(true);
-    expect(d.summaryZh.some((s) => s.includes("默认全景机位"))).toBe(true);
+    expect(d.summaryZh.some((s) => s.startsWith("运镜"))).toBe(true);
   });
 
   it("出水镜：只有出水者在场，浪花事件按接触点，错峰；画外去向进摘要", () => {
@@ -57,13 +57,13 @@ describe("动作计划 → 白模规格草案", () => {
     expect(d.spec!.interactions).toBeUndefined();
   });
 
-  it("镜3 四人两组交锋：对手都在场 → 两条互动；无相机采样 → 带回相机问题但仍给默认机位", () => {
+  it("镜3 四人两组交锋：对手都在场 → 两条互动；无相机采样 → 带回相机问题但仍按文法编排切镜", () => {
     const shot = shots.find((s) => s.sourceShotId === "ap_shot_3")!;
     const d = manhuaPrevisDraftFromExecutableShot({ plan, shot, resolvedCamera: null, aspect: "16:9" });
     expect(d.spec!.interactions?.map((i) => `${i.actorId}>${i.targetActorId}`)).toEqual([`${MAN}>${A}`, `${WOMAN}>${B}`]);
     expect(d.issuesZh.some((s) => s.includes("相机"))).toBe(true);
-    expect(d.spec!.cameras).toHaveLength(1);
-    expect(d.spec!.cameras[0]!.endSec).toBe(d.spec!.durationSec);
+    expect(d.spec!.cameras.length).toBeGreaterThanOrEqual(4);
+    expect(d.spec!.cameras[d.spec!.cameras.length - 1]!.endSec).toBe(d.spec!.durationSec);
   });
 
   it("对手不在场 → 该互动不进规格并如实报出", () => {

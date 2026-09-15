@@ -15,6 +15,7 @@ import type { ManhuaExecutableShot } from "./manhuaActionPlanSplit";
 import type { ManhuaResolvedCameraSource } from "./manhuaActionPlanBindings";
 import { manhuaPrevisTimingForExecutableShot, type ManhuaPrevisTiming } from "./manhuaPrevisTiming";
 import { manhuaSnapToFrameSec } from "./manhuaActionPlanTiming";
+import { choreographManhuaCameras, manhuaCameraPromptZh, type ManhuaCameraStyle } from "./manhuaCameraGrammar";
 
 export type ManhuaPrevisCharacterLink = {
   actorId: string;
@@ -30,7 +31,7 @@ export type ManhuaPrevisDraftFromPlan = {
   timing: ManhuaPrevisTiming;
   /** 过了生产 schema 的规格；没过为 null，看 issuesZh */
   spec: ManhuaPrevisSpec | null;
-  /** 给创作者看的白话摘要 */
+  /** 给创作者看的白话摘要（含每镜运镜提示词，可直接喂视频模型） */
   summaryZh: string[];
   issuesZh: string[];
 };
@@ -57,6 +58,8 @@ export function manhuaPrevisDraftFromExecutableShot(input: {
   resolvedCamera?: ManhuaResolvedCameraSource | null;
   aspect: "16:9" | "9:16";
   links?: ManhuaPrevisCharacterLink[];
+  /** 运镜风格档；省略 = 硬桥硬马 */
+  cameraStyle?: ManhuaCameraStyle;
 }): ManhuaPrevisDraftFromPlan {
   const { plan, shot } = input;
   const timing = manhuaPrevisTimingForExecutableShot(shot, input.resolvedCamera ?? null);
@@ -136,11 +139,13 @@ export function manhuaPrevisDraftFromExecutableShot(input: {
     if (emerges.length > 3) issuesZh.push(`出水 ${emerges.length} 人超过白模上限 3 人`);
   }
 
-  // 相机：计划相机无位置 → 默认机位；有覆盖就按覆盖起止，不足整段仍拦（timing 已报）
-  const cameras: ManhuaPrevisSpec["cameras"] = [
-    { startSec: 0, endSec: D, position: input.aspect === "9:16" ? [0, -7, 2.4] : [0, -8, 2.8], target: [0, 0, 1], lens: 35 },
-  ];
-  summaryZh.push(`相机：默认全景机位覆盖 0–${D}s（计划相机只有时间没有机位，机位在高级参数改）`);
+  // 相机：按武打运镜文法从动作事件编排（≤8 切镜，源秒对齐 24 帧）；无事件时退回默认全景
+  const actorPositions: Record<string, [number, number]> = {};
+  for (const a of actors) actorPositions[a.id] = a.start;
+  const choreo = choreographManhuaCameras({ durationSec: D, events: shot.events, cues: timing.contactCues, actorPositions, style: input.cameraStyle });
+  const cameras: ManhuaPrevisSpec["cameras"] = choreo.cameras.map(({ startSec, endSec, position, target, lens }) => ({ startSec, endSec, position, target, lens }));
+  summaryZh.push(`运镜 ${cameras.length} 镜（按接触点切）：` + choreo.cameras.map(manhuaCameraPromptZh).join("；"));
+  for (const n of choreo.notesZh) summaryZh.push(n);
   if (timing.padSec > 0) summaryZh.push(`源区间 ${(D - timing.padSec).toFixed(1)}s 取整为 ${D}s，末尾补 ${timing.padSec.toFixed(2)}s 待机`);
 
   const candidate = {
