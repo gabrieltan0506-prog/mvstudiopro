@@ -33,6 +33,9 @@ import { VIDEO_MODEL_OPTIONS, type CanvasBlock } from "@/lib/canvasTypes";
 import { CanvasAudioStudio } from "@/components/canvas/CanvasAudioStudio";
 import { ManhuaPrevisStudio } from "@/components/canvas/ManhuaPrevisStudio";
 import { ManhuaActionTimeline } from "@/components/canvas/ManhuaActionTimeline";
+import { Manhua3dModelStudio } from "@/components/canvas/Manhua3dModelStudio";
+import { splitManhuaActionPlanForPrevis } from "@shared/manhuaActionPlanSplit";
+import { manhuaPrevisDraftFromExecutableShot } from "@shared/manhuaPrevisFromActionPlan";
 import type { ManhuaActionPlan } from "@shared/manhuaActionPlan";
 import type { ManhuaActionPlanBindingContext } from "@shared/manhuaActionPlanBindings";
 import {
@@ -1203,6 +1206,7 @@ export default function ManhuaScriptWorkbench({
   const [audioStudioOpen, setAudioStudioOpen] = useState(false);
   const [previsStudioOpen,setPrevisStudioOpen] = useState(false);
   const [actionTimelineOpen, setActionTimelineOpen] = useState(false);
+  const [modelStudioOpen, setModelStudioOpen] = useState(false);
   /** 免费裁字弹层：拖框选保留区，框外（含烧字边缘）裁掉 */
   const [cropTarget, setCropTarget] = useState<{ id: string; url: string; labelZh: string } | null>(null);
   const [cropRect, setCropRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
@@ -2462,6 +2466,30 @@ export default function ManhuaScriptWorkbench({
       customAssetRefs,
     ],
   );
+  /** 0915 PR-4：本段动作计划 → 白模草案（只取本段镜头；无计划则空） */
+  const previsDraftsFromPlan = useMemo(() => {
+    if (!manhuaActionPlan) return [];
+    const prefix = `ap_shot_e${focusEpisode}_s${activeSegNo}_`;
+    const { shots } = splitManhuaActionPlanForPrevis(manhuaActionPlan);
+    const links = assetLockRegistry.byRole.character.map((a) => ({ actorId: a.id, assetRef: a.id }));
+    const aspect = activeClip?.previsStudio?.spec.aspect === "9:16" ? ("9:16" as const) : ("16:9" as const);
+    return shots
+      .filter((s) => s.sourceShotId.startsWith(prefix))
+      .map((shot) => manhuaPrevisDraftFromExecutableShot({ plan: manhuaActionPlan, shot, resolvedCamera: null, aspect, links }));
+  }, [manhuaActionPlan, focusEpisode, activeSegNo, assetLockRegistry.byRole.character, activeClip?.previsStudio?.spec.aspect]);
+  const modelStudioCharacters = useMemo(
+    () =>
+      assetLockRegistry.byRole.character.map((a) => {
+        const ref = customAssetRefs.find((r) => r.id === a.id);
+        return {
+          id: a.id,
+          labelZh: a.labelZh,
+          thumbUrl: ref?.url,
+          eligibility: ref ? evaluateManhuaAsset3dEligibility(ref) : { eligible: false, reasonZh: "找不到这张人物参考图", sourceVersion: "" },
+        };
+      }),
+    [assetLockRegistry.byRole.character, customAssetRefs],
+  );
   // 保留既有显式解锁能力；阶段完成展示只读独立的剧本确认状态。
   const outlineComplete = Boolean(canRun);
   const activeLookCharacterIds = useMemo(() => {
@@ -3339,6 +3367,17 @@ export default function ManhuaScriptWorkbench({
               </button>
             </>
           )}
+          {onGenerateAsset3d || onImportAsset3d ? <button type="button" data-manhua-action="open-3d-model-studio" disabled={Boolean(factoryBusy)}
+            className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
+            onClick={()=>setModelStudioOpen(value=>!value)}>3D 模型（就绪 {modelStudioCharacters.filter(c=>c.eligibility.currentModel3d?.status==="succeeded").length}/{modelStudioCharacters.length}）</button> : null}
+          {modelStudioOpen ? <Manhua3dModelStudio
+            characters={modelStudioCharacters}
+            busyIds={asset3dBusyIds}
+            disabled={Boolean(factoryBusy)}
+            onGenerate={onGenerateAsset3d}
+            onImport={onImportAsset3d}
+            onPreview={(_id, url, labelZh)=>setModel3dPreview({ url, labelZh })}
+            onRig={onApplyRiggedModel ? (id)=>setAutoRigAssetId(id) : undefined}/> : null}
           {onUpdateClipPrevisStudio ? <button type="button" data-manhua-action="open-previs-studio" disabled={Boolean(factoryBusy)}
             className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
             onClick={()=>{setPrevisStudioOpen(value=>!value);if(!activeClip)onEnsureSegmentClips?.();}}>本段动作白模</button> : null}
@@ -3358,6 +3397,7 @@ export default function ManhuaScriptWorkbench({
                 return { id: a.id, label: a.labelZh, model: eligibility?.eligible && eligibility.currentModel3d?.status === "succeeded" ? { taskId: eligibility.currentModel3d.taskId } : undefined };
               }))}
               sourceShots={activeSegment?.shots.map(shot=>({index:shot.index,durationSec:shot.durationSec,actionZh:shot.actionZh}))}
+              actionPlanDrafts={previsDraftsFromPlan}
               disabled={Boolean(factoryBusy)||activeClip.status==="running"||activeClip.videoTaskStatus==="queued"}
               onChange={(studio,reference)=>onUpdateClipPrevisStudio(activeClip.id,studio,reference)}/>
               :<p className="text-xs text-amber-100">请先确认分段剧本并建立本段成片节点；此操作不会生成付费成片。</p>}
