@@ -46,17 +46,17 @@ describe("武打运镜文法 → 白模相机", () => {
   it("斗法档：施法起手手部特写（lens 55）、命中镜在受方侧低机位全景（lens 32）；反应特写仍在", () => {
     const shot = shots.find((s) => s.sourceShotId === "ap_shot_1")!;
     const timing = manhuaPrevisTimingForExecutableShot(shot, cam(6));
-    // 施法起手要有 ≥ 半秒才有起手镜：把 1b 的起手提前到 1.2s（夹具里起手只有 0.46s）
-    const cues = timing.contactCues.map((c) => (c.eventId === "ap_evt_1b" ? { ...c, windupStartSec: 1.2 } : c));
-    const { cameras } = choreographManhuaCameras({ durationSec: timing.durationSec, events: shot.events, cues, actorPositions: positions, eventManner: { ap_evt_1b: "ranged" } });
-    const spell = cameras.find((c) => c.kind === "contact" && c.eventId === "ap_evt_1b")!;
+    // 用首事件 1a 当斗法：起手 0→1.0s（≥ 半秒才有起手镜，且不被前一事件的反应特写挤掉）
+    const cues = timing.contactCues.map((c) => (c.eventId === "ap_evt_1a" ? { ...c, windupStartSec: 0, contactSec: 1.0, recoverEndSec: 2.0 } : c));
+    const { cameras } = choreographManhuaCameras({ durationSec: timing.durationSec, events: shot.events, cues, actorPositions: positions, eventManner: { ap_evt_1a: "ranged" } });
+    const spell = cameras.find((c) => c.kind === "contact" && c.eventId === "ap_evt_1a")!;
     expect(spell.lens).toBe(32);
     expect(spell.position[2]).toBeLessThan(0.9);
-    // 命中镜机位靠受方（MAN 在 -1.25）而不是攻方（WOMAN 在 1.25）
-    expect(spell.position[0]).toBeLessThan(0);
-    const melee = cameras.find((c) => c.kind === "contact" && c.eventId === "ap_evt_1a")!;
+    // 命中镜机位靠受方（WOMAN 在 +1.25）而不是攻方（MAN 在 -1.25）
+    expect(spell.position[0]).toBeGreaterThan(0);
+    const melee = cameras.find((c) => c.kind === "contact" && c.eventId === "ap_evt_1b")!;
     expect(melee.lens).toBe(45);
-    expect(cameras.some((c) => c.kind === "windup" && c.eventId === "ap_evt_1b" && c.lens === 55)).toBe(true);
+    expect(cameras.some((c) => c.kind === "windup" && c.eventId === "ap_evt_1a" && c.lens === 55)).toBe(true);
     expect(cameras.filter((c) => c.kind === "reaction").length).toBeGreaterThan(0);
   });
 
