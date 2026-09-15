@@ -33,7 +33,7 @@ import { VIDEO_MODEL_OPTIONS, type CanvasBlock } from "@/lib/canvasTypes";
 import { CanvasAudioStudio } from "@/components/canvas/CanvasAudioStudio";
 import { ManhuaPrevisStudio } from "@/components/canvas/ManhuaPrevisStudio";
 import { ManhuaActionTimeline } from "@/components/canvas/ManhuaActionTimeline";
-import { Manhua3dModelStudio, manhua3dModelCounts } from "@/components/canvas/Manhua3dModelStudio";
+import { Manhua3dModelStudio, manhua3dModelCounts, manhua3dRigLookupCharacters } from "@/components/canvas/Manhua3dModelStudio";
 import { splitManhuaActionPlanForPrevis } from "@shared/manhuaActionPlanSplit";
 import { manhuaPrevisDraftFromExecutableShot } from "@shared/manhuaPrevisFromActionPlan";
 import type { ManhuaActionPlan } from "@shared/manhuaActionPlan";
@@ -2466,10 +2466,6 @@ export default function ManhuaScriptWorkbench({
       customAssetRefs,
     ],
   );
-  const riggedAssetIds = useMemo(
-    () => collectPreparedRigProfiles(blocks, assetLockRegistry.byRole.character.map((a) => ({ id: a.id, label: a.labelZh }))).map((p) => p.assetRef),
-    [blocks, assetLockRegistry.byRole.character],
-  );
   /** 0915 PR-4：本段动作计划 → 白模草案（只取本段镜头；无计划则空） */
   const previsDraftsFromPlan = useMemo(() => {
     if (!manhuaActionPlan) return [];
@@ -2493,6 +2489,11 @@ export default function ManhuaScriptWorkbench({
         };
       }),
     [assetLockRegistry.byRole.character, customAssetRefs],
+  );
+  /** 已绑骨的人：collectPreparedRigProfiles 只认带 model.taskId 的人物（1468 R2 修：原先没传 model 永远为空） */
+  const riggedAssetIds = useMemo(
+    () => collectPreparedRigProfiles(blocks, manhua3dRigLookupCharacters(modelStudioCharacters)).map((p) => p.assetRef),
+    [blocks, modelStudioCharacters],
   );
   // 保留既有显式解锁能力；阶段完成展示只读独立的剧本确认状态。
   const outlineComplete = Boolean(canRun);

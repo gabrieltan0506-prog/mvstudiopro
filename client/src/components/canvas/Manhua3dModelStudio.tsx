@@ -52,6 +52,19 @@ export function manhua3dModelStageOf(c: Manhua3dModelStudioCharacter, rigged: bo
   }
 }
 
+/**
+ * 给 collectPreparedRigProfiles 用的人物表（1468 R2）：**必须带 model.taskId**，
+ * 否则它的 `!character?.model` 直接跳过，riggedIds 永远为空、「已绑骨」阶段从不出现。
+ */
+export function manhua3dRigLookupCharacters(
+  characters: Manhua3dModelStudioCharacter[],
+): Array<{ id: string; label: string; model?: { taskId: string } }> {
+  return characters.map((c) => {
+    const m = c.eligibility.eligible ? c.eligibility.currentModel3d : undefined;
+    return { id: c.id, label: c.labelZh, ...(m?.status === "succeeded" ? { model: { taskId: m.taskId } } : {}) };
+  });
+}
+
 /** 按钮与面板共用的计数口径（1468 R1）：就绪 = ready 或 rigged（阶段判定后，blocked 的人即使有旧模型也不算） */
 export function manhua3dModelCounts(characters: Manhua3dModelStudioCharacter[], riggedIds: readonly string[]): { total: number; ready: number; rigged: number } {
   const stages = characters.map((c) => manhua3dModelStageOf(c, riggedIds.includes(c.id)).stage);
@@ -164,8 +177,8 @@ export function Manhua3dModelStudio(props: Props) {
                   </button>
                 ) : null}
                 {c.eligibility.eligible && onImport && !busy ? (
-                  <label className={`${btn} cursor-pointer`}>
-                    导入 GLB
+                  <label className={`${btn} cursor-pointer`} title="上传本机 GLB 作为这个人物的模型（替代 Tripo 建模，不扣积分）；与人物卡里「导入 GLB 校验」不同：那是校验已建好的模型">
+                    上传 GLB 替代建模
                     <input
                       type="file"
                       accept=".glb,model/gltf-binary"

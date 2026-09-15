@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { A, B, MAN, WOMAN, buildBoatFight } from "./manhuaActionPlanBoatFightFixture";
 import { splitManhuaActionPlanForPrevis } from "./manhuaActionPlanSplit";
 import { manhuaPrevisSpecSchema } from "./manhuaPrevis";
-import { manhuaPrevisDraftFromExecutableShot } from "./manhuaPrevisFromActionPlan";
+import { applyManhuaPrevisDraftToStudio, manhuaPrevisDraftFromExecutableShot } from "./manhuaPrevisFromActionPlan";
+import { createManhuaPrevisStudio } from "./manhuaPrevis";
 
 const cam = (endSec: number) => ({
   source: "previs_cameras" as const,
@@ -113,5 +114,23 @@ describe("1468 R1 · 边界：秒位吸附与短镜出水", () => {
     const d = manhuaPrevisDraftFromExecutableShot({ plan, shot: late as typeof water, resolvedCamera: cam(6), aspect: "9:16" });
     expect(d.spec).toBeNull();
     expect(d.issuesZh.join("\n")).toMatch(/最后一个实际视频帧|上升与浪花/);
+  });
+});
+
+
+describe("1468 R2 · 套用草案可撤销", () => {
+  it("套用把当前规格压进 specHistory 末尾；「恢复上一份」弹回原规格", () => {
+    const plan = buildBoatFight();
+    const { shots } = splitManhuaActionPlanForPrevis(plan);
+    const d = manhuaPrevisDraftFromExecutableShot({ plan, shot: shots[0]!, resolvedCamera: cam(6), aspect: "16:9" });
+    const studio = createManhuaPrevisStudio();
+    const before = studio.spec;
+    const applied = applyManhuaPrevisDraftToStudio(studio, d.spec!, "2026-09-16T00:00:00.000Z");
+    expect(applied.spec).toEqual(d.spec);
+    expect(applied.specHistory?.at(-1)).toEqual({ spec: before, createdAt: "2026-09-16T00:00:00.000Z", reasonZh: "套用动作计划草案前的配置" });
+    // 与工作台「恢复上一份动作配置」同一算法：取末条回填、历史去尾
+    const restored = { ...applied, spec: applied.specHistory!.at(-1)!.spec, specHistory: applied.specHistory!.slice(0, -1) };
+    expect(restored.spec).toEqual(before);
+    expect(restored.specHistory).toEqual(studio.specHistory ?? []);
   });
 });

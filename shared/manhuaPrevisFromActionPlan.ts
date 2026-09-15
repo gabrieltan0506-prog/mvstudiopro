@@ -9,7 +9,7 @@
  *   - 相机：计划相机没有位置信息 → 给一台默认机位覆盖整段并写明；不假称已解析。
  *   - 产出先过生产 schema：不过就把原因带回，UI 不得静默套用。
  */
-import { manhuaPrevisSpecSchema, type ManhuaPrevisSpec } from "./manhuaPrevis";
+import { manhuaPrevisSpecSchema, type ManhuaPrevisSpec, type ManhuaPrevisStudio } from "./manhuaPrevis";
 import { compileManhuaShotSnapshot, type ManhuaActionPlan, type ManhuaActionEvent } from "./manhuaActionPlan";
 import type { ManhuaExecutableShot } from "./manhuaActionPlanSplit";
 import type { ManhuaResolvedCameraSource } from "./manhuaActionPlanBindings";
@@ -164,5 +164,25 @@ export function manhuaPrevisDraftFromExecutableShot(input: {
     spec: parsed.success ? parsed.data : null,
     summaryZh,
     issuesZh,
+  };
+}
+
+
+/**
+ * 把草案套用到白模工作台配置：**先把当前规格压进 specHistory 再替换**（1468 R2）。
+ * 「恢复上一份动作配置」只回退 specHistory 的最后一条；不压历史就等于不可撤销。
+ */
+export function applyManhuaPrevisDraftToStudio(
+  studio: ManhuaPrevisStudio,
+  spec: ManhuaPrevisSpec,
+  nowIso: string = new Date().toISOString(),
+): ManhuaPrevisStudio {
+  return {
+    ...studio,
+    spec,
+    specHistory: [
+      ...(studio.specHistory ?? []),
+      { spec: studio.spec, createdAt: nowIso, reasonZh: "套用动作计划草案前的配置" },
+    ],
   };
 }

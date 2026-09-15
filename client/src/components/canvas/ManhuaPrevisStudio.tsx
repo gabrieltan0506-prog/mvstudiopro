@@ -4,7 +4,7 @@ import { ManhuaPrevisRigControls } from "./ManhuaPrevisRigControls";
 import { trpc } from "@/lib/trpc";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import type { ManhuaSegmentReferenceEntry } from "@shared/manhuaSegmentReference";
-import type { ManhuaPrevisDraftFromPlan } from "@shared/manhuaPrevisFromActionPlan";
+import { applyManhuaPrevisDraftToStudio, type ManhuaPrevisDraftFromPlan } from "@shared/manhuaPrevisFromActionPlan";
 import {
   createManhuaPrevisStudio,
   formatPrevisMotionGuide,
@@ -586,7 +586,8 @@ export function ManhuaPrevisStudioView({
                 disabled={disabled || Boolean(pendingId) || busy || !d.spec}
                 title={d.spec ? "把这镜的白模规格套用到下方（可撤销：规格历史里可回退）" : "草案未过白模合同，先按上面提示修时间轴"}
                 onClick={() => {
-                  if (d.spec) edit(d.spec);
+                  // 先压历史再替换：「恢复上一份动作配置」才能回退（1468 R2）
+                  if (d.spec && !disabled && !pendingId && !lock.current) publish(applyManhuaPrevisDraftToStudio(studio, d.spec));
                 }}
               >
                 套用这镜到白模规格

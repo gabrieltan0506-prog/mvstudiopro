@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { manhua3dModelCounts, manhua3dModelStageOf, runManhua3dBatch } from "@/components/canvas/Manhua3dModelStudio";
+import { manhua3dModelCounts, manhua3dModelStageOf, manhua3dRigLookupCharacters, runManhua3dBatch } from "@/components/canvas/Manhua3dModelStudio";
+import { collectPreparedRigProfiles } from "@/lib/manhuaPrevisProfiles";
 
 const base = (over: Record<string, unknown> = {}) => ({
   id: "c1",
@@ -48,5 +49,33 @@ describe("1468 R1 · 批量与计数", () => {
       { ...base({ currentModel3d: model("failed") }), id: "c4" },
     ] as never[];
     expect(manhua3dModelCounts(chars, ["c2"])).toEqual({ total: 4, ready: 2, rigged: 1 });
+  });
+});
+
+
+describe("1468 R2 · riggedIds 真能算出来", () => {
+  it("rig 查表带 model.taskId（只给 eligible+succeeded 的人），collectPreparedRigProfiles 才认得出已绑骨", () => {
+    const chars = [
+      base({ currentModel3d: model("succeeded") }),
+      { ...base({ currentModel3d: model("failed") }), id: "c2" },
+      { ...base({ eligible: false, reasonZh: "x", currentModel3d: model("succeeded") }), id: "c3" },
+    ] as never[];
+    const lookup = manhua3dRigLookupCharacters(chars);
+    expect(lookup).toEqual([
+      { id: "c1", label: "男", model: { taskId: "m3d_1" } },
+      { id: "c2", label: "男" },
+      { id: "c3", label: "男" },
+    ]);
+    const rigged = { sourceJobId: "m3d_1", forwardAxis: "+Y", targetHeight: 1.7 };
+    const block = {
+      id: "clip-e01-01", kind: "video",
+      previsStudio: { scopeId: "s", spec: { version: 1, durationSec: 4, aspect: "16:9", cameras: [], actors: [{ id: "c1", nameZh: "男", assetRef: "c1", shape: "human", start: [0, 0], end: [0, 0], moveStartSec: 0, moveEndSec: 4, facingDeg: 0, actions: [], riggedModel: rigged }] }, history: [] },
+    } as never;
+    // 不带 model（R1 前的写法）→ 永远空（这就是「已绑骨」从不出现的根）；带 model → 算得出
+    const withoutModel = collectPreparedRigProfiles([block], chars.map((c: { id: string; labelZh: string }) => ({ id: c.id, label: c.labelZh })));
+    expect(withoutModel).toEqual([]);
+    const withModel = collectPreparedRigProfiles([block], lookup);
+    expect(withModel.map((p) => p.assetRef)).toEqual(["c1"]);
+    expect(withModel[0]!.sourceJobId).toBe("m3d_1");
   });
 });
