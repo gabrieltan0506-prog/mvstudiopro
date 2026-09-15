@@ -63,17 +63,112 @@ describe("本机展示地址的参考：先溯源，再筛选", () => {
     );
   });
 
-  it("溯不回 https 的本机地址：绝不出现在出站请求里", async () => {
-    // 这里不断言「必须抛错」——该引擎未必强制要图，抛不抛是另一条产品规则。
-    // 真正要保住的是：溯不回 https 的地址一个字节都不能发给供应商。
+  it("溯不回 https 的本机地址：报出具体的槽位与来源，并且不出站", async () => {
+    // 0915 复审：这里的正确行为不是「静默不发」，而是**明确拒绝**——
+    // 用户已经选了图，它凭空消失比报错更糟。
     vi.stubGlobal("fetch", vi.fn(async () => {
       throw new Error("预览不得发起任何请求");
     }));
     const orphan = "blob:http://localhost/never-registered";
-    const preview = await previewCanvasBlockOutbound(deps, clip(orphan) as never);
+    await expect(
+      previewCanvasBlockOutbound(deps, clip(orphan) as never),
+    ).rejects.toThrow(/已选参考解析不到可提交的来源[\s\S]*never-registered/);
+  });
+});
+
+/**
+ * 0915 复审新增的三条。统一顺序是：
+ *   本机溯源 → 合法站内路径绝对化 → 可提交协议校验 → 去重 → 容量/绑定规划
+ */
+describe("参考规范化：顺序、早筛与失败语义", () => {
+  it("显式选过的参考解析不出来：明确报错，不静默丢（哪怕另有一张有效图）", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("预览不得发起任何请求");
+    }));
+    const good = "https://example.com/still-ok.jpg";
+    const orphan = "blob:http://localhost/no-source-at-all";
+    // 有一张有效静帧 + 一张溯不回来源的显式引用：
+    // 旧行为是预览照常成功、那张引用凭空消失。
+    await expect(
+      previewCanvasBlockOutbound(
+        deps,
+        { ...clip(good), editFusionUrls: [orphan] } as never,
+      ),
+    ).rejects.toThrow(/已选参考解析不到可提交的来源/);
+  });
+
+  it("本来就没有参考的合法用法不受影响（不能一刀切成报错）", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("预览不得发起任何请求");
+    }));
+    const bare = {
+      id: "clip-e01-g01",
+      kind: "video" as const,
+      prompt: "0–10s：空镜，雨落在青石板上。",
+      videoModel: "seedance-2.5",
+      aspectRatio: "9:16" as const,
+      episodeIndex: 1,
+    };
+    const preview = await previewCanvasBlockOutbound(deps, bare as never);
+    expect(preview.engine).toBe("seedance-2.5");
+  });
+
+  it("溯源得到站内相对路径：绝对化后仍进出站，不被协议筛选丢掉", async () => {
+    // node 测试环境默认没有 location，absolutize 无从取 origin；
+    // 生产在浏览器里总有 origin，这里补上以还原真实条件。
+    vi.stubGlobal("location", { origin: "https://app.test.invalid" });
+    const display = "blob:http://localhost/site-relative";
+    rememberLocalMediaDisplay({
+      displayUrl: display,
+      pointer: makeLocalMediaPointer("rec-rel"),
+      sourceUrl: "/manhua-assets/a.png",
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("预览不得发起任何请求");
+    }));
+
+    const preview = await previewCanvasBlockOutbound(deps, clip(display) as never);
     const all = JSON.stringify([preview.body, preview.refs]);
-    expect(all.includes(orphan), "溯不回的本机地址被发出去了").toBe(false);
+    expect(all.includes("manhua-assets/a.png"), "站内相对路径被丢掉了").toBe(true);
     expect(all.includes("blob:"), "出站里出现了 blob:").toBe(false);
-    expect(all.includes("local-media:"), "出站里出现了 local-media:").toBe(false);
+  });
+});
+
+describe("资产图：规范化必须早于 resolveManhuaAssetImageBindRows", () => {
+  it("@角色 的资产路径是本机地址时，身份图仍进得了 refs", async () => {
+    // 0915 复审 P1 实测：resolveManhuaAssetImageBindRows 内部先过
+    // isBindableAssetPath，它已排除 blob:/local-media:，
+    // 之后再 map 溯源救不回**已经被删掉的整行**——身份图整张消失，只剩静帧。
+    const display = "blob:http://localhost/asset-c1";
+    rememberLocalMediaDisplay({
+      displayUrl: display,
+      pointer: makeLocalMediaPointer("rec-c1"),
+      sourceUrl: "https://example.com/char-c1.png",
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("预览不得发起任何请求");
+    }));
+
+    const still = "https://example.com/still-ok.jpg";
+    const preview = await previewCanvasBlockOutbound(
+      {
+        ...deps,
+        manhuaAssetPathById: { c1: display },
+      } as never,
+      {
+        id: "clip-e01-g01",
+        kind: "video" as const,
+        prompt:
+          "【资产·Image对照】\n@角色1|id=c1|label=黑奇|kind=角色|duty=identity\n\n【秒轴】\n0–10s：黑奇自梁上落地。",
+        videoModel: "seedance-2.5",
+        aspectRatio: "9:16" as const,
+        episodeIndex: 1,
+        refImageUrl: still,
+      } as never,
+    );
+
+    const all = JSON.stringify([preview.body, preview.refs]);
+    expect(all.includes("char-c1.png"), "身份图整行被早筛删掉了").toBe(true);
+    expect(all.includes("blob:"), "出站里出现了 blob:").toBe(false);
   });
 });

@@ -266,6 +266,51 @@ function traceCanvasRefToHttpsSource(url: unknown): string {
   return u;
 }
 
+/** 可提交的出站参考协议：https(s) 绝对链，或 data:image */
+function isSubmittableRefUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url) || url.startsWith("data:image/");
+}
+
+/**
+ * 参考地址规范化的**唯一顺序**（0915 复审要求，静帧/资产/导演板共用）：
+ *   本机溯源 → 合法站内路径绝对化 → （调用方再做）协议校验 → 去重 → 容量/绑定规划
+ *
+ * 只在某一处补第二次转换是不够的：
+ * 溯源可能得到 `/manhua-assets/x.png` 这类站内相对路径，
+ * 不绝对化就会被紧接着的协议筛选当成非法地址丢掉（0915 复审 P2 实测）。
+ */
+function normalizeCanvasRefSource(url: unknown): string {
+  const traced = traceCanvasRefToHttpsSource(url);
+  if (!traced) return "";
+  return String(absolutizeManhuaAssetUrl(traced) || traced).trim();
+}
+
+/**
+ * 用户**显式选过**的参考，解析失败时不许静默丢掉。
+ *
+ * 0915 复审实测：只要还有另一张有效图，preview 就照常成功，
+ * 那张解析不出来的引用凭空消失——用户看到的和实际发出的不是一回事。
+ * 「引擎允许不带图」是另一回事，不能拿来替「已选的图可以丢」。
+ *
+ * 这里只对**存在但解析失败**的报错；本来就没有参考的合法文生视频不受影响。
+ * 既不把 blob: 发出去，也不自动上传或重买兜底。
+ */
+function assertExplicitRefsResolvable(
+  entries: Array<{ slotZh: string; raw: string; resolved: string }>,
+): void {
+  const broken = entries.filter(
+    (e) => String(e.raw || "").trim() && !isSubmittableRefUrl(e.resolved),
+  );
+  if (!broken.length) return;
+  const detail = broken
+    .map((e) => `${e.slotZh}：${e.raw.slice(0, 80)}`)
+    .join("；");
+  throw new Error(
+    `这些已选参考解析不到可提交的来源，本次未提交、未扣费：${detail}。` +
+      `请重新选择或重新上传该参考（本机缓存地址无法直接发给生成方）。`,
+  );
+}
+
 async function toHttpsImageUrls(
   deps: CanvasRunDeps,
   urls: string[],
@@ -2598,12 +2643,25 @@ export async function runCanvasBlock(
       const requestedAssetRows = isClip
         ? parseManhuaAssetImageBindBlock(block.prompt || motionPrompt)
         : [];
+      // 资产路径表必须**先规范化再交给解析器**：
+      // resolveManhuaAssetImageBindRows 内部经 isBindableAssetPath，
+      // 它已把 blob: / local-media: 排除掉，之后再 map 补溯源救不回被删的行
+      //（0915 复审 P1 实测：身份图整行消失，只剩静帧）。
+      // 规范化放在客户端这一侧，shared 纯模块不必依赖浏览器媒体库。
+      const normalizedAssetPathById = deps.manhuaAssetPathById
+        ? Object.fromEntries(
+            Object.entries(deps.manhuaAssetPathById).map(([id, path]) => [
+              id,
+              normalizeCanvasRefSource(path) || String(path ?? ""),
+            ]),
+          )
+        : deps.manhuaAssetPathById;
       const assetRows = isClip
         ? resolveManhuaAssetImageBindRows(
             requestedAssetRows,
-            deps.manhuaAssetPathById,
+            normalizedAssetPathById,
           ).map((r) => {
-            const abs = absolutizeManhuaAssetUrl(r.path) || r.path;
+            const abs = normalizeCanvasRefSource(r.path) || r.path;
             /**
              * 跨集场景挂的是四视角拼板切片，按本段机位换那一格：俯拍段喂平视图
              * 等于让引擎自己想象俯视下的地面动线，空间锁就白锁了。
@@ -2611,7 +2669,7 @@ export async function runCanvasBlock(
             const tiles = deps.manhuaAssetTileUrlsById?.[r.id];
             if (!tiles) return { ...r, path: abs };
             const picked = resolveManhuaSceneTileUrl(abs, tiles, motionPrompt);
-            return { ...r, path: absolutizeManhuaAssetUrl(picked.url) || picked.url };
+            return { ...r, path: normalizeCanvasRefSource(picked.url) || picked.url };
           })
         : [];
       const requiredLookRows = requestedAssetRows.filter((row) => row.tag.startsWith("@服装"));
@@ -2639,17 +2697,17 @@ export async function runCanvasBlock(
           `@引用断链：@${atRefApplied.missing.join("、@")} 指到的资产不存在，请在审阅框修正或删除该引用后再出片`,
         );
       }
-      // **先溯源再筛选**：回灌后的 blob: / local-media: 必须在这一步换回 https，
-      // 否则下面这道协议筛选会把它们直接丢掉（0915 审查实证）。
-      const absStills = [
-        ...(atRefApplied?.imageUrls || []),
-        ...stillPool.map((u) => absolutizeManhuaAssetUrl(u) || u),
-      ]
-        .map((u) => traceCanvasRefToHttpsSource(u))
-        .filter(
-          (u, i, arr) =>
-            (/^https?:\/\//i.test(u) || u.startsWith("data:image/")) && arr.indexOf(u) === i,
-        );
+      // 统一顺序：本机溯源 → 站内路径绝对化 → 协议校验 → 去重。
+      // 三步缺一不可：只溯源不绝对化，站内相对路径会被协议筛选丢掉（复审 P2）。
+      const explicitStillRefs = [
+        ...(atRefApplied?.imageUrls || []).map((raw) => ({ slotZh: "@引用图", raw })),
+        ...stillPool.map((raw) => ({ slotZh: "参考静帧", raw })),
+      ].map((e) => ({ ...e, resolved: normalizeCanvasRefSource(e.raw) }));
+      // 用户已经选过的参考解析不出来时明确报错，不静默丢（复审 P1）
+      assertExplicitRefsResolvable(explicitStillRefs);
+      const absStills = explicitStillRefs
+        .map((e) => e.resolved)
+        .filter((u, i, arr) => isSubmittableRefUrl(u) && arr.indexOf(u) === i);
       // clip-eNN-... → 集号；没有导演板表或解不出集号时 boardUrl 就是空串，不影响既有行为
       const clipEpisodeMatch = /^[a-z_]+-e(\d{2})-/i.exec(block.id);
       const clipEpisodeNo = clipEpisodeMatch ? Number.parseInt(clipEpisodeMatch[1]!, 10) : null;
@@ -2669,10 +2727,8 @@ export async function runCanvasBlock(
       // 成片硬绑：末帧 → 资产定妆 → 本段静帧 → 导演板（URL 只进 API imageUrls）
       const bindPlan = isClip
         ? planManhuaClipSeedanceImageBind({
-            // 同理：资产路径也先溯源，再按协议筛
-            assetRows: assetRows
-              .map((r) => ({ ...r, path: traceCanvasRefToHttpsSource(r.path) }))
-              .filter((r) => /^https?:\/\//i.test(r.path)),
+            // 资产行在上面已按统一顺序规范化过，这里只做协议校验
+            assetRows: assetRows.filter((r) => isSubmittableRefUrl(r.path)),
             stillUrls: absStills,
             tailUrls: tailFrames,
             mentionedTags,

@@ -325,8 +325,11 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
    */
   it("确认 A → 改设置为 B → 旧确认被拒 → 重新确认 B → 实际 POST 等于 B", async () => {
     // 这一条补的是「重渲染之后画布真的消费了**新**准备结果」。
-    // 用真实设置「导演包主卡」做 A→B：它会改到出站正文，
-    // 所以 A 的确认在 B 之下必须失效，重新确认后发出去的必须是 B。
+    //
+    // 用**第二段**：首段没有「上一段」，切尾帧接力未必改到请求，证明不了消费了新设置。
+    // 设置走页面自己的 onShotContinuityChange——工作台那个接力开关点下去调的同一个函数；
+    // 该开关在本夹具状态未渲染，所以直接调真实 prop，这个边界如实写在这里。
+    // （曾试过用「导演包主卡」做 B：它会让该段丢掉静帧引用，太具破坏性，已弃用。）
     const { page, close } = await mount();
     const result = await page.evaluate(async () => {
       type B = Record<string, unknown>;
@@ -444,7 +447,20 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
       w.__posts!.length = 0;
       const clicked1 = clickRun(clipAfterChange);
       if (clicked1 !== "clicked") return { step: "run-a-failed" as const, why: clicked1 };
-      await settle(2000);
+      // 轮询本次运行的终态，不用固定睡眠
+      try {
+        await until(
+          () => {
+            const c = w.__ffcProps!.blocks.find((x) => String(x.id) === clipAfterChange);
+            const st = String((c as B | undefined)?.status ?? "");
+            return st !== "running" && Boolean((c as B | undefined)?.error);
+          },
+          30_000,
+          "旧确认那次运行落定",
+        );
+      } catch (e) {
+        return { step: "stale-run-not-settled" as const, why: String((e as Error)?.message || e) };
+      }
       const postsAfterStale = w.__posts!.filter(isClipPost).length;
       // 失败原因会被 patchOne 写进节点的 error 字段，直接读它，比拦 toast 稳
       const afterStale = w.__ffcProps!.blocks.find((x) => String(x.id) === clipAfterChange);
