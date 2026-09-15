@@ -204,6 +204,59 @@ describe("manhua3dTask", () => {
     ).rejects.toThrow("invalid_manhua_3d_multiview_input");
   });
 
+  it("1469 R1 旧路径回归：multiviewImageUrls 传空数组与不传完全等价——同 taskId、走 submit 不走 submitMultiview、视图无 multiview 字段", async () => {
+    const submit = vi.fn().mockResolvedValue({ predictionId: "pred-single" });
+    const submitMultiview = vi.fn();
+    setManhua3dTaskDependenciesForTests({
+      isConfigured: () => true,
+      submit,
+      submitMultiview,
+      poll: vi.fn().mockResolvedValue({ state: "running", status: "processing" }),
+    });
+    const base = { userId: 7, assetRef: "character:black-horse", sourceVersion: "sha256:single-v1", sourceImageUrl: "https://assets.test/black-horse-front.png" };
+    const plain = await createManhua3dTask(base);
+    const withEmpty = await createManhua3dTask({ ...base, multiviewImageUrls: [], multiviewImageGcsUris: [], multiviewVersion: "" });
+    expect(withEmpty.taskId).toBe(plain.taskId);
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(submitMultiview).not.toHaveBeenCalled();
+    expect(plain).not.toHaveProperty("multiviewImageUrls");
+    expect(plain).not.toHaveProperty("multiviewVersion");
+  });
+
+  it("1469 R1 重试：多视角任务失败后重试仍走 submitMultiview（提交前按 gs:// 重签），不退回单图；视图带 multiview 标记", async () => {
+    const submit = vi.fn();
+    const submitMultiview = vi
+      .fn()
+      .mockRejectedValueOnce(new SubmitRejectedError("bad views"))
+      .mockResolvedValueOnce({ predictionId: "pred-mv-retry" });
+    const signGlb = vi.fn((gs: string) => `https://signed.test/${gs.replace("gs://", "")}?fresh=1`);
+    setManhua3dTaskDependenciesForTests({
+      isConfigured: () => true,
+      submit,
+      submitMultiview,
+      signGlb: signGlb as never,
+      poll: vi.fn().mockResolvedValue({ state: "running", status: "processing" }),
+    });
+    const views = ["https://assets.test/v/front.png", "https://assets.test/v/left.png"];
+    const gcs = ["gs://b/front.png", "gs://b/left.png"];
+    const failed = await createManhua3dTask({
+      userId: 7, assetRef: "character:black-horse", sourceVersion: "sha256:mv-retry-v1",
+      sourceImageUrl: "https://assets.test/black-horse-front.png",
+      multiviewImageUrls: views, multiviewImageGcsUris: gcs, multiviewVersion: "views:v1",
+    });
+    expect(failed.status).toBe("failed");
+    expect(failed.multiviewVersion).toBe("views:v1");
+    expect(failed.multiviewImageUrls).toEqual(views);
+    expect(submitMultiview.mock.calls[0]?.[0]).toMatchObject({ images: gcs.map((g) => `https://signed.test/${g.replace("gs://", "")}?fresh=1`) });
+
+    const retried = await retryManhua3dTask(failed.taskId, 7);
+    expect(retried?.status).toBe("running");
+    expect(retried?.multiviewVersion).toBe("views:v1");
+    expect(submit).not.toHaveBeenCalled();
+    expect(submitMultiview).toHaveBeenCalledTimes(2);
+    expect(signGlb).toHaveBeenCalledWith("gs://b/front.png", 2 * 60 * 60);
+  });
+
   it("同一来源用不同质量选项会产生不同任务，避免错误复用", async () => {
     const submit = vi
       .fn()

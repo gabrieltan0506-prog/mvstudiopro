@@ -97,6 +97,9 @@ export type Manhua3dTaskView = Pick<
   | "assetRef"
   | "sourceVersion"
   | "sourceImageUrl"
+  /** 0916 多视角：前端据此分辨任务类型；视角图 URL 会轮换，仅展示用 */
+  | "multiviewImageUrls"
+  | "multiviewVersion"
   | "status"
   | "predictionId"
   | "glbGcsUri"
@@ -390,6 +393,8 @@ function toView(record: Manhua3dTaskRecord): Manhua3dTaskView {
     assetRef,
     sourceVersion,
     sourceImageUrl,
+    multiviewImageUrls,
+    multiviewVersion,
     status,
     predictionId,
     glbGcsUri,
@@ -407,6 +412,7 @@ function toView(record: Manhua3dTaskRecord): Manhua3dTaskView {
     assetRef,
     sourceVersion,
     sourceImageUrl,
+    ...(multiviewImageUrls?.length ? { multiviewImageUrls: [...multiviewImageUrls], multiviewVersion } : {}),
     status,
     predictionId,
     glbGcsUri,
@@ -860,6 +866,14 @@ export async function retryManhua3dTask(
     assetRef: previous.assetRef,
     sourceVersion: previous.sourceVersion,
     sourceImageUrl: previous.sourceImageUrl,
+    // 1469 R1：多视角任务重试必须仍是多视角（原先只抄单图字段 → 重试静默退回单图生成）
+    ...(previous.multiviewImageUrls?.length
+      ? {
+          multiviewImageUrls: [...previous.multiviewImageUrls],
+          ...(previous.multiviewImageGcsUris?.length ? { multiviewImageGcsUris: [...previous.multiviewImageGcsUris] } : {}),
+          ...(previous.multiviewVersion ? { multiviewVersion: previous.multiviewVersion } : {}),
+        }
+      : {}),
     status: "queued",
     options: previous.options,
     createdAt: now,

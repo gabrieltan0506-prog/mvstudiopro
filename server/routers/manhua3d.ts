@@ -71,6 +71,9 @@ export function mapManhua3dTaskError(error: unknown): never {
       message: "三维文件校验超时，请稍后重新导入；当前人物参考未改变",
     });
   }
+  if (message === "invalid_manhua_3d_multiview_input") {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "多视角参数无效：需 2–4 张 https 视角图、稳定的视角版本，gs:// 数量与图数一致" });
+  }
   if (/^invalid_glb_|^glb_too_large$/.test(message)) {
     throw new TRPCError({
       code: "BAD_REQUEST",
@@ -141,6 +144,12 @@ export const manhua3dRouter = router({
         multiviewImageGcsUris: z.array(z.string().trim().regex(/^gs:\/\//)).max(4).optional(),
         multiviewVersion: z.string().trim().min(1).max(4_096),
         options: optionsSchema.optional(),
+      })
+      .superRefine((value, ctx) => {
+        // 1469 R1：gs:// 与 https 必须一一对应（按位重签），长度不等在路由层就拒成 BAD_REQUEST，不落到 500
+        if (value.multiviewImageGcsUris && value.multiviewImageGcsUris.length !== value.multiviewImageUrls.length) {
+          ctx.addIssue({ code: "custom", path: ["multiviewImageGcsUris"], message: "视角图 gs:// 数量须与 https 数量一致" });
+        }
       })
     )
     .mutation(async ({ ctx, input }) => {

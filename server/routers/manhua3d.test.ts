@@ -68,6 +68,27 @@ describe("manhua3dRouter", () => {
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
 
+  it("1469 R1：gs:// 数量与 https 数量不一致在路由层就是 BAD_REQUEST；服务层 invalid_manhua_3d_multiview_input 也映射 BAD_REQUEST 而非 500", async () => {
+    const admin = manhua3dRouter.createCaller(ctx("admin"));
+    const views = ["https://assets.test/v/front.png", "https://assets.test/v/left.png"];
+    await expect(
+      admin.submitMultiview({
+        assetRef: "character:black-horse", sourceVersion: "sha256:test-v1",
+        sourceImageUrl: "https://assets.test/black-horse-front.png",
+        multiviewImageUrls: views, multiviewImageGcsUris: ["gs://b/f.png"], multiviewVersion: "views:v1",
+      })
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(mocks.createManhua3dTask).not.toHaveBeenCalled();
+    mocks.createManhua3dTask.mockRejectedValueOnce(new Error("invalid_manhua_3d_multiview_input"));
+    await expect(
+      admin.submitMultiview({
+        assetRef: "character:black-horse", sourceVersion: "sha256:test-v1",
+        sourceImageUrl: "https://assets.test/black-horse-front.png",
+        multiviewImageUrls: views, multiviewVersion: "views:v1",
+      })
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
   it("普通用户不能提交或查询三维任务", async () => {
     const caller = manhua3dRouter.createCaller(ctx("user"));
     await expect(
