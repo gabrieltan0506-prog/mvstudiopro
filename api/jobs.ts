@@ -1108,6 +1108,27 @@ async function markCanvasIntentStage(input: {
   return true;
 }
 
+/**
+ * 裁决层在扣费前拒绝（409 / 503）时，试片 registry 的 submitting 预留必须释放：
+ * 零扣费、零建单，不该留一个两分钟后变 reconcile_manual 的孤儿预留。
+ * 202 / 既有任务不释放——那是同一次生成在别处推进。返回最终回复体。
+ */
+async function releasePilotOnIntentReject(
+  prepared: PreparedManhuaPilot,
+  userId: number,
+  reply: { status: number; body: Record<string, unknown> },
+): Promise<Record<string, unknown>> {
+  if (reply.body.ok === true) return reply.body;
+  const releaseError = await markPreparedManhuaPilotFailed(
+    prepared,
+    userId,
+    `扣费前裁决拒绝：${String(reply.body.error || "")}`,
+  );
+  return releaseError
+    ? { ...reply.body, error: `${String(reply.body.error || "")}；${releaseError}` }
+    : reply.body;
+}
+
 /** 被 fencing 出局时的回复：这次生成已由另一执行者持有，客户端按意图查询即可，不重复扣费 */
 function canvasIntentFencedReply(intentId: string): { status: number; body: Record<string, unknown> } {
   return {
@@ -1121,6 +1142,99 @@ function canvasIntentFencedReply(intentId: string): { status: number; body: Reco
       message: "同一次生成已由另一执行者接管，请稍候查询结果；本次未重复扣费",
     },
   };
+}
+
+/**
+ * Seedance 2.5 主链是**对象返回**、由 `canvas` / `seedance25` 两个 op 统一落 HTTP。
+ * 裁决层的 202「creating」与 fencing 202 必须以 `pending: true + intentId` 原样到达客户端
+ * （客户端 `resolvePendingCanvasIntentTaskId` 只认 HTTP 202 或 `pending === true`），
+ * 不能被压成 200 无 taskId。既有任务则按主链正常形态回（带 intentId）。
+ */
+type Seedance25PendingReply = {
+  ok: true;
+  async: true;
+  pending: true;
+  intentId: string;
+  status: "creating";
+  leaseExpiresAt?: string;
+  message?: string;
+};
+
+function seedance25ReplyFromIntentBody(
+  status: number,
+  body: Record<string, unknown>,
+  shape: { resolution: "480p" | "720p" | "1080p"; duration: number; workMode: string },
+):
+  | Seedance25PendingReply
+  | {
+      ok: true;
+      async: true;
+      taskId: string;
+      status: string;
+      credits: number;
+      resolution: "480p" | "720p" | "1080p";
+      duration: number;
+      workMode: string;
+      videoUrl?: string;
+      provider?: string;
+      intentId?: string;
+      pending?: false;
+    } {
+  if (status === 202 || body.pending === true) {
+    return {
+      ok: true,
+      async: true,
+      pending: true,
+      intentId: s(body.intentId || ""),
+      status: "creating",
+      ...(body.leaseExpiresAt ? { leaseExpiresAt: s(body.leaseExpiresAt) } : {}),
+      ...(body.message ? { message: s(body.message) } : {}),
+    };
+  }
+  return {
+    ok: true,
+    async: true,
+    taskId: s(body.taskId || ""),
+    status: s(body.status || ""),
+    credits: Number(body.creditsUsed) || 0,
+    resolution: shape.resolution,
+    duration: shape.duration,
+    workMode: shape.workMode,
+    ...(body.videoUrl ? { videoUrl: s(body.videoUrl) } : {}),
+    ...(body.provider ? { provider: s(body.provider) } : {}),
+    ...(body.intentId ? { intentId: s(body.intentId) } : {}),
+  };
+}
+
+/** 两个 op 共用：把 2.5 主链结果落成 HTTP（202 pending 原样透传） */
+function sendSeedance25Result(
+  res: VercelResponse,
+  result: Awaited<ReturnType<typeof runSeedance25EvolinkJob>>,
+) {
+  if (!result.ok) {
+    return res.status(result.status).json({
+      ok: false,
+      error: result.error,
+      version: "2.5",
+      ...(result.paidOnly ? { paidOnly: true } : {}),
+    });
+  }
+  if (result.pending === true) {
+    return res.status(202).json({ ...result, version: "2.5" });
+  }
+  return res.status(200).json({
+    ok: true,
+    async: true,
+    taskId: result.taskId,
+    status: result.status,
+    videoUrl: result.videoUrl || undefined,
+    version: "2.5",
+    workMode: result.workMode,
+    resolution: result.resolution,
+    duration: result.duration,
+    creditsUsed: result.credits,
+    ...(result.intentId ? { intentId: result.intentId } : {}),
+  });
 }
 
 function manhuaPilotTaskFields(prepared: PreparedManhuaPilot): Record<string, unknown> {
@@ -1653,7 +1767,11 @@ async function runSeedance25EvolinkJob(
       workMode: string;
       videoUrl?: string;
       provider?: string;
+      /** D（0915）：意图裁决命中既有任务时回带，客户端据此关联本地意图 */
+      intentId?: string;
+      pending?: false;
     }
+  | Seedance25PendingReply
 > {
   const access = await assertSeedance25PaidAccess(req);
   if (!access.ok) return { ...access, paidOnly: true };
@@ -1909,9 +2027,30 @@ async function runSeedance25EvolinkJob(
     });
     const intentReply = await canvasIntentStepReply(intentGate.step, access.userId);
     if (intentReply) {
-      return intentReply.body.ok === true
-        ? (intentReply.body as any)
-        : { ok: false, status: intentReply.status, error: String(intentReply.body.error || "") };
+      // 试片预留在扣费之前被裁决层挡回（409 冲突 / 503 读不出来）：**零扣费**，
+      // 必须释放 registry 里的 submitting 预留，否则两分钟后被 refreshUnderLock 判成
+      // reconcile_manual，一次数据库瞬断就把试片锁进人工核对（R1 审查 1464-06）。
+      if (intentReply.body.ok !== true) {
+        const releaseError = await markPreparedManhuaPilotFailed(
+          preparedPilot,
+          access.userId,
+          `扣费前裁决拒绝：${String(intentReply.body.error || "")}`,
+        );
+        return {
+          ok: false,
+          status: intentReply.status,
+          error: releaseError
+            ? `${String(intentReply.body.error || "")}；${releaseError}`
+            : String(intentReply.body.error || ""),
+        };
+      }
+      // 本函数是对象返回、由两个 op 统一落 HTTP：202 creating 与既有任务都要保住
+      // pending / intentId，否则调用方会把 creating 压成 200 无 taskId，客户端当失败（R1 1464-04）
+      return seedance25ReplyFromIntentBody(intentReply.status, intentReply.body, {
+        resolution,
+        duration: providerDuration,
+        workMode: mode,
+      });
     }
     const charged = await chargeCanvasVideoCredits(req, {
       durationSec: duration,
@@ -1938,7 +2077,11 @@ async function runSeedance25EvolinkJob(
     });
     if (!intentCharged) {
       const fenced = canvasIntentFencedReply(intentId);
-      return fenced.body as any;
+      return seedance25ReplyFromIntentBody(fenced.status, fenced.body, {
+        resolution,
+        duration: providerDuration,
+        workMode: mode,
+      });
     }
     const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
     try {
@@ -4483,7 +4626,12 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           taskInput,
         });
         const intentReply = await canvasIntentStepReply(intentGate.step, hailuoViewer.userId);
-        if (intentReply) return res.status(intentReply.status).json(intentReply.body);
+        if (intentReply) {
+          // 409/503 零扣费：释放试片 submitting 预留（R1 1464-06）；202/既有任务不释放
+          return res
+            .status(intentReply.status)
+            .json(await releasePilotOnIntentReject(preparedPilot, hailuoViewer.userId, intentReply));
+        }
         const charged = await chargeCanvasVideoCredits(req, {
           idempotencyKey: intentId,
           durationSec: duration,
@@ -4704,7 +4852,12 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           taskInput,
         });
         const intentReply = await canvasIntentStepReply(intentGate.step, wanViewer.userId);
-        if (intentReply) return res.status(intentReply.status).json(intentReply.body);
+        if (intentReply) {
+          // 409/503 零扣费：释放试片 submitting 预留（R1 1464-06）；202/既有任务不释放
+          return res
+            .status(intentReply.status)
+            .json(await releasePilotOnIntentReject(preparedPilot, wanViewer.userId, intentReply));
+        }
         const charged = await chargeCanvasVideoCredits(req, {
           idempotencyKey: intentId,
           durationSec: duration,
@@ -5335,26 +5488,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       /** Seedance 2.5 正式版：五种 EvoLink 路由，共用计费与异步任务主链。 */
       if (productVersion === "2.5") {
         const result = await runSeedance25EvolinkJob(req, b, q, "画布 Seedance 2.5");
-        if (!result.ok) {
-          return res.status(result.status).json({
-            ok: false,
-            error: result.error,
-            version: "2.5",
-            ...(result.paidOnly ? { paidOnly: true } : {}),
-          });
-        }
-        return res.status(200).json({
-          ok: true,
-          async: true,
-          taskId: result.taskId,
-          status: result.status,
-          videoUrl: result.videoUrl || undefined,
-          version: "2.5",
-          workMode: result.workMode,
-          resolution: result.resolution,
-          duration: result.duration,
-          creditsUsed: result.credits,
-        });
+        return sendSeedance25Result(res, result);
       }
       const aspectRatio = s(b.aspectRatio || q.aspectRatio || "16:9").trim() || "16:9";
       const generateAudio = !(
@@ -5570,7 +5704,12 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             taskInput,
           });
           const intentReply = await canvasIntentStepReply(intentGate.step, intentViewerId);
-          if (intentReply) return res.status(intentReply.status).json(intentReply.body);
+          if (intentReply) {
+            // 409/503 零扣费：释放试片 submitting 预留（R1 1464-06）；202/既有任务不释放
+            return res
+              .status(intentReply.status)
+              .json(await releasePilotOnIntentReject(preparedPilot, intentViewerId, intentReply));
+          }
           const charged = await chargeCanvasVideoCredits(req, {
             idempotencyKey: intentId,
             durationSec,
@@ -5790,7 +5929,12 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           taskInput,
         });
         const intentReply = await canvasIntentStepReply(intentGate.step, intentViewerId);
-        if (intentReply) return res.status(intentReply.status).json(intentReply.body);
+        if (intentReply) {
+          // 409/503 零扣费：释放试片 submitting 预留（R1 1464-06）；202/既有任务不释放
+          return res
+            .status(intentReply.status)
+            .json(await releasePilotOnIntentReject(preparedPilot, intentViewerId, intentReply));
+        }
         const chargedMini = await chargeCanvasVideoCredits(req, {
           idempotencyKey: intentId,
           durationSec,
@@ -5885,26 +6029,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         return res.status(405).json({ ok: false, error: "Method not allowed" });
       }
       const result = await runSeedance25EvolinkJob(req, b, q, "Seedance 2.5");
-      if (!result.ok) {
-        return res.status(result.status).json({
-          ok: false,
-          error: result.error,
-          version: "2.5",
-          ...(result.paidOnly ? { paidOnly: true } : {}),
-        });
-      }
-      return res.status(200).json({
-        ok: true,
-        async: true,
-        taskId: result.taskId,
-        status: result.status,
-        videoUrl: result.videoUrl || undefined,
-        version: "2.5",
-        workMode: result.workMode,
-        resolution: result.resolution,
-        duration: result.duration,
-        creditsUsed: result.credits,
-      });
+      return sendSeedance25Result(res, result);
     }
 
     if (op === "manhuaPilotStatus") {
