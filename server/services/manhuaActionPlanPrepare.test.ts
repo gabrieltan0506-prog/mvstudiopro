@@ -13,6 +13,7 @@ import {
   manhuaBindingRevision,
   prepareManhuaActionExecution,
 } from "./manhuaActionPlanPrepare";
+import { summarizeManhuaActionPlanReadiness } from "../../client/src/lib/manhuaActionPlanEditor";
 
 const world = (x: number, y: number, z: number) => ({ space: "world" as const, x, y, z, unit: "m" as const, axis: "z_up" as const });
 const landing = (landingId: string, actorId: string, x: number): ManhuaActionPlanBindingContext["landings"][number] => ({
@@ -98,6 +99,33 @@ describe("prepareManhuaActionExecution · 四人船战", () => {
     if (r2.ok) return;
     expect(r2.stage).toBe("plan");
     expect(r2.planIssues.map((i) => i.code)).toContain("shot_empty");
+  });
+
+  it("1466 R2：服务端 shot_not_confirmed / shot_empty 与时间轴 readiness 的 unconfirmedShotIds / emptyShotIds **完全同口径**（四种变体逐一对照）", () => {
+    const base = buildBoatFight({ withSourceBindings: true });
+    const exitedAll = base.actors.map((a) => ({ actorId: a.actorId, next: { presence: "exited" as const, whereaboutsZh: "退场" } }));
+    const last = base.shots[base.shots.length - 1]!;
+    const variants: Array<{ name: string; plan: ReturnType<typeof sealManhuaActionPlan> }> = [
+      // 无事件、但有人在场：两边都不算空镜
+      { name: "no_events_but_onstage", plan: sealManhuaActionPlan({ ...base, shots: base.shots.map((s, i) => (i === 0 ? { ...s, events: [] } : s)) }) },
+      // 有事件、但全员离场：两边都不算空镜（是否可执行由其它校验决定）
+      { name: "events_but_nobody_onstage", plan: sealManhuaActionPlan({ ...base, shots: [...base.shots, { ...structuredClone(last), shotId: "ap_shot_x", displayIndex: last.displayIndex + 1, actorChanges: exitedAll }] }) },
+      // 无事件且全员离场：两边都算空镜
+      { name: "empty", plan: sealManhuaActionPlan({ ...base, shots: [...base.shots, { ...structuredClone(last), shotId: "ap_shot_empty", displayIndex: last.displayIndex + 1, events: [], actorChanges: exitedAll }] }) },
+      // 未确认：两边都算
+      { name: "unconfirmed", plan: sealManhuaActionPlan({ ...base, shots: base.shots.map((s, i) => (i === 1 ? { ...s, confirm: "draft" as const } : s)) }) },
+    ];
+    for (const v of variants) {
+      const readiness = summarizeManhuaActionPlanReadiness(v.plan, goodContext());
+      const prepared = prepareManhuaActionExecution({ plan: v.plan, context: goodContext() });
+      const serverEmpty = prepared.ok ? [] : prepared.planIssues.filter((i) => i.code === "shot_empty").map((i) => i.shotId).sort();
+      const serverUnconfirmed = prepared.ok ? [] : prepared.planIssues.filter((i) => i.code === "shot_not_confirmed").map((i) => i.shotId).sort();
+      expect({ v: v.name, empty: [...readiness.emptyShotIds].sort() }).toEqual({ v: v.name, empty: serverEmpty });
+      expect({ v: v.name, unconfirmed: [...readiness.unconfirmedShotIds].sort() }).toEqual({ v: v.name, unconfirmed: serverUnconfirmed });
+    }
+    // 反例锚点：第一种变体确实两边都放行（空镜名单为空），第三种两边都拦
+    expect(summarizeManhuaActionPlanReadiness(variants[0]!.plan, goodContext()).emptyShotIds).toEqual([]);
+    expect(summarizeManhuaActionPlanReadiness(variants[2]!.plan, goodContext()).emptyShotIds).toEqual(["ap_shot_empty"]);
   });
 
   it("approval 不是总门禁：未审批的计划只要证据齐全仍可准备，approvalCurrent=false 如实带回", () => {
