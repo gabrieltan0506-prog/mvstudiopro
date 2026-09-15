@@ -27,6 +27,8 @@ vi.mock("../services/postProdMediaSource", () => ({
   resolvePostProdInputSources: (args: { input: unknown }) => resolvePostProdInputSources(args),
 }));
 
+const renderManhuaAutoRig = vi.fn(async (..._args:unknown[])=>({stage:"inspect",qualityAccepted:false}));
+vi.mock("../services/manhuaAutoRigRender",()=>({renderManhuaAutoRig:(...args:unknown[])=>renderManhuaAutoRig(...args)}));
 import { processPostProdJob, runWithTaskLimit } from "./postProdJob";
 
 describe("processPostProdJob 强 Schema 分派", () => {
@@ -188,4 +190,12 @@ describe("runWithTaskLimit", () => {
     const out = await runWithTaskLimit(5_000, async () => "done");
     expect(out).toBe("done");
   });
+});
+
+it("绑骨分派保留专用来源及同一终止信号，不调用媒体拼接",async()=>{
+ const params={stage:"inspect",requestId:"11111111-1111-4111-8111-111111111111",assetRef:"person",sourceJobId:"m3d_test_original",settings:{pose:"T",forwardAxis:"+X",targetHeight:1.7}};
+ const signal=new AbortController().signal;
+ const output=await processPostProdJob({action:"manhua_auto_rig",params},"7",{signal});
+ expect(renderManhuaAutoRig).toHaveBeenCalledWith(params,"7",{signal});
+ expect(output).toEqual({provider:"blender-auto-rig",output:{stage:"inspect",qualityAccepted:false}});
 });

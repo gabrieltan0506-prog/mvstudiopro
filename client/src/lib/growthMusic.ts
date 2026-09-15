@@ -1,3 +1,4 @@
+import { gcsTransferUrl, isGcsTransferUrl } from "./gcsTransfer";
 /**
  * Growth / MVAnalysis：AIM 音乐轮询与下载共用逻辑（避免 MVAnalysis vs GrowthCamp 分叉、减少 0 字节 MP3）
  */
@@ -108,9 +109,9 @@ export async function downloadGeneratedMusicToFile(
     if (!url) continue;
     tried.push(url);
     try {
-      const resp = await fetch(url, {
+      const resp = await fetch(gcsTransferUrl(url), {
         mode: "cors",
-        credentials: "omit",
+        credentials: isGcsTransferUrl(url) ? "include" : "omit",
         cache: "no-store",
         redirect: "follow",
       });

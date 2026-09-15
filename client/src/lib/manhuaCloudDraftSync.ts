@@ -1,3 +1,4 @@
+import { gcsTransferUrl, isGcsTransferUrl } from "@/lib/gcsTransfer";
 /**
  * 漫剧草稿双通路同步：本机 localStorage + 登录云端。
  * 任一侧失败都不放弃另一侧；恢复时用较新副本补写较弱一侧。
@@ -609,7 +610,8 @@ export async function uploadManhuaCloudDraftViaGcsDirect(opts: {
       "Content-Type": "application/json",
       ...(prepared.requiredHeaders || {}),
     };
-    const putRes = await fetch(uploadUrl, {
+    const putRes = await fetch(gcsTransferUrl(uploadUrl), {
+      credentials: isGcsTransferUrl(uploadUrl) ? "include" : "same-origin",
       method: "PUT",
       headers,
       body,

@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { gcsTransferUrl } from "@/lib/gcsTransfer";
 /**
  * Suno 音乐工作室
  *
@@ -20,7 +21,6 @@ import {
   Music, 
   ArrowLeft, 
   Pencil, 
-  Music2, 
   Music2, 
   Sparkles, 
   Wand2, 
@@ -633,7 +633,7 @@ export default function AudioLabPage() {
                     </button>
                   )}
                   {song.audioUrl && (
-                    <a href={song.audioUrl} download={`${song.title || "song"}.mp3`} className="p-2.5 bg-white/10 rounded-md hover:bg-white/20 transition-colors">
+                    <a href={gcsTransferUrl(song.audioUrl)} download={`${song.title || "song"}.mp3`} className="p-2.5 bg-white/10 rounded-md hover:bg-white/20 transition-colors">
                       <Download size={18} className="text-[#E8825E]" />
                     </a>
                   )}

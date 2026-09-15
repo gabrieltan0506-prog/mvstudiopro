@@ -9501,6 +9501,15 @@ export default function OmniCanvas() {
                   customAssetRefs={customAssetRefs}
                   onGenerateAsset3d={canUseManhua3d ? generateManhua3dAsset : undefined}
                   onImportAsset3d={canUseManhua3d ? importExistingManhua3dAsset : undefined}
+                  onApplyRiggedModel={canUseManhua3d ? (task, expectedTaskId) => {
+                    if (factoryBusy || asset3dBusyIds.includes(task.assetRef)) return false;
+                    const current = customAssetRefs.find(ref => ref.id === task.assetRef);
+                    if (!current || current.model3d?.taskId !== expectedTaskId) return false;
+                    const next = normalizeManhuaCustomAssetRefs(applyManhua3dBinding(customAssetRefs, task.assetRef, toManhuaAsset3dRef(task), expectedTaskId));
+                    if (next.find(ref => ref.id === task.assetRef)?.model3d?.taskId !== task.taskId) return false;
+                    setCustomAssetRefs(next);
+                    return true;
+                  } : undefined}
                   asset3dBusyIds={asset3dBusyIds}
                   characterLookSets={characterLookSets}
                   onCharacterLookSetsChange={setCharacterLookSets}

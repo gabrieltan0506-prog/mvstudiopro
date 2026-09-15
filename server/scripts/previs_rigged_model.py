@@ -147,7 +147,7 @@ def _image_dimensions(data, mime):
     raise ValueError("内嵌图片仅支持PNG/JPEG，压缩扩展格式关闭")
 
 
-def _validate_resources(doc, binary):
+def _validate_resources(doc, binary, *, unrigged=False):
     """所有元数据、解码规模和实际索引/蒙皮值须先通过，之后才允许调用Blender。"""
     arrays = {name: doc.get(name, []) for name in ("buffers", "bufferViews", "accessors", "nodes", "meshes", "skins", "images", "textures", "materials", "samplers", "scenes", "animations")}
     for name, rows in arrays.items():
@@ -264,16 +264,18 @@ def _validate_resources(doc, binary):
         base = values(dense, accessor["count"]) if dense else ((0,) * widths[accessor["type"]] for _ in range(accessor["count"]))
         return (sparse.get(i, value) for i, value in enumerate(base))
     skins, nodes, meshes = arrays["skins"], arrays["nodes"], arrays["meshes"]
-    if len(skins) != 1 or not skins[0].get("joints"):
+    if unrigged and skins:
+        raise ValueError("绑骨准备只接受无骨模型，请直接使用已有带骨模型")
+    if not unrigged and (len(skins) != 1 or not skins[0].get("joints")):
         raise ValueError("必须提供单套已蒙皮骨架；无骨模型不能直接重定向")
-    joints = skins[0]["joints"]
-    if not isinstance(joints, list) or not 1 <= len(joints) <= 256 or any(type(i) is not int or not 0 <= i < len(nodes) for i in joints) or len(set(joints)) != len(joints):
+    joints = [] if unrigged else skins[0]["joints"]
+    if not isinstance(joints, list) or not (0 if unrigged else 1) <= len(joints) <= 256 or any(type(i) is not int or not 0 <= i < len(nodes) for i in joints) or len(set(joints)) != len(joints):
         raise ValueError("角色关节索引无效")
-    if "inverseBindMatrices" in skins[0]:
+    if skins and "inverseBindMatrices" in skins[0]:
         for matrix in rows(skins[0]["inverseBindMatrices"], {"MAT4"}, {5126}, len(joints)):
             if any(abs(matrix[i]) > 1e-6 for i in (3, 7, 11)) or abs(matrix[15] - 1) > 1e-6:
                 raise ValueError("inverseBindMatrices必须为仿射矩阵")
-    if "skeleton" in skins[0]:
+    if skins and "skeleton" in skins[0]:
         _integer(skins[0]["skeleton"], 0, len(nodes) - 1, "骨架根节点")
     mesh_counts, mesh_components, mesh_indices, morph_names = [], [], [], []
     for mesh in meshes:
@@ -285,8 +287,11 @@ def _validate_resources(doc, binary):
             if not isinstance(primitive, dict) or primitive.get("mode", 4) != 4:
                 raise ValueError("仅支持三角形网格")
             attrs = primitive.get("attributes", {})
-            if not isinstance(attrs, dict) or not {"POSITION", "JOINTS_0", "WEIGHTS_0"}.issubset(attrs):
+            required = {"POSITION"} if unrigged else {"POSITION", "JOINTS_0", "WEIGHTS_0"}
+            if not isinstance(attrs, dict) or not required.issubset(attrs):
                 raise ValueError("每个角色网格必须包含真实顶点与蒙皮权重")
+            if unrigged and (set(attrs) & {"JOINTS_0", "WEIGHTS_0"} or primitive.get("targets")):
+                raise ValueError("绑骨准备不接受已有权重或形变")
             pi = _integer(attrs["POSITION"], 0, len(accessors) - 1, "POSITION accessor")
             count = accessors[pi]["count"]
             vertex_count += count
@@ -301,7 +306,7 @@ def _validate_resources(doc, binary):
                 normalized = accessors[index].get("normalized", False)
                 if name == "JOINTS_0" and normalized or name != "JOINTS_0" and accessors[index]["componentType"] != 5126 and not normalized:
                     raise ValueError("顶点属性归一化契约无效")
-            for joint_row, weight_row in zip(rows(attrs["JOINTS_0"]), rows(attrs["WEIGHTS_0"])):
+            for joint_row, weight_row in (zip(rows(attrs["JOINTS_0"]), rows(attrs["WEIGHTS_0"])) if not unrigged else ()):
                 divisor = {5121: 255, 5123: 65535, 5126: 1}[accessors[attrs["WEIGHTS_0"]]["componentType"]]
                 weights = [v / divisor for v in weight_row]
                 if any(not 0 <= j < len(joints) for j in joint_row):
@@ -369,7 +374,7 @@ def _validate_resources(doc, binary):
             parents[child] = index
         if "mesh" in node:
             mi = _integer(node["mesh"], 0, len(meshes) - 1, "mesh")
-            if type(node.get("skin")) is not int or node["skin"] != 0:
+            if (unrigged and "skin" in node) or (not unrigged and (type(node.get("skin")) is not int or node["skin"] != 0)):
                 raise ValueError("实例网格缺少真实skin")
             total += mesh_counts[mi]
             instance_components += mesh_components[mi]
@@ -394,12 +399,12 @@ def _validate_resources(doc, binary):
             index = parents[index]
             chain.append(index)
         return chain
-    common = set(ancestors(joints[0]))
+    common = set(ancestors(joints[0])) if joints else set()
     for joint in joints[1:]:
         common.intersection_update(ancestors(joint))
-    if not common:
+    if joints and not common:
         raise ValueError("skin所有joints必须有共同根节点")
-    if "skeleton" in skins[0] and skins[0]["skeleton"] not in common:
+    if skins and "skeleton" in skins[0] and skins[0]["skeleton"] not in common:
         raise ValueError("skin.skeleton必须是全部joints的共同祖先")
     # 不能只验局部TRS：合法的逐层scale也能在父链中相乘溢出。
     world_matrices = {}
@@ -485,7 +490,7 @@ def _validate_resources(doc, binary):
             "imagePixels": pixels, "morphNames": sorted(set(morph_names))}
 
 
-def inspect_glb(path, expected_sha256=None):
+def inspect_glb(path, expected_sha256=None, *, unrigged=False):
     """读取 GLB 元数据；在导入器触碰它前禁止外链和不受支持的压缩/脚本扩展。"""
     source = Path(path)
     size = source.stat().st_size
@@ -535,11 +540,11 @@ def inspect_glb(path, expected_sha256=None):
     if not isinstance(doc, dict) or not isinstance(doc.get("asset"), dict) or doc["asset"].get("version") != "2.0":
         raise ValueError("角色GLB元数据无效")
     try:
-        resources = _validate_resources(doc, binary)
+        resources = _validate_resources(doc, binary, unrigged=unrigged)
     except (TypeError, KeyError, AttributeError, OverflowError, RecursionError) as error:
         raise ValueError("GLB资源元数据结构无效") from error
     return {"sha256": digest, "bytes": size, **resources, "meshes": len(doc["meshes"]),
-            "jointNames": [doc["nodes"][i].get("name", "") for i in doc["skins"][0]["joints"]]}
+            "jointNames": [] if unrigged else [doc["nodes"][i].get("name", "") for i in doc["skins"][0]["joints"]]}
 
 
 def resolve_bone_map(names, explicit=None):

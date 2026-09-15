@@ -1,3 +1,4 @@
+import { ManhuaAssetImage } from "@/components/ManhuaAssetImage";
 /**
  * 段成片提示词的药丸视图：把 @角色2 这种裸标记渲染成带缩略图的内联药丸。
  *
@@ -70,7 +71,7 @@ export default function ManhuaPromptAssetChips({
             className={`mx-0.5 inline-flex max-w-[13rem] items-center gap-1 rounded-full border py-0 pl-0.5 pr-1.5 align-middle text-[10px] ${tone}`}
           >
             {thumb ? (
-              <img
+              <ManhuaAssetImage
                 src={thumb}
                 alt=""
                 loading="lazy"

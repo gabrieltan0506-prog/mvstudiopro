@@ -1,3 +1,4 @@
+import { gcsTransferUrl, isGcsTransferUrl } from "@/lib/gcsTransfer";
 /** Canvas 共用的 Google 文本、图像与素材 API 封装（文件名仅为历史兼容）。 */
 import { resolveGeminiScriptFallbackModel } from "@shared/geminiScriptFallback";
 import { withLongJobsFlyDirect } from "./longJobsFlyOrigin";
@@ -147,7 +148,8 @@ export async function uploadFileToSignedUrl(params: {
 }) {
   return new Promise<void>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("PUT", params.uploadUrl, true);
+    xhr.open("PUT", gcsTransferUrl(params.uploadUrl), true);
+    if (isGcsTransferUrl(params.uploadUrl)) xhr.withCredentials = true;
     if (params.onProgress) {
       xhr.upload.onprogress = (event) => {
         if (event.lengthComputable && event.total > 0) {

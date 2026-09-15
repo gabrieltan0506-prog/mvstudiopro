@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { gcsTransferUrl } from "@/lib/gcsTransfer";
 import React, { useState, useCallback, useRef } from "react";
 import { ExpiryWarningBanner, CreationHistoryPanel } from "@/components/CreationManager";
 import { useLocation, Link } from "wouter";
@@ -250,7 +251,7 @@ export default function ThreeDStudioPage() {
   // 下载模型
   const handleDownload = (url: string, format: string) => {
     const a = document.createElement("a");
-    a.href = url;
+    a.href = gcsTransferUrl(url);
     a.download = `manus-3d-studio-model.${format}`;
     a.target = "_blank";
     document.body.appendChild(a);

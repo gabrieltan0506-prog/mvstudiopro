@@ -1,0 +1,8 @@
+{
+  "sourceDirectory": "/Users/tangenjie/Documents/Codex/2026-08-29/downloads-2026aug25-2026aug28-md-json-html/work/previs-stages-0913/server/scripts",
+  "baseline": "405ac72570a1fc8bdc91d27b238a6e9c99db4077",
+  "untrackedPrototypeSha256": {
+    "previs_auto_rig.py": "b614737ca61ebf91633b9b210e59e78256682126df4c6ce14dd036ff7a1b8b32",
+    "test_previs_auto_rig.py": "24f4f82ab340dbc77a03fcdd81a0753110bedffc010fb24527b0f4dafe47b363"
+  }
+}

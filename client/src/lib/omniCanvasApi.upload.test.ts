@@ -65,3 +65,11 @@ describe("GCS 直传 MIME 与签名一致", () => {
     );
   });
 });
+
+it("GCS签名上传经Fly并携带登录态，保留签名MIME", async () => {
+  vi.stubGlobal("XMLHttpRequest", UploadRequest);
+  const source="https://storage.googleapis.com/test/model.glb?X-Goog-Signature=test";
+  await uploadFileToSignedUrl({file:new File(["model"],"model.glb"),uploadUrl:source,contentType:"model/gltf-binary"});
+  expect(UploadRequest.last.open).toHaveBeenCalledWith("PUT", `/api/gcs-transfer?url=${encodeURIComponent(source)}`, true);
+  expect((UploadRequest.last as any).withCredentials).toBe(true);
+});

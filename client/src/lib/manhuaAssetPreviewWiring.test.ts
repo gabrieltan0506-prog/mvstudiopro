@@ -107,3 +107,28 @@ describe("真实工作台放大与裁剪的资产身份", () => {
     }
   });
 });
+
+describe("提示词审阅与引用菜单复用同图恢复", () => {
+  for (const file of ["ManhuaPromptAssetChips", "ManhuaPromptMentionEditor"]) {
+    it(`${file} 把资产缩略图交给恢复组件且保留原始引用`, () => {
+      const input = ts.createSourceFile(file + ".tsx", readFileSync(
+        new URL(`../components/${file}.tsx`, import.meta.url), "utf8"
+      ), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+      const images: ts.JsxSelfClosingElement[] = [];
+      function visit(node: ts.Node) {
+        if (ts.isJsxSelfClosingElement(node) && node.attributes.properties.some(
+          attr => ts.isJsxAttribute(attr) && attr.name.getText(input) === "src" &&
+            attr.initializer?.getText(input) === "{thumb}"
+        )) images.push(node);
+        ts.forEachChild(node, visit);
+      }
+      visit(input);
+      expect(images).toHaveLength(1);
+      const thumb = "https://storage.googleapis.com/test-bucket/actor.png?expired=1";
+      const element = execute(images[0].getText(input), { ManhuaAssetImage, thumb });
+      expect(element.type).toBe(ManhuaAssetImage);
+      expect(element.props.src).toBe(thumb);
+      expect(renderToStaticMarkup(element)).toContain('src="' + thumb + '"');
+    });
+  }
+});
