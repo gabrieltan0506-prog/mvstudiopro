@@ -68,12 +68,23 @@ describe("manhuaCloudDraft · 稳定图链与任务字段往返", () => {
       videoTaskId: "cv_abc",
       videoTaskEngine: "wan-3.0",
       videoTaskStatus: "running",
+      // D（0915）：意图与提前进合同的三个身份也必须存活
+      videoIntentId: "gi_clip-e01-01_abcdef",
+      videoIntentStatus: "submitted",
+      videoTakeId: "take_01",
+      videoInputFingerprint: JSON.stringify({ prompt: "p" }),
+      manhuaActionPlanRevision: "rev_0001",
     });
     expect(out?.outputUrl).toBe(stableUrl);
     expect(out?.outputUrls).toContain(stableUrl);
     expect(out?.videoTaskId).toBe("cv_abc");
     expect(out?.videoTaskEngine).toBe("wan-3.0");
     expect(out?.videoTaskStatus).toBe("running");
+    expect(out?.videoIntentId).toBe("gi_clip-e01-01_abcdef");
+    expect(out?.videoIntentStatus).toBe("submitted");
+    expect(out?.videoTakeId).toBe("take_01");
+    expect(out?.videoInputFingerprint).toBe(JSON.stringify({ prompt: "p" }));
+    expect(out?.manhuaActionPlanRevision).toBe("rev_0001");
     // 三审 P1-1:遮罩与末帧续拍锚同样必须存活
     expect(out?.editMaskUrl).toBe(stableUrl);
     expect(out?.lastFrameUrl).toBe(stableUrl);

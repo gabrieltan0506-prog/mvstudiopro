@@ -924,6 +924,11 @@ export default function FreeformCanvas({
           videoTaskStatus: "running",
         });
       },
+      // D（0915）：意图状态随节点持久化，驱动六态芯片；刷新后由下方恢复 effect 按 intentId 查已提交任务
+      onCanvasIntentChanged: (blockId: string, intent: { intentId: string; status: CanvasBlock["videoIntentStatus"] }) => {
+        runDeps.onCanvasIntentChanged?.(blockId, intent as never);
+        patchOneRef.current?.(blockId, { videoIntentId: intent.intentId, videoIntentStatus: intent.status });
+      },
     }),
     [runDeps, userPlan, userRole],
   );
@@ -1587,6 +1592,61 @@ export default function FreeformCanvas({
       window.clearInterval(timer);
     };
   }, [activeVideoTaskKey, authUser?.id]);
+
+  /**
+   * D（0915）刷新恢复：有意图、没任务号的段（提交中 / 核实中），按 intentId 问服务端**已提交的任务**。
+   * - 服务端已建单 → 接上 taskId，交给上面的任务轮询；
+   * - 服务端说没有这次记录 → 意图作废（settled）；**不重发**——重发要用户重新确认后再点。
+   * - 读不出来（503）→ 保持核实中，下次挂载再问。
+   */
+  const pendingIntentKey = JSON.stringify(
+    blocks
+      .filter(
+        (b) =>
+          b.videoIntentId &&
+          !b.videoTaskId &&
+          (b.videoIntentStatus === "submitted" ||
+            b.videoIntentStatus === "unverified" ||
+            b.videoIntentStatus === "acknowledged"),
+      )
+      .map((b) => [b.id, b.videoIntentId]),
+  );
+  useEffect(() => {
+    const pairs = JSON.parse(pendingIntentKey) as Array<[string, string]>;
+    if (!pairs.length) return;
+    let cancelled = false;
+    for (const [blockId, intentId] of pairs) {
+      void (async () => {
+        try {
+          const res = await fetch(
+            withLongJobsFlyDirect(`/api/jobs?op=canvasIntentStatus&intentId=${encodeURIComponent(intentId)}`),
+            { credentials: "include", cache: "no-store" },
+          );
+          const j = (await res.json().catch(() => ({}))) as {
+            ok?: boolean; pending?: boolean; code?: string; taskId?: string; status?: string; engine?: string;
+          };
+          if (cancelled) return;
+          if (res.status === 404 && j.code === "intent_not_found") {
+            patchOneRef.current?.(blockId, { videoIntentStatus: "settled" });
+            return;
+          }
+          if (!res.ok || !j.ok || j.pending !== false || !j.taskId) return; // 仍在核实：不动
+          patchOneRef.current?.(blockId, {
+            videoTaskId: j.taskId,
+            videoTaskEngine: j.engine,
+            videoTaskStatus:
+              j.status === "succeeded" || j.status === "failed" || j.status === "queued" ? j.status : "running",
+            videoIntentStatus: "acknowledged",
+          });
+        } catch {
+          /* 瞬态：保持核实中 */
+        }
+      })();
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingIntentKey]);
 
   /**
    * 漫剧确认闸与准备入口用**每次渲染刷新的 ref** 读。
@@ -2850,6 +2910,27 @@ export default function FreeformCanvas({
                           {!canUsePaidVideo ? (
                             <div className="rounded-lg border border-dashed border-amber-400/30 bg-amber-500/5 px-2 py-1.5 text-[10px] leading-5 text-amber-100/85">
                               {PAID_VIDEO_MEMBER_ONLY_LABEL_ZH}
+                            </div>
+                          ) : null}
+                          {/* D（0915）六态里任务号还没到的三态：待提交 / 提交中 / 核实中——都不是失败，也不是新单入口 */}
+                          {!block.videoTaskId &&
+                          block.videoIntentStatus &&
+                          block.videoIntentStatus !== "settled" ? (
+                            <div
+                              className={`rounded-lg border px-2 py-1.5 text-[10px] ${
+                                block.videoIntentStatus === "unverified"
+                                  ? "border-sky-400/30 bg-sky-500/10 text-sky-100"
+                                  : "border-amber-400/30 bg-amber-500/10 text-amber-100"
+                              }`}
+                              data-manhua-intent-status={block.videoIntentStatus}
+                            >
+                              {block.videoIntentStatus === "pending_submit"
+                                ? "待提交"
+                                : block.videoIntentStatus === "submitted"
+                                  ? "提交中 · 尚未收到回执，勿重复点击"
+                                  : block.videoIntentStatus === "unverified"
+                                    ? "正在核实 · 上次提交结果未知，已停止自动重发"
+                                    : "已受理 · 等待任务号"}
                             </div>
                           ) : null}
                           {/* C8(UI 优化):长排队任务状态徽章+可复制单号——Wan 公测以小时计,只有转圈用户会以为死了 */}

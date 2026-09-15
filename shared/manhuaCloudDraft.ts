@@ -87,6 +87,12 @@ export type ManhuaCloudDraftCanvasBlock = {
   videoTaskId?: string;
   videoTaskEngine?: string;
   videoTaskStatus?: string;
+  /** D（0915）：生成意图与提前进合同的三个身份；只做往返，不赋语义 */
+  videoIntentId?: string;
+  videoIntentStatus?: string;
+  videoTakeId?: string;
+  videoInputFingerprint?: string;
+  manhuaActionPlanRevision?: string;
   /** 成片节点的真实裁切合同；视频字节不进草稿，但合成参数必须可恢复。 */
   manhuaEditTrim?: {
     /** 源视频真实总长；旧稿缺失时由客户端按已编译目标时长回退。 */
@@ -388,6 +394,15 @@ export function sanitizeManhuaCloudDraftBlock(
       b.videoTaskStatus != null
         ? String(b.videoTaskStatus).slice(0, 40)
         : undefined,
+    videoIntentId: b.videoIntentId != null ? String(b.videoIntentId).slice(0, 160) : undefined,
+    videoIntentStatus:
+      b.videoIntentStatus != null ? String(b.videoIntentStatus).slice(0, 24) : undefined,
+    videoTakeId: b.videoTakeId != null ? String(b.videoTakeId).slice(0, 160) : undefined,
+    // 指纹是 JSON 串，可能较长；截 4000 只为防爆，正常远小于此
+    videoInputFingerprint:
+      b.videoInputFingerprint != null ? String(b.videoInputFingerprint).slice(0, 4000) : undefined,
+    manhuaActionPlanRevision:
+      b.manhuaActionPlanRevision != null ? String(b.manhuaActionPlanRevision).slice(0, 80) : undefined,
     manhuaEditTrim: sanitizeManhuaEditTrim(b.manhuaEditTrim, b.manhuaAutoSegment),
     manhuaFinalPostProd: normalizeManhuaFinalPostProdBinding(
       b.manhuaFinalPostProd

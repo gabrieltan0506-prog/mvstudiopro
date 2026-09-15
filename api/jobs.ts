@@ -1084,19 +1084,43 @@ async function canvasIntentStepReply(
   };
 }
 
-/** 扣费后 / 建单后各记一次阶段，供崩溃恢复凭据；持有者不符会被拒（返回 null），不抛 */
+/**
+ * 扣费后 / 建单后各记一次阶段，供崩溃恢复凭据。
+ *
+ * **这是 fencing 点**：阶段推进是带 holderId 的条件 UPDATE。租约过期被别人接管后，
+ * 旧执行者迟到的推进影响 0 行 → 返回 false。调用方在 `charged` 这一步拿到 false
+ * **必须停下不建单**——扣费本身按 marker 幂等不会双扣，但若旧执行者继续建单/提交上游，
+ * 就成了两个执行者各自推进同一次生成。建单点由静态守门保证检查了返回值。
+ */
 async function markCanvasIntentStage(input: {
   userId: number;
   intentId: string;
   holderId: string;
   stage: "charged" | "task_created";
   chargeKey?: string;
-}): Promise<void> {
+}): Promise<boolean> {
   const m = await import("../server/services/canvasGenerationIntent.js");
   const out = await m.updateCanvasIntentStage(input).catch(() => null);
   if (!out) {
-    console.warn(`[canvasIntent] stage=${input.stage} 未写入（持有者不符或存储不可用） intent=${input.intentId}`);
+    console.warn(`[canvasIntent] stage=${input.stage} 未写入（已被接管或存储不可用） intent=${input.intentId}`);
+    return false;
   }
+  return true;
+}
+
+/** 被 fencing 出局时的回复：这次生成已由另一执行者持有，客户端按意图查询即可，不重复扣费 */
+function canvasIntentFencedReply(intentId: string): { status: number; body: Record<string, unknown> } {
+  return {
+    status: 202,
+    body: {
+      ok: true,
+      async: true,
+      pending: true,
+      intentId,
+      status: "creating",
+      message: "同一次生成已由另一执行者接管，请稍候查询结果；本次未重复扣费",
+    },
+  };
 }
 
 function manhuaPilotTaskFields(prepared: PreparedManhuaPilot): Record<string, unknown> {
@@ -1904,13 +1928,18 @@ async function runSeedance25EvolinkJob(
       return stateError ? { ...charged, status: 503, error: `${charged.error}；${stateError}` } : charged;
     }
 
-    await markCanvasIntentStage({
+    // fencing：被接管的旧执行者在这里出局，不得继续建单
+    const intentCharged = await markCanvasIntentStage({
       userId: access.userId,
       intentId,
       holderId: intentGate.holderId,
       stage: "charged",
       chargeKey: charged.chargeKey,
     });
+    if (!intentCharged) {
+      const fenced = canvasIntentFencedReply(intentId);
+      return fenced.body as any;
+    }
     const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
     try {
       const task = await createCanvasVideoTask({
@@ -4283,13 +4312,18 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           return res.status(503).json({ ok: false, error: "扣费服务暂不可用，本次未扣费，请稍后重试" });
         }
       }
-      await markCanvasIntentStage({
+      // fencing：被接管的旧执行者在这里出局，不得继续建单
+      const intentCharged = await markCanvasIntentStage({
         userId: viewer.userId,
         intentId,
         holderId: intentGate.holderId,
         stage: "charged",
         chargeKey: marker,
       });
+      if (!intentCharged) {
+        const fenced = canvasIntentFencedReply(intentId);
+        return res.status(fenced.status).json(fenced.body);
+      }
       try {
         const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
         const task = await createCanvasVideoTask({
@@ -4470,13 +4504,18 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           });
         }
         try {
-          await markCanvasIntentStage({
+          // fencing：被接管的旧执行者在这里出局，不得继续建单
+          const intentCharged = await markCanvasIntentStage({
             userId: hailuoViewer.userId,
             intentId,
             holderId: intentGate.holderId,
             stage: "charged",
             chargeKey: charged.chargeKey,
           });
+          if (!intentCharged) {
+            const fenced = canvasIntentFencedReply(intentId);
+            return res.status(fenced.status).json(fenced.body);
+          }
           const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
           const task = await createCanvasVideoTask({
             ...taskInput,
@@ -4685,13 +4724,18 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           });
         }
         try {
-          await markCanvasIntentStage({
+          // fencing：被接管的旧执行者在这里出局，不得继续建单
+          const intentCharged = await markCanvasIntentStage({
             userId: wanViewer.userId,
             intentId,
             holderId: intentGate.holderId,
             stage: "charged",
             chargeKey: charged.chargeKey,
           });
+          if (!intentCharged) {
+            const fenced = canvasIntentFencedReply(intentId);
+            return res.status(fenced.status).json(fenced.body);
+          }
           const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
           const task = await createCanvasVideoTask({
             ...taskInput,
@@ -4829,13 +4873,18 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           return res.status(charged.status).json({ ok: false, error: charged.error });
         }
         try {
-          await markCanvasIntentStage({
+          // fencing：被接管的旧执行者在这里出局，不得继续建单
+          const intentCharged = await markCanvasIntentStage({
             userId: hhViewer.userId,
             intentId,
             holderId: intentGate.holderId,
             stage: "charged",
             chargeKey: charged.chargeKey,
           });
+          if (!intentCharged) {
+            const fenced = canvasIntentFencedReply(intentId);
+            return res.status(fenced.status).json(fenced.body);
+          }
           const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
           const task = await createCanvasVideoTask({
             ...taskInput,
@@ -5543,13 +5592,18 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             });
           }
           try {
-            await markCanvasIntentStage({
+            // fencing：被接管的旧执行者在这里出局，不得继续建单
+            const intentCharged = await markCanvasIntentStage({
               userId: intentViewerId,
               intentId,
               holderId: intentGate.holderId,
               stage: "charged",
               chargeKey: charged.chargeKey,
             });
+            if (!intentCharged) {
+              const fenced = canvasIntentFencedReply(intentId);
+              return res.status(fenced.status).json(fenced.body);
+            }
             const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
             const task = await createCanvasVideoTask({
               ...taskInput,
@@ -5757,13 +5811,18 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           });
         }
         try {
-          await markCanvasIntentStage({
+          // fencing：被接管的旧执行者在这里出局，不得继续建单
+          const intentCharged = await markCanvasIntentStage({
             userId: intentViewerId,
             intentId,
             holderId: intentGate.holderId,
             stage: "charged",
             chargeKey: chargedMini.chargeKey,
           });
+          if (!intentCharged) {
+            const fenced = canvasIntentFencedReply(intentId);
+            return res.status(fenced.status).json(fenced.body);
+          }
           const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
           const task = await createCanvasVideoTask({
             ...taskInput,

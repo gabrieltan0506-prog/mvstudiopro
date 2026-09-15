@@ -44,13 +44,13 @@ function memoryStorage(opts?: { failSet?: boolean }): CanvasIntentStorageLike & 
   };
 }
 
-const SCOPE = {
+const SCOPE: { userId: string; workspaceId: string; projectVersion: string; blockId: string; epoch: number } = {
   userId: "7",
   workspaceId: "manhua-cloud-draft:7",
   projectVersion: "proj-a",
   blockId: "clip-e01-g01",
   epoch: 1,
-} as const;
+};
 
 function makeBlock(over: Record<string, unknown> = {}) {
   return {

@@ -82,6 +82,17 @@ describe("建单入口必须全部经过意图裁决", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("fencing：建单前必须检查 charged 阶段推进的返回值（被接管的旧执行者不得继续建单）", () => {
+    const offenders: number[] = [];
+    createSites().forEach((line) => {
+      const seg = LINES.slice(Math.max(0, line - 60), line).join("\n");
+      const marked = /const intentCharged = await markCanvasIntentStage\(/.test(seg);
+      const checked = /if \(!intentCharged\)/.test(seg);
+      if (!(marked && checked)) offenders.push(line);
+    });
+    expect(offenders).toEqual([]);
+  });
+
   it("建单必须复用裁决层预留的 taskId，不许现场新造", () => {
     const offenders: number[] = [];
     createSites().forEach((line) => {
