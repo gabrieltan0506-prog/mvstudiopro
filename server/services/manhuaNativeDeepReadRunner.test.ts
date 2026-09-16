@@ -3342,6 +3342,43 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       .toEqual(Array.from({ length: 13 }, (_, index) => index));
   });
 
+  it("整形缓存读取503也在同一批次边界补发三次，终态失败后不让另一条路领取新批次", async () => {
+    const segments = Array.from({ length: 13 }, (_, index) => ({
+      startSec: index * 60,
+      endSec: (index + 1) * 60,
+    }));
+    const base = makeGlmStructuringStub();
+    let firstBatchCacheReads = 0;
+    const readStructuredBatchCache = vi.fn(async (input: { segmentIndexes: readonly number[] }) => {
+      if (input.segmentIndexes[0] === 0) {
+        firstBatchCacheReads += 1;
+        throw new Error("gcs_stat_failed:503");
+      }
+      return null;
+    });
+    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      return base(prompt);
+    });
+    const deps = makeRunnerDeps({
+      postVertex: makeSuccessfulEpisodePostVertex(segments) as never,
+      readStructuredBatchCache: readStructuredBatchCache as never,
+      invokeGlmStructuring: invokeGlmStructuring as never,
+    });
+
+    await expect(runManhuaNativeDeepReadBatch({
+      episodes: [{ episodeIndex: 1, resolveNodes: async () => [], segments, sourceDurationSec: 780,
+        cacheSourceDigest: "8".repeat(64) }],
+      segmentCacheSeriesKey: "retry_cache_read_then_stop",
+    }, deps)).rejects.toThrow("gcs_stat_failed:503");
+
+    expect(firstBatchCacheReads).toBe(4);
+    expect(deps.waitForRetry).toHaveBeenCalledTimes(3);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    expect(readStructuredBatchCache.mock.calls.some(([input]) => input.segmentIndexes[0] === 10)).toBe(false);
+    expect(deps.writeSegmentCache).toHaveBeenCalledTimes(13);
+  });
+
   it("整形证据落盘失败不可当网络抖动补发，避免重复付费", async () => {
     const segments = Array.from({ length: 4 }, (_, index) => ({
       startSec: index * 60,

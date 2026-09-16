@@ -1387,10 +1387,9 @@ export function nativeDeepReadStructuringJsonSchema(): Record<string, unknown> {
 export const NATIVE_DEEP_READ_STRUCTURING_JSON_SCHEMA_NAME = "native_structuring_card";
 
 /**
- * 0905 用户拍板的整形分流链（按批次序号，0 起；单批＝第 1 批）：
- * Qwen 首发：第 1 批 北京 → EvoLink → OpenRouter；第 2 批 新加坡 → OpenRouter → EvoLink（两路都挂时 OpenRouter/EvoLink 各接一批真并发）。
- * GLM 首发：各批一律 OpenRouter → EvoLink → Qwen（第 1 批 北京→新加坡，第 2 批 新加坡→北京）；用户 0905「并行走 OpenRouter」。
- * 任一档 25 分钟（Qwen）/20 分钟（GLM）不回即切下一档，不做 20 秒重试轮。
+ * 当前整形分流链（按 worker 序号，0 起）：
+ * 普通 GLM 链由两名 worker 分别从 OpenRouter、EvoLink 首发，失败后互换路由；
+ * 哪一路先返回就继续领取下一批。Qwen-first 是保留的独立策略，不参与当前普通 GLM 链。
  */
 export function nativeDeepReadStructuringGatewayOrder(
   policy: "structuring_chain" | "structuring_chain_qwen_first",
@@ -1400,7 +1399,6 @@ export function nativeDeepReadStructuringGatewayOrder(
   if (policy === "structuring_chain_qwen_first") {
     return odd ? ["plan_sg_qwen", "openrouter", "evolink_glm"] : ["plan_bj_qwen", "evolink_glm", "openrouter"];
   }
-  // 0905 用户拍板「并行走 OpenRouter」：GLM 模式所有批次首发 OpenRouter（Z.AI 官方，并发稳），EvoLink 兜底，两档败切 Qwen
   // 0906 用户令「不走 Qwen」：GLM 链只剩 OpenRouter（钉 Z.AI）与 EvoLink 两档，不再切 Qwen；判坏重试仍按每档两次
   // 0907 用户令「一路走 OpenRouter 一路走 EvoLink」：并发批次分流首发，第 1 批 OpenRouter→EvoLink，第 2 批 EvoLink→OpenRouter
   return odd ? ["evolink_glm", "openrouter"] : ["openrouter", "evolink_glm"];
@@ -4040,9 +4038,7 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE = 0.8;
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT = MANHUA_NATIVE_GLM_REASONING_EFFORT;
 /** 四个 300 秒分片的真实组装曾在 12 分钟边界被本地中止；只放宽等待，不自动重提。 */
 // 0829 曾放宽到 6 小时（15 分钟硬顶曾在 900,005ms 掐断成 network_error）。
-// 0905 用户令：**每一档 30 分钟**，超时自动切下一档——
-// EvoLink GLM → OpenRouter GLM → Qwen 北京套餐 → Qwen 新加坡套餐 → OpenRouter Qwen；
-// 五档全失败才走本地确定性整形兜底，不重读片。
+// 普通 GLM 链单档 30 分钟；当前只在 OpenRouter 与 EvoLink 之间切换，不重读片。
 const GLM_STRUCTURING_TIMEOUT_MS = 30 * 60_000;
 const OPENROUTER_USD_TO_CNY_EQUIVALENT = 7.2;
 
@@ -4663,7 +4659,7 @@ export async function invokeNativeDeepReadGlmStructuring(
     onStreamProgress: context?.onStreamProgress,
     gatewayOrder: context?.gatewayOrder as GlmGatewayName[] | undefined,
   });
-  // 通道锁：只接受整形链五档（GLM 两档 + Qwen 三档）；判据复用 bailianChat 的单一真源。
+  // 通道锁只接受登记在 STRUCTURING_GATEWAYS 的整形通道；实际可用顺序由本次 gatewayOrder 决定。
   if (!STRUCTURING_GATEWAYS.has(response.gateway) || !raw) {
     throw new Error("结构化整形通道锁失效或未返回 JSON");
   }
@@ -6474,7 +6470,7 @@ async function executeNativeDeepReadBatch(
             || error.gatewayTrace.some((row) => row.outcome === "ok" || row.outcome === "evidence_persistence_failed")
           ) throw error;
           if (input.allowLocalFallback === false && isTransientStructuringDispatchError(error)) throw error;
-          const detailZh = `${input.labelZh}整形链五档均未交付可消费结果，已使用确定性本地整形fallback；未新增或改写证据`;
+          const detailZh = `${input.labelZh}整形链所有可用通道均未交付可消费结果，已使用确定性本地整形fallback；未新增或改写证据`;
           structuringFallbackAdvisories.push({
             code: "glm_structuring_local_fallback",
             detailZh,
@@ -6618,17 +6614,13 @@ async function executeNativeDeepReadBatch(
           return restoreNativeRequiredSummary(result.raw, input.rows);
         }
       };
-      const structureBatchWithDispatchRetry = async (
-        input: Parameters<typeof structureBatchWithLockRetry>[0],
+      const withStructuringDispatchRetry = async (
+        input: Pick<Parameters<typeof structureBatchWithLockRetry>[0], "segmentIndexes" | "videoCount" | "labelZh">,
+        operation: (dispatchRetry: number) => Promise<Record<string, unknown>>,
       ): Promise<Record<string, unknown>> => {
         for (let dispatchRetry = 0; ; dispatchRetry += 1) {
           try {
-            return await structureBatchWithLockRetry({
-              ...input,
-              dispatchRetry,
-              // 瞬时故障必须先完成三次批次级退避；全败后停止，不用本地拼接冒充模型整形成功。
-              allowLocalFallback: false,
-            });
+            return await operation(dispatchRetry);
           } catch (error) {
             params.abortSignal?.throwIfAborted();
             if (!isTransientStructuringDispatchError(error)
@@ -6760,9 +6752,7 @@ async function executeNativeDeepReadBatch(
         const allSegmentIndexes = episode.segments.map((_, index) => index);
         const groups = nativeDeepReadStructuringGroups(segmentCount);
         if (groups.length === 1) {
-          const cached = await readCachedStructuring(allSegmentIndexes, glmStructuringInputs, "最终整形");
-          if (cached) return unwrapNativeDeepReadStructuredAnswerEnvelope(cached);
-          return structureBatchWithDispatchRetry({
+          const batchInput: Parameters<typeof structureBatchWithLockRetry>[0] = {
             prompt: buildNativeDeepReadGlmStructuringPrompt({
               episodeIndex: episode.episodeIndex,
               durationSec: episode.sourceDurationSec,
@@ -6778,6 +6768,16 @@ async function executeNativeDeepReadBatch(
             rows: glmStructuringInputs,
             fallbackRows: annotateSegmentRows(),
             labelZh: `第${episode.episodeIndex}集整集整形（一次）`,
+          };
+          return withStructuringDispatchRetry(batchInput, async (dispatchRetry) => {
+            const cached = await readCachedStructuring(allSegmentIndexes, glmStructuringInputs, "最终整形");
+            if (cached) return unwrapNativeDeepReadStructuredAnswerEnvelope(cached);
+            return structureBatchWithLockRetry({
+              ...batchInput,
+              dispatchRetry,
+              // 瞬时故障必须先完成三次批次级退避；全败后停止，不用本地拼接冒充模型整形成功。
+              allowLocalFallback: false,
+            });
           });
         }
 
@@ -6794,36 +6794,40 @@ async function executeNativeDeepReadBatch(
             const groupInputs = segmentIndexes.map((index) => completeRawSegments[index]!);
             const annotatedRows = annotateSegmentRows();
             const groupCanonicalRows = segmentIndexes.map((index) => annotatedRows[index]!);
-            const cached = await readCachedStructuring(
-              segmentIndexes,
-              groupInputs,
-              `整形批次 ${segmentIndexes.join(",")} `,
-            );
-            if (cached) {
-              groupRows[groupIndex] = cached;
-              continue;
-            }
             const groupSegments = segmentIndexes.map((index) => episode.segments[index]!);
-            try {
-              groupRows[groupIndex] = await structureBatchWithDispatchRetry({
-                prompt: buildNativeDeepReadGlmStructuringPrompt({
-                  episodeIndex: episode.episodeIndex,
-                  durationSec: episode.sourceDurationSec,
-                  segments: groupSegments,
-                  segmentIndexes,
-                  hasAudio,
-                  rawSegments: groupInputs,
-                  coverageStartSec: groupSegments[0]!.startSec,
-                  coverageEndSec: groupSegments.at(-1)!.endSec,
-                  scopeZh: "批次",
-                }),
-                videoCount: segmentIndexes.length,
+            const batchInput: Parameters<typeof structureBatchWithLockRetry>[0] = {
+              prompt: buildNativeDeepReadGlmStructuringPrompt({
+                episodeIndex: episode.episodeIndex,
+                durationSec: episode.sourceDurationSec,
+                segments: groupSegments,
                 segmentIndexes,
-                rows: groupInputs,
-                fallbackRows: groupCanonicalRows,
-                labelZh: `第${episode.episodeIndex}集第${segmentIndexes[0]! + 1}—${segmentIndexes.at(-1)! + 1}片批次整形`,
-                // 路由归属跟 worker 固定，而非跟批次编号轮换：先返回的路继续领下一批。
-                batchOrdinal: laneOrdinal,
+                hasAudio,
+                rawSegments: groupInputs,
+                coverageStartSec: groupSegments[0]!.startSec,
+                coverageEndSec: groupSegments.at(-1)!.endSec,
+                scopeZh: "批次",
+              }),
+              videoCount: segmentIndexes.length,
+              segmentIndexes,
+              rows: groupInputs,
+              fallbackRows: groupCanonicalRows,
+              labelZh: `第${episode.episodeIndex}集第${segmentIndexes[0]! + 1}—${segmentIndexes.at(-1)! + 1}片批次整形`,
+              // 路由归属跟 worker 固定，而非跟批次编号轮换：先返回的路继续领下一批。
+              batchOrdinal: laneOrdinal,
+            };
+            try {
+              groupRows[groupIndex] = await withStructuringDispatchRetry(batchInput, async (dispatchRetry) => {
+                const cached = await readCachedStructuring(
+                  segmentIndexes,
+                  groupInputs,
+                  `整形批次 ${segmentIndexes.join(",")} `,
+                );
+                if (cached) return cached;
+                return structureBatchWithLockRetry({
+                  ...batchInput,
+                  dispatchRetry,
+                  allowLocalFallback: false,
+                });
               });
             } catch (error) {
               // 只有补发三次仍失败或遇到不可重试错误才停派；另一条已在途调用继续收口。
