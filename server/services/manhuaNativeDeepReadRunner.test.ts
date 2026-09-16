@@ -31,6 +31,8 @@ import {
   NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG,
   NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS,
   NATIVE_DEEP_READ_RESOURCE_RETRY_MAX,
+  NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_INTERVAL_MS,
+  NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_MAX,
   NATIVE_DEEP_READ_RETRY_INTERVAL_MS,
   NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY,
   NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO,
@@ -3269,6 +3271,110 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     ]);
   });
 
+  it("整形批次遇到503时每隔30秒补发三次，第四发成功后继续派发", async () => {
+    const segments = Array.from({ length: 4 }, (_, index) => ({
+      startSec: index * 60,
+      endSec: (index + 1) * 60,
+    }));
+    const base = makeGlmStructuringStub();
+    let firstBatchAttempts = 0;
+    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => {
+      const rows = readRawSegmentsFromGlmPrompt(prompt.user);
+      const firstStart = (rows[0]!.shots as Array<{ startSec: number }>)[0]!.startSec;
+      if (firstStart === 0 && firstBatchAttempts++ < 3) throw new Error("HTTP 503：服务器繁忙");
+      return base(prompt);
+    });
+    const deps = makeRunnerDeps({
+      postVertex: makeSuccessfulEpisodePostVertex(segments) as never,
+      invokeGlmStructuring: invokeGlmStructuring as never,
+    });
+
+    await runManhuaNativeDeepReadBatch({
+      episodes: [{ episodeIndex: 1, resolveNodes: async () => [], segments, sourceDurationSec: 240,
+        cacheSourceDigest: "5".repeat(64) }],
+      segmentCacheSeriesKey: "retry_three_then_succeed",
+    }, deps);
+
+    expect(firstBatchAttempts).toBe(4);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(5);
+    expect(deps.waitForRetry).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(deps.waitForRetry).mock.calls.map(([ms]) => ms)).toEqual([
+      NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_INTERVAL_MS,
+      NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_INTERVAL_MS,
+      NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_INTERVAL_MS,
+    ]);
+    expect(NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_MAX).toBe(3);
+  });
+
+  it("整形批次初发加三次补发仍为503才停派，并等待另一条已在途调用收口", async () => {
+    const segments = Array.from({ length: 13 }, (_, index) => ({
+      startSec: index * 60,
+      endSec: (index + 1) * 60,
+    }));
+    const base = makeGlmStructuringStub();
+    const started: number[] = [];
+    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => {
+      const rows = readRawSegmentsFromGlmPrompt(prompt.user);
+      const firstStart = (rows[0]!.shots as Array<{ startSec: number }>)[0]!.startSec;
+      started.push(firstStart);
+      if (firstStart === 0) throw new Error("HTTP 503：服务器繁忙");
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      return base(prompt);
+    });
+    const deps = makeRunnerDeps({
+      postVertex: makeSuccessfulEpisodePostVertex(segments) as never,
+      invokeGlmStructuring: invokeGlmStructuring as never,
+    });
+
+    await expect(runManhuaNativeDeepReadBatch({
+      episodes: [{ episodeIndex: 1, resolveNodes: async () => [], segments, sourceDurationSec: 780,
+        cacheSourceDigest: "6".repeat(64) }],
+      segmentCacheSeriesKey: "stop_after_three_dispatch_retries",
+    }, deps)).rejects.toThrow("HTTP 503");
+
+    expect(started.filter((start) => start === 0)).toHaveLength(4);
+    expect(started.filter((start) => start === 300)).toHaveLength(1);
+    expect(started).not.toContain(600);
+    expect(deps.waitForRetry).toHaveBeenCalledTimes(3);
+    // 整形失败只停后续整形派发；此前 Gemini 已通过的 13 片段缓存必须全部保留，供下次断点续学。
+    expect(deps.writeSegmentCache).toHaveBeenCalledTimes(13);
+    expect(vi.mocked(deps.writeSegmentCache).mock.calls.map(([entry]) => entry.segmentIndex))
+      .toEqual(Array.from({ length: 13 }, (_, index) => index));
+  });
+
+  it("整形证据落盘失败不可当网络抖动补发，避免重复付费", async () => {
+    const segments = Array.from({ length: 4 }, (_, index) => ({
+      startSec: index * 60,
+      endSec: (index + 1) * 60,
+    }));
+    const base = makeGlmStructuringStub();
+    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => {
+      const rows = readRawSegmentsFromGlmPrompt(prompt.user);
+      const firstStart = (rows[0]!.shots as Array<{ startSec: number }>)[0]!.startSec;
+      if (firstStart === 0) throw new GlmGatewayError("解析证据保存失败", [
+        { gateway: "openrouter", model: "z-ai/glm-5.3", outcome: "evidence_persistence_failed" },
+      ]);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return base(prompt);
+    });
+    const deps = makeRunnerDeps({
+      postVertex: makeSuccessfulEpisodePostVertex(segments) as never,
+      invokeGlmStructuring: invokeGlmStructuring as never,
+    });
+
+    await expect(runManhuaNativeDeepReadBatch({
+      episodes: [{ episodeIndex: 1, resolveNodes: async () => [], segments, sourceDurationSec: 240,
+        cacheSourceDigest: "7".repeat(64) }],
+      segmentCacheSeriesKey: "do_not_retry_evidence_persistence",
+    }, deps)).rejects.toThrow("解析证据保存失败");
+
+    expect(invokeGlmStructuring.mock.calls.filter(([prompt]) => {
+      const rows = readRawSegmentsFromGlmPrompt((prompt as { user: string }).user);
+      return (rows[0]!.shots as Array<{ startSec: number }>)[0]!.startSec === 0;
+    })).toHaveLength(1);
+    expect(deps.waitForRetry).not.toHaveBeenCalled();
+  });
+
   it("Vertex 主线全合规也走 GLM，输入含本集全部分段卡且一份不丢", async () => {
     const invokeGlmStructuring = makeGlmStructuringStub();
     const deps = makeRunnerDeps({
@@ -3697,7 +3803,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(result.episodes[0]!.result.glmEvidence?.callId).toBe(evidenceCallId);
   });
 
-  it("两条GLM供应商都失败时使用确定性本地整形并显式贴fallback标记", async () => {
+  it("两条GLM供应商因网络与HTTP故障全败时补发三次，仍失败则停止而不伪造本地整形", async () => {
     const invokeGlmStructuring = vi.fn(async () => {
       throw new GlmGatewayError("两档失败", [
         { gateway: "evolink_glm", model: "glm-5.3", outcome: "network_error" },
@@ -3708,12 +3814,11 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       postVertex: makeSuccessfulEpisodePostVertex(twoSegmentEpisode.segments) as never,
       invokeGlmStructuring: invokeGlmStructuring as never,
     });
-    const result = await runManhuaNativeDeepReadBatch({ episodes: [twoSegmentEpisode] }, deps);
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
-    expect(result.episodes[0]!.result.advisories).toEqual(expect.arrayContaining([
-      expect.objectContaining({ code: "glm_structuring_local_fallback" }),
-    ]));
-    expect(result.episodes[0]!.result.beatGrid.length).toBeGreaterThan(0);
+    await expect(runManhuaNativeDeepReadBatch({ episodes: [twoSegmentEpisode] }, deps))
+      .rejects.toThrow("两档失败");
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(4);
+    expect(deps.waitForRetry).toHaveBeenCalledTimes(3);
+    expect(deps.writeStructuredBatchCache).not.toHaveBeenCalled();
   });
 
   it("供应商已交卷后解析证据落盘失败时关闭式停止，不用本地fallback掩盖", async () => {
