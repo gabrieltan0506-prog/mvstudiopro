@@ -73,6 +73,7 @@ import {
   isNativeDeepReadKeyShot,
   nativeDeepReadKeyMomentSecs,
   repairNativeDeepReadStructuredKeyMoments,
+  repairNativeDeepReadStructuredAudioSummaries,
   runManhuaNativeDeepRead,
   runManhuaNativeDeepReadSelectedSegments,
   createNativeDeepReadRunnerDeps,
@@ -3610,7 +3611,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(result.episodes[0]!.result.segmentCount).toBe(9);
   });
 
-  it("0907 整形输出不符合集卡 schema（音轨分析总结省掉）→ 判坏走同档降温重试，第二发补齐即入库", async () => {
+  it("0916 GLM 漏掉音轨分析总结 → 按 chunkIndex 从分片原稿补回，一次整形即入库", async () => {
     const segments = Array.from({ length: 3 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
     const base = makeGlmStructuringStub();
     let calls = 0;
@@ -3631,8 +3632,8 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentCacheSeriesKey: "schema_retry",
       onModelReceipt: (receipt) => { receipts.push(receipt as unknown as Record<string, unknown>); },
     }, deps);
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
-    expect(receipts.some((row) => row.route === "structuring_retry_pending" && String(row.model).includes("不符合集卡 schema"))).toBe(true);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    expect(receipts.some((row) => row.route === "structuring_retry_pending")).toBe(false);
     expect(result.episodes[0]!.result.segmentCount).toBe(3);
   });
 
@@ -5336,6 +5337,34 @@ describe("0907 · 八坑补齐：费用闸 / 集级留存率不可达 / 三稿�
 });
 
 describe("0907 · 整形输出音轨块编号对不上段号", () => {
+  it("0916 GLM 漏掉或留空的音频总结按 chunkIndex 从分片原稿补回，不覆盖 GLM 有效内容", () => {
+    const rows = [0, 1].map((segmentIndex) => makeSegmentPayload({ segmentIndex, startSec: segmentIndex * 60, endSec: (segmentIndex + 1) * 60 }));
+    const raw = {
+      audioResolution: [
+        { chunkIndex: 1, analysis: { audioTrack: [{ fromSec: 0, toSec: 60 }], audioBeatStructureZh: "GLM 保留", mixNotesZh: "   ", reusableAudioZh: "GLM 复用", genAudioHintZh: "" } },
+        { chunkIndex: 0, analysis: { audioTrack: [{ fromSec: 0, toSec: 60 }], mixNotesZh: "GLM 混音" } },
+      ],
+    };
+    const fixed = repairNativeDeepReadStructuredAudioSummaries(raw, rows);
+    expect(fixed.restored).toBe(5);
+    expect(fixed.chunks).toBe(2);
+    const chunks = fixed.raw.audioResolution as Array<{ chunkIndex: number; analysis: Record<string, unknown> }>;
+    expect(chunks[0]!.analysis).toMatchObject({ audioBeatStructureZh: "GLM 保留", mixNotesZh: "对白前置", reusableAudioZh: "GLM 复用", genAudioHintZh: "弦乐渐强+环境声" });
+    expect(chunks[1]!.analysis).toMatchObject({ audioBeatStructureZh: "先抑后扬", mixNotesZh: "GLM 混音", reusableAudioZh: "低频铺垫承压", genAudioHintZh: "弦乐渐强+环境声" });
+    expect((raw.audioResolution[0]!.analysis as Record<string, unknown>).mixNotesZh).toBe("   ");
+  });
+
+  it("0916 原稿也缺字段时不编造，且输出齐全时保持对象身份", () => {
+    const missingSource = { audioResolution: [{ chunkIndex: 2, analysis: { audioTrack: [] } }] };
+    const missingOutput = { audioResolution: [{ chunkIndex: 2, analysis: { audioTrack: [] } }] };
+    const missing = repairNativeDeepReadStructuredAudioSummaries(missingOutput, [missingSource]);
+    expect(missing.restored).toBe(0);
+    expect(missing.raw).toBe(missingOutput);
+    const source = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    const intact = { audioResolution: source.audioResolution };
+    expect(repairNativeDeepReadStructuredAudioSummaries(intact, [source]).raw).toBe(intact);
+  });
+
   it("整体偏移（1 起）确定性映射回段号；多一块或对不上则判坏", async () => {
     const m = await import("./manhuaNativeDeepReadRunner");
     const mk = (idx: number[]) => ({ audioResolution: idx.map((chunkIndex) => ({ chunkIndex, analysis: {} })) });

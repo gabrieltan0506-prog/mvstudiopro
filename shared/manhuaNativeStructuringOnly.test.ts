@@ -2,14 +2,13 @@ import { describe, expect, it } from "vitest";
 import { parseNativeDeepReadJobConfirmation } from "./manhuaNativeDeepReadJob.js";
 import { assertNativeStructuringPreviousJob } from "./manhuaNativeStructuringOnly.js";
 const base = { url: "https://www.douyin.com/video/12345", batchSize: 1, nativeDeepReadConfirmed: true,
-  nativeMaxCalls: 200, nativePlanLimit: 1, nativeSegmentSeconds: 300, nativeVideoFps: 12, nativeStructuringModel: "qwen3.8-max" };
+  nativeMaxCalls: 200, nativePlanLimit: 1, nativeSegmentSeconds: 300, nativeVideoFps: 12, nativeStructuringModel: "glm-5.3" };
 const params = { ...base, nativeStructuringOnly: true, nativeStructuringEpisodeIndex: 3, nativeStructuringPreviousJobId: "old-job", nativeStructuringModel: "glm-5.3" };
 const previousJob = { userId: "7", status: "failed", input: { action: "manhua_template_learn", params: base }, output: { nativeModelReceipts: [{ episodeIndexes: [3] }] } };
 describe("仅重新整形确认", () => {
-  it("同源停止任务可双向换模型", () => {
+  it("同源停止任务可用 GLM 重新整形，Qwen 旧值明确拒绝", () => {
     expect(() => assertNativeStructuringPreviousJob({ confirmation: parseNativeDeepReadJobConfirmation(params), userId: "7", previousJob })).not.toThrow();
-    expect(() => assertNativeStructuringPreviousJob({ confirmation: parseNativeDeepReadJobConfirmation({ ...params, nativeStructuringModel: "qwen3.8-max" }), userId: "7",
-      previousJob: { ...previousJob, input: { ...previousJob.input, params: { ...base, nativeStructuringModel: "glm-5.3" } } } })).not.toThrow();
+    expect(() => parseNativeDeepReadJobConfirmation({ ...params, nativeStructuringModel: "qwen3.8-max" })).toThrow("只允许 GLM-5.3");
   });
   it.each(["queued", "running"])("旧任务%s不允许并发切换", status => {
     expect(() => assertNativeStructuringPreviousJob({ confirmation: parseNativeDeepReadJobConfirmation(params), userId: "7", previousJob: { ...previousJob, status } })).toThrow("等待");

@@ -2839,6 +2839,64 @@ export function repairNativeDeepReadStructuredAudioChunks(
   return normalizeNativeDeepReadStructuredAudioChunkIndexes(raw, segmentIndexes);
 }
 
+const NATIVE_DEEP_READ_AUDIO_SUMMARY_FIELDS = [
+  "audioBeatStructureZh",
+  "mixNotesZh",
+  "reusableAudioZh",
+  "genAudioHintZh",
+] as const;
+
+/**
+ * GLM 负责整集去重与结构整理；若它漏掉分片门禁已确认存在的音频总结字段，
+ * 按 chunkIndex 从对应 Gemini 分片原稿确定性补回。只补缺失/空白值，不覆盖 GLM 有效内容。
+ */
+export function repairNativeDeepReadStructuredAudioSummaries(
+  raw: Record<string, unknown>,
+  rows: ReadonlyArray<Record<string, unknown>>,
+): { raw: Record<string, unknown>; restored: number; chunks: number } {
+  const sourceByChunk = new Map<number, Record<string, unknown>>();
+  for (const row of rows) {
+    const chunks = Array.isArray(row.audioResolution) ? row.audioResolution : [];
+    for (const value of chunks) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const chunk = value as Record<string, unknown>;
+      const chunkIndex = Number(chunk.chunkIndex);
+      const analysis = chunk.analysis;
+      if (!Number.isInteger(chunkIndex) || !analysis || typeof analysis !== "object" || Array.isArray(analysis)) continue;
+      sourceByChunk.set(chunkIndex, analysis as Record<string, unknown>);
+    }
+  }
+  const chunks = Array.isArray(raw.audioResolution) ? raw.audioResolution : [];
+  let restored = 0;
+  let restoredChunks = 0;
+  let changed = false;
+  const audioResolution = chunks.map((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+    const chunk = value as Record<string, unknown>;
+    const chunkIndex = Number(chunk.chunkIndex);
+    const source = sourceByChunk.get(chunkIndex);
+    if (!source) return value;
+    const current = chunk.analysis && typeof chunk.analysis === "object" && !Array.isArray(chunk.analysis)
+      ? chunk.analysis as Record<string, unknown>
+      : {};
+    let next: Record<string, unknown> | null = null;
+    for (const field of NATIVE_DEEP_READ_AUDIO_SUMMARY_FIELDS) {
+      const existing = current[field];
+      if (typeof existing === "string" && existing.trim()) continue;
+      const fallback = source[field];
+      if (typeof fallback !== "string" || !fallback.trim()) continue;
+      next ??= { ...current };
+      next[field] = fallback;
+      restored += 1;
+    }
+    if (!next) return value;
+    changed = true;
+    restoredChunks += 1;
+    return { ...chunk, analysis: next };
+  });
+  return { raw: changed ? { ...raw, audioResolution } : raw, restored, chunks: restoredChunks };
+}
+
 /**
  * 0907 实弹（b28ec016fa44 第 1 集）：GLM 不带严格 schema 后整份回复把 keyMoments 键漏掉，
  * 四段读片稿共 30 条重点时刻入库变 0 条、抽帧 0 张、报告没有画面，而入库门禁一路放行。
@@ -6530,14 +6588,6 @@ async function executeNativeDeepReadBatch(
           try {
             assertNativeDeepReadShotObservationsPreserved(input.rows, result.raw);
             assertNativeStructuringAnalysis(result.raw, { requireGeneratedAnalysis: true });
-            // 0907 实弹：第三发过了锁却在入库前被集卡 schema 拒（音轨分析三段总结整段省掉）→ 也算坏输出，走同一套重试
-            const schemaCheck = nativeDeepReadSegmentSchema.safeParse(result.raw);
-            if (!schemaCheck.success) {
-              const issues = schemaCheck.error.issues.slice(0, 3).map((i) => `${i.path.join(".")}：${i.message}`).join("；");
-              const error = new Error(`整形输出不符合集卡 schema（${issues}）`);
-              error.name = NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME;
-              throw error;
-            }
             // 0907：音轨块编号对不上批次段号 → 能确定性映射就映射，不能就判坏重试（拼接后才抛会整集死）
             const chunkFix = repairNativeDeepReadStructuredAudioChunks(result.raw, input.segmentIndexes, hasAudio);
             if (!chunkFix) {
@@ -6548,6 +6598,20 @@ async function executeNativeDeepReadBatch(
             if (chunkFix.remapped) {
               console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集${input.labelZh}：audioResolution.chunkIndex 整体偏移，已确定性映射回段号 ${input.segmentIndexes.join(",")}`);
               result.raw = chunkFix.raw;
+            }
+            // 0916 实弹：GLM 偶发漏掉音频总结字段，但对应 Gemini 分片原稿已过门禁且字段齐全。
+            // 在 schema 校验前按 chunkIndex 只补缺失/空白值，保留 GLM 已生成内容，避免为确定性缺字段重复付费整形。
+            const audioSummaryFix = repairNativeDeepReadStructuredAudioSummaries(result.raw, input.rows);
+            if (audioSummaryFix.raw !== result.raw) {
+              console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集${input.labelZh}：从分片原稿补回 ${audioSummaryFix.restored} 个音频总结字段（${audioSummaryFix.chunks} 片）`);
+              result.raw = audioSummaryFix.raw;
+            }
+            const schemaCheck = nativeDeepReadSegmentSchema.safeParse(result.raw);
+            if (!schemaCheck.success) {
+              const issues = schemaCheck.error.issues.slice(0, 3).map((i) => `${i.path.join(".")}：${i.message}`).join("；");
+              const error = new Error(`整形输出不符合集卡 schema（${issues}）`);
+              error.name = NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME;
+              throw error;
             }
             // 0907 实弹：GLM 整份漏掉 keyMoments → 入库 0 条、抽帧 0 张。提示词要求原样保留，缺的从读片稿确定性补回，不花钱重整形
             const keyFix = repairNativeDeepReadStructuredKeyMoments(result.raw, input.rows);
@@ -6663,12 +6727,6 @@ async function executeNativeDeepReadBatch(
           try {
             assertNativeDeepReadShotObservationsPreserved(rows, cached.raw);
             assertNativeStructuringAnalysis(unwrapNativeDeepReadStructuredAnswerEnvelope(cached.raw), { requireGeneratedAnalysis: true });
-            const cachedSchema = nativeDeepReadSegmentSchema.safeParse(unwrapNativeDeepReadStructuredAnswerEnvelope(cached.raw));
-            if (!cachedSchema.success) {
-              const error = new Error(`缓存整形输出不符合集卡 schema（${cachedSchema.error.issues.slice(0, 3).map((i) => `${i.path.join(".")}：${i.message}`).join("；")}）`);
-              error.name = NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME;
-              throw error;
-            }
             // 0907 审查①：第 9 集那批 chunkIndex=4 的坏输出已在缓存里，缓存路径同样查音轨块；修不了当坏缓存删掉重整形
             const cachedChunkFix = repairNativeDeepReadStructuredAudioChunks(unwrapNativeDeepReadStructuredAnswerEnvelope(cached.raw), segmentIndexes, hasAudio);
             if (!cachedChunkFix) {
@@ -6677,6 +6735,19 @@ async function executeNativeDeepReadBatch(
               throw error;
             }
             if (cachedChunkFix.remapped) cached = { ...cached, raw: cachedChunkFix.raw };
+            const cachedAudioSummaryFix = repairNativeDeepReadStructuredAudioSummaries(
+              unwrapNativeDeepReadStructuredAnswerEnvelope(cached.raw), rows,
+            );
+            if (cachedAudioSummaryFix.restored > 0) {
+              console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集${labelZh}缓存整形输出：从分片原稿补回 ${cachedAudioSummaryFix.restored} 个音频总结字段（${cachedAudioSummaryFix.chunks} 片）`);
+              cached = { ...cached, raw: cachedAudioSummaryFix.raw };
+            }
+            const cachedSchema = nativeDeepReadSegmentSchema.safeParse(unwrapNativeDeepReadStructuredAnswerEnvelope(cached.raw));
+            if (!cachedSchema.success) {
+              const error = new Error(`缓存整形输出不符合集卡 schema（${cachedSchema.error.issues.slice(0, 3).map((i) => `${i.path.join(".")}：${i.message}`).join("；")}）`);
+              error.name = NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME;
+              throw error;
+            }
             // 0907：缓存里的整形输出同样可能漏 keyMoments，读缓存时一样从读片稿补回
             const cachedUnwrapped = unwrapNativeDeepReadStructuredAnswerEnvelope(cached.raw);
             const cachedKeyFix = repairNativeDeepReadStructuredKeyMoments(cachedUnwrapped, rows);

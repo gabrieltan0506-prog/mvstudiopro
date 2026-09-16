@@ -6,8 +6,8 @@ export function buildManhuaRestructureParams(job: ManhuaLearnServerJob, episodeI
   const original = job.input?.params;
   if (!original || original.nativeDeepReadConfirmed !== true || !original.url) throw new Error("原任务缺少原生学习参数，无法只重新整形");
   if (!Number.isInteger(episodeIndex) || episodeIndex < 1 || episodeIndex > 999) throw new Error("请输入有效集号");
-  if (model !== "glm-5.3" && model !== "qwen3.8-max") throw new Error("整形模型无效");
-  if (parseNativeStructuringModel(original.nativeStructuringModel) === model) throw new Error("请选择另一种整形模型");
+  if (model !== "glm-5.3") throw new Error("整形模型只允许 GLM-5.3");
+  parseNativeStructuringModel(original.nativeStructuringModel);
   const params = { ...original, nativeStructuringOnly: true, nativeStructuringEpisodeIndex: episodeIndex,
     nativeStructuringPreviousJobId: job.jobId, nativeStructuringModel: model,
     nativePlanLimit: 1, batchSize: 1, refreshPreviewFrames: false, retrySkippedEpisodes: false };
