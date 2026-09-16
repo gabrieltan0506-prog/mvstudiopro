@@ -102,4 +102,17 @@ describe("双引擎重铺", () => {
     const tight = packManhuaSegmentRefsForEngine(refs, { image: 2, video: 1, audio: 0 });
     expect(tight.kept.map((r) => r.id)).toEqual(["face1", "face2", "pv"]);
   });
+
+  it("写回 markdown：没有片尾钩子时止于下一个 ## 二级标题，不吞后面的章节；奇数段并段给出落单提示", () => {
+    const body = `## 第1集\n\n${uniquePlanMarkdown()}\n\n## 备注\n- 保留我`;
+    const r = relayoutManhuaSegmentPlanForEngine(plan6, { fromDurationSec: 15, toDurationSec: 30 });
+    const out = replaceManhuaEpisodeSegmentPlanInMarkdown(body, r.plan);
+    expect(out).toContain("## 备注\n- 保留我");
+    expect(out).toContain("### 四段可拍表（Seedance 2.5）");
+    expect(parseManhuaEpisodeSegmentPlanFromMarkdown(out).segments.length).toBe(3);
+    const odd = { ...plan6, segments: plan6.segments.slice(0, 5), segmentCount: 5 };
+    const ro = relayoutManhuaSegmentPlanForEngine(odd, { fromDurationSec: 15, toDurationSec: 30 });
+    expect(ro.plan.segments.length).toBe(3);
+    expect(ro.notesZh.join("")).toContain("落单");
+  });
 });

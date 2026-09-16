@@ -537,9 +537,10 @@ export function selectManhuaCharacterPrimaryRef(
         claimedAnchorIds,
         claimSource: "manual" as const,
         primarySelectionScopes,
+        // 目标图：同人物同职责只保留一种状态（常态或某一状态），否则下拉框读到的是先前那条绑定
         primaryBindings:
           ref.id === refId
-            ? [...primaryBindings, { anchorId, duty: input.duty, ...(stateId ? { stateId } : {}) }]
+            ? [...primaryBindings.filter((b) => !(b.anchorId === anchorId && b.duty === input.duty)), { anchorId, duty: input.duty, ...(stateId ? { stateId } : {}) }]
             : primaryBindings,
       };
     }),
@@ -592,6 +593,11 @@ export function consumableManhuaCustomAssetRefs(
       .map((anchorId) => `${anchorId}:${ref.refDuty}`)
       .filter((key) => explicitSelectionKeys.has(key));
     if (!controlledKeys.length) return true;
+    // 0916 状态变体：显式绑到某状态（肩伤/虚弱…）的图与常态图并存进生成，不被常态当前图挤掉
+    const boundToState = (ref.primaryBindings || []).some(
+      (b) => b.stateId && b.duty === ref.refDuty && (ref.claimedAnchorIds || []).includes(b.anchorId),
+    );
+    if (boundToState) return true;
     return controlledKeys.some(
       (key) => primaryByKey.has(key) && primaryByKey.get(key) === ref.id,
     );

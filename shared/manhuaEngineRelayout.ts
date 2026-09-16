@@ -48,6 +48,7 @@ function mergePairs(plan: ManhuaEpisodeSegmentPlan, toSec: number): ManhuaEpisod
     const a = src[i]!;
     const b = src[i + 1];
     if (!b) {
+      // 段数为奇数：最后一段落单，原样放进 30s 槽（内容只有 15s 的量，导入前请补戏或并入上一段）
       out.push({ ...a, index: out.length + 1 });
       continue;
     }
@@ -104,6 +105,7 @@ export function relayoutManhuaSegmentPlanForEngine(
   if (to > from) {
     next = mergePairs(plan, to);
     notesZh.push(`${plan.segments.length} 段×${from}s → ${next.segments.length} 段×${to}s：相邻两段并一段，对白原样接续`);
+    if (plan.segments.length % 2 === 1) notesZh.push(`段数为奇数：最后一段落单，内容只有 ${from}s 的量，导入前请补戏或手动并入上一段`);
   } else {
     next = splitHalves(plan, to);
     notesZh.push(`${plan.segments.length} 段×${from}s → ${next.segments.length} 段×${to}s：每段对白对半拆、表演/运镜按「；」对半拆`);
@@ -147,7 +149,8 @@ export function replaceManhuaEpisodeSegmentPlanInMarkdown(body: string, plan: Ma
   if (!m || m.index == null) return `${src.trimEnd()}\n\n${md}\n`;
   const start = m.index + (m[0].startsWith("\n") ? 1 : 0);
   const rest = src.slice(start);
-  const endRe = /\n#{2,3}\s*片尾钩子/;
+  // 与解析器段块的收尾一致：片尾钩子 / 任意 ## 二级标题（含「## 第N集」）都算可拍表结束，不能把后面的章节一起吞掉
+  const endRe = /\n#{2,3}\s*片尾钩子|\n##\s[^#]/;
   const e = rest.match(endRe);
   const end = e && e.index != null ? start + e.index : src.length;
   return `${src.slice(0, start)}${md}\n${src.slice(end)}`;

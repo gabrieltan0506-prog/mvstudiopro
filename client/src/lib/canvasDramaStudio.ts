@@ -3406,9 +3406,9 @@ function withManhuaShotStateNote(shot: ManhuaWorkbenchShot, shots: readonly Manh
   const plan = opts?.segmentPlan;
   const anchors = opts?.assetCanon?.characters || [];
   if (!plan?.segments.length || !anchors.length || !shots.length) return shot;
-  const per = Math.max(1, Math.ceil(shots.length / plan.segments.length));
+  // 镜按位置等比落段（静帧数不整除段数时也不会把尾段全部漏掉；整除时与「每段 per 镜」完全一致）
   const pos = Math.max(0, shots.findIndex((s) => s.index === shot.index));
-  const seg = [...plan.segments].sort((a, b) => a.index - b.index)[Math.min(plan.segments.length - 1, Math.floor(pos / per))];
+  const seg = [...plan.segments].sort((a, b) => a.index - b.index)[Math.min(plan.segments.length - 1, Math.floor((pos * plan.segments.length) / shots.length))];
   const stateNoteZh = seg ? formatManhuaCastStateNoteZh(seg.castZh, anchors) : "";
   return stateNoteZh ? { ...shot, stateNoteZh } : shot;
 }
