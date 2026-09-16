@@ -9,6 +9,14 @@
  */
 import { useMemo, useState } from "react";
 import type { ManhuaAsset3dEligibility } from "@shared/manhuaAsset3d";
+import {
+  MANHUA_MULTIVIEW_VIEWS,
+  MANHUA_MULTIVIEW_VIEW_LABEL_ZH,
+  evaluateManhuaMultiviewReadiness,
+  orderManhuaMultiviewViews,
+  type ManhuaMultiviewDraft,
+  type ManhuaMultiviewView,
+} from "@shared/manhuaMultiview";
 
 export type Manhua3dModelStudioCharacter = {
   id: string;
@@ -27,6 +35,12 @@ type Props = {
   onRig?: (id: string) => void;
   /** 有绑骨成品（白模可直接用）的角色 id */
   riggedIds?: readonly string[];
+  /** 0916 多视角：每人的四视角草稿（按 ref.id） */
+  multiviewDrafts?: Record<string, ManhuaMultiviewDraft | undefined>;
+  /** 出四视角图（缺哪几张出哪几张；不传 views = 全部四张）；付费出图，确认在回调里做 */
+  onGenerateMultiview?: (id: string, views?: ManhuaMultiviewView[]) => void | Promise<void>;
+  /** 用四视角草稿提交 Tripo multiview-to-3d */
+  onSubmitMultiview?: (id: string) => void | Promise<void>;
 };
 
 type Stage = "blocked" | "none" | "building" | "review" | "failed" | "ready" | "rigged";
@@ -107,8 +121,10 @@ const STAGE_CLASS: Record<Stage, string> = {
 };
 
 export function Manhua3dModelStudio(props: Props) {
-  const { characters, busyIds, disabled, onGenerate, onImport, onPreview, onRig } = props;
+  const { characters, busyIds, disabled, onGenerate, onImport, onPreview, onRig, onGenerateMultiview, onSubmitMultiview } = props;
   const riggedIds = props.riggedIds ?? [];
+  const multiviewDrafts = props.multiviewDrafts ?? {};
+  const [multiviewOpenId, setMultiviewOpenId] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [confirmBatch, setConfirmBatch] = useState(false);
   const [batchBusy, setBatchBusy] = useState(false);
@@ -202,7 +218,31 @@ export function Manhua3dModelStudio(props: Props) {
                     {stage === "rigged" ? "重新绑骨" : "绑骨"}
                   </button>
                 ) : null}
+                {c.eligibility.eligible && onGenerateMultiview && onSubmitMultiview ? (
+                  <button
+                    type="button"
+                    className={btn}
+                    disabled={disabled}
+                    data-manhua-action="toggle-multiview"
+                    title="用定妆图改出前/左/后/右四张白底视角图，过目后再提交 Tripo 多视角建模；比单图更保侧面与背面细节"
+                    onClick={() => setMultiviewOpenId((prev) => (prev === c.id ? null : c.id))}
+                  >
+                    {multiviewOpenId === c.id ? "收起四视角" : multiviewDrafts[c.id] ? "查看四视角" : "四视角建模"}
+                  </button>
+                ) : null}
               </span>
+              {multiviewOpenId === c.id && onGenerateMultiview && onSubmitMultiview ? (
+                <ManhuaMultiviewPanel
+                  labelZh={c.labelZh}
+                  draft={multiviewDrafts[c.id]}
+                  sourceVersion={c.eligibility.sourceVersion}
+                  busy={busy}
+                  disabled={Boolean(disabled)}
+                  canSubmit={canBuild}
+                  onGenerate={(views) => void onGenerateMultiview(c.id, views)}
+                  onSubmit={() => void onSubmitMultiview(c.id)}
+                />
+              ) : null}
             </li>
           );
         })}
@@ -231,5 +271,77 @@ export function Manhua3dModelStudio(props: Props) {
         </div>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * 四视角面板（PR-7）：出图 → 逐张过目/重出 → 提交多视角建模。
+ * 付费动作只发回调；确认与扣费提示由页面统一做，这里不弹 confirm。
+ */
+export function ManhuaMultiviewPanel(props: {
+  labelZh: string;
+  draft?: ManhuaMultiviewDraft;
+  sourceVersion: string;
+  busy: boolean;
+  disabled: boolean;
+  /** 当前人物能否提交建模（未建模/失败才可） */
+  canSubmit: boolean;
+  onGenerate: (views?: ManhuaMultiviewView[]) => void;
+  onSubmit: () => void;
+}) {
+  const { labelZh, draft, sourceVersion, busy, disabled, canSubmit, onGenerate, onSubmit } = props;
+  const readiness = evaluateManhuaMultiviewReadiness(draft, sourceVersion);
+  const stale = Boolean(draft && draft.sourceVersion !== sourceVersion);
+  const views = draft && !stale ? orderManhuaMultiviewViews(draft.views) : [];
+  const byView = new Map(views.map((v) => [v.view, v] as const));
+  const missing = MANHUA_MULTIVIEW_VIEWS.filter((v) => !byView.has(v));
+  return (
+    <div className="mt-1 w-full rounded border border-cyan-300/20 bg-black/30 p-2" data-manhua-multiview-panel>
+      <div className="mb-1 flex flex-wrap items-center gap-2 text-[11px]">
+        <span className="text-cyan-100">{labelZh} · 四视角</span>
+        <span className="text-white/50">顺序固定 正面/左侧/背面/右侧；正面必有，至少 2 张即可提交</span>
+        {stale ? <span className="text-amber-100">定妆图已换，旧视角图不能用，请重出</span> : null}
+      </div>
+      <div className="grid grid-cols-4 gap-1">
+        {MANHUA_MULTIVIEW_VIEWS.map((view) => {
+          const hit = byView.get(view);
+          return (
+            <div key={view} className="flex flex-col items-center gap-1 rounded bg-white/5 p-1 text-[10px]" data-multiview-slot={view} data-filled={hit ? "1" : "0"}>
+              <span>{MANHUA_MULTIVIEW_VIEW_LABEL_ZH[view]}</span>
+              {hit ? (
+                <img src={hit.url} alt={`${labelZh} ${MANHUA_MULTIVIEW_VIEW_LABEL_ZH[view]}`} className="h-24 w-full rounded object-contain bg-white" />
+              ) : (
+                <span className="flex h-24 w-full items-center justify-center rounded border border-dashed border-white/20 text-white/40">未出</span>
+              )}
+              <button type="button" className={btn} disabled={disabled || busy} onClick={() => onGenerate([view])}>
+                {hit ? "重出这张" : "补出这张"}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
+        {missing.length === MANHUA_MULTIVIEW_VIEWS.length ? (
+          <button type="button" className={btnPrimary} disabled={disabled || busy} onClick={() => onGenerate()}>
+            出四视角图（4 张改图，逐张扣积分）
+          </button>
+        ) : missing.length ? (
+          <button type="button" className={btn} disabled={disabled || busy} onClick={() => onGenerate(missing)}>
+            补齐缺的 {missing.length} 张
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className={btnPrimary}
+          disabled={disabled || busy || !readiness.ready || !canSubmit}
+          data-manhua-action="submit-multiview"
+          title={!readiness.ready ? readiness.reasonZh : !canSubmit ? "已有模型或建模中；要重建先等它结束" : "提交 Tripo H3.1 多视角建模（扣积分）"}
+          onClick={onSubmit}
+        >
+          提交多视角建模
+        </button>
+        {!readiness.ready ? <span className="text-amber-100">{readiness.reasonZh}</span> : null}
+      </div>
+    </div>
   );
 }

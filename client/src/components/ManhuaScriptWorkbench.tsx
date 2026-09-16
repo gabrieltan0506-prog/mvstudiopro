@@ -482,6 +482,10 @@ type Props = {
   onGenerateAsset3d?: (id: string) => void | Promise<void>;
   /** 导入用户已有 GLB；不调用建模服务，仍绑定当前人物图版本。 */
   onImportAsset3d?: (id: string, file: File) => void | Promise<void>;
+  /** 0916 多视角：出四视角图（付费改图）；views 省略 = 四张全出 */
+  onGenerateAsset3dMultiview?: (id: string, views?: import("@shared/manhuaMultiview").ManhuaMultiviewView[]) => void | Promise<void>;
+  /** 0916 多视角：用四视角草稿提交 Tripo multiview-to-3d */
+  onSubmitAsset3dMultiview?: (id: string) => void | Promise<void>;
   onApplyRiggedModel?: (model: AutoRigAdoptedModel, expectedTaskId: string) => boolean | Promise<boolean>;
   asset3dBusyIds?: readonly string[];
   assetStandardizeBusyId?: string | null;
@@ -1079,6 +1083,8 @@ export default function ManhuaScriptWorkbench({
   onStandardizeCustomAsset,
   onGenerateAsset3d,
   onImportAsset3d,
+  onGenerateAsset3dMultiview,
+  onSubmitAsset3dMultiview,
   onApplyRiggedModel,
   asset3dBusyIds = [],
   assetStandardizeBusyId = null,
@@ -2519,6 +2525,12 @@ export default function ManhuaScriptWorkbench({
       }),
     [assetLockRegistry.byRole.character, customAssetRefs],
   );
+  /** 0916 多视角草稿按 ref.id 索引，给 3D 工作台面板 */
+  const multiviewDrafts = useMemo(() => {
+    const out: Record<string, import("@shared/manhuaMultiview").ManhuaMultiviewDraft | undefined> = {};
+    for (const ref of customAssetRefs) if (ref.multiviewDraft) out[ref.id] = ref.multiviewDraft;
+    return out;
+  }, [customAssetRefs]);
   /** 已绑骨的人：collectPreparedRigProfiles 只认带 model.taskId 的人物（1468 R2 修：原先没传 model 永远为空） */
   const riggedAssetIds = useMemo(
     () => collectPreparedRigProfiles(blocks, manhua3dRigLookupCharacters(modelStudioCharacters)).map((p) => p.assetRef),
@@ -3429,6 +3441,9 @@ export default function ManhuaScriptWorkbench({
             disabled={Boolean(factoryBusy)}
             onGenerate={onGenerateAsset3d}
             onImport={onImportAsset3d}
+            onGenerateMultiview={onGenerateAsset3dMultiview}
+            onSubmitMultiview={onSubmitAsset3dMultiview}
+            multiviewDrafts={multiviewDrafts}
             onPreview={(_id, url, labelZh)=>setModel3dPreview({ url, labelZh })}
             riggedIds={riggedAssetIds}
             onRig={onApplyRiggedModel ? (id)=>setAutoRigAssetId(id) : undefined}/> : null}

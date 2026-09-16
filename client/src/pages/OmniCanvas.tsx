@@ -41,6 +41,16 @@ import {
   type CanvasOutboundConfirmationScope,
 } from "@/lib/canvasRunBlock";
 import { resolveOpenAiImageLaneForBlockId } from "@shared/openaiImageLane";
+import {
+  MANHUA_MULTIVIEW_VIEWS,
+  MANHUA_MULTIVIEW_VIEW_LABEL_ZH,
+  buildManhuaMultiviewPrompt,
+  evaluateManhuaMultiviewReadiness,
+  gsUriFromSignedGcsUrl,
+  mergeManhuaMultiviewDraft,
+  type ManhuaMultiviewDraftView,
+  type ManhuaMultiviewView,
+} from "@shared/manhuaMultiview";
 import { copyText } from "@/lib/copyText";
 import { cropManhuaSheet2x2 } from "@/lib/manhuaSheetCropApi";
 import type { ManhuaSceneTileSlot } from "@shared/manhuaSceneTilePick";
@@ -1653,6 +1663,150 @@ export default function OmniCanvas() {
       getSignedUrlMutation,
       importExistingManhua3dMutation,
     ],
+  );
+  const submitManhua3dMultiviewMutation = trpc.manhua3d.submitMultiview.useMutation();
+  /**
+   * 0916 PR-7 多视角：用当前定妆图改出前/左/后/右白底视角图（走既有 canvas_gpt_image2 付费管线，
+   * 每张一单、瞬时错误重试一次），逐张落进 ref.multiviewDraft，刷新不丢；不提交建模。
+   */
+  const generateManhua3dMultiviewViews = useCallback(
+    async (assetRefId: string, views?: ManhuaMultiviewView[]) => {
+      const ref = customAssetRefs.find((item) => item.id === assetRefId);
+      if (!ref) {
+        toast.error("人物参考图不存在");
+        return;
+      }
+      const eligibility = evaluateManhuaAsset3dEligibility(ref);
+      if (!eligibility.eligible) {
+        toast.error(eligibility.reasonZh || "当前人物参考图不能出四视角");
+        return;
+      }
+      if (!user?.id) {
+        toast.error("请先登录后再出图");
+        return;
+      }
+      const targets = views?.length ? views : [...MANHUA_MULTIVIEW_VIEWS];
+      const labels = targets.map((v) => MANHUA_MULTIVIEW_VIEW_LABEL_ZH[v]).join("、");
+      if (
+        !window.confirm(
+          `将用「${ref.labelZh || "这张人物图"}」当前定妆图改出 ${targets.length} 张白底视角图（${labels}），每张按改图计费；原图不变，出完先过目再决定是否建模。确认继续？`,
+        )
+      ) {
+        return;
+      }
+      const operationToken = manhua3dOperationGuard.current.begin(assetRefId);
+      if (!operationToken) return;
+      setAsset3dBusyIds(manhua3dOperationGuard.current.assetIds());
+      const failed: string[] = [];
+      let produced = 0;
+      try {
+        for (const view of targets) {
+          const prompt = buildManhuaMultiviewPrompt(view, ref.labelZh);
+          let url = "";
+          for (let attempt = 0; attempt < 2 && !url; attempt += 1) {
+            try {
+              url = await runGptImage2(prompt, "9:16", {
+                refImageUrl: ref.url,
+                imageLane: "asset",
+                userId: String(user.id),
+              });
+            } catch (error) {
+              // 0916 探针：官方改图偶发 520，同一视角只重试一次；两次都失败留给用户按「补出这张」
+              if (attempt === 1) failed.push(`${MANHUA_MULTIVIEW_VIEW_LABEL_ZH[view]}（${error instanceof Error ? error.message : "出图失败"}）`);
+            }
+          }
+          if (!url) continue;
+          const item: ManhuaMultiviewDraftView = {
+            view,
+            url,
+            ...(gsUriFromSignedGcsUrl(url) ? { gcsUri: gsUriFromSignedGcsUrl(url) } : {}),
+            createdAt: Date.now(),
+          };
+          produced += 1;
+          setCustomAssetRefs((prev) =>
+            normalizeManhuaCustomAssetRefs(
+              prev.map((r) =>
+                r.id === assetRefId
+                  ? { ...r, multiviewDraft: mergeManhuaMultiviewDraft(r.multiviewDraft, eligibility.sourceVersion, item) }
+                  : r,
+              ),
+            ),
+          );
+        }
+        if (failed.length) toast.error(`${failed.length} 张视角图未出：${failed.join("；")}；其余已保存，可单张补出`);
+        else if (produced) toast.success(`已出 ${produced} 张视角图，过目后再提交多视角建模`);
+      } finally {
+        manhua3dOperationGuard.current.end(assetRefId, operationToken);
+        setAsset3dBusyIds(manhua3dOperationGuard.current.assetIds());
+      }
+    },
+    [customAssetRefs, user?.id],
+  );
+  /** 0916 PR-7：四视角草稿 → Tripo H3.1 multiview-to-3d（服务端按 gs:// 重签；幂等按视角版本） */
+  const submitManhua3dMultiview = useCallback(
+    async (assetRefId: string) => {
+      const ref = customAssetRefs.find((item) => item.id === assetRefId);
+      if (!ref) {
+        toast.error("人物参考图不存在");
+        return;
+      }
+      const eligibility = evaluateManhuaAsset3dEligibility(ref);
+      if (!eligibility.eligible) {
+        toast.error(eligibility.reasonZh || "当前人物参考图不能建立 3D 参考");
+        return;
+      }
+      const currentModel3d = eligibility.currentModel3d;
+      if (currentModel3d?.status === "queued" || currentModel3d?.status === "running") {
+        void pollManhua3dTask(currentModel3d.taskId);
+        return;
+      }
+      if (currentModel3d?.status === "reconcile_manual") {
+        toast.message("任务结果仍待核对，为避免重复计费不会再次提交");
+        return;
+      }
+      const readiness = evaluateManhuaMultiviewReadiness(ref.multiviewDraft, eligibility.sourceVersion);
+      if (!readiness.ready) {
+        toast.error(readiness.reasonZh);
+        return;
+      }
+      if (
+        !window.confirm(
+          `将用 ${readiness.views.length} 张视角图提交 Tripo 多视角建模（精细档，约 4 分钟）。此操作会调用外部生成服务并产生实际调用成本；${currentModel3d?.status === "succeeded" ? "现有模型会被新模型替换，旧 GLB 仍保留在任务记录里。" : "原人物图不会被替换。"}确认继续？`,
+        )
+      ) {
+        return;
+      }
+      const operationToken = manhua3dOperationGuard.current.begin(assetRefId);
+      if (!operationToken) return;
+      setAsset3dBusyIds(manhua3dOperationGuard.current.assetIds());
+      try {
+        const allHaveGs = readiness.views.every((v) => Boolean(v.gcsUri));
+        const task = await submitManhua3dMultiviewMutation.mutateAsync({
+          assetRef: ref.id,
+          sourceVersion: eligibility.sourceVersion,
+          sourceImageUrl: ref.url,
+          multiviewImageUrls: readiness.views.map((v) => v.url),
+          ...(allHaveGs ? { multiviewImageGcsUris: readiness.views.map((v) => v.gcsUri as string) } : {}),
+          multiviewVersion: readiness.version,
+          options: { geometryQuality: "detailed", textureQuality: "detailed" },
+        });
+        applyManhua3dTaskView(task, ref.model3d?.taskId || null);
+        if (task.status === "queued" || task.status === "running") {
+          toast.message("多视角 3D 参考已开始建立，完成后回到人物卡查看");
+          void pollManhua3dTask(task.taskId);
+        } else if (task.status === "succeeded") {
+          toast.success("多视角 3D 参考已建立");
+        } else {
+          toast.error(task.errorZh || "多视角 3D 任务未能启动");
+        }
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "多视角 3D 任务提交失败");
+      } finally {
+        manhua3dOperationGuard.current.end(assetRefId, operationToken);
+        setAsset3dBusyIds(manhua3dOperationGuard.current.assetIds());
+      }
+    },
+    [applyManhua3dTaskView, customAssetRefs, pollManhua3dTask, submitManhua3dMultiviewMutation],
   );
   useEffect(() => {
     if (!canUseManhua3d) return;
@@ -9622,6 +9776,8 @@ export default function OmniCanvas() {
                   customAssetRefs={customAssetRefs}
                   onGenerateAsset3d={canUseManhua3d ? generateManhua3dAsset : undefined}
                   onImportAsset3d={canUseManhua3d ? importExistingManhua3dAsset : undefined}
+                  onGenerateAsset3dMultiview={canUseManhua3d ? generateManhua3dMultiviewViews : undefined}
+                  onSubmitAsset3dMultiview={canUseManhua3d ? submitManhua3dMultiview : undefined}
                   onApplyRiggedModel={canUseManhua3d ? (task, expectedTaskId) => {
                     if (factoryBusy || asset3dBusyIds.includes(task.assetRef)) return false;
                     const current = customAssetRefs.find(ref => ref.id === task.assetRef);

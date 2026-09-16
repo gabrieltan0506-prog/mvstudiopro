@@ -12,6 +12,7 @@ import {
   MANHUA_ASSET_SHEET_SOFT_NO_TEXT_ZH,
 } from "./manhuaScriptWorkbench.js";
 import { normalizeManhuaAsset3dRef } from "./manhuaAsset3d.js";
+import { normalizeManhuaMultiviewDraft } from "./manhuaMultiview.js";
 
 export const MANHUA_CUSTOM_ASSET_ROLES = [
   "character",
@@ -117,6 +118,8 @@ export type ManhuaCustomAssetRef = {
   tileUrls?: Partial<Record<ManhuaSceneTileSlot, string>> | null;
   /** 人物参考图派生的可选 3D 资产，不参与默认出片门禁。 */
   model3d?: import("./manhuaAsset3d").ManhuaAsset3dRef;
+  /** 0916 多视角建模：由当前定妆图改出的前/左/后/右视角草稿（付费出图，存稿防刷新丢失） */
+  multiviewDraft?: import("./manhuaMultiview").ManhuaMultiviewDraft;
 };
 
 const SCENE_TILE_SLOTS: ManhuaSceneTileSlot[] = [
@@ -453,6 +456,7 @@ export function normalizeManhuaCustomAssetRefs(
       tileUrls: parseSceneTileUrls((o as { tileUrls?: unknown }).tileUrls),
       gcsUri: /^gs:\/\//i.test(String(o.gcsUri || "")) ? String(o.gcsUri).trim() : undefined,
       model3d: normalizeManhuaAsset3dRef((o as { model3d?: unknown }).model3d),
+      multiviewDraft: normalizeManhuaMultiviewDraft((o as { multiviewDraft?: unknown }).multiviewDraft),
     });
     if (out.length >= max) break;
   }
