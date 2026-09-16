@@ -255,6 +255,7 @@ export function scheduleManhuaSegmentShots(input: ManhuaShotScheduleInput): Manh
       const c = shots[bestI]!;
       p.endSec = c.endSec;
       p.noteZh = `${p.noteZh}（含下一句，机位不切）`;
+      p.promptZh = `${p.promptZh}；${c.faceZh || "对方"}接着说话，机位不切`;
       shots.splice(bestI, 1);
     }
   }
