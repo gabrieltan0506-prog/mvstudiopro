@@ -25,6 +25,7 @@ import {
 
 export type ManhuaStageCharacter = {
   id: string;
+  assetRef?: string;
   labelZh: string;
   /** 已就绪的人物 GLB（https） */
   glbUrl: string;
@@ -41,6 +42,9 @@ export type ManhuaStageFrameExport = {
   /** 本帧里加载成功的人物 id（= 全部预期人物；缺人不放行） */
   actorIds: string[];
   revision: string;
+  camera: StageCameraRig;
+  actors: ManhuaStageCharacter[];
+  timeSec: 0;
 };
 
 export type StageAssetFailure = { id: string; kind: "world" | "collider" | "actor"; message: string };
@@ -90,7 +94,6 @@ export function buildStageSceneConfig(world: ManhuaWorld3dAssets, characters: re
     ...(isHttps(world.colliderGlbUrl) ? { colliderUrl: world.colliderGlbUrl } : {}),
     transform: { scale: t.scale, quaternionXYZW: t.quaternionXYZW, translationStage: t.translationStage },
     characters: characters
-      .filter((c) => isHttps(c.glbUrl))
       .map((c) => ({ id: c.id, glbUrl: c.glbUrl, stagePoint: c.stagePoint, heightM: c.heightM && c.heightM > 0 ? c.heightM : 1.7, yawDeg: c.yawDeg ?? 0 })),
     initialCamera,
   };
@@ -109,7 +112,7 @@ export function stageCameraRigs(characters: readonly ManhuaStageCharacter[]): Re
   };
 }
 
-function buildSrcDoc(config: StageSceneConfig): string {
+export function buildSrcDoc(config: StageSceneConfig): string {
   const payload = escapeForScript(JSON.stringify(config));
   return `<!DOCTYPE html>
 <html lang="zh"><head><meta charset="UTF-8">
@@ -161,9 +164,13 @@ if (THREE && SplatMesh) {
     scene.add(splat);
 
     const loader = new GLTFLoader();
-    const loadGltf = (url) => new Promise((resolve, reject) => loader.load(url, resolve, undefined, (e) => reject(new Error(e && e.message ? e.message : "load_failed"))));
+    const loadGltf = (url) => new Promise((resolve, reject) => {
+      if (!String(url || "").startsWith("https://")) { reject(new Error("缺少可用的人物模型")); return; }
+      loader.load(url, resolve, undefined, (e) => reject(new Error(e && e.message ? e.message : "load_failed")));
+    });
     let collider = null;
     let cameraKind = "";
+    let canExport = false;
     const required = [];
     // 世界高斯：SparkJS SplatMesh 解码完成信号是 initialized（Promise）；没有这个信号就不能当已加载
     required.push({ id: "world", kind: "world", promise: (async () => {
@@ -181,11 +188,12 @@ if (THREE && SplatMesh) {
       }) });
     }
     for (const ch of CONFIG.characters) {
-      required.push({ id: ch.id, kind: "actor", promise: loadGltf(ch.glbUrl).then((gltf) => {
+      required.push({ id: ch.id, kind: "actor", promise: (Number.isFinite(ch.stagePoint[0]) && Number.isFinite(ch.stagePoint[1]) ? loadGltf(ch.glbUrl) : Promise.reject(new Error("人物站位未确认"))).then((gltf) => {
         const root = new THREE.Group();
         const model = gltf.scene;
         const box = new THREE.Box3().setFromObject(model);
-        const nativeHeight = Math.max(1e-6, box.max.y - box.min.y);
+        const nativeHeight = box.max.y - box.min.y;
+        if (!Number.isFinite(nativeHeight) || nativeHeight <= 1e-6) throw new Error("人物模型为空或高度无效");
         // Y 上 → 舞台 Z 上：绕 X +90°
         model.rotation.x = Math.PI / 2;
         const scaleK = ch.heightM / nativeHeight;
@@ -203,9 +211,9 @@ if (THREE && SplatMesh) {
       if (m.source !== "manhua-world-stage-host" || m.revision !== CONFIG.revision) return;
       if (m.type === "camera" && m.rig) { applyCamera(m.rig); cameraKind = String(m.cameraKind || ""); }
       if (m.type === "collider" && collider) collider.visible = Boolean(m.visible);
-      if (m.type === "export") {
+      if (m.type === "export" && canExport) {
         renderer.render(scene, camera);
-        try { post({ type: "frame", dataUrl: renderer.domElement.toDataURL("image/png"), viewLabelZh: m.viewLabelZh || "", cameraKind: String(m.cameraKind || cameraKind) }); }
+        try { post({ type: "frame", dataUrl: renderer.domElement.toDataURL("image/png"), viewLabelZh: m.viewLabelZh || "", cameraKind: String(m.cameraKind || cameraKind), requestId: m.requestId }); }
         catch (e) { post({ type: "error", message: "导出失败：" + (e && e.message ? e.message : "canvas") }); }
       }
     });
@@ -227,6 +235,7 @@ if (THREE && SplatMesh) {
       fail("世界高斯（.spz）加载失败：" + failed.find((f) => f.kind === "world").message);
     } else {
       msg.remove();
+      canExport = failed.length === 0;
       post({ type: "ready", loaded, failed });
     }
   } catch (e) {
@@ -258,6 +267,10 @@ export function ManhuaWorldStagePreview(props: Props) {
     return buildStageSceneConfig(world, characters, rigs.establish, `r${revisionCounter.current}`);
   }, [world, characters, rigs]);
   const revision = config?.revision ?? "";
+  const liveState = useRef({ revision, cameraKind });
+  liveState.current = { revision, cameraKind };
+  const exportCounter = useRef(0);
+  const pendingExport = useRef<{ requestId: number; revision: string; cameraKind: StageCameraKind; frame: ManhuaStageFrameExport; deliver: Props["onExportStageFrame"] } | null>(null);
   const srcDoc = useMemo(() => (config ? buildSrcDoc(config) : ""), [config]);
   const expectedActorIds = useMemo(() => (config?.characters ?? []).map((c) => c.id), [config]);
 
@@ -266,6 +279,7 @@ export function ManhuaWorldStagePreview(props: Props) {
     setNoteZh("");
     setFailures([]);
     setExporting(false);
+    pendingExport.current = null;
   }, [revision]);
 
   const send = useCallback(
@@ -277,7 +291,7 @@ export function ManhuaWorldStagePreview(props: Props) {
 
   useEffect(() => {
     const onMessage = (ev: MessageEvent) => {
-      const m = (ev.data || {}) as { source?: string; revision?: string; type?: string; message?: string; dataUrl?: string; viewLabelZh?: string; cameraKind?: string; loaded?: string[]; failed?: StageAssetFailure[] };
+      const m = (ev.data || {}) as { source?: string; revision?: string; type?: string; message?: string; dataUrl?: string; viewLabelZh?: string; cameraKind?: string; requestId?: number; loaded?: string[]; failed?: StageAssetFailure[] };
       if (m.source !== "manhua-world-stage" || ev.source !== iframeRef.current?.contentWindow) return;
       // 旧实例迟到的消息：作废
       if (m.revision !== revision) return;
@@ -303,8 +317,10 @@ export function ManhuaWorldStagePreview(props: Props) {
       } else if (m.type === "warn") {
         setNoteZh(m.message || "");
       } else if (m.type === "frame" && m.dataUrl) {
-        // 导出前换了机位：这帧不是用户现在要的，作废
-        if (m.cameraKind && m.cameraKind !== cameraKind) {
+        const pending = pendingExport.current;
+        if (!pending || m.requestId !== pending.requestId || pending.revision !== revision) return;
+        if (m.cameraKind !== pending.cameraKind || pending.cameraKind !== cameraKind) {
+          pendingExport.current = null;
           setExporting(false);
           setNoteZh("导出期间切换了机位，这帧已作废，请重新导出");
           return;
@@ -312,7 +328,9 @@ export function ManhuaWorldStagePreview(props: Props) {
         void (async () => {
           try {
             const blob = await dataUrlToBlob(m.dataUrl!);
-            await onExportStageFrame?.(blob, { viewLabelZh: m.viewLabelZh || STAGE_CAMERA_LABEL_ZH[cameraKind], cameraKind, actorIds: expectedActorIds, revision });
+            if (pendingExport.current !== pending || liveState.current.revision !== pending.revision || liveState.current.cameraKind !== pending.cameraKind) return;
+            pendingExport.current = null;
+            await pending.deliver?.(blob, pending.frame);
           } finally {
             setExporting(false);
           }
@@ -358,8 +376,15 @@ export function ManhuaWorldStagePreview(props: Props) {
             disabled={status !== "ready" || exporting}
             title={status === "partial" ? "有人物/资产没加载成功，不能导出" : undefined}
             onClick={() => {
+              const requestId = ++exportCounter.current;
+              const frame: ManhuaStageFrameExport = {
+                viewLabelZh: STAGE_CAMERA_LABEL_ZH[cameraKind], cameraKind, actorIds: expectedActorIds,
+                revision, camera: structuredClone(rigs[cameraKind]), actors: structuredClone([...characters]), timeSec: 0,
+              };
+              pendingExport.current = { requestId, revision, cameraKind, frame, deliver: onExportStageFrame };
               setExporting(true);
-              send({ type: "export", viewLabelZh: STAGE_CAMERA_LABEL_ZH[cameraKind], cameraKind });
+              send({ type: "camera", rig: rigs[cameraKind], cameraKind });
+              send({ type: "export", requestId, viewLabelZh: frame.viewLabelZh, cameraKind });
             }}
           >
             {exporting ? "导出中…" : "导出当前视角 PNG"}
@@ -367,7 +392,7 @@ export function ManhuaWorldStagePreview(props: Props) {
         ) : null}
       </div>
       <p className="text-[10px] text-white/45">
-        {characters.length ? `预期 ${characters.length} 个人物（脚贴地）；` : "本段没有已就绪的人物 GLB，只看场景；"}
+        {characters.length ? `本段预期 ${characters.length} 个人物（平地摆位，未验证真实表面）；` : "本段没有已就绪的人物 GLB，只看场景；"}
         机位规则与白模一致：过肩在第二人身后 0.9/侧 0.45/高 1.55，单人正前 1.6，建立高位全景。
         {rigs.ots.kind === "single" && cameraKind === "ots" ? " 缺过肩对象，过肩退为单人正面。" : ""}
         {status === "loading" ? " 资产加载中（世界高斯 + 每个人物都要真实加载成功才算就绪）。" : ""}

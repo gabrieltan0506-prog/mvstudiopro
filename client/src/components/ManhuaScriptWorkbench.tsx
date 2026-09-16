@@ -2568,24 +2568,22 @@ export default function ManhuaScriptWorkbench({
       .filter((a) => Number.isFinite(a.start[0]) && Number.isFinite(a.start[1]))
       .map((a) => ({ id: a.id, nameZh: a.nameZh, start: [a.start[0], a.start[1]] as const, shape: a.shape }));
   }, [activeClip?.previsStudio?.spec.actors]);
-  /** PR-10：已就绪人物 GLB 进世界；舞台点优先取本段白模里对应 actor 的起点，否则沿 X 每 1.2 米排开 */
+  /** PR-10：只取本段必需 actor，不混入其他段，不伪造站位 */
   const worldStageCharacters = useMemo((): ManhuaStageCharacter[] => {
     const actors = activeClip?.previsStudio?.spec.actors || [];
-    const out: ManhuaStageCharacter[] = [];
-    for (const a of assetLockRegistry.byRole.character) {
-      const ref = customAssetRefs.find((r) => r.id === a.id);
+    // 本段 actor 是必需名单；缺模型仍保留，让加载门禁明确报缺，不能从名单中消失。
+    return actors.map((actor): ManhuaStageCharacter => {
+      const ref = customAssetRefs.find((r) => r.id === actor.assetRef);
       const model = ref ? evaluateManhuaAsset3dEligibility(ref).currentModel3d : undefined;
-      if (!model || model.status !== "succeeded" || !model.glbUrl) continue;
-      const actor = actors.find((x) => x.assetRef === a.id && Number.isFinite(x.start[0]) && Number.isFinite(x.start[1]));
-      out.push({
-        id: a.id,
-        labelZh: a.labelZh,
-        glbUrl: model.glbUrl,
-        stagePoint: actor ? ([actor.start[0], actor.start[1]] as const) : ([out.length * 1.2, 0] as const),
-        ...(actor && Number.isFinite(actor.facingDeg) ? { yawDeg: actor.facingDeg } : {}),
-      });
-    }
-    return out;
+      return {
+        id: actor.id,
+        assetRef: actor.assetRef,
+        labelZh: actor.nameZh || ref?.labelZh || actor.id,
+        glbUrl: model?.status === "succeeded" ? model.glbUrl || "" : "",
+        stagePoint: [actor.start[0], actor.start[1]],
+        yawDeg: actor.facingDeg,
+      };
+    });
   }, [activeClip?.previsStudio?.spec.actors, assetLockRegistry.byRole.character, customAssetRefs]);
   /** 0916 多视角草稿按 ref.id 索引，给 3D 工作台面板 */
   const multiviewDrafts = useMemo(() => {

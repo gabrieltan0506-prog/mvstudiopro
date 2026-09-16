@@ -34,11 +34,16 @@ export type ManhuaStageFrameBinding = {
   worldSourceVersion: string;
   cameraKind: ManhuaStageCameraKind;
   viewLabelZh: string;
-  /** 本帧里确实加载成功的人物 ref.id（缺人不许导出，所以这里 = 预期人物） */
+  /** 本帧里确实加载成功的本段 actor.id；资产卡身份另存 actors[].assetRef（缺人不许导出） */
   actorIds: string[];
   episode?: number;
   segmentIndex?: number;
   exportedAt: number;
+  /** 新导出保存实例与完整机位/演员快照；旧候选图允许缺失，不能据此宣称正式镜头已绑定。 */
+  revision?: string;
+  camera?: { kind: ManhuaStageCameraKind; position: [number, number, number]; target: [number, number, number]; lens: number; labelZh: string };
+  actors?: Array<{ id: string; assetRef?: string; labelZh: string; glbUrl: string; stagePoint: readonly [number, number]; heightM?: number; yawDeg?: number }>;
+  timeSec?: number;
 };
 
 const STAGE_CAMERA_KINDS: readonly ManhuaStageCameraKind[] = ["establish", "ots", "single"];
@@ -65,6 +70,10 @@ export function normalizeManhuaStageFrameBinding(raw: unknown): ManhuaStageFrame
     ...(Number.isInteger(episode) && episode > 0 ? { episode } : {}),
     ...(Number.isInteger(segmentIndex) && segmentIndex > 0 ? { segmentIndex } : {}),
     exportedAt: Number.isFinite(exportedAt) ? exportedAt : 0,
+    ...(typeof o.revision === "string" && o.revision ? { revision: o.revision.slice(0, 100) } : {}),
+    ...(o.camera && STAGE_CAMERA_KINDS.includes(o.camera.kind) && Array.isArray(o.camera.position) && o.camera.position.length === 3 && o.camera.position.every(Number.isFinite) && Array.isArray(o.camera.target) && o.camera.target.length === 3 && o.camera.target.every(Number.isFinite) && Number.isFinite(o.camera.lens) ? { camera: { kind: o.camera.kind, position: [...o.camera.position] as [number, number, number], target: [...o.camera.target] as [number, number, number], lens: o.camera.lens, labelZh: String(o.camera.labelZh || "").slice(0, 80) } } : {}),
+    ...(Array.isArray(o.actors) && o.actors.every(a => a && typeof a.id === "string" && Array.isArray(a.stagePoint) && a.stagePoint.length === 2 && a.stagePoint.every(Number.isFinite)) ? { actors: o.actors.map(a => ({ id: a.id, ...(a.assetRef ? { assetRef: a.assetRef } : {}), labelZh: String(a.labelZh || ""), glbUrl: String(a.glbUrl || ""), stagePoint: [...a.stagePoint] as [number, number], ...(Number.isFinite(a.heightM) ? { heightM: a.heightM } : {}), ...(Number.isFinite(a.yawDeg) ? { yawDeg: a.yawDeg } : {}) })) } : {}),
+    ...(Number.isFinite(o.timeSec) && Number(o.timeSec) >= 0 ? { timeSec: Number(o.timeSec) } : {}),
   };
 }
 

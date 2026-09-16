@@ -219,6 +219,7 @@ describe("manhuaWorldTask", () => {
     expect(done?.assets?.spz500kUrl).toMatch(/scene-500k\.spz/);
     expect(done?.worldCost).toEqual({ totalCredits: 1500 });
     expect(done?.depthCost).toEqual({ totalCredits: 150 });
+    expect(await getManhuaWorldTask(view.taskId, 7)).toMatchObject({ depthCost: { totalCredits: 150 }, worldCost: { totalCredits: 1500 }, depthPanoRgbBridgeUrl: expect.stringContaining("depth-rgb-pano.jpg") });
   });
 
   it("WL-D01：缺/坏 depthMeta 建单前拒，零上游调用（不拉图、不传、不提交）", async () => {
@@ -320,32 +321,45 @@ describe("manhuaWorldTask", () => {
     expect(submit).toHaveBeenCalledTimes(1);
   });
 
-  it("第一步产物镜像失败不阻断：本轮退回上游 pano_url 提交第二步，记 lastTransientError，下一轮再补归档", async () => {
-    const view = await createManhuaWorldTask(baseInput({ sceneRef: "scene:l7", sourceImageUrl: "https://signed/d.png", sourceImageGcsUri: undefined, prompt: { type: "layout", depthPanoUrl: "https://signed/d.png", depthMeta, textPrompt: "夜" } }));
+  it("第一步镜像失败先保留原 operation：不提交第二步；恢复后先归档再建世界且不重付上色", async () => {
+    const view = await createManhuaWorldTask(baseInput({ sceneRef: "scene:l7", prompt: { type: "layout", depthPanoUrl: "https://signed/d.png", depthMeta, textPrompt: "夜" } }));
     pollDepth.mockResolvedValueOnce({ state: "completed", panoUrl: "https://up/p7.jpg" });
     mirror.mockRejectedValueOnce(new Error("bridge_down"));
     const next = await advanceManhuaWorldTask(view.taskId);
     expect(next?.status).toBe("running");
-    expect(next?.depthPanoRgbGcsUri).toBeUndefined();
-    expect(submit).toHaveBeenLastCalledWith(expect.objectContaining({ prompt: { type: "image", imageUrl: "https://up/p7.jpg", isPano: true, textPrompt: "夜" } }));
-    expect(signSource).not.toHaveBeenCalled();
+    expect(next?.depthOperationId).toBe("dop1");
+    expect(next?.lastTransientError).toContain("depth_pano_archive_failed");
+    expect(submit).not.toHaveBeenCalled();
+    await advanceManhuaWorldTask(view.taskId);
+    expect(submitDepth).toHaveBeenCalledTimes(1);
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(submit).toHaveBeenLastCalledWith(expect.objectContaining({ prompt: expect.objectContaining({ imageUrl: "https://signed/deck.png?sig=fresh" }) }));
   });
-  it("第一步产物镜像成、归档败：本轮退回上游链接；第二步被拒后重试从桥路径补归档（不重下、不重付上色）再用自家签名提交", async () => {
-    const view = await createManhuaWorldTask(baseInput({ sceneRef: "scene:l8", sourceImageUrl: "https://signed/d.png", sourceImageGcsUri: undefined, prompt: { type: "layout", depthPanoUrl: "https://signed/d.png", depthMeta, textPrompt: "夜" } }));
+  it("第一步镜像成功、归档失败：从已有桥路径补归档，不重新拉图或上色", async () => {
+    const view = await createManhuaWorldTask(baseInput({ sceneRef: "scene:l8", prompt: { type: "layout", depthPanoUrl: "https://signed/d.png", depthMeta, textPrompt: "夜" } }));
     pollDepth.mockResolvedValueOnce({ state: "completed", panoUrl: "https://up/p8.jpg" });
     archive.mockRejectedValueOnce(new Error("gcs down"));
-    submit.mockRejectedValueOnce(new SubmitRejectedError("marble_submit_rejected_422"));
-    const failed = await advanceManhuaWorldTask(view.taskId);
-    expect(failed?.status).toBe("failed");
-    expect(failed?.depthPanoRgbBridgeUrl).toMatch(/depth-rgb-pano\.jpg/);
-    expect(failed?.depthPanoRgbGcsUri).toBeUndefined();
-    expect(submit).toHaveBeenLastCalledWith(expect.objectContaining({ prompt: expect.objectContaining({ imageUrl: "https://up/p8.jpg" }) }));
-    const retried = await retryManhuaWorldTask(view.taskId, 7);
-    expect(retried?.status).toBe("running");
+    const waiting = await advanceManhuaWorldTask(view.taskId);
+    expect(waiting?.depthPanoRgbBridgeUrl).toMatch(/depth-rgb-pano\.jpg/);
+    expect(waiting?.depthPanoRgbGcsUri).toBeUndefined();
+    expect(submit).not.toHaveBeenCalled();
+    await advanceManhuaWorldTask(view.taskId);
     expect(mirror).toHaveBeenCalledTimes(1);
     expect(submitDepth).toHaveBeenCalledTimes(1);
-    expect(archive).toHaveBeenLastCalledWith(`world/${view.taskId}/depth-rgb-pano.jpg`, `manhua-world/u7/${retried!.taskId}/depth-rgb-pano.jpg`);
-    expect(signSource).toHaveBeenCalledWith(`gs://bucket/manhua-world/u7/${retried!.taskId}/depth-rgb-pano.jpg`);
-    expect(submit).toHaveBeenLastCalledWith(expect.objectContaining({ prompt: expect.objectContaining({ imageUrl: "https://signed/deck.png?sig=fresh", isPano: true }) }));
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(archive).toHaveBeenLastCalledWith(`world/${view.taskId}/depth-rgb-pano.jpg`, `manhua-world/u7/${view.taskId}/depth-rgb-pano.jpg`);
+  });
+  it("旧记录已有第二步 operation 也补第一步归档；成功后缺归档仍由 worker 退避恢复", async () => {
+    const view = await createManhuaWorldTask(baseInput({ sceneRef: "scene:l9", prompt: { type: "layout", depthPanoUrl: "https://signed/d.png", depthMeta, textPrompt: "夜" } }));
+    const file = path.join(dir, `${view.taskId}.json`);
+    const rec = JSON.parse(await fs.readFile(file, "utf8"));
+    Object.assign(rec, { operationId: "world-existing", depthPanoRgbUrl: "https://up/p9.jpg" });
+    await fs.writeFile(file, JSON.stringify(rec));
+    await advanceManhuaWorldTask(view.taskId);
+    expect(submitDepth).toHaveBeenCalledTimes(1);
+    expect(submit).not.toHaveBeenCalled();
+    expect(poll).toHaveBeenLastCalledWith("world-existing");
+    expect(archive).toHaveBeenCalledWith(`world/${view.taskId}/depth-rgb-pano.jpg`, `manhua-world/u7/${view.taskId}/depth-rgb-pano.jpg`);
+    expect(shouldManhuaWorldWorkerTouch({ status: "succeeded", depthPanoRgbUrl: "https://up/p9.jpg", updatedAt: "2026-09-16T03:00:00Z" }, Date.parse("2026-09-16T04:00:00Z"))).toBe(true);
   });
 });

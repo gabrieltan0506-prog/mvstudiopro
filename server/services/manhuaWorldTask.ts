@@ -201,6 +201,9 @@ export function toManhuaWorldTaskView(record: ManhuaWorldTaskRecord): ManhuaWorl
     status: record.status,
     ...(record.worldId ? { worldId: record.worldId } : {}),
     ...(record.assets ? { assets: record.assets } : {}),
+    ...(record.depthCost ? { depthCost: record.depthCost } : {}),
+    ...(record.worldCost ? { worldCost: record.worldCost } : {}),
+    ...(record.depthPanoRgbBridgeUrl ? { depthPanoRgbBridgeUrl: record.depthPanoRgbBridgeUrl } : {}),
     ...(record.errorZh ? { errorZh: record.errorZh } : {}),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
@@ -299,12 +302,37 @@ async function mirrorProducts(record: ManhuaWorldTaskRecord, upstream: MarbleWor
   return { done, assets };
 }
 
+/** 已付费上色产物的独立归档路径；不受第二步 operationId 影响。 */
+async function archiveDepthPano(record: ManhuaWorldTaskRecord): Promise<boolean> {
+  if (record.prompt.type !== "layout" || !record.depthPanoRgbUrl || record.depthPanoRgbGcsUri) return true;
+  try {
+    let relPath = record.depthPanoRgbBridgeUrl ? bridgeRelPathFromMediaUrl(record.depthPanoRgbBridgeUrl) : "";
+    if (!relPath) {
+      const mirrored = await deps.mirror({ ns: "world", id: record.taskId, name: DEPTH_RGB_PANO_NAME }, record.depthPanoRgbUrl);
+      relPath = mirrored.relPath;
+      record.depthPanoRgbBridgeUrl = buildBridgeMediaUrl(relPath);
+      await writeRecord(record);
+    }
+    const archived = await deps.archive(relPath, archiveObjectName(record, DEPTH_RGB_PANO_NAME));
+    record.depthPanoRgbGcsUri = archived.gcsUri;
+    record.lastTransientError = undefined;
+    await writeRecord(record);
+    return true;
+  } catch (error) {
+    record.lastTransientError = `depth_pano_archive_failed:${error instanceof Error ? error.message : String(error)}`.slice(0, 280);
+    await writeRecord(record);
+    return false;
+  }
+}
+
 export async function advanceManhuaWorldTask(taskId: string): Promise<ManhuaWorldTaskRecord | null> {
   if (inflight.has(taskId)) return readRecord(taskId);
   inflight.add(taskId);
   try {
     const record = await readRecord(taskId);
-    if (!record) return null;
+    if (!record || record.deletedAt) return record;
+    // 兼容已有第二步的旧记录：继续补第一步归档，绝不回头提交上色。
+    if (record.operationId || record.status === "succeeded") await archiveDepthPano(record);
     if (record.status === "succeeded" || record.status === "failed" || record.status === "reconcile_manual") {
       // 已成功但归档没补齐：静默补一次（不改状态）
       if (record.status === "succeeded" && record.upstreamAssets && record.assets && !record.assets.spz500kGcsUri) {
@@ -387,26 +415,8 @@ export async function advanceManhuaWorldTask(taskId: string): Promise<ManhuaWorl
         record.lastTransientError = undefined;
         await writeRecord(record);
       }
-      if (!record.depthPanoRgbGcsUri) {
-        // 第一步产物先落 Fly 桥 + 归档 gs://：上游 pano_url 会过期，第二步/重试都从自家归档重新签名，绝不因链接过期回头重付第一步
-        try {
-          // 已镜像但归档没成（含重试沿用的旧任务号桥路径）：按桥地址里的相对路径补归档，不再从上游重下（上游链接可能已过期）
-          let relPath = record.depthPanoRgbBridgeUrl ? bridgeRelPathFromMediaUrl(record.depthPanoRgbBridgeUrl) : "";
-          if (!relPath) {
-            const mirrored = await deps.mirror({ ns: "world", id: record.taskId, name: DEPTH_RGB_PANO_NAME }, record.depthPanoRgbUrl!);
-            relPath = mirrored.relPath;
-            record.depthPanoRgbBridgeUrl = buildBridgeMediaUrl(relPath);
-            await writeRecord(record);
-          }
-          const archived = await deps.archive(relPath, archiveObjectName(record, DEPTH_RGB_PANO_NAME));
-          record.depthPanoRgbGcsUri = archived.gcsUri;
-          await writeRecord(record);
-        } catch (error) {
-          // 镜像/归档失败不阻断：本轮仍用上游链接提交；下一轮再补归档
-          record.lastTransientError = `depth_pano_mirror_failed:${error instanceof Error ? error.message : String(error)}`.slice(0, 280);
-          await writeRecord(record);
-        }
-      }
+      // 第一阶段产物必须先持久归档，再进入第二次付费动作。
+      if (!(await archiveDepthPano(record))) return record;
     }
 
     if (!record.operationId) {
@@ -635,12 +645,14 @@ export async function deleteManhuaWorldTask(taskId: string, userId: number): Pro
  */
 export const ARCHIVE_RETRY_MS = 5 * 60_000;
 export function shouldManhuaWorldWorkerTouch(
-  r: Pick<ManhuaWorldTaskRecord, "status" | "upstreamAssets" | "assets" | "deletedAt" | "updatedAt">,
+  r: Pick<ManhuaWorldTaskRecord, "status" | "upstreamAssets" | "assets" | "deletedAt" | "updatedAt"> & Partial<Pick<ManhuaWorldTaskRecord, "depthPanoRgbUrl" | "depthPanoRgbGcsUri">>,
   nowMs: number = deps.now().getTime(),
 ): boolean {
   if (r.deletedAt) return false;
   if (r.status === "queued" || r.status === "running") return true;
-  if (r.status !== "succeeded" || !r.upstreamAssets || !r.assets || r.assets.spz500kGcsUri) return false;
+  const needsWorldArchive = Boolean(r.upstreamAssets && r.assets && !r.assets.spz500kGcsUri);
+  const needsDepthArchive = Boolean(r.depthPanoRgbUrl && !r.depthPanoRgbGcsUri);
+  if (r.status !== "succeeded" || (!needsWorldArchive && !needsDepthArchive)) return false;
   // 补归档每次失败都会 writeRecord 刷新 updatedAt：按 5 分钟退避，GCS 长期不可用时不至于每 15s 打一次
   const last = Date.parse(r.updatedAt || "");
   return !Number.isFinite(last) || nowMs - last >= ARCHIVE_RETRY_MS;

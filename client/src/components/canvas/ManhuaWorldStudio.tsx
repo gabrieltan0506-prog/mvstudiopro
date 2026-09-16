@@ -117,7 +117,7 @@ function depthPreviewDataUrl(gray: Uint8Array, width: number, height: number): s
   return canvas.toDataURL("image/png");
 }
 
-type LayoutDraft = { previewUrl: string; png: Blob; bytes: number; meta: DepthPanoMeta; actorCount: number };
+type LayoutDraft = { sourceKey: string; previewUrl: string; png: Blob; bytes: number; meta: DepthPanoMeta; actorCount: number };
 
 function LayoutPanel(props: {
   scene: ManhuaWorldStudioScene;
@@ -128,7 +128,9 @@ function LayoutPanel(props: {
   onSubmit: (options: ManhuaWorldLayoutSubmitOptions) => void | Promise<void>;
 }) {
   const { scene, model, textPrompt, actors, disabled, onSubmit } = props;
-  const [draft, setDraft] = useState<LayoutDraft | null>(null);
+  const [storedDraft, setDraft] = useState<LayoutDraft | null>(null);
+  const sourceKey = JSON.stringify([scene.id, actors]);
+  const draft = storedDraft?.sourceKey === sourceKey ? storedDraft : null;
   const [busy, setBusy] = useState(false);
   const [errorZh, setErrorZh] = useState("");
   function render() {
@@ -139,7 +141,7 @@ function LayoutPanel(props: {
       // 上传编码 = 官方对数反相（z_min/z_max 随请求体走）；屏幕预览另用线性近亮，两者分开
       const bytes = encodeRgbPngFromGray(r.width, r.height, quantizeDepthForUpload(r));
       const png = new Blob([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], { type: "image/png" });
-      setDraft({ previewUrl: depthPreviewDataUrl(quantizeDepthTo8bit(r), r.width, r.height), png, bytes: bytes.byteLength, meta: r.meta, actorCount: actors.length });
+      setDraft({ sourceKey, previewUrl: depthPreviewDataUrl(quantizeDepthTo8bit(r), r.width, r.height), png, bytes: bytes.byteLength, meta: r.meta, actorCount: actors.length });
     } catch (error) {
       setErrorZh(error instanceof Error ? error.message : "深度全景生成失败");
     }
@@ -147,8 +149,8 @@ function LayoutPanel(props: {
   const prompt = textPrompt.trim();
   return (
     <div className="mt-1 flex w-full flex-wrap items-center gap-2 rounded border border-violet-300/25 bg-violet-500/10 p-2 text-[11px]" data-manhua-world-layout>
-      <span className="text-violet-100">布局可控</span>
-      <span className="text-white/55">用本段白模站位（{actors.length} 人）渲深度全景 → Marble 上色 → 建世界；空间结构由我们定</span>
+      <span className="text-violet-100">粗略地面布局</span>
+      <span className="text-white/55">本段 {actors.length} 人的站位仅确定观察点；当前只提供平地深度，未包含建筑、道具或演员，不保证生成后的落点。</span>
       <button type="button" className={btn} disabled={disabled || !actors.length} onClick={render}>
         {draft ? "重新生成深度全景" : "生成深度全景"}
       </button>
@@ -169,7 +171,7 @@ function LayoutPanel(props: {
               void Promise.resolve(onSubmit({ model, textPrompt: prompt, depthPng: draft.png, meta: draft.meta })).finally(() => setBusy(false));
             }}
           >
-            {busy ? "提交中…" : "按布局生成世界"}
+            {busy ? "提交中…" : "按粗略地面生成世界"}
           </button>
         </>
       ) : null}

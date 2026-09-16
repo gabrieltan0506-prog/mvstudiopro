@@ -286,7 +286,7 @@ export function renderLayoutDepthPanoPng(scene: DepthPanoScene, options: { width
 }
 
 /**
- * 白模规格 → 深度场景：站位变成 0.5×0.35×1.7 的人形柱（缺省），道具/建筑体由调用方另给。
+ * 白模规格 → 粗略背景：站位只定视点，道具/建筑体由调用方另给。活动演员不能烘入背景。
  * 视点取所有站位的中心、高 1.6。
  */
 export function depthPanoSceneFromPrevisActors(
@@ -297,11 +297,5 @@ export function depthPanoSceneFromPrevisActors(
   const valid = actors.filter((a) => Number.isFinite(a.start[0]) && Number.isFinite(a.start[1]));
   const cx = valid.length ? valid.reduce((n, a) => n + a.start[0], 0) / valid.length : 0;
   const cy = valid.length ? valid.reduce((n, a) => n + a.start[1], 0) / valid.length : 0;
-  const boxes: DepthBox[] = valid.map((a) => ({
-    id: a.id,
-    labelZh: a.nameZh,
-    center: a.start,
-    size: a.shape === "horse" ? [1.0, 2.2, 1.6] : [0.5, 0.35, 1.7],
-  }));
-  return { eye: [cx, cy, eyeHeightM], groundZ: 0, boxes: [...boxes, ...extraBoxes] };
+  return { eye: [cx, cy, eyeHeightM], groundZ: 0, boxes: [...extraBoxes] };
 }

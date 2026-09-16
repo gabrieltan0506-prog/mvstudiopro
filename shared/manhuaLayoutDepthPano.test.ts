@@ -52,13 +52,15 @@ describe("manhuaLayoutDepthPano", () => {
     expect(depth[horizon * width + (width * 3) / 4]).toBe(50);
   });
 
-  it("站位中心为视点时，自己的体块不参与；别人的体块可见", () => {
+  it("演员只定视点，全部留在独立角色层；静态几何才进入背景", () => {
     const scene = depthPanoSceneFromPrevisActors([{ id: "a", start: [0, 0] }]);
     expect(scene.eye).toEqual([0, 0, 1.6]);
     const solo = renderLayoutDepthPano(scene, { width: 128, zMax: 30 });
     expect(solo.depth[(solo.height / 2) * solo.width + solo.width / 2]).toBe(30);
     const two = renderLayoutDepthPano(depthPanoSceneFromPrevisActors([{ id: "a", start: [0, -2] }, { id: "b", start: [0, 2] }]), { width: 128, zMax: 30 });
-    expect(two.depth[(two.height / 2) * two.width + two.width / 2]).toBeLessThan(3);
+    expect(two.depth[(two.height / 2) * two.width + two.width / 2]).toBe(30);
+    const staticBox = { id: "wall", center: [0, 4] as const, size: [1, 1, 3] as const };
+    expect(depthPanoSceneFromPrevisActors([{ id: "a", start: [0, 0] }], [staticBox]).boxes).toEqual([staticBox]);
   });
 
   it("显示预览量化：near→255、far→0、线性可逆（只作屏幕预览，不上传）", () => {

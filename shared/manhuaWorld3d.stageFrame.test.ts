@@ -38,6 +38,12 @@ describe("导出视角图来源绑定（WL 交付门槛）", () => {
     expect(refs[1]!.stageFrame).toBeUndefined();
   });
 
+  it("新导出的实例、机位、角色资产与时间码经候选库归一化不丢失", () => {
+    const frame = { worldTaskId: "mw", worldSourceVersion: "v", cameraKind: "ots", actorIds: ["actor-1"], revision: "r7", camera: { kind: "ots", position: [1, 2, 3], target: [4, 5, 6], lens: 50, labelZh: "过肩" }, actors: [{ id: "actor-1", assetRef: "ref-9", labelZh: "甲", glbUrl: "https://x/a.glb", stagePoint: [2, 3], yawDeg: 90 }], timeSec: 0, exportedAt: 9 };
+    const refs = normalizeManhuaCustomAssetRefs([{ id: "a", role: "scene", labelZh: "甲板", url: "https://x/a.png", stageFrame: frame }]);
+    expect(refs[0]?.stageFrame).toEqual({ ...frame, viewLabelZh: "" });
+  });
+
   it("建世界一步价目表：draft 150、1.1 固定 1500、plus 区间", () => {
     expect(MANHUA_WORLD_3D_MODEL_CREDITS["marble-1.0-draft"]).toEqual({ min: 150, max: 150 });
     expect(MANHUA_WORLD_3D_MODEL_CREDITS["marble-1.1-plus"].max).toBeGreaterThan(MANHUA_WORLD_3D_MODEL_CREDITS["marble-1.1-plus"].min);
