@@ -4,6 +4,7 @@
  */
 
 import { classifyManhuaDirectionSceneType, resolveDirectorStyleBlocks, type ManhuaDirectionCanon } from "@shared/manhuaDirectionCanon";
+import { formatManhuaCastStateNoteZh } from "@shared/manhuaCharacterStates";
 import {
   formatManhuaDirectionSelectionMarker,
   readManhuaDirectionCanonFromBlocks,
@@ -3399,6 +3400,19 @@ export function expectedMinManhuaClipAssetEdges(bindRowCount: number): number {
 /**
  * 反推完成后：按分镜展开多张关键静帧，并为每镜铺片段成片节点。
  */
+
+/** 0916 状态变体：按镜所在段的「角色：墨屠（肩伤）」把状态句挂到镜上（进静帧提示词「角色状态硬锁」） */
+function withManhuaShotStateNote(shot: ManhuaWorkbenchShot, shots: readonly ManhuaWorkbenchShot[], opts?: ManhuaFragmentClipEnsureOptions): ManhuaWorkbenchShot {
+  const plan = opts?.segmentPlan;
+  const anchors = opts?.assetCanon?.characters || [];
+  if (!plan?.segments.length || !anchors.length || !shots.length) return shot;
+  const per = Math.max(1, Math.ceil(shots.length / plan.segments.length));
+  const pos = Math.max(0, shots.findIndex((s) => s.index === shot.index));
+  const seg = [...plan.segments].sort((a, b) => a.index - b.index)[Math.min(plan.segments.length - 1, Math.floor(pos / per))];
+  const stateNoteZh = seg ? formatManhuaCastStateNoteZh(seg.castZh, anchors) : "";
+  return stateNoteZh ? { ...shot, stateNoteZh } : shot;
+}
+
 export function expandManhuaShotKeyartsAfterReverse(
   blocks: CanvasBlock[],
   edges: CanvasEdge[],
@@ -3461,7 +3475,7 @@ export function expandManhuaShotKeyartsAfterReverse(
       x: primary.x + Math.min(shot.index, 3) * 28,
       y: primary.y + (shot.index - 1) * 36,
       parentId: reverse.id,
-      prompt: attachManhuaKeyartShotInject(basePrompt, shot),
+      prompt: attachManhuaKeyartShotInject(basePrompt, withManhuaShotStateNote(shot, shots, opts)),
       manhuaKeyartSourceState: { required: JSON.stringify(shot) },
       status: "idle",
       outputUrl: undefined,
@@ -3489,7 +3503,7 @@ export function expandManhuaShotKeyartsAfterReverse(
       // 只更新分镜注入文案，保留 status / outputUrl
       return {
         ...b,
-        prompt: attachManhuaKeyartShotInject(base, shot),
+        prompt: attachManhuaKeyartShotInject(base, withManhuaShotStateNote(shot, shots, opts)),
         manhuaKeyartSourceState: { ...b.manhuaKeyartSourceState, required: JSON.stringify(shot) },
       };
     });

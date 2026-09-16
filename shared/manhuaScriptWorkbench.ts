@@ -59,6 +59,8 @@ export type ManhuaWorkbenchShot = {
   durationSec: number;
   cameraZh: string;
   actionZh: string;
+  /** 0916 状态变体：本镜角色状态句（如「墨屠（肩伤）：肩头血口」），进静帧提示词 */
+  stateNoteZh?: string;
   /** 本镜台词（只作表演，不烧字） */
   dialogueZh?: string;
   /** 用户明确清空本镜台词；区别于“尚无覆盖、可继承剧本”。 */
@@ -887,6 +889,7 @@ export function formatWorkbenchShotInjectBlock(shot: ManhuaWorkbenchShot): strin
     "光线硬锁：必须落实本镜动作描述中的具体光向、冷暖与明暗关系；禁止套用统一的暖背景加轮廓光模板。",
     "必须画出本镜人物、场景与点选道具的配合；服装连续与题材时代一致；禁止空镜或错时代穿戴。",
     "连续硬锁：与上镜/设定卡同一张脸、同一套服装、同一场景材质；禁止换脸换装跳棚。",
+    shot.stateNoteZh ? `角色状态硬锁（只加不减，不得修复/美化）：${shot.stateNoteZh}` : "",
     "对白硬锁：静帧不写台词字面；只表现为口型、表情与肢体，禁止任何字形出现在画面中。",
     MANHUA_KEYART_NO_TEXT_LOCK,
     shot.keyframeRole

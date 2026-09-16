@@ -3,6 +3,7 @@
  * 表文案为真相；库内模板仅可选参考。场景：系列池 + 每集主场景。
  */
 
+import { parseManhuaCharacterStates } from "./manhuaCharacterStates.js";
 import {
   MANHUA_EPISODE_SEGMENT_COUNT_MAX,
   MANHUA_EPISODE_SEGMENT_COUNT_MIN,
@@ -34,6 +35,8 @@ export type ManhuaWriterAssetAnchor = {
   noteZh?: string;
   /** 拼好的生图提示 */
   promptZh: string;
+  /** 0916 状态变体（仅人物）：人物表「状态：肩伤=…；虚弱=…」 */
+  statesZh?: import("./manhuaCharacterStates").ManhuaCharacterState[];
 };
 
 export type ManhuaWriterAssetCanon = {
@@ -163,7 +166,7 @@ function parseTableMd(
       // 年龄外形｜动机｜关系｜性格底线
       lookZh = f[0] || "";
       motiveZh = f[1] || "";
-      noteZh = [f[2], f[3]].filter(Boolean).join("；");
+      noteZh = [f[2], f[3]].filter((x) => x && !/^\s*(?:状态|状态变体|变体)\s*[:：]/.test(x)).join("；");
     } else if (role === "prop") {
       // 功能｜外形
       motiveZh = f[0] || "";
@@ -202,6 +205,7 @@ function parseTableMd(
             ]
               .filter(Boolean)
               .join("。");
+    const statesZh = role === "character" ? parseManhuaCharacterStates(f) : [];
     out.push({
       id,
       role,
@@ -211,6 +215,7 @@ function parseTableMd(
       motiveZh: motiveZh.slice(0, 160) || undefined,
       noteZh: noteZh.slice(0, 200) || undefined,
       promptZh: promptZh.slice(0, 900),
+      ...(statesZh.length ? { statesZh } : {}),
     });
   }
   return out;

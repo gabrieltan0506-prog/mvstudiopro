@@ -56,6 +56,8 @@ export type ManhuaCharacterPrimaryDuty = "identity" | "look";
 export type ManhuaCharacterPrimaryBinding = {
   anchorId: string;
   duty: ManhuaCharacterPrimaryDuty;
+  /** 0916 状态变体：省略 = 常态；有值 = 该状态（肩伤/虚弱…）的当前图，与常态图并存 */
+  stateId?: string;
 };
 
 export const MANHUA_CUSTOM_ASSET_REF_DUTY_LABEL_ZH: Record<ManhuaCustomAssetRefDuty, string> = {
@@ -428,11 +430,12 @@ export function normalizeManhuaCustomAssetRefs(
           .slice(0, 120);
         const duty = String((item as { duty?: unknown }).duty || "");
         if (!anchorId || !claimed.has(anchorId) || duty !== finalDuty) continue;
-        const key = `${anchorId}:${duty}`;
+        const stateId = String((item as { stateId?: unknown }).stateId || "").trim().slice(0, 40) || undefined;
+        const key = `${anchorId}:${duty}${stateId ? `:${stateId}` : ""}`;
         if (seenBindings.has(key)) continue;
         seenBindings.add(key);
-        bindings.push({ anchorId, duty: duty as ManhuaCharacterPrimaryDuty });
-        if (bindings.length >= 4) break;
+        bindings.push({ anchorId, duty: duty as ManhuaCharacterPrimaryDuty, ...(stateId ? { stateId } : {}) });
+        if (bindings.length >= 12) break;
       }
       return bindings;
     };
@@ -468,7 +471,7 @@ export function normalizeManhuaCustomAssetRefs(
 }
 
 function primaryBindingKey(binding: ManhuaCharacterPrimaryBinding): string {
-  return `${binding.anchorId}:${binding.duty}`;
+  return `${binding.anchorId}:${binding.duty}${binding.stateId ? `:${binding.stateId}` : ""}`;
 }
 
 /**
@@ -482,6 +485,8 @@ export function selectManhuaCharacterPrimaryRef(
     duty: ManhuaCharacterPrimaryDuty;
     /** UI 以剧本锚点匹配出的同人物、同职责候选，防止未显式认领的旧图漏筛。 */
     groupRefIds?: string[];
+    /** 0916 状态变体：省略 = 常态 */
+    stateId?: string;
   },
 ): ManhuaCustomAssetRef[] {
   const list = normalizeManhuaCustomAssetRefs(refs);
@@ -497,7 +502,8 @@ export function selectManhuaCharacterPrimaryRef(
   ) {
     return list;
   }
-  const key = `${anchorId}:${input.duty}`;
+  const stateId = String(input.stateId || "").trim().slice(0, 40) || undefined;
+  const key = primaryBindingKey({ anchorId, duty: input.duty, ...(stateId ? { stateId } : {}) });
   const groupRefIds = new Set([
     refId,
     ...(input.groupRefIds || []).map((id) => String(id || "").trim()).filter(Boolean),
@@ -524,7 +530,7 @@ export function selectManhuaCharacterPrimaryRef(
         ...(ref.primarySelectionScopes || []).filter(
           (binding) => primaryBindingKey(binding) !== key,
         ),
-        { anchorId, duty: input.duty },
+        { anchorId, duty: input.duty, ...(stateId ? { stateId } : {}) },
       ];
       return {
         ...ref,
@@ -533,7 +539,7 @@ export function selectManhuaCharacterPrimaryRef(
         primarySelectionScopes,
         primaryBindings:
           ref.id === refId
-            ? [...primaryBindings, { anchorId, duty: input.duty }]
+            ? [...primaryBindings, { anchorId, duty: input.duty, ...(stateId ? { stateId } : {}) }]
             : primaryBindings,
       };
     }),
@@ -542,9 +548,9 @@ export function selectManhuaCharacterPrimaryRef(
 
 export function findManhuaCharacterPrimaryRefId(
   refs: ManhuaCustomAssetRef[] | null | undefined,
-  input: { anchorId: string; duty: ManhuaCharacterPrimaryDuty },
+  input: { anchorId: string; duty: ManhuaCharacterPrimaryDuty; stateId?: string },
 ): string | null {
-  const key = `${String(input.anchorId || "").trim()}:${input.duty}`;
+  const key = primaryBindingKey({ anchorId: String(input.anchorId || "").trim(), duty: input.duty, ...(input.stateId ? { stateId: input.stateId } : {}) });
   for (const ref of normalizeManhuaCustomAssetRefs(refs)) {
     if ((ref.primaryBindings || []).some((binding) => primaryBindingKey(binding) === key)) {
       return ref.id;
