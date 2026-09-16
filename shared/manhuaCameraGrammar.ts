@@ -16,7 +16,7 @@ import type { ManhuaPrevisSpec } from "./manhuaPrevis";
 
 export type ManhuaCameraStyle = "hard" | "slow_orbit" | "handheld";
 
-export type ManhuaCameraShotKind = "establish" | "windup" | "contact" | "recover" | "reaction" | "emerge_low" | "land_high";
+export type ManhuaCameraShotKind = "establish" | "windup" | "over_shoulder" | "contact" | "recover" | "reaction" | "emerge_low" | "land_high";
 
 export type ManhuaChoreographedCamera = ManhuaPrevisSpec["cameras"][number] & {
   kind: ManhuaCameraShotKind;
@@ -128,7 +128,10 @@ export function choreographManhuaCameras(input: ManhuaCameraChoreographyInput): 
         drafts.push(
           ranged
             ? { kind: "windup", eventId: e.eventId, startSec: windupStart, endSec: contactStart, position: pt(a[0] + dir[0] * 1.2 + side[0] * 0.8, a[1] + dir[1] * 1.2 + side[1] * 0.8, 1.3), target: pt(a[0] + dir[0] * 0.5, a[1] + dir[1] * 0.5, 1.2), lens: 55, noteZh: `${e.actorId} 施法起手：手部/法印特写`, priority: 2 }
-            : { kind: "windup", eventId: e.eventId, startSec: windupStart, endSec: contactStart, position: pt(a[0] + side[0] * 3, a[1] + side[1] * 3, 1.4), target: pt(a[0], a[1], 1.2), lens: 40, noteZh: `${e.actorId} 起手：侧面中景`, priority: 2 },
+            : other
+              // 近身起手：过肩镜——机位贴在攻方肩后，看受方的脸（审片：全平视侧面中景是「摆姿势不打架」的主因）
+              ? { kind: "over_shoulder", eventId: e.eventId, startSec: windupStart, endSec: contactStart, position: pt(a[0] - dir[0] * 0.9 + side[0] * 0.45, a[1] - dir[1] * 0.9 + side[1] * 0.45, 1.55), target: pt(b[0], b[1], 1.4), lens: 45, noteZh: `${e.actorId} 起手：从其肩后过肩看 ${other}`, priority: 2 }
+              : { kind: "windup", eventId: e.eventId, startSec: windupStart, endSec: contactStart, position: pt(a[0] + side[0] * 3, a[1] + side[1] * 3, 1.4), target: pt(a[0], a[1], 1.2), lens: 40, noteZh: `${e.actorId} 起手：侧面中景`, priority: 2 },
         );
       }
       // 接触：近身=攻方侧低机位仰角；斗法=受方侧低机位全景看命中与余波；都是固定机位，切在接触前 5 帧
@@ -243,8 +246,55 @@ export function choreographManhuaCameras(input: ManhuaCameraChoreographyInput): 
 
 /** 给视频模型的运镜提示词（每镜一句），与白模相机同源 */
 export function manhuaCameraPromptZh(c: ManhuaChoreographedCamera, style: ManhuaCameraStyle = "hard"): string {
-  const scale = c.lens >= 50 ? "特写" : c.lens >= 38 ? "中景" : "全景";
+  const scale = c.kind === "over_shoulder" ? "过肩中近景" : c.lens >= 50 ? "特写" : c.lens >= 38 ? "中景" : "全景";
   const angle = c.position[2] < 0.9 ? "仰角" : c.position[2] > 3 ? "俯角" : "平视";
   const motion = style === "handheld" ? "手持微晃" : style === "slow_orbit" && c.kind === "establish" ? "慢环绕" : "固定机位";
   return `${c.startSec.toFixed(2)}–${c.endSec.toFixed(2)}s ${scale}·${angle}·${motion}：${c.noteZh}`;
+}
+
+export type ManhuaCameraVarietyIssue = { code: "same_setup_too_long" | "flat_only" | "no_over_shoulder" | "no_reaction"; messageZh: string };
+
+function heightClass(c: Pick<ManhuaChoreographedCamera, "position">): "low" | "eye" | "high" {
+  return c.position[2] < 0.9 ? "low" : c.position[2] > 3 ? "high" : "eye";
+}
+function scaleClass(c: Pick<ManhuaChoreographedCamera, "lens" | "kind">): string {
+  return c.kind === "over_shoulder" ? "ots" : c.lens >= 50 ? "cu" : c.lens >= 38 ? "ms" : "ws";
+}
+
+/**
+ * 景别/机位多样性门禁（0916 审片规则）：
+ *   - 同机位高度 + 同景别连续 > maxSameSetupSec（默认 3s）→ 原地拉扯
+ *   - 段长 > 6s 且从头到尾只有一种机位高度（全平视）→ 没有仰俯
+ *   - 有近身交手却没有过肩镜 / 没有反应镜
+ * 只报不改：编排器已按文法出镜，这里是给人看的告警与给顾问的信号。
+ */
+export function assessManhuaCameraVariety(
+  cameras: readonly ManhuaChoreographedCamera[],
+  opts?: { maxSameSetupSec?: number; hasMelee?: boolean },
+): ManhuaCameraVarietyIssue[] {
+  const issues: ManhuaCameraVarietyIssue[] = [];
+  const maxSame = opts?.maxSameSetupSec ?? 3;
+  if (!cameras.length) return issues;
+  let runStart = cameras[0]!.startSec;
+  let runKey = `${heightClass(cameras[0]!)}:${scaleClass(cameras[0]!)}`;
+  const flag = (end: number) => {
+    const len = end - runStart;
+    if (len > maxSame + 1e-6) issues.push({ code: "same_setup_too_long", messageZh: `同机位同景别连续 ${len.toFixed(1)} 秒（${runStart.toFixed(1)}–${end.toFixed(1)}s），超过 ${maxSame} 秒会变成原地拉扯` });
+  };
+  for (let i = 1; i < cameras.length; i += 1) {
+    const key = `${heightClass(cameras[i]!)}:${scaleClass(cameras[i]!)}`;
+    if (key !== runKey) {
+      flag(cameras[i]!.startSec);
+      runStart = cameras[i]!.startSec;
+      runKey = key;
+    }
+  }
+  flag(cameras[cameras.length - 1]!.endSec);
+  const total = cameras[cameras.length - 1]!.endSec - cameras[0]!.startSec;
+  const heights = new Set(cameras.map(heightClass));
+  if (total > 6 && heights.size === 1) issues.push({ code: "flat_only", messageZh: "整段只有一种机位高度（全平视/全仰/全俯），接触点没有仰角、落点没有俯拍" });
+  const melee = opts?.hasMelee ?? cameras.some((c) => c.kind === "contact");
+  if (melee && !cameras.some((c) => c.kind === "over_shoulder")) issues.push({ code: "no_over_shoulder", messageZh: "有近身交手但没有过肩镜：起手段应从攻方肩后看受方" });
+  if (melee && !cameras.some((c) => c.kind === "reaction")) issues.push({ code: "no_reaction", messageZh: "有交手但没有反应特写：接触后要看受方的脸" });
+  return issues;
 }

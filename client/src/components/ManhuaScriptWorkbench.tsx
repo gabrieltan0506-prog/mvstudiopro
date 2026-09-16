@@ -39,6 +39,7 @@ import { Manhua3dModelStudio, manhua3dModelCounts, manhua3dRigLookupCharacters }
 import { ManhuaWorldStudio, manhuaWorldCounts, type ManhuaStageFrameBindingDraft, type ManhuaWorldGenerateOptions, type ManhuaWorldLayoutActor, type ManhuaWorldLayoutSubmitOptions } from "@/components/canvas/ManhuaWorldStudio";
 import type { ManhuaStageCharacter } from "@/components/canvas/ManhuaWorldStagePreview";
 import { evaluateManhuaWorld3dEligibility } from "@shared/manhuaWorld3d";
+import { buildManhuaStateDerivePromptZh } from "@shared/manhuaCharacterStates";
 import { splitManhuaActionPlanForPrevis } from "@shared/manhuaActionPlanSplit";
 import { manhuaPrevisDraftFromExecutableShot } from "@shared/manhuaPrevisFromActionPlan";
 import { resolveManhuaCameraTempo } from "@shared/manhuaCameraTempo";
@@ -207,7 +208,7 @@ import {
 import {
   inferManhuaCastZhFromDialogue,
   parseManhuaEpisodeSegmentPlanFromMarkdown,
-  getManhuaSegmentIntentZh,
+  getManhuaSegmentDialogueZh, getManhuaSegmentIntentZh,
   type ManhuaEpisodeSegmentPlan,
 } from "@shared/manhuaEpisodeSegmentPlan";
 import { MANHUA_DIALOGUE_SILENCE_TOKEN } from "@shared/manhuaShotDialoguePersist";
@@ -478,6 +479,8 @@ type Props = {
     anchorId: string,
     duty: ManhuaCharacterPrimaryDuty,
     groupRefIds: string[],
+    /** 0916 状态变体：省略 = 常态 */
+    stateId?: string,
   ) => void;
   onCustomAssetReviewAccept?: (id: string) => void;
   onStandardizeCustomAsset?: (id: string, quality: ManhuaAssetStandardizeQuality) => void | Promise<void>;
@@ -2528,7 +2531,7 @@ export default function ManhuaScriptWorkbench({
       .map((shot) => {
         const hasContact = shot.events.some((e) => e.kind === "attack" || e.kind === "land" || e.kind === "emerge");
         const tempo = resolveManhuaCameraTempo({ intentZh, directionCardId: directionCanon?.mainCardId ?? null, hasContact });
-        return manhuaPrevisDraftFromExecutableShot({ plan: manhuaActionPlan, shot, resolvedCamera: null, aspect, links, tempo, cameraStyle });
+        return manhuaPrevisDraftFromExecutableShot({ plan: manhuaActionPlan, shot, resolvedCamera: null, aspect, links, tempo, cameraStyle, dialogueZh: getManhuaSegmentDialogueZh(shootablePlan, activeSegNo) });
       });
   }, [manhuaActionPlan, focusEpisode, activeSegNo, assetLockRegistry.byRole.character, activeClip?.previsStudio?.spec.aspect, activeClip?.previsStudio?.cameraStyle, shootablePlan, directionCanon?.mainCardId]);
   const modelStudioCharacters = useMemo(
@@ -6272,6 +6275,7 @@ export default function ManhuaScriptWorkbench({
                             </button>
                             {ref.role === "character" && primaryDuty && onSetCharacterPrimaryRef ? (
                               primaryAnchor ? (
+                                <>
                                 <button
                                   type="button"
                                   aria-pressed={isPrimaryRef}
@@ -6303,6 +6307,42 @@ export default function ManhuaScriptWorkbench({
                                     <span className="font-normal text-white/35">· 候选保留</span>
                                   ) : null}
                                 </button>
+                                {primaryAnchor.statesZh?.length ? (
+                                  <div className="flex flex-col gap-1 border-b border-white/10 bg-black/30 px-2 py-1" data-manhua-state-variants>
+                                    <label className="flex items-center gap-1 text-[9px] text-white/60">
+                                      状态
+                                      <select
+                                        aria-label={`${primaryAnchor.nameZh} 状态变体`}
+                                        className="flex-1 rounded border border-white/10 bg-black/45 px-1 py-0.5 text-[9px] text-white/80"
+                                        disabled={needsReview}
+                                        value={(ref.primaryBindings || []).find((b) => b.anchorId === primaryAnchor.id && b.duty === primaryDuty)?.stateId || ""}
+                                        onChange={(e) => onSetCharacterPrimaryRef(ref.id, primaryAnchor.id, primaryDuty, primaryGroupRefIds, e.target.value || undefined)}
+                                      >
+                                        <option value="">常态（默认锁脸）</option>
+                                        {primaryAnchor.statesZh.map((st) => (
+                                          <option key={st.id} value={st.id}>{st.nameZh}{st.deltaZh ? `：${st.deltaZh.slice(0, 12)}` : ""}</option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                    {onEditCustomAsset && isPrimaryRef ? (
+                                      <div className="flex flex-wrap gap-1">
+                                        {primaryAnchor.statesZh.map((st) => (
+                                          <button
+                                            key={st.id}
+                                            type="button"
+                                            disabled={!outlineComplete || assetStandardizeBusyId != null}
+                                            title={`用这张常态图编辑派生「${st.nameZh}」状态图（只加差异，其余不动；扣改图积分）；出来后把新图的状态设为「${st.nameZh}」`}
+                                            onClick={() => onEditCustomAsset(ref.id, buildManhuaStateDerivePromptZh({ nameZh: primaryAnchor.nameZh, stateZh: st.nameZh, deltaZh: st.deltaZh }))}
+                                            className="rounded border border-violet-300/40 bg-violet-500/10 px-1.5 py-0.5 text-[9px] text-violet-100 hover:bg-violet-500/25 disabled:opacity-40"
+                                          >
+                                            派生：{st.nameZh}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                                </>
                               ) : claimEntry === "confirm_script" && onOpenWriterEditor ? (
                                 <button
                                   type="button"

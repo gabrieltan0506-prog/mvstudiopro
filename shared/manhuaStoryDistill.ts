@@ -9,6 +9,8 @@
  */
 
 import type { ManhuaEpisodeSegmentBeat } from "./manhuaEpisodeSegmentPlan.js";
+import { resolveManhuaCameraTempo } from "./manhuaCameraTempo.js";
+import { scheduleManhuaSegmentShots, type ManhuaScheduledShot } from "./manhuaShotScheduler.js";
 import {
   MANHUA_EPISODE_SEGMENT_DURATION_SEC,
   extractManhuaDialogueSpeakerName,
@@ -48,9 +50,12 @@ export const MANHUA_KEYFRAME_ROLE_LABEL_ZH: Record<ManhuaKeyframeRole, string> =
 /** 导戏单/静帧编译用的最小镜位（可与 ManhuaWorkbenchShot 互通） */
 export type ManhuaDistillShot = {
   index: number;
+  sourceSegmentIndex?: number;
   cameraZh: string;
   actionZh: string;
   dialogueZh?: string;
+  dialogueSuppressed?: boolean;
+  additionalDialogueCues?: Array<{ dialogueZh: string; speakerNameZh?: string }>; 
   /** 原剧本对白说话人名，供成片阶段绑定真实 @角色N。 */
   dialogueSpeakerNameZh?: string;
   emotionZh?: string;
@@ -128,6 +133,18 @@ export function resolveKeyframeRoleInSegment(
   return "edit_out";
 }
 
+/** 静帧角色 → 调度镜表里的机位句：起幅=建立镜/首镜，戏核=关键句那一镜，桥接=反应镜（没有则关键句后一镜），落幅=末镜 */
+function scheduledShotForRole(role: ManhuaKeyframeRole, shots: readonly ManhuaScheduledShot[], keyLineIndex: number): ManhuaScheduledShot | undefined {
+  if (!shots.length) return undefined;
+  const first = shots[0]!;
+  const last = shots[shots.length - 1]!;
+  // 关键句可能被并进同一人连说的一镜（lineIndex 只记组首句）：取 lineIndex ≤ 关键句的最后一镜
+  const key = shots.find((s) => s.lineIndex === keyLineIndex) || [...shots].reverse().find((s) => s.lineIndex != null && s.lineIndex <= keyLineIndex) || shots.find((s) => s.kind === "single") || shots[Math.min(1, shots.length - 1)]!;
+  const reaction = shots.find((s) => s.kind === "reaction");
+  const pick = role === "start" ? first : role === "key_action" ? key : role === "bridge" ? reaction || shots[Math.min(shots.indexOf(key) + 1, shots.length - 1)]! : last;
+  return pick;
+}
+
 function roleCameraZh(role: ManhuaKeyframeRole, lightingCameraZh: string): string {
   const base = String(lightingCameraZh || "").trim();
   if (role === "start") {
@@ -181,23 +198,36 @@ export function buildWorkbenchShotsFromSegmentPlan(
   let global = 0;
   for (const beat of segs) {
     const dialogueLines = extractManhuaSegmentDialogueQuotes(beat.dialogueZh || "");
+    // 0916 运镜调度生成器：对白戏按过肩公式出机位（谁在前景/过谁肩/拍谁脸 → 景别推情绪 → 关键句反应）
+    const hasContact = /打|劈|掌|砸|撞|踢|扑|抓|刺|斩|剑|拳|爆|冲/.test(`${beat.performanceZh || ""}${beat.intentZh || ""}`);
+    const tempo = resolveManhuaCameraTempo({ intentZh: beat.intentZh, hasContact });
+    const schedule = scheduleManhuaSegmentShots({ durationSec: MANHUA_EPISODE_SEGMENT_DURATION_SEC, dialogueZh: beat.dialogueZh, tempoTier: tempo.tier, hasContact });
     for (let k = 1; k <= per; k++) {
       global += 1;
       const role = resolveKeyframeRoleInSegment(k, per);
+      const picked = scheduledShotForRole(role, schedule.shots, schedule.keyLineIndex);
+      // 静帧只绑定所选镜的发话；反应/建立镜不冒充发话。完整对白仍保留在段表。
+      const indices = picked?.lineIndices ?? (picked?.lineIndex != null ? [picked.lineIndex] : []);
+      const pickedLines = indices.map(i => dialogueLines[i]).filter(Boolean);
+      const pickedDialogue = pickedLines[0] || "";
+      const cleanDialogue = (line: string) => line.replace(/^([\u4e00-\u9fff·A-Za-z]{2,12})\s*[：:]\s*/, "").replace(/^[「『"“]|[」』"”]$/g, "").trim();
       out.push({
         index: global,
+        sourceSegmentIndex: beat.index,
         durationSec: 0,
-        cameraZh: roleCameraZh(role, beat.lightingCameraZh),
+        cameraZh: picked?.promptZh.slice(0, 120) || roleCameraZh(role, beat.lightingCameraZh),
         actionZh: roleActionZh(role, beat),
-        dialogueZh: dialogueLines[k - 1]
-          ? String(dialogueLines[k - 1])
+        dialogueZh: pickedDialogue
+          ? String(pickedDialogue)
               .replace(/^([\u4e00-\u9fff·A-Za-z]{2,12})\s*[：:]\s*/, "")
               .replace(/^[「『"“]|[」』"”]$/g, "")
               .trim()
           : undefined,
-        dialogueSpeakerNameZh: dialogueLines[k - 1]
-          ? extractManhuaDialogueSpeakerName(dialogueLines[k - 1]) || undefined
+        dialogueSpeakerNameZh: pickedDialogue
+          ? extractManhuaDialogueSpeakerName(pickedDialogue) || undefined
           : undefined,
+        dialogueSuppressed: !pickedLines.length,
+        ...(pickedLines.length > 1 ? { additionalDialogueCues: pickedLines.slice(1).map(line => ({ dialogueZh: cleanDialogue(line), speakerNameZh: extractManhuaDialogueSpeakerName(line) || undefined })) } : {}),
         emotionZh:
           beat.performanceZh ||
           (beat.dialogueZh ? "贴合对白施压/反应" : undefined),

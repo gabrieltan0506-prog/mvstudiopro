@@ -47,7 +47,7 @@ import {
   syncManhuaClipAssetEdges,
 } from "./canvasDramaStudio";
 import { buildManhuaAssetLockRegistry, buildManhuaAssetPathById, parseManhuaAssetImageBindBlock, resolveManhuaAssetImageBindRows } from "@shared/manhuaAssetLockRegistry";
-import { parseManhuaEpisodeSegmentPlanFromMarkdown } from "@shared/manhuaEpisodeSegmentPlan";
+import { parseManhuaEpisodeSegmentPlanFromMarkdown, buildManhuaEpisodeSegmentPlanFixtureMarkdown } from "@shared/manhuaEpisodeSegmentPlan";
 import { upsertShotDialogueSection } from "@shared/manhuaShotDialoguePersist";
 import { upsertManhuaClipUserSupplement } from "@shared/manhuaClipUserSupplement";
 import {
@@ -3396,4 +3396,24 @@ describe("manhua layout size/gap invariants", () => {
       MANHUA_LAYOUT_ASSET_H + 16,
     );
   });
+});
+
+
+it("状态变更令静帧源指纹失效，铺段消费不覆盖回旧指纹", () => {
+  const text = buildManhuaEpisodeSegmentPlanFixtureMarkdown();
+  const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(text);
+  const anchor = { id: "hero", role: "character" as const, nameZh: "墨屠", lookZh: "黑衣", promptZh: "黑衣", statesZh: [{ id: "st_hurt", nameZh: "肩伤", deltaZh: "肩部流血" }] };
+  const opts = { segmentPlan: plan, customRefs: [{ id: "hurt", role: "character" as const, source: "generated" as const, refDuty: "identity" as const, claimedAnchorIds: ["hero"], labelZh: "墨屠", url: "https://example.com/hurt.png", primaryBindings: [{ anchorId: "hero", duty: "identity" as const, stateId: "st_hurt" }] }], assetCanon: { characters: [anchor], props: [], locations: [], episodeMainSceneId: {} } };
+  const reverse = { ...defaultCanvasBlock("text", 0, 0), id: "reverse-e01-test", episodeIndex: 1, outputText: text };
+  const keyart = { ...defaultCanvasBlock("image", 0, 0), id: "keyart-e01-s01-test", episodeIndex: 1 };
+  const a = expandManhuaShotKeyartsAfterReverse([reverse, keyart], [], reverse.id, opts);
+  const prior = a.blocks.find(b => b.id === keyart.id)!.manhuaKeyartSourceState!.required;
+  const stored = a.blocks.map(b => b.id === keyart.id ? { ...b, manhuaKeyartSourceState: { ...b.manhuaKeyartSourceState!, generatedFor: prior } } : b);
+  const nextPlan = { ...plan, segments: plan.segments.map((s, i) => i === 0 ? { ...s, castZh: "墨屠（肩伤）" } : s) };
+  const b = expandManhuaShotKeyartsAfterReverse(stored, [], reverse.id, { ...opts, segmentPlan: nextPlan });
+  const changed = b.blocks.find(b => b.id === keyart.id)!;
+  expect(changed.prompt).toContain("肩部流血");
+  expect(changed.manhuaKeyartSourceState!.required).not.toBe(prior);
+  expect(changed.manhuaKeyartSourceState!.generatedFor).toBe(prior);
+  expect(JSON.parse(changed.manhuaKeyartSourceState!.required).stateNoteZh).toContain("肩部流血");
 });

@@ -4,6 +4,7 @@
  */
 
 import { classifyManhuaDirectionSceneType, resolveDirectorStyleBlocks, type ManhuaDirectionCanon } from "@shared/manhuaDirectionCanon";
+import { formatManhuaCastStateNoteZh, resolveManhuaStateExcludedRefIds } from "@shared/manhuaCharacterStates";
 import {
   formatManhuaDirectionSelectionMarker,
   readManhuaDirectionCanonFromBlocks,
@@ -2010,12 +2011,12 @@ function mergeManhuaPlanBeatsForSegment(
   segShots: ManhuaWorkbenchShot[],
 ): ManhuaEpisodeSegmentPlan["segments"][number] | undefined {
   if (!segmentPlan?.segments?.length) return undefined;
-  if (JSON.stringify(buildWorkbenchShotsFromSegmentPlan(segmentPlan)) !== JSON.stringify(shots)) return undefined;
   const sorted = [...segmentPlan.segments].sort((a, b) => a.index - b.index);
-  const planIndexes = Array.from(
-    new Set(segShots.map((s) => Math.floor((s.index - 1) / MANHUA_KEYARTS_PER_SEGMENT_MIN))),
-  ).sort((a, b) => a - b);
-  const beats = planIndexes.map((i) => sorted[i]).filter((b): b is NonNullable<typeof b> => Boolean(b));
+  const explicitSource = segShots.length > 0 && segShots.every(s => s.sourceSegmentIndex != null);
+  if (!explicitSource && JSON.stringify(buildWorkbenchShotsFromSegmentPlan(segmentPlan)) !== JSON.stringify(shots)) return undefined;
+  const planIndexes = Array.from(new Set(segShots.map(s => explicitSource ? s.sourceSegmentIndex! : sorted[Math.floor((s.index - 1) / MANHUA_KEYARTS_PER_SEGMENT_MIN)]?.index))).filter((i): i is number => i != null);
+  const beats = planIndexes.map(i => sorted.find(b => b.index === i)).filter((b): b is NonNullable<typeof b> => Boolean(b));
+  if (explicitSource && beats.length !== planIndexes.length) throw new Error("镜头来源段已变更，请重新核对段表后再生成");
   if (!beats.length) return undefined;
   if (beats.length === 1) return beats[0];
   const first = (key: "castZh" | "wardrobePropZh" | "sceneZh" | "intentZh" | "performanceZh" | "lightingCameraZh" | "paletteZh") =>
@@ -2278,6 +2279,12 @@ export function ensureManhuaFragmentClips(
     const intentZh = String(seg.shots.find((s) => s.intentZh)?.intentZh || "").trim();
     // 只有同源计划可补充原段语义；自动段号不是旧计划段号。
     const planBeat = mergeManhuaPlanBeatsForSegment(segmentPlan, shots, seg.shots);
+    const excludedStateRefs = resolveManhuaStateExcludedRefIds(planBeat?.castZh || "", opts?.assetCanon?.characters || [], mergedCustomRefs);
+    const segmentRegistry: ManhuaAssetLockRegistry = {
+      ...lockRegistry,
+      slots: lockRegistry.slots.filter(s => !excludedStateRefs.has(s.id)),
+      byRole: { ...lockRegistry.byRole, character: lockRegistry.byRole.character.filter(s => !excludedStateRefs.has(s.id)) },
+    };
     const dialogueLines = planBeat ? extractManhuaSegmentDialogueQuotes(planBeat.dialogueZh) : [];
     const sceneFromKeyart = extractManhuaSceneHintFromPrompt(primary.prompt);
     const sceneFromPlan = String(planBeat?.sceneZh || "").trim();
@@ -2336,7 +2343,7 @@ export function ensureManhuaFragmentClips(
       wardrobePropZh: planBeat?.wardrobePropZh,
       sceneZh: sceneFromPlan || sceneFromKeyart || undefined,
       propHaystack,
-      registry: lockRegistry,
+      registry: segmentRegistry,
       assetCanon: opts?.assetCanon,
       mainSceneId: mainScene?.id,
       castCount,
@@ -2448,7 +2455,7 @@ export function ensureManhuaFragmentClips(
       .filter(([cid]) => segAssets.characterIds.includes(cid))
       .map(([, id]) => id);
     for (const id of selectedLookIds) {
-      if (!lockRegistry.slots.some((s) => s.id === id && s.role === "wardrobe")) {
+      if (!segmentRegistry.slots.some((s) => s.id === id && s.role === "wardrobe")) {
         throw new Error("本段所选造型缺少可用参考图，请重新挂图并确认后再生成。");
       }
     }
@@ -2456,15 +2463,15 @@ export function ensureManhuaFragmentClips(
       const originalShot = shots.find(shot => shot.index === resolveKeyartShotIndex(keyart.id, keyart.prompt));
       const sourceBoundKeyart = originalShot ? {
         ...keyart,
-        manhuaKeyartSourceState: { ...keyart.manhuaKeyartSourceState, required: JSON.stringify(originalShot) },
+        manhuaKeyartSourceState: { ...keyart.manhuaKeyartSourceState, required: JSON.stringify(withManhuaShotStateNote(originalShot, shots, opts)) },
       } : keyart;
       refreshedKeyarts.set(keyart.id, compileManhuaKeyartLookBindings(sourceBoundKeyart, {
-        registry: lockRegistry,
+        registry: segmentRegistry,
         allowedIds: segAssets.allowedIds,
         activeLookSetIds: activeLookIds,
       }));
     }
-    const assetLockBlock = formatManhuaAssetImageBindBlock(lockRegistry, 8, {
+    const assetLockBlock = formatManhuaAssetImageBindBlock(segmentRegistry, 8, {
       activeLookSetIds: activeLookIds,
       allowedIds: segAssets.allowedIds,
     });
@@ -3399,6 +3406,24 @@ export function expectedMinManhuaClipAssetEdges(bindRowCount: number): number {
 /**
  * 反推完成后：按分镜展开多张关键静帧，并为每镜铺片段成片节点。
  */
+
+/** 0916 状态变体：按镜所在段的「角色：墨屠（肩伤）」把状态句挂到镜上（进静帧提示词「角色状态硬锁」） */
+function withManhuaShotStateNote(shot: ManhuaWorkbenchShot, shots: readonly ManhuaWorkbenchShot[], opts?: ManhuaFragmentClipEnsureOptions): ManhuaWorkbenchShot {
+  const plan = opts?.segmentPlan;
+  const anchors = opts?.assetCanon?.characters || [];
+  if (!plan?.segments.length || !anchors.length || !shots.length) return shot;
+  const seg = plan.segments.find(s => s.index === shot.sourceSegmentIndex);
+  if (!seg) {
+    if (plan.segments.some(s => formatManhuaCastStateNoteZh(s.castZh, anchors))) {
+      throw new Error("角色状态所属段未绑定，请从当前可拍表重新铺镜后再生成；旧图保留。");
+    }
+    return shot;
+  }
+  const stateNoteZh = seg ? formatManhuaCastStateNoteZh(seg.castZh, anchors) : "";
+  const { stateNoteZh: _old, ...clean } = shot;
+  return stateNoteZh ? { ...clean, stateNoteZh } : clean;
+}
+
 export function expandManhuaShotKeyartsAfterReverse(
   blocks: CanvasBlock[],
   edges: CanvasEdge[],
@@ -3461,8 +3486,8 @@ export function expandManhuaShotKeyartsAfterReverse(
       x: primary.x + Math.min(shot.index, 3) * 28,
       y: primary.y + (shot.index - 1) * 36,
       parentId: reverse.id,
-      prompt: attachManhuaKeyartShotInject(basePrompt, shot),
-      manhuaKeyartSourceState: { required: JSON.stringify(shot) },
+      prompt: attachManhuaKeyartShotInject(basePrompt, withManhuaShotStateNote(shot, shots, opts)),
+      manhuaKeyartSourceState: { required: JSON.stringify(withManhuaShotStateNote(shot, shots, opts)) },
       status: "idle",
       outputUrl: undefined,
       outputUrls: [],
@@ -3489,8 +3514,8 @@ export function expandManhuaShotKeyartsAfterReverse(
       // 只更新分镜注入文案，保留 status / outputUrl
       return {
         ...b,
-        prompt: attachManhuaKeyartShotInject(base, shot),
-        manhuaKeyartSourceState: { ...b.manhuaKeyartSourceState, required: JSON.stringify(shot) },
+        prompt: attachManhuaKeyartShotInject(base, withManhuaShotStateNote(shot, shots, opts)),
+        manhuaKeyartSourceState: { ...b.manhuaKeyartSourceState, required: JSON.stringify(withManhuaShotStateNote(shot, shots, opts)) },
       };
     });
   nextBlocks = [...nextBlocks, ...extras];

@@ -219,6 +219,22 @@ describe("manhuaCustomAssetRefs", () => {
     expect(changedDuty.find((ref) => ref.id === "b")?.primaryBindings).toEqual([]);
   });
 
+  it("状态变体：设状态图不清常态图、两者都进生成；同一张图换状态不留双绑定；无 stateId 的旧绑定 key 不变", () => {
+    const refs = normalizeManhuaCustomAssetRefs([
+      { id: "base", url: "https://cdn.example/base.png", role: "character", refDuty: "identity", claimedAnchorIds: ["wa_char_a"] },
+      { id: "hurt", url: "https://cdn.example/hurt.png", role: "character", refDuty: "identity", claimedAnchorIds: ["wa_char_a"] },
+    ]);
+    const withBase = selectManhuaCharacterPrimaryRef(refs, { refId: "base", anchorId: "wa_char_a", duty: "identity" });
+    expect(withBase.find((r) => r.id === "base")?.primaryBindings).toEqual([{ anchorId: "wa_char_a", duty: "identity" }]);
+    const withState = selectManhuaCharacterPrimaryRef(withBase, { refId: "hurt", anchorId: "wa_char_a", duty: "identity", stateId: "st_x" });
+    expect(findManhuaCharacterPrimaryRefId(withState, { anchorId: "wa_char_a", duty: "identity" })).toBe("base");
+    expect(findManhuaCharacterPrimaryRefId(withState, { anchorId: "wa_char_a", duty: "identity", stateId: "st_x" })).toBe("hurt");
+    expect(consumableManhuaCustomAssetRefs(withState).map((r) => r.id).sort()).toEqual(["base", "hurt"]);
+    const flipped = selectManhuaCharacterPrimaryRef(withState, { refId: "hurt", anchorId: "wa_char_a", duty: "identity" });
+    expect(flipped.find((r) => r.id === "hurt")?.primaryBindings).toEqual([{ anchorId: "wa_char_a", duty: "identity" }]);
+    expect(findManhuaCharacterPrimaryRefId(flipped, { anchorId: "wa_char_a", duty: "identity", stateId: "st_x" })).toBeNull();
+  });
+
   it("待确认图片不能成为当前图", () => {
     const refs = [{
       id: "pending",

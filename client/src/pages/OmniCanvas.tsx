@@ -52,6 +52,8 @@ import {
   type ManhuaMultiviewView,
 } from "@shared/manhuaMultiview";
 import { evaluateManhuaWorld3dEligibility, toManhuaWorld3dRef } from "@shared/manhuaWorld3d";
+import { evaluateManhuaStateContinuity } from "@shared/manhuaCharacterStates";
+import { relayoutManhuaSegmentPlanForEngine, replaceManhuaEpisodeSegmentPlanInMarkdown } from "@shared/manhuaEngineRelayout";
 import type { ManhuaStageFrameBindingDraft, ManhuaWorldGenerateOptions, ManhuaWorldLayoutSubmitOptions } from "@/components/canvas/ManhuaWorldStudio";
 import { copyText } from "@/lib/copyText";
 import { cropManhuaSheet2x2 } from "@/lib/manhuaSheetCropApi";
@@ -1405,11 +1407,13 @@ export default function OmniCanvas() {
     const body = writerPack.episodes.find((ep) => ep.index === writerFocusEpisode)?.body || "";
     const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(body);
     const quality = plan.segments.length ? evaluateManhuaEpisodeSegmentPlanQuality(plan, { mode: "actual" }) : null;
+    // 0916 状态变体连续性：受伤后回常态没写恢复 / 请求了人物表没定义的状态 → 进顾问门禁
+    const stateIssues = plan.segments.length ? evaluateManhuaStateContinuity(plan.segments, projectBible?.assetCanon?.characters || []).map((i) => i.messageZh) : [];
     return {
-      errors: [...density.errors, ...(quality?.issues || [])],
+      errors: [...density.errors, ...(quality?.issues || []), ...stateIssues],
       segments: plan.segments.map((seg) => ({ intentZh: seg.intentZh, dialogueZh: seg.dialogueZh, castZh: seg.castZh })),
     };
-  }, [writerPack, writerLayoutProfile, writerFocusEpisode]);
+  }, [writerPack, writerLayoutProfile, writerFocusEpisode, projectBible?.assetCanon?.characters]);
   const advisorProject = useMemo(() => buildManhuaAdvisorProject({
     pack: writerPack,
     bible: projectBible,
@@ -6763,6 +6767,7 @@ export default function OmniCanvas() {
       anchorId: string,
       duty: ManhuaCharacterPrimaryDuty,
       groupRefIds: string[],
+      stateId?: string,
     ) => {
       setCustomAssetRefs((prev) =>
         selectManhuaCharacterPrimaryRef(prev, {
@@ -6770,9 +6775,10 @@ export default function OmniCanvas() {
           anchorId,
           duty,
           groupRefIds,
+          ...(stateId ? { stateId } : {}),
         }),
       );
-      toast.success(duty === "identity" ? "已设为当前锁脸图" : "已设为当前妆造图", {
+      toast.success(stateId ? "已设为该状态的当前图（与常态图并存）" : duty === "identity" ? "已设为当前锁脸图" : "已设为当前妆造图", {
         description: "其他版本仍保留，但不会再作为额外角色进入生成。",
       });
     },
@@ -11119,6 +11125,39 @@ export default function OmniCanvas() {
                       if (next === "seedance-2.5" && !canUseSeedance25) {
                         toast.error(seedance25Gate.message || SEEDANCE_25_PAID_ONLY_LABEL_ZH);
                         return;
+                      }
+                      // 0916 PR-14 双引擎重铺：段长变了（15s ↔ 30s）且本集已有可拍表 → 先给用户看重铺说明，确认才改稿
+                      {
+                        const toProfile = resolveManhuaSeedanceLayoutProfile(next, writerLengthTierId);
+                        const ep = writerPack?.episodes.find((e) => e.index === writerFocusEpisode);
+                        const plan = ep ? parseManhuaEpisodeSegmentPlanFromMarkdown(ep.body || "") : null;
+                        if (plan && plan.segments.length && toProfile.durationSecPerSegment !== writerLayoutProfile.durationSecPerSegment) {
+                          const relayout = relayoutManhuaSegmentPlanForEngine(plan, {
+                            fromDurationSec: writerLayoutProfile.durationSecPerSegment,
+                            toDurationSec: toProfile.durationSecPerSegment,
+                            toSegmentMax: toProfile.segmentMax,
+                          });
+                          const apply =
+                            relayout.dialoguePreserved &&
+                            window.confirm(
+                              `切到「${toProfile.labelZh}」需要重铺第 ${writerFocusEpisode} 集可拍表：\n${relayout.notesZh.join("\n")}\n\n对白句子一句不改，只重排段落。确定＝重铺并切换；取消＝只切引擎、可拍表不动（成片时会按新段长拦）。`,
+                            );
+                          if (apply) {
+                            setWriterPack((prev) =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    episodes: prev.episodes.map((e) =>
+                                      e.index === writerFocusEpisode ? { ...e, body: replaceManhuaEpisodeSegmentPlanInMarkdown(e.body || "", relayout.plan) } : e,
+                                    ),
+                                  }
+                                : prev,
+                            );
+                            toast.success(`第 ${writerFocusEpisode} 集可拍表已重铺为 ${relayout.plan.segments.length} 段×${toProfile.durationSecPerSegment}s，请回剧本工作室确认后再出片`);
+                          } else if (!relayout.dialoguePreserved) {
+                            toast.error("重铺后对白句集合不一致，已放弃自动重铺，只切换引擎");
+                          }
+                        }
                       }
                       setWriterVideoModel(next as (typeof writerLayoutChoices)[number]["videoModel"]);
                       setWriterVideoModelPicked(true);
