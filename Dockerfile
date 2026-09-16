@@ -62,6 +62,15 @@ RUN blender --background --factory-startup --version | head -n 1 \
     | tee /tmp/auto-rig-build-smoke.log \
  && grep -q "^TEST_OK" /tmp/auto-rig-build-smoke.log
 
+# 跨进程摘要稳定性：线上「检查」与「绑定」是两次独立 Blender 进程，摘要不稳绑定必被拒。
+# 同一脚本跑两遍再比对——同进程跑两次抓不到这个（2026-09-16 线上首跑真的因此失败）。
+RUN xvfb-run -a blender --background --factory-startup --disable-autoexec --threads 1 --python-exit-code 1 \
+    --python server/scripts/test_auto_rig_digest.py -- /tmp/auto-rig-digest-1 \
+ && xvfb-run -a blender --background --factory-startup --disable-autoexec --threads 1 --python-exit-code 1 \
+    --python server/scripts/test_auto_rig_digest.py -- /tmp/auto-rig-digest-2 \
+ && diff /tmp/auto-rig-digest-1/digest.json /tmp/auto-rig-digest-2/digest.json \
+ && cat /tmp/auto-rig-digest-1/digest.json
+
 # 跳过 postinstall 脚本（youtube-dl-exec 不再自行下载二进制）
 # 并告知 youtube-dl-exec 使用系统 yt-dlp
 RUN pnpm install --ignore-scripts

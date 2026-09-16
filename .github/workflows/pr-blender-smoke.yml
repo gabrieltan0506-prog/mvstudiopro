@@ -38,6 +38,11 @@ jobs:
             mvstudiopro-pr-smoke:${{ github.sha }} \
             sh -c 'blender --background --factory-startup --version | grep -m1 "^Blender " | tee /out/blender-version.txt \
               && xvfb-run -a blender --background --factory-startup --disable-autoexec --threads 1 --python-exit-code 1 \
+                 --python server/scripts/test_auto_rig_digest.py -- /out/digest-1 \
+              && xvfb-run -a blender --background --factory-startup --disable-autoexec --threads 1 --python-exit-code 1 \
+                 --python server/scripts/test_auto_rig_digest.py -- /out/digest-2 \
+              && diff /out/digest-1/digest.json /out/digest-2/digest.json \
+              && xvfb-run -a blender --background --factory-startup --disable-autoexec --threads 1 --python-exit-code 1 \
                  --python server/scripts/test_auto_rig_proxy.py -- /out/run' \
             2>&1 | tee artifacts/auto-rig-smoke/smoke.log
           # 容器以 root 写出（mkdtemp 目录 0700），runner 用户扫不进去 → 上传前放开读权限
@@ -58,5 +63,6 @@ jobs:
             artifacts/auto-rig-smoke/tested-sha.txt
             artifacts/auto-rig-smoke/run/**/*.png
             artifacts/auto-rig-smoke/run/**/*.json
+            artifacts/auto-rig-smoke/digest-*/digest.json
           if-no-files-found: warn
           retention-days: 14
