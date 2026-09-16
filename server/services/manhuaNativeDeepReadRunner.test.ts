@@ -3560,7 +3560,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(result.episodes[0]!.result.segmentCount).toBe(9);
   });
 
-  it("0906 观察锁判坏：同档先重试一次，再坏才换档只重整形这一批；其他批不动，整集不死", async () => {
+  it("0916 观察锁失败按原稿恢复，两个批次各调用一次", async () => {
     const segments = Array.from({ length: 9 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
     const base = makeGlmStructuringStub();
     const seen: Array<{ segs: string; callId?: string; gatewayOrder?: readonly string[]; temperature?: number }> = [];
@@ -3589,25 +3589,11 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentCacheSeriesKey: "lock_retry_9_segments",
       onModelReceipt: (receipt) => { receipts.push(receipt as unknown as Record<string, unknown>); },
     }, deps);
-    // 第一批 1 次；第二批原发 + 同档重试 + 换档共 3 次。
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(4);
-    const mid = seen.filter((row) => row.segs === "5,6,7,8");
-    expect(mid).toHaveLength(3);
-    expect(mid[0]!.callId).not.toMatch(/-lockretry/);
-    expect(mid[1]!.callId).toMatch(/-lockretry1$/);
-    expect(mid[2]!.callId).toMatch(/-lockretry2$/);
-    // 第 2 次仍同档首发；第 3 次把交坏卷的档排到链尾
-    expect(mid[1]!.gatewayOrder?.[0]).toBe(mid[0]!.gatewayOrder?.[0]);
-    expect(mid[2]!.gatewayOrder?.[0]).not.toBe(mid[0]!.gatewayOrder?.[0]);
-    expect(mid[2]!.gatewayOrder?.at(-1)).toBe(mid[0]!.gatewayOrder?.[0]);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
+    expect(seen.filter(row => row.segs === "5,6,7,8")).toHaveLength(1);
     expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(2);
-    const retryReceipts = receipts.filter((row) => row.route === "structuring_retry_pending");
-    expect(retryReceipts).toHaveLength(2);
-    expect(String(retryReceipts[0]!.model)).toContain("同档降温到 0.75 再试一次");
-    expect(String(retryReceipts[1]!.model)).toContain("换下一档重整形这一批");
-    // 同档重试降温 0.75；换档后回到冻结首发温度
-    expect(mid[1]!.temperature).toBe(0.75);
-    expect(mid[2]!.temperature).toBeUndefined();
+    expect(receipts.filter(row => row.route === "structuring_retry_pending")).toHaveLength(0);
+    expect(JSON.stringify(result)).not.toContain("被模型改写过的观察");
     expect(result.episodes[0]!.result.segmentCount).toBe(9);
   });
 
@@ -3716,7 +3702,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(intact.raw).toBe(fixed.raw);
   });
 
-  it("0906 坏缓存直接砍：缓存输出过不了锁 → 删掉该对象、重整形、结果写回同名", async () => {
+  it("0916 坏缓存按原稿恢复，保留原缓存且不再整形", async () => {
     const segments = Array.from({ length: 3 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
     const base = makeGlmStructuringStub();
     const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => ({ ...(await base(prompt)), gateway: "plan_bj_qwen" }));
@@ -3736,9 +3722,9 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentCacheSeriesKey: "bad_cache_delete",
     }, deps);
     const removed = vi.mocked(deps.remove).mock.calls.map(([input]) => (input as { objectName: string }).objectName);
-    expect(removed.some((name) => /native-structuring-cache\/bad_cache_delete\/.*\/ep-003\/segments-0-1-2\/.*\.json$/.test(name))).toBe(true);
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
-    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(1);
+    expect(removed.some((name) => /native-structuring-cache\/bad_cache_delete\/.*\/ep-003\/segments-0-1-2\/.*\.json$/.test(name))).toBe(false);
+    expect(invokeGlmStructuring).not.toHaveBeenCalled();
+    expect(deps.writeStructuredBatchCache).not.toHaveBeenCalled();
     expect(result.episodes[0]!.result.segmentCount).toBe(3);
   });
 
@@ -4320,7 +4306,7 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     expect((result.episodes[0]!.result.reusableZh ?? "").length).toBeGreaterThan(1);
   });
 
-  it.each(["长标题", "缺分析"])("模型%s必须在原链有限重试，保留原输入后通过", async kind => {
+  it.each(["长标题", "缺分析"])("模型%s按原稿恢复，只调用一次且保留原输入", async kind => {
     const episode = makeEpisode([{ startSec: 0, endSec: 60 }]);
     const entry = makeCacheEntry({ episode, segmentIndex: 0 });
     const base = makeGlmStructuringStub();
@@ -4338,13 +4324,13 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     const deps = makeRunnerDeps({ readSegmentCache: vi.fn(async () => ({ entry, generation: "1" })) as never, invokeGlmStructuring: invokeGlmStructuring as never });
     const original = JSON.stringify(entry.raw);
     await runManhuaNativeDeepReadBatch({ episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey, structuringOnly: true }, deps);
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(entry.raw)).toBe(original);
     expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(deps.writeStructuredBatchCache).mock.calls[0]![0].raw).toMatchObject({ templateTitleZh: "短标题" });
+    expect(vi.mocked(deps.writeStructuredBatchCache).mock.calls[0]![0].raw).not.toHaveProperty("templateTitleZh");
   });
 
-  it("旧缓存分析不完整时保留缓存证据，重整形且不覆盖坏缓存", async () => {
+  it("旧缓存分析不完整时本地恢复，零模型调用且不覆盖缓存", async () => {
     const episode = makeEpisode([{ startSec: 0, endSec: 60 }]);
     const entry = makeCacheEntry({ episode, segmentIndex: 0 });
     const badRaw = { ...entry.raw, templateTitleZh: "正文混入标题".repeat(20) };
@@ -4352,7 +4338,7 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     const deps = makeRunnerDeps({ readSegmentCache: vi.fn(async () => ({ entry, generation: "1" })) as never,
       readStructuredBatchCache: vi.fn(async () => ({ raw: badRaw })) as never });
     await runManhuaNativeDeepReadBatch({ episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey, structuringOnly: true }, deps);
-    expect(deps.invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    expect(deps.invokeGlmStructuring).not.toHaveBeenCalled();
     expect(deps.remove).not.toHaveBeenCalled();
     expect(deps.writeStructuredBatchCache).not.toHaveBeenCalled();
     expect(JSON.stringify(badRaw)).toBe(original);
@@ -5199,7 +5185,7 @@ describe("逐镜动态观察的生产与消费", () => {
     expect(deterministicallyMergeNativeDeepReadRawSegments([wrappedSource]).shots).toEqual([shot]);
   });
 
-  it("实际批量入口在GLM丢观察后：同档重试一次、再换档，两路各两次都丢观察才停止；每次原始解析证据都保存（0906 用户令）", async () => {
+  it("实际批量入口GLM丢观察后本地补回，原始解析证据保留", async () => {
     const segments = [{ startSec: 0, endSec: 60 }];
     const base = makeGlmStructuringStub();
     const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => {
@@ -5211,10 +5197,10 @@ describe("逐镜动态观察的生产与消费", () => {
       invokeGlmStructuring: invokeGlmStructuring as never });
     await expect(runManhuaNativeDeepReadBatch({ segmentCacheSeriesKey: "hint-test", structuringModel: "glm-5.3",
       episodes: [{ episodeIndex: 1, segments, cacheSourceDigest: "a".repeat(64),
-      sourceDurationSec: 60, resolveNodes: async () => [] }] }, deps)).rejects.toThrow("hintZh丢失");
+      sourceDurationSec: 60, resolveNodes: async () => [] }] }, deps)).resolves.toHaveProperty("episodes");
     expect(deps.postVertex).toHaveBeenCalledTimes(1);
-    // 两条 GLM 路由各两次，读片缓存不重读。
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(4);
+    // 内容失败只按原稿恢复，GLM 不再提交。
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
     expect(deps.writeRawAttemptEvidence).toHaveBeenCalledTimes(1);
     expect(deps.writeParsedAttemptEvidence).toHaveBeenCalledTimes(1);
     expect(vi.mocked(deps.writeParsedAttemptEvidence).mock.calls[0]![0].parsed.shots).toEqual(
@@ -5279,7 +5265,7 @@ describe("0905 · 整形 JSON Schema（Qwen strict）", () => {
 });
 
 describe("0907 · 八坑补齐：费用闸 / 集级留存率不可达 / 三稿全败合并 / 提示词参考值与门禁分离", () => {
-  it("费用闸：判坏重试累计费用达 ¥20 即停，不再往下一档烧", async () => {
+  it("内容判坏只支付首发，直接恢复不等累计费用上限", async () => {
     const { NATIVE_DEEP_READ_STRUCTURING_BATCH_COST_CAP_CNY } = await import("./manhuaNativeDeepReadRunner");
     expect(NATIVE_DEEP_READ_STRUCTURING_BATCH_COST_CAP_CNY).toBe(20);
     const segments = Array.from({ length: 3 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
@@ -5294,8 +5280,8 @@ describe("0907 · 八坑补齐：费用闸 / 集级留存率不可达 / 三稿�
     await expect(runManhuaNativeDeepReadBatch({
       episodes: [{ episodeIndex: 1, resolveNodes: async () => [], segments, sourceDurationSec: 180, cacheSourceDigest: "c".repeat(64) }],
       segmentCacheSeriesKey: "cost_cap",
-    }, deps)).rejects.toThrow("费用闸");
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
+    }, deps)).resolves.toHaveProperty("episodes");
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
   });
 
   it("集级留存率闸不可达：各批留存率都过线时，确定性拼接不会再降到线下（拼接只合并同秒位同角色的重复镜）", async () => {
@@ -5383,7 +5369,7 @@ describe("0907 · 整形输出音轨块编号对不上段号", () => {
     expect(m.repairNativeDeepReadStructuredAudioChunks(mk([0, 1, 2, 4]), [0, 1, 2], true)).toBeNull();
   });
 
-  it("审查①：缓存里的坏音轨块（chunkIndex 越出段号）→ 当坏缓存删掉重整形，不再拼接后整集死", async () => {
+  it("缓存音轨编号错误按原稿恢复，不重整形", async () => {
     const segments = Array.from({ length: 3 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
     const base = makeGlmStructuringStub();
     const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => ({ ...(await base(prompt)), gateway: "openrouter" }));
@@ -5400,11 +5386,11 @@ describe("0907 · 整形输出音轨块编号对不上段号", () => {
       segmentCacheSeriesKey: "bad_cache_chunk",
     }, deps);
     expect(vi.mocked(deps.remove)).toHaveBeenCalled();
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    expect(invokeGlmStructuring).not.toHaveBeenCalled();
     expect(result.episodes[0]!.result.segmentCount).toBe(3);
   });
 
-  it("批次输出多一块音轨（chunkIndex 越出段号）→ 判坏走同档降温重试，第二发正常即入库", async () => {
+  it("输出越界音轨按原稿恢复，无第二发", async () => {
     const segments = Array.from({ length: 3 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
     const base = makeGlmStructuringStub();
     let calls = 0;
@@ -5423,7 +5409,7 @@ describe("0907 · 整形输出音轨块编号对不上段号", () => {
       episodes: [{ episodeIndex: 9, resolveNodes: async () => [], segments, sourceDurationSec: 180, cacheSourceDigest: "8".repeat(64) }],
       segmentCacheSeriesKey: "chunk_index_retry",
     }, deps);
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
     expect(result.episodes[0]!.result.segmentCount).toBe(3);
   });
 });
@@ -5734,4 +5720,19 @@ describe("音画覆盖补读与实测字数上限", () => {
       expect(JSON.stringify(schema)).not.toMatch(/18项内容|18字段逐项非空|至少覆盖.*90%/);
     }
   });
+});
+
+
+it("本地恢复保留有效GLM分析；原稿也不完整时仍拒绝且不编造", async () => {
+  const {recoverNativeStructuringFromSource} = await import("./manhuaNativeDeepReadRunner");
+  const rows = [makeSegmentPayload({segmentIndex:0,startSec:0,endSec:60})];
+  const raw = structuredClone(rows[0]!);
+  raw.templateTitleZh = "保留标题";
+  raw.classificationProseZh = {emotionZh:"情绪",narrativeZh:"叙事",performanceZh:"表演",audiovisualZh:"视听",audienceZh:"观众"};
+  (raw.shots as Record<string,unknown>[])[0]!.hintZh = "错误改写";
+  const fixed = recoverNativeStructuringFromSource(raw, rows, [0], true);
+  expect(fixed.templateTitleZh).toBe("保留标题");
+  expect(fixed.classificationProseZh).toEqual(raw.classificationProseZh);
+  expect(fixed.shots).toEqual(rows[0]!.shots);
+  expect(() => recoverNativeStructuringFromSource({}, [], [0], true)).toThrow();
 });
