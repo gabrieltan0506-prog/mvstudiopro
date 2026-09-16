@@ -10169,6 +10169,13 @@ export default function OmniCanvas() {
                   onImportPropSheetFile={importPropSheetFile}
                   onCustomAssetRoleChange={setCustomAssetRole}
                   onCustomAssetDutyChange={setCustomAssetDuty}
+                  onCustomAssetRigSourceChange={(characterRefId, rigSourceRefId) =>
+                    setCustomAssetRefs((prev) =>
+                      normalizeManhuaCustomAssetRefs(
+                        prev.map((r) => (r.id === characterRefId ? { ...r, rigSourceRefId: rigSourceRefId || undefined } : r)),
+                      ),
+                    )
+                  }
                   onCustomAssetLabelChange={setCustomAssetLabel}
                   onDetextCustomAsset={detextCustomAsset}
                   onEditCustomAsset={editCustomAsset}

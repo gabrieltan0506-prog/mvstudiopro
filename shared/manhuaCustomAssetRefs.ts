@@ -127,6 +127,11 @@ export type ManhuaCustomAssetRef = {
   world3d?: import("./manhuaWorld3d").ManhuaWorld3dRef;
   /** 0916 从 3D 世界导出的视角图：来源绑定（世界/镜/机位/人物）；没有绑定的视角图不能当正式关键帧来源 */
   stageFrame?: import("./manhuaWorld3d").ManhuaStageFrameBinding;
+  /**
+   * 0916 绑骨模型来源钉选（只在人物锁脸图上有意义）：指向同人物另一张候选图（如 A-pose 定妆）的 ref.id，
+   * 绑骨/白模/场景预览用那张图的模型；原定妆与高模保留。不指向时按「锁脸图优先，否则候选图」自动解析。
+   */
+  rigSourceRefId?: string;
 };
 
 const SCENE_TILE_SLOTS: ManhuaSceneTileSlot[] = [
@@ -467,6 +472,9 @@ export function normalizeManhuaCustomAssetRefs(
       multiviewDraft: normalizeManhuaMultiviewDraft((o as { multiviewDraft?: unknown }).multiviewDraft),
       world3d: normalizeManhuaWorld3dRef((o as { world3d?: unknown }).world3d),
       stageFrame: normalizeManhuaStageFrameBinding((o as { stageFrame?: unknown }).stageFrame),
+      ...(String((o as { rigSourceRefId?: unknown }).rigSourceRefId || "").trim()
+        ? { rigSourceRefId: String((o as { rigSourceRefId?: unknown }).rigSourceRefId).trim().slice(0, 100) }
+        : {}),
     });
     if (out.length >= max) break;
   }

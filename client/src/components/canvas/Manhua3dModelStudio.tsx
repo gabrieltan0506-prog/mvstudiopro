@@ -23,6 +23,12 @@ export type Manhua3dModelStudioCharacter = {
   labelZh: string;
   thumbUrl?: string;
   eligibility: ManhuaAsset3dEligibility;
+  /**
+   * 0916 绑骨模型来源：锁脸图没就绪模型时可用同人物候选图（如 A-pose 定妆）的模型；
+   * 绑骨/白模/场景预览都按它取模型，绑骨编辑器按 refId 开（服务端绑骨任务挂在该 ref 上）。
+   */
+  rigSource?: import("@shared/manhuaRigSource").ManhuaRigSource;
+  rigOptions?: import("@shared/manhuaRigSource").ManhuaRigSource[];
 };
 
 type Props = {
@@ -32,7 +38,8 @@ type Props = {
   onGenerate?: (id: string) => void | Promise<void>;
   onImport?: (id: string, file: File) => void | Promise<void>;
   onPreview?: (id: string, glbUrl: string, labelZh: string) => void;
-  onRig?: (id: string) => void;
+  /** 打开绑骨编辑器：sourceRefId = 模型所在 ref（可能是候选图）；characterId = 人物锁脸 ref（用于钉选来源） */
+  onRig?: (sourceRefId: string, characterId: string) => void;
   /** 有绑骨成品（白模可直接用）的角色 id */
   riggedIds?: readonly string[];
   /** 0916 多视角：每人的四视角草稿（按 ref.id） */
@@ -52,6 +59,8 @@ export function manhua3dModelStageOf(c: Manhua3dModelStudioCharacter, rigged: bo
   if (!c.eligibility.eligible) return { stage: "blocked", labelZh: "还不能建模", reasonZh: c.eligibility.reasonZh };
   const m = c.eligibility.currentModel3d;
   if (rigged) return { stage: "rigged", labelZh: "已绑骨 · 白模可用" };
+  // 绑骨来源解析到候选图（锁脸图没就绪模型、建模失败，或用户钉选了 A-pose）：按候选图算就绪，绑骨用它
+  if (c.rigSource?.isCandidate) return { stage: "ready", labelZh: `候选图模型就绪 · 待绑骨（${c.rigSource.labelZh}）` };
   if (!m) return { stage: "none", labelZh: "未建模" };
   switch (m.status) {
     case "queued":
@@ -74,7 +83,8 @@ export function manhua3dRigLookupCharacters(
   characters: Manhua3dModelStudioCharacter[],
 ): Array<{ id: string; label: string; model?: { taskId: string } }> {
   return characters.map((c) => {
-    const m = c.eligibility.eligible ? c.eligibility.currentModel3d : undefined;
+    // 0916：模型来源统一走 rigSource（锁脸图优先，否则同人物候选图）
+    const m = c.rigSource?.model ?? (c.eligibility.eligible ? c.eligibility.currentModel3d : undefined);
     return { id: c.id, label: c.labelZh, ...(m?.status === "succeeded" ? { model: { taskId: m.taskId } } : {}) };
   });
 }
@@ -165,6 +175,7 @@ export function Manhua3dModelStudio(props: Props) {
         {rows.map(({ c, stage, labelZh, reasonZh }) => {
           const busy = busyIds.includes(c.id);
           const model = c.eligibility.currentModel3d;
+          const rigSource = c.rigSource;
           const canBuild = (stage === "none" || stage === "failed") && !busy && Boolean(onGenerate);
           return (
             <li key={c.id} className="flex flex-wrap items-center gap-2 rounded bg-white/5 px-2 py-1 text-[11px]" data-character-id={c.id} data-stage={stage}>
@@ -213,11 +224,27 @@ export function Manhua3dModelStudio(props: Props) {
                     预览
                   </button>
                 ) : null}
-                {model?.status === "succeeded" && onRig ? (
-                  <button type="button" className={stage === "rigged" ? btn : btnPrimary} disabled={disabled || busy} onClick={() => onRig(c.id)}>
-                    {stage === "rigged" ? "重新绑骨" : "绑骨"}
+                {rigSource && onRig ? (
+                  <button
+                    type="button"
+                    className={stage === "rigged" ? btn : btnPrimary}
+                    disabled={disabled || busy}
+                    data-rig-source-ref={rigSource.refId}
+                    title={rigSource.isCandidate ? `绑骨用候选图「${rigSource.labelZh}」的模型（原定妆与高模保留，A-pose 只作绑骨生产资产）` : undefined}
+                    onClick={() => onRig(rigSource.refId, c.id)}
+                  >
+                    {stage === "rigged" ? "重新绑骨" : rigSource.isCandidate ? `绑骨（用「${rigSource.labelZh}」）` : "绑骨"}
                   </button>
                 ) : null}
+                {(c.rigOptions?.length ?? 0) > 1 && onRig
+                  ? c.rigOptions!
+                      .filter((o) => o.refId !== rigSource?.refId)
+                      .map((o) => (
+                        <button key={o.refId} type="button" className={btn} disabled={disabled || busy} data-rig-source-ref={o.refId} onClick={() => onRig(o.refId, c.id)}>
+                          改用「{o.labelZh}」绑骨
+                        </button>
+                      ))
+                  : null}
                 {c.eligibility.eligible && onGenerateMultiview && onSubmitMultiview ? (
                   <button
                     type="button"
