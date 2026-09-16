@@ -55,6 +55,8 @@ import { evaluateManhuaWorld3dEligibility, toManhuaWorld3dRef } from "@shared/ma
 import { evaluateManhuaStateContinuity } from "@shared/manhuaCharacterStates";
 import { relayoutManhuaSegmentPlanForEngine, replaceManhuaEpisodeSegmentPlanInMarkdown } from "@shared/manhuaEngineRelayout";
 import type { ManhuaStageFrameBindingDraft, ManhuaWorldGenerateOptions, ManhuaWorldLayoutSubmitOptions } from "@/components/canvas/ManhuaWorldStudio";
+import { formatManhuaStageFrameSourceZh, listManhuaUsableStageFrames, toggleManhuaStageFrameAdoption } from "@shared/manhuaStageFrameAdoption";
+import { manhuaActionPlanShotId } from "@/lib/manhuaActionPlanEditor";
 import { copyText } from "@/lib/copyText";
 import { cropManhuaSheet2x2 } from "@/lib/manhuaSheetCropApi";
 import type { ManhuaSceneTileSlot } from "@shared/manhuaSceneTilePick";
@@ -4257,6 +4259,31 @@ export default function OmniCanvas() {
       characterVoiceLocks,
       audioReferenceLock,
       manhuaAssetPathById: manhuaAssetMaps.pathById,
+      // 0916：本镜已采用且未失效的片场视角图。采用与失效判定在这里一次做完，
+      // canvasRunBlock 只消费结果——出站层不做业务判定。
+      manhuaAdoptedStageFrames: (block: CanvasBlock) => {
+        const episode = Number(block.episodeIndex) || Number(block.id.match(/^clip-e(\d+)-/)?.[1]) || 1;
+        const segmentIndex = Number(block.id.match(/-g(\d+)$/)?.[1]) || undefined;
+        if (!segmentIndex) return [];
+        const sceneRef = customAssetRefs.find((r) => r.role === "scene" && r.world3d?.status === "succeeded");
+        const actorIds = (block.previsStudio?.spec.actors || []).map((a: { assetRef?: string }) => a.assetRef).filter((x): x is string => Boolean(x));
+        const shotIds = (block.previsStudio?.spec.actors ? [1, 2, 3] : [1, 2, 3]).map((i) => manhuaActionPlanShotId(episode, segmentIndex, i));
+        const out: Array<{ refId: string; url: string; labelZh: string; sourceZh: string }> = [];
+        for (const shotId of shotIds) {
+          for (const ref of listManhuaUsableStageFrames(customAssetRefs, {
+            shotId,
+            episode,
+            segmentIndex,
+            actorIds,
+            ...(sceneRef?.world3d?.taskId ? { worldTaskId: sceneRef.world3d.taskId } : {}),
+            ...(sceneRef?.world3d?.sourceVersion ? { worldSourceVersion: sceneRef.world3d.sourceVersion } : {}),
+          })) {
+            if (out.some((x) => x.refId === ref.id)) continue;
+            out.push({ refId: ref.id, url: ref.url, labelZh: ref.labelZh || ref.id, sourceZh: formatManhuaStageFrameSourceZh(ref) });
+          }
+        }
+        return out;
+      },
       manhuaAssetTileUrlsById: manhuaAssetMaps.tileUrlsById,
       manhuaDirectorBoardUrlByEpisode: directorBoardUrlByEpisode,
       manhuaDirectorBoardUrlByEpisodeSegment: directorBoardUrlByEpisodeSegment,
@@ -10169,6 +10196,17 @@ export default function OmniCanvas() {
                   onImportPropSheetFile={importPropSheetFile}
                   onCustomAssetRoleChange={setCustomAssetRole}
                   onCustomAssetDutyChange={setCustomAssetDuty}
+                  onToggleStageFrameAdoption={(refId, shotId) =>
+                    setCustomAssetRefs((prev) =>
+                      normalizeManhuaCustomAssetRefs(
+                        prev.map((r) =>
+                          r.id === refId
+                            ? { ...r, stageFrameAdoptions: toggleManhuaStageFrameAdoption(r.stageFrameAdoptions, shotId, Date.now()) }
+                            : r,
+                        ),
+                      ),
+                    )
+                  }
                   onCustomAssetRigSourceChange={(characterRefId, rigSourceRefId) =>
                     setCustomAssetRefs((prev) =>
                       normalizeManhuaCustomAssetRefs(

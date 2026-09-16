@@ -38,6 +38,8 @@ import { ManhuaActionTimeline } from "@/components/canvas/ManhuaActionTimeline";
 import { Manhua3dModelStudio, manhua3dModelCounts, manhua3dRigLookupCharacters } from "@/components/canvas/Manhua3dModelStudio";
 import { resolveManhuaRigSource } from "@shared/manhuaRigSource";
 import { ManhuaWorldStudio, manhuaWorldCounts, type ManhuaStageFrameBindingDraft, type ManhuaWorldGenerateOptions, type ManhuaWorldLayoutActor, type ManhuaWorldLayoutSubmitOptions } from "@/components/canvas/ManhuaWorldStudio";
+import { ManhuaStageFrameAdoptPanel } from "@/components/canvas/ManhuaStageFrameAdoptPanel";
+import { manhuaActionPlanShotId } from "@/lib/manhuaActionPlanEditor";
 import type { ManhuaStageCharacter } from "@/components/canvas/ManhuaWorldStagePreview";
 import { evaluateManhuaWorld3dEligibility } from "@shared/manhuaWorld3d";
 import { buildManhuaStateDerivePromptZh } from "@shared/manhuaCharacterStates";
@@ -466,6 +468,8 @@ type Props = {
   onCustomAssetDutyChange?: (id: string, duty: ManhuaCustomAssetRefDuty | null) => void;
   /** 0916 绑骨模型来源钉选：人物锁脸 ref → 用哪张同人物候选图的模型绑骨（null = 回到自动规则） */
   onCustomAssetRigSourceChange?: (characterRefId: string, rigSourceRefId: string | null) => void;
+  /** 0916 视角图采用到某一镜（同一个开关：已采用则取消） */
+  onToggleStageFrameAdoption?: (refId: string, shotId: string) => void;
   /** 手动改名：改成与剧本表一致的名字即被认领（自动识别不追求 100%） */
   onCustomAssetLabelChange?: (id: string, labelZh: string) => void;
   /** AI 去字（3 分）：物理擦除画面文字 */
@@ -1108,6 +1112,7 @@ export default function ManhuaScriptWorkbench({
   onRetrySceneWorld,
   onRemoveSceneWorld,
   onExportSceneStageFrame,
+  onToggleStageFrameAdoption,
   onSubmitLayoutSceneWorld,
   sceneWorldBusyIds = [],
   onApplyRiggedModel,
@@ -2580,6 +2585,26 @@ export default function ManhuaScriptWorkbench({
       .map((a) => ({ id: a.id, nameZh: a.nameZh, start: [a.start[0], a.start[1]] as const, shape: a.shape }));
   }, [activeClip?.previsStudio?.spec.actors]);
   /** PR-10：只取本段必需 actor，不混入其他段，不伪造站位 */
+  /** 0916 本段镜头清单（shotId 与 manhuaActionPlan 同口径，重排不变），供视角图采用面板用 */
+  const stageFrameShotOptions = useMemo(
+    () =>
+      (activeSegment?.shots || []).map((shot, i) => ({
+        shotId: manhuaActionPlanShotId(focusEpisode, activeSegNo, shot.index),
+        labelZh: `镜${i + 1}`,
+      })),
+    [activeSegment?.shots, focusEpisode, activeSegNo],
+  );
+  /** 判采用是否失效的本段当前状态：世界、演员、集段 */
+  const stageFrameAdoptContext = useMemo(() => {
+    const sceneRef = customAssetRefs.find((r) => r.role === "scene" && r.world3d?.status === "succeeded");
+    return {
+      episode: focusEpisode,
+      segmentIndex: activeSegNo,
+      actorIds: (activeClip?.previsStudio?.spec.actors || []).map((a) => a.assetRef).filter((x): x is string => Boolean(x)),
+      ...(sceneRef?.world3d?.taskId ? { worldTaskId: sceneRef.world3d.taskId } : {}),
+      ...(sceneRef?.world3d?.sourceVersion ? { worldSourceVersion: sceneRef.world3d.sourceVersion } : {}),
+    };
+  }, [customAssetRefs, focusEpisode, activeSegNo, activeClip?.previsStudio?.spec.actors]);
   const worldStageCharacters = useMemo((): ManhuaStageCharacter[] => {
     const actors = activeClip?.previsStudio?.spec.actors || [];
     // 本段 actor 是必需名单；缺模型仍保留，让加载门禁明确报缺，不能从名单中消失。
@@ -3537,6 +3562,15 @@ export default function ManhuaScriptWorkbench({
             onExportStageFrame={onExportSceneStageFrame ? (id, blob, frame) => onExportSceneStageFrame(id, blob, { ...frame, episode: focusEpisode, segmentIndex: activeSegNo }) : undefined}
             layoutActors={worldLayoutActors}
             onSubmitLayoutWorld={onSubmitLayoutSceneWorld}/> : null}
+          {worldStudioOpen && onToggleStageFrameAdoption ? <div className="w-full">
+            <ManhuaStageFrameAdoptPanel
+              refs={customAssetRefs}
+              shots={stageFrameShotOptions}
+              context={stageFrameAdoptContext}
+              disabled={Boolean(factoryBusy)}
+              onToggleAdopt={onToggleStageFrameAdoption}
+              actorLabelOf={(id)=>assetLockRegistry.byRole.character.find(a=>a.id===id)?.labelZh||id}/>
+          </div> : null}
           {onUpdateClipPrevisStudio ? <button type="button" data-manhua-action="open-previs-studio" disabled={Boolean(factoryBusy)}
             className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
             onClick={()=>{setPrevisStudioOpen(value=>!value);if(!activeClip)onEnsureSegmentClips?.();}}>本段动作白模</button> : null}

@@ -73,4 +73,21 @@ describe("视角图采用到某一镜", () => {
     expect(s).toContain("世界 world-ab");
     expect(formatManhuaStageFrameSourceZh({ id: "x" })).toBe("");
   });
+
+  it("出站口径：只有采用且未失效的才交给出站层；失效的必须走单独名单，不能混进可用清单", () => {
+    // 这一条钉的是 canvasRunBlock 的消费约定：出站只吃 listManhuaUsableStageFrames 的结果，
+    // 采用与失效判定在页面侧一次做完，出站层不重做业务判定，也不靠中文标签猜。
+    const ok = ref("ok");
+    const otherWorld = ref("otherWorld", { stageFrame: binding({ worldTaskId: "mw_other" }) });
+    const otherActors = ref("otherActors", { stageFrame: binding({ actorIds: ["c_aj"] }) });
+    const otherSeg = ref("otherSeg", { stageFrame: binding({ segmentIndex: 9 }) });
+    const notAdopted = ref("notAdopted", { stageFrameAdoptions: [] });
+    const refs = [ok, otherWorld, otherActors, otherSeg, notAdopted];
+    expect(listManhuaUsableStageFrames(refs, ctx).map((r) => r.id)).toEqual(["ok"]);
+    expect(listManhuaStaleStageFrames(refs, ctx).map((x) => [x.ref.id, x.staleCode])).toEqual([
+      ["otherWorld", "world_changed"],
+      ["otherActors", "actors_changed"],
+      ["otherSeg", "shot_moved"],
+    ]);
+  });
 });
