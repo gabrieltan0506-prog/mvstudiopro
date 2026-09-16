@@ -1,3 +1,4 @@
+import { createManhuaPrevisStudio } from "./manhuaPrevis";
 import { describe, expect, it } from "vitest";
 import {
   buildManhuaCloudDraftPayload,
@@ -248,3 +249,16 @@ describe("manhuaCloudDraft · 动作计划按集往返（PR-2）", () => {
   });
 });
 
+describe("1471 R2 · previsStudio 新字段云草稿往返", () => {
+  it("cameraStyle / draftCameraPromptZh / draftTempoZh 经 sanitize 存活；旧稿没有这些字段照常通过", async () => {
+    const { sanitizeManhuaCloudDraftBlock } = await import("./manhuaCloudDraft");
+    const studio = { ...createManhuaPrevisStudio(), cameraStyle: "slow_orbit" as const, draftCameraPromptZh: ["0.00–1.50s 全景·平视·慢环绕：建立"], draftTempoZh: "慢 · 意图「静」且无接触" };
+    const out = sanitizeManhuaCloudDraftBlock({ id: "clip-e01-01", kind: "video", previsStudio: studio } as never);
+    expect(out?.previsStudio?.cameraStyle).toBe("slow_orbit");
+    expect(out?.previsStudio?.draftCameraPromptZh).toEqual(studio.draftCameraPromptZh);
+    expect(out?.previsStudio?.draftTempoZh).toBe(studio.draftTempoZh);
+    const legacy = sanitizeManhuaCloudDraftBlock({ id: "clip-e01-02", kind: "video", previsStudio: createManhuaPrevisStudio() } as never);
+    expect(legacy?.previsStudio).toBeTruthy();
+    expect(legacy?.previsStudio).not.toHaveProperty("cameraStyle");
+  });
+});

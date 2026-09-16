@@ -4,7 +4,8 @@ import { splitManhuaActionPlanForPrevis } from "./manhuaActionPlanSplit";
 import { manhuaPrevisTimingForExecutableShot } from "./manhuaPrevisTiming";
 import { manhuaPrevisSpecSchema } from "./manhuaPrevis";
 import { manhuaPrevisDraftFromExecutableShot } from "./manhuaPrevisFromActionPlan";
-import { CONTACT_LEAD_FRAMES, MANHUA_CAMERA_MAX_CUTS, choreographManhuaCameras } from "./manhuaCameraGrammar";
+import { CONTACT_LEAD_FRAMES, MANHUA_CAMERA_MAX_CUTS, choreographManhuaCameras, manhuaCameraPromptZh } from "./manhuaCameraGrammar";
+import { resolveManhuaCameraTempo } from "./manhuaCameraTempo";
 import type { ManhuaActionEvent } from "./manhuaActionPlan";
 
 const plan = buildBoatFight();
@@ -220,5 +221,167 @@ describe("1470 R2 · 边界穷举", () => {
     const observe: ManhuaActionEvent[] = [{ eventId: "ob", kind: "observe", actorId: MAN, subjectActorId: WOMAN, outcome: "observed", slowMotionIntent: false,
       phases: [{ kind: "windup", sourceStartSec: 0, sourceEndSec: 3 }] } as ManhuaActionEvent];
     assertCameraContract(run(observe, 4).cameras, 4);
+  });
+});
+
+describe("PR-6 · 节奏档接进运镜文法（属性式）", () => {
+  const lcg = (seed: number) => () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
+  const base = shots.find((s) => s.sourceShotId === "ap_shot_1")!;
+  const randomShot = (rnd: () => number) => {
+    const D = [4, 6, 8, 12][Math.floor(rnd() * 4)]!;
+    const n = 1 + Math.floor(rnd() * 6);
+    const events: ManhuaActionEvent[] = [];
+    // 事件按序不交叠（交叠事件的裁切由 1470 属性测试覆盖；这里验节奏档的停留/上限）
+    let clock = Math.round(rnd() * 1.5 * 24) / 24;
+    for (let i = 0; i < n && clock < D - 0.5; i += 1) {
+      const start = clock;
+      const w = Math.round((0.1 + rnd() * 1) * 24) / 24;
+      const c = Math.round((0.05 + rnd() * 0.5) * 24) / 24;
+      const r = Math.round((0.1 + rnd() * 1.5) * 24) / 24;
+      const end = Math.min(D, start + w + c + r);
+      clock = end + Math.round(rnd() * 1 * 24) / 24;
+      const cs = Math.min(end, start + w);
+      const ce = Math.min(end, cs + c);
+      const [atk, tgt] = rnd() < 0.5 ? [MAN, WOMAN] : [WOMAN, MAN];
+      events.push({
+        eventId: `t_e${i}`, kind: "attack", actorId: atk, targetActorId: tgt, outcome: "unplanned", slowMotionIntent: false,
+        phases: [
+          { kind: "windup", sourceStartSec: start, sourceEndSec: cs },
+          { kind: "contact", sourceStartSec: cs, sourceEndSec: ce },
+          { kind: "recover", sourceStartSec: ce, sourceEndSec: end },
+        ].filter((p) => p.sourceEndSec > p.sourceStartSec) as ManhuaActionEvent["phases"],
+      } as ManhuaActionEvent);
+    }
+    const shot = { ...base, sourceSpan: { startSec: 0, endSec: D }, timeMap: { sourceDurationSec: D, spans: [] }, events };
+    const timing = manhuaPrevisTimingForExecutableShot(shot, cam(D));
+    return { D: timing.durationSec, events, cues: timing.contactCues };
+  };
+
+  it("快档（有接触）：合同恒成立、≤8 镜、反应镜至少停 1s（被下一个接触镜切掉或到片尾除外；空档沿用上一镜是既有规则）", () => {
+    const tempo = resolveManhuaCameraTempo({ intentZh: "燃", hasContact: true });
+    for (let round = 0; round < 12; round += 1) {
+      const { D, events, cues } = randomShot(lcg(7000 + round));
+      const { cameras } = choreographManhuaCameras({ durationSec: D, events, cues, actorPositions: positions, tempo });
+      assertCameraContract(cameras, D);
+      expect(cameras.length).toBeLessThanOrEqual(tempo.maxCuts);
+      cameras.forEach((c, i) => {
+        const next = cameras[i + 1];
+        if (c.kind !== "reaction" || !next || next.kind === "contact" || next.kind === "reaction") return; // 交叠事件的接触/反应镜可切掉前一反应镜
+        expect(c.endSec - c.startSec + 1e-9).toBeGreaterThanOrEqual(Math.min(tempo.reactionHoldSec, D - c.startSec) - 1 / 24);
+      });
+    }
+  });
+
+  it("慢档（慢环绕）：≤3 镜、建立镜 ≥ min(3s, 首个接触镜起点)、接触镜不被推迟、合同恒成立", () => {
+    const tempo = resolveManhuaCameraTempo({ intentZh: "静", hasContact: false });
+    expect(tempo.style).toBe("slow_orbit");
+    for (let round = 0; round < 12; round += 1) {
+      const { D, events, cues } = randomShot(lcg(9000 + round));
+      const plain = choreographManhuaCameras({ durationSec: D, events, cues, actorPositions: positions }).cameras;
+      const { cameras, notesZh } = choreographManhuaCameras({ durationSec: D, events, cues, actorPositions: positions, tempo });
+      assertCameraContract(cameras, D);
+      expect(cameras.length).toBeLessThanOrEqual(3);
+      const firstContact = plain.find((c) => c.kind === "contact");
+      const est = cameras[0]!;
+      if (est.kind === "establish") {
+        const limit = Math.min(firstContact ? firstContact.startSec : D - 1 / 24, tempo.minShotSec);
+        expect(est.endSec + 1e-9).toBeGreaterThanOrEqual(Math.min(limit, D));
+        expect(manhuaCameraPromptZh(est, tempo.style)).toContain("慢环绕");
+      }
+      const contact = cameras.find((c) => c.kind === "contact");
+      if (contact && firstContact && contact.eventId === firstContact.eventId) expect(contact.startSec).toBeLessThanOrEqual(firstContact.startSec + 1e-9);
+      expect(notesZh.some((n) => n.includes("慢环绕"))).toBe(true);
+    }
+  });
+
+  it("反应镜停留可调：hold 2s 时反应镜 ≈2s；导演卡非人角色 → 反应给非人攻方、lens 55", () => {
+    const shot = base;
+    const timing = manhuaPrevisTimingForExecutableShot(shot, cam(6));
+    // 1a 接触 1.0s、1b 接触 4.5s：反应镜有 2s 空间，再长就撞上 1b 的接触镜
+    const cues = timing.contactCues.map((c) => (c.eventId === "ap_evt_1a" ? { ...c, windupStartSec: 0, contactSec: 1.0, recoverEndSec: 2.0 } : { ...c, windupStartSec: 4.0, contactSec: 4.5, recoverEndSec: 5.5 }));
+    // 两次交锋：1a 的反应镜被 1b 顶住；hold 越长反应镜结束点越晚（直到被 1b 的接触镜切掉）
+    const endWith = (hold: number) => {
+      const { cameras } = choreographManhuaCameras({ durationSec: timing.durationSec, events: shot.events, cues, actorPositions: positions, tempo: { reactionHoldSec: hold, maxCuts: 8 } });
+      return cameras.find((c) => c.kind === "reaction" && c.eventId === "ap_evt_1a")!;
+    };
+    const long = endWith(2);
+    const contact1b = cues.find((c) => c.eventId === "ap_evt_1b")!.contactSec - 5 / 24;
+    expect(long).toBeTruthy();
+    expect(long.endSec - long.startSec + 1e-9).toBeGreaterThanOrEqual(Math.min(2, contact1b - long.startSec) - 1 / 24);
+    // 反应镜停留再长也不能吞掉下一个接触镜（接触优先级最高）
+    const longAll = choreographManhuaCameras({ durationSec: timing.durationSec, events: shot.events, cues, actorPositions: positions, tempo: { reactionHoldSec: 2, maxCuts: 8 } }).cameras;
+    const c1b = longAll.find((c) => c.kind === "contact" && c.eventId === "ap_evt_1b")!;
+    expect(c1b).toBeTruthy();
+    expect(c1b.startSec).toBeCloseTo(Math.round(contact1b * 24) / 24, 6);
+    const evt = shot.events[0] as Extract<ManhuaActionEvent, { kind: "attack" }>;
+    const nh = choreographManhuaCameras({ durationSec: timing.durationSec, events: shot.events.slice(0, 1), cues, actorPositions: positions, tempo: { reactionToNonHuman: true, reactionLens: 55 }, nonHumanActorIds: [evt.actorId] });
+    const rr = nh.cameras.find((c) => c.kind === "reaction")!;
+    expect(rr.noteZh).toContain(evt.actorId);
+    expect(rr.noteZh).toContain("非人");
+    expect(rr.lens).toBe(55);
+  });
+
+  it("手持档：切点与硬切相同，只多一条标注；提示词句带「手持」", () => {
+    const shot = base;
+    const timing = manhuaPrevisTimingForExecutableShot(shot, cam(6));
+    const hard = choreographManhuaCameras({ durationSec: timing.durationSec, events: shot.events, cues: timing.contactCues, actorPositions: positions });
+    const hand = choreographManhuaCameras({ durationSec: timing.durationSec, events: shot.events, cues: timing.contactCues, actorPositions: positions, tempo: { style: "handheld" } });
+    expect(hand.cameras.map((c) => [c.startSec, c.endSec])).toEqual(hard.cameras.map((c) => [c.startSec, c.endSec]));
+    expect(hand.notesZh.some((n) => n.includes("手持"))).toBe(true);
+    expect(manhuaCameraPromptZh(hand.cameras[0]!, "handheld")).toContain("手持");
+  });
+});
+
+describe("1471 R1 · 属性式：布局改动不丢接触镜", () => {
+  const lcg = (seed: number) => () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
+  const base = shots.find((s) => s.sourceShotId === "ap_shot_1")!;
+  const randomShot = (rnd: () => number, maxEvents: number) => {
+    const D = [4, 6, 8, 12][Math.floor(rnd() * 4)]!;
+    const n = 1 + Math.floor(rnd() * maxEvents);
+    const events: ManhuaActionEvent[] = [];
+    let clock = Math.round(rnd() * 2 * 24) / 24;
+    for (let i = 0; i < n && clock < D - 0.5; i += 1) {
+      const start = clock;
+      const w = Math.round((0.1 + rnd() * 1) * 24) / 24;
+      const c = Math.round((0.05 + rnd() * 0.5) * 24) / 24;
+      const r = Math.round((0.1 + rnd() * 1.5) * 24) / 24;
+      const end = Math.min(D, start + w + c + r);
+      clock = end + Math.round(rnd() * 1 * 24) / 24;
+      const cs = Math.min(end, start + w);
+      const ce = Math.min(end, cs + c);
+      const [atk, tgt] = rnd() < 0.5 ? [MAN, WOMAN] : [WOMAN, MAN];
+      events.push({
+        eventId: `nl_e${i}`, kind: "attack", actorId: atk, targetActorId: tgt, outcome: "unplanned", slowMotionIntent: false,
+        phases: [
+          { kind: "windup", sourceStartSec: start, sourceEndSec: cs },
+          { kind: "contact", sourceStartSec: cs, sourceEndSec: ce },
+          { kind: "recover", sourceStartSec: ce, sourceEndSec: end },
+        ].filter((p) => p.sourceEndSec > p.sourceStartSec) as ManhuaActionEvent["phases"],
+      } as ManhuaActionEvent);
+    }
+    const shot = { ...base, sourceSpan: { startSec: 0, endSec: D }, timeMap: { sourceDurationSec: D, spans: [] }, events };
+    const timing = manhuaPrevisTimingForExecutableShot(shot, cam(D));
+    return { D: timing.durationSec, events, cues: timing.contactCues };
+  };
+  it("≤2 次交锋（草稿 ≤7 镜，不触发上限丢镜）在默认/快/慢/手持/长反应停留下，每个有 cue 的攻击事件都有自己的接触镜", () => {
+    const tempos = [
+      undefined,
+      resolveManhuaCameraTempo({ intentZh: "燃", hasContact: true }),
+      { ...resolveManhuaCameraTempo({ intentZh: "静", hasContact: false }), maxCuts: 8 },
+      { style: "handheld" as const },
+      { reactionHoldSec: 4, maxCuts: 8 },
+    ];
+    for (let round = 0; round < 12; round += 1) {
+      const { D, events, cues } = randomShot(lcg(11000 + round), 2);
+      for (const tempo of tempos) {
+        const { cameras } = choreographManhuaCameras({ durationSec: D, events, cues, actorPositions: positions, tempo });
+        assertCameraContract(cameras, D);
+        for (const cue of cues) {
+          const contact = cameras.find((c) => c.kind === "contact" && c.eventId === cue.eventId);
+          expect(contact, `round ${round} tempo ${JSON.stringify(tempo)} event ${cue.eventId}`).toBeTruthy();
+          expect(contact!.startSec).toBeLessThanOrEqual(cue.contactSec + 1e-9);
+        }
+      }
+    }
   });
 });

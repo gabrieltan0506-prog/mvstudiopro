@@ -128,3 +128,34 @@ describe("findMentionedTemplates", () => {
     expect(hits.map((t) => t.publicId)).toEqual(["mt_l"]);
   });
 });
+
+describe("buildAdvisorQuestion · PR-12 项目状态补喂", () => {
+  it("六项字段与 3D 规则进问题文本，总长不超上限", () => {
+    const q = buildAdvisorQuestion({
+      question: "下一步怎么做",
+      hasProjectEvidence: true,
+      projectSignals: {
+        gateZh: ["第 1 集对白不足 12 句"],
+        assetGapZh: "待生成 5：人物 0 · 场景 5 · 道具 0",
+        keyframeBlockZh: "请先出齐本段所需关键静帧",
+        pipeline3dZh: "模型就绪 1/6 · 已绑骨 0/6 · 白模参考 0 段",
+        queueZh: "生成中：道具图·药碗",
+        creditsZh: "未知",
+        rule3dZh: "建议第 2 段用 3D",
+      },
+    });
+    for (const s of ["对白不足 12 句", "待生成 5", "关键静帧", "已绑骨 0/6", "道具图·药碗", "余额：未知", "第 2 段用 3D"]) expect(q).toContain(s);
+    expect(q.length).toBeLessThanOrEqual(ADVISOR_QUESTION_MAX_CHARS);
+    const long = buildAdvisorQuestion({
+      question: "问".repeat(1200),
+      hasProjectEvidence: true,
+      projectSignals: { gateZh: Array.from({ length: 8 }, () => "错".repeat(120)), assetGapZh: "缺".repeat(120), keyframeBlockZh: "拦".repeat(120), pipeline3dZh: "骨".repeat(120), queueZh: "队".repeat(120), creditsZh: "余".repeat(120), rule3dZh: "规".repeat(400) },
+    });
+    expect(long.length).toBeLessThanOrEqual(ADVISOR_QUESTION_MAX_CHARS);
+    expect(long).toContain("问".repeat(1200));
+  });
+  it("没有补喂字段时不留空段", () => {
+    const q = buildAdvisorQuestion({ question: "下一步怎么做", hasProjectEvidence: true });
+    expect(q).not.toContain("【当前状态】");
+  });
+});

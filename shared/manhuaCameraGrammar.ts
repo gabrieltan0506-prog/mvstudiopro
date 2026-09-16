@@ -37,7 +37,25 @@ export type ManhuaCameraChoreographyInput = {
   maxCuts?: number;
   /** 每个事件的交手方式：melee 近身（默认）/ ranged 斗法·远程（施法起手手部特写、命中在受方侧） */
   eventManner?: Record<string, "melee" | "ranged">;
+  /** 节奏策略（PR-6，见 manhuaCameraTempo）：切镜上限、最短镜长、反应镜停留、风格档；显式 style/maxCuts 优先 */
+  tempo?: ManhuaCameraTempoParams;
+  /** 非人角色（马/兽等）：导演卡「非人角色先成为人物」时反应镜给它 */
+  nonHumanActorIds?: string[];
 };
+
+export type ManhuaCameraTempoParams = {
+  maxCuts?: number;
+  minShotSec?: number;
+  reactionHoldSec?: number;
+  style?: ManhuaCameraStyle;
+  /** 先立戏核：慢环绕建立镜优先（没有建立镜也补一镜，但不推迟接触镜） */
+  establishFirst?: boolean;
+  reactionToNonHuman?: boolean;
+  reactionLens?: number;
+};
+
+/** 反应特写默认停留（拉片：受方反应 1–2s） */
+const DEFAULT_REACTION_HOLD_SEC = 1.25;
 
 export const MANHUA_CAMERA_MAX_CUTS = 8;
 const FRAME = 1 / MANHUA_TIMING_FPS;
@@ -71,8 +89,13 @@ type Draft = { kind: ManhuaCameraShotKind; startSec: number; endSec: number; pos
 
 export function choreographManhuaCameras(input: ManhuaCameraChoreographyInput): { cameras: ManhuaChoreographedCamera[]; notesZh: string[] } {
   const D = input.durationSec;
-  const maxCuts = Math.min(MANHUA_CAMERA_MAX_CUTS, Math.max(1, input.maxCuts ?? MANHUA_CAMERA_MAX_CUTS));
-  const style = input.style ?? "hard";
+  const tempo = input.tempo ?? {};
+  const maxCuts = Math.min(MANHUA_CAMERA_MAX_CUTS, Math.max(1, input.maxCuts ?? tempo.maxCuts ?? MANHUA_CAMERA_MAX_CUTS));
+  const style = input.style ?? tempo.style ?? "hard";
+  const minShotSec = Math.max(MIN_CUT_SEC, Number.isFinite(tempo.minShotSec) ? (tempo.minShotSec as number) : MIN_CUT_SEC);
+  const reactionHold = Math.max(FRAME, Number.isFinite(tempo.reactionHoldSec) ? (tempo.reactionHoldSec as number) : DEFAULT_REACTION_HOLD_SEC);
+  const reactionLens = Math.round(Math.max(18, Math.min(65, tempo.reactionLens ?? 55)));
+  const nonHuman = new Set(input.nonHumanActorIds ?? []);
   const center = stageCenter(input.actorPositions);
   const notesZh: string[] = [];
   const wide = (): Pick<Draft, "position" | "target" | "lens"> => ({ position: pt(center[0], center[1] - 7, 2.6), target: pt(center[0], center[1], 1), lens: 28 });
@@ -116,8 +139,12 @@ export function choreographManhuaCameras(input: ManhuaCameraChoreographyInput): 
       );
       const recoverEnd = fr(Math.min(D, Math.max(contactEnd + MIN_CUT_SEC, cue.recoverEndSec)));
       if (other && e.kind === "attack") {
-        // 反应特写：受方先
-        drafts.push({ kind: "reaction", eventId: e.eventId, startSec: contactEnd, endSec: fr(Math.min(D, contactEnd + 1.25)), position: pt(b[0] - dir[0] * 1.5, b[1] - dir[1] * 1.5, 1.5), target: pt(b[0], b[1], 1.5), lens: 55, noteZh: `${other} 反应特写`, priority: 3 });
+        // 反应特写：受方先；导演卡「非人角色先成为人物」且攻方是非人、受方不是 → 反应给非人攻方
+        const toAttacker = Boolean(tempo.reactionToNonHuman) && nonHuman.has(e.actorId) && !nonHuman.has(other);
+        const who = toAttacker ? e.actorId : other;
+        const p: Vec2 = toAttacker ? a : b;
+        const face: Vec2 = toAttacker ? [-dir[0], -dir[1]] : dir;
+        drafts.push({ kind: "reaction", eventId: e.eventId, startSec: contactEnd, endSec: fr(Math.min(D, contactEnd + reactionHold)), position: pt(p[0] - face[0] * 1.5, p[1] - face[1] * 1.5, 1.5), target: pt(p[0], p[1], 1.5), lens: reactionLens, noteZh: `${who} 反应特写${toAttacker ? "（非人角色先成人物）" : ""}`, priority: 3 });
       } else if (recoverEnd - contactEnd >= MIN_CUT_SEC) {
         drafts.push({ kind: "recover", eventId: e.eventId, startSec: contactEnd, endSec: recoverEnd, ...wide(), lens: 30, noteZh: "卸力：拉远", priority: 1 });
       }
@@ -133,11 +160,15 @@ export function choreographManhuaCameras(input: ManhuaCameraChoreographyInput): 
   const laid: Draft[] = [];
   let cursor = 0;
   for (const d of drafts) {
+    const prev = laid[laid.length - 1];
+    // 高优先级（接触）先把前一低优先级镜裁短，再判断自己还剩多少：否则反应镜停留一长，后面的接触镜会被整镜丢掉（PR-6 修）
+    if (prev && prev.priority < d.priority && prev.endSec > d.startSec) {
+      prev.endSec = Math.max(prev.startSec + FRAME, d.startSec);
+      cursor = prev.endSec;
+    }
     const start = Math.max(d.startSec, cursor);
     if (d.endSec - start < FRAME) continue;
-    const prev = laid[laid.length - 1];
-    if (prev && prev.priority < d.priority && prev.endSec > d.startSec) prev.endSec = Math.max(prev.startSec + FRAME, d.startSec);
-    laid.push({ ...d, startSec: Math.max(d.startSec, prev?.endSec ?? 0) });
+    laid.push({ ...d, startSec: start });
     cursor = laid[laid.length - 1]!.endSec;
   }
   // 建立镜：首镜前若有 ≥ 半秒空档；更短的空档并入首镜（必须从 0 覆盖）
@@ -151,11 +182,34 @@ export function choreographManhuaCameras(input: ManhuaCameraChoreographyInput): 
     cams.push(d);
   }
   cams[cams.length - 1]!.endSec = D;
-  // 太短的镜并入邻镜；超过上限先丢最低优先级
+  // 慢环绕 / 先立戏核：建立镜延长到 ≥ minShotSec，但不越过第一个接触/出水镜的起点（不推迟接触）
+  const slowEstablish = style === "slow_orbit" || Boolean(tempo.establishFirst);
+  if (slowEstablish && D > FRAME) {
+    const firstHard = cams.find((c) => c.kind === "contact" || c.kind === "emerge_low");
+    const limit = fr(Math.min(firstHard ? firstHard.startSec : D - FRAME, minShotSec));
+    if (cams[0]!.kind !== "establish" && cams[0]!.kind !== "contact" && cams[0]!.kind !== "emerge_low" && limit >= MIN_CUT_SEC) {
+      cams.unshift({ kind: "establish", startSec: 0, endSec: 0, ...wide(), noteZh: "建立：慢环绕立戏核", priority: 1 });
+    }
+    const est = cams[0]!;
+    if (est.kind === "establish") {
+      est.noteZh = "建立：慢环绕立戏核";
+      const target = Math.max(est.endSec, limit);
+      est.endSec = target;
+      for (let i = 1; i < cams.length; ) {
+        const c = cams[i]!;
+        if (c.endSec - target < FRAME) { cams.splice(i, 1); continue; }
+        if (c.startSec < target) c.startSec = target;
+        i += 1;
+      }
+    }
+    cams[cams.length - 1]!.endSec = D;
+  }
+  // 太短的镜并入邻镜（节奏档给的最短镜长优先，接触镜例外：接触本来就短）；超过上限先丢最低优先级
   const merge = () => {
     for (let i = 0; i < cams.length; i += 1) {
       const c = cams[i]!;
-      if (c.endSec - c.startSec < MIN_CUT_SEC && cams.length > 1) {
+      const floor = c.kind === "contact" || c.kind === "emerge_low" ? MIN_CUT_SEC : minShotSec;
+      if (c.endSec - c.startSec < floor && cams.length > 1) {
         const into = i > 0 ? cams[i - 1]! : cams[1]!;
         if (i > 0) into.endSec = c.endSec; else into.startSec = c.startSec;
         cams.splice(i, 1);
@@ -173,8 +227,9 @@ export function choreographManhuaCameras(input: ManhuaCameraChoreographyInput): 
     cams.splice(idx, 1);
     notesZh.push(`镜数超过 ${maxCuts}，并掉「${c.noteZh}」`);
   }
-  // 风格档只改运动感受，不改切点（首版）：慢看环绕/手持在摘要里说明，白模合同没有运动字段
-  if (style !== "hard") notesZh.push(`风格「${style}」首版只影响提示词，白模相机切点与硬桥硬马档相同`);
+  // 风格档：慢环绕真改切点（建立镜延长、并到 ≤ maxCuts）；手持只标注，白模合同没有运动字段
+  if (style === "slow_orbit") notesZh.push(`风格「慢环绕」：建立镜 ≥ ${minShotSec.toFixed(1)}s、最多 ${maxCuts} 镜`);
+  if (style === "handheld") notesZh.push("风格「手持」只进提示词，白模相机切点与硬切档相同");
 
   const cameras: ManhuaChoreographedCamera[] = cams.map((c) => ({
     startSec: fr(c.startSec), endSec: fr(c.endSec), position: c.position, target: c.target, lens: Math.round(Math.max(18, Math.min(65, c.lens))),
@@ -187,8 +242,9 @@ export function choreographManhuaCameras(input: ManhuaCameraChoreographyInput): 
 }
 
 /** 给视频模型的运镜提示词（每镜一句），与白模相机同源 */
-export function manhuaCameraPromptZh(c: ManhuaChoreographedCamera): string {
+export function manhuaCameraPromptZh(c: ManhuaChoreographedCamera, style: ManhuaCameraStyle = "hard"): string {
   const scale = c.lens >= 50 ? "特写" : c.lens >= 38 ? "中景" : "全景";
   const angle = c.position[2] < 0.9 ? "仰角" : c.position[2] > 3 ? "俯角" : "平视";
-  return `${c.startSec.toFixed(2)}–${c.endSec.toFixed(2)}s ${scale}·${angle}·固定机位：${c.noteZh}`;
+  const motion = style === "handheld" ? "手持微晃" : style === "slow_orbit" && c.kind === "establish" ? "慢环绕" : "固定机位";
+  return `${c.startSec.toFixed(2)}–${c.endSec.toFixed(2)}s ${scale}·${angle}·${motion}：${c.noteZh}`;
 }
