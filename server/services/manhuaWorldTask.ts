@@ -35,6 +35,8 @@ const POLL_INTERVAL_MS = Math.max(3_000, Math.min(Number(process.env.MANHUA_WORL
 const MAX_POLL_MS = Math.max(5 * 60_000, Math.min(Number(process.env.MANHUA_WORLD_MAX_POLL_MS) || 40 * 60_000, 3 * 60 * 60_000));
 /** 产物单文件上限：full_res spz 可到几百 MB，先只镜像 500k + 全景 + 碰撞 + 缩略图 */
 const MAX_PRODUCT_BYTES = 400 * 1024 * 1024;
+/** layout 第一步产物在 Fly 桥/归档里的文件名 */
+const DEPTH_RGB_PANO_NAME = "depth-rgb-pano.jpg";
 
 export type ManhuaWorldTaskStatus = ManhuaWorld3dStatus;
 
@@ -65,7 +67,10 @@ export type ManhuaWorldTaskRecord = {
   /** layout 第一步（depth_to_rgb）：先把深度 PNG 传成 Marble media asset（钥匙只在 Fly），再提交；操作号与产物分别持久化 */
   depthMediaAssetId?: string;
   depthOperationId?: string;
+  /** 第一步产物：上游 pano_url（签名链会过期，只作镜像来源）→ Fly 桥稳定地址 + gs:// 归档（第二步提交前重新签名，重试不依赖过期链接） */
   depthPanoRgbUrl?: string;
+  depthPanoRgbBridgeUrl?: string;
+  depthPanoRgbGcsUri?: string;
   /** 上游 Operation.cost 原样记账（可空≠零费）；与用户积分不是一份账 */
   depthCost?: MarbleOperationCost;
   worldCost?: MarbleOperationCost;
@@ -84,7 +89,7 @@ export type ManhuaWorldTaskRecord = {
 
 export type ManhuaWorldTaskView = Pick<
   ManhuaWorldTaskRecord,
-  "taskId" | "sceneRef" | "sourceVersion" | "displayName" | "model" | "status" | "worldId" | "assets" | "errorZh" | "createdAt" | "updatedAt" | "finishedAt" | "depthCost" | "worldCost"
+  "taskId" | "sceneRef" | "sourceVersion" | "displayName" | "model" | "status" | "worldId" | "assets" | "errorZh" | "createdAt" | "updatedAt" | "finishedAt" | "depthCost" | "worldCost" | "depthPanoRgbBridgeUrl"
 >;
 
 type Deps = {
@@ -303,8 +308,6 @@ export async function advanceManhuaWorldTask(taskId: string): Promise<ManhuaWorl
     if (!record.operationId && record.prompt.type === "layout") {
       // 第一步：深度全景 → RGB 全景。上传/提交被拒 → failed（可重试）；提交不确定 → reconcile；
       // 第一步产物（media asset / operationId / pano_url）各自持久化，重试只补缺的那一步，不重付。
-      const metaCheck = validateDepthPanoUploadMeta(record.prompt.depthMeta);
-      if (!metaCheck.ok) return markFailed(record, `深度元数据不合格：${metaCheck.reasonZh}`);
       if (!record.depthMediaAssetId) {
         // 签名 url 会过期：有 gs:// 就重新签；签不动/拉不动/传不上 → failed，不占上游（没有付费动作）
         let depthPanoUrl = record.prompt.depthPanoUrl;
@@ -331,6 +334,9 @@ export async function advanceManhuaWorldTask(taskId: string): Promise<ManhuaWorl
         }
       }
       if (!record.depthOperationId) {
+        // 元数据只在真要提交上色时校验：已经提交过（有 depthOperationId = 已付费）的记录不能因元数据回读问题被判 failed 后重付
+        const metaCheck = validateDepthPanoUploadMeta(record.prompt.depthMeta);
+        if (!metaCheck.ok) return markFailed(record, `深度元数据不合格，未提交上游：${metaCheck.reasonZh}`);
         record.status = "reconcile_manual";
         record.errorZh = "提交结果正在确认，为避免重复生成不会自动重试";
         record.startedAt = record.startedAt || isoNow();
@@ -371,6 +377,20 @@ export async function advanceManhuaWorldTask(taskId: string): Promise<ManhuaWorl
         record.lastTransientError = undefined;
         await writeRecord(record);
       }
+      if (!record.depthPanoRgbGcsUri) {
+        // 第一步产物先落 Fly 桥 + 归档 gs://：上游 pano_url 会过期，第二步/重试都从自家归档重新签名，绝不因链接过期回头重付第一步
+        try {
+          const mirrored = await deps.mirror({ ns: "world", id: record.taskId, name: DEPTH_RGB_PANO_NAME }, record.depthPanoRgbUrl!);
+          record.depthPanoRgbBridgeUrl = buildBridgeMediaUrl(mirrored.relPath);
+          const archived = await deps.archive(mirrored.relPath, archiveObjectName(record, DEPTH_RGB_PANO_NAME));
+          record.depthPanoRgbGcsUri = archived.gcsUri;
+          await writeRecord(record);
+        } catch (error) {
+          // 镜像/归档失败不阻断：本轮仍用上游链接提交；下一轮再补归档
+          record.lastTransientError = `depth_pano_mirror_failed:${error instanceof Error ? error.message : String(error)}`.slice(0, 280);
+          await writeRecord(record);
+        }
+      }
     }
 
     if (!record.operationId) {
@@ -380,6 +400,15 @@ export async function advanceManhuaWorldTask(taskId: string): Promise<ManhuaWorl
           imageUrl = await deps.signSource(record.sourceImageGcsUri);
         } catch (error) {
           return markFailed(record, "场景图签名失败，未提交上游，可重试", error);
+        }
+      }
+      // layout 第二步：优先用自家归档重新签名（不依赖上游过期链接）；没归档成才退回上游 pano_url
+      let panoUrl = record.depthPanoRgbUrl;
+      if (record.prompt.type === "layout" && record.depthPanoRgbGcsUri) {
+        try {
+          panoUrl = await deps.signSource(record.depthPanoRgbGcsUri);
+        } catch (error) {
+          return markFailed(record, "上色全景签名失败，未提交建世界，可重试（不重付上色）", error);
         }
       }
       record.status = "reconcile_manual";
@@ -394,7 +423,7 @@ export async function advanceManhuaWorldTask(taskId: string): Promise<ManhuaWorl
             record.prompt.type === "text"
               ? { type: "text", textPrompt: record.prompt.textPrompt }
               : record.prompt.type === "layout"
-                ? { type: "image", imageUrl: record.depthPanoRgbUrl!, isPano: true, textPrompt: record.prompt.textPrompt }
+                ? { type: "image", imageUrl: panoUrl!, isPano: true, textPrompt: record.prompt.textPrompt }
                 : { type: "image", imageUrl, isPano: record.prompt.isPano, ...(record.prompt.textPrompt ? { textPrompt: record.prompt.textPrompt } : {}) },
         });
         record.operationId = submitted.operationId;
@@ -530,6 +559,8 @@ export async function retryManhuaWorldTask(taskId: string, userId: number): Prom
     depthMediaAssetId: record.depthMediaAssetId,
     depthOperationId: keepDepth ? record.depthOperationId : undefined,
     depthPanoRgbUrl: keepDepth ? record.depthPanoRgbUrl : undefined,
+    depthPanoRgbBridgeUrl: keepDepth ? record.depthPanoRgbBridgeUrl : undefined,
+    depthPanoRgbGcsUri: keepDepth ? record.depthPanoRgbGcsUri : undefined,
     depthCost: keepDepth ? record.depthCost : undefined,
     worldCost: undefined,
     worldId: undefined,

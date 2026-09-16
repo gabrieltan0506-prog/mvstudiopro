@@ -200,9 +200,15 @@ describe("manhuaWorldTask", () => {
 
     pollDepth.mockResolvedValueOnce({ state: "completed", panoUrl: "https://up/rgb-pano.jpg", cost: { totalCredits: 150 } });
     await advanceManhuaWorldTask(view.taskId);
-    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ prompt: { type: "image", imageUrl: "https://up/rgb-pano.jpg", isPano: true, textPrompt: "雨夜甲板" } }));
+    // 第一步产物先落 Fly 桥 + 归档，再用自家归档重新签名提交第二步（不依赖上游过期链接）
+    expect(mirror).toHaveBeenCalledWith({ ns: "world", id: view.taskId, name: "depth-rgb-pano.jpg" }, "https://up/rgb-pano.jpg");
+    expect(archive).toHaveBeenCalledWith(`world/${view.taskId}/depth-rgb-pano.jpg`, `manhua-world/u7/${view.taskId}/depth-rgb-pano.jpg`);
+    expect(signSource).toHaveBeenCalledWith(`gs://bucket/manhua-world/u7/${view.taskId}/depth-rgb-pano.jpg`);
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ prompt: { type: "image", imageUrl: "https://signed/deck.png?sig=fresh", isPano: true, textPrompt: "雨夜甲板" } }));
     rec = JSON.parse(await fs.readFile(path.join(dir, `${view.taskId}.json`), "utf8"));
     expect(rec.depthPanoRgbUrl).toBe("https://up/rgb-pano.jpg");
+    expect(rec.depthPanoRgbGcsUri).toBe(`gs://bucket/manhua-world/u7/${view.taskId}/depth-rgb-pano.jpg`);
+    expect(rec.depthPanoRgbBridgeUrl).toMatch(/depth-rgb-pano\.jpg/);
     expect(rec.depthCost).toEqual({ totalCredits: 150 });
     expect(rec.operationId).toBe("op1");
     expect(rec.status).toBe("running");
@@ -286,11 +292,42 @@ describe("manhuaWorldTask", () => {
     // 建单时轮询一次（running）+ 完成一次 = 2；重试后不再轮第一步
     expect(pollDepth).toHaveBeenCalledTimes(2);
     expect(submit).toHaveBeenCalledTimes(2);
-    expect(submit).toHaveBeenLastCalledWith(expect.objectContaining({ prompt: { type: "image", imageUrl: "https://up/p5.jpg", isPano: true, textPrompt: "夜" } }));
+    expect(submit).toHaveBeenLastCalledWith(expect.objectContaining({ prompt: { type: "image", imageUrl: "https://signed/deck.png?sig=fresh", isPano: true, textPrompt: "夜" } }));
+    // 重试不重新镜像第一步产物；归档 gs:// 跟着记录走
+    expect(mirror).toHaveBeenCalledTimes(1);
     const rec = JSON.parse(await fs.readFile(path.join(dir, `${retried!.taskId}.json`), "utf8"));
+    expect(rec.depthPanoRgbGcsUri).toBe(`gs://bucket/manhua-world/u7/${view.taskId}/depth-rgb-pano.jpg`);
     expect(rec.depthMediaAssetId).toBe("ma_depth");
     expect(rec.depthOperationId).toBe("dop1");
     expect(rec.depthCost).toEqual({ totalCredits: 150 });
     expect(rec.worldCost).toBeUndefined();
+  });
+  it("layout 元数据只在真要提交上色时校验：已提交（已付费）的第一步不会因记录里元数据缺失被判 failed 再重付", async () => {
+    const view = await createManhuaWorldTask(baseInput({ sceneRef: "scene:l6", sourceImageUrl: "https://signed/d.png", sourceImageGcsUri: undefined, prompt: { type: "layout", depthPanoUrl: "https://signed/d.png", depthMeta, textPrompt: "夜" } }));
+    expect(view.status).toBe("running");
+    expect(submitDepth).toHaveBeenCalledTimes(1);
+    // 模拟旧记录/回读损坏：depthMeta 丢了，但 depthOperationId 已在
+    const file = path.join(dir, `${view.taskId}.json`);
+    const rec = JSON.parse(await fs.readFile(file, "utf8"));
+    expect(rec.depthOperationId).toBe("dop1");
+    delete rec.prompt.depthMeta;
+    await fs.writeFile(file, JSON.stringify(rec));
+    pollDepth.mockResolvedValueOnce({ state: "completed", panoUrl: "https://up/p6.jpg" });
+    const next = await advanceManhuaWorldTask(view.taskId);
+    expect(next?.status).toBe("running");
+    expect(next?.depthPanoRgbUrl).toBe("https://up/p6.jpg");
+    expect(submitDepth).toHaveBeenCalledTimes(1);
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("第一步产物镜像失败不阻断：本轮退回上游 pano_url 提交第二步，记 lastTransientError，下一轮再补归档", async () => {
+    const view = await createManhuaWorldTask(baseInput({ sceneRef: "scene:l7", sourceImageUrl: "https://signed/d.png", sourceImageGcsUri: undefined, prompt: { type: "layout", depthPanoUrl: "https://signed/d.png", depthMeta, textPrompt: "夜" } }));
+    pollDepth.mockResolvedValueOnce({ state: "completed", panoUrl: "https://up/p7.jpg" });
+    mirror.mockRejectedValueOnce(new Error("bridge_down"));
+    const next = await advanceManhuaWorldTask(view.taskId);
+    expect(next?.status).toBe("running");
+    expect(next?.depthPanoRgbGcsUri).toBeUndefined();
+    expect(submit).toHaveBeenLastCalledWith(expect.objectContaining({ prompt: { type: "image", imageUrl: "https://up/p7.jpg", isPano: true, textPrompt: "夜" } }));
+    expect(signSource).not.toHaveBeenCalled();
   });
 });
