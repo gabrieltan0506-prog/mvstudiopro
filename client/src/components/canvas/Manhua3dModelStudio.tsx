@@ -59,8 +59,8 @@ export function manhua3dModelStageOf(c: Manhua3dModelStudioCharacter, rigged: bo
   if (!c.eligibility.eligible) return { stage: "blocked", labelZh: "还不能建模", reasonZh: c.eligibility.reasonZh };
   const m = c.eligibility.currentModel3d;
   if (rigged) return { stage: "rigged", labelZh: "已绑骨 · 白模可用" };
-  // 锁脸图没模型但候选图（A-pose）有就绪模型：按候选图算就绪，绑骨用它
-  if (!m && c.rigSource?.isCandidate) return { stage: "ready", labelZh: `候选图模型就绪 · 待绑骨（${c.rigSource.labelZh}）` };
+  // 绑骨来源解析到候选图（锁脸图没就绪模型、建模失败，或用户钉选了 A-pose）：按候选图算就绪，绑骨用它
+  if (c.rigSource?.isCandidate) return { stage: "ready", labelZh: `候选图模型就绪 · 待绑骨（${c.rigSource.labelZh}）` };
   if (!m) return { stage: "none", labelZh: "未建模" };
   switch (m.status) {
     case "queued":
