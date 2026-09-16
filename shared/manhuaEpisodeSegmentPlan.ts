@@ -720,6 +720,16 @@ export function getManhuaSegmentIntentZh(
   return String(hit?.intentZh || "").trim();
 }
 
+/** 本段对白原文（给运镜调度生成器）；没有就空串 */
+export function getManhuaSegmentDialogueZh(
+  plan: ManhuaEpisodeSegmentPlan | null | undefined,
+  segmentIndex: number,
+): string {
+  const idx = Math.max(1, Math.floor(segmentIndex));
+  const hit = (plan?.segments || []).find((s) => s.index === idx);
+  return String(hit?.dialogueZh || "").trim();
+}
+
 /** 把可拍表压成工厂节拍提示（不编造缺失段；含意图 + 节拍防火墙 + 去空话） */
 export function formatManhuaEpisodeSegmentPlanBeatsBlock(
   plan: ManhuaEpisodeSegmentPlan | null | undefined,

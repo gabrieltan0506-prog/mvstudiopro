@@ -15,7 +15,8 @@ import type { ManhuaExecutableShot } from "./manhuaActionPlanSplit";
 import type { ManhuaResolvedCameraSource } from "./manhuaActionPlanBindings";
 import { manhuaPrevisTimingForExecutableShot, type ManhuaPrevisTiming } from "./manhuaPrevisTiming";
 import { manhuaSnapToFrameSec } from "./manhuaActionPlanTiming";
-import { choreographManhuaCameras, manhuaCameraPromptZh, type ManhuaCameraStyle } from "./manhuaCameraGrammar";
+import { assessManhuaCameraVariety, choreographManhuaCameras, manhuaCameraPromptZh, type ManhuaCameraStyle } from "./manhuaCameraGrammar";
+import { formatManhuaShotScheduleZh, scheduleManhuaSegmentShots, scheduledShotsToPrevisCameras } from "./manhuaShotScheduler.js";
 import { MANHUA_CAMERA_STYLE_LABEL_ZH, MANHUA_TEMPO_TIER_LABEL_ZH, type ManhuaCameraTempo } from "./manhuaCameraTempo";
 
 export type ManhuaPrevisCharacterLink = {
@@ -67,6 +68,8 @@ export function manhuaPrevisDraftFromExecutableShot(input: {
   cameraStyle?: ManhuaCameraStyle;
   /** 节奏策略（resolveManhuaCameraTempo）；省略 = 老口径 */
   tempo?: ManhuaCameraTempo;
+  /** 0916 运镜调度：本段可拍表对白原文；没有动作事件时按过肩公式出机位 */
+  dialogueZh?: string;
 }): ManhuaPrevisDraftFromPlan {
   const { plan, shot } = input;
   const timing = manhuaPrevisTimingForExecutableShot(shot, input.resolvedCamera ?? null);
@@ -156,12 +159,28 @@ export function manhuaPrevisDraftFromExecutableShot(input: {
     durationSec: D, events: shot.events, cues: timing.contactCues, actorPositions, style,
     ...(tempo ? { tempo: { maxCuts: tempo.maxCuts, minShotSec: tempo.minShotSec, reactionHoldSec: tempo.reactionHoldSec, style, establishFirst: tempo.establishFirst, reactionToNonHuman: tempo.reactionToNonHuman, reactionLens: tempo.reactionLens }, nonHumanActorIds } : {}),
   });
-  const cameras: ManhuaPrevisSpec["cameras"] = choreo.cameras.map(({ startSec, endSec, position, target, lens }) => ({ startSec, endSec, position, target, lens }));
-  const cameraPromptZh = choreo.cameras.map((c) => manhuaCameraPromptZh(c, style));
+  let cameras: ManhuaPrevisSpec["cameras"] = choreo.cameras.map(({ startSec, endSec, position, target, lens }) => ({ startSec, endSec, position, target, lens }));
+  let cameraPromptZh = choreo.cameras.map((c) => manhuaCameraPromptZh(c, style));
+  // 无动作事件的对白段：过肩公式出机位（谁在前景/过谁肩/拍谁脸 → 景别推情绪 → 关键句反应）
+  const hasActionEvents = shot.events.length > 0;
+  if (!hasActionEvents && String(input.dialogueZh || "").trim()) {
+    const positionsByName: Record<string, [number, number]> = {};
+    for (const a of actors) positionsByName[a.nameZh] = a.start;
+    const nonHumanNames = actors.filter((a) => a.shape !== "human").map((a) => a.nameZh);
+    const schedule = scheduleManhuaSegmentShots({ durationSec: D, dialogueZh: input.dialogueZh, tempoTier: tempo?.tier, nonHumanNames });
+    const scheduled = scheduledShotsToPrevisCameras(schedule.shots, positionsByName, { nonHumanNames }).slice(0, 8);
+    if (scheduled.length) {
+      scheduled[scheduled.length - 1]!.endSec = D;
+      cameras = scheduled.map(({ startSec, endSec, position, target, lens }) => ({ startSec, endSec, position, target, lens }));
+      cameraPromptZh = schedule.shots.slice(0, scheduled.length).map((sh) => `${sh.startSec.toFixed(2)}–${sh.endSec.toFixed(2)}s ${sh.promptZh}`);
+      summaryZh.push(formatManhuaShotScheduleZh(schedule));
+    }
+  }
   const tempoZh = tempo ? `${MANHUA_TEMPO_TIER_LABEL_ZH[tempo.tier]} · ${tempo.reasonZh}${input.cameraStyle && input.cameraStyle !== tempo.style ? `（风格档手改为${MANHUA_CAMERA_STYLE_LABEL_ZH[input.cameraStyle]}）` : ""}` : "";
   if (tempoZh) summaryZh.push(`节奏：${tempoZh}`);
   summaryZh.push(`运镜 ${cameras.length} 镜（按接触点切）：` + cameraPromptZh.join("；"));
   for (const n of choreo.notesZh) summaryZh.push(n);
+  for (const issue of assessManhuaCameraVariety(choreo.cameras)) summaryZh.push(`运镜提醒：${issue.messageZh}`);
   if (timing.padSec > 0) summaryZh.push(`源区间 ${(D - timing.padSec).toFixed(1)}s 取整为 ${D}s，末尾补 ${timing.padSec.toFixed(2)}s 待机`);
 
   const candidate = {

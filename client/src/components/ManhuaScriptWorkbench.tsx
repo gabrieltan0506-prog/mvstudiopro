@@ -204,7 +204,7 @@ import {
 import {
   inferManhuaCastZhFromDialogue,
   parseManhuaEpisodeSegmentPlanFromMarkdown,
-  getManhuaSegmentIntentZh,
+  getManhuaSegmentDialogueZh, getManhuaSegmentIntentZh,
   type ManhuaEpisodeSegmentPlan,
 } from "@shared/manhuaEpisodeSegmentPlan";
 import { MANHUA_DIALOGUE_SILENCE_TOKEN } from "@shared/manhuaShotDialoguePersist";
@@ -2503,7 +2503,7 @@ export default function ManhuaScriptWorkbench({
       .map((shot) => {
         const hasContact = shot.events.some((e) => e.kind === "attack" || e.kind === "land" || e.kind === "emerge");
         const tempo = resolveManhuaCameraTempo({ intentZh, directionCardId: directionCanon?.mainCardId ?? null, hasContact });
-        return manhuaPrevisDraftFromExecutableShot({ plan: manhuaActionPlan, shot, resolvedCamera: null, aspect, links, tempo, cameraStyle });
+        return manhuaPrevisDraftFromExecutableShot({ plan: manhuaActionPlan, shot, resolvedCamera: null, aspect, links, tempo, cameraStyle, dialogueZh: getManhuaSegmentDialogueZh(shootablePlan, activeSegNo) });
       });
   }, [manhuaActionPlan, focusEpisode, activeSegNo, assetLockRegistry.byRole.character, activeClip?.previsStudio?.spec.aspect, activeClip?.previsStudio?.cameraStyle, shootablePlan, directionCanon?.mainCardId]);
   const modelStudioCharacters = useMemo(

@@ -4,7 +4,7 @@ import { splitManhuaActionPlanForPrevis } from "./manhuaActionPlanSplit";
 import { manhuaPrevisTimingForExecutableShot } from "./manhuaPrevisTiming";
 import { manhuaPrevisSpecSchema } from "./manhuaPrevis";
 import { manhuaPrevisDraftFromExecutableShot } from "./manhuaPrevisFromActionPlan";
-import { CONTACT_LEAD_FRAMES, MANHUA_CAMERA_MAX_CUTS, choreographManhuaCameras, manhuaCameraPromptZh } from "./manhuaCameraGrammar";
+import { CONTACT_LEAD_FRAMES, MANHUA_CAMERA_MAX_CUTS, assessManhuaCameraVariety, choreographManhuaCameras, manhuaCameraPromptZh, type ManhuaChoreographedCamera } from "./manhuaCameraGrammar";
 import { resolveManhuaCameraTempo } from "./manhuaCameraTempo";
 import type { ManhuaActionEvent } from "./manhuaActionPlan";
 
@@ -383,5 +383,34 @@ describe("1471 R1 · 属性式：布局改动不丢接触镜", () => {
         }
       }
     }
+  });
+});
+
+describe("过肩镜与景别多样性门禁（0916 审片规则）", () => {
+  it("近身起手出过肩镜：机位贴攻方肩后、目标是受方、45mm；提示词写「过肩」；斗法起手仍是手部特写", () => {
+    // 起手 ≥ 半秒才有起手镜：自建一次近身交锋（起手 0–2s，接触 2s，卸力到 3s）
+    const events: ManhuaActionEvent[] = [{ eventId: "ots", kind: "attack", actorId: MAN, targetActorId: WOMAN, outcome: "unplanned", slowMotionIntent: false } as ManhuaActionEvent];
+    const cues = [{ eventId: "ots", contactSec: 2, windupStartSec: 0, recoverEndSec: 3 }];
+    const { cameras } = choreographManhuaCameras({ durationSec: 5, events, cues, actorPositions: positions });
+    const ots = cameras.filter((c) => c.kind === "over_shoulder");
+    expect(ots.length).toBeGreaterThan(0);
+    for (const c of ots) {
+      expect(c.lens).toBe(45);
+      expect(c.position[2]).toBeGreaterThan(0.9);
+      expect(c.position[2]).toBeLessThan(3);
+      expect(manhuaCameraPromptZh(c)).toContain("过肩");
+    }
+    const ranged = choreographManhuaCameras({ durationSec: 5, events, cues, actorPositions: positions, eventManner: { ots: "ranged" } });
+    expect(ranged.cameras.some((c) => c.kind === "over_shoulder")).toBe(false);
+    expect(assessManhuaCameraVariety(cameras)).toEqual([]);
+  });
+
+  it("多样性门禁：同机位同景别 >3s、全平视、无过肩、无反应各自告警", () => {
+    const flat = (startSec: number, endSec: number, kind: ManhuaChoreographedCamera["kind"] = "establish"): ManhuaChoreographedCamera => ({ kind, startSec, endSec, position: [0, -7, 1.5], target: [0, 0, 1], lens: 28, noteZh: "平视全景" });
+    const issues = assessManhuaCameraVariety([flat(0, 4), flat(4, 7, "contact")]);
+    expect(issues.map((i) => i.code)).toEqual(["same_setup_too_long", "flat_only", "no_over_shoulder", "no_reaction"]);
+    expect(issues[0]!.messageZh).toContain("7.0 秒");
+    expect(assessManhuaCameraVariety([flat(0, 2.5), { ...flat(2.5, 5), position: [0, -2, 0.5], lens: 45 }])).toEqual([]);
+    expect(assessManhuaCameraVariety([])).toEqual([]);
   });
 });

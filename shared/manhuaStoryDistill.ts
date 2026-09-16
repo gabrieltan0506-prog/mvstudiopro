@@ -9,6 +9,8 @@
  */
 
 import type { ManhuaEpisodeSegmentBeat } from "./manhuaEpisodeSegmentPlan.js";
+import { resolveManhuaCameraTempo } from "./manhuaCameraTempo.js";
+import { scheduleManhuaSegmentShots, type ManhuaScheduledShot } from "./manhuaShotScheduler.js";
 import {
   MANHUA_EPISODE_SEGMENT_DURATION_SEC,
   extractManhuaDialogueSpeakerName,
@@ -128,6 +130,17 @@ export function resolveKeyframeRoleInSegment(
   return "edit_out";
 }
 
+/** 静帧角色 → 调度镜表里的机位句：起幅=建立镜/首镜，戏核=关键句那一镜，桥接=反应镜（没有则关键句后一镜），落幅=末镜 */
+function scheduledCameraZh(role: ManhuaKeyframeRole, shots: readonly ManhuaScheduledShot[], keyLineIndex: number): string {
+  if (!shots.length) return "";
+  const first = shots[0]!;
+  const last = shots[shots.length - 1]!;
+  const key = shots.find((s) => s.lineIndex === keyLineIndex) || shots.find((s) => s.kind === "single") || shots[Math.min(1, shots.length - 1)]!;
+  const reaction = shots.find((s) => s.kind === "reaction");
+  const pick = role === "start" ? first : role === "key_action" ? key : role === "bridge" ? reaction || shots[Math.min(shots.indexOf(key) + 1, shots.length - 1)]! : last;
+  return pick.promptZh.slice(0, 120);
+}
+
 function roleCameraZh(role: ManhuaKeyframeRole, lightingCameraZh: string): string {
   const base = String(lightingCameraZh || "").trim();
   if (role === "start") {
@@ -181,13 +194,17 @@ export function buildWorkbenchShotsFromSegmentPlan(
   let global = 0;
   for (const beat of segs) {
     const dialogueLines = extractManhuaSegmentDialogueQuotes(beat.dialogueZh || "");
+    // 0916 运镜调度生成器：对白戏按过肩公式出机位（谁在前景/过谁肩/拍谁脸 → 景别推情绪 → 关键句反应）
+    const hasContact = /打|劈|掌|砸|撞|踢|扑|抓|刺|斩|剑|拳|爆|冲/.test(`${beat.performanceZh || ""}${beat.intentZh || ""}`);
+    const tempo = resolveManhuaCameraTempo({ intentZh: beat.intentZh, hasContact });
+    const schedule = scheduleManhuaSegmentShots({ durationSec: MANHUA_EPISODE_SEGMENT_DURATION_SEC, dialogueZh: beat.dialogueZh, tempoTier: tempo.tier, hasContact });
     for (let k = 1; k <= per; k++) {
       global += 1;
       const role = resolveKeyframeRoleInSegment(k, per);
       out.push({
         index: global,
         durationSec: 0,
-        cameraZh: roleCameraZh(role, beat.lightingCameraZh),
+        cameraZh: scheduledCameraZh(role, schedule.shots, schedule.keyLineIndex) || roleCameraZh(role, beat.lightingCameraZh),
         actionZh: roleActionZh(role, beat),
         dialogueZh: dialogueLines[k - 1]
           ? String(dialogueLines[k - 1])
