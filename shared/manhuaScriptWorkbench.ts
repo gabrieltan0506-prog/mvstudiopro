@@ -56,6 +56,8 @@ export { isManhuaClipPromptLegacyFat, stripManhuaClipForbiddenBoards };
 
 export type ManhuaWorkbenchShot = {
   index: number;
+  /** 原可拍表段号，重排或改机位时保留；不按镜头数量猜段。 */
+  sourceSegmentIndex?: number;
   durationSec: number;
   cameraZh: string;
   actionZh: string;

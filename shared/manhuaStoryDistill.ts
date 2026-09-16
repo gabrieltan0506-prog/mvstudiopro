@@ -48,6 +48,7 @@ export const MANHUA_KEYFRAME_ROLE_LABEL_ZH: Record<ManhuaKeyframeRole, string> =
 /** 导戏单/静帧编译用的最小镜位（可与 ManhuaWorkbenchShot 互通） */
 export type ManhuaDistillShot = {
   index: number;
+  sourceSegmentIndex?: number;
   cameraZh: string;
   actionZh: string;
   dialogueZh?: string;
@@ -186,6 +187,7 @@ export function buildWorkbenchShotsFromSegmentPlan(
       const role = resolveKeyframeRoleInSegment(k, per);
       out.push({
         index: global,
+        sourceSegmentIndex: beat.index,
         durationSec: 0,
         cameraZh: roleCameraZh(role, beat.lightingCameraZh),
         actionZh: roleActionZh(role, beat),

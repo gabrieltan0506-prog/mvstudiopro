@@ -2457,7 +2457,7 @@ export function ensureManhuaFragmentClips(
       const originalShot = shots.find(shot => shot.index === resolveKeyartShotIndex(keyart.id, keyart.prompt));
       const sourceBoundKeyart = originalShot ? {
         ...keyart,
-        manhuaKeyartSourceState: { ...keyart.manhuaKeyartSourceState, required: JSON.stringify(originalShot) },
+        manhuaKeyartSourceState: { ...keyart.manhuaKeyartSourceState, required: JSON.stringify(withManhuaShotStateNote(originalShot, shots, opts)) },
       } : keyart;
       refreshedKeyarts.set(keyart.id, compileManhuaKeyartLookBindings(sourceBoundKeyart, {
         registry: lockRegistry,
@@ -3406,11 +3406,16 @@ function withManhuaShotStateNote(shot: ManhuaWorkbenchShot, shots: readonly Manh
   const plan = opts?.segmentPlan;
   const anchors = opts?.assetCanon?.characters || [];
   if (!plan?.segments.length || !anchors.length || !shots.length) return shot;
-  // 镜按位置等比落段（静帧数不整除段数时也不会把尾段全部漏掉；整除时与「每段 per 镜」完全一致）
-  const pos = Math.max(0, shots.findIndex((s) => s.index === shot.index));
-  const seg = [...plan.segments].sort((a, b) => a.index - b.index)[Math.min(plan.segments.length - 1, Math.floor((pos * plan.segments.length) / shots.length))];
+  const seg = plan.segments.find(s => s.index === shot.sourceSegmentIndex);
+  if (!seg) {
+    if (plan.segments.some(s => formatManhuaCastStateNoteZh(s.castZh, anchors))) {
+      throw new Error("角色状态所属段未绑定，请从当前可拍表重新铺镜后再生成；旧图保留。");
+    }
+    return shot;
+  }
   const stateNoteZh = seg ? formatManhuaCastStateNoteZh(seg.castZh, anchors) : "";
-  return stateNoteZh ? { ...shot, stateNoteZh } : shot;
+  const { stateNoteZh: _old, ...clean } = shot;
+  return stateNoteZh ? { ...clean, stateNoteZh } : clean;
 }
 
 export function expandManhuaShotKeyartsAfterReverse(
@@ -3476,7 +3481,7 @@ export function expandManhuaShotKeyartsAfterReverse(
       y: primary.y + (shot.index - 1) * 36,
       parentId: reverse.id,
       prompt: attachManhuaKeyartShotInject(basePrompt, withManhuaShotStateNote(shot, shots, opts)),
-      manhuaKeyartSourceState: { required: JSON.stringify(shot) },
+      manhuaKeyartSourceState: { required: JSON.stringify(withManhuaShotStateNote(shot, shots, opts)) },
       status: "idle",
       outputUrl: undefined,
       outputUrls: [],
@@ -3504,7 +3509,7 @@ export function expandManhuaShotKeyartsAfterReverse(
       return {
         ...b,
         prompt: attachManhuaKeyartShotInject(base, withManhuaShotStateNote(shot, shots, opts)),
-        manhuaKeyartSourceState: { ...b.manhuaKeyartSourceState, required: JSON.stringify(shot) },
+        manhuaKeyartSourceState: { ...b.manhuaKeyartSourceState, required: JSON.stringify(withManhuaShotStateNote(shot, shots, opts)) },
       };
     });
   nextBlocks = [...nextBlocks, ...extras];

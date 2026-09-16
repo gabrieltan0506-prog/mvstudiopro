@@ -32,6 +32,17 @@ function uniquePlanMarkdown(): string {
 const plan6 = parseManhuaEpisodeSegmentPlanFromMarkdown(uniquePlanMarkdown());
 const fixture6 = parseManhuaEpisodeSegmentPlanFromMarkdown(buildManhuaEpisodeSegmentPlanFixtureMarkdown());
 
+it("重复对白经合段、存稿回读仍保留两次且顺序不变", () => {
+  const base = parseManhuaEpisodeSegmentPlanFromMarkdown(buildManhuaEpisodeSegmentPlanFixtureMarkdown());
+  const repeated = { ...base, segments: base.segments.slice(0, 2).map(s => ({ ...s, dialogueZh: '阿菁：「别动！」' })), segmentCount: 2 };
+  const r = relayoutManhuaSegmentPlanForEngine(repeated, { fromDurationSec: 15, toDurationSec: 30 });
+  expect(r.dialoguePreserved).toBe(true);
+  const text = formatManhuaEpisodeSegmentPlanMarkdown(r.plan);
+  expect(text.match(/别动！/g)).toHaveLength(2);
+  const read = parseManhuaEpisodeSegmentPlanFromMarkdown(text);
+  expect(formatManhuaEpisodeSegmentPlanMarkdown(read).match(/别动！/g)).toHaveLength(2);
+});
+
 describe("双引擎重铺", () => {
   it("15s→30s：6 段并 3 段，对白句集合不变、顺序不变；场景不同时写 A → B", () => {
     const r = relayoutManhuaSegmentPlanForEngine(plan6, { fromDurationSec: 15, toDurationSec: 30, toSegmentMax: 4 });

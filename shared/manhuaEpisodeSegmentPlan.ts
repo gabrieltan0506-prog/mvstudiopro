@@ -267,63 +267,14 @@ export function countManhuaSegmentDialogueQuotes(dialogueZh: string): number {
  */
 export function extractManhuaSegmentDialogueQuotes(dialogueZh: string): string[] {
   const t = String(dialogueZh || "");
-  const seen = new Set<string>();
   const out: string[] = [];
-  const push = (line: string) => {
-    const s = String(line || "").trim();
-    if (s.length < 1 || seen.has(s)) return;
-    seen.add(s);
-    out.push(s);
-  };
-  // 已经识别出说话人的引号原文，避免被下面的「无说话人回落」再当匿名句重复计入
-  const consumedQuotes = new Set<string>();
-  /**
-   * 优先：姓名：「台词」/ 姓名（批注）：「台词」（批注如「气声」「自语」「低」不进名字，
-   * 否则锁脸会锁错）。Array.from 兼容 Fly tsc 旧 target。
-   */
-  const withSpeaker = Array.from(
-    t.matchAll(
-      /([\u4e00-\u9fff·A-Za-z]{2,12})(?:[（(][^）)]{0,16}[）)])?\s*[：:]\s*「([^」]{1,80})」/g,
-    ),
-  );
-  for (const m of withSpeaker) {
-    const name = String(m[1] || "").trim();
-    const quote = String(m[2] || "").trim();
-    if (name && quote) {
-      push(`${name}：「${quote}」`);
-      consumedQuotes.add(quote);
-    }
+  // 一次按出现位置扫描，重复句是独立发话；不按文本去重，也不把不同引号分批排序。
+  const re = /(?:([\u4e00-\u9fff·A-Za-z]{2,12})(?:[（(][^）)]{0,16}[）)])?\s*[：:]\s*)?(?:「([^」]+)」|“([^”]+)”|"([^"\n]+)")/g;
+  for (const m of Array.from(t.matchAll(re))) {
+    const quote = String(m[2] ?? m[3] ?? m[4] ?? "").trim();
+    if (!quote) continue;
+    out.push(m[1] ? `${m[1]}：「${quote}」` : quote);
   }
-  const withSpeakerCurly = Array.from(
-    t.matchAll(
-      /([\u4e00-\u9fff·A-Za-z]{2,12})(?:[（(][^）)]{0,16}[）)])?\s*[：:]\s*[\u201c“]([^\u201d”]{1,80})[\u201d”]/g,
-    ),
-  );
-  for (const m of withSpeakerCurly) {
-    const name = String(m[1] || "").trim();
-    const quote = String(m[2] || "").trim();
-    if (name && quote) {
-      push(`${name}：「${quote}」`);
-      consumedQuotes.add(quote);
-    }
-  }
-
-  /**
-   * 回落：无法识别说话人的引号句仍要计入，不能因为本段已经抓到几句带说话人的
-   * 台词就整段跳过——之前在这里 `if (out.length) return` 提前返回，会把带批注
-   * 说话人的句子静默丢掉且不进回落，两三句台词就这样在门禁里凭空消失。
-   */
-  const cn = t.match(/「([^」]{1,80})」/g) || [];
-  const curly = t.match(/[\u201c“]([^\u201d”]{1,80})[\u201d”]/g) || [];
-  const en = t.match(/"([^"]{1,80})"/g) || [];
-  for (const raw of [...cn, ...curly, ...en]) {
-    const inner = String(raw || "")
-      .replace(/^[「『"“\u201c]|[」』"”\u201d]$/g, "")
-      .trim();
-    if (inner.length < 1 || consumedQuotes.has(inner)) continue;
-    push(inner);
-  }
-  // 句数由真实段落决定；下游会在同一视觉镜位内继续排对白，不能在这里无声明截断。
   return out;
 }
 

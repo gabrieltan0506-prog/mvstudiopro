@@ -6,7 +6,7 @@
  * 全程对白/气口不变（每句「」原样、顺序不变）。这里全是纯函数；写回 markdown 用 replaceManhuaEpisodeSegmentPlanInMarkdown。
  */
 import type { ManhuaEpisodeSegmentBeat, ManhuaEpisodeSegmentPlan } from "./manhuaEpisodeSegmentPlan.js";
-import { extractManhuaSegmentDialogueQuotes } from "./manhuaEpisodeSegmentPlan.js";
+import { extractManhuaSegmentDialogueQuotes, parseManhuaEpisodeSegmentPlanFromMarkdown } from "./manhuaEpisodeSegmentPlan.js";
 
 export type ManhuaRelayoutResult = {
   plan: ManhuaEpisodeSegmentPlan;
@@ -35,9 +35,9 @@ function dialogueLinesOf(beat: ManhuaEpisodeSegmentBeat): string[] {
   return extractManhuaSegmentDialogueQuotes(beat.dialogueZh || "").map((l) => (/：「[^」]*」$/.test(l) || /^「[^」]*」$/.test(l) ? l : `「${l}」`));
 }
 
-/** 对白句集合（去重后排序）：解析器本身对同一段内完全相同的句子去重，所以只能按集合比、不能按多重集比 */
+/** 比较有序发话序列，重复次数和顺序都属于内容。 */
 function lineSet(plan: ManhuaEpisodeSegmentPlan): string {
-  return Array.from(new Set(plan.segments.flatMap(dialogueLinesOf))).sort().join("\n");
+  return JSON.stringify([...plan.segments].sort((a, b) => a.index - b.index).flatMap(dialogueLinesOf));
 }
 
 /** 2×15s → 30s：相邻两段并一段（最后落单的保留） */
@@ -115,8 +115,9 @@ export function relayoutManhuaSegmentPlanForEngine(
   if (input.toSegmentMax && next.segments.length > input.toSegmentMax) {
     notesZh.push(`重铺后 ${next.segments.length} 段超过该引擎上限 ${input.toSegmentMax}，请手动合并或删段`);
   }
-  const dialoguePreserved = lineSet(next) === before;
-  if (!dialoguePreserved) notesZh.push("对白句集合前后不一致——不应发生，请勿应用");
+  const saved = parseManhuaEpisodeSegmentPlanFromMarkdown(formatManhuaEpisodeSegmentPlanMarkdown(next));
+  const dialoguePreserved = lineSet(next) === before && lineSet(saved) === before;
+  if (!dialoguePreserved) notesZh.push("对白次数或顺序在重铺/存稿后不一致——不应发生，请勿应用");
   return { plan: next, notesZh, dialoguePreserved, mode: to > from ? "merge" : "split" };
 }
 
