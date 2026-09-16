@@ -183,3 +183,42 @@ describe("1470 R1 · 属性式：随机事件密度下相机合同恒成立", ()
     expect(mk(3)).toBe(5);
   });
 });
+
+describe("1470 R2 · 边界穷举", () => {
+  const base = shots.find((s) => s.sourceShotId === "ap_shot_1")!;
+  const one = (contactSec: number, D: number): ManhuaActionEvent[] => [{
+    eventId: "edge", kind: "attack", actorId: MAN, targetActorId: WOMAN, outcome: "unplanned", slowMotionIntent: false,
+    phases: [
+      { kind: "windup", sourceStartSec: Math.max(0, contactSec - 0.2), sourceEndSec: contactSec },
+      { kind: "contact", sourceStartSec: contactSec, sourceEndSec: Math.min(D, contactSec + 0.1) },
+      { kind: "recover", sourceStartSec: Math.min(D, contactSec + 0.1), sourceEndSec: D },
+    ].filter((p) => p.sourceEndSec > p.sourceStartSec) as ManhuaActionEvent["phases"],
+  } as ManhuaActionEvent];
+  const run = (events: ManhuaActionEvent[], D: number, maxCuts?: number) => {
+    const shot = { ...base, sourceSpan: { startSec: 0, endSec: D }, timeMap: { sourceDurationSec: D, spans: [] }, events };
+    const timing = manhuaPrevisTimingForExecutableShot(shot, cam(D));
+    return choreographManhuaCameras({ durationSec: timing.durationSec, events, cues: timing.contactCues, actorPositions: positions, maxCuts });
+  };
+  it("最短段 D=2：接触贴在片尾 / 贴在片头，都连续覆盖且每镜 ≥1 帧", () => {
+    assertCameraContract(run(one(2, 2), 2).cameras, 2);
+    assertCameraContract(run(one(0, 2), 2).cameras, 2);
+    assertCameraContract(run(one(1, 2), 2).cameras, 2);
+  });
+  it("maxCuts=1：只剩一镜仍覆盖 0–D；maxCuts=2 与 8 均连续", () => {
+    const shot3 = shots.find((s) => s.sourceShotId === "ap_shot_3")!;
+    const timing = manhuaPrevisTimingForExecutableShot(shot3, cam(8));
+    for (const max of [1, 2, 8]) {
+      const { cameras } = choreographManhuaCameras({ durationSec: timing.durationSec, events: shot3.events, cues: timing.contactCues, actorPositions: positions, maxCuts: max });
+      expect(cameras.length).toBeLessThanOrEqual(max);
+      assertCameraContract(cameras, timing.durationSec);
+    }
+  });
+  it("单事件 evade（无接触镜生成）与只有 observe：退回默认全景，仍满足合同", () => {
+    const evade: ManhuaActionEvent[] = [{ eventId: "ev", kind: "evade", actorId: MAN, threatActorId: WOMAN, outcome: "unplanned", slowMotionIntent: false,
+      phases: [{ kind: "windup", sourceStartSec: 1, sourceEndSec: 1.5 }, { kind: "contact", sourceStartSec: 1.5, sourceEndSec: 2 }] } as ManhuaActionEvent];
+    assertCameraContract(run(evade, 4).cameras, 4);
+    const observe: ManhuaActionEvent[] = [{ eventId: "ob", kind: "observe", actorId: MAN, subjectActorId: WOMAN, outcome: "observed", slowMotionIntent: false,
+      phases: [{ kind: "windup", sourceStartSec: 0, sourceEndSec: 3 }] } as ManhuaActionEvent];
+    assertCameraContract(run(observe, 4).cameras, 4);
+  });
+});
