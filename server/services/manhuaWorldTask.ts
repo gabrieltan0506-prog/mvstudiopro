@@ -237,6 +237,16 @@ const MIRROR_PLAN: Array<{ name: string; pick: (a: MarbleWorldAssets) => string 
   { name: "thumb.jpg", pick: (a) => a.thumbnailUrl, url: "thumbnailUrl", gcs: "thumbnailUrl", required: false },
 ];
 
+/** 桥地址 → 相对路径（buildBridgeMediaUrl 的逆；解不出给空串） */
+function bridgeRelPathFromMediaUrl(url: string): string {
+  try {
+    const rel = new URL(url).searchParams.get("relPath") || "";
+    return rel.split("/").length === 3 && !rel.includes("..") ? rel : "";
+  } catch {
+    return "";
+  }
+}
+
 function archiveObjectName(record: ManhuaWorldTaskRecord, name: string): string {
   return `manhua-world/u${record.userId}/${record.taskId}/${name}`;
 }
@@ -380,9 +390,15 @@ export async function advanceManhuaWorldTask(taskId: string): Promise<ManhuaWorl
       if (!record.depthPanoRgbGcsUri) {
         // 第一步产物先落 Fly 桥 + 归档 gs://：上游 pano_url 会过期，第二步/重试都从自家归档重新签名，绝不因链接过期回头重付第一步
         try {
-          const mirrored = await deps.mirror({ ns: "world", id: record.taskId, name: DEPTH_RGB_PANO_NAME }, record.depthPanoRgbUrl!);
-          record.depthPanoRgbBridgeUrl = buildBridgeMediaUrl(mirrored.relPath);
-          const archived = await deps.archive(mirrored.relPath, archiveObjectName(record, DEPTH_RGB_PANO_NAME));
+          // 已镜像但归档没成（含重试沿用的旧任务号桥路径）：按桥地址里的相对路径补归档，不再从上游重下（上游链接可能已过期）
+          let relPath = record.depthPanoRgbBridgeUrl ? bridgeRelPathFromMediaUrl(record.depthPanoRgbBridgeUrl) : "";
+          if (!relPath) {
+            const mirrored = await deps.mirror({ ns: "world", id: record.taskId, name: DEPTH_RGB_PANO_NAME }, record.depthPanoRgbUrl!);
+            relPath = mirrored.relPath;
+            record.depthPanoRgbBridgeUrl = buildBridgeMediaUrl(relPath);
+            await writeRecord(record);
+          }
+          const archived = await deps.archive(relPath, archiveObjectName(record, DEPTH_RGB_PANO_NAME));
           record.depthPanoRgbGcsUri = archived.gcsUri;
           await writeRecord(record);
         } catch (error) {
