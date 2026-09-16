@@ -79,7 +79,7 @@ describe("人体绑骨请求闭合", () => {
     await expect(submitAutoRigTask(1, request, f.deps)).rejects.toThrow("请求回执未确认");
     expect(f.counts().inserts).toBe(1);
     // 赢家的设置原样保留
-    const row = f.rows.get([...f.rows.keys()][0]!)!;
+    const row = f.rows.get(Array.from(f.rows.keys())[0]!)!;
     expect((row.input as { params: { settings: { pose: string } } }).params.settings.pose).toBe("A");
   });
   it("同编号不同设置拒绝，不覆盖旧请求", async () => {
