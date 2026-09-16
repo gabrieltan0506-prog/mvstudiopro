@@ -595,7 +595,7 @@ export function consumableManhuaCustomAssetRefs(
     if (!controlledKeys.length) return true;
     // 0916 状态变体：显式绑到某状态（肩伤/虚弱…）的图与常态图并存进生成，不被常态当前图挤掉
     const boundToState = (ref.primaryBindings || []).some(
-      (b) => b.stateId && b.duty === ref.refDuty && (ref.claimedAnchorIds || []).includes(b.anchorId),
+      (b) => b.stateId && b.duty === ref.refDuty && (ref.claimedAnchorIds || []).includes(b.anchorId) && primaryByKey.get(primaryBindingKey(b)) === ref.id,
     );
     if (boundToState) return true;
     return controlledKeys.some(
