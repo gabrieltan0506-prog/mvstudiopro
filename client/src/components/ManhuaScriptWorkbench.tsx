@@ -36,7 +36,7 @@ import { CanvasAudioStudio } from "@/components/canvas/CanvasAudioStudio";
 import { ManhuaPrevisStudio } from "@/components/canvas/ManhuaPrevisStudio";
 import { ManhuaActionTimeline } from "@/components/canvas/ManhuaActionTimeline";
 import { Manhua3dModelStudio, manhua3dModelCounts, manhua3dRigLookupCharacters } from "@/components/canvas/Manhua3dModelStudio";
-import { ManhuaWorldStudio, manhuaWorldCounts, type ManhuaWorldGenerateOptions, type ManhuaWorldLayoutActor, type ManhuaWorldLayoutSubmitOptions } from "@/components/canvas/ManhuaWorldStudio";
+import { ManhuaWorldStudio, manhuaWorldCounts, type ManhuaStageFrameBindingDraft, type ManhuaWorldGenerateOptions, type ManhuaWorldLayoutActor, type ManhuaWorldLayoutSubmitOptions } from "@/components/canvas/ManhuaWorldStudio";
 import type { ManhuaStageCharacter } from "@/components/canvas/ManhuaWorldStagePreview";
 import { evaluateManhuaWorld3dEligibility } from "@shared/manhuaWorld3d";
 import { splitManhuaActionPlanForPrevis } from "@shared/manhuaActionPlanSplit";
@@ -494,7 +494,7 @@ type Props = {
   onRetrySceneWorld?: (id: string) => void | Promise<void>;
   onRemoveSceneWorld?: (id: string) => void | Promise<void>;
   /** PR-10：3D 世界视角 PNG → 该场景候选参考图 */
-  onExportSceneStageFrame?: (id: string, blob: Blob, viewLabelZh: string) => void | Promise<void>;
+  onExportSceneStageFrame?: (id: string, blob: Blob, frame: ManhuaStageFrameBindingDraft & { episode?: number; segmentIndex?: number }) => void | Promise<void>;
   /** PR-11：按本段白模布局（深度全景）生成世界 */
   onSubmitLayoutSceneWorld?: (id: string, options: ManhuaWorldLayoutSubmitOptions) => void | Promise<void>;
   sceneWorldBusyIds?: readonly string[];
@@ -3520,7 +3520,7 @@ export default function ManhuaScriptWorkbench({
             onRetry={onRetrySceneWorld}
             onRemove={onRemoveSceneWorld}
             stageCharacters={worldStageCharacters}
-            onExportStageFrame={onExportSceneStageFrame}
+            onExportStageFrame={onExportSceneStageFrame ? (id, blob, frame) => onExportSceneStageFrame(id, blob, { ...frame, episode: focusEpisode, segmentIndex: activeSegNo }) : undefined}
             layoutActors={worldLayoutActors}
             onSubmitLayoutWorld={onSubmitLayoutSceneWorld}/> : null}
           {onUpdateClipPrevisStudio ? <button type="button" data-manhua-action="open-previs-studio" disabled={Boolean(factoryBusy)}

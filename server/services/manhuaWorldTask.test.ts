@@ -51,6 +51,9 @@ describe("manhuaWorldTask", () => {
   const signSource = vi.fn();
   const submitDepth = vi.fn();
   const pollDepth = vi.fn();
+  const fetchSource = vi.fn();
+  const uploadMedia = vi.fn();
+  const depthMeta = { width: 1024, height: 512, zMin: 0.3, zMax: 60, encoding: "log_inverse_01" as const };
   beforeEach(async () => {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), "mw-"));
     bridge = await fs.mkdtemp(path.join(os.tmpdir(), "mwb-"));
@@ -64,7 +67,9 @@ describe("manhuaWorldTask", () => {
     signSource.mockReset().mockResolvedValue("https://signed/deck.png?sig=fresh");
     submitDepth.mockReset().mockResolvedValue({ operationId: "dop1" });
     pollDepth.mockReset().mockResolvedValue({ state: "running", status: "PENDING" });
-    setManhuaWorldTaskDependenciesForTests({ isConfigured: () => true, submit, poll, mirror, archive, deleteWorld, signSource, submitDepth, pollDepth, now: () => new Date("2026-09-16T04:00:00.000Z") });
+    fetchSource.mockReset().mockResolvedValue(new Uint8Array([0x89, 0x50]));
+    uploadMedia.mockReset().mockResolvedValue({ mediaAssetId: "ma_depth" });
+    setManhuaWorldTaskDependenciesForTests({ isConfigured: () => true, submit, poll, mirror, archive, deleteWorld, signSource, submitDepth, pollDepth, fetchSource, uploadMedia, now: () => new Date("2026-09-16T04:00:00.000Z") });
   });
   afterEach(async () => {
     resetManhuaWorldTaskDependenciesForTests();
@@ -178,62 +183,114 @@ describe("manhuaWorldTask", () => {
     expect(await getManhuaWorldTask(a.taskId, 7)).toBeNull();
   });
 
-  it("PR-11 layout：两步链路——先 depth_to_rgb 得全景，再以 is_pano:true 建世界；两步各记 operationId", async () => {
-    const input = baseInput({ sceneRef: "scene:layout", sourceImageUrl: "https://signed/depth.png", sourceImageGcsUri: undefined, prompt: { type: "layout", depthPanoUrl: "https://signed/depth.png", textPrompt: "雨夜甲板" } });
+  it("PR-11/WL-D01 layout：深度 PNG 先传 media asset，再以 media_asset 引用 + z_min/z_max 提交 depth_to_rgb，得全景后以 is_pano:true 建世界；两步 operationId 与 cost 各自持久化", async () => {
+    const input = baseInput({ sceneRef: "scene:layout", sourceImageUrl: "https://signed/depth.png", sourceImageGcsUri: undefined, prompt: { type: "layout", depthPanoUrl: "https://signed/depth.png", depthMeta, textPrompt: "雨夜甲板" } });
     const view = await createManhuaWorldTask(input);
     expect(view.status).toBe("running");
-    expect(submitDepth).toHaveBeenCalledWith({ depthPanoUrl: "https://signed/depth.png", textPrompt: "雨夜甲板" });
+    expect(fetchSource).toHaveBeenCalledWith("https://signed/depth.png");
+    expect(uploadMedia).toHaveBeenCalledWith(expect.objectContaining({ contentType: "image/png", kind: "image", extension: "png" }));
+    expect(submitDepth).toHaveBeenCalledWith({ depth: { source: "media_asset", mediaAssetId: "ma_depth" }, textPrompt: "雨夜甲板", zMin: 0.3, zMax: 60 });
     expect(submit).not.toHaveBeenCalled();
     let rec = JSON.parse(await fs.readFile(path.join(dir, `${view.taskId}.json`), "utf8"));
+    expect(rec.depthMediaAssetId).toBe("ma_depth");
     expect(rec.depthOperationId).toBe("dop1");
     expect(rec.operationId).toBeUndefined();
+    // 元数据原样持久化并可恢复
+    expect(rec.prompt.depthMeta).toEqual(depthMeta);
 
-    pollDepth.mockResolvedValueOnce({ state: "completed", panoUrl: "https://up/rgb-pano.jpg" });
+    pollDepth.mockResolvedValueOnce({ state: "completed", panoUrl: "https://up/rgb-pano.jpg", cost: { totalCredits: 150 } });
     await advanceManhuaWorldTask(view.taskId);
     expect(submit).toHaveBeenCalledWith(expect.objectContaining({ prompt: { type: "image", imageUrl: "https://up/rgb-pano.jpg", isPano: true, textPrompt: "雨夜甲板" } }));
     rec = JSON.parse(await fs.readFile(path.join(dir, `${view.taskId}.json`), "utf8"));
     expect(rec.depthPanoRgbUrl).toBe("https://up/rgb-pano.jpg");
+    expect(rec.depthCost).toEqual({ totalCredits: 150 });
     expect(rec.operationId).toBe("op1");
     expect(rec.status).toBe("running");
 
-    poll.mockResolvedValueOnce({ state: "completed", worldId: "w9", assets: upstream });
+    poll.mockResolvedValueOnce({ state: "completed", worldId: "w9", assets: upstream, cost: { totalCredits: 1500 } });
     const done = await advanceManhuaWorldTask(view.taskId);
     expect(done?.status).toBe("succeeded");
     expect(done?.assets?.spz500kUrl).toMatch(/scene-500k\.spz/);
+    expect(done?.worldCost).toEqual({ totalCredits: 1500 });
+    expect(done?.depthCost).toEqual({ totalCredits: 150 });
   });
 
-  it("PR-11 layout：带 gs:// 时第一步先重新签名再提交（签名 url 过期后重试也能用）；签名失败 → failed 不占上游", async () => {
-    const view = await createManhuaWorldTask(baseInput({ sceneRef: "scene:lg", sourceImageUrl: "https://signed/d.png", sourceImageGcsUri: undefined, prompt: { type: "layout", depthPanoUrl: "https://signed/stale.png", depthPanoGcsUri: "gs://b/depth.png", textPrompt: "夜" } }));
+  it("WL-D01：缺/坏 depthMeta 建单前拒，零上游调用（不拉图、不传、不提交）", async () => {
+    for (const bad of [undefined, { ...depthMeta, zMin: 0 }, { ...depthMeta, zMax: 0.3 }, { ...depthMeta, height: 500 }, { ...depthMeta, encoding: "near_bright_linear" }]) {
+      await expect(
+        createManhuaWorldTask(baseInput({ sceneRef: `scene:bad-${String(bad ? JSON.stringify(bad).length : 0)}`, prompt: { type: "layout", depthPanoUrl: "https://signed/d.png", depthMeta: bad as never, textPrompt: "夜" } })),
+      ).rejects.toThrow("invalid_manhua_world_depth_meta");
+    }
+    expect(fetchSource).not.toHaveBeenCalled();
+    expect(uploadMedia).not.toHaveBeenCalled();
+    expect(submitDepth).not.toHaveBeenCalled();
+  });
+
+  it("PR-11 layout：带 gs:// 时第一步先重新签名再拉图（签名 url 过期后重试也能用）；签名/拉图/上传失败 → failed 不占上游", async () => {
+    const view = await createManhuaWorldTask(baseInput({ sceneRef: "scene:lg", sourceImageUrl: "https://signed/d.png", sourceImageGcsUri: undefined, prompt: { type: "layout", depthPanoUrl: "https://signed/stale.png", depthPanoGcsUri: "gs://b/depth.png", depthMeta, textPrompt: "夜" } }));
     expect(view.status).toBe("running");
     expect(signSource).toHaveBeenCalledWith("gs://b/depth.png");
-    expect(submitDepth).toHaveBeenCalledWith({ depthPanoUrl: "https://signed/deck.png?sig=fresh", textPrompt: "夜" });
+    expect(fetchSource).toHaveBeenCalledWith("https://signed/deck.png?sig=fresh");
     signSource.mockRejectedValueOnce(new Error("sign_down"));
-    const bad = await createManhuaWorldTask(baseInput({ sceneRef: "scene:lg2", sourceImageUrl: "https://signed/d.png", sourceImageGcsUri: undefined, prompt: { type: "layout", depthPanoUrl: "https://signed/stale.png", depthPanoGcsUri: "gs://b/depth2.png", textPrompt: "夜" } }));
+    const bad = await createManhuaWorldTask(baseInput({ sceneRef: "scene:lg2", sourceImageUrl: "https://signed/d.png", sourceImageGcsUri: undefined, prompt: { type: "layout", depthPanoUrl: "https://signed/stale.png", depthPanoGcsUri: "gs://b/depth2.png", depthMeta, textPrompt: "夜" } }));
     expect(bad.status).toBe("failed");
+    fetchSource.mockRejectedValueOnce(new Error("depth_source_http_403"));
+    const bad2 = await createManhuaWorldTask(baseInput({ sceneRef: "scene:lg3", sourceImageUrl: "https://signed/d.png", sourceImageGcsUri: undefined, prompt: { type: "layout", depthPanoUrl: "https://signed/d3.png", depthMeta, textPrompt: "夜" } }));
+    expect(bad2.status).toBe("failed");
+    expect(bad2.errorZh).toContain("拉取失败");
+    uploadMedia.mockRejectedValueOnce(new SubmitRejectedError("marble_media_put_http_403"));
+    const bad3 = await createManhuaWorldTask(baseInput({ sceneRef: "scene:lg4", sourceImageUrl: "https://signed/d.png", sourceImageGcsUri: undefined, prompt: { type: "layout", depthPanoUrl: "https://signed/d4.png", depthMeta, textPrompt: "夜" } }));
+    expect(bad3.status).toBe("failed");
+    expect(bad3.errorZh).toContain("素材库");
     expect(submitDepth).toHaveBeenCalledTimes(1);
   });
 
-  it("PR-11 layout：第一步 rejected → failed 可重试；第一步 poll 报错 → failed；第二步提交 unknown → reconcile", async () => {
+  it("PR-11 layout：第一步 rejected → failed 可重试（media asset 留用不重传）；第一步 poll 报错 → failed；第二步提交 unknown → reconcile（第一步产物留在记录里）", async () => {
     submitDepth.mockRejectedValueOnce(new SubmitRejectedError("marble_depth_submit_rejected_422"));
-    const failed = await createManhuaWorldTask(baseInput({ sceneRef: "scene:l1", sourceImageUrl: "https://signed/d.png", sourceImageGcsUri: undefined, prompt: { type: "layout", depthPanoUrl: "https://signed/d.png", textPrompt: "夜" } }));
+    const failed = await createManhuaWorldTask(baseInput({ sceneRef: "scene:l1", sourceImageUrl: "https://signed/d.png", sourceImageGcsUri: undefined, prompt: { type: "layout", depthPanoUrl: "https://signed/d.png", depthMeta, textPrompt: "夜" } }));
     expect(failed.status).toBe("failed");
     expect(failed.errorZh).toContain("深度全景");
     const retried = await retryManhuaWorldTask(failed.taskId, 7);
     expect(retried?.status).toBe("running");
     expect(submitDepth).toHaveBeenCalledTimes(2);
+    expect(uploadMedia).toHaveBeenCalledTimes(1);
 
-    const running = await createManhuaWorldTask(baseInput({ sceneRef: "scene:l2", sourceImageUrl: "https://signed/d.png", sourceImageGcsUri: undefined, prompt: { type: "layout", depthPanoUrl: "https://signed/d.png", textPrompt: "夜" } }));
+    const running = await createManhuaWorldTask(baseInput({ sceneRef: "scene:l2", sourceImageUrl: "https://signed/d.png", sourceImageGcsUri: undefined, prompt: { type: "layout", depthPanoUrl: "https://signed/d.png", depthMeta, textPrompt: "夜" } }));
     pollDepth.mockResolvedValueOnce({ state: "failed", error: "[9] bad depth" });
     expect((await advanceManhuaWorldTask(running.taskId))?.status).toBe("failed");
 
-    const second = await createManhuaWorldTask(baseInput({ sceneRef: "scene:l3", sourceImageUrl: "https://signed/d.png", sourceImageGcsUri: undefined, prompt: { type: "layout", depthPanoUrl: "https://signed/d.png", textPrompt: "夜" } }));
+    const second = await createManhuaWorldTask(baseInput({ sceneRef: "scene:l3", sourceImageUrl: "https://signed/d.png", sourceImageGcsUri: undefined, prompt: { type: "layout", depthPanoUrl: "https://signed/d.png", depthMeta, textPrompt: "夜" } }));
     pollDepth.mockResolvedValueOnce({ state: "completed", panoUrl: "https://up/p.jpg" });
     submit.mockRejectedValueOnce(new SubmitUnknownError("marble_submit_network:AbortError"));
     const rec = await advanceManhuaWorldTask(second.taskId);
     expect(rec?.status).toBe("reconcile_manual");
+    expect(rec?.depthPanoRgbUrl).toBe("https://up/p.jpg");
+    expect(rec?.depthOperationId).toBe("dop1");
     await expect(retryManhuaWorldTask(second.taskId, 7)).rejects.toThrow("manhua_world_retry_reconcile_forbidden");
 
     // 非 https 深度图 / 空提示：建单前拒
-    await expect(createManhuaWorldTask(baseInput({ sceneRef: "scene:l4", prompt: { type: "layout", depthPanoUrl: "http://x/d.png", textPrompt: "夜" } }))).rejects.toThrow("invalid_manhua_world_task_input");
+    await expect(createManhuaWorldTask(baseInput({ sceneRef: "scene:l4", prompt: { type: "layout", depthPanoUrl: "http://x/d.png", depthMeta, textPrompt: "夜" } }))).rejects.toThrow("invalid_manhua_world_task_input");
+  });
+
+  it("两步恢复：第二步（建世界）rejected 失败后重试只重做第二步——不重传、不重新上色、不重付第一步", async () => {
+    const view = await createManhuaWorldTask(baseInput({ sceneRef: "scene:l5", sourceImageUrl: "https://signed/d.png", sourceImageGcsUri: undefined, prompt: { type: "layout", depthPanoUrl: "https://signed/d.png", depthMeta, textPrompt: "夜" } }));
+    pollDepth.mockResolvedValueOnce({ state: "completed", panoUrl: "https://up/p5.jpg", cost: { totalCredits: 150 } });
+    submit.mockRejectedValueOnce(new SubmitRejectedError("marble_submit_rejected_422"));
+    const failed = await advanceManhuaWorldTask(view.taskId);
+    expect(failed?.status).toBe("failed");
+    expect(failed?.depthPanoRgbUrl).toBe("https://up/p5.jpg");
+    const retried = await retryManhuaWorldTask(view.taskId, 7);
+    expect(retried?.status).toBe("running");
+    expect(uploadMedia).toHaveBeenCalledTimes(1);
+    expect(submitDepth).toHaveBeenCalledTimes(1);
+    // 建单时轮询一次（running）+ 完成一次 = 2；重试后不再轮第一步
+    expect(pollDepth).toHaveBeenCalledTimes(2);
+    expect(submit).toHaveBeenCalledTimes(2);
+    expect(submit).toHaveBeenLastCalledWith(expect.objectContaining({ prompt: { type: "image", imageUrl: "https://up/p5.jpg", isPano: true, textPrompt: "夜" } }));
+    const rec = JSON.parse(await fs.readFile(path.join(dir, `${retried!.taskId}.json`), "utf8"));
+    expect(rec.depthMediaAssetId).toBe("ma_depth");
+    expect(rec.depthOperationId).toBe("dop1");
+    expect(rec.depthCost).toEqual({ totalCredits: 150 });
+    expect(rec.worldCost).toBeUndefined();
   });
 });

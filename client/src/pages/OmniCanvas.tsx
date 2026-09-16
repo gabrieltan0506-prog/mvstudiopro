@@ -52,7 +52,7 @@ import {
   type ManhuaMultiviewView,
 } from "@shared/manhuaMultiview";
 import { evaluateManhuaWorld3dEligibility, toManhuaWorld3dRef } from "@shared/manhuaWorld3d";
-import type { ManhuaWorldGenerateOptions, ManhuaWorldLayoutSubmitOptions } from "@/components/canvas/ManhuaWorldStudio";
+import type { ManhuaStageFrameBindingDraft, ManhuaWorldGenerateOptions, ManhuaWorldLayoutSubmitOptions } from "@/components/canvas/ManhuaWorldStudio";
 import { copyText } from "@/lib/copyText";
 import { cropManhuaSheet2x2 } from "@/lib/manhuaSheetCropApi";
 import type { ManhuaSceneTileSlot } from "@shared/manhuaSceneTilePick";
@@ -1990,22 +1990,40 @@ export default function OmniCanvas() {
     [getSignedUrlMutation],
   );
   const exportSceneStageFrame = useCallback(
-    async (sceneRefId: string, blob: Blob, viewLabelZh: string) => {
+    async (sceneRefId: string, blob: Blob, frame: ManhuaStageFrameBindingDraft & { episode?: number; segmentIndex?: number }) => {
       const ref = customAssetRefs.find((item) => item.id === sceneRefId);
       if (!ref) {
         toast.error("场景参考图不存在");
         return;
       }
+      // 来源绑定必须齐：世界身份 + 机位；缺任一就不入库（不靠标签猜）
+      if (!frame.worldTaskId || !frame.worldSourceVersion || !frame.cameraKind) {
+        toast.error("视角图缺少世界/机位来源，未保存");
+        return;
+      }
       try {
-        const safeView = String(viewLabelZh || "视角").replace(/[^a-zA-Z0-9\u4e00-\u9fff_-]+/g, "-").slice(0, 24);
+        const viewLabelZh = frame.viewLabelZh || "视角";
+        const safeView = String(viewLabelZh).replace(/[^a-zA-Z0-9\u4e00-\u9fff_-]+/g, "-").slice(0, 24);
         const { url, gcsUri } = await uploadPngForManhuaWorld(blob, `world-stage-${safeView}-${Date.now()}.png`);
-        const labelZh = `${ref.labelZh || "场景"}·${viewLabelZh}机位`;
+        const shotZh = frame.episode && frame.segmentIndex ? `第${frame.episode}集段${String(frame.segmentIndex).padStart(2, "0")}·` : "";
+        const labelZh = `${ref.labelZh || "场景"}·${shotZh}${viewLabelZh}机位`;
+        const stageFrame = {
+          worldTaskId: frame.worldTaskId,
+          ...(frame.worldId ? { worldId: frame.worldId } : {}),
+          worldSourceVersion: frame.worldSourceVersion,
+          cameraKind: frame.cameraKind,
+          viewLabelZh,
+          actorIds: frame.actorIds,
+          ...(frame.episode ? { episode: frame.episode } : {}),
+          ...(frame.segmentIndex ? { segmentIndex: frame.segmentIndex } : {}),
+          exportedAt: Date.now(),
+        };
         setCustomAssetRefs((prev) => {
           const next = upsertGeneratedManhuaCustomAssetRef(prev, { url, role: "scene", labelZh, refDuty: "space" });
-          // 长期引用要留 gs://（签名 url 会过期）
-          return normalizeManhuaCustomAssetRefs(next.map((r) => (r.url === url ? { ...r, gcsUri } : r)));
+          // 长期引用要留 gs://（签名 url 会过期）；来源绑定同源写进 ref
+          return normalizeManhuaCustomAssetRefs(next.map((r) => (r.url === url ? { ...r, gcsUri, stageFrame } : r)));
         });
-        toast.success(`已把「${labelZh}」存为该场景的候选参考图`);
+        toast.success(`已把「${labelZh}」存为该场景的候选参考图（已绑定世界与 ${frame.actorIds.length} 个人物）`);
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "视角图上传失败");
       }
@@ -2047,10 +2065,9 @@ export default function OmniCanvas() {
       setSceneWorldBusyIds(manhuaWorldOperationGuard.current.assetIds());
       try {
         const { meta } = options;
-        const { url: depthPanoUrl, gcsUri: depthPanoGcsUri } = await uploadPngForManhuaWorld(
-          options.depthPng,
-          `depth-pano-${meta.width}x${meta.height}-near${meta.nearM}-far${meta.farM}-${meta.encoding}.png`,
-        );
+        const { url: depthPanoUrl, gcsUri: depthPanoGcsUri } = await uploadPngForManhuaWorld(options.depthPng, `depth-pano-${meta.width}x${meta.height}-${meta.encoding}.png`);
+        // WL-D01：z_min/z_max/编码/尺寸是 API 字段，结构化随单走（文件名只是给人看的）
+        const depthMeta = { width: meta.width, height: meta.height, zMin: meta.zMin, zMax: meta.zMax, encoding: meta.encoding };
         const task = await submitManhuaWorldMutation.mutateAsync({
           sceneRef: ref.id,
           sourceVersion: eligibility.sourceVersion,
@@ -2058,7 +2075,7 @@ export default function OmniCanvas() {
           ...(ref.gcsUri ? { sourceImageGcsUri: ref.gcsUri } : {}),
           displayName: `${ref.labelZh || ref.id}·布局`,
           model: options.model,
-          prompt: { type: "layout", depthPanoUrl, depthPanoGcsUri, textPrompt },
+          prompt: { type: "layout", depthPanoUrl, depthPanoGcsUri, depthMeta, textPrompt },
         });
         applyManhuaWorldTaskView(task, ref.world3d?.taskId || null);
         if (task.status === "queued" || task.status === "running") {

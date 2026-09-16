@@ -1,5 +1,6 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
+import { DEPTH_PANO_MAX_WIDTH, DEPTH_PANO_UPLOAD_ENCODING } from "../../shared/manhuaLayoutDepthPano.js";
 import { adminProcedure, router } from "../_core/trpc.js";
 import {
   createManhuaWorldTask,
@@ -30,6 +31,17 @@ const promptSchema = z.discriminatedUnion("type", [
     depthPanoUrl: httpsUrl,
     /** 深度全景的 gs://（签名 url 会过期；重试/对账时重新签） */
     depthPanoGcsUri: z.string().trim().max(2_048).regex(/^gs:\/\//i).optional(),
+    /** WL-D01：结构化深度元数据 = API 字段（z_min/z_max）；0<zMin<zMax、2:1、编码固定，坏的在这里就拒 */
+    depthMeta: z
+      .object({
+        width: z.number().int().min(64).max(DEPTH_PANO_MAX_WIDTH),
+        height: z.number().int().min(32),
+        zMin: z.number().positive(),
+        zMax: z.number().positive(),
+        encoding: z.literal(DEPTH_PANO_UPLOAD_ENCODING),
+      })
+      .refine((m) => m.zMax > m.zMin, { message: "z_min 必须小于 z_max" })
+      .refine((m) => m.height * 2 === m.width, { message: "深度全景必须是 2:1" }),
     textPrompt: z.string().trim().min(2).max(2_000),
   }),
 ]);

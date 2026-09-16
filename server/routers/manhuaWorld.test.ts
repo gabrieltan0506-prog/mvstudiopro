@@ -57,16 +57,20 @@ describe("manhuaWorldRouter", () => {
     ).rejects.toThrow();
   });
 
-  it("PR-11 layout 提示：depthPanoUrl 必须 https、textPrompt 必填", async () => {
+  it("PR-11/WL-D01 layout 提示：depthPanoUrl 必须 https、textPrompt 必填、depthMeta 必填且 0<zMin<zMax、2:1、编码固定；合格的原样传给任务层", async () => {
     const admin = manhuaWorldRouter.createCaller(ctx("admin"));
-    await admin.submit({ sceneRef: "s", sourceVersion: "v", sourceImageUrl: "https://x/d.png", displayName: "d", prompt: { type: "layout", depthPanoUrl: "https://x/d.png", textPrompt: "雨夜甲板" } });
-    expect(mocks.createManhuaWorldTask).toHaveBeenCalledWith(expect.objectContaining({ prompt: { type: "layout", depthPanoUrl: "https://x/d.png", textPrompt: "雨夜甲板" } }));
-    await expect(
-      admin.submit({ sceneRef: "s", sourceVersion: "v", sourceImageUrl: "https://x/d.png", displayName: "d", prompt: { type: "layout", depthPanoUrl: "http://x/d.png", textPrompt: "雨夜甲板" } }),
-    ).rejects.toThrow();
-    await expect(
-      admin.submit({ sceneRef: "s", sourceVersion: "v", sourceImageUrl: "https://x/d.png", displayName: "d", prompt: { type: "layout", depthPanoUrl: "https://x/d.png", textPrompt: "" } }),
-    ).rejects.toThrow();
+    const depthMeta = { width: 1024, height: 512, zMin: 0.3, zMax: 60, encoding: "log_inverse_01" as const };
+    await admin.submit({ sceneRef: "s", sourceVersion: "v", sourceImageUrl: "https://x/d.png", displayName: "d", prompt: { type: "layout", depthPanoUrl: "https://x/d.png", depthMeta, textPrompt: "雨夜甲板" } });
+    expect(mocks.createManhuaWorldTask).toHaveBeenCalledWith(expect.objectContaining({ prompt: { type: "layout", depthPanoUrl: "https://x/d.png", depthMeta, textPrompt: "雨夜甲板" } }));
+    const base = { sceneRef: "s", sourceVersion: "v", sourceImageUrl: "https://x/d.png", displayName: "d" };
+    await expect(admin.submit({ ...base, prompt: { type: "layout", depthPanoUrl: "http://x/d.png", depthMeta, textPrompt: "雨夜甲板" } })).rejects.toThrow();
+    await expect(admin.submit({ ...base, prompt: { type: "layout", depthPanoUrl: "https://x/d.png", depthMeta, textPrompt: "" } })).rejects.toThrow();
+    await expect(admin.submit({ ...base, prompt: { type: "layout", depthPanoUrl: "https://x/d.png", textPrompt: "雨夜" } as never })).rejects.toThrow();
+    await expect(admin.submit({ ...base, prompt: { type: "layout", depthPanoUrl: "https://x/d.png", depthMeta: { ...depthMeta, zMin: 0 }, textPrompt: "雨夜" } })).rejects.toThrow();
+    await expect(admin.submit({ ...base, prompt: { type: "layout", depthPanoUrl: "https://x/d.png", depthMeta: { ...depthMeta, zMax: 0.3 }, textPrompt: "雨夜" } })).rejects.toThrow();
+    await expect(admin.submit({ ...base, prompt: { type: "layout", depthPanoUrl: "https://x/d.png", depthMeta: { ...depthMeta, height: 500 }, textPrompt: "雨夜" } })).rejects.toThrow();
+    await expect(admin.submit({ ...base, prompt: { type: "layout", depthPanoUrl: "https://x/d.png", depthMeta: { ...depthMeta, encoding: "near_bright_linear" as never }, textPrompt: "雨夜" } })).rejects.toThrow();
+    expect(mocks.createManhuaWorldTask).toHaveBeenCalledTimes(1);
   });
 
   it("普通用户不可用；服务错误映射为 TRPC 码", async () => {

@@ -5,6 +5,7 @@
  */
 import { useMemo, useState } from "react";
 import {
+  MANHUA_WORLD_3D_MODEL_CREDITS,
   MANHUA_WORLD_3D_MODEL_LABEL_ZH,
   MANHUA_WORLD_3D_MODELS,
   type ManhuaWorld3dEligibility,
@@ -13,12 +14,13 @@ import {
 import {
   DEPTH_PANO_DEFAULT_WIDTH,
   depthPanoSceneFromPrevisActors,
-  encodeGrayPng,
+  encodeRgbPngFromGray,
+  quantizeDepthForUpload,
   quantizeDepthTo8bit,
   renderLayoutDepthPano,
   type DepthPanoMeta,
 } from "@shared/manhuaLayoutDepthPano";
-import { ManhuaWorldStagePreview, type ManhuaStageCharacter } from "./ManhuaWorldStagePreview";
+import { ManhuaWorldStagePreview, type ManhuaStageCharacter, type ManhuaStageFrameExport } from "./ManhuaWorldStagePreview";
 
 export type ManhuaWorldStudioScene = {
   id: string;
@@ -30,6 +32,9 @@ export type ManhuaWorldStudioScene = {
 };
 
 export type ManhuaWorldGenerateOptions = { model: ManhuaWorld3dModel; textPrompt: string };
+
+/** 导出视角图的绑定草稿：预览给机位/人物/实例版本，工作台补世界身份；上层再补集/段号 */
+export type ManhuaStageFrameBindingDraft = ManhuaStageFrameExport & { worldTaskId: string; worldId?: string; worldSourceVersion: string };
 
 /** PR-11 布局可控：深度全景 PNG + 元数据 + 提示词，由页面上传后以 layout 提示提交 */
 export type ManhuaWorldLayoutSubmitOptions = { model: ManhuaWorld3dModel; textPrompt: string; depthPng: Blob; meta: DepthPanoMeta };
@@ -47,7 +52,7 @@ type Props = {
   /** PR-10：已就绪人物 GLB + 舞台点，放进就绪世界预览 */
   stageCharacters?: readonly ManhuaStageCharacter[];
   /** PR-10：导出的视角 PNG → 上传 → 作该场景候选参考图 */
-  onExportStageFrame?: (sceneRefId: string, blob: Blob, viewLabelZh: string) => void | Promise<void>;
+  onExportStageFrame?: (sceneRefId: string, blob: Blob, frame: ManhuaStageFrameBindingDraft) => void | Promise<void>;
   /** PR-11：当前段白模站位；有则显示「布局可控」子面板 */
   layoutActors?: readonly ManhuaWorldLayoutActor[];
   onSubmitLayoutWorld?: (sceneRefId: string, options: ManhuaWorldLayoutSubmitOptions) => void | Promise<void>;
@@ -112,7 +117,7 @@ function depthPreviewDataUrl(gray: Uint8Array, width: number, height: number): s
   return canvas.toDataURL("image/png");
 }
 
-type LayoutDraft = { previewUrl: string; png: Blob; meta: DepthPanoMeta; actorCount: number };
+type LayoutDraft = { previewUrl: string; png: Blob; bytes: number; meta: DepthPanoMeta; actorCount: number };
 
 function LayoutPanel(props: {
   scene: ManhuaWorldStudioScene;
@@ -131,10 +136,10 @@ function LayoutPanel(props: {
     try {
       const depthScene = depthPanoSceneFromPrevisActors(actors);
       const r = renderLayoutDepthPano(depthScene, { width: DEPTH_PANO_DEFAULT_WIDTH });
-      const gray = quantizeDepthTo8bit(r);
-      const bytes = encodeGrayPng(r.width, r.height, gray);
+      // 上传编码 = 官方对数反相（z_min/z_max 随请求体走）；屏幕预览另用线性近亮，两者分开
+      const bytes = encodeRgbPngFromGray(r.width, r.height, quantizeDepthForUpload(r));
       const png = new Blob([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], { type: "image/png" });
-      setDraft({ previewUrl: depthPreviewDataUrl(gray, r.width, r.height), png, meta: r.meta, actorCount: actors.length });
+      setDraft({ previewUrl: depthPreviewDataUrl(quantizeDepthTo8bit(r), r.width, r.height), png, bytes: bytes.byteLength, meta: r.meta, actorCount: actors.length });
     } catch (error) {
       setErrorZh(error instanceof Error ? error.message : "深度全景生成失败");
     }
@@ -150,8 +155,9 @@ function LayoutPanel(props: {
       {draft ? (
         <>
           <img src={draft.previewUrl} alt={`${scene.labelZh} 深度全景`} className="h-16 rounded border border-white/10 object-cover" data-depth-preview />
-          <span className="text-white/45">
-            {draft.meta.width}×{draft.meta.height} · 近 {draft.meta.nearM}m 亮 / 远 {draft.meta.farM}m 暗
+          <span className="text-white/45" data-depth-upload-meta>
+            上传 {draft.meta.width}×{draft.meta.height} RGB 8bit PNG（{Math.ceil(draft.bytes / 1024)} KB）· z_min {draft.meta.zMin}m / z_max {draft.meta.zMax}m · 编码 {draft.meta.encoding}（官方对数反相，近亮）
+            · 费用：上色一步按上游回执记账 + 建世界 {MANHUA_WORLD_3D_MODEL_CREDITS[model].min === MANHUA_WORLD_3D_MODEL_CREDITS[model].max ? MANHUA_WORLD_3D_MODEL_CREDITS[model].min : `${MANHUA_WORLD_3D_MODEL_CREDITS[model].min}–${MANHUA_WORLD_3D_MODEL_CREDITS[model].max}`} credits
           </span>
           <button
             type="button"
@@ -306,7 +312,11 @@ export function ManhuaWorldStudio(props: Props) {
                       sceneLabelZh={s.labelZh}
                       world={assets}
                       characters={stageCharacters}
-                      onExportStageFrame={onExportStageFrame ? (blob, viewLabelZh) => onExportStageFrame(s.id, blob, viewLabelZh) : undefined}
+                      onExportStageFrame={
+                        onExportStageFrame && world
+                          ? (blob, frame) => onExportStageFrame(s.id, blob, { ...frame, worldTaskId: world.taskId, ...(world.worldId ? { worldId: world.worldId } : {}), worldSourceVersion: world.sourceVersion })
+                          : undefined
+                      }
                     />
                   </div>
                 </div>

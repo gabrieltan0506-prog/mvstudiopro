@@ -4,7 +4,9 @@
  *
  * 纯 CPU 光线求交（平面 + AABB），不依赖 DOM；≤ 2048×1024。
  * 舞台口径：Z 上、米、+Y 为正前（方位角 0° 在图像中央列）；方位角顺时针（+X 在 90°）。
- * 8bit 量化：近亮远暗（255 = nearM，0 = farM，线性），元数据随文件一起走，Marble 侧口径若不同只改这一处。
+ * 上传编码（WL-D01，官方 web-chisel-depth-png 范例）：8bit，n = (ln z − ln zMin)/(ln zMax − ln zMin)，encoded = 1 − n（近亮远暗，对数）。
+ * z_min/z_max 必须作为 API 字段随请求一起发（PNG 归一到 [0,1]，上游靠 z_min/z_max 还原米）。
+ * 近亮线性 8bit 只作屏幕显示预览，不上传。
  */
 
 export type DepthBox = {
@@ -26,15 +28,38 @@ export type DepthPanoScene = {
   boxes?: readonly DepthBox[];
 };
 
+/** 上传编码口径（与官方范例一致）；服务端 schema 用同一常量 */
+export const DEPTH_PANO_UPLOAD_ENCODING = "log_inverse_01" as const;
+export type DepthPanoUploadEncoding = typeof DEPTH_PANO_UPLOAD_ENCODING;
+
 export type DepthPanoMeta = {
   width: number;
   height: number;
-  nearM: number;
-  farM: number;
-  /** 8bit 口径：near_bright = 255 为近 */
-  encoding: "near_bright_linear";
+  /** = 请求体 z_min（米，>0） */
+  zMin: number;
+  /** = 请求体 z_max（米，> zMin） */
+  zMax: number;
+  encoding: DepthPanoUploadEncoding;
   eye: readonly [number, number, number];
 };
+
+/** 走 router/任务记录的结构化深度元数据（不含 eye） */
+export type DepthPanoUploadMeta = Pick<DepthPanoMeta, "width" | "height" | "zMin" | "zMax" | "encoding">;
+
+/** 0 < zMin < zMax、2:1、宽 ≤ 上限；不合格给中文原因（调上游前拒） */
+export function validateDepthPanoUploadMeta(meta: unknown): { ok: true; meta: DepthPanoUploadMeta } | { ok: false; reasonZh: string } {
+  const m = (meta || {}) as Partial<Record<keyof DepthPanoUploadMeta, unknown>>;
+  const width = Number(m.width);
+  const height = Number(m.height);
+  const zMin = Number(m.zMin);
+  const zMax = Number(m.zMax);
+  if (m.encoding !== DEPTH_PANO_UPLOAD_ENCODING) return { ok: false, reasonZh: `深度编码必须是 ${DEPTH_PANO_UPLOAD_ENCODING}` };
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 64 || width > DEPTH_PANO_MAX_WIDTH || height * 2 !== width) {
+    return { ok: false, reasonZh: "深度全景必须是 2:1 等距柱状（宽 64–2048）" };
+  }
+  if (!Number.isFinite(zMin) || !Number.isFinite(zMax) || !(zMin > 0) || !(zMax > zMin)) return { ok: false, reasonZh: "z_min/z_max 必须满足 0 < z_min < z_max" };
+  return { ok: true, meta: { width, height, zMin, zMax, encoding: DEPTH_PANO_UPLOAD_ENCODING } };
+}
 
 export type DepthPanoRender = {
   width: number;
@@ -83,11 +108,11 @@ function intersectAabb(eye: readonly [number, number, number], dir: readonly [nu
   return tMin > 0 ? tMin : Number.POSITIVE_INFINITY;
 }
 
-export function renderLayoutDepthPano(scene: DepthPanoScene, options: { width?: number; nearM?: number; farM?: number } = {}): DepthPanoRender {
+export function renderLayoutDepthPano(scene: DepthPanoScene, options: { width?: number; zMin?: number; zMax?: number } = {}): DepthPanoRender {
   const width = clampWidth(options.width);
   const height = width / 2;
-  const nearM = Math.max(0.01, Number(options.nearM) || DEPTH_PANO_DEFAULT_NEAR_M);
-  const farM = Math.max(nearM + 0.1, Number(options.farM) || DEPTH_PANO_DEFAULT_FAR_M);
+  const nearM = Math.max(0.01, Number(options.zMin) || DEPTH_PANO_DEFAULT_NEAR_M);
+  const farM = Math.max(nearM + 0.1, Number(options.zMax) || DEPTH_PANO_DEFAULT_FAR_M);
   const eye: [number, number, number] = [
     Number(scene.eye?.[0]) || 0,
     Number(scene.eye?.[1]) || 0,
@@ -121,24 +146,47 @@ export function renderLayoutDepthPano(scene: DepthPanoScene, options: { width?: 
       depth[v * width + u] = Math.max(nearM, Math.min(farM, best));
     }
   }
-  return { width, height, depth, meta: { width, height, nearM, farM, encoding: "near_bright_linear", eye } };
+  return { width, height, depth, meta: { width, height, zMin: nearM, zMax: farM, encoding: DEPTH_PANO_UPLOAD_ENCODING, eye } };
 }
 
-/** Float32 距离 → 8bit 灰度（近亮远暗，线性） */
+/** 官方上传编码：米 → [0,1]（1 − 对数归一；近 = 1 亮） */
+export function encodeDepthMetersOfficial(z: number, meta: Pick<DepthPanoMeta, "zMin" | "zMax">): number {
+  const lo = Math.log(meta.zMin);
+  const hi = Math.log(meta.zMax);
+  const n = (Math.log(Math.max(meta.zMin, Math.min(meta.zMax, z))) - lo) / Math.max(1e-12, hi - lo);
+  return 1 - Math.max(0, Math.min(1, n));
+}
+
+/** 官方上传编码的逆：8bit 值 → 米（供固定样例校验与回读） */
+export function decodeDepth8bitOfficial(value: number, meta: Pick<DepthPanoMeta, "zMin" | "zMax">): number {
+  const encoded = Math.max(0, Math.min(255, value)) / 255;
+  const lo = Math.log(meta.zMin);
+  const hi = Math.log(meta.zMax);
+  return Math.exp(lo + (1 - encoded) * (hi - lo));
+}
+
+/** Float32 距离 → 上传用 8bit（官方对数反相编码，zMin→255、zMax→0） */
+export function quantizeDepthForUpload(render: Pick<DepthPanoRender, "depth" | "meta">): Uint8Array {
+  const out = new Uint8Array(render.depth.length);
+  for (let i = 0; i < render.depth.length; i += 1) out[i] = Math.round(255 * encodeDepthMetersOfficial(render.depth[i]!, render.meta));
+  return out;
+}
+
+/** 显示预览用 8bit（近亮远暗、线性，肉眼更好读）；不上传 */
 export function quantizeDepthTo8bit(render: Pick<DepthPanoRender, "depth" | "meta">): Uint8Array {
-  const { nearM, farM } = render.meta;
-  const span = Math.max(1e-6, farM - nearM);
+  const { zMin, zMax } = render.meta;
+  const span = Math.max(1e-6, zMax - zMin);
   const out = new Uint8Array(render.depth.length);
   for (let i = 0; i < render.depth.length; i += 1) {
-    const t = (render.depth[i]! - nearM) / span;
+    const t = (render.depth[i]! - zMin) / span;
     out[i] = Math.round(255 * (1 - Math.max(0, Math.min(1, t))));
   }
   return out;
 }
 
-/** 8bit 灰度 → 米（与量化互逆，供回读校验） */
-export function depth8bitToMeters(value: number, meta: Pick<DepthPanoMeta, "nearM" | "farM">): number {
-  return meta.nearM + (1 - Math.max(0, Math.min(255, value)) / 255) * (meta.farM - meta.nearM);
+/** 显示预览 8bit → 米（线性逆，只对 quantizeDepthTo8bit 有效） */
+export function depth8bitToMeters(value: number, meta: Pick<DepthPanoMeta, "zMin" | "zMax">): number {
+  return meta.zMin + (1 - Math.max(0, Math.min(255, value)) / 255) * (meta.zMax - meta.zMin);
 }
 
 /* ─────────────── 极简 PNG 编码（8bit 灰度，zlib 仅存储块，不依赖 zlib/DOM） ─────────────── */
@@ -181,13 +229,16 @@ function chunk(type: string, data: Uint8Array): Uint8Array {
   return out;
 }
 
-export function encodeGrayPng(width: number, height: number, gray: Uint8Array): Uint8Array {
-  if (gray.length !== width * height) throw new Error("gray_png_size_mismatch");
+/** 官方范例是 RGB(A) 三通道同值的 8bit PNG；上传按 RGB（colorType 2）写，显示预览用灰度 */
+export function encodePng8(width: number, height: number, samples: Uint8Array, colorType: 0 | 2): Uint8Array {
+  const channels = colorType === 2 ? 3 : 1;
+  if (samples.length !== width * height * channels) throw new Error("gray_png_size_mismatch");
+  const stride = width * channels;
   // 每行前置 filter byte 0
-  const raw = new Uint8Array((width + 1) * height);
+  const raw = new Uint8Array((stride + 1) * height);
   for (let y = 0; y < height; y += 1) {
-    raw[y * (width + 1)] = 0;
-    raw.set(gray.subarray(y * width, (y + 1) * width), y * (width + 1) + 1);
+    raw[y * (stride + 1)] = 0;
+    raw.set(samples.subarray(y * stride, (y + 1) * stride), y * (stride + 1) + 1);
   }
   // zlib：仅存储块，每块 ≤ 65535
   const blocks: number[] = [0x78, 0x01];
@@ -200,7 +251,7 @@ export function encodeGrayPng(width: number, height: number, gray: Uint8Array): 
     if (raw.length === 0) break;
   }
   blocks.push(...u32(adler32(raw)));
-  const ihdr = new Uint8Array([...u32(width), ...u32(height), 8, 0, 0, 0, 0]);
+  const ihdr = new Uint8Array([...u32(width), ...u32(height), 8, colorType, 0, 0, 0]);
   const parts = [new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("IDAT", new Uint8Array(blocks)), chunk("IEND", new Uint8Array(0))];
   const total = parts.reduce((n, p) => n + p.length, 0);
   const out = new Uint8Array(total);
@@ -212,10 +263,26 @@ export function encodeGrayPng(width: number, height: number, gray: Uint8Array): 
   return out;
 }
 
-/** 一步到位：场景 → PNG 字节 + 元数据（上传时把 meta 记在任务/文件名旁） */
-export function renderLayoutDepthPanoPng(scene: DepthPanoScene, options: { width?: number; nearM?: number; farM?: number } = {}): { png: Uint8Array; meta: DepthPanoMeta } {
+export function encodeGrayPng(width: number, height: number, gray: Uint8Array): Uint8Array {
+  return encodePng8(width, height, gray, 0);
+}
+
+/** 单通道 → RGB 三通道同值 PNG（官方范例形态） */
+export function encodeRgbPngFromGray(width: number, height: number, gray: Uint8Array): Uint8Array {
+  if (gray.length !== width * height) throw new Error("gray_png_size_mismatch");
+  const rgb = new Uint8Array(gray.length * 3);
+  for (let i = 0; i < gray.length; i += 1) {
+    rgb[i * 3] = gray[i]!;
+    rgb[i * 3 + 1] = gray[i]!;
+    rgb[i * 3 + 2] = gray[i]!;
+  }
+  return encodePng8(width, height, rgb, 2);
+}
+
+/** 一步到位：场景 → 上传用 PNG（官方编码，RGB）+ 元数据（zMin/zMax 必须随请求体一起发） */
+export function renderLayoutDepthPanoPng(scene: DepthPanoScene, options: { width?: number; zMin?: number; zMax?: number } = {}): { png: Uint8Array; meta: DepthPanoMeta } {
   const render = renderLayoutDepthPano(scene, options);
-  return { png: encodeGrayPng(render.width, render.height, quantizeDepthTo8bit(render)), meta: render.meta };
+  return { png: encodeRgbPngFromGray(render.width, render.height, quantizeDepthForUpload(render)), meta: render.meta };
 }
 
 /**

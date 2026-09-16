@@ -6,6 +6,10 @@
  * 坐标：SPZ 按 shared/manhuaWorldStage.marbleToStageTransform 摆正到舞台（Z 上、米）；
  * 人物 GLB（Y 上）绕 X +90° 立起来，按 placeCharacterOnGround 贴地；碰撞网格只做显示开关。
  * 三机位（建立/过肩/单人）来自 threeCameraRigForKeyframe；「导出当前视角 PNG」由 iframe canvas.toDataURL 回传。
+ *
+ * WL-D02 就绪门禁：每次场景配置（世界/人物/碰撞）生成一个 revision；iframe 汇总必需资产清单（世界高斯 + 每个人物 + 碰撞），
+ * await 各自真实成功信号后才报 ready（带 loaded/failed）；缺人物 → partial，列出 actorId，可看不可导出；
+ * 主机只收当前 revision 的消息，旧实例迟到的 ready/frame 一律作废；导出回执带 revision + cameraKind，导出前换机位即作废。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ManhuaWorld3dAssets } from "@shared/manhuaWorld3d";
@@ -30,13 +34,24 @@ export type ManhuaStageCharacter = {
   yawDeg?: number;
 };
 
+/** 导出回执：PNG 之外还带机位/人物/实例版本，由上层补世界与镜号后写进 ref.stageFrame */
+export type ManhuaStageFrameExport = {
+  viewLabelZh: string;
+  cameraKind: StageCameraKind;
+  /** 本帧里加载成功的人物 id（= 全部预期人物；缺人不放行） */
+  actorIds: string[];
+  revision: string;
+};
+
+export type StageAssetFailure = { id: string; kind: "world" | "collider" | "actor"; message: string };
+
 type Props = {
   sceneLabelZh: string;
   world: ManhuaWorld3dAssets;
   characters: readonly ManhuaStageCharacter[];
   height?: number;
   /** 导出当前视角 PNG（供关键帧参考）；不传则不显示导出按钮 */
-  onExportStageFrame?: (blob: Blob, viewLabelZh: string) => void | Promise<void>;
+  onExportStageFrame?: (blob: Blob, frame: ManhuaStageFrameExport) => void | Promise<void>;
 };
 
 const THREE_URL = "https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.module.js";
@@ -56,6 +71,8 @@ function escapeForScript(json: string): string {
 }
 
 export type StageSceneConfig = {
+  /** 本次实例版本；iframe 每条消息回带，主机只认当前值 */
+  revision: string;
   spzUrl: string;
   colliderUrl?: string;
   transform: { scale: number; quaternionXYZW: readonly number[]; translationStage: readonly number[] };
@@ -64,10 +81,11 @@ export type StageSceneConfig = {
 };
 
 /** 组件外可测的纯函数：世界资产 + 人物 → iframe 场景配置（无 https 主产物则 null） */
-export function buildStageSceneConfig(world: ManhuaWorld3dAssets, characters: readonly ManhuaStageCharacter[], initialCamera: StageCameraRig): StageSceneConfig | null {
+export function buildStageSceneConfig(world: ManhuaWorld3dAssets, characters: readonly ManhuaStageCharacter[], initialCamera: StageCameraRig, revision = "0"): StageSceneConfig | null {
   if (!isHttps(world.spz500kUrl)) return null;
   const t = marbleToStageTransform({ metricScaleFactor: world.metricScaleFactor, groundPlaneOffset: world.groundPlaneOffset });
   return {
+    revision,
     spzUrl: world.spz500kUrl,
     ...(isHttps(world.colliderGlbUrl) ? { colliderUrl: world.colliderGlbUrl } : {}),
     transform: { scale: t.scale, quaternionXYZW: t.quaternionXYZW, translationStage: t.translationStage },
@@ -102,7 +120,7 @@ function buildSrcDoc(config: StageSceneConfig): string {
 <script type="module">
 const CONFIG = ${payload};
 const msg = document.getElementById("msg");
-const post = (m) => parent.postMessage({ source: "manhua-world-stage", ...m }, "*");
+const post = (m) => parent.postMessage({ source: "manhua-world-stage", revision: CONFIG.revision, ...m }, "*");
 const fail = (text) => { msg.textContent = text; post({ type: "error", message: text }); };
 let THREE, GLTFLoader, SplatMesh;
 try {
@@ -143,18 +161,27 @@ if (THREE && SplatMesh) {
     scene.add(splat);
 
     const loader = new GLTFLoader();
+    const loadGltf = (url) => new Promise((resolve, reject) => loader.load(url, resolve, undefined, (e) => reject(new Error(e && e.message ? e.message : "load_failed"))));
     let collider = null;
+    let cameraKind = "";
+    const required = [];
+    // 世界高斯：SparkJS SplatMesh 解码完成信号是 initialized（Promise）；没有这个信号就不能当已加载
+    required.push({ id: "world", kind: "world", promise: (async () => {
+      if (!splat.initialized || typeof splat.initialized.then !== "function") throw new Error("SplatMesh 没有 initialized 信号");
+      await splat.initialized;
+      if (splat.numSplats !== undefined && !(splat.numSplats > 0)) throw new Error("高斯数为 0");
+    })() });
     if (CONFIG.colliderUrl) {
-      loader.load(CONFIG.colliderUrl, (gltf) => {
+      required.push({ id: "collider", kind: "collider", promise: loadGltf(CONFIG.colliderUrl).then((gltf) => {
         collider = gltf.scene;
         collider.traverse((o) => { if (o.isMesh) o.material = new THREE.MeshBasicMaterial({ color: 0x22ddaa, wireframe: true, transparent: true, opacity: 0.35 }); });
         collider.quaternion.set(q[0], q[1], q[2], q[3]); collider.scale.setScalar(s); collider.position.set(t[0], t[1], t[2]);
         collider.visible = false;
         scene.add(collider);
-      }, undefined, () => post({ type: "warn", message: "碰撞网格加载失败" }));
+      }) });
     }
     for (const ch of CONFIG.characters) {
-      loader.load(ch.glbUrl, (gltf) => {
+      required.push({ id: ch.id, kind: "actor", promise: loadGltf(ch.glbUrl).then((gltf) => {
         const root = new THREE.Group();
         const model = gltf.scene;
         const box = new THREE.Box3().setFromObject(model);
@@ -168,24 +195,40 @@ if (THREE && SplatMesh) {
         root.position.set(ch.stagePoint[0], ch.stagePoint[1], -box.min.y * scaleK);
         root.add(model);
         scene.add(root);
-      }, undefined, () => post({ type: "warn", message: "人物 GLB 加载失败：" + ch.id }));
+      }) });
     }
 
     window.addEventListener("message", (ev) => {
       const m = ev.data || {};
-      if (m.source !== "manhua-world-stage-host") return;
-      if (m.type === "camera" && m.rig) applyCamera(m.rig);
+      if (m.source !== "manhua-world-stage-host" || m.revision !== CONFIG.revision) return;
+      if (m.type === "camera" && m.rig) { applyCamera(m.rig); cameraKind = String(m.cameraKind || ""); }
       if (m.type === "collider" && collider) collider.visible = Boolean(m.visible);
       if (m.type === "export") {
         renderer.render(scene, camera);
-        try { post({ type: "frame", dataUrl: renderer.domElement.toDataURL("image/png"), viewLabelZh: m.viewLabelZh || "" }); }
+        try { post({ type: "frame", dataUrl: renderer.domElement.toDataURL("image/png"), viewLabelZh: m.viewLabelZh || "", cameraKind: String(m.cameraKind || cameraKind) }); }
         catch (e) { post({ type: "error", message: "导出失败：" + (e && e.message ? e.message : "canvas") }); }
       }
     });
     window.addEventListener("resize", () => { renderer.setSize(window.innerWidth, window.innerHeight); camera.aspect = window.innerWidth / Math.max(1, window.innerHeight); camera.updateProjectionMatrix(); });
-    msg.remove();
-    post({ type: "ready" });
     renderer.setAnimationLoop(() => renderer.render(scene, camera));
+
+    // WL-D02：等每个必需资产的真实成功信号，不用固定 sleep；全部结算后才报 ready（带清单）
+    let settled = 0;
+    msg.textContent = "正在加载 0/" + required.length + "…";
+    for (const r of required) r.promise.then(() => { settled += 1; msg.textContent = "正在加载 " + settled + "/" + required.length + "…"; }, () => { settled += 1; });
+    const results = await Promise.allSettled(required.map((r) => r.promise));
+    const loaded = [], failed = [];
+    results.forEach((res, i) => {
+      const r = required[i];
+      if (res.status === "fulfilled") loaded.push(r.id);
+      else failed.push({ id: r.id, kind: r.kind, message: String(res.reason && res.reason.message ? res.reason.message : res.reason || "load_failed").slice(0, 160) });
+    });
+    if (failed.some((f) => f.kind === "world")) {
+      fail("世界高斯（.spz）加载失败：" + failed.find((f) => f.kind === "world").message);
+    } else {
+      msg.remove();
+      post({ type: "ready", loaded, failed });
+    }
   } catch (e) {
     fail("3D 世界预览初始化失败：" + (e && e.message ? e.message : "WebGL"));
   }
@@ -201,26 +244,58 @@ async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
 export function ManhuaWorldStagePreview(props: Props) {
   const { sceneLabelZh, world, characters, height = 360, onExportStageFrame } = props;
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const revisionCounter = useRef(0);
   const [cameraKind, setCameraKind] = useState<StageCameraKind>("establish");
   const [colliderVisible, setColliderVisible] = useState(false);
-  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [status, setStatus] = useState<"loading" | "ready" | "partial" | "error">("loading");
   const [noteZh, setNoteZh] = useState<string>("");
+  const [failures, setFailures] = useState<StageAssetFailure[]>([]);
   const [exporting, setExporting] = useState(false);
   const rigs = useMemo(() => stageCameraRigs(characters), [characters]);
-  const config = useMemo(() => buildStageSceneConfig(world, characters, rigs.establish), [world, characters, rigs]);
+  // 世界/人物/碰撞任一变化 = 新实例版本；旧实例的 ready/frame 一律作废
+  const config = useMemo(() => {
+    revisionCounter.current += 1;
+    return buildStageSceneConfig(world, characters, rigs.establish, `r${revisionCounter.current}`);
+  }, [world, characters, rigs]);
+  const revision = config?.revision ?? "";
   const srcDoc = useMemo(() => (config ? buildSrcDoc(config) : ""), [config]);
+  const expectedActorIds = useMemo(() => (config?.characters ?? []).map((c) => c.id), [config]);
 
-  const send = useCallback((message: Record<string, unknown>) => {
-    iframeRef.current?.contentWindow?.postMessage({ source: "manhua-world-stage-host", ...message }, "*");
-  }, []);
+  useEffect(() => {
+    setStatus("loading");
+    setNoteZh("");
+    setFailures([]);
+    setExporting(false);
+  }, [revision]);
+
+  const send = useCallback(
+    (message: Record<string, unknown>) => {
+      iframeRef.current?.contentWindow?.postMessage({ source: "manhua-world-stage-host", revision, ...message }, "*");
+    },
+    [revision],
+  );
 
   useEffect(() => {
     const onMessage = (ev: MessageEvent) => {
-      const m = (ev.data || {}) as { source?: string; type?: string; message?: string; dataUrl?: string; viewLabelZh?: string };
+      const m = (ev.data || {}) as { source?: string; revision?: string; type?: string; message?: string; dataUrl?: string; viewLabelZh?: string; cameraKind?: string; loaded?: string[]; failed?: StageAssetFailure[] };
       if (m.source !== "manhua-world-stage" || ev.source !== iframeRef.current?.contentWindow) return;
+      // 旧实例迟到的消息：作废
+      if (m.revision !== revision) return;
       if (m.type === "ready") {
-        setStatus("ready");
-        setNoteZh("");
+        const failed = Array.isArray(m.failed) ? m.failed : [];
+        const loaded = new Set(Array.isArray(m.loaded) ? m.loaded : []);
+        const missingActors = expectedActorIds.filter((id) => !loaded.has(id));
+        setFailures(failed);
+        if (missingActors.length || failed.length) {
+          setStatus("partial");
+          const labels = missingActors.map((id) => characters.find((c) => c.id === id)?.labelZh || id);
+          setNoteZh(
+            `${missingActors.length ? `缺人物：${labels.join("、")}（${missingActors.join("、")}）；` : ""}${failed.map((f) => `${f.kind === "collider" ? "碰撞网格" : f.id} ${f.message}`).join("；")}。可预览，不能导出为关键帧。`,
+          );
+        } else {
+          setStatus("ready");
+          setNoteZh("");
+        }
       } else if (m.type === "error") {
         setStatus("error");
         setNoteZh(m.message || "渲染器不可用");
@@ -228,10 +303,16 @@ export function ManhuaWorldStagePreview(props: Props) {
       } else if (m.type === "warn") {
         setNoteZh(m.message || "");
       } else if (m.type === "frame" && m.dataUrl) {
+        // 导出前换了机位：这帧不是用户现在要的，作废
+        if (m.cameraKind && m.cameraKind !== cameraKind) {
+          setExporting(false);
+          setNoteZh("导出期间切换了机位，这帧已作废，请重新导出");
+          return;
+        }
         void (async () => {
           try {
             const blob = await dataUrlToBlob(m.dataUrl!);
-            await onExportStageFrame?.(blob, m.viewLabelZh || STAGE_CAMERA_LABEL_ZH[cameraKind]);
+            await onExportStageFrame?.(blob, { viewLabelZh: m.viewLabelZh || STAGE_CAMERA_LABEL_ZH[cameraKind], cameraKind, actorIds: expectedActorIds, revision });
           } finally {
             setExporting(false);
           }
@@ -240,14 +321,15 @@ export function ManhuaWorldStagePreview(props: Props) {
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [cameraKind, onExportStageFrame]);
+  }, [cameraKind, characters, expectedActorIds, onExportStageFrame, revision]);
 
+  const loaded = status === "ready" || status === "partial";
   useEffect(() => {
-    if (status === "ready") send({ type: "camera", rig: rigs[cameraKind] });
-  }, [cameraKind, rigs, send, status]);
+    if (loaded) send({ type: "camera", rig: rigs[cameraKind], cameraKind });
+  }, [cameraKind, loaded, rigs, send]);
   useEffect(() => {
-    if (status === "ready") send({ type: "collider", visible: colliderVisible });
-  }, [colliderVisible, send, status]);
+    if (loaded) send({ type: "collider", visible: colliderVisible });
+  }, [colliderVisible, loaded, send]);
 
   if (!config) {
     return <p className="text-[11px] text-amber-100">这个世界还没有可用的高斯文件（.spz），暂不能进场景。</p>;
@@ -255,17 +337,17 @@ export function ManhuaWorldStagePreview(props: Props) {
   const btn = "rounded border border-cyan-300/30 px-2 py-0.5 text-[11px] text-cyan-50 disabled:opacity-40";
   const btnOn = "rounded border border-cyan-300/70 bg-cyan-500/25 px-2 py-0.5 text-[11px] text-cyan-50";
   return (
-    <div className="flex w-full flex-col gap-1" data-manhua-world-stage>
+    <div className="flex w-full flex-col gap-1" data-manhua-world-stage data-stage-status={status} data-stage-revision={revision}>
       <div className="flex flex-wrap items-center gap-1 text-[11px]">
         <span className="text-white/60">机位</span>
         {STAGE_CAMERA_KINDS.map((k) => (
-          <button key={k} type="button" className={cameraKind === k ? btnOn : btn} disabled={status !== "ready"} onClick={() => setCameraKind(k)} title={rigs[k].labelZh}>
+          <button key={k} type="button" className={cameraKind === k ? btnOn : btn} disabled={!loaded} onClick={() => setCameraKind(k)} title={rigs[k].labelZh}>
             {STAGE_CAMERA_LABEL_ZH[k]}
           </button>
         ))}
         {config.colliderUrl ? (
           <label className="ml-2 flex items-center gap-1 text-white/70">
-            <input type="checkbox" checked={colliderVisible} disabled={status !== "ready"} onChange={(e) => setColliderVisible(e.target.checked)} />
+            <input type="checkbox" checked={colliderVisible} disabled={!loaded} onChange={(e) => setColliderVisible(e.target.checked)} />
             显示碰撞网格
           </label>
         ) : null}
@@ -274,9 +356,10 @@ export function ManhuaWorldStagePreview(props: Props) {
             type="button"
             className={`ml-auto ${btn}`}
             disabled={status !== "ready" || exporting}
+            title={status === "partial" ? "有人物/资产没加载成功，不能导出" : undefined}
             onClick={() => {
               setExporting(true);
-              send({ type: "export", viewLabelZh: STAGE_CAMERA_LABEL_ZH[cameraKind] });
+              send({ type: "export", viewLabelZh: STAGE_CAMERA_LABEL_ZH[cameraKind], cameraKind });
             }}
           >
             {exporting ? "导出中…" : "导出当前视角 PNG"}
@@ -284,19 +367,33 @@ export function ManhuaWorldStagePreview(props: Props) {
         ) : null}
       </div>
       <p className="text-[10px] text-white/45">
-        {characters.length ? `已放入 ${characters.length} 个人物（脚贴地）；` : "本段没有已就绪的人物 GLB，只看场景；"}
+        {characters.length ? `预期 ${characters.length} 个人物（脚贴地）；` : "本段没有已就绪的人物 GLB，只看场景；"}
         机位规则与白模一致：过肩在第二人身后 0.9/侧 0.45/高 1.55，单人正前 1.6，建立高位全景。
         {rigs.ots.kind === "single" && cameraKind === "ots" ? " 缺过肩对象，过肩退为单人正面。" : ""}
+        {status === "loading" ? " 资产加载中（世界高斯 + 每个人物都要真实加载成功才算就绪）。" : ""}
       </p>
       <div className="relative w-full overflow-hidden rounded border border-cyan-300/20 bg-black" style={{ height }}>
-        <iframe ref={iframeRef} title={`${sceneLabelZh} 3D 世界预览`} srcDoc={srcDoc} sandbox="allow-scripts" className="h-full w-full" style={{ border: 0 }} />
+        <iframe key={revision} ref={iframeRef} title={`${sceneLabelZh} 3D 世界预览`} srcDoc={srcDoc} sandbox="allow-scripts" className="h-full w-full" style={{ border: 0 }} />
         {status === "error" ? (
           <div className="absolute inset-0 flex items-center justify-center bg-black/70 p-3 text-center text-[11px] text-amber-100" data-stage-placeholder>
             3D 世界预览需要加载渲染器。{noteZh}
           </div>
         ) : null}
       </div>
-      {status === "ready" && noteZh ? <p className="text-[10px] text-amber-100">{noteZh}</p> : null}
+      {status !== "error" && noteZh ? (
+        <p className="text-[10px] text-amber-100" data-stage-note>
+          {noteZh}
+        </p>
+      ) : null}
+      {status === "partial" && failures.length ? (
+        <ul className="text-[10px] text-amber-100/80" data-stage-failures>
+          {failures.map((f) => (
+            <li key={`${f.kind}:${f.id}`}>
+              {f.kind === "actor" ? "人物" : f.kind === "collider" ? "碰撞" : "世界"} {f.id}：{f.message}
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   );
 }

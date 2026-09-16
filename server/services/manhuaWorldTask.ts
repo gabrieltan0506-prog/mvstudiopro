@@ -11,6 +11,7 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { ManhuaWorld3dAssets, ManhuaWorld3dModel, ManhuaWorld3dStatus } from "../../shared/manhuaWorld3d.js";
+import { validateDepthPanoUploadMeta, type DepthPanoUploadMeta } from "../../shared/manhuaLayoutDepthPano.js";
 import { archiveBridgeFileToGcs, bridgeRelPath, buildBridgeMediaUrl, writeBridgeFileFromUrl } from "./flyEditBridge.js";
 import { uploadBufferToGcs } from "./gcs.js";
 import {
@@ -20,8 +21,11 @@ import {
   pollMarbleOperationOnce,
   submitMarbleDepthToRgb,
   submitMarbleGenerate,
+  uploadMarbleMediaAsset,
+  type MarbleDepthToRgbInput,
   type MarbleDepthToRgbSnapshot,
   type MarbleGenerateInput,
+  type MarbleOperationCost,
   type MarbleOperationSnapshot,
   type MarbleWorldAssets,
 } from "./worldlabsMarble.js";
@@ -37,8 +41,11 @@ export type ManhuaWorldTaskStatus = ManhuaWorld3dStatus;
 export type ManhuaWorldPromptRecord =
   | { type: "text"; textPrompt: string }
   | { type: "image"; isPano: boolean | "auto"; textPrompt?: string }
-  /** PR-11 布局可控：我们渲的深度全景 → depth_to_rgb 上色 → 再以 is_pano:true 建世界（两步各记 operationId） */
-  | { type: "layout"; depthPanoUrl: string; depthPanoGcsUri?: string; textPrompt: string };
+  /**
+   * PR-11 布局可控：我们渲的深度全景 → depth_to_rgb 上色 → 再以 is_pano:true 建世界（两步各记 operationId）。
+   * WL-D01：depthMeta（zMin/zMax/编码/尺寸）是 API 字段，必须结构化随单走，文件名里的数字不算。
+   */
+  | { type: "layout"; depthPanoUrl: string; depthPanoGcsUri?: string; depthMeta: DepthPanoUploadMeta; textPrompt: string };
 
 export type ManhuaWorldTaskRecord = {
   taskId: string;
@@ -55,9 +62,13 @@ export type ManhuaWorldTaskRecord = {
   prompt: ManhuaWorldPromptRecord;
   status: ManhuaWorldTaskStatus;
   operationId?: string;
-  /** layout 第一步（depth_to_rgb）的操作号与产物 */
+  /** layout 第一步（depth_to_rgb）：先把深度 PNG 传成 Marble media asset（钥匙只在 Fly），再提交；操作号与产物分别持久化 */
+  depthMediaAssetId?: string;
   depthOperationId?: string;
   depthPanoRgbUrl?: string;
+  /** 上游 Operation.cost 原样记账（可空≠零费）；与用户积分不是一份账 */
+  depthCost?: MarbleOperationCost;
+  worldCost?: MarbleOperationCost;
   worldId?: string;
   /** 上游产物原始链接（会过期；只作镜像来源） */
   upstreamAssets?: MarbleWorldAssets;
@@ -73,15 +84,18 @@ export type ManhuaWorldTaskRecord = {
 
 export type ManhuaWorldTaskView = Pick<
   ManhuaWorldTaskRecord,
-  "taskId" | "sceneRef" | "sourceVersion" | "displayName" | "model" | "status" | "worldId" | "assets" | "errorZh" | "createdAt" | "updatedAt" | "finishedAt"
+  "taskId" | "sceneRef" | "sourceVersion" | "displayName" | "model" | "status" | "worldId" | "assets" | "errorZh" | "createdAt" | "updatedAt" | "finishedAt" | "depthCost" | "worldCost"
 >;
 
 type Deps = {
   isConfigured: () => boolean;
   submit: (input: MarbleGenerateInput) => Promise<{ operationId: string; worldId?: string }>;
   poll: (operationId: string) => Promise<MarbleOperationSnapshot>;
-  submitDepth: (input: { depthPanoUrl: string; textPrompt: string }) => Promise<{ operationId: string }>;
+  submitDepth: (input: MarbleDepthToRgbInput) => Promise<{ operationId: string }>;
   pollDepth: (operationId: string) => Promise<MarbleDepthToRgbSnapshot>;
+  /** 深度 PNG（GCS 签名链）→ 字节：Fly 拉下来再传 Marble media asset */
+  fetchSource: (url: string) => Promise<Uint8Array>;
+  uploadMedia: (input: { bytes: Uint8Array; contentType: string; fileName: string; kind: "image" | "video"; extension: string }) => Promise<{ mediaAssetId: string }>;
   deleteWorld: (worldId: string) => Promise<boolean>;
   /** 上游产物 → Fly 卷 */
   mirror: (ref: { ns: string; id: string; name: string }, url: string) => Promise<{ relPath: string; bytes: number }>;
@@ -97,6 +111,14 @@ const productionDeps: Deps = {
   poll: pollMarbleOperationOnce,
   submitDepth: submitMarbleDepthToRgb,
   pollDepth: pollMarbleDepthToRgbOnce,
+  fetchSource: async (url) => {
+    const response = await fetch(url, { signal: AbortSignal.timeout(60_000) });
+    if (!response.ok) throw new Error(`depth_source_http_${response.status}`);
+    const buf = new Uint8Array(await response.arrayBuffer());
+    if (buf.length > 32 * 1024 * 1024) throw new Error("depth_source_too_large");
+    return buf;
+  },
+  uploadMedia: uploadMarbleMediaAsset,
   deleteWorld: deleteMarbleWorld,
   mirror: (ref, url) => writeBridgeFileFromUrl(ref, url, { maxBytes: MAX_PRODUCT_BYTES }),
   archive: (relPath, objectName) => archiveBridgeFileToGcs(relPath, objectName, { upload: uploadBufferToGcs }),
@@ -279,9 +301,12 @@ export async function advanceManhuaWorldTask(taskId: string): Promise<ManhuaWorl
     }
 
     if (!record.operationId && record.prompt.type === "layout") {
-      // 第一步：深度全景 → RGB 全景。失败 → failed（可重试，重试从头做两步）；提交不确定 → reconcile
-      if (!record.depthOperationId) {
-        // 签名 url 会过期：有 gs:// 就重新签（重试/对账后再提交也能用）；签不动 → failed，不占上游（与场景图路径同序：先签再置 reconcile）
+      // 第一步：深度全景 → RGB 全景。上传/提交被拒 → failed（可重试）；提交不确定 → reconcile；
+      // 第一步产物（media asset / operationId / pano_url）各自持久化，重试只补缺的那一步，不重付。
+      const metaCheck = validateDepthPanoUploadMeta(record.prompt.depthMeta);
+      if (!metaCheck.ok) return markFailed(record, `深度元数据不合格：${metaCheck.reasonZh}`);
+      if (!record.depthMediaAssetId) {
+        // 签名 url 会过期：有 gs:// 就重新签；签不动/拉不动/传不上 → failed，不占上游（没有付费动作）
         let depthPanoUrl = record.prompt.depthPanoUrl;
         if (record.prompt.depthPanoGcsUri) {
           try {
@@ -290,12 +315,33 @@ export async function advanceManhuaWorldTask(taskId: string): Promise<ManhuaWorl
             return markFailed(record, "深度全景签名失败，未提交上游，可重试", error);
           }
         }
+        let bytes: Uint8Array;
+        try {
+          bytes = await deps.fetchSource(depthPanoUrl);
+        } catch (error) {
+          return markFailed(record, "深度全景拉取失败，未提交上游，可重试", error);
+        }
+        try {
+          const uploaded = await deps.uploadMedia({ bytes, contentType: "image/png", fileName: `depth-${record.taskId}.png`, kind: "image", extension: "png" });
+          record.depthMediaAssetId = uploaded.mediaAssetId;
+          record.startedAt = record.startedAt || isoNow();
+          await writeRecord(record);
+        } catch (error) {
+          return markFailed(record, "深度全景上传到上游素材库失败，未提交上色，可重试", error);
+        }
+      }
+      if (!record.depthOperationId) {
         record.status = "reconcile_manual";
         record.errorZh = "提交结果正在确认，为避免重复生成不会自动重试";
         record.startedAt = record.startedAt || isoNow();
         await writeRecord(record);
         try {
-          const submitted = await deps.submitDepth({ depthPanoUrl, textPrompt: record.prompt.textPrompt });
+          const submitted = await deps.submitDepth({
+            depth: { source: "media_asset", mediaAssetId: record.depthMediaAssetId! },
+            textPrompt: record.prompt.textPrompt,
+            zMin: metaCheck.meta.zMin,
+            zMax: metaCheck.meta.zMax,
+          });
           record.depthOperationId = submitted.operationId;
           record.status = "running";
           record.errorZh = undefined;
@@ -321,6 +367,7 @@ export async function advanceManhuaWorldTask(taskId: string): Promise<ManhuaWorl
           return record;
         }
         record.depthPanoRgbUrl = depth.panoUrl;
+        if (depth.cost) record.depthCost = depth.cost;
         record.lastTransientError = undefined;
         await writeRecord(record);
       }
@@ -380,6 +427,7 @@ export async function advanceManhuaWorldTask(taskId: string): Promise<ManhuaWorl
 
     record.worldId = snapshot.worldId;
     record.upstreamAssets = snapshot.assets;
+    if (snapshot.cost) record.worldCost = snapshot.cost;
     const { done, assets } = await mirrorProducts(record, snapshot.assets);
     record.assets = assets;
     if (!assets.spz500kUrl) {
@@ -419,6 +467,9 @@ export async function createManhuaWorldTask(input: {
   if (input.prompt.type === "layout" && (!String(input.prompt.textPrompt || "").trim() || !/^https:\/\//i.test(String(input.prompt.depthPanoUrl || "")))) {
     throw new Error("invalid_manhua_world_task_input");
   }
+  // WL-D01：缺/坏深度元数据在建单前就拒，零上游调用
+  const depthMeta = input.prompt.type === "layout" ? validateDepthPanoUploadMeta(input.prompt.depthMeta) : null;
+  if (depthMeta && !depthMeta.ok) throw new Error(`invalid_manhua_world_depth_meta:${depthMeta.reasonZh}`);
   if (!deps.isConfigured()) throw new Error("manhua_world_service_unavailable");
 
   const prompt: ManhuaWorldPromptRecord =
@@ -429,6 +480,7 @@ export async function createManhuaWorldTask(input: {
             type: "layout",
             depthPanoUrl: String(input.prompt.depthPanoUrl).trim().slice(0, 4_096),
             ...(input.prompt.depthPanoGcsUri && /^gs:\/\//i.test(input.prompt.depthPanoGcsUri) ? { depthPanoGcsUri: String(input.prompt.depthPanoGcsUri).trim().slice(0, 2_048) } : {}),
+            depthMeta: (depthMeta as { ok: true; meta: DepthPanoUploadMeta }).meta,
             textPrompt: String(input.prompt.textPrompt).trim().slice(0, 2_000),
           }
         : { type: "image", isPano: input.prompt.isPano, ...(input.prompt.textPrompt?.trim() ? { textPrompt: input.prompt.textPrompt.trim().slice(0, 2_000) } : {}) };
@@ -468,13 +520,18 @@ export async function retryManhuaWorldTask(taskId: string, userId: number): Prom
   const now = isoNow();
   // 1472 R1：重试号只由上一次 taskId 派生（与 manhua3dTask 同口径）——同一失败任务连点两次不会向 Marble 提交两单；
   // 重试再失败后，新失败任务号又能派生下一次。原先掺入时间戳，每次点击都是新任务 = 重复扣上游 credits。
+  // layout 两步：第一步（上色）已有产物就只重做第二步，绝不重付第一步；已传好的 media asset 也留用
+  const keepDepth = record.prompt.type === "layout" && Boolean(record.depthPanoRgbUrl);
   const retried: ManhuaWorldTaskRecord = {
     ...record,
     taskId: `mw_${createHash("sha256").update(JSON.stringify(["retry", record.taskId])).digest("hex").slice(0, 24)}`,
     status: "queued",
     operationId: undefined,
-    depthOperationId: undefined,
-    depthPanoRgbUrl: undefined,
+    depthMediaAssetId: record.depthMediaAssetId,
+    depthOperationId: keepDepth ? record.depthOperationId : undefined,
+    depthPanoRgbUrl: keepDepth ? record.depthPanoRgbUrl : undefined,
+    depthCost: keepDepth ? record.depthCost : undefined,
+    worldCost: undefined,
     worldId: undefined,
     upstreamAssets: undefined,
     assets: undefined,
