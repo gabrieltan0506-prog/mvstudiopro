@@ -40,11 +40,22 @@ describe("manhuaStoryDistill", () => {
     expect(shots[0]?.keyframeRole).toBe("start");
     expect(shots[1]?.keyframeRole).toBe("key_action");
     expect(shots[2]?.keyframeRole).toBe("edit_out");
-    expect(shots.slice(0, 3).map((shot) => shot.dialogueZh)).toEqual([
-      "把玉珏交出来——第1次。",
-      "你再装傻，我就掀了这屏风。",
-      "……拿去，别碰她。",
-    ]);
+    expect(shots[0]?.dialogueZh).toBe("把玉珏交出来——第1次。");
+    expect(shots[1]?.dialogueZh).toBeTruthy();
+
+  });
+
+  it("关键句镜与对白同源，反应镜不再发出关键句", () => {
+    const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(buildManhuaEpisodeSegmentPlanFixtureMarkdown());
+    plan.segments = [{ ...plan.segments[0]!, dialogueZh: '甲甲：「我先问。」\n乙乙：「我来回答。」\n甲甲：「不许动！！」', performanceZh: '对话', intentZh: '质问' }];
+    const before = JSON.stringify(plan);
+    const shots = buildWorkbenchShotsFromSegmentPlan(plan);
+    expect(shots[1]?.cameraZh).toContain('不许动！！');
+    expect(shots[1]?.dialogueZh).toBe('不许动！！');
+    expect(shots[1]?.dialogueSpeakerNameZh).toBe('甲甲');
+    expect(shots[2]?.cameraZh).toContain('反应');
+    expect(shots[2]?.dialogueZh).toBeUndefined();
+    expect(JSON.stringify(plan)).toBe(before);
   });
 
   it("builds second cue sheet and image-2 prompt without tech leak", () => {
