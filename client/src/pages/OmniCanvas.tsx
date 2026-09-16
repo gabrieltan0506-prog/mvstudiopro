@@ -1716,10 +1716,9 @@ export default function OmniCanvas() {
               // 0916 探针：官方改图偶发 520，同一视角只重试一次；两次都失败留给用户按「补出这张」。
               // 1472 R3：建单/轮询的网络类错误（job 可能已建成并计费）不自动重试，否则可能二次扣费；只对上游明确失败重试。
               const message = error instanceof Error ? error.message : "出图失败";
-              // 覆盖 pollJobUntilTerminal 两轮都超时的「任务轮询已等待…」与 fetch 中断类错误：任务多半还在 worker 里跑。
-              const uncertain =
-                error instanceof TypeError ||
-                /failed to fetch|network|timeout|TimeoutError|超时|aborted|轮询已等待|job timed out/i.test(message);
+              // 1472 R4：只拦「轮询超时 / Timeout / Abort」这类任务多半还在 worker 里跑的情形；
+              // 520 与普通网络错误（建单未成、无计费）仍按原口径重试一次。
+              const uncertain = /轮询已等待|timeout|timed out|超时|abort/i.test(message);
               if (uncertain) {
                 failed.push(`${MANHUA_MULTIVIEW_VIEW_LABEL_ZH[view]}（${message}；结果不确定，可能已计费，请先核对积分再「补出这张」）`);
                 break;
