@@ -434,7 +434,7 @@ def _validate_resources(doc, binary, *, unrigged=False, max_vertices=None):
                 raise ValueError("节点合成世界变换超过有限数值预算")
             world_matrices[current] = matrix
     if not 0 < total <= limit_vertices:
-        raise ValueError("实例总顶点超过预算或为空")
+        raise ValueError("实例总顶点超过预算或为空（实例总顶点 %d，预算 %d，网格数 %d）" % (total, limit_vertices, len(meshes)))
     if instance_components > limit_components or instance_indices > limit_vertices * 6:
         raise ValueError("实例展开分量或indices超过预算")
     if len(used_meshes) != len(meshes):

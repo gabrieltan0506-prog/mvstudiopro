@@ -378,30 +378,58 @@ def _bend_max_delta(obj, rig, names):
     return result
 
 
+def _glb_mesh_summary(path):
+    """只读 GLB 的 JSON 块：每个网格节点的名字与 POSITION 顶点数（不进 Blender，用于导出后即刻取证）。"""
+    import struct
+    data = Path(path).read_bytes()
+    if len(data) < 20 or data[:4] != b"glTF":
+        return []
+    json_len = struct.unpack_from("<I", data, 12)[0]
+    doc = json.loads(data[20:20 + json_len].decode("utf-8"))
+    accessors, meshes = doc.get("accessors", []), doc.get("meshes", [])
+    rows = []
+    for node in doc.get("nodes", []):
+        if "mesh" not in node:
+            continue
+        mesh = meshes[node["mesh"]]
+        count = sum(accessors[p["attributes"]["POSITION"]]["count"] for p in mesh.get("primitives", []) if "POSITION" in p.get("attributes", {}))
+        rows.append((node.get("name") or mesh.get("name") or "?", count))
+    return rows
+
+
 def _export_rigged(objects, rig, path):
-    """只导出指定网格 + 骨架：其它网格临时隐藏（glTF 导出会把骨架相关网格一并带出，选择过滤不够）。"""
+    """
+    只导出指定网格 + 骨架。不靠「隐藏」（glTF 导出器各版本对 hide_set/use_visible 的处理不一致，线上 Debian Blender 3.4 没有 use_visible），
+    而是把其它网格物体从所有集合暂时解链——不在场景里的物体任何版本都导不出来；导完再链回。
+    导出后即读 GLB 取证：网格节点名与顶点数写到 stdout，多出/缺少网格直接报错，不等到重导入合同才发现。
+    """
     import bpy
     keep = set(objects) | {rig}
-    hidden = []
-    for obj in bpy.context.scene.objects:
-        if obj not in keep and not obj.hide_get():
-            obj.hide_set(True)
-            hidden.append(obj)
+    unlinked = []
+    for obj in list(bpy.context.scene.objects):
+        if obj.type == "MESH" and obj not in keep:
+            for coll in list(obj.users_collection):
+                coll.objects.unlink(obj)
+                unlinked.append((obj, coll))
     try:
+        bpy.context.view_layer.update()
         bpy.ops.object.select_all(action="DESELECT")
         rig.select_set(True)
         for obj in objects:
             obj.hide_set(False)
             obj.select_set(True)
         bpy.context.view_layer.objects.active = rig
-        options = {"filepath": str(path), "export_format": "GLB", "use_selection": True, "export_animations": False, "export_skins": True}
-        # 线上是 Debian 自带 Blender 3.4；use_visible 只在导出器支持时传，缺了就只靠选择+隐藏
-        if "use_visible" in bpy.ops.export_scene.gltf.get_rna_type().properties:
-            options["use_visible"] = True
-        bpy.ops.export_scene.gltf(**options)
+        bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", use_selection=True, export_animations=False, export_skins=True)
     finally:
-        for obj in hidden:
-            obj.hide_set(False)
+        for obj, coll in unlinked:
+            coll.objects.link(obj)
+        bpy.context.view_layer.update()
+    summary = _glb_mesh_summary(path)
+    print("[auto-rig] export %s meshes=%s bytes=%d" % (Path(path).name, summary, Path(path).stat().st_size))
+    expected = sorted(obj.name for obj in objects)
+    got = sorted(name for name, _ in summary)
+    if got != expected:
+        raise ValueError("导出网格与目标不一致：期望 %s，实际 %s" % (expected, got))
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
