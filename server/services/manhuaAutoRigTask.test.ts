@@ -70,6 +70,18 @@ describe("人体绑骨请求闭合", () => {
     expect(a.jobId).toBe(b.jobId);
     expect(f.counts().inserts).toBe(1);
   });
+  it("1473 R1 去事务后的并发窗口：同编号不同设置在 load 之后被别处抢先插入（onConflictDoNothing 静默）→ 回执核对拦下，不冒充成功", async () => {
+    const f = fixture();
+    const rival = { ...request, settings: { ...request.settings, pose: "A" } };
+    const insert = f.deps.insert;
+    // 模拟：本次 insert 到达时行已被并发赢家（不同设置）写入，onConflictDoNothing 不报错也不覆盖
+    f.deps.insert = async (id, userId, _input) => insert(id, userId, rival as never);
+    await expect(submitAutoRigTask(1, request, f.deps)).rejects.toThrow("请求回执未确认");
+    expect(f.counts().inserts).toBe(1);
+    // 赢家的设置原样保留
+    const row = f.rows.get([...f.rows.keys()][0]!)!;
+    expect((row.input as { params: { settings: { pose: string } } }).params.settings.pose).toBe("A");
+  });
   it("同编号不同设置拒绝，不覆盖旧请求", async () => {
     const f = fixture();
     await submitAutoRigTask(1, request, f.deps);
