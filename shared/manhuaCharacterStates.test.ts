@@ -69,7 +69,7 @@ describe("角色状态变体", () => {
 it("段级状态排除常态与其它状态，缺当前状态明确拒绝", () => {
   const a = [{ id: "a", nameZh: "墨屠", statesZh: [{ id: "hurt", nameZh: "肩伤", deltaZh: "出血" }] }];
   const refs = [{ id: "base", primaryBindings: [{ anchorId: "a", duty: "identity" }] }, { id: "injured", primaryBindings: [{ anchorId: "a", duty: "identity", stateId: "hurt" }] }];
-  expect([...resolveManhuaStateExcludedRefIds("墨屠（肩伤）", a, refs)]).toEqual(["base"]);
-  expect([...resolveManhuaStateExcludedRefIds("墨屠", a, refs)]).toEqual(["injured"]);
+  expect(Array.from(resolveManhuaStateExcludedRefIds("墨屠（肩伤）", a, refs))).toEqual(["base"]);
+  expect(Array.from(resolveManhuaStateExcludedRefIds("墨屠", a, refs))).toEqual(["injured"]);
   expect(() => resolveManhuaStateExcludedRefIds("墨屠（肩伤）", a, refs.slice(0, 1))).toThrow("缺少当前参考图");
 });
