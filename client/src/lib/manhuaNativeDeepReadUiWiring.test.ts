@@ -179,13 +179,18 @@ describe("原生精读页面接线", () => {
     expect(RESULT_UI.slice(resultTypeStart, resultTypeEnd)).not.toContain("nativeModelReceipts");
   });
 
-  it("轮询 effect 不依赖整颗 query 对象，且无变化快照复用旧引用", () => {
+  it("一次服务端轮询同时更新任务面板、导入篮与待审卡，不依赖整页刷新", () => {
     expect(PAGE).toContain("reuseManhuaLearnServerJobsIfUnchanged(prev, listed.items)");
     expect(PAGE).toContain("manhuaViralProposalsRefetchRef.current = manhuaViralProposalsQuery.refetch");
     expect(PAGE).toContain("manhuaClaimsRefetchRef.current = manhuaClaimsQuery.refetch");
     const refreshAt = PAGE.indexOf("const refreshManhuaLearnServerJobs = useCallback");
     const stopAt = PAGE.indexOf("const stopFocusedManhuaLearnJob", refreshAt);
     const refreshBlock = PAGE.slice(refreshAt, stopAt);
+    expect(refreshBlock).toContain("setManhuaLearnServerJobs((prev) =>");
+    expect(refreshBlock).toContain("setManhuaLearnBasket((prev) =>");
+    expect(refreshBlock).toContain("setManhuaLearnResult((prev) =>");
+    expect(refreshBlock).toContain("manhuaViralProposalsRefetchRef.current()");
+    expect(refreshBlock).not.toContain("window.location.reload");
     expect(refreshBlock).toContain("manhuaLearnFocusSeriesKeyRef.current");
     expect(refreshBlock).toContain("manhuaLearnActiveJobRef.current");
     expect(refreshBlock).toContain("reuseManhuaLearnResultIfUnchanged(prev, focused.result)");

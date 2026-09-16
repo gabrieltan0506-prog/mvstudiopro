@@ -42,10 +42,27 @@ export type ManhuaLearnServerJob = {
   updatedAt?: string;
 };
 
+/**
+ * 学习任务会运行数分钟到数小时，状态轮询和控制请求必须直达 Fly/API 子域。
+ * 若继续走 www 同源路径，Vercel 质询页会把 JSON 轮询替换成 HTML；后台仍在运行，
+ * 但页面只能在整页刷新后一次性看到进度。
+ */
+async function fetchManhuaLearnServer(
+  path: string,
+  init: RequestInit,
+): Promise<Response> {
+  const url = withLongJobsFlyDirect(path);
+  return withFlyHealthGate(flyHealthProbeOriginForUrl(url), () =>
+    fetch(url, {
+      ...init,
+      credentials: "include",
+    }),
+  );
+}
+
 export async function listManhuaLearnServerJobs(): Promise<{ maxConcurrent: number; items: ManhuaLearnServerJob[] }> {
-  const response = await fetch("/api/jobs/manhua-learn", {
+  const response = await fetchManhuaLearnServer("/api/jobs/manhua-learn", {
     method: "GET",
-    credentials: "include",
     cache: "no-store",
   });
   if (!response.ok) throw new Error(await formatCreateJobError(response));
@@ -63,11 +80,10 @@ async function controlManhuaLearnJob(
   jobId: string,
   action: "cancel" | "skip",
 ): Promise<{ jobId: string; status: JobStatus; messageZh?: string }> {
-  const response = await fetch(
+  const response = await fetchManhuaLearnServer(
     `/api/jobs/manhua-learn/${encodeURIComponent(jobId)}/${action}`,
     {
       method: "POST",
-      credentials: "include",
     },
   );
   if (!response.ok) throw new Error(await formatCreateJobError(response));
@@ -83,11 +99,10 @@ export function skipManhuaLearnServerEpisode(jobId: string) {
 }
 
 export async function hideManhuaLearnServerSeries(jobId: string) {
-  const response = await fetch(
+  const response = await fetchManhuaLearnServer(
     `/api/jobs/manhua-learn/${encodeURIComponent(jobId)}/hide`,
     {
       method: "POST",
-      credentials: "include",
     },
   );
   if (!response.ok) throw new Error(await formatCreateJobError(response));
@@ -95,11 +110,10 @@ export async function hideManhuaLearnServerSeries(jobId: string) {
 }
 
 export async function clearOtherManhuaLearnSeries(keepJobId: string) {
-  const response = await fetch(
+  const response = await fetchManhuaLearnServer(
     `/api/jobs/manhua-learn/${encodeURIComponent(keepJobId)}/clear-others`,
     {
       method: "POST",
-      credentials: "include",
     },
   );
   if (!response.ok) throw new Error(await formatCreateJobError(response));

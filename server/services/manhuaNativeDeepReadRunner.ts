@@ -656,6 +656,9 @@ export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS = 60_000;
  */
 export const NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS = 30_000;
 export const NATIVE_DEEP_READ_RESOURCE_RETRY_MAX = 4;
+/** 整形批次遇到网络抖动、429/5xx 或服务端暂时繁忙时，初次失败后再补发 3 次。 */
+export const NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_INTERVAL_MS = 30_000;
+export const NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_MAX = 3;
 /** 0906 用户令：整形判坏（镜数不合/过不了观察锁）同档降温重试用的温度（首发 0.8 → 重试 0.75），再坏才换路由。 */
 export const NATIVE_DEEP_READ_STRUCTURING_RETRY_TEMPERATURE = 0.75;
 /**
@@ -1384,10 +1387,9 @@ export function nativeDeepReadStructuringJsonSchema(): Record<string, unknown> {
 export const NATIVE_DEEP_READ_STRUCTURING_JSON_SCHEMA_NAME = "native_structuring_card";
 
 /**
- * 0905 用户拍板的整形分流链（按批次序号，0 起；单批＝第 1 批）：
- * Qwen 首发：第 1 批 北京 → EvoLink → OpenRouter；第 2 批 新加坡 → OpenRouter → EvoLink（两路都挂时 OpenRouter/EvoLink 各接一批真并发）。
- * GLM 首发：各批一律 OpenRouter → EvoLink → Qwen（第 1 批 北京→新加坡，第 2 批 新加坡→北京）；用户 0905「并行走 OpenRouter」。
- * 任一档 25 分钟（Qwen）/20 分钟（GLM）不回即切下一档，不做 20 秒重试轮。
+ * 当前整形分流链（按 worker 序号，0 起）：
+ * 普通 GLM 链由两名 worker 分别从 OpenRouter、EvoLink 首发，失败后互换路由；
+ * 哪一路先返回就继续领取下一批。Qwen-first 是保留的独立策略，不参与当前普通 GLM 链。
  */
 export function nativeDeepReadStructuringGatewayOrder(
   policy: "structuring_chain" | "structuring_chain_qwen_first",
@@ -1397,10 +1399,25 @@ export function nativeDeepReadStructuringGatewayOrder(
   if (policy === "structuring_chain_qwen_first") {
     return odd ? ["plan_sg_qwen", "openrouter", "evolink_glm"] : ["plan_bj_qwen", "evolink_glm", "openrouter"];
   }
-  // 0905 用户拍板「并行走 OpenRouter」：GLM 模式所有批次首发 OpenRouter（Z.AI 官方，并发稳），EvoLink 兜底，两档败切 Qwen
   // 0906 用户令「不走 Qwen」：GLM 链只剩 OpenRouter（钉 Z.AI）与 EvoLink 两档，不再切 Qwen；判坏重试仍按每档两次
   // 0907 用户令「一路走 OpenRouter 一路走 EvoLink」：并发批次分流首发，第 1 批 OpenRouter→EvoLink，第 2 批 EvoLink→OpenRouter
   return odd ? ["evolink_glm", "openrouter"] : ["openrouter", "evolink_glm"];
+}
+
+/** 整形分组合同：四片为 2+2；其余按原顺序每五片一批。 */
+export function nativeDeepReadStructuringGroups(segmentCount: number): number[][] {
+  if (!Number.isInteger(segmentCount) || segmentCount <= 0) {
+    throw new Error(`整形分片数必须是正整数，收到 ${segmentCount}`);
+  }
+  if (segmentCount === 4) return [[0, 1], [2, 3]];
+  const groups: number[][] = [];
+  for (let start = 0; start < segmentCount; start += 5) {
+    groups.push(Array.from(
+      { length: Math.min(5, segmentCount - start) },
+      (_, offset) => start + offset,
+    ));
+  }
+  return groups;
 }
 
 /** 实际出站Schema：重点、简写、广告各自必填；时间与内容有效性仍由程序验收。 */
@@ -4021,9 +4038,7 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE = 0.8;
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT = MANHUA_NATIVE_GLM_REASONING_EFFORT;
 /** 四个 300 秒分片的真实组装曾在 12 分钟边界被本地中止；只放宽等待，不自动重提。 */
 // 0829 曾放宽到 6 小时（15 分钟硬顶曾在 900,005ms 掐断成 network_error）。
-// 0905 用户令：**每一档 30 分钟**，超时自动切下一档——
-// EvoLink GLM → OpenRouter GLM → Qwen 北京套餐 → Qwen 新加坡套餐 → OpenRouter Qwen；
-// 五档全失败才走本地确定性整形兜底，不重读片。
+// 普通 GLM 链单档 30 分钟；当前只在 OpenRouter 与 EvoLink 之间切换，不重读片。
 const GLM_STRUCTURING_TIMEOUT_MS = 30 * 60_000;
 const OPENROUTER_USD_TO_CNY_EQUIVALENT = 7.2;
 
@@ -4644,7 +4659,7 @@ export async function invokeNativeDeepReadGlmStructuring(
     onStreamProgress: context?.onStreamProgress,
     gatewayOrder: context?.gatewayOrder as GlmGatewayName[] | undefined,
   });
-  // 通道锁：只接受整形链五档（GLM 两档 + Qwen 三档）；判据复用 bailianChat 的单一真源。
+  // 通道锁只接受登记在 STRUCTURING_GATEWAYS 的整形通道；实际可用顺序由本次 gatewayOrder 决定。
   if (!STRUCTURING_GATEWAYS.has(response.gateway) || !raw) {
     throw new Error("结构化整形通道锁失效或未返回 JSON");
   }
@@ -6398,6 +6413,27 @@ async function executeNativeDeepReadBatch(
         return copy;
       });
       const structuringFallbackAdvisories: NativeDeepReadAdvisory[] = [];
+      class NativeDeepReadStructuringPersistenceError extends Error {
+        constructor(message: string, options?: ErrorOptions) {
+          super(message, options);
+          this.name = "NativeDeepReadStructuringPersistenceError";
+        }
+      }
+      const isTransientStructuringDispatchError = (error: unknown): boolean => {
+        if (params.abortSignal?.aborted || error instanceof NativeDeepReadStructuringPersistenceError) return false;
+        if (error instanceof GlmGatewayError) {
+          if (error.code !== "glm_gateway_all_failed") return false;
+          const terminalOutcomes = new Set(["ok", "evidence_persistence_failed", "content_invalid", "invalid_json"]);
+          if (error.gatewayTrace.some((row) => terminalOutcomes.has(row.outcome))) return false;
+          return error.gatewayTrace.some((row) => [
+            "network_error", "http_error", "truncated", "incomplete", "empty_content",
+          ].includes(row.outcome));
+        }
+        if (!(error instanceof Error)) return false;
+        const code = String((error as Error & { code?: unknown }).code ?? "").toUpperCase();
+        if (/^(ECONN|ETIMEDOUT|EAI_AGAIN|ENET|EHOST|UND_ERR)/.test(code)) return true;
+        return /(?:HTTP\s*(?:429|5\d\d)|\b429\b|\b5\d\d\b|timeout|timed out|network|fetch failed|server busy|resource[_ ]exhausted|服务器繁忙|服务暂不可用|网络)/i.test(error.message);
+      };
       const runStructuringOrLocalFallback = async (input: {
         prompt: ReturnType<typeof buildNativeDeepReadGlmStructuringPrompt>;
         videoCount: number;
@@ -6409,6 +6445,7 @@ async function executeNativeDeepReadBatch(
         lockRetry?: number;
         badGateways?: readonly string[];
         temperature?: number;
+        allowLocalFallback?: boolean;
       }): Promise<NativeDeepReadGlmStructuringResult | { raw: Record<string, unknown>; localFallback: true }> => {
         try {
           return await glmStructure({
@@ -6432,7 +6469,8 @@ async function executeNativeDeepReadBatch(
             || error.code !== "glm_gateway_all_failed"
             || error.gatewayTrace.some((row) => row.outcome === "ok" || row.outcome === "evidence_persistence_failed")
           ) throw error;
-          const detailZh = `${input.labelZh}整形链五档均未交付可消费结果，已使用确定性本地整形fallback；未新增或改写证据`;
+          if (input.allowLocalFallback === false && isTransientStructuringDispatchError(error)) throw error;
+          const detailZh = `${input.labelZh}整形链所有可用通道均未交付可消费结果，已使用确定性本地整形fallback；未新增或改写证据`;
           structuringFallbackAdvisories.push({
             code: "glm_structuring_local_fallback",
             detailZh,
@@ -6457,6 +6495,8 @@ async function executeNativeDeepReadBatch(
         fallbackRows: ReadonlyArray<Record<string, unknown>>;
         labelZh: string;
         batchOrdinal?: number;
+        dispatchRetry?: number;
+        allowLocalFallback?: boolean;
       }): Promise<Record<string, unknown>> => {
         const chain = nativeDeepReadStructuringGatewayOrder(structuringGatewayPolicy, input.batchOrdinal ?? 0);
         const maxAttempts = chain.length * NATIVE_DEEP_READ_LOCK_TRIES_PER_GATEWAY;
@@ -6468,7 +6508,8 @@ async function executeNativeDeepReadBatch(
         for (let attempt = 0; ; attempt += 1) {
           const badGateways = Array.from(badCountByGateway.entries())
             .filter(([, n]) => n >= NATIVE_DEEP_READ_LOCK_TRIES_PER_GATEWAY).map(([g]) => g);
-          const result = await runStructuringOrLocalFallback({ ...input, lockRetry: attempt || undefined, badGateways, temperature: nextTemperature });
+          const retryOrdinal = (input.dispatchRetry ?? 0) * 100 + attempt;
+          const result = await runStructuringOrLocalFallback({ ...input, lockRetry: retryOrdinal || undefined, badGateways, temperature: nextTemperature });
           if (!("localFallback" in result)) {
             // OpenRouter 回 usage.cost；EvoLink / DashScope 不回 → 按 GLM 目录价（$1.4/$4.4 per M）估，闸对每一档都生效
             const costUsd = Number(result.costUsd) > 0
@@ -6561,8 +6602,45 @@ async function executeNativeDeepReadBatch(
             }, params.onModelReceipt);
             continue;
           }
-          await writeCachedStructuring(input.segmentIndexes, input.rows, result);
+          try {
+            await writeCachedStructuring(input.segmentIndexes, input.rows, result);
+          } catch (error) {
+            // 上游结果已经交付后，缓存/证据落盘失败不得以“网络重试”名义重新付费提交。
+            throw new NativeDeepReadStructuringPersistenceError(
+              `${input.labelZh}整形结果落盘失败：${error instanceof Error ? error.message : String(error)}`,
+              { cause: error },
+            );
+          }
           return restoreNativeRequiredSummary(result.raw, input.rows);
+        }
+      };
+      const withStructuringDispatchRetry = async (
+        input: Pick<Parameters<typeof structureBatchWithLockRetry>[0], "segmentIndexes" | "videoCount" | "labelZh">,
+        operation: (dispatchRetry: number) => Promise<Record<string, unknown>>,
+      ): Promise<Record<string, unknown>> => {
+        for (let dispatchRetry = 0; ; dispatchRetry += 1) {
+          try {
+            return await operation(dispatchRetry);
+          } catch (error) {
+            params.abortSignal?.throwIfAborted();
+            if (!isTransientStructuringDispatchError(error)
+              || dispatchRetry >= NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_MAX) throw error;
+            const reasonZh = (error instanceof Error ? error.message : String(error)).slice(0, 200);
+            console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集${input.labelZh}瞬时失败，30秒后补发第 ${dispatchRetry + 1}/${NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_MAX} 次：${reasonZh}`);
+            await emitVisualModelReceipt({
+              callId: `${episodeRequestId}:structuring-dispatch-retry:${input.segmentIndexes.join("-")}:${dispatchRetry + 1}`,
+              model: `${input.labelZh}瞬时失败，等待补发第 ${dispatchRetry + 1}/${NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_MAX} 次`,
+              route: "structuring_dispatch_retry_pending",
+              stage: "visual_parse",
+              status: "failed",
+              batchRequestId: episodeRequestId,
+              episodeIndexes: [episode.episodeIndex],
+              videoCount: input.videoCount,
+              labelZh: input.labelZh,
+              errorZh: reasonZh,
+            }, params.onModelReceipt);
+            await deps.waitForRetry(NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_INTERVAL_MS, params.abortSignal);
+          }
         }
       };
       const badCacheUndeletable = new Set<string>();
@@ -6669,14 +6747,12 @@ async function executeNativeDeepReadBatch(
         });
       };
       const structuredEpisodeRaw = async (): Promise<Record<string, unknown>> => {
-        // 0905 用户改回 4：5 片一批单次输出 120K 贴 131K 上限、几万字 JSON 更容易丢符号；
-        // 4 片一批输出 ≈90K 更稳。批次数＝片数÷4 向上取整后均分：8→4+4、9→3+3+3、29→8 组（5 个 4 + 3 个 3）
-        const maxRawSegmentsPerBatch = 4;
+        // 0916 用户复核：四片 2+2、九片 5+4；超过九片仍每批最多五片。
+        // 两个固定 worker 分别由 OpenRouter / EvoLink 首发，谁先返回谁立即领取下一批，不等另一边。
         const allSegmentIndexes = episode.segments.map((_, index) => index);
-        if (segmentCount <= maxRawSegmentsPerBatch) {
-          const cached = await readCachedStructuring(allSegmentIndexes, glmStructuringInputs, "最终整形");
-          if (cached) return unwrapNativeDeepReadStructuredAnswerEnvelope(cached);
-          return structureBatchWithLockRetry({
+        const groups = nativeDeepReadStructuringGroups(segmentCount);
+        if (groups.length === 1) {
+          const batchInput: Parameters<typeof structureBatchWithLockRetry>[0] = {
             prompt: buildNativeDeepReadGlmStructuringPrompt({
               episodeIndex: episode.episodeIndex,
               durationSec: episode.sourceDurationSec,
@@ -6692,53 +6768,80 @@ async function executeNativeDeepReadBatch(
             rows: glmStructuringInputs,
             fallbackRows: annotateSegmentRows(),
             labelZh: `第${episode.episodeIndex}集整集整形（一次）`,
+          };
+          return withStructuringDispatchRetry(batchInput, async (dispatchRetry) => {
+            const cached = await readCachedStructuring(allSegmentIndexes, glmStructuringInputs, "最终整形");
+            if (cached) return unwrapNativeDeepReadStructuredAnswerEnvelope(cached);
+            return structureBatchWithLockRetry({
+              ...batchInput,
+              dispatchRetry,
+              // 瞬时故障必须先完成三次批次级退避；全败后停止，不用本地拼接冒充模型整形成功。
+              allowLocalFallback: false,
+            });
           });
         }
 
-        // 0905 用户令：批次要均分，不是「前面塞满、尾巴一小撮」——8 片＝4+4、9 片＝3+3+3、29 片＝5×4+3×3，
-        // 各批并发才真正分担；批次数按每批上限（4）向上取整决定。
-        const groupCount = Math.ceil(segmentCount / maxRawSegmentsPerBatch);
-        const baseSize = Math.floor(segmentCount / groupCount);
-        const extra = segmentCount % groupCount;
-        const groups: number[][] = [];
-        for (let g = 0, start = 0; g < groupCount; g += 1) {
-          const size = baseSize + (g < extra ? 1 : 0);
-          groups.push(Array.from({ length: size }, (_, offset) => start + offset));
-          start += size;
-        }
-        const groupRows = await Promise.all(groups.map(async (segmentIndexes, batchOrdinal) => {
-          // 单片无需再做一次中间GLM；直接作为一张已结构化分段卡进入确定性拼接。
-          if (segmentIndexes.length === 1 && !selectedSegmentCandidates.has(segmentIndexes[0]!)) return completeRawSegments[segmentIndexes[0]!]!;
-          const groupInputs = segmentIndexes.map((index) => completeRawSegments[index]!);
-          const annotatedRows = annotateSegmentRows();
-          const groupCanonicalRows = segmentIndexes.map((index) => annotatedRows[index]!);
-          const cached = await readCachedStructuring(
-            segmentIndexes,
-            groupInputs,
-            `整形批次 ${segmentIndexes.join(",")} `,
-          );
-          if (cached) return cached;
-          const groupSegments = segmentIndexes.map((index) => episode.segments[index]!);
-          return structureBatchWithLockRetry({
-            prompt: buildNativeDeepReadGlmStructuringPrompt({
-              episodeIndex: episode.episodeIndex,
-              durationSec: episode.sourceDurationSec,
-              segments: groupSegments,
+        const groupRows: Record<string, unknown>[] = new Array(groups.length);
+        let nextGroupIndex = 0;
+        let stopDispatch = false;
+        const runStructuringLane = async (laneOrdinal: number): Promise<void> => {
+          while (!stopDispatch) {
+            // JS 同步取号；任何 await 之前先占住批次，两个 worker 不会领取同一组。
+            const groupIndex = nextGroupIndex;
+            nextGroupIndex += 1;
+            if (groupIndex >= groups.length) return;
+            const segmentIndexes = groups[groupIndex]!;
+            const groupInputs = segmentIndexes.map((index) => completeRawSegments[index]!);
+            const annotatedRows = annotateSegmentRows();
+            const groupCanonicalRows = segmentIndexes.map((index) => annotatedRows[index]!);
+            const groupSegments = segmentIndexes.map((index) => episode.segments[index]!);
+            const batchInput: Parameters<typeof structureBatchWithLockRetry>[0] = {
+              prompt: buildNativeDeepReadGlmStructuringPrompt({
+                episodeIndex: episode.episodeIndex,
+                durationSec: episode.sourceDurationSec,
+                segments: groupSegments,
+                segmentIndexes,
+                hasAudio,
+                rawSegments: groupInputs,
+                coverageStartSec: groupSegments[0]!.startSec,
+                coverageEndSec: groupSegments.at(-1)!.endSec,
+                scopeZh: "批次",
+              }),
+              videoCount: segmentIndexes.length,
               segmentIndexes,
-              hasAudio,
-              rawSegments: groupInputs,
-              coverageStartSec: groupSegments[0]!.startSec,
-              coverageEndSec: groupSegments.at(-1)!.endSec,
-              scopeZh: "批次",
-            }),
-            videoCount: segmentIndexes.length,
-            segmentIndexes,
-            rows: groupInputs,
-            fallbackRows: groupCanonicalRows,
-            labelZh: `第${episode.episodeIndex}集第${segmentIndexes[0]! + 1}—${segmentIndexes.at(-1)! + 1}片批次整形`,
-            batchOrdinal,
-          });
-        }));
+              rows: groupInputs,
+              fallbackRows: groupCanonicalRows,
+              labelZh: `第${episode.episodeIndex}集第${segmentIndexes[0]! + 1}—${segmentIndexes.at(-1)! + 1}片批次整形`,
+              // 路由归属跟 worker 固定，而非跟批次编号轮换：先返回的路继续领下一批。
+              batchOrdinal: laneOrdinal,
+            };
+            try {
+              groupRows[groupIndex] = await withStructuringDispatchRetry(batchInput, async (dispatchRetry) => {
+                const cached = await readCachedStructuring(
+                  segmentIndexes,
+                  groupInputs,
+                  `整形批次 ${segmentIndexes.join(",")} `,
+                );
+                if (cached) return cached;
+                return structureBatchWithLockRetry({
+                  ...batchInput,
+                  dispatchRetry,
+                  allowLocalFallback: false,
+                });
+              });
+            } catch (error) {
+              // 只有补发三次仍失败或遇到不可重试错误才停派；另一条已在途调用继续收口。
+              stopDispatch = true;
+              throw error;
+            }
+          }
+        };
+        const laneOutcomes = await Promise.allSettled(Array.from(
+          { length: Math.min(2, groups.length) },
+          (_, laneOrdinal) => runStructuringLane(laneOrdinal),
+        ));
+        const failedLane = laneOutcomes.find((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
+        if (failedLane) throw failedLane.reason;
         // 0905 用户令「不归并，分上下集」：批次各自整形完，按秒位确定性拼成整集卡，
         // 省掉第三次 GLM（实测归并一发 49 分钟、输入 212K）。批次边界的重复镜头由
         // deterministicallyMerge 的「同秒位取信息更全」规则收口，零模型调用。
