@@ -48,6 +48,7 @@ bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
 source.data.remesh_voxel_size = .007
 bpy.ops.object.voxel_remesh()
 dense = len(source.data.vertices)
+print("[auto-rig-test] dense source vertices=%d faces=%d" % (dense, len(source.data.polygons)))
 assert dense > 50_000, "测试原模必须超过 5 万顶点，当前 %d" % dense
 # 给原模一层 UV + 一个带贴图的材质：让「剥材质求解副本 / 全模重导入核材质贴图」这条路真的被走到
 while source.data.uv_layers:
@@ -110,7 +111,14 @@ wt = r2["weightTransfer"]
 assert wt["enabled"] and wt["fullVertices"] == r1["weightTransfer"]["originalVertices"] and wt["midVertices"] <= runner.MID_MAX_VERTICES, wt
 # 回执顶点 = 导出 GLB 实际顶点；中模去 UV/法线后应与网格顶点一致且 ≤ 预算（导出器版本无关）
 assert r2["vertices"] == wt["midExportedVertices"] <= runner.MID_MAX_VERTICES, (r2["vertices"], wt)
-assert wt["midExportedVertices"] == wt["midVertices"], ("中模导出拆点", wt["midExportedVertices"], wt["midVertices"])
+# 去 UV/法线后导出器不再按属性拆点：导出顶点 ≤ 网格顶点（导出器会丢掉无面引用的散点，所以可小于）
+assert wt["midExportedVertices"] <= wt["midVertices"], ("中模导出拆点", wt["midExportedVertices"], wt["midVertices"])
+# 最终中模重导入后：四肢弯曲仍有位移（再次减面没损坏权重），预览图（缺省法线）已渲出
+for name, delta in wt["midReimportBendMaxDeltaMeters"].items():
+    assert delta >= .05, ("中模重导入弯曲位移过小", name, delta)
+for i in (0, 1):
+    assert (out / "bind" / ("preview-mid-%d.png" % i)).stat().st_size > 200
+print("TEST_EVIDENCE", json.dumps({"dense": dense, "midVertices": wt["midVertices"], "midExported": wt["midExportedVertices"], "fullExported": wt["fullExportedVertices"], "midReimportBends": {k: round(v, 3) for k, v in wt["midReimportBendMaxDeltaMeters"].items()}}))
 assert all(v >= .01 for v in wt["originalBendMaxDeltaMeters"].values()), wt["originalBendMaxDeltaMeters"]
 mid = (out / "bind" / "model.glb").read_bytes(); full = (out / "bind" / "model-full.glb").read_bytes()
 assert hashlib.sha256(mid).hexdigest() == r2["outputSha256"], "中模 sha 与回执不一致"

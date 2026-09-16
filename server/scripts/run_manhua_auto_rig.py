@@ -67,6 +67,7 @@ def _decimate_to(obj, target):
         modifier.use_collapse_triangulate = True
         bpy.context.view_layer.objects.active = obj
         bpy.ops.object.modifier_apply(modifier=modifier.name)
+        print("[auto-rig] decimate %s: %d -> %d (target %d, ratio %.4f, faces %d)" % (obj.name, count, len(obj.data.vertices), target, ratio, len(obj.data.polygons)))
     obj.data.update()
     return len(obj.data.vertices)
 
@@ -578,11 +579,13 @@ def run(request_file, source_file, output_dir):
     mid.name = "白模中模"
     bpy.context.scene.collection.objects.link(mid)
     # 白模只要几何与权重，不带材质、不带 UV、不写法线；画质在 model-full.glb。
-    # 合同按 glTF 顶点数（拆点后）算预算：CI 实测同一 10 万顶点网格，Blender 3.4 导出器拆出 29.5 万、5.2 拆出 11.3 万——
-    # 去掉 UV 与法线后导出顶点 = 网格顶点，与导出器版本无关；导出后再按实际数核一次，超了继续减面重导，不放宽上限。
+    # 合同按 glTF 顶点数（拆点后）算预算：CI 实测同一 10 万顶点网格，Blender 3.4 导出器拆出 29.5 万、5.2 拆出 11.3 万。
+    # 去掉 UV、不写法线后当前夹具实测导出顶点与网格顶点一致；但不当作定律，最终一律以导出 GLB 的实际计数为准：
+    # 导出后按实际数核一次，超了继续减面重导，不放宽上限。
     mid.data.materials.clear()
     while mid.data.uv_layers:
         mid.data.uv_layers.remove(mid.data.uv_layers[0])
+    print("[auto-rig] mid initial vertices=%d faces=%d loose=%d" % (len(mid.data.vertices), len(mid.data.polygons), len(mid.data.vertices) - len({i for poly in mid.data.polygons for i in poly.vertices})))
     mid_vertices = _decimate_to(mid, MID_MAX_VERTICES)
     mid_sha, mid_exported = _export_rigged([mid], rig, out / "model.glb", export_normals=False)
     for _ in range(3):
@@ -593,12 +596,26 @@ def run(request_file, source_file, output_dir):
     if mid_exported > MID_MAX_VERTICES:
         raise ValueError("中模导出顶点 %d 仍超过预算 %d（网格顶点 %d）" % (mid_exported, MID_MAX_VERTICES, mid_vertices))
     check = contract.import_rigged_model(out / "model.glb", "中模重导入", forward_axis="+X", target_height=settings["targetHeight"], expected_sha256=mid_sha)
+    # 最终中模（再次减面 + 去 UV/法线）重导入后也要过弯曲测试与预览：证明减面没损坏权重、缺省法线没有明显渲染异常
+    mid_check = check["meshes"][0]
+    mid_bends = _bend_max_delta(mid_check, check["rig"], ("forearm-1", "forearm1", "lower_leg-1", "lower_leg1"))
+    for hidden in [original, mid] + [m for m in check["meshes"] if m is not mid_check]:
+        hidden.hide_render = True
+    preview([mid_check], out / "preview-mid-0.png")
+    mid_bone = check["rig"].pose.bones["forearm-1"]
+    mid_bone.rotation_mode = "XYZ"
+    mid_bone.rotation_euler.x = .55
+    bpy.context.view_layer.update()
+    preview([mid_check], out / "preview-mid-1.png")
+    mid_bone.matrix_basis = Matrix.Identity(4)
+    bpy.context.view_layer.update()
+    original.hide_render = False
     receipt["outputSha256"] = mid_sha
     # 回执顶点数 = 导出 GLB 的实际顶点数（服务端与合同都按它判 ≤25 万）
     receipt["vertices"] = mid_exported
     receipt["stage4Reimport"] = check["report"]
     receipt["weightTransfer"] = {**proxy_info, "proxySha256": proxy_sha, "fullSha256": full_sha, "fullVertices": len(original.data.vertices),
-                                 "midVertices": mid_vertices, "midExportedVertices": mid_exported, "fullExportedVertices": full_exported, "filledVertices": transfer["filledVertices"], "originalBendMaxDeltaMeters": bends, "fullCheck": full_check,
+                                 "midVertices": mid_vertices, "midExportedVertices": mid_exported, "fullExportedVertices": full_exported, "midReimportBendMaxDeltaMeters": mid_bends, "filledVertices": transfer["filledVertices"], "originalBendMaxDeltaMeters": bends, "fullCheck": full_check,
                                  "proxyRealign": realign}
     receipt["limitations"].append("骨架在低模代理上求解，权重按最近面转回原模；请检查肩肘/手指/衣摆穿插")
     write_json(out / "report.json", receipt)
