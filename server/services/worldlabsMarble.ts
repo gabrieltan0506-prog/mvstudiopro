@@ -241,3 +241,86 @@ export async function deleteMarbleWorld(worldId: string): Promise<boolean> {
   });
   return response.ok || response.status === 404;
 }
+
+/* ─────────────── PR-11 布局可控：深度全景 → RGB 全景（pano:depth_to_rgb） ─────────────── */
+
+export type MarbleDepthToRgbSnapshot =
+  | { state: "completed"; panoUrl: string }
+  | { state: "failed"; error: string }
+  | { state: "running"; status: string }
+  | { state: "reconcile"; error: string };
+
+/** 请求体：文档 `POST /marble/v1/pano:depth_to_rgb` {image, text_prompt}；image 走 uri 来源 */
+export function buildMarbleDepthToRgbBody(input: { depthPanoUrl: string; textPrompt: string }): Record<string, unknown> {
+  return { image: { source: "uri", uri: input.depthPanoUrl }, text_prompt: String(input.textPrompt || "").slice(0, 2_000) };
+}
+
+/**
+ * 结果字段：文档只写「→ 操作 → pano_url」，没定死挂在哪层。
+ * 同时接受 response.pano_url 与 response.imagery.pano_url（测试固定两种），都没有再兜 response.assets.imagery.pano_url。
+ */
+export function pickMarbleDepthToRgbPanoUrl(response: unknown): string {
+  const r = (response || {}) as { pano_url?: unknown; imagery?: { pano_url?: unknown }; assets?: { imagery?: { pano_url?: unknown } } };
+  const candidates = [r.pano_url, r.imagery?.pano_url, r.assets?.imagery?.pano_url];
+  for (const c of candidates) {
+    const s = String(c || "").trim();
+    if (/^https?:\/\//i.test(s)) return s;
+  }
+  return "";
+}
+
+export async function submitMarbleDepthToRgb(input: { depthPanoUrl: string; textPrompt: string }): Promise<{ operationId: string }> {
+  if (!isWorldlabsMarbleConfigured()) throw new SubmitRejectedError("marble_not_configured");
+  let response: Response;
+  try {
+    response = await fetch(`${apiBase()}/marble/v1/pano:depth_to_rgb`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify(buildMarbleDepthToRgbBody(input)),
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch (error) {
+    throw new SubmitUnknownError(`marble_depth_submit_network:${error instanceof Error ? error.name : "unknown"}`);
+  }
+  const text = await response.text().catch(() => "");
+  if (response.status >= 400 && response.status < 500) {
+    throw new SubmitRejectedError(`marble_depth_submit_rejected_${response.status}:${text.slice(0, 200)}`);
+  }
+  if (!response.ok) throw new SubmitUnknownError(`marble_depth_submit_http_${response.status}`);
+  let json: MarbleOperationJson = {};
+  try {
+    json = JSON.parse(text) as MarbleOperationJson;
+  } catch {
+    throw new SubmitUnknownError("marble_depth_submit_bad_json");
+  }
+  const operationId = String(json.operation_id || json.id || json.name || "").trim();
+  if (!operationId) throw new SubmitUnknownError("marble_depth_submit_missing_operation_id");
+  return { operationId };
+}
+
+/** 轮询同一个 operations 接口，只是结果取 pano_url */
+export async function pollMarbleDepthToRgbOnce(operationId: string): Promise<MarbleDepthToRgbSnapshot> {
+  if (!isWorldlabsMarbleConfigured()) return { state: "reconcile", error: "3D 世界查询通道未配置" };
+  let response: Response;
+  try {
+    response = await fetch(`${apiBase()}/marble/v1/operations/${encodeURIComponent(operationId)}`, {
+      headers: headers(),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (error) {
+    return { state: "running", status: `transient_fetch_error:${error instanceof Error ? error.name : "unknown"}` };
+  }
+  if (response.status === 429 || response.status >= 500) return { state: "running", status: `transient_http_${response.status}` };
+  if ([400, 401, 403, 404, 422].includes(response.status)) {
+    await response.text().catch(() => "");
+    return { state: "reconcile", error: `深度全景上色任务状态无法确认（HTTP ${response.status}）` };
+  }
+  const json = (await response.json().catch(() => ({}))) as MarbleOperationJson & { response?: unknown };
+  if (!response.ok) return { state: "running", status: `transient_http_${response.status}` };
+  const error = marbleOperationHasError(json);
+  if (error) return { state: "failed", error };
+  if (!json.done) return { state: "running", status: String(json.metadata?.progress?.status || "pending").slice(0, 80) };
+  const panoUrl = pickMarbleDepthToRgbPanoUrl(json.response);
+  if (!panoUrl) return { state: "reconcile", error: "深度全景上色已完成但没有 pano_url" };
+  return { state: "completed", panoUrl };
+}

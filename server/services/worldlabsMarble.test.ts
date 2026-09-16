@@ -112,3 +112,46 @@ describe("worldlabsMarble", () => {
     expect(await pollMarbleOperationOnce("op")).toMatchObject({ state: "running", status: "transient_http_503" });
   });
 });
+
+describe("worldlabsMarble depth_to_rgb（PR-11）", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.WORLDLABS_API_KEY;
+  });
+
+  it("请求体：image.source=uri + text_prompt；提交打 pano:depth_to_rgb", async () => {
+    const { buildMarbleDepthToRgbBody, submitMarbleDepthToRgb } = await import("./worldlabsMarble.js");
+    expect(buildMarbleDepthToRgbBody({ depthPanoUrl: "https://x/d.png", textPrompt: "夜雨甲板" })).toEqual({ image: { source: "uri", uri: "https://x/d.png" }, text_prompt: "夜雨甲板" });
+    process.env.WORLDLABS_API_KEY = "k";
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ operation_id: "dop1" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await submitMarbleDepthToRgb({ depthPanoUrl: "https://x/d.png", textPrompt: "夜" })).toEqual({ operationId: "dop1" });
+    expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toMatch(/\/marble\/v1\/pano:depth_to_rgb$/);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("bad", { status: 422 })));
+    await expect(submitMarbleDepthToRgb({ depthPanoUrl: "https://x/d.png", textPrompt: "夜" })).rejects.toMatchObject({ kind: "rejected" });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("err", { status: 502 })));
+    await expect(submitMarbleDepthToRgb({ depthPanoUrl: "https://x/d.png", textPrompt: "夜" })).rejects.toMatchObject({ kind: "unknown" });
+  });
+
+  it("轮询：pano_url 在 response 顶层或 response.imagery 都收；done 但没 pano_url → reconcile；error 非空 → failed", async () => {
+    const { pollMarbleDepthToRgbOnce, pickMarbleDepthToRgbPanoUrl } = await import("./worldlabsMarble.js");
+    process.env.WORLDLABS_API_KEY = "k";
+    const responses: Response[] = [
+      new Response(JSON.stringify({ done: true, error: { code: null, message: null }, response: { pano_url: "https://s/p1.jpg" } }), { status: 200 }),
+      new Response(JSON.stringify({ done: true, error: { code: null, message: null }, response: { imagery: { pano_url: "https://s/p2.jpg" } } }), { status: 200 }),
+      new Response(JSON.stringify({ done: true, error: { code: null, message: null }, response: {} }), { status: 200 }),
+      new Response(JSON.stringify({ done: false, error: { code: null, message: null }, metadata: { progress: { status: "RUNNING" } } }), { status: 200 }),
+      new Response(JSON.stringify({ done: true, error: { code: 9, message: "bad depth" } }), { status: 200 }),
+      new Response("nope", { status: 404 }),
+    ];
+    vi.stubGlobal("fetch", vi.fn(async () => responses.shift() as Response));
+    expect(await pollMarbleDepthToRgbOnce("dop")).toEqual({ state: "completed", panoUrl: "https://s/p1.jpg" });
+    expect(await pollMarbleDepthToRgbOnce("dop")).toEqual({ state: "completed", panoUrl: "https://s/p2.jpg" });
+    expect(await pollMarbleDepthToRgbOnce("dop")).toMatchObject({ state: "reconcile" });
+    expect(await pollMarbleDepthToRgbOnce("dop")).toEqual({ state: "running", status: "RUNNING" });
+    expect(await pollMarbleDepthToRgbOnce("dop")).toEqual({ state: "failed", error: "[9] bad depth" });
+    expect(await pollMarbleDepthToRgbOnce("dop")).toMatchObject({ state: "reconcile" });
+    expect(pickMarbleDepthToRgbPanoUrl({ assets: { imagery: { pano_url: "https://s/p3.jpg" } } })).toBe("https://s/p3.jpg");
+    expect(pickMarbleDepthToRgbPanoUrl({ pano_url: "gs://not-http" })).toBe("");
+  });
+});

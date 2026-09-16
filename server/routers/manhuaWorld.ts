@@ -24,6 +24,12 @@ const promptSchema = z.discriminatedUnion("type", [
     isPano: z.union([z.boolean(), z.literal("auto")]).default("auto"),
     textPrompt: z.string().trim().max(2_000).optional(),
   }),
+  /** PR-11 布局可控：深度全景（我们渲的，https）+ 必填文字提示 */
+  z.object({
+    type: z.literal("layout"),
+    depthPanoUrl: httpsUrl,
+    textPrompt: z.string().trim().min(2).max(2_000),
+  }),
 ]);
 
 export function mapManhuaWorldTaskError(error: unknown): never {

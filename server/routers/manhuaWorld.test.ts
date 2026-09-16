@@ -57,6 +57,18 @@ describe("manhuaWorldRouter", () => {
     ).rejects.toThrow();
   });
 
+  it("PR-11 layout 提示：depthPanoUrl 必须 https、textPrompt 必填", async () => {
+    const admin = manhuaWorldRouter.createCaller(ctx("admin"));
+    await admin.submit({ sceneRef: "s", sourceVersion: "v", sourceImageUrl: "https://x/d.png", displayName: "d", prompt: { type: "layout", depthPanoUrl: "https://x/d.png", textPrompt: "雨夜甲板" } });
+    expect(mocks.createManhuaWorldTask).toHaveBeenCalledWith(expect.objectContaining({ prompt: { type: "layout", depthPanoUrl: "https://x/d.png", textPrompt: "雨夜甲板" } }));
+    await expect(
+      admin.submit({ sceneRef: "s", sourceVersion: "v", sourceImageUrl: "https://x/d.png", displayName: "d", prompt: { type: "layout", depthPanoUrl: "http://x/d.png", textPrompt: "雨夜甲板" } }),
+    ).rejects.toThrow();
+    await expect(
+      admin.submit({ sceneRef: "s", sourceVersion: "v", sourceImageUrl: "https://x/d.png", displayName: "d", prompt: { type: "layout", depthPanoUrl: "https://x/d.png", textPrompt: "" } }),
+    ).rejects.toThrow();
+  });
+
   it("普通用户不可用；服务错误映射为 TRPC 码", async () => {
     const user = manhuaWorldRouter.createCaller(ctx("user"));
     await expect(user.listMine()).rejects.toMatchObject({ code: expect.stringMatching(/FORBIDDEN|UNAUTHORIZED/) });

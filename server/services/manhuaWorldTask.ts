@@ -16,8 +16,11 @@ import { uploadBufferToGcs } from "./gcs.js";
 import {
   deleteMarbleWorld,
   isWorldlabsMarbleConfigured,
+  pollMarbleDepthToRgbOnce,
   pollMarbleOperationOnce,
+  submitMarbleDepthToRgb,
   submitMarbleGenerate,
+  type MarbleDepthToRgbSnapshot,
   type MarbleGenerateInput,
   type MarbleOperationSnapshot,
   type MarbleWorldAssets,
@@ -33,7 +36,9 @@ export type ManhuaWorldTaskStatus = ManhuaWorld3dStatus;
 
 export type ManhuaWorldPromptRecord =
   | { type: "text"; textPrompt: string }
-  | { type: "image"; isPano: boolean | "auto"; textPrompt?: string };
+  | { type: "image"; isPano: boolean | "auto"; textPrompt?: string }
+  /** PR-11 布局可控：我们渲的深度全景 → depth_to_rgb 上色 → 再以 is_pano:true 建世界（两步各记 operationId） */
+  | { type: "layout"; depthPanoUrl: string; textPrompt: string };
 
 export type ManhuaWorldTaskRecord = {
   taskId: string;
@@ -50,6 +55,9 @@ export type ManhuaWorldTaskRecord = {
   prompt: ManhuaWorldPromptRecord;
   status: ManhuaWorldTaskStatus;
   operationId?: string;
+  /** layout 第一步（depth_to_rgb）的操作号与产物 */
+  depthOperationId?: string;
+  depthPanoRgbUrl?: string;
   worldId?: string;
   /** 上游产物原始链接（会过期；只作镜像来源） */
   upstreamAssets?: MarbleWorldAssets;
@@ -72,6 +80,8 @@ type Deps = {
   isConfigured: () => boolean;
   submit: (input: MarbleGenerateInput) => Promise<{ operationId: string; worldId?: string }>;
   poll: (operationId: string) => Promise<MarbleOperationSnapshot>;
+  submitDepth: (input: { depthPanoUrl: string; textPrompt: string }) => Promise<{ operationId: string }>;
+  pollDepth: (operationId: string) => Promise<MarbleDepthToRgbSnapshot>;
   deleteWorld: (worldId: string) => Promise<boolean>;
   /** 上游产物 → Fly 卷 */
   mirror: (ref: { ns: string; id: string; name: string }, url: string) => Promise<{ relPath: string; bytes: number }>;
@@ -85,6 +95,8 @@ const productionDeps: Deps = {
   isConfigured: isWorldlabsMarbleConfigured,
   submit: submitMarbleGenerate,
   poll: pollMarbleOperationOnce,
+  submitDepth: submitMarbleDepthToRgb,
+  pollDepth: pollMarbleDepthToRgbOnce,
   deleteWorld: deleteMarbleWorld,
   mirror: (ref, url) => writeBridgeFileFromUrl(ref, url, { maxBytes: MAX_PRODUCT_BYTES }),
   archive: (relPath, objectName) => archiveBridgeFileToGcs(relPath, objectName, { upload: uploadBufferToGcs }),
@@ -266,6 +278,45 @@ export async function advanceManhuaWorldTask(taskId: string): Promise<ManhuaWorl
       return record;
     }
 
+    if (!record.operationId && record.prompt.type === "layout") {
+      // 第一步：深度全景 → RGB 全景。失败 → failed（可重试，重试从头做两步）；提交不确定 → reconcile
+      if (!record.depthOperationId) {
+        record.status = "reconcile_manual";
+        record.errorZh = "提交结果正在确认，为避免重复生成不会自动重试";
+        record.startedAt = record.startedAt || isoNow();
+        await writeRecord(record);
+        try {
+          const submitted = await deps.submitDepth({ depthPanoUrl: record.prompt.depthPanoUrl, textPrompt: record.prompt.textPrompt });
+          record.depthOperationId = submitted.operationId;
+          record.status = "running";
+          record.errorZh = undefined;
+          record.lastTransientError = undefined;
+          await writeRecord(record);
+        } catch (error) {
+          const kind = (error as { kind?: string } | null)?.kind;
+          if (kind === "rejected") return markFailed(record, "深度全景上色任务未能创建（上游拒绝）", error);
+          return markReconcile(record, "提交结果无法确认，为避免重复生成已停止自动重试", error);
+        }
+      }
+      if (!record.depthPanoRgbUrl) {
+        if (deps.now().getTime() - Date.parse(record.createdAt) > MAX_POLL_MS) {
+          return markReconcile(record, "深度全景上色长时间没有终态，已转人工对账");
+        }
+        const depth = await deps.pollDepth(record.depthOperationId!);
+        if (depth.state === "reconcile") return markReconcile(record, depth.error);
+        if (depth.state === "failed") return markFailed(record, "深度全景上色失败", depth.error);
+        if (depth.state === "running") {
+          record.status = "running";
+          record.lastTransientError = `depth:${depth.status}`.slice(0, 280);
+          await writeRecord(record);
+          return record;
+        }
+        record.depthPanoRgbUrl = depth.panoUrl;
+        record.lastTransientError = undefined;
+        await writeRecord(record);
+      }
+    }
+
     if (!record.operationId) {
       let imageUrl = record.sourceImageUrl;
       if (record.prompt.type === "image" && record.sourceImageGcsUri) {
@@ -286,7 +337,9 @@ export async function advanceManhuaWorldTask(taskId: string): Promise<ManhuaWorl
           prompt:
             record.prompt.type === "text"
               ? { type: "text", textPrompt: record.prompt.textPrompt }
-              : { type: "image", imageUrl, isPano: record.prompt.isPano, ...(record.prompt.textPrompt ? { textPrompt: record.prompt.textPrompt } : {}) },
+              : record.prompt.type === "layout"
+                ? { type: "image", imageUrl: record.depthPanoRgbUrl!, isPano: true, textPrompt: record.prompt.textPrompt }
+                : { type: "image", imageUrl, isPano: record.prompt.isPano, ...(record.prompt.textPrompt ? { textPrompt: record.prompt.textPrompt } : {}) },
         });
         record.operationId = submitted.operationId;
         if (submitted.worldId) record.worldId = submitted.worldId;
@@ -354,12 +407,17 @@ export async function createManhuaWorldTask(input: {
   if (!Number.isInteger(input.userId) || input.userId <= 0) throw new Error("invalid_user_id");
   if (!sceneRef || !sourceVersion || !/^https:\/\//i.test(sourceImageUrl)) throw new Error("invalid_manhua_world_task_input");
   if (input.prompt.type === "text" && !String(input.prompt.textPrompt || "").trim()) throw new Error("invalid_manhua_world_task_input");
+  if (input.prompt.type === "layout" && (!String(input.prompt.textPrompt || "").trim() || !/^https:\/\//i.test(String(input.prompt.depthPanoUrl || "")))) {
+    throw new Error("invalid_manhua_world_task_input");
+  }
   if (!deps.isConfigured()) throw new Error("manhua_world_service_unavailable");
 
   const prompt: ManhuaWorldPromptRecord =
     input.prompt.type === "text"
       ? { type: "text", textPrompt: String(input.prompt.textPrompt).trim().slice(0, 2_000) }
-      : { type: "image", isPano: input.prompt.isPano, ...(input.prompt.textPrompt?.trim() ? { textPrompt: input.prompt.textPrompt.trim().slice(0, 2_000) } : {}) };
+      : input.prompt.type === "layout"
+        ? { type: "layout", depthPanoUrl: String(input.prompt.depthPanoUrl).trim().slice(0, 4_096), textPrompt: String(input.prompt.textPrompt).trim().slice(0, 2_000) }
+        : { type: "image", isPano: input.prompt.isPano, ...(input.prompt.textPrompt?.trim() ? { textPrompt: input.prompt.textPrompt.trim().slice(0, 2_000) } : {}) };
   const digest = idempotencyDigest({ userId: input.userId, sceneRef, sourceVersion, model: input.model, prompt });
   const taskId = `mw_${digest.slice(0, 24)}`;
   const now = isoNow();
@@ -401,6 +459,8 @@ export async function retryManhuaWorldTask(taskId: string, userId: number): Prom
     taskId: `mw_${createHash("sha256").update(JSON.stringify(["retry", record.taskId])).digest("hex").slice(0, 24)}`,
     status: "queued",
     operationId: undefined,
+    depthOperationId: undefined,
+    depthPanoRgbUrl: undefined,
     worldId: undefined,
     upstreamAssets: undefined,
     assets: undefined,
