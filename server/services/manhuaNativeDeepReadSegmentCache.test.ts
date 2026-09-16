@@ -165,6 +165,7 @@ describe("门禁前原始响应确定性证据", () => {
       responseBytes: Buffer.byteLength(raw.responseText),
       responseSha256: stored.responseSha256,
       httpStatus: 200,
+      visualRoute: raw.visualRoute,
     });
     expect(gcs.downloadVersioned).toHaveBeenCalledWith({
       gcsUri: `gs://test-bucket/${nativeDeepReadRawAttemptEvidenceObjectName(raw)}`,

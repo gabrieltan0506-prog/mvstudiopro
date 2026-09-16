@@ -137,11 +137,7 @@ export const NATIVE_DEEP_READ_ROUTE_VERTEX = "vertex_gcs_video" as const;
  * 128,926）——即按默认 1fps 抽帧，兜底属**降采样降级模式**，门禁照跑，宁缺勿滥。
  */
 export const NATIVE_DEEP_READ_ROUTE_EVOLINK = "evolink_gemini_video" as const;
-/**
- * 0905 用户令「兜底是要的」：Vertex 同段连撞 503/429 满 NATIVE_DEEP_READ_RESOURCE_FALLBACK_AFTER 次后，
- * 把该段拉下来传 Gemini Files API，改走 AI Studio（generativelanguage）读一次；失败回 Vertex 跑完剩余重试。
- * 不预传、不当主线（#1370 主线版 0905 凌晨已回滚）；只影响撞 503 的那一段。
- */
+/** 历史只读路由：保留旧证据/缓存兼容；新生产不再提交 Gemini Files API。 */
 export const NATIVE_DEEP_READ_ROUTE_GEMINI_API = "gemini_api_files_video" as const;
 export type NativeDeepReadVisualRoute =
   | typeof NATIVE_DEEP_READ_ROUTE_VERTEX
@@ -654,7 +650,7 @@ export const NATIVE_DEEP_READ_REQUIRED_RETRY_CODES: ReadonlySet<string> = new Se
 export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS = 60_000;
 /**
  * 503/429/RESOURCE_EXHAUSTED（视频服务器繁忙）专用退避：不降温、原档补发。
- * 0904 用户令：**隔 30 秒重试 4 次**（原为 60 秒 3 次）。
+ * 0916 用户令：**隔 30 秒重试 4 次**；四次仍失败才停止，本次已终态分片留给下次续学。
  * 单开一条常量而不改 RETRY_INTERVAL_MS，是为了不动契约 SHA 与段缓存指纹——
  * 那条一改，已买断的分片缓存会全部失配、重复付费。
  */
@@ -667,8 +663,6 @@ export const NATIVE_DEEP_READ_STRUCTURING_RETRY_TEMPERATURE = 0.75;
  * GLM 一批 4 片约 ¥3–4，按最坏两档各两次算上限 ¥16；闸设 ¥20 留余量。触发即整集停并写明累计费用。
  */
 export const NATIVE_DEEP_READ_STRUCTURING_BATCH_COST_CAP_CNY = 20;
-/** 0905 用户拍板：Vertex 重试 2 次仍 503 就切 AI Studio 兜底（第 3 次资源错误触发）。 */
-export const NATIVE_DEEP_READ_RESOURCE_FALLBACK_AFTER = 2;
 export const NATIVE_DEEP_READ_TEMPERATURE_MIN = 0.6;
 
 /** 第二次尝试参数；保留导出供既有调用方与缓存指纹使用。 */
@@ -1540,7 +1534,7 @@ export function nativeDeepReadFrozenContractSha256(): string {
     generationConfig: NATIVE_DEEP_READ_GENERATION_CONFIG,
     retryTemperatures: NATIVE_DEEP_READ_RETRY_TEMPERATURES,
     retryIntervalMs: NATIVE_DEEP_READ_RETRY_INTERVAL_MS,
-    resourceRetry: { intervalMs: NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS, maximum: NATIVE_DEEP_READ_RESOURCE_RETRY_MAX, fallbackAfter: NATIVE_DEEP_READ_RESOURCE_FALLBACK_AFTER },
+    resourceRetry: { intervalMs: NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS, maximum: NATIVE_DEEP_READ_RESOURCE_RETRY_MAX },
     requestTimeoutMs: NATIVE_DEEP_READ_REQUEST_TOTAL_TIMEOUT_MS,
     acceptanceContract: {
       coverageMinimum: NATIVE_DEEP_READ_SEGMENT_COVERAGE_RETRY_RATIO,
@@ -1582,7 +1576,7 @@ export function nativeDeepReadFrozenContractSha256(): string {
 // 0906 用户明确授权三分支required与类型标记；生成时约束结构，返回后由代码验证实际类型和非空内容。
 // 0906 追加授权：普通镜可以额外填写重点细节；只放宽返回后该方向的检查。
 // 0906 当前用户授权：撤销额外内容强迫、完整音画生成与缺口反馈；采样及输出参数保持不变。
-export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "6906e43a433714d605567780a94f9cc4155ad17af5ab23afcb5e831e9ef063f8" as const;
+export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "72bbec15c7ec0bd6eb111543c73d239dc040e1d2731803643d0f6f9f31bf413e" as const;
 
 export function assertNativeDeepReadFrozenContract(): void {
   const actual = nativeDeepReadFrozenContractSha256();
@@ -1747,125 +1741,6 @@ async function postEvolinkNativeDeepRead(
     body,
     abortSignal,
   });
-}
-
-/* ────────────────── AI Studio（Gemini API key）503 兜底 ──────────────────
- * gs:// 只有 Vertex 认；这条线要先把分片传到 Gemini Files API 拿 files/xxx URI（48 小时自动过期）。
- * 0904 实弹：generativelanguage 不认 Vertex 专属 generationConfig.audioTimestamp（400），发线前剥掉；
- * 冻结契约与 requestFingerprint 均按原 body 计算，不受影响。 */
-
-function resolveGeminiApiBaseUrl(): string {
-  return String(process.env.GEMINI_API_BASE_URL || "https://generativelanguage.googleapis.com")
-    .trim().replace(/\/+$/, "") || "https://generativelanguage.googleapis.com";
-}
-
-/** 兜底可用条件：配了 GEMINI_API_KEY。没配就维持纯 Vertex 4 次重试，行为与 0904 基线一致。 */
-export function isGeminiApiFallbackAvailable(): boolean {
-  return Boolean(String(process.env.GEMINI_API_KEY || "").trim());
-}
-
-export function stripVertexOnlyGenerationConfigFields(body: unknown): unknown {
-  if (!body || typeof body !== "object" || Array.isArray(body)) return body;
-  const record = body as Record<string, unknown>;
-  const config = record.generationConfig;
-  if (!config || typeof config !== "object" || Array.isArray(config)) return body;
-  const { audioTimestamp: _audioTimestamp, ...rest } = config as Record<string, unknown>;
-  return { ...record, generationConfig: rest };
-}
-
-async function postGeminiApiNativeDeepRead(
-  body: unknown,
-  abortSignal?: AbortSignal,
-  _context?: NativeDeepReadSegmentContext,
-  model: ManhuaNativeDeepReadModelId = MANHUA_NATIVE_DEEP_READ_MODEL,
-): Promise<NativeDeepReadModelResponse> {
-  const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
-  if (!apiKey) throw new Error("GEMINI_API_KEY 未配置，AI Studio 兜底不可用");
-  const url = `${resolveGeminiApiBaseUrl()}/v1beta/models/`
-    + `${encodeURIComponent(model)}:generateContent`;
-  return postNativeDeepReadGenerateContent({
-    url,
-    headers: { "x-goog-api-key": apiKey },
-    body: stripVertexOnlyGenerationConfigFields(body),
-    abortSignal,
-  });
-}
-
-/**
- * 上传分片到 Gemini Files API 并等待转码完成（视频 PROCESSING→ACTIVE 才可读）。
- * 单档 ≤2GB、项目仓 20GB、48 小时自动删除；上传与存储不计费。
- */
-export async function uploadSegmentToGeminiFiles(input: {
-  buffer: Buffer;
-  signal?: AbortSignal;
-  /** 测试注入零等待；生产走真实计时器。 */
-  sleepMs?: (ms: number) => Promise<void>;
-}): Promise<{ fileUri: string }> {
-  const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
-  if (!apiKey) throw new Error("GEMINI_API_KEY 未配置，Gemini Files 上传不可用");
-  const base = resolveGeminiApiBaseUrl();
-  const start = await fetch(`${base}/upload/v1beta/files`, {
-    method: "POST",
-    headers: {
-      "x-goog-api-key": apiKey,
-      "X-Goog-Upload-Protocol": "resumable",
-      "X-Goog-Upload-Command": "start",
-      "X-Goog-Upload-Header-Content-Length": String(input.buffer.byteLength),
-      "X-Goog-Upload-Header-Content-Type": "video/mp4",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ file: { displayName: "manhua-native-segment.mp4" } }),
-    signal: input.signal,
-  });
-  if (!start.ok) {
-    throw new Error(`Gemini Files 上传初始化失败 HTTP ${start.status}：${(await start.text()).slice(0, 300)}`);
-  }
-  const uploadUrl = start.headers.get("x-goog-upload-url");
-  if (!uploadUrl) throw new Error("Gemini Files 未返回上传地址");
-  const up = await fetch(uploadUrl, {
-    method: "POST",
-    headers: {
-      "X-Goog-Upload-Command": "upload, finalize",
-      "X-Goog-Upload-Offset": "0",
-      "Content-Length": String(input.buffer.byteLength),
-    },
-    body: new Uint8Array(input.buffer),
-    signal: input.signal,
-  });
-  if (!up.ok) {
-    throw new Error(`Gemini Files 分片上传失败 HTTP ${up.status}：${(await up.text()).slice(0, 300)}`);
-  }
-  const meta = await up.json() as { file?: { name?: string; uri?: string; state?: string } };
-  const name = String(meta.file?.name || "");
-  let uri = String(meta.file?.uri || "");
-  let state = String(meta.file?.state || "");
-  if (!name || !uri) throw new Error("Gemini Files 响应缺少文件标识");
-  const sleep = input.sleepMs ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  const deadline = Date.now() + 5 * 60_000;
-  while (state === "PROCESSING" || state === "STATE_UNSPECIFIED" || state === "") {
-    if (Date.now() > deadline) throw new Error("Gemini Files 转码超时（5 分钟未 ACTIVE），已停止");
-    input.signal?.throwIfAborted();
-    await sleep(5_000);
-    const got = await fetch(`${base}/v1beta/${name}`, {
-      headers: { "x-goog-api-key": apiKey },
-      signal: input.signal,
-    });
-    if (!got.ok) throw new Error(`Gemini Files 状态查询失败 HTTP ${got.status}`);
-    const j = await got.json() as { state?: string; uri?: string };
-    state = String(j.state || "");
-    if (j.uri) uri = String(j.uri);
-  }
-  if (state !== "ACTIVE") throw new Error(`Gemini Files 文件状态 ${state}，不可读，已停止`);
-  return { fileUri: uri };
-}
-
-/** 兜底备料：把已在 GCS 的分片拉回来再传 Files API（只在撞 503 时才做，不预传）。 */
-async function uploadGcsSegmentToGeminiFiles(input: {
-  gsUri: string;
-  signal?: AbortSignal;
-}): Promise<{ fileUri: string }> {
-  const { buffer } = await downloadGcsObject({ gcsUri: input.gsUri });
-  return uploadSegmentToGeminiFiles({ buffer, signal: input.signal });
 }
 
 /* ────────────────── 媒体节点解析（yt-dlp，与批处理脚本共用） ────────────────── */
@@ -4816,10 +4691,6 @@ export type NativeDeepReadBatchRunnerDeps = {
   remove: typeof deleteGcsObject;
   postVertex: (body: unknown, signal?: AbortSignal, context?: NativeDeepReadSegmentContext, model?: ManhuaNativeDeepReadModelId) => Promise<NativeDeepReadModelResponse>;
   postEvolink: (body: unknown, signal?: AbortSignal, context?: NativeDeepReadSegmentContext, model?: ManhuaNativeDeepReadModelId) => Promise<NativeDeepReadModelResponse>;
-  /** AI Studio 503 兜底三件套；缺省用真实现。 */
-  postGeminiApi?: (body: unknown, signal?: AbortSignal, context?: NativeDeepReadSegmentContext, model?: ManhuaNativeDeepReadModelId) => Promise<NativeDeepReadModelResponse>;
-  uploadGeminiFile?: (input: { gsUri: string; signal?: AbortSignal }) => Promise<{ fileUri: string }>;
-  geminiApiFallbackAvailable?: () => boolean;
   signReadUrl: typeof signGsUriV4ReadUrl;
   invokeGlmStructuring: typeof invokeNativeDeepReadGlmStructuring;
   selectAttemptWithQwen: typeof selectNativeDeepReadAttemptWithQwen;
@@ -4845,9 +4716,6 @@ const defaultBatchRunnerDeps: NativeDeepReadBatchRunnerDeps = {
   remove: deleteGcsObject,
   postVertex: postVertexNativeDeepRead,
   postEvolink: postEvolinkNativeDeepRead,
-  postGeminiApi: postGeminiApiNativeDeepRead,
-  uploadGeminiFile: uploadGcsSegmentToGeminiFiles,
-  geminiApiFallbackAvailable: isGeminiApiFallbackAvailable,
   signReadUrl: signGsUriV4ReadUrl,
   invokeGlmStructuring: invokeNativeDeepReadGlmStructuring,
   selectAttemptWithQwen: selectNativeDeepReadAttemptWithQwen,
@@ -5249,15 +5117,6 @@ async function executeNativeDeepReadBatch(
       let episodeAudioInput = 0;
       let episodeReasoning = 0;
       const routesUsed = new Set<NativeDeepReadVisualRoute>();
-      /** AI Studio 兜底的 files/xxx URI 按段记住：同段三档温度只传一次。 */
-      const geminiFileUriBySegment = new Map<number, string>();
-      const resolveGeminiFileUri = async (segmentIndex: number, gsUri: string): Promise<string> => {
-        const hit = geminiFileUriBySegment.get(segmentIndex);
-        if (hit) return hit;
-        const { fileUri } = await (deps.uploadGeminiFile ?? uploadGcsSegmentToGeminiFiles)({ gsUri, signal: params.abortSignal });
-        geminiFileUriBySegment.set(segmentIndex, fileUri);
-        return fileUri;
-      };
       const rawAttemptEvidenceObjectNames = new Set<string>();
       /** 段级 advisory 的集级汇总（按段号聚合）；provenance 与面板都读这份。 */
       const advisoriesBySegment = new Map<number, NativeDeepReadAdvisory[]>();
@@ -5445,6 +5304,7 @@ async function executeNativeDeepReadBatch(
         let modelCallStarted = false;
         let recoveredPaidEvidence = false;
         let evidenceBatchRequestId: string = episodeRequestId;
+        let evidenceVisualRoute: NativeDeepReadVisualRoute = input.route;
         const segmentContext = { startSec: segment.startSec, endSec: segment.endSec, segmentIndex: input.segmentIndex, hasAudio };
         const body = buildGeminiNativeDeepReadSegmentRequest({
           segmentContext,
@@ -5498,6 +5358,7 @@ async function executeNativeDeepReadBatch(
               recoveredPaidEvidence = true;
               callId = recovered.callId;
               evidenceBatchRequestId = recovered.batchRequestId;
+              evidenceVisualRoute = recovered.visualRoute;
               response = {
                 status: recovered.httpStatus,
                 text: recovered.responseText,
@@ -5535,9 +5396,7 @@ async function executeNativeDeepReadBatch(
             modelCallStarted = true;
             response = await (input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK
               ? deps.postEvolink(body, params.abortSignal, segmentContext, readModel)
-              : input.route === NATIVE_DEEP_READ_ROUTE_GEMINI_API
-                ? (deps.postGeminiApi ?? postGeminiApiNativeDeepRead)(body, params.abortSignal, segmentContext, readModel)
-                : deps.postVertex(body, params.abortSignal, segmentContext, readModel));
+              : deps.postVertex(body, params.abortSignal, segmentContext, readModel));
           }
           if (!response) throw new Error("原生精读响应缺失，已停止且不得自动重试");
           if (response.status >= 300) {
@@ -5610,7 +5469,7 @@ async function executeNativeDeepReadBatch(
             episodeReasoning += attemptReasoning;
           }
           episodeAudioInput += attemptAudioInput;
-          routesUsed.add(input.route);
+          routesUsed.add(evidenceVisualRoute);
           addPaidUsage(input.segmentIndex, {
             inputTokens: attemptInput,
             outputTokens: attemptOutput,
@@ -5690,7 +5549,7 @@ async function executeNativeDeepReadBatch(
                 callId,
                 attemptNumber: input.attemptNumber,
                 temperature: input.temperature,
-                visualRoute: input.route,
+                visualRoute: evidenceVisualRoute,
                 repeatableDiagnostic: Boolean(selectedSegmentIndexes),
                 providerRequestId: response.requestId,
                 model: readModel,
@@ -5815,7 +5674,7 @@ async function executeNativeDeepReadBatch(
                 reasonZh: gateFailure instanceof Error ? gateFailure.message : String(gateFailure),
                 result: { raw, advisories: dedupeNativeDeepReadAdvisories([...readSegmentAdvisories(raw, input.segmentIndex), ...(truncated ? [{ code: "truncated", detailZh: "原始读片输出截断，保留已取得证据进入整形", segmentIndex: input.segmentIndex }] : [])]), truncated,
                   inputTokens: attemptInput, outputTokens: attemptOutput, audioInputTokens: attemptAudioInput,
-                  reasoningTokens: attemptReasoning, visualRoute: input.route, finishReason: candidate?.finishReason,
+                  reasoningTokens: attemptReasoning, visualRoute: evidenceVisualRoute, finishReason: candidate?.finishReason,
                   providerRequestId: response.requestId, rawAttemptEvidenceObjectName, requestFingerprint } });
               rejectedAttempts.set(input.segmentIndex, candidates);
             }
@@ -5906,7 +5765,7 @@ async function executeNativeDeepReadBatch(
             outputTokens: attemptOutput,
             audioInputTokens: attemptAudioInput,
             reasoningTokens: attemptReasoning,
-            visualRoute: input.route,
+            visualRoute: evidenceVisualRoute,
             finishReason: candidate?.finishReason,
             providerRequestId: response.requestId,
             rawAttemptEvidenceObjectName,
@@ -6041,23 +5900,10 @@ async function executeNativeDeepReadBatch(
             params.abortSignal?.throwIfAborted();
           }
           let resourceRetryCount = 0;
-          let geminiApiFallbackPending = false;
-          let geminiApiFallbackTried = false;
           while (true) {
-            const viaGeminiApi = geminiApiFallbackPending;
             try {
-              let attemptRoute = input.route;
-              let attemptFileUri = input.fileUri;
-              if (viaGeminiApi) {
-                geminiApiFallbackPending = false;
-                geminiApiFallbackTried = true;
-                attemptRoute = NATIVE_DEEP_READ_ROUTE_GEMINI_API;
-                attemptFileUri = await resolveGeminiFileUri(input.segmentIndex, input.fileUri);
-              }
               const accepted = await attemptSegment({
                 ...input,
-                route: attemptRoute,
-                fileUri: attemptFileUri,
                 attemptNumber: attemptIndex + 1,
                 temperature,
                 rejectedReasonZh,
@@ -6066,72 +5912,10 @@ async function executeNativeDeepReadBatch(
             } catch (error) {
               if (params.abortSignal?.aborted) throw error;
               if (error instanceof Error && error.name === "NativeDeepReadEvidencePersistenceError") throw error;
-              const geminiApiSideFailure = viaGeminiApi
-                && !isNativeDeepReadGateFailure(error)
-                && !(error instanceof Error && (error.name === NATIVE_DEEP_READ_SCHEMA_ERROR_NAME || error.name === "ZodError"));
-              if (geminiApiSideFailure) {
-                // AI Studio 兜底自身失败（上传/转码/HTTP/429）：不计入 Vertex 重试次数，回 Vertex 跑完剩余重试
-                const errorZh = (error instanceof Error ? error.message : String(error)).slice(0, 2_000);
-                console.warn(
-                  `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段 AI Studio 兜底失败，`
-                  + `30 秒后回 Vertex 继续重试（剩 ${NATIVE_DEEP_READ_RESOURCE_RETRY_MAX - resourceRetryCount} 次）：${errorZh}`,
-                );
-                await emitVisualModelReceipt({
-                  callId: `${episodeRequestId}:segment-${input.segmentIndex}:gemini-api-fallback-failed-${attemptIndex + 1}`,
-                  model: readModel,
-                  route: "gemini_api_fallback_failed",
-                  stage: "visual_parse",
-                  status: "failed",
-                  batchRequestId: episodeRequestId,
-                  episodeIndexes: [episode.episodeIndex],
-                  chunkIndex: input.segmentIndex,
-                  segmentCount,
-                  videoCount: 1,
-                  attemptNumber: attemptIndex + 1,
-                  temperature,
-                  resourceRetryNumber: resourceRetryCount,
-                  resourceRetryMax: NATIVE_DEEP_READ_RESOURCE_RETRY_MAX,
-                  errorZh,
-                }, params.onModelReceipt);
-                await deps.waitForRetry(NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS, params.abortSignal);
-                params.abortSignal?.throwIfAborted();
-                continue;
-              }
               if (isNativeDeepReadResourceExhausted(error)) {
                 if (resourceRetryCount >= NATIVE_DEEP_READ_RESOURCE_RETRY_MAX) throw error;
                 resourceRetryCount += 1;
                 const errorZh = (error instanceof Error ? error.message : String(error)).slice(0, 2_000);
-                const switchToGeminiApi = input.route === NATIVE_DEEP_READ_ROUTE_VERTEX
-                  // 首发 + FALLBACK_AFTER 次重试都撞 → 第 FALLBACK_AFTER+1 次资源错误触发
-                  && resourceRetryCount > NATIVE_DEEP_READ_RESOURCE_FALLBACK_AFTER
-                  && !geminiApiFallbackTried
-                  && (deps.geminiApiFallbackAvailable ?? isGeminiApiFallbackAvailable)();
-                if (switchToGeminiApi) {
-                  // 0905 用户拍板：Vertex 重试 2 次仍 503 → 立刻切 AI Studio（不再等 30 秒，上传本身就要时间）
-                  geminiApiFallbackPending = true;
-                  console.warn(
-                    `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段 Vertex 连撞 ${resourceRetryCount} 次资源拥堵，`
-                    + `改走 AI Studio（Files API）兜底：${errorZh}`,
-                  );
-                  await emitVisualModelReceipt({
-                    callId: `${episodeRequestId}:segment-${input.segmentIndex}:gemini-api-fallback-${attemptIndex + 1}`,
-                    model: readModel,
-                    route: "gemini_api_fallback_pending",
-                    stage: "visual_parse",
-                    status: "started",
-                    batchRequestId: episodeRequestId,
-                    episodeIndexes: [episode.episodeIndex],
-                    chunkIndex: input.segmentIndex,
-                    segmentCount,
-                    videoCount: 1,
-                    attemptNumber: attemptIndex + 1,
-                    temperature,
-                    resourceRetryNumber: resourceRetryCount,
-                    resourceRetryMax: NATIVE_DEEP_READ_RESOURCE_RETRY_MAX,
-                    errorZh,
-                  }, params.onModelReceipt);
-                  continue;
-                }
                 await emitVisualModelReceipt({
                   callId: `${episodeRequestId}:segment-${input.segmentIndex}:resource-retry-${attemptIndex + 1}-${resourceRetryCount}`,
                   model: readModel,

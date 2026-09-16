@@ -133,6 +133,8 @@ export type NativeDeepReadRawAttemptEvidenceRead = {
   responseBytes: number;
   responseSha256: string;
   httpStatus: number;
+  /** 真实付费响应使用的路由；恢复时必须沿用，不能拿当前入口路由改写不可变证据。 */
+  visualRoute: NativeDeepReadSegmentCacheVisualRoute;
 };
 
 export type NativeDeepReadSegmentCacheRead = {
@@ -397,6 +399,7 @@ function parseNativeDeepReadRawAttemptEvidence(
     responseBytes,
     responseSha256,
     httpStatus,
+    visualRoute: row.visualRoute,
   };
 }
 
