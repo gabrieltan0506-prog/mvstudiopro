@@ -281,11 +281,7 @@ export async function advanceManhuaWorldTask(taskId: string): Promise<ManhuaWorl
     if (!record.operationId && record.prompt.type === "layout") {
       // 第一步：深度全景 → RGB 全景。失败 → failed（可重试，重试从头做两步）；提交不确定 → reconcile
       if (!record.depthOperationId) {
-        record.status = "reconcile_manual";
-        record.errorZh = "提交结果正在确认，为避免重复生成不会自动重试";
-        record.startedAt = record.startedAt || isoNow();
-        await writeRecord(record);
-        // 签名 url 会过期：有 gs:// 就重新签（重试/对账后再提交也能用）；签不动 → failed，不占上游
+        // 签名 url 会过期：有 gs:// 就重新签（重试/对账后再提交也能用）；签不动 → failed，不占上游（与场景图路径同序：先签再置 reconcile）
         let depthPanoUrl = record.prompt.depthPanoUrl;
         if (record.prompt.depthPanoGcsUri) {
           try {
@@ -294,6 +290,10 @@ export async function advanceManhuaWorldTask(taskId: string): Promise<ManhuaWorl
             return markFailed(record, "深度全景签名失败，未提交上游，可重试", error);
           }
         }
+        record.status = "reconcile_manual";
+        record.errorZh = "提交结果正在确认，为避免重复生成不会自动重试";
+        record.startedAt = record.startedAt || isoNow();
+        await writeRecord(record);
         try {
           const submitted = await deps.submitDepth({ depthPanoUrl, textPrompt: record.prompt.textPrompt });
           record.depthOperationId = submitted.operationId;
