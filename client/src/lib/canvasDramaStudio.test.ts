@@ -3403,7 +3403,7 @@ it("状态变更令静帧源指纹失效，铺段消费不覆盖回旧指纹", (
   const text = buildManhuaEpisodeSegmentPlanFixtureMarkdown();
   const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(text);
   const anchor = { id: "hero", role: "character" as const, nameZh: "墨屠", lookZh: "黑衣", promptZh: "黑衣", statesZh: [{ id: "st_hurt", nameZh: "肩伤", deltaZh: "肩部流血" }] };
-  const opts = { segmentPlan: plan, assetCanon: { characters: [anchor], props: [], locations: [], episodeMainSceneId: {} } };
+  const opts = { segmentPlan: plan, customRefs: [{ id: "hurt", role: "character" as const, source: "generated" as const, refDuty: "identity" as const, claimedAnchorIds: ["hero"], labelZh: "墨屠", url: "https://example.com/hurt.png", primaryBindings: [{ anchorId: "hero", duty: "identity" as const, stateId: "st_hurt" }] }], assetCanon: { characters: [anchor], props: [], locations: [], episodeMainSceneId: {} } };
   const reverse = { ...defaultCanvasBlock("text", 0, 0), id: "reverse-e01-test", episodeIndex: 1, outputText: text };
   const keyart = { ...defaultCanvasBlock("image", 0, 0), id: "keyart-e01-s01-test", episodeIndex: 1 };
   const a = expandManhuaShotKeyartsAfterReverse([reverse, keyart], [], reverse.id, opts);

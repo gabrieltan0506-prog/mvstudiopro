@@ -2011,12 +2011,12 @@ function mergeManhuaPlanBeatsForSegment(
   segShots: ManhuaWorkbenchShot[],
 ): ManhuaEpisodeSegmentPlan["segments"][number] | undefined {
   if (!segmentPlan?.segments?.length) return undefined;
-  if (JSON.stringify(buildWorkbenchShotsFromSegmentPlan(segmentPlan)) !== JSON.stringify(shots)) return undefined;
   const sorted = [...segmentPlan.segments].sort((a, b) => a.index - b.index);
-  const planIndexes = Array.from(
-    new Set(segShots.map((s) => Math.floor((s.index - 1) / MANHUA_KEYARTS_PER_SEGMENT_MIN))),
-  ).sort((a, b) => a - b);
-  const beats = planIndexes.map((i) => sorted[i]).filter((b): b is NonNullable<typeof b> => Boolean(b));
+  const explicitSource = segShots.length > 0 && segShots.every(s => s.sourceSegmentIndex != null);
+  if (!explicitSource && JSON.stringify(buildWorkbenchShotsFromSegmentPlan(segmentPlan)) !== JSON.stringify(shots)) return undefined;
+  const planIndexes = Array.from(new Set(segShots.map(s => explicitSource ? s.sourceSegmentIndex! : sorted[Math.floor((s.index - 1) / MANHUA_KEYARTS_PER_SEGMENT_MIN)]?.index))).filter((i): i is number => i != null);
+  const beats = planIndexes.map(i => sorted.find(b => b.index === i)).filter((b): b is NonNullable<typeof b> => Boolean(b));
+  if (explicitSource && beats.length !== planIndexes.length) throw new Error("镜头来源段已变更，请重新核对段表后再生成");
   if (!beats.length) return undefined;
   if (beats.length === 1) return beats[0];
   const first = (key: "castZh" | "wardrobePropZh" | "sceneZh" | "intentZh" | "performanceZh" | "lightingCameraZh" | "paletteZh") =>
