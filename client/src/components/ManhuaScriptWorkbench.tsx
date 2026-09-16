@@ -37,6 +37,7 @@ import { ManhuaActionTimeline } from "@/components/canvas/ManhuaActionTimeline";
 import { Manhua3dModelStudio, manhua3dModelCounts, manhua3dRigLookupCharacters } from "@/components/canvas/Manhua3dModelStudio";
 import { splitManhuaActionPlanForPrevis } from "@shared/manhuaActionPlanSplit";
 import { manhuaPrevisDraftFromExecutableShot } from "@shared/manhuaPrevisFromActionPlan";
+import { resolveManhuaCameraTempo } from "@shared/manhuaCameraTempo";
 import type { ManhuaActionPlan } from "@shared/manhuaActionPlan";
 import type { ManhuaActionPlanBindingContext } from "@shared/manhuaActionPlanBindings";
 import {
@@ -202,6 +203,7 @@ import {
 import {
   inferManhuaCastZhFromDialogue,
   parseManhuaEpisodeSegmentPlanFromMarkdown,
+  getManhuaSegmentIntentZh,
   type ManhuaEpisodeSegmentPlan,
 } from "@shared/manhuaEpisodeSegmentPlan";
 import { MANHUA_DIALOGUE_SILENCE_TOKEN } from "@shared/manhuaShotDialoguePersist";
@@ -2474,10 +2476,17 @@ export default function ManhuaScriptWorkbench({
     const { shots } = splitManhuaActionPlanForPrevis(manhuaActionPlan);
     const links = assetLockRegistry.byRole.character.map((a) => ({ actorId: a.id, assetRef: a.id }));
     const aspect = activeClip?.previsStudio?.spec.aspect === "9:16" ? ("9:16" as const) : ("16:9" as const);
+    // PR-6：段意图（可拍表）+ 导演包主卡 + 是否有接触事件 → 节奏档；用户在白模区手改的风格档覆盖 tempo.style
+    const intentZh = getManhuaSegmentIntentZh(shootablePlan, activeSegNo);
+    const cameraStyle = activeClip?.previsStudio?.cameraStyle;
     return shots
       .filter((s) => s.sourceShotId.startsWith(prefix))
-      .map((shot) => manhuaPrevisDraftFromExecutableShot({ plan: manhuaActionPlan, shot, resolvedCamera: null, aspect, links }));
-  }, [manhuaActionPlan, focusEpisode, activeSegNo, assetLockRegistry.byRole.character, activeClip?.previsStudio?.spec.aspect]);
+      .map((shot) => {
+        const hasContact = shot.events.some((e) => e.kind === "attack" || e.kind === "land" || e.kind === "emerge");
+        const tempo = resolveManhuaCameraTempo({ intentZh, directionCardId: directionCanon?.mainCardId ?? null, hasContact });
+        return manhuaPrevisDraftFromExecutableShot({ plan: manhuaActionPlan, shot, resolvedCamera: null, aspect, links, tempo, cameraStyle });
+      });
+  }, [manhuaActionPlan, focusEpisode, activeSegNo, assetLockRegistry.byRole.character, activeClip?.previsStudio?.spec.aspect, activeClip?.previsStudio?.cameraStyle, shootablePlan, directionCanon?.mainCardId]);
   const modelStudioCharacters = useMemo(
     () =>
       assetLockRegistry.byRole.character.map((a) => {
@@ -3405,6 +3414,7 @@ export default function ManhuaScriptWorkbench({
               }))}
               sourceShots={activeSegment?.shots.map(shot=>({index:shot.index,durationSec:shot.durationSec,actionZh:shot.actionZh}))}
               actionPlanDrafts={previsDraftsFromPlan}
+              onNextDraftVideo={onGenerateFragment ? runGenerateFragment : undefined}
               disabled={Boolean(factoryBusy)||activeClip.status==="running"||activeClip.videoTaskStatus==="queued"}
               onChange={(studio,reference)=>onUpdateClipPrevisStudio(activeClip.id,studio,reference)}/>
               :<p className="text-xs text-amber-100">请先确认分段剧本并建立本段成片节点；此操作不会生成付费成片。</p>}

@@ -5,6 +5,8 @@ import { trpc } from "@/lib/trpc";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import type { ManhuaSegmentReferenceEntry } from "@shared/manhuaSegmentReference";
 import { applyManhuaPrevisDraftToStudio, type ManhuaPrevisDraftFromPlan } from "@shared/manhuaPrevisFromActionPlan";
+import { appendManhuaCameraPromptToMotionGuide, MANHUA_CAMERA_PROMPT_BLOCK_MAX_CHARS, MANHUA_CAMERA_STYLE_LABEL_ZH } from "@shared/manhuaCameraTempo";
+import type { ManhuaCameraStyle } from "@shared/manhuaCameraGrammar";
 import {
   createManhuaPrevisStudio,
   formatPrevisMotionGuide,
@@ -67,6 +69,8 @@ type Props = {
   }>;
   sourceShots?: PrevisSourceShot[];
   profiles?: PreparedRigProfile[];
+  /** PR-6：采用白模成功后露出「下一步：生成本段草稿视频」；走工作台既有的本段成片入口（扣费确认沿用） */
+  onNextDraftVideo?: () => void;
   onChange: (
     studio: Studio,
     reference?: ManhuaSegmentReferenceEntry
@@ -102,6 +106,7 @@ export function ManhuaPrevisStudioView({
   sourceShots = [],
   profiles = [],
   actionPlanDrafts = [],
+  onNextDraftVideo,
 }: Props & { services: PrevisServices }) {
   const [initial] = useState(
     () => block.previsStudio ?? createManhuaPrevisStudio()
@@ -120,6 +125,8 @@ export function ManhuaPrevisStudioView({
   );
   const draftBaseKey = useRef("");
   const [reviewedDraft, setReviewedDraft] = useState(false);
+  /** 采用白模成功后才露出下一步按钮；换段/换任务即收起 */
+  const [adoptedJobId, setAdoptedJobId] = useState("");
   const lock = useRef(false);
   const mounted = useRef(true);
   useEffect(() => {
@@ -411,7 +418,12 @@ export function ManhuaPrevisStudioView({
       fileName: `动作白模-${take.jobId}.mp4`,
       durationSec: take.durationSec,
       updatedAt: new Date().toISOString(),
-      motionGuideZh: formatPrevisMotionGuide(take.spec),
+      // PR-6：草案的每镜运镜句逐镜追加进运动指引（超出预算截断、保留前面镜头）
+      motionGuideZh: appendManhuaCameraPromptToMotionGuide(
+        formatPrevisMotionGuide(take.spec),
+        studio.draftCameraPromptZh ?? [],
+        formatPrevisMotionGuide(take.spec).length + MANHUA_CAMERA_PROMPT_BLOCK_MAX_CHARS
+      ),
     };
     const referenceHistory = [...studio.referenceHistory];
     if (
@@ -428,6 +440,7 @@ export function ManhuaPrevisStudioView({
       )
     )
       return;
+    setAdoptedJobId(take.jobId);
     setStatus("已采用为本段白模参考，旧参考保留；尚未验证最终生成片跟随质量");
   }
   return (
@@ -570,14 +583,45 @@ export function ManhuaPrevisStudioView({
           <p className="text-xs text-white/60">
             时间轴上排好的起手/接触/卸力已换算成白模时序（对齐 24 帧）。站位与机位为默认值，套用后可在「高级参数」微调；套用不提交渲染。
           </p>
+          <label className="flex flex-wrap items-center gap-2 text-xs text-white/80" data-previs-camera-style>
+            风格档
+            <select
+              aria-label="运镜风格档"
+              className={field}
+              disabled={disabled || Boolean(pendingId) || busy}
+              value={studio.cameraStyle ?? ""}
+              title="缺省按段意图/导演包自动定；手改后本段草案按你选的档重排"
+              onChange={(e) => {
+                const v = e.target.value as ManhuaCameraStyle | "";
+                if (disabled || pendingId || lock.current) return;
+                const { cameraStyle: _c, ...rest } = studio;
+                publish(v ? { ...rest, cameraStyle: v } : rest);
+              }}
+            >
+              <option value="">自动</option>
+              {(Object.keys(MANHUA_CAMERA_STYLE_LABEL_ZH) as ManhuaCameraStyle[]).map((k) => (
+                <option key={k} value={k}>{MANHUA_CAMERA_STYLE_LABEL_ZH[k]}</option>
+              ))}
+            </select>
+          </label>
           {actionPlanDrafts.map((d) => (
             <div key={d.executableShotId} className="space-y-1 rounded border border-white/15 p-2" data-draft-shot={d.executableShotId}>
               <p className="text-xs text-white/85">
                 {d.executableShotId} · {d.kind === "water_emerge" ? "出水" : d.kind === "engagement" ? "交锋" : "过渡"} · 源 {d.timing.durationSec}s
               </p>
-              {d.summaryZh.map((line, i) => (
+              {d.tempoZh ? (
+                <p className="text-[11px] text-cyan-100" data-previs-tempo>节奏档：{d.tempoZh}</p>
+              ) : null}
+              {d.summaryZh.filter((line) => !line.startsWith("节奏：") && !line.startsWith("运镜 ")).map((line, i) => (
                 <p key={i} className="text-[11px] text-white/70">{line}</p>
               ))}
+              {d.cameraPromptZh.length ? (
+                <ol className="list-decimal space-y-0.5 pl-4 text-[11px] text-white/70" data-previs-camera-prompts>
+                  {d.cameraPromptZh.map((line, i) => (
+                    <li key={i}>{line}</li>
+                  ))}
+                </ol>
+              ) : null}
               {d.issuesZh.map((line, i) => (
                 <p key={`i${i}`} className="text-[11px] text-amber-100">{line}</p>
               ))}
@@ -587,7 +631,7 @@ export function ManhuaPrevisStudioView({
                 title={d.spec ? "把这镜的白模规格套用到下方（可撤销：规格历史里可回退）" : "草案未过白模合同，先按上面提示修时间轴"}
                 onClick={() => {
                   // 先压历史再替换：「恢复上一份动作配置」才能回退（1468 R2）
-                  if (d.spec && !disabled && !pendingId && !lock.current) publish(applyManhuaPrevisDraftToStudio(studio, d.spec));
+                  if (d.spec && !disabled && !pendingId && !lock.current) publish(applyManhuaPrevisDraftToStudio(studio, d.spec, undefined, d));
                 }}
               >
                 套用这镜到白模规格
@@ -603,12 +647,15 @@ export function ManhuaPrevisStudioView({
           onClick={() => {
             const history = studio.specHistory ?? [];
             const old = history.at(-1);
-            if (old && !disabled && !pendingId && !lock.current)
+            if (old && !disabled && !pendingId && !lock.current) {
+              // 回退规格时把草案带来的运镜句一并清掉，句子不能和旧规格对不上
+              const { draftCameraPromptZh: _p, draftTempoZh: _t, ...rest } = studio;
               publish({
-                ...studio,
+                ...rest,
                 spec: old.spec,
                 specHistory: history.slice(0, -1),
               });
+            }
           }}
         >
           恢复上一份动作配置（不改已采用参考）
@@ -1577,6 +1624,19 @@ export function ManhuaPrevisStudioView({
           {status}
         </span>
       </div>
+      {adoptedJobId && studio.selectedJobId === adoptedJobId && onNextDraftVideo ? (
+        <div className="flex flex-wrap items-center gap-2 rounded border border-emerald-300/30 bg-emerald-500/10 p-2" data-previs-next-draft-video>
+          <span className="text-xs text-emerald-100">白模已采用。下一步：生成本段草稿视频（Seedance 2.0 mini ≤15s），点了会走扣费确认，不会自动扣。</span>
+          <button
+            type="button"
+            className={button}
+            disabled={disabled || busy}
+            onClick={() => onNextDraftVideo()}
+          >
+            生成本段草稿视频
+          </button>
+        </div>
+      ) : null}
       {pendingId && (
         <p className="text-xs text-white/50">
           请求编号：{pendingId}。配置已锁定，任务结束后可修改。
