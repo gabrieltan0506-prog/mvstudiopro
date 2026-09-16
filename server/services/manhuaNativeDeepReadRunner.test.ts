@@ -4307,7 +4307,8 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     };
   }
 
-  it.each(["qwen3.8-max", "glm-5.3"] as const)("仅重新整形使用完整永久JSON进入%s，原生模型与视频准备均为零", async structuringModel => {
+  it("仅重新整形使用完整永久JSON进入GLM，原生模型与视频准备均为零", async () => {
+    const structuringModel = "glm-5.3" as const;
     const episode = makeEpisode([{ startSec: 0, endSec: 60 }]);
     const entry = makeCacheEntry({ episode, segmentIndex: 0 });
     const deps = makeRunnerDeps({ readPermanentSegment: vi.fn(async () => ({ entry, generation: "1" })) as never });
@@ -5198,7 +5199,7 @@ describe("逐镜动态观察的生产与消费", () => {
     expect(deterministicallyMergeNativeDeepReadRawSegments([wrappedSource]).shots).toEqual([shot]);
   });
 
-  it("实际批量入口在GLM丢观察后：同档重试一次、再换档，链上三档各两次都丢观察才停止；每次原始解析证据都保存（0906 用户令）", async () => {
+  it("实际批量入口在GLM丢观察后：同档重试一次、再换档，两路各两次都丢观察才停止；每次原始解析证据都保存（0906 用户令）", async () => {
     const segments = [{ startSec: 0, endSec: 60 }];
     const base = makeGlmStructuringStub();
     const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => {
@@ -5208,12 +5209,12 @@ describe("逐镜动态观察的生产与消费", () => {
     });
     const deps = makeRunnerDeps({ postVertex: makeSuccessfulEpisodePostVertex(segments) as never,
       invokeGlmStructuring: invokeGlmStructuring as never });
-    await expect(runManhuaNativeDeepReadBatch({ segmentCacheSeriesKey: "hint-test", structuringModel: "qwen3.8-max",
+    await expect(runManhuaNativeDeepReadBatch({ segmentCacheSeriesKey: "hint-test", structuringModel: "glm-5.3",
       episodes: [{ episodeIndex: 1, segments, cacheSourceDigest: "a".repeat(64),
       sourceDurationSec: 60, resolveNodes: async () => [] }] }, deps)).rejects.toThrow("hintZh丢失");
     expect(deps.postVertex).toHaveBeenCalledTimes(1);
-    // 单批链序 3 档 × 每档 2 次 = 6 次整形；读片只读 1 次（分片缓存不重读）
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(6);
+    // 两条 GLM 路由各两次，读片缓存不重读。
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(4);
     expect(deps.writeRawAttemptEvidence).toHaveBeenCalledTimes(1);
     expect(deps.writeParsedAttemptEvidence).toHaveBeenCalledTimes(1);
     expect(vi.mocked(deps.writeParsedAttemptEvidence).mock.calls[0]![0].parsed.shots).toEqual(
@@ -5345,11 +5346,12 @@ describe("0907 · 整形输出音轨块编号对不上段号", () => {
         { chunkIndex: 0, analysis: { audioTrack: [{ fromSec: 0, toSec: 60 }], mixNotesZh: "GLM 混音" } },
       ],
     };
+    (rows[1]!.audioResolution as Array<{analysis: Record<string, unknown>}>)[0]!.analysis.mixNotesZh = "第二片独有混音";
     const fixed = repairNativeDeepReadStructuredAudioSummaries(raw, rows);
     expect(fixed.restored).toBe(5);
     expect(fixed.chunks).toBe(2);
     const chunks = fixed.raw.audioResolution as Array<{ chunkIndex: number; analysis: Record<string, unknown> }>;
-    expect(chunks[0]!.analysis).toMatchObject({ audioBeatStructureZh: "GLM 保留", mixNotesZh: "对白前置", reusableAudioZh: "GLM 复用", genAudioHintZh: "弦乐渐强+环境声" });
+    expect(chunks[0]!.analysis).toMatchObject({ audioBeatStructureZh: "GLM 保留", mixNotesZh: "第二片独有混音", reusableAudioZh: "GLM 复用", genAudioHintZh: "弦乐渐强+环境声" });
     expect(chunks[1]!.analysis).toMatchObject({ audioBeatStructureZh: "先抑后扬", mixNotesZh: "GLM 混音", reusableAudioZh: "低频铺垫承压", genAudioHintZh: "弦乐渐强+环境声" });
     expect((raw.audioResolution[0]!.analysis as Record<string, unknown>).mixNotesZh).toBe("   ");
   });
@@ -5449,18 +5451,16 @@ describe("0905 · 整形按批次序号分流链", () => {
     expect(nativeDeepReadStructuringGatewayOrder("structuring_chain", 1)[0]).toBe("evolink_glm");
   });
 
-  it("整形模型开关：qwen3.8-max → Qwen 首发链；glm-5.3 / 缺省 → GLM 首发链；started 标签跟着开关走", async () => {
+  it("整形模型只允许 GLM；旧 Qwen 值明确拒绝", async () => {
     const m = await import("./manhuaNativeDeepReadRunner");
-    expect(m.nativeDeepReadStructuringPolicyForModel("qwen3.8-max")).toBe("structuring_chain_qwen_first");
+    expect(() => m.nativeDeepReadStructuringPolicyForModel("qwen3.8-max")).toThrow("只允许 GLM-5.3");
     expect(m.nativeDeepReadStructuringPolicyForModel(undefined)).toBe("structuring_chain");
     expect(m.nativeDeepReadStructuringPolicyForModel("glm-5.3")).toBe("structuring_chain");
-    expect(m.nativeDeepReadStructuringStartedLabel("structuring_chain_qwen_first")).toMatch(/^Qwen3\.8-Max/);
     expect(m.nativeDeepReadStructuringStartedLabel("structuring_chain")).not.toMatch(/^Qwen3\.8-Max/);
     // GLM 链的兜底档必须含 Qwen 两档，Qwen 链的兜底档必须含 GLM 两档（两档败切对方）
     // 0907 用户令：GLM 并发批次分流首发，第 1 批 OpenRouter→EvoLink，第 2 批 EvoLink→OpenRouter；不切 Qwen
     expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain", 0)).toEqual(["openrouter", "evolink_glm"]);
     expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain", 1)).toEqual(["evolink_glm", "openrouter"]);
-    expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain_qwen_first", 0).slice(1)).toEqual(["evolink_glm", "openrouter"]);
   });
 
   it("上下文里的 gatewayPolicy / gatewayOrder 原样落到网关请求；严格 schema 始终随请求", async () => {

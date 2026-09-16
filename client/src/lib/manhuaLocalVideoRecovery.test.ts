@@ -62,7 +62,7 @@ describe("本地上传学习恢复", () => {
   });
 
   it("仅重整形保留原来源及参数，不触发原片查询或上传", () => {
-    const params = buildManhuaRestructureParams(job, 1, "qwen3.8-max");
+    const params = buildManhuaRestructureParams(job, 1, "glm-5.3");
     expect(params).toMatchObject({ url: sourceRef, localVideoUploadId: uploadId,
       nativeStructuringOnly: true, nativeStructuringPreviousJobId: job.jobId,
       nativeSegmentSeconds: 17, nativeVideoFps: 3, nativeStandaloneSource: true });

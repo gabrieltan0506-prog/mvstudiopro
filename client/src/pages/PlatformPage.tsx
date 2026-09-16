@@ -3682,6 +3682,15 @@ export default function PlatformPage() {
   useEffect(() => {
     manhuaViralProposalsRefetchRef.current = manhuaViralProposalsQuery.refetch;
   }, [manhuaViralProposalsQuery.refetch]);
+  const manhuaLearnCachesRefreshRef = useRef(async () => {});
+  manhuaLearnCachesRefreshRef.current = async () => {
+    await Promise.all([
+      trpcUtils.manhuaViralTemplate.getProposalDetail.invalidate(),
+      trpcUtils.manhuaViralTemplate.getSeriesLearnSnapshot.invalidate(),
+      ...(ownerTemplateOptimizeAllowed
+        ? [trpcUtils.manhuaViralTemplate.listApprovedPrivate.invalidate()] : []),
+    ]);
+  };
   const nativeProposalRefreshSignatureRef = useRef("");
   useEffect(() => {
     nativeProposalRefreshSignatureRef.current = "";
@@ -3806,6 +3815,8 @@ export default function PlatformPage() {
         const refreshed = await manhuaViralProposalsRefetchRef.current();
         if (refreshed.isError) throw refreshed.error;
         if (manhuaLearnUserKeyRef.current !== requestUserKey) return listed;
+        await manhuaLearnCachesRefreshRef.current();
+        if (manhuaLearnUserKeyRef.current !== requestUserKey) return listed;
       } catch (error) {
         // job 恢复不能被待审列表的一次读取失败拖垮；不记签名，下一轮轮询继续重试。
         terminalRefreshFailed = true;
@@ -3907,7 +3918,7 @@ export default function PlatformPage() {
 
   useEffect(() => {
     const allowed = Boolean(
-      user?.id && hasSupervisorOpsAccess,
+      user?.id && (hasSupervisorOpsAccess || ownerTemplateOptimizeAllowed),
     );
     if (!allowed || trendInsightTab !== "ai_manhua") return;
     let disposed = false;
@@ -3995,7 +4006,7 @@ export default function PlatformPage() {
       document.removeEventListener("visibilitychange", onVisibilityChange);
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [refreshManhuaLearnServerJobs, hasSupervisorOpsAccess, trendInsightTab, user?.id, bumpManhuaLearnSnapshotBaseline]);
+  }, [refreshManhuaLearnServerJobs, hasSupervisorOpsAccess, ownerTemplateOptimizeAllowed, trendInsightTab, user?.id, bumpManhuaLearnSnapshotBaseline]);
   /** owner 专用完整库；先通过能力查询再请求，其他监管账号不会触发私有列表请求。 */
   const manhuaViralApprovedQuery = trpc.manhuaViralTemplate.listApprovedPrivate.useQuery(
     { compact: true },

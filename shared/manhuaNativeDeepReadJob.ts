@@ -47,7 +47,7 @@ export function parseNativeDeepReadModel(value: unknown): ManhuaNativeDeepReadMo
 export const MANHUA_NATIVE_STRUCTURING_MODEL_OPTIONS = ["glm-5.3"] as const;
 export type ManhuaNativeStructuringModelId = "glm-5.3";
 export const MANHUA_NATIVE_STRUCTURING_MODEL = "glm-5.3" as const;
-export const MANHUA_NATIVE_STRUCTURING_MODEL_LABELS: Record<ManhuaNativeStructuringModelId, string> = {
+export const MANHUA_NATIVE_STRUCTURING_MODEL_LABELS: Record<(typeof MANHUA_NATIVE_STRUCTURING_MODEL_OPTIONS)[number], string> = {
   "glm-5.3": "GLM-5.3（并发批次分流：OpenRouter · Z.AI / EvoLink 各一路，不切 Qwen）",
 };
 export function parseNativeStructuringModel(value: unknown): ManhuaNativeStructuringModelId {
