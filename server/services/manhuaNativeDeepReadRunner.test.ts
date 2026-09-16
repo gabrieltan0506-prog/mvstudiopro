@@ -3269,6 +3269,44 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     ]);
   });
 
+  it("任一路终态失败后不再派发剩余批次，并等待另一条已在途调用收口", async () => {
+    const segments = Array.from({ length: 13 }, (_, index) => ({
+      startSec: index * 60,
+      endSec: (index + 1) * 60,
+    }));
+    const base = makeGlmStructuringStub();
+    const started: number[] = [];
+    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => {
+      const rows = readRawSegmentsFromGlmPrompt(prompt.user);
+      const firstStart = (rows[0]!.shots as Array<{ startSec: number }>)[0]!.startSec;
+      started.push(firstStart);
+      if (firstStart === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        throw new Error("测试：OpenRouter终态失败");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      return base(prompt);
+    });
+    const deps = makeRunnerDeps({
+      postVertex: makeSuccessfulEpisodePostVertex(segments) as never,
+      invokeGlmStructuring: invokeGlmStructuring as never,
+    });
+
+    await expect(runManhuaNativeDeepReadBatch({
+      episodes: [{
+        episodeIndex: 1,
+        resolveNodes: async () => [],
+        segments,
+        sourceDurationSec: 780,
+        cacheSourceDigest: "e".repeat(64),
+      }],
+      segmentCacheSeriesKey: "stop_dynamic_queue_on_failure",
+    }, deps)).rejects.toThrow("测试：OpenRouter终态失败");
+
+    expect(started).toEqual([0, 300]);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
+  });
+
   it("Vertex 主线全合规也走 GLM，输入含本集全部分段卡且一份不丢", async () => {
     const invokeGlmStructuring = makeGlmStructuringStub();
     const deps = makeRunnerDeps({

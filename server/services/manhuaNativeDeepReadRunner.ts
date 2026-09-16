@@ -1384,10 +1384,10 @@ export function nativeDeepReadStructuringJsonSchema(): Record<string, unknown> {
 export const NATIVE_DEEP_READ_STRUCTURING_JSON_SCHEMA_NAME = "native_structuring_card";
 
 /**
- * 0905 用户拍板的整形分流链（按批次序号，0 起；单批＝第 1 批）：
- * Qwen 首发：第 1 批 北京 → EvoLink → OpenRouter；第 2 批 新加坡 → OpenRouter → EvoLink（两路都挂时 OpenRouter/EvoLink 各接一批真并发）。
- * GLM 首发：各批一律 OpenRouter → EvoLink → Qwen（第 1 批 北京→新加坡，第 2 批 新加坡→北京）；用户 0905「并行走 OpenRouter」。
- * 任一档 25 分钟（Qwen）/20 分钟（GLM）不回即切下一档，不做 20 秒重试轮。
+ * 整形分流链（按固定 worker 序号，0 起；单批＝第 1 路）：
+ * Qwen 首发策略保留历史链；GLM 策略固定两路首发：第 1 路 OpenRouter→EvoLink，
+ * 第 2 路 EvoLink→OpenRouter，不切 Qwen。超过两批时，先返回的 worker 立即领取下一批。
+ * Qwen 单档 25 分钟、GLM 单档 20 分钟；超时按各自链切换，不做 20 秒重试轮。
  */
 export function nativeDeepReadStructuringGatewayOrder(
   policy: "structuring_chain" | "structuring_chain_qwen_first",
@@ -1397,7 +1397,6 @@ export function nativeDeepReadStructuringGatewayOrder(
   if (policy === "structuring_chain_qwen_first") {
     return odd ? ["plan_sg_qwen", "openrouter", "evolink_glm"] : ["plan_bj_qwen", "evolink_glm", "openrouter"];
   }
-  // 0905 用户拍板「并行走 OpenRouter」：GLM 模式所有批次首发 OpenRouter（Z.AI 官方，并发稳），EvoLink 兜底，两档败切 Qwen
   // 0906 用户令「不走 Qwen」：GLM 链只剩 OpenRouter（钉 Z.AI）与 EvoLink 两档，不再切 Qwen；判坏重试仍按每档两次
   // 0907 用户令「一路走 OpenRouter 一路走 EvoLink」：并发批次分流首发，第 1 批 OpenRouter→EvoLink，第 2 批 EvoLink→OpenRouter
   return odd ? ["evolink_glm", "openrouter"] : ["openrouter", "evolink_glm"];
@@ -4037,9 +4036,7 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE = 0.8;
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT = MANHUA_NATIVE_GLM_REASONING_EFFORT;
 /** 四个 300 秒分片的真实组装曾在 12 分钟边界被本地中止；只放宽等待，不自动重提。 */
 // 0829 曾放宽到 6 小时（15 分钟硬顶曾在 900,005ms 掐断成 network_error）。
-// 0905 用户令：**每一档 30 分钟**，超时自动切下一档——
-// EvoLink GLM → OpenRouter GLM → Qwen 北京套餐 → Qwen 新加坡套餐 → OpenRouter Qwen；
-// 五档全失败才走本地确定性整形兜底，不重读片。
+// 当前 GLM 两档各 20 分钟，超时仅在 OpenRouter 与 EvoLink 间切换；不切 Qwen。
 const GLM_STRUCTURING_TIMEOUT_MS = 30 * 60_000;
 const OPENROUTER_USD_TO_CNY_EQUIVALENT = 7.2;
 
@@ -4050,9 +4047,9 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG = deepFreezeNativeContract(
   timeoutMs: GLM_STRUCTURING_TIMEOUT_MS,
   temperature: NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE,
   reasoningEffort: NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT,
-  // 0905 用户令：Qwen 套餐档思考上限 32,768（第 5 集实测每批思考 12K–18K，只拦失控长考不伤正常发）
+  // Qwen 首发策略仍使用此上限；GLM 策略不会切入 Qwen。
   thinkingBudget: 32_768,
-  // 0905 用户拍板：每批 4 片，Qwen 两档单档 25 分钟不回就切下一档（实弹 4 片 15 分钟）；GLM 档仍 timeoutMs
+  // Qwen 两档单档 25 分钟；GLM 两档单档 20 分钟。
   gatewayTimeoutMsOverrides: {
     plan_bj_qwen: 25 * 60_000, plan_sg_qwen: 25 * 60_000,
     // 0907 用户令：GLM 两档单档 20 分钟（0905 曾定 15 分钟；实弹 4 片 6–9 分钟）
@@ -6713,8 +6710,9 @@ async function executeNativeDeepReadBatch(
 
         const groupRows: Record<string, unknown>[] = new Array(groups.length);
         let nextGroupIndex = 0;
+        let stopDispatch = false;
         const runStructuringLane = async (laneOrdinal: number): Promise<void> => {
-          while (true) {
+          while (!stopDispatch) {
             // JS 同步取号；任何 await 之前先占住批次，两个 worker 不会领取同一组。
             const groupIndex = nextGroupIndex;
             nextGroupIndex += 1;
@@ -6723,42 +6721,50 @@ async function executeNativeDeepReadBatch(
             const groupInputs = segmentIndexes.map((index) => completeRawSegments[index]!);
             const annotatedRows = annotateSegmentRows();
             const groupCanonicalRows = segmentIndexes.map((index) => annotatedRows[index]!);
-            const cached = await readCachedStructuring(
-              segmentIndexes,
-              groupInputs,
-              `整形批次 ${segmentIndexes.join(",")} `,
-            );
-            if (cached) {
-              groupRows[groupIndex] = cached;
-              continue;
-            }
-            const groupSegments = segmentIndexes.map((index) => episode.segments[index]!);
-            groupRows[groupIndex] = await structureBatchWithLockRetry({
-              prompt: buildNativeDeepReadGlmStructuringPrompt({
-                episodeIndex: episode.episodeIndex,
-                durationSec: episode.sourceDurationSec,
-                segments: groupSegments,
+            try {
+              const cached = await readCachedStructuring(
                 segmentIndexes,
-                hasAudio,
-                rawSegments: groupInputs,
-                coverageStartSec: groupSegments[0]!.startSec,
-                coverageEndSec: groupSegments.at(-1)!.endSec,
-                scopeZh: "批次",
-              }),
-              videoCount: segmentIndexes.length,
-              segmentIndexes,
-              rows: groupInputs,
-              fallbackRows: groupCanonicalRows,
-              labelZh: `第${episode.episodeIndex}集第${segmentIndexes[0]! + 1}—${segmentIndexes.at(-1)! + 1}片批次整形`,
-              // 路由归属跟 worker 固定，而非跟批次编号轮换：先返回的路继续领下一批。
-              batchOrdinal: laneOrdinal,
-            });
+                groupInputs,
+                `整形批次 ${segmentIndexes.join(",")} `,
+              );
+              if (cached) {
+                groupRows[groupIndex] = cached;
+                continue;
+              }
+              const groupSegments = segmentIndexes.map((index) => episode.segments[index]!);
+              groupRows[groupIndex] = await structureBatchWithLockRetry({
+                prompt: buildNativeDeepReadGlmStructuringPrompt({
+                  episodeIndex: episode.episodeIndex,
+                  durationSec: episode.sourceDurationSec,
+                  segments: groupSegments,
+                  segmentIndexes,
+                  hasAudio,
+                  rawSegments: groupInputs,
+                  coverageStartSec: groupSegments[0]!.startSec,
+                  coverageEndSec: groupSegments.at(-1)!.endSec,
+                  scopeZh: "批次",
+                }),
+                videoCount: segmentIndexes.length,
+                segmentIndexes,
+                rows: groupInputs,
+                fallbackRows: groupCanonicalRows,
+                labelZh: `第${episode.episodeIndex}集第${segmentIndexes[0]! + 1}—${segmentIndexes.at(-1)! + 1}片批次整形`,
+                // 路由归属跟 worker 固定，而非跟批次编号轮换：先返回的路继续领下一批。
+                batchOrdinal: laneOrdinal,
+              });
+            } catch (error) {
+              // 一路终态失败后停止派发新批次；另一条已付费的在途调用继续收口，但不得再领下一批。
+              stopDispatch = true;
+              throw error;
+            }
           }
         };
-        await Promise.all(Array.from(
+        const laneOutcomes = await Promise.allSettled(Array.from(
           { length: Math.min(2, groups.length) },
           (_, laneOrdinal) => runStructuringLane(laneOrdinal),
         ));
+        const failedLane = laneOutcomes.find((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
+        if (failedLane) throw failedLane.reason;
         // 0905 用户令「不归并，分上下集」：批次各自整形完，按秒位确定性拼成整集卡，
         // 省掉第三次 GLM（实测归并一发 49 分钟、输入 212K）。批次边界的重复镜头由
         // deterministicallyMerge 的「同秒位取信息更全」规则收口，零模型调用。
