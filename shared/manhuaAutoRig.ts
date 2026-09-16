@@ -109,6 +109,23 @@ export const autoRigRequestSchema = z.discriminatedUnion("stage", [
     .strict(),
 ]);
 export type AutoRigRequest = z.infer<typeof autoRigRequestSchema>;
+export const autoRigProxyInfoSchema = z
+  .object({
+    enabled: z.boolean(),
+    originalVertices: z.number().int().positive(),
+    proxyVertices: z.number().int().positive().optional(),
+    decimateRatio: z.number().finite().optional(),
+    joinedParts: z.number().int().positive().optional(),
+    proxyIslands: z.number().int().positive().optional(),
+    proxyDroppedVertices: z.number().int().nonnegative().optional(),
+    originalMaterials: z.number().int().nonnegative().optional(),
+    originalUvLayers: z.number().int().nonnegative().optional(),
+    decimated: z.boolean().optional(),
+    remeshed: z.boolean().optional(),
+    voxelSize: z.number().finite().optional(),
+  })
+  .strict();
+export type AutoRigProxyInfo = z.infer<typeof autoRigProxyInfoSchema>;
 export const autoRigInspectionSchema = z
   .object({
     version: z.literal(1),
@@ -120,6 +137,8 @@ export const autoRigInspectionSchema = z
     joints: autoRigJointsSchema,
     settings: autoRigSettingsSchema,
     limitations: z.array(z.string()).min(1).max(10),
+    /** 0916 低模绑骨：原模超限时的代理信息（vertices 记的是代理顶点数） */
+    weightTransfer: autoRigProxyInfoSchema.optional(),
   })
   .strict();
 export type AutoRigInspection = z.infer<typeof autoRigInspectionSchema>;
@@ -154,6 +173,9 @@ export type AutoRigView = {
     previewUrls?: string[];
     qualityAccepted: false;
     reportGcsUri: string;
+    /** 0916 低模绑骨：带骨原模（画质/三视角参考）；model.glb 是白模用的中模 */
+    fullGlb?: { gcsUri: string; sha256: string; bytes: number; url?: string };
+    weightTransfer?: Record<string, unknown>;
   };
 };
 export type AutoRigAdoptedModel = Omit<ManhuaAsset3dRef, "updatedAt"> & {

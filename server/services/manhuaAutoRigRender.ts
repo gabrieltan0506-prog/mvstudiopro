@@ -59,6 +59,11 @@ export const autoRigResultSchema = z
     inspection: autoRigInspectionSchema.optional(),
     previews: z.array(evidenceSchema).min(2).max(5),
     reportSha256: digest,
+    /** 0916 低模绑骨：带骨原模（可选，只有原模超限走代理时才有） */
+    fullGlb: z
+      .object({ gcsUri: z.string(), sha256: digest, bytes: z.number().int().min(20).max(256 * 1024 * 1024) })
+      .optional(),
+    weightTransfer: z.record(z.string(), z.unknown()).optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -93,7 +98,8 @@ export function validateAutoRigBindReport(
       qualityAccepted: z.literal(false),
       sourceDigest: digest,
       outputSha256: digest,
-      vertices: z.number().int().min(100).max(50_000),
+      // 0916 低模绑骨：model.glb 是权重转移后的中模（≤24 万顶点），代理仍 ≤5 万
+      vertices: z.number().int().min(100).max(250_000),
       maxWeightInfluences: z.literal(4),
       influencedVertices: z.record(z.string(), z.number().int().positive()),
       reimportBendMaxDeltaMeters: z.record(
@@ -111,7 +117,22 @@ export function validateAutoRigBindReport(
         meshVertices: z.number().int().positive(),
         weightedVertices: z.number().int().positive(),
       }),
+      weightTransfer: z
+        .object({
+          enabled: z.boolean(),
+          originalVertices: z.number().int().positive(),
+          proxyVertices: z.number().int().positive(),
+          proxySha256: digest,
+          fullSha256: digest,
+          fullVertices: z.number().int().positive(),
+          midVertices: z.number().int().positive(),
+          filledVertices: z.number().int().nonnegative(),
+          originalBendMaxDeltaMeters: z.record(z.string(), z.number().finite().min(0.01)),
+        })
+        .passthrough()
+        .optional(),
     })
+    .passthrough()
     .parse(raw);
   const exact = (actual: Record<string, unknown>, keys: readonly string[]) =>
     Object.keys(actual).length === keys.length &&
@@ -380,6 +401,20 @@ export async function renderManhuaAutoRig(
       d,
       signal
     );
+    // 0916 低模绑骨：绑定阶段若有带骨原模（model-full.glb），另存一份供三视角/画质参考
+    let fullGlb: { gcsUri: string; sha256: string; bytes: number } | undefined;
+    if (request.stage === "bind" && report.weightTransfer?.enabled) {
+      const full = await localBytes(path.join(out, "model-full.glb"), 256 * 1024 * 1024);
+      if (autoRigSha(full) !== report.weightTransfer.fullSha256)
+        throw Error("带骨原模与绑骨回执不一致");
+      fullGlb = await put(
+        `uploads/u${userId}/auto-rig/${request.requestId}/model-full.glb`,
+        full,
+        "model/gltf-binary",
+        d,
+        signal
+      );
+    }
     const previews = [];
     for (
       let index = 0;
@@ -420,6 +455,8 @@ export async function renderManhuaAutoRig(
       reportSha256: autoRigSha(reportBytes),
       ...(inspection ? { inspection } : {}),
       previews,
+      ...(fullGlb ? { fullGlb } : {}),
+      ...(report.weightTransfer ? { weightTransfer: report.weightTransfer } : {}),
     });
     // 完整结果最后落盘；失败恢复只读这个已闭合回执，不再次求解。
     await put(
