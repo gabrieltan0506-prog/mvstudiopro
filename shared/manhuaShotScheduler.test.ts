@@ -50,6 +50,21 @@ describe("运镜调度生成器（过肩公式）", () => {
     expect(scheduleManhuaSegmentShots({ durationSec: 10, hasContact: true }).shots).toEqual([]);
   });
 
+  it("第三人不参与过肩轴线：只出单人镜；切数超上限时相邻台词镜合并，最终 ≤ maxCuts 且仍连续覆盖", () => {
+    const three = scheduleManhuaSegmentShots({ durationSec: 15, dialogueZh: "阿菁：「你来了？」\n曹三：「我来了。」\n先生：「都别吵！」\n阿菁：「哼。」" });
+    const xian = three.shots.find((x) => x.faceZh === "先生")!;
+    expect(xian.kind).toBe("single");
+    expect(three.shots.every((x) => x.overZh !== "先生")).toBe(true);
+    expect(three.layoutZh).toContain("先生不参与过肩轴线");
+    const many = Array.from({ length: 10 }, (_, i) => `${i % 2 ? "曹三" : "阿菁"}：「第${i}句话。」`).join("\n");
+    const s = scheduleManhuaSegmentShots({ durationSec: 15, dialogueZh: many, tempoTier: "neutral" });
+    expect(s.shots.length).toBeLessThanOrEqual(6);
+    expect(s.shots[0]!.startSec).toBe(0);
+    for (let i = 1; i < s.shots.length; i += 1) expect(s.shots[i]!.startSec).toBeCloseTo(s.shots[i - 1]!.endSec, 6);
+    expect(s.shots[s.shots.length - 1]!.endSec).toBe(15);
+    expect(s.shots.some((x) => /含下一句/.test(x.noteZh))).toBe(true);
+  });
+
   it("单人独白：单人镜景别递进，无过肩无反应", () => {
     const s = scheduleManhuaSegmentShots({ durationSec: 12, dialogueZh: "先生：「药只能压三天。」\n先生：「要根治，得灵兽一点精血。」\n先生：「一碗就够，不伤性命。」" });
     expect(s.shots.every((x) => x.kind !== "ots" && x.kind !== "reaction")).toBe(true);

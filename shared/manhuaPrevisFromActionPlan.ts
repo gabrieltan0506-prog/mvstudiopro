@@ -163,6 +163,7 @@ export function manhuaPrevisDraftFromExecutableShot(input: {
   let cameraPromptZh = choreo.cameras.map((c) => manhuaCameraPromptZh(c, style));
   // 无动作事件的对白段：过肩公式出机位（谁在前景/过谁肩/拍谁脸 → 景别推情绪 → 关键句反应）
   const hasActionEvents = shot.events.length > 0;
+  let scheduledReplaced = false;
   if (!hasActionEvents && String(input.dialogueZh || "").trim()) {
     const positionsByName: Record<string, [number, number]> = {};
     for (const a of actors) positionsByName[a.nameZh] = a.start;
@@ -174,13 +175,15 @@ export function manhuaPrevisDraftFromExecutableShot(input: {
       cameras = scheduled.map(({ startSec, endSec, position, target, lens }) => ({ startSec, endSec, position, target, lens }));
       cameraPromptZh = schedule.shots.slice(0, scheduled.length).map((sh) => `${sh.startSec.toFixed(2)}–${sh.endSec.toFixed(2)}s ${sh.promptZh}`);
       summaryZh.push(formatManhuaShotScheduleZh(schedule));
+      scheduledReplaced = true;
     }
   }
   const tempoZh = tempo ? `${MANHUA_TEMPO_TIER_LABEL_ZH[tempo.tier]} · ${tempo.reasonZh}${input.cameraStyle && input.cameraStyle !== tempo.style ? `（风格档手改为${MANHUA_CAMERA_STYLE_LABEL_ZH[input.cameraStyle]}）` : ""}` : "";
   if (tempoZh) summaryZh.push(`节奏：${tempoZh}`);
   summaryZh.push(`运镜 ${cameras.length} 镜（按接触点切）：` + cameraPromptZh.join("；"));
   for (const n of choreo.notesZh) summaryZh.push(n);
-  for (const issue of assessManhuaCameraVariety(choreo.cameras)) summaryZh.push(`运镜提醒：${issue.messageZh}`);
+  // 对白段已由调度器换掉机位：不再拿动作文法那条「默认全景」去报多样性告警（否则每段对白都会误报全平视）
+  if (!scheduledReplaced) for (const issue of assessManhuaCameraVariety(choreo.cameras)) summaryZh.push(`运镜提醒：${issue.messageZh}`);
   if (timing.padSec > 0) summaryZh.push(`源区间 ${(D - timing.padSec).toFixed(1)}s 取整为 ${D}s，末尾补 ${timing.padSec.toFixed(2)}s 待机`);
 
   const candidate = {

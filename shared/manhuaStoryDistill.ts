@@ -135,7 +135,8 @@ function scheduledCameraZh(role: ManhuaKeyframeRole, shots: readonly ManhuaSched
   if (!shots.length) return "";
   const first = shots[0]!;
   const last = shots[shots.length - 1]!;
-  const key = shots.find((s) => s.lineIndex === keyLineIndex) || shots.find((s) => s.kind === "single") || shots[Math.min(1, shots.length - 1)]!;
+  // 关键句可能被并进同一人连说的一镜（lineIndex 只记组首句）：取 lineIndex ≤ 关键句的最后一镜
+  const key = shots.find((s) => s.lineIndex === keyLineIndex) || [...shots].reverse().find((s) => s.lineIndex != null && s.lineIndex <= keyLineIndex) || shots.find((s) => s.kind === "single") || shots[Math.min(1, shots.length - 1)]!;
   const reaction = shots.find((s) => s.kind === "reaction");
   const pick = role === "start" ? first : role === "key_action" ? key : role === "bridge" ? reaction || shots[Math.min(shots.indexOf(key) + 1, shots.length - 1)]! : last;
   return pick.promptZh.slice(0, 120);

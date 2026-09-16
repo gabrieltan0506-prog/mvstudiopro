@@ -110,7 +110,7 @@ export function scheduleManhuaSegmentShots(input: ManhuaShotScheduleInput): Manh
   for (const l of rawLines) if (l.speakerZh && !speakersZh.includes(l.speakerZh)) speakersZh.push(l.speakerZh);
   const A = speakersZh[0] || "";
   const B = speakersZh[1] || "";
-  const layoutZh = A && B ? `${A}在画左、${B}在画右，机位不越轴，${A}看画右${B}看画左` : A ? `${A}单人，机位不越轴` : "无对白";
+  const layoutZh = A && B ? `${A}在画左、${B}在画右，机位不越轴，${A}看画右${B}看画左${speakersZh.length > 2 ? `；${speakersZh.slice(2).join("、")}不参与过肩轴线，单人出镜` : ""}` : A ? `${A}单人，机位不越轴` : "无对白";
 
   if (!rawLines.length) {
     return {
@@ -181,9 +181,11 @@ export function scheduleManhuaSegmentShots(input: ManhuaShotScheduleInput): Manh
 
   let scale: ManhuaScheduledScale = "ms";
   let usedCleanSingle = false;
+  let keySingleShot: ManhuaScheduledShot | null = null;
   groups.forEach((g, gi) => {
     const speaker = g.speakerZh || A;
-    const listener = speaker === A ? B : A;
+    // 第三人以后不参与过肩轴线：只出单人镜，不过任何人的肩
+    const listener = speaker === A ? B : speaker === B ? A : "";
     const isKey = gi === keyGroup;
     const multi = g.texts.length > 1;
     const thisScale: ManhuaScheduledScale = gi === 0 ? "ms" : multi ? bump(bump(scale)) : bump(scale);
@@ -194,6 +196,7 @@ export function scheduleManhuaSegmentShots(input: ManhuaShotScheduleInput): Manh
     if (isKey && rawLines.length >= 3 && !usedCleanSingle) {
       usedCleanSingle = true;
       push({ kind: "single", faceZh: speaker, scale: "cu", height: "eye", lineIndex: g.lineStart, noteZh: `${speaker} 关键句：干净单人特写`, promptZh: `${speaker}单人特写（不带前景肩），说「${quote}」，${MANHUA_SCALE_LABEL_ZH.cu}看表情起伏` }, lineSecs[gi]!);
+      keySingleShot = shots[shots.length - 1] ?? null;
       return;
     }
     if (listener) {
@@ -229,7 +232,30 @@ export function scheduleManhuaSegmentShots(input: ManhuaShotScheduleInput): Manh
       if (i >= 0 && shots.length > 1) {
         shots[i + 1 < shots.length ? i + 1 : i - 1]!.startSec = Math.min(shots[i]!.startSec, shots[i + 1 < shots.length ? i + 1 : i - 1]!.startSec);
         shots.splice(i, 1);
-      } else break;
+        merged = true;
+      }
+    }
+    if (!merged) {
+      // 仍超上限：把最短的一对相邻台词镜并成一镜（机位留在前一人脸上，后一句在同一镜里说完），关键句特写与反应镜不动
+      let bestI = -1;
+      let bestLen = Infinity;
+      for (let i = 1; i < shots.length; i += 1) {
+        const p = shots[i - 1]!;
+        const c = shots[i]!;
+        const lineShot = (x: ManhuaScheduledShot) => (x.kind === "ots" || x.kind === "single") && x !== keySingleShot;
+        if (!lineShot(p) || !lineShot(c)) continue;
+        const len = c.endSec - p.startSec;
+        if (len < bestLen) {
+          bestLen = len;
+          bestI = i;
+        }
+      }
+      if (bestI < 0) break;
+      const p = shots[bestI - 1]!;
+      const c = shots[bestI]!;
+      p.endSec = c.endSec;
+      p.noteZh = `${p.noteZh}（含下一句，机位不切）`;
+      shots.splice(bestI, 1);
     }
   }
   shots.forEach((s, i) => (s.index = i + 1));
