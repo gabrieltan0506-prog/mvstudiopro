@@ -464,6 +464,8 @@ type Props = {
   onImportPropSheetFile?: (file: File) => void | Promise<void>;
   onCustomAssetRoleChange?: (id: string, role: ManhuaCustomAssetRef["role"]) => void;
   onCustomAssetDutyChange?: (id: string, duty: ManhuaCustomAssetRefDuty | null) => void;
+  /** 0916 绑骨模型来源钉选：人物锁脸 ref → 用哪张同人物候选图的模型绑骨（null = 回到自动规则） */
+  onCustomAssetRigSourceChange?: (characterRefId: string, rigSourceRefId: string | null) => void;
   /** 手动改名：改成与剧本表一致的名字即被认领（自动识别不追求 100%） */
   onCustomAssetLabelChange?: (id: string, labelZh: string) => void;
   /** AI 去字（3 分）：物理擦除画面文字 */
@@ -1089,6 +1091,7 @@ export default function ManhuaScriptWorkbench({
   onImportPropSheetFile,
   onCustomAssetRoleChange,
   onCustomAssetDutyChange,
+  onCustomAssetRigSourceChange,
   onCustomAssetLabelChange,
   onDetextCustomAsset,
   onEditCustomAsset,
@@ -3515,7 +3518,11 @@ export default function ManhuaScriptWorkbench({
             multiviewDrafts={multiviewDrafts}
             onPreview={(_id, url, labelZh)=>setModel3dPreview({ url, labelZh })}
             riggedIds={riggedAssetIds}
-            onRig={onApplyRiggedModel ? (id)=>setAutoRigAssetId(id) : undefined}/> : null}
+            onRig={onApplyRiggedModel ? (sourceRefId, characterId)=>{
+              // 用候选图（A-pose）绑骨：把来源钉在锁脸图上，白模/场景预览随之切到该模型；用回锁脸图自己的模型则清钉
+              onCustomAssetRigSourceChange?.(characterId, sourceRefId===characterId ? null : sourceRefId);
+              setAutoRigAssetId(sourceRefId);
+            } : undefined}/> : null}
           {onGenerateSceneWorld ? <button type="button" data-manhua-action="open-world-studio" disabled={Boolean(factoryBusy)}
             className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
             onClick={()=>setWorldStudioOpen(value=>!value)}>3D 场景（就绪 {manhuaWorldCounts(worldStudioScenes).ready}/{worldStudioScenes.length}）</button> : null}

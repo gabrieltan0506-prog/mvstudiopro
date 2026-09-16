@@ -38,7 +38,8 @@ type Props = {
   onGenerate?: (id: string) => void | Promise<void>;
   onImport?: (id: string, file: File) => void | Promise<void>;
   onPreview?: (id: string, glbUrl: string, labelZh: string) => void;
-  onRig?: (id: string) => void;
+  /** 打开绑骨编辑器：sourceRefId = 模型所在 ref（可能是候选图）；characterId = 人物锁脸 ref（用于钉选来源） */
+  onRig?: (sourceRefId: string, characterId: string) => void;
   /** 有绑骨成品（白模可直接用）的角色 id */
   riggedIds?: readonly string[];
   /** 0916 多视角：每人的四视角草稿（按 ref.id） */
@@ -230,7 +231,7 @@ export function Manhua3dModelStudio(props: Props) {
                     disabled={disabled || busy}
                     data-rig-source-ref={rigSource.refId}
                     title={rigSource.isCandidate ? `绑骨用候选图「${rigSource.labelZh}」的模型（原定妆与高模保留，A-pose 只作绑骨生产资产）` : undefined}
-                    onClick={() => onRig(rigSource.refId)}
+                    onClick={() => onRig(rigSource.refId, c.id)}
                   >
                     {stage === "rigged" ? "重新绑骨" : rigSource.isCandidate ? `绑骨（用「${rigSource.labelZh}」）` : "绑骨"}
                   </button>
@@ -239,7 +240,7 @@ export function Manhua3dModelStudio(props: Props) {
                   ? c.rigOptions!
                       .filter((o) => o.refId !== rigSource?.refId)
                       .map((o) => (
-                        <button key={o.refId} type="button" className={btn} disabled={disabled || busy} data-rig-source-ref={o.refId} onClick={() => onRig(o.refId)}>
+                        <button key={o.refId} type="button" className={btn} disabled={disabled || busy} data-rig-source-ref={o.refId} onClick={() => onRig(o.refId, c.id)}>
                           改用「{o.labelZh}」绑骨
                         </button>
                       ))
