@@ -10,6 +10,15 @@ import {
   type ManhuaWorld3dEligibility,
   type ManhuaWorld3dModel,
 } from "@shared/manhuaWorld3d";
+import {
+  DEPTH_PANO_DEFAULT_WIDTH,
+  depthPanoSceneFromPrevisActors,
+  encodeGrayPng,
+  quantizeDepthTo8bit,
+  renderLayoutDepthPano,
+  type DepthPanoMeta,
+} from "@shared/manhuaLayoutDepthPano";
+import { ManhuaWorldStagePreview, type ManhuaStageCharacter } from "./ManhuaWorldStagePreview";
 
 export type ManhuaWorldStudioScene = {
   id: string;
@@ -22,6 +31,12 @@ export type ManhuaWorldStudioScene = {
 
 export type ManhuaWorldGenerateOptions = { model: ManhuaWorld3dModel; textPrompt: string };
 
+/** PR-11 布局可控：深度全景 PNG + 元数据 + 提示词，由页面上传后以 layout 提示提交 */
+export type ManhuaWorldLayoutSubmitOptions = { model: ManhuaWorld3dModel; textPrompt: string; depthPng: Blob; meta: DepthPanoMeta };
+
+/** 当前段白模站位（用于生成深度全景） */
+export type ManhuaWorldLayoutActor = { id: string; nameZh?: string; start: readonly [number, number]; shape?: "human" | "horse" };
+
 type Props = {
   scenes: ManhuaWorldStudioScene[];
   busyIds: readonly string[];
@@ -29,6 +44,13 @@ type Props = {
   onGenerate?: (id: string, options: ManhuaWorldGenerateOptions) => void | Promise<void>;
   onRetry?: (id: string) => void | Promise<void>;
   onRemove?: (id: string) => void | Promise<void>;
+  /** PR-10：已就绪人物 GLB + 舞台点，放进就绪世界预览 */
+  stageCharacters?: readonly ManhuaStageCharacter[];
+  /** PR-10：导出的视角 PNG → 上传 → 作该场景候选参考图 */
+  onExportStageFrame?: (sceneRefId: string, blob: Blob, viewLabelZh: string) => void | Promise<void>;
+  /** PR-11：当前段白模站位；有则显示「布局可控」子面板 */
+  layoutActors?: readonly ManhuaWorldLayoutActor[];
+  onSubmitLayoutWorld?: (sceneRefId: string, options: ManhuaWorldLayoutSubmitOptions) => void | Promise<void>;
 };
 
 type Stage = "blocked" | "none" | "building" | "review" | "failed" | "ready";
@@ -66,8 +88,92 @@ const STAGE_CLASS: Record<Stage, string> = {
   ready: "bg-emerald-500/20",
 };
 
+/** 深度全景 → 预览小图（灰度 → RGBA data URL）；无 DOM 时返回空串 */
+function depthPreviewDataUrl(gray: Uint8Array, width: number, height: number): string {
+  if (typeof document === "undefined") return "";
+  const canvas = document.createElement("canvas");
+  const scale = Math.max(1, Math.round(width / 512));
+  canvas.width = Math.floor(width / scale);
+  canvas.height = Math.floor(height / scale);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return "";
+  const img = ctx.createImageData(canvas.width, canvas.height);
+  for (let y = 0; y < canvas.height; y += 1) {
+    for (let x = 0; x < canvas.width; x += 1) {
+      const v = gray[y * scale * width + x * scale] ?? 0;
+      const i = (y * canvas.width + x) * 4;
+      img.data[i] = v;
+      img.data[i + 1] = v;
+      img.data[i + 2] = v;
+      img.data[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return canvas.toDataURL("image/png");
+}
+
+type LayoutDraft = { previewUrl: string; png: Blob; meta: DepthPanoMeta; actorCount: number };
+
+function LayoutPanel(props: {
+  scene: ManhuaWorldStudioScene;
+  model: ManhuaWorld3dModel;
+  textPrompt: string;
+  actors: readonly ManhuaWorldLayoutActor[];
+  disabled?: boolean;
+  onSubmit: (options: ManhuaWorldLayoutSubmitOptions) => void | Promise<void>;
+}) {
+  const { scene, model, textPrompt, actors, disabled, onSubmit } = props;
+  const [draft, setDraft] = useState<LayoutDraft | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [errorZh, setErrorZh] = useState("");
+  function render() {
+    setErrorZh("");
+    try {
+      const depthScene = depthPanoSceneFromPrevisActors(actors);
+      const r = renderLayoutDepthPano(depthScene, { width: DEPTH_PANO_DEFAULT_WIDTH });
+      const gray = quantizeDepthTo8bit(r);
+      const bytes = encodeGrayPng(r.width, r.height, gray);
+      const png = new Blob([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], { type: "image/png" });
+      setDraft({ previewUrl: depthPreviewDataUrl(gray, r.width, r.height), png, meta: r.meta, actorCount: actors.length });
+    } catch (error) {
+      setErrorZh(error instanceof Error ? error.message : "深度全景生成失败");
+    }
+  }
+  const prompt = textPrompt.trim();
+  return (
+    <div className="mt-1 flex w-full flex-wrap items-center gap-2 rounded border border-violet-300/25 bg-violet-500/10 p-2 text-[11px]" data-manhua-world-layout>
+      <span className="text-violet-100">布局可控</span>
+      <span className="text-white/55">用本段白模站位（{actors.length} 人）渲深度全景 → Marble 上色 → 建世界；空间结构由我们定</span>
+      <button type="button" className={btn} disabled={disabled || !actors.length} onClick={render}>
+        {draft ? "重新生成深度全景" : "生成深度全景"}
+      </button>
+      {draft ? (
+        <>
+          <img src={draft.previewUrl} alt={`${scene.labelZh} 深度全景`} className="h-16 rounded border border-white/10 object-cover" data-depth-preview />
+          <span className="text-white/45">
+            {draft.meta.width}×{draft.meta.height} · 近 {draft.meta.nearM}m 亮 / 远 {draft.meta.farM}m 暗
+          </span>
+          <button
+            type="button"
+            className={btnPrimary}
+            disabled={disabled || busy || prompt.length < 2}
+            title={prompt.length < 2 ? "布局提示词必填（描述材质/时间/氛围）" : undefined}
+            onClick={() => {
+              setBusy(true);
+              void Promise.resolve(onSubmit({ model, textPrompt: prompt, depthPng: draft.png, meta: draft.meta })).finally(() => setBusy(false));
+            }}
+          >
+            {busy ? "提交中…" : "按布局生成世界"}
+          </button>
+        </>
+      ) : null}
+      {errorZh ? <span className="text-amber-100">{errorZh}</span> : null}
+    </div>
+  );
+}
+
 export function ManhuaWorldStudio(props: Props) {
-  const { scenes, busyIds, disabled, onGenerate, onRetry, onRemove } = props;
+  const { scenes, busyIds, disabled, onGenerate, onRetry, onRemove, stageCharacters = [], onExportStageFrame, layoutActors, onSubmitLayoutWorld } = props;
   const [model, setModel] = useState<ManhuaWorld3dModel>("marble-1.1");
   const [prompts, setPrompts] = useState<Record<string, string>>({});
   const [openPreviewId, setOpenPreviewId] = useState<string | null>(null);
@@ -195,7 +301,18 @@ export function ManhuaWorldStudio(props: Props) {
                       <p className="text-white/45">产物走 Fly 稳定地址，中国可达；归档 {assets.spz500kGcsUri ? "已完成" : "进行中"}。</p>
                     </div>
                   </div>
+                  <div className="mt-2">
+                    <ManhuaWorldStagePreview
+                      sceneLabelZh={s.labelZh}
+                      world={assets}
+                      characters={stageCharacters}
+                      onExportStageFrame={onExportStageFrame ? (blob, viewLabelZh) => onExportStageFrame(s.id, blob, viewLabelZh) : undefined}
+                    />
+                  </div>
                 </div>
+              ) : null}
+              {(stage === "none" || stage === "failed") && !busy && layoutActors && onSubmitLayoutWorld ? (
+                <LayoutPanel scene={s} model={model} textPrompt={promptFor(s)} actors={layoutActors} disabled={disabled} onSubmit={(options) => onSubmitLayoutWorld(s.id, options)} />
               ) : null}
             </li>
           );
