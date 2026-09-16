@@ -53,6 +53,8 @@ export type ManhuaDistillShot = {
   cameraZh: string;
   actionZh: string;
   dialogueZh?: string;
+  dialogueSuppressed?: boolean;
+  additionalDialogueCues?: Array<{ dialogueZh: string; speakerNameZh?: string }>; 
   /** 原剧本对白说话人名，供成片阶段绑定真实 @角色N。 */
   dialogueSpeakerNameZh?: string;
   emotionZh?: string;
@@ -206,7 +208,8 @@ export function buildWorkbenchShotsFromSegmentPlan(
       // 静帧只绑定所选镜的发话；反应/建立镜不冒充发话。完整对白仍保留在段表。
       const indices = picked?.lineIndices ?? (picked?.lineIndex != null ? [picked.lineIndex] : []);
       const pickedLines = indices.map(i => dialogueLines[i]).filter(Boolean);
-      const pickedDialogue = pickedLines.join("\n");
+      const pickedDialogue = pickedLines[0] || "";
+      const cleanDialogue = (line: string) => line.replace(/^([\u4e00-\u9fff·A-Za-z]{2,12})\s*[：:]\s*/, "").replace(/^[「『"“]|[」』"”]$/g, "").trim();
       out.push({
         index: global,
         durationSec: 0,
@@ -221,6 +224,8 @@ export function buildWorkbenchShotsFromSegmentPlan(
         dialogueSpeakerNameZh: pickedDialogue
           ? extractManhuaDialogueSpeakerName(pickedDialogue) || undefined
           : undefined,
+        dialogueSuppressed: !pickedLines.length,
+        ...(pickedLines.length > 1 ? { additionalDialogueCues: pickedLines.slice(1).map(line => ({ dialogueZh: cleanDialogue(line), speakerNameZh: extractManhuaDialogueSpeakerName(line) || undefined })) } : {}),
         emotionZh:
           beat.performanceZh ||
           (beat.dialogueZh ? "贴合对白施压/反应" : undefined),
