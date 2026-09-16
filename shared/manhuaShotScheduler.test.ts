@@ -25,7 +25,7 @@ describe("运镜调度生成器（过肩公式）", () => {
     const caoGroup = s.shots.find((x) => x.kind === "ots" && x.faceZh === "曹三");
     expect(caoGroup?.overZh).toBe("阿菁");
     expect(["mcu", "cu"]).toContain(caoGroup?.scale);
-    expect(s.shots[s.shots.length - 1]).toMatchObject({ kind: "reaction", faceZh: "曹三" });
+    expect(s.shots[2]).toMatchObject({ kind: "reaction", faceZh: "曹三" });
     expect(s.shots.length).toBeLessThanOrEqual(6);
     const zh = formatManhuaShotScheduleZh(s);
     expect(zh).toContain("过阿菁肩看曹三");
@@ -93,5 +93,28 @@ describe("运镜调度生成器（过肩公式）", () => {
     const hc = scheduledShotsToPrevisCameras(horse.shots, { 阿菁: [0, 0], 墨屠: [2, 0] }, { nonHumanNames: ["墨屠"] });
     const seeHorse = hc.find((c) => c.kind === "ots" && /看墨屠/.test(c.noteZh))!;
     expect(seeHorse.target[2]).toBeCloseTo(1.2, 1);
+  });
+});
+
+// Codex 终审：同一轴侧、关键句反应与合镜对白覆盖。
+describe("终审回归", () => {
+  it.each([[[0, 0], [2, 0]], [[0, 0], [0, 2]], [[-1, -1], [2, 3]]] as Array<[[number, number], [number, number]]>)("正反打不越轴 %j %j", (a, b) => {
+    const schedule = scheduleManhuaSegmentShots({ durationSec: 30, lines: Array.from({ length: 6 }, (_, i) => ({ speakerZh: i % 2 ? "乙乙" : "甲甲", textZh: `台词${i}` })), keyLineIndex: 3 });
+    const cameras = scheduledShotsToPrevisCameras(schedule.shots, { 甲甲: a, 乙乙: b });
+    const distances = cameras.map((c) => (b[0]-a[0])*(c.position[1]-a[1])-(b[1]-a[1])*(c.position[0]-a[0]));
+    expect(distances.every((v) => v > 0) || distances.every((v) => v < 0)).toBe(true);
+  });
+  it.each([0, 4, 9])("关键句%d后立即反应，合镜保留全部对白", (keyLineIndex) => {
+    const s = scheduleManhuaSegmentShots({ durationSec: 30, tempoTier: "fast", keyLineIndex, lines: Array.from({ length: 10 }, (_, i) => ({ speakerZh: i % 2 ? "乙乙" : "甲甲", textZh: `台词${i}` })) });
+    expect(s.shots.length).toBeLessThanOrEqual(8);
+    expect(s.shots.flatMap((x) => x.lineIndices || [])).toEqual(Array.from({ length: 10 }, (_, i) => i));
+    const key = s.shots.findIndex((x) => x.lineIndices?.includes(keyLineIndex));
+    expect(s.shots[key + 1]?.kind).toBe("reaction");
+    for (let i = 1; i < s.shots.length; i++) expect(s.shots[i]!.startSec).toBe(s.shots[i-1]!.endSec);
+    expect(s.shots.at(-1)!.endSec).toBe(30);
+  });
+  it("缺人物站位不给舞台中心假坐标", () => {
+    const s = scheduleManhuaSegmentShots({ durationSec: 15, dialogueZh: seg02 });
+    expect(scheduledShotsToPrevisCameras(s.shots, { 阿菁: [0, 0] })).toEqual([]);
   });
 });

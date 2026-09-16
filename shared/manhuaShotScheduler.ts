@@ -24,6 +24,8 @@ export type ManhuaScheduledShot = {
   height: "low" | "eye" | "high";
   /** 对应第几句台词（0 起；建立/反应镜无） */
   lineIndex?: number;
+  /** 本镜覆盖的原对白行号，合镜仍保留顺序与次数。 */
+  lineIndices?: number[];
   noteZh: string;
   /** 给静帧/成片提示词的一句「看得见的画面」 */
   promptZh: string;
@@ -195,20 +197,34 @@ export function scheduleManhuaSegmentShots(input: ManhuaShotScheduleInput): Manh
     // ≥3 句后必须出现一次干净单人特写：落在关键句
     if (isKey && rawLines.length >= 3 && !usedCleanSingle) {
       usedCleanSingle = true;
-      push({ kind: "single", faceZh: speaker, scale: "cu", height: "eye", lineIndex: g.lineStart, noteZh: `${speaker} 关键句：干净单人特写`, promptZh: `${speaker}单人特写（不带前景肩），说「${quote}」，${MANHUA_SCALE_LABEL_ZH.cu}看表情起伏` }, lineSecs[gi]!);
+      push({ kind: "single", faceZh: speaker, scale: "cu", height: "eye", lineIndex: g.lineStart, lineIndices: Array.from({ length: g.lineEnd - g.lineStart + 1 }, (_, i) => g.lineStart + i), noteZh: `${speaker} 关键句：干净单人特写`, promptZh: `${speaker}单人特写（不带前景肩），说「${quote}」，${MANHUA_SCALE_LABEL_ZH.cu}看表情起伏` }, lineSecs[gi]!);
       keySingleShot = shots[shots.length - 1] ?? null;
       return;
     }
     if (listener) {
-      push({ kind: "ots", faceZh: speaker, overZh: listener, scale: thisScale, height: "eye", lineIndex: g.lineStart, noteZh: `过${listener}肩看${speaker}${seesNonHuman ? "的头（非人角色，长焦）" : ""}`, promptZh: `过${listener}肩看${speaker}，${MANHUA_SCALE_LABEL_ZH[thisScale]}，${listener}的肩与后脑在画${listener === A ? "左" : "右"}失焦，${speaker}说「${quote}」时看向${listener}` }, lineSecs[gi]!);
+      push({ kind: "ots", faceZh: speaker, overZh: listener, scale: thisScale, height: "eye", lineIndex: g.lineStart, lineIndices: Array.from({ length: g.lineEnd - g.lineStart + 1 }, (_, i) => g.lineStart + i), noteZh: `过${listener}肩看${speaker}${seesNonHuman ? "的头（非人角色，长焦）" : ""}`, promptZh: `过${listener}肩看${speaker}，${MANHUA_SCALE_LABEL_ZH[thisScale]}，${listener}的肩与后脑在画${listener === A ? "左" : "右"}失焦，${speaker}说「${quote}」时看向${listener}` }, lineSecs[gi]!);
     } else {
-      push({ kind: "single", faceZh: speaker, scale: thisScale, height: "eye", lineIndex: g.lineStart, noteZh: `${speaker} 单人`, promptZh: `${speaker}单人${MANHUA_SCALE_LABEL_ZH[thisScale]}，说「${quote}」` }, lineSecs[gi]!);
+      push({ kind: "single", faceZh: speaker, scale: thisScale, height: "eye", lineIndex: g.lineStart, lineIndices: Array.from({ length: g.lineEnd - g.lineStart + 1 }, (_, i) => g.lineStart + i), noteZh: `${speaker} 单人`, promptZh: `${speaker}单人${MANHUA_SCALE_LABEL_ZH[thisScale]}，说「${quote}」` }, lineSecs[gi]!);
     }
   });
 
   if (reactionSec > 0 && listenerOfKey) {
     const keyText = rawLines[keyLineIndex]?.textZh.slice(0, 24) || "";
     push({ kind: "reaction", faceZh: listenerOfKey, scale: "cu", height: "eye", noteZh: `${listenerOfKey} 听到关键句的反应${nonHuman.has(listenerOfKey) ? "（非人角色：从人的肩后看它的头）" : ""}`, promptZh: `${listenerOfKey}反应特写：听到「${keyText}」后表情变化，停 ${reactionSec.toFixed(1)} 秒` }, reactionSec);
+  }
+  // 反应紧接关键句所在镜，而不是延迟到其他人的对白之后。
+  const reactionIndex = shots.findIndex((s) => s.kind === "reaction");
+  const keyIndex = shots.findIndex((s) => s.lineIndices?.includes(keyLineIndex));
+  if (reactionIndex >= 0 && keyIndex >= 0 && reactionIndex !== keyIndex + 1) {
+    const [reaction] = shots.splice(reactionIndex, 1);
+    shots.splice(keyIndex + 1, 0, reaction!);
+    let cursor = 0;
+    for (const shot of shots) {
+      const duration = shot.endSec - shot.startSec;
+      shot.startSec = fr(cursor);
+      shot.endSec = fr(cursor + duration);
+      cursor = shot.endSec;
+    }
   }
   // 末镜补到段尾（混合段：段尾交给动作文法，不补）
   if (shots.length && !input.hasContact && shots[shots.length - 1]!.endSec < D) shots[shots.length - 1]!.endSec = fr(D);
@@ -222,6 +238,8 @@ export function scheduleManhuaSegmentShots(input: ManhuaShotScheduleInput): Manh
       if (p.kind === "ots" && c.kind === "ots" && p.faceZh === c.faceZh) {
         p.endSec = c.endSec;
         p.scale = bump(p.scale);
+        p.lineIndices = [...(p.lineIndices || []), ...(c.lineIndices || [])];
+        p.promptZh += `；同一镜继续：${c.promptZh}`;
         shots.splice(i, 1);
         merged = true;
         break;
@@ -255,7 +273,8 @@ export function scheduleManhuaSegmentShots(input: ManhuaShotScheduleInput): Manh
       const c = shots[bestI]!;
       p.endSec = c.endSec;
       p.noteZh = `${p.noteZh}（含下一句，机位不切）`;
-      p.promptZh = `${p.promptZh}；${c.faceZh || "对方"}接着说话，机位不切`;
+      p.lineIndices = [...(p.lineIndices || []), ...(c.lineIndices || [])];
+      p.promptZh = `${p.promptZh}；${c.faceZh || "对方"}接着说「${(c.lineIndices || []).map((i) => rawLines[i]!.textZh).join("／")}」，机位不切`;
       shots.splice(bestI, 1);
     }
   }
@@ -281,7 +300,7 @@ const LENS: Record<ManhuaScheduledScale, number> = { ws: 28, ms: 40, mcu: 50, cu
 export type ManhuaScheduledCamera = { startSec: number; endSec: number; position: [number, number, number]; target: [number, number, number]; lens: number; noteZh: string; kind: ManhuaScheduledShotKind };
 
 /**
- * 需要每个人名对应的舞台站位（previs actor.start）；缺站位的人退回舞台中心。
+ * 需要每个人名对应的舞台站位（previs actor.start）；缺站位或交锋轴退化时不生成假坐标，由调用方保留原机位。
  * 过肩：机位在「过谁肩」那人的身后偏侧 0.9/0.45，高 1.55，看对方脸 1.4；单人/反应：正前方 1.6 处。
  */
 export function scheduledShotsToPrevisCameras(
@@ -298,22 +317,34 @@ export function scheduledShotsToPrevisCameras(
     const l = Math.hypot(d[0], d[1]);
     return l < 1e-6 ? [0, 1] : [d[0] / l, d[1] / l];
   };
+  const requiredNames = Array.from(new Set(shots.flatMap((s) => [s.faceZh, s.overZh || ""]).filter(Boolean)));
+  if (requiredNames.some((name) => !positionsByName[name] || positionsByName[name]!.some((n) => !Number.isFinite(n)))) return [];
+  // 整组正反打共享轴侧；沿同一法向量偏移，不能随主客互换翻转。
+  const pair = shots.find((s) => s.kind === "ots" && s.overZh);
+  let normal: Vec2 = [0, -1];
+  if (pair?.overZh) {
+    const a = posOf(pair.overZh), b = posOf(pair.faceZh);
+    if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 1e-6) return [];
+    const axis = dirTo(a, b);
+    normal = [-axis[1], axis[0]];
+    if (normal[1] > 0 || (Math.abs(normal[1]) < 1e-6 && normal[0] < 0)) normal = [-normal[0], -normal[1]];
+  }
   return shots.map((s) => {
     if (s.kind === "establish" || !s.faceZh) {
-      return { startSec: s.startSec, endSec: s.endSec, position: pt(center[0], center[1] - 7, 2.6), target: pt(center[0], center[1], 1), lens: LENS.ws, noteZh: s.noteZh, kind: s.kind };
+      return { startSec: s.startSec, endSec: s.endSec, position: pt(center[0] + normal[0] * 7, center[1] + normal[1] * 7, 2.6), target: pt(center[0], center[1], 1), lens: LENS.ws, noteZh: s.noteZh, kind: s.kind };
     }
     const face = posOf(s.faceZh);
     const headZ = nonHuman.has(s.faceZh) ? 1.2 : 1.45;
     if (s.kind === "ots" && s.overZh) {
       const over = posOf(s.overZh);
       const dir = dirTo(over, face);
-      const side: Vec2 = [-dir[1], dir[0]];
+      const side = normal;
       return { startSec: s.startSec, endSec: s.endSec, position: pt(over[0] - dir[0] * 0.9 + side[0] * 0.45, over[1] - dir[1] * 0.9 + side[1] * 0.45, 1.55), target: pt(face[0], face[1], headZ), lens: Math.min(65, LENS[s.scale] + (nonHuman.has(s.faceZh) ? 5 : 0)), noteZh: s.noteZh, kind: s.kind };
     }
     // 单人/反应：从对手方向正面看脸（没有对手就从舞台中心方向）
     const other = names.find((n) => n !== s.faceZh);
     const from = other ? posOf(other) : center;
     const dir = dirTo(face, from);
-    return { startSec: s.startSec, endSec: s.endSec, position: pt(face[0] + dir[0] * 1.6, face[1] + dir[1] * 1.6, 1.5), target: pt(face[0], face[1], headZ), lens: Math.min(65, s.kind === "reaction" ? 55 : LENS[s.scale]), noteZh: s.noteZh, kind: s.kind };
+    return { startSec: s.startSec, endSec: s.endSec, position: pt(face[0] + dir[0] * 1.6 + normal[0] * 0.45, face[1] + dir[1] * 1.6 + normal[1] * 0.45, 1.5), target: pt(face[0], face[1], headZ), lens: Math.min(65, s.kind === "reaction" ? 55 : LENS[s.scale]), noteZh: s.noteZh, kind: s.kind };
   });
 }
