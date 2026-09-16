@@ -1030,6 +1030,11 @@ async function startServer() {
         console.warn("[manhua3dTask] resume failed:", e),
       );
     }).catch(() => {});
+    import("../services/manhuaWorldTask").then(({ resumeManhuaWorldTasksOnStartup }) => {
+      resumeManhuaWorldTasksOnStartup().catch((e) =>
+        console.warn("[manhuaWorldTask] resume failed:", e),
+      );
+    }).catch(() => {});
     // 启动即扫 + 每 5 分钟常驻补扫；防止退款失败只有等下次部署才会恢复。
     import("../services/paidJobLedger").then(({ startPaidJobLedgerReaper }) => {
       startPaidJobLedgerReaper();

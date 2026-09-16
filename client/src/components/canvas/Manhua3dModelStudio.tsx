@@ -238,7 +238,8 @@ export function Manhua3dModelStudio(props: Props) {
                   sourceVersion={c.eligibility.sourceVersion}
                   busy={busy}
                   disabled={Boolean(disabled)}
-                  canSubmit={canBuild}
+                  canSubmit={!busy && (stage === "none" || stage === "failed" || stage === "ready" || stage === "rigged")}
+                  rebuild={stage === "ready" || stage === "rigged"}
                   onGenerate={(views) => void onGenerateMultiview(c.id, views)}
                   onSubmit={() => void onSubmitMultiview(c.id)}
                 />
@@ -284,12 +285,14 @@ export function ManhuaMultiviewPanel(props: {
   sourceVersion: string;
   busy: boolean;
   disabled: boolean;
-  /** 当前人物能否提交建模（未建模/失败才可） */
+  /** 当前人物能否提交建模（建模中/待核对不可；已有模型可重建） */
   canSubmit: boolean;
+  /** 已有模型：提交=替换重建 */
+  rebuild?: boolean;
   onGenerate: (views?: ManhuaMultiviewView[]) => void;
   onSubmit: () => void;
 }) {
-  const { labelZh, draft, sourceVersion, busy, disabled, canSubmit, onGenerate, onSubmit } = props;
+  const { labelZh, draft, sourceVersion, busy, disabled, canSubmit, rebuild, onGenerate, onSubmit } = props;
   const readiness = evaluateManhuaMultiviewReadiness(draft, sourceVersion);
   const stale = Boolean(draft && draft.sourceVersion !== sourceVersion);
   const views = draft && !stale ? orderManhuaMultiviewViews(draft.views) : [];
@@ -335,11 +338,12 @@ export function ManhuaMultiviewPanel(props: {
           className={btnPrimary}
           disabled={disabled || busy || !readiness.ready || !canSubmit}
           data-manhua-action="submit-multiview"
-          title={!readiness.ready ? readiness.reasonZh : !canSubmit ? "已有模型或建模中；要重建先等它结束" : "提交 Tripo H3.1 多视角建模（扣积分）"}
+          title={!readiness.ready ? readiness.reasonZh : !canSubmit ? "建模中或结果待核对，先等它结束" : rebuild ? "用四视角重建并替换现有模型（扣积分；旧 GLB 保留在任务记录）" : "提交 Tripo H3.1 多视角建模（扣积分）"}
           onClick={onSubmit}
         >
-          提交多视角建模
+          {rebuild ? "用四视角重建模型" : "提交多视角建模"}
         </button>
+        {busy ? <span className="text-cyan-100">出图/提交进行中，逐张落稿，可稍后回来</span> : null}
         {!readiness.ready ? <span className="text-amber-100">{readiness.reasonZh}</span> : null}
       </div>
     </div>

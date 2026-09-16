@@ -13,6 +13,7 @@ import {
 } from "./manhuaScriptWorkbench.js";
 import { normalizeManhuaAsset3dRef } from "./manhuaAsset3d.js";
 import { normalizeManhuaMultiviewDraft } from "./manhuaMultiview.js";
+import { normalizeManhuaWorld3dRef } from "./manhuaWorld3d.js";
 
 export const MANHUA_CUSTOM_ASSET_ROLES = [
   "character",
@@ -120,6 +121,8 @@ export type ManhuaCustomAssetRef = {
   model3d?: import("./manhuaAsset3d").ManhuaAsset3dRef;
   /** 0916 多视角建模：由当前定妆图改出的前/左/后/右视角草稿（付费出图，存稿防刷新丢失） */
   multiviewDraft?: import("./manhuaMultiview").ManhuaMultiviewDraft;
+  /** 0916 场景 3DGS 世界（Marble）：场景参考图派生的可选 3D 世界，产物在 Fly 桥 + gs:// */
+  world3d?: import("./manhuaWorld3d").ManhuaWorld3dRef;
 };
 
 const SCENE_TILE_SLOTS: ManhuaSceneTileSlot[] = [
@@ -457,6 +460,7 @@ export function normalizeManhuaCustomAssetRefs(
       gcsUri: /^gs:\/\//i.test(String(o.gcsUri || "")) ? String(o.gcsUri).trim() : undefined,
       model3d: normalizeManhuaAsset3dRef((o as { model3d?: unknown }).model3d),
       multiviewDraft: normalizeManhuaMultiviewDraft((o as { multiviewDraft?: unknown }).multiviewDraft),
+      world3d: normalizeManhuaWorld3dRef((o as { world3d?: unknown }).world3d),
     });
     if (out.length >= max) break;
   }

@@ -36,6 +36,8 @@ import { CanvasAudioStudio } from "@/components/canvas/CanvasAudioStudio";
 import { ManhuaPrevisStudio } from "@/components/canvas/ManhuaPrevisStudio";
 import { ManhuaActionTimeline } from "@/components/canvas/ManhuaActionTimeline";
 import { Manhua3dModelStudio, manhua3dModelCounts, manhua3dRigLookupCharacters } from "@/components/canvas/Manhua3dModelStudio";
+import { ManhuaWorldStudio, manhuaWorldCounts, type ManhuaWorldGenerateOptions } from "@/components/canvas/ManhuaWorldStudio";
+import { evaluateManhuaWorld3dEligibility } from "@shared/manhuaWorld3d";
 import { splitManhuaActionPlanForPrevis } from "@shared/manhuaActionPlanSplit";
 import { manhuaPrevisDraftFromExecutableShot } from "@shared/manhuaPrevisFromActionPlan";
 import { resolveManhuaCameraTempo } from "@shared/manhuaCameraTempo";
@@ -486,6 +488,11 @@ type Props = {
   onGenerateAsset3dMultiview?: (id: string, views?: import("@shared/manhuaMultiview").ManhuaMultiviewView[]) => void | Promise<void>;
   /** 0916 多视角：用四视角草稿提交 Tripo multiview-to-3d */
   onSubmitAsset3dMultiview?: (id: string) => void | Promise<void>;
+  /** 0916 场景 3D 世界（Marble）：生成 / 重试 / 删除；产物在 Fly 桥 */
+  onGenerateSceneWorld?: (id: string, options: ManhuaWorldGenerateOptions) => void | Promise<void>;
+  onRetrySceneWorld?: (id: string) => void | Promise<void>;
+  onRemoveSceneWorld?: (id: string) => void | Promise<void>;
+  sceneWorldBusyIds?: readonly string[];
   onApplyRiggedModel?: (model: AutoRigAdoptedModel, expectedTaskId: string) => boolean | Promise<boolean>;
   asset3dBusyIds?: readonly string[];
   assetStandardizeBusyId?: string | null;
@@ -1085,6 +1092,10 @@ export default function ManhuaScriptWorkbench({
   onImportAsset3d,
   onGenerateAsset3dMultiview,
   onSubmitAsset3dMultiview,
+  onGenerateSceneWorld,
+  onRetrySceneWorld,
+  onRemoveSceneWorld,
+  sceneWorldBusyIds = [],
   onApplyRiggedModel,
   asset3dBusyIds = [],
   assetStandardizeBusyId = null,
@@ -1235,6 +1246,7 @@ export default function ManhuaScriptWorkbench({
   const [previsStudioOpen,setPrevisStudioOpen] = useState(false);
   const [actionTimelineOpen, setActionTimelineOpen] = useState(false);
   const [modelStudioOpen, setModelStudioOpen] = useState(false);
+  const [worldStudioOpen, setWorldStudioOpen] = useState(false);
   /** 免费裁字弹层：拖框选保留区，框外（含烧字边缘）裁掉 */
   const [cropTarget, setCropTarget] = useState<{ id: string; url: string; labelZh: string } | null>(null);
   const [cropRect, setCropRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
@@ -2525,6 +2537,22 @@ export default function ManhuaScriptWorkbench({
       }),
     [assetLockRegistry.byRole.character, customAssetRefs],
   );
+  /** 0916 场景 3D 世界工作台的行：已锁场景 + 场景表氛围句作默认提示词 */
+  const worldStudioScenes = useMemo(
+    () =>
+      assetLockRegistry.byRole.scene.map((a) => {
+        const ref = customAssetRefs.find((r) => r.id === a.id);
+        const canonHit = (assetCanon?.locations || []).find((l) => l.id === a.seedLibraryId || l.nameZh === a.labelZh);
+        return {
+          id: a.id,
+          labelZh: a.labelZh,
+          thumbUrl: ref?.url,
+          hintZh: canonHit ? [canonHit.lookZh, canonHit.motiveZh].filter(Boolean).join("，") : undefined,
+          eligibility: ref ? evaluateManhuaWorld3dEligibility(ref) : { eligible: false, reasonZh: "找不到这张场景参考图", sourceVersion: "" },
+        };
+      }),
+    [assetLockRegistry.byRole.scene, customAssetRefs, assetCanon],
+  );
   /** 0916 多视角草稿按 ref.id 索引，给 3D 工作台面板 */
   const multiviewDrafts = useMemo(() => {
     const out: Record<string, import("@shared/manhuaMultiview").ManhuaMultiviewDraft | undefined> = {};
@@ -3447,6 +3475,16 @@ export default function ManhuaScriptWorkbench({
             onPreview={(_id, url, labelZh)=>setModel3dPreview({ url, labelZh })}
             riggedIds={riggedAssetIds}
             onRig={onApplyRiggedModel ? (id)=>setAutoRigAssetId(id) : undefined}/> : null}
+          {onGenerateSceneWorld ? <button type="button" data-manhua-action="open-world-studio" disabled={Boolean(factoryBusy)}
+            className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
+            onClick={()=>setWorldStudioOpen(value=>!value)}>3D 场景（就绪 {manhuaWorldCounts(worldStudioScenes).ready}/{worldStudioScenes.length}）</button> : null}
+          {worldStudioOpen && onGenerateSceneWorld ? <ManhuaWorldStudio
+            scenes={worldStudioScenes}
+            busyIds={sceneWorldBusyIds}
+            disabled={Boolean(factoryBusy)}
+            onGenerate={onGenerateSceneWorld}
+            onRetry={onRetrySceneWorld}
+            onRemove={onRemoveSceneWorld}/> : null}
           {onUpdateClipPrevisStudio ? <button type="button" data-manhua-action="open-previs-studio" disabled={Boolean(factoryBusy)}
             className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
             onClick={()=>{setPrevisStudioOpen(value=>!value);if(!activeClip)onEnsureSegmentClips?.();}}>本段动作白模</button> : null}

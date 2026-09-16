@@ -31,6 +31,8 @@ import { characterLockStep } from "../server/workflow/steps/characterLockStep.js
 import { backgroundRemoveStep } from "../server/workflow/steps/backgroundRemoveStep.js";
 import { synthesizeVoiceAudio } from "../server/models/voiceSynthesis.js";
 import { resolveSafeFlyPlatformImageReadPath } from "../server/services/flyVolumeGeneratedImages.js";
+import { bridgeMimeFor, resolveSafeBridgeReadPath } from "../server/services/flyEditBridge.js";
+import { createReadStream as createBridgeReadStream } from "node:fs";
 import {
   hasSupervisorRole,
   isSupervisorWorkflowOp,
@@ -2817,6 +2819,54 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       } catch {
         return res.status(404).json({ ok: false, error: "not_found" });
       }
+    }
+
+    if (opNormalized === "manhuabridgemedia") {
+      // PR-9 Fly 编辑桥：卷上工作副本的公开读取（spz/glb/全景等，可能上百 MB → 流式 + Range）
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const relPath = s(q.relPath || q.relpath).trim();
+      const resolved = resolveSafeBridgeReadPath(relPath);
+      if (!resolved.ok) {
+        return res.status(400).json({ ok: false, error: `invalid_rel_path:${resolved.reason}` });
+      }
+      let size = 0;
+      try {
+        const st = await fs.stat(resolved.abs);
+        if (!st.isFile() || st.size <= 0) return res.status(404).json({ ok: false, error: "not_found" });
+        size = st.size;
+      } catch {
+        return res.status(404).json({ ok: false, error: "not_found" });
+      }
+      res.setHeader("Content-Type", bridgeMimeFor(resolved.abs));
+      res.setHeader("Cache-Control", "public, max-age=86400, immutable");
+      res.setHeader("Accept-Ranges", "bytes");
+      const range = s(req.headers.range).trim();
+      const m = /^bytes=(\d*)-(\d*)$/.exec(range);
+      let start = 0;
+      let end = size - 1;
+      if (m && (m[1] || m[2])) {
+        start = m[1] ? Number(m[1]) : Math.max(0, size - Number(m[2]));
+        end = m[1] && m[2] ? Math.min(Number(m[2]), size - 1) : end;
+        if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= size) {
+          res.setHeader("Content-Range", `bytes */${size}`);
+          return res.status(416).end();
+        }
+        res.setHeader("Content-Range", `bytes ${start}-${end}/${size}`);
+        res.status(206);
+      } else {
+        res.status(200);
+      }
+      res.setHeader("Content-Length", String(end - start + 1));
+      if (req.method === "HEAD") return res.end();
+      const stream = createBridgeReadStream(resolved.abs, { start, end });
+      stream.on("error", () => {
+        if (!res.headersSent) res.status(500);
+        res.end();
+      });
+      stream.pipe(res as unknown as NodeJS.WritableStream);
+      return;
     }
 
     if (opNormalized === "workflowstatus") {
