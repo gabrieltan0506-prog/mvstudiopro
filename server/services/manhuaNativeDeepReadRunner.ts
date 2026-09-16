@@ -6088,15 +6088,19 @@ async function executeNativeDeepReadBatch(
         const best = candidates[0];
         if (best && !selectedSegmentIndexes) {
           selectedSegmentCandidates.add(input.segmentIndex);
-          best.result.attemptSelection = {
+          console.info(`[nativeDeepRead] 第${input.segmentIndex + 1}段三档未过，选择第${best.attemptNumber}份原稿进入整形`);
+          // 0917 根因：选择记录的 rawSha256 曾在合并前盖章，而合并会改 raw（补字幕/剥 gateMarked）→
+          // 缓存写入自检抛「三档候选选择记录与原始证据不一致」→ 段卡永远写不进去，每次续跑重放同三份失败稿。
+          // 章必须盖在最终要落盘的那份 raw 上。
+          const selected = await applyRetryDraftMerge(input.segmentIndex, best.attemptNumber, best.result, false);
+          selected.attemptSelection = {
             status: "selected_for_structuring_after_three_attempts", policyVersion: 1, attemptedCount: 3,
             selectedAttemptNumber: best.attemptNumber, sourceDigest: episode.cacheSourceDigest ?? "",
-            rawSha256: nativeAttemptRawSha256(best.result.raw),
+            rawSha256: nativeAttemptRawSha256(selected.raw),
             candidates: candidates.map(row => ({ attemptNumber: row.attemptNumber, score: row.score,
               reasonZh: row.reasonZh, rawAttemptEvidenceObjectName: row.result.rawAttemptEvidenceObjectName })),
           };
-          console.info(`[nativeDeepRead] 第${input.segmentIndex + 1}段三档未过，选择第${best.attemptNumber}份原稿进入整形`);
-          return await applyRetryDraftMerge(input.segmentIndex, best.attemptNumber, best.result, false);
+          return selected;
         }
         // 三份均无可解析的非空证据时，不能制造空稿。
         logFinalGateFailure(input.segmentIndex, retryError);

@@ -4960,6 +4960,52 @@ describe("门禁前解析稿持久化接线", () => {
     expect(deps.invokeGlmStructuring).toHaveBeenCalledTimes(1);
   });
 
+  it("0917 根因回归：三档未过 + 合并稿改了 raw → 选择记录按最终稿盖章，段卡能落盘；续跑命中缓存零外呼", async () => {
+    const { hasNativeAttemptSelection } = await import("./manhuaNativeDeepReadAttemptSelection");
+    const { mergeNativeDeepReadRetryDrafts } = await import("./manhuaNativeDeepReadRetryDraftMerge");
+    // 三发都覆盖全段、字段齐全，但镜数远低于地板 → 三项线（数值偏差 >15%）拒收、进候选；
+    // 而密度门禁只记 advisory 不抛 → 合并稿不会被退回底稿。字幕各不相同 → 合并稿必定与底稿 raw 不同。
+    // （低覆盖 / 零重点时刻这类硬门失败不能用：合并稿过不了密度门禁会退回底稿，走不到这条路。）
+    const uniqueSubtitles = ["你把晚风留在窗外", "剑气未收人已至", "山门今日不开"];
+    const drafts = uniqueSubtitles.map((textZh, i) => {
+      const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60, shotCountOverride: 4 });
+      // 秒位相隔 > 合并窗口 3 秒、文本互不相似，合并才会真的把其他两发补进底稿
+      raw.subtitles = [{ atSec: 4 + i * 6, textZh }];
+      return raw;
+    });
+    const postVertex = vi.fn()
+      .mockResolvedValueOnce(geminiResponse(drafts[0]))
+      .mockResolvedValueOnce(geminiResponse(drafts[1]))
+      .mockResolvedValueOnce(geminiResponse(drafts[2]));
+    const written: NativeDeepReadSegmentCacheEntry[] = [];
+    // 生产默认接了 mergeRetryDrafts（runner 默认依赖），测试桩要显式接上才走真实合并路径
+    const deps = makeRunnerDeps({
+      postVertex: postVertex as never,
+      mergeRetryDrafts: mergeNativeDeepReadRetryDrafts,
+      writeSegmentCache: vi.fn(async (entry: NativeDeepReadSegmentCacheEntry) => { written.push(entry); return writeResultOf(entry); }) as never,
+    });
+    await runManhuaNativeDeepReadBatch(params, deps);
+    expect(postVertex).toHaveBeenCalledTimes(3);
+    expect(written).toHaveLength(1);
+    const entry = written[0]!;
+    // 合并确实改了 raw（补进了其他两发的字幕），否则本测试无法区分新旧代码
+    expect((entry.raw.subtitles as Array<{ textZh: string }>).map((s) => s.textZh).sort()).toEqual([...uniqueSubtitles].sort());
+    expect(entry.raw).not.toHaveProperty("gateMarked");
+    // 旧代码在此抛「三档候选选择记录与原始证据不一致」（sha 盖在合并前的 raw 上）
+    expect(hasNativeAttemptSelection(entry)).toBe(true);
+    expect(deps.invokeGlmStructuring).toHaveBeenCalledTimes(1);
+
+    // 续跑：段缓存命中 → 不再重放三份失败稿，模型外呼 0
+    const resumed = makeRunnerDeps({
+      postVertex: vi.fn() as never,
+      readSegmentCache: vi.fn(async () => ({ entry, generation: "1" })) as never,
+    });
+    await runManhuaNativeDeepReadBatch(params, resumed);
+    expect(resumed.postVertex).not.toHaveBeenCalled();
+    expect(resumed.readRawAttemptEvidence).not.toHaveBeenCalled();
+    expect(resumed.invokeGlmStructuring).toHaveBeenCalledTimes(1);
+  });
+
   it("GLM原文保存失败时不把已知Gemini用量冒充完整账单", async () => {
     const failure = Object.assign(new Error("原始响应未保存，本次GLM用量未知"), { currentAttemptUsageUnavailable: true });
     const deps = makeRunnerDeps({
