@@ -7,6 +7,7 @@ import {
   parseManhuaCastZhWithStates,
   parseManhuaCharacterStates,
   resolveManhuaCastStates,
+  resolveManhuaStateExcludedRefIds,
 } from "./manhuaCharacterStates";
 
 const states = parseManhuaCharacterStates(["常态：棕色瘸腿马", "护阿菁", "状态：肩伤=肩头炸开血口，毛发结血痂；虚弱=眼罩下眼眯成缝、腿打颤；完全体：浅色兽身金角黑翼"]);
@@ -63,4 +64,12 @@ describe("角色状态变体", () => {
     ]);
     expect(issues[0]!.messageZh).toContain("上一段还是「肩伤」");
   });
+});
+
+it("段级状态排除常态与其它状态，缺当前状态明确拒绝", () => {
+  const a = [{ id: "a", nameZh: "墨屠", statesZh: [{ id: "hurt", nameZh: "肩伤", deltaZh: "出血" }] }];
+  const refs = [{ id: "base", primaryBindings: [{ anchorId: "a", duty: "identity" }] }, { id: "injured", primaryBindings: [{ anchorId: "a", duty: "identity", stateId: "hurt" }] }];
+  expect([...resolveManhuaStateExcludedRefIds("墨屠（肩伤）", a, refs)]).toEqual(["base"]);
+  expect([...resolveManhuaStateExcludedRefIds("墨屠", a, refs)]).toEqual(["injured"]);
+  expect(() => resolveManhuaStateExcludedRefIds("墨屠（肩伤）", a, refs.slice(0, 1))).toThrow("缺少当前参考图");
 });

@@ -156,3 +156,19 @@ export function evaluateManhuaStateContinuity(
   }
   return issues;
 }
+
+
+/** 段级消费只选本段状态；候选库仍保留其它状态与常态，不删除资产。 */
+export function resolveManhuaStateExcludedRefIds(castZh: string, anchors: readonly ManhuaStateAnchorLike[], refs: readonly { id: string; primaryBindings?: Array<{ anchorId: string; duty: string; stateId?: string }> }[]): Set<string> {
+  const excluded = new Set<string>();
+  for (const req of resolveManhuaCastStates(castZh, anchors)) {
+    if (!req.anchorId) continue;
+    if (req.undefinedState) throw new Error(`${req.nameZh}的${req.stateZh}状态尚未定义，不能使用常态替代`);
+    const bound = refs.filter(r => r.primaryBindings?.some(b => b.anchorId === req.anchorId && (b.duty === "identity" || b.duty === "look")));
+    if (req.stateId && !bound.some(r => r.primaryBindings?.some(b => b.anchorId === req.anchorId && b.stateId === req.stateId))) throw new Error(`${req.nameZh}的${req.stateZh}状态缺少当前参考图`);
+    for (const ref of bound) {
+      if (!ref.primaryBindings?.some(b => b.anchorId === req.anchorId && (b.stateId || null) === req.stateId)) excluded.add(ref.id);
+    }
+  }
+  return excluded;
+}

@@ -4,7 +4,7 @@
  */
 
 import { classifyManhuaDirectionSceneType, resolveDirectorStyleBlocks, type ManhuaDirectionCanon } from "@shared/manhuaDirectionCanon";
-import { formatManhuaCastStateNoteZh } from "@shared/manhuaCharacterStates";
+import { formatManhuaCastStateNoteZh, resolveManhuaStateExcludedRefIds } from "@shared/manhuaCharacterStates";
 import {
   formatManhuaDirectionSelectionMarker,
   readManhuaDirectionCanonFromBlocks,
@@ -2279,6 +2279,12 @@ export function ensureManhuaFragmentClips(
     const intentZh = String(seg.shots.find((s) => s.intentZh)?.intentZh || "").trim();
     // 只有同源计划可补充原段语义；自动段号不是旧计划段号。
     const planBeat = mergeManhuaPlanBeatsForSegment(segmentPlan, shots, seg.shots);
+    const excludedStateRefs = resolveManhuaStateExcludedRefIds(planBeat?.castZh || "", opts?.assetCanon?.characters || [], mergedCustomRefs);
+    const segmentRegistry: ManhuaAssetLockRegistry = {
+      ...lockRegistry,
+      slots: lockRegistry.slots.filter(s => !excludedStateRefs.has(s.id)),
+      byRole: { ...lockRegistry.byRole, character: lockRegistry.byRole.character.filter(s => !excludedStateRefs.has(s.id)) },
+    };
     const dialogueLines = planBeat ? extractManhuaSegmentDialogueQuotes(planBeat.dialogueZh) : [];
     const sceneFromKeyart = extractManhuaSceneHintFromPrompt(primary.prompt);
     const sceneFromPlan = String(planBeat?.sceneZh || "").trim();
@@ -2337,7 +2343,7 @@ export function ensureManhuaFragmentClips(
       wardrobePropZh: planBeat?.wardrobePropZh,
       sceneZh: sceneFromPlan || sceneFromKeyart || undefined,
       propHaystack,
-      registry: lockRegistry,
+      registry: segmentRegistry,
       assetCanon: opts?.assetCanon,
       mainSceneId: mainScene?.id,
       castCount,
@@ -2449,7 +2455,7 @@ export function ensureManhuaFragmentClips(
       .filter(([cid]) => segAssets.characterIds.includes(cid))
       .map(([, id]) => id);
     for (const id of selectedLookIds) {
-      if (!lockRegistry.slots.some((s) => s.id === id && s.role === "wardrobe")) {
+      if (!segmentRegistry.slots.some((s) => s.id === id && s.role === "wardrobe")) {
         throw new Error("本段所选造型缺少可用参考图，请重新挂图并确认后再生成。");
       }
     }
@@ -2460,12 +2466,12 @@ export function ensureManhuaFragmentClips(
         manhuaKeyartSourceState: { ...keyart.manhuaKeyartSourceState, required: JSON.stringify(withManhuaShotStateNote(originalShot, shots, opts)) },
       } : keyart;
       refreshedKeyarts.set(keyart.id, compileManhuaKeyartLookBindings(sourceBoundKeyart, {
-        registry: lockRegistry,
+        registry: segmentRegistry,
         allowedIds: segAssets.allowedIds,
         activeLookSetIds: activeLookIds,
       }));
     }
-    const assetLockBlock = formatManhuaAssetImageBindBlock(lockRegistry, 8, {
+    const assetLockBlock = formatManhuaAssetImageBindBlock(segmentRegistry, 8, {
       activeLookSetIds: activeLookIds,
       allowedIds: segAssets.allowedIds,
     });
