@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { buildManhuaAdvisorProject, resolveManhuaAdvisorVideoModel } from "./manhuaAdvisorProject";
+import {
+  buildManhuaAdvisorProject,
+  claimManhuaAdvisorNudgeOnce,
+  formatManhuaAdvisorAssetGapZh,
+  formatManhuaAdvisorPipeline3dZh,
+  pickManhuaAdvisorPhaseNudge,
+  pickManhuaAdvisorTopIssue,
+  recommendManhua3dUsage,
+  resolveManhuaAdvisorVideoModel,
+} from "./manhuaAdvisorProject";
 import { buildManhuaProjectBible } from "@shared/manhuaProjectBible";
 import { manhuaCreativeAdvisorContextSchema } from "@shared/manhuaCreativeAdvisor";
 import type { ManhuaWriterPack } from "@shared/manhuaWriterRoom";
@@ -131,5 +140,100 @@ describe("创作顾问的真实项目生产者", () => {
     expect(selected.context.shotSummary).toContain("真实选中动作");
     expect(selected.context.shotSummary).not.toContain("分镜开头");
     expect(selected.contextNotes).toEqual([]);
+  });
+});
+
+describe("PR-12 · 上下文补喂与四类 issue", () => {
+  it("六项字段进上下文并通过 schema，门禁/缺口/关键帧/绑骨四类 issue 各归各阶段", () => {
+    const result = buildManhuaAdvisorProject({
+      ...base,
+      gate: ["第 1 集对白不足 12 句", "场景表为空"],
+      assetGap: formatManhuaAdvisorAssetGapZh({ characters: 0, scenes: 5, props: 0 }),
+      keyframeBlock: "请先出齐本段所需关键静帧",
+      pipeline3d: formatManhuaAdvisorPipeline3dZh({ modelReady: 1, rigged: 0, total: 6, previsSegments: 0 }),
+      queue: "生成中：道具图·药碗",
+      credits: "未知",
+    });
+    expect(result.context.gateZh).toEqual(["第 1 集对白不足 12 句", "场景表为空"]);
+    expect(result.context.assetGapZh).toBe("待生成 5：人物 0 · 场景 5 · 道具 0");
+    expect(result.context.keyframeBlockZh).toBe("请先出齐本段所需关键静帧");
+    expect(result.context.pipeline3dZh).toBe("模型就绪 1/6 · 已绑骨 0/6 · 白模参考 0 段");
+    expect(result.context.queueZh).toBe("生成中：道具图·药碗");
+    expect(result.context.creditsZh).toBe("未知");
+    expect(manhuaCreativeAdvisorContextSchema.safeParse(result.context).success).toBe(true);
+    const byId = Object.fromEntries(result.issues.map((issue) => [issue.id, issue.phase]));
+    expect(byId["gate"]).toBe("outline");
+    expect(byId["asset-gap"]).toBe("assets");
+    expect(byId["keyframe"]).toBe("storyboard");
+    expect(byId["rig"]).toBe("storyboard");
+    expect(result.context.blockers).toContain(result.issues.find((i) => i.id === "gate")!.text);
+  });
+
+  it("缺口为零、已绑骨、无门禁时不造 issue；超长门禁只取前 8 条各 120 字", () => {
+    const result = buildManhuaAdvisorProject({
+      ...base,
+      gate: [],
+      assetGap: formatManhuaAdvisorAssetGapZh({ characters: 0, scenes: 0, props: 0 }),
+      pipeline3d: formatManhuaAdvisorPipeline3dZh({ modelReady: 2, rigged: 2, total: 6, previsSegments: 1 }),
+    });
+    const ids = result.issues.map((issue) => issue.id);
+    expect(ids).not.toContain("gate");
+    expect(ids).not.toContain("asset-gap");
+    expect(ids).not.toContain("keyframe");
+    expect(ids).not.toContain("rig");
+    expect(result.context.gateZh).toBeUndefined();
+    const many = buildManhuaAdvisorProject({ ...base, gate: Array.from({ length: 10 }, (_, i) => `${i}${"错".repeat(200)}`) });
+    expect(many.context.gateZh).toHaveLength(8);
+    expect(many.context.gateZh![0]!.length).toBeLessThanOrEqual(120);
+    expect(manhuaCreativeAdvisorContextSchema.safeParse(many.context).success).toBe(true);
+  });
+
+  it("3D 规则：武打段且同一已锁脸角色跨三段才推荐，只推一段", () => {
+    const segments = [
+      { intentZh: "阿菁在坊市与恶少对峙", dialogueZh: "「让开」", castZh: "阿菁、恶少" },
+      { intentZh: "恶少拔剑劈向阿菁", dialogueZh: "", castZh: "阿菁、恶少" },
+      { intentZh: "阿菁反手一掌击退", dialogueZh: "「滚」", castZh: "阿菁" },
+      { intentZh: "黑奇低吼", dialogueZh: "", castZh: "黑奇" },
+    ];
+    const yes = recommendManhua3dUsage({ segments, lockedCharacterNames: ["阿菁"] });
+    expect(yes.recommend).toBe(true);
+    expect(yes.suggestedSegmentIndex).toBe(2);
+    expect(yes.reasonZh).toContain("阿菁");
+    expect(yes.reasonZh).toContain("第 2 段");
+    const noLock = recommendManhua3dUsage({ segments, lockedCharacterNames: [] });
+    expect(noLock.recommend).toBe(false);
+    expect(noLock.suggestedSegmentIndex).toBeUndefined();
+    const talky = recommendManhua3dUsage({
+      segments: [
+        { intentZh: "两人对坐叙旧", dialogueZh: "「多年不见」", castZh: "阿菁、黑奇" },
+        { intentZh: "阿菁回忆往事", dialogueZh: "「那年」", castZh: "阿菁" },
+        { intentZh: "阿菁落泪", dialogueZh: "", castZh: "阿菁" },
+      ],
+      lockedCharacterNames: ["阿菁"],
+    });
+    expect(talky.recommend).toBe(false);
+    expect(talky.reasonZh).toContain("对话");
+    const built = buildManhuaAdvisorProject({ ...base, segments, lockedCharacterNames: ["阿菁"] });
+    expect(built.contextNotes.some((n) => n.includes("3D") && n.includes("第 2 段"))).toBe(true);
+    expect(built.recommend3d?.recommend).toBe(true);
+  });
+
+  it("阶段顶部提示与进阶段气泡：取当前阶段第一条 issue，否则 3D 理由；每阶段只弹一次", () => {
+    const issues = [
+      { id: "gate", text: "门禁", phase: "outline" as const },
+      { id: "asset-gap", text: "缺口", phase: "assets" as const },
+    ];
+    expect(pickManhuaAdvisorTopIssue(issues, "assets")?.id).toBe("asset-gap");
+    expect(pickManhuaAdvisorTopIssue(issues, "storyboard")?.id).toBe("gate");
+    expect(pickManhuaAdvisorTopIssue([], "assets")).toBeNull();
+    expect(pickManhuaAdvisorPhaseNudge({ phase: "assets", issues, recommend3d: null })).toBe("进入资产设定：缺口");
+    expect(pickManhuaAdvisorPhaseNudge({ phase: "storyboard", issues: [], recommend3d: { recommend: true, reasonZh: "理由", suggestedSegmentIndex: 2 } })).toBe("进入分镜：理由");
+    expect(pickManhuaAdvisorPhaseNudge({ phase: "storyboard", issues: [], recommend3d: { recommend: false, reasonZh: "不推荐" } })).toBeNull();
+    const store = new Map<string, string>();
+    const storage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } };
+    expect(claimManhuaAdvisorNudgeOnce(storage, "assets")).toBe(true);
+    expect(claimManhuaAdvisorNudgeOnce(storage, "assets")).toBe(false);
+    expect(claimManhuaAdvisorNudgeOnce(storage, "storyboard")).toBe(true);
+    expect(claimManhuaAdvisorNudgeOnce({ getItem: () => { throw new Error("blocked"); }, setItem: () => {} }, "edit")).toBe(true);
   });
 });

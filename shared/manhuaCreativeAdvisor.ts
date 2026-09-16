@@ -26,6 +26,10 @@ export const MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS = {
   questionChars: 1_200,
   /** 与 askPlatformSkillQa 路由的 question 上限保持一致；超限显式拒绝。 */
   wrappedQuestionChars: 4_000,
+  /** PR-12 状态补喂：门禁原文条数与单条字数；其余状态短句共用 signalChars。 */
+  gateItems: 8,
+  gateChars: 120,
+  signalChars: 120,
 } as const;
 
 export const manhuaCreativeAdvisorStageSchema = z.enum([
@@ -131,6 +135,21 @@ export const manhuaCreativeAdvisorContextSchema = z
       .array(manhuaCreativeAdvisorHistoryMessageSchema)
       .max(MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.historyItems)
       .optional(),
+    /** 编剧密度／可拍表门禁报错原文；旧上下文没有这些字段仍须通过。 */
+    gateZh: z
+      .array(contextText(MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.gateChars, "门禁报错", true))
+      .max(MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.gateItems)
+      .optional(),
+    /** 如「待生成 5：人物 0 · 场景 5 · 道具 0」 */
+    assetGapZh: contextText(MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.signalChars, "资产缺口").optional(),
+    /** 关键静帧被拦原因原文 */
+    keyframeBlockZh: contextText(MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.signalChars, "关键静帧拦截").optional(),
+    /** 如「模型就绪 1/6 · 已绑骨 0/6 · 白模参考 0 段」 */
+    pipeline3dZh: contextText(MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.signalChars, "3D 管线状态").optional(),
+    /** 如「生成中：道具图·药碗」或「空闲」 */
+    queueZh: contextText(MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.signalChars, "生成队列").optional(),
+    /** 如「余额 N · 本步预估 M」；取不到就「未知」 */
+    creditsZh: contextText(MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.signalChars, "积分状态").optional(),
   })
   .strict();
 

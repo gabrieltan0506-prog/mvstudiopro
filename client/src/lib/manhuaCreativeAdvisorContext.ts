@@ -65,7 +65,41 @@ export type AdvisorContextInput = {
   craftProfiles?: readonly CraftTechniqueProfile[];
   /** 当前请求另带已校验的项目证据，不能用“只看模板”盖过真实剧本。 */
   hasProjectEvidence?: boolean;
+  /** PR-12：门禁／缺口／关键帧／3D／队列／积分状态短句，与上下文 schema 同源 */
+  projectSignals?: AdvisorProjectSignalsText;
 };
+
+export type AdvisorProjectSignalsText = {
+  gateZh?: string[];
+  assetGapZh?: string;
+  keyframeBlockZh?: string;
+  pipeline3dZh?: string;
+  queueZh?: string;
+  creditsZh?: string;
+  /** 3D 决策规则判定原文 */
+  rule3dZh?: string;
+};
+
+function formatProjectSignals(signals: AdvisorProjectSignalsText | undefined, budget: number): string {
+  if (!signals) return "";
+  const lines: string[] = [];
+  const gate = (signals.gateZh || []).map((line) => clip(line, 120)).filter(Boolean);
+  if (gate.length) lines.push(`门禁未过：${gate.join("；")}`);
+  if (signals.assetGapZh) lines.push(`资产缺口：${clip(signals.assetGapZh, 120)}`);
+  if (signals.keyframeBlockZh) lines.push(`关键静帧：${clip(signals.keyframeBlockZh, 120)}`);
+  if (signals.pipeline3dZh) lines.push(`3D 管线：${clip(signals.pipeline3dZh, 120)}`);
+  if (signals.queueZh) lines.push(`生成队列：${clip(signals.queueZh, 120)}`);
+  if (signals.creditsZh) lines.push(`余额：${clip(signals.creditsZh, 120)}`);
+  if (signals.rule3dZh) lines.push(`3D 规则：${clip(signals.rule3dZh, 300)}`);
+  if (!lines.length) return "";
+  // 状态段只是线索：超预算时从尾部逐行砍，绝不动用户问题
+  let out = `【当前状态】\n${lines.join("\n")}`;
+  while (out.length > budget && lines.length > 1) {
+    lines.pop();
+    out = `【当前状态】\n${lines.join("\n")}`;
+  }
+  return out.length > budget ? "" : out;
+}
 
 function formatTemplateLine(t: PublicManhuaViralTemplateCard): string {
   const tags = (t.classificationTagsZh || []).slice(0, 4).join("/");
@@ -86,14 +120,17 @@ export function buildAdvisorQuestion(input: AdvisorContextInput): string {
     // 当前项目的手法和引擎规则由服务端同源合同派生，不能再混入旧版全库摘要。
     // 公开模板仅是可选线索，不修改项目已冻结的导演策略。
     const selected = input.selectedTemplate;
-    return [
+    const fixed = [
       "【身份】你是漫剧工厂的创作顾问，围绕另附的当前项目证据提供建议。",
       selected
         ? `【当前候选模板】${clip(selected.nameZh, 160)}：${clip(selected.featureZh || selected.introZh, 240)}`
         : "【当前候选模板】未选择；不需要为了答问选择模板。",
       "【回答要求】明确问题位置、依据、修改建议和影响范围；区分观察事实与建议。先给简短结论，再按用户要求展开。只给建议，不声称已经修改、生成或审过未读取的媒体。",
       `【用户问题】${question}`,
-    ].join("\n\n");
+    ];
+    const fixedLength = fixed.join("\n\n").length;
+    const signals = formatProjectSignals(input.projectSignals, ADVISOR_QUESTION_MAX_CHARS - fixedLength - 2);
+    return [...fixed.slice(0, 3), ...(signals ? [signals] : []), fixed[3]!].join("\n\n");
   }
   const question = clip(input.question, 1200);
   const selected = input.selectedTemplate || null;
