@@ -695,6 +695,11 @@ export const manhuaPrevisStudioSchema = z
           .strict()
       )
       .optional(),
+    /** PR-6 节奏档：用户手改的风格档（缺省 = 按段意图/导演包自动） */
+    cameraStyle: z.enum(["hard", "slow_orbit", "handheld"]).optional(),
+    /** PR-6：套用草案时带来的每镜运镜句与节奏说明；采用白模时逐镜追加进运动指引 */
+    draftCameraPromptZh: z.array(z.string().max(400)).max(8).optional(),
+    draftTempoZh: z.string().max(400).optional(),
     history: z.array(
       z
         .object({

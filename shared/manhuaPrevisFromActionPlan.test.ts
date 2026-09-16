@@ -4,6 +4,7 @@ import { splitManhuaActionPlanForPrevis } from "./manhuaActionPlanSplit";
 import { manhuaPrevisSpecSchema } from "./manhuaPrevis";
 import { applyManhuaPrevisDraftToStudio, manhuaPrevisDraftFromExecutableShot } from "./manhuaPrevisFromActionPlan";
 import { createManhuaPrevisStudio } from "./manhuaPrevis";
+import { resolveManhuaCameraTempo } from "./manhuaCameraTempo";
 
 const cam = (endSec: number) => ({
   source: "previs_cameras" as const,
@@ -132,5 +133,57 @@ describe("1468 R2 · 套用草案可撤销", () => {
     const restored = { ...applied, spec: applied.specHistory!.at(-1)!.spec, specHistory: applied.specHistory!.slice(0, -1) };
     expect(restored.spec).toEqual(before);
     expect(restored.specHistory).toEqual(studio.specHistory ?? []);
+  });
+});
+
+describe("PR-6 · 节奏档进白模草案", () => {
+  const plan = buildBoatFight();
+  const { shots } = splitManhuaActionPlanForPrevis(plan);
+  const shot = shots.find((s) => s.sourceShotId === "ap_shot_1")!;
+  it("不传 tempo：老口径不变，cameraPromptZh 每镜一句、tempoZh 为空", () => {
+    const d = manhuaPrevisDraftFromExecutableShot({ plan, shot, resolvedCamera: cam(6), aspect: "16:9" });
+    expect(d.cameraPromptZh.length).toBe(d.spec!.cameras.length);
+    expect(d.tempoZh).toBe("");
+    expect(d.summaryZh.some((l) => l.startsWith("节奏："))).toBe(false);
+  });
+  it("快档：摘要多一行「节奏：快 · 原因」，每镜运镜句与 cameraPromptZh 同源；慢档 ≤3 镜且句里有慢环绕", () => {
+    const fast = resolveManhuaCameraTempo({ intentZh: "燃", hasContact: true });
+    const d = manhuaPrevisDraftFromExecutableShot({ plan, shot, resolvedCamera: cam(6), aspect: "16:9", tempo: fast });
+    expect(d.spec).not.toBeNull();
+    expect(d.tempoZh).toMatch(/^快 · /);
+    expect(d.summaryZh).toContain(`节奏：${d.tempoZh}`);
+    expect(d.cameraPromptZh.length).toBe(d.spec!.cameras.length);
+    for (const line of d.cameraPromptZh) expect(d.summaryZh.join("\n")).toContain(line);
+    const slow = resolveManhuaCameraTempo({ intentZh: "静", hasContact: false });
+    const s2 = manhuaPrevisDraftFromExecutableShot({ plan, shot, resolvedCamera: cam(6), aspect: "16:9", tempo: slow });
+    expect(s2.spec!.cameras.length).toBeLessThanOrEqual(3);
+    expect(s2.tempoZh).toMatch(/^慢 · /);
+    // 镜1 首个接触贴片头，建立镜让位给接触镜（不推迟接触）；慢环绕在摘要备注里说明
+    expect(s2.summaryZh.some((l) => l.includes("慢环绕"))).toBe(true);
+  });
+  it("用户改风格档覆盖 tempo.style：cameraStyle=handheld 时句子带手持、切点同硬切", () => {
+    const fast = resolveManhuaCameraTempo({ intentZh: "燃", hasContact: true });
+    const hard = manhuaPrevisDraftFromExecutableShot({ plan, shot, resolvedCamera: cam(6), aspect: "16:9", tempo: fast });
+    const hand = manhuaPrevisDraftFromExecutableShot({ plan, shot, resolvedCamera: cam(6), aspect: "16:9", tempo: fast, cameraStyle: "handheld" });
+    expect(hand.spec!.cameras.map((c) => [c.startSec, c.endSec])).toEqual(hard.spec!.cameras.map((c) => [c.startSec, c.endSec]));
+    expect(hand.cameraPromptZh.every((l) => l.includes("手持"))).toBe(true);
+    expect(hand.tempoZh).toContain("手持");
+  });
+});
+
+describe("PR-6 · 套用草案带上运镜句", () => {
+  it("传草案则写入 draftCameraPromptZh/draftTempoZh；不传则清掉旧句；规格历史照压", () => {
+    const plan = buildBoatFight();
+    const { shots } = splitManhuaActionPlanForPrevis(plan);
+    const d = manhuaPrevisDraftFromExecutableShot({ plan, shot: shots[0]!, resolvedCamera: cam(6), aspect: "16:9", tempo: resolveManhuaCameraTempo({ intentZh: "燃", hasContact: true }) });
+    const studio = createManhuaPrevisStudio();
+    const applied = applyManhuaPrevisDraftToStudio(studio, d.spec!, "2026-09-16T00:00:00.000Z", d);
+    expect(applied.draftCameraPromptZh).toEqual(d.cameraPromptZh);
+    expect(applied.draftTempoZh).toBe(d.tempoZh);
+    expect(applied.specHistory).toHaveLength(1);
+    const again = applyManhuaPrevisDraftToStudio(applied, studio.spec as typeof d.spec & object, "2026-09-16T00:00:01.000Z");
+    expect(again.draftCameraPromptZh).toBeUndefined();
+    expect(again.draftTempoZh).toBeUndefined();
+    expect(again.specHistory).toHaveLength(2);
   });
 });

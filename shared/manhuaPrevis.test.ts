@@ -351,3 +351,13 @@ describe("单次渲染预算：按实测定的能力边界（0911）", () => {
     expect(previsMaxDurationSec(60)).toBe(2);
   });
 });
+
+describe("PR-6 · 节奏档字段随白模工作台状态往返", () => {
+  it("cameraStyle / draftCameraPromptZh / draftTempoZh 可存可读；缺省不写入；非法风格档拒绝", () => {
+    const studio = createManhuaPrevisStudio(6);
+    expect(manhuaPrevisStudioSchema.parse(studio)).toEqual(studio);
+    const withTempo = { ...studio, cameraStyle: "slow_orbit" as const, draftCameraPromptZh: ["0.00–3.00s 全景·平视·慢环绕：建立"], draftTempoZh: "慢 · 意图「静」且无接触" };
+    expect(manhuaPrevisStudioSchema.parse(withTempo)).toEqual(withTempo);
+    expect(manhuaPrevisStudioSchema.safeParse({ ...studio, cameraStyle: "dolly" }).success).toBe(false);
+  });
+});

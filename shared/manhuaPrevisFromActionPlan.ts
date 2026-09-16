@@ -16,6 +16,7 @@ import type { ManhuaResolvedCameraSource } from "./manhuaActionPlanBindings";
 import { manhuaPrevisTimingForExecutableShot, type ManhuaPrevisTiming } from "./manhuaPrevisTiming";
 import { manhuaSnapToFrameSec } from "./manhuaActionPlanTiming";
 import { choreographManhuaCameras, manhuaCameraPromptZh, type ManhuaCameraStyle } from "./manhuaCameraGrammar";
+import { MANHUA_CAMERA_STYLE_LABEL_ZH, MANHUA_TEMPO_TIER_LABEL_ZH, type ManhuaCameraTempo } from "./manhuaCameraTempo";
 
 export type ManhuaPrevisCharacterLink = {
   actorId: string;
@@ -34,6 +35,10 @@ export type ManhuaPrevisDraftFromPlan = {
   /** 给创作者看的白话摘要（含每镜运镜提示词，可直接喂视频模型） */
   summaryZh: string[];
   issuesZh: string[];
+  /** 每镜一句运镜句（与 spec.cameras 同序同长），成片提示词逐镜追加用 */
+  cameraPromptZh: string[];
+  /** 「快 · 原因」；没传 tempo 为空 */
+  tempoZh: string;
 };
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
@@ -58,8 +63,10 @@ export function manhuaPrevisDraftFromExecutableShot(input: {
   resolvedCamera?: ManhuaResolvedCameraSource | null;
   aspect: "16:9" | "9:16";
   links?: ManhuaPrevisCharacterLink[];
-  /** 运镜风格档；省略 = 硬桥硬马 */
+  /** 运镜风格档；省略 = 按 tempo.style，再省略 = 硬切；用户手改时传这个覆盖 */
   cameraStyle?: ManhuaCameraStyle;
+  /** 节奏策略（resolveManhuaCameraTempo）；省略 = 老口径 */
+  tempo?: ManhuaCameraTempo;
 }): ManhuaPrevisDraftFromPlan {
   const { plan, shot } = input;
   const timing = manhuaPrevisTimingForExecutableShot(shot, input.resolvedCamera ?? null);
@@ -142,9 +149,18 @@ export function manhuaPrevisDraftFromExecutableShot(input: {
   // 相机：按武打运镜文法从动作事件编排（≤8 切镜，源秒对齐 24 帧）；无事件时退回默认全景
   const actorPositions: Record<string, [number, number]> = {};
   for (const a of actors) actorPositions[a.id] = a.start;
-  const choreo = choreographManhuaCameras({ durationSec: D, events: shot.events, cues: timing.contactCues, actorPositions, style: input.cameraStyle });
+  const tempo = input.tempo;
+  const style: ManhuaCameraStyle = input.cameraStyle ?? tempo?.style ?? "hard";
+  const nonHumanActorIds = actors.filter((a) => a.shape !== "human").map((a) => a.id);
+  const choreo = choreographManhuaCameras({
+    durationSec: D, events: shot.events, cues: timing.contactCues, actorPositions, style,
+    ...(tempo ? { tempo: { maxCuts: tempo.maxCuts, minShotSec: tempo.minShotSec, reactionHoldSec: tempo.reactionHoldSec, style, establishFirst: tempo.establishFirst, reactionToNonHuman: tempo.reactionToNonHuman, reactionLens: tempo.reactionLens }, nonHumanActorIds } : {}),
+  });
   const cameras: ManhuaPrevisSpec["cameras"] = choreo.cameras.map(({ startSec, endSec, position, target, lens }) => ({ startSec, endSec, position, target, lens }));
-  summaryZh.push(`运镜 ${cameras.length} 镜（按接触点切）：` + choreo.cameras.map(manhuaCameraPromptZh).join("；"));
+  const cameraPromptZh = choreo.cameras.map((c) => manhuaCameraPromptZh(c, style));
+  const tempoZh = tempo ? `${MANHUA_TEMPO_TIER_LABEL_ZH[tempo.tier]} · ${tempo.reasonZh}${input.cameraStyle && input.cameraStyle !== tempo.style ? `（风格档手改为${MANHUA_CAMERA_STYLE_LABEL_ZH[input.cameraStyle]}）` : ""}` : "";
+  if (tempoZh) summaryZh.push(`节奏：${tempoZh}`);
+  summaryZh.push(`运镜 ${cameras.length} 镜（按接触点切）：` + cameraPromptZh.join("；"));
   for (const n of choreo.notesZh) summaryZh.push(n);
   if (timing.padSec > 0) summaryZh.push(`源区间 ${(D - timing.padSec).toFixed(1)}s 取整为 ${D}s，末尾补 ${timing.padSec.toFixed(2)}s 待机`);
 
@@ -169,6 +185,8 @@ export function manhuaPrevisDraftFromExecutableShot(input: {
     spec: parsed.success ? parsed.data : null,
     summaryZh,
     issuesZh,
+    cameraPromptZh,
+    tempoZh,
   };
 }
 
@@ -181,13 +199,18 @@ export function applyManhuaPrevisDraftToStudio(
   studio: ManhuaPrevisStudio,
   spec: ManhuaPrevisSpec,
   nowIso: string = new Date().toISOString(),
+  draft?: Pick<ManhuaPrevisDraftFromPlan, "cameraPromptZh" | "tempoZh">,
 ): ManhuaPrevisStudio {
+  const { draftCameraPromptZh: _p, draftTempoZh: _t, ...rest } = studio;
   return {
-    ...studio,
+    ...rest,
     spec,
     specHistory: [
       ...(studio.specHistory ?? []),
       { spec: studio.spec, createdAt: nowIso, reasonZh: "套用动作计划草案前的配置" },
     ],
+    // 草案的每镜运镜句随状态走：采用白模时追加进运动指引；没传草案就清掉旧句，避免句子和规格对不上
+    ...(draft?.cameraPromptZh?.length ? { draftCameraPromptZh: draft.cameraPromptZh.slice(0, 8) } : {}),
+    ...(draft?.tempoZh ? { draftTempoZh: draft.tempoZh } : {}),
   };
 }
