@@ -1187,6 +1187,43 @@ export type ManhuaLearnServerJobSnapshot = {
 };
 
 /**
+ * 轮询后找焦点项（0917 用户实测：面板停在「已入队」不动）。
+ * 服务端起跑后会把临时 key 换成真实 seriesKey，basket 项原位升级、焦点 key 却还是旧值，
+ * 只按 seriesKey 找就永远找不到 → 学习面板的结果从不刷新，只有另起的实况条在动。
+ * 兜底顺序与页面上 focusedManhuaLearnServerJob 一致：seriesKey → 焦点来源 URL/gcsUri → 唯一活跃任务（jobId 或来源）。
+ * 返回的项 seriesKey 与焦点 key 不同时，调用方应把焦点 key 跟过去。
+ */
+export function resolveFocusedManhuaLearnBasketItem(input: {
+  items: readonly ManhuaLearnBasketItem[];
+  focusSeriesKey: string;
+  focusSource?: string | null;
+  jobs: readonly ManhuaLearnServerJobSnapshot[];
+}): ManhuaLearnBasketItem | null {
+  const focusKey = String(input.focusSeriesKey || "").trim();
+  if (!focusKey) return null;
+  const byKey = input.items.find((item) => item.seriesKey === focusKey);
+  if (byKey) return byKey;
+  const focusSource = String(input.focusSource || "").trim();
+  const active = input.jobs.filter((job) => job.status === "queued" || job.status === "running");
+  const activeJobIds = new Set(active.map((job) => job.jobId));
+  const activeSources = new Set(active.map((job) => String(
+    job.input?.params?.dedupeKey || job.input?.params?.gcsUri || job.input?.params?.url || "",
+  ).trim()).filter(Boolean));
+  const sourceOf = (item: ManhuaLearnBasketItem) =>
+    String(item.continuation.row.gcsUri || item.continuation.row.url || "").trim();
+  if (focusSource) {
+    // 有来源就只认来源：焦点剧刚学完被移出篮子 / 刚点开始尚未入篮时，
+    // 唯一活跃任务可能是另一部剧，按 jobId 兜底会把焦点劫持过去。
+    return input.items.find((item) => sourceOf(item) === focusSource) || null;
+  }
+  // 多个任务在跑时不猜：宁可不动焦点，也不把别人的进度挂到用户正看着的剧上。
+  return (active.length === 1
+    ? input.items.find((item) => (item.jobId && activeJobIds.has(item.jobId)) || activeSources.has(sourceOf(item)))
+    : undefined)
+    || null;
+}
+
+/**
  * 任务轮询每 3 秒会拿到一份新数组；内容没变时复用旧引用，避免让整张万行页面
  * 因一次无变化的 GET 重绘原生 select。服务端每次任务写入都会同步 updatedAt，
  * 这里仍比较完整快照，防止旧任务或补写路径漏更新时间时吞掉真实进度。
