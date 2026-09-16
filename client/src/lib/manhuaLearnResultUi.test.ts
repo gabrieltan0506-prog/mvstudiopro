@@ -1,4 +1,5 @@
 import { mergeNativeProposalListAndDetail } from "./manhuaLearnResultUi";
+import { resolveFocusedManhuaLearnBasketItem as resolveFocused0917, manhuaLearnResultFromStart as fromStart0917, type ManhuaLearnBasketItem as BasketItem0917 } from "./manhuaLearnResultUi";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   clearLegacyManhuaLearnStorage,
@@ -1214,5 +1215,44 @@ describe("待审卡与学习分片同步", () => {
     const two = { ...base, output: { nativePartialProposalCheckpoint: { episodeIndex: 1, completedSegments: 2, totalSegments: 4 } } };
     expect(nativeLearnTerminalProposalRefreshSignature([one])).not.toBe(nativeLearnTerminalProposalRefreshSignature([two]));
     expect(nativeLearnTerminalProposalRefreshSignature([two])).toContain("partial:1:2/4");
+  });
+});
+
+
+describe("0917 焦点项兜底：服务端换 seriesKey 后学习面板仍能跟上", () => {
+  const item = (seriesKey: string, url: string, jobId?: string) => ({
+    seriesKey, jobId, updatedAt: 0,
+    continuation: { row: { url }, rank: 0, seriesKey, savedAt: 0 },
+    result: fromStart0917({ channel: "cloud", url, seriesKey }),
+  }) as unknown as BasketItem0917;
+  const running = (jobId: string, url: string) => ({ jobId, status: "running" as const, input: { params: { url } } });
+  const A = "https://www.douyin.com/video/1";
+  const B = "https://www.douyin.com/video/2";
+
+  it("按 seriesKey 直接命中", () => {
+    const items = [item("tpl_a", A), item("tpl_b", B)];
+    expect(resolveFocused0917({ items, focusSeriesKey: "tpl_b", jobs: [] })?.seriesKey).toBe("tpl_b");
+  });
+  it("焦点 key 是旧的临时 key：按焦点来源 URL 找到已升级的项", () => {
+    const items = [item("tpl_native_real", A, "j1"), item("tpl_b", B)];
+    const found = resolveFocused0917({ items, focusSeriesKey: "learn_temp", focusSource: A, jobs: [running("j1", A)] });
+    expect(found?.seriesKey).toBe("tpl_native_real");
+  });
+  it("没有来源可对时，唯一活跃任务按 jobId 兜底", () => {
+    const items = [item("tpl_native_real", A, "j1"), item("tpl_b", B)];
+    const found = resolveFocused0917({ items, focusSeriesKey: "learn_temp", jobs: [running("j1", A)] });
+    expect(found?.seriesKey).toBe("tpl_native_real");
+  });
+  it("多个任务在跑且来源对不上：不猜，返回 null（不把别人的进度挂到当前剧上）", () => {
+    const items = [item("tpl_a", A, "j1"), item("tpl_b", B, "j2")];
+    expect(resolveFocused0917({ items, focusSeriesKey: "learn_temp", jobs: [running("j1", A), running("j2", B)] })).toBeNull();
+  });
+  it("焦点剧已学完被移出篮子、来源对不上：即使只剩一个活跃任务也不劫持到别的剧", () => {
+    const items = [item("tpl_b", B, "j2")];
+    const found = resolveFocused0917({ items, focusSeriesKey: "tpl_a_done", focusSource: A, jobs: [running("j2", B)] });
+    expect(found).toBeNull();
+  });
+  it("没有焦点 key 时返回 null，交给自动聚焦 effect", () => {
+    expect(resolveFocused0917({ items: [item("tpl_a", A, "j1")], focusSeriesKey: "", jobs: [running("j1", A)] })).toBeNull();
   });
 });
