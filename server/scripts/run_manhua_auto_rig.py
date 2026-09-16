@@ -135,12 +135,25 @@ def _make_solve_copy(original, target_max):
     直到 ≤target_max 顶点且封闭流形单连通。inspect 与 bind 用同一派生规则，摘要稳定。
     """
     import bpy
+    import bmesh
     proxy = original.copy()
     proxy.data = original.data.copy()
     proxy.name = "绑骨求解副本"
     bpy.context.scene.collection.objects.link(proxy)
     _strip_materials(proxy)
-    info = {"decimated": False, "remeshed": False}
+    # GLB 的 UV/法线接缝会拆开同一位置的顶点；副本上先把数值重合点焊回去并**写回网格**，
+    # 否则 ≤上限的小模型会带着拆开的接缝进 rig_confirmed_mesh 的流形检查而被拒（原模不动）。
+    bm = bmesh.new()
+    try:
+        bm.from_mesh(proxy.data)
+        count = len(bm.verts)
+        weld_identical_vertices(bm)
+        merged = count - len(bm.verts)
+        bm.to_mesh(proxy.data)
+    finally:
+        bm.free()
+    proxy.data.update()
+    info = {"decimated": False, "remeshed": False, "weldedVertices": merged}
     if len(proxy.data.vertices) <= target_max and _is_manifold_connected(proxy):
         return proxy, info
     low, high = bounds_of(proxy)
@@ -220,7 +233,7 @@ def load_source(file, expected_sha, settings):
             "decimateRatio": round(len(proxy.data.vertices) / max(1, original_vertices), 4),
             "joinedParts": joined_parts, "originalMaterials": len(original.data.materials),
             "originalUvLayers": len(original.data.uv_layers), **derive}
-    return proxy, metadata, 0, original, info
+    return proxy, metadata, derive["weldedVertices"], original, info
 
 
 def verify_full_export(path, original, expected):
@@ -251,6 +264,40 @@ def verify_full_export(path, original, expected):
     finally:
         for obj in imported:
             bpy.data.objects.remove(obj, do_unlink=True)
+
+
+def realign_reimported_rig(rig, rigged_mesh, pre_bounds):
+    """
+    import_rigged_model 会把重导入的代理重新归一（骨盆点移到 xy=0、按包围盒高缩放）。
+    用户确认的骨盆点不在包围盒中心、或代理丢了小岛时，骨架就会相对原模平移/缩放，
+    权重按最近面转移会串到邻近肢体。这里用导出前代理的包围盒把骨架+代理精确映射回原模坐标系。
+    """
+    import bpy
+    from mathutils import Matrix, Vector
+    post_low, post_high = bounds_of(rigged_mesh)
+    pre_low, pre_high = (Vector(v) for v in pre_bounds)
+    post_low, post_high = Vector(post_low), Vector(post_high)
+    post_height = post_high.z - post_low.z
+    if post_height < 1e-6:
+        raise ValueError("代理重导入后高度为空")
+    scale = (pre_high.z - pre_low.z) / post_height
+    offset = pre_low - post_low * scale
+    correction = Matrix.Translation(offset) @ Matrix.Scale(scale, 4)
+    if rigged_mesh.parent is not rig:
+        raise ValueError("代理重导入后未挂在骨架下")
+    rig.matrix_world = correction @ rig.matrix_world
+    bpy.context.view_layer.update()
+    bpy.ops.object.select_all(action="DESELECT")
+    rig.select_set(True)
+    rigged_mesh.select_set(True)
+    bpy.context.view_layer.objects.active = rig
+    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+    bpy.context.view_layer.update()
+    low, high = bounds_of(rigged_mesh)
+    residual = max(abs(a - b) for pair in ((low, pre_low), (high, pre_high)) for a, b in zip(pair[0], pair[1]))
+    if not math.isfinite(residual) or residual > 1e-3:
+        raise ValueError("代理重导入后无法对齐回原模坐标系")
+    return {"scale": round(scale, 6), "offsetMeters": [round(v, 5) for v in offset], "residualMeters": round(residual, 6)}
 
 
 def transfer_weights_to_original(original, rigged_mesh, rig):
@@ -347,7 +394,11 @@ def _export_rigged(objects, rig, path):
             obj.hide_set(False)
             obj.select_set(True)
         bpy.context.view_layer.objects.active = rig
-        bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", use_selection=True, use_visible=True, export_animations=False, export_skins=True)
+        options = {"filepath": str(path), "export_format": "GLB", "use_selection": True, "export_animations": False, "export_skins": True}
+        # 线上是 Debian 自带 Blender 3.4；use_visible 只在导出器支持时传，缺了就只靠选择+隐藏
+        if "use_visible" in bpy.ops.export_scene.gltf.get_rna_type().properties:
+            options["use_visible"] = True
+        bpy.ops.export_scene.gltf(**options)
     finally:
         for obj in hidden:
             obj.hide_set(False)
@@ -453,6 +504,8 @@ def run(request_file, source_file, output_dir):
     proxy_sha = receipt["outputSha256"]
     imported = contract.import_rigged_model(out / "model-proxy.glb", "代理重导入", forward_axis="+X", target_height=settings["targetHeight"], expected_sha256=proxy_sha)
     rig, rigged_proxy = imported["rig"], imported["meshes"][0]
+    # 重导入会按骨盆点/包围盒重新归一；先把骨架精确映射回导出前代理（=原模）坐标系再转权重
+    realign = realign_reimported_rig(rig, rigged_proxy, bounds_of(source))
     transfer = transfer_weights_to_original(original, rigged_proxy, rig)
     # 代理只为求解与转权重；转完即删，避免随骨架被一起导出
     bpy.data.objects.remove(rigged_proxy, do_unlink=True)
@@ -475,7 +528,8 @@ def run(request_file, source_file, output_dir):
     receipt["vertices"] = mid_vertices
     receipt["stage4Reimport"] = check["report"]
     receipt["weightTransfer"] = {**proxy_info, "proxySha256": proxy_sha, "fullSha256": full_sha, "fullVertices": len(original.data.vertices),
-                                 "midVertices": mid_vertices, "filledVertices": transfer["filledVertices"], "originalBendMaxDeltaMeters": bends, "fullCheck": full_check}
+                                 "midVertices": mid_vertices, "filledVertices": transfer["filledVertices"], "originalBendMaxDeltaMeters": bends, "fullCheck": full_check,
+                                 "proxyRealign": realign}
     receipt["limitations"].append("骨架在低模代理上求解，权重按最近面转回原模；请检查肩肘/手指/衣摆穿插")
     write_json(out / "report.json", receipt)
     for obj in check["meshes"] + [mid]:

@@ -122,6 +122,7 @@ export const autoRigProxyInfoSchema = z
     originalUvLayers: z.number().int().nonnegative().optional(),
     decimated: z.boolean().optional(),
     remeshed: z.boolean().optional(),
+    weldedVertices: z.number().int().nonnegative().optional(),
     voxelSize: z.number().finite().optional(),
   })
   .strict();

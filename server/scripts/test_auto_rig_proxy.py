@@ -49,6 +49,23 @@ source.data.remesh_voxel_size = .007
 bpy.ops.object.voxel_remesh()
 dense = len(source.data.vertices)
 assert dense > 50_000, "测试原模必须超过 5 万顶点，当前 %d" % dense
+# 给原模一层 UV + 一个带贴图的材质：让「剥材质求解副本 / 全模重导入核材质贴图」这条路真的被走到
+while source.data.uv_layers:
+    source.data.uv_layers.remove(source.data.uv_layers[0])
+uv = source.data.uv_layers.new(name="UVMap")
+for loop in source.data.loops:
+    co = source.data.vertices[loop.vertex_index].co
+    uv.data[loop.index].uv = ((co.y + 1) / 2, co.z / 2)
+image = bpy.data.images.new("测试贴图", 64, 64)
+image.pixels = [v for _ in range(64 * 64) for v in (.8, .3, .2, 1)]
+image.pack()
+material = bpy.data.materials.new("测试材质")
+material.use_nodes = True
+tex = material.node_tree.nodes.new("ShaderNodeTexImage")
+tex.image = image
+bsdf = next(n for n in material.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
+material.node_tree.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+source.data.materials.append(material)
 # 原模朝向 +X 已是绑骨坐标；导出时 glTF 会转 Y-up，脚本按 forwardAxis 转回
 glb = out / "dense-original.glb"
 bpy.ops.export_scene.gltf(filepath=str(glb), export_format="GLB", use_selection=True, export_animations=False)
@@ -62,17 +79,16 @@ req1.write_text(json.dumps({"request": {"requestId": "00000000-0000-4000-8000-00
 r1 = runner.run(str(req1), str(glb), str(out / "inspect"))
 # glTF 导出会按法线/UV 接缝拆点，导入后顶点数 ≥ 导出前；只断言超过 5 万且走了代理
 assert r1["weightTransfer"]["enabled"] and r1["weightTransfer"]["originalVertices"] >= 50_000, r1["weightTransfer"]
+assert r1["weightTransfer"]["originalMaterials"] == 1 and r1["weightTransfer"]["originalUvLayers"] == 1, r1["weightTransfer"]
 assert 100 <= r1["vertices"] <= runner.RIG_MAX_VERTICES, r1["vertices"]
 assert (out / "inspect" / "preview-0.png").stat().st_size > 200
 
 # 3) bind：关节点用测试网格的真值（与 test_previs_auto_rig 同一套），单位已按 targetHeight 归一
-h = 1.75 / 1.75
-joints = {}
-for name, (a, b) in points.items():
-    pass
-truth = {"pelvis": (0, 0, .85), "waist": (0, 0, .95), "chest": (0, 0, 1.35), "neck": (0, 0, 1.35), "headTop": (0, 0, 1.75)}
+# 躯干点故意前移 4cm（真实模型骨盆很少正好在包围盒中心）：重导入会把骨盆归到 xy=0，脚本必须对齐回原模坐标
+TORSO_X = .04
+truth = {"pelvis": (TORSO_X, 0, .85), "waist": (TORSO_X, 0, .95), "chest": (TORSO_X, 0, 1.35), "neck": (TORSO_X, 0, 1.35), "headTop": (TORSO_X, 0, 1.75)}
 # 语义点（与 BONES 表对应）：neck 骨 chest→neck，head 骨 neck→headTop；此处 neck 点取 1.5
-truth["neck"] = (0, 0, 1.5)
+truth["neck"] = (TORSO_X, 0, 1.5)
 for side, sign in (("L", 1), ("R", -1)):
     truth.update({"shoulder" + side: (0, sign * .16, 1.35), "elbow" + side: (0, sign * .46, 1.35), "wrist" + side: (0, sign * .73, 1.35), "handTip" + side: (0, sign * .85, 1.35),
                   "hip" + side: (0, sign * .12, .85), "knee" + side: (0, sign * .12, .46), "ankle" + side: (0, sign * .12, .08), "toe" + side: (.18, sign * .12, .08)})
@@ -89,6 +105,15 @@ mid = (out / "bind" / "model.glb").read_bytes(); full = (out / "bind" / "model-f
 assert hashlib.sha256(mid).hexdigest() == r2["outputSha256"], "中模 sha 与回执不一致"
 assert hashlib.sha256(full).hexdigest() == wt["fullSha256"], "全模 sha 与回执不一致"
 assert len(full) > len(mid), "全模应比中模大"
+# 全模重导入核对：材质/UV/贴图都在；中模无材质
+fc = wt["fullCheck"]
+assert fc["materials"] == 1 and fc["uvLayers"] == 1 and fc["images"] >= 1 and fc["armatureModifier"], fc
+# 骨架对齐：重导入把骨盆归到 xy=0，脚本必须映射回原模坐标，骨盆骨头端要落回用户确认的关节点
+realign = wt["proxyRealign"]
+assert realign["residualMeters"] < 1e-3 and abs(realign["offsetMeters"][0] - TORSO_X) < .01, realign
+rig = bpy.data.objects["代理重导入_角色骨架"]  # 中模重导入的骨架会被再次归一，不是这里要核的
+pelvis_head = rig.matrix_world @ rig.data.bones["pelvis"].head_local
+assert (pelvis_head - Vector(joints["pelvis"])).length < 2e-3, (list(pelvis_head), joints["pelvis"])
 for i in range(5):
     assert (out / "bind" / ("preview-%d.png" % i)).stat().st_size > 200
 print("TEST_OK", json.dumps({"dense": dense, "proxy": wt["proxyVertices"], "mid": wt["midVertices"], "filled": wt["filledVertices"], "bends": {k: round(v, 3) for k, v in wt["originalBendMaxDeltaMeters"].items()}, "midBytes": len(mid), "fullBytes": len(full)}))
