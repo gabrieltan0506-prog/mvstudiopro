@@ -591,7 +591,9 @@ def run(request_file, source_file, output_dir):
     for _ in range(3):
         if mid_exported <= MID_MAX_VERTICES:
             break
-        mid_vertices = _decimate_to(mid, int(MID_MAX_VERTICES * len(mid.data.vertices) / mid_exported))
+        # 按「导出/网格」比例反推目标；目标不小于当前顶点时（导出计数异常）改按九折减，避免减面空转三轮后才报错
+        current = len(mid.data.vertices)
+        mid_vertices = _decimate_to(mid, min(int(MID_MAX_VERTICES * current / mid_exported), int(current * .9)))
         mid_sha, mid_exported = _export_rigged([mid], rig, out / "model.glb", export_normals=False)
     if mid_exported > MID_MAX_VERTICES:
         raise ValueError("中模导出顶点 %d 仍超过预算 %d（网格顶点 %d）" % (mid_exported, MID_MAX_VERTICES, mid_vertices))
