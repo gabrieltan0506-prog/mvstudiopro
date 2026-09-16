@@ -1,6 +1,6 @@
 import { parseNativeDeepReadJobConfirmation, type NativeDeepReadJobConfirmation } from "./manhuaNativeDeepReadJob.js";
 
-/** 只允许复用本人已经终止的同源任务，避免模型切换与旧任务并发计费。 */
+/** 只允许复用本人已经终止的同源同集任务，避免与旧任务并发计费。 */
 export function assertNativeStructuringPreviousJob(input: {
   confirmation: NativeDeepReadJobConfirmation;
   userId: string;
@@ -24,8 +24,7 @@ export function assertNativeStructuringPreviousJob(input: {
   if (current.url !== old.url || current.readModel !== old.readModel
     || current.segmentSeconds !== old.segmentSeconds || current.videoFps !== old.videoFps
     || current.standaloneSource !== old.standaloneSource || current.learnLlm !== old.learnLlm
-    || (old.structuringOnly && current.structuringEpisodeIndex !== old.structuringEpisodeIndex)
-    || current.structuringModel === old.structuringModel) {
-    throw new Error("重新整形必须使用原任务同源同集的读片参数，并切换另一整形模型");
+    || (old.structuringOnly && current.structuringEpisodeIndex !== old.structuringEpisodeIndex)) {
+    throw new Error("重新整形必须使用原任务同源同集的读片参数");
   }
 }

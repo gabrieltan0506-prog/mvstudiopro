@@ -43,22 +43,20 @@ export function parseNativeDeepReadModel(value: unknown): ManhuaNativeDeepReadMo
   throw new Error("读片模型只允许 Gemini 3.1 Pro 或 Gemini 3.8 Flash");
 }
 
-/** 0905 用户令：整形模型可选 GLM-5.3（默认）或 Qwen3.8-Max；两者互为兜底，只改首发链序。 */
-export const MANHUA_NATIVE_STRUCTURING_MODEL_OPTIONS = ["glm-5.3", "qwen3.8-max"] as const;
-export type ManhuaNativeStructuringModelId = (typeof MANHUA_NATIVE_STRUCTURING_MODEL_OPTIONS)[number];
-/** 0906 用户拍板：默认 GLM-5.3，保留 Qwen3.8-Max 手动选择和备用。 */
+/** 0916 用户拍板：整形只允许 GLM-5.3，Qwen 从该产品链下架。 */
+export const MANHUA_NATIVE_STRUCTURING_MODEL_OPTIONS = ["glm-5.3"] as const;
+export type ManhuaNativeStructuringModelId = "glm-5.3";
 export const MANHUA_NATIVE_STRUCTURING_MODEL = "glm-5.3" as const;
-export const MANHUA_NATIVE_STRUCTURING_MODEL_LABELS: Record<ManhuaNativeStructuringModelId, string> = {
-  "qwen3.8-max": "Qwen3.8-Max（北京 / 新加坡套餐分流·严格 schema，两档败回 GLM）",
+export const MANHUA_NATIVE_STRUCTURING_MODEL_LABELS: Record<(typeof MANHUA_NATIVE_STRUCTURING_MODEL_OPTIONS)[number], string> = {
   "glm-5.3": "GLM-5.3（并发批次分流：OpenRouter · Z.AI / EvoLink 各一路，不切 Qwen）",
 };
 export function parseNativeStructuringModel(value: unknown): ManhuaNativeStructuringModelId {
   if (value === undefined || value === null || value === "") return MANHUA_NATIVE_STRUCTURING_MODEL;
   const id = String(value).trim();
-  if ((MANHUA_NATIVE_STRUCTURING_MODEL_OPTIONS as readonly string[]).includes(id)) {
+  if (id === "glm-5.3") {
     return id as ManhuaNativeStructuringModelId;
   }
-  throw new Error("整形模型只允许 GLM-5.3 或 Qwen3.8-Max");
+  throw new Error("整形模型只允许 GLM-5.3");
 }
 /** 用户确认：GLM-5.3 整集结构化、系列聚合及同源探针统一使用官方支持的 high。 */
 export const MANHUA_NATIVE_GLM_REASONING_EFFORT = "high" as const;

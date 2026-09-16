@@ -189,11 +189,12 @@ export function writeManhuaLearnReadModel(userKey: string, value: ManhuaNativeDe
   }
 }
 
-/** 0905 整形开关持久化：GLM-5.3 / Qwen3.8-Max，只改首发链序。 */
+/** 0916 面板只使用 GLM-5.3；本地旧值读取时迁回 GLM。 */
 export function readManhuaLearnStructuringModel(userKey: string): ManhuaNativeStructuringModelId {
   const key = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_STRUCTURING_MODEL, userKey);
   try {
-    return parseNativeStructuringModel(key ? JSON.parse(localStorage.getItem(key) || "null") : undefined);
+    parseNativeStructuringModel(key ? JSON.parse(localStorage.getItem(key) || "null") : undefined);
+    return MANHUA_NATIVE_STRUCTURING_MODEL;
   } catch {
     return MANHUA_NATIVE_STRUCTURING_MODEL;
   }
@@ -203,7 +204,8 @@ export function writeManhuaLearnStructuringModel(userKey: string, value: ManhuaN
   const key = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_STRUCTURING_MODEL, userKey);
   if (!key) return;
   try {
-    localStorage.setItem(key, JSON.stringify(parseNativeStructuringModel(value)));
+    parseNativeStructuringModel(value);
+    localStorage.setItem(key, JSON.stringify(MANHUA_NATIVE_STRUCTURING_MODEL));
   } catch {
     /* 本地存储不可用时仍用当前选择 */
   }

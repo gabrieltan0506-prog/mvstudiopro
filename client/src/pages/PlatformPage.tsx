@@ -2633,7 +2633,7 @@ export default function PlatformPage() {
   }, [manhuaPasteTitle]);
   /** 0903 双模型：读片主模型面板可选；默认 3.1 Pro 质量基线，3.8 Flash 为低成本对照档。 */
   const [manhuaLearnReadModel, setManhuaLearnReadModel] = useState<ManhuaNativeDeepReadModelId>(MANHUA_NATIVE_DEEP_READ_MODEL);
-  /** 0905 整形开关：GLM-5.3 / Qwen3.8-Max 首发，另一家兜底 */
+  /** 0916 用户拍板：整形固定 GLM-5.3。 */
   const [manhuaLearnStructuringModel, setManhuaLearnStructuringModel] = useState<ManhuaNativeStructuringModelId>(MANHUA_NATIVE_STRUCTURING_MODEL);
   const [manhuaRestructureBusy, setManhuaRestructureBusy] = useState(false);
   const manhuaRestructureBusyRef = useRef(false);
@@ -3682,6 +3682,15 @@ export default function PlatformPage() {
   useEffect(() => {
     manhuaViralProposalsRefetchRef.current = manhuaViralProposalsQuery.refetch;
   }, [manhuaViralProposalsQuery.refetch]);
+  const manhuaLearnCachesRefreshRef = useRef(async () => {});
+  manhuaLearnCachesRefreshRef.current = async () => {
+    await Promise.all([
+      trpcUtils.manhuaViralTemplate.getProposalDetail.invalidate(),
+      trpcUtils.manhuaViralTemplate.getSeriesLearnSnapshot.invalidate(),
+      ...(ownerTemplateOptimizeAllowed
+        ? [trpcUtils.manhuaViralTemplate.listApprovedPrivate.invalidate()] : []),
+    ]);
+  };
   const nativeProposalRefreshSignatureRef = useRef("");
   useEffect(() => {
     nativeProposalRefreshSignatureRef.current = "";
@@ -3806,6 +3815,8 @@ export default function PlatformPage() {
         const refreshed = await manhuaViralProposalsRefetchRef.current();
         if (refreshed.isError) throw refreshed.error;
         if (manhuaLearnUserKeyRef.current !== requestUserKey) return listed;
+        await manhuaLearnCachesRefreshRef.current();
+        if (manhuaLearnUserKeyRef.current !== requestUserKey) return listed;
       } catch (error) {
         // job 恢复不能被待审列表的一次读取失败拖垮；不记签名，下一轮轮询继续重试。
         terminalRefreshFailed = true;
@@ -3848,7 +3859,7 @@ export default function PlatformPage() {
 
   const restructureManhuaEpisode = useCallback(async (job: ManhuaLearnServerJob, episodeIndex: number, model: ManhuaNativeStructuringModelId) => {
     if (manhuaRestructureBusyRef.current || !ownerTemplateOptimizeAllowed || !user?.id) return;
-    const label = model === "glm-5.3" ? "GLM 5.3" : "Qwen 3.8 Max";
+    const label = "GLM 5.3";
     if (!window.confirm(`使用 ${label} 重新整形第 ${episodeIndex} 集？先停止原任务，只复用已保存的读片 JSON；缺片会停止，不重新读视频。新整形单独计费，旧调用可能已有费用，结果仍需批准入库。`)) return;
     const ownerKey = manhuaLearnUserKey;
     manhuaRestructureBusyRef.current = true;
@@ -3907,7 +3918,7 @@ export default function PlatformPage() {
 
   useEffect(() => {
     const allowed = Boolean(
-      user?.id && hasSupervisorOpsAccess,
+      user?.id && (hasSupervisorOpsAccess || ownerTemplateOptimizeAllowed),
     );
     if (!allowed || trendInsightTab !== "ai_manhua") return;
     let disposed = false;
@@ -3995,7 +4006,7 @@ export default function PlatformPage() {
       document.removeEventListener("visibilitychange", onVisibilityChange);
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [refreshManhuaLearnServerJobs, hasSupervisorOpsAccess, trendInsightTab, user?.id, bumpManhuaLearnSnapshotBaseline]);
+  }, [refreshManhuaLearnServerJobs, hasSupervisorOpsAccess, ownerTemplateOptimizeAllowed, trendInsightTab, user?.id, bumpManhuaLearnSnapshotBaseline]);
   /** owner 专用完整库；先通过能力查询再请求，其他监管账号不会触发私有列表请求。 */
   const manhuaViralApprovedQuery = trpc.manhuaViralTemplate.listApprovedPrivate.useQuery(
     { compact: true },
@@ -13804,24 +13815,9 @@ export default function PlatformPage() {
                             </option>
                           ))}
                         </select>
-                        <label htmlFor="manhua-learn-structuring-model" className="text-[11px] font-semibold text-[#c9c0e6]/90">
-                          整形模型
-                        </label>
-                        <select
-                          id="manhua-learn-structuring-model"
-                          value={manhuaLearnStructuringModel}
-                          disabled={Boolean(manhuaLearnBusyKey)}
-                          onChange={(event) => {
-                            const next = event.target.value as ManhuaNativeStructuringModelId;
-                            setManhuaLearnStructuringModel(next);
-                            writeManhuaLearnStructuringModel(manhuaLearnUserKey, next);
-                          }}
-                          className="rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] text-white disabled:opacity-45"
-                        >
-                          {MANHUA_NATIVE_STRUCTURING_MODEL_OPTIONS.map((model) => (
-                            <option key={model} value={model}>{MANHUA_NATIVE_STRUCTURING_MODEL_LABELS[model]}</option>
-                          ))}
-                        </select>
+                        <span className="rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] text-white">
+                          整形模型：{MANHUA_NATIVE_STRUCTURING_MODEL_LABELS["glm-5.3"]}
+                        </span>
                         <span className="rounded-md border border-[#8cefff]/20 bg-black/25 px-2 py-1 text-[10px] font-semibold text-[#8cefff]">
                           学习模型：{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[manhuaLearnReadModel]} · 原生视频精读
                           {manhuaLearnReadModel !== MANHUA_NATIVE_DEEP_READ_MODEL ? " · 对照版单独成剧，两版各审后留一版入库" : ""}
