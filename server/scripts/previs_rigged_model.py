@@ -13,6 +13,8 @@ import struct
 MAX_GLB_BYTES = 64 * 1024 * 1024
 MAX_JSON_BYTES = 16 * 1024 * 1024
 MAX_VERTICES = 250_000
+# 0916 低模绑骨：原模只做检查与权重转移目标，允许更大预算（Tripo 标准档 74 万顶点）
+SOURCE_MAX_VERTICES = 2_000_000
 MAX_ACCESSOR_COMPONENTS = 8_000_000
 MAX_IMAGE_PIXELS = 16_777_216
 MAX_TOTAL_IMAGE_PIXELS = 33_554_432
@@ -147,8 +149,10 @@ def _image_dimensions(data, mime):
     raise ValueError("内嵌图片仅支持PNG/JPEG，压缩扩展格式关闭")
 
 
-def _validate_resources(doc, binary, *, unrigged=False):
+def _validate_resources(doc, binary, *, unrigged=False, max_vertices=None):
     """所有元数据、解码规模和实际索引/蒙皮值须先通过，之后才允许调用Blender。"""
+    limit_vertices = max_vertices or MAX_VERTICES
+    limit_components = MAX_ACCESSOR_COMPONENTS * limit_vertices // MAX_VERTICES
     arrays = {name: doc.get(name, []) for name in ("buffers", "bufferViews", "accessors", "nodes", "meshes", "skins", "images", "textures", "materials", "samplers", "scenes", "animations")}
     for name, rows in arrays.items():
         if not isinstance(rows, list) or len(rows) > 4096 or any(not isinstance(row, dict) for row in rows):
@@ -214,11 +218,11 @@ def _validate_resources(doc, binary, *, unrigged=False):
         component, kind = accessor.get("componentType"), accessor.get("type")
         if type(component) is not int or component not in types or kind not in widths or (kind == "MAT4" and component != 5126):
             raise ValueError("accessor分量类型不支持")
-        count = _integer(accessor.get("count"), 1, MAX_VERTICES * 6, "accessor数量")
+        count = _integer(accessor.get("count"), 1, limit_vertices * 6, "accessor数量")
         width = widths[kind]
         budget += count * width
-        if budget > MAX_ACCESSOR_COMPONENTS:
-            raise ValueError("accessor展开总分量超过800万预算")
+        if budget > limit_components:
+            raise ValueError("accessor展开总分量超过预算")
         if type(accessor.get("normalized", False)) is not bool or (accessor.get("normalized") and component not in (5120, 5121, 5122, 5123)):
             raise ValueError("accessor归一化类型无效")
         dense = layout(accessor["bufferView"], accessor.get("byteOffset", 0), count, width, component) if "bufferView" in accessor else None
@@ -335,7 +339,7 @@ def _validate_resources(doc, binary, *, unrigged=False):
                 for index in target.values():
                     rows(index, {"VEC3"}, {5126}, count)
                     decoded_count += count * 3
-            if decoded_count > MAX_ACCESSOR_COMPONENTS or index_count > MAX_VERTICES * 6:
+            if decoded_count > limit_components or index_count > limit_vertices * 6:
                 raise ValueError("网格实例展开分量或indices超过预算")
             if "material" in primitive:
                 _integer(primitive["material"], 0, len(arrays["materials"]) - 1, "material")
@@ -429,9 +433,9 @@ def _validate_resources(doc, binary, *, unrigged=False):
             if any(not math.isfinite(value) or abs(value) > 1e6 for row in matrix for value in row):
                 raise ValueError("节点合成世界变换超过有限数值预算")
             world_matrices[current] = matrix
-    if not 0 < total <= MAX_VERTICES:
-        raise ValueError("实例总顶点超过250000预算或为空")
-    if instance_components > MAX_ACCESSOR_COMPONENTS or instance_indices > MAX_VERTICES * 6:
+    if not 0 < total <= limit_vertices:
+        raise ValueError("实例总顶点超过预算或为空（实例总顶点 %d，预算 %d，网格数 %d）" % (total, limit_vertices, len(meshes)))
+    if instance_components > limit_components or instance_indices > limit_vertices * 6:
         raise ValueError("实例展开分量或indices超过预算")
     if len(used_meshes) != len(meshes):
         raise ValueError("存在未实例化网格")
@@ -490,7 +494,7 @@ def _validate_resources(doc, binary, *, unrigged=False):
             "imagePixels": pixels, "morphNames": sorted(set(morph_names))}
 
 
-def inspect_glb(path, expected_sha256=None, *, unrigged=False):
+def inspect_glb(path, expected_sha256=None, *, unrigged=False, max_vertices=None):
     """读取 GLB 元数据；在导入器触碰它前禁止外链和不受支持的压缩/脚本扩展。"""
     source = Path(path)
     size = source.stat().st_size
@@ -540,7 +544,7 @@ def inspect_glb(path, expected_sha256=None, *, unrigged=False):
     if not isinstance(doc, dict) or not isinstance(doc.get("asset"), dict) or doc["asset"].get("version") != "2.0":
         raise ValueError("角色GLB元数据无效")
     try:
-        resources = _validate_resources(doc, binary, unrigged=unrigged)
+        resources = _validate_resources(doc, binary, unrigged=unrigged, max_vertices=max_vertices)
     except (TypeError, KeyError, AttributeError, OverflowError, RecursionError) as error:
         raise ValueError("GLB资源元数据结构无效") from error
     return {"sha256": digest, "bytes": size, **resources, "meshes": len(doc["meshes"]),

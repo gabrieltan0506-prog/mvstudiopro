@@ -54,6 +54,14 @@ RUN xvfb-run -a blender --background --factory-startup --disable-autoexec --thre
     --python server/scripts/test_previs_workbench_appearance.py -- /tmp/previs-appearance-build-smoke \
     --legacy-fixture /tmp/previs-gltf-build-smoke/TEST_ONLY-rigged-with-morph.glb
 
+# 0916 低模绑骨→权重转移→原模导出：在镜像自带的 Blender 上真实跑一遍（合成 >5 万顶点人体，不用用户资产）。
+# 含预览渲染，沿用虚拟显示；异常即构建失败。只证明本容器里合成模型链路通过，不证明真模/材质/内存/形变质量。
+RUN blender --background --factory-startup --version | head -n 1 \
+ && xvfb-run -a blender --background --factory-startup --disable-autoexec --threads 1 --python-exit-code 1 \
+    --python server/scripts/test_auto_rig_proxy.py -- /tmp/auto-rig-build-smoke \
+    | tee /tmp/auto-rig-build-smoke.log \
+ && grep -q "^TEST_OK" /tmp/auto-rig-build-smoke.log
+
 # 跳过 postinstall 脚本（youtube-dl-exec 不再自行下载二进制）
 # 并告知 youtube-dl-exec 使用系统 yt-dlp
 RUN pnpm install --ignore-scripts
