@@ -1403,6 +1403,22 @@ export function nativeDeepReadStructuringGatewayOrder(
   return odd ? ["evolink_glm", "openrouter"] : ["openrouter", "evolink_glm"];
 }
 
+/** 整形分组合同：四片为 2+2；其余按原顺序每五片一批。 */
+export function nativeDeepReadStructuringGroups(segmentCount: number): number[][] {
+  if (!Number.isInteger(segmentCount) || segmentCount <= 0) {
+    throw new Error(`整形分片数必须是正整数，收到 ${segmentCount}`);
+  }
+  if (segmentCount === 4) return [[0, 1], [2, 3]];
+  const groups: number[][] = [];
+  for (let start = 0; start < segmentCount; start += 5) {
+    groups.push(Array.from(
+      { length: Math.min(5, segmentCount - start) },
+      (_, offset) => start + offset,
+    ));
+  }
+  return groups;
+}
+
 /** 实际出站Schema：重点、简写、广告各自必填；时间与内容有效性仍由程序验收。 */
 export function buildNativeDeepReadResponseSchema(context: NativeDeepReadSegmentContext): Record<string, unknown> {
   return buildNativeDeepReadResponseSchemaVersion(context, false, false, false);
@@ -6669,11 +6685,11 @@ async function executeNativeDeepReadBatch(
         });
       };
       const structuredEpisodeRaw = async (): Promise<Record<string, unknown>> => {
-        // 0905 用户改回 4：5 片一批单次输出 120K 贴 131K 上限、几万字 JSON 更容易丢符号；
-        // 4 片一批输出 ≈90K 更稳。批次数＝片数÷4 向上取整后均分：8→4+4、9→3+3+3、29→8 组（5 个 4 + 3 个 3）
-        const maxRawSegmentsPerBatch = 4;
+        // 0916 用户复核：四片 2+2、九片 5+4；超过九片仍每批最多五片。
+        // 两个固定 worker 分别由 OpenRouter / EvoLink 首发，谁先返回谁立即领取下一批，不等另一边。
         const allSegmentIndexes = episode.segments.map((_, index) => index);
-        if (segmentCount <= maxRawSegmentsPerBatch) {
+        const groups = nativeDeepReadStructuringGroups(segmentCount);
+        if (groups.length === 1) {
           const cached = await readCachedStructuring(allSegmentIndexes, glmStructuringInputs, "最终整形");
           if (cached) return unwrapNativeDeepReadStructuredAnswerEnvelope(cached);
           return structureBatchWithLockRetry({
@@ -6695,50 +6711,54 @@ async function executeNativeDeepReadBatch(
           });
         }
 
-        // 0905 用户令：批次要均分，不是「前面塞满、尾巴一小撮」——8 片＝4+4、9 片＝3+3+3、29 片＝5×4+3×3，
-        // 各批并发才真正分担；批次数按每批上限（4）向上取整决定。
-        const groupCount = Math.ceil(segmentCount / maxRawSegmentsPerBatch);
-        const baseSize = Math.floor(segmentCount / groupCount);
-        const extra = segmentCount % groupCount;
-        const groups: number[][] = [];
-        for (let g = 0, start = 0; g < groupCount; g += 1) {
-          const size = baseSize + (g < extra ? 1 : 0);
-          groups.push(Array.from({ length: size }, (_, offset) => start + offset));
-          start += size;
-        }
-        const groupRows = await Promise.all(groups.map(async (segmentIndexes, batchOrdinal) => {
-          // 单片无需再做一次中间GLM；直接作为一张已结构化分段卡进入确定性拼接。
-          if (segmentIndexes.length === 1 && !selectedSegmentCandidates.has(segmentIndexes[0]!)) return completeRawSegments[segmentIndexes[0]!]!;
-          const groupInputs = segmentIndexes.map((index) => completeRawSegments[index]!);
-          const annotatedRows = annotateSegmentRows();
-          const groupCanonicalRows = segmentIndexes.map((index) => annotatedRows[index]!);
-          const cached = await readCachedStructuring(
-            segmentIndexes,
-            groupInputs,
-            `整形批次 ${segmentIndexes.join(",")} `,
-          );
-          if (cached) return cached;
-          const groupSegments = segmentIndexes.map((index) => episode.segments[index]!);
-          return structureBatchWithLockRetry({
-            prompt: buildNativeDeepReadGlmStructuringPrompt({
-              episodeIndex: episode.episodeIndex,
-              durationSec: episode.sourceDurationSec,
-              segments: groupSegments,
+        const groupRows: Record<string, unknown>[] = new Array(groups.length);
+        let nextGroupIndex = 0;
+        const runStructuringLane = async (laneOrdinal: number): Promise<void> => {
+          while (true) {
+            // JS 同步取号；任何 await 之前先占住批次，两个 worker 不会领取同一组。
+            const groupIndex = nextGroupIndex;
+            nextGroupIndex += 1;
+            if (groupIndex >= groups.length) return;
+            const segmentIndexes = groups[groupIndex]!;
+            const groupInputs = segmentIndexes.map((index) => completeRawSegments[index]!);
+            const annotatedRows = annotateSegmentRows();
+            const groupCanonicalRows = segmentIndexes.map((index) => annotatedRows[index]!);
+            const cached = await readCachedStructuring(
               segmentIndexes,
-              hasAudio,
-              rawSegments: groupInputs,
-              coverageStartSec: groupSegments[0]!.startSec,
-              coverageEndSec: groupSegments.at(-1)!.endSec,
-              scopeZh: "批次",
-            }),
-            videoCount: segmentIndexes.length,
-            segmentIndexes,
-            rows: groupInputs,
-            fallbackRows: groupCanonicalRows,
-            labelZh: `第${episode.episodeIndex}集第${segmentIndexes[0]! + 1}—${segmentIndexes.at(-1)! + 1}片批次整形`,
-            batchOrdinal,
-          });
-        }));
+              groupInputs,
+              `整形批次 ${segmentIndexes.join(",")} `,
+            );
+            if (cached) {
+              groupRows[groupIndex] = cached;
+              continue;
+            }
+            const groupSegments = segmentIndexes.map((index) => episode.segments[index]!);
+            groupRows[groupIndex] = await structureBatchWithLockRetry({
+              prompt: buildNativeDeepReadGlmStructuringPrompt({
+                episodeIndex: episode.episodeIndex,
+                durationSec: episode.sourceDurationSec,
+                segments: groupSegments,
+                segmentIndexes,
+                hasAudio,
+                rawSegments: groupInputs,
+                coverageStartSec: groupSegments[0]!.startSec,
+                coverageEndSec: groupSegments.at(-1)!.endSec,
+                scopeZh: "批次",
+              }),
+              videoCount: segmentIndexes.length,
+              segmentIndexes,
+              rows: groupInputs,
+              fallbackRows: groupCanonicalRows,
+              labelZh: `第${episode.episodeIndex}集第${segmentIndexes[0]! + 1}—${segmentIndexes.at(-1)! + 1}片批次整形`,
+              // 路由归属跟 worker 固定，而非跟批次编号轮换：先返回的路继续领下一批。
+              batchOrdinal: laneOrdinal,
+            });
+          }
+        };
+        await Promise.all(Array.from(
+          { length: Math.min(2, groups.length) },
+          (_, laneOrdinal) => runStructuringLane(laneOrdinal),
+        ));
         // 0905 用户令「不归并，分上下集」：批次各自整形完，按秒位确定性拼成整集卡，
         // 省掉第三次 GLM（实测归并一发 49 分钟、输入 212K）。批次边界的重复镜头由
         // deterministicallyMerge 的「同秒位取信息更全」规则收口，零模型调用。

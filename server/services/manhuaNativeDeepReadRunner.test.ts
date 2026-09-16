@@ -3156,6 +3156,119 @@ describe("Vertex 主线：每段一次调用（不再多段合包）", () => {
 });
 
 describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", () => {
+  it("四片固定拆成2+2并发，两批由OpenRouter与EvoLink分别首发，整集只做本地确定性拼接", async () => {
+    const segments = Array.from({ length: 4 }, (_, index) => ({
+      startSec: index * 60,
+      endSec: (index + 1) * 60,
+    }));
+    const base = makeGlmStructuringStub();
+    let active = 0;
+    let maxActive = 0;
+    const invokeGlmStructuring = vi.fn(async (
+      prompt: { system: string; user: string },
+      _signal: unknown,
+      context: { gatewayOrder?: readonly string[] },
+    ) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const result = await base(prompt);
+      active -= 1;
+      return { ...result, gateway: context.gatewayOrder?.[0] ?? "openrouter" };
+    });
+    const deps = makeRunnerDeps({
+      postVertex: makeSuccessfulEpisodePostVertex(segments) as never,
+      invokeGlmStructuring: invokeGlmStructuring as never,
+    });
+
+    const result = await runManhuaNativeDeepReadBatch({
+      episodes: [{
+        episodeIndex: 1,
+        resolveNodes: async () => [],
+        segments,
+        sourceDurationSec: 240,
+        cacheSourceDigest: "4".repeat(64),
+      }],
+      segmentCacheSeriesKey: "four_segments_two_lanes",
+    }, deps);
+
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
+    expect(invokeGlmStructuring.mock.calls.map(([prompt]) =>
+      readRawSegmentsFromGlmPrompt((prompt as { user: string }).user).map((row) =>
+        (row.shots as Array<{ startSec: number }>)[0]!.startSec))).toEqual([[0, 60], [120, 180]]);
+    expect(invokeGlmStructuring.mock.calls.map((call) => call[2]?.gatewayOrder)).toEqual([
+      ["openrouter", "evolink_glm"],
+      ["evolink_glm", "openrouter"],
+    ]);
+    expect(maxActive).toBe(2);
+    expect(result.episodes[0]!.result.glmEvidence).toBeUndefined();
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(2);
+  });
+
+  it("整形分组遵守四片2+2、九片5+4，超过九片继续按五片切批", async () => {
+    const { nativeDeepReadStructuringGroups } = await import("./manhuaNativeDeepReadRunner");
+    expect(nativeDeepReadStructuringGroups(1)).toEqual([[0]]);
+    expect(nativeDeepReadStructuringGroups(3)).toEqual([[0, 1, 2]]);
+    expect(nativeDeepReadStructuringGroups(4)).toEqual([[0, 1], [2, 3]]);
+    expect(nativeDeepReadStructuringGroups(5)).toEqual([[0, 1, 2, 3, 4]]);
+    expect(nativeDeepReadStructuringGroups(9)).toEqual([[0, 1, 2, 3, 4], [5, 6, 7, 8]]);
+    expect(nativeDeepReadStructuringGroups(13)).toEqual([
+      [0, 1, 2, 3, 4],
+      [5, 6, 7, 8, 9],
+      [10, 11, 12],
+    ]);
+  });
+
+  it("超过九片只维持两路，先返回的EvoLink立即领取剩余批次且不等待OpenRouter", async () => {
+    const segments = Array.from({ length: 13 }, (_, index) => ({
+      startSec: index * 60,
+      endSec: (index + 1) * 60,
+    }));
+    const base = makeGlmStructuringStub();
+    const started: Array<{ firstStart: number; route: string }> = [];
+    let active = 0;
+    let maxActive = 0;
+    const invokeGlmStructuring = vi.fn(async (
+      prompt: { system: string; user: string },
+      _signal: unknown,
+      context: { gatewayOrder?: readonly string[] },
+    ) => {
+      const rows = readRawSegmentsFromGlmPrompt(prompt.user);
+      const firstStart = (rows[0]!.shots as Array<{ startSec: number }>)[0]!.startSec;
+      const route = String(context.gatewayOrder?.[0]);
+      started.push({ firstStart, route });
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      // 第一批故意慢、第二批故意快；第三批必须由第二路返回后立即领取。
+      await new Promise((resolve) => setTimeout(resolve, firstStart === 0 ? 40 : 5));
+      const result = await base(prompt);
+      active -= 1;
+      return { ...result, gateway: route };
+    });
+    const deps = makeRunnerDeps({
+      postVertex: makeSuccessfulEpisodePostVertex(segments) as never,
+      invokeGlmStructuring: invokeGlmStructuring as never,
+    });
+
+    await runManhuaNativeDeepReadBatch({
+      episodes: [{
+        episodeIndex: 1,
+        resolveNodes: async () => [],
+        segments,
+        sourceDurationSec: 780,
+        cacheSourceDigest: "d".repeat(64),
+      }],
+      segmentCacheSeriesKey: "dynamic_two_lane_queue",
+    }, deps);
+
+    expect(maxActive).toBe(2);
+    expect(started).toEqual([
+      { firstStart: 0, route: "openrouter" },
+      { firstStart: 300, route: "evolink_glm" },
+      { firstStart: 600, route: "evolink_glm" },
+    ]);
+  });
+
   it("Vertex 主线全合规也走 GLM，输入含本集全部分段卡且一份不丢", async () => {
     const invokeGlmStructuring = makeGlmStructuringStub();
     const deps = makeRunnerDeps({
@@ -3172,7 +3285,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(prompt.system).toContain("记录去重、信息取并集");
   });
 
-  it("九片先按4/4/1整形成三张批次卡，再只用三张批次卡做最终整集合并", async () => {
+  it("九片按5+4并发整形成两张批次卡，再由代码确定性拼成整集", async () => {
     const segments = Array.from({ length: 9 }, (_, index) => ({
       startSec: index * 60,
       endSec: (index + 1) * 60,
@@ -3193,17 +3306,16 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentCacheSeriesKey: "hierarchy_9_segments",
     }, deps);
 
-    // 0905 用户令「不归并、每批 4 片、批次均分」：9 片＝3+3+3 三批各整形一次，整集由代码确定性拼接
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(3);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
     const sent = invokeGlmStructuring.mock.calls.map(([prompt]) =>
       readRawSegmentsFromGlmPrompt((prompt as { user: string }).user));
-    expect(sent.map((rows) => rows.length)).toEqual([3, 3, 3]);
+    expect(sent.map((rows) => rows.length)).toEqual([5, 4]);
     expect((invokeGlmStructuring.mock.calls[0]![0] as { user: string }).user)
       .toContain('"segments":[{"segmentIndex":0');
     expect((invokeGlmStructuring.mock.calls[1]![0] as { user: string }).user)
-      .toContain('"segments":[{"segmentIndex":3');
-    expect(deps.readStructuredBatchCache).toHaveBeenCalledTimes(3);
-    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(3);
+      .toContain('"segments":[{"segmentIndex":5');
+    expect(deps.readStructuredBatchCache).toHaveBeenCalledTimes(2);
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(2);
     expect(result.episodes[0]!.result.segmentCount).toBe(9);
     expect(result.episodes[0]!.result.attemptedSegments).toBe(9);
   });
@@ -3216,7 +3328,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     const readStructuredBatchCache = vi.fn(async (input: {
       segmentIndexes: readonly number[];
       rawSegments: ReadonlyArray<Record<string, unknown>>;
-    }) => JSON.stringify(input.segmentIndexes) === JSON.stringify([0, 1, 2]) ? {
+    }) => JSON.stringify(input.segmentIndexes) === JSON.stringify([0, 1, 2, 3, 4]) ? {
       schemaVersion: 1 as const,
       frozenContractSha256: "f".repeat(64),
       seriesKey: "legacy_answer_envelope",
@@ -3264,16 +3376,15 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       onModelReceipt: (receipt) => { receipts.push(receipt); },
     }, deps);
 
-    // 0905：每批 4 片均分，5 片＝[0..2]+[3,4]；前批命中缓存，后批跑一次
-    expect(readStructuredBatchCache).toHaveBeenCalledTimes(2);
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
-    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(1);
+    expect(readStructuredBatchCache).toHaveBeenCalledTimes(1);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(0);
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(0);
     expect(receipts.filter((row) => row.route === NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE)).toEqual([]);
     expect(result.episodes[0]!.result.beatGrid).toHaveLength(60);
     expect(result.episodes[0]!.result.segmentCount).toBe(5);
   });
 
-  it("九片3+3+3的每层GLM都返回answer外壳时仍生成完整整集卡", async () => {
+  it("九片5+4的两路GLM都返回answer外壳时仍生成完整整集卡", async () => {
     const segments = Array.from({ length: 9 }, (_, index) => ({
       startSec: index * 60,
       endSec: (index + 1) * 60,
@@ -3299,10 +3410,8 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentCacheSeriesKey: "answer_envelope_9_segments",
     }, deps);
 
-    // 0905：不再有第三次归并，5 片＝两个批次，各整形一次；整集由代码确定性拼接
-    // 0905：每批 4 片均分 → 9 片＝3+3+3 三批
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(3);
-    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(3);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(2);
     expect(result.episodes[0]!.result.beatGrid).toHaveLength(108);
     expect(result.episodes[0]!.result.segmentCount).toBe(9);
   });
@@ -3311,15 +3420,15 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     const segments = Array.from({ length: 9 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
     const base = makeGlmStructuringStub();
     const seen: Array<{ segs: string; callId?: string; gatewayOrder?: readonly string[]; temperature?: number }> = [];
-    let badLeft = 2; // 批次 3,4,5：前两次（同档两次）交坏卷，第三次（换档）才交好卷
+    let badLeft = 2; // 第二路 5,6,7,8：前两次交坏卷，第三次换档才交好卷
     const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }, _signal: unknown, context: { callId?: string; gatewayOrder?: readonly string[]; temperature?: number }) => {
       const result = await base(prompt);
       const rows = readRawSegmentsFromGlmPrompt(prompt.user);
       const firstStart = Math.min(...rows.flatMap((r) => ((r as { shots?: Array<{ startSec: number }> }).shots || []).map((s) => Number(s.startSec))));
-      const segs = firstStart >= 180 && firstStart < 360 ? "3,4,5" : firstStart < 180 ? "0,1,2" : "6,7,8";
+      const segs = firstStart < 300 ? "0,1,2,3,4" : "5,6,7,8";
       seen.push({ segs, callId: context?.callId, gatewayOrder: context?.gatewayOrder, temperature: context?.temperature });
       const gateway = context?.gatewayOrder?.[0] ?? "plan_bj_qwen";
-      if (segs === "3,4,5" && badLeft > 0) {
+      if (segs === "5,6,7,8" && badLeft > 0) {
         badLeft -= 1;
         const shots = (result.raw.shots as Array<Record<string, unknown>>).map((s, i) => i === 0 ? { ...s, hintZh: "被模型改写过的观察" } : s);
         return { ...result, gateway, raw: { ...result.raw, shots } };
@@ -3336,9 +3445,9 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentCacheSeriesKey: "lock_retry_9_segments",
       onModelReceipt: (receipt) => { receipts.push(receipt as unknown as Record<string, unknown>); },
     }, deps);
-    // 三批：0,1,2 与 6,7,8 各 1 次；3,4,5 = 原发 + 同档重试 + 换档 = 3 次
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(5);
-    const mid = seen.filter((row) => row.segs === "3,4,5");
+    // 第一批 1 次；第二批原发 + 同档重试 + 换档共 3 次。
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(4);
+    const mid = seen.filter((row) => row.segs === "5,6,7,8");
     expect(mid).toHaveLength(3);
     expect(mid[0]!.callId).not.toMatch(/-lockretry/);
     expect(mid[1]!.callId).toMatch(/-lockretry1$/);
@@ -3347,7 +3456,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(mid[1]!.gatewayOrder?.[0]).toBe(mid[0]!.gatewayOrder?.[0]);
     expect(mid[2]!.gatewayOrder?.[0]).not.toBe(mid[0]!.gatewayOrder?.[0]);
     expect(mid[2]!.gatewayOrder?.at(-1)).toBe(mid[0]!.gatewayOrder?.[0]);
-    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(3);
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(2);
     const retryReceipts = receipts.filter((row) => row.route === "structuring_retry_pending");
     expect(retryReceipts).toHaveLength(2);
     expect(String(retryReceipts[0]!.model)).toContain("同档降温到 0.75 再试一次");
@@ -3498,8 +3607,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentIndexes: readonly number[];
       rawSegments: ReadonlyArray<Record<string, unknown>>;
     }) => (
-      JSON.stringify(input.segmentIndexes) === JSON.stringify([0, 1, 2])
-      || JSON.stringify(input.segmentIndexes) === JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7, 8])
+      JSON.stringify(input.segmentIndexes) === JSON.stringify([0, 1, 2, 3, 4])
     ) ? {
           schemaVersion: 1 as const,
           frozenContractSha256: "f".repeat(64),
@@ -3515,13 +3623,6 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
           outputTokens: 1,
           reasoningTokens: 1,
           costUsd: 0.01,
-          ...(input.segmentIndexes.length === 9 ? { evidence: {
-            callId: "cached-final-call",
-            request: { objectName: "cached-request.json", bytes: 1, sha256: "a".repeat(64) },
-            raw: [],
-            parsed: { objectName: "cached-parsed.json", bytes: 1, sha256: "b".repeat(64) },
-            selectedRawObjectName: "cached-raw.json",
-          } } : {}),
           savedAtIso: "2026-09-01T00:00:00.000Z",
           source: "manual_import" as const,
         }
@@ -3543,12 +3644,12 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentCacheSeriesKey: "hierarchy_cache_hit",
     }, deps);
 
-    // 0905：没有最终归并；9 片＝[0..2]+[3..5]+[6..8]，只有 [0..2] 命中缓存，另两批各跑一次
-    expect(readStructuredBatchCache).toHaveBeenCalledTimes(3);
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
+    // 9 片＝[0..4]+[5..8]；第一批命中缓存，只补第二批。
+    expect(readStructuredBatchCache).toHaveBeenCalledTimes(2);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
     expect(invokeGlmStructuring.mock.calls.map(([prompt]) =>
-      readRawSegmentsFromGlmPrompt((prompt as { user: string }).user).length)).toEqual([3, 3]);
-    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(2);
+      readRawSegmentsFromGlmPrompt((prompt as { user: string }).user).length)).toEqual([4]);
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(1);
     // 没有整集级 GLM 证据：报告导出必须走分段卡拼装，不许指向某一半批次卡
     expect(result.episodes[0]!.result.glmEvidence).toBeUndefined();
   });
@@ -5286,7 +5387,7 @@ describe("0906 摘要必填跨路径回归", () => {
     expect(createHash("sha256").update(JSON.stringify(previous)).digest("hex"))
       .toBe("188453ff58a8cd15464da434a0664f15bde6e57602ca9f4cd9d05b65e1b0be75");
   });
-  it("九片分批整形各自漏栏，逐批恢复完整两栏且只有原定三次整形", async () => {
+  it("九片5+4整形各自漏栏，逐批恢复完整两栏且只有两次整形", async () => {
     const segments = Array.from({ length: 9 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
     const base = makeGlmStructuringStub();
     const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => {
@@ -5299,7 +5400,7 @@ describe("0906 摘要必填跨路径回归", () => {
     const result = await runManhuaNativeDeepReadBatch({ episodes: [{ ...twoSegmentEpisode, segments, sourceDurationSec: 540 }] }, deps);
     expect(result.episodes[0]!.result.reusableZh).toContain("开场即冲突的通用做法");
     expect(result.episodes[0]!.result.genPromptHintZh).toContain("景别递进+顶光");
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(3);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
     expect(deps.postVertex).toHaveBeenCalledTimes(9);
   });
   it("缺栏整形缓存直接从对应原稿恢复，不删除缓存、不重整形", async () => {
