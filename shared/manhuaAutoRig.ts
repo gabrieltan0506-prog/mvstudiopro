@@ -140,6 +140,17 @@ export const autoRigInspectionSchema = z
     limitations: z.array(z.string()).min(1).max(10),
     /** 0916 低模绑骨：原模超限时的代理信息（vertices 记的是代理顶点数） */
     weightTransfer: autoRigProxyInfoSchema.optional(),
+    /** 0916 朝向自检：forwardAxis 选反 180° 时合同检查全过但左右骨互换；这里只警告不阻断 */
+    orientationCheck: z
+      .object({
+        suspect: z.boolean(),
+        feetForwardMeters: z.number().finite(),
+        depthMeters: z.number().finite().nonnegative(),
+        widthMeters: z.number().finite().nonnegative(),
+        reasons: z.array(z.string()).max(4),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export type AutoRigInspection = z.infer<typeof autoRigInspectionSchema>;

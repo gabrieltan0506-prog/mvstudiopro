@@ -405,6 +405,33 @@ def _export_rigged(objects, rig, path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def orientation_check(obj):
+    """
+    廉价朝向自检（不改任何阈值、不阻断）：归一后人物应面朝 +X。
+    - 选错 90°（如 Tripo 实际 +X 却选 -Y）：手臂落到 X 轴，contract 的展臂检查会明确报错；
+    - 选错 180°（选 -X）：所有合同检查都能过，但左右骨互换、脚骨朝后——**静默错骨**。
+    用「脚部质心是否在躯干质心前方（脚尖朝 +X）」与「深度是否小于宽度（展臂在 Y 轴）」给出疑似警告。
+    """
+    low, high = bounds_of(obj)
+    height = max(1e-6, high[2] - low[2])
+    feet, torso = [], []
+    for vertex in obj.data.vertices:
+        z = (vertex.co.z - low[2]) / height
+        if z < .08:
+            feet.append(vertex.co.x)
+        elif .4 <= z <= .6:
+            torso.append(vertex.co.x)
+    feet_forward = (sum(feet) / len(feet) - sum(torso) / len(torso)) if feet and torso else 0.0
+    depth, width = high[0] - low[0], high[1] - low[1]
+    reasons = []
+    if feet_forward < 0:
+        reasons.append("脚部质心在躯干后方，人物可能背对 +X（前向轴选反 180°）")
+    if depth >= width:
+        reasons.append("深度不小于宽度，展臂可能落在 X 轴（前向轴选错 90°）")
+    return {"suspect": bool(reasons), "feetForwardMeters": round(feet_forward, 4),
+            "depthMeters": round(depth, 4), "widthMeters": round(width, 4), "reasons": reasons}
+
+
 def suggestions(bounds, pose):
     """比例建议不是人体识别，必须由用户对照前/侧视图逐点确认。"""
     low, high = bounds
@@ -484,6 +511,9 @@ def run(request_file, source_file, output_dir):
                   "limitations": ["初始点是比例建议，必须对照模型人工校正", "仅封闭连通A/T人体，不含眼骨和表情", "本次合并%d个数值重合接缝点，原云模型保持不变" % merged]}
         result["limitations"].append("骨架在无材质的独立求解副本上求解（%d→%d 顶点），权重转回原模；原模字节、材质、UV、贴图不动" % (proxy_info["originalVertices"], proxy_info["proxyVertices"]))
         result["weightTransfer"] = proxy_info
+        result["orientationCheck"] = orientation_check(source)
+        if result["orientationCheck"]["suspect"]:
+            result["limitations"].append("疑似前向轴不符：" + "；".join(result["orientationCheck"]["reasons"]) + "。请核对正面预览，必要时改 forwardAxis 重新检查")
         result["joints"] = suggestions(result["bounds"], settings["pose"])
         write_json(out / "report.json", result)
         bpy.ops.object.select_all(action="DESELECT")

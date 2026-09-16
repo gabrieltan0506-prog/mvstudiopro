@@ -82,6 +82,15 @@ assert r1["weightTransfer"]["enabled"] and r1["weightTransfer"]["originalVertice
 assert r1["weightTransfer"]["originalMaterials"] == 1 and r1["weightTransfer"]["originalUvLayers"] == 1, r1["weightTransfer"]
 assert 100 <= r1["vertices"] <= runner.RIG_MAX_VERTICES, r1["vertices"]
 assert (out / "inspect" / "preview-0.png").stat().st_size > 200
+oc = r1["orientationCheck"]
+assert not oc["suspect"] and oc["feetForwardMeters"] > 0 and oc["depthMeters"] < oc["widthMeters"], oc
+# 朝向自检：同一模型把 forwardAxis 选反 180°（-X），合同检查全部能过，但必须给出「疑似朝向不符」警告
+(out / "inspect-wrong").mkdir(exist_ok=True)
+req_wrong = out / "req-wrong.json"
+req_wrong.write_text(json.dumps({"request": {"requestId": "00000000-0000-4000-8000-0000000000a3", "assetRef": "test", "sourceJobId": "m3d_test", "settings": {**settings, "forwardAxis": "-X"}, "stage": "inspect"}, "sourceSha256": sha}))
+r_wrong = runner.run(str(req_wrong), str(glb), str(out / "inspect-wrong"))
+assert r_wrong["orientationCheck"]["suspect"] and r_wrong["orientationCheck"]["feetForwardMeters"] < 0, r_wrong["orientationCheck"]
+assert any("疑似前向轴" in line for line in r_wrong["limitations"]), r_wrong["limitations"]
 
 # 3) bind：关节点用测试网格的真值（与 test_previs_auto_rig 同一套），单位已按 targetHeight 归一
 # 躯干点故意前移 4cm（真实模型骨盆很少正好在包围盒中心）：重导入会把骨盆归到 xy=0，脚本必须对齐回原模坐标
