@@ -43,14 +43,27 @@ def _rna_values(value):
     return result
 
 
+def _corner_normals(mesh):
+    """
+    角法线：4.1+ 用 mesh.corner_normals（始终已算好）；3.4/3.6 只有 loop.normal，
+    而它在调用 calc_normals_split() 之前是**未初始化的缓存**——同一份网格在两个进程里可能读出不同值。
+    检查与绑定是两次独立 Blender 进程，摘要一旦把这种值算进去，绑定必被判「模型或检查设置已经变化」。
+    所以旧版必须先显式算一次再读。
+    """
+    if hasattr(mesh, "corner_normals"):
+        return [list(item.vector) for item in mesh.corner_normals]
+    if hasattr(mesh, "calc_normals_split"):
+        mesh.calc_normals_split()
+    return [list(loop.normal) for loop in mesh.loops]
+
+
 def source_digest(obj):
     """绑定确认到完整的可消费外观与几何，防止改模型后复用旧关节点。"""
     import struct
     value = {"geometry": mesh_digest(obj),
              "edges": [list(edge.vertices) for edge in obj.data.edges],
              "polygonSettings": [_rna_values(p) for p in obj.data.polygons],
-             "normals": ([list(item.vector) for item in obj.data.corner_normals] if hasattr(obj.data, "corner_normals")
-                         else [list(loop.normal) for loop in obj.data.loops]),
+             "normals": _corner_normals(obj.data),
              "attributes": [{"name": attr.name, "domain": attr.domain, "type": attr.data_type,
                              "data": [_rna_values(item) for item in attr.data]} for attr in obj.data.attributes],
              "uv": {layer.name: [list(loop.uv) for loop in layer.data] for layer in obj.data.uv_layers},
