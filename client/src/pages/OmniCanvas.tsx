@@ -14,7 +14,15 @@ import ManhuaTemplateTrialCompare, {
 import PostProdWorkshopCard from "@/components/canvas/PostProdWorkshopCard";
 import ManhuaCreativeAdvisorPanel from "@/components/canvas/ManhuaCreativeAdvisorPanel";
 import { manhuaAdvisorMountKey } from "@/lib/manhuaAdvisorSession";
-import { buildManhuaAdvisorProject, type AdvisorSelection } from "@/lib/manhuaAdvisorProject";
+import {
+  buildManhuaAdvisorProject,
+  claimManhuaAdvisorNudgeOnce,
+  pickManhuaAdvisorPhaseNudge,
+  pickManhuaAdvisorTopIssue,
+  type AdvisorIssue,
+  type AdvisorSelection,
+} from "@/lib/manhuaAdvisorProject";
+import type { ManhuaWorkbenchAdvisorSignals } from "@/components/ManhuaScriptWorkbench";
 import { MANHUA_ADVISOR_STAGE_LABELS, publishManhuaAdvisorScope } from "@/lib/manhuaAdvisorEntry";
 import type { CanvasBlock, CanvasEdge } from "@/lib/canvasTypes";
 import {
@@ -438,6 +446,7 @@ import {
   MANHUA_EPISODE_LENGTH_TIER_DEFAULT,
   type ManhuaEpisodeLengthTierId,
   getManhuaEpisodeLengthTier,
+  evaluateManhuaEpisodeSegmentPlanQuality,
   parseManhuaEpisodeSegmentPlanFromMarkdown,
   upsertManhuaSegmentCastInMarkdown,
   upsertManhuaSegmentIntentInMarkdown,
@@ -1285,17 +1294,10 @@ export default function OmniCanvas() {
   /** 创作顾问面板开合：会话内不持久化——顾问是随手问，不是常驻工序 */
   const [advisorOpen, setAdvisorOpen] = useState(false);
   const [advisorSelection, setAdvisorSelection] = useState<AdvisorSelection | null>(null);
-  const advisorProject = useMemo(() => buildManhuaAdvisorProject({
-    pack: writerPack,
-    bible: projectBible,
-    episodeIndex: writerFocusEpisode,
-    phase: workflowPhase,
-    videoModel: explicitWriterVideoModel,
-    writerConfirmed,
-    refs: customAssetRefs,
-    blocks,
-    selection: advisorSelection,
-  }), [writerPack, projectBible, writerFocusEpisode, workflowPhase, explicitWriterVideoModel, writerConfirmed, customAssetRefs, blocks, advisorSelection]);
+  /** 工作台上报的缺口／关键帧／3D 状态；工作台未挂载时为 null，顾问按未知处理 */
+  const [advisorSignals, setAdvisorSignals] = useState<ManhuaWorkbenchAdvisorSignals | null>(null);
+  /** 进阶段主动一条建议；关掉即消失，同阶段本机只弹一次 */
+  const [advisorNudge, setAdvisorNudge] = useState<string | null>(null);
   /**
    * 第五格「成片」的面板就是成片坞，而坞在独立顶层视图里、其可见性不持久化。
    * 只存 workflowPhase 不存当前视图，刷新后 phase 还是 final、坞却关着，
@@ -1374,6 +1376,67 @@ export default function OmniCanvas() {
     return () => publishManhuaAdvisorScope(false);
   }, [canvasMode]);
   const [assembleBusy, setAssembleBusy] = useState(false);
+  /** 顾问门禁口径与「确认剧本」同一把尺：密度门禁全稿 + 本集可拍表质量 */
+  const advisorGate = useMemo(() => {
+    if (!writerPack) return { errors: [] as string[], segments: [] as Array<{ intentZh: string; dialogueZh: string; castZh: string }> };
+    const density = evaluateWriterPackAssetAndDensity({
+      charactersMd: writerPack.charactersMd,
+      propsMd: writerPack.propsMd,
+      locationsMd: writerPack.locationsMd,
+      episodes: writerPack.episodes,
+      targetSec: writerLayoutProfile.targetSec,
+      segmentCount: writerLayoutProfile.segmentCount,
+      durationSecPerSegment: writerLayoutProfile.durationSecPerSegment,
+      segmentMin: writerLayoutProfile.segmentMin,
+      segmentMax: writerLayoutProfile.segmentMax,
+    });
+    const body = writerPack.episodes.find((ep) => ep.index === writerFocusEpisode)?.body || "";
+    const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(body);
+    const quality = plan.segments.length ? evaluateManhuaEpisodeSegmentPlanQuality(plan, { mode: "actual" }) : null;
+    return {
+      errors: [...density.errors, ...(quality?.issues || [])],
+      segments: plan.segments.map((seg) => ({ intentZh: seg.intentZh, dialogueZh: seg.dialogueZh, castZh: seg.castZh })),
+    };
+  }, [writerPack, writerLayoutProfile, writerFocusEpisode]);
+  const advisorProject = useMemo(() => buildManhuaAdvisorProject({
+    pack: writerPack,
+    bible: projectBible,
+    episodeIndex: writerFocusEpisode,
+    phase: workflowPhase,
+    videoModel: explicitWriterVideoModel,
+    writerConfirmed,
+    refs: customAssetRefs,
+    blocks,
+    selection: advisorSelection,
+    gate: advisorGate.errors,
+    segments: advisorGate.segments,
+    assetGap: advisorSignals?.assetGap,
+    keyframeBlock: advisorSignals?.keyframeBlock,
+    pipeline3d: advisorSignals?.pipeline3d,
+    lockedCharacterNames: advisorSignals?.lockedCharacterNames,
+    queue: assembleBusy ? "生成中：长片合成与配乐" : factoryBusy ? "生成中：工厂出片" : writerBusy ? "生成中：编剧扩写" : "空闲",
+    // 页面没有积分余额查询；不为顾问新增请求
+    credits: "未知",
+  }), [writerPack, projectBible, writerFocusEpisode, workflowPhase, explicitWriterVideoModel, writerConfirmed, customAssetRefs, blocks, advisorSelection, advisorGate, advisorSignals, assembleBusy, factoryBusy, writerBusy]);
+  const advisorTopIssue = useMemo(() => pickManhuaAdvisorTopIssue(advisorProject.issues, workflowPhase), [advisorProject.issues, workflowPhase]);
+  const locateAdvisorIssue = useCallback((issue: AdvisorIssue) => {
+    setWorkflowPhase(issue.phase);
+    setManhuaUiMode("workbench");
+    setImmersiveWorkspaceView(issue.phase === "outline" ? "topic" : "workbench");
+    window.setTimeout(() => {
+      document.querySelector(issue.phase === "outline" ? "#manhua-factory-zone" : "#manhua-workbench-zone")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 60);
+  }, []);
+  /** 进入新阶段：面板没开就弹一条；只读本地状态，不发起付费问答 */
+  useEffect(() => {
+    if (canvasMode !== "manhua" || advisorOpen) return;
+    const text = pickManhuaAdvisorPhaseNudge({ phase: workflowPhase, issues: advisorProject.issues, recommend3d: advisorProject.recommend3d });
+    if (!text) return;
+    if (!claimManhuaAdvisorNudgeOnce(window.sessionStorage, workflowPhase)) return;
+    setAdvisorNudge(text);
+    // 只在阶段切换那一刻取一次快照；issues 后续变化不重复弹
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workflowPhase, canvasMode]);
   /**
    * 成片地址从**画布节点**派生，不再只活在 React state 里。
    *
@@ -9399,6 +9462,12 @@ export default function OmniCanvas() {
                   outboundConfirmedAtByBlock={outboundConfirmedAtByBlock}
                   immersive={immersiveWorkbench}
                   onAdvisorSelectionChange={setAdvisorSelection}
+                  onAdvisorSignalsChange={setAdvisorSignals}
+                  advisorTopIssue={advisorTopIssue}
+                  onOpenAdvisorIssue={() => {
+                    if (advisorTopIssue) locateAdvisorIssue(advisorTopIssue);
+                    setAdvisorOpen(true);
+                  }}
                   blocks={blocks}
                   videoModel={activePilotVideoModel}
                   directorStrategyContract={directorStrategyContract}
@@ -12267,14 +12336,46 @@ export default function OmniCanvas() {
 
       {/* 漫剧页的唯一右上顾问入口，普通用户走既有鉴权问答，不开放管理接口。 */}
       {canvasMode === "manhua" && !advisorOpen ? (
-        <button
-          type="button"
-          onClick={() => setAdvisorOpen(true)}
-          aria-expanded={advisorOpen}
-          className="fixed top-[4.5rem] right-4 z-[59] rounded-full border border-cyan-300/40 bg-[#10171f]/95 px-4 py-2.5 text-[12px] font-bold text-cyan-100 shadow-xl backdrop-blur transition hover:bg-cyan-500/20"
-        >
-          创作顾问
-        </button>
+        <div className="fixed top-[4.5rem] right-4 z-[59] flex flex-col items-end gap-2">
+          <button
+            type="button"
+            onClick={() => { setAdvisorOpen(true); setAdvisorNudge(null); }}
+            aria-expanded={advisorOpen}
+            data-manhua-advisor-open
+            className="relative rounded-full border border-cyan-300/40 bg-[#10171f]/95 px-4 py-2.5 text-[12px] font-bold text-cyan-100 shadow-xl backdrop-blur transition hover:bg-cyan-500/20"
+          >
+            创作顾问
+            {advisorProject.issues.length ? (
+              <span
+                data-manhua-advisor-badge
+                aria-label={`${advisorProject.issues.length} 条待处理`}
+                className="absolute -top-1.5 -right-1.5 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white"
+              >
+                {advisorProject.issues.length}
+              </span>
+            ) : null}
+          </button>
+          {advisorNudge ? (
+            <div
+              role="status"
+              data-manhua-advisor-nudge
+              className="flex max-w-[280px] items-start gap-2 rounded-lg border border-amber-300/40 bg-[#161a10]/95 px-3 py-2 text-[11px] leading-5 text-amber-50 shadow-xl backdrop-blur"
+            >
+              <button
+                type="button"
+                className="min-w-0 flex-1 text-left hover:underline"
+                onClick={() => {
+                  if (advisorTopIssue) locateAdvisorIssue(advisorTopIssue);
+                  setAdvisorOpen(true);
+                  setAdvisorNudge(null);
+                }}
+              >
+                {advisorNudge}
+              </button>
+              <button type="button" aria-label="关闭" onClick={() => setAdvisorNudge(null)} className="shrink-0 text-amber-200/70 hover:text-amber-50">×</button>
+            </div>
+          ) : null}
+        </div>
       ) : null}
       <ManhuaCreativeAdvisorPanel
         key={manhuaAdvisorMountKey(user?.id != null ? String(user.id) : undefined, projectBible?.confirmedAt, writerPack)}
@@ -12283,12 +12384,7 @@ export default function OmniCanvas() {
         project={advisorProject}
         onLocate={(issue) => {
           setAdvisorOpen(false);
-          setWorkflowPhase(issue.phase);
-          setManhuaUiMode("workbench");
-          setImmersiveWorkspaceView(issue.phase === "outline" ? "topic" : "workbench");
-          window.setTimeout(() => {
-            document.querySelector(issue.phase === "outline" ? "#manhua-factory-zone" : "#manhua-workbench-zone")?.scrollIntoView({ behavior: "smooth", block: "start" });
-          }, 60);
+          locateAdvisorIssue(issue);
         }}
         open={canvasMode === "manhua" && advisorOpen}
         onClose={() => setAdvisorOpen(false)}

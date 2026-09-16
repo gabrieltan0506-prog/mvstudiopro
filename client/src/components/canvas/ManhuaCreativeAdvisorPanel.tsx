@@ -150,7 +150,14 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     const request: PendingQuestion = {
       requestId: crypto.randomUUID(),
       rawQuestion: question,
-      question: buildAdvisorQuestion({ question, stageZh, selectedTemplate, templates, hasProjectEvidence: Boolean(project) }),
+      question: buildAdvisorQuestion({
+        question, stageZh, selectedTemplate, templates, hasProjectEvidence: Boolean(project),
+        projectSignals: project ? {
+          gateZh: project.context.gateZh, assetGapZh: project.context.assetGapZh, keyframeBlockZh: project.context.keyframeBlockZh,
+          pipeline3dZh: project.context.pipeline3dZh, queueZh: project.context.queueZh, creditsZh: project.context.creditsZh,
+          rule3dZh: project.recommend3d?.reasonZh,
+        } : undefined,
+      }),
       manhuaContext: result?.success ? result.data : undefined, label,
     };
     setDraft("");

@@ -191,3 +191,28 @@ describe("resolveManhuaCreativeAdvisorEngineFacts", () => {
     expect(facts).not.toHaveProperty("references");
   });
 });
+
+describe("manhuaCreativeAdvisorContextSchema · PR-12 补喂字段兼容", () => {
+  const legacy = {
+    seriesTitle: "墨菁传", episodeIndex: 1, episodeTitle: "", stage: "assets" as const, videoModel: "seedance-2.5",
+    writerConfirmed: false, episodeBody: "", assetSummary: "", shotSummary: "", blockers: [],
+  };
+  it("旧上下文没有新字段仍能通过", () => {
+    expect(manhuaCreativeAdvisorContextSchema.safeParse(legacy).success).toBe(true);
+  });
+  it("六项补喂字段可选且受长度上限约束", () => {
+    const ok = manhuaCreativeAdvisorContextSchema.safeParse({
+      ...legacy,
+      gateZh: ["第 1 集对白不足 12 句", "场景表为空"],
+      assetGapZh: "待生成 5：人物 0 · 场景 5 · 道具 0",
+      keyframeBlockZh: "请先出齐本段所需关键静帧",
+      pipeline3dZh: "模型就绪 1/6 · 已绑骨 0/6 · 白模参考 0 段",
+      queueZh: "生成中：道具图·药碗",
+      creditsZh: "未知",
+    });
+    expect(ok.success).toBe(true);
+    expect(manhuaCreativeAdvisorContextSchema.safeParse({ ...legacy, gateZh: Array.from({ length: 9 }, () => "错") }).success).toBe(false);
+    expect(manhuaCreativeAdvisorContextSchema.safeParse({ ...legacy, gateZh: ["错".repeat(121)] }).success).toBe(false);
+    expect(manhuaCreativeAdvisorContextSchema.safeParse({ ...legacy, queueZh: "https://example.com/x" }).success).toBe(false);
+  });
+});

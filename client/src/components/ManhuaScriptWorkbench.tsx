@@ -1,3 +1,4 @@
+import { formatManhuaAdvisorAssetGapZh, formatManhuaAdvisorPipeline3dZh } from "@/lib/manhuaAdvisorProject";
 import { collectPreparedRigProfiles } from "@/lib/manhuaPrevisProfiles";
 import ManhuaAutoRigEditor from "@/components/canvas/ManhuaAutoRigEditor";
 import Manhua3dAssetImportPanel from "@/components/canvas/Manhua3dAssetImportPanel";
@@ -270,6 +271,13 @@ import {
 import { manhuaToolbarActionCost } from "@/lib/manhuaToolbarGroups";
 import type { ManhuaWorkflowPhase } from "@shared/manhuaWriterSession";
 
+export type ManhuaWorkbenchAdvisorSignals = {
+  assetGap: string;
+  keyframeBlock: string;
+  pipeline3d: string;
+  lockedCharacterNames: string[];
+};
+
 /** 阶段枚举收口在 shared：此处只取别名，不再另写一份 */
 type WorkflowPhaseId = ManhuaWorkflowPhase;
 
@@ -378,6 +386,14 @@ type Props = {
       shot: ManhuaWorkbenchShot | null;
     } | null,
   ) => void;
+  /**
+   * 创作顾问状态补喂：资产缺口／关键静帧拦截／3D 管线／已锁脸人名，只读上报给同页顾问。
+   * 这些量本就在工作台算好，父级不重算一份。
+   */
+  onAdvisorSignalsChange?: (signals: ManhuaWorkbenchAdvisorSignals | null) => void;
+  /** 阶段条当前格旁的「顾问：…」一行；点它打开顾问面板并定位 */
+  advisorTopIssue?: { id: string; text: string } | null;
+  onOpenAdvisorIssue?: () => void;
   /** @deprecated 方案 B 已取消跳过；保留字段仅兼容旧会话 */
   assetsSkipped?: boolean;
   onAssetsSkippedChange?: (skipped: boolean) => void;
@@ -1014,6 +1030,9 @@ export default function ManhuaScriptWorkbench({
   onConfirmOutline,
   onOpenWriterEditor,
   onAdvisorSelectionChange,
+  onAdvisorSignalsChange,
+  advisorTopIssue = null,
+  onOpenAdvisorIssue,
   onPreviewClipOutbound,
   onConfirmClipOutbound,
   outboundConfirmedAtByBlock,
@@ -2570,6 +2589,25 @@ export default function ManhuaScriptWorkbench({
           ? "请先完成垫图改图锁定的关键静帧"
           : "请先确认按秒导戏单（静帧锁定后自动生成）";
 
+  /** 顾问补喂：与左栏待生成卡、出片拦截横幅、3D 状态同源，不另算一份 */
+  useEffect(() => {
+    if (!onAdvisorSignalsChange) return;
+    const count = (kind: ManhuaCanonSheetKind) => pendingSheetAnchors.filter((a) => a.kind === kind).length;
+    const characterRefs = customAssetRefs.filter((r) => r.role === "character");
+    onAdvisorSignalsChange({
+      assetGap: formatManhuaAdvisorAssetGapZh({ characters: count("charsheet"), scenes: count("sceneplate"), props: count("propsheet") }),
+      keyframeBlock: videoBurnHint || "",
+      pipeline3d: formatManhuaAdvisorPipeline3dZh({
+        modelReady: characterRefs.filter((r) => r.model3d?.status === "succeeded").length,
+        rigged: riggedAssetIds.length,
+        total: characterRefs.length,
+        previsSegments: episodeClips.filter((b) => (b.previsStudio?.referenceHistory?.length ?? 0) > 0).length,
+      }),
+      lockedCharacterNames: assetLockRegistry.byRole.character.map((slot) => String(slot.labelZh || "").trim()).filter(Boolean),
+    });
+  }, [onAdvisorSignalsChange, pendingSheetAnchors, customAssetRefs, videoBurnHint, riggedAssetIds, episodeClips, assetLockRegistry.byRole.character]);
+  useEffect(() => () => { onAdvisorSignalsChange?.(null); }, [onAdvisorSignalsChange]);
+
   /** 门槛只用于点击时报错，禁止拿来把按钮静默变灰 */
   const keyartGateHint = explainManhuaKeyartActionGate({
     outlineComplete,
@@ -3999,6 +4037,24 @@ export default function ManhuaScriptWorkbench({
                 {phase.complete ? "已完成" : phase.current ? "当前" : "待开始"}
               </span>
             </button>
+            {phase.current && advisorTopIssue ? (
+              <span
+                role="button"
+                tabIndex={0}
+                data-manhua-phase-advisor
+                title={advisorTopIssue.text}
+                onClick={() => onOpenAdvisorIssue?.()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onOpenAdvisorIssue?.();
+                  }
+                }}
+                className="max-w-[220px] shrink-0 cursor-pointer truncate rounded border border-amber-300/40 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-100 hover:bg-amber-500/20"
+              >
+                顾问：{advisorTopIssue.text}
+              </span>
+            ) : null}
             {index < workflowPhases.length - 1 ? (
               <span aria-hidden className="text-[10px] text-white/25">
                 →
