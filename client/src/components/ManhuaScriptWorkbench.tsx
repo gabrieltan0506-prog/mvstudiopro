@@ -36,7 +36,8 @@ import { CanvasAudioStudio } from "@/components/canvas/CanvasAudioStudio";
 import { ManhuaPrevisStudio } from "@/components/canvas/ManhuaPrevisStudio";
 import { ManhuaActionTimeline } from "@/components/canvas/ManhuaActionTimeline";
 import { Manhua3dModelStudio, manhua3dModelCounts, manhua3dRigLookupCharacters } from "@/components/canvas/Manhua3dModelStudio";
-import { ManhuaWorldStudio, manhuaWorldCounts, type ManhuaWorldGenerateOptions } from "@/components/canvas/ManhuaWorldStudio";
+import { ManhuaWorldStudio, manhuaWorldCounts, type ManhuaStageFrameBindingDraft, type ManhuaWorldGenerateOptions, type ManhuaWorldLayoutActor, type ManhuaWorldLayoutSubmitOptions } from "@/components/canvas/ManhuaWorldStudio";
+import type { ManhuaStageCharacter } from "@/components/canvas/ManhuaWorldStagePreview";
 import { evaluateManhuaWorld3dEligibility } from "@shared/manhuaWorld3d";
 import { splitManhuaActionPlanForPrevis } from "@shared/manhuaActionPlanSplit";
 import { manhuaPrevisDraftFromExecutableShot } from "@shared/manhuaPrevisFromActionPlan";
@@ -492,6 +493,10 @@ type Props = {
   onGenerateSceneWorld?: (id: string, options: ManhuaWorldGenerateOptions) => void | Promise<void>;
   onRetrySceneWorld?: (id: string) => void | Promise<void>;
   onRemoveSceneWorld?: (id: string) => void | Promise<void>;
+  /** PR-10：3D 世界视角 PNG → 该场景候选参考图 */
+  onExportSceneStageFrame?: (id: string, blob: Blob, frame: ManhuaStageFrameBindingDraft & { episode?: number; segmentIndex?: number }) => void | Promise<void>;
+  /** PR-11：按本段白模布局（深度全景）生成世界 */
+  onSubmitLayoutSceneWorld?: (id: string, options: ManhuaWorldLayoutSubmitOptions) => void | Promise<void>;
   sceneWorldBusyIds?: readonly string[];
   onApplyRiggedModel?: (model: AutoRigAdoptedModel, expectedTaskId: string) => boolean | Promise<boolean>;
   asset3dBusyIds?: readonly string[];
@@ -1095,6 +1100,8 @@ export default function ManhuaScriptWorkbench({
   onGenerateSceneWorld,
   onRetrySceneWorld,
   onRemoveSceneWorld,
+  onExportSceneStageFrame,
+  onSubmitLayoutSceneWorld,
   sceneWorldBusyIds = [],
   onApplyRiggedModel,
   asset3dBusyIds = [],
@@ -2553,6 +2560,31 @@ export default function ManhuaScriptWorkbench({
       }),
     [assetLockRegistry.byRole.scene, customAssetRefs, assetCanon],
   );
+  /** PR-11：当前段白模站位（草稿允许非法数，只取有限值），给布局可控深度全景 */
+  const worldLayoutActors = useMemo((): ManhuaWorldLayoutActor[] | undefined => {
+    const actors = activeClip?.previsStudio?.spec.actors;
+    if (!actors?.length) return undefined;
+    return actors
+      .filter((a) => Number.isFinite(a.start[0]) && Number.isFinite(a.start[1]))
+      .map((a) => ({ id: a.id, nameZh: a.nameZh, start: [a.start[0], a.start[1]] as const, shape: a.shape }));
+  }, [activeClip?.previsStudio?.spec.actors]);
+  /** PR-10：只取本段必需 actor，不混入其他段，不伪造站位 */
+  const worldStageCharacters = useMemo((): ManhuaStageCharacter[] => {
+    const actors = activeClip?.previsStudio?.spec.actors || [];
+    // 本段 actor 是必需名单；缺模型仍保留，让加载门禁明确报缺，不能从名单中消失。
+    return actors.map((actor): ManhuaStageCharacter => {
+      const ref = customAssetRefs.find((r) => r.id === actor.assetRef);
+      const model = ref ? evaluateManhuaAsset3dEligibility(ref).currentModel3d : undefined;
+      return {
+        id: actor.id,
+        assetRef: actor.assetRef,
+        labelZh: actor.nameZh || ref?.labelZh || actor.id,
+        glbUrl: model?.status === "succeeded" ? model.glbUrl || "" : "",
+        stagePoint: [actor.start[0], actor.start[1]],
+        yawDeg: actor.facingDeg,
+      };
+    });
+  }, [activeClip?.previsStudio?.spec.actors, assetLockRegistry.byRole.character, customAssetRefs]);
   /** 0916 多视角草稿按 ref.id 索引，给 3D 工作台面板 */
   const multiviewDrafts = useMemo(() => {
     const out: Record<string, import("@shared/manhuaMultiview").ManhuaMultiviewDraft | undefined> = {};
@@ -3484,7 +3516,11 @@ export default function ManhuaScriptWorkbench({
             disabled={Boolean(factoryBusy)}
             onGenerate={onGenerateSceneWorld}
             onRetry={onRetrySceneWorld}
-            onRemove={onRemoveSceneWorld}/> : null}
+            onRemove={onRemoveSceneWorld}
+            stageCharacters={worldStageCharacters}
+            onExportStageFrame={onExportSceneStageFrame ? (id, blob, frame) => onExportSceneStageFrame(id, blob, { ...frame, episode: focusEpisode, segmentIndex: activeSegNo }) : undefined}
+            layoutActors={worldLayoutActors}
+            onSubmitLayoutWorld={onSubmitLayoutSceneWorld}/> : null}
           {onUpdateClipPrevisStudio ? <button type="button" data-manhua-action="open-previs-studio" disabled={Boolean(factoryBusy)}
             className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
             onClick={()=>{setPrevisStudioOpen(value=>!value);if(!activeClip)onEnsureSegmentClips?.();}}>本段动作白模</button> : null}
