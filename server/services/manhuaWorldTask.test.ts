@@ -12,6 +12,7 @@ import {
   resetManhuaWorldTaskDependenciesForTests,
   retryManhuaWorldTask,
   setManhuaWorldTaskDependenciesForTests,
+  shouldManhuaWorldWorkerTouch,
 } from "./manhuaWorldTask.js";
 
 const upstream = {
@@ -122,8 +123,17 @@ describe("manhuaWorldTask", () => {
     expect(r2?.status).toBe("succeeded");
     expect(r2?.assets?.spz500kUrl).toBeTruthy();
     expect(r2?.assets?.spz500kGcsUri).toBeUndefined();
+    // 1472 R3：worker 必须会挑到「成功但主产物未归档」的记录，否则「下轮补归档」永远不发生
+    const t2 = Date.parse(r2!.updatedAt);
+    expect(shouldManhuaWorldWorkerTouch(r2!, t2 + 5 * 60_000)).toBe(true);
+    // 刚失败过：5 分钟内退避，不每 tick 重打 GCS
+    expect(shouldManhuaWorldWorkerTouch(r2!, t2 + 60_000)).toBe(false);
     const r3 = await advanceManhuaWorldTask(view.taskId);
     expect(r3?.assets?.spz500kGcsUri).toBe(`gs://bucket/manhua-world/u7/${view.taskId}/scene-500k.spz`);
+    expect(shouldManhuaWorldWorkerTouch(r3!, t2 + 10 * 60_000)).toBe(false);
+    expect(shouldManhuaWorldWorkerTouch({ status: "failed", updatedAt: r2!.updatedAt }, t2)).toBe(false);
+    expect(shouldManhuaWorldWorkerTouch({ status: "running", updatedAt: r2!.updatedAt }, t2)).toBe(true);
+    expect(shouldManhuaWorldWorkerTouch({ ...r2!, deletedAt: "2026-09-16T05:00:00.000Z" }, t2 + 10 * 60_000)).toBe(false);
   });
 
   it("提交 rejected → failed 可重试（新任务号）；unknown → reconcile 禁重试；上游报错 → failed", async () => {

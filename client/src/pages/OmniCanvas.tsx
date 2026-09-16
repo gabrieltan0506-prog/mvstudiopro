@@ -1713,8 +1713,18 @@ export default function OmniCanvas() {
                 userId: String(user.id),
               });
             } catch (error) {
-              // 0916 探针：官方改图偶发 520，同一视角只重试一次；两次都失败留给用户按「补出这张」
-              if (attempt === 1) failed.push(`${MANHUA_MULTIVIEW_VIEW_LABEL_ZH[view]}（${error instanceof Error ? error.message : "出图失败"}）`);
+              // 0916 探针：官方改图偶发 520，同一视角只重试一次；两次都失败留给用户按「补出这张」。
+              // 1472 R3：建单/轮询的网络类错误（job 可能已建成并计费）不自动重试，否则可能二次扣费；只对上游明确失败重试。
+              const message = error instanceof Error ? error.message : "出图失败";
+              // 覆盖 pollJobUntilTerminal 两轮都超时的「任务轮询已等待…」与 fetch 中断类错误：任务多半还在 worker 里跑。
+              const uncertain =
+                error instanceof TypeError ||
+                /failed to fetch|network|timeout|TimeoutError|超时|aborted|轮询已等待|job timed out/i.test(message);
+              if (uncertain) {
+                failed.push(`${MANHUA_MULTIVIEW_VIEW_LABEL_ZH[view]}（${message}；结果不确定，可能已计费，请先核对积分再「补出这张」）`);
+                break;
+              }
+              if (attempt === 1) failed.push(`${MANHUA_MULTIVIEW_VIEW_LABEL_ZH[view]}（${message}）`);
             }
           }
           if (!url) continue;
@@ -1773,7 +1783,7 @@ export default function OmniCanvas() {
       }
       if (
         !window.confirm(
-          `将用 ${readiness.views.length} 张视角图提交 Tripo 多视角建模（精细档，约 4 分钟）。此操作会调用外部生成服务并产生实际调用成本；${currentModel3d?.status === "succeeded" ? "现有模型会被新模型替换，旧 GLB 仍保留在任务记录里。" : "原人物图不会被替换。"}确认继续？`,
+          `将用 ${readiness.views.length} 张视角图提交 Tripo 多视角建模（精细档，约 4 分钟）。此操作会调用外部生成服务并产生实际调用成本；${currentModel3d?.status === "succeeded" ? "现有模型会被新模型替换，旧 GLB 仍保留在任务记录里；已按旧模型做的绑骨/白模配置需按新模型重绑。" : "原人物图不会被替换。"}确认继续？`,
         )
       ) {
         return;
@@ -1852,7 +1862,7 @@ export default function OmniCanvas() {
             return;
           }
         }
-        toast.message("3D 世界仍在生成，可稍后回到 3D 场景工作台查看");
+        toast.message("已等待 40 分钟仍未完成；服务端会把超时任务转为人工核对，请回 3D 场景工作台查看最终状态");
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "3D 世界状态读取失败");
       } finally {

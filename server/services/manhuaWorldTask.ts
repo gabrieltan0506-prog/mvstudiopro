@@ -451,13 +451,30 @@ export async function deleteManhuaWorldTask(taskId: string, userId: number): Pro
   return true;
 }
 
+/**
+ * worker 该不该推进这条记录：排队/运行中，或已成功但主产物归档还没补上（1472 R3：原先 worker 只看 queued/running，
+ * 「归档失败下轮补」实际永远不会发生）。补归档只读 Fly 副本再上传，不碰上游。
+ */
+export const ARCHIVE_RETRY_MS = 5 * 60_000;
+export function shouldManhuaWorldWorkerTouch(
+  r: Pick<ManhuaWorldTaskRecord, "status" | "upstreamAssets" | "assets" | "deletedAt" | "updatedAt">,
+  nowMs: number = deps.now().getTime(),
+): boolean {
+  if (r.deletedAt) return false;
+  if (r.status === "queued" || r.status === "running") return true;
+  if (r.status !== "succeeded" || !r.upstreamAssets || !r.assets || r.assets.spz500kGcsUri) return false;
+  // 补归档每次失败都会 writeRecord 刷新 updatedAt：按 5 分钟退避，GCS 长期不可用时不至于每 15s 打一次
+  const last = Date.parse(r.updatedAt || "");
+  return !Number.isFinite(last) || nowMs - last >= ARCHIVE_RETRY_MS;
+}
+
 export function ensureManhuaWorldWorker(): void {
   if (workerTimer || process.env.NODE_ENV === "test") return;
   workerTimer = setInterval(() => {
     void listRecords()
       .then(async (records) => {
         for (const r of records) {
-          if (r.status !== "queued" && r.status !== "running") continue;
+          if (!shouldManhuaWorldWorkerTouch(r)) continue;
           await advanceManhuaWorldTask(r.taskId).catch((error) => console.warn("[manhuaWorldTask] worker tick failed", r.taskId, error));
         }
       })
@@ -470,7 +487,7 @@ export async function resumeManhuaWorldTasksOnStartup(): Promise<void> {
   ensureManhuaWorldWorker();
   const records = await listRecords();
   for (const r of records) {
-    if (r.status !== "queued" && r.status !== "running") continue;
+    if (!shouldManhuaWorldWorkerTouch(r)) continue;
     await advanceManhuaWorldTask(r.taskId).catch((error) => console.warn("[manhuaWorldTask] startup resume failed", r.taskId, error));
   }
 }
