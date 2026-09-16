@@ -202,6 +202,17 @@ describe("manhuaWorldTask", () => {
     expect(done?.assets?.spz500kUrl).toMatch(/scene-500k\.spz/);
   });
 
+  it("PR-11 layout：带 gs:// 时第一步先重新签名再提交（签名 url 过期后重试也能用）；签名失败 → failed 不占上游", async () => {
+    const view = await createManhuaWorldTask(baseInput({ sceneRef: "scene:lg", sourceImageUrl: "https://signed/d.png", sourceImageGcsUri: undefined, prompt: { type: "layout", depthPanoUrl: "https://signed/stale.png", depthPanoGcsUri: "gs://b/depth.png", textPrompt: "夜" } }));
+    expect(view.status).toBe("running");
+    expect(signSource).toHaveBeenCalledWith("gs://b/depth.png");
+    expect(submitDepth).toHaveBeenCalledWith({ depthPanoUrl: "https://signed/deck.png?sig=fresh", textPrompt: "夜" });
+    signSource.mockRejectedValueOnce(new Error("sign_down"));
+    const bad = await createManhuaWorldTask(baseInput({ sceneRef: "scene:lg2", sourceImageUrl: "https://signed/d.png", sourceImageGcsUri: undefined, prompt: { type: "layout", depthPanoUrl: "https://signed/stale.png", depthPanoGcsUri: "gs://b/depth2.png", textPrompt: "夜" } }));
+    expect(bad.status).toBe("failed");
+    expect(submitDepth).toHaveBeenCalledTimes(1);
+  });
+
   it("PR-11 layout：第一步 rejected → failed 可重试；第一步 poll 报错 → failed；第二步提交 unknown → reconcile", async () => {
     submitDepth.mockRejectedValueOnce(new SubmitRejectedError("marble_depth_submit_rejected_422"));
     const failed = await createManhuaWorldTask(baseInput({ sceneRef: "scene:l1", sourceImageUrl: "https://signed/d.png", sourceImageGcsUri: undefined, prompt: { type: "layout", depthPanoUrl: "https://signed/d.png", textPrompt: "夜" } }));

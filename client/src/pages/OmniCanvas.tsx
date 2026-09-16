@@ -2047,7 +2047,7 @@ export default function OmniCanvas() {
       setSceneWorldBusyIds(manhuaWorldOperationGuard.current.assetIds());
       try {
         const { meta } = options;
-        const { url: depthPanoUrl } = await uploadPngForManhuaWorld(
+        const { url: depthPanoUrl, gcsUri: depthPanoGcsUri } = await uploadPngForManhuaWorld(
           options.depthPng,
           `depth-pano-${meta.width}x${meta.height}-near${meta.nearM}-far${meta.farM}-${meta.encoding}.png`,
         );
@@ -2058,7 +2058,7 @@ export default function OmniCanvas() {
           ...(ref.gcsUri ? { sourceImageGcsUri: ref.gcsUri } : {}),
           displayName: `${ref.labelZh || ref.id}·布局`,
           model: options.model,
-          prompt: { type: "layout", depthPanoUrl, textPrompt },
+          prompt: { type: "layout", depthPanoUrl, depthPanoGcsUri, textPrompt },
         });
         applyManhuaWorldTaskView(task, ref.world3d?.taskId || null);
         if (task.status === "queued" || task.status === "running") {

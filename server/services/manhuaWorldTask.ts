@@ -38,7 +38,7 @@ export type ManhuaWorldPromptRecord =
   | { type: "text"; textPrompt: string }
   | { type: "image"; isPano: boolean | "auto"; textPrompt?: string }
   /** PR-11 布局可控：我们渲的深度全景 → depth_to_rgb 上色 → 再以 is_pano:true 建世界（两步各记 operationId） */
-  | { type: "layout"; depthPanoUrl: string; textPrompt: string };
+  | { type: "layout"; depthPanoUrl: string; depthPanoGcsUri?: string; textPrompt: string };
 
 export type ManhuaWorldTaskRecord = {
   taskId: string;
@@ -285,8 +285,17 @@ export async function advanceManhuaWorldTask(taskId: string): Promise<ManhuaWorl
         record.errorZh = "提交结果正在确认，为避免重复生成不会自动重试";
         record.startedAt = record.startedAt || isoNow();
         await writeRecord(record);
+        // 签名 url 会过期：有 gs:// 就重新签（重试/对账后再提交也能用）；签不动 → failed，不占上游
+        let depthPanoUrl = record.prompt.depthPanoUrl;
+        if (record.prompt.depthPanoGcsUri) {
+          try {
+            depthPanoUrl = await deps.signSource(record.prompt.depthPanoGcsUri);
+          } catch (error) {
+            return markFailed(record, "深度全景签名失败，未提交上游，可重试", error);
+          }
+        }
         try {
-          const submitted = await deps.submitDepth({ depthPanoUrl: record.prompt.depthPanoUrl, textPrompt: record.prompt.textPrompt });
+          const submitted = await deps.submitDepth({ depthPanoUrl, textPrompt: record.prompt.textPrompt });
           record.depthOperationId = submitted.operationId;
           record.status = "running";
           record.errorZh = undefined;
@@ -416,7 +425,12 @@ export async function createManhuaWorldTask(input: {
     input.prompt.type === "text"
       ? { type: "text", textPrompt: String(input.prompt.textPrompt).trim().slice(0, 2_000) }
       : input.prompt.type === "layout"
-        ? { type: "layout", depthPanoUrl: String(input.prompt.depthPanoUrl).trim().slice(0, 4_096), textPrompt: String(input.prompt.textPrompt).trim().slice(0, 2_000) }
+        ? {
+            type: "layout",
+            depthPanoUrl: String(input.prompt.depthPanoUrl).trim().slice(0, 4_096),
+            ...(input.prompt.depthPanoGcsUri && /^gs:\/\//i.test(input.prompt.depthPanoGcsUri) ? { depthPanoGcsUri: String(input.prompt.depthPanoGcsUri).trim().slice(0, 2_048) } : {}),
+            textPrompt: String(input.prompt.textPrompt).trim().slice(0, 2_000),
+          }
         : { type: "image", isPano: input.prompt.isPano, ...(input.prompt.textPrompt?.trim() ? { textPrompt: input.prompt.textPrompt.trim().slice(0, 2_000) } : {}) };
   const digest = idempotencyDigest({ userId: input.userId, sceneRef, sourceVersion, model: input.model, prompt });
   const taskId = `mw_${digest.slice(0, 24)}`;

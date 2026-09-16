@@ -28,6 +28,8 @@ const promptSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("layout"),
     depthPanoUrl: httpsUrl,
+    /** 深度全景的 gs://（签名 url 会过期；重试/对账时重新签） */
+    depthPanoGcsUri: z.string().trim().max(2_048).regex(/^gs:\/\//i).optional(),
     textPrompt: z.string().trim().min(2).max(2_000),
   }),
 ]);
