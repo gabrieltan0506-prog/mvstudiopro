@@ -36,6 +36,7 @@ import { CanvasAudioStudio } from "@/components/canvas/CanvasAudioStudio";
 import { ManhuaPrevisStudio } from "@/components/canvas/ManhuaPrevisStudio";
 import { ManhuaActionTimeline } from "@/components/canvas/ManhuaActionTimeline";
 import { Manhua3dModelStudio, manhua3dModelCounts, manhua3dRigLookupCharacters } from "@/components/canvas/Manhua3dModelStudio";
+import { resolveManhuaRigSource } from "@shared/manhuaRigSource";
 import { ManhuaWorldStudio, manhuaWorldCounts, type ManhuaStageFrameBindingDraft, type ManhuaWorldGenerateOptions, type ManhuaWorldLayoutActor, type ManhuaWorldLayoutSubmitOptions } from "@/components/canvas/ManhuaWorldStudio";
 import type { ManhuaStageCharacter } from "@/components/canvas/ManhuaWorldStagePreview";
 import { evaluateManhuaWorld3dEligibility } from "@shared/manhuaWorld3d";
@@ -2538,11 +2539,15 @@ export default function ManhuaScriptWorkbench({
     () =>
       assetLockRegistry.byRole.character.map((a) => {
         const ref = customAssetRefs.find((r) => r.id === a.id);
+        // 0916 绑骨模型来源：锁脸图优先，否则同人物候选图（A-pose 定妆）的就绪模型
+        const rig = resolveManhuaRigSource(ref, customAssetRefs);
         return {
           id: a.id,
           labelZh: a.labelZh,
           thumbUrl: ref?.url,
           eligibility: ref ? evaluateManhuaAsset3dEligibility(ref) : { eligible: false, reasonZh: "找不到这张人物参考图", sourceVersion: "" },
+          ...(rig.source ? { rigSource: rig.source } : {}),
+          ...(rig.options.length ? { rigOptions: rig.options } : {}),
         };
       }),
     [assetLockRegistry.byRole.character, customAssetRefs],
@@ -2577,7 +2582,8 @@ export default function ManhuaScriptWorkbench({
     // 本段 actor 是必需名单；缺模型仍保留，让加载门禁明确报缺，不能从名单中消失。
     return actors.map((actor): ManhuaStageCharacter => {
       const ref = customAssetRefs.find((r) => r.id === actor.assetRef);
-      const model = ref ? evaluateManhuaAsset3dEligibility(ref).currentModel3d : undefined;
+      // 0916：模型来源与绑骨/白模同口径——锁脸图没就绪模型时用同人物候选图（A-pose）的模型
+      const model = resolveManhuaRigSource(ref, customAssetRefs).source?.model ?? (ref ? evaluateManhuaAsset3dEligibility(ref).currentModel3d : undefined);
       return {
         id: actor.id,
         assetRef: actor.assetRef,
@@ -3532,15 +3538,15 @@ export default function ManhuaScriptWorkbench({
             {activeClip?<ManhuaPrevisStudio key={`${activeClip.id}:${activeClip.previsStudio?.scopeId??"new"}`} block={activeClip}
               characters={assetLockRegistry.byRole.character.map(a=>{
                 const ref=customAssetRefs.find(ref=>ref.id===a.id);
-                const eligibility=ref?evaluateManhuaAsset3dEligibility(ref):undefined;
-                const model=eligibility?.eligible&&eligibility.currentModel3d?.status==="succeeded"
-                  ? {taskId:eligibility.currentModel3d.taskId}:undefined;
+                // 0916：与 3D 模型工作台同口径——锁脸图没模型时用候选图（A-pose）的就绪模型
+                const source=resolveManhuaRigSource(ref,customAssetRefs).source;
+                const model=source?{taskId:source.model.taskId}:undefined;
                 return {id:a.id,label:a.labelZh,tag:a.tag,model};
               })}
               profiles={collectPreparedRigProfiles(blocks, assetLockRegistry.byRole.character.map(a => {
                 const ref = customAssetRefs.find(ref => ref.id === a.id);
-                const eligibility = ref ? evaluateManhuaAsset3dEligibility(ref) : undefined;
-                return { id: a.id, label: a.labelZh, model: eligibility?.eligible && eligibility.currentModel3d?.status === "succeeded" ? { taskId: eligibility.currentModel3d.taskId } : undefined };
+                const source = resolveManhuaRigSource(ref, customAssetRefs).source;
+                return { id: a.id, label: a.labelZh, model: source ? { taskId: source.model.taskId } : undefined };
               }))}
               sourceShots={activeSegment?.shots.map(shot=>({index:shot.index,durationSec:shot.durationSec,actionZh:shot.actionZh}))}
               actionPlanDrafts={previsDraftsFromPlan}
