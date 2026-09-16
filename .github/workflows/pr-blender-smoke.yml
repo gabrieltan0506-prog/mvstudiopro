@@ -1,0 +1,59 @@
+# PR 构建探针：用生产 Dockerfile 在 linux/amd64 上只构建、不推镜像、不部署、不读生产 secrets，
+# 然后在构建出的容器里真实跑低模绑骨自测（含预览渲染，走 xvfb），把日志/预览图/回执存成 artifact。
+# 口径：CI 通过只证明该容器里的合成模型链路通过；不证明 74 万顶点真模、材质保真、内存峰值与形变质量。
+name: PR Blender Smoke
+on:
+  pull_request:
+    paths:
+      - Dockerfile
+      - server/scripts/**
+      - shared/manhuaAutoRig.ts
+      - .github/workflows/pr-blender-smoke.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  blender-smoke:
+    name: Build image and run auto-rig smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    concurrency:
+      group: pr-blender-smoke-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build production image (linux/amd64, no push)
+        run: |
+          docker buildx build --platform linux/amd64 --load -t mvstudiopro-pr-smoke:${{ github.sha }} .
+      - name: Run auto-rig smoke inside the built image
+        timeout-minutes: 20
+        run: |
+          set -o pipefail
+          mkdir -p artifacts/auto-rig-smoke
+          docker run --rm --platform linux/amd64 \
+            -v "$PWD/artifacts/auto-rig-smoke:/out" \
+            mvstudiopro-pr-smoke:${{ github.sha }} \
+            sh -c 'blender --background --factory-startup --version | head -n 1 | tee /out/blender-version.txt \
+              && xvfb-run -a blender --background --factory-startup --disable-autoexec --threads 1 --python-exit-code 1 \
+                 --python server/scripts/test_auto_rig_proxy.py -- /out/run' \
+            2>&1 | tee artifacts/auto-rig-smoke/smoke.log
+          echo "tested_sha=${{ github.event.pull_request.head.sha || github.sha }}" | tee artifacts/auto-rig-smoke/tested-sha.txt
+          grep -q "^TEST_OK" artifacts/auto-rig-smoke/smoke.log
+          echo "== Blender =="; cat artifacts/auto-rig-smoke/blender-version.txt
+          echo "== TEST_OK =="; grep "^TEST_OK" artifacts/auto-rig-smoke/smoke.log
+      - name: Upload smoke artifacts (log, previews, receipts)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: auto-rig-smoke-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            artifacts/auto-rig-smoke/smoke.log
+            artifacts/auto-rig-smoke/blender-version.txt
+            artifacts/auto-rig-smoke/tested-sha.txt
+            artifacts/auto-rig-smoke/run/**/*.png
+            artifacts/auto-rig-smoke/run/**/*.json
+          if-no-files-found: warn
+          retention-days: 14
