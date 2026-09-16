@@ -54,7 +54,7 @@ import {
 import { evaluateManhuaWorld3dEligibility, toManhuaWorld3dRef } from "@shared/manhuaWorld3d";
 import { evaluateManhuaStateContinuity } from "@shared/manhuaCharacterStates";
 import { relayoutManhuaSegmentPlanForEngine, replaceManhuaEpisodeSegmentPlanInMarkdown } from "@shared/manhuaEngineRelayout";
-import type { ManhuaWorldGenerateOptions } from "@/components/canvas/ManhuaWorldStudio";
+import type { ManhuaStageFrameBindingDraft, ManhuaWorldGenerateOptions, ManhuaWorldLayoutSubmitOptions } from "@/components/canvas/ManhuaWorldStudio";
 import { copyText } from "@/lib/copyText";
 import { cropManhuaSheet2x2 } from "@/lib/manhuaSheetCropApi";
 import type { ManhuaSceneTileSlot } from "@shared/manhuaSceneTilePick";
@@ -1981,6 +1981,127 @@ export default function OmniCanvas() {
       }
     },
     [customAssetRefs, removeManhuaWorldMutation],
+  );
+  /** PR-10：3D 世界视角 PNG → 签名上传 → 该场景的候选参考图（不带 seedLibraryId，避免顶掉挂着 world3d 的原场景图） */
+  const uploadPngForManhuaWorld = useCallback(
+    async (blob: Blob, fileName: string): Promise<{ url: string; gcsUri: string }> => {
+      const file = new File([blob], fileName, { type: "image/png" });
+      const signed = await getSignedUrlMutation.mutateAsync({ fileName, mimeType: "image/png" });
+      await uploadFileToSignedUrl({ file, uploadUrl: signed.uploadUrl, contentType: "image/png", headers: signed.requiredHeaders });
+      const url = await resolveCanvasMaterialUrl(signed.gcsUri);
+      return { url, gcsUri: signed.gcsUri };
+    },
+    [getSignedUrlMutation],
+  );
+  const exportSceneStageFrame = useCallback(
+    async (sceneRefId: string, blob: Blob, frame: ManhuaStageFrameBindingDraft & { episode?: number; segmentIndex?: number }) => {
+      const ref = customAssetRefs.find((item) => item.id === sceneRefId);
+      if (!ref) {
+        toast.error("场景参考图不存在");
+        return;
+      }
+      // 来源绑定必须齐：世界身份 + 机位；缺任一就不入库（不靠标签猜）
+      if (!frame.worldTaskId || !frame.worldSourceVersion || !frame.cameraKind) {
+        toast.error("视角图缺少世界/机位来源，未保存");
+        return;
+      }
+      try {
+        const viewLabelZh = frame.viewLabelZh || "视角";
+        const safeView = String(viewLabelZh).replace(/[^a-zA-Z0-9\u4e00-\u9fff_-]+/g, "-").slice(0, 24);
+        const { url, gcsUri } = await uploadPngForManhuaWorld(blob, `world-stage-${safeView}-${Date.now()}.png`);
+        const shotZh = frame.episode && frame.segmentIndex ? `第${frame.episode}集段${String(frame.segmentIndex).padStart(2, "0")}·` : "";
+        const labelZh = `${ref.labelZh || "场景"}·${shotZh}${viewLabelZh}机位`;
+        const stageFrame = {
+          worldTaskId: frame.worldTaskId,
+          ...(frame.worldId ? { worldId: frame.worldId } : {}),
+          worldSourceVersion: frame.worldSourceVersion,
+          cameraKind: frame.cameraKind,
+          viewLabelZh,
+          actorIds: frame.actorIds,
+          revision: frame.revision,
+          camera: frame.camera,
+          actors: frame.actors,
+          timeSec: frame.timeSec,
+          ...(frame.episode ? { episode: frame.episode } : {}),
+          ...(frame.segmentIndex ? { segmentIndex: frame.segmentIndex } : {}),
+          exportedAt: Date.now(),
+        };
+        setCustomAssetRefs((prev) => {
+          const next = upsertGeneratedManhuaCustomAssetRef(prev, { url, role: "scene", labelZh, refDuty: "space" });
+          // 长期引用要留 gs://（签名 url 会过期）；来源绑定同源写进 ref
+          return normalizeManhuaCustomAssetRefs(next.map((r) => (r.url === url ? { ...r, gcsUri, stageFrame } : r)));
+        });
+        toast.success(`已把「${labelZh}」存为该场景的候选参考图（已绑定世界与 ${frame.actorIds.length} 个人物）`);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "视角图上传失败");
+      }
+    },
+    [customAssetRefs, uploadPngForManhuaWorld],
+  );
+  /** PR-11：深度全景上传后以 layout 提示提交（两步：Marble 上色 → is_pano 建世界，服务端串） */
+  const submitLayoutSceneWorld = useCallback(
+    async (sceneRefId: string, options: ManhuaWorldLayoutSubmitOptions) => {
+      const ref = customAssetRefs.find((item) => item.id === sceneRefId);
+      if (!ref) {
+        toast.error("场景参考图不存在");
+        return;
+      }
+      const eligibility = evaluateManhuaWorld3dEligibility(ref);
+      if (!eligibility.eligible) {
+        toast.error(eligibility.reasonZh || "当前场景参考图不能生成 3D 世界");
+        return;
+      }
+      const current = eligibility.currentWorld3d;
+      if (current?.status === "queued" || current?.status === "running" || current?.status === "reconcile_manual") {
+        toast.message("这个场景已有进行中或待核对的世界任务，不会重复提交");
+        return;
+      }
+      const textPrompt = options.textPrompt.trim();
+      if (textPrompt.length < 2) {
+        toast.error("布局提示词必填：描述材质/时间/氛围");
+        return;
+      }
+      if (
+        !window.confirm(
+          `将按本段白模布局生成「${ref.labelZh || "这张场景图"}」的 3D 世界（${options.model}，深度全景上色 + 建世界两步，约 2–8 分钟）。此操作会调用外部生成服务并产生实际调用成本。确认继续？`,
+        )
+      ) {
+        return;
+      }
+      const token = manhuaWorldOperationGuard.current.begin(sceneRefId);
+      if (!token) return;
+      setSceneWorldBusyIds(manhuaWorldOperationGuard.current.assetIds());
+      try {
+        const { meta } = options;
+        const { url: depthPanoUrl, gcsUri: depthPanoGcsUri } = await uploadPngForManhuaWorld(options.depthPng, `depth-pano-${meta.width}x${meta.height}-${meta.encoding}.png`);
+        // WL-D01：z_min/z_max/编码/尺寸是 API 字段，结构化随单走（文件名只是给人看的）
+        const depthMeta = { width: meta.width, height: meta.height, zMin: meta.zMin, zMax: meta.zMax, encoding: meta.encoding };
+        const task = await submitManhuaWorldMutation.mutateAsync({
+          sceneRef: ref.id,
+          sourceVersion: eligibility.sourceVersion,
+          sourceImageUrl: ref.url,
+          ...(ref.gcsUri ? { sourceImageGcsUri: ref.gcsUri } : {}),
+          displayName: `${ref.labelZh || ref.id}·布局`,
+          model: options.model,
+          prompt: { type: "layout", depthPanoUrl, depthPanoGcsUri, depthMeta, textPrompt },
+        });
+        applyManhuaWorldTaskView(task, ref.world3d?.taskId || null);
+        if (task.status === "queued" || task.status === "running") {
+          toast.message("布局可控世界已开始生成（先上色再建世界），完成后回到 3D 场景工作台查看");
+          void pollManhuaWorldTask(task.taskId);
+        } else if (task.status === "succeeded") {
+          toast.success("3D 世界已就绪");
+        } else {
+          toast.error(task.errorZh || "3D 世界任务未能启动");
+        }
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "布局世界提交失败");
+      } finally {
+        manhuaWorldOperationGuard.current.end(sceneRefId, token);
+        setSceneWorldBusyIds(manhuaWorldOperationGuard.current.assetIds());
+      }
+    },
+    [applyManhuaWorldTaskView, customAssetRefs, pollManhuaWorldTask, submitManhuaWorldMutation, uploadPngForManhuaWorld],
   );
   useEffect(() => {
     if (!canUseManhua3d) return;
@@ -9964,6 +10085,8 @@ export default function OmniCanvas() {
                   onGenerateSceneWorld={canUseManhua3d ? generateSceneWorld : undefined}
                   onRetrySceneWorld={canUseManhua3d ? retrySceneWorld : undefined}
                   onRemoveSceneWorld={canUseManhua3d ? removeSceneWorld : undefined}
+                  onExportSceneStageFrame={canUseManhua3d ? exportSceneStageFrame : undefined}
+                  onSubmitLayoutSceneWorld={canUseManhua3d ? submitLayoutSceneWorld : undefined}
                   sceneWorldBusyIds={sceneWorldBusyIds}
                   onApplyRiggedModel={canUseManhua3d ? (task, expectedTaskId) => {
                     if (factoryBusy || asset3dBusyIds.includes(task.assetRef)) return false;

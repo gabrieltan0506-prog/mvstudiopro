@@ -14,6 +14,69 @@ export const MANHUA_WORLD_3D_MODEL_LABEL_ZH: Record<ManhuaWorld3dModel, string> 
   "marble-1.0-draft": "草稿（≈$0.12，试提示词）",
 };
 
+/** 0916 文档价：$1 = 1250 credits；draft 150、1.1 1500、plus 1500–3000（建世界一步；depth_to_rgb 上色以 Operation.cost 回执为准，不预估） */
+export const MANHUA_WORLD_3D_MODEL_CREDITS: Record<ManhuaWorld3dModel, { min: number; max: number }> = {
+  "marble-1.1-plus": { min: 1500, max: 3000 },
+  "marble-1.1": { min: 1500, max: 1500 },
+  "marble-1.0": { min: 1500, max: 1500 },
+  "marble-1.0-draft": { min: 150, max: 150 },
+};
+
+export type ManhuaStageCameraKind = "establish" | "ots" | "single";
+
+/**
+ * 导出视角图的来源绑定（WL 交付门槛）：哪个世界（任务号/world_id/场景图版本）、哪一镜（集/段）、哪个机位、哪些人物、何时。
+ * 采用到关键帧/提交时同源带走，不靠中文标签猜。
+ */
+export type ManhuaStageFrameBinding = {
+  worldTaskId: string;
+  worldId?: string;
+  worldSourceVersion: string;
+  cameraKind: ManhuaStageCameraKind;
+  viewLabelZh: string;
+  /** 本帧里确实加载成功的本段 actor.id；资产卡身份另存 actors[].assetRef（缺人不许导出） */
+  actorIds: string[];
+  episode?: number;
+  segmentIndex?: number;
+  exportedAt: number;
+  /** 新导出保存实例与完整机位/演员快照；旧候选图允许缺失，不能据此宣称正式镜头已绑定。 */
+  revision?: string;
+  camera?: { kind: ManhuaStageCameraKind; position: [number, number, number]; target: [number, number, number]; lens: number; labelZh: string };
+  actors?: Array<{ id: string; assetRef?: string; labelZh: string; glbUrl: string; stagePoint: readonly [number, number]; heightM?: number; yawDeg?: number }>;
+  timeSec?: number;
+};
+
+const STAGE_CAMERA_KINDS: readonly ManhuaStageCameraKind[] = ["establish", "ots", "single"];
+
+export function normalizeManhuaStageFrameBinding(raw: unknown): ManhuaStageFrameBinding | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const o = raw as Partial<ManhuaStageFrameBinding>;
+  const worldTaskId = String(o.worldTaskId || "").trim().slice(0, 100);
+  const worldSourceVersion = String(o.worldSourceVersion || "").trim().slice(0, 4_096);
+  const cameraKind = String(o.cameraKind || "") as ManhuaStageCameraKind;
+  if (!worldTaskId || !worldSourceVersion || !STAGE_CAMERA_KINDS.includes(cameraKind)) return undefined;
+  const worldId = String(o.worldId || "").trim().slice(0, 160) || undefined;
+  const actorIds = Array.isArray(o.actorIds) ? o.actorIds.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 32) : [];
+  const episode = Number(o.episode);
+  const segmentIndex = Number(o.segmentIndex);
+  const exportedAt = Number(o.exportedAt);
+  return {
+    worldTaskId,
+    ...(worldId ? { worldId } : {}),
+    worldSourceVersion,
+    cameraKind,
+    viewLabelZh: String(o.viewLabelZh || "").trim().slice(0, 40),
+    actorIds,
+    ...(Number.isInteger(episode) && episode > 0 ? { episode } : {}),
+    ...(Number.isInteger(segmentIndex) && segmentIndex > 0 ? { segmentIndex } : {}),
+    exportedAt: Number.isFinite(exportedAt) ? exportedAt : 0,
+    ...(typeof o.revision === "string" && o.revision ? { revision: o.revision.slice(0, 100) } : {}),
+    ...(o.camera && STAGE_CAMERA_KINDS.includes(o.camera.kind) && Array.isArray(o.camera.position) && o.camera.position.length === 3 && o.camera.position.every(Number.isFinite) && Array.isArray(o.camera.target) && o.camera.target.length === 3 && o.camera.target.every(Number.isFinite) && Number.isFinite(o.camera.lens) ? { camera: { kind: o.camera.kind, position: [...o.camera.position] as [number, number, number], target: [...o.camera.target] as [number, number, number], lens: o.camera.lens, labelZh: String(o.camera.labelZh || "").slice(0, 80) } } : {}),
+    ...(Array.isArray(o.actors) && o.actors.every(a => a && typeof a.id === "string" && Array.isArray(a.stagePoint) && a.stagePoint.length === 2 && a.stagePoint.every(Number.isFinite)) ? { actors: o.actors.map(a => ({ id: a.id, ...(a.assetRef ? { assetRef: a.assetRef } : {}), labelZh: String(a.labelZh || ""), glbUrl: String(a.glbUrl || ""), stagePoint: [...a.stagePoint] as [number, number], ...(Number.isFinite(a.heightM) ? { heightM: a.heightM } : {}), ...(Number.isFinite(a.yawDeg) ? { yawDeg: a.yawDeg } : {}) })) } : {}),
+    ...(Number.isFinite(o.timeSec) && Number(o.timeSec) >= 0 ? { timeSec: Number(o.timeSec) } : {}),
+  };
+}
+
 export type ManhuaWorld3dAssets = {
   /** Fly 桥稳定地址（不过期）；键名即文件名 */
   spz500kUrl?: string;
