@@ -61,7 +61,9 @@ export function resolveManhuaCameraTempo(input: ManhuaCameraTempoInput): ManhuaC
   let reason: string;
   if (hasContact || fastHit.length) {
     tier = "fast";
-    reason = hasContact ? `有接触事件${fastHit.length ? `、意图「${fastHit.join("/")}」` : ""}，按快档切` : `意图「${fastHit.join("/")}」，按快档切`;
+    reason = hasContact
+      ? `有接触事件${fastHit.length ? `、意图「${fastHit.join("/")}」` : ""}，按快档切${slowHit.length ? `（意图慢词「${slowHit.join("/")}」被接触事件覆盖）` : ""}`
+      : `意图「${fastHit.join("/")}」，按快档切${slowHit.length ? `（同时含慢词「${slowHit.join("/")}」，快词优先）` : ""}`;
   } else if (slowHit.length) {
     tier = "slow";
     reason = `意图「${slowHit.join("/")}」且无接触，按慢档留长镜`;

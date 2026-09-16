@@ -237,3 +237,15 @@ describe("PR-12 · 上下文补喂与四类 issue", () => {
     expect(claimManhuaAdvisorNudgeOnce({ getItem: () => { throw new Error("blocked"); }, setItem: () => {} }, "edit")).toBe(true);
   });
 });
+
+describe("1471 R1 · 存储不可用", () => {
+  it("取 sessionStorage 本身抛 SecurityError 或为 null：仍返回可弹，不抛", async () => {
+    const { claimManhuaAdvisorNudgeOnce } = await import("./manhuaAdvisorProject");
+    expect(claimManhuaAdvisorNudgeOnce(() => { throw new Error("SecurityError"); }, "assets")).toBe(true);
+    expect(claimManhuaAdvisorNudgeOnce(null, "assets")).toBe(true);
+    const mem = new Map<string, string>();
+    const store = { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => void mem.set(k, v) };
+    expect(claimManhuaAdvisorNudgeOnce(() => store, "edit")).toBe(true);
+    expect(claimManhuaAdvisorNudgeOnce(store, "edit")).toBe(false);
+  });
+});

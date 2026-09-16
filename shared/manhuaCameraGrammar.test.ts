@@ -331,3 +331,57 @@ describe("PR-6 · 节奏档接进运镜文法（属性式）", () => {
     expect(manhuaCameraPromptZh(hand.cameras[0]!, "handheld")).toContain("手持");
   });
 });
+
+describe("1471 R1 · 属性式：布局改动不丢接触镜", () => {
+  const lcg = (seed: number) => () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
+  const base = shots.find((s) => s.sourceShotId === "ap_shot_1")!;
+  const randomShot = (rnd: () => number, maxEvents: number) => {
+    const D = [4, 6, 8, 12][Math.floor(rnd() * 4)]!;
+    const n = 1 + Math.floor(rnd() * maxEvents);
+    const events: ManhuaActionEvent[] = [];
+    let clock = Math.round(rnd() * 2 * 24) / 24;
+    for (let i = 0; i < n && clock < D - 0.5; i += 1) {
+      const start = clock;
+      const w = Math.round((0.1 + rnd() * 1) * 24) / 24;
+      const c = Math.round((0.05 + rnd() * 0.5) * 24) / 24;
+      const r = Math.round((0.1 + rnd() * 1.5) * 24) / 24;
+      const end = Math.min(D, start + w + c + r);
+      clock = end + Math.round(rnd() * 1 * 24) / 24;
+      const cs = Math.min(end, start + w);
+      const ce = Math.min(end, cs + c);
+      const [atk, tgt] = rnd() < 0.5 ? [MAN, WOMAN] : [WOMAN, MAN];
+      events.push({
+        eventId: `nl_e${i}`, kind: "attack", actorId: atk, targetActorId: tgt, outcome: "unplanned", slowMotionIntent: false,
+        phases: [
+          { kind: "windup", sourceStartSec: start, sourceEndSec: cs },
+          { kind: "contact", sourceStartSec: cs, sourceEndSec: ce },
+          { kind: "recover", sourceStartSec: ce, sourceEndSec: end },
+        ].filter((p) => p.sourceEndSec > p.sourceStartSec) as ManhuaActionEvent["phases"],
+      } as ManhuaActionEvent);
+    }
+    const shot = { ...base, sourceSpan: { startSec: 0, endSec: D }, timeMap: { sourceDurationSec: D, spans: [] }, events };
+    const timing = manhuaPrevisTimingForExecutableShot(shot, cam(D));
+    return { D: timing.durationSec, events, cues: timing.contactCues };
+  };
+  it("≤2 次交锋（草稿 ≤7 镜，不触发上限丢镜）在默认/快/慢/手持/长反应停留下，每个有 cue 的攻击事件都有自己的接触镜", () => {
+    const tempos = [
+      undefined,
+      resolveManhuaCameraTempo({ intentZh: "燃", hasContact: true }),
+      { ...resolveManhuaCameraTempo({ intentZh: "静", hasContact: false }), maxCuts: 8 },
+      { style: "handheld" as const },
+      { reactionHoldSec: 4, maxCuts: 8 },
+    ];
+    for (let round = 0; round < 12; round += 1) {
+      const { D, events, cues } = randomShot(lcg(11000 + round), 2);
+      for (const tempo of tempos) {
+        const { cameras } = choreographManhuaCameras({ durationSec: D, events, cues, actorPositions: positions, tempo });
+        assertCameraContract(cameras, D);
+        for (const cue of cues) {
+          const contact = cameras.find((c) => c.kind === "contact" && c.eventId === cue.eventId);
+          expect(contact, `round ${round} tempo ${JSON.stringify(tempo)} event ${cue.eventId}`).toBeTruthy();
+          expect(contact!.startSec).toBeLessThanOrEqual(cue.contactSec + 1e-9);
+        }
+      }
+    }
+  });
+});

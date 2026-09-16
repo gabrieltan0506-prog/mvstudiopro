@@ -13,6 +13,12 @@ describe("节奏策略 · 意图/接触 → 快慢档", () => {
     const t = resolveManhuaCameraTempo({ intentZh: "她迟疑了", hasContact: true });
     expect(t.tier).toBe("fast");
     expect(t.reasonZh).toContain("接触");
+    // 1471 R1：冲突时把被覆盖的慢词写进原因，创作者看得见为什么没走慢档
+    expect(t.reasonZh).toContain("迟疑");
+    expect(t.reasonZh).toContain("覆盖");
+    const both = resolveManhuaCameraTempo({ intentZh: "燃到静", hasContact: false });
+    expect(both.tier).toBe("fast");
+    expect(both.reasonZh).toContain("快词优先");
   });
   it("戳/亏欠/迟疑/静且无接触 → slow：3 镜、3 秒、反应 4s、慢环绕", () => {
     const t = resolveManhuaCameraTempo({ intentZh: "让观众被亏欠感戳到", hasContact: false });

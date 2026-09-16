@@ -1432,7 +1432,7 @@ export default function OmniCanvas() {
     if (canvasMode !== "manhua" || advisorOpen) return;
     const text = pickManhuaAdvisorPhaseNudge({ phase: workflowPhase, issues: advisorProject.issues, recommend3d: advisorProject.recommend3d });
     if (!text) return;
-    if (!claimManhuaAdvisorNudgeOnce(window.sessionStorage, workflowPhase)) return;
+    if (!claimManhuaAdvisorNudgeOnce(() => window.sessionStorage, workflowPhase)) return;
     setAdvisorNudge(text);
     // 只在阶段切换那一刻取一次快照；issues 后续变化不重复弹
     // eslint-disable-next-line react-hooks/exhaustive-deps

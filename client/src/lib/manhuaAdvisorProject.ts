@@ -130,13 +130,20 @@ export const MANHUA_ADVISOR_NUDGE_STORAGE_PREFIX = "manhua-advisor-nudge:";
 
 /** 每阶段只弹一次；存储不可用时按「可弹」处理，不因本机存储把提示吞掉。 */
 export function claimManhuaAdvisorNudgeOnce(
-  storage: { getItem: (key: string) => string | null; setItem: (key: string, value: string) => void },
+  storage:
+    | { getItem: (key: string) => string | null; setItem: (key: string, value: string) => void }
+    | (() => { getItem: (key: string) => string | null; setItem: (key: string, value: string) => void })
+    | null
+    | undefined,
   phase: ManhuaCreativeAdvisorContext["stage"],
 ): boolean {
   const key = `${MANHUA_ADVISOR_NUDGE_STORAGE_PREFIX}${phase}`;
   try {
-    if (storage.getItem(key)) return false;
-    storage.setItem(key, "1");
+    // 1471 R1：`window.sessionStorage` 属性本身在 Safari 私密窗/被禁站点会抛 SecurityError，允许传取值函数在 try 内取
+    const store = typeof storage === "function" ? storage() : storage;
+    if (!store) return true;
+    if (store.getItem(key)) return false;
+    store.setItem(key, "1");
   } catch {
     /* 私密窗口或存储被禁：仍弹，只是记不住 */
   }
