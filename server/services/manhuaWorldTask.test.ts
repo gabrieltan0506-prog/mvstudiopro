@@ -131,9 +131,14 @@ describe("manhuaWorldTask", () => {
     const failed = await createManhuaWorldTask(baseInput());
     expect(failed.status).toBe("failed");
     submit.mockResolvedValueOnce({ operationId: "op2" });
+    const submitsBefore = submit.mock.calls.length;
     const retried = await retryManhuaWorldTask(failed.taskId, 7);
     expect(retried?.status).toBe("running");
     expect(retried?.taskId).not.toBe(failed.taskId);
+    // 1472 R1：同一失败任务再点一次重试 → 同一个重试任务号，不再向上游提交第二单
+    const again = await retryManhuaWorldTask(failed.taskId, 7);
+    expect(again?.taskId).toBe(retried?.taskId);
+    expect(submit.mock.calls.length).toBe(submitsBefore + 1);
     await expect(retryManhuaWorldTask(retried!.taskId, 7)).rejects.toThrow("manhua_world_retry_not_failed");
 
     submit.mockRejectedValueOnce(new SubmitUnknownError("marble_submit_network:AbortError"));

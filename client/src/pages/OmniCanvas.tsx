@@ -1823,7 +1823,9 @@ export default function OmniCanvas() {
         normalizeManhuaCustomAssetRefs(
           prev.map((r) => {
             if (r.id !== task.sceneRef) return r;
-            // 只在仍指向预期任务（或尚无任务）时写入，避免换图/删除后旧轮询把结果盖回来
+            // 只在仍指向预期任务（或尚无任务且这是首次提交）时写入，避免换图/删除后旧轮询把结果盖回来。
+            // 1472 R1：轮询回写（expectedTaskId === task.taskId）时若节点已没有 world3d（用户已删除），不得把旧任务写回去。
+            if (expectedTaskId && !r.world3d && expectedTaskId === task.taskId) return r;
             if (expectedTaskId && r.world3d?.taskId && r.world3d.taskId !== expectedTaskId && r.world3d.taskId !== task.taskId) return r;
             return { ...r, world3d: toManhuaWorld3dRef(task) };
           }),

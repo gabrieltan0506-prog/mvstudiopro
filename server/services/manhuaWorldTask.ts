@@ -394,9 +394,11 @@ export async function retryManhuaWorldTask(taskId: string, userId: number): Prom
   if (record.status === "reconcile_manual") throw new Error("manhua_world_retry_reconcile_forbidden");
   if (record.status !== "failed") throw new Error("manhua_world_retry_not_failed");
   const now = isoNow();
+  // 1472 R1：重试号只由上一次 taskId 派生（与 manhua3dTask 同口径）——同一失败任务连点两次不会向 Marble 提交两单；
+  // 重试再失败后，新失败任务号又能派生下一次。原先掺入时间戳，每次点击都是新任务 = 重复扣上游 credits。
   const retried: ManhuaWorldTaskRecord = {
     ...record,
-    taskId: `mw_${createHash("sha256").update(`${record.taskId}:${now}`).digest("hex").slice(0, 24)}`,
+    taskId: `mw_${createHash("sha256").update(JSON.stringify(["retry", record.taskId])).digest("hex").slice(0, 24)}`,
     status: "queued",
     operationId: undefined,
     worldId: undefined,
@@ -409,7 +411,12 @@ export async function retryManhuaWorldTask(taskId: string, userId: number): Prom
     createdAt: now,
     updatedAt: now,
   };
-  await createRecordExclusive(retried);
+  const created = await createRecordExclusive(retried);
+  if (!created) {
+    const existing = await readRecord(retried.taskId);
+    if (!existing) throw new Error("manhua_world_idempotency_record_missing");
+    return toManhuaWorldTaskView(existing);
+  }
   const advanced = (await advanceManhuaWorldTask(retried.taskId)) || retried;
   ensureManhuaWorldWorker();
   return toManhuaWorldTaskView(advanced);

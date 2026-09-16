@@ -7,7 +7,7 @@
  *   - 归档：archiveBridgeFileToGcs（Fly → GCS）
  * 公开读取走 /api/jobs?op=manhuaBridgeMedia&relPath=…（Vercel rewrite 到 Fly）。
  */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { downloadGcsObject, uploadBufferToGcs } from "./gcs.js";
@@ -80,7 +80,7 @@ export async function writeBridgeFile(ref: BridgeRef, buffer: Buffer): Promise<{
   const relPath = bridgeRelPath(ref);
   const abs = path.join(getBridgeBaseDir(), relPath);
   await fs.mkdir(path.dirname(abs), { recursive: true });
-  const temporary = `${abs}.tmp.${process.pid}.${Date.now()}`;
+  const temporary = `${abs}.tmp.${process.pid}.${randomUUID()}`; // 1472 R1：同毫秒并发写同一文件不再撞临时名
   await fs.writeFile(temporary, buffer);
   await fs.rename(temporary, abs);
   return { relPath, abs, bytes: buffer.byteLength, sha256: createHash("sha256").update(buffer).digest("hex") };
