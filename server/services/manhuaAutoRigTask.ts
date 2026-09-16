@@ -164,42 +164,42 @@ const real: AutoRigTaskDeps = {
     return row ?? null;
   },
   async insert(id, userId, input) {
+    /**
+     * 0916 线上事故：生产 DB 走 drizzle neon-http，该驱动**不支持 transaction**，
+     * 原先的 db.transaction + pg_advisory_xact_lock 一进来就抛「No transactions support」→ 绑骨提交永远 500。
+     * 改为无事务路径：先查同编号/同人物在途任务，再 onConflictDoNothing 插入；
+     * 并发保护退化为 jobs.id 唯一键（同编号绝不重复建单）+ 在途检查（跨标签页极端并发最多多一条 queued，worker 按人物串行执行）。
+     */
     const db = await database();
-    await db.transaction(async tx => {
-      // 同一人物跨标签页提交串行核对；同编号重查不会触发第二个任务。
-      await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(hashtext(${`auto-rig:${userId}:${input.assetRef}`}))`
-      );
-      const [existing] = await tx.select().from(jobs).where(eq(jobs.id, id));
-      if (existing) return;
-      const active = await tx
-        .select({ id: jobs.id })
-        .from(jobs)
-        .where(
-          and(
-            eq(jobs.userId, String(userId)),
-            eq(jobs.provider, "blender-auto-rig"),
-            sql`${jobs.status} IN ('queued','running')`,
-            sql`${jobs.input}::jsonb->'params'->>'assetRef' = ${input.assetRef}`
-          )
+    const [existing] = await db.select().from(jobs).where(eq(jobs.id, id));
+    if (existing) return;
+    const active = await db
+      .select({ id: jobs.id })
+      .from(jobs)
+      .where(
+        and(
+          eq(jobs.userId, String(userId)),
+          eq(jobs.provider, "blender-auto-rig"),
+          sql`${jobs.status} IN ('queued','running')`,
+          sql`${jobs.input}::jsonb->'params'->>'assetRef' = ${input.assetRef}`
         )
-        .limit(1);
-      if (active.length)
-        throw new AutoRigInputError(
-          "这个人物还有绑骨任务在处理，请先查询原任务"
-        );
-      await tx
-        .insert(jobs)
-        .values({
-          id,
-          userId: String(userId),
-          type: "post_prod",
-          provider: "blender-auto-rig",
-          status: "queued",
-          input: { action: "manhua_auto_rig", params: input },
-        })
-        .onConflictDoNothing({ target: jobs.id });
-    });
+      )
+      .limit(1);
+    if (active.length)
+      throw new AutoRigInputError(
+        "这个人物还有绑骨任务在处理，请先查询原任务"
+      );
+    await db
+      .insert(jobs)
+      .values({
+        id,
+        userId: String(userId),
+        type: "post_prod",
+        provider: "blender-auto-rig",
+        status: "queued",
+        input: { action: "manhua_auto_rig", params: input },
+      })
+      .onConflictDoNothing({ target: jobs.id });
   },
   async saveRecovered(previous, output) {
     const db = await database();

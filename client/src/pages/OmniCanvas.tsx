@@ -41,6 +41,18 @@ import {
   type CanvasOutboundConfirmationScope,
 } from "@/lib/canvasRunBlock";
 import { resolveOpenAiImageLaneForBlockId } from "@shared/openaiImageLane";
+import {
+  MANHUA_MULTIVIEW_VIEWS,
+  MANHUA_MULTIVIEW_VIEW_LABEL_ZH,
+  buildManhuaMultiviewPrompt,
+  evaluateManhuaMultiviewReadiness,
+  gsUriFromSignedGcsUrl,
+  mergeManhuaMultiviewDraft,
+  type ManhuaMultiviewDraftView,
+  type ManhuaMultiviewView,
+} from "@shared/manhuaMultiview";
+import { evaluateManhuaWorld3dEligibility, toManhuaWorld3dRef } from "@shared/manhuaWorld3d";
+import type { ManhuaWorldGenerateOptions } from "@/components/canvas/ManhuaWorldStudio";
 import { copyText } from "@/lib/copyText";
 import { cropManhuaSheet2x2 } from "@/lib/manhuaSheetCropApi";
 import type { ManhuaSceneTileSlot } from "@shared/manhuaSceneTilePick";
@@ -1654,6 +1666,325 @@ export default function OmniCanvas() {
       importExistingManhua3dMutation,
     ],
   );
+  const submitManhua3dMultiviewMutation = trpc.manhua3d.submitMultiview.useMutation();
+  /**
+   * 0916 PR-7 多视角：用当前定妆图改出前/左/后/右白底视角图（走既有 canvas_gpt_image2 付费管线，
+   * 每张一单、瞬时错误重试一次），逐张落进 ref.multiviewDraft，刷新不丢；不提交建模。
+   */
+  const generateManhua3dMultiviewViews = useCallback(
+    async (assetRefId: string, views?: ManhuaMultiviewView[]) => {
+      const ref = customAssetRefs.find((item) => item.id === assetRefId);
+      if (!ref) {
+        toast.error("人物参考图不存在");
+        return;
+      }
+      const eligibility = evaluateManhuaAsset3dEligibility(ref);
+      if (!eligibility.eligible) {
+        toast.error(eligibility.reasonZh || "当前人物参考图不能出四视角");
+        return;
+      }
+      if (!user?.id) {
+        toast.error("请先登录后再出图");
+        return;
+      }
+      const targets = views?.length ? views : [...MANHUA_MULTIVIEW_VIEWS];
+      const labels = targets.map((v) => MANHUA_MULTIVIEW_VIEW_LABEL_ZH[v]).join("、");
+      if (
+        !window.confirm(
+          `将用「${ref.labelZh || "这张人物图"}」当前定妆图改出 ${targets.length} 张白底视角图（${labels}），每张按改图计费；原图不变，出完先过目再决定是否建模。确认继续？`,
+        )
+      ) {
+        return;
+      }
+      const operationToken = manhua3dOperationGuard.current.begin(assetRefId);
+      if (!operationToken) return;
+      setAsset3dBusyIds(manhua3dOperationGuard.current.assetIds());
+      const failed: string[] = [];
+      let produced = 0;
+      try {
+        for (const view of targets) {
+          const prompt = buildManhuaMultiviewPrompt(view, ref.labelZh);
+          let url = "";
+          for (let attempt = 0; attempt < 2 && !url; attempt += 1) {
+            try {
+              url = await runGptImage2(prompt, "9:16", {
+                refImageUrl: ref.url,
+                imageLane: "asset",
+                userId: String(user.id),
+              });
+            } catch (error) {
+              // 0916 探针：官方改图偶发 520，同一视角只重试一次；两次都失败留给用户按「补出这张」。
+              // 1472 R3：建单/轮询的网络类错误（job 可能已建成并计费）不自动重试，否则可能二次扣费；只对上游明确失败重试。
+              const message = error instanceof Error ? error.message : "出图失败";
+              // 1472 R4：只拦「轮询超时 / Timeout / Abort」这类任务多半还在 worker 里跑的情形；
+              // 520 与普通网络错误（建单未成、无计费）仍按原口径重试一次。
+              const uncertain = /轮询已等待|timeout|timed out|超时|abort/i.test(message);
+              if (uncertain) {
+                failed.push(`${MANHUA_MULTIVIEW_VIEW_LABEL_ZH[view]}（${message}；结果不确定，可能已计费，请先核对积分再「补出这张」）`);
+                break;
+              }
+              if (attempt === 1) failed.push(`${MANHUA_MULTIVIEW_VIEW_LABEL_ZH[view]}（${message}）`);
+            }
+          }
+          if (!url) continue;
+          const item: ManhuaMultiviewDraftView = {
+            view,
+            url,
+            ...(gsUriFromSignedGcsUrl(url) ? { gcsUri: gsUriFromSignedGcsUrl(url) } : {}),
+            createdAt: Date.now(),
+          };
+          produced += 1;
+          setCustomAssetRefs((prev) =>
+            normalizeManhuaCustomAssetRefs(
+              prev.map((r) =>
+                r.id === assetRefId
+                  ? { ...r, multiviewDraft: mergeManhuaMultiviewDraft(r.multiviewDraft, eligibility.sourceVersion, item) }
+                  : r,
+              ),
+            ),
+          );
+        }
+        if (failed.length) toast.error(`${failed.length} 张视角图未出：${failed.join("；")}；其余已保存，可单张补出`);
+        else if (produced) toast.success(`已出 ${produced} 张视角图，过目后再提交多视角建模`);
+      } finally {
+        manhua3dOperationGuard.current.end(assetRefId, operationToken);
+        setAsset3dBusyIds(manhua3dOperationGuard.current.assetIds());
+      }
+    },
+    [customAssetRefs, user?.id],
+  );
+  /** 0916 PR-7：四视角草稿 → Tripo H3.1 multiview-to-3d（服务端按 gs:// 重签；幂等按视角版本） */
+  const submitManhua3dMultiview = useCallback(
+    async (assetRefId: string) => {
+      const ref = customAssetRefs.find((item) => item.id === assetRefId);
+      if (!ref) {
+        toast.error("人物参考图不存在");
+        return;
+      }
+      const eligibility = evaluateManhuaAsset3dEligibility(ref);
+      if (!eligibility.eligible) {
+        toast.error(eligibility.reasonZh || "当前人物参考图不能建立 3D 参考");
+        return;
+      }
+      const currentModel3d = eligibility.currentModel3d;
+      if (currentModel3d?.status === "queued" || currentModel3d?.status === "running") {
+        void pollManhua3dTask(currentModel3d.taskId);
+        return;
+      }
+      if (currentModel3d?.status === "reconcile_manual") {
+        toast.message("任务结果仍待核对，为避免重复计费不会再次提交");
+        return;
+      }
+      const readiness = evaluateManhuaMultiviewReadiness(ref.multiviewDraft, eligibility.sourceVersion);
+      if (!readiness.ready) {
+        toast.error(readiness.reasonZh);
+        return;
+      }
+      if (
+        !window.confirm(
+          `将用 ${readiness.views.length} 张视角图提交 Tripo 多视角建模（精细档，约 4 分钟）。此操作会调用外部生成服务并产生实际调用成本；${currentModel3d?.status === "succeeded" ? "现有模型会被新模型替换，旧 GLB 仍保留在任务记录里；已按旧模型做的绑骨/白模配置需按新模型重绑。" : "原人物图不会被替换。"}确认继续？`,
+        )
+      ) {
+        return;
+      }
+      const operationToken = manhua3dOperationGuard.current.begin(assetRefId);
+      if (!operationToken) return;
+      setAsset3dBusyIds(manhua3dOperationGuard.current.assetIds());
+      try {
+        const allHaveGs = readiness.views.every((v) => Boolean(v.gcsUri));
+        const task = await submitManhua3dMultiviewMutation.mutateAsync({
+          assetRef: ref.id,
+          sourceVersion: eligibility.sourceVersion,
+          sourceImageUrl: ref.url,
+          multiviewImageUrls: readiness.views.map((v) => v.url),
+          ...(allHaveGs ? { multiviewImageGcsUris: readiness.views.map((v) => v.gcsUri as string) } : {}),
+          multiviewVersion: readiness.version,
+          options: { geometryQuality: "detailed", textureQuality: "detailed" },
+        });
+        applyManhua3dTaskView(task, ref.model3d?.taskId || null);
+        if (task.status === "queued" || task.status === "running") {
+          toast.message("多视角 3D 参考已开始建立，完成后回到人物卡查看");
+          void pollManhua3dTask(task.taskId);
+        } else if (task.status === "succeeded") {
+          toast.success("多视角 3D 参考已建立");
+        } else {
+          toast.error(task.errorZh || "多视角 3D 任务未能启动");
+        }
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "多视角 3D 任务提交失败");
+      } finally {
+        manhua3dOperationGuard.current.end(assetRefId, operationToken);
+        setAsset3dBusyIds(manhua3dOperationGuard.current.assetIds());
+      }
+    },
+    [applyManhua3dTaskView, customAssetRefs, pollManhua3dTask, submitManhua3dMultiviewMutation],
+  );
+  /* ---------------- 0916 PR-8 场景 3D 世界（Marble）：与人物 3D 同一套守卫/轮询纪律 ---------------- */
+  const submitManhuaWorldMutation = trpc.manhuaWorld.submit.useMutation();
+  const retryManhuaWorldMutation = trpc.manhuaWorld.retry.useMutation();
+  const removeManhuaWorldMutation = trpc.manhuaWorld.remove.useMutation();
+  const manhuaWorldPollInFlightRef = useRef<Set<string>>(new Set());
+  const manhuaWorldOperationGuard = useRef(createManhua3dOperationGuard());
+  const [sceneWorldBusyIds, setSceneWorldBusyIds] = useState<string[]>([]);
+  const applyManhuaWorldTaskView = useCallback(
+    (task: Parameters<typeof toManhuaWorld3dRef>[0], expectedTaskId: string | null) => {
+      setCustomAssetRefs((prev) =>
+        normalizeManhuaCustomAssetRefs(
+          prev.map((r) => {
+            if (r.id !== task.sceneRef) return r;
+            // 只在仍指向预期任务（或尚无任务且这是首次提交）时写入，避免换图/删除后旧轮询把结果盖回来。
+            // 1472 R1：轮询回写（expectedTaskId === task.taskId）时若节点已没有 world3d（用户已删除），不得把旧任务写回去。
+            if (expectedTaskId && !r.world3d && expectedTaskId === task.taskId) return r;
+            if (expectedTaskId && r.world3d?.taskId && r.world3d.taskId !== expectedTaskId && r.world3d.taskId !== task.taskId) return r;
+            return { ...r, world3d: toManhuaWorld3dRef(task) };
+          }),
+        ),
+      );
+    },
+    [],
+  );
+  const pollManhuaWorldTask = useCallback(
+    async (taskId: string) => {
+      if (manhuaWorldPollInFlightRef.current.has(taskId)) return;
+      manhuaWorldPollInFlightRef.current.add(taskId);
+      try {
+        for (let attempt = 0; attempt < 240; attempt += 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 10_000));
+          const task = await trpcUtils.manhuaWorld.getStatus.fetch({ taskId });
+          applyManhuaWorldTaskView(task, taskId);
+          if (task.status === "succeeded") {
+            toast.success(`「${task.displayName}」3D 世界已就绪，可在 3D 场景工作台预览`);
+            return;
+          }
+          if (task.status === "failed" || task.status === "reconcile_manual") {
+            toast.error(task.errorZh || "3D 世界未能完成，请查看 3D 场景工作台");
+            return;
+          }
+        }
+        toast.message("已等待 40 分钟仍未完成；服务端会把超时任务转为人工核对，请回 3D 场景工作台查看最终状态");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "3D 世界状态读取失败");
+      } finally {
+        manhuaWorldPollInFlightRef.current.delete(taskId);
+      }
+    },
+    [applyManhuaWorldTaskView, trpcUtils],
+  );
+  const generateSceneWorld = useCallback(
+    async (sceneRefId: string, options: ManhuaWorldGenerateOptions) => {
+      const ref = customAssetRefs.find((item) => item.id === sceneRefId);
+      if (!ref) {
+        toast.error("场景参考图不存在");
+        return;
+      }
+      const eligibility = evaluateManhuaWorld3dEligibility(ref);
+      if (!eligibility.eligible) {
+        toast.error(eligibility.reasonZh || "当前场景参考图不能生成 3D 世界");
+        return;
+      }
+      const current = eligibility.currentWorld3d;
+      if (current?.status === "queued" || current?.status === "running") {
+        void pollManhuaWorldTask(current.taskId);
+        return;
+      }
+      if (current?.status === "reconcile_manual") {
+        toast.message("任务结果仍待核对，为避免重复计费不会再次提交");
+        return;
+      }
+      if (
+        !window.confirm(
+          `将用「${ref.labelZh || "这张场景图"}」生成 3D 世界（${options.model}，约 1–5 分钟）。此操作会调用外部生成服务并产生实际调用成本；场景图不会被替换。确认继续？`,
+        )
+      ) {
+        return;
+      }
+      const token = manhuaWorldOperationGuard.current.begin(sceneRefId);
+      if (!token) return;
+      setSceneWorldBusyIds(manhuaWorldOperationGuard.current.assetIds());
+      try {
+        const textPrompt = options.textPrompt.trim();
+        const task = await submitManhuaWorldMutation.mutateAsync({
+          sceneRef: ref.id,
+          sourceVersion: eligibility.sourceVersion,
+          sourceImageUrl: ref.url,
+          ...(ref.gcsUri ? { sourceImageGcsUri: ref.gcsUri } : {}),
+          displayName: ref.labelZh || ref.id,
+          model: options.model,
+          prompt: { type: "image", isPano: "auto", ...(textPrompt ? { textPrompt } : {}) },
+        });
+        applyManhuaWorldTaskView(task, ref.world3d?.taskId || null);
+        if (task.status === "queued" || task.status === "running") {
+          toast.message("3D 世界已开始生成，完成后回到 3D 场景工作台查看");
+          void pollManhuaWorldTask(task.taskId);
+        } else if (task.status === "succeeded") {
+          toast.success("3D 世界已就绪");
+        } else {
+          toast.error(task.errorZh || "3D 世界任务未能启动");
+        }
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "3D 世界任务提交失败");
+        throw error;
+      } finally {
+        manhuaWorldOperationGuard.current.end(sceneRefId, token);
+        setSceneWorldBusyIds(manhuaWorldOperationGuard.current.assetIds());
+      }
+    },
+    [applyManhuaWorldTaskView, customAssetRefs, pollManhuaWorldTask, submitManhuaWorldMutation],
+  );
+  const retrySceneWorld = useCallback(
+    async (sceneRefId: string) => {
+      const ref = customAssetRefs.find((item) => item.id === sceneRefId);
+      const current = ref ? evaluateManhuaWorld3dEligibility(ref).currentWorld3d : undefined;
+      if (!ref || current?.status !== "failed") {
+        toast.error("只有明确失败的 3D 世界任务可以重试");
+        return;
+      }
+      if (!window.confirm("将重新生成这个场景的 3D 世界，会再次产生外部调用成本。确认继续？")) return;
+      const token = manhuaWorldOperationGuard.current.begin(sceneRefId);
+      if (!token) return;
+      setSceneWorldBusyIds(manhuaWorldOperationGuard.current.assetIds());
+      try {
+        const task = await retryManhuaWorldMutation.mutateAsync({ taskId: current.taskId });
+        applyManhuaWorldTaskView(task, current.taskId);
+        if (task.status === "queued" || task.status === "running") void pollManhuaWorldTask(task.taskId);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "3D 世界重试失败");
+      } finally {
+        manhuaWorldOperationGuard.current.end(sceneRefId, token);
+        setSceneWorldBusyIds(manhuaWorldOperationGuard.current.assetIds());
+      }
+    },
+    [applyManhuaWorldTaskView, customAssetRefs, pollManhuaWorldTask, retryManhuaWorldMutation],
+  );
+  const removeSceneWorld = useCallback(
+    async (sceneRefId: string) => {
+      const ref = customAssetRefs.find((item) => item.id === sceneRefId);
+      const current = ref?.world3d;
+      if (!ref || !current) return;
+      if (!window.confirm("将删除上游 3D 世界（不再计存储）；已落 Fly/GCS 的产物归档保留。确认继续？")) return;
+      const token = manhuaWorldOperationGuard.current.begin(sceneRefId);
+      if (!token) return;
+      setSceneWorldBusyIds(manhuaWorldOperationGuard.current.assetIds());
+      try {
+        await removeManhuaWorldMutation.mutateAsync({ taskId: current.taskId });
+        setCustomAssetRefs((prev) => normalizeManhuaCustomAssetRefs(prev.map((r) => (r.id === sceneRefId ? { ...r, world3d: undefined } : r))));
+        toast.success("3D 世界已删除，产物归档保留");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "3D 世界删除失败");
+      } finally {
+        manhuaWorldOperationGuard.current.end(sceneRefId, token);
+        setSceneWorldBusyIds(manhuaWorldOperationGuard.current.assetIds());
+      }
+    },
+    [customAssetRefs, removeManhuaWorldMutation],
+  );
+  useEffect(() => {
+    if (!canUseManhua3d) return;
+    for (const ref of customAssetRefs) {
+      const world = evaluateManhuaWorld3dEligibility(ref).currentWorld3d;
+      if (world?.status === "queued" || world?.status === "running") void pollManhuaWorldTask(world.taskId);
+    }
+  }, [canUseManhua3d, customAssetRefs, pollManhuaWorldTask]);
   useEffect(() => {
     if (!canUseManhua3d) return;
     for (const ref of customAssetRefs) {
@@ -9622,6 +9953,12 @@ export default function OmniCanvas() {
                   customAssetRefs={customAssetRefs}
                   onGenerateAsset3d={canUseManhua3d ? generateManhua3dAsset : undefined}
                   onImportAsset3d={canUseManhua3d ? importExistingManhua3dAsset : undefined}
+                  onGenerateAsset3dMultiview={canUseManhua3d ? generateManhua3dMultiviewViews : undefined}
+                  onSubmitAsset3dMultiview={canUseManhua3d ? submitManhua3dMultiview : undefined}
+                  onGenerateSceneWorld={canUseManhua3d ? generateSceneWorld : undefined}
+                  onRetrySceneWorld={canUseManhua3d ? retrySceneWorld : undefined}
+                  onRemoveSceneWorld={canUseManhua3d ? removeSceneWorld : undefined}
+                  sceneWorldBusyIds={sceneWorldBusyIds}
                   onApplyRiggedModel={canUseManhua3d ? (task, expectedTaskId) => {
                     if (factoryBusy || asset3dBusyIds.includes(task.assetRef)) return false;
                     const current = customAssetRefs.find(ref => ref.id === task.assetRef);
