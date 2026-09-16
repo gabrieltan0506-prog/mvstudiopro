@@ -42,10 +42,12 @@ export type ManhuaShotStageContext = {
   segmentIndex?: number;
   /** 本镜当前预期演员（人物 ref.id），顺序无关 */
   actorIds?: readonly string[];
-  /** 本段当前世界任务号；换世界即失效 */
-  worldTaskId?: string;
-  /** 场景图版本；换图即失效 */
-  worldSourceVersion?: string;
+  /**
+   * 场景图版本 → 该场景**当前**的世界任务号。
+   * 不能只传「本段的世界任务号」：一部剧有多个场景，取错一个就会把好图判成失效、或把旧图放过去。
+   * 这里按导出时记下的 worldSourceVersion 反查同一张场景图现在的世界，才是精确比较。
+   */
+  currentWorldTaskIdBySourceVersion?: Readonly<Record<string, string>>;
 };
 
 export type ManhuaStageFrameStaleCode = "world_changed" | "actors_changed" | "shot_moved";
@@ -81,11 +83,15 @@ export function evaluateManhuaStageFrameAdoption(ref: StageFrameRefLike, ctx: Ma
   const binding = ref.stageFrame;
   const adopted = (ref.stageFrameAdoptions || []).some((a) => a.shotId === ctx.shotId);
   if (!binding || !adopted) return { adopted: false, usable: false };
-  if (ctx.worldTaskId && binding.worldTaskId !== ctx.worldTaskId) {
-    return { adopted: true, usable: false, staleCode: "world_changed", reasonZh: "这张视角图来自另一个 3D 世界，本镜的世界已经换过，请在新世界里重新导出" };
-  }
-  if (ctx.worldSourceVersion && binding.worldSourceVersion !== ctx.worldSourceVersion) {
-    return { adopted: true, usable: false, staleCode: "world_changed", reasonZh: "场景参考图已换版本，这张视角图是旧版世界导出的，请重新导出" };
+  const worldMap = ctx.currentWorldTaskIdBySourceVersion;
+  if (worldMap) {
+    const current = worldMap[binding.worldSourceVersion];
+    if (!current) {
+      return { adopted: true, usable: false, staleCode: "world_changed", reasonZh: "这张视角图所属的场景参考图已换版本或已不在资产里，请在当前场景的世界里重新导出" };
+    }
+    if (current !== binding.worldTaskId) {
+      return { adopted: true, usable: false, staleCode: "world_changed", reasonZh: "这个场景的 3D 世界已经重建过，这张视角图是旧世界导出的，请重新导出" };
+    }
   }
   if (ctx.actorIds && binding.actorIds.length && !sameActorSet(binding.actorIds, ctx.actorIds)) {
     return { adopted: true, usable: false, staleCode: "actors_changed", reasonZh: "本镜的人物名单已变化，这张视角图里的人物与当前不一致，请重新导出" };
@@ -96,6 +102,32 @@ export function evaluateManhuaStageFrameAdoption(ref: StageFrameRefLike, ctx: Ma
     return { adopted: true, usable: false, staleCode: "shot_moved", reasonZh: "这张视角图是别的集或段导出的，本镜不能直接用" };
   }
   return { adopted: true, usable: true };
+}
+
+/**
+ * shotId 是否属于这一集这一段。
+ * shotId 形如 `ap_shot_e{集}_s{段}_t{镜序}`（manhuaActionPlanShotId），镜序由分镜决定、不是固定 1..3，
+ * 所以出站侧不能自己枚举镜序去找采用图——枚举错了采用就永远命中不了。按集段前缀匹配。
+ */
+export function isManhuaShotIdOfSegment(shotId: string, episode: number, segmentIndex: number): boolean {
+  return String(shotId || "").startsWith(`ap_shot_e${episode}_s${segmentIndex}_t`);
+}
+
+/**
+ * 本段（不限具体哪一镜）已采用且未失效的视角图。
+ * 出站按段取：一张图采用到本段任一镜，就该进本段的参考清单。
+ */
+export function listManhuaUsableStageFramesForSegment<T extends StageFrameRefLike>(
+  refs: readonly T[],
+  ctx: Omit<ManhuaShotStageContext, "shotId"> & { episode: number; segmentIndex: number },
+): T[] {
+  const out: T[] = [];
+  for (const ref of refs) {
+    const shotIds = (ref.stageFrameAdoptions || []).map((a) => a.shotId).filter((id) => isManhuaShotIdOfSegment(id, ctx.episode, ctx.segmentIndex));
+    if (!shotIds.length) continue;
+    if (shotIds.some((shotId) => evaluateManhuaStageFrameAdoption(ref, { ...ctx, shotId }).usable)) out.push(ref);
+  }
+  return out;
 }
 
 /** 本镜可用的采用图（按采用时间新到旧）；出站清单只吃这一份 */

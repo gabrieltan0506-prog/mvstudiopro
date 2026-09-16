@@ -2596,13 +2596,18 @@ export default function ManhuaScriptWorkbench({
   );
   /** 判采用是否失效的本段当前状态：世界、演员、集段 */
   const stageFrameAdoptContext = useMemo(() => {
-    const sceneRef = customAssetRefs.find((r) => r.role === "scene" && r.world3d?.status === "succeeded");
+    // 场景图版本 → 该场景当前的世界任务号。本剧多个场景，不能只拿「第一个有世界的」去比。
+    const currentWorldTaskIdBySourceVersion: Record<string, string> = {};
+    for (const r of customAssetRefs) {
+      if (r.role !== "scene" || r.world3d?.status !== "succeeded" || !r.world3d.taskId) continue;
+      const version = r.world3d.sourceVersion || r.gcsUri || r.url;
+      if (version) currentWorldTaskIdBySourceVersion[version] = r.world3d.taskId;
+    }
     return {
       episode: focusEpisode,
       segmentIndex: activeSegNo,
       actorIds: (activeClip?.previsStudio?.spec.actors || []).map((a) => a.assetRef).filter((x): x is string => Boolean(x)),
-      ...(sceneRef?.world3d?.taskId ? { worldTaskId: sceneRef.world3d.taskId } : {}),
-      ...(sceneRef?.world3d?.sourceVersion ? { worldSourceVersion: sceneRef.world3d.sourceVersion } : {}),
+      currentWorldTaskIdBySourceVersion,
     };
   }, [customAssetRefs, focusEpisode, activeSegNo, activeClip?.previsStudio?.spec.actors]);
   const worldStageCharacters = useMemo((): ManhuaStageCharacter[] => {
