@@ -108,7 +108,9 @@ req2.write_text(json.dumps({"request": {"requestId": "00000000-0000-4000-8000-00
 r2 = runner.run(str(req2), str(glb), str(out / "bind"))
 wt = r2["weightTransfer"]
 assert wt["enabled"] and wt["fullVertices"] == r1["weightTransfer"]["originalVertices"] and wt["midVertices"] <= runner.MID_MAX_VERTICES, wt
-assert r2["vertices"] == wt["midVertices"], (r2["vertices"], wt)
+# 回执顶点 = 导出 GLB 实际顶点；中模去 UV/法线后应与网格顶点一致且 ≤ 预算（导出器版本无关）
+assert r2["vertices"] == wt["midExportedVertices"] <= runner.MID_MAX_VERTICES, (r2["vertices"], wt)
+assert wt["midExportedVertices"] == wt["midVertices"], ("中模导出拆点", wt["midExportedVertices"], wt["midVertices"])
 assert all(v >= .01 for v in wt["originalBendMaxDeltaMeters"].values()), wt["originalBendMaxDeltaMeters"]
 mid = (out / "bind" / "model.glb").read_bytes(); full = (out / "bind" / "model-full.glb").read_bytes()
 assert hashlib.sha256(mid).hexdigest() == r2["outputSha256"], "中模 sha 与回执不一致"

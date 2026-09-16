@@ -397,7 +397,7 @@ def _glb_mesh_summary(path):
     return rows
 
 
-def _export_rigged(objects, rig, path):
+def _export_rigged(objects, rig, path, **export_extra):
     """
     只导出指定网格 + 骨架。不靠「隐藏」（glTF 导出器各版本对 hide_set/use_visible 的处理不一致，线上 Debian Blender 3.4 没有 use_visible），
     而是把其它网格物体从所有集合暂时解链——不在场景里的物体任何版本都导不出来；导完再链回。
@@ -419,7 +419,7 @@ def _export_rigged(objects, rig, path):
             obj.hide_set(False)
             obj.select_set(True)
         bpy.context.view_layer.objects.active = rig
-        bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", use_selection=True, export_animations=False, export_skins=True)
+        bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", use_selection=True, export_animations=False, export_skins=True, **export_extra)
     finally:
         for obj, coll in unlinked:
             coll.objects.link(obj)
@@ -430,7 +430,7 @@ def _export_rigged(objects, rig, path):
     got = sorted(name for name, _ in summary)
     if got != expected:
         raise ValueError("导出网格与目标不一致：期望 %s，实际 %s" % (expected, got))
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest(), sum(count for _, count in summary)
 
 
 def orientation_check(obj):
@@ -571,22 +571,34 @@ def run(request_file, source_file, output_dir):
         bpy.data.objects.remove(child, do_unlink=True)
     bends = _bend_max_delta(original, rig, ("forearm-1", "forearm1", "lower_leg-1", "lower_leg1"))
     # 全模（原模 + 骨架）：三视角参考与画质；中模（≤24 万顶点）：白模渲染预算
-    full_sha = _export_rigged([original], rig, out / "model-full.glb")
+    full_sha, full_exported = _export_rigged([original], rig, out / "model-full.glb")
     full_check = verify_full_export(out / "model-full.glb", original, proxy_info)
     mid = original.copy()
     mid.data = original.data.copy()
     mid.name = "白模中模"
     bpy.context.scene.collection.objects.link(mid)
-    # 白模只要几何与权重，不带材质；画质在 model-full.glb
+    # 白模只要几何与权重，不带材质、不带 UV、不写法线；画质在 model-full.glb。
+    # 合同按 glTF 顶点数（拆点后）算预算：CI 实测同一 10 万顶点网格，Blender 3.4 导出器拆出 29.5 万、5.2 拆出 11.3 万——
+    # 去掉 UV 与法线后导出顶点 = 网格顶点，与导出器版本无关；导出后再按实际数核一次，超了继续减面重导，不放宽上限。
     mid.data.materials.clear()
+    while mid.data.uv_layers:
+        mid.data.uv_layers.remove(mid.data.uv_layers[0])
     mid_vertices = _decimate_to(mid, MID_MAX_VERTICES)
-    mid_sha = _export_rigged([mid], rig, out / "model.glb")
+    mid_sha, mid_exported = _export_rigged([mid], rig, out / "model.glb", export_normals=False)
+    for _ in range(3):
+        if mid_exported <= MID_MAX_VERTICES:
+            break
+        mid_vertices = _decimate_to(mid, int(MID_MAX_VERTICES * len(mid.data.vertices) / mid_exported))
+        mid_sha, mid_exported = _export_rigged([mid], rig, out / "model.glb", export_normals=False)
+    if mid_exported > MID_MAX_VERTICES:
+        raise ValueError("中模导出顶点 %d 仍超过预算 %d（网格顶点 %d）" % (mid_exported, MID_MAX_VERTICES, mid_vertices))
     check = contract.import_rigged_model(out / "model.glb", "中模重导入", forward_axis="+X", target_height=settings["targetHeight"], expected_sha256=mid_sha)
     receipt["outputSha256"] = mid_sha
-    receipt["vertices"] = mid_vertices
+    # 回执顶点数 = 导出 GLB 的实际顶点数（服务端与合同都按它判 ≤25 万）
+    receipt["vertices"] = mid_exported
     receipt["stage4Reimport"] = check["report"]
     receipt["weightTransfer"] = {**proxy_info, "proxySha256": proxy_sha, "fullSha256": full_sha, "fullVertices": len(original.data.vertices),
-                                 "midVertices": mid_vertices, "filledVertices": transfer["filledVertices"], "originalBendMaxDeltaMeters": bends, "fullCheck": full_check,
+                                 "midVertices": mid_vertices, "midExportedVertices": mid_exported, "fullExportedVertices": full_exported, "filledVertices": transfer["filledVertices"], "originalBendMaxDeltaMeters": bends, "fullCheck": full_check,
                                  "proxyRealign": realign}
     receipt["limitations"].append("骨架在低模代理上求解，权重按最近面转回原模；请检查肩肘/手指/衣摆穿插")
     write_json(out / "report.json", receipt)
