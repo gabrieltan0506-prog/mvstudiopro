@@ -217,6 +217,11 @@ export type CanvasRunDeps = {
    * 节点只存 @角色N|id=…|label=…，这里再转成可下载 URL。
    */
   manhuaAssetPathById?: Record<string, string> | null;
+  /**
+   * 0916 本镜已采用且未失效的 3D 片场视角图（由 listManhuaUsableStageFrames 在页面侧定好再传进来）。
+   * 放在 deps 而不是现场算：出站只消费清单已解析值，不在这一层做采用与失效判定。
+   */
+  manhuaAdoptedStageFrames?: ((block: CanvasBlock) => Array<{ refId: string; url: string; labelZh: string; sourceZh: string }>) | null;
   /** 四视角拼板切片：段内按机位挑一格当场景垫图 */
   manhuaAssetTileUrlsById?: Record<
     string,
@@ -3003,7 +3008,8 @@ async function runCanvasBlockInner(
        * 所以顺序固定为：**登记清单 → 统一解析 → 统一校验 → 之后才允许任何过滤**。
        * 新增引用类型只要登记进这张清单，就自动获得同样的失败语义。
        */
-      type ExplicitRefKind = "atref" | "still" | "asset" | "board";
+      const adoptedStageFrames = isClip ? deps.manhuaAdoptedStageFrames?.(block) || [] : [];
+      type ExplicitRefKind = "atref" | "still" | "asset" | "board" | "stageframe";
       const explicitRefManifest: Array<{
         /** 稳定键：下游一律按它筛选，中文 slotZh 只用于报错展示 */
         kind: ExplicitRefKind;
@@ -3036,6 +3042,13 @@ async function runCanvasBlockInner(
             ),
           };
         }),
+        // 0916 3D 片场视角图：只收**明确采用到本镜且未失效**的那几张（deps 侧已按 shotId 与世界/演员判过），
+        // 不靠中文标签猜；失效的在采用面板里明说，不静默混进出站。
+        ...adoptedStageFrames.map((f) => ({
+          kind: "stageframe" as const,
+          slotZh: `片场视角图 ${f.labelZh}`,
+          raw: String(f.url || ""),
+        })),
         ...(rawBoardUrl
           ? [{ kind: "board" as const, slotZh: "导演板", raw: rawBoardUrl }]
           : []),
@@ -3057,7 +3070,7 @@ async function runCanvasBlockInner(
         : [];
       // 静帧直接取清单里已解析好的值：协议校验 → 去重，不再自己解析一遍
       const absStills = explicitRefManifest
-        .filter((e) => e.kind === "atref" || e.kind === "still")
+        .filter((e) => e.kind === "atref" || e.kind === "still" || e.kind === "stageframe")
         .map((e) => e.resolved)
         .filter((u, i, arr) => isSubmittableRefUrl(u) && arr.indexOf(u) === i);
       // 成片硬绑：末帧 → 资产定妆 → 本段静帧 → 导演板（URL 只进 API imageUrls）
@@ -3084,6 +3097,10 @@ async function runCanvasBlockInner(
         return !path || !rawPool.includes(path);
       })) {
         throw new Error("本段参考图名额不足，所选造型未能进入生成，请减少参考图后重试。");
+      }
+      const adoptedStageEntries = explicitRefManifest.filter(e => e.kind === "stageframe");
+      if (adoptedStageEntries.some(e => !rawPool.slice(0, maxVideoImageRefs).includes(e.resolved))) {
+        throw new Error("参考图名额不足，已采用的片场视角图不能全部进入请求；请减少参考或取消采用，本次未提交。");
       }
       const httpsImages = await toHttpsImageUrls(
         deps,
@@ -3142,8 +3159,13 @@ async function runCanvasBlockInner(
         : "";
       // imageBind 是按实际送进 API 的图现算的，为准；节点里存的那两块快照剥掉，
       // 否则模型同时拿到两套 @Image 映射（还可能对不上）只会挑错脸
+      const stageSourceLines = adoptedStageFrames.map((frame, i) => {
+        const index = rawPool.slice(0, maxVideoImageRefs).indexOf(adoptedStageEntries[i]!.resolved);
+        return `【片场采用】@图片${index + 1}：${frame.sourceZh}`;
+      });
       const seedancePrompt = [
         imageBind,
+        ...stageSourceLines,
         isClip ? stripManhuaStaleAssetBindForModel(motionPrompt) : motionPrompt,
         voiceOneLine ? `【声线】${voiceOneLine}` : "",
         audioRefBlock,
