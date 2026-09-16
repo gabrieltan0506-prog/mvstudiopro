@@ -826,3 +826,19 @@ describe("参考槽位表不重复计首帧", () => {
     expect(preview.refs.imageUrls[0]).toBe(String(preview.body.imageUrl || ""));
   });
 });
+
+it("采用视角图进入真实请求与确认全文，超容量明确拒绝", async () => {
+  const frame = {refId:"stage",url:"https://test.invalid/stage.png",labelZh:"过肩",sourceZh:"世界 world-1 · 过肩机位 · 人物 actor-1 · ap_shot_e1_s1_t7"};
+  const adoptedDeps = {...deps, manhuaAdoptedStageFrames: () => [frame]};
+  const block = makeBlock();
+  const preview = await previewCanvasBlockOutbound(adoptedDeps,block);
+  expect(preview.body.imageUrls).toContain(frame.url);
+  expect(preview.body.prompt).toContain("world-1");
+  expect(preview.body.prompt).toContain("ap_shot_e1_s1_t7");
+  const bodies=captureOutbound();
+  const scope={...TEST_SCOPE,blockId:block.id};
+  await runCanvasBlock(adoptedDeps,block,undefined,{enforceOutboundConfirmation:true,outboundGate:{currentScope:scope,confirmation:{scope,confirmedAt:Date.now(),fingerprint:manhuaOutboundConfirmationFingerprint(preview,scope)}}} as never);
+  expect(bodies[0]!.imageUrls).toEqual(preview.body.imageUrls);
+  expect(bodies[0]!.prompt).toBe(preview.body.prompt);
+  await expect(previewCanvasBlockOutbound({...deps,manhuaAdoptedStageFrames:()=>Array.from({length:40},(_,i)=>({...frame,url:`https://test.invalid/stage-${i}.png`}))},block)).rejects.toThrow("片场视角图不能全部进入请求");
+});

@@ -93,7 +93,7 @@ export function evaluateManhuaStageFrameAdoption(ref: StageFrameRefLike, ctx: Ma
       return { adopted: true, usable: false, staleCode: "world_changed", reasonZh: "这个场景的 3D 世界已经重建过，这张视角图是旧世界导出的，请重新导出" };
     }
   }
-  if (ctx.actorIds && binding.actorIds.length && !sameActorSet(binding.actorIds, ctx.actorIds)) {
+  if (ctx.actorIds && !sameActorSet(binding.actorIds, ctx.actorIds)) {
     return { adopted: true, usable: false, staleCode: "actors_changed", reasonZh: "本镜的人物名单已变化，这张视角图里的人物与当前不一致，请重新导出" };
   }
   const epMismatch = ctx.episode && binding.episode && binding.episode !== ctx.episode;
@@ -168,4 +168,14 @@ export function formatManhuaStageFrameSourceZh(ref: StageFrameRefLike, labelOfAc
   const shot = b.episode && b.segmentIndex ? `第${b.episode}集段${String(b.segmentIndex).padStart(2, "0")}` : "";
   const world = b.worldId ? `世界 ${b.worldId.slice(0, 8)}` : `世界任务 ${b.worldTaskId.slice(0, 10)}`;
   return [shot, `${cam}机位`, actors ? `人物 ${actors}` : "", world].filter(Boolean).join(" · ");
+}
+
+/** 出站必须报告已采用但失效的引用，不能当成未采用静默删除。 */
+export function requireManhuaStageFramesForSegment<T extends StageFrameRefLike>(refs: readonly T[], ctx: Omit<ManhuaShotStageContext, "shotId"> & {episode:number;segmentIndex:number}): T[] {
+  for (const ref of refs) for (const adoption of ref.stageFrameAdoptions || []) {
+    if (!isManhuaShotIdOfSegment(adoption.shotId, ctx.episode, ctx.segmentIndex)) continue;
+    const state = evaluateManhuaStageFrameAdoption(ref, {...ctx,shotId:adoption.shotId});
+    if (!state.usable) throw new Error(`已采用的片场视角图「${ref.labelZh || ref.id}」失效：${state.reasonZh || "来源绑定缺失"}；请取消采用或重新导出，本次未提交。`);
+  }
+  return listManhuaUsableStageFramesForSegment(refs,ctx);
 }

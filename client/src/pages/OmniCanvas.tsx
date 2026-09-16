@@ -55,7 +55,7 @@ import { evaluateManhuaWorld3dEligibility, toManhuaWorld3dRef } from "@shared/ma
 import { evaluateManhuaStateContinuity } from "@shared/manhuaCharacterStates";
 import { relayoutManhuaSegmentPlanForEngine, replaceManhuaEpisodeSegmentPlanInMarkdown } from "@shared/manhuaEngineRelayout";
 import type { ManhuaStageFrameBindingDraft, ManhuaWorldGenerateOptions, ManhuaWorldLayoutSubmitOptions } from "@/components/canvas/ManhuaWorldStudio";
-import { formatManhuaStageFrameSourceZh, listManhuaUsableStageFramesForSegment, toggleManhuaStageFrameAdoption } from "@shared/manhuaStageFrameAdoption";
+import { formatManhuaStageFrameSourceZh, requireManhuaStageFramesForSegment, toggleManhuaStageFrameAdoption } from "@shared/manhuaStageFrameAdoption";
 import { copyText } from "@/lib/copyText";
 import { cropManhuaSheet2x2 } from "@/lib/manhuaSheetCropApi";
 import type { ManhuaSceneTileSlot } from "@shared/manhuaSceneTilePick";
@@ -4268,17 +4268,18 @@ export default function OmniCanvas() {
         const currentWorldTaskIdBySourceVersion: Record<string, string> = {};
         for (const r of customAssetRefs) {
           if (r.role !== "scene" || r.world3d?.status !== "succeeded" || !r.world3d.taskId) continue;
-          const version = r.world3d.sourceVersion || r.gcsUri || r.url;
+          const eligibility = evaluateManhuaWorld3dEligibility(r);
+      const version = eligibility.currentWorld3d ? eligibility.sourceVersion : undefined;
           if (version) currentWorldTaskIdBySourceVersion[version] = r.world3d.taskId;
         }
-        const actorIds = (block.previsStudio?.spec.actors || []).map((a: { assetRef?: string }) => a.assetRef).filter((x): x is string => Boolean(x));
+        const actorIds = (block.previsStudio?.spec.actors || []).map((a) => a.id);
         // 按集段取：镜序由分镜决定，不能在这里枚举，枚举错了采用就永远命中不了
-        return listManhuaUsableStageFramesForSegment(customAssetRefs, {
+        return requireManhuaStageFramesForSegment(customAssetRefs, {
           episode,
           segmentIndex,
           actorIds,
           currentWorldTaskIdBySourceVersion,
-        }).map((ref) => ({ refId: ref.id, url: ref.url, labelZh: ref.labelZh || ref.id, sourceZh: formatManhuaStageFrameSourceZh(ref) }));
+        }).map((ref) => ({ refId: ref.id, url: ref.url, labelZh: ref.labelZh || ref.id, sourceZh: `${formatManhuaStageFrameSourceZh(ref)} · 采用镜头 ${(ref.stageFrameAdoptions || []).map(a => a.shotId).join("、")}` }));
       },
       manhuaAssetTileUrlsById: manhuaAssetMaps.tileUrlsById,
       manhuaDirectorBoardUrlByEpisode: directorBoardUrlByEpisode,
@@ -4386,6 +4387,7 @@ export default function OmniCanvas() {
       characterVoiceLocks,
       audioReferenceLock,
       manhuaAssetMaps,
+      customAssetRefs,
       directorBoardUrlByEpisode,
       directorBoardUrlByEpisodeSegment,
       directorBoardMotionOverlayBySegment,

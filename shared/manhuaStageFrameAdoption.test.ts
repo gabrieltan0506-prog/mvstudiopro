@@ -113,3 +113,10 @@ describe("视角图采用到某一镜", () => {
     expect(listManhuaUsableStageFramesForSegment([t12, otherSeg, staleWorld], segCtx).map((r) => r.id)).toEqual(["t12"]);
   });
 });
+
+it("出站不静默删除失效采用，空人物世界不能冒充有人", async () => {
+  const {requireManhuaStageFramesForSegment}=await import('./manhuaStageFrameAdoption');
+  expect(()=>requireManhuaStageFramesForSegment([ref('stale',{stageFrame:binding({worldTaskId:'gone'})})],ctx)).toThrow('失效');
+  expect(()=>requireManhuaStageFramesForSegment([ref('missing',{stageFrame:undefined})],ctx)).toThrow('来源绑定缺失');
+  expect(evaluateManhuaStageFrameAdoption(ref('empty',{stageFrame:binding({actorIds:[]})}),ctx)).toMatchObject({usable:false,staleCode:'actors_changed'});
+});

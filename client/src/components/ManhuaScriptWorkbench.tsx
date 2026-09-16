@@ -2600,13 +2600,14 @@ export default function ManhuaScriptWorkbench({
     const currentWorldTaskIdBySourceVersion: Record<string, string> = {};
     for (const r of customAssetRefs) {
       if (r.role !== "scene" || r.world3d?.status !== "succeeded" || !r.world3d.taskId) continue;
-      const version = r.world3d.sourceVersion || r.gcsUri || r.url;
+      const eligibility = evaluateManhuaWorld3dEligibility(r);
+      const version = eligibility.currentWorld3d ? eligibility.sourceVersion : undefined;
       if (version) currentWorldTaskIdBySourceVersion[version] = r.world3d.taskId;
     }
     return {
       episode: focusEpisode,
       segmentIndex: activeSegNo,
-      actorIds: (activeClip?.previsStudio?.spec.actors || []).map((a) => a.assetRef).filter((x): x is string => Boolean(x)),
+      actorIds: (activeClip?.previsStudio?.spec.actors || []).map((a) => a.id),
       currentWorldTaskIdBySourceVersion,
     };
   }, [customAssetRefs, focusEpisode, activeSegNo, activeClip?.previsStudio?.spec.actors]);
