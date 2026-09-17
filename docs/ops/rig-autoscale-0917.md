@@ -58,6 +58,11 @@ fly secrets set FLY_API_TOKEN=<fly deploy token> -a mvstudiopro
 | 一台 rig 机都没有 | 先记时间戳不动任务；**连续 `RIG_UNAVAILABLE_CONFIRM_MS`（60 秒）仍是零台**才打回排队中的 Blender 任务，错误里既有用户向说明（「不是你的参数或配置问题…可重新提交」），也有管理员命令 `fly scale count rig=1 -a mvstudiopro` |
 | 机器在、但 start 全失败 | 同样要连续确认 60 秒才打回，错误里点名具体机器 ID：`fly machine start <rig-id> -a mvstudiopro` |
 | 列举 Machines API 本身失败 / 返回的不是机器数组 | **不打回**（查不到 ≠ 没有机器），复位确认计时，只记日志，下一轮再试 |
+| 零台 rig，但应用里有机器**缺 `fly_process_group` 元数据** | **不打回**（`fly machine run` 手建的机器没有这个元数据，却可能正带着 `JOB_WORKER_ROLE=rig` 在领单；把它当成不存在＝一边有机器在跑一边杀队列），复位计时并在日志里点名台数 |
+
+**多台 app 机**（`min_machines_running = 1` + `auto_start_machines`，线上常有 2 台）：每台各有一份 `rigStartState`。
+重复发 `start` 无害（只发给 stopped 的机器，输的那一台下一轮看到 started 就复位窗口）；重复打回无害（UPDATE 只匹配 `queued`，第二次命中 0 行）。
+**不会比预期更早打回**：每个进程的窗口都从它自己第一次坏观察算起，不早于故障真正开始的时刻。
 
 **开关**：`RIG_UNAVAILABLE_CONFIRM_MS` 是代码常量（不是 env），改成 0 ＝ 首次观察到零台就立刻打回（退回没有确认窗口的行为）。
 **打回一批之后确认窗口重新计时**：否则打回之后新提交进来的任务会在下一个 15 秒 tick 被连坐秒杀，

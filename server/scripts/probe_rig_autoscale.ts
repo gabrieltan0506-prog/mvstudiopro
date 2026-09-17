@@ -230,6 +230,20 @@ async function main() {
     malformed,
   );
 
+  // 11. 反例对照（第五轮）：零台 rig，但应用里有缺 fly_process_group 元数据的机器（fly machine run 手建）
+  //     —— 手建机很可能正带着 JOB_WORKER_ROLE=rig 在领单，这时候打回等于一边有机器在跑一边杀队列。
+  const before11 = failedReasons.length;
+  machines = [{ id: "hand-built", state: "started", config: { metadata: { fly_process_group: "" } } }];
+  const unknown = await ensureRigStartedForPending(failing, {
+    lastAttemptAt: 0,
+    unavailableSince: Date.now() - RIG_UNAVAILABLE_CONFIRM_MS - 1,
+  });
+  check(
+    "零台 rig 但有机器缺进程组元数据：证据不足，一个任务都不打回",
+    unknown.action === "unknown_topology" && failedReasons.length === before11,
+    unknown,
+  );
+
   server.close();
   console.log(JSON.stringify({ httpCalls: calls.map((c) => c.method + " " + c.path) }, null, 2));
   if (failures.length) {

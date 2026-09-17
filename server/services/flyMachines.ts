@@ -103,6 +103,20 @@ export async function listRigMachines(cfg: FlyMachinesConfig): Promise<FlyMachin
   return (await listFlyMachines(cfg)).filter((m) => m.processGroup === "rig");
 }
 
+/**
+ * Fly Machines API 语义（按官方文档语义推定，**没有真发过生产请求**，本机/CI 都没有 token）：
+ * - `POST …/start` 对已经 started/starting 的机器不是幂等成功，Fly 会拒绝（4xx，机体形如
+ *   "machine still active, refusing to start"）。两台 app 机同时看见同一台 stopped 的 rig
+ *   时必然有一台撞上这个拒绝。
+ * - `POST …/stop` 对已经 stopped 的机器按幂等处理（只发信号，不存在可停的进程时直接 ok）。
+ *
+ * **本模块不依赖上面任何一条推定**，这是写下它的前提：
+ * - start 只发给 `needsStart()` 过的机器（stopped/suspended/created），撞上竞态被拒绝时
+ *   `ensureRigStartedForPending` 只记日志不改任务状态，而且要连续 60 秒观察失败才会打回，
+ *   输的那台 app 机下一轮就会看到 started → `already_running` → 复位确认窗口。
+ * - stop 只发给本机，且发之前刚核对过本机在 rig 进程组里；真被拒绝也只是 `error` + 复位领单闸。
+ * 所以无论 Fly 对这两种重复调用返回 200 还是 4xx，用户可见行为都不变。
+ */
 export async function startFlyMachine(cfg: FlyMachinesConfig, machineId: string): Promise<void> {
   await callFly(cfg, `/apps/${encodeURIComponent(cfg.appName)}/machines/${encodeURIComponent(machineId)}/start`, { method: "POST", timeoutMs: 30_000 });
 }

@@ -154,6 +154,52 @@ describe("rig 唤醒（app 机）", () => {
     expect(started).toEqual(["rig-1"]);
   });
 
+  it("零台 rig 但有机器缺进程组元数据（手建机）：证据不足，确认窗口走满也不打回（第五轮）", async () => {
+    const { deps, failedReasons, advance } = makeDeps({
+      queuedBlenderJobs: async () => 1,
+      listRig: async () => [],
+      listAllMachines: async () => [
+        { id: "app-1", state: "started", processGroup: "app" },
+        { id: "hand-built", state: "started", processGroup: "" }, // fly machine run 手建，没有 fly_process_group
+      ],
+    });
+    const state: RigStartState = { lastAttemptAt: 0 };
+    await ensureRigStartedForPending(deps, state);
+    advance(RIG_UNAVAILABLE_CONFIRM_MS + 1);
+    expect(await ensureRigStartedForPending(deps, state)).toEqual({ action: "unknown_topology" });
+    expect(failedReasons).toEqual([]);
+    // 证据不足要复位计时，否则下一轮元数据补上了也还带着旧戳
+    expect(state.unavailableSince).toBeUndefined();
+  });
+
+  it("正例对照：全量机器都带着进程组元数据时，零台 rig 照样打回（上一条不是把打回关掉了）", async () => {
+    const { deps, failedReasons, advance } = makeDeps({
+      queuedBlenderJobs: async () => 1,
+      listRig: async () => [],
+      listAllMachines: async () => [{ id: "app-1", state: "started", processGroup: "app" }],
+    });
+    const state: RigStartState = { lastAttemptAt: 0 };
+    await ensureRigStartedForPending(deps, state);
+    advance(RIG_UNAVAILABLE_CONFIRM_MS + 1);
+    expect((await ensureRigStartedForPending(deps, state)).action).toBe("no_machine");
+    expect(failedReasons).toHaveLength(1);
+  });
+
+  it("附加查询本身失败时不放过真实故障：仍按原判据打回", async () => {
+    const { deps, failedReasons, advance } = makeDeps({
+      queuedBlenderJobs: async () => 1,
+      listRig: async () => [],
+      listAllMachines: async () => {
+        throw new Error("fly api down");
+      },
+    });
+    const state: RigStartState = { lastAttemptAt: 0 };
+    await ensureRigStartedForPending(deps, state);
+    advance(RIG_UNAVAILABLE_CONFIRM_MS + 1);
+    expect((await ensureRigStartedForPending(deps, state)).action).toBe("no_machine");
+    expect(failedReasons).toHaveLength(1);
+  });
+
   it("机器在、但一台都起不来：连续确认后才打回，错误里点名具体机器 ID", async () => {
     const { deps, failedReasons, advance } = makeDeps({
       queuedBlenderJobs: async () => 1,

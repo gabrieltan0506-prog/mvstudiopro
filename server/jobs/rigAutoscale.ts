@@ -15,6 +15,7 @@
  *  - 起不来/停不掉只记日志，绝不改任务状态：任务照排队，rig 恢复后照领。
  */
 import {
+  listFlyMachines,
   listRigMachines,
   needsStart,
   resolveFlyMachinesConfig,
@@ -66,6 +67,13 @@ export type RigAutoscaleDeps = {
   /** 错误文案里要写出的应用名，用于拼可执行的命令。 */
   appName?: string;
   listRig(): Promise<FlyMachine[]>;
+  /**
+   * 不过滤进程组的全量机器列表。只在「一台 rig 机都没有」这个分支用：
+   * 「零台 rig」有两种解释——真的没有 rig 机，或者机器在、但缺 `fly_process_group` 元数据
+   * （`fly machine run` 手建的调试机就没有）。后者会把一台正在干活的 rig 机误判成不存在，
+   * 60 秒后清空队列。判据必须先排除这个良性解释才能打回。不传＝退回旧行为。
+   */
+  listAllMachines?(): Promise<FlyMachine[]>;
   startMachine(machineId: string): Promise<void>;
   stopMachine(machineId: string): Promise<void>;
   selfMachineId: string;
@@ -82,6 +90,8 @@ export type RigStartOutcome =
   | { action: "already_running" }
   | { action: "started"; machineIds: string[] }
   | { action: "no_machine" }
+  /** 查不到 rig 进程组机器，但存在缺进程组元数据的机器：证据不足，不打回。 */
+  | { action: "unknown_topology" }
   /** rig 不可用，但还没连续够 RIG_UNAVAILABLE_CONFIRM_MS：这一轮只记录，不打回任务。 */
   | { action: "no_machine_pending"; unavailableMs: number }
   | { action: "error"; message: string };
@@ -97,6 +107,19 @@ function confirmRigUnavailable(deps: RigAutoscaleDeps, state: RigStartState): { 
   if (state.unavailableSince === undefined) state.unavailableSince = now;
   const elapsedMs = now - state.unavailableSince;
   return { confirmed: elapsedMs >= RIG_UNAVAILABLE_CONFIRM_MS, elapsedMs };
+}
+
+/**
+ * 全量列表里缺进程组元数据的机器台数。列举失败当 0（沿用外层「列举失败不打回」的处理，
+ * 但这里更保守：查不到就按旧行为继续走确认窗口，不会因为这条附加查询挂掉而放过真实故障）。
+ */
+async function countUnlabeledMachines(deps: RigAutoscaleDeps): Promise<number> {
+  if (!deps.listAllMachines) return 0;
+  try {
+    return (await deps.listAllMachines()).filter((m) => !m.processGroup).length;
+  } catch {
+    return 0;
+  }
 }
 
 /** app 机：有 Blender 任务排队就把停着的 rig 机拉起来。幂等 + 冷却，不重复发命令。 */
@@ -125,6 +148,18 @@ export async function ensureRigStartedForPending(
       if (!confirmed) {
         deps.log(`[rig-autoscale] 暂时查不到 rig 进程组机器（已 ${Math.round(elapsedMs / 1000)} 秒），未到确认窗口，先不打回任务`);
         return { action: "no_machine_pending", unavailableMs: elapsedMs };
+      }
+      // 打回之前先排除「机器在、只是没有 fly_process_group 元数据」这个良性解释：
+      // 手建（fly machine run）的 rig 机照样带 JOB_WORKER_ROLE=rig 在领单，把它当成不存在
+      // 就会一边有机器在跑、一边把队列里其余任务全杀掉。存疑就不打回，只报警。
+      const unlabeled = await countUnlabeledMachines(deps);
+      if (unlabeled > 0) {
+        state.unavailableSince = undefined;
+        deps.log(
+          `[rig-autoscale] 没查到 rig 进程组机器，但有 ${unlabeled} 台机器缺 fly_process_group 元数据（多半是 fly machine run 手建的）：` +
+            "无法断定 rig 不存在，本轮不打回任何任务。请用 fly deploy 产出的机器跑 rig，或给手建机补上元数据。",
+        );
+        return { action: "unknown_topology" };
       }
       const app = deps.appName ? ` -a ${deps.appName}` : "";
       const failed = await deps.failQueuedBlenderJobs?.(
@@ -293,6 +328,7 @@ export function resolveRigAutoscaleDeps(
     failQueuedBlenderJobs: hooks.failQueuedBlenderJobs,
     appName: cfg.appName,
     listRig: () => listRigMachines(cfg),
+    listAllMachines: () => listFlyMachines(cfg),
     startMachine: (id) => startFlyMachine(cfg, id),
     stopMachine: (id) => stopFlyMachine(cfg, id),
     selfMachineId: resolveSelfMachineId(env),
