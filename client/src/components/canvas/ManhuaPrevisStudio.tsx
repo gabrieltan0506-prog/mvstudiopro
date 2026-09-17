@@ -13,6 +13,8 @@ import {
   formatPrevisMotionGuide,
   manhuaPrevisSpecSchema,
   PREVIS_ACTION_LABELS,
+  PREVIS_LOOK_AT_CAMERA,
+  previsActionForKind,
   previsSpecKey,
   type ManhuaPrevisRequest,
   type ManhuaPrevisSpec,
@@ -1049,7 +1051,12 @@ export function ManhuaPrevisStudioView({
                   actorEdit(index, {
                     actions: actor.actions.map((a, k) =>
                       k === j
-                        ? { ...a, kind: e.target.value as typeof action.kind }
+                        ? previsActionForKind(a, e.target.value as typeof action.kind, {
+                            actorFacingDeg: actor.facingDeg,
+                            otherActorIds: studio.spec.actors
+                              .filter(other => other.id !== actor.id)
+                              .map(other => other.id),
+                          })
                         : a
                     ),
                   })
@@ -1075,6 +1082,39 @@ export function ManhuaPrevisStudioView({
                   ),
                 })
               )}
+              {action.kind === "turn"
+                ? numeric("目标朝向", action.facingDeg ?? actor.facingDeg, n =>
+                    actorEdit(index, {
+                      actions: actor.actions.map((a, k) =>
+                        k === j ? { ...a, facingDeg: n } : a
+                      ),
+                    })
+                  )
+                : null}
+              {action.kind === "look" ? (
+                <select
+                  className={field}
+                  aria-label={`角色${index + 1}动作${j + 1}看向谁`}
+                  value={action.lookAtId ?? PREVIS_LOOK_AT_CAMERA}
+                  disabled={disabled || Boolean(pendingId)}
+                  onChange={e =>
+                    actorEdit(index, {
+                      actions: actor.actions.map((a, k) =>
+                        k === j ? { ...a, lookAtId: e.target.value } : a
+                      ),
+                    })
+                  }
+                >
+                  {studio.spec.actors
+                    .filter(other => other.id !== actor.id)
+                    .map(other => (
+                      <option key={other.id} value={other.id}>
+                        看向{other.nameZh}
+                      </option>
+                    ))}
+                  <option value={PREVIS_LOOK_AT_CAMERA}>看向镜头</option>
+                </select>
+              ) : null}
               <button
                 className={button}
                 disabled={disabled || Boolean(pendingId)}

@@ -80,6 +80,10 @@ def mesh(name, a, b, radius, mat, sphere=False):
 ground = material('水面' if water_events else '地面', (.06,.22,.30) if water_events else (.23,.25,.27))
 obj = mesh('地面', (0,0,-.12), (0,0,0), 64 if water_events else 16, ground)
 
+# 看向的偏转上限（弧度）：超过就只转到上限，不做扭脖子式的非人姿态。
+LOOK_YAW_LIMIT = math.radians(55)
+LOOK_PITCH_LIMIT = math.radians(25)
+
 def smooth(value):
     u = max(0., min(1., value))
     return u*u*(3-2*u)
@@ -92,8 +96,26 @@ def position(actor, frame):
     return Vector((actor['start'][0]*(1-u)+actor['end'][0]*u,
                    actor['start'][1]*(1-u)+actor['end'][1]*u, z))
 
+def turn_facing(actor, t):
+    """0917 PR-E：转身动作按时间插值出朝向。动作已按 schema 排序且不重叠。
+    与 motionRoute 互斥（schema 已拒绝同时给），避免两套朝向真源互相覆盖。"""
+    facing=actor['facingDeg']
+    for action in actor['actions']:
+        if action['kind']!='turn': continue
+        target=action.get('facingDeg')
+        if target is None: continue
+        if t>=action['endSec']:
+            facing=target
+            continue
+        if t<=action['startSec']: break
+        u=(t-action['startSec'])/(action['endSec']-action['startSec'])
+        delta=((target-facing+180)%360)-180
+        facing=facing+delta*smooth(u)
+        break
+    return facing
+
 def transform(actor, frame):
-    facing=route_pose(actor,(frame-1)/24)[1] if actor.get('motionRoute') else actor['facingDeg']
+    facing=route_pose(actor,(frame-1)/24)[1] if actor.get('motionRoute') else turn_facing(actor,(frame-1)/24)
     return Matrix.Translation(position(actor, frame)) @ Matrix.Rotation(math.radians(facing), 4, 'Z')
 
 def ik(hip, end, l1, l2, bend):
@@ -106,8 +128,14 @@ def ik(hip, end, l1, l2, bend):
     along = (l1*l1-l2*l2+length*length)/(2*length)
     return hip+direction*along+side*math.sqrt(max(0.,l1*l1-along*along)), hip+direction*length
 
+# 0917 PR-E：文戏动作量。与打戏四类同一套「按进度算量、量再驱动关节」的写法，
+# 不另起一条关键帧管线，真模走同一条棍人→boneMap 重定向。
+DRAMA_HOLD = ('sit','bow','gesture_point')
+
 def action_amounts(actor, t):
-    values = {'wind':0.,'strike':0.,'guard':0.,'recoil':0.}
+    values = {'wind':0.,'strike':0.,'guard':0.,'recoil':0.,
+              'walk':0.,'sit':0.,'bow':0.,'gesture_point':0.,'look':0.}
+    values['lookAt']=None
     for action in actor['actions']:
         if not action['startSec'] <= t <= action['endSec']: continue
         u = (t-action['startSec'])/(action['endSec']-action['startSec'])
@@ -116,14 +144,38 @@ def action_amounts(actor, t):
             values['strike'] = smooth((u-.30)/.12)*(1-smooth((u-.65)/.35))
         elif action['kind'] in ('guard','recoil'):
             values[action['kind']] = smooth(u/.20)*(1-smooth((u-.75)/.25))
+        elif action['kind'] in DRAMA_HOLD:
+            # 起 20% 进姿势、末 25% 回中位，中间保持——坐下/行礼/指向都要「停得住」
+            values[action['kind']] = smooth(u/.20)*(1-smooth((u-.75)/.25))
+        elif action['kind'] == 'walk':
+            values['walk'] = smooth(u/.15)*(1-smooth((u-.85)/.15))
+        elif action['kind'] == 'look':
+            values['look'] = smooth(u/.25)*(1-smooth((u-.80)/.20))
+            values['lookAt'] = action.get('lookAtId')
     return values
+
+def camera_position_at(t):
+    for shot in spec['cameras']:
+        if shot['startSec'] <= t <= shot['endSec']: return Vector(shot['position'])
+    return Vector(spec['cameras'][0]['position'])
+
+def look_target_world(actor, target_id, frame):
+    """注视目标的世界坐标（人物取头高，镜头取机位）。找不到返回 None，调用方按「不看」处理。"""
+    if not target_id: return None
+    if target_id in ('camera','镜头'): return camera_position_at((frame-1)/24)
+    for other in spec['actors']:
+        if other['id']==target_id and other['id']!=actor['id']:
+            base=position(other,frame)
+            return Vector((base.x,base.y,base.z+(1.15 if other['shape']=='horse' else 1.45)))
+    return None
 
 def points(actor, frame, contacts):
     t = (frame-1)/24
     amounts = action_amounts(actor,t)
     horse = actor['shape'] == 'horse'
     keys = list(contacts)
-    hip_z = (1.02 if horse else .80)-.09*amounts['wind']-.08*amounts['recoil']
+    # 坐下：髋下沉，脚不动 → 下面的 IK 自然把膝盖顶出来
+    hip_z = (1.02 if horse else .80)-.09*amounts['wind']-.08*amounts['recoil']-.30*amounts['sit']
     inv = transform(actor,frame).inverted()
     ankles = {key:inv @ contacts[key] for key in keys}
     hips = {key:Vector((offset[0],offset[1],hip_z)) for key,offset in foot_offsets(actor).items()}
@@ -145,16 +197,42 @@ def points(actor, frame, contacts):
         p['head']=(Vector((.7,0,1.96-lower)),Vector((1.3,0,1.96-lower)))
     else:
         pelvis=Vector((0,0,hip_z-lower))
-        chest=pelvis+Vector((.10*amounts['strike']-.08*amounts['recoil'],0,.43))
-        neck=chest+Vector((0,0,.14))
+        # 行礼：脊柱前倾，胸口前移下沉；坐下时上身略前倾保持重心
+        bow=amounts['bow']
+        chest=pelvis+Vector((.10*amounts['strike']-.08*amounts['recoil']+.30*bow+.06*amounts['sit'],0,
+                             .43-.11*bow))
+        neck=chest+Vector((.05*bow,0,.14-.02*bow))
+        # 看向：上身与头朝目标偏转（棍人骨骼只有端点，纯头部偏航不可见，必须连上身一起转）
+        look=amounts['look']
+        look_yaw=0.
+        look_pitch=0.
+        if look>.001:
+            target=look_target_world(actor,amounts['lookAt'],frame)
+            local=inv @ target-neck if target is not None else None
+            flat=math.hypot(local.x,local.y) if local is not None else 0.
+            if local is not None and flat>.05:
+                look_yaw=max(-LOOK_YAW_LIMIT,min(LOOK_YAW_LIMIT,math.atan2(local.y,local.x)))*look
+                look_pitch=max(-LOOK_PITCH_LIMIT,min(LOOK_PITCH_LIMIT,math.atan2(local.z,flat)))*look
+            else:
+                # 注视目标解析不出来（被删的角色、旧存稿）：按「不看」处理，
+                # 绝不因为写了 look 就硬摆一个朝向——那会让白模撒谎。
+                look=0.
         p['pelvis']=(pelvis-Vector((0,0,.08)),pelvis)
         p['spine']=(pelvis,chest)
         p['neck']=(chest,neck)
-        p['head']=(neck,neck+Vector((-.045*amounts['recoil'],0,.28)))
+        head_dir=Vector((math.cos(look_yaw),math.sin(look_yaw),0))*(.09*look+.06*bow)
+        p['head']=(neck,neck+head_dir+Vector((-.045*amounts['recoil'],0,.28+.10*math.sin(look_pitch))))
         for s in (-1,1):
-            shoulder=chest+Vector((0,s*.21,0))
+            # 上身偏转：肩线跟着看向的偏航一起转，真模重定向时才看得出「转过去看」
+            shoulder=chest+Matrix.Rotation(look_yaw,4,'Z') @ Vector((0,s*.21,0))
             x=.10+.43*amounts['strike']-.25*amounts['wind'] if s==-1 else .12
-            hand=shoulder+Vector((x+.18*amounts['guard'],s*.13,-.34+.35*amounts['wind']+.31*amounts['strike']+.50*amounts['guard']+.40*amounts['recoil']))
+            # 走位摆臂：两臂反相，周期对齐脚步（plan_contacts 每 6 帧换一只脚 = 0.5 秒一个来回）
+            swing=.16*amounts['walk']*math.sin(2*math.pi*t/.5+(0 if s==-1 else math.pi))
+            # 抬手指向：前手（s=-1）抬到肩高前伸；行礼时两臂贴身略前摆
+            point=amounts['gesture_point'] if s==-1 else 0.
+            hand=shoulder+Vector((x+.18*amounts['guard']+swing+.42*point+.10*bow,s*.13,
+                                  -.34+.35*amounts['wind']+.31*amounts['strike']+.50*amounts['guard']+.40*amounts['recoil']
+                                  +.30*point-.06*abs(swing)))
             elbow,hand=ik(shoulder,hand,.29,.29,(0,s,-.4))
             p['upper_arm'+str(s)]=(shoulder,elbow)
             p['forearm'+str(s)]=(elbow,hand)

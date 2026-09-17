@@ -1,10 +1,59 @@
 /** 本段原镜 → 可审阅动作草案。纯本地编译，不调用模型、不修改原剧本。 */
 import {
+  PREVIS_LOOK_AT_CAMERA,
   createManhuaPrevisStudio,
   manhuaPrevisSpecSchema,
+  type PrevisActionKind,
   type ManhuaPrevisSpec,
   type PrevisInteraction,
 } from "./manhuaPrevis";
+
+/**
+ * 草案编译认得的动作动词表（唯一真源，面板提示也读它）。
+ * 0917 PR-E：打戏四类之外补文戏六类；镜头描述型分镜（中近景/特写/固定机位）仍会 0 映射——设计边界。
+ */
+export const PREVIS_SCRIPT_DRAFT_KINDS = [
+  ["strike", /(?:出拳|挥拳|出手)/],
+  ["guard", /(?:抬臂保护|抬手保护|格挡)/],
+  ["recoil", /(?:后缩|后仰|受惊)/],
+  ["idle", /(?:待机|静立|站定|保持站位)/],
+  ["walk", /(?:走向|走到|走近|迈步)/],
+  ["turn", /(?:转身|回身|回头)/],
+  ["look", /(?:看向|望向|注视|看着)/],
+  ["sit", /(?:坐下|落座|坐到)/],
+  ["gesture_point", /(?:指向|抬手指|伸手指)/],
+  ["bow", /(?:行礼|拱手|鞠躬|俯身行礼)/],
+] as const satisfies readonly (readonly [PrevisActionKind, RegExp])[];
+
+/** 这些动作后面可以跟一个目标（同场角色或镜头）。 */
+export const PREVIS_DRAFT_KINDS_WITH_TARGET: readonly PrevisActionKind[] = [
+  "walk",
+  "look",
+  "gesture_point",
+  "bow",
+];
+
+/** 提示文案用：把上表摊平成「出拳 / 挥拳 / 出手」这样的可读词组。 */
+export function previsScriptDraftVocabularyZh(): string[] {
+  return PREVIS_SCRIPT_DRAFT_KINDS.map(([, re]) =>
+    re.source.replace(/^\(\?:/, "").replace(/\)$/, "").split("|").join(" / "),
+  );
+}
+
+/** 归一到 (-180, 180]：转身 180 度显示成 180，不是 -180。 */
+export function normalizeFacingDeg(deg: number): number {
+  const wrapped = ((((deg + 180) % 360) + 360) % 360) - 180;
+  return wrapped === -180 ? 180 : wrapped;
+}
+
+/** 角色在已排动作之后的朝向：前一次转身的目标，否则是初始朝向。 */
+function lastFacingOf(actor: { facingDeg: number; actions: { kind: string; facingDeg?: number }[] }): number {
+  for (let i = actor.actions.length - 1; i >= 0; i -= 1) {
+    const action = actor.actions[i];
+    if (action.kind === "turn" && Number.isFinite(action.facingDeg)) return Number(action.facingDeg);
+  }
+  return actor.facingDeg;
+}
 
 export type PrevisSourceShot = {
   index: number;
@@ -265,34 +314,71 @@ export function compilePrevisScriptDraft(input: {
       continue;
     }
     const present = characters.filter(c => new RegExp(mention(c)).test(text));
-    const kinds = [
-      ["strike", /(?:出拳|挥拳|出手)/],
-      ["guard", /(?:抬臂保护|抬手保护|格挡)/],
-      ["recoil", /(?:后缩|后仰|受惊)/],
-      ["idle", /(?:待机|静立|站定|保持站位)/],
-    ] as const;
-    const matches = kinds.filter(([, re]) => re.test(text));
-    if (present.length !== 1 || matches.length !== 1) {
+    const matches = PREVIS_SCRIPT_DRAFT_KINDS.filter(([, re]) => re.test(text));
+    if (matches.length !== 1) {
       reject("动作或角色无法唯一匹配当前动作库");
       continue;
     }
+    const [kind, kindPattern] = matches[0];
+    const takesTarget = PREVIS_DRAFT_KINDS_WITH_TARGET.includes(kind);
+    // 「阿菁看向家丁」里出现两个人物，但只有一个是动作主语：句首那个。
+    // 不带目标的动作仍然只许出现一个人物，免得把双人戏当独角戏排。
+    const subject = present.find(c => new RegExp("^" + mention(c)).test(sentence));
+    if (present.length !== 1 && !(takesTarget && present.length === 2 && subject)) {
+      reject("动作或角色无法唯一匹配当前动作库");
+      continue;
+    }
+    if (subject && present.length === 2) present.splice(0, present.length, subject, ...present.filter(c => c !== subject));
+    // 0917 PR-E：文戏动作可以带一个目标（「阿菁看向娘」「阿菁走向娘」）。
+    // 目标只认同场角色名或「镜头」，不认自由文本——否则又变成把部分匹配当整镜。
+    const others = characters.filter(c => c !== present[0]);
+    const targetPattern =
+      "(?:" + [...others.map(c => mention(c)), "镜头", "镜头方向"].join("|") + ")";
     const wholeAction = new RegExp(
       "^" +
         mention(present[0]) +
         "(?:缓慢|缓缓|轻轻|迅速|快速|原地)?" +
-        matches[0][1].source +
+        kindPattern.source +
+        (PREVIS_DRAFT_KINDS_WITH_TARGET.includes(kind) ? "(" + targetPattern + ")?" : "") +
         "(?:一次)?$"
     );
-    if (!wholeAction.test(sentence)) {
+    const whole = wholeAction.exec(sentence);
+    if (!whole) {
       reject("含否定、重复或未支持动作，不能将部分匹配当作整镜完成");
       continue;
     }
     const actor = actorFor(present[0]);
-    if (actor.shape === "horse" && matches[0][0] !== "idle") {
+    if (actor.shape === "horse" && kind !== "idle") {
       reject("四足角色不能套人体动作");
       continue;
     }
-    actor.actions.push({ kind: matches[0][0], startSec: start, endSec: end });
+    const targetText = whole[1] ?? "";
+    if (kind === "look") {
+      // 看向必须知道看谁：写不清就不猜，退回未映射让人工补。
+      if (!targetText) {
+        reject("看向没有写明目标，不替用户猜注视对象");
+        continue;
+      }
+      const lookAtId = targetText.startsWith("镜头")
+        ? PREVIS_LOOK_AT_CAMERA
+        : actorFor(others.find(c => new RegExp(mention(c)).test(targetText))!).id;
+      actor.actions.push({ kind, startSec: start, endSec: end, lookAtId });
+    } else if (kind === "turn") {
+      // 原文只说「转身/回头」，没有角度信息：一律按转向背面 180°，由人工再调。
+      if (actor.motionRoute?.length) {
+        reject("该角色已有运动轨迹，朝向以轨迹为准，不再叠加转身");
+        continue;
+      }
+      const from = lastFacingOf(actor);
+      actor.actions.push({
+        kind,
+        startSec: start,
+        endSec: end,
+        facingDeg: normalizeFacingDeg(from + 180),
+      });
+    } else {
+      actor.actions.push({ kind, startSec: start, endSec: end });
+    }
     result.mappedShotIndices.push(shot.index);
   }
   if (!result.mappedShotIndices.length) {
