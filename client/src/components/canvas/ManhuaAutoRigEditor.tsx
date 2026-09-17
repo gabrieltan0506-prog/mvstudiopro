@@ -704,7 +704,7 @@ export function ManhuaAutoRigEditorView({
             {task?.status === "queued"
               ? "已排队，等待模型检查资源"
               : task?.status === "running"
-                ? "正在检查或求解，最长十分钟；无需重复提交"
+                ? "正在检查或求解；检查约几分钟，绑定高面数真模可能需要二三十分钟，以服务端状态为准，无需重复提交"
                 : "正在确认原任务回执"}
           </p>
           <button
