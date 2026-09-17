@@ -212,6 +212,10 @@ let pdfProcessing = false;
 let pdfTimer: NodeJS.Timeout | null = null;
 let postProdProcessing = false;
 let postProdTimer: NodeJS.Timeout | null = null;
+// 0917 PR-B：rig 进程组按需启停。app 机负责唤醒，rig 机负责停自己。
+let rigAutoscaleTimer: NodeJS.Timeout | null = null;
+const rigStartState = { lastAttemptAt: 0 };
+const rigIdleState = { lastBusyAt: Date.now() };
 /** 成长营素材分析专用 worker 并发（与平台长 Job 分池，默认 2） */
 const GROWTH_CAMP_JOB_WORKER_CONCURRENCY = Math.max(
   1,
@@ -4295,6 +4299,28 @@ export async function processJobsOnce() {
   }
 }
 
+const RIG_AUTOSCALE_TICK_MS = 15_000;
+
+/** app 机：队列里有 Blender 任务就唤醒 rig 机。没配 Fly 凭证时整段跳过。 */
+async function rigWakeTick() {
+  const { resolveRigAutoscaleDeps, ensureRigStartedForPending } = await import("./rigAutoscale.js");
+  const { countPendingBlenderPostProdJobs } = await import("./repository.js");
+  const deps = resolveRigAutoscaleDeps(countPendingBlenderPostProdJobs);
+  if (!deps) return;
+  const outcome = await ensureRigStartedForPending(deps, rigStartState);
+  if (outcome.action === "error") console.warn("[rig-autoscale] 唤醒失败：", outcome.message);
+}
+
+/** rig 机：空闲够久停自己。本进程在跑任务、或队列里还有 Blender 任务，一律不停。 */
+async function rigIdleTick() {
+  const { resolveRigAutoscaleDeps, maybeStopIdleRig } = await import("./rigAutoscale.js");
+  const { countPendingBlenderPostProdJobs } = await import("./repository.js");
+  const deps = resolveRigAutoscaleDeps(countPendingBlenderPostProdJobs);
+  if (!deps) return;
+  const outcome = await maybeStopIdleRig(deps, rigIdleState, postProdProcessing);
+  if (outcome.action === "error") console.warn("[rig-autoscale] 停机判定异常：", outcome.message);
+}
+
 export function startJobWorker() {
   if (workerStarted) return;
   workerStarted = true;
@@ -4306,6 +4332,11 @@ export function startJobWorker() {
     postProdTimer = setInterval(() => {
       void processPostProdJobsOnce();
     }, 1_000);
+    rigIdleState.lastBusyAt = Date.now();
+    rigAutoscaleTimer = setInterval(() => {
+      void rigIdleTick();
+    }, RIG_AUTOSCALE_TICK_MS);
+    rigAutoscaleTimer.unref?.();
     return;
   }
 
@@ -4329,6 +4360,10 @@ export function startJobWorker() {
   postProdTimer = setInterval(() => {
     void processPostProdJobsOnce();
   }, 3_000);
+  rigAutoscaleTimer = setInterval(() => {
+    void rigWakeTick();
+  }, RIG_AUTOSCALE_TICK_MS);
+  rigAutoscaleTimer.unref?.();
   if (typeof postProdTimer.unref === "function") {
     postProdTimer.unref();
   }
@@ -4358,5 +4393,7 @@ export function stopJobWorker() {
   pdfTimer = null;
   if (postProdTimer) clearInterval(postProdTimer);
   postProdTimer = null;
+  if (rigAutoscaleTimer) clearInterval(rigAutoscaleTimer);
+  rigAutoscaleTimer = null;
   workerStarted = false;
 }

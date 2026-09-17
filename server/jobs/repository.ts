@@ -1040,6 +1040,34 @@ export async function claimNextPostProdJob(filter?: PostProdClaimFilter): Promis
   return claimQueuedJobById(db, next, "claimNextPostProdJob");
 }
 
+/**
+ * 0917 PR-B：待处理的 Blender 后期任务条数（queued + running）。
+ * app 机用它决定要不要把停着的 rig 机唤醒；rig 机用它决定能不能停自己。
+ * 口径与 claimNextPostProdJob(filter="blender") 完全一致（同一个 action 列表、同样 coalesce 兜住 NULL）。
+ * 查不到数据库时返回 0：调用方只在 >0 时启机，宁可不启也不误启。
+ */
+export async function countPendingBlenderPostProdJobs(): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  try {
+    const rows = await db
+      .select({ id: jobs.id })
+      .from(jobs)
+      .where(
+        and(
+          sql`${jobs.status} IN ('queued','running')`,
+          eq(jobs.type, "post_prod"),
+          inArray(sql`coalesce(${jobs.input}->>'action', '')`, [...BLENDER_POST_PROD_ACTIONS]),
+        ),
+      )
+      .limit(50);
+    return rows.length;
+  } catch (error) {
+    console.error("[JobsRepo] countPendingBlenderPostProdJobs failed:", error);
+    return 0;
+  }
+}
+
 /** 专用 pdf_export 队列，避免长时间 page.pdf 阻塞 image/video/audio/platform。 */
 export async function claimNextPdfExportJob(): Promise<NormalizedJob | null> {
   const db = await getDb();

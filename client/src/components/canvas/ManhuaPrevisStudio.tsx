@@ -23,6 +23,7 @@ import {
 } from "@shared/manhuaPrevis";
 import {
   compilePrevisScriptDraft,
+  previsScriptDraftVocabularyZh,
   previsScriptSourceKey,
   type PrevisSourceShot,
   type PrevisScriptDraft,
@@ -86,6 +87,9 @@ const field =
 const button =
   "rounded border border-cyan-300/30 px-2 py-1 text-xs text-cyan-50 disabled:opacity-40";
 
+/** 连续查不到原编号多久之后允许放弃（毫秒）。入队成功的任务几秒内即可查到。 */
+export const PREVIS_ABANDON_AFTER_MS = 10 * 60_000;
+
 export function ManhuaPrevisStudio(props: Props) {
   const utils = trpc.useUtils();
   const submit = trpc.manhuaPrevis.submit.useMutation();
@@ -125,6 +129,10 @@ export function ManhuaPrevisStudioView({
   const [status, setStatus] = useState("");
   const [preview, setPreview] = useState<Result | null>(null);
   const [busy, setBusy] = useState(false);
+  // 0917 PR-D：服务端连续查不到原编号时给一个可放弃的出口，别让用户永远卡在「确认原请求」。
+  // 判据是「连续查不到满 10 分钟」——入队成功的任务最迟几秒内就查得到，十分钟仍为空说明这单没建成。
+  const missingSince = useRef<number | null>(null);
+  const [abandonable, setAbandonable] = useState(false);
   const [scriptDraft, setScriptDraft] = useState<PrevisScriptDraft | null>(
     null
   );
@@ -249,6 +257,8 @@ export function ManhuaPrevisStudioView({
     }
   }
   useEffect(() => {
+    missingSince.current = null;
+    setAbandonable(false);
     if (!pendingId) return;
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
@@ -257,10 +267,22 @@ export function ManhuaPrevisStudioView({
         const response = await latest.current.services.get(pendingId);
         if (!active) return;
         if (response) {
+          missingSince.current = null;
+          setAbandonable(false);
           consume(response);
           if (response.status === "succeeded" || response.status === "failed")
             return;
-        } else setStatus("尚未查到原请求；可确认原编号，不会新建重复任务");
+        } else {
+          const first = missingSince.current ?? Date.now();
+          missingSince.current = first;
+          const missedMs = Date.now() - first;
+          if (missedMs >= PREVIS_ABANDON_AFTER_MS) setAbandonable(true);
+          setStatus(
+            missedMs >= PREVIS_ABANDON_AFTER_MS
+              ? "服务端连续十分钟查不到这个编号，可放弃后重新生成"
+              : "尚未查到原请求；可确认原编号，不会新建重复任务"
+          );
+        }
       } catch {
         if (active) setStatus("查询暂不可用，保留原任务编号，稍后继续查询");
       }
@@ -490,6 +512,9 @@ export function ManhuaPrevisStudioView({
           >
             从本段剧本生成动作草案
           </button>
+          <p className="text-xs text-white/60" data-previs-draft-vocabulary>
+            只认这些动作：{previsScriptDraftVocabularyZh().join("；")}。分镜写的是镜头描述（中近景／特写／固定机位）时会 0 映射——这是设计边界，不是故障；白模不依赖草案，角色配置保存后可直接提交。
+          </p>
           {scriptDraft ? (
             <>
               <p className="text-xs text-white/70">
@@ -1718,6 +1743,23 @@ export function ManhuaPrevisStudioView({
         >
           恢复本段历史
         </button>
+        {pendingId && abandonable ? (
+          <button
+            type="button"
+            className={button}
+            data-previs-abandon-pending
+            disabled={busy}
+            onClick={() => {
+              if (!publish({ ...latest.current.studio, pending: undefined })) return;
+              missingSince.current = null;
+              setAbandonable(false);
+              setError("");
+              setStatus("已放弃原编号；再点「确认生成动作白模」会新建一次");
+            }}
+          >
+            原编号不存在，放弃它
+          </button>
+        ) : null}
         <span role="status" className="text-xs text-white/65">
           {status}
         </span>

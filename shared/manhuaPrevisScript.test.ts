@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  PREVIS_SCRIPT_DRAFT_KINDS,
   compilePrevisScriptDraft,
+  previsScriptDraftVocabularyZh,
   previsScriptSourceKey,
   type PrevisSourceCharacter,
 } from "./manhuaPrevisScript";
@@ -497,5 +499,30 @@ describe("文戏草案 · 0917 三轮审查补漏", () => {
     expect(actionsOf(compile("阿菁行礼。", { spec }))).toEqual([
       { kind: "bow", startSec: 0, endSec: 4 },
     ]);
+  });
+});
+
+describe("草案动作词表是面板提示的唯一真源（0917 PR-D，扩到十类后仍成立）", () => {
+  it("提示文案里的动词就是编译器真正匹配的那批，不另起一套", () => {
+    const vocabulary = previsScriptDraftVocabularyZh();
+    // 表驱动：扩库之后条数要跟着变。写死四条会在 PR-E 合进来之后变成
+    //「改了表、文案没跟上」照样绿——那正是这条用例要防的事。
+    expect(vocabulary).toHaveLength(PREVIS_SCRIPT_DRAFT_KINDS.length);
+    expect(vocabulary[0]).toBe("出拳 / 挥拳 / 出手");
+    PREVIS_SCRIPT_DRAFT_KINDS.forEach(([, re], i) => {
+      for (const word of re.source.replace(/^\(\?:/, "").replace(/\)$/, "").split("|")) {
+        expect(vocabulary[i]).toContain(word);
+      }
+    });
+    // 正例：词表里的每个动词都能被它自己那条正则命中
+    for (const [, re] of PREVIS_SCRIPT_DRAFT_KINDS) {
+      for (const word of re.source.replace(/^\(\?:/, "").replace(/\)$/, "").split("|")) {
+        expect(re.test(word)).toBe(true);
+      }
+    }
+    // 反例对照：镜头描述型分镜的常见写法一个都不许命中（0 映射是设计边界，不是故障）
+    for (const word of ["中近景", "特写", "固定机位", "全景", "推镜"]) {
+      expect(PREVIS_SCRIPT_DRAFT_KINDS.some(([, re]) => re.test(word))).toBe(false);
+    }
   });
 });
