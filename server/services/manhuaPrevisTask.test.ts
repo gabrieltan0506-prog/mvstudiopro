@@ -9,6 +9,7 @@ import {
   type PrevisTaskDeps,
   listPrevisTasks,
   parsePrevisCursor,
+  PrevisRejectedError,
   previsTaskId,
   type PrevisListDeps,
 } from "./manhuaPrevisTask";
@@ -193,4 +194,19 @@ it("真实查询生成相同毫秒精度的双键SQL且保留用户项目过滤"
   } finally {
     stub.mockRestore();
   }
+});
+
+it("0917：同编号已有任务时再确认不再核回执；无任务时业务拒绝才是 PrevisRejectedError，基础设施异常原样上抛", async () => {
+  const s = createManhuaPrevisStudio(2, "11111111-1111-4111-8111-111111111111");
+  const input = { requestId: "33333333-3333-4333-8333-333333333333", scopeId: s.scopeId, clipId: "clip-1", spec: s.spec };
+  const row = { id: previsTaskId(7, input.requestId), userId: "7", type: "post_prod", status: "queued", input: { action: "manhua_previs", params: input }, output: null, error: null, provider: "blender-previs", createdAt: new Date(), updatedAt: new Date() };
+  const insert = vi.fn(async () => { throw new PrevisRejectedError("本人已完成角色模型或完整来源回执不存在"); });
+  const existing: PrevisTaskDeps = { load: async () => row as any, insert, sign: uri => uri };
+  expect((await submitPrevisTask(7, input, existing)).jobId).toBe(row.id);
+  expect(insert).not.toHaveBeenCalled();
+  const fresh: PrevisTaskDeps = { load: async () => null, insert, sign: uri => uri };
+  await expect(submitPrevisTask(7, input, fresh)).rejects.toBeInstanceOf(PrevisRejectedError);
+  const io: PrevisTaskDeps = { load: async () => null, insert: async () => { throw new Error("gcs_download_failed:503"); }, sign: uri => uri };
+  await expect(submitPrevisTask(7, input, io)).rejects.toThrow("gcs_download_failed");
+  await expect(submitPrevisTask(7, input, io)).rejects.not.toBeInstanceOf(PrevisRejectedError);
 });

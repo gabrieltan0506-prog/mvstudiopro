@@ -4,7 +4,7 @@ import {createManhuaPrevisStudio} from '../../shared/manhuaPrevis';
 import {preparePrevisModels,resolvePrevisModels,PREVIS_MODEL_MAX_BYTES,type PrevisModelDeps} from './manhuaPrevisModels';
 import {writeFile} from 'node:fs/promises';
 vi.mock('node:fs/promises',()=>({writeFile:vi.fn().mockResolvedValue(undefined)}));
-vi.mock('./manhua3dTask',()=>({getCompletedManhua3dSource:vi.fn(()=>{throw new Error('禁止真实来源调用');})}));
+vi.mock('./manhua3dTask',()=>({getCompletedManhua3dSource:vi.fn(()=>{throw new Error('禁止真实来源调用');}),Manhua3dSourceRejectedError:class extends Error{}}));
 vi.mock('./gcs',()=>({inspectGcsObjectBounded:vi.fn(()=>{throw new Error('禁止真实云调用');})}));
 
 function glb() {
