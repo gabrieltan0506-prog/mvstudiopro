@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -157,4 +157,20 @@ it("来源下载SHA不一致时不求解", async () => {
     )
   ).rejects.toThrow("已登记版本");
   expect(f.runs()).toBe(0);
+});
+
+
+describe("0917 Blender 降优先级", () => {
+  it("生产（lowPriority）用 nice -n 10 包住 blender / xvfb-run；本机不包", async () => {
+    const { blenderLaunchCommand } = await import("./manhuaAutoRigRender");
+    const args = ["--background", "--python", "x.py"];
+    expect(blenderLaunchCommand({ blender: "blender", useXvfb: false, lowPriority: true }, args))
+      .toEqual({ command: "nice", args: ["-n", "10", "blender", ...args] });
+    expect(blenderLaunchCommand({ blender: "blender", useXvfb: true, lowPriority: true }, args))
+      .toEqual({ command: "nice", args: ["-n", "10", "xvfb-run", "-a", "blender", ...args] });
+    expect(blenderLaunchCommand({ blender: "test-blender", useXvfb: false, lowPriority: false }, args))
+      .toEqual({ command: "test-blender", args });
+    expect(blenderLaunchCommand({ blender: "b", useXvfb: true }, args))
+      .toEqual({ command: "xvfb-run", args: ["-a", "b", ...args] });
+  });
 });

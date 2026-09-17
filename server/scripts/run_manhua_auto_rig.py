@@ -593,10 +593,16 @@ def run(request_file, source_file, output_dir):
         raise ValueError("模型或检查设置已经变化，请重新检查和确认关节点")
     points = {name: [request["joints"][key] for key in pair] for name, pair in BONES.items()}
     # 低模绑骨 → 权重转移 → 原模渲染
+    # rig_confirmed_mesh 内部用同进程的几何摘要自证（core.source_digest），与跨进程契约摘要（request_digest）是两把尺子：
+    # #1488 首次部署构建期在此处把契约摘要传了进去 → 「模型已变化」→ 构建失败。
     receipt = core.rig_confirmed_mesh(source, points, {
-        "sourceDigest": digest, "pose": settings["pose"], "singleHuman": request["singleHuman"],
+        "sourceDigest": core.source_digest(source), "pose": settings["pose"], "singleHuman": request["singleHuman"],
         "landmarksManuallyConfirmed": request["landmarksManuallyConfirmed"]}, out / "model-proxy.glb")
     proxy_sha = receipt["outputSha256"]
+    # 回执对外的 sourceDigest 必须是契约摘要：TS validateAutoRigBindReport 拿 request.sourceDigest（=检查回执的契约摘要）硬比；
+    # core 写进回执的是几何摘要，不改写线上绑定仍会被拒「绑骨回执」。几何自证另存一键，不丢证据。
+    receipt["sourceGeometryDigest"] = receipt["sourceDigest"]
+    receipt["sourceDigest"] = digest
     imported = contract.import_rigged_model(out / "model-proxy.glb", "代理重导入", forward_axis="+X", target_height=settings["targetHeight"], expected_sha256=proxy_sha)
     rig, rigged_proxy = imported["rig"], imported["meshes"][0]
     # 重导入会按骨盆点/包围盒重新归一；先把骨架精确映射回导出前代理（=原模）坐标系再转权重

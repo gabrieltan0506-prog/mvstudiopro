@@ -107,6 +107,9 @@ joints = {k: [max(low[i], min(high[i], v[i])) for i in range(3)] for k, v in tru
 req2 = out / "req2.json"
 req2.write_text(json.dumps({"request": {"requestId": "00000000-0000-4000-8000-0000000000a2", "assetRef": "test", "sourceJobId": "m3d_test", "settings": settings, "stage": "bind", "inspectionRequestId": "00000000-0000-4000-8000-0000000000a1", "sourceDigest": r1["sourceDigest"], "joints": joints, "singleHuman": True, "landmarksManuallyConfirmed": True}, "sourceSha256": sha}))
 r2 = runner.run(str(req2), str(glb), str(out / "bind"))
+# 绑定回执对外摘要 = 检查回执的契约摘要（TS 侧硬比）；几何自证另存，且与契约摘要不是同一把尺子
+assert r2["sourceDigest"] == r1["sourceDigest"], ("绑定回执契约摘要不一致", r2["sourceDigest"], r1["sourceDigest"])
+assert len(r2["sourceGeometryDigest"]) == 64 and r2["sourceGeometryDigest"] != r2["sourceDigest"], r2["sourceGeometryDigest"]
 wt = r2["weightTransfer"]
 assert wt["enabled"] and wt["fullVertices"] == r1["weightTransfer"]["originalVertices"] and wt["midVertices"] <= runner.MID_MAX_VERTICES, wt
 # 回执顶点 = 导出 GLB 实际顶点；中模去 UV/法线后应与网格顶点一致且 ≤ 预算（导出器版本无关）

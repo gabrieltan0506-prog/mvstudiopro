@@ -32,7 +32,7 @@ RUN apt-get update \
 RUN blender --background --factory-startup --version \
  && blender --background --factory-startup --python-exit-code 1 \
     --python-expr "import numpy; import io_scene_gltf2.blender.imp.gltf2_blender_mesh; print('GLTF_DEPENDENCIES_IMPORTED', numpy.__version__)" \
- && command -v xvfb-run
+ && command -v xvfb-run && command -v nice
 ENV LIBGL_ALWAYS_SOFTWARE=1
 
 RUN npm install -g pnpm@10.4.1

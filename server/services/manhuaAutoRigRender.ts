@@ -23,7 +23,12 @@ import {
   inspectGcsObjectBounded,
   uploadBufferToGcsIfAbsent,
 } from "./gcs";
-import { runPrevisProcess } from "./manhuaPrevisRender";
+import {
+  blenderLaunchCommand,
+  blenderLowPriorityDefault,
+  runPrevisProcess,
+} from "./manhuaPrevisRender";
+export { blenderLaunchCommand };
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const evidenceSchema = z
@@ -164,6 +169,12 @@ export type AutoRigRenderDeps = {
   run: typeof runPrevisProcess;
   blender: string;
   useXvfb: boolean;
+  /**
+   * 0917 线上实跑：绑定阶段 Blender `--threads 2` 把 2 vCPU 占满，同一台机器上的 web 进程被饿死——
+   * Fly 健康检查失败 15 秒、静帧 mutation `Failed to fetch`。生产（linux）一律用 nice -n 10 起 Blender，
+   * 让 web 请求先走；本机/测试默认不包。
+   */
+  lowPriority?: boolean;
 };
 export const autoRigStorage = {
   source: getCompletedManhua3dSource,
@@ -176,7 +187,9 @@ const defaults: AutoRigRenderDeps = {
   run: runPrevisProcess,
   blender: process.env.BLENDER_BIN || "blender",
   useXvfb: process.platform === "linux",
+  lowPriority: blenderLowPriorityDefault(),
 };
+
 
 export async function readRigCloud(
   gcsUri: string,
@@ -313,11 +326,8 @@ export async function renderManhuaAutoRig(
     ];
     let runError: unknown;
     try {
-      const stdout = await d.run(
-        d.useXvfb ? "xvfb-run" : d.blender,
-        d.useXvfb ? ["-a", d.blender, ...args] : args,
-        signal
-      );
+      const launch = blenderLaunchCommand(d, args);
+      const stdout = await d.run(launch.command, launch.args, signal);
       await writeFile(
         path.join(directory, "process.json"),
         JSON.stringify({ stdout }),
