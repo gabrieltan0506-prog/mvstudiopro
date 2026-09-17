@@ -973,6 +973,14 @@ async function startServer() {
         return;
       }
       try {
+        // 0917：把本机 3D 模型回执补镜像到 GCS（幂等），rig 进程组才读得到历史模型
+        try {
+          const { mirrorManhua3dRecordsOnStartup } = await import("../services/manhua3dTask.js");
+          const mirror = await mirrorManhua3dRecordsOnStartup();
+          if (mirror.mirrored > 0) console.warn(`[manhua3d] startup record mirror: mirrored=${mirror.mirrored} skipped=${mirror.skipped}`);
+        } catch (error) {
+          console.warn("[manhua3d] startup record mirror failed:", error);
+        }
         const { requeued, cancelled, completed, exhausted } =
           await recoverInterruptedManhuaTemplateLearnJobsOnStartup();
         if (requeued > 0 || cancelled > 0 || completed > 0 || exhausted > 0) {
