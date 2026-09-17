@@ -71,10 +71,13 @@ bpy.ops.export_scene.gltf(filepath=str(glb), export_format="GLB", use_selection=
 
 sha = hashlib.sha256(glb.read_bytes()).hexdigest()
 proxy, metadata, merged, original, info = runner.load_source(str(glb), sha, {"pose": "A", "forwardAxis": "+X", "targetHeight": 1.7})
-digest = runner.core.source_digest(proxy)
+# 0917：检查↔绑定的契约摘要改为 request_digest（源 SHA + 设置 + 代理参数版本）；几何摘要只作对照记录
+digest = runner.request_digest(sha, {"pose": "A", "forwardAxis": "+X", "targetHeight": 1.7})
+geometry_digest = runner.core.source_digest(proxy)
 mesh = proxy.data
 record = {
     "digest": digest,
+    "geometryDigest": geometry_digest,
     "sourceSha256": sha,
     "proxyVertices": len(mesh.vertices),
     "proxyPolygons": len(mesh.polygons),

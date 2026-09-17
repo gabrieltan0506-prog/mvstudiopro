@@ -455,6 +455,25 @@ def orientation_check(obj):
     return orientation_verdict(feet_forward, depth, width, height)
 
 
+REQUEST_DIGEST_VERSION = "request-v1|proxy=%d|mid=%d|rig=%d" % (PROXY_MAX_VERTICES, MID_MAX_VERTICES, RIG_MAX_VERTICES)
+
+
+def request_digest(source_sha256, settings):
+    """
+    检查↔绑定的「模型或检查设置已经变化」判据。
+    0916/0917 两次线上真跑（Blender 3.4.1）都被拒：旧判据 core.source_digest 从内存里的代理网格算
+    （几何/边/法线/属性/UV/材质），检查与绑定是两个独立进程，3.4.1 上有跨进程不稳的项，
+    #1480 修了角法线仍不够，且日志里不打摘要、定位不到具体字段。
+    改按「源文件 SHA + 用户设置 + 代理参数版本」算：同一文件同一设置必然相同；改模型、改姿态/朝向/身高、
+    改代理参数任一项都变。带骨回执里的几何自证仍用 core.source_digest，不受影响。
+    """
+    import hashlib, json
+    payload = {"version": REQUEST_DIGEST_VERSION, "sourceSha256": str(source_sha256).lower(),
+               "settings": {"pose": settings["pose"], "forwardAxis": settings["forwardAxis"],
+                            "targetHeight": round(float(settings["targetHeight"]), 4)}}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
 ORIENTATION_NOISE_RATIO = 0.02
 
 
@@ -546,7 +565,7 @@ def run(request_file, source_file, output_dir):
     request, sha = data["request"], data["sourceSha256"]
     settings = request["settings"]
     source, metadata, merged, original, proxy_info = load_source(source_file, sha, settings)
-    digest = core.source_digest(source)
+    digest = request_digest(sha, settings)
     preview_meshes = [original]
     if request["stage"] == "inspect":
         result = {"version": 1, "stage": "inspect", "sourceDigest": digest,
