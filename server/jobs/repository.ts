@@ -1,3 +1,4 @@
+import { BLENDER_POST_PROD_ACTIONS, type PostProdClaimFilter } from "./workerRole.js";
 import { and, asc, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { isDeepStrictEqual } from "node:util";
 import { jobs, type Job, type InsertJob } from "../../drizzle/schema";
@@ -1007,16 +1008,23 @@ export async function listManhuaBgmJobsForUser(
 export const MAIN_QUEUE_EXCLUDED_TYPES = ["pdf_export", "post_prod"] as const;
 
 /** 专用 post_prod 队列:后期 ffmpeg 耗时长,单并发消化,不挤占普通媒体任务 */
-export async function claimNextPostProdJob(): Promise<NormalizedJob | null> {
+export async function claimNextPostProdJob(filter?: PostProdClaimFilter): Promise<NormalizedJob | null> {
   const db = await getDb();
   if (!db) return null;
 
   let rows: Job[] = [];
   try {
+    // 0917：Blender 任务可分流到独立进程组；按 input.action 过滤，兼容没开分流的单机模式
+    const actionExpr = sql`${jobs.input}->>'action'`;
+    const actionClause = filter === "blender"
+      ? inArray(actionExpr, [...BLENDER_POST_PROD_ACTIONS])
+      : filter === "non_blender"
+        ? notInArray(actionExpr, [...BLENDER_POST_PROD_ACTIONS])
+        : undefined;
     rows = await db
       .select()
       .from(jobs)
-      .where(and(eq(jobs.status, "queued"), eq(jobs.type, "post_prod")))
+      .where(and(eq(jobs.status, "queued"), eq(jobs.type, "post_prod"), ...(actionClause ? [actionClause] : [])))
       .orderBy(asc(jobs.createdAt))
       .limit(1);
   } catch (error) {

@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { resolveJobWorkerRole } from "../jobs/workerRole.js";
 // 必须在任何图像处理模块之前载入：全局限制 sharp/libvips 内存（0911 OOM 事故）
 import "./sharpLimits.js";
 import { registerGcsTransfer } from "../routers/gcsTransfer";
@@ -962,6 +963,13 @@ async function startServer() {
     // 漫剧学习逐集落盘；部署/崩溃会留下 running 行。先恢复为 queued 再启动 worker，
     // 让任务跳过已完成集并继续总分析，避免页面永久卡在“正在合成”。
     const recoverManhuaThenStartWorkers = async (attempt = 1): Promise<void> => {
+      // 0917：rig 进程组只跑 Blender 后期任务，启动期的学习/配乐恢复交给 app 做，避免两台机同时 requeue
+      if (resolveJobWorkerRole() === "rig") {
+        console.warn("[boot] JOB_WORKER_ROLE=rig：跳过学习/配乐启动恢复，只起 Blender 后期 worker");
+        startJobWorker();
+        startStaleJobsReaper();
+        return;
+      }
       try {
         const { requeued, cancelled, completed, exhausted } =
           await recoverInterruptedManhuaTemplateLearnJobsOnStartup();

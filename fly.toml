@@ -132,6 +132,13 @@ kill_timeout = 300
   strategy = "rolling"
   wait_timeout = "15m"
 
+# 0917：Blender（绑骨/白模渲染）独立进程组。app 开 MANHUA_RIG_WORKER_SPLIT=1 后不再领 Blender 任务；
+# rig 只领 Blender 任务、不跑 growth、不做启动恢复；不挂 http_service、不挂 /data 卷。
+# 首次部署会自动为 rig 建 1 台机（fly scale count rig=1 可调）；rig 掉线时 Blender 任务排队等待，不会被 app 误领。
+[processes]
+  app = "env MANHUA_RIG_WORKER_SPLIT=1 pnpm exec tsx server/_core/index.ts"
+  rig = "env JOB_WORKER_ROLE=rig MANHUA_RIG_WORKER_SPLIT=1 DISABLE_GROWTH_TREND_SCHEDULER=1 pnpm exec tsx server/_core/index.ts"
+
 [http_service]
   internal_port = 3000
   force_https = true
@@ -155,11 +162,21 @@ kill_timeout = 300
 
 [[vm]]
   # 对齐线上真值（已 scale 到 performance-2x / 8GB）；勿写回 4x 免得下次 Deploy 顶回去
+  processes = ['app']
   memory = '8gb'
   cpu_kind = 'performance'
   cpus = 2
   memory_mb = 8192
 
+# rig：绑定阶段实测 RSS 2.4 GB、CPU 130%（0917）；4 核 8 GB 让真模绑定从 >30 分钟缩短
+[[vm]]
+  processes = ['rig']
+  memory = '8gb'
+  cpu_kind = 'performance'
+  cpus = 4
+  memory_mb = 8192
+
 [[mounts]]
   source = 'growth_data'
   destination = '/data'
+  processes = ['app']
