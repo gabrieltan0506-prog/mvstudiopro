@@ -51,6 +51,13 @@ export type RigAutoscaleDeps = {
   onStopDecided?(): void;
   /** 停机失败时复位上面的闸。 */
   onStopAborted?(): void;
+  /**
+   * 没有 rig 机可唤醒 / 启动全失败时，把排队中的 Blender 任务打回失败（带原因带做法）。
+   * 只有确实查过 Machines API 才调；「机器存在但 stopped」不算没有，那要去 start 它。
+   */
+  failQueuedBlenderJobs?(reason: string): Promise<string[]>;
+  /** 错误文案里要写出的应用名，用于拼可执行的命令。 */
+  appName?: string;
   listRig(): Promise<FlyMachine[]>;
   startMachine(machineId: string): Promise<void>;
   stopMachine(machineId: string): Promise<void>;
@@ -87,7 +94,12 @@ export async function ensureRigStartedForPending(
   try {
     const machines = await deps.listRig();
     if (machines.length === 0) {
-      deps.log("[rig-autoscale] 没有 rig 进程组机器，Blender 任务将排队等待（检查 fly.toml [processes] 与部署）");
+      // 行为变更（0917 用户拍板）：没有机器就即时打回，不再静默排队到 reaper 判死。
+      const app = deps.appName ? ` -a ${deps.appName}` : "";
+      const failed = await deps.failQueuedBlenderJobs?.(
+        `Blender 后期机不存在或不可唤醒：本应用当前没有 rig 进程组机器。请管理员执行 fly scale count rig=1${app} 建机（机器可以停着，有任务会自动唤醒），再重新提交。`,
+      );
+      deps.log(`[rig-autoscale] 没有 rig 进程组机器，已打回 ${failed?.length ?? 0} 个排队中的 Blender 任务（检查 fly.toml [processes] 与部署）`);
       return { action: "no_machine" };
     }
     const targets = machines.filter((m) => needsStart(m.state));
@@ -105,7 +117,15 @@ export async function ensureRigStartedForPending(
         deps.log(`[rig-autoscale] 启动 rig 机 ${machine.id} 失败：${String(error)}`);
       }
     }
-    return started.length ? { action: "started", machineIds: started } : { action: "error", message: "所有 rig 机启动均失败" };
+    if (started.length) return { action: "started", machineIds: started };
+    // 机器在、但一台都起不来：同样打回，错误里给出具体机器 ID，管理员可以直接照抄命令。
+    const app = deps.appName ? ` -a ${deps.appName}` : "";
+    const ids = targets.map((m) => m.id).join(" / ");
+    const failed = await deps.failQueuedBlenderJobs?.(
+      `Blender 后期机不存在或不可唤醒：rig 机 ${ids} 启动失败。请管理员执行 fly machine start ${targets[0].id}${app} 后重新提交。`,
+    );
+    deps.log(`[rig-autoscale] rig 机启动全失败，已打回 ${failed?.length ?? 0} 个排队中的 Blender 任务`);
+    return { action: "error", message: `所有 rig 机启动均失败（${ids}）` };
   } catch (error) {
     return { action: "error", message: `列举 rig 机失败：${String(error)}` };
   }
@@ -193,7 +213,11 @@ export function resolveRigAutoscaleDeps(
     queuedBlenderJobs: () => Promise<number>;
     pendingBlenderJobs: () => Promise<number>;
   },
-  hooks: { onStopDecided?: () => void; onStopAborted?: () => void } = {},
+  hooks: {
+    onStopDecided?: () => void;
+    onStopAborted?: () => void;
+    failQueuedBlenderJobs?: (reason: string) => Promise<string[]>;
+  } = {},
   env: NodeJS.ProcessEnv = process.env,
 ): RigAutoscaleDeps | null {
   if (!rigAutoscaleEnabled(env)) return null;
@@ -205,6 +229,8 @@ export function resolveRigAutoscaleDeps(
     pendingBlenderJobs: counters.pendingBlenderJobs,
     onStopDecided: hooks.onStopDecided,
     onStopAborted: hooks.onStopAborted,
+    failQueuedBlenderJobs: hooks.failQueuedBlenderJobs,
+    appName: cfg.appName,
     listRig: () => listRigMachines(cfg),
     startMachine: (id) => startFlyMachine(cfg, id),
     stopMachine: (id) => stopFlyMachine(cfg, id),

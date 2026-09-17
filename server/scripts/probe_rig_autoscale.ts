@@ -167,6 +167,31 @@ async function main() {
     refused,
   );
 
+  // 9. 行为变更验证：一台 rig 机都没有时，排队中的 Blender 任务即时打回并带可执行命令
+  const failedReasons: string[] = [];
+  machines = machines.filter((m) => m.config.metadata.fly_process_group !== "rig");
+  const failing = resolveRigAutoscaleDeps(
+    counters,
+    {
+      ...hooks,
+      failQueuedBlenderJobs: async (reason: string) => {
+        failedReasons.push(reason);
+        return ["job-x"];
+      },
+    },
+    env,
+  )!;
+  queued = 1;
+  const noMachine = await ensureRigStartedForPending(failing, { lastAttemptAt: 0 });
+  check(
+    "没有 rig 机时打回排队任务，错误带做法",
+    noMachine.action === "no_machine" &&
+      failedReasons.length === 1 &&
+      failedReasons[0].includes("Blender 后期机不存在或不可唤醒") &&
+      failedReasons[0].includes("fly scale count rig=1 -a mvstudiopro-probe"),
+    failedReasons,
+  );
+
   server.close();
   console.log(JSON.stringify({ httpCalls: calls.map((c) => c.method + " " + c.path) }, null, 2));
   if (failures.length) {

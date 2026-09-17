@@ -4330,7 +4330,13 @@ export async function processJobsOnce() {
 
 const RIG_AUTOSCALE_TICK_MS = 15_000;
 
-async function rigAutoscaleDeps(hooks: { onStopDecided?: () => void; onStopAborted?: () => void } = {}) {
+async function rigAutoscaleDeps(
+  hooks: {
+    onStopDecided?: () => void;
+    onStopAborted?: () => void;
+    failQueuedBlenderJobs?: (reason: string) => Promise<string[]>;
+  } = {},
+) {
   const { resolveRigAutoscaleDeps } = await import("./rigAutoscale.js");
   const { countPendingBlenderPostProdJobs } = await import("./repository.js");
   return resolveRigAutoscaleDeps(
@@ -4372,7 +4378,10 @@ async function rigWakeTick() {
   // 那等于两台机器抢同一单，而 app 机 8 GB 跑 Blender 正是 0917 OOM 那次的死法。
   const { rigWorkerSplitEnabled } = await import("./workerRole.js");
   if (!rigWorkerSplitEnabled()) return;
-  const deps = await rigAutoscaleDeps();
+  const { failQueuedBlenderPostProdJobs } = await import("./repository.js");
+  // 行为变更（0917 用户拍板）：没有 rig 机可唤醒时，排队中的 Blender 任务即时失败并带做法。
+  // 绑骨/白模都是免费任务，打回不涉及退积分；以后若有付费 post_prod 走这条路，退款先行。
+  const deps = await rigAutoscaleDeps({ failQueuedBlenderJobs: failQueuedBlenderPostProdJobs });
   if (!deps) return;
   const { ensureRigStartedForPending } = await import("./rigAutoscale.js");
   const outcome = await ensureRigStartedForPending(deps, rigStartState);

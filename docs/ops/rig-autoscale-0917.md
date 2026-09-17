@@ -44,6 +44,21 @@ fly secrets set FLY_API_TOKEN=<fly deploy token> -a mvstudiopro
 - 不改 `fly.toml`：rig 进程组的声明、规格、部署都照旧，这里只管它平时开着还是停着。
 - 起不来 / 停不掉只记日志，绝不改任务状态——任务排队等着，比误判失败安全。
 
+## 行为变更：无 rig 机时 Blender 任务即时失败
+以前没有 rig 机时任务静默排队，直到 stale reaper 按创建时间判死，用户侧表现是「点了没反应」。
+现在 app 机在唤醒那一刻查 Machines API，按三种情况分开处理：
+
+| 查到什么 | 怎么做 |
+|---|---|
+| 机器存在但 stopped | `start` 它，任务正常排队——**停着是正常状态，不算没有** |
+| 一台 rig 机都没有 | 排队中的 Blender 任务即时打回，错误写「Blender 后期机不存在或不可唤醒：…请管理员执行 `fly scale count rig=1 -a mvstudiopro` 建机…」 |
+| 机器在、但 start 全失败 | 同样打回，错误里点名具体机器 ID：「…请管理员执行 `fly machine start <rig-id> -a mvstudiopro`…」 |
+| 列举 Machines API 本身失败 | **不打回**（查不到 ≠ 没有机器），只记日志，下一轮再试 |
+
+只打回 `queued` 的 `manhua_auto_rig` / `manhua_previs`：绝不碰 `running`（那在别的机器上跑着），
+也绝不碰其它 post_prod。绑骨/白模都是免费任务，打回不涉及退积分——
+**以后若有付费 post_prod 走这条路，必须退款先行，不能直接扩这个名单。**
+
 ## 合并前探针（不碰生产）
 ```
 npx tsx server/scripts/probe_rig_autoscale.ts

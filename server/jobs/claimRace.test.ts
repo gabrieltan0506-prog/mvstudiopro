@@ -12,6 +12,7 @@ vi.mock("../services/drProSecondaryStaging.js", () => ({
 import {
   claimNextPostProdJob,
   countPendingBlenderPostProdJobs,
+  failQueuedBlenderPostProdJobs,
   claimNextQueuedJob,
   claimNextQueuedJobExcluding,
   MAIN_QUEUE_EXCLUDED_TYPES,
@@ -388,6 +389,28 @@ describe("post_prod 独立任务通道", () => {
     expect(countValues).not.toContain("manhua_assemble_final");
     // running 也要算：绑定跑 12 分钟，期间队列为空，只看 queued 会把机器停在任务头上
     expect(countValues.join(" ")).toContain("queued','running");
+  });
+
+  it("打回排队中的 Blender 任务：只动 queued、只动这两类 action，绝不碰 running 或付费任务", async () => {
+    let condition: unknown;
+    getDb.mockResolvedValue({
+      update: () => ({
+        set: () => ({
+          where: (c: unknown) => {
+            condition = c;
+            return { returning: async () => [{ id: "job-1" }, { id: "job-2" }] };
+          },
+        }),
+      }),
+    });
+    const ids = await failQueuedBlenderPostProdJobs("没有 rig 机");
+    expect(ids).toEqual(["job-1", "job-2"]);
+    const values = sqlStringValues(condition);
+    expect(values).toEqual(expect.arrayContaining(["queued", "post_prod", "manhua_auto_rig", "manhua_previs"]));
+    // 反例：running 不在条件里（跑着的任务在别的机器上，与「没有 rig 机」无关）
+    expect(values).not.toContain("running");
+    // 反例：非 Blender 的后期任务不许被打回（它们可能是付费的，退款先行）
+    expect(values).not.toContain("manhua_assemble_final");
   });
 
   it("数据库不可用时返回 0，不会误启机器", async () => {

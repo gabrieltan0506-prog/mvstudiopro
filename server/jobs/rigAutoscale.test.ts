@@ -16,10 +16,16 @@ function makeDeps(over: Partial<RigAutoscaleDeps> = {}) {
   const started: string[] = [];
   const stopped: string[] = [];
   const calls: string[] = [];
+  const failedReasons: string[] = [];
   const deps: RigAutoscaleDeps = {
     now: () => clock,
     queuedBlenderJobs: async () => 0,
     pendingBlenderJobs: async () => 0,
+    failQueuedBlenderJobs: async (reason: string) => {
+      failedReasons.push(reason);
+      return ["job-1"];
+    },
+    appName: "mvstudiopro",
     onStopDecided: () => void calls.push("gate_closed"),
     onStopAborted: () => void calls.push("gate_reopened"),
     listRig: async () => [{ id: "rig-1", state: "stopped", processGroup: "rig" }],
@@ -33,7 +39,7 @@ function makeDeps(over: Partial<RigAutoscaleDeps> = {}) {
     log: () => {},
     ...over,
   };
-  return { deps, started, stopped, calls, advance: (ms: number) => (clock += ms), at: () => clock };
+  return { deps, started, stopped, calls, failedReasons, advance: (ms: number) => (clock += ms), at: () => clock };
 }
 
 describe("rig 唤醒（app 机）", () => {
@@ -100,10 +106,43 @@ describe("rig 唤醒（app 机）", () => {
     expect(next.started).toEqual(["rig-1"]);
   });
 
-  it("列不到 rig 机时只报不抛，任务照排队", async () => {
-    const { deps, started } = makeDeps({ queuedBlenderJobs: async () => 1, listRig: async () => [] });
+  it("一台 rig 机都没有：排队中的 Blender 任务即时打回，错误里带可执行的命令", async () => {
+    const { deps, started, failedReasons } = makeDeps({ queuedBlenderJobs: async () => 1, listRig: async () => [] });
     expect(await ensureRigStartedForPending(deps, { lastAttemptAt: 0 })).toEqual({ action: "no_machine" });
     expect(started).toEqual([]);
+    expect(failedReasons).toHaveLength(1);
+    expect(failedReasons[0]).toContain("Blender 后期机不存在或不可唤醒");
+    expect(failedReasons[0]).toContain("fly scale count rig=1 -a mvstudiopro");
+  });
+
+  it("机器在、但一台都起不来：也打回，错误里点名具体机器 ID", async () => {
+    const { deps, failedReasons } = makeDeps({
+      queuedBlenderJobs: async () => 1,
+      startMachine: async () => {
+        throw new Error("fly 500");
+      },
+    });
+    const out = await ensureRigStartedForPending(deps, { lastAttemptAt: 0 });
+    expect(out.action).toBe("error");
+    expect(failedReasons[0]).toContain("fly machine start rig-1 -a mvstudiopro");
+  });
+
+  it("反例对照：机器只是停着（正常状态）不许当成没有，要去启动它、不许打回任务", async () => {
+    const { deps, started, failedReasons } = makeDeps({ queuedBlenderJobs: async () => 1 });
+    expect((await ensureRigStartedForPending(deps, { lastAttemptAt: 0 })).action).toBe("started");
+    expect(started).toEqual(["rig-1"]);
+    expect(failedReasons).toEqual([]);
+  });
+
+  it("反例对照：列举 Machines API 失败时不打回（查不到 ≠ 没有机器）", async () => {
+    const { deps, failedReasons } = makeDeps({
+      queuedBlenderJobs: async () => 1,
+      listRig: async () => {
+        throw new Error("fly api down");
+      },
+    });
+    expect((await ensureRigStartedForPending(deps, { lastAttemptAt: 0 })).action).toBe("error");
+    expect(failedReasons).toEqual([]);
   });
 
   it("Fly API 报错不抛到 worker 循环", async () => {

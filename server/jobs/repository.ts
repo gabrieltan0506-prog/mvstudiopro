@@ -1073,6 +1073,42 @@ export async function countPendingBlenderPostProdJobs(
   }
 }
 
+/**
+ * 0917 PR-B：没有 rig 机可唤醒时，把**排队中**的 Blender 后期任务即时打回失败。
+ *
+ * 行为变更的理由：以前是静默排队到 stale reaper 按创建时间判死，用户侧表现是「点了没反应」——
+ * 今天已经因为同一症状吃过两次亏（弹层没挂载、回执读不到）。明确失败带原因带做法，比静默排队好。
+ *
+ * 三条边界写死在这里：
+ * - 只动 `queued`，绝不碰 `running`（跑着的任务在别的机器上，与「没有 rig 机」无关）。
+ * - 只动 BLENDER_POST_PROD_ACTIONS 这两类（绑骨/白模，均为免费任务，打回不涉及退积分）。
+ *   **以后若有付费 post_prod 走这条路，必须先退款再打回，不能直接扩这个名单。**
+ * - 调用方只在「确实查过 Machines API 且确认没有机器 / 启动失败」时才调；
+ *   「机器存在但 stopped」是正常状态，要去 start 它，不许当成没有。
+ */
+export async function failQueuedBlenderPostProdJobs(reason: string): Promise<string[]> {
+  const db = await getDb();
+  if (!db) return [];
+  try {
+    const rows = await db
+      .update(jobs)
+      .set({ status: "failed", error: reason.slice(0, 800), updatedAt: new Date() })
+      .where(
+        and(
+          eq(jobs.status, "queued"),
+          eq(jobs.type, "post_prod"),
+          inArray(sql`coalesce(${jobs.input}->>'action', '')`, [...BLENDER_POST_PROD_ACTIONS]),
+        ),
+      )
+      .returning({ id: jobs.id });
+    if (rows.length) console.error("[JobsRepo] 无 rig 机，打回排队中的 Blender 任务：", rows.map((r) => r.id).join(","), reason);
+    return rows.map((r) => r.id);
+  } catch (error) {
+    console.error("[JobsRepo] failQueuedBlenderPostProdJobs failed:", error);
+    return [];
+  }
+}
+
 /** 专用 pdf_export 队列，避免长时间 page.pdf 阻塞 image/video/audio/platform。 */
 export async function claimNextPdfExportJob(): Promise<NormalizedJob | null> {
   const db = await getDb();
