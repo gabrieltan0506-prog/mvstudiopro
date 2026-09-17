@@ -3,10 +3,14 @@ import {
   PREVIS_LOOK_AT_CAMERA,
   createManhuaPrevisStudio,
   manhuaPrevisSpecSchema,
+  normalizeFacingDeg,
   type PrevisActionKind,
   type ManhuaPrevisSpec,
   type PrevisInteraction,
 } from "./manhuaPrevis";
+
+/** 朝向归一的唯一实现在 manhuaPrevis.ts；这里只做转出，旧引用路径不断。 */
+export { normalizeFacingDeg };
 
 /**
  * 草案编译认得的动作动词表（唯一真源，面板提示也读它）。
@@ -18,14 +22,19 @@ export const PREVIS_SCRIPT_DRAFT_KINDS = [
   ["recoil", /(?:后缩|后仰|受惊)/],
   ["idle", /(?:待机|静立|站定|保持站位)/],
   ["walk", /(?:走向|走到|走近|迈步)/],
-  ["turn", /(?:转身|回身|回头)/],
+  // 「回头」通常是扭头去看，不是整个人站位翻面；写进 turn 会把它排成 180 度整体转身，
+  // 而它又没有注视目标可落 → 从词表拿掉，让这类句子退回未映射由人工写清楚（0917 审查提出）。
+  ["turn", /(?:转身|回身)/],
   ["look", /(?:看向|望向|注视|看着)/],
   ["sit", /(?:坐下|落座|坐到)/],
   ["gesture_point", /(?:指向|抬手指|伸手指)/],
   ["bow", /(?:行礼|拱手|鞠躬|俯身行礼)/],
 ] as const satisfies readonly (readonly [PrevisActionKind, RegExp])[];
 
-/** 这些动作后面可以跟一个目标（同场角色或镜头）。 */
+/**
+ * 这些动作后面可能跟一个目标（同场角色或镜头）。整镜唯一匹配要把它吃进来才判得准，
+ * 但只有「看向」能真的落进 spec；其余写了目标一律退回未映射（见下方编译处）。
+ */
 export const PREVIS_DRAFT_KINDS_WITH_TARGET: readonly PrevisActionKind[] = [
   "walk",
   "look",
@@ -40,11 +49,6 @@ export function previsScriptDraftVocabularyZh(): string[] {
   );
 }
 
-/** 归一到 (-180, 180]：转身 180 度显示成 180，不是 -180。 */
-export function normalizeFacingDeg(deg: number): number {
-  const wrapped = ((((deg + 180) % 360) + 360) % 360) - 180;
-  return wrapped === -180 ? 180 : wrapped;
-}
 
 /** 角色在已排动作之后的朝向：前一次转身的目标，否则是初始朝向。 */
 function lastFacingOf(actor: { facingDeg: number; actions: { kind: string; facingDeg?: number }[] }): number {
@@ -353,6 +357,23 @@ export function compilePrevisScriptDraft(input: {
       continue;
     }
     const targetText = whole[1] ?? "";
+    // 0917 审查：只有「看向」能把目标真的落进 spec。走位/指向的目标白模表达不了
+    // （走位不改站位、指向只按角色自身朝向抬手），映射了等于把原文的调度信息吞掉，
+    // 还要让白模摆出一个指不到人的姿势。写了目标就退回未映射，让人工补站位/朝向。
+    if (targetText && kind !== "look") {
+      reject("原文写了动作目标，但走位/指向的目标白模还表达不了，请人工设站位或朝向");
+      continue;
+    }
+    if (kind === "walk") {
+      // 走位只出摆臂步态，位移来自站位区间；站着不动就不排走位，免得原地摆臂假装在走。
+      const travels = actor.start.some((v, k) => v !== actor.end[k]);
+      const overlapsMove =
+        start < actor.moveEndSec && end > actor.moveStartSec;
+      if (!travels || !overlapsMove) {
+        reject("该角色本段没有实际位移，走位步态会原地摆臂，请先设好起止站位");
+        continue;
+      }
+    }
     if (kind === "look") {
       // 看向必须知道看谁：写不清就不猜，退回未映射让人工补。
       if (!targetText) {

@@ -97,6 +97,11 @@ export type PrevisActionKind = (typeof PREVIS_ACTION_KINDS)[number];
 /** 打戏四类：四足角色与持剑白模只许这几类，扩库不放宽旧门禁。 */
 export const PREVIS_COMBAT_ACTION_KINDS = ["idle", "strike", "guard", "recoil"] as const;
 export const PREVIS_LOOK_AT_CAMERA = "camera" as const;
+/** 归一到 (-180, 180]：转身 180 度显示成 180，不是 -180。朝向的唯一归一入口。 */
+export function normalizeFacingDeg(deg: number): number {
+  const wrapped = ((((deg + 180) % 360) + 360) % 360) - 180;
+  return wrapped === -180 ? 180 : wrapped;
+}
 /**
  * 0917 PR-E：换动作类型时把只属于旧类型的参数丢掉、把新类型必需的参数补上。
  * 不这么做会留下「转身没有目标朝向」或「出拳还挂着注视目标」这种提交必被 schema 拒的脏配置。
@@ -109,11 +114,9 @@ export function previsActionForKind<T extends { kind: string; facingDeg?: number
   const next = { ...action, kind } as T;
   delete (next as { facingDeg?: number }).facingDeg;
   delete (next as { lookAtId?: string }).lookAtId;
-  if (kind === "turn") {
-    // 默认转向背面；归一到 (-180, 180]，转身 180 度显示成 180 而不是 -180
-    const wrapped = (((context.actorFacingDeg + 180 + 180) % 360) + 360) % 360 - 180;
-    (next as { facingDeg?: number }).facingDeg = wrapped === -180 ? 180 : wrapped;
-  }
+  // 默认转向背面；归一走 normalizeFacingDeg 这一个入口，不再各处手写取模
+  if (kind === "turn")
+    (next as { facingDeg?: number }).facingDeg = normalizeFacingDeg(context.actorFacingDeg + 180);
   if (kind === "look")
     (next as { lookAtId?: string }).lookAtId = context.otherActorIds[0] ?? PREVIS_LOOK_AT_CAMERA;
   return next;
@@ -440,6 +443,19 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
             message: "只有看向能设注视目标",
             path: ["actors", i, "actions", j, "lookAtId"],
           });
+        // 0917 审查：走位只负责「摆臂步态」，位移来自站位/轨迹。角色原地不动、
+        // 或动作窗口压根不在位移区间内时，白模会原地摆臂假装在走——那是白模撒谎。
+        if (action.kind === "walk" && !actor.motionRoute?.length) {
+          const travels = actor.start.some((v, k) => v !== actor.end[k]);
+          const overlapsMove =
+            action.startSec < actor.moveEndSec && action.endSec > actor.moveStartSec;
+          if (!travels || !overlapsMove)
+            ctx.addIssue({
+              code: "custom",
+              message: "走位动作必须落在角色实际位移区间内；原地不动请改用其它动作或先设好起止站位",
+              path: ["actors", i, "actions", j],
+            });
+        }
         // 转身与运动轨迹是两套朝向真源，同时给会互相覆盖，先拒绝。
         if (action.kind === "turn" && actor.motionRoute?.length)
           ctx.addIssue({

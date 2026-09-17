@@ -344,11 +344,35 @@ describe("文戏动词草案（0917 PR-E）", () => {
     ]);
   });
 
-  it("走位、坐下、指向、行礼各自落成对应动作", () => {
-    expect(act("阿菁走向家丁。")[0]?.kind).toBe("walk");
+  it("坐下、指向、行礼各自落成对应动作", () => {
     expect(act("阿菁坐下。")[0]?.kind).toBe("sit");
-    expect(act("阿菁指向家丁。")[0]?.kind).toBe("gesture_point");
+    expect(act("阿菁抬手指。")[0]?.kind).toBe("gesture_point");
     expect(act("阿菁拱手。")[0]?.kind).toBe("bow");
+  });
+
+  it("走位只在角色真的有位移时才排，且写了目标不自作主张", () => {
+    // 反例①：原文写了「走向家丁」，但白模改不了站位——退回未映射，不吞掉调度信息
+    const withTarget = compile("阿菁走向家丁。");
+    expect(withTarget.mappedShotIndices).toEqual([]);
+    expect(withTarget.unmapped[0].reasonZh).toContain("白模还表达不了");
+    // 反例②：站着不动的角色「迈步」＝原地摆臂假装在走，同样退回
+    expect(compile("阿菁迈步。").mappedShotIndices).toEqual([]);
+    // 正例：当前配置里该角色本来就有位移区间，才落成 walk
+    const moving = createManhuaPrevisStudio(4).spec;
+    moving.actors[0].assetRef = "qing";
+    moving.actors[0].start = [-1, 0];
+    moving.actors[0].end = [1, 0];
+    moving.actors[0].moveStartSec = 0;
+    moving.actors[0].moveEndSec = 4;
+    const ok = compile("阿菁迈步。", { spec: moving });
+    expect(ok.mappedShotIndices).toEqual([7]);
+    expect(ok.spec?.actors.find(a => a.actions.length)?.actions[0].kind).toBe("walk");
+  });
+
+  it("指向写了目标也退回：白模只按自身朝向抬手，指不到那个人", () => {
+    const pointed = compile("阿菁指向家丁。");
+    expect(pointed.mappedShotIndices).toEqual([]);
+    expect(pointed.unmapped[0].reasonZh).toContain("白模还表达不了");
   });
 
   it("镜头描述型分镜仍然 0 映射（设计边界没被扩库放宽）", () => {

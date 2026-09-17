@@ -745,12 +745,25 @@ export function ManhuaPrevisStudioView({
                 Boolean(pendingId) ||
                 studio.spec.actors.length === 1
               }
-              onClick={() =>
+              onClick={() => {
+                // 0917 审查：被删角色可能正被别人「看向」。留着悬空 lookAtId，面板下拉看着正常、
+                // 提交却被 schema 拒（看向目标须是同场的其他角色或镜头），用户找不到错在哪。
+                // 目标没了就不替他改看向谁——直接把这条看向动作去掉，面板上看得见。
+                const gone = studio.spec.actors[index].id;
                 edit({
                   ...studio.spec,
-                  actors: studio.spec.actors.filter((_, i) => i !== index),
-                })
-              }
+                  actors: studio.spec.actors
+                    .filter((_, i) => i !== index)
+                    .map(other =>
+                      other.actions.some(a => a.lookAtId === gone)
+                        ? {
+                            ...other,
+                            actions: other.actions.filter(a => a.lookAtId !== gone),
+                          }
+                        : other
+                    ),
+                });
+              }}
             >
               移除角色
             </button>

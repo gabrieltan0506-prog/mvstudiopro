@@ -131,6 +131,42 @@ results.append({'case':'walk','swingAmplitude':round(amplitude,4),
 assert amplitude >= 0.12, ('走位摆臂幅度不足', amplitude)
 assert control_amplitude <= amplitude/3, ('反例对照失效：不摆臂的 idle 也测出了摆臂', control_amplitude, amplitude)
 
+# 6b) 走位必须是异侧摆臂，不能同手同脚。
+# 判据：同侧手与同侧脚的「前后领先量」在整个步态里必须负相关。阈值 -0.2 写死在这里；
+# 把 points() 里 swing 的相位改回同相，这条会翻成 +0.35 左右而变红（0917 审查实测）。
+def _pearson(xs, ys):
+    mx = sum(xs)/len(xs); my = sum(ys)/len(ys)
+    num = sum((a-mx)*(b-my) for a, b in zip(xs, ys))
+    den = (sum((a-mx)**2 for a in xs)*sum((b-my)**2 for b in ys))**.5
+    return num/den if den > 1e-9 else 0.
+build(spec, 'walk-phase')
+foot_lead = [sample('lower_leg-1', f).x - sample('lower_leg1', f).x for f in range(1, 25)]
+hand_lead = [sample('hand-1', f).x - sample('hand1', f).x for f in range(1, 25)]
+phase = _pearson(foot_lead, hand_lead)
+results.append({'case':'walk-phase','pearsonFootHandLead':round(phase,4),
+                'note':'同侧手脚必须反相；正相关＝同手同脚'})
+assert phase <= -0.2, ('走位同手同脚：同侧手脚前后领先量正相关', phase)
+
+# 7) 转身与分段运动轨迹是两套朝向真源：渲染层必须硬失败，不能静默按轨迹走、把转身吞掉。
+clash = copy.deepcopy(BASE)
+clash['actors'][0]['end'] = [.8, 0]
+clash['actors'][0]['motionRoute'] = [
+    {'timeSec':0,'position':[-.4,0],'facingDeg':0},
+    {'timeSec':(2*24-1)/24,'position':[.8,0],'facingDeg':0}]
+clash['actors'][0]['actions'] = [{'kind':'turn','startSec':0,'endSec':2,'facingDeg':180}]
+raised = None
+try:
+    build(clash, 'turn-plus-route')
+except Exception as error:
+    raised = str(error)
+results.append({'case':'turn-plus-route','raised':raised})
+assert raised and '转身' in raised, ('转身叠轨迹没有硬失败，白模会静默不转', raised)
+# 反例对照：去掉转身、只留同一条轨迹必须正常跑完，证明上面红的是转身叠加而不是轨迹本身
+route_only = copy.deepcopy(clash)
+route_only['actors'][0]['actions'] = []
+build(route_only, 'turn-plus-route-negative-control')
+results.append({'case':'turn-plus-route-negative-control','note':'同一条轨迹去掉转身可正常渲染'})
+
 (root/'report.json').write_text(json.dumps({'blender':bpy.app.version_string,'cases':results},
                                            ensure_ascii=False, indent=2))
 print('TEST_OK', json.dumps({'blender':bpy.app.version_string,'cases':len(results)}, ensure_ascii=False))

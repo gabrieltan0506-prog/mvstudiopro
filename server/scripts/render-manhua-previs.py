@@ -96,9 +96,15 @@ def position(actor, frame):
     return Vector((actor['start'][0]*(1-u)+actor['end'][0]*u,
                    actor['start'][1]*(1-u)+actor['end'][1]*u, z))
 
+for _actor in spec['actors']:
+    # 0917 审查：转身与 motionRoute 是两套朝向真源。schema 已拒绝同时给，但渲染层过去
+    # 是「有轨迹就走轨迹」静默丢掉转身——白模不转，报告也不说，等于撒谎。这里硬失败。
+    if _actor.get('motionRoute') and any(a['kind']=='turn' for a in _actor['actions']):
+        raise ValueError('转身动作与分段运动轨迹不能同时给，朝向请写进轨迹节点')
+
 def turn_facing(actor, t):
     """0917 PR-E：转身动作按时间插值出朝向。动作已按 schema 排序且不重叠。
-    与 motionRoute 互斥（schema 已拒绝同时给），避免两套朝向真源互相覆盖。"""
+    与 motionRoute 互斥（上方已硬失败），避免两套朝向真源互相覆盖。"""
     facing=actor['facingDeg']
     for action in actor['actions']:
         if action['kind']!='turn': continue
@@ -226,8 +232,10 @@ def points(actor, frame, contacts):
             # 上身偏转：肩线跟着看向的偏航一起转，真模重定向时才看得出「转过去看」
             shoulder=chest+Matrix.Rotation(look_yaw,4,'Z') @ Vector((0,s*.21,0))
             x=.10+.43*amounts['strike']-.25*amounts['wind'] if s==-1 else .12
-            # 走位摆臂：两臂反相，周期对齐脚步（plan_contacts 每 6 帧换一只脚 = 0.5 秒一个来回）
-            swing=.16*amounts['walk']*math.sin(2*math.pi*t/.5+(0 if s==-1 else math.pi))
+            # 走位摆臂：两臂反相，周期对齐脚步（plan_contacts 每 6 帧换一只脚 = 0.5 秒一个来回）。
+            # 相位必须跟同侧脚相反：plan_contacts 第 0 个 6 帧块迈的是 '-1' 脚（t∈[0,.25)），
+            # 所以同侧的 s=-1 手此时要往后摆，否则就是同手同脚（0917 审查实测 pearson +0.35）。
+            swing=.16*amounts['walk']*math.sin(2*math.pi*t/.5+(math.pi if s==-1 else 0))
             # 抬手指向：前手（s=-1）抬到肩高前伸；行礼时两臂贴身略前摆
             point=amounts['gesture_point'] if s==-1 else 0.
             hand=shoulder+Vector((x+.18*amounts['guard']+swing+.42*point+.10*bow,s*.13,
