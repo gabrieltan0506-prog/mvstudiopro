@@ -188,7 +188,8 @@ export type AutoRigView = {
     previewUrls?: string[];
     qualityAccepted: false;
     reportGcsUri: string;
-    /** 0916 低模绑骨：带骨原模（画质/三视角参考）；model.glb 是白模用的中模 */
+    /** 白模优先代理；主模型仍为中模，fullGlb保留原模用于画质检查。 */
+    proxyGlb?: { gcsUri: string; sha256: string; bytes: number; vertices: number };
     fullGlb?: { gcsUri: string; sha256: string; bytes: number; url?: string };
     weightTransfer?: Record<string, unknown>;
   };

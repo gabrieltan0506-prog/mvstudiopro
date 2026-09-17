@@ -1,3 +1,4 @@
+import { exportedProxyVertices } from "./manhuaPrevisProxy";
 /** 本人3D任务 → 有界云对象验真 → worker临时文件；凭证不进入任务或子进程。 */
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
@@ -25,6 +26,8 @@ export async function resolvePrevisModels(
 ) {
   const sources: Array<{ actorId: string; source: PrevisModelSource }> = [];
   let total = 0;
+  // previs_creature.py：18节骨段 + 6×3羽片，每网格8顶点。
+  let vertices = spec.actors.filter(a => a.creature?.preset === "four_tail_black_wings").length * 288;
   for (const actor of spec.actors) {
     if (!actor.riggedModel) continue;
     if (!actor.assetRef) throw new Manhua3dSourceRejectedError("角色模型未绑定项目人物");
@@ -33,7 +36,8 @@ export async function resolvePrevisModels(
     const source = await d.source(
       actor.riggedModel.sourceJobId,
       userId,
-      modelAssetRef
+      modelAssetRef,
+      { prefer: "previs" }
     );
     if (
       source.taskId !== actor.riggedModel.sourceJobId ||
@@ -44,6 +48,28 @@ export async function resolvePrevisModels(
       !/^[a-f0-9]{64}$/.test(source.sha256)
     )
       throw new Manhua3dSourceRejectedError("角色模型来源或体积未通过预演检查");
+    let modelVertices = source.vertices;
+    if (modelVertices === undefined) {
+      // 历史回执没有计数；入队前读取真实GLB验真，不能将未知当成0。
+      const chunks: Buffer[] = [];
+      let received = 0;
+      const checked = await d.inspect({gcsUri: source.gcsUri, maxBytes: PREVIS_MODEL_MAX_BYTES,
+        timeoutMs: 120000, onChunk: chunk => {
+          received += chunk.length;
+          if (received > PREVIS_MODEL_MAX_BYTES) throw Error("角色文件超过64MB");
+          chunks.push(Buffer.from(chunk));
+        }});
+      const buffer = Buffer.concat(chunks);
+      if (buffer.length !== source.bytes || checked.sha256 !== source.sha256 ||
+          checked.byteLength !== source.bytes || createHash("sha256").update(buffer).digest("hex") !== source.sha256)
+        throw Error("角色模型下载不完整，保留原请求编号");
+      modelVertices = exportedProxyVertices(buffer, 2_000_000);
+    }
+    if (!Number.isSafeInteger(modelVertices) || modelVertices < 100)
+      throw new Manhua3dSourceRejectedError("角色模型顶点回执无效");
+    vertices += modelVertices;
+    if (vertices * spec.durationSec * 24 * (spec.aspect === "9:16" ? 3 : 1) > 12_000_000)
+      throw new Manhua3dSourceRejectedError("本段角色模型合计超出1200万顶点帧预算，请缩短片段、改横屏或使用低模代理");
     total += source.bytes;
     if (total > PREVIS_MODEL_MAX_BYTES * 2)
       throw new Manhua3dSourceRejectedError("本段角色模型总量超过128MB，请分段预演");

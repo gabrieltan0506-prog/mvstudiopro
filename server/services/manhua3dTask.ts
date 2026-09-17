@@ -1,3 +1,4 @@
+import { previsProxySchema, type PrevisProxy } from "./manhuaPrevisProxy";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -85,6 +86,7 @@ export type Manhua3dTaskRecord = {
   glbUrlExpiresAt?: string;
   glbBytes?: number;
   glbSha256?: string;
+  previsProxy?: PrevisProxy;
   errorZh?: string;
   lastTransientError?: string;
   createdAt: string;
@@ -821,6 +823,7 @@ export async function importExistingManhua3dAsset(input: {
   sourceVersion: string;
   sourceImageUrl: string;
   glbGcsUri: string;
+  previsProxy?: PrevisProxy;
 }): Promise<Manhua3dTaskView> {
   const assetRef = String(input.assetRef || "").trim();
   const sourceVersion = String(input.sourceVersion || "").trim();
@@ -836,6 +839,8 @@ export async function importExistingManhua3dAsset(input: {
     throw new Error("manhua3d_glb_forbidden");
   }
 
+  const proxy = input.previsProxy === undefined ? undefined : previsProxySchema.parse(input.previsProxy);
+  if (proxy && !proxy.gcsUri.startsWith(ownedPrefix)) throw Error("manhua3d_proxy_forbidden");
   const digest = createHash("sha256")
     .update(
       JSON.stringify([
@@ -844,6 +849,7 @@ export async function importExistingManhua3dAsset(input: {
         assetRef,
         sourceVersion,
         glbGcsUri,
+        ...(proxy ? [proxy] : []),
       ])
     )
     .digest("hex");
@@ -893,8 +899,14 @@ export async function importExistingManhua3dAsset(input: {
         }),
       });
 
+      if (proxy) {
+        const verified = await dependencies.inspectUploadedGlb(proxy.gcsUri);
+        if (verified.sha256 !== proxy.sha256 || verified.byteLength !== proxy.bytes)
+          throw Error("白模代理字节已变化，禁止采用");
+      }
       const now = isoNow();
       const record: Manhua3dTaskRecord = {
+        ...(proxy ? { previsProxy: proxy } : {}),
         taskId,
         userId: input.userId,
         assetRef,
@@ -1010,7 +1022,7 @@ export async function getManhua3dTask(
 export class Manhua3dSourceRejectedError extends Error {
   readonly sourceRejected = true as const;
 }
-export async function getCompletedManhua3dSource(taskId: string, userId: number, assetRef: string) {
+export async function getCompletedManhua3dSource(taskId: string, userId: number, assetRef: string, options?: { prefer: "previs" }): Promise<{ taskId: string; assetRef: string; gcsUri: string; sha256: string; bytes: number; vertices?: number }> {
   if (!/^m3d_[a-zA-Z0-9_.-]{1,150}$/.test(taskId) || !Number.isSafeInteger(userId) || userId <= 0)
     throw new Manhua3dSourceRejectedError("角色模型身份无效");
   const record = await readRecord(taskId);
@@ -1020,6 +1032,12 @@ export async function getCompletedManhua3dSource(taskId: string, userId: number,
       !record.glbSha256 || !/^[a-f0-9]{64}$/.test(record.glbSha256) ||
       !Number.isSafeInteger(record.glbBytes) || record.glbBytes! < 20)
     throw new Manhua3dSourceRejectedError("本人已完成角色模型或完整来源回执不存在");
+  if (options?.prefer === "previs" && record.previsProxy !== undefined) {
+    const proxy = previsProxySchema.safeParse(record.previsProxy);
+    if (!proxy.success || !proxy.data.gcsUri.startsWith(`gs://${dependencies.getBucketName()}/uploads/u${userId}/`))
+      throw new Manhua3dSourceRejectedError("白模代理回执损坏或来源不符");
+    return { taskId, assetRef, ...proxy.data };
+  }
   return { taskId, assetRef, gcsUri:record.glbGcsUri, sha256:record.glbSha256, bytes:record.glbBytes! };
 }
 

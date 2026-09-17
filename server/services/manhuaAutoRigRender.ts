@@ -1,3 +1,4 @@
+import { previsProxySchema, exportedProxyVertices, type PrevisProxy } from "./manhuaPrevisProxy";
 /** 现有本人GLB→受控Blender→永久回执/候选；子进程没有云凭证。 */
 import { createHash } from "node:crypto";
 import {
@@ -68,6 +69,7 @@ export const autoRigResultSchema = z
     fullGlb: z
       .object({ gcsUri: z.string(), sha256: digest, bytes: z.number().int().min(20).max(256 * 1024 * 1024) })
       .optional(),
+    proxyGlb: previsProxySchema.optional(),
     weightTransfer: z.record(z.string(), z.unknown()).optional(),
   })
   .strict()
@@ -425,6 +427,16 @@ export async function renderManhuaAutoRig(
         signal
       );
     }
+    let proxyGlb: PrevisProxy | undefined;
+    if (request.stage === "bind") {
+      const proxy = await localBytes(path.join(out, "model-proxy.glb"));
+      if (autoRigSha(proxy) !== report.weightTransfer?.proxySha256)
+        throw Error("代理模型与绑骨回执不一致");
+      const vertices = exportedProxyVertices(proxy);
+      proxyGlb = { ...await put(
+        `uploads/u${userId}/auto-rig/${request.requestId}/model-proxy.glb`,
+        proxy, "model/gltf-binary", d, signal), vertices };
+    }
     const previews = [];
     for (
       let index = 0;
@@ -465,6 +477,7 @@ export async function renderManhuaAutoRig(
       reportSha256: autoRigSha(reportBytes),
       ...(inspection ? { inspection } : {}),
       previews,
+      ...(proxyGlb ? { proxyGlb } : {}),
       ...(fullGlb ? { fullGlb } : {}),
       ...(report.weightTransfer ? { weightTransfer: report.weightTransfer } : {}),
     });
