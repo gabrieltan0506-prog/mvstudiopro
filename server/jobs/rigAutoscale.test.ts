@@ -15,18 +15,25 @@ function makeDeps(over: Partial<RigAutoscaleDeps> = {}) {
   let clock = 1_000_000;
   const started: string[] = [];
   const stopped: string[] = [];
+  const calls: string[] = [];
   const deps: RigAutoscaleDeps = {
     now: () => clock,
+    queuedBlenderJobs: async () => 0,
     pendingBlenderJobs: async () => 0,
+    onStopDecided: () => void calls.push("gate_closed"),
+    onStopAborted: () => void calls.push("gate_reopened"),
     listRig: async () => [{ id: "rig-1", state: "stopped", processGroup: "rig" }],
     startMachine: async (id) => void started.push(id),
-    stopMachine: async (id) => void stopped.push(id),
+    stopMachine: async (id) => {
+      calls.push("stop:" + id);
+      stopped.push(id);
+    },
     selfMachineId: "rig-1",
     idleStopMs: DEFAULT_RIG_IDLE_STOP_MS,
     log: () => {},
     ...over,
   };
-  return { deps, started, stopped, advance: (ms: number) => (clock += ms), at: () => clock };
+  return { deps, started, stopped, calls, advance: (ms: number) => (clock += ms), at: () => clock };
 }
 
 describe("rig 唤醒（app 机）", () => {
@@ -37,7 +44,7 @@ describe("rig 唤醒（app 机）", () => {
   });
 
   it("有排队任务且 rig 停着就启动它", async () => {
-    const { deps, started } = makeDeps({ pendingBlenderJobs: async () => 2 });
+    const { deps, started } = makeDeps({ queuedBlenderJobs: async () => 2 });
     const out = await ensureRigStartedForPending(deps, { lastAttemptAt: 0 });
     expect(out).toEqual({ action: "started", machineIds: ["rig-1"] });
     expect(started).toEqual(["rig-1"]);
@@ -45,7 +52,7 @@ describe("rig 唤醒（app 机）", () => {
 
   it("rig 已经在跑就不重复发启动命令", async () => {
     const { deps, started } = makeDeps({
-      pendingBlenderJobs: async () => 1,
+      queuedBlenderJobs: async () => 1,
       listRig: async () => [{ id: "rig-1", state: "started", processGroup: "rig" }],
     });
     expect(await ensureRigStartedForPending(deps, { lastAttemptAt: 0 })).toEqual({ action: "already_running" });
@@ -53,7 +60,7 @@ describe("rig 唤醒（app 机）", () => {
   });
 
   it("冷却期内不重复调用 Fly API；过了冷却才再试", async () => {
-    const { deps, started, advance, at } = makeDeps({ pendingBlenderJobs: async () => 1 });
+    const { deps, started, advance, at } = makeDeps({ queuedBlenderJobs: async () => 1 });
     const state = { lastAttemptAt: 0 };
     await ensureRigStartedForPending(deps, state);
     expect(started).toEqual(["rig-1"]);
@@ -66,15 +73,42 @@ describe("rig 唤醒（app 机）", () => {
     expect(state.lastAttemptAt).toBe(at());
   });
 
+  it("唤醒只数 queued：另一台在跑的 running 单不该把其它 rig 机也拉起来", async () => {
+    const { deps, started } = makeDeps({
+      queuedBlenderJobs: async () => 0,
+      pendingBlenderJobs: async () => 1, // 有一单正在别的机器上跑
+      listRig: async () => [
+        { id: "rig-1", state: "started", processGroup: "rig" },
+        { id: "rig-2", state: "stopped", processGroup: "rig" },
+      ],
+    });
+    expect(await ensureRigStartedForPending(deps, { lastAttemptAt: 0 })).toEqual({ action: "idle" });
+    expect(started).toEqual([]);
+  });
+
+  it("没机器可启的轮次不烧冷却（rig 处在 stopping 时不该让唤醒多等一个周期）", async () => {
+    const state = { lastAttemptAt: 0 };
+    const { deps, started } = makeDeps({
+      queuedBlenderJobs: async () => 1,
+      listRig: async () => [{ id: "rig-1", state: "stopping", processGroup: "rig" }],
+    });
+    expect(await ensureRigStartedForPending(deps, state)).toEqual({ action: "already_running" });
+    expect(state.lastAttemptAt).toBe(0);
+    const next = makeDeps({ queuedBlenderJobs: async () => 1 });
+    expect((await ensureRigStartedForPending(next.deps, state)).action).toBe("started");
+    expect(started).toEqual([]);
+    expect(next.started).toEqual(["rig-1"]);
+  });
+
   it("列不到 rig 机时只报不抛，任务照排队", async () => {
-    const { deps, started } = makeDeps({ pendingBlenderJobs: async () => 1, listRig: async () => [] });
+    const { deps, started } = makeDeps({ queuedBlenderJobs: async () => 1, listRig: async () => [] });
     expect(await ensureRigStartedForPending(deps, { lastAttemptAt: 0 })).toEqual({ action: "no_machine" });
     expect(started).toEqual([]);
   });
 
   it("Fly API 报错不抛到 worker 循环", async () => {
     const { deps } = makeDeps({
-      pendingBlenderJobs: async () => 1,
+      queuedBlenderJobs: async () => 1,
       listRig: async () => {
         throw new Error("boom");
       },
@@ -119,6 +153,24 @@ describe("rig 空闲停机（rig 机自己）", () => {
     expect(stopped).toEqual(["rig-1"]);
   });
 
+  it("停机命令发出之前先关本进程领单闸（审查 P1：否则停机窗口内还会领到一单被 SIGINT 打断）", async () => {
+    const { deps, calls, at } = makeDeps();
+    const out = await maybeStopIdleRig(deps, { lastBusyAt: at() - DEFAULT_RIG_IDLE_STOP_MS - 1 }, false);
+    expect(out.action).toBe("stopped");
+    expect(calls).toEqual(["gate_closed", "stop:rig-1"]);
+  });
+
+  it("停机失败时把闸打开，机器继续领单，不变成活着却不干活的空转机", async () => {
+    const { deps, calls, at } = makeDeps({
+      stopMachine: async () => {
+        throw new Error("fly 502");
+      },
+    });
+    const out = await maybeStopIdleRig(deps, { lastBusyAt: at() - DEFAULT_RIG_IDLE_STOP_MS - 1 }, false);
+    expect(out.action).toBe("error");
+    expect(calls).toEqual(["gate_closed", "gate_reopened"]);
+  });
+
   it("查不到队列时按「忙」处理，宁可多开不误停", async () => {
     const { deps, stopped, at } = makeDeps({
       pendingBlenderJobs: async () => {
@@ -147,9 +199,10 @@ describe("配置与安全边界", () => {
     expect(resolveFlyMachinesConfig({} as NodeJS.ProcessEnv)).toBeNull();
     expect(resolveFlyMachinesConfig({ FLY_API_TOKEN: "t" } as NodeJS.ProcessEnv)).toBeNull();
     expect(resolveFlyMachinesConfig({ FLY_APP_NAME: "a" } as NodeJS.ProcessEnv)).toBeNull();
-    expect(resolveRigAutoscaleDeps(async () => 1, {} as NodeJS.ProcessEnv)).toBeNull();
+    const counters = { queuedBlenderJobs: async () => 1, pendingBlenderJobs: async () => 1 };
+    expect(resolveRigAutoscaleDeps(counters, {}, {} as NodeJS.ProcessEnv)).toBeNull();
     expect(
-      resolveRigAutoscaleDeps(async () => 1, {
+      resolveRigAutoscaleDeps(counters, {}, {
         FLY_API_TOKEN: "t",
         FLY_APP_NAME: "a",
         MANHUA_RIG_AUTOSCALE: "0",
@@ -163,6 +216,9 @@ describe("配置与安全边界", () => {
     expect(resolveRigIdleStopMs({ MANHUA_RIG_IDLE_STOP_MS: "1000" } as NodeJS.ProcessEnv)).toBe(60_000);
     expect(resolveRigIdleStopMs({ MANHUA_RIG_IDLE_STOP_MS: "1800000" } as NodeJS.ProcessEnv)).toBe(1_800_000);
     expect(resolveRigIdleStopMs({ MANHUA_RIG_IDLE_STOP_MS: "0" } as NodeJS.ProcessEnv)).toBe(0);
+    // 空串＝没设（secret 设过又清空），必须走默认值而不是静默关掉停机
+    expect(resolveRigIdleStopMs({ MANHUA_RIG_IDLE_STOP_MS: "" } as NodeJS.ProcessEnv)).toBe(DEFAULT_RIG_IDLE_STOP_MS);
+    expect(resolveRigIdleStopMs({ MANHUA_RIG_IDLE_STOP_MS: "  " } as NodeJS.ProcessEnv)).toBe(DEFAULT_RIG_IDLE_STOP_MS);
   });
 
   it("只有停着的机器需要启动", () => {

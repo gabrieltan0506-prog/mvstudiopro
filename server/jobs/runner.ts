@@ -216,6 +216,11 @@ let postProdTimer: NodeJS.Timeout | null = null;
 let rigAutoscaleTimer: NodeJS.Timeout | null = null;
 const rigStartState = { lastAttemptAt: 0 };
 const rigIdleState = { lastBusyAt: Date.now() };
+/**
+ * rig 已决定停机：从这一刻起本进程不再领新单，免得领到一半被停机的 SIGINT 打断。
+ * 导出成对象是为了让回归测试能直接验「闸一关就不再领单」这条因果，不用去驱动整条定时器链。
+ */
+export const rigStopGate = { requested: false };
 /** 成长营素材分析专用 worker 并发（与平台长 Job 分池，默认 2） */
 const GROWTH_CAMP_JOB_WORKER_CONCURRENCY = Math.max(
   1,
@@ -4232,6 +4237,7 @@ export async function processPdfJobsOnce() {
 }
 
 async function processOnePostProdJob(): Promise<boolean> {
+  if (rigStopGate.requested) return false;
   const job = await claimNextPostProdJob(resolvePostProdClaimFilter());
   if (!job) return false;
 
@@ -4276,7 +4282,7 @@ async function processOnePostProdJob(): Promise<boolean> {
 
 /** 后期工坊独立通道:串行消化(单并发),不与普通媒体任务抢队列 */
 export async function processPostProdJobsOnce() {
-  if (postProdProcessing) return;
+  if (postProdProcessing || rigStopGate.requested) return;
   postProdProcessing = true;
   try {
     while (await processOnePostProdJob()) {
@@ -4301,24 +4307,65 @@ export async function processJobsOnce() {
 
 const RIG_AUTOSCALE_TICK_MS = 15_000;
 
-/** app 机：队列里有 Blender 任务就唤醒 rig 机。没配 Fly 凭证时整段跳过。 */
-async function rigWakeTick() {
-  const { resolveRigAutoscaleDeps, ensureRigStartedForPending } = await import("./rigAutoscale.js");
+async function rigAutoscaleDeps(hooks: { onStopDecided?: () => void; onStopAborted?: () => void } = {}) {
+  const { resolveRigAutoscaleDeps } = await import("./rigAutoscale.js");
   const { countPendingBlenderPostProdJobs } = await import("./repository.js");
-  const deps = resolveRigAutoscaleDeps(countPendingBlenderPostProdJobs);
+  return resolveRigAutoscaleDeps(
+    {
+      queuedBlenderJobs: () => countPendingBlenderPostProdJobs({ includeRunning: false }),
+      pendingBlenderJobs: () => countPendingBlenderPostProdJobs(),
+    },
+    hooks,
+  );
+}
+
+/** 启动时报一次自动启停的状态：没配凭证时的表现是「任务一直排队」，最难查，必须在日志里留一行。 */
+async function logRigAutoscaleBoot(role: "app" | "rig") {
+  const { rigAutoscaleEnabled, resolveRigIdleStopMs } = await import("./rigAutoscale.js");
+  const { resolveFlyMachinesConfig, resolveSelfMachineId } = await import("../services/flyMachines.js");
+  if (!rigAutoscaleEnabled()) {
+    console.warn(`[rig-autoscale] ${role}：MANHUA_RIG_AUTOSCALE=0，自动启停关闭，rig 机保持常驻`);
+    return;
+  }
+  if (!resolveFlyMachinesConfig()) {
+    console.warn(`[rig-autoscale] ${role}：没有 FLY_API_TOKEN/FLY_APP_NAME，自动启停不工作（rig 停着时 Blender 任务会一直排队）`);
+    return;
+  }
+  console.warn(
+    role === "app"
+      ? "[rig-autoscale] app：有 Fly 凭证，队列出现 Blender 任务时会唤醒 rig 机"
+      : `[rig-autoscale] rig：有 Fly 凭证，本机 ${resolveSelfMachineId() || "(无 FLY_MACHINE_ID)"} 空闲 ${Math.round(resolveRigIdleStopMs() / 1000)} 秒后自停`,
+  );
+}
+
+/** app 机：队列里有 queued 的 Blender 任务就唤醒停着的 rig 机。没配 Fly 凭证时整段跳过。 */
+async function rigWakeTick() {
+  const deps = await rigAutoscaleDeps();
   if (!deps) return;
+  const { ensureRigStartedForPending } = await import("./rigAutoscale.js");
   const outcome = await ensureRigStartedForPending(deps, rigStartState);
   if (outcome.action === "error") console.warn("[rig-autoscale] 唤醒失败：", outcome.message);
 }
 
 /** rig 机：空闲够久停自己。本进程在跑任务、或队列里还有 Blender 任务，一律不停。 */
 async function rigIdleTick() {
-  const { resolveRigAutoscaleDeps, maybeStopIdleRig } = await import("./rigAutoscale.js");
-  const { countPendingBlenderPostProdJobs } = await import("./repository.js");
-  const deps = resolveRigAutoscaleDeps(countPendingBlenderPostProdJobs);
+  const deps = await rigAutoscaleDeps({
+    onStopDecided: () => {
+      rigStopGate.requested = true;
+    },
+    onStopAborted: () => {
+      rigStopGate.requested = false;
+    },
+  });
   if (!deps) return;
+  const { maybeStopIdleRig } = await import("./rigAutoscale.js");
   const outcome = await maybeStopIdleRig(deps, rigIdleState, postProdProcessing);
   if (outcome.action === "error") console.warn("[rig-autoscale] 停机判定异常：", outcome.message);
+}
+
+/** 定时器里不能漏掉 rejection：动态 import 失败会变成 unhandled rejection 把进程打掉。 */
+function guarded(tick: () => Promise<unknown>): void {
+  void tick().catch((error) => console.warn("[rig-autoscale] tick 异常：", error));
 }
 
 export function startJobWorker() {
@@ -4333,8 +4380,9 @@ export function startJobWorker() {
       void processPostProdJobsOnce();
     }, 1_000);
     rigIdleState.lastBusyAt = Date.now();
+    void logRigAutoscaleBoot("rig").catch(() => {});
     rigAutoscaleTimer = setInterval(() => {
-      void rigIdleTick();
+      guarded(rigIdleTick);
     }, RIG_AUTOSCALE_TICK_MS);
     rigAutoscaleTimer.unref?.();
     return;
@@ -4360,8 +4408,9 @@ export function startJobWorker() {
   postProdTimer = setInterval(() => {
     void processPostProdJobsOnce();
   }, 3_000);
+  void logRigAutoscaleBoot("app").catch(() => {});
   rigAutoscaleTimer = setInterval(() => {
-    void rigWakeTick();
+    guarded(rigWakeTick);
   }, RIG_AUTOSCALE_TICK_MS);
   rigAutoscaleTimer.unref?.();
   if (typeof postProdTimer.unref === "function") {
@@ -4395,5 +4444,6 @@ export function stopJobWorker() {
   postProdTimer = null;
   if (rigAutoscaleTimer) clearInterval(rigAutoscaleTimer);
   rigAutoscaleTimer = null;
+  rigStopGate.requested = false;
   workerStarted = false;
 }

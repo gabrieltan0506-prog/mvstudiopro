@@ -28,7 +28,10 @@ export const RIG_START_COOLDOWN_MS = 60_000;
 export const DEFAULT_RIG_IDLE_STOP_MS = 10 * 60_000;
 
 export function resolveRigIdleStopMs(env: NodeJS.ProcessEnv = process.env): number {
-  const raw = Number(env.MANHUA_RIG_IDLE_STOP_MS);
+  // 空串（secret 设过又清空）当没设，走默认值；不能让 Number("")===0 静默关掉停机。
+  const rawText = String(env.MANHUA_RIG_IDLE_STOP_MS ?? "").trim();
+  if (!rawText) return DEFAULT_RIG_IDLE_STOP_MS;
+  const raw = Number(rawText);
   if (!Number.isFinite(raw)) return DEFAULT_RIG_IDLE_STOP_MS;
   if (raw <= 0) return 0; // 0 = 关闭自动停机
   return Math.max(60_000, Math.floor(raw));
@@ -40,8 +43,14 @@ export function rigAutoscaleEnabled(env: NodeJS.ProcessEnv = process.env): boole
 
 export type RigAutoscaleDeps = {
   now(): number;
-  /** queued + running 的 Blender 后期任务条数（manhua_auto_rig / manhua_previs） */
+  /** 只数 queued：判「要不要唤醒一台停着的 rig」。running 的那单已经有机器在跑。 */
+  queuedBlenderJobs(): Promise<number>;
+  /** queued + running：判「这台能不能停」。绑定跑 12 分钟期间队列为空但机器不能停。 */
   pendingBlenderJobs(): Promise<number>;
+  /** 停机命令发出前的回调：runner 用它把本进程的领单闸关掉，避免停机窗口内又领一单。 */
+  onStopDecided?(): void;
+  /** 停机失败时复位上面的闸。 */
+  onStopAborted?(): void;
   listRig(): Promise<FlyMachine[]>;
   startMachine(machineId: string): Promise<void>;
   stopMachine(machineId: string): Promise<void>;
@@ -66,15 +75,14 @@ export async function ensureRigStartedForPending(
   deps: RigAutoscaleDeps,
   state: RigStartState,
 ): Promise<RigStartOutcome> {
-  let pending = 0;
+  let queued = 0;
   try {
-    pending = await deps.pendingBlenderJobs();
+    queued = await deps.queuedBlenderJobs();
   } catch (error) {
-    return { action: "error", message: `pending 查询失败：${String(error)}` };
+    return { action: "error", message: `queued 查询失败：${String(error)}` };
   }
-  if (pending <= 0) return { action: "idle" };
+  if (queued <= 0) return { action: "idle" };
   if (deps.now() - state.lastAttemptAt < RIG_START_COOLDOWN_MS) return { action: "cooldown" };
-  state.lastAttemptAt = deps.now();
 
   try {
     const machines = await deps.listRig();
@@ -83,13 +91,16 @@ export async function ensureRigStartedForPending(
       return { action: "no_machine" };
     }
     const targets = machines.filter((m) => needsStart(m.state));
+    // 冷却只为「真的发了启动命令」计时：没机器可启、正在 starting/stopping 的轮次不烧冷却，
+    // 否则一台处于 stopping 的 rig 会让唤醒最坏多等一个冷却周期。
     if (targets.length === 0) return { action: "already_running" };
+    state.lastAttemptAt = deps.now();
     const started: string[] = [];
     for (const machine of targets) {
       try {
         await deps.startMachine(machine.id);
         started.push(machine.id);
-        deps.log(`[rig-autoscale] 有 ${pending} 个 Blender 任务在队，已启动 rig 机 ${machine.id}（原状态 ${machine.state}）`);
+        deps.log(`[rig-autoscale] 有 ${queued} 个 Blender 任务在队，已启动 rig 机 ${machine.id}（原状态 ${machine.state}）`);
       } catch (error) {
         deps.log(`[rig-autoscale] 启动 rig 机 ${machine.id} 失败：${String(error)}`);
       }
@@ -135,12 +146,17 @@ export async function maybeStopIdleRig(
   }
   const idleMs = deps.now() - state.lastBusyAt;
   if (idleMs < deps.idleStopMs) return { action: "waiting", idleMs };
+  // 先关本进程的领单闸，再发停机命令：停机要跨一次网络往返，这期间 worker 每秒还在领单，
+  // 领到的绑骨任务会被随后的 SIGINT 打断，卡 running 到 reaper 判失败。
+  deps.onStopDecided?.();
   try {
     deps.log(`[rig-autoscale] rig 空闲 ${Math.round(idleMs / 1000)} 秒，停机 ${deps.selfMachineId}（下次有 Blender 任务时由 app 机唤醒）`);
     await deps.stopMachine(deps.selfMachineId);
     state.lastBusyAt = deps.now();
     return { action: "stopped", machineId: deps.selfMachineId };
   } catch (error) {
+    // 停不掉就把闸打开，机器继续干活，别变成一台活着却不领单的空转机器。
+    deps.onStopAborted?.();
     state.lastBusyAt = deps.now();
     return { action: "error", message: `停机失败：${String(error)}` };
   }
@@ -148,7 +164,11 @@ export async function maybeStopIdleRig(
 
 /** 线上依赖：没有 Fly 凭证就返回 null，调用方直接跳过（关闭式失败，不回落本机） */
 export function resolveRigAutoscaleDeps(
-  pendingBlenderJobs: () => Promise<number>,
+  counters: {
+    queuedBlenderJobs: () => Promise<number>;
+    pendingBlenderJobs: () => Promise<number>;
+  },
+  hooks: { onStopDecided?: () => void; onStopAborted?: () => void } = {},
   env: NodeJS.ProcessEnv = process.env,
 ): RigAutoscaleDeps | null {
   if (!rigAutoscaleEnabled(env)) return null;
@@ -156,7 +176,10 @@ export function resolveRigAutoscaleDeps(
   if (!cfg) return null;
   return {
     now: () => Date.now(),
-    pendingBlenderJobs,
+    queuedBlenderJobs: counters.queuedBlenderJobs,
+    pendingBlenderJobs: counters.pendingBlenderJobs,
+    onStopDecided: hooks.onStopDecided,
+    onStopAborted: hooks.onStopAborted,
     listRig: () => listRigMachines(cfg),
     startMachine: (id) => startFlyMachine(cfg, id),
     stopMachine: (id) => stopFlyMachine(cfg, id),

@@ -1046,16 +1046,21 @@ export async function claimNextPostProdJob(filter?: PostProdClaimFilter): Promis
  * 口径与 claimNextPostProdJob(filter="blender") 完全一致（同一个 action 列表、同样 coalesce 兜住 NULL）。
  * 查不到数据库时返回 0：调用方只在 >0 时启机，宁可不启也不误启。
  */
-export async function countPendingBlenderPostProdJobs(): Promise<number> {
+export async function countPendingBlenderPostProdJobs(
+  options: { includeRunning?: boolean } = {},
+): Promise<number> {
   const db = await getDb();
   if (!db) return 0;
+  // 唤醒侧只数 queued：running 的那单已经有机器在跑，再数它会把另外几台 rig 全拉起来空转。
+  // 停机侧要数 queued+running：绑定跑 12 分钟期间队列为空，只看 queued 会把机器停在任务头上。
+  const includeRunning = options.includeRunning !== false;
   try {
     const rows = await db
       .select({ id: jobs.id })
       .from(jobs)
       .where(
         and(
-          sql`${jobs.status} IN ('queued','running')`,
+          includeRunning ? sql`${jobs.status} IN ('queued','running')` : eq(jobs.status, "queued"),
           eq(jobs.type, "post_prod"),
           inArray(sql`coalesce(${jobs.input}->>'action', '')`, [...BLENDER_POST_PROD_ACTIONS]),
         ),
