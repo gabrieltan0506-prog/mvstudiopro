@@ -357,6 +357,12 @@ export function compilePrevisScriptDraft(input: {
       reject("四足角色不能套人体动作");
       continue;
     }
+    // 与提交门禁同一条边界：带骨真模坐下会穿地（实测 21—32 厘米），草案就不要排出来
+    // 让用户到提交时才被拒。判据在 manhuaPrevisSpecSchema，这里只是提前退回未映射。
+    if (kind === "sit" && actor.riggedModel) {
+      reject("带骨角色暂不支持坐下：重定向不做落脚校正，实测脚会穿地");
+      continue;
+    }
     const targetText = whole[1] ?? "";
     // 0917 审查：只有「看向」能把目标真的落进 spec。走位/指向的目标白模表达不了
     // （走位不改站位、指向只按角色自身朝向抬手），映射了等于把原文的调度信息吞掉，
@@ -384,10 +390,10 @@ export function compilePrevisScriptDraft(input: {
       // present.length 拦下，没有真的映错）；但判据不能靠另一道门兜着。
       // 改成整串匹配，并把非空断言换成显式退回：解不出目标时只该这一镜未映射，
       // 不能抛异常把整份草案编译炸掉。
-      const targetActor = targetText.startsWith("镜头")
-        ? null
-        : others.find(c => new RegExp("^" + mention(c) + "$").test(targetText));
-      if (!targetText.startsWith("镜头") && !targetActor) {
+      // 0917 三轮审查：先解角色、解不出才当镜头。原来是先看 startsWith("镜头")，
+      // 于是一个 label 就叫「镜头」的角色会被判成看镜头——原文明明写的是看那个人。
+      const targetActor = others.find(c => new RegExp("^" + mention(c) + "$").test(targetText));
+      if (!targetActor && !/^镜头(?:方向)?$/.test(targetText)) {
         reject("看向的目标对应不到唯一的同场角色");
         continue;
       }

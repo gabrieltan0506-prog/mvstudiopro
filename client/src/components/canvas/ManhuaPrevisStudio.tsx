@@ -823,7 +823,9 @@ export function ManhuaPrevisStudioView({
               {numeric(
                 "朝向角度",
                 actor.facingDeg,
-                n => actorEdit(index, { facingDeg: n }),
+                // 0917 三轮审查：朝向归一只有 normalizeFacingDeg 一个入口，面板也必须走它。
+                // 不归一时填 270 会被 schema 的 -180..180 挡下，用户看到的是一条 zod 范围错。
+                n => actorEdit(index, { facingDeg: normalizeFacingDeg(n) }),
                 5
               )}
               {(["start", "end"] as const).flatMap(key =>
@@ -926,7 +928,7 @@ export function ManhuaPrevisStudioView({
                       {numeric(
                         `路线${index + 1}节点${j + 1}朝向`,
                         node.facingDeg,
-                        n => patchNode({ facingDeg: n }),
+                        n => patchNode({ facingDeg: normalizeFacingDeg(n) }),
                         5
                       )}
                       {j > 0 && j < actor.motionRoute!.length - 1 && (
@@ -1077,8 +1079,14 @@ export function ManhuaPrevisStudioView({
                 }
               >
                 {Object.entries(PREVIS_ACTION_LABELS).map(([id, label]) => (
-                  <option key={id} value={id}>
-                    {label}
+                  // 0917 三轮审查：带骨角色的坐下实测脚会穿地 21—32 厘米，提交处已拒。
+                  // 面板上直接禁掉并写清原因，别让用户选了、排好了时间再被 schema 弹回来。
+                  <option
+                    key={id}
+                    value={id}
+                    disabled={id === "sit" && Boolean(actor.riggedModel) && action.kind !== "sit"}
+                  >
+                    {id === "sit" && actor.riggedModel ? label + "（带骨角色暂不支持：脚会穿地）" : label}
                   </option>
                 ))}
               </select>

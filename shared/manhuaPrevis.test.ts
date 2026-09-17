@@ -378,6 +378,8 @@ describe("文戏动作库（0917 PR-E）", () => {
     actions: Record<string, unknown>[];
     motionRoute?: unknown;
     weapon?: string;
+    assetRef?: string;
+    riggedModel?: Record<string, unknown>;
   };
   const base = (): {
     version: 1;
@@ -431,6 +433,31 @@ describe("文戏动作库（0917 PR-E）", () => {
     expect(withAction({ kind: "turn", startSec: 0, endSec: 2, facingDeg: 90 }).success).toBe(true);
     expect(withAction({ kind: "look", startSec: 0, endSec: 2, lookAtId: "b" }).success).toBe(true);
     expect(withAction({ kind: "look", startSec: 0, endSec: 2, lookAtId: PREVIS_LOOK_AT_CAMERA }).success).toBe(true);
+  });
+
+  it("带骨角色的坐下在提交处直接拒绝（实测脚会穿地 21—32 厘米）", () => {
+    const rigged = base();
+    rigged.actors[0].riggedModel = {
+      sourceJobId: "m3d_test_only",
+      forwardAxis: "+X",
+      targetHeight: 1.7,
+    };
+    rigged.actors[0].assetRef = "qing";
+    rigged.actors[0].actions = [{ kind: "sit", startSec: 0, endSec: 2 }];
+    expect(manhuaPrevisSpecSchema.safeParse(rigged).success).toBe(false);
+    // 反例对照①：同一个带骨角色换成行礼/指向/看向照常放行，不是把带骨角色整体禁掉
+    for (const action of [
+      { kind: "bow", startSec: 0, endSec: 2 },
+      { kind: "gesture_point", startSec: 0, endSec: 2 },
+      { kind: "look", startSec: 0, endSec: 2, lookAtId: "b" },
+    ]) {
+      rigged.actors[0].actions = [action];
+      expect(manhuaPrevisSpecSchema.safeParse(rigged).success).toBe(true);
+    }
+    // 反例对照②：去掉 riggedModel 之后同一个坐下必须通过，证明红的是带骨这一条
+    delete rigged.actors[0].riggedModel;
+    rigged.actors[0].actions = [{ kind: "sit", startSec: 0, endSec: 2 }];
+    expect(manhuaPrevisSpecSchema.safeParse(rigged).success).toBe(true);
   });
 
   it("参数只属于需要它的动作，缺了/多了都拒", () => {

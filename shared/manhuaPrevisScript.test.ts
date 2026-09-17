@@ -460,3 +460,42 @@ describe("文戏草案 · 0917 二轮审查补漏", () => {
     expect(manhuaPrevisSpecSchema.safeParse(turned.spec).success).toBe(true);
   });
 });
+
+describe("文戏草案 · 0917 三轮审查补漏", () => {
+  const actionsOf = (r: ReturnType<typeof compile>) =>
+    r.spec?.actors.find(a => a.actions.length)?.actions ?? [];
+
+  it("角色 label 恰好叫「镜头」时，看向的是那个人，不是镜头", () => {
+    const withCameraName: PrevisSourceCharacter[] = [
+      { id: "qing", label: "阿菁", tag: "@人物1" },
+      { id: "lens", label: "镜头", tag: "@人物2" },
+    ];
+    const result = compile("阿菁看向镜头。", { characters: withCameraName });
+    expect(result.mappedShotIndices).toEqual([7]);
+    const lensActor = result.spec?.actors.find(a => a.assetRef === "lens");
+    expect(lensActor?.id).toBeTruthy();
+    expect(actionsOf(result)[0].lookAtId).toBe(lensActor?.id);
+    // 反例对照：角色表里没有叫「镜头」的人时，同一句仍然落成看镜头
+    expect(actionsOf(compile("阿菁看向镜头。"))[0].lookAtId).toBe("camera");
+  });
+
+  it("带骨角色的坐下不再排进草案（与提交门禁同一条边界）", () => {
+    const spec = createManhuaPrevisStudio(4).spec;
+    spec.actors[0] = {
+      ...spec.actors[0],
+      assetRef: "qing",
+      riggedModel: {
+        sourceJobId: "m3d_test_only",
+        forwardAxis: "+X",
+        targetHeight: 1.7,
+      },
+    };
+    expect(compile("阿菁坐下。", { spec }).mappedShotIndices).toEqual([]);
+    // 反例对照：同一句在不带骨的角色上仍然映射得出来
+    expect(compile("阿菁坐下。").mappedShotIndices).toEqual([7]);
+    // 反例对照：带骨角色的其它文戏动作照常映射，不是被整条跳过
+    expect(actionsOf(compile("阿菁行礼。", { spec }))).toEqual([
+      { kind: "bow", startSec: 0, endSec: 4 },
+    ]);
+  });
+});

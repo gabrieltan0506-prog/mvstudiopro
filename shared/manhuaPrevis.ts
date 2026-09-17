@@ -490,6 +490,19 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
               "走位动作必须落在角色实际位移区间内；原地不动请改用其它动作或先设好起止站位",
             path: ["actors", i, "actions", j],
           });
+        // 0917 三轮审查实测（server/scripts/test_previs_drama_rigged.py）：
+        // retarget_from_source 只烘「相对各自静止姿态的旋转增量」。棍人的静止姿态腿本来就
+        // 屈着 31.3°（站位 IK 的结果），真模的静止姿态腿是直的，于是坐下只传过去 28.3° 的
+        // 增量——腿够不着地，脚直接扎进地板：1.7 米模型 −21.4 厘米、2.55 米模型 −32.2 厘米，
+        // 与身高成正比，不是夹具特例。走位实测只有 +2.0 厘米抬脚残差，不受影响。
+        // 落脚校正上线之前，宁可拒绝提交，也不渲一个脚在地里的片子。
+        if (action.kind === "sit" && actor.riggedModel)
+          ctx.addIssue({
+            code: "custom",
+            message:
+              "带骨角色暂不支持坐下：重定向不做落脚校正，实测脚会穿地（1.7 米角色约 21 厘米）。请去掉坐下动作，或改用不带骨的白模角色",
+            path: ["actors", i, "actions", j],
+          });
         // 转身与运动轨迹是两套朝向真源，同时给会互相覆盖，先拒绝。
         if (action.kind === "turn" && actor.motionRoute?.length)
           ctx.addIssue({

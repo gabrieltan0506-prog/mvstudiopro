@@ -26,13 +26,14 @@ BASE = {'version':1, 'durationSec':2, 'aspect':'16:9',
 
 results = []
 
-def build(spec, label):
+def build(spec, label, renderer=None):
+    renderer = renderer or script
     folder = root/label
     folder.mkdir(exist_ok=True)
     source = folder/'spec.json'
     source.write_text(json.dumps(spec, ensure_ascii=False, indent=2))
-    sys.argv = [str(script), '--', str(source), str(folder)]
-    runpy.run_path(str(script), run_name='__main__')
+    sys.argv = [str(renderer), '--', str(source), str(folder)]
+    runpy.run_path(str(renderer), run_name='__main__')
     return folder, json.loads((folder/'report.json').read_text())
 
 def sample(bone, frame, actor_id='阿菁'):
@@ -194,6 +195,61 @@ route_only = copy.deepcopy(clash)
 route_only['actors'][0]['actions'] = []
 build(route_only, 'turn-plus-route-negative-control')
 results.append({'case':'turn-plus-route-negative-control','note':'同一条轨迹去掉转身可正常渲染'})
+
+# 8) 看向正后方：目标左右穿越背后时肩线不许翻转。
+# 判据是**肩线偏航的逐帧增量**（肩线向量由 points() 里 Rot(look_yaw) 直接决定），
+# 阈值写死 2°/帧；反例是把淡出系数 reach 钉成 1（等于恢复「硬夹到 ±55°」的旧行为），
+# 同一场必须翻出 ≥60°/帧的跳变，证明这条断言真的能红。
+def head_of(bone, frame, actor_id='阿菁'):
+    rig = bpy.data.objects[actor_id]
+    bpy.context.scene.frame_set(frame)
+    bpy.context.view_layer.update()
+    return (rig.matrix_world @ rig.pose.bones[bone].head).copy()
+
+def shoulder_yaw_deg(frame):
+    """肩线相对中位的偏航。中位肩线是 +Y，look_yaw 把它绕 Z 转过去。"""
+    left = head_of('upper_arm1', frame)
+    right = head_of('upper_arm-1', frame)
+    d = left-right
+    return math.degrees(math.atan2(-d.x, d.y))
+
+def max_step(frames):
+    values = [shoulder_yaw_deg(f) for f in frames]
+    return max(abs(b-a) for a, b in zip(values, values[1:])), values
+
+behind = copy.deepcopy(BASE)
+# 目标在正后方 2.6 米处由右后方划到左后方，中途精确穿过 180°
+behind['actors'][1].update({'start':[-3,-.8], 'end':[-3,.8], 'moveStartSec':0, 'moveEndSec':2})
+behind['actors'][0]['actions'] = [{'kind':'look','startSec':0,'endSec':2,'lookAtId':'娘'}]
+build(behind, 'look-behind')
+behind_step, behind_values = max_step(range(1, 49))
+results.append({'case':'look-behind','maxYawStepDeg':round(behind_step,4),
+                'maxAbsYawDeg':round(max(abs(v) for v in behind_values),4),
+                'note':'正后方超出 GIVEUP：整段不转，逐帧增量必须≈0'})
+assert behind_step <= 2., ('看向正后方时肩线逐帧跳变', behind_step)
+assert max(abs(v) for v in behind_values) <= 2., ('目标在正后方却硬转了肩线', behind_values[:4])
+
+# 反例①：同一段把淡出关掉（reach 恒为 1＝旧的硬夹 ±55°），必须红
+broken = root/'TEST_ONLY-render-giveup-disabled.py'
+source = script.read_text()
+marker = 'reach=1-smooth((abs(desired)-LOOK_YAW_LIMIT)/(LOOK_YAW_GIVEUP-LOOK_YAW_LIMIT))'
+assert source.count(marker) == 1, '反例对照失效：淡出写法已变，请同步本用例'
+broken.write_text(source.replace(marker, 'reach=1.'))
+build(behind, 'look-behind-giveup-disabled', broken)
+broken_step, _ = max_step(range(1, 49))
+results.append({'case':'look-behind-giveup-disabled','maxYawStepDeg':round(broken_step,4),
+                'note':'反例：reach 恒为 1＝旧的硬夹 ±55°，肩线在正后方翻转'})
+assert broken_step >= 60., ('反例对照没红：旧行为量不出正后方跳变，说明判据测不到这件事', broken_step)
+
+# 反例②：目标在够得着的侧前方时肩线必须真的转过去，证明上面的「≈0」不是因为看向压根没生效
+side = copy.deepcopy(BASE)
+side['actors'][1].update({'start':[.4,1.2], 'end':[.4,1.2]})
+side['actors'][0]['actions'] = [{'kind':'look','startSec':0,'endSec':2,'lookAtId':'娘'}]
+build(side, 'look-side-positive-control')
+side_yaw = shoulder_yaw_deg(25)
+results.append({'case':'look-side-positive-control','yawDeg':round(side_yaw,3),
+                'note':'侧前方目标在上限内：肩线必须真的转过去'})
+assert side_yaw >= 20., ('够得着的侧向目标也没转肩线，看向整体失效', side_yaw)
 
 (root/'report.json').write_text(json.dumps({'blender':bpy.app.version_string,'cases':results},
                                            ensure_ascii=False, indent=2))

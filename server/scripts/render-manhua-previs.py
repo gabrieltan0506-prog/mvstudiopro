@@ -83,6 +83,13 @@ obj = mesh('地面', (0,0,-.12), (0,0,0), 64 if water_events else 16, ground)
 # 看向的偏转上限（弧度）：超过就只转到上限，不做扭脖子式的非人姿态。
 LOOK_YAW_LIMIT = math.radians(55)
 LOOK_PITCH_LIMIT = math.radians(25)
+# 0917 三轮审查：目标绕到正后方时 atan2 在 ±180° 换符号，直接夹到 ±55° 会让目标左右穿越
+# 背后时肩线在 +55/−55 之间一帧翻一次（目标带 motionRoute 或出水上升时天天发生）。
+# 选「转不过去就不转」而不是「按最短弧连续夹取」：人本来就不可能只靠头颈看向正后方，
+# 夹到 55° 再硬摆一个姿势等于白模撒谎；而且任何「连续夹取」在 ±180° 都得选一边，
+# 换个站位又会从另一边翻。这里在 [LIMIT, GIVEUP] 之间把整个看向量平滑淡出，
+# |desired| ≥ GIVEUP 一律不看，两侧在 ±180° 都收敛到 0，绕过背后不再有跳变。
+LOOK_YAW_GIVEUP = math.radians(120)
 
 def smooth(value):
     u = max(0., min(1., value))
@@ -101,6 +108,10 @@ for _actor in spec['actors']:
     # 是「有轨迹就走轨迹」静默丢掉转身——白模不转，报告也不说，等于撒谎。这里硬失败。
     if _actor.get('motionRoute') and any(a['kind']=='turn' for a in _actor['actions']):
         raise ValueError('转身动作与分段运动轨迹不能同时给，朝向请写进轨迹节点')
+    # 0917 三轮审查：带骨真模坐下会穿地（实测 1.7 米 −21.4 厘米 / 2.55 米 −32.2 厘米，
+    # 见 test_previs_drama_rigged.py）。schema 已拒，渲染层再硬失败一次，旧存稿绕不过去。
+    if _actor.get('riggedModel') and any(a['kind']=='sit' for a in _actor['actions']):
+        raise ValueError('带骨角色暂不支持坐下：重定向不做落脚校正，实测脚会穿地')
 
 def turn_facing(actor, t):
     """0917 PR-E：转身动作按时间插值出朝向。动作已按 schema 排序且不重叠。
@@ -168,7 +179,11 @@ def camera_position_at(t):
 def look_target_world(actor, target_id, frame):
     """注视目标的世界坐标（人物取头高，镜头取机位）。找不到返回 None，调用方按「不看」处理。"""
     if not target_id: return None
-    if target_id in ('camera','镜头'): return camera_position_at((frame-1)/24)
+    # 0917 三轮审查：这里原来还认 '镜头' 这个别名。lookAtId 的取值只有 PREVIS_LOOK_AT_CAMERA
+    # （="camera"）或角色 id，草案编译也只写这两种，所以 '镜头' 是死分支；但它不是无害的死
+    # 分支——角色 id 恰好是 '镜头' 时会被劫持成看镜头，schema 那边却按角色算，两边判据分叉。
+    # 删掉别名后渲染层与 schema 对 "camera" 的口径完全一致。
+    if target_id=='camera': return camera_position_at((frame-1)/24)
     for other in spec['actors']:
         if other['id']==target_id and other['id']!=actor['id']:
             base=position(other,frame)
@@ -216,8 +231,12 @@ def points(actor, frame, contacts):
             target=look_target_world(actor,amounts['lookAt'],frame)
             local=inv @ target-neck if target is not None else None
             flat=math.hypot(local.x,local.y) if local is not None else 0.
-            if local is not None and flat>.05:
-                look_yaw=max(-LOOK_YAW_LIMIT,min(LOOK_YAW_LIMIT,math.atan2(local.y,local.x)))*look
+            desired=math.atan2(local.y,local.x) if local is not None else 0.
+            # 超出上限后按 |desired| 平滑淡出；≥GIVEUP 直接不看（见 LOOK_YAW_GIVEUP 注释）
+            reach=1-smooth((abs(desired)-LOOK_YAW_LIMIT)/(LOOK_YAW_GIVEUP-LOOK_YAW_LIMIT))
+            if local is not None and flat>.05 and reach>.001:
+                look=look*reach
+                look_yaw=max(-LOOK_YAW_LIMIT,min(LOOK_YAW_LIMIT,desired))*look
                 look_pitch=max(-LOOK_PITCH_LIMIT,min(LOOK_PITCH_LIMIT,math.atan2(local.z,flat)))*look
             else:
                 # 注视目标解析不出来（被删的角色、旧存稿）：按「不看」处理，
@@ -419,7 +438,10 @@ if any(actor.get('riggedModel') for actor in spec['actors']):
             if obj.type=='MESH': obj.hide_render=True
         model['actorId']=actor['id']
         model['report'].update({'actorId':actor['id'],'sourceJobId':row['sourceJobId'],
-            'boundaryZh':'真实带骨网格旋转与路径重定向，保留模型原始静止姿态，不自动生成自然站姿；源白模脚底误差不代表角色网格接地，尚未验证双人接触；坐下与走位只烘旋转、骨盆位移按身高比例缩放：身材与棍人不同时落座高度与步幅会偏，需人工复核；'+appearance['boundaryZh']})
+            'boundaryZh':'真实带骨网格旋转与路径重定向，保留模型原始静止姿态，不自动生成自然站姿；源白模脚底误差不代表角色网格接地，尚未验证双人接触；文戏动作只烘「相对各自静止姿态的旋转增量」、骨盆位移按骨骼跨度比例缩放：'
+            '实测（test_previs_drama_rigged.py，1.0 倍与 1.5 倍棍人身高两具夹具）行礼/指向/看向按身高等比转移，'
+            '落座深度比等比值浅 3.4%；坐下因棍人静止姿态屈膝、真模静止姿态直腿，脚会穿地 21—32 厘米，已在提交与渲染两处拒绝；'
+            '走位抬脚残差 ≤2.0 厘米；看向只转头骨，肩线偏转是位置量、重定向不转移；'+appearance['boundaryZh']})
         models.append(model)
     # 只有真实模型进入基础色预演；无贴图的白模/地面继续使用原材质色。
     scene.display.shading.color_type='TEXTURE'
