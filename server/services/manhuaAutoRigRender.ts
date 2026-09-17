@@ -164,6 +164,12 @@ export type AutoRigRenderDeps = {
   run: typeof runPrevisProcess;
   blender: string;
   useXvfb: boolean;
+  /**
+   * 0917 线上实跑：绑定阶段 Blender `--threads 2` 把 2 vCPU 占满，同一台机器上的 web 进程被饿死——
+   * Fly 健康检查失败 15 秒、静帧 mutation `Failed to fetch`。生产（linux）一律用 nice -n 10 起 Blender，
+   * 让 web 请求先走；本机/测试默认不包。
+   */
+  lowPriority?: boolean;
 };
 export const autoRigStorage = {
   source: getCompletedManhua3dSource,
@@ -176,7 +182,15 @@ const defaults: AutoRigRenderDeps = {
   run: runPrevisProcess,
   blender: process.env.BLENDER_BIN || "blender",
   useXvfb: process.platform === "linux",
+  lowPriority: process.platform === "linux" && process.env.MANHUA_BLENDER_NICE !== "0",
 };
+
+/** 生产上 Blender 排在 web 之后：nice -n 10 包住实际命令（含 xvfb-run 的情况）。 */
+export function blenderLaunchCommand(d: Pick<AutoRigRenderDeps, "blender" | "useXvfb" | "lowPriority">, args: string[]): { command: string; args: string[] } {
+  const command = d.useXvfb ? "xvfb-run" : d.blender;
+  const argv = d.useXvfb ? ["-a", d.blender, ...args] : args;
+  return d.lowPriority ? { command: "nice", args: ["-n", "10", command, ...argv] } : { command, args: argv };
+}
 
 export async function readRigCloud(
   gcsUri: string,
@@ -313,11 +327,8 @@ export async function renderManhuaAutoRig(
     ];
     let runError: unknown;
     try {
-      const stdout = await d.run(
-        d.useXvfb ? "xvfb-run" : d.blender,
-        d.useXvfb ? ["-a", d.blender, ...args] : args,
-        signal
-      );
+      const launch = blenderLaunchCommand(d, args);
+      const stdout = await d.run(launch.command, launch.args, signal);
       await writeFile(
         path.join(directory, "process.json"),
         JSON.stringify({ stdout }),
