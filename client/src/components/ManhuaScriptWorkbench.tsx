@@ -4269,6 +4269,52 @@ export default function ManhuaScriptWorkbench({
         </button>
       </div>
 
+      {/* 0917 线上实测：3D 模型面板的「绑骨」在任何阶段都可点，弹层却只在资产阶段挂载 → 分镜阶段点了静默无反应。挪到阶段分支外，与阶段无关。 */}
+      {autoRigAsset && autoRigEligibility?.eligible && autoRigEligibility.currentModel3d?.status === "succeeded" && onApplyRiggedModel ? (
+        <div className="fixed inset-0 z-[81] flex items-center justify-center bg-black/80 p-4">
+          <ManhuaAutoRigEditor
+            key={`${autoRigAsset.id}:${autoRigEligibility.sourceVersion}`}
+            assetRef={autoRigAsset.id}
+            label={autoRigAsset.labelZh || "当前人物"}
+            sourceJobId={autoRigEligibility.currentModel3d.taskId}
+            sourceVersion={autoRigEligibility.sourceVersion}
+            disabled={Boolean(factoryBusy) || asset3dBusyIds.includes(autoRigAsset.id)}
+            onApply={onApplyRiggedModel}
+            onClose={() => setAutoRigAssetId(null)}
+          />
+        </div>
+      ) : null}
+      {/* 同上：3D 模型面板「预览」在任何阶段可点，弹层只在资产阶段挂载 → 一并挪出阶段分支 */}
+      {model3dPreview ? (
+        <div
+          className="fixed inset-0 z-[76] flex items-center justify-center bg-black/85 px-4 py-6"
+          onClick={() => setModel3dPreview(null)}
+        >
+          <div
+            className="w-full max-w-3xl space-y-3 rounded-2xl border border-cyan-300/20 bg-[#101417] p-4 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-white/90">
+                  {model3dPreview.labelZh}
+                </div>
+                <div className="text-[10px] text-white/45">
+                  可旋转检查造型与比例；跛行等动作仍由分镜运动规格控制
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModel3dPreview(null)}
+                className="rounded-lg border border-white/15 px-3 py-1.5 text-xs text-white/65 hover:bg-white/[0.06]"
+              >
+                关闭
+              </button>
+            </div>
+            <ModelViewer glbUrl={model3dPreview.url} height={520} />
+          </div>
+        </div>
+      ) : null}
       {activePhase === "outline" ? (
         <div
           data-manhua-phase-panel="outline"
@@ -4742,50 +4788,6 @@ export default function ManhuaScriptWorkbench({
                     >
                       取消
                     </button>
-                  </div>
-                </div>
-              ) : null}
-              {autoRigAsset && autoRigEligibility?.eligible && autoRigEligibility.currentModel3d?.status === "succeeded" && onApplyRiggedModel ? (
-                <div className="fixed inset-0 z-[81] flex items-center justify-center bg-black/80 p-4">
-                  <ManhuaAutoRigEditor
-                    key={`${autoRigAsset.id}:${autoRigEligibility.sourceVersion}`}
-                    assetRef={autoRigAsset.id}
-                    label={autoRigAsset.labelZh || "当前人物"}
-                    sourceJobId={autoRigEligibility.currentModel3d.taskId}
-                    sourceVersion={autoRigEligibility.sourceVersion}
-                    disabled={Boolean(factoryBusy) || asset3dBusyIds.includes(autoRigAsset.id)}
-                    onApply={onApplyRiggedModel}
-                    onClose={() => setAutoRigAssetId(null)}
-                  />
-                </div>
-              ) : null}
-              {model3dPreview ? (
-                <div
-                  className="fixed inset-0 z-[76] flex items-center justify-center bg-black/85 px-4 py-6"
-                  onClick={() => setModel3dPreview(null)}
-                >
-                  <div
-                    className="w-full max-w-3xl space-y-3 rounded-2xl border border-cyan-300/20 bg-[#101417] p-4 shadow-2xl"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-semibold text-white/90">
-                          {model3dPreview.labelZh}
-                        </div>
-                        <div className="text-[10px] text-white/45">
-                          可旋转检查造型与比例；跛行等动作仍由分镜运动规格控制
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setModel3dPreview(null)}
-                        className="rounded-lg border border-white/15 px-3 py-1.5 text-xs text-white/65 hover:bg-white/[0.06]"
-                      >
-                        关闭
-                      </button>
-                    </div>
-                    <ModelViewer glbUrl={model3dPreview.url} height={520} />
                   </div>
                 </div>
               ) : null}
