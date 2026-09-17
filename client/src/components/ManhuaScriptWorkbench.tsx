@@ -4269,6 +4269,21 @@ export default function ManhuaScriptWorkbench({
         </button>
       </div>
 
+      {/* 0917 线上实测：3D 模型面板的「绑骨」在任何阶段都可点，弹层却只在资产阶段挂载 → 分镜阶段点了静默无反应。挪到阶段分支外，与阶段无关。 */}
+      {autoRigAsset && autoRigEligibility?.eligible && autoRigEligibility.currentModel3d?.status === "succeeded" && onApplyRiggedModel ? (
+        <div className="fixed inset-0 z-[81] flex items-center justify-center bg-black/80 p-4">
+          <ManhuaAutoRigEditor
+            key={`${autoRigAsset.id}:${autoRigEligibility.sourceVersion}`}
+            assetRef={autoRigAsset.id}
+            label={autoRigAsset.labelZh || "当前人物"}
+            sourceJobId={autoRigEligibility.currentModel3d.taskId}
+            sourceVersion={autoRigEligibility.sourceVersion}
+            disabled={Boolean(factoryBusy) || asset3dBusyIds.includes(autoRigAsset.id)}
+            onApply={onApplyRiggedModel}
+            onClose={() => setAutoRigAssetId(null)}
+          />
+        </div>
+      ) : null}
       {activePhase === "outline" ? (
         <div
           data-manhua-phase-panel="outline"
@@ -4743,20 +4758,6 @@ export default function ManhuaScriptWorkbench({
                       取消
                     </button>
                   </div>
-                </div>
-              ) : null}
-              {autoRigAsset && autoRigEligibility?.eligible && autoRigEligibility.currentModel3d?.status === "succeeded" && onApplyRiggedModel ? (
-                <div className="fixed inset-0 z-[81] flex items-center justify-center bg-black/80 p-4">
-                  <ManhuaAutoRigEditor
-                    key={`${autoRigAsset.id}:${autoRigEligibility.sourceVersion}`}
-                    assetRef={autoRigAsset.id}
-                    label={autoRigAsset.labelZh || "当前人物"}
-                    sourceJobId={autoRigEligibility.currentModel3d.taskId}
-                    sourceVersion={autoRigEligibility.sourceVersion}
-                    disabled={Boolean(factoryBusy) || asset3dBusyIds.includes(autoRigAsset.id)}
-                    onApply={onApplyRiggedModel}
-                    onClose={() => setAutoRigAssetId(null)}
-                  />
                 </div>
               ) : null}
               {model3dPreview ? (
