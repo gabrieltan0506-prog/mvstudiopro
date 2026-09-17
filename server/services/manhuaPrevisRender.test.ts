@@ -11,10 +11,24 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { createManhuaPrevisStudio } from "../../shared/manhuaPrevis";
 import {
+  blenderLaunchCommand,
   renderManhuaPrevis,
   runPrevisProcess,
   type PrevisRenderDeps,
 } from "./manhuaPrevisRender";
+
+it("0917 生产白模渲染同样 nice -n 10 起 Blender；未开降优先级时命令原样", () => {
+  const args = ["--background", "--python", "render.py"];
+  expect(
+    blenderLaunchCommand({ blender: "blender", useXvfb: true, lowPriority: true }, args)
+  ).toEqual({ command: "nice", args: ["-n", "10", "xvfb-run", "-a", "blender", ...args] });
+  expect(
+    blenderLaunchCommand({ blender: "blender", useXvfb: false, lowPriority: true }, args)
+  ).toEqual({ command: "nice", args: ["-n", "10", "blender", ...args] });
+  expect(
+    blenderLaunchCommand({ blender: "test-blender", useXvfb: false }, args)
+  ).toEqual({ command: "test-blender", args });
+});
 
 it("带骨角色使用本次临时侧载清单，报告缺失时在长时渲染前停止并存证", async () => {
   const studio = createManhuaPrevisStudio(

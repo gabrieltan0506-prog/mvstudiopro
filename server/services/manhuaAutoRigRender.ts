@@ -23,7 +23,12 @@ import {
   inspectGcsObjectBounded,
   uploadBufferToGcsIfAbsent,
 } from "./gcs";
-import { runPrevisProcess } from "./manhuaPrevisRender";
+import {
+  blenderLaunchCommand,
+  blenderLowPriorityDefault,
+  runPrevisProcess,
+} from "./manhuaPrevisRender";
+export { blenderLaunchCommand };
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const evidenceSchema = z
@@ -182,15 +187,9 @@ const defaults: AutoRigRenderDeps = {
   run: runPrevisProcess,
   blender: process.env.BLENDER_BIN || "blender",
   useXvfb: process.platform === "linux",
-  lowPriority: process.platform === "linux" && process.env.MANHUA_BLENDER_NICE !== "0",
+  lowPriority: blenderLowPriorityDefault(),
 };
 
-/** 生产上 Blender 排在 web 之后：nice -n 10 包住实际命令（含 xvfb-run 的情况）。 */
-export function blenderLaunchCommand(d: Pick<AutoRigRenderDeps, "blender" | "useXvfb" | "lowPriority">, args: string[]): { command: string; args: string[] } {
-  const command = d.useXvfb ? "xvfb-run" : d.blender;
-  const argv = d.useXvfb ? ["-a", d.blender, ...args] : args;
-  return d.lowPriority ? { command: "nice", args: ["-n", "10", command, ...argv] } : { command, args: argv };
-}
 
 export async function readRigCloud(
   gcsUri: string,

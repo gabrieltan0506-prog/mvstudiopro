@@ -91,13 +91,30 @@ export type PrevisRenderDeps = {
   run: typeof runPrevisProcess;
   blender: string;
   useXvfb: boolean;
+  /** 0917：白模渲染与绑骨同在一台 2 vCPU 机器上，生产（linux）一律 nice -n 10 起 Blender，让 web 先走；本机/测试不包。 */
+  lowPriority?: boolean;
   prepareModels?: typeof preparePrevisModels;
 };
+/** 生产默认降优先级；MANHUA_BLENDER_NICE=0 可关（排障用）。 */
+export const blenderLowPriorityDefault = () =>
+  process.platform === "linux" && process.env.MANHUA_BLENDER_NICE !== "0";
+/** 生产上 Blender 排在 web 之后：nice -n 10 包住实际命令（含 xvfb-run 的情况，nice 值由子进程继承）。 */
+export function blenderLaunchCommand(
+  d: { blender: string; useXvfb: boolean; lowPriority?: boolean },
+  args: string[]
+): { command: string; args: string[] } {
+  const command = d.useXvfb ? "xvfb-run" : d.blender;
+  const argv = d.useXvfb ? ["-a", d.blender, ...args] : args;
+  return d.lowPriority
+    ? { command: "nice", args: ["-n", "10", command, ...argv] }
+    : { command, args: argv };
+}
 const deps: PrevisRenderDeps = {
   upload: uploadBufferToGcs,
   run: runPrevisProcess,
   blender: process.env.BLENDER_BIN || "blender",
   useXvfb: process.platform === "linux",
+  lowPriority: blenderLowPriorityDefault(),
 };
 const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 
@@ -168,11 +185,10 @@ export async function renderManhuaPrevis(
     let reportBytes: Buffer | undefined;
     let reportObject: Awaited<ReturnType<typeof uploadBufferToGcs>> | undefined;
     try {
-      await d.run(
-        d.useXvfb ? "xvfb-run" : d.blender,
-        d.useXvfb ? ["-a", d.blender, ...args] : args,
-        options.signal
-      );
+      {
+        const launch = blenderLaunchCommand(d, args);
+        await d.run(launch.command, launch.args, options.signal);
+      }
     } finally {
       // 报告在渲染前产生。失败或超时也先永久保存原字节，再做解析和门禁。
       // 不复用已经中止的媒体信号；保全独立限时，不重跑渲染。
@@ -266,11 +282,10 @@ export async function renderManhuaPrevis(
       "2",
       "--render-anim",
     ];
-    await d.run(
-      d.useXvfb ? "xvfb-run" : d.blender,
-      d.useXvfb ? ["-a", d.blender, ...renderArgs] : renderArgs,
-      options.signal
-    );
+    {
+      const launch = blenderLaunchCommand(d, renderArgs);
+      await d.run(launch.command, launch.args, options.signal);
+    }
     const frameNames = await readdir(path.join(dir, "frames"));
     if (frameNames.length !== report.frames) throw new Error("白模渲染帧缺失");
     for (let frame = 1; frame <= report.frames; frame++) {
@@ -434,11 +449,10 @@ export async function renderManhuaPrevis(
       ];
       let rawMeta: Buffer | undefined;
       try {
-        await d.run(
-          d.useXvfb ? "xvfb-run" : d.blender,
-          d.useXvfb ? ["-a", d.blender, ...layerArgs] : layerArgs,
-          options.signal
-        );
+        {
+          const launch = blenderLaunchCommand(d, layerArgs);
+          await d.run(launch.command, launch.args, options.signal);
+        }
       } finally {
         // 即使脚本中途失败也先保全未完成清单；不再次启动层渲染。
         try {

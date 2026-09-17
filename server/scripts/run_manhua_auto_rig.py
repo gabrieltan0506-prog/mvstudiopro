@@ -599,6 +599,10 @@ def run(request_file, source_file, output_dir):
         "sourceDigest": core.source_digest(source), "pose": settings["pose"], "singleHuman": request["singleHuman"],
         "landmarksManuallyConfirmed": request["landmarksManuallyConfirmed"]}, out / "model-proxy.glb")
     proxy_sha = receipt["outputSha256"]
+    # 回执对外的 sourceDigest 必须是契约摘要：TS validateAutoRigBindReport 拿 request.sourceDigest（=检查回执的契约摘要）硬比；
+    # core 写进回执的是几何摘要，不改写线上绑定仍会被拒「绑骨回执」。几何自证另存一键，不丢证据。
+    receipt["sourceGeometryDigest"] = receipt["sourceDigest"]
+    receipt["sourceDigest"] = digest
     imported = contract.import_rigged_model(out / "model-proxy.glb", "代理重导入", forward_axis="+X", target_height=settings["targetHeight"], expected_sha256=proxy_sha)
     rig, rigged_proxy = imported["rig"], imported["meshes"][0]
     # 重导入会按骨盆点/包围盒重新归一；先把骨架精确映射回导出前代理（=原模）坐标系再转权重
