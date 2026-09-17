@@ -322,3 +322,75 @@ describe("阶段②③提交门禁与恢复契约", () => {
     ).toEqual(spec);
   });
 });
+
+describe("文戏动词草案（0917 PR-E）", () => {
+  const act = (text: string) => compile(text).spec?.actors.find(a => a.actions.length)?.actions ?? [];
+
+  it("看向必须写明目标，目标落成 lookAtId", () => {
+    expect(act("阿菁看向家丁。")).toEqual([
+      { kind: "look", startSec: 0, endSec: 4, lookAtId: "script-actor-2" },
+    ]);
+    expect(act("阿菁望向镜头。")).toEqual([
+      { kind: "look", startSec: 0, endSec: 4, lookAtId: "camera" },
+    ]);
+    // 反例：没写看谁就不猜，退回未映射
+    const vague = compile("阿菁看向远处。");
+    expect(vague.mappedShotIndices).toEqual([]);
+  });
+
+  it("转身按转向背面写死目标朝向，人工可再调", () => {
+    expect(act("阿菁转身。")).toEqual([
+      { kind: "turn", startSec: 0, endSec: 4, facingDeg: 180 },
+    ]);
+  });
+
+  it("坐下、指向、行礼各自落成对应动作", () => {
+    expect(act("阿菁坐下。")[0]?.kind).toBe("sit");
+    expect(act("阿菁抬手指。")[0]?.kind).toBe("gesture_point");
+    expect(act("阿菁拱手。")[0]?.kind).toBe("bow");
+  });
+
+  it("走位只在角色真的有位移时才排，且写了目标不自作主张", () => {
+    // 反例①：原文写了「走向家丁」，但白模改不了站位——退回未映射，不吞掉调度信息
+    const withTarget = compile("阿菁走向家丁。");
+    expect(withTarget.mappedShotIndices).toEqual([]);
+    expect(withTarget.unmapped[0].reasonZh).toContain("白模还表达不了");
+    // 反例②：站着不动的角色「迈步」＝原地摆臂假装在走，同样退回
+    expect(compile("阿菁迈步。").mappedShotIndices).toEqual([]);
+    // 正例：当前配置里该角色本来就有位移区间，才落成 walk
+    const moving = createManhuaPrevisStudio(4).spec;
+    moving.actors[0].assetRef = "qing";
+    moving.actors[0].start = [-1, 0];
+    moving.actors[0].end = [1, 0];
+    moving.actors[0].moveStartSec = 0;
+    moving.actors[0].moveEndSec = 4;
+    const ok = compile("阿菁迈步。", { spec: moving });
+    expect(ok.mappedShotIndices).toEqual([7]);
+    expect(ok.spec?.actors.find(a => a.actions.length)?.actions[0].kind).toBe("walk");
+  });
+
+  it("指向写了目标也退回：白模只按自身朝向抬手，指不到那个人", () => {
+    const pointed = compile("阿菁指向家丁。");
+    expect(pointed.mappedShotIndices).toEqual([]);
+    expect(pointed.unmapped[0].reasonZh).toContain("白模还表达不了");
+  });
+
+  it("镜头描述型分镜仍然 0 映射（设计边界没被扩库放宽）", () => {
+    for (const text of ["中近景，阿菁立于堂前。", "特写推向阿菁的手。", "固定机位，全景。"])
+      expect(compile(text).mappedShotIndices).toEqual([]);
+  });
+
+  it("部分匹配、多余成分仍然拒绝，不把半句当整镜", () => {
+    expect(compile("阿菁看向家丁后又转身离开。").mappedShotIndices).toEqual([]);
+    expect(compile("阿菁没有坐下。").mappedShotIndices).toEqual([]);
+    expect(compile("阿菁走向家丁并坐下。").mappedShotIndices).toEqual([]);
+  });
+
+  it("产出的草案能通过正式 schema（转身/看向的必填参数都带齐了）", () => {
+    for (const text of ["阿菁转身。", "阿菁看向家丁。", "阿菁坐下。"]) {
+      const result = compile(text);
+      expect(result.errors).toEqual([]);
+      expect(manhuaPrevisSpecSchema.safeParse(result.spec).success).toBe(true);
+    }
+  });
+});

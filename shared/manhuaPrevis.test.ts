@@ -5,7 +5,9 @@ import {
   manhuaPrevisSpecSchema,
   manhuaPrevisStudioSchema,
   formatPrevisMotionGuide,
+  PREVIS_LOOK_AT_CAMERA,
   PREVIS_RENDER_UNIT_BUDGET,
+  previsActionForKind,
   previsCapacityIssueZh,
   previsMaxDurationSec,
   previsRenderCostUnits,
@@ -359,5 +361,159 @@ describe("PR-6 · 节奏档字段随白模工作台状态往返", () => {
     const withTempo = { ...studio, cameraStyle: "slow_orbit" as const, draftCameraPromptZh: ["0.00–3.00s 全景·平视·慢环绕：建立"], draftTempoZh: "慢 · 意图「静」且无接触" };
     expect(manhuaPrevisStudioSchema.parse(withTempo)).toEqual(withTempo);
     expect(manhuaPrevisStudioSchema.safeParse({ ...studio, cameraStyle: "dolly" }).success).toBe(false);
+  });
+});
+
+describe("文戏动作库（0917 PR-E）", () => {
+  type LooseActor = {
+    id: string;
+    nameZh: string;
+    shape: string;
+    start: [number, number];
+    end: [number, number];
+    moveStartSec: number;
+    moveEndSec: number;
+    facingDeg: number;
+    actions: Record<string, unknown>[];
+    motionRoute?: unknown;
+    weapon?: string;
+  };
+  const base = (): {
+    version: 1;
+    durationSec: number;
+    aspect: "16:9";
+    actors: LooseActor[];
+    cameras: Record<string, unknown>[];
+  } => ({
+    version: 1 as const,
+    durationSec: 4,
+    aspect: "16:9" as const,
+    actors: [
+      {
+        id: "a",
+        nameZh: "阿菁",
+        shape: "human",
+        start: [0, 0] as [number, number],
+        end: [0, 0] as [number, number],
+        moveStartSec: 0,
+        moveEndSec: 4,
+        facingDeg: 0,
+        actions: [] as Record<string, unknown>[],
+      },
+      {
+        id: "b",
+        nameZh: "娘",
+        shape: "human",
+        start: [1, 1] as [number, number],
+        end: [1, 1] as [number, number],
+        moveStartSec: 0,
+        moveEndSec: 4,
+        facingDeg: 180,
+        actions: [] as Record<string, unknown>[],
+      },
+    ],
+    cameras: [{ startSec: 0, endSec: 4, position: [2, -5, 2.3], target: [0, 0, 1], lens: 40 }],
+  });
+  const withAction = (action: Record<string, unknown>) => {
+    const spec = base();
+    spec.actors[0].actions = [action];
+    return manhuaPrevisSpecSchema.safeParse(spec);
+  };
+
+  it("六类文戏动作可提交", () => {
+    for (const kind of ["sit", "gesture_point", "bow"])
+      expect(withAction({ kind, startSec: 0, endSec: 2 }).success).toBe(true);
+    const walking = base();
+    walking.actors[0].end = [2, 0];
+    walking.actors[0].actions = [{ kind: "walk", startSec: 0, endSec: 2 }];
+    expect(manhuaPrevisSpecSchema.safeParse(walking).success).toBe(true);
+    expect(withAction({ kind: "turn", startSec: 0, endSec: 2, facingDeg: 90 }).success).toBe(true);
+    expect(withAction({ kind: "look", startSec: 0, endSec: 2, lookAtId: "b" }).success).toBe(true);
+    expect(withAction({ kind: "look", startSec: 0, endSec: 2, lookAtId: PREVIS_LOOK_AT_CAMERA }).success).toBe(true);
+  });
+
+  it("参数只属于需要它的动作，缺了/多了都拒", () => {
+    expect(withAction({ kind: "turn", startSec: 0, endSec: 2 }).success).toBe(false);
+    expect(withAction({ kind: "look", startSec: 0, endSec: 2 }).success).toBe(false);
+    // 看向自己、看向不在场的人都不算目标
+    expect(withAction({ kind: "look", startSec: 0, endSec: 2, lookAtId: "a" }).success).toBe(false);
+    expect(withAction({ kind: "look", startSec: 0, endSec: 2, lookAtId: "查无此人" }).success).toBe(false);
+    expect(withAction({ kind: "walk", startSec: 0, endSec: 2, facingDeg: 90 }).success).toBe(false);
+    expect(withAction({ kind: "strike", startSec: 0, endSec: 2, lookAtId: "b" }).success).toBe(false);
+  });
+
+  it("走位必须落在真实位移区间内，原地摆臂假装在走一律拒", () => {
+    // 反例①：起止站位相同——白模只会原地摆臂
+    expect(withAction({ kind: "walk", startSec: 0, endSec: 2 }).success).toBe(false);
+    // 反例②：有位移，但走位窗口整个落在位移区间之外
+    const offWindow = base();
+    offWindow.actors[0].end = [2, 0];
+    offWindow.actors[0].moveStartSec = 0;
+    offWindow.actors[0].moveEndSec = 1;
+    offWindow.actors[0].actions = [{ kind: "walk", startSec: 2, endSec: 4 }];
+    expect(manhuaPrevisSpecSchema.safeParse(offWindow).success).toBe(false);
+    // 正例：窗口与位移区间有交集
+    const inWindow = base();
+    inWindow.actors[0].end = [2, 0];
+    inWindow.actors[0].moveStartSec = 1;
+    inWindow.actors[0].moveEndSec = 4;
+    inWindow.actors[0].actions = [{ kind: "walk", startSec: 0, endSec: 2 }];
+    expect(manhuaPrevisSpecSchema.safeParse(inWindow).success).toBe(true);
+    // 轨迹角色的位移由 motionRoute 负责，不受站位判据管
+    const routed = base();
+    routed.actors[0].end = [2, 0];
+    routed.actors[0].motionRoute = [
+      { timeSec: 0, position: [0, 0], facingDeg: 0 },
+      { timeSec: (4 * 24 - 1) / 24, position: [2, 0], facingDeg: 0 },
+    ];
+    routed.actors[0].actions = [{ kind: "walk", startSec: 0, endSec: 2 }];
+    expect(manhuaPrevisSpecSchema.safeParse(routed).success).toBe(true);
+  });
+
+  it("朝向有两个真源时拒绝：已设运动轨迹就不能再用转身", () => {
+    const spec = base();
+    spec.actors[0].motionRoute = [
+      { timeSec: 0, position: [0, 0], facingDeg: 0 },
+      { timeSec: 4, position: [1, 0], facingDeg: 90 },
+    ];
+    spec.actors[0].actions = [{ kind: "turn", startSec: 0, endSec: 2, facingDeg: 90 }];
+    expect(manhuaPrevisSpecSchema.safeParse(spec).success).toBe(false);
+  });
+
+  it("四足角色与持剑白模的旧门禁没被扩库放宽", () => {
+    const spec = base();
+    spec.actors[0].shape = "horse";
+    spec.actors[0].actions = [{ kind: "walk", startSec: 0, endSec: 2 }];
+    expect(manhuaPrevisSpecSchema.safeParse(spec).success).toBe(false);
+    const sword = base();
+    sword.actors[0].weapon = "practice_sword";
+    sword.actors[0].actions = [{ kind: "bow", startSec: 0, endSec: 2 }];
+    expect(manhuaPrevisSpecSchema.safeParse(sword).success).toBe(false);
+  });
+
+  it("换动作类型时旧参数丢掉、新参数补上", () => {
+    const ctx = { actorFacingDeg: 0, otherActorIds: ["b"] };
+    const turned = previsActionForKind(
+      { kind: "look", startSec: 0, endSec: 2, lookAtId: "b" } as {
+        kind: string;
+        startSec: number;
+        endSec: number;
+        lookAtId?: string;
+        facingDeg?: number;
+      },
+      "turn",
+      ctx,
+    );
+    expect(turned).toEqual({ kind: "turn", startSec: 0, endSec: 2, facingDeg: 180 });
+    const looked = previsActionForKind(turned, "look", ctx);
+    expect(looked).toEqual({ kind: "look", startSec: 0, endSec: 2, lookAtId: "b" });
+    const idle = previsActionForKind(looked, "idle", ctx);
+    expect(idle).toEqual({ kind: "idle", startSec: 0, endSec: 2 });
+    // 场上只有自己时退回看向镜头，而不是留一个空目标
+    expect(previsActionForKind(idle, "look", { actorFacingDeg: 0, otherActorIds: [] }).lookAtId).toBe(
+      PREVIS_LOOK_AT_CAMERA,
+    );
+    // 朝向归一到 ±180，不出现 270 这种提交会被拒的值
+    expect(previsActionForKind(idle, "turn", { actorFacingDeg: 90, otherActorIds: [] }).facingDeg).toBe(-90);
   });
 });
