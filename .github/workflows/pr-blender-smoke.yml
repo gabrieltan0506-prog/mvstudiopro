@@ -52,32 +52,6 @@ jobs:
           echo "== Blender =="; cat artifacts/auto-rig-smoke/blender-version.txt
           grep -q "^Blender " artifacts/auto-rig-smoke/blender-version.txt
           echo "== TEST_OK =="; grep "^TEST_OK" artifacts/auto-rig-smoke/smoke.log
-      - name: Run drama-action previs smoke inside the built image
-        timeout-minutes: 20
-        run: |
-          set -o pipefail
-          mkdir -p artifacts/drama-actions
-          docker run --rm --platform linux/amd64 \
-            -v "$PWD/artifacts/drama-actions:/out" \
-            mvstudiopro-pr-smoke:${{ github.sha }} \
-            sh -c 'xvfb-run -a blender --background --factory-startup --disable-autoexec --threads 1 --python-exit-code 1 \
-                 --python server/scripts/test_previs_drama_actions.py -- /out/run' \
-            2>&1 | tee artifacts/drama-actions/smoke.log
-          sudo chmod -R a+rX artifacts/drama-actions
-          # 每条断言都量真实骨骼位移并配 idle 反例；线上是 Blender 3.4.1，本机 5.2.1 过不算数
-          grep -q "^TEST_OK" artifacts/drama-actions/smoke.log
-          echo "== 文戏动作实测 =="; cat artifacts/drama-actions/run/report.json
-      - name: Upload drama-action artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: drama-actions-${{ github.event.pull_request.head.sha || github.sha }}
-          path: |
-            artifacts/drama-actions/smoke.log
-            artifacts/drama-actions/run/report.json
-            artifacts/drama-actions/run/**/spec.json
-          if-no-files-found: warn
-          retention-days: 14
       - name: Upload smoke artifacts (log, previews, receipts)
         if: always()
         uses: actions/upload-artifact@v4

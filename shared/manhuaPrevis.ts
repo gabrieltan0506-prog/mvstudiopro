@@ -72,56 +72,7 @@ export const PREVIS_ACTION_LABELS = {
   strike: "蓄力出手",
   guard: "抬臂保护",
   recoil: "受惊后缩",
-  // 0917 PR-E：文戏六类。打戏之外的段落此前只能站着，绑骨的价值兑现不出来。
-  walk: "走位（摆臂步态）",
-  turn: "转身到指定朝向",
-  look: "看向目标",
-  sit: "坐下",
-  gesture_point: "抬手指向",
-  bow: "俯身行礼",
 } as const;
-/** 需要额外参数的动作：转身要目标朝向，看向要目标。 */
-export const PREVIS_ACTION_KINDS = [
-  "idle",
-  "strike",
-  "guard",
-  "recoil",
-  "walk",
-  "turn",
-  "look",
-  "sit",
-  "gesture_point",
-  "bow",
-] as const;
-export type PrevisActionKind = (typeof PREVIS_ACTION_KINDS)[number];
-/** 打戏四类：四足角色与持剑白模只许这几类，扩库不放宽旧门禁。 */
-export const PREVIS_COMBAT_ACTION_KINDS = ["idle", "strike", "guard", "recoil"] as const;
-export const PREVIS_LOOK_AT_CAMERA = "camera" as const;
-/** 归一到 (-180, 180]：转身 180 度显示成 180，不是 -180。朝向的唯一归一入口。 */
-export function normalizeFacingDeg(deg: number): number {
-  const wrapped = ((((deg + 180) % 360) + 360) % 360) - 180;
-  return wrapped === -180 ? 180 : wrapped;
-}
-/**
- * 0917 PR-E：换动作类型时把只属于旧类型的参数丢掉、把新类型必需的参数补上。
- * 不这么做会留下「转身没有目标朝向」或「出拳还挂着注视目标」这种提交必被 schema 拒的脏配置。
- */
-export function previsActionForKind<T extends { kind: string; facingDeg?: number; lookAtId?: string }>(
-  action: T,
-  kind: PrevisActionKind,
-  context: { actorFacingDeg: number; otherActorIds: readonly string[] },
-): T {
-  const next = { ...action, kind } as T;
-  delete (next as { facingDeg?: number }).facingDeg;
-  delete (next as { lookAtId?: string }).lookAtId;
-  // 默认转向背面；归一走 normalizeFacingDeg 这一个入口，不再各处手写取模
-  if (kind === "turn")
-    (next as { facingDeg?: number }).facingDeg = normalizeFacingDeg(context.actorFacingDeg + 180);
-  if (kind === "look")
-    (next as { lookAtId?: string }).lookAtId = context.otherActorIds[0] ?? PREVIS_LOOK_AT_CAMERA;
-  return next;
-}
-
 export const previsMotionRouteNodeSchema = z
   .object({
     timeSec: z.number().finite().min(0).max(30),
@@ -154,13 +105,9 @@ export const previsActorSchema = z
       .array(
         z
           .object({
-            kind: z.enum(PREVIS_ACTION_KINDS),
+            kind: z.enum(["idle", "strike", "guard", "recoil"]),
             startSec: z.number().finite().min(0).max(30),
             endSec: z.number().finite().positive().max(30),
-            /** kind="turn" 的目标朝向；其它动作不接受。 */
-            facingDeg: z.number().finite().min(-180).max(180).optional(),
-            /** kind="look" 的注视目标：同场角色 id 或 "camera"；其它动作不接受。 */
-            lookAtId: z.string().min(1).max(100).optional(),
           })
           .strict()
       )
@@ -265,11 +212,9 @@ export const manhuaPrevisDraftSchema = manhuaPrevisSpecBaseSchema.extend({
           .array(
             z
               .object({
-                kind: z.enum(PREVIS_ACTION_KINDS),
+                kind: z.enum(["idle", "strike", "guard", "recoil"]),
                 startSec: draftNumber,
                 endSec: draftNumber,
-                facingDeg: draftNumber.optional(),
-                lookAtId: z.string().min(1).max(100).optional(),
               })
               .strict()
           )
@@ -413,56 +358,6 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
           path: ["actors", i, "actions"],
         });
       actor.actions.forEach((action, j) => {
-        // 0917 PR-E：参数只属于需要它的动作，避免「填了没用」的假配置。
-        if (action.kind === "turn" && !Number.isFinite(action.facingDeg as number))
-          ctx.addIssue({
-            code: "custom",
-            message: "转身必须给目标朝向",
-            path: ["actors", i, "actions", j, "facingDeg"],
-          });
-        if (action.kind !== "turn" && action.facingDeg !== undefined)
-          ctx.addIssue({
-            code: "custom",
-            message: "只有转身能设目标朝向",
-            path: ["actors", i, "actions", j, "facingDeg"],
-          });
-        if (action.kind === "look") {
-          const target = String(action.lookAtId || "");
-          const known =
-            target === PREVIS_LOOK_AT_CAMERA ||
-            spec.actors.some(other => other.id === target && other.id !== actor.id);
-          if (!known)
-            ctx.addIssue({
-              code: "custom",
-              message: "看向目标须是同场的其他角色或镜头",
-              path: ["actors", i, "actions", j, "lookAtId"],
-            });
-        } else if (action.lookAtId !== undefined)
-          ctx.addIssue({
-            code: "custom",
-            message: "只有看向能设注视目标",
-            path: ["actors", i, "actions", j, "lookAtId"],
-          });
-        // 0917 审查：走位只负责「摆臂步态」，位移来自站位/轨迹。角色原地不动、
-        // 或动作窗口压根不在位移区间内时，白模会原地摆臂假装在走——那是白模撒谎。
-        if (action.kind === "walk" && !actor.motionRoute?.length) {
-          const travels = actor.start.some((v, k) => v !== actor.end[k]);
-          const overlapsMove =
-            action.startSec < actor.moveEndSec && action.endSec > actor.moveStartSec;
-          if (!travels || !overlapsMove)
-            ctx.addIssue({
-              code: "custom",
-              message: "走位动作必须落在角色实际位移区间内；原地不动请改用其它动作或先设好起止站位",
-              path: ["actors", i, "actions", j],
-            });
-        }
-        // 转身与运动轨迹是两套朝向真源，同时给会互相覆盖，先拒绝。
-        if (action.kind === "turn" && actor.motionRoute?.length)
-          ctx.addIssue({
-            code: "custom",
-            message: "已设运动轨迹的角色不能再用转身动作；朝向请写进轨迹节点",
-            path: ["actors", i, "actions", j],
-          });
         if (
           action.endSec > spec.durationSec ||
           action.endSec - action.startSec < 0.5
