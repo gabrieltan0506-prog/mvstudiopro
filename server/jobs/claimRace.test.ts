@@ -11,6 +11,8 @@ vi.mock("../services/drProSecondaryStaging.js", () => ({
 
 import {
   claimNextPostProdJob,
+  countPendingBlenderPostProdJobs,
+  failQueuedBlenderPostProdJobs,
   claimNextQueuedJob,
   claimNextQueuedJobExcluding,
   MAIN_QUEUE_EXCLUDED_TYPES,
@@ -366,6 +368,58 @@ describe("post_prod 独立任务通道", () => {
     const db = fakeDb([0]);
     getDb.mockResolvedValue(db);
     expect(await claimNextPostProdJob()).toBeNull();
+  });
+
+  it("countPendingBlenderPostProdJobs 与 blender 领取口径同一套条件（0917 rig 按需启停靠它判有没有活）", async () => {
+    let claimCondition: unknown;
+    let countCondition: unknown;
+    getDb.mockResolvedValue(fakeDb([1], c => (claimCondition = c)));
+    await claimNextPostProdJob("blender");
+    getDb.mockResolvedValue(fakeDb([1], c => (countCondition = c)));
+    const pending = await countPendingBlenderPostProdJobs();
+
+    expect(pending).toBe(1);
+    const countValues = sqlStringValues(countCondition);
+    // 正例：两种 Blender action 都在条件里，且与领取端一字不差
+    expect(countValues).toEqual(expect.arrayContaining(["manhua_auto_rig", "manhua_previs"]));
+    for (const action of sqlStringValues(claimCondition).filter(v => v.startsWith("manhua_"))) {
+      expect(countValues).toContain(action);
+    }
+    // 反例：非 Blender 的后期 action 不许出现在条件里（出现即会把 ffmpeg 任务也算成「要开 rig」）
+    expect(countValues).not.toContain("manhua_assemble_final");
+    // running 也要算：绑定跑 12 分钟，期间队列为空，只看 queued 会把机器停在任务头上
+    expect(countValues.join(" ")).toContain("queued','running");
+  });
+
+  it("打回排队中的 Blender 任务：只动 queued、只动这两类 action，绝不碰 running 或付费任务", async () => {
+    let condition: unknown;
+    getDb.mockResolvedValue({
+      update: () => ({
+        set: () => ({
+          where: (c: unknown) => {
+            condition = c;
+            return { returning: async () => [{ id: "job-1" }, { id: "job-2" }] };
+          },
+        }),
+      }),
+    });
+    const ids = await failQueuedBlenderPostProdJobs("没有 rig 机");
+    expect(ids).toEqual(["job-1", "job-2"]);
+    const values = sqlStringValues(condition);
+    expect(values).toEqual(expect.arrayContaining(["queued", "post_prod", "manhua_auto_rig", "manhua_previs"]));
+    // 反例：running 不在条件里（跑着的任务在别的机器上，与「没有 rig 机」无关）
+    expect(values).not.toContain("running");
+    // 反例：非 Blender 的后期任务不许被打回（它们可能是付费的，退款先行）
+    expect(values).not.toContain("manhua_assemble_final");
+  });
+
+  it("数据库不可用时返回 0，不会误启机器", async () => {
+    getDb.mockResolvedValue(null);
+    expect(await countPendingBlenderPostProdJobs()).toBe(0);
+    getDb.mockResolvedValue({
+      select: () => ({ from: () => ({ where: () => ({ limit: async () => { throw new Error("db down"); } }) }) }),
+    });
+    expect(await countPendingBlenderPostProdJobs()).toBe(0);
   });
 });
 

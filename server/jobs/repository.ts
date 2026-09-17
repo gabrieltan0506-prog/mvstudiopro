@@ -1040,6 +1040,75 @@ export async function claimNextPostProdJob(filter?: PostProdClaimFilter): Promis
   return claimQueuedJobById(db, next, "claimNextPostProdJob");
 }
 
+/**
+ * 0917 PR-B：待处理的 Blender 后期任务条数（queued + running）。
+ * app 机用它决定要不要把停着的 rig 机唤醒；rig 机用它决定能不能停自己。
+ * 口径与 claimNextPostProdJob(filter="blender") 完全一致（同一个 action 列表、同样 coalesce 兜住 NULL）。
+ * 查不到数据库时返回 0：调用方只在 >0 时启机，宁可不启也不误启。
+ */
+export async function countPendingBlenderPostProdJobs(
+  options: { includeRunning?: boolean } = {},
+): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  // 唤醒侧只数 queued：running 的那单已经有机器在跑，再数它会把另外几台 rig 全拉起来空转。
+  // 停机侧要数 queued+running：绑定跑 12 分钟期间队列为空，只看 queued 会把机器停在任务头上。
+  const includeRunning = options.includeRunning !== false;
+  try {
+    const rows = await db
+      .select({ id: jobs.id })
+      .from(jobs)
+      .where(
+        and(
+          includeRunning ? sql`${jobs.status} IN ('queued','running')` : eq(jobs.status, "queued"),
+          eq(jobs.type, "post_prod"),
+          inArray(sql`coalesce(${jobs.input}->>'action', '')`, [...BLENDER_POST_PROD_ACTIONS]),
+        ),
+      )
+      .limit(50);
+    return rows.length;
+  } catch (error) {
+    console.error("[JobsRepo] countPendingBlenderPostProdJobs failed:", error);
+    return 0;
+  }
+}
+
+/**
+ * 0917 PR-B：没有 rig 机可唤醒时，把**排队中**的 Blender 后期任务即时打回失败。
+ *
+ * 行为变更的理由：以前是静默排队到 stale reaper 按创建时间判死，用户侧表现是「点了没反应」——
+ * 今天已经因为同一症状吃过两次亏（弹层没挂载、回执读不到）。明确失败带原因带做法，比静默排队好。
+ *
+ * 三条边界写死在这里：
+ * - 只动 `queued`，绝不碰 `running`（跑着的任务在别的机器上，与「没有 rig 机」无关）。
+ * - 只动 BLENDER_POST_PROD_ACTIONS 这两类（绑骨/白模，均为免费任务，打回不涉及退积分）。
+ *   **以后若有付费 post_prod 走这条路，必须先退款再打回，不能直接扩这个名单。**
+ * - 调用方只在「确实查过 Machines API 且确认没有机器 / 启动失败」时才调；
+ *   「机器存在但 stopped」是正常状态，要去 start 它，不许当成没有。
+ */
+export async function failQueuedBlenderPostProdJobs(reason: string): Promise<string[]> {
+  const db = await getDb();
+  if (!db) return [];
+  try {
+    const rows = await db
+      .update(jobs)
+      .set({ status: "failed", error: reason.slice(0, 800), updatedAt: new Date() })
+      .where(
+        and(
+          eq(jobs.status, "queued"),
+          eq(jobs.type, "post_prod"),
+          inArray(sql`coalesce(${jobs.input}->>'action', '')`, [...BLENDER_POST_PROD_ACTIONS]),
+        ),
+      )
+      .returning({ id: jobs.id });
+    if (rows.length) console.error("[JobsRepo] 无 rig 机，打回排队中的 Blender 任务：", rows.map((r) => r.id).join(","), reason);
+    return rows.map((r) => r.id);
+  } catch (error) {
+    console.error("[JobsRepo] failQueuedBlenderPostProdJobs failed:", error);
+    return [];
+  }
+}
+
 /** 专用 pdf_export 队列，避免长时间 page.pdf 阻塞 image/video/audio/platform。 */
 export async function claimNextPdfExportJob(): Promise<NormalizedJob | null> {
   const db = await getDb();

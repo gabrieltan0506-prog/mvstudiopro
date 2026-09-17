@@ -22,7 +22,14 @@ import {
   type ManhuaPrevisStudio as Studio,
 } from "@shared/manhuaPrevis";
 import {
+  clearPrevisMissingSince,
+  previsAbandonable,
+  readPrevisMissingSince,
+  writePrevisMissingSince,
+} from "@shared/manhuaPrevisAbandon";
+import {
   compilePrevisScriptDraft,
+  previsScriptDraftVocabularyZh,
   previsScriptSourceKey,
   type PrevisSourceShot,
   type PrevisScriptDraft,
@@ -86,6 +93,24 @@ const field =
 const button =
   "rounded border border-cyan-300/30 px-2 py-1 text-xs text-cyan-50 disabled:opacity-40";
 
+/**
+ * 「第一次查不到」的时间戳按 requestId 落在 sessionStorage 里，而不是只放组件内的 ref。
+ * 理由：等十分钟期间用户切页签／换路由是常态，组件一卸载重挂 ref 就清零，计时永远重来，
+ * 「放弃原编号」这个出口实际上永远点不亮——功能等于没有。
+ * 只按 requestId 存：换了编号读不到旧值，不会把上一单的等待时间算到新单头上。
+ * sessionStorage 在隐私模式/禁用站点数据时会抛，全部包 try/catch，读失败就退回本次会话内计时。
+ * 判据（阈值、脏值/未来时间戳）在 @shared/manhuaPrevisAbandon，这里只负责存取。
+ */
+// 取 sessionStorage 这个**属性访问**本身就可能抛（隐私模式/站点数据被禁），
+// 所以兜底要包在这里，不能只包 store.getItem。
+const previsStore = () => {
+  try {
+    return typeof window === "undefined" ? null : window.sessionStorage;
+  } catch {
+    return null;
+  }
+};
+
 export function ManhuaPrevisStudio(props: Props) {
   const utils = trpc.useUtils();
   const submit = trpc.manhuaPrevis.submit.useMutation();
@@ -125,6 +150,10 @@ export function ManhuaPrevisStudioView({
   const [status, setStatus] = useState("");
   const [preview, setPreview] = useState<Result | null>(null);
   const [busy, setBusy] = useState(false);
+  // 0917 PR-D：服务端连续查不到原编号时给一个可放弃的出口，别让用户永远卡在「确认原请求」。
+  // 判据是「连续查不到满 10 分钟」——入队成功的任务最迟几秒内就查得到，十分钟仍为空说明这单没建成。
+  const missingSince = useRef<number | null>(null);
+  const [abandonable, setAbandonable] = useState(false);
   const [scriptDraft, setScriptDraft] = useState<PrevisScriptDraft | null>(
     null
   );
@@ -249,7 +278,16 @@ export function ManhuaPrevisStudioView({
     }
   }
   useEffect(() => {
-    if (!pendingId) return;
+    if (!pendingId) {
+      missingSince.current = null;
+      setAbandonable(false);
+      return;
+    }
+    // 重挂载（切页签/换路由）接着上次的计时走，别从零开始。
+    // 但**只恢复计时、不恢复「已可放弃」权限**：旧时间戳只说明上次会话连续查不到，
+    // 这期间任务可能已经建成甚至跑完了；权限要等本次 get 明确回 null 才开放（终审 1495-R1-03）。
+    missingSince.current = readPrevisMissingSince(previsStore(), pendingId, Date.now());
+    setAbandonable(false);
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
@@ -257,12 +295,32 @@ export function ManhuaPrevisStudioView({
         const response = await latest.current.services.get(pendingId);
         if (!active) return;
         if (response) {
+          missingSince.current = null;
+          clearPrevisMissingSince(previsStore(), pendingId);
+          setAbandonable(false);
           consume(response);
           if (response.status === "succeeded" || response.status === "failed")
             return;
-        } else setStatus("尚未查到原请求；可确认原编号，不会新建重复任务");
+        } else {
+          const first = missingSince.current ?? Date.now();
+          missingSince.current = first;
+          writePrevisMissingSince(previsStore(), pendingId, first);
+          const canAbandon = previsAbandonable(first, Date.now());
+          if (canAbandon) setAbandonable(true);
+          setStatus(
+            canAbandon
+              ? "服务端连续十分钟查不到这个编号，可放弃后重新生成"
+              : "尚未查到原请求；可确认原编号，不会新建重复任务"
+          );
+        }
       } catch {
-        if (active) setStatus("查询暂不可用，保留原任务编号，稍后继续查询");
+        if (!active) return;
+        // 查询本身失败 ≠ 服务端查不到这个编号：断网/网关抖动不能计进「连续查不到十分钟」，
+        // 否则一次外网抖动就把「放弃原编号」按钮点亮，用户放弃掉一单真实在跑的任务再重提 = 重复建单。
+        missingSince.current = null;
+        clearPrevisMissingSince(previsStore(), pendingId);
+        setAbandonable(false);
+        setStatus("查询暂不可用，保留原任务编号，稍后继续查询");
       }
       if (active) timer = setTimeout(poll, 4000);
     };
@@ -272,6 +330,61 @@ export function ManhuaPrevisStudioView({
       clearTimeout(timer);
     };
   }, [pendingId]);
+  /**
+   * 放弃原编号（终审 1495-R1-03）：点下去之前**再查一次**。
+   * 十分钟里任务可能已经建成甚至跑完，凭旧时间戳直接清 pending 会把一单真实任务丢掉，
+   * 用户再点一次就是重复建单（事故簿坑 14 的代价）。查到就消费掉、保留编号；
+   * 只有这次也明确查不到、且计时确实满十分钟，才真的放弃。
+   */
+  async function abandonPending() {
+    const before = latest.current;
+    const id = before.studio.pending?.requestId;
+    if (
+      !id ||
+      before.disabled ||
+      lock.current ||
+      !previsAbandonable(missingSince.current, Date.now())
+    )
+      return;
+    const scopeId = before.studio.scopeId;
+    const blockId = before.block.id;
+    lock.current = true;
+    setBusy(true);
+    setAbandonable(false);
+    try {
+      const response = await before.services.get(id);
+      const current = latest.current;
+      // 复查期间用户可能换了段/换了编号：认不出就什么都不做，绝不动别的段的 pending
+      if (
+        !mounted.current ||
+        current.disabled ||
+        current.studio.scopeId !== scopeId ||
+        current.block.id !== blockId ||
+        current.studio.pending?.requestId !== id
+      )
+        return;
+      if (response) {
+        missingSince.current = null;
+        clearPrevisMissingSince(previsStore(), id);
+        consume(response);
+        return;
+      }
+      if (!previsAbandonable(missingSince.current, Date.now())) return;
+      if (!publish({ ...current.studio, pending: undefined })) return;
+      missingSince.current = null;
+      clearPrevisMissingSince(previsStore(), id);
+      setError("");
+      setStatus("已放弃原编号；再点「确认生成动作白模」会新建一次");
+    } catch {
+      // 复查本身失败：保留编号，计时清零重新算，不让一次抖动把任务丢掉
+      missingSince.current = null;
+      clearPrevisMissingSince(previsStore(), id);
+      if (mounted.current) setStatus("查询暂不可用，保留原任务编号");
+    } finally {
+      lock.current = false;
+      if (mounted.current) setBusy(false);
+    }
+  }
   async function generate() {
     if (disabled || lock.current) return;
     // 带骨模型可能挂在同一人物的候选图上：提交时按当前人物表补上模型所在 ref，服务端按它核回执。
@@ -490,6 +603,9 @@ export function ManhuaPrevisStudioView({
           >
             从本段剧本生成动作草案
           </button>
+          <p className="text-xs text-white/60" data-previs-draft-vocabulary>
+            只认这些动作：{previsScriptDraftVocabularyZh().join("；")}。分镜写的是镜头描述（中近景／特写／固定机位）时会 0 映射——这是设计边界，不是故障；白模不依赖草案，角色配置保存后可直接提交。
+          </p>
           {scriptDraft ? (
             <>
               <p className="text-xs text-white/70">
@@ -1718,6 +1834,17 @@ export function ManhuaPrevisStudioView({
         >
           恢复本段历史
         </button>
+        {pendingId && abandonable ? (
+          <button
+            type="button"
+            className={button}
+            data-previs-abandon-pending
+            disabled={disabled || busy}
+            onClick={() => void abandonPending()}
+          >
+            原编号不存在，放弃它
+          </button>
+        ) : null}
         <span role="status" className="text-xs text-white/65">
           {status}
         </span>

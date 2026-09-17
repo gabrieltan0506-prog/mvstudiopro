@@ -103,6 +103,8 @@ import {
 import { isTtapiSunoSubmissionUnknown } from "../services/ttapiSunoMusic.js";
 import { processPdfExportJob } from "./pdfExportJob";
 import { resolveJobWorkerRole, resolvePostProdClaimFilter } from "./workerRole.js";
+// 只导入类型：rigAutoscale 仍走动态 import（app 机不该为这条链加载 Fly 客户端），类型在编译期就被擦掉。
+import type { RigStartState } from "./rigAutoscale.js";
 import {
   invokePlatformAnalysisChat,
   PLATFORM_ANALYSIS_FALLBACK_MODEL,
@@ -212,6 +214,42 @@ let pdfProcessing = false;
 let pdfTimer: NodeJS.Timeout | null = null;
 let postProdProcessing = false;
 let postProdTimer: NodeJS.Timeout | null = null;
+// 0917 PR-B：rig 进程组按需启停。app 机负责唤醒，rig 机负责停自己。
+let rigAutoscaleTimer: NodeJS.Timeout | null = null;
+/**
+ * 唤醒/停机两份状态。导出是为了让回归测试能直接验「stopJobWorker 之后确认窗口确实清零」
+ * 这条因果（与 rigStopGate 同理），业务代码不要在别处写它们。
+ */
+export const rigStartState: RigStartState = { lastAttemptAt: 0 };
+export const rigIdleState = { lastBusyAt: Date.now() };
+/**
+ * rig 已决定停机：从这一刻起本进程不再领新单，免得领到一半被停机的 SIGINT 打断。
+ * 导出成对象是为了让回归测试能直接验「闸一关就不再领单」这条因果，不用去驱动整条定时器链。
+ */
+export const rigStopGate = { requested: false, requestedAt: 0 };
+/**
+ * 闸关上之后本进程最多容忍多久还活着。SIGINT 处理器最迟 10 秒强制 exit，
+ * 所以超过这个窗口还在跑，只能是 Fly 接受了 stop 但机器没停（或停完立刻被重启/部署拉起）。
+ * 那时必须把闸复位，否则这台机器活着却永远不领单——比多烧几分钟机时贵得多。
+ */
+export const RIG_STOP_GATE_MAX_MS = 5 * 60_000;
+
+/**
+ * 闸关了太久本进程还活着 → 机器没真停，复位领单闸。返回是否复位过。
+ * 导出是为了让回归测试直接验这条自愈，不用去驱动整条定时器链。
+ */
+export function releaseStaleRigStopGateIfNeeded(now: number = Date.now()): boolean {
+  if (!rigStopGate.requested || now - rigStopGate.requestedAt <= RIG_STOP_GATE_MAX_MS) return false;
+  console.warn(
+    `[rig-autoscale] 停机命令已发出 ${Math.round((now - rigStopGate.requestedAt) / 1000)} 秒本进程仍在运行，` +
+      "判定机器没有真停，复位领单闸继续领单",
+  );
+  rigStopGate.requested = false;
+  rigStopGate.requestedAt = 0;
+  // 空闲计时也重置：否则复位当轮就立刻又发一次停机，来回抖。
+  rigIdleState.lastBusyAt = now;
+  return true;
+}
 /** 成长营素材分析专用 worker 并发（与平台长 Job 分池，默认 2） */
 const GROWTH_CAMP_JOB_WORKER_CONCURRENCY = Math.max(
   1,
@@ -4228,6 +4266,7 @@ export async function processPdfJobsOnce() {
 }
 
 async function processOnePostProdJob(): Promise<boolean> {
+  if (rigStopGate.requested) return false;
   const job = await claimNextPostProdJob(resolvePostProdClaimFilter());
   if (!job) return false;
 
@@ -4272,7 +4311,7 @@ async function processOnePostProdJob(): Promise<boolean> {
 
 /** 后期工坊独立通道:串行消化(单并发),不与普通媒体任务抢队列 */
 export async function processPostProdJobsOnce() {
-  if (postProdProcessing) return;
+  if (postProdProcessing || rigStopGate.requested) return;
   postProdProcessing = true;
   try {
     while (await processOnePostProdJob()) {
@@ -4295,6 +4334,93 @@ export async function processJobsOnce() {
   }
 }
 
+const RIG_AUTOSCALE_TICK_MS = 15_000;
+
+async function rigAutoscaleDeps(
+  hooks: {
+    onStopDecided?: () => void;
+    onStopAborted?: () => void;
+    failQueuedBlenderJobs?: (reason: string) => Promise<string[]>;
+  } = {},
+) {
+  const { resolveRigAutoscaleDeps } = await import("./rigAutoscale.js");
+  const { countPendingBlenderPostProdJobs } = await import("./repository.js");
+  return resolveRigAutoscaleDeps(
+    {
+      queuedBlenderJobs: () => countPendingBlenderPostProdJobs({ includeRunning: false }),
+      pendingBlenderJobs: () => countPendingBlenderPostProdJobs(),
+    },
+    hooks,
+  );
+}
+
+/** 启动时报一次自动启停的状态：没配凭证时的表现是「任务一直排队」，最难查，必须在日志里留一行。 */
+async function logRigAutoscaleBoot(role: "app" | "rig") {
+  const { rigAutoscaleEnabled, resolveRigIdleStopMs } = await import("./rigAutoscale.js");
+  const { resolveFlyMachinesConfig, resolveSelfMachineId } = await import("../services/flyMachines.js");
+  const { rigWorkerSplitEnabled } = await import("./workerRole.js");
+  if (role === "app" && !rigWorkerSplitEnabled()) {
+    console.warn("[rig-autoscale] app：MANHUA_RIG_WORKER_SPLIT 未开，本机自己领 Blender 任务，不唤醒 rig 机");
+    return;
+  }
+  if (!rigAutoscaleEnabled()) {
+    console.warn(`[rig-autoscale] ${role}：MANHUA_RIG_AUTOSCALE=0，自动启停关闭，rig 机保持常驻`);
+    return;
+  }
+  if (!resolveFlyMachinesConfig()) {
+    console.warn(`[rig-autoscale] ${role}：没有 FLY_API_TOKEN/FLY_APP_NAME，自动启停不工作（rig 停着时 Blender 任务会一直排队）`);
+    return;
+  }
+  console.warn(
+    role === "app"
+      ? "[rig-autoscale] app：有 Fly 凭证，队列出现 Blender 任务时会唤醒 rig 机"
+      : `[rig-autoscale] rig：有 Fly 凭证，本机 ${resolveSelfMachineId() || "(无 FLY_MACHINE_ID)"} 空闲 ${Math.round(resolveRigIdleStopMs() / 1000)} 秒后自停`,
+  );
+}
+
+/** app 机：队列里有 queued 的 Blender 任务就唤醒停着的 rig 机。没配 Fly 凭证时整段跳过。 */
+async function rigWakeTick() {
+  // app 自己还在领 Blender 任务时（MANHUA_RIG_WORKER_SPLIT 未设的降级部署）不许唤醒 rig：
+  // 那等于两台机器抢同一单，而 app 机 8 GB 跑 Blender 正是 0917 OOM 那次的死法。
+  const { rigWorkerSplitEnabled } = await import("./workerRole.js");
+  if (!rigWorkerSplitEnabled()) return;
+  const { failQueuedBlenderPostProdJobs } = await import("./repository.js");
+  // 行为变更（0917 用户拍板）：没有 rig 机可唤醒时，排队中的 Blender 任务即时失败并带做法。
+  // 绑骨/白模都是免费任务，打回不涉及退积分；以后若有付费 post_prod 走这条路，退款先行。
+  const deps = await rigAutoscaleDeps({ failQueuedBlenderJobs: failQueuedBlenderPostProdJobs });
+  if (!deps) return;
+  const { ensureRigStartedForPending } = await import("./rigAutoscale.js");
+  const outcome = await ensureRigStartedForPending(deps, rigStartState);
+  if (outcome.action === "error") console.warn("[rig-autoscale] 唤醒失败：", outcome.message);
+}
+
+/** rig 机：空闲够久停自己。本进程在跑任务、或队列里还有 Blender 任务，一律不停。 */
+async function rigIdleTick() {
+  // 自愈：停机命令发出去了、这个进程却还活着，说明机器没真停。再不复位就是一台空转机。
+  if (releaseStaleRigStopGateIfNeeded()) return;
+  if (rigStopGate.requested) return; // 停机在途，不再重复判定
+  const deps = await rigAutoscaleDeps({
+    onStopDecided: () => {
+      rigStopGate.requested = true;
+      rigStopGate.requestedAt = Date.now();
+    },
+    onStopAborted: () => {
+      rigStopGate.requested = false;
+      rigStopGate.requestedAt = 0;
+    },
+  });
+  if (!deps) return;
+  const { maybeStopIdleRig } = await import("./rigAutoscale.js");
+  // 传函数而不是快照：停机判定要跨两次网络往返，期间 1 秒一轮的 post_prod 通道可能刚领到一单。
+  const outcome = await maybeStopIdleRig(deps, rigIdleState, () => postProdProcessing);
+  if (outcome.action === "error") console.warn("[rig-autoscale] 停机判定异常：", outcome.message);
+}
+
+/** 定时器里不能漏掉 rejection：动态 import 失败会变成 unhandled rejection 把进程打掉。 */
+function guarded(tick: () => Promise<unknown>): void {
+  void tick().catch((error) => console.warn("[rig-autoscale] tick 异常：", error));
+}
+
 export function startJobWorker() {
   if (workerStarted) return;
   workerStarted = true;
@@ -4306,6 +4432,12 @@ export function startJobWorker() {
     postProdTimer = setInterval(() => {
       void processPostProdJobsOnce();
     }, 1_000);
+    rigIdleState.lastBusyAt = Date.now();
+    void logRigAutoscaleBoot("rig").catch(() => {});
+    rigAutoscaleTimer = setInterval(() => {
+      guarded(rigIdleTick);
+    }, RIG_AUTOSCALE_TICK_MS);
+    rigAutoscaleTimer.unref?.();
     return;
   }
 
@@ -4329,6 +4461,11 @@ export function startJobWorker() {
   postProdTimer = setInterval(() => {
     void processPostProdJobsOnce();
   }, 3_000);
+  void logRigAutoscaleBoot("app").catch(() => {});
+  rigAutoscaleTimer = setInterval(() => {
+    guarded(rigWakeTick);
+  }, RIG_AUTOSCALE_TICK_MS);
+  rigAutoscaleTimer.unref?.();
   if (typeof postProdTimer.unref === "function") {
     postProdTimer.unref();
   }
@@ -4358,5 +4495,15 @@ export function stopJobWorker() {
   pdfTimer = null;
   if (postProdTimer) clearInterval(postProdTimer);
   postProdTimer = null;
+  if (rigAutoscaleTimer) clearInterval(rigAutoscaleTimer);
+  rigAutoscaleTimer = null;
+  rigStopGate.requested = false;
+  rigStopGate.requestedAt = 0;
+  // 三份状态都要跟着 worker 生命周期复位。尤其是 unavailableSince：留着上一轮 worker
+  // 攒下的「rig 已经不可用 N 分钟」时间戳，下次 startJobWorker 后的**第一次**观察就会
+  // 判定确认窗口已满，直接打回全部排队任务——确认窗口等于没有。
+  rigStartState.lastAttemptAt = 0;
+  rigStartState.unavailableSince = undefined;
+  rigIdleState.lastBusyAt = Date.now();
   workerStarted = false;
 }
