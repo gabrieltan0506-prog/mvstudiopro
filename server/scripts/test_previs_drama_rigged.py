@@ -284,7 +284,7 @@ def run_with(folder, runner):
             del sys.modules[name]
 
 
-SIT_GATE = "        raise ValueError('带骨角色暂不支持坐下：重定向不做落脚校正，实测脚会穿地')"
+SIT_GATE = "        raise ValueError('带骨角色暂不支持坐下：静止姿态差会让脚穿地（1.70 米约 21 厘米），待重定向补偿后开放（PR-F）；棍人角色可以坐下，带骨角色的看向/转身/行礼不受影响')"
 SIT_GATE_OFF = "        pass  # TEST_ONLY 去掉门禁，只为量出真实穿地深度"
 nogate = patched_scripts('TEST_ONLY-sit-gate-off-scripts',
                          [('render-manhua-previs.py', SIT_GATE, SIT_GATE_OFF)])

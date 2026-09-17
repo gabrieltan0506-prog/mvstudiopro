@@ -360,7 +360,7 @@ export function compilePrevisScriptDraft(input: {
     // 与提交门禁同一条边界：带骨真模坐下会穿地（实测 21—32 厘米），草案就不要排出来
     // 让用户到提交时才被拒。判据在 manhuaPrevisSpecSchema，这里只是提前退回未映射。
     if (kind === "sit" && actor.riggedModel) {
-      reject("带骨角色暂不支持坐下：重定向不做落脚校正，实测脚会穿地");
+      reject("带骨角色暂不支持坐下：静止姿态差会让脚穿地（1.70 米约 21 厘米），待重定向补偿后开放（PR-F）；棍人角色可以坐下，带骨角色的看向/转身/行礼不受影响");
       continue;
     }
     const targetText = whole[1] ?? "";

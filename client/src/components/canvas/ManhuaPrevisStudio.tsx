@@ -1086,7 +1086,9 @@ export function ManhuaPrevisStudioView({
                     value={id}
                     disabled={id === "sit" && Boolean(actor.riggedModel) && action.kind !== "sit"}
                   >
-                    {id === "sit" && actor.riggedModel ? label + "（带骨角色暂不支持：脚会穿地）" : label}
+                    {id === "sit" && actor.riggedModel
+                      ? label + "（带骨角色暂不支持：静止姿态差会让脚穿地，待重定向补偿后开放；改用棍人角色可坐）"
+                      : label}
                   </option>
                 ))}
               </select>
