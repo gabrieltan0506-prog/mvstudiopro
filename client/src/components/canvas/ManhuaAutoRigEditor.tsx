@@ -443,6 +443,16 @@ export function ManhuaAutoRigEditorView({
           taskRef.current?.params.requestId !== running.params.requestId
         ) {
           consume(running, epoch, running.params.requestId);
+        } else if (!running && activity.current === epoch && !pendingRef.current && !taskRef.current) {
+          // 0917 线上实测：重开编辑器只剩空表单，要去历史里手点「模型检查 · 可查看」才带出关节点。
+          // 没有在跑的任务时，自动载入同一模型最近一次成功检查（仍需人工勾确认，不自动绑定）。
+          const latestInspect = result.items.find(
+            item =>
+              item.status === "succeeded" &&
+              item.output?.stage === "inspect" &&
+              item.params.sourceJobId === latest.current.sourceJobId
+          );
+          if (latestInspect) consume(latestInspect, epoch, latestInspect.params.requestId);
         }
       } catch (e) {
         if (!cancelled && activity.current === epoch)
