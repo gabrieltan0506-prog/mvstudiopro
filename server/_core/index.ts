@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { resolveJobWorkerRole } from "../jobs/workerRole.js";
 // 必须在任何图像处理模块之前载入：全局限制 sharp/libvips 内存（0911 OOM 事故）
 import "./sharpLimits.js";
 import { registerGcsTransfer } from "../routers/gcsTransfer";
@@ -962,6 +963,15 @@ async function startServer() {
     // 漫剧学习逐集落盘；部署/崩溃会留下 running 行。先恢复为 queued 再启动 worker，
     // 让任务跳过已完成集并继续总分析，避免页面永久卡在“正在合成”。
     const recoverManhuaThenStartWorkers = async (attempt = 1): Promise<void> => {
+      // 0917：rig 进程组只跑 Blender 后期任务，启动期的学习/配乐恢复交给 app 做，避免两台机同时 requeue
+      if (resolveJobWorkerRole() === "rig") {
+        // 不起 stale reaper：reaper 判 manhua_assemble_final 活性要读 /data 上的 paidJobLedger，
+        // rig 没挂卷会读到空账本，把 app 上仍在心跳的合成任务误判失活且退不了款；app 的 reaper
+        // 只看 updatedAt，足以清理 rig 崩掉留下的 post_prod running 行。
+        console.warn("[boot] JOB_WORKER_ROLE=rig：跳过学习/配乐启动恢复与 stale reaper，只起 Blender 后期 worker");
+        startJobWorker();
+        return;
+      }
       try {
         const { requeued, cancelled, completed, exhausted } =
           await recoverInterruptedManhuaTemplateLearnJobsOnStartup();
@@ -1006,6 +1016,12 @@ async function startServer() {
       }
     };
     void recoverManhuaThenStartWorkers();
+    // 0917：以下启动恢复/常驻回收器全部依赖 /data 卷上的任务记录与付费账本；rig 没挂卷，
+    // 跑起来只会对着空目录空转、并打出「账本降级到 tmpdir」的误导告警，一律只在 app 跑。
+    if (resolveJobWorkerRole() === "rig") {
+      console.warn("[boot] JOB_WORKER_ROLE=rig：跳过 /data 依赖的启动恢复与账本回收器");
+      return;
+    }
     // 启动时扫描并恢复孤儿 deepResearch 任务（机器重启/部署可能中断异步任务）
     import("../services/deepResearchService").then(({ recoverOrphanedJobs }) => {
       recoverOrphanedJobs().catch((e) => console.warn("[deepResearch] recover failed:", e));

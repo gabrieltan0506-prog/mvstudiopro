@@ -102,6 +102,7 @@ import {
 } from "../services/manhuaScoringRoom.js";
 import { isTtapiSunoSubmissionUnknown } from "../services/ttapiSunoMusic.js";
 import { processPdfExportJob } from "./pdfExportJob";
+import { resolveJobWorkerRole, resolvePostProdClaimFilter } from "./workerRole.js";
 import {
   invokePlatformAnalysisChat,
   PLATFORM_ANALYSIS_FALLBACK_MODEL,
@@ -4227,7 +4228,7 @@ export async function processPdfJobsOnce() {
 }
 
 async function processOnePostProdJob(): Promise<boolean> {
-  const job = await claimNextPostProdJob();
+  const job = await claimNextPostProdJob(resolvePostProdClaimFilter());
   if (!job) return false;
 
   // 心跳刷新 updatedAt:stale reaper 只清"最后活动过旧"的 running 行,
@@ -4297,6 +4298,16 @@ export async function processJobsOnce() {
 export function startJobWorker() {
   if (workerStarted) return;
   workerStarted = true;
+
+  // 0917：rig 进程组只消化 Blender 后期任务，其他队列一律不碰（避免与 app 双领）
+  if (resolveJobWorkerRole() === "rig") {
+    console.warn("[runner] JOB_WORKER_ROLE=rig：只领 Blender 后期任务（manhua_auto_rig / manhua_previs）");
+    void processPostProdJobsOnce();
+    postProdTimer = setInterval(() => {
+      void processPostProdJobsOnce();
+    }, 1_000);
+    return;
+  }
 
   void processJobsOnce();
   void processPdfJobsOnce();
