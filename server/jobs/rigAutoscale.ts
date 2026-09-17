@@ -146,6 +146,18 @@ export async function maybeStopIdleRig(
   }
   const idleMs = deps.now() - state.lastBusyAt;
   if (idleMs < deps.idleStopMs) return { action: "waiting", idleMs };
+  // 停机前再确认一次「我这台确实是 rig」。停错机器＝把 app 机停掉＝站点下线，
+  // 这条保险的代价只是停机时多一次 list 调用。
+  try {
+    const rigMachines = await deps.listRig();
+    if (!rigMachines.some((m) => m.id === deps.selfMachineId)) {
+      state.lastBusyAt = deps.now();
+      return { action: "error", message: `本机 ${deps.selfMachineId} 不在 rig 进程组里，拒绝停机` };
+    }
+  } catch (error) {
+    state.lastBusyAt = deps.now();
+    return { action: "error", message: `停机前核对进程组失败：${String(error)}` };
+  }
   // 先关本进程的领单闸，再发停机命令：停机要跨一次网络往返，这期间 worker 每秒还在领单，
   // 领到的绑骨任务会被随后的 SIGINT 打断，卡 running 到 reaper 判失败。
   deps.onStopDecided?.();

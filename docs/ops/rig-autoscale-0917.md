@@ -36,3 +36,15 @@ fly secrets set FLY_API_TOKEN=<fly deploy token> -a mvstudiopro
 ## 不做
 - 不改 `fly.toml`：rig 进程组的声明、规格、部署都照旧，这里只管它平时开着还是停着。
 - 起不来 / 停不掉只记日志，绝不改任务状态——任务排队等着，比误判失败安全。
+
+## 合并前探针（不碰生产）
+```
+npx tsx server/scripts/probe_rig_autoscale.ts
+```
+起一台假 Fly Machines API，让真代码（`resolveRigAutoscaleDeps → listRigMachines → start/stop`）跑真 HTTP 往返，13 条断言：
+方法/URL/Bearer 头、只启 rig 不碰 app、已 started 不重发、队列有任务不停机、空闲才停、停机前先关领单闸、
+Fly 502 只报不抛且复位、没 token 一个请求都不发、**本机不在 rig 进程组时拒绝停机**。
+最后一条是反例对照：把进程组保险去掉，探针立刻红并显示它会去停 `app-1`（站点下线）。
+
+它**不能**证明真实 Fly API 接受这些请求——那需要生产 token，只在 Fly env，不下本机。
+真实验收仍按上一节四步，在 secret 设好之后做。

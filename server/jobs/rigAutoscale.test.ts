@@ -171,6 +171,18 @@ describe("rig 空闲停机（rig 机自己）", () => {
     expect(calls).toEqual(["gate_closed", "gate_reopened"]);
   });
 
+  it("本机不在 rig 进程组里就拒绝停机（停错＝把 app 机停掉，站点下线）", async () => {
+    const { deps, stopped, calls, at } = makeDeps({
+      selfMachineId: "app-1",
+      listRig: async () => [{ id: "rig-1", state: "started", processGroup: "rig" }],
+    });
+    const out = await maybeStopIdleRig(deps, { lastBusyAt: at() - DEFAULT_RIG_IDLE_STOP_MS - 1 }, false);
+    expect(out.action).toBe("error");
+    expect(stopped).toEqual([]);
+    // 进程组核对在关闸之前：拒绝停机的那一轮不该把本机的领单闸关掉
+    expect(calls).toEqual([]);
+  });
+
   it("查不到队列时按「忙」处理，宁可多开不误停", async () => {
     const { deps, stopped, at } = makeDeps({
       pendingBlenderJobs: async () => {
