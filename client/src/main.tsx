@@ -113,6 +113,12 @@ const TRPC_LONG_HTTP_LINK_PATHS = new Set([
   /** 云端草稿 payload 偏大，走 Fly，避免 www→Vercel 反代回 HTML 导致 JSON 解析失败 */
   "manhuaCloudDraft.get",
   "manhuaCloudDraft.upsert",
+  /** 0916 阿菁 A-pose 真跑：绑骨 5 秒轮询走 www 被 Vercel 质询回 HTML → 编辑器报 Unexpected token '<' 停住；同 #1483 学习任务口径直连 Fly */
+  "manhuaAutoRig.submit",
+  "manhuaAutoRig.get",
+  "manhuaAutoRig.list",
+  "manhuaAutoRig.adopt",
+  "manhuaAutoRig.restore",
 ]);
 
 function useLongTrpcHttpLink(op: { path: string }) {

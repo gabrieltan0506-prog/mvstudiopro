@@ -457,3 +457,35 @@ it("当前任务结束不能删除其他页面后来保存的请求编号", asyn
     await p.close();
   }
 }, 15000);
+
+it("0917 轮询遇网关 HTML 回包不当失败：只提示、继续查同一编号，下一轮恢复后清提示", async () => {
+  const p = await open(`f=>{f.submit=r=>({jobId:'rig_test',status:'running',params:r,error:null,createdAt:null,updatedAt:null,output:null});let n=0;f.get=id=>{n++;if(n===1)throw new SyntaxError('Unexpected token <, <!DOCTYPE ... is not valid JSON');return f.response(f.submits[0]);};}`);
+  try {
+    await click(p, "检查当前模型");
+    // 第 1 轮（约 5 秒后）拿到 HTML：不能进 [role=alert]，只能是提示，并且明确说继续查同一编号
+    await p.waitForFunction(() => document.body.textContent?.includes("继续查同一编号"), { timeout: 9000 });
+    expect(await p.$("[role=alert]")).toBeNull();
+    // 第 2 轮恢复：同一编号、没有第二次提交、提示清掉
+    await p.waitForFunction(() => (window as any).fixture.gets.length >= 2, { timeout: 9000 });
+    await p.waitForFunction(() => !document.body.textContent?.includes("继续查同一编号"), { timeout: 9000 });
+    const f = await p.evaluate(() => ({ submits: (window as any).fixture.submits.length, gets: (window as any).fixture.gets }));
+    expect(f.submits).toBe(1);
+    expect(new Set(f.gets).size).toBe(1);
+    expect(await p.$("[role=alert]")).toBeNull();
+  } finally {
+    await p.close();
+  }
+}, 30000);
+
+it("0917 反例：轮询拿到服务端明确错误码（需登录）必须进 [role=alert]，不能当瞬时只提示", async () => {
+  const p = await open(`f=>{f.submit=r=>({jobId:'rig_test',status:'running',params:r,error:null,createdAt:null,updatedAt:null,output:null});f.get=()=>{throw Object.assign(new Error('Please login (10001)'),{data:{code:'UNAUTHORIZED',httpStatus:401}});};}`);
+  try {
+    await click(p, "检查当前模型");
+    await p.waitForSelector("[role=alert]", { timeout: 9000 });
+    const alert = await p.$eval("[role=alert]", el => el.textContent || "");
+    expect(alert).toContain("Please login (10001)");
+    expect(await p.evaluate(() => document.body.textContent?.includes("继续查同一编号"))).toBe(false);
+  } finally {
+    await p.close();
+  }
+}, 30000);

@@ -148,6 +148,9 @@ export const autoRigInspectionSchema = z
         depthMeters: z.number().finite().nonnegative(),
         widthMeters: z.number().finite().nonnegative(),
         reasons: z.array(z.string()).max(4),
+        /** 0917：噪声线与「无法从脚判朝向」提示；旧回执没有这两项 */
+        noiseFloorMeters: z.number().finite().nonnegative().optional(),
+        notes: z.array(z.string()).max(4).optional(),
       })
       .strict()
       .optional(),

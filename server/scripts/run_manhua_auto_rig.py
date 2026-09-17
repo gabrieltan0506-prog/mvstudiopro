@@ -452,13 +452,28 @@ def orientation_check(obj):
             torso.append(vertex.co.x)
     feet_forward = (sum(feet) / len(feet) - sum(torso) / len(torso)) if feet and torso else 0.0
     depth, width = high[0] - low[0], high[1] - low[1]
-    reasons = []
-    if feet_forward < 0:
+    return orientation_verdict(feet_forward, depth, width, height)
+
+
+ORIENTATION_NOISE_RATIO = 0.02
+
+
+def orientation_verdict(feet_forward, depth, width, height):
+    """
+    纯判定，便于不开 Blender 单测。0916 阿菁 A-pose 真跑：feetForwardMeters = -0.0104（1 厘米）就被判「背对 +X」，
+    而正面预览明明是正脸——脚与躯干质心几乎同一垂直线时，正负号只是噪声。
+    噪声线按身高 2%（1.7 m → 3.4 cm）：|Δ| 在噪声线内不判朝向，只留一句提示让用户看正面预览。
+    """
+    noise = ORIENTATION_NOISE_RATIO * max(1e-6, height)
+    reasons, notes = [], []
+    if feet_forward < -noise:
         reasons.append("脚部质心在躯干后方，人物可能背对 +X（前向轴选反 180°）")
+    elif abs(feet_forward) <= noise:
+        notes.append("脚部与躯干质心几乎同一垂直线（%.1f 厘米，噪声线 %.1f 厘米内），无法从脚判朝向，请以正面预览为准" % (feet_forward * 100, noise * 100))
     if depth >= width:
         reasons.append("深度不小于宽度，展臂可能落在 X 轴（前向轴选错 90°）")
-    return {"suspect": bool(reasons), "feetForwardMeters": round(feet_forward, 4),
-            "depthMeters": round(depth, 4), "widthMeters": round(width, 4), "reasons": reasons}
+    return {"suspect": bool(reasons), "feetForwardMeters": round(feet_forward, 4), "noiseFloorMeters": round(noise, 4),
+            "depthMeters": round(depth, 4), "widthMeters": round(width, 4), "reasons": reasons, "notes": notes}
 
 
 def suggestions(bounds, pose):
@@ -543,6 +558,8 @@ def run(request_file, source_file, output_dir):
         result["orientationCheck"] = orientation_check(source)
         if result["orientationCheck"]["suspect"]:
             result["limitations"].append("疑似前向轴不符：" + "；".join(result["orientationCheck"]["reasons"]) + "。请核对正面预览，必要时改 forwardAxis 重新检查")
+        # 噪声线内不判朝向，但要把「为什么没判」说给用户听，避免以为自检没跑
+        result["limitations"].extend(result["orientationCheck"].get("notes", []))
         result["joints"] = suggestions(result["bounds"], settings["pose"])
         write_json(out / "report.json", result)
         bpy.ops.object.select_all(action="DESELECT")
