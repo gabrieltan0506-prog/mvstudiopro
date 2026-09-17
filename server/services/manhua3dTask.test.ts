@@ -717,6 +717,11 @@ describe("0917 回执镜像到 GCS（rig 进程组无 /data 卷）", () => {
     setManhua3dTaskDependenciesForTests({
       getBucketName: () => "test-bucket",
       mirrorRecord: async (objectName: string, buffer: Buffer) => { mirror.set(objectName, Buffer.from(buffer)); },
+      mirrorRecordIfAbsent: async (objectName: string, buffer: Buffer) => {
+        if (mirror.has(objectName)) return false;
+        mirror.set(objectName, Buffer.from(buffer));
+        return true;
+      },
       readMirroredRecord: async (objectName: string) => mirror.get(objectName) ?? null,
     });
   });
@@ -731,6 +736,27 @@ describe("0917 回执镜像到 GCS（rig 进程组无 /data 卷）", () => {
     const source = await getCompletedManhua3dSource("m3d_x1", 7, "cust_a");
     expect(source).toMatchObject({ taskId: "m3d_x1", sha256: "a".repeat(64), bytes: 1234 });
     expect(JSON.parse(await fs.readFile(path.join(dir, "m3d_x1.json"), "utf8")).taskId).toBe("m3d_x1");
+  });
+  it("镜像里是未完成的回执：读得到但不落本地缓存（rig 机不推进任务，缓存会永远停在旧状态）", async () => {
+    mirror.set("manhua-3d/task-records/m3d_run.json", Buffer.from(JSON.stringify({ ...record("m3d_run"), status: "running" })));
+    await expect(getCompletedManhua3dSource("m3d_run", 7, "cust_a")).rejects.toThrow("本人已完成角色模型或完整来源回执不存在");
+    await expect(fs.access(path.join(dir, "m3d_run.json"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  it("导入 GLB 的回执（wx 独占创建、一出生就 succeeded）也要进镜像，否则 rig 机永远读不到采用后的模型", async () => {
+    setManhua3dTaskDependenciesForTests({
+      getBucketName: () => "test-bucket",
+      mirrorRecord: async (objectName: string, buffer: Buffer) => { mirror.set(objectName, Buffer.from(buffer)); },
+      inspectUploadedGlb: async () => inspectedGlb(validGlb(Buffer.from("adopted-model"))),
+      rewriteUploadedGlb: async () => ({ gcsUri: "gs://test-bucket/manhua-3d/u7/imported.glb" }),
+      signGlb: ((uri: string) => `https://signed.test/${encodeURIComponent(uri)}`) as never,
+    });
+    const view = await importExistingManhua3dAsset({
+      userId: 7, assetRef: "cust_a", sourceVersion: "v1", sourceImageUrl: "https://example.com/a.png",
+      glbGcsUri: "gs://test-bucket/uploads/u7/auto-rig/r1/model.glb",
+    });
+    const mirrored = mirror.get(`manhua-3d/task-records/${view.taskId}.json`);
+    expect(mirrored, "创建即镜像").toBeTruthy();
+    expect(JSON.parse(mirrored!.toString()).status).toBe("succeeded");
   });
   it("本地与镜像都没有 → 仍报「回执不存在」，不伪造", async () => {
     await expect(getCompletedManhua3dSource("m3d_none", 7, "cust_a")).rejects.toThrow("本人已完成角色模型或完整来源回执不存在");
