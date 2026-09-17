@@ -4,6 +4,7 @@ import {
   createManhuaPrevisStudio,
   manhuaPrevisSpecSchema,
   normalizeFacingDeg,
+  previsActorTravelsDuring,
   type PrevisActionKind,
   type ManhuaPrevisSpec,
   type PrevisInteraction,
@@ -366,10 +367,8 @@ export function compilePrevisScriptDraft(input: {
     }
     if (kind === "walk") {
       // 走位只出摆臂步态，位移来自站位区间；站着不动就不排走位，免得原地摆臂假装在走。
-      const travels = actor.start.some((v, k) => v !== actor.end[k]);
-      const overlapsMove =
-        start < actor.moveEndSec && end > actor.moveStartSec;
-      if (!travels || !overlapsMove) {
+      // 判据与提交门禁共用 previsActorTravelsDuring，不在这里再写一遍。
+      if (!previsActorTravelsDuring(actor, start, end)) {
         reject("该角色本段没有实际位移，走位步态会原地摆臂，请先设好起止站位");
         continue;
       }
@@ -380,9 +379,19 @@ export function compilePrevisScriptDraft(input: {
         reject("看向没有写明目标，不替用户猜注视对象");
         continue;
       }
-      const lookAtId = targetText.startsWith("镜头")
-        ? PREVIS_LOOK_AT_CAMERA
-        : actorFor(others.find(c => new RegExp(mention(c)).test(targetText))!).id;
+      // 0917 二轮审查：这里过去是 `others.find(…)!` 的非空断言 + 子串匹配。
+      // 子串匹配在「菁」与「阿菁」并存时会先命中短的那个（实测这种句子会先被
+      // present.length 拦下，没有真的映错）；但判据不能靠另一道门兜着。
+      // 改成整串匹配，并把非空断言换成显式退回：解不出目标时只该这一镜未映射，
+      // 不能抛异常把整份草案编译炸掉。
+      const targetActor = targetText.startsWith("镜头")
+        ? null
+        : others.find(c => new RegExp("^" + mention(c) + "$").test(targetText));
+      if (!targetText.startsWith("镜头") && !targetActor) {
+        reject("看向的目标对应不到唯一的同场角色");
+        continue;
+      }
+      const lookAtId = targetActor ? actorFor(targetActor).id : PREVIS_LOOK_AT_CAMERA;
       actor.actions.push({ kind, startSec: start, endSec: end, lookAtId });
     } else if (kind === "turn") {
       // 原文只说「转身/回头」，没有角度信息：一律按转向背面 180°，由人工再调。

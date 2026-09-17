@@ -93,20 +93,48 @@ results.append({'case':'look-missing-target','delta':round(missing_delta,4),
                 'note':'目标找不到时按不看处理：渲染不崩，也不硬编一个朝向'})
 assert missing_delta <= 0.01, ('找不到注视目标却摆出了朝向', missing_delta)
 
-# 5) 转身：整具骨架的世界朝向真的转过去了
+# 5) 转身：整具骨架的世界朝向真的转过去了。
+# 0917 二轮审查：原判据让转身一直开到片尾，末帧全靠 smoothstep 饱和才卡进 2° 容差——
+# 缓动曲线一改就假红，等于把「到位没有」测成了「缓动曲线还是不是这条」。改成 1 秒收工：
+# 末帧 t 已越过 endSec，turn_facing 走的是 `t>=endSec → facing=target` 那条路，判据与缓动
+# 完全无关（容差收到 0.05°）。插值不是跳变另用首帧/中点两条严格不等式证明。
+def facing_at(frame, actor_id='阿菁'):
+    rig = bpy.data.objects[actor_id]
+    bpy.context.scene.frame_set(frame)
+    bpy.context.view_layer.update()
+    return math.degrees(rig.matrix_world.to_euler().z)
+
 spec = copy.deepcopy(BASE)
-spec['actors'][0]['actions'] = [{'kind':'turn','startSec':0,'endSec':2,'facingDeg':90}]
+spec['actors'][0]['actions'] = [{'kind':'turn','startSec':0,'endSec':1,'facingDeg':90}]
 build(spec, 'turn')
-rig = bpy.data.objects['阿菁']
-bpy.context.scene.frame_set(48)
-bpy.context.view_layer.update()
-turned = math.degrees(rig.matrix_world.to_euler().z)
-results.append({'case':'turn','endFacingDeg':round(turned,2)})
-assert abs(((turned-90+180)%360)-180) <= 2, ('转身没有到达目标朝向', turned)
-bpy.context.scene.frame_set(1)
-bpy.context.view_layer.update()
-start_facing = math.degrees(rig.matrix_world.to_euler().z)
-assert abs(start_facing) <= 2, ('转身在首帧就跳到目标，不是插值', start_facing)
+turned, start_facing, mid_facing = facing_at(48), facing_at(1), facing_at(13)
+results.append({'case':'turn','endFacingDeg':round(turned,2),'startFacingDeg':round(start_facing,2),
+                'midFacingDeg':round(mid_facing,2),
+                'note':'动作 0→1 秒、片长 2 秒：末帧已过 endSec，判据不依赖缓动饱和'})
+assert abs(((turned-90+180)%360)-180) <= 0.05, ('转身没有到达目标朝向', turned)
+assert abs(start_facing) <= 0.05, ('转身在首帧就跳到目标，不是插值', start_facing)
+assert 5 < mid_facing < 85, ('转身中点不在起止之间，不是连续插值', mid_facing)
+
+# 5b) 零间隔：前一个动作的 endSec 就是后一个的 startSec。两个动作在接缝帧必须都已归零，
+# 否则接缝上会叠出一个谁也没要的姿势。判据是「接缝帧姿势 == 纯 idle 姿势」，硬等式。
+seam = copy.deepcopy(BASE)
+seam['actors'][0]['actions'] = [{'kind':'sit','startSec':0,'endSec':1},
+                                {'kind':'bow','startSec':1,'endSec':2}]
+build(seam, 'zero-gap-seam')
+seam_pose = [sample(b, 25) for b in ('pelvis','head','hand-1')]
+control = copy.deepcopy(BASE)
+control['actors'][0]['actions'] = [{'kind':'idle','startSec':0,'endSec':2}]
+build(control, 'zero-gap-seam-idle-control')
+seam_rest = [sample(b, 25) for b in ('pelvis','head','hand-1')]
+seam_gap = max((a-b).length for a, b in zip(seam_pose, seam_rest))
+results.append({'case':'zero-gap-seam','maxDeltaFromIdle':round(seam_gap,5),
+                'note':'零间隔接缝帧两个动作都必须已归零'})
+assert seam_gap <= 0.002, ('零间隔接缝帧叠出了残留姿势', seam_gap)
+# 反例对照：同一段在动作中点必须明显不是 idle，证明上面的 0 不是因为动作压根没生效
+build(seam, 'zero-gap-seam-midaction')
+mid_gap = max((sample(b, 13)-r).length for b, r in zip(('pelvis','head','hand-1'), seam_rest))
+results.append({'case':'zero-gap-seam-midaction','maxDeltaFromIdle':round(mid_gap,5)})
+assert mid_gap >= 0.05, ('零间隔用例的动作压根没生效，接缝断言等于没测', mid_gap)
 
 # 6) 走位：两臂在步态周期内反相摆动（idle 走同样位移时不摆臂）
 spec = copy.deepcopy(BASE)

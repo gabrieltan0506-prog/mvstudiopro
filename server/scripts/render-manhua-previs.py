@@ -276,6 +276,16 @@ def plan_contacts(actor):
         if moving: anchors[chosen]=goal
     return result,stance
 
+# 0917 二轮审查：出水角色的头高原本是懒算的——只有轮到它自己建骨时才写进 water_head_heights。
+# 但「看向」要读目标角色当帧的世界位置，先建的角色看后建的出水角色（以及任何带 interactions
+# 的场次，那一轮在建骨之前就跑完了）读到的都是 z=0（水面），而它其实还在水下两米——白模会
+# 抬头看天，报告还不说。头高只取决于中性姿态：points() 里脚点已被 inv 去掉根变换，hip_z 与
+# 根部 z 无关，所以这里在任何姿态循环之前一次把所有出水角色的头高算好，顺序不再影响结果。
+for _actor in spec['actors']:
+    if _actor['id'] in water_events and _actor['id'] not in water_head_heights:
+        _pre_contacts,_pre_stance=plan_contacts(_actor)
+        water_head_heights[_actor['id']]=float(points(_actor,1,_pre_contacts[1])['head'][1].z)
+
 events=[]
 interaction_poses={}
 sword_handles=[]
@@ -409,7 +419,7 @@ if any(actor.get('riggedModel') for actor in spec['actors']):
             if obj.type=='MESH': obj.hide_render=True
         model['actorId']=actor['id']
         model['report'].update({'actorId':actor['id'],'sourceJobId':row['sourceJobId'],
-            'boundaryZh':'真实带骨网格旋转与路径重定向，保留模型原始静止姿态，不自动生成自然站姿；源白模脚底误差不代表角色网格接地，尚未验证双人接触；'+appearance['boundaryZh']})
+            'boundaryZh':'真实带骨网格旋转与路径重定向，保留模型原始静止姿态，不自动生成自然站姿；源白模脚底误差不代表角色网格接地，尚未验证双人接触；坐下与走位只烘旋转、骨盆位移按身高比例缩放：身材与棍人不同时落座高度与步幅会偏，需人工复核；'+appearance['boundaryZh']})
         models.append(model)
     # 只有真实模型进入基础色预演；无贴图的白模/地面继续使用原材质色。
     scene.display.shading.color_type='TEXTURE'

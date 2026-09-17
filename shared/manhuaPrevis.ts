@@ -122,6 +122,41 @@ export function previsActionForKind<T extends { kind: string; facingDeg?: number
   return next;
 }
 
+/**
+ * 「这个角色在 [startSec, endSec) 里是不是真的在走」——走位判据的唯一实现。
+ * 0917 二轮审查：这条判据原先写了两遍（schema 里一遍、草案编译里一遍），而且两遍都只认
+ * 起止站位；有 motionRoute 的角色在 schema 里被整条跳过，于是一条原地不动的轨迹照样能挂上
+ * walk，白模还是原地摆臂——PR 想堵的洞从另一扇门又开了。收口成一个函数，两处都引用。
+ */
+export function previsActorTravelsDuring(
+  actor: {
+    start: readonly number[];
+    end: readonly number[];
+    moveStartSec: number;
+    moveEndSec: number;
+    motionRoute?: readonly { timeSec: number; position: readonly number[] }[] | null;
+  },
+  startSec: number,
+  endSec: number,
+): boolean {
+  const route = actor.motionRoute;
+  if (route?.length)
+    // 轨迹角色：动作窗口里至少要跨过一段位置真的变了的节点区间
+    return route.some(
+      (node, k) =>
+        k > 0 &&
+        node.position.some((v, m) => v !== route[k - 1].position[m]) &&
+        startSec < node.timeSec &&
+        endSec > route[k - 1].timeSec,
+    );
+  // 站位角色：起止站位不同，且动作窗口与位移区间有交集
+  return (
+    actor.start.some((v, k) => v !== actor.end[k]) &&
+    startSec < actor.moveEndSec &&
+    endSec > actor.moveStartSec
+  );
+}
+
 export const previsMotionRouteNodeSchema = z
   .object({
     timeSec: z.number().finite().min(0).max(30),
@@ -445,17 +480,16 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
           });
         // 0917 审查：走位只负责「摆臂步态」，位移来自站位/轨迹。角色原地不动、
         // 或动作窗口压根不在位移区间内时，白模会原地摆臂假装在走——那是白模撒谎。
-        if (action.kind === "walk" && !actor.motionRoute?.length) {
-          const travels = actor.start.some((v, k) => v !== actor.end[k]);
-          const overlapsMove =
-            action.startSec < actor.moveEndSec && action.endSec > actor.moveStartSec;
-          if (!travels || !overlapsMove)
-            ctx.addIssue({
-              code: "custom",
-              message: "走位动作必须落在角色实际位移区间内；原地不动请改用其它动作或先设好起止站位",
-              path: ["actors", i, "actions", j],
-            });
-        }
+        if (
+          action.kind === "walk" &&
+          !previsActorTravelsDuring(actor, action.startSec, action.endSec)
+        )
+          ctx.addIssue({
+            code: "custom",
+            message:
+              "走位动作必须落在角色实际位移区间内；原地不动请改用其它动作或先设好起止站位",
+            path: ["actors", i, "actions", j],
+          });
         // 转身与运动轨迹是两套朝向真源，同时给会互相覆盖，先拒绝。
         if (action.kind === "turn" && actor.motionRoute?.length)
           ctx.addIssue({

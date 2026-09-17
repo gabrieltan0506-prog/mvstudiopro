@@ -394,3 +394,69 @@ describe("文戏动词草案（0917 PR-E）", () => {
     }
   });
 });
+
+describe("文戏草案 · 0917 二轮审查补漏", () => {
+  const three: PrevisSourceCharacter[] = [
+    { id: "qing", label: "阿菁", tag: "@人物1" },
+    { id: "guard", label: "家丁", tag: "@人物2" },
+    { id: "boy", label: "小二", tag: "@人物3" },
+  ];
+  const actionsOf = (r: ReturnType<typeof compile>) =>
+    r.spec?.actors.find(a => a.actions.length)?.actions ?? [];
+
+  it("三人及以上同场：主语取句首那个，目标落到真正被看的人", () => {
+    const named = compile("阿菁看向家丁。", { characters: three });
+    expect(named.mappedShotIndices).toEqual([7]);
+    // 目标必须是「家丁」对应的那个 actor，不是角色表里的第二项碰巧对上
+    const guardActor = named.spec?.actors.find(a => a.assetRef === "guard");
+    expect(actionsOf(named)).toEqual([
+      { kind: "look", startSec: 0, endSec: 4, lookAtId: guardActor?.id },
+    ]);
+    // 换成第三个人也要跟着换目标，而不是恒指第二项
+    const other = compile("阿菁看向小二。", { characters: three });
+    const boyActor = other.spec?.actors.find(a => a.assetRef === "boy");
+    expect(actionsOf(other)[0].lookAtId).toBe(boyActor?.id);
+    // 同一份草案里不该顺手把没被提到的家丁也建出来当目标
+    expect(other.spec?.actors.map(a => a.assetRef)).toEqual(["qing", "boy"]);
+    expect(guardActor?.assetRef).toBe("guard");
+  });
+
+  it("标签写法（@人物N）在三人同场也判对主语与目标", () => {
+    const tagged = compile("@人物3看向@人物1。", { characters: three });
+    expect(tagged.mappedShotIndices).toEqual([7]);
+    const subject = tagged.spec?.actors.find(a => a.actions.length);
+    expect(subject?.assetRef).toBe("boy");
+    expect(subject?.actions[0].lookAtId).toBe(
+      tagged.spec?.actors.find(a => a.assetRef === "qing")?.id
+    );
+  });
+
+  it("目标名互为子串（菁 / 阿菁）时宁可退回未映射，绝不指错人", () => {
+    const overlap: PrevisSourceCharacter[] = [
+      { id: "jing", label: "菁" },
+      { id: "aqing", label: "阿菁" },
+      { id: "ming", label: "小明" },
+    ];
+    // 「阿菁」一出现，「菁」也被算作在场 → 三个人在场，不唯一，退回
+    const ambiguous = compile("小明看向阿菁。", { characters: overlap });
+    expect(ambiguous.mappedShotIndices).toEqual([]);
+    // 正例对照：只提到短名时仍然映射，且指的是短名那个，不是长名那个
+    const short = compile("小明看向菁。", { characters: overlap });
+    expect(short.mappedShotIndices).toEqual([7]);
+    expect(actionsOf(short)[0].lookAtId).toBe(
+      short.spec?.actors.find(a => a.assetRef === "jing")?.id
+    );
+    expect(short.spec?.actors.find(a => a.assetRef === "aqing")).toBeUndefined();
+  });
+
+  it("草案里的转身朝向已归一到 ±180，不会产出提交必被拒的角度", () => {
+    const spec = createManhuaPrevisStudio(4).spec;
+    spec.actors[0].assetRef = "qing";
+    spec.actors[0].facingDeg = 90;
+    const turned = compile("阿菁转身。", { spec });
+    expect(actionsOf(turned)).toEqual([
+      { kind: "turn", startSec: 0, endSec: 4, facingDeg: -90 },
+    ]);
+    expect(manhuaPrevisSpecSchema.safeParse(turned.spec).success).toBe(true);
+  });
+});

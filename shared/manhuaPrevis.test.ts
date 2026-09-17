@@ -8,6 +8,7 @@ import {
   PREVIS_LOOK_AT_CAMERA,
   PREVIS_RENDER_UNIT_BUDGET,
   previsActionForKind,
+  normalizeFacingDeg,
   previsCapacityIssueZh,
   previsMaxDurationSec,
   previsRenderCostUnits,
@@ -515,5 +516,137 @@ describe("文戏动作库（0917 PR-E）", () => {
     );
     // 朝向归一到 ±180，不出现 270 这种提交会被拒的值
     expect(previsActionForKind(idle, "turn", { actorFacingDeg: 90, otherActorIds: [] }).facingDeg).toBe(-90);
+  });
+});
+
+describe("文戏动作库 · 0917 二轮审查补漏", () => {
+  const spec2s = (actions: Record<string, unknown>[]) => ({
+    version: 1 as const,
+    durationSec: 2,
+    aspect: "16:9" as const,
+    actors: [
+      {
+        id: "a",
+        nameZh: "阿菁",
+        shape: "human" as const,
+        start: [0, 0] as [number, number],
+        end: [0, 0] as [number, number],
+        moveStartSec: 0,
+        moveEndSec: 2,
+        facingDeg: 0,
+        actions,
+      },
+      {
+        id: "b",
+        nameZh: "娘",
+        shape: "human" as const,
+        start: [1, 1] as [number, number],
+        end: [1, 1] as [number, number],
+        moveStartSec: 0,
+        moveEndSec: 2,
+        facingDeg: 180,
+        actions: [] as Record<string, unknown>[],
+      },
+    ],
+    cameras: [{ startSec: 0, endSec: 2, position: [2, -5, 2.3], target: [0, 0, 1], lens: 40 }],
+  });
+
+  it("朝向归一是唯一入口：面板填 270 要能落成 -90，而不是交上去被 zod 拒", () => {
+    // 面板的「目标朝向」输入框不限范围（numeric 只做 Number.isFinite），
+    // 归一必须在写回 spec 之前发生，否则用户看到的是一条 zod 范围错。
+    expect(normalizeFacingDeg(270)).toBe(-90);
+    expect(normalizeFacingDeg(-270)).toBe(90);
+    expect(normalizeFacingDeg(360)).toBe(0);
+    expect(normalizeFacingDeg(540)).toBe(180);
+    expect(normalizeFacingDeg(-180)).toBe(180);
+    expect(normalizeFacingDeg(180)).toBe(180);
+    expect(normalizeFacingDeg(0)).toBe(0);
+    for (const raw of [270, -270, 540, -540, 1080, -1e3])
+      expect(
+        manhuaPrevisSpecSchema.safeParse(
+          spec2s([{ kind: "turn", startSec: 0, endSec: 2, facingDeg: normalizeFacingDeg(raw) }])
+        ).success
+      ).toBe(true);
+  });
+
+  it("时间轴边界：2 秒极短片、紧贴片头片尾、零间隔都可提交", () => {
+    expect(manhuaPrevisSpecSchema.safeParse(spec2s([{ kind: "sit", startSec: 0, endSec: 2 }])).success).toBe(true);
+    expect(
+      manhuaPrevisSpecSchema.safeParse(
+        spec2s([
+          { kind: "sit", startSec: 0, endSec: 1 },
+          { kind: "bow", startSec: 1, endSec: 2 },
+        ])
+      ).success
+    ).toBe(true);
+    // 反例：重叠一帧就必须红，否则「零间隔可以」这条等于没判据
+    expect(
+      manhuaPrevisSpecSchema.safeParse(
+        spec2s([
+          { kind: "sit", startSec: 0, endSec: 1.2 },
+          { kind: "bow", startSec: 1, endSec: 2 },
+        ])
+      ).success
+    ).toBe(false);
+    // 反例：超出片长、短于半秒也必须红
+    expect(manhuaPrevisSpecSchema.safeParse(spec2s([{ kind: "bow", startSec: 1, endSec: 2.5 }])).success).toBe(false);
+    expect(manhuaPrevisSpecSchema.safeParse(spec2s([{ kind: "bow", startSec: 1, endSec: 1.3 }])).success).toBe(false);
+  });
+
+  it("向后兼容：只有打戏四类、没有新字段的旧存稿仍能提交与往返", () => {
+    const legacy = spec2s([
+      { kind: "idle", startSec: 0, endSec: 1 },
+      { kind: "strike", startSec: 1, endSec: 2 },
+    ]);
+    const parsed = manhuaPrevisSpecSchema.safeParse(legacy);
+    expect(parsed.success).toBe(true);
+    // 新字段是 optional，解析后不许被补上默认值——否则旧存稿的 key 会漂移
+    expect(parsed.success && parsed.data.actors[0].actions.every(a => !("facingDeg" in a) && !("lookAtId" in a))).toBe(
+      true
+    );
+    expect(parsed.success && JSON.stringify(parsed.data)).toBe(JSON.stringify(legacy));
+    // 旧稿用 motionRoute 走位、没有 walk 动作：新增的 walk 位移校验不得误伤
+    const routed = spec2s([{ kind: "idle", startSec: 0, endSec: 2 }]);
+    (routed.actors[0] as Record<string, unknown>).end = [1, 0];
+    (routed.actors[0] as Record<string, unknown>).motionRoute = [
+      { timeSec: 0, position: [0, 0], facingDeg: 0 },
+      { timeSec: (2 * 24 - 1) / 24, position: [1, 0], facingDeg: 0 },
+    ];
+    expect(manhuaPrevisSpecSchema.safeParse(routed).success).toBe(true);
+  });
+
+  it("走位判据收口：轨迹角色也要真的在走，不能从 motionRoute 这扇门绕过去", () => {
+    // 一条原地不动的轨迹 + walk：过去 schema 对轨迹角色整条跳过，白模照样原地摆臂
+    const stillRoute = [
+      { timeSec: 0, position: [0, 0], facingDeg: 0 },
+      { timeSec: 1, position: [0, 0], facingDeg: 0 },
+      { timeSec: (2 * 24 - 1) / 24, position: [0, 0], facingDeg: 0 },
+    ];
+    const still = spec2s([{ kind: "walk", startSec: 0, endSec: 2 }]);
+    (still.actors[0] as Record<string, unknown>).motionRoute = stillRoute;
+    expect(manhuaPrevisSpecSchema.safeParse(still).success).toBe(false);
+    // 正例对照：同一条原地轨迹挂 idle 必须绿，证明上面红的是 walk 判据本身，
+    // 不是这条轨迹碰巧违反了别的门禁（第一版这条测试就是这样假红的）
+    const stillIdle = spec2s([{ kind: "idle", startSec: 0, endSec: 2 }]);
+    (stillIdle.actors[0] as Record<string, unknown>).motionRoute = stillRoute;
+    expect(manhuaPrevisSpecSchema.safeParse(stillIdle).success).toBe(true);
+    // 正例对照：同一条轨迹只要真的挪了位置就放行，证明红的是「没在走」而不是「有轨迹」
+    const moving = spec2s([{ kind: "walk", startSec: 0, endSec: 2 }]);
+    (moving.actors[0] as Record<string, unknown>).end = [1, 0];
+    (moving.actors[0] as Record<string, unknown>).motionRoute = [
+      { timeSec: 0, position: [0, 0], facingDeg: 0 },
+      { timeSec: 1, position: [0.5, 0], facingDeg: 0 },
+      { timeSec: (2 * 24 - 1) / 24, position: [1, 0], facingDeg: 0 },
+    ];
+    expect(manhuaPrevisSpecSchema.safeParse(moving).success).toBe(true);
+    // 走了，但走的时段与动作窗口不重叠：也要红
+    const offWindow = spec2s([{ kind: "walk", startSec: 0, endSec: 1 }]);
+    (offWindow.actors[0] as Record<string, unknown>).end = [1, 0];
+    (offWindow.actors[0] as Record<string, unknown>).motionRoute = [
+      { timeSec: 0, position: [0, 0], facingDeg: 0 },
+      { timeSec: 1, position: [0, 0], facingDeg: 0 },
+      { timeSec: (2 * 24 - 1) / 24, position: [1, 0], facingDeg: 0 },
+    ];
+    expect(manhuaPrevisSpecSchema.safeParse(offWindow).success).toBe(false);
   });
 });

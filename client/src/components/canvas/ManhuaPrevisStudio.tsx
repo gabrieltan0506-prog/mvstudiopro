@@ -14,6 +14,7 @@ import {
   manhuaPrevisSpecSchema,
   PREVIS_ACTION_LABELS,
   PREVIS_LOOK_AT_CAMERA,
+  normalizeFacingDeg,
   previsActionForKind,
   previsSpecKey,
   type ManhuaPrevisRequest,
@@ -1099,7 +1100,10 @@ export function ManhuaPrevisStudioView({
                 ? numeric("目标朝向", action.facingDeg ?? actor.facingDeg, n =>
                     actorEdit(index, {
                       actions: actor.actions.map((a, k) =>
-                        k === j ? { ...a, facingDeg: n } : a
+                        // 0917 二轮审查：这里过去直接写 n。输入框不限范围，填 270 就越过
+                        // schema 的 -180..180，用户看到的是一条 zod 范围错而不是「转身」的问题。
+                        // 归一入口只有 normalizeFacingDeg 一个，面板也必须走它。
+                        k === j ? { ...a, facingDeg: normalizeFacingDeg(n) } : a
                       ),
                     })
                   )
