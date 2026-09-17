@@ -139,3 +139,15 @@ assert (pelvis_head - Vector(joints["pelvis"])).length < 2e-3, (list(pelvis_head
 for i in range(5):
     assert (out / "bind" / ("preview-%d.png" % i)).stat().st_size > 200
 print("TEST_OK", json.dumps({"dense": dense, "proxy": wt["proxyVertices"], "mid": wt["midVertices"], "filled": wt["filledVertices"], "bends": {k: round(v, 3) for k, v in wt["originalBendMaxDeltaMeters"].items()}, "midBytes": len(mid), "fullBytes": len(full)}))
+
+# PR-A：必须检查导出后的代理，不能拿减面前网格数冒充白模预算。
+import struct
+proxy_bytes = (out / "bind" / "model-proxy.glb").read_bytes()
+proxy_doc = json.loads(proxy_bytes[20:20 + struct.unpack_from("<I", proxy_bytes, 12)[0]])
+proxy_exported = sum(proxy_doc["accessors"][primitive["attributes"]["POSITION"]]["count"]
+                     for node in proxy_doc["nodes"] if "mesh" in node
+                     for primitive in proxy_doc["meshes"][node["mesh"]]["primitives"])
+assert 100 <= proxy_exported <= 50000, ("代理导出拆点超预算", proxy_exported)
+assert proxy_exported * 240 <= 12000000, ("10秒代理超预算", proxy_exported)
+assert hashlib.sha256(proxy_bytes).hexdigest() == wt["proxySha256"]
+print("TEST_PROXY_10S_BUDGET_OK", proxy_exported, proxy_exported * 240)

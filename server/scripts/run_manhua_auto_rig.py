@@ -597,7 +597,7 @@ def run(request_file, source_file, output_dir):
     # #1488 首次部署构建期在此处把契约摘要传了进去 → 「模型已变化」→ 构建失败。
     receipt = core.rig_confirmed_mesh(source, points, {
         "sourceDigest": core.source_digest(source), "pose": settings["pose"], "singleHuman": request["singleHuman"],
-        "landmarksManuallyConfirmed": request["landmarksManuallyConfirmed"]}, out / "model-proxy.glb")
+        "landmarksManuallyConfirmed": request["landmarksManuallyConfirmed"]}, out / "model-proxy.glb", compact_proxy=True)
     proxy_sha = receipt["outputSha256"]
     # 回执对外的 sourceDigest 必须是契约摘要：TS validateAutoRigBindReport 拿 request.sourceDigest（=检查回执的契约摘要）硬比；
     # core 写进回执的是几何摘要，不改写线上绑定仍会被拒「绑骨回执」。几何自证另存一键，不丢证据。
