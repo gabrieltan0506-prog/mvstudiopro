@@ -44,6 +44,38 @@ const terminal = (task: AutoRigView) =>
   ["succeeded", "failed", "canceled"].includes(task.status);
 
 /** 与后台正交相机使用完全相同的中心和比例，拖动不依赖图片分辨率。 */
+
+/** 网关质询（HTML 代替 JSON）、断网、上游 502/503/504：任务本身没坏，只是这一轮没问到。 */
+const TRANSIENT_TRPC_CODES = new Set(["INTERNAL_SERVER_ERROR", "TIMEOUT", "TOO_MANY_REQUESTS"]);
+const TRANSIENT_HTTP_STATUS = new Set([502, 503, 504]);
+const HTML_INSTEAD_OF_JSON = /Unexpected token|is not valid JSON|SyntaxError|JSON\.parse|质询|challenge/i;
+const NETWORK_DOWN = /Failed to fetch|NetworkError|Load failed|ECONN(?:REFUSED|RESET)|ERR_NETWORK/i;
+const TIMED_OUT = /TimeoutError|timed out|AbortError/i;
+function trpcErrorData(e: unknown): { code: string; httpStatus: number } {
+  const data = (e as { data?: { code?: unknown; httpStatus?: unknown } } | null)?.data;
+  return {
+    code: typeof data?.code === "string" ? data.code : "",
+    httpStatus: typeof data?.httpStatus === "number" ? data.httpStatus : 0,
+  };
+}
+export function isTransientPollError(e: unknown): boolean {
+  const { code, httpStatus } = trpcErrorData(e);
+  // 服务端明确回了 tRPC 错误码（需登录 / 无权限 / 参数错 / 不存在 …）：真实错误，必须进 error 面板，不按文案猜
+  if (code && !TRANSIENT_TRPC_CODES.has(code)) return false;
+  if (TRANSIENT_HTTP_STATUS.has(httpStatus)) return true;
+  const message = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+  return HTML_INSTEAD_OF_JSON.test(message) || NETWORK_DOWN.test(message) || TIMED_OUT.test(message);
+}
+export function transientPollReasonZh(e: unknown): string {
+  const { httpStatus } = trpcErrorData(e);
+  const message = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+  if (HTML_INSTEAD_OF_JSON.test(message)) return "网关返回了网页而不是数据";
+  if (NETWORK_DOWN.test(message)) return "网络断开";
+  if (TRANSIENT_HTTP_STATUS.has(httpStatus)) return `服务端暂时不可用（${httpStatus}）`;
+  if (TIMED_OUT.test(message)) return "请求超时";
+  return "服务端暂时不可用";
+}
+
 export function rigProjection(
   inspection: AutoRigInspection,
   point: [number, number, number],
@@ -423,6 +455,9 @@ export function ManhuaAutoRigEditorView({
       cancelled = true;
     };
   }, [key, assetRef]);
+  /** 连续瞬时失败次数：网关质询 / 断网 / 5xx 不算任务失败，下一轮继续查同一编号。 */
+  const pollFailures = useRef(0);
+  const POLL_FAILURES_BEFORE_ERROR = 12;
   async function query() {
     const request = pendingRef.current;
     if (!request || polling.current) return;
@@ -430,6 +465,12 @@ export function ManhuaAutoRigEditorView({
     polling.current = true;
     try {
       const value = await latest.current.services.get(request.requestId);
+      if (pollFailures.current > 0 && mounted.current && activity.current === epoch) {
+        setNotice("");
+        // 已升级成错误面板的「查询暂时不通」，这一轮问到了就撤掉；consume 若带 value.error 会再写回真实错误
+        if (pollFailures.current >= POLL_FAILURES_BEFORE_ERROR) setError("");
+      }
+      pollFailures.current = 0;
       if (value) consume(value, epoch, request.requestId);
       else if (
         mounted.current &&
@@ -442,8 +483,18 @@ export function ManhuaAutoRigEditorView({
         mounted.current &&
         activity.current === epoch &&
         pendingRef.current?.requestId === request.requestId
-      )
-        setError(e instanceof Error ? e.message : "查询暂不可用，未重新提交");
+      ) {
+        // 0916 真跑：密集轮询期间 Vercel 质询回 HTML，旧代码把 Unexpected token '<' 当失败停住，
+        // 其实任务仍在服务端跑。瞬时错误只提示、继续查同一编号；连续 12 次（约 1 分钟）才升级成错误，仍不停查。
+        if (isTransientPollError(e)) {
+          pollFailures.current += 1;
+          const zh = `查询暂时不通（第 ${pollFailures.current} 次：${transientPollReasonZh(e)}），5 秒后继续查同一编号；任务仍在服务端运行，未重复提交`;
+          if (pollFailures.current >= POLL_FAILURES_BEFORE_ERROR) setError(zh);
+          else setNotice(zh);
+        } else {
+          setError(e instanceof Error ? e.message : "查询暂不可用，未重新提交");
+        }
+      }
     } finally {
       polling.current = false;
     }
