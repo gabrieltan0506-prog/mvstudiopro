@@ -13,8 +13,6 @@ import {
   formatPrevisMotionGuide,
   manhuaPrevisSpecSchema,
   PREVIS_ACTION_LABELS,
-  PREVIS_LOOK_AT_CAMERA,
-  previsActionForKind,
   previsSpecKey,
   type ManhuaPrevisRequest,
   type ManhuaPrevisSpec,
@@ -745,25 +743,12 @@ export function ManhuaPrevisStudioView({
                 Boolean(pendingId) ||
                 studio.spec.actors.length === 1
               }
-              onClick={() => {
-                // 0917 审查：被删角色可能正被别人「看向」。留着悬空 lookAtId，面板下拉看着正常、
-                // 提交却被 schema 拒（看向目标须是同场的其他角色或镜头），用户找不到错在哪。
-                // 目标没了就不替他改看向谁——直接把这条看向动作去掉，面板上看得见。
-                const gone = studio.spec.actors[index].id;
+              onClick={() =>
                 edit({
                   ...studio.spec,
-                  actors: studio.spec.actors
-                    .filter((_, i) => i !== index)
-                    .map(other =>
-                      other.actions.some(a => a.lookAtId === gone)
-                        ? {
-                            ...other,
-                            actions: other.actions.filter(a => a.lookAtId !== gone),
-                          }
-                        : other
-                    ),
-                });
-              }}
+                  actors: studio.spec.actors.filter((_, i) => i !== index),
+                })
+              }
             >
               移除角色
             </button>
@@ -1064,12 +1049,7 @@ export function ManhuaPrevisStudioView({
                   actorEdit(index, {
                     actions: actor.actions.map((a, k) =>
                       k === j
-                        ? previsActionForKind(a, e.target.value as typeof action.kind, {
-                            actorFacingDeg: actor.facingDeg,
-                            otherActorIds: studio.spec.actors
-                              .filter(other => other.id !== actor.id)
-                              .map(other => other.id),
-                          })
+                        ? { ...a, kind: e.target.value as typeof action.kind }
                         : a
                     ),
                   })
@@ -1095,39 +1075,6 @@ export function ManhuaPrevisStudioView({
                   ),
                 })
               )}
-              {action.kind === "turn"
-                ? numeric("目标朝向", action.facingDeg ?? actor.facingDeg, n =>
-                    actorEdit(index, {
-                      actions: actor.actions.map((a, k) =>
-                        k === j ? { ...a, facingDeg: n } : a
-                      ),
-                    })
-                  )
-                : null}
-              {action.kind === "look" ? (
-                <select
-                  className={field}
-                  aria-label={`角色${index + 1}动作${j + 1}看向谁`}
-                  value={action.lookAtId ?? PREVIS_LOOK_AT_CAMERA}
-                  disabled={disabled || Boolean(pendingId)}
-                  onChange={e =>
-                    actorEdit(index, {
-                      actions: actor.actions.map((a, k) =>
-                        k === j ? { ...a, lookAtId: e.target.value } : a
-                      ),
-                    })
-                  }
-                >
-                  {studio.spec.actors
-                    .filter(other => other.id !== actor.id)
-                    .map(other => (
-                      <option key={other.id} value={other.id}>
-                        看向{other.nameZh}
-                      </option>
-                    ))}
-                  <option value={PREVIS_LOOK_AT_CAMERA}>看向镜头</option>
-                </select>
-              ) : null}
               <button
                 className={button}
                 disabled={disabled || Boolean(pendingId)}
