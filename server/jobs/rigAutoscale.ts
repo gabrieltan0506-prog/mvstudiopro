@@ -110,16 +110,31 @@ function confirmRigUnavailable(deps: RigAutoscaleDeps, state: RigStartState): { 
 }
 
 /**
- * 全量列表里缺进程组元数据的机器台数。列举失败当 0（沿用外层「列举失败不打回」的处理，
- * 但这里更保守：查不到就按旧行为继续走确认窗口，不会因为这条附加查询挂掉而放过真实故障）。
+ * 打回前的最后一道复查：全量列表里缺 fly_process_group 元数据的机器台数。
+ *
+ * 0917 终审 1495-R1-02：这里原来把「查询失败」当 0 台，于是附加查询一抖动就丢掉这道保险、
+ * 照样打回——与外层「列举失败不打回」自相矛盾，正是这道保险要防的误杀。
+ * 现在一律**抛**，交给外层 catch 复位确认窗口：判不准就不打回。
+ * 同理，两次查询之间 rig 可能刚起来，复查见到 rig 就抛，下一轮重新判。
  */
-async function countUnlabeledMachines(deps: RigAutoscaleDeps): Promise<number> {
-  if (!deps.listAllMachines) return 0;
-  try {
-    return (await deps.listAllMachines()).filter((m) => !m.processGroup).length;
-  } catch {
-    return 0;
-  }
+async function assertNoRigBeforeFailing(deps: RigAutoscaleDeps): Promise<number> {
+  if (!deps.listAllMachines) throw new Error("缺少全量机器查询能力，不能判定 rig 不存在");
+  const all = await deps.listAllMachines();
+  if (all.some((m) => m.processGroup === "rig"))
+    throw new Error("复查时 rig 已出现，保留任务并在下一轮重新判断");
+  return all.filter((m) => !m.processGroup).length;
+}
+
+/** 有机器缺元数据时：复位计时、只报警、绝不打回（手建机照样带 JOB_WORKER_ROLE=rig 在领单）。 */
+function holdOnUnlabeledMachines(deps: RigAutoscaleDeps, state: RigStartState, unlabeled: number, reasonZh: string): boolean {
+  if (unlabeled <= 0) return false;
+  state.unavailableSince = undefined;
+  deps.log(
+    `[rig-autoscale] ${reasonZh}，但有 ${unlabeled} 台机器缺 fly_process_group 元数据` +
+      "（多半是 fly machine run 手建的，它照样带 JOB_WORKER_ROLE=rig 在领单）：" +
+      "无法断定 rig 不可用，本轮不打回任何任务。请用 fly deploy 产出的机器跑 rig，或给手建机补上元数据。",
+  );
+  return true;
 }
 
 /** app 机：有 Blender 任务排队就把停着的 rig 机拉起来。幂等 + 冷却，不重复发命令。 */
@@ -152,15 +167,8 @@ export async function ensureRigStartedForPending(
       // 打回之前先排除「机器在、只是没有 fly_process_group 元数据」这个良性解释：
       // 手建（fly machine run）的 rig 机照样带 JOB_WORKER_ROLE=rig 在领单，把它当成不存在
       // 就会一边有机器在跑、一边把队列里其余任务全杀掉。存疑就不打回，只报警。
-      const unlabeled = await countUnlabeledMachines(deps);
-      if (unlabeled > 0) {
-        state.unavailableSince = undefined;
-        deps.log(
-          `[rig-autoscale] 没查到 rig 进程组机器，但有 ${unlabeled} 台机器缺 fly_process_group 元数据（多半是 fly machine run 手建的）：` +
-            "无法断定 rig 不存在，本轮不打回任何任务。请用 fly deploy 产出的机器跑 rig，或给手建机补上元数据。",
-        );
+      if (holdOnUnlabeledMachines(deps, state, await assertNoRigBeforeFailing(deps), "没查到 rig 进程组机器"))
         return { action: "unknown_topology" };
-      }
       const app = deps.appName ? ` -a ${deps.appName}` : "";
       const failed = await deps.failQueuedBlenderJobs?.(
         "绑骨/白模任务未能开始：Blender 后期机不存在或不可唤醒。这不是你的参数或配置问题，" +
@@ -203,14 +211,30 @@ export async function ensureRigStartedForPending(
       state.unavailableSince = undefined;
       return { action: "started", machineIds: started };
     }
-    // 机器在、但一台都起不来：同样打回，错误里给出具体机器 ID，管理员可以直接照抄命令。
-    // 一样要连续确认：Fly 的 start 偶发 5xx（部署、容量调度）一次就清空队列同样是误杀。
+    // 0917 终审 1495-R1-01：备用机起不来 ≠ 整个 rig 不可用。
+    // 必须**重新列举**（不能复用上面那份快照：start 失败这段时间里状态可能已经变了），
+    // 只要有 started/starting 的机器，这一单本来就会被它领走；
+    // 处于其它过渡态（stopping/replacing 等）也不能判死，留到下一轮。
+    // 查询抛错不吞，交外层 catch 复位确认窗口。
     const ids = targets.map((m) => m.id).join(" / ");
+    const recheck = await deps.listRig();
+    if (recheck.some((m) => m.state === "started" || m.state === "starting")) {
+      state.unavailableSince = undefined;
+      deps.log(`[rig-autoscale] 备用 rig 机 ${ids} 启动失败，但已有机器在运行，本轮不打回任务`);
+      return { action: "already_running" };
+    }
+    if (recheck.some((m) => !needsStart(m.state))) {
+      state.unavailableSince = undefined;
+      deps.log(`[rig-autoscale] rig 机 ${ids} 启动失败，但有机器处于过渡或未知状态，保留排队任务`);
+      return { action: "unknown_topology" };
+    }
     const { confirmed, elapsedMs } = confirmRigUnavailable(deps, state);
     if (!confirmed) {
       deps.log(`[rig-autoscale] rig 机 ${ids} 本轮启动失败（已 ${Math.round(elapsedMs / 1000)} 秒），未到确认窗口，先不打回任务`);
       return { action: "error", message: `所有 rig 机启动均失败（${ids}），未到打回确认窗口` };
     }
+    if (holdOnUnlabeledMachines(deps, state, await assertNoRigBeforeFailing(deps), `rig 机 ${ids} 连续启动失败`))
+      return { action: "unknown_topology" };
     const app = deps.appName ? ` -a ${deps.appName}` : "";
     const failed = await deps.failQueuedBlenderJobs?.(
       "绑骨/白模任务未能开始：Blender 后期机不存在或不可唤醒。这不是你的参数或配置问题，" +

@@ -31,6 +31,9 @@ function makeDeps(over: Partial<RigAutoscaleDeps> = {}) {
     onStopDecided: () => void calls.push("gate_closed"),
     onStopAborted: () => void calls.push("gate_reopened"),
     listRig: async () => [{ id: "rig-1", state: "stopped", processGroup: "rig" }],
+    // 默认就给一份可信的全量查询：打回前的复查是硬前提，不能靠「测试里省略这个依赖」暗中放行。
+    // 这份默认值里只有带标签的 app 机（没有 rig），对应「rig 确实不存在」的场景。
+    listAllMachines: async () => [{ id: "app-1", state: "started", processGroup: "app" }],
     startMachine: async (id) => void started.push(id),
     stopMachine: async (id) => {
       calls.push("stop:" + id);
@@ -185,19 +188,131 @@ describe("rig 唤醒（app 机）", () => {
     expect(failedReasons).toHaveLength(1);
   });
 
-  it("附加查询本身失败时不放过真实故障：仍按原判据打回", async () => {
+  // 0917 终审 1495-R1-02：这条原来断言「附加查询失败仍打回」，那正是要防的误杀——
+  // 判不准就不许打回。判据换向了，所以旧断言必须改掉，不是补一条。
+  it("打回前的复查查询失败：不打回，且确认计时清零（判不准就不判死）", async () => {
     const { deps, failedReasons, advance } = makeDeps({
       queuedBlenderJobs: async () => 1,
       listRig: async () => [],
       listAllMachines: async () => {
-        throw new Error("fly api down");
+        throw new Error("fly api 503");
       },
     });
     const state: RigStartState = { lastAttemptAt: 0 };
     await ensureRigStartedForPending(deps, state);
     advance(RIG_UNAVAILABLE_CONFIRM_MS + 1);
-    expect((await ensureRigStartedForPending(deps, state)).action).toBe("no_machine");
-    expect(failedReasons).toHaveLength(1);
+    const out = await ensureRigStartedForPending(deps, state);
+    expect(out.action).toBe("error");
+    expect(failedReasons).toEqual([]);
+    expect(state.unavailableSince).toBeUndefined();
+  });
+
+  it("复查时 rig 已经出现：不打回，下一轮重新判", async () => {
+    const { deps, failedReasons, advance } = makeDeps({
+      queuedBlenderJobs: async () => 1,
+      listRig: async () => [],
+      listAllMachines: async () => [
+        { id: "app-1", state: "started", processGroup: "app" },
+        { id: "rig-9", state: "started", processGroup: "rig" },
+      ],
+    });
+    const state: RigStartState = { lastAttemptAt: 0 };
+    await ensureRigStartedForPending(deps, state);
+    advance(RIG_UNAVAILABLE_CONFIRM_MS + 1);
+    expect((await ensureRigStartedForPending(deps, state)).action).toBe("error");
+    expect(failedReasons).toEqual([]);
+    expect(state.unavailableSince).toBeUndefined();
+  });
+
+  it("没有全量查询能力时宁可不判：不打回（不能靠省略依赖暗中放行）", async () => {
+    const { deps, failedReasons, advance } = makeDeps({
+      queuedBlenderJobs: async () => 1,
+      listRig: async () => [],
+      listAllMachines: undefined,
+    });
+    const state: RigStartState = { lastAttemptAt: 0 };
+    await ensureRigStartedForPending(deps, state);
+    advance(RIG_UNAVAILABLE_CONFIRM_MS + 1);
+    expect((await ensureRigStartedForPending(deps, state)).action).toBe("error");
+    expect(failedReasons).toEqual([]);
+  });
+
+  it("备用机启动失败但已有机器在跑：绝不打回（健康机还能消化这一单）", async () => {
+    for (const liveState of ["started", "starting"]) {
+      const { deps, failedReasons, advance } = makeDeps({
+        queuedBlenderJobs: async () => 1,
+        listRig: async () => [
+          { id: "rig-live", state: liveState, processGroup: "rig" },
+          { id: "rig-spare", state: "stopped", processGroup: "rig" },
+        ],
+        startMachine: async () => {
+          throw new Error("fly 503");
+        },
+      });
+      const state: RigStartState = { lastAttemptAt: 0 };
+      expect((await ensureRigStartedForPending(deps, state)).action).toBe("already_running");
+      advance(RIG_UNAVAILABLE_CONFIRM_MS + 1);
+      state.lastAttemptAt = 0;
+      expect((await ensureRigStartedForPending(deps, state)).action).toBe("already_running");
+      expect(failedReasons).toEqual([]);
+      expect(state.unavailableSince).toBeUndefined();
+    }
+  });
+
+  it("启动失败后复查发现机器已经起来了：按已在运行处理，不打回", async () => {
+    let round = 0;
+    const { deps, failedReasons, advance } = makeDeps({
+      queuedBlenderJobs: async () => 1,
+      listRig: async () => {
+        round += 1;
+        // 第一次列举给 stopped（于是会去 start），start 失败后的复查已经是 started
+        return [{ id: "rig-1", state: round === 1 ? "stopped" : "started", processGroup: "rig" }];
+      },
+      startMachine: async () => {
+        throw new Error("fly 500");
+      },
+    });
+    const state: RigStartState = { lastAttemptAt: 0 };
+    expect((await ensureRigStartedForPending(deps, state)).action).toBe("already_running");
+    advance(RIG_UNAVAILABLE_CONFIRM_MS + 1);
+    expect(failedReasons).toEqual([]);
+  });
+
+  it("启动失败后复查抛错：不打回（异常不吞，交外层复位）", async () => {
+    let round = 0;
+    const { deps, failedReasons } = makeDeps({
+      queuedBlenderJobs: async () => 1,
+      listRig: async () => {
+        round += 1;
+        if (round > 1) throw new Error("fly api down");
+        return [{ id: "rig-1", state: "stopped", processGroup: "rig" }];
+      },
+      startMachine: async () => {
+        throw new Error("fly 500");
+      },
+    });
+    const state: RigStartState = { lastAttemptAt: 0 };
+    expect((await ensureRigStartedForPending(deps, state)).action).toBe("error");
+    expect(failedReasons).toEqual([]);
+    expect(state.unavailableSince).toBeUndefined();
+  });
+
+  it("机器处于过渡态（stopping）时不判死：保留排队任务", async () => {
+    let round = 0;
+    const { deps, failedReasons, advance } = makeDeps({
+      queuedBlenderJobs: async () => 1,
+      listRig: async () => {
+        round += 1;
+        return [{ id: "rig-1", state: round === 1 ? "stopped" : "stopping", processGroup: "rig" }];
+      },
+      startMachine: async () => {
+        throw new Error("fly 500");
+      },
+    });
+    const state: RigStartState = { lastAttemptAt: 0 };
+    expect((await ensureRigStartedForPending(deps, state)).action).toBe("unknown_topology");
+    advance(RIG_UNAVAILABLE_CONFIRM_MS + 1);
+    expect(failedReasons).toEqual([]);
   });
 
   it("机器在、但一台都起不来：连续确认后才打回，错误里点名具体机器 ID", async () => {

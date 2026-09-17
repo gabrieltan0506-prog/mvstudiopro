@@ -101,7 +101,15 @@ const button =
  * sessionStorage 在隐私模式/禁用站点数据时会抛，全部包 try/catch，读失败就退回本次会话内计时。
  * 判据（阈值、脏值/未来时间戳）在 @shared/manhuaPrevisAbandon，这里只负责存取。
  */
-const previsStore = () => (typeof window === "undefined" ? null : window.sessionStorage);
+// 取 sessionStorage 这个**属性访问**本身就可能抛（隐私模式/站点数据被禁），
+// 所以兜底要包在这里，不能只包 store.getItem。
+const previsStore = () => {
+  try {
+    return typeof window === "undefined" ? null : window.sessionStorage;
+  } catch {
+    return null;
+  }
+};
 
 export function ManhuaPrevisStudio(props: Props) {
   const utils = trpc.useUtils();
@@ -275,10 +283,11 @@ export function ManhuaPrevisStudioView({
       setAbandonable(false);
       return;
     }
-    // 重挂载（切页签/换路由）接着上次的计时走，别从零开始
-    const resumed = readPrevisMissingSince(previsStore(), pendingId, Date.now());
-    missingSince.current = resumed;
-    setAbandonable(previsAbandonable(resumed, Date.now()));
+    // 重挂载（切页签/换路由）接着上次的计时走，别从零开始。
+    // 但**只恢复计时、不恢复「已可放弃」权限**：旧时间戳只说明上次会话连续查不到，
+    // 这期间任务可能已经建成甚至跑完了；权限要等本次 get 明确回 null 才开放（终审 1495-R1-03）。
+    missingSince.current = readPrevisMissingSince(previsStore(), pendingId, Date.now());
+    setAbandonable(false);
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
@@ -321,6 +330,61 @@ export function ManhuaPrevisStudioView({
       clearTimeout(timer);
     };
   }, [pendingId]);
+  /**
+   * 放弃原编号（终审 1495-R1-03）：点下去之前**再查一次**。
+   * 十分钟里任务可能已经建成甚至跑完，凭旧时间戳直接清 pending 会把一单真实任务丢掉，
+   * 用户再点一次就是重复建单（事故簿坑 14 的代价）。查到就消费掉、保留编号；
+   * 只有这次也明确查不到、且计时确实满十分钟，才真的放弃。
+   */
+  async function abandonPending() {
+    const before = latest.current;
+    const id = before.studio.pending?.requestId;
+    if (
+      !id ||
+      before.disabled ||
+      lock.current ||
+      !previsAbandonable(missingSince.current, Date.now())
+    )
+      return;
+    const scopeId = before.studio.scopeId;
+    const blockId = before.block.id;
+    lock.current = true;
+    setBusy(true);
+    setAbandonable(false);
+    try {
+      const response = await before.services.get(id);
+      const current = latest.current;
+      // 复查期间用户可能换了段/换了编号：认不出就什么都不做，绝不动别的段的 pending
+      if (
+        !mounted.current ||
+        current.disabled ||
+        current.studio.scopeId !== scopeId ||
+        current.block.id !== blockId ||
+        current.studio.pending?.requestId !== id
+      )
+        return;
+      if (response) {
+        missingSince.current = null;
+        clearPrevisMissingSince(previsStore(), id);
+        consume(response);
+        return;
+      }
+      if (!previsAbandonable(missingSince.current, Date.now())) return;
+      if (!publish({ ...current.studio, pending: undefined })) return;
+      missingSince.current = null;
+      clearPrevisMissingSince(previsStore(), id);
+      setError("");
+      setStatus("已放弃原编号；再点「确认生成动作白模」会新建一次");
+    } catch {
+      // 复查本身失败：保留编号，计时清零重新算，不让一次抖动把任务丢掉
+      missingSince.current = null;
+      clearPrevisMissingSince(previsStore(), id);
+      if (mounted.current) setStatus("查询暂不可用，保留原任务编号");
+    } finally {
+      lock.current = false;
+      if (mounted.current) setBusy(false);
+    }
+  }
   async function generate() {
     if (disabled || lock.current) return;
     // 带骨模型可能挂在同一人物的候选图上：提交时按当前人物表补上模型所在 ref，服务端按它核回执。
@@ -1775,15 +1839,8 @@ export function ManhuaPrevisStudioView({
             type="button"
             className={button}
             data-previs-abandon-pending
-            disabled={busy}
-            onClick={() => {
-              if (!publish({ ...latest.current.studio, pending: undefined })) return;
-              missingSince.current = null;
-              clearPrevisMissingSince(previsStore(), pendingId);
-              setAbandonable(false);
-              setError("");
-              setStatus("已放弃原编号；再点「确认生成动作白模」会新建一次");
-            }}
+            disabled={disabled || busy}
+            onClick={() => void abandonPending()}
           >
             原编号不存在，放弃它
           </button>
