@@ -134,9 +134,11 @@ type Manhua3dTaskDependencies = {
 
 const productionDependencies: Manhua3dTaskDependencies = {
   mirrorRecord: async (objectName, buffer) => {
+    if (!gcsCredentialsPresent()) return; // 本机/测试无 GCS 凭证：不镜像，本地仍是真源
     await uploadBufferToGcs({ objectName, buffer, contentType: "application/json" });
   },
   readMirroredRecord: async (objectName) => {
+    if (!gcsCredentialsPresent()) return null;
     try {
       const { buffer } = await downloadGcsObject({ gcsUri: `gs://${getGcsBucketName()}/${objectName}` });
       return buffer;
@@ -185,6 +187,9 @@ let activeImportedGlbInspections = 0;
 let workerTimer: NodeJS.Timeout | null = null;
 
 const RECORD_MIRROR_PREFIX = "manhua-3d/task-records/";
+function gcsCredentialsPresent(): boolean {
+  return Boolean(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || process.env.GOOGLE_APPLICATION_CREDENTIALS);
+}
 function recordMirrorObjectName(taskId: string): string {
   return `${RECORD_MIRROR_PREFIX}${String(taskId || "").replace(/[^a-zA-Z0-9_.-]+/g, "_")}.json`;
 }
