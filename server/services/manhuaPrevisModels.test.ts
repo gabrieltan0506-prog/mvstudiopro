@@ -49,6 +49,17 @@ describe('模型来源解析与本机生产隔离',()=>{
     await expect(preparePrevisModels(spec,7,'/test-output',new AbortController().signal,d)).rejects.toThrow(/128MB/);
     expect(d.inspect).not.toHaveBeenCalled();
   });
+  it('0917：模型挂在A-pose候选图时按sourceAssetRef核回执，身份仍是assetRef',async()=>{
+    const {spec,d,source}=fixture();spec.actors[0].riggedModel!.sourceAssetRef='asset-apose';
+    vi.mocked(d.source).mockResolvedValue({...source,assetRef:'asset-apose'});
+    expect(await resolvePrevisModels(spec,7,d)).toHaveLength(1);
+    expect(d.source).toHaveBeenCalledWith('m3d_test',7,'asset-apose');
+  });
+  it('0917：带sourceAssetRef但回执挂在别的ref仍拒绝',async()=>{
+    const {spec,d,source}=fixture();spec.actors[0].riggedModel!.sourceAssetRef='asset-apose';
+    vi.mocked(d.source).mockResolvedValue({...source});
+    await expect(resolvePrevisModels(spec,7,d)).rejects.toThrow(/来源/);
+  });
   it('没有assetRef在来源调用前拒绝',async()=>{
     const {spec,d}=fixture();delete spec.actors[0].assetRef;
     await expect(resolvePrevisModels(spec,7,d)).rejects.toThrow();expect(d.source).not.toHaveBeenCalled();

@@ -81,6 +81,10 @@ export async function saveRecoveredPrevisResult(
     .where(and(eq(jobs.id, previous.id), eq(jobs.userId, previous.userId)));
   return current ?? null;
 }
+/** 入队前校验被明确拒绝（不是网络/存储歧义）：没有创建任何任务，前端应放弃该请求编号并显示原因。 */
+export class PrevisRejectedError extends Error {
+  readonly rejected = true as const;
+}
 const real: PrevisTaskDeps = {
   recover,
   async load(id) {
@@ -90,7 +94,13 @@ const real: PrevisTaskDeps = {
   },
   async insert(id, userId, input) {
     // 入队前核对本人已成功模型，worker读取字节时再次验同一任务与SHA。
-    await resolvePrevisModels(input.spec,userId);
+    try {
+      await resolvePrevisModels(input.spec, userId);
+    } catch (error) {
+      throw new PrevisRejectedError(
+        error instanceof Error && error.message ? error.message : "角色模型来源未通过预演检查"
+      );
+    }
     const db = await database();
     await db
       .insert(jobs)

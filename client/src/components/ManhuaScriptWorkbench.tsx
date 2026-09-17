@@ -3587,7 +3587,7 @@ export default function ManhuaScriptWorkbench({
                 const ref=customAssetRefs.find(ref=>ref.id===a.id);
                 // 0916：与 3D 模型工作台同口径——锁脸图没模型时用候选图（A-pose）的就绪模型
                 const source=resolveManhuaRigSource(ref,customAssetRefs).source;
-                const model=source?{taskId:source.model.taskId}:undefined;
+                const model=source?{taskId:source.model.taskId,assetRef:source.refId}:undefined;
                 return {id:a.id,label:a.labelZh,tag:a.tag,model};
               })}
               profiles={collectPreparedRigProfiles(blocks, assetLockRegistry.byRole.character.map(a => {

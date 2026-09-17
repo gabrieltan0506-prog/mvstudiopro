@@ -28,14 +28,16 @@ export async function resolvePrevisModels(
   for (const actor of spec.actors) {
     if (!actor.riggedModel) continue;
     if (!actor.assetRef) throw new Error("角色模型未绑定项目人物");
+    // 绑骨模型可能挂在同一人物的 A-pose 候选图上（0916 口径）；回执按模型所在 ref 核对，身份仍是 assetRef。
+    const modelAssetRef = actor.riggedModel.sourceAssetRef ?? actor.assetRef;
     const source = await d.source(
       actor.riggedModel.sourceJobId,
       userId,
-      actor.assetRef
+      modelAssetRef
     );
     if (
       source.taskId !== actor.riggedModel.sourceJobId ||
-      source.assetRef !== actor.assetRef ||
+      source.assetRef !== modelAssetRef ||
       !Number.isSafeInteger(source.bytes) ||
       source.bytes < 20 ||
       source.bytes > PREVIS_MODEL_MAX_BYTES ||

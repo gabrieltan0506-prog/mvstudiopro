@@ -1,5 +1,6 @@
 import type { PreparedRigProfile } from "@/lib/manhuaPrevisProfiles";
 import { useEffect, useRef, useState } from "react";
+import { isDefiniteRejection, withRiggedModelSourceAssetRefs } from "@/lib/manhuaPrevisSubmit";
 import { ManhuaPrevisRigControls } from "./ManhuaPrevisRigControls";
 import { trpc } from "@/lib/trpc";
 import type { CanvasBlock } from "@/lib/canvasTypes";
@@ -65,7 +66,8 @@ type Props = {
     id: string;
     label: string;
     tag?: string;
-    model?: { taskId: string };
+    /** assetRef：模型所在 ref（可能是 A-pose 候选图，与人物 id 不同） */
+    model?: { taskId: string; assetRef?: string };
   }>;
   sourceShots?: PrevisSourceShot[];
   profiles?: PreparedRigProfile[];
@@ -269,7 +271,10 @@ export function ManhuaPrevisStudioView({
   }, [pendingId]);
   async function generate() {
     if (disabled || lock.current) return;
-    const parsed = manhuaPrevisSpecSchema.safeParse(studio.spec);
+    // 带骨模型可能挂在同一人物的候选图上：提交时按当前人物表补上模型所在 ref，服务端按它核回执。
+    const parsed = manhuaPrevisSpecSchema.safeParse(
+      withRiggedModelSourceAssetRefs(studio.spec, characters)
+    );
     if (!parsed.success) {
       setError(parsed.error.issues.map(i => i.message).join("；"));
       return;
@@ -287,8 +292,13 @@ export function ManhuaPrevisStudioView({
       // 同一段状态先保留请求，再入队。响应只入候选，不自动替换本段参考。
       if (!publish({ ...studio, pending: input })) return;
       consume(await services.submit(input));
-    } catch {
-      if (mounted.current)
+    } catch (error) {
+      if (!mounted.current) return;
+      if (isDefiniteRejection(error)) {
+        // 服务端明确拒绝＝没建任务；放弃该编号，下次点击重新生成，不再卡在「确认原请求」。
+        publish({ ...latest.current.studio, pending: undefined });
+        setError(error.message);
+      } else
         setError(
           "提交结果尚未确认。保留原编号；请查询或确认原请求，不要新建任务。"
         );

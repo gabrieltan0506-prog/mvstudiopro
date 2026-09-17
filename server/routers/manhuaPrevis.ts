@@ -7,6 +7,7 @@ import {
   listPrevisTasks,
   submitPrevisTask,
   previsCursorSchema,
+  PrevisRejectedError,
 } from "../services/manhuaPrevisTask";
 
 async function safely<T>(fn: () => Promise<T>) {
@@ -17,6 +18,12 @@ async function safely<T>(fn: () => Promise<T>) {
       "[manhua-previs] task operation failed",
       error instanceof Error ? error.message : "unknown"
     );
+    // 明确拒绝：任务没建，把原因交给前端并让它放弃该请求编号；歧义失败仍按「保留编号再查」处理。
+    if (error instanceof PrevisRejectedError)
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: `白模未提交：${error.message}`,
+      });
     throw new TRPCError({
       code: "BAD_REQUEST",
       message: "白模任务暂未确认，请核对配置或查询原任务；不要重复提交",

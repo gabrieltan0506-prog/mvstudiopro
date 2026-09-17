@@ -11,6 +11,7 @@ vi.mock("../services/manhuaPrevisTask", async importOriginal => ({
   ...mocks,
 }));
 import { manhuaPrevisRouter } from "./manhuaPrevis";
+import { PrevisRejectedError } from "../services/manhuaPrevisTask";
 const studio = createManhuaPrevisStudio(
   2,
   "11111111-1111-4111-8111-111111111111"
@@ -75,4 +76,19 @@ it("管理员坏游标在路由schema拒绝，分页服务零调用", async () =
     })
   ).rejects.toMatchObject({ code: "BAD_REQUEST" });
   expect(mocks.listPrevisTasks).not.toHaveBeenCalled();
+});
+
+it("0917：入队前校验明确拒绝 → PRECONDITION_FAILED 带原因；歧义失败仍是 BAD_REQUEST 通用文案", async () => {
+  mocks.submitPrevisTask.mockRejectedValueOnce(
+    new PrevisRejectedError("本人已完成角色模型或完整来源回执不存在")
+  );
+  await expect(caller("admin").submit(input)).rejects.toMatchObject({
+    code: "PRECONDITION_FAILED",
+    message: "白模未提交：本人已完成角色模型或完整来源回执不存在",
+  });
+  mocks.submitPrevisTask.mockRejectedValueOnce(new Error("db down"));
+  await expect(caller("admin").submit(input)).rejects.toMatchObject({
+    code: "BAD_REQUEST",
+    message: expect.stringContaining("暂未确认"),
+  });
 });

@@ -59,6 +59,8 @@ export const previsPerformanceCueSchema = z
 export const previsRiggedModelSchema = z
   .object({
     sourceJobId: z.string().regex(/^m3d_[a-zA-Z0-9_.-]{1,150}$/),
+    /** 0917：模型所在的项目 ref（A-pose 候选图）；缺省＝actor.assetRef（锁脸图自己的模型） */
+    sourceAssetRef: z.string().trim().min(1).max(160).optional(),
     forwardAxis: z.enum(["+X", "-X", "+Y", "-Y"]),
     targetHeight: z.number().finite().min(0.5).max(3),
     boneMap: z.partialRecord(z.enum(PREVIS_BODY_BONES), name).optional(),
