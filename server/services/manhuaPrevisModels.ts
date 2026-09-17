@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import { getCompletedManhua3dSource } from "./manhua3dTask";
+import { getCompletedManhua3dSource, Manhua3dSourceRejectedError } from "./manhua3dTask";
 import { inspectGcsObjectBounded } from "./gcs";
 import { assertValidGlb2 } from "../../shared/glbValidation";
 import type { ManhuaPrevisSpec } from "../../shared/manhuaPrevis";
@@ -27,24 +27,26 @@ export async function resolvePrevisModels(
   let total = 0;
   for (const actor of spec.actors) {
     if (!actor.riggedModel) continue;
-    if (!actor.assetRef) throw new Error("角色模型未绑定项目人物");
+    if (!actor.assetRef) throw new Manhua3dSourceRejectedError("角色模型未绑定项目人物");
+    // 绑骨模型可能挂在同一人物的 A-pose 候选图上（0916 口径）；回执按模型所在 ref 核对，身份仍是 assetRef。
+    const modelAssetRef = actor.riggedModel.sourceAssetRef ?? actor.assetRef;
     const source = await d.source(
       actor.riggedModel.sourceJobId,
       userId,
-      actor.assetRef
+      modelAssetRef
     );
     if (
       source.taskId !== actor.riggedModel.sourceJobId ||
-      source.assetRef !== actor.assetRef ||
+      source.assetRef !== modelAssetRef ||
       !Number.isSafeInteger(source.bytes) ||
       source.bytes < 20 ||
       source.bytes > PREVIS_MODEL_MAX_BYTES ||
       !/^[a-f0-9]{64}$/.test(source.sha256)
     )
-      throw new Error("角色模型来源或体积未通过预演检查");
+      throw new Manhua3dSourceRejectedError("角色模型来源或体积未通过预演检查");
     total += source.bytes;
     if (total > PREVIS_MODEL_MAX_BYTES * 2)
-      throw new Error("本段角色模型总量超过128MB，请分段预演");
+      throw new Manhua3dSourceRejectedError("本段角色模型总量超过128MB，请分段预演");
     sources.push({ actorId: actor.id, source });
   }
   return sources;

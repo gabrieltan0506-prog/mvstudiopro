@@ -9,6 +9,7 @@ import {
 } from "../../shared/manhuaPrevis";
 import { getDb } from "../db";
 import { resolvePrevisModels } from "./manhuaPrevisModels";
+import { Manhua3dSourceRejectedError } from "./manhua3dTask";
 import {
   buildPostProdJobResponse,
   type PostProdJobRow,
@@ -81,6 +82,10 @@ export async function saveRecoveredPrevisResult(
     .where(and(eq(jobs.id, previous.id), eq(jobs.userId, previous.userId)));
   return current ?? null;
 }
+/** 入队前校验被明确拒绝（不是网络/存储歧义）：没有创建任何任务，前端应放弃该请求编号并显示原因。 */
+export class PrevisRejectedError extends Error {
+  readonly rejected = true as const;
+}
 const real: PrevisTaskDeps = {
   recover,
   async load(id) {
@@ -90,7 +95,14 @@ const real: PrevisTaskDeps = {
   },
   async insert(id, userId, input) {
     // 入队前核对本人已成功模型，worker读取字节时再次验同一任务与SHA。
-    await resolvePrevisModels(input.spec,userId);
+    // 只有业务判定（归属/回执不闭合）算明确拒绝；读盘、读 GCS 等基础设施异常原样上抛，前端保留编号再查。
+    try {
+      await resolvePrevisModels(input.spec, userId);
+    } catch (error) {
+      if (error instanceof Manhua3dSourceRejectedError)
+        throw new PrevisRejectedError(error.message);
+      throw error;
+    }
     const db = await database();
     await db
       .insert(jobs)
@@ -132,8 +144,8 @@ export async function submitPrevisTask(
     throw new Error("白模任务身份无效");
   const input = manhuaPrevisRequestSchema.parse(raw);
   const id = previsTaskId(userId, input.requestId);
-  await d.insert(id, userId, input);
-  const row = await d.load(id);
+  // 同编号已有任务（首次响应丢失后再确认）直接复用，不再核回执：此时的核对失败不代表任务没建。
+  const row = (await d.load(id)) ?? (await d.insert(id, userId, input), await d.load(id));
   if (!row) throw new Error("白模任务回执未确认，请查询原编号");
   const response = present(row, userId, d);
   if (JSON.stringify(response.params) !== JSON.stringify(input))
