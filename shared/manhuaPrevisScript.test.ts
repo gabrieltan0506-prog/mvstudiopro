@@ -322,3 +322,180 @@ describe("阶段②③提交门禁与恢复契约", () => {
     ).toEqual(spec);
   });
 });
+
+describe("文戏动词草案（0917 PR-E）", () => {
+  const act = (text: string) => compile(text).spec?.actors.find(a => a.actions.length)?.actions ?? [];
+
+  it("看向必须写明目标，目标落成 lookAtId", () => {
+    expect(act("阿菁看向家丁。")).toEqual([
+      { kind: "look", startSec: 0, endSec: 4, lookAtId: "script-actor-2" },
+    ]);
+    expect(act("阿菁望向镜头。")).toEqual([
+      { kind: "look", startSec: 0, endSec: 4, lookAtId: "camera" },
+    ]);
+    // 反例：没写看谁就不猜，退回未映射
+    const vague = compile("阿菁看向远处。");
+    expect(vague.mappedShotIndices).toEqual([]);
+  });
+
+  it("转身按转向背面写死目标朝向，人工可再调", () => {
+    expect(act("阿菁转身。")).toEqual([
+      { kind: "turn", startSec: 0, endSec: 4, facingDeg: 180 },
+    ]);
+  });
+
+  it("坐下、指向、行礼各自落成对应动作", () => {
+    expect(act("阿菁坐下。")[0]?.kind).toBe("sit");
+    expect(act("阿菁抬手指。")[0]?.kind).toBe("gesture_point");
+    expect(act("阿菁拱手。")[0]?.kind).toBe("bow");
+  });
+
+  it("走位只在角色真的有位移时才排，且写了目标不自作主张", () => {
+    // 反例①：原文写了「走向家丁」，但白模改不了站位——退回未映射，不吞掉调度信息
+    const withTarget = compile("阿菁走向家丁。");
+    expect(withTarget.mappedShotIndices).toEqual([]);
+    expect(withTarget.unmapped[0].reasonZh).toContain("白模还表达不了");
+    // 反例②：站着不动的角色「迈步」＝原地摆臂假装在走，同样退回
+    expect(compile("阿菁迈步。").mappedShotIndices).toEqual([]);
+    // 正例：当前配置里该角色本来就有位移区间，才落成 walk
+    const moving = createManhuaPrevisStudio(4).spec;
+    moving.actors[0].assetRef = "qing";
+    moving.actors[0].start = [-1, 0];
+    moving.actors[0].end = [1, 0];
+    moving.actors[0].moveStartSec = 0;
+    moving.actors[0].moveEndSec = 4;
+    const ok = compile("阿菁迈步。", { spec: moving });
+    expect(ok.mappedShotIndices).toEqual([7]);
+    expect(ok.spec?.actors.find(a => a.actions.length)?.actions[0].kind).toBe("walk");
+  });
+
+  it("指向写了目标也退回：白模只按自身朝向抬手，指不到那个人", () => {
+    const pointed = compile("阿菁指向家丁。");
+    expect(pointed.mappedShotIndices).toEqual([]);
+    expect(pointed.unmapped[0].reasonZh).toContain("白模还表达不了");
+  });
+
+  it("镜头描述型分镜仍然 0 映射（设计边界没被扩库放宽）", () => {
+    for (const text of ["中近景，阿菁立于堂前。", "特写推向阿菁的手。", "固定机位，全景。"])
+      expect(compile(text).mappedShotIndices).toEqual([]);
+  });
+
+  it("部分匹配、多余成分仍然拒绝，不把半句当整镜", () => {
+    expect(compile("阿菁看向家丁后又转身离开。").mappedShotIndices).toEqual([]);
+    expect(compile("阿菁没有坐下。").mappedShotIndices).toEqual([]);
+    expect(compile("阿菁走向家丁并坐下。").mappedShotIndices).toEqual([]);
+  });
+
+  it("产出的草案能通过正式 schema（转身/看向的必填参数都带齐了）", () => {
+    for (const text of ["阿菁转身。", "阿菁看向家丁。", "阿菁坐下。"]) {
+      const result = compile(text);
+      expect(result.errors).toEqual([]);
+      expect(manhuaPrevisSpecSchema.safeParse(result.spec).success).toBe(true);
+    }
+  });
+});
+
+describe("文戏草案 · 0917 二轮审查补漏", () => {
+  const three: PrevisSourceCharacter[] = [
+    { id: "qing", label: "阿菁", tag: "@人物1" },
+    { id: "guard", label: "家丁", tag: "@人物2" },
+    { id: "boy", label: "小二", tag: "@人物3" },
+  ];
+  const actionsOf = (r: ReturnType<typeof compile>) =>
+    r.spec?.actors.find(a => a.actions.length)?.actions ?? [];
+
+  it("三人及以上同场：主语取句首那个，目标落到真正被看的人", () => {
+    const named = compile("阿菁看向家丁。", { characters: three });
+    expect(named.mappedShotIndices).toEqual([7]);
+    // 目标必须是「家丁」对应的那个 actor，不是角色表里的第二项碰巧对上
+    const guardActor = named.spec?.actors.find(a => a.assetRef === "guard");
+    expect(actionsOf(named)).toEqual([
+      { kind: "look", startSec: 0, endSec: 4, lookAtId: guardActor?.id },
+    ]);
+    // 换成第三个人也要跟着换目标，而不是恒指第二项
+    const other = compile("阿菁看向小二。", { characters: three });
+    const boyActor = other.spec?.actors.find(a => a.assetRef === "boy");
+    expect(actionsOf(other)[0].lookAtId).toBe(boyActor?.id);
+    // 同一份草案里不该顺手把没被提到的家丁也建出来当目标
+    expect(other.spec?.actors.map(a => a.assetRef)).toEqual(["qing", "boy"]);
+    expect(guardActor?.assetRef).toBe("guard");
+  });
+
+  it("标签写法（@人物N）在三人同场也判对主语与目标", () => {
+    const tagged = compile("@人物3看向@人物1。", { characters: three });
+    expect(tagged.mappedShotIndices).toEqual([7]);
+    const subject = tagged.spec?.actors.find(a => a.actions.length);
+    expect(subject?.assetRef).toBe("boy");
+    expect(subject?.actions[0].lookAtId).toBe(
+      tagged.spec?.actors.find(a => a.assetRef === "qing")?.id
+    );
+  });
+
+  it("目标名互为子串（菁 / 阿菁）时宁可退回未映射，绝不指错人", () => {
+    const overlap: PrevisSourceCharacter[] = [
+      { id: "jing", label: "菁" },
+      { id: "aqing", label: "阿菁" },
+      { id: "ming", label: "小明" },
+    ];
+    // 「阿菁」一出现，「菁」也被算作在场 → 三个人在场，不唯一，退回
+    const ambiguous = compile("小明看向阿菁。", { characters: overlap });
+    expect(ambiguous.mappedShotIndices).toEqual([]);
+    // 正例对照：只提到短名时仍然映射，且指的是短名那个，不是长名那个
+    const short = compile("小明看向菁。", { characters: overlap });
+    expect(short.mappedShotIndices).toEqual([7]);
+    expect(actionsOf(short)[0].lookAtId).toBe(
+      short.spec?.actors.find(a => a.assetRef === "jing")?.id
+    );
+    expect(short.spec?.actors.find(a => a.assetRef === "aqing")).toBeUndefined();
+  });
+
+  it("草案里的转身朝向已归一到 ±180，不会产出提交必被拒的角度", () => {
+    const spec = createManhuaPrevisStudio(4).spec;
+    spec.actors[0].assetRef = "qing";
+    spec.actors[0].facingDeg = 90;
+    const turned = compile("阿菁转身。", { spec });
+    expect(actionsOf(turned)).toEqual([
+      { kind: "turn", startSec: 0, endSec: 4, facingDeg: -90 },
+    ]);
+    expect(manhuaPrevisSpecSchema.safeParse(turned.spec).success).toBe(true);
+  });
+});
+
+describe("文戏草案 · 0917 三轮审查补漏", () => {
+  const actionsOf = (r: ReturnType<typeof compile>) =>
+    r.spec?.actors.find(a => a.actions.length)?.actions ?? [];
+
+  it("角色 label 恰好叫「镜头」时，看向的是那个人，不是镜头", () => {
+    const withCameraName: PrevisSourceCharacter[] = [
+      { id: "qing", label: "阿菁", tag: "@人物1" },
+      { id: "lens", label: "镜头", tag: "@人物2" },
+    ];
+    const result = compile("阿菁看向镜头。", { characters: withCameraName });
+    expect(result.mappedShotIndices).toEqual([7]);
+    const lensActor = result.spec?.actors.find(a => a.assetRef === "lens");
+    expect(lensActor?.id).toBeTruthy();
+    expect(actionsOf(result)[0].lookAtId).toBe(lensActor?.id);
+    // 反例对照：角色表里没有叫「镜头」的人时，同一句仍然落成看镜头
+    expect(actionsOf(compile("阿菁看向镜头。"))[0].lookAtId).toBe("camera");
+  });
+
+  it("带骨角色的坐下不再排进草案（与提交门禁同一条边界）", () => {
+    const spec = createManhuaPrevisStudio(4).spec;
+    spec.actors[0] = {
+      ...spec.actors[0],
+      assetRef: "qing",
+      riggedModel: {
+        sourceJobId: "m3d_test_only",
+        forwardAxis: "+X",
+        targetHeight: 1.7,
+      },
+    };
+    expect(compile("阿菁坐下。", { spec }).mappedShotIndices).toEqual([]);
+    // 反例对照：同一句在不带骨的角色上仍然映射得出来
+    expect(compile("阿菁坐下。").mappedShotIndices).toEqual([7]);
+    // 反例对照：带骨角色的其它文戏动作照常映射，不是被整条跳过
+    expect(actionsOf(compile("阿菁行礼。", { spec }))).toEqual([
+      { kind: "bow", startSec: 0, endSec: 4 },
+    ]);
+  });
+});

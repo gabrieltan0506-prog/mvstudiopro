@@ -72,7 +72,91 @@ export const PREVIS_ACTION_LABELS = {
   strike: "蓄力出手",
   guard: "抬臂保护",
   recoil: "受惊后缩",
+  // 0917 PR-E：文戏六类。打戏之外的段落此前只能站着，绑骨的价值兑现不出来。
+  walk: "走位（摆臂步态）",
+  turn: "转身到指定朝向",
+  look: "看向目标",
+  sit: "坐下",
+  gesture_point: "抬手指向",
+  bow: "俯身行礼",
 } as const;
+/** 需要额外参数的动作：转身要目标朝向，看向要目标。 */
+export const PREVIS_ACTION_KINDS = [
+  "idle",
+  "strike",
+  "guard",
+  "recoil",
+  "walk",
+  "turn",
+  "look",
+  "sit",
+  "gesture_point",
+  "bow",
+] as const;
+export type PrevisActionKind = (typeof PREVIS_ACTION_KINDS)[number];
+/** 打戏四类：四足角色与持剑白模只许这几类，扩库不放宽旧门禁。 */
+export const PREVIS_COMBAT_ACTION_KINDS = ["idle", "strike", "guard", "recoil"] as const;
+export const PREVIS_LOOK_AT_CAMERA = "camera" as const;
+/** 归一到 (-180, 180]：转身 180 度显示成 180，不是 -180。朝向的唯一归一入口。 */
+export function normalizeFacingDeg(deg: number): number {
+  const wrapped = ((((deg + 180) % 360) + 360) % 360) - 180;
+  return wrapped === -180 ? 180 : wrapped;
+}
+/**
+ * 0917 PR-E：换动作类型时把只属于旧类型的参数丢掉、把新类型必需的参数补上。
+ * 不这么做会留下「转身没有目标朝向」或「出拳还挂着注视目标」这种提交必被 schema 拒的脏配置。
+ */
+export function previsActionForKind<T extends { kind: string; facingDeg?: number; lookAtId?: string }>(
+  action: T,
+  kind: PrevisActionKind,
+  context: { actorFacingDeg: number; otherActorIds: readonly string[] },
+): T {
+  const next = { ...action, kind } as T;
+  delete (next as { facingDeg?: number }).facingDeg;
+  delete (next as { lookAtId?: string }).lookAtId;
+  // 默认转向背面；归一走 normalizeFacingDeg 这一个入口，不再各处手写取模
+  if (kind === "turn")
+    (next as { facingDeg?: number }).facingDeg = normalizeFacingDeg(context.actorFacingDeg + 180);
+  if (kind === "look")
+    (next as { lookAtId?: string }).lookAtId = context.otherActorIds[0] ?? PREVIS_LOOK_AT_CAMERA;
+  return next;
+}
+
+/**
+ * 「这个角色在 [startSec, endSec) 里是不是真的在走」——走位判据的唯一实现。
+ * 0917 二轮审查：这条判据原先写了两遍（schema 里一遍、草案编译里一遍），而且两遍都只认
+ * 起止站位；有 motionRoute 的角色在 schema 里被整条跳过，于是一条原地不动的轨迹照样能挂上
+ * walk，白模还是原地摆臂——PR 想堵的洞从另一扇门又开了。收口成一个函数，两处都引用。
+ */
+export function previsActorTravelsDuring(
+  actor: {
+    start: readonly number[];
+    end: readonly number[];
+    moveStartSec: number;
+    moveEndSec: number;
+    motionRoute?: readonly { timeSec: number; position: readonly number[] }[] | null;
+  },
+  startSec: number,
+  endSec: number,
+): boolean {
+  const route = actor.motionRoute;
+  if (route?.length)
+    // 轨迹角色：动作窗口里至少要跨过一段位置真的变了的节点区间
+    return route.some(
+      (node, k) =>
+        k > 0 &&
+        node.position.some((v, m) => v !== route[k - 1].position[m]) &&
+        startSec < node.timeSec &&
+        endSec > route[k - 1].timeSec,
+    );
+  // 站位角色：起止站位不同，且动作窗口与位移区间有交集
+  return (
+    actor.start.some((v, k) => v !== actor.end[k]) &&
+    startSec < actor.moveEndSec &&
+    endSec > actor.moveStartSec
+  );
+}
+
 export const previsMotionRouteNodeSchema = z
   .object({
     timeSec: z.number().finite().min(0).max(30),
@@ -105,9 +189,13 @@ export const previsActorSchema = z
       .array(
         z
           .object({
-            kind: z.enum(["idle", "strike", "guard", "recoil"]),
+            kind: z.enum(PREVIS_ACTION_KINDS),
             startSec: z.number().finite().min(0).max(30),
             endSec: z.number().finite().positive().max(30),
+            /** kind="turn" 的目标朝向；其它动作不接受。 */
+            facingDeg: z.number().finite().min(-180).max(180).optional(),
+            /** kind="look" 的注视目标：同场角色 id 或 "camera"；其它动作不接受。 */
+            lookAtId: z.string().min(1).max(100).optional(),
           })
           .strict()
       )
@@ -212,9 +300,11 @@ export const manhuaPrevisDraftSchema = manhuaPrevisSpecBaseSchema.extend({
           .array(
             z
               .object({
-                kind: z.enum(["idle", "strike", "guard", "recoil"]),
+                kind: z.enum(PREVIS_ACTION_KINDS),
                 startSec: draftNumber,
                 endSec: draftNumber,
+                facingDeg: draftNumber.optional(),
+                lookAtId: z.string().min(1).max(100).optional(),
               })
               .strict()
           )
@@ -358,6 +448,68 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
           path: ["actors", i, "actions"],
         });
       actor.actions.forEach((action, j) => {
+        // 0917 PR-E：参数只属于需要它的动作，避免「填了没用」的假配置。
+        if (action.kind === "turn" && !Number.isFinite(action.facingDeg as number))
+          ctx.addIssue({
+            code: "custom",
+            message: "转身必须给目标朝向",
+            path: ["actors", i, "actions", j, "facingDeg"],
+          });
+        if (action.kind !== "turn" && action.facingDeg !== undefined)
+          ctx.addIssue({
+            code: "custom",
+            message: "只有转身能设目标朝向",
+            path: ["actors", i, "actions", j, "facingDeg"],
+          });
+        if (action.kind === "look") {
+          const target = String(action.lookAtId || "");
+          const known =
+            target === PREVIS_LOOK_AT_CAMERA ||
+            spec.actors.some(other => other.id === target && other.id !== actor.id);
+          if (!known)
+            ctx.addIssue({
+              code: "custom",
+              message: "看向目标须是同场的其他角色或镜头",
+              path: ["actors", i, "actions", j, "lookAtId"],
+            });
+        } else if (action.lookAtId !== undefined)
+          ctx.addIssue({
+            code: "custom",
+            message: "只有看向能设注视目标",
+            path: ["actors", i, "actions", j, "lookAtId"],
+          });
+        // 0917 审查：走位只负责「摆臂步态」，位移来自站位/轨迹。角色原地不动、
+        // 或动作窗口压根不在位移区间内时，白模会原地摆臂假装在走——那是白模撒谎。
+        if (
+          action.kind === "walk" &&
+          !previsActorTravelsDuring(actor, action.startSec, action.endSec)
+        )
+          ctx.addIssue({
+            code: "custom",
+            message:
+              "走位动作必须落在角色实际位移区间内；原地不动请改用其它动作或先设好起止站位",
+            path: ["actors", i, "actions", j],
+          });
+        // 0917 三轮审查实测（server/scripts/test_previs_drama_rigged.py）：
+        // retarget_from_source 只烘「相对各自静止姿态的旋转增量」。棍人的静止姿态腿本来就
+        // 屈着 31.3°（站位 IK 的结果），真模的静止姿态腿是直的，于是坐下只传过去 28.3° 的
+        // 增量——腿够不着地，脚直接扎进地板：1.7 米模型 −21.4 厘米、2.55 米模型 −32.2 厘米，
+        // 与身高成正比，不是夹具特例。走位实测只有 +2.0 厘米抬脚残差，不受影响。
+        // 落脚校正上线之前，宁可拒绝提交，也不渲一个脚在地里的片子。
+        if (action.kind === "sit" && actor.riggedModel)
+          ctx.addIssue({
+            code: "custom",
+            message:
+              "带骨角色暂不支持坐下：真模静止是直腿、棍人静止屈腿 31.3°，重定向只传旋转增量，实测脚会穿地（1.70 米角色约 21 厘米，2.55 米约 32 厘米）。待重定向补偿静止姿态差后开放（PR-F）。现在可以：把这一镜换成不带骨的棍人角色，或改用站立类动作；带骨角色的站位、看向、转身、行礼都不受影响。",
+            path: ["actors", i, "actions", j],
+          });
+        // 转身与运动轨迹是两套朝向真源，同时给会互相覆盖，先拒绝。
+        if (action.kind === "turn" && actor.motionRoute?.length)
+          ctx.addIssue({
+            code: "custom",
+            message: "已设运动轨迹的角色不能再用转身动作；朝向请写进轨迹节点",
+            path: ["actors", i, "actions", j],
+          });
         if (
           action.endSec > spec.durationSec ||
           action.endSec - action.startSec < 0.5

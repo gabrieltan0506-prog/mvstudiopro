@@ -80,6 +80,17 @@ def mesh(name, a, b, radius, mat, sphere=False):
 ground = material('水面' if water_events else '地面', (.06,.22,.30) if water_events else (.23,.25,.27))
 obj = mesh('地面', (0,0,-.12), (0,0,0), 64 if water_events else 16, ground)
 
+# 看向的偏转上限（弧度）：超过就只转到上限，不做扭脖子式的非人姿态。
+LOOK_YAW_LIMIT = math.radians(55)
+LOOK_PITCH_LIMIT = math.radians(25)
+# 0917 三轮审查：目标绕到正后方时 atan2 在 ±180° 换符号，直接夹到 ±55° 会让目标左右穿越
+# 背后时肩线在 +55/−55 之间一帧翻一次（目标带 motionRoute 或出水上升时天天发生）。
+# 选「转不过去就不转」而不是「按最短弧连续夹取」：人本来就不可能只靠头颈看向正后方，
+# 夹到 55° 再硬摆一个姿势等于白模撒谎；而且任何「连续夹取」在 ±180° 都得选一边，
+# 换个站位又会从另一边翻。这里在 [LIMIT, GIVEUP] 之间把整个看向量平滑淡出，
+# |desired| ≥ GIVEUP 一律不看，两侧在 ±180° 都收敛到 0，绕过背后不再有跳变。
+LOOK_YAW_GIVEUP = math.radians(120)
+
 def smooth(value):
     u = max(0., min(1., value))
     return u*u*(3-2*u)
@@ -92,8 +103,36 @@ def position(actor, frame):
     return Vector((actor['start'][0]*(1-u)+actor['end'][0]*u,
                    actor['start'][1]*(1-u)+actor['end'][1]*u, z))
 
+for _actor in spec['actors']:
+    # 0917 审查：转身与 motionRoute 是两套朝向真源。schema 已拒绝同时给，但渲染层过去
+    # 是「有轨迹就走轨迹」静默丢掉转身——白模不转，报告也不说，等于撒谎。这里硬失败。
+    if _actor.get('motionRoute') and any(a['kind']=='turn' for a in _actor['actions']):
+        raise ValueError('转身动作与分段运动轨迹不能同时给，朝向请写进轨迹节点')
+    # 0917 三轮审查：带骨真模坐下会穿地（实测 1.7 米 −21.4 厘米 / 2.55 米 −32.2 厘米，
+    # 见 test_previs_drama_rigged.py）。schema 已拒，渲染层再硬失败一次，旧存稿绕不过去。
+    if _actor.get('riggedModel') and any(a['kind']=='sit' for a in _actor['actions']):
+        raise ValueError('带骨角色暂不支持坐下：静止姿态差会让脚穿地（1.70 米约 21 厘米），待重定向补偿后开放（PR-F）；棍人角色可以坐下，带骨角色的看向/转身/行礼不受影响')
+
+def turn_facing(actor, t):
+    """0917 PR-E：转身动作按时间插值出朝向。动作已按 schema 排序且不重叠。
+    与 motionRoute 互斥（上方已硬失败），避免两套朝向真源互相覆盖。"""
+    facing=actor['facingDeg']
+    for action in actor['actions']:
+        if action['kind']!='turn': continue
+        target=action.get('facingDeg')
+        if target is None: continue
+        if t>=action['endSec']:
+            facing=target
+            continue
+        if t<=action['startSec']: break
+        u=(t-action['startSec'])/(action['endSec']-action['startSec'])
+        delta=((target-facing+180)%360)-180
+        facing=facing+delta*smooth(u)
+        break
+    return facing
+
 def transform(actor, frame):
-    facing=route_pose(actor,(frame-1)/24)[1] if actor.get('motionRoute') else actor['facingDeg']
+    facing=route_pose(actor,(frame-1)/24)[1] if actor.get('motionRoute') else turn_facing(actor,(frame-1)/24)
     return Matrix.Translation(position(actor, frame)) @ Matrix.Rotation(math.radians(facing), 4, 'Z')
 
 def ik(hip, end, l1, l2, bend):
@@ -106,8 +145,14 @@ def ik(hip, end, l1, l2, bend):
     along = (l1*l1-l2*l2+length*length)/(2*length)
     return hip+direction*along+side*math.sqrt(max(0.,l1*l1-along*along)), hip+direction*length
 
+# 0917 PR-E：文戏动作量。与打戏四类同一套「按进度算量、量再驱动关节」的写法，
+# 不另起一条关键帧管线，真模走同一条棍人→boneMap 重定向。
+DRAMA_HOLD = ('sit','bow','gesture_point')
+
 def action_amounts(actor, t):
-    values = {'wind':0.,'strike':0.,'guard':0.,'recoil':0.}
+    values = {'wind':0.,'strike':0.,'guard':0.,'recoil':0.,
+              'walk':0.,'sit':0.,'bow':0.,'gesture_point':0.,'look':0.}
+    values['lookAt']=None
     for action in actor['actions']:
         if not action['startSec'] <= t <= action['endSec']: continue
         u = (t-action['startSec'])/(action['endSec']-action['startSec'])
@@ -116,14 +161,50 @@ def action_amounts(actor, t):
             values['strike'] = smooth((u-.30)/.12)*(1-smooth((u-.65)/.35))
         elif action['kind'] in ('guard','recoil'):
             values[action['kind']] = smooth(u/.20)*(1-smooth((u-.75)/.25))
+        elif action['kind'] in DRAMA_HOLD:
+            # 起 20% 进姿势、末 25% 回中位，中间保持——坐下/行礼/指向都要「停得住」
+            values[action['kind']] = smooth(u/.20)*(1-smooth((u-.75)/.25))
+        elif action['kind'] == 'walk':
+            values['walk'] = smooth(u/.15)*(1-smooth((u-.85)/.15))
+        elif action['kind'] == 'look':
+            values['look'] = smooth(u/.25)*(1-smooth((u-.80)/.20))
+            values['lookAt'] = action.get('lookAtId')
     return values
+
+def camera_position_at(t):
+    """看向「镜头」时取当帧真正在用的那台机位。
+
+    0917 终审：原来用 `startSec <= t <= endSec` 判，切镜那一秒两镜同时命中，for 先取到
+    **上一镜**，于是切镜首帧角色还朝着旧机位看。相机关键帧是按帧打的（见下方建机位处），
+    所以这里改用同一套帧界，与 camera.location 的实际切换严格同源。"""
+    frame = math.floor(t*24+.5)+1
+    for shot in spec['cameras']:
+        begin = math.floor(shot['startSec']*24+.5)+1
+        end = math.floor(shot['endSec']*24+.5)
+        if begin <= frame <= end: return Vector(shot['position'])
+    return Vector(spec['cameras'][0]['position'])
+
+def look_target_world(actor, target_id, frame):
+    """注视目标的世界坐标（人物取头高，镜头取机位）。找不到返回 None，调用方按「不看」处理。"""
+    if not target_id: return None
+    # 0917 三轮审查：这里原来还认 '镜头' 这个别名。lookAtId 的取值只有 PREVIS_LOOK_AT_CAMERA
+    # （="camera"）或角色 id，草案编译也只写这两种，所以 '镜头' 是死分支；但它不是无害的死
+    # 分支——角色 id 恰好是 '镜头' 时会被劫持成看镜头，schema 那边却按角色算，两边判据分叉。
+    # 删掉别名后渲染层与 schema 对 "camera" 的口径完全一致。
+    if target_id=='camera': return camera_position_at((frame-1)/24)
+    for other in spec['actors']:
+        if other['id']==target_id and other['id']!=actor['id']:
+            base=position(other,frame)
+            return Vector((base.x,base.y,base.z+(1.15 if other['shape']=='horse' else 1.45)))
+    return None
 
 def points(actor, frame, contacts):
     t = (frame-1)/24
     amounts = action_amounts(actor,t)
     horse = actor['shape'] == 'horse'
     keys = list(contacts)
-    hip_z = (1.02 if horse else .80)-.09*amounts['wind']-.08*amounts['recoil']
+    # 坐下：髋下沉，脚不动 → 下面的 IK 自然把膝盖顶出来
+    hip_z = (1.02 if horse else .80)-.09*amounts['wind']-.08*amounts['recoil']-.30*amounts['sit']
     inv = transform(actor,frame).inverted()
     ankles = {key:inv @ contacts[key] for key in keys}
     hips = {key:Vector((offset[0],offset[1],hip_z)) for key,offset in foot_offsets(actor).items()}
@@ -145,16 +226,48 @@ def points(actor, frame, contacts):
         p['head']=(Vector((.7,0,1.96-lower)),Vector((1.3,0,1.96-lower)))
     else:
         pelvis=Vector((0,0,hip_z-lower))
-        chest=pelvis+Vector((.10*amounts['strike']-.08*amounts['recoil'],0,.43))
-        neck=chest+Vector((0,0,.14))
+        # 行礼：脊柱前倾，胸口前移下沉；坐下时上身略前倾保持重心
+        bow=amounts['bow']
+        chest=pelvis+Vector((.10*amounts['strike']-.08*amounts['recoil']+.30*bow+.06*amounts['sit'],0,
+                             .43-.11*bow))
+        neck=chest+Vector((.05*bow,0,.14-.02*bow))
+        # 看向：上身与头朝目标偏转（棍人骨骼只有端点，纯头部偏航不可见，必须连上身一起转）
+        look=amounts['look']
+        look_yaw=0.
+        look_pitch=0.
+        if look>.001:
+            target=look_target_world(actor,amounts['lookAt'],frame)
+            local=inv @ target-neck if target is not None else None
+            flat=math.hypot(local.x,local.y) if local is not None else 0.
+            desired=math.atan2(local.y,local.x) if local is not None else 0.
+            # 超出上限后按 |desired| 平滑淡出；≥GIVEUP 直接不看（见 LOOK_YAW_GIVEUP 注释）
+            reach=1-smooth((abs(desired)-LOOK_YAW_LIMIT)/(LOOK_YAW_GIVEUP-LOOK_YAW_LIMIT))
+            if local is not None and flat>.05 and reach>.001:
+                look=look*reach
+                look_yaw=max(-LOOK_YAW_LIMIT,min(LOOK_YAW_LIMIT,desired))*look
+                look_pitch=max(-LOOK_PITCH_LIMIT,min(LOOK_PITCH_LIMIT,math.atan2(local.z,flat)))*look
+            else:
+                # 注视目标解析不出来（被删的角色、旧存稿）：按「不看」处理，
+                # 绝不因为写了 look 就硬摆一个朝向——那会让白模撒谎。
+                look=0.
         p['pelvis']=(pelvis-Vector((0,0,.08)),pelvis)
         p['spine']=(pelvis,chest)
         p['neck']=(chest,neck)
-        p['head']=(neck,neck+Vector((-.045*amounts['recoil'],0,.28)))
+        head_dir=Vector((math.cos(look_yaw),math.sin(look_yaw),0))*(.09*look+.06*bow)
+        p['head']=(neck,neck+head_dir+Vector((-.045*amounts['recoil'],0,.28+.10*math.sin(look_pitch))))
         for s in (-1,1):
-            shoulder=chest+Vector((0,s*.21,0))
+            # 上身偏转：肩线跟着看向的偏航一起转，真模重定向时才看得出「转过去看」
+            shoulder=chest+Matrix.Rotation(look_yaw,4,'Z') @ Vector((0,s*.21,0))
             x=.10+.43*amounts['strike']-.25*amounts['wind'] if s==-1 else .12
-            hand=shoulder+Vector((x+.18*amounts['guard'],s*.13,-.34+.35*amounts['wind']+.31*amounts['strike']+.50*amounts['guard']+.40*amounts['recoil']))
+            # 走位摆臂：两臂反相，周期对齐脚步（plan_contacts 每 6 帧换一只脚 = 0.5 秒一个来回）。
+            # 相位必须跟同侧脚相反：plan_contacts 第 0 个 6 帧块迈的是 '-1' 脚（t∈[0,.25)），
+            # 所以同侧的 s=-1 手此时要往后摆，否则就是同手同脚（0917 审查实测 pearson +0.35）。
+            swing=.16*amounts['walk']*math.sin(2*math.pi*t/.5+(math.pi if s==-1 else 0))
+            # 抬手指向：前手（s=-1）抬到肩高前伸；行礼时两臂贴身略前摆
+            point=amounts['gesture_point'] if s==-1 else 0.
+            hand=shoulder+Vector((x+.18*amounts['guard']+swing+.42*point+.10*bow,s*.13,
+                                  -.34+.35*amounts['wind']+.31*amounts['strike']+.50*amounts['guard']+.40*amounts['recoil']
+                                  +.30*point-.06*abs(swing)))
             elbow,hand=ik(shoulder,hand,.29,.29,(0,s,-.4))
             p['upper_arm'+str(s)]=(shoulder,elbow)
             p['forearm'+str(s)]=(elbow,hand)
@@ -189,6 +302,23 @@ def plan_contacts(actor):
             stance[f]=[key for key in keys if key!=chosen or not moving]
         if moving: anchors[chosen]=goal
     return result,stance
+
+# 0917 二轮审查：出水角色的头高原本是懒算的——只有轮到它自己建骨时才写进 water_head_heights。
+# 但「看向」要读目标角色当帧的世界位置，先建的角色看后建的出水角色（以及任何带 interactions
+# 的场次，那一轮在建骨之前就跑完了）读到的都是 z=0（水面），而它其实还在水下两米——白模会
+# 抬头看天，报告还不说。头高只取决于中性姿态：points() 里脚点已被 inv 去掉根变换，hip_z 与
+# 根部 z 无关，所以这里在任何姿态循环之前一次把所有出水角色的头高算好，顺序不再影响结果。
+for _actor in spec['actors']:
+    if _actor['id'] in water_events and _actor['id'] not in water_head_heights:
+        # 0917 四轮审查（加固，不是修 bug）：上面那句「头高只取决于中性姿态」目前**是真的**，
+        # 但它成立靠的是另一个模块的巧合——action_amounts 里每条包络在 u=0 都恰好等于 0，
+        # 所以 startSec=0 的动作在第 1 帧贡献为零。实测过：加 sit(0–2s) 前后头高与根部 z
+        # 逐帧完全相同（delta=0）。问题是这层依赖没人写下来：哪天有个动作的包络在 u=0 不为零
+        # （比如「已经坐着」这种起始即到位的姿态），出水深度就会跟着排了什么动作偷偷变，
+        # 而且不报错。量一份去掉全部动作的副本，把这条不变量变成结构性的，行为与今天完全一致。
+        _neutral=dict(_actor,actions=[])
+        _pre_contacts,_pre_stance=plan_contacts(_neutral)
+        water_head_heights[_actor['id']]=float(points(_neutral,1,_pre_contacts[1])['head'][1].z)
 
 events=[]
 interaction_poses={}
@@ -323,7 +453,10 @@ if any(actor.get('riggedModel') for actor in spec['actors']):
             if obj.type=='MESH': obj.hide_render=True
         model['actorId']=actor['id']
         model['report'].update({'actorId':actor['id'],'sourceJobId':row['sourceJobId'],
-            'boundaryZh':'真实带骨网格旋转与路径重定向，保留模型原始静止姿态，不自动生成自然站姿；源白模脚底误差不代表角色网格接地，尚未验证双人接触；'+appearance['boundaryZh']})
+            'boundaryZh':'真实带骨网格旋转与路径重定向，保留模型原始静止姿态，不自动生成自然站姿；源白模脚底误差不代表角色网格接地，尚未验证双人接触；文戏动作只烘「相对各自静止姿态的旋转增量」、骨盆位移按骨骼跨度比例缩放：'
+            '实测（test_previs_drama_rigged.py，1.0 倍与 1.5 倍棍人身高两具夹具）行礼/指向/看向按身高等比转移，'
+            '落座深度比等比值浅 3.4%；坐下因棍人静止姿态屈膝、真模静止姿态直腿，脚会穿地 21—32 厘米，已在提交与渲染两处拒绝；'
+            '走位抬脚残差 ≤2.0 厘米；看向只转头骨，肩线偏转是位置量、重定向不转移；'+appearance['boundaryZh']})
         models.append(model)
     # 只有真实模型进入基础色预演；无贴图的白模/地面继续使用原材质色。
     scene.display.shading.color_type='TEXTURE'
