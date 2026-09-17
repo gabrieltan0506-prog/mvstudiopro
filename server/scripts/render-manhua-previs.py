@@ -172,8 +172,16 @@ def action_amounts(actor, t):
     return values
 
 def camera_position_at(t):
+    """看向「镜头」时取当帧真正在用的那台机位。
+
+    0917 终审：原来用 `startSec <= t <= endSec` 判，切镜那一秒两镜同时命中，for 先取到
+    **上一镜**，于是切镜首帧角色还朝着旧机位看。相机关键帧是按帧打的（见下方建机位处），
+    所以这里改用同一套帧界，与 camera.location 的实际切换严格同源。"""
+    frame = math.floor(t*24+.5)+1
     for shot in spec['cameras']:
-        if shot['startSec'] <= t <= shot['endSec']: return Vector(shot['position'])
+        begin = math.floor(shot['startSec']*24+.5)+1
+        end = math.floor(shot['endSec']*24+.5)
+        if begin <= frame <= end: return Vector(shot['position'])
     return Vector(spec['cameras'][0]['position'])
 
 def look_target_world(actor, target_id, frame):

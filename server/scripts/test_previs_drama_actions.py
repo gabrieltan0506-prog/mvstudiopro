@@ -251,6 +251,51 @@ results.append({'case':'look-side-positive-control','yawDeg':round(side_yaw,3),
                 'note':'侧前方目标在上限内：肩线必须真的转过去'})
 assert side_yaw >= 20., ('够得着的侧向目标也没转肩线，看向整体失效', side_yaw)
 
+# 11) 切镜首帧的注视目标必须跟着新机位走（0917 终审 1498-R1-01）
+# 判据不是「头动了」，而是「注视方向与那一帧相机自己的 location 同源」——
+# 只量头有没有移动的话，取到上一台机位照样会动，等于没测。
+cut = copy.deepcopy(BASE)
+cut['cameras'] = [
+    {'startSec':0,'endSec':1,'position':[0,-5,2],'target':[0,0,1],'lens':40},
+    {'startSec':1,'endSec':2,'position':[5,0,2],'target':[0,0,1],'lens':40},
+]
+cut['actors'][0]['actions'] = [{'kind':'look','startSec':0,'endSec':2,'lookAtId':'camera'}]
+cut['actors'][1]['actions'] = []
+build(cut, 'look-camera-cut')
+
+rig = bpy.data.objects['阿菁']
+def head_azimuth_and_camera(frame):
+    bpy.context.scene.frame_set(frame)
+    bpy.context.view_layer.update()
+    head = rig.pose.bones['head']
+    world = rig.matrix_world
+    d = (world @ head.tail) - (world @ head.head)
+    cam = bpy.data.objects['Camera'] if 'Camera' in bpy.data.objects else bpy.context.scene.camera
+    return math.degrees(math.atan2(d.y, d.x)), cam.matrix_world.translation.copy()
+
+rows = []
+for frame in (24, 25, 26):
+    azimuth, cam_pos = head_azimuth_and_camera(frame)
+    origin = rig.matrix_world.translation
+    want = math.degrees(math.atan2(cam_pos.y-origin.y, cam_pos.x-origin.x))
+    rows.append({'frame':frame,'headAzimuthDeg':round(azimuth,3),
+                 'cameraPos':[round(v,3) for v in cam_pos],
+                 'cameraAzimuthDeg':round(want,3),
+                 'deltaDeg':round(abs(((azimuth-want+180)%360)-180),3)})
+results.append({'case':'look-camera-cut','rows':rows,
+                'note':'注视方位与当帧相机方位同侧；切镜帧（25）必须跟新机位，不能停在旧机位'})
+
+# 24 帧仍是旧机位、25/26 帧已是新机位——先确认夹具本身真的切镜了，否则下面的断言是空的
+assert rows[0]['cameraPos'] != rows[1]['cameraPos'], ('夹具没有切镜，本用例无效', rows)
+assert rows[1]['cameraPos'] == rows[2]['cameraPos'], ('切镜后机位不稳定', rows)
+# 判据：切镜帧与其后一帧的注视方位必须与**当帧相机**方位一致（新机位在正前方 0°，不受 ±55° 夹取影响）。
+# 不能只判「和旧机位不同」——旧机位在侧后方会被夹到 ±55°，差值天然就大，那样的断言恒真。
+# 实测过：把 camera_position_at 改回 `startSec <= t <= endSec` 的旧版，下面两条会红。
+assert rows[1]['deltaDeg'] <= 2, ('切镜首帧仍朝着上一台机位看', rows)
+assert rows[2]['deltaDeg'] <= 2, ('切镜后第二帧的注视目标不是当帧机位', rows)
+# 切镜前一帧的目标是侧后方的旧机位，会被偏航上限夹住——记下来说明夹取仍在起作用
+assert rows[0]['deltaDeg'] > 20, ('切镜前一帧没有按旧机位在侧后方处理', rows)
+
 (root/'report.json').write_text(json.dumps({'blender':bpy.app.version_string,'cases':results},
                                            ensure_ascii=False, indent=2))
 print('TEST_OK', json.dumps({'blender':bpy.app.version_string,'cases':len(results)}, ensure_ascii=False))
