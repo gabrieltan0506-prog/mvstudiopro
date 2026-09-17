@@ -1014,8 +1014,10 @@ export async function claimNextPostProdJob(filter?: PostProdClaimFilter): Promis
 
   let rows: Job[] = [];
   try {
-    // 0917：Blender 任务可分流到独立进程组；按 input.action 过滤，兼容没开分流的单机模式
-    const actionExpr = sql`${jobs.input}->>'action'`;
+    // 0917：Blender 任务可分流到独立进程组；按 input.action 过滤，兼容没开分流的单机模式。
+    // input 列是 json（非 jsonb），->> 直接可用；coalesce 成 '' 是为了让 action 缺失（NULL）的旧行
+    // 不被 NOT IN 的三值逻辑吞掉，仍归 app 的 non_blender 通道领走（与 staleJobsReaper 同一写法）。
+    const actionExpr = sql`coalesce(${jobs.input}->>'action', '')`;
     const actionClause = filter === "blender"
       ? inArray(actionExpr, [...BLENDER_POST_PROD_ACTIONS])
       : filter === "non_blender"

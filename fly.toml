@@ -137,7 +137,7 @@ kill_timeout = 300
 # 首次部署会自动为 rig 建 1 台机（fly scale count rig=1 可调）；rig 掉线时 Blender 任务排队等待，不会被 app 误领。
 [processes]
   app = "env MANHUA_RIG_WORKER_SPLIT=1 pnpm exec tsx server/_core/index.ts"
-  rig = "env JOB_WORKER_ROLE=rig MANHUA_RIG_WORKER_SPLIT=1 DISABLE_GROWTH_TREND_SCHEDULER=1 pnpm exec tsx server/_core/index.ts"
+  rig = "env JOB_WORKER_ROLE=rig MANHUA_RIG_WORKER_SPLIT=1 DISABLE_GROWTH_TREND_SCHEDULER=1 NODE_OPTIONS=--max-old-space-size=4096 pnpm exec tsx server/_core/index.ts"
 
 [http_service]
   internal_port = 3000
