@@ -26,6 +26,13 @@ import {
 
 export const RIG_START_COOLDOWN_MS = 60_000;
 export const DEFAULT_RIG_IDLE_STOP_MS = 10 * 60_000;
+/**
+ * 「rig 不可用」必须连续观察够这么久才允许打回用户任务。
+ * 理由：打回是不可逆的产品行为（用户直接看到失败），而 `fly deploy` 期间旧机被销毁、新机还没建好，
+ * 列举 API 完全可能有几秒钟返回零台 rig 机。单次观察就清空队列 = 一次正常部署误杀所有排队任务。
+ * 连续两轮（tick 15 秒、启动冷却 60 秒）确认之后再打回，代价只是失败晚一分钟出现。
+ */
+export const RIG_UNAVAILABLE_CONFIRM_MS = 60_000;
 
 export function resolveRigIdleStopMs(env: NodeJS.ProcessEnv = process.env): number {
   // 空串（secret 设过又清空）当没设，走默认值；不能让 Number("")===0 静默关掉停机。
@@ -66,7 +73,7 @@ export type RigAutoscaleDeps = {
   log(message: string): void;
 };
 
-export type RigStartState = { lastAttemptAt: number };
+export type RigStartState = { lastAttemptAt: number; unavailableSince?: number };
 export type RigIdleState = { lastBusyAt: number };
 
 export type RigStartOutcome =
@@ -75,7 +82,22 @@ export type RigStartOutcome =
   | { action: "already_running" }
   | { action: "started"; machineIds: string[] }
   | { action: "no_machine" }
+  /** rig 不可用，但还没连续够 RIG_UNAVAILABLE_CONFIRM_MS：这一轮只记录，不打回任务。 */
+  | { action: "no_machine_pending"; unavailableMs: number }
   | { action: "error"; message: string };
+
+/**
+ * 「rig 不可用」是否已经连续观察够久，可以打回排队任务了。
+ * 第一次观察落时间戳；恢复正常或列举失败时由调用方复位。
+ * 窗口设 0 时首次观察即确认——这样「关掉确认窗口＝退回即时打回」才名副其实，
+ * 不会变成「还是要等下一轮」这种说一套做一套的开关。
+ */
+function confirmRigUnavailable(deps: RigAutoscaleDeps, state: RigStartState): { confirmed: boolean; elapsedMs: number } {
+  const now = deps.now();
+  if (state.unavailableSince === undefined) state.unavailableSince = now;
+  const elapsedMs = now - state.unavailableSince;
+  return { confirmed: elapsedMs >= RIG_UNAVAILABLE_CONFIRM_MS, elapsedMs };
+}
 
 /** app 机：有 Blender 任务排队就把停着的 rig 机拉起来。幂等 + 冷却，不重复发命令。 */
 export async function ensureRigStartedForPending(
@@ -88,16 +110,28 @@ export async function ensureRigStartedForPending(
   } catch (error) {
     return { action: "error", message: `queued 查询失败：${String(error)}` };
   }
-  if (queued <= 0) return { action: "idle" };
+  if (queued <= 0) {
+    state.unavailableSince = undefined;
+    return { action: "idle" };
+  }
   if (deps.now() - state.lastAttemptAt < RIG_START_COOLDOWN_MS) return { action: "cooldown" };
 
   try {
     const machines = await deps.listRig();
     if (machines.length === 0) {
       // 行为变更（0917 用户拍板）：没有机器就即时打回，不再静默排队到 reaper 判死。
+      // 但必须连续确认够久——部署窗口内零台 rig 是暂态，单次观察就打回等于每次发版误杀队列。
+      const { confirmed, elapsedMs } = confirmRigUnavailable(deps, state);
+      if (!confirmed) {
+        deps.log(`[rig-autoscale] 暂时查不到 rig 进程组机器（已 ${Math.round(elapsedMs / 1000)} 秒），未到确认窗口，先不打回任务`);
+        return { action: "no_machine_pending", unavailableMs: elapsedMs };
+      }
       const app = deps.appName ? ` -a ${deps.appName}` : "";
       const failed = await deps.failQueuedBlenderJobs?.(
-        `Blender 后期机不存在或不可唤醒：本应用当前没有 rig 进程组机器。请管理员执行 fly scale count rig=1${app} 建机（机器可以停着，有任务会自动唤醒），再重新提交。`,
+        "绑骨/白模任务未能开始：Blender 后期机不存在或不可唤醒。这不是你的参数或配置问题，" +
+          "请稍后重新提交；若仍然失败，把这条错误原样转给管理员即可。" +
+          `管理员处理：本应用当前没有 rig 进程组机器，执行 fly scale count rig=1${app} 建机` +
+          "（机器可以停着，有任务会自动唤醒），并检查 fly.toml [processes] 与本次部署。",
       );
       deps.log(`[rig-autoscale] 没有 rig 进程组机器，已打回 ${failed?.length ?? 0} 个排队中的 Blender 任务（检查 fly.toml [processes] 与部署）`);
       return { action: "no_machine" };
@@ -105,7 +139,10 @@ export async function ensureRigStartedForPending(
     const targets = machines.filter((m) => needsStart(m.state));
     // 冷却只为「真的发了启动命令」计时：没机器可启、正在 starting/stopping 的轮次不烧冷却，
     // 否则一台处于 stopping 的 rig 会让唤醒最坏多等一个冷却周期。
-    if (targets.length === 0) return { action: "already_running" };
+    if (targets.length === 0) {
+      state.unavailableSince = undefined;
+      return { action: "already_running" };
+    }
     state.lastAttemptAt = deps.now();
     const started: string[] = [];
     for (const machine of targets) {
@@ -117,16 +154,29 @@ export async function ensureRigStartedForPending(
         deps.log(`[rig-autoscale] 启动 rig 机 ${machine.id} 失败：${String(error)}`);
       }
     }
-    if (started.length) return { action: "started", machineIds: started };
+    if (started.length) {
+      state.unavailableSince = undefined;
+      return { action: "started", machineIds: started };
+    }
     // 机器在、但一台都起不来：同样打回，错误里给出具体机器 ID，管理员可以直接照抄命令。
-    const app = deps.appName ? ` -a ${deps.appName}` : "";
+    // 一样要连续确认：Fly 的 start 偶发 5xx（部署、容量调度）一次就清空队列同样是误杀。
     const ids = targets.map((m) => m.id).join(" / ");
+    const { confirmed, elapsedMs } = confirmRigUnavailable(deps, state);
+    if (!confirmed) {
+      deps.log(`[rig-autoscale] rig 机 ${ids} 本轮启动失败（已 ${Math.round(elapsedMs / 1000)} 秒），未到确认窗口，先不打回任务`);
+      return { action: "error", message: `所有 rig 机启动均失败（${ids}），未到打回确认窗口` };
+    }
+    const app = deps.appName ? ` -a ${deps.appName}` : "";
     const failed = await deps.failQueuedBlenderJobs?.(
-      `Blender 后期机不存在或不可唤醒：rig 机 ${ids} 启动失败。请管理员执行 fly machine start ${targets[0].id}${app} 后重新提交。`,
+      "绑骨/白模任务未能开始：Blender 后期机不存在或不可唤醒。这不是你的参数或配置问题，" +
+        "请稍后重新提交；若仍然失败，把这条错误原样转给管理员即可。" +
+        `管理员处理：rig 机 ${ids} 连续启动失败，执行 fly machine start ${targets[0].id}${app} 查看拒绝原因。`,
     );
     deps.log(`[rig-autoscale] rig 机启动全失败，已打回 ${failed?.length ?? 0} 个排队中的 Blender 任务`);
     return { action: "error", message: `所有 rig 机启动均失败（${ids}）` };
   } catch (error) {
+    // 列举失败 ≠ 没有机器：复位确认计时，打回必须建立在连续两次**成功**的观察上。
+    state.unavailableSince = undefined;
     return { action: "error", message: `列举 rig 机失败：${String(error)}` };
   }
 }

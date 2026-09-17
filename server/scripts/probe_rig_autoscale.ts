@@ -11,7 +11,13 @@
  * 运行：npx tsx server/scripts/probe_rig_autoscale.ts
  */
 import { createServer } from "node:http";
-import { ensureRigStartedForPending, maybeStopIdleRig, resolveRigAutoscaleDeps } from "../jobs/rigAutoscale.js";
+import {
+  RIG_UNAVAILABLE_CONFIRM_MS,
+  ensureRigStartedForPending,
+  maybeStopIdleRig,
+  resolveRigAutoscaleDeps,
+  type RigStartState,
+} from "../jobs/rigAutoscale.js";
 
 type Call = { method: string; path: string; auth: string };
 const calls: Call[] = [];
@@ -22,6 +28,8 @@ let machines = [
 /** 只让 /stop 这一个请求失败：原来是「下一个请求失败」，结果 502 落在停机前的
  *  进程组核对上，那条断言验的根本不是停机失败路径（自证嫌疑，第二轮审查抓的）。 */
 let failNextStop = false;
+/** 让列举返回 200 + 非数组体（代理页 / 错误体），验「畸形响应不许当成没有机器」。 */
+let malformedList = false;
 
 const server = createServer((req, res) => {
   calls.push({ method: req.method || "", path: req.url || "", auth: String(req.headers.authorization || "") });
@@ -40,6 +48,10 @@ const server = createServer((req, res) => {
   if (stop) {
     machines = machines.map((m) => (m.id === stop[1] ? { ...m, state: "stopped" } : m));
     res.writeHead(200).end(JSON.stringify({ ok: true }));
+    return;
+  }
+  if (malformedList) {
+    res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ error: "unauthorized" }));
     return;
   }
   res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(machines));
@@ -182,14 +194,40 @@ async function main() {
     env,
   )!;
   queued = 1;
-  const noMachine = await ensureRigStartedForPending(failing, { lastAttemptAt: 0 });
+  // 9a. 反例对照：第一次看见「零台 rig」只记录不打回（fly deploy 期间零台 rig 是暂态）
+  const failState: RigStartState = { lastAttemptAt: 0 };
+  const firstLook = await ensureRigStartedForPending(failing, failState);
   check(
-    "没有 rig 机时打回排队任务，错误带做法",
+    "首次观察到零台 rig 机：只记录，一个任务都不许打回",
+    firstLook.action === "no_machine_pending" && failedReasons.length === 0,
+    { action: firstLook.action, failed: failedReasons.length },
+  );
+
+  // 9b. 确认窗口走满（把状态里的起始时间往前拨，状态本来就归调用方所有）
+  failState.unavailableSince = Date.now() - RIG_UNAVAILABLE_CONFIRM_MS - 1;
+  const noMachine = await ensureRigStartedForPending(failing, failState);
+  check(
+    "连续确认够久后打回排队任务，错误带用户向说明和管理员命令",
     noMachine.action === "no_machine" &&
       failedReasons.length === 1 &&
       failedReasons[0].includes("Blender 后期机不存在或不可唤醒") &&
+      failedReasons[0].includes("不是你的参数或配置问题") &&
       failedReasons[0].includes("fly scale count rig=1 -a mvstudiopro-probe"),
     failedReasons,
+  );
+
+  // 10. 反例对照：列举返回 200 但不是数组（代理/错误体）——必须报错，绝不当成「没有机器」去打回
+  const before10 = failedReasons.length;
+  malformedList = true;
+  const malformed = await ensureRigStartedForPending(failing, {
+    lastAttemptAt: 0,
+    unavailableSince: Date.now() - RIG_UNAVAILABLE_CONFIRM_MS - 1,
+  });
+  malformedList = false;
+  check(
+    "列举返回畸形响应：报 error、不打回任何任务",
+    malformed.action === "error" && malformed.message.includes("列举 rig 机失败") && failedReasons.length === before10,
+    malformed,
   );
 
   server.close();

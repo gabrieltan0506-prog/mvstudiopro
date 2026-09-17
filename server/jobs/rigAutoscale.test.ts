@@ -2,12 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_RIG_IDLE_STOP_MS,
   RIG_START_COOLDOWN_MS,
+  RIG_UNAVAILABLE_CONFIRM_MS,
   ensureRigStartedForPending,
   maybeStopIdleRig,
   resolveRigAutoscaleDeps,
   resolveRigIdleStopMs,
   rigAutoscaleEnabled,
   type RigAutoscaleDeps,
+  type RigStartState,
 } from "./rigAutoscale";
 import { listRigMachines, needsStart, resolveFlyMachinesConfig } from "../services/flyMachines";
 
@@ -106,24 +108,68 @@ describe("rig 唤醒（app 机）", () => {
     expect(next.started).toEqual(["rig-1"]);
   });
 
-  it("一台 rig 机都没有：排队中的 Blender 任务即时打回，错误里带可执行的命令", async () => {
-    const { deps, started, failedReasons } = makeDeps({ queuedBlenderJobs: async () => 1, listRig: async () => [] });
-    expect(await ensureRigStartedForPending(deps, { lastAttemptAt: 0 })).toEqual({ action: "no_machine" });
+  it("一台 rig 机都没有：连续确认够久才打回，错误里带可执行的命令和用户向的说明", async () => {
+    const { deps, started, failedReasons, advance } = makeDeps({ queuedBlenderJobs: async () => 1, listRig: async () => [] });
+    const state = { lastAttemptAt: 0 };
+    // 第一轮只记录，不打回（部署窗口内零台 rig 是暂态）
+    expect(await ensureRigStartedForPending(deps, state)).toEqual({ action: "no_machine_pending", unavailableMs: 0 });
+    expect(failedReasons).toEqual([]);
+    advance(RIG_UNAVAILABLE_CONFIRM_MS + 1);
+    expect(await ensureRigStartedForPending(deps, state)).toEqual({ action: "no_machine" });
     expect(started).toEqual([]);
     expect(failedReasons).toHaveLength(1);
     expect(failedReasons[0]).toContain("Blender 后期机不存在或不可唤醒");
+    expect(failedReasons[0]).toContain("不是你的参数或配置问题");
+    expect(failedReasons[0]).toContain("重新提交");
     expect(failedReasons[0]).toContain("fly scale count rig=1 -a mvstudiopro");
   });
 
-  it("机器在、但一台都起不来：也打回，错误里点名具体机器 ID", async () => {
-    const { deps, failedReasons } = makeDeps({
+  it("反例对照：确认窗口内（含刚好等于窗口前一刻）一个任务都不许打回", async () => {
+    const { deps, failedReasons, advance } = makeDeps({ queuedBlenderJobs: async () => 1, listRig: async () => [] });
+    const state = { lastAttemptAt: 0 };
+    await ensureRigStartedForPending(deps, state);
+    advance(RIG_UNAVAILABLE_CONFIRM_MS - 1);
+    const out = await ensureRigStartedForPending(deps, state);
+    expect(out.action).toBe("no_machine_pending");
+    expect(failedReasons).toEqual([]);
+  });
+
+  it("rig 机在确认窗口内恢复（部署做完了）：计时复位，绝不打回", async () => {
+    let machines: { id: string; state: string; processGroup: string }[] = [];
+    const { deps, started, failedReasons, advance } = makeDeps({
+      queuedBlenderJobs: async () => 1,
+      listRig: async () => machines,
+    });
+    const state: RigStartState = { lastAttemptAt: 0 };
+    expect((await ensureRigStartedForPending(deps, state)).action).toBe("no_machine_pending");
+    machines = [{ id: "rig-1", state: "stopped", processGroup: "rig" }];
+    advance(20_000);
+    expect((await ensureRigStartedForPending(deps, state)).action).toBe("started");
+    expect(state.unavailableSince).toBeUndefined();
+    // 再次消失也要重新从零计时，不能沿用上一次的时间戳直接打回
+    machines = [];
+    advance(RIG_UNAVAILABLE_CONFIRM_MS + 1);
+    expect((await ensureRigStartedForPending(deps, state)).action).toBe("no_machine_pending");
+    expect(failedReasons).toEqual([]);
+    expect(started).toEqual(["rig-1"]);
+  });
+
+  it("机器在、但一台都起不来：连续确认后才打回，错误里点名具体机器 ID", async () => {
+    const { deps, failedReasons, advance } = makeDeps({
       queuedBlenderJobs: async () => 1,
       startMachine: async () => {
         throw new Error("fly 500");
       },
     });
-    const out = await ensureRigStartedForPending(deps, { lastAttemptAt: 0 });
+    const state = { lastAttemptAt: 0 };
+    // 反例对照：偶发一次 5xx（部署/容量调度）不许清空队列
+    const first = await ensureRigStartedForPending(deps, state);
+    expect(first.action).toBe("error");
+    expect(failedReasons).toEqual([]);
+    advance(RIG_UNAVAILABLE_CONFIRM_MS + 1);
+    const out = await ensureRigStartedForPending(deps, state);
     expect(out.action).toBe("error");
+    expect(failedReasons).toHaveLength(1);
     expect(failedReasons[0]).toContain("fly machine start rig-1 -a mvstudiopro");
   });
 
@@ -134,14 +180,25 @@ describe("rig 唤醒（app 机）", () => {
     expect(failedReasons).toEqual([]);
   });
 
-  it("反例对照：列举 Machines API 失败时不打回（查不到 ≠ 没有机器）", async () => {
-    const { deps, failedReasons } = makeDeps({
+  it("反例对照：列举 Machines API 失败时不打回（查不到 ≠ 没有机器），且复位确认计时", async () => {
+    let down = false;
+    const { deps, failedReasons, advance } = makeDeps({
       queuedBlenderJobs: async () => 1,
       listRig: async () => {
-        throw new Error("fly api down");
+        if (down) throw new Error("fly api down");
+        return [];
       },
     });
-    expect((await ensureRigStartedForPending(deps, { lastAttemptAt: 0 })).action).toBe("error");
+    const state: RigStartState = { lastAttemptAt: 0 };
+    expect((await ensureRigStartedForPending(deps, state)).action).toBe("no_machine_pending");
+    down = true;
+    advance(1_000);
+    expect((await ensureRigStartedForPending(deps, state)).action).toBe("error");
+    expect(state.unavailableSince).toBeUndefined();
+    // API 恢复后必须重新从零确认，不能拿故障期间流逝的时间凑满窗口直接打回
+    down = false;
+    advance(RIG_UNAVAILABLE_CONFIRM_MS + 1);
+    expect((await ensureRigStartedForPending(deps, state)).action).toBe("no_machine_pending");
     expect(failedReasons).toEqual([]);
   });
 
@@ -325,6 +382,25 @@ describe("配置与安全边界", () => {
       const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
       expect(url).toBe("https://api.machines.dev/v1/apps/mvstudiopro/machines");
       expect(init.method).toBe("GET");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("列举返回的不是数组（200 带错误体／空体／代理 HTML）必须抛，不许当成「没有机器」", async () => {
+    const cfg = { appName: "mvstudiopro", token: "test-key", baseUrl: "https://api.machines.dev/v1" };
+    for (const body of ['{"error":"unauthorized"}', "", "<html>502</html>"]) {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(body, { status: 200 })));
+      try {
+        await expect(listRigMachines(cfg)).rejects.toThrow(/不是机器数组/);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    }
+    // 正例对照：真的是空数组（应用里一台机器都没有）仍然正常返回 []，不是一抛了之
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200 })));
+    try {
+      await expect(listRigMachines(cfg)).resolves.toEqual([]);
     } finally {
       vi.unstubAllGlobals();
     }

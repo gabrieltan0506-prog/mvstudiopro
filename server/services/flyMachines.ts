@@ -91,7 +91,11 @@ function normalizeMachine(raw: unknown): FlyMachine | null {
 
 export async function listFlyMachines(cfg: FlyMachinesConfig): Promise<FlyMachine[]> {
   const body = await callFly(cfg, `/apps/${encodeURIComponent(cfg.appName)}/machines`, { method: "GET" });
-  if (!Array.isArray(body)) return [];
+  // 非数组（200 带错误体、空体、代理返回的 HTML、JSON 解析失败）**必须抛**，不能当成「一台机器都没有」：
+  // 调用方把空数组当作「没有 rig 机」的证据去打回用户排队中的任务，畸形响应在那里等于误杀。
+  if (!Array.isArray(body)) {
+    throw new FlyMachinesError(`Fly Machines GET /machines 返回的不是机器数组（${typeof body}），拒绝当成「没有机器」`, 0);
+  }
   return body.map(normalizeMachine).filter((m): m is FlyMachine => m !== null);
 }
 

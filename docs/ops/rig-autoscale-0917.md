@@ -44,16 +44,23 @@ fly secrets set FLY_API_TOKEN=<fly deploy token> -a mvstudiopro
 - 不改 `fly.toml`：rig 进程组的声明、规格、部署都照旧，这里只管它平时开着还是停着。
 - 起不来 / 停不掉只记日志，绝不改任务状态——任务排队等着，比误判失败安全。
 
-## 行为变更：无 rig 机时 Blender 任务即时失败
+## 行为变更：rig 不可用时 Blender 任务快速失败
 以前没有 rig 机时任务静默排队，直到 stale reaper 按创建时间判死，用户侧表现是「点了没反应」。
-现在 app 机在唤醒那一刻查 Machines API，按三种情况分开处理：
+现在 app 机在唤醒那一刻查 Machines API，按四种情况分开处理：
 
 | 查到什么 | 怎么做 |
 |---|---|
 | 机器存在但 stopped | `start` 它，任务正常排队——**停着是正常状态，不算没有** |
-| 一台 rig 机都没有 | 排队中的 Blender 任务即时打回，错误写「Blender 后期机不存在或不可唤醒：…请管理员执行 `fly scale count rig=1 -a mvstudiopro` 建机…」 |
-| 机器在、但 start 全失败 | 同样打回，错误里点名具体机器 ID：「…请管理员执行 `fly machine start <rig-id> -a mvstudiopro`…」 |
-| 列举 Machines API 本身失败 | **不打回**（查不到 ≠ 没有机器），只记日志，下一轮再试 |
+| 一台 rig 机都没有 | 先记时间戳不动任务；**连续 `RIG_UNAVAILABLE_CONFIRM_MS`（60 秒）仍是零台**才打回排队中的 Blender 任务，错误里既有用户向说明（「不是你的参数或配置问题…可重新提交」），也有管理员命令 `fly scale count rig=1 -a mvstudiopro` |
+| 机器在、但 start 全失败 | 同样要连续确认 60 秒才打回，错误里点名具体机器 ID：`fly machine start <rig-id> -a mvstudiopro` |
+| 列举 Machines API 本身失败 / 返回的不是机器数组 | **不打回**（查不到 ≠ 没有机器），复位确认计时，只记日志，下一轮再试 |
+
+**开关**：`RIG_UNAVAILABLE_CONFIRM_MS` 设 0 ＝ 首次观察到零台就立刻打回（退回没有确认窗口的行为）。
+
+**为什么要确认窗口**：`fly deploy` 期间旧 rig 机被销毁、新机还没建好，列举完全可能返回零台 rig，
+而 tick 是 15 秒一轮——单次观察就打回等于每次发版都误杀整条排队。任何一次成功的「看见 rig 机」
+或列举失败都会把计时复位，所以打回必须建立在**连续两次成功观察**上。同理，`listFlyMachines`
+碰到 200 但不是数组的响应（错误体 / 空体 / 代理 HTML）一律抛错，绝不退化成空数组被当成「没有机器」。
 
 只打回 `queued` 的 `manhua_auto_rig` / `manhua_previs`：绝不碰 `running`（那在别的机器上跑着），
 也绝不碰其它 post_prod。绑骨/白模都是免费任务，打回不涉及退积分——
@@ -63,7 +70,7 @@ fly secrets set FLY_API_TOKEN=<fly deploy token> -a mvstudiopro
 ```
 npx tsx server/scripts/probe_rig_autoscale.ts
 ```
-起一台假 Fly Machines API，让真代码（`resolveRigAutoscaleDeps → listRigMachines → start/stop`）跑真 HTTP 往返，15 条断言：
+起一台假 Fly Machines API，让真代码（`resolveRigAutoscaleDeps → listRigMachines → start/stop`）跑真 HTTP 往返，18 条断言：
 方法/URL/Bearer 头、只启 rig 不碰 app、已 started 不重发、队列有任务不停机、空闲才停、停机前先关领单闸、
 **关闸后发现刚领到单就撤回停机（一个 stop 都不发）**、停机命令真被 502 拒绝时只报不抛且复位、
 没 token 一个请求都不发、**本机不在 rig 进程组时拒绝停机**。
