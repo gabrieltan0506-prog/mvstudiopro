@@ -4239,9 +4239,10 @@ async function processOnePostProdJob(): Promise<boolean> {
   }, 30_000);
   heartbeat.unref?.();
 
+  const { runPostProdJobWithLimit, resolvePostProdJobTimeoutMs } = await import("./postProdJob.js");
+  // 绑骨绑定阶段真模 >10 分钟（0917 实测），按任务类型分辨墙钟；其余后期仍 10 分钟
+  const timeoutMs = resolvePostProdJobTimeoutMs(job.input);
   try {
-    const timeoutMs = JOB_TIMEOUT_MS.post_prod;
-    const { runPostProdJobWithLimit } = await import("./postProdJob.js");
     // 时限贯通 AbortSignal:到点下载与 ffmpeg/ffprobe 子进程同步终止
     const { output, provider } = await runPostProdJobWithLimit(
       job.input,
@@ -4258,7 +4259,7 @@ async function processOnePostProdJob(): Promise<boolean> {
     // 后期任务确定性強、重跑同样贵:一律直接失败,不 requeue 重做整项媒体处理
     const message =
       error instanceof Error && error.name === "AbortError"
-        ? `后期任务超时(${JOB_TIMEOUT_MS.post_prod}ms),已终止本次处理`
+        ? `后期任务超时(${timeoutMs}ms),已终止本次处理`
         : getJobFailureMessage("post_prod" as JobType, error);
     await markJobFailed(job.id, message.slice(0, 800));
   } finally {

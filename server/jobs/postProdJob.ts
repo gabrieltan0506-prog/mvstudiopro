@@ -22,7 +22,7 @@ export async function processPostProdJob(
   switch (input.action) {
     case "manhua_auto_rig": {
       const {renderManhuaAutoRig}=await import("../services/manhuaAutoRigRender");
-      const output=await renderManhuaAutoRig(input.params,userId,{signal:options?.signal??AbortSignal.timeout(600_000)});
+      const output=await renderManhuaAutoRig(input.params,userId,{signal:options?.signal??AbortSignal.timeout(resolvePostProdJobTimeoutMs(input))});
       return {output,provider:"blender-auto-rig"};
     }
     case "manhua_previs": {
@@ -107,6 +107,23 @@ export async function runWithTaskLimit<T>(
       signal.removeEventListener("abort", onAbort);
     }
   }
+}
+
+/** 后期任务默认 10 分钟封顶（ffmpeg 拼接）。 */
+export const POST_PROD_DEFAULT_TIMEOUT_MS = 10 * 60_000;
+/**
+ * 0917 线上实测：阿菁 A-pose 真模（737,797 顶点）绑定阶段在 2 vCPU 上 >10 分钟被 600 秒硬超时杀掉
+ *（检查阶段 6–8 分钟能过）。绑定单独放宽：默认 30 分钟，env 只能上调、不能低于 10 分钟。
+ */
+export const MANHUA_AUTO_RIG_BIND_DEFAULT_TIMEOUT_MS = 30 * 60_000;
+export function resolvePostProdJobTimeoutMs(rawInput: unknown, env: NodeJS.ProcessEnv = process.env): number {
+  const input = rawInput as { action?: unknown; params?: { stage?: unknown } } | null;
+  if (input && input.action === "manhua_auto_rig" && input.params && input.params.stage === "bind") {
+    const raw = Number(env.MANHUA_AUTO_RIG_BIND_TIMEOUT_MS);
+    if (Number.isFinite(raw) && raw > 0) return Math.max(POST_PROD_DEFAULT_TIMEOUT_MS, Math.floor(raw));
+    return MANHUA_AUTO_RIG_BIND_DEFAULT_TIMEOUT_MS;
+  }
+  return POST_PROD_DEFAULT_TIMEOUT_MS;
 }
 
 export async function runPostProdJobWithLimit(
