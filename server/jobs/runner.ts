@@ -220,7 +220,30 @@ const rigIdleState = { lastBusyAt: Date.now() };
  * rig 已决定停机：从这一刻起本进程不再领新单，免得领到一半被停机的 SIGINT 打断。
  * 导出成对象是为了让回归测试能直接验「闸一关就不再领单」这条因果，不用去驱动整条定时器链。
  */
-export const rigStopGate = { requested: false };
+export const rigStopGate = { requested: false, requestedAt: 0 };
+/**
+ * 闸关上之后本进程最多容忍多久还活着。SIGINT 处理器最迟 10 秒强制 exit，
+ * 所以超过这个窗口还在跑，只能是 Fly 接受了 stop 但机器没停（或停完立刻被重启/部署拉起）。
+ * 那时必须把闸复位，否则这台机器活着却永远不领单——比多烧几分钟机时贵得多。
+ */
+export const RIG_STOP_GATE_MAX_MS = 5 * 60_000;
+
+/**
+ * 闸关了太久本进程还活着 → 机器没真停，复位领单闸。返回是否复位过。
+ * 导出是为了让回归测试直接验这条自愈，不用去驱动整条定时器链。
+ */
+export function releaseStaleRigStopGateIfNeeded(now: number = Date.now()): boolean {
+  if (!rigStopGate.requested || now - rigStopGate.requestedAt <= RIG_STOP_GATE_MAX_MS) return false;
+  console.warn(
+    `[rig-autoscale] 停机命令已发出 ${Math.round((now - rigStopGate.requestedAt) / 1000)} 秒本进程仍在运行，` +
+      "判定机器没有真停，复位领单闸继续领单",
+  );
+  rigStopGate.requested = false;
+  rigStopGate.requestedAt = 0;
+  // 空闲计时也重置：否则复位当轮就立刻又发一次停机，来回抖。
+  rigIdleState.lastBusyAt = now;
+  return true;
+}
 /** 成长营素材分析专用 worker 并发（与平台长 Job 分池，默认 2） */
 const GROWTH_CAMP_JOB_WORKER_CONCURRENCY = Math.max(
   1,
@@ -4323,6 +4346,11 @@ async function rigAutoscaleDeps(hooks: { onStopDecided?: () => void; onStopAbort
 async function logRigAutoscaleBoot(role: "app" | "rig") {
   const { rigAutoscaleEnabled, resolveRigIdleStopMs } = await import("./rigAutoscale.js");
   const { resolveFlyMachinesConfig, resolveSelfMachineId } = await import("../services/flyMachines.js");
+  const { rigWorkerSplitEnabled } = await import("./workerRole.js");
+  if (role === "app" && !rigWorkerSplitEnabled()) {
+    console.warn("[rig-autoscale] app：MANHUA_RIG_WORKER_SPLIT 未开，本机自己领 Blender 任务，不唤醒 rig 机");
+    return;
+  }
   if (!rigAutoscaleEnabled()) {
     console.warn(`[rig-autoscale] ${role}：MANHUA_RIG_AUTOSCALE=0，自动启停关闭，rig 机保持常驻`);
     return;
@@ -4340,6 +4368,10 @@ async function logRigAutoscaleBoot(role: "app" | "rig") {
 
 /** app 机：队列里有 queued 的 Blender 任务就唤醒停着的 rig 机。没配 Fly 凭证时整段跳过。 */
 async function rigWakeTick() {
+  // app 自己还在领 Blender 任务时（MANHUA_RIG_WORKER_SPLIT 未设的降级部署）不许唤醒 rig：
+  // 那等于两台机器抢同一单，而 app 机 8 GB 跑 Blender 正是 0917 OOM 那次的死法。
+  const { rigWorkerSplitEnabled } = await import("./workerRole.js");
+  if (!rigWorkerSplitEnabled()) return;
   const deps = await rigAutoscaleDeps();
   if (!deps) return;
   const { ensureRigStartedForPending } = await import("./rigAutoscale.js");
@@ -4349,17 +4381,23 @@ async function rigWakeTick() {
 
 /** rig 机：空闲够久停自己。本进程在跑任务、或队列里还有 Blender 任务，一律不停。 */
 async function rigIdleTick() {
+  // 自愈：停机命令发出去了、这个进程却还活着，说明机器没真停。再不复位就是一台空转机。
+  if (releaseStaleRigStopGateIfNeeded()) return;
+  if (rigStopGate.requested) return; // 停机在途，不再重复判定
   const deps = await rigAutoscaleDeps({
     onStopDecided: () => {
       rigStopGate.requested = true;
+      rigStopGate.requestedAt = Date.now();
     },
     onStopAborted: () => {
       rigStopGate.requested = false;
+      rigStopGate.requestedAt = 0;
     },
   });
   if (!deps) return;
   const { maybeStopIdleRig } = await import("./rigAutoscale.js");
-  const outcome = await maybeStopIdleRig(deps, rigIdleState, postProdProcessing);
+  // 传函数而不是快照：停机判定要跨两次网络往返，期间 1 秒一轮的 post_prod 通道可能刚领到一单。
+  const outcome = await maybeStopIdleRig(deps, rigIdleState, () => postProdProcessing);
   if (outcome.action === "error") console.warn("[rig-autoscale] 停机判定异常：", outcome.message);
 }
 
@@ -4445,5 +4483,6 @@ export function stopJobWorker() {
   if (rigAutoscaleTimer) clearInterval(rigAutoscaleTimer);
   rigAutoscaleTimer = null;
   rigStopGate.requested = false;
+  rigStopGate.requestedAt = 0;
   workerStarted = false;
 }

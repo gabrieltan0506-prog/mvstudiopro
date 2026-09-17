@@ -284,7 +284,12 @@ export function ManhuaPrevisStudioView({
           );
         }
       } catch {
-        if (active) setStatus("查询暂不可用，保留原任务编号，稍后继续查询");
+        if (!active) return;
+        // 查询本身失败 ≠ 服务端查不到这个编号：断网/网关抖动不能计进「连续查不到十分钟」，
+        // 否则一次外网抖动就把「放弃原编号」按钮点亮，用户放弃掉一单真实在跑的任务再重提 = 重复建单。
+        missingSince.current = null;
+        setAbandonable(false);
+        setStatus("查询暂不可用，保留原任务编号，稍后继续查询");
       }
       if (active) timer = setTimeout(poll, 4000);
     };

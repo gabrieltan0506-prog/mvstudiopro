@@ -120,15 +120,19 @@ export type RigIdleOutcome =
 
 /**
  * rig 机：空闲够久就停自己。
- * @param busy 本进程此刻是否有任务在跑（runner 传 postProdProcessing）
+ * @param busy 本进程此刻是否有任务在跑。**线上一律传函数**（runner 传 `() => postProdProcessing`）：
+ *              关闸前后各读一次，快照式 boolean 会漏掉停机窗口里刚领到的那一单。
  */
 export async function maybeStopIdleRig(
   deps: RigAutoscaleDeps,
   state: RigIdleState,
-  busy: boolean,
+  busy: boolean | (() => boolean),
 ): Promise<RigIdleOutcome> {
+  // 传函数才是线上口径：下面两次 await 各跨一次网络往返，期间 1 秒一轮的 post_prod
+  // 通道完全可能刚领到一单绑骨任务，快照式的 boolean 看不见它。
+  const isBusy = typeof busy === "function" ? busy : () => busy;
   if (deps.idleStopMs <= 0 || !deps.selfMachineId) return { action: "disabled" };
-  if (busy) {
+  if (isBusy()) {
     state.lastBusyAt = deps.now();
     return { action: "busy" };
   }
@@ -161,6 +165,15 @@ export async function maybeStopIdleRig(
   // 先关本进程的领单闸，再发停机命令：停机要跨一次网络往返，这期间 worker 每秒还在领单，
   // 领到的绑骨任务会被随后的 SIGINT 打断，卡 running 到 reaper 判失败。
   deps.onStopDecided?.();
+  // 关闸之后再核一次「本进程有没有任务在跑」。闸是同步置位的，而 runner 的
+  // `processPostProdJobsOnce` 在「查闸 → 置 processing」之间没有 await，
+  // 所以关闸后 isBusy() 仍为 false，才能断定停机不会打断一单已经在跑的绑骨
+  // （12 分钟的活被 SIGINT 打断 = 卡 running 到 reaper 判失败，正是这条链最贵的错）。
+  if (isBusy()) {
+    deps.onStopAborted?.();
+    state.lastBusyAt = deps.now();
+    return { action: "busy" };
+  }
   try {
     deps.log(`[rig-autoscale] rig 空闲 ${Math.round(idleMs / 1000)} 秒，停机 ${deps.selfMachineId}（下次有 Blender 任务时由 app 机唤醒）`);
     await deps.stopMachine(deps.selfMachineId);

@@ -19,17 +19,19 @@ let machines = [
   { id: "app-1", state: "started", config: { metadata: { fly_process_group: "app" } } },
   { id: "rig-1", state: "stopped", config: { metadata: { fly_process_group: "rig" } } },
 ];
-let failNext = false;
+/** 只让 /stop 这一个请求失败：原来是「下一个请求失败」，结果 502 落在停机前的
+ *  进程组核对上，那条断言验的根本不是停机失败路径（自证嫌疑，第二轮审查抓的）。 */
+let failNextStop = false;
 
 const server = createServer((req, res) => {
   calls.push({ method: req.method || "", path: req.url || "", auth: String(req.headers.authorization || "") });
-  if (failNext) {
-    failNext = false;
+  const start = /\/machines\/([^/]+)\/start$/.exec(req.url || "");
+  const stop = /\/machines\/([^/]+)\/stop$/.exec(req.url || "");
+  if (stop && failNextStop) {
+    failNextStop = false;
     res.writeHead(502).end("upstream boom");
     return;
   }
-  const start = /\/machines\/([^/]+)\/start$/.exec(req.url || "");
-  const stop = /\/machines\/([^/]+)\/stop$/.exec(req.url || "");
   if (start) {
     machines = machines.map((m) => (m.id === start[1] ? { ...m, state: "started" } : m));
     res.writeHead(200).end(JSON.stringify({ ok: true }));
@@ -101,24 +103,53 @@ async function main() {
   queued = 0;
   running = 1;
   const idleState = { lastBusyAt: Date.now() - 10 * 60_000 };
-  const busy = await maybeStopIdleRig(deps, idleState, false);
+  const busy = await maybeStopIdleRig(deps, idleState, () => false);
   check("队列里还有任务就不停机", busy.action === "busy" && !gateClosed, busy);
 
   // 5. 真正空闲：关闸 → 停机
   running = 0;
   idleState.lastBusyAt = Date.now() - 10 * 60_000;
-  const stopped = await maybeStopIdleRig(deps, idleState, false);
+  const stopped = await maybeStopIdleRig(deps, idleState, () => false);
   check("空闲够久停掉自己这台", stopped.action === "stopped" && stopped.machineId === "rig-1", stopped);
   check("停机前领单闸已关", gateClosed);
   check("机器状态已变 stopped", machines.find((m) => m.id === "rig-1")?.state === "stopped");
 
+  // 5b. 停机窗口竞态：关闸那一刻本进程刚领到一单 → 必须撤回停机，一个 stop 都不许发
+  machines = machines.map((m) => (m.id === "rig-1" ? { ...m, state: "started" } : m));
+  gateClosed = false;
+  let localBusy = false;
+  const raceDeps = resolveRigAutoscaleDeps(counters, {
+    onStopDecided: () => {
+      gateClosed = true;
+      localBusy = true; // 闸关上的同一刻，post_prod 通道已经在上一次 await 期间领到了单
+    },
+    onStopAborted: () => {
+      gateClosed = false;
+    },
+  }, env)!;
+  const stopsBeforeRace = calls.filter((c) => c.path.endsWith("/stop")).length;
+  const raced = await maybeStopIdleRig(raceDeps, { lastBusyAt: Date.now() - 10 * 60_000 }, () => localBusy);
+  check(
+    "关闸后发现本进程刚领到一单：撤回停机、闸复位、一个 stop 都没发",
+    raced.action === "busy" && !gateClosed && calls.filter((c) => c.path.endsWith("/stop")).length === stopsBeforeRace,
+    raced,
+  );
+
   // 6. Fly 报错：不抛出，闸复位
   machines = machines.map((m) => (m.id === "rig-1" ? { ...m, state: "started" } : m));
   gateClosed = false;
-  failNext = true;
+  failNextStop = true;
   idleState.lastBusyAt = Date.now() - 10 * 60_000;
-  const failed = await maybeStopIdleRig(deps, idleState, false);
-  check("停机失败只报不抛，且闸已复位", failed.action === "error" && !gateClosed, failed);
+  const stopsBeforeFail = calls.filter((c) => c.path.endsWith("/stop")).length;
+  const failed = await maybeStopIdleRig(deps, idleState, () => false);
+  check(
+    "停机命令真发出去并被 502 拒绝：只报不抛、闸已复位",
+    failed.action === "error" &&
+      failed.message.includes("停机失败") &&
+      !gateClosed &&
+      calls.filter((c) => c.path.endsWith("/stop")).length === stopsBeforeFail + 1,
+    failed,
+  );
 
   // 7. 没凭证：一个请求都不发（关闭式失败）
   const beforeNoToken = calls.length;
@@ -129,7 +160,7 @@ async function main() {
   machines = machines.map((m) => (m.id === "rig-1" ? { ...m, state: "started" } : m));
   const wrongSelf = resolveRigAutoscaleDeps(counters, hooks, { ...env, FLY_MACHINE_ID: "app-1" })!;
   const beforeWrong = calls.filter((c) => c.path.includes("app-1")).length;
-  const refused = await maybeStopIdleRig(wrongSelf, { lastBusyAt: Date.now() - 10 * 60_000 }, false);
+  const refused = await maybeStopIdleRig(wrongSelf, { lastBusyAt: Date.now() - 10 * 60_000 }, () => false);
   check(
     "本机不在 rig 进程组时拒绝停机，且没对 app 机发过任何命令",
     refused.action === "error" && calls.filter((c) => c.path.includes("app-1")).length === beforeWrong,

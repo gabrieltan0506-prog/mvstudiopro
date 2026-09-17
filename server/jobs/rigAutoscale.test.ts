@@ -160,6 +160,32 @@ describe("rig 空闲停机（rig 机自己）", () => {
     expect(calls).toEqual(["gate_closed", "stop:rig-1"]);
   });
 
+  it("关闸后本进程刚领到一单（停机窗口竞态）：撤回停机，绝不发 stop", async () => {
+    // 反例对照：把 busy 当成快照 boolean 传进去，这条就是漏的那个洞。
+    let busy = false;
+    const { deps, stopped, calls, at } = makeDeps({
+      onStopDecided: () => {
+        calls.push("gate_closed");
+        // 模拟：闸关上的同一刻，1 秒一轮的 post_prod 通道已经在上一次 await 期间领到了单
+        busy = true;
+      },
+    });
+    const state = { lastBusyAt: at() - DEFAULT_RIG_IDLE_STOP_MS - 1 };
+    const out = await maybeStopIdleRig(deps, state, () => busy);
+    expect(out).toEqual({ action: "busy" });
+    expect(stopped).toEqual([]);
+    expect(calls).toEqual(["gate_closed", "gate_reopened"]);
+    expect(state.lastBusyAt).toBe(at());
+  });
+
+  it("正例：关闸后仍然空闲就照常停机（证明上一条不是把停机整个关掉了）", async () => {
+    const { deps, stopped, calls, at } = makeDeps();
+    const out = await maybeStopIdleRig(deps, { lastBusyAt: at() - DEFAULT_RIG_IDLE_STOP_MS - 1 }, () => false);
+    expect(out.action).toBe("stopped");
+    expect(stopped).toEqual(["rig-1"]);
+    expect(calls).toEqual(["gate_closed", "stop:rig-1"]);
+  });
+
   it("停机失败时把闸打开，机器继续领单，不变成活着却不干活的空转机", async () => {
     const { deps, calls, at } = makeDeps({
       stopMachine: async () => {
