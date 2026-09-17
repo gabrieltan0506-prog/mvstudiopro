@@ -499,13 +499,29 @@ describe("文戏动作库（0917 PR-E）", () => {
   });
 
   it("朝向有两个真源时拒绝：已设运动轨迹就不能再用转身", () => {
-    const spec = base();
-    spec.actors[0].motionRoute = [
+    // 0917 四轮审查：这条原来用的节点时间是 timeSec=4（等于片长，越界），
+    // 于是把「转身×轨迹」互斥规则整条删掉它照样红——断言永远为真，规则实际上没人测。
+    // 改成合法轨迹 + 指名报错内容 + 正例对照。
+    const route = [
       { timeSec: 0, position: [0, 0], facingDeg: 0 },
-      { timeSec: 4, position: [1, 0], facingDeg: 90 },
+      { timeSec: (4 * 24 - 1) / 24, position: [1, 0], facingDeg: 90 },
     ];
+    const spec = base();
+    spec.actors[0].end = [1, 0];
+    spec.actors[0].motionRoute = route;
     spec.actors[0].actions = [{ kind: "turn", startSec: 0, endSec: 2, facingDeg: 90 }];
-    expect(manhuaPrevisSpecSchema.safeParse(spec).success).toBe(false);
+    const rejected = manhuaPrevisSpecSchema.safeParse(spec);
+    expect(rejected.success).toBe(false);
+    expect(
+      !rejected.success &&
+        rejected.error.issues.some(issue => issue.message.includes("转身"))
+    ).toBe(true);
+    // 正例对照：同一条轨迹只要不叠转身动作必须绿，证明红的是互斥规则而不是这条轨迹本身
+    const accepted = base();
+    accepted.actors[0].end = [1, 0];
+    accepted.actors[0].motionRoute = route;
+    accepted.actors[0].actions = [{ kind: "idle", startSec: 0, endSec: 2 }];
+    expect(manhuaPrevisSpecSchema.safeParse(accepted).success).toBe(true);
   });
 
   it("四足角色与持剑白模的旧门禁没被扩库放宽", () => {

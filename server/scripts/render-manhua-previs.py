@@ -302,8 +302,15 @@ def plan_contacts(actor):
 # 根部 z 无关，所以这里在任何姿态循环之前一次把所有出水角色的头高算好，顺序不再影响结果。
 for _actor in spec['actors']:
     if _actor['id'] in water_events and _actor['id'] not in water_head_heights:
-        _pre_contacts,_pre_stance=plan_contacts(_actor)
-        water_head_heights[_actor['id']]=float(points(_actor,1,_pre_contacts[1])['head'][1].z)
+        # 0917 四轮审查（加固，不是修 bug）：上面那句「头高只取决于中性姿态」目前**是真的**，
+        # 但它成立靠的是另一个模块的巧合——action_amounts 里每条包络在 u=0 都恰好等于 0，
+        # 所以 startSec=0 的动作在第 1 帧贡献为零。实测过：加 sit(0–2s) 前后头高与根部 z
+        # 逐帧完全相同（delta=0）。问题是这层依赖没人写下来：哪天有个动作的包络在 u=0 不为零
+        # （比如「已经坐着」这种起始即到位的姿态），出水深度就会跟着排了什么动作偷偷变，
+        # 而且不报错。量一份去掉全部动作的副本，把这条不变量变成结构性的，行为与今天完全一致。
+        _neutral=dict(_actor,actions=[])
+        _pre_contacts,_pre_stance=plan_contacts(_neutral)
+        water_head_heights[_actor['id']]=float(points(_neutral,1,_pre_contacts[1])['head'][1].z)
 
 events=[]
 interaction_poses={}

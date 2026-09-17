@@ -853,11 +853,18 @@ export function ManhuaPrevisStudioView({
             className="space-y-2 rounded border border-white/15 p-2"
             data-previs-route={actor.id}
           >
+            {/* 0917 四轮审查：转身与轨迹互斥这条边界，schema、渲染层、动作下拉三处都拒了，
+                只剩这个开关是从另一个方向进同一个死路——已排了转身的角色勾上轨迹，一样是
+                提交才被弹回。这里不替用户删他排好的转身，只挡住并说清先去哪儿改。 */}
             <label className="text-xs text-white/70">
               <input
                 type="checkbox"
                 aria-label={`角色${index + 1}分段运动轨`}
-                disabled={disabled || Boolean(pendingId)}
+                disabled={
+                  disabled ||
+                  Boolean(pendingId) ||
+                  (!actor.motionRoute && actor.actions.some(a => a.kind === "turn"))
+                }
                 checked={Boolean(actor.motionRoute)}
                 onChange={e =>
                   actorEdit(index, {
@@ -880,6 +887,11 @@ export function ManhuaPrevisStudioView({
               />
               分段站位与转身
             </label>
+            {!actor.motionRoute && actor.actions.some(a => a.kind === "turn") ? (
+              <p className="text-xs text-amber-200" data-previs-route-blocked>
+                本角色已排「转身到指定朝向」动作：朝向只能有一个真源。要改用分段轨迹，请先删掉转身动作，再把朝向写进轨迹节点。
+              </p>
+            ) : null}
             {actor.motionRoute && (
               <>
                 <p className="text-xs text-white/60">
@@ -1078,19 +1090,28 @@ export function ManhuaPrevisStudioView({
                   })
                 }
               >
-                {Object.entries(PREVIS_ACTION_LABELS).map(([id, label]) => (
+                {Object.entries(PREVIS_ACTION_LABELS).map(([id, label]) => {
                   // 0917 三轮审查：带骨角色的坐下实测脚会穿地 21—32 厘米，提交处已拒。
                   // 面板上直接禁掉并写清原因，别让用户选了、排好了时间再被 schema 弹回来。
-                  <option
-                    key={id}
-                    value={id}
-                    disabled={id === "sit" && Boolean(actor.riggedModel) && action.kind !== "sit"}
-                  >
-                    {id === "sit" && actor.riggedModel
-                      ? label + "（带骨角色暂不支持：静止姿态差会让脚穿地，待重定向补偿后开放；改用棍人角色可坐）"
-                      : label}
-                  </option>
-                ))}
+                  const sitBlocked = id === "sit" && Boolean(actor.riggedModel);
+                  // 0917 四轮审查：一轮就定了「转身与运动轨迹是两套朝向真源」，schema 与渲染层
+                  // 两处都硬拒，唯独面板没跟上——有轨迹的角色照样能选转身，排完时间提交才被弹回。
+                  // 与上面坐下同一套做法：能拒的就在下拉里当场拒，并写清朝向该写到哪。
+                  const turnBlocked = id === "turn" && Boolean(actor.motionRoute?.length);
+                  return (
+                    <option
+                      key={id}
+                      value={id}
+                      disabled={(sitBlocked || turnBlocked) && action.kind !== id}
+                    >
+                      {sitBlocked
+                        ? label + "（带骨角色暂不支持：静止姿态差会让脚穿地，待重定向补偿后开放；改用棍人角色可坐）"
+                        : turnBlocked
+                          ? label + "（本角色已设运动轨迹：朝向以轨迹节点为准，请改节点朝向）"
+                          : label}
+                    </option>
+                  );
+                })}
               </select>
               {numeric("动作开始", action.startSec, n =>
                 actorEdit(index, {
