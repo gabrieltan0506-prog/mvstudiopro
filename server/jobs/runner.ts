@@ -103,6 +103,8 @@ import {
 import { isTtapiSunoSubmissionUnknown } from "../services/ttapiSunoMusic.js";
 import { processPdfExportJob } from "./pdfExportJob";
 import { resolveJobWorkerRole, resolvePostProdClaimFilter } from "./workerRole.js";
+// 只导入类型：rigAutoscale 仍走动态 import（app 机不该为这条链加载 Fly 客户端），类型在编译期就被擦掉。
+import type { RigStartState } from "./rigAutoscale.js";
 import {
   invokePlatformAnalysisChat,
   PLATFORM_ANALYSIS_FALLBACK_MODEL,
@@ -214,8 +216,12 @@ let postProdProcessing = false;
 let postProdTimer: NodeJS.Timeout | null = null;
 // 0917 PR-B：rig 进程组按需启停。app 机负责唤醒，rig 机负责停自己。
 let rigAutoscaleTimer: NodeJS.Timeout | null = null;
-const rigStartState = { lastAttemptAt: 0 };
-const rigIdleState = { lastBusyAt: Date.now() };
+/**
+ * 唤醒/停机两份状态。导出是为了让回归测试能直接验「stopJobWorker 之后确认窗口确实清零」
+ * 这条因果（与 rigStopGate 同理），业务代码不要在别处写它们。
+ */
+export const rigStartState: RigStartState = { lastAttemptAt: 0 };
+export const rigIdleState = { lastBusyAt: Date.now() };
 /**
  * rig 已决定停机：从这一刻起本进程不再领新单，免得领到一半被停机的 SIGINT 打断。
  * 导出成对象是为了让回归测试能直接验「闸一关就不再领单」这条因果，不用去驱动整条定时器链。
@@ -4493,5 +4499,11 @@ export function stopJobWorker() {
   rigAutoscaleTimer = null;
   rigStopGate.requested = false;
   rigStopGate.requestedAt = 0;
+  // 三份状态都要跟着 worker 生命周期复位。尤其是 unavailableSince：留着上一轮 worker
+  // 攒下的「rig 已经不可用 N 分钟」时间戳，下次 startJobWorker 后的**第一次**观察就会
+  // 判定确认窗口已满，直接打回全部排队任务——确认窗口等于没有。
+  rigStartState.lastAttemptAt = 0;
+  rigStartState.unavailableSince = undefined;
+  rigIdleState.lastBusyAt = Date.now();
   workerStarted = false;
 }

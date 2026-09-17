@@ -90,6 +90,39 @@ const button =
 /** 连续查不到原编号多久之后允许放弃（毫秒）。入队成功的任务几秒内即可查到。 */
 export const PREVIS_ABANDON_AFTER_MS = 10 * 60_000;
 
+/**
+ * 「第一次查不到」的时间戳按 requestId 落在 sessionStorage 里，而不是只放组件内的 ref。
+ * 理由：等十分钟期间用户切页签／换路由是常态，组件一卸载重挂 ref 就清零，计时永远重来，
+ * 「放弃原编号」这个出口实际上永远点不亮——功能等于没有。
+ * 只按 requestId 存：换了编号读不到旧值，不会把上一单的等待时间算到新单头上。
+ * sessionStorage 在隐私模式/禁用站点数据时会抛，全部包 try/catch，读失败就退回本次会话内计时。
+ */
+const previsMissingKey = (requestId: string) => `manhua-previs-missing-since:${requestId}`;
+function readPrevisMissingSince(requestId: string): number | null {
+  try {
+    const raw = window.sessionStorage.getItem(previsMissingKey(requestId));
+    const at = raw ? Number(raw) : NaN;
+    // 未来时间戳（改过系统时钟）一律不认，否则会立刻点亮放弃按钮
+    return Number.isFinite(at) && at > 0 && at <= Date.now() ? at : null;
+  } catch {
+    return null;
+  }
+}
+function writePrevisMissingSince(requestId: string, at: number) {
+  try {
+    window.sessionStorage.setItem(previsMissingKey(requestId), String(at));
+  } catch {
+    /* 存不了就退回内存计时，不影响主流程 */
+  }
+}
+function clearPrevisMissingSince(requestId: string) {
+  try {
+    window.sessionStorage.removeItem(previsMissingKey(requestId));
+  } catch {
+    /* 同上 */
+  }
+}
+
 export function ManhuaPrevisStudio(props: Props) {
   const utils = trpc.useUtils();
   const submit = trpc.manhuaPrevis.submit.useMutation();
@@ -257,9 +290,15 @@ export function ManhuaPrevisStudioView({
     }
   }
   useEffect(() => {
-    missingSince.current = null;
-    setAbandonable(false);
-    if (!pendingId) return;
+    if (!pendingId) {
+      missingSince.current = null;
+      setAbandonable(false);
+      return;
+    }
+    // 重挂载（切页签/换路由）接着上次的计时走，别从零开始
+    const resumed = readPrevisMissingSince(pendingId);
+    missingSince.current = resumed;
+    setAbandonable(resumed !== null && Date.now() - resumed >= PREVIS_ABANDON_AFTER_MS);
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
@@ -268,6 +307,7 @@ export function ManhuaPrevisStudioView({
         if (!active) return;
         if (response) {
           missingSince.current = null;
+          clearPrevisMissingSince(pendingId);
           setAbandonable(false);
           consume(response);
           if (response.status === "succeeded" || response.status === "failed")
@@ -275,6 +315,7 @@ export function ManhuaPrevisStudioView({
         } else {
           const first = missingSince.current ?? Date.now();
           missingSince.current = first;
+          writePrevisMissingSince(pendingId, first);
           const missedMs = Date.now() - first;
           if (missedMs >= PREVIS_ABANDON_AFTER_MS) setAbandonable(true);
           setStatus(
@@ -288,6 +329,7 @@ export function ManhuaPrevisStudioView({
         // 查询本身失败 ≠ 服务端查不到这个编号：断网/网关抖动不能计进「连续查不到十分钟」，
         // 否则一次外网抖动就把「放弃原编号」按钮点亮，用户放弃掉一单真实在跑的任务再重提 = 重复建单。
         missingSince.current = null;
+        clearPrevisMissingSince(pendingId);
         setAbandonable(false);
         setStatus("查询暂不可用，保留原任务编号，稍后继续查询");
       }
@@ -1757,6 +1799,7 @@ export function ManhuaPrevisStudioView({
             onClick={() => {
               if (!publish({ ...latest.current.studio, pending: undefined })) return;
               missingSince.current = null;
+              clearPrevisMissingSince(pendingId);
               setAbandonable(false);
               setError("");
               setStatus("已放弃原编号；再点「确认生成动作白模」会新建一次");

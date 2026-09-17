@@ -173,6 +173,70 @@ describe("rig 唤醒（app 机）", () => {
     expect(failedReasons[0]).toContain("fly machine start rig-1 -a mvstudiopro");
   });
 
+  it("多台 rig：1 单排队只唤醒 1 台，剩下的停着的不动（第四轮：多唤醒的那几台在这单跑完前停不掉）", async () => {
+    const { deps, started } = makeDeps({
+      queuedBlenderJobs: async () => 1,
+      listRig: async () => [
+        { id: "rig-1", state: "stopped", processGroup: "rig" },
+        { id: "rig-2", state: "stopped", processGroup: "rig" },
+        { id: "rig-3", state: "stopped", processGroup: "rig" },
+      ],
+    });
+    expect(await ensureRigStartedForPending(deps, { lastAttemptAt: 0 })).toEqual({ action: "started", machineIds: ["rig-1"] });
+    expect(started).toEqual(["rig-1"]);
+  });
+
+  it("多台 rig：2 单排队唤醒 2 台（反例对照：上一条不是把多机唤醒整个关死）", async () => {
+    const { deps, started } = makeDeps({
+      queuedBlenderJobs: async () => 2,
+      listRig: async () => [
+        { id: "rig-1", state: "stopped", processGroup: "rig" },
+        { id: "rig-2", state: "stopped", processGroup: "rig" },
+        { id: "rig-3", state: "stopped", processGroup: "rig" },
+      ],
+    });
+    expect((await ensureRigStartedForPending(deps, { lastAttemptAt: 0 })).action).toBe("started");
+    expect(started).toEqual(["rig-1", "rig-2"]);
+  });
+
+  it("多台 rig：起不来的那台不占名额，要继续试下一台（否则一台坏机就把任务推到打回分支）", async () => {
+    const attempted: string[] = [];
+    const { deps, started, failedReasons } = makeDeps({
+      queuedBlenderJobs: async () => 1,
+      listRig: async () => [
+        { id: "rig-bad", state: "stopped", processGroup: "rig" },
+        { id: "rig-ok", state: "stopped", processGroup: "rig" },
+        { id: "rig-3", state: "stopped", processGroup: "rig" },
+      ],
+      startMachine: async (id) => {
+        attempted.push(id);
+        if (id === "rig-bad") throw new Error("fly 500");
+        started.push(id);
+      },
+    });
+    expect(await ensureRigStartedForPending(deps, { lastAttemptAt: 0 })).toEqual({ action: "started", machineIds: ["rig-ok"] });
+    expect(attempted).toEqual(["rig-bad", "rig-ok"]);
+    expect(started).toEqual(["rig-ok"]);
+    expect(failedReasons).toEqual([]);
+  });
+
+  it("打回之后确认窗口重新计时：刚入队的任务不被连坐秒杀（第四轮）", async () => {
+    const { deps, failedReasons, advance } = makeDeps({ queuedBlenderJobs: async () => 1, listRig: async () => [] });
+    const state: RigStartState = { lastAttemptAt: 0 };
+    await ensureRigStartedForPending(deps, state);
+    advance(RIG_UNAVAILABLE_CONFIRM_MS + 1);
+    expect((await ensureRigStartedForPending(deps, state)).action).toBe("no_machine");
+    expect(failedReasons).toHaveLength(1);
+    // 打回后紧接着又有人提交（队列仍 >0）：下一个 tick 不许直接再打回
+    advance(15_000);
+    expect((await ensureRigStartedForPending(deps, state)).action).toBe("no_machine_pending");
+    expect(failedReasons).toHaveLength(1);
+    // 正例对照：新的一整个窗口走满之后照样打回，不是把打回关掉了
+    advance(RIG_UNAVAILABLE_CONFIRM_MS + 1);
+    expect((await ensureRigStartedForPending(deps, state)).action).toBe("no_machine");
+    expect(failedReasons).toHaveLength(2);
+  });
+
   it("反例对照：机器只是停着（正常状态）不许当成没有，要去启动它、不许打回任务", async () => {
     const { deps, started, failedReasons } = makeDeps({ queuedBlenderJobs: async () => 1 });
     expect((await ensureRigStartedForPending(deps, { lastAttemptAt: 0 })).action).toBe("started");

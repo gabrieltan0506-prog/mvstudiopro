@@ -134,6 +134,11 @@ export async function ensureRigStartedForPending(
           "（机器可以停着，有任务会自动唤醒），并检查 fly.toml [processes] 与本次部署。",
       );
       deps.log(`[rig-autoscale] 没有 rig 进程组机器，已打回 ${failed?.length ?? 0} 个排队中的 Blender 任务（检查 fly.toml [processes] 与部署）`);
+      // 打回完就把确认窗口重新开始计时：否则时间戳一直是最早那次观察，
+      // 打回之后新提交进来的任务会在下一个 15 秒 tick 被连坐秒杀（等于对它没有确认窗口）。
+      // 重开之后每一批被打回的任务都实打实享受满一个 RIG_UNAVAILABLE_CONFIRM_MS，
+      // rig 若在这期间恢复，这批任务直接跑掉而不是先被杀。
+      state.unavailableSince = deps.now();
       return { action: "no_machine" };
     }
     const targets = machines.filter((m) => needsStart(m.state));
@@ -146,6 +151,11 @@ export async function ensureRigStartedForPending(
     state.lastAttemptAt = deps.now();
     const started: string[] = [];
     for (const machine of targets) {
+      // 最多唤醒 queued 台：1 单排队却把 3 台停着的 rig 全拉起来，多出来的那几台在这一单跑完前
+      // 都因为 pendingBlenderJobs>0 停不掉（见 maybeStopIdleRig），等于 1 单付 N 台 ×（任务时长+10 分钟）。
+      // 注意是「已成功启动够 queued 台」才收手：启动失败的那台不占名额，否则一台起不来就会
+      // 让另外几台可用的 rig 完全没机会被试，最后走到打回分支上误杀任务。
+      if (started.length >= queued) break;
       try {
         await deps.startMachine(machine.id);
         started.push(machine.id);
@@ -173,6 +183,7 @@ export async function ensureRigStartedForPending(
         `管理员处理：rig 机 ${ids} 连续启动失败，执行 fly machine start ${targets[0].id}${app} 查看拒绝原因。`,
     );
     deps.log(`[rig-autoscale] rig 机启动全失败，已打回 ${failed?.length ?? 0} 个排队中的 Blender 任务`);
+    state.unavailableSince = deps.now(); // 同上：打回一批就重开确认窗口，别让后来的任务没有窗口
     return { action: "error", message: `所有 rig 机启动均失败（${ids}）` };
   } catch (error) {
     // 列举失败 ≠ 没有机器：复位确认计时，打回必须建立在连续两次**成功**的观察上。

@@ -14,7 +14,10 @@ import {
   RIG_STOP_GATE_MAX_MS,
   processPostProdJobsOnce,
   releaseStaleRigStopGateIfNeeded,
+  rigIdleState,
+  rigStartState,
   rigStopGate,
+  stopJobWorker,
 } from "./runner";
 
 describe("rig 停机闸（审查 P1：停机要跨一次网络往返，这期间不能再领单）", () => {
@@ -72,5 +75,19 @@ describe("停机闸自愈（审查第二轮：Fly 接受了 stop 但机器没停
 
   it("闸本来就没关时不做任何事", () => {
     expect(releaseStaleRigStopGateIfNeeded(Date.now() + 10 * RIG_STOP_GATE_MAX_MS)).toBe(false);
+  });
+});
+
+describe("worker 生命周期复位（第四轮：跨 stopJobWorker 的状态残留）", () => {
+  it("stopJobWorker 之后确认窗口清零，下一次 startJobWorker 的第一次观察不会立刻打回任务", () => {
+    rigStartState.lastAttemptAt = 123;
+    rigStartState.unavailableSince = 1;
+    const before = rigIdleState.lastBusyAt;
+    stopJobWorker();
+    expect(rigStartState.unavailableSince).toBeUndefined();
+    expect(rigStartState.lastAttemptAt).toBe(0);
+    // 空闲计时也要跟着重开，否则重启后第一个 tick 就满足十分钟空闲直接停机
+    expect(rigIdleState.lastBusyAt).toBeGreaterThanOrEqual(before);
+    expect(Date.now() - rigIdleState.lastBusyAt).toBeLessThan(5_000);
   });
 });

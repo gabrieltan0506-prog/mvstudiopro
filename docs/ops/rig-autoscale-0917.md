@@ -11,6 +11,10 @@ Blender（绑骨/白模）必须与 app 分机跑——同一台 8 GB 机上 Nod
   停机前先关本进程的领单闸，关闸后**再核一次**本进程是否刚领到单（两次查询各跨一次网络往返，1 秒一轮的 post_prod 通道可能在这期间领到单）；核出在跑就撤回停机。
   停机命令发出后本进程若仍活着超过 5 分钟（SIGINT 处理器最迟 10 秒强制退出，所以只能是机器没真停或被立刻重启），自动复位领单闸，不留一台活着却不领单的空转机。
 - 只碰 `fly_process_group === "rig"` 的机器，app 机永不参与启停。
+- **多台 rig 时**：一轮最多唤醒「排队单数」台（1 单排队只拉起 1 台）；多拉起来的那几台在这单跑完前因为
+  `queued+running > 0` 停不掉，等于 1 单付 N 台机时。反过来，停机侧数的是全局 `queued+running`，
+  所以「一台在跑、一台空闲」时空闲那台要等整个 Blender 队列清空后再空闲满 10 分钟才停——
+  这是有意的保守口径（宁可多烧机时，也不冒险停掉正在跑 12 分钟绑定的机器），rig=1 的现行部署下没有影响。
 
 ## 前置：一条 Fly secret（只能由用户在 Fly 侧设置）
 ```
@@ -22,7 +26,7 @@ fly secrets set FLY_API_TOKEN=<fly deploy token> -a mvstudiopro
 - 设 secret 会重启机器 —— 有绑定/白模在跑时不要设。
 
 ## 两个必须知道的运维边界
-1. **`fly scale count rig=0` 之后本机制救不了**：唤醒只会 `start` 已存在的 rig 机，不会新建机器。rig 数量为 0 时 Blender 任务会一直排队，约 20 分钟后被 `staleJobsReaper` 改判 `failed`（"后期任务已停止,请重新提交"）。要省钱请让 rig 机存在但 **stopped**，不要 scale 到 0。
+1. **`fly scale count rig=0` 之后本机制救不了**：唤醒只会 `start` 已存在的 rig 机，不会新建机器。rig 数量为 0 时排队中的 Blender 任务会在连续确认 60 秒后被**主动打回失败**并附管理员命令（见下面《行为变更》一节，不再是静默排队到 reaper 判死）。要省钱请让 rig 机存在但 **stopped**，不要 scale 到 0。
 2. **排队超时窗口**：`staleJobsReaper` 对 `post_prod` 的 `queued` 行按 `createdAt` 计时，默认 20 分钟（`JOBS_STALE_QUEUED_HOURS` / `JOBS_STALE_MINUTES` 未设时）。唤醒最坏路径 = 15 秒轮询 + Fly 冷启动，远在窗口内；但**没配 `FLY_API_TOKEN` 又把 rig 停着**时，任务就是在这 20 分钟后静默判失败——启动日志里那行 `[rig-autoscale] …没有 FLY_API_TOKEN…` 就是给这种情况留的。
 
 ## 没配 secret 会怎样
@@ -55,7 +59,9 @@ fly secrets set FLY_API_TOKEN=<fly deploy token> -a mvstudiopro
 | 机器在、但 start 全失败 | 同样要连续确认 60 秒才打回，错误里点名具体机器 ID：`fly machine start <rig-id> -a mvstudiopro` |
 | 列举 Machines API 本身失败 / 返回的不是机器数组 | **不打回**（查不到 ≠ 没有机器），复位确认计时，只记日志，下一轮再试 |
 
-**开关**：`RIG_UNAVAILABLE_CONFIRM_MS` 设 0 ＝ 首次观察到零台就立刻打回（退回没有确认窗口的行为）。
+**开关**：`RIG_UNAVAILABLE_CONFIRM_MS` 是代码常量（不是 env），改成 0 ＝ 首次观察到零台就立刻打回（退回没有确认窗口的行为）。
+**打回一批之后确认窗口重新计时**：否则打回之后新提交进来的任务会在下一个 15 秒 tick 被连坐秒杀，
+等于对它根本没有确认窗口。重开之后每批任务都实打实等满 60 秒，rig 若在这期间恢复就直接跑掉。
 
 **为什么要确认窗口**：`fly deploy` 期间旧 rig 机被销毁、新机还没建好，列举完全可能返回零台 rig，
 而 tick 是 15 秒一轮——单次观察就打回等于每次发版都误杀整条排队。任何一次成功的「看见 rig 机」
