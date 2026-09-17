@@ -44,6 +44,7 @@ export function runPrevisProcess(
       },
     });
     let output = "";
+    let stderrTail = "";
     let outputBytes = 0;
     let failure: Error | undefined;
     const stop = () => {
@@ -62,6 +63,7 @@ export function runPrevisProcess(
     signal.addEventListener("abort", abort, { once: true });
     if (signal.aborted) abort();
     const receive = (chunk: Buffer, capture: boolean) => {
+      if (!capture) stderrTail = (stderrTail + chunk.toString()).slice(-4096);
       if (failure) return;
       outputBytes += chunk.length;
       if (outputBytes > 4 * 1024 * 1024) {
@@ -78,6 +80,7 @@ export function runPrevisProcess(
     });
     child.on("close", code => {
       signal.removeEventListener("abort", abort);
+      if (code !== 0) console.error("[manhua-previs] blender exit", code, stderrTail.slice(-2000));
       if (failure) reject(failure);
       else if (code !== 0)
         reject(new Error("白模渲染未完成，请检查动作与镜头配置"));

@@ -126,7 +126,7 @@ def _write_json(file, value):
         os.fsync(handle.fileno())
 
 
-def rig_confirmed_mesh(source, landmarks, confirmation, output_path, *, checkpoint=lambda phase: None):
+def rig_confirmed_mesh(source, landmarks, confirmation, output_path, *, checkpoint=lambda phase: None, compact_proxy=False):
     """工作进程入口；确认绑定源摘要，输出仅为待审候选，绝不覆盖已有文件。"""
     import bpy
     import bmesh
@@ -334,8 +334,12 @@ def rig_confirmed_mesh(source, landmarks, confirmation, output_path, *, checkpoi
         rig.select_set(True)
         mesh.select_set(True)
         path.parent.mkdir(parents=True, exist_ok=True)
+        # 仅生产代理剥离求解副本的UV/法线，避免3.4导出按属性拆点；原模不变。
+        if compact_proxy:
+            while mesh.data.uv_layers:
+                mesh.data.uv_layers.remove(mesh.data.uv_layers[0])
         bpy.ops.export_scene.gltf(filepath=str(candidate), export_format="GLB", use_selection=True,
-                                  export_animations=False, export_skins=True)
+                                  export_animations=False, export_skins=True, export_normals=not compact_proxy)
         advance("候选导出完成")
         inspection = contract.inspect_glb(candidate)
         imported = contract.import_rigged_model(candidate, "候选重导入", forward_axis="+X",

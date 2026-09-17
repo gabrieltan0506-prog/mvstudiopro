@@ -95,6 +95,9 @@ export function checkRigResult(
     )
   )
     throw Error("绑骨结果身份或存储回执不一致");
+  if (result.proxyGlb && result.proxyGlb.gcsUri !==
+    `gs://${bucket}/uploads/u${userId}/auto-rig/${input.requestId}/model-proxy.glb`)
+    throw Error("白模代理存储身份不一致");
   if (input.stage === "bind" && result.sourceDigest !== input.sourceDigest)
     throw Error("绑骨结果不是已确认模型");
   if (
@@ -442,5 +445,6 @@ export async function adoptAutoRigTask(
     sourceVersion: original.sourceVersion,
     sourceImageUrl: original.sourceImageUrl,
     glbGcsUri: expected,
+    previsProxy: task.output.proxyGlb,
   });
 }

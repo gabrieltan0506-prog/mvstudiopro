@@ -302,3 +302,11 @@ it("原模型版本变更拒绝恢复", async () => {
     adoptAutoRigTask(7, request.requestId, f.candidateSha, true, f.d)
   ).rejects.toThrow("版本不一致");
 });
+
+it("采用将白模代理证据传入持久化导入器", async () => {
+  const f = adoption();
+  const proxy = {gcsUri: `gs://test/uploads/u7/auto-rig/${request.requestId}/model-proxy.glb`, sha256: "e".repeat(64), bytes: 100, vertices: 44394};
+  Object.assign(f.task.output, {proxyGlb: proxy});
+  await adoptAutoRigTask(7, request.requestId, f.candidateSha, false, f.d);
+  expect(f.calls[0]).toMatchObject({previsProxy: proxy});
+});

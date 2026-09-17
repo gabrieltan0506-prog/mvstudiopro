@@ -737,6 +737,22 @@ describe("0917 回执镜像到 GCS（rig 进程组无 /data 卷）", () => {
     expect(source).toMatchObject({ taskId: "m3d_x1", sha256: "a".repeat(64), bytes: 1234 });
     expect(JSON.parse(await fs.readFile(path.join(dir, "m3d_x1.json"), "utf8")).taskId).toBe("m3d_x1");
   });
+  it("代理镜像跨进程恢复且仅白模选择代理，默认仍取中模", async () => {
+    const proxy = {gcsUri: "gs://test-bucket/uploads/u7/auto-rig/r1/model-proxy.glb", sha256: "b".repeat(64), bytes: 321, vertices: 44394};
+    mirror.set("manhua-3d/task-records/m3d_proxy.json", Buffer.from(JSON.stringify({...record("m3d_proxy"), previsProxy: proxy})));
+    expect(await getCompletedManhua3dSource("m3d_proxy", 7, "cust_a", {prefer: "previs"})).toMatchObject(proxy);
+    expect(await getCompletedManhua3dSource("m3d_proxy", 7, "cust_a")).toMatchObject({gcsUri: record("m3d_proxy").glbGcsUri});
+    expect(JSON.parse(await fs.readFile(path.join(dir, "m3d_proxy.json"), "utf8")).previsProxy).toEqual(proxy);
+  });
+  it("代理越权或缺计数不静默回退中模", async () => {
+    for (const [id, proxy] of Object.entries({
+      foreign: {gcsUri:"gs://test-bucket/uploads/u8/proxy.glb", sha256:"b".repeat(64), bytes:321, vertices:44394},
+      broken: {gcsUri:"gs://test-bucket/uploads/u7/proxy.glb", sha256:"b".repeat(64), bytes:321},
+    })) {
+      mirror.set(`manhua-3d/task-records/m3d_${id}.json`, Buffer.from(JSON.stringify({...record(`m3d_${id}`), previsProxy: proxy})));
+      await expect(getCompletedManhua3dSource(`m3d_${id}`,7,"cust_a",{prefer:"previs"})).rejects.toThrow("白模代理回执损坏或来源不符");
+    }
+  });
   it("镜像里是未完成的回执：读得到但不落本地缓存（rig 机不推进任务，缓存会永远停在旧状态）", async () => {
     mirror.set("manhua-3d/task-records/m3d_run.json", Buffer.from(JSON.stringify({ ...record("m3d_run"), status: "running" })));
     await expect(getCompletedManhua3dSource("m3d_run", 7, "cust_a")).rejects.toThrow("本人已完成角色模型或完整来源回执不存在");
