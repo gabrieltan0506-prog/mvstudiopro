@@ -6611,7 +6611,8 @@ export default function OmniCanvas() {
     }
     abortRef.current.abort();
     toast.message("已请求中断", {
-      description: "当前步骤结束后会停住；已完成的片段会保留，可改设定后继续测。",
+      // 0917 线上实测：中断只拦得住还没发出的；已发出的出图/成片请求上游已收单，会出完并照常扣费
+      description: "未发出的不再发；已发出的会出完并照常扣费（无法追回）。已完成的片段保留，可改设定后继续。",
     });
   }, []);
 

@@ -14,6 +14,7 @@ import {
   getManhua3dTask,
   importExistingManhua3dAsset,
   retryManhua3dTask,
+  getCompletedManhua3dSource,
   resetManhua3dTaskDependenciesForTests,
   setManhua3dTaskDependenciesForTests,
 } from "./manhua3dTask.js";
@@ -698,5 +699,75 @@ describe("manhua3dTask", () => {
     expect(() => assertGlbBuffer(Buffer.from("not-a-glb"))).toThrow(
       "invalid_glb_magic"
     );
+  });
+});
+
+
+describe("0917 回执镜像到 GCS（rig 进程组无 /data 卷）", () => {
+  let dir = "";
+  const mirror = new Map<string, Buffer>();
+  const record = (taskId: string) => ({
+    taskId, userId: 7, assetRef: "cust_a", status: "succeeded", createdAt: "2026-09-17T00:00:00.000Z", updatedAt: "2026-09-17T00:00:00.000Z",
+    glbGcsUri: "gs://test-bucket/manhua-3d/u7/a.glb", glbSha256: "a".repeat(64), glbBytes: 1234,
+  });
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "manhua3d-mirror-test-"));
+    vi.stubEnv("MANHUA_3D_TASK_DIR", dir);
+    mirror.clear();
+    setManhua3dTaskDependenciesForTests({
+      getBucketName: () => "test-bucket",
+      mirrorRecord: async (objectName: string, buffer: Buffer) => { mirror.set(objectName, Buffer.from(buffer)); },
+      mirrorRecordIfAbsent: async (objectName: string, buffer: Buffer) => {
+        if (mirror.has(objectName)) return false;
+        mirror.set(objectName, Buffer.from(buffer));
+        return true;
+      },
+      readMirroredRecord: async (objectName: string) => mirror.get(objectName) ?? null,
+    });
+  });
+  afterEach(async () => {
+    resetManhua3dTaskDependenciesForTests();
+    vi.unstubAllEnvs();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it("本地没有回执时从 GCS 镜像读到，并落一份本地缓存", async () => {
+    mirror.set("manhua-3d/task-records/m3d_x1.json", Buffer.from(JSON.stringify(record("m3d_x1"))));
+    const source = await getCompletedManhua3dSource("m3d_x1", 7, "cust_a");
+    expect(source).toMatchObject({ taskId: "m3d_x1", sha256: "a".repeat(64), bytes: 1234 });
+    expect(JSON.parse(await fs.readFile(path.join(dir, "m3d_x1.json"), "utf8")).taskId).toBe("m3d_x1");
+  });
+  it("镜像里是未完成的回执：读得到但不落本地缓存（rig 机不推进任务，缓存会永远停在旧状态）", async () => {
+    mirror.set("manhua-3d/task-records/m3d_run.json", Buffer.from(JSON.stringify({ ...record("m3d_run"), status: "running" })));
+    await expect(getCompletedManhua3dSource("m3d_run", 7, "cust_a")).rejects.toThrow("本人已完成角色模型或完整来源回执不存在");
+    await expect(fs.access(path.join(dir, "m3d_run.json"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  it("导入 GLB 的回执（wx 独占创建、一出生就 succeeded）也要进镜像，否则 rig 机永远读不到采用后的模型", async () => {
+    setManhua3dTaskDependenciesForTests({
+      getBucketName: () => "test-bucket",
+      mirrorRecord: async (objectName: string, buffer: Buffer) => { mirror.set(objectName, Buffer.from(buffer)); },
+      inspectUploadedGlb: async () => inspectedGlb(validGlb(Buffer.from("adopted-model"))),
+      rewriteUploadedGlb: async () => ({ gcsUri: "gs://test-bucket/manhua-3d/u7/imported.glb" }),
+      signGlb: ((uri: string) => `https://signed.test/${encodeURIComponent(uri)}`) as never,
+    });
+    const view = await importExistingManhua3dAsset({
+      userId: 7, assetRef: "cust_a", sourceVersion: "v1", sourceImageUrl: "https://example.com/a.png",
+      glbGcsUri: "gs://test-bucket/uploads/u7/auto-rig/r1/model.glb",
+    });
+    const mirrored = mirror.get(`manhua-3d/task-records/${view.taskId}.json`);
+    expect(mirrored, "创建即镜像").toBeTruthy();
+    expect(JSON.parse(mirrored!.toString()).status).toBe("succeeded");
+  });
+  it("本地与镜像都没有 → 仍报「回执不存在」，不伪造", async () => {
+    await expect(getCompletedManhua3dSource("m3d_none", 7, "cust_a")).rejects.toThrow("本人已完成角色模型或完整来源回执不存在");
+  });
+  it("启动补镜像：只补缺的，已有的跳过", async () => {
+    await fs.writeFile(path.join(dir, "m3d_old1.json"), JSON.stringify(record("m3d_old1")));
+    await fs.writeFile(path.join(dir, "m3d_old2.json"), JSON.stringify(record("m3d_old2")));
+    mirror.set("manhua-3d/task-records/m3d_old2.json", Buffer.from("{}"));
+    const { mirrorManhua3dRecordsOnStartup } = await import("./manhua3dTask");
+    expect(await mirrorManhua3dRecordsOnStartup()).toEqual({ mirrored: 1, skipped: 1 });
+    expect(mirror.has("manhua-3d/task-records/m3d_old1.json")).toBe(true);
+    expect(mirror.get("manhua-3d/task-records/m3d_old2.json")?.toString()).toBe("{}");
   });
 });

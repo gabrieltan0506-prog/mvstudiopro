@@ -6,12 +6,14 @@ import {
   SubmitUnknownError,
 } from "./submitOutcomeErrors.js";
 import {
+  downloadGcsObject,
   getGcsBucketName,
   inspectGcsObjectBounded,
   rewriteGcsObjectGenerationIfAbsent,
   signGsUriV4ReadUrl,
   statGcsObjectVersion,
   uploadBufferToGcs,
+  uploadBufferToGcsIfAbsent,
 } from "./gcs.js";
 import { assertValidGlb2, Glb2StreamValidator } from "../../shared/glbValidation.js";
 import {
@@ -114,6 +116,11 @@ export type Manhua3dTaskView = Pick<
 > & { multiviewImageCount?: number };
 
 type Manhua3dTaskDependencies = {
+  /** 0917：回执镜像到 GCS——rig 进程组没有 /data 卷，读不到主机本地回执 */
+  mirrorRecord: (objectName: string, buffer: Buffer) => Promise<void>;
+  /** 只在镜像不存在时写（GCS ifGenerationMatch=0 一次调用），启动补镜像用；返回是否新建 */
+  mirrorRecordIfAbsent: (objectName: string, buffer: Buffer) => Promise<boolean>;
+  readMirroredRecord: (objectName: string) => Promise<Buffer | null>;
   isConfigured: () => boolean;
   submit: (input: WavespeedTripo3dInput) => Promise<{ predictionId: string }>;
   submitMultiview: (input: WavespeedTripo3dMultiviewInput) => Promise<{ predictionId: string }>;
@@ -137,6 +144,26 @@ type Manhua3dTaskDependencies = {
 };
 
 const productionDependencies: Manhua3dTaskDependencies = {
+  mirrorRecord: async (objectName, buffer) => {
+    if (!gcsCredentialsPresent()) return; // 本机/测试无 GCS 凭证：不镜像，本地仍是真源
+    await uploadBufferToGcs({ objectName, buffer, contentType: "application/json" });
+  },
+  mirrorRecordIfAbsent: async (objectName, buffer) => {
+    if (!gcsCredentialsPresent()) return false;
+    const { created } = await uploadBufferToGcsIfAbsent({ objectName, buffer, contentType: "application/json" });
+    return created;
+  },
+  readMirroredRecord: async (objectName) => {
+    if (!gcsCredentialsPresent()) return null;
+    try {
+      const { buffer } = await downloadGcsObject({ gcsUri: `gs://${getGcsBucketName()}/${objectName}` });
+      return buffer;
+    } catch (error) {
+      // downloadGcsObject 对象不存在时抛 `gcs_download_failed:404:<body>`；只认状态码段，不误吃响应体里的 404 字样
+      if (/^gcs_download_failed:404(?::|$)/.test(error instanceof Error ? error.message : String(error))) return null;
+      throw error;
+    }
+  },
   isConfigured: isWavespeedTripo3dConfigured,
   submit: submitWavespeedTripo3d,
   submitMultiview: submitWavespeedTripo3dMultiview,
@@ -175,6 +202,14 @@ const importedGlbInflight = new Map<string, Promise<Manhua3dTaskView>>();
 const MAX_CONCURRENT_IMPORTED_GLB_INSPECTIONS = 2;
 let activeImportedGlbInspections = 0;
 let workerTimer: NodeJS.Timeout | null = null;
+
+const RECORD_MIRROR_PREFIX = "manhua-3d/task-records/";
+function gcsCredentialsPresent(): boolean {
+  return Boolean(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || process.env.GOOGLE_APPLICATION_CREDENTIALS);
+}
+function recordMirrorObjectName(taskId: string): string {
+  return `${RECORD_MIRROR_PREFIX}${String(taskId || "").replace(/[^a-zA-Z0-9_.-]+/g, "_")}.json`;
+}
 
 function taskDir(): string {
   return (
@@ -237,25 +272,35 @@ async function writeRecord(record: Manhua3dTaskRecord): Promise<void> {
   record.updatedAt = isoNow();
   const target = recordPath(record.taskId);
   const temporary = `${target}.tmp.${process.pid}.${randomUUID()}`;
-  await fs.writeFile(temporary, JSON.stringify(record, null, 2));
+  const body = JSON.stringify(record, null, 2);
+  await fs.writeFile(temporary, body);
   await fs.rename(temporary, target);
+  await mirrorRecordBestEffort(record.taskId, body);
+}
+
+/** 0917：同步镜像到 GCS，让没有 /data 卷的 rig 机也读得到；镜像失败只警告，本地仍是真源 */
+async function mirrorRecordBestEffort(taskId: string, body: string): Promise<void> {
+  try {
+    await dependencies.mirrorRecord(recordMirrorObjectName(taskId), Buffer.from(body, "utf8"));
+  } catch (error) {
+    console.warn("[manhua3dTask] record mirror to GCS failed", taskId, error instanceof Error ? error.message : String(error));
+  }
 }
 
 async function createRecordExclusive(
   record: Manhua3dTaskRecord
 ): Promise<boolean> {
   await ensureTaskStore();
+  const body = JSON.stringify(record, null, 2);
   try {
-    await fs.writeFile(
-      recordPath(record.taskId),
-      JSON.stringify(record, null, 2),
-      { flag: "wx" }
-    );
-    return true;
+    await fs.writeFile(recordPath(record.taskId), body, { flag: "wx" });
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === "EEXIST") return false;
     throw error;
   }
+  // 导入 GLB / 绑骨采用的回执一创建就是 succeeded，之后不再 writeRecord——不在这里镜像，rig 机永远读不到它
+  await mirrorRecordBestEffort(record.taskId, body);
+  return true;
 }
 
 async function readRecord(taskId: string): Promise<Manhua3dTaskRecord | null> {
@@ -265,9 +310,47 @@ async function readRecord(taskId: string): Promise<Manhua3dTaskRecord | null> {
       await fs.readFile(recordPath(taskId), "utf8")
     ) as Manhua3dTaskRecord;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return null;
-    throw error;
+    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
   }
+  // 本地没有（rig 机无卷、或换机）→ 读 GCS 镜像，读到就落一份本地缓存
+  const mirrored = await dependencies.readMirroredRecord(recordMirrorObjectName(taskId));
+  if (!mirrored) return null;
+  const record = JSON.parse(mirrored.toString("utf8")) as Manhua3dTaskRecord;
+  // 只缓存已完成的：succeeded 后来源字段不再变；未完成的若落本地，rig 机（无卷、不推进任务）会一直读到旧状态
+  if (record.status !== "succeeded") return record;
+  try {
+    const target = recordPath(taskId);
+    const temporary = `${target}.tmp.${process.pid}.${randomUUID()}`;
+    await fs.writeFile(temporary, mirrored);
+    await fs.rename(temporary, target);
+  } catch {
+    // 本地缓存失败不影响本次读取
+  }
+  return record;
+}
+
+/**
+ * app 启动时把本机已有回执补镜像到 GCS（幂等：只补缺的），让 rig 机读得到历史模型。
+ * 每条一次条件写（ifGenerationMatch=0），不先读再写；调用方应 `void` 掉，不阻塞启动恢复链。
+ */
+export async function mirrorManhua3dRecordsOnStartup(): Promise<{ mirrored: number; skipped: number }> {
+  await ensureTaskStore();
+  const names = await fs.readdir(taskDir()).catch(() => [] as string[]);
+  let mirrored = 0, skipped = 0;
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    const taskId = name.slice(0, -5);
+    try {
+      const created = await dependencies.mirrorRecordIfAbsent(
+        recordMirrorObjectName(taskId),
+        await fs.readFile(path.join(taskDir(), name)),
+      );
+      if (created) mirrored += 1; else skipped += 1;
+    } catch (error) {
+      console.warn("[manhua3dTask] startup mirror failed", taskId, error instanceof Error ? error.message : String(error));
+    }
+  }
+  return { mirrored, skipped };
 }
 
 async function listActiveTaskIds(): Promise<string[]> {

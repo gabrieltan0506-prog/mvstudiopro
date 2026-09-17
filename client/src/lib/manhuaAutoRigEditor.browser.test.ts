@@ -489,3 +489,15 @@ it("0917 反例：轮询拿到服务端明确错误码（需登录）必须进 [
     await p.close();
   }
 }, 30000);
+
+it("0917 重开编辑器自动载入最近一次成功检查（同模型），不自动绑定", async () => {
+  const p = await open(`f=>{f.list=()=>({items:[f.response({requestId:'11111111-1111-4111-8111-111111111111',assetRef:'person',sourceJobId:'m3d_original',stage:'inspect',settings:{pose:'A',forwardAxis:'+X',targetHeight:1.7}})],nextCursor:null});}`);
+  try {
+    await p.waitForFunction(() => /已检查 [\d,]+ 个顶点/.test(document.body.textContent || ""), { timeout: 8000 });
+    const f = await p.evaluate(() => ({ submits: (window as any).fixture.submits.length, checked: (document.querySelector('input[type=checkbox]') as HTMLInputElement | null)?.checked }));
+    expect(f.submits).toBe(0);
+    expect(f.checked).toBe(false);
+  } finally {
+    await p.close();
+  }
+}, 20000);
