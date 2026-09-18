@@ -1,5 +1,6 @@
 import React from "react";
 import HomeNavbar from "../components/HomeNavbar";
+import HomePresentationShowcase from "../components/HomePresentationShowcase";
 import HomeHero from "../components/HomeHero";
 import HomePricing from "../components/HomePricing";
 import HomeMyWorks from "../components/HomeMyWorks";
@@ -31,6 +32,7 @@ export default function HomePage() {
         <HomeNavbar />
         <LaunchCountdownBanner />
         <HomeHero />
+        <HomePresentationShowcase />
         {/* 定价置顶（用户 2026-08-12：商业网站先谈钱）；试读样刊区整区下架，换 /blog 实测封面直达生成 */}
         <HomePricing />
         <HomeUpdateTicker />
