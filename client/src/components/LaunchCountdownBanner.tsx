@@ -6,14 +6,14 @@ import { SEEDANCE_25_LAUNCHED_LABEL_ZH } from "@shared/seedance25Access";
 /**
  * 首页 Seedance 2.5 正式上线宣传区。
  *
- * 倒计时已下线；沿用既有上线文案与样片展示。
+ * 倒计时已下线；沿用既有上线文案，样片统一在 HomeHero 展示。
  * 本处按用户明文授权对外写出引擎名，属前台零技术泄漏规则的显式例外。
  */
 
 export function LaunchCountdownBanner() {
   return (
     <section className="border-b border-emerald-300/15 bg-[radial-gradient(circle_at_20%_10%,rgba(16,185,129,0.17),transparent_34%),linear-gradient(135deg,#070a10,#111126_58%,#170b25)] px-5 py-8 sm:py-11">
-      <div className="mx-auto grid w-full max-w-[1120px] items-center gap-7 lg:grid-cols-[0.9fr_1.1fr]">
+      <div className="mx-auto grid w-full max-w-[1120px] items-center gap-7">
         <div>
           <div className="inline-flex items-center gap-2 rounded-full border border-emerald-300/20 bg-emerald-300/10 px-3 py-1 text-xs font-bold text-emerald-200">
             <PartyPopper size={14} className="text-yellow-300" /> 正式上线
@@ -38,43 +38,6 @@ export function LaunchCountdownBanner() {
             <Clapperboard className="h-4 w-4" /> 进入漫剧工厂与画布
             <ArrowRight className="h-4 w-4" />
           </Link>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <figure className="overflow-hidden rounded-2xl border border-white/12 bg-black/35 shadow-[0_24px_80px_rgba(0,0,0,0.4)]">
-            <video
-              controls
-              autoPlay
-              muted
-              loop
-              playsInline
-              preload="metadata"
-              poster="/home-assets/seedance25-kpop-dance-poster.jpg"
-              className="aspect-video w-full bg-black object-cover"
-            >
-              <source src="/home-assets/seedance25-kpop-dance.mp4" type="video/mp4" />
-            </video>
-            <figcaption className="flex items-center justify-between gap-3 px-4 py-3 text-xs text-white/55">
-              <span>Seedance 2.5 · K-pop dance</span>
-              <span>1920×1080</span>
-            </figcaption>
-          </figure>
-          <figure className="overflow-hidden rounded-2xl border border-white/12 bg-black/35 shadow-[0_24px_80px_rgba(0,0,0,0.4)]">
-            <video
-              controls
-              muted
-              loop
-              playsInline
-              preload="metadata"
-              poster="/home-assets/seedance25-racemow-poster.jpg"
-              className="aspect-video w-full bg-black object-cover"
-            >
-              <source src="/home-assets/seedance25-racemow.mp4" type="video/mp4" />
-            </video>
-            <figcaption className="flex items-center justify-between gap-3 px-4 py-3 text-xs text-white/55">
-              <span>Seedance 2.5 · Racemow</span>
-              <span>1920×1080</span>
-            </figcaption>
-          </figure>
         </div>
       </div>
     </section>

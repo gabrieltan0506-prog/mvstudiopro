@@ -1,6 +1,5 @@
 import { Link } from "wouter";
-import React, { useEffect, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import React, { useRef, useState } from "react";
 
 /** Hero 主能力入口（视频下方横排一行；用户 2026-08-12：不许再遮视频） */
 const FLAGSHIP: { href: string; label: string; desc: string }[] = [
@@ -9,74 +8,65 @@ const FLAGSHIP: { href: string; label: string; desc: string }[] = [
 ];
 
 /**
- * 片单全部来自 /blog 实测新片（用户 2026-08-12：视频只留片名，文字别糊脸；
+ * 片单使用用户指定的水果茶与战船完整样片（用户 2026-08-12：视频只留片名，文字别糊脸；
  * 「从洞察到成片」的话 /blog 已经讲过，这里不重复）。海洋女神/太空站观景台旧片下架。
  */
 const slides = [
-  {
-    title: "雁门 · 残玉",
-    videoUrl: "/blog-assets/video-4k-upscale/01-sd25-yuji-720p.mp4",
-    poster: "/blog-assets/video-4k-upscale/poster-25-720p.jpg",
-  },
-  {
-    title: "剑客 · 雨中对峙",
-    videoUrl: "/blog-assets/video-4k-upscale/03-sd20-swordsmen-1080p.mp4",
-    poster: "/blog-assets/video-4k-upscale/poster-20-1080p.jpg",
-  },
-  {
-    title: "苹果茶 · 倾倒",
-    videoUrl: "/blog-assets/manhua-video-model-review/01-seedance-25-tea-r2v-11s.mp4",
-    poster: "/blog-assets/manhua-video-model-review/00-cover-seedance-25-pour.jpg",
-  },
+  { title: "水果茶", videoUrl: "/blog-assets/manhua-video-model-review/01-seedance-25-tea-r2v-11s.mp4", poster: "/blog-assets/manhua-video-model-review/00-cover-seedance-25-pour.jpg" },
+  { title: "战船", videoUrl: "/home-assets/warship-2k-1.2x.mp4", poster: "/home-assets/warship-2k-poster.jpg" },
 ];
 
 export default function HomeHero() {
   const [idx, setIdx] = useState(0);
-  const [reduceMotion, setReduceMotion] = useState(false);
+  const video = useRef<HTMLVideoElement>(null);
+  const [notice, setNotice] = useState("");
+  const attempt = useRef(0);
 
-  useEffect(() => {
-    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
-    setReduceMotion(mq.matches);
-    const onChange = () => setReduceMotion(mq.matches);
-    mq.addEventListener?.("change", onChange);
-    return () => mq.removeEventListener?.("change", onChange);
-  }, []);
-
-  useEffect(() => {
-    if (reduceMotion) return;
-    const t = setInterval(() => setIdx((v) => (v + 1) % slides.length), 8000);
-    return () => clearInterval(t);
-  }, [reduceMotion]);
-
-  const slide = slides[idx]!;
+  const play = (index = idx) => {
+    const player = video.current;
+    if (!player) return;
+    const request = ++attempt.current;
+    if (player.getAttribute("src") !== slides[index]!.videoUrl) {
+      player.pause();
+      player.src = slides[index]!.videoUrl;
+      player.poster = slides[index]!.poster;
+      player.load();
+    }
+    setIdx(index);
+    setNotice("");
+    // 切片和播放保持在同一次点击中，保留浏览器的用户手势授权。
+    void player.play().catch((error: DOMException) => {
+      if (request !== attempt.current || error.name === "AbortError") return;
+      setNotice(error.name === "NotAllowedError" ? "点击播放，开启声音" : "视频暂时无法播放，请重试");
+    });
+  };
 
   return (
     <section className="relative mx-auto max-w-[1240px] px-5 pt-7">
-      {/* 视频全幅干净展示：画面上只有底部片名切换条，其余文字一概不上脸 */}
+      {/* 视频全幅干净展示：片名切换条放在播放器外，不遮挡画面与播放控制 */}
       <div className="relative aspect-[16/9] overflow-hidden rounded-3xl border border-white/10 bg-[#0c0b16] md:aspect-[21/9]">
-        <AnimatePresence mode="wait">
-          <motion.video
-            key={slide.videoUrl}
-            src={slide.videoUrl}
-            poster={slide.poster}
-            autoPlay
-            muted
-            loop
-            playsInline
-            initial={reduceMotion ? false : { opacity: 0.35, scale: 1.02 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0.2 }}
-            transition={{ duration: 0.7 }}
-            className="absolute inset-0 h-full w-full object-cover"
-          />
-        </AnimatePresence>
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/60 to-transparent" />
-        <div className="absolute inset-x-0 bottom-0 flex flex-wrap items-center gap-2 px-5 pb-4">
+        <video
+          ref={video}
+          src={slides[0]!.videoUrl}
+          poster={slides[0]!.poster}
+          controls
+          playsInline
+          preload="metadata"
+          onMouseEnter={() => play()}
+          onPlay={() => setNotice("")}
+          onError={() => setNotice("视频暂时无法播放，请重试")}
+          aria-label={slides[idx]!.title}
+          className="absolute inset-0 h-full w-full object-contain"
+        />
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
           {slides.map((s, i) => (
             <button
               key={s.title}
               type="button"
-              onClick={() => setIdx(i)}
+              onClick={() => play(i)}
+              onMouseEnter={() => play(i)}
+              aria-pressed={i === idx}
               className={`home-liquid-glass shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
                 i === idx ? "text-white ring-1 ring-white/40" : "text-white/60 hover:text-white"
               }`}
@@ -84,7 +74,7 @@ export default function HomeHero() {
               {s.title}
             </button>
           ))}
-        </div>
+        <span role="status" className="ml-2 text-xs text-white/60">{notice || "点击或停留播放 · 默认有声 · 完整播放"}</span>
       </div>
 
       {/* 两个工作台入口：视频下方横排一行，不占画面 */}

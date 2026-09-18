@@ -1,0 +1,24 @@
+import {build} from 'esbuild';
+import express from 'express';
+import puppeteer from 'puppeteer';
+import assert from 'node:assert/strict';
+const bundle=await build({stdin:{contents:"import React from 'react';import{createRoot}from'react-dom/client';import Hero from './client/src/components/HomeHero';createRoot(document.getElementById('root')).render(<Hero/>);",resolveDir:process.cwd(),loader:'tsx'},bundle:true,write:false,define:{'process.env.NODE_ENV':'"production"'}});
+const app=express();app.get('/',(_,r)=>r.send('<div id="root"></div><script src="/probe.js"></script>'));app.get('/probe.js',(_,r)=>r.type('js').send(bundle.outputFiles[0].text));app.use(express.static('client/public'));
+const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
+const browser=await puppeteer.launch({headless:true,args:['--autoplay-policy=no-user-gesture-required']});
+try {const p=await browser.newPage();await p.goto(`http://127.0.0.1:${server.address().port}`);await p.waitForSelector('video');
+assert.deepEqual(await p.$$eval('button',bs=>bs.map(b=>b.textContent.trim())),['水果茶','战船']);
+assert.equal(await p.$eval('video',v=>v.paused&&!v.muted&&!v.autoplay&&!v.loop),true);
+await p.hover('button:nth-of-type(2)');await p.waitForFunction(()=>!document.querySelector('video').paused&&document.querySelector('video').currentTime>0.1);
+assert.equal(await p.$eval('video',v=>v.getAttribute('src')),'/home-assets/warship-2k-1.2x.mp4');
+assert.equal(await p.$eval('video',v=>v.playbackRate),1);
+assert.ok(Math.abs(await p.$eval('video',v=>v.duration)-18.4)<0.2);
+await p.$eval('video',v=>v.currentTime=v.duration-0.4);await p.waitForFunction(()=>document.querySelector('video').ended);
+assert.equal(await p.$eval('video',v=>v.getAttribute('src')),'/home-assets/warship-2k-1.2x.mp4');
+await p.click('button:nth-of-type(1)');await p.waitForFunction(()=>!document.querySelector('video').paused&&document.querySelector('video').currentTime>0.1);
+assert.ok((await p.$eval('video',v=>v.currentSrc)).includes('tea-r2v'));
+await p.evaluate(()=>{const v=document.querySelector('video');v.pause();v.play=()=>Promise.reject(new DOMException('blocked','NotAllowedError'));});
+await p.click('button:nth-of-type(2)');await p.waitForFunction(()=>document.querySelector('[role=status]').textContent.includes('点击播放'));
+assert.equal(await p.$eval('video',v=>v.muted),false);
+console.log('PASS: 两条片单、初始暂停/有声、悬停战船实播、18.4秒原片/1倍、结尾不切片、点击水果茶实播、声音拦截提示');
+}finally{await browser.close();server.close();}
