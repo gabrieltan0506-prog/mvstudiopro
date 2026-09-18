@@ -216,7 +216,7 @@ export default function HomeNavbar() {
                       }}
                     />
                     <a
-                      href="/dashboard"
+                      href="/pricing"
                       onClick={() => setSheetOpen(false)}
                       className="min-h-11"
                       style={{
@@ -232,7 +232,7 @@ export default function HomeNavbar() {
                         border: "1px solid rgba(167,139,250,0.30)",
                       }}
                     >
-                      个人中心 · Dashboard
+                      充值 · Top up
                     </a>
                     <a
                       href="/my-works"
@@ -346,7 +346,7 @@ export default function HomeNavbar() {
               ))}
               {isAuthenticated && user ? (
                 <a
-                  href="/dashboard"
+                  href="/pricing"
                   style={{
                     color: "#e9d5ff",
                     textDecoration: "none",
@@ -361,8 +361,8 @@ export default function HomeNavbar() {
                     border: "1px solid rgba(167,139,250,0.35)",
                   }}
                 >
-                  <span>个人中心</span>
-                  <span style={{ fontSize: 10, opacity: 0.75 }}>Dashboard</span>
+                  <span>充值</span>
+                  <span style={{ fontSize: 10, opacity: 0.75 }}>Top up</span>
                 </a>
               ) : null}
             </nav>
