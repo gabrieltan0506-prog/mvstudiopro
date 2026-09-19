@@ -88,6 +88,8 @@ async function open(strict = false, keyed = false) {
   );
   await page.addScriptTag({ content: bundle });
   await page.waitForSelector("[data-manhua-previs-studio]");
+  // 专业编辑回归显式打开数字表；默认收起由动作库入口探针单独验证。
+  await page.click("[data-previs-advanced] > summary");
   return page;
 }
 async function click(page: Page, text: string) {

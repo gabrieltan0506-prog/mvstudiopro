@@ -8,13 +8,14 @@
  * 口径与线上一致：有图但没过垫图锁 = **不能出片**（不是「已就绪」），
  * 这条是 0917 事故之后写死的判据，这里只搬不改。
  */
-export type ManhuaShotKeyartState = "idle" | "running" | "error" | "unlocked" | "ready";
+export type ManhuaShotKeyartState = "idle" | "running" | "error" | "unlocked" | "stale" | "ready";
 
 export const MANHUA_SHOT_KEYART_STATE_ZH: Record<ManhuaShotKeyartState, string> = {
   idle: "待出分镜图",
   running: "出图中…",
   error: "出图失败，可单镜重出",
   unlocked: "有图但没垫图锁，不能出片",
+  stale: "原稿或造型已变更，需重出本镜",
   ready: "已锁图，可出片",
 };
 
@@ -24,7 +25,10 @@ export function manhuaShotKeyartState(input: {
   running: boolean;
   /** 过了垫图改图锁（无图时无意义） */
   pixelLocked: boolean;
+  /** 已有成图是否仍匹配当前原稿与造型；未传时沿用旧调用约定。 */
+  sourceCurrent?: boolean;
 }): ManhuaShotKeyartState {
+  if (input.hasImage && input.sourceCurrent === false) return "stale";
   if (input.hasImage) return input.pixelLocked ? "ready" : "unlocked";
   if (input.failed) return "error";
   if (input.running) return "running";

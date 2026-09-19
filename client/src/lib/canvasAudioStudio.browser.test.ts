@@ -397,6 +397,7 @@ describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
       await page.evaluate(() => (window as any).fixture.addBgm());
       await page.waitForSelector('[data-cue-id="bgm-a"]');
       await click("添加一句对白");
+      await page.select('[aria-label="当前音轨"]', "bgm-a");
       await click("只裁这一段");
       await page.waitForFunction(
         () => (window as any).fixture.posts.length === 1

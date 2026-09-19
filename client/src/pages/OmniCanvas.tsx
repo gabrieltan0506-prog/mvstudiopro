@@ -1,3 +1,4 @@
+import { CREDIT_COSTS } from "@shared/plans";
 import ManhuaFinalDeliverySurface from "@/components/ManhuaFinalDeliverySurface";
 import "@/styles/manhuaCream.css";
 import { capManhuaMediaHistory } from "@shared/manhuaMediaHistoryCap";
@@ -236,6 +237,7 @@ import {
 import { MANHUA_CANVAS_LAYOUT } from "@/lib/manhuaCanvasLayout";
 import {
   collectManhuaClipDockItems,
+  collectManhuaAssembleClipsFromDock,
   episodeIndexesFromDockSelection,
 } from "@/lib/manhuaProjectExport";
 import {
@@ -10171,6 +10173,12 @@ export default function OmniCanvas() {
                     setActionRecipeManual(true);
                     setFactoryActionRecipeId(id);
                   }}
+                  onGenerateCurrentVersion={(episodeIndex) => {
+                    const items = collectManhuaClipDockItems(blocks).filter(item => item.episodeIndex === episodeIndex);
+                    const clips = collectManhuaAssembleClipsFromDock(items, { blocks }).filter(clip => clip.episodeIndex === episodeIndex && clip.clipUrl);
+                    void assembleManhuaFinal(clips);
+                  }}
+                  currentVersionCredits={user?.role === "admin" || user?.role === "supervisor" ? 0 : CREDIT_COSTS.workflowFinalRender}
                   finalVideoUrl={finalAssembleVideoUrl}
                   onBurnSubtitle={handleBurnSubtitle}
                   finalSubtitleTimeline={finalSubtitleTimeline}

@@ -33,7 +33,7 @@ describe("镜头静帧状态（列表卡与当前镜面板共用一处判断）"
     expect(manhuaShotKeyartStateZh({ hasImage: true, failed: false, running: false, pixelLocked: false }))
       .toBe(MANHUA_SHOT_KEYART_STATE_ZH.unlocked);
     expect(Object.keys(MANHUA_SHOT_KEYART_STATE_ZH).sort()).toEqual(
-      ["error", "idle", "ready", "running", "unlocked"],
+      ["error", "idle", "ready", "running", "stale", "unlocked"],
     );
   });
 });

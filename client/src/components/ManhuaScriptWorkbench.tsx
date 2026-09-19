@@ -402,6 +402,8 @@ type Props = {
   onActionRecipeIdChange?: (id: string) => void;
   /** 合成长片预览（成片坞合成后） */
   finalVideoUrl?: string | null;
+  onGenerateCurrentVersion?: (episodeIndex: number) => void;
+  currentVersionCredits?: number;
   /**
    * 终审那条长片是不是旧料合的（判据在 shared/manhuaFinalCutSource.ts）。
    * `finalCutStale` 为真时阶段条不许显示「终审已完成」—— 产物在，但不是当前这批镜头的。
@@ -800,13 +802,15 @@ function keyartsForEpisode(blocks: CanvasBlock[], episode: number): CanvasBlock[
  * 面板 `Boolean(thumb && key && isManhuaKeyartPixelLocked(key))`）—— 当时穷举验过等价，
  * 但下次改一处就会分叉。推导也收到这里，同源做到入参层。
  */
-function manhuaShotKeyartInputOf(key?: CanvasBlock) {
+export function manhuaShotKeyartInputOf(key?: CanvasBlock) {
   const thumb = mediaUrl(key);
   return {
     hasImage: Boolean(thumb),
     failed: Boolean(key && (key.status === "error" || Boolean(key.error))) && !thumb,
     running: key?.status === "running" && !thumb,
     pixelLocked: Boolean(thumb && key && isManhuaKeyartPixelLocked(key)),
+    // 垫图只是输入；只有已有成图才报告原稿或造型过期，旧图继续保留。
+    sourceCurrent: !key || !Boolean(key.outputUrl || key.outputUrls?.some((url) => url.trim())) || isManhuaWorkbenchKeyartCurrent(key),
   };
 }
 
@@ -1123,6 +1127,8 @@ export default function ManhuaScriptWorkbench({
   onPathRecipeIdChange,
   onActionRecipeIdChange,
   finalVideoUrl,
+  onGenerateCurrentVersion,
+  currentVersionCredits,
   finalCutStale = false,
   finalCutVerified = false,
   finalCutStaleReasonZh = "",
@@ -2963,8 +2969,8 @@ export default function ManhuaScriptWorkbench({
           episodeKeyarts.length > 0 ? episodeKeyarts.length : shots.length;
         const has =
           expected > 0
-            ? episodeStillCount >= expected && keyartsPixelLocked
-            : episodeStillCount > 0 && keyartsPixelLocked;
+            ? episodeStillCount >= expected && keyartsPixelLocked && staleLookStillCount === 0
+            : episodeStillCount > 0 && keyartsPixelLocked && staleLookStillCount === 0;
         return {
           stage,
           label:
@@ -3019,6 +3025,7 @@ export default function ManhuaScriptWorkbench({
     episodeStillCount,
     shots.length,
     keyartsPixelLocked,
+    staleLookStillCount,
   ]);
   /** 勾选集是 Set：直接进依赖数组不会因元素增减触发重算，取 size */
   const dockSelectedCount = dockSelectedIds?.size ?? 0;
@@ -4613,7 +4620,7 @@ export default function ManhuaScriptWorkbench({
           阶段
         </span>
         {workflowPhases.map((phase, index) => (
-          <div key={phase.id} className="flex shrink-0 flex-1 items-center gap-1.5">
+          <div key={phase.id} className="flex shrink-0 flex-1 max-sm:flex-none items-center gap-1.5">
             <button
               type="button"
               data-manhua-phase={phase.id}
@@ -4722,9 +4729,9 @@ export default function ManhuaScriptWorkbench({
             data-manhua-ashuo-step-title
             className="text-[13px] font-bold tracking-wide text-white/95"
           >
-            {activePhase === "final" ? "终审与交付" : nextCta.stepTitleZh}
+            {activePhase === "final" ? "终审与交付" : activePhase === "edit" ? "成片剪辑台" : nextCta.stepTitleZh}
           </div>
-          <p className="mh-hint mt-0.5 text-[11px] leading-snug text-white/50">{activePhase === "final" ? "核对当前剪辑、质检结果，再选择范围生成交付包" : nextCta.hintZh}</p>
+          <p className="mh-hint mt-0.5 text-[11px] leading-snug text-white/50">{activePhase === "final" ? "核对当前剪辑、质检结果，再选择范围生成交付包" : activePhase === "edit" ? "调整本集片段后，生成当前版本；旧成片保留" : nextCta.hintZh}</p>
         </div>
         <button
           type="button"
@@ -4741,25 +4748,25 @@ export default function ManhuaScriptWorkbench({
           type="button"
           data-manhua-action="ashuo-step-generate"
           disabled={
-            activePhase === "final" ? Boolean(factoryBusy) : nextCta.kind === "busy"
+            (activePhase === "final" || (activePhase === "edit" && nextCta.kind !== "busy")) ? Boolean(factoryBusy) : nextCta.kind === "busy"
               ? !onStopFactory
               : nextCta.kind === "idle_done"
                 ? true
                 : Boolean(factoryBusy)
           }
-          onClick={activePhase === "final" ? () => selectPhase("edit") : runNextCta}
+          onClick={activePhase === "final" ? () => selectPhase("edit") : activePhase === "edit" && nextCta.kind !== "busy" ? () => selectPhase("final") : runNextCta}
           className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3.5 py-2 text-[12px] font-bold disabled:opacity-45 ${
-            activePhase === "final" ? "border-white/20 bg-white/[0.04] text-white/65 hover:bg-white/[0.08]" : nextCta.kind === "busy"
+            (activePhase === "final" || (activePhase === "edit" && nextCta.kind !== "busy")) ? "border-white/20 bg-white/[0.04] text-white/65 hover:bg-white/[0.08]" : nextCta.kind === "busy"
               ? "border-red-400/50 bg-red-500/25 text-red-50"
               : "border-violet-300/50 bg-violet-500/30 text-violet-50 hover:bg-violet-500/40"
           }`}
         >
-          {activePhase === "final" ? null : nextCta.kind === "busy" ? (
+          {(activePhase === "final" || (activePhase === "edit" && nextCta.kind !== "busy")) ? null : nextCta.kind === "busy" ? (
             <Square className="h-3.5 w-3.5 fill-current" />
           ) : (
             <Play className="h-3.5 w-3.5" />
           )}
-          {activePhase === "final" ? "返回精剪" : nextCta.kind === "generate_keyarts" && onGenerateKeyartShot ? "查看当前镜生成入口" : nextCta.labelZh}
+          {activePhase === "final" ? "返回精剪" : activePhase === "edit" && nextCta.kind !== "busy" ? "前往终审" : nextCta.kind === "generate_keyarts" && onGenerateKeyartShot ? "查看当前镜生成入口" : nextCta.labelZh}
         </button>
       </div>
 
@@ -8065,6 +8072,8 @@ export default function ManhuaScriptWorkbench({
             {fineCutInCanvas ? <button type="button" onClick={onReturnFineCutReview} className="rounded border px-3 py-1">返回工厂终审</button> : onOpenFineCutCanvas && <button type="button" onClick={onOpenFineCutCanvas} className="rounded border px-3 py-1">到自由画布精剪</button>}
           </div>
           <ManhuaEditMultitrackPanel
+            onGenerateCurrentVersion={onGenerateCurrentVersion ? () => onGenerateCurrentVersion(focusEpisode) : undefined}
+            currentVersionCredits={currentVersionCredits}
             roughClips={roughClips}
             shots={shots}
             stillIndexes={stillIndexSet}
@@ -8727,7 +8736,8 @@ export default function ManhuaScriptWorkbench({
                   const thumb = mediaUrl(shotKey);
                   const keyartFailed = keyartInput.failed;
                   const keyartRunning = keyartInput.running;
-                  const keyartUnlocked = keyartInput.hasImage && !keyartInput.pixelLocked;
+                  const keyartStale = manhuaShotKeyartState(keyartInput) === "stale";
+                  const keyartUnlocked = keyartInput.hasImage && (!keyartInput.pixelLocked || keyartStale);
                   return (
                     <div
                       key={shot.index}
@@ -8754,7 +8764,9 @@ export default function ManhuaScriptWorkbench({
                               : ""
                           }`}
                           title={
-                            keyartUnlocked
+                            keyartStale
+                              ? "原稿或造型已变更，旧图保留；请重出本镜后再生成成片"
+                              : keyartUnlocked
                               ? "有图但未垫图改图（缺参考图或非改图模式），不能出成片；请重出该镜静帧"
                               : undefined
                           }
@@ -8770,7 +8782,7 @@ export default function ManhuaScriptWorkbench({
                               />
                               {keyartUnlocked ? (
                                 <span className="absolute inset-x-0 bottom-0 bg-red-900/80 px-1 py-0.5 text-center text-[9px] font-semibold text-red-50">
-                                  未垫图锁
+                                  {keyartStale ? "已变更 · 待重出" : "未垫图锁"}
                                 </span>
                               ) : (
                                 <span className="absolute left-1 top-1 rounded bg-emerald-600/90 px-1 py-px text-[8px] font-semibold text-white">

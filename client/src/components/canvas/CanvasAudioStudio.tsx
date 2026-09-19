@@ -32,6 +32,7 @@ import {
 } from "@shared/canvasGenerationPricing";
 import {
   buildQwenTtsVoiceId,
+  pickQwenTtsVoice,
   QWEN_TTS_VOICE_CATALOG,
 } from "@shared/qwenTtsVoiceCatalog";
 
@@ -41,6 +42,16 @@ const VOICES = QWEN_TTS_VOICE_CATALOG.filter(row =>
   id: buildQwenTtsVoiceId("plus", row.suffix),
   label: `${row.nameZh} · ${row.gender} · ${row.traitZh}`,
 }));
+export type CanvasVoiceMatchCriteria = { gender?: "男" | "女" | "中性"; ageBand?: "child" | "adult" | "senior"; traitLike?: string };
+/** 现有音轨没有稳定角色 ID，只消费显式目录条件，禁止按姓名跨句借声。 */
+export function matchCanvasDialogueVoice(criteria: CanvasVoiceMatchCriteria) {
+  if (!criteria.gender && !criteria.ageBand && !criteria.traitLike?.trim()) return { reasonZh: "请填写至少一项目录筛选条件；不会按角色姓名借用其他对白音色。" };
+  const ages = criteria.ageBand === "child" ? { maxAge: 12 } : criteria.ageBand === "senior" ? { minAge: 55 } : criteria.ageBand === "adult" ? { minAge: 18, maxAge: 54 } : {};
+  const entry = pickQwenTtsVoice({ gender: criteria.gender, ...ages, traitLike: criteria.traitLike?.trim(), lang: "中文" });
+  if (!entry) return { reasonZh: "目录中没有同时符合这些条件的声线；原音色保持不变。" };
+  return { voice: buildQwenTtsVoiceId("plus", entry.suffix), reasonZh: `目录候选：${entry.nameZh} · ${entry.gender} · ${entry.age ?? "年龄未标"}岁 · ${entry.traitZh}。按所填条件筛选，尚未试听验证。` };
+}
+
 const fieldClass =
   "min-w-0 w-full rounded border border-white/15 bg-black/30 px-2 py-1.5 text-xs text-white";
 const buttonClass =
@@ -196,6 +207,11 @@ export function CanvasAudioStudioView({
   const mounted = useRef(true);
   const busyRef = useRef(false);
   const [busy, setBusy] = useState(false);
+  const [activeCueId, setActiveCueId] = useState<string | null>(null);
+  const [voiceCriteria, setVoiceCriteria] = useState<CanvasVoiceMatchCriteria>({});
+  const activeCue = activeCueId === null ? state.cues[0] : state.cues.find(cue => cue.id === activeCueId);
+  const voiceMatch = activeCue?.kind === "dialogue" ? matchCanvasDialogueVoice(voiceCriteria) : undefined;
+  useEffect(() => { setActiveCueId(null); setVoiceCriteria({}); }, [block.id]);
   const [error, setError] = useState("");
   const [musicJobs, setMusicJobs] = useState<MusicJob[]>([]);
   const [musicPrompt, setMusicPrompt] = useState("");
@@ -478,6 +494,36 @@ export function CanvasAudioStudioView({
       ...previous,
       cues: [...previous.cues, { ...cue, voice: VOICES[0]?.id || "" }],
     }));
+    setActiveCueId(cue.id);
+    setVoiceCriteria({});
+    setConfirmation(null);
+  };
+  const prepareDialogue = (cue: CanvasAudioCue) => {
+    try {
+      checkWindow(cue);
+      if (
+        cue.takes.length >= 100 ||
+        current.current.state.pendingOperations.length >= 100
+      )
+        throw new Error(
+          "候选或待处理任务已达 100 条上限，本次不提交。"
+        );
+      compileCanvasDialogueInput(cue.textZh, cue.emotion);
+      if (
+        !cue.speakerZh.trim() ||
+        !cue.textZh.trim() ||
+        !cue.voice
+      )
+        throw new Error("先填写说话角色、台词并选择音色。");
+      setError("");
+      setConfirmation({
+        kind: "dialogue",
+        cueId: cue.id,
+        inputKey: canvasAudioCueInputKey(cue),
+      });
+    } catch (caught) {
+      setError((caught as Error).message);
+    }
   };
   const sourceFor = (cue: CanvasAudioCue) => cue.source;
   const checkWindow = (cue: CanvasAudioCue) => {
@@ -934,6 +980,28 @@ export function CanvasAudioStudioView({
         本段 {durationSec} 秒，时间从本段 0
         秒开始。每次只处理一段。生成后先试听，再确认秒窗；对白独立投料，合听预览不代替口型绑定。
       </p>
+      <section className="space-y-2 rounded-xl border border-cyan-300/25 p-3" aria-label="当前音轨操作">
+        <label className="block text-xs">当前音轨
+          <select aria-label="当前音轨" className={fieldClass} disabled={disabled || busy} value={activeCue?.id || ""} onChange={event => { setActiveCueId(event.target.value); setVoiceCriteria({}); setConfirmation(null); }}>
+            {!activeCue && <option value="">请选择音轨</option>}
+            {state.cues.map((cue, index) => <option key={cue.id} value={cue.id}>{index + 1} · {cue.kind === "dialogue" ? `对白 · ${cue.speakerZh || "未填角色"}` : cue.kind === "bgm" ? "配乐" : "音效"}</option>)}
+          </select>
+        </label>
+        {activeCue?.kind === "dialogue" && <details>
+          <summary className="text-xs">声线匹配建议 · 免费规则筛选</summary>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <label className="text-xs">目录性别<select aria-label="匹配性别" className={fieldClass} value={voiceCriteria.gender || ""} onChange={event => setVoiceCriteria(prev => ({ ...prev, gender: event.target.value as CanvasVoiceMatchCriteria["gender"] || undefined }))}><option value="">不限</option><option>男</option><option>女</option><option>中性</option></select></label>
+            <label className="text-xs">目录年龄<select aria-label="匹配年龄" className={fieldClass} value={voiceCriteria.ageBand || ""} onChange={event => setVoiceCriteria(prev => ({ ...prev, ageBand: event.target.value as CanvasVoiceMatchCriteria["ageBand"] || undefined }))}><option value="">不限</option><option value="child">儿童（12岁及以下）</option><option value="adult">成年（18–54岁）</option><option value="senior">年长（55岁及以上）</option></select></label>
+            <label className="col-span-2 text-xs">特质或场景关键词<input aria-label="匹配特质" className={fieldClass} maxLength={80} value={voiceCriteria.traitLike || ""} onChange={event => setVoiceCriteria(prev => ({ ...prev, traitLike: event.target.value }))}/></label>
+          </div>
+          <p role="status" className="mt-2 text-xs text-white/65">{voiceMatch?.reasonZh}</p>
+          <button type="button" className={buttonClass} disabled={disabled || busy || !voiceMatch?.voice || state.pendingOperations.some(row => row.cueId === activeCue.id)} onClick={() => { if (voiceMatch?.voice) patchCue(activeCue.id, { voice: voiceMatch.voice }); }}>应用建议音色</button>
+        </details>}
+        <button type="button" className={buttonClass} disabled={disabled || busy || !activeCue || state.pendingOperations.some(row => row.cueId === activeCue.id)} onClick={() => { if (!activeCue) return; if (activeCue.kind === "dialogue") prepareDialogue(activeCue); else void trim(activeCue); }}>
+          {activeCue?.kind === "dialogue" ? `生成本句 · ${CANVAS_TTS_CREDITS_PER_LINE} 积分` : "只裁这一段 · 免费"}
+        </button>
+        <p className="text-[11px] text-white/50">仅处理上方当前音轨；对白仍须确认费用，配乐与音效仅裁切已选来源。原曲制作在下方单独确认。</p>
+      </section>
       {(["dialogue", "bgm", "sfx"] as const).map(kind => <section key={kind} data-audio-group={kind} aria-label={{ dialogue: "角色配音编辑", bgm: "背景音乐编辑", sfx: "事件音效编辑" }[kind]} className="min-w-0 space-y-3 rounded-xl border border-white/15 bg-black/15 p-3">
         <header className="flex flex-wrap items-center justify-between gap-2">
           <div><h3 className="text-sm font-semibold">{{ dialogue: "角色配音", bgm: "背景音乐", sfx: "事件音效" }[kind]} <span className="text-xs font-normal text-white/45">{state.cues.filter(cue => cue.kind === kind).length} {kind === "dialogue" ? "句" : kind === "bgm" ? "段" : "条"}</span></h3><p className="mt-1 text-[11px] text-white/45">{{ dialogue: "写台词、选音色，试听后逐句采用。", bgm: "选原曲、裁秒窗，控制留白与对白避让。", sfx: "为片中实际发生的动作选音效，按秒点采用。" }[kind]}</p></div>
@@ -1077,6 +1145,7 @@ export function CanvasAudioStudioView({
                       patchCue(cue.id, { voice: event.target.value })
                     }
                   >
+                    {cue.voice && !VOICES.some(voice => voice.id === cue.voice) && <option value={cue.voice}>已保存的角色音色</option>}
                     {VOICES.map(voice => (
                       <option key={voice.id} value={voice.id}>
                         {voice.label}
@@ -1098,39 +1167,7 @@ export function CanvasAudioStudioView({
                     }
                   />
                 </label>
-                <button
-                  className={buttonClass}
-                  disabled={locked}
-                  onClick={() => {
-                    try {
-                      checkWindow(cue);
-                      if (
-                        cue.takes.length >= 100 ||
-                        current.current.state.pendingOperations.length >= 100
-                      )
-                        throw new Error(
-                          "候选或待处理任务已达 100 条上限，本次不提交。"
-                        );
-                      compileCanvasDialogueInput(cue.textZh, cue.emotion);
-                      if (
-                        !cue.speakerZh.trim() ||
-                        !cue.textZh.trim() ||
-                        !cue.voice
-                      )
-                        throw new Error("先填写说话角色、台词并选择音色。");
-                      setError("");
-                      setConfirmation({
-                        kind: "dialogue",
-                        cueId: cue.id,
-                        inputKey: canvasAudioCueInputKey(cue),
-                      });
-                    } catch (caught) {
-                      setError((caught as Error).message);
-                    }
-                  }}
-                >
-                  生成本句 · {CANVAS_TTS_CREDITS_PER_LINE} 积分
-                </button>
+
               </>
             ) : (
               <>
@@ -1263,13 +1300,7 @@ export function CanvasAudioStudioView({
                   {numberField("淡入秒", "fadeInSec")}
                   {numberField("淡出秒", "fadeOutSec")}
                 </div>
-                <button
-                  className={buttonClass}
-                  disabled={locked}
-                  onClick={() => void trim(cue)}
-                >
-                  只裁这一段 · 免费
-                </button>
+
               </>
             )}
             {cue.kind !== "dialogue" && <CanvasAudioMixControls cue={cue} disabled={locked} onChange={patch => patchCue(cue.id, patch)}/>}
