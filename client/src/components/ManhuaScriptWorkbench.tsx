@@ -120,6 +120,10 @@ import {
 import { buildManhuaAssetRoleGroups } from "@/lib/manhuaAssetEntityGroups";
 import { manhuaKeyartEntryVisible } from "@/lib/manhuaKeyartEntry";
 import { buildManhuaMainTaskState } from "@/lib/manhuaMainTaskBlockers";
+import {
+  manhuaShotKeyartState,
+  manhuaShotKeyartStateZh,
+} from "@/lib/manhuaShotKeyartState";
 import type { AdvisorIssue } from "@/lib/manhuaAdvisorProject";
 import {
   buildManhuaAtReferenceIndex,
@@ -1886,6 +1890,18 @@ export default function ManhuaScriptWorkbench({
   }, [shots]);
 
   const activeShot = shots[Math.min(shotIndex, Math.max(0, shots.length - 1))] || shots[0];
+  /** 当前镜的静帧状态文案：与列表卡共用 manhuaShotKeyartState，不各算一份 */
+  const activeShotKeyartStateZh = (() => {
+    if (!activeShot) return "";
+    const key = episodeKeyarts.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === activeShot.index);
+    const thumb = key ? mediaUrl(key) : "";
+    return manhuaShotKeyartStateZh({
+      hasImage: Boolean(thumb),
+      failed: Boolean(key) && (key!.status === "error" || Boolean(key!.error)) && !thumb,
+      running: key?.status === "running" && !thumb,
+      pixelLocked: Boolean(thumb && key && isManhuaKeyartPixelLocked(key)),
+    });
+  })();
   const activeShotNo = activeShot?.index ?? 1;
   const activeSegNo = resolveManhuaActiveSegmentIndex({
     shotIndex: activeShotNo,
@@ -8219,17 +8235,12 @@ export default function ManhuaScriptWorkbench({
                       data-manhua-shot={shot.index}
                       data-manhua-active={on ? "true" : "false"}
                       data-manhua-keyart-url={thumb || ""}
-                      data-manhua-keyart-status={
-                        keyartUnlocked
-                          ? "unlocked"
-                          : thumb
-                            ? "ready"
-                            : keyartFailed
-                              ? "error"
-                              : keyartRunning
-                                ? "running"
-                                : "idle"
-                      }
+                      data-manhua-keyart-status={manhuaShotKeyartState({
+                        hasImage: Boolean(thumb),
+                        failed: keyartFailed,
+                        running: Boolean(keyartRunning),
+                        pixelLocked: Boolean(thumb) && !keyartUnlocked,
+                      })}
                       className={`w-full overflow-hidden rounded-lg border text-left transition ${
                         on
                           ? "border-cyan-300/70 bg-cyan-500/15 ring-1 ring-cyan-300/50"
@@ -8347,45 +8358,6 @@ export default function ManhuaScriptWorkbench({
                               {shot.emotionZh || shot.microExpressionZh || ""}
                             </div>
                           ) : null}
-                          {on ? (
-                            <div
-                              className="mt-1 flex flex-wrap gap-0.5"
-                              data-manhua-shot-angles={shot.index}
-                              onClick={(e) => e.stopPropagation()}
-                              onKeyDown={(e) => e.stopPropagation()}
-                            >
-                              {MANHUA_CAMERA_ANGLE_ORDER.map((id) => {
-                                const ang = getManhuaCameraAngle(id)!;
-                                const selected = shotAngleByIndex[shot.index] === id;
-                                return (
-                                  <button
-                                    key={id}
-                                    type="button"
-                                    title={`${ang.functionZh}｜${ang.whenToUseZh}`}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      const next = {
-                                        ...shotAngleByIndex,
-                                        [shot.index]: id,
-                                      };
-                                      setShotAngleByIndex(next);
-                                      onUpsertShotAngles?.(next);
-                                      toast.message(`镜${shot.index} · ${ang.nameZh}`, {
-                                        description: formatManhuaCameraAngleLine(ang).slice(0, 80),
-                                      });
-                                    }}
-                                    className={`rounded px-1 py-0.5 text-[8px] ${
-                                      selected
-                                        ? "bg-cyan-500/30 text-cyan-50 ring-1 ring-cyan-400/40"
-                                        : "bg-white/[0.04] text-white/40 hover:text-white/70"
-                                    }`}
-                                  >
-                                    {ang.nameZh}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          ) : null}
                         </div>
                       </button>
                       {shotKey?.id && onRerunKeyartShot ? (
@@ -8408,6 +8380,61 @@ export default function ManhuaScriptWorkbench({
                   );
                 })}
               </div>
+              {activeShot ? (
+                <div
+                  data-manhua-shot-params={activeShot.index}
+                  className="mt-2 shrink-0 rounded-lg border border-cyan-400/25 bg-cyan-500/[0.06] p-2"
+                >
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    <span className="text-[11px] font-semibold text-cyan-50">
+                      当前第 {String(activeShot.index).padStart(2, "0")} 镜
+                    </span>
+                    <span data-manhua-shot-params-status className="text-[10px] text-white/45">
+                      {activeShotKeyartStateZh}
+                    </span>
+                  </div>
+                  {activeShot.dialogueZh || activeShot.emotionZh || activeShot.microExpressionZh ? (
+                    <p className="mt-1 text-[10px] leading-4 text-rose-100/70">
+                      {activeShot.dialogueZh ? `「${activeShot.dialogueZh}」` : ""}
+                      {activeShot.dialogueZh && (activeShot.emotionZh || activeShot.microExpressionZh) ? " · " : ""}
+                      {activeShot.emotionZh || activeShot.microExpressionZh || ""}
+                    </p>
+                  ) : null}
+                  <p className="mh-hint mt-1 text-[9px] leading-4 text-white/35">
+                    镜位只改本镜，不动其它镜；改完出图前不扣费。
+                  </p>
+                  <div className="mt-1 flex flex-wrap gap-0.5" data-manhua-shot-angles={activeShot.index}>
+                    {MANHUA_CAMERA_ANGLE_ORDER.map((id) => {
+                      const ang = getManhuaCameraAngle(id)!;
+                      const selected = shotAngleByIndex[activeShot.index] === id;
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          data-manhua-shot-angle={id}
+                          aria-pressed={selected}
+                          title={`${ang.functionZh}｜${ang.whenToUseZh}`}
+                          onClick={() => {
+                            const next = { ...shotAngleByIndex, [activeShot.index]: id };
+                            setShotAngleByIndex(next);
+                            onUpsertShotAngles?.(next);
+                            toast.message(`镜${activeShot.index} · ${ang.nameZh}`, {
+                              description: formatManhuaCameraAngleLine(ang).slice(0, 80),
+                            });
+                          }}
+                          className={`rounded px-1.5 py-0.5 text-[9px] ${
+                            selected
+                              ? "bg-cyan-500/30 text-cyan-50 ring-1 ring-cyan-400/40"
+                              : "bg-white/[0.04] text-white/45 hover:text-white/75"
+                          }`}
+                        >
+                          {ang.nameZh}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
               <p className="mh-hint mt-2 text-[10px] leading-snug text-white/35">
                 确认简报 → 静帧锁脸服场 → 审阅段成片提示词 → 本段一轮成片吃多镜表演；改台词只重出本段，勿整集重烧。
               </p>

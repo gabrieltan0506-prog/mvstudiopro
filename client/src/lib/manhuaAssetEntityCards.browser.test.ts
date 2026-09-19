@@ -313,4 +313,49 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
     expect(opened).toBe("keyframe");
     await close();
   }, 180_000);
+
+  /**
+   * 三栏分镜的第三栏：当前镜参数从列表卡里搬出来。
+   * 原先选中的卡会就地展开 10 个镜位按钮，列表跟着重排；现在列表只管图与状态，
+   * 参数归当前镜面板 —— 并且状态文案与列表卡走同一处判断。
+   */
+  it("分镜阶段：镜位参数不再挤在列表卡里，当前镜面板显示镜号+状态+镜位，点镜位只改本镜", async () => {
+    const { page, close } = await mountStoryboard();
+    const seen = await page.evaluate(() => {
+      const panel = document.querySelector("[data-manhua-shot-params]");
+      const cards = Array.from(document.querySelectorAll("[data-manhua-shot]"));
+      return {
+        hasPanel: Boolean(panel),
+        panelShot: panel?.getAttribute("data-manhua-shot-params"),
+        panelText: (panel?.textContent || "").replace(/\s+/g, " ").trim(),
+        statusZh: panel?.querySelector("[data-manhua-shot-params-status]")?.textContent?.trim() || "",
+        anglesInPanel: panel?.querySelectorAll("[data-manhua-shot-angle]").length || 0,
+        // 列表卡里不该再有镜位按钮
+        anglesInCards: cards.reduce((n, c) => n + c.querySelectorAll("[data-manhua-shot-angle]").length, 0),
+        cardCount: cards.length,
+        cardStatuses: cards.slice(0, 3).map((c) => c.getAttribute("data-manhua-keyart-status")),
+      };
+    });
+    expect(seen.hasPanel, "当前镜面板没渲染出来").toBe(true);
+    expect(seen.cardCount).toBeGreaterThan(1);
+    expect(seen.anglesInPanel).toBeGreaterThanOrEqual(8);
+    expect(seen.anglesInCards).toBe(0);
+    expect(seen.panelText).toContain("当前第");
+    // 状态与列表卡同源：这批夹具没有静帧，所以两边都必须是「待出」
+    expect(seen.statusZh).toBe("待出分镜图");
+    expect(seen.cardStatuses.every((x) => x === "idle")).toBe(true);
+
+    // 点一个镜位：只有被点那个按下，其它不受影响
+    const pressed = await page.evaluate(() => {
+      const panel = document.querySelector("[data-manhua-shot-params]")!;
+      const buttons = Array.from(panel.querySelectorAll("[data-manhua-shot-angle]")) as HTMLButtonElement[];
+      const target = buttons.find((b) => b.getAttribute("data-manhua-shot-angle") === "low") || buttons[1]!;
+      target.click();
+      return Array.from(panel.querySelectorAll("[data-manhua-shot-angle]"))
+        .filter((b) => b.getAttribute("aria-pressed") === "true")
+        .map((b) => b.getAttribute("data-manhua-shot-angle"));
+    });
+    expect(pressed).toHaveLength(1);
+    await close();
+  }, 180_000);
 });
