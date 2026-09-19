@@ -5020,6 +5020,7 @@ export default function OmniCanvas() {
           directorBoardUrlByEpisodeSegment,
           directorBoardMotionOverlayByEpisodeSegment:
             directorBoardMotionOverlayBySegment,
+          storyEmotionLineByEpisodeSegment,
           videoModel: explicitWriterVideoModel || undefined,
         });
         const fresh = ensured.blocks.find((b) => b.id === block.id);
