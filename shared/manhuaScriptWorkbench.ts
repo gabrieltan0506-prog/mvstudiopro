@@ -1141,6 +1141,12 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
   segmentPerformanceZh?: string | null;
   /** 姓名 → @角色N，对白挂真说话人 */
   speakerTagByNameZh?: Record<string, string> | null;
+  /**
+   * 0919 本段戏核：由剧情情绪分析投影出的一行中文（情绪目的 + 人物动机/阻力/选择）。
+   * 空串或缺省＝没做分析，**一个字都不注入** —— 与导演法典缺省时同一规矩，
+   * 不给默认情绪，免得模型对着编造的目的演。
+   */
+  storyEmotionLineZh?: string | null;
 }): string {
   const seg = Math.max(1, Math.floor(input.segmentIndex));
   const dur =
@@ -1184,9 +1190,13 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
   const tailHold = sourceDuration > 0 && sourceDuration < dur
     ? `原稿动作与对白在${sourceDuration}秒结束；${sourceDuration}–${dur}秒仅保持末态留白，不增加动作或台词，此尾部将按原稿时长裁去。`
     : "";
+  // 戏核放在段头之后、秒轴之前：先说这一段要达成什么，再说逐秒怎么拍。
+  // 缺省不写这一块，旧项目的提示词逐字节不变。
+  const storyCore = String(input.storyEmotionLineZh || "").trim();
+  const storyCoreBlock = storyCore ? `【本段戏核】${storyCore}` : "";
   // 段头场景锁 + 光影氛围 + 秒轴（动作/运镜轨迹/景别）；资产/@Image 由 ensure 挂
   return stripManhuaClipForbiddenBoards(
-    stripManhuaPromptSlop([headBoard, continuation, timeline, tailHold].filter(Boolean).join("\n")),
+    stripManhuaPromptSlop([headBoard, storyCoreBlock, continuation, timeline, tailHold].filter(Boolean).join("\n")),
   );
 }
 
