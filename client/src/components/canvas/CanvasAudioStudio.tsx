@@ -4,6 +4,7 @@ import { applyCanvasAudioMixPlan, assertCanvasAudioMixCapacity } from "@shared/c
 import { useEffect, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import type { CanvasBlock } from "@/lib/canvasTypes";
+import { canvasAudioCapabilityHint } from "@/lib/canvasAudioCapabilityHint";
 import type { ManhuaSegmentReferenceEntry } from "@shared/manhuaSegmentReference";
 import { BGM_BRIEF_MODEL_LABEL_ZH, type BgmBriefModel } from "@shared/manhuaBgmBrief";
 import { buildPremixTimelineClips, isPremixPendingKey, PREMIX_PENDING_PREFIX } from "@/lib/manhuaPremixMaster";
@@ -919,10 +920,8 @@ export function CanvasAudioStudioView({
         </section>
       </div>
       <p className="text-xs text-amber-100">
-        逐段声音投料目前仅支持加长成片的多模态参考；其他引擎可制作、试听音频，但不自动用于出片。
-        {block.videoModel !== "seedance-2.5"
-          ? "当前引擎不支持逐段声音投料，请在生成付费音频前确认用途。"
-          : ""}
+        {canvasAudioCapabilityHint(block)}
+        母轨仅用于本段正常出片，局部编辑、视频延长和试片不注入母轨；出片前仍会校验音轨采用状态、母轨版本及容量。
       </p>
       <details className="rounded-lg border border-white/10 bg-black/15 p-2">
         <summary className="cursor-pointer text-xs text-sky-100">本段剧本与对白</summary>

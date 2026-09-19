@@ -220,6 +220,7 @@ import {
   resolveManhuaEpisodeClipVideoModel,
   resolveManhuaClipRelatedAssetNodeIds,
   runManhuaDramaFactoryPipeline,
+  prepareManhuaKeyartShotTarget,
   sanitizeManhuaClipBlocksPrompts,
   sanitizeManhuaRecapUpstreamLinks,
   spawnManhuaDramaStudio,
@@ -8530,6 +8531,7 @@ export default function OmniCanvas() {
         episodeIndexes?: number[];
         /** 仅重跑已铺好的指定节点（工作台单镜重出）。 */
         targetBlockIds?: string[];
+        keyartShotIndex?: number;
         /** 工作台「生成片段」：只跑该镜静帧（若缺）+ 该镜成片。 */
         fragmentShotIndex?: number;
         /** 依次生成多个片段（缺片批量）。 */
@@ -8549,7 +8551,7 @@ export default function OmniCanvas() {
         bypassPilotGate?: boolean;
       },
     ) => {
-      if (factoryBusy) return;
+      if (factoryBusy || abortRef.current) return;
       const ac = new AbortController();
       abortRef.current = ac;
       setFactoryBusy(true);
@@ -8589,6 +8591,13 @@ export default function OmniCanvas() {
         saveCanvasState(workingBlocks, workingEdges);
       };
       try {
+        if (opts?.keyartShotIndex !== undefined &&
+          (untilStage !== "keyart" || opts.episodeIndexes?.length !== 1 || !Number.isInteger(opts.keyartShotIndex) || opts.keyartShotIndex < 1)) {
+          throw new Error("当前镜目标无效，本次未提交");
+        }
+        if (opts?.keyartShotIndex !== undefined) {
+          prepareManhuaKeyartShotTarget(blocks, edges, opts.episodeIndexes![0]!, opts.keyartShotIndex, undefined, opts.targetBlockIds?.[0]);
+        }
         // 已有原片编辑不需要铺故事/资产，也不能改动其他节点或补生成静帧。
         const preparedEditOnly = untilStage === "clip" &&
           opts?.episodeIndexes?.length === 1 && uniqueFragmentIndexes.length === 1 &&
@@ -8606,8 +8615,8 @@ export default function OmniCanvas() {
         ) {
           throw new Error("视频编辑目标或集段不匹配，请重新选择一个已有片段；本次未提交");
         }
-        const spawned = preparedEditOnly ? { blocks, edges } : ensureStudioSpawned(factoryTopic);
-        const cleanedGraph = preparedEditOnly
+        const spawned = preparedEditOnly || opts?.keyartShotIndex !== undefined ? { blocks, edges } : ensureStudioSpawned(factoryTopic);
+        const cleanedGraph = preparedEditOnly || opts?.keyartShotIndex !== undefined
           ? spawned
           : sanitizeManhuaRecapUpstreamLinks(spawned.blocks, spawned.edges);
         workingBlocks = cleanedGraph.blocks;
@@ -8711,8 +8720,10 @@ export default function OmniCanvas() {
             customRefs: consumableCustomAssetRefs,
             assetCanon: projectBible?.assetCanon,
           });
-          setBlocks(workingBlocks);
-          saveCanvasState(workingBlocks, workingEdges);
+          if (opts?.keyartShotIndex === undefined) {
+            setBlocks(workingBlocks);
+            saveCanvasState(workingBlocks, workingEdges);
+          }
         }
 
         const fragmentLabel = uniqueFragmentIndexes.length
@@ -8723,6 +8734,8 @@ export default function OmniCanvas() {
             ? `编辑片段 ${fragmentLabel}（第 ${episodeIndexes.join("、")} 集）`
             : fragmentLabel
             ? `生成片段 ${fragmentLabel}（第 ${episodeIndexes.join("、")} 集）`
+            : opts?.keyartShotIndex !== undefined
+              ? `第 ${episodeIndexes[0]} 集 · 生成第 ${opts.keyartShotIndex} 镜静帧（仅当前镜）`
             : untilStage === "reverse"
               ? `漫剧工厂：故事→角色→节拍→反推（第 ${episodeIndexes.join("、")} 集）`
               : untilStage === "keyart"
@@ -8956,6 +8969,20 @@ export default function OmniCanvas() {
                 break outer;
               }
             }
+            if (opts?.keyartShotIndex !== undefined) {
+              const prepared = prepareManhuaKeyartShotTarget(workingBlocks, workingEdges, episodeIndex, opts.keyartShotIndex, ensureOptions, opts.targetBlockIds?.[0]);
+              const target = prepared.blocks.find((block) => block.id === prepared.targetBlockId)!;
+              // 偏好注入可用于编译当前镜，但不改写同集其他镜或其他集。
+              workingBlocks = blocks.some((block) => block.id === target.id)
+                ? blocks.map((block) => block.id === target.id ? target : block)
+                : [...blocks, target];
+              const ids = new Set(workingBlocks.map((block) => block.id));
+              workingEdges = prepared.edges.filter((edge) => ids.has(edge.fromId) && ids.has(edge.toId));
+              effectiveTargetBlockIds = [target.id];
+              setBlocks(workingBlocks);
+              setEdges(workingEdges);
+              saveCanvasState(workingBlocks, workingEdges);
+            }
             const keyartExpectedTotal = countExpectedManhuaKeyartShots(
               workingBlocks,
               episodeIndex,
@@ -8987,6 +9014,7 @@ export default function OmniCanvas() {
               episodeIndex,
               forceFromStage,
               targetBlockIds: effectiveTargetBlockIds,
+              keyartShotIndex: opts?.keyartShotIndex,
               fragmentShotIndex,
               shotContinuity,
               skipDone: true,
@@ -11073,23 +11101,19 @@ export default function OmniCanvas() {
                       overwriteKeyarts: true,
                     });
                   }}
-                  onRerunKeyartShot={(blockId, shotIndex) => {
-                    if (
-                      !window.confirm(
-                        `只重跑第${writerFocusEpisode}集第${shotIndex}镜静帧；其他镜头保留。继续？`,
-                      )
-                    ) {
-                      return;
+                  onGenerateKeyartShot={({ episodeIndex, shotIndex, blockId }) => {
+                    if (episodeIndex !== writerFocusEpisode || factoryBusy || abortRef.current) return;
+                    const existing = blockId ? blocks.find((block) => block.id === blockId) : undefined;
+                    if (existing?.outputUrl || existing?.outputUrls?.length) {
+                      if (!window.confirm(`只重出第${episodeIndex}集第${shotIndex}镜静帧；旧图保留为版本，其他镜头不变；按顶部档位生成，双档两张分别计费。继续？`)) return;
                     }
-                    setFactoryRunScope("focus");
-                    ensureStudioSpawned(factoryTopic);
-                    toast.message(`第${writerFocusEpisode}集 · 单独重出第${shotIndex}镜`);
                     void runFactory("keyart", {
                       forceFromStage: "keyart",
-                      episodeIndexes: [writerFocusEpisode],
-                      targetBlockIds: [blockId],
-                      // 名单镜：允许覆盖该镜已有图
-                      overwriteKeyarts: false,
+                      episodeIndexes: [episodeIndex],
+                      keyartShotIndex: shotIndex,
+                      targetBlockIds: blockId ? [blockId] : undefined,
+                      maxRetries: 0,
+                      stopOnError: true,
                     });
                   }}
                   dockSelectedIds={dockSelectedIds}

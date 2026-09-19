@@ -709,6 +709,8 @@ type Props = {
   onRerunKeyartsFromReverse?: () => void;
   /** 只重跑当前分镜静帧，保留同集其他已完成镜头。 */
   onRerunKeyartShot?: (blockId: string, shotIndex: number) => void;
+  /** 当前镜首次生成/重出，同一明确集镜目标；没有节点也可提交。 */
+  onGenerateKeyartShot?: (target: { episodeIndex: number; shotIndex: number; blockId?: string }) => void;
   /** 质检软拦：用户仍采用当前镜成片进入成片坞 */
   onAcceptClipDespiteQc?: (clipBlockId: string) => void;
   /** 同次剪辑批量写入所有受影响段，避免跨段顺序只保存一半。 */
@@ -1264,6 +1266,7 @@ export default function ManhuaScriptWorkbench({
   onResumeFromFailure,
   onRerunKeyartsFromReverse,
   onRerunKeyartShot,
+  onGenerateKeyartShot,
   onAcceptClipDespiteQc,
   onApplyClipEditTrims,
   dockSelectedIds,
@@ -3670,6 +3673,16 @@ export default function ManhuaScriptWorkbench({
     enterStoryboard();
   };
 
+  const runCurrentKeyart = () => {
+    if (factoryBusy || refuseIfBlocked(keyartGateHint)) return;
+    if (!activeShot || shotSourceIsFallback || !onGenerateKeyartShot) {
+      toast.error("请先选择当前剧本中的有效分镜");
+      return;
+    }
+    onGenerateKeyartShot({ episodeIndex: focusEpisode, shotIndex: activeShot.index, blockId: activeKeyart?.id });
+  };
+  const currentKeyartLabel = (activeKeyart?.outputUrl || activeKeyart?.outputUrls?.length) ? "重出当前镜静帧" : "生成当前镜静帧";
+
   const runGenerateAllKeyarts = () => {
     if (refuseIfBlocked(keyartGateHint)) return;
     setActivePhase("storyboard");
@@ -3697,7 +3710,11 @@ export default function ManhuaScriptWorkbench({
       return;
     }
     if (nextCta.kind === "generate_keyarts") {
-      runGenerateAllKeyarts();
+      if (onGenerateKeyartShot) {
+        setActivePhase("storyboard");
+        document.querySelector('[data-manhua-action="generate-current-keyart"]')?.scrollIntoView({ block: "nearest" });
+      }
+      else runGenerateAllKeyarts();
       return;
     }
     if (nextCta.kind === "generate_all_clips") {
@@ -3927,7 +3944,7 @@ export default function ManhuaScriptWorkbench({
             </button>
           ) : (
             <>
-              {onGenerateAllEpisodeKeyarts &&
+              {!onGenerateKeyartShot && onGenerateAllEpisodeKeyarts &&
               !(compactUi && activePhase === "storyboard") &&
               manhuaKeyartEntryVisible("toolbar", keyartEntryState) ? (
                 <button
@@ -4392,7 +4409,7 @@ export default function ManhuaScriptWorkbench({
               }) * (missingFragmentIndexes.length || segments.length)} 积分
             </button>
           ) : null}
-          {onRerunKeyartsFromReverse ? (
+          {!onGenerateKeyartShot && onRerunKeyartsFromReverse ? (
             <button
               type="button"
               data-manhua-action="rerun-keyarts"
@@ -4747,7 +4764,7 @@ export default function ManhuaScriptWorkbench({
           ) : (
             <Play className="h-3.5 w-3.5" />
           )}
-          {nextCta.labelZh}
+          {nextCta.kind === "generate_keyarts" && onGenerateKeyartShot ? "查看当前镜生成入口" : nextCta.labelZh}
         </button>
       </div>
 
@@ -5148,7 +5165,8 @@ export default function ManhuaScriptWorkbench({
                       onGenerateAllEpisodeKeyarts &&
                       !stillsReadyEnough
                     ) {
-                      runGenerateAllKeyarts();
+                      if (onGenerateKeyartShot) setActivePhase("storyboard");
+                      else runGenerateAllKeyarts();
                       return;
                     }
                     if (episodeSheetGallery.length === 0 || !assetsComplete) {
@@ -5171,7 +5189,7 @@ export default function ManhuaScriptWorkbench({
                     : episodeSheetGallery.length === 0 || !assetsComplete
                       ? "生成全部"
                       : !stillsReadyEnough
-                        ? "生成关键静帧"
+                        ? onGenerateKeyartShot ? "进入分镜，生成当前镜 →" : "生成关键静帧"
                         : "进入分镜 →"}
                 </button>
               </div>
@@ -8117,7 +8135,9 @@ export default function ManhuaScriptWorkbench({
             }}
             onReworkStill={(shotIndex) => {
               const media = editShotMedia.find((m) => m.shotIndex === shotIndex);
-              if (media?.keyartBlockId && onRerunKeyartShot) {
+              if (onGenerateKeyartShot) {
+                onGenerateKeyartShot({ episodeIndex: focusEpisode, shotIndex, blockId: media?.keyartBlockId });
+              } else if (media?.keyartBlockId && onRerunKeyartShot) {
                 onRerunKeyartShot(media.keyartBlockId, shotIndex);
               }
             }}
@@ -8650,7 +8670,7 @@ export default function ManhuaScriptWorkbench({
                       ) : null}
                     </div>
                     <div className="mt-1.5 flex flex-wrap gap-1.5">
-                      {onGenerateAllEpisodeKeyarts &&
+                      {!onGenerateKeyartShot && onGenerateAllEpisodeKeyarts &&
                       manhuaKeyartEntryVisible("panel", keyartEntryState) ? (
                         <button
                           type="button"
@@ -8661,7 +8681,7 @@ export default function ManhuaScriptWorkbench({
                         >
                           生成关键静帧
                         </button>
-                      ) : onGenerateAllEpisodeKeyarts ? (
+                      ) : !onGenerateKeyartShot && onGenerateAllEpisodeKeyarts ? (
                         <p className="text-[9px] leading-4 text-white/40">
                           出静帧走底栏主操作「
                           {keyartEntryState.stageCtaIsKeyart ? "生成关键静帧" : "生成全部"}
@@ -8672,6 +8692,16 @@ export default function ManhuaScriptWorkbench({
                   </div>
                 </>
               )}
+              {onGenerateKeyartShot ? (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <button type="button" data-manhua-action="generate-current-keyart" disabled={Boolean(factoryBusy) || !activeShot || shotSourceIsFallback} onClick={runCurrentKeyart} className="rounded-lg border border-cyan-300/40 bg-cyan-500/20 px-3 py-2 text-xs font-semibold text-cyan-50 disabled:opacity-40">{currentKeyartLabel}</button>
+                  <span className="text-[10px] text-white/45">仅当前镜，按顶部档位生成；双档两张分别计费</span>
+                  <details><summary className="cursor-pointer text-xs text-white/50">高级批量操作</summary>
+                    <button type="button" disabled={Boolean(factoryBusy)} onClick={runGenerateAllKeyarts} className="p-2 text-xs text-amber-100">补齐本集缺失静帧（按张计费）</button>
+                    {onRerunKeyartsFromReverse ? <button type="button" disabled={Boolean(factoryBusy)} onClick={() => { if (!refuseIfBlocked(keyartGateHint)) onRerunKeyartsFromReverse(); }} className="p-2 text-xs text-amber-100">从反推重出本集全部静帧（按张计费）</button> : null}
+                  </details>
+                </div>
+              ) : null}
               <div className="mt-2 shrink-0 text-[11px] font-semibold text-white/70">
                 分镜（{shots.length}）· 当前第 {activeShot?.index ?? "—"} 镜
                 <ManhuaShotSourceLabel isFallback={shotSourceIsFallback} />
@@ -8815,7 +8845,7 @@ export default function ManhuaScriptWorkbench({
                           ) : null}
                         </div>
                       </button>
-                      {shotKey?.id && onRerunKeyartShot ? (
+                      {!onGenerateKeyartShot && shotKey?.id && onRerunKeyartShot ? (
                         <button
                           type="button"
                           data-manhua-action="rerun-shot"
@@ -9726,7 +9756,7 @@ export default function ManhuaScriptWorkbench({
           {((previewUrl && !previewIsVideo) ||
             (clipQuality?.status === "failed" &&
               /文字|设定卡|姓名条|字幕|重出静帧/.test(clipQuality.summary || ""))) &&
-          onRerunKeyartsFromReverse ? (
+          !onGenerateKeyartShot && onRerunKeyartsFromReverse ? (
             <p className="mh-hint mt-1.5 shrink-0 text-[10px] leading-snug text-white/40">
               静帧不对（穿错时代/没进场景/带字）→ 顶栏点
               <button
