@@ -1099,12 +1099,26 @@ export default function OmniCanvas() {
   const [writerPackDiff, setWriterPackDiff] = useState<WriterPackDiffResult | null>(null);
   /**
    * 剧本版本标识：拿当集正文算，换稿即变 → 旧分析自动标失效。
-   * 用长度+首尾片段而不是整段正文：只为判"变没变"，不需要内容本身。
+   *
+   * 0919 探针实锤：原先用「长度 + 前 24 字」，把第 37 字「银镯」改成「玉佩」时 key 不变，
+   * 旧分析被静默沿用 —— 同长度改字在润色阶段是常事。改成逐字符滚动哈希（FNV-1a，
+   * 全文都进去），仍然只存指纹不存正文。
    */
   const storyEmotionScriptVersionKey = useMemo(() => {
+    const fingerprint = (bodyZh: string) => {
+      let h = 0x811c9dc5;
+      for (let i = 0; i < bodyZh.length; i += 1) {
+        h ^= bodyZh.charCodeAt(i);
+        h = Math.imul(h, 0x01000193) >>> 0;
+      }
+      return h.toString(36);
+    };
     const eps = writerPack?.episodes || [];
     return eps
-      .map((e) => `${e.index}:${String(e.body || "").length}:${String(e.body || "").slice(0, 24)}`)
+      .map((e) => {
+        const bodyZh = String(e.body || "");
+        return `${e.index}:${bodyZh.length}:${fingerprint(bodyZh)}`;
+      })
       .join("|");
   }, [writerPack]);
   const storyEmotionLineByEpisodeSegment = useMemo(() => {

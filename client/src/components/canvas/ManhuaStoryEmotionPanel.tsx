@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   MANHUA_STORY_EMOTION_FORMAT,
   checkManhuaStoryEmotion,
@@ -73,14 +73,43 @@ export function ManhuaStoryEmotionPanel({
   );
 
   /**
-   * 每次改动都过一遍 normalize 再交出去：面板里手输的脏值（强度打 99、段号打 0）
-   * 不许流进存稿，否则下游读到的就是脏数据。
+   * 编辑中的草稿是面板自己的真源，交出去的才过 normalize。
+   *
+   * 0919 探针实锤的数据丢失：原先草稿就是 `analysis` 本身，而 `normalizeBeat` 要求
+   * 人物名非空 —— 用户把「人物」框一退格清空，这条节拍连同已填的阻力/开始状态/触发/
+   * 选择/结束状态/原文位置六个字段当场从存稿消失，再打回名字也回不来；若它是唯一内容，
+   * 整份分析被写成 undefined。现在：清空只让这条**暂不保存**（卡上明写），
+   * 已填的字还在草稿里，名字打回去立刻恢复。脏值仍然一个都不许流进存稿。
    */
+  const [draft, setDraft] = useState<ManhuaStoryEmotion | null>(analysis ?? null);
+  const normalizedDraft = useMemo(
+    () => (draft ? normalizeManhuaStoryEmotion({ ...draft, scriptVersionKey }) : undefined),
+    [draft, scriptVersionKey],
+  );
+  const normalizedDraftJson = JSON.stringify(normalizedDraft ?? null);
+  const analysisJson = JSON.stringify(analysis ?? null);
+  const draftRef = useRef(normalizedDraftJson);
+  draftRef.current = normalizedDraftJson;
+  useEffect(() => {
+    // 外部换了内容（刷新恢复、换集、别处改稿）才覆盖草稿；
+    // 如果外部那份正是草稿 normalize 后的结果，就保留草稿——否则用户没填完的字会被自己发出去的
+    // 那一轮回灌冲掉。draft 故意不进依赖表：它变化时这里没有事要做。
+    if (draftRef.current !== analysisJson) setDraft(analysis ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analysisJson]);
+
   const commit = (next: ManhuaStoryEmotion) => {
     if (disabled) return;
+    setDraft(next);
     onChange(normalizeManhuaStoryEmotion({ ...next, scriptVersionKey }));
   };
-  const current = analysis ?? emptyAnalysis(scriptVersionKey);
+  const current = draft ?? analysis ?? emptyAnalysis(scriptVersionKey);
+
+  /** 草稿里过不了 normalize 的节拍：不是丢了，是还没保存 */
+  const unsavedBeatIds = useMemo(() => {
+    const saved = new Set((normalizedDraft?.beats || []).map((b) => b.id));
+    return new Set(current.beats.filter((b) => !saved.has(b.id)).map((b) => b.id));
+  }, [normalizedDraft, current.beats]);
 
   const setCurve = (segmentIndex: number, patch: Partial<ManhuaEmotionPoint>) => {
     const rest = current.curve.filter((p) => !(p.episode === episode && p.segmentIndex === segmentIndex));
@@ -237,7 +266,20 @@ export function ManhuaStoryEmotionPanel({
             ) : null}
             <div className="space-y-2">
               {episodeBeats.map((b) => (
-                <div key={b.id} className="rounded border border-white/10 p-1.5" data-manhua-story-emotion-beat={b.id}>
+                <div
+                  key={b.id}
+                  className={`rounded border p-1.5 ${
+                    unsavedBeatIds.has(b.id) ? "border-amber-300/40 bg-amber-500/[0.07]" : "border-white/10"
+                  }`}
+                  data-manhua-story-emotion-beat={b.id}
+                  data-manhua-story-emotion-beat-unsaved={unsavedBeatIds.has(b.id) ? "1" : "0"}
+                >
+                  {unsavedBeatIds.has(b.id) ? (
+                    <p className="mb-1 text-[9px] leading-4 text-amber-100/90">
+                      这条还没保存：{b.characterZh.trim() ? "段号不合法" : "缺「人物」"}。
+                      已填的字都还在，补上就会保存。
+                    </p>
+                  ) : null}
                   <div className="flex flex-wrap items-center gap-1">
                     <select
                       className={field}
