@@ -46,7 +46,7 @@ beforeAll(async () => {
         import { createRoot } from 'react-dom/client';
         import { TooltipProvider } from './client/src/components/ui/tooltip';
         import ManhuaScriptWorkbench from './client/src/components/ManhuaScriptWorkbench';
-        globalThis.fixture = { keyart: 0 };
+        globalThis.fixture = { keyart: 0, openedIssue: undefined };
         const refs = ${JSON.stringify(REFS)};
         const canon = ${JSON.stringify(CANON)};
         createRoot(document.getElementById('root')).render(
@@ -58,6 +58,12 @@ beforeAll(async () => {
               workflowPhase='assets' customAssetRefs={refs} assetCanon={canon}
               onUploadCustomAssets={async () => {}}
               onGenerateAllEpisodeKeyarts={async () => { globalThis.fixture.keyart += 1; }}
+              advisorIssues={[
+                { id: 'keyframe', text: '关键静帧还没垫图锁定，成片会走纯文生成', phase: 'storyboard', blocking: true },
+                { id: 'asset-gap', text: '阿菁还没有定妆图，静帧锁不到这张脸', phase: 'assets', blocking: true },
+                { id: 'claims', text: '2 张人物图未认领，静帧不会拿它们当参考', phase: 'assets', blocking: false },
+              ]}
+              onOpenAdvisorIssue={(id) => { globalThis.fixture.openedIssue = id || null; }}
             />
           </TooltipProvider>,
         );
@@ -90,7 +96,7 @@ beforeAll(async () => {
         import { TooltipProvider } from './client/src/components/ui/tooltip';
         import { defaultCanvasBlock } from './client/src/lib/canvasTypes';
         import ManhuaScriptWorkbench from './client/src/components/ManhuaScriptWorkbench';
-        globalThis.fixture = { keyart: 0 };
+        globalThis.fixture = { keyart: 0, openedIssue: undefined };
         const refs = ${JSON.stringify(REFS)};
         const canon = ${JSON.stringify(CANON)};
         const blocks = [1, 2].map((n) => ({
@@ -264,6 +270,47 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
     });
     expect(seen.count).toBe(1);
     expect(seen.entries.filter(Boolean)).toHaveLength(1);
+    await close();
+  }, 180_000);
+
+  /**
+   * 阻断卡集中显示：真实页面上要一次看到「卡着几条」，本步排最前，
+   * 提醒项不许被藏掉（藏提示正是线上那个毛病本身），点某一条要把那一条的 id 交回去。
+   */
+  it("主任务条下面出现阻断卡：本步排最前、报清条数、提醒项照样显示、点一条回传该条 id", async () => {
+    const { page, close } = await mount();
+    const seen = await page.evaluate(() => {
+      const card = document.querySelector("[data-manhua-blocker-card]");
+      if (!card) return null;
+      return {
+        count: card.getAttribute("data-manhua-blocker-count"),
+        headline: (card.querySelector("span")?.textContent || "").trim(),
+        order: Array.from(card.querySelectorAll("[data-manhua-blocker]")).map((b) => ({
+          id: b.getAttribute("data-manhua-blocker"),
+          text: (b.textContent || "").replace(/\s+/g, " ").trim(),
+        })),
+        advisoryCount: card
+          .querySelector("[data-manhua-advisory-count]")
+          ?.getAttribute("data-manhua-advisory-count"),
+        advisoryText: (card.querySelector("[data-manhua-advisory-count]")?.textContent || "")
+          .replace(/\s+/g, " ")
+          .trim(),
+      };
+    });
+    expect(seen, "阻断卡没有渲染出来").not.toBeNull();
+    expect(seen.count).toBe("2");
+    expect(seen.headline).toBe("本步卡着 1 条，全片共 2 条要解");
+    // 夹具里「后续阶段」那条排在数组第一个：排序失效页面顺序就会反过来（变异验过会红）
+    expect(seen.order.map((o) => o.id)).toEqual(["asset-gap", "keyframe"]);
+    expect(seen.order[0].text.startsWith("本步")).toBe(true);
+    expect(seen.order[1].text.startsWith("本步")).toBe(false);
+    expect(seen.advisoryCount).toBe("1");
+    expect(seen.advisoryText).toContain("不挡出片");
+    const opened = await page.evaluate(() => {
+      (document.querySelector('[data-manhua-blocker="keyframe"]') as HTMLButtonElement).click();
+      return (window as never as { fixture: { openedIssue?: string | null } }).fixture.openedIssue;
+    });
+    expect(opened).toBe("keyframe");
     await close();
   }, 180_000);
 });

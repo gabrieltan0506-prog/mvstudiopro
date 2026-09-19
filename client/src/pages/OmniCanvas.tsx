@@ -9948,8 +9948,13 @@ export default function OmniCanvas() {
                   onAdvisorSelectionChange={setAdvisorSelection}
                   onAdvisorSignalsChange={setAdvisorSignals}
                   advisorTopIssue={advisorTopIssue}
-                  onOpenAdvisorIssue={() => {
-                    if (advisorTopIssue) locateAdvisorIssue(advisorTopIssue);
+                  advisorIssues={advisorProject.issues}
+                  onOpenAdvisorIssue={(issueId) => {
+                    // 点阻断卡里某一条就定位那一条；点阶段条旁的那行仍然定位顶部项
+                    const picked = issueId
+                      ? advisorProject.issues.find((i) => i.id === issueId) || advisorTopIssue
+                      : advisorTopIssue;
+                    if (picked) locateAdvisorIssue(picked);
                     setAdvisorOpen(true);
                   }}
                   blocks={blocks}

@@ -119,6 +119,8 @@ import {
 } from "@shared/manhuaAssetScriptSync";
 import { buildManhuaAssetRoleGroups } from "@/lib/manhuaAssetEntityGroups";
 import { manhuaKeyartEntryVisible } from "@/lib/manhuaKeyartEntry";
+import { buildManhuaMainTaskState } from "@/lib/manhuaMainTaskBlockers";
+import type { AdvisorIssue } from "@/lib/manhuaAdvisorProject";
 import {
   buildManhuaAtReferenceIndex,
   resolveManhuaAtReferences,
@@ -404,7 +406,12 @@ type Props = {
   onAdvisorSignalsChange?: (signals: ManhuaWorkbenchAdvisorSignals | null) => void;
   /** 阶段条当前格旁的「顾问：…」一行；点它打开顾问面板并定位 */
   advisorTopIssue?: { id: string; text: string } | null;
-  onOpenAdvisorIssue?: () => void;
+  onOpenAdvisorIssue?: (issueId?: string) => void;
+  /**
+   * 全部顾问问题（含阻断/提醒分级），用来在主任务条下面集中显示阻断卡。
+   * 只读消费，判据仍在 `manhuaAdvisorProject`，这里不重算。
+   */
+  advisorIssues?: readonly AdvisorIssue[];
   /** @deprecated 方案 B 已取消跳过；保留字段仅兼容旧会话 */
   assetsSkipped?: boolean;
   onAssetsSkippedChange?: (skipped: boolean) => void;
@@ -1063,6 +1070,7 @@ export default function ManhuaScriptWorkbench({
   onAdvisorSignalsChange,
   advisorTopIssue = null,
   onOpenAdvisorIssue,
+  advisorIssues,
   onPreviewClipOutbound,
   onConfirmClipOutbound,
   outboundConfirmedAtByBlock,
@@ -3133,6 +3141,12 @@ export default function ManhuaScriptWorkbench({
       !stillsReadyEnough,
     panelNeedsKeyart: activePhase === "storyboard" && !stillsReadyEnough,
   };
+  /** 阻断卡：散落各处的阻断项收成一张，接在唯一主任务条下面 */
+  const mainTask = buildManhuaMainTaskState({
+    issues: advisorIssues || [],
+    phase: activePhase,
+    busy: Boolean(factoryBusy),
+  });
   const [fullSpawnTick, setFullSpawnTick] = useState(() => Date.now());
   useEffect(() => {
     if (fullSpawnArmAt == null) return;
@@ -4286,6 +4300,52 @@ export default function ManhuaScriptWorkbench({
           {nextCta.labelZh}
         </button>
       </div>
+
+      {/* 阻断卡集中显示：不藏提示、不替用户点按钮，只把「卡着几条、先解哪条、点哪跳去修」说清 */}
+      {mainTask.blocked ? (
+        <div
+          data-manhua-blocker-card
+          data-manhua-blocker-count={mainTask.blockers.length}
+          className="shrink-0 border-b border-rose-300/25 bg-rose-500/[0.07] px-3 py-2"
+        >
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <span className="text-[12px] font-bold text-rose-50">{mainTask.headlineZh}</span>
+            <span className="mh-hint text-[10px] text-rose-50/70">{mainTask.hintZh}</span>
+          </div>
+          <ul className="mt-1.5 grid gap-1 sm:grid-cols-2">
+            {mainTask.blockers.map((issue) => (
+              <li key={issue.id}>
+                <button
+                  type="button"
+                  data-manhua-blocker={issue.id}
+                  data-manhua-blocker-phase={issue.phase}
+                  onClick={() => onOpenAdvisorIssue?.(issue.id)}
+                  className={`w-full rounded border px-2 py-1 text-left text-[10px] leading-4 ${
+                    issue.phase === activePhase
+                      ? "border-rose-300/45 bg-rose-500/12 text-rose-50 hover:bg-rose-500/22"
+                      : "border-white/12 bg-white/[0.03] text-white/65 hover:bg-white/[0.07]"
+                  }`}
+                >
+                  <span className="mr-1 font-semibold">
+                    {issue.phase === activePhase
+                      ? "本步"
+                      : workflowPhases.find((p) => p.id === issue.phase)?.label || "后续"}
+                  </span>
+                  {issue.text}
+                </button>
+              </li>
+            ))}
+          </ul>
+          {mainTask.advisories.length ? (
+            <p
+              data-manhua-advisory-count={mainTask.advisories.length}
+              className="mh-hint mt-1.5 text-[10px] leading-4 text-white/45"
+            >
+              另有 {mainTask.advisories.length} 条提醒（不挡出片）：{mainTask.advisories[0]!.text}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* 0917 线上实测：3D 模型面板的「绑骨」在任何阶段都可点，弹层却只在资产阶段挂载 → 分镜阶段点了静默无反应。挪到阶段分支外，与阶段无关。 */}
       {autoRigAsset && autoRigEligibility?.eligible && autoRigEligibility.currentModel3d?.status === "succeeded" && onApplyRiggedModel ? (
