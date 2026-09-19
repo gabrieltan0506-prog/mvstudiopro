@@ -29,8 +29,8 @@ describe("一键预混母轨 · 时间轴片段", () => {
     expect(bgm!.fadeInSec + bgm!.fadeOutSec).toBeLessThanOrEqual(1.5);
     expect(bgm!.fadeInSec).toBe(0.5);
   });
-  it("没有对白、秒窗越界、内容改过、音频长于秒窗都报中文错", () => {
-    expect(() => buildPremixTimelineClips({ cues: [cueWithTake("bgm", "b", 0, 10, 8)], durationSec: 30, getSelectedTake, inputKeyOf: canvasAudioCueInputKey })).toThrow(/至少一句对白/);
+  it("没有采用音轨、秒窗越界、内容改过、音频长于秒窗都报中文错", () => {
+    expect(() => buildPremixTimelineClips({ cues: [], durationSec: 30, getSelectedTake, inputKeyOf: canvasAudioCueInputKey })).toThrow(/至少一条音轨/);
     expect(() => buildPremixTimelineClips({ cues: [cueWithTake("dialogue", "d", 28, 33, 2)], durationSec: 30, getSelectedTake, inputKeyOf: canvasAudioCueInputKey })).toThrow(/秒窗超出/);
     const edited = { ...cueWithTake("dialogue", "d", 0, 3, 2), textZh: "改了" };
     expect(() => buildPremixTimelineClips({ cues: [edited], durationSec: 30, getSelectedTake, inputKeyOf: canvasAudioCueInputKey })).toThrow(/重新试听/);

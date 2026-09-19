@@ -10111,6 +10111,8 @@ export default function OmniCanvas() {
                   outlineEpisodes={(writerPack?.episodes || []).map((ep) => ({
                     index: ep.index,
                     title: ep.title || `第${ep.index}集`,
+                    body: ep.body,
+                    endHook: ep.endHook,
                   }))}
                   episodeCount={writerEpisodeCount}
                   focusEpisode={writerFocusEpisode}
@@ -10463,7 +10465,9 @@ export default function OmniCanvas() {
                     );
                   }}
                   onFocusBlock={(id) => {
-                    openManhuaFactoryCanvas(id);
+                    // 选镜只同步选中节点；高级模式由工作台显式操作打开。
+                    setFocusBlockId(null);
+                    window.setTimeout(() => setFocusBlockId(id), 0);
                   }}
                   onEditImageBlock={async ({ blockId, prompt }) => {
                     /**
@@ -10864,7 +10868,7 @@ export default function OmniCanvas() {
                     });
                     // 等 layout 写入后再 focus，才能滚到真实坐标并高亮
                     window.setTimeout(() => {
-                      if (compileFailed) return;
+                      if (compileFailed || opts?.revealCanvas === false) return;
                       if (focusId) openManhuaFactoryCanvas(focusId);
                       else openManhuaFactoryCanvas();
                     }, 120);

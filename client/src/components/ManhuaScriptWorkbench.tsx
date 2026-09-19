@@ -370,8 +370,8 @@ type Props = {
   logline?: string;
   /** 配乐来源可选项（Suno v6 三档，走 TTAPI 网关） */
   bgmModels?: Array<{ model: BgmBriefModel; labelZh: string }>;
-  /** 大纲页分集列表（标题即可） */
-  outlineEpisodes?: Array<{ index: number; title: string }>;
+  /** 大纲页分集卡：保留编剧原文与片尾悬念。 */
+  outlineEpisodes?: Array<{ index: number; title: string; body?: string; endHook?: string }>;
   episodeCount: number;
   focusEpisode: number;
   onFocusEpisode: (ep: number) => void;
@@ -691,7 +691,7 @@ type Props = {
    * 审阅成片提示词主路径：铺段节点 + 竖排后，聚焦并高亮目标段节点到视口中央。
    * 有此回调时优先走它，避免「先 focus 再 layout」滚到空白区。
    */
-  onReviewClipPromptsOnCanvas?: (opts?: { segmentIndex?: number }) => void;
+  onReviewClipPromptsOnCanvas?: (opts?: { segmentIndex?: number; revealCanvas?: boolean }) => void;
   /** 写回段成片节点 prompt（审阅编辑） */
   onUpdateClipPrompt?: (clipId: string, prompt: string) => void;
   /** 在工厂内按当前段保存声音，不跳转到自由画布。 */
@@ -938,6 +938,8 @@ export function ManhuaMotionEntryButton({
     onOpenPathTab();
     const panel = panelRef.current;
     if (!panel) return;
+    const disclosure = panel.closest("details");
+    if (disclosure) disclosure.open = true;
     panel.scrollIntoView({ behavior: "instant", block: "center", inline: "nearest" });
     panel.focus({ preventScroll: true });
   };
@@ -1476,8 +1478,9 @@ export default function ManhuaScriptWorkbench({
   const bPersistKey = manhuaWorkbenchBPersistKey(topic || seriesTitle || "manhua", focusEpisode);
   /** 只允许把已经完成当前集加载的状态写回该集，避免切集首帧把上一集状态写进新 key。 */
   const [hydratedBPersistKey, setHydratedBPersistKey] = useState<string | null>(null);
-  /** 右栏本集画布：阿硕 C2 分镜有静帧时强制常开；其余阶段仍可随成片收合 */
-  const [canvasDockOpen, setCanvasDockOpen] = useState(true);
+  /** 节点画布仅在用户主动进入高级模式时显示，默认聚焦当前镜媒体。 */
+  const [canvasDockOpen, setCanvasDockOpen] = useState(false);
+  const [shotPreviewMode, setShotPreviewMode] = useState<"still" | "clip">("still");
   /** 胶片多选：直接保存段号；长镜跨段时不能再用重复的原镜号代替段身份。 */
   const [selectedSegmentIndexes, setSelectedSegmentIndexes] = useState<number[]>([]);
   /** 同一原镜跨多个生成段时，保留用户点中的具体段，不强制跳回首段。 */
@@ -2022,13 +2025,12 @@ export default function ManhuaScriptWorkbench({
   );
   // 严格按镜号对齐：禁止用「列表第 N 张」顶替，避免剧本与静帧错位
   const activeKeyart =
-    episodeKeyarts.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === activeShotNo) ||
-    (activeShotNo === 1 ? keyart : undefined);
+    episodeKeyarts.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === activeShotNo);
   const activeClip =
     episodeClips.find(
       (b) => resolveClipLocalSegmentIndex(b.id, b.prompt, focusEpisode) === activeSegNo,
-    ) || (activeSegNo === 1 ? legacyClip : undefined);
-  const clip = activeClip || legacyClip;
+    );
+  const clip = activeClip;
   const clipQuality = clip?.manhuaClipQuality;
   // unverified + 用户已放行 → unverified_waived（持久化只存放行标记，展示层派生）
   const clipQualityEffective = resolveManhuaClipQualityEffectiveStatus(clipQuality);
@@ -2038,10 +2040,19 @@ export default function ManhuaScriptWorkbench({
   // 有成片就播：质检未过/服务暂不可用时仍可看，避免「生成成功却像失败」
   const playableClipUrl = approvedClipUrl || clipVideoUrl;
   const anyKeyartUrl = episodeKeyarts.map(mediaUrl).find(Boolean);
-  const previewUrl = playableClipUrl || mediaUrl(activeKeyart) || anyKeyartUrl;
-  const previewIsVideo = Boolean(playableClipUrl);
+  // 分镜只展示当前镜或当前段的产物，缺图不借其它镜头冒充。
+  const focusedClipPreview = activePhase === "storyboard" &&
+    Boolean(clipOutputUrl(activeClip)) && (shotPreviewMode === "clip" || !mediaUrl(activeKeyart));
+  const previewUrl = activePhase === "storyboard"
+    ? focusedClipPreview ? clipOutputUrl(activeClip) : mediaUrl(activeKeyart)
+    : playableClipUrl || mediaUrl(activeKeyart) || anyKeyartUrl;
+  const previewIsVideo = activePhase === "storyboard"
+    ? focusedClipPreview
+    : Boolean(playableClipUrl);
+  const previewFinalVideoUrl = activePhase === "storyboard" ? undefined : finalVideoUrl;
   const activeShotStillUrl = mediaUrl(activeKeyart);
   const annotateStillUrl = activeShotStillUrl || anyKeyartUrl;
+  const previewStillUrl = activePhase === "storyboard" ? activeShotStillUrl : annotateStillUrl;
   const directorOverlaySegment = segments.find((segment) => segment.index === activeSegNo);
   const segmentFirstShotNo = directorOverlaySegment?.shots[0]?.index;
   const segmentFirstShotKeyart = segmentFirstShotNo
@@ -2104,31 +2115,21 @@ export default function ManhuaScriptWorkbench({
     canChange: Boolean(onDirectorBoardMotionOverlayChange),
   });
 
-  /** 切镜 / 成片：分镜有静帧时画布常开（阿硕 C2）；否则未出片展开、已出片收起 */
+  // 切换集或阶段回到媒体预览；同阶段选镜不强制打开或关闭高级模式。
   useEffect(() => {
-    if (!dockCanvas) return;
-    if (activePhase === "storyboard" && episodeStillCount > 0) {
-      setCanvasDockOpen(true);
-      return;
-    }
-    setCanvasDockOpen(!playableClipUrl);
-  }, [dockCanvas, playableClipUrl, activeShotNo, activePhase, episodeStillCount]);
+    setCanvasDockOpen(false);
+  }, [focusEpisode, activePhase]);
 
   const openCanvasDock = () => setCanvasDockOpen(true);
-  const closeCanvasDock = () => {
-    // 分镜有静帧时禁止收起——右栏就是主预览
-    if (activePhase === "storyboard" && episodeStillCount > 0) return;
-    setCanvasDockOpen(false);
-  };
+  const closeCanvasDock = () => setCanvasDockOpen(false);
   // 阿硕 C2：首次进分镜且有静帧 → 自动铺段节点 + 写入垫图锁提示词
   const autoLaidClipLocksRef = useRef(false);
   useEffect(() => {
     if (activePhase !== "storyboard" || episodeStillCount <= 0) return;
-    setCanvasDockOpen(true);
     if (autoLaidClipLocksRef.current) return;
     if (!onReviewClipPromptsOnCanvas) return;
     autoLaidClipLocksRef.current = true;
-    onReviewClipPromptsOnCanvas({ segmentIndex: activeSegNo });
+    onReviewClipPromptsOnCanvas({ segmentIndex: activeSegNo, revealCanvas: false });
   }, [activePhase, episodeStillCount, activeSegNo, onReviewClipPromptsOnCanvas]);
   const imageEditSubmitLockRef = useRef(false);
   const [imageEditDraft, setImageEditDraft] = useState<{
@@ -2163,8 +2164,11 @@ export default function ManhuaScriptWorkbench({
       episodeClips.find(
         (b) => resolveClipLocalSegmentIndex(b.id, b.prompt, focusEpisode) === segNo,
       ) || null;
-    focusBlockAndOpenCanvas(clipBlock?.id || keyart?.id || "");
+    const focusId = keyart?.id || clipBlock?.id;
+    if (focusId) onFocusBlock?.(focusId);
   };
+
+  useEffect(() => { setShotPreviewMode("still"); }, [focusEpisode, activeShotNo, activeSegNo]);
 
   const showCanvasDock = dockCanvas && canvasDockOpen;
 
@@ -4917,25 +4921,35 @@ export default function ManhuaScriptWorkbench({
               </div>
             </div>
             {outlineEpisodes.length ? (
-              <div className="mt-3 grid gap-1.5 sm:grid-cols-2">
-                {outlineEpisodes.slice(0, 12).map((ep) => (
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3" aria-label="分集卡片">
+                {outlineEpisodes.map((ep) => (
                   <button
                     key={ep.index}
                     type="button"
                     onClick={() => onFocusEpisode(ep.index)}
-                    className={`rounded-lg border px-3 py-2 text-left ${
+                    data-manhua-episode-card={ep.index}
+                    aria-pressed={focusEpisode === ep.index}
+                    className={`rounded-xl border px-4 py-3 text-left ${
                       focusEpisode === ep.index
                         ? "border-cyan-400/40 bg-cyan-500/10 text-cyan-50"
                         : "border-white/10 bg-white/[0.02] text-white/70 hover:bg-white/[0.05]"
                     }`}
                   >
-                    <div className="text-[10px] text-white/40">第 {ep.index} 集</div>
+                    <div className="flex items-center justify-between text-xs text-white/55"><span>第 {ep.index} 集</span>{focusEpisode === ep.index ? <span>当前</span> : null}</div>
                     <div className="truncate text-[12px] font-medium">
                       {ep.title || `第${ep.index}集`}
                     </div>
+                    <p className="mt-2 line-clamp-3 text-xs leading-5 text-white/60">{ep.body?.trim() || "本集尚无剧情正文"}</p>
                   </button>
                 ))}
               </div>
+            ) : null}
+            {outlineEpisodes.find((ep) => ep.index === focusEpisode)?.body ? (
+              <details className="mt-3 rounded-lg border border-white/10 p-3" data-manhua-episode-story>
+                <summary className="cursor-pointer text-xs text-white/75">查看第 {focusEpisode} 集完整剧情</summary>
+                <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-white/70">{outlineEpisodes.find((ep) => ep.index === focusEpisode)?.body}</p>
+                {outlineEpisodes.find((ep) => ep.index === focusEpisode)?.endHook ? <p className="mt-3 text-xs text-amber-100/80">片尾悬念：{outlineEpisodes.find((ep) => ep.index === focusEpisode)?.endHook}</p> : null}
+              </details>
             ) : null}
             {onChangeStoryEmotion ? (
               <ManhuaStoryEmotionPanel
@@ -9247,13 +9261,13 @@ export default function ManhuaScriptWorkbench({
           data-manhua-preview-kind={
             showCanvasDock
               ? "canvas"
-              : finalVideoUrl || previewIsVideo
+              : previewFinalVideoUrl || previewIsVideo
                 ? "video"
                 : previewUrl
                   ? "image"
                   : "empty"
           }
-          data-manhua-preview-url={finalVideoUrl || previewUrl || ""}
+          data-manhua-preview-url={previewFinalVideoUrl || previewUrl || ""}
           className={
             immersive
               ? "flex h-full min-h-0 flex-col p-1.5 md:p-2"
@@ -9264,19 +9278,24 @@ export default function ManhuaScriptWorkbench({
         >
           <div className="mb-1.5 flex shrink-0 flex-wrap items-center justify-between gap-2">
             <div className="text-[12px] font-semibold text-white/90">
-              {showCanvasDock ? "本集画布（主预览）" : previewIsVideo || finalVideoUrl ? "视频结果" : "预览"}
+              {showCanvasDock ? "高级节点画布" : activePhase === "storyboard" ? (previewIsVideo ? `第 ${activeSegNo} 段成片 · 包含当前镜` : `当前镜预览 · ${String(activeShotNo).padStart(2, "0")}`) : previewIsVideo || previewFinalVideoUrl ? "视频结果" : "预览"}
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
+              {activePhase === "storyboard" && !showCanvasDock && mediaUrl(activeKeyart) && clipOutputUrl(activeClip) ? (
+                <div className="inline-flex gap-1" aria-label="当前镜预览内容">
+                  <button type="button" aria-pressed={shotPreviewMode === "still"} onClick={() => setShotPreviewMode("still")} className="rounded border border-white/15 px-2 py-1 text-xs text-white/80 aria-pressed:bg-cyan-500/20">本镜静帧</button>
+                  <button type="button" aria-pressed={shotPreviewMode === "clip"} onClick={() => setShotPreviewMode("clip")} className="rounded border border-white/15 px-2 py-1 text-xs text-white/80 aria-pressed:bg-cyan-500/20">本段成片</button>
+                </div>
+              ) : null}
               {(() => {
                 /**
-                 * 当前预览的产物：成片优先，否则静帧。
+                 * 下载与当前可见预览使用同一产物，分镜可切换本镜静帧与本段成片。
                  *
-                 * 不看画布坞开没开：分镜阶段主预览是常开的，若按坞状态收起
-                 * 按钮，最常用的那个状态反而永远下不了。
+                 * 高级画布展开时仍保留当前镜/段的下载入口。
                  */
-                const dlUrl = String(finalVideoUrl || previewUrl || "").trim();
+                const dlUrl = String(previewFinalVideoUrl || previewUrl || "").trim();
                 if (/^https?:\/\//i.test(dlUrl)) {
-                  const isVid = Boolean(finalVideoUrl || previewIsVideo);
+                  const isVid = Boolean(previewFinalVideoUrl || previewIsVideo);
                   return (
                     <button
                       type="button"
@@ -9314,11 +9333,6 @@ export default function ManhuaScriptWorkbench({
               })()}
               {dockCanvas ? (
                 showCanvasDock ? (
-                  activePhase === "storyboard" && episodeStillCount > 0 ? (
-                    <span className="rounded-md border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-100/80">
-                      主预览常开
-                    </span>
-                  ) : (
                     <button
                       type="button"
                       data-manhua-action="close-canvas-dock"
@@ -9327,9 +9341,8 @@ export default function ManhuaScriptWorkbench({
                       title="收起画布，腾出空间检查成片"
                     >
                       <X className="h-3 w-3" />
-                      收起画布
+                      返回主预览
                     </button>
-                  )
                 ) : (
                   <button
                     type="button"
@@ -9339,7 +9352,7 @@ export default function ManhuaScriptWorkbench({
                     title="打开本集画布（多镜节点）"
                   >
                     <LayoutGrid className="h-3 w-3" />
-                    打开画布
+                    高级节点画布
                   </button>
                 )
               ) : null}
@@ -9370,7 +9383,7 @@ export default function ManhuaScriptWorkbench({
                   <AlertTriangle className="h-3 w-3" />
                   质检不可用·未质检
                 </span>
-              ) : finalVideoUrl ? (
+              ) : previewFinalVideoUrl ? (
                 <span className="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2 py-0.5 text-[9px] font-semibold text-cyan-100">
                   长片已合成
                 </span>
@@ -9394,6 +9407,8 @@ export default function ManhuaScriptWorkbench({
               )}
             </div>
           </div>
+          <details open={scriptTab === "path" || undefined} className="mb-2 shrink-0" data-manhua-motion-details>
+            <summary className="cursor-pointer rounded-md border border-white/10 px-3 py-2 text-xs text-white/70">人物动作与运镜 · {activeMotionPanelStatus.labelZh}</summary>
           <section
             ref={directorOverlayPanelRef}
             tabIndex={-1}
@@ -9526,6 +9541,7 @@ export default function ManhuaScriptWorkbench({
               </div>
             )}
           </section>
+          </details>
           {dockCanvas ? (
             <div
               id="freeform-canvas-zone"
@@ -9545,17 +9561,17 @@ export default function ManhuaScriptWorkbench({
             <div
               data-manhua-shot-pair-preview
               className={`flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-lg border bg-black ${
-                finalVideoUrl || previewIsVideo
+                previewFinalVideoUrl || previewIsVideo
                   ? "border-cyan-400/45"
                   : factoryBusy
                     ? "border-amber-400/35"
                     : "border-white/12"
               }`}
             >
-              {annotateStillUrl && (playableClipUrl || finalVideoUrl) ? (
+              {previewStillUrl && (previewIsVideo || previewFinalVideoUrl) ? (
                 <div className="flex max-h-[28%] shrink-0 items-center gap-2 border-b border-white/10 bg-black/80 px-2 py-1.5">
                   <ManhuaAssetImage
-                    src={annotateStillUrl}
+                    src={previewStillUrl}
                     alt=""
                     className="h-16 w-12 shrink-0 rounded object-cover object-top"
                   />
@@ -9563,13 +9579,13 @@ export default function ManhuaScriptWorkbench({
                     <div className="font-semibold text-white/75">
                       镜 {String(activeShotNo).padStart(2, "0")} · 静帧
                     </div>
-                    <div className="truncate text-white/40">成片在下方，一镜一图一片</div>
+                    <div className="truncate text-white/40">下方播放本段成片，可能包含多个镜头</div>
                   </div>
                 </div>
               ) : null}
-              <div className="flex min-h-0 flex-1 items-center justify-center">
-                {finalVideoUrl ? (
-                  <video src={finalVideoUrl} controls className="h-full max-h-full w-full object-contain" />
+              <div className="flex min-h-0 flex-1 items-center justify-center p-3" data-manhua-media-frame style={activePhase === "storyboard" ? { aspectRatio: "9 / 16", maxHeight: "65vh", width: "100%", margin: "auto" } : undefined}>
+                {previewFinalVideoUrl ? (
+                  <video src={previewFinalVideoUrl} controls className="h-full max-h-full w-full object-contain" />
                 ) : previewUrl ? (
                   previewIsVideo ? (
                     <video src={previewUrl} controls className="h-full max-h-full w-full object-contain" />
@@ -9580,8 +9596,10 @@ export default function ManhuaScriptWorkbench({
                   <div className="px-4 text-center text-[11px] leading-relaxed text-white/40">
                     {factoryBusy
                       ? "正在生成…"
-                      : dockCanvas
-                        ? "点「打开画布」调节点，或先生成片段后在此检查成片"
+                      : activePhase === "storyboard"
+                        ? `镜 ${String(activeShotNo).padStart(2, "0")} 尚无可预览产物，请先生成本镜静帧`
+                        : dockCanvas
+                        ? "可打开高级节点画布，或生成片段后检查成片"
                         : "生成关键静帧后，静帧 / 成片在此预览"}
                   </div>
                 )}

@@ -33,7 +33,7 @@ export function isPremixPendingKey(inputKey: string | null | undefined): boolean
 }
 
 /**
- * 只收「已确认且启用」的 cue；至少一句对白；每条 take 必须与当前 cue 内容一致且不长于秒窗。
+ * 只收「已确认且启用」的 cue；至少一条音轨；每条 take 必须与当前 cue 内容一致且不长于秒窗。
  * 抛中文错误给面板直接显示。
  */
 export function buildPremixTimelineClips(input: {
@@ -45,8 +45,8 @@ export function buildPremixTimelineClips(input: {
   videoModel?: string | null;
 }): PremixTimelineClip[] {
   const cues = input.cues.filter((cue) => cue.approved && cue.enabled !== false);
-  if (!cues.some((cue) => cue.kind === "dialogue")) {
-    throw new Error("先试听并确认至少一句对白，再预混母轨。");
+  if (!cues.length) {
+    throw new Error("先试听并确认至少一条音轨，再预混母轨。");
   }
   if (cues.length > PREMIX_MAX_CLIPS) {
     throw new Error(`一次最多预混 ${PREMIX_MAX_CLIPS} 条音频，请先停用或合并部分对白/配乐（当前 ${cues.length} 条）。`);
