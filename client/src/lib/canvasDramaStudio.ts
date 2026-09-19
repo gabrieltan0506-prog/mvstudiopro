@@ -12,6 +12,7 @@ import {
   stripManhuaDirectionStyleBlocks,
 } from "@shared/manhuaDirectionCanonLibrary";
 import { buildWorkbenchShotsFromSegmentPlan } from "@shared/manhuaStoryDistill";
+import { readManhuaTimedStoryboard } from "@shared/manhuaTimedStoryboard";
 import { buildManhuaAutoSegmentBinding, normalizeManhuaAutoSegmentBinding } from "@shared/manhuaAutoSegment";
 import {
   collectDocumentAssets,
@@ -1889,7 +1890,7 @@ export function resolveShotsForEpisodeKeyarts(
 export function resolveShotsForEpisodeKeyartsResult(
   blocks: CanvasBlock[],
   episodeIndex: number | null | undefined,
-): { shots: ManhuaWorkbenchShot[]; isFallback: boolean } {
+): { shots: ManhuaWorkbenchShot[]; isFallback: boolean; sourceErrors: string[] } {
   const sameEpisode = (b: CanvasBlock) => {
     if (episodeIndex == null) return true;
     const be = getBlockEpisodeIndex(b);
@@ -1901,21 +1902,27 @@ export function resolveShotsForEpisodeKeyartsResult(
   const reverseText = reverse?.outputText || reverse?.prompt || "";
   const beatsText = beats?.outputText || beats?.prompt || "";
   const storyText = story?.outputText || story?.prompt || "";
-  // 只把真实生成的可拍表/分镜行当结构真源；beats 的模板 prompt 不能压过 reverse 成稿。
-  const shotSource = [
+  const parseSource = (text: string) => {
+    const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(text);
+    return plan.segments.length && !hasExplicitManhuaShotBlocks(text)
+      ? { shots: buildWorkbenchShotsFromSegmentPlan(plan), isFallback: false }
+      : parseWorkbenchShotsFromTextResult(text);
+  };
+  // 先隔离真实成稿与模板，再在成稿中优先消费明确秒位，避免无秒数节拍盖住定时反推表。
+  const generated = [
     String(beats?.outputText || "").trim(),
     String(reverse?.outputText || "").trim(),
     String(story?.outputText || "").trim(),
-    beatsText,
-    reverseText,
-    storyText,
-  ].find((text) => text && hasExplicitManhuaShotStructure(text));
-  // 三类节点遵循同一成稿优先顺序；旧段表必须先编译，不能误落逐镜解析骨架。
+  ].filter(Boolean).map(text => ({ text, timed: readManhuaTimedStoryboard(text), result: parseSource(text) }))
+    .filter(source => source.timed.recognized || !source.result.isFallback);
+  // 坏秒位表同样保留为真源供后续校验；不得换成另一份稿掩盖坏行。
+  // 后续反推必须覆盖同一镜数；旧反推不能因有秒数就覆盖新增或删减过的节拍。
+  const timedSource = generated.find(source => source.result.shots.length === generated[0]?.result.shots.length &&
+    (source.timed.recognized || (source.result.shots.length > 0 && source.result.shots.every(shot => Number.isFinite(shot.durationSec) && shot.durationSec > 0))));
+  const shotSource = timedSource?.text || generated[0]?.text ||
+    [beatsText, reverseText, storyText].find(text => text && hasExplicitManhuaShotStructure(text));
   const selectedText = shotSource || reverseText || beatsText || storyText;
-  const selectedPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(selectedText);
-  const result = selectedPlan.segments.length && !hasExplicitManhuaShotBlocks(selectedText)
-    ? { shots: buildWorkbenchShotsFromSegmentPlan(selectedPlan), isFallback: false }
-    : parseWorkbenchShotsFromTextResult(selectedText);
+  const result = generated.find(source => source.text === selectedText)?.result || parseSource(selectedText);
   const withAngles = applyShotAnglesFromText(result.shots, `${reverseText}\n${beatsText}`);
   // 工作台的「成片台词」会把覆盖表同时写回 reverse / beats。这里是静帧与段成片
   // 共用的真实分镜生产者，必须在分段、说话人绑定和提示词编译之前消费覆盖表。
@@ -1924,7 +1931,16 @@ export function resolveShotsForEpisodeKeyartsResult(
   const withDialogues = applyShotDialoguesFromText(withReverseDialogues, beatsText);
   // 返回分镜列表本身；成段/注水在 ensureManhuaFragmentClips / 工作台侧做
   // 保留完整正文；引擎容量由后续统一重切处理，不能在解析后先丢掉尾部剧情。
-  return { shots: withDialogues, isFallback: result.isFallback };
+  return { shots: withDialogues, isFallback: result.isFallback, sourceErrors: readManhuaTimedStoryboard(selectedText).errors };
+}
+
+class ManhuaShotSourceInvalidError extends Error {}
+
+/** 预览保留坏行供用户修稿；生产准备必须在改节点、签名素材与生成请求之前拒绝。 */
+function assertManhuaShotSourceReady(blocks: CanvasBlock[], episodeIndex?: number | null): ManhuaWorkbenchShot[] {
+  const source = resolveShotsForEpisodeKeyartsResult(blocks, episodeIndex);
+  if (source.sourceErrors.length) throw new ManhuaShotSourceInvalidError(`分镜原稿无效：${source.sourceErrors.join("；")}。请先修正原稿；旧产物保留，不提交静帧或成片。`);
+  return source.shots;
 }
 
 function makeShotBlockId(
@@ -2216,7 +2232,7 @@ export function ensureManhuaFragmentClips(
     : "";
   // 导演法典：每段按自己的动作/对白文本判场景类型，副卡（如动作场）只盖它声明的阶段
   const directionCanon = opts?.directionCanon !== undefined ? opts.directionCanon : readManhuaDirectionCanonFromBlocks(blocks.filter(sameEpisode));
-  const shots = resolveShotsForEpisodeKeyarts(blocks, ep);
+  const shots = assertManhuaShotSourceReady(blocks, ep);
   /**
    * 引擎优先级：显式入参 > 本集已有 clip 节点上盖的引擎（spawn 时按用户选择写入）
    * > 兜底默认。引擎限制每段容量，原稿决定段数与源时长。
@@ -3537,7 +3553,7 @@ export function expandManhuaShotKeyartsAfterReverse(
     return be == null ? ep === 1 : be === ep;
   };
   // 静帧按原镜建立，长镜的多个成片段共用该镜静帧。
-  const shots = resolveShotsForEpisodeKeyarts(blocks, ep);
+  const shots = assertManhuaShotSourceReady(blocks, ep);
   if (shots.length < 2) {
     return ensureManhuaFragmentClips(blocks, edges, ep ?? 1, opts);
   }
@@ -4026,6 +4042,9 @@ export async function prepareManhuaFactoryClipInput(input: {
   const { blocks: working, edges, blockId, fallbackBlock, stage, preparedVideoEdit } = input;
   const opts = { shotContinuity: input.shotContinuity, episodeIndex: input.episodeIndex };
   const current = working.find((b) => b.id === blockId) || fallbackBlock;
+  if (!preparedVideoEdit && (stage === "clip" || stage === "keyart")) {
+    assertManhuaShotSourceReady(working, getBlockEpisodeIndex(current) ?? input.episodeIndex ?? 1);
+  }
   const visionImages = preparedVideoEdit ? [] : collectVisionImages(blockId, working, edges);
   const nearestRef =
     !preparedVideoEdit && (current.kind === "image" || current.kind === "video")
@@ -4245,6 +4264,17 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       pausedDownstreamIds: [],
     };
   }
+  const runsShotMedia = MANHUA_FACTORY_STAGE_ORDER.indexOf(opts.untilStage ?? "clip") >= MANHUA_FACTORY_STAGE_ORDER.indexOf("keyart");
+  const regeneratesSource = opts.keyartShotIndex == null && opts.fragmentShotIndex == null &&
+    opts.forceFromStage != null && MANHUA_FACTORY_STAGE_ORDER.indexOf(opts.forceFromStage) <= MANHUA_FACTORY_STAGE_ORDER.indexOf("reverse");
+  if (runsShotMedia && !preparedVideoEdit && !regeneratesSource) {
+    const episodes = opts.episodeIndex != null ? [opts.episodeIndex] : Array.from(new Set(opts.blocks.map(block => getBlockEpisodeIndex(block) ?? 1)));
+    try {
+      for (const episode of episodes) assertManhuaShotSourceReady(opts.blocks, episode);
+    } catch (error) {
+      return { blocks: opts.blocks, completedIds: [], skippedIds: [], errors: [{ id: "shot-source", message: error instanceof Error ? error.message : "分镜原稿无效" }], awaitingConfirmationIds: [], pausedDownstreamIds: [] };
+    }
+  }
   /** 工厂内 ensure/反推展开必须吃同一张导演板表，禁止只靠工作台审阅路径传参 */
   const directorBoardUrlByEpisode = opts.deps.manhuaDirectorBoardUrlByEpisode ?? null;
   const directorBoardUrlByEpisodeSegment = opts.deps.manhuaDirectorBoardUrlByEpisodeSegment ?? null;
@@ -4306,7 +4336,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
         (getBlockEpisodeIndex(b) ?? 1) === opts.episodeIndex) &&
       Boolean(b.outputText?.trim()),
   );
-  if (!singleKeyartTarget && !preparedVideoEdit && reverseReady) {
+  if (!singleKeyartTarget && !preparedVideoEdit && reverseReady && runsShotMedia && !regeneratesSource) {
     const expanded = expandManhuaShotKeyartsAfterReverse(working, edges, reverseReady.id, {
       ...ensureOptions,
     });
@@ -4314,7 +4344,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
     edges = expanded.edges;
     opts.onBlocksChange?.(working);
   } else if (
-    !preparedVideoEdit &&
+    !preparedVideoEdit && !regeneratesSource &&
     typeof opts.episodeIndex === "number" &&
     opts.episodeIndex >= 1 &&
     (opts.fragmentShotIndex != null || (opts.untilStage ?? "clip") === "clip")
@@ -4715,6 +4745,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
     let lastMessage = "生成失败";
     let succeeded = false;
     let awaitingConfirmation = false;
+    let invalidShotSource = false;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       if (opts.signal?.aborted) {
         lastMessage = "已取消";
@@ -4797,6 +4828,11 @@ export async function runManhuaDramaFactoryPipeline(opts: {
               }
             : b,
         );
+        if (stage === "reverse") {
+          // 保留刚返回的错误正文供修正，但不能继续沿旧稿生成或自动重试烧费。
+          try { assertManhuaShotSourceReady(next, getBlockEpisodeIndex(block) ?? opts.episodeIndex ?? 1); }
+          catch (error) { publish(next); throw error; }
+        }
         next = enrichDownstreamPrompts(next, blockId);
         if (stage === "reverse") {
           const expanded = expandManhuaShotKeyartsAfterReverse(next, edges, blockId, {
@@ -4828,6 +4864,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       } catch (e: unknown) {
         lastMessage = e instanceof Error ? e.message : "生成失败";
         if (lastMessage === "已取消" || opts.signal?.aborted) break;
+        if (e instanceof ManhuaShotSourceInvalidError) { invalidShotSource = true; break; }
         // D：确认失效（依赖产物变了 / 缺确认）不是瞬时错误——不重试、不续发，交回用户重新确认
         if (
           e instanceof ManhuaOutboundConfirmationMismatchError ||
@@ -4867,6 +4904,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       if (!alreadyLogged) {
         errors.push({ id: blockId, message: lastMessage });
       }
+      if (invalidShotSource) return { blocks: working, completedIds, skippedIds, errors, awaitingConfirmationIds, pausedDownstreamIds };
       if (lastMessage === "已取消" || opts.signal?.aborted) break;
       if (awaitingConfirmation) {
         // 本段没提交没扣费，等用户重新确认。它的下游依赖段一并暂停（上游产物都没定，

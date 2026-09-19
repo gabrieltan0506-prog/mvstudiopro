@@ -23,7 +23,7 @@ export type ManhuaFinalCutPiece = {
 };
 
 /** 指纹：段身份 + 该段实际用的成片地址，按身份排序后拼。地址变了就是换了料。 */
-export function manhuaFinalCutSourceKey(pieces: readonly ManhuaFinalCutPiece[]): string {
+export function manhuaFinalCutSourceKey(pieces: readonly ManhuaFinalCutPiece[], transition: "cut" | "fade" = "fade"): string {
   const rows = pieces
     .filter((piece) => String(piece.clipUrl || "").trim())
     .map((piece) => {
@@ -51,7 +51,8 @@ export function manhuaFinalCutSourceKey(pieces: readonly ManhuaFinalCutPiece[]):
       return JSON.stringify([id, piece.episodeIndex ?? null, piece.segmentIndex ?? null, url, cut]);
     })
     .sort();
-  return rows.length ? `${rows.length}|v2|${rows.join(",")}` : "";
+  // 旧工作台只提交淡化，保留其原键；直切单独记入版本，避免旧片假有效。
+  return rows.length ? `${rows.length}|v2|${rows.join(",")}${transition === "cut" ? "|transition=cut" : ""}` : "";
 }
 
 export type ManhuaFinalCutStale = {
@@ -85,6 +86,9 @@ export function manhuaFinalCutStaleOf(input: {
   }
   if (!recorded.includes("|v2|")) return { stale: false, reasonZh: "旧版本只记录媒体，未记录裁切与镜头顺序，无法核对当前剪辑" };
   if (recorded === current) return { stale: false, reasonZh: "" };
+  if (recorded.replace(/\|transition=cut$/, "") === current.replace(/\|transition=cut$/, "")) {
+    return { stale: true, reasonZh: "本集转场设置已改变，请重新生成当前版本；旧成片保留" };
+  }
   const recordedCount = Number(recorded.split("|")[0] || 0);
   if (recordedCount && recordedCount !== input.currentCount) {
     return {

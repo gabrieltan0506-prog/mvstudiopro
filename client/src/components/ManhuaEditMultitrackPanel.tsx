@@ -99,6 +99,8 @@ type Props = {
   onOpenClipDock?: () => void;
   onGenerateCurrentVersion?: () => void;
   currentVersionCredits?: number;
+  editTransition?: "cut" | "fade";
+  onEditTransitionChange?: (next: "cut" | "fade") => void;
   deliveryPackage?: ManhuaDeliveryPackage | null;
   onDeliveryPackageChange?: (next: ManhuaDeliveryPackage) => void;
   cineVocabLocale?: ManhuaCineVocabLocale;
@@ -191,6 +193,8 @@ export default function ManhuaEditMultitrackPanel({
   onOpenClipDock,
   onGenerateCurrentVersion,
   currentVersionCredits,
+  editTransition = "fade",
+  onEditTransitionChange,
   deliveryPackage,
   onDeliveryPackageChange,
   cineVocabLocale,
@@ -708,8 +712,13 @@ export default function ManhuaEditMultitrackPanel({
       </div>
       <div id="manhua-edit-drawer-subtitles" data-manhua-edit-drawer="subtitles" hidden={activeDrawer !== "subtitles"} className="shrink-0 rounded-xl border border-white/15 bg-black/25 p-3">
         <h3 className="text-sm font-semibold text-white/90">转场与字幕</h3>
+        <label className="my-2 flex items-center gap-2 text-xs">本集转场
+          <select data-manhua-edit-transition value={editTransition} disabled={factoryBusy || !onEditTransitionChange} onChange={e => onEditTransitionChange?.(e.target.value === "cut" ? "cut" : "fade")} className="min-h-11 rounded border border-white/20 bg-slate-900 px-3 text-white">
+            <option value="fade">淡化</option><option value="cut">直切</option>
+          </select>
+        </label>
         <div className="space-y-3 pt-2">
-<p className="text-xs text-white/55">当前合成默认使用淡化转场；转场选择尚未接入。字幕轨与烧字沿用真实任务，原片保留。</p>
+<p className="text-xs text-white/55">转场应用于本集片段之间；改变设置后需重新生成当前版本，旧成片保留。字幕轨与烧字沿用真实任务。</p>
           <label className="ml-1 inline-flex items-center gap-1 rounded border border-white/10 bg-black/40 px-2 py-1 text-[9px] text-white/55">
             <input
               type="checkbox"

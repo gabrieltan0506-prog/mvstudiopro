@@ -139,6 +139,7 @@ function confirmHarness(name: string, allowBatch = true, directionSelection: Man
     shouldAttachManhuaPreviouslyOn,
     consumableManhuaCustomAssetRefsForCanon,
     writerPack: original,
+    projectBible: null,
     writerFocusEpisode: 1,
     writerVideoModel: "seedance-2.0-mini",
     writerLayoutProfile: layout.resolveManhuaSeedanceLayoutProfile(

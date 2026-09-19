@@ -1,3 +1,4 @@
+import { normalizeManhuaEditTransitions, manhuaEditTransitionOf, manhuaAssembleTransitionOf } from "@shared/manhuaEditTransition";
 import { CREDIT_COSTS } from "@shared/plans";
 import ManhuaFinalDeliverySurface from "@/components/ManhuaFinalDeliverySurface";
 import "@/styles/manhuaCream.css";
@@ -1346,6 +1347,7 @@ export default function OmniCanvas() {
     normalizeManhuaSegmentLookBindings(initialWriterSession?.segmentLookBindings),
   );
   /** 每集「分镜→成片容量」模式；缺省 block_when_over（超容量拦下、不静默丢镜） */
+  const [editTransitionByEpisode, setEditTransitionByEpisode] = useState(() => normalizeManhuaEditTransitions(initialWriterSession?.editTransitionByEpisode));
   const [segmentCapacityModeByEpisode, setSegmentCapacityModeByEpisode] = useState(() =>
     normalizeManhuaSegmentCapacityModeByEpisode(
       initialWriterSession?.segmentCapacityModeByEpisode,
@@ -1555,7 +1557,7 @@ export default function OmniCanvas() {
         trimOutSec: block.manhuaEditTrim?.outSec,
         shotPieces: block.manhuaEditTrim?.shotPieces,
       }));
-    const currentSourceKey = manhuaFinalCutSourceKey(pieces);
+    const currentSourceKey = manhuaFinalCutSourceKey(pieces, manhuaEditTransitionOf(editTransitionByEpisode, writerFocusEpisode));
     return { ...manhuaFinalCutStaleOf({
       versionSourceKey: identity?.sourceKey,
       currentSourceKey,
@@ -1567,6 +1569,7 @@ export default function OmniCanvas() {
     explicitWriterVideoModel,
     finalAssembleBlock,
     finalAssembleVideoUrl,
+    editTransitionByEpisode,
   ]);
   const finalVideoVersions = useMemo(
     () => ({
@@ -3017,6 +3020,7 @@ export default function OmniCanvas() {
         manhuaUiMode,
         assetsSkipped,
         workflowPhase,
+        editTransitionByEpisode,
         customAssetRefs,
         characterVoiceLocks,
         audioReferenceLock,
@@ -3044,6 +3048,7 @@ export default function OmniCanvas() {
     manhuaUiMode,
     assetsSkipped,
     workflowPhase,
+    editTransitionByEpisode,
     customAssetRefs,
     characterVoiceLocks,
     audioReferenceLock,
@@ -3109,6 +3114,7 @@ export default function OmniCanvas() {
           : "workbench",
     );
     setAssetsSkipped(Boolean(session.assetsSkipped));
+    setEditTransitionByEpisode(normalizeManhuaEditTransitions(session.editTransitionByEpisode));
     setCustomAssetRefs(normalizeManhuaCustomAssetRefs(session.customAssetRefs));
     setCharacterVoiceLocks(
       normalizeManhuaCharacterVoiceLocks(session.characterVoiceLocks),
@@ -3264,7 +3270,9 @@ export default function OmniCanvas() {
 
   /** 手动备份（用户拍板：只有用户点上传才存云） */
   const latestDraftSnapshotRef = useRef<Parameters<typeof buildLocalCloudDraftSnapshot>[0] | null>(null);
-  const [cloudBackupBusy, setCloudBackupBusy] = useState<null | "upload" | "restore">(null);
+  const backupOperationRef = useRef<null | "upload" | "restore" | "export" | "import">(null);
+  const [cloudBackupBusy, setCloudBackupBusy] = useState<typeof backupOperationRef.current>(null);
+  const [backupExportProgress, setBackupExportProgress] = useState<string | null>(null);
   /** 自动备份去重标记：上次自动上云的快照序列化；手动上传后清空，让下个周期重新校准 */
   const lastAutoBackupSerializedRef = useRef("");
   const autoBackupInFlightRef = useRef(false);
@@ -3281,11 +3289,19 @@ export default function OmniCanvas() {
    * 包含图片字节及工作区引用；视频、音轨、3D 文件仍需单独备份。
    */
   const exportBackupFile = useCallback(async () => {
+    if (backupOperationRef.current) return;
+    if (autoBackupInFlightRef.current) {
+      toast.message("自动备份正在进行，请稍后再试");
+      return;
+    }
     const snap = latestDraftSnapshotRef.current;
     if (!snap) {
       toast.error("当前没有可导出的工作区内容");
       return;
     }
+    backupOperationRef.current = "export";
+    setCloudBackupBusy("export");
+    setBackupExportProgress("正在准备备份…");
     try {
       const payload = buildLocalCloudDraftSnapshot(snap);
       const stats = countDraftPayloadStats(payload);
@@ -3297,7 +3313,9 @@ export default function OmniCanvas() {
       const manifest: Array<{ file: string; sourceUrl: string; mime: string }> = [];
       const failed: string[] = [];
       let idx = 0;
+      let processed = 0;
       for (const { sourceUrl: url, gcsUri } of imageSources) {
+        setBackupExportProgress(`正在收集图片 ${++processed}/${imageSources.length}…`);
         let blob: Blob | null = null;
         let mime = "image/png";
         // 本机媒体库优先
@@ -3350,6 +3368,7 @@ export default function OmniCanvas() {
         manifest.push({ file, sourceUrl: url, mime });
       }
       zip.file("assets-manifest.json", JSON.stringify(manifest));
+      setBackupExportProgress("图片收集结束，正在打包备份文件…");
       const out = await zip.generateAsync({ type: "blob", compression: "STORE" });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(out);
@@ -3363,10 +3382,21 @@ export default function OmniCanvas() {
       }
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "导出失败");
+    } finally {
+      backupOperationRef.current = null;
+      setCloudBackupBusy(null);
+      setBackupExportProgress(null);
     }
   }, [countDraftPayloadStats]);
   /** 从本机备份导入:zip(带图回灌本机媒体库)或旧版纯 JSON;与云端回填同一条恢复通道 */
   const importBackupFile = useCallback(async (file: File) => {
+    if (backupOperationRef.current) return;
+    if (autoBackupInFlightRef.current) {
+      toast.message("自动备份正在进行，请稍后再试");
+      return;
+    }
+    backupOperationRef.current = "import";
+    setCloudBackupBusy("import");
     try {
       let draft: Record<string, unknown> & { canvas?: { blocks?: unknown[] }; clientUpdatedAt?: string };
       let restoredImages = 0;
@@ -3416,15 +3446,23 @@ export default function OmniCanvas() {
       toast.success(restoredImages ? `已回填:${restoredImages} 张图从备份包本机回灌` : "已从备份文件回填");
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "备份文件解析失败");
+    } finally {
+      backupOperationRef.current = null;
+      setCloudBackupBusy(null);
     }
   }, [countDraftPayloadStats, applyCloudDraftToUi]);
   const uploadCloudBackupNow = useCallback(async () => {
-    if (cloudBackupBusy) return;
+    if (backupOperationRef.current) return;
+    if (autoBackupInFlightRef.current) {
+      toast.message("自动备份正在进行，请稍后再试");
+      return;
+    }
     const snap = latestDraftSnapshotRef.current;
     if (!snap) {
       toast.error("当前没有可备份的工作区内容");
       return;
     }
+    backupOperationRef.current = "upload";
     setCloudBackupBusy("upload");
     try {
       const payload = buildLocalCloudDraftSnapshot(snap);
@@ -3440,9 +3478,10 @@ export default function OmniCanvas() {
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "备份上传失败，请稍后重试");
     } finally {
+      backupOperationRef.current = null;
       setCloudBackupBusy(null);
     }
-  }, [cloudBackupBusy, syncCloudDraftPayload, countDraftPayloadStats]);
+  }, [syncCloudDraftPayload, countDraftPayloadStats]);
   /**
    * 自动云备份（2026-08-20 用户拍板：15 分钟检查一次,有新增图片/节点才上云,没新增不动；
    * 覆盖旧「只有用户点上传才存云」口径）。内容没变或上一发在途就跳过；
@@ -3450,7 +3489,7 @@ export default function OmniCanvas() {
    */
   useEffect(() => {
     const tick = async () => {
-      if (autoBackupInFlightRef.current) return;
+      if (autoBackupInFlightRef.current || backupOperationRef.current) return;
       const snap = latestDraftSnapshotRef.current;
       if (!snap) return;
       const payload = buildLocalCloudDraftSnapshot(snap);
@@ -3478,7 +3517,12 @@ export default function OmniCanvas() {
     return () => window.clearInterval(timer);
   }, [syncCloudDraftPayload]);
   const restoreCloudBackupNow = useCallback(async () => {
-    if (cloudBackupBusy) return;
+    if (backupOperationRef.current) return;
+    if (autoBackupInFlightRef.current) {
+      toast.message("自动备份正在进行，请稍后再试");
+      return;
+    }
+    backupOperationRef.current = "restore";
     setCloudBackupBusy("restore");
     try {
       // 回填前强制取最新云备份，别用登录时的旧缓存
@@ -3507,9 +3551,10 @@ export default function OmniCanvas() {
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "回填失败，请稍后重试");
     } finally {
+      backupOperationRef.current = null;
       setCloudBackupBusy(null);
     }
-  }, [cloudBackupBusy, cloudDraftQuery, applyCloudDraftToUi, countDraftPayloadStats]);
+  }, [cloudDraftQuery, applyCloudDraftToUi, countDraftPayloadStats]);
 
   /** 登录后：云端与本机比新，胜出方驱动 UI，并补写较弱一侧 */
   useEffect(() => {
@@ -3605,6 +3650,7 @@ export default function OmniCanvas() {
       manhuaUiMode,
       assetsSkipped,
       workflowPhase,
+      editTransitionByEpisode,
       customAssetRefs,
       characterVoiceLocks,
       audioReferenceLock,
@@ -3653,6 +3699,7 @@ export default function OmniCanvas() {
     manhuaUiMode,
     assetsSkipped,
     workflowPhase,
+    editTransitionByEpisode,
     customAssetRefs,
     characterVoiceLocks,
     audioReferenceLock,
@@ -4097,6 +4144,8 @@ export default function OmniCanvas() {
         toast.error("至少需要一集成片才能合成长片");
         return;
       }
+      const transition = manhuaAssembleTransitionOf(editTransitionByEpisode, ready);
+      if (!transition) { toast.error("所选集的转场设置不同，请分别生成或先统一转场"); return; }
       const targetEpisodes = new Set(ready.map((clip) => clip.episodeIndex));
       const planned = Array.from(targetEpisodes).flatMap((episodeIndex) =>
         queuedManhuaClipBlocks(
@@ -4156,6 +4205,7 @@ export default function OmniCanvas() {
           userId: user?.id ? String(user.id) : "",
           input: buildManhuaAssembleJobInput({
             clips: ready,
+            transition,
             expectedSegments: planned,
             topic: factoryTopic,
             seriesTitle: writerPack?.seriesTitle || projectBible?.seriesTitle || "",
@@ -4220,7 +4270,7 @@ export default function OmniCanvas() {
             url: finalVideoUrl,
             jobId,
             // 这一版长片用的就是本次提交的那批段成片；指纹落档，终审才判得出旧料
-            sourceKey: manhuaFinalCutSourceKey(ready),
+            sourceKey: manhuaFinalCutSourceKey(ready, transition),
           });
           const next = existing
             ? prev.map((b) => (b.id === finalId ? nextBlock : b))
@@ -4260,6 +4310,7 @@ export default function OmniCanvas() {
     [
       assembleBusy,
       assembleProjectKey,
+      editTransitionByEpisode,
       factoryBusy,
       chargeWorkflowStepMutation,
       factoryTopic,
@@ -6047,6 +6098,7 @@ export default function OmniCanvas() {
       setFemaleLeadManual(false);
       setMaleLeadManual(false);
       if (switchesSeries) {
+        setEditTransitionByEpisode({});
         setDirectorBoardMainByEpisode({});
         saveManhuaDirectorBoardMainByEpisode({});
         setDirectorBoardBySegment({});
@@ -6246,6 +6298,7 @@ export default function OmniCanvas() {
     saveCanvasState(cleaned.blocks, cleaned.edges);
     setDockSelectedIds(new Set());
     setWorkflowPhase("outline");
+    setEditTransitionByEpisode({});
     setWriterPack(null);
     setWriterConfirmed(false);
     setProjectBible(null);
@@ -9863,7 +9916,11 @@ export default function OmniCanvas() {
                           ? "备份中…"
                           : cloudBackupBusy === "restore"
                             ? "回填中…"
-                            : "备份 / 回填"}
+                            : cloudBackupBusy === "export"
+                              ? "导出中…"
+                              : cloudBackupBusy === "import"
+                                ? "导入中…"
+                                : "备份 / 回填"}
                       </option>
                       <option value="upload" disabled={!cloudSyncReady}>
                         立即备份到云端
@@ -9874,6 +9931,7 @@ export default function OmniCanvas() {
                       <option value="export">导出备份文件到本机</option>
                       <option value="import">从本机备份文件导入</option>
                     </select>
+                    {backupExportProgress && <p role="status" aria-live="polite" className="mt-1 max-w-56 text-[10px] text-white/70">{backupExportProgress} 请勿重复操作。</p>}
                   </div>
                 ) : null}
                 <OpenAiImageVariantSwitch compact />
@@ -10301,6 +10359,8 @@ export default function OmniCanvas() {
                   onCharacterLookSetsChange={setCharacterLookSets}
                   segmentLookBindings={segmentLookBindings}
                   onSegmentLookBindingsChange={setSegmentLookBindings}
+                  editTransitionByEpisode={editTransitionByEpisode}
+                  onEditTransitionChange={(episode, next) => setEditTransitionByEpisode(previous => ({ ...previous, [String(episode)]: next }))}
                   segmentCapacityModeByEpisode={segmentCapacityModeByEpisode}
                   onSegmentCapacityModeChange={setSegmentCapacityModeForEpisode}
                   episodeLengthTierId={writerLengthTierId}

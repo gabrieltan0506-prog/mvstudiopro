@@ -211,6 +211,47 @@ describe("来源事实从真实选源到工作台标签保持一致", () => {
     }
   );
 
+  it("无秒数节拍不能盖过已生成的完整定时分镜", () => {
+    const untimed = [1, 2, 3].map(i => `**镜0${i}｜中景｜固定机位**\n人物沿走廊行进并停在第${i}道门前。`).join("\n\n");
+    const blocks = episode("beats", untimed).map(block =>
+      block.id.startsWith("reverse-") ? { ...block, outputText: table("定时成稿") } : block
+    );
+    const shots = assertSameSource(blocks, 1, false);
+    expect(shots.map(shot => shot.durationSec)).toEqual([5, 5, 5]);
+    expect(shots.map(shot => shot.actionZh)).toEqual(["定时成稿动作1", "定时成稿动作2", "定时成稿动作3"]);
+  });
+
+  it("定时模板不能盖过无秒数的真实生成正文", () => {
+    const untimed = [1, 2].map(i => `**镜0${i}｜中景｜固定机位**\n人物沿走廊行进并停在第${i}道门前。`).join("\n\n");
+    const blocks = episode("beats", untimed).map(block =>
+      block.id.startsWith("reverse-") ? { ...block, prompt: table("模板") } : block
+    );
+    const shots = assertSameSource(blocks, 1, false);
+    expect(shots).toHaveLength(2);
+    expect(JSON.stringify(shots)).not.toContain("模板动作");
+  });
+
+  it.each([2, 4])("旧反推%d镜不能覆盖当前三镜节拍", count => {
+    const untimed = [1, 2, 3].map(i => `**镜0${i}｜中景｜固定机位**\n人物沿走廊行进并停在第${i}道门前。`).join("\n\n");
+    const blocks = episode("beats", untimed).map(block =>
+      block.id.startsWith("reverse-") ? { ...block, outputText: table("旧反推", count) } : block
+    );
+    const shots = assertSameSource(blocks, 1, false);
+    expect(shots).toHaveLength(3);
+    expect(JSON.stringify(shots)).not.toContain("旧反推动作");
+  });
+
+  it("首份定时正文的坏行不得通过换用另一成稿而被掩盖", () => {
+    const malformed = table("坏行").replace("0-5", "未填写");
+    const blocks = episode("beats", malformed).map(block =>
+      block.id.startsWith("reverse-") ? { ...block, outputText: table("另一份") } : block
+    );
+    const shots = assertSameSource(blocks, 1, false);
+    expect(shots[0]?.actionZh).toBe("坏行动作1");
+    expect(shots[0]?.durationSec).toBe(0);
+    expect(shots).toHaveLength(3);
+  });
+
   it("多份成稿保持 beats、reverse、story 原有优先级，不依赖数组顺序", () => {
     const blocks = episode("beats", table("节拍"))
       .map(block =>

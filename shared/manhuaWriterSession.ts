@@ -1,3 +1,4 @@
+import { normalizeManhuaEditTransitions, type ManhuaEditTransition } from "./manhuaEditTransition.js";
 /**
  * 漫剧编剧室会话快照（本机 localStorage）。
  * 硬刷新后恢复剧情包 / 确认态 / Project Bible，避免线上重扩烧积分。
@@ -67,6 +68,8 @@ export type ManhuaWriterSession = {
   assetsSkipped: boolean;
   /** 工作台阶段：大纲 / 资产 / 分镜 / 剪辑 / 成片 */
   workflowPhase: ManhuaWorkflowPhase;
+  /** 本集片段间转场；旧草稿缺省淡化。 */
+  editTransitionByEpisode?: Record<string, ManhuaEditTransition>;
   /** 用户上传/基于库参考生成的参考图（HTTPS + 勾选角色） */
   customAssetRefs: ManhuaCustomAssetRef[];
   /** 从有声成片抠出的角色声线参考（按 @角色N） */
@@ -212,6 +215,7 @@ export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): Man
     manhuaUiMode: mode,
     assetsSkipped: Boolean(input.assetsSkipped),
     workflowPhase,
+    editTransitionByEpisode: normalizeManhuaEditTransitions(input.editTransitionByEpisode),
     customAssetRefs: normalizeManhuaCustomAssetRefs(input.customAssetRefs),
     characterVoiceLocks: normalizeManhuaCharacterVoiceLocks(input.characterVoiceLocks),
     audioReferenceLock: normalizeManhuaAudioReferenceLock(input.audioReferenceLock),
