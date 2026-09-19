@@ -295,6 +295,11 @@ type FreeformCanvasProps = {
   blocks: CanvasBlock[];
   edges: CanvasEdge[];
   onBlocksChange: (blocks: BlocksUpdater) => void;
+  /**
+   * 画布选中的节点变了就报出去（对照图 02：侧栏要显示所选镜头）。
+   * 只读上报，不接管选中；父级拿它解析「这是第几段第几镜」。
+   */
+  onSelectedBlockIdChange?: (blockId: string | null) => void;
   onEdgesChange: (edges: CanvasEdge[]) => void;
   runDeps: CanvasRunDeps;
   /**
@@ -788,6 +793,7 @@ export default function FreeformCanvas({
   blocks,
   edges,
   onBlocksChange,
+  onSelectedBlockIdChange,
   onEdgesChange,
   runDeps,
   resolveManhuaOutboundGate,
@@ -808,6 +814,12 @@ export default function FreeformCanvas({
   const toolbarFileInputRef = useRef<HTMLInputElement>(null);
   const pendingUploadBlockIdRef = useRef<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // 选中态只读上报给父级（侧栏显示所选镜头）；不改选中行为本身
+  const onSelectedBlockIdChangeRef = useRef(onSelectedBlockIdChange);
+  onSelectedBlockIdChangeRef.current = onSelectedBlockIdChange;
+  useEffect(() => {
+    onSelectedBlockIdChangeRef.current?.(selectedId);
+  }, [selectedId]);
   /** 外部 focus 时短暂高亮，避免只滚过去却看不见点了哪张 */
   const [pulseHighlightId, setPulseHighlightId] = useState<string | null>(null);
   const [spawnMenu, setSpawnMenu] = useState<SpawnMenuState>(null);

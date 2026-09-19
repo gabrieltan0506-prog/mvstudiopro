@@ -120,7 +120,12 @@ import {
 import { buildManhuaAssetRoleGroups } from "@/lib/manhuaAssetEntityGroups";
 import { manhuaKeyartEntryVisible } from "@/lib/manhuaKeyartEntry";
 import { buildManhuaDirectorCardView } from "@shared/manhuaDirectorCardView";
+import { buildManhuaShotParamFields } from "@shared/manhuaShotParamFields";
 import { classifyManhuaDirectionSceneType } from "@shared/manhuaDirectionCanon";
+import {
+  manhuaCanvasNodeBelongsToSegment,
+  readManhuaCanvasNodeIdentity,
+} from "@shared/manhuaCanvasNodeIdentity";
 import { buildManhuaMainTaskState } from "@/lib/manhuaMainTaskBlockers";
 import {
   MANHUA_SECONDARY_TOOL_LABEL_ZH,
@@ -388,6 +393,8 @@ type Props = {
    */
   finalCutStale?: boolean;
   finalCutStaleReasonZh?: string;
+  /** 画布上此刻选中的节点 id（对照图 02：侧栏显示所选镜头）。只读身份，不接管选中。 */
+  canvasSelectedBlockId?: string | null;
   /** 0902 烧字：把字幕轨烧进已合成长片（无长片时不传，面板按钮自灰） */
   onBurnSubtitle?: (subtitleSrt: string) => void | Promise<void>;
   finalSubtitleTimeline?: import("@shared/manhuaRenderedSubtitle").ManhuaRenderedSubtitle;
@@ -1089,6 +1096,7 @@ export default function ManhuaScriptWorkbench({
   finalVideoUrl,
   finalCutStale = false,
   finalCutStaleReasonZh = "",
+  canvasSelectedBlockId = null,
   onBurnSubtitle,
   finalSubtitleTimeline,
   burnSubtitleBusy,
@@ -3065,6 +3073,59 @@ export default function ManhuaScriptWorkbench({
     sceneType: activeSegmentSceneType,
     hasSpawnedNodes: blocks.some((b) => b.id.startsWith("story-") || b.id.startsWith("clip-")),
   });
+  /**
+   * 画布选中的节点是哪一段哪一镜（对照图 02「侧栏显示所选镜头」）。
+   * 只读身份：判不出段号就说判不出，不默认当成本段 —— 那会让人以为改对了地方。
+   */
+  const canvasSelectedBlock = blocks.find((b) => b.id === canvasSelectedBlockId);
+  const canvasSelectedIdentity = readManhuaCanvasNodeIdentity({
+    blockId: canvasSelectedBlockId,
+    prompt: canvasSelectedBlock?.prompt,
+    episodeIndex: getBlockEpisodeIndex(canvasSelectedBlock) ?? focusEpisode,
+    segments,
+  });
+  const canvasSelectedBelongs = manhuaCanvasNodeBelongsToSegment(canvasSelectedIdentity, {
+    episode: focusEpisode,
+    segmentIndex: activeSegNo,
+  });
+  const canvasSelectionBlock = canvasSelectedIdentity ? (
+    <div
+      data-manhua-canvas-selection={canvasSelectedBlockId || ""}
+      data-manhua-canvas-selection-belongs={canvasSelectedBelongs}
+      className={`mb-2 rounded-lg border p-2 ${
+        canvasSelectedBelongs === "other"
+          ? "border-amber-300/35 bg-amber-500/[0.08]"
+          : "border-white/12 bg-white/[0.03]"
+      }`}
+    >
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <span className="text-[10px] text-white/45">画布选中</span>
+        <span className="text-[11px] font-semibold text-white/85">{canvasSelectedIdentity.labelZh}</span>
+      </div>
+      {canvasSelectedBelongs === "other" ? (
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          <span className="text-[9px] leading-4 text-amber-100/85">
+            它不属于当前第 {activeSegNo} 段，右边这些参数改的不是它
+          </span>
+          {canvasSelectedIdentity.segmentIndex ? (
+            <button
+              type="button"
+              data-manhua-canvas-selection-jump={canvasSelectedIdentity.segmentIndex}
+              onClick={() => setActiveSegmentOverride(canvasSelectedIdentity.segmentIndex!)}
+              className="rounded border border-amber-300/40 bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-amber-50 hover:bg-amber-500/25"
+            >
+              切到第 {canvasSelectedIdentity.segmentIndex} 段
+            </button>
+          ) : null}
+        </div>
+      ) : canvasSelectedBelongs === "unknown" ? (
+        <p className="mt-0.5 text-[9px] leading-4 text-white/40">
+          这个节点判不出属于哪一段，右边参数只对当前第 {activeSegNo} 段生效
+        </p>
+      ) : null}
+    </div>
+  ) : null;
+
   /** 导演卡块：当前有效手法 · 来源 · 覆盖理由 · 影响预览 · 连续性提醒 */
   const directorCardBlock = directorCardView ? (
     <div
@@ -3089,12 +3150,14 @@ export default function ManhuaScriptWorkbench({
     </div>
   ) : null;
   const storyboardThreeColumn = activePhase === "storyboard" && shots.length > 0;
+  const shotParamFields = buildManhuaShotParamFields(activeShot);
   const shotParamsPanel = activeShot ? (
 
               <div
                 data-manhua-shot-params={activeShot.index}
                 className="mt-2 shrink-0 rounded-lg border border-cyan-400/25 bg-cyan-500/[0.06] p-2"
               >
+                {canvasSelectionBlock}
                 {directorCardBlock}
                 <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                   <span className="text-[11px] font-semibold text-cyan-50">
@@ -3111,6 +3174,48 @@ export default function ManhuaScriptWorkbench({
                     {activeShot.emotionZh || activeShot.microExpressionZh || ""}
                   </p>
                 ) : null}
+                {/* 对照图 01 右栏四个字段：时长 / 景别 / 机位运动 / 画面描述（0/200） */}
+                <dl data-manhua-shot-fields className="mt-1.5 grid grid-cols-2 gap-x-2 gap-y-1">
+                  {(
+                    [
+                      ["镜头时长", shotParamFields.durationZh],
+                      ["景别", shotParamFields.shotSizeZh],
+                      ["机位运动", shotParamFields.cameraMoveZh],
+                    ] as Array<[string, string]>
+                  ).map(([labelZh, valueZh]) => (
+                    <div key={labelZh} data-manhua-shot-field={labelZh} className="min-w-0">
+                      <dt className="text-[9px] text-white/40">{labelZh}</dt>
+                      <dd
+                        className={`truncate text-[10px] ${
+                          valueZh === "未标注" ? "text-amber-100/70" : "text-white/80"
+                        }`}
+                        title={valueZh}
+                      >
+                        {valueZh}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+                {shotParamFields.cameraUnparsed && shotParamFields.rawCameraZh ? (
+                  <p className="mt-0.5 text-[9px] leading-4 text-white/40">
+                    机位原文：{shotParamFields.rawCameraZh}
+                  </p>
+                ) : null}
+                <div data-manhua-shot-description className="mt-1.5">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-[9px] text-white/40">画面描述</span>
+                    <span
+                      className={`text-[9px] tabular-nums ${
+                        shotParamFields.overLimit ? "text-rose-200" : "text-white/35"
+                      }`}
+                    >
+                      {shotParamFields.descriptionLen}/{shotParamFields.descriptionLimit}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 max-h-16 overflow-y-auto text-[10px] leading-4 text-white/70">
+                    {shotParamFields.descriptionZh || "本镜还没有画面描述"}
+                  </p>
+                </div>
                 <p className="mh-hint mt-1 text-[9px] leading-4 text-white/35">
                   镜位只改本镜，不动其它镜；改完出图前不扣费。
                 </p>
