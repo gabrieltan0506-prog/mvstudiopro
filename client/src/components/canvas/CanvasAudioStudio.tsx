@@ -20,6 +20,8 @@ import {
   type CanvasAudioCue,
   type CanvasAudioTake,
 } from "@shared/canvasAudioStudio";
+import { buildManhuaSoundPanelSummary } from "@shared/manhuaSoundPanelSummary";
+import { resolveClipLocalSegmentIndex } from "@shared/manhuaScriptWorkbench";
 import {
   CANVAS_TTS_CREDITS_PER_LINE,
   CANVAS_BGM_CREDITS_PER_RUN,
@@ -177,6 +179,14 @@ export function CanvasAudioStudioView({
     block.manhuaAutoSegment?.durationSec ??
       parseManhuaClipTargetDurationSec(block.prompt)
   );
+  /** 对照图 02 第三格的三块摘要；混合轨不伪装多轨（对照图 04 的 mvs-sound-edit 硬要求） */
+  const soundSummary = buildManhuaSoundPanelSummary({
+    segmentIndex: resolveClipLocalSegmentIndex(block.id, block.prompt, Number(block.episodeIndex) || 1),
+    durationSec,
+    cues: state.cues,
+    musicJobCount: state.musicJobIds.length,
+    hasPremixMaster: Boolean((block.seedance25RefAudioUrls || []).length),
+  });
   const current = useRef({ state, onChange, services, block, onMasterTrackReady });
   current.current = { state, onChange, services, block, onMasterTrackReady };
   const mounted = useRef(true);
@@ -733,6 +743,28 @@ export function CanvasAudioStudioView({
       onKeyDown={event => event.stopPropagation()}
     >
       <h3 className="text-sm font-semibold">逐句配音 · 分段配乐</h3>
+      {/* 对照图 02 第三格：当前片段 / 角色配音 / 背景音乐 三块摘要 + 轨道口径（混合轨不伪装多轨） */}
+      <div
+        data-manhua-sound-summary
+        data-manhua-sound-multitrack={soundSummary.hasRealMultitrack ? "1" : "0"}
+        className="rounded-md border border-sky-200/20 bg-sky-500/[0.06] px-2 py-1.5"
+      >
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <span className="text-[12px] font-semibold text-sky-50">{soundSummary.headlineZh}</span>
+          {soundSummary.speakersZh.length ? (
+            <span className="text-[10px] text-white/45">{soundSummary.speakersZh.join(" · ")}</span>
+          ) : null}
+          {soundSummary.adoptedCount ? (
+            <span className="text-[10px] text-emerald-100/75">已采用 {soundSummary.adoptedCount} 条对白</span>
+          ) : null}
+        </div>
+        {soundSummary.trackNoteZh ? (
+          <p className="mt-0.5 text-[10px] leading-4 text-amber-100/80">{soundSummary.trackNoteZh}</p>
+        ) : null}
+        {soundSummary.emptyZh ? (
+          <p className="mt-0.5 text-[10px] leading-4 text-white/45">{soundSummary.emptyZh}</p>
+        ) : null}
+      </div>
       <p className="text-xs text-amber-100">
         逐段声音投料目前仅支持加长成片的多模态参考；其他引擎可制作、试听音频，但不自动用于出片。
         {block.videoModel !== "seedance-2.5"

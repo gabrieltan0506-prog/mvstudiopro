@@ -106,10 +106,10 @@ beforeAll(async () => {
         const canon = ${JSON.stringify(CANON)};
         const blocks = [1, 2].map((n) => ({
           ...defaultCanvasBlock('video', 0, 0),
-          id: 'clip-e01-g0' + n + '-cards',
+          id: 'clip-e01-g0' + n + '-audio',
           episodeIndex: 1,
           videoModel: 'seedance-2.5',
-          prompt: '【第' + n + '段·30s】墨屠第' + n + '段动作。',
+          prompt: '【第' + n + '段·30s】墨屠第' + n + '段对白与动作。',
         }));
         createRoot(document.getElementById('root')).render(
           <TooltipProvider>
@@ -570,5 +570,100 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
     expect(seen.mainCardSelect, "导演包主卡入口不该被一起藏掉").toBe(true);
     expect(seen.text).toContain("投影到");
     await close();
+  }, 180_000);
+
+  /**
+   * 对照图 02 第三格：对白与配乐面板开头要能一眼看到「这一段有什么」。
+   * 对照图 04 的硬要求：混合轨不许伪装成多轨。
+   * 这里直接挂真实的 `CanvasAudioStudioView`（离线视图，不接付费服务）。
+   */
+  it("对白与配乐面板顶部：当前片段摘要按真实 cue 统计，只有预混母轨时不谎称多轨", async () => {
+    const mountAudio = async (extra: string) => {
+      const built = await build({
+        stdin: {
+          resolveDir: process.cwd(),
+          loader: "tsx",
+          contents: `
+            import React from 'react';
+            import { createRoot } from 'react-dom/client';
+            import { CanvasAudioStudioView } from './client/src/components/canvas/CanvasAudioStudio';
+            import { defaultCanvasBlock } from './client/src/lib/canvasTypes';
+            import { emptyCanvasAudioStudio, createCanvasAudioCue } from './shared/canvasAudioStudio';
+            const cue = (kind, id, speakerZh, selectedTakeId) => ({
+              ...createCanvasAudioCue(kind, id), speakerZh, textZh: '别怕，站我身后。',
+              ...(selectedTakeId ? { selectedTakeId, takes: [{ id: selectedTakeId, gcsUri: 'gs://b/a.wav', previewUrl: '', durationSec: 2, createdAt: '2026-09-19', inputKey: 'k' }] } : {}),
+            });
+            const block = {
+              ...defaultCanvasBlock('video', 0, 0),
+              id: 'clip-e01-g01-audio', episodeIndex: 1, videoModel: 'seedance-2.5',
+              prompt: '【第1段·30s】墨屠第1段对白与动作。',
+              ${extra}
+            };
+            const services = {
+              resolveAudio: async () => '', generateDialogue: async () => { throw Error('本测试禁止生成'); },
+              getDialogue: async () => ({}), draftMusic: async () => { throw Error('本测试禁止生成'); },
+              generateMusic: async () => { throw Error('本测试禁止生成'); }, getMusic: async () => ({}),
+              listMusic: async () => [], queuePost: async () => { throw Error('本测试禁止生成'); }, getPost: async () => ({}),
+            };
+            globalThis.mkCue = cue;
+            createRoot(document.getElementById('root')).render(
+              <CanvasAudioStudioView block={block} onChange={() => {}} services={services} />,
+            );
+          `,
+        },
+        bundle: true, write: false, format: "iife", platform: "browser", jsx: "automatic",
+        alias: { "@": path.resolve("client/src"), "@shared": path.resolve("shared") },
+        loader: { ".png": "dataurl", ".svg": "dataurl", ".jpg": "dataurl", ".css": "text" },
+        define: { "process.env.NODE_ENV": '"production"', "import.meta.env": "__VITE_ENV__" },
+        banner: {
+          js:
+            'var __VITE_ENV__={DEV:false,PROD:true,MODE:"production",SSR:false};' +
+            'window.matchMedia=window.matchMedia||function(){return{matches:false,addEventListener(){},removeEventListener(){},addListener(){},removeListener(){}}};',
+        },
+        logLevel: "silent",
+      });
+      const ctx = await browser.createBrowserContext();
+      const page = await ctx.newPage();
+      await page.setRequestInterception(true);
+      page.on("request", (req) =>
+        req.url().startsWith("data:") ? req.continue() : req.respond({ status: 200, body: "" }),
+      );
+      await page.goto("http://localhost/", { waitUntil: "domcontentloaded" }).catch(() => {});
+      await page.setContent("<div id=root></div>");
+      await page.evaluate(built.outputFiles[0]!.text);
+      await page.waitForSelector("[data-manhua-sound-summary]", { timeout: 30_000 });
+      const out = await page.evaluate(() => {
+        const box = document.querySelector("[data-manhua-sound-summary]")!;
+        return {
+          multitrack: box.getAttribute("data-manhua-sound-multitrack"),
+          text: (box.textContent || "").replace(/\s+/g, " ").trim(),
+        };
+      });
+      await ctx.close().catch(() => {});
+      return out;
+    };
+
+    // 空态：如实说没有声音任务，绝不显示成多轨
+    const empty = await mountAudio("");
+    expect(empty.text).toContain("第1段");
+    expect(empty.text).toContain("角色配音 0");
+    expect(empty.text).toContain("还没有任何声音任务");
+    expect(empty.multitrack).toBe("0");
+
+    // 只有预混母轨：明说不是多轨
+    const premix = await mountAudio(
+      "seedance25RefAudioUrls: ['https://example.test/premix.wav'], audioStudio: { ...emptyCanvasAudioStudio(), cues: [cue('dialogue','line-1','阿菁')] },",
+    );
+    expect(premix.multitrack).toBe("0");
+    expect(premix.text).toContain("不是多轨");
+
+    // 对白已采用 + 有配乐任务：才算真多轨
+    const real = await mountAudio(
+      "audioStudio: { ...emptyCanvasAudioStudio(), cues: [cue('dialogue','line-1','阿菁','take-1'), cue('dialogue','line-2','掌柜','take-2')], musicJobIds: ['job-1'] },",
+    );
+    expect(real.multitrack).toBe("1");
+    expect(real.text).toContain("角色配音 2");
+    expect(real.text).toContain("背景音乐 1");
+    expect(real.text).toContain("各自成轨");
   }, 180_000);
 });
