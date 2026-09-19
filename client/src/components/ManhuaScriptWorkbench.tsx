@@ -4620,7 +4620,7 @@ export default function ManhuaScriptWorkbench({
           阶段
         </span>
         {workflowPhases.map((phase, index) => (
-          <div key={phase.id} className="flex shrink-0 flex-1 items-center gap-1.5">
+          <div key={phase.id} className="flex shrink-0 flex-1 max-sm:flex-none items-center gap-1.5">
             <button
               type="button"
               data-manhua-phase={phase.id}
