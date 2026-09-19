@@ -36,6 +36,10 @@ import {
   type FilmEventKind,
 } from "@shared/manhuaBeatTable";
 import { deriveManhuaBgmBriefSeed } from "@shared/manhuaBgmBrief";
+import {
+  projectManhuaStoryEmotionForBgm,
+  type ManhuaStoryEmotion,
+} from "@shared/manhuaStoryEmotion";
 import { MANHUA_BEAT_FUNCTION_VOCAB_ZH } from "@shared/manhuaClipDialogueTimeline";
 import { resolveClipLocalSegmentIndex } from "@shared/manhuaScriptWorkbench";
 import {
@@ -110,6 +114,11 @@ type PostProdWorkshopCardProps = {
   userRole?: string | null;
   /** 画布「BGM 风格说明」（audioReferenceLock.bgmNoteZh）——起草 brief 时自动作风格锚 */
   bgmSeedNoteZh?: string;
+  /**
+   * 剧本页产出的剧情情绪分析（**已过失效判定**：换过剧本的旧稿由上层传 null）。
+   * 配乐只消费不编辑：曲线定段情绪，留白段插 [Break] 让配乐真的静下来。
+   */
+  storyEmotion?: ManhuaStoryEmotion | null;
 };
 
 type EditableBgmBrief = {
@@ -150,6 +159,7 @@ export default function PostProdWorkshopCard({
   userId,
   userRole,
   bgmSeedNoteZh,
+  storyEmotion,
 }: PostProdWorkshopCardProps) {
   const queueMutation = trpc.mvAnalysis.queuePostProd.useMutation();
   const draftBgmMutation = trpc.mvAnalysis.draftManhuaBgmBrief.useMutation();
@@ -246,9 +256,11 @@ export default function PostProdWorkshopCard({
         laneZh: "自定义剧情",
         segmentBeatFunctionsZh: beats,
         bgmNoteZh: String(bgmSeedNoteZh || "").trim() || undefined,
+        // 剧本页的情绪曲线（原先这个入参全仓没人喂，0919 探针点名的死接线）
+        storyEmotion: projectManhuaStoryEmotionForBgm(storyEmotion, episode),
       }),
     };
-  }, [blocks, bgmSeedNoteZh]);
+  }, [blocks, bgmSeedNoteZh, storyEmotion]);
   const [scoreBrief, setScoreBrief] = useState<EditableBgmBrief | null>(null);
   const [bgmPending, setBgmPending] = useState<ManhuaBgmPendingJob | null>(() =>
     readPendingManhuaBgmJob(localStorage, Date.now(), userId)

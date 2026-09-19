@@ -1123,12 +1123,19 @@ export default function OmniCanvas() {
       })
       .join("|");
   }, [writerPack]);
-  const storyEmotionLineByEpisodeSegment = useMemo(() => {
+  /**
+   * 下游唯一可消费的那份分析：**换过剧本的旧稿在这里就被挡掉**（返回 null）。
+   * 面板横幅写的「下游不会采用」在接线之前只是句话，接上之后必须真的成立（0919 探针点名）。
+   * 段提示词与配乐都从这一处取，不各自判一次失效。
+   */
+  const storyEmotionForDownstream = useMemo(() => {
     const analysis = projectBible?.storyEmotion;
+    if (!analysis) return null;
+    return manhuaStoryEmotionIsStale(analysis, storyEmotionScriptVersionKey) ? null : analysis;
+  }, [projectBible?.storyEmotion, storyEmotionScriptVersionKey]);
+  const storyEmotionLineByEpisodeSegment = useMemo(() => {
+    const analysis = storyEmotionForDownstream;
     if (!analysis) return {};
-    // 失效守卫：换过剧本的旧分析一个字都不喂下游 —— 面板横幅写的「下游不会采用」
-    // 在接线之前只是句话，接上之后必须真的成立（0919 探针点名）。
-    if (manhuaStoryEmotionIsStale(analysis, storyEmotionScriptVersionKey)) return {};
     const out: Record<number, Record<number, string>> = {};
     for (const point of analysis.curve) {
       const line = projectManhuaStoryEmotionForSegment(analysis, point.episode, point.segmentIndex);
@@ -1142,7 +1149,7 @@ export default function OmniCanvas() {
       if (line) (out[beat.episode] ||= {})[beat.segmentIndex] = line;
     }
     return out;
-  }, [projectBible?.storyEmotion, storyEmotionScriptVersionKey]);
+  }, [storyEmotionForDownstream]);
   const [writerPackDiffOpen, setWriterPackDiffOpen] = useState(false);
   const [writerConfirmed, setWriterConfirmed] = useState(
     () => Boolean(initialWriterSession?.writerConfirmed),
@@ -12706,6 +12713,7 @@ export default function OmniCanvas() {
                   userId={String(user.id)}
                   userRole={userRole}
                   bgmSeedNoteZh={audioReferenceLock?.bgmNoteZh || ""}
+                  storyEmotion={storyEmotionForDownstream}
                 />
               ) : null}
             </div>

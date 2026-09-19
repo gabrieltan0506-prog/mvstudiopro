@@ -11,8 +11,10 @@ import {
   queuedManhuaClipBlocks,
   spawnManhuaDramaStudio,
 } from "./canvasDramaStudio";
+import { buildBgmStructurePrompt, deriveManhuaBgmBriefSeed } from "@shared/manhuaBgmBrief";
 import {
   MANHUA_STORY_EMOTION_FORMAT,
+  projectManhuaStoryEmotionForBgm,
   manhuaStoryEmotionIsStale,
   normalizeManhuaStoryEmotion,
   projectManhuaStoryEmotionForSegment,
@@ -112,5 +114,77 @@ describe("剧情情绪接线：投影表真的进了段成片提示词", () => {
     });
     const clips = queuedManhuaClipBlocks(ensured.blocks, 1, VIDEO_MODEL);
     expect(clips.every((b) => !String(b.prompt || "").includes("【本段戏核】"))).toBe(true);
+  });
+});
+
+/**
+ * 配乐侧的同一条接线：`deriveManhuaBgmBriefSeed` 的 storyEmotion 入参原先全仓没人喂
+ * （0919 探针点名）。这里逐字复算 PostProdWorkshopCard 里的那个表达式。
+ * 未验：卡片把 prop 传进去这一步要靠浏览器夹具，本条只验组合本身。
+ */
+describe("剧情情绪接线：配乐读到情绪曲线与留白", () => {
+  const withBreath = normalizeManhuaStoryEmotion({
+    format: MANHUA_STORY_EMOTION_FORMAT,
+    scriptVersionKey: "v1",
+    beats: [],
+    curve: [
+      { episode: 1, segmentIndex: 1, intensity: 6, kind: "rise", reasonZh: "压上来" },
+      { episode: 1, segmentIndex: 2, intensity: 9, kind: "turn", reasonZh: "翻底" },
+      { episode: 1, segmentIndex: 3, intensity: 2, kind: "breath", reasonZh: "留白" },
+    ],
+    foreshadows: [],
+    unreviewedZh: [],
+  });
+
+  it("曲线里的留白段让配乐真的静下来：[Break] 出现在最大一刀之前", () => {
+    const projected = projectManhuaStoryEmotionForBgm(withBreath, 1);
+    expect(projected?.hasSilenceBreak).toBe(true);
+    const seed = deriveManhuaBgmBriefSeed({
+      laneZh: "自定义剧情",
+      segmentBeatFunctionsZh: [["压上来"], ["翻底"], ["留白"]],
+      storyEmotion: projected,
+    });
+    const prompt = buildBgmStructurePrompt({ ...seed, hasSilenceBreak: seed.hasSilenceBreak });
+    const breakAt = prompt.indexOf("[Break");
+    expect(breakAt).toBeGreaterThanOrEqual(0);
+    const anchorAt = Math.max(prompt.indexOf("[Peak"), prompt.indexOf("[Turn"));
+    expect(anchorAt).toBeGreaterThanOrEqual(0);
+    expect(breakAt).toBeLessThan(anchorAt);
+  });
+
+  it("反例对照：没有留白段时一个 [Break] 都不许出现", () => {
+    const noBreath = normalizeManhuaStoryEmotion({
+      format: MANHUA_STORY_EMOTION_FORMAT,
+      scriptVersionKey: "v1",
+      beats: [],
+      curve: [
+        { episode: 1, segmentIndex: 1, intensity: 6, kind: "rise", reasonZh: "压上来" },
+        { episode: 1, segmentIndex: 2, intensity: 9, kind: "turn", reasonZh: "翻底" },
+      ],
+      foreshadows: [],
+      unreviewedZh: [],
+    });
+    const seed = deriveManhuaBgmBriefSeed({
+      laneZh: "自定义剧情",
+      segmentBeatFunctionsZh: [["压上来"], ["翻底"]],
+      storyEmotion: projectManhuaStoryEmotionForBgm(noBreath, 1),
+    });
+    // seed 在无留白时**不带**这个键（不是 false），所以按 falsy 判
+    expect(seed.hasSilenceBreak ?? false).toBe(false);
+    expect(buildBgmStructurePrompt({ ...seed, hasSilenceBreak: seed.hasSilenceBreak })).not.toContain("[Break");
+  });
+
+  it("失效守卫：上层传 null（换过剧本）时配乐拿不到任何情绪，退回原有基线", () => {
+    const projected = projectManhuaStoryEmotionForBgm(null, 1);
+    const seed = deriveManhuaBgmBriefSeed({
+      laneZh: "自定义剧情",
+      segmentBeatFunctionsZh: [["压上来"], ["翻底"]],
+      storyEmotion: projected,
+    });
+    const baseline = deriveManhuaBgmBriefSeed({
+      laneZh: "自定义剧情",
+      segmentBeatFunctionsZh: [["压上来"], ["翻底"]],
+    });
+    expect(seed).toEqual(baseline);
   });
 });
