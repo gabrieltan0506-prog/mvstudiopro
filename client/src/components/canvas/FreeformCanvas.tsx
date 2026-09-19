@@ -390,6 +390,7 @@ function patchBlock(blocks: CanvasBlock[], id: string, patch: Partial<CanvasBloc
 
 function assetKindLabel(kind: ReturnType<typeof inferCanvasAssetKindFromFileName>) {
   if (kind === "video") return "视频";
+  if (kind === "audio") return "音频";
   if (kind === "document") return "文档";
   return "图片";
 }

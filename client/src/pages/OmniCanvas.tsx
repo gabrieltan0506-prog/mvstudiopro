@@ -1,3 +1,4 @@
+import ManhuaFinalDeliverySurface from "@/components/ManhuaFinalDeliverySurface";
 import "@/styles/manhuaCream.css";
 import { capManhuaMediaHistory } from "@shared/manhuaMediaHistoryCap";
 import { BGM_BRIEF_MODELS, BGM_BRIEF_MODEL_LABEL_ZH } from "@shared/manhuaBgmBrief";
@@ -1376,17 +1377,12 @@ export default function OmniCanvas() {
   const [advisorSignals, setAdvisorSignals] = useState<ManhuaWorkbenchAdvisorSignals | null>(null);
   /** 进阶段主动一条建议；关掉即消失，同阶段本机只弹一次 */
   const [advisorNudge, setAdvisorNudge] = useState<string | null>(null);
-  /**
-   * 第五格「成片」的面板就是成片坞，而坞在独立顶层视图里、其可见性不持久化。
-   * 只存 workflowPhase 不存当前视图，刷新后 phase 还是 final、坞却关着，
-   * 而工作台内部只渲染 outline/assets/storyboard/edit 四个面板 —— 结果是**空白工作台**。
-   * 这里把两者绑定：进 final 就开坞。
-   */
+  /** 引导终审在工作台内；经典模式继续使用原成片坞。 */
   useEffect(() => {
     if (shouldOpenClipDockForPhase(workflowPhase)) {
-      setImmersiveWorkspaceView("clip_dock");
+      setImmersiveWorkspaceView(manhuaUiMode === "workbench" ? "workbench" : "clip_dock");
     }
-  }, [workflowPhase]);
+  }, [workflowPhase, manhuaUiMode]);
 
   /**
    * 回到工作台的唯一收口：只有从成片态返回时才把 final 收回 edit；
@@ -3154,7 +3150,7 @@ export default function OmniCanvas() {
     if (session.chainIgnoreByScene) setChainIgnoreByScene(session.chainIgnoreByScene);
     const restoredPhase = parseManhuaWorkflowPhase(session.workflowPhase, Boolean(session.writerConfirmed));
     setWorkflowPhase(restoredPhase);
-    setImmersiveWorkspaceView(workspaceViewForRestoredManhuaPhase(restoredPhase, Boolean(session.writerConfirmed)));
+    setImmersiveWorkspaceView(restoredPhase === "final" && manhuaUiMode === "workbench" ? "workbench" : workspaceViewForRestoredManhuaPhase(restoredPhase, Boolean(session.writerConfirmed)));
     const prefs = draft.factoryPrefs || {};
     const restoredScope = String(prefs.assetSelectionScopeKey || "").trim();
     const sessionScope = manhuaAssetSelectionScopeKey(
@@ -3261,7 +3257,7 @@ export default function OmniCanvas() {
       writerSession: repairedWriterSession,
       factoryPrefs: repairedFactoryPrefs,
     });
-  }, [canUseSeedance25, factoryDefaultVideoModel]);
+  }, [canUseSeedance25, factoryDefaultVideoModel, manhuaUiMode]);
 
 
   /** 手动备份（用户拍板：只有用户点上传才存云） */
@@ -10430,6 +10426,7 @@ export default function OmniCanvas() {
                   onOpenCharacterCard={() => setManhuaAssetDrawer("characters")}
                   onOpenAssetWall={() => setManhuaAssetDrawer("assets")}
                   onOpenClipDock={() => {
+                    if (workflowPhase === "final") { document.getElementById("manhua-final-delivery-host")?.scrollIntoView({ behavior: "smooth" }); return; }
                     // 坞是独立视图；沉浸态必须先切换再滚，对 display:none 滚动无效
                     setImmersiveWorkspaceView("clip_dock");
                     window.setTimeout(() => {
@@ -12685,7 +12682,9 @@ export default function OmniCanvas() {
                 immersiveWorkbench && immersiveWorkspaceView !== "clip_dock" ? "hidden" : ""
               }`}
             >
+              <ManhuaFinalDeliverySurface inReview={workflowPhase === "final" && manhuaUiMode === "workbench" && !(immersiveWorkbench && immersiveExtrasOpen)}>
               <ManhuaClipDock
+                reviewMode={workflowPhase === "final" && manhuaUiMode === "workbench"}
                 blocks={blocks}
                 currentEpisodeIndex={writerFocusEpisode}
                 topic={factoryTopic}
@@ -12707,7 +12706,7 @@ export default function OmniCanvas() {
                 onRetakeClip={handleRetakeClip}
                 segmentRefBusyId={segmentRefBusyId}
                 segmentRefProgress={segmentRefProgress}
-                onPrepareDeliveryAudio={async (finals, onProgress) => {
+                onPrepareDeliveryAudio={async (finals, onProgress, format = "m4a") => {
                   // 交付包：每集整集成片先跑 audio_extract（免费）；单集失败不拦整包，清单里写明
                   const out: Record<string, { url: string; ext: "m4a" | "wav" }> & { __timedOutEpisodes?: number[] } = {};
                   const timedOutEpisodes: number[] = [];
@@ -12724,7 +12723,7 @@ export default function OmniCanvas() {
                     try {
                       const { jobId } = await queueBurnSubtitleMutation.mutateAsync({
                         action: "audio_extract",
-                        params: { videoUri: f.gcsUri || f.url, format: "m4a" },
+                        params: { videoUri: f.gcsUri || f.url, format },
                       });
                       const deadline = Math.min(Date.now() + 10 * 60_000, packDeadline);
                       let settled = false;
@@ -12821,6 +12820,7 @@ export default function OmniCanvas() {
                   openManhuaFactoryCanvas(id);
                 }}
               />
+              </ManhuaFinalDeliverySurface>
               {/* 后期工坊(蓝图二):三件套已上线,卡内只挂真实工序;按用户挂载防串单 */}
               {user?.id ? (
                 <PostProdWorkshopCard

@@ -1,3 +1,4 @@
+import { buildManhuaEditMultitrack } from "@shared/manhuaEditMultitrack";
 import { ManhuaDirectionOverridePanel } from "./canvas/ManhuaDirectionOverridePanel";
 import type { ManhuaDirectionOverride } from "@shared/manhuaDirectionCanon";
 import { ManhuaSceneSpacePanel } from "./canvas/ManhuaSceneSpacePanel";
@@ -3194,6 +3195,7 @@ export default function ManhuaScriptWorkbench({
    * 终审检查清单（对照图 03）：**只用真有证据的信号**，没证据的项写「未检」不写「通过」。
    * 线上现状是没有成片时仍展示一大堆不可执行项（README 原话），这里反过来先说清缺什么。
    */
+  const reviewTimeline = buildManhuaEditMultitrack({ roughClips, shots, stillIndexes: stillIndexSet, clipIndexes: clipIndexSet, fineCutByShot, subtitleEnabled: editSubtitleEnabled });
   const finalReviewChecklist = buildManhuaFinalReviewChecklist({
     plannedSegments: segments.length,
     readyClips: episodeClips.filter(
@@ -3488,13 +3490,6 @@ export default function ManhuaScriptWorkbench({
         description: "成片台需要分镜就绪后再进入",
       });
       setActivePhase("storyboard");
-      return;
-    }
-    if (phase === "final") {
-      // 坞渲染在 extras 视图（沉浸工作台下 display:none），
-      // 组件内部滚动对隐藏元素无效，必须由父级先切视图
-      setActivePhase("final");
-      onOpenClipDock?.();
       return;
     }
     setActivePhase(phase);
@@ -4727,9 +4722,9 @@ export default function ManhuaScriptWorkbench({
             data-manhua-ashuo-step-title
             className="text-[13px] font-bold tracking-wide text-white/95"
           >
-            {nextCta.stepTitleZh}
+            {activePhase === "final" ? "终审与交付" : nextCta.stepTitleZh}
           </div>
-          <p className="mh-hint mt-0.5 text-[11px] leading-snug text-white/50">{nextCta.hintZh}</p>
+          <p className="mh-hint mt-0.5 text-[11px] leading-snug text-white/50">{activePhase === "final" ? "核对当前剪辑、质检结果，再选择范围生成交付包" : nextCta.hintZh}</p>
         </div>
         <button
           type="button"
@@ -4746,30 +4741,38 @@ export default function ManhuaScriptWorkbench({
           type="button"
           data-manhua-action="ashuo-step-generate"
           disabled={
-            nextCta.kind === "busy"
+            activePhase === "final" ? Boolean(factoryBusy) : nextCta.kind === "busy"
               ? !onStopFactory
               : nextCta.kind === "idle_done"
                 ? true
                 : Boolean(factoryBusy)
           }
-          onClick={runNextCta}
+          onClick={activePhase === "final" ? () => selectPhase("edit") : runNextCta}
           className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3.5 py-2 text-[12px] font-bold disabled:opacity-45 ${
-            nextCta.kind === "busy"
+            activePhase === "final" ? "border-white/20 bg-white/[0.04] text-white/65 hover:bg-white/[0.08]" : nextCta.kind === "busy"
               ? "border-red-400/50 bg-red-500/25 text-red-50"
               : "border-violet-300/50 bg-violet-500/30 text-violet-50 hover:bg-violet-500/40"
           }`}
         >
-          {nextCta.kind === "busy" ? (
+          {activePhase === "final" ? null : nextCta.kind === "busy" ? (
             <Square className="h-3.5 w-3.5 fill-current" />
           ) : (
             <Play className="h-3.5 w-3.5" />
           )}
-          {nextCta.kind === "generate_keyarts" && onGenerateKeyartShot ? "查看当前镜生成入口" : nextCta.labelZh}
+          {activePhase === "final" ? "返回精剪" : nextCta.kind === "generate_keyarts" && onGenerateKeyartShot ? "查看当前镜生成入口" : nextCta.labelZh}
         </button>
       </div>
 
-      {/* 终审检查清单（对照图 03）：每项通过/不通过/未检 + 「存在 N 处需处理的问题」 */}
       {activePhase === "final" ? (
+        <div data-manhua-phase-panel="final" className="min-h-0 flex-1 overflow-y-auto p-3">
+          <div className="grid min-w-0 gap-3 lg:grid-cols-2">
+            <section data-manhua-final-section="timeline" className="min-w-0 rounded-xl border border-white/15 bg-white/[0.03] p-3 lg:col-span-2">
+              <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-sm font-semibold">时间线 · 第{focusEpisode}集</h2><button type="button" className="min-h-11 rounded border border-white/20 px-3 text-xs" onClick={() => selectPhase("edit")}>查看与调整剪辑</button></div>
+              <p className="mt-1 text-xs text-white/55">{roughClips.length ? `当前裁切与排序 · ${reviewTimeline.totalSec}s` : "暂无剪辑计划 · 0镜"} · {finalCutStale ? "旧成片已失效，请重新合成" : finalCutVerified ? "当前成片来源已核对" : "最终成片尚未核验"}</p>
+              {finalVideoUrl ? <video controls preload="metadata" src={finalVideoUrl} className="mx-auto my-3 max-h-72 w-full rounded-lg bg-black" /> : <p className="py-3 text-xs text-white/50">尚无整集成片；下方为当前剪辑计划。</p>}
+              <div className="mt-3 flex gap-2 overflow-x-auto pb-2">{reviewTimeline.tracks.find(track => track.kind === "v2_clip")?.segments.map(segment => <button type="button" key={segment.shotIndex} data-manhua-review-shot={segment.shotIndex} data-review-duration={segment.durationSec} onClick={() => { const index = shots.findIndex(shot => shot.index === segment.shotIndex); if (index >= 0) setShotIndex(index); selectPhase("edit"); }} className="min-h-16 min-w-32 shrink-0 rounded-lg border border-white/20 bg-white/[0.04] p-3 text-left text-xs"><strong>第{segment.shotIndex}镜 · {segment.durationSec.toFixed(1)}s</strong><span className="mt-1 block text-white/50">入{segment.inSec.toFixed(1)}s / 出{segment.outSec.toFixed(1)}s · {segment.hasMedia ? "已有片段" : "待生成"}</span></button>)}</div>
+            </section>
+            <section data-manhua-final-section="quality" className="min-w-0 rounded-xl border border-white/15 bg-white/[0.03] p-3"><h2 className="mb-2 text-sm font-semibold">质检结果</h2>
         <div
           data-manhua-final-checklist
           data-manhua-final-ready={finalReviewChecklist.readyForFinal ? "1" : "0"}
@@ -4809,6 +4812,12 @@ export default function ManhuaScriptWorkbench({
               </li>
             ))}
           </ul>
+        </div>
+
+              <button type="button" onClick={() => selectPhase("edit")} className="mt-3 min-h-11 rounded border border-white/20 px-3 text-xs">定位片段并处理</button>
+            </section>
+            <section data-manhua-final-section="delivery" className="min-w-0 rounded-xl border border-white/15 bg-white/[0.03] p-3"><h2 className="mb-2 text-sm font-semibold">导出交付</h2><div id="manhua-final-delivery-host" /></section>
+          </div>
         </div>
       ) : null}
       {/* 阻断卡集中显示：不藏提示、不替用户点按钮，只把「卡着几条、先解哪条、点哪跳去修」说清 */}

@@ -51,6 +51,7 @@ import {
 } from "@shared/manhuaDirectingWorkflow";
 
 type Props = {
+  reviewMode?: boolean;
   blocks: CanvasBlock[];
   currentEpisodeIndex?: number;
   topic?: string;
@@ -92,6 +93,7 @@ type Props = {
   onPrepareDeliveryAudio?: (
     finals: Array<{ blockId: string; episodeIndex: number; url: string; gcsUri?: string }>,
     onProgress?: (done: number, total: number, episodeIndex: number) => void,
+    format?: "m4a" | "wav",
   ) => Promise<Record<string, { url: string; ext: "m4a" | "wav" }> & { __timedOutEpisodes?: number[] }>;
 };
 
@@ -121,6 +123,7 @@ function episodeKeyartUrl(list: ManhuaClipDockItem[]): string | undefined {
 }
 
 export default function ManhuaClipDock({
+  reviewMode = false,
   blocks,
   currentEpisodeIndex,
   topic,
@@ -156,6 +159,7 @@ export default function ManhuaClipDock({
   const deliveryEpisodes = Array.from(new Set(blocks.filter(b => isManhuaFinalVideoBlockId(b.id) && !b.archivedFromPreviousScript && /^https?:\/\//i.test(String(b.outputUrl || ""))).map(b => getBlockEpisodeIndex(b) ?? 1))).sort((a, b) => a - b);
   const [deliveryBusy, setDeliveryBusy] = useState<string | null>(null);
   const [exportBusy, setExportBusy] = useState(false);
+  const [deliveryAudioFormat, setDeliveryAudioFormat] = useState<"m4a" | "wav">("m4a");
   // 「含历史版本」默认关；用户打开过就记在本机（只影响 zip 内容，不影响合成）
   const [includeHistory, setIncludeHistory] = useState<boolean>(() => {
     try {
@@ -317,6 +321,7 @@ export default function ManhuaClipDock({
       const audioMap = onPrepareDeliveryAudio
         ? await onPrepareDeliveryAudio(finals, (done, total, episodeIndex) =>
             setDeliveryBusy(`抽音轨 第${episodeIndex}集（${done}/${total}）…`),
+            deliveryAudioFormat,
           )
         : {};
       setDeliveryBusy("打包中…");
@@ -441,6 +446,33 @@ export default function ManhuaClipDock({
 
   return (
     <div className="overflow-hidden rounded-2xl border border-cyan-400/20 bg-gradient-to-b from-[#0c1520] via-[#0a0e18] to-[#08070f]">
+      <div className="p-3">        <fieldset disabled={exportBusy} data-manhua-delivery-group className="min-w-0 rounded-xl border border-emerald-300/30 bg-emerald-500/[0.06] p-3 text-xs">
+          <legend>交付包范围</legend>
+          <label>导出范围 <select aria-label="交付包导出范围" value={deliveryScope} onChange={e => setDeliveryScope(e.target.value as "all" | "current" | "selected")} className="min-h-11 max-w-full rounded border border-white/20 bg-slate-900 px-3">
+            <option value="all">全部集</option>
+            <option value="current">当前集{currentEpisodeIndex ? `（第${currentEpisodeIndex}集）` : "（未选择）"}</option>
+            <option value="selected">选择集</option>
+          </select></label>
+          <label className="mt-2 flex flex-wrap items-center gap-2">音轨格式 <select aria-label="交付音轨格式" value={deliveryAudioFormat} onChange={event => setDeliveryAudioFormat(event.target.value as "m4a" | "wav")} className="min-h-11 rounded border border-white/20 bg-slate-900 px-3"><option value="m4a">M4A</option><option value="wav">WAV</option></select></label>
+          {deliveryScope === "selected" && <div className="flex flex-wrap gap-2">
+            {deliveryEpisodes.map(ep => <label key={ep} className="inline-flex min-h-11 items-center gap-2 rounded border border-white/15 px-3"><input type="checkbox" aria-label={`交付第${ep}集`} checked={deliverySelectedEpisodes.includes(ep)} onChange={e => setDeliverySelectedEpisodes(prev => e.target.checked ? [...prev, ep] : prev.filter(value => value !== ep))}/>第{ep}集</label>)}
+            {!deliveryEpisodes.length && <span>暂无整集成片</span>}
+          </div>}
+          <p>按集导出整集成片、已有字幕和音轨；不使用下方片段勾选范围。</p>
+
+        <button
+          type="button"
+          disabled={exportBusy}
+          onClick={() => void handleDeliveryPack()}
+          title="整集成片当前版 → 先抽音轨（免费）→ 打包：交付/epXX/ 成片.mp4 + 字幕.srt（合成时冻结的真实时间轴）+ 所选格式音轨 + 交付清单.md"
+          data-manhua-delivery-primary className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-emerald-400/35 bg-emerald-500/20 px-4 py-2 text-sm font-semibold text-emerald-50 hover:bg-emerald-500/30 disabled:opacity-40"
+        >
+          {deliveryBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
+          {deliveryBusy || "生成交付包"}
+        </button>
+        </fieldset></div>
+      <details open={!reviewMode}>
+        <summary className={reviewMode ? "cursor-pointer px-4 py-3 text-xs text-white/60" : "hidden"}>历史、素材与高级导出</summary>
       {/* 终局出口 · 示意 A 成片段 */}
       <div className="border-b border-white/10 px-3 py-3 md:px-4 md:py-3.5">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -505,7 +537,7 @@ export default function ManhuaClipDock({
               <span className="rounded-md border border-amber-400/25 bg-amber-500/10 px-2 py-0.5 text-amber-100/80">
                 待跑 {summary.pendingCount}
               </span>
-              {finalVideoUrl ? (
+              {finalVideoUrl && !reviewMode ? (
                 <span className="rounded-md border border-cyan-400/35 bg-cyan-500/15 px-2 py-0.5 text-cyan-100">
                   长片已合成
                 </span>
@@ -745,29 +777,7 @@ export default function ManhuaClipDock({
           {exportBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
           导出全部有产物
         </button>
-        <fieldset disabled={exportBusy} className="rounded-lg border border-white/12 px-2 py-1 text-xs">
-          <legend>交付包范围</legend>
-          <label>导出范围 <select aria-label="交付包导出范围" value={deliveryScope} onChange={e => setDeliveryScope(e.target.value as "all" | "current" | "selected")} className="bg-slate-900">
-            <option value="all">全部集</option>
-            <option value="current">当前集{currentEpisodeIndex ? `（第${currentEpisodeIndex}集）` : "（未选择）"}</option>
-            <option value="selected">选择集</option>
-          </select></label>
-          {deliveryScope === "selected" && <div className="flex flex-wrap gap-2">
-            {deliveryEpisodes.map(ep => <label key={ep}><input type="checkbox" aria-label={`交付第${ep}集`} checked={deliverySelectedEpisodes.includes(ep)} onChange={e => setDeliverySelectedEpisodes(prev => e.target.checked ? [...prev, ep] : prev.filter(value => value !== ep))}/>第{ep}集</label>)}
-            {!deliveryEpisodes.length && <span>暂无整集成片</span>}
-          </div>}
-          <p>按集导出整集成片、已有字幕和音轨；不使用下方片段勾选范围。</p>
-        </fieldset>
-        <button
-          type="button"
-          disabled={exportBusy}
-          onClick={() => void handleDeliveryPack()}
-          title="整集成片当前版 → 先抽音轨（免费）→ 打包：交付/epXX/ 成片.mp4 + 字幕.srt（合成时冻结的真实时间轴）+ 音轨.m4a + 交付清单.md"
-          className="inline-flex items-center gap-1 rounded-lg border border-emerald-400/35 bg-emerald-500/12 px-2.5 py-1 text-[10px] font-semibold text-emerald-50 hover:bg-emerald-500/20 disabled:opacity-40"
-        >
-          {deliveryBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
-          {deliveryBusy || "生成交付包"}
-        </button>
+
         <button
           type="button"
           disabled={exportBusy || !selectedIds.size}
@@ -1074,6 +1084,7 @@ export default function ManhuaClipDock({
           })}
         </div>
       )}
+      </details>
     </div>
   );
 }

@@ -181,6 +181,7 @@ import {
   MANHUA_KEYARTS_PER_SEGMENT_MIN,
   MANHUA_SEGMENT_DEFAULT,
   parseWorkbenchShotsFromTextResult,
+  hasExplicitManhuaShotBlocks,
   parseManhuaClipTargetDurationSec,
   resolveClipLocalSegmentIndex,
   resolveClipSegmentIndex,
@@ -1912,7 +1913,7 @@ export function resolveShotsForEpisodeKeyartsResult(
   // 三类节点遵循同一成稿优先顺序；旧段表必须先编译，不能误落逐镜解析骨架。
   const selectedText = shotSource || reverseText || beatsText || storyText;
   const selectedPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(selectedText);
-  const result = selectedPlan.segments.length
+  const result = selectedPlan.segments.length && !hasExplicitManhuaShotBlocks(selectedText)
     ? { shots: buildWorkbenchShotsFromSegmentPlan(selectedPlan), isFallback: false }
     : parseWorkbenchShotsFromTextResult(selectedText);
   const withAngles = applyShotAnglesFromText(result.shots, `${reverseText}\n${beatsText}`);
