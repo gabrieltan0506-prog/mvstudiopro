@@ -274,6 +274,7 @@ import {
   summarizeManhuaProjectBible,
   type ManhuaProjectBible,
 } from "@shared/manhuaProjectBible";
+import { projectManhuaStoryEmotionForSegment } from "@shared/manhuaStoryEmotion";
 import {
   buildManhuaDirectionCanonFromSelection,
   type ManhuaDirectionSelection,
@@ -864,6 +865,11 @@ export default function OmniCanvas() {
     () => directorBoardHttpsByEpisodeSegment(directorBoardBySegment),
     [directorBoardBySegment],
   );
+  /**
+   * 0919 本段戏核：把 Bible 里的剧情情绪投影成「集 → 段 → 一行中文」。
+   * 只传投影结果给段编译，不传整份分析——提示词里塞完整节拍表会把秒轴挤掉。
+   * 没做分析时整张表为空，段编译一个字都不注入。
+   */
   const [factoryTopic, setFactoryTopic] = useState(
     () => initialWriterSession?.topic || initialFactoryPrefs.topic || "",
   );
@@ -1091,6 +1097,47 @@ export default function OmniCanvas() {
   );
   /** 0902：扩写前后逐行对比（高亮）——「全部扩写也没列出对比」用户拍板 */
   const [writerPackDiff, setWriterPackDiff] = useState<WriterPackDiffResult | null>(null);
+  /**
+   * 剧本版本标识：拿当集正文算，换稿即变 → 旧分析自动标失效。
+   *
+   * 0919 探针实锤：原先用「长度 + 前 24 字」，把第 37 字「银镯」改成「玉佩」时 key 不变，
+   * 旧分析被静默沿用 —— 同长度改字在润色阶段是常事。改成逐字符滚动哈希（FNV-1a，
+   * 全文都进去），仍然只存指纹不存正文。
+   */
+  const storyEmotionScriptVersionKey = useMemo(() => {
+    const fingerprint = (bodyZh: string) => {
+      let h = 0x811c9dc5;
+      for (let i = 0; i < bodyZh.length; i += 1) {
+        h ^= bodyZh.charCodeAt(i);
+        h = Math.imul(h, 0x01000193) >>> 0;
+      }
+      return h.toString(36);
+    };
+    const eps = writerPack?.episodes || [];
+    return eps
+      .map((e) => {
+        const bodyZh = String(e.body || "");
+        return `${e.index}:${bodyZh.length}:${fingerprint(bodyZh)}`;
+      })
+      .join("|");
+  }, [writerPack]);
+  const storyEmotionLineByEpisodeSegment = useMemo(() => {
+    const analysis = projectBible?.storyEmotion;
+    if (!analysis) return {};
+    const out: Record<number, Record<number, string>> = {};
+    for (const point of analysis.curve) {
+      const line = projectManhuaStoryEmotionForSegment(analysis, point.episode, point.segmentIndex);
+      if (!line) continue;
+      (out[point.episode] ||= {})[point.segmentIndex] = line;
+    }
+    // 只有节拍、没有情绪点的段也要给出戏核
+    for (const beat of analysis.beats) {
+      if (out[beat.episode]?.[beat.segmentIndex]) continue;
+      const line = projectManhuaStoryEmotionForSegment(analysis, beat.episode, beat.segmentIndex);
+      if (line) (out[beat.episode] ||= {})[beat.segmentIndex] = line;
+    }
+    return out;
+  }, [projectBible?.storyEmotion]);
   const [writerPackDiffOpen, setWriterPackDiffOpen] = useState(false);
   const [writerConfirmed, setWriterConfirmed] = useState(
     () => Boolean(initialWriterSession?.writerConfirmed),
@@ -9992,6 +10039,13 @@ export default function OmniCanvas() {
                   propIds={factoryPropIds}
                   artStyleLabelZh={getManhuaArtStylePreset(factoryArtStyleId).labelZh}
                   projectBibleSummary={summarizeManhuaProjectBible(projectBible)}
+                  storyEmotion={projectBible?.storyEmotion ?? null}
+                  storyEmotionScriptVersionKey={storyEmotionScriptVersionKey}
+                  onChangeStoryEmotion={
+                    projectBible
+                      ? (next) => setProjectBible({ ...projectBible, storyEmotion: next })
+                      : undefined
+                  }
                   assetCanon={projectBible?.assetCanon}
                   bibleBoundEpisodes={projectBible?.cast.boundEpisodeIndexes}
                   pathTrackLabelZh={pathTrackLabelZh}

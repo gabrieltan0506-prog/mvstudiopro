@@ -279,6 +279,8 @@ import {
 } from "@/lib/manhuaCharacterEntry";
 import { manhuaToolbarActionCost } from "@/lib/manhuaToolbarGroups";
 import type { ManhuaWorkflowPhase } from "@shared/manhuaWriterSession";
+import type { ManhuaStoryEmotion } from "@shared/manhuaStoryEmotion";
+import { ManhuaStoryEmotionPanel } from "./canvas/ManhuaStoryEmotionPanel";
 
 export type ManhuaWorkbenchAdvisorSignals = {
   assetGap: string;
@@ -352,6 +354,11 @@ type Props = {
   artStyleLabelZh?: string;
   /** 专案 Bible 一行摘要（确认编剧后） */
   projectBibleSummary?: string;
+  /** 0919 剧情与情绪（唯一生产者入口在剧本列的折叠区） */
+  storyEmotion?: ManhuaStoryEmotion | null;
+  /** 当前剧本版本标识；换剧本后旧分析标失效 */
+  storyEmotionScriptVersionKey?: string;
+  onChangeStoryEmotion?: (next: ManhuaStoryEmotion | undefined) => void;
   /** 编剧表资产真源：系列人物/道具/场景池 + 每集主场景 */
   assetCanon?: ManhuaWriterAssetCanon | null;
   /** Bible 已绑定造型的集号（1-based） */
@@ -1033,6 +1040,9 @@ export default function ManhuaScriptWorkbench({
   propIds,
   artStyleLabelZh,
   projectBibleSummary,
+  storyEmotion,
+  storyEmotionScriptVersionKey,
+  onChangeStoryEmotion,
   assetCanon = null,
   bibleBoundEpisodes = [],
   pathTrackLabelZh,
@@ -7867,6 +7877,16 @@ export default function ManhuaScriptWorkbench({
                 </div>
               ) : null}
             </div>
+            {onChangeStoryEmotion ? (
+              <ManhuaStoryEmotionPanel
+                episode={focusEpisode}
+                segmentCount={segments.length || 1}
+                scriptVersionKey={String(storyEmotionScriptVersionKey || "")}
+                analysis={storyEmotion}
+                disabled={Boolean(factoryBusy)}
+                onChange={onChangeStoryEmotion}
+              />
+            ) : null}
             {onSegmentLookBindingsChange && activeLookCharacterIds.length > 0 ? (
               <details className="my-2 rounded-lg border border-cyan-400/20 bg-cyan-500/[0.04] p-2" data-manhua-segment-looks>
                 <summary className="cursor-pointer text-[11px] font-medium text-cyan-50">本段造型 · 保持角色身份</summary>
