@@ -28,7 +28,11 @@ describe("创作顾问的真实项目生产者", () => {
     const result = buildManhuaAdvisorProject({ ...base, refs: Array.from({ length: 6 }, (_, i) => ({
       id: `r${i}`, role: "character" as const, source: "upload" as const, url: `https://example.com/${i}.png`, labelZh: `候选${i}`,
     })) });
-    expect(result.issues.find((issue) => issue.id === "claims")?.text).toBe("6 张人物图尚未认领到本剧人物。");
+    const claims = result.issues.find((issue) => issue.id === "claims");
+    expect(claims?.text).toContain("6 张人物图尚未认领到本剧人物");
+    // 0919：未认领的多余图不挡出片，文案必须说清后果，否则用户看到 ✅ 旁边挂警告会以为自相矛盾
+    expect(claims?.text).toContain("不挡出片");
+    expect(claims?.blocking).toBe(false);
     expect(result.issues.find((issue) => issue.id === "canon")?.phase).toBe("outline");
     expect(result.context.episodeBody).toBe(pack.episodes[0]!.body);
     expect(JSON.stringify(result.context)).not.toContain("https://");
@@ -220,11 +224,41 @@ describe("PR-12 · 上下文补喂与四类 issue", () => {
 
   it("阶段顶部提示与进阶段气泡：取当前阶段第一条 issue，否则 3D 理由；每阶段只弹一次", () => {
     const issues = [
-      { id: "gate", text: "门禁", phase: "outline" as const },
-      { id: "asset-gap", text: "缺口", phase: "assets" as const },
+      { id: "gate", text: "门禁", phase: "outline" as const, blocking: true },
+      { id: "asset-gap", text: "缺口", phase: "assets" as const, blocking: true },
     ];
     expect(pickManhuaAdvisorTopIssue(issues, "assets")?.id).toBe("asset-gap");
     expect(pickManhuaAdvisorTopIssue(issues, "storyboard")?.id).toBe("gate");
+    // 0919 阻断优先：本阶段有不挡路的提醒排在前面时，仍要先报真正卡住的那条
+    expect(
+      pickManhuaAdvisorTopIssue(
+        [
+          { id: "claims", text: "未认领", phase: "assets" as const, blocking: false },
+          { id: "asset-gap", text: "缺口", phase: "assets" as const, blocking: true },
+        ],
+        "assets",
+      )?.id,
+    ).toBe("asset-gap");
+    // 本阶段没有阻断时，跨阶段的阻断也优先于本阶段的提醒——它同样挡着往下走
+    expect(
+      pickManhuaAdvisorTopIssue(
+        [
+          { id: "claims", text: "未认领", phase: "assets" as const, blocking: false },
+          { id: "gate", text: "门禁", phase: "outline" as const, blocking: true },
+        ],
+        "assets",
+      )?.id,
+    ).toBe("gate");
+    // 反例对照：全是提醒时照旧按阶段取第一条，不许凭空升级成阻断
+    expect(
+      pickManhuaAdvisorTopIssue(
+        [
+          { id: "review", text: "待确认", phase: "assets" as const, blocking: false },
+          { id: "rig", text: "未绑骨", phase: "storyboard" as const, blocking: false },
+        ],
+        "storyboard",
+      )?.id,
+    ).toBe("rig");
     expect(pickManhuaAdvisorTopIssue([], "assets")).toBeNull();
     expect(pickManhuaAdvisorPhaseNudge({ phase: "assets", issues, recommend3d: null })).toBe("进入资产设定：缺口");
     expect(pickManhuaAdvisorPhaseNudge({ phase: "storyboard", issues: [], recommend3d: { recommend: true, reasonZh: "理由", suggestedSegmentIndex: 2 } })).toBe("进入分镜：理由");
