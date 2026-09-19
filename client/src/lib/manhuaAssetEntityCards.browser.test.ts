@@ -118,6 +118,17 @@ beforeAll(async () => {
               episodeCount={1} focusEpisode={1} onFocusEpisode={() => {}}
               characterIds={[]} propIds={[]} outlineConfirmed={true}
               workflowPhase='storyboard' compactUi={false}
+              directionCanon={{
+                mainCardId: 'main',
+                cards: [
+                  { id: 'main', labelZh: '信息位置可控', rules: [{ id: 'm1', ruleZh: '手法一', stages: ['story','storyboard'], status: 'formal' }] },
+                  { id: 'fight', labelZh: '动作改变关系', rules: [{ id: 'f1', ruleZh: '手法二', stages: ['keyframe'], status: 'formal' }] },
+                ],
+                authorizedCardIds: ['main', 'fight'],
+                sceneOverrides: { action: { cardId: 'fight' } },
+              }}
+              onSelectDirectionCard={() => {}}
+              onSelectDirectionSceneCard={() => {}}
               customAssetRefs={refs} assetCanon={canon}
               onUploadCustomAssets={async () => {}}
               onGenerateAllEpisodeKeyarts={async () => { globalThis.fixture.keyart += 1; }}
@@ -530,6 +541,34 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
     expect(seen.order.params).toBe(3);
     expect(seen.paramsInRight).toBe(true);
     expect(seen.paramsInScript).toBe(false);
+    await close();
+  }, 180_000);
+
+  /**
+   * 对照图 04（mvs-director-continuity）：分镜页给一张紧凑导演卡 ——
+   * 当前有效手法 / 来源范围 / 覆盖理由 / 影响预览 / 连续性提醒；
+   * 顶栏那五个「场次副卡」下拉在分镜阶段收起（它回答不了「这一段用哪张」）。
+   */
+  it("分镜阶段：右栏出现紧凑导演卡，顶栏五个场次副卡下拉收起", async () => {
+    const { page, close } = await mountStoryboard();
+    const seen = await page.evaluate(() => {
+      const card = document.querySelector("[data-manhua-director-card]");
+      const params = document.querySelector('[data-manhua-column="params"]');
+      return {
+        hasCard: Boolean(card),
+        inRightColumn: Boolean(params?.querySelector("[data-manhua-director-card]")),
+        source: card?.getAttribute("data-manhua-director-card-source") || "",
+        text: (card?.textContent || "").replace(/\s+/g, " ").trim(),
+        sceneCardsInTopBar: Boolean(document.querySelector("[data-manhua-direction-scene-cards]")),
+        // 主卡下拉仍然在（导演包本身没被藏掉）
+        mainCardSelect: Boolean(document.querySelector("[data-manhua-direction-canon]")),
+      };
+    });
+    expect(seen.hasCard, "导演卡没渲染").toBe(true);
+    expect(seen.inRightColumn, "导演卡不在右栏").toBe(true);
+    expect(seen.sceneCardsInTopBar, "顶栏五个场次副卡下拉应在分镜阶段收起").toBe(false);
+    expect(seen.mainCardSelect, "导演包主卡入口不该被一起藏掉").toBe(true);
+    expect(seen.text).toContain("投影到");
     await close();
   }, 180_000);
 });

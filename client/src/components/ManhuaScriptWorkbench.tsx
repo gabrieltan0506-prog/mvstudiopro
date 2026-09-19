@@ -119,6 +119,8 @@ import {
 } from "@shared/manhuaAssetScriptSync";
 import { buildManhuaAssetRoleGroups } from "@/lib/manhuaAssetEntityGroups";
 import { manhuaKeyartEntryVisible } from "@/lib/manhuaKeyartEntry";
+import { buildManhuaDirectorCardView } from "@shared/manhuaDirectorCardView";
+import { classifyManhuaDirectionSceneType } from "@shared/manhuaDirectionCanon";
 import { buildManhuaMainTaskState } from "@/lib/manhuaMainTaskBlockers";
 import {
   MANHUA_SECONDARY_TOOL_LABEL_ZH,
@@ -3050,6 +3052,42 @@ export default function ManhuaScriptWorkbench({
           })}
     </>
   );
+  /**
+   * 紧凑导演卡（对照图 04 的 mvs-director-continuity）：按**当前段正文**判场次类型，
+   * 算出此刻真正生效的是主卡还是副卡。线上实测：五类场次副卡下拉常驻顶栏、每个六个选项，
+   * 却回答不了用户在分镜阶段真正要问的「这一段用哪张」。
+   */
+  const activeSegmentSceneType = classifyManhuaDirectionSceneType(
+    [activeSegment?.summaryZh, activeClip?.prompt, activeShot?.actionZh].filter(Boolean).join("\n"),
+  );
+  const directorCardView = buildManhuaDirectorCardView({
+    canon: directionCanon,
+    sceneType: activeSegmentSceneType,
+    hasSpawnedNodes: blocks.some((b) => b.id.startsWith("story-") || b.id.startsWith("clip-")),
+  });
+  /** 导演卡块：当前有效手法 · 来源 · 覆盖理由 · 影响预览 · 连续性提醒 */
+  const directorCardBlock = directorCardView ? (
+    <div
+      data-manhua-director-card
+      data-manhua-director-card-source={directorCardView.sourceZh}
+      className="mb-2 rounded-lg border border-violet-300/25 bg-violet-500/[0.08] p-2"
+    >
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <span className="text-[11px] font-semibold text-violet-50">{directorCardView.effectiveLabelZh}</span>
+        <span className="text-[9px] text-violet-100/70">{directorCardView.sourceZh}</span>
+        <span className="text-[9px] text-white/35">本段判为{directorCardView.sceneTypeZh}</span>
+      </div>
+      {directorCardView.overrideReasonZh ? (
+        <p className="mt-0.5 text-[9px] leading-4 text-violet-100/70">{directorCardView.overrideReasonZh}</p>
+      ) : null}
+      <p className="mt-0.5 text-[9px] leading-4 text-white/40">{directorCardView.impactZh}</p>
+      {directorCardView.continuityZh ? (
+        <p data-manhua-director-continuity className="mt-0.5 text-[9px] leading-4 text-amber-100/80">
+          {directorCardView.continuityZh}
+        </p>
+      ) : null}
+    </div>
+  ) : null;
   const storyboardThreeColumn = activePhase === "storyboard" && shots.length > 0;
   const shotParamsPanel = activeShot ? (
 
@@ -3057,6 +3095,7 @@ export default function ManhuaScriptWorkbench({
                 data-manhua-shot-params={activeShot.index}
                 className="mt-2 shrink-0 rounded-lg border border-cyan-400/25 bg-cyan-500/[0.06] p-2"
               >
+                {directorCardBlock}
                 <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                   <span className="text-[11px] font-semibold text-cyan-50">
                     当前第 {String(activeShot.index).padStart(2, "0")} 镜
@@ -3587,7 +3626,8 @@ export default function ManhuaScriptWorkbench({
                     换卡后已铺节点需同步设置
                   </span>
                 ) : null}
-                {directionCanon && onSelectDirectionSceneCard ? (
+                {/* 分镜阶段这五个下拉收起：右栏导演卡已经说清「这一段用哪张、为什么、影响哪几处」 */}
+                {directionCanon && onSelectDirectionSceneCard && !storyboardThreeColumn ? (
                   <div data-manhua-direction-scene-cards className="flex w-full flex-wrap items-center gap-1 pl-2">
                     <span className="text-violet-100/60">场次副卡</span>
                     {MANHUA_DIRECTION_SCENE_TYPES.map((scene) => (
