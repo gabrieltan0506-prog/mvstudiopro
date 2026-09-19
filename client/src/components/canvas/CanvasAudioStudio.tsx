@@ -4,6 +4,7 @@ import { applyCanvasAudioMixPlan, assertCanvasAudioMixCapacity } from "@shared/c
 import { useEffect, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import type { CanvasBlock } from "@/lib/canvasTypes";
+import { canvasAudioCapabilityHint } from "@/lib/canvasAudioCapabilityHint";
 import type { ManhuaSegmentReferenceEntry } from "@shared/manhuaSegmentReference";
 import { BGM_BRIEF_MODEL_LABEL_ZH, type BgmBriefModel } from "@shared/manhuaBgmBrief";
 import { buildPremixTimelineClips, isPremixPendingKey, PREMIX_PENDING_PREFIX } from "@/lib/manhuaPremixMaster";
@@ -23,7 +24,7 @@ import {
   type CanvasAudioCue,
   type CanvasAudioTake,
 } from "@shared/canvasAudioStudio";
-import { buildManhuaSoundPanelSummary } from "@shared/manhuaSoundPanelSummary";
+import { buildManhuaSoundPanelSummary, hasAdoptedManhuaAudio } from "@shared/manhuaSoundPanelSummary";
 import { resolveClipLocalSegmentIndex } from "@shared/manhuaScriptWorkbench";
 import {
   CANVAS_TTS_CREDITS_PER_LINE,
@@ -738,6 +739,151 @@ export function CanvasAudioStudioView({
       ),
     });
   };
+  const musicLibraryPanel = <>
+      {musicJobs.filter(job => Number.isSafeInteger(job.missingVariants) && Number(job.missingVariants) > 0).map(job => (
+        <p key={job.jobId} role="status" className="text-xs text-amber-200">
+          {job.titleZh}：已保留 {job.variants.length} 个版本，另有 {job.missingVariants} 个版本未交付。请保留原任务等待核对，不要重复生成。
+        </p>
+      ))}
+      <details className="border-t border-white/15 pt-2">
+        <summary className="text-xs font-semibold">
+          生成配乐原曲 · 保留所有版本
+        </summary>
+        <div className="mt-2 space-y-2">
+          <label className="block text-xs">
+            剧情与情绪推进
+            <textarea
+              className={fieldClass}
+              aria-label="配乐剧情与情绪推进"
+              rows={3}
+              value={musicPrompt}
+              disabled={disabled || busy}
+              onChange={event => {
+                setMusicPrompt(event.target.value);
+                setBrief(null);
+                setConfirmation(null);
+              }}
+            />
+          </label>
+          <label className="block text-xs">
+            原曲目标时长
+            <input
+              className={fieldClass}
+              type="number"
+              min="1"
+              max="3600"
+              value={musicDuration}
+              disabled={disabled || busy}
+              onChange={event => {
+                setMusicDuration(Number(event.target.value));
+                setBrief(null);
+                setConfirmation(null);
+              }}
+            />
+          </label>
+          {bgmModels?.length ? (
+            <label className="block text-xs">
+              配乐来源
+              <select
+                aria-label="配乐来源"
+                className={fieldClass}
+                value={bgmModel}
+                disabled={disabled || busy}
+                onChange={event => {
+                  setBgmModel(event.target.value as typeof bgmModel);
+                  setBrief(null);
+                  setConfirmation(null);
+                }}
+              >
+                {bgmModels.map(item => (
+                  <option key={item.model} value={item.model}>
+                    {item.labelZh}
+                  </option>
+                ))}
+              </select>
+              <span className="mt-1 block text-[10px] text-amber-200/80">
+                v6 走 TTAPI 网关，按段表时长出整曲，成品再按段表裁。
+              </span>
+            </label>
+          ) : null}
+          <button
+            className={buttonClass}
+            disabled={disabled || busy || !musicPrompt.trim()}
+            onClick={() =>
+              void action(async () => {
+                const result = await services.draftMusic({
+                  laneZh: "本段剧情配乐",
+                  durationSec: musicDuration,
+                  moods: ["蓄力", "冲突", "反转", "收束"],
+                  moodArcZh: musicPrompt,
+                  titleZh: "剧情配乐",
+                  model: bgmModel,
+                });
+                setBrief(result.brief);
+              })
+            }
+          >
+            整理配乐要求 · 免费
+          </button>
+          {brief && (
+            <>
+              {brief.model !== "suno-v5.5-beta" ? (
+                <p className="text-[10px] text-amber-200/80">
+                  来源：{BGM_BRIEF_MODEL_LABEL_ZH[brief.model]}
+                </p>
+              ) : null}
+              <label className="block text-xs">
+                配乐要求
+                <textarea
+                  className={fieldClass}
+                  value={brief.prompt}
+                  rows={3}
+                  disabled={disabled || busy}
+                  onChange={event => {
+                    setBrief({ ...brief, prompt: event.target.value });
+                    setConfirmation(null);
+                  }}
+                />
+              </label>
+              <label className="block text-xs">
+                音乐风格
+                <input
+                  className={fieldClass}
+                  value={brief.style}
+                  disabled={disabled || busy}
+                  onChange={event => {
+                    setBrief({ ...brief, style: event.target.value });
+                    setConfirmation(null);
+                  }}
+                />
+              </label>
+              <button
+                className={buttonClass}
+                disabled={
+                  disabled ||
+                  busy ||
+                  state.pendingOperations.some(row => row.kind === "bgm")
+                }
+                onClick={() => {
+                  if (
+                    current.current.state.musicJobIds.length >= 100 ||
+                    current.current.state.pendingOperations.length >= 100
+                  ) {
+                    setError(
+                      "配乐记录或待处理任务已达 100 条上限，原数据保留，本次不提交。"
+                    );
+                    return;
+                  }
+                  setConfirmation({ kind: "bgm", brief });
+                }}
+              >
+                生成这版配乐 · {CANVAS_BGM_CREDITS_PER_RUN} 积分
+              </button>
+            </>
+          )}
+        </div>
+      </details>
+  </>;
   return (
     <section
       aria-label="逐句配音、配乐与事件音效"
@@ -745,37 +891,40 @@ export function CanvasAudioStudioView({
       onPointerDown={event => event.stopPropagation()}
       onKeyDown={event => event.stopPropagation()}
     >
-      <h3 className="text-sm font-semibold">逐句配音 · 配乐 · 事件音效</h3>
-      {/* 对照图 02 第三格：当前片段 / 角色配音 / 背景音乐 三块摘要 + 轨道口径（混合轨不伪装多轨） */}
-      <div
-        data-manhua-sound-summary
-        data-manhua-sound-multitrack={soundSummary.hasRealMultitrack ? "1" : "0"}
-        className="rounded-md border border-sky-200/20 bg-sky-500/[0.06] px-2 py-1.5"
-      >
-        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-          <span className="text-[12px] font-semibold text-sky-50">{soundSummary.headlineZh}</span>
-          {soundSummary.speakersZh.length ? (
-            <span className="text-[10px] text-white/45">{soundSummary.speakersZh.join(" · ")}</span>
-          ) : null}
-          {soundSummary.adoptedCount ? (
-            <span className="text-[10px] text-emerald-100/75">已采用 {soundSummary.adoptedCount} 条对白</span>
-          ) : null}
-        </div>
-        {soundSummary.trackNoteZh ? (
-          <p className="mt-0.5 text-[10px] leading-4 text-amber-100/80">{soundSummary.trackNoteZh}</p>
-        ) : null}
-        {soundSummary.emptyZh ? (
-          <p className="mt-0.5 text-[10px] leading-4 text-white/45">{soundSummary.emptyZh}</p>
-        ) : null}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold">对白与配乐</h3>
+        <span className="text-[11px] text-white/50">逐句试听 · 分段采用 · 保留原版本</span>
+      </div>
+      <div data-manhua-sound-summary data-manhua-sound-multitrack={soundSummary.hasRealMultitrack ? "1" : "0"} className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)]">
+        <section aria-label="当前片段声音预览" className="flex min-w-0 items-start gap-3 rounded-xl border border-sky-200/20 bg-sky-500/[0.06] p-3">
+          {block.outputUrl ? <video aria-label="当前片段画面" src={block.outputUrl} controls playsInline preload="metadata" className="aspect-[4/3] w-28 shrink-0 rounded-lg bg-black object-contain"/> : <div className="flex min-h-20 w-28 shrink-0 items-center justify-center rounded-lg border border-dashed border-white/15 bg-black/20 p-3 text-center text-xs text-white/45">本段尚无成片画面，可先制作并试听声音。</div>}
+          <div className="min-w-0 flex-1"><div className="flex flex-wrap items-baseline justify-between gap-2"><h4 className="text-sm font-semibold text-sky-50">第{soundSummary.segmentIndex}段</h4><span className="text-xs text-white/60">{durationSec} 秒</span></div>
+          <p className="mt-1 text-[11px] text-white/50">声音时间从本段 0 秒开始</p>
+          {state.pendingOperations.length > 0 && <p role="status" className="mt-2 text-xs text-sky-100">{state.pendingOperations.length} 项原任务处理中</p>}
+          {soundSummary.trackNoteZh && <p className="mt-2 text-[11px] leading-4 text-amber-100/80">{soundSummary.trackNoteZh}</p>}
+          {soundSummary.emptyZh && <p className="mt-2 text-[11px] leading-4 text-white/45">{soundSummary.emptyZh}</p>}
+          {!soundSummary.hasRealMultitrack && !soundSummary.trackNoteZh && Boolean(block.seedance25RefAudioUrls?.length) && <p className="mt-2 text-[11px] leading-4 text-amber-100/80">本段已挂参考音频，尚未确认对白与配乐各自采用；这不是多轨证明。</p>}
+          </div>
+        </section>
+        <section aria-label="角色配音摘要" className="min-w-0 rounded-xl border border-white/15 bg-white/[0.03] p-3">
+          <h4 className="text-sm font-semibold">角色配音 <span className="text-white/45">{soundSummary.speakerCount}</span></h4>
+          <div className="mt-3 flex flex-wrap gap-2">{soundSummary.speakersZh.map(speaker => <span key={speaker} className="max-w-full break-words rounded-lg border border-sky-200/20 bg-sky-500/10 px-2 py-1.5 text-xs">{speaker}</span>)}</div>
+          <p className="mt-3 text-xs text-white/60">{soundSummary.dialogueCount} 句对白 · 已采用 {soundSummary.adoptedCount} 句</p>
+          <p className="mt-1 text-[11px] leading-4 text-white/45">{soundSummary.dialogueCount ? "按角色保留音色，每句独立试听与确认。" : "在下方添加对白，填写角色与台词。"}</p>
+        </section>
+        <section aria-label="背景音乐与音效摘要" className="min-w-0 rounded-xl border border-fuchsia-200/20 bg-fuchsia-500/[0.04] p-3">
+          <h4 className="text-sm font-semibold">背景音乐 <span className="text-white/45">{state.cues.filter(cue => cue.kind === "bgm").length}</span></h4>
+          <p className="mt-3 text-xs text-white/60">已采用 {state.cues.filter(cue => cue.kind === "bgm" && hasAdoptedManhuaAudio(cue)).length} 段 · 原曲任务 {state.musicJobIds.length} 个</p>
+          <div className="mt-3 border-t border-white/10 pt-3"><h4 className="text-xs font-semibold">事件音效 · {soundSummary.sfxCount} 条</h4><p className="mt-1 text-[11px] text-white/50">已采用 {state.cues.filter(cue => cue.kind === "sfx" && hasAdoptedManhuaAudio(cue)).length} 条</p></div>
+          <p className="mt-3 text-[11px] leading-4 text-white/45">配乐与音效各自裁切，保留对白窗与留白。</p>
+        </section>
       </div>
       <p className="text-xs text-amber-100">
-        逐段声音投料目前仅支持加长成片的多模态参考；其他引擎可制作、试听音频，但不自动用于出片。
-        {block.videoModel !== "seedance-2.5"
-          ? "当前引擎不支持逐段声音投料，请在生成付费音频前确认用途。"
-          : ""}
+        {canvasAudioCapabilityHint(block)}
+        母轨仅用于本段正常出片，局部编辑、视频延长和试片不注入母轨；出片前仍会校验音轨采用状态、母轨版本及容量。
       </p>
-      <details open>
-        <summary className="text-xs text-sky-100">先看本段剧本与对白</summary>
+      <details className="rounded-lg border border-white/10 bg-black/15 p-2">
+        <summary className="cursor-pointer text-xs text-sky-100">本段剧本与对白</summary>
         <pre className="mt-2 max-h-44 overflow-auto whitespace-pre-wrap text-xs leading-5 text-white/70">
           {block.prompt ||
             "先在视频节点填写剧本，再逐句添加对白或逐段添加音乐。"}
@@ -785,24 +934,14 @@ export function CanvasAudioStudioView({
         本段 {durationSec} 秒，时间从本段 0
         秒开始。每次只处理一段。生成后先试听，再确认秒窗；对白独立投料，合听预览不代替口型绑定。
       </p>
-      <div className="flex flex-wrap gap-2">
-        <button
-          className={buttonClass}
-          disabled={disabled || busy}
-          onClick={() => addCue("dialogue")}
-        >
-          添加一句对白
-        </button>
-        <button
-          className={buttonClass}
-          disabled={disabled || busy}
-          onClick={() => addCue("bgm")}
-        >
-          添加一段配乐
-        </button>
-        <button className={buttonClass} disabled={disabled || busy} onClick={() => addCue("sfx")}>添加事件音效</button>
-      </div>
+      {(["dialogue", "bgm", "sfx"] as const).map(kind => <section key={kind} data-audio-group={kind} aria-label={{ dialogue: "角色配音编辑", bgm: "背景音乐编辑", sfx: "事件音效编辑" }[kind]} className="min-w-0 space-y-3 rounded-xl border border-white/15 bg-black/15 p-3">
+        <header className="flex flex-wrap items-center justify-between gap-2">
+          <div><h3 className="text-sm font-semibold">{{ dialogue: "角色配音", bgm: "背景音乐", sfx: "事件音效" }[kind]} <span className="text-xs font-normal text-white/45">{state.cues.filter(cue => cue.kind === kind).length} {kind === "dialogue" ? "句" : kind === "bgm" ? "段" : "条"}</span></h3><p className="mt-1 text-[11px] text-white/45">{{ dialogue: "写台词、选音色，试听后逐句采用。", bgm: "选原曲、裁秒窗，控制留白与对白避让。", sfx: "为片中实际发生的动作选音效，按秒点采用。" }[kind]}</p></div>
+          <button type="button" className={buttonClass} disabled={disabled || busy} onClick={() => addCue(kind)}>{{ dialogue: "添加一句对白", bgm: "添加一段配乐", sfx: "添加事件音效" }[kind]}</button>
+        </header>
+        {!state.cues.some(cue => cue.kind === kind) && <p className="rounded-lg border border-dashed border-white/10 p-3 text-xs text-white/40">{{ dialogue: "还没有对白。每句生成前单独确认费用，生成后保留候选。", bgm: "还没有分段配乐。可选择已有原曲，或展开下方原曲制作。", sfx: "还没有事件音效。仅为本段需要的动作添加，不自动补声音。" }[kind]}</p>}
       {state.cues.map((cue, index) => {
+        if (cue.kind !== kind) return null;
         const pending = state.pendingOperations.some(
           row => row.cueId === cue.id
         );
@@ -839,7 +978,7 @@ export function CanvasAudioStudioView({
           <article
             key={cue.id}
             data-cue-id={cue.id}
-            className="space-y-2 border-t border-white/15 pt-3"
+            className="min-w-0 space-y-2 rounded-lg border border-white/10 bg-white/[0.02] p-3"
           >
             <label className="flex items-center gap-2 text-xs">
               <input
@@ -1140,6 +1279,7 @@ export function CanvasAudioStudioView({
                 <div key={take.id} className="space-y-1 rounded bg-white/5 p-2">
                   <div className="text-xs">
                     候选 {takeIndex + 1} · {take.durationSec.toFixed(2)} 秒{" "}
+                    {cue.selectedTakeId === take.id && hasAdoptedManhuaAudio(cue) ? <span className="ml-1 rounded bg-emerald-500/15 px-1.5 py-0.5 text-emerald-100">已采用</span> : null}
                     {take.inputKey !== canvasAudioCueInputKey(cue)
                       ? "· 修改前版本，保留试听"
                       : ""}
@@ -1188,149 +1328,8 @@ export function CanvasAudioStudioView({
           </article>
         );
       })}
-      {musicJobs.filter(job => Number.isSafeInteger(job.missingVariants) && Number(job.missingVariants) > 0).map(job => (
-        <p key={job.jobId} role="status" className="text-xs text-amber-200">
-          {job.titleZh}：已保留 {job.variants.length} 个版本，另有 {job.missingVariants} 个版本未交付。请保留原任务等待核对，不要重复生成。
-        </p>
-      ))}
-      <details className="border-t border-white/15 pt-2">
-        <summary className="text-xs font-semibold">
-          生成配乐原曲 · 保留所有版本
-        </summary>
-        <div className="mt-2 space-y-2">
-          <label className="block text-xs">
-            剧情与情绪推进
-            <textarea
-              className={fieldClass}
-              aria-label="配乐剧情与情绪推进"
-              rows={3}
-              value={musicPrompt}
-              disabled={disabled || busy}
-              onChange={event => {
-                setMusicPrompt(event.target.value);
-                setBrief(null);
-                setConfirmation(null);
-              }}
-            />
-          </label>
-          <label className="block text-xs">
-            原曲目标时长
-            <input
-              className={fieldClass}
-              type="number"
-              min="1"
-              max="3600"
-              value={musicDuration}
-              disabled={disabled || busy}
-              onChange={event => {
-                setMusicDuration(Number(event.target.value));
-                setBrief(null);
-                setConfirmation(null);
-              }}
-            />
-          </label>
-          {bgmModels?.length ? (
-            <label className="block text-xs">
-              配乐来源
-              <select
-                aria-label="配乐来源"
-                className={fieldClass}
-                value={bgmModel}
-                disabled={disabled || busy}
-                onChange={event => {
-                  setBgmModel(event.target.value as typeof bgmModel);
-                  setBrief(null);
-                  setConfirmation(null);
-                }}
-              >
-                {bgmModels.map(item => (
-                  <option key={item.model} value={item.model}>
-                    {item.labelZh}
-                  </option>
-                ))}
-              </select>
-              <span className="mt-1 block text-[10px] text-amber-200/80">
-                v6 走 TTAPI 网关，按段表时长出整曲，成品再按段表裁。
-              </span>
-            </label>
-          ) : null}
-          <button
-            className={buttonClass}
-            disabled={disabled || busy || !musicPrompt.trim()}
-            onClick={() =>
-              void action(async () => {
-                const result = await services.draftMusic({
-                  laneZh: "本段剧情配乐",
-                  durationSec: musicDuration,
-                  moods: ["蓄力", "冲突", "反转", "收束"],
-                  moodArcZh: musicPrompt,
-                  titleZh: "剧情配乐",
-                  model: bgmModel,
-                });
-                setBrief(result.brief);
-              })
-            }
-          >
-            整理配乐要求 · 免费
-          </button>
-          {brief && (
-            <>
-              {brief.model !== "suno-v5.5-beta" ? (
-                <p className="text-[10px] text-amber-200/80">
-                  来源：{BGM_BRIEF_MODEL_LABEL_ZH[brief.model]}
-                </p>
-              ) : null}
-              <label className="block text-xs">
-                配乐要求
-                <textarea
-                  className={fieldClass}
-                  value={brief.prompt}
-                  rows={3}
-                  disabled={disabled || busy}
-                  onChange={event => {
-                    setBrief({ ...brief, prompt: event.target.value });
-                    setConfirmation(null);
-                  }}
-                />
-              </label>
-              <label className="block text-xs">
-                音乐风格
-                <input
-                  className={fieldClass}
-                  value={brief.style}
-                  disabled={disabled || busy}
-                  onChange={event => {
-                    setBrief({ ...brief, style: event.target.value });
-                    setConfirmation(null);
-                  }}
-                />
-              </label>
-              <button
-                className={buttonClass}
-                disabled={
-                  disabled ||
-                  busy ||
-                  state.pendingOperations.some(row => row.kind === "bgm")
-                }
-                onClick={() => {
-                  if (
-                    current.current.state.musicJobIds.length >= 100 ||
-                    current.current.state.pendingOperations.length >= 100
-                  ) {
-                    setError(
-                      "配乐记录或待处理任务已达 100 条上限，原数据保留，本次不提交。"
-                    );
-                    return;
-                  }
-                  setConfirmation({ kind: "bgm", brief });
-                }}
-              >
-                生成这版配乐 · {CANVAS_BGM_CREDITS_PER_RUN} 积分
-              </button>
-            </>
-          )}
-        </div>
-      </details>
+      {kind === "bgm" ? musicLibraryPanel : null}
+      </section>)}
       {confirmation && (
         <div
           role="dialog"

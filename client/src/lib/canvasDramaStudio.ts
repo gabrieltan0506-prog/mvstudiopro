@@ -181,6 +181,7 @@ import {
   MANHUA_KEYARTS_PER_SEGMENT_MIN,
   MANHUA_SEGMENT_DEFAULT,
   parseWorkbenchShotsFromTextResult,
+  hasExplicitManhuaShotBlocks,
   parseManhuaClipTargetDurationSec,
   resolveClipLocalSegmentIndex,
   resolveClipSegmentIndex,
@@ -1912,7 +1913,7 @@ export function resolveShotsForEpisodeKeyartsResult(
   // 三类节点遵循同一成稿优先顺序；旧段表必须先编译，不能误落逐镜解析骨架。
   const selectedText = shotSource || reverseText || beatsText || storyText;
   const selectedPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(selectedText);
-  const result = selectedPlan.segments.length
+  const result = selectedPlan.segments.length && !hasExplicitManhuaShotBlocks(selectedText)
     ? { shots: buildWorkbenchShotsFromSegmentPlan(selectedPlan), isFallback: false }
     : parseWorkbenchShotsFromTextResult(selectedText);
   const withAngles = applyShotAnglesFromText(result.shots, `${reverseText}\n${beatsText}`);
@@ -2272,12 +2273,18 @@ export function ensureManhuaFragmentClips(
       !/-s\d{2,}(?:-|$)/.test(b.id) &&
       !/-g\d{2,}(?:-|$)/i.test(b.id),
   );
+  const currentClipIds = new Set(queuedManhuaClipBlocks(blocks, ep, clipVideoModel).map(block => block.id));
   const existingSegClips = blocks.filter(
     (b) =>
       b.id.startsWith("clip-") &&
       sameEpisode(b) &&
       !b.archivedFromPreviousScript &&
       (/-g\d{2,}(?:-|$)/i.test(b.id) || /-s\d{2,}(?:-|$)/.test(b.id)),
+  ).sort((a, b) =>
+    // 与工作台保持同一候选与顺序，避免数组顺序让预览/配音对象在提交前被归档。
+    Number(currentClipIds.has(b.id)) - Number(currentClipIds.has(a.id)) ||
+    resolveClipLocalSegmentIndex(a.id, a.prompt, ep) - resolveClipLocalSegmentIndex(b.id, b.prompt, ep) ||
+    a.id.localeCompare(b.id),
   );
   /** 键 = 全集连续段号；兼容旧集内 g01 重计 */
   const clipBySeg = new Map<number, CanvasBlock>();
@@ -4107,6 +4114,44 @@ export async function prepareManhuaFactoryClipInput(input: {
   return { preparedBlock: runBlockPayload, upstream: { visionImages, texts } };
 }
 
+/** 首次生成与重出共用真实集/镜身份；编译其他镜只作临时上下文，不写回。 */
+export function prepareManhuaKeyartShotTarget(
+  blocks: CanvasBlock[], edges: CanvasEdge[], episodeIndex: number, shotIndex: number,
+  options?: ManhuaFragmentClipEnsureOptions, expectedBlockId?: string,
+): { blocks: CanvasBlock[]; edges: CanvasEdge[]; targetBlockId: string } {
+  if (!Number.isInteger(episodeIndex) || episodeIndex < 1 || !Number.isInteger(shotIndex) || shotIndex < 1) {
+    throw new Error("单镜目标无效，本次未提交");
+  }
+  const source = resolveShotsForEpisodeKeyartsResult(blocks, episodeIndex);
+  if (source.isFallback || !source.shots.some((shot) => shot.index === shotIndex)) {
+    throw new Error("当前剧本中找不到该镜，请重新选择；本次未提交");
+  }
+  const sameShot = (block: CanvasBlock) => block.id.startsWith("keyart-") &&
+    !block.archivedFromPreviousScript && getBlockEpisodeIndex(block) === episodeIndex &&
+    resolveKeyartShotIndex(block.id, block.prompt) === shotIndex;
+  const existing = blocks.filter(sameShot);
+  if (existing.length > 1 || (expectedBlockId && !existing.some((block) => block.id === expectedBlockId))) {
+    throw new Error("单镜节点身份不匹配或重复，请重新选择；本次未提交");
+  }
+  const reverse = blocks.find((block) => block.id.startsWith("reverse-") && getBlockEpisodeIndex(block) === episodeIndex);
+  if (!reverse) throw new Error("当前集分镜来源未就绪，本次未提交");
+  let prepared = blocks;
+  if (!blocks.some((block) => block.id.startsWith("keyart-") && !block.archivedFromPreviousScript && getBlockEpisodeIndex(block) === episodeIndex)) {
+    const template = spawnManhuaDramaStudio({ topic: "", episodeIndex, customRefs: options?.customRefs || undefined, assetCanon: options?.assetCanon || undefined }).blocks.find((block) => block.id.startsWith("keyart-"))!;
+    prepared = [...blocks, { ...template, parentId: reverse.id }];
+  }
+  const expanded = expandManhuaShotKeyartsAfterReverse(prepared, edges, reverse.id, options);
+  const targets = expanded.blocks.filter(sameShot);
+  if (targets.length !== 1) throw new Error("当前镜静帧节点未就绪，本次未提交");
+  const target: CanvasBlock = { ...targets[0]!, imageBatchCount: 1 };
+  const nextBlocks = blocks.some((block) => block.id === target.id)
+    ? blocks.map((block) => block.id === target.id ? target : block)
+    : [...blocks, target];
+  const ids = new Set(nextBlocks.map((block) => block.id));
+  const nextEdges = [...edges.filter((edge) => edge.toId !== target.id), ...expanded.edges.filter((edge) => edge.toId === target.id && ids.has(edge.fromId))];
+  return { blocks: nextBlocks, edges: nextEdges, targetBlockId: target.id };
+}
+
 export async function runManhuaDramaFactoryPipeline(opts: {
   deps: CanvasRunDeps;
   blocks: CanvasBlock[];
@@ -4118,6 +4163,8 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   forceFromStage?: ManhuaFactoryStageKey;
   /** 仅执行这些已铺好的节点；用于工作台单镜重出，不重跑同集其他静帧。 */
   targetBlockIds?: string[];
+  /** 明确的原镜号：首次生成与重出静帧共用，解析失败不得退回整集。 */
+  keyartShotIndex?: number;
   /** 工作台「生成片段」：展开后按镜号解析 target（优先于传入的 targetBlockIds）。 */
   fragmentShotIndex?: number;
   skipDone?: boolean;
@@ -4219,7 +4266,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   const hadPoisonedRecapLink = opts.blocks.some(
     (b) => b.id.startsWith("story-") && Boolean(b.parentId?.startsWith("recap_card-")),
   );
-  const sanitized = preparedVideoEdit
+  const sanitized = preparedVideoEdit || opts.keyartShotIndex !== undefined
     ? { blocks: opts.blocks.map((b) => ({ ...b })), edges: opts.edges }
     : sanitizeManhuaRecapUpstreamLinks(opts.blocks.map((b) => ({ ...b })), opts.edges);
   let working = sanitized.blocks;
@@ -4234,9 +4281,21 @@ export async function runManhuaDramaFactoryPipeline(opts: {
           .filter((entry): entry is readonly [string, CanvasBlock] => Boolean(entry)),
       )
     : null;
-  if (hadPoisonedRecapLink && !preparedVideoEdit) {
+  if (hadPoisonedRecapLink && !preparedVideoEdit && opts.keyartShotIndex === undefined) {
     // 旧画布误挂 recap→story 时，写回清理后的 parentId，避免手点节点仍吃到提要图
     opts.onBlocksChange?.(working);
+  }
+  let singleKeyartTarget: string | undefined;
+  if (opts.keyartShotIndex !== undefined) {
+    try {
+      if (opts.untilStage !== "keyart" || opts.fragmentShotIndex !== undefined || opts.targetBlockIds && opts.targetBlockIds.length !== 1) throw new Error("单镜运行范围不匹配，本次未提交");
+      const prepared = prepareManhuaKeyartShotTarget(working, edges, opts.episodeIndex!, opts.keyartShotIndex, ensureOptions, opts.targetBlockIds?.[0]);
+      working = prepared.blocks;
+      edges = prepared.edges;
+      singleKeyartTarget = prepared.targetBlockId;
+    } catch (error) {
+      return { blocks: opts.blocks, completedIds: [], skippedIds: [], errors: [{ id: "keyart-target", message: error instanceof Error ? error.message : "单镜目标无效" }], awaitingConfirmationIds: [], pausedDownstreamIds: [] };
+    }
   }
   // 若反推已完成，先按镜展开静帧，避免只跑一张
   const reverseReady = working.find(
@@ -4247,7 +4306,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
         (getBlockEpisodeIndex(b) ?? 1) === opts.episodeIndex) &&
       Boolean(b.outputText?.trim()),
   );
-  if (!preparedVideoEdit && reverseReady) {
+  if (!singleKeyartTarget && !preparedVideoEdit && reverseReady) {
     const expanded = expandManhuaShotKeyartsAfterReverse(working, edges, reverseReady.id, {
       ...ensureOptions,
     });
@@ -4270,7 +4329,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
     opts.onBlocksChange?.(working);
   }
 
-  let resolvedTargetIds = opts.targetBlockIds;
+  let resolvedTargetIds = singleKeyartTarget ? [singleKeyartTarget] : opts.targetBlockIds;
   let resolvedForceFromStage = opts.forceFromStage;
   if (
     !preparedVideoEdit &&
@@ -4527,6 +4586,9 @@ export async function runManhuaDramaFactoryPipeline(opts: {
               visionImages,
               texts,
             });
+            if (singleKeyartTarget && !out.outputUrl && !out.outputUrls?.length) {
+              throw new Error("当前镜未返回有效图片，旧图已保留");
+            }
             let next = working.map((b) =>
               b.id === kid
                 ? {
@@ -4544,7 +4606,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
                   }
                 : b,
             );
-            next = enrichDownstreamPrompts(next, kid);
+            if (!singleKeyartTarget) next = enrichDownstreamPrompts(next, kid);
             publish(next);
             completedIds.push(kid);
             opts.onStageDone?.(kid, Math.max(0, localIndex), keyartBatchTotal, kLabel);

@@ -75,7 +75,7 @@ it("工厂原工作台直接打开音轨，切段分别保存且不跳画布或�
       timeout: 10000,
     });
     await page.click('[data-manhua-action="open-audio-studio"]');
-    await page.waitForSelector('section[aria-label="逐句配音与分段配乐"]');
+    await page.waitForSelector('section[aria-label="逐句配音、配乐与事件音效"]');
     const add = () =>
       page.evaluate(() => {
         const button = Array.from(document.querySelectorAll("button")).find(b =>

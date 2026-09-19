@@ -579,9 +579,84 @@ type ParsedShotRow = {
   index: number;
   cameraZh: string;
   actionZh: string;
+  cameraAngleId?: string;
   /** 原稿明确给出秒位时保留实长；无时间的旧表仍由段编排决定。 */
   durationSec?: number;
 } & Partial<ManhuaPerformanceCue>;
+
+/** 编剧多行镜块：标题负责摄影，续行负责表演；段内镜号可重新从 1 开始。 */
+function multilineShotHeader(line: string): { cameraZh: string; durationSec?: number } | undefined {
+  const title = line.trim().replace(/^#{1,6}\s*/, "").replace(/^[-*•]\s+/, "").replace(/^\d{1,3}\s*[.、:：)]\s*/, "").replace(/^\*\*|\*\*$/g, "");
+  const match = title.match(/^(?:镜头|镜)\s*\d{1,3}(?:\s*[（(]([^）)]+)[）)])?\s*[｜|]\s*(.+)$/);
+  if (!match) return undefined;
+  const camera: string[] = [];
+  let durationSec: number | undefined;
+  for (const part of [match[1], ...match[2].split(/[｜|]/)].filter(Boolean) as string[]) {
+    const cell = part.trim();
+    const interval = cell.match(/^(?:秒位\s*[:：]\s*)?(\d+(?:\.\d+)?)\s*(?:-|–|—|~|～|至)\s*(\d+(?:\.\d+)?)\s*(?:s|秒)$/i);
+    const duration = cell.match(/^(?:时长\s*[:：]\s*)?(\d+(?:\.\d+)?)\s*(?:s|秒)$/i);
+    const seconds = interval ? Number(interval[2]) - Number(interval[1]) : duration ? Number(duration[1]) : undefined;
+    if (seconds !== undefined) {
+      if (!(seconds > 0) || (durationSec !== undefined && Math.abs(durationSec - seconds) > 0.001)) return undefined;
+      durationSec = seconds;
+    } else camera.push(cell);
+  }
+  const cameraZh = camera.join("，");
+  return /景|特写|机位|视角|过肩|仰|俯|平视|顶视|鸟瞰|第一人称|主观|正面|侧面|背面|斜侧|推|拉|移|摇|跟|环绕|升|降|固定|静止|手持/.test(cameraZh) ? { cameraZh, durationSec } : undefined;
+}
+
+/** 段标题中已有逐镜正文时不能再把每段重建成默认三镜。 */
+export function hasExplicitManhuaShotBlocks(text: string): boolean {
+  return parseMultilineShotBlocks(extractManhuaStoryboardSection(text)).length > 0;
+}
+
+function parseMultilineShotBlocks(text: string): ParsedShotRow[] {
+  const rows: ParsedShotRow[] = [];
+  let headerCount = 0;
+  let invalidHeader = false;
+  let current: { cameraZh: string; durationSec?: number; lines: string[] } | undefined;
+  const flush = () => {
+    if (!current) return;
+    const dialogue: string[] = [];
+    const action: string[] = [];
+    for (const line of current.lines) {
+      const match = line.replace(/\*\*/g, "").match(/^(?:[-*•]\s*)?(?:台词|对白)\s*[:：]\s*(.*)$/);
+      if (match) {
+        if (match[1] && !/^(?:无|无对白|无台词|[-—–]+)$/.test(match[1].trim())) dialogue.push(match[1].trim());
+      } else action.push(line);
+    }
+    // 空标题不能挤掉旧段表；不能把标签本身当成动作正文。
+    const hasAction = action.some(line => line.replace(/\*\*/g, "").replace(/^(?:[-*•]\s*)?(?:动作链|动作|对手互动|道具入画|微表情|增量)\s*[:：]\s*/, "").trim());
+    if (!hasAction) { current = undefined; return; }
+    rows.push(enrichRowWithPerformance({
+      index: rows.length + 1,
+      cameraZh: current.cameraZh,
+      durationSec: current.durationSec,
+      actionZh: action.join("\n"),
+      dialogueZh: dialogue.join("\n") || undefined,
+      ...(/过肩|仰拍|仰视|俯拍|俯视|平视|顶视|鸟瞰|第一人称|主观|正面|侧面|背面|斜侧/.test(current.cameraZh)
+        ? { cameraAngleId: recommendManhuaCameraAngleFromText(current.cameraZh).id } : {}),
+    }));
+    current = undefined;
+  };
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    const header = multilineShotHeader(line);
+    if (header) {
+      flush();
+      headerCount++;
+      current = { ...header, lines: [] };
+    } else if (/^(?:#{1,6}\s*)?(?:[-*•]\s+)?(?:\d{1,3}\s*[.、:：)]\s*)?\*{0,2}(?:镜头|镜)\s*\d{1,3}(?:\s*[（(][^）)]*[）)])?\s*[｜|]/.test(line)) {
+      // 镜标题候选不是上一镜动作；任一坏标题使本组回到旧解析/段表合同。
+      flush();
+      invalidHeader = true;
+    } else if (/^#{1,6}\s|^[-*_]{3,}$/.test(line)) {
+      flush();
+    } else if (current && line) current.lines.push(line);
+  }
+  flush();
+  return !invalidHeader && rows.length === headerCount ? rows : [];
+}
 
 function enrichRowWithPerformance(row: ParsedShotRow): ParsedShotRow {
   const camNorm = normalizeManhuaShotCameraLanguage({
@@ -621,6 +696,9 @@ function parseShotRowsFromText(raw: string): ParsedShotRow[] {
           ? undefined : row.dialogueZh,
     }));
   }
+
+  const multiline = parseMultilineShotBlocks(section);
+  if (multiline.length) return multiline;
 
   const lines = section
     .split(/\r?\n/)
@@ -698,13 +776,14 @@ export function parseWorkbenchShotsFromTextResult(raw: string | undefined | null
   if (!text) return { shots: defaultWorkbenchShots(), isFallback: true };
 
   const rows = parseShotRowsFromText(text);
-  if (rows.length < 2) return { shots: defaultWorkbenchShots(text.slice(0, 180)), isFallback: true };
+  if (!rows.length || (rows.length < 2 && !hasExplicitManhuaShotBlocks(text))) return { shots: defaultWorkbenchShots(text.slice(0, 180)), isFallback: true };
 
   // 重新编号为 1..n；有原稿秒位则保留，无秒位的旧表仍使用 0 占位。
   const shots = rows.map((row, i) => ({
     index: i + 1,
     durationSec: row.durationSec || 0,
     cameraZh: row.cameraZh || DEFAULT_CAMERAS[i % DEFAULT_CAMERAS.length]!,
+    ...(row.cameraAngleId ? { cameraAngleId: row.cameraAngleId } : {}),
     // 动作参与静帧、角色匹配、成片和修订身份；展示长度不能静默裁掉生产正文。
     actionZh: row.actionZh,
     dialogueZh: row.dialogueZh || undefined,
