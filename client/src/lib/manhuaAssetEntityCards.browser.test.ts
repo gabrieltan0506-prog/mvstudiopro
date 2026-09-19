@@ -122,7 +122,7 @@ beforeAll(async () => {
               directionCanon={{
                 mainCardId: 'main',
                 cards: [
-                  { id: 'main', labelZh: '信息位置可控', rules: [{ id: 'm1', ruleZh: '手法一', stages: ['story','storyboard'], status: 'formal' }] },
+                  { id: 'main', labelZh: '信息位置可控', rules: [{ id: 'm1', ruleZh: '手法一', stages: ['story','storyboard'], status: 'formal' }, { id: 'm2', ruleZh: '手法二', stages: ['storyboard'], status: 'formal' }] },
                   { id: 'fight', labelZh: '动作改变关系', rules: [{ id: 'f1', ruleZh: '手法二', stages: ['keyframe'], status: 'formal' }] },
                 ],
                 authorizedCardIds: ['main', 'fight'],
@@ -320,6 +320,7 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
       };
     });
     expect(seen, "阻断卡没有渲染出来").not.toBeNull();
+    if (!seen) throw new Error("阻断卡未挂载");
     expect(seen.count).toBe("2");
     expect(seen.headline).toBe("本步卡着 1 条，全片共 2 条要解");
     // 夹具里「后续阶段」那条排在数组第一个：排序失效页面顺序就会反过来（变异验过会红）
@@ -507,7 +508,8 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
     expect(stale).not.toContain("已完成");
 
     const fresh = await readStage("finalCutStale={false} finalCutStaleReasonZh=''");
-    expect(fresh).toContain("已完成");
+    expect(fresh).not.toContain("已完成");
+    expect(fresh).toContain("需处理");
     expect(fresh).not.toContain("需重合成");
   }, 180_000);
 
@@ -608,11 +610,11 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
             import { createRoot } from 'react-dom/client';
             import { CanvasAudioStudioView } from './client/src/components/canvas/CanvasAudioStudio';
             import { defaultCanvasBlock } from './client/src/lib/canvasTypes';
-            import { emptyCanvasAudioStudio, createCanvasAudioCue } from './shared/canvasAudioStudio';
-            const cue = (kind, id, speakerZh, selectedTakeId) => ({
-              ...createCanvasAudioCue(kind, id), speakerZh, textZh: '别怕，站我身后。',
-              ...(selectedTakeId ? { selectedTakeId, takes: [{ id: selectedTakeId, gcsUri: 'gs://b/a.wav', previewUrl: '', durationSec: 2, createdAt: '2026-09-19', inputKey: 'k' }] } : {}),
-            });
+            import { emptyCanvasAudioStudio, createCanvasAudioCue, canvasAudioCueInputKey } from './shared/canvasAudioStudio';
+            const cue = (kind, id, speakerZh, selectedTakeId) => {
+              const value = { ...createCanvasAudioCue(kind, id), speakerZh, textZh: '别怕，站我身后。', approved: Boolean(selectedTakeId) };
+              return selectedTakeId ? { ...value, selectedTakeId, takes: [{ id: selectedTakeId, gcsUri: 'gs://b/a.wav', previewUrl: '', durationSec: 2, createdAt: '2026-09-19', inputKey: canvasAudioCueInputKey(value) }] } : value;
+            };
             const block = {
               ...defaultCanvasBlock('video', 0, 0),
               id: 'clip-e01-g01-audio', episodeIndex: 1, videoModel: 'seedance-2.5',
@@ -677,9 +679,9 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
     expect(premix.multitrack).toBe("0");
     expect(premix.text).toContain("不是多轨");
 
-    // 对白已采用 + 有配乐任务：才算真多轨
+    // 对白与配乐均有当前输入对应的已采用产物，才算多轨
     const real = await mountAudio(
-      "audioStudio: { ...emptyCanvasAudioStudio(), cues: [cue('dialogue','line-1','阿菁','take-1'), cue('dialogue','line-2','掌柜','take-2')], musicJobIds: ['job-1'] },",
+      "audioStudio: { ...emptyCanvasAudioStudio(), cues: [cue('dialogue','line-1','阿菁','take-1'), cue('dialogue','line-2','掌柜','take-2'), cue('bgm','music-1','','music-take-1')], musicJobIds: [] },",
     );
     expect(real.multitrack).toBe("1");
     expect(real.text).toContain("角色配音 2");

@@ -89,3 +89,9 @@ describe("选中的节点是不是当前这一段", () => {
     expect(manhuaCanvasNodeBelongsToSegment(of("clip-e01-g02-x", "【第2段·10s】"), current)).not.toBe("unknown");
   });
 });
+
+it("缺集身份的节点不能冒充当前集", () => {
+ const identity = readManhuaCanvasNodeIdentity({ blockId: "clip-unknown-g02", prompt: "【第2段】" });
+ expect(identity?.episode).toBeNull();
+ expect(manhuaCanvasNodeBelongsToSegment(identity, { episode: 1, segmentIndex: 2 })).toBe("unknown");
+});

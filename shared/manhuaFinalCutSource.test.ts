@@ -32,8 +32,8 @@ describe("长片用料指纹", () => {
       { episodeIndex: 1, segmentIndex: 2, clipUrl: "https://x/b.mp4" },
     ]);
     expect(key.startsWith("2|")).toBe(true);
-    expect(key).toContain("e1s1@");
-    expect(key).toContain("e1s2@");
+    expect(key).toContain("e1s1");
+    expect(key).toContain("e1s2");
   });
 });
 
@@ -75,4 +75,13 @@ describe("终审是否在拿旧料充当完成", () => {
     expect(manhuaFinalCutStaleOf({ versionSourceKey: current, currentSourceKey: "", currentCount: 0 }))
       .toEqual({ stale: false, reasonZh: "" });
   });
+});
+
+it("裁切、镜头重排、不同路径的同名媒体都会改变用料身份", () => {
+ const row = { blockId: "clip-1", clipUrl: "https://x/a/" + "z".repeat(80) + ".mp4", trimInSec: 0, trimOutSec: 10 };
+ const key = manhuaFinalCutSourceKey([row]);
+ expect(manhuaFinalCutSourceKey([{ ...row, trimInSec: 1 }])).not.toBe(key);
+ expect(manhuaFinalCutSourceKey([{ ...row, clipUrl: row.clipUrl.replace("/a/", "/b/") }])).not.toBe(key);
+ const pieces = [{ shotIndex: 1, timelineOrder: 1, trimInSec: 0, trimOutSec: 5 }, { shotIndex: 2, timelineOrder: 2, trimInSec: 5, trimOutSec: 10 }];
+ expect(manhuaFinalCutSourceKey([{ ...row, shotPieces: pieces }])).not.toBe(manhuaFinalCutSourceKey([{ ...row, shotPieces: pieces.map(p => ({ ...p, timelineOrder: 3 - p.timelineOrder })) }]));
 });

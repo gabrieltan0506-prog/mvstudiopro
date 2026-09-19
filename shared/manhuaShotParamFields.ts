@@ -57,7 +57,7 @@ export type ManhuaShotParamFields = {
 const UNSET = "未标注";
 
 function pick(vocab: readonly string[], text: string): string {
-  for (const word of vocab) if (text.includes(word)) return word;
+  for (const word of [...vocab].sort((a, b) => b.length - a.length)) if (text.includes(word)) return word;
   return "";
 }
 

@@ -8,7 +8,7 @@
  * 这里的硬规矩：**没有证据的项一律 "unknown"（未检），绝不写成「通过」。**
  * 线上那份「智能质检」在没有成片时就是没跑过——那时候写「通过」是骗人。
  */
-export type ManhuaFinalCheckState = "pass" | "fail" | "unknown";
+export type ManhuaFinalCheckState = "pass" | "fail" | "unknown" | "not_required";
 
 export type ManhuaFinalCheckItem = {
   id: "content" | "picture" | "audio" | "subtitle" | "cut_fresh";
@@ -39,6 +39,9 @@ export function buildManhuaFinalReviewChecklist(input: {
   /** 关键静帧总数与其中过了垫图锁的数量 */
   keyartTotal: number;
   keyartPixelLocked: number;
+  /** 段视频实际质检，静帧锁不等于成片画质。 */
+  qualityPassedClips?: number;
+  qualityFailedClips?: number;
   /** 有独立音轨（对白已采用 + 有配乐）的段数；没有声音任务时传 0 */
   segmentsWithAudio: number;
   /** 用户是否要求字幕 */
@@ -47,6 +50,7 @@ export function buildManhuaFinalReviewChecklist(input: {
   subtitleReady: boolean;
   /** 长片是否用旧料合的（manhuaFinalCutSource 的判定） */
   finalCutStale: boolean;
+  finalCutVerified?: boolean;
   /** 有没有长片 */
   hasFinalVideo: boolean;
 }): ManhuaFinalReviewChecklist {
@@ -63,27 +67,22 @@ export function buildManhuaFinalReviewChecklist(input: {
   );
 
   items.push(
-    input.keyartTotal === 0
-      ? { id: "picture", labelZh: "画面质量", state: "unknown", detailZh: "还没有关键静帧，未检" }
-      : input.keyartPixelLocked >= input.keyartTotal
-        ? { id: "picture", labelZh: "画面质量", state: "pass", detailZh: `${input.keyartPixelLocked}/${input.keyartTotal} 张静帧过了垫图锁` }
-        : {
-            id: "picture",
-            labelZh: "画面质量",
-            state: "fail",
-            detailZh: `${input.keyartTotal - input.keyartPixelLocked} 张静帧没过垫图锁，不能出片`,
-          },
+    (input.qualityFailedClips || 0) > 0
+      ? { id: "picture", labelZh: "画面质量", state: "fail", detailZh: `${input.qualityFailedClips} 段成片质检未通过，请返回对应片段处理` }
+      : planned > 0 && (input.qualityPassedClips || 0) >= planned
+        ? { id: "picture", labelZh: "画面质量", state: "pass", detailZh: `${input.qualityPassedClips}/${planned} 段成片质检通过` }
+        : { id: "picture", labelZh: "画面质量", state: "unknown", detailZh: `成片质检通过 ${input.qualityPassedClips || 0}/${planned} 段；静帧垫图锁不代表成片画质` },
   );
 
   items.push(
-    input.segmentsWithAudio > 0
+    planned > 0 && input.segmentsWithAudio >= planned
       ? { id: "audio", labelZh: "音频配乐", state: "pass", detailZh: `${input.segmentsWithAudio} 段有独立音轨` }
-      : { id: "audio", labelZh: "音频配乐", state: "unknown", detailZh: "没有任何段做过对白或配乐，未检" },
+      : { id: "audio", labelZh: "音频配乐", state: "unknown", detailZh: "独立音轨尚未齐备，成片声音需试听确认" },
   );
 
   items.push(
     !input.subtitleRequired
-      ? { id: "subtitle", labelZh: "字幕信息", state: "unknown", detailZh: "本片未要求字幕，未检" }
+      ? { id: "subtitle", labelZh: "字幕信息", state: "not_required", detailZh: "本片未要求字幕，不作为终审必需项" }
       : input.subtitleReady
         ? { id: "subtitle", labelZh: "字幕信息", state: "pass", detailZh: "字幕时间轴已生成" }
         : { id: "subtitle", labelZh: "字幕信息", state: "fail", detailZh: "要求了字幕但还没有时间轴" },
@@ -94,7 +93,9 @@ export function buildManhuaFinalReviewChecklist(input: {
       ? { id: "cut_fresh", labelZh: "成片用料", state: "unknown", detailZh: "还没有长片，未检" }
       : input.finalCutStale
         ? { id: "cut_fresh", labelZh: "成片用料", state: "fail", detailZh: "长片是旧料合的，需重合成" }
-        : { id: "cut_fresh", labelZh: "成片用料", state: "pass", detailZh: "长片用的就是当前这批镜头" },
+        : input.finalCutVerified
+          ? { id: "cut_fresh", labelZh: "成片用料", state: "pass", detailZh: "长片用的就是当前这批镜头" }
+          : { id: "cut_fresh", labelZh: "成片用料", state: "unknown", detailZh: "缺少可核对的用料记录，请确认成片版本" },
   );
 
   const passCount = items.filter((i) => i.state === "pass").length;
@@ -108,7 +109,7 @@ export function buildManhuaFinalReviewChecklist(input: {
     summaryZh: unknownCount
       ? `${passCount}/${items.length} 项通过 · ${unknownCount} 项未检`
       : `${passCount}/${items.length} 项通过`,
-    blockingZh: failCount ? `存在 ${failCount} 处需处理的问题，才能通过终审` : "",
-    readyForFinal: passCount === items.length,
+    blockingZh: failCount ? `存在 ${failCount} 处需处理的问题，才能通过终审` : unknownCount ? `还有 ${unknownCount} 项未检，需核对后终审` : "",
+    readyForFinal: input.hasFinalVideo && failCount === 0 && unknownCount === 0,
   };
 }

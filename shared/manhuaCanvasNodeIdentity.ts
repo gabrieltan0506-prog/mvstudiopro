@@ -100,6 +100,6 @@ export function manhuaCanvasNodeBelongsToSegment(
 ): "current" | "other" | "unknown" {
   if (!identity) return "unknown";
   if (identity.episode && identity.episode !== current.episode) return "other";
-  if (!identity.segmentIndex) return "unknown";
+  if (!identity.episode || !identity.segmentIndex) return "unknown";
   return identity.segmentIndex === current.segmentIndex ? "current" : "other";
 }

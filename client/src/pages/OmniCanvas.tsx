@@ -274,6 +274,9 @@ import {
   summarizeManhuaProjectBible,
   type ManhuaProjectBible,
 } from "@shared/manhuaProjectBible";
+import { projectManhuaStoryEmotionForSegment,
+  manhuaStoryEmotionIsStale,
+} from "@shared/manhuaStoryEmotion";
 import {
   buildManhuaDirectionCanonFromSelection,
   type ManhuaDirectionSelection,
@@ -865,6 +868,11 @@ export default function OmniCanvas() {
     () => directorBoardHttpsByEpisodeSegment(directorBoardBySegment),
     [directorBoardBySegment],
   );
+  /**
+   * 0919 本段戏核：把 Bible 里的剧情情绪投影成「集 → 段 → 一行中文」。
+   * 只传投影结果给段编译，不传整份分析——提示词里塞完整节拍表会把秒轴挤掉。
+   * 没做分析时整张表为空，段编译一个字都不注入。
+   */
   const [factoryTopic, setFactoryTopic] = useState(
     () => initialWriterSession?.topic || initialFactoryPrefs.topic || "",
   );
@@ -1092,6 +1100,57 @@ export default function OmniCanvas() {
   );
   /** 0902：扩写前后逐行对比（高亮）——「全部扩写也没列出对比」用户拍板 */
   const [writerPackDiff, setWriterPackDiff] = useState<WriterPackDiffResult | null>(null);
+  /**
+   * 剧本版本标识：拿当集正文算，换稿即变 → 旧分析自动标失效。
+   *
+   * 0919 探针实锤：原先用「长度 + 前 24 字」，把第 37 字「银镯」改成「玉佩」时 key 不变，
+   * 旧分析被静默沿用 —— 同长度改字在润色阶段是常事。改成逐字符滚动哈希（FNV-1a，
+   * 全文都进去），仍然只存指纹不存正文。
+   */
+  const storyEmotionScriptVersionKey = useMemo(() => {
+    const fingerprint = (bodyZh: string) => {
+      let h = 0x811c9dc5;
+      for (let i = 0; i < bodyZh.length; i += 1) {
+        h ^= bodyZh.charCodeAt(i);
+        h = Math.imul(h, 0x01000193) >>> 0;
+      }
+      return h.toString(36);
+    };
+    const eps = writerPack?.episodes || [];
+    return eps
+      .map((e) => {
+        const bodyZh = String(e.body || "");
+        return `${e.index}:${bodyZh.length}:${fingerprint(bodyZh)}`;
+      })
+      .join("|");
+  }, [writerPack]);
+  /**
+   * 下游唯一可消费的那份分析：**换过剧本的旧稿在这里就被挡掉**（返回 null）。
+   * 面板横幅写的「下游不会采用」在接线之前只是句话，接上之后必须真的成立（0919 探针点名）。
+   * 段提示词与配乐都从这一处取，不各自判一次失效。
+   */
+  const storyEmotionForDownstream = useMemo(() => {
+    const analysis = projectBible?.storyEmotion;
+    if (!analysis) return null;
+    return manhuaStoryEmotionIsStale(analysis, storyEmotionScriptVersionKey) ? null : analysis;
+  }, [projectBible?.storyEmotion, storyEmotionScriptVersionKey]);
+  const storyEmotionLineByEpisodeSegment = useMemo(() => {
+    const analysis = storyEmotionForDownstream;
+    if (!analysis) return {};
+    const out: Record<number, Record<number, string>> = {};
+    for (const point of analysis.curve) {
+      const line = projectManhuaStoryEmotionForSegment(analysis, point.episode, point.segmentIndex);
+      if (!line) continue;
+      (out[point.episode] ||= {})[point.segmentIndex] = line;
+    }
+    // 只有节拍、没有情绪点的段也要给出戏核
+    for (const beat of analysis.beats) {
+      if (out[beat.episode]?.[beat.segmentIndex]) continue;
+      const line = projectManhuaStoryEmotionForSegment(analysis, beat.episode, beat.segmentIndex);
+      if (line) (out[beat.episode] ||= {})[beat.segmentIndex] = line;
+    }
+    return out;
+  }, [storyEmotionForDownstream]);
   const [writerPackDiffOpen, setWriterPackDiffOpen] = useState(false);
   const [writerConfirmed, setWriterConfirmed] = useState(
     () => Boolean(initialWriterSession?.writerConfirmed),
@@ -1477,7 +1536,7 @@ export default function OmniCanvas() {
   const [canvasSelectedBlockId, setCanvasSelectedBlockId] = useState<string | null>(null);
   const finalCutStale = useMemo(() => {
     if (!finalAssembleBlock?.outputUrl || !finalAssembleVideoUrl) {
-      return { stale: false, reasonZh: "" };
+      return { stale: false, reasonZh: "", verified: false };
     }
     const identity = findManhuaFinalVideoVersionIdentity(finalAssembleBlock, finalAssembleVideoUrl);
     const pieces = queuedManhuaClipBlocks(
@@ -1491,13 +1550,16 @@ export default function OmniCanvas() {
         episodeIndex: writerFocusEpisode,
         segmentIndex: resolveClipLocalSegmentIndex(block.id, block.prompt, writerFocusEpisode),
         clipUrl: String(block.outputUrl || "").trim(),
+        trimInSec: block.manhuaEditTrim?.inSec,
+        trimOutSec: block.manhuaEditTrim?.outSec,
+        shotPieces: block.manhuaEditTrim?.shotPieces,
       }));
     const currentSourceKey = manhuaFinalCutSourceKey(pieces);
-    return manhuaFinalCutStaleOf({
+    return { ...manhuaFinalCutStaleOf({
       versionSourceKey: identity?.sourceKey,
       currentSourceKey,
       currentCount: pieces.filter((piece) => piece.clipUrl).length,
-    });
+    }), verified: Boolean(identity?.sourceKey && currentSourceKey && identity.sourceKey === currentSourceKey) };
   }, [
     blocks,
     writerFocusEpisode,
@@ -5009,6 +5071,8 @@ export default function OmniCanvas() {
           writerPack?.episodes.find((e) => e.index === ep)?.body || "";
         const segmentPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(epBody);
         const ensured = ensureManhuaFragmentClips(blocks, edges, ep, {
+          // 段成片提示词吃「本段戏核」：生产者在剧本页折叠区，这里是唯一的喂入口
+          storyEmotionLineByEpisodeSegment,
           segmentCapacityMode: getManhuaSegmentCapacityMode(segmentCapacityModeByEpisode, ep),
           lengthTierId: writerLengthTierId,
           assetCanon: projectBible?.assetCanon,
@@ -5104,6 +5168,7 @@ export default function OmniCanvas() {
       directorBoardUrlByEpisode,
       directorBoardUrlByEpisodeSegment,
       directorBoardMotionOverlayBySegment,
+      storyEmotionLineByEpisodeSegment,
       explicitWriterVideoModel,
       writerVideoModel,
     ],
@@ -6297,6 +6362,7 @@ export default function OmniCanvas() {
       directorStrategyContract,
       directionCanon: confirmedDirectionCanon,
       assetCanon: canon,
+      storyEmotion: projectBible?.storyEmotion,
       manualOverrides: {
         femaleLead: femaleLeadManual,
         maleLead: maleLeadManual,
@@ -6395,6 +6461,7 @@ export default function OmniCanvas() {
     );
     return true;
   }, [
+    projectBible?.storyEmotion,
     writerPack,
     factoryTopic,
     writerVideoModel,
@@ -6534,6 +6601,7 @@ export default function OmniCanvas() {
         directorStrategyContract,
         directionCanon: buildManhuaDirectionCanonFromSelection(directionSelection),
         assetCanon: canon,
+        storyEmotion: projectBible?.storyEmotion,
         manualOverrides: {
           femaleLead: femaleLeadManual,
           maleLead: maleLeadManual,
@@ -6610,6 +6678,7 @@ export default function OmniCanvas() {
       `已按集铺板 ${spawned.episodeCount} 行链（${writerLayoutProfile.labelZh}；实际段数已按原稿秒位计算；旧成品已转存档；坞已预勾选可跑）`,
     );
   }, [
+    projectBible?.storyEmotion,
     writerPack,
     factoryTopic,
     writerVideoModel,
@@ -8685,6 +8754,8 @@ export default function OmniCanvas() {
             // 审阅、10 秒试片、单段、整集、失败续跑共用同一份真实编译上下文。
             // 以前只有工作台审阅传了资产/造型/可拍表，runFactory 会再次 ensure 后把它们冲掉。
             const ensureOptions = {
+              // 段成片提示词吃「本段戏核」：生产者在剧本页折叠区，这里是唯一的喂入口
+              storyEmotionLineByEpisodeSegment,
               assetCanon: projectBible?.assetCanon,
               characterSheetUrlById: collectManhuaCharacterSheetUrlById(
                 workingBlocks,
@@ -9180,6 +9251,7 @@ export default function OmniCanvas() {
       directorBoardUrlByEpisode,
       directorBoardUrlByEpisodeSegment,
       directorBoardMotionOverlayBySegment,
+      storyEmotionLineByEpisodeSegment,
       explicitWriterVideoModel,
       writerVideoModel,
       segmentCapacityModeByEpisode,
@@ -9991,6 +10063,7 @@ export default function OmniCanvas() {
                   canvasSelectedBlockId={canvasSelectedBlockId}
                   finalCutStaleReasonZh={finalCutStale.reasonZh}
                   finalCutStale={finalCutStale.stale}
+                  finalCutVerified={finalCutStale.verified}
                   onOpenAdvisorIssue={(issueId) => {
                     // 点阻断卡里某一条就定位那一条；点阶段条旁的那行仍然定位顶部项
                     const picked = issueId
@@ -10039,6 +10112,13 @@ export default function OmniCanvas() {
                   propIds={factoryPropIds}
                   artStyleLabelZh={getManhuaArtStylePreset(factoryArtStyleId).labelZh}
                   projectBibleSummary={summarizeManhuaProjectBible(projectBible)}
+                  storyEmotion={projectBible?.storyEmotion ?? null}
+                  storyEmotionScriptVersionKey={storyEmotionScriptVersionKey}
+                  onChangeStoryEmotion={
+                    projectBible
+                      ? (next) => setProjectBible({ ...projectBible, storyEmotion: next })
+                      : undefined
+                  }
                   assetCanon={projectBible?.assetCanon}
                   bibleBoundEpisodes={projectBible?.cast.boundEpisodeIndexes}
                   pathTrackLabelZh={pathTrackLabelZh}
@@ -10260,6 +10340,7 @@ export default function OmniCanvas() {
                       ),
                     )
                   }
+                  onCustomAssetSceneSpaceChange={(id, sceneSpace) => setCustomAssetRefs(previous => normalizeManhuaCustomAssetRefs(previous.map(ref => ref.id === id && ref.role === "scene" ? { ...ref, sceneSpace } : ref)))}
                   onCustomAssetLabelChange={setCustomAssetLabel}
                   onDetextCustomAsset={detextCustomAsset}
                   onEditCustomAsset={editCustomAsset}
@@ -10633,6 +10714,8 @@ export default function OmniCanvas() {
                         "";
                       const segmentPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(epBody);
                       const layoutOpts = {
+                        // 段成片提示词吃「本段戏核」：生产者在剧本页折叠区，这里是唯一的喂入口
+                        storyEmotionLineByEpisodeSegment,
                         assetCanon: projectBible?.assetCanon,
                         characterSheetUrlById: sheetUrls,
                         propImageUrlById: collectManhuaPropImageUrlById(
@@ -10694,6 +10777,8 @@ export default function OmniCanvas() {
                         "";
                       const segmentPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(epBody);
                       const layoutOpts = {
+                        // 段成片提示词吃「本段戏核」：生产者在剧本页折叠区，这里是唯一的喂入口
+                        storyEmotionLineByEpisodeSegment,
                         assetCanon: projectBible?.assetCanon,
                         characterSheetUrlById: sheetUrls,
                         propImageUrlById: collectManhuaPropImageUrlById(
@@ -10820,6 +10905,8 @@ export default function OmniCanvas() {
                         "";
                       const segmentPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(epBody);
                       const layoutOpts = {
+                        // 段成片提示词吃「本段戏核」：生产者在剧本页折叠区，这里是唯一的喂入口
+                        storyEmotionLineByEpisodeSegment,
                         assetCanon: projectBible?.assetCanon,
                         characterSheetUrlById: sheetUrls,
                         propImageUrlById: collectManhuaPropImageUrlById(
@@ -12686,6 +12773,7 @@ export default function OmniCanvas() {
                   userId={String(user.id)}
                   userRole={userRole}
                   bgmSeedNoteZh={audioReferenceLock?.bgmNoteZh || ""}
+                  storyEmotion={storyEmotionForDownstream}
                 />
               ) : null}
             </div>

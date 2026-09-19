@@ -42,3 +42,7 @@ describe("当前镜参数四字段", () => {
     expect(buildManhuaShotParamFields({ durationSec: 4.5 }).durationZh).toBe("4.5 秒");
   });
 });
+
+it("较长景别优先，不把大远景切成远景", () => {
+ expect(buildManhuaShotParamFields({ cameraZh: "大远景，固定机位" }).shotSizeZh).toBe("大远景");
+});

@@ -96,14 +96,26 @@ export function deriveManhuaBgmBriefSeed(input: {
   segmentSeconds?: number;
   /** 画布「BGM 风格说明」输入框原文（如「古风弦乐·紧张推进」），作风格锚 */
   bgmNoteZh?: string;
-}): Pick<BgmBriefInput, "laneZh" | "durationSec" | "moods" | "styleAnchorZh" | "endingZh"> {
+  /**
+   * 剧情情绪曲线投影（`projectManhuaStoryEmotionForBgm`）。
+   * 有它就用它当情绪走向真源——编剧确认过的曲线比秒轴标签准；没有就退回标签推导，
+   * 旧项目行为一字不变。留白段在这里变成 [Break]：画面真的要静，不是模型自由发挥。
+   */
+  storyEmotion?: { moods: readonly BgmBeatMood[]; hasSilenceBreak: boolean } | null;
+}): Pick<BgmBriefInput, "laneZh" | "durationSec" | "moods" | "styleAnchorZh" | "endingZh" | "hasSilenceBreak"> {
   const segCount = Math.max(1, input.segmentBeatFunctionsZh.length);
   const perSeg = Math.max(1, Math.floor(input.segmentSeconds ?? BGM_SEED_SEGMENT_SECONDS_DEFAULT));
   const moods: BgmBeatMood[] = [];
-  for (const beats of input.segmentBeatFunctionsZh) {
-    for (const beat of beats) {
-      const mood = BEAT_FUNCTION_TO_MOOD[String(beat).trim()];
-      if (mood && moods.at(-1) !== mood) moods.push(mood);
+  // 编剧确认过的情绪曲线优先；它为空才退回秒轴〔节拍功能〕标签
+  const fromStory = input.storyEmotion?.moods ?? [];
+  if (fromStory.length) {
+    for (const mood of fromStory) if (moods.at(-1) !== mood) moods.push(mood);
+  } else {
+    for (const beats of input.segmentBeatFunctionsZh) {
+      for (const beat of beats) {
+        const mood = BEAT_FUNCTION_TO_MOOD[String(beat).trim()];
+        if (mood && moods.at(-1) !== mood) moods.push(mood);
+      }
     }
   }
   if (!moods.length) moods.push("蓄力", "冲突", "收束");
@@ -117,6 +129,7 @@ export function deriveManhuaBgmBriefSeed(input: {
     styleAnchorZh: note || undefined,
     // 尾钩画面在末段末拍——收尾写死淡出，别让模型自己选
     endingZh: "最后两秒渐弱淡出，不顶在高潮上",
+    ...(input.storyEmotion?.hasSilenceBreak ? { hasSilenceBreak: true } : {}),
   };
 }
 
@@ -218,17 +231,28 @@ export function buildBgmStructurePrompt(input: {
 }): string {
   const lines = ["[Intro - 建置，稀疏]"];
   const seen = new Set<string>();
+  // 0919：留白要插在"最大一刀"之前。原来只认 Peak，于是没有冲突情绪的曲线（例如
+  // 蓄力→反转→收束）虽然画面真的要静，[Break] 却被静默丢掉。改成落在第一个
+  // Peak 或 Turn 之前；两者都没有时收尾前补一次，宁可位置保守也不丢这个字段。
+  // 锚点优先级：爆点 → 转折 → 收尾。落到收尾之后的 [Break] 没有意义，
+  // 所以"收尾前"也算一个合法锚点，最后那次兜底只管循环里压根没出现收尾的情形。
+  const anchorOf = (tag: string) => input.moods.some((m) => MOOD_CUE[m]?.tag === tag);
+  const breakAnchor = anchorOf("Peak") ? "Peak" : anchorOf("Turn") ? "Turn" : anchorOf("Outro") ? "Outro" : "";
   for (const m of input.moods) {
     const cue = MOOD_CUE[m];
     if (!cue) continue;
-    // [Break] 直接对应画面的静音停顿，插在爆点之前
-    if (input.hasSilenceBreak && cue.tag === "Peak" && !seen.has("Break")) {
+    if (input.hasSilenceBreak && breakAnchor && cue.tag === breakAnchor && !seen.has("Break")) {
       lines.push("[Break - 全频静音，最大一刀之前的憋]");
       seen.add("Break");
     }
     if (seen.has(cue.tag)) continue;
     seen.add(cue.tag);
     lines.push(`[${cue.tag} - ${cue.cueZh}]`);
+  }
+  if (input.hasSilenceBreak && !seen.has("Break")) {
+    // 曲线里既没爆点也没转折：留白仍然要有落点，放在收尾之前
+    lines.push("[Break - 全频静音，画面留白处]");
+    seen.add("Break");
   }
   if (!seen.has("Outro")) {
     lines.push(`[Outro - ${input.endingZh?.trim() || "余波不泄，悬着"}]`);

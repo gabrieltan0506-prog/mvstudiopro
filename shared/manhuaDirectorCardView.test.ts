@@ -23,7 +23,7 @@ describe("紧凑导演卡：这一段到底用哪张", () => {
   it("没有场次副卡时走主卡，来源写「集级主卡」，覆盖理由为空", () => {
     const view = buildManhuaDirectorCardView({ canon: canon(), sceneType: "action", hasSpawnedNodes: false })!;
     expect(view.effectiveCardId).toBe("main");
-    expect(view.sourceZh).toBe("集级主卡");
+    expect(view.sourceZh).toBe("系列主卡");
     expect(view.overrideReasonZh).toBe("");
     expect(view.sceneTypeZh).toBe("打戏");
   });
@@ -45,7 +45,7 @@ describe("紧凑导演卡：这一段到底用哪张", () => {
       hasSpawnedNodes: false,
     })!;
     expect(dialogue.effectiveCardId).toBe("main");
-    expect(dialogue.sourceZh).toBe("集级主卡");
+    expect(dialogue.sourceZh).toBe("系列主卡");
   });
 
   it("副卡未授权时如实说明仍走主卡，不静默降级", () => {
@@ -55,7 +55,7 @@ describe("紧凑导演卡：这一段到底用哪张", () => {
       hasSpawnedNodes: false,
     })!;
     expect(view.effectiveCardId).toBe("main");
-    expect(view.overrideReasonZh).toContain("未授权");
+    expect(view.overrideReasonZh).toContain("未获生产准入");
   });
 
   it("副卡只声明部分阶段时，影响预览只报那几处", () => {
@@ -91,4 +91,12 @@ describe("紧凑导演卡：这一段到底用哪张", () => {
       }),
     ).toBeNull();
   });
+});
+
+it("摘要遵守生产准入和覆盖阶段，不把未生效副卡写成当前卡", () => {
+ const c = canon({ sceneOverrides: { action: { cardId: "fight", stages: ["clip"] } } });
+ expect(buildManhuaDirectorCardView({ canon: c, sceneType: "action", stage: "storyboard", hasSpawnedNodes: false })?.effectiveCardId).toBe("main");
+ expect(buildManhuaDirectorCardView({ canon: c, sceneType: "action", stage: "clip", hasSpawnedNodes: false })?.effectiveCardId).toBe("fight");
+ c.authorizedCardIds = ["fight"];
+ expect(buildManhuaDirectorCardView({ canon: c, sceneType: "action", hasSpawnedNodes: false })).toBeNull();
 });

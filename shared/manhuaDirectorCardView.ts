@@ -1,3 +1,4 @@
+import type { ManhuaDirectorStrategyStage } from "./manhuaDirectorStrategy.js";
 /**
  * 紧凑导演卡（对照图 04 的 `mvs-director-continuity`：当前有效手法｜来源范围｜覆盖理由｜影响预览｜连续性提醒）。
  *
@@ -12,7 +13,7 @@ import {
   MANHUA_DIRECTION_STAGES,
   type ManhuaDirectionCanon,
   type ManhuaDirectionSceneType,
-  type ManhuaDirectorStrategyStage,
+  manhuaDirectionCardIsProductionReady,
 } from "./manhuaDirectionCanon.js";
 
 export const MANHUA_DIRECTION_SCENE_TYPE_SHORT_ZH: Record<ManhuaDirectionSceneType, string> = {
@@ -38,7 +39,7 @@ export type ManhuaDirectorCardView = {
   /** 此刻真正生效的卡；没有导演包时为 null（不许编一张默认卡） */
   effectiveCardId: string | null;
   effectiveLabelZh: string;
-  /** 「集级主卡」或「场次副卡·打戏」 */
+  /** 「系列主卡」或「场次副卡·打戏」 */
   sourceZh: string;
   /** 用副卡的理由；走主卡时为空串 */
   overrideReasonZh: string;
@@ -57,33 +58,34 @@ export function buildManhuaDirectorCardView(input: {
   sceneType: ManhuaDirectionSceneType;
   /** 画布上已经铺过节点：换卡不会自动跟着变 */
   hasSpawnedNodes: boolean;
+  stage?: ManhuaDirectorStrategyStage;
 }): ManhuaDirectorCardView | null {
   const canon = input.canon;
   const sceneTypeZh = MANHUA_DIRECTION_SCENE_TYPE_SHORT_ZH[input.sceneType];
   if (!canon?.mainCardId) return null;
   const byId = new Map(canon.cards.map((card) => [card.id, card] as const));
   const main = byId.get(canon.mainCardId);
-  if (!main) return null;
+  if (!main || !canon.authorizedCardIds.includes(main.id) || !manhuaDirectionCardIsProductionReady(main)) return null;
 
   const override = canon.sceneOverrides?.[input.sceneType];
   const sub = override ? byId.get(override.cardId) : undefined;
-  const subAuthorized = Boolean(sub && canon.authorizedCardIds.includes(sub.id));
+  const subAuthorized = Boolean(sub && canon.authorizedCardIds.includes(sub.id) && manhuaDirectionCardIsProductionReady(sub));
   const stages: ManhuaDirectorStrategyStage[] =
     override?.stages?.length ? [...override.stages] : [...MANHUA_DIRECTION_STAGES];
 
-  const effective = subAuthorized && sub ? sub : main;
+  const effective = subAuthorized && sub && (!input.stage || stages.includes(input.stage)) ? sub : main;
   const usingSub = effective.id !== main.id;
 
   return {
     effectiveCardId: effective.id,
     effectiveLabelZh: effective.labelZh,
-    sourceZh: usingSub ? `场次副卡 · ${sceneTypeZh}` : "集级主卡",
+    sourceZh: usingSub ? `场次副卡 · ${sceneTypeZh}` : "系列主卡",
     overrideReasonZh: usingSub
       ? `本段判为${sceneTypeZh}，按场次副卡覆盖主卡「${main.labelZh}」`
       : sub && !subAuthorized
-        ? `本段判为${sceneTypeZh}，副卡「${sub.labelZh}」未授权，仍走主卡`
+        ? `本段判为${sceneTypeZh}，副卡「${sub.labelZh}」未获生产准入，仍走主卡`
         : "",
-    impactZh: `投影到 ${stages.map((stage) => STAGE_LABEL_ZH[stage] || stage).join(" / ")}`,
+    impactZh: `投影到 ${(usingSub ? stages : MANHUA_DIRECTION_STAGES).map((stage) => STAGE_LABEL_ZH[stage] || stage).join(" / ")}`,
     continuityZh: input.hasSpawnedNodes
       ? "换卡后已铺的剧本／分镜／关键帧／成片节点不会自动跟着变，要重铺一次才生效"
       : "",

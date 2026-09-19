@@ -1,3 +1,5 @@
+import { canvasAudioCueSchema, canvasAudioCueInputKey } from "./canvasAudioStudio.js";
+
 /**
  * 对白与配乐面板的「这一段有什么」摘要（纯函数）。
  *
@@ -15,6 +17,16 @@ export type ManhuaSoundCueLike = {
   takes?: readonly unknown[];
   selectedTakeId?: string;
 };
+
+/** 采用必须对应真实、已确认且未失效的音频候选。 */
+export function hasAdoptedManhuaAudio(cue: unknown): boolean {
+  const parsed = canvasAudioCueSchema.safeParse(cue);
+  if (!parsed.success) return false;
+  const value = parsed.data;
+  if (!value.enabled || !value.approved) return false;
+  const take = value.takes.find((item) => item.id === value.selectedTakeId);
+  return Boolean(take && take.inputKey === canvasAudioCueInputKey(value));
+}
 
 export type ManhuaSoundPanelSummary = {
   segmentIndex: number;
@@ -63,10 +75,10 @@ export function buildManhuaSoundPanelSummary(input: {
   const bgmCues = input.cues.filter((cue) => cue.kind === "bgm").length;
   const bgmCount = bgmCues + Math.max(0, Math.floor(Number(input.musicJobCount) || 0));
   const sfxCount = input.cues.filter((cue) => cue.kind === "sfx").length;
-  const adoptedCount = dialogue.filter((cue) => String(cue.selectedTakeId || "").trim()).length;
+  const adoptedCount = dialogue.filter(hasAdoptedManhuaAudio).length;
 
   // 多轨的判据：对白与配乐各自真的有内容。只有预混母轨 ≠ 多轨。
-  const hasRealMultitrack = adoptedCount > 0 && bgmCount > 0;
+  const hasRealMultitrack = adoptedCount > 0 && input.cues.some((cue) => cue.kind === "bgm" && hasAdoptedManhuaAudio(cue));
 
   const parts = [`第${segmentIndex}段`];
   if (durationSec > 0) parts.push(fmtSec(durationSec));

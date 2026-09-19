@@ -1,3 +1,4 @@
+import { compileManhuaSceneSpace } from "@shared/manhuaSceneSpace";
 /**
  * 漫剧工厂：一键铺节点 + 顺序自动跑（故事→角色→节拍→反推→静帧→Seedance）
  * 目标：阿硕级「脚本进、成片出」分步编排核（按阶段跑；不引导一键全自动）。
@@ -2060,6 +2061,12 @@ export type ManhuaFragmentClipEnsureOptions = {
   directorBoardUrlByEpisode?: Record<number, string> | null;
   /** 段级导演板：集号→本集段号→HTTPS。 */
   directorBoardUrlByEpisodeSegment?: Record<number, Record<number, string>> | null;
+  /**
+   * 0919 本段戏核（按集/段）：剧情情绪分析投影出的一行中文，由调用方用
+   * `projectManhuaStoryEmotionForSegment` 算好传进来。缺省＝没做分析，不注入。
+   * 这里收投影结果而不是整份分析：提示词里塞完整节拍表会把秒轴挤掉。
+   */
+  storyEmotionLineByEpisodeSegment?: Record<number, Record<number, string>> | null;
   /** 与底图分离的可编辑矢量层；只有已确认数据会编译进成片提示词。 */
   directorBoardMotionOverlayByEpisodeSegment?: Record<
     number,
@@ -2404,6 +2411,8 @@ export function ensureManhuaFragmentClips(
       segmentDialogueLines: dialogueLines,
       segmentPerformanceZh: planBeat?.performanceZh,
       speakerTagByNameZh,
+      // 0919 本段戏核：剧情情绪分析的段级投影。没做分析就是空串，一个字不注入。
+      storyEmotionLineZh: opts?.storyEmotionLineByEpisodeSegment?.[ep]?.[seg.index],
     });
     const savedDirectorBoardMotionOverlay =
       opts?.directorBoardMotionOverlayByEpisodeSegment?.[ep]?.[seg.index];
@@ -2613,6 +2622,7 @@ export function ensureManhuaFragmentClips(
         stripManhuaPromptSlop(
           [
             timelineBlock,
+            compileManhuaSceneSpace(mergedCustomRefs, segAssets.sceneIds),
             directorStrategyClipLine,
             directionClipLine,
             directorBoardMotionLine,

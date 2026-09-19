@@ -1,3 +1,6 @@
+import { ManhuaSceneSpacePanel } from "./canvas/ManhuaSceneSpacePanel";
+import type { ManhuaSceneSpace } from "@shared/manhuaSceneSpace";
+import { hasAdoptedManhuaAudio } from "@shared/manhuaSoundPanelSummary";
 import { formatManhuaAdvisorAssetGapZh, formatManhuaAdvisorPipeline3dZh } from "@/lib/manhuaAdvisorProject";
 import { collectPreparedRigProfiles } from "@/lib/manhuaPrevisProfiles";
 import ManhuaAutoRigEditor from "@/components/canvas/ManhuaAutoRigEditor";
@@ -300,6 +303,8 @@ import {
 } from "@/lib/manhuaCharacterEntry";
 import { manhuaToolbarActionCost } from "@/lib/manhuaToolbarGroups";
 import type { ManhuaWorkflowPhase } from "@shared/manhuaWriterSession";
+import type { ManhuaStoryEmotion } from "@shared/manhuaStoryEmotion";
+import { ManhuaStoryEmotionPanel } from "./canvas/ManhuaStoryEmotionPanel";
 
 export type ManhuaWorkbenchAdvisorSignals = {
   assetGap: string;
@@ -373,6 +378,11 @@ type Props = {
   artStyleLabelZh?: string;
   /** 专案 Bible 一行摘要（确认编剧后） */
   projectBibleSummary?: string;
+  /** 0919 剧情与情绪（唯一生产者入口在剧本列的折叠区） */
+  storyEmotion?: ManhuaStoryEmotion | null;
+  /** 当前剧本版本标识；换剧本后旧分析标失效 */
+  storyEmotionScriptVersionKey?: string;
+  onChangeStoryEmotion?: (next: ManhuaStoryEmotion | undefined) => void;
   /** 编剧表资产真源：系列人物/道具/场景池 + 每集主场景 */
   assetCanon?: ManhuaWriterAssetCanon | null;
   /** Bible 已绑定造型的集号（1-based） */
@@ -393,6 +403,7 @@ type Props = {
    * 为假时 reason 也可能非空：旧长片没留用料记录，如实说无法核对。
    */
   finalCutStale?: boolean;
+  finalCutVerified?: boolean;
   finalCutStaleReasonZh?: string;
   /** 画布上此刻选中的节点 id（对照图 02：侧栏显示所选镜头）。只读身份，不接管选中。 */
   canvasSelectedBlockId?: string | null;
@@ -506,6 +517,7 @@ type Props = {
   /** 0916 视角图采用到某一镜（同一个开关：已采用则取消） */
   onToggleStageFrameAdoption?: (refId: string, shotId: string) => void;
   /** 手动改名：改成与剧本表一致的名字即被认领（自动识别不追求 100%） */
+  onCustomAssetSceneSpaceChange?: (id: string, space: ManhuaSceneSpace) => void;
   onCustomAssetLabelChange?: (id: string, labelZh: string) => void;
   /** AI 去字（3 分）：物理擦除画面文字 */
   onDetextCustomAsset?: (id: string) => void | Promise<void>;
@@ -782,7 +794,7 @@ function manhuaShotKeyartInputOf(key?: CanvasBlock) {
   const thumb = mediaUrl(key);
   return {
     hasImage: Boolean(thumb),
-    failed: Boolean(key) && (key.status === "error" || Boolean(key.error)) && !thumb,
+    failed: Boolean(key && (key.status === "error" || Boolean(key.error))) && !thumb,
     running: key?.status === "running" && !thumb,
     pixelLocked: Boolean(thumb && key && isManhuaKeyartPixelLocked(key)),
   };
@@ -1086,6 +1098,9 @@ export default function ManhuaScriptWorkbench({
   propIds,
   artStyleLabelZh,
   projectBibleSummary,
+  storyEmotion,
+  storyEmotionScriptVersionKey,
+  onChangeStoryEmotion,
   assetCanon = null,
   bibleBoundEpisodes = [],
   pathTrackLabelZh,
@@ -1096,6 +1111,7 @@ export default function ManhuaScriptWorkbench({
   onActionRecipeIdChange,
   finalVideoUrl,
   finalCutStale = false,
+  finalCutVerified = false,
   finalCutStaleReasonZh = "",
   canvasSelectedBlockId = null,
   onBurnSubtitle,
@@ -1154,6 +1170,7 @@ export default function ManhuaScriptWorkbench({
   onCustomAssetDutyChange,
   onCustomAssetRigSourceChange,
   onCustomAssetLabelChange,
+  onCustomAssetSceneSpaceChange,
   onDetextCustomAsset,
   onEditCustomAsset,
   onCropCustomAsset,
@@ -3067,11 +3084,12 @@ export default function ManhuaScriptWorkbench({
    * 却回答不了用户在分镜阶段真正要问的「这一段用哪张」。
    */
   const activeSegmentSceneType = classifyManhuaDirectionSceneType(
-    [activeSegment?.summaryZh, activeClip?.prompt, activeShot?.actionZh].filter(Boolean).join("\n"),
+    [activeSegment?.shots.map((shot) => [shot.actionZh, shot.dialogueZh].filter(Boolean).join(" ")).join("\n")].filter(Boolean).join("\n"),
   );
   const directorCardView = buildManhuaDirectorCardView({
     canon: directionCanon,
     sceneType: activeSegmentSceneType,
+    stage: "storyboard",
     hasSpawnedNodes: blocks.some((b) => b.id.startsWith("story-") || b.id.startsWith("clip-")),
   });
   /**
@@ -3084,7 +3102,7 @@ export default function ManhuaScriptWorkbench({
     prompt: canvasSelectedBlock?.prompt,
     // 选中的节点可能不在本集 blocks 里（跨集选中、节点已删）：此时 find 返回 undefined，
     // 直接喂给 getBlockEpisodeIndex 会当场崩（浏览器夹具抓到：Cannot read properties of undefined）。
-    episodeIndex: (canvasSelectedBlock ? getBlockEpisodeIndex(canvasSelectedBlock) : undefined) ?? focusEpisode,
+    episodeIndex: canvasSelectedBlock ? getBlockEpisodeIndex(canvasSelectedBlock) : undefined,
     segments,
   });
   const canvasSelectedBelongs = manhuaCanvasNodeBelongsToSegment(canvasSelectedIdentity, {
@@ -3110,7 +3128,7 @@ export default function ManhuaScriptWorkbench({
           <span className="text-[9px] leading-4 text-amber-100/85">
             它不属于当前第 {activeSegNo} 段，右边这些参数改的不是它
           </span>
-          {canvasSelectedIdentity.segmentIndex ? (
+          {canvasSelectedIdentity.segmentIndex && canvasSelectedIdentity.episode === focusEpisode ? (
             <button
               type="button"
               data-manhua-canvas-selection-jump={canvasSelectedIdentity.segmentIndex}
@@ -3167,14 +3185,17 @@ export default function ManhuaScriptWorkbench({
     keyartPixelLocked: episodeKeyarts.filter(
       (b) => Boolean(mediaUrl(b)) && isManhuaKeyartPixelLocked(b),
     ).length,
+    qualityPassedClips: episodeClips.filter((b) => b.status === "done" && clipOutputUrl(b) && b.manhuaClipQuality?.status === "passed").length,
+    qualityFailedClips: episodeClips.filter((b) => b.manhuaClipQuality?.status === "failed").length,
+    finalCutVerified,
     segmentsWithAudio: episodeClips.filter((b) => {
       const cues = b.audioStudio?.cues || [];
-      const adopted = cues.some((cue) => cue.kind === "dialogue" && String(cue.selectedTakeId || "").trim());
-      const bgm = cues.some((cue) => cue.kind === "bgm") || (b.audioStudio?.musicJobIds || []).length > 0;
+      const adopted = cues.some((cue) => cue.kind === "dialogue" && hasAdoptedManhuaAudio(cue));
+      const bgm = cues.some((cue) => cue.kind === "bgm" && hasAdoptedManhuaAudio(cue));
       return adopted && bgm;
     }).length,
     subtitleRequired: Boolean(editSubtitleEnabled || deliveryPackage?.subtitle?.needSubtitles),
-    subtitleReady: Boolean(finalSubtitleTimeline),
+    subtitleReady: Boolean(finalSubtitleTimeline?.cues.some((cue) => cue.textZh.trim())),
     finalCutStale: Boolean(finalCutStale),
     hasFinalVideo: Boolean(finalVideoUrl),
   });
@@ -3373,7 +3394,7 @@ export default function ManhuaScriptWorkbench({
         id: "final",
         label: "终审",
         // 产物在也不等于完成：长片是旧料合的就不算过（对照图 08「避免未验即完成」）
-        complete: Boolean(finalVideoUrl) && !finalCutStale,
+        complete: finalReviewChecklist.readyForFinal,
         // 阶段格的缺口直接引用终审检查清单：用户在阶段条就看得到「卡在哪一项」
         gapZh: finalVideoUrl
           ? finalCutStale
@@ -3410,6 +3431,7 @@ export default function ManhuaScriptWorkbench({
     finalCutStale,
     finalCutStaleReasonZh,
     finalReviewChecklist.blockingZh,
+    finalReviewChecklist.readyForFinal,
     dockSelectedCount,
   ]);
 
@@ -4746,7 +4768,7 @@ export default function ManhuaScriptWorkbench({
                 }`}
               >
                 <span className="mr-1 font-semibold">
-                  {item.state === "pass" ? "通过" : item.state === "fail" ? "不通过" : "未检"}
+                  {item.state === "pass" ? "通过" : item.state === "fail" ? "不通过" : item.state === "not_required" ? "不适用" : "未检"}
                 </span>
                 {item.labelZh}
                 <span className="ml-1 text-white/45">{item.detailZh}</span>
@@ -4901,6 +4923,16 @@ export default function ManhuaScriptWorkbench({
                   </button>
                 ))}
               </div>
+            ) : null}
+            {onChangeStoryEmotion ? (
+              <ManhuaStoryEmotionPanel
+                episode={focusEpisode}
+                segmentCount={segments.length || 1}
+                scriptVersionKey={String(storyEmotionScriptVersionKey || "")}
+                analysis={storyEmotion}
+                disabled={Boolean(factoryBusy)}
+                onChange={onChangeStoryEmotion}
+              />
             ) : null}
             <div className="mt-5 flex flex-wrap items-center gap-2">
               {!outlineConfirmed && writerPackReady && onConfirmOutline ? (
@@ -7141,6 +7173,7 @@ export default function ManhuaScriptWorkbench({
                                   ) : null}
                                 </div>
                               ) : null}
+                              {ref.role === "scene" && onCustomAssetSceneSpaceChange ? <ManhuaSceneSpacePanel asset={ref} disabled={Boolean(factoryBusy)} onChange={space => onCustomAssetSceneSpaceChange(ref.id, space)}/> : null}
                               {groupUseZh || groupAlsoInZh ? (
                                 <div className="flex flex-wrap items-center gap-1">
                                   {groupUseZh ? (

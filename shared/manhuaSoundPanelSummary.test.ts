@@ -1,5 +1,14 @@
+import { createCanvasAudioCue, canvasAudioCueInputKey } from "./canvasAudioStudio";
 import { describe, expect, it } from "vitest";
-import { buildManhuaSoundPanelSummary } from "./manhuaSoundPanelSummary";
+import { buildManhuaSoundPanelSummary, hasAdoptedManhuaAudio } from "./manhuaSoundPanelSummary";
+
+const adopted = (kind: "dialogue" | "bgm") => {
+  const cue = createCanvasAudioCue(kind, kind);
+  cue.approved = true;
+  cue.selectedTakeId = "take-1";
+  cue.takes = [{ id: "take-1", gcsUri: `gs://test-only/${kind}.wav`, previewUrl: "", durationSec: 2, createdAt: "test", inputKey: canvasAudioCueInputKey(cue) }];
+  return cue;
+};
 
 const dialogue = (speakerZh: string, selectedTakeId?: string) => ({
   kind: "dialogue",
@@ -34,7 +43,7 @@ describe("对白与配乐面板摘要", () => {
     const real = buildManhuaSoundPanelSummary({
       segmentIndex: 2,
       durationSec: 10,
-      cues: [dialogue("阿菁", "take-1")],
+      cues: [adopted("dialogue"), adopted("bgm")],
       musicJobCount: 1,
       hasPremixMaster: true,
     });
@@ -74,3 +83,13 @@ describe("对白与配乐面板摘要", () => {
     expect(out.trackNoteZh).toBe("");
   });
 });
+
+ it("任务ID和孤立采用ID不能冒充音轨，旧输入和禁用候选也不计", () => {
+  const pending = buildManhuaSoundPanelSummary({ segmentIndex: 1, durationSec: 15, cues: [dialogue("阿菁", "missing")], musicJobCount: 1 });
+  expect(pending.hasRealMultitrack).toBe(false);
+  expect(pending.adoptedCount).toBe(0);
+  const cue = adopted("dialogue");
+  expect(hasAdoptedManhuaAudio(cue)).toBe(true);
+  expect(hasAdoptedManhuaAudio({ ...cue, enabled: false })).toBe(false);
+  expect(hasAdoptedManhuaAudio({ ...cue, textZh: "改稿" })).toBe(false);
+ });

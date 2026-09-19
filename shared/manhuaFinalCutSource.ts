@@ -17,6 +17,9 @@ export type ManhuaFinalCutPiece = {
   segmentIndex?: number;
   /** 实际那条成片的地址：重出会换 url，所以它就是「这段料的版本」 */
   clipUrl?: string;
+  trimInSec?: number;
+  trimOutSec?: number;
+  shotPieces?: Array<{ shotIndex: number; timelineOrder?: number; trimInSec: number; trimOutSec: number; durationSec?: number }>;
 };
 
 /** 指纹：段身份 + 该段实际用的成片地址，按身份排序后拼。地址变了就是换了料。 */
@@ -30,12 +33,25 @@ export function manhuaFinalCutSourceKey(pieces: readonly ManhuaFinalCutPiece[]):
           0,
           Math.floor(Number(piece.segmentIndex) || 0),
         )}`;
-      // 只取地址尾段：签名/过期参数会变，媒体身份不变
-      const url = String(piece.clipUrl || "").trim().split("?")[0]!.slice(-64);
-      return `${id}@${url}`;
+      // 保留完整媒体身份；只移除续签参数，不能把不同路径的同名文件视为同一版。
+      const rawUrl = String(piece.clipUrl || "").trim();
+      let url = rawUrl;
+      try {
+        const parsed = new URL(rawUrl);
+        for (const key of Array.from(parsed.searchParams.keys())) {
+          if (/^(x-goog-|x-amz-)/i.test(key) || /^(sig|signature|expires|exp|token|googleaccessid)$/i.test(key)) parsed.searchParams.delete(key);
+        }
+        parsed.hash = "";
+        parsed.searchParams.sort();
+        url = parsed.toString();
+      } catch { /* 非标准地址仍完整保留，不能静默截尾。 */ }
+      const cut = piece.shotPieces?.length
+        ? piece.shotPieces.map(p => [p.shotIndex, p.timelineOrder ?? null, p.trimInSec, p.trimOutSec, p.durationSec ?? null])
+        : [piece.trimInSec ?? null, piece.trimOutSec ?? null];
+      return JSON.stringify([id, piece.episodeIndex ?? null, piece.segmentIndex ?? null, url, cut]);
     })
     .sort();
-  return rows.length ? `${rows.length}|${rows.join(",")}` : "";
+  return rows.length ? `${rows.length}|v2|${rows.join(",")}` : "";
 }
 
 export type ManhuaFinalCutStale = {
@@ -67,6 +83,7 @@ export function manhuaFinalCutStaleOf(input: {
       reasonZh: "这条长片没有留下用料记录，无法核对是不是当前这批镜头合的",
     };
   }
+  if (!recorded.includes("|v2|")) return { stale: false, reasonZh: "旧版本只记录媒体，未记录裁切与镜头顺序，无法核对当前剪辑" };
   if (recorded === current) return { stale: false, reasonZh: "" };
   const recordedCount = Number(recorded.split("|")[0] || 0);
   if (recordedCount && recordedCount !== input.currentCount) {
@@ -77,6 +94,6 @@ export function manhuaFinalCutStaleOf(input: {
   }
   return {
     stale: true,
-    reasonZh: "有镜头在合成之后重出过，这条长片用的是旧料 —— 需重合成（旧片仍保留在版本里）",
+    reasonZh: "有镜头在合成之后重出过或修改了裁切／顺序，这条长片用的是旧料 —— 需重合成（旧片仍保留在版本里）",
   };
 }
