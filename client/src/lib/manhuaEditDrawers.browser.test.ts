@@ -104,7 +104,7 @@ it('真实四抽屉裁切进入当前版本合成与持久化，旧版本保留'
  await page.$eval('[data-manhua-edit-section="fine-cut"]',el=>{const label=Array.from(el.querySelectorAll('label')).find(e=>e.textContent?.includes('入点'))!;(Array.from(label.querySelectorAll('button')).find(e=>e.textContent?.trim()==='+') as HTMLButtonElement).click();});
  await page.waitForFunction(()=>(window as any).__ffcProps.blocks.some((b:any)=>b.manhuaEditTrim?.inSec===0.5 || b.manhuaEditTrim?.shotPieces?.some((p:any)=>p.trimInSec===0.5)));
  await page.click('[data-manhua-edit-drawer-toggle="effects"]');expect(await page.$eval('[data-manhua-edit-drawer="effects"]',e=>e.textContent)).toContain('尚未接通');
- await page.click('[data-manhua-edit-drawer-toggle="subtitles"]');expect(await page.$eval('[data-manhua-edit-drawer="subtitles"]',e=>e.textContent)).toContain('默认使用淡化');
+ await page.click('[data-manhua-edit-drawer-toggle="subtitles"]');expect(await page.$eval('[data-manhua-edit-drawer="subtitles"]',e=>e.textContent)).toContain('转场应用于本集片段之间');
  await page.click('[data-manhua-edit-drawer-toggle="export"]');
  await page.$eval('[data-manhua-edit-generate-current]',el=>el.scrollIntoView({block:'center'}));
  const pointer=await page.$eval('[data-manhua-edit-generate-current]',el=>{const r=el.getBoundingClientRect();return {rect:{x:r.x,y:r.y,width:r.width,height:r.height},hit:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.outerHTML};});

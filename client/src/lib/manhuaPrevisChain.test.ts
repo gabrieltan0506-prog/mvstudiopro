@@ -449,4 +449,25 @@ describe("动作白模草稿与最终消费闭环（离线）", () => {
       )
     ).toBe(false);
   });
+  it("系统5秒白模不能冒充15秒全段，旧引用保留且零出片请求", async () => {
+    const state=adopted();state.manhuaSegmentRefs.previs.durationSec=5;
+    state.previsStudio.history[0].durationSec=5;state.previsStudio.history[0].spec=createManhuaPrevisStudio(5,scopeId).spec;
+    const block={...defaultCanvasBlock("video",0,0),id:"clip-e01-g01",videoModel:"seedance-2.5" as const,prompt:"【第1段·15s】0–15s：阿菁护住墨屠。",refImageUrl:"https://test.invalid/keyart.png",...state};
+    const before=structuredClone(block);
+    await expect(runCanvasBlock({userId:"test-user",userRole:"admin",optimizeCopy:async()=>""},block)).rejects.toThrow("系统白模");
+    expect(requests).toHaveLength(0);expect(block).toEqual(before);
+  });
+  it("手动5秒动作参考仍可用于15秒段，不扩大全局门禁", async () => {
+    const block={...defaultCanvasBlock("video",0,0),id:"clip-e01-g01",videoModel:"seedance-2.5" as const,prompt:"【第1段·15s】0–15s：阿菁护住墨屠。",refImageUrl:"https://test.invalid/keyart.png",manhuaSegmentRefs:{previs:{url:"https://test.invalid/manual.mp4",durationSec:5,updatedAt:"2026-09-20"}}};
+    await runCanvasBlock({userId:"test-user",userRole:"admin",optimizeCopy:async()=>""},block);
+    expect(requests).toHaveLength(1);expect(requests[0].videoUrls).toContain("https://test.invalid/manual.mp4");
+  });
+
+  it("同长系统候选归属别镜时实际出片仍拒绝", async () => {
+    const state=adopted();state.previsStudio.history[0].spec.scriptSource={compilerVersion:1,shots:[{index:1,durationSec:10,actionZh:"阿菁护住墨屠"}],unmappedShotIndices:[]};
+    const block={...defaultCanvasBlock("video",0,0),id:"clip-e01-g02",videoModel:"seedance-2.5" as const,prompt:"【第2段·10s】0–10s：阿菁护住墨屠。",refImageUrl:"https://test.invalid/keyart.png",...state,manhuaAutoSegment:{format:"mv-manhua-auto-segment-v1" as const,episodeIndex:1,segmentIndex:2,sourceStartSec:10,sourceEndSec:20,durationSec:10,shotIndexes:[2],revision:"current-segment"}};
+    await expect(runCanvasBlock({userId:"test-user",userRole:"admin",optimizeCopy:async()=>""},block)).rejects.toThrow("别镜");
+    expect(requests).toHaveLength(0);
+  });
+
 });

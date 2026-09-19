@@ -30,7 +30,7 @@ class NodeCompatibleZip {
   }
 }
 
-function exportCallback(deps: Record<string, unknown>) {
+function exportCallback(deps: Record<string, unknown>, callbackName = "exportBackupFile") {
   const source = ts.createSourceFile(
     "OmniCanvas.tsx",
     readFileSync(new URL("../pages/OmniCanvas.tsx", import.meta.url), "utf8"),
@@ -42,7 +42,7 @@ function exportCallback(deps: Record<string, unknown>) {
   function visit(node: ts.Node) {
     if (
       ts.isVariableDeclaration(node) &&
-      node.name.getText(source) === "exportBackupFile" &&
+      node.name.getText(source) === callbackName &&
       node.initializer &&
       ts.isCallExpression(node.initializer)
     )
@@ -80,7 +80,12 @@ type ManifestEntry = { file: string; sourceUrl: string; mime: string };
 function setup(payload: Payload) {
   let downloaded: Blob | undefined;
   const anchor = { href: "", download: "", click: vi.fn() };
-  const toast = { success: vi.fn(), warning: vi.fn(), error: vi.fn() };
+  const toast = { success: vi.fn(), warning: vi.fn(), error: vi.fn(), message: vi.fn() };
+  const backupOperationRef = { current: null as null | "upload" | "restore" | "export" | "import" };
+  const autoBackupInFlightRef = { current: false };
+  const setCloudBackupBusy = vi.fn();
+  const setBackupExportProgress = vi.fn();
+  const loadModule = vi.fn(async () => ({ default: NodeCompatibleZip }));
   const fetchImage = vi.fn(async (_url: string, _options: unknown) => ({
     ok: false,
     blob: async () => new Blob(),
@@ -90,7 +95,17 @@ function setup(payload: Payload) {
   const validateImage = vi.fn(async (blob: Blob, mime: string) => {
     if (mime && !mime.startsWith("image/")) throw new Error("备份图片格式不对");
   });
-  const run = exportCallback({
+  const syncCloudDraftPayload = vi.fn(async (_payload: unknown) => true);
+  const cloudDraftQuery = { refetch: vi.fn(async () => ({ data: { draft: null } })) };
+  const deps = {
+    syncCloudDraftPayload,
+    cloudDraftQuery,
+    lastAutoBackupSerializedRef: { current: "" },
+    applyCloudDraftToUi: vi.fn(),
+    backupOperationRef,
+    autoBackupInFlightRef,
+    setCloudBackupBusy,
+    setBackupExportProgress,
     latestDraftSnapshotRef: { current: { testSnapshot: true } },
     buildLocalCloudDraftSnapshot: () => payload,
     countDraftPayloadStats: () => ({
@@ -107,7 +122,7 @@ function setup(payload: Payload) {
     assetImageGcsUri: () => undefined,
     resolveCanvasMaterialUrl: resolveMaterial,
     fetch: fetchImage,
-    loadModule: async () => ({ default: NodeCompatibleZip }),
+    loadModule,
     document: { createElement: () => anchor },
     URL: {
       createObjectURL: (blob: Blob) => {
@@ -117,9 +132,19 @@ function setup(payload: Payload) {
       revokeObjectURL: revoke,
     },
     toast,
-  });
+  };
+  const run = exportCallback(deps);
   return {
     run,
+    upload: exportCallback(deps, "uploadCloudBackupNow"),
+    restore: exportCallback(deps, "restoreCloudBackupNow"),
+    syncCloudDraftPayload,
+    cloudDraftQuery,
+    backupOperationRef,
+    autoBackupInFlightRef,
+    setCloudBackupBusy,
+    setBackupExportProgress,
+    loadModule,
     toast,
     fetchImage,
     resolveMaterial,
@@ -351,5 +376,40 @@ describe("真实备份导出 ZIP 与图片字节", () => {
     );
     expect(state.toast.success).not.toHaveBeenCalled();
     expect(state.toast.error).not.toHaveBeenCalled();
+  });
+});
+
+describe("真实导出运行反馈与同步门闩", () => {
+  const payload = () => buildManhuaCloudDraftPayload({ writerSession: {}, blocks: [], edges: [], factoryPrefs: { customAssetRefs: [{id: "one", url: url("one")}] } });
+  it("延迟取图同一轮双击只执行一次，部分缺图后解除忙碌并允许重试", async () => {
+    const state=setup(payload());
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => {release=resolve;});
+    state.fetchImage.mockImplementationOnce(async()=>{await pending;return {ok:false,blob:async()=>new Blob()};});
+    const first=state.run(); const duplicate=state.run();
+    expect(state.backupOperationRef.current).toBe("export");
+    expect(state.setCloudBackupBusy).toHaveBeenCalledWith("export");
+    await vi.waitFor(()=>expect(state.fetchImage).toHaveBeenCalledOnce());
+    expect(state.setBackupExportProgress).toHaveBeenCalledWith("正在收集图片 1/1…");
+    expect(state.anchor.click).not.toHaveBeenCalled();
+    await state.upload();await state.restore();
+    expect(state.syncCloudDraftPayload).not.toHaveBeenCalled();expect(state.cloudDraftQuery.refetch).not.toHaveBeenCalled();
+    await duplicate; release(); await first;
+    expect(state.anchor.click).toHaveBeenCalledOnce();expect(state.toast.warning).toHaveBeenCalledOnce();
+    expect(state.backupOperationRef.current).toBeNull();expect(state.setCloudBackupBusy).toHaveBeenLastCalledWith(null);expect(state.setBackupExportProgress).toHaveBeenLastCalledWith(null);
+    await state.run();expect(state.anchor.click).toHaveBeenCalledTimes(2);
+    let finishUpload!:()=>void;
+    state.syncCloudDraftPayload.mockImplementationOnce(async()=>{await new Promise<void>(resolve=>{finishUpload=resolve;});return true;});
+    const upload=state.upload();await state.run();
+    expect(state.loadModule).toHaveBeenCalledTimes(2);expect(state.backupOperationRef.current).toBe("upload");
+    finishUpload();await upload;expect(state.backupOperationRef.current).toBeNull();
+  });
+  it("打包加载异常释放锁，可再次成功导出；云操作或自动备份在途不交错", async () => {
+    const state=setup(payload());
+    state.backupOperationRef.current="restore";await state.run();expect(state.loadModule).not.toHaveBeenCalled();
+    state.backupOperationRef.current=null;state.autoBackupInFlightRef.current=true;await state.run();expect(state.toast.message).toHaveBeenCalledWith("自动备份正在进行，请稍后再试");expect(state.loadModule).not.toHaveBeenCalled();
+    state.autoBackupInFlightRef.current=false;state.loadModule.mockRejectedValueOnce(new Error("测试打包失败"));
+    await state.run();expect(state.toast.error).toHaveBeenCalledWith("测试打包失败");expect(state.backupOperationRef.current).toBeNull();expect(state.setCloudBackupBusy).toHaveBeenLastCalledWith(null);
+    await state.run();expect(state.anchor.click).toHaveBeenCalledOnce();
   });
 });

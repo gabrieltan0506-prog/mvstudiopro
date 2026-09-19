@@ -1,3 +1,4 @@
+import { manhuaGeneratedPrevisCoverageIssue } from "@shared/manhuaPrevisScope";
 import { compileManhua3dImageTreatment } from "@shared/manhua3dMaterialPrompt";
 import { DEFAULT_CANVAS_VIDEO_MODEL, isCanvasWan30VideoModel, normalizeCanvasVideoModel, type CanvasBlock } from "./canvasTypes";
 import { compileCanvasAudioBindings, assertCanvasAudioMasterCurrent } from "@shared/canvasAudioStudio";
@@ -3227,6 +3228,13 @@ async function runCanvasBlockInner(
       if(segmentRefs?.previs?.motionGuideZh && !manhuaSegmentReferenceFitsCap(segmentRefs.previs,segmentCapSec)){
         throw new Error(`已采用的动作白模超过当前参考视频 ${segmentCapSec} 秒上限；请缩短白模后重新采用。本次未提交，旧参考保留。`);
       }
+      const previsCoverageIssue = manhuaGeneratedPrevisCoverageIssue({
+        reference: segmentRefs?.previs,
+        studio: block.previsStudio,
+        durationSec: clipDuration,
+        shotIndexes: block.manhuaAutoSegment?.shotIndexes,
+      });
+      if (previsCoverageIssue) throw new Error(previsCoverageIssue);
       const segmentPrevisUrl = manhuaSegmentReferenceFitsCap(segmentRefs?.previs, segmentCapSec)
         ? await freshManhuaSegmentReferenceUrl(segmentRefs.previs)
         : undefined;

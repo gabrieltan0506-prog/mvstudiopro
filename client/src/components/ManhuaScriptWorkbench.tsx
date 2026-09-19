@@ -1,3 +1,4 @@
+import { manhuaEditTransitionOf, type ManhuaEditTransition } from "@shared/manhuaEditTransition";
 import { buildManhuaEditMultitrack } from "@shared/manhuaEditMultitrack";
 import { ManhuaDirectionOverridePanel } from "./canvas/ManhuaDirectionOverridePanel";
 import type { ManhuaDirectionOverride } from "@shared/manhuaDirectionCanon";
@@ -404,6 +405,8 @@ type Props = {
   finalVideoUrl?: string | null;
   onGenerateCurrentVersion?: (episodeIndex: number) => void;
   currentVersionCredits?: number;
+  editTransitionByEpisode?: Record<string, ManhuaEditTransition>;
+  onEditTransitionChange?: (episode: number, next: ManhuaEditTransition) => void;
   /**
    * 终审那条长片是不是旧料合的（判据在 shared/manhuaFinalCutSource.ts）。
    * `finalCutStale` 为真时阶段条不许显示「终审已完成」—— 产物在，但不是当前这批镜头的。
@@ -1129,6 +1132,8 @@ export default function ManhuaScriptWorkbench({
   finalVideoUrl,
   onGenerateCurrentVersion,
   currentVersionCredits,
+  editTransitionByEpisode,
+  onEditTransitionChange,
   finalCutStale = false,
   finalCutVerified = false,
   finalCutStaleReasonZh = "",
@@ -8072,6 +8077,8 @@ export default function ManhuaScriptWorkbench({
             {fineCutInCanvas ? <button type="button" onClick={onReturnFineCutReview} className="rounded border px-3 py-1">返回工厂终审</button> : onOpenFineCutCanvas && <button type="button" onClick={onOpenFineCutCanvas} className="rounded border px-3 py-1">到自由画布精剪</button>}
           </div>
           <ManhuaEditMultitrackPanel
+            editTransition={manhuaEditTransitionOf(editTransitionByEpisode, focusEpisode)}
+            onEditTransitionChange={onEditTransitionChange ? next => onEditTransitionChange(focusEpisode, next) : undefined}
             onGenerateCurrentVersion={onGenerateCurrentVersion ? () => onGenerateCurrentVersion(focusEpisode) : undefined}
             currentVersionCredits={currentVersionCredits}
             roughClips={roughClips}

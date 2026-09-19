@@ -6,6 +6,8 @@ export type ManhuaTimedStoryboardRow = {
   cameraZh: string;
   actionZh: string;
   dialogueZh: string;
+  /** 混合音频列中明确与台词分开的音效/配乐，不能作为对白朗读。 */
+  soundZh?: string;
 };
 
 /** 保留既有工作台的区块优先级，确认门禁同时检查区块外是否还藏有另一份原镜。 */
@@ -38,6 +40,39 @@ function splitTimedTableCells(line: string): string[] {
   return cells;
 }
 
+/** 只拆明确带说话人和引号的对白；不把未标明的混合说明猜成台词。 */
+function splitReverseAudio(value: string): { dialogueZh: string; soundZh: string; error?: string } {
+  const raw = value.trim();
+  const soundLabel = /^(?:音效|环境声|配乐|音乐|BGM)[:：]/i;
+  const quotedSpeech = /[^:：「」“”『』"＋+]{1,80}[:：]\s*(?:「[^」]+」|“[^”]+”|『[^』]+』|"[^"]+")/;
+  const spoken = new RegExp(`^(${quotedSpeech.source})`);
+  const noDialogue = raw.match(/^(?:无对白|无|[-—–]+)(?:\s*[＋+]\s*(.+))?$/);
+  const tail = noDialogue?.[1]?.trim() || "";
+  if (noDialogue && !quotedSpeech.test(tail.replace(soundLabel, "")) && (!/[:：]/.test(tail) || soundLabel.test(tail)))
+    return { dialogueZh: "无", soundZh: tail };
+  if (soundLabel.test(raw) && /[:：]\s*\S/.test(raw))
+    return { dialogueZh: "无", soundZh: raw, ...(quotedSpeech.test(raw.replace(soundLabel, "")) ? { error: "音频标签与引用对白混用，请明确分开" } : {}) };
+
+  const dialogue: string[] = [];
+  let rest = raw;
+  while (rest) {
+    const match = rest.match(spoken);
+    if (!match) break;
+    dialogue.push(match[1].trim());
+    rest = rest.slice(match[0].length).trim();
+    if (!rest) return { dialogueZh: dialogue.join("\n"), soundZh: "" };
+    if (spoken.test(rest)) continue;
+    if (!/^[＋+]/.test(rest)) break;
+    rest = rest.slice(1).trim();
+    if (!rest) return { dialogueZh: dialogue.join("\n"), soundZh: "", error: "音频分隔符后缺少内容" };
+    if (!spoken.test(rest)) {
+      if (/[「」“”『』"]/.test(rest) || /[:：]/.test(rest) && !/^(?:音效|环境声|配乐|音乐|BGM)[:：]/i.test(rest)) break;
+      return { dialogueZh: dialogue.join("\n"), soundZh: rest };
+    }
+  }
+  return { dialogueZh: "", soundZh: raw, error: "音频列含未明确的对白/音效，请标明说话人及引号，或标注无对白/音效" };
+}
+
 function readTimedRows(text: string): {
   recognized: boolean;
   rows: ManhuaTimedStoryboardRow[];
@@ -50,9 +85,11 @@ function readTimedRows(text: string): {
   let columns: {
     index: number;
     time: number;
-    camera: number;
+    camera: number[];
     action: number;
     dialogue: number;
+    duration: number;
+    startClock: boolean;
   } | null = null;
   for (const raw of String(text || "").split(/\r?\n/)) {
     const line = raw.trim();
@@ -66,20 +103,25 @@ function readTimedRows(text: string): {
     if (cells.every(cell => /^[-: ]*$/.test(cell))) continue;
     const headings = cells.map(cell => cell.replace(/\*\*/g, ""));
     const time = headings.findIndex(cell =>
-      /^(?:秒位|时间|时间轴|起止秒位)$/.test(cell)
+      /^(?:秒位|时间|时间轴|起止秒位|约时码)$/.test(cell)
     );
     if (time >= 0) {
       recognized = true;
       columnCount = cells.length;
+      const startClock = headings[time] === "约时码";
       columns = {
         index: headings.findIndex(cell => /^(?:#|镜号|序号|镜头)$/.test(cell)),
         time,
-        camera: headings.findIndex(cell => /景别|运镜|机位/.test(cell)),
-        action: headings.findIndex(cell => /^(?:画面|内容|动作)$/.test(cell)),
-        dialogue: headings.findIndex(cell => /台词|对白/.test(cell)),
+        camera: startClock
+          ? ["景别", "角度", "运镜"].map(heading => headings.indexOf(heading))
+          : [headings.findIndex(cell => /景别|运镜|机位/.test(cell))],
+        action: headings.findIndex(cell => /^(?:画面|内容|动作|主体动作)$/.test(cell)),
+        dialogue: headings.findIndex(cell => startClock ? cell === "音频" : /台词|对白/.test(cell)),
+        duration: headings.indexOf("时长建议"),
+        startClock,
       };
-      if (Object.values(columns).some(value => value < 0))
-        errors.push("秒位分镜表缺镜号、秒位、景别/运镜、画面或对白列");
+      if ([columns.index, columns.time, columns.action, columns.dialogue, ...columns.camera].some(value => value < 0) || startClock && columns.duration < 0)
+        errors.push(startClock ? "约时码分镜表缺镜号、约时码、景别/角度/运镜、主体动作、音频或时长建议列" : "秒位分镜表缺镜号、秒位、景别/运镜、画面或对白列");
       continue;
     }
     if (!columns) continue;
@@ -92,15 +134,23 @@ function readTimedRows(text: string): {
     const match = (cells[columns.time] || "").match(
       /^(\d+(?:\.\d+)?)\s*(?:-|–|—|~|～|至)\s*(\d+(?:\.\d+)?)\s*(?:s|秒)?$/i
     );
-    const row = {
+    const clock = columns.startClock ? (cells[columns.time] || "").match(/^(\d+):([0-5]\d(?:\.\d+)?)$/) : null;
+    const duration = columns.startClock ? (cells[columns.duration] || "").match(/^(\d+(?:\.\d+)?)\s*(?:s|秒)$/i) : null;
+    const startSec = columns.startClock ? (clock ? Number(clock[1]) * 60 + Number(clock[2]) : NaN) : (match ? Number(match[1]) : NaN);
+    const audio = columns.startClock ? splitReverseAudio(cells[columns.dialogue] || "") : null;
+    const row: ManhuaTimedStoryboardRow = {
       index,
-      startSec: match ? Number(match[1]) : NaN,
-      endSec: match ? Number(match[2]) : NaN,
-      cameraZh: cells[columns.camera] || "",
+      startSec,
+      endSec: columns.startClock ? (duration ? startSec + Number(duration[1]) : NaN) : (match ? Number(match[2]) : NaN),
+      cameraZh: columns.camera.map(column => cells[column] || "").filter(cell => cell && !/^[-—–]+$/.test(cell)).join("；"),
       actionZh: cells[columns.action] || "",
-      dialogueZh: cells[columns.dialogue] || "",
+      dialogueZh: audio?.dialogueZh ?? cells[columns.dialogue] ?? "",
+      ...(audio ? { soundZh: audio.soundZh } : {}),
     };
     const label = `镜${indexText || rows.length + 1}`;
+    if (columns.startClock && (!duration || Number(duration[1]) <= 0))
+      errors.push(`${label} 无精确时长，时长建议须为单个正数秒；不能使用范围或默认秒数`);
+    if (audio?.error) errors.push(`${label} ${audio.error}`);
     if (!Number.isSafeInteger(index) || index !== rows.length + 1)
       errors.push(`${label} 镜号重复、缺失或不连续`);
     if (

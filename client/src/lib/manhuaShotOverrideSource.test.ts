@@ -182,6 +182,8 @@ describe("对白覆盖不能抢占真实分镜", () => {
         directorBoardUrlByEpisode: {},
         directorBoardUrlByEpisodeSegment: {},
         directorBoardMotionOverlayBySegment: {},
+        storyEmotionLineByEpisodeSegment: {},
+        activeDirectionCanon: undefined,
         explicitWriterVideoModel: "seedance-2.0",
         // 0909：回调里新增了容量模式与时长档取值
         getManhuaSegmentCapacityMode: () => "block_when_over",

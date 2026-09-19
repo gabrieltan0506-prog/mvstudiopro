@@ -1,3 +1,6 @@
+import { manhuaGeneratedPrevisCoverageIssue, manhuaPrevisSourceLabel } from "@shared/manhuaPrevisScope";
+import { parseManhuaClipTargetDurationSec } from "@shared/manhuaScriptWorkbench";
+import { clampManhuaClipDurationSecForVideoModel } from "@shared/manhuaSeedanceLayout";
 import { ManhuaPrevisActionLibrary } from "./ManhuaPrevisActionLibrary";
 import type { PreparedRigProfile } from "@/lib/manhuaPrevisProfiles";
 import { useEffect, useRef, useState } from "react";
@@ -173,6 +176,13 @@ export function ManhuaPrevisStudioView({
   const pendingId = studio.pending?.requestId;
   function publish(next: Studio, reference?: ManhuaSegmentReferenceEntry) {
     const current = latest.current;
+    const targetDuration = parseManhuaClipTargetDurationSec(current.block.prompt || "");
+    const issue = manhuaGeneratedPrevisCoverageIssue({
+      reference, studio: next,
+      durationSec: targetDuration == null ? undefined : clampManhuaClipDurationSecForVideoModel(current.block.videoModel, targetDuration),
+      shotIndexes: current.block.manhuaAutoSegment?.shotIndexes ?? sourceShots.map(shot => shot.index),
+    });
+    if (issue) { setError(issue); return false; }
     if (current.onChange(next, reference) === false) {
       setError("本段状态未保存，未提交新任务或替换参考；请先处理保存问题。");
       return false;
@@ -579,6 +589,7 @@ export function ManhuaPrevisStudioView({
         本段动作白模 ·
         简化人体关节／四足站位，不是角色模型自动绑定。渲染不调用付费生成模型；预览后再采用，不会自动出成片。
       </p>
+      <p className="text-xs text-cyan-100" data-previs-source-scope>{manhuaPrevisSourceLabel(studio.spec)}</p>
       {sourceShots.length > 0 ? (
         <section
           className="space-y-2 rounded border border-cyan-300/20 p-2"
@@ -1890,6 +1901,7 @@ export function ManhuaPrevisStudioView({
         >
           <span>
             {take.durationSec} 秒 · {take.createdAt.slice(0, 19)}
+            <span data-previs-take-source> · {manhuaPrevisSourceLabel(take.spec)}</span>
             {studio.selectedJobId === take.jobId ? " · 当前采用" : ""}
             {previsSpecKey(take.spec) !== previsSpecKey(studio.spec)
               ? " · 较早配置"
