@@ -498,4 +498,38 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
     expect(fresh).toContain("已完成");
     expect(fresh).not.toContain("需重合成");
   }, 180_000);
+
+  /**
+   * 对照图 01 第三格 + README「分镜页固定三栏：镜头清单、主预览、当前镜参数」。
+   * 断言的是**视觉列序**（CSS order），不是 DOM 顺序 —— 真实页面上用户看到的是左中右。
+   */
+  it("分镜阶段固定三栏：左镜头清单、中主预览、右当前镜参数；挂载资产退成折叠", async () => {
+    const { page, close } = await mountStoryboard();
+    const seen = await page.evaluate(() => {
+      const pick = (name: string) => document.querySelector(`[data-manhua-column="${name}"]`);
+      const orderOf = (el: Element | null) =>
+        el ? Number(window.getComputedStyle(el).order || "0") : null;
+      const script = pick("script");
+      const preview = pick("preview");
+      const params = pick("params");
+      return {
+        hasParamsColumn: Boolean(params),
+        hasAssetsColumn: Boolean(pick("assets")),
+        order: { script: orderOf(script), preview: orderOf(preview), params: orderOf(params) },
+        // 当前镜参数面板现在应该在右栏里，而不是在镜头清单那一栏
+        paramsInRight: Boolean(params?.querySelector("[data-manhua-shot-params]")),
+        paramsInScript: Boolean(script?.querySelector("[data-manhua-shot-params]")),
+        collapsedAssets: Boolean(document.querySelector("[data-manhua-storyboard-assets-collapsed]")),
+      };
+    });
+    expect(seen.hasParamsColumn, "右栏没有变成当前镜参数").toBe(true);
+    expect(seen.hasAssetsColumn, "分镜阶段不该还有常驻资产栏").toBe(false);
+    // 左 1 · 中 2 · 右 3
+    expect(seen.order.script).toBe(1);
+    expect(seen.order.preview).toBe(2);
+    expect(seen.order.params).toBe(3);
+    expect(seen.paramsInRight).toBe(true);
+    expect(seen.paramsInScript).toBe(false);
+    await close();
+  }, 180_000);
 });

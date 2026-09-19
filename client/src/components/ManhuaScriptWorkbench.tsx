@@ -1930,6 +1930,12 @@ export default function ManhuaScriptWorkbench({
         ),
       )
     : "";
+
+  /** 当前镜参数面板（对照图 01 右栏）：三栏模式渲染在右栏，否则跟在镜头清单下面 */
+  /**
+   * 分镜三栏（README 明写「分镜页固定三栏：镜头清单、主预览、当前镜参数」）。
+   * 只在分镜阶段且真有镜头时成立；其余阶段维持原来的「本段挂载资产 / 分镜卡 / 主预览」。
+   */
   const activeShotNo = activeShot?.index ?? 1;
   const activeSegNo = resolveManhuaActiveSegmentIndex({
     shotIndex: activeShotNo,
@@ -2972,6 +2978,135 @@ export default function ManhuaScriptWorkbench({
 
   const storyboardReadyEnough =
     assetsComplete && (shots.length > 0 || Boolean(episodeStillCount));
+
+  /** 分镜栏里的本段挂载资产（定妆/场景/道具），三栏模式下折叠进 details */
+  const storyboardCanonAssets = (
+    <>
+          {CANON_SHEET_SECTIONS.map((sec) => {
+            const items = episodeSheetGallery.filter((x) => x.kind === sec.kind);
+            const pending = pendingSheetAnchors.filter((x) => x.kind === sec.kind);
+            if (!items.length && !pending.length) return null;
+            return (
+              <div key={sec.kind}>
+                <div className="text-[10px] font-semibold tracking-wide text-white/40">
+                  {sec.titleZh} · {items.length}
+                  {pending.length ? (
+                    <span className="ml-1 text-amber-200/75">待出 {pending.length}</span>
+                  ) : null}
+                </div>
+                <div className="mt-1.5 grid grid-cols-3 gap-1.5">
+                  {items.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      data-manhua-canon-sheet={item.id}
+                      onClick={() => {
+                        if (item.id) focusBlockAndOpenCanvas(item.id);
+                      }}
+                      className="overflow-hidden rounded-lg border border-emerald-300/40 bg-black/40 text-left hover:border-emerald-200/70"
+                      title={`定位：${item.labelZh}`}
+                    >
+                      <ManhuaAssetImage
+                        src={item.url}
+                        alt=""
+                        className="aspect-square w-full object-cover object-top"
+                        loading="lazy"
+                      />
+                      <div className="truncate px-1 py-0.5 text-[9px] text-white/80">
+                        {item.labelZh}
+                      </div>
+                    </button>
+                  ))}
+                  {pending.map((p) => (
+                    <button
+                      key={p.anchorId}
+                      type="button"
+                      data-manhua-pending-anchor={p.anchorId}
+                      disabled={!outlineComplete || factoryBusy || !onGenerateCanonAssetSheet}
+                      onClick={() => {
+                        void onGenerateCanonAssetSheet?.({
+                          anchorId: p.anchorId,
+                          nameZh: p.nameZh,
+                        });
+                      }}
+                      className="overflow-hidden rounded-lg border border-dashed border-amber-300/45 bg-amber-500/[0.07] text-left hover:bg-amber-500/15 disabled:opacity-40"
+                      title={
+                        p.lookZh
+                          ? `补这一张：${p.nameZh}｜${p.lookZh.slice(0, 60)}`
+                          : `补这一张：${p.nameZh}`
+                      }
+                    >
+                      <span className="flex aspect-square w-full items-center justify-center text-[14px] leading-none text-amber-100/80">
+                        ＋
+                      </span>
+                      <div className="truncate px-1 py-0.5 text-[9px] font-semibold text-amber-50/90">
+                        {p.nameZh}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+    </>
+  );
+  const storyboardThreeColumn = activePhase === "storyboard" && shots.length > 0;
+  const shotParamsPanel = activeShot ? (
+
+              <div
+                data-manhua-shot-params={activeShot.index}
+                className="mt-2 shrink-0 rounded-lg border border-cyan-400/25 bg-cyan-500/[0.06] p-2"
+              >
+                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                  <span className="text-[11px] font-semibold text-cyan-50">
+                    当前第 {String(activeShot.index).padStart(2, "0")} 镜
+                  </span>
+                  <span data-manhua-shot-params-status className="text-[10px] text-white/45">
+                    {activeShotKeyartStateZh}
+                  </span>
+                </div>
+                {activeShot.dialogueZh || activeShot.emotionZh || activeShot.microExpressionZh ? (
+                  <p className="mt-1 text-[10px] leading-4 text-rose-100/70">
+                    {activeShot.dialogueZh ? `「${activeShot.dialogueZh}」` : ""}
+                    {activeShot.dialogueZh && (activeShot.emotionZh || activeShot.microExpressionZh) ? " · " : ""}
+                    {activeShot.emotionZh || activeShot.microExpressionZh || ""}
+                  </p>
+                ) : null}
+                <p className="mh-hint mt-1 text-[9px] leading-4 text-white/35">
+                  镜位只改本镜，不动其它镜；改完出图前不扣费。
+                </p>
+                <div className="mt-1 flex flex-wrap gap-0.5" data-manhua-shot-angles={activeShot.index}>
+                  {MANHUA_CAMERA_ANGLE_ORDER.map((id) => {
+                    const ang = getManhuaCameraAngle(id)!;
+                    const selected = shotAngleByIndex[activeShot.index] === id;
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        data-manhua-shot-angle={id}
+                        aria-pressed={selected}
+                        title={`${ang.functionZh}｜${ang.whenToUseZh}`}
+                        onClick={() => {
+                          const next = { ...shotAngleByIndex, [activeShot.index]: id };
+                          setShotAngleByIndex(next);
+                          onUpsertShotAngles?.(next);
+                          toast.message(`镜${activeShot.index} · ${ang.nameZh}`, {
+                            description: formatManhuaCameraAngleLine(ang).slice(0, 80),
+                          });
+                        }}
+                        className={`rounded px-1.5 py-0.5 text-[9px] ${
+                          selected
+                            ? "bg-cyan-500/30 text-cyan-50 ring-1 ring-cyan-400/40"
+                            : "bg-white/[0.04] text-white/45 hover:text-white/75"
+                        }`}
+                      >
+                        {ang.nameZh}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+  ) : null;
 
   const workflowPhases = useMemo(() => {
     const byStage = new Map(stageStrip.map((item) => [item.stage, item]));
@@ -7764,96 +7899,52 @@ export default function ManhuaScriptWorkbench({
               immersive
                 ? showCanvasDock
                   ? // 常规桌面先让三栏在当前视口内弹性收缩；极窄窗口才由外层横向滚动兜底。
-                    "grid h-full min-h-0 min-w-[840px] grid-cols-[minmax(128px,0.34fr)_minmax(300px,0.78fr)_minmax(400px,1.28fr)] xl:min-w-0 xl:grid-cols-[152px_minmax(400px,0.58fr)_minmax(560px,1.08fr)]"
-                  : "grid h-full min-h-0 min-w-[760px] grid-cols-[minmax(128px,0.38fr)_minmax(280px,0.8fr)_minmax(350px,1.15fr)] xl:min-w-0 xl:grid-cols-[168px_minmax(300px,0.72fr)_minmax(420px,1.08fr)]"
+                    // 分镜阶段按对照图 01 固定为「左镜头清单 · 中主预览 · 右当前镜参数」：
+                    // 列顺序用 CSS order 调（见各列的 storyboardColumnOrder），这里只给对应宽度。
+                    storyboardThreeColumn
+                      ? "grid h-full min-h-0 min-w-[840px] grid-cols-[minmax(300px,0.78fr)_minmax(400px,1.28fr)_minmax(150px,0.36fr)] xl:min-w-0 xl:grid-cols-[minmax(340px,0.62fr)_minmax(520px,1.06fr)_minmax(180px,0.34fr)]"
+                      : "grid h-full min-h-0 min-w-[840px] grid-cols-[minmax(128px,0.34fr)_minmax(300px,0.78fr)_minmax(400px,1.28fr)] xl:min-w-0 xl:grid-cols-[152px_minmax(400px,0.58fr)_minmax(560px,1.08fr)]"
+                  : storyboardThreeColumn
+                    ? "grid h-full min-h-0 min-w-[760px] grid-cols-[minmax(280px,0.8fr)_minmax(350px,1.15fr)_minmax(150px,0.4fr)] xl:min-w-0 xl:grid-cols-[minmax(300px,0.72fr)_minmax(420px,1.08fr)_minmax(180px,0.36fr)]"
+                    : "grid h-full min-h-0 min-w-[760px] grid-cols-[minmax(128px,0.38fr)_minmax(280px,0.8fr)_minmax(350px,1.15fr)] xl:min-w-0 xl:grid-cols-[168px_minmax(300px,0.72fr)_minmax(420px,1.08fr)]"
                 : "flex h-full min-h-0 w-full overflow-hidden"
             }
           >
         {/* 左：本片段挂载（随胶片切换）+ 本集其他 */}
         <aside
-          data-manhua-column="assets"
+          data-manhua-column={storyboardThreeColumn ? "params" : "assets"}
           data-manhua-shot-mount={shotMount.mode}
           data-manhua-shot-mount-cast={String(mountedCastCount)}
+          style={storyboardThreeColumn ? { order: 3 } : undefined}
           className={
             immersive
               ? "h-full min-h-0 overflow-y-auto border-r border-white/10 p-2"
               : "min-h-0 w-[180px] shrink-0 overflow-y-auto border-r border-white/10 p-2"
           }
         >
+          {/* 分镜阶段：这一栏是「当前镜参数」，本段挂载资产退成折叠（README：分镜阶段不再长驻资产墙） */}
+          {storyboardThreeColumn ? shotParamsPanel : null}
           {/*
             剧本本人的定妆与场景。这一栏原先只列题材原型（「雨夜江湖刀客」之类），
             剧本里的角色一张都不在，看着满满当当其实一张脸都没锁——
             成片于是每段自己捏一张，十段十个人。缺图的留可点占位格，就地补。
           */}
           {episodeSheetGallery.length || pendingSheetAnchors.length ? (
-            <div data-manhua-storyboard-canon-assets className="mb-2.5 space-y-2">
-              {CANON_SHEET_SECTIONS.map((sec) => {
-                const items = episodeSheetGallery.filter((x) => x.kind === sec.kind);
-                const pending = pendingSheetAnchors.filter((x) => x.kind === sec.kind);
-                if (!items.length && !pending.length) return null;
-                return (
-                  <div key={sec.kind}>
-                    <div className="text-[10px] font-semibold tracking-wide text-white/40">
-                      {sec.titleZh} · {items.length}
-                      {pending.length ? (
-                        <span className="ml-1 text-amber-200/75">待出 {pending.length}</span>
-                      ) : null}
-                    </div>
-                    <div className="mt-1.5 grid grid-cols-3 gap-1.5">
-                      {items.map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          data-manhua-canon-sheet={item.id}
-                          onClick={() => {
-                            if (item.id) focusBlockAndOpenCanvas(item.id);
-                          }}
-                          className="overflow-hidden rounded-lg border border-emerald-300/40 bg-black/40 text-left hover:border-emerald-200/70"
-                          title={`定位：${item.labelZh}`}
-                        >
-                          <ManhuaAssetImage
-                            src={item.url}
-                            alt=""
-                            className="aspect-square w-full object-cover object-top"
-                            loading="lazy"
-                          />
-                          <div className="truncate px-1 py-0.5 text-[9px] text-white/80">
-                            {item.labelZh}
-                          </div>
-                        </button>
-                      ))}
-                      {pending.map((p) => (
-                        <button
-                          key={p.anchorId}
-                          type="button"
-                          data-manhua-pending-anchor={p.anchorId}
-                          disabled={!outlineComplete || factoryBusy || !onGenerateCanonAssetSheet}
-                          onClick={() => {
-                            void onGenerateCanonAssetSheet?.({
-                              anchorId: p.anchorId,
-                              nameZh: p.nameZh,
-                            });
-                          }}
-                          className="overflow-hidden rounded-lg border border-dashed border-amber-300/45 bg-amber-500/[0.07] text-left hover:bg-amber-500/15 disabled:opacity-40"
-                          title={
-                            p.lookZh
-                              ? `补这一张：${p.nameZh}｜${p.lookZh.slice(0, 60)}`
-                              : `补这一张：${p.nameZh}`
-                          }
-                        >
-                          <span className="flex aspect-square w-full items-center justify-center text-[14px] leading-none text-amber-100/80">
-                            ＋
-                          </span>
-                          <div className="truncate px-1 py-0.5 text-[9px] font-semibold text-amber-50/90">
-                            {p.nameZh}
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            storyboardThreeColumn ? (
+              // 分镜阶段这一栏让给当前镜参数，挂载资产退成折叠（README：分镜阶段不再长驻资产墙）；
+              // 不是删掉——要核对锁脸/场景时点开就在原地，不用切回资产阶段。
+              <details
+                data-manhua-storyboard-assets-collapsed
+                className="mb-2.5 rounded-lg border border-white/10 bg-white/[0.02] p-1.5"
+              >
+                <summary className="cursor-pointer text-[10px] text-white/55">
+                  本段挂载资产（{episodeSheetGallery.length + pendingSheetAnchors.length}）
+                </summary>
+                <div className="mt-1.5 space-y-2">{storyboardCanonAssets}</div>
+              </details>
+            ) : (
+              <div data-manhua-storyboard-canon-assets className="mb-2.5 space-y-2">{storyboardCanonAssets}              </div>
+            )
           ) : null}
 
           <div className="text-[10px] font-semibold tracking-wide text-white/40">
@@ -8042,6 +8133,7 @@ export default function ManhuaScriptWorkbench({
         {/* 中：分镜图卡（阿硕 C2：图为主、文为辅；右栏才是主预览） */}
         <section
           data-manhua-column="script"
+          style={storyboardThreeColumn ? { order: 1 } : undefined}
           className={
             immersive
               ? "flex h-full min-h-0 flex-col overflow-hidden border-r border-white/10 p-2 md:p-2.5"
@@ -8458,61 +8550,8 @@ export default function ManhuaScriptWorkbench({
                   );
                 })}
               </div>
-              {activeShot ? (
-                <div
-                  data-manhua-shot-params={activeShot.index}
-                  className="mt-2 shrink-0 rounded-lg border border-cyan-400/25 bg-cyan-500/[0.06] p-2"
-                >
-                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                    <span className="text-[11px] font-semibold text-cyan-50">
-                      当前第 {String(activeShot.index).padStart(2, "0")} 镜
-                    </span>
-                    <span data-manhua-shot-params-status className="text-[10px] text-white/45">
-                      {activeShotKeyartStateZh}
-                    </span>
-                  </div>
-                  {activeShot.dialogueZh || activeShot.emotionZh || activeShot.microExpressionZh ? (
-                    <p className="mt-1 text-[10px] leading-4 text-rose-100/70">
-                      {activeShot.dialogueZh ? `「${activeShot.dialogueZh}」` : ""}
-                      {activeShot.dialogueZh && (activeShot.emotionZh || activeShot.microExpressionZh) ? " · " : ""}
-                      {activeShot.emotionZh || activeShot.microExpressionZh || ""}
-                    </p>
-                  ) : null}
-                  <p className="mh-hint mt-1 text-[9px] leading-4 text-white/35">
-                    镜位只改本镜，不动其它镜；改完出图前不扣费。
-                  </p>
-                  <div className="mt-1 flex flex-wrap gap-0.5" data-manhua-shot-angles={activeShot.index}>
-                    {MANHUA_CAMERA_ANGLE_ORDER.map((id) => {
-                      const ang = getManhuaCameraAngle(id)!;
-                      const selected = shotAngleByIndex[activeShot.index] === id;
-                      return (
-                        <button
-                          key={id}
-                          type="button"
-                          data-manhua-shot-angle={id}
-                          aria-pressed={selected}
-                          title={`${ang.functionZh}｜${ang.whenToUseZh}`}
-                          onClick={() => {
-                            const next = { ...shotAngleByIndex, [activeShot.index]: id };
-                            setShotAngleByIndex(next);
-                            onUpsertShotAngles?.(next);
-                            toast.message(`镜${activeShot.index} · ${ang.nameZh}`, {
-                              description: formatManhuaCameraAngleLine(ang).slice(0, 80),
-                            });
-                          }}
-                          className={`rounded px-1.5 py-0.5 text-[9px] ${
-                            selected
-                              ? "bg-cyan-500/30 text-cyan-50 ring-1 ring-cyan-400/40"
-                              : "bg-white/[0.04] text-white/45 hover:text-white/75"
-                          }`}
-                        >
-                          {ang.nameZh}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : null}
+              {/* 三栏模式下当前镜参数在右栏；非三栏（窄屏/非分镜阶段）留在清单下面 */}
+              {storyboardThreeColumn ? null : shotParamsPanel}
               <p className="mh-hint mt-2 text-[10px] leading-snug text-white/35">
                 确认简报 → 静帧锁脸服场 → 审阅段成片提示词 → 本段一轮成片吃多镜表演；改台词只重出本段，勿整集重烧。
               </p>
@@ -8933,6 +8972,7 @@ export default function ManhuaScriptWorkbench({
         {/* 右：本集画布（阿硕式常驻）或单路视频结果 */}
         <aside
           data-manhua-column="preview"
+          style={storyboardThreeColumn ? { order: 2 } : undefined}
           data-manhua-preview-kind={
             showCanvasDock
               ? "canvas"
