@@ -143,7 +143,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await browser?.close();
-});
+}, 180_000);
 
 async function mountStoryboard(): Promise<{ page: Page; close: () => Promise<void> }> {
   const ctx = await browser.createBrowserContext();
