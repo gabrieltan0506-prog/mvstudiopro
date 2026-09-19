@@ -274,7 +274,9 @@ import {
   summarizeManhuaProjectBible,
   type ManhuaProjectBible,
 } from "@shared/manhuaProjectBible";
-import { projectManhuaStoryEmotionForSegment } from "@shared/manhuaStoryEmotion";
+import { projectManhuaStoryEmotionForSegment
+  manhuaStoryEmotionIsStale,
+} from "@shared/manhuaStoryEmotion";
 import {
   buildManhuaDirectionCanonFromSelection,
   type ManhuaDirectionSelection,
@@ -1124,6 +1126,9 @@ export default function OmniCanvas() {
   const storyEmotionLineByEpisodeSegment = useMemo(() => {
     const analysis = projectBible?.storyEmotion;
     if (!analysis) return {};
+    // 失效守卫：换过剧本的旧分析一个字都不喂下游 —— 面板横幅写的「下游不会采用」
+    // 在接线之前只是句话，接上之后必须真的成立（0919 探针点名）。
+    if (manhuaStoryEmotionIsStale(analysis, storyEmotionScriptVersionKey)) return {};
     const out: Record<number, Record<number, string>> = {};
     for (const point of analysis.curve) {
       const line = projectManhuaStoryEmotionForSegment(analysis, point.episode, point.segmentIndex);
@@ -1137,7 +1142,7 @@ export default function OmniCanvas() {
       if (line) (out[beat.episode] ||= {})[beat.segmentIndex] = line;
     }
     return out;
-  }, [projectBible?.storyEmotion]);
+  }, [projectBible?.storyEmotion, storyEmotionScriptVersionKey]);
   const [writerPackDiffOpen, setWriterPackDiffOpen] = useState(false);
   const [writerConfirmed, setWriterConfirmed] = useState(
     () => Boolean(initialWriterSession?.writerConfirmed),
@@ -5017,6 +5022,8 @@ export default function OmniCanvas() {
           writerPack?.episodes.find((e) => e.index === ep)?.body || "";
         const segmentPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(epBody);
         const ensured = ensureManhuaFragmentClips(blocks, edges, ep, {
+          // 段成片提示词吃「本段戏核」：生产者在剧本页折叠区，这里是唯一的喂入口
+          storyEmotionLineByEpisodeSegment,
           segmentCapacityMode: getManhuaSegmentCapacityMode(segmentCapacityModeByEpisode, ep),
           lengthTierId: writerLengthTierId,
           assetCanon: projectBible?.assetCanon,
@@ -8693,6 +8700,8 @@ export default function OmniCanvas() {
             // 审阅、10 秒试片、单段、整集、失败续跑共用同一份真实编译上下文。
             // 以前只有工作台审阅传了资产/造型/可拍表，runFactory 会再次 ensure 后把它们冲掉。
             const ensureOptions = {
+              // 段成片提示词吃「本段戏核」：生产者在剧本页折叠区，这里是唯一的喂入口
+              storyEmotionLineByEpisodeSegment,
               assetCanon: projectBible?.assetCanon,
               characterSheetUrlById: collectManhuaCharacterSheetUrlById(
                 workingBlocks,
@@ -10639,6 +10648,8 @@ export default function OmniCanvas() {
                         "";
                       const segmentPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(epBody);
                       const layoutOpts = {
+                        // 段成片提示词吃「本段戏核」：生产者在剧本页折叠区，这里是唯一的喂入口
+                        storyEmotionLineByEpisodeSegment,
                         assetCanon: projectBible?.assetCanon,
                         characterSheetUrlById: sheetUrls,
                         propImageUrlById: collectManhuaPropImageUrlById(
@@ -10700,6 +10711,8 @@ export default function OmniCanvas() {
                         "";
                       const segmentPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(epBody);
                       const layoutOpts = {
+                        // 段成片提示词吃「本段戏核」：生产者在剧本页折叠区，这里是唯一的喂入口
+                        storyEmotionLineByEpisodeSegment,
                         assetCanon: projectBible?.assetCanon,
                         characterSheetUrlById: sheetUrls,
                         propImageUrlById: collectManhuaPropImageUrlById(
@@ -10826,6 +10839,8 @@ export default function OmniCanvas() {
                         "";
                       const segmentPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(epBody);
                       const layoutOpts = {
+                        // 段成片提示词吃「本段戏核」：生产者在剧本页折叠区，这里是唯一的喂入口
+                        storyEmotionLineByEpisodeSegment,
                         assetCanon: projectBible?.assetCanon,
                         characterSheetUrlById: sheetUrls,
                         propImageUrlById: collectManhuaPropImageUrlById(
