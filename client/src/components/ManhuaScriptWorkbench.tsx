@@ -121,6 +121,11 @@ import { buildManhuaAssetRoleGroups } from "@/lib/manhuaAssetEntityGroups";
 import { manhuaKeyartEntryVisible } from "@/lib/manhuaKeyartEntry";
 import { buildManhuaMainTaskState } from "@/lib/manhuaMainTaskBlockers";
 import {
+  MANHUA_SECONDARY_TOOL_LABEL_ZH,
+  manhuaDrawerSecondaryTools,
+  manhuaSecondaryToolHome,
+} from "@/lib/manhuaSecondaryTools";
+import {
   manhuaShotKeyartState,
   manhuaShotKeyartStateZh,
 } from "@/lib/manhuaShotKeyartState";
@@ -3583,7 +3588,7 @@ export default function ManhuaScriptWorkbench({
               </button>
             </>
           )}
-          {onGenerateAsset3d || onImportAsset3d ? <button type="button" data-manhua-action="open-3d-model-studio" disabled={Boolean(factoryBusy)}
+          {(onGenerateAsset3d || onImportAsset3d) && manhuaSecondaryToolHome("model3d", activePhase) === "cluster" ? <button type="button" data-manhua-action="open-3d-model-studio" data-manhua-tool-home="cluster" disabled={Boolean(factoryBusy)}
             className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
             onClick={()=>setModelStudioOpen(value=>!value)}>3D 模型（就绪 {manhua3dModelCounts(modelStudioCharacters, riggedAssetIds).ready}/{modelStudioCharacters.length}）</button> : null}
           {modelStudioOpen ? <Manhua3dModelStudio
@@ -3625,7 +3630,7 @@ export default function ManhuaScriptWorkbench({
               onToggleAdopt={onToggleStageFrameAdoption}
               actorLabelOf={(id)=>assetLockRegistry.byRole.character.find(a=>a.id===id)?.labelZh||id}/>
           </div> : null}
-          {onUpdateClipPrevisStudio ? <button type="button" data-manhua-action="open-previs-studio" disabled={Boolean(factoryBusy)}
+          {onUpdateClipPrevisStudio && manhuaSecondaryToolHome("previs", activePhase) === "cluster" ? <button type="button" data-manhua-action="open-previs-studio" data-manhua-tool-home="cluster" disabled={Boolean(factoryBusy)}
             className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
             onClick={()=>{setPrevisStudioOpen(value=>!value);if(!activeClip)onEnsureSegmentClips?.();}}>本段动作白模</button> : null}
           {previsStudioOpen&&onUpdateClipPrevisStudio ? <div className="w-full">
@@ -3650,7 +3655,7 @@ export default function ManhuaScriptWorkbench({
               onChange={(studio,reference)=>onUpdateClipPrevisStudio(activeClip.id,studio,reference)}/>
               :<p className="text-xs text-amber-100">请先确认分段剧本并建立本段成片节点；此操作不会生成付费成片。</p>}
           </div>:null}
-          {onChangeManhuaActionPlan ? <button type="button" data-manhua-action="open-action-timeline" disabled={Boolean(factoryBusy)}
+          {onChangeManhuaActionPlan && manhuaSecondaryToolHome("actionTimeline", activePhase) === "cluster" ? <button type="button" data-manhua-action="open-action-timeline" data-manhua-tool-home="cluster" disabled={Boolean(factoryBusy)}
             className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
             onClick={()=>setActionTimelineOpen(value=>!value)}>本段动作节奏</button> : null}
           {actionTimelineOpen&&onChangeManhuaActionPlan ? <ManhuaActionTimeline
@@ -3662,8 +3667,8 @@ export default function ManhuaScriptWorkbench({
             bindingContext={manhuaActionPlanBindingContext ?? null}
             disabled={Boolean(factoryBusy)}
             onChange={(plan)=>onChangeManhuaActionPlan(focusEpisode, plan)}/> : null}
-          {onUpdateClipAudioStudio ? (
-            <button type="button" data-manhua-action="open-audio-studio"
+          {onUpdateClipAudioStudio && manhuaSecondaryToolHome("audio", activePhase) === "cluster" ? (
+            <button type="button" data-manhua-action="open-audio-studio" data-manhua-tool-home="cluster"
               disabled={Boolean(factoryBusy)}
               className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
               onClick={() => { setAudioStudioOpen(value => !value); if (!activeClip) onEnsureSegmentClips?.(); }}>
@@ -3714,6 +3719,54 @@ export default function ManhuaScriptWorkbench({
                     主流程留在步骤条；这里收纳导演板、局部重跑与工作区设置。
                   </p>
                 </div>
+                {/* 二级工具：对象不在本阶段时收到这里，保证每个工具任一阶段恰好一个入口（判据在 manhuaSecondaryTools.ts） */}
+                {manhuaDrawerSecondaryTools(activePhase).length ? (
+                  <div
+                    data-manhua-toolbar-group="secondary-tools"
+                    className="mb-3 rounded-lg border border-white/10 bg-white/[0.025] p-2"
+                  >
+                    <div className="text-[11px] font-semibold text-white/80">二级工具</div>
+                    <p className="mh-hint mt-0.5 text-[10px] leading-4 text-white/40">
+                      这些工具的对象不在本步：3D 模型挂在人物引用上，白模／动作节奏／声音跟着段走。点开仍可用。
+                    </p>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {manhuaDrawerSecondaryTools(activePhase).map((tool) => {
+                        const enabled =
+                          tool === "model3d"
+                            ? Boolean(onGenerateAsset3d || onImportAsset3d)
+                            : tool === "previs"
+                              ? Boolean(onUpdateClipPrevisStudio)
+                              : tool === "actionTimeline"
+                                ? Boolean(onChangeManhuaActionPlan)
+                                : Boolean(onUpdateClipAudioStudio);
+                        if (!enabled) return null;
+                        return (
+                          <button
+                            key={tool}
+                            type="button"
+                            data-manhua-tool-home="drawer"
+                            data-manhua-secondary-tool={tool}
+                            disabled={Boolean(factoryBusy)}
+                            onClick={() => {
+                              if (tool === "model3d") setModelStudioOpen((v) => !v);
+                              else if (tool === "previs") {
+                                setPrevisStudioOpen((v) => !v);
+                                if (!activeClip) onEnsureSegmentClips?.();
+                              } else if (tool === "actionTimeline") setActionTimelineOpen((v) => !v);
+                              else {
+                                setAudioStudioOpen((v) => !v);
+                                if (!activeClip) onEnsureSegmentClips?.();
+                              }
+                            }}
+                            className="rounded-lg border border-white/15 bg-white/[0.04] px-2.5 py-1.5 text-[11px] text-white/70 hover:bg-white/[0.08] disabled:opacity-40"
+                          >
+                            {MANHUA_SECONDARY_TOOL_LABEL_ZH[tool]}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
                 <div
                   data-manhua-toolbar-group="director-assets"
                   className="rounded-lg border border-white/10 bg-white/[0.025] p-2"

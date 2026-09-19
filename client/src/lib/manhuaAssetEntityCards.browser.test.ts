@@ -58,6 +58,10 @@ beforeAll(async () => {
               workflowPhase='assets' customAssetRefs={refs} assetCanon={canon}
               onUploadCustomAssets={async () => {}}
               onGenerateAllEpisodeKeyarts={async () => { globalThis.fixture.keyart += 1; }}
+              onGenerateAsset3d={async () => {}}
+              onUpdateClipPrevisStudio={() => {}}
+              onChangeManhuaActionPlan={() => {}}
+              onUpdateClipAudioStudio={() => {}}
               advisorIssues={[
                 { id: 'keyframe', text: '关键静帧还没垫图锁定，成片会走纯文生成', phase: 'storyboard', blocking: true },
                 { id: 'asset-gap', text: '阿菁还没有定妆图，静帧锁不到这张脸', phase: 'assets', blocking: true },
@@ -116,6 +120,10 @@ beforeAll(async () => {
               customAssetRefs={refs} assetCanon={canon}
               onUploadCustomAssets={async () => {}}
               onGenerateAllEpisodeKeyarts={async () => { globalThis.fixture.keyart += 1; }}
+              onGenerateAsset3d={async () => {}}
+              onUpdateClipPrevisStudio={() => {}}
+              onChangeManhuaActionPlan={() => {}}
+              onUpdateClipAudioStudio={() => {}}
             />
           </TooltipProvider>,
         );
@@ -356,6 +364,59 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
         .map((b) => b.getAttribute("data-manhua-shot-angle"));
     });
     expect(pressed).toHaveLength(1);
+    await close();
+  }, 180_000);
+
+  /**
+   * 二级工具：对象不在本阶段时从主操作簇收进「更多操作」抽屉。
+   * 断言的是**恰好一个入口**——既不在两处重复，也不会某阶段无处可去。
+   * 资产阶段：3D 归簇；白模／动作节奏／声音归抽屉。
+   */
+  it("资产阶段：3D 模型留在主操作簇，白模／动作节奏／声音收进更多操作抽屉", async () => {
+    const { page, close } = await mount();
+    const seen = await page.evaluate(() => {
+      const cluster = Array.from(document.querySelectorAll('[data-manhua-tool-home="cluster"]')).map(
+        (b) => b.getAttribute("data-manhua-action"),
+      );
+      // 打开「更多操作」抽屉
+      const more = Array.from(document.querySelectorAll("button")).find(
+        (b) => b.getAttribute("data-manhua-action") === "open-more-tools",
+      ) as HTMLButtonElement | undefined;
+      more?.click();
+      return { cluster, hasMore: Boolean(more) };
+    });
+    expect(seen.hasMore).toBe(true);
+    // 资产阶段主操作簇里只有 3D，没有段级工具
+    expect(seen.cluster).toContain("open-3d-model-studio");
+    expect(seen.cluster).not.toContain("open-previs-studio");
+    expect(seen.cluster).not.toContain("open-action-timeline");
+    expect(seen.cluster).not.toContain("open-audio-studio");
+
+    const drawer = await page.evaluate(() => {
+      const rows = Array.from(document.querySelectorAll("[data-manhua-secondary-tool]"));
+      return {
+        tools: rows.map((b) => b.getAttribute("data-manhua-secondary-tool")),
+        homes: rows.map((b) => b.getAttribute("data-manhua-tool-home")),
+      };
+    });
+    expect(drawer.tools).toEqual(["previs", "actionTimeline", "audio"]);
+    expect(drawer.homes.every((h) => h === "drawer")).toBe(true);
+    // 3D 已经在簇里，抽屉里不许再出现一个
+    expect(drawer.tools).not.toContain("model3d");
+    await close();
+  }, 180_000);
+
+  it("分镜阶段反过来：段级工具回到主操作簇，3D 收进抽屉", async () => {
+    const { page, close } = await mountStoryboard();
+    const cluster = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('[data-manhua-tool-home="cluster"]')).map((b) =>
+        b.getAttribute("data-manhua-action"),
+      ),
+    );
+    expect(cluster).toContain("open-previs-studio");
+    expect(cluster).toContain("open-action-timeline");
+    expect(cluster).toContain("open-audio-studio");
+    expect(cluster).not.toContain("open-3d-model-studio");
     await close();
   }, 180_000);
 });
