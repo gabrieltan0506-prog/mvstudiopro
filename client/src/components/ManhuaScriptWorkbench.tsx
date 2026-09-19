@@ -753,6 +753,24 @@ function keyartsForEpisode(blocks: CanvasBlock[], episode: number): CanvasBlock[
     );
 }
 
+/**
+ * 一个镜头静帧块 → `manhuaShotKeyartState` 的入参。
+ *
+ * 0919 第三轮探针观察：状态机虽然统一到 `manhuaShotKeyartState`，但两个调用点
+ * 各写一份 `pixelLocked` 推导（列表卡 `Boolean(thumb) && !keyartUnlocked`、
+ * 面板 `Boolean(thumb && key && isManhuaKeyartPixelLocked(key))`）—— 当时穷举验过等价，
+ * 但下次改一处就会分叉。推导也收到这里，同源做到入参层。
+ */
+function manhuaShotKeyartInputOf(key?: CanvasBlock) {
+  const thumb = mediaUrl(key);
+  return {
+    hasImage: Boolean(thumb),
+    failed: Boolean(key) && (key.status === "error" || Boolean(key.error)) && !thumb,
+    running: key?.status === "running" && !thumb,
+    pixelLocked: Boolean(thumb && key && isManhuaKeyartPixelLocked(key)),
+  };
+}
+
 function mediaUrl(b?: CanvasBlock): string | undefined {
   if (!b) return undefined;
   // 成图优先（含 local-media: / blob:）；缺成图时回退垫图/融合参考
@@ -1896,17 +1914,13 @@ export default function ManhuaScriptWorkbench({
 
   const activeShot = shots[Math.min(shotIndex, Math.max(0, shots.length - 1))] || shots[0];
   /** 当前镜的静帧状态文案：与列表卡共用 manhuaShotKeyartState，不各算一份 */
-  const activeShotKeyartStateZh = (() => {
-    if (!activeShot) return "";
-    const key = episodeKeyarts.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === activeShot.index);
-    const thumb = key ? mediaUrl(key) : "";
-    return manhuaShotKeyartStateZh({
-      hasImage: Boolean(thumb),
-      failed: Boolean(key) && (key!.status === "error" || Boolean(key!.error)) && !thumb,
-      running: key?.status === "running" && !thumb,
-      pixelLocked: Boolean(thumb && key && isManhuaKeyartPixelLocked(key)),
-    });
-  })();
+  const activeShotKeyartStateZh = activeShot
+    ? manhuaShotKeyartStateZh(
+        manhuaShotKeyartInputOf(
+          episodeKeyarts.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === activeShot.index),
+        ),
+      )
+    : "";
   const activeShotNo = activeShot?.index ?? 1;
   const activeSegNo = resolveManhuaActiveSegmentIndex({
     shotIndex: activeShotNo,
@@ -8278,25 +8292,19 @@ export default function ManhuaScriptWorkbench({
                   const shotKey = episodeKeyarts.find(
                     (b) => resolveKeyartShotIndex(b.id, b.prompt) === shot.index,
                   );
+                  // 入参推导只有一处：列表卡与当前镜面板共用 manhuaShotKeyartInputOf
+                  const keyartInput = manhuaShotKeyartInputOf(shotKey);
                   const thumb = mediaUrl(shotKey);
-                  const keyartFailed =
-                    Boolean(shotKey) &&
-                    (shotKey!.status === "error" || Boolean(shotKey!.error)) &&
-                    !thumb;
-                  const keyartRunning = shotKey?.status === "running" && !thumb;
-                  const keyartUnlocked = Boolean(thumb && shotKey && !isManhuaKeyartPixelLocked(shotKey));
+                  const keyartFailed = keyartInput.failed;
+                  const keyartRunning = keyartInput.running;
+                  const keyartUnlocked = keyartInput.hasImage && !keyartInput.pixelLocked;
                   return (
                     <div
                       key={shot.index}
                       data-manhua-shot={shot.index}
                       data-manhua-active={on ? "true" : "false"}
                       data-manhua-keyart-url={thumb || ""}
-                      data-manhua-keyart-status={manhuaShotKeyartState({
-                        hasImage: Boolean(thumb),
-                        failed: keyartFailed,
-                        running: Boolean(keyartRunning),
-                        pixelLocked: Boolean(thumb) && !keyartUnlocked,
-                      })}
+                      data-manhua-keyart-status={manhuaShotKeyartState(keyartInput)}
                       className={`w-full overflow-hidden rounded-lg border text-left transition ${
                         on
                           ? "border-cyan-300/70 bg-cyan-500/15 ring-1 ring-cyan-300/50"
