@@ -541,6 +541,25 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
     expect(seen.order.params).toBe(3);
     expect(seen.paramsInRight).toBe(true);
     expect(seen.paramsInScript).toBe(false);
+
+    // 对照图 01 右栏四个字段：时长 / 景别 / 机位运动 / 画面描述（0/200）
+    const fields = await page.evaluate(() => {
+      const panel = document.querySelector("[data-manhua-shot-params]")!;
+      const rows = Array.from(panel.querySelectorAll("[data-manhua-shot-field]")).map((el) => ({
+        label: el.getAttribute("data-manhua-shot-field"),
+        value: (el.querySelector("dd")?.textContent || "").trim(),
+      }));
+      const desc = panel.querySelector("[data-manhua-shot-description]");
+      return { rows, descText: (desc?.textContent || "").replace(/\s+/g, " ").trim() };
+    });
+    expect(fields.rows.map((r) => r.label)).toEqual(["镜头时长", "景别", "机位运动"]);
+    // 夹具的镜头带机位文本，真实页面上必须切出景别；切不出来才写「未标注」（合同测试另有覆盖）
+    const shotSize = fields.rows.find((r) => r.label === "景别")?.value || "";
+    expect(shotSize).not.toBe("");
+    expect(["全景", "中景", "近景", "中近景", "特写", "大特写", "远景", "大远景", "未标注"]).toContain(shotSize);
+    expect(fields.rows.find((r) => r.label === "镜头时长")?.value).toMatch(/秒|未标注/);
+    expect(fields.descText).toContain("画面描述");
+    expect(fields.descText).toMatch(/\d+\/200/);
     await close();
   }, 180_000);
 

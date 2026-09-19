@@ -120,6 +120,7 @@ import {
 import { buildManhuaAssetRoleGroups } from "@/lib/manhuaAssetEntityGroups";
 import { manhuaKeyartEntryVisible } from "@/lib/manhuaKeyartEntry";
 import { buildManhuaDirectorCardView } from "@shared/manhuaDirectorCardView";
+import { buildManhuaShotParamFields } from "@shared/manhuaShotParamFields";
 import { classifyManhuaDirectionSceneType } from "@shared/manhuaDirectionCanon";
 import { buildManhuaMainTaskState } from "@/lib/manhuaMainTaskBlockers";
 import {
@@ -3089,6 +3090,7 @@ export default function ManhuaScriptWorkbench({
     </div>
   ) : null;
   const storyboardThreeColumn = activePhase === "storyboard" && shots.length > 0;
+  const shotParamFields = buildManhuaShotParamFields(activeShot);
   const shotParamsPanel = activeShot ? (
 
               <div
@@ -3111,6 +3113,48 @@ export default function ManhuaScriptWorkbench({
                     {activeShot.emotionZh || activeShot.microExpressionZh || ""}
                   </p>
                 ) : null}
+                {/* 对照图 01 右栏四个字段：时长 / 景别 / 机位运动 / 画面描述（0/200） */}
+                <dl data-manhua-shot-fields className="mt-1.5 grid grid-cols-2 gap-x-2 gap-y-1">
+                  {(
+                    [
+                      ["镜头时长", shotParamFields.durationZh],
+                      ["景别", shotParamFields.shotSizeZh],
+                      ["机位运动", shotParamFields.cameraMoveZh],
+                    ] as Array<[string, string]>
+                  ).map(([labelZh, valueZh]) => (
+                    <div key={labelZh} data-manhua-shot-field={labelZh} className="min-w-0">
+                      <dt className="text-[9px] text-white/40">{labelZh}</dt>
+                      <dd
+                        className={`truncate text-[10px] ${
+                          valueZh === "未标注" ? "text-amber-100/70" : "text-white/80"
+                        }`}
+                        title={valueZh}
+                      >
+                        {valueZh}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+                {shotParamFields.cameraUnparsed && shotParamFields.rawCameraZh ? (
+                  <p className="mt-0.5 text-[9px] leading-4 text-white/40">
+                    机位原文：{shotParamFields.rawCameraZh}
+                  </p>
+                ) : null}
+                <div data-manhua-shot-description className="mt-1.5">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-[9px] text-white/40">画面描述</span>
+                    <span
+                      className={`text-[9px] tabular-nums ${
+                        shotParamFields.overLimit ? "text-rose-200" : "text-white/35"
+                      }`}
+                    >
+                      {shotParamFields.descriptionLen}/{shotParamFields.descriptionLimit}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 max-h-16 overflow-y-auto text-[10px] leading-4 text-white/70">
+                    {shotParamFields.descriptionZh || "本镜还没有画面描述"}
+                  </p>
+                </div>
                 <p className="mh-hint mt-1 text-[9px] leading-4 text-white/35">
                   镜位只改本镜，不动其它镜；改完出图前不扣费。
                 </p>
