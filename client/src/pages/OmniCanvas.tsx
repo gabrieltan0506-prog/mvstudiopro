@@ -215,6 +215,7 @@ import {
   queuedManhuaKeyartBlocks,
   queuedManhuaClipBlocks,
   resolveShotsForEpisodeKeyarts,
+  selectCurrentManhuaSpatialContexts,
   resolveManhuaCanvasClipVideoModel,
   resolveManhuaEpisodeClipVideoModel,
   resolveManhuaClipRelatedAssetNodeIds,
@@ -274,8 +275,12 @@ import {
   summarizeManhuaProjectBible,
   type ManhuaProjectBible,
 } from "@shared/manhuaProjectBible";
+import { projectManhuaStoryEmotionForSegment,
+  manhuaStoryEmotionIsStale,
+} from "@shared/manhuaStoryEmotion";
 import {
   buildManhuaDirectionCanonFromSelection,
+  manhuaDirectionSelectionForRequest,
   type ManhuaDirectionSelection,
 } from "@shared/manhuaDirectionCanonLibrary";
 import {
@@ -308,6 +313,7 @@ import {
   setManhuaFinalVersionReadError,
   updateManhuaFinalSubtitleBurnStatus,
 } from "@shared/manhuaFinalPostProd";
+import { manhuaFinalCutSourceKey, manhuaFinalCutStaleOf } from "@shared/manhuaFinalCutSource";
 import {
   beginManhuaSubtitlePoll,
   beginManhuaSubtitleSubmit,
@@ -825,7 +831,7 @@ export default function OmniCanvas() {
   /** 导演包选卡：确认后以 Bible.directionCanon 为真源，确认前存会话草稿 */
   const [directionSelection, setDirectionSelection] = useState<ManhuaDirectionSelection | null>(() =>
     bootBible?.directionCanon
-      ? { mainCardId: bootBible.directionCanon.mainCardId, sceneOverrides: bootBible.directionCanon.sceneOverrides }
+      ? { mainCardId: bootBible.directionCanon.mainCardId, sceneOverrides: bootBible.directionCanon.sceneOverrides, scopedOverrides: bootBible.directionCanon.scopedOverrides }
       : initialWriterSession?.directionSelection || null,
   );
   const activeDirectionCanon = useMemo(
@@ -864,6 +870,11 @@ export default function OmniCanvas() {
     () => directorBoardHttpsByEpisodeSegment(directorBoardBySegment),
     [directorBoardBySegment],
   );
+  /**
+   * 0919 本段戏核：把 Bible 里的剧情情绪投影成「集 → 段 → 一行中文」。
+   * 只传投影结果给段编译，不传整份分析——提示词里塞完整节拍表会把秒轴挤掉。
+   * 没做分析时整张表为空，段编译一个字都不注入。
+   */
   const [factoryTopic, setFactoryTopic] = useState(
     () => initialWriterSession?.topic || initialFactoryPrefs.topic || "",
   );
@@ -1091,6 +1102,57 @@ export default function OmniCanvas() {
   );
   /** 0902：扩写前后逐行对比（高亮）——「全部扩写也没列出对比」用户拍板 */
   const [writerPackDiff, setWriterPackDiff] = useState<WriterPackDiffResult | null>(null);
+  /**
+   * 剧本版本标识：拿当集正文算，换稿即变 → 旧分析自动标失效。
+   *
+   * 0919 探针实锤：原先用「长度 + 前 24 字」，把第 37 字「银镯」改成「玉佩」时 key 不变，
+   * 旧分析被静默沿用 —— 同长度改字在润色阶段是常事。改成逐字符滚动哈希（FNV-1a，
+   * 全文都进去），仍然只存指纹不存正文。
+   */
+  const storyEmotionScriptVersionKey = useMemo(() => {
+    const fingerprint = (bodyZh: string) => {
+      let h = 0x811c9dc5;
+      for (let i = 0; i < bodyZh.length; i += 1) {
+        h ^= bodyZh.charCodeAt(i);
+        h = Math.imul(h, 0x01000193) >>> 0;
+      }
+      return h.toString(36);
+    };
+    const eps = writerPack?.episodes || [];
+    return eps
+      .map((e) => {
+        const bodyZh = String(e.body || "");
+        return `${e.index}:${bodyZh.length}:${fingerprint(bodyZh)}`;
+      })
+      .join("|");
+  }, [writerPack]);
+  /**
+   * 下游唯一可消费的那份分析：**换过剧本的旧稿在这里就被挡掉**（返回 null）。
+   * 面板横幅写的「下游不会采用」在接线之前只是句话，接上之后必须真的成立（0919 探针点名）。
+   * 段提示词与配乐都从这一处取，不各自判一次失效。
+   */
+  const storyEmotionForDownstream = useMemo(() => {
+    const analysis = projectBible?.storyEmotion;
+    if (!analysis) return null;
+    return manhuaStoryEmotionIsStale(analysis, storyEmotionScriptVersionKey) ? null : analysis;
+  }, [projectBible?.storyEmotion, storyEmotionScriptVersionKey]);
+  const storyEmotionLineByEpisodeSegment = useMemo(() => {
+    const analysis = storyEmotionForDownstream;
+    if (!analysis) return {};
+    const out: Record<number, Record<number, string>> = {};
+    for (const point of analysis.curve) {
+      const line = projectManhuaStoryEmotionForSegment(analysis, point.episode, point.segmentIndex);
+      if (!line) continue;
+      (out[point.episode] ||= {})[point.segmentIndex] = line;
+    }
+    // 只有节拍、没有情绪点的段也要给出戏核
+    for (const beat of analysis.beats) {
+      if (out[beat.episode]?.[beat.segmentIndex]) continue;
+      const line = projectManhuaStoryEmotionForSegment(analysis, beat.episode, beat.segmentIndex);
+      if (line) (out[beat.episode] ||= {})[beat.segmentIndex] = line;
+    }
+    return out;
+  }, [storyEmotionForDownstream]);
   const [writerPackDiffOpen, setWriterPackDiffOpen] = useState(false);
   const [writerConfirmed, setWriterConfirmed] = useState(
     () => Boolean(initialWriterSession?.writerConfirmed),
@@ -1468,6 +1530,45 @@ export default function OmniCanvas() {
     const finalId = `final-e${String(writerFocusEpisode).padStart(2, "0")}`;
     return blocks.find((block) => block.id === finalId) || null;
   }, [blocks, writerFocusEpisode]);
+  /**
+   * 终审亮着的这条长片，是不是当前这批段成片合的（对照图 08：避免未验即完成）。
+   * 判不出来时如实说「无法核对」，不谎报通过也不谎报失效；旧片一律不删。
+   */
+  /** 画布上此刻选中的节点（对照图 02：侧栏显示所选镜头）。只读身份，不接管选中。 */
+  const [canvasSelectedBlockId, setCanvasSelectedBlockId] = useState<string | null>(null);
+  const finalCutStale = useMemo(() => {
+    if (!finalAssembleBlock?.outputUrl || !finalAssembleVideoUrl) {
+      return { stale: false, reasonZh: "", verified: false };
+    }
+    const identity = findManhuaFinalVideoVersionIdentity(finalAssembleBlock, finalAssembleVideoUrl);
+    const pieces = queuedManhuaClipBlocks(
+      blocks,
+      writerFocusEpisode,
+      resolveManhuaEpisodeClipVideoModel(blocks, writerFocusEpisode, explicitWriterVideoModel || undefined),
+    )
+      .filter((block) => (getBlockEpisodeIndex(block) ?? 1) === writerFocusEpisode)
+      .map((block) => ({
+        blockId: block.id,
+        episodeIndex: writerFocusEpisode,
+        segmentIndex: resolveClipLocalSegmentIndex(block.id, block.prompt, writerFocusEpisode),
+        clipUrl: String(block.outputUrl || "").trim(),
+        trimInSec: block.manhuaEditTrim?.inSec,
+        trimOutSec: block.manhuaEditTrim?.outSec,
+        shotPieces: block.manhuaEditTrim?.shotPieces,
+      }));
+    const currentSourceKey = manhuaFinalCutSourceKey(pieces);
+    return { ...manhuaFinalCutStaleOf({
+      versionSourceKey: identity?.sourceKey,
+      currentSourceKey,
+      currentCount: pieces.filter((piece) => piece.clipUrl).length,
+    }), verified: Boolean(identity?.sourceKey && currentSourceKey && identity.sourceKey === currentSourceKey) };
+  }, [
+    blocks,
+    writerFocusEpisode,
+    explicitWriterVideoModel,
+    finalAssembleBlock,
+    finalAssembleVideoUrl,
+  ]);
   const finalVideoVersions = useMemo(
     () => ({
       activeUrl: finalAssembleBlock?.outputUrl,
@@ -2996,7 +3097,7 @@ export default function OmniCanvas() {
     );
     setDirectionSelection(
       session.projectBible?.directionCanon
-        ? { mainCardId: session.projectBible.directionCanon.mainCardId, sceneOverrides: session.projectBible.directionCanon.sceneOverrides }
+        ? { mainCardId: session.projectBible.directionCanon.mainCardId, sceneOverrides: session.projectBible.directionCanon.sceneOverrides, scopedOverrides: session.projectBible.directionCanon.scopedOverrides }
         : session.directionSelection || null,
     );
     // 已确认项目刷新后必须回到主工作台；旧云草稿里的 form 只能作为未确认剧本的编辑选择，
@@ -4119,6 +4220,8 @@ export default function OmniCanvas() {
             subtitleTimeline: out.subtitleTimeline,
             url: finalVideoUrl,
             jobId,
+            // 这一版长片用的就是本次提交的那批段成片；指纹落档，终审才判得出旧料
+            sourceKey: manhuaFinalCutSourceKey(ready),
           });
           const next = existing
             ? prev.map((b) => (b.id === finalId ? nextBlock : b))
@@ -4970,6 +5073,9 @@ export default function OmniCanvas() {
           writerPack?.episodes.find((e) => e.index === ep)?.body || "";
         const segmentPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(epBody);
         const ensured = ensureManhuaFragmentClips(blocks, edges, ep, {
+          // 段成片提示词吃「本段戏核」：生产者在剧本页折叠区，这里是唯一的喂入口
+          storyEmotionLineByEpisodeSegment,
+          directionCanon: activeDirectionCanon,
           segmentCapacityMode: getManhuaSegmentCapacityMode(segmentCapacityModeByEpisode, ep),
           lengthTierId: writerLengthTierId,
           assetCanon: projectBible?.assetCanon,
@@ -5065,6 +5171,8 @@ export default function OmniCanvas() {
       directorBoardUrlByEpisode,
       directorBoardUrlByEpisodeSegment,
       directorBoardMotionOverlayBySegment,
+      storyEmotionLineByEpisodeSegment,
+      activeDirectionCanon,
       explicitWriterVideoModel,
       writerVideoModel,
     ],
@@ -5526,7 +5634,7 @@ export default function OmniCanvas() {
                 undefined
               : undefined,
           directionSelection: directionSelection
-            ? { mainCardId: directionSelection.mainCardId, sceneOverrides: directionSelection.sceneOverrides }
+            ? manhuaDirectionSelectionForRequest(directionSelection)
             : undefined,
         }),
         new Promise<never>((_, reject) => {
@@ -6258,6 +6366,7 @@ export default function OmniCanvas() {
       directorStrategyContract,
       directionCanon: confirmedDirectionCanon,
       assetCanon: canon,
+      storyEmotion: projectBible?.storyEmotion,
       manualOverrides: {
         femaleLead: femaleLeadManual,
         maleLead: maleLeadManual,
@@ -6356,6 +6465,7 @@ export default function OmniCanvas() {
     );
     return true;
   }, [
+    projectBible?.storyEmotion,
     writerPack,
     factoryTopic,
     writerVideoModel,
@@ -6495,6 +6605,7 @@ export default function OmniCanvas() {
         directorStrategyContract,
         directionCanon: buildManhuaDirectionCanonFromSelection(directionSelection),
         assetCanon: canon,
+        storyEmotion: projectBible?.storyEmotion,
         manualOverrides: {
           femaleLead: femaleLeadManual,
           maleLead: maleLeadManual,
@@ -6571,6 +6682,7 @@ export default function OmniCanvas() {
       `已按集铺板 ${spawned.episodeCount} 行链（${writerLayoutProfile.labelZh}；实际段数已按原稿秒位计算；旧成品已转存档；坞已预勾选可跑）`,
     );
   }, [
+    projectBible?.storyEmotion,
     writerPack,
     factoryTopic,
     writerVideoModel,
@@ -8646,6 +8758,9 @@ export default function OmniCanvas() {
             // 审阅、10 秒试片、单段、整集、失败续跑共用同一份真实编译上下文。
             // 以前只有工作台审阅传了资产/造型/可拍表，runFactory 会再次 ensure 后把它们冲掉。
             const ensureOptions = {
+              // 段成片提示词吃「本段戏核」：生产者在剧本页折叠区，这里是唯一的喂入口
+              storyEmotionLineByEpisodeSegment,
+              directionCanon: activeDirectionCanon,
               assetCanon: projectBible?.assetCanon,
               characterSheetUrlById: collectManhuaCharacterSheetUrlById(
                 workingBlocks,
@@ -9141,11 +9256,11 @@ export default function OmniCanvas() {
       directorBoardUrlByEpisode,
       directorBoardUrlByEpisodeSegment,
       directorBoardMotionOverlayBySegment,
+      storyEmotionLineByEpisodeSegment,
+      activeDirectionCanon,
       explicitWriterVideoModel,
       writerVideoModel,
       segmentCapacityModeByEpisode,
-      // 审查 P1：整板跑之前的同步设置要用当前选的导演卡
-      activeDirectionCanon,
       // 审查 P1-2 点名漏掉的一项。它现在读 ref、依赖为空，本身稳定；
       // 列进来是为了别再出现「闭包里少一项就拿到旧上下文」这类问题。
       manhuaOutboundScope,
@@ -9926,10 +10041,10 @@ export default function OmniCanvas() {
               </div>
             ) : null}
 
-            {canvasMode === "manhua" ? (
-            <>
+            {canvasMode === "manhua" || (canvasMode === "freeform" && workflowPhase === "edit") ? (
+            <div className={canvasMode === "freeform" ? "hidden" : "contents"}>
             {/* 工作台主屏：沉浸三栏（未确认也可进壳；题材从顶栏「改题材」） */}
-            {manhuaUiMode === "workbench" &&
+            {(manhuaUiMode === "workbench" || (canvasMode === "freeform" && workflowPhase === "edit")) &&
             !(immersiveWorkbench && immersiveExtrasOpen) ? (
               <div
                 id="manhua-workbench-zone"
@@ -9948,8 +10063,17 @@ export default function OmniCanvas() {
                   onAdvisorSelectionChange={setAdvisorSelection}
                   onAdvisorSignalsChange={setAdvisorSignals}
                   advisorTopIssue={advisorTopIssue}
-                  onOpenAdvisorIssue={() => {
-                    if (advisorTopIssue) locateAdvisorIssue(advisorTopIssue);
+                  advisorIssues={advisorProject.issues}
+                  canvasSelectedBlockId={canvasSelectedBlockId}
+                  finalCutStaleReasonZh={finalCutStale.reasonZh}
+                  finalCutStale={finalCutStale.stale}
+                  finalCutVerified={finalCutStale.verified}
+                  onOpenAdvisorIssue={(issueId) => {
+                    // 点阻断卡里某一条就定位那一条；点阶段条旁的那行仍然定位顶部项
+                    const picked = issueId
+                      ? advisorProject.issues.find((i) => i.id === issueId) || advisorTopIssue
+                      : advisorTopIssue;
+                    if (picked) locateAdvisorIssue(picked);
                     setAdvisorOpen(true);
                   }}
                   blocks={blocks}
@@ -9957,6 +10081,14 @@ export default function OmniCanvas() {
                   directorStrategyContract={directorStrategyContract}
                   directionCanon={activeDirectionCanon}
                   directionLocked={Boolean(projectBible)}
+                  onDirectionOverridesChange={(scopedOverrides) => {
+                    if (!activeDirectionCanon) return;
+                    const selection = { mainCardId: activeDirectionCanon.mainCardId, sceneOverrides: activeDirectionCanon.sceneOverrides, scopedOverrides };
+                    const canon = buildManhuaDirectionCanonFromSelection(selection);
+                    if (!canon) return;
+                    setDirectionSelection(selection);
+                    setProjectBible(previous => previous ? { ...previous, directionCanon: canon } : previous);
+                  }}
                   onSelectDirectionCard={(mainCardId) => setDirectionSelection(mainCardId ? { mainCardId } : null)}
                   onSelectDirectionSceneCard={(scene, cardId) =>
                     setDirectionSelection((prev) => {
@@ -9992,6 +10124,13 @@ export default function OmniCanvas() {
                   propIds={factoryPropIds}
                   artStyleLabelZh={getManhuaArtStylePreset(factoryArtStyleId).labelZh}
                   projectBibleSummary={summarizeManhuaProjectBible(projectBible)}
+                  storyEmotion={projectBible?.storyEmotion ?? null}
+                  storyEmotionScriptVersionKey={storyEmotionScriptVersionKey}
+                  onChangeStoryEmotion={
+                    projectBible
+                      ? (next) => setProjectBible({ ...projectBible, storyEmotion: next })
+                      : undefined
+                  }
                   assetCanon={projectBible?.assetCanon}
                   bibleBoundEpisodes={projectBible?.cast.boundEpisodeIndexes}
                   pathTrackLabelZh={pathTrackLabelZh}
@@ -10213,6 +10352,7 @@ export default function OmniCanvas() {
                       ),
                     )
                   }
+                  onCustomAssetSceneSpaceChange={(id, sceneSpace) => setCustomAssetRefs(previous => normalizeManhuaCustomAssetRefs(previous.map(ref => ref.id === id && ref.role === "scene" ? { ...ref, sceneSpace } : ref)))}
                   onCustomAssetLabelChange={setCustomAssetLabel}
                   onDetextCustomAsset={detextCustomAsset}
                   onEditCustomAsset={editCustomAsset}
@@ -10244,6 +10384,18 @@ export default function OmniCanvas() {
                   onShareAssetToLibraryChange={setShareAssetToLibrary}
                   assetShareBilling={assetShareBillingUi}
                   workflowPhase={workflowPhase}
+                  fineCutInCanvas={canvasMode === "freeform" && workflowPhase === "edit"}
+                  onOpenFineCutCanvas={() => {
+                    setManhuaUiMode("workbench");
+                    setWorkflowPhase("edit");
+                    setImmersiveWorkspaceView("workbench");
+                    selectCanvasMode("freeform");
+                  }}
+                  onReturnFineCutReview={() => {
+                    selectCanvasMode("manhua");
+                    setManhuaUiMode("workbench");
+                    setWorkflowPhase("final");
+                  }}
                   onWorkflowPhaseChange={setWorkflowPhase}
                   onOpenCharacterCard={() => setManhuaAssetDrawer("characters")}
                   onOpenAssetWall={() => setManhuaAssetDrawer("assets")}
@@ -10377,6 +10529,7 @@ export default function OmniCanvas() {
                   previewCanvas={
                     <div className="absolute inset-0 overflow-hidden">
                       <FreeformCanvas
+                        onSelectedBlockIdChange={setCanvasSelectedBlockId}
                         resolveManhuaOutboundGate={(blockId) => ({
                           currentScope: manhuaOutboundScope(blockId),
                           confirmation: outboundConfirmationsRef.current[blockId],
@@ -10585,6 +10738,9 @@ export default function OmniCanvas() {
                         "";
                       const segmentPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(epBody);
                       const layoutOpts = {
+                        // 段成片提示词吃「本段戏核」：生产者在剧本页折叠区，这里是唯一的喂入口
+                        storyEmotionLineByEpisodeSegment,
+                        directionCanon: activeDirectionCanon,
                         assetCanon: projectBible?.assetCanon,
                         characterSheetUrlById: sheetUrls,
                         propImageUrlById: collectManhuaPropImageUrlById(
@@ -10646,6 +10802,9 @@ export default function OmniCanvas() {
                         "";
                       const segmentPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(epBody);
                       const layoutOpts = {
+                        // 段成片提示词吃「本段戏核」：生产者在剧本页折叠区，这里是唯一的喂入口
+                        storyEmotionLineByEpisodeSegment,
+                        directionCanon: activeDirectionCanon,
                         assetCanon: projectBible?.assetCanon,
                         characterSheetUrlById: sheetUrls,
                         propImageUrlById: collectManhuaPropImageUrlById(
@@ -10772,6 +10931,9 @@ export default function OmniCanvas() {
                         "";
                       const segmentPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(epBody);
                       const layoutOpts = {
+                        // 段成片提示词吃「本段戏核」：生产者在剧本页折叠区，这里是唯一的喂入口
+                        storyEmotionLineByEpisodeSegment,
+                        directionCanon: activeDirectionCanon,
                         assetCanon: projectBible?.assetCanon,
                         characterSheetUrlById: sheetUrls,
                         propImageUrlById: collectManhuaPropImageUrlById(
@@ -11960,6 +12122,7 @@ export default function OmniCanvas() {
                     </div>
                     <div className="min-h-[360px] md:min-h-[480px]">
                       <FreeformCanvas
+                        onSelectedBlockIdChange={setCanvasSelectedBlockId}
                         resolveManhuaOutboundGate={(blockId) => ({
                           currentScope: manhuaOutboundScope(blockId),
                           confirmation: outboundConfirmationsRef.current[blockId],
@@ -12637,16 +12800,21 @@ export default function OmniCanvas() {
                   userId={String(user.id)}
                   userRole={userRole}
                   bgmSeedNoteZh={audioReferenceLock?.bgmNoteZh || ""}
+                  storyEmotion={storyEmotionForDownstream}
+                  sceneSpaceRefs={customAssetRefs}
+                  focusEpisode={writerFocusEpisode}
+                  spatialContexts={selectCurrentManhuaSpatialContexts(blocks, writerFocusEpisode, explicitWriterVideoModel)}
                 />
               ) : null}
             </div>
             </div>
-            </>
+            </div>
             ) : null}
           </div>
 
           {canvasMode === "freeform" ? (
           <div id="freeform-canvas-zone" className="scroll-mt-24">
+            {workflowPhase === "edit" && <div id="manhua-freeform-finecut" data-manhua-finecut-episode={writerFocusEpisode} className="mb-4 flex max-h-[70vh] min-h-0 flex-col overflow-auto rounded-xl border border-white/15 bg-slate-950 text-white" />}
             <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
               <div className="text-sm font-semibold text-white/85">自由画布</div>
               <span className="text-[11px] text-white/40">

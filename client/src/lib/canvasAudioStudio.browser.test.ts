@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { build } from "esbuild";
 import puppeteer, { type Browser } from "puppeteer";
@@ -70,7 +71,7 @@ beforeAll(async () => {
   });
   bundle = result.outputFiles[0]!.text;
   browser = await puppeteer.launch({ headless: true });
-}, 30_000);
+}, 180_000);
 afterAll(async () => {
   await browser?.close();
 });
@@ -90,7 +91,7 @@ async function open() {
   });
   await page.goto("http://localhost:41811");
   await page.addScriptTag({ content: bundle });
-  await page.waitForSelector('section[aria-label="逐句配音与分段配乐"]');
+  await page.waitForSelector('section[aria-label="逐句配音、配乐与事件音效"]');
   const click = async (text: string) =>
     page.evaluate(t => {
       const el = Array.from(document.querySelectorAll("button")).find(el =>
@@ -123,7 +124,7 @@ describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
       await page.waitForFunction(hasWarning, { timeout: 10_000 });
       expect(await page.evaluate(() => Array.from(document.querySelectorAll('[role="status"]')).some(el => el.textContent?.includes("旧原曲")))).toBe(false);
       await page.evaluate(() => (window as any).fixture.show(false));
-      await page.waitForFunction(() => !document.querySelector('section[aria-label="逐句配音与分段配乐"]'), { timeout: 10_000 });
+      await page.waitForFunction(() => !document.querySelector('section[aria-label="逐句配音、配乐与事件音效"]'), { timeout: 10_000 });
       await page.evaluate(() => (window as any).fixture.show(true));
       await page.waitForFunction(hasWarning, { timeout: 10_000 });
       expect(await page.evaluate(() => (window as any).fixture.calls)).toEqual([]);
@@ -216,7 +217,7 @@ describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
       );
       expect(
         await page.$eval(
-          'section[aria-label="逐句配音与分段配乐"]',
+          'section[aria-label="逐句配音、配乐与事件音效"]',
           el => el.textContent
         )
       ).toContain("阶段标签用于区分候选；实际声音由音色和语气决定");
@@ -466,7 +467,7 @@ describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
   const PREMIX_PENDING = {
     id: "22222222-2222-4222-8222-222222222222",
     kind: "post_prod",
-    inputKey: "premix:sha256:abc",
+    inputKey: "premix:sha256:" + createHash("sha256").update("[]").digest("hex"),
   };
   const PREMIX_RESULT = {
     jobId: "22222222-2222-4222-8222-222222222222",
@@ -565,4 +566,19 @@ describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
       await context.close();
     }
   }, 20_000);
+  it("声音编辑后迟到的预混只保留旧合听，不覆盖当前母轨", async () => {
+    const {context,page}=await open();
+    try {
+      await page.evaluate((pending,result)=>{
+        const f=(window as any).fixture;f.postResult=result;f.setMasterCb(true);
+        f.configure({...f.state,pendingOperations:[pending]});f.longCues();f.show(false);
+      },PREMIX_PENDING,PREMIX_RESULT);
+      await page.waitForFunction(()=>!document.querySelector("section"));
+      await page.evaluate(()=>(window as any).fixture.show(true));
+      await page.waitForFunction(()=>(window as any).fixture.state.pendingOperations.length===0);
+      const state=await page.evaluate(()=>({masters:(window as any).fixture.masterEntries.length,preview:(window as any).fixture.state.previewTake?.gcsUri,text:document.body.innerText}));
+      expect(state.masters).toBe(0);expect(state.preview).toBe(PREMIX_RESULT.output.gcsUri);expect(state.text).toContain("旧版预混已生成");
+    }finally{await context.close();}
+  },20000);
+
 });

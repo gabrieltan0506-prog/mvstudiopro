@@ -7,6 +7,7 @@ import { Clapperboard, FileText, Image as ImageIcon, LayoutTemplate, Video, Musi
 import type { ManhuaClipQualityReport } from "@shared/manhuaClipQuality";
 import { normalizeManhuaKeyartLookState } from "@shared/manhuaKeyartLookState";
 import { normalizeManhuaAutoSegmentBinding, type ManhuaAutoSegmentBinding } from "@shared/manhuaAutoSegment";
+import { normalizeManhuaSpatialContext, type ManhuaSpatialContext } from "@shared/manhuaSceneSpace";
 import {
   normalizeManhuaFinalPostProdBinding,
   normalizeManhuaFinalVersionIdentities,
@@ -142,6 +143,7 @@ export type CanvasBlock = {
   aspectRatio: "9:16" | "16:9";
   /** 图片方块：文生图 / 改图（需参考图） */
   imageMode: CanvasImageMode;
+  imageTreatment?: "preserve_3d";
   /** 图片方块一次生成张数 */
   imageBatchCount: CanvasImageBatchCount;
   /**
@@ -307,6 +309,8 @@ export type CanvasBlock = {
   /** 整集每个版本的任务/GCS 长期身份；本机与云草稿同批保存，不包含视频字节。 */
   manhuaFinalVersions?: ManhuaFinalVersionIdentity[];
   manhuaAutoSegment?: ManhuaAutoSegmentBinding;
+  /** 实际分段编译得到的空间身份，供后期读取；不从展示文本反猜。 */
+  manhuaSpatialContext?: ManhuaSpatialContext;
 };
 
 export type CanvasEdge = { fromId: string; toId: string };
@@ -557,6 +561,7 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
     imageModel: normalizeCanvasImageModel(block.imageModel),
     videoModel: withVideo.videoModel,
     imageMode: block.imageMode === "edit" ? "edit" : "generate",
+    imageTreatment: block.imageTreatment === "preserve_3d" ? "preserve_3d" : undefined,
     seedance25WorkMode,
     width: block.width ?? CANVAS_BLOCK_DEFAULT_WIDTH,
     height: block.height ?? CANVAS_BLOCK_DEFAULT_HEIGHT,
@@ -653,6 +658,7 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
     manhuaFinalPostProd: normalizeManhuaFinalPostProdBinding(block.manhuaFinalPostProd),
     manhuaFinalVersions: normalizeManhuaFinalVersionIdentities(block.manhuaFinalVersions),
     manhuaAutoSegment: normalizeManhuaAutoSegmentBinding(block.manhuaAutoSegment),
+    manhuaSpatialContext: normalizeManhuaSpatialContext(block.manhuaSpatialContext),
   };
 }
 

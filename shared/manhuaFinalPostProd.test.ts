@@ -280,3 +280,14 @@ describe("manhuaFinalPostProd", () => {
     expect(refreshed.outputUrls).not.toContain(oldSigned);
   });
 });
+
+it("长用料记录经过保存、烧字和结果续签不丢裁切身份", () => {
+ const sourceKey = "2|v2|" + "a".repeat(4500);
+ const assembled = replaceManhuaFinalAssembleVersion({ id: "final-e01" }, { url: original, sourceKey });
+ const restored = JSON.parse(JSON.stringify(assembled)) as typeof assembled;
+ const pending = beginManhuaFinalSubtitleBurn(restored, { jobId: "subtitle-source", sourceUrl: original });
+ const result = applyManhuaFinalSubtitleBurnSuccess(pending, { jobId: "subtitle-source", resultUrl: "https://cdn.example/burn.mp4", resultGcsUri: "gs://bucket/burn.mp4" });
+ expect(result.manhuaFinalVersions?.find(row => row.origin === "burn_subtitle")?.sourceKey).toBe(sourceKey);
+ const refreshed = refreshManhuaFinalVersionIdentity(result, { jobId: "subtitle-source", resultUrl: "https://cdn.example/burn.mp4?sig=renewed", resultGcsUri: "gs://bucket/burn.mp4" });
+ expect(refreshed.manhuaFinalVersions?.find(row => row.origin === "burn_subtitle")?.sourceKey).toBe(sourceKey);
+});

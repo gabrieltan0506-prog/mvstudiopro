@@ -17,6 +17,18 @@ export type AdvisorIssue = {
   id: string;
   text: string;
   phase: ManhuaCreativeAdvisorContext["stage"];
+  /**
+   * 0919：这条是不是**挡住往下走**的。
+   *
+   * 为什么要这个字段：阶段条「资产设定 ✅」走的是覆盖方向（剧本里每个人物是否都有图，
+   * 见 findManhuaAssetCoverageGaps），顾问的「N 张人物图未认领」走的是反方向
+   * （每张图是否认领到了人物）。两者可以同时为真且都没错——剧本里的人都有图，
+   * 同时另有几张多余的图没认领。用户看到 ✅ 旁边挂着警告，分不清哪个说了算，
+   * 这就是线上暴露的「阶段状态冲突」。
+   *
+   * 定性只按一条：**不补它能不能继续出片**。能继续的是提醒（false），不能的是阻断（true）。
+   */
+  blocking: boolean;
 };
 
 export type AdvisorVideoModelResolution = {
@@ -103,8 +115,19 @@ export function recommendManhua3dUsage(input: {
 }
 
 /** 阶段条「顾问：…」取当前阶段第一条；当前阶段没有就取全局第一条。 */
+/**
+ * 顶部只显示一条：**先挑阻断的**。
+ * 原来取本阶段第一条，于是「4 张图未认领」这种不挡路的提醒会盖过真正卡住的那条，
+ * 用户照着补完还是走不下去。阻断优先，本阶段优先于其它阶段。
+ */
 export function pickManhuaAdvisorTopIssue(issues: AdvisorIssue[], phase: ManhuaCreativeAdvisorContext["stage"]): AdvisorIssue | null {
-  return issues.find((issue) => issue.phase === phase) || issues[0] || null;
+  return (
+    issues.find((issue) => issue.phase === phase && issue.blocking)
+    || issues.find((issue) => issue.blocking)
+    || issues.find((issue) => issue.phase === phase)
+    || issues[0]
+    || null
+  );
 }
 
 const PHASE_LABELS: Record<ManhuaCreativeAdvisorContext["stage"], string> = {
@@ -223,22 +246,23 @@ export function buildManhuaAdvisorProject(input: {
     episodeIndex: input.episodeIndex,
     blocks: input.blocks,
   });
-  if (!episode?.body.trim()) issues.push({ id: "script", text: "本集尚无剧本正文，请先导入或填写。", phase: "outline" });
+  if (!episode?.body.trim()) issues.push({ id: "script", text: "本集尚无剧本正文，请先导入或填写。", phase: "outline", blocking: true });
   if (!input.writerConfirmed || !canon?.characters.length) {
-    issues.push({ id: "canon", text: "剧本人物表尚未确认；图片暂时无法认领到人物。", phase: "outline" });
+    issues.push({ id: "canon", text: "剧本人物表尚未确认；图片暂时无法认领到人物。", phase: "outline", blocking: true });
   }
   if (engine.conflictModels.length > 1) {
     issues.push({
       id: "engine-conflict",
       text: `本集成片节点存在 ${engine.conflictModels.length} 个不同引擎，顾问不会猜用哪一个；请先统一成片引擎。`,
       phase: "outline",
+      blocking: true,
     });
   } else if (!normalizeCompilerEngineId(engine.videoModel)) {
-    issues.push({ id: "engine", text: "尚未选择可用的成片引擎，不能确定成片提示词配方。", phase: "outline" });
+    issues.push({ id: "engine", text: "尚未选择可用的成片引擎，不能确定成片提示词配方。", phase: "outline", blocking: true });
   }
   const gateZh = (input.gate || []).map((line) => clipSignal(line, LIMITS.gateChars)).filter(Boolean).slice(0, LIMITS.gateItems);
   if (gateZh.length) {
-    issues.push({ id: "gate", text: `剧本门禁未过（${gateZh.length} 条）：${gateZh[0]}`, phase: "outline" });
+    issues.push({ id: "gate", text: `剧本门禁未过（${gateZh.length} 条）：${gateZh[0]}`, phase: "outline", blocking: true });
   }
   const roleNames = { character: "人物", scene: "场景", prop: "道具", wardrobe: "服装", unset: "未分类" };
   let unclaimed = 0;
@@ -254,26 +278,41 @@ export function buildManhuaAdvisorProject(input: {
       ? "已保存（不代表已验证造型质量）" : model.status === "failed" ? "失败" : model.status === "reconcile_manual" ? "待对账" : "处理中";
     return `${roleNames[ref.role]}「${ref.labelZh || "未命名"}」：${claims.length ? `认领${claims.map((a) => a.nameZh).join("、")}` : "未认领"}；${current.length ? "当前参考" : "候选"}；${ref.reviewStatus === "needs_review" ? "待审核" : "无待审核标记"}；3D ${modelState}`;
   }).join("\n") || "尚未导入参考图。";
-  if (unclaimed) issues.push({ id: "claims", text: `${unclaimed} 张人物图尚未认领到本剧人物。`, phase: "assets" });
-  if (pendingReview) issues.push({ id: "review", text: `${pendingReview} 张参考图需要人工确认。`, phase: "assets" });
+  if (unclaimed) issues.push({
+    id: "claims",
+    text: `${unclaimed} 张人物图尚未认领到本剧人物：不挡出片，但这些图不会被用作锁脸参考；认领后才会进入候选。`,
+    phase: "assets",
+    blocking: false,
+  });
+  if (pendingReview) issues.push({
+    id: "review",
+    text: `${pendingReview} 张参考图需要人工确认：确认前不参与出片，已认领的其它图照常可用。`,
+    phase: "assets",
+    blocking: false,
+  });
   if (!canon?.locations.length && !input.refs.some((ref) => ref.role === "scene" && ref.reviewStatus !== "needs_review")) {
-    issues.push({ id: "scene", text: "尚无已确认场景表或可用场景参考。", phase: "assets" });
+    issues.push({ id: "scene", text: "尚无已确认场景表或可用场景参考。", phase: "assets", blocking: true });
   }
   const assetGapZh = clipSignal(input.assetGap, LIMITS.signalChars);
   const assetGapPending = Number(ASSET_GAP_PATTERN.exec(assetGapZh)?.[1] || 0);
   if (assetGapPending > 0) {
-    issues.push({ id: "asset-gap", text: `${assetGapZh}；补齐后再进分镜。`, phase: "assets" });
+    issues.push({ id: "asset-gap", text: `${assetGapZh}；补齐后再进分镜。`, phase: "assets", blocking: true });
   }
   const keyframeBlockZh = clipSignal(input.keyframeBlock, LIMITS.signalChars);
   if (keyframeBlockZh) {
-    issues.push({ id: "keyframe", text: `关键静帧被拦：${keyframeBlockZh}`, phase: "storyboard" });
+    issues.push({ id: "keyframe", text: `关键静帧被拦：${keyframeBlockZh}`, phase: "storyboard", blocking: true });
   }
   const pipeline3dZh = clipSignal(input.pipeline3d, LIMITS.signalChars);
   const pipelineMatch = PIPELINE_3D_PATTERN.exec(pipeline3dZh);
   const modelReady = Number(pipelineMatch?.[1] || 0);
   const rigged = Number(pipelineMatch?.[2] || 0);
   if (modelReady > 0 && rigged === 0) {
-    issues.push({ id: "rig", text: `已有 ${modelReady} 个 3D 模型未绑骨，白模动作还驱动不了。`, phase: "storyboard" });
+    issues.push({
+      id: "rig",
+      text: `已有 ${modelReady} 个 3D 模型未绑骨：不挡静帧与成片，但白模里这些角色只能站着。`,
+      phase: "storyboard",
+      blocking: false,
+    });
   }
   const queueZh = clipSignal(input.queue, LIMITS.signalChars);
   const creditsZh = clipSignal(input.credits, LIMITS.signalChars);

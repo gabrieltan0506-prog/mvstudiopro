@@ -1,3 +1,4 @@
+import { normalizeManhuaSceneSpace, type ManhuaSceneSpace } from "./manhuaSceneSpace.js";
 /**
  * 用户上传参考图：勾选人物 / 场景 / 服装道具后，直接进关键静帧融图。
  * 仅接受 HTTPS；unset 不进融图与门禁。
@@ -83,6 +84,8 @@ export function defaultManhuaCustomAssetRefDuty(
 }
 
 export type ManhuaCustomAssetRef = {
+  /** 绑定本图版本的非比例场景空间拓扑。 */
+  sceneSpace?: ManhuaSceneSpace;
   id: string;
   /** HTTPS 可读地址（GCS 等） */
   url: string;
@@ -452,6 +455,7 @@ export function normalizeManhuaCustomAssetRefs(
     const primaryBindings = parsePrimaryBindings(o.primaryBindings);
     const primarySelectionScopes = parsePrimaryBindings(o.primarySelectionScopes);
     out.push({
+      sceneSpace: normalizeManhuaSceneSpace(o.sceneSpace),
       id,
       url,
       role,

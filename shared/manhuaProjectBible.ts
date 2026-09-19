@@ -5,6 +5,10 @@
 
 import type { ManhuaWriterPack } from "./manhuaWriterRoom.js";
 import {
+  normalizeManhuaStoryEmotion,
+  type ManhuaStoryEmotion,
+} from "./manhuaStoryEmotion.js";
+import {
   buildManhuaWriterAssetCanon,
   type ManhuaWriterAssetCanon,
 } from "./manhuaWriterAssetCanon.js";
@@ -58,6 +62,12 @@ export type ManhuaProjectBible = {
    * 缺省 undefined = 没选导演包，所有阶段保持原提示词，不注入默认风格。
    */
   directionCanon?: ManhuaDirectionCanon;
+  /**
+   * 剧情与情绪结构：因果节拍、情绪曲线、伏笔状态。与 directionCanon 同一条路——
+   * 编剧确认时冻结，分镜/声音/终审读同一份，随 writerSession 存本地与云端草稿。
+   * 缺省 undefined = 没做分析，下游按原样走，不注入任何默认情绪。
+   */
+  storyEmotion?: ManhuaStoryEmotion;
   /** 手选覆盖自动推荐（冲突规则：人工优先） */
   manualOverrides?: {
     femaleLead?: boolean;
@@ -85,6 +95,7 @@ export type BuildManhuaProjectBibleInput = {
   manualOverrides?: ManhuaProjectBible["manualOverrides"];
   directorStrategyContract?: ManhuaDirectorStrategyContract | null;
   directionCanon?: ManhuaDirectionCanon | null;
+  storyEmotion?: ManhuaStoryEmotion | null;
 };
 
 /** 从编剧确认瞬间的状态生成专案 Bible */
@@ -148,6 +159,7 @@ export function buildManhuaProjectBible(input: BuildManhuaProjectBibleInput): Ma
     directorStrategyContract: parseManhuaDirectorStrategyContract(input.directorStrategyContract),
     assetCanon,
     directionCanon: normalizeManhuaDirectionCanon(input.directionCanon),
+    storyEmotion: normalizeManhuaStoryEmotion(input.storyEmotion),
     manualOverrides: input.manualOverrides,
   };
 }
@@ -196,6 +208,7 @@ export function parseManhuaProjectBible(raw: unknown): ManhuaProjectBible | null
       confirmedAt: o.confirmedAt,
       assetCanon: (o as { assetCanon?: ManhuaWriterAssetCanon }).assetCanon,
       directionCanon: (o as { directionCanon?: unknown }).directionCanon as ManhuaDirectionCanon | null | undefined,
+      storyEmotion: (o as { storyEmotion?: unknown }).storyEmotion as ManhuaStoryEmotion | null | undefined,
       manualOverrides: o.manualOverrides,
     });
   } catch {

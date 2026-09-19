@@ -28,6 +28,8 @@ export type ManhuaSegmentReferenceEntry = {
   durationSec?: number;
   /** 只有工厂生成的骨骼动作白模才声明动作职责；旧上传参考保持旧语义。 */
   motionGuideZh?: string;
+  /** 工厂预混采用的完整声音用料，上传母轨不伪造此证据。 */
+  audioStudioSource?: string;
   updatedAt: string;
 };
 
@@ -83,6 +85,7 @@ export function normalizeManhuaSegmentReferenceEntry(
         ? Math.round(r.durationSec * 1000) / 1000
         : undefined,
     updatedAt: updatedAt || new Date(0).toISOString(),
+    ...(typeof r.audioStudioSource === "string" && r.audioStudioSource ? { audioStudioSource: r.audioStudioSource } : {}),
     ...(typeof r.motionGuideZh === "string" && r.motionGuideZh.trim() ? {motionGuideZh:r.motionGuideZh.trim()} : {}),
   };
 }
@@ -121,6 +124,8 @@ export function formatManhuaSegmentReferenceGuideZh(input: {
   previsVideoIndex?: number;
   masterAudioIndex?: number;
   motionGuideZh?: string;
+  /** 工厂预混采用的完整声音用料，上传母轨不伪造此证据。 */
+  audioStudioSource?: string;
 }): string {
   const lines: string[] = [];
   if (input.previsVideoIndex && input.previsVideoIndex > 0) {
