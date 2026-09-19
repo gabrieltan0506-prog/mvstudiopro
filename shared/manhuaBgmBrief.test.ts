@@ -171,3 +171,66 @@ describe("deriveManhuaBgmBriefSeed（0901 段表接线）", () => {
     expect(empty.moods).toEqual(["蓄力", "冲突", "收束"]);
   });
 });
+
+describe("配乐读剧情情绪曲线（0919 下游消费）", () => {
+  const seg = [["蓄力"], ["情绪高点"], ["悬念钩子"]];
+
+  it("有情绪曲线就用它当真源，并把留白落成 [Break]", () => {
+    const seed = deriveManhuaBgmBriefSeed({
+      laneZh: "古装",
+      segmentBeatFunctionsZh: seg,
+      storyEmotion: { moods: ["蓄力", "反转"], hasSilenceBreak: true },
+    });
+    expect(seed.moods).toEqual(["蓄力", "反转", "收束"]);
+    expect(seed.hasSilenceBreak).toBe(true);
+    const brief = buildManhuaBgmBrief({ ...seed, moods: seed.moods, hasSilenceBreak: seed.hasSilenceBreak });
+    expect(brief.prompt).toContain("[Break");
+  });
+
+  it("没有曲线时行为一字不变：仍按秒轴节拍标签推导，且不插 [Break]", () => {
+    const without = deriveManhuaBgmBriefSeed({ laneZh: "古装", segmentBeatFunctionsZh: seg });
+    const nullish = deriveManhuaBgmBriefSeed({ laneZh: "古装", segmentBeatFunctionsZh: seg, storyEmotion: null });
+    expect(without.moods).toEqual(nullish.moods);
+    expect(without.hasSilenceBreak).toBeUndefined();
+    // 反例对照：这条是旧行为基线，曲线为空数组时也不许改写它
+    const emptyCurve = deriveManhuaBgmBriefSeed({
+      laneZh: "古装",
+      segmentBeatFunctionsZh: seg,
+      storyEmotion: { moods: [], hasSilenceBreak: false },
+    });
+    expect(emptyCurve.moods).toEqual(without.moods);
+  });
+
+  it("末拍仍然强制落地：曲线以反转收尾也要补收束", () => {
+    const seed = deriveManhuaBgmBriefSeed({
+      laneZh: "古装",
+      segmentBeatFunctionsZh: seg,
+      storyEmotion: { moods: ["反转"], hasSilenceBreak: false },
+    });
+    expect(seed.moods.at(-1)).toBe("收束");
+  });
+});
+
+describe("留白不许被静默丢掉（0919 修）", () => {
+  it("曲线没有冲突情绪时，[Break] 落在转折前而不是消失", () => {
+    const p = buildBgmStructurePrompt({ moods: ["蓄力", "反转", "收束"], hasSilenceBreak: true });
+    expect(p).toContain("[Break");
+    expect(p.indexOf("[Break")).toBeLessThan(p.indexOf("[Turn"));
+  });
+
+  it("既无爆点也无转折时，收尾前补一次，绝不丢", () => {
+    const p = buildBgmStructurePrompt({ moods: ["蓄力", "收束"], hasSilenceBreak: true });
+    expect(p).toContain("[Break");
+    expect(p.indexOf("[Break")).toBeLessThan(p.indexOf("[Outro"));
+  });
+
+  it("有爆点时仍按原行为落在爆点前（回归基线）", () => {
+    const p = buildBgmStructurePrompt({ moods: ["蓄力", "冲突", "收束"], hasSilenceBreak: true });
+    expect(p.indexOf("[Break")).toBeLessThan(p.indexOf("[Peak"));
+  });
+
+  it("反例对照：没有留白就一个 [Break] 都不许出现", () => {
+    expect(buildBgmStructurePrompt({ moods: ["蓄力", "冲突", "收束"] })).not.toContain("[Break");
+    expect(buildBgmStructurePrompt({ moods: ["蓄力", "反转"], hasSilenceBreak: false })).not.toContain("[Break");
+  });
+});

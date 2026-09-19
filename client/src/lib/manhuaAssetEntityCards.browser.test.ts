@@ -106,10 +106,10 @@ beforeAll(async () => {
         const canon = ${JSON.stringify(CANON)};
         const blocks = [1, 2].map((n) => ({
           ...defaultCanvasBlock('video', 0, 0),
-          id: 'clip-e01-g0' + n + '-cards',
+          id: 'clip-e01-g0' + n + '-audio',
           episodeIndex: 1,
           videoModel: 'seedance-2.5',
-          prompt: '【第' + n + '段·30s】墨屠第' + n + '段动作。',
+          prompt: '【第' + n + '段·30s】墨屠第' + n + '段对白与动作。',
         }));
         createRoot(document.getElementById('root')).render(
           <TooltipProvider>
@@ -118,6 +118,18 @@ beforeAll(async () => {
               episodeCount={1} focusEpisode={1} onFocusEpisode={() => {}}
               characterIds={[]} propIds={[]} outlineConfirmed={true}
               workflowPhase='storyboard' compactUi={false}
+              canvasSelectedBlockId='clip-e01-g03-cards'
+              directionCanon={{
+                mainCardId: 'main',
+                cards: [
+                  { id: 'main', labelZh: '信息位置可控', rules: [{ id: 'm1', ruleZh: '手法一', stages: ['story','storyboard'], status: 'formal' }, { id: 'm2', ruleZh: '手法二', stages: ['storyboard'], status: 'formal' }] },
+                  { id: 'fight', labelZh: '动作改变关系', rules: [{ id: 'f1', ruleZh: '手法二', stages: ['keyframe'], status: 'formal' }] },
+                ],
+                authorizedCardIds: ['main', 'fight'],
+                sceneOverrides: { action: { cardId: 'fight' } },
+              }}
+              onSelectDirectionCard={() => {}}
+              onSelectDirectionSceneCard={() => {}}
               customAssetRefs={refs} assetCanon={canon}
               onUploadCustomAssets={async () => {}}
               onGenerateAllEpisodeKeyarts={async () => { globalThis.fixture.keyart += 1; }}
@@ -308,6 +320,7 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
       };
     });
     expect(seen, "阻断卡没有渲染出来").not.toBeNull();
+    if (!seen) throw new Error("阻断卡未挂载");
     expect(seen.count).toBe("2");
     expect(seen.headline).toBe("本步卡着 1 条，全片共 2 条要解");
     // 夹具里「后续阶段」那条排在数组第一个：排序失效页面顺序就会反过来（变异验过会红）
@@ -495,7 +508,278 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
     expect(stale).not.toContain("已完成");
 
     const fresh = await readStage("finalCutStale={false} finalCutStaleReasonZh=''");
-    expect(fresh).toContain("已完成");
+    expect(fresh).not.toContain("已完成");
+    expect(fresh).toContain("需处理");
     expect(fresh).not.toContain("需重合成");
+  }, 180_000);
+
+  /**
+   * 对照图 01 第三格 + README「分镜页固定三栏：镜头清单、主预览、当前镜参数」。
+   * 断言的是**视觉列序**（CSS order），不是 DOM 顺序 —— 真实页面上用户看到的是左中右。
+   */
+  it("分镜阶段固定三栏：左镜头清单、中主预览、右当前镜参数；挂载资产退成折叠", async () => {
+    const { page, close } = await mountStoryboard();
+    const seen = await page.evaluate(() => {
+      const pick = (name: string) => document.querySelector(`[data-manhua-column="${name}"]`);
+      const orderOf = (el: Element | null) =>
+        el ? Number(window.getComputedStyle(el).order || "0") : null;
+      const script = pick("script");
+      const preview = pick("preview");
+      const params = pick("params");
+      return {
+        hasParamsColumn: Boolean(params),
+        hasAssetsColumn: Boolean(pick("assets")),
+        order: { script: orderOf(script), preview: orderOf(preview), params: orderOf(params) },
+        // 当前镜参数面板现在应该在右栏里，而不是在镜头清单那一栏
+        paramsInRight: Boolean(params?.querySelector("[data-manhua-shot-params]")),
+        paramsInScript: Boolean(script?.querySelector("[data-manhua-shot-params]")),
+        collapsedAssets: Boolean(document.querySelector("[data-manhua-storyboard-assets-collapsed]")),
+      };
+    });
+    expect(seen.hasParamsColumn, "右栏没有变成当前镜参数").toBe(true);
+    expect(seen.hasAssetsColumn, "分镜阶段不该还有常驻资产栏").toBe(false);
+    // 左 1 · 中 2 · 右 3
+    expect(seen.order.script).toBe(1);
+    expect(seen.order.preview).toBe(2);
+    expect(seen.order.params).toBe(3);
+    expect(seen.paramsInRight).toBe(true);
+    expect(seen.paramsInScript).toBe(false);
+
+    // 对照图 01 右栏四个字段：时长 / 景别 / 机位运动 / 画面描述（0/200）
+    const fields = await page.evaluate(() => {
+      const panel = document.querySelector("[data-manhua-shot-params]")!;
+      const rows = Array.from(panel.querySelectorAll("[data-manhua-shot-field]")).map((el) => ({
+        label: el.getAttribute("data-manhua-shot-field"),
+        value: (el.querySelector("dd")?.textContent || "").trim(),
+      }));
+      const desc = panel.querySelector("[data-manhua-shot-description]");
+      return { rows, descText: (desc?.textContent || "").replace(/\s+/g, " ").trim() };
+    });
+    expect(fields.rows.map((r) => r.label)).toEqual(["镜头时长", "景别", "机位运动"]);
+    // 夹具的镜头带机位文本，真实页面上必须切出景别；切不出来才写「未标注」（合同测试另有覆盖）
+    const shotSize = fields.rows.find((r) => r.label === "景别")?.value || "";
+    expect(shotSize).not.toBe("");
+    expect(["全景", "中景", "近景", "中近景", "特写", "大特写", "远景", "大远景", "未标注"]).toContain(shotSize);
+    expect(fields.rows.find((r) => r.label === "镜头时长")?.value).toMatch(/秒|未标注/);
+    expect(fields.descText).toContain("画面描述");
+    expect(fields.descText).toMatch(/\d+\/200/);
+    await close();
+  }, 180_000);
+
+  /**
+   * 对照图 04（mvs-director-continuity）：分镜页给一张紧凑导演卡 ——
+   * 当前有效手法 / 来源范围 / 覆盖理由 / 影响预览 / 连续性提醒；
+   * 顶栏那五个「场次副卡」下拉在分镜阶段收起（它回答不了「这一段用哪张」）。
+   */
+  it("分镜阶段：右栏出现紧凑导演卡，顶栏五个场次副卡下拉收起", async () => {
+    const { page, close } = await mountStoryboard();
+    const seen = await page.evaluate(() => {
+      const card = document.querySelector("[data-manhua-director-card]");
+      const params = document.querySelector('[data-manhua-column="params"]');
+      return {
+        hasCard: Boolean(card),
+        inRightColumn: Boolean(params?.querySelector("[data-manhua-director-card]")),
+        source: card?.getAttribute("data-manhua-director-card-source") || "",
+        text: (card?.textContent || "").replace(/\s+/g, " ").trim(),
+        sceneCardsInTopBar: Boolean(document.querySelector("[data-manhua-direction-scene-cards]")),
+        // 主卡下拉仍然在（导演包本身没被藏掉）
+        mainCardSelect: Boolean(document.querySelector("[data-manhua-direction-canon]")),
+      };
+    });
+    expect(seen.hasCard, "导演卡没渲染").toBe(true);
+    expect(seen.inRightColumn, "导演卡不在右栏").toBe(true);
+    expect(seen.sceneCardsInTopBar, "顶栏五个场次副卡下拉应在分镜阶段收起").toBe(false);
+    expect(seen.mainCardSelect, "导演包主卡入口不该被一起藏掉").toBe(true);
+    expect(seen.text).toContain("投影到");
+    await close();
+  }, 180_000);
+
+  /**
+   * 对照图 02 第三格：对白与配乐面板开头要能一眼看到「这一段有什么」。
+   * 对照图 04 的硬要求：混合轨不许伪装成多轨。
+   * 这里直接挂真实的 `CanvasAudioStudioView`（离线视图，不接付费服务）。
+   */
+  it("对白与配乐面板顶部：当前片段摘要按真实 cue 统计，只有预混母轨时不谎称多轨", async () => {
+    const mountAudio = async (extra: string) => {
+      const built = await build({
+        stdin: {
+          resolveDir: process.cwd(),
+          loader: "tsx",
+          contents: `
+            import React from 'react';
+            import { createRoot } from 'react-dom/client';
+            import { CanvasAudioStudioView } from './client/src/components/canvas/CanvasAudioStudio';
+            import { defaultCanvasBlock } from './client/src/lib/canvasTypes';
+            import { emptyCanvasAudioStudio, createCanvasAudioCue, canvasAudioCueInputKey } from './shared/canvasAudioStudio';
+            const cue = (kind, id, speakerZh, selectedTakeId) => {
+              const value = { ...createCanvasAudioCue(kind, id), speakerZh, textZh: '别怕，站我身后。', approved: Boolean(selectedTakeId) };
+              return selectedTakeId ? { ...value, selectedTakeId, takes: [{ id: selectedTakeId, gcsUri: 'gs://b/a.wav', previewUrl: '', durationSec: 2, createdAt: '2026-09-19', inputKey: canvasAudioCueInputKey(value) }] } : value;
+            };
+            const block = {
+              ...defaultCanvasBlock('video', 0, 0),
+              id: 'clip-e01-g01-audio', episodeIndex: 1, videoModel: 'seedance-2.5',
+              prompt: '【第1段·30s】墨屠第1段对白与动作。',
+              ${extra}
+            };
+            const services = {
+              resolveAudio: async () => '', generateDialogue: async () => { throw Error('本测试禁止生成'); },
+              getDialogue: async () => ({}), draftMusic: async () => { throw Error('本测试禁止生成'); },
+              generateMusic: async () => { throw Error('本测试禁止生成'); }, getMusic: async () => ({}),
+              listMusic: async () => [], queuePost: async () => { throw Error('本测试禁止生成'); }, getPost: async () => ({}),
+            };
+            globalThis.mkCue = cue;
+            createRoot(document.getElementById('root')).render(
+              <CanvasAudioStudioView block={block} onChange={() => {}} services={services} />,
+            );
+          `,
+        },
+        bundle: true, write: false, format: "iife", platform: "browser", jsx: "automatic",
+        alias: { "@": path.resolve("client/src"), "@shared": path.resolve("shared") },
+        loader: { ".png": "dataurl", ".svg": "dataurl", ".jpg": "dataurl", ".css": "text" },
+        define: { "process.env.NODE_ENV": '"production"', "import.meta.env": "__VITE_ENV__" },
+        banner: {
+          js:
+            'var __VITE_ENV__={DEV:false,PROD:true,MODE:"production",SSR:false};' +
+            'window.matchMedia=window.matchMedia||function(){return{matches:false,addEventListener(){},removeEventListener(){},addListener(){},removeListener(){}}};',
+        },
+        logLevel: "silent",
+      });
+      const ctx = await browser.createBrowserContext();
+      const page = await ctx.newPage();
+      await page.setRequestInterception(true);
+      page.on("request", (req) =>
+        req.url().startsWith("data:") ? req.continue() : req.respond({ status: 200, body: "" }),
+      );
+      await page.goto("http://localhost/", { waitUntil: "domcontentloaded" }).catch(() => {});
+      await page.setContent("<div id=root></div>");
+      await page.evaluate(built.outputFiles[0]!.text);
+      await page.waitForSelector("[data-manhua-sound-summary]", { timeout: 30_000 });
+      const out = await page.evaluate(() => {
+        const box = document.querySelector("[data-manhua-sound-summary]")!;
+        return {
+          multitrack: box.getAttribute("data-manhua-sound-multitrack"),
+          text: (box.textContent || "").replace(/\s+/g, " ").trim(),
+        };
+      });
+      await ctx.close().catch(() => {});
+      return out;
+    };
+
+    // 空态：如实说没有声音任务，绝不显示成多轨
+    const empty = await mountAudio("");
+    expect(empty.text).toContain("第1段");
+    expect(empty.text).toContain("角色配音 0");
+    expect(empty.text).toContain("还没有任何声音任务");
+    expect(empty.multitrack).toBe("0");
+
+    // 只有预混母轨：明说不是多轨
+    const premix = await mountAudio(
+      "seedance25RefAudioUrls: ['https://example.test/premix.wav'], audioStudio: { ...emptyCanvasAudioStudio(), cues: [cue('dialogue','line-1','阿菁')] },",
+    );
+    expect(premix.multitrack).toBe("0");
+    expect(premix.text).toContain("不是多轨");
+
+    // 对白与配乐均有当前输入对应的已采用产物，才算多轨
+    const real = await mountAudio(
+      "audioStudio: { ...emptyCanvasAudioStudio(), cues: [cue('dialogue','line-1','阿菁','take-1'), cue('dialogue','line-2','掌柜','take-2'), cue('bgm','music-1','','music-take-1')], musicJobIds: [] },",
+    );
+    expect(real.multitrack).toBe("1");
+    expect(real.text).toContain("角色配音 2");
+    expect(real.text).toContain("背景音乐 1");
+    expect(real.text).toContain("各自成轨");
+  }, 180_000);
+
+  /**
+   * 对照图 02 + README：「沿用本集画布和段身份，**侧栏显示所选镜头**」。
+   * 夹具故意让画布选中第 3 段的节点、而当前段是第 1 段 ——
+   * 侧栏必须说清「这不是当前段」并给一键切过去，否则用户会对着别段的参数改半天。
+   */
+  it("侧栏显示画布所选节点身份；选中别段时明说并可一键切段", async () => {
+    const { page, close } = await mountStoryboard();
+    const seen = await page.evaluate(() => {
+      const params = document.querySelector('[data-manhua-column="params"]');
+      const sel = document.querySelector("[data-manhua-canvas-selection]");
+      return {
+        inRightColumn: Boolean(params?.querySelector("[data-manhua-canvas-selection]")),
+        belongs: sel?.getAttribute("data-manhua-canvas-selection-belongs") || "",
+        text: (sel?.textContent || "").replace(/\s+/g, " ").trim(),
+        jumpTo: document
+          .querySelector("[data-manhua-canvas-selection-jump]")
+          ?.getAttribute("data-manhua-canvas-selection-jump"),
+      };
+    });
+    expect(seen.inRightColumn, "画布选中身份没出现在右栏").toBe(true);
+    expect(seen.text).toContain("画布选中");
+    expect(seen.text).toContain("第3段");
+    expect(seen.belongs).toBe("other");
+    expect(seen.text).toContain("不属于当前");
+    expect(seen.jumpTo).toBe("3");
+    await close();
+  }, 180_000);
+
+  /**
+   * 对照图 03：终审页要的是一张清单（每项通过/不通过）+「存在 N 处需处理的问题，才能通过终审」。
+   * 这里验的核心是**没证据的项写「未检」不写「通过」** —— 空项目里五项应该全是未检或不通过。
+   */
+  it("终审阶段：检查清单逐项给状态，没证据的写未检而不是通过", async () => {
+    const built = await build({
+      stdin: {
+        resolveDir: process.cwd(),
+        loader: "tsx",
+        contents: `
+          import React from 'react';
+          import { createRoot } from 'react-dom/client';
+          import { TooltipProvider } from './client/src/components/ui/tooltip';
+          import ManhuaScriptWorkbench from './client/src/components/ManhuaScriptWorkbench';
+          createRoot(document.getElementById('root')).render(
+            <TooltipProvider>
+              <ManhuaScriptWorkbench
+                blocks={[]} videoModel='seedance-2.5' topic='墨屠守护阿菁'
+                episodeCount={1} focusEpisode={1} onFocusEpisode={() => {}}
+                characterIds={[]} propIds={[]} outlineConfirmed={true}
+                workflowPhase='final'
+              />
+            </TooltipProvider>,
+          );
+        `,
+      },
+      bundle: true, write: false, format: "iife", platform: "browser", jsx: "automatic",
+      alias: { "@": path.resolve("client/src"), "@shared": path.resolve("shared") },
+      loader: { ".png": "dataurl", ".svg": "dataurl", ".jpg": "dataurl", ".css": "text" },
+      define: { "process.env.NODE_ENV": '"production"', "import.meta.env": "__VITE_ENV__" },
+      banner: {
+        js:
+          'var __VITE_ENV__={DEV:false,PROD:true,MODE:"production",SSR:false};' +
+          'window.matchMedia=window.matchMedia||function(){return{matches:false,addEventListener(){},removeEventListener(){},addListener(){},removeListener(){}}};',
+      },
+      logLevel: "silent",
+    });
+    const ctx = await browser.createBrowserContext();
+    const page = await ctx.newPage();
+    await page.setRequestInterception(true);
+    page.on("request", (req) =>
+      req.url().startsWith("data:") ? req.continue() : req.respond({ status: 200, body: "" }),
+    );
+    await page.goto("http://localhost/", { waitUntil: "domcontentloaded" }).catch(() => {});
+    await page.setContent("<div id=root></div>");
+    await page.evaluate(built.outputFiles[0]!.text);
+    await page.waitForSelector("[data-manhua-final-checklist]", { timeout: 30_000 });
+    const seen = await page.evaluate(() => {
+      const box = document.querySelector("[data-manhua-final-checklist]")!;
+      return {
+        ready: box.getAttribute("data-manhua-final-ready"),
+        summary: box.querySelector("[data-manhua-final-summary]")?.textContent?.trim() || "",
+        items: Array.from(box.querySelectorAll("[data-manhua-final-check]")).map((el) => ({
+          id: el.getAttribute("data-manhua-final-check"),
+          state: el.getAttribute("data-manhua-final-check-state"),
+        })),
+      };
+    });
+    expect(seen.items.map((i) => i.id)).toEqual(["content", "picture", "audio", "subtitle", "cut_fresh"]);
+    // 空项目：一项都不该是「通过」
+    expect(seen.items.some((i) => i.state === "pass")).toBe(false);
+    expect(seen.ready).toBe("0");
+    expect(seen.summary).toContain("未检");
+    await ctx.close().catch(() => {});
   }, 180_000);
 });

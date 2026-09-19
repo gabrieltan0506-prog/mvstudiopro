@@ -10,6 +10,7 @@ import { canvasAudioStudioSchema } from "./canvasAudioStudio.js";
 import { manhuaPrevisStudioSchema, type ManhuaPrevisStudio } from "./manhuaPrevis";
 import { normalizeManhuaKeyartLookState } from "./manhuaKeyartLookState";
 import { normalizeManhuaAutoSegmentBinding, type ManhuaAutoSegmentBinding } from "./manhuaAutoSegment";
+import { normalizeManhuaSpatialContext, type ManhuaSpatialContext } from "./manhuaSceneSpace";
 import {
   buildManhuaWriterSession,
   migrateManhuaWriterTemplateId,
@@ -70,6 +71,7 @@ export type ManhuaCloudDraftCanvasBlock = {
   editFusionUrls?: string[];
   /** 微调遮罩(三审 P1-1:不落它=换机后局部改图参考全丢) */
   editMaskUrl?: string;
+  imageTreatment?: "preserve_3d";
   /** 上段末帧续拍锚(三审 P1-1) */
   lastFrameUrl?: string;
   imageMode?: string;
@@ -113,6 +115,7 @@ export type ManhuaCloudDraftCanvasBlock = {
   manhuaFinalPostProd?: ManhuaFinalPostProdBinding;
   manhuaFinalVersions?: ManhuaFinalVersionIdentity[];
   manhuaAutoSegment?: ManhuaAutoSegmentBinding;
+  manhuaSpatialContext?: ManhuaSpatialContext;
   archivedFromPreviousScript?: boolean;
   /** 必须与当前视频一起保存，否则失败片恢复后会落入无报告历史放行分支。 */
   manhuaClipQuality?: ManhuaClipQualityReport;
@@ -410,6 +413,8 @@ export function sanitizeManhuaCloudDraftBlock(
     manhuaKeyartLookState: normalizeManhuaKeyartLookState(b.manhuaKeyartLookState),
     manhuaKeyartSourceState: normalizeManhuaKeyartLookState(b.manhuaKeyartSourceState),
     manhuaAutoSegment: normalizeManhuaAutoSegmentBinding(b.manhuaAutoSegment),
+    manhuaSpatialContext: normalizeManhuaSpatialContext(b.manhuaSpatialContext),
+    imageTreatment: b.imageTreatment === "preserve_3d" ? "preserve_3d" : undefined,
     imageMode:
       b.imageMode != null ? String(b.imageMode).slice(0, 24) : undefined,
     aspectRatio:

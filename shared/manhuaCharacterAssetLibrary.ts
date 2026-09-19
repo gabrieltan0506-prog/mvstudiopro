@@ -14,6 +14,7 @@ import {
   MANHUA_ASSET_SHEET_SOFT_NO_TEXT_EN,
   MANHUA_ASSET_SHEET_SOFT_NO_TEXT_ZH,
 } from "./manhuaScriptWorkbench.js";
+import { MANHUA_3D_MATERIAL_ZH } from "./manhua3dMaterialPrompt.js";
 
 export type ManhuaCharacterGender = "female" | "male";
 
@@ -134,12 +135,12 @@ export type ManhuaArtStyleId = "photoreal" | "cg_drama" | "cg_3d" | "photoreal_3
 const CG_3D_RENDER_LOCK_EN =
   "MATERIALS: PBR surfaces with wear, scratch and roughness variation; subsurface scattering on skin and ears so flesh reads as having thickness; anisotropic highlights along hair strands; woven fabric with visible thread. " +
   "SHADING: ambient occlusion deepening every crevice, seam and underside; contact shadows anchoring subjects to ground; fresnel edge light so silhouettes are defined by light transition, never by outline strokes; micro-roughness varying across one surface. " +
-  "LIGHTING: strong backlight rim; single warm key against cool ambient; volumetric fog with god rays. " +
-  "DEPTH: shallow depth of field, subject sharp, background softly defocused, aerial perspective fading distance.";
+  "LIGHTING: follow the established scene light sources and directions; use rim light and atmosphere only when motivated. " +
+  "DEPTH: keep required asset structures and story information legible; depth of field follows the shot purpose. " + MANHUA_3D_MATERIAL_ZH;
 
 /** 反向项单独拎出：正向为主，避免堆禁令触发上游拒答 */
 const CG_3D_AVOID_EN =
-  "Avoid flat cel shading, outline strokes, uniform sharpness across the frame, painted flat backgrounds.";
+  "Avoid flat cel shading, outline strokes and painted flat backgrounds when the selected style is 3D.";
 
 /**
  * 3D 数字人专用皮肤锁。
@@ -1368,4 +1369,3 @@ export function buildManhuaCharacterPromptBlock(
     .filter(Boolean)
     .join("\n");
 }
-

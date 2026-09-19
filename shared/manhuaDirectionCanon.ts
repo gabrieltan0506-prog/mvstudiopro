@@ -47,6 +47,18 @@ export type ManhuaDirectionCard = {
 
 export type ManhuaDirectionSceneType = "action" | "dialogue" | "reveal" | "emotion" | "transition" | "default";
 
+export type ManhuaDirectionContext = { episodeIndex?: number; segmentIndex?: number; shotIndex?: number };
+export type ManhuaDirectionOverride = {
+  scope: "episode" | "segment" | "shot";
+  episodeIndex: number;
+  segmentIndex?: number;
+  shotIndex?: number;
+  cardId: string;
+  reasonZh: string;
+  stages: ManhuaDirectorStrategyStage[];
+  status: "draft" | "approved";
+};
+
 export type ManhuaDirectionCanon = {
   version: 1;
   /** 系列主卡 */
@@ -55,6 +67,7 @@ export type ManhuaDirectionCanon = {
   cards: ManhuaDirectionCard[];
   /** 场次副卡：某类场景改用另一张卡的某些阶段 */
   sceneOverrides?: Partial<Record<ManhuaDirectionSceneType, { cardId: string; stages?: ManhuaDirectorStrategyStage[] }>>;
+  scopedOverrides?: ManhuaDirectionOverride[];
   authorizedCardIds: string[];
 };
 
@@ -172,6 +185,20 @@ export function normalizeManhuaDirectionCanon(raw: unknown): ManhuaDirectionCano
     mainCardId,
     cards,
     ...(Object.keys(sceneOverrides).length ? { sceneOverrides } : {}),
+    scopedOverrides: Array.isArray(r.scopedOverrides) ? r.scopedOverrides.flatMap((value): ManhuaDirectionOverride[] => {
+      if (!value || typeof value !== "object") return [];
+      const o = value as Record<string, unknown>;
+      const positive = (n: unknown) => typeof n === "number" && Number.isInteger(n) && n > 0;
+      if (!["episode", "segment", "shot"].includes(String(o.scope)) || !positive(o.episodeIndex)) return [];
+      if (o.scope === "segment" && !positive(o.segmentIndex) || o.scope === "shot" && !positive(o.shotIndex)) return [];
+      if (!cards.some(c => c.id === o.cardId)) return [];
+      return [{ scope: o.scope as ManhuaDirectionOverride["scope"], episodeIndex: o.episodeIndex as number,
+        ...(o.scope === "segment" ? { segmentIndex: o.segmentIndex as number } : {}),
+        ...(o.scope === "shot" ? { shotIndex: o.shotIndex as number } : {}),
+        cardId: String(o.cardId), reasonZh: String(o.reasonZh || ""),
+        stages: Array.isArray(o.stages) ? Array.from(new Set(o.stages.filter((v): v is ManhuaDirectorStrategyStage => STAGE_SET.has(String(v))))) : [],
+        status: o.status === "approved" ? "approved" : "draft" }];
+    }) : undefined,
     authorizedCardIds,
   };
 }
@@ -223,6 +250,36 @@ function marker(card: ManhuaDirectionCard): string {
 /** 闭合哨兵：剥离时以它定边界，不靠「下一个 【」猜（审查 P2：猜边界会吞掉块后面的用户正文） */
 export const MANHUA_DIRECTION_BLOCK_END = "【/导演法典】";
 
+export function manhuaDirectionCardSupportsStage(card: ManhuaDirectionCard, stage: ManhuaDirectorStrategyStage): boolean {
+  return card.rules.some(r => r.status !== "research_only" && r.stages.includes(stage) && r.ruleZh.trim() && (stage !== "keyframe" || !KEYFRAME_MOTION_RE.test(r.ruleZh)));
+}
+
+/** 展示与生产共享继承结果；草稿、无理由、无授权和阶段不匹配均不生效。 */
+export function resolveManhuaDirectionCard(
+  canon: ManhuaDirectionCanon | null | undefined,
+  stage: ManhuaDirectorStrategyStage,
+  sceneType: ManhuaDirectionSceneType = "default",
+  context: ManhuaDirectionContext = {},
+): { card: ManhuaDirectionCard; scope: "series" | "scene" | ManhuaDirectionOverride["scope"]; override?: ManhuaDirectionOverride } | null {
+  if (!canon) return null;
+  const eligible = (id: string) => canon.cards.find(c => c.id === id && canon.authorizedCardIds.includes(id) && manhuaDirectionCardIsProductionReady(c));
+  const main = eligible(canon.mainCardId);
+  if (!main) return null;
+  let selected: NonNullable<ReturnType<typeof resolveManhuaDirectionCard>> = { card: main, scope: "series" };
+  const scene = canon.sceneOverrides?.[sceneType];
+  const sceneCard = scene && eligible(scene.cardId);
+  if (sceneCard && (!scene?.stages?.length || scene.stages.includes(stage))) selected = { card: sceneCard, scope: "scene" };
+  for (const scope of ["episode", "segment", "shot"] as const) {
+    for (const o of canon.scopedOverrides || []) {
+      if (o.scope !== scope || o.episodeIndex !== context.episodeIndex || o.status !== "approved" || !o.reasonZh.trim() || !o.stages.includes(stage)) continue;
+      if (scope === "segment" && o.segmentIndex !== context.segmentIndex || scope === "shot" && o.shotIndex !== context.shotIndex) continue;
+      const card = eligible(o.cardId);
+      if (card && manhuaDirectionCardSupportsStage(card, stage)) selected = { card, scope, override: o };
+    }
+  }
+  return selected;
+}
+
 /**
  * 唯一编译入口：按场景类型选卡（副卡只覆盖其声明的阶段），只取正式规律，五块互相隔离。
  * 未授权、未达卡级准入、或 canon 为空 → 全空块（调用方按「没有导演法典」处理，不注入默认风格）。
@@ -230,17 +287,13 @@ export const MANHUA_DIRECTION_BLOCK_END = "【/导演法典】";
 export function resolveDirectorStyleBlocks(
   canon: ManhuaDirectionCanon | null | undefined,
   sceneType: ManhuaDirectionSceneType = "default",
+  context: ManhuaDirectionContext = {},
 ): ManhuaDirectionStyleBlocks {
   if (!canon) return EMPTY_BLOCKS();
   const byId = new Map(canon.cards.map((c) => [c.id, c] as const));
   const main = byId.get(canon.mainCardId);
   if (!main || !canon.authorizedCardIds.includes(main.id) || !manhuaDirectionCardIsProductionReady(main)) return EMPTY_BLOCKS(main?.labelZh || "");
-  const override = canon.sceneOverrides?.[sceneType];
-  const sub = override ? byId.get(override.cardId) : undefined;
-  const subReady = Boolean(sub && canon.authorizedCardIds.includes(sub.id) && manhuaDirectionCardIsProductionReady(sub));
-  const subStages = new Set<ManhuaDirectorStrategyStage>(override?.stages?.length ? override.stages : MANHUA_DIRECTION_STAGES);
-
-  const cardFor = (stage: ManhuaDirectorStrategyStage): ManhuaDirectionCard => (subReady && sub && subStages.has(stage) ? sub : main);
+  const cardFor = (stage: ManhuaDirectorStrategyStage): ManhuaDirectionCard => resolveManhuaDirectionCard(canon, stage, sceneType, context)?.card || main;
   const rulesFor = (stage: ManhuaDirectorStrategyStage) =>
     cardFor(stage).rules.filter((r) => r.status !== "research_only" && r.stages.includes(stage));
 

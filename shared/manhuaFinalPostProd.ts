@@ -101,7 +101,7 @@ export function normalizeManhuaFinalVersionIdentities(
       jobId: String(row.jobId || "").trim().slice(0, 80) || undefined,
       gcsUri: gsUri(row.gcsUri),
       errorZh: String(row.errorZh || "").trim().slice(0, 160) || undefined,
-      sourceKey: String(row.sourceKey || "").trim().slice(0, 4000) || undefined,
+      sourceKey: String(row.sourceKey || "").trim() || undefined,
       createdAt: Math.max(0, Math.floor(Number(row.createdAt) || 0)),
     };
     const key = versionIdentityKey(normalized);
@@ -283,6 +283,7 @@ export function applyManhuaFinalSubtitleBurnSuccess<T extends ManhuaFinalPostPro
     ),
     manhuaFinalVersions: upsertVersionIdentity(block.manhuaFinalVersions, {
       origin: "burn_subtitle",
+      sourceKey: findManhuaFinalVideoVersionIdentity(block, binding.sourceUrl)?.sourceKey ?? existingResult?.sourceKey,
       subtitleTimeline: findManhuaFinalVideoVersionIdentity(block, binding.sourceUrl)?.subtitleTimeline,
       url: resultUrl,
       jobId: input.jobId,
@@ -424,7 +425,7 @@ export function replaceManhuaFinalAssembleVersion<T extends ManhuaFinalPostProdB
       url: outputUrl,
       jobId: String(nextInput.jobId || "").trim().slice(0, 80) || undefined,
       // 用料指纹随版本落档：之后才判得出「终审亮着的这条是不是旧料合的」
-      sourceKey: String(nextInput.sourceKey || "").trim().slice(0, 4000) || undefined,
+      sourceKey: String(nextInput.sourceKey || "").trim() || undefined,
       createdAt: Math.max(0, Math.floor(Number(nextInput.createdAt) || Date.now())),
     }),
   };

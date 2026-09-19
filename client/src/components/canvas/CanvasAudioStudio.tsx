@@ -1,3 +1,6 @@
+import { canvasAudioMixSource } from "@shared/canvasAudioStudio";
+import { CanvasAudioMixControls } from "./CanvasAudioMixControls";
+import { applyCanvasAudioMixPlan, assertCanvasAudioMixCapacity } from "@shared/canvasAudioMixPlan";
 import { useEffect, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import type { CanvasBlock } from "@/lib/canvasTypes";
@@ -20,6 +23,8 @@ import {
   type CanvasAudioCue,
   type CanvasAudioTake,
 } from "@shared/canvasAudioStudio";
+import { buildManhuaSoundPanelSummary } from "@shared/manhuaSoundPanelSummary";
+import { resolveClipLocalSegmentIndex } from "@shared/manhuaScriptWorkbench";
 import {
   CANVAS_TTS_CREDITS_PER_LINE,
   CANVAS_BGM_CREDITS_PER_RUN,
@@ -177,8 +182,16 @@ export function CanvasAudioStudioView({
     block.manhuaAutoSegment?.durationSec ??
       parseManhuaClipTargetDurationSec(block.prompt)
   );
-  const current = useRef({ state, onChange, services, block, onMasterTrackReady });
-  current.current = { state, onChange, services, block, onMasterTrackReady };
+  /** 对照图 02 第三格的三块摘要；混合轨不伪装多轨（对照图 04 的 mvs-sound-edit 硬要求） */
+  const soundSummary = buildManhuaSoundPanelSummary({
+    segmentIndex: resolveClipLocalSegmentIndex(block.id, block.prompt, Number(block.episodeIndex) || 1),
+    durationSec,
+    cues: state.cues,
+    musicJobCount: state.musicJobIds.length,
+    hasPremixMaster: Boolean(block.manhuaSegmentRefs?.master?.gcsUri || block.manhuaSegmentRefs?.master?.url),
+  });
+  const current = useRef({ state, onChange, services, block, onMasterTrackReady, durationSec });
+  current.current = { state, onChange, services, block, onMasterTrackReady, durationSec };
   const mounted = useRef(true);
   const busyRef = useRef(false);
   const [busy, setBusy] = useState(false);
@@ -390,6 +403,15 @@ export function CanvasAudioStudioView({
                 // 轮询 effect 只依赖 block.id：回调与 master 都必须从 current ref 读最新值，闭包里的是挂载时的旧 props
                 const masterReady = current.current.onMasterTrackReady;
                 if (!masterReady) continue;
+                const sourceSnapshot = canvasAudioMixSource(current.current.state.cues, current.current.durationSec);
+                const expectedKey = `${PREMIX_PENDING_PREFIX}${await canvasAudioPreviewKey(sourceSnapshot)}`;
+                if (stopped || current.current.block.id !== block.id) continue;
+                if (pending.inputKey !== expectedKey || sourceSnapshot !== canvasAudioMixSource(current.current.state.cues, current.current.durationSec)) {
+                  update(previous => ({ ...previous, previewTake: take }));
+                  setError("旧版预混已生成，但声音配置已改变；保留为旧合听，不替换当前母轨。请先核对声音再预混。");
+                  settle(pending.id, take);
+                  continue;
+                }
                 // 出片排队中 audioStudio 不落盘（onUpdateClipAudioStudio 对 running/queued 直接返回），
                 // pending 会在下一轮再次命中同一 job：母轨已挂上就不再重复挂、重复弹提示
                 const liveMaster = current.current.block.manhuaSegmentRefs?.master?.gcsUri;
@@ -401,6 +423,7 @@ export function CanvasAudioStudioView({
                   url: take.previewUrl,
                   gcsUri: take.gcsUri,
                   fileName: `预混母轨-${block.id}.wav`,
+                  audioStudioSource: sourceSnapshot,
                   durationSec: take.durationSec,
                   updatedAt: new Date().toISOString(),
                 });
@@ -444,7 +467,7 @@ export function CanvasAudioStudioView({
       if (mounted.current) setBusy(false);
     }
   };
-  const addCue = (kind: "dialogue" | "bgm") => {
+  const addCue = (kind: CanvasAudioCue["kind"]) => {
     if (current.current.state.cues.length >= 100) {
       setError("本段已达 100 条音轨草稿上限，原片段全部保留，未添加新片段。");
       return;
@@ -586,7 +609,7 @@ export function CanvasAudioStudioView({
         );
       checkWindow(cue);
       const source = sourceFor(cue);
-      if (!source) throw new Error("先选择这一段使用的配乐原曲。");
+      if (!source) throw new Error("先选择这一段使用的来源音频。");
       if (
         !(
           cue.sourceStartSec >= 0 &&
@@ -594,7 +617,7 @@ export function CanvasAudioStudioView({
           cue.sourceEndSec <= source.durationSec + 0.02
         )
       )
-        throw new Error("裁切区间必须在原曲真实时长内。");
+        throw new Error("裁切区间必须在来源音频真实时长内。");
       const inputKey = canvasAudioCueInputKey(cue);
       const result = await services.queuePost({
         action: "audio_trim",
@@ -615,18 +638,7 @@ export function CanvasAudioStudioView({
         ],
       }));
     });
-  const selectedSource = JSON.stringify(
-    state.cues
-      .filter(cue => cue.approved && cue.enabled !== false)
-      .map(cue => [
-        cue.id,
-        canvasAudioCueInputKey(cue),
-        cue.selectedTakeId,
-        cue.startSec,
-        cue.endSec,
-        durationSec,
-      ])
-  );
+  const selectedSource = canvasAudioMixSource(state.cues, durationSec);
   const [selectedKey, setSelectedKey] = useState("");
   useEffect(() => {
     let stopped = false;
@@ -643,14 +655,14 @@ export function CanvasAudioStudioView({
         cue => cue.approved && cue.enabled !== false
       );
       if (!cues.length) throw new Error("先试听并确认至少一段音频。");
-      const clips = cues.map(cue => {
+      const clips = cues.flatMap(cue => {
         checkWindow(cue);
         const take = getSelectedAudioTake(cue);
         if (!take || take.inputKey !== canvasAudioCueInputKey(cue))
           throw new Error("音频内容已修改，请重新试听确认。");
         if (take.durationSec > cue.endSec - cue.startSec + 0.02)
           throw new Error("对白或音乐长于秒窗，请调整结束秒；不会截断对白。");
-        return {
+        return applyCanvasAudioMixPlan(cue, {
           audioUri: take.gcsUri,
           sourceStartSec: 0,
           sourceEndSec: take.durationSec,
@@ -658,8 +670,9 @@ export function CanvasAudioStudioView({
           volume: 1,
           fadeInSec: 0,
           fadeOutSec: 0,
-        };
+        }, cues);
       });
+      assertCanvasAudioMixCapacity(clips);
       const previewKey = await canvasAudioPreviewKey(selectedSource);
       canvasAudioStudioSchema.parse({ ...current.current.state, pendingOperations: [
         ...current.current.state.pendingOperations, { id: "preflight-preview", kind: "post_prod", inputKey: previewKey },
@@ -716,7 +729,7 @@ export function CanvasAudioStudioView({
         gcsUri: take.gcsUri,
         previewUrl: take.previewUrl,
         durationSec: take.durationSec,
-        labelZh: "已选配乐原曲",
+        labelZh: cue.kind === "sfx" ? "已选音效来源" : "已选配乐原曲",
       },
       sourceStartSec: 0,
       sourceEndSec: Math.min(
@@ -727,12 +740,34 @@ export function CanvasAudioStudioView({
   };
   return (
     <section
-      aria-label="逐句配音与分段配乐"
+      aria-label="逐句配音、配乐与事件音效"
       className="space-y-3 rounded-lg border border-sky-200/20 bg-slate-900/70 p-3 text-white"
       onPointerDown={event => event.stopPropagation()}
       onKeyDown={event => event.stopPropagation()}
     >
-      <h3 className="text-sm font-semibold">逐句配音 · 分段配乐</h3>
+      <h3 className="text-sm font-semibold">逐句配音 · 配乐 · 事件音效</h3>
+      {/* 对照图 02 第三格：当前片段 / 角色配音 / 背景音乐 三块摘要 + 轨道口径（混合轨不伪装多轨） */}
+      <div
+        data-manhua-sound-summary
+        data-manhua-sound-multitrack={soundSummary.hasRealMultitrack ? "1" : "0"}
+        className="rounded-md border border-sky-200/20 bg-sky-500/[0.06] px-2 py-1.5"
+      >
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <span className="text-[12px] font-semibold text-sky-50">{soundSummary.headlineZh}</span>
+          {soundSummary.speakersZh.length ? (
+            <span className="text-[10px] text-white/45">{soundSummary.speakersZh.join(" · ")}</span>
+          ) : null}
+          {soundSummary.adoptedCount ? (
+            <span className="text-[10px] text-emerald-100/75">已采用 {soundSummary.adoptedCount} 条对白</span>
+          ) : null}
+        </div>
+        {soundSummary.trackNoteZh ? (
+          <p className="mt-0.5 text-[10px] leading-4 text-amber-100/80">{soundSummary.trackNoteZh}</p>
+        ) : null}
+        {soundSummary.emptyZh ? (
+          <p className="mt-0.5 text-[10px] leading-4 text-white/45">{soundSummary.emptyZh}</p>
+        ) : null}
+      </div>
       <p className="text-xs text-amber-100">
         逐段声音投料目前仅支持加长成片的多模态参考；其他引擎可制作、试听音频，但不自动用于出片。
         {block.videoModel !== "seedance-2.5"
@@ -765,6 +800,7 @@ export function CanvasAudioStudioView({
         >
           添加一段配乐
         </button>
+        <button className={buttonClass} disabled={disabled || busy} onClick={() => addCue("sfx")}>添加事件音效</button>
       </div>
       {state.cues.map((cue, index) => {
         const pending = state.pendingOperations.some(
@@ -819,7 +855,7 @@ export function CanvasAudioStudioView({
             </label>
             <div className="flex items-center justify-between gap-2">
               <h4 className="text-xs font-semibold">
-                {index + 1} · {cue.kind === "dialogue" ? "对白" : "配乐"}{" "}
+                {index + 1} · {cue.kind === "dialogue" ? "对白" : cue.kind === "sfx" ? "音效" : "配乐"}{" "}
                 {cue.approved ? "· 已确认" : "· 待试听确认"}
               </h4>
               {pending && (
@@ -1056,7 +1092,7 @@ export function CanvasAudioStudioView({
                               })
                             }
                           >
-                            选这条上传原曲
+                            选这条上传音频
                           </button>
                         </div>
                       ))}
@@ -1082,8 +1118,8 @@ export function CanvasAudioStudioView({
                   </div>
                 )}
                 <div className="grid grid-cols-2 gap-2">
-                  {numberField("原曲裁切起点", "sourceStartSec")}
-                  {numberField("原曲裁切终点", "sourceEndSec")}
+                  {numberField("源音频裁切起点", "sourceStartSec")}
+                  {numberField("源音频裁切终点", "sourceEndSec")}
                   {numberField("音量", "volume")}
                   {numberField("淡入秒", "fadeInSec")}
                   {numberField("淡出秒", "fadeOutSec")}
@@ -1097,6 +1133,7 @@ export function CanvasAudioStudioView({
                 </button>
               </>
             )}
+            {cue.kind !== "dialogue" && <CanvasAudioMixControls cue={cue} disabled={locked} onChange={patch => patchCue(cue.id, patch)}/>}
             {cue.takes
               .filter(take => take.inputKey !== "source")
               .map((take, takeIndex) => (
@@ -1382,6 +1419,7 @@ export function CanvasAudioStudioView({
           刷新配乐素材
         </button>
       </div>
+      {block.manhuaSegmentRefs?.master?.audioStudioSource && block.manhuaSegmentRefs.master.audioStudioSource !== selectedSource && <p role="alert" className="text-xs text-amber-200">当前母轨与声音配置不一致，旧版保留；请重新合听后预混。</p>}
       {state.previewTake && (
         <div className="text-xs">
           {state.previewTake.inputKey === selectedKey

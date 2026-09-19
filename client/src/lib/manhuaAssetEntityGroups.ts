@@ -158,7 +158,7 @@ export function buildManhuaAssetRoleGroups(input: {
       alsoInZhByRefId,
       sharedNoteZh:
         !owned.length && sharedNames.length
-          ? `参考图与「${[...new Set(sharedNames)].join("、")}」共用，卡片在上面那组`
+          ? `参考图与「${Array.from(new Set(sharedNames)).join("、")}」共用，卡片在上面那组`
           : "",
     };
   });

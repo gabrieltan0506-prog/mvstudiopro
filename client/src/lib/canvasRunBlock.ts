@@ -1,5 +1,6 @@
+import { compileManhua3dImageTreatment } from "@shared/manhua3dMaterialPrompt";
 import { DEFAULT_CANVAS_VIDEO_MODEL, isCanvasWan30VideoModel, normalizeCanvasVideoModel, type CanvasBlock } from "./canvasTypes";
-import { compileCanvasAudioBindings } from "@shared/canvasAudioStudio";
+import { compileCanvasAudioBindings, assertCanvasAudioMasterCurrent } from "@shared/canvasAudioStudio";
 import { isLocalMediaPointer, resolveUrlForCloudSync } from "./manhuaLocalMediaStore";
 import { withFlyHealthGate } from "./flyHealthGate";
 import {
@@ -2666,9 +2667,11 @@ async function runCanvasBlockInner(
      * 关键静帧：提示词已含分镜/画风/硬锁（中文直送即可），再跑导演中台多一轮 LLM，明显拖慢。
      * 其它 image 节点仍走 JSON 导演编译。
      */
+    const imageTreatmentPrompt = compileManhua3dImageTreatment(block.imageTreatment, isEdit);
     const rawImagePrompt = isEdit
       ? [
           mergedPrompt,
+          imageTreatmentPrompt,
           fusionUrls.length
             ? `【多图融合】另有 ${fusionUrls.length} 张参考图：请按说明把风格/元素/妆造合理融合进底图，保持人物身份一致。`
             : "",
@@ -3195,6 +3198,7 @@ async function runCanvasBlockInner(
         !runOptions?.pilotRun
           ? block.manhuaSegmentRefs
           : undefined;
+      assertCanvasAudioMasterCurrent(segmentRefs?.master, block.audioStudio, clipDuration);
       const segmentCapSec = useWan30
         ? MANHUA_SEGMENT_REFERENCE_CAP_SEC.wan30
         : MANHUA_SEGMENT_REFERENCE_CAP_SEC.seedance;

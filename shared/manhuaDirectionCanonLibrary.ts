@@ -40,15 +40,33 @@ export function getManhuaDirectionCard(id: string): ManhuaDirectionCard | null {
 }
 
 export type ManhuaDirectionSelection = {
+  scopedOverrides?: ManhuaDirectionCanon["scopedOverrides"];
   mainCardId: string;
   sceneOverrides?: Partial<Record<ManhuaDirectionSceneType, { cardId: string; stages?: ManhuaDirectorStrategyStage[] }>>;
 };
+
+/** 出站按范围构造必需身份；缺失身份必须阻断，不能静默丢掉覆盖。 */
+export function manhuaDirectionSelectionForRequest(selection: ManhuaDirectionSelection) {
+  return { ...selection, scopedOverrides: selection.scopedOverrides?.map(o => {
+    const common = { episodeIndex: o.episodeIndex, cardId: o.cardId, reasonZh: o.reasonZh, stages: o.stages, status: o.status };
+    if (!Number.isInteger(o.episodeIndex) || o.episodeIndex < 1) throw new Error("导演覆盖缺少有效集身份");
+    if (o.scope === "segment") {
+      if (o.segmentIndex == null || !Number.isInteger(o.segmentIndex) || o.segmentIndex < 1) throw new Error("导演覆盖缺少有效段身份");
+      return { ...common, scope: "segment" as const, segmentIndex: o.segmentIndex };
+    }
+    if (o.scope === "shot") {
+      if (o.shotIndex == null || !Number.isInteger(o.shotIndex) || o.shotIndex < 1) throw new Error("导演覆盖缺少有效镜头身份");
+      return { ...common, scope: "shot" as const, shotIndex: o.shotIndex };
+    }
+    return { ...common, scope: "episode" as const };
+  }) };
+}
 
 /** 会话/请求回读：只留库里有的卡；主卡不在库 → null */
 export function normalizeManhuaDirectionSelection(raw: unknown): ManhuaDirectionSelection | null {
   const canon = buildManhuaDirectionCanonFromSelection(raw && typeof raw === "object" ? (raw as ManhuaDirectionSelection) : null);
   if (!canon) return null;
-  return { mainCardId: canon.mainCardId, ...(canon.sceneOverrides ? { sceneOverrides: canon.sceneOverrides } : {}) };
+  return { mainCardId: canon.mainCardId, scopedOverrides: canon.scopedOverrides, ...(canon.sceneOverrides ? { sceneOverrides: canon.sceneOverrides } : {}) };
 }
 
 /** 用户选卡 → 法典；主卡不在库里返回 null（不猜、不换卡） */
@@ -66,11 +84,16 @@ export function buildManhuaDirectionCanonFromSelection(selection: ManhuaDirectio
     if (!cards.some((c) => c.id === sub.id)) cards.push(sub);
     sceneOverrides[scene] = { cardId: sub.id, ...(o.stages?.length ? { stages: o.stages } : {}) };
   }
+  for (const o of selection.scopedOverrides || []) {
+    const card = getManhuaDirectionCard(o.cardId);
+    if (card && !cards.some(c => c.id === card.id)) cards.push(card);
+  }
   return normalizeManhuaDirectionCanon({
     version: 1,
     mainCardId: main.id,
     cards,
     sceneOverrides,
+    scopedOverrides: selection.scopedOverrides,
     authorizedCardIds: cards.map((c) => c.id),
   }) || null;
 }
@@ -79,6 +102,7 @@ const SELECTION_MARKER_RE = /【导演法典选卡·v1·([a-z0-9_]+)((?:·[a-z]+
 
 /** 写进 story/beats 节点的选卡标记；下游阶段从已铺节点回读，硬刷新/续跑都不丢 */
 export function formatManhuaDirectionSelectionMarker(canon: ManhuaDirectionCanon): string {
+  if (canon.scopedOverrides?.length) return `【导演法典选卡·v2·${encodeURIComponent(JSON.stringify({ mainCardId: canon.mainCardId, sceneOverrides: canon.sceneOverrides, scopedOverrides: canon.scopedOverrides }))}】`;
   const parts = [`main=${canon.mainCardId}`];
   for (const scene of MANHUA_DIRECTION_SCENE_TYPES) {
     const o = canon.sceneOverrides?.[scene];
@@ -89,6 +113,10 @@ export function formatManhuaDirectionSelectionMarker(canon: ManhuaDirectionCanon
 
 /** 从任一节点 prompt 回读选卡；没标记或卡已不在库 → null（不猜、不静默换卡） */
 export function readManhuaDirectionCanonFromPrompt(prompt: string | null | undefined): ManhuaDirectionCanon | null {
+  const current = /【导演法典选卡·v2·([^】]+)】/.exec(String(prompt || ""));
+  if (current) {
+    try { return buildManhuaDirectionCanonFromSelection(JSON.parse(decodeURIComponent(current[1]!))); } catch { return null; }
+  }
   const m = SELECTION_MARKER_RE.exec(String(prompt || ""));
   if (!m) return null;
   const selection: ManhuaDirectionSelection = { mainCardId: m[1]!, sceneOverrides: {} };
@@ -122,7 +150,7 @@ export function stripManhuaDirectionStyleBlocks(prompt: string | null | undefine
   return String(prompt || "")
     // 新格式：以闭合哨兵定边界（多行/单行通吃），不吞块后正文
     .replace(/\s?【导演法典·v1·[\s\S]*?【\/导演法典】/g, "")
-    .replace(/ ?【导演法典选卡·v1·[^】]*】/g, "")
+    .replace(/ ?【导演法典选卡·v[12]·[^】]*】/g, "")
     // 旧格式（没有哨兵的历史节点）：多行形态按行首；单行形态只到下一个 【 为止
     .replace(/(?:^|\n)【导演法典·v1·[^\n]*(?:\n(?!\n)[^\n]*)*/g, "")
     .replace(/(?:^|\n)【导演法典选卡·v1·[^\n]*/g, "")
