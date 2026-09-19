@@ -59,6 +59,7 @@ beforeAll(async () => {
               onUploadCustomAssets={async () => {}}
               onGenerateAllEpisodeKeyarts={async () => { globalThis.fixture.keyart += 1; }}
               onGenerateAsset3d={async () => {}}
+              onGenerateSceneWorld={async () => {}}
               onUpdateClipPrevisStudio={() => {}}
               onChangeManhuaActionPlan={() => {}}
               onUpdateClipAudioStudio={() => {}}
@@ -121,6 +122,7 @@ beforeAll(async () => {
               onUploadCustomAssets={async () => {}}
               onGenerateAllEpisodeKeyarts={async () => { globalThis.fixture.keyart += 1; }}
               onGenerateAsset3d={async () => {}}
+              onGenerateSceneWorld={async () => {}}
               onUpdateClipPrevisStudio={() => {}}
               onChangeManhuaActionPlan={() => {}}
               onUpdateClipAudioStudio={() => {}}
@@ -388,6 +390,7 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
     expect(seen.hasMore).toBe(true);
     // 资产阶段主操作簇里只有 3D，没有段级工具
     expect(seen.cluster).toContain("open-3d-model-studio");
+    expect(seen.cluster).toContain("open-world-studio");
     expect(seen.cluster).not.toContain("open-previs-studio");
     expect(seen.cluster).not.toContain("open-action-timeline");
     expect(seen.cluster).not.toContain("open-audio-studio");
@@ -400,6 +403,7 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
       };
     });
     expect(drawer.tools).toEqual(["previs", "actionTimeline", "audio"]);
+    expect(drawer.tools).not.toContain("world3d");
     expect(drawer.homes.every((h) => h === "drawer")).toBe(true);
     // 3D 已经在簇里，抽屉里不许再出现一个
     expect(drawer.tools).not.toContain("model3d");
@@ -417,6 +421,7 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
     expect(cluster).toContain("open-action-timeline");
     expect(cluster).toContain("open-audio-studio");
     expect(cluster).not.toContain("open-3d-model-studio");
+    expect(cluster).not.toContain("open-world-studio");
     await close();
   }, 180_000);
 });

@@ -3607,7 +3607,7 @@ export default function ManhuaScriptWorkbench({
               onCustomAssetRigSourceChange?.(characterId, sourceRefId===characterId ? null : sourceRefId);
               setAutoRigAssetId(sourceRefId);
             } : undefined}/> : null}
-          {onGenerateSceneWorld ? <button type="button" data-manhua-action="open-world-studio" disabled={Boolean(factoryBusy)}
+          {onGenerateSceneWorld && manhuaSecondaryToolHome("world3d", activePhase) === "cluster" ? <button type="button" data-manhua-action="open-world-studio" data-manhua-tool-home="cluster" disabled={Boolean(factoryBusy)}
             className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
             onClick={()=>setWorldStudioOpen(value=>!value)}>3D 场景（就绪 {manhuaWorldCounts(worldStudioScenes).ready}/{worldStudioScenes.length}）</button> : null}
           {worldStudioOpen && onGenerateSceneWorld ? <ManhuaWorldStudio
@@ -3734,7 +3734,9 @@ export default function ManhuaScriptWorkbench({
                         const enabled =
                           tool === "model3d"
                             ? Boolean(onGenerateAsset3d || onImportAsset3d)
-                            : tool === "previs"
+                            : tool === "world3d"
+                              ? Boolean(onGenerateSceneWorld)
+                              : tool === "previs"
                               ? Boolean(onUpdateClipPrevisStudio)
                               : tool === "actionTimeline"
                                 ? Boolean(onChangeManhuaActionPlan)
@@ -3749,6 +3751,7 @@ export default function ManhuaScriptWorkbench({
                             disabled={Boolean(factoryBusy)}
                             onClick={() => {
                               if (tool === "model3d") setModelStudioOpen((v) => !v);
+                              else if (tool === "world3d") setWorldStudioOpen((v) => !v);
                               else if (tool === "previs") {
                                 setPrevisStudioOpen((v) => !v);
                                 if (!activeClip) onEnsureSegmentClips?.();

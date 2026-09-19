@@ -6,7 +6,7 @@ import {
   type ManhuaSecondaryTool,
 } from "./manhuaSecondaryTools";
 
-const TOOLS: ManhuaSecondaryTool[] = ["model3d", "previs", "actionTimeline", "audio"];
+const TOOLS: ManhuaSecondaryTool[] = ["model3d", "world3d", "previs", "actionTimeline", "audio"];
 const PHASES = ["outline", "assets", "storyboard", "edit", "final"];
 
 describe("二级工具的家", () => {
@@ -23,6 +23,7 @@ describe("二级工具的家", () => {
 
   it("对象在场的阶段归主操作簇：3D 归资产、白模与动作节奏归分镜、声音归分镜与成片", () => {
     expect(manhuaSecondaryToolHome("model3d", "assets")).toBe("cluster");
+    expect(manhuaSecondaryToolHome("world3d", "assets")).toBe("cluster");
     expect(manhuaSecondaryToolHome("previs", "storyboard")).toBe("cluster");
     expect(manhuaSecondaryToolHome("actionTimeline", "storyboard")).toBe("cluster");
     expect(manhuaSecondaryToolHome("audio", "storyboard")).toBe("cluster");
@@ -36,9 +37,10 @@ describe("二级工具的家", () => {
 
   it("反例对照：3D 在分镜阶段不归簇、声音在资产阶段不归簇（否则等于没按对象过滤）", () => {
     expect(manhuaSecondaryToolHome("model3d", "storyboard")).toBe("drawer");
+    expect(manhuaSecondaryToolHome("world3d", "storyboard")).toBe("drawer");
     expect(manhuaSecondaryToolHome("audio", "assets")).toBe("drawer");
     expect(manhuaDrawerSecondaryTools("assets")).toEqual(["previs", "actionTimeline", "audio"]);
-    expect(manhuaDrawerSecondaryTools("storyboard")).toEqual(["model3d"]);
+    expect(manhuaDrawerSecondaryTools("storyboard")).toEqual(["model3d", "world3d"]);
   });
 
   it("抽屉里的顺序固定，不随阶段跳动；每个工具都有中文名", () => {

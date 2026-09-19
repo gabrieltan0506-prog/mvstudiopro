@@ -13,10 +13,11 @@
  *
  * 判据收口在这里，不散进 JSX：散着写下次一定漏一处。
  */
-export type ManhuaSecondaryTool = "model3d" | "previs" | "actionTimeline" | "audio";
+export type ManhuaSecondaryTool = "model3d" | "world3d" | "previs" | "actionTimeline" | "audio";
 
 export const MANHUA_SECONDARY_TOOL_LABEL_ZH: Record<ManhuaSecondaryTool, string> = {
   model3d: "3D 模型",
+  world3d: "3D 场景",
   previs: "本段动作白模",
   actionTimeline: "本段动作节奏",
   audio: "音轨工作台",
@@ -26,6 +27,8 @@ export const MANHUA_SECONDARY_TOOL_LABEL_ZH: Record<ManhuaSecondaryTool, string>
 const NATIVE_PHASES: Record<ManhuaSecondaryTool, readonly string[]> = {
   // 3D 模型挂在人物引用上，人物引用在资产阶段
   model3d: ["assets"],
+  // 3D 场景挂在场景表上，同样只在资产阶段成立（对照图 03：场景管理与 3D 入口不该分散在全局）
+  world3d: ["assets"],
   // 白模与动作节奏都针对「本段」，段在分镜阶段才成立
   previs: ["storyboard"],
   actionTimeline: ["storyboard"],
@@ -44,7 +47,7 @@ export function manhuaSecondaryToolHome(
 
 /** 这个阶段要在抽屉里列出哪些工具（顺序固定，不随阶段跳动） */
 export function manhuaDrawerSecondaryTools(phase: string): ManhuaSecondaryTool[] {
-  return (["model3d", "previs", "actionTimeline", "audio"] as const).filter(
+  return (["model3d", "world3d", "previs", "actionTimeline", "audio"] as const).filter(
     (tool) => manhuaSecondaryToolHome(tool, phase) === "drawer",
   );
 }
