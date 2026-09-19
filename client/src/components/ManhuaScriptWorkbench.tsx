@@ -117,6 +117,7 @@ import {
   customAssetRefClaimsAnchor,
   resolveManhuaAssetClaimEntry,
 } from "@shared/manhuaAssetScriptSync";
+import { buildManhuaAssetRoleGroups } from "@/lib/manhuaAssetEntityGroups";
 import {
   buildManhuaAtReferenceIndex,
   resolveManhuaAtReferences,
@@ -6097,6 +6098,12 @@ export default function ManhuaScriptWorkbench({
                 ] as const
               ).map((sec) => {
                 const refs = customAssetRefs.filter((r) => r.role === sec.role);
+                // 同名多版本按剧本实体收成一组：组头写当前采用的是哪张，缺当前版本的实体排前面
+                const roleGroups = buildManhuaAssetRoleGroups({
+                  refs: customAssetRefs,
+                  assetCanon,
+                  role: sec.role,
+                });
                 // 传过参考图的栏默认展开（用户正在用），空栏默认收起
                 const expanded = openCustomRefRoles[sec.role] ?? refs.length > 0;
                 const toggle = () => {
@@ -6129,7 +6136,7 @@ export default function ManhuaScriptWorkbench({
                         >
                           <span aria-hidden className="text-white/40">{expanded ? "▾" : "▸"}</span>
                           {sec.titleZh}
-                          <span className="ml-1 font-normal text-white/40">· {refs.length}</span>
+                          <span className="ml-1 font-normal text-white/40">· {roleGroups.headerCountZh}</span>
                         </button>
                         {expanded ? (
                           <p className="mh-hint mt-0.5 text-[10px] leading-4 text-white/45">{sec.hintZh}</p>
@@ -6194,8 +6201,45 @@ export default function ManhuaScriptWorkbench({
                       </div>
                     </div>
                     {expanded && refs.length ? (
-                      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
-                        {refs.map((ref) => {
+                      <div className="mt-2 space-y-3">
+                        {roleGroups.groups.map((group) => (
+                        <div
+                          key={group.key}
+                          data-manhua-asset-entity={group.key}
+                          data-manhua-asset-entity-current={group.hasCurrent ? "1" : "0"}
+                          className={
+                            group.kind === "flat"
+                              ? ""
+                              : `rounded-lg border px-2 py-2 ${
+                                  group.kind === "unclaimed"
+                                    ? "border-white/10 bg-white/[0.02]"
+                                    : group.hasCurrent
+                                      ? "border-white/10 bg-white/[0.03]"
+                                      : "border-amber-300/30 bg-amber-500/[0.06]"
+                                }`
+                          }
+                        >
+                          {group.kind === "flat" ? null : (
+                            <div className="mb-2 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                              <span className="text-[11px] font-semibold text-white/85">{group.titleZh}</span>
+                              <span
+                                data-manhua-asset-entity-current-zh
+                                className={`text-[10px] ${
+                                  group.hasCurrent ? "text-white/45" : "text-amber-100/85"
+                                }`}
+                              >
+                                {group.currentZh}
+                              </span>
+                              <span className="text-[10px] text-white/30">· {group.refs.length} 张</span>
+                            </div>
+                          )}
+                          {group.sharedNoteZh ? (
+                            <p className="mh-hint text-[10px] leading-4 text-white/40">{group.sharedNoteZh}</p>
+                          ) : null}
+                          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                        {group.refs.map((ref) => {
+                          const groupUseZh = group.useZhByRefId[ref.id] || "";
+                          const groupAlsoInZh = group.alsoInZhByRefId[ref.id] || "";
                           const lockTag =
                             assetLockRegistry.slots.find((s) => s.path === ref.url)?.tag ||
                             assetLockRegistry.byRole[sec.role].find((s) => s.id === ref.id)?.tag;
@@ -6565,6 +6609,21 @@ export default function ManhuaScriptWorkbench({
                                   ) : null}
                                 </div>
                               ) : null}
+                              {groupUseZh || groupAlsoInZh ? (
+                                <div className="flex flex-wrap items-center gap-1">
+                                  {groupUseZh ? (
+                                    <span
+                                      data-manhua-asset-use={ref.id}
+                                      className="rounded bg-white/10 px-1 py-0.5 text-[9px] text-white/60"
+                                    >
+                                      {groupUseZh}
+                                    </span>
+                                  ) : null}
+                                  {groupAlsoInZh ? (
+                                    <span className="text-[9px] text-white/40">{groupAlsoInZh}</span>
+                                  ) : null}
+                                </div>
+                              ) : null}
                               {shouldShowManhuaAssetRoleChip(cardExpanded) ? (
                                 <div className="text-[9px] text-white/40">
                                   {MANHUA_CUSTOM_ASSET_ROLE_LABEL_ZH[ref.role]}
@@ -6755,6 +6814,9 @@ export default function ManhuaScriptWorkbench({
                           </div>
                           );
                         })}
+                          </div>
+                        </div>
+                        ))}
                       </div>
                     ) : (
                       <p className="mh-hint mt-2 text-[10px] text-white/35">本栏尚无参考图。</p>
