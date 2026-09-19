@@ -1,3 +1,5 @@
+import { ManhuaDirectionOverridePanel } from "./canvas/ManhuaDirectionOverridePanel";
+import type { ManhuaDirectionOverride } from "@shared/manhuaDirectionCanon";
 import { ManhuaSceneSpacePanel } from "./canvas/ManhuaSceneSpacePanel";
 import type { ManhuaSceneSpace } from "@shared/manhuaSceneSpace";
 import { hasAdoptedManhuaAudio } from "@shared/manhuaSoundPanelSummary";
@@ -265,6 +267,7 @@ import ManhuaRoughEditTimeline from "@/components/ManhuaRoughEditTimeline";
 import ManhuaStylePackPanel from "@/components/ManhuaStylePackPanel";
 import type { ManhuaStylePack } from "@shared/manhuaStylePack";
 import ManhuaEditMultitrackPanel from "@/components/ManhuaEditMultitrackPanel";
+import { ManhuaFineCutSurface } from "@/components/canvas/ManhuaFineCutSurface";
 import {
   MANHUA_CAMERA_ANGLE_ORDER,
   formatManhuaCameraAngleLine,
@@ -358,6 +361,7 @@ type Props = {
   directionCanon?: ManhuaDirectionCanon | null;
   /** 编剧确认后随 Bible 冻结，不再改卡（改卡等于换整套手法，需重铺） */
   directionLocked?: boolean;
+  onDirectionOverridesChange?: (overrides: ManhuaDirectionOverride[]) => void;
   onSelectDirectionCard?: (mainCardId: string | null) => void;
   /** 场次副卡：某类场景（打戏/对白/揭露/情感/过场）改用另一张卡；null=该类场景走主卡 */
   onSelectDirectionSceneCard?: (scene: ManhuaDirectionSceneType, cardId: string | null) => void;
@@ -462,6 +466,9 @@ type Props = {
    * 组件内部直接 scrollIntoView 对隐藏元素无效——必须由父级先切开视图再滚动。
    */
   onOpenClipDock?: () => void;
+  fineCutInCanvas?: boolean;
+  onOpenFineCutCanvas?: () => void;
+  onReturnFineCutReview?: () => void;
   /** 确认资产：先按序出角色图→场景图，再进分镜 */
   onConfirmAssetsAndPrepareImages?: () => void | Promise<void>;
   /** 清掉与现稿不符的旧设定图，并按剧本强制重出 */
@@ -1081,6 +1088,7 @@ export default function ManhuaScriptWorkbench({
   videoModel,
   directorStrategyContract,
   directionCanon,
+  onDirectionOverridesChange,
   directionLocked,
   onSelectDirectionSceneCard,
   onSelectDirectionCard,
@@ -1144,6 +1152,9 @@ export default function ManhuaScriptWorkbench({
   onOpenCharacterCard,
   onOpenAssetWall,
   onOpenClipDock,
+  fineCutInCanvas,
+  onOpenFineCutCanvas,
+  onReturnFineCutReview,
   onConfirmAssetsAndPrepareImages,
   onRegenerateAssetsFromScript,
   onPurgeStaleAssets,
@@ -3090,6 +3101,7 @@ export default function ManhuaScriptWorkbench({
     canon: directionCanon,
     sceneType: activeSegmentSceneType,
     stage: "storyboard",
+    context: { episodeIndex: focusEpisode, segmentIndex: activeSegNo, shotIndex: activeShot?.index },
     hasSpawnedNodes: blocks.some((b) => b.id.startsWith("story-") || b.id.startsWith("clip-")),
   });
   /**
@@ -3163,6 +3175,7 @@ export default function ManhuaScriptWorkbench({
         <p className="mt-0.5 text-[9px] leading-4 text-violet-100/70">{directorCardView.overrideReasonZh}</p>
       ) : null}
       <p className="mt-0.5 text-[9px] leading-4 text-white/40">{directorCardView.impactZh}</p>
+      {directionCanon && onDirectionOverridesChange ? <ManhuaDirectionOverridePanel canon={directionCanon} context={{ episodeIndex: focusEpisode, segmentIndex: activeSegNo, shotIndex: activeShot?.index }} onChange={onDirectionOverridesChange}/> : null}
       {directorCardView.continuityZh ? (
         <p data-manhua-director-continuity className="mt-0.5 text-[9px] leading-4 text-amber-100/80">
           {directorCardView.continuityZh}
@@ -7173,7 +7186,7 @@ export default function ManhuaScriptWorkbench({
                                   ) : null}
                                 </div>
                               ) : null}
-                              {ref.role === "scene" && onCustomAssetSceneSpaceChange ? <ManhuaSceneSpacePanel asset={ref} disabled={Boolean(factoryBusy)} onChange={space => onCustomAssetSceneSpaceChange(ref.id, space)}/> : null}
+                              {ref.role === "scene" && onCustomAssetSceneSpaceChange ? <ManhuaSceneSpacePanel asset={ref} actors={(assetCanon?.characters || []).map(c => ({ id: c.id, labelZh: c.nameZh }))} scopes={segments.flatMap(segment => [{ episode: focusEpisode, segmentIndex: segment.index, sourceRevision: buildManhuaAutoSegmentBinding(focusEpisode, segment, episodeVideoModel).revision, labelZh: `第${focusEpisode}集第${segment.index}段` }, ...segment.shots.map(shot => ({ episode: focusEpisode, segmentIndex: segment.index, sourceRevision: buildManhuaAutoSegmentBinding(focusEpisode, segment, episodeVideoModel).revision, shotId: String(shot.index), labelZh: `第${focusEpisode}集第${segment.index}段第${shot.index}镜` }))])} disabled={Boolean(factoryBusy)} onChange={space => onCustomAssetSceneSpaceChange(ref.id, space)}/> : null}
                               {groupUseZh || groupAlsoInZh ? (
                                 <div className="flex flex-wrap items-center gap-1">
                                   {groupUseZh ? (
@@ -8001,10 +8014,15 @@ export default function ManhuaScriptWorkbench({
       ) : null}
 
       {activePhase === "edit" ? (
+        <ManhuaFineCutSurface inCanvas={fineCutInCanvas}>
         <div
           data-manhua-phase-panel="edit"
           className="flex min-h-0 flex-1 flex-col overflow-hidden border-t border-white/5"
         >
+          <div className="flex items-center justify-between gap-3 border-b border-white/10 p-3 text-xs">
+            <span>第{focusEpisode}集 · {fineCutInCanvas ? "自由画布精剪" : "工厂粗剪与质检"} · 沿用本集素材与采用版本</span>
+            {fineCutInCanvas ? <button type="button" onClick={onReturnFineCutReview} className="rounded border px-3 py-1">返回工厂终审</button> : onOpenFineCutCanvas && <button type="button" onClick={onOpenFineCutCanvas} className="rounded border px-3 py-1">到自由画布精剪</button>}
+          </div>
           <ManhuaEditMultitrackPanel
             roughClips={roughClips}
             shots={shots}
@@ -8128,6 +8146,7 @@ export default function ManhuaScriptWorkbench({
             ) : null}
           </div>
         </div>
+        </ManhuaFineCutSurface>
       ) : null}
 
       {/* 阿硕工作流：左本集资产｜中片段脚本｜右本集画布；外层给定高，内层再横移，避免画布高度塌缩 */}

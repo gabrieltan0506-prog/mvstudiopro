@@ -1,10 +1,10 @@
-import { compileManhuaSceneSpace } from "@shared/manhuaSceneSpace";
+import { compileManhuaSceneSpace, resolveManhuaSpatialActorIds } from "@shared/manhuaSceneSpace";
 /**
  * 漫剧工厂：一键铺节点 + 顺序自动跑（故事→角色→节拍→反推→静帧→Seedance）
  * 目标：阿硕级「脚本进、成片出」分步编排核（按阶段跑；不引导一键全自动）。
  */
 
-import { classifyManhuaDirectionSceneType, resolveDirectorStyleBlocks, type ManhuaDirectionCanon } from "@shared/manhuaDirectionCanon";
+import { classifyManhuaDirectionSceneType, resolveManhuaDirectionCard, resolveDirectorStyleBlocks, type ManhuaDirectionCanon } from "@shared/manhuaDirectionCanon";
 import { formatManhuaCastStateNoteZh, resolveManhuaStateExcludedRefIds } from "@shared/manhuaCharacterStates";
 import {
   formatManhuaDirectionSelectionMarker,
@@ -931,7 +931,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
       ? formatManhuaDirectorStrategyStage(directorStrategyContract, "keyframe")
       : "";
   // 导演法典：与创作策略并列投影；选卡标记写进 story 与 beats，下游从已铺节点回读
-  const direction = resolveDirectorStyleBlocks(opts.directionCanon || null);
+  const direction = resolveDirectorStyleBlocks(opts.directionCanon || null, "default", { episodeIndex: opts.episodeIndex });
   const directionMarker = opts.directionCanon && direction.audit.cardId ? formatManhuaDirectionSelectionMarker(opts.directionCanon) : "";
   const episodeIndex =
     typeof opts.episodeIndex === "number" && opts.episodeIndex >= 1
@@ -1330,7 +1330,6 @@ export function applyFactoryPrefsToBlocks(
     : "";
   // 导演法典：显式入参优先（审查 P1：换卡后同步设置必须用新卡），缺省才从已铺节点回读选卡标记；重写先剥旧投影再加，幂等
   const prefsDirectionCanon = opts.directionCanon !== undefined ? opts.directionCanon : readManhuaDirectionCanonFromBlocks(blocks);
-  const prefsDirection = resolveDirectorStyleBlocks(prefsDirectionCanon);
   const prefsDirectionMarker = prefsDirectionCanon ? formatManhuaDirectionSelectionMarker(prefsDirectionCanon) : "";
   const craftBlock = buildCraftShotInjectBlock(opts.craftShotIds || []);
   const pathCameraBlock = buildPathCameraInjectBlock(opts.pathCameraRecipeIds || []);
@@ -1381,7 +1380,61 @@ export function applyFactoryPrefsToBlocks(
       ? opts.videoReverseOutputMode
       : "zh";
 
+  const segmentContextByEpisode = new Map<number, ReturnType<typeof groupShotsIntoSegments>>();
+  const segmentForShot = (ep: number, shotIndex: number) => {
+    if (!segmentContextByEpisode.has(ep)) segmentContextByEpisode.set(ep, groupShotsIntoSegments(resolveShotsForEpisodeKeyarts(blocks, ep), { videoModel: resolveEpisodeClipVideoModel(blocks, ep) }));
+    return segmentContextByEpisode.get(ep)?.find(seg => seg.shots.some(shot => shot.index === shotIndex))?.index;
+  };
+  const storyboardProjectionByEpisode = new Map<number, string>();
+  const scopedStoryboardProjection = (ep: number): string => {
+    const cached = storyboardProjectionByEpisode.get(ep);
+    if (cached !== undefined) return cached;
+    const currentSourceBlocks = blocks.filter(block => !block.archivedFromPreviousScript);
+    const hasStoryboardSource = currentSourceBlocks.some(block =>
+      (getBlockEpisodeIndex(block) ?? 1) === ep &&
+      /^(story|beats|reverse)-/.test(block.id) &&
+      Boolean(String(block.outputText || "").trim()) &&
+      hasExplicitManhuaShotStructure(String(block.outputText)),
+    );
+    if (!hasStoryboardSource) {
+      storyboardProjectionByEpisode.set(ep, "");
+      return "";
+    }
+    const source = resolveShotsForEpisodeKeyartsResult(currentSourceBlocks.map(block => ({
+      ...block,
+      prompt: String(block.prompt || "").replace(/\s?【逐镜分镜手法】[\s\S]*?【\/逐镜分镜手法】/g, ""),
+    })), ep);
+    if (source.isFallback) {
+      storyboardProjectionByEpisode.set(ep, "");
+      return "";
+    }
+    const segments = groupShotsIntoSegments(source.shots, { videoModel: resolveEpisodeClipVideoModel(currentSourceBlocks, ep) });
+    let hasLocalStoryboardOverride = false;
+    const rows = segments.flatMap(segment => {
+      const sceneType = classifyManhuaDirectionSceneType(segment.shots.map(shot => {
+        const dialogue = String(shot.dialogueZh || "").trim();
+        return `${shot.actionZh || ""} ${dialogue ? `「${dialogue}」` : ""} ${shot.intentZh || ""}`;
+      }).join("\n"));
+      return segment.shots.map(shot => {
+        const context = { episodeIndex: ep, segmentIndex: segment.index, shotIndex: shot.index };
+        const selected = resolveManhuaDirectionCard(prefsDirectionCanon, "storyboard", sceneType, context);
+        if (selected?.scope === "segment" || selected?.scope === "shot") hasLocalStoryboardOverride = true;
+        const line = resolveDirectorStyleBlocks(prefsDirectionCanon, sceneType, context).storyboard;
+        return line ? `第${shot.index}镜（第${segment.index}段）分镜手法：${line}` : "";
+      });
+    }).filter(Boolean);
+    const projection = hasLocalStoryboardOverride && rows.length
+      ? ["【逐镜分镜手法】", "以下方法仅对注明的镜头生效；各镜以自己的方法为准，不将局部覆盖扩散到其他镜头。", ...rows, "【/逐镜分镜手法】"].join("\n")
+      : "";
+    storyboardProjectionByEpisode.set(ep, projection);
+    return projection;
+  };
   return blocks.map((b) => {
+    const prefsDirection = resolveDirectorStyleBlocks(prefsDirectionCanon, classifyManhuaDirectionSceneType(b.prompt || ""), {
+      episodeIndex: getBlockEpisodeIndex(b) ?? 1,
+      shotIndex: b.id.startsWith("keyart-") ? resolveKeyartShotIndex(b.id, b.prompt) : undefined,
+      segmentIndex: b.id.startsWith("keyart-") ? segmentForShot(getBlockEpisodeIndex(b) ?? 1, resolveKeyartShotIndex(b.id, b.prompt)) : undefined,
+    });
     const syncScene =
       b.id.startsWith("story-") ||
       b.id.startsWith("beats-") ||
@@ -1442,7 +1495,8 @@ export function applyFactoryPrefsToBlocks(
     }
 
     if (b.id.startsWith("beats-") || b.id.startsWith("reverse-")) {
-      let base = stripManhuaDirectionStyleBlocks(stripManhuaDirectorStrategyStage(b.prompt));
+      const withoutScopedStoryboard = String(b.prompt || "").replace(/\s?【逐镜分镜手法】[\s\S]*?【\/逐镜分镜手法】/g, "");
+      let base = stripManhuaDirectionStyleBlocks(stripManhuaDirectorStrategyStage(withoutScopedStoryboard));
       base = stripInjectBlock(base, "【手法条目库·原子镜头】");
       base = stripMarkedSection(base, "【路径运镜配方】");
       base = stripMarkedSection(base, "【动作运镜配方】");
@@ -1473,6 +1527,7 @@ export function applyFactoryPrefsToBlocks(
         b.id.startsWith("beats-") && propAnchorBlock ? propAnchorBlock : "",
         directorStoryboardBlock,
         prefsDirection.storyboard,
+        scopedStoryboardProjection(getBlockEpisodeIndex(b) ?? 1),
         b.id.startsWith("beats-") ? prefsDirectionMarker : "",
       ].filter(Boolean);
       return {
@@ -2042,6 +2097,7 @@ function mergeManhuaPlanBeatsForSegment(
  * 兼容旧 clip-eXX-sNN（视为段号）。
  */
 export type ManhuaFragmentClipEnsureOptions = {
+  directionCanon?: ManhuaDirectionCanon | null;
   assetCanon?: ManhuaWriterAssetCanon | null;
   characterSheetUrlById?: Record<string, string> | null;
   /** wa_prop_* → 单件图 HTTPS；有则 @道具N 子槽优先绑这张，不再绑整张定妆卡 */
@@ -2113,6 +2169,21 @@ export function countManhuaRenderedClipsToArchiveOnResegment(
   ).length;
 }
 
+/** 配乐直接入口也核对当前原稿，不能把已保存的旧空间版本当成当前版本。 */
+export function selectCurrentManhuaSpatialContexts(
+  blocks: CanvasBlock[], episodeIndex: number, explicitVideoModel?: string | null,
+) {
+  const ep = Math.max(1, Math.floor(episodeIndex));
+  const model = resolveEpisodeClipVideoModel(blocks, ep, explicitVideoModel);
+  const current = new Map(groupShotsIntoSegments(resolveShotsForEpisodeKeyarts(blocks, ep), { videoModel: model })
+    .map(segment => [segment.index, buildManhuaAutoSegmentBinding(ep, segment, model).revision]));
+  return blocks.flatMap(block => {
+    const context = block.manhuaSpatialContext;
+    return !block.archivedFromPreviousScript && context?.episode === ep && current.get(context.segmentIndex) === context.sourceRevision
+      ? [context] : [];
+  });
+}
+
 export function ensureManhuaFragmentClips(
   blocks: CanvasBlock[],
   edges: CanvasEdge[],
@@ -2143,7 +2214,7 @@ export function ensureManhuaFragmentClips(
     ? formatManhuaDirectorStrategyClipLine(directorStrategyContract)
     : "";
   // 导演法典：每段按自己的动作/对白文本判场景类型，副卡（如动作场）只盖它声明的阶段
-  const directionCanon = readManhuaDirectionCanonFromBlocks(blocks.filter(sameEpisode));
+  const directionCanon = opts?.directionCanon !== undefined ? opts.directionCanon : readManhuaDirectionCanonFromBlocks(blocks.filter(sameEpisode));
   const shots = resolveShotsForEpisodeKeyarts(blocks, ep);
   /**
    * 引擎优先级：显式入参 > 本集已有 clip 节点上盖的引擎（spawn 时按用户选择写入）
@@ -2355,6 +2426,7 @@ export function ensureManhuaFragmentClips(
       mainSceneId: mainScene?.id,
       castCount,
     });
+    const spatialContext = { episode: ep, segmentIndex: seg.index, sourceRevision: binding.revision, shotIds: seg.shots.map(s => String(s.index)), actorIds: resolveManhuaSpatialActorIds(segAssets.characterIds, mergedCustomRefs, opts?.assetCanon ? opts.assetCanon.characters.map(c => c.id) : undefined), sceneIds: segAssets.sceneIds };
     if (segAssets.mode === "mismatch") {
       castMismatchSegments.push(seg.index);
       for (const n of segAssets.unmatchedCastNames) unmatchedCastNames.add(n);
@@ -2396,7 +2468,10 @@ export function ensureManhuaFragmentClips(
         })
         .join("\n"),
     );
-    const directionClipLine = directionCanon ? resolveDirectorStyleBlocks(directionCanon, directionSceneType).clip : "";
+    const directionLines = hydratedShots.map(shot => ({ shotIndex: shot.index, line: resolveDirectorStyleBlocks(directionCanon, directionSceneType, { episodeIndex: ep, segmentIndex: seg.index, shotIndex: shot.index }).clip }));
+    const directionClipLine = new Set(directionLines.map(row => row.line)).size === 1
+      ? directionLines[0]?.line || ""
+      : directionLines.filter(row => row.line).map(row => `镜${String(row.shotIndex).padStart(2, "0")}导演方法：${row.line}`).join("\n");
     const timelineBlock = formatWorkbenchSegmentClipInjectBlock({
       segmentIndex: seg.index,
       totalSegments: segments.length,
@@ -2470,9 +2545,13 @@ export function ensureManhuaFragmentClips(
     }
     for (const keyart of segKeyarts) {
       const originalShot = shots.find(shot => shot.index === resolveKeyartShotIndex(keyart.id, keyart.prompt));
+      const directionContext = { episodeIndex: ep, segmentIndex: seg.index, shotIndex: originalShot?.index };
+      const keyframeDirection = resolveDirectorStyleBlocks(directionCanon, directionSceneType, directionContext).keyframe;
+      const localDirection = resolveManhuaDirectionCard(directionCanon, "keyframe", directionSceneType, directionContext)?.override;
       const sourceBoundKeyart = originalShot ? {
         ...keyart,
-        manhuaKeyartSourceState: { ...keyart.manhuaKeyartSourceState, required: JSON.stringify(withManhuaShotStateNote(originalShot, shots, opts)) },
+        prompt: [stripManhuaDirectionStyleBlocks(keyart.prompt), keyframeDirection].filter(Boolean).join("\n\n"),
+        manhuaKeyartSourceState: { ...keyart.manhuaKeyartSourceState, required: JSON.stringify({ ...withManhuaShotStateNote(originalShot, shots, opts), ...(localDirection ? { directionKeyframe: keyframeDirection } : {}) }) },
       } : keyart;
       refreshedKeyarts.set(keyart.id, compileManhuaKeyartLookBindings(sourceBoundKeyart, {
         registry: segmentRegistry,
@@ -2622,7 +2701,7 @@ export function ensureManhuaFragmentClips(
         stripManhuaPromptSlop(
           [
             timelineBlock,
-            compileManhuaSceneSpace(mergedCustomRefs, segAssets.sceneIds),
+            compileManhuaSceneSpace(mergedCustomRefs, segAssets.sceneIds, spatialContext),
             directorStrategyClipLine,
             directionClipLine,
             directorBoardMotionLine,
@@ -2646,6 +2725,7 @@ export function ensureManhuaFragmentClips(
       clipBySeg.set(globalSeg, {
         ...generationBase,
         manhuaAutoSegment: binding,
+        manhuaSpatialContext: spatialContext,
         prompt: mergeManhuaDerivedClipPrompt(segPrompt, generationBase.prompt),
         parentId: primary.id,
         refImageUrl: segUrls[0] || mediaUrlOf(primary) || existing.refImageUrl,
@@ -2678,6 +2758,7 @@ export function ensureManhuaFragmentClips(
       uploadedAssets: [],
       uploadFailures: undefined,
       manhuaAutoSegment: binding,
+      manhuaSpatialContext: spatialContext,
       manhuaEditTrim: { sourceDurationSec: seg.durationSec, inSec: 0, outSec: binding.sourceEndSec - binding.sourceStartSec },
       manhuaFinalPostProd: undefined,
       manhuaFinalVersions: undefined,
@@ -3454,6 +3535,12 @@ export function expandManhuaShotKeyartsAfterReverse(
     return ensureManhuaFragmentClips(blocks, edges, ep ?? 1, opts);
   }
 
+  const directionCanon = opts?.directionCanon !== undefined ? opts.directionCanon : readManhuaDirectionCanonFromBlocks(blocks.filter(sameEpisode));
+  const directionSegments = groupShotsIntoSegments(shots, { videoModel: resolveEpisodeClipVideoModel(blocks, ep ?? 1, opts?.videoModel) });
+  const withDirection = (base: string, shot: ManhuaWorkbenchShot) => [stripManhuaDirectionStyleBlocks(base), resolveDirectorStyleBlocks(directionCanon,
+    classifyManhuaDirectionSceneType(`${shot.actionZh || ""} ${shot.dialogueZh || ""}`),
+    { episodeIndex: ep ?? 1, segmentIndex: directionSegments.find(seg => seg.shots.some(s => s.index === shot.index))?.index, shotIndex: shot.index }).keyframe].filter(Boolean).join("\n\n");
+
   const existingKeyarts = blocks
     .filter((b) => b.id.startsWith("keyart-") && !b.archivedFromPreviousScript && sameEpisode(b))
     .sort(sortKeyartBlocks);
@@ -3496,7 +3583,7 @@ export function expandManhuaShotKeyartsAfterReverse(
       x: primary.x + Math.min(shot.index, 3) * 28,
       y: primary.y + (shot.index - 1) * 36,
       parentId: reverse.id,
-      prompt: attachManhuaKeyartShotInject(basePrompt, withManhuaShotStateNote(shot, shots, opts)),
+      prompt: attachManhuaKeyartShotInject(withDirection(basePrompt, shot), withManhuaShotStateNote(shot, shots, opts)),
       manhuaKeyartSourceState: { required: JSON.stringify(withManhuaShotStateNote(shot, shots, opts)) },
       status: "idle",
       outputUrl: undefined,
@@ -3524,7 +3611,7 @@ export function expandManhuaShotKeyartsAfterReverse(
       // 只更新分镜注入文案，保留 status / outputUrl
       return {
         ...b,
-        prompt: attachManhuaKeyartShotInject(base, withManhuaShotStateNote(shot, shots, opts)),
+        prompt: attachManhuaKeyartShotInject(withDirection(base, shot), withManhuaShotStateNote(shot, shots, opts)),
         manhuaKeyartSourceState: { ...b.manhuaKeyartSourceState, required: JSON.stringify(withManhuaShotStateNote(shot, shots, opts)) },
       };
     });

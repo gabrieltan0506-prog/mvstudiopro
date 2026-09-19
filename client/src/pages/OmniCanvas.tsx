@@ -215,6 +215,7 @@ import {
   queuedManhuaKeyartBlocks,
   queuedManhuaClipBlocks,
   resolveShotsForEpisodeKeyarts,
+  selectCurrentManhuaSpatialContexts,
   resolveManhuaCanvasClipVideoModel,
   resolveManhuaEpisodeClipVideoModel,
   resolveManhuaClipRelatedAssetNodeIds,
@@ -279,6 +280,7 @@ import { projectManhuaStoryEmotionForSegment,
 } from "@shared/manhuaStoryEmotion";
 import {
   buildManhuaDirectionCanonFromSelection,
+  manhuaDirectionSelectionForRequest,
   type ManhuaDirectionSelection,
 } from "@shared/manhuaDirectionCanonLibrary";
 import {
@@ -829,7 +831,7 @@ export default function OmniCanvas() {
   /** 导演包选卡：确认后以 Bible.directionCanon 为真源，确认前存会话草稿 */
   const [directionSelection, setDirectionSelection] = useState<ManhuaDirectionSelection | null>(() =>
     bootBible?.directionCanon
-      ? { mainCardId: bootBible.directionCanon.mainCardId, sceneOverrides: bootBible.directionCanon.sceneOverrides }
+      ? { mainCardId: bootBible.directionCanon.mainCardId, sceneOverrides: bootBible.directionCanon.sceneOverrides, scopedOverrides: bootBible.directionCanon.scopedOverrides }
       : initialWriterSession?.directionSelection || null,
   );
   const activeDirectionCanon = useMemo(
@@ -3095,7 +3097,7 @@ export default function OmniCanvas() {
     );
     setDirectionSelection(
       session.projectBible?.directionCanon
-        ? { mainCardId: session.projectBible.directionCanon.mainCardId, sceneOverrides: session.projectBible.directionCanon.sceneOverrides }
+        ? { mainCardId: session.projectBible.directionCanon.mainCardId, sceneOverrides: session.projectBible.directionCanon.sceneOverrides, scopedOverrides: session.projectBible.directionCanon.scopedOverrides }
         : session.directionSelection || null,
     );
     // 已确认项目刷新后必须回到主工作台；旧云草稿里的 form 只能作为未确认剧本的编辑选择，
@@ -5073,6 +5075,7 @@ export default function OmniCanvas() {
         const ensured = ensureManhuaFragmentClips(blocks, edges, ep, {
           // 段成片提示词吃「本段戏核」：生产者在剧本页折叠区，这里是唯一的喂入口
           storyEmotionLineByEpisodeSegment,
+          directionCanon: activeDirectionCanon,
           segmentCapacityMode: getManhuaSegmentCapacityMode(segmentCapacityModeByEpisode, ep),
           lengthTierId: writerLengthTierId,
           assetCanon: projectBible?.assetCanon,
@@ -5169,6 +5172,7 @@ export default function OmniCanvas() {
       directorBoardUrlByEpisodeSegment,
       directorBoardMotionOverlayBySegment,
       storyEmotionLineByEpisodeSegment,
+      activeDirectionCanon,
       explicitWriterVideoModel,
       writerVideoModel,
     ],
@@ -5630,7 +5634,7 @@ export default function OmniCanvas() {
                 undefined
               : undefined,
           directionSelection: directionSelection
-            ? { mainCardId: directionSelection.mainCardId, sceneOverrides: directionSelection.sceneOverrides }
+            ? manhuaDirectionSelectionForRequest(directionSelection)
             : undefined,
         }),
         new Promise<never>((_, reject) => {
@@ -8756,6 +8760,7 @@ export default function OmniCanvas() {
             const ensureOptions = {
               // 段成片提示词吃「本段戏核」：生产者在剧本页折叠区，这里是唯一的喂入口
               storyEmotionLineByEpisodeSegment,
+              directionCanon: activeDirectionCanon,
               assetCanon: projectBible?.assetCanon,
               characterSheetUrlById: collectManhuaCharacterSheetUrlById(
                 workingBlocks,
@@ -9252,11 +9257,10 @@ export default function OmniCanvas() {
       directorBoardUrlByEpisodeSegment,
       directorBoardMotionOverlayBySegment,
       storyEmotionLineByEpisodeSegment,
+      activeDirectionCanon,
       explicitWriterVideoModel,
       writerVideoModel,
       segmentCapacityModeByEpisode,
-      // 审查 P1：整板跑之前的同步设置要用当前选的导演卡
-      activeDirectionCanon,
       // 审查 P1-2 点名漏掉的一项。它现在读 ref、依赖为空，本身稳定；
       // 列进来是为了别再出现「闭包里少一项就拿到旧上下文」这类问题。
       manhuaOutboundScope,
@@ -10037,10 +10041,10 @@ export default function OmniCanvas() {
               </div>
             ) : null}
 
-            {canvasMode === "manhua" ? (
-            <>
+            {canvasMode === "manhua" || (canvasMode === "freeform" && workflowPhase === "edit") ? (
+            <div className={canvasMode === "freeform" ? "hidden" : "contents"}>
             {/* 工作台主屏：沉浸三栏（未确认也可进壳；题材从顶栏「改题材」） */}
-            {manhuaUiMode === "workbench" &&
+            {(manhuaUiMode === "workbench" || (canvasMode === "freeform" && workflowPhase === "edit")) &&
             !(immersiveWorkbench && immersiveExtrasOpen) ? (
               <div
                 id="manhua-workbench-zone"
@@ -10077,6 +10081,14 @@ export default function OmniCanvas() {
                   directorStrategyContract={directorStrategyContract}
                   directionCanon={activeDirectionCanon}
                   directionLocked={Boolean(projectBible)}
+                  onDirectionOverridesChange={(scopedOverrides) => {
+                    if (!activeDirectionCanon) return;
+                    const selection = { mainCardId: activeDirectionCanon.mainCardId, sceneOverrides: activeDirectionCanon.sceneOverrides, scopedOverrides };
+                    const canon = buildManhuaDirectionCanonFromSelection(selection);
+                    if (!canon) return;
+                    setDirectionSelection(selection);
+                    setProjectBible(previous => previous ? { ...previous, directionCanon: canon } : previous);
+                  }}
                   onSelectDirectionCard={(mainCardId) => setDirectionSelection(mainCardId ? { mainCardId } : null)}
                   onSelectDirectionSceneCard={(scene, cardId) =>
                     setDirectionSelection((prev) => {
@@ -10372,6 +10384,18 @@ export default function OmniCanvas() {
                   onShareAssetToLibraryChange={setShareAssetToLibrary}
                   assetShareBilling={assetShareBillingUi}
                   workflowPhase={workflowPhase}
+                  fineCutInCanvas={canvasMode === "freeform" && workflowPhase === "edit"}
+                  onOpenFineCutCanvas={() => {
+                    setManhuaUiMode("workbench");
+                    setWorkflowPhase("edit");
+                    setImmersiveWorkspaceView("workbench");
+                    selectCanvasMode("freeform");
+                  }}
+                  onReturnFineCutReview={() => {
+                    selectCanvasMode("manhua");
+                    setManhuaUiMode("workbench");
+                    setWorkflowPhase("final");
+                  }}
                   onWorkflowPhaseChange={setWorkflowPhase}
                   onOpenCharacterCard={() => setManhuaAssetDrawer("characters")}
                   onOpenAssetWall={() => setManhuaAssetDrawer("assets")}
@@ -10716,6 +10740,7 @@ export default function OmniCanvas() {
                       const layoutOpts = {
                         // 段成片提示词吃「本段戏核」：生产者在剧本页折叠区，这里是唯一的喂入口
                         storyEmotionLineByEpisodeSegment,
+                        directionCanon: activeDirectionCanon,
                         assetCanon: projectBible?.assetCanon,
                         characterSheetUrlById: sheetUrls,
                         propImageUrlById: collectManhuaPropImageUrlById(
@@ -10779,6 +10804,7 @@ export default function OmniCanvas() {
                       const layoutOpts = {
                         // 段成片提示词吃「本段戏核」：生产者在剧本页折叠区，这里是唯一的喂入口
                         storyEmotionLineByEpisodeSegment,
+                        directionCanon: activeDirectionCanon,
                         assetCanon: projectBible?.assetCanon,
                         characterSheetUrlById: sheetUrls,
                         propImageUrlById: collectManhuaPropImageUrlById(
@@ -10907,6 +10933,7 @@ export default function OmniCanvas() {
                       const layoutOpts = {
                         // 段成片提示词吃「本段戏核」：生产者在剧本页折叠区，这里是唯一的喂入口
                         storyEmotionLineByEpisodeSegment,
+                        directionCanon: activeDirectionCanon,
                         assetCanon: projectBible?.assetCanon,
                         characterSheetUrlById: sheetUrls,
                         propImageUrlById: collectManhuaPropImageUrlById(
@@ -12774,16 +12801,20 @@ export default function OmniCanvas() {
                   userRole={userRole}
                   bgmSeedNoteZh={audioReferenceLock?.bgmNoteZh || ""}
                   storyEmotion={storyEmotionForDownstream}
+                  sceneSpaceRefs={customAssetRefs}
+                  focusEpisode={writerFocusEpisode}
+                  spatialContexts={selectCurrentManhuaSpatialContexts(blocks, writerFocusEpisode, explicitWriterVideoModel)}
                 />
               ) : null}
             </div>
             </div>
-            </>
+            </div>
             ) : null}
           </div>
 
           {canvasMode === "freeform" ? (
           <div id="freeform-canvas-zone" className="scroll-mt-24">
+            {workflowPhase === "edit" && <div id="manhua-freeform-finecut" data-manhua-finecut-episode={writerFocusEpisode} className="mb-4 flex max-h-[70vh] min-h-0 flex-col overflow-auto rounded-xl border border-white/15 bg-slate-950 text-white" />}
             <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
               <div className="text-sm font-semibold text-white/85">自由画布</div>
               <span className="text-[11px] text-white/40">

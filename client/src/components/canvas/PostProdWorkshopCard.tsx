@@ -1,3 +1,5 @@
+import { projectManhuaSpatialStoryCuesForBgm } from "@shared/manhuaSpatialStoryCue";
+import type { ManhuaSceneSpaceRef, ManhuaSpatialContext } from "@shared/manhuaSceneSpace";
 /**
  * 后期工坊卡(成片坞内):拼接 / BGM 贴装 / 响度验收,纯 ffmpeg 零积分。
  * 任务记录以服务端 jobs 为主来源(listPostProdJobs 恢复),localStorage 仅作
@@ -119,6 +121,9 @@ type PostProdWorkshopCardProps = {
    * 配乐只消费不编辑：曲线定段情绪，留白段插 [Break] 让配乐真的静下来。
    */
   storyEmotion?: ManhuaStoryEmotion | null;
+  focusEpisode?: number;
+  sceneSpaceRefs?: readonly ManhuaSceneSpaceRef[];
+  spatialContexts?: readonly ManhuaSpatialContext[];
 };
 
 type EditableBgmBrief = {
@@ -160,6 +165,9 @@ export default function PostProdWorkshopCard({
   userRole,
   bgmSeedNoteZh,
   storyEmotion,
+  focusEpisode,
+  sceneSpaceRefs = [],
+  spatialContexts = [],
 }: PostProdWorkshopCardProps) {
   const queueMutation = trpc.mvAnalysis.queuePostProd.useMutation();
   const draftBgmMutation = trpc.mvAnalysis.draftManhuaBgmBrief.useMutation();
@@ -204,29 +212,38 @@ export default function PostProdWorkshopCard({
     return out;
   }, [blocks]);
 
-  const defaultStoryContext = useMemo(
-    () =>
-      blocks
-        .filter(block => block.kind === "text" || block.kind === "video")
-        .map(block => String(block.prompt || block.outputText || "").trim())
-        .filter(Boolean)
-        .join("\n")
-        .slice(0, 900),
-    [blocks]
+  const currentStoryContext = useMemo(
+    () => blocks
+      .filter(block => !block.archivedFromPreviousScript &&
+        (block.kind === "text" || block.kind === "video") &&
+        (focusEpisode == null || Number(block.episodeIndex) === focusEpisode))
+      .map(block => String(block.outputText || block.prompt || "").trim())
+      .filter(Boolean).join("\n"),
+    [blocks, focusEpisode]
   );
-  const [scoreStoryZh, setScoreStoryZh] = useState(() => defaultStoryContext);
+  const storyContextKey = JSON.stringify([focusEpisode, currentStoryContext]);
+  const [scoreStoryDraft, setScoreStoryDraft] = useState<{ sourceKey: string; text: string } | null>(null);
+  const scoreStoryZh = scoreStoryDraft?.text ?? currentStoryContext.slice(0, 900);
+  const scoreStoryStale = scoreStoryDraft !== null && scoreStoryDraft.sourceKey !== storyContextKey;
   const [scoreDurationSec, setScoreDurationSec] = useState(30);
   /**
    * 全自动种子（0902 最后一根线）：读最新一集 clip 段表里的〔节拍功能〕标签，
    * 情绪弧和时长自动推——用户一键起草，不再手拼四拍。
    */
+  // 路线事件来自已采用空间合同，不依赖可选的节拍文字标签。
+  const spatialBgm = useMemo(() => projectManhuaSpatialStoryCuesForBgm(
+    sceneSpaceRefs,
+    spatialContexts.filter(context => context.episode === (focusEpisode ?? Math.max(0, ...spatialContexts.map(item => item.episode)))),
+  ), [sceneSpaceRefs, spatialContexts, focusEpisode]);
   const segmentBriefSeed = useMemo(() => {
     const vocab = new Set<string>(MANHUA_BEAT_FUNCTION_VOCAB_ZH);
     const rows = blocks
       .filter(
         b =>
           b.kind === "video" &&
+          !b.archivedFromPreviousScript &&
           Number(b.episodeIndex) > 0 &&
+          (focusEpisode == null || Number(b.episodeIndex) === focusEpisode) &&
           String(b.prompt || "").includes("〔")
       )
       .map(b => ({
@@ -240,6 +257,8 @@ export default function PostProdWorkshopCard({
       }));
     if (!rows.length) return null;
     const episode = Math.max(...rows.map(r => r.ep));
+    const spatial = projectManhuaSpatialStoryCuesForBgm(sceneSpaceRefs, spatialContexts.filter(context => context.episode === episode));
+    const emotion = projectManhuaStoryEmotionForBgm(storyEmotion, episode);
     const beats = rows
       .filter(r => r.ep === episode)
       .sort((a, b) => a.seg - b.seg)
@@ -252,15 +271,17 @@ export default function PostProdWorkshopCard({
     return {
       episode,
       segCount: beats.length,
+      spatialNoteZh: spatial.noteZh,
+      hasSilenceBreak: emotion.hasSilenceBreak || spatial.hasSilenceBreak,
       seed: deriveManhuaBgmBriefSeed({
         laneZh: "自定义剧情",
         segmentBeatFunctionsZh: beats,
         bgmNoteZh: String(bgmSeedNoteZh || "").trim() || undefined,
         // 剧本页的情绪曲线（原先这个入参全仓没人喂，0919 探针点名的死接线）
-        storyEmotion: projectManhuaStoryEmotionForBgm(storyEmotion, episode),
+        storyEmotion: { ...emotion, moods: emotion.moods.length ? emotion.moods : spatial.moods, hasSilenceBreak: emotion.hasSilenceBreak || spatial.hasSilenceBreak },
       }),
     };
-  }, [blocks, bgmSeedNoteZh, storyEmotion]);
+  }, [blocks, bgmSeedNoteZh, storyEmotion, sceneSpaceRefs, spatialContexts, focusEpisode]);
   const [scoreBrief, setScoreBrief] = useState<EditableBgmBrief | null>(null);
   const [bgmPending, setBgmPending] = useState<ManhuaBgmPendingJob | null>(() =>
     readPendingManhuaBgmJob(localStorage, Date.now(), userId)
@@ -791,22 +812,33 @@ export default function PostProdWorkshopCard({
     }
   };
 
+  const scoringMoodArcZh = [scoreStoryZh.trim(), spatialBgm.noteZh].filter(Boolean).join("\n");
+  const validateScoringMoodArc = () => {
+    if (scoreStoryStale) {
+      toast.error("剧情已更新，请采用当前剧情或确认手工说明后再起草配乐");
+      return false;
+    }
+    if (scoringMoodArcZh.length <= 1000) return true;
+    toast.error(`剧情与路线事件共${scoringMoodArcZh.length}字，超过配乐说明1000字上限，请精简剧情或路线事件后再起草`);
+    return false;
+  };
   const draftScoringBrief = async () => {
     if (!scoreStoryZh.trim()) {
       toast.error("先填写剧情与情绪推进");
       return;
     }
+    if (!validateScoringMoodArc()) return;
     try {
       const seedNote = String(bgmSeedNoteZh || "").trim().slice(0, 300);
       const result = await draftBgmMutation.mutateAsync({
         laneZh: "自定义剧情",
         durationSec: scoreDurationSec,
         moods: ["蓄力", "冲突", "反转", "收束"],
-        moodArcZh: scoreStoryZh.trim(),
+        moodArcZh: scoringMoodArcZh,
         titleZh: "剧情配乐",
         endingZh: "尾钩前收住，不泄尽",
         ...(seedNote ? { styleAnchorZh: seedNote } : {}),
-        hasSilenceBreak: filmEvents.some(event => event.kind === "静音停顿"),
+        hasSilenceBreak: spatialBgm.hasSilenceBreak || Boolean(segmentBriefSeed?.hasSilenceBreak) || filmEvents.some(event => event.kind === "静音停顿"),
       });
       setScoreBrief(result.brief as EditableBgmBrief);
       toast.success("配乐 brief 已起草，可先修改再确认");
@@ -819,7 +851,7 @@ export default function PostProdWorkshopCard({
 
   /** 段表一键起草：节拍→情绪弧、段数→时长全自动；剧情文本有则一并当情绪弧原文 */
   const draftScoringBriefFromSegments = async () => {
-    if (!segmentBriefSeed) return;
+    if (!segmentBriefSeed || !validateScoringMoodArc()) return;
     const { seed, episode } = segmentBriefSeed;
     try {
       setScoreDurationSec(seed.durationSec);
@@ -827,11 +859,11 @@ export default function PostProdWorkshopCard({
         laneZh: seed.laneZh,
         durationSec: seed.durationSec,
         moods: [...seed.moods],
-        moodArcZh: scoreStoryZh.trim() || undefined,
+        moodArcZh: scoringMoodArcZh || undefined,
         titleZh: `第${episode}集配乐`,
         endingZh: seed.endingZh,
         ...(seed.styleAnchorZh ? { styleAnchorZh: seed.styleAnchorZh } : {}),
-        hasSilenceBreak: filmEvents.some(event => event.kind === "静音停顿"),
+        hasSilenceBreak: segmentBriefSeed.hasSilenceBreak || filmEvents.some(event => event.kind === "静音停顿"),
       });
       setScoreBrief(result.brief as EditableBgmBrief);
       toast.success(
@@ -1106,12 +1138,19 @@ export default function PostProdWorkshopCard({
             <textarea
               value={scoreStoryZh}
               onChange={event =>
-                setScoreStoryZh(event.target.value.slice(0, 1000))
+                setScoreStoryDraft({ sourceKey: storyContextKey, text: event.target.value.slice(0, 1000) })
               }
               rows={3}
               placeholder="写本段剧情、情绪从哪里推进到哪里、哪里要压住或爆开…"
               className="w-full resize-y rounded-lg border border-white/10 bg-black/35 px-2 py-1.5 text-[11px] leading-5 text-white placeholder:text-white/30"
             />
+            {scoreStoryStale ? (
+              <div role="alert" className="col-span-full text-[11px] text-amber-200">
+                剧情已更新，手工说明已保留；确认来源后才能继续起草。
+                <button className="mx-2 rounded border border-amber-200/40 px-2 py-1" type="button" onClick={() => setScoreStoryDraft(null)}>采用当前项目剧情</button>
+                <button className="rounded border border-amber-200/40 px-2 py-1" type="button" onClick={() => setScoreStoryDraft({ sourceKey: storyContextKey, text: scoreStoryZh })}>确认沿用手工说明</button>
+              </div>
+            ) : null}
             {String(bgmSeedNoteZh || "").trim() ? (
               <div className="col-span-full text-[10px] leading-4 text-emerald-200/70">
                 画布 BGM 说明将自动作为风格锚：
@@ -1152,6 +1191,7 @@ export default function PostProdWorkshopCard({
                 ) : null}
                 起草 brief
               </button>
+              {spatialBgm.noteZh ? <p className="whitespace-pre-wrap text-xs text-white/60">已采用路线剧情与音乐意图：{spatialBgm.noteZh}</p> : null}
               {segmentBriefSeed ? (
                 <button
                   type="button"

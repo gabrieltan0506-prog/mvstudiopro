@@ -11,6 +11,8 @@ import type { ManhuaDirectorStrategyStage } from "./manhuaDirectorStrategy.js";
  */
 import {
   MANHUA_DIRECTION_STAGES,
+  resolveManhuaDirectionCard,
+  type ManhuaDirectionContext,
   type ManhuaDirectionCanon,
   type ManhuaDirectionSceneType,
   manhuaDirectionCardIsProductionReady,
@@ -59,6 +61,7 @@ export function buildManhuaDirectorCardView(input: {
   /** 画布上已经铺过节点：换卡不会自动跟着变 */
   hasSpawnedNodes: boolean;
   stage?: ManhuaDirectorStrategyStage;
+  context?: ManhuaDirectionContext;
 }): ManhuaDirectorCardView | null {
   const canon = input.canon;
   const sceneTypeZh = MANHUA_DIRECTION_SCENE_TYPE_SHORT_ZH[input.sceneType];
@@ -73,21 +76,22 @@ export function buildManhuaDirectorCardView(input: {
   const stages: ManhuaDirectorStrategyStage[] =
     override?.stages?.length ? [...override.stages] : [...MANHUA_DIRECTION_STAGES];
 
-  const effective = subAuthorized && sub && (!input.stage || stages.includes(input.stage)) ? sub : main;
+  const resolved = resolveManhuaDirectionCard(canon, input.stage || "storyboard", input.sceneType, input.context);
+  const effective = resolved?.card || main;
   const usingSub = effective.id !== main.id;
 
   return {
     effectiveCardId: effective.id,
     effectiveLabelZh: effective.labelZh,
-    sourceZh: usingSub ? `场次副卡 · ${sceneTypeZh}` : "系列主卡",
-    overrideReasonZh: usingSub
+    sourceZh: resolved?.override ? ({ episode: "本集覆盖", segment: "本段覆盖", shot: "本镜覆盖" }[resolved.override.scope]) : usingSub ? `场次副卡 · ${sceneTypeZh}` : "系列主卡",
+    overrideReasonZh: resolved?.override ? resolved.override.reasonZh : usingSub
       ? `本段判为${sceneTypeZh}，按场次副卡覆盖主卡「${main.labelZh}」`
       : sub && !subAuthorized
         ? `本段判为${sceneTypeZh}，副卡「${sub.labelZh}」未获生产准入，仍走主卡`
         : "",
-    impactZh: `投影到 ${(usingSub ? stages : MANHUA_DIRECTION_STAGES).map((stage) => STAGE_LABEL_ZH[stage] || stage).join(" / ")}`,
+    impactZh: `投影到 ${(resolved?.override?.stages || (usingSub ? stages : MANHUA_DIRECTION_STAGES)).map((stage) => STAGE_LABEL_ZH[stage] || stage).join(" / ")}`,
     continuityZh: input.hasSpawnedNodes
-      ? "换卡后已铺的剧本／分镜／关键帧／成片节点不会自动跟着变，要重铺一次才生效"
+      ? "已生成的图与视频保留旧版；新方法在重编译后生效，请复核受影响镜头再决定是否重出"
       : "",
     sceneType: input.sceneType,
     sceneTypeZh,

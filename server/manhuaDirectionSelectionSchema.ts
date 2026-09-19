@@ -13,8 +13,20 @@ export const manhuaDirectionSceneOverrideSchema = z.object({
   stages: z.array(MANHUA_DIRECTION_STAGE_ENUM).max(6).optional(),
 });
 
+const scopedDirectionBase = {
+  episodeIndex: z.number().int().positive(), cardId: z.string().min(1).max(80),
+  reasonZh: z.string().max(10000), stages: z.array(MANHUA_DIRECTION_STAGE_ENUM).max(6),
+  status: z.enum(["draft", "approved"]),
+};
+export const manhuaDirectionScopedOverrideSchema = z.discriminatedUnion("scope", [
+  z.object({ ...scopedDirectionBase, scope: z.literal("episode") }),
+  z.object({ ...scopedDirectionBase, scope: z.literal("segment"), segmentIndex: z.number().int().positive() }),
+  z.object({ ...scopedDirectionBase, scope: z.literal("shot"), shotIndex: z.number().int().positive() }),
+]);
+
 export const manhuaDirectionSelectionInputSchema = z.object({
   mainCardId: z.string().max(80),
+  scopedOverrides: z.array(manhuaDirectionScopedOverrideSchema).optional(),
   sceneOverrides: z.partialRecord(MANHUA_DIRECTION_SCENE_TYPE_ENUM, manhuaDirectionSceneOverrideSchema).optional(),
 });
 

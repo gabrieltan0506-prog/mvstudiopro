@@ -2666,6 +2666,7 @@ export default function FreeformCanvas({
                                 const nextEdit = e.target.value === "edit";
                                 patchOne(block.id, {
                                   imageMode: nextEdit ? "edit" : "generate",
+                                  ...(!nextEdit ? { imageTreatment: undefined } : {}),
                                   ...(nextEdit
                                     ? {
                                         imageModel: "gpt-image-2" as const,
@@ -2683,6 +2684,13 @@ export default function FreeformCanvas({
                               <option value="edit">微调这张图</option>
                             </select>
                           </label>
+                          {block.imageMode === "edit" && <label className="flex items-center gap-2 text-[11px] text-white/70">
+                            <span className="shrink-0 text-white/45">材质处理</span>
+                            <select aria-label="图片材质处理" value={block.imageTreatment || ""} onChange={e => patchOne(block.id, { imageTreatment: e.target.value === "preserve_3d" ? "preserve_3d" : undefined })} className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white">
+                              <option value="">按当前修改说明</option>
+                              <option value="preserve_3d">保留构图与身份 · 3D质感</option>
+                            </select>
+                          </label>}
                           <div className="flex items-center gap-2 text-[11px] text-white/70">
                             <span className="shrink-0 text-white/45">引擎</span>
                             <span className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white/85">

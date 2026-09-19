@@ -19,7 +19,7 @@ export const canvasAudioTakeSchema = z.object({
 export type CanvasAudioTake = z.infer<typeof canvasAudioTakeSchema>;
 export const canvasAudioCueSchema = z.object({
   id: text(120).min(1),
-  kind: z.enum(["dialogue", "bgm"]),
+  kind: z.enum(["dialogue", "bgm", "sfx"]),
   labelZh: text(200),
   shotZh: text(2000),
   startSec: seconds,
@@ -34,6 +34,11 @@ export const canvasAudioCueSchema = z.object({
     previewUrl: z.string().max(8192),
     durationSec: z.number().finite().positive().max(3600),
     labelZh: text(200),
+  }).optional(),
+  mix: z.object({
+    duckUnderDialogue: z.boolean(),
+    duckVolume: z.number().finite().min(0).max(1),
+    silenceWindows: z.array(z.object({ startSec: seconds, endSec: seconds }).refine(w => w.endSec > w.startSec, "留白结束须晚于开始")).max(20),
   }).optional(),
   sourceStartSec: seconds,
   sourceEndSec: seconds,
@@ -100,8 +105,9 @@ export function validateCanvasAudioCue(cue: CanvasAudioCue, durationSec = 30): s
   if (cue.kind === "dialogue") {
     if (!cue.speakerZh.trim() || !cue.textZh.trim() || !cue.voice.trim()) issues.push("请填写说话角色、台词并选择音色");
   } else if (!cue.source || !(cue.sourceEndSec > cue.sourceStartSec && cue.sourceEndSec <= cue.source.durationSec)) {
-    issues.push("请选择原曲并填写原曲范围内的裁切起止秒");
+    issues.push("请选择来源音频并填写实际时长内的裁切起止秒");
   }
+  if (cue.mix?.silenceWindows.some(w => w.startSec < cue.startSec || w.endSec > cue.endSec)) issues.push("留白窗口须位于本条音轨的片内时间窗内");
   const take = getSelectedAudioTake(cue);
   if (!take) issues.push("请试听并采用一条音频候选");
   else {
@@ -142,7 +148,21 @@ export function compileCanvasAudioBindings(input: {
     const window = `${cue.startSec.toFixed(3)}–${cue.endSec.toFixed(3)}秒`;
     return cue.kind === "dialogue"
       ? `${window}，${cue.shotZh}。${tag}仅对应${cue.speakerZh}${cue.voiceStateZh ? `（${cue.voiceStateZh}）` : ""}的对白{${cue.textZh}}；在${cue.startSec.toFixed(3)}秒开始对应音频，按该音频发音同步开口，音频结束即闭口，其他角色不说此句；不继承为其他声音状态。`
+      : cue.kind === "sfx"
+        ? `${window}，${cue.shotZh}。<音效：${tag}对应${cue.labelZh || cue.shotZh}，从${cue.startSec.toFixed(3)}秒触发，不作为对白或配乐，不提前虚构画面中未发生的事件。>`
       : `${window}，${cue.shotZh}。（从${cue.startSec.toFixed(3)}秒播放${tag}这条已裁好的音乐片段，音频结束或到${cue.endSec.toFixed(3)}秒停止；不循环、不跨段延长、不作为角色对白。）`;
   });
-  return { audioUrls, promptAppendix: `【已确认的逐段声音时间表】\n${rows.join("\n")}\n对白、配乐按上述角色和时间窗分别使用；环境音与动作音效另行生成。` };
+  return { audioUrls, promptAppendix: `【已确认的逐段声音时间表】\n${rows.join("\n")}\n对白、配乐按上述角色和时间窗分别使用；已给定音效按事件和时间窗使用，未提供的声音不冒充已制作。` };
+}
+
+/** 混音用料完整身份；不包含会过期的试听URL，也不触发重新购买单条音频。 */
+export function canvasAudioMixSource(cues: readonly CanvasAudioCue[], durationSec: number): string {
+  return JSON.stringify(cues.filter(cue => cue.approved && cue.enabled !== false).map(cue => {
+    const row: unknown[] = [cue.id, canvasAudioCueInputKey(cue), cue.selectedTakeId, cue.startSec, cue.endSec, durationSec];
+    if (cue.mix) row.push(cue.mix);
+    return row;
+  }));
+}
+export function assertCanvasAudioMasterCurrent(master: { audioStudioSource?: string } | undefined, studio: CanvasAudioStudio | undefined, durationSec: number): void {
+  if (master?.audioStudioSource && master.audioStudioSource !== canvasAudioMixSource(studio?.cues || [], durationSec)) throw new Error("本段声音或留白/避让配置已改变，预混母轨仍为旧版；请重新合听并预混，或明确移除母轨。本次未提交，旧音频保留。");
 }

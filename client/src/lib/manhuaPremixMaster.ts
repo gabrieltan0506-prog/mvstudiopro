@@ -1,3 +1,4 @@
+import { applyCanvasAudioMixPlan, assertCanvasAudioMixCapacity } from "@shared/canvasAudioMixPlan";
 /**
  * 一键预混母轨（0908 墨菁传实录搬进配音间）：
  * 对白按秒窗原音量落位；配乐压到 −12 dB（线性 0.25）并带淡入淡出；合成一条本段时长的单轨，
@@ -53,7 +54,7 @@ export function buildPremixTimelineClips(input: {
   if (isCanvasWan30VideoModel(normalizeCanvasVideoModel(input.videoModel || DEFAULT_CANVAS_VIDEO_MODEL)) && input.durationSec > MANHUA_SEGMENT_REFERENCE_CAP_SEC.wan30) {
     throw new Error(`Wan 3.0 参考音频上限 ${MANHUA_SEGMENT_REFERENCE_CAP_SEC.wan30} 秒，本段 ${input.durationSec} 秒的母轨出片时会被丢弃；请把本段切到 ≤15 秒或换 Seedance 2.5。`);
   }
-  return cues.map((cue) => {
+  const clips = cues.flatMap((cue) => {
     if (!(cue.startSec >= 0 && cue.endSec > cue.startSec && cue.endSec <= input.durationSec)) {
       throw new Error(`「${cue.labelZh || cue.textZh || cue.id}」的秒窗超出本段 ${input.durationSec} 秒，请先调整。`);
     }
@@ -75,7 +76,7 @@ export function buildPremixTimelineClips(input: {
     // 淡入淡出总和不能超过片长（服务端 checkAudioClip 会拒）：各自封顶到片长的三分之一
     const fadeIn = isBgm ? Math.min(PREMIX_BGM_FADE_IN_SEC, take.durationSec / 3) : 0;
     const fadeOut = isBgm ? Math.min(PREMIX_BGM_FADE_OUT_SEC, take.durationSec / 3) : 0;
-    return {
+    return applyCanvasAudioMixPlan(cue, {
       audioUri: take.gcsUri,
       sourceStartSec: 0,
       sourceEndSec: take.durationSec,
@@ -83,6 +84,8 @@ export function buildPremixTimelineClips(input: {
       volume: isBgm ? PREMIX_BGM_VOLUME : 1,
       fadeInSec: Math.round(fadeIn * 1000) / 1000,
       fadeOutSec: Math.round(fadeOut * 1000) / 1000,
-    };
+    }, cues);
   });
+  assertCanvasAudioMixCapacity(clips);
+  return clips;
 }

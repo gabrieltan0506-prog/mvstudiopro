@@ -6,8 +6,8 @@ const card = (id: string, labelZh: string) => ({
   id,
   labelZh,
   rules: [
-    { id: `${id}-r1`, ruleZh: "手法一", stages: ["story", "storyboard"], status: "formal" },
-    { id: `${id}-r2`, ruleZh: "手法二", stages: ["keyframe"], status: "formal" },
+    { id: `${id}-r1`, ruleZh: "手法一", stages: ["story", "storyboard"], status: "verified" },
+    { id: `${id}-r2`, ruleZh: "手法二", stages: ["keyframe"], status: "verified" },
   ],
 });
 
@@ -61,6 +61,7 @@ describe("紧凑导演卡：这一段到底用哪张", () => {
   it("副卡只声明部分阶段时，影响预览只报那几处", () => {
     const view = buildManhuaDirectorCardView({
       canon: canon({ sceneOverrides: { action: { cardId: "fight", stages: ["keyframe", "clip"] } } }),
+      stage: "clip",
       sceneType: "action",
       hasSpawnedNodes: false,
     })!;
@@ -76,7 +77,7 @@ describe("紧凑导演卡：这一段到底用哪张", () => {
 
   it("已铺过节点才给连续性提醒；没铺过不吓唬人", () => {
     const spawned = buildManhuaDirectorCardView({ canon: canon(), sceneType: "emotion", hasSpawnedNodes: true })!;
-    expect(spawned.continuityZh).toContain("不会自动跟着变");
+    expect(spawned.continuityZh).toContain("保留旧版");
     const clean = buildManhuaDirectorCardView({ canon: canon(), sceneType: "emotion", hasSpawnedNodes: false })!;
     expect(clean.continuityZh).toBe("");
   });
