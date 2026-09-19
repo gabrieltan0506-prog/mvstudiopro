@@ -118,6 +118,7 @@ import {
   resolveManhuaAssetClaimEntry,
 } from "@shared/manhuaAssetScriptSync";
 import { buildManhuaAssetRoleGroups } from "@/lib/manhuaAssetEntityGroups";
+import { manhuaKeyartEntryVisible } from "@/lib/manhuaKeyartEntry";
 import {
   buildManhuaAtReferenceIndex,
   resolveManhuaAtReferences,
@@ -3119,6 +3120,19 @@ export default function ManhuaScriptWorkbench({
    */
   const FULL_SPAWN_CONFIRM_MS = 5000;
   const [fullSpawnArmAt, setFullSpawnArmAt] = useState<number | null>(null);
+  /**
+   * 「生成关键静帧」同屏只留一个入口。这个动作重跑整条管线、重写段表并按张扣费（0917 事故），
+   * 原先工具条 / 阶段底栏 / 分镜面板三处同名按钮 = 三个误点机会。裁决在
+   * `manhuaKeyartEntry.ts`：阶段主操作优先 → 分镜面板就地补图 → 工具条兜底，恒有一个。
+   */
+  const keyartEntryState = {
+    stageCtaIsKeyart:
+      fullSpawnArmAt == null &&
+      episodeSheetGallery.length > 0 &&
+      assetsComplete &&
+      !stillsReadyEnough,
+    panelNeedsKeyart: activePhase === "storyboard" && !stillsReadyEnough,
+  };
   const [fullSpawnTick, setFullSpawnTick] = useState(() => Date.now());
   useEffect(() => {
     if (fullSpawnArmAt == null) return;
@@ -3500,10 +3514,13 @@ export default function ManhuaScriptWorkbench({
             </button>
           ) : (
             <>
-              {onGenerateAllEpisodeKeyarts && !(compactUi && activePhase === "storyboard") ? (
+              {onGenerateAllEpisodeKeyarts &&
+              !(compactUi && activePhase === "storyboard") &&
+              manhuaKeyartEntryVisible("toolbar", keyartEntryState) ? (
                 <button
                   type="button"
                   data-manhua-action="generate-all-keyarts"
+                  data-manhua-keyart-entry="toolbar"
                   data-manhua-action-cost={manhuaToolbarActionCost("generate-all-keyarts")}
                   disabled={Boolean(factoryBusy)}
                   onClick={runGenerateAllKeyarts}
@@ -4569,6 +4586,7 @@ export default function ManhuaScriptWorkbench({
                     if (refuseIfBlocked(keyartGateHint)) return;
                     setActivePhase("storyboard");
                   }}
+                  data-manhua-keyart-entry={keyartEntryState.stageCtaIsKeyart ? "stage" : undefined}
                   className="rounded-lg border border-violet-300/50 bg-violet-500/30 px-3 py-1.5 text-[12px] font-bold text-violet-50 disabled:opacity-45"
                   title={(stillsReadyEnough ? "进入分镜" : "生成关键静帧")
                   }
@@ -8095,15 +8113,23 @@ export default function ManhuaScriptWorkbench({
                       ) : null}
                     </div>
                     <div className="mt-1.5 flex flex-wrap gap-1.5">
-                      {onGenerateAllEpisodeKeyarts ? (
+                      {onGenerateAllEpisodeKeyarts &&
+                      manhuaKeyartEntryVisible("panel", keyartEntryState) ? (
                         <button
                           type="button"
+                          data-manhua-keyart-entry="panel"
                           disabled={Boolean(factoryBusy)}
                           onClick={runGenerateAllKeyarts}
                           className="rounded-md border border-cyan-300/40 bg-cyan-500/15 px-2 py-1 text-[10px] font-semibold text-cyan-50 hover:bg-cyan-500/25 disabled:opacity-40"
                         >
                           生成关键静帧
                         </button>
+                      ) : onGenerateAllEpisodeKeyarts ? (
+                        <p className="text-[9px] leading-4 text-white/40">
+                          出静帧走底栏主操作「
+                          {keyartEntryState.stageCtaIsKeyart ? "生成关键静帧" : "生成全部"}
+                          」，这里不再放第二个按钮（同一个动作按张扣费）
+                        </p>
                       ) : null}
                     </div>
                   </div>
