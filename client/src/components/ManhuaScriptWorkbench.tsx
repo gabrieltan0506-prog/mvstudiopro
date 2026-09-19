@@ -3374,10 +3374,11 @@ export default function ManhuaScriptWorkbench({
         label: "终审",
         // 产物在也不等于完成：长片是旧料合的就不算过（对照图 08「避免未验即完成」）
         complete: Boolean(finalVideoUrl) && !finalCutStale,
+        // 阶段格的缺口直接引用终审检查清单：用户在阶段条就看得到「卡在哪一项」
         gapZh: finalVideoUrl
           ? finalCutStale
             ? finalCutStaleReasonZh || "长片用的是旧料，需重合成"
-            : ""
+            : finalReviewChecklist.blockingZh || ""
           : !clipHas
             ? "需先出至少 1 段成片"
             : dockSelectedCount
@@ -3408,6 +3409,7 @@ export default function ManhuaScriptWorkbench({
     finalVideoUrl,
     finalCutStale,
     finalCutStaleReasonZh,
+    finalReviewChecklist.blockingZh,
     dockSelectedCount,
   ]);
 
