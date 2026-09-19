@@ -714,4 +714,70 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
     expect(seen.jumpTo).toBe("3");
     await close();
   }, 180_000);
+
+  /**
+   * 对照图 03：终审页要的是一张清单（每项通过/不通过）+「存在 N 处需处理的问题，才能通过终审」。
+   * 这里验的核心是**没证据的项写「未检」不写「通过」** —— 空项目里五项应该全是未检或不通过。
+   */
+  it("终审阶段：检查清单逐项给状态，没证据的写未检而不是通过", async () => {
+    const built = await build({
+      stdin: {
+        resolveDir: process.cwd(),
+        loader: "tsx",
+        contents: `
+          import React from 'react';
+          import { createRoot } from 'react-dom/client';
+          import { TooltipProvider } from './client/src/components/ui/tooltip';
+          import ManhuaScriptWorkbench from './client/src/components/ManhuaScriptWorkbench';
+          createRoot(document.getElementById('root')).render(
+            <TooltipProvider>
+              <ManhuaScriptWorkbench
+                blocks={[]} videoModel='seedance-2.5' topic='墨屠守护阿菁'
+                episodeCount={1} focusEpisode={1} onFocusEpisode={() => {}}
+                characterIds={[]} propIds={[]} outlineConfirmed={true}
+                workflowPhase='final'
+              />
+            </TooltipProvider>,
+          );
+        `,
+      },
+      bundle: true, write: false, format: "iife", platform: "browser", jsx: "automatic",
+      alias: { "@": path.resolve("client/src"), "@shared": path.resolve("shared") },
+      loader: { ".png": "dataurl", ".svg": "dataurl", ".jpg": "dataurl", ".css": "text" },
+      define: { "process.env.NODE_ENV": '"production"', "import.meta.env": "__VITE_ENV__" },
+      banner: {
+        js:
+          'var __VITE_ENV__={DEV:false,PROD:true,MODE:"production",SSR:false};' +
+          'window.matchMedia=window.matchMedia||function(){return{matches:false,addEventListener(){},removeEventListener(){},addListener(){},removeListener(){}}};',
+      },
+      logLevel: "silent",
+    });
+    const ctx = await browser.createBrowserContext();
+    const page = await ctx.newPage();
+    await page.setRequestInterception(true);
+    page.on("request", (req) =>
+      req.url().startsWith("data:") ? req.continue() : req.respond({ status: 200, body: "" }),
+    );
+    await page.goto("http://localhost/", { waitUntil: "domcontentloaded" }).catch(() => {});
+    await page.setContent("<div id=root></div>");
+    await page.evaluate(built.outputFiles[0]!.text);
+    await page.waitForSelector("[data-manhua-final-checklist]", { timeout: 30_000 });
+    const seen = await page.evaluate(() => {
+      const box = document.querySelector("[data-manhua-final-checklist]")!;
+      return {
+        ready: box.getAttribute("data-manhua-final-ready"),
+        summary: box.querySelector("[data-manhua-final-summary]")?.textContent?.trim() || "",
+        items: Array.from(box.querySelectorAll("[data-manhua-final-check]")).map((el) => ({
+          id: el.getAttribute("data-manhua-final-check"),
+          state: el.getAttribute("data-manhua-final-check-state"),
+        })),
+      };
+    });
+    expect(seen.items.map((i) => i.id)).toEqual(["content", "picture", "audio", "subtitle", "cut_fresh"]);
+    // 空项目：一项都不该是「通过」
+    expect(seen.items.some((i) => i.state === "pass")).toBe(false);
+    expect(seen.ready).toBe("0");
+    expect(seen.summary).toContain("未检");
+    await ctx.close().catch(() => {});
+  }, 180_000);
 });

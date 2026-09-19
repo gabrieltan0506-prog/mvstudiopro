@@ -121,6 +121,7 @@ import { buildManhuaAssetRoleGroups } from "@/lib/manhuaAssetEntityGroups";
 import { manhuaKeyartEntryVisible } from "@/lib/manhuaKeyartEntry";
 import { buildManhuaDirectorCardView } from "@shared/manhuaDirectorCardView";
 import { buildManhuaShotParamFields } from "@shared/manhuaShotParamFields";
+import { buildManhuaFinalReviewChecklist } from "@shared/manhuaFinalReviewChecklist";
 import { classifyManhuaDirectionSceneType } from "@shared/manhuaDirectionCanon";
 import {
   manhuaCanvasNodeBelongsToSegment,
@@ -3151,6 +3152,32 @@ export default function ManhuaScriptWorkbench({
       ) : null}
     </div>
   ) : null;
+  /**
+   * 终审检查清单（对照图 03）：**只用真有证据的信号**，没证据的项写「未检」不写「通过」。
+   * 线上现状是没有成片时仍展示一大堆不可执行项（README 原话），这里反过来先说清缺什么。
+   */
+  const finalReviewChecklist = buildManhuaFinalReviewChecklist({
+    plannedSegments: segments.length,
+    readyClips: episodeClips.filter(
+      (b) =>
+        b.status === "done" &&
+        manhuaClipQualityAllowsAssemble({ outputUrl: clipOutputUrl(b), quality: b.manhuaClipQuality }),
+    ).length,
+    keyartTotal: episodeKeyarts.length,
+    keyartPixelLocked: episodeKeyarts.filter(
+      (b) => Boolean(mediaUrl(b)) && isManhuaKeyartPixelLocked(b),
+    ).length,
+    segmentsWithAudio: episodeClips.filter((b) => {
+      const cues = b.audioStudio?.cues || [];
+      const adopted = cues.some((cue) => cue.kind === "dialogue" && String(cue.selectedTakeId || "").trim());
+      const bgm = cues.some((cue) => cue.kind === "bgm") || (b.audioStudio?.musicJobIds || []).length > 0;
+      return adopted && bgm;
+    }).length,
+    subtitleRequired: Boolean(editSubtitleEnabled || deliveryPackage?.subtitle?.needSubtitles),
+    subtitleReady: Boolean(finalSubtitleTimeline),
+    finalCutStale: Boolean(finalCutStale),
+    hasFinalVideo: Boolean(finalVideoUrl),
+  });
   const storyboardThreeColumn = activePhase === "storyboard" && shots.length > 0;
   const shotParamFields = buildManhuaShotParamFields(activeShot);
   const shotParamsPanel = activeShot ? (
@@ -4683,6 +4710,49 @@ export default function ManhuaScriptWorkbench({
         </button>
       </div>
 
+      {/* 终审检查清单（对照图 03）：每项通过/不通过/未检 + 「存在 N 处需处理的问题」 */}
+      {activePhase === "final" ? (
+        <div
+          data-manhua-final-checklist
+          data-manhua-final-ready={finalReviewChecklist.readyForFinal ? "1" : "0"}
+          className="shrink-0 border-b border-white/10 bg-white/[0.03] px-3 py-2"
+        >
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <span className="text-[12px] font-bold text-white/90">终审检查</span>
+            <span
+              data-manhua-final-summary
+              className={`text-[11px] ${finalReviewChecklist.failCount ? "text-rose-100" : "text-white/55"}`}
+            >
+              {finalReviewChecklist.summaryZh}
+            </span>
+            {finalReviewChecklist.blockingZh ? (
+              <span className="text-[11px] font-semibold text-rose-100">{finalReviewChecklist.blockingZh}</span>
+            ) : null}
+          </div>
+          <ul className="mt-1.5 grid gap-1 sm:grid-cols-2 lg:grid-cols-3">
+            {finalReviewChecklist.items.map((item) => (
+              <li
+                key={item.id}
+                data-manhua-final-check={item.id}
+                data-manhua-final-check-state={item.state}
+                className={`rounded border px-2 py-1 text-[10px] leading-4 ${
+                  item.state === "fail"
+                    ? "border-rose-300/40 bg-rose-500/10 text-rose-50"
+                    : item.state === "pass"
+                      ? "border-emerald-300/25 bg-emerald-500/[0.08] text-emerald-50/90"
+                      : "border-white/12 bg-white/[0.03] text-white/55"
+                }`}
+              >
+                <span className="mr-1 font-semibold">
+                  {item.state === "pass" ? "通过" : item.state === "fail" ? "不通过" : "未检"}
+                </span>
+                {item.labelZh}
+                <span className="ml-1 text-white/45">{item.detailZh}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {/* 阻断卡集中显示：不藏提示、不替用户点按钮，只把「卡着几条、先解哪条、点哪跳去修」说清 */}
       {mainTask.blocked ? (
         <div
