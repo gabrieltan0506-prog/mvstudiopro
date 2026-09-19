@@ -1,0 +1,269 @@
+/**
+ * 资产页实体卡的**真实浏览器验收**（离线 puppeteer，挂真实 ManhuaScriptWorkbench）。
+ *
+ * 为什么必须走浏览器：分组是 UI 收口，纯函数测试只能证明数据对，
+ * 证明不了「用户在页面上看到的是一组一张卡、同一张图没被画两次」。
+ * 全部 fetch 被拦截，不生成、不付费、不连生产。
+ */
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { build } from "esbuild";
+import puppeteer, { type Browser, type Page } from "puppeteer";
+import path from "node:path";
+
+let browser: Browser;
+let bundle: string;
+/**
+ * 分镜阶段的第二份夹具：资产阶段只有工具条一个位置会画静帧按钮，
+ * 拿它断言「恰好一个」是**永真的**（变异掉让位逻辑仍然绿 —— 实测过）。
+ * 重复只可能出现在两处同时具备的阶段，所以必须另挂一份分镜阶段的页面。
+ */
+let storyboardBundle: string;
+
+const REFS = [
+  { id: "a1", url: "data:image/png;base64,iVBORw0KGgo=", role: "character", source: "generated", labelZh: "阿菁-候选", claimedAnchorIds: ["wa_char_aqing"] },
+  { id: "a2", url: "data:image/png;base64,iVBORw0KGgo=", role: "character", source: "generated", labelZh: "阿菁-定妆", refDuty: "identity", claimedAnchorIds: ["wa_char_aqing"], primaryBindings: [{ anchorId: "wa_char_aqing", duty: "identity" }] },
+  { id: "a3", url: "data:image/png;base64,iVBORw0KGgo=", role: "character", source: "generated", labelZh: "阿菁-编辑", claimedAnchorIds: ["wa_char_aqing"] },
+  { id: "duo", url: "data:image/png;base64,iVBORw0KGgo=", role: "character", source: "generated", labelZh: "阿菁与墨菁合影", claimedAnchorIds: ["wa_char_aqing", "wa_char_mo"] },
+  { id: "z9", url: "data:image/png;base64,iVBORw0KGgo=", role: "character", source: "upload", labelZh: "网图-没认领" },
+];
+
+const CANON = {
+  characters: [
+    { id: "wa_char_aqing", role: "character", nameZh: "阿菁", lookZh: "" },
+    { id: "wa_char_mo", role: "character", nameZh: "墨菁", lookZh: "" },
+  ],
+  locations: [],
+  props: [],
+};
+
+beforeAll(async () => {
+  const built = await build({
+    stdin: {
+      resolveDir: process.cwd(),
+      loader: "tsx",
+      contents: `
+        import React from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { TooltipProvider } from './client/src/components/ui/tooltip';
+        import ManhuaScriptWorkbench from './client/src/components/ManhuaScriptWorkbench';
+        globalThis.fixture = { keyart: 0 };
+        const refs = ${JSON.stringify(REFS)};
+        const canon = ${JSON.stringify(CANON)};
+        createRoot(document.getElementById('root')).render(
+          <TooltipProvider>
+            <ManhuaScriptWorkbench
+              blocks={[]} videoModel='seedance-2.5' topic='墨屠守护阿菁'
+              episodeCount={1} focusEpisode={1} onFocusEpisode={() => {}}
+              characterIds={[]} propIds={[]} outlineConfirmed={true}
+              workflowPhase='assets' customAssetRefs={refs} assetCanon={canon}
+              onUploadCustomAssets={async () => {}}
+              onGenerateAllEpisodeKeyarts={async () => { globalThis.fixture.keyart += 1; }}
+            />
+          </TooltipProvider>,
+        );
+      `,
+    },
+    bundle: true,
+    write: false,
+    format: "iife",
+    platform: "browser",
+    jsx: "automatic",
+    alias: { "@": path.resolve("client/src"), "@shared": path.resolve("shared") },
+    loader: { ".png": "dataurl", ".svg": "dataurl", ".jpg": "dataurl", ".css": "text" },
+    define: { "process.env.NODE_ENV": '"production"', "import.meta.env": "__VITE_ENV__" },
+    banner: {
+      js:
+        'var __VITE_ENV__={DEV:false,PROD:true,MODE:"production",SSR:false};' +
+        'window.matchMedia=window.matchMedia||function(){return{matches:false,addEventListener(){},removeEventListener(){},addListener(){},removeListener(){}}};',
+    },
+    logLevel: "silent",
+  });
+  bundle = built.outputFiles[0]!.text;
+
+  const storyboardBuilt = await build({
+    stdin: {
+      resolveDir: process.cwd(),
+      loader: "tsx",
+      contents: `
+        import React from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { TooltipProvider } from './client/src/components/ui/tooltip';
+        import { defaultCanvasBlock } from './client/src/lib/canvasTypes';
+        import ManhuaScriptWorkbench from './client/src/components/ManhuaScriptWorkbench';
+        globalThis.fixture = { keyart: 0 };
+        const refs = ${JSON.stringify(REFS)};
+        const canon = ${JSON.stringify(CANON)};
+        const blocks = [1, 2].map((n) => ({
+          ...defaultCanvasBlock('video', 0, 0),
+          id: 'clip-e01-g0' + n + '-cards',
+          episodeIndex: 1,
+          videoModel: 'seedance-2.5',
+          prompt: '【第' + n + '段·30s】墨屠第' + n + '段动作。',
+        }));
+        createRoot(document.getElementById('root')).render(
+          <TooltipProvider>
+            <ManhuaScriptWorkbench
+              blocks={blocks} videoModel='seedance-2.5' topic='墨屠守护阿菁'
+              episodeCount={1} focusEpisode={1} onFocusEpisode={() => {}}
+              characterIds={[]} propIds={[]} outlineConfirmed={true}
+              workflowPhase='storyboard' compactUi={false}
+              customAssetRefs={refs} assetCanon={canon}
+              onUploadCustomAssets={async () => {}}
+              onGenerateAllEpisodeKeyarts={async () => { globalThis.fixture.keyart += 1; }}
+            />
+          </TooltipProvider>,
+        );
+      `,
+    },
+    bundle: true,
+    write: false,
+    format: "iife",
+    platform: "browser",
+    jsx: "automatic",
+    alias: { "@": path.resolve("client/src"), "@shared": path.resolve("shared") },
+    loader: { ".png": "dataurl", ".svg": "dataurl", ".jpg": "dataurl", ".css": "text" },
+    define: { "process.env.NODE_ENV": '"production"', "import.meta.env": "__VITE_ENV__" },
+    banner: {
+      js:
+        'var __VITE_ENV__={DEV:false,PROD:true,MODE:"production",SSR:false};' +
+        'window.matchMedia=window.matchMedia||function(){return{matches:false,addEventListener(){},removeEventListener(){},addListener(){},removeListener(){}}};',
+    },
+    logLevel: "silent",
+  });
+  storyboardBundle = storyboardBuilt.outputFiles[0]!.text;
+
+  browser = await puppeteer.launch({ args: ["--no-sandbox"] });
+}, 180_000);
+
+afterAll(async () => {
+  await browser?.close();
+});
+
+async function mountStoryboard(): Promise<{ page: Page; close: () => Promise<void> }> {
+  const ctx = await browser.createBrowserContext();
+  const page = await ctx.newPage();
+  await page.setRequestInterception(true);
+  page.on("request", (req) =>
+    req.url().startsWith("data:") ? req.continue() : req.respond({ status: 200, body: "" }),
+  );
+  await page.goto("http://localhost/", { waitUntil: "domcontentloaded" }).catch(() => {});
+  await page.setContent("<div id=root></div>");
+  // compactUi 是组件内部 state（localStorage `manhua_compact_ui`，默认 true），不是 prop。
+  // 关掉简洁模式才会同时具备「工具条 + 分镜面板」两个静帧入口 —— 这是真能出现重复的那个状态，
+  // 旧代码在这里就是两个按钮。
+  await page.evaluate(() => window.localStorage.setItem("manhua_compact_ui", "0"));
+  await page.evaluate(storyboardBundle);
+  await page.waitForFunction(() => /生成关键静帧|视觉简报|分镜/.test(document.body.innerText), {
+    timeout: 30_000,
+  });
+  return { page, close: async () => { await ctx.close().catch(() => {}); } };
+}
+
+async function mount(): Promise<{ page: Page; close: () => Promise<void> }> {
+  const ctx = await browser.createBrowserContext();
+  const page = await ctx.newPage();
+  await page.setRequestInterception(true);
+  page.on("request", (req) =>
+    req.url().startsWith("data:") ? req.continue() : req.respond({ status: 200, body: "" }),
+  );
+  await page.goto("http://localhost/", { waitUntil: "domcontentloaded" }).catch(() => {});
+  await page.setContent("<div id=root></div>");
+  await page.evaluate(bundle);
+  await page.waitForSelector("[data-manhua-custom-refs-role=character]", { timeout: 30_000 });
+  return { page, close: async () => { await ctx.close().catch(() => {}); } };
+}
+
+describe("浏览器真实页面：资产页同名多版本收成实体卡", () => {
+  it("人物栏按实体分组，组头报当前采用的职责，计数报实体数与张数", async () => {
+    const { page, close } = await mount();
+    const seen = await page.evaluate(() => {
+      const section = document.querySelector("[data-manhua-custom-refs-role=character]")!;
+      const groups = Array.from(section.querySelectorAll("[data-manhua-asset-entity]"));
+      return {
+        headerText: (section.querySelector("button")?.textContent || "").replace(/\s+/g, " ").trim(),
+        groups: groups.map((g) => ({
+          key: g.getAttribute("data-manhua-asset-entity"),
+          hasCurrent: g.getAttribute("data-manhua-asset-entity-current"),
+          currentZh: g.querySelector("[data-manhua-asset-entity-current-zh]")?.textContent?.trim() || "",
+          cardIds: Array.from(g.querySelectorAll("[data-manhua-asset-card-toggle]")).map((b) =>
+            b.getAttribute("data-manhua-asset-card-toggle"),
+          ),
+        })),
+      };
+    });
+    // 栏头：实体数与图片数分开报，不再只报一个 18
+    expect(seen.headerText).toContain("2 个人物 · 5 张图");
+    // 缺当前版本的实体排最前（墨菁只有一张合影、没定当前版本）
+    expect(seen.groups.map((g) => g.key)).toEqual(["wa_char_mo", "wa_char_aqing", "__unclaimed"]);
+    const mo = seen.groups[0]!;
+    const aqing = seen.groups[1]!;
+    expect(mo.hasCurrent).toBe("0");
+    expect(mo.currentZh).toBe("未定当前版本");
+    expect(aqing.hasCurrent).toBe("1");
+    expect(aqing.currentZh).toBe("当前：锁脸（妆造未定）");
+    await close();
+  }, 180_000);
+
+  it("同一张图不会在页面上被画两次，未认领的图单独一组并写明不参与出片", async () => {
+    const { page, close } = await mount();
+    const seen = await page.evaluate(() => {
+      const section = document.querySelector("[data-manhua-custom-refs-role=character]")!;
+      const cards = Array.from(section.querySelectorAll("[data-manhua-asset-card-toggle]")).map((b) =>
+        b.getAttribute("data-manhua-asset-card-toggle"),
+      );
+      const unclaimed = section.querySelector('[data-manhua-asset-entity="__unclaimed"]')!;
+      return {
+        cards,
+        unclaimedText: (unclaimed.textContent || "").replace(/\s+/g, " "),
+        unclaimedCards: Array.from(unclaimed.querySelectorAll("[data-manhua-asset-card-toggle]")).map((b) =>
+          b.getAttribute("data-manhua-asset-card-toggle"),
+        ),
+      };
+    });
+    // 合影 duo 被两个人物认领，但全栏只出现一次（卡片带勾选和删除，画两次会让用户删错）
+    expect(seen.cards.filter((id) => id === "duo")).toHaveLength(1);
+    expect(new Set(seen.cards).size).toBe(seen.cards.length);
+    expect(seen.unclaimedCards).toEqual(["z9"]);
+    expect(seen.unclaimedText).toContain("不参与出片");
+    await close();
+  }, 180_000);
+
+  it("同屏「生成关键静帧」入口恰好一个，不是三个", async () => {
+    const { page, close } = await mount();
+    const seen = await page.evaluate(() => {
+      const buttons = Array.from(document.querySelectorAll("button")).filter(
+        (b) => (b.textContent || "").replace(/\s+/g, "") === "生成关键静帧",
+      );
+      return {
+        count: buttons.length,
+        entries: buttons.map((b) => b.getAttribute("data-manhua-keyart-entry")),
+      };
+    });
+    const count = seen.count;
+    // 资产阶段：阶段主操作此刻不是静帧、分镜面板没挂载 → 入口归工具条，恰好一个
+    expect(count).toBe(1);
+    expect(seen.entries).toEqual(["toolbar"]);
+    await close();
+  }, 180_000);
+
+  /**
+   * 这一条才是真正能抓到「三个按钮」的：分镜阶段工具条与分镜面板两处同时具备条件，
+   * 让位逻辑一旦失效，同屏就会出现第二个。变异验证：把工具条的让位判断改成恒真 → 本条转红。
+   */
+  it("关掉简洁模式的分镜阶段（工具条+面板都具备条件）同屏仍然只有一个入口", async () => {
+    const { page, close } = await mountStoryboard();
+    const seen = await page.evaluate(() => {
+      const buttons = Array.from(document.querySelectorAll("button")).filter(
+        (b) => (b.textContent || "").replace(/\s+/g, "") === "生成关键静帧",
+      );
+      return {
+        count: buttons.length,
+        entries: buttons.map((b) => b.getAttribute("data-manhua-keyart-entry")),
+        pointerText: /出静帧走底栏主操作/.test(document.body.innerText),
+      };
+    });
+    expect(seen.count).toBe(1);
+    expect(seen.entries.filter(Boolean)).toHaveLength(1);
+    await close();
+  }, 180_000);
+});
