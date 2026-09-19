@@ -3081,7 +3081,9 @@ export default function ManhuaScriptWorkbench({
   const canvasSelectedIdentity = readManhuaCanvasNodeIdentity({
     blockId: canvasSelectedBlockId,
     prompt: canvasSelectedBlock?.prompt,
-    episodeIndex: getBlockEpisodeIndex(canvasSelectedBlock) ?? focusEpisode,
+    // 选中的节点可能不在本集 blocks 里（跨集选中、节点已删）：此时 find 返回 undefined，
+    // 直接喂给 getBlockEpisodeIndex 会当场崩（浏览器夹具抓到：Cannot read properties of undefined）。
+    episodeIndex: (canvasSelectedBlock ? getBlockEpisodeIndex(canvasSelectedBlock) : undefined) ?? focusEpisode,
     segments,
   });
   const canvasSelectedBelongs = manhuaCanvasNodeBelongsToSegment(canvasSelectedIdentity, {
