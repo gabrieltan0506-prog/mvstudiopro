@@ -118,6 +118,7 @@ beforeAll(async () => {
               episodeCount={1} focusEpisode={1} onFocusEpisode={() => {}}
               characterIds={[]} propIds={[]} outlineConfirmed={true}
               workflowPhase='storyboard' compactUi={false}
+              canvasSelectedBlockId='clip-e01-g03-cards'
               directionCanon={{
                 mainCardId: 'main',
                 cards: [
@@ -684,5 +685,33 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
     expect(real.text).toContain("角色配音 2");
     expect(real.text).toContain("背景音乐 1");
     expect(real.text).toContain("各自成轨");
+  }, 180_000);
+
+  /**
+   * 对照图 02 + README：「沿用本集画布和段身份，**侧栏显示所选镜头**」。
+   * 夹具故意让画布选中第 3 段的节点、而当前段是第 1 段 ——
+   * 侧栏必须说清「这不是当前段」并给一键切过去，否则用户会对着别段的参数改半天。
+   */
+  it("侧栏显示画布所选节点身份；选中别段时明说并可一键切段", async () => {
+    const { page, close } = await mountStoryboard();
+    const seen = await page.evaluate(() => {
+      const params = document.querySelector('[data-manhua-column="params"]');
+      const sel = document.querySelector("[data-manhua-canvas-selection]");
+      return {
+        inRightColumn: Boolean(params?.querySelector("[data-manhua-canvas-selection]")),
+        belongs: sel?.getAttribute("data-manhua-canvas-selection-belongs") || "",
+        text: (sel?.textContent || "").replace(/\s+/g, " ").trim(),
+        jumpTo: document
+          .querySelector("[data-manhua-canvas-selection-jump]")
+          ?.getAttribute("data-manhua-canvas-selection-jump"),
+      };
+    });
+    expect(seen.inRightColumn, "画布选中身份没出现在右栏").toBe(true);
+    expect(seen.text).toContain("画布选中");
+    expect(seen.text).toContain("第3段");
+    expect(seen.belongs).toBe("other");
+    expect(seen.text).toContain("不属于当前");
+    expect(seen.jumpTo).toBe("3");
+    await close();
   }, 180_000);
 });

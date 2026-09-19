@@ -1473,6 +1473,8 @@ export default function OmniCanvas() {
    * 终审亮着的这条长片，是不是当前这批段成片合的（对照图 08：避免未验即完成）。
    * 判不出来时如实说「无法核对」，不谎报通过也不谎报失效；旧片一律不删。
    */
+  /** 画布上此刻选中的节点（对照图 02：侧栏显示所选镜头）。只读身份，不接管选中。 */
+  const [canvasSelectedBlockId, setCanvasSelectedBlockId] = useState<string | null>(null);
   const finalCutStale = useMemo(() => {
     if (!finalAssembleBlock?.outputUrl || !finalAssembleVideoUrl) {
       return { stale: false, reasonZh: "" };
@@ -9986,6 +9988,7 @@ export default function OmniCanvas() {
                   onAdvisorSignalsChange={setAdvisorSignals}
                   advisorTopIssue={advisorTopIssue}
                   advisorIssues={advisorProject.issues}
+                  canvasSelectedBlockId={canvasSelectedBlockId}
                   finalCutStaleReasonZh={finalCutStale.reasonZh}
                   finalCutStale={finalCutStale.stale}
                   onOpenAdvisorIssue={(issueId) => {
@@ -10421,6 +10424,7 @@ export default function OmniCanvas() {
                   previewCanvas={
                     <div className="absolute inset-0 overflow-hidden">
                       <FreeformCanvas
+                        onSelectedBlockIdChange={setCanvasSelectedBlockId}
                         resolveManhuaOutboundGate={(blockId) => ({
                           currentScope: manhuaOutboundScope(blockId),
                           confirmation: outboundConfirmationsRef.current[blockId],
@@ -12004,6 +12008,7 @@ export default function OmniCanvas() {
                     </div>
                     <div className="min-h-[360px] md:min-h-[480px]">
                       <FreeformCanvas
+                        onSelectedBlockIdChange={setCanvasSelectedBlockId}
                         resolveManhuaOutboundGate={(blockId) => ({
                           currentScope: manhuaOutboundScope(blockId),
                           confirmation: outboundConfirmationsRef.current[blockId],
