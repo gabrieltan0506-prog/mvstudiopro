@@ -379,6 +379,13 @@ type Props = {
   onActionRecipeIdChange?: (id: string) => void;
   /** 合成长片预览（成片坞合成后） */
   finalVideoUrl?: string | null;
+  /**
+   * 终审那条长片是不是旧料合的（判据在 shared/manhuaFinalCutSource.ts）。
+   * `finalCutStale` 为真时阶段条不许显示「终审已完成」—— 产物在，但不是当前这批镜头的。
+   * 为假时 reason 也可能非空：旧长片没留用料记录，如实说无法核对。
+   */
+  finalCutStale?: boolean;
+  finalCutStaleReasonZh?: string;
   /** 0902 烧字：把字幕轨烧进已合成长片（无长片时不传，面板按钮自灰） */
   onBurnSubtitle?: (subtitleSrt: string) => void | Promise<void>;
   finalSubtitleTimeline?: import("@shared/manhuaRenderedSubtitle").ManhuaRenderedSubtitle;
@@ -1078,6 +1085,8 @@ export default function ManhuaScriptWorkbench({
   onPathRecipeIdChange,
   onActionRecipeIdChange,
   finalVideoUrl,
+  finalCutStale = false,
+  finalCutStaleReasonZh = "",
   onBurnSubtitle,
   finalSubtitleTimeline,
   burnSubtitleBusy,
@@ -3055,9 +3064,12 @@ export default function ManhuaScriptWorkbench({
          */
         id: "final",
         label: "终审",
-        complete: Boolean(finalVideoUrl),
+        // 产物在也不等于完成：长片是旧料合的就不算过（对照图 08「避免未验即完成」）
+        complete: Boolean(finalVideoUrl) && !finalCutStale,
         gapZh: finalVideoUrl
-          ? ""
+          ? finalCutStale
+            ? finalCutStaleReasonZh || "长片用的是旧料，需重合成"
+            : ""
           : !clipHas
             ? "需先出至少 1 段成片"
             : dockSelectedCount
@@ -3086,6 +3098,8 @@ export default function ManhuaScriptWorkbench({
     characterIds,
     stylePack,
     finalVideoUrl,
+    finalCutStale,
+    finalCutStaleReasonZh,
     dockSelectedCount,
   ]);
 

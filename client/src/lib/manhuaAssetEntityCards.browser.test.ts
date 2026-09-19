@@ -424,4 +424,78 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
     expect(cluster).not.toContain("open-world-studio");
     await close();
   }, 180_000);
+
+  /**
+   * 对照图 08：产物在也不等于完成。长片是旧料合的时候，阶段条第五格不许显示「已完成」，
+   * 并且要说清差在哪。这里用真实 ManhuaScriptWorkbench 挂两次（新鲜 / 旧料）对照。
+   */
+  it("终审格：长片用旧料时不显示已完成并说清原因；同一批料才算过", async () => {
+    const readStage = async (extraProps: string) => {
+      const built = await build({
+        stdin: {
+          resolveDir: process.cwd(),
+          loader: "tsx",
+          contents: `
+            import React from 'react';
+            import { createRoot } from 'react-dom/client';
+            import { TooltipProvider } from './client/src/components/ui/tooltip';
+            import ManhuaScriptWorkbench from './client/src/components/ManhuaScriptWorkbench';
+            createRoot(document.getElementById('root')).render(
+              <TooltipProvider>
+                <ManhuaScriptWorkbench
+                  blocks={[]} videoModel='seedance-2.5' topic='墨屠守护阿菁'
+                  episodeCount={1} focusEpisode={1} onFocusEpisode={() => {}}
+                  characterIds={[]} propIds={[]} outlineConfirmed={true}
+                  workflowPhase='edit'
+                  finalVideoUrl='https://example.test/final.mp4'
+                  ${extraProps}
+                />
+              </TooltipProvider>,
+            );
+          `,
+        },
+        bundle: true,
+        write: false,
+        format: "iife",
+        platform: "browser",
+        jsx: "automatic",
+        alias: { "@": path.resolve("client/src"), "@shared": path.resolve("shared") },
+        loader: { ".png": "dataurl", ".svg": "dataurl", ".jpg": "dataurl", ".css": "text" },
+        define: { "process.env.NODE_ENV": '"production"', "import.meta.env": "__VITE_ENV__" },
+        banner: {
+          js:
+            'var __VITE_ENV__={DEV:false,PROD:true,MODE:"production",SSR:false};' +
+            'window.matchMedia=window.matchMedia||function(){return{matches:false,addEventListener(){},removeEventListener(){},addListener(){},removeListener(){}}};',
+        },
+        logLevel: "silent",
+      });
+      const ctx = await browser.createBrowserContext();
+      const page = await ctx.newPage();
+      await page.setRequestInterception(true);
+      page.on("request", (req) =>
+        req.url().startsWith("data:") ? req.continue() : req.respond({ status: 200, body: "" }),
+      );
+      await page.goto("http://localhost/", { waitUntil: "domcontentloaded" }).catch(() => {});
+      await page.setContent("<div id=root></div>");
+      await page.evaluate(built.outputFiles[0]!.text);
+      await page.waitForSelector('[data-manhua-phase="final"]', { timeout: 30_000 });
+      const out = await page.evaluate(() => {
+        const cell = document.querySelector('[data-manhua-phase="final"]')!;
+        return (cell.textContent || "").replace(/\s+/g, " ").trim();
+      });
+      await ctx.close().catch(() => {});
+      return out;
+    };
+
+    const stale = await readStage(
+      "finalCutStale={true} finalCutStaleReasonZh='这条长片是 6 段合的，现在是 7 段 —— 需重合成'",
+    );
+    expect(stale).toContain("需重合成");
+    expect(stale).toContain("6 段合的");
+    expect(stale).not.toContain("已完成");
+
+    const fresh = await readStage("finalCutStale={false} finalCutStaleReasonZh=''");
+    expect(fresh).toContain("已完成");
+    expect(fresh).not.toContain("需重合成");
+  }, 180_000);
 });

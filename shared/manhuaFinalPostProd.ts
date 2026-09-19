@@ -33,6 +33,12 @@ export type ManhuaFinalVersionIdentity = {
   gcsUri?: string;
   errorZh?: string;
   createdAt: number;
+  /**
+   * 这一版长片**是哪一批镜头合的**（`manhuaFinalCutSourceKey` 的指纹）。
+   * 没有它就没法判「终审 ✅ 其实是旧料合的」——对照图 08 的「未验即完成」。
+   * 旧存稿没有这个字段：判据要如实说「无法核对」，不许默认通过（见 manhuaFinalCutSource.ts）。
+   */
+  sourceKey?: string;
 };
 
 export type ManhuaFinalPostProdBlock = {
@@ -95,6 +101,7 @@ export function normalizeManhuaFinalVersionIdentities(
       jobId: String(row.jobId || "").trim().slice(0, 80) || undefined,
       gcsUri: gsUri(row.gcsUri),
       errorZh: String(row.errorZh || "").trim().slice(0, 160) || undefined,
+      sourceKey: String(row.sourceKey || "").trim().slice(0, 4000) || undefined,
       createdAt: Math.max(0, Math.floor(Number(row.createdAt) || 0)),
     };
     const key = versionIdentityKey(normalized);
@@ -389,7 +396,13 @@ export function replaceManhuaFinalAssembleVersion<T extends ManhuaFinalPostProdB
   next: unknown | { url: unknown; jobId?: string; createdAt?: number; subtitleTimeline?: ManhuaRenderedSubtitle },
 ): T & ManhuaFinalPostProdBlock {
   const nextInput = next && typeof next === "object" && "url" in next
-    ? (next as { url: unknown; jobId?: string; createdAt?: number; subtitleTimeline?: ManhuaRenderedSubtitle })
+    ? (next as {
+        url: unknown;
+        jobId?: string;
+        createdAt?: number;
+        subtitleTimeline?: ManhuaRenderedSubtitle;
+        sourceKey?: string;
+      })
     : { url: next };
   const outputUrl = httpUrl(nextInput.url);
   if (!outputUrl) return block;
@@ -410,6 +423,8 @@ export function replaceManhuaFinalAssembleVersion<T extends ManhuaFinalPostProdB
       subtitleTimeline: normalizeManhuaRenderedSubtitle(nextInput.subtitleTimeline),
       url: outputUrl,
       jobId: String(nextInput.jobId || "").trim().slice(0, 80) || undefined,
+      // 用料指纹随版本落档：之后才判得出「终审亮着的这条是不是旧料合的」
+      sourceKey: String(nextInput.sourceKey || "").trim().slice(0, 4000) || undefined,
       createdAt: Math.max(0, Math.floor(Number(nextInput.createdAt) || Date.now())),
     }),
   };

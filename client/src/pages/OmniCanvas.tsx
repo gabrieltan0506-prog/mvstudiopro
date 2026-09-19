@@ -308,6 +308,7 @@ import {
   setManhuaFinalVersionReadError,
   updateManhuaFinalSubtitleBurnStatus,
 } from "@shared/manhuaFinalPostProd";
+import { manhuaFinalCutSourceKey, manhuaFinalCutStaleOf } from "@shared/manhuaFinalCutSource";
 import {
   beginManhuaSubtitlePoll,
   beginManhuaSubtitleSubmit,
@@ -1468,6 +1469,40 @@ export default function OmniCanvas() {
     const finalId = `final-e${String(writerFocusEpisode).padStart(2, "0")}`;
     return blocks.find((block) => block.id === finalId) || null;
   }, [blocks, writerFocusEpisode]);
+  /**
+   * 终审亮着的这条长片，是不是当前这批段成片合的（对照图 08：避免未验即完成）。
+   * 判不出来时如实说「无法核对」，不谎报通过也不谎报失效；旧片一律不删。
+   */
+  const finalCutStale = useMemo(() => {
+    if (!finalAssembleBlock?.outputUrl || !finalAssembleVideoUrl) {
+      return { stale: false, reasonZh: "" };
+    }
+    const identity = findManhuaFinalVideoVersionIdentity(finalAssembleBlock, finalAssembleVideoUrl);
+    const pieces = queuedManhuaClipBlocks(
+      blocks,
+      writerFocusEpisode,
+      resolveManhuaEpisodeClipVideoModel(blocks, writerFocusEpisode, explicitWriterVideoModel || undefined),
+    )
+      .filter((block) => (getBlockEpisodeIndex(block) ?? 1) === writerFocusEpisode)
+      .map((block) => ({
+        blockId: block.id,
+        episodeIndex: writerFocusEpisode,
+        segmentIndex: resolveClipLocalSegmentIndex(block.id, block.prompt, writerFocusEpisode),
+        clipUrl: String(block.outputUrl || "").trim(),
+      }));
+    const currentSourceKey = manhuaFinalCutSourceKey(pieces);
+    return manhuaFinalCutStaleOf({
+      versionSourceKey: identity?.sourceKey,
+      currentSourceKey,
+      currentCount: pieces.filter((piece) => piece.clipUrl).length,
+    });
+  }, [
+    blocks,
+    writerFocusEpisode,
+    explicitWriterVideoModel,
+    finalAssembleBlock,
+    finalAssembleVideoUrl,
+  ]);
   const finalVideoVersions = useMemo(
     () => ({
       activeUrl: finalAssembleBlock?.outputUrl,
@@ -4119,6 +4154,8 @@ export default function OmniCanvas() {
             subtitleTimeline: out.subtitleTimeline,
             url: finalVideoUrl,
             jobId,
+            // 这一版长片用的就是本次提交的那批段成片；指纹落档，终审才判得出旧料
+            sourceKey: manhuaFinalCutSourceKey(ready),
           });
           const next = existing
             ? prev.map((b) => (b.id === finalId ? nextBlock : b))
@@ -9949,6 +9986,8 @@ export default function OmniCanvas() {
                   onAdvisorSignalsChange={setAdvisorSignals}
                   advisorTopIssue={advisorTopIssue}
                   advisorIssues={advisorProject.issues}
+                  finalCutStaleReasonZh={finalCutStale.reasonZh}
+                  finalCutStale={finalCutStale.stale}
                   onOpenAdvisorIssue={(issueId) => {
                     // 点阻断卡里某一条就定位那一条；点阶段条旁的那行仍然定位顶部项
                     const picked = issueId
