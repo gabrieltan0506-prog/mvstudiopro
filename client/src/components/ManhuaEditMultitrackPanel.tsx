@@ -97,6 +97,8 @@ type Props = {
   clipVersionsByBlockId?: Record<string, { activeUrl?: string; urls: string[] }>;
   onSelectClipVersion?: (clipBlockId: string, url: string) => void;
   onOpenClipDock?: () => void;
+  onGenerateCurrentVersion?: () => void;
+  currentVersionCredits?: number;
   deliveryPackage?: ManhuaDeliveryPackage | null;
   onDeliveryPackageChange?: (next: ManhuaDeliveryPackage) => void;
   cineVocabLocale?: ManhuaCineVocabLocale;
@@ -187,6 +189,8 @@ export default function ManhuaEditMultitrackPanel({
   clipVersionsByBlockId,
   onSelectClipVersion,
   onOpenClipDock,
+  onGenerateCurrentVersion,
+  currentVersionCredits,
   deliveryPackage,
   onDeliveryPackageChange,
   cineVocabLocale,
@@ -219,6 +223,7 @@ export default function ManhuaEditMultitrackPanel({
   const [burnConfirmedKey, setBurnConfirmedKey] = useState<string | null>(null);
   const burnArmed = burnConfirmedKey === burnConsentKey;
   const [videoEditInstruction, setVideoEditInstruction] = useState("");
+  const [activeDrawer, setActiveDrawer] = useState<string | null>("cut");
   const submitBurn = () => {
     if (!onBurnSubtitle || burnSubtitleBusy) return;
     try {
@@ -279,13 +284,13 @@ export default function ManhuaEditMultitrackPanel({
       data-manhua-panel="edit-multitrack"
       className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3"
     >
-      <div className="flex flex-wrap items-start justify-between gap-2">
+      <div className="flex shrink-0 flex-wrap items-start justify-between gap-2">
         <div>
           <div className="flex items-center gap-1.5 text-[13px] font-semibold text-white/90">
             <Scissors className="h-4 w-4 text-violet-200" />
             剪辑台
             <span className="text-[11px] font-normal text-white/40">
-              约 {totalSec}s · 粗剪序 + 细剪
+              {roughClips.length ? `约 ${totalSec}s · ${roughClips.length}镜` : "暂无剪辑计划 · 0镜"}
             </span>
           </div>
           <p className="mt-1 max-w-xl text-[10px] leading-relaxed text-white/40">
@@ -295,6 +300,7 @@ export default function ManhuaEditMultitrackPanel({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
+          {onGenerateCurrentVersion ? <button type="button" data-manhua-edit-generate-current disabled={factoryBusy || !clipIndexes.size} onClick={onGenerateCurrentVersion} className="min-h-11 rounded-xl border border-violet-300/50 bg-violet-500/30 px-4 py-2 text-sm font-semibold text-violet-50 disabled:opacity-40">{factoryBusy ? "正在处理…" : `生成成片（当前版本${currentVersionCredits == null ? "" : ` · ${currentVersionCredits}积分`}）`}</button> : null}
           {onSuggestAutoCuts ? (
             <button
               type="button"
@@ -316,20 +322,19 @@ export default function ManhuaEditMultitrackPanel({
               {s.nameZh}
             </span>
           ))}
-          <label className="ml-1 inline-flex items-center gap-1 rounded border border-white/10 bg-black/40 px-2 py-1 text-[9px] text-white/55">
-            <input
-              type="checkbox"
-              checked={subtitleEnabled}
-              onChange={(e) => onSubtitleEnabledChange?.(e.target.checked)}
-              className="accent-violet-400"
-            />
-            <Subtitles className="h-3 w-3" />
-            字幕轨
-          </label>
+
         </div>
       </div>
 
-      <div className="space-y-2 rounded-lg border border-white/10 bg-black/35 p-2.5">
+      <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4" aria-label="剪辑工具抽屉">
+        {[["cut", "剪辑工具"], ["effects", "特效与滤镜"], ["subtitles", "转场与字幕"], ["export", "导出设置"]].map(([id, label]) => (
+          <button key={id} type="button" data-manhua-edit-drawer-toggle={id} aria-expanded={activeDrawer === id} aria-controls={`manhua-edit-drawer-${id}`} onClick={() => setActiveDrawer(current => current === id ? null : id)} className={`min-h-11 rounded-lg border px-3 py-2 text-xs font-semibold ${activeDrawer === id ? "border-violet-300/50 bg-violet-500/20 text-violet-50" : "border-white/15 bg-white/[0.03] text-white/70"}`}>
+            {label} {activeDrawer === id ? "▴" : "▾"}
+          </button>
+        ))}
+      </div>
+
+      <div className="shrink-0 space-y-2 rounded-lg border border-white/10 bg-black/35 p-2.5">
         {tracks.map((t) => (
           <TrackRow
             key={t.kind}
@@ -352,6 +357,9 @@ export default function ManhuaEditMultitrackPanel({
         </div>
       </div>
 
+      <div id="manhua-edit-drawer-cut" data-manhua-edit-drawer="cut" hidden={activeDrawer !== "cut"} className="shrink-0 rounded-xl border border-white/15 bg-black/25 p-3">
+        <h3 className="text-sm font-semibold text-white/90">剪辑工具</h3>
+        <div className="space-y-3 pt-2">
       {/* 细剪 */}
       <div
         data-manhua-edit-section="fine-cut"
@@ -377,7 +385,7 @@ export default function ManhuaEditMultitrackPanel({
                 镜 {String(activeClip.shotIndex).padStart(2, "0")} · 源长{" "}
                 {activeClip.durationSec}s
               </div>
-              <div className="mt-1 flex items-center gap-2">
+              <div className="mt-1 flex flex-wrap items-center gap-2">
                 <label className="flex items-center gap-1 text-[10px] text-white/70">
                   入点
                   <button
@@ -436,138 +444,48 @@ export default function ManhuaEditMultitrackPanel({
         )}
       </div>
 
-      {/* 字幕轨数据 */}
-      {subtitleEnabled ? (
-        <div
-          data-manhua-edit-section="subtitle"
-          className="rounded-lg border border-white/10 bg-white/[0.02] p-2.5"
-        >
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-[10px] font-semibold text-white/70">
-              {finalSubtitleTimeline ? "当前成片字幕" : "计划字幕预览"} · {cues.length} 条（默认不烧）
-            </div>
-            {srtPreview ? (
-              <button
-                type="button"
-                className="text-[9px] text-cyan-200/80 underline-offset-2 hover:underline"
-                onClick={() => {
-                  void copyText(srtPreview).then((ok) => {
-                    if (ok) toast.success("已复制 SRT");
-                    else toast.error("复制没成功", { description: "请手动选中下方字幕文本复制。" });
-                  });
-                }}
-              >
-                复制 SRT
-              </button>
-            ) : null}
-          </div>
-          {cues.length ? (
-            <ul className="mt-1.5 max-h-28 space-y-1 overflow-y-auto">
-              {cues.map((c) => (
-                <li
-                  key={`cue-${c.shotIndex}-${c.order}`}
-                  className="truncate text-[10px] text-white/55"
+      <div className="rounded-lg border border-white/10 bg-white/[0.02] p-2">
+        <div className="text-[10px] font-semibold text-white/60">粗剪顺序</div>
+        <div className="mt-1.5 flex gap-1 overflow-x-auto pb-0.5">
+          {roughClips.map((c, i) => (
+            <div
+              key={`ord-${c.shotIndex}`}
+              className={`flex min-w-[96px] shrink-0 items-center gap-1 rounded-md border px-1.5 py-1 ${
+                c.shotIndex === activeShotIndex
+                  ? "border-violet-400/45 bg-violet-500/15"
+                  : "border-white/10 bg-black/40"
+              }`}
+            >
+              <div className="flex flex-col">
+                <button
+                  type="button"
+                  className="text-[9px] text-white/35 hover:text-white/70"
+                  onClick={() => move(i, -1)}
                 >
-                  <span className="font-mono text-white/35">
-                    {c.startSec}–{c.endSec}s
-                  </span>{" "}
-                  镜{c.shotIndex} 「{c.textZh}」
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="mt-1 text-[10px] text-white/35">当前粗剪序无对白可铺字幕</p>
-          )}
-
-          {/* 烧字进片:与 bgm_mount/concat 同一条后期任务通道(父级接线) */}
-          <div
-            data-manhua-edit-section="subtitle-burn"
-            className="mt-2 rounded-md border border-amber-400/25 bg-amber-500/[0.05] p-2"
-          >
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <label className="inline-flex items-center gap-1.5 text-[10px] text-amber-50/90">
-                <input
-                  type="checkbox"
-                  checked={burnArmed}
-                  onChange={(e) => setBurnConfirmedKey(e.target.checked ? burnConsentKey : null)}
-                  className="accent-amber-400"
-                />
-                <Flame className="h-3 w-3 text-amber-200/90" />
-                已核对对白与成片一致，烧字进片
-                <span className="text-[9px] font-normal text-white/40">
-                  使用该版合成时冻结的 {burnCues.length} 条对白（按实际镜窗对齐，未经语音识别；原片保留）
-                </span>
-              </label>
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  className="text-[9px] text-white/35 hover:text-white/70"
+                  onClick={() => move(i, 1)}
+                >
+                  ↓
+                </button>
+              </div>
               <button
                 type="button"
-                data-manhua-action="burn-subtitle"
-                disabled={
-                  !onBurnSubtitle || !burnArmed || !burnCues.length || !finalSubtitleTimeline || burnSubtitleBusy || factoryBusy
-                }
-                onClick={submitBurn}
-                className="inline-flex items-center gap-1 rounded border border-amber-400/40 bg-amber-500/20 px-2 py-0.5 text-[9px] font-semibold text-amber-50 hover:bg-amber-500/30 disabled:opacity-40"
-                title={
-                  !onBurnSubtitle
-                    ? "先在成片坞合成本集长片，再回来烧字"
-                    : !finalSubtitleTimeline
-                      ? "当前版本缺少字幕时间表，请重新合成后再烧字"
-                    : !burnCues.length
-                      ? "当前无字幕可烧"
-                      : !burnArmed
-                        ? "先勾选左侧确认烧字"
-                        : "提交烧字任务，产出带字幕的新成片"
-                }
+                className="min-w-0 flex-1 text-left"
+                onClick={() => onSelectShot?.(c.shotIndex)}
               >
-                <Flame className="h-3 w-3" />
-                {burnSubtitleBusy ? "烧字处理中…" : "提交烧字任务"}
+                <div className="text-[10px] font-semibold text-white/85">
+                  {String(c.order).padStart(2, "0")}·镜{c.shotIndex}
+                </div>
+                <div className="truncate text-[8px] text-white/40">{c.labelZh}</div>
               </button>
             </div>
-            {!finalSubtitleTimeline && onBurnSubtitle ? (
-              <p className="mt-1 text-[10px] text-amber-100/80">当前版本没有可核对的字幕时间表，不能套用新稿字幕。重新合成后可用，原片保留。</p>
-            ) : null}
-            {burnSubtitleResultUrl ? (
-              <a
-                href={burnSubtitleResultUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-1.5 inline-block text-[10px] text-emerald-200/90 underline-offset-2 hover:underline"
-              >
-                查看烧字成片（新视频）
-              </a>
-            ) : null}
-            {burnSubtitleRecoveryError ? (
-              <p className="mt-1.5 text-[9px] text-amber-100/80">
-                {burnSubtitleRecoveryError}
-              </p>
-            ) : null}
-            {finalVideoVersions && finalVideoVersions.urls.length > 1 ? (
-              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                <span className="text-[8px] text-white/35">整集成片版本</span>
-                {finalVideoVersions.urls.map((url, index) => (
-                  <button
-                    key={url}
-                    type="button"
-                    disabled={factoryBusy || burnSubtitleBusy || !onSelectFinalVideoVersion}
-                    onClick={() => onSelectFinalVideoVersion?.(url)}
-                    className={`rounded border px-1.5 py-0.5 text-[8px] ${
-                      finalVideoVersions.activeUrl === url
-                        ? "border-emerald-300/40 bg-emerald-500/20 text-emerald-50"
-                        : "border-white/12 bg-white/[0.04] text-white/55"
-                    }`}
-                  >
-                    {finalVideoVersions.activeUrl === url
-                      ? "当前下载版"
-                      : index === 0
-                        ? "字幕版"
-                        : `保留版 ${index}`}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
+          ))}
         </div>
-      ) : null}
-
+      </div>
       {/* 质检 + 返工 */}
       <div
         data-manhua-edit-section="qc"
@@ -720,7 +638,40 @@ export default function ManhuaEditMultitrackPanel({
                 </button>
               ) : null}
             </div>
-            {activeQc.clipBlockId && activeQc.gate !== "missing" && onVideoEditClip ? (
+            {activeQc.clipBlockId && activeVersions && activeVersions.urls.length > 1 ? (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <span className="text-[8px] text-white/35">成片版本</span>
+                {activeVersions.urls.map((url, index) => (
+                  <button
+                    key={url}
+                    type="button"
+                    disabled={factoryBusy || !onSelectClipVersion}
+                    onClick={() => onSelectClipVersion?.(activeQc.clipBlockId!, url)}
+                    className={`rounded border px-1.5 py-0.5 text-[8px] ${
+                      activeVersions.activeUrl === url
+                        ? "border-emerald-300/40 bg-emerald-500/20 text-emerald-50"
+                        : "border-white/12 bg-white/[0.04] text-white/55"
+                    }`}
+                  >
+                    {index === 0 ? "最新版" : `旧版 ${index}`}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <p className="mt-1.5 text-[10px] text-white/35">点选片段查看该镜质检</p>
+        )}
+      </div>
+
+
+        </div>
+      </div>
+      <div id="manhua-edit-drawer-effects" data-manhua-edit-drawer="effects" hidden={activeDrawer !== "effects"} className="shrink-0 rounded-xl border border-white/15 bg-black/25 p-3">
+        <h3 className="text-sm font-semibold text-white/90">特效与滤镜</h3>
+        <div className="space-y-3 pt-2">
+<p className="text-xs text-white/55">已有片段可提交局部画面编辑，原片保留。独立滤镜、调色与特效参数尚未接通，不会自动作用于成片。</p>
+            {activeQc?.clipBlockId && activeQc.gate !== "missing" && onVideoEditClip ? (
               <div className="mt-2 rounded-md border border-cyan-400/20 bg-cyan-500/[0.06] p-2">
                 <label className="block text-[9px] font-semibold text-cyan-50/85">
                   局部改画面 · 原片保留可切回
@@ -751,32 +702,162 @@ export default function ManhuaEditMultitrackPanel({
                 </p>
               </div>
             ) : null}
-            {activeQc.clipBlockId && activeVersions && activeVersions.urls.length > 1 ? (
-              <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                <span className="text-[8px] text-white/35">成片版本</span>
-                {activeVersions.urls.map((url, index) => (
+
+      {!activeQc?.clipBlockId || activeQc.gate === "missing" || !onVideoEditClip ? <p className="text-xs text-amber-100/70">请先选中已有成片，才可编辑画面。</p> : null}
+        </div>
+      </div>
+      <div id="manhua-edit-drawer-subtitles" data-manhua-edit-drawer="subtitles" hidden={activeDrawer !== "subtitles"} className="shrink-0 rounded-xl border border-white/15 bg-black/25 p-3">
+        <h3 className="text-sm font-semibold text-white/90">转场与字幕</h3>
+        <div className="space-y-3 pt-2">
+<p className="text-xs text-white/55">当前合成默认使用淡化转场；转场选择尚未接入。字幕轨与烧字沿用真实任务，原片保留。</p>
+          <label className="ml-1 inline-flex items-center gap-1 rounded border border-white/10 bg-black/40 px-2 py-1 text-[9px] text-white/55">
+            <input
+              type="checkbox"
+              checked={subtitleEnabled}
+              onChange={(e) => onSubtitleEnabledChange?.(e.target.checked)}
+              className="accent-violet-400"
+            />
+            <Subtitles className="h-3 w-3" />
+            字幕轨
+          </label>
+      {/* 字幕轨数据 */}
+      {subtitleEnabled ? (
+        <div
+          data-manhua-edit-section="subtitle"
+          className="rounded-lg border border-white/10 bg-white/[0.02] p-2.5"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[10px] font-semibold text-white/70">
+              {finalSubtitleTimeline ? "当前成片字幕" : "计划字幕预览"} · {cues.length} 条（默认不烧）
+            </div>
+            {srtPreview ? (
+              <button
+                type="button"
+                className="text-[9px] text-cyan-200/80 underline-offset-2 hover:underline"
+                onClick={() => {
+                  void copyText(srtPreview).then((ok) => {
+                    if (ok) toast.success("已复制 SRT");
+                    else toast.error("复制没成功", { description: "请手动选中下方字幕文本复制。" });
+                  });
+                }}
+              >
+                复制 SRT
+              </button>
+            ) : null}
+          </div>
+          {cues.length ? (
+            <ul className="mt-1.5 max-h-28 space-y-1 overflow-y-auto">
+              {cues.map((c) => (
+                <li
+                  key={`cue-${c.shotIndex}-${c.order}`}
+                  className="truncate text-[10px] text-white/55"
+                >
+                  <span className="font-mono text-white/35">
+                    {c.startSec}–{c.endSec}s
+                  </span>{" "}
+                  镜{c.shotIndex} 「{c.textZh}」
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-1 text-[10px] text-white/35">当前粗剪序无对白可铺字幕</p>
+          )}
+
+          {/* 烧字进片:与 bgm_mount/concat 同一条后期任务通道(父级接线) */}
+          <div
+            data-manhua-edit-section="subtitle-burn"
+            className="mt-2 rounded-md border border-amber-400/25 bg-amber-500/[0.05] p-2"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label className="inline-flex items-center gap-1.5 text-[10px] text-amber-50/90">
+                <input
+                  type="checkbox"
+                  checked={burnArmed}
+                  onChange={(e) => setBurnConfirmedKey(e.target.checked ? burnConsentKey : null)}
+                  className="accent-amber-400"
+                />
+                <Flame className="h-3 w-3 text-amber-200/90" />
+                已核对对白与成片一致，烧字进片
+                <span className="text-[9px] font-normal text-white/40">
+                  使用该版合成时冻结的 {burnCues.length} 条对白（按实际镜窗对齐，未经语音识别；原片保留）
+                </span>
+              </label>
+              <button
+                type="button"
+                data-manhua-action="burn-subtitle"
+                disabled={
+                  !onBurnSubtitle || !burnArmed || !burnCues.length || !finalSubtitleTimeline || burnSubtitleBusy || factoryBusy
+                }
+                onClick={submitBurn}
+                className="inline-flex items-center gap-1 rounded border border-amber-400/40 bg-amber-500/20 px-2 py-0.5 text-[9px] font-semibold text-amber-50 hover:bg-amber-500/30 disabled:opacity-40"
+                title={
+                  !onBurnSubtitle
+                    ? "先在成片坞合成本集长片，再回来烧字"
+                    : !finalSubtitleTimeline
+                      ? "当前版本缺少字幕时间表，请重新合成后再烧字"
+                    : !burnCues.length
+                      ? "当前无字幕可烧"
+                      : !burnArmed
+                        ? "先勾选左侧确认烧字"
+                        : "提交烧字任务，产出带字幕的新成片"
+                }
+              >
+                <Flame className="h-3 w-3" />
+                {burnSubtitleBusy ? "烧字处理中…" : "提交烧字任务"}
+              </button>
+            </div>
+            {!finalSubtitleTimeline && onBurnSubtitle ? (
+              <p className="mt-1 text-[10px] text-amber-100/80">当前版本没有可核对的字幕时间表，不能套用新稿字幕。重新合成后可用，原片保留。</p>
+            ) : null}
+            {burnSubtitleResultUrl ? (
+              <a
+                href={burnSubtitleResultUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-1.5 inline-block text-[10px] text-emerald-200/90 underline-offset-2 hover:underline"
+              >
+                查看烧字成片（新视频）
+              </a>
+            ) : null}
+            {burnSubtitleRecoveryError ? (
+              <p className="mt-1.5 text-[9px] text-amber-100/80">
+                {burnSubtitleRecoveryError}
+              </p>
+            ) : null}
+            {finalVideoVersions && finalVideoVersions.urls.length > 1 ? (
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                <span className="text-[8px] text-white/35">整集成片版本</span>
+                {finalVideoVersions.urls.map((url, index) => (
                   <button
                     key={url}
                     type="button"
-                    disabled={factoryBusy || !onSelectClipVersion}
-                    onClick={() => onSelectClipVersion?.(activeQc.clipBlockId!, url)}
+                    disabled={factoryBusy || burnSubtitleBusy || !onSelectFinalVideoVersion}
+                    onClick={() => onSelectFinalVideoVersion?.(url)}
                     className={`rounded border px-1.5 py-0.5 text-[8px] ${
-                      activeVersions.activeUrl === url
+                      finalVideoVersions.activeUrl === url
                         ? "border-emerald-300/40 bg-emerald-500/20 text-emerald-50"
                         : "border-white/12 bg-white/[0.04] text-white/55"
                     }`}
                   >
-                    {index === 0 ? "最新版" : `旧版 ${index}`}
+                    {finalVideoVersions.activeUrl === url
+                      ? "当前下载版"
+                      : index === 0
+                        ? "字幕版"
+                        : `保留版 ${index}`}
                   </button>
                 ))}
               </div>
             ) : null}
           </div>
-        ) : (
-          <p className="mt-1.5 text-[10px] text-white/35">点选片段查看该镜质检</p>
-        )}
-      </div>
+        </div>
+      ) : null}
 
+
+        </div>
+      </div>
+      <div id="manhua-edit-drawer-export" data-manhua-edit-drawer="export" hidden={activeDrawer !== "export"} className="shrink-0 rounded-xl border border-white/15 bg-black/25 p-3">
+        <h3 className="text-sm font-semibold text-white/90">导出设置</h3>
+        <div className="space-y-3 pt-2">
       {deliveryPackage && onDeliveryPackageChange ? (
         <ManhuaDeliveryEditSection
           deliveryPackage={deliveryPackage}
@@ -877,46 +958,7 @@ export default function ManhuaEditMultitrackPanel({
         </ul>
       </div>
 
-      <div className="rounded-lg border border-white/10 bg-white/[0.02] p-2">
-        <div className="text-[10px] font-semibold text-white/60">粗剪顺序</div>
-        <div className="mt-1.5 flex gap-1 overflow-x-auto pb-0.5">
-          {roughClips.map((c, i) => (
-            <div
-              key={`ord-${c.shotIndex}`}
-              className={`flex min-w-[96px] shrink-0 items-center gap-1 rounded-md border px-1.5 py-1 ${
-                c.shotIndex === activeShotIndex
-                  ? "border-violet-400/45 bg-violet-500/15"
-                  : "border-white/10 bg-black/40"
-              }`}
-            >
-              <div className="flex flex-col">
-                <button
-                  type="button"
-                  className="text-[9px] text-white/35 hover:text-white/70"
-                  onClick={() => move(i, -1)}
-                >
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  className="text-[9px] text-white/35 hover:text-white/70"
-                  onClick={() => move(i, 1)}
-                >
-                  ↓
-                </button>
-              </div>
-              <button
-                type="button"
-                className="min-w-0 flex-1 text-left"
-                onClick={() => onSelectShot?.(c.shotIndex)}
-              >
-                <div className="text-[10px] font-semibold text-white/85">
-                  {String(c.order).padStart(2, "0")}·镜{c.shotIndex}
-                </div>
-                <div className="truncate text-[8px] text-white/40">{c.labelZh}</div>
-              </button>
-            </div>
-          ))}
+
         </div>
       </div>
     </section>

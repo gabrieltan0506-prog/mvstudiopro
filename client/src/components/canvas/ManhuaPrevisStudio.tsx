@@ -1,3 +1,4 @@
+import { ManhuaPrevisActionLibrary } from "./ManhuaPrevisActionLibrary";
 import type { PreparedRigProfile } from "@/lib/manhuaPrevisProfiles";
 import { useEffect, useRef, useState } from "react";
 import { isDefiniteRejection, withRiggedModelSourceAssetRefs } from "@/lib/manhuaPrevisSubmit";
@@ -141,8 +142,8 @@ export function ManhuaPrevisStudioView({
   const [initial] = useState(
     () => block.previsStudio ?? createManhuaPrevisStudio()
   );
-  // 高级数字表折叠只由**初始**有无草案决定；之后跟着用户手动开合走，草案出现/消失不会把正在编辑的表收起来（1468 R1）
-  const [advancedOpen, setAdvancedOpen] = useState(() => !actionPlanDrafts.length);
+  // 专业参数默认收起，之后保留用户手动开合，不因草案变化重置。
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const studio = block.previsStudio ?? initial;
   const latest = useRef({ studio, onChange, services, disabled, block });
   latest.current = { studio, onChange, services, disabled, block };
@@ -790,6 +791,9 @@ export function ManhuaPrevisStudioView({
           恢复上一份动作配置（不改已采用参考）
         </button>
       ) : null}
+      <ManhuaPrevisActionLibrary spec={studio.spec} disabled={disabled || Boolean(pendingId) || busy} onChange={edit} />
+      <details open={advancedOpen} onToggle={(e) => setAdvancedOpen(e.currentTarget.open)} className="space-y-2" data-previs-advanced>
+        <summary className="text-xs text-cyan-100">高级参数 · 数字表（站位 / 动作 / 特效 / 出水 / 短打）</summary>
       <div className="flex flex-wrap gap-3">
         {numeric(
           "片长（秒）",
@@ -816,8 +820,6 @@ export function ManhuaPrevisStudioView({
           </select>
         </label>
       </div>
-      <details open={advancedOpen} onToggle={(e) => setAdvancedOpen(e.currentTarget.open)} className="space-y-2" data-previs-advanced>
-        <summary className="text-xs text-cyan-100">高级参数 · 数字表（站位 / 动作 / 特效 / 出水 / 短打）</summary>
       {studio.spec.actors.map((actor, index) => (
         <fieldset
           key={actor.id}
