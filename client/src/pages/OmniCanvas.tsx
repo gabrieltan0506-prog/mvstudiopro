@@ -12687,6 +12687,7 @@ export default function OmniCanvas() {
             >
               <ManhuaClipDock
                 blocks={blocks}
+                currentEpisodeIndex={writerFocusEpisode}
                 topic={factoryTopic}
                 seriesTitle={writerPack?.seriesTitle}
                 characterIds={selectedCharacterIds}

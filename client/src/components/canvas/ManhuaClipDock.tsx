@@ -22,6 +22,7 @@ import type { CanvasBlock } from "@/lib/canvasTypes";
 import { findManhuaFinalVideoVersionIdentity } from "@shared/manhuaFinalPostProd";
 import { getBlockEpisodeIndex, isManhuaFinalVideoBlockId } from "@/lib/canvasDramaStudio";
 import {
+  resolveManhuaDeliveryEpisodeIndexes,
   collectManhuaAssembleClipsFromDock,
   collectManhuaClipDockItems,
   downloadManhuaProjectZip,
@@ -51,6 +52,7 @@ import {
 
 type Props = {
   blocks: CanvasBlock[];
+  currentEpisodeIndex?: number;
   topic?: string;
   seriesTitle?: string;
   characterIds?: string[];
@@ -120,6 +122,7 @@ function episodeKeyartUrl(list: ManhuaClipDockItem[]): string | undefined {
 
 export default function ManhuaClipDock({
   blocks,
+  currentEpisodeIndex,
   topic,
   seriesTitle,
   characterIds,
@@ -148,6 +151,9 @@ export default function ManhuaClipDock({
   segmentRefProgress,
   onPrepareDeliveryAudio,
 }: Props) {
+  const [deliveryScope, setDeliveryScope] = useState<"all" | "current" | "selected">("all");
+  const [deliverySelectedEpisodes, setDeliverySelectedEpisodes] = useState<number[]>([]);
+  const deliveryEpisodes = Array.from(new Set(blocks.filter(b => isManhuaFinalVideoBlockId(b.id) && !b.archivedFromPreviousScript && /^https?:\/\//i.test(String(b.outputUrl || ""))).map(b => getBlockEpisodeIndex(b) ?? 1))).sort((a, b) => a - b);
   const [deliveryBusy, setDeliveryBusy] = useState<string | null>(null);
   const [exportBusy, setExportBusy] = useState(false);
   // 「含历史版本」默认关；用户打开过就记在本机（只影响 zip 内容，不影响合成）
@@ -288,14 +294,21 @@ export default function ManhuaClipDock({
 
   /** 生成交付包：整集成片当前版 → 抽音轨 → zip（成片 + 字幕.srt + 音轨 + 交付清单） */
   const handleDeliveryPack = async () => {
+    let deliveryEpisodeIndexes: number[] | undefined;
+    try {
+      deliveryEpisodeIndexes = resolveManhuaDeliveryEpisodeIndexes(deliveryScope, currentEpisodeIndex, deliverySelectedEpisodes);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "交付范围无效");
+      return;
+    }
     const finals = blocks
-      .filter((b) => isManhuaFinalVideoBlockId(b.id) && !b.archivedFromPreviousScript && /^https?:\/\//i.test(String(b.outputUrl || "")))
+      .filter((b) => isManhuaFinalVideoBlockId(b.id) && !b.archivedFromPreviousScript && /^https?:\/\//i.test(String(b.outputUrl || "")) && (!deliveryEpisodeIndexes || deliveryEpisodeIndexes.includes(getBlockEpisodeIndex(b) ?? 1)))
       .map((b) => {
         const identity = findManhuaFinalVideoVersionIdentity(b, String(b.outputUrl));
         return { blockId: b.id, episodeIndex: getBlockEpisodeIndex(b) ?? 1, url: String(b.outputUrl), gcsUri: identity?.gcsUri };
       });
     if (!finals.length) {
-      window.alert("还没有整集成片：先在成片坞合成长片，再生成交付包。");
+      window.alert("所选范围还没有整集成片：先合成本集成片，再生成交付包。");
       return;
     }
     setExportBusy(true);
@@ -320,10 +333,11 @@ export default function ManhuaClipDock({
         writerPackMarkdown,
         deliveryPackageMarkdown: formatManhuaDeliveryPackageMarkdown(deliveryPkg),
         cineVocabTableMarkdown: formatCineVocabMultilingualTable(cineVocabIds.length ? cineVocabIds : undefined),
-        finalVideoUrl: finalVideoUrl || undefined,
+        finalVideoUrl: deliveryEpisodeIndexes ? undefined : finalVideoUrl || undefined,
         blocks,
         includeHistory,
         includeDelivery: true,
+        deliveryEpisodeIndexes,
         deliveryAudioByFinalUrl: Object.fromEntries(Object.entries(audioMap).filter(([k]) => k !== "__timedOutEpisodes")) as Record<string, { url: string; ext: "m4a" | "wav" }>,
       });
       const missingAudio = finals.filter((f) => !audioMap[f.url]).length;
@@ -731,6 +745,19 @@ export default function ManhuaClipDock({
           {exportBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
           导出全部有产物
         </button>
+        <fieldset disabled={exportBusy} className="rounded-lg border border-white/12 px-2 py-1 text-xs">
+          <legend>交付包范围</legend>
+          <label>导出范围 <select aria-label="交付包导出范围" value={deliveryScope} onChange={e => setDeliveryScope(e.target.value as "all" | "current" | "selected")} className="bg-slate-900">
+            <option value="all">全部集</option>
+            <option value="current">当前集{currentEpisodeIndex ? `（第${currentEpisodeIndex}集）` : "（未选择）"}</option>
+            <option value="selected">选择集</option>
+          </select></label>
+          {deliveryScope === "selected" && <div className="flex flex-wrap gap-2">
+            {deliveryEpisodes.map(ep => <label key={ep}><input type="checkbox" aria-label={`交付第${ep}集`} checked={deliverySelectedEpisodes.includes(ep)} onChange={e => setDeliverySelectedEpisodes(prev => e.target.checked ? [...prev, ep] : prev.filter(value => value !== ep))}/>第{ep}集</label>)}
+            {!deliveryEpisodes.length && <span>暂无整集成片</span>}
+          </div>}
+          <p>按集导出整集成片、已有字幕和音轨；不使用下方片段勾选范围。</p>
+        </fieldset>
         <button
           type="button"
           disabled={exportBusy}

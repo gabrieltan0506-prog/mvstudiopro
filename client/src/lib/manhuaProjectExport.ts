@@ -456,6 +456,8 @@ export type ManhuaProjectExportManifest = {
     path?: string;
     source?: ManhuaDockHistorySource;
   }>;
+  /** 显式请求的集级导出范围；省略表示沿用全量。 */
+  deliveryEpisodeIndexes?: number[];
   /** 交付包写入记录（成片/字幕/音轨/清单） */
   delivery?: Array<{ episodeIndex: number; kind: "video" | "srt" | "audio" | "doc"; path: string }>;
   failed: Array<{ blockId: string; url?: string; error: string }>;
@@ -493,11 +495,27 @@ export type ExportManhuaProjectZipOpts = {
    * 成片.mp4 + 字幕.srt（合成时冻结的真实时间轴）+ 音轨.m4a（deliveryAudioByFinalUrl 给到时）+ 交付清单.md
    */
   includeDelivery?: boolean;
+  /** undefined保留旧全量；显式集号同时限制抽取后的ZIP、字幕和清单，空数组拒绝。 */
+  deliveryEpisodeIndexes?: number[];
   /** 整集成片 URL → 已抽出的音轨（由成片坞先跑 audio_extract 后期任务得到） */
   deliveryAudioByFinalUrl?: Record<string, { url: string; ext: "m4a" | "wav" }>;
   /** 默认 false：为 true 时把每个节点的历史版本写进 epXX/历史/ 并附 版本清单.md */
   includeHistory?: boolean;
 };
+
+/** 明确集级范围；不从片段/节点勾选推断，也不将空选择回退成全部。 */
+export function resolveManhuaDeliveryEpisodeIndexes(
+  scope: "all" | "current" | "selected",
+  currentEpisodeIndex: number | undefined,
+  selectedEpisodeIndexes: readonly number[],
+): number[] | undefined {
+  if (scope === "all") return undefined;
+  const values = scope === "current" ? [currentEpisodeIndex] : selectedEpisodeIndexes;
+  if (!values.length || values.some(value => !Number.isSafeInteger(value) || Number(value) < 1)) {
+    throw new Error(scope === "current" ? "请先选择当前集" : "请至少选择一集交付范围");
+  }
+  return Array.from(new Set(values as number[])).sort((a, b) => a - b);
+}
 
 export type ExportManhuaProjectZipResult = {
   blob: Blob;
@@ -597,14 +615,18 @@ export function clampManhuaSubtitleCueOverlap<T extends { startSec: number; endS
 export async function exportManhuaProjectZip(
   opts: ExportManhuaProjectZipOpts,
 ): Promise<ExportManhuaProjectZipResult> {
+  const deliveryEpisodeIndexes = opts.deliveryEpisodeIndexes === undefined ? undefined
+    : resolveManhuaDeliveryEpisodeIndexes("selected", undefined, opts.deliveryEpisodeIndexes);
+  const episodeInScope = (episodeIndex: number) => !deliveryEpisodeIndexes || deliveryEpisodeIndexes.includes(episodeIndex);
   const selectedSet = new Set(opts.selectedIds);
   const selected = opts.items.filter(
-    (it) => selectedSet.has(it.blockId) && manhuaClipDockItemHasExportableOutput(it),
+    (it) => selectedSet.has(it.blockId) && episodeInScope(it.episodeIndex) && manhuaClipDockItemHasExportableOutput(it),
   );
   // 成片坞只传 blocks：整集成片块从 blocks 里自己找，不再要求调用方另传（此前坞内导出一直漏掉整集成片）
   const finalVideoBlocks = (opts.finalVideoBlocks || opts.blocks || []).filter(
     (block) =>
       isManhuaFinalVideoBlockId(block.id) &&
+      episodeInScope(getBlockEpisodeIndex(block) ?? 1) &&
       !block.archivedFromPreviousScript &&
       listManhuaFinalVideoVersions(block).length > 0,
   );
@@ -885,7 +907,8 @@ export async function exportManhuaProjectZip(
     }
   }
 
-  const finalVideoUrl = String(opts.finalVideoUrl || "").trim() || undefined;
+  // 整片链接没有集级归属；任何显式范围都不能把它带入清单、说明或播放元数据。
+  const finalVideoUrl = deliveryEpisodeIndexes ? undefined : String(opts.finalVideoUrl || "").trim() || undefined;
   const manifest: ManhuaProjectExportManifest = {
     format: "mv-manhua-project-v1",
     topic: String(opts.topic || "").trim(),
@@ -903,6 +926,7 @@ export async function exportManhuaProjectZip(
     selected: selectedMeta,
     history: opts.includeHistory ? historyMeta : undefined,
     failed,
+    ...(deliveryEpisodeIndexes ? { deliveryEpisodeIndexes } : {}),
     ...(deliveryMeta.length ? { delivery: deliveryMeta } : {}),
   };
   zip.file("manifest.json", JSON.stringify(manifest, null, 2));
