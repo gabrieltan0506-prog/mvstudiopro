@@ -28,6 +28,20 @@ export type ManhuaPrevisCharacterLink = {
   shape?: "human" | "horse";
 };
 
+/** 计划人物与资产卡使用不同 ID，仅通过明确身份锚点桥接；歧义不猜。 */
+export function resolveManhuaPrevisCharacterLinks(
+  actors: ManhuaActionPlan["actors"],
+  assets: Array<{ id: string; seedLibraryId?: string | null }>,
+): ManhuaPrevisCharacterLink[] {
+  return actors.flatMap(actor => {
+    const direct = assets.filter(asset => asset.id === actor.actorId);
+    const matches = direct.length ? direct : assets.filter(asset => Boolean(actor.canonAnchorId) &&
+      (asset.id === actor.canonAnchorId || asset.seedLibraryId === actor.canonAnchorId));
+    const ids = Array.from(new Set(matches.map(asset => asset.id)));
+    return ids.length === 1 ? [{ actorId: actor.actorId, assetRef: ids[0] }] : [];
+  });
+}
+
 export type ManhuaPrevisDraftFromPlan = {
   executableShotId: string;
   sourceShotId: string;

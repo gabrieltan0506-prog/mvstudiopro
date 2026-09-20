@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { A, B, MAN, WOMAN, buildBoatFight } from "./manhuaActionPlanBoatFightFixture";
 import { splitManhuaActionPlanForPrevis } from "./manhuaActionPlanSplit";
 import { manhuaPrevisSpecSchema } from "./manhuaPrevis";
-import { applyManhuaPrevisDraftToStudio, manhuaPrevisDraftFromExecutableShot } from "./manhuaPrevisFromActionPlan";
+import { applyManhuaPrevisDraftToStudio, manhuaPrevisDraftFromExecutableShot, resolveManhuaPrevisCharacterLinks } from "./manhuaPrevisFromActionPlan";
 import { createManhuaPrevisStudio } from "./manhuaPrevis";
 import { resolveManhuaCameraTempo } from "./manhuaCameraTempo";
 
@@ -200,3 +200,14 @@ describe("PR-6 · 套用草案带上运镜句", () => {
     expect(again.specHistory).toHaveLength(2);
   });
 });
+
+ it("身份锚点跨 ID 绑定进入实际白模，歧义与仅同名不猜", () => {
+   const plan = buildBoatFight();
+   plan.actors.find(a => a.actorId === MAN)!.canonAnchorId = "wa_char_man";
+   const links = resolveManhuaPrevisCharacterLinks(plan.actors, [{id:"cust_man",seedLibraryId:"wa_char_man"}]);
+   const shot = splitManhuaActionPlanForPrevis(plan).shots.find(s => s.sourceShotId === "ap_shot_1")!;
+   const draft = manhuaPrevisDraftFromExecutableShot({plan,shot,resolvedCamera:cam(6),aspect:"16:9",links});
+   expect(draft.spec!.actors.find(a => a.id === MAN)!.assetRef).toBe("cust_man");
+   expect(resolveManhuaPrevisCharacterLinks(plan.actors, [{id:"cust_a",seedLibraryId:"wa_char_man"},{id:"cust_b",seedLibraryId:"wa_char_man"}])).toEqual([]);
+   expect(resolveManhuaPrevisCharacterLinks(plan.actors, [{id:plan.actors[0]!.nameZh}])).toEqual([]);
+ });

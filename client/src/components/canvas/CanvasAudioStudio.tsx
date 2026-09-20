@@ -1173,6 +1173,7 @@ export function CanvasAudioStudioView({
                       patchCue(cue.id, { voice: event.target.value })
                     }
                   >
+                    <option value="">请选择音色</option>
                     {cue.voice && !VOICES.some(voice => voice.id === cue.voice) && <option value={cue.voice}>已保存的角色音色</option>}
                     {VOICES.map(voice => (
                       <option key={voice.id} value={voice.id}>

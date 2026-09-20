@@ -56,7 +56,7 @@ import type { ManhuaStageCharacter } from "@/components/canvas/ManhuaWorldStageP
 import { evaluateManhuaWorld3dEligibility } from "@shared/manhuaWorld3d";
 import { buildManhuaStateDerivePromptZh } from "@shared/manhuaCharacterStates";
 import { splitManhuaActionPlanForPrevis } from "@shared/manhuaActionPlanSplit";
-import { manhuaPrevisDraftFromExecutableShot } from "@shared/manhuaPrevisFromActionPlan";
+import { manhuaPrevisDraftFromExecutableShot, resolveManhuaPrevisCharacterLinks } from "@shared/manhuaPrevisFromActionPlan";
 import { resolveManhuaCameraTempo } from "@shared/manhuaCameraTempo";
 import type { ManhuaActionPlan } from "@shared/manhuaActionPlan";
 import type { ManhuaActionPlanBindingContext } from "@shared/manhuaActionPlanBindings";
@@ -2666,7 +2666,7 @@ export default function ManhuaScriptWorkbench({
     if (!manhuaActionPlan) return [];
     const prefix = `ap_shot_e${focusEpisode}_s${activeSegNo}_`;
     const { shots } = splitManhuaActionPlanForPrevis(manhuaActionPlan);
-    const links = assetLockRegistry.byRole.character.map((a) => ({ actorId: a.id, assetRef: a.id }));
+    const links = resolveManhuaPrevisCharacterLinks(manhuaActionPlan.actors, assetLockRegistry.byRole.character);
     const aspect = activeClip?.previsStudio?.spec.aspect === "9:16" ? ("9:16" as const) : ("16:9" as const);
     // PR-6：段意图（可拍表）+ 导演包主卡 + 是否有接触事件 → 节奏档；用户在白模区手改的风格档覆盖 tempo.style
     const intentZh = getManhuaSegmentIntentZh(shootablePlan, activeSegNo);
