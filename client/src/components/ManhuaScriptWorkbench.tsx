@@ -1327,6 +1327,7 @@ export default function ManhuaScriptWorkbench({
   >({});
   /** 代际号：迟到的预览回执不得覆盖更新的一份 */
   const clipOutboundGenerationRef = useRef<Record<string, number>>({});
+  const [narrowWorkbenchColumn, setNarrowWorkbenchColumn] = useState<"script" | "preview" | "assets">("script");
   const loadClipOutboundPreview = useCallback(
     async (blockId: string) => {
       if (!onPreviewClipOutbound || !blockId) return;
@@ -8245,6 +8246,16 @@ export default function ManhuaScriptWorkbench({
             : "flex min-h-0 flex-1 flex-col overflow-hidden"
         }
       >
+        <nav aria-label="分镜工作区视图" className="flex shrink-0 gap-2 border-b border-white/10 p-2 md:hidden">
+          {([['script', '镜头'], ['preview', '主预览'], ['assets', '参数与资产']] as const).map(([column, label]) => (
+            <button key={column} type="button" data-manhua-narrow-column={column}
+              aria-pressed={narrowWorkbenchColumn === column}
+              onClick={() => setNarrowWorkbenchColumn(column)}
+              className="flex-1 rounded border border-white/15 px-2 py-2 text-xs text-white/80 aria-pressed:bg-cyan-500/20">
+              {label}
+            </button>
+          ))}
+        </nav>
         <div
           className={
             immersive
@@ -8254,7 +8265,7 @@ export default function ManhuaScriptWorkbench({
         >
           <div
             className={
-              immersive
+              "max-md:!grid max-md:!w-full max-md:!min-w-0 max-md:!grid-cols-1 " + (immersive
                 ? showCanvasDock
                   ? // 常规桌面先让三栏在当前视口内弹性收缩；极窄窗口才由外层横向滚动兜底。
                     // 分镜阶段按对照图 01 固定为「左镜头清单 · 中主预览 · 右当前镜参数」：
@@ -8265,7 +8276,7 @@ export default function ManhuaScriptWorkbench({
                   : storyboardThreeColumn
                     ? "grid h-full min-h-0 min-w-[760px] grid-cols-[minmax(280px,0.8fr)_minmax(350px,1.15fr)_minmax(150px,0.4fr)] xl:min-w-0 xl:grid-cols-[minmax(300px,0.72fr)_minmax(420px,1.08fr)_minmax(180px,0.36fr)]"
                     : "grid h-full min-h-0 min-w-[760px] grid-cols-[minmax(128px,0.38fr)_minmax(280px,0.8fr)_minmax(350px,1.15fr)] xl:min-w-0 xl:grid-cols-[168px_minmax(300px,0.72fr)_minmax(420px,1.08fr)]"
-                : "flex h-full min-h-0 w-full overflow-hidden"
+                : "flex h-full min-h-0 w-full overflow-hidden")
             }
           >
         {/* 左：本片段挂载（随胶片切换）+ 本集其他 */}
@@ -8275,9 +8286,9 @@ export default function ManhuaScriptWorkbench({
           data-manhua-shot-mount-cast={String(mountedCastCount)}
           style={storyboardThreeColumn ? { order: 3 } : undefined}
           className={
-            immersive
+            `max-md:!w-full max-md:min-w-0 ${narrowWorkbenchColumn !== "assets" ? "max-md:!hidden" : ""} ` + (immersive
               ? "h-full min-h-0 overflow-y-auto border-r border-white/10 p-2"
-              : "min-h-0 w-[180px] shrink-0 overflow-y-auto border-r border-white/10 p-2"
+              : "min-h-0 w-[180px] shrink-0 overflow-y-auto border-r border-white/10 p-2")
           }
         >
           {/* 分镜阶段：这一栏是「当前镜参数」，本段挂载资产退成折叠（README：分镜阶段不再长驻资产墙） */}
@@ -8516,9 +8527,9 @@ export default function ManhuaScriptWorkbench({
           data-manhua-column="script"
           style={storyboardThreeColumn ? { order: 1 } : undefined}
           className={
-            immersive
+            `max-md:!w-full max-md:min-w-0 ${narrowWorkbenchColumn !== "script" ? "max-md:!hidden" : ""} ` + (immersive
               ? "flex h-full min-h-0 flex-col overflow-hidden border-r border-white/10 p-2 md:p-2.5"
-              : "flex min-h-0 w-[min(28vw,300px)] shrink-0 flex-col overflow-hidden border-r border-white/10 p-2 md:p-2.5"
+              : "flex min-h-0 w-[min(28vw,300px)] shrink-0 flex-col overflow-hidden border-r border-white/10 p-2 md:p-2.5")
           }
         >
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
@@ -9378,11 +9389,11 @@ export default function ManhuaScriptWorkbench({
           }
           data-manhua-preview-url={previewFinalVideoUrl || previewUrl || ""}
           className={
-            immersive
+            `max-md:!w-full max-md:min-w-0 ${narrowWorkbenchColumn !== "preview" ? "max-md:!hidden" : ""} ` + (immersive
               ? "flex h-full min-h-0 flex-col p-1.5 md:p-2"
               : showCanvasDock
                 ? "flex min-h-0 min-w-0 flex-1 flex-col p-2"
-                : "flex min-h-0 w-[min(42vw,480px)] shrink-0 flex-col p-2 md:p-2.5"
+                : "flex min-h-0 w-[min(42vw,480px)] shrink-0 flex-col p-2 md:p-2.5")
           }
         >
           <div className="mb-1.5 flex shrink-0 flex-wrap items-center justify-between gap-2">
