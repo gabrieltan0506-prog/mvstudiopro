@@ -284,6 +284,48 @@ export const manhuaViralTemplateRouter = router({
       }
     }),
 
+  /**
+   * 0920 用户令：「在ＰＲ加一個島出ＰＤＦ檔的按鈕」。
+   * 复用同一张 HTML 报告（含内嵌帧图），交给图文笔记那条 Cloud Run pdf-worker 出 PDF。
+   * 不重渲染内容：**PDF 与 HTML 报告同源同身份**，只换载体，避免两份报告口径分叉。
+   */
+  renderEpisodeReportPdf: protectedProcedure
+    .input(z.object({
+      seriesKey: z.string().regex(/^[0-9A-Za-z_-]{1,40}$/),
+      episodeIndex: z.number().int().min(1).max(999),
+      themeChoice: z.enum(NATIVE_REPORT_THEME_CHOICES).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      assertSiteOwner(ctx.user);
+      const [{ renderNativeReportPdfFromHtmlObject }, { nativeDeepReadProposalId }, store] =
+        await Promise.all([
+          import("../services/manhuaNativeReportPdf"),
+          import("../services/manhuaNativeDeepReadIngest"),
+          import("../services/manhuaViralTemplateStore"),
+        ]);
+      const cardKey = nativeDeepReadProposalId(input.seriesKey, input.episodeIndex);
+      const card = (await store.getGcsManhuaViralProposal(cardKey))
+        ?? (await store.getGcsManhuaViralApproved(cardKey));
+      if (!card) {
+        throw new TRPCError({ code: "NOT_FOUND", message: `该集精读卡不存在（${cardKey}），无法出 PDF` });
+      }
+      // PDF 只认已经渲染好的 HTML 报告对象：先点「导出报告」，再点「导出 PDF」。
+      // 这样 PDF 不会绕过报告那侧的完整性门禁（缺段、装配未完成一律不给导）。
+      const themeSuffix = input.themeChoice && input.themeChoice !== "auto" ? `-${input.themeChoice}` : "";
+      const htmlObjectName = `manhua-template-learn/reports/${cardKey}${themeSuffix}.html`;
+      try {
+        const out = await renderNativeReportPdfFromHtmlObject({ htmlObjectName });
+        return { pdfUrl: out.pdfUrl, bytes: out.bytes };
+      } catch (e) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: e instanceof Error
+            ? `${e.message}（若报错找不到报告，请先点「导出报告」生成 HTML 再出 PDF）`
+            : "PDF 渲染失败",
+        });
+      }
+    }),
+
   /** owner 查看单张正式模板；从 GCS approved/ 即时读取，不信任客户端列表缓存。 */
   getApprovedOwnerDetail: protectedProcedure
     .input(z.object({ id: z.string().regex(/^tpl_[a-z0-9_-]{1,60}$/i) }))

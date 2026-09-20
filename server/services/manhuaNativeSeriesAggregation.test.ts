@@ -284,14 +284,14 @@ describe("原生精读系列结构化 · GLM-5.3 两档（0829 改线：EvoLink 
       }), { status: 200, headers: { "content-type": "application/json" } });
     }));
 
-    expect(MANHUA_NATIVE_SERIES_AGGREGATION_MODEL).toBe("glm-5.3→z-ai/glm-5.3");
+    expect(MANHUA_NATIVE_SERIES_AGGREGATION_MODEL).toBe("glm-5.3-flash→z-ai/glm-5.3-flash");
     expect(MANHUA_NATIVE_SERIES_AGGREGATION_ROUTE).toBe("openrouter_text");
     await expect(invokeNativeSeriesAggregationModel(JSON.stringify({ episodes: [] })))
       .resolves.toEqual({
         raw: { ok: true },
         // 0830 审查 P1-2：返回体带出实际交卷的网关与模型，回执才记得了真值
         gateway: "evolink_glm",
-        model: "glm-5.3",
+        model: "glm-5.3-flash",
         inputTokens: 321,
         outputTokens: 45,
         reasoningTokens: 17,
@@ -305,7 +305,7 @@ describe("原生精读系列结构化 · GLM-5.3 两档（0829 改线：EvoLink 
     expect(calls[0]?.url).toBe(EVOLINK_ENDPOINT);
     const body = JSON.parse(String(calls[0]?.init.body));
     expect(body).toMatchObject({
-      model: "glm-5.3",
+      model: "glm-5.3-flash",
       response_format: { type: "json_object" },
       reasoning_effort: "high",   // EvoLink 用顶层字符串，不是嵌套 reasoning:{effort}
       max_tokens: 131_072,
@@ -331,7 +331,7 @@ describe("原生精读系列结构化 · GLM-5.3 两档（0829 改线：EvoLink 
     expect(calls).toHaveLength(2);
     expect(calls[0]!.body.reasoning_effort).toBe("high");
     expect(calls[1]).toMatchObject({ url: OPENROUTER_ENDPOINT, body: {
-      model: "z-ai/glm-5.3", reasoning: { effort: "high" }, max_tokens: 131_072,
+      model: "z-ai/glm-5.3-flash", reasoning: { effort: "high" }, max_tokens: 131_072,
       temperature: 0.8, stream: true, response_format: { type: "json_object" },
       provider: { order: ["z-ai/fp8"], allow_fallbacks: false, require_parameters: true },
     } });
@@ -393,7 +393,7 @@ describe("原生精读系列结构化 · GLM-5.3 两档（0829 改线：EvoLink 
     // 0830 P1-1：失败路径的身份从 gatewayTrace 里取**最后一个真发出过的档**，
     // 不再是「恒定 openrouter + 链路标签」的假默认。本例只配了 OpenRouter 一档，
     // 所以记的是它的真实模型 id。
-    const fallbackIdentity = { gateway: "openrouter", model: "z-ai/glm-5.3" };
+    const fallbackIdentity = { gateway: "openrouter", model: "z-ai/glm-5.3-flash" };
     for (const expected of [
       { ...fallbackIdentity, inputTokens: 800, outputTokens: 131_072, reasoningTokens: 120_000, costUsd: 0.42 },
       { ...fallbackIdentity, inputTokens: 600, outputTokens: 90, reasoningTokens: 30, costUsd: 0.04 },

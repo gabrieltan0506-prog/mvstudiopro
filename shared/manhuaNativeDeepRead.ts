@@ -57,6 +57,15 @@ const shotSchema = z
  * 整集卡剔除 non_story_ad 镜头行后的区间账目（绝对秒位）。
  * 完整时间轴仍保留在原始分段卡（Gemini 产物 / raw 证据），供模型完整性验证与审计。
  */
+/**
+ * 🔒 keyMoments 的 `kindZh` **五类白名单 · 单一真源**。
+ * 与审片报告的抽帧六原则一一对应。解析层（本文件）与整形前补扫（manhuaNativeSweepMerge）
+ * 必须共用这一份——两处各写一份正是 0920 那轮补扫把条目写成抽不到帧的根因。
+ */
+export const MANHUA_NATIVE_KEY_MOMENT_KINDS: ReadonlySet<string> =
+  new Set(["切镜", "情绪", "灯光", "剧情", "音轨"]);
+
+
 export const nativeDeepReadExcludedAdRangeSchema = z
   .object({
     startSec: z.number().finite().min(0),
@@ -113,6 +122,7 @@ export const nativeDeepReadSegmentSchema = z
      * 参照 shotSchema 用 .passthrough() 正是同一个道理。
      * 非法条目由 runner 过滤成 advisory，不进硬门。
      */
+    // 🔒 kindZh 白名单见本文件顶部导出的 MANHUA_NATIVE_KEY_MOMENT_KINDS（单一真源）。
     keyMoments: z.array(z.object({
       atSec: z.number().finite().min(0),
       kindZh: z.string().trim().min(1),
@@ -618,7 +628,7 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
    * 非法条目（秒位不在本段区间内、类型不在五类内）**静默丢弃并记 advisory**，
    * 绝不抛错：这是可选字段，不该有弄死整段付费产出的杀伤力。
    */
-  const KEY_MOMENT_KINDS = new Set(["切镜", "情绪", "灯光", "剧情", "音轨"]);
+  const KEY_MOMENT_KINDS = MANHUA_NATIVE_KEY_MOMENT_KINDS;
   const keyMomentSeen = new Set<string>();
   let keyMomentDropped = 0;
   const keyMoments: NativeDeepReadKeyMoment[] = ok

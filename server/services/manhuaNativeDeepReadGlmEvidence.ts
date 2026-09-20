@@ -8,6 +8,7 @@ import {
   GLM_MODEL_GATEWAYS,
   STRUCTURING_CHAIN_GATEWAYS,
   STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS,
+  STRUCTURING_LEGACY_RECOGNIZED_GATEWAYS,
   type GlmGatewayName,
   type GlmRawResponseEvidence,
 } from "./bailianChat.js";
@@ -20,6 +21,8 @@ const STRUCTURING_EVIDENCE_GATEWAYS: ReadonlySet<string> = new Set<string>([
   ...Array.from(GLM_MODEL_GATEWAYS),
   ...STRUCTURING_CHAIN_GATEWAYS,
   ...STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS,
+  // 🔒 0920：Qwen 三档撤出发起顺序后，回读白名单靠这条保持不收缩（删名字＝历史付费证据作废）。
+  ...STRUCTURING_LEGACY_RECOGNIZED_GATEWAYS,
 ]);
 
 /** 来源只接收调用方已有身份；legacy直调缺失字段明确留空，禁止猜集号。 */

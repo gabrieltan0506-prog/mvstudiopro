@@ -1,4 +1,22 @@
 import { buildManhuaLocalVideoSourceRef } from "../../shared/manhuaLocalVideoUpload.js";
+
+// 0920：梯度/上限/容差下沉到叶子模块，断开与 attemptSelection 的循环 import（见该文件注释）。
+import {
+  NATIVE_DEEP_READ_RETRY_TEMPERATURES,
+  NATIVE_DEEP_READ_ESCALATION_MODEL,
+  NATIVE_DEEP_READ_ESCALATION_TEMPERATURES,
+  NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC,
+  NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO,
+  NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC,
+} from "./manhuaNativeDeepReadGradient.js";
+export {
+  NATIVE_DEEP_READ_RETRY_TEMPERATURES,
+  NATIVE_DEEP_READ_ESCALATION_MODEL,
+  NATIVE_DEEP_READ_ESCALATION_TEMPERATURES,
+  NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC,
+  NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO,
+  NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC,
+};
 import type { NativeDeepReadLocalVideoUpload } from "./manhuaNativeDeepReadPlan.js";
 import { writeNativeStructuredCard } from "./manhuaNativeDeepReadStructuredCard.js";
 import { mergeNativeDeepReadRetryDrafts, type NativeDeepReadRetryDraft } from "./manhuaNativeDeepReadRetryDraftMerge.js";
@@ -69,11 +87,15 @@ import {
   nativeProviderReceiptFromError,
   parseNativeProviderErrorReceipt,
 } from "./manhuaNativeProviderReceipt.js";
+import { sweepOneSegmentBeforeStructuring } from "./manhuaNativeSweepScan.js";
 import {
   EVOLINK_GLM_MODEL,
+  EVOLINK_GLM_LEGACY_MODEL_BEFORE_0920,
   GLM_MODEL_GATEWAYS,
   GlmGatewayError,
   OPENROUTER_GLM_MODEL,
+  OPENROUTER_GLM_LEGACY_MODEL_BEFORE_0920,
+  STRUCTURING_LEGACY_RECOGNIZED_GATEWAYS,
   STRUCTURING_CHAIN_GATEWAYS,
   STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS,
   invokeGlmJsonChatWithGatewayFallback,
@@ -435,12 +457,21 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = deepFreezeNativeContract({
  * 同一分片固定三档：0.7 → 0.65 → 0.6，共一次首发、两次重试。
  * 调用方不能插入、删除、换序或覆盖温度；通过即停止，三档均未过即失败。
  */
-export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = deepFreezeNativeContract([0.7, 0.65, 0.6] as const);
+
+
+/**
+ * 🔴 0920 用户令：「**單一分片如果連讀五次都不通過，就升級成Gemini 3.1 pro來讀**」
+ * 「如果重是五次都不通過，**保留分片，不報錯**，換Gemini 3.1 pro來讀，**直接從0.7--0.65--0.6**」。
+ *
+ * 升级只在**首读模型不是 3.1 Pro** 时发生（已经是 Pro 就没有更高档可升）；
+ * 升级读用自己的三档梯度，不接着往下降；三档仍不过才回到既有的「五选一原稿进整形」。
+ */
+
 
 /** 兼容旧诊断导出；0906 起任一必需证据缺陷即拒收，不再凑满三项。 */
 export const NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES = 1;
-/** 0907 用户令「门禁放宽到 15%」：数值偏差最多 15%（0906 曾定 10%，0830 前为 20%）。只进门禁判定，不进提示词。 */
-export const NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO = 0.15;
+/** 0920 用户令「百分之十五放寬到百分之二十」：数值偏差最多 20%。只进门禁判定，不进提示词。 */
+export const NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO = 0.20;
 /**
  * 提示词/schema 里「story 至少 N 条」「平均镜长 ≤ M 秒」的参考值仍按 10% 算：这段文字进段缓存指纹，
  * 改它＝全部已付费分片失配重买。门禁放宽只改判定线（15%），提示词照旧。
@@ -509,23 +540,16 @@ export const NATIVE_DEEP_READ_AD_SINGLE_MAX_RATIO = 0.6;
 export const NATIVE_DEEP_READ_COVERAGE_SOLO_RETRY_CODES: ReadonlySet<string> = new Set([
   "coverage_missing", "coverage_head_gap", "coverage_tail_gap", "timeline_gap",
   /**
-   * 0831 用户拍板加回：镜数低于「离谱地板」可**单独触发**重试。
-   *
-   * 为什么必须有：0830 删掉段级镜数反馈后，模型写 9 镜和写 90 镜，
-   * 门禁反应完全一样。实测 run probe_douyin_20260831035500_86a2a69d attempt1
-   * 给出 **9 镜 / 319 秒 ＝ 35.4 秒一镜**、输出只用 3,689 token（上限的 5.6%）——
-   * 319 秒的漫剧不可能只有 9 个镜头，这是躺平不是「诚实地少写」。
-   * 提示词里的自检基准是软的，模型可以不理，这一发就是不理的证据。
-   *
-   * ⚠️ 这不是回到「硬拒收逼模型凑数」：地板取的是**离谱线 10 秒/镜**
-   * （319 秒＝32 镜），不是 v11 的建议线 6 秒/镜（53 镜）。
-   * 目的只是让「只写 9 镜」有代价，不是逼它写够 53 镜。
+   * 📜 历史：0831 曾把 `shot_density_low` 加回本名单（证据 run
+   * probe_douyin_20260831035500_86a2a69d attempt1：9 镜 / 319 秒＝35.4 秒一镜，
+   * 输出只用上限的 5.6%，属躺平而非「诚实地少写」）。
+   * 🔴 **0920 已撤出**，理由见下——那条证据不失效，但用户按成本重新拍板了。
    */
-  "shot_density_low",
-  // 平均镜长同样可单独触发：等分切法能压在镜数地板上蒙混过关，只有它抓得住。
-  "shot_avg_too_long",
-  // 广告占比异常同样可单独触发重试：整片被标成广告时，其他判据都数不到东西。
-  "ad_ratio_suspicious",
+  // 🔴 0920 用户令「鏡數地板、平均鏡長、廣告佔比 不在觸發重試，降級為advisory」：
+  // `shot_density_low` / `shot_avg_too_long` / `ad_ratio_suspicious` 三条整体移出本名单，
+  // 改进 NON_ACTIONABLE_RETRY_CODES。理由是用户原话：再触发重试就是「白燒好幾次讀片的次數」——
+  // 输入 token 按整片计费，重试一片＝重付一整片视频。
+  // ⚠️ 名字仍留在 ADVISORY_FAMILIES 与文案里，advisory 照发，只是不再换钱重买。
 ]);
 
 export const NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES: ReadonlySet<string> = new Set([
@@ -592,7 +616,18 @@ export const NATIVE_DEEP_READ_DENSITY_GUIDE_BLOCK =
 本段最后三分之一与开头同等重要，用同样的观察密度处理。`;
 
 /** 单条镜头证据的生成上限；在构造禁止区之前初始化，避免模块加载时访问未初始化常量。 */
-export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC = 30;
+/**
+ * 🔒 单条证据段硬上限。
+ * 0829 定 30 秒（用户三十余次实测：不加模型会一次跑 140–300 秒的假长镜）。
+ * 🔴 **0920 用户令放宽到 60 秒、且只留这一层**：
+ *   「平均鏡長可以大於十秒，放寬到單鏡頭小於六十秒」
+ *   「必須放鬆到六十秒內，這個要不然我會白燒好幾次讀片的次數，**只要一層就好**」
+ * 原来的 15 秒软线（SHOT_SINGLE_MAX_SEC / long_take_count）随之整条停用，见下。
+ * ⚠️ 这个数字同时写在提示词禁止项里，进段缓存指纹——历史身份由 `legacyBefore0920` 复原。
+ */
+
+/** 0920 换档前的硬上限；**只进历史指纹复原**，不参与任何现行判定。 */
+export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC_BEFORE_0920 = 30;
 
 /**
  * 统一禁止区（0831 重构）。
@@ -608,7 +643,13 @@ export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC = 30;
  *   · 本区只讲**不许做什么**，不夹带任何要求
  *   · 删掉一切免责声明——门禁那边已有 advisory 在管，提示词不替门禁做免责
  */
-const NATIVE_DEEP_READ_LEGACY_PROHIBITION_BLOCK = `
+/**
+ * 🔑 单条证据段上限**参数化**（0920）：这段文字进段缓存指纹，
+ * 上限从 30 改到 60 之后，必须还能按旧上限渲染出**逐字相同**的历史提示词，
+ * 否则已付费分片全部失配重买。所以这里从 const 改成按 capSec 渲染的函数。
+ */
+function buildNativeDeepReadLegacyProhibitionBlock(capSec: number): string {
+  return `
 【禁止事项】
 · 将 MM:SS 或 HH:MM:SS 去掉冒号后直接当作累计秒，跳过分钟×60或小时×3600换算；例如把文件内 05:13 的本段累计秒误写为 513。
 · 同一段描述套用到不同时间段；两条镜头的画面描述逐字相同。
@@ -629,16 +670,26 @@ const NATIVE_DEEP_READ_LEGACY_PROHIBITION_BLOCK = `
 · 为了打破等长而改动真实剪辑点或虚构镜内变化。
 · 在总结中引入镜头表里没有的内容。
 · 给 non_story_ad 的 hintZh 填写非null内容，或填写 startSec、endSec、evidenceRole、hintZh、detailLevel 之外的字段。
-· 单条 shots 记录的 endSec − startSec 超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒。
+· 单条 shots 记录的 endSec − startSec 超过 ${capSec} 秒。
 · 把同一长镜的证据段边界伪报为真实剪辑切换。`;
+}
 
-export const NATIVE_DEEP_READ_PROHIBITION_BLOCK = NATIVE_DEEP_READ_LEGACY_PROHIBITION_BLOCK
-  .replace("· 同一段描述套用到不同时间段；两条镜头的画面描述逐字相同。\n", "")
-  .replace("，或把上一镜的观察直接套到下一镜。", "。");
+function buildNativeDeepReadProhibitionBlock(capSec: number): string {
+  return buildNativeDeepReadLegacyProhibitionBlock(capSec)
+    .replace("· 同一段描述套用到不同时间段；两条镜头的画面描述逐字相同。\n", "")
+    .replace("，或把上一镜的观察直接套到下一镜。", "。");
+}
+/** 现行上限下的渲染结果；存量导出消费者与探针继续用这两个常量。 */
+const NATIVE_DEEP_READ_LEGACY_PROHIBITION_BLOCK =
+  buildNativeDeepReadLegacyProhibitionBlock(NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC);
+export const NATIVE_DEEP_READ_PROHIBITION_BLOCK =
+  buildNativeDeepReadProhibitionBlock(NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC);
 
 
 export const NATIVE_DEEP_READ_NON_ACTIONABLE_RETRY_CODES: ReadonlySet<string> = new Set([
   "audio_track_thin", "audio_cue_thin", "long_take_count",
+  // 0920 用户令：密度类与广告占比一律只记建议，不触发重试。
+  "shot_density_low", "shot_avg_too_long", "ad_ratio_suspicious",
 ]);
 
 /** 单项命中也必须重试；这些错误会让下游整集规范化必然失败，不能只记 advisory。 */
@@ -646,8 +697,16 @@ export const NATIVE_DEEP_READ_REQUIRED_RETRY_CODES: ReadonlySet<string> = new Se
   "audio_timeline_invalid",
 ]);
 
-/** 门禁未过的降温重试间隔（进契约 SHA 与请求指纹，非用户明令不得改）。 */
-export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS = 60_000;
+/**
+ * 门禁未过的降温重试间隔（进契约 SHA，非用户明令不得改）。
+ * 0920 用户令：「**重試改成間隔三十秒，不要六十秒了**」→ 60 秒改 30 秒。
+ */
+export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS = 30_000;
+/**
+ * 0920 换档前的降温重试间隔（60 秒）。**只进历史身份计算，永不用于真实等待**。
+ * 这个值进段缓存指纹（实测：60→30 两个指纹都变），不复原＝已买断分片全部失配重买。
+ */
+export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS_BEFORE_0920 = 60_000;
 /**
  * 503/429/RESOURCE_EXHAUSTED（视频服务器繁忙）专用退避：不降温、原档补发。
  * 0916 用户令：**隔 30 秒重试 4 次**；四次仍失败才停止，本次已终态分片留给下次续学。
@@ -924,7 +983,8 @@ export function resolveNativeDeepReadInputFps(durationSec: number): number {
  * 镜头表地板（0826 用户拍板改时长制）：15 秒地板等于允许「场面段」冒充逐镜——
  * 探针实证 360s 段 28 镜（均 12.9s/镜、最长 26s）也能过旧地板，品质过粗。
  * 温度只管发挥不管密度，密度必须靠代码门禁：
- *   镜头数 ≥ ceil(段时长/6) · 平均每镜 ≤6s · 单镜 ≤15s（超了=合并了多次切镜）。
+ *   镜头数 ≥ ceil(段时长/6) · 平均每镜 ≤6s · 单镜 ≤15s」（📜 0826 原文；三项均已失效：
+ *   镜数与均长 0920 降 advisory，单镜上限 0920 起是 60 秒一层）。
  */
 export const NATIVE_DEEP_READ_SHOT_FLOOR_INTERVAL_SEC = 6;
 /**
@@ -950,6 +1010,10 @@ export const NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC = 6;
  * 但标题卡/长定场 16–20s 真实存在）：>15s 至多允许 1 个真实长镜。
  * 同一物理长镜超过 30s 时不得截断或伪造切镜，而要按镜内真实变化拆成连续证据段。
  */
+/**
+ * 🔴 **0920 停用**：15 秒软线是「两层」里的那一层，用户明令「只要一層就好」。
+ * 常量保留仅供历史证据与旧测试识别，**不再有任何生产消费者**（long_take_count 已停发）。
+ */
 export const NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC = 15;
 // 25 秒是质量提示线，不应因真实长镜只多 1 秒就重烧整段；30 秒才标记并重试。
 /**
@@ -957,19 +1021,23 @@ export const NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC = 15;
  * 不加这条硬约束，模型会把 140–300 秒整段当成「一个长镜」交差——那不是长镜，
  * 是躺平的另一种形态。0829 曾试图改成「无变化可照实记一条」，用户当场否决：
  * 「不行，超过三十秒必须要拆」「这个不加模型会一次跑 140-300 秒这样的长镜」「我都试过了」。
+ * 🔴 **0920 用户改口径**：拆的要求不变，阈值放宽到 60 秒一层（原话见 HARD_MAX_SEC 注释）。
  * 提示词硬约束 1 与本门禁必须同时保持硬性，任何 agent 不得单方面放宽。
  */
 /**
  * 生成前安排观察与边界；返回后的算术验收由代码执行。
  * 这些文字是生成指引，不代表模型能回退修改已经输出的JSON，也不保证内容正确。
  */
-export function buildNativeDeepReadObservationPlanBlock(lenSec: number): string {
+export function buildNativeDeepReadObservationPlanBlock(
+  lenSec: number,
+  capSec: number = NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC,
+): string {
   return `
 【观察与输出顺序】
 
 1. 通览本段 ${Math.round(lenSec)} 秒画面，定位每次真实剪辑切换及镜内变化，规划连续覆盖整段的时间边界。
 2. 先输出 keyMoments：定位每个 atSec 的原帧，核实人物、地点、动作及可见字幕，再填写 noteZh；音轨类同时核实该秒声音。
-3. ${buildNativeDeepReadDensityContract(lenSec)}
+3. ${buildNativeDeepReadDensityContract(lenSec, capSec)}
 4. 再输出 shots：按硬约束 2 确定每条记录的起止秒位，依据已输出 keyMoments 的前后6秒范围判定重点镜或简写镜，然后填写对应字段，沿原片时间轴继续下一条。`;
 }
 
@@ -1018,16 +1086,16 @@ export const NATIVE_DEEP_READ_SEGMENT_COVERAGE_FLOOR_RATIO = 0.5;
  * 为了「30.4 秒 vs 30 秒」这种擦边去重买一整片，换回来的产出并不更对。
  * 只对**数值**门禁生效；字段齐全 / 五维五键 / zod 这类二值判定没有 10% 可言，不受影响。
  */
-/** 0907 用户令「门禁放宽到 15%」（实际单镜拒收线 34.5 秒）；0831 曾定 10%，不回退到 v11 的零容差。 */
-export const NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO = 0.15;
+/** 0920 用户令「百分之十五放寬到百分之二十」→ 单镜拒收线 60 × 1.2 = **72 秒**。 */
+
 /**
- * 单镜拒收线 = 硬上限 × (1 + 容差) = 34.5 秒（0907 用户放宽到 15%）。
- * 🔴 软上限整条删除：用户原话「軟上限就是有偷懒的空間」——
- * 40–60 秒的镜头此前既不触发 advisory 也不拒收，模型自然往粗里切。
- * v28 实证：上限放到 60 后，六片镜头数在 18–72 之间摆动 4 倍，三片命中 long_take_count。
+ * 单镜拒收线 = 硬上限 × (1 + 容差) = **72 秒**（0920 用户令：上限 60 + 容差 20%）。
+ * 📜 历史：0907 曾以「軟上限就是有偷懒的空間」删掉软上限，并记 v28 实证
+ * （上限放到 60 后六片镜头数在 18–72 之间摆动 4 倍）。
+ * 🔴 **0920 用户按成本重新拍板**：「必須放鬆到六十秒內…只要一層就好」
+ * ——密度摆动改由 advisory 记录，不再换钱重买。
  */
-export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC =
-  NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC * (1 + NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO);
+
 /**
  * 整集镜头留存率**实际拒收线** = 0.5 × 0.9 = 0.45（0830 用户令「容错率改为上下百分之十」：
  * 每条数值门禁按方向各让 10%——上限 +10%，下限 −10%）。此前这条漏了容差。
@@ -1106,7 +1174,11 @@ export function buildGeminiNativeDeepReadSegmentPrompt(input: NativeDeepReadSegm
 }
 
 /** 历史版本仅计算已付费证据身份；新模型请求始终使用公开构建器。 */
-function buildGeminiNativeDeepReadSegmentPromptVersion(input: NativeDeepReadSegmentPromptInput, legacyCoverage: boolean): string {
+function buildGeminiNativeDeepReadSegmentPromptVersion(
+  input: NativeDeepReadSegmentPromptInput,
+  legacyCoverage: boolean,
+  capSec: number = NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC,
+): string {
   const observation = legacyCoverage ? NATIVE_DEEP_READ_SHOT_OBSERVATION_ZH : NATIVE_DEEP_READ_COVERAGE_OBSERVATION_ZH;
   const lenSec = Math.max(1, Math.round(input.endSec - input.startSec));
   const videoFps = resolveNativeDeepReadRequestFps(lenSec, input.videoFps);
@@ -1139,10 +1211,10 @@ audioResolution 内的 fromSec/toSec、cues.atSec 使用本段局部整数秒，
 
 2. 镜头记录与生成前长镜拆分
 真实剪辑切换的 unitTypeZh 写「剪辑镜头」。
-**每条 shots 记录最长 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒。**在输出本条 JSON 对象之前，先确定 startSec 和 endSec，使 0 < endSec − startSec ≤ ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC}；然后填写本条画面内容。
+**每条 shots 记录最长 ${capSec} 秒。**在输出本条 JSON 对象之前，先确定 startSec 和 endSec，使 0 < endSec − startSec ≤ ${capSec}；然后填写本条画面内容。
 真实剪辑镜头按实际起止秒位记录，短于 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒也完整保留；相邻镜头时长可以相同。
-遇到持续超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒的同一真实长镜，先规划多个首尾相接的证据段，再逐条输出，完整覆盖原镜头。优先在实际构图、运镜、角色调度、动作、表演或光影变化处分段；持续静止或持续对话同样按上限续接，并如实记录该段保持的状态。
-同一长镜的每个拆分证据段保持 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒；该下限仅适用于同一长镜的拆分证据段。
+遇到持续超过 ${capSec} 秒的同一真实长镜，先规划多个首尾相接的证据段，再逐条输出，完整覆盖原镜头。优先在实际构图、运镜、角色调度、动作、表演或光影变化处分段；持续静止或持续对话同样按上限续接，并如实记录该段保持的状态。
+同一长镜的每个拆分证据段保持 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${capSec} 秒；该下限仅适用于同一长镜的拆分证据段。
 在输出前安排好尾段：不足 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒的余量与前段共同调整边界，使各段仍处于上述范围，原镜头首尾保持完整。
 拆分后的 unitTypeZh 写「拆分镜证据段」；第二段及后续段的 transitionInZh 固定写「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」。
 
@@ -1168,7 +1240,7 @@ ${audioHardRule}
 分段序号：第 ${input.segmentIndex + 1}/${input.segmentCount} 段。
 音轨段号：${input.segmentIndex}。${hint ? `\n补充信息：${hint}。\n补充信息用于辅助定位；本镜的环境、道具与动作以该时段原片可见证据为准。` : ""}
 
-${buildNativeDeepReadObservationPlanBlock(lenSec)}
+${buildNativeDeepReadObservationPlanBlock(lenSec, capSec)}
 
 【正向要求一：关键抓帧 keyMoments】
 
@@ -1193,7 +1265,7 @@ story 镜头分两档：
 - **重点镜**：起止秒与任一 keyMoments.atSec 前后 ${NATIVE_DEEP_READ_KEY_SHOT_WINDOW_SEC} 秒有交集的镜头，${legacyCoverage ? "按以下顺序完整填写 18 字段——先记录本镜时间与分类，再生成本镜观察 hintZh，随后依据本镜画面填写详细分析。" : "先记录本镜时间、分类、观察和动作，再依据实际画面详写相关分析，各项遵守下列字数上限。"}
 - **简写镜**：其余镜头只填 startSec、endSec、evidenceRole、hintZh（≤40字）、actionZh（≤40字）；长镜拆分的续段另填 transitionInZh 的规定续接标记。镜头切分、时间覆盖与数量要求两档相同，简写不是少记镜头，只是少写字段。
 先定 keyMoments 再决定各镜档位；hintZh 是本次输出的逐镜观察，和调用前的补充信息各自独立。
-- startSec / endSec：本镜实际起止秒位。单条最长 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒；真实短镜按实际时长保留，超过上限的长镜按硬约束 2 拆成每段 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒。
+- startSec / endSec：本镜实际起止秒位。单条最长 ${capSec} 秒；真实短镜按实际时长保留，超过上限的长镜按硬约束 2 拆成每段 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${capSec} 秒。
 - evidenceRole：按统一分类规则填写。
 - hintZh：${observation.hintZh}≤80字。
 - unitTypeZh：剪辑镜头／拆分镜证据段。
@@ -1271,7 +1343,7 @@ shots 条目按 evidenceRole 区分两种结构：
 
 本轮重做要求：
 1. 只修正上面点名的问题，其余一律照常完整观察。
-2. 证据段过长时的唯一正确做法是**按前文长镜拆分规则拆成多条**（每段 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，
+2. 证据段过长时的唯一正确做法是**按前文长镜拆分规则拆成多条**（每段 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${capSec} 秒，
    后续段 transitionInZh 写固定标记）。
 3. 每条证据的画面描述必须来自你在该时间段真实看到的内容。${
   // 无音轨片保持空数组契约；声音观察要求仅用于有音轨片。
@@ -1291,7 +1363,7 @@ shots 条目按 evidenceRole 区分两种结构：
     : ""}`
     : "";
   // 首发与重试共用一个禁止区；重试新增禁令也留在此区，避免再次混入正向要求。
-  return `${retryRequirements}\n${legacyCoverage ? NATIVE_DEEP_READ_LEGACY_PROHIBITION_BLOCK : NATIVE_DEEP_READ_PROHIBITION_BLOCK}${retryProhibitions}`;
+  return `${retryRequirements}\n${legacyCoverage ? buildNativeDeepReadLegacyProhibitionBlock(capSec) : buildNativeDeepReadProhibitionBlock(capSec)}${retryProhibitions}`;
 }
 
 /** 同一段的可信输入由生产者传递，既用于生成请求，也用于探针独立校验。 */
@@ -1313,17 +1385,28 @@ export function resolveNativeDeepReadDensityContract(lenSec: number) {
   };
 }
 
-function buildNativeDeepReadDensityContract(lenSec: number): string {
+function buildNativeDeepReadDensityContract(
+  lenSec: number,
+  capSec: number = NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC,
+): string {
   const rule = resolveNativeDeepReadDensityContract(lenSec);
-  return `本段镜数参考线为 ${rule.referenceShots} 条；存在剧情镜时 story 至少 ${rule.minStoryShots} 条，广告另计。剧情镜平均时长（剧情镜时长总和÷剧情镜数）上限为 ${rule.maxAverageSec} 秒；完整${Math.round(lenSec)}秒均为剧情时，至少需要 ${Math.ceil(lenSec / rule.maxAverageSec)} 条。镜数和平均时长用于提示可能漏记的内容，逐镜边界和描述以原片实际证据为准。每条 shots 记录的 endSec − startSec 上限固定为 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒；真实长镜按该上限提前规划连续证据段。完整输出覆盖整段时间轴。`;
+  return `本段镜数参考线为 ${rule.referenceShots} 条；存在剧情镜时 story 至少 ${rule.minStoryShots} 条，广告另计。剧情镜平均时长（剧情镜时长总和÷剧情镜数）上限为 ${rule.maxAverageSec} 秒；完整${Math.round(lenSec)}秒均为剧情时，至少需要 ${Math.ceil(lenSec / rule.maxAverageSec)} 条。镜数和平均时长用于提示可能漏记的内容，逐镜边界和描述以原片实际证据为准。每条 shots 记录的 endSec − startSec 上限固定为 ${capSec} 秒；真实长镜按该上限提前规划连续证据段。完整输出覆盖整段时间轴。`;
 }
 
 /** 仅整理模型可见的长镜拒因；完整诊断、内部容差和重试决策原样保留。 */
 function nativeDeepReadRetryReasonForPrompt(reason: string): string {
+  // 🔴 这三条正则曾把 33 / 30 / 10% 写死：阈值一改就永远匹配不到（等于哑弹），
+  // 而它要防的是「内部容差数字泄漏进模型的正向区」。改成按当前常量生成。
+  const rejectSec = String(Math.round(NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC * 10) / 10);
+  const capSec = String(NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC);
+  const tolPct = String(Math.round(NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO * 100));
+  void rejectSec; void tolPct;
+  // 🔴 用**通配**而不是当前阈值：拒因可能来自历史缓存（旧阈值 33/30/10%），
+  // 只认当前数字会让旧文案整段漏过去，把「容差」泄漏进模型正向区——正是本函数要防的。
   return reason
-    .replace(/超过\s*33\s*秒的镜头证据段（要求\s*30\s*秒\s*\+\s*10%\s*容差）/g,
-      "超过30秒输出上限的镜头证据段")
-    .replace(/镜头证据段超过\s*33\s*秒/g, "镜头证据段超过30秒输出上限")
+    .replace(/超过\s*[0-9.]+\s*秒的镜头证据段（要求\s*[0-9.]+\s*秒\s*\+\s*[0-9.]+%\s*容差）/g,
+      `超过${capSec}秒输出上限的镜头证据段`)
+    .replace(/镜头证据段超过\s*[0-9.]+\s*秒/g, `镜头证据段超过${capSec}秒输出上限`)
     .replace("；这几条必须按镜内变化拆成连续证据段，禁止截断尾部",
       "；本次生成前按长镜拆分规则安排完整连续的证据段");
 }
@@ -1401,6 +1484,9 @@ export function nativeDeepReadStructuringGatewayOrder(
   }
   // 0906 用户令「不走 Qwen」：GLM 链只剩 OpenRouter（钉 Z.AI）与 EvoLink 两档，不再切 Qwen；判坏重试仍按每档两次
   // 0907 用户令「一路走 OpenRouter 一路走 EvoLink」：并发批次分流首发，第 1 批 OpenRouter→EvoLink，第 2 批 EvoLink→OpenRouter
+  // 🔒 **分流不能去掉**：两条 lane 若同时首发同一网关，会撞上同通道租约排队＝并发整形退化成串行
+  //    （用户 0920：「一般來說我都是併發整形的」）。0920「open router 打折」落在模型换 Flash 与
+  //    OpenRouter 留在链上，不改这条分流。
   return odd ? ["evolink_glm", "openrouter"] : ["openrouter", "evolink_glm"];
 }
 
@@ -1426,7 +1512,7 @@ export function buildNativeDeepReadResponseSchema(context: NativeDeepReadSegment
 }
 
 /** 历史单结构仅用于旧付费证据指纹；所有新请求使用公开构建函数的三分支。 */
-function buildNativeDeepReadResponseSchemaVersion(context: NativeDeepReadSegmentContext, legacySingleShape: boolean, legacyBranchGuidance = false, legacyCoverage = true): Record<string, unknown> {
+function buildNativeDeepReadResponseSchemaVersion(context: NativeDeepReadSegmentContext, legacySingleShape: boolean, legacyBranchGuidance = false, legacyCoverage = true, capSec: number = NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC): Record<string, unknown> {
   if (!Number.isFinite(context.startSec) || !Number.isFinite(context.endSec)
     || context.startSec < 0 || context.endSec <= context.startSec
     || !Number.isSafeInteger(context.segmentIndex) || context.segmentIndex < 0
@@ -1436,7 +1522,7 @@ function buildNativeDeepReadResponseSchemaVersion(context: NativeDeepReadSegment
   const lenSec = Math.max(1, Math.round(context.endSec - context.startSec));
   const absoluteRangeZh = `全片绝对秒，范围 ${Math.round(context.startSec)} 至 ${Math.round(context.endSec)} 秒`;
   const shot = props.shots!.items!;
-  props.shots!.description = buildNativeDeepReadDensityContract(lenSec)
+  props.shots!.description = buildNativeDeepReadDensityContract(lenSec, capSec)
     + "story与non_story_ad分别按条目分类要求填写。";
   shot.description = `story条目分两档：重点镜（起止与任一 keyMoments.atSec 前后 ${NATIVE_DEEP_READ_KEY_SHOT_WINDOW_SEC} 秒有交集）按顺序完整填写以下18字段：${Object.keys(shot.properties!).join("、")}；其余简写镜只填 startSec、endSec、evidenceRole、hintZh、actionZh，其它字段省略。`
     + "重点镜18字段逐项非空，依据本镜可见内容具体填写。先写本镜hintZh观察，再写详细分析。non_story_ad仅保留startSec、endSec、evidenceRole三个有内容的字段，hintZh固定为null空占位。";
@@ -1449,7 +1535,7 @@ function buildNativeDeepReadResponseSchemaVersion(context: NativeDeepReadSegment
   // 官方结构化输出支持propertyOrdering；仅约束逐镜生成顺序，与正文逐项顺序一致。
   shot.propertyOrdering = Object.keys(shot.properties!);
   shot.properties!.startSec = { type: "NUMBER", description: `${absoluteRangeZh}，填写实际起点，可保留一位小数。` };
-  shot.properties!.endSec = { type: "NUMBER", description: `${absoluteRangeZh}，生成本条前确定终点，满足startSec < endSec ≤ startSec + ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC}，可保留一位小数；真实长镜按单条上限连续分段。` };
+  shot.properties!.endSec = { type: "NUMBER", description: `${absoluteRangeZh}，生成本条前确定终点，满足startSec < endSec ≤ startSec + ${capSec}，可保留一位小数；真实长镜按单条上限连续分段。` };
   props.keyMoments!.description = NATIVE_DEEP_READ_KEY_MOMENT_SELECTION_ZH;
   const firstFrameSec = Number((Math.ceil(context.startSec * 10) / 10).toFixed(1));
   const lastFrameSec = Number((Math.ceil(context.endSec * 10) / 10 - 0.1).toFixed(1));
@@ -1593,7 +1679,12 @@ export function nativeDeepReadFrozenContractSha256(): string {
 // 0906 用户明确授权三分支required与类型标记；生成时约束结构，返回后由代码验证实际类型和非空内容。
 // 0906 追加授权：普通镜可以额外填写重点细节；只放宽返回后该方向的检查。
 // 0906 当前用户授权：撤销额外内容强迫、完整音画生成与缺口反馈；采样及输出参数保持不变。
-export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "72bbec15c7ec0bd6eb111543c73d239dc040e1d2731803643d0f6f9f31bf413e" as const;
+// 0920 用户授权解冻（原话「我授權解凍」）：本轮变更冻结项 —— 重试梯度 0.7/0.65×2/0.6×2、
+// 门禁容差与偏差线 15%→20%、单条证据段上限 30→60（一层）、密度与广告占比三条降 advisory。
+// 覆盖线保持 90%（用户原话「覆蓋率要百分之九十這條不變，不要求到百分之百」）。
+// 0920 追加解冻（用户原话「重試改成間隔三十秒，不要六十秒了」）：降温重试间隔 60→30 秒；
+// 历史已付费分片按 legacyBefore0920 复原旧 60 秒身份（实测叠旗标后指纹逐位相同）。
+export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "4e7ee4fe001e912931c03b8738e759af6c062c59afd4f4e01b8868eefa529656" as const;
 
 export function assertNativeDeepReadFrozenContract(): void {
   const actual = nativeDeepReadFrozenContractSha256();
@@ -1611,19 +1702,33 @@ export function buildGeminiNativeDeepReadSegmentRequest(input: {
   fps: number;
   prompt: string;
   segmentContext: NativeDeepReadSegmentContext;
-  /** 只允许选择冻结梯度中的尝试序号；调用方不能覆盖 generationConfig。 */
-  attemptIndex?: 0 | 1 | 2;
+  /**
+   * 只允许选择冻结梯度中的尝试序号；调用方不能覆盖 generationConfig。
+   * 0920 起首读梯度 5 档；**升级档（3.1 Pro）另有 3 档，序号接着往后数**（5→7），
+   * 由 `escalated` 标记，温度取升级梯度表，不与首读梯度混用。
+   */
+  attemptIndex?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+  /** true＝这一发属于 0920 升级档（Gemini 3.1 Pro，0.7/0.65/0.6）。 */
+  escalated?: boolean;
 }): Record<string, unknown> {
   assertNativeDeepReadFrozenContract();
   const attemptIndex = input.attemptIndex ?? 0;
-  if (!Number.isSafeInteger(attemptIndex)
-    || attemptIndex < 0 || attemptIndex >= NATIVE_DEEP_READ_RETRY_TEMPERATURES.length) {
-    throw new Error("原生精读只允许冻结的0.7/0.65/0.6三档尝试序号");
+  const gradient = input.escalated === true
+    ? NATIVE_DEEP_READ_ESCALATION_TEMPERATURES
+    : NATIVE_DEEP_READ_RETRY_TEMPERATURES;
+  const gradientIndex = input.escalated === true
+    ? attemptIndex - NATIVE_DEEP_READ_RETRY_TEMPERATURES.length
+    : attemptIndex;
+  if (!Number.isSafeInteger(gradientIndex)
+    || gradientIndex < 0 || gradientIndex >= gradient.length) {
+    throw new Error(
+      `原生精读只允许冻结梯度内的尝试序号（${gradient.join("/")}，共 ${gradient.length} 发`
+      + `${input.escalated === true ? "，升级档序号从 " + (NATIVE_DEEP_READ_RETRY_TEMPERATURES.length + 1) + " 起" : ""}）`);
   }
   const generationConfig = {
     ...NATIVE_DEEP_READ_GENERATION_CONFIG,
     responseSchema: buildNativeDeepReadResponseSchema(input.segmentContext),
-    temperature: NATIVE_DEEP_READ_RETRY_TEMPERATURES[attemptIndex],
+    temperature: gradient[gradientIndex],
   };
   return {
     contents: [{
@@ -1850,11 +1955,18 @@ export const NATIVE_DEEP_READ_MEDIA_PREP_MAX_CONCURRENCY = 4;
  */
 export const NATIVE_DEEP_READ_MEDIA_UPLOAD_MAX_CONCURRENCY = 4;
 /**
- * 单集模型调用并发上限。0901 拍板 5 片；**0904 用户令降到 4**，为的是压住 503：
- * Vertex 上 3.8 flash 无固定配额（动态共享池），5 路扇出会把自己挤成资源拥堵。
+ * 单集模型调用并发上限。0901 拍板 5 片；0904 用户令降到 4（压 503）；
+ * **0920 用户令改回 5**：原话「我讀片都是五片並發的」「把四片並發改成五片」。
+ * 撞 503 时不靠降并发兜，靠既有资源退避（30 秒 × 4 次、不降温）。
  * 调用方可调低，不能抬高生产上限。
  */
-export const NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY = 4;
+export const NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY = 5;
+
+/**
+ * 0920 用户令：「**加一個條件，切滿五片就直接傳到ＧＣＳ開始ＧＥＭＩＮＩ讀片，不用全部切完才傳**」。
+ * 备料层按这个片数分组：切满一组就并发上传并回调，读片不再等整集切完。
+ */
+export const NATIVE_DEEP_READ_PREPARED_GROUP_SIZE = 5;
 
 function mediaHeaders(node: NativeDeepReadMediaNode): string[] {
   const referer = String(node.referer || "").trim();
@@ -2103,6 +2215,15 @@ export async function prepareEpisodeVideos(
     uploadConcurrency?: number;
     /** 媒体备料全程进度播报：整片拉取 / 落盘完成 / 切片 N/M / 上传 N/M（0905 用户令：面板不许十几分钟零进度）。 */
     onSourceFetchProgress?: (zh: string) => void | Promise<void>;
+    /** 0920 用户令：切满这么多片就先传先读（缺省 5）。 */
+    preparedGroupSize?: number;
+    /**
+     * 0920 用户令：每组上传完成即回调，调用方可以立刻开始读这几片，不等整集备完。
+     * 回调抛错视为备料失败（调用方已经开始读，必须让备料方停下来）。
+     */
+    onPreparedGroup?: (
+      rows: readonly { segmentIndex: number; video: PreparedNativeVideo }[],
+    ) => void | Promise<void>;
   },
 ): Promise<PreparedNativeVideo[]> {
   const segments = validateNativeDeepReadSegments(episode.segments);
@@ -2315,6 +2436,14 @@ export async function prepareEpisodeVideos(
             bytes: fileStat.size,
             hasAudio: media.hasAudio,
           };
+          /**
+           * 音轨一致性闸：原来是「整集切完后一次比对」，0920 改成先传先读后，
+           * 必须改成**与第一片逐片比对**——否则混音轨的片会先被传上去开读，钱已经花掉。
+           */
+          const firstCut = cutRows.find((row, rowIndex) => row !== undefined && rowIndex !== index);
+          if (firstCut && firstCut.hasAudio !== media.hasAudio) {
+            throw new Error(`第${episode.episodeIndex}集分片音轨存在性不一致，已停止上传`);
+          }
           completed = true;
           cutDone += 1;
           await reportMedia(
@@ -2335,44 +2464,26 @@ export async function prepareEpisodeVideos(
       }
       if (!completed) throw lastError instanceof Error ? lastError : new Error("视频分片准备失败");
     };
-    const workers = Array.from({ length: concurrency }, async () => {
-      while (!stopSchedulingCuts) {
-        const index = nextIndex;
-        nextIndex += 1;
-        if (index >= segments.length) return;
-        try {
-          await prepareOne(index);
-        } catch (error) {
-          if (!cutFailed) firstCutFailure = error;
-          cutFailed = true;
-          stopSchedulingCuts = true;
-          return;
-        }
-      }
-    });
-    await Promise.allSettled(workers);
-    if (cutFailed) throw firstCutFailure;
-    if (cutRows.filter(Boolean).length !== segments.length) {
-      throw new Error(`第${episode.episodeIndex}集媒体切片结果不完整，已停止`);
-    }
+    /**
+     * 0920 用户令：「切滿五片就直接傳到ＧＣＳ開始ＧＥＭＩＮＩ讀片，不用全部切完才傳」。
+     * 切片 worker 把切好的片推进 readyQueue；上传泵按 groupSize 取一组并发上传，
+     * 每组传完立刻回调调用方（调用方即可开读这几片），不再等整集切完。
+     */
+    const groupSize = Math.max(1, Math.floor(
+      Number(limits?.preparedGroupSize) || NATIVE_DEEP_READ_PREPARED_GROUP_SIZE,
+    ));
+    const readyQueue: number[] = [];
+    let cuttingFinished = false;
+    let wakeUploader: (() => void) | undefined;
+    const signalUploader = () => { const wake = wakeUploader; wakeUploader = undefined; wake?.(); };
 
-    const completeCutRows = cutRows as Array<NonNullable<(typeof cutRows)[number]>>;
-    if (completeCutRows.some((row) => row.hasAudio !== completeCutRows[0]!.hasAudio)) {
-      throw new Error(`第${episode.episodeIndex}集分片音轨存在性不一致，已停止上传`);
-    }
-    // 上传改并发（0829 晚用户令「改成并发，不是串行」）。
-    // 旧实现是一个严格串行 for 循环——六片就是六次往返排队，是全链最明显的串行点。
-    // 仍保留并发上限：uploadBufferToGcs 会复制 Buffer，无上限并发在极端片源下吃内存。
     const uploadCap = Math.max(1, Math.floor(
       Number(limits?.uploadConcurrency) || NATIVE_DEEP_READ_MEDIA_UPLOAD_MAX_CONCURRENCY,
     ));
-    const uploadConcurrency = Math.max(1, Math.min(uploadCap, completeCutRows.length));
-    let nextUploadIndex = 0;
     let uploadFailure: unknown;
-    let stopUploading = false;
     const uploadOne = async (index: number): Promise<void> => {
       abortSignal?.throwIfAborted();
-      const row = completeCutRows[index]!;
+      const row = cutRows[index]!;
       const uploaded = await deps.upload({
         objectName: `${NATIVE_VIDEO_TEMP_PREFIX}/${row.runId}.mp4`,
         buffer: await deps.readLocal(row.localPath),
@@ -2390,29 +2501,77 @@ export async function prepareEpisodeVideos(
       };
       uploadDone += 1;
       await reportMedia(
-        `第${episode.episodeIndex}集 · 上传 ${uploadDone}/${completeCutRows.length} 完成`
-        + (uploadDone === completeCutRows.length ? " · 备料齐全，开始逐段模型调用" : ""),
+        `第${episode.episodeIndex}集 · 上传 ${uploadDone}/${segments.length} 完成`
+        + (uploadDone === segments.length ? " · 备料齐全" : " · 本组可以开始读片"),
       );
     };
-    const uploadWorkers = Array.from({ length: uploadConcurrency }, async () => {
-      while (!stopUploading) {
-        const index = nextUploadIndex;
-        nextUploadIndex += 1;
-        if (index >= completeCutRows.length) return;
+    /** 一组内并发上传；组内任一失败即视为备料失败（不再排新组）。 */
+    const uploadGroup = async (indexes: readonly number[]): Promise<void> => {
+      let nextInGroup = 0;
+      let stop = false;
+      const groupWorkers = Array.from({ length: Math.min(uploadCap, indexes.length) }, async () => {
+        while (!stop) {
+          const position = nextInGroup;
+          nextInGroup += 1;
+          if (position >= indexes.length) return;
+          try {
+            await uploadOne(indexes[position]!);
+          } catch (error) {
+            if (uploadFailure === undefined) uploadFailure = error;
+            stop = true;
+            return;
+          }
+        }
+      });
+      await Promise.allSettled(groupWorkers);
+      if (uploadFailure !== undefined) throw uploadFailure;
+      // 回调抛错＝调用方那侧已经出问题，备料必须停下来，不再继续上传后续组
+      await limits?.onPreparedGroup?.(indexes.map((index) => ({
+        segmentIndex: index, video: prepared[index]!,
+      })));
+    };
+    const uploadPump = (async () => {
+      while (true) {
+        if (uploadFailure !== undefined || cutFailed) return;
+        const takeAll = cuttingFinished || stopSchedulingCuts;
+        if (readyQueue.length >= groupSize || (takeAll && readyQueue.length > 0)) {
+          const take = readyQueue.length >= groupSize ? groupSize : readyQueue.length;
+          await uploadGroup(readyQueue.splice(0, take));
+          continue;
+        }
+        if (takeAll) return;
+        await new Promise<void>((resolve) => { wakeUploader = resolve; });
+      }
+    })();
+
+    const workers = Array.from({ length: concurrency }, async () => {
+      while (!stopSchedulingCuts) {
+        const index = nextIndex;
+        nextIndex += 1;
+        if (index >= segments.length) return;
         try {
-          await uploadOne(index);
+          await prepareOne(index);
+          readyQueue.push(index);
+          signalUploader();
         } catch (error) {
-          // 已在途的兄弟上传照样等回执（外层 catch 负责清理已传对象），
-          // 但不再排新的，避免失败后继续往 GCS 堆垃圾。
-          if (uploadFailure === undefined) uploadFailure = error;
-          stopUploading = true;
+          if (!cutFailed) firstCutFailure = error;
+          cutFailed = true;
+          stopSchedulingCuts = true;
+          signalUploader();
           return;
         }
       }
     });
-    await Promise.allSettled(uploadWorkers);
+    await Promise.allSettled(workers);
+    cuttingFinished = true;
+    signalUploader();
+    await uploadPump.catch((error) => { if (uploadFailure === undefined) uploadFailure = error; });
+    if (cutFailed) throw firstCutFailure;
     if (uploadFailure !== undefined) throw uploadFailure;
-    if (prepared.filter(Boolean).length !== completeCutRows.length) {
+    if (cutRows.filter(Boolean).length !== segments.length) {
+      throw new Error(`第${episode.episodeIndex}集媒体切片结果不完整，已停止`);
+    }
+    if (prepared.filter(Boolean).length !== segments.length) {
       throw new Error(`第${episode.episodeIndex}集分片上传结果不完整，已停止`);
     }
     return prepared as PreparedNativeVideo[];
@@ -3166,15 +3325,10 @@ function collectLongTakeAdvisories(input: {
     });
     physicalDurations = evidenceDurations;
   }
-  const physicalLongTakes = physicalDurations
-    .filter((shotLen) => shotLen > NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC);
-  if (physicalLongTakes.length > NATIVE_DEEP_READ_SHOT_LONG_TAKE_ALLOWANCE) {
-    out.push({
-      code: "long_take_count",
-      detailZh: `${input.labelZh}有 ${physicalLongTakes.length} 个超过 ${NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC} 秒的真实长镜（最长 ${Math.round(Math.max(...physicalLongTakes))} 秒），仅提示不拒收`,
-      segmentIndex: input.segmentIndex,
-    });
-  }
+  // 🔴 0920 用户令「只要一層就好」：原来这里按 15 秒软线再数一遍真实长镜并发
+  // `long_take_count`，那正是被撤掉的第二层。现在唯一的层是上面 60 秒（+20% 容差＝72 秒）的硬闸。
+  // `long_take_split_discontinuous`（长镜拆分不连续）不属于「层」，是结构判据，照旧保留。
+  void physicalDurations;
   return out;
 }
 
@@ -3683,7 +3837,7 @@ export function assertNativeDeepReadSegmentDensity(input: {
    *     后者正是「回得越少地板越低、越容易过」的洞。
    *
    * 上限与覆盖这两条与体裁无关的硬约束照旧：
-   *   · 单条证据段 ≤30 秒（用户三十余次实测拍板，不得放宽）
+   *   · 单条证据段 ≤60 秒（0829 定 30 秒；**0920 用户明令放宽到 60 且只留这一层**）
    *   · 段级覆盖率地板（整片必须读完，回 3 秒即拒）
    */
   const shotFloor = resolveNativeDeepReadDensityContract(lenSec).referenceShots;
@@ -3701,7 +3855,8 @@ export function assertNativeDeepReadSegmentDensity(input: {
    * 🔴 平均镜长门禁：接回 0826 就存在、后来被架空的那条线。
    *
    * 0826 代码注释原话：「温度只管发挥不管密度，密度必须靠代码门禁：
-   * 镜头数 ≥ ceil(段时长/6) · 平均每镜 ≤6s · 单镜 ≤15s（超了=合并了多次切镜）」。
+   * 镜头数 ≥ ceil(段时长/6) · 平均每镜 ≤6s · 单镜 ≤15s」（📜 0826 原文，三项均已失效：
+   * 镜数与均长 0920 降 advisory，单镜上限 0920 起是 60 秒一层）。
    * `NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC = 6` 常量一直在，但 0830 删镜数门禁时
    * 连它的消费者一起删了——常量成了死代码，全仓 grep `shot_avg_too_long` 零结果。
    *
@@ -3838,7 +3993,7 @@ export function assertNativeDeepReadEpisodeEvidence(input: {
   if (overlongShots.length > 0) {
     throw gateError(
       `第${input.episodeIndex}集整集卡有 ${overlongShots.length} 条证据超过`
-      + ` ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC} 秒（${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒 + 10% 容差）（最长`
+      + ` ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC} 秒（${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒 + ${Math.round(NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO * 100)}% 容差）（最长`
       + ` ${Math.max(...overlongShots.map((r) => r.lenSec)).toFixed(1)} 秒，起于`
       + ` ${overlongShots[0]!.startSec.toFixed(1)} 秒）：必须按镜内真实变化拆成连续证据段，`
       + `不许靠丢弃证据满足`,
@@ -3897,7 +4052,7 @@ export function assertNativeDeepReadEpisodeEvidence(input: {
     throw new Error(`第${input.episodeIndex}集整形后镜头覆盖率 ${(episodeCoverage.coverageRatio * 100).toFixed(2)}%，低于 90%，整集拒绝入库`);
   }
   if (episodeCoverage.coverageRatio < 1) {
-    noteEpisode("episode_coverage_gap", `整集原始镜头覆盖率 ${(episodeCoverage.coverageRatio * 100).toFixed(2)}%，缺口在 10% 容差内，保留真实区间`);
+    noteEpisode("episode_coverage_gap", `整集原始镜头覆盖率 ${(episodeCoverage.coverageRatio * 100).toFixed(2)}%，缺口在覆盖线 ${(NATIVE_DEEP_READ_SEGMENT_COVERAGE_RETRY_RATIO * 100).toFixed(0)}% 之上，保留真实区间`);
   }
   const storyShots = allShots.filter((shot) => shot.evidenceRole === "story");
   const storyDurationSec = storyShots.reduce(
@@ -4041,13 +4196,21 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE = "openrouter_glm_structurin
  */
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL = `${EVOLINK_GLM_MODEL}→${OPENROUTER_GLM_MODEL}`;
 /** 开始/失败回执的人话链路标签（0905：用户看了几百次「z-ai/glm-5.3」以为一直走 OpenRouter）。 */
-export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 · 第1批 OpenRouter（Z.AI）→EvoLink · 第2批 EvoLink→OpenRouter，不切 Qwen（单档 20 分钟，有心跳即延长）";
+/**
+ * 0920 只换模型名，**双路分流一字不动**（用户否决过「OpenRouter 转主档」那个外推：
+ * 「我說用open router我從沒說過要放棄evolink」）。两批首发不同是 0907 拍板的并发分流，
+ * 文案必须照实写，否则面板显示的链路与真实发起顺序不符。
+ */
+export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 Flash · 第1批 OpenRouter（Z.AI）→EvoLink · 第2批 EvoLink→OpenRouter，不切 Qwen（单档 20 分钟，有心跳即延长）";
 export const NATIVE_DEEP_READ_QWEN_STRUCTURING_STARTED_LABEL = "Qwen3.8-Max 严格 schema · 第1批 北京→EvoLink→OpenRouter · 第2批 新加坡→OpenRouter→EvoLink（Qwen 单档 25 分钟 · GLM 20 分钟）";
 /** 0916：该产品链只允许 GLM；旧 Qwen 值在进入路由前明确拒绝。 */
 export function nativeDeepReadStructuringPolicyForModel(
   model: unknown,
 ): "structuring_chain" {
-  if (model !== undefined && model !== "glm-5.3") throw new Error("整形模型只允许 GLM-5.3");
+  // 0920 用户令换档 GLM-5.3 Flash；旧值 "glm-5.3" 继续接受（存量调用方与历史任务参数）。
+  if (model !== undefined && model !== EVOLINK_GLM_MODEL && model !== EVOLINK_GLM_LEGACY_MODEL_BEFORE_0920) {
+    throw new Error(`整形模型只允许 ${EVOLINK_GLM_MODEL}`);
+  }
   return "structuring_chain";
 }
 export function nativeDeepReadStructuringStartedLabel(policy: "structuring_chain" | "structuring_chain_qwen_first"): string {
@@ -4057,12 +4220,14 @@ export function nativeDeepReadStructuringStartedLabel(policy: "structuring_chain
 /** 整形链可接受的网关集合（缓存校验与通道锁共用）。 */
 export const STRUCTURING_GATEWAYS: ReadonlySet<string> = new Set<string>([
   ...Array.from(GLM_MODEL_GATEWAYS), ...STRUCTURING_CHAIN_GATEWAYS, ...STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS,
+  // 🔒 停用 ≠ 撤销识别：0920 撤档的 Qwen 三档写过的整形证据必须继续认，否则整段重新付费。
+  ...STRUCTURING_LEGACY_RECOGNIZED_GATEWAYS,
 ]);
 export function glmGatewayDisplayLabel(gateway: string): string {
   switch (gateway) {
     // 0905 用户令「整形哪个模型面板就显示哪个模型」：模型名在前，网关在后
-    case "evolink_glm": return "GLM-5.3 · EvoLink";
-    case "openrouter": return "GLM-5.3 · OpenRouter";
+    case "evolink_glm": return "GLM-5.3 Flash · EvoLink";
+    case "openrouter": return "GLM-5.3 Flash · OpenRouter";
     case "plan_bj_qwen": return "Qwen3.8-Max · 北京套餐";
     case "plan_sg_qwen": return "Qwen3.8-Max · 新加坡套餐";
     case "openrouter_qwen": return "Qwen3.8-Max · OpenRouter";
@@ -4376,6 +4541,29 @@ ${input.badJsonText}`,
  * 每段缓存的真实请求契约指纹。不能只 hash 一份“典型提示词”：真实集时长、段号、
  * 段数、hint、fps、音轨口径和来源只要有一项改变，都必须让旧缓存失效。
  */
+/**
+ * 🔒 **历史已付费分片的身份变体表（单一真源）**。
+ *
+ * 每次收紧/放宽提示词、schema 或整形模型，旧缓存的身份就换一次；不把旧身份列在这里，
+ * 已经买断的分片就会「查不到 → 重新付费」。0906 之前的四个收紧点各一个标记，
+ * 0920 换档（60 秒上限 + GLM Flash）再乘一维。
+ *
+ * ⚠️ 这张表**只增不减**。两处消费者（permanent 段读取与缓存命中校验）都必须用它，
+ * 不许各写一份——0906 就是两处判据分家炸的。
+ */
+export type NativeDeepReadLegacyFingerprintVariant = {
+  legacyBeforeCoverage0906?: boolean;
+  legacyBeforeExplicitShotWindows0906?: boolean;
+  legacyBeforeRequiredBranches0906?: boolean;
+  legacyBeforeStrict0906?: boolean;
+  legacyBefore0920?: boolean;
+};
+export const NATIVE_DEEP_READ_LEGACY_FINGERPRINT_VARIANTS:
+ReadonlyArray<NativeDeepReadLegacyFingerprintVariant> =
+  ([{}, { legacyBeforeCoverage0906: true }, { legacyBeforeExplicitShotWindows0906: true },
+    { legacyBeforeRequiredBranches0906: true }, { legacyBeforeStrict0906: true }] as const)
+    .flatMap((version) => [version, { ...version, legacyBefore0920: true }]);
+
 export function nativeDeepReadSegmentCacheFingerprint(input: {
   sourceDigest: string;
   episodeIndex: number;
@@ -4396,10 +4584,20 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
   legacyBeforeExplicitShotWindows0906?: boolean;
   /** 保留撤销额外内容强迫之前的付费请求身份。 */
   legacyBeforeCoverage0906?: boolean;
+  /**
+   * 🔒 仅识别 0920 换档前的已付费分片。两处身份在 0920 同时变了：
+   *   ① 提示词与 schema 里的单条证据段上限 30 → 60（用户令「放寬到六十秒…只要一層就好」）
+   *   ② glmRepairModel 由 `glm-5.3→z-ai/glm-5.3` 换成 Flash 两档
+   * 不复原＝**已买断的分片全部失配重买**。本标记只进身份计算，永不用于发请求。
+   */
+  legacyBefore0920?: boolean;
 }): string {
   const legacyCoverage = input.legacyBeforeCoverage0906 === true || input.legacyBeforeExplicitShotWindows0906 === true
     || input.legacyBeforeRequiredBranches0906 === true || input.legacyBeforeStrict0906 === true;
   const fps = resolveNativeDeepReadRequestFps(input.segment.endSec - input.segment.startSec, input.videoFps);
+  const capSec = input.legacyBefore0920 === true
+    ? NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC_BEFORE_0920
+    : NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC;
   let prompt = buildGeminiNativeDeepReadSegmentPromptVersion({
     episodeDurationSec: input.episodeDurationSec,
     startSec: input.segment.startSec,
@@ -4409,7 +4607,7 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
     hasAudio: input.hasAudio,
     videoFps: fps,
     hintZh: input.segment.hintZh || input.hintZh,
-  }, legacyCoverage);
+  }, legacyCoverage, capSec);
   const repairPrompt = buildNativeDeepReadGlmSegmentRepairPrompt({
     episodeIndex: input.episodeIndex,
     segmentIndex: input.segmentIndex,
@@ -4420,7 +4618,7 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
   });
   const legacySingleShape = input.legacyBeforeStrict0906 === true || input.legacyBeforeRequiredBranches0906 === true;
   const previousBranchGuidance = input.legacyBeforeExplicitShotWindows0906 === true || legacySingleShape;
-  const responseSchema = buildNativeDeepReadResponseSchemaVersion({ ...input.segment, segmentIndex: input.segmentIndex, hasAudio: input.hasAudio }, legacySingleShape, previousBranchGuidance, legacyCoverage) as NativeResponseSchemaNode;
+  const responseSchema = buildNativeDeepReadResponseSchemaVersion({ ...input.segment, segmentIndex: input.segmentIndex, hasAudio: input.hasAudio }, legacySingleShape, previousBranchGuidance, legacyCoverage, capSec) as NativeResponseSchemaNode;
   if (previousBranchGuidance) prompt = prompt.replace(NATIVE_DEEP_READ_BEFORE_COVERAGE_SHOT_DETAIL_GUIDE_ZH, NATIVE_DEEP_READ_LEGACY_SHOT_DETAIL_GUIDE_ZH)
     .replace("hintZh、detailLevel 之外的字段。", "hintZh 之外的字段。");
   if (legacySingleShape) prompt = prompt.replace(`${NATIVE_DEEP_READ_LEGACY_SHOT_DETAIL_GUIDE_ZH}\n`, "");
@@ -4454,11 +4652,13 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
 · non_story_ad 的 hintZh 除null空占位外不得写入内容；除 startSec、endSec、evidenceRole 外，其他描述及衍生内容严禁写入。
 · 单条 shots 记录的 endSec − startSec 超过 30 秒。
 · 把同一长镜的证据段边界伪报为真实剪辑切换。`;
-    prompt = prompt.replace(NATIVE_DEEP_READ_LEGACY_PROHIBITION_BLOCK.replace("hintZh、detailLevel 之外的字段。", "hintZh 之外的字段。"), legacyProhibitionBlock);
+    // 🔴 搜索键必须按**本次身份的 capSec** 渲染：拿现行上限（60）去搜一份按 30 渲染的提示词，
+    // 匹配不上 → 整个替换静默失效 → 历史身份复原不了 → 已付费分片重买。
+    prompt = prompt.replace(buildNativeDeepReadLegacyProhibitionBlock(capSec).replace("hintZh、detailLevel 之外的字段。", "hintZh 之外的字段。"), legacyProhibitionBlock);
     prompt = prompt.replace('2. 先输出 keyMoments：定位每个 atSec 的原帧，核实人物、地点、动作及可见字幕，再填写 noteZh；音轨类同时核实该秒声音。', '2. 按硬约束 2 先确定每条记录的起止秒位，再输出该条字段；每完成一条，沿已观察到的时间轴继续下一条。').replace('4. 再输出 shots：按硬约束 2 确定每条记录的起止秒位，依据已输出 keyMoments 的前后6秒范围判定重点镜或简写镜，然后填写对应字段，沿原片时间轴继续下一条。', '4. 写入每条 keyMoment 前，先定位 atSec 的原帧，观察人物、地点、动作及可见字幕，再据此填写 noteZh；音轨类同时听取该秒声音。');
     prompt = prompt.replace('actionZh（≤40字）；长镜拆分的续段另填 transitionInZh 的规定续接标记。', 'actionZh（≤40字），**其它字段一律省略不写**；唯一例外：长镜拆分的续段仍要写 transitionInZh 的规定续接标记。').replace("看不清时写明可见范围及无法辨认的部分。", "看不清时写明可见范围及无法辨认的部分，不补猜。");
     const lenSec = Math.max(1, Math.round(input.segment.endSec - input.segment.startSec));
-    const currentDensity = buildNativeDeepReadDensityContract(lenSec);
+    const currentDensity = buildNativeDeepReadDensityContract(lenSec, capSec);
     const ref = Math.ceil(lenSec / NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC);
     const legacyDensity = currentDensity
       .replace(`story 至少 ${Math.ceil(ref * 0.9)} 条`, `story 至少 ${Math.ceil(ref * 0.8)} 条`)
@@ -4485,21 +4685,26 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
       .replace("重点镜18字段逐项非空，依据本镜可见内容具体填写。", "");
     if (input.hasAudio) responseSchema.properties!.audioResolution!.description = "本段有音轨，数组包含且仅包含1个分析对象，内容来自本段真实声音。";
   }
-  return crypto.createHash("sha256").update(JSON.stringify({
+  const __payload__ = {
     cacheSchemaVersion: NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION,
     planVersion: NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
     model: input.model ?? NATIVE_DEEP_READ_MODEL,
-    glmRepairModel: NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL,
+    glmRepairModel: input.legacyBefore0920 === true
+      ? `${EVOLINK_GLM_LEGACY_MODEL_BEFORE_0920}→${OPENROUTER_GLM_LEGACY_MODEL_BEFORE_0920}`
+      : NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL,
     responseSchema,
     generationConfig: NATIVE_DEEP_READ_GENERATION_CONFIG,
     retryGenerationConfig: NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG,
     finalRetryGenerationConfig: NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG,
-    retryIntervalMs: NATIVE_DEEP_READ_RETRY_INTERVAL_MS,
+    retryIntervalMs: input.legacyBefore0920 === true
+      ? NATIVE_DEEP_READ_RETRY_INTERVAL_MS_BEFORE_0920
+      : NATIVE_DEEP_READ_RETRY_INTERVAL_MS,
     sourceDigest: input.sourceDigest,
     requestedFps: fps,
     prompt,
     repairPrompt,
-  }), "utf8").digest("hex");
+  };
+  return crypto.createHash("sha256").update(JSON.stringify(__payload__), "utf8").digest("hex");
 }
 
 export type NativeDeepReadGlmStructuringResult = {
@@ -5062,6 +5267,10 @@ async function executeNativeDeepReadBatch(
     episode: (typeof validated)[number];
     videos: PreparedNativeVideo[];
     videosBySegment: Map<number, PreparedNativeVideo>;
+    /** 0920 先传先读：每片就绪闸（缓存命中的片不在表里） */
+    segmentReady?: Map<number, { promise: Promise<void>; resolve: () => void; reject: (error: unknown) => void }>;
+    /** 备料整体结果；读完后必须 await，别把后段备料失败吞掉 */
+    preparePromise?: Promise<void>;
     cachedSegments: Map<number, NativeDeepReadSegmentCacheEntry>;
   }> = [];
   const episodes: NativeDeepReadBatchRunResult["episodes"] = [];
@@ -5081,7 +5290,7 @@ async function executeNativeDeepReadBatch(
           });
           if (!cached && params.structuringOnly && deps.readPermanentSegment) {
             cached = await deps.readPermanentSegment({ seriesKey: params.segmentCacheSeriesKey, episodeIndex: episode.episodeIndex,
-              segmentIndex, sourceDigest: episode.cacheSourceDigest!, fingerprints: [false, true].flatMap(hasAudio => [{}, { legacyBeforeCoverage0906: true }, { legacyBeforeExplicitShotWindows0906: true }, { legacyBeforeRequiredBranches0906: true }, { legacyBeforeStrict0906: true }].map(version => nativeDeepReadSegmentCacheFingerprint({
+              segmentIndex, sourceDigest: episode.cacheSourceDigest!, fingerprints: [false, true].flatMap(hasAudio => NATIVE_DEEP_READ_LEGACY_FINGERPRINT_VARIANTS.map(version => nativeDeepReadSegmentCacheFingerprint({
                 sourceDigest: episode.cacheSourceDigest!, episodeIndex: episode.episodeIndex, episodeDurationSec: episode.sourceDurationSec,
                 segment, segmentIndex, segmentCount: episode.segments.length, hasAudio, videoFps: episode.videoFps, hintZh: episode.hintZh, ...version,
               }))) });
@@ -5099,11 +5308,8 @@ async function executeNativeDeepReadBatch(
             videoFps: episode.videoFps,
             hintZh: episode.hintZh,
           };
-          const expectedFingerprints = [nativeDeepReadSegmentCacheFingerprint(fingerprintInput),
-            nativeDeepReadSegmentCacheFingerprint({ ...fingerprintInput, legacyBeforeCoverage0906: true }),
-            nativeDeepReadSegmentCacheFingerprint({ ...fingerprintInput, legacyBeforeExplicitShotWindows0906: true }),
-            nativeDeepReadSegmentCacheFingerprint({ ...fingerprintInput, legacyBeforeRequiredBranches0906: true }),
-            nativeDeepReadSegmentCacheFingerprint({ ...fingerprintInput, legacyBeforeStrict0906: true })];
+          const expectedFingerprints = NATIVE_DEEP_READ_LEGACY_FINGERPRINT_VARIANTS
+            .map((version) => nativeDeepReadSegmentCacheFingerprint({ ...fingerprintInput, ...version }));
           if (
             entry.sourceDigest !== episode.cacheSourceDigest
             || !expectedFingerprints.includes(entry.fingerprint)
@@ -5148,25 +5354,35 @@ async function executeNativeDeepReadBatch(
 
       const videosBySegment = new Map<number, PreparedNativeVideo>();
       const allVideos: PreparedNativeVideo[] = [];
-      const prepareSegmentIndexes = async (indexes: readonly number[]): Promise<void> => {
-        if (!indexes.length) return;
-        if (params.structuringOnly) throw new Error(`第${episode.episodeIndex}集原始JSON不齐或契约不匹配，禁止重新读视频；缺少第${indexes.map(index => index + 1).join("、")}段`);
-        const selectedSegments = indexes.map((index) => episode.segments[index]!);
-        const prepared = await deps.prepareVideos(
-          { ...episode, segments: selectedSegments },
-          params.abortSignal,
-          undefined,
-          {
-            cutConcurrency: params.mediaCutConcurrency,
-            uploadConcurrency: params.mediaUploadConcurrency,
-            onSourceFetchProgress: params.onMediaProgressZh,
-          },
-        );
-        if (prepared.length !== indexes.length) {
-          throw new Error(`第${episode.episodeIndex}集备料数量与请求段数不一致，已停止`);
+      /**
+       * 0920 用户令：「切滿五片就直接傳到ＧＣＳ開始ＧＥＭＩＮＩ讀片，不用全部切完才傳」。
+       * 备料层按 5 片一组回调；这里把每组登记进 videosBySegment 并释放该片的 ready 闸，
+       * 读片侧只等自己那一片，不等整集。**第一组到齐才开读**（整集 hasAudio 口径要先定）。
+       */
+      const segmentReady = new Map<number, { promise: Promise<void>; resolve: () => void; reject: (error: unknown) => void }>();
+      const readyOf = (segmentIndex: number) => {
+        let row = segmentReady.get(segmentIndex);
+        if (!row) {
+          let resolve!: () => void;
+          let reject!: (error: unknown) => void;
+          const promise = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
+          // 备料失败时这条 promise 会被 reject；没人 await 到它之前不许变成未捕获拒绝
+          promise.catch(() => undefined);
+          row = { promise, resolve, reject };
+          segmentReady.set(segmentIndex, row);
         }
-        prepared.forEach((video, position) => {
-          const segmentIndex = indexes[position]!;
+        return row;
+      };
+      let firstGroupResolve!: () => void;
+      let firstGroupReject!: (error: unknown) => void;
+      const firstGroupReady = new Promise<void>((resolve, reject) => {
+        firstGroupResolve = resolve; firstGroupReject = reject;
+      });
+      firstGroupReady.catch(() => undefined);
+      const registerPreparedGroup = (
+        rows: readonly { segmentIndex: number; video: PreparedNativeVideo }[],
+      ): void => {
+        for (const { segmentIndex, video } of rows) {
           const expected = episode.segments[segmentIndex]!;
           if (
             Math.abs(video.startSec - expected.startSec) > 0.01
@@ -5176,20 +5392,93 @@ async function executeNativeDeepReadBatch(
           }
           videosBySegment.set(segmentIndex, video);
           allVideos.push(video);
+        }
+        // 组内音轨事实必须与已登记的第一片一致（备料层逐片比过，这里守住装配口径）
+        const kinds = new Set(Array.from(videosBySegment.values()).map((row) => row.hasAudio === true));
+        if (kinds.size > 1) {
+          throw new Error(`第${episode.episodeIndex}集各段 hasAudio 实测不一致，已停止以避免错误装配`);
+        }
+        for (const { segmentIndex } of rows) readyOf(segmentIndex).resolve();
+        firstGroupResolve();
+      };
+      const prepareSegmentIndexes = (indexes: readonly number[]): Promise<void> => {
+        if (!indexes.length) { firstGroupResolve(); return Promise.resolve(); }
+        if (params.structuringOnly) {
+          const error = new Error(`第${episode.episodeIndex}集原始JSON不齐或契约不匹配，禁止重新读视频；缺少第${indexes.map(index => index + 1).join("、")}段`);
+          firstGroupReject(error);
+          for (const index of indexes) readyOf(index).reject(error);
+          return Promise.reject(error);
+        }
+        const selectedSegments = indexes.map((index) => episode.segments[index]!);
+        return deps.prepareVideos(
+          { ...episode, segments: selectedSegments },
+          params.abortSignal,
+          undefined,
+          {
+            cutConcurrency: params.mediaCutConcurrency,
+            uploadConcurrency: params.mediaUploadConcurrency,
+            onSourceFetchProgress: params.onMediaProgressZh,
+            preparedGroupSize: NATIVE_DEEP_READ_PREPARED_GROUP_SIZE,
+            onPreparedGroup: (rows) => {
+              // 备料层给的是「本次请求内的段号」＝ selectedSegments 的下标，换回真实段号
+              registerPreparedGroup(rows.map((row) => ({
+                segmentIndex: indexes[row.segmentIndex]!, video: row.video,
+              })));
+            },
+          },
+        ).then((prepared) => {
+          if (prepared.length !== indexes.length) {
+            throw new Error(`第${episode.episodeIndex}集备料数量与请求段数不一致，已停止`);
+          }
+          /**
+           * 兼容不支持分组回调的备料实现（旧实现、测试替身、诊断路径）：
+           * 回调没登记的段用返回值补登记，登记本身幂等。两条路径都不登记才算真失败。
+           */
+          const missing = indexes.filter((index) => !videosBySegment.has(index));
+          if (missing.length) {
+            registerPreparedGroup(missing.map((index) => ({
+              segmentIndex: index, video: prepared[indexes.indexOf(index)]!,
+            })));
+          }
+          const stillMissing = indexes.filter((index) => !videosBySegment.has(index));
+          if (stillMissing.length) {
+            throw new Error(`第${episode.episodeIndex}集第${stillMissing.map((index) => index + 1).join("、")}段备料未登记，已停止`);
+          }
+        }).catch((error) => {
+          firstGroupReject(error);
+          for (const index of indexes) readyOf(index).reject(error);
+          throw error;
         });
       };
 
       const pendingIndexes = (selectedSegmentIndexes ?? episode.segments.map((_, index) => index))
         .filter((index) => !cachedSegments.has(index));
-      await prepareSegmentIndexes(pendingIndexes);
+      /**
+       * 0920 用户令：不再等整集备完。启动备料后**只等第一组（5 片）到齐**就往下走去读片，
+       * 余下分片边切边传，读片侧按片等自己的 ready 闸。
+       * 备料的最终结果仍要 await（`prepareSettled`），否则后段失败会被静默吞掉。
+       */
+      /**
+       * 🔴 先传先读的前提：**所有待备段在开跑前就要有就绪闸**。
+       * 只在「已登记」时才建闸会让后面几组的片没有闸可等，读片直接去取备料 →
+       * 「第 N 段缺少对应备料，已停止」（0920 实链第四轮实测踩到）。
+       */
+      for (const index of pendingIndexes) readyOf(index);
+      const preparePromise = prepareSegmentIndexes(pendingIndexes);
+      preparePromise.catch(() => undefined);
+      await firstGroupReady;
 
       // 新备段与历史缓存的音轨事实不一致时，缓存不能继续参与本次装配；只补备原缓存段。
       if (videosBySegment.size > 0 && cachedSegments.size > 0) {
         const preparedHasAudio = Array.from(videosBySegment.values())[0]!.hasAudio === true;
         const cacheHasAudio = Array.from(cachedSegments.values())[0]!.hasAudio;
         if (preparedHasAudio !== cacheHasAudio) {
+          // 纠偏路径（罕见）：整集重备，这里等备完再往下，不做先传先读
+          await preparePromise.catch(() => undefined);
           cachedSegments.clear();
           videosBySegment.clear();
+          allVideos.length = 0;
+          segmentReady.clear();
           await prepareSegmentIndexes(episode.segments.map((_, index) => index));
         }
       }
@@ -5205,10 +5494,13 @@ async function executeNativeDeepReadBatch(
         videos: allVideos,
         videosBySegment,
         cachedSegments,
+        // 读片侧等这两个：某一片的 ready 闸 + 备料整体结果
+        segmentReady,
+        preparePromise,
       });
     }
 
-    for (const { episode, videosBySegment, cachedSegments } of preparedByEpisode) {
+    for (const { episode, videosBySegment, cachedSegments, segmentReady, preparePromise } of preparedByEpisode) {
       params.abortSignal?.throwIfAborted();
       const episodeRequestId = validated.length === 1 ? batchRequestId : crypto.randomUUID();
       const firstPrepared = Array.from(videosBySegment.values())[0];
@@ -5406,8 +5698,11 @@ async function executeNativeDeepReadBatch(
         attemptNumber: number;
         temperature: number;
         rejectedReasonZh?: string;
+        /** 0920 升级档：本发实际用的读片模型；缺省＝本轮首读模型。 */
+        model?: ManhuaNativeDeepReadModelId;
       }): Promise<SegmentAttemptResult> => {
         const segment = episode.segments[input.segmentIndex]!;
+        const attemptModel = input.model ?? readModel;
         let callId: string = crypto.randomUUID();
         const startedAt = Date.now();
         const degraded = input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK;
@@ -5420,7 +5715,9 @@ async function executeNativeDeepReadBatch(
           segmentContext,
           fileUri: input.fileUri,
           fps: input.fps,
-          attemptIndex: (input.attemptNumber - 1) as 0 | 1 | 2,
+          attemptIndex: (input.attemptNumber - 1) as 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7,
+          // 0920 升级档：序号超过首读梯度长度即为升级发，温度改取 3.1 Pro 的三档表
+          escalated: input.attemptNumber > NATIVE_DEEP_READ_RETRY_TEMPERATURES.length,
           prompt: buildGeminiNativeDeepReadSegmentPrompt({
             episodeDurationSec: episode.sourceDurationSec,
             startSec: segment.startSec,
@@ -5436,7 +5733,7 @@ async function executeNativeDeepReadBatch(
         let requestFingerprint: string | undefined;
         if (params.segmentCacheSeriesKey && episode.cacheSourceDigest) {
           requestFingerprint = nativeDeepReadSegmentCacheFingerprint({
-            model: readModel,
+            model: attemptModel,
             sourceDigest: episode.cacheSourceDigest,
             episodeIndex: episode.episodeIndex,
             episodeDurationSec: episode.sourceDurationSec,
@@ -5490,7 +5787,7 @@ async function executeNativeDeepReadBatch(
           if (!recoveredPaidEvidence) {
             await emitVisualModelReceipt({
               callId,
-              model: readModel,
+              model: attemptModel,
               route: input.route,
               stage: "visual_model",
               status: "started",
@@ -5505,8 +5802,8 @@ async function executeNativeDeepReadBatch(
             }, params.onModelReceipt);
             modelCallStarted = true;
             response = await (input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK
-              ? deps.postEvolink(body, params.abortSignal, segmentContext, readModel)
-              : deps.postVertex(body, params.abortSignal, segmentContext, readModel));
+              ? deps.postEvolink(body, params.abortSignal, segmentContext, attemptModel)
+              : deps.postVertex(body, params.abortSignal, segmentContext, attemptModel));
           }
           if (!response) throw new Error("原生精读响应缺失，已停止且不得自动重试");
           if (response.status >= 300) {
@@ -5516,7 +5813,7 @@ async function executeNativeDeepReadBatch(
               requestId: response.requestId,
             });
             const failure = errorWithNativeProviderReceipt(
-              formatNativeProviderErrorZh(routeLabelZh(input.route, readModel), providerError),
+              formatNativeProviderErrorZh(routeLabelZh(input.route, attemptModel), providerError),
               providerError,
             ) as HttpFailure;
             failure.nativeDeepReadHttpStatus = response.status;
@@ -5565,7 +5862,7 @@ async function executeNativeDeepReadBatch(
             + Math.max(0, Number(usage?.thoughtsTokenCount) || 0);
           const attemptAudioInput = audioTokensFromUsage(usage?.promptTokensDetails);
           const attemptReasoning = Math.max(0, Number(usage?.thoughtsTokenCount) || 0);
-          const prices = routePrices(input.route, readModel);
+          const prices = routePrices(input.route, attemptModel);
           const attemptCost =
             (attemptInput * prices.inPerM) / 1e6 + (attemptOutput * prices.outPerM) / 1e6;
           // 恢复旧付费证据时只重建段级历史用量，不伪装成本次外呼或本批新增费用。
@@ -5592,7 +5889,7 @@ async function executeNativeDeepReadBatch(
             if (recoveredPaidEvidence) return;
             await emitVisualModelReceipt({
               callId,
-              model: readModel,
+              model: attemptModel,
               route: input.route,
               stage: "visual_model",
               status: "completed",
@@ -5662,7 +5959,7 @@ async function executeNativeDeepReadBatch(
                 visualRoute: evidenceVisualRoute,
                 repeatableDiagnostic: Boolean(selectedSegmentIndexes),
                 providerRequestId: response.requestId,
-                model: readModel,
+                model: attemptModel,
                 startSec: segment.startSec,
                 endSec: segment.endSec,
                 fps: input.fps,
@@ -5852,7 +6149,7 @@ async function executeNativeDeepReadBatch(
           if (segmentAdvisories.length) raw.advisories = segmentAdvisories;
           await emitVisualModelReceipt({
             callId: `${episodeRequestId}:segment-${input.segmentIndex}:gate-${input.attemptNumber}`,
-            model: readModel,
+            model: attemptModel,
             route: "local_schema_gate",
             stage: "visual_parse",
             status: "completed",
@@ -5888,7 +6185,7 @@ async function executeNativeDeepReadBatch(
             const providerError = nativeProviderReceiptFromError(error);
             await emitVisualModelReceipt({
               callId,
-              model: readModel,
+              model: attemptModel,
               route: input.route,
               stage: "visual_model",
               status: "failed",
@@ -5983,8 +6280,20 @@ async function executeNativeDeepReadBatch(
       }): Promise<SegmentAttemptResult> => {
         let lastError: unknown;
         let rejectedReasonZh: string | undefined;
-        for (let attemptIndex = 0; attemptIndex < NATIVE_DEEP_READ_RETRY_TEMPERATURES.length; attemptIndex += 1) {
-          const temperature = NATIVE_DEEP_READ_RETRY_TEMPERATURES[attemptIndex]!;
+        /**
+         * 0920 用户令：一个梯度跑完仍不过 → 不报错、保留分片、升级模型再跑一趟自己的梯度。
+         * 本闭包把「一趟梯度」抽出来，两趟共用同一套门禁、资源退避与合并逻辑，
+         * 只换模型与温度表；attemptNumber 连号，证据与选稿记录不会互相覆盖。
+         */
+        const runGradient = async (
+          gradientModel: ManhuaNativeDeepReadModelId,
+          temperatures: readonly number[],
+          attemptNumberOffset: number,
+        ): Promise<SegmentAttemptResult | null> => {
+        for (let attemptIndex = 0; attemptIndex < temperatures.length; attemptIndex += 1) {
+          const temperature = temperatures[attemptIndex]!;
+          const attemptNumber = attemptNumberOffset + attemptIndex + 1;
+
           if (attemptIndex > 0) {
             const retryReasonZh = rejectedReasonZh || "上一档门禁未通过";
             console.warn(
@@ -5992,8 +6301,8 @@ async function executeNativeDeepReadBatch(
               + `门禁未通过，60 秒后降到 temperature ${temperature} 重试：${retryReasonZh}`,
             );
             await emitVisualModelReceipt({
-              callId: `${episodeRequestId}:segment-${input.segmentIndex}:retry-${attemptIndex + 1}`,
-              model: readModel,
+              callId: `${episodeRequestId}:segment-${input.segmentIndex}:retry-${attemptNumber}`,
+              model: gradientModel,
               route: "gate_retry_pending",
               stage: "visual_parse",
               status: "started",
@@ -6002,7 +6311,7 @@ async function executeNativeDeepReadBatch(
               chunkIndex: input.segmentIndex,
               segmentCount,
               videoCount: 1,
-              attemptNumber: attemptIndex + 1,
+              attemptNumber,
               temperature,
               errorZh: retryReasonZh,
             }, params.onModelReceipt);
@@ -6014,11 +6323,13 @@ async function executeNativeDeepReadBatch(
             try {
               const accepted = await attemptSegment({
                 ...input,
-                attemptNumber: attemptIndex + 1,
+                attemptNumber,
+                // 0920 升级档：这一发实际用哪个读片模型由梯度决定（首读档 / 3.1 Pro 升级档）
+                model: gradientModel,
                 temperature,
                 rejectedReasonZh,
               });
-              return attemptIndex > 0 ? await applyRetryDraftMerge(input.segmentIndex, attemptIndex + 1, accepted, true) : accepted;
+              return attemptNumber > 1 ? await applyRetryDraftMerge(input.segmentIndex, attemptNumber, accepted, true) : accepted;
             } catch (error) {
               if (params.abortSignal?.aborted) throw error;
               if (error instanceof Error && error.name === "NativeDeepReadEvidencePersistenceError") throw error;
@@ -6027,8 +6338,8 @@ async function executeNativeDeepReadBatch(
                 resourceRetryCount += 1;
                 const errorZh = (error instanceof Error ? error.message : String(error)).slice(0, 2_000);
                 await emitVisualModelReceipt({
-                  callId: `${episodeRequestId}:segment-${input.segmentIndex}:resource-retry-${attemptIndex + 1}-${resourceRetryCount}`,
-                  model: readModel,
+                  callId: `${episodeRequestId}:segment-${input.segmentIndex}:resource-retry-${attemptNumber}-${resourceRetryCount}`,
+                  model: gradientModel,
                   route: "resource_retry_pending",
                   stage: "visual_parse",
                   status: "started",
@@ -6037,7 +6348,7 @@ async function executeNativeDeepReadBatch(
                   chunkIndex: input.segmentIndex,
                   segmentCount,
                   videoCount: 1,
-                  attemptNumber: attemptIndex + 1,
+                  attemptNumber,
                   temperature,
                   resourceRetryNumber: resourceRetryCount,
                   resourceRetryMax: NATIVE_DEEP_READ_RESOURCE_RETRY_MAX,
@@ -6056,8 +6367,8 @@ async function executeNativeDeepReadBatch(
                 && (error.name === NATIVE_DEEP_READ_SCHEMA_ERROR_NAME || error.name === "ZodError");
               if (!isNativeDeepReadGateFailure(error) && !schemaGateFailure) throw error;
               await emitVisualModelReceipt({
-                callId: `${episodeRequestId}:segment-${input.segmentIndex}:gate-${attemptIndex + 1}`,
-                model: readModel,
+                callId: `${episodeRequestId}:segment-${input.segmentIndex}:gate-${attemptNumber}`,
+                model: gradientModel,
                 route: "local_schema_gate",
                 stage: "visual_parse",
                 status: "failed",
@@ -6066,7 +6377,7 @@ async function executeNativeDeepReadBatch(
                 chunkIndex: input.segmentIndex,
                 segmentCount,
                 videoCount: 1,
-                attemptNumber: attemptIndex + 1,
+                attemptNumber,
                 temperature,
                 errorZh: (error instanceof Error ? error.message : String(error)).slice(0, 2_000),
               }, params.onModelReceipt);
@@ -6078,6 +6389,45 @@ async function executeNativeDeepReadBatch(
             }
           }
         }
+        return null;
+        };
+
+        const firstPass = await runGradient(readModel, NATIVE_DEEP_READ_RETRY_TEMPERATURES, 0);
+        if (firstPass) return firstPass;
+        /**
+         * 0920 用户令：「單一分片如果連讀五次都不通過，就升級成Gemini 3.1 pro來讀」
+         * 「保留分片，不報錯」「直接從0.7--0.65--0.6」。首读已是 3.1 Pro 时没有更高档，跳过。
+         */
+        if (readModel !== NATIVE_DEEP_READ_ESCALATION_MODEL) {
+          console.warn(
+            `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段`
+            + `${NATIVE_DEEP_READ_RETRY_TEMPERATURES.length} 发均未过门禁，保留分片并升级 `
+            + `${NATIVE_DEEP_READ_ESCALATION_MODEL} 重读（${NATIVE_DEEP_READ_ESCALATION_TEMPERATURES.join("→")}）：`
+            + `${rejectedReasonZh || "上一档门禁未通过"}`,
+          );
+          await emitVisualModelReceipt({
+            callId: `${episodeRequestId}:segment-${input.segmentIndex}:escalate-${NATIVE_DEEP_READ_ESCALATION_MODEL}`,
+            model: NATIVE_DEEP_READ_ESCALATION_MODEL,
+            route: "read_model_escalation_pending",
+            stage: "visual_parse",
+            status: "started",
+            batchRequestId: episodeRequestId,
+            episodeIndexes: [episode.episodeIndex],
+            chunkIndex: input.segmentIndex,
+            segmentCount,
+            videoCount: 1,
+            attemptNumber: NATIVE_DEEP_READ_RETRY_TEMPERATURES.length + 1,
+            temperature: NATIVE_DEEP_READ_ESCALATION_TEMPERATURES[0]!,
+            errorZh: rejectedReasonZh,
+          }, params.onModelReceipt);
+          const escalated = await runGradient(
+            NATIVE_DEEP_READ_ESCALATION_MODEL,
+            NATIVE_DEEP_READ_ESCALATION_TEMPERATURES,
+            NATIVE_DEEP_READ_RETRY_TEMPERATURES.length,
+          );
+          if (escalated) return escalated;
+        }
+
 
         const retryError = lastError || new Error("分片三次尝试均未完成");
         const candidates = rejectedAttempts.get(input.segmentIndex) ?? [];
@@ -6090,11 +6440,13 @@ async function executeNativeDeepReadBatch(
           selectedSegmentCandidates.add(input.segmentIndex);
           console.info(`[nativeDeepRead] 第${input.segmentIndex + 1}段三档未过，选择第${best.attemptNumber}份原稿进入整形`);
           // 0917 根因：选择记录的 rawSha256 曾在合并前盖章，而合并会改 raw（补字幕/剥 gateMarked）→
-          // 缓存写入自检抛「三档候选选择记录与原始证据不一致」→ 段卡永远写不进去，每次续跑重放同三份失败稿。
+          // 缓存写入自检抛「N 档候选选择记录与原始证据不一致」→ 段卡永远写不进去，每次续跑重放同几份失败稿。
           // 章必须盖在最终要落盘的那份 raw 上。
           const selected = await applyRetryDraftMerge(input.segmentIndex, best.attemptNumber, best.result, false);
           selected.attemptSelection = {
-            status: "selected_for_structuring_after_three_attempts", policyVersion: 1, attemptedCount: 3,
+            status: "selected_for_structuring_after_three_attempts", policyVersion: 1,
+            // 0920：档数跟随冻结梯度（5 发），不再写死 3——写死会让自检抛错、段卡永远写不进去。
+            attemptedCount: NATIVE_DEEP_READ_RETRY_TEMPERATURES.length,
             selectedAttemptNumber: best.attemptNumber, sourceDigest: episode.cacheSourceDigest ?? "",
             rawSha256: nativeAttemptRawSha256(selected.raw),
             candidates: candidates.map(row => ({ attemptNumber: row.attemptNumber, score: row.score,
@@ -6169,6 +6521,9 @@ async function executeNativeDeepReadBatch(
           await commitSegmentToProposal(segmentIndex, canonicalEntry);
           return;
         }
+        // 0920 先传先读：这一片的切片+上传可能还没轮到，等它自己的 ready 闸（备料失败会 reject）
+        const readyGate = segmentReady?.get(segmentIndex);
+        if (readyGate) await readyGate.promise;
         const video = videosBySegment.get(segmentIndex);
         if (!video) {
           throw new Error(`第${episode.episodeIndex}集第${segmentIndex + 1}段缺少对应备料，已停止`);
@@ -6299,10 +6654,94 @@ async function executeNativeDeepReadBatch(
           },
         };
       }
+      // 0920 先传先读：读片可能比备料先跑完最后一片以外的部分，备料整体结果必须在这里收口，
+      // 否则后段切片/上传失败会被静默吞掉，装配拿着不全的分片继续走。
+      if (preparePromise) await preparePromise;
       if (rawSegments.some((raw) => !raw)) {
         throw new Error(`第${episode.episodeIndex}集并发精读结果不完整，已停止`);
       }
       const completeRawSegments = rawSegments as Array<Record<string, unknown>>;
+
+      /**
+       * 🔴 整形前补扫（0920 用户令）：「GLM5.3 flash整形之前，先讓他讀一遍所有的分片，
+       * Ｇemini 判定是keymonents的必須保留，他也可以判斷哪些是有亮點跟特色的鏡頭」。
+       *
+       * 只增不减：合并后的 keyMoments 必然逐条包含 Gemini 原条目（判据在
+       * shared/manhuaNativeSweepMerge.ts，11 条单测钉住）。补扫整体失败＝当作没补到，
+       * 绝不影响已付费的读片产出。
+       */
+      const sweepSummaries: Array<{
+        segmentIndex: number; scanned: boolean; added: number;
+        droppedCount: number; skippedReasonZh?: string;
+      }> = [];
+      if (process.env.MANHUA_NATIVE_SWEEP_BEFORE_STRUCTURING !== "0") {
+        for (let segmentIndex = 0; segmentIndex < completeRawSegments.length; segmentIndex += 1) {
+          const raw = completeRawSegments[segmentIndex]!;
+          const video = videosBySegment.get(segmentIndex);
+          const shots = Array.isArray(raw.shots) ? raw.shots as Array<Record<string, unknown>> : [];
+          const storyRanges = shots
+            .filter((shot) => shot?.evidenceRole !== "non_story_ad")
+            .map((shot) => ({ startSec: Number(shot?.startSec) || 0, endSec: Number(shot?.endSec) || 0 }))
+            .filter((r) => r.endSec > r.startSec);
+          const adRanges = shots
+            .filter((shot) => shot?.evidenceRole === "non_story_ad")
+            .map((shot) => ({ startSec: Number(shot?.startSec) || 0, endSec: Number(shot?.endSec) || 0 }))
+            .filter((r) => r.endSec > r.startSec);
+          const geminiKeyMoments = (Array.isArray(raw.keyMoments) ? raw.keyMoments : [])
+            .map((row) => row as Record<string, unknown>)
+            .flatMap((row) => {
+              const atSec = Number(row?.atSec);
+              const kindZh = String(row?.kindZh || "").trim();
+              const noteZh = String(row?.noteZh || "").trim();
+              // 🔒 原条目原样带过，缺字段的也带——补扫不是清洗工序，不许顺手丢 Gemini 的东西。
+              return Number.isFinite(atSec) ? [{ atSec, kindZh, noteZh }] : [];
+            });
+          const subtitles = (Array.isArray(raw.subtitles) ? raw.subtitles : [])
+            .map((row) => row as Record<string, unknown>)
+            .flatMap((row) => {
+              const atSec = Number(row?.atSec);
+              const textZh = String(row?.textZh || "").trim();
+              return Number.isFinite(atSec) && textZh ? [{ atSec, textZh }] : [];
+            });
+          const result = await sweepOneSegmentBeforeStructuring({
+            seriesKey: String(params.segmentCacheSeriesKey || "sweep"),
+            episodeIndex: episode.episodeIndex,
+            segmentIndex,
+            gsUri: String(video?.gsUri || ""),
+            startSec: episode.segments[segmentIndex]!.startSec,
+            endSec: episode.segments[segmentIndex]!.endSec,
+            geminiKeyMoments, subtitles, storyRanges, excludedAdRanges: adRanges,
+          }, params.abortSignal);
+          /**
+           * 🔴 0920 实链实测到的缺陷：这里原来是 `raw.keyMoments = ...` **原地改**。
+           * 而 `raw` 与段缓存 entry 的 `raw` 是**同一个引用**，段证据对象名 =
+           * hash(整条 entry 含 raw)（`manhuaNativeDeepReadSegmentCache.ts` 的
+           * `nativeDeepReadSegmentEvidenceResponseFingerprint`）。补扫改完之后 provenance 才重算名字，
+           * 于是记下的名字与早先真正上传的证据对象**对不上** → 报告渲染按「不许列目录猜证据」
+           * 直接拒绝出报告（藏海传第2集 seg4/seg6 实测 404）。
+           * 改成生成新对象：**付费证据身份逐字不变**，补扫结果只进交给整形的那份。
+           */
+          if (result.merge.addedCount > 0) {
+            completeRawSegments[segmentIndex] = { ...raw, keyMoments: result.merge.keyMoments };
+          }
+          sweepSummaries.push({
+            segmentIndex, scanned: result.scanned, added: result.merge.addedCount,
+            droppedCount: result.merge.dropped.length,
+            ...(result.skippedReasonZh ? { skippedReasonZh: result.skippedReasonZh } : {}),
+          });
+          console.info(
+            `[nativeDeepRead] 第${episode.episodeIndex}集第${segmentIndex + 1}段整形前补扫：`
+            + `${result.scanned ? `补进 ${result.merge.addedCount} 条、拦下 ${result.merge.dropped.length} 条` : `跳过（${result.skippedReasonZh || "未扫"}）`}`,
+          );
+        }
+        const scannedCount = sweepSummaries.filter((row) => row.scanned).length;
+        const addedTotal = sweepSummaries.reduce((sum, row) => sum + row.added, 0);
+        console.info(
+          `[nativeDeepRead] 第${episode.episodeIndex}集整形前补扫完成：`
+          + `扫了 ${scannedCount}/${sweepSummaries.length} 片，合计补进 ${addedTotal} 条重点时刻`,
+        );
+      }
+
       const glmStructuringInputs = completeRawSegments;
 
       // 段卡合并成集卡：0829 起**每集一律走 GLM 5.3 结构化整形**（去重 + 结构化），

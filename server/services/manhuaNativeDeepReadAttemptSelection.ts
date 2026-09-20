@@ -1,10 +1,38 @@
 import { createHash } from "node:crypto";
+import {
+  NATIVE_DEEP_READ_RETRY_TEMPERATURES,
+  NATIVE_DEEP_READ_ESCALATION_TEMPERATURES,
+  NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC,
+} from "./manhuaNativeDeepReadGradient.js";
+
+/**
+ * 候选档数＝冻结重试梯度的长度。0920 用户令改成 5 发（0.7 / 0.65×2 / 0.6×2）之后，
+ * 这里若继续写死 3，整段「跑满全部档位仍不合格 → 择优入库」的路径会直接抛错。
+ */
+// ⚠️ 本模块与 runner 互相 import：**必须惰性取值**，模块求值期读会拿到 undefined。
+const attemptCount = () => NATIVE_DEEP_READ_RETRY_TEMPERATURES.length;
+/**
+ * 🔴 历史已付费选稿信封写的是 `attemptedCount: 3`（0920 之前是三档梯度）。
+ * 只认当前档数＝旧信封回读一律判无效 → 那几段要**重新付费整形**。
+ * 「停用 ≠ 撤销识别」：识别名单只增不减，往里加档数永远安全，删掉就是作废历史付费产出。
+ * 升级档（3.1 Pro 三发）会让实际发数变 8，同样必须在识别范围内。
+ */
+const NATIVE_DEEP_READ_RECOGNIZED_ATTEMPT_COUNTS_LEGACY: readonly number[] = [3];
+const recognizedAttemptCounts = () => [
+  ...NATIVE_DEEP_READ_RECOGNIZED_ATTEMPT_COUNTS_LEGACY,
+  attemptCount(),
+  attemptCount() + NATIVE_DEEP_READ_ESCALATION_TEMPERATURES.length,
+];
+const maxRecognizedAttemptCount = () => Math.max(...recognizedAttemptCounts());
+const attemptNumbers = () => Array.from(
+  { length: maxRecognizedAttemptCount() }, (_, i) => i + 1);
 
 /** 服务器记录：失败原稿仅供整形，不代表已经通过门禁。 */
 export type NativeDeepReadAttemptSelection = {
   status: "selected_for_structuring_after_three_attempts";
   policyVersion: 1;
-  attemptedCount: 3;
+  /** 实际档数由冻结梯度决定（0920 起为 5）；字段名沿用历史，值不再写死。 */
+  attemptedCount: number;
   selectedAttemptNumber: number;
   sourceDigest: string;
   rawSha256: string;
@@ -34,8 +62,8 @@ export function hasNativeAttemptSelection(entry: {
     !record(marker) ||
     marker.status !== "selected_for_structuring_after_three_attempts" ||
     marker.policyVersion !== 1 ||
-    marker.attemptedCount !== 3 ||
-    ![1, 2, 3].includes(marker.selectedAttemptNumber) ||
+    !recognizedAttemptCounts().includes(Number(marker.attemptedCount)) ||
+    !attemptNumbers().includes(marker.selectedAttemptNumber) ||
     marker.sourceDigest !== entry.sourceDigest ||
     marker.rawSha256 !== nativeAttemptRawSha256(entry.raw) ||
     !Array.isArray(marker.candidates) ||
@@ -43,7 +71,7 @@ export function hasNativeAttemptSelection(entry: {
     marker.candidates.some(
       row =>
         !record(row) ||
-        ![1, 2, 3].includes(row.attemptNumber) ||
+        !attemptNumbers().includes(row.attemptNumber) ||
         typeof row.reasonZh !== "string" ||
         !Array.isArray(row.score) ||
         row.score.length !== 4 ||
@@ -55,7 +83,7 @@ export function hasNativeAttemptSelection(entry: {
       row => row.attemptNumber === marker.selectedAttemptNumber
     )
   ) {
-    throw new Error("三档候选选择记录与原始证据不一致");
+    throw new Error(`${attemptCount()} 档候选选择记录与原始证据不一致`);
   }
   return true;
 }
@@ -115,7 +143,9 @@ export function scoreNativeAttempt(
       if (typeof shot[key] !== "string" || !String(shot[key]).trim()) errors++;
     }
   for (const shot of shots)
-    if (Number(shot.endSec) - Number(shot.startSec) > 33) errors++;
+    // 🔴 曾写死 33（＝30 + 10% 容差）。上限与容差一改，评分器就会把合法镜头算成错误，
+    // 择优入库直接选错稿。改为跟随当前拒收线（0920：60 + 20% = 72 秒）。
+    if (Number(shot.endSec) - Number(shot.startSec) > NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC) errors++;
   for (const track of tracks)
     for (const cue of rows(track.cues)) {
       if (
