@@ -5,6 +5,7 @@ import { addPrevisLibraryAction, PREVIS_LIBRARY_ACTIONS } from "./manhuaPrevisAc
 describe("动作库沿原白模合同添加", () => {
   it.each(PREVIS_LIBRARY_ACTIONS)("%s 进入同一草稿与提交参数，保留旧配置", kind => {
     const studio = createManhuaPrevisStudio(6, "11111111-1111-4111-8111-111111111111");
+    if (kind === "walk") { studio.spec.actors[0].end = [0, 1]; studio.spec.actors[0].moveStartSec = 0; studio.spec.actors[0].moveEndSec = 6; }
     const snapshot = structuredClone(studio);
     const result = addPrevisLibraryAction(studio.spec, "actor-1", kind);
     expect(result.error).toBeUndefined();

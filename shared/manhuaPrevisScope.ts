@@ -1,5 +1,6 @@
 import type { ManhuaPrevisSpec, ManhuaPrevisStudio } from "./manhuaPrevis";
 import type { ManhuaSegmentReferenceEntry } from "./manhuaSegmentReference";
+import type { ManhuaAutoSegmentBinding } from "./manhuaAutoSegment";
 
 type SourceSpec = Pick<ManhuaPrevisSpec, "scriptSource">;
 /** 只陈述已保存的原稿来源，不从当前选镜反推历史候选的归属。 */
@@ -16,6 +17,7 @@ export function manhuaGeneratedPrevisCoverageIssue(input: {
   studio?: Pick<ManhuaPrevisStudio, "history">;
   durationSec?: number;
   shotIndexes?: readonly number[];
+  autoSegment?: Pick<ManhuaAutoSegmentBinding, "revision">;
 }): string | undefined {
   const reference = input.reference;
   if (!reference) return;
@@ -44,6 +46,25 @@ export function manhuaGeneratedPrevisCoverageIssue(input: {
       actual.some((index, position) => expected[position] !== index)
     ) {
       return `系统白模原稿来源为第 ${actual.join("、")} 镜，与本段第 ${expected.join("、")} 镜不一致；不能将别镜候选作为本段参考。旧参考保留。`;
+    }
+  }
+  // 当前分段保留镜内窗口，但历史 scriptSource 只有镜号/时长/动作。
+  // 在未保存可核对的窗口身份前，不能把同镜前半段白模误用于后半段。
+  if (input.autoSegment) {
+    let shots: Array<{ sourceOffsetSec?: number; sourceDurationSec?: number; durationSec?: number }>;
+    try {
+      const revision = JSON.parse(input.autoSegment.revision);
+      if (!Array.isArray(revision.shots) || !revision.shots.length) throw new Error("missing shots");
+      shots = revision.shots;
+      if (shots.some(shot => !shot || typeof shot !== "object")) throw new Error("invalid shots");
+    } catch {
+      return "本段原镜窗口身份无法解析，不能确认系统白模覆盖范围；旧参考与候选保留，本次未提交。";
+    }
+    if (shots.some(shot =>
+      (typeof shot.sourceOffsetSec === "number" && shot.sourceOffsetSec > 0) ||
+      (typeof shot.sourceDurationSec === "number" && typeof shot.durationSec === "number" && shot.sourceDurationSec > shot.durationSec + 0.000001)
+    )) {
+      return "本段是长镜的镜内窗口，系统白模历史未保存可核对的镜内起止范围，无法确认属于本窗口；不能仅凭相同镜号和时长采用。旧参考与候选保留，本次未提交。";
     }
   }
 }

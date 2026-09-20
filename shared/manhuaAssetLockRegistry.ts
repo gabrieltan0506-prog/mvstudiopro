@@ -34,6 +34,9 @@ import {
   type ManhuaCharacterLookSet,
   type ManhuaWardrobeSubSlot,
 } from "./manhuaCharacterLookSets.js";
+import { inferManhuaCastZhFromDialogue } from "./manhuaEpisodeSegmentPlan.js";
+import { parseManhuaDialogueCues } from "./manhuaClipDialogueTimeline.js";
+import { customAssetRefClaimsAnchor } from "./manhuaAssetScriptSync.js";
 import { stripManhuaClipForbiddenBoards } from "./manhuaClipPromptSanitize.js";
 import {
   SEEDANCE_25_REFERENCE_MAX,
@@ -159,6 +162,9 @@ export function buildManhuaAssetLockRegistry(opts?: {
   // 上传与本集生成的人物垫图都进锁（生成图也是可用 HTTPS）
   const customChars = consumableCustomRefsByRole(consumableRefs, "character");
   for (const c of customChars) {
+    // 保留已选图片的 cust 身份与路径，仅把明确认领桥接到当前剧本身份；不按候选顺序选人。
+    const anchors = (opts?.assetCanon?.characters || []).filter(anchor => customAssetRefClaimsAnchor(c, anchor));
+    const canonicalId = opts?.assetCanon ? (anchors.length === 1 ? anchors[0]!.id : null) : c.seedLibraryId || null;
     pushRole(
       "character",
       c.id,
@@ -167,7 +173,7 @@ export function buildManhuaAssetLockRegistry(opts?: {
       // 只认锁脸/锁妆造两种；其余职责（画风、首尾帧等）不影响人物绑定句写法
       {
         duty: c.refDuty === "identity" || c.refDuty === "look" ? c.refDuty : null,
-        seedLibraryId: c.seedLibraryId || null,
+        seedLibraryId: canonicalId,
       },
     );
   }
@@ -767,6 +773,36 @@ function lookTokenHits(hay: string, lookBlob: string): number {
  * 从本段剧本/可拍表点名角色/场景/道具。
  * 优先 castZh 真名；其次文案名/别名/外形词；**禁止**点不中时软取库序前 N（那会锁成马县丞这种假角）。
  */
+/** 显式角色栏优先；否则把动作中的唯一身份与明确对白身份合并，不能把说话人当全体演员。 */
+export function resolveManhuaSegmentCastZh(input: {
+  castZh?: string | null;
+  dialogueZh?: string | null;
+  shots?: Array<{ actionZh?: string; dialogueZh?: string; dialogueSpeakerNameZh?: string }> | null;
+  registry?: ManhuaAssetLockRegistry | null;
+  assetCanon?: ManhuaWriterAssetCanon | null;
+}): string {
+  const explicit = String(input.castZh || "").trim();
+  if (explicit) return explicit;
+  const shots = input.shots || [];
+  const actionText = shots.map(shot => shot.actionZh || "").join("\n");
+  const anchors = input.assetCanon
+    ? input.assetCanon.characters.map(anchor => ({ id: anchor.id, name: anchor.nameZh, aliases: [anchor.nameZh, anchor.aliasZh].filter(Boolean) as string[] }))
+    : (input.registry?.byRole.character || []).map(slot => ({ id: slot.seedLibraryId || slot.id, name: slot.labelZh, aliases: [slot.labelZh] }));
+  const owners = new Map<string, Set<string>>();
+  for (const anchor of anchors) for (const name of anchor.aliases) {
+    const ids = owners.get(name) || new Set<string>(); ids.add(anchor.id); owners.set(name, ids);
+  }
+  // 单字称呼不能从“姑娘”等正文撞字推断；只允许下方明确署名对白提供。
+  const actionNames = anchors.filter(anchor => anchor.aliases.some(name => name.length >= 2 && owners.get(name)?.size === 1 && actionText.includes(name))).map(anchor => anchor.name);
+  const dialogueNames = [String(input.dialogueZh || ""), ...shots.map(shot => shot.dialogueZh || "")]
+    .flatMap(text => parseManhuaDialogueCues(text).map(cue => cue.speakerAtTag))
+    .concat(shots.map(shot => shot.dialogueSpeakerNameZh || ""))
+    .filter(name => name && !name.startsWith("@"));
+  const legacyExplicitNames = splitManhuaCastZhNames(inferManhuaCastZhFromDialogue(null,
+    [String(input.dialogueZh || ""), ...shots.map(shot => shot.actionZh || "")].join("\n")));
+  return Array.from(new Set([...actionNames, ...dialogueNames, ...legacyExplicitNames])).join("；");
+}
+
 export function resolveManhuaSegmentClipAllowedAssets(input: {
   haystack: string;
   /** 可拍表「角色：」原文，最高优先 */
@@ -801,16 +837,29 @@ export function resolveManhuaSegmentClipAllowedAssets(input: {
   const scenes = reg?.byRole.scene || [];
   const props = reg?.byRole.prop || [];
   const mentionedTags = extractManhuaMentionedAssetTags(hay);
-  const castNames = splitManhuaCastZhNames(castZh);
+  const castNames = Array.from(new Set([
+    ...splitManhuaCastZhNames(castZh),
+    // 单字称呼只接受当前剧本已登记且明确出现在角色栏的身份，不拿正文常用字猜人。
+    ...(input.assetCanon?.characters || []).map(c => c.nameZh).filter(name => name.length === 1 && castZh.split(/[；;、，,\n]+/).some(part => part.trim() === name)),
+  ]));
 
   const canonOf = (id: string) =>
     (input.assetCanon?.characters || []).find((c) => c.id === id);
 
+  // 姓名只用来定位唯一身份；同名不同角色必须用显式 @角色 标签消歧，不能由排序/容量截断替用户选人。
+  const identitiesByName = new Map<string, Set<string>>();
+  for (const slot of chars) {
+    const anchor = canonOf(slot.seedLibraryId || slot.id);
+    for (const name of [slot.labelZh, anchor?.nameZh, anchor?.aliasZh].filter(Boolean) as string[]) {
+      const owners = identitiesByName.get(name) || new Set<string>();
+      owners.add(anchor?.id || slot.id); identitiesByName.set(name, owners);
+    }
+  }
   type Scored = { id: string; nameScore: number; lookHits: number };
   const scored: Scored[] = [];
   const matchedCastNames = new Set<string>();
   for (const s of chars) {
-    const canon = canonOf(s.id);
+    const canon = canonOf(s.seedLibraryId || s.id);
     const names = [s.labelZh, canon?.nameZh, canon?.aliasZh].filter(Boolean) as string[];
     /**
      * A 口径（对白说话人真名桥接）：只有「真名 / 文案名 / @tag」这类**身份**命中
@@ -820,7 +869,8 @@ export function resolveManhuaSegmentClipAllowedAssets(input: {
      */
     let nameScore = 0;
     for (const n of names) {
-      const castHit = castNames.find((cn) => cn === n || cn.includes(n) || n.includes(cn));
+      if ((identitiesByName.get(n)?.size || 0) > 1) continue;
+      const castHit = castNames.find((cn) => cn === n || (cn.length >= 2 && n.length >= 2 && (cn.includes(n) || n.includes(cn))));
       if (castHit) {
         matchedCastNames.add(castHit);
         nameScore = Math.max(nameScore, 100);
@@ -839,10 +889,13 @@ export function resolveManhuaSegmentClipAllowedAssets(input: {
   scored.sort(
     (a, b) => b.nameScore - a.nameScore || b.lookHits - a.lookHits || a.id.localeCompare(b.id),
   );
-  const characterIds = scored
-    .filter((x) => x.nameScore >= 70)
-    .slice(0, castCap)
-    .map((x) => x.id);
+  const identityOf = (id: string) => {
+    const slot = chars.find(slot => slot.id === id);
+    return canonOf(slot?.seedLibraryId || id)?.id || id;
+  };
+  // 同一人的脸/造型参考不是两名演员；人数上限按稳定身份计，保留其已采用参考职责。
+  const selectedIdentities = new Set(Array.from(new Set(scored.filter(x => x.nameScore >= 70).map(x => identityOf(x.id)))).slice(0, castCap));
+  const characterIds = scored.filter(x => x.nameScore >= 70 && selectedIdentities.has(identityOf(x.id))).map(x => x.id);
 
   let sceneFallback = false;
   let sceneIds: string[] = [];

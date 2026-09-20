@@ -3231,6 +3231,7 @@ async function runCanvasBlockInner(
       const previsCoverageIssue = manhuaGeneratedPrevisCoverageIssue({
         reference: segmentRefs?.previs,
         studio: block.previsStudio,
+        autoSegment: block.manhuaAutoSegment,
         durationSec: clipDuration,
         shotIndexes: block.manhuaAutoSegment?.shotIndexes,
       });

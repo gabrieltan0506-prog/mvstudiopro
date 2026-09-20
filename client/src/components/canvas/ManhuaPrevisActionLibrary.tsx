@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ManhuaPrevisActionPreview } from "./ManhuaPrevisActionPreview";
 import { PREVIS_ACTION_LABELS, type ManhuaPrevisStudio } from "@shared/manhuaPrevis";
 import { addPrevisLibraryAction, PREVIS_LIBRARY_ACTIONS } from "@/lib/manhuaPrevisActionLibrary";
 
@@ -14,10 +15,10 @@ export function ManhuaPrevisActionLibrary({ spec, disabled, onChange }: {
   const target = actors.find(a => a.id === actorId) ?? actors[0];
   const proposed = target ? addPrevisLibraryAction(spec, target.id, selected) : undefined;
   const added = proposed?.spec?.actors.find(a => a.id === target?.id)?.actions.find(a => !target?.actions.includes(a));
-  const explanations = { idle: "保持当前站位", guard: "抬臂保护，再回收", strike: "蓄力、出手、回收；不是接触受力验收", bow: "俯身行礼，再起身" };
+  const explanations = { idle: "保持当前站位", guard: "抬臂保护，再回收", strike: "蓄力、出手、回收；不是接触受力验收", bow: "俯身行礼，再起身", walk: "沿已有位移摆臂行走；不是奔跑" };
   return <section className="space-y-2 rounded border border-cyan-300/20 p-3" data-previs-action-library>
     <p className="text-xs text-cyan-100">添加基础动作</p>
-    <p className="text-xs text-white/60">下方为动作参数示意，不是渲染预览。添加只保存配置，不会提交或采用视频。走位等复杂动作请在专业参数中配置。</p>
+    <p className="text-xs text-white/60">选择动作后可播放基础人形预览。添加只保存配置，不会提交或采用视频。行走沿已有位移添加；起止站位和轨迹请在专业参数中配置。</p>
     <label className="text-xs">添加给 <select aria-label="动作库角色" value={target?.id ?? ""} disabled={disabled || !actors.length} onChange={e => {setActorId(e.target.value);setMessage("");}}>
       {actors.map(a => <option key={a.id} value={a.id}>{a.nameZh || a.id}</option>)}
     </select></label>
@@ -27,6 +28,7 @@ export function ManhuaPrevisActionLibrary({ spec, disabled, onChange }: {
         <button type="button" disabled={disabled} aria-pressed={selected === kind} className="mt-1 w-full rounded border px-2 py-1 text-xs aria-pressed:border-cyan-300" onClick={() => {setSelected(kind);setMessage("");}}>{PREVIS_ACTION_LABELS[kind]}</button>
       </div>)}
     </div>
+    <ManhuaPrevisActionPreview key={selected} kind={selected} disabled={disabled} />
     <p className="text-xs" data-previs-action-window>{target ? `${target.nameZh || target.id} · ${added ? `${added.startSec}—${added.endSec}秒` : proposed?.error || "无法添加"}` : "请先在专业参数中添加人物。"}</p>
     <button type="button" disabled={disabled || !target || !proposed?.spec} className="rounded border border-cyan-300/40 px-3 py-2 text-xs" onClick={() => {
       if (disabled || !target) return;
