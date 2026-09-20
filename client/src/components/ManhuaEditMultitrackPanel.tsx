@@ -118,11 +118,11 @@ function TrackRow({
 }) {
   return (
     <div className="flex gap-2" data-manhua-edit-track={track.kind}>
-      <div className="w-16 shrink-0 pt-1">
-        <div className="text-[10px] font-semibold text-white/75">{track.nameZh}</div>
-        <div className="mt-0.5 text-[8px] leading-snug text-white/35">{track.hintZh}</div>
+      <div className="w-24 shrink-0 pt-1">
+        <div className="text-sm font-semibold text-white/75">{track.nameZh}</div>
+        <div className="mt-0.5 text-sm leading-snug text-white/35">{track.hintZh}</div>
       </div>
-      <div className="relative min-h-[36px] flex-1 overflow-hidden rounded-md border border-white/10 bg-black/50">
+      <div className="relative min-h-[64px] flex-1 overflow-hidden rounded-md border border-white/10 bg-black/50">
         {track.segments.map((seg) => {
           const on = seg.shotIndex === activeShotIndex;
           return (
@@ -143,13 +143,13 @@ function TrackRow({
                     : "border-white/10 bg-white/[0.04]"
               }`}
             >
-              <div className="truncate text-[9px] font-medium text-white/85">{seg.labelZh}</div>
-              <div className="text-[8px] text-white/40">{seg.durationSec}s</div>
+              <div className="truncate text-sm font-medium text-white/85">{seg.labelZh}</div>
+              <div className="text-sm text-white/40">{seg.durationSec}s</div>
             </button>
           );
         })}
         {!track.segments.length ? (
-          <div className="flex h-9 items-center px-2 text-[10px] text-white/30">暂无片段</div>
+          <div className="flex h-9 items-center px-2 text-sm text-white/30">暂无片段</div>
         ) : null}
       </div>
     </div>
@@ -286,21 +286,19 @@ export default function ManhuaEditMultitrackPanel({
   return (
     <section
       data-manhua-panel="edit-multitrack"
-      className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3"
+      className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto p-3 text-sm [&_button]:min-h-8 [&_button]:text-sm [&_label]:text-sm [&_p]:text-sm"
     >
       <div className="flex shrink-0 flex-wrap items-start justify-between gap-2">
         <div>
-          <div className="flex items-center gap-1.5 text-[13px] font-semibold text-white/90">
+          <div className="flex items-center gap-1.5 text-base font-semibold text-white/90">
             <Scissors className="h-4 w-4 text-violet-200" />
             剪辑台
-            <span className="text-[11px] font-normal text-white/40">
+            <span className="text-sm font-normal text-white/40">
               {roughClips.length ? `约 ${totalSec}s · ${roughClips.length}镜` : "暂无剪辑计划 · 0镜"}
             </span>
           </div>
-          <p className="mt-1 max-w-xl text-[10px] leading-relaxed text-white/40">
-            多轨预览：静帧 / 成片 / 对白 / 字幕。可调进出点；字幕默认只生成轨数据，
-            勾选下方「烧字进片」提交后才真正烧进成片。
-            建议切点：气口 + 导戏秒轴对齐，写入成片后合成会真裁切。
+          <p className="mt-1 max-w-xl text-sm leading-relaxed text-white/40">
+            先选片段，再调整剪辑、画面或字幕。确认后生成当前版本，原成片保留。
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
@@ -310,7 +308,7 @@ export default function ManhuaEditMultitrackPanel({
               type="button"
               disabled={suggestAutoCutsBusy || factoryBusy}
               onClick={() => void onSuggestAutoCuts()}
-              className="inline-flex items-center gap-1 rounded-md border border-emerald-400/35 bg-emerald-500/15 px-2 py-1 text-[10px] text-emerald-50/95 hover:bg-emerald-500/25 disabled:opacity-40"
+              className="inline-flex items-center gap-1 rounded-md border border-emerald-400/35 bg-emerald-500/15 px-2 py-1 text-sm text-emerald-50/95 hover:bg-emerald-500/25 disabled:opacity-40"
               title="分析成片气口，自动建议各镜进出点"
             >
               <Sparkles className="h-3 w-3" />
@@ -320,7 +318,7 @@ export default function ManhuaEditMultitrackPanel({
           {stages.map((s) => (
             <span
               key={s.id}
-              className="rounded border border-white/10 bg-white/[0.03] px-1.5 py-0.5 text-[8px] text-white/45"
+              className="rounded border border-white/10 bg-white/[0.03] px-1.5 py-0.5 text-sm text-white/45"
               title={s.jobZh}
             >
               {s.nameZh}
@@ -332,13 +330,14 @@ export default function ManhuaEditMultitrackPanel({
 
       <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4" aria-label="剪辑工具抽屉">
         {[["cut", "剪辑工具"], ["effects", "特效与滤镜"], ["subtitles", "转场与字幕"], ["export", "导出设置"]].map(([id, label]) => (
-          <button key={id} type="button" data-manhua-edit-drawer-toggle={id} aria-expanded={activeDrawer === id} aria-controls={`manhua-edit-drawer-${id}`} onClick={() => setActiveDrawer(current => current === id ? null : id)} className={`min-h-11 rounded-lg border px-3 py-2 text-xs font-semibold ${activeDrawer === id ? "border-violet-300/50 bg-violet-500/20 text-violet-50" : "border-white/15 bg-white/[0.03] text-white/70"}`}>
+          <button key={id} type="button" data-manhua-edit-drawer-toggle={id} aria-expanded={activeDrawer === id} aria-controls={`manhua-edit-drawer-${id}`} onClick={() => setActiveDrawer(current => current === id ? null : id)} className={`min-h-11 rounded-lg border px-3 py-2 text-sm font-semibold ${activeDrawer === id ? "border-violet-300/50 bg-violet-500/20 text-violet-50" : "border-white/15 bg-white/[0.03] text-white/70"}`}>
             {label} {activeDrawer === id ? "▴" : "▾"}
           </button>
         ))}
       </div>
 
-      <div className="shrink-0 space-y-2 rounded-lg border border-white/10 bg-black/35 p-2.5">
+      <div data-manhua-edit-timeline-scroll className="min-w-0 shrink-0 overflow-x-auto rounded-lg border border-white/10 bg-black/35 p-3">
+        <div className="space-y-3" style={{ minWidth: Math.max(640, roughClips.length * 110) }}>
         {tracks.map((t) => (
           <TrackRow
             key={t.kind}
@@ -353,12 +352,14 @@ export default function ManhuaEditMultitrackPanel({
             style={{ left: "0%" }}
             title="播放头"
           />
-          <div className="absolute inset-x-0 top-0.5 flex justify-between px-0.5 text-[8px] text-white/30">
+          <div className="absolute inset-x-0 top-0.5 flex justify-between px-0.5 text-sm text-white/30">
             <span>0s</span>
             <span>{Math.round(totalSec / 2)}s</span>
             <span>{totalSec}s</span>
           </div>
         </div>
+      </div>
+
       </div>
 
       <div id="manhua-edit-drawer-cut" data-manhua-edit-drawer="cut" hidden={activeDrawer !== "cut"} className="shrink-0 rounded-xl border border-white/15 bg-black/25 p-3">
@@ -370,13 +371,13 @@ export default function ManhuaEditMultitrackPanel({
         className="rounded-lg border border-violet-400/20 bg-violet-500/[0.06] p-2.5"
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="text-[10px] font-semibold text-violet-100/90">细剪 · 进出点</div>
+          <div className="text-sm font-semibold text-violet-100/90">细剪 · 进出点</div>
           {onSuggestAutoCuts ? (
             <button
               type="button"
               disabled={suggestAutoCutsBusy || factoryBusy}
               onClick={() => void onSuggestAutoCuts()}
-              className="text-[9px] text-emerald-200/80 underline-offset-2 hover:underline disabled:opacity-40"
+              className="text-sm text-emerald-200/80 underline-offset-2 hover:underline disabled:opacity-40"
             >
               {suggestAutoCutsBusy ? "正在按气口分析…" : "按气口重算建议"}
             </button>
@@ -385,12 +386,12 @@ export default function ManhuaEditMultitrackPanel({
         {activeClip && activeTrim ? (
           <div className="mt-2 flex flex-wrap items-end gap-3">
             <div>
-              <div className="text-[9px] text-white/40">
+              <div className="text-sm text-white/40">
                 镜 {String(activeClip.shotIndex).padStart(2, "0")} · 源长{" "}
                 {activeClip.durationSec}s
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-2">
-                <label className="flex items-center gap-1 text-[10px] text-white/70">
+                <label className="flex items-center gap-1 text-sm text-white/70">
                   入点
                   <button
                     type="button"
@@ -410,7 +411,7 @@ export default function ManhuaEditMultitrackPanel({
                     +
                   </button>
                 </label>
-                <label className="flex items-center gap-1 text-[10px] text-white/70">
+                <label className="flex items-center gap-1 text-sm text-white/70">
                   出点
                   <button
                     type="button"
@@ -430,13 +431,13 @@ export default function ManhuaEditMultitrackPanel({
                     +
                   </button>
                 </label>
-                <span className="text-[9px] text-cyan-200/70">
+                <span className="text-sm text-cyan-200/70">
                   有效 {(activeTrim.outSec - activeTrim.inSec).toFixed(1)}s
                 </span>
                 <button
                   type="button"
                   onClick={resetTrim}
-                  className="text-[9px] text-white/40 underline-offset-2 hover:underline"
+                  className="text-sm text-white/40 underline-offset-2 hover:underline"
                 >
                   重置
                 </button>
@@ -444,12 +445,12 @@ export default function ManhuaEditMultitrackPanel({
             </div>
           </div>
         ) : (
-          <p className="mt-1 text-[10px] text-white/35">点选时间线上的片段以调节进出点</p>
+          <p className="mt-1 text-sm text-white/35">点选时间线上的片段以调节进出点</p>
         )}
       </div>
 
       <div className="rounded-lg border border-white/10 bg-white/[0.02] p-2">
-        <div className="text-[10px] font-semibold text-white/60">粗剪顺序</div>
+        <div className="text-sm font-semibold text-white/60">粗剪顺序</div>
         <div className="mt-1.5 flex gap-1 overflow-x-auto pb-0.5">
           {roughClips.map((c, i) => (
             <div
@@ -463,14 +464,14 @@ export default function ManhuaEditMultitrackPanel({
               <div className="flex flex-col">
                 <button
                   type="button"
-                  className="text-[9px] text-white/35 hover:text-white/70"
+                  className="text-sm text-white/35 hover:text-white/70"
                   onClick={() => move(i, -1)}
                 >
                   ↑
                 </button>
                 <button
                   type="button"
-                  className="text-[9px] text-white/35 hover:text-white/70"
+                  className="text-sm text-white/35 hover:text-white/70"
                   onClick={() => move(i, 1)}
                 >
                   ↓
@@ -481,10 +482,10 @@ export default function ManhuaEditMultitrackPanel({
                 className="min-w-0 flex-1 text-left"
                 onClick={() => onSelectShot?.(c.shotIndex)}
               >
-                <div className="text-[10px] font-semibold text-white/85">
+                <div className="text-sm font-semibold text-white/85">
                   {String(c.order).padStart(2, "0")}·镜{c.shotIndex}
                 </div>
-                <div className="truncate text-[8px] text-white/40">{c.labelZh}</div>
+                <div className="truncate text-sm text-white/40">{c.labelZh}</div>
               </button>
             </div>
           ))}
@@ -500,7 +501,7 @@ export default function ManhuaEditMultitrackPanel({
         }`}
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 text-[10px] font-semibold text-white/80">
+          <div className="flex items-center gap-1.5 text-sm font-semibold text-white/80">
             <ShieldCheck className="h-3.5 w-3.5 text-cyan-200/80" />
             智能质检
             <span className="font-normal text-white/40">
@@ -514,7 +515,7 @@ export default function ManhuaEditMultitrackPanel({
               disabled={factoryBusy}
               data-manhua-action="rework-all-failed"
               onClick={() => onReworkFailedClips(qcSummary.reworkIndexes)}
-              className="inline-flex items-center gap-1 rounded border border-amber-400/40 bg-amber-500/20 px-2 py-0.5 text-[9px] text-amber-50 disabled:opacity-45"
+              className="inline-flex items-center gap-1 rounded border border-amber-400/40 bg-amber-500/20 px-2 py-0.5 text-sm text-amber-50 disabled:opacity-45"
             >
               <RefreshCw className="h-3 w-3" />
               返工未过镜
@@ -524,11 +525,11 @@ export default function ManhuaEditMultitrackPanel({
 
         {activeQc ? (
           <div className="mt-2 rounded-md border border-white/10 bg-black/30 p-2">
-            <div className="flex items-center justify-between gap-2 text-[10px]">
+            <div className="flex items-center justify-between gap-2 text-sm">
               <span className="font-semibold text-white/75">
                 镜 {String(activeQc.shotIndex).padStart(2, "0")}
               </span>
-              <span className="text-[9px] text-white/40">
+              <span className="text-sm text-white/40">
                 {activeQc.gate === "passed"
                   ? "可进成片坞"
                   : activeQc.gate === "accepted"
@@ -550,7 +551,7 @@ export default function ManhuaEditMultitrackPanel({
                 return (
                   <div
                     key={key}
-                    className={`flex items-center gap-1 rounded px-1.5 py-1 text-[9px] ${
+                    className={`flex items-center gap-1 rounded px-1.5 py-1 text-sm ${
                       passed
                         ? "bg-emerald-500/12 text-emerald-100"
                         : failed
@@ -571,7 +572,7 @@ export default function ManhuaEditMultitrackPanel({
               })}
             </div>
             {activeQc.quality?.status === "failed" && activeQc.quality.summary ? (
-              <p className="mt-1.5 line-clamp-3 text-[9px] leading-relaxed text-amber-50/85">
+              <p className="mt-1.5 line-clamp-3 text-sm leading-relaxed text-amber-50/85">
                 {activeQc.quality.summary}
               </p>
             ) : null}
@@ -582,7 +583,7 @@ export default function ManhuaEditMultitrackPanel({
                   disabled={factoryBusy}
                   data-manhua-action="rework-clip"
                   onClick={() => onReworkClip(activeQc.shotIndex)}
-                  className="rounded border border-cyan-400/35 bg-cyan-500/15 px-2 py-0.5 text-[9px] text-cyan-50 disabled:opacity-45"
+                  className="rounded border border-cyan-400/35 bg-cyan-500/15 px-2 py-0.5 text-sm text-cyan-50 disabled:opacity-45"
                 >
                   重出本镜成片
                 </button>
@@ -595,7 +596,7 @@ export default function ManhuaEditMultitrackPanel({
                   disabled={factoryBusy || !activeQc.keyartBlockId}
                   data-manhua-action="rework-still"
                   onClick={() => onReworkStill(activeQc.shotIndex)}
-                  className="rounded border border-amber-400/35 bg-amber-500/15 px-2 py-0.5 text-[9px] text-amber-50 disabled:opacity-45"
+                  className="rounded border border-amber-400/35 bg-amber-500/15 px-2 py-0.5 text-sm text-amber-50 disabled:opacity-45"
                 >
                   重出本镜静帧
                 </button>
@@ -612,7 +613,7 @@ export default function ManhuaEditMultitrackPanel({
                     const variable = suggestManhuaRetakeVariable(activeQc.quality!.summary);
                     onRetakeClip(activeQc.clipBlockId!, variable);
                   }}
-                  className="rounded border border-fuchsia-400/40 bg-fuchsia-500/15 px-2 py-0.5 text-[9px] font-semibold text-fuchsia-50 disabled:opacity-45"
+                  className="rounded border border-fuchsia-400/40 bg-fuchsia-500/15 px-2 py-0.5 text-sm font-semibold text-fuchsia-50 disabled:opacity-45"
                   title={formatManhuaRetakeHintZh(
                     suggestManhuaRetakeVariable(activeQc.quality.summary),
                     1,
@@ -636,7 +637,7 @@ export default function ManhuaEditMultitrackPanel({
                   type="button"
                   data-manhua-action="accept-clip-despite-qc"
                   onClick={() => onAcceptDespiteQc(activeQc.clipBlockId!)}
-                  className="rounded border border-amber-400/45 bg-amber-500/20 px-2 py-0.5 text-[9px] font-semibold text-amber-50"
+                  className="rounded border border-amber-400/45 bg-amber-500/20 px-2 py-0.5 text-sm font-semibold text-amber-50"
                 >
                   仍采用此片
                 </button>
@@ -644,14 +645,14 @@ export default function ManhuaEditMultitrackPanel({
             </div>
             {activeQc.clipBlockId && activeVersions && activeVersions.urls.length > 1 ? (
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                <span className="text-[8px] text-white/35">成片版本</span>
+                <span className="text-sm text-white/35">成片版本</span>
                 {activeVersions.urls.map((url, index) => (
                   <button
                     key={url}
                     type="button"
                     disabled={factoryBusy || !onSelectClipVersion}
                     onClick={() => onSelectClipVersion?.(activeQc.clipBlockId!, url)}
-                    className={`rounded border px-1.5 py-0.5 text-[8px] ${
+                    className={`rounded border px-1.5 py-0.5 text-sm ${
                       activeVersions.activeUrl === url
                         ? "border-emerald-300/40 bg-emerald-500/20 text-emerald-50"
                         : "border-white/12 bg-white/[0.04] text-white/55"
@@ -664,7 +665,7 @@ export default function ManhuaEditMultitrackPanel({
             ) : null}
           </div>
         ) : (
-          <p className="mt-1.5 text-[10px] text-white/35">点选片段查看该镜质检</p>
+          <p className="mt-1.5 text-sm text-white/35">点选片段查看该镜质检</p>
         )}
       </div>
 
@@ -674,10 +675,10 @@ export default function ManhuaEditMultitrackPanel({
       <div id="manhua-edit-drawer-effects" data-manhua-edit-drawer="effects" hidden={activeDrawer !== "effects"} className="shrink-0 rounded-xl border border-white/15 bg-black/25 p-3">
         <h3 className="text-sm font-semibold text-white/90">特效与滤镜</h3>
         <div className="space-y-3 pt-2">
-<p className="text-xs text-white/55">已有片段可提交局部画面编辑，原片保留。独立滤镜、调色与特效参数尚未接通，不会自动作用于成片。</p>
+<p className="text-sm text-white/55">已有片段可提交局部画面编辑，原片保留。独立滤镜、调色与特效参数尚未接通，不会自动作用于成片。</p>
             {activeQc?.clipBlockId && activeQc.gate !== "missing" && onVideoEditClip ? (
               <div className="mt-2 rounded-md border border-cyan-400/20 bg-cyan-500/[0.06] p-2">
-                <label className="block text-[9px] font-semibold text-cyan-50/85">
+                <label className="block text-sm font-semibold text-cyan-50/85">
                   局部改画面 · 原片保留可切回
                 </label>
                 <div className="mt-1 flex gap-1.5">
@@ -686,7 +687,7 @@ export default function ManhuaEditMultitrackPanel({
                     maxLength={240}
                     onChange={(e) => setVideoEditInstruction(e.target.value)}
                     placeholder="例如：移除背景路人，主体动作、构图与时长不变"
-                    className="min-w-0 flex-1 rounded border border-white/12 bg-black/45 px-2 py-1 text-[9px] text-white/85 outline-none focus:border-cyan-400/45"
+                    className="min-w-0 flex-1 rounded border border-white/12 bg-black/45 px-2 py-1 text-sm text-white/85 outline-none focus:border-cyan-400/45"
                   />
                   <button
                     type="button"
@@ -696,30 +697,30 @@ export default function ManhuaEditMultitrackPanel({
                       onVideoEditClip(activeQc.clipBlockId!, videoEditInstruction);
                       setVideoEditInstruction("");
                     }}
-                    className="rounded border border-cyan-400/35 bg-cyan-500/15 px-2 py-1 text-[9px] font-semibold text-cyan-50 disabled:opacity-40"
+                    className="rounded border border-cyan-400/35 bg-cyan-500/15 px-2 py-1 text-sm font-semibold text-cyan-50 disabled:opacity-40"
                   >
                     提交编辑
                   </button>
                 </div>
-                <p className="mt-1 text-[8px] leading-snug text-white/35">
+                <p className="mt-1 text-sm leading-snug text-white/35">
                   位于单镜质检之后、最终拼接之前；编辑版需重新质检。
                 </p>
               </div>
             ) : null}
 
-      {!activeQc?.clipBlockId || activeQc.gate === "missing" || !onVideoEditClip ? <p className="text-xs text-amber-100/70">请先选中已有成片，才可编辑画面。</p> : null}
+      {!activeQc?.clipBlockId || activeQc.gate === "missing" || !onVideoEditClip ? <p className="text-sm text-amber-100/70">请先选中已有成片，才可编辑画面。</p> : null}
         </div>
       </div>
       <div id="manhua-edit-drawer-subtitles" data-manhua-edit-drawer="subtitles" hidden={activeDrawer !== "subtitles"} className="shrink-0 rounded-xl border border-white/15 bg-black/25 p-3">
         <h3 className="text-sm font-semibold text-white/90">转场与字幕</h3>
-        <label className="my-2 flex items-center gap-2 text-xs">本集转场
+        <label className="my-2 flex items-center gap-2 text-sm">本集转场
           <select data-manhua-edit-transition value={editTransition} disabled={factoryBusy || !onEditTransitionChange} onChange={e => onEditTransitionChange?.(e.target.value === "cut" ? "cut" : "fade")} className="min-h-11 rounded border border-white/20 bg-slate-900 px-3 text-white">
             <option value="fade">淡化</option><option value="cut">直切</option>
           </select>
         </label>
         <div className="space-y-3 pt-2">
-<p className="text-xs text-white/55">转场应用于本集片段之间；改变设置后需重新生成当前版本，旧成片保留。字幕轨与烧字沿用真实任务。</p>
-          <label className="ml-1 inline-flex items-center gap-1 rounded border border-white/10 bg-black/40 px-2 py-1 text-[9px] text-white/55">
+<p className="text-sm text-white/55">转场应用于本集片段之间；改变设置后需重新生成当前版本，旧成片保留。字幕轨与烧字沿用真实任务。</p>
+          <label className="ml-1 inline-flex items-center gap-1 rounded border border-white/10 bg-black/40 px-2 py-1 text-sm text-white/55">
             <input
               type="checkbox"
               checked={subtitleEnabled}
@@ -736,13 +737,13 @@ export default function ManhuaEditMultitrackPanel({
           className="rounded-lg border border-white/10 bg-white/[0.02] p-2.5"
         >
           <div className="flex items-center justify-between gap-2">
-            <div className="text-[10px] font-semibold text-white/70">
+            <div className="text-sm font-semibold text-white/70">
               {finalSubtitleTimeline ? "当前成片字幕" : "计划字幕预览"} · {cues.length} 条（默认不烧）
             </div>
             {srtPreview ? (
               <button
                 type="button"
-                className="text-[9px] text-cyan-200/80 underline-offset-2 hover:underline"
+                className="text-sm text-cyan-200/80 underline-offset-2 hover:underline"
                 onClick={() => {
                   void copyText(srtPreview).then((ok) => {
                     if (ok) toast.success("已复制 SRT");
@@ -759,7 +760,7 @@ export default function ManhuaEditMultitrackPanel({
               {cues.map((c) => (
                 <li
                   key={`cue-${c.shotIndex}-${c.order}`}
-                  className="truncate text-[10px] text-white/55"
+                  className="truncate text-sm text-white/55"
                 >
                   <span className="font-mono text-white/35">
                     {c.startSec}–{c.endSec}s
@@ -769,7 +770,7 @@ export default function ManhuaEditMultitrackPanel({
               ))}
             </ul>
           ) : (
-            <p className="mt-1 text-[10px] text-white/35">当前粗剪序无对白可铺字幕</p>
+            <p className="mt-1 text-sm text-white/35">当前粗剪序无对白可铺字幕</p>
           )}
 
           {/* 烧字进片:与 bgm_mount/concat 同一条后期任务通道(父级接线) */}
@@ -778,7 +779,7 @@ export default function ManhuaEditMultitrackPanel({
             className="mt-2 rounded-md border border-amber-400/25 bg-amber-500/[0.05] p-2"
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <label className="inline-flex items-center gap-1.5 text-[10px] text-amber-50/90">
+              <label className="inline-flex items-center gap-1.5 text-sm text-amber-50/90">
                 <input
                   type="checkbox"
                   checked={burnArmed}
@@ -787,7 +788,7 @@ export default function ManhuaEditMultitrackPanel({
                 />
                 <Flame className="h-3 w-3 text-amber-200/90" />
                 已核对对白与成片一致，烧字进片
-                <span className="text-[9px] font-normal text-white/40">
+                <span className="text-sm font-normal text-white/40">
                   使用该版合成时冻结的 {burnCues.length} 条对白（按实际镜窗对齐，未经语音识别；原片保留）
                 </span>
               </label>
@@ -798,7 +799,7 @@ export default function ManhuaEditMultitrackPanel({
                   !onBurnSubtitle || !burnArmed || !burnCues.length || !finalSubtitleTimeline || burnSubtitleBusy || factoryBusy
                 }
                 onClick={submitBurn}
-                className="inline-flex items-center gap-1 rounded border border-amber-400/40 bg-amber-500/20 px-2 py-0.5 text-[9px] font-semibold text-amber-50 hover:bg-amber-500/30 disabled:opacity-40"
+                className="inline-flex items-center gap-1 rounded border border-amber-400/40 bg-amber-500/20 px-2 py-0.5 text-sm font-semibold text-amber-50 hover:bg-amber-500/30 disabled:opacity-40"
                 title={
                   !onBurnSubtitle
                     ? "先在成片坞合成本集长片，再回来烧字"
@@ -816,33 +817,33 @@ export default function ManhuaEditMultitrackPanel({
               </button>
             </div>
             {!finalSubtitleTimeline && onBurnSubtitle ? (
-              <p className="mt-1 text-[10px] text-amber-100/80">当前版本没有可核对的字幕时间表，不能套用新稿字幕。重新合成后可用，原片保留。</p>
+              <p className="mt-1 text-sm text-amber-100/80">当前版本没有可核对的字幕时间表，不能套用新稿字幕。重新合成后可用，原片保留。</p>
             ) : null}
             {burnSubtitleResultUrl ? (
               <a
                 href={burnSubtitleResultUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="mt-1.5 inline-block text-[10px] text-emerald-200/90 underline-offset-2 hover:underline"
+                className="mt-1.5 inline-block text-sm text-emerald-200/90 underline-offset-2 hover:underline"
               >
                 查看烧字成片（新视频）
               </a>
             ) : null}
             {burnSubtitleRecoveryError ? (
-              <p className="mt-1.5 text-[9px] text-amber-100/80">
+              <p className="mt-1.5 text-sm text-amber-100/80">
                 {burnSubtitleRecoveryError}
               </p>
             ) : null}
             {finalVideoVersions && finalVideoVersions.urls.length > 1 ? (
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                <span className="text-[8px] text-white/35">整集成片版本</span>
+                <span className="text-sm text-white/35">整集成片版本</span>
                 {finalVideoVersions.urls.map((url, index) => (
                   <button
                     key={url}
                     type="button"
                     disabled={factoryBusy || burnSubtitleBusy || !onSelectFinalVideoVersion}
                     onClick={() => onSelectFinalVideoVersion?.(url)}
-                    className={`rounded border px-1.5 py-0.5 text-[8px] ${
+                    className={`rounded border px-1.5 py-0.5 text-sm ${
                       finalVideoVersions.activeUrl === url
                         ? "border-emerald-300/40 bg-emerald-500/20 text-emerald-50"
                         : "border-white/12 bg-white/[0.04] text-white/55"
@@ -882,7 +883,7 @@ export default function ManhuaEditMultitrackPanel({
         className="rounded-lg border border-white/10 bg-white/[0.02] p-2.5"
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 text-[10px] font-semibold text-white/75">
+          <div className="flex items-center gap-1.5 text-sm font-semibold text-white/75">
             <Package className="h-3.5 w-3.5 text-violet-200/80" />
             导出 · 成片坞勾选
             <span className="font-normal text-white/35">
@@ -896,7 +897,7 @@ export default function ManhuaEditMultitrackPanel({
                 data-manhua-action="select-exportable-clips"
                 disabled={!exportableIds.length}
                 onClick={() => onSelectExportableClips(exportableIds)}
-                className="rounded border border-violet-400/35 bg-violet-500/15 px-2 py-0.5 text-[9px] text-violet-50 disabled:opacity-40"
+                className="rounded border border-violet-400/35 bg-violet-500/15 px-2 py-0.5 text-sm text-violet-50 disabled:opacity-40"
               >
                 勾选本集可导出
               </button>
@@ -905,7 +906,7 @@ export default function ManhuaEditMultitrackPanel({
               <button
                 type="button"
                 onClick={onOpenClipDock}
-                className="text-[9px] text-cyan-200/80 underline-offset-2 hover:underline"
+                className="text-sm text-cyan-200/80 underline-offset-2 hover:underline"
               >
                 打开成片坞
               </button>
@@ -942,11 +943,11 @@ export default function ManhuaEditMultitrackPanel({
                 />
                 <button
                   type="button"
-                  className="min-w-0 flex-1 text-left text-[10px] text-white/70"
+                  className="min-w-0 flex-1 text-left text-sm text-white/70"
                   onClick={() => onSelectShot?.(row.shotIndex)}
                 >
                   镜 {String(row.shotIndex).padStart(2, "0")}
-                  <span className="ml-1.5 text-[9px] text-white/35">
+                  <span className="ml-1.5 text-sm text-white/35">
                     {row.gate === "passed"
                       ? "质检通过"
                       : row.gate === "accepted"
@@ -962,7 +963,7 @@ export default function ManhuaEditMultitrackPanel({
             );
           })}
           {!qcRows.length ? (
-            <li className="text-[10px] text-white/35">暂无片段可导出</li>
+            <li className="text-sm text-white/35">暂无片段可导出</li>
           ) : null}
         </ul>
       </div>

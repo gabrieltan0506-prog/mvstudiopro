@@ -44,20 +44,20 @@ export default function ManhuaDeliveryEditSection({
       className="rounded-lg border border-violet-400/25 bg-violet-500/[0.06] p-2.5"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 text-[10px] font-semibold text-white/80">
+        <div className="flex items-center gap-1.5 text-sm font-semibold text-white/80">
           <Palette className="h-3.5 w-3.5 text-violet-200/90" />
           成色 / 字幕 / 配音
           <span className="font-normal text-white/40">{progress.labelZh}</span>
         </div>
         {onCineVocabLocaleChange ? (
-          <label className="flex items-center gap-1 text-[9px] text-white/45">
+          <label className="flex items-center gap-1 text-sm text-white/45">
             可拍词语言
             <select
               value={cineVocabLocale}
               onChange={(e) =>
                 onCineVocabLocaleChange(e.target.value as ManhuaCineVocabLocale)
               }
-              className="rounded border border-white/15 bg-black/40 px-1.5 py-0.5 text-[9px] text-white/80"
+              className="rounded border border-white/15 bg-black/40 px-1.5 py-0.5 text-sm text-white/80"
             >
               {(Object.keys(MANHUA_CINE_VOCAB_LOCALE_LABEL_ZH) as ManhuaCineVocabLocale[]).map(
                 (loc) => (
@@ -71,48 +71,51 @@ export default function ManhuaDeliveryEditSection({
         ) : null}
       </div>
 
-      <p className="mt-1.5 text-[10px] leading-relaxed text-white/55">
+      <p className="mt-1.5 text-sm leading-relaxed text-white/55">
         {MANHUA_DELIVERY_REQUIREMENTS_HINT_ZH}
       </p>
+      <details data-manhua-color-settings className="mt-2">
+        <summary className="min-h-9 cursor-pointer py-2 text-sm">画面与色彩（高级）</summary>
       <div className="mt-2 grid gap-2 md:grid-cols-3">
         <label className="block space-y-1">
-          <span className="text-[9px] text-white/45">成色意图</span>
+          <span className="text-sm text-white/45">成色意图</span>
           <input
             value={deliveryPackage.color.lookIntentZh}
             onChange={(e) =>
               patch({ color: { ...deliveryPackage.color, lookIntentZh: e.target.value } })
             }
-            className="w-full rounded border border-white/12 bg-black/35 px-2 py-1 text-[10px] text-white/85"
+            className="w-full rounded border border-white/12 bg-black/35 px-2 py-1 text-sm text-white/85"
           />
         </label>
         <label className="block space-y-1">
-          <span className="text-[9px] text-white/45">工作/交付色域</span>
+          <span className="text-sm text-white/45">工作/交付色域</span>
           <input
             value={deliveryPackage.color.workingSpaceHint}
             onChange={(e) =>
               patch({ color: { ...deliveryPackage.color, workingSpaceHint: e.target.value } })
             }
-            className="w-full rounded border border-white/12 bg-black/35 px-2 py-1 text-[10px] text-white/85"
+            className="w-full rounded border border-white/12 bg-black/35 px-2 py-1 text-sm text-white/85"
           />
         </label>
         <label className="block space-y-1">
-          <span className="text-[9px] text-white/45">保真色</span>
+          <span className="text-sm text-white/45">保真色</span>
           <input
             value={deliveryPackage.color.heroColorLocksZh}
             onChange={(e) =>
               patch({ color: { ...deliveryPackage.color, heroColorLocksZh: e.target.value } })
             }
-            className="w-full rounded border border-white/12 bg-black/35 px-2 py-1 text-[10px] text-white/85"
+            className="w-full rounded border border-white/12 bg-black/35 px-2 py-1 text-sm text-white/85"
           />
         </label>
       </div>
+      </details>
 
       <div className="mt-2 flex flex-wrap items-center gap-3 border-t border-white/10 pt-2">
-        <div className="flex items-center gap-1 text-[9px] font-semibold text-white/60">
+        <div className="flex items-center gap-1 text-sm font-semibold text-white/60">
           <Subtitles className="h-3 w-3" />
           字幕
         </div>
-        <label className="flex items-center gap-1 text-[9px] text-white/55">
+        <label className="flex items-center gap-1 text-sm text-white/55">
           <input
             type="checkbox"
             checked={deliveryPackage.subtitle.needSubtitles}
@@ -124,7 +127,7 @@ export default function ManhuaDeliveryEditSection({
           />
           需要字幕轴
         </label>
-        <label className="flex items-center gap-1 text-[9px] text-white/55">
+        <label className="flex items-center gap-1 text-sm text-white/55">
           <input
             type="checkbox"
             checked={deliveryPackage.subtitle.needSdh}
@@ -134,7 +137,7 @@ export default function ManhuaDeliveryEditSection({
           />
           听障轴
         </label>
-        <label className="flex items-center gap-1 text-[9px] text-white/55">
+        <label className="flex items-center gap-1 text-sm text-white/55">
           <input
             type="checkbox"
             checked={deliveryPackage.subtitle.burnInForbidden}
@@ -146,7 +149,7 @@ export default function ManhuaDeliveryEditSection({
           />
           交付要求：不烧进成片
         </label>
-        <label className="flex items-center gap-1 text-[9px] text-white/45">
+        <label className="flex items-center gap-1 text-sm text-white/45">
           语言
           <select
             value={deliveryPackage.subtitle.locale}
@@ -158,7 +161,7 @@ export default function ManhuaDeliveryEditSection({
                 },
               })
             }
-            className="rounded border border-white/15 bg-black/40 px-1.5 py-0.5 text-[9px] text-white/80"
+            className="rounded border border-white/15 bg-black/40 px-1.5 py-0.5 text-sm text-white/80"
           >
             {LOCALES.map((loc) => (
               <option key={loc} value={loc}>
@@ -170,11 +173,11 @@ export default function ManhuaDeliveryEditSection({
       </div>
 
       <div className="mt-2 flex flex-wrap items-center gap-3 border-t border-white/10 pt-2">
-        <div className="flex items-center gap-1 text-[9px] font-semibold text-white/60">
+        <div className="flex items-center gap-1 text-sm font-semibold text-white/60">
           <Mic2 className="h-3 w-3" />
           配音
         </div>
-        <label className="flex items-center gap-1 text-[9px] text-white/55">
+        <label className="flex items-center gap-1 text-sm text-white/55">
           <input
             type="checkbox"
             checked={deliveryPackage.dubbing.needDubbing}
@@ -184,7 +187,7 @@ export default function ManhuaDeliveryEditSection({
           />
           需要配音
         </label>
-        <label className="flex items-center gap-1 text-[9px] text-white/55">
+        <label className="flex items-center gap-1 text-sm text-white/55">
           <input
             type="checkbox"
             checked={deliveryPackage.dubbing.needMeStem}
@@ -195,7 +198,7 @@ export default function ManhuaDeliveryEditSection({
           M&amp;E 分轨
         </label>
         <label className="block min-w-[12rem] flex-1 space-y-0.5">
-          <span className="text-[9px] text-white/45">响度 / 人声</span>
+          <span className="text-sm text-white/45">响度 / 人声</span>
           <input
             value={deliveryPackage.dubbing.loudnessTargetHint}
             onChange={(e) =>
@@ -203,7 +206,7 @@ export default function ManhuaDeliveryEditSection({
                 dubbing: { ...deliveryPackage.dubbing, loudnessTargetHint: e.target.value },
               })
             }
-            className="w-full rounded border border-white/12 bg-black/35 px-2 py-1 text-[10px] text-white/85"
+            className="w-full rounded border border-white/12 bg-black/35 px-2 py-1 text-sm text-white/85"
           />
         </label>
       </div>
