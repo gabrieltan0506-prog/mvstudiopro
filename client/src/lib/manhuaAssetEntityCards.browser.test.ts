@@ -113,6 +113,7 @@ beforeAll(async () => {
           prompt: '【第' + n + '段·30s】墨屠第' + n + '段对白与动作。',
         }));
         if (globalThis.directorProbe) blocks.push({...defaultCanvasBlock('text',0,0),id:'beats-e01-probe',episodeIndex:1,outputText:'## 分镜表\\n| 镜号 | 景别/运镜 | 内容 | 台词 | 情绪 | 微表情 | 语气 | 时长秒 |\\n| 1 | 双人中景缓推 | 阿菁握拳后松开 | 娘：慢点 | 隐忍 | 肩背轻颤后恢复 | 轻声 | 5 |\\n| 2 | 近景 | 娘看向阿菁 | 无对白 | 放松 | 眉头舒展 | | 5 |'});
+        if (globalThis.progressProbe) blocks.push({...defaultCanvasBlock('image',0,0),id:'keyart-e01-s01-probe',episodeIndex:1,refImageUrl:'https://example.com/reference.png',prompt:'第1镜参考'});
         createRoot(document.getElementById('root')).render(
           <TooltipProvider>
             <ManhuaScriptWorkbench
@@ -171,7 +172,7 @@ afterAll(async () => {
   await browser?.close();
 }, 180_000);
 
-async function mountStoryboard(directorProbe = false): Promise<{ page: Page; close: () => Promise<void> }> {
+async function mountStoryboard(directorProbe = false, progressProbe = false): Promise<{ page: Page; close: () => Promise<void> }> {
   const ctx = await browser.createBrowserContext();
   const page = await ctx.newPage();
   await page.setRequestInterception(true);
@@ -185,6 +186,7 @@ async function mountStoryboard(directorProbe = false): Promise<{ page: Page; clo
   // 旧代码在这里就是两个按钮。
   await page.evaluate(() => window.localStorage.setItem("manhua_compact_ui", "0"));
   await page.evaluate((enabled) => { (globalThis as any).directorProbe = enabled; }, directorProbe);
+  await page.evaluate((enabled) => { (globalThis as any).progressProbe = enabled; }, progressProbe);
   await page.evaluate(storyboardBundle);
   await page.waitForFunction(() => /生成关键静帧|视觉简报|分镜/.test(document.body.innerText), {
     timeout: 30_000,
@@ -825,4 +827,29 @@ it("导演执行表与分类特效在真实工作台显示，采用只写当前�
     expect(result.updatedClip.prompt).toContain(description);
     expect(result.keyart).toBe(0);
   } finally {await close();}
+},180_000);
+
+it("七核心编辑从真实分镜右栏写入当前段，不触发生成", async () => {
+  const {page,close}=await mountStoryboard(true);
+  try {
+    await page.waitForSelector("[data-manhua-seven-core-editor]");
+    expect(await page.$eval("[data-manhua-seven-core-editor]",el=>(el as HTMLDetailsElement).open)).toBe(false);
+    await page.click("[data-manhua-seven-core-editor] summary");
+    expect(await page.$$eval("[data-manhua-seven-core-editor] textarea",els=>els.length)).toBe(7);
+    await page.type('[aria-label="本镜景别"]',"中景转近景，保留两人的空间关系");
+    await page.type('[aria-label="本镜光影"]',"窗侧自然光，人物暗侧保留细节");
+    await page.click("[data-manhua-seven-core-editor] button");
+    const result=await page.evaluate(()=>(globalThis as any).fixture);
+    expect(result.updatedClip.id).toMatch(/^clip-e01/);
+    expect(result.updatedClip.prompt).toContain("【镜头七核心：");
+    expect(result.updatedClip.prompt).toContain("中景转近景，保留两人的空间关系");
+    expect(result.updatedClip.prompt).toContain("窗侧自然光，人物暗侧保留细节");
+    expect(result.keyart).toBe(0);
+  } finally {await close();}
+},180_000);
+
+it("真实工作台进度按全部原稿镜头统计，输入垫图不算已出图",async()=>{
+ const {page,close}=await mountStoryboard(true,true);
+ try {expect(await page.evaluate(()=>document.body.innerText)).toContain("可用静帧 0/2");}
+ finally {await close();}
 },180_000);

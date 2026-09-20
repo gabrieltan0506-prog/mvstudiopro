@@ -1,3 +1,5 @@
+import { ManhuaSevenCoreEditor } from "./canvas/ManhuaSevenCoreEditor";
+import { extractManhuaShotSevenCore, upsertManhuaShotSevenCore, clearManhuaShotSevenCore } from "@shared/manhuaSevenCoreSupplement";
 import { ManhuaVfxPicker } from "./canvas/ManhuaVfxPicker";
 import { extractManhuaShotVfx, upsertManhuaShotVfx } from "@shared/manhuaVfxSupplement";
 import { ManhuaDirectorExecutionTable } from "./canvas/ManhuaDirectorExecutionTable";
@@ -1642,6 +1644,15 @@ export default function ManhuaScriptWorkbench({
     });
   }, [story?.outputText, story?.prompt, reverse?.outputText, reverse?.prompt, topic]);
   const episodeStillCount = episodeKeyarts.filter((b) => mediaUrl(b)).length;
+  // 当前剧本镜头才是进度分母；垫图、过期图和已移出本稿的旧镜头不能算可用。
+  const currentShotKeys = shots.length
+    ? shots.map(shot => episodeKeyarts.find(block => resolveKeyartShotIndex(block.id, block.prompt) === shot.index))
+    : episodeKeyarts;
+  const currentStillTarget = currentShotKeys.length;
+  const currentStillReady = currentShotKeys.filter(block => block &&
+    Boolean(block.outputUrl || block.outputUrls?.some(url => url.trim())) &&
+    manhuaShotKeyartState(manhuaShotKeyartInputOf(block)) === "ready").length;
+
   // A（用户 2026-07-29）：静帧门禁按「一镜一张」的实际分镜节点数算，不用「段×3」估算硬顶。
   // 已铺出静帧节点后，目标 = 实际已铺节点数（旧稿 13 张不该被新 plan 段×3=18 判成缺 5 张）；
   // 尚未铺任何静帧节点时，才用分镜数（段×3）排队首次生成。
@@ -3248,10 +3259,8 @@ export default function ManhuaScriptWorkbench({
         b.status === "done" &&
         manhuaClipQualityAllowsAssemble({ outputUrl: clipOutputUrl(b), quality: b.manhuaClipQuality }),
     ).length,
-    keyartTotal: episodeKeyarts.length,
-    keyartPixelLocked: episodeKeyarts.filter(
-      (b) => Boolean(mediaUrl(b)) && isManhuaKeyartPixelLocked(b),
-    ).length,
+    keyartTotal: currentStillTarget,
+    keyartPixelLocked: currentStillReady,
     qualityPassedClips: episodeClips.filter((b) => b.status === "done" && clipOutputUrl(b) && b.manhuaClipQuality?.status === "passed").length,
     qualityFailedClips: episodeClips.filter((b) => b.manhuaClipQuality?.status === "failed").length,
     finalCutVerified,
@@ -3268,6 +3277,12 @@ export default function ManhuaScriptWorkbench({
   });
   const storyboardThreeColumn = activePhase === "storyboard" && shots.length > 0;
   const shotParamFields = buildManhuaShotParamFields(activeShot);
+  let sevenCoreValues: ReturnType<typeof extractManhuaShotSevenCore> = null;
+  let sevenCoreReadError = "";
+  if (activeShot) {
+    try { sevenCoreValues = extractManhuaShotSevenCore(activeClip?.prompt || "", activeShot.index); }
+    catch (error) { sevenCoreReadError = error instanceof Error ? error.message : "七核心内容暂时无法读取"; }
+  }
   const shotParamsPanel = activeShot ? (
 
               <div
@@ -3290,6 +3305,20 @@ export default function ManhuaScriptWorkbench({
                   </p>
                 ) : null}
                 <ManhuaDirectorExecutionTable shots={activeSegment?.shots || [activeShot]} />
+                {sevenCoreReadError && <p role="alert" className="text-xs text-amber-100">{sevenCoreReadError}，原内容已保留。</p>}
+                <ManhuaSevenCoreEditor key={`seven:${focusEpisode}:${activeSegNo}:${activeShot.index}`} shotIndex={activeShot.index}
+                  initialValues={sevenCoreValues}
+                  disabled={Boolean(sevenCoreReadError) || shotSourceIsFallback || !activeClip || !onUpdateClipPrompt || Boolean(factoryBusy) || activeClip.status === "running" || activeClip.videoTaskStatus === "queued"}
+                  onApply={values => {
+                    if (shotSourceIsFallback || !activeClip || !onUpdateClipPrompt || factoryBusy || activeClip.status === "running" || activeClip.videoTaskStatus === "queued") throw new Error("当前段暂不能编辑");
+                    onUpdateClipPrompt(activeClip.id, upsertManhuaShotSevenCore(activeClip.prompt || "", activeShot.index, values));
+                    toast.success(`镜${activeShot.index}导演要求已保存，下次生成本段时采用`);
+                  }}
+                  onClear={() => {
+                    if (shotSourceIsFallback || !activeClip || !onUpdateClipPrompt || factoryBusy || activeClip.status === "running" || activeClip.videoTaskStatus === "queued") throw new Error("当前段暂不能编辑");
+                    onUpdateClipPrompt(activeClip.id, clearManhuaShotSevenCore(activeClip.prompt || "", activeShot.index));
+                    toast.success(`已清除镜${activeShot.index}的七项自定义要求`);
+                  }} />
                 <ManhuaVfxPicker key={`${focusEpisode}:${activeSegNo}:${activeShot.index}`} shotIndex={activeShot.index}
                   initialDirection={extractManhuaShotVfx(activeClip?.prompt || "", activeShot.index)}
                   disabled={shotSourceIsFallback || !activeClip || !onUpdateClipPrompt || Boolean(factoryBusy) || activeClip.status === "running" || activeClip.videoTaskStatus === "queued"}
@@ -3462,7 +3491,7 @@ export default function ManhuaScriptWorkbench({
         gapZh: clipHas
           ? ""
           : clipTotal
-            ? `静帧 ${episodeStillCount}/${Math.max(episodeKeyarts.length || shots.length, 1)} · 成片 ${clipDone}/${clipTotal}`
+            ? `${shotSourceIsFallback ? "预估" : "可用"}静帧 ${currentStillReady}/${currentStillTarget} · 成片 ${clipDone}/${clipTotal}`
             : "先出静帧再出成片",
       },
       {
