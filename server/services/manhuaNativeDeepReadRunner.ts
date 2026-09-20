@@ -6702,7 +6702,18 @@ async function executeNativeDeepReadBatch(
             endSec: episode.segments[segmentIndex]!.endSec,
             geminiKeyMoments, subtitles, storyRanges, excludedAdRanges: adRanges,
           }, params.abortSignal);
-          if (result.merge.addedCount > 0) raw.keyMoments = result.merge.keyMoments;
+          /**
+           * 🔴 0920 实链实测到的缺陷：这里原来是 `raw.keyMoments = ...` **原地改**。
+           * 而 `raw` 与段缓存 entry 的 `raw` 是**同一个引用**，段证据对象名 =
+           * hash(整条 entry 含 raw)（`manhuaNativeDeepReadSegmentCache.ts` 的
+           * `nativeDeepReadSegmentEvidenceResponseFingerprint`）。补扫改完之后 provenance 才重算名字，
+           * 于是记下的名字与早先真正上传的证据对象**对不上** → 报告渲染按「不许列目录猜证据」
+           * 直接拒绝出报告（藏海传第2集 seg4/seg6 实测 404）。
+           * 改成生成新对象：**付费证据身份逐字不变**，补扫结果只进交给整形的那份。
+           */
+          if (result.merge.addedCount > 0) {
+            completeRawSegments[segmentIndex] = { ...raw, keyMoments: result.merge.keyMoments };
+          }
           sweepSummaries.push({
             segmentIndex, scanned: result.scanned, added: result.merge.addedCount,
             droppedCount: result.merge.dropped.length,
