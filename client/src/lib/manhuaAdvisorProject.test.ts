@@ -1,3 +1,4 @@
+import { buildManhuaDirectionCanonFromSelection } from "@shared/manhuaDirectionCanonLibrary";
 import { describe, expect, it } from "vitest";
 import {
   buildManhuaAdvisorProject,
@@ -301,4 +302,13 @@ describe("1471 R1 · 存储不可用", () => {
     expect(claimManhuaAdvisorNudgeOnce(() => store, "edit")).toBe(true);
     expect(claimManhuaAdvisorNudgeOnce(store, "edit")).toBe(false);
   });
+});
+
+it("当前导演包七核心检查进入真实顾问摘要", () => {
+ const bible = buildManhuaProjectBible({ topic: "墨菁传", pack, cast: { lane: "ancient", characterIds: [], ancientArchetypeIds: [], artStyleId: "cg", propIds: [], wardrobePropContinuityIds: [] } });
+ bible.directionCanon = buildManhuaDirectionCanonFromSelection({ mainCardId: "parallel_action_editing" })!;
+ const result = buildManhuaAdvisorProject({ ...base, bible, phase: "storyboard", selection: { episodeIndex: 1, segmentIndex: 1, shot: { index: 1, durationSec: 5, actionZh: "黑奇护住阿菁", cameraZh: "全景" } } });
+ for (const label of ["景别", "角度", "构图", "光影", "色调", "动势", "转场"]) expect(result.context.shotSummary).toContain(`七核心检查·${label}`);
+ expect(result.context.shotSummary).toContain("黑奇护住阿菁");
+ expect(manhuaCreativeAdvisorContextSchema.safeParse(result.context).success).toBe(true);
 });

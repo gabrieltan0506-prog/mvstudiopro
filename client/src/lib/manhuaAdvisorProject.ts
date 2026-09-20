@@ -1,3 +1,4 @@
+import { resolveDirectorStyleBlocks, classifyManhuaDirectionSceneType } from "@shared/manhuaDirectionCanon";
 import { MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS as LIMITS, MANHUA_CREATIVE_ADVISOR_STRATEGY_IDS, type ManhuaCreativeAdvisorContext } from "@shared/manhuaCreativeAdvisor";
 import type { ManhuaWriterPack } from "@shared/manhuaWriterRoom";
 import type { ManhuaProjectBible } from "@shared/manhuaProjectBible";
@@ -333,10 +334,14 @@ export function buildManhuaAdvisorProject(input: {
   const selected = input.selection?.episodeIndex === input.episodeIndex ? input.selection : null;
   const shot = selected?.shot;
   const selectionLabel = shot ? `第 ${selected!.segmentIndex} 段 · 镜 ${shot.index}` : "本集（未指定镜头）";
-  const shotSummary = shot
+  const baseShotSummary = shot
     ? `${selectionLabel}\n${JSON.stringify(shot)}`
     : scoped.filter((b) => /^(beats|reverse)-/.test(b.id) && b.outputText?.trim())
         .map((b) => `已生成${b.id.startsWith("beats-") ? "分镜" : "成片提示词"}：\n${b.outputText}`).join("\n") || "本集没有可读取的已生成分镜；未选中具体镜头。";
+  const directionReview = resolveDirectorStyleBlocks(input.bible?.directionCanon,
+    classifyManhuaDirectionSceneType(shot ? JSON.stringify(shot) : episode?.body || ""),
+    { episodeIndex: input.episodeIndex, segmentIndex: selected?.segmentIndex, shotIndex: shot?.index }).review;
+  const shotSummary = [directionReview, baseShotSummary].filter(Boolean).join("\n\n");
   // 只转发原始冻结身份；不能按当前注册表给旧项目凭空补上 revision。
   const rawStrategy = input.bible?.directorStrategyContract as { strategyId?: unknown; revision?: unknown } | null | undefined;
   const strategyId = MANHUA_CREATIVE_ADVISOR_STRATEGY_IDS.find((id) => id === rawStrategy?.strategyId);

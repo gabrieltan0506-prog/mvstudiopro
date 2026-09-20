@@ -8,6 +8,7 @@
  * 去名铁律：进入漫剧工厂生产成稿的只能是手法参数；导演名、作品名、「致敬」「某某风格」只存 internal 字段，
  * `resolveDirectorStyleBlocks` 的输出里出现任何 internal 名称即视为泄漏（测试硬判）。
  */
+import { manhuaSevenCoreDirectives } from "./manhuaDirectionSevenCores.js";
 import type { ManhuaDirectorStrategyStage } from "./manhuaDirectorStrategy.js";
 
 export type ManhuaDirectionRuleStatus = "verified" | "conditional" | "research_only";
@@ -315,11 +316,16 @@ export function resolveDirectorStyleBlocks(
   const storyboard = take("storyboard", (r) => r.ruleZh);
   const keyframe = take("keyframe", (r) => r.ruleZh);
   const clip = take("clip", (r) => r.ruleZh);
+  // 扩展只随有效阶段手法进入既有边界标记，重编译可完整移除，旧草稿不自动付费重出。
+  for (const [stage, output] of [["storyboard", storyboard], ["keyframe", keyframe], ["clip", clip]] as const) {
+    if (output.lines.length) output.lines.push(...manhuaSevenCoreDirectives(stage));
+  }
   const reviewRules = MANHUA_DIRECTION_STAGES.flatMap((stage) => rulesFor(stage)).filter((r, i, all) => all.findIndex((x) => x.id === r.id) === i);
   const reviewLines = denameGuard(
     reviewRules.filter((r) => r.failZh).map((r) => `- ${r.titleZh || r.id}：失效条件——${r.failZh}`),
     main,
   );
+  if (storyboard.lines.length || keyframe.lines.length || clip.lines.length) reviewLines.push(...manhuaSevenCoreDirectives("review").map(line => `- ${line}`));
   const avoid = denameGuard(main.avoidZh || [], main);
 
   const block = (t: { card: ManhuaDirectionCard; lines: string[] }, headZh: string) =>

@@ -146,3 +146,20 @@ describe("导演包接线：提示词真的带了导演法典", () => {
     for (const b of rewritten) expect(b.prompt, b.id).not.toContain("导演法典");
   });
 });
+
+
+it("七核心随导演包到实际分镜与成片输入，静帧不携带动态两项", () => {
+  const p = pipeline(true);
+  for (const label of ["景别", "角度", "构图", "光影", "色调", "动势", "转场"]) {
+    expect(p.beats.prompt).toContain(`${label}：`);
+    expect(p.reverse.prompt).toContain(`${label}：`);
+    expect(p.clips.some(c => c.prompt.includes(`${label}：`))).toBe(true);
+  }
+  for (const k of p.keyarts) {
+    for (const label of ["景别", "角度", "构图", "光影", "色调"]) expect(k.prompt).toContain(`${label}：`);
+    expect(k.prompt).not.toContain("动势：");
+    expect(k.prompt).not.toContain("转场：");
+  }
+  expect(resolveDirectorStyleBlocks(canon).review).toContain("七核心检查·转场");
+  expect(pipeline(false).beats.prompt).not.toContain("七核心落实");
+});

@@ -1473,7 +1473,7 @@ export function applyFactoryPrefsToBlocks(
       // 尽量保留已有分镜注入原文（避免 prefs 防抖冲掉动作描写）
       const keptShot = (() => {
         const m = String(b.prompt || "").match(/【分镜\s*\d+·静帧[\s\S]*$/i);
-        return m ? m[0].trim() : "";
+        return m ? stripManhuaDirectionStyleBlocks(m[0]).trim() : "";
       })();
       const editPlan = planManhuaKeyartEditFusion({
         characterIds: prefsCharacterIds,
