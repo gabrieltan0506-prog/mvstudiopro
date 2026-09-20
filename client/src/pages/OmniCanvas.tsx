@@ -1,3 +1,4 @@
+import { applyManhuaAssetDirection } from "@shared/manhuaDirectionCanonLibrary";
 import { normalizeManhuaEditTransitions, manhuaEditTransitionOf, manhuaAssembleTransitionOf } from "@shared/manhuaEditTransition";
 import { CREDIT_COSTS } from "@shared/plans";
 import ManhuaFinalDeliverySurface from "@/components/ManhuaFinalDeliverySurface";
@@ -2906,7 +2907,7 @@ export default function OmniCanvas() {
       const charCount = blocks.filter((b) => b.id.startsWith("charsheet-")).length;
       const sheet = defaultCanvasBlock("image", 60 + charCount * 380, 80);
       sheet.id = makeCanvasBlockId("charsheet");
-      sheet.prompt = prompt;
+      sheet.prompt = applyManhuaAssetDirection(prompt, activeDirectionCanon);
       sheet.aspectRatio = "9:16";
       sheet.imageModel = "gpt-image-2";
       // 仅预填 prompt；不挂本地 /manhua-characters 相对路径（云端生图拉不到）
@@ -2922,7 +2923,7 @@ export default function OmniCanvas() {
         { description: "节点已预填，打开即可核对 prompt。点运行才会扣费——验收阶段请勿点运行。" },
       );
     },
-    [blocks, edges, factoryFemaleId, factoryMaleId, factoryArtStyleId],
+    [blocks, edges, factoryFemaleId, factoryMaleId, factoryArtStyleId, activeDirectionCanon],
   );
 
   const recommendedCraft = useMemo(
@@ -7562,14 +7563,14 @@ export default function OmniCanvas() {
         return;
       }
       const style = getManhuaArtStylePreset(factoryArtStyleId);
-      const prompt = buildManhuaCustomAssetGenFromLibraryPrompt({
+      const prompt = applyManhuaAssetDirection(buildManhuaCustomAssetGenFromLibraryPrompt({
         role: opts.role,
         seedLabelZh: seed.labelZh,
         seedPromptZh: seed.promptZh,
         topic: factoryTopic,
         artStyleLabelZh: style.labelZh,
         artStylePromptZh: style.promptZh,
-      });
+      }), activeDirectionCanon);
       // 有类似人物/服装道具/场景库图 → 垫图；无类似才纯文案出图
       const refAbs = seed.previewPath
         ? absolutizeManhuaAssetUrl(seed.previewPath, window.location.origin)
@@ -7632,6 +7633,7 @@ export default function OmniCanvas() {
     },
     [
       assetShareBillingUi.priceLabelZh,
+      activeDirectionCanon,
       assetShareQuote,
       factoryArtStyleId,
       factoryBusy,
@@ -8242,9 +8244,9 @@ export default function OmniCanvas() {
         regenerateNoteZh: opts?.regenerateNoteZh,
         propShapeHintsZh,
       });
-      const plans = isIncremental
+      const plans = (isIncremental
         ? plannedAll.filter((p) => anchorIdMatch(p.id))
-        : plannedAll;
+        : plannedAll).map(plan => ({ ...plan, prompt: applyManhuaAssetDirection(plan.prompt, activeDirectionCanon) }));
       /**
        * 重出档位按**真实张数**算，不按锚点数：主角一个人就有全身 + 脸特写两张，
        * 按锚点算会少收（2 张收成 15）。
@@ -8575,6 +8577,7 @@ export default function OmniCanvas() {
       recommendedScene?.id,
       runDeps,
       selectedCharacterIds,
+      activeDirectionCanon,
       stashManhuaAssetBlocksBeforePurge,
       writerFocusEpisode,
       writerPack?.episodes,

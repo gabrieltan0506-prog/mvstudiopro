@@ -11,7 +11,7 @@ import {
   spawnManhuaDramaStudio,
 } from "./canvasDramaStudio";
 import { buildManhuaWriterExpandPrompt } from "@shared/manhuaWriterRoom";
-import { buildManhuaDirectionCanonFromSelection, readManhuaDirectionCanonFromBlocks } from "@shared/manhuaDirectionCanonLibrary";
+import { applyManhuaAssetDirection, buildManhuaDirectionCanonFromSelection, readManhuaDirectionCanonFromBlocks } from "@shared/manhuaDirectionCanonLibrary";
 import { manhuaDirectionBlocksLeakInternalNames, resolveDirectorStyleBlocks } from "@shared/manhuaDirectionCanon";
 
 const canon = buildManhuaDirectionCanonFromSelection({
@@ -162,4 +162,30 @@ it("七核心随导演包到实际分镜与成片输入，静帧不携带动态�
   }
   expect(resolveDirectorStyleBlocks(canon).review).toContain("七核心检查·转场");
   expect(pipeline(false).beats.prompt).not.toContain("七核心落实");
+});
+
+it("资产导演手法进入Bible并在同步设置时替换，取消选卡不残留",()=>{
+ const assetCanon={...canon,cards:canon.cards.map(c=>c.id===canon.mainCardId?{...c,rules:[...c.rules,{id:"asset-probe",titleZh:"资产材质",ruleZh:"道具材质反映角色生活经历",stages:["assets" as const],status:"verified" as const}]}:c)};
+ const spawned=spawnManhuaDramaStudio({topic:"雨夜守护",episodeIndex:1,videoModel:"seedance-2.5",directionCanon:assetCanon});
+ const bible=spawned.blocks.find(b=>b.id.startsWith("bible-"))!;
+ expect(bible.prompt).toContain("资产层：");expect(bible.prompt).toContain("道具材质反映角色生活经历");expect(bible.prompt).toContain("持有者和当前完损状态");noNames(bible.prompt);
+ const synced=applyFactoryPrefsToBlocks(spawned.blocks,{directionCanon:assetCanon});
+ expect(synced.find(b=>b.id===bible.id)!.prompt.match(/资产层：/g)).toHaveLength(1);
+ const cleared=applyFactoryPrefsToBlocks(synced,{directionCanon:null});
+ expect(cleared.find(b=>b.id===bible.id)!.prompt).not.toContain("资产层：");
+});
+
+it("真实内置卡无需虚构assets规则也能传到资产，未选卡保持空",()=>{
+ const withCard=spawnManhuaDramaStudio({topic:"雨夜守护",episodeIndex:1,directionCanon:canon});
+ const without=spawnManhuaDramaStudio({topic:"雨夜守护",episodeIndex:1,directionCanon:null});
+ expect(withCard.blocks.find(b=>b.id.startsWith("bible-"))!.prompt).toContain("资产层：");
+ expect(without.blocks.find(b=>b.id.startsWith("bible-"))!.prompt).not.toContain("资产层：");
+});
+
+it("实际资产出图文本保留身份、移除旧包并支持取消",()=>{
+ const base="只画阿菁，保留蓝色衣服与手中木盒，禁止新增人物。";
+ const first=applyManhuaAssetDirection(base,canon);
+ expect(first).toContain(base); expect(first).toContain("资产层："); noNames(first);
+ expect(applyManhuaAssetDirection(first,canon)).toBe(first);
+ expect(applyManhuaAssetDirection(first,null).trim()).toBe(base);
 });
