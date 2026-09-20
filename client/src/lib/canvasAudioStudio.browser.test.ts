@@ -19,6 +19,7 @@ beforeAll(async () => {
       import {emptyCanvasAudioStudio,createCanvasAudioCue,canvasAudioCueInputKey} from './shared/canvasAudioStudio';
       const f=globalThis.fixture={calls:[],queries:[],musicQueries:[],history:{},posts:[],postQueries:[],postResult:null,masterEntries:[],dropSettle:false,state:null,result:null};
       const services={
+        resolveAudio:async uri=>{f.resolvedAudio=uri;return f.refreshedUrl||"";},
         generateDialogue:async input=>{f.calls.push(input);return {jobId:'test-job',status:'succeeded',result:{gcsUri:'gs://test-bucket/generated/test.mp3',audioUrl:'https://audio.test/test.mp3',bytes:12000,voiceGate:{durationSeconds:2.25}}};},
         getDialogue:async input=>{f.queries.push(input);return f.result;},
         draftMusic:async()=>({brief:{model:'suno-v6',custom_mode:true,instrumental:true,style:'恢宏',prompt:'展翼时释放气势',title:'守护',duration:30,negative_tags:'',style_weight:0.5,weirdness_constraint:0.5}}),
@@ -613,5 +614,54 @@ it("修改对白内容、声音状态和情绪后保留旧候选，恢复编辑�
     await click("确认生成");
     await page.waitForFunction(() => (window as any).fixture.calls.length === 2);
     expect(await page.evaluate(() => (window as any).fixture.calls[1])).toMatchObject({input: "[serious]站到我身后！", speakerZh: "墨屠", voiceStateZh: "变身后"});
+  } finally { await context.close(); }
+}, 20_000);
+
+it("原声通过现有传输入口播放且不改变候选或发起生成", async () => {
+  const { context, page } = await open();
+  try {
+    const source = "https://storage.googleapis.com/test-bucket/dialogue.wav?test-signature=fixture";
+    const requests: string[] = [];
+    const wav = Buffer.alloc(44 + 16000);
+    wav.write("RIFF", 0); wav.writeUInt32LE(wav.length - 8, 4); wav.write("WAVEfmt ", 8);
+    wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
+    wav.writeUInt32LE(8000, 24); wav.writeUInt32LE(16000, 28); wav.writeUInt16LE(2, 32);
+    wav.writeUInt16LE(16, 34); wav.write("data", 36); wav.writeUInt32LE(16000, 40);
+    page.removeAllListeners("request");
+    page.on("request", request => {
+      requests.push(request.url());
+      const url = new URL(request.url());
+      if (url.pathname === "/api/gcs-transfer" && [source, source + "&renewed=1"].includes(url.searchParams.get("url") || ""))
+        void request.respond({status:200,contentType:"audio/wav",body:wav});
+      else void request.abort();
+    });
+    await page.evaluate(source => {
+      const f = (window as any).fixture;
+      f.configure({...f.state,cues:[{id:"dialogue-existing",kind:"dialogue",labelZh:"娘",shotZh:"",speakerZh:"娘",voiceStateZh:"",textZh:"慢一点。",emotion:"",voice:"",sourceStartSec:0,sourceEndSec:5,volume:1,fadeInSec:0,fadeOutSec:0,approved:false,startSec:0,endSec:5,enabled:true,
+        takes:[{id:"original",gcsUri:"gs://test-bucket/dialogue.wav",previewUrl:source,durationSec:1,inputKey:"old",createdAt:"2026-09-21T00:00:00Z"}]}]});
+    }, source);
+    await page.waitForSelector('audio[aria-label="1 候选 1"]');
+    expect(await page.$eval('audio[aria-label="1 候选 1"]', e => new URL((e as HTMLAudioElement).src).pathname)).toBe("/api/gcs-transfer");
+    await page.$eval('audio[aria-label="1 候选 1"]', async e => {
+      const audio = e as HTMLAudioElement;
+      await audio.play();
+    });
+    await page.waitForFunction(() => {
+      const audio = document.querySelector('audio[aria-label="1 候选 1"]') as HTMLAudioElement;
+      return audio.readyState >= 2 && audio.currentTime > 0;
+    }, { timeout: 5000 });
+    await page.evaluate(source => {
+      (window as any).fixture.refreshedUrl = source + "&renewed=1";
+      document.querySelector('audio[aria-label="1 候选 1"]')!.dispatchEvent(new Event("error"));
+    }, source);
+    await page.waitForFunction(() => {
+      const a=document.querySelector('audio[aria-label="1 候选 1"]') as HTMLAudioElement;
+      return new URL(a.src).searchParams.get("url")?.endsWith("&renewed=1") && a.crossOrigin === "use-credentials";
+    });
+    expect(requests.some(url => url.startsWith("https://storage.googleapis.com/"))).toBe(false);
+    const result = await page.evaluate(() => {const f=(window as any).fixture;return {take:f.state.cues[0].takes[0],calls:f.calls};});
+    expect(result.take.previewUrl).toBe(source);
+    expect(result.take.id).toBe("original");
+    expect(result.calls).toEqual([]);
   } finally { await context.close(); }
 }, 20_000);

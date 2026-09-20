@@ -1,3 +1,5 @@
+import { gcsTransferUrl, isGcsTransferUrl } from "@/lib/gcsTransfer";
+import type { ComponentProps } from "react";
 import { findCanvasDialogueReuse, restoreCanvasDialogueCandidate } from "@/lib/canvasDialogueReuse";
 import { createManhuaAudioFromShots } from "@shared/manhuaAudioFromShots";
 import { planCanvasDialogueTiming } from "@shared/canvasDialogueTimingPlan";
@@ -61,6 +63,12 @@ export function matchCanvasDialogueVoice(criteria: CanvasVoiceMatchCriteria) {
 
 const fieldClass =
   "min-w-0 w-full rounded border border-white/15 bg-black/30 px-2 py-1.5 text-xs text-white";
+/** 播放复用已鉴权传输，原候选和投料地址保持不变。 */
+function CanvasAudioPlayer({ src, ...props }: ComponentProps<"audio">) {
+  return <audio {...props} src={src ? gcsTransferUrl(src) : src}
+    crossOrigin={src && isGcsTransferUrl(src) ? "use-credentials" : props.crossOrigin} />;
+}
+
 const buttonClass =
   "rounded border border-white/20 px-2 py-1.5 text-xs text-white hover:bg-white/10 disabled:opacity-40";
 
@@ -255,7 +263,9 @@ export function CanvasAudioStudioView({
     try {
       const url = await services.resolveAudio(gcsUri);
       if (mounted.current && element.isConnected && /^https:\/\//.test(url)) {
-        element.src = url;
+        if (isGcsTransferUrl(url)) element.crossOrigin = "use-credentials";
+        else element.removeAttribute("crossorigin");
+        element.src = gcsTransferUrl(url);
         element.load();
       }
     } catch {
@@ -1220,7 +1230,7 @@ export function CanvasAudioStudioView({
                             <div className="text-xs">
                               {job.titleZh} · 版本 {variant.index + 1}
                             </div>
-                            <audio
+                            <CanvasAudioPlayer
                               aria-label={`${job.titleZh} 版本 ${variant.index + 1}`}
                               className="w-full h-8"
                               controls
@@ -1269,7 +1279,7 @@ export function CanvasAudioStudioView({
                       .map(asset => (
                         <div key={asset.id}>
                           <div className="text-xs">{asset.fileName}</div>
-                          <audio
+                          <CanvasAudioPlayer
                             className="w-full h-8"
                             controls
                             preload="metadata"
@@ -1317,7 +1327,7 @@ export function CanvasAudioStudioView({
                 {source && (
                   <div className="space-y-1 text-xs">
                     原曲 {source.durationSec.toFixed(2)} 秒
-                    <audio
+                    <CanvasAudioPlayer
                       className="w-full h-8"
                       controls
                       src={source.previewUrl}
@@ -1345,7 +1355,7 @@ export function CanvasAudioStudioView({
                 {reuseCandidates.map(candidate => (
                   <div key={candidate.take.id} className="mt-3 space-y-2 rounded bg-white/5 p-2">
                     <p className="text-xs">{candidate.take.durationSec.toFixed(3)} 秒 · {candidate.emotion || "自然情绪"} · {VOICES.find(voice => voice.id === candidate.voice)?.label || candidate.voice || "未标音色"}</p>
-                    <audio controls preload="none" src={candidate.take.previewUrl} className="h-8 w-full" onError={event => void restoreAudio(event.currentTarget, candidate.take.gcsUri)} />
+                    <CanvasAudioPlayer controls preload="none" src={candidate.take.previewUrl} className="h-8 w-full" onError={event => void restoreAudio(event.currentTarget, candidate.take.gcsUri)} />
                     <button type="button" className={buttonClass} disabled={locked || cue.takes.length >= 100} onClick={() => {
                       if (locked || busyRef.current) return;
                       setConfirmation(null);
@@ -1374,7 +1384,7 @@ export function CanvasAudioStudioView({
                       ? "· 修改前版本，保留试听"
                       : ""}
                   </div>
-                  <audio
+                  <CanvasAudioPlayer
                     className="w-full h-8"
                     aria-label={`${index + 1} 候选 ${takeIndex + 1}`}
                     controls
@@ -1539,7 +1549,7 @@ export function CanvasAudioStudioView({
           {state.previewTake.inputKey === selectedKey
             ? "秒锁合听预览（不会作为整条对白投料）"
             : "旧合听预览，当前配置已改变"}
-          <audio
+          <CanvasAudioPlayer
             className="w-full h-8"
             controls
             src={state.previewTake.previewUrl}
