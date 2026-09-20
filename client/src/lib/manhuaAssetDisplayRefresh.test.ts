@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { canKeepAssetImageDisplayUrl } from "./manhuaAssetImageSource";
+import { assetImageGcsUri, canKeepAssetImageDisplayUrl } from "./manhuaAssetImageSource";
 
 const page = ts.createSourceFile(
   "OmniCanvas.tsx",
@@ -11,6 +11,7 @@ const page = ts.createSourceFile(
   ts.ScriptKind.TSX
 );
 function realRefreshEffect(deps: Record<string, unknown>) {
+  deps = { assetImageGcsUri, ...deps };
   let text = "";
   function visit(node: ts.Node) {
     if (
@@ -117,4 +118,27 @@ describe("真实工作台资产续签入口", () => {
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(setCustomAssetRefs).not.toHaveBeenCalled();
   });
+  it("旧编辑图缺存储字段也恢复同一张图，不更换采用版本", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-21T00:00:00Z"));
+    const { gcsUri, ...legacy } = original;
+    const freshUrl = original.url.replace("20260907T170620Z", "20260921T000000Z");
+    const resolveCanvasMaterialUrl = vi.fn(async () => freshUrl);
+    const setCustomAssetRefs = vi.fn();
+    realRefreshEffect({ customAssetRefs: [legacy], resignedPropGcsUriRef: { current: new Set() },
+      canKeepAssetImageDisplayUrl, resolveCanvasMaterialUrl, setCustomAssetRefs })();
+    await vi.waitFor(() => expect(setCustomAssetRefs).toHaveBeenCalledTimes(1));
+    expect(resolveCanvasMaterialUrl).toHaveBeenCalledWith(gcsUri);
+    expect(setCustomAssetRefs.mock.calls[0][0]([legacy])).toEqual([{ ...legacy, gcsUri, url: freshUrl }]);
+  });
+
+  it("续签回执不覆盖同 ID 后来换入的图片", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-21T00:00:00Z"));
+    const setCustomAssetRefs = vi.fn();
+    realRefreshEffect({ customAssetRefs: [original], resignedPropGcsUriRef: { current: new Set() },
+      canKeepAssetImageDisplayUrl, resolveCanvasMaterialUrl: async () => original.url, setCustomAssetRefs })();
+    await vi.waitFor(() => expect(setCustomAssetRefs).toHaveBeenCalledOnce());
+    const replacement = { ...original, url: "https://example.com/new-selected.png", gcsUri: undefined };
+    expect(setCustomAssetRefs.mock.calls[0][0]([replacement])).toEqual([replacement]);
+  });
+
 });
