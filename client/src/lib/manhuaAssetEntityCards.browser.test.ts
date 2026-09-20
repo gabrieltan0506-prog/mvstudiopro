@@ -805,10 +805,14 @@ it("导演执行表与分类特效在真实工作台显示，采用只写当前�
     await page.click("[data-manhua-director-execution] summary");
     expect(await page.$eval("[data-manhua-director-execution]",el=>el.textContent)).toContain("情绪与细微表演");
     await page.click("[data-manhua-vfx-picker] summary");
+    expect(await page.$$eval('[aria-label="特效分类"] option', options=>options.length)).toBe(21);
+    await page.select('[aria-label="特效分类"]', "reveal");
     await page.waitForSelector("[data-manhua-vfx-picker] button");
     await page.click("[data-manhua-vfx-picker] button");
     const description=await page.$eval('[aria-label="本镜特效描述"]',el=>(el as HTMLTextAreaElement).value);
     expect(description.length).toBeGreaterThan(50);
+    expect(description).toContain("旧字迹逐层显露");
+    expect(description).toContain("剧情衔接");
     const applied=await page.evaluate(()=>{
       const button=Array.from(document.querySelectorAll<HTMLButtonElement>("[data-manhua-vfx-picker] button")).find(b=>b.textContent?.includes("采用到当前镜头"))!;
       const enabled=!button.disabled; if(enabled) button.click(); return enabled;
