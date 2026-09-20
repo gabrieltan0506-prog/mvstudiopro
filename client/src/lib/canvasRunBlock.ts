@@ -100,6 +100,7 @@ import { formatManhuaEditCraftDirectives } from "@shared/manhuaEditCraftDirectiv
 import { appendManhuaClipEngineOptics } from "@shared/manhuaCineOpticsBank";
 import {
   renderManhuaClipPromptForSeedance,
+  resolveManhuaSubmittedAssetTags,
   stripManhuaStaleAssetBindForModel,
 } from "@shared/manhuaClipPromptSanitize";
 import {
@@ -3180,8 +3181,10 @@ async function runCanvasBlockInner(
       const seedancePrompt = [
         imageBind,
         ...stageSourceLines,
-        isClip ? stripManhuaStaleAssetBindForModel(motionPrompt) : motionPrompt,
-        voiceOneLine ? `【声线】${voiceOneLine}` : "",
+        isClip
+          ? resolveManhuaSubmittedAssetTags(stripManhuaStaleAssetBindForModel(motionPrompt), keptEntries)
+          : motionPrompt,
+        voiceOneLine ? `【声线】${isClip ? resolveManhuaSubmittedAssetTags(voiceOneLine, keptEntries) : voiceOneLine}` : "",
         audioRefBlock,
         editCraft,
       ]

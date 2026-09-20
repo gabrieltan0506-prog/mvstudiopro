@@ -5,6 +5,24 @@
 const LEGACY_FAT_RE =
   /节拍防火墙|视频生成导戏单|按秒导戏单|成片预演硬锁|跨镜连续硬锁|古风服化参考|路径运镜配方|动作运镜配方|点选道具锚点|成片有声与导戏硬锁|人物表演·成片台词|第\s*\d+\s*段·成片|有参考图时写完整/;
 
+/** 在声线规划之后，用实际提交图片的主体名解释编号；不修改节点存稿。 */
+export function resolveManhuaSubmittedAssetTags(
+  text: string,
+  entries: ReadonlyArray<{ kind: string; roleTag?: string; labelZh?: string }>,
+): string {
+  const subjects = new Map<string, Set<string>>();
+  for (const entry of entries) {
+    if (entry.kind !== "asset" || !entry.roleTag || !entry.labelZh?.trim()) continue;
+    const labels = subjects.get(entry.roleTag) ?? new Set<string>();
+    labels.add(entry.labelZh.trim());
+    subjects.set(entry.roleTag, labels);
+  }
+  return text.replace(/@(?:角色|场景|道具)\d+/g, (tag) => {
+    const labels = subjects.get(tag);
+    return labels?.size === 1 ? Array.from(labels)[0]! : tag;
+  });
+}
+
 /** 旧肥提示（不可直接喂成片引擎） */
 export function isManhuaClipPromptLegacyFat(text: string | null | undefined): boolean {
   return LEGACY_FAT_RE.test(String(text || ""));
