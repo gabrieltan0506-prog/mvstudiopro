@@ -163,9 +163,18 @@ function buildSeededCanvas() {
   return { ...laid, blocks };
 }
 
+const recoveryTable = "## 分镜表\n| 镜号 | 秒位 | 景别/运镜 | 画面 | 对白 |\n|---|---|---|---|---|\n|1|0–5秒|中景|扶稳同伴|沈砚舟：「慢点。」|\n|2|5–8秒|近景|回头|云疏冷：「快到了。」|";
+if ((window as any).__mixedTiming) {
+  session.writerPack!.episodes[0].body += "\n\n" + recoveryTable;
+  session.writerConfirmed = false;
+  session.directorUnlocked = false;
+  session.workflowPhase = "outline";
+}
 if (localStorage.getItem("mv-manhua-writer-session-v1") === null) {
   localStorage.setItem("mv-manhua-writer-session-v1", JSON.stringify(session));
   const laid = buildSeededCanvas();
+  if ((window as any).__mixedTiming) laid.blocks = laid.blocks.map(b => /^(reverse|beats)-/.test(b.id) ? {...b,outputText:recoveryTable} : b);
+
   if ((window as any).__firstShot) {
     laid.blocks = laid.blocks.filter(b => !b.id.startsWith('keyart-'));
     const ids = new Set(laid.blocks.map(b=>b.id));

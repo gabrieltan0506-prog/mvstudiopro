@@ -62,7 +62,7 @@ afterAll(async () => {
 });
 
 /** 每个用例一个全新 BrowserContext：localStorage 隔离，第二条不沿用第一条的状态 */
-async function mount(first = false, both = false): Promise<{ page: Page; close: () => Promise<void> }> {
+async function mount(first = false, both = false, mixedTiming = false): Promise<{ page: Page; close: () => Promise<void> }> {
   const ctx = await browser.createBrowserContext();
   const p = await ctx.newPage();
   await p.setRequestInterception(true);
@@ -71,7 +71,7 @@ async function mount(first = false, both = false): Promise<{ page: Page; close: 
   );
   await p.goto("http://localhost/", { waitUntil: "domcontentloaded" }).catch(() => {});
   await p.setContent("<div id=root></div>");
-  await p.evaluate(({first,both}) => { (window as any).__firstShot = first; localStorage.setItem("mv.openaiImageVariant",both?"both":"flare"); }, {first,both});
+  await p.evaluate(({first,both,mixedTiming}) => { (window as any).__mixedTiming = mixedTiming; (window as any).__firstShot = first; localStorage.setItem("mv.openaiImageVariant",both?"both":"flare"); }, {first,both,mixedTiming});
   await p.evaluate(()=>{(window as any).__stale=true;});
   await p.evaluate(bundle);
   await p.waitForFunction(() => /进入引导式漫剧/.test(document.body.innerText), { timeout: 30_000 });
@@ -239,5 +239,35 @@ it('镜长保存遇到剧本配额失败时不改变画布和确认态',async()=
   await page.click('[data-manhua-shot-timing] button');
   await page.waitForFunction(()=>document.querySelector('[data-manhua-shot-timing] [role="alert"]')?.textContent?.includes('时长未应用'));
   expect(await page.evaluate(()=>({blocks:JSON.stringify((window as any).__ffcProps.blocks),writer:localStorage.getItem('mv-manhua-writer-session-v1')}))).toEqual(before);
+ }finally{await close();}
+},60000);
+
+it('大纲页修复混合镜头稿，保留时长原文且不提交生成', async()=>{
+ const {page,close}=await mount(false,false,true);
+ try {
+  await page.waitForSelector('[data-manhua-timing-recovery]');
+  const before=await page.evaluate(()=>({posts:JSON.stringify((window as any).__posts),writer:JSON.parse(localStorage.getItem('mv-manhua-writer-session-v1')!)}));
+  await page.click('[data-manhua-timing-recovery] button');
+  await page.waitForFunction(()=>!document.querySelector('[data-manhua-timing-recovery]'));
+  const after=await page.evaluate(()=>({posts:JSON.stringify((window as any).__posts),writer:JSON.parse(localStorage.getItem('mv-manhua-writer-session-v1')!),text:document.body.innerText}));
+  expect(after.posts).toBe(before.posts);
+  expect(after.writer.writerPack.episodes[1]).toEqual(before.writer.writerPack.episodes[1]);
+  expect(after.writer.writerPack.episodes[0].body).toContain('0–5秒');
+  expect(after.writer.writerPack.episodes[0].body).toContain('原分段参考');
+  expect(after.writer.writerPack.rawMarkdown).toContain(after.writer.writerPack.episodes[0].body);
+  expect(after.text).not.toContain('同时含秒位分镜表与段表');
+ } finally {await close();}
+},60000);
+
+it('混合稿恢复保存失败时可见报错，原稿与修复入口保留', async()=>{
+ const {page,close}=await mount(false,false,true);
+ try {
+  await page.waitForSelector('[data-manhua-timing-recovery]');
+  const before=await page.evaluate(()=>({writer:localStorage.getItem('mv-manhua-writer-session-v1'),canvas:localStorage.getItem('mv-freeform-canvas-v1')}));
+  await page.evaluate(()=>{const set=Storage.prototype.setItem;Storage.prototype.setItem=function(k,v){if(k==='mv-manhua-writer-session-v1')throw new DOMException('Full','QuotaExceededError');return set.call(this,k,v);};});
+  await page.click('[data-manhua-timing-recovery] button');
+  await page.waitForFunction(()=>document.querySelector('[data-manhua-timing-recovery] [role="alert"]')?.textContent?.includes('时长未应用'));
+  expect(await page.evaluate(()=>({writer:localStorage.getItem('mv-manhua-writer-session-v1'),canvas:localStorage.getItem('mv-freeform-canvas-v1')}))).toEqual(before);
+  expect(await page.$eval('[data-manhua-timing-recovery] button',(b:any)=>b.disabled)).toBe(false);
  }finally{await close();}
 },60000);
