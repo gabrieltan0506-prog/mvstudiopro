@@ -1,4 +1,22 @@
 import { buildManhuaLocalVideoSourceRef } from "../../shared/manhuaLocalVideoUpload.js";
+
+// 0920：梯度/上限/容差下沉到叶子模块，断开与 attemptSelection 的循环 import（见该文件注释）。
+import {
+  NATIVE_DEEP_READ_RETRY_TEMPERATURES,
+  NATIVE_DEEP_READ_ESCALATION_MODEL,
+  NATIVE_DEEP_READ_ESCALATION_TEMPERATURES,
+  NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC,
+  NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO,
+  NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC,
+} from "./manhuaNativeDeepReadGradient.js";
+export {
+  NATIVE_DEEP_READ_RETRY_TEMPERATURES,
+  NATIVE_DEEP_READ_ESCALATION_MODEL,
+  NATIVE_DEEP_READ_ESCALATION_TEMPERATURES,
+  NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC,
+  NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO,
+  NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC,
+};
 import type { NativeDeepReadLocalVideoUpload } from "./manhuaNativeDeepReadPlan.js";
 import { writeNativeStructuredCard } from "./manhuaNativeDeepReadStructuredCard.js";
 import { mergeNativeDeepReadRetryDrafts, type NativeDeepReadRetryDraft } from "./manhuaNativeDeepReadRetryDraftMerge.js";
@@ -439,14 +457,7 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = deepFreezeNativeContract({
  * 同一分片固定三档：0.7 → 0.65 → 0.6，共一次首发、两次重试。
  * 调用方不能插入、删除、换序或覆盖温度；通过即停止，三档均未过即失败。
  */
-/**
- * 🔴 0920 用户令：「降檔重試 0.7--0.65x2--0.6x2，等於0.65與0.6各重試兩次」→ 共 5 发。
- * ⚠️ 只是**次数**变了，两个降档温度值仍是 0.65 / 0.6——段缓存指纹只取 `[1]` 与 `[last]`
- * 两个值（retryGenerationConfig / finalRetryGenerationConfig），所以**不动已付费分片身份**。
- * 但本数组进冻结契约 SHA（用户 0920「我授權解凍」），摘要需同步升级。
- */
-export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = deepFreezeNativeContract(
-  [0.7, 0.65, 0.65, 0.6, 0.6] as const);
+
 
 /**
  * 🔴 0920 用户令：「**單一分片如果連讀五次都不通過，就升級成Gemini 3.1 pro來讀**」
@@ -455,9 +466,7 @@ export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = deepFreezeNativeContract(
  * 升级只在**首读模型不是 3.1 Pro** 时发生（已经是 Pro 就没有更高档可升）；
  * 升级读用自己的三档梯度，不接着往下降；三档仍不过才回到既有的「五选一原稿进整形」。
  */
-export const NATIVE_DEEP_READ_ESCALATION_MODEL = "gemini-3.1-pro-preview" as const;
-export const NATIVE_DEEP_READ_ESCALATION_TEMPERATURES = deepFreezeNativeContract(
-  [0.7, 0.65, 0.6] as const);
+
 
 /** 兼容旧诊断导出；0906 起任一必需证据缺陷即拒收，不再凑满三项。 */
 export const NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES = 1;
@@ -616,7 +625,7 @@ export const NATIVE_DEEP_READ_DENSITY_GUIDE_BLOCK =
  * 原来的 15 秒软线（SHOT_SINGLE_MAX_SEC / long_take_count）随之整条停用，见下。
  * ⚠️ 这个数字同时写在提示词禁止项里，进段缓存指纹——历史身份由 `legacyBefore0920` 复原。
  */
-export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC = 60;
+
 /** 0920 换档前的硬上限；**只进历史指纹复原**，不参与任何现行判定。 */
 export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC_BEFORE_0920 = 30;
 
@@ -1078,7 +1087,7 @@ export const NATIVE_DEEP_READ_SEGMENT_COVERAGE_FLOOR_RATIO = 0.5;
  * 只对**数值**门禁生效；字段齐全 / 五维五键 / zod 这类二值判定没有 10% 可言，不受影响。
  */
 /** 0920 用户令「百分之十五放寬到百分之二十」→ 单镜拒收线 60 × 1.2 = **72 秒**。 */
-export const NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO = 0.20;
+
 /**
  * 单镜拒收线 = 硬上限 × (1 + 容差) = **72 秒**（0920 用户令：上限 60 + 容差 20%）。
  * 📜 历史：0907 曾以「軟上限就是有偷懒的空間」删掉软上限，并记 v28 实证
@@ -1086,8 +1095,7 @@ export const NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO = 0.20;
  * 🔴 **0920 用户按成本重新拍板**：「必須放鬆到六十秒內…只要一層就好」
  * ——密度摆动改由 advisory 记录，不再换钱重买。
  */
-export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC =
-  NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC * (1 + NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO);
+
 /**
  * 整集镜头留存率**实际拒收线** = 0.5 × 0.9 = 0.45（0830 用户令「容错率改为上下百分之十」：
  * 每条数值门禁按方向各让 10%——上限 +10%，下限 −10%）。此前这条漏了容差。
@@ -1954,6 +1962,12 @@ export const NATIVE_DEEP_READ_MEDIA_UPLOAD_MAX_CONCURRENCY = 4;
  */
 export const NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY = 5;
 
+/**
+ * 0920 用户令：「**加一個條件，切滿五片就直接傳到ＧＣＳ開始ＧＥＭＩＮＩ讀片，不用全部切完才傳**」。
+ * 备料层按这个片数分组：切满一组就并发上传并回调，读片不再等整集切完。
+ */
+export const NATIVE_DEEP_READ_PREPARED_GROUP_SIZE = 5;
+
 function mediaHeaders(node: NativeDeepReadMediaNode): string[] {
   const referer = String(node.referer || "").trim();
   return [
@@ -2201,6 +2215,15 @@ export async function prepareEpisodeVideos(
     uploadConcurrency?: number;
     /** 媒体备料全程进度播报：整片拉取 / 落盘完成 / 切片 N/M / 上传 N/M（0905 用户令：面板不许十几分钟零进度）。 */
     onSourceFetchProgress?: (zh: string) => void | Promise<void>;
+    /** 0920 用户令：切满这么多片就先传先读（缺省 5）。 */
+    preparedGroupSize?: number;
+    /**
+     * 0920 用户令：每组上传完成即回调，调用方可以立刻开始读这几片，不等整集备完。
+     * 回调抛错视为备料失败（调用方已经开始读，必须让备料方停下来）。
+     */
+    onPreparedGroup?: (
+      rows: readonly { segmentIndex: number; video: PreparedNativeVideo }[],
+    ) => void | Promise<void>;
   },
 ): Promise<PreparedNativeVideo[]> {
   const segments = validateNativeDeepReadSegments(episode.segments);
@@ -2413,6 +2436,14 @@ export async function prepareEpisodeVideos(
             bytes: fileStat.size,
             hasAudio: media.hasAudio,
           };
+          /**
+           * 音轨一致性闸：原来是「整集切完后一次比对」，0920 改成先传先读后，
+           * 必须改成**与第一片逐片比对**——否则混音轨的片会先被传上去开读，钱已经花掉。
+           */
+          const firstCut = cutRows.find((row, rowIndex) => row !== undefined && rowIndex !== index);
+          if (firstCut && firstCut.hasAudio !== media.hasAudio) {
+            throw new Error(`第${episode.episodeIndex}集分片音轨存在性不一致，已停止上传`);
+          }
           completed = true;
           cutDone += 1;
           await reportMedia(
@@ -2433,44 +2464,26 @@ export async function prepareEpisodeVideos(
       }
       if (!completed) throw lastError instanceof Error ? lastError : new Error("视频分片准备失败");
     };
-    const workers = Array.from({ length: concurrency }, async () => {
-      while (!stopSchedulingCuts) {
-        const index = nextIndex;
-        nextIndex += 1;
-        if (index >= segments.length) return;
-        try {
-          await prepareOne(index);
-        } catch (error) {
-          if (!cutFailed) firstCutFailure = error;
-          cutFailed = true;
-          stopSchedulingCuts = true;
-          return;
-        }
-      }
-    });
-    await Promise.allSettled(workers);
-    if (cutFailed) throw firstCutFailure;
-    if (cutRows.filter(Boolean).length !== segments.length) {
-      throw new Error(`第${episode.episodeIndex}集媒体切片结果不完整，已停止`);
-    }
+    /**
+     * 0920 用户令：「切滿五片就直接傳到ＧＣＳ開始ＧＥＭＩＮＩ讀片，不用全部切完才傳」。
+     * 切片 worker 把切好的片推进 readyQueue；上传泵按 groupSize 取一组并发上传，
+     * 每组传完立刻回调调用方（调用方即可开读这几片），不再等整集切完。
+     */
+    const groupSize = Math.max(1, Math.floor(
+      Number(limits?.preparedGroupSize) || NATIVE_DEEP_READ_PREPARED_GROUP_SIZE,
+    ));
+    const readyQueue: number[] = [];
+    let cuttingFinished = false;
+    let wakeUploader: (() => void) | undefined;
+    const signalUploader = () => { const wake = wakeUploader; wakeUploader = undefined; wake?.(); };
 
-    const completeCutRows = cutRows as Array<NonNullable<(typeof cutRows)[number]>>;
-    if (completeCutRows.some((row) => row.hasAudio !== completeCutRows[0]!.hasAudio)) {
-      throw new Error(`第${episode.episodeIndex}集分片音轨存在性不一致，已停止上传`);
-    }
-    // 上传改并发（0829 晚用户令「改成并发，不是串行」）。
-    // 旧实现是一个严格串行 for 循环——六片就是六次往返排队，是全链最明显的串行点。
-    // 仍保留并发上限：uploadBufferToGcs 会复制 Buffer，无上限并发在极端片源下吃内存。
     const uploadCap = Math.max(1, Math.floor(
       Number(limits?.uploadConcurrency) || NATIVE_DEEP_READ_MEDIA_UPLOAD_MAX_CONCURRENCY,
     ));
-    const uploadConcurrency = Math.max(1, Math.min(uploadCap, completeCutRows.length));
-    let nextUploadIndex = 0;
     let uploadFailure: unknown;
-    let stopUploading = false;
     const uploadOne = async (index: number): Promise<void> => {
       abortSignal?.throwIfAborted();
-      const row = completeCutRows[index]!;
+      const row = cutRows[index]!;
       const uploaded = await deps.upload({
         objectName: `${NATIVE_VIDEO_TEMP_PREFIX}/${row.runId}.mp4`,
         buffer: await deps.readLocal(row.localPath),
@@ -2488,29 +2501,77 @@ export async function prepareEpisodeVideos(
       };
       uploadDone += 1;
       await reportMedia(
-        `第${episode.episodeIndex}集 · 上传 ${uploadDone}/${completeCutRows.length} 完成`
-        + (uploadDone === completeCutRows.length ? " · 备料齐全，开始逐段模型调用" : ""),
+        `第${episode.episodeIndex}集 · 上传 ${uploadDone}/${segments.length} 完成`
+        + (uploadDone === segments.length ? " · 备料齐全" : " · 本组可以开始读片"),
       );
     };
-    const uploadWorkers = Array.from({ length: uploadConcurrency }, async () => {
-      while (!stopUploading) {
-        const index = nextUploadIndex;
-        nextUploadIndex += 1;
-        if (index >= completeCutRows.length) return;
+    /** 一组内并发上传；组内任一失败即视为备料失败（不再排新组）。 */
+    const uploadGroup = async (indexes: readonly number[]): Promise<void> => {
+      let nextInGroup = 0;
+      let stop = false;
+      const groupWorkers = Array.from({ length: Math.min(uploadCap, indexes.length) }, async () => {
+        while (!stop) {
+          const position = nextInGroup;
+          nextInGroup += 1;
+          if (position >= indexes.length) return;
+          try {
+            await uploadOne(indexes[position]!);
+          } catch (error) {
+            if (uploadFailure === undefined) uploadFailure = error;
+            stop = true;
+            return;
+          }
+        }
+      });
+      await Promise.allSettled(groupWorkers);
+      if (uploadFailure !== undefined) throw uploadFailure;
+      // 回调抛错＝调用方那侧已经出问题，备料必须停下来，不再继续上传后续组
+      await limits?.onPreparedGroup?.(indexes.map((index) => ({
+        segmentIndex: index, video: prepared[index]!,
+      })));
+    };
+    const uploadPump = (async () => {
+      while (true) {
+        if (uploadFailure !== undefined || cutFailed) return;
+        const takeAll = cuttingFinished || stopSchedulingCuts;
+        if (readyQueue.length >= groupSize || (takeAll && readyQueue.length > 0)) {
+          const take = readyQueue.length >= groupSize ? groupSize : readyQueue.length;
+          await uploadGroup(readyQueue.splice(0, take));
+          continue;
+        }
+        if (takeAll) return;
+        await new Promise<void>((resolve) => { wakeUploader = resolve; });
+      }
+    })();
+
+    const workers = Array.from({ length: concurrency }, async () => {
+      while (!stopSchedulingCuts) {
+        const index = nextIndex;
+        nextIndex += 1;
+        if (index >= segments.length) return;
         try {
-          await uploadOne(index);
+          await prepareOne(index);
+          readyQueue.push(index);
+          signalUploader();
         } catch (error) {
-          // 已在途的兄弟上传照样等回执（外层 catch 负责清理已传对象），
-          // 但不再排新的，避免失败后继续往 GCS 堆垃圾。
-          if (uploadFailure === undefined) uploadFailure = error;
-          stopUploading = true;
+          if (!cutFailed) firstCutFailure = error;
+          cutFailed = true;
+          stopSchedulingCuts = true;
+          signalUploader();
           return;
         }
       }
     });
-    await Promise.allSettled(uploadWorkers);
+    await Promise.allSettled(workers);
+    cuttingFinished = true;
+    signalUploader();
+    await uploadPump.catch((error) => { if (uploadFailure === undefined) uploadFailure = error; });
+    if (cutFailed) throw firstCutFailure;
     if (uploadFailure !== undefined) throw uploadFailure;
-    if (prepared.filter(Boolean).length !== completeCutRows.length) {
+    if (cutRows.filter(Boolean).length !== segments.length) {
+      throw new Error(`第${episode.episodeIndex}集媒体切片结果不完整，已停止`);
+    }
+    if (prepared.filter(Boolean).length !== segments.length) {
       throw new Error(`第${episode.episodeIndex}集分片上传结果不完整，已停止`);
     }
     return prepared as PreparedNativeVideo[];
@@ -5202,6 +5263,10 @@ async function executeNativeDeepReadBatch(
     episode: (typeof validated)[number];
     videos: PreparedNativeVideo[];
     videosBySegment: Map<number, PreparedNativeVideo>;
+    /** 0920 先传先读：每片就绪闸（缓存命中的片不在表里） */
+    segmentReady?: Map<number, { promise: Promise<void>; resolve: () => void; reject: (error: unknown) => void }>;
+    /** 备料整体结果；读完后必须 await，别把后段备料失败吞掉 */
+    preparePromise?: Promise<void>;
     cachedSegments: Map<number, NativeDeepReadSegmentCacheEntry>;
   }> = [];
   const episodes: NativeDeepReadBatchRunResult["episodes"] = [];
@@ -5285,25 +5350,35 @@ async function executeNativeDeepReadBatch(
 
       const videosBySegment = new Map<number, PreparedNativeVideo>();
       const allVideos: PreparedNativeVideo[] = [];
-      const prepareSegmentIndexes = async (indexes: readonly number[]): Promise<void> => {
-        if (!indexes.length) return;
-        if (params.structuringOnly) throw new Error(`第${episode.episodeIndex}集原始JSON不齐或契约不匹配，禁止重新读视频；缺少第${indexes.map(index => index + 1).join("、")}段`);
-        const selectedSegments = indexes.map((index) => episode.segments[index]!);
-        const prepared = await deps.prepareVideos(
-          { ...episode, segments: selectedSegments },
-          params.abortSignal,
-          undefined,
-          {
-            cutConcurrency: params.mediaCutConcurrency,
-            uploadConcurrency: params.mediaUploadConcurrency,
-            onSourceFetchProgress: params.onMediaProgressZh,
-          },
-        );
-        if (prepared.length !== indexes.length) {
-          throw new Error(`第${episode.episodeIndex}集备料数量与请求段数不一致，已停止`);
+      /**
+       * 0920 用户令：「切滿五片就直接傳到ＧＣＳ開始ＧＥＭＩＮＩ讀片，不用全部切完才傳」。
+       * 备料层按 5 片一组回调；这里把每组登记进 videosBySegment 并释放该片的 ready 闸，
+       * 读片侧只等自己那一片，不等整集。**第一组到齐才开读**（整集 hasAudio 口径要先定）。
+       */
+      const segmentReady = new Map<number, { promise: Promise<void>; resolve: () => void; reject: (error: unknown) => void }>();
+      const readyOf = (segmentIndex: number) => {
+        let row = segmentReady.get(segmentIndex);
+        if (!row) {
+          let resolve!: () => void;
+          let reject!: (error: unknown) => void;
+          const promise = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
+          // 备料失败时这条 promise 会被 reject；没人 await 到它之前不许变成未捕获拒绝
+          promise.catch(() => undefined);
+          row = { promise, resolve, reject };
+          segmentReady.set(segmentIndex, row);
         }
-        prepared.forEach((video, position) => {
-          const segmentIndex = indexes[position]!;
+        return row;
+      };
+      let firstGroupResolve!: () => void;
+      let firstGroupReject!: (error: unknown) => void;
+      const firstGroupReady = new Promise<void>((resolve, reject) => {
+        firstGroupResolve = resolve; firstGroupReject = reject;
+      });
+      firstGroupReady.catch(() => undefined);
+      const registerPreparedGroup = (
+        rows: readonly { segmentIndex: number; video: PreparedNativeVideo }[],
+      ): void => {
+        for (const { segmentIndex, video } of rows) {
           const expected = episode.segments[segmentIndex]!;
           if (
             Math.abs(video.startSec - expected.startSec) > 0.01
@@ -5313,20 +5388,87 @@ async function executeNativeDeepReadBatch(
           }
           videosBySegment.set(segmentIndex, video);
           allVideos.push(video);
+        }
+        // 组内音轨事实必须与已登记的第一片一致（备料层逐片比过，这里守住装配口径）
+        const kinds = new Set(Array.from(videosBySegment.values()).map((row) => row.hasAudio === true));
+        if (kinds.size > 1) {
+          throw new Error(`第${episode.episodeIndex}集各段 hasAudio 实测不一致，已停止以避免错误装配`);
+        }
+        for (const { segmentIndex } of rows) readyOf(segmentIndex).resolve();
+        firstGroupResolve();
+      };
+      const prepareSegmentIndexes = (indexes: readonly number[]): Promise<void> => {
+        if (!indexes.length) { firstGroupResolve(); return Promise.resolve(); }
+        if (params.structuringOnly) {
+          const error = new Error(`第${episode.episodeIndex}集原始JSON不齐或契约不匹配，禁止重新读视频；缺少第${indexes.map(index => index + 1).join("、")}段`);
+          firstGroupReject(error);
+          for (const index of indexes) readyOf(index).reject(error);
+          return Promise.reject(error);
+        }
+        const selectedSegments = indexes.map((index) => episode.segments[index]!);
+        return deps.prepareVideos(
+          { ...episode, segments: selectedSegments },
+          params.abortSignal,
+          undefined,
+          {
+            cutConcurrency: params.mediaCutConcurrency,
+            uploadConcurrency: params.mediaUploadConcurrency,
+            onSourceFetchProgress: params.onMediaProgressZh,
+            preparedGroupSize: NATIVE_DEEP_READ_PREPARED_GROUP_SIZE,
+            onPreparedGroup: (rows) => {
+              // 备料层给的是「本次请求内的段号」＝ selectedSegments 的下标，换回真实段号
+              registerPreparedGroup(rows.map((row) => ({
+                segmentIndex: indexes[row.segmentIndex]!, video: row.video,
+              })));
+            },
+          },
+        ).then((prepared) => {
+          if (prepared.length !== indexes.length) {
+            throw new Error(`第${episode.episodeIndex}集备料数量与请求段数不一致，已停止`);
+          }
+          /**
+           * 兼容不支持分组回调的备料实现（旧实现、测试替身、诊断路径）：
+           * 回调没登记的段用返回值补登记，登记本身幂等。两条路径都不登记才算真失败。
+           */
+          const missing = indexes.filter((index) => !videosBySegment.has(index));
+          if (missing.length) {
+            registerPreparedGroup(missing.map((index) => ({
+              segmentIndex: index, video: prepared[indexes.indexOf(index)]!,
+            })));
+          }
+          const stillMissing = indexes.filter((index) => !videosBySegment.has(index));
+          if (stillMissing.length) {
+            throw new Error(`第${episode.episodeIndex}集第${stillMissing.map((index) => index + 1).join("、")}段备料未登记，已停止`);
+          }
+        }).catch((error) => {
+          firstGroupReject(error);
+          for (const index of indexes) readyOf(index).reject(error);
+          throw error;
         });
       };
 
       const pendingIndexes = (selectedSegmentIndexes ?? episode.segments.map((_, index) => index))
         .filter((index) => !cachedSegments.has(index));
-      await prepareSegmentIndexes(pendingIndexes);
+      /**
+       * 0920 用户令：不再等整集备完。启动备料后**只等第一组（5 片）到齐**就往下走去读片，
+       * 余下分片边切边传，读片侧按片等自己的 ready 闸。
+       * 备料的最终结果仍要 await（`prepareSettled`），否则后段失败会被静默吞掉。
+       */
+      const preparePromise = prepareSegmentIndexes(pendingIndexes);
+      preparePromise.catch(() => undefined);
+      await firstGroupReady;
 
       // 新备段与历史缓存的音轨事实不一致时，缓存不能继续参与本次装配；只补备原缓存段。
       if (videosBySegment.size > 0 && cachedSegments.size > 0) {
         const preparedHasAudio = Array.from(videosBySegment.values())[0]!.hasAudio === true;
         const cacheHasAudio = Array.from(cachedSegments.values())[0]!.hasAudio;
         if (preparedHasAudio !== cacheHasAudio) {
+          // 纠偏路径（罕见）：整集重备，这里等备完再往下，不做先传先读
+          await preparePromise.catch(() => undefined);
           cachedSegments.clear();
           videosBySegment.clear();
+          allVideos.length = 0;
+          segmentReady.clear();
           await prepareSegmentIndexes(episode.segments.map((_, index) => index));
         }
       }
@@ -5342,10 +5484,13 @@ async function executeNativeDeepReadBatch(
         videos: allVideos,
         videosBySegment,
         cachedSegments,
+        // 读片侧等这两个：某一片的 ready 闸 + 备料整体结果
+        segmentReady,
+        preparePromise,
       });
     }
 
-    for (const { episode, videosBySegment, cachedSegments } of preparedByEpisode) {
+    for (const { episode, videosBySegment, cachedSegments, segmentReady, preparePromise } of preparedByEpisode) {
       params.abortSignal?.throwIfAborted();
       const episodeRequestId = validated.length === 1 ? batchRequestId : crypto.randomUUID();
       const firstPrepared = Array.from(videosBySegment.values())[0];
@@ -6366,6 +6511,9 @@ async function executeNativeDeepReadBatch(
           await commitSegmentToProposal(segmentIndex, canonicalEntry);
           return;
         }
+        // 0920 先传先读：这一片的切片+上传可能还没轮到，等它自己的 ready 闸（备料失败会 reject）
+        const readyGate = segmentReady?.get(segmentIndex);
+        if (readyGate) await readyGate.promise;
         const video = videosBySegment.get(segmentIndex);
         if (!video) {
           throw new Error(`第${episode.episodeIndex}集第${segmentIndex + 1}段缺少对应备料，已停止`);
@@ -6496,6 +6644,9 @@ async function executeNativeDeepReadBatch(
           },
         };
       }
+      // 0920 先传先读：读片可能比备料先跑完最后一片以外的部分，备料整体结果必须在这里收口，
+      // 否则后段切片/上传失败会被静默吞掉，装配拿着不全的分片继续走。
+      if (preparePromise) await preparePromise;
       if (rawSegments.some((raw) => !raw)) {
         throw new Error(`第${episode.episodeIndex}集并发精读结果不完整，已停止`);
       }

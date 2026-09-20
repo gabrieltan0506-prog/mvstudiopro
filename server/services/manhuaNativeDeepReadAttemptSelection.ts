@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import {
   NATIVE_DEEP_READ_RETRY_TEMPERATURES,
+  NATIVE_DEEP_READ_ESCALATION_TEMPERATURES,
   NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC,
-} from "./manhuaNativeDeepReadRunner.js";
+} from "./manhuaNativeDeepReadGradient.js";
 
 /**
  * 候选档数＝冻结重试梯度的长度。0920 用户令改成 5 发（0.7 / 0.65×2 / 0.6×2）之后，
@@ -10,7 +11,21 @@ import {
  */
 // ⚠️ 本模块与 runner 互相 import：**必须惰性取值**，模块求值期读会拿到 undefined。
 const attemptCount = () => NATIVE_DEEP_READ_RETRY_TEMPERATURES.length;
-const attemptNumbers = () => Array.from({ length: attemptCount() }, (_, i) => i + 1);
+/**
+ * 🔴 历史已付费选稿信封写的是 `attemptedCount: 3`（0920 之前是三档梯度）。
+ * 只认当前档数＝旧信封回读一律判无效 → 那几段要**重新付费整形**。
+ * 「停用 ≠ 撤销识别」：识别名单只增不减，往里加档数永远安全，删掉就是作废历史付费产出。
+ * 升级档（3.1 Pro 三发）会让实际发数变 8，同样必须在识别范围内。
+ */
+const NATIVE_DEEP_READ_RECOGNIZED_ATTEMPT_COUNTS_LEGACY: readonly number[] = [3];
+const recognizedAttemptCounts = () => [
+  ...NATIVE_DEEP_READ_RECOGNIZED_ATTEMPT_COUNTS_LEGACY,
+  attemptCount(),
+  attemptCount() + NATIVE_DEEP_READ_ESCALATION_TEMPERATURES.length,
+];
+const maxRecognizedAttemptCount = () => Math.max(...recognizedAttemptCounts());
+const attemptNumbers = () => Array.from(
+  { length: maxRecognizedAttemptCount() }, (_, i) => i + 1);
 
 /** 服务器记录：失败原稿仅供整形，不代表已经通过门禁。 */
 export type NativeDeepReadAttemptSelection = {
@@ -47,7 +62,7 @@ export function hasNativeAttemptSelection(entry: {
     !record(marker) ||
     marker.status !== "selected_for_structuring_after_three_attempts" ||
     marker.policyVersion !== 1 ||
-    marker.attemptedCount !== attemptCount() ||
+    !recognizedAttemptCounts().includes(Number(marker.attemptedCount)) ||
     !attemptNumbers().includes(marker.selectedAttemptNumber) ||
     marker.sourceDigest !== entry.sourceDigest ||
     marker.rawSha256 !== nativeAttemptRawSha256(entry.raw) ||
