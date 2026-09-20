@@ -583,3 +583,35 @@ describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
   },20000);
 
 });
+
+it("修改对白内容、声音状态和情绪后保留旧候选，恢复编辑值并以新内容提交", async () => {
+  const { context, page, click, fill } = await open();
+  try {
+    await click("添加一句对白");
+    await fill("1 镜头与动作", "墨屠护住阿菁");
+    await fill("1 说话角色", "墨屠");
+    await fill("1 本句台词", "别怕。");
+    await click("生成本句");
+    await click("确认生成");
+    await page.waitForFunction(() => (window as any).fixture.state.cues[0].takes.length === 1);
+    await click("试听后确认本段");
+    await page.waitForFunction(() => (window as any).fixture.state.cues[0].approved);
+    await fill("1 本句台词", "站到我身后！");
+    await fill("1 声音状态", "变身后");
+    await fill("1 语气标签", "[serious]");
+    const changed = await page.evaluate(() => ({ cue: (window as any).fixture.state.cues[0], calls: (window as any).fixture.calls.length }));
+    expect(changed.cue.approved).toBe(false);
+    expect(changed.cue.takes).toHaveLength(1);
+    expect(changed.calls).toBe(1);
+    await page.evaluate(() => (window as any).fixture.show(false));
+    await page.waitForFunction(() => !document.querySelector('section[aria-label="逐句配音、配乐与事件音效"]'));
+    await page.evaluate(() => (window as any).fixture.show(true));
+    await page.waitForSelector('[aria-label="1 本句台词"]');
+    expect(await page.$eval('[aria-label="1 本句台词"]', el => (el as HTMLTextAreaElement).value)).toBe("站到我身后！");
+    expect(await page.$eval('[aria-label="1 语气标签"]', el => (el as HTMLInputElement).value)).toBe("[serious]");
+    await click("生成本句");
+    await click("确认生成");
+    await page.waitForFunction(() => (window as any).fixture.calls.length === 2);
+    expect(await page.evaluate(() => (window as any).fixture.calls[1])).toMatchObject({input: "[serious]站到我身后！", speakerZh: "墨屠", voiceStateZh: "变身后"});
+  } finally { await context.close(); }
+}, 20_000);

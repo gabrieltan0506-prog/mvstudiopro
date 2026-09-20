@@ -20,6 +20,8 @@ import {
   canvasAudioCueInputKey,
   getSelectedAudioTake,
   canvasAudioCueSchema,
+  canvasMusicDraftSchema,
+  type CanvasMusicDraft,
   type CanvasAudioStudio as CanvasAudioStudioState,
   type CanvasAudioCue,
   type CanvasAudioTake,
@@ -214,13 +216,11 @@ export function CanvasAudioStudioView({
   useEffect(() => { setActiveCueId(null); setVoiceCriteria({}); }, [block.id]);
   const [error, setError] = useState("");
   const [musicJobs, setMusicJobs] = useState<MusicJob[]>([]);
-  const [musicPrompt, setMusicPrompt] = useState("");
-  const [musicDuration, setMusicDuration] = useState(30);
-  const [brief, setBrief] = useState<MusicBrief | null>(null);
-  // 缺省 Suno v6（v5.5 0910 已下架）；有下拉时取第一项
-  const [bgmModel, setBgmModel] = useState<BgmBriefModel>(
-    bgmModels?.[0]?.model ?? "suno-v6",
-  );
+  const musicDraft = state.musicDraft || { prompt: "", durationSec: 30, brief: null, model: bgmModels?.[0]?.model ?? "suno-v6" };
+  const musicPrompt = musicDraft.prompt;
+  const musicDuration = musicDraft.durationSec;
+  const brief = musicDraft.brief;
+  const bgmModel = musicDraft.model;
   const [resumable, setResumable] = useState<Record<string, JobResult>>({});
   const [confirmation, setConfirmation] = useState<
     | { kind: "dialogue"; cueId: string; inputKey: string }
@@ -254,6 +254,16 @@ export function CanvasAudioStudioView({
     current.current.state = next;
     current.current.onChange(next);
   };
+  const patchMusicDraft = (patch: Partial<CanvasMusicDraft>) => {
+    if (!mounted.current || current.current.block.id !== block.id) return;
+    setConfirmation(null);
+    update(previous => {
+      const parsed = canvasMusicDraftSchema.safeParse({ ...musicDraft, ...previous.musicDraft, ...patch });
+      if (!parsed.success) { setError("配乐草稿超出字段范围，已保留原稿。"); return previous; }
+      return { ...previous, musicDraft: parsed.data };
+    });
+  };
+  const setBrief = (next: MusicBrief | null) => patchMusicDraft({ brief: next });
   const patchCue = (id: string, patch: Partial<CanvasAudioCue>) => {
     setConfirmation(null);
     const previousCue = current.current.state.cues.find(cue => cue.id === id);
@@ -346,8 +356,8 @@ export function CanvasAudioStudioView({
   useEffect(() => {
     mounted.current = true;
     setConfirmation(null);
-    setBrief(null);
     setError("");
+    setMusicJobs([]);
     setResumable({});
     refreshedAudio.current.clear();
     let stopped = false;
@@ -805,8 +815,7 @@ export function CanvasAudioStudioView({
               value={musicPrompt}
               disabled={disabled || busy}
               onChange={event => {
-                setMusicPrompt(event.target.value);
-                setBrief(null);
+                patchMusicDraft({ prompt: event.target.value, brief: null });
                 setConfirmation(null);
               }}
             />
@@ -816,13 +825,14 @@ export function CanvasAudioStudioView({
             <input
               className={fieldClass}
               type="number"
-              min="1"
-              max="3600"
+              min="10"
+              max="360"
+              step="1"
               value={musicDuration}
+              aria-label="配乐原曲目标时长"
               disabled={disabled || busy}
               onChange={event => {
-                setMusicDuration(Number(event.target.value));
-                setBrief(null);
+                patchMusicDraft({ durationSec: Number(event.target.value), brief: null });
                 setConfirmation(null);
               }}
             />
@@ -836,8 +846,7 @@ export function CanvasAudioStudioView({
                 value={bgmModel}
                 disabled={disabled || busy}
                 onChange={event => {
-                  setBgmModel(event.target.value as typeof bgmModel);
-                  setBrief(null);
+                  patchMusicDraft({ model: event.target.value as typeof bgmModel, brief: null });
                   setConfirmation(null);
                 }}
               >
@@ -848,15 +857,16 @@ export function CanvasAudioStudioView({
                 ))}
               </select>
               <span className="mt-1 block text-[10px] text-amber-200/80">
-                v6 走 TTAPI 网关，按段表时长出整曲，成品再按段表裁。
+                原曲按所填目标秒数提交（10–360整数秒），成品可再按段表裁。
               </span>
             </label>
           ) : null}
           <button
             className={buttonClass}
-            disabled={disabled || busy || !musicPrompt.trim()}
+            disabled={disabled || busy || !musicPrompt.trim() || !Number.isInteger(musicDuration) || musicDuration < 10 || musicDuration > 360}
             onClick={() =>
               void action(async () => {
+                if (!Number.isInteger(musicDuration) || musicDuration < 10 || musicDuration > 360) throw new Error("原曲目标时长须为10–360整数秒。");
                 const result = await services.draftMusic({
                   laneZh: "本段剧情配乐",
                   durationSec: musicDuration,
@@ -865,7 +875,7 @@ export function CanvasAudioStudioView({
                   titleZh: "剧情配乐",
                   model: bgmModel,
                 });
-                setBrief(result.brief);
+                setBrief({ ...result.brief, duration: musicDuration });
               })
             }
           >
@@ -883,6 +893,7 @@ export function CanvasAudioStudioView({
                 <textarea
                   className={fieldClass}
                   value={brief.prompt}
+                  aria-label="配乐生成提示词"
                   rows={3}
                   disabled={disabled || busy}
                   onChange={event => {
@@ -896,6 +907,7 @@ export function CanvasAudioStudioView({
                 <input
                   className={fieldClass}
                   value={brief.style}
+                  aria-label="配乐音乐风格"
                   disabled={disabled || busy}
                   onChange={event => {
                     setBrief({ ...brief, style: event.target.value });
@@ -920,7 +932,11 @@ export function CanvasAudioStudioView({
                     );
                     return;
                   }
-                  setConfirmation({ kind: "bgm", brief });
+                  if (!Number.isInteger(musicDuration) || musicDuration < 10 || musicDuration > 360) {
+                    setError("原曲目标时长须为10–360整数秒。");
+                    return;
+                  }
+                  setConfirmation({ kind: "bgm", brief: { ...brief, duration: musicDuration } });
                 }}
               >
                 生成这版配乐 · {CANVAS_BGM_CREDITS_PER_RUN} 积分

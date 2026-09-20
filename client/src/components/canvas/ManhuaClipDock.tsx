@@ -20,7 +20,7 @@ import {
 } from "@shared/manhuaSegmentReference";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import { findManhuaFinalVideoVersionIdentity } from "@shared/manhuaFinalPostProd";
-import { getBlockEpisodeIndex, isManhuaFinalVideoBlockId } from "@/lib/canvasDramaStudio";
+import { getBlockEpisodeIndex, isManhuaFinalVideoBlockId, stageKeyFromBlockId } from "@/lib/canvasDramaStudio";
 import {
   resolveManhuaDeliveryEpisodeIndexes,
   collectManhuaAssembleClipsFromDock,
@@ -257,6 +257,29 @@ export default function ManhuaClipDock({
     [deliveryPkg],
   );
 
+  // 汇总真实产物与质检回执；存在文件不代表画面、声音已人工验收。
+  const reviewEpisodes = deliveryScope === "current"
+    ? (currentEpisodeIndex ? [currentEpisodeIndex] : [])
+    : deliveryScope === "selected" ? deliverySelectedEpisodes : Array.from(new Set([...byEpisode.map(([ep]) => ep), ...deliveryEpisodes, ...blocks.filter(b => !b.archivedFromPreviousScript && stageKeyFromBlockId(b.id) === "clip").map(b => getBlockEpisodeIndex(b) ?? 1)])).sort((a,b) => a-b);
+  const reviewFinals = blocks.filter(b => !b.archivedFromPreviousScript && isManhuaFinalVideoBlockId(b.id)
+    && /^https?:\/\//i.test(String(b.outputUrl || "")) && reviewEpisodes.includes(getBlockEpisodeIndex(b) ?? 1));
+  const reviewGaps = reviewEpisodes.flatMap(episodeIndex => {
+    const clips = blocks.filter(b => !b.archivedFromPreviousScript && stageKeyFromBlockId(b.id) === "clip" && (getBlockEpisodeIndex(b) ?? 1) === episodeIndex);
+    const missing = clips.filter(b => !b.outputUrl || b.status === "error").length;
+    const undecided = clips.filter(b => b.outputUrl && b.status !== "error" && !manhuaClipDockItemAllowsAssemble({outputUrl:b.outputUrl,clipQuality:b.manhuaClipQuality})).length;
+    const final = reviewFinals.find(b => (getBlockEpisodeIndex(b) ?? 1) === episodeIndex);
+    const messages: string[] = [];
+    if (missing) messages.push(`${missing}段尚无成片`);
+    if (undecided) messages.push(`${undecided}段待质检或采用决定`);
+    if (!final) messages.push("尚未合成本集成片");
+    else if (!findManhuaFinalVideoVersionIdentity(final, String(final.outputUrl))?.subtitleTimeline?.cues.length) messages.push("没有随成片保存的字幕时间轴（无对白集可不需要）");
+    return messages.length ? [{ episodeIndex, messages }] : [];
+  });
+  const goResolveReview = (episodeIndex?: number) => {
+    if (episodeIndex != null) onSelectEpisode?.(episodeIndex);
+    onGoWorkbench?.();
+  };
+
   const handleDownloadDeliveryNotes = () => {
     const md = [
       formatManhuaDeliveryPackageMarkdown(deliveryPkg),
@@ -459,6 +482,16 @@ export default function ManhuaClipDock({
 
   return (
     <div className="overflow-hidden rounded-2xl border border-cyan-400/20 bg-gradient-to-b from-[#0c1520] via-[#0a0e18] to-[#08070f]">
+      {reviewMode && <section data-manhua-delivery-gaps className="border-b border-white/10 p-4">
+        <h3 className="text-sm font-semibold text-white">交付前待处理</h3>
+        <p className="mt-1 text-xs text-white/55">按下方交付范围核对已有产物。画面连续性、口型与声音仍需播放确认。</p>
+        {!reviewEpisodes.length ? <p className="mt-3 text-xs text-amber-100">{deliveryScope === "selected" ? "请选择要交付的集。" : "暂无可核对的制作集，请先到工作台完成制作。"}</p>
+          : reviewGaps.length ? <ul className="mt-3 space-y-2">{reviewGaps.map(gap => <li key={gap.episodeIndex} className="flex items-center justify-between gap-3 rounded-lg border border-amber-300/20 bg-amber-500/5 p-3">
+            <div className="text-xs text-amber-100"><strong>第{gap.episodeIndex}集</strong><p className="mt-1 text-white/65">{gap.messages.join("；")}</p></div>
+            {(onSelectEpisode || onGoWorkbench) && <button type="button" aria-label={`去处理第${gap.episodeIndex}集`} onClick={() => goResolveReview(gap.episodeIndex)} className="min-h-11 shrink-0 rounded-lg border border-white/20 px-3 text-xs text-white">去处理</button>}
+          </li>)}</ul> : <p className="mt-3 text-xs text-white/70">未发现缺失的片段、整集成片或字幕记录；这不代表视听质量已验收。</p>}
+        {!reviewEpisodes.length && onGoWorkbench && deliveryScope !== "selected" && <button type="button" onClick={() => goResolveReview()} className="mt-2 min-h-11 rounded-lg border border-white/20 px-3 text-xs text-white">去工作台制作</button>}
+      </section>}
       <div className="p-3">        <fieldset disabled={exportBusy} data-manhua-delivery-group className="min-w-0 rounded-xl border border-emerald-300/30 bg-emerald-500/[0.06] p-3 text-xs">
           <legend>交付包范围</legend>
           <label>导出范围 <select aria-label="交付包导出范围" value={deliveryScope} onChange={e => setDeliveryScope(e.target.value as "all" | "current" | "selected")} className="min-h-11 max-w-full rounded border border-white/20 bg-slate-900 px-3">
@@ -475,13 +508,13 @@ export default function ManhuaClipDock({
 
         <button
           type="button"
-          disabled={exportBusy}
+          disabled={exportBusy || reviewFinals.length === 0}
           onClick={() => void handleDeliveryPack()}
           title="整集成片当前版 → 先抽音轨（免费）→ 打包：交付/epXX/ 成片.mp4 + 字幕.srt（合成时冻结的真实时间轴）+ 所选格式音轨 + 交付清单.md"
           data-manhua-delivery-primary className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-emerald-400/35 bg-emerald-500/20 px-4 py-2 text-sm font-semibold text-emerald-50 hover:bg-emerald-500/30 disabled:opacity-40"
         >
           {deliveryBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
-          {deliveryBusy || "生成交付包"}
+          {deliveryBusy || (reviewFinals.length ? "下载交付包" : "请先合成所选集成片")}
         </button>
         </fieldset></div>
       <details open={!reviewMode}>

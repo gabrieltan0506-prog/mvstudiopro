@@ -132,6 +132,7 @@ beforeAll(async () => {
               onSelectDirectionSceneCard={() => {}}
               customAssetRefs={refs} assetCanon={canon}
               onUploadCustomAssets={async () => {}}
+              onGenerateKeyartShot={async () => { globalThis.fixture.keyart += 1; }}
               onGenerateAllEpisodeKeyarts={async () => { globalThis.fixture.keyart += 1; }}
               onGenerateAsset3d={async () => {}}
               onGenerateSceneWorld={async () => {}}
@@ -537,6 +538,8 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
         order: { script: orderOf(script), preview: orderOf(preview), params: orderOf(params) },
         // 当前镜参数面板现在应该在右栏里，而不是在镜头清单那一栏
         paramsInRight: Boolean(params?.querySelector("[data-manhua-shot-params]")),
+        primaryInRight: Boolean(params?.querySelector('[data-manhua-action="generate-current-keyart"]')),
+        primaryCount: document.querySelectorAll('[data-manhua-action="generate-current-keyart"]').length,
         paramsInScript: Boolean(script?.querySelector("[data-manhua-shot-params]")),
         collapsedAssets: Boolean(document.querySelector("[data-manhua-storyboard-assets-collapsed]")),
       };
@@ -548,6 +551,8 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
     expect(seen.order.preview).toBe(2);
     expect(seen.order.params).toBe(3);
     expect(seen.paramsInRight).toBe(true);
+    expect(seen.primaryInRight).toBe(true);
+    expect(seen.primaryCount).toBe(1);
     expect(seen.paramsInScript).toBe(false);
 
     // 对照图 01 右栏四个字段：时长 / 景别 / 机位运动 / 画面描述（0/200）

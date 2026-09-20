@@ -651,7 +651,7 @@ export function manhuaBlockHasPaidOutput(block: CanvasBlock): boolean {
 export function hasManhuaAudioWork(block: CanvasBlock): boolean {
   const studio = block.audioStudio;
   return Boolean(block.previsStudio || block.manhuaSegmentRefs?.previs)
-    || Boolean(studio && (studio.cues.length || studio.musicJobIds.length || studio.pendingOperations.length || studio.previewTake))
+    || Boolean(studio && (studio.cues.length || studio.musicJobIds.length || studio.pendingOperations.length || studio.previewTake || studio.musicDraft))
     || Boolean(block.seedance25RefAudioUrls?.length)
     || Boolean(block.uploadedAssets?.some(asset => asset.kind === "audio"));
 }
