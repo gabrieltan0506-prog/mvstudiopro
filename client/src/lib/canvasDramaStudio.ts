@@ -4075,10 +4075,14 @@ export async function prepareManhuaFactoryClipInput(input: {
   if (!preparedVideoEdit && (stage === "clip" || stage === "keyart")) {
     assertManhuaShotSourceReady(working, getBlockEpisodeIndex(current) ?? input.episodeIndex ?? 1);
   }
-  const visionImages = preparedVideoEdit ? [] : collectVisionImages(blockId, working, edges);
+  // 当前成片不消费归档节点及其旧连线；原始图和连线仍保留。
+  const referenceBlocks = stage === "clip" && !preparedVideoEdit
+    ? working.filter(block => !block.archivedFromPreviousScript)
+    : working;
+  const visionImages = preparedVideoEdit ? [] : collectVisionImages(blockId, referenceBlocks, edges);
   const nearestRef =
     !preparedVideoEdit && (current.kind === "image" || current.kind === "video")
-      ? current.refImageUrl || resolveNearestUpstreamImageUrl(blockId, working, edges)
+      ? current.refImageUrl || resolveNearestUpstreamImageUrl(blockId, referenceBlocks, edges)
       : current.refImageUrl;
   let runBlockPayload =
     nearestRef && nearestRef !== current.refImageUrl
@@ -4135,6 +4139,7 @@ export async function prepareManhuaFactoryClipInput(input: {
       .filter(
         (b) =>
           b.id.startsWith("keyart-") &&
+          !b.archivedFromPreviousScript &&
           (getBlockEpisodeIndex(b) ?? 1) === epForSeg &&
           episodeSegmentContainsShot(working, epForSeg, localSeg, resolveKeyartShotIndex(b.id, b.prompt), runBlockPayload.videoModel),
       )
@@ -4159,7 +4164,7 @@ export async function prepareManhuaFactoryClipInput(input: {
     current.kind === "text" || current.kind === "copy_organize"
       ? await loadCanvasDocumentTexts(collectDocumentAssets(blockId, working, edges))
       : [];
-  const texts = preparedVideoEdit ? [] : [...collectUpstreamTexts(blockId, working, edges), ...docTexts];
+  const texts = preparedVideoEdit ? [] : [...collectUpstreamTexts(blockId, referenceBlocks, edges), ...docTexts];
   return { preparedBlock: runBlockPayload, upstream: { visionImages, texts } };
 }
 

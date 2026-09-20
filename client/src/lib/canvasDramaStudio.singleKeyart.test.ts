@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { spawnManhuaDramaStudio, prepareManhuaKeyartShotTarget, runManhuaDramaFactoryPipeline } from "./canvasDramaStudio";
+import { spawnManhuaDramaStudio, prepareManhuaKeyartShotTarget, runManhuaDramaFactoryPipeline, ensureManhuaFragmentClips, prepareManhuaFactoryClipInput } from "./canvasDramaStudio";
 import * as runner from "./canvasRunBlock";
 
 const refs = [{ id: "hero", role: "character" as const, url: "https://test.invalid/hero.png", source: "upload" as const, labelZh: "玄璃" }];
@@ -57,4 +57,20 @@ describe("当前镜首次生成与重出", () => {
     const r = await runManhuaDramaFactoryPipeline({ blocks, edges: a.edges, deps: { optimizeCopy: async () => "" }, episodeIndex: 1, untilStage: "keyart", keyartShotIndex: 1, maxRetries: 0, ensureOptions: { customRefs: refs } });
     expect(spy).toHaveBeenCalledTimes(1); expect(r.errors).toHaveLength(1); expect(r.blocks.find(b => b.id === a.targetBlockId)?.outputUrl).toBe("https://test.invalid/old.png");
   });
+});
+
+it.each([false, true])("归档同镜旧图不混入段参考（残留连线=%s）", async (linked) => {
+  const g = fixture();
+  vi.spyOn(runner, "runCanvasBlock").mockResolvedValue({ outputUrl: "https://test.invalid/current.png" });
+  const r = await runManhuaDramaFactoryPipeline({ ...g, deps: { optimizeCopy: async () => "" }, episodeIndex: 1, untilStage: "keyart", keyartShotIndex: 2, maxRetries: 0, ensureOptions: { customRefs: refs } });
+  expect(r.errors).toEqual([]);
+  const plan = ensureManhuaFragmentClips(r.blocks, g.edges, 1, { customRefs: refs });
+  const clip = plan.blocks.find(b => b.id.startsWith("clip-") && !b.archivedFromPreviousScript)!;
+  const keyart = plan.blocks.find(b => b.id.startsWith("keyart-"))!;
+  const baseline = await prepareManhuaFactoryClipInput({ blocks: plan.blocks, edges: plan.edges, blockId: clip.id, fallbackBlock: clip, stage: "clip", preparedVideoEdit: false });
+  const archived = { ...keyart, id: "keyart-e01-s02-archived-test", archivedFromPreviousScript: true, outputUrl: "https://test.invalid/archived.png", outputUrls: ["https://test.invalid/archived.png"], manhuaKeyartSourceState: undefined };
+  const blocks = [...plan.blocks, archived];
+  const result = await prepareManhuaFactoryClipInput({ blocks, edges: linked ? [...plan.edges, { fromId: archived.id, toId: clip.id }] : plan.edges, blockId: clip.id, fallbackBlock: clip, stage: "clip", preparedVideoEdit: false });
+  expect(result).toEqual(baseline);
+  expect(blocks.at(-1)).toEqual(archived);
 });
