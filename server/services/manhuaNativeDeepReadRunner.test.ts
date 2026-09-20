@@ -30,6 +30,8 @@ import {
   NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG,
   NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG,
   NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS,
+  NATIVE_DEEP_READ_ESCALATION_MODEL,
+  NATIVE_DEEP_READ_ESCALATION_TEMPERATURES,
   NATIVE_DEEP_READ_RETRY_INTERVAL_MS_BEFORE_0920,
   nativeDeepReadFrozenContractSha256,
   NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256,
@@ -5000,12 +5002,19 @@ describe("门禁前解析稿持久化接线", () => {
   it("0917 根因回归：五档未过 + 合并稿改了 raw → 选择记录按最终稿盖章，段卡能落盘；续跑命中缓存零外呼", async () => {
     const { hasNativeAttemptSelection } = await import("./manhuaNativeDeepReadAttemptSelection");
     const { mergeNativeDeepReadRetryDrafts } = await import("./manhuaNativeDeepReadRetryDraftMerge");
-    // 五发都覆盖全段、字段齐全，但镜数远低于地板 → 三项线（数值偏差 >20%）拒收、进候选；
-    // 而密度门禁只记 advisory 不抛 → 合并稿不会被退回底稿。字幕各不相同 → 合并稿必定与底稿 raw 不同。
-    // （低覆盖 / 零重点时刻这类硬门失败不能用：合并稿过不了密度门禁会退回底稿，走不到这条路。）
+    // 0920 起「镜数低于地板」已降成 advisory、不再触发重试，所以这条回归改用**仍在
+    // NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES 里的拒因**制造五发不过：音轨只有 1 段
+    // （60 秒段的建议地板是 2 段）→ audio_track_thin 触发降档重试；
+    // 字幕各不相同 → 合并稿必定与底稿 raw 不同，正是 0917 盖章错位的复现条件。
     const uniqueSubtitles = ["你把晚风留在窗外", "剑气未收人已至", "山门今日不开", "灯下无人对饮", "旧案卷宗重开"];
     const drafts = uniqueSubtitles.map((textZh, i) => {
-      const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60, shotCountOverride: 4 });
+      const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+      // 每发各缺**两个相邻**镜头（覆盖率 ≈83%，低于 90% 硬门 → 五发全拒、全部进候选）；
+      // 五发缺的窗口互不相同，合并后覆盖被补齐 → 合并稿必定≠底稿，正是 0917 盖章错位的复现条件。
+      // （不能只缺一个：那只有 8% 偏差，覆盖/时间轴类要超过 20% 才算可重试拒因。）
+      const shots = raw.shots as Array<Record<string, unknown>>;
+      const hole = [1 + i * 2, 2 + i * 2];
+      raw.shots = shots.filter((_, index) => !hole.includes(index));
       // 秒位相隔 > 合并窗口 3 秒、文本互不相似，合并才会真的把其他两发补进底稿
       raw.subtitles = [{ atSec: 4 + i * 6, textZh }];
       return raw;
@@ -5820,4 +5829,82 @@ it("本地恢复保留有效GLM分析；原稿也不完整时仍拒绝且不编�
   expect(fixed.classificationProseZh).toEqual(raw.classificationProseZh);
   expect(fixed.shots).toEqual(rows[0]!.shots);
   expect(() => recoverNativeStructuringFromSource({}, [], [0], true)).toThrow();
+});
+
+/**
+ * 0920 用户令：「單一分片如果連讀五次都不通過，就升級成Gemini 3.1 pro來讀」
+ * 「如果重是五次都不通過，保留分片，不報錯，換Gemini 3.1 pro來讀，直接從0.7--0.65--0.6」。
+ */
+describe("0920 读片升级档：单片五发不过 → 不报错 → 升级 Gemini 3.1 Pro 三档重读", () => {
+  const fullSegments = [0, 319, 638, 957, 1276].map((startSec, index) => ({
+    startSec, endSec: index === 4 ? 1594 : startSec + 319,
+  }));
+  function selectedParams(indexes: number[]): NativeDeepReadSelectedSegmentsParams {
+    return {
+      seriesKey: "test_escalation_0920", sourceDigest: "e".repeat(64),
+      sourceDurationSec: 1594, segments: fullSegments, videoFps: 12,
+      selectedSegmentIndexes: indexes,
+      preparedVideos: indexes.map((index) => ({
+        ...fullSegments[index]!, gsUri: `gs://test-bucket/seg-${index}.mp4`,
+        temporaryGcs: { bucket: "test-bucket", objectName: `seg-${index}.mp4` },
+        bytes: 123456, hasAudio: true,
+      })),
+    };
+  }
+  const modelsOf = (spy: unknown) => (spy as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[3]);
+  const tempsOf = (spy: unknown) => (spy as ReturnType<typeof vi.fn>).mock.calls
+    .map((call) => (call[0] as { generationConfig: { temperature: number } }).generationConfig.temperature);
+
+  it("Flash 五发全不过：再跑 3.1 Pro 三档（共 8 发），温度从 0.7 重新开始，且不抛错", async () => {
+    const short = makeSegmentPayload({ segmentIndex: 3, startSec: 957, endSec: 977 });
+    const deps = makeRunnerDeps({ postVertex: vi.fn().mockResolvedValue(geminiResponse(short)) });
+    // 「不报错」指的是**五发不过不停手、改升级**；升级三档也全废时仍按既有硬门拒收（覆盖率 6.3%）
+    const error = await runManhuaNativeDeepReadSelectedSegments(
+      { ...selectedParams([3]), readModel: "gemini-3.8-flash" }, deps).catch((e) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect(String(error.message)).toContain("覆盖率");
+    expect(deps.postVertex).toHaveBeenCalledTimes(8);
+    expect(modelsOf(deps.postVertex)).toEqual([
+      "gemini-3.8-flash", "gemini-3.8-flash", "gemini-3.8-flash", "gemini-3.8-flash", "gemini-3.8-flash",
+      "gemini-3.1-pro-preview", "gemini-3.1-pro-preview", "gemini-3.1-pro-preview",
+    ]);
+    expect(tempsOf(deps.postVertex)).toEqual([0.7, 0.65, 0.65, 0.6, 0.6, 0.7, 0.65, 0.6]);
+    // 保留分片：八发的原稿与解析稿都落了永久证据，下次续跑不重买
+    expect(deps.writeRawAttemptEvidence).toHaveBeenCalledTimes(8);
+    expect(deps.writeParsedAttemptEvidence).toHaveBeenCalledTimes(8);
+  });
+
+  it("升级档第一发就过：总共 6 发，采用 3.1 Pro 那一稿", async () => {
+    const short = makeSegmentPayload({ segmentIndex: 3, startSec: 957, endSec: 977 });
+    const healthy = makeSegmentPayload({ segmentIndex: 3, startSec: 957, endSec: 1276 });
+    const postVertex = vi.fn()
+      .mockResolvedValueOnce(geminiResponse(short)).mockResolvedValueOnce(geminiResponse(short))
+      .mockResolvedValueOnce(geminiResponse(short)).mockResolvedValueOnce(geminiResponse(short))
+      .mockResolvedValueOnce(geminiResponse(short))
+      .mockResolvedValueOnce(geminiResponse(healthy));
+    const deps = makeRunnerDeps({ postVertex });
+    const result = await runManhuaNativeDeepReadSelectedSegments(
+      { ...selectedParams([3]), readModel: "gemini-3.8-flash" }, deps);
+    expect(postVertex).toHaveBeenCalledTimes(6);
+    expect(modelsOf(postVertex)[5]).toBe("gemini-3.1-pro-preview");
+    expect(tempsOf(postVertex)[5]).toBe(0.7);
+    expect(result.segments[0]!.raw.shots).toEqual(healthy.shots);
+  });
+
+  it("首读已经是 3.1 Pro：没有更高档可升，仍然只发五次", async () => {
+    const short = makeSegmentPayload({ segmentIndex: 3, startSec: 957, endSec: 977 });
+    const deps = makeRunnerDeps({ postVertex: vi.fn().mockResolvedValue(geminiResponse(short)) });
+    const error = await runManhuaNativeDeepReadSelectedSegments(
+      { ...selectedParams([3]), readModel: "gemini-3.1-pro-preview" }, deps).catch((e) => e);
+    expect(error).toBeInstanceOf(Error);
+    // 没有升级档可走：停在五发，不会多烧三发
+    expect(deps.postVertex).toHaveBeenCalledTimes(5);
+    expect(new Set(modelsOf(deps.postVertex))).toEqual(new Set(["gemini-3.1-pro-preview"]));
+  });
+
+  it("升级档常量按用户原话写死：3.1 Pro + 0.7/0.65/0.6 三发", () => {
+    expect(NATIVE_DEEP_READ_ESCALATION_MODEL).toBe("gemini-3.1-pro-preview");
+    expect([...NATIVE_DEEP_READ_ESCALATION_TEMPERATURES]).toEqual([0.7, 0.65, 0.6]);
+    expect(NATIVE_DEEP_READ_ESCALATION_TEMPERATURES).toHaveLength(3);
+  });
 });

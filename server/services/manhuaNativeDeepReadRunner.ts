@@ -448,6 +448,17 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = deepFreezeNativeContract({
 export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = deepFreezeNativeContract(
   [0.7, 0.65, 0.65, 0.6, 0.6] as const);
 
+/**
+ * 🔴 0920 用户令：「**單一分片如果連讀五次都不通過，就升級成Gemini 3.1 pro來讀**」
+ * 「如果重是五次都不通過，**保留分片，不報錯**，換Gemini 3.1 pro來讀，**直接從0.7--0.65--0.6**」。
+ *
+ * 升级只在**首读模型不是 3.1 Pro** 时发生（已经是 Pro 就没有更高档可升）；
+ * 升级读用自己的三档梯度，不接着往下降；三档仍不过才回到既有的「五选一原稿进整形」。
+ */
+export const NATIVE_DEEP_READ_ESCALATION_MODEL = "gemini-3.1-pro-preview" as const;
+export const NATIVE_DEEP_READ_ESCALATION_TEMPERATURES = deepFreezeNativeContract(
+  [0.7, 0.65, 0.6] as const);
+
 /** 兼容旧诊断导出；0906 起任一必需证据缺陷即拒收，不再凑满三项。 */
 export const NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES = 1;
 /** 0920 用户令「百分之十五放寬到百分之二十」：数值偏差最多 20%。只进门禁判定，不进提示词。 */
@@ -1683,20 +1694,33 @@ export function buildGeminiNativeDeepReadSegmentRequest(input: {
   fps: number;
   prompt: string;
   segmentContext: NativeDeepReadSegmentContext;
-  /** 只允许选择冻结梯度中的尝试序号；调用方不能覆盖 generationConfig。0920 起共 5 档。 */
-  attemptIndex?: 0 | 1 | 2 | 3 | 4;
+  /**
+   * 只允许选择冻结梯度中的尝试序号；调用方不能覆盖 generationConfig。
+   * 0920 起首读梯度 5 档；**升级档（3.1 Pro）另有 3 档，序号接着往后数**（5→7），
+   * 由 `escalated` 标记，温度取升级梯度表，不与首读梯度混用。
+   */
+  attemptIndex?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+  /** true＝这一发属于 0920 升级档（Gemini 3.1 Pro，0.7/0.65/0.6）。 */
+  escalated?: boolean;
 }): Record<string, unknown> {
   assertNativeDeepReadFrozenContract();
   const attemptIndex = input.attemptIndex ?? 0;
-  if (!Number.isSafeInteger(attemptIndex)
-    || attemptIndex < 0 || attemptIndex >= NATIVE_DEEP_READ_RETRY_TEMPERATURES.length) {
+  const gradient = input.escalated === true
+    ? NATIVE_DEEP_READ_ESCALATION_TEMPERATURES
+    : NATIVE_DEEP_READ_RETRY_TEMPERATURES;
+  const gradientIndex = input.escalated === true
+    ? attemptIndex - NATIVE_DEEP_READ_RETRY_TEMPERATURES.length
+    : attemptIndex;
+  if (!Number.isSafeInteger(gradientIndex)
+    || gradientIndex < 0 || gradientIndex >= gradient.length) {
     throw new Error(
-      `原生精读只允许冻结梯度内的尝试序号（${NATIVE_DEEP_READ_RETRY_TEMPERATURES.join("/")}，共 ${NATIVE_DEEP_READ_RETRY_TEMPERATURES.length} 发）`);
+      `原生精读只允许冻结梯度内的尝试序号（${gradient.join("/")}，共 ${gradient.length} 发`
+      + `${input.escalated === true ? "，升级档序号从 " + (NATIVE_DEEP_READ_RETRY_TEMPERATURES.length + 1) + " 起" : ""}）`);
   }
   const generationConfig = {
     ...NATIVE_DEEP_READ_GENERATION_CONFIG,
     responseSchema: buildNativeDeepReadResponseSchema(input.segmentContext),
-    temperature: NATIVE_DEEP_READ_RETRY_TEMPERATURES[attemptIndex],
+    temperature: gradient[gradientIndex],
   };
   return {
     contents: [{
@@ -5518,8 +5542,11 @@ async function executeNativeDeepReadBatch(
         attemptNumber: number;
         temperature: number;
         rejectedReasonZh?: string;
+        /** 0920 升级档：本发实际用的读片模型；缺省＝本轮首读模型。 */
+        model?: ManhuaNativeDeepReadModelId;
       }): Promise<SegmentAttemptResult> => {
         const segment = episode.segments[input.segmentIndex]!;
+        const attemptModel = input.model ?? readModel;
         let callId: string = crypto.randomUUID();
         const startedAt = Date.now();
         const degraded = input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK;
@@ -5532,7 +5559,9 @@ async function executeNativeDeepReadBatch(
           segmentContext,
           fileUri: input.fileUri,
           fps: input.fps,
-          attemptIndex: (input.attemptNumber - 1) as 0 | 1 | 2,
+          attemptIndex: (input.attemptNumber - 1) as 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7,
+          // 0920 升级档：序号超过首读梯度长度即为升级发，温度改取 3.1 Pro 的三档表
+          escalated: input.attemptNumber > NATIVE_DEEP_READ_RETRY_TEMPERATURES.length,
           prompt: buildGeminiNativeDeepReadSegmentPrompt({
             episodeDurationSec: episode.sourceDurationSec,
             startSec: segment.startSec,
@@ -5548,7 +5577,7 @@ async function executeNativeDeepReadBatch(
         let requestFingerprint: string | undefined;
         if (params.segmentCacheSeriesKey && episode.cacheSourceDigest) {
           requestFingerprint = nativeDeepReadSegmentCacheFingerprint({
-            model: readModel,
+            model: attemptModel,
             sourceDigest: episode.cacheSourceDigest,
             episodeIndex: episode.episodeIndex,
             episodeDurationSec: episode.sourceDurationSec,
@@ -5602,7 +5631,7 @@ async function executeNativeDeepReadBatch(
           if (!recoveredPaidEvidence) {
             await emitVisualModelReceipt({
               callId,
-              model: readModel,
+              model: attemptModel,
               route: input.route,
               stage: "visual_model",
               status: "started",
@@ -5617,8 +5646,8 @@ async function executeNativeDeepReadBatch(
             }, params.onModelReceipt);
             modelCallStarted = true;
             response = await (input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK
-              ? deps.postEvolink(body, params.abortSignal, segmentContext, readModel)
-              : deps.postVertex(body, params.abortSignal, segmentContext, readModel));
+              ? deps.postEvolink(body, params.abortSignal, segmentContext, attemptModel)
+              : deps.postVertex(body, params.abortSignal, segmentContext, attemptModel));
           }
           if (!response) throw new Error("原生精读响应缺失，已停止且不得自动重试");
           if (response.status >= 300) {
@@ -5628,7 +5657,7 @@ async function executeNativeDeepReadBatch(
               requestId: response.requestId,
             });
             const failure = errorWithNativeProviderReceipt(
-              formatNativeProviderErrorZh(routeLabelZh(input.route, readModel), providerError),
+              formatNativeProviderErrorZh(routeLabelZh(input.route, attemptModel), providerError),
               providerError,
             ) as HttpFailure;
             failure.nativeDeepReadHttpStatus = response.status;
@@ -5677,7 +5706,7 @@ async function executeNativeDeepReadBatch(
             + Math.max(0, Number(usage?.thoughtsTokenCount) || 0);
           const attemptAudioInput = audioTokensFromUsage(usage?.promptTokensDetails);
           const attemptReasoning = Math.max(0, Number(usage?.thoughtsTokenCount) || 0);
-          const prices = routePrices(input.route, readModel);
+          const prices = routePrices(input.route, attemptModel);
           const attemptCost =
             (attemptInput * prices.inPerM) / 1e6 + (attemptOutput * prices.outPerM) / 1e6;
           // 恢复旧付费证据时只重建段级历史用量，不伪装成本次外呼或本批新增费用。
@@ -5704,7 +5733,7 @@ async function executeNativeDeepReadBatch(
             if (recoveredPaidEvidence) return;
             await emitVisualModelReceipt({
               callId,
-              model: readModel,
+              model: attemptModel,
               route: input.route,
               stage: "visual_model",
               status: "completed",
@@ -5774,7 +5803,7 @@ async function executeNativeDeepReadBatch(
                 visualRoute: evidenceVisualRoute,
                 repeatableDiagnostic: Boolean(selectedSegmentIndexes),
                 providerRequestId: response.requestId,
-                model: readModel,
+                model: attemptModel,
                 startSec: segment.startSec,
                 endSec: segment.endSec,
                 fps: input.fps,
@@ -5964,7 +5993,7 @@ async function executeNativeDeepReadBatch(
           if (segmentAdvisories.length) raw.advisories = segmentAdvisories;
           await emitVisualModelReceipt({
             callId: `${episodeRequestId}:segment-${input.segmentIndex}:gate-${input.attemptNumber}`,
-            model: readModel,
+            model: attemptModel,
             route: "local_schema_gate",
             stage: "visual_parse",
             status: "completed",
@@ -6000,7 +6029,7 @@ async function executeNativeDeepReadBatch(
             const providerError = nativeProviderReceiptFromError(error);
             await emitVisualModelReceipt({
               callId,
-              model: readModel,
+              model: attemptModel,
               route: input.route,
               stage: "visual_model",
               status: "failed",
@@ -6095,8 +6124,20 @@ async function executeNativeDeepReadBatch(
       }): Promise<SegmentAttemptResult> => {
         let lastError: unknown;
         let rejectedReasonZh: string | undefined;
-        for (let attemptIndex = 0; attemptIndex < NATIVE_DEEP_READ_RETRY_TEMPERATURES.length; attemptIndex += 1) {
-          const temperature = NATIVE_DEEP_READ_RETRY_TEMPERATURES[attemptIndex]!;
+        /**
+         * 0920 用户令：一个梯度跑完仍不过 → 不报错、保留分片、升级模型再跑一趟自己的梯度。
+         * 本闭包把「一趟梯度」抽出来，两趟共用同一套门禁、资源退避与合并逻辑，
+         * 只换模型与温度表；attemptNumber 连号，证据与选稿记录不会互相覆盖。
+         */
+        const runGradient = async (
+          gradientModel: ManhuaNativeDeepReadModelId,
+          temperatures: readonly number[],
+          attemptNumberOffset: number,
+        ): Promise<SegmentAttemptResult | null> => {
+        for (let attemptIndex = 0; attemptIndex < temperatures.length; attemptIndex += 1) {
+          const temperature = temperatures[attemptIndex]!;
+          const attemptNumber = attemptNumberOffset + attemptIndex + 1;
+
           if (attemptIndex > 0) {
             const retryReasonZh = rejectedReasonZh || "上一档门禁未通过";
             console.warn(
@@ -6104,8 +6145,8 @@ async function executeNativeDeepReadBatch(
               + `门禁未通过，60 秒后降到 temperature ${temperature} 重试：${retryReasonZh}`,
             );
             await emitVisualModelReceipt({
-              callId: `${episodeRequestId}:segment-${input.segmentIndex}:retry-${attemptIndex + 1}`,
-              model: readModel,
+              callId: `${episodeRequestId}:segment-${input.segmentIndex}:retry-${attemptNumber}`,
+              model: gradientModel,
               route: "gate_retry_pending",
               stage: "visual_parse",
               status: "started",
@@ -6114,7 +6155,7 @@ async function executeNativeDeepReadBatch(
               chunkIndex: input.segmentIndex,
               segmentCount,
               videoCount: 1,
-              attemptNumber: attemptIndex + 1,
+              attemptNumber,
               temperature,
               errorZh: retryReasonZh,
             }, params.onModelReceipt);
@@ -6126,11 +6167,13 @@ async function executeNativeDeepReadBatch(
             try {
               const accepted = await attemptSegment({
                 ...input,
-                attemptNumber: attemptIndex + 1,
+                attemptNumber,
+                // 0920 升级档：这一发实际用哪个读片模型由梯度决定（首读档 / 3.1 Pro 升级档）
+                model: gradientModel,
                 temperature,
                 rejectedReasonZh,
               });
-              return attemptIndex > 0 ? await applyRetryDraftMerge(input.segmentIndex, attemptIndex + 1, accepted, true) : accepted;
+              return attemptNumber > 1 ? await applyRetryDraftMerge(input.segmentIndex, attemptNumber, accepted, true) : accepted;
             } catch (error) {
               if (params.abortSignal?.aborted) throw error;
               if (error instanceof Error && error.name === "NativeDeepReadEvidencePersistenceError") throw error;
@@ -6139,8 +6182,8 @@ async function executeNativeDeepReadBatch(
                 resourceRetryCount += 1;
                 const errorZh = (error instanceof Error ? error.message : String(error)).slice(0, 2_000);
                 await emitVisualModelReceipt({
-                  callId: `${episodeRequestId}:segment-${input.segmentIndex}:resource-retry-${attemptIndex + 1}-${resourceRetryCount}`,
-                  model: readModel,
+                  callId: `${episodeRequestId}:segment-${input.segmentIndex}:resource-retry-${attemptNumber}-${resourceRetryCount}`,
+                  model: gradientModel,
                   route: "resource_retry_pending",
                   stage: "visual_parse",
                   status: "started",
@@ -6149,7 +6192,7 @@ async function executeNativeDeepReadBatch(
                   chunkIndex: input.segmentIndex,
                   segmentCount,
                   videoCount: 1,
-                  attemptNumber: attemptIndex + 1,
+                  attemptNumber,
                   temperature,
                   resourceRetryNumber: resourceRetryCount,
                   resourceRetryMax: NATIVE_DEEP_READ_RESOURCE_RETRY_MAX,
@@ -6168,8 +6211,8 @@ async function executeNativeDeepReadBatch(
                 && (error.name === NATIVE_DEEP_READ_SCHEMA_ERROR_NAME || error.name === "ZodError");
               if (!isNativeDeepReadGateFailure(error) && !schemaGateFailure) throw error;
               await emitVisualModelReceipt({
-                callId: `${episodeRequestId}:segment-${input.segmentIndex}:gate-${attemptIndex + 1}`,
-                model: readModel,
+                callId: `${episodeRequestId}:segment-${input.segmentIndex}:gate-${attemptNumber}`,
+                model: gradientModel,
                 route: "local_schema_gate",
                 stage: "visual_parse",
                 status: "failed",
@@ -6178,7 +6221,7 @@ async function executeNativeDeepReadBatch(
                 chunkIndex: input.segmentIndex,
                 segmentCount,
                 videoCount: 1,
-                attemptNumber: attemptIndex + 1,
+                attemptNumber,
                 temperature,
                 errorZh: (error instanceof Error ? error.message : String(error)).slice(0, 2_000),
               }, params.onModelReceipt);
@@ -6190,6 +6233,45 @@ async function executeNativeDeepReadBatch(
             }
           }
         }
+        return null;
+        };
+
+        const firstPass = await runGradient(readModel, NATIVE_DEEP_READ_RETRY_TEMPERATURES, 0);
+        if (firstPass) return firstPass;
+        /**
+         * 0920 用户令：「單一分片如果連讀五次都不通過，就升級成Gemini 3.1 pro來讀」
+         * 「保留分片，不報錯」「直接從0.7--0.65--0.6」。首读已是 3.1 Pro 时没有更高档，跳过。
+         */
+        if (readModel !== NATIVE_DEEP_READ_ESCALATION_MODEL) {
+          console.warn(
+            `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段`
+            + `${NATIVE_DEEP_READ_RETRY_TEMPERATURES.length} 发均未过门禁，保留分片并升级 `
+            + `${NATIVE_DEEP_READ_ESCALATION_MODEL} 重读（${NATIVE_DEEP_READ_ESCALATION_TEMPERATURES.join("→")}）：`
+            + `${rejectedReasonZh || "上一档门禁未通过"}`,
+          );
+          await emitVisualModelReceipt({
+            callId: `${episodeRequestId}:segment-${input.segmentIndex}:escalate-${NATIVE_DEEP_READ_ESCALATION_MODEL}`,
+            model: NATIVE_DEEP_READ_ESCALATION_MODEL,
+            route: "read_model_escalation_pending",
+            stage: "visual_parse",
+            status: "started",
+            batchRequestId: episodeRequestId,
+            episodeIndexes: [episode.episodeIndex],
+            chunkIndex: input.segmentIndex,
+            segmentCount,
+            videoCount: 1,
+            attemptNumber: NATIVE_DEEP_READ_RETRY_TEMPERATURES.length + 1,
+            temperature: NATIVE_DEEP_READ_ESCALATION_TEMPERATURES[0]!,
+            errorZh: rejectedReasonZh,
+          }, params.onModelReceipt);
+          const escalated = await runGradient(
+            NATIVE_DEEP_READ_ESCALATION_MODEL,
+            NATIVE_DEEP_READ_ESCALATION_TEMPERATURES,
+            NATIVE_DEEP_READ_RETRY_TEMPERATURES.length,
+          );
+          if (escalated) return escalated;
+        }
+
 
         const retryError = lastError || new Error("分片三次尝试均未完成");
         const candidates = rejectedAttempts.get(input.segmentIndex) ?? [];
