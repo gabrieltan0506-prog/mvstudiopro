@@ -27,13 +27,13 @@ describe("阻断卡集中显示", () => {
     expect(state.advisories.map((i) => i.id)).toEqual(["claims"]);
   });
 
-  it("本步没阻断但别处有：不说「可以往下走」，如实说后面还有几条", () => {
+  it("本步没阻断但别处有：不说「可以往下走」，如实说其他步骤还有几条", () => {
     const state = buildManhuaMainTaskState({
       issues: [issue("keyframe", "storyboard", true), issue("review", "assets", false)],
       phase: "assets",
     });
     expect(state.blocked).toBe(true);
-    expect(state.headlineZh).toBe("本步没有阻断项，但后面还有 1 条");
+    expect(state.headlineZh).toBe("其他步骤还有 1 项需要处理");
   });
 
   it("只有提醒项时不算阻断，卡整张不渲染", () => {

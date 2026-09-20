@@ -1,3 +1,4 @@
+import { findCanvasDialogueReuse, restoreCanvasDialogueCandidate } from "@/lib/canvasDialogueReuse";
 import { createManhuaAudioFromShots } from "@shared/manhuaAudioFromShots";
 import { planCanvasDialogueTiming } from "@shared/canvasDialogueTimingPlan";
 import type { ManhuaWorkbenchShot } from "@shared/manhuaScriptWorkbench";
@@ -153,6 +154,7 @@ export type CanvasAudioStudioServices = {
 type Props = {
   block: CanvasBlock;
   sourceShots?: ManhuaWorkbenchShot[];
+  dialogueSources?: readonly CanvasBlock[];
   disabled?: boolean;
   onChange: (next: CanvasAudioStudioState) => void;
   /**
@@ -190,6 +192,7 @@ export function CanvasAudioStudio(props: Props) {
 export function CanvasAudioStudioView({
   block,
   sourceShots,
+  dialogueSources = [],
   disabled = false,
   onChange,
   onMasterTrackReady,
@@ -218,8 +221,8 @@ export function CanvasAudioStudioView({
     musicJobCount: state.musicJobIds.length,
     hasPremixMaster: Boolean(block.manhuaSegmentRefs?.master?.gcsUri || block.manhuaSegmentRefs?.master?.url),
   });
-  const current = useRef({ state, onChange, services, block, onMasterTrackReady, durationSec });
-  current.current = { state, onChange, services, block, onMasterTrackReady, durationSec };
+  const current = useRef({ state, onChange, services, block, onMasterTrackReady, durationSec, dialogueSources });
+  current.current = { state, onChange, services, block, onMasterTrackReady, durationSec, dialogueSources };
   const mounted = useRef(true);
   const busyRef = useRef(false);
   const [busy, setBusy] = useState(false);
@@ -1045,6 +1048,7 @@ export function CanvasAudioStudioView({
         );
         const locked = disabled || busy || pending;
         const source = sourceFor(cue);
+        const reuseCandidates = findCanvasDialogueReuse(block, cue, dialogueSources);
         const numberField = (
           label: string,
           key:
@@ -1334,6 +1338,30 @@ export function CanvasAudioStudioView({
 
               </>
             )}
+            {cue.kind === "dialogue" && reuseCandidates.length > 0 ? (
+              <details className="rounded-lg border border-cyan-300/25 p-3" data-dialogue-reuse>
+                <summary className="cursor-pointer text-sm text-cyan-100">找回已有对白 · 无需重新生成</summary>
+                <p className="mt-2 text-xs text-white/60">同角色、同状态、同台词的原声。加入时使用所列情绪和音色，保留当前时间安排；试听后再采用。</p>
+                {reuseCandidates.map(candidate => (
+                  <div key={candidate.take.id} className="mt-3 space-y-2 rounded bg-white/5 p-2">
+                    <p className="text-xs">{candidate.take.durationSec.toFixed(3)} 秒 · {candidate.emotion || "自然情绪"} · {VOICES.find(voice => voice.id === candidate.voice)?.label || candidate.voice || "未标音色"}</p>
+                    <audio controls preload="none" src={candidate.take.previewUrl} className="h-8 w-full" onError={event => void restoreAudio(event.currentTarget, candidate.take.gcsUri)} />
+                    <button type="button" className={buttonClass} disabled={locked || cue.takes.length >= 100} onClick={() => {
+                      if (locked || busyRef.current) return;
+                      setConfirmation(null);
+                      update(previous => {
+                        const latest = previous.cues.find(item => item.id === cue.id);
+                        if (!latest) return previous;
+                        try {
+                          const restored = restoreCanvasDialogueCandidate(current.current.block, latest, current.current.dialogueSources, candidate);
+                          return { ...previous, previewTake: undefined, cues: previous.cues.map(item => item.id === cue.id ? restored : item) };
+                        } catch (error) { setError(error instanceof Error ? error.message : "找回失败，原声仍保留。"); return previous; }
+                      });
+                    }}>加入候选并使用此情绪与音色</button>
+                  </div>
+                ))}
+              </details>
+            ) : null}
             {cue.kind !== "dialogue" && <CanvasAudioMixControls cue={cue} disabled={locked} onChange={patch => patchCue(cue.id, patch)}/>}
             {cue.takes
               .filter(take => take.inputKey !== "source")

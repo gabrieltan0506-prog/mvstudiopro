@@ -149,3 +149,33 @@ it('真实四抽屉裁切进入当前版本合成与持久化，旧版本保留'
  writeFileSync(join(evidenceDir,'failure-preserved.json'),JSON.stringify(await page.evaluate(()=>({toasts:(window as any).__toastHistory(),posts:(window as any).__posts,final:(window as any).__ffcProps.blocks.find((b:any)=>b.id==='final-e01')})),null,2));
  }catch(error){writeFileSync(join(evidenceDir,'console.json'),JSON.stringify({errors,consoles},null,2));writeFileSync(join(evidenceDir,'failure.json'),JSON.stringify(await page.evaluate(()=>({toasts:(window as any).__toastHistory(),fetches:(window as any).__fetches,body:document.body.innerText,phase:(window as any).__wbProps?.workflowPhase,button:document.querySelector("[data-manhua-edit-generate-current]")?.outerHTML,posts:(window as any).__posts,blocks:(window as any).__ffcProps?.blocks})),null,2));throw error;}finally{await close();}
 },120000);
+
+it('剪辑界面可读性：窄屏只滚动时间线，工具正文不少于14像素', async () => {
+ const {page,close}=await mount();
+ try {
+  const cssDir=process.env.MANHUA_LAYOUT_CSS_DIR;
+  if(!cssDir)throw Error('布局验收需要本次构建CSS');
+  for(const file of readdirSync(cssDir).filter(n=>n.endsWith('.css')))await page.addStyleTag({content:readFileSync(join(cssDir,file),'utf8')});
+  await page.evaluate(()=>(window as any).__wbProps.onWorkflowPhaseChange('edit'));
+  await page.waitForSelector('[data-manhua-panel="edit-multitrack"]');
+  for(const width of [1280,390]) {
+   await page.setViewport({width,height:900});
+   for(const drawer of ['cut','effects','subtitles','export']) {
+    await page.evaluate(id=>{const b=document.querySelector(`[data-manhua-edit-drawer-toggle="${id}"]`) as HTMLButtonElement;if(b.getAttribute('aria-expanded')!=='true')b.click();},drawer);
+    const layout=await page.evaluate(id=>{
+     const panel=document.querySelector('[data-manhua-panel="edit-multitrack"]') as HTMLElement;
+     const scroller=document.querySelector('[data-manhua-edit-timeline-scroll]') as HTMLElement;
+     const content=document.querySelector(`[data-manhua-edit-drawer="${id}"]`) as HTMLElement;
+     const labels=Array.from(content.querySelectorAll('p,label,button,input,select,summary')).filter(e=>(e as HTMLElement).offsetHeight>0&&(e.textContent?.trim()||e.matches('input,select')));
+     return {panelWidth:panel.getBoundingClientRect().width,viewport:innerWidth,scroll:scroller.scrollWidth>scroller.clientWidth,fonts:labels.map(e=>parseFloat(getComputedStyle(e).fontSize))};
+    },drawer);
+    expect(layout.panelWidth).toBeLessThanOrEqual(width);
+    expect(layout.fonts.length).toBeGreaterThan(0);
+    expect(Math.min(...layout.fonts)).toBeGreaterThanOrEqual(14);
+    if(width===390)expect(layout.scroll).toBe(true);
+    await page.evaluate(id=>document.querySelector(`[data-manhua-edit-drawer="${id}"]`)?.scrollIntoView({block:"start"}),drawer);
+    await page.screenshot({path:join(evidenceDir,`readable-${width}-${drawer}.png`),fullPage:false});
+   }
+  }
+ } finally {await close();}
+},30000);

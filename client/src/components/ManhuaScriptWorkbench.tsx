@@ -1,3 +1,4 @@
+import { ManhuaShotTimingEditor } from "./ManhuaShotTimingEditor";
 import { ManhuaSevenCoreEditor } from "./canvas/ManhuaSevenCoreEditor";
 import { extractManhuaShotSevenCore, upsertManhuaShotSevenCore, clearManhuaShotSevenCore } from "@shared/manhuaSevenCoreSupplement";
 import { ManhuaVfxPicker } from "./canvas/ManhuaVfxPicker";
@@ -308,6 +309,7 @@ import {
   isManhuaAssetCardExpanded,
   shouldShowManhuaAssetFoldToggle,
   shouldShowManhuaAssetRoleChip,
+  resolveManhuaAssetPreviewId,
 } from "@/lib/manhuaAssetCardFold";
 import {
   shouldShowToolbarAssetWallEntry,
@@ -782,6 +784,7 @@ type Props = {
   onArtStyleChange?: (id: ManhuaArtStyleId) => void;
   /** 创作顾问：同步规划产物到工厂节点 */
   /** 机位选定写回反推/节拍（供工厂注入） */
+  onUpdateShotTiming?: (shotIndex: number, durationSec: number) => void;
   onUpsertShotAngles?: (angles: Record<number, string>) => void;
   /** 分镜台词写回（成片注入用；静帧不读字面） */
   onUpsertShotDialogues?: (
@@ -1299,6 +1302,7 @@ export default function ManhuaScriptWorkbench({
   onShotContinuityChange,
   artStyleId,
   onArtStyleChange,
+  onUpdateShotTiming,
   onUpsertShotAngles,
   onUpsertShotDialogues,
 }: Props) {
@@ -1408,6 +1412,7 @@ export default function ManhuaScriptWorkbench({
    * 单卡 11–13 个控件 × 13 张全平铺，是用户说「太复杂跟繁琐」的直接来源。
    */
   const [expandedAssetIds, setExpandedAssetIds] = useState<ReadonlySet<string>>(new Set());
+  const [assetPreviewByGroup, setAssetPreviewByGroup] = useState<Record<string, string>>({});
   /**
    * 非简洁模式下用户手动收起的卡。
    *
@@ -3276,6 +3281,16 @@ export default function ManhuaScriptWorkbench({
     finalCutStale: Boolean(finalCutStale),
     hasFinalVideo: Boolean(finalVideoUrl),
   });
+  // 问题时间来自本集原稿分段；定位只切工作区，不发起生成或改变采用状态。
+  const finalSegmentIssues = segments.flatMap(segment => {
+    const candidates = episodeClips.filter(clip => resolveClipLocalSegmentIndex(clip.id, clip.prompt, focusEpisode) === segment.index);
+    const clip = candidates.find(item => item.status === "done" && clipOutputUrl(item)) || candidates[0];
+    const noVideo = !clip || clip.status !== "done" || !clipOutputUrl(clip);
+    const qualityPending = !noVideo && clip.manhuaClipQuality?.status !== "passed";
+    const dialoguePending = !noVideo && !qualityPending && clip.audioStudio?.cues.some(cue => cue.enabled && cue.kind === "dialogue" && !hasAdoptedManhuaAudio(cue));
+    if (!noVideo && !qualityPending && !dialoguePending) return [];
+    return [{ segment, targetAudio: Boolean(dialoguePending), labelZh: noVideo ? "尚无可用成片" : qualityPending ? (clip?.manhuaClipQuality?.status === "failed" ? "画面质检未通过" : "画面尚待质检") : "对白尚未确认采用" }];
+  });
   const storyboardThreeColumn = activePhase === "storyboard" && shots.length > 0;
   const shotParamFields = buildManhuaShotParamFields(activeShot);
   let sevenCoreValues: ReturnType<typeof extractManhuaShotSevenCore> = null;
@@ -3355,6 +3370,8 @@ export default function ManhuaScriptWorkbench({
                     机位原文：{shotParamFields.rawCameraZh}
                   </p>
                 ) : null}
+                {onUpdateShotTiming && <ManhuaShotTimingEditor key={`${focusEpisode}:${activeShot.index}:${activeShot.durationSec}`} shotIndex={activeShot.index} durationSec={activeShot.durationSec}
+                  disabled={shotSourceIsFallback || Boolean(factoryBusy)} onApply={onUpdateShotTiming} />}
                 <div data-manhua-shot-description className="mt-1.5">
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="text-[9px] text-white/40">画面描述</span>
@@ -4181,7 +4198,7 @@ export default function ManhuaScriptWorkbench({
                 </select>
                 <button type="button" onClick={() => setAudioStudioOpen(false)}>收起</button>
               </div>
-              {activeClip ? <CanvasAudioStudio key={activeClip.id} block={activeClip} sourceShots={activeSegment?.shots}
+              {activeClip ? <CanvasAudioStudio key={activeClip.id} block={activeClip} sourceShots={activeSegment?.shots} dialogueSources={blocks}
                 disabled={Boolean(factoryBusy) || activeClip.status === "running" || activeClip.videoTaskStatus === "queued"}
                 onChange={studio => onUpdateClipAudioStudio(activeClip.id, studio)}
                 onMasterTrackReady={onSetClipSegmentReference ? (entry) => onSetClipSegmentReference(activeClip.id, "master", entry) : undefined}
@@ -4873,13 +4890,25 @@ export default function ManhuaScriptWorkbench({
 
       {activePhase === "final" ? (
         <div data-manhua-phase-panel="final" className="min-h-0 flex-1 overflow-y-auto p-3">
-          <div className="grid min-w-0 gap-3 lg:grid-cols-2">
-            <section data-manhua-final-section="timeline" className="min-w-0 rounded-xl border border-white/15 bg-white/[0.03] p-3 lg:col-span-2">
-              <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-sm font-semibold">时间线 · 第{focusEpisode}集</h2><button type="button" className="min-h-11 rounded border border-white/20 px-3 text-xs" onClick={() => selectPhase("edit")}>查看与调整剪辑</button></div>
-              <p className="mt-1 text-xs text-white/55">{roughClips.length ? `当前裁切与排序 · ${reviewTimeline.totalSec}s` : "暂无剪辑计划 · 0镜"} · {finalCutStale ? "旧成片已失效，请重新合成" : finalCutVerified ? "当前成片来源已核对" : "最终成片尚未核验"}</p>
-              {finalVideoUrl ? <video controls preload="metadata" src={finalVideoUrl} className="mx-auto my-3 max-h-72 w-full rounded-lg bg-black" /> : <p className="py-3 text-xs text-white/50">尚无整集成片；下方为当前剪辑计划。</p>}
-              <div className="mt-3 flex gap-2 overflow-x-auto pb-2">{reviewTimeline.tracks.find(track => track.kind === "v2_clip")?.segments.map(segment => <button type="button" key={segment.shotIndex} data-manhua-review-shot={segment.shotIndex} data-review-duration={segment.durationSec} onClick={() => { const index = shots.findIndex(shot => shot.index === segment.shotIndex); if (index >= 0) setShotIndex(index); selectPhase("edit"); }} className="min-h-16 min-w-32 shrink-0 rounded-lg border border-white/20 bg-white/[0.04] p-3 text-left text-xs"><strong>第{segment.shotIndex}镜 · {segment.durationSec.toFixed(1)}s</strong><span className="mt-1 block text-white/50">入{segment.inSec.toFixed(1)}s / 出{segment.outSec.toFixed(1)}s · {segment.hasMedia ? "已有片段" : "待生成"}</span></button>)}</div>
-            </section>
+          <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+              {finalSegmentIssues.length ? <section data-manhua-final-issues className="rounded-xl border border-amber-300/30 bg-amber-500/[0.06] p-4 lg:col-span-2">
+                <h2 className="text-base font-semibold text-amber-100">先处理这 {finalSegmentIssues.length} 段，再完成终审</h2>
+                <div className="mt-3 grid max-h-80 gap-2 overflow-y-auto md:grid-cols-2">
+                  {finalSegmentIssues.map(issue => <button type="button" key={issue.segment.index}
+                    data-manhua-review-issue={issue.segment.index}
+                    className="flex min-h-11 w-full items-center justify-between gap-3 rounded border border-white/15 px-3 py-2 text-left text-sm hover:bg-white/10"
+                    onClick={() => {
+                      setActiveSegmentOverride(issue.segment.index);
+                      const index = shots.findIndex(shot => shot.index === issue.segment.shots[0]?.index);
+                      if (index >= 0) setShotIndex(index);
+                      selectPhase("storyboard");
+                      if (issue.targetAudio && outlineComplete) { setAudioStudioOpen(true); setAudioStudioPhase("storyboard"); }
+                    }}>
+                    <span>第{issue.segment.index}段 · {issue.labelZh}<span className="mt-1 block text-white/50">剧本时间 {typeof issue.segment.sourceStartSec === "number" ? issue.segment.sourceStartSec.toFixed(1) : "未标"}–{typeof issue.segment.sourceEndSec === "number" ? issue.segment.sourceEndSec.toFixed(1) : "未标"} 秒</span></span>
+                    <span className="shrink-0 text-cyan-100">去处理 →</span>
+                  </button>)}
+                </div>
+              </section> : null}
             <section data-manhua-final-section="quality" className="min-w-0 rounded-xl border border-white/15 bg-white/[0.03] p-3"><h2 className="mb-2 text-sm font-semibold">质检结果</h2>
         <div
           data-manhua-final-checklist
@@ -4898,13 +4927,13 @@ export default function ManhuaScriptWorkbench({
               <span className="text-[11px] font-semibold text-rose-100">{finalReviewChecklist.blockingZh}</span>
             ) : null}
           </div>
-          <ul className="mt-1.5 grid gap-1 sm:grid-cols-2 lg:grid-cols-3">
+          <ul className="mt-3 space-y-2">
             {finalReviewChecklist.items.map((item) => (
               <li
                 key={item.id}
                 data-manhua-final-check={item.id}
                 data-manhua-final-check-state={item.state}
-                className={`rounded border px-2 py-1 text-[10px] leading-4 ${
+                className={`rounded-lg border px-3 py-2 text-sm leading-6 ${
                   item.state === "fail"
                     ? "border-rose-300/40 bg-rose-500/10 text-rose-50"
                     : item.state === "pass"
@@ -4916,15 +4945,21 @@ export default function ManhuaScriptWorkbench({
                   {item.state === "pass" ? "通过" : item.state === "fail" ? "不通过" : item.state === "not_required" ? "不适用" : "未检"}
                 </span>
                 {item.labelZh}
-                <span className="ml-1 text-white/45">{item.detailZh}</span>
+                <span className="block text-xs text-white/55">{item.detailZh}</span>
               </li>
             ))}
           </ul>
         </div>
 
-              <button type="button" onClick={() => selectPhase("edit")} className="mt-3 min-h-11 rounded border border-white/20 px-3 text-xs">定位片段并处理</button>
+              <button type="button" onClick={() => selectPhase("edit")} className="mt-3 min-h-11 rounded border border-white/20 px-3 text-xs">查看剪辑与字幕</button>
             </section>
             <section data-manhua-final-section="delivery" className="min-w-0 rounded-xl border border-white/15 bg-white/[0.03] p-3"><h2 className="mb-2 text-sm font-semibold">导出交付</h2><div id="manhua-final-delivery-host" /></section>
+            <section data-manhua-final-section="timeline" className="min-w-0 rounded-xl border border-white/15 bg-white/[0.03] p-3 lg:col-span-2">
+              <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-sm font-semibold">时间线 · 第{focusEpisode}集</h2><button type="button" className="min-h-11 rounded border border-white/20 px-3 text-xs" onClick={() => selectPhase("edit")}>查看与调整剪辑</button></div>
+              <p className="mt-1 text-xs text-white/55">{roughClips.length ? `当前裁切与排序 · ${reviewTimeline.totalSec}s` : "暂无剪辑计划 · 0镜"} · {finalCutStale ? "旧成片已失效，请重新合成" : finalCutVerified ? "当前成片来源已核对" : "最终成片尚未核验"}</p>
+              {finalVideoUrl ? <video controls preload="metadata" src={finalVideoUrl} className="mx-auto my-3 max-h-72 w-full rounded-lg bg-black" /> : <p className="py-3 text-xs text-white/50">尚无整集成片，请先处理上方缺口。</p>}
+              <details data-manhua-review-timeline className="mt-3"><summary className="min-h-11 cursor-pointer py-3 text-sm text-white/70">查看逐镜剪辑计划 · {shots.length} 镜</summary><div className="mt-2 flex gap-2 overflow-x-auto pb-2">{reviewTimeline.tracks.find(track => track.kind === "v2_clip")?.segments.map(segment => <button type="button" key={segment.shotIndex} data-manhua-review-shot={segment.shotIndex} data-review-duration={segment.durationSec} onClick={() => { const index = shots.findIndex(shot => shot.index === segment.shotIndex); if (index >= 0) setShotIndex(index); selectPhase("edit"); }} className="min-h-16 min-w-32 shrink-0 rounded-lg border border-white/20 bg-white/[0.04] p-3 text-left text-xs"><strong>第{segment.shotIndex}镜 · {segment.durationSec.toFixed(1)}s</strong><span className="mt-1 block text-white/50">入{segment.inSec.toFixed(1)}s / 出{segment.outSec.toFixed(1)}s · {segment.hasMedia ? "已有片段" : "待生成"}</span></button>)}</div></details>
+            </section>
           </div>
         </div>
       ) : null}
@@ -6966,9 +7001,12 @@ export default function ManhuaScriptWorkbench({
                             <div className="mb-2 flex gap-2 overflow-x-auto pb-1" aria-label={`${group.titleZh}版本缩略图`}>
                               {group.refs.map((version, versionIndex) => (
                                 <button type="button" key={version.id}
-                                  className="w-20 shrink-0 rounded border border-white/15 p-1 text-xs"
+                                  aria-pressed={resolveManhuaAssetPreviewId(group.refs, assetPreviewByGroup[group.key]) === version.id}
+                                  className={`w-20 shrink-0 rounded border p-1 text-xs ${resolveManhuaAssetPreviewId(group.refs, assetPreviewByGroup[group.key]) === version.id ? "border-cyan-300 bg-cyan-400/10" : "border-white/15"}`}
                                   title={`查看${version.labelZh || `版本${versionIndex + 1}`}，不改变采用版本`}
                                   onClick={event => {
+                                    setAssetPreviewByGroup(previous => ({ ...previous, [group.key]: version.id }));
+                                    if (compactUi) return;
                                     const entity = event.currentTarget.closest('[data-manhua-asset-entity]');
                                     const card = Array.from(entity?.querySelectorAll<HTMLElement>('[data-manhua-custom-ref-id]') ?? [])
                                       .find(node => node.dataset.manhuaCustomRefId === version.id);
@@ -7055,6 +7093,7 @@ export default function ManhuaScriptWorkbench({
                             data-manhua-custom-ref-id={ref.id}
                             data-manhua-asset-lock-tag={lockTag || ""}
                             data-manhua-primary-ref={isPrimaryRef ? "true" : "false"}
+                            style={{ display: compactUi && group.kind === "entity" && !needsReview && resolveManhuaAssetPreviewId(group.refs, assetPreviewByGroup[group.key]) !== ref.id ? "none" : undefined }}
                             className={`relative overflow-hidden rounded-lg border bg-black/35 transition-colors ${
                               isPrimaryRef
                                 ? "border-cyan-300/65 ring-1 ring-cyan-300/25"

@@ -102,6 +102,7 @@ it('真实终审三块、裁切回流、原Dock范围保留与未知失效',asyn
   await page.select('[aria-label="交付包导出范围"]','selected');
   await page.click('[aria-label="交付第1集"]');
   const duration=await page.$eval('[data-manhua-review-shot="1"]',e=>Number(e.getAttribute('data-review-duration')));
+  await page.click('[data-manhua-review-timeline] > summary');
   await page.click('[data-manhua-review-shot="1"]');
   await page.waitForSelector('[data-manhua-edit-section="fine-cut"]');
   await page.$eval('[data-manhua-edit-section="fine-cut"]',el=>{const label=Array.from(el.querySelectorAll('label')).find(e=>e.textContent?.includes('入点'))!;(Array.from(label.querySelectorAll('button')).find(e=>e.textContent?.trim()==='+') as HTMLButtonElement).click();});
@@ -152,3 +153,91 @@ it('真实终审三块、裁切回流、原Dock范围保留与未知失效',asyn
   expect(errors).toEqual([]);
  }finally{await close();}
 },180000);
+
+it('终审问题按剧本秒位定位指定段且不触发生成', async () => {
+  const { page, close } = await mount();
+  try {
+    await page.evaluate(() => (window as any).__wbProps.onWorkflowPhaseChange('final'));
+    await page.waitForSelector('[data-manhua-review-issue="2"]');
+    expect(await page.$eval('[data-manhua-review-issue="2"]', element => element.textContent)).toContain('剧本时间');
+    const before = await page.evaluate(() => JSON.stringify((window as any).__posts));
+    await page.click('[data-manhua-review-issue="2"]');
+    await page.waitForFunction(() => (window as any).__wbProps.workflowPhase === 'storyboard');
+    await page.waitForSelector('[data-manhua-filmstrip-segment="2"][data-manhua-active="true"]');
+    expect(await page.evaluate(() => JSON.stringify((window as any).__posts))).toBe(before);
+    await page.evaluate(() => (window as any).__wbProps.onWorkflowPhaseChange('final'));
+    await page.waitForSelector('[data-manhua-review-issue="2"]');
+    expect(await page.$eval('[data-manhua-review-issue="2"]', element => element.textContent)).toContain('尚无可用成片');
+  } finally { await close(); }
+}, 180000);
+
+it('终审优先显示问题且逐镜计划默认收起，展开不产生请求', async () => {
+ const {page,close}=await mount();
+ try {
+  await page.evaluate(()=>(window as any).__wbProps.onWorkflowPhaseChange('final'));
+  await page.waitForSelector('[data-manhua-final-issues]');
+  const before=await page.evaluate(()=>JSON.stringify((window as any).__posts));
+  expect(await page.$eval('[data-manhua-review-timeline]',e=>(e as HTMLDetailsElement).open)).toBe(false);
+  expect(await page.$eval('[data-manhua-final-issues]',e=>Boolean(e.compareDocumentPosition(document.querySelector('[data-manhua-final-section="quality"]')!)&Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+  await page.click('[data-manhua-review-timeline] > summary');
+  expect(await page.$eval('[data-manhua-review-timeline]',e=>(e as HTMLDetailsElement).open)).toBe(true);
+  expect(await page.evaluate(()=>JSON.stringify((window as any).__posts))).toBe(before);
+ }finally{await close();}
+},180000);
+
+it('终审新布局桌面与手机可读且无横向溢出',async()=>{
+ const {page,close}=await mount();
+ try {
+  await page.evaluate(()=>(window as any).__wbProps.onWorkflowPhaseChange('final'));
+  await page.waitForSelector('[data-manhua-final-issues]');
+  const cssDir='client/dist/assets';
+  for(const file of readdirSync(cssDir).filter(f=>f.endsWith('.css'))) await page.addStyleTag({content:readFileSync(cssDir+'/'+file,'utf8')});
+  const rows=[];
+  for(const width of [1280,390]) {
+   await page.setViewport({width,height:900});
+   await page.$eval('[data-manhua-final-issues]',e=>e.scrollIntoView({block:'start'}));
+   const geometry=await page.evaluate(()=>Array.from(document.querySelectorAll('[data-manhua-final-section],[data-manhua-final-issues]')).map(e=>{const r=e.getBoundingClientRect();return {x:r.x,width:r.width};}));
+   expect(geometry.every(r=>r.width>0&&r.x>=0&&r.x+r.width<=width+1)).toBe(true);
+   rows.push({width,geometry});await page.screenshot({path:join(evidenceDir,`priority-${width}.png`)});
+  }
+  writeFileSync(join(evidenceDir,'priority-layout.json'),JSON.stringify(rows,null,2));
+ }finally{await close();}
+},60000);
+
+it('真实镜长按钮同步原稿与新分段，旧产物保留且无生成',async()=>{
+ const {page,close}=await mount();
+ try {
+  const timed='## 分镜表\n| 镜号 | 秒位 | 景别/运镜 | 画面 | 对白 |\n|---|---|---|---|---|\n| 1 | 0–4秒 | 中景横移 | 扶住同伴 | 沈砚舟：「慢点。」 |\n| 2 | 4–7秒 | 近景 | 点头 | 云疏冷：「快到了。」 |\n| 3 | 7–12秒 | 特写 | 看向门口 | 无 |';
+  await page.evaluate(timed=>{
+   const p=(window as any).__ffcProps;
+   p.onBlocksChange(p.blocks.map((b:any)=>b.episodeIndex===1&&/^(reverse|beats)-/.test(b.id)?{...b,outputText:timed}:b));
+   (window as any).__wbProps.onWorkflowPhaseChange('storyboard');
+  },timed);
+  await page.waitForSelector('[data-manhua-shot-timing]');
+  const before=await page.evaluate(()=>({posts:JSON.stringify((window as any).__posts),media:(window as any).__ffcProps.blocks.filter((b:any)=>b.outputUrl).map((b:any)=>[b.id,b.outputUrl])}));
+  await page.click('[data-manhua-shot-timing] summary');
+  await page.$eval('[aria-label="当前镜头时长"]',el=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!.call(el,'4.944');el.dispatchEvent(new Event('input',{bubbles:true}));});
+  await page.click('[data-manhua-shot-timing] button');
+  await page.waitForFunction(()=>JSON.parse(localStorage.getItem('mv-manhua-writer-session-v1')||'{}').writerPack?.episodes[0].body.includes('4.944'));
+  const after=await page.evaluate(()=>({posts:JSON.stringify((window as any).__posts),media:(window as any).__ffcProps.blocks.filter((b:any)=>b.outputUrl).map((b:any)=>[b.id,b.outputUrl]),writer:JSON.parse(localStorage.getItem('mv-manhua-writer-session-v1')||'{}'),nodes:(window as any).__ffcProps.blocks.filter((b:any)=>b.episodeIndex===1&&/^(reverse|beats)-/.test(b.id)).map((b:any)=>b.outputText)}));
+  expect(after.media).toEqual(before.media);expect(after.posts).toBe(before.posts);expect(after.writer.writerConfirmed).toBe(false);expect(after.writer.directorUnlocked).toBe(false);
+  expect(after.nodes.every((s:string)=>s.includes('4.944–7.944秒'))).toBe(true);
+  expect(after.writer.writerPack.episodes[0].body).toContain('7.944–12.944秒');
+ }finally{await close();}
+},60000);
+
+it('镜长保存遇到剧本配额失败时不改变画布和确认态',async()=>{
+ const {page,close}=await mount();
+ try {
+  const timed='## 分镜表\n| 镜号 | 秒位 | 景别/运镜 | 画面 | 对白 |\n|---|---|---|---|---|\n| 1 | 0–4秒 | 中景横移 | 扶住同伴 | 无 |\n| 2 | 4–7秒 | 近景 | 点头 | 无 |';
+  await page.evaluate(timed=>{const p=(window as any).__ffcProps;p.onBlocksChange(p.blocks.map((b:any)=>b.episodeIndex===1&&/^(reverse|beats)-/.test(b.id)?{...b,outputText:timed}:b));(window as any).__wbProps.onWorkflowPhaseChange('storyboard');},timed);
+  await page.waitForSelector('[data-manhua-shot-timing]');
+  const before=await page.evaluate(()=>({blocks:JSON.stringify((window as any).__ffcProps.blocks),writer:localStorage.getItem('mv-manhua-writer-session-v1')}));
+  await page.evaluate(()=>{const set=Storage.prototype.setItem;Storage.prototype.setItem=function(k,v){if(k==='mv-manhua-writer-session-v1')throw new DOMException('Full','QuotaExceededError');return set.call(this,k,v);};});
+  await page.click('[data-manhua-shot-timing] summary');
+  await page.$eval('[aria-label="当前镜头时长"]',el=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!.call(el,'4.944');el.dispatchEvent(new Event('input',{bubbles:true}));});
+  await page.click('[data-manhua-shot-timing] button');
+  await page.waitForFunction(()=>document.querySelector('[data-manhua-shot-timing] [role="alert"]')?.textContent?.includes('时长未应用'));
+  expect(await page.evaluate(()=>({blocks:JSON.stringify((window as any).__ffcProps.blocks),writer:localStorage.getItem('mv-manhua-writer-session-v1')}))).toEqual(before);
+ }finally{await close();}
+},60000);

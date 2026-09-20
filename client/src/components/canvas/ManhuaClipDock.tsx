@@ -1,3 +1,4 @@
+import { summarizeManhuaDeliverySegments } from "@/lib/manhuaDeliverySegmentSummary";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
@@ -53,6 +54,7 @@ import {
 
 type Props = {
   reviewMode?: boolean;
+  videoModel?: string;
   blocks: CanvasBlock[];
   currentEpisodeIndex?: number;
   topic?: string;
@@ -125,6 +127,7 @@ function episodeKeyartUrl(list: ManhuaClipDockItem[]): string | undefined {
 
 export default function ManhuaClipDock({
   reviewMode = false,
+  videoModel,
   blocks,
   currentEpisodeIndex,
   topic,
@@ -260,13 +263,11 @@ export default function ManhuaClipDock({
   // 汇总真实产物与质检回执；存在文件不代表画面、声音已人工验收。
   const reviewEpisodes = deliveryScope === "current"
     ? (currentEpisodeIndex ? [currentEpisodeIndex] : [])
-    : deliveryScope === "selected" ? deliverySelectedEpisodes : Array.from(new Set([...byEpisode.map(([ep]) => ep), ...deliveryEpisodes, ...blocks.filter(b => !b.archivedFromPreviousScript && stageKeyFromBlockId(b.id) === "clip").map(b => getBlockEpisodeIndex(b) ?? 1)])).sort((a,b) => a-b);
+    : deliveryScope === "selected" ? deliverySelectedEpisodes : Array.from(new Set([...byEpisode.map(([ep]) => ep), ...deliveryEpisodes, ...blocks.filter(b => !b.archivedFromPreviousScript && ["clip", "story", "beats", "reverse"].includes(stageKeyFromBlockId(b.id) || "")).map(b => getBlockEpisodeIndex(b) ?? 1)])).sort((a,b) => a-b);
   const reviewFinals = blocks.filter(b => !b.archivedFromPreviousScript && isManhuaFinalVideoBlockId(b.id)
     && /^https?:\/\//i.test(String(b.outputUrl || "")) && reviewEpisodes.includes(getBlockEpisodeIndex(b) ?? 1));
   const reviewGaps = reviewEpisodes.flatMap(episodeIndex => {
-    const clips = blocks.filter(b => !b.archivedFromPreviousScript && stageKeyFromBlockId(b.id) === "clip" && (getBlockEpisodeIndex(b) ?? 1) === episodeIndex);
-    const missing = clips.filter(b => !b.outputUrl || b.status === "error").length;
-    const undecided = clips.filter(b => b.outputUrl && b.status !== "error" && !manhuaClipDockItemAllowsAssemble({outputUrl:b.outputUrl,clipQuality:b.manhuaClipQuality})).length;
+    const { missing, undecided } = summarizeManhuaDeliverySegments(blocks, episodeIndex, videoModel);
     const final = reviewFinals.find(b => (getBlockEpisodeIndex(b) ?? 1) === episodeIndex);
     const messages: string[] = [];
     if (missing) messages.push(`${missing}段尚无成片`);

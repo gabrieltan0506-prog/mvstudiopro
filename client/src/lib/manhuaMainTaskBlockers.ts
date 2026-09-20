@@ -48,7 +48,7 @@ export function buildManhuaMainTaskState(input: {
     headlineZh: blocked
       ? thisPhase > 0
         ? `本步卡着 ${thisPhase} 条，全片共 ${blockers.length} 条要解`
-        : `本步没有阻断项，但后面还有 ${blockers.length} 条`
+        : `其他步骤还有 ${blockers.length} 项需要处理`
       : "",
     hintZh: blocked ? "点任意一条跳到该修的地方；解完主操作才会真的往下走" : "",
   };

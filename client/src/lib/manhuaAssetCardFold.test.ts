@@ -3,9 +3,19 @@ import {
   isManhuaAssetCardExpanded,
   shouldShowManhuaAssetFoldToggle,
   shouldShowManhuaAssetRoleChip,
+  resolveManhuaAssetPreviewId,
 } from "./manhuaAssetCardFold";
 
 const base = { compactUi: true, expandedIds: new Set<string>(), id: "a" };
+
+it("查看版本不改变原资产，删除所看版本或换组后回退到存在的版本", () => {
+  const refs = [{ id: "a" }, { id: "b" }];
+  expect(resolveManhuaAssetPreviewId(refs, "b")).toBe("b");
+  expect(resolveManhuaAssetPreviewId(refs, "other-group")).toBe("a");
+  expect(resolveManhuaAssetPreviewId(refs.slice(0, 1), "b")).toBe("a");
+  expect(resolveManhuaAssetPreviewId([], "b")).toBeUndefined();
+  expect(refs).toEqual([{ id: "a" }, { id: "b" }]);
+});
 
 describe("资产卡折叠判据", () => {
   it("简洁模式下默认折叠 —— 一屏控件降下来靠的就是这条", () => {

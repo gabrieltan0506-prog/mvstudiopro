@@ -65,3 +65,8 @@ export function shouldShowManhuaAssetFoldToggle(input: { needsReview?: boolean }
 export function shouldShowManhuaAssetRoleChip(expanded: boolean): boolean {
   return !expanded;
 }
+
+/** 只选择查看版本；不改变采用身份。删除正在查看的版本后回到仍存在的首张。 */
+export function resolveManhuaAssetPreviewId(refs: readonly { id: string }[], requested?: string): string | undefined {
+  return refs.some(ref => ref.id === requested) ? requested : refs[0]?.id;
+}
