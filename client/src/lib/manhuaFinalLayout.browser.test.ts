@@ -102,6 +102,7 @@ it('真实终审三块、裁切回流、原Dock范围保留与未知失效',asyn
   await page.select('[aria-label="交付包导出范围"]','selected');
   await page.click('[aria-label="交付第1集"]');
   const duration=await page.$eval('[data-manhua-review-shot="1"]',e=>Number(e.getAttribute('data-review-duration')));
+  await page.click('[data-manhua-review-timeline] > summary');
   await page.click('[data-manhua-review-shot="1"]');
   await page.waitForSelector('[data-manhua-edit-section="fine-cut"]');
   await page.$eval('[data-manhua-edit-section="fine-cut"]',el=>{const label=Array.from(el.querySelectorAll('label')).find(e=>e.textContent?.includes('入点'))!;(Array.from(label.querySelectorAll('button')).find(e=>e.textContent?.trim()==='+') as HTMLButtonElement).click();});
@@ -169,3 +170,36 @@ it('终审问题按剧本秒位定位指定段且不触发生成', async () => {
     expect(await page.$eval('[data-manhua-review-issue="2"]', element => element.textContent)).toContain('尚无可用成片');
   } finally { await close(); }
 }, 180000);
+
+it('终审优先显示问题且逐镜计划默认收起，展开不产生请求', async () => {
+ const {page,close}=await mount();
+ try {
+  await page.evaluate(()=>(window as any).__wbProps.onWorkflowPhaseChange('final'));
+  await page.waitForSelector('[data-manhua-final-issues]');
+  const before=await page.evaluate(()=>JSON.stringify((window as any).__posts));
+  expect(await page.$eval('[data-manhua-review-timeline]',e=>(e as HTMLDetailsElement).open)).toBe(false);
+  expect(await page.$eval('[data-manhua-final-issues]',e=>Boolean(e.compareDocumentPosition(document.querySelector('[data-manhua-final-section="quality"]')!)&Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+  await page.click('[data-manhua-review-timeline] > summary');
+  expect(await page.$eval('[data-manhua-review-timeline]',e=>(e as HTMLDetailsElement).open)).toBe(true);
+  expect(await page.evaluate(()=>JSON.stringify((window as any).__posts))).toBe(before);
+ }finally{await close();}
+},180000);
+
+it('终审新布局桌面与手机可读且无横向溢出',async()=>{
+ const {page,close}=await mount();
+ try {
+  await page.evaluate(()=>(window as any).__wbProps.onWorkflowPhaseChange('final'));
+  await page.waitForSelector('[data-manhua-final-issues]');
+  const cssDir='client/dist/assets';
+  for(const file of readdirSync(cssDir).filter(f=>f.endsWith('.css'))) await page.addStyleTag({content:readFileSync(cssDir+'/'+file,'utf8')});
+  const rows=[];
+  for(const width of [1280,390]) {
+   await page.setViewport({width,height:900});
+   await page.$eval('[data-manhua-final-issues]',e=>e.scrollIntoView({block:'start'}));
+   const geometry=await page.evaluate(()=>Array.from(document.querySelectorAll('[data-manhua-final-section],[data-manhua-final-issues]')).map(e=>{const r=e.getBoundingClientRect();return {x:r.x,width:r.width};}));
+   expect(geometry.every(r=>r.width>0&&r.x>=0&&r.x+r.width<=width+1)).toBe(true);
+   rows.push({width,geometry});await page.screenshot({path:join(evidenceDir,`priority-${width}.png`)});
+  }
+  writeFileSync(join(evidenceDir,'priority-layout.json'),JSON.stringify(rows,null,2));
+ }finally{await close();}
+},60000);
