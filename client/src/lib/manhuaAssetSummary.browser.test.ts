@@ -6,8 +6,8 @@ import { mkdirSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
 
-it("自定义当前段资产摘要保留身份、缺图并定位唯一节点", async () => {
- const dir=process.env.MANHUA_ASSET_SUMMARY_EVIDENCE_DIR || path.join(tmpdir(),"mvs-asset-summary-probe");
+it.each([false, true])("自定义当前段资产摘要保留身份、缺图并定位唯一节点，沉浸模式=%s", async (immersive) => {
+ const dir=path.join(process.env.MANHUA_ASSET_SUMMARY_EVIDENCE_DIR || path.join(tmpdir(),"mvs-asset-summary-probe"),immersive?'immersive':'standard');
  mkdirSync(dir,{recursive:true});
  const built=await build({stdin:{resolveDir:process.cwd(),loader:"tsx",contents:`
   import React,{useState} from 'react';import {createRoot} from 'react-dom/client';
@@ -28,7 +28,7 @@ it("自定义当前段资产摘要保留身份、缺图并定位唯一节点", a
   const graph=initial.map(b=>b.id.startsWith('clip-')?{...b,prompt:b.prompt+'\\n【资产·Image对照】\\n@角色1|id=custom-a|label=阿菁|kind=角色\\n@角色2|id=deleted-reference|label=旧引用缺图|kind=角色\\n@场景1|id=custom-scene|label=庭院|kind=场景'}:b);
   graph.push({...initial[0],kind:'image',id:'charsheet-wa_char_aqing',outputUrl:refs[0].url,prompt:'阿菁定妆'});
   const f=globalThis.fixture={focus:[],wall:0};
-  function App(){const [shown,setShown]=useState(graph);const [liveRefs,setLiveRefs]=useState(refs);const [legacy,setLegacy]=useState(false);f.imageUrl=url=>{setLiveRefs(refs.map((r,i)=>i===0?{...r,url}:r));setShown(graph.map(b=>b.id==='charsheet-wa_char_aqing'?{...b,outputUrl:url}:b));};f.duplicate=()=>setShown([...graph,{...graph[graph.length-1],id:'charsheet-second-version'}]);f.wrongVersion=()=>setShown(graph.map(b=>b.id==='charsheet-wa_char_aqing'?{...b,outputUrl:'https://offline.invalid/another-version.png'}:b));f.legacy=()=>setLegacy(true);return <TooltipProvider><Workbench blocks={shown} videoModel='seedance-2.5' topic='阿菁在庭院' episodeCount={1} focusEpisode={1} onFocusEpisode={()=>{}} characterIds={[]} propIds={[]} outlineConfirmed={true} workflowPhase='storyboard' compactUi={false} customAssetRefs={legacy?[]:liveRefs} assetCanon={legacy?undefined:canon} onFocusBlock={id=>f.focus.push(id)} onOpenAssetWall={()=>f.wall++}/></TooltipProvider>;}
+  function App(){const [shown,setShown]=useState(graph);const [liveRefs,setLiveRefs]=useState(refs);const [legacy,setLegacy]=useState(false);f.imageUrl=url=>{setLiveRefs(refs.map((r,i)=>i===0?{...r,url}:r));setShown(graph.map(b=>b.id==='charsheet-wa_char_aqing'?{...b,outputUrl:url}:b));};f.duplicate=()=>setShown([...graph,{...graph[graph.length-1],id:'charsheet-second-version'}]);f.wrongVersion=()=>setShown(graph.map(b=>b.id==='charsheet-wa_char_aqing'?{...b,outputUrl:'https://offline.invalid/another-version.png'}:b));f.legacy=()=>setLegacy(true);return <TooltipProvider><Workbench immersive={${immersive}} blocks={shown} videoModel='seedance-2.5' topic='阿菁在庭院' episodeCount={1} focusEpisode={1} onFocusEpisode={()=>{}} characterIds={[]} propIds={[]} outlineConfirmed={true} workflowPhase='storyboard' compactUi={false} customAssetRefs={legacy?[]:liveRefs} assetCanon={legacy?undefined:canon} onFocusBlock={id=>f.focus.push(id)} onOpenAssetWall={()=>f.wall++}/></TooltipProvider>;}
   createRoot(document.getElementById('root')).render(<App/>);
  `},bundle:true,write:false,format:"iife",platform:"browser",jsx:"automatic",alias:{"@":path.resolve("client/src"),"@shared":path.resolve("shared")},loader:{".png":"dataurl",".svg":"dataurl",".jpg":"dataurl",".css":"text"},define:{"process.env.NODE_ENV":'"production"',"import.meta.env":"__VITE_ENV__"},banner:{js:'var __VITE_ENV__={DEV:false,PROD:true,MODE:"production",SSR:false};'},logLevel:"silent"});
  const browser=await puppeteer.launch({headless:true});const page=await browser.newPage();const errors:string[]=[];page.on('pageerror',e=>errors.push(e instanceof Error ? e.stack || e.message : String(e)));
@@ -46,6 +46,17 @@ it("自定义当前段资产摘要保留身份、缺图并定位唯一节点", a
     const layouts=[];
     for(const width of [1280,390]){
       await page.setViewport({width,height:900});
+      if(width<768){
+        for(const column of ['script','preview','assets']){
+          await page.click(`[data-manhua-narrow-column="${column}"]`);
+          const target=column==='assets'?'params':column;
+          const bounds=await page.$eval(`[data-manhua-column="${target}"]`,e=>{const r=e.getBoundingClientRect();return {left:r.left,right:r.right,width:r.width};});
+          expect(bounds.width).toBeGreaterThan(250);
+          expect(bounds.left).toBeGreaterThanOrEqual(0);
+          expect(bounds.right).toBeLessThanOrEqual(width);
+          await page.screenshot({path:path.join(dir,`column-${column}-${width}.png`),fullPage:false});
+        }
+      }
       await page.$eval(selector,e=>e.scrollIntoView({block:'start',inline:'nearest'}));
       const layout=await page.evaluate(selector=>{const element=document.querySelector(selector)!;const rect=element.getBoundingClientRect();return {viewport:window.innerWidth,documentWidth:document.documentElement.scrollWidth,summaryWidth:rect.width,summaryScrollWidth:element.scrollWidth,visible:rect.width>0&&rect.height>0};},selector);
       layouts.push(layout);

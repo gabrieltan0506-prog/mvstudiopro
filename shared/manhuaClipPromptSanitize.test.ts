@@ -2,11 +2,26 @@ import { describe, expect, it } from "vitest";
 import {
   isManhuaClipPromptLegacyFat,
   renderManhuaClipPromptForSeedance,
+  resolveManhuaSubmittedAssetTags,
   stripManhuaClipForbiddenBoards,
   stripManhuaStaleAssetBindForModel,
 } from "./manhuaClipPromptSanitize";
 
 describe("manhuaClipPromptSanitize", () => {
+  it("出站编号按实际图片主体解释，拆脸服不歧义，缺图或冲突不猜", () => {
+    const entries = [
+      {kind: "asset", roleTag: "@角色1", labelZh: "阿菁"},
+      {kind: "asset", roleTag: "@角色1", labelZh: "阿菁"},
+      {kind: "asset", roleTag: "@角色10", labelZh: "娘"},
+      {kind: "asset", roleTag: "@场景2", labelZh: "医馆"},
+      {kind: "asset", roleTag: "@角色3", labelZh: "甲"},
+      {kind: "asset", roleTag: "@角色3", labelZh: "乙"},
+      {kind: "still", roleTag: "@角色9", labelZh: "不能使用"},
+    ];
+    const stored = '@角色10说「慢点」。@角色1扶她进入@场景2。@角色3、@角色9。';
+    expect(resolveManhuaSubmittedAssetTags(stored, entries)).toBe('娘说「慢点」。阿菁扶她进入医馆。@角色3、@角色9。');
+    expect(stored).toContain('@角色10');
+  });
   /**
    * 官方符号表：（）音乐、<>音效、{}台词、【】字幕。拿【】当段落标题等于叫
    * 引擎把「场景锁」这类内部字段烧进画面。
