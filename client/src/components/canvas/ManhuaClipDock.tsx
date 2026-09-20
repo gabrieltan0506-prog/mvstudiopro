@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -26,6 +26,7 @@ import {
   collectManhuaAssembleClipsFromDock,
   collectManhuaClipDockItems,
   downloadManhuaProjectZip,
+  downloadManhuaFinalVideo,
   MANHUA_DOCK_EXPORT_HISTORY_STORAGE_KEY,
   manhuaClipDockItemAllowsAssemble,
   manhuaClipDockItemHasExportableOutput,
@@ -159,6 +160,18 @@ export default function ManhuaClipDock({
   const deliveryEpisodes = Array.from(new Set(blocks.filter(b => isManhuaFinalVideoBlockId(b.id) && !b.archivedFromPreviousScript && /^https?:\/\//i.test(String(b.outputUrl || ""))).map(b => getBlockEpisodeIndex(b) ?? 1))).sort((a, b) => a - b);
   const [deliveryBusy, setDeliveryBusy] = useState<string | null>(null);
   const [exportBusy, setExportBusy] = useState(false);
+  const [finalDownloadBusy, setFinalDownloadBusy] = useState(false);
+  const finalDownloadLock = useRef(false);
+  const [finalDownloadError, setFinalDownloadError] = useState("");
+  const handleDownloadFinal = async () => {
+    if (!finalVideoUrl || finalDownloadLock.current) return;
+    finalDownloadLock.current = true;
+    setFinalDownloadBusy(true);
+    setFinalDownloadError("");
+    try { await downloadManhuaFinalVideo(finalVideoUrl, seriesTitle || topic || "漫剧成片"); }
+    catch (error) { setFinalDownloadError(error instanceof Error ? error.message : "下载失败，请稍后重试"); }
+    finally { finalDownloadLock.current = false; setFinalDownloadBusy(false); }
+  };
   const [deliveryAudioFormat, setDeliveryAudioFormat] = useState<"m4a" | "wav">("m4a");
   // 「含历史版本」默认关；用户打开过就记在本机（只影响 zip 内容，不影响合成）
   const [includeHistory, setIncludeHistory] = useState<boolean>(() => {
@@ -619,21 +632,15 @@ export default function ManhuaClipDock({
         <div className="border-b border-white/10 bg-black/35 px-3 py-3 md:px-4">
           <div className="mb-2 flex items-center justify-between gap-2">
             <div className="text-[11px] font-semibold text-cyan-100/90">长片预览</div>
-            <span className="text-[10px] text-white/40">多集拼接 · 保留原声</span>
+            <button type="button" disabled={finalDownloadBusy} onClick={() => void handleDownloadFinal()} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-cyan-400/30 px-3 text-xs text-cyan-50 disabled:opacity-50">
+              {finalDownloadBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              {finalDownloadBusy ? "正在下载…" : "下载成片 MP4"}
+            </button>
           </div>
           <div className="overflow-hidden rounded-xl border border-cyan-400/25 bg-black/60">
             <video src={finalVideoUrl} controls className="max-h-64 w-full object-contain" />
           </div>
-          {/* 示意 A 成片段：波形条装饰，非真实音频编辑 */}
-          <div className="mt-2 flex h-7 items-end gap-px px-0.5 opacity-70" aria-hidden>
-            {Array.from({ length: 48 }, (_, i) => (
-              <span
-                key={i}
-                className="flex-1 rounded-sm bg-emerald-400/55"
-                style={{ height: `${18 + ((i * 17) % 40)}%` }}
-              />
-            ))}
-          </div>
+          {finalDownloadError && <p role="alert" className="mt-2 text-xs text-amber-200">{finalDownloadError}；原片仍保留，可重试下载。</p>}
         </div>
       ) : null}
 

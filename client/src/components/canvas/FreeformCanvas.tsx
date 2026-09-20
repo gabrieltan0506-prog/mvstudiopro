@@ -111,10 +111,12 @@ import { eraseAiCornerMark } from "@/lib/eraseAiCornerMarkApi";
 import {
   fetchVideoUpscaleStatus,
   isVideoUpscaleTerminal,
-  probeVideoDurationSec,
+  probeVideoUpscaleSource,
+  type VideoUpscaleSourceMetadata,
   startVideoUpscale,
   videoUpscaleStatusLabel,
 } from "@/lib/videoUpscaleApi";
+import { canWavespeedUpscale } from "@shared/wavespeedVideoUpscaleModels";
 import { canvasVideoUpscaleCredits } from "@shared/canvasGenerationPricing";
 import { canUpscaleNow } from "@/lib/manhuaDeliveryOrder";
 import { trpc } from "@/lib/trpc";
@@ -846,8 +848,8 @@ export default function FreeformCanvas({
   const [upscalePanelBlockId, setUpscalePanelBlockId] = useState<string | null>(
     null
   );
-  const [upscaleProbedSec, setUpscaleProbedSec] = useState<
-    Record<string, number>
+  const [upscaleProbedSources, setUpscaleProbedSources] = useState<
+    Record<string, VideoUpscaleSourceMetadata>
   >({});
   const [upscaleBusyId, setUpscaleBusyId] = useState<string | null>(null);
   const [maskBusyId, setMaskBusyId] = useState<string | null>(null);
@@ -1429,26 +1431,28 @@ export default function FreeformCanvas({
         return;
       }
       setUpscalePanelBlockId(blockId);
-      if (!upscaleProbedSec[blockId]) {
-        const sec = await probeVideoDurationSec(src);
-        if (sec) {
-          setUpscaleProbedSec(prev => ({ ...prev, [blockId]: sec }));
+      if (!upscaleProbedSources[src]) {
+        const measured = await probeVideoUpscaleSource(src);
+        if (measured) {
+          setUpscaleProbedSources(prev => ({ ...prev, [src]: measured }));
         } else {
-          toast.error("读取视频时长失败，请稍后重试");
+          toast.error("读取视频真实尺寸或时长失败，请稍后重试");
           setUpscalePanelBlockId(cur => (cur === blockId ? null : cur));
         }
       }
     },
-    [blocks, upscaleProbedSec]
+    [blocks, upscaleProbedSources]
   );
 
   const startUpscaleForBlock = useCallback(
     async (blockId: string, target: "2k" | "4k") => {
       const block = blocks.find(b => b.id === blockId);
       const src = String(block?.outputUrl || "").trim();
-      const sec = upscaleProbedSec[blockId];
-      if (!block || !/^https:\/\//i.test(src) || !sec) return;
+      const measured = upscaleProbedSources[src];
+      const sec = measured?.durationSec;
+      if (!block || !/^https:\/\//i.test(src) || !measured || !sec) return;
       if (upscaleBusyId) return;
+      if (!canWavespeedUpscale(measured?.sourceResolution, target)) { toast.error("该原片不支持此超分档位：480p最高2K，720p可选2K或4K。"); return; }
       const deliveryDecision = canUpscaleNow({
         surface: "free_canvas",
         hasDeliveryVideo: true,
@@ -1469,7 +1473,7 @@ export default function FreeformCanvas({
             Number(block.episodeIndex) > 0
               ? Number(block.episodeIndex)
               : undefined,
-          sourceResolution: block.videoResolution || "720p",
+          sourceResolution: measured.sourceResolution,
         });
         // 任务字段随画布持久化 → 刷新后由下面的轮询 effect 自动恢复
         patchOne(blockId, {
@@ -1488,7 +1492,7 @@ export default function FreeformCanvas({
         setUpscaleBusyId(null);
       }
     },
-    [blocks, patchOne, upscaleBusyId, upscaleProbedSec],
+    [blocks, patchOne, upscaleBusyId, upscaleProbedSources],
   );
 
   // 活跃超分任务统一轮询（含刷新恢复：字段随画布持久化，挂载即接管）。
@@ -3347,18 +3351,20 @@ export default function FreeformCanvas({
                                   ) : null}
                                   {upscalePanelBlockId === block.id ? (
                                     (() => {
-                                      const sec = upscaleProbedSec[block.id];
+                                      const measured = upscaleProbedSources[String(block.outputUrl || "").trim()];
+                                      const sec = measured?.durationSec;
                                       const freeform = !(Number(block.episodeIndex) > 0);
                                       return (
                                         <div className="space-y-1 rounded-lg border border-white/15 bg-white/[0.04] p-2">
                                           <div className="text-[10px] text-white/60">
                                             {sec
-                                              ? `视频约 ${sec} 秒 · 按秒计费${freeform ? "" : "（整集批发价）"}`
-                                              : "读取视频时长中…"}
+                                              ? `实测 ${measured.width}×${measured.height} · 视频约 ${sec} 秒 · 按秒计费${freeform ? "" : "（整集批发价）"}`
+                                              : "读取视频真实尺寸与时长中…"}
                                           </div>
+                                          {measured && <p className="text-[10px] text-white/50">{measured.sourceResolution === "480p" ? "480p原片最高可放大到2K。" : !canWavespeedUpscale(measured.sourceResolution, "2k") ? "原片已达2K及以上，无可用超分档位。" : "720p及以上原片可选2K或4K。"}</p>}
                                           {sec ? (
                                             <div className="grid grid-cols-2 gap-1">
-                                              {(["2k", "4k"] as const).map((t) => (
+                                              {(["2k", "4k"] as const).filter(t => canWavespeedUpscale(measured?.sourceResolution, t)).map((t) => (
                                                 <button
                                                   key={t}
                                                   type="button"

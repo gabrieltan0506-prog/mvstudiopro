@@ -37,11 +37,11 @@ export const WAVESPEED_UPSCALE_MAX_BILLED_SEC = 600 as const;
 /**
  * 源分辨率 → 可选超分档。
  *
- * 720p 可升 1080p/2K/4K；1080p 可升 2K/4K。已经是 2K/4K 的没有再升的档，
+ * 480p 最高升到2K；720p 可升 1080p/2K/4K；1080p 可升 2K/4K。已经是 2K/4K 的没有再升的档，
  * 提交上去只会白花钱，所以这里直接判空，让调用方在扣费前就挡住。
  */
 const UPSCALE_TARGETS_BY_SOURCE: Readonly<Record<string, readonly WavespeedUpscaleTarget[]>> = {
-  "480p": ["1080p", "2k", "4k"],
+  "480p": ["1080p", "2k"],
   "720p": ["1080p", "2k", "4k"],
   "768p": ["1080p", "2k", "4k"],
   "1080p": ["2k", "4k"],
@@ -83,4 +83,11 @@ export function wavespeedUpscaleUsdCost(
     Math.max(WAVESPEED_UPSCALE_MIN_BILLED_SEC, Number.isFinite(raw) && raw > 0 ? raw : 0),
   );
   return sec * WAVESPEED_UPSCALE_USD_PER_SEC[target];
+}
+
+/** 按真实画面短边分档，横竖屏同口径；无有效尺寸时拒绝猜测。 */
+export function wavespeedSourceResolutionFromDimensions(width: number, height: number): string | null {
+  if (![width, height].every(value => Number.isFinite(value) && value > 0)) return null;
+  const short = Math.min(width, height);
+  return short <= 480 ? "480p" : short <= 720 ? "720p" : short <= 768 ? "768p" : short <= 1080 ? "1080p" : short <= 1440 ? "2k" : "4k";
 }
