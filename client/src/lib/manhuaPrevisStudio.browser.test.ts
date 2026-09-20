@@ -1446,3 +1446,80 @@ it("重载的分层历史须查询同一原单确认层包后才能采用", asyn
     await page.close();
   }
 });
+
+
+it("白模修改后提示旧预览并保留原片，不自动重渲染", async () => {
+  const page = await open();
+  try {
+    await click(page, "确认生成动作白模");
+    await page.waitForSelector("[data-previs-preview-controls]");
+    expect(await page.$("[data-previs-preview-stale]")).toBeNull();
+    await page.evaluate(() => {
+      const f = (window as any).fixture;
+      f.setBlock((b: any) => ({...b, previsStudio: {...b.previsStudio,
+        spec: {...b.previsStudio.spec, cameras: b.previsStudio.spec.cameras.map((c: any, i: number) => i ? c : {...c, lens: c.lens + 1})}}}));
+    });
+    await page.waitForSelector("[data-previs-preview-stale]");
+    expect(await page.evaluate(() => (window as any).fixture.submits.length)).toBe(1);
+    expect(await page.$eval("video", e => e.getAttribute("src"))).toBe("https://offline.invalid/new.mp4");
+  } finally { await page.close(); }
+});
+
+
+it("布局拖动保存真实角色端点，不自动提交渲染", async () => {
+  const page = await open();
+  try {
+    const before = await page.evaluate(() => (window as any).fixture.block.previsStudio.spec.actors[0].start);
+    const actor = await page.$("[data-layout-actor] circle");
+    await actor!.scrollIntoView();
+    const box = await actor!.boundingBox();
+    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box!.x + box!.width / 2 + 20, box!.y + box!.height / 2, {steps:4});
+    await page.mouse.up();
+    await settle(page);
+    const after = await page.evaluate(() => ({start:(window as any).fixture.block.previsStudio.spec.actors[0].start, count:(window as any).fixture.submits.length}));
+    expect(after.start[0]).toBeGreaterThan(before[0]);
+    expect(after.count).toBe(0);
+  } finally { await page.close(); }
+});
+
+it("快慢节奏保存到真实渲染请求且可恢复常速", async () => {
+  const page=await open();
+  try {
+    await click(page,"应用快慢节奏");
+    await settle(page);
+    expect(await page.evaluate(()=>(window as any).fixture.block.previsStudio.spec.timeMap.spans[1].rate)).toBe(.5);
+    expect(await page.evaluate(()=>(window as any).fixture.submits.length)).toBe(0);
+    await click(page,"确认生成动作白模");
+    await page.waitForSelector("[data-previs-preview-controls]");
+    expect(await page.evaluate(()=>(window as any).fixture.submits[0].spec.timeMap.spans[1].rate)).toBe(.5);
+    await click(page,"恢复常速");
+    await settle(page);
+    expect(await page.evaluate(()=>(window as any).fixture.block.previsStudio.spec.timeMap)).toBeUndefined();
+    expect(await page.evaluate(()=>(window as any).fixture.submits.length)).toBe(1);
+    expect(await page.$("[data-previs-preview-stale]")).not.toBeNull();
+  } finally { await page.close(); }
+});
+
+it("快慢节奏恢复已保存区间与自定义速率，不自动生成", async () => {
+  const page=await open();
+  try {
+    await page.evaluate(()=>{ const f=(window as any).fixture; f.setBlock((b:any)=>({...b,previsStudio:{...b.previsStudio,spec:{...b.previsStudio.spec,timeMap:{sourceDurationSec:b.previsStudio.spec.durationSec,spans:[{sourceStartSec:0,sourceEndSec:1,rate:1},{sourceStartSec:1,sourceEndSec:2,rate:.4},{sourceStartSec:2,sourceEndSec:b.previsStudio.spec.durationSec,rate:1}]}}}})); });
+    await settle(page);
+    expect(await page.$eval('[aria-label="慢动作起点"]',e=>(e as HTMLInputElement).value)).toBe('1');
+    expect(await page.$eval('[aria-label="慢动作终点"]',e=>(e as HTMLInputElement).value)).toBe('2');
+    expect(await page.$eval('[aria-label="重点动作速度"]',e=>(e as HTMLSelectElement).value)).toBe('0.4');
+    expect(await page.evaluate(()=>(window as any).fixture.submits.length)).toBe(0);
+  }finally{await page.close();}
+});
+
+it("空机位草稿保留站位编辑并提示补机位", async()=>{
+ const page=await open();try{
+ await page.evaluate(()=>{const f=(window as any).fixture;f.setBlock((b:any)=>({...b,previsStudio:{...b.previsStudio,spec:{...b.previsStudio.spec,cameras:[]}}}));});
+ await settle(page);
+ expect(await page.$eval('[data-previs-layout-preview]',e=>e.textContent)).toContain('尚未配置机位');
+ expect(await page.$('[data-layout-actor]')).not.toBeNull();
+ expect(await page.evaluate(()=>(window as any).fixture.submits.length)).toBe(0);
+ }finally{await page.close();}
+});

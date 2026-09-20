@@ -201,6 +201,10 @@ export function manhuaPrevisDraftFromExecutableShot(input: {
     durationSec: D,
     aspect: input.aspect,
     actors,
+    ...(timing.presentationSpans.some(span=>span.rate!==1) ? {timeMap:{sourceDurationSec:D,spans:[
+      ...timing.presentationSpans.map(({sourceStartSec,sourceEndSec,rate})=>({sourceStartSec,sourceEndSec,rate})),
+      ...(timing.padSec>0?[{sourceStartSec:D-timing.padSec,sourceEndSec:D,rate:1}]:[]),
+    ]}} : {}),
     ...(interactions.length ? { interactions } : {}),
     ...(waterEmergence ? { waterEmergence } : {}),
     cameras,
