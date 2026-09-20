@@ -308,6 +308,7 @@ import {
   isManhuaAssetCardExpanded,
   shouldShowManhuaAssetFoldToggle,
   shouldShowManhuaAssetRoleChip,
+  resolveManhuaAssetPreviewId,
 } from "@/lib/manhuaAssetCardFold";
 import {
   shouldShowToolbarAssetWallEntry,
@@ -1408,6 +1409,7 @@ export default function ManhuaScriptWorkbench({
    * 单卡 11–13 个控件 × 13 张全平铺，是用户说「太复杂跟繁琐」的直接来源。
    */
   const [expandedAssetIds, setExpandedAssetIds] = useState<ReadonlySet<string>>(new Set());
+  const [assetPreviewByGroup, setAssetPreviewByGroup] = useState<Record<string, string>>({});
   /**
    * 非简洁模式下用户手动收起的卡。
    *
@@ -6966,9 +6968,12 @@ export default function ManhuaScriptWorkbench({
                             <div className="mb-2 flex gap-2 overflow-x-auto pb-1" aria-label={`${group.titleZh}版本缩略图`}>
                               {group.refs.map((version, versionIndex) => (
                                 <button type="button" key={version.id}
-                                  className="w-20 shrink-0 rounded border border-white/15 p-1 text-xs"
+                                  aria-pressed={resolveManhuaAssetPreviewId(group.refs, assetPreviewByGroup[group.key]) === version.id}
+                                  className={`w-20 shrink-0 rounded border p-1 text-xs ${resolveManhuaAssetPreviewId(group.refs, assetPreviewByGroup[group.key]) === version.id ? "border-cyan-300 bg-cyan-400/10" : "border-white/15"}`}
                                   title={`查看${version.labelZh || `版本${versionIndex + 1}`}，不改变采用版本`}
                                   onClick={event => {
+                                    setAssetPreviewByGroup(previous => ({ ...previous, [group.key]: version.id }));
+                                    if (compactUi) return;
                                     const entity = event.currentTarget.closest('[data-manhua-asset-entity]');
                                     const card = Array.from(entity?.querySelectorAll<HTMLElement>('[data-manhua-custom-ref-id]') ?? [])
                                       .find(node => node.dataset.manhuaCustomRefId === version.id);
@@ -7055,6 +7060,7 @@ export default function ManhuaScriptWorkbench({
                             data-manhua-custom-ref-id={ref.id}
                             data-manhua-asset-lock-tag={lockTag || ""}
                             data-manhua-primary-ref={isPrimaryRef ? "true" : "false"}
+                            style={{ display: compactUi && group.kind === "entity" && !needsReview && resolveManhuaAssetPreviewId(group.refs, assetPreviewByGroup[group.key]) !== ref.id ? "none" : undefined }}
                             className={`relative overflow-hidden rounded-lg border bg-black/35 transition-colors ${
                               isPrimaryRef
                                 ? "border-cyan-300/65 ring-1 ring-cyan-300/25"
