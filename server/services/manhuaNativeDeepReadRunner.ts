@@ -69,6 +69,7 @@ import {
   nativeProviderReceiptFromError,
   parseNativeProviderErrorReceipt,
 } from "./manhuaNativeProviderReceipt.js";
+import { sweepOneSegmentBeforeStructuring } from "./manhuaNativeSweepScan.js";
 import {
   EVOLINK_GLM_MODEL,
   EVOLINK_GLM_LEGACY_MODEL_BEFORE_0920,
@@ -1212,7 +1213,7 @@ ${audioHardRule}
 分段序号：第 ${input.segmentIndex + 1}/${input.segmentCount} 段。
 音轨段号：${input.segmentIndex}。${hint ? `\n补充信息：${hint}。\n补充信息用于辅助定位；本镜的环境、道具与动作以该时段原片可见证据为准。` : ""}
 
-${buildNativeDeepReadObservationPlanBlock(lenSec)}
+${buildNativeDeepReadObservationPlanBlock(lenSec, capSec)}
 
 【正向要求一：关键抓帧 keyMoments】
 
@@ -1237,7 +1238,7 @@ story 镜头分两档：
 - **重点镜**：起止秒与任一 keyMoments.atSec 前后 ${NATIVE_DEEP_READ_KEY_SHOT_WINDOW_SEC} 秒有交集的镜头，${legacyCoverage ? "按以下顺序完整填写 18 字段——先记录本镜时间与分类，再生成本镜观察 hintZh，随后依据本镜画面填写详细分析。" : "先记录本镜时间、分类、观察和动作，再依据实际画面详写相关分析，各项遵守下列字数上限。"}
 - **简写镜**：其余镜头只填 startSec、endSec、evidenceRole、hintZh（≤40字）、actionZh（≤40字）；长镜拆分的续段另填 transitionInZh 的规定续接标记。镜头切分、时间覆盖与数量要求两档相同，简写不是少记镜头，只是少写字段。
 先定 keyMoments 再决定各镜档位；hintZh 是本次输出的逐镜观察，和调用前的补充信息各自独立。
-- startSec / endSec：本镜实际起止秒位。单条最长 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒；真实短镜按实际时长保留，超过上限的长镜按硬约束 2 拆成每段 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒。
+- startSec / endSec：本镜实际起止秒位。单条最长 ${capSec} 秒；真实短镜按实际时长保留，超过上限的长镜按硬约束 2 拆成每段 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${capSec} 秒。
 - evidenceRole：按统一分类规则填写。
 - hintZh：${observation.hintZh}≤80字。
 - unitTypeZh：剪辑镜头／拆分镜证据段。
@@ -1372,11 +1373,13 @@ function nativeDeepReadRetryReasonForPrompt(reason: string): string {
   const rejectSec = String(Math.round(NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC * 10) / 10);
   const capSec = String(NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC);
   const tolPct = String(Math.round(NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO * 100));
-  const esc = (v: string) => v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  void rejectSec; void tolPct;
+  // 🔴 用**通配**而不是当前阈值：拒因可能来自历史缓存（旧阈值 33/30/10%），
+  // 只认当前数字会让旧文案整段漏过去，把「容差」泄漏进模型正向区——正是本函数要防的。
   return reason
-    .replace(new RegExp(`超过\\s*${esc(rejectSec)}\\s*秒的镜头证据段（要求\\s*${esc(capSec)}\\s*秒\\s*\\+\\s*${esc(tolPct)}%\\s*容差）`, "g"),
+    .replace(/超过\s*[0-9.]+\s*秒的镜头证据段（要求\s*[0-9.]+\s*秒\s*\+\s*[0-9.]+%\s*容差）/g,
       `超过${capSec}秒输出上限的镜头证据段`)
-    .replace(new RegExp(`镜头证据段超过\\s*${esc(rejectSec)}\\s*秒`, "g"), `镜头证据段超过${capSec}秒输出上限`)
+    .replace(/镜头证据段超过\s*[0-9.]+\s*秒/g, `镜头证据段超过${capSec}秒输出上限`)
     .replace("；这几条必须按镜内变化拆成连续证据段，禁止截断尾部",
       "；本次生成前按长镜拆分规则安排完整连续的证据段");
 }
@@ -1452,11 +1455,12 @@ export function nativeDeepReadStructuringGatewayOrder(
   if (policy === "structuring_chain_qwen_first") {
     return odd ? ["plan_sg_qwen", "openrouter", "evolink_glm"] : ["plan_bj_qwen", "evolink_glm", "openrouter"];
   }
-  // 0906 用户令「不走 Qwen」：GLM 链只剩 OpenRouter（钉 Z.AI）与 EvoLink 两档。
-  // 🔴 0920 用户令「現在open router打折，趁機用上」：OpenRouter 转**主档**，两批次首发一致，
-  // 不再按 0907 那样分流——分流是为了均摊两家用量，打折期的口径是「都走便宜那家」。
-  // EvoLink 退兜底（没有 Flash X，停在 5.3 Flash）；末档新加坡 Qwen 套餐由链序提供。
-  return odd ? ["openrouter", "evolink_glm"] : ["openrouter", "evolink_glm"];
+  // 0906 用户令「不走 Qwen」：GLM 链只剩 OpenRouter（钉 Z.AI）与 EvoLink 两档，不再切 Qwen；判坏重试仍按每档两次
+  // 0907 用户令「一路走 OpenRouter 一路走 EvoLink」：并发批次分流首发，第 1 批 OpenRouter→EvoLink，第 2 批 EvoLink→OpenRouter
+  // 🔒 **分流不能去掉**：两条 lane 若同时首发同一网关，会撞上同通道租约排队＝并发整形退化成串行
+  //    （用户 0920：「一般來說我都是併發整形的」）。0920「open router 打折」落在模型换 Flash 与
+  //    OpenRouter 留在链上，不改这条分流。
+  return odd ? ["evolink_glm", "openrouter"] : ["openrouter", "evolink_glm"];
 }
 
 /** 整形分组合同：四片为 2+2；其余按原顺序每五片一批。 */
@@ -1651,7 +1655,7 @@ export function nativeDeepReadFrozenContractSha256(): string {
 // 0920 用户授权解冻（原话「我授權解凍」）：本轮变更冻结项 —— 重试梯度 0.7/0.65×2/0.6×2、
 // 门禁容差与偏差线 15%→20%、单条证据段上限 30→60（一层）、密度与广告占比三条降 advisory。
 // 覆盖线保持 90%（用户原话「覆蓋率要百分之九十這條不變，不要求到百分之百」）。
-export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "7bb7da55e9d69289024f9fbc86fe8515314f63c384f4bf4d75c391bc8eacbc82" as const;
+export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "b65ba4d8a2a38535bdcb0be5beb671d65de936c999a38f0c415eeebd8c8838bd" as const;
 
 export function assertNativeDeepReadFrozenContract(): void {
   const actual = nativeDeepReadFrozenContractSha256();
@@ -4096,7 +4100,8 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE = "openrouter_glm_structurin
  */
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL = `${EVOLINK_GLM_MODEL}→${OPENROUTER_GLM_MODEL}`;
 /** 开始/失败回执的人话链路标签（0905：用户看了几百次「z-ai/glm-5.3」以为一直走 OpenRouter）。 */
-export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 · 第1批 OpenRouter（Z.AI）→EvoLink · 第2批 EvoLink→OpenRouter，不切 Qwen（单档 20 分钟，有心跳即延长）";
+// 0920：换档 Flash + OpenRouter 转主档后，两批首发一致（不再按 0907 分流），文案同步。
+export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 Flash · OpenRouter（Z.AI）→EvoLink，不切 Qwen（单档 20 分钟，有心跳即延长）";
 export const NATIVE_DEEP_READ_QWEN_STRUCTURING_STARTED_LABEL = "Qwen3.8-Max 严格 schema · 第1批 北京→EvoLink→OpenRouter · 第2批 新加坡→OpenRouter→EvoLink（Qwen 单档 25 分钟 · GLM 20 分钟）";
 /** 0916：该产品链只允许 GLM；旧 Qwen 值在进入路由前明确拒绝。 */
 export function nativeDeepReadStructuringPolicyForModel(
@@ -4547,11 +4552,13 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
 · non_story_ad 的 hintZh 除null空占位外不得写入内容；除 startSec、endSec、evidenceRole 外，其他描述及衍生内容严禁写入。
 · 单条 shots 记录的 endSec − startSec 超过 30 秒。
 · 把同一长镜的证据段边界伪报为真实剪辑切换。`;
-    prompt = prompt.replace(NATIVE_DEEP_READ_LEGACY_PROHIBITION_BLOCK.replace("hintZh、detailLevel 之外的字段。", "hintZh 之外的字段。"), legacyProhibitionBlock);
+    // 🔴 搜索键必须按**本次身份的 capSec** 渲染：拿现行上限（60）去搜一份按 30 渲染的提示词，
+    // 匹配不上 → 整个替换静默失效 → 历史身份复原不了 → 已付费分片重买。
+    prompt = prompt.replace(buildNativeDeepReadLegacyProhibitionBlock(capSec).replace("hintZh、detailLevel 之外的字段。", "hintZh 之外的字段。"), legacyProhibitionBlock);
     prompt = prompt.replace('2. 先输出 keyMoments：定位每个 atSec 的原帧，核实人物、地点、动作及可见字幕，再填写 noteZh；音轨类同时核实该秒声音。', '2. 按硬约束 2 先确定每条记录的起止秒位，再输出该条字段；每完成一条，沿已观察到的时间轴继续下一条。').replace('4. 再输出 shots：按硬约束 2 确定每条记录的起止秒位，依据已输出 keyMoments 的前后6秒范围判定重点镜或简写镜，然后填写对应字段，沿原片时间轴继续下一条。', '4. 写入每条 keyMoment 前，先定位 atSec 的原帧，观察人物、地点、动作及可见字幕，再据此填写 noteZh；音轨类同时听取该秒声音。');
     prompt = prompt.replace('actionZh（≤40字）；长镜拆分的续段另填 transitionInZh 的规定续接标记。', 'actionZh（≤40字），**其它字段一律省略不写**；唯一例外：长镜拆分的续段仍要写 transitionInZh 的规定续接标记。').replace("看不清时写明可见范围及无法辨认的部分。", "看不清时写明可见范围及无法辨认的部分，不补猜。");
     const lenSec = Math.max(1, Math.round(input.segment.endSec - input.segment.startSec));
-    const currentDensity = buildNativeDeepReadDensityContract(lenSec);
+    const currentDensity = buildNativeDeepReadDensityContract(lenSec, capSec);
     const ref = Math.ceil(lenSec / NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC);
     const legacyDensity = currentDensity
       .replace(`story 至少 ${Math.ceil(ref * 0.9)} 条`, `story 至少 ${Math.ceil(ref * 0.8)} 条`)
@@ -4578,7 +4585,7 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
       .replace("重点镜18字段逐项非空，依据本镜可见内容具体填写。", "");
     if (input.hasAudio) responseSchema.properties!.audioResolution!.description = "本段有音轨，数组包含且仅包含1个分析对象，内容来自本段真实声音。";
   }
-  return crypto.createHash("sha256").update(JSON.stringify({
+  const __payload__ = {
     cacheSchemaVersion: NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION,
     planVersion: NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
     model: input.model ?? NATIVE_DEEP_READ_MODEL,
@@ -4594,7 +4601,8 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
     requestedFps: fps,
     prompt,
     repairPrompt,
-  }), "utf8").digest("hex");
+  };
+  return crypto.createHash("sha256").update(JSON.stringify(__payload__), "utf8").digest("hex");
 }
 
 export type NativeDeepReadGlmStructuringResult = {
@@ -6182,11 +6190,13 @@ async function executeNativeDeepReadBatch(
           selectedSegmentCandidates.add(input.segmentIndex);
           console.info(`[nativeDeepRead] 第${input.segmentIndex + 1}段三档未过，选择第${best.attemptNumber}份原稿进入整形`);
           // 0917 根因：选择记录的 rawSha256 曾在合并前盖章，而合并会改 raw（补字幕/剥 gateMarked）→
-          // 缓存写入自检抛「三档候选选择记录与原始证据不一致」→ 段卡永远写不进去，每次续跑重放同三份失败稿。
+          // 缓存写入自检抛「N 档候选选择记录与原始证据不一致」→ 段卡永远写不进去，每次续跑重放同几份失败稿。
           // 章必须盖在最终要落盘的那份 raw 上。
           const selected = await applyRetryDraftMerge(input.segmentIndex, best.attemptNumber, best.result, false);
           selected.attemptSelection = {
-            status: "selected_for_structuring_after_three_attempts", policyVersion: 1, attemptedCount: 3,
+            status: "selected_for_structuring_after_three_attempts", policyVersion: 1,
+            // 0920：档数跟随冻结梯度（5 发），不再写死 3——写死会让自检抛错、段卡永远写不进去。
+            attemptedCount: NATIVE_DEEP_READ_RETRY_TEMPERATURES.length,
             selectedAttemptNumber: best.attemptNumber, sourceDigest: episode.cacheSourceDigest ?? "",
             rawSha256: nativeAttemptRawSha256(selected.raw),
             candidates: candidates.map(row => ({ attemptNumber: row.attemptNumber, score: row.score,
@@ -6395,6 +6405,76 @@ async function executeNativeDeepReadBatch(
         throw new Error(`第${episode.episodeIndex}集并发精读结果不完整，已停止`);
       }
       const completeRawSegments = rawSegments as Array<Record<string, unknown>>;
+
+      /**
+       * 🔴 整形前补扫（0920 用户令）：「GLM5.3 flash整形之前，先讓他讀一遍所有的分片，
+       * Ｇemini 判定是keymonents的必須保留，他也可以判斷哪些是有亮點跟特色的鏡頭」。
+       *
+       * 只增不减：合并后的 keyMoments 必然逐条包含 Gemini 原条目（判据在
+       * shared/manhuaNativeSweepMerge.ts，11 条单测钉住）。补扫整体失败＝当作没补到，
+       * 绝不影响已付费的读片产出。
+       */
+      const sweepSummaries: Array<{
+        segmentIndex: number; scanned: boolean; added: number;
+        droppedCount: number; skippedReasonZh?: string;
+      }> = [];
+      if (process.env.MANHUA_NATIVE_SWEEP_BEFORE_STRUCTURING !== "0") {
+        for (let segmentIndex = 0; segmentIndex < completeRawSegments.length; segmentIndex += 1) {
+          const raw = completeRawSegments[segmentIndex]!;
+          const video = videosBySegment.get(segmentIndex);
+          const shots = Array.isArray(raw.shots) ? raw.shots as Array<Record<string, unknown>> : [];
+          const storyRanges = shots
+            .filter((shot) => shot?.evidenceRole !== "non_story_ad")
+            .map((shot) => ({ startSec: Number(shot?.startSec) || 0, endSec: Number(shot?.endSec) || 0 }))
+            .filter((r) => r.endSec > r.startSec);
+          const adRanges = shots
+            .filter((shot) => shot?.evidenceRole === "non_story_ad")
+            .map((shot) => ({ startSec: Number(shot?.startSec) || 0, endSec: Number(shot?.endSec) || 0 }))
+            .filter((r) => r.endSec > r.startSec);
+          const geminiKeyMoments = (Array.isArray(raw.keyMoments) ? raw.keyMoments : [])
+            .map((row) => row as Record<string, unknown>)
+            .flatMap((row) => {
+              const atSec = Number(row?.atSec);
+              const kindZh = String(row?.kindZh || "").trim();
+              const noteZh = String(row?.noteZh || "").trim();
+              // 🔒 原条目原样带过，缺字段的也带——补扫不是清洗工序，不许顺手丢 Gemini 的东西。
+              return Number.isFinite(atSec) ? [{ atSec, kindZh, noteZh }] : [];
+            });
+          const subtitles = (Array.isArray(raw.subtitles) ? raw.subtitles : [])
+            .map((row) => row as Record<string, unknown>)
+            .flatMap((row) => {
+              const atSec = Number(row?.atSec);
+              const textZh = String(row?.textZh || "").trim();
+              return Number.isFinite(atSec) && textZh ? [{ atSec, textZh }] : [];
+            });
+          const result = await sweepOneSegmentBeforeStructuring({
+            seriesKey: String(params.segmentCacheSeriesKey || "sweep"),
+            episodeIndex: episode.episodeIndex,
+            segmentIndex,
+            gsUri: String(video?.gsUri || ""),
+            startSec: episode.segments[segmentIndex]!.startSec,
+            endSec: episode.segments[segmentIndex]!.endSec,
+            geminiKeyMoments, subtitles, storyRanges, excludedAdRanges: adRanges,
+          }, params.abortSignal);
+          if (result.merge.addedCount > 0) raw.keyMoments = result.merge.keyMoments;
+          sweepSummaries.push({
+            segmentIndex, scanned: result.scanned, added: result.merge.addedCount,
+            droppedCount: result.merge.dropped.length,
+            ...(result.skippedReasonZh ? { skippedReasonZh: result.skippedReasonZh } : {}),
+          });
+          console.info(
+            `[nativeDeepRead] 第${episode.episodeIndex}集第${segmentIndex + 1}段整形前补扫：`
+            + `${result.scanned ? `补进 ${result.merge.addedCount} 条、拦下 ${result.merge.dropped.length} 条` : `跳过（${result.skippedReasonZh || "未扫"}）`}`,
+          );
+        }
+        const scannedCount = sweepSummaries.filter((row) => row.scanned).length;
+        const addedTotal = sweepSummaries.reduce((sum, row) => sum + row.added, 0);
+        console.info(
+          `[nativeDeepRead] 第${episode.episodeIndex}集整形前补扫完成：`
+          + `扫了 ${scannedCount}/${sweepSummaries.length} 片，合计补进 ${addedTotal} 条重点时刻`,
+        );
+      }
+
       const glmStructuringInputs = completeRawSegments;
 
       // 段卡合并成集卡：0829 起**每集一律走 GLM 5.3 结构化整形**（去重 + 结构化），

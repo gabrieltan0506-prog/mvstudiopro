@@ -113,14 +113,21 @@ export const GLM_CHAIN_FALLBACK_MODEL = "qwen3.8-max";
 export const OPENROUTER_QWEN_MODEL = "qwen/qwen3.8-max";
 /** 0905 整形专用链的固定顺序；只有 gatewayPolicy="structuring_chain" 才会用到两个新档。 */
 /**
- * 0920 用户令改线：
- *   ·「現在open router打折，趁機用上」→ **OpenRouter 主档**，EvoLink 退兜底（推翻 0829「EvoLink 优先」）
+ * 0920 用户令：**只撤 Qwen，GLM 两档的先后一字不动**。
  *   ·「把qwen都拿掉，就算fallback也用glm5.3。不用qwen 3.8」→ 撤 `plan_bj_qwen` / `openrouter_qwen`
  *   ·「plan sg qwen 可以留著」→ 末档保留新加坡套餐（已付费，不用即归零）
+ *
+ * 🔒 **EvoLink 仍在 OpenRouter 之前（0829 拍板原序）**。
+ *    用户 0920 只说过「現在open router打折，趁機用上」「open router鎖定供應商是z.ai」
+ *    「因為出了GLM5.3 flash X，但是evolink沒有這個模型，所以我就用GLM5.3 flash就可以了」——
+ *    **没有任何一句要放弃或降级 EvoLink**（第三句反而以 EvoLink 在用为前提）。
+ *    我曾据「趁机用上」擅自改成「OpenRouter 主档、EvoLink 退兜底」，被用户当场否决：
+ *    「我說用open router我從沒說過要放棄evolink」「如果我要放棄，我會給出明確的指令」。
+ *    → 规矩：**没有明确指令就不动既有顺序**，不从一句「用上」外推成改主档。
  * ⚠️ 撤档只从**发起顺序**里拿掉，识别位见 STRUCTURING_LEGACY_RECOGNIZED_GATEWAYS。
  */
 export const STRUCTURING_CHAIN_GATEWAYS: readonly GlmGatewayName[] = [
-  "openrouter", "evolink_glm", "plan_sg_qwen",
+  "evolink_glm", "openrouter", "plan_sg_qwen",
 ];
 /** 0905 用户令：整形开关选 Qwen 时的链序——北京/新加坡套餐首发（并发批次轮流分流），两档败回 GLM，末档 OpenRouter Qwen。 */
 /** 整形链首发两档的轮数与轮间隔（0905 用户令：两档都败隔 20 秒再试，共重试两轮）。 */
@@ -231,6 +238,27 @@ export type GlmRawResponseEvidence = {
 export type GlmParams = {
   system: string;
   user: string;
+  /**
+   * 读图输入（签名 https URL）。**只有 GLM-5.3 Flash 吃图/吃视频**，`glm-5.3` 是纯长文本档。
+   * 走 OpenAI 兼容 content parts（与知识卡读档链同口径）。
+   * 不传或空数组时请求体**逐字不变**，不影响任何存量调用方。
+   */
+  imageUrls?: readonly string[];
+  /**
+   * 带标签的读图输入：每张图前插一行文字再跟图，**文字与图交替**。
+   * 为什么必须交替：一次给十几张图时，模型分不清哪张是第几秒——
+   * 标签不贴在图旁边，它报的秒位就会飘，下游按 atSec 抽帧全部对不上。
+   * 知识卡读档链同款做法（`【原稿 X 第 N 页】` + 图）。
+   * 与 imageUrls 同时给时，先发本表，再发裸图。
+   */
+  imageParts?: readonly { url: string; labelZh?: string }[];
+  /**
+   * 读视频输入（签名 https URL）。用户 0920 原话：
+   * 「**ＧＬＭ5.3 flash可以讀視頻，但沒有辦法讀音頻**，所以我才只讓他看畫面跟字幕」。
+   * → 所以补扫喂的是**分片视频本体**，不是抽帧；音轨侧的判断一律不交给它。
+   * content part 形态沿用仓内既有写法 `{type:"video_url",video_url:{url}}`。
+   */
+  videoUrls?: readonly string[];
   maxTokens?: number;
   abortSignal?: AbortSignal;
   /**
@@ -415,8 +443,9 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
   let accumulatedUsage = emptyGlmGatewayUsage();
   const configuredGateways: Array<{ name: GlmGatewayName; model: string; ready: boolean; url: string; key: string; structuringOnly?: boolean }> = [
     {
-      // 0920 起退为兜底:EvoLink GLM-5.3 Flash(用户「現在open router打折，趁機用上」,
-      // 推翻 0829「evolink 优先」)。EvoLink 没有 Flash X,所以停在 5.3 Flash。
+      // 通用链主档仍是 EvoLink(0829 拍板,0920 未改动本链顺序);模型 id 已换 GLM-5.3 Flash。
+      // ⚠️ 0920「open router 打折趁机用上」只改**整形链**首发(见 nativeDeepReadStructuringGatewayOrder),
+      // 不动这条通用链——用户没交代通用链改序,不自行外推。
       name: "evolink_glm",
       model: EVOLINK_GLM_MODEL,
       ready: Boolean(String(process.env.EVOLINK_API_KEY || "").trim()),
@@ -424,7 +453,7 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
       key: String(process.env.EVOLINK_API_KEY || "").trim(),
     },
     {
-      // 0920 起为主档:OpenRouter GLM-5.3 Flash(打折),provider 仍钉 Z.AI 自营
+      // 兜底一(同模型):EvoLink 不通才走 OpenRouter,仍是 GLM-5.3 Flash,产出口径不变,provider 钉 Z.AI 自营
       name: "openrouter",
       model: OPENROUTER_GLM_MODEL,
       ready: Boolean(String(process.env.OPENROUTER_API_KEY || "").trim()),
@@ -718,6 +747,12 @@ async function invokeOneGlmGateway(
   // 五档统一夹在 131,072，GLM 才真能接单。
   const gatewayMaxOutput = 131_072;
   const budget = Math.max(8_192, Math.min(gatewayMaxOutput, Math.floor(Number(params.maxTokens) || 65_536)));
+  const images = (params.imageUrls ?? []).map((u) => String(u || "").trim()).filter(Boolean);
+  const labeledImages = (params.imageParts ?? [])
+    .map((row) => ({ url: String(row?.url || "").trim(), labelZh: String(row?.labelZh || "").trim() }))
+    .filter((row) => row.url);
+  const videos = (params.videoUrls ?? []).map((u) => String(u || "").trim()).filter(Boolean);
+  const hasMedia = images.length > 0 || videos.length > 0 || labeledImages.length > 0;
   const body: Record<string, unknown> = {
     model,
     response_format: { type: "json_object" },
@@ -727,7 +762,21 @@ async function invokeOneGlmGateway(
       : GLM_CHAIN_DEFAULT_TEMPERATURE,
     messages: [
       { role: "system", content: params.system },
-      { role: "user", content: params.user },
+      // 有图才换成 content parts；无图时保持字符串形态，存量请求体一字不改。
+      hasMedia
+        ? {
+          role: "user",
+          content: [
+            { type: "text", text: params.user },
+            ...videos.map((url) => ({ type: "video_url", video_url: { url } })),
+            ...labeledImages.flatMap((row) => [
+              ...(row.labelZh ? [{ type: "text", text: row.labelZh }] : []),
+              { type: "image_url", image_url: { url: row.url, detail: "high" } },
+            ]),
+            ...images.map((url) => ({ type: "image_url", image_url: { url, detail: "high" } })),
+          ],
+        }
+        : { role: "user", content: params.user },
     ],
   };
   if (gateway === "evolink_glm") {

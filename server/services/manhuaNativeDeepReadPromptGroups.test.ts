@@ -39,7 +39,7 @@ const commonProhibitions = [
   "为了打破等长而改动真实剪辑点或虚构镜内变化",
   "在总结中引入镜头表里没有的内容",
   "给 non_story_ad 的 hintZh 填写非null内容，或填写 startSec、endSec、evidenceRole、hintZh、detailLevel 之外的字段",
-  "单条 shots 记录的 endSec − startSec 超过 30 秒",
+  "单条 shots 记录的 endSec − startSec 超过 60 秒",
   "把同一长镜的证据段边界伪报为真实剪辑切换",
 ];
 
@@ -85,11 +85,12 @@ describe("Gemini 原生读片正向要求与禁止事项分区", () => {
         "仅保留 startSec、endSec、evidenceRole 三个有内容的字段"
       );
       expect(positive).toContain("总结");
-      expect(positive).toContain("每条 shots 记录最长 30 秒");
+      expect(positive).toContain("每条 shots 记录最长 60 秒");
       expect(positive).toContain(
         "真实剪辑镜头按实际起止秒位记录，短于 3 秒也完整保留"
       );
-      expect(positive).toContain("同一长镜的每个拆分证据段保持 3—30 秒");
+      // 0920 用户令：单条证据段上限 30→60，只留一层。期望值写死 60，不从常量反推。
+      expect(positive).toContain("同一长镜的每个拆分证据段保持 3—60 秒");
       expect(positive).toContain("相邻镜头时长可以相同");
       expect(positive).not.toContain("每 3—6 秒");
       expect(positive).not.toContain("最长 6 秒");
@@ -98,7 +99,7 @@ describe("Gemini 原生读片正向要求与禁止事项分区", () => {
       for (const rule of commonProhibitions) expect(negative).toContain(rule);
 
       if (row.retry) {
-        expect(positive).toContain("【上一轮未通过的检查】镜头证据段超过30秒输出上限");
+        expect(positive).toContain("【上一轮未通过的检查】镜头证据段超过60秒输出上限");
         expect(positive).toContain(
           "只修正上面点名的问题，其余一律照常完整观察"
         );
@@ -159,10 +160,10 @@ describe("Gemini 原生读片正向要求与禁止事项分区", () => {
     const wire = JSON.parse(JSON.stringify(request));
     const positive = wire.contents[0].parts[1].text.split("【禁止事项】")[0];
     expect(positive).toContain("第37镜 205—313 秒（108 秒）");
-    expect(positive).not.toMatch(/(?:超过|拒收线)\s*33\s*秒|容差|禁止|不得|不要|输出前自检|回去拆/);
+    expect(positive).not.toMatch(/(?:超过|拒收线)\s*72\s*秒|容差|禁止|不得|不要|输出前自检|回去拆/);
     expect(wire.generationConfig.responseSchema.properties.shots.description).not.toMatch(/33秒|容差/);
     expect(wire.generationConfig.responseSchema.properties.shots.items.anyOf[0].properties.endSec.description)
-      .toContain("startSec < endSec ≤ startSec + 30");
+      .toContain("startSec < endSec ≤ startSec + 60");
     // 33也可能是原片真实时间，不能通过全局替换抹掉观测值。
     const realTime = buildGeminiNativeDeepReadSegmentPrompt({
       ...input, hasAudio: true, rejectedReasonZh: "第2镜 33—141 秒（108 秒）",
