@@ -6903,7 +6903,26 @@ export default function ManhuaScriptWorkbench({
                           {group.sharedNoteZh ? (
                             <p className="mh-hint text-[10px] leading-4 text-white/40">{group.sharedNoteZh}</p>
                           ) : null}
-                          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                          {group.kind === "entity" && group.refs.length > 1 ? (
+                            <div className="mb-2 flex gap-2 overflow-x-auto pb-1" aria-label={`${group.titleZh}版本缩略图`}>
+                              {group.refs.map((version, versionIndex) => (
+                                <button type="button" key={version.id}
+                                  className="w-20 shrink-0 rounded border border-white/15 p-1 text-xs"
+                                  title={`查看${version.labelZh || `版本${versionIndex + 1}`}，不改变采用版本`}
+                                  onClick={event => {
+                                    const entity = event.currentTarget.closest('[data-manhua-asset-entity]');
+                                    const card = Array.from(entity?.querySelectorAll<HTMLElement>('[data-manhua-custom-ref-id]') ?? [])
+                                      .find(node => node.dataset.manhuaCustomRefId === version.id);
+                                    card?.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
+                                  }}>
+                                  <img src={version.url} alt="" loading="lazy" className="mb-1 h-16 w-full rounded object-cover" />
+                                  版本 {versionIndex + 1}
+                                  <span className="block truncate text-[10px] text-white/60">{group.useZhByRefId[version.id]}</span>
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                          <div className={group.kind === "entity" ? "flex gap-2 overflow-x-auto pb-2 [&>div]:w-72 [&>div]:shrink-0" : "grid grid-cols-2 gap-2 sm:grid-cols-3"}>
                         {group.refs.map((ref) => {
                           const groupUseZh = group.useZhByRefId[ref.id] || "";
                           const groupAlsoInZh = group.alsoInZhByRefId[ref.id] || "";
