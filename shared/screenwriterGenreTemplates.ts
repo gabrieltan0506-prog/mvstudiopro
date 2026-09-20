@@ -365,7 +365,8 @@ export function buildManhuaStagePromptWithGenre(
     writerContext &&
     (stage === "story_brief" || stage === "character_bible" || stage === "episode_beats")
   ) {
-    parts.push(writerContext.slice(0, 6000));
+    // 已确认原稿也是分镜读取来源，不能截掉尾部镜头；不能以缩短上下文为由删减已确认剧情。
+    parts.push(writerContext);
   }
   if (writerContext && stage === "key_art") {
     parts.push(
