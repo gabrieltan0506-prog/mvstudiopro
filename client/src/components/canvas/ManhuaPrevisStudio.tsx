@@ -803,6 +803,40 @@ export function ManhuaPrevisStudioView({
           恢复上一份动作配置（不改已采用参考）
         </button>
       ) : null}
+      <section className="space-y-2 rounded border border-cyan-300/20 p-3" data-previs-cast>
+        <p className="text-xs text-cyan-100">本次出场人物</p>
+        <div className="flex flex-wrap gap-3">
+          {studio.spec.actors.map((actor, index) => (
+            <label key={actor.id} className="text-xs">
+              {actor.nameZh || `人物 ${index + 1}`} ·
+              <select
+                aria-label={`白模出场人物${index + 1}`}
+                className={field}
+                value={actor.assetRef ?? ""}
+                disabled={disabled || Boolean(pendingId) || busy}
+                onChange={e => {
+                  const selected = characters.find(c => c.id === e.target.value);
+                  if (selected?.id === actor.assetRef) return;
+                  actorEdit(index, {
+                    assetRef: selected?.id,
+                    nameZh: selected?.label ?? actor.nameZh,
+                    riggedModel: undefined,
+                  });
+                }}
+              >
+                <option value="">自定义人物</option>
+                {actor.assetRef && !characters.some(c => c.id === actor.assetRef) ? (
+                  <option value={actor.assetRef}>{actor.nameZh}（原资产不可用）</option>
+                ) : null}
+                {characters.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+              </select>
+            </label>
+          ))}
+        </div>
+        <button type="button" className={button} onClick={() => setAdvancedOpen(true)}>
+          调整人数与站位
+        </button>
+      </section>
       <ManhuaPrevisActionLibrary spec={studio.spec} disabled={disabled || Boolean(pendingId) || busy} onChange={edit} />
       <details open={advancedOpen} onToggle={(e) => setAdvancedOpen(e.currentTarget.open)} className="space-y-2" data-previs-advanced>
         <summary className="text-xs text-cyan-100">高级参数 · 数字表（站位 / 动作 / 特效 / 出水 / 短打）</summary>

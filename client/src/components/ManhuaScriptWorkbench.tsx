@@ -1442,6 +1442,7 @@ export default function ManhuaScriptWorkbench({
    * 工具区默认收起，用到才展开；已经传过参考图的那一栏保持展开，不替用户收走他在用的东西。
    */
   const [openCustomRefRoles, setOpenCustomRefRoles] = useState<Record<string, boolean>>({});
+  const [moreToolsOpen, setMoreToolsOpen] = useState(false);
   const [compactUi, setCompactUi] = useState(() => {
     try {
       return window.localStorage.getItem("manhua_compact_ui") !== "0";
@@ -3795,6 +3796,11 @@ export default function ManhuaScriptWorkbench({
               </span>
               <ManhuaShotSourceLabel isFallback={shotSourceIsFallback} />
             </div>
+            {!segmentCapacityPlan.ok ? (
+              <p role="alert" className="mt-1 text-xs text-rose-200">{segmentCapacityPlan.errorZh}</p>
+            ) : null}
+            <details className="mt-1" data-manhua-project-settings>
+              <summary className="cursor-pointer text-xs text-white/60">制作设置</summary>
             <div
               data-manhua-segment-capacity
               className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1.5 text-[10px] text-white/55"
@@ -3910,6 +3916,7 @@ export default function ManhuaScriptWorkbench({
                 <span className="font-semibold">创作策略 · 旧项目待升级</span>
               </div>
             ) : null}
+            </details>
             {immersive ? (
               <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px]">
                 <button
@@ -4126,7 +4133,7 @@ export default function ManhuaScriptWorkbench({
             </section>
           ) : null}
           {factoryBusy && onStopFactory ? null : (
-            <Popover>
+            <Popover open={moreToolsOpen} onOpenChange={setMoreToolsOpen}>
               <PopoverTrigger asChild>
                 <button
                   type="button"
@@ -4150,7 +4157,7 @@ export default function ManhuaScriptWorkbench({
                     主流程留在步骤条；这里收纳导演板、局部重跑与工作区设置。
                   </p>
                 </div>
-                {/* 二级工具：对象不在本阶段时收到这里，保证每个工具任一阶段恰好一个入口（判据在 manhuaSecondaryTools.ts） */}
+                {/* 二级工具统一收到这里，保证每个工具任一阶段恰好一个入口（判据在 manhuaSecondaryTools.ts） */}
                 {manhuaDrawerSecondaryTools(activePhase).length ? (
                   <div
                     data-manhua-toolbar-group="secondary-tools"
@@ -4158,7 +4165,7 @@ export default function ManhuaScriptWorkbench({
                   >
                     <div className="text-[11px] font-semibold text-white/80">二级工具</div>
                     <p className="mh-hint mt-0.5 text-[10px] leading-4 text-white/40">
-                      这些工具的对象不在本步：3D 模型挂在人物引用上，白模／动作节奏／声音跟着段走。点开仍可用。
+                      人物与场景用来准备资产；动作白模、动作节奏和声音用于当前片段。
                     </p>
                     <div className="mt-1.5 flex flex-wrap gap-1.5">
                       {manhuaDrawerSecondaryTools(activePhase).map((tool) => {
@@ -4181,6 +4188,7 @@ export default function ManhuaScriptWorkbench({
                             data-manhua-secondary-tool={tool}
                             disabled={Boolean(factoryBusy)}
                             onClick={() => {
+                              setMoreToolsOpen(false);
                               if (tool === "model3d") setModelStudioOpen((v) => !v);
                               else if (tool === "world3d") setWorldStudioOpen((v) => !v);
                               else if (tool === "previs") {
