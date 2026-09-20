@@ -90,13 +90,12 @@ export function formatAdvisorShotsAsBeatsMarkdown(shots: ManhuaWorkbenchShot[]):
   const lines = [
     "## 分镜表",
     "",
-    "| 镜号 | 景别/运镜 | 内容 | 台词 | 情绪 | 微表情 | 语气 | 时长秒 |",
-    "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    "| 镜号 | 景别/运镜 | 内容 | 台词 | 情绪 |",
+    "| --- | --- | --- | --- | --- |",
   ];
-  const cell = (value: unknown) => String(value ?? "").replace(/&/g, "&amp;").replace(/\|/g, "&#124;").replace(/\r?\n/g, "<br>");
   for (const s of shots) {
     lines.push(
-      `| ${[s.index, s.cameraZh, s.actionZh, s.dialogueZh, s.emotionZh, s.microExpressionZh, s.voiceToneZh, s.durationSec].map(cell).join(" | ")} |`,
+      `| ${s.index} | ${s.cameraZh || ""} | ${s.actionZh || ""} | ${s.dialogueZh || ""} | ${s.emotionZh || ""} |`,
     );
   }
   return lines.join("\n");

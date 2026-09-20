@@ -1,4 +1,3 @@
-import { MANHUA_PERFORMANCE_REVIEW_ZH } from "@shared/manhuaPerformanceCraft";
 import { resolveDirectorStyleBlocks, classifyManhuaDirectionSceneType } from "@shared/manhuaDirectionCanon";
 import { MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS as LIMITS, MANHUA_CREATIVE_ADVISOR_STRATEGY_IDS, type ManhuaCreativeAdvisorContext } from "@shared/manhuaCreativeAdvisor";
 import type { ManhuaWriterPack } from "@shared/manhuaWriterRoom";
@@ -342,7 +341,7 @@ export function buildManhuaAdvisorProject(input: {
   const directionReview = resolveDirectorStyleBlocks(input.bible?.directionCanon,
     classifyManhuaDirectionSceneType(shot ? JSON.stringify(shot) : episode?.body || ""),
     { episodeIndex: input.episodeIndex, segmentIndex: selected?.segmentIndex, shotIndex: shot?.index }).review;
-  const shotSummary = [baseShotSummary, MANHUA_PERFORMANCE_REVIEW_ZH, directionReview].filter(Boolean).join("\n\n");
+  const shotSummary = [directionReview, baseShotSummary].filter(Boolean).join("\n\n");
   // 只转发原始冻结身份；不能按当前注册表给旧项目凭空补上 revision。
   const rawStrategy = input.bible?.directorStrategyContract as { strategyId?: unknown; revision?: unknown } | null | undefined;
   const strategyId = MANHUA_CREATIVE_ADVISOR_STRATEGY_IDS.find((id) => id === rawStrategy?.strategyId);

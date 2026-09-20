@@ -1,4 +1,3 @@
-import { MANHUA_PERFORMANCE_CRAFT_ZH, MANHUA_PERFORMANCE_REVIEW_ZH } from "./manhuaPerformanceCraft.js";
 /** 用户提供的七核心教学图转为决策检查项，不冒充某位导演的考据规律。 */
 export const MANHUA_SHOT_CORE_GUIDES = [
   { key: "scale", labelZh: "景别", instructionZh: "按本镜信息量选择远景、全景、中景、近景或细节特写；空间与多人动作需看清关系，情绪和关键线索才收近，避免整段只用近景。" },
@@ -12,10 +11,9 @@ export const MANHUA_SHOT_CORE_GUIDES = [
 
 export function manhuaSevenCoreDirectives(stage: "storyboard" | "keyframe" | "clip" | "review"): string[] {
   const cores = stage === "keyframe" ? MANHUA_SHOT_CORE_GUIDES.slice(0, 5) : MANHUA_SHOT_CORE_GUIDES;
-  if (stage === "review") return [MANHUA_PERFORMANCE_REVIEW_ZH, ...cores.map(c => `七核心检查·${c.labelZh}：对照本镜已确认方案与实际产物；缺少证据标未验证，发现问题定位镜号与受影响项，不凭任务成功判通过。${c.instructionZh}`)];
+  if (stage === "review") return cores.map(c => `七核心检查·${c.labelZh}：对照本镜已确认方案与实际产物；缺少证据标未验证，发现问题定位镜号与受影响项，不凭任务成功判通过。${c.instructionZh}`);
   return [
     "七核心落实：以下为通用分镜决策检查项，不是导演生平规律；结合本阶段选卡手法与本镜剧情填写，用户明确锁定优先，没有依据不强加风格。",
-    ...(stage === "keyframe" ? [] : [MANHUA_PERFORMANCE_CRAFT_ZH.replace(/\s*\n\s*/g, " ")]),
     ...cores.map(c => `${c.labelZh}：${c.instructionZh}`),
     stage === "keyframe"
       ? "静帧只呈现已选时刻的构图、机位、光色及主体姿态，不生成时间过程或切镜效果。"

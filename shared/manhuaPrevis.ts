@@ -1,7 +1,5 @@
 /** 动作白模配置：只有数据，没有用户 Python／命令／任意素材 URL。 */
 import { z } from "zod";
-import { manhuaShotTimeMapSchema, validateManhuaShotTimeMap } from "./manhuaActionPlanTiming";
-import { previsPlaybackDuration, previsPresentationGuideSpec } from "./manhuaPrevisPlayback";
 import {
   previsEffectsSchema,
   previsEffectsDraftSchema,
@@ -216,8 +214,6 @@ const manhuaPrevisSpecBaseSchema = z
     version: z.literal(1),
     durationSec: z.number().int().min(2).max(30),
     aspect: z.enum(["16:9", "9:16"]),
-    /** 人物、接触、特效和相机统一按源时间变速；不是独立摄影机的子弹时间。 */
-    timeMap: manhuaShotTimeMapSchema.optional(),
     actors: z.array(previsActorSchema).min(1).max(6),
     interactions: z.array(previsInteractionSchema).max(24).optional(),
     scriptSource: previsScriptSourceSchema.optional(),
@@ -404,13 +400,6 @@ export function previsCapacityIssueZh(
 export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
   (spec, ctx) => {
     validatePrevisEffects(spec, ctx);
-    if (spec.timeMap) {
-      for (const issue of validateManhuaShotTimeMap(spec.timeMap)) ctx.addIssue({code:"custom",path:["timeMap"],message:issue.messageZh});
-      if (Math.abs(spec.timeMap.sourceDurationSec-spec.durationSec)>1e-6) ctx.addIssue({code:"custom",path:["timeMap"],message:"变速源时长与动作配置不一致，请重新设置快慢节奏"});
-      const duration=previsPlaybackDuration(spec);
-      if (duration<2 || duration>30) ctx.addIssue({code:"custom",path:["timeMap"],message:"变速后的白模须在2—30秒内"});
-      if (spec.exportLayers) ctx.addIssue({code:"custom",path:["timeMap"],message:"变速视频与源时间分层不能一起导出，请关闭分层或恢复常速"});
-    }
     if (spec.exportLayers && (spec.durationSec > 8 || spec.actors.length > 3))
       ctx.addIssue({ code: "custom", message: "分层输出限3人8秒以内" });
     // 能力边界先判：超预算的作业会在 600 秒生产时限里烧满十分钟还交不出视频（0911 实测）
@@ -943,7 +932,6 @@ export function previsSpecKey(spec: ManhuaPrevisSpec): string {
 }
 
 export function formatPrevisMotionGuide(spec: ManhuaPrevisSpec): string {
-  if (spec.timeMap) return "白模已按统一时间表变速；以下秒位均为成片呈现时间，直接跟随参考，不重复变速。\n" + formatPrevisMotionGuide(previsPresentationGuideSpec(spec));
   return [
     "参考中的关节姿态、落脚、蓄力—出手—回收及保护反应按对应秒位读取；不继承白模外形。",
     ...spec.cameras.filter(c => c.orbitDeg).map(c => `${c.startSec}—${c.endSec}秒围绕（${c.target.join("，")}）水平环绕${c.orbitDeg}度，保持半径和高度；人物速度不由环绕改变。`),
