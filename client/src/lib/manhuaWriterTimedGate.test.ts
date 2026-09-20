@@ -46,6 +46,21 @@ import {
 
 const header =
   "| # | 秒位 | 景别·运镜 | 画面 | 台词/字幕 | 音效·配乐 |\n|---|---|---|---|---|---|";
+
+it("同步导演设置保留已确认分镜表的换行、秒位与对白", () => {
+  const confirmed = pack();
+  confirmed.episodes[0].body = `原剧情正文。\n\n## 分镜表\n\n${body}`;
+  const spawned = spawnManhuaDramaStudio({
+    topic: confirmed.seriesTitle, episodeIndex: 1,
+    writerContext: composeWriterPackFactoryContext(confirmed, 1),
+  });
+  const before = resolveShotsForEpisodeKeyarts(spawned.blocks, 1);
+  const synced = studio.applyFactoryPrefsToBlocks(spawned.blocks, {});
+  const after = resolveShotsForEpisodeKeyarts(synced, 1);
+  expect(after.map(({ durationSec, dialogueZh, actionZh }) => ({ durationSec, dialogueZh, actionZh })))
+    .toEqual(before.map(({ durationSec, dialogueZh, actionZh }) => ({ durationSec, dialogueZh, actionZh })));
+  expect(after.reduce((sum, shot) => sum + shot.durationSec, 0)).toBe(145);
+});
 const body = [
   header,
   ...Array.from(
