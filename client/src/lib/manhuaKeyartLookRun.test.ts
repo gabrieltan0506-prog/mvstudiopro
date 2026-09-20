@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
+import { rememberMusicMvOutput } from "./canvasMusicMvWorkflow";
 import { runCanvasBlock } from "./canvasRunBlock";
 import {
   spawnManhuaDramaStudio,
@@ -206,6 +207,9 @@ function actualRerun(scope: Record<string, unknown>) {
       directorBoardUrlByEpisode: {},
       directorBoardUrlByEpisodeSegment: {},
       directorBoardMotionOverlayBySegment: {},
+      // 无 writerPack 的页面状态不产生段情绪线。
+      storyEmotionLineByEpisodeSegment: {},
+      activeDirectionCanon: null,
       explicitWriterVideoModel: null,
       // 0909：回调里新增了容量模式与时长档取值
       getManhuaSegmentCapacityMode: () => "block_when_over",
@@ -255,7 +259,7 @@ function actualCanvasExpression(
     ts.transpileModule(`(${expression})`, {
       compilerOptions: { target: ts.ScriptTarget.ES2022 },
     }).outputText,
-    { ...scope, recordManhuaKeyartLookOutput, mergeManhuaMediaVersions }
+    { ...scope, recordManhuaKeyartLookOutput, mergeManhuaMediaVersions, rememberMusicMvOutput }
   );
 }
 
@@ -449,6 +453,8 @@ describe("静帧造型的真实编排、节点重跑与请求边界", () => {
       runBlockPayload,
       out,
       stashUrls: patch.outputUrls,
+      blocksRef: { current: [runBlockPayload] },
+      workingBlock: runBlockPayload,
     });
     expect(outputPatch.outputUrls).toEqual([
       "https://test.invalid/new-output.png",
