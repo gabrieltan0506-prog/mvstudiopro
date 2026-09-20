@@ -34,6 +34,7 @@ const CANON = {
   ],
   locations: [],
   props: [],
+  episodeMainSceneId: {},
 };
 
 beforeAll(async () => {
@@ -46,7 +47,7 @@ beforeAll(async () => {
         import { createRoot } from 'react-dom/client';
         import { TooltipProvider } from './client/src/components/ui/tooltip';
         import ManhuaScriptWorkbench from './client/src/components/ManhuaScriptWorkbench';
-        globalThis.fixture = { keyart: 0, openedIssue: undefined, updatedClip: undefined };
+        globalThis.fixture = { keyart: 0, removed: [], openedIssue: undefined, updatedClip: undefined };
         const refs = ${JSON.stringify(REFS)};
         const canon = ${JSON.stringify(CANON)};
         createRoot(document.getElementById('root')).render(
@@ -56,6 +57,7 @@ beforeAll(async () => {
               episodeCount={1} focusEpisode={1} onFocusEpisode={() => {}}
               characterIds={[]} propIds={[]} outlineConfirmed={true}
               workflowPhase='assets' customAssetRefs={refs} assetCanon={canon}
+              onRemoveCustomAsset={(id) => globalThis.fixture.removed.push(id)}
               onUploadCustomAssets={async () => {}}
               onGenerateAllEpisodeKeyarts={async () => { globalThis.fixture.keyart += 1; }}
               onGenerateAsset3d={async () => {}}
@@ -197,6 +199,8 @@ async function mountStoryboard(directorProbe = false, progressProbe = false): Pr
 async function mount(): Promise<{ page: Page; close: () => Promise<void> }> {
   const ctx = await browser.createBrowserContext();
   const page = await ctx.newPage();
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(String(error)));
   await page.setRequestInterception(true);
   page.on("request", (req) =>
     req.url().startsWith("data:") ? req.continue() : req.respond({ status: 200, body: "" }),
@@ -204,11 +208,27 @@ async function mount(): Promise<{ page: Page; close: () => Promise<void> }> {
   await page.goto("http://localhost/", { waitUntil: "domcontentloaded" }).catch(() => {});
   await page.setContent("<div id=root></div>");
   await page.evaluate(bundle);
-  await page.waitForSelector("[data-manhua-custom-refs-role=character]", { timeout: 30_000 });
+  await page.waitForSelector("[data-manhua-custom-refs-role=character]", { timeout: 5_000 }).catch(error => { throw new Error(errors.join("\n") || String(error)); });
   return { page, close: async () => { await ctx.close().catch(() => {}); } };
 }
 
 describe("浏览器真实页面：资产页同名多版本收成实体卡", () => {
+  it("切换查看版本清除隐藏勾选，批量删除只处理仍可见的选择", async () => {
+    const { page, close } = await mount();
+    try {
+      await page.click('[title="查看阿菁-定妆，不改变采用版本"]');
+      await page.click('[data-manhua-custom-ref-id="a2"] input[type=checkbox]');
+      await page.click('[data-manhua-custom-ref-id="z9"] input[type=checkbox]');
+      await page.click('[title="查看阿菁-编辑，不改变采用版本"]');
+      await page.waitForFunction(() => getComputedStyle(document.querySelector('[data-manhua-custom-ref-id="a2"]')!).display === 'none');
+      expect(await page.$eval('[data-manhua-custom-ref-id="a2"] input', e => (e as HTMLInputElement).checked)).toBe(false);
+      expect(await page.$eval('[data-manhua-custom-ref-id="z9"] input', e => (e as HTMLInputElement).checked)).toBe(true);
+      page.on('dialog', dialog => void dialog.accept());
+      await page.evaluate(() => Array.from(document.querySelectorAll('button')).find(b => b.textContent?.trim() === '删除所选')!.click());
+      expect(await page.evaluate(() => (window as any).fixture.removed)).toEqual(['z9']);
+      expect(await page.evaluate(() => (window as any).fixture.keyart)).toBe(0);
+    } finally { await close(); }
+  }, 180_000);
   it("版本缩略条定位对应原卡，不改变采用职责或触发生成", async () => {
     const { page, close } = await mount();
     try {
