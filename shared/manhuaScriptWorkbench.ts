@@ -19,6 +19,8 @@ import {
 } from "./manhuaCameraAngleBank.js";
 import { normalizeManhuaShotCameraLanguage } from "./manhuaCameraLanguageZh.js";
 import {
+  buildManhuaDialogueTimelineBeats,
+  parseManhuaDialogueCues,
   formatManhuaClipSceneLightBoard,
   formatManhuaDialogueTimelineBlock,
 } from "./manhuaClipDialogueTimeline.js";
@@ -63,6 +65,8 @@ export type ManhuaWorkbenchShot = {
   actionZh: string;
   /** 0916 状态变体：本镜角色状态句（如「墨屠（肩伤）：肩头血口」），进静帧提示词 */
   stateNoteZh?: string;
+  /** 原稿独立声音指示：只进入成片声音旁轨，不进入动作、静帧或对白/TTS。 */
+  soundZh?: string;
   /** 本镜台词（只作表演，不烧字） */
   dialogueZh?: string;
   /** 用户明确清空本镜台词；区别于“尚无覆盖、可继承剧本”。 */
@@ -317,7 +321,7 @@ export function recutWorkbenchShotsTo(
       buckets[Math.min(total - 1, Math.floor((i * total) / list.length))]!.push(s);
     });
     const seams: number[] = [];
-    const joinField = (chunk: ManhuaWorkbenchShot[], key: "dialogueZh" | "actionZh") =>
+    const joinField = (chunk: ManhuaWorkbenchShot[], key: "dialogueZh" | "actionZh" | "soundZh") =>
       chunk
         .map((s) => String(s[key] || "").trim())
         .filter(Boolean)
@@ -338,6 +342,7 @@ export function recutWorkbenchShotsTo(
         durationSec: chunk.reduce((n, s) => n + (Number(s.durationSec) || 0), 0),
         actionZh: joinField(chunk, "actionZh") || "",
         dialogueZh: joinField(chunk, "dialogueZh"),
+        ...(joinField(chunk, "soundZh") ? { soundZh: joinField(chunk, "soundZh") } : {}),
         intentZh: firstOf(chunk, "intentZh") as string | undefined,
         emotionZh: firstOf(chunk, "emotionZh") as string | undefined,
         voiceToneZh: firstOf(chunk, "voiceToneZh") as string | undefined,
@@ -576,6 +581,7 @@ function splitCameraAndAction(rawBody: string): { cameraZh: string; actionZh: st
 }
 
 type ParsedShotRow = {
+  soundZh?: string;
   index: number;
   cameraZh: string;
   actionZh: string;
@@ -687,6 +693,7 @@ function parseShotRowsFromText(raw: string): ParsedShotRow[] {
       index: row.index,
       cameraZh: row.cameraZh,
       actionZh: row.actionZh,
+      ...(row.soundZh?.trim() ? { soundZh: row.soundZh.trim() } : {}),
       durationSec:
         Number.isFinite(row.endSec - row.startSec) && row.endSec > row.startSec
           ? row.endSec - row.startSec : undefined,
@@ -786,6 +793,7 @@ export function parseWorkbenchShotsFromTextResult(raw: string | undefined | null
     ...(row.cameraAngleId ? { cameraAngleId: row.cameraAngleId } : {}),
     // 动作参与静帧、角色匹配、成片和修订身份；展示长度不能静默裁掉生产正文。
     actionZh: row.actionZh,
+    ...(row.soundZh?.trim() ? { soundZh: row.soundZh.trim() } : {}),
     dialogueZh: row.dialogueZh || undefined,
     emotionZh: row.emotionZh || undefined,
     voiceToneZh: row.voiceToneZh || undefined,
@@ -1061,6 +1069,15 @@ export function hydrateWorkbenchShotsWithSegmentDialogue(
 ): ManhuaWorkbenchShot[] {
   const list = Array.isArray(shots) ? shots : [];
   const tagByName = opts?.speakerTagByNameZh || {};
+  // 姓名属于说话人身份，不是可丢弃的台词装饰；逐句映射，不能把多人绑到首人。
+  const retainDialogueIdentity = (line: string) => {
+    const cues = parseManhuaDialogueCues(line);
+    if (!cues.some(cue => cue.speakerAtTag)) return stripManhuaSpeakerAtPrefix(line);
+    return cues.map(cue => {
+      const identity = tagByName[cue.speakerAtTag] || cue.speakerAtTag;
+      return identity ? `${identity}：「${cue.dialogueZh}」` : cue.dialogueZh;
+    }).join("；");
+  };
   const resolveSpeakerTag = (
     line: string,
     actionZh: string,
@@ -1083,12 +1100,12 @@ export function hydrateWorkbenchShotsWithSegmentDialogue(
   const lines = (dialogueLines || [])
     .map((d) => String(d || "").trim())
     .filter((d) => d.length >= 1);
-  if (!list.length || !lines.length) return list;
+  if (!list.length) return list;
   const perf = extractManhuaPerformanceCue(performanceZh || "");
   const hydrated = list.map((s, shotOffset) => {
     const fromAction = extractManhuaPerformanceCue(s.actionZh);
     if (s.dialogueSuppressed) {
-      return { ...s, dialogueZh: undefined };
+      return { ...s, dialogueZh: undefined, additionalDialogueCues: [] };
     }
     const existing =
       String(s.dialogueZh || "").trim() || fromAction.dialogueZh;
@@ -1099,9 +1116,7 @@ export function hydrateWorkbenchShotsWithSegmentDialogue(
         fromAction.speakerAtTag || "",
         s.dialogueSpeakerNameZh,
       );
-      const dialogueZh = stripManhuaSpeakerAtPrefix(
-        existing.replace(/^([\u4e00-\u9fff·A-Za-z]{1,12})\s*[：:]\s*/, ""),
-      );
+      const dialogueZh = retainDialogueIdentity(existing);
       if (!speakerAtTag || /@角色\d+/.test(s.actionZh || "")) {
         return { ...s, dialogueZh: dialogueZh || existing };
       }
@@ -1120,9 +1135,7 @@ export function hydrateWorkbenchShotsWithSegmentDialogue(
       String(s.actionZh || ""),
       fromAction.speakerAtTag || "",
     );
-    const dialogueOnly = stripManhuaSpeakerAtPrefix(
-      line.replace(/^([\u4e00-\u9fff·A-Za-z]{1,12})\s*[：:]\s*/, ""),
-    );
+    const dialogueOnly = retainDialogueIdentity(line);
     return {
       ...s,
       dialogueZh: dialogueOnly || stripManhuaSpeakerAtPrefix(line),
@@ -1147,6 +1160,7 @@ export function hydrateWorkbenchShotsWithSegmentDialogue(
   if (!extraLines.length) return hydrated;
   const tailIndex = hydrated.length - 1;
   const tail = hydrated[tailIndex]!;
+  if (tail.dialogueSuppressed) return hydrated;
   const fromAction = extractManhuaPerformanceCue(tail.actionZh);
   const additionalDialogueCues = extraLines.map((line) => {
     const speakerAtTag = resolveSpeakerTag(
@@ -1157,10 +1171,7 @@ export function hydrateWorkbenchShotsWithSegmentDialogue(
     const speakerNameZh = String(
       line.match(/^([\u4e00-\u9fff·A-Za-z]{1,12})\s*[：:]\s*[「『"“]/)?.[1] || "",
     ).trim();
-    const dialogueZh =
-      stripManhuaSpeakerAtPrefix(
-        line.replace(/^([\u4e00-\u9fff·A-Za-z]{1,12})\s*[：:]\s*/, ""),
-      ) || stripManhuaSpeakerAtPrefix(line);
+    const dialogueZh = retainDialogueIdentity(line);
     return {
       dialogueZh,
       ...(speakerAtTag ? { speakerAtTag } : {}),
@@ -1258,6 +1269,21 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
     lightingCameraZh: lighting,
     paletteZh: palette,
   });
+  // 复用镜头秒轴，只增独立声音旁轨；不能塞入对白/TTS或静帧动作。
+  const soundWindows = buildManhuaDialogueTimelineBeats(shots, dur);
+  const soundLines = shots.flatMap((shot, index) => {
+    const sound = String(shot.soundZh || "").trim();
+    if (!sound) return [];
+    const window = soundWindows[index];
+    if (!window) return [];
+    const sourceWindow = typeof shot.sourceDurationSec === "number"
+      ? `（原镜内${shot.sourceOffsetSec ?? 0}–${Math.round(((shot.sourceOffsetSec ?? 0) + shot.durationSec) * 1e6) / 1e6}秒／总长${shot.sourceDurationSec}秒；以下为原镜整体声音上下文，仅在本窗口实际发生的事件处触发，持续声承接，不得每窗从头重复瞬态音效）`
+      : "";
+    return [`镜${shot.index}，本段${Math.round(window.startSec * 1e6) / 1e6}–${Math.round(window.endSec * 1e6) / 1e6}秒${sourceWindow}：${sound}`];
+  });
+  const soundBlock = soundLines.length
+    ? ["【原稿声音指示】以下仅为音效、环境声或配乐指示，不作为人物台词朗读，不烧成字幕；只在当前镜实际发生的事件处触发，不重复已经发生的瞬态音效，持续声音按画面承接并避让对白。", ...soundLines].join("\n")
+    : "";
   const continuation = shots
     .filter((shot) => typeof shot.sourceDurationSec === "number")
     .map((shot) => {
@@ -1275,7 +1301,7 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
   const storyCoreBlock = storyCore ? `【本段戏核】${storyCore}` : "";
   // 段头场景锁 + 光影氛围 + 秒轴（动作/运镜轨迹/景别）；资产/@Image 由 ensure 挂
   return stripManhuaClipForbiddenBoards(
-    stripManhuaPromptSlop([headBoard, storyCoreBlock, continuation, timeline, tailHold].filter(Boolean).join("\n")),
+    stripManhuaPromptSlop([headBoard, storyCoreBlock, continuation, timeline, soundBlock, tailHold].filter(Boolean).join("\n")),
   );
 }
 

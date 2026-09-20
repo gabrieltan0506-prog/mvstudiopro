@@ -36,6 +36,34 @@ export type ManhuaDialogueTimelineBeat = {
   }>;
 };
 
+/** 只拆明确的“姓名：台词”，人物身份留在引号外；多人逐句进入现有镜内时间窗。 */
+export function parseManhuaDialogueCues(raw: string, fallbackSpeaker = ""): Array<{ dialogueZh: string; speakerAtTag: string }> {
+  const text = String(raw || "").trim();
+  if (!text) return [];
+  // 姓名/别名/括号状态都属于冒号前的明确署名，不按姓名字数截断。
+  const identity = '[^：:\\n\\r；;，,。！？!?「」『』“”"]{1,80}';
+  const quoted = new RegExp(`(${identity})\\s*[：:]\\s*(?:「([^」]*)」|『([^』]*)』|“([^”]*)”|"([^"]*)")`, "g");
+  const matches = Array.from(text.matchAll(quoted));
+  // 必须消费完整原文才能拆句，不能因局部匹配丢掉后半句或动作。
+  if (matches.length && !text.replace(quoted, "").replace(/[\s；;，,。]+/g, "")) {
+    return matches.map(match => ({
+      speakerAtTag: match[1]!.trim(),
+      dialogueZh: match[2] ?? match[3] ?? match[4] ?? match[5] ?? "",
+    })).filter(cue => cue.dialogueZh);
+  }
+  const named = text.match(new RegExp(`^(${identity})\\s*[：:]\\s*([\\s\\S]+)$`));
+  if (named) {
+    // 无引号的明确换行/分号轮次仍须分别保留说话人。
+    const turns = text.split(new RegExp(`[；;\\n]+(?=\\s*(?:${identity})\\s*[：:])`));
+    if (turns.length > 1) return turns.flatMap(turn => parseManhuaDialogueCues(turn, fallbackSpeaker));
+    const body = named[2]!.trim();
+    const pairs: Record<string, string> = { "「": "」", "『": "』", "“": "”", '"': '"' };
+    const dialogueZh = pairs[body[0]!] === body.at(-1) ? body.slice(1, -1) : body;
+    return [{ speakerAtTag: named[1]!.trim(), dialogueZh }];
+  }
+  return [{ speakerAtTag: fallbackSpeaker || extractManhuaSpeakerAtTag(text), dialogueZh: stripManhuaSpeakerAtPrefix(text) }];
+}
+
 function resolveShotDialogue(shot: ManhuaWorkbenchShot): string {
   if (shot.dialogueSuppressed) return "";
   const direct = String(shot.dialogueZh || "").trim();
@@ -107,13 +135,10 @@ export function buildManhuaDialogueTimelineBeats(
         s.actionZh,
         fromAction.speakerAtTag,
       ),
-      additionalDialogueCues: (s.additionalDialogueCues || [])
-        .map((cue) => ({
-          dialogueZh: stripManhuaSpeakerAtPrefix(cue.dialogueZh).trim(),
-          speakerAtTag: String(
-            cue.speakerAtTag || extractManhuaSpeakerAtTag(cue.dialogueZh, s.actionZh),
-          ).trim(),
-        }))
+      additionalDialogueCues: (s.dialogueSuppressed ? [] : s.additionalDialogueCues || [])
+        .flatMap((cue) => parseManhuaDialogueCues(cue.dialogueZh, String(
+          cue.speakerAtTag || extractManhuaSpeakerAtTag(cue.dialogueZh, s.actionZh),
+        ).trim()))
         .filter((cue) => cue.dialogueZh),
     };
   });
@@ -319,7 +344,8 @@ export function formatManhuaDialogueTimelineBlock(
   const lines = beats.flatMap((b, i) => {
     const frame = extractManhuaFramingLabelZh(b.cameraZh, b.actionZh);
     const traj = cameraTrajectoryZh(b.cameraZh, b.actionZh);
-    const speaker = b.speakerAtTag;
+    const primaryCues = parseManhuaDialogueCues(b.dialogueZh, b.speakerAtTag);
+    const speaker = primaryCues[0]?.speakerAtTag || b.speakerAtTag;
     let action = stripLeadingCameraDirection(
       String(b.actionZh || "")
         .replace(/[「『"“][^」』"”]{0,200}[」』"”]/g, "")
@@ -335,7 +361,7 @@ export function formatManhuaDialogueTimelineBlock(
     const emotionRaw = sharedEmotion ? "" : emotionOf(b);
     const emotion = emotionRaw && emotionRaw !== micro ? emotionRaw : "";
     const tone = sharedTone ? "" : toneOf(b);
-    const line = stripManhuaSpeakerAtPrefix(b.dialogueZh).trim();
+    const line = primaryCues[0]?.dialogueZh || "";
     // 光与氛围是段级常量，段头【光影·景别·氛围】已写；每镜再复读一遍，
     // 15s 三镜就让同一串配色出现五次，纯占 token 又稀释镜级信息。
     /**
@@ -368,7 +394,7 @@ export function formatManhuaDialogueTimelineBlock(
     });
     // 节拍功能标进秒轴正文（〔…〕），紧跟时间头之后、运镜之前，与样片右上角节拍对齐
     const cues = [
-      ...(line ? [{ dialogueZh: line, speakerAtTag: speaker }] : []),
+      ...primaryCues,
       ...b.additionalDialogueCues,
     ];
     if (cues.length <= 1) {

@@ -46,6 +46,7 @@ import {
   planManhuaClipSeedanceImageBind,
   resolveManhuaAssetImageBindRows,
   resolveManhuaSegmentClipAllowedAssets,
+  resolveManhuaSegmentCastZh,
   parseManhuaAssetImageBindBlock,
   sanitizeManhuaClipPromptForUi,
   sceneLabelMatchesHintZh,
@@ -69,7 +70,6 @@ import {
 import { normalizeForManhuaNameMatch } from "@shared/manhuaScriptTextNormalize";
 import {
   extractManhuaSegmentDialogueQuotes,
-  inferManhuaCastZhFromDialogue,
   parseManhuaEpisodeSegmentPlanFromMarkdown,
   type ManhuaEpisodeSegmentPlan,
 } from "@shared/manhuaEpisodeSegmentPlan";
@@ -78,6 +78,7 @@ import {
   ManhuaOutboundConfirmationMismatchError,
   ManhuaOutboundConfirmationMissingError,
   newWanSubmissionKey,
+  normalizeOutboundRefUrlForFingerprint,
   runCanvasBlock,
   type CanvasRunDeps,
   type ManhuaOutboundGate,
@@ -199,7 +200,7 @@ import {
 import { applyShotAnglesFromText } from "@shared/manhuaShotAnglePersist";
 import { applyShotDialoguesFromText } from "@shared/manhuaShotDialoguePersist";
 import { mergeManhuaDerivedClipPrompt } from "@shared/manhuaClipUserSupplement";
-import { extractManhuaSceneHintFromPrompt } from "@shared/manhuaClipDialogueTimeline";
+import { extractManhuaSceneHintFromPrompt, parseManhuaDialogueCues } from "@shared/manhuaClipDialogueTimeline";
 import {
   clearManhuaVideoEditOperation,
   isManhuaVideoEditBlock,
@@ -1968,12 +1969,21 @@ function buildSpeakerTagByNameZh(
 ): Record<string, string> {
   const allow = new Set(characterIds);
   const out: Record<string, string> = {};
+  const ambiguous = new Set<string>();
+  const owners = new Map<string, { characterId: string; duty: string | null | undefined }>();
   for (const s of registry?.byRole.character || []) {
     if (!allow.has(s.id)) continue;
-    const canon = (assetCanon?.characters || []).find((c) => c.id === s.id);
+    const canon = (assetCanon?.characters || []).find((c) => c.id === (s.seedLibraryId || s.id));
     for (const name of [s.labelZh, canon?.nameZh, canon?.aliasZh]) {
       const n = String(name || "").trim();
-      if (n.length >= 2) out[n] = s.tag;
+      if (!(n.length >= 2 || (n.length === 1 && n === canon?.nameZh)) || ambiguous.has(n)) continue;
+      const owner = owners.get(n);
+      if (out[n] && out[n] !== s.tag) {
+        // 同一人拆脸/造型两图时，声音身份取明确锁脸图；同名不同人或两张锁脸图不可任选。
+        if (canon && owner?.characterId === canon.id && owner.duty !== s.duty && (owner.duty === "identity" || s.duty === "identity")) {
+          if (s.duty === "identity") { out[n] = s.tag; owners.set(n, { characterId: canon.id, duty: s.duty }); }
+        } else { delete out[n]; ambiguous.add(n); }
+      } else { out[n] = s.tag; owners.set(n, { characterId: canon?.id || s.id, duty: s.duty }); }
     }
   }
   return out;
@@ -2411,16 +2421,23 @@ export function ensureManhuaFragmentClips(
       .filter(Boolean)
       .join("\n");
     // 可拍表缺「角色：」时，用对白「姓名：」说话人补真名，避免只剩描述词对不齐
-    const effectiveCastZh = inferManhuaCastZhFromDialogue(
-      planBeat?.castZh,
-      [String(planBeat?.dialogueZh || ""), ...dialogueLines, ...seg.shots.flatMap(s => [s.dialogueSpeakerNameZh ? `${s.dialogueSpeakerNameZh}：「${s.dialogueZh || ""}」` : "", s.actionZh])].filter(Boolean).join("\n"),
-    );
+    const shotDialogueNames = seg.shots.flatMap(shot => parseManhuaDialogueCues(shot.dialogueZh || "")
+      .map(cue => cue.speakerAtTag).filter(name => name && !name.startsWith("@")));
+    const effectiveCastZh = resolveManhuaSegmentCastZh({
+      castZh: planBeat?.castZh,
+      dialogueZh: [String(planBeat?.dialogueZh || ""), ...dialogueLines].filter(Boolean).join("\n"),
+      shots: seg.shots,
+      registry: segmentRegistry,
+      assetCanon: opts?.assetCanon,
+    });
     const castCount = Math.min(
       4,
       Math.max(
         1,
         ...seg.shots.map((s) => inferWorkbenchShotCastCount(String(s.actionZh || ""))),
         splitCastHintCount(effectiveCastZh || planBeat?.castZh),
+        new Set(shotDialogueNames).size,
+        !String(planBeat?.castZh || "").trim() ? effectiveCastZh.split("；").filter(Boolean).length : 0,
       ),
     );
     /**
@@ -2593,15 +2610,19 @@ export function ensureManhuaFragmentClips(
      */
     const segNeedsFace =
       splitManhuaCastZhNames(effectiveCastZh || planBeat?.castZh || "").length > 0 ||
-      dialogueLines.length > 0;
+      dialogueLines.length > 0 || shotDialogueNames.length > 0;
     const bindRowsForFace = parseManhuaAssetImageBindBlock(assetLockBlock);
     const lockedCastLabels = new Set(
       bindRowsForFace
         .filter((r) => r.tag.startsWith("@角色"))
-        .map((r) => String(r.labelZh || "").trim())
+        .flatMap((r) => {
+          const slot = segmentRegistry.byRole.character.find(slot => slot.id === r.id);
+          const anchor = opts?.assetCanon?.characters.find(anchor => anchor.id === (slot?.seedLibraryId || slot?.id));
+          return [r.labelZh, anchor?.nameZh, anchor?.aliasZh].map(name => String(name || "").trim());
+        })
         .filter(Boolean),
     );
-    const castNamesNeeded = splitManhuaCastZhNames(effectiveCastZh || planBeat?.castZh || "");
+    const castNamesNeeded = Array.from(new Set([...splitManhuaCastZhNames(effectiveCastZh || planBeat?.castZh || ""), ...shotDialogueNames]));
     /** 可拍表每个真名都要在对照表里有对应 @角色；只锁一人不算本段已锁脸 */
     const missingCastFaceNames = castNamesNeeded.filter((n) => {
       if (lockedCastLabels.has(n)) return false;
@@ -3407,6 +3428,15 @@ function slotMatchesAssetNode(
    */
   const hit = canvasAssetNodeSeed(block.id);
   if (!hit || hit.role !== slot.role) return false;
+  const selectedPath = String(slot.path || "").trim();
+  if (slot.role === "character" && isBindableAssetPath(selectedPath) && (block.outputUrl || block.outputUrls?.length)) {
+    // 已出图节点必须与当前采用版本一致；按真实视觉消费者核对，历史输出/上传/垫图不能夹带别版。
+    // 无输出节点仍沿原身份依赖解析，不能因尚未出图拆掉其合理依赖。
+    const identity = normalizeOutboundRefUrlForFingerprint(selectedPath);
+    const images = collectVisionImages(block.id, [block as CanvasBlock], []);
+    return normalizeOutboundRefUrlForFingerprint(mediaUrlOf(block)) === identity && images.length > 0 &&
+      images.every(image => normalizeOutboundRefUrlForFingerprint(image.url) === identity);
+  }
   const seed = String(slot.seedLibraryId || "").trim();
   const slotId = String(slot.id || "").trim();
   if (seed && (hit.seed === seed || hit.seed.includes(seed) || seed.includes(hit.seed))) {

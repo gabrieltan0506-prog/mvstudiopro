@@ -179,6 +179,7 @@ export function ManhuaPrevisStudioView({
     const targetDuration = parseManhuaClipTargetDurationSec(current.block.prompt || "");
     const issue = manhuaGeneratedPrevisCoverageIssue({
       reference, studio: next,
+      autoSegment: current.block.manhuaAutoSegment,
       durationSec: targetDuration == null ? undefined : clampManhuaClipDurationSecForVideoModel(current.block.videoModel, targetDuration),
       shotIndexes: current.block.manhuaAutoSegment?.shotIndexes ?? sourceShots.map(shot => shot.index),
     });
