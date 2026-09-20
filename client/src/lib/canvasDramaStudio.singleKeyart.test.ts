@@ -59,7 +59,7 @@ describe("当前镜首次生成与重出", () => {
   });
 });
 
-it("归档同镜旧图不阻断当前新图，也不混入段参考", async () => {
+it.each([false, true])("归档同镜旧图不混入段参考（残留连线=%s）", async (linked) => {
   const g = fixture();
   vi.spyOn(runner, "runCanvasBlock").mockResolvedValue({ outputUrl: "https://test.invalid/current.png" });
   const r = await runManhuaDramaFactoryPipeline({ ...g, deps: { optimizeCopy: async () => "" }, episodeIndex: 1, untilStage: "keyart", keyartShotIndex: 2, maxRetries: 0, ensureOptions: { customRefs: refs } });
@@ -68,9 +68,9 @@ it("归档同镜旧图不阻断当前新图，也不混入段参考", async () =
   const clip = plan.blocks.find(b => b.id.startsWith("clip-") && !b.archivedFromPreviousScript)!;
   const keyart = plan.blocks.find(b => b.id.startsWith("keyart-"))!;
   const baseline = await prepareManhuaFactoryClipInput({ blocks: plan.blocks, edges: plan.edges, blockId: clip.id, fallbackBlock: clip, stage: "clip", preparedVideoEdit: false });
-  const archived = { ...keyart, id: "keyart-e01-s02-archived-test", archivedFromPreviousScript: true, outputUrl: "https://test.invalid/archived.png", manhuaKeyartSourceState: undefined };
+  const archived = { ...keyart, id: "keyart-e01-s02-archived-test", archivedFromPreviousScript: true, outputUrl: "https://test.invalid/archived.png", outputUrls: ["https://test.invalid/archived.png"], manhuaKeyartSourceState: undefined };
   const blocks = [...plan.blocks, archived];
-  const result = await prepareManhuaFactoryClipInput({ blocks, edges: plan.edges, blockId: clip.id, fallbackBlock: clip, stage: "clip", preparedVideoEdit: false });
+  const result = await prepareManhuaFactoryClipInput({ blocks, edges: linked ? [...plan.edges, { fromId: archived.id, toId: clip.id }] : plan.edges, blockId: clip.id, fallbackBlock: clip, stage: "clip", preparedVideoEdit: false });
   expect(result).toEqual(baseline);
   expect(blocks.at(-1)).toEqual(archived);
 });
