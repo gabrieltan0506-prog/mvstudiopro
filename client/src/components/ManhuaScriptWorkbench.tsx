@@ -3278,6 +3278,16 @@ export default function ManhuaScriptWorkbench({
     finalCutStale: Boolean(finalCutStale),
     hasFinalVideo: Boolean(finalVideoUrl),
   });
+  // 问题时间来自本集原稿分段；定位只切工作区，不发起生成或改变采用状态。
+  const finalSegmentIssues = segments.flatMap(segment => {
+    const candidates = episodeClips.filter(clip => resolveClipLocalSegmentIndex(clip.id, clip.prompt, focusEpisode) === segment.index);
+    const clip = candidates.find(item => item.status === "done" && clipOutputUrl(item)) || candidates[0];
+    const noVideo = !clip || clip.status !== "done" || !clipOutputUrl(clip);
+    const qualityPending = !noVideo && clip.manhuaClipQuality?.status !== "passed";
+    const dialoguePending = !noVideo && !qualityPending && clip.audioStudio?.cues.some(cue => cue.enabled && cue.kind === "dialogue" && !hasAdoptedManhuaAudio(cue));
+    if (!noVideo && !qualityPending && !dialoguePending) return [];
+    return [{ segment, targetAudio: Boolean(dialoguePending), labelZh: noVideo ? "尚无可用成片" : qualityPending ? (clip?.manhuaClipQuality?.status === "failed" ? "画面质检未通过" : "画面尚待质检") : "对白尚未确认采用" }];
+  });
   const storyboardThreeColumn = activePhase === "storyboard" && shots.length > 0;
   const shotParamFields = buildManhuaShotParamFields(activeShot);
   let sevenCoreValues: ReturnType<typeof extractManhuaShotSevenCore> = null;
@@ -4924,7 +4934,25 @@ export default function ManhuaScriptWorkbench({
           </ul>
         </div>
 
-              <button type="button" onClick={() => selectPhase("edit")} className="mt-3 min-h-11 rounded border border-white/20 px-3 text-xs">定位片段并处理</button>
+              {finalSegmentIssues.length ? <details open className="mt-3 rounded-lg border border-amber-300/20 p-2">
+                <summary className="cursor-pointer text-xs text-amber-100">逐段处理 · {finalSegmentIssues.length} 段待处理</summary>
+                <div className="mt-2 max-h-72 space-y-2 overflow-y-auto">
+                  {finalSegmentIssues.map(issue => <button type="button" key={issue.segment.index}
+                    data-manhua-review-issue={issue.segment.index}
+                    className="flex min-h-11 w-full items-center justify-between gap-3 rounded border border-white/15 px-3 py-2 text-left text-xs hover:bg-white/10"
+                    onClick={() => {
+                      setActiveSegmentOverride(issue.segment.index);
+                      const index = shots.findIndex(shot => shot.index === issue.segment.shots[0]?.index);
+                      if (index >= 0) setShotIndex(index);
+                      selectPhase("storyboard");
+                      if (issue.targetAudio && outlineComplete) { setAudioStudioOpen(true); setAudioStudioPhase("storyboard"); }
+                    }}>
+                    <span>第{issue.segment.index}段 · {issue.labelZh}<span className="mt-1 block text-white/50">剧本时间 {typeof issue.segment.sourceStartSec === "number" ? issue.segment.sourceStartSec.toFixed(1) : "未标"}–{typeof issue.segment.sourceEndSec === "number" ? issue.segment.sourceEndSec.toFixed(1) : "未标"} 秒</span></span>
+                    <span className="shrink-0 text-cyan-100">去处理 →</span>
+                  </button>)}
+                </div>
+              </details> : null}
+              <button type="button" onClick={() => selectPhase("edit")} className="mt-3 min-h-11 rounded border border-white/20 px-3 text-xs">查看剪辑与字幕</button>
             </section>
             <section data-manhua-final-section="delivery" className="min-w-0 rounded-xl border border-white/15 bg-white/[0.03] p-3"><h2 className="mb-2 text-sm font-semibold">导出交付</h2><div id="manhua-final-delivery-host" /></section>
           </div>

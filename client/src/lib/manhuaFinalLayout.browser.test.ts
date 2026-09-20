@@ -152,3 +152,20 @@ it('真实终审三块、裁切回流、原Dock范围保留与未知失效',asyn
   expect(errors).toEqual([]);
  }finally{await close();}
 },180000);
+
+it('终审问题按剧本秒位定位指定段且不触发生成', async () => {
+  const { page, close } = await mount();
+  try {
+    await page.evaluate(() => (window as any).__wbProps.onWorkflowPhaseChange('final'));
+    await page.waitForSelector('[data-manhua-review-issue="2"]');
+    expect(await page.$eval('[data-manhua-review-issue="2"]', element => element.textContent)).toContain('剧本时间');
+    const before = await page.evaluate(() => JSON.stringify((window as any).__posts));
+    await page.click('[data-manhua-review-issue="2"]');
+    await page.waitForFunction(() => (window as any).__wbProps.workflowPhase === 'storyboard');
+    await page.waitForSelector('[data-manhua-filmstrip-segment="2"][data-manhua-active="true"]');
+    expect(await page.evaluate(() => JSON.stringify((window as any).__posts))).toBe(before);
+    await page.evaluate(() => (window as any).__wbProps.onWorkflowPhaseChange('final'));
+    await page.waitForSelector('[data-manhua-review-issue="2"]');
+    expect(await page.$eval('[data-manhua-review-issue="2"]', element => element.textContent)).toContain('尚无可用成片');
+  } finally { await close(); }
+}, 180000);
