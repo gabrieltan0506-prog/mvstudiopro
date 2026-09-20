@@ -173,6 +173,8 @@ export const previsActorSchema = z
   .object({
     id: z.string().min(1).max(100),
     nameZh: z.string().trim().min(1).max(80),
+    /** 角色在白模中的身份色；旧稿缺省时按身份分配。 */
+    colorIndex: z.number().int().min(0).max(5).optional(),
     /** 仅标明对应的项目角色；不声称为无骨骼 GLB 自动蒙皮。 */
     assetRef: z.string().max(160).optional(),
     weapon: z.literal("practice_sword").optional(),
@@ -226,6 +228,10 @@ const manhuaPrevisSpecBaseSchema = z
             endSec: z.number().finite().positive().max(30),
             position: cameraPoint,
             target: cameraPoint,
+            endPosition: cameraPoint.optional(),
+            endTarget: cameraPoint.optional(),
+            /** 围绕当前注视点的水平环绕角度；不改变人物动作速度。 */
+            orbitDeg: z.number().finite().min(-180).max(180).optional(),
             lens: z.number().int().min(18).max(65),
           })
           .strict()
@@ -320,6 +326,9 @@ export const manhuaPrevisDraftSchema = manhuaPrevisSpecBaseSchema.extend({
           endSec: draftNumber,
           position: draftCameraPoint,
           target: draftCameraPoint,
+          endPosition: draftCameraPoint.optional(),
+          endTarget: draftCameraPoint.optional(),
+          orbitDeg: draftNumber.optional(),
           lens: draftNumber,
         })
         .strict()
@@ -771,6 +780,12 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
         });
     });
     spec.cameras.forEach((camera, i) => {
+      if (camera.orbitDeg !== undefined) {
+        if (camera.endPosition || camera.endTarget) ctx.addIssue({ code: "custom", message: "环绕与直线终点不能同时使用", path: ["cameras", i] });
+        const radius = Math.hypot(camera.position[0] - camera.target[0], camera.position[1] - camera.target[1]);
+        if (radius < 0.5 || Math.abs(camera.target[0]) + radius > 30 || Math.abs(camera.target[1]) + radius > 30)
+          ctx.addIssue({ code: "custom", message: "环绕半径须至少半米，环绕范围须留在舞台内", path: ["cameras", i] });
+      }
       if (Math.round(camera.endSec * 24) <= Math.round(camera.startSec * 24))
         ctx.addIssue({
           code: "custom",
@@ -788,12 +803,14 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
           message: "机位时间段须连续覆盖全片",
           path: ["cameras", i],
         });
-      if (
-        Math.hypot(...camera.position.map((n, j) => n - camera.target[j])) < 0.5
-      )
+      const delta = camera.position.map((n, j) => n - camera.target[j]);
+      const travel = delta.map((n, j) => (camera.endPosition ?? camera.position)[j] - (camera.endTarget ?? camera.target)[j] - n);
+      const travelSquared = travel.reduce((sum, n) => sum + n * n, 0);
+      const closest = travelSquared ? Math.max(0, Math.min(1, -delta.reduce((sum, n, j) => sum + n * travel[j], 0) / travelSquared)) : 0;
+      if (Math.hypot(...delta.map((n, j) => n + closest * travel[j])) < 0.5)
         ctx.addIssue({
           code: "custom",
-          message: "机位与目标不能重合",
+          message: "机位与目标不能重合，运动途中也须保持至少半米距离",
           path: ["cameras", i],
         });
     });
@@ -917,6 +934,10 @@ export function previsSpecKey(spec: ManhuaPrevisSpec): string {
 export function formatPrevisMotionGuide(spec: ManhuaPrevisSpec): string {
   return [
     "参考中的关节姿态、落脚、蓄力—出手—回收及保护反应按对应秒位读取；不继承白模外形。",
+    ...spec.cameras.filter(c => c.orbitDeg).map(c => `${c.startSec}—${c.endSec}秒围绕（${c.target.join("，")}）水平环绕${c.orbitDeg}度，保持半径和高度；人物速度不由环绕改变。`),
+    ...spec.cameras.filter(c => c.endPosition || c.endTarget).map(c =>
+      `${c.startSec}—${c.endSec}秒相机从（${c.position.join("，")}）连续移动到（${(c.endPosition ?? c.position).join("，")}），看向从（${c.target.join("，")}）到（${(c.endTarget ?? c.target).join("，")}）；平滑起停，切镜时不跨镜连移。`
+    ),
     ...spec.actors.map(
       (a, index) =>
         `白模角色${index + 1}对应${a.nameZh}${a.assetRef ? `（${a.assetRef}）` : ""}：${spec.waterEmergence ? "按下方出水时间与竖直轨迹" : a.actions.length ? a.actions.map(x => `${x.startSec}—${x.endSec}秒${PREVIS_ACTION_LABELS[x.kind]}`).join("；") : "按参考站位和步态"}。`

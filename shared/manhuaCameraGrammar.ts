@@ -236,6 +236,9 @@ export function choreographManhuaCameras(input: ManhuaCameraChoreographyInput): 
 
   const cameras: ManhuaChoreographedCamera[] = cams.map((c) => ({
     startSec: fr(c.startSec), endSec: fr(c.endSec), position: c.position, target: c.target, lens: Math.round(Math.max(18, Math.min(65, c.lens))),
+    // 既有卸力拉远从文字落到白模坐标，不改接触点或人物动作时间。
+    ...(c.kind === "recover" ? { endPosition: pt(...c.position.map((n, i) => c.target[i] + (n - c.target[i]) * 1.15) as [number, number, number]) } : {}),
+    ...(style === "slow_orbit" && c.kind === "establish" ? { orbitDeg: 30 } : {}),
     kind: c.kind, ...(c.eventId ? { eventId: c.eventId } : {}), noteZh: c.noteZh,
   }));
   cameras[0]!.startSec = 0;
@@ -248,7 +251,7 @@ export function choreographManhuaCameras(input: ManhuaCameraChoreographyInput): 
 export function manhuaCameraPromptZh(c: ManhuaChoreographedCamera, style: ManhuaCameraStyle = "hard"): string {
   const scale = c.kind === "over_shoulder" ? "过肩中近景" : c.lens >= 50 ? "特写" : c.lens >= 38 ? "中景" : "全景";
   const angle = c.position[2] < 0.9 ? "仰角" : c.position[2] > 3 ? "俯角" : "平视";
-  const motion = style === "handheld" ? "手持微晃" : style === "slow_orbit" && c.kind === "establish" ? "慢环绕" : "固定机位";
+  const motion = c.endPosition ? "拉远" : style === "handheld" ? "手持微晃" : style === "slow_orbit" && c.kind === "establish" ? "慢环绕" : "固定机位";
   return `${c.startSec.toFixed(2)}–${c.endSec.toFixed(2)}s ${scale}·${angle}·${motion}：${c.noteZh}`;
 }
 
