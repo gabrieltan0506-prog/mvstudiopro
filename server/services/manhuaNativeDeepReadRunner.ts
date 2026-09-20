@@ -1947,11 +1947,12 @@ export const NATIVE_DEEP_READ_MEDIA_PREP_MAX_CONCURRENCY = 4;
  */
 export const NATIVE_DEEP_READ_MEDIA_UPLOAD_MAX_CONCURRENCY = 4;
 /**
- * 单集模型调用并发上限。0901 拍板 5 片；**0904 用户令降到 4**，为的是压住 503：
- * Vertex 上 3.8 flash 无固定配额（动态共享池），5 路扇出会把自己挤成资源拥堵。
+ * 单集模型调用并发上限。0901 拍板 5 片；0904 用户令降到 4（压 503）；
+ * **0920 用户令改回 5**：原话「我讀片都是五片並發的」「把四片並發改成五片」。
+ * 撞 503 时不靠降并发兜，靠既有资源退避（30 秒 × 4 次、不降温）。
  * 调用方可调低，不能抬高生产上限。
  */
-export const NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY = 4;
+export const NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY = 5;
 
 function mediaHeaders(node: NativeDeepReadMediaNode): string[] {
   const referer = String(node.referer || "").trim();

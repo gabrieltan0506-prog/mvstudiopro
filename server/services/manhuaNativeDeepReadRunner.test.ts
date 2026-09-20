@@ -347,7 +347,8 @@ describe("模型与通道收口", () => {
   it("503 退避与并发上限（0916 用户令）：30 秒 × 4 次、并发 4，且都不进契约哈希", () => {
     expect(NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS).toBe(30_000);
     expect(NATIVE_DEEP_READ_RESOURCE_RETRY_MAX).toBe(4);
-    expect(NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY).toBe(4);
+    // 0920 用户令「把四片並發改成五片」
+    expect(NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY).toBe(5);
     // 两条线仍是两个独立常量（0920 用户令把门禁降温线也调到 30 秒，数值上恰好相同）：
     // 资源退避线**不进**契约哈希，门禁降温线**进**契约 SHA 与段缓存指纹——
     // 判据不看两个数是否相等，看契约哈希会不会因为它们变化。
@@ -3007,7 +3008,7 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
 });
 
 describe("Vertex 主线：每段一次调用（不再多段合包）", () => {
-  it("调用方即使传入16并发，分片模型扇出也不超过4（0904 用户令由 5 降到 4）", async () => {
+  it("调用方即使传入16并发，分片模型扇出也不超过5（0920 用户令由 4 改回 5）", async () => {
     const segments = Array.from({ length: 6 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
     let active = 0;
     let peak = 0;
@@ -3016,7 +3017,8 @@ describe("Vertex 主线：每段一次调用（不再多段合包）", () => {
     const postVertex = vi.fn(async (body: unknown) => {
       active += 1;
       peak = Math.max(peak, active);
-      if (postVertex.mock.calls.length <= 4) await firstWave;
+      // 第一波按上限 5 路一起卡住，第 6 片必须等有人腾出位置才允许发
+      if (postVertex.mock.calls.length <= 5) await firstWave;
       const fileUri = (body as {
         contents: Array<{ parts: Array<{ fileData?: { fileUri: string } }> }>;
       }).contents[0]!.parts[0]!.fileData!.fileUri;
@@ -3029,12 +3031,12 @@ describe("Vertex 主线：每段一次调用（不再多段合包）", () => {
       episodes: [{ ...twoSegmentEpisode, segments, sourceDurationSec: 360 }],
       segmentModelConcurrency: 16,
     }, deps);
-    await vi.waitFor(() => expect(postVertex).toHaveBeenCalledTimes(4));
-    expect(peak).toBe(4);
+    await vi.waitFor(() => expect(postVertex).toHaveBeenCalledTimes(5));
+    expect(peak).toBe(5);
     releaseFirstWave();
     await running;
     expect(postVertex).toHaveBeenCalledTimes(6);
-    expect(peak).toBe(4);
+    expect(peak).toBe(5);
   });
 
   it("单集入口319秒/12fps穿透首发、重试、尾片、提示词与段缓存指纹", async () => {
