@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canvasAudioCueInputKey, canvasAudioStudioSchema, compileCanvasAudioBindings, createCanvasAudioCue, emptyCanvasAudioStudio } from "./canvasAudioStudio";
+import { canvasDialogueWindowFit, canvasAudioCueInputKey, canvasAudioStudioSchema, compileCanvasAudioBindings, createCanvasAudioCue, emptyCanvasAudioStudio } from "./canvasAudioStudio";
 import { sanitizeManhuaCloudDraftBlock } from "./manhuaCloudDraft";
 
 function readyCue(id = "line-1") {
@@ -40,4 +40,17 @@ describe("逐句音轨的持久化与消费闭环", () => {
     expect(canvasAudioStudioSchema.safeParse({ ...emptyCanvasAudioStudio(), cues: [readyCue(), readyCue()] }).success).toBe(false);
     expect(() => compileCanvasAudioBindings({ studio: { ...emptyCanvasAudioStudio(), cues: [readyCue()] }, existingAudioUrls: Array.from({ length: 10 }, (_, i) => `gs://test-bucket/${i}.wav`), durationSec: 10 })).toThrow("超过 10 条");
   });
+});
+
+it("对白4.944秒原声延长不重购，拦截邻句冲突及片长越界", () => {
+  const cue = {...readyCue(), startSec:0, endSec:4};
+  const take = {...cue.takes[0]!, durationSec:4.944};
+  cue.takes = [take];
+  expect(canvasDialogueWindowFit(cue,take,[cue],12)).toEqual({endSec:4.944,issue:""});
+  const fitted = {...cue,endSec:4.944};
+  expect(canvasAudioCueInputKey(fitted)).toBe(take.inputKey);
+  expect(compileCanvasAudioBindings({studio:{...emptyCanvasAudioStudio(),cues:[fitted]},existingAudioUrls:[],durationSec:12}).audioUrls).toHaveLength(1);
+  expect(canvasDialogueWindowFit(cue,take,[cue,{...readyCue("line-2"),startSec:4,endSec:7,speakerZh:"阿菁"}],12).issue).toContain("阿菁");
+  expect(canvasDialogueWindowFit(cue,take,[cue],4).issue).toContain("调整镜头时长");
+  expect(canvasDialogueWindowFit({...cue,textZh:"新台词"},take,[cue],12).issue).toContain("已修改");
 });
