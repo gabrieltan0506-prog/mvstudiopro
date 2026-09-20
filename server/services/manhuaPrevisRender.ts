@@ -15,6 +15,7 @@ import {
   manhuaPrevisRequestSchema,
   type ManhuaPrevisRequest,
 } from "../../shared/manhuaPrevis";
+import { previsPlaybackDuration, previsPlaybackFrames, previsPlaybackFilter } from "../../shared/manhuaPrevisPlayback";
 import { uploadBufferToGcs } from "./gcs";
 import { validatePrevisReport } from "./manhuaPrevisReport";
 import {
@@ -315,6 +316,7 @@ export async function renderManhuaPrevis(
         "24",
         "-i",
         path.join(dir, "frames/frame-%04d.png"),
+        ...(previsPlaybackFilter(input.spec) ? ["-vf", previsPlaybackFilter(input.spec)!] : []),
         "-an",
         "-c:v",
         "libx264",
@@ -417,8 +419,8 @@ export async function renderManhuaPrevis(
       stream?.width !== width ||
       stream?.height !== height ||
       !Number.isFinite(Number(probe?.format?.duration)) ||
-      Number(stream?.nb_read_frames) !== report.frames ||
-      Math.abs(Number(probe?.format?.duration) - input.spec.durationSec) > 0.05
+      Number(stream?.nb_read_frames) !== previsPlaybackFrames(input.spec) ||
+      Math.abs(Number(probe?.format?.duration) - previsPlaybackDuration(input.spec)) > 0.05
     )
       throw new Error("白模视频解码校验未通过");
     const video = await readBoundedArtifact(
@@ -543,7 +545,7 @@ export async function renderManhuaPrevis(
       userId,
       scopeId: input.scopeId,
       gcsUri: videoObject.gcsUri,
-      durationSec: input.spec.durationSec,
+      durationSec: previsPlaybackDuration(input.spec),
       bytes: video.length,
       sha256: sha(video),
       width: stream.width,
