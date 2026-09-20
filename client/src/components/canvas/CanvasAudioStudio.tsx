@@ -1,7 +1,9 @@
+import { createManhuaAudioFromShots } from "@shared/manhuaAudioFromShots";
+import type { ManhuaWorkbenchShot } from "@shared/manhuaScriptWorkbench";
 import { canvasAudioMixSource } from "@shared/canvasAudioStudio";
 import { CanvasAudioMixControls } from "./CanvasAudioMixControls";
 import { applyCanvasAudioMixPlan, assertCanvasAudioMixCapacity } from "@shared/canvasAudioMixPlan";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import { canvasAudioCapabilityHint } from "@/lib/canvasAudioCapabilityHint";
@@ -148,6 +150,7 @@ export type CanvasAudioStudioServices = {
 
 type Props = {
   block: CanvasBlock;
+  sourceShots?: ManhuaWorkbenchShot[];
   disabled?: boolean;
   onChange: (next: CanvasAudioStudioState) => void;
   /**
@@ -184,18 +187,27 @@ export function CanvasAudioStudio(props: Props) {
 
 export function CanvasAudioStudioView({
   block,
+  sourceShots,
   disabled = false,
   onChange,
   onMasterTrackReady,
   bgmModels,
   services,
 }: Props & { services: CanvasAudioStudioServices }) {
-  const state = block.audioStudio || emptyCanvasAudioStudio();
   const durationSec = clampManhuaClipDurationSecForVideoModel(
     block.videoModel,
     block.manhuaAutoSegment?.durationSec ??
       parseManhuaClipTargetDurationSec(block.prompt)
   );
+  const { initialAudio, sourceIssue } = useMemo(() => {
+    if (block.audioStudio || !sourceShots?.length) return { initialAudio: emptyCanvasAudioStudio(), sourceIssue: "" };
+    try { return { initialAudio: createManhuaAudioFromShots(sourceShots, durationSec), sourceIssue: "" }; }
+    catch { return { initialAudio: emptyCanvasAudioStudio(), sourceIssue: "本段对白超出音轨容量或字段限制，未截断原文；请先拆分本段或检查原稿。" }; }
+  }, [block.audioStudio, sourceShots, durationSec]);
+  const state = block.audioStudio ?? initialAudio;
+  useEffect(() => {
+    if (!disabled && !block.audioStudio && initialAudio.cues.length && !sourceIssue) onChange(initialAudio);
+  }, [block.id, block.audioStudio, disabled, initialAudio, sourceIssue, onChange]);
   /** 对照图 02 第三格的三块摘要；混合轨不伪装多轨（对照图 04 的 mvs-sound-edit 硬要求） */
   const soundSummary = buildManhuaSoundPanelSummary({
     segmentIndex: resolveClipLocalSegmentIndex(block.id, block.prompt, Number(block.episodeIndex) || 1),
@@ -1489,6 +1501,7 @@ export function CanvasAudioStudioView({
           。状态未明时不要重复生成。
         </p>
       )}
+      {sourceIssue && <p role="alert" className="text-amber-200">{sourceIssue}</p>}
       {error && (
         <p role="alert" className="text-xs text-amber-200">
           {error}

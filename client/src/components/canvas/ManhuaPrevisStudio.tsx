@@ -37,6 +37,7 @@ import {
 } from "@shared/manhuaPrevisAbandon";
 import {
   compilePrevisScriptDraft,
+  previsInitialDurationSec,
   previsScriptDraftVocabularyZh,
   previsScriptSourceKey,
   type PrevisSourceShot,
@@ -147,7 +148,12 @@ export function ManhuaPrevisStudioView({
   onNextDraftVideo,
 }: Props & { services: PrevisServices }) {
   const [initial] = useState(
-    () => block.previsStudio ?? createManhuaPrevisStudio()
+    () => block.previsStudio ?? createManhuaPrevisStudio(
+      previsInitialDurationSec(sourceShots, (() => {
+        const duration = parseManhuaClipTargetDurationSec(block.prompt || "");
+        return duration == null ? null : clampManhuaClipDurationSecForVideoModel(block.videoModel, duration);
+      })()),
+    )
   );
   // 专业参数默认收起，之后保留用户手动开合，不因草案变化重置。
   const [advancedOpen, setAdvancedOpen] = useState(false);

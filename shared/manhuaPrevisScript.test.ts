@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   PREVIS_SCRIPT_DRAFT_KINDS,
   compilePrevisScriptDraft,
+  previsInitialDurationSec,
   previsScriptDraftVocabularyZh,
   previsScriptSourceKey,
   type PrevisSourceCharacter,
@@ -524,5 +525,16 @@ describe("草案动作词表是面板提示的唯一真源（0917 PR-D，扩到�
     for (const word of ["中近景", "特写", "固定机位", "全景", "推镜"]) {
       expect(PREVIS_SCRIPT_DRAFT_KINDS.some(([, re]) => re.test(word))).toBe(false);
     }
+  });
+});
+
+ describe("首次白模时长来自本段", () => {
+  it("成片15秒优先于原镜12秒，保持整段采用时长合同", () => {
+    expect(previsInitialDurationSec([1,2,3].map(index => ({index, durationSec:4, actionZh:"原镜"})),15)).toBe(15);
+    expect(previsInitialDurationSec([1,2,3].map(index => ({index, durationSec:4, actionZh:"原镜"})))).toBe(12);
+  });
+  it("无原镜使用有效段长，不截断超限原镜冒充已匹配", () => {
+    expect(previsInitialDurationSec([],18)).toBe(18);
+    expect(previsInitialDurationSec([{index:1,durationSec:31,actionZh:"原镜"}])).toBe(10);
   });
 });

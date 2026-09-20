@@ -4134,7 +4134,9 @@ export default function ManhuaScriptWorkbench({
                 // 0916：与 3D 模型工作台同口径——锁脸图没模型时用候选图（A-pose）的就绪模型
                 const source=resolveManhuaRigSource(ref,customAssetRefs).source;
                 const model=source?{taskId:source.model.taskId,assetRef:source.refId}:undefined;
-                return {id:a.id,label:a.labelZh,tag:a.tag,model};
+                // 资产卡标题可带造型/编辑后缀；动作匹配使用已绑定剧本角色名，不能拿展示标题当人物身份。
+                const anchor = assetCanon?.characters.find(c => c.id === (a.seedLibraryId || a.id));
+                return {id:a.id,label:anchor?.nameZh || a.labelZh,tag:a.tag,model};
               })}
               profiles={collectPreparedRigProfiles(blocks, assetLockRegistry.byRole.character.map(a => {
                 const ref = customAssetRefs.find(ref => ref.id === a.id);
@@ -4178,7 +4180,7 @@ export default function ManhuaScriptWorkbench({
                 </select>
                 <button type="button" onClick={() => setAudioStudioOpen(false)}>收起</button>
               </div>
-              {activeClip ? <CanvasAudioStudio key={activeClip.id} block={activeClip}
+              {activeClip ? <CanvasAudioStudio key={activeClip.id} block={activeClip} sourceShots={activeSegment?.shots}
                 disabled={Boolean(factoryBusy) || activeClip.status === "running" || activeClip.videoTaskStatus === "queued"}
                 onChange={studio => onUpdateClipAudioStudio(activeClip.id, studio)}
                 onMasterTrackReady={onSetClipSegmentReference ? (entry) => onSetClipSegmentReference(activeClip.id, "master", entry) : undefined}
