@@ -1211,7 +1211,7 @@ export default function OmniCanvas() {
     normalizeManhuaCustomAssetRefs(initialWriterSession?.customAssetRefs),
   );
   /**
-   * 长期资产的签名 url 会过期（如道具拼板切图，7 天）。有 gcsUri 的条目，
+   * 长期资产的签名 url 会过期（如道具拼板切图，7 天）。旧图缺 gcsUri 时从同一存储地址恢复，
    * 草稿加载/变动时只刷新无有效签名的地址，不能把新产物的七天签名降为一小时。
    * 同页后续过期由图片的有界显示回退处理；生成预检仍独立鉴权续签。
    * 按 gcsUri 去重，避免刚刷完又把自己刷一遍死循环。
@@ -1219,7 +1219,10 @@ export default function OmniCanvas() {
   const resignedPropGcsUriRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const stale = customAssetRefs.filter(
-      (r) => r.gcsUri && !resignedPropGcsUriRef.current.has(r.gcsUri) && !canKeepAssetImageDisplayUrl(r),
+      (r) => {
+        const gcsUri = r.gcsUri || assetImageGcsUri(r.url);
+        return gcsUri && !resignedPropGcsUriRef.current.has(gcsUri) && !canKeepAssetImageDisplayUrl({ ...r, gcsUri });
+      },
     );
     if (!stale.length) return;
     let cancelled = false;
@@ -1227,23 +1230,29 @@ export default function OmniCanvas() {
       const resolved = await Promise.all(
         stale.map(async (r) => {
           try {
-            const url = await resolveCanvasMaterialUrl(r.gcsUri!);
-            return { id: r.id, gcsUri: r.gcsUri!, url };
+            const gcsUri = r.gcsUri || assetImageGcsUri(r.url)!;
+            const url = await resolveCanvasMaterialUrl(gcsUri);
+            if (!/^https:\/\//i.test(url)) return null;
+            return { id: r.id, gcsUri, url, sourceUrl: r.url };
           } catch {
             return null;
           }
         }),
       );
       if (cancelled) return;
-      const byId = new Map<string, string>();
+      const byId = new Map<string, { gcsUri: string; url: string; sourceUrl: string }>();
       for (const r of resolved) {
         if (!r) continue;
         resignedPropGcsUriRef.current.add(r.gcsUri);
-        byId.set(r.id, r.url);
+        byId.set(r.id, r);
       }
       if (!byId.size) return;
       setCustomAssetRefs((prev) =>
-        prev.map((r) => (byId.has(r.id) ? { ...r, url: byId.get(r.id)! } : r)),
+        prev.map((r) => {
+          const fresh = byId.get(r.id);
+          // 异步续签不能覆盖期间更换的同 ID 图片。
+          return fresh && r.url === fresh.sourceUrl ? { ...r, gcsUri: fresh.gcsUri, url: fresh.url } : r;
+        }),
       );
     })();
     return () => {
