@@ -1,3 +1,6 @@
+import { ManhuaPrevisTempoControls } from "./ManhuaPrevisTempoControls";
+import { previsPlaybackDuration } from "@shared/manhuaPrevisPlayback";
+import { ManhuaPrevisLayoutPreview } from "./ManhuaPrevisLayoutPreview";
 import { manhuaGeneratedPrevisCoverageIssue, manhuaPrevisSourceLabel } from "@shared/manhuaPrevisScope";
 import { assignPrevisActorColors, previsActorColor } from "@shared/manhuaPrevisColors";
 import { parseManhuaClipTargetDurationSec } from "@shared/manhuaScriptWorkbench";
@@ -154,6 +157,8 @@ export function ManhuaPrevisStudioView({
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [preview, setPreview] = useState<Result | null>(null);
+  const previewVideo = useRef<HTMLVideoElement>(null);
+  const [previewTime, setPreviewTime] = useState(0);
   const [busy, setBusy] = useState(false);
   // 0917 PR-D：服务端连续查不到原编号时给一个可放弃的出口，别让用户永远卡在「确认原请求」。
   // 判据是「连续查不到满 10 分钟」——入队成功的任务最迟几秒内就查得到，十分钟仍为空说明这单没建成。
@@ -253,7 +258,7 @@ export function ManhuaPrevisStudioView({
       if (
         !result?.gcsUri ||
         !result.url ||
-        result.durationSec !== response.params.spec.durationSec ||
+        Math.abs(result.durationSec - previsPlaybackDuration(response.params.spec)) > 0.05 ||
         result.requestId !== response.params.requestId ||
         result.clipId !== response.params.clipId
       ) {
@@ -458,7 +463,7 @@ export function ManhuaPrevisStudioView({
             response.status !== "succeeded" ||
             !result?.gcsUri ||
             !result.url ||
-            result.durationSec !== response.params.spec.durationSec ||
+            Math.abs(result.durationSec - previsPlaybackDuration(response.params.spec)) > 0.05 ||
             result.requestId !== response.params.requestId ||
             result.clipId !== block.id ||
             (response.params.spec.exportLayers &&
@@ -593,6 +598,8 @@ export function ManhuaPrevisStudioView({
         简化人体关节／四足站位，不是角色模型自动绑定。渲染不调用付费生成模型；预览后再采用，不会自动出成片。
       </p>
       <p className="text-xs text-cyan-100" data-previs-source-scope>{manhuaPrevisSourceLabel(studio.spec)}</p>
+      <ManhuaPrevisLayoutPreview key={studio.scopeId + block.id} spec={studio.spec} disabled={disabled || Boolean(pendingId) || busy} onChange={edit} />
+      <ManhuaPrevisTempoControls key={studio.scopeId+block.id} spec={studio.spec} disabled={disabled || !!pendingId || busy} onChange={edit}/>
       {sourceShots.length > 0 ? (
         <section
           className="space-y-2 rounded border border-cyan-300/20 p-2"
@@ -1942,7 +1949,34 @@ export function ManhuaPrevisStudioView({
       )}
       {preview && (
         <div>
-          <video controls src={preview.url} className="max-h-80 w-full" />
+          <video key={preview.requestId} ref={previewVideo} controls src={preview.url} className="max-h-80 w-full"
+            onTimeUpdate={event => setPreviewTime(event.currentTarget.currentTime)}
+            onLoadedMetadata={() => setPreviewTime(0)} />
+          <div data-previs-preview-controls className="flex flex-wrap items-center gap-2 py-2 text-xs text-white/80">
+            <span>定位问题：{previewTime.toFixed(2)} 秒</span>
+            {[-1, 1].map(direction => (
+              <button key={direction} type="button" className={button} onClick={() => {
+                const video = previewVideo.current;
+                if (!video || video.readyState < 1) return;
+                video.pause();
+                video.currentTime = Math.max(0, Math.min(video.duration, video.currentTime + direction / 24));
+                setPreviewTime(video.currentTime);
+              }}>{direction < 0 ? "上一帧" : "下一帧"}</button>
+            ))}
+            <input aria-label="白模预览时间" type="range" min={0} max={preview.durationSec} step={1 / 24}
+              value={Math.min(previewTime, preview.durationSec)} onChange={event => {
+                const video = previewVideo.current;
+                if (!video || video.readyState < 1) return;
+                video.pause();
+                video.currentTime = Math.min(video.duration, Number(event.target.value));
+                setPreviewTime(video.currentTime);
+              }} />
+          </div>
+          {previsSpecKey(preview.spec) !== previsSpecKey(studio.spec) && (
+            <p data-previs-preview-stale className="text-xs text-amber-200">
+              配置已修改，正在播放修改前的白模。请用“确认生成动作白模”重新渲染，再预览采用；旧版仍保留。
+            </p>
+          )}
           <p className="text-xs text-amber-100">
             {preview.report?.warnings?.join("；") ||
               "请检查动作节拍、遮挡和接触；技术检查不等于表演质量通过。"}

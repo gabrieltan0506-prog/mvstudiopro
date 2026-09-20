@@ -45,3 +45,14 @@ describe("manhuaAgentLoopSync", () => {
     expect(mapAdvisorPlanToWorkbenchSync({ shots: [] })).toBeNull();
   });
 });
+
+it("单镜同步经文本存储回读保留微表情、语气、情绪和时长，特殊字符不串列",async()=>{
+ const {parseWorkbenchShotsFromTextResult}=await import("./manhuaScriptWorkbench");
+ const sync=mapAdvisorPlanToWorkbenchSync({shots:[{index:1,durationSec:7,cameraZh:"近景",actionZh:"听到门响，握拳|松手",dialogueZh:"娘：「慢点。」",emotionZh:"惊惧转为克制",microExpressionZh:"听见脚步后眉心收紧\n确认来人后嘴角放松",voiceToneZh:"先压低声音，再恢复平稳"}]})!;
+ const restored=parseWorkbenchShotsFromTextResult(JSON.parse(JSON.stringify({text:sync.beatsMarkdown})).text);
+ expect(restored.isFallback).toBe(false);expect(restored.shots).toHaveLength(1);
+ expect(restored.shots[0]).toMatchObject({durationSec:7,emotionZh:"惊惧转为克制",voiceToneZh:"先压低声音，再恢复平稳"});
+ expect(restored.shots[0].actionZh).toContain("握拳|松手");
+ expect(restored.shots[0].microExpressionZh).toContain("听见脚步后眉心收紧");
+ expect(restored.shots[0].microExpressionZh).toContain("确认来人后嘴角放松");
+});

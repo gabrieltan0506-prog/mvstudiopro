@@ -5,6 +5,7 @@
  */
 import {
   manhuaDirectionCardIsProductionReady,
+  resolveDirectorStyleBlocks,
   normalizeManhuaDirectionCanon,
   type ManhuaDirectionCanon,
   type ManhuaDirectionCard,
@@ -158,4 +159,10 @@ export function stripManhuaDirectionStyleBlocks(prompt: string | null | undefine
     .replace(/\n{3,}/g, "\n\n")
     .replace(/ {2,}/g, " ")
     .trim();
+}
+
+/** 资产生成与重出共用；保留角色身份、画风及用户要求，重复同步不堆叠。 */
+export function applyManhuaAssetDirection(prompt: string, canon?: ManhuaDirectionCanon | null): string {
+  const base = stripManhuaDirectionStyleBlocks(prompt);
+  return [base, resolveDirectorStyleBlocks(canon ?? null).assets].filter(Boolean).join("\n\n");
 }

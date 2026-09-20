@@ -220,6 +220,8 @@ export function manhuaDirectionCardIsProductionReady(card: ManhuaDirectionCard):
 export type ManhuaDirectionStyleBlocks = {
   /** 剧本：戏核、信息揭示、冲突取舍 */
   story: string;
+  /** 资产：身份、空间、道具状态及可复用光色，不包含时间动作。 */
+  assets: string;
   /** 分镜：构图、调度、景别、剪辑节奏 */
   storyboard: string;
   /** 关键帧：只写静态构图终态/光影/色调/材质；禁写运镜 */
@@ -234,7 +236,7 @@ export type ManhuaDirectionStyleBlocks = {
   audit: { cardId: string; version: string; ruleIds: string[] };
 };
 
-const EMPTY_BLOCKS = (label = ""): ManhuaDirectionStyleBlocks => ({ story: "", storyboard: "", keyframe: "", clip: "", review: "", usedCardLabelZh: label, audit: { cardId: "", version: "", ruleIds: [] } });
+const EMPTY_BLOCKS = (label = ""): ManhuaDirectionStyleBlocks => ({ story: "", assets: "", storyboard: "", keyframe: "", clip: "", review: "", usedCardLabelZh: label, audit: { cardId: "", version: "", ruleIds: [] } });
 
 /** 关键帧禁写运镜：含这些词的规律不投影到 keyframe */
 const KEYFRAME_MOTION_RE = /运镜|推进|横移|升降|摇移|甩镜|环绕|变焦|长镜|剪辑|切换|硬切|节奏/;
@@ -302,7 +304,7 @@ export function resolveDirectorStyleBlocks(
   const take = (stage: ManhuaDirectorStrategyStage, pick: (r: ManhuaDirectionRule) => string | undefined) => {
     const card = cardFor(stage);
     const lines = rulesFor(stage)
-      .filter((r) => (stage === "keyframe" ? !KEYFRAME_MOTION_RE.test(r.ruleZh) : true))
+      .filter((r) => (stage === "keyframe" || stage === "assets" ? !KEYFRAME_MOTION_RE.test(r.ruleZh) : true))
       .map((r) => {
         const v = pick(r);
         if (v) usedRuleIds.add(r.id);
@@ -313,6 +315,10 @@ export function resolveDirectorStyleBlocks(
   };
 
   const story = take("story", (r) => r.ruleZh);
+  let assets = take("assets", (r) => r.ruleZh);
+  // 旧内置卡尚无assets阶段，从已授权静帧规则继承静态要求，不借用视频动作。
+  if (!assets.lines.length) assets = take("keyframe", (r) => r.ruleZh);
+  if (assets.lines.length) assets.lines.push("角色、场景、道具沿用已确认剧本与资产身份：角色固定服装轮廓、材质与主色；场景明确尺度、出入口、可行走空间与实际光源；道具固定尺寸、持有者和当前完损状态。景别、角度与构图用于安排可核对资产的视图，光影与色调保持一致；动势仅落实姿态和活动空间，转场仅记录跨镜状态，不在资产静图中绘制运镜轨迹或连续动作。用户已锁定条件优先，不新增角色、道具或剧情。");
   const storyboard = take("storyboard", (r) => r.ruleZh);
   const keyframe = take("keyframe", (r) => r.ruleZh);
   const clip = take("clip", (r) => r.ruleZh);
@@ -332,6 +338,7 @@ export function resolveDirectorStyleBlocks(
     t.lines.length ? [marker(t.card), headZh, ...t.lines.map((l) => `- ${l}`), MANHUA_DIRECTION_BLOCK_END].join("\n") : "";
   return {
     story: block(story, "剧本层：戏核、信息揭示与冲突取舍按下列规律处理，只借方法不借外观。"),
+    assets: block(assets, "资产层：把已选导演方法落实为可复用的角色、场景与道具约束。"),
     storyboard: block(storyboard, "分镜层：构图、调度、景别与剪辑节奏按下列规律处理。"),
     keyframe: block(keyframe, "关键帧层：只写静态构图终态、光影与材质；运镜一律不写。"),
     clip: clip.lines.length ? `${marker(clip.card)}｜${clip.lines.join("；")}${MANHUA_DIRECTION_BLOCK_END}` : "",
@@ -346,6 +353,6 @@ export function resolveDirectorStyleBlocks(
 /** 生产成稿去名硬判：任何 internal 名称出现在五块里即泄漏 */
 export function manhuaDirectionBlocksLeakInternalNames(blocks: ManhuaDirectionStyleBlocks, canon: ManhuaDirectionCanon): string[] {
   const names = canon.cards.flatMap((c) => [c.internal?.personName, ...(c.internal?.workNames || []), c.internal?.slug]).map((n) => String(n || "").trim()).filter((n) => n.length >= 2);
-  const haystack = [blocks.story, blocks.storyboard, blocks.keyframe, blocks.clip, blocks.review].join("\n");
+  const haystack = [blocks.story, blocks.assets, blocks.storyboard, blocks.keyframe, blocks.clip, blocks.review].join("\n");
   return names.filter((n) => haystack.includes(n));
 }

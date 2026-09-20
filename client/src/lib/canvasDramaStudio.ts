@@ -1030,6 +1030,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     wardrobeBlock,
     propAnchorBlock,
     directorAssetsBlock,
+    direction.assets,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -1575,7 +1576,7 @@ export function applyFactoryPrefsToBlocks(
         b.id.startsWith("bible-") && wardrobeBlock ? wardrobeBlock : "",
         b.id.startsWith("bible-") && propAnchorBlock ? propAnchorBlock : "",
         b.id.startsWith("story-") ? directorStoryBlock : directorAssetsBlock,
-        b.id.startsWith("story-") ? prefsDirection.story : "",
+        b.id.startsWith("story-") ? prefsDirection.story : prefsDirection.assets,
         b.id.startsWith("story-") ? prefsDirectionMarker : "",
       ].filter(Boolean);
       return { ...b, prompt: parts.join("\n\n") };
