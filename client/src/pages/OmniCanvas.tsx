@@ -12769,6 +12769,7 @@ export default function OmniCanvas() {
             >
               <ManhuaFinalDeliverySurface inReview={workflowPhase === "final" && manhuaUiMode === "workbench" && !(immersiveWorkbench && immersiveExtrasOpen)}>
               <ManhuaClipDock
+                videoModel={activePilotVideoModel}
                 reviewMode={workflowPhase === "final" && manhuaUiMode === "workbench"}
                 blocks={blocks}
                 currentEpisodeIndex={writerFocusEpisode}
