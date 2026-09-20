@@ -232,3 +232,14 @@ describe("首段试片的实际出站载荷（仅虚构网络边界）", () => {
     expect(requests).toEqual([]);
   });
 });
+
+
+it("试片截断对白在鉴权建单和任何网络之前拒绝", async () => {
+  const authorize = vi.fn();
+  const block = { ...pilotBlock("seedance-2.5"), prompt: '0–8s：人物走入坊市。\n8–13s：@角色1说「娘，抓紧我，快到了。」' };
+  const before = JSON.stringify(block);
+  await expect(runCanvasBlock({ userRole: "admin", userId: "test-user", optimizeCopy: async () => "", authorizeManhuaClip: authorize }, block, undefined, { pilotRun: true })).rejects.toThrow(/截断.*对白/);
+  expect(authorize).not.toHaveBeenCalled();
+  expect(fetch).not.toHaveBeenCalled();
+  expect(JSON.stringify(block)).toBe(before);
+});

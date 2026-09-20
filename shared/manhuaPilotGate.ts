@@ -379,6 +379,12 @@ function cropTimelineLine(line: string): {
       removed += 1;
       continue;
     }
+    const body = line.slice(bodyStart, bodyEnd);
+    // 试片可截短无声动作，不能把完整台词强塞进缩水后的窗口。
+    const hasDialogue = /(?:说|道|问|答|喊|念|对白|台词|旁白|画外音)\s*[：:]?\s*[「『“"]|[：:|｜]\s*[「『“"]|(?:对白|台词|旁白|画外音)\s*[：:]\s*\S/.test(body);
+    if (current.endSec > MANHUA_PILOT_DURATION_SEC && hasDialogue) {
+      throw new Error(`10 秒试片会截断 ${current.startSec}–${current.endSec} 秒的对白。请在分镜调整镜头时长，让这句完整落在试片内或移到 10 秒之后；本次未生成。`);
+    }
     const head =
       current.endSec > MANHUA_PILOT_DURATION_SEC
         ? replaceTimelineEnd(current, MANHUA_PILOT_DURATION_SEC)
