@@ -1,3 +1,4 @@
+import { compileCanvasDialogueInput } from "./canvasDialogueControls";
 import { expect, it } from 'vitest';
 import { createManhuaAudioFromShots } from './manhuaAudioFromShots';
 import type { ManhuaWorkbenchShot } from './manhuaScriptWorkbench';
@@ -7,6 +8,7 @@ it('从真实三镜取两句对白，保留镜内秒位、角色和原句，不�
  expect(result.cues.map(c=>[c.speakerZh,c.textZh,c.startSec,c.endSec])).toEqual([['阿菁','娘，抓紧我，快到了。',4,8],['曹三','你有钱付诊金吗？',8,12]]);
  expect(result.cues.every(c=>!c.approved && !c.voice && !c.takes.length)).toBe(true);
  expect(result.pendingOperations).toEqual([]);
+ expect(compileCanvasDialogueInput(result.cues[1].textZh,result.cues[1].emotion)).toBe("[scornful]你有钱付诊金吗？");
 });
 it('保留一字说话人及同镜续句，已压制对白不恢复，音效不当对白', () => {
  const result=createManhuaAudioFromShots([shot(1,{dialogueZh:'别怕。',dialogueSpeakerNameZh:'娘',additionalDialogueCues:[{dialogueZh:'我在这儿。',speakerNameZh:'阿菁'}]}),shot(2,{dialogueZh:'删除的台词',dialogueSuppressed:true,soundZh:'风声'})],8);

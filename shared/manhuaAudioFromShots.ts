@@ -1,3 +1,4 @@
+import { inferQwenEmotionTags } from "./manhuaDialogueTtsCompile";
 import { createCanvasAudioCue, emptyCanvasAudioStudio, canvasAudioStudioSchema } from './canvasAudioStudio';
 import { buildManhuaDialogueTimelineBeats, parseManhuaDialogueCues } from './manhuaClipDialogueTimeline';
 import type { ManhuaWorkbenchShot } from './manhuaScriptWorkbench';
@@ -17,10 +18,10 @@ export function createManhuaAudioFromShots(shots: ManhuaWorkbenchShot[], duratio
       studio.cues.push({
         ...createCanvasAudioCue('dialogue', `script-shot-${beat.shotIndex}-line-${index + 1}`),
         labelZh: `第${beat.shotIndex}镜·第${index + 1}句`,
-        shotZh: `第${beat.shotIndex}镜 ${beat.actionZh}`,
+        shotZh: `第${beat.shotIndex}镜 ${beat.actionZh}${beat.emotionZh ? `；情绪：${beat.emotionZh}` : ""}`,
         speakerZh: line.speakerAtTag,
         textZh: line.dialogueZh,
-        emotion: beat.emotionZh,
+        emotion: inferQwenEmotionTags(beat.emotionZh).join(""),
         startSec: beat.startSec + index * span,
         endSec: beat.startSec + (index + 1) * span,
       });

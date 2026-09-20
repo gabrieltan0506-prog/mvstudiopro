@@ -16,6 +16,7 @@ it('真实面板首次带入对白、保存恢复及手动清空不复活，全�
  try {const page=await browser.newPage();const errors:string[]=[];page.on('pageerror',e=>errors.push(String(e)));await page.setRequestInterception(true);page.on('request',r=>void r.abort());await page.setContent('<div id="root"></div>');await page.addScriptTag({content:built.outputFiles[0].text});
  await page.waitForFunction(()=>Boolean((window as any).fixture.block.audioStudio?.cues.length));
  expect(await page.evaluate(()=>(window as any).fixture.block.audioStudio.cues.map((c:any)=>[c.speakerZh,c.textZh]))).toEqual([['娘','别怕，我在这里。']]);
+ expect(await page.$eval('[aria-label="1 音色"]',el=>(el as HTMLSelectElement).value)).toBe('');
  await page.evaluate(()=>(window as any).fixture.remount());await page.waitForFunction(()=>(window as any).fixture.updates===1);
  await page.evaluate(()=>{(window as any).fixture.clear();});await page.waitForFunction(()=>(window as any).fixture.block.audioStudio.cues.length===0);
  await page.evaluate(()=>(window as any).fixture.remount());await page.waitForSelector('[aria-label="角色配音摘要"]');
