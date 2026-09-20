@@ -2468,6 +2468,7 @@ export function ensureManhuaFragmentClips(
       castZh: effectiveCastZh || planBeat?.castZh,
       wardrobePropZh: planBeat?.wardrobePropZh,
       sceneZh: sceneFromPlan || sceneFromKeyart || undefined,
+      sceneHaystack: [planBeat?.performanceZh, planBeat?.sceneZh, ...seg.shots.map(shot => shot.actionZh)].filter(Boolean).join("\n"),
       propHaystack,
       registry: segmentRegistry,
       assetCanon: opts?.assetCanon,

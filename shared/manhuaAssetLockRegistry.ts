@@ -813,6 +813,8 @@ export function resolveManhuaSegmentClipAllowedAssets(input: {
    * 点不到同名图就空着——禁止回落挂成另一处（断月桥戏绑芦苇渡口那种）。
    */
   sceneZh?: string | null;
+  /** 仅当前段动作与场景语义，不包含静帧的全库参考清单。 */
+  sceneHaystack?: string | null;
   /**
    * 道具专用窄文案（可拍表服化道 + 对白 + 表演）。
    * 不传时回落 wardrobePropZh+haystack；传了就**不再**用静帧全文——
@@ -897,6 +899,8 @@ export function resolveManhuaSegmentClipAllowedAssets(input: {
   const selectedIdentities = new Set(Array.from(new Set(scored.filter(x => x.nameScore >= 70).map(x => identityOf(x.id)))).slice(0, castCap));
   const characterIds = scored.filter(x => x.nameScore >= 70 && selectedIdentities.has(identityOf(x.id))).map(x => x.id);
 
+  const sceneHay = input.sceneHaystack == null ? hay : input.sceneHaystack;
+  const sceneTags = extractManhuaMentionedAssetTags(sceneHay);
   let sceneFallback = false;
   let sceneIds: string[] = [];
   if (sceneZh) {
@@ -918,16 +922,21 @@ export function resolveManhuaSegmentClipAllowedAssets(input: {
       .filter((s) => {
         const loc = (input.assetCanon?.locations || []).find((l) => l.id === s.id);
         return (
-          textHasName(hay, s.labelZh) ||
-          (loc?.nameZh && textHasName(hay, loc.nameZh)) ||
-          (loc?.aliasZh && textHasName(hay, loc.aliasZh)) ||
-          mentionedTags.includes(s.tag)
+          textHasName(sceneHay, s.labelZh) ||
+          (loc?.nameZh && textHasName(sceneHay, loc.nameZh)) ||
+          (loc?.aliasZh && textHasName(sceneHay, loc.aliasZh)) ||
+          sceneTags.includes(s.tag)
         );
       })
       .map((s) => s.id);
     if (!sceneIds.length) {
       const main = String(input.mainSceneId || "").trim();
-      const hit = main ? scenes.find((s) => s.id === main) : undefined;
+      const anchor = input.assetCanon?.locations.find(location => location.id === main);
+      const direct = main ? scenes.find(slot => slot.id === main) : undefined;
+      const linked = main ? scenes.filter(slot => slot.seedLibraryId === main) : [];
+      const named = anchor ? scenes.filter(slot => slot.labelZh === anchor.nameZh || (anchor.aliasZh && slot.labelZh === anchor.aliasZh)) : [];
+      // 旧上传图未认领时只接受唯一同名图，多版本不按库序猜选。
+      const hit = direct || (linked.length === 1 ? linked[0] : linked.length === 0 && named.length === 1 ? named[0] : undefined);
       // 仅当文案完全点不到场景时，才回落本集主场景（场景可共用；角色绝不可假锁）
       if (hit) {
         sceneIds = [hit.id];

@@ -2792,10 +2792,12 @@ export default function ManhuaScriptWorkbench({
       haystack: (activeSegment?.shots || []).flatMap((shot) => [shot.actionZh, shot.dialogueZh]).filter(Boolean).join("\n"),
       castZh: plannedCast,
       sceneZh: beat?.sceneZh,
+      sceneHaystack: [beat?.performanceZh, beat?.sceneZh, ...(activeSegment?.shots || []).map(shot => shot.actionZh)].filter(Boolean).join("\n"),
+      mainSceneId: assetCanon?.episodeMainSceneId[focusEpisode],
       registry: assetLockRegistry,
       assetCanon,
     });
-  }, [activeSourceBeat, activeSegment, assetLockRegistry, assetCanon]);
+  }, [activeSourceBeat, activeSegment, assetLockRegistry, assetCanon, focusEpisode]);
   const activeLookCharacterIds = activePlannedAssets.characterIds;
   const showCustomAssetSummary = Boolean(assetCanon?.characters.length || assetCanon?.locations.length || customAssetRefs.some(ref => ref.role === "character" || ref.role === "scene"));
   const [summaryImageStates, setSummaryImageStates] = useState<Record<string, "loaded" | "failed">>({});
