@@ -79,6 +79,7 @@ import {
   OPENROUTER_GLM_PROVIDER_SLUG,
   STRUCTURING_CHAIN_GATEWAYS,
   STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS,
+  STRUCTURING_LEGACY_RECOGNIZED_GATEWAYS,
   invokeGlmJsonChatWithGatewayFallback,
 } from "./bailianChat.js";
 import type { GlmGatewayName } from "./bailianChat.js";
@@ -4127,6 +4128,8 @@ export function nativeDeepReadStructuringStartedLabel(policy: "structuring_chain
 /** 整形链可接受的网关集合（缓存校验与通道锁共用）。 */
 export const STRUCTURING_GATEWAYS: ReadonlySet<string> = new Set<string>([
   ...Array.from(GLM_MODEL_GATEWAYS), ...STRUCTURING_CHAIN_GATEWAYS, ...STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS,
+  // 0920：Qwen 三档从链上摘掉后必须继续**认得**，否则它们写的整形证据回读判无效、整段重新付费。
+  ...STRUCTURING_LEGACY_RECOGNIZED_GATEWAYS,
 ]);
 export function glmGatewayDisplayLabel(gateway: string): string {
   switch (gateway) {

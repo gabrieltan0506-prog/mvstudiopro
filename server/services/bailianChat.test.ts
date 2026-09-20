@@ -6,6 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   GlmGatewayError,
   GlmRawResponsePersistenceError,
+  STRUCTURING_CHAIN_GATEWAYS,
+  STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS,
+  STRUCTURING_LEGACY_RECOGNIZED_GATEWAYS,
   invokeGlmJsonChatWithGatewayFallback,
   type GlmRawResponseEvidence,
 } from "./bailianChat";
@@ -809,5 +812,26 @@ describe("0907 · 单档期限有心跳只延长一次 15 分钟", () => {
       vi.useRealTimers();
       vi.restoreAllMocks();
     }
+  });
+});
+
+/**
+ * 0920 回归：把 Qwen 三档从链上摘掉时，**识别位必须留着**。
+ * 判据写死字面量，不读被测常量自证；这条在我第一版改动上是红的
+ * （证据回读与通道锁的白名单都由链序推导，链一缩就把历史付费产出判作废）。
+ */
+describe("停用网关仍需被识别（0920）", () => {
+  it("三档停用 Qwen 永久留在识别名单里，新加坡套餐同时还在链上", () => {
+    expect([...STRUCTURING_LEGACY_RECOGNIZED_GATEWAYS].sort())
+      .toEqual(["evolink_qwen", "openrouter_qwen", "plan_bj_qwen", "plan_sg_qwen"]);
+  });
+  it("识别 ≠ 发起：北京套餐、EvoLink Qwen、OpenRouter Qwen 都不在任何发起链序里", () => {
+    for (const retired of ["plan_bj_qwen", "evolink_qwen", "openrouter_qwen"] as const) {
+      expect(STRUCTURING_CHAIN_GATEWAYS).not.toContain(retired);
+      expect(STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS).not.toContain(retired);
+    }
+  });
+  it("发起链序按 0920 用户令写死：OpenRouter 主档、EvoLink 次档、新加坡套餐末档", () => {
+    expect(STRUCTURING_CHAIN_GATEWAYS).toEqual(["openrouter", "evolink_glm", "plan_sg_qwen"]);
   });
 });

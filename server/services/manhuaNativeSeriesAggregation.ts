@@ -37,11 +37,13 @@ import {
 import { nativeProviderReceiptFromError } from "./manhuaNativeProviderReceipt.js";
 
 /**
- * 系列聚合的**链路标签**（0829 改线后主档是 EvoLink glm-5.3，兜底才是 OpenRouter）。
- * 与整形链同口径：两档都是 GLM-5.3，不换模型。
+ * 系列聚合的**链路标签**（0920 改线：主档 OpenRouter，兜底 EvoLink；0829 那版是反的）。
+ * 与整形链同口径：两档都是 GLM-5.3 Flash，不换模型。
+ * 只是回执上的人话标签——系列提案对象名只由 seriesKey 决定、复用判据也不比模型，
+ * 所以改这串**不会让已付费的系列聚合重跑**（已实查 `nativeSeriesProposalObjectName`）。
  */
 export const MANHUA_NATIVE_SERIES_AGGREGATION_MODEL =
-  `${EVOLINK_GLM_MODEL}→${OPENROUTER_GLM_MODEL}`;
+  `${OPENROUTER_GLM_MODEL}→${EVOLINK_GLM_MODEL}`;
 export const MANHUA_NATIVE_SERIES_AGGREGATION_ROUTE = "openrouter_text" as const;
 export const MANHUA_NATIVE_SERIES_AGGREGATION_SCHEMA_VERSION = "native-series-v2" as const;
 

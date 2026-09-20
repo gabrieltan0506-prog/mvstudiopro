@@ -134,6 +134,18 @@ export const STRUCTURING_CHAIN_GATEWAYS: readonly GlmGatewayName[] = [
 /** 整形链首发两档的轮数与轮间隔（0905 用户令：两档都败隔 20 秒再试，共重试两轮）。 */
 export const STRUCTURING_PRIMARY_ROUNDS = 3;
 export const STRUCTURING_PRIMARY_RETRY_DELAY_MS = 20_000;
+/**
+ * 🔒 **历史整形通道白名单：只用于识别与回读，永不进发起顺序。**
+ *
+ * 0920 把 Qwen 三档从链上摘掉后，`STRUCTURING_GATEWAYS`（由链序推导）跟着收缩，
+ * 于是这三档当年写下的整形证据**回读一律判无效**，整段要重新付费整形——
+ * 0906 第 7 集就是这么炸的（那次是新增网关没扫白名单，这次是删网关没留识别位）。
+ * **停用 ≠ 撤销识别**：名字永久留在这里，缓存校验与通道锁照认，但不会再被发起。
+ * 往这里加名字永远安全；从这里删名字＝让历史付费产出作废，不许删。
+ */
+export const STRUCTURING_LEGACY_RECOGNIZED_GATEWAYS: readonly GlmGatewayName[] = [
+  "plan_bj_qwen", "openrouter_qwen", "evolink_qwen", "plan_sg_qwen",
+];
 export const STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS: readonly GlmGatewayName[] = [
   // 0905 用户拍板默认链：Qwen 北京套餐 → 新加坡套餐 → OpenRouter（GLM）→ EvoLink（GLM）
   // 0920：Qwen 全部拿掉；这条「Qwen 首发」链退化成与主链同序，保留只为兼容存量调用方

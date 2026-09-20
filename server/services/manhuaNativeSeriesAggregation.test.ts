@@ -260,7 +260,7 @@ function aggregationDeps(options: {
 
 const EVOLINK_ENDPOINT = "https://api.evolink.ai/v1/chat/completions";
 
-describe("原生精读系列结构化 · GLM-5.3 两档（0829 改线：EvoLink 主档→OpenRouter 兜底）", () => {
+describe("原生精读系列结构化 · GLM-5.3 Flash 两档（0920 改线：OpenRouter 主档→EvoLink 兜底）", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
@@ -284,14 +284,15 @@ describe("原生精读系列结构化 · GLM-5.3 两档（0829 改线：EvoLink 
       }), { status: 200, headers: { "content-type": "application/json" } });
     }));
 
-    expect(MANHUA_NATIVE_SERIES_AGGREGATION_MODEL).toBe("glm-5.3→z-ai/glm-5.3");
+    expect(MANHUA_NATIVE_SERIES_AGGREGATION_MODEL).toBe("z-ai/glm-5.3-flash→glm-5.3-flash");
     expect(MANHUA_NATIVE_SERIES_AGGREGATION_ROUTE).toBe("openrouter_text");
     await expect(invokeNativeSeriesAggregationModel(JSON.stringify({ episodes: [] })))
       .resolves.toEqual({
         raw: { ok: true },
         // 0830 审查 P1-2：返回体带出实际交卷的网关与模型，回执才记得了真值
-        gateway: "evolink_glm",
-        model: "glm-5.3",
+        // 0920 用户令改序：主档是 OpenRouter
+        gateway: "openrouter",
+        model: "z-ai/glm-5.3-flash",
         inputTokens: 321,
         outputTokens: 45,
         reasoningTokens: 17,
@@ -300,25 +301,26 @@ describe("原生精读系列结构化 · GLM-5.3 两档（0829 改线：EvoLink 
         providerRequestId: undefined,
         finishReason: "stop",
       });
-    // 主档已改 EvoLink GLM-5.3 直连（0829 用户拍板）
+    // 主档 0920 起改 OpenRouter（用户令「open router 打折，趁机用上」；0829 那版主档是 EvoLink）
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.url).toBe(EVOLINK_ENDPOINT);
+    expect(calls[0]?.url).toBe(OPENROUTER_ENDPOINT);
     const body = JSON.parse(String(calls[0]?.init.body));
     expect(body).toMatchObject({
-      model: "glm-5.3",
+      model: "z-ai/glm-5.3-flash",
       response_format: { type: "json_object" },
-      reasoning_effort: "high",   // EvoLink 用顶层字符串，不是嵌套 reasoning:{effort}
+      reasoning: { effort: "high" },  // OpenRouter 用嵌套形态
       max_tokens: 131_072,
       temperature: 0.8,             // 链级默认，不发＝落到供应商默认 1.0
+      // 0829 账单实证：不钉原生 provider 会抽到中转商，多烧数倍思考 token
+      provider: { order: ["z-ai/fp8"], allow_fallbacks: false, require_parameters: true },
     });
     expect(body.messages).toHaveLength(2);
     expect(body).not.toHaveProperty("enable_thinking");
-    expect(body).not.toHaveProperty("reasoning");   // OpenRouter 专属形态，别抄过来
-    expect(body).not.toHaveProperty("provider");    // OpenRouter 专属键
+    expect(body).not.toHaveProperty("reasoning_effort");  // EvoLink 专属形态，别抄过来
     expect(body).not.toHaveProperty("top_p");
   });
 
-  it("主档失败后的OpenRouter仍使用high，其他请求参数不变", async () => {
+  it("主档失败后的次档仍使用high，其他请求参数不变（0920：主档=OpenRouter，次档=EvoLink）", async () => {
     vi.stubEnv("EVOLINK_API_KEY", "test-key");
     vi.stubEnv("OPENROUTER_API_KEY", "test-key");
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
@@ -327,18 +329,21 @@ describe("原生精读系列结构化 · GLM-5.3 两档（0829 改线：EvoLink 
       if (calls.length === 1) return new Response("test upstream failure", { status: 503 });
       return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: '{"ok":true}' } }] }), { status: 200 });
     }));
-    await expect(invokeNativeSeriesAggregationModel("{}")).resolves.toMatchObject({ gateway: "openrouter", raw: { ok: true } });
+    await expect(invokeNativeSeriesAggregationModel("{}")).resolves.toMatchObject({ gateway: "evolink_glm", raw: { ok: true } });
     expect(calls).toHaveLength(2);
-    expect(calls[0]!.body.reasoning_effort).toBe("high");
-    expect(calls[1]).toMatchObject({ url: OPENROUTER_ENDPOINT, body: {
-      model: "z-ai/glm-5.3", reasoning: { effort: "high" }, max_tokens: 131_072,
+    // 首发是 OpenRouter：档位走嵌套 reasoning.effort，且必须钉住原生 provider
+    expect(calls[0]).toMatchObject({ url: OPENROUTER_ENDPOINT, body: {
+      model: "z-ai/glm-5.3-flash", reasoning: { effort: "high" }, max_tokens: 131_072,
       temperature: 0.8, stream: true, response_format: { type: "json_object" },
       provider: { order: ["z-ai/fp8"], allow_fallbacks: false, require_parameters: true },
     } });
-    expect(calls[1]!.body).not.toHaveProperty("reasoning_effort");
+    expect(calls[0]!.body).not.toHaveProperty("reasoning_effort");
+    // 次档 EvoLink：档位走顶层 reasoning_effort，不带 provider
+    expect(calls[1]!.body.reasoning_effort).toBe("high");
+    expect(calls[1]!.body.model).toBe("glm-5.3-flash");
   });
 
-  it("OpenRouter 失败时不静默调用新加坡 Qwen 或 EvoLink", async () => {
+  it("GLM 两档都失败时不静默调用新加坡 Qwen", async () => {
     vi.stubEnv("OPENROUTER_API_KEY", "sk-or-test");
     vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "qwen-is-configured");
     vi.stubEnv("EVOLINK_API_KEY", "evolink-is-configured");
@@ -347,11 +352,12 @@ describe("原生精读系列结构化 · GLM-5.3 两档（0829 改线：EvoLink 
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(invokeNativeSeriesAggregationModel("{}"))
-      .rejects.toThrow(/GLM-5\.3 两档\(EvoLink→OpenRouter\)全部失败/);
+      .rejects.toThrow(/GLM-5\.3 两档\(OpenRouter→EvoLink\)全部失败/);
     // 两档 GLM 都试过就停：绝不静默滑到 Qwen（新加坡套餐档 / EvoLink Qwen 档）
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(EVOLINK_ENDPOINT);
-    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(OPENROUTER_ENDPOINT);
+    // 0920 用户令改序：OpenRouter 主档、EvoLink 次档
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(OPENROUTER_ENDPOINT);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(EVOLINK_ENDPOINT);
   });
 
   it("严格要求 finish_reason=stop，截断、缺失结束原因与坏 JSON 均保留真实 usage", async () => {
@@ -393,7 +399,7 @@ describe("原生精读系列结构化 · GLM-5.3 两档（0829 改线：EvoLink 
     // 0830 P1-1：失败路径的身份从 gatewayTrace 里取**最后一个真发出过的档**，
     // 不再是「恒定 openrouter + 链路标签」的假默认。本例只配了 OpenRouter 一档，
     // 所以记的是它的真实模型 id。
-    const fallbackIdentity = { gateway: "openrouter", model: "z-ai/glm-5.3" };
+    const fallbackIdentity = { gateway: "openrouter", model: "z-ai/glm-5.3-flash" };
     for (const expected of [
       { ...fallbackIdentity, inputTokens: 800, outputTokens: 131_072, reasoningTokens: 120_000, costUsd: 0.42 },
       { ...fallbackIdentity, inputTokens: 600, outputTokens: 90, reasoningTokens: 30, costUsd: 0.04 },

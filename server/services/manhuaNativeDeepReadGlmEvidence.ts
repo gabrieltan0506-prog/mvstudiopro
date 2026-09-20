@@ -8,6 +8,7 @@ import {
   GLM_MODEL_GATEWAYS,
   STRUCTURING_CHAIN_GATEWAYS,
   STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS,
+  STRUCTURING_LEGACY_RECOGNIZED_GATEWAYS,
   type GlmGatewayName,
   type GlmRawResponseEvidence,
 } from "./bailianChat.js";
@@ -15,11 +16,16 @@ import {
 /**
  * 0906 实弹（第 7 集重跑）：证据回读只认 GLM 两档，Qwen 北京套餐写的整形证据被判「回执无效」，
  * 整集零付费重跑直接炸。回读白名单必须与整形链一致：GLM 两档 + Qwen 三档。
+ *
+ * 0920 二次踩坑：这份白名单是**由现行链序推导**的，把 Qwen 三档从链上摘掉后它跟着收缩，
+ * 同一个 0906 的坑又原地复现了一次。回读白名单从此**只增不减**，
+ * 另挂 `STRUCTURING_LEGACY_RECOGNIZED_GATEWAYS` 永久兜住停用档。
  */
 const STRUCTURING_EVIDENCE_GATEWAYS: ReadonlySet<string> = new Set<string>([
   ...Array.from(GLM_MODEL_GATEWAYS),
   ...STRUCTURING_CHAIN_GATEWAYS,
   ...STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS,
+  ...STRUCTURING_LEGACY_RECOGNIZED_GATEWAYS,
 ]);
 
 /** 来源只接收调用方已有身份；legacy直调缺失字段明确留空，禁止猜集号。 */

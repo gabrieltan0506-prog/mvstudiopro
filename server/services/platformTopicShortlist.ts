@@ -679,8 +679,12 @@ const EXPAND_QWEN_MAX_COMPLETION_TOKENS = 65_536;
 
 /**
  * 经济档唯一模型常量（审查 2026-08-18 建议2：请求与遥测必须同源，禁止双份定义）。
- * 0911 用户令：原来的 `deepseek/deepseek-v4-pro-0813` 三天后下架，换 GLM 5.3（长文本旗舰，
- * 不是读图的 GLM 5.3 Flash）；OpenRouter 主路锁 Z.AI 自营，换不动落 EvoLink 同款 `glm-5.3`。
+ * 0911 用户令：原来的 `deepseek/deepseek-v4-pro-0813` 三天后下架，换 GLM 5.3；
+ * OpenRouter 主路锁 Z.AI 自营，换不动落 EvoLink 同款。
+ * **0920 用户令「都换掉吧」：GLM 5.3 → GLM 5.3 Flash**（推翻 0911 的「不是读图的 Flash」那句）。
+ * 能换的依据：Z.AI 自营端点 flash 与 5.3 同为 ctx 1,048,576 / max_out 131,072，
+ * 65,536 输出预算照旧装得下；flash 还多吃图，能力是超集。单价 $0.15/$0.50 对 5.3 的 $1.4/$4.4。
+ * 代价说清：长文本推理档位比旗舰弱，这是用户自己拍的（「open router 打折，趁机用上」）。
  */
 export const ECONOMY_MODEL = GLM_53_OPENROUTER_MODEL;
 /** EvoLink 兜底同款（OpenRouter 打不通时走这家） */
@@ -780,7 +784,7 @@ export async function invokeDeepSeekJsonChatRaw(params: {
     throw err;
   }
   /**
-   * 0911 用户令：OpenRouter 主路（锁 Z.AI）打不通，落 EvoLink 同款 GLM 5.3。
+   * 0911 用户令：OpenRouter 主路（锁 Z.AI）打不通，落 EvoLink 同款（0920 起两家都是 Flash）。
    * 终审 P2：跨网关回退必须记真账——实际打了几家、最后是谁成功的，
    * 都要随响应/错误带回去，否则下游把两次外呼记成一次、还可能把 EvoLink 记成 OpenRouter。
    */

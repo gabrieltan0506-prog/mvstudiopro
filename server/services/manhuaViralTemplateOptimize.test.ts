@@ -81,7 +81,8 @@ describe("optimizeApprovedManhuaViralTemplate", () => {
     { model: "claude_opus_5_high", modelName: "claude-opus-5", effort: "high", maxTokens: 32_768 },
     {
       model: "glm_53_high",
-      modelName: "z-ai/glm-5.3",
+      // 0920 用户令「都换掉吧」：GLM 档换 Flash（Z.AI 自营端点 ctx/max_out 与 5.3 同，65K 预算照旧装得下）
+      modelName: "z-ai/glm-5.3-flash",
       effort: "high",
       maxTokens: 65_536,
     },

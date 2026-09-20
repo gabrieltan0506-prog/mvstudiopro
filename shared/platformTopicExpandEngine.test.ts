@@ -22,19 +22,20 @@ describe("normalizePlatformTopicExpandEngine", () => {
 
 describe("buildDeepSeekExpandRequestBody（缰绳纪律固化）", () => {
   const body = buildDeepSeekExpandRequestBody({ system: "s", user: "u" });
-  it("OpenRouter 主路：GLM 5.3 + 65K 预算 + 推理 high + json_object + 锁 Z.AI 自营", () => {
+  it("OpenRouter 主路：GLM 5.3 Flash + 65K 预算 + 推理 high + json_object + 锁 Z.AI 自营", () => {
     expect(body.max_tokens).toBe(65_536);
     expect(body.reasoning).toEqual({ effort: "high" });
     expect(body.response_format).toEqual({ type: "json_object" });
     // 0911 用户令：锁 Z.AI 自营且不许回落；require_parameters 仍在，防参数被静默忽略
     expect(body.provider).toEqual({ order: ["Z.AI"], allow_fallbacks: false, require_parameters: true });
-    // 长文本旗舰 GLM 5.3，不是读图的 GLM 5.3 Flash
-    expect(body.model).toBe("z-ai/glm-5.3");
+    // 0920 用户令「都换掉吧」：经济档换 GLM 5.3 Flash（推翻 0911 的「不是读图的 Flash」）。
+    // 判据写死字面量（不读被测常量自证）：换回 5.3 或漏改一家，这条必须红。
+    expect(body.model).toBe("z-ai/glm-5.3-flash");
   });
 
-  it("EvoLink 兜底：同款 glm-5.3，档位走顶层 reasoning_effort、不带 provider", () => {
+  it("EvoLink 兜底：同款 glm-5.3-flash，档位走顶层 reasoning_effort、不带 provider", () => {
     const evo = buildDeepSeekExpandRequestBody({ system: "s", user: "u", gateway: "evolink" });
-    expect(evo.model).toBe("glm-5.3");
+    expect(evo.model).toBe("glm-5.3-flash");
     expect(evo.reasoning_effort).toBe("high");
     expect(evo.max_tokens).toBe(65_536);
     expect(evo.response_format).toEqual({ type: "json_object" });

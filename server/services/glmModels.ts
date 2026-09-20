@@ -40,11 +40,23 @@ export const OPENROUTER_DEEPSEEK_PROVIDER_LOCK = {
   allow_fallbacks: false,
 } as const;
 
-/** 这个模型名是不是 GLM 5.3 系（含 flash、含 EvoLink 与 OpenRouter 两种写法） */
+/**
+ * 🔒 **停用但必须继续认得的旧 id**（0920）。
+ *
+ * 0920 把常量整体换成 Flash 后，`isGlm53Model("z-ai/glm-5.3")` 立刻变 false，
+ * 于是队列里/存量任务里带着旧 id 的请求**不再套 Z.AI 自营 provider 锁**，
+ * 也不再按 GLM 口径透传 max_tokens —— 那就是 0829 账单实证的那个形态：
+ * 不钉 provider 会抽到 Fireworks 之类的中转商，多烧数倍思考 token。
+ * **识别名单只增不减**，与网关白名单同一条规矩（停用 ≠ 撤销识别）。
+ */
+export const GLM_53_LEGACY_MODEL_IDS: readonly string[] = ["z-ai/glm-5.3", "glm-5.3"];
+
+/** 这个模型名是不是 GLM 5.3 系（含 flash、含 EvoLink 与 OpenRouter 两种写法、含停用的旧 id） */
 export function isGlm53Model(modelId?: string | null): boolean {
   const v = String(modelId || "").trim().toLowerCase();
   return v === GLM_53_OPENROUTER_MODEL || v === GLM_53_EVOLINK_MODEL
-    || v === GLM_53_FLASH_OPENROUTER_MODEL || v === GLM_53_FLASH_EVOLINK_MODEL;
+    || v === GLM_53_FLASH_OPENROUTER_MODEL || v === GLM_53_FLASH_EVOLINK_MODEL
+    || GLM_53_LEGACY_MODEL_IDS.includes(v);
 }
 
 /** GLM 5.3 的思考档：只有 low/high/max 真正生效，其余一律按 high 发 */

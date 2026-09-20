@@ -342,7 +342,7 @@ describe("P2 经济档跨网关回执：实际外呼次数与成功网关记真�
     const json = await invokeDeepSeekJsonChatRaw({ system: "s", user: "u" });
     expect(calls).toHaveLength(1);
     expect(json.gateway).toBe("openrouter");
-    expect(json.gatewayTrace).toEqual([{ gateway: "openrouter", model: "z-ai/glm-5.3", outcome: "ok" }]);
+    expect(json.gatewayTrace).toEqual([{ gateway: "openrouter", model: "z-ai/glm-5.3-flash", outcome: "ok" }]);
   });
 
   it("OpenRouter 失败、EvoLink 成功：2 次外呼，gateway=evolink，轨迹两条", async () => {
@@ -354,7 +354,7 @@ describe("P2 经济档跨网关回执：实际外呼次数与成功网关记真�
     expect(calls).toHaveLength(2);
     expect(json.gateway).toBe("evolink");
     expect(json.gatewayTrace?.map((t) => `${t.gateway}:${t.outcome}`)).toEqual(["openrouter:failed", "evolink:ok"]);
-    expect(calls[1]!.body.model).toBe("glm-5.3");
+    expect(calls[1]!.body.model).toBe("glm-5.3-flash");
   });
 
   it("两跳都失败：错误带两条轨迹", async () => {

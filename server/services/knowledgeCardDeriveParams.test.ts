@@ -189,7 +189,7 @@ describe("挑页与经济档也走流式（0911 用户令）", () => {
     expect(new URL(calls[0]!.url).hostname).toBe("openrouter.ai");
   });
 
-  it("经济档：OpenRouter 挂了落 EvoLink 同款 glm-5.3（0911 用户令：OpenRouter 优先）", async () => {
+  it("经济档：OpenRouter 挂了落 EvoLink 同款 glm-5.3-flash（0911 OpenRouter 优先 · 0920 换 Flash）", async () => {
     stubKeys();
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const payload = JSON.stringify({ items: [{ title: "一个够长的业务标题", reason: "够长的理由文本" }] });
@@ -199,7 +199,8 @@ describe("挑页与经济档也走流式（0911 用户令）", () => {
     ]);
     await invokeEconomy();
     expect(calls.map((c) => new URL(c.url).hostname)).toEqual(["openrouter.ai", "direct.evolink.ai"]);
-    expect(calls[1]!.body.model).toBe("glm-5.3");
+    // 0920 用户令「都换掉吧」：经济档 EvoLink 兜底同款也换 Flash
+    expect(calls[1]!.body.model).toBe("glm-5.3-flash");
     expect(calls[1]!.body.stream).toBe(true);
   });
 });
