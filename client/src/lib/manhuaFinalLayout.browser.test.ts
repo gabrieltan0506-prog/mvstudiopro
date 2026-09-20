@@ -203,3 +203,25 @@ it('终审新布局桌面与手机可读且无横向溢出',async()=>{
   writeFileSync(join(evidenceDir,'priority-layout.json'),JSON.stringify(rows,null,2));
  }finally{await close();}
 },60000);
+
+it('真实镜长按钮同步原稿与新分段，旧产物保留且无生成',async()=>{
+ const {page,close}=await mount();
+ try {
+  const timed='## 分镜表\n| 镜号 | 秒位 | 景别/运镜 | 画面 | 对白 |\n|---|---|---|---|---|\n| 1 | 0–4秒 | 中景横移 | 扶住同伴 | 沈砚舟：「慢点。」 |\n| 2 | 4–7秒 | 近景 | 点头 | 云疏冷：「快到了。」 |\n| 3 | 7–12秒 | 特写 | 看向门口 | 无 |';
+  await page.evaluate(timed=>{
+   const p=(window as any).__ffcProps;
+   p.onBlocksChange(p.blocks.map((b:any)=>b.episodeIndex===1&&/^(reverse|beats)-/.test(b.id)?{...b,outputText:timed}:b));
+   (window as any).__wbProps.onWorkflowPhaseChange('storyboard');
+  },timed);
+  await page.waitForSelector('[data-manhua-shot-timing]');
+  const before=await page.evaluate(()=>({posts:JSON.stringify((window as any).__posts),media:(window as any).__ffcProps.blocks.filter((b:any)=>b.outputUrl).map((b:any)=>[b.id,b.outputUrl])}));
+  await page.click('[data-manhua-shot-timing] summary');
+  await page.$eval('[aria-label="当前镜头时长"]',el=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!.call(el,'4.944');el.dispatchEvent(new Event('input',{bubbles:true}));});
+  await page.click('[data-manhua-shot-timing] button');
+  await page.waitForFunction(()=>JSON.parse(localStorage.getItem('mv-manhua-writer-session-v1')||'{}').writerPack?.episodes[0].body.includes('4.944'));
+  const after=await page.evaluate(()=>({posts:JSON.stringify((window as any).__posts),media:(window as any).__ffcProps.blocks.filter((b:any)=>b.outputUrl).map((b:any)=>[b.id,b.outputUrl]),writer:JSON.parse(localStorage.getItem('mv-manhua-writer-session-v1')||'{}'),nodes:(window as any).__ffcProps.blocks.filter((b:any)=>b.episodeIndex===1&&/^(reverse|beats)-/.test(b.id)).map((b:any)=>b.outputText)}));
+  expect(after.media).toEqual(before.media);expect(after.posts).toBe(before.posts);expect(after.writer.writerConfirmed).toBe(false);expect(after.writer.directorUnlocked).toBe(false);
+  expect(after.nodes.every((s:string)=>s.includes('4.944–7.944秒'))).toBe(true);
+  expect(after.writer.writerPack.episodes[0].body).toContain('7.944–12.944秒');
+ }finally{await close();}
+},60000);

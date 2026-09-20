@@ -1,3 +1,4 @@
+import { ManhuaShotTimingEditor } from "./ManhuaShotTimingEditor";
 import { ManhuaSevenCoreEditor } from "./canvas/ManhuaSevenCoreEditor";
 import { extractManhuaShotSevenCore, upsertManhuaShotSevenCore, clearManhuaShotSevenCore } from "@shared/manhuaSevenCoreSupplement";
 import { ManhuaVfxPicker } from "./canvas/ManhuaVfxPicker";
@@ -783,6 +784,7 @@ type Props = {
   onArtStyleChange?: (id: ManhuaArtStyleId) => void;
   /** 创作顾问：同步规划产物到工厂节点 */
   /** 机位选定写回反推/节拍（供工厂注入） */
+  onUpdateShotTiming?: (shotIndex: number, durationSec: number) => void;
   onUpsertShotAngles?: (angles: Record<number, string>) => void;
   /** 分镜台词写回（成片注入用；静帧不读字面） */
   onUpsertShotDialogues?: (
@@ -1300,6 +1302,7 @@ export default function ManhuaScriptWorkbench({
   onShotContinuityChange,
   artStyleId,
   onArtStyleChange,
+  onUpdateShotTiming,
   onUpsertShotAngles,
   onUpsertShotDialogues,
 }: Props) {
@@ -3367,6 +3370,8 @@ export default function ManhuaScriptWorkbench({
                     机位原文：{shotParamFields.rawCameraZh}
                   </p>
                 ) : null}
+                {onUpdateShotTiming && <ManhuaShotTimingEditor key={`${focusEpisode}:${activeShot.index}:${activeShot.durationSec}`} shotIndex={activeShot.index} durationSec={activeShot.durationSec}
+                  disabled={shotSourceIsFallback || Boolean(factoryBusy)} onApply={onUpdateShotTiming} />}
                 <div data-manhua-shot-description className="mt-1.5">
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="text-[9px] text-white/40">画面描述</span>
