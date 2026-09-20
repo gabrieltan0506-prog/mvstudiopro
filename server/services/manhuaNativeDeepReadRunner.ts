@@ -5454,6 +5454,12 @@ async function executeNativeDeepReadBatch(
        * 余下分片边切边传，读片侧按片等自己的 ready 闸。
        * 备料的最终结果仍要 await（`prepareSettled`），否则后段失败会被静默吞掉。
        */
+      /**
+       * 🔴 先传先读的前提：**所有待备段在开跑前就要有就绪闸**。
+       * 只在「已登记」时才建闸会让后面几组的片没有闸可等，读片直接去取备料 →
+       * 「第 N 段缺少对应备料，已停止」（0920 实链第四轮实测踩到）。
+       */
+      for (const index of pendingIndexes) readyOf(index);
       const preparePromise = prepareSegmentIndexes(pendingIndexes);
       preparePromise.catch(() => undefined);
       await firstGroupReady;
