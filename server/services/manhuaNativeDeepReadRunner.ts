@@ -4196,8 +4196,12 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE = "openrouter_glm_structurin
  */
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL = `${EVOLINK_GLM_MODEL}→${OPENROUTER_GLM_MODEL}`;
 /** 开始/失败回执的人话链路标签（0905：用户看了几百次「z-ai/glm-5.3」以为一直走 OpenRouter）。 */
-// 0920：换档 Flash + OpenRouter 转主档后，两批首发一致（不再按 0907 分流），文案同步。
-export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 Flash · OpenRouter（Z.AI）→EvoLink，不切 Qwen（单档 20 分钟，有心跳即延长）";
+/**
+ * 0920 只换模型名，**双路分流一字不动**（用户否决过「OpenRouter 转主档」那个外推：
+ * 「我說用open router我從沒說過要放棄evolink」）。两批首发不同是 0907 拍板的并发分流，
+ * 文案必须照实写，否则面板显示的链路与真实发起顺序不符。
+ */
+export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 Flash · 第1批 OpenRouter（Z.AI）→EvoLink · 第2批 EvoLink→OpenRouter，不切 Qwen（单档 20 分钟，有心跳即延长）";
 export const NATIVE_DEEP_READ_QWEN_STRUCTURING_STARTED_LABEL = "Qwen3.8-Max 严格 schema · 第1批 北京→EvoLink→OpenRouter · 第2批 新加坡→OpenRouter→EvoLink（Qwen 单档 25 分钟 · GLM 20 分钟）";
 /** 0916：该产品链只允许 GLM；旧 Qwen 值在进入路由前明确拒绝。 */
 export function nativeDeepReadStructuringPolicyForModel(

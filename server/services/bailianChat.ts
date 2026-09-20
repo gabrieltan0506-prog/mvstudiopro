@@ -44,7 +44,7 @@ export type GlmGatewayName =
  * 「現在open router打折，趁機用上」「因為出了GLM5.3 flash X，但是evolink沒有這個模型，
  * 所以我就用GLM5.3 flash就可以了」——停在 5.3 Flash，不上 Flash X。
  * ⚠️ 这个值进段缓存指纹（glmRepairModel），换值＝历史已付费分片失配。
- * 旧身份由 `legacyBefore0920GlmFlash` 复原，见 nativeDeepReadSegmentCacheFingerprint。
+ * 旧身份由 `legacyBefore0920` 复原，见 nativeDeepReadSegmentCacheFingerprint。
  */
 export const OPENROUTER_GLM_MODEL = "z-ai/glm-5.3-flash";
 /** 0920 换档前的 OpenRouter 档 id；**只进历史指纹复原与识别，永不发请求**。 */

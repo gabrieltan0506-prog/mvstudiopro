@@ -448,6 +448,18 @@ function computeBaselineFingerprints(cases: FingerprintCase[]): Map<string, stri
   let created = false;
   try {
     if (!reuse) {
+      /**
+       * 🔴 0920 用户令：「**不准開 fork**」「不許新建 git worktree」——他不愿同时面对两条修改路径。
+       * 所以本探针**默认不自己开基线工作树**：要跑历史指纹复原这一档，必须由用户/接手人
+       * 先自己准备好基线目录再用 `PROBE_BASELINE_DIR=<dir>` 指过来；
+       * 只有显式 `--allow-baseline-worktree` 才允许脚本自己开（跑完强制删）。
+       */
+      if (!process.argv.includes("--allow-baseline-worktree")) {
+        fail(
+          "历史指纹复原档需要换档前的基线代码：请用 PROBE_BASELINE_DIR=<已有基线目录> 指定，"
+          + "或显式加 --allow-baseline-worktree 允许本脚本临时开一棵基线工作树（默认禁止，用户明令不准开 fork）",
+        );
+      }
       if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
       const add = spawnSync("git", ["-C", REPO, "worktree", "add", "--detach", dir, BASE_REF], { encoding: "utf8" });
       if (add.status !== 0) fail(`建基线工作树失败（${BASE_REF}）：${add.stderr || add.stdout}`);
