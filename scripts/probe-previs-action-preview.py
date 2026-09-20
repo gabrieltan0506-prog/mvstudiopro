@@ -24,7 +24,7 @@ BASE = {'version': 1, 'durationSec': 2, 'aspect': '16:9',
 clips = {}
 checks = {}
 world_samples = {}
-for kind in ('idle', 'guard', 'strike', 'bow', 'walk'):
+for kind in ('idle', 'guard', 'strike', 'bow', 'walk', 'cough'):
     spec = json.loads(json.dumps(BASE))
     if kind == 'walk':
         spec['actors'][0]['start'] = [0, -.6]

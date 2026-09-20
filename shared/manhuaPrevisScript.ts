@@ -30,6 +30,7 @@ export const PREVIS_SCRIPT_DRAFT_KINDS = [
   ["sit", /(?:坐下|落座|坐到)/],
   ["gesture_point", /(?:指向|抬手指|伸手指)/],
   ["bow", /(?:行礼|拱手|鞠躬|俯身行礼)/],
+  ["cough", /(?:咳嗽|咳喘|轻咳)/],
 ] as const satisfies readonly (readonly [PrevisActionKind, RegExp])[];
 
 /**

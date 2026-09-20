@@ -15,7 +15,7 @@ export function ManhuaPrevisActionLibrary({ spec, disabled, onChange }: {
   const target = actors.find(a => a.id === actorId) ?? actors[0];
   const proposed = target ? addPrevisLibraryAction(spec, target.id, selected) : undefined;
   const added = proposed?.spec?.actors.find(a => a.id === target?.id)?.actions.find(a => !target?.actions.includes(a));
-  const explanations = { idle: "保持当前站位", guard: "抬臂保护，再回收", strike: "蓄力、出手、回收；不是接触受力验收", bow: "俯身行礼，再起身", walk: "沿已有位移摆臂行走；不是奔跑" };
+  const explanations = { idle: "保持当前站位", guard: "抬臂保护，再回收", strike: "蓄力、出手、回收；不是接触受力验收", bow: "俯身行礼，再起身", walk: "沿已有位移摆臂行走；不是奔跑", cough: "抬手掩口、两次轻咳、放下缓气" };
   return <section className="space-y-2 rounded border border-cyan-300/20 p-3" data-previs-action-library>
     <p className="text-xs text-cyan-100">添加基础动作</p>
     <p className="text-xs text-white/60">选择动作后可播放基础人形预览。添加只保存配置，不会提交或采用视频。行走沿已有位移添加；起止站位和轨迹请在专业参数中配置。</p>

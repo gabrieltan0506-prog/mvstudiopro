@@ -110,6 +110,8 @@ for _actor in spec['actors']:
         raise ValueError('转身动作与分段运动轨迹不能同时给，朝向请写进轨迹节点')
     # 0917 三轮审查：带骨真模坐下会穿地（实测 1.7 米 −21.4 厘米 / 2.55 米 −32.2 厘米，
     # 见 test_previs_drama_rigged.py）。schema 已拒，渲染层再硬失败一次，旧存稿绕不过去。
+    if _actor.get('riggedModel') and any(a['kind']=='cough' for a in _actor['actions']):
+        raise ValueError('带骨角色咳嗽暂未通过掩口和收手位置验收，请使用基础白模预演')
     if _actor.get('riggedModel') and any(a['kind']=='sit' for a in _actor['actions']):
         raise ValueError('带骨角色暂不支持坐下：静止姿态差会让脚穿地（1.70 米约 21 厘米），待重定向补偿后开放（PR-F）；棍人角色可以坐下，带骨角色的看向/转身/行礼不受影响')
 
@@ -151,7 +153,7 @@ DRAMA_HOLD = ('sit','bow','gesture_point')
 
 def action_amounts(actor, t):
     values = {'wind':0.,'strike':0.,'guard':0.,'recoil':0.,
-              'walk':0.,'sit':0.,'bow':0.,'gesture_point':0.,'look':0.}
+              'walk':0.,'sit':0.,'bow':0.,'gesture_point':0.,'look':0.,'cough':0.,'cough_hold':0.}
     values['lookAt']=None
     for action in actor['actions']:
         if not action['startSec'] <= t <= action['endSec']: continue
@@ -164,6 +166,13 @@ def action_amounts(actor, t):
         elif action['kind'] in DRAMA_HOLD:
             # 起 20% 进姿势、末 25% 回中位，中间保持——坐下/行礼/指向都要「停得住」
             values[action['kind']] = smooth(u/.20)*(1-smooth((u-.75)/.25))
+        elif action['kind'] == 'cough':
+            # 掩口先于咳嗽，两次短收缩后留缓气；不移动支撑脚。
+            hold = smooth(u/.22)*(1-smooth((u-.76)/.24))
+            pulse = sum(smooth((u-start)/.06)*(1-smooth((u-start-.06)/.12))
+                        for start in (.28,.52))
+            values['cough_hold'] = hold
+            values['cough'] = hold*(.15+.85*pulse)
         elif action['kind'] == 'walk':
             values['walk'] = smooth(u/.15)*(1-smooth((u-.85)/.15))
         elif action['kind'] == 'look':
@@ -244,9 +253,11 @@ def points(actor, frame, contacts):
         pelvis=Vector((0,0,hip_z-lower))
         # 行礼：脊柱前倾，胸口前移下沉；坐下时上身略前倾保持重心
         bow=amounts['bow']
-        chest=pelvis+Vector((.10*amounts['strike']-.08*amounts['recoil']+.30*bow+.06*amounts['sit'],0,
-                             .43-.11*bow))
-        neck=chest+Vector((.05*bow,0,.14-.02*bow))
+        cough=amounts['cough']
+        cough_hold=amounts['cough_hold']
+        chest=pelvis+Vector((.10*amounts['strike']-.08*amounts['recoil']+.30*bow+.06*amounts['sit']+.13*cough,0,
+                             .43-.11*bow-.025*cough))
+        neck=chest+Vector((.05*bow+.025*cough,0,.14-.02*bow-.006*cough))
         # 看向：上身与头朝目标偏转（棍人骨骼只有端点，纯头部偏航不可见，必须连上身一起转）
         look=amounts['look']
         look_yaw=0.
@@ -269,7 +280,7 @@ def points(actor, frame, contacts):
         p['pelvis']=(pelvis-Vector((0,0,.08)),pelvis)
         p['spine']=(pelvis,chest)
         p['neck']=(chest,neck)
-        head_dir=Vector((math.cos(look_yaw),math.sin(look_yaw),0))*(.09*look+.06*bow)
+        head_dir=Vector((math.cos(look_yaw),math.sin(look_yaw),0))*(.09*look+.06*bow+.03*cough)
         p['head']=(neck,neck+head_dir+Vector((-.045*amounts['recoil'],0,.28+.10*math.sin(look_pitch))))
         for s in (-1,1):
             # 上身偏转：肩线跟着看向的偏航一起转，真模重定向时才看得出「转过去看」
@@ -284,6 +295,9 @@ def points(actor, frame, contacts):
             hand=shoulder+Vector((x+.18*amounts['guard']+swing+.42*point+.10*bow,s*.13,
                                   -.34+.35*amounts['wind']+.31*amounts['strike']+.50*amounts['guard']+.40*amounts['recoil']
                                   +.30*point-.06*abs(swing)))
+            if s == -1 and cough_hold > 0:
+                # 前手靠近口部而不穿进头部；动作结束恢复原手位。
+                hand = hand.lerp(neck+Vector((.20,-.04,.09)), cough_hold)
             elbow,hand=ik(shoulder,hand,.29,.29,(0,s,-.4))
             p['upper_arm'+str(s)]=(shoulder,elbow)
             p['forearm'+str(s)]=(elbow,hand)

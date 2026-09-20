@@ -133,3 +133,16 @@ it("保存被拒不伪称添加成功，旧草稿恢复不自动改动作", asyn
   expect(actual.actions).toEqual([]);expect(actual.submits).toEqual([]);
  }finally{await page.close();}
 });
+
+it("咳嗽预览可选并保存，保留已采用视频且不自动付费", async () => {
+  const page = await open();
+  try {
+    await click(page,"掩口咳嗽与缓气");
+    await click(page,"添加所选动作");
+    await page.waitForFunction(() => (window as any).fixture.block.previsStudio.spec.actors[0].actions.some((a: {kind: string}) => a.kind === "cough"));
+    const result = await page.evaluate(() => {const f=(window as any).fixture; return {actions:f.block.previsStudio.spec.actors[0].actions,submits:f.submits,reference:f.block.manhuaSegmentRefs.previs};});
+    expect(result.actions).toEqual([{kind:"cough",startSec:0,endSec:2}]);
+    expect(result.submits).toEqual([]);
+    expect(result.reference.gcsUri).toBe("gs://test/old.mp4");
+  } finally {await page.close();}
+});

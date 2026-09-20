@@ -81,6 +81,7 @@ export const PREVIS_ACTION_LABELS = {
   sit: "坐下",
   gesture_point: "抬手指向",
   bow: "俯身行礼",
+  cough: "掩口咳嗽与缓气",
 } as const;
 /** 需要额外参数的动作：转身要目标朝向，看向要目标。 */
 export const PREVIS_ACTION_KINDS = [
@@ -94,6 +95,7 @@ export const PREVIS_ACTION_KINDS = [
   "sit",
   "gesture_point",
   "bow",
+  "cough",
 ] as const;
 export type PrevisActionKind = (typeof PREVIS_ACTION_KINDS)[number];
 /** 打戏四类：四足角色与持剑白模只许这几类，扩库不放宽旧门禁。 */
@@ -468,6 +470,8 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
           path: ["actors", i, "actions"],
         });
       actor.actions.forEach((action, j) => {
+        if (action.kind === "cough" && action.endSec - action.startSec < 1.2)
+          ctx.addIssue({ code: "custom", message: "咳嗽动作至少1.2秒，需留出掩口和缓气时间", path: ["actors", i, "actions", j] });
         // 0917 PR-E：参数只属于需要它的动作，避免「填了没用」的假配置。
         if (action.kind === "turn" && !Number.isFinite(action.facingDeg as number))
           ctx.addIssue({
@@ -516,6 +520,8 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
         // 增量——腿够不着地，脚直接扎进地板：1.7 米模型 −21.4 厘米、2.55 米模型 −32.2 厘米，
         // 与身高成正比，不是夹具特例。走位实测只有 +2.0 厘米抬脚残差，不受影响。
         // 落脚校正上线之前，宁可拒绝提交，也不渲一个脚在地里的片子。
+        if (action.kind === "cough" && actor.riggedModel)
+          ctx.addIssue({ code: "custom", message: "咳嗽目前仅支持基础白模人物；完整人物的掩口和收手位置还未修正，请先使用基础白模预演。", path: ["actors", i, "actions", j] });
         if (action.kind === "sit" && actor.riggedModel)
           ctx.addIssue({
             code: "custom",
