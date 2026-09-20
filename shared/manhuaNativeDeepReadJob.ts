@@ -44,19 +44,25 @@ export function parseNativeDeepReadModel(value: unknown): ManhuaNativeDeepReadMo
 }
 
 /** 0916 用户拍板：整形只允许 GLM-5.3，Qwen 从该产品链下架。 */
-export const MANHUA_NATIVE_STRUCTURING_MODEL_OPTIONS = ["glm-5.3"] as const;
-export type ManhuaNativeStructuringModelId = "glm-5.3";
-export const MANHUA_NATIVE_STRUCTURING_MODEL = "glm-5.3" as const;
+export const MANHUA_NATIVE_STRUCTURING_MODEL_OPTIONS = ["glm-5.3-flash"] as const;
+/**
+ * 0920 用户令：整形模型换成 GLM-5.3 Flash。
+ * 旧值 `"glm-5.3"` **保留可解析**——队列里在途的任务、已落库的付费证据都带着旧 id，
+ * 直接删掉等于让它们在恢复时抛错。新任务一律落 flash。
+ */
+export type ManhuaNativeStructuringModelId = "glm-5.3-flash" | "glm-5.3";
+export const MANHUA_NATIVE_STRUCTURING_MODEL = "glm-5.3-flash" as const;
+export const MANHUA_NATIVE_STRUCTURING_MODEL_LEGACY = "glm-5.3" as const;
 export const MANHUA_NATIVE_STRUCTURING_MODEL_LABELS: Record<(typeof MANHUA_NATIVE_STRUCTURING_MODEL_OPTIONS)[number], string> = {
-  "glm-5.3": "GLM-5.3（并发批次分流：OpenRouter · Z.AI / EvoLink 各一路，不切 Qwen）",
+  "glm-5.3-flash": "GLM-5.3 Flash（并发批次分流：OpenRouter · Z.AI / EvoLink 各一路，不切 Qwen）",
 };
 export function parseNativeStructuringModel(value: unknown): ManhuaNativeStructuringModelId {
   if (value === undefined || value === null || value === "") return MANHUA_NATIVE_STRUCTURING_MODEL;
   const id = String(value).trim();
-  if (id === "glm-5.3") {
+  if (id === MANHUA_NATIVE_STRUCTURING_MODEL || id === MANHUA_NATIVE_STRUCTURING_MODEL_LEGACY) {
     return id as ManhuaNativeStructuringModelId;
   }
-  throw new Error("整形模型只允许 GLM-5.3");
+  throw new Error("整形模型只允许 GLM-5.3 Flash（旧任务的 GLM-5.3 仍可恢复）");
 }
 /** 用户确认：GLM-5.3 整集结构化、系列聚合及同源探针统一使用官方支持的 high。 */
 export const MANHUA_NATIVE_GLM_REASONING_EFFORT = "high" as const;

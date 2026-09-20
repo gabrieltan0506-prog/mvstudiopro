@@ -39,7 +39,7 @@ export type GlmGatewayName =
   | "openrouter_qwen";
 
 /** OpenRouter 档模型 id。 */
-export const OPENROUTER_GLM_MODEL = "z-ai/glm-5.3";
+export const OPENROUTER_GLM_MODEL = "z-ai/glm-5.3-flash";
 /**
  * 🔒 OpenRouter 上必须钉死的原生 provider slug（0829 账单实证后立）。
  *
@@ -58,7 +58,21 @@ export const OPENROUTER_GLM_PROVIDER_SLUG = "z-ai/fp8";
  * 0829 晚 Fly 内实测 `GET /v1/models`：api.evolink.ai 与 direct.evolink.ai 均已列出
  * `glm-5.3` 与 `glm-5.3-flash`——0825 记的「EvoLink 只有 glm-5.2，5.3 永久 404」已过期。
  */
-export const EVOLINK_GLM_MODEL = "glm-5.3";
+export const EVOLINK_GLM_MODEL = "glm-5.3-flash";
+/**
+ * 🆕 0920 用户令：**漫剧学习路径的整形模型换成 GLM-5.3 Flash**。
+ *
+ * 只给整形链用，不动别的调用方 —— `OPENROUTER_GLM_MODEL` 同时还被
+ * 平台趋势长图（`routers.ts` 的 `runVisualReportLlmAttempts`）用着，
+ * 整体替换等于顺手改了另一个业务的产出口径。
+ *
+ * OpenRouter 侧 0920 实测（`/api/v1/models/z-ai/glm-5.3-flash/endpoints`，30 家 provider）：
+ *   Z.AI 原生档 tag 仍是 `z-ai/fp8`（与 5.3 同名，钉死值不用改）
+ *   单价 $0.15/M in · $0.50/M out —— 对比 5.3 的 $1.4 / $4.4，**约便宜 9 倍**
+ *   ctx 1,048,576 · max_out 131,072 · 支持 reasoning_effort 与 response_format
+ * EvoLink 侧模型 id 为 `glm-5.3-flash`（0829 晚 Fly 内 `GET /v1/models` 已列出，见上条注释）。
+ */
+
 /**
  * 「仍然是 GLM-5.3」的网关集合（单一真源）。`glm_only` 用它筛选，
  * 调用方也用它断言「产出确实来自 GLM 而不是 Qwen 兜底」——两处判据不许各写一遍。
@@ -100,9 +114,21 @@ export const GLM_MODEL_GATEWAYS: ReadonlySet<GlmGatewayName> = new Set<GlmGatewa
 export const GLM_CHAIN_FALLBACK_MODEL = "qwen3.8-max";
 /** OpenRouter 上的 Qwen3.8-Max id（整形链末档）。 */
 export const OPENROUTER_QWEN_MODEL = "qwen/qwen3.8-max";
-/** 0905 整形专用链的固定顺序；只有 gatewayPolicy="structuring_chain" 才会用到两个新档。 */
+/**
+ * 0905 整形专用链的固定顺序；只有 gatewayPolicy="structuring_chain" 才会用到两个新档。
+ *
+ * 🔄 **0920 用户令改序：OpenRouter 优先**（原话「现在 open router 打折，趁机用上」，
+ * 起因是 GLM-5.3 Flash X 上市、旧 flash 降价）。推翻 0829 的「EvoLink 优先」。
+ * 当日 OpenRouter 实价（`/api/v1/models`）：
+ *   `z-ai/glm-5.3-flash` $0.090/M in · $0.300/M out（`:batch` 更低 0.075/0.25）
+ *   `z-ai/glm-5.3` 0.896/2.816 · `z-ai/glm-5.3-flashx` 0.370/1.250
+ * ⚠️ 我们仍钉死原生 `z-ai/fp8`（0829 账单实证：不钉会抽到中转商，多烧数倍思考 token），
+ * 该档实价 $0.15/M in · $0.50/M out —— 比最低价贵，但**行为可控**这笔更划算。
+ * 折扣结束要改回 EvoLink 优先时，改这里一行即可。
+ */
 export const STRUCTURING_CHAIN_GATEWAYS: readonly GlmGatewayName[] = [
-  "evolink_glm", "openrouter", "plan_bj_qwen", "plan_sg_qwen", "openrouter_qwen",
+  // 0920：两档 GLM 主力 + 新加坡套餐末档（已付费额度，不用即归零）
+  "openrouter", "evolink_glm", "plan_sg_qwen",
 ];
 /** 0905 用户令：整形开关选 Qwen 时的链序——北京/新加坡套餐首发（并发批次轮流分流），两档败回 GLM，末档 OpenRouter Qwen。 */
 /** 整形链首发两档的轮数与轮间隔（0905 用户令：两档都败隔 20 秒再试，共重试两轮）。 */
@@ -110,7 +136,8 @@ export const STRUCTURING_PRIMARY_ROUNDS = 3;
 export const STRUCTURING_PRIMARY_RETRY_DELAY_MS = 20_000;
 export const STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS: readonly GlmGatewayName[] = [
   // 0905 用户拍板默认链：Qwen 北京套餐 → 新加坡套餐 → OpenRouter（GLM）→ EvoLink（GLM）
-  "plan_bj_qwen", "plan_sg_qwen", "openrouter", "evolink_glm",
+  // 0920：Qwen 全部拿掉；这条「Qwen 首发」链退化成与主链同序，保留只为兼容存量调用方
+  "openrouter", "evolink_glm",
 ];
 
 export type BailianChatResponse = {
@@ -384,16 +411,8 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
   let accumulatedUsage = emptyGlmGatewayUsage();
   const configuredGateways: Array<{ name: GlmGatewayName; model: string; ready: boolean; url: string; key: string; structuringOnly?: boolean }> = [
     {
-      // 主档:EvoLink GLM-5.3(0829 晚用户拍板改线,原话「GLM5.3 改用 evolink 优先,
-      // fallback 再走 open router」)。上线状态当日 Fly 内 /v1/models 实测确认。
-      name: "evolink_glm",
-      model: EVOLINK_GLM_MODEL,
-      ready: Boolean(String(process.env.EVOLINK_API_KEY || "").trim()),
-      url: "https://api.evolink.ai/v1/chat/completions",
-      key: String(process.env.EVOLINK_API_KEY || "").trim(),
-    },
-    {
-      // 兜底一(同模型):EvoLink 不通才走 OpenRouter,仍是 GLM-5.3,产出口径不变
+      // 🔄 0920 用户令：**OpenRouter 主档**（GLM-5.3 Flash X 上市、旧 flash 降价，趁折扣用）。
+      // 推翻 0829「EvoLink 优先」；原生 provider 仍钉 z-ai/fp8，不为便宜放开抽签。
       name: "openrouter",
       model: OPENROUTER_GLM_MODEL,
       ready: Boolean(String(process.env.OPENROUTER_API_KEY || "").trim()),
@@ -401,39 +420,32 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
       key: String(process.env.OPENROUTER_API_KEY || "").trim(),
     },
     {
-      // 兜底二(换模型):GLM 两档都不可用才换 Qwen;新加坡 Token Plan 套餐额度(已付费,不用即归零)
+      // 兜底一(同模型):OpenRouter 不通才走 EvoLink,仍是 GLM-5.3 Flash,产出口径不变
+      name: "evolink_glm",
+      model: EVOLINK_GLM_MODEL,
+      ready: Boolean(String(process.env.EVOLINK_API_KEY || "").trim()),
+      url: "https://api.evolink.ai/v1/chat/completions",
+      key: String(process.env.EVOLINK_API_KEY || "").trim(),
+    },
+    /**
+     * 🔻 0920 用户令：Qwen 档基本拿掉（原话「把 qwen 都拿掉，就算 fallback 也用 glm5.3」），
+     * **只保留新加坡 Token Plan 一档**（补充令「plan sg qwen 可以留着」）——
+     * 那是已付费套餐额度，不用即归零，留着当最后兜底不额外花钱。
+     *
+     * 撤掉的三档：EvoLink Qwen、北京 Token Plan、OpenRouter Qwen。
+     * 换模型＝换产出口径，学习链的结构化结果会不可比；能少换就少换。
+     * 网关名保留在 `GlmGatewayName` 里，只为能读懂历史 trace。
+     *
+     * 流式：全链默认 `stream:true`（0830 拍板，见下方请求组装处），本档同样走流式。
+     */
+    {
+      // 末档兜底(换模型):两档 GLM 都不可用才用它;新加坡 Token Plan 套餐额度(已付费,不用即归零)
       // 端点写死 token-plan 专用域——配 DASHSCOPE_SG_BASE 会 401,不给配错的机会
       name: "plan_sg_qwen",
       model: GLM_CHAIN_FALLBACK_MODEL,
       ready: Boolean(String(process.env.DASHSCOPE_SG_PLAN_KEY || "").trim()),
       url: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions",
       key: String(process.env.DASHSCOPE_SG_PLAN_KEY || "").trim(),
-    },
-    {
-      // 兜底三:SG 套餐也不通才走 EvoLink Qwen,保交付不保同型
-      name: "evolink_qwen",
-      model: GLM_CHAIN_FALLBACK_MODEL,
-      ready: Boolean(String(process.env.EVOLINK_API_KEY || "").trim()),
-      url: "https://api.evolink.ai/v1/chat/completions",
-      key: String(process.env.EVOLINK_API_KEY || "").trim(),
-    },
-    {
-      // 0905 整形链专用：北京 Token Plan（与对白 TTS 同一把 WAN_PLAN_API_KEY），只走套餐域不走官方直连
-      name: "plan_bj_qwen",
-      model: GLM_CHAIN_FALLBACK_MODEL,
-      ready: Boolean(String(process.env.WAN_PLAN_API_KEY || "").trim()),
-      url: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions",
-      key: String(process.env.WAN_PLAN_API_KEY || "").trim(),
-      structuringOnly: true,
-    },
-    {
-      // 0905 整形链末档：OpenRouter 上的 Qwen3.8-Max
-      name: "openrouter_qwen",
-      model: OPENROUTER_QWEN_MODEL,
-      ready: Boolean(String(process.env.OPENROUTER_API_KEY || "").trim()),
-      url: "https://openrouter.ai/api/v1/chat/completions",
-      key: String(process.env.OPENROUTER_API_KEY || "").trim(),
-      structuringOnly: true,
     },
   ];
   // 🔒 按网关名筛选，不用 slice 下标——0829 改线把 EvoLink GLM 插到第一位，

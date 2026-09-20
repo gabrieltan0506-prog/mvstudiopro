@@ -6,7 +6,8 @@ export function buildManhuaRestructureParams(job: ManhuaLearnServerJob, episodeI
   const original = job.input?.params;
   if (!original || original.nativeDeepReadConfirmed !== true || !original.url) throw new Error("原任务缺少原生学习参数，无法只重新整形");
   if (!Number.isInteger(episodeIndex) || episodeIndex < 1 || episodeIndex > 999) throw new Error("请输入有效集号");
-  if (model !== "glm-5.3") throw new Error("整形模型只允许 GLM-5.3");
+  // 0920：整形模型换 GLM-5.3 Flash；解析交给 shared 的唯一判据，别在前端再写一份阈值
+  parseNativeStructuringModel(model);
   parseNativeStructuringModel(original.nativeStructuringModel);
   const params = { ...original, nativeStructuringOnly: true, nativeStructuringEpisodeIndex: episodeIndex,
     nativeStructuringPreviousJobId: job.jobId, nativeStructuringModel: model,

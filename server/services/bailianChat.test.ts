@@ -11,7 +11,7 @@ import {
 } from "./bailianChat";
 
 const GOOD = JSON.stringify({ reportTitle: "报表", insightSummary: [{ role: "判断", title: "t", description: "d" }], trackGrowth: [{ name: "n", growth: "+1%" }] });
-const okBody = (content: string, model = "glm-5.3") =>
+const okBody = (content: string, model = "glm-5.3-flash") =>
   JSON.stringify({ choices: [{ message: { content }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 2 }, model });
 const meteredBody = (options: {
   content?: string;
@@ -33,7 +33,7 @@ const meteredBody = (options: {
     completion_tokens_details: { reasoning_tokens: options.reasoningTokens ?? 33 },
     cost: options.costUsd ?? 0.0123,
   },
-  model: "z-ai/glm-5.3",
+  model: "z-ai/glm-5.3-flash",
   provider: options.provider ?? "Z.AI",
 });
 
@@ -69,14 +69,14 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     vi.restoreAllMocks();
   });
 
-  it("🔀0829改线：EvoLink GLM 是主档，成功即短路,只发一次外呼", async () => {
+  it("🔀0920 改线：OpenRouter 是主档（趁折扣），成功即短路,只发一次外呼", async () => {
     const calls = stubFetchSeq([() => ({ ok: true, status: 200, body: okBody(GOOD) })]);
     const r = await invokeGlmJsonChatWithGatewayFallback({ system: "s", user: "u" });
     expect(calls).toHaveLength(1);
-    expect(calls[0].url).toContain("api.evolink.ai");
-    expect(r.gateway).toBe("evolink_glm");
-    expect(r.model).toBe("glm-5.3");
-    expect(r.gatewayTrace).toEqual([{ gateway: "evolink_glm", model: "glm-5.3", outcome: "ok" }]);
+    expect(calls[0].url).toContain("openrouter.ai");
+    expect(r.gateway).toBe("openrouter");
+    expect(r.model).toBe("z-ai/glm-5.3-flash");
+    expect(r.gatewayTrace).toEqual([{ gateway: "openrouter", model: "z-ai/glm-5.3-flash", outcome: "ok" }]);
     // 链级默认温度必须显式发出（不发＝落到供应商默认 1.0）
     expect(JSON.parse(String(calls[0].init.body)).temperature).toBe(0.8);
   });
@@ -100,7 +100,7 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     expect(result.gatewayTrace.map((row) => row.gateway)).toEqual(["openrouter", "evolink_glm"]);
   });
 
-  it("glm_only 失败时关闭式停止：EvoLink→OpenRouter 两档都试，绝不回退 Qwen", async () => {
+  it("glm_only 失败时关闭式停止：OpenRouter→EvoLink 两档都试，绝不回退 Qwen", async () => {
     const calls = stubFetchSeq([() => ({ ok: false, status: 503, body: "openrouter down" })]);
     const err = await invokeGlmJsonChatWithGatewayFallback({
       system: "s",
@@ -110,23 +110,23 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     }).catch((error) => error);
 
     expect(err).toBeInstanceOf(GlmGatewayError);
-    expect(err.message).toContain("GLM-5.3 两档(EvoLink→OpenRouter)全部失败");
+    expect(err.message).toContain("两档");
     expect(err.gatewayTrace).toEqual([
       expect.objectContaining({
-        gateway: "evolink_glm",
-        model: "glm-5.3",
+        gateway: "openrouter",
+        model: "z-ai/glm-5.3-flash",
         outcome: "http_error",
         providerError: expect.objectContaining({ httpStatus: 503 }),
       }),
       expect.objectContaining({
-        gateway: "openrouter",
-        model: "z-ai/glm-5.3",
+        gateway: "evolink_glm",
+        model: "glm-5.3-flash",
         outcome: "http_error",
         providerError: expect.objectContaining({ httpStatus: 503 }),
       }),
     ]);
-    expect(calls[0].url).toContain("api.evolink.ai");
-    expect(calls[1].url).toContain("openrouter.ai");
+    expect(calls[0].url).toContain("openrouter.ai");
+    expect(calls[1].url).toContain("api.evolink.ai");
     expect(calls).toHaveLength(2);
     // 关键回归：两档都是 GLM-5.3，一次都不许滑到 Qwen 兜底
     expect(calls.some((call) => /token-plan/.test(call.url))).toBe(false);
@@ -135,10 +135,14 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     }
   });
 
-  it("EvoLink GLM 请求体：顶层 reasoning_effort、无 provider 键、12 分钟墙钟", async () => {
+  it("EvoLink GLM 请求体：顶层 reasoning_effort、无 provider 键、12 分钟墙钟（0920 起是第二档）", async () => {
     const timeoutSignal = new AbortController().signal;
     const timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockReturnValue(timeoutSignal);
-    const calls = stubFetchSeq([() => ({ ok: true, status: 200, body: meteredBody() })]);
+    // 0920 改序后 OpenRouter 是主档：先让它失败，才轮到 EvoLink 发请求
+    const calls = stubFetchSeq([
+      () => ({ ok: false, status: 503, body: "openrouter down" }),
+      () => ({ ok: true, status: 200, body: meteredBody() }),
+    ]);
 
     await invokeGlmJsonChatWithGatewayFallback({
       system: "s",
@@ -149,30 +153,27 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
       timeoutMs: 12 * 60_000,
     });
 
-    expect(timeoutSpy).toHaveBeenCalledOnce();
+    expect(timeoutSpy).toHaveBeenCalledTimes(2); // 0920：主档 OpenRouter 先发一次，再轮到 EvoLink
     expect(timeoutSpy).toHaveBeenCalledWith(720_000);
     // 0907：首期仍由 AbortSignal.timeout 给出，但发给 fetch 的是可延期的组合信号
     expect(calls[0].init.signal).toBeInstanceOf(AbortSignal);
     expect(calls[0].init.signal.aborted).toBe(false);
-    const evoBody = JSON.parse(String(calls[0].init.body));
+    const evoBody = JSON.parse(String(calls[1].init.body)); // 0920：EvoLink 是第二发
     // EvoLink 用**顶层字符串** reasoning_effort，不是 OpenRouter 的嵌套 reasoning:{effort}
-    expect(evoBody).toMatchObject({ model: "glm-5.3", reasoning_effort: "max" });
+    expect(evoBody).toMatchObject({ model: "glm-5.3-flash", reasoning_effort: "max" });
     expect(evoBody.reasoning).toBeUndefined();
     expect(evoBody.provider).toBeUndefined();   // provider 是 OpenRouter 专属键
   });
 
-  it("🔒OpenRouter 兜底档必须钉死原生 z-ai/fp8 且禁回落（0829 账单实证：抽到中转商=烧四倍思考）", async () => {
-    const calls = stubFetchSeq([
-      () => ({ ok: false, status: 500, body: "evolink down" }),
-      () => ({ ok: true, status: 200, body: meteredBody() }),
-    ]);
+  it("🔒OpenRouter 主档必须钉死原生 z-ai/fp8 且禁回落（0829 账单实证：抽到中转商=烧四倍思考）", async () => {
+    const calls = stubFetchSeq([() => ({ ok: true, status: 200, body: meteredBody() })]);
     const r = await invokeGlmJsonChatWithGatewayFallback({
       system: "s", user: "u", gatewayPolicy: "glm_only", requireParameters: true,
     });
     expect(r.gateway).toBe("openrouter");
-    const orBody = JSON.parse(String(calls[1].init.body));
+    const orBody = JSON.parse(String(calls[0].init.body));
     expect(orBody).toMatchObject({
-      model: "z-ai/glm-5.3",
+      model: "z-ai/glm-5.3-flash",
       reasoning: { effort: "high" },
       provider: { order: ["z-ai/fp8"], allow_fallbacks: false, require_parameters: true },
     });
@@ -200,7 +201,7 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     });
 
     expect(result.provider).toBe("Z.AI");
-    expect(result.gateway).toBe("evolink_glm");
+    expect(result.gateway).toBe("openrouter"); // 0920：主档改 OpenRouter
     expect(result.usage).toEqual({
       prompt_tokens: 105,
       completion_tokens: 218,
@@ -209,7 +210,7 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     });
   });
 
-  it("默认策略不回归：GLM 两档全 500 后才降级新加坡 Token Plan Qwen", async () => {
+  it("默认策略：GLM 两档全 500 后降级新加坡 Token Plan（0920 只保留这一个 Qwen 档）", async () => {
     const calls = stubFetchSeq([
       () => ({ ok: false, status: 500, body: "boom" }),
       () => ({ ok: false, status: 500, body: "boom" }),
@@ -219,11 +220,11 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     expect(calls).toHaveLength(3);
     expect(calls[2].url).toContain("token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode");
     expect(r.gateway).toBe("plan_sg_qwen");
-    // 七审第4条回归:SG 套餐档必须继承 DashScope Qwen 的 enable_thinking(换档时分支键漏改过)
+    // 0920：撤掉的是 EvoLink Qwen / 北京套餐 / OpenRouter Qwen，只留这一个已付费套餐档
+    expect(r.gatewayTrace.map((t: any) => t.gateway)).toEqual(["openrouter", "evolink_glm", "plan_sg_qwen"]);
     const sgBody = JSON.parse(String(calls[2].init?.body));
     expect(sgBody.enable_thinking).toBe(true);
-    expect(sgBody.model).toBe("qwen3.8-max");
-    expect(r.gatewayTrace.map((t: any) => t.gateway)).toEqual(["evolink_glm", "openrouter", "plan_sg_qwen"]);
+    expect(sgBody.stream).toBe(true); // 全链流式：末档同样走流式
   });
 
   it("qwen_only 从新加坡 Token Plan 开始，绝不访问 GLM 网关", async () => {
@@ -235,6 +236,7 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
       user: "u",
       gatewayPolicy: "qwen_only",
     });
+    // 0920：只保留新加坡套餐这一个 Qwen 档，qwen_only 仍然只走它
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toContain("token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode");
     expect(result.gateway).toBe("plan_sg_qwen");
@@ -256,8 +258,8 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     });
     expect(calls).toHaveLength(3);
     expect(r.gateway).toBe("plan_sg_qwen");
-    expect(r.gatewayTrace[0]).toMatchObject({ gateway: "evolink_glm", outcome: "content_invalid" });
-    expect(r.gatewayTrace[1]).toMatchObject({ gateway: "openrouter", outcome: "content_invalid" });
+    expect(r.gatewayTrace[0]).toMatchObject({ gateway: "openrouter", outcome: "content_invalid" });
+    expect(r.gatewayTrace[1]).toMatchObject({ gateway: "evolink_glm", outcome: "content_invalid" });
   });
 
   it("glm_only 的业务 JSON 验真失败仍在 GlmGatewayError 保留真实 usage", async () => {
@@ -281,8 +283,8 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
 
     expect(err).toBeInstanceOf(GlmGatewayError);
     expect(err.gatewayTrace).toEqual([
-      expect.objectContaining({ gateway: "evolink_glm", outcome: "content_invalid", detail: "业务 JSON 非法" }),
-      expect.objectContaining({ gateway: "openrouter", outcome: "http_error" }),
+      expect.objectContaining({ gateway: "openrouter", outcome: "content_invalid", detail: "业务 JSON 非法" }),
+      expect.objectContaining({ gateway: "evolink_glm", outcome: "http_error" }),
     ]);
     expect(err.usage).toEqual({
       inputTokens: 410,
@@ -309,8 +311,8 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     expect(err).toBeInstanceOf(GlmGatewayError);
     // 两档 GLM 都会被试到，两档都因非 stop 被拒；用量按两次累计。
     expect(err.gatewayTrace).toEqual([
-      expect.objectContaining({ gateway: "evolink_glm", outcome: "incomplete" }),
       expect.objectContaining({ gateway: "openrouter", outcome: "incomplete" }),
+      expect.objectContaining({ gateway: "evolink_glm", outcome: "incomplete" }),
     ]);
     expect(err.usage).toEqual({
       inputTokens: envelope.usage.prompt_tokens * 2,
@@ -328,7 +330,7 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     ]);
     const r = await invokeGlmJsonChatWithGatewayFallback({ system: "s", user: "u" });
     expect(calls).toHaveLength(3);
-    expect(r.gatewayTrace[0]).toMatchObject({ gateway: "evolink_glm", outcome: "empty_content" });
+    expect(r.gatewayTrace[0]).toMatchObject({ gateway: "openrouter", outcome: "empty_content" });
   });
 
   it("🔒 deadlineAtMs 逐档真扣减：第二档拿到的墙钟必须小于第一档（0830 空改事故回归）", async () => {
@@ -354,7 +356,7 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
       deadlineAtMs: realNow + 600_000,
     });
 
-    expect(r.gateway).toBe("openrouter");
+    expect(r.gateway).toBe("evolink_glm");
     expect(timeouts).toHaveLength(2);
     expect(timeouts[0]).toBe(600_000);
     // 第一档吃掉 300 秒，第二档只应拿到剩下的 300 秒
@@ -500,7 +502,7 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     const onRawResponse = vi.fn(async (evidence: GlmRawResponseEvidence) => {
       events.push("persist:start");
       expect(evidence).toEqual({
-        gateway: "evolink_glm", model: "glm-5.3", httpStatus: 200,
+        gateway: "openrouter", model: "z-ai/glm-5.3-flash", httpStatus: 200,
         providerRequestId: "provider-test-1", contentType: "application/json; charset=utf-8",
         bodyText: body, bodyComplete: true, receivedBytes: Buffer.byteLength(body),
       });
@@ -569,9 +571,9 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     vi.stubGlobal("fetch", fetchMock);
     const onRawResponse = vi.fn(async (_evidence: GlmRawResponseEvidence) => {});
     const result = await invokeGlmJsonChatWithGatewayFallback({ system: "s", user: "u", gatewayPolicy: "glm_only", onRawResponse });
-    expect(result.gateway).toBe("openrouter");
+    expect(result.gateway).toBe("evolink_glm");
     expect(onRawResponse.mock.calls.map(([row]) => [row.gateway, row.model, row.httpStatus, row.bodyText, row.bodyComplete]))
-      .toEqual([["evolink_glm", "glm-5.3", 503, first, true], ["openrouter", "z-ai/glm-5.3", 200, second, true]]);
+      .toEqual([["openrouter", "z-ai/glm-5.3-flash", 503, first, true], ["evolink_glm", "glm-5.3-flash", 200, second, true]]);
     expect(onRawResponse.mock.calls[1]![0].providerRequestId).toBe("or-test-2");
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
@@ -600,7 +602,7 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     expect(error).toBeInstanceOf(GlmGatewayError);
     expect(error.code).toBe("glm_raw_response_persistence_failed");
     expect(error.currentAttemptUsageUnavailable).toBe(true);
-    expect(error.gatewayTrace).toEqual([expect.objectContaining({ gateway: "evolink_glm", outcome: "evidence_persistence_failed" })]);
+    expect(error.gatewayTrace).toEqual([expect.objectContaining({ gateway: "openrouter", outcome: "evidence_persistence_failed" })]);
     expect(JSON.stringify(error.gatewayTrace) + error.message).not.toContain("test-secret-key");
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(validateContent).not.toHaveBeenCalled();
@@ -625,7 +627,7 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
       system: "s", user: "u", gatewayPolicy: "glm_only", onRawResponse, validateContent,
     }).catch((failure) => failure);
     expect(error).toBeInstanceOf(GlmGatewayError);
-    expect(error.gatewayTrace[0]).toMatchObject({ outcome: "network_error", detail: interrupted.message });
+    expect(error.gatewayTrace.find((row: any) => row.outcome === "network_error")).toMatchObject({ detail: interrupted.message });
     expect(onRawResponse).toHaveBeenCalledWith(expect.objectContaining({
       bodyText: prefix, bodyComplete: false, receivedBytes: Buffer.byteLength(prefix),
     }));
@@ -646,7 +648,7 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
       system: "s", user: "u", gatewayPolicy: "glm_only", maxResponseBytes: 1_024, onRawResponse,
     }).catch((failure) => failure);
     expect(error).toBeInstanceOf(GlmGatewayError);
-    expect(error.gatewayTrace[0].detail).toContain("超过处理上限");
+    expect(error.gatewayTrace.map((row: any) => row.detail).join(" ")).toContain("超过处理上限");
     expect(onRawResponse).toHaveBeenCalledWith(expect.objectContaining({ bodyText: bytes.toString(), receivedBytes: 1_500, bodyComplete: false }));
     expect(cancel).toHaveBeenCalledOnce();
   });
@@ -685,27 +687,26 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     expect(calls).toHaveLength(2);
   });
 
-  it("全链失败:轨迹=[evolink_glm,openrouter,plan_sg_qwen,evolink_qwen];🔴 整条链零百炼按量调用", async () => {
+  it("全链失败:轨迹=[openrouter,evolink_glm,plan_sg_qwen]；零百炼按量调用", async () => {
     const calls = stubFetchSeq([() => ({ ok: false, status: 502, body: "bad" })]);
     const err = await invokeGlmJsonChatWithGatewayFallback({ system: "s", user: "u", maxTokens: 12_345 }).catch((e) => e);
     expect(err).toBeInstanceOf(GlmGatewayError);
     expect(err.gatewayTrace.map((t: any) => t.gateway)).toEqual([
-      "evolink_glm",
       "openrouter",
+      "evolink_glm",
       "plan_sg_qwen",
-      "evolink_qwen",
     ]);
     expect(err.gatewayTrace.every((t: any) => t.outcome === "http_error")).toBe(true);
     const body0 = JSON.parse(String(calls[0].init?.body));
     expect(body0.max_tokens).toBe(12_345);
-    expect(body0.model).toBe("glm-5.3");
+    expect(body0.model).toBe("z-ai/glm-5.3-flash"); // 0920：首档是 OpenRouter
     // 0825 二次拍板:百炼按量域名(WAN_OFFICIAL_BASE)一次都不许被打到
     for (const c of calls) {
       expect(c.url).not.toContain("ws.example.cn");
       const model = JSON.parse(String(c.init?.body || "{}")).model;
       // Qwen 兜底两档才是 qwen 模型；EvoLink GLM 主档同样在 evolink 域上，但跑的是 glm-5.3
       if (/token-plan/.test(c.url)) expect(model).toBe("qwen3.8-max");
-      if (/api\.evolink\.ai/.test(c.url)) expect(["glm-5.3", "qwen3.8-max"]).toContain(model);
+      if (/api\.evolink\.ai/.test(c.url)) expect(["glm-5.3-flash", "qwen3.8-max"]).toContain(model);
     }
     expect(calls[0].init?.signal).toBeInstanceOf(AbortSignal);
   });
@@ -736,7 +737,7 @@ describe("0905 · 回包 JSON 确定性修复", () => {
 });
 
 describe("0905 · Qwen 套餐档带 json_schema strict", () => {
-  it("qwen_only + responseJsonSchema：新加坡档请求体是 json_schema strict；不带 schema 时仍是 json_object", async () => {
+  it("glm_only + responseJsonSchema：请求体是 json_schema strict；不带 schema 时仍是 json_object", async () => {
     vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "sg-plan-key");
     vi.stubEnv("WAN_PLAN_API_KEY", "");
     const { invokeGlmJsonChatWithGatewayFallback } = await import("./bailianChat");
@@ -767,13 +768,14 @@ describe("0905 · gatewayOrder 显式链序", () => {
     vi.stubEnv("OPENROUTER_API_KEY", "or-key");
     const { invokeGlmJsonChatWithGatewayFallback } = await import("./bailianChat");
     const urls: string[] = [];
-    const okBody = JSON.stringify({ choices: [{ message: { content: JSON.stringify({ ok: true }) }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 }, model: "glm-5.3" });
+    const okBody = JSON.stringify({ choices: [{ message: { content: JSON.stringify({ ok: true }) }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 }, model: "glm-5.3-flash" });
     vi.stubGlobal("fetch", vi.fn(async (url: string) => { urls.push(url); return urls.length === 1 ? new Response("boom", { status: 503 }) : new Response(okBody, { status: 200, headers: { "content-type": "application/json" } }); }));
+    // 0920：指定顺序里即便还写着 Qwen 档，也不会被配置出来（链里已无此档）
     const r = await invokeGlmJsonChatWithGatewayFallback({ system: "s", user: "u", gatewayPolicy: "structuring_chain_qwen_first", gatewayOrder: ["plan_bj_qwen", "evolink_glm", "openrouter"] } as never);
-    expect(urls[0]).toContain("token-plan.cn-beijing");
-    expect(urls[1]).toContain("api.evolink.ai");
-    expect(r.gateway).toBe("evolink_glm");
-    expect(r.gatewayTrace.map((t) => t.gateway)).toEqual(["plan_bj_qwen", "evolink_glm"]);
+    expect(urls.some((u) => /token-plan/.test(u))).toBe(false);
+    expect(urls[0]).toContain("api.evolink.ai");
+    expect(r.gateway).toBe("openrouter");
+    expect(r.gatewayTrace.map((t) => t.gateway)).toEqual(["evolink_glm", "openrouter"]);
   });
 });
 

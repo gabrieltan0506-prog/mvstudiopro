@@ -11,7 +11,8 @@ import {
 } from "./bailianChat.js";
 
 export const PLATFORM_TEXT_QWEN_MODEL = "qwen3.8-max";
-export const PLATFORM_TEXT_GLM_MODEL = "glm-5.3";
+/** 0920 用户令「都换掉吧」：平台文本分析兜底档也换 GLM-5.3 Flash */
+export const PLATFORM_TEXT_GLM_MODEL = "glm-5.3-flash";
 export const PLATFORM_TEXT_QWEN_BEIJING_URL =
   "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions";
 export const PLATFORM_TEXT_QWEN_SINGAPORE_URL =

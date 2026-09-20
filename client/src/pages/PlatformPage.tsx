@@ -13772,7 +13772,7 @@ export default function PlatformPage() {
                           ))}
                         </select>
                         <span className="rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] text-white">
-                          整形模型：{MANHUA_NATIVE_STRUCTURING_MODEL_LABELS["glm-5.3"]}
+                          整形模型：{MANHUA_NATIVE_STRUCTURING_MODEL_LABELS[MANHUA_NATIVE_STRUCTURING_MODEL]}
                         </span>
                         <span className="rounded-md border border-[#8cefff]/20 bg-black/25 px-2 py-1 text-[10px] font-semibold text-[#8cefff]">
                           学习模型：{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[manhuaLearnReadModel]} · 原生视频精读

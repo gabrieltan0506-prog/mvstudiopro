@@ -15,10 +15,14 @@
  * @see https://evolink.ai/docs/en/api-manual/language-series/glm/chat-completions/chat-completions-reference
  */
 
-/** OpenRouter 主路（文本旗舰，131 万上下文） */
-export const GLM_53_OPENROUTER_MODEL = "z-ai/glm-5.3" as const;
-/** EvoLink 兜底（同款文本旗舰） */
-export const GLM_53_EVOLINK_MODEL = "glm-5.3" as const;
+/**
+ * OpenRouter 主路。0920 用户令「都换掉吧」：GLM-5.3 → **GLM-5.3 Flash**。
+ * 实测 Z.AI 原生档 tag 仍是 `z-ai/fp8`，$0.15/M in · $0.50/M out（5.3 是 $1.4 / $4.4），ctx 1,048,576。
+ * 使用方：微信视频号挖掘（`weixinChannelsMiner`）、平台选题（`platformTopicShortlist`）。
+ */
+export const GLM_53_OPENROUTER_MODEL = "z-ai/glm-5.3-flash" as const;
+/** EvoLink 兜底（同款，0920 一并换 Flash） */
+export const GLM_53_EVOLINK_MODEL = "glm-5.3-flash" as const;
 /** 原生视觉的 Flash 版（读图链用） */
 export const GLM_53_FLASH_OPENROUTER_MODEL = "z-ai/glm-5.3-flash" as const;
 export const GLM_53_FLASH_EVOLINK_MODEL = "glm-5.3-flash" as const;
