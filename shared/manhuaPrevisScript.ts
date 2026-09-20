@@ -74,6 +74,14 @@ export type PrevisScriptDraft = {
   notes: string[];
   errors: string[];
 };
+/** 首次白模沿用成片段长以满足采用合同；无有效段长才用原镜总时长。 */
+export function previsInitialDurationSec(shots: PrevisSourceShot[], clipDuration?: number | null): number {
+  if (clipDuration != null && Number.isInteger(clipDuration) && clipDuration >= 2 && clipDuration <= 30) return clipDuration;
+  const total = shots.reduce((n, shot) => n + shot.durationSec, 0);
+  if (shots.length && shots.every(s => Number.isFinite(s.durationSec) && s.durationSec > 0)
+    && Number.isInteger(total) && total >= 2 && total <= 30) return total;
+  return 10;
+}
 export function previsScriptSourceKey(
   shots: PrevisSourceShot[],
   characters: PrevisSourceCharacter[]
