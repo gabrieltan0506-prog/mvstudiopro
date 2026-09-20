@@ -1473,6 +1473,25 @@ export default function ManhuaScriptWorkbench({
       return next;
     });
   };
+  // 批量操作只保留仍显示的卡片，切版本或收起分组不留下隐藏勾选。
+  useEffect(() => {
+    const visible = new Set<string>();
+    for (const role of MANHUA_CUSTOM_ASSET_ROLES) {
+      if (openCustomRefRoles[role] === false) continue;
+      const groups = buildManhuaAssetRoleGroups({ refs: customAssetRefs, assetCanon, role }).groups;
+      for (const group of groups) {
+        const previewId = resolveManhuaAssetPreviewId(group.refs, assetPreviewByGroup[group.key]);
+        for (const ref of group.refs) {
+          if (!compactUi || group.kind !== "entity" || ref.reviewStatus === "needs_review" || ref.id === previewId) visible.add(ref.id);
+        }
+      }
+    }
+    setSelectedAssetIds(previous => {
+      const kept = new Set(Array.from(previous).filter(id => visible.has(id)));
+      return kept.size === previous.size ? previous : kept;
+    });
+  }, [customAssetRefs, assetCanon, compactUi, assetPreviewByGroup, openCustomRefRoles]);
+
   const [downloadBusy, setDownloadBusy] = useState(false);
   const directorOverlayPanelRef = useRef<HTMLElement>(null);
   /** 默认药丸视图；按段记「谁被切到了原文编辑」 */
