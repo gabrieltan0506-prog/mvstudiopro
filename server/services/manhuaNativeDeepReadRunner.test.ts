@@ -1108,13 +1108,15 @@ describe("v11 · 截断段豁免（classification 在 responseSchema 最末，�
     })).toThrow("classification 缺失");
   });
 
-  it("截断段守相同长镜边界：34秒合格，35秒拒收（0907 容差 15% → 34.5 秒线）", () => {
+  // 🔴 0920 用户令：单条证据段上限 30→60、容差 15%→20% ⇒ 拒收线 **72 秒**。
+  // 期望值在此写死（72 / 72.5），不从被测常量反推——否则阈值再改一次这条又会恒真。
+  it("截断段守相同长镜边界：72秒合格，72.5秒拒收（0920 上限 60 + 容差 20% → 72 秒线）", () => {
     const raw = makeSegmentPayload({ ...base });
     const shot = (raw.shots as Array<Record<string, unknown>>)[0]!;
-    raw.shots = [{ ...shot, startSec: 0, endSec: 34 }, { ...shot, startSec: 34, endSec: 60 }];
+    raw.shots = [{ ...shot, startSec: 0, endSec: 72 }, { ...shot, startSec: 72, endSec: 100 }];
     expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw, truncated: true })).not.toThrow();
-    raw.shots = [{ ...shot, startSec: 0, endSec: 35 }, { ...shot, startSec: 35, endSec: 60 }];
-    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw, truncated: true })).toThrow(/34\.5 秒/);
+    raw.shots = [{ ...shot, startSec: 0, endSec: 72.5 }, { ...shot, startSec: 72.5, endSec: 100 }];
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw, truncated: true })).toThrow(/72 秒/);
   });
 
   it("🔒 截断段照样守逐镜 17 字段：缺字段仍拒收", () => {

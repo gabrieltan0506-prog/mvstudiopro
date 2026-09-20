@@ -71,9 +71,12 @@ import {
 } from "./manhuaNativeProviderReceipt.js";
 import {
   EVOLINK_GLM_MODEL,
+  EVOLINK_GLM_LEGACY_MODEL_BEFORE_0920,
   GLM_MODEL_GATEWAYS,
   GlmGatewayError,
   OPENROUTER_GLM_MODEL,
+  OPENROUTER_GLM_LEGACY_MODEL_BEFORE_0920,
+  STRUCTURING_LEGACY_RECOGNIZED_GATEWAYS,
   STRUCTURING_CHAIN_GATEWAYS,
   STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS,
   invokeGlmJsonChatWithGatewayFallback,
@@ -435,12 +438,19 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = deepFreezeNativeContract({
  * 同一分片固定三档：0.7 → 0.65 → 0.6，共一次首发、两次重试。
  * 调用方不能插入、删除、换序或覆盖温度；通过即停止，三档均未过即失败。
  */
-export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = deepFreezeNativeContract([0.7, 0.65, 0.6] as const);
+/**
+ * 🔴 0920 用户令：「降檔重試 0.7--0.65x2--0.6x2，等於0.65與0.6各重試兩次」→ 共 5 发。
+ * ⚠️ 只是**次数**变了，两个降档温度值仍是 0.65 / 0.6——段缓存指纹只取 `[1]` 与 `[last]`
+ * 两个值（retryGenerationConfig / finalRetryGenerationConfig），所以**不动已付费分片身份**。
+ * 但本数组进冻结契约 SHA（用户 0920「我授權解凍」），摘要需同步升级。
+ */
+export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = deepFreezeNativeContract(
+  [0.7, 0.65, 0.65, 0.6, 0.6] as const);
 
 /** 兼容旧诊断导出；0906 起任一必需证据缺陷即拒收，不再凑满三项。 */
 export const NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES = 1;
-/** 0907 用户令「门禁放宽到 15%」：数值偏差最多 15%（0906 曾定 10%，0830 前为 20%）。只进门禁判定，不进提示词。 */
-export const NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO = 0.15;
+/** 0920 用户令「百分之十五放寬到百分之二十」：数值偏差最多 20%。只进门禁判定，不进提示词。 */
+export const NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO = 0.20;
 /**
  * 提示词/schema 里「story 至少 N 条」「平均镜长 ≤ M 秒」的参考值仍按 10% 算：这段文字进段缓存指纹，
  * 改它＝全部已付费分片失配重买。门禁放宽只改判定线（15%），提示词照旧。
@@ -509,23 +519,16 @@ export const NATIVE_DEEP_READ_AD_SINGLE_MAX_RATIO = 0.6;
 export const NATIVE_DEEP_READ_COVERAGE_SOLO_RETRY_CODES: ReadonlySet<string> = new Set([
   "coverage_missing", "coverage_head_gap", "coverage_tail_gap", "timeline_gap",
   /**
-   * 0831 用户拍板加回：镜数低于「离谱地板」可**单独触发**重试。
-   *
-   * 为什么必须有：0830 删掉段级镜数反馈后，模型写 9 镜和写 90 镜，
-   * 门禁反应完全一样。实测 run probe_douyin_20260831035500_86a2a69d attempt1
-   * 给出 **9 镜 / 319 秒 ＝ 35.4 秒一镜**、输出只用 3,689 token（上限的 5.6%）——
-   * 319 秒的漫剧不可能只有 9 个镜头，这是躺平不是「诚实地少写」。
-   * 提示词里的自检基准是软的，模型可以不理，这一发就是不理的证据。
-   *
-   * ⚠️ 这不是回到「硬拒收逼模型凑数」：地板取的是**离谱线 10 秒/镜**
-   * （319 秒＝32 镜），不是 v11 的建议线 6 秒/镜（53 镜）。
-   * 目的只是让「只写 9 镜」有代价，不是逼它写够 53 镜。
+   * 📜 历史：0831 曾把 `shot_density_low` 加回本名单（证据 run
+   * probe_douyin_20260831035500_86a2a69d attempt1：9 镜 / 319 秒＝35.4 秒一镜，
+   * 输出只用上限的 5.6%，属躺平而非「诚实地少写」）。
+   * 🔴 **0920 已撤出**，理由见下——那条证据不失效，但用户按成本重新拍板了。
    */
-  "shot_density_low",
-  // 平均镜长同样可单独触发：等分切法能压在镜数地板上蒙混过关，只有它抓得住。
-  "shot_avg_too_long",
-  // 广告占比异常同样可单独触发重试：整片被标成广告时，其他判据都数不到东西。
-  "ad_ratio_suspicious",
+  // 🔴 0920 用户令「鏡數地板、平均鏡長、廣告佔比 不在觸發重試，降級為advisory」：
+  // `shot_density_low` / `shot_avg_too_long` / `ad_ratio_suspicious` 三条整体移出本名单，
+  // 改进 NON_ACTIONABLE_RETRY_CODES。理由是用户原话：再触发重试就是「白燒好幾次讀片的次數」——
+  // 输入 token 按整片计费，重试一片＝重付一整片视频。
+  // ⚠️ 名字仍留在 ADVISORY_FAMILIES 与文案里，advisory 照发，只是不再换钱重买。
 ]);
 
 export const NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES: ReadonlySet<string> = new Set([
@@ -592,7 +595,18 @@ export const NATIVE_DEEP_READ_DENSITY_GUIDE_BLOCK =
 本段最后三分之一与开头同等重要，用同样的观察密度处理。`;
 
 /** 单条镜头证据的生成上限；在构造禁止区之前初始化，避免模块加载时访问未初始化常量。 */
-export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC = 30;
+/**
+ * 🔒 单条证据段硬上限。
+ * 0829 定 30 秒（用户三十余次实测：不加模型会一次跑 140–300 秒的假长镜）。
+ * 🔴 **0920 用户令放宽到 60 秒、且只留这一层**：
+ *   「平均鏡長可以大於十秒，放寬到單鏡頭小於六十秒」
+ *   「必須放鬆到六十秒內，這個要不然我會白燒好幾次讀片的次數，**只要一層就好**」
+ * 原来的 15 秒软线（SHOT_SINGLE_MAX_SEC / long_take_count）随之整条停用，见下。
+ * ⚠️ 这个数字同时写在提示词禁止项里，进段缓存指纹——历史身份由 `legacyBefore0920` 复原。
+ */
+export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC = 60;
+/** 0920 换档前的硬上限；**只进历史指纹复原**，不参与任何现行判定。 */
+export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC_BEFORE_0920 = 30;
 
 /**
  * 统一禁止区（0831 重构）。
@@ -608,7 +622,13 @@ export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC = 30;
  *   · 本区只讲**不许做什么**，不夹带任何要求
  *   · 删掉一切免责声明——门禁那边已有 advisory 在管，提示词不替门禁做免责
  */
-const NATIVE_DEEP_READ_LEGACY_PROHIBITION_BLOCK = `
+/**
+ * 🔑 单条证据段上限**参数化**（0920）：这段文字进段缓存指纹，
+ * 上限从 30 改到 60 之后，必须还能按旧上限渲染出**逐字相同**的历史提示词，
+ * 否则已付费分片全部失配重买。所以这里从 const 改成按 capSec 渲染的函数。
+ */
+function buildNativeDeepReadLegacyProhibitionBlock(capSec: number): string {
+  return `
 【禁止事项】
 · 将 MM:SS 或 HH:MM:SS 去掉冒号后直接当作累计秒，跳过分钟×60或小时×3600换算；例如把文件内 05:13 的本段累计秒误写为 513。
 · 同一段描述套用到不同时间段；两条镜头的画面描述逐字相同。
@@ -629,16 +649,26 @@ const NATIVE_DEEP_READ_LEGACY_PROHIBITION_BLOCK = `
 · 为了打破等长而改动真实剪辑点或虚构镜内变化。
 · 在总结中引入镜头表里没有的内容。
 · 给 non_story_ad 的 hintZh 填写非null内容，或填写 startSec、endSec、evidenceRole、hintZh、detailLevel 之外的字段。
-· 单条 shots 记录的 endSec − startSec 超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒。
+· 单条 shots 记录的 endSec − startSec 超过 ${capSec} 秒。
 · 把同一长镜的证据段边界伪报为真实剪辑切换。`;
+}
 
-export const NATIVE_DEEP_READ_PROHIBITION_BLOCK = NATIVE_DEEP_READ_LEGACY_PROHIBITION_BLOCK
-  .replace("· 同一段描述套用到不同时间段；两条镜头的画面描述逐字相同。\n", "")
-  .replace("，或把上一镜的观察直接套到下一镜。", "。");
+function buildNativeDeepReadProhibitionBlock(capSec: number): string {
+  return buildNativeDeepReadLegacyProhibitionBlock(capSec)
+    .replace("· 同一段描述套用到不同时间段；两条镜头的画面描述逐字相同。\n", "")
+    .replace("，或把上一镜的观察直接套到下一镜。", "。");
+}
+/** 现行上限下的渲染结果；存量导出消费者与探针继续用这两个常量。 */
+const NATIVE_DEEP_READ_LEGACY_PROHIBITION_BLOCK =
+  buildNativeDeepReadLegacyProhibitionBlock(NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC);
+export const NATIVE_DEEP_READ_PROHIBITION_BLOCK =
+  buildNativeDeepReadProhibitionBlock(NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC);
 
 
 export const NATIVE_DEEP_READ_NON_ACTIONABLE_RETRY_CODES: ReadonlySet<string> = new Set([
   "audio_track_thin", "audio_cue_thin", "long_take_count",
+  // 0920 用户令：密度类与广告占比一律只记建议，不触发重试。
+  "shot_density_low", "shot_avg_too_long", "ad_ratio_suspicious",
 ]);
 
 /** 单项命中也必须重试；这些错误会让下游整集规范化必然失败，不能只记 advisory。 */
@@ -924,7 +954,8 @@ export function resolveNativeDeepReadInputFps(durationSec: number): number {
  * 镜头表地板（0826 用户拍板改时长制）：15 秒地板等于允许「场面段」冒充逐镜——
  * 探针实证 360s 段 28 镜（均 12.9s/镜、最长 26s）也能过旧地板，品质过粗。
  * 温度只管发挥不管密度，密度必须靠代码门禁：
- *   镜头数 ≥ ceil(段时长/6) · 平均每镜 ≤6s · 单镜 ≤15s（超了=合并了多次切镜）。
+ *   镜头数 ≥ ceil(段时长/6) · 平均每镜 ≤6s · 单镜 ≤15s」（📜 0826 原文；三项均已失效：
+ *   镜数与均长 0920 降 advisory，单镜上限 0920 起是 60 秒一层）。
  */
 export const NATIVE_DEEP_READ_SHOT_FLOOR_INTERVAL_SEC = 6;
 /**
@@ -950,6 +981,10 @@ export const NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC = 6;
  * 但标题卡/长定场 16–20s 真实存在）：>15s 至多允许 1 个真实长镜。
  * 同一物理长镜超过 30s 时不得截断或伪造切镜，而要按镜内真实变化拆成连续证据段。
  */
+/**
+ * 🔴 **0920 停用**：15 秒软线是「两层」里的那一层，用户明令「只要一層就好」。
+ * 常量保留仅供历史证据与旧测试识别，**不再有任何生产消费者**（long_take_count 已停发）。
+ */
 export const NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC = 15;
 // 25 秒是质量提示线，不应因真实长镜只多 1 秒就重烧整段；30 秒才标记并重试。
 /**
@@ -957,19 +992,23 @@ export const NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC = 15;
  * 不加这条硬约束，模型会把 140–300 秒整段当成「一个长镜」交差——那不是长镜，
  * 是躺平的另一种形态。0829 曾试图改成「无变化可照实记一条」，用户当场否决：
  * 「不行，超过三十秒必须要拆」「这个不加模型会一次跑 140-300 秒这样的长镜」「我都试过了」。
+ * 🔴 **0920 用户改口径**：拆的要求不变，阈值放宽到 60 秒一层（原话见 HARD_MAX_SEC 注释）。
  * 提示词硬约束 1 与本门禁必须同时保持硬性，任何 agent 不得单方面放宽。
  */
 /**
  * 生成前安排观察与边界；返回后的算术验收由代码执行。
  * 这些文字是生成指引，不代表模型能回退修改已经输出的JSON，也不保证内容正确。
  */
-export function buildNativeDeepReadObservationPlanBlock(lenSec: number): string {
+export function buildNativeDeepReadObservationPlanBlock(
+  lenSec: number,
+  capSec: number = NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC,
+): string {
   return `
 【观察与输出顺序】
 
 1. 通览本段 ${Math.round(lenSec)} 秒画面，定位每次真实剪辑切换及镜内变化，规划连续覆盖整段的时间边界。
 2. 先输出 keyMoments：定位每个 atSec 的原帧，核实人物、地点、动作及可见字幕，再填写 noteZh；音轨类同时核实该秒声音。
-3. ${buildNativeDeepReadDensityContract(lenSec)}
+3. ${buildNativeDeepReadDensityContract(lenSec, capSec)}
 4. 再输出 shots：按硬约束 2 确定每条记录的起止秒位，依据已输出 keyMoments 的前后6秒范围判定重点镜或简写镜，然后填写对应字段，沿原片时间轴继续下一条。`;
 }
 
@@ -1018,13 +1057,14 @@ export const NATIVE_DEEP_READ_SEGMENT_COVERAGE_FLOOR_RATIO = 0.5;
  * 为了「30.4 秒 vs 30 秒」这种擦边去重买一整片，换回来的产出并不更对。
  * 只对**数值**门禁生效；字段齐全 / 五维五键 / zod 这类二值判定没有 10% 可言，不受影响。
  */
-/** 0907 用户令「门禁放宽到 15%」（实际单镜拒收线 34.5 秒）；0831 曾定 10%，不回退到 v11 的零容差。 */
-export const NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO = 0.15;
+/** 0920 用户令「百分之十五放寬到百分之二十」→ 单镜拒收线 60 × 1.2 = **72 秒**。 */
+export const NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO = 0.20;
 /**
- * 单镜拒收线 = 硬上限 × (1 + 容差) = 34.5 秒（0907 用户放宽到 15%）。
- * 🔴 软上限整条删除：用户原话「軟上限就是有偷懒的空間」——
- * 40–60 秒的镜头此前既不触发 advisory 也不拒收，模型自然往粗里切。
- * v28 实证：上限放到 60 后，六片镜头数在 18–72 之间摆动 4 倍，三片命中 long_take_count。
+ * 单镜拒收线 = 硬上限 × (1 + 容差) = **72 秒**（0920 用户令：上限 60 + 容差 20%）。
+ * 📜 历史：0907 曾以「軟上限就是有偷懒的空間」删掉软上限，并记 v28 实证
+ * （上限放到 60 后六片镜头数在 18–72 之间摆动 4 倍）。
+ * 🔴 **0920 用户按成本重新拍板**：「必須放鬆到六十秒內…只要一層就好」
+ * ——密度摆动改由 advisory 记录，不再换钱重买。
  */
 export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC =
   NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC * (1 + NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO);
@@ -1106,7 +1146,11 @@ export function buildGeminiNativeDeepReadSegmentPrompt(input: NativeDeepReadSegm
 }
 
 /** 历史版本仅计算已付费证据身份；新模型请求始终使用公开构建器。 */
-function buildGeminiNativeDeepReadSegmentPromptVersion(input: NativeDeepReadSegmentPromptInput, legacyCoverage: boolean): string {
+function buildGeminiNativeDeepReadSegmentPromptVersion(
+  input: NativeDeepReadSegmentPromptInput,
+  legacyCoverage: boolean,
+  capSec: number = NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC,
+): string {
   const observation = legacyCoverage ? NATIVE_DEEP_READ_SHOT_OBSERVATION_ZH : NATIVE_DEEP_READ_COVERAGE_OBSERVATION_ZH;
   const lenSec = Math.max(1, Math.round(input.endSec - input.startSec));
   const videoFps = resolveNativeDeepReadRequestFps(lenSec, input.videoFps);
@@ -1139,10 +1183,10 @@ audioResolution 内的 fromSec/toSec、cues.atSec 使用本段局部整数秒，
 
 2. 镜头记录与生成前长镜拆分
 真实剪辑切换的 unitTypeZh 写「剪辑镜头」。
-**每条 shots 记录最长 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒。**在输出本条 JSON 对象之前，先确定 startSec 和 endSec，使 0 < endSec − startSec ≤ ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC}；然后填写本条画面内容。
+**每条 shots 记录最长 ${capSec} 秒。**在输出本条 JSON 对象之前，先确定 startSec 和 endSec，使 0 < endSec − startSec ≤ ${capSec}；然后填写本条画面内容。
 真实剪辑镜头按实际起止秒位记录，短于 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒也完整保留；相邻镜头时长可以相同。
-遇到持续超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒的同一真实长镜，先规划多个首尾相接的证据段，再逐条输出，完整覆盖原镜头。优先在实际构图、运镜、角色调度、动作、表演或光影变化处分段；持续静止或持续对话同样按上限续接，并如实记录该段保持的状态。
-同一长镜的每个拆分证据段保持 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒；该下限仅适用于同一长镜的拆分证据段。
+遇到持续超过 ${capSec} 秒的同一真实长镜，先规划多个首尾相接的证据段，再逐条输出，完整覆盖原镜头。优先在实际构图、运镜、角色调度、动作、表演或光影变化处分段；持续静止或持续对话同样按上限续接，并如实记录该段保持的状态。
+同一长镜的每个拆分证据段保持 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${capSec} 秒；该下限仅适用于同一长镜的拆分证据段。
 在输出前安排好尾段：不足 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒的余量与前段共同调整边界，使各段仍处于上述范围，原镜头首尾保持完整。
 拆分后的 unitTypeZh 写「拆分镜证据段」；第二段及后续段的 transitionInZh 固定写「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」。
 
@@ -1271,7 +1315,7 @@ shots 条目按 evidenceRole 区分两种结构：
 
 本轮重做要求：
 1. 只修正上面点名的问题，其余一律照常完整观察。
-2. 证据段过长时的唯一正确做法是**按前文长镜拆分规则拆成多条**（每段 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，
+2. 证据段过长时的唯一正确做法是**按前文长镜拆分规则拆成多条**（每段 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${capSec} 秒，
    后续段 transitionInZh 写固定标记）。
 3. 每条证据的画面描述必须来自你在该时间段真实看到的内容。${
   // 无音轨片保持空数组契约；声音观察要求仅用于有音轨片。
@@ -1291,7 +1335,7 @@ shots 条目按 evidenceRole 区分两种结构：
     : ""}`
     : "";
   // 首发与重试共用一个禁止区；重试新增禁令也留在此区，避免再次混入正向要求。
-  return `${retryRequirements}\n${legacyCoverage ? NATIVE_DEEP_READ_LEGACY_PROHIBITION_BLOCK : NATIVE_DEEP_READ_PROHIBITION_BLOCK}${retryProhibitions}`;
+  return `${retryRequirements}\n${legacyCoverage ? buildNativeDeepReadLegacyProhibitionBlock(capSec) : buildNativeDeepReadProhibitionBlock(capSec)}${retryProhibitions}`;
 }
 
 /** 同一段的可信输入由生产者传递，既用于生成请求，也用于探针独立校验。 */
@@ -1313,17 +1357,26 @@ export function resolveNativeDeepReadDensityContract(lenSec: number) {
   };
 }
 
-function buildNativeDeepReadDensityContract(lenSec: number): string {
+function buildNativeDeepReadDensityContract(
+  lenSec: number,
+  capSec: number = NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC,
+): string {
   const rule = resolveNativeDeepReadDensityContract(lenSec);
-  return `本段镜数参考线为 ${rule.referenceShots} 条；存在剧情镜时 story 至少 ${rule.minStoryShots} 条，广告另计。剧情镜平均时长（剧情镜时长总和÷剧情镜数）上限为 ${rule.maxAverageSec} 秒；完整${Math.round(lenSec)}秒均为剧情时，至少需要 ${Math.ceil(lenSec / rule.maxAverageSec)} 条。镜数和平均时长用于提示可能漏记的内容，逐镜边界和描述以原片实际证据为准。每条 shots 记录的 endSec − startSec 上限固定为 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒；真实长镜按该上限提前规划连续证据段。完整输出覆盖整段时间轴。`;
+  return `本段镜数参考线为 ${rule.referenceShots} 条；存在剧情镜时 story 至少 ${rule.minStoryShots} 条，广告另计。剧情镜平均时长（剧情镜时长总和÷剧情镜数）上限为 ${rule.maxAverageSec} 秒；完整${Math.round(lenSec)}秒均为剧情时，至少需要 ${Math.ceil(lenSec / rule.maxAverageSec)} 条。镜数和平均时长用于提示可能漏记的内容，逐镜边界和描述以原片实际证据为准。每条 shots 记录的 endSec − startSec 上限固定为 ${capSec} 秒；真实长镜按该上限提前规划连续证据段。完整输出覆盖整段时间轴。`;
 }
 
 /** 仅整理模型可见的长镜拒因；完整诊断、内部容差和重试决策原样保留。 */
 function nativeDeepReadRetryReasonForPrompt(reason: string): string {
+  // 🔴 这三条正则曾把 33 / 30 / 10% 写死：阈值一改就永远匹配不到（等于哑弹），
+  // 而它要防的是「内部容差数字泄漏进模型的正向区」。改成按当前常量生成。
+  const rejectSec = String(Math.round(NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC * 10) / 10);
+  const capSec = String(NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC);
+  const tolPct = String(Math.round(NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO * 100));
+  const esc = (v: string) => v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return reason
-    .replace(/超过\s*33\s*秒的镜头证据段（要求\s*30\s*秒\s*\+\s*10%\s*容差）/g,
-      "超过30秒输出上限的镜头证据段")
-    .replace(/镜头证据段超过\s*33\s*秒/g, "镜头证据段超过30秒输出上限")
+    .replace(new RegExp(`超过\\s*${esc(rejectSec)}\\s*秒的镜头证据段（要求\\s*${esc(capSec)}\\s*秒\\s*\\+\\s*${esc(tolPct)}%\\s*容差）`, "g"),
+      `超过${capSec}秒输出上限的镜头证据段`)
+    .replace(new RegExp(`镜头证据段超过\\s*${esc(rejectSec)}\\s*秒`, "g"), `镜头证据段超过${capSec}秒输出上限`)
     .replace("；这几条必须按镜内变化拆成连续证据段，禁止截断尾部",
       "；本次生成前按长镜拆分规则安排完整连续的证据段");
 }
@@ -1399,9 +1452,11 @@ export function nativeDeepReadStructuringGatewayOrder(
   if (policy === "structuring_chain_qwen_first") {
     return odd ? ["plan_sg_qwen", "openrouter", "evolink_glm"] : ["plan_bj_qwen", "evolink_glm", "openrouter"];
   }
-  // 0906 用户令「不走 Qwen」：GLM 链只剩 OpenRouter（钉 Z.AI）与 EvoLink 两档，不再切 Qwen；判坏重试仍按每档两次
-  // 0907 用户令「一路走 OpenRouter 一路走 EvoLink」：并发批次分流首发，第 1 批 OpenRouter→EvoLink，第 2 批 EvoLink→OpenRouter
-  return odd ? ["evolink_glm", "openrouter"] : ["openrouter", "evolink_glm"];
+  // 0906 用户令「不走 Qwen」：GLM 链只剩 OpenRouter（钉 Z.AI）与 EvoLink 两档。
+  // 🔴 0920 用户令「現在open router打折，趁機用上」：OpenRouter 转**主档**，两批次首发一致，
+  // 不再按 0907 那样分流——分流是为了均摊两家用量，打折期的口径是「都走便宜那家」。
+  // EvoLink 退兜底（没有 Flash X，停在 5.3 Flash）；末档新加坡 Qwen 套餐由链序提供。
+  return odd ? ["openrouter", "evolink_glm"] : ["openrouter", "evolink_glm"];
 }
 
 /** 整形分组合同：四片为 2+2；其余按原顺序每五片一批。 */
@@ -1426,7 +1481,7 @@ export function buildNativeDeepReadResponseSchema(context: NativeDeepReadSegment
 }
 
 /** 历史单结构仅用于旧付费证据指纹；所有新请求使用公开构建函数的三分支。 */
-function buildNativeDeepReadResponseSchemaVersion(context: NativeDeepReadSegmentContext, legacySingleShape: boolean, legacyBranchGuidance = false, legacyCoverage = true): Record<string, unknown> {
+function buildNativeDeepReadResponseSchemaVersion(context: NativeDeepReadSegmentContext, legacySingleShape: boolean, legacyBranchGuidance = false, legacyCoverage = true, capSec: number = NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC): Record<string, unknown> {
   if (!Number.isFinite(context.startSec) || !Number.isFinite(context.endSec)
     || context.startSec < 0 || context.endSec <= context.startSec
     || !Number.isSafeInteger(context.segmentIndex) || context.segmentIndex < 0
@@ -1436,7 +1491,7 @@ function buildNativeDeepReadResponseSchemaVersion(context: NativeDeepReadSegment
   const lenSec = Math.max(1, Math.round(context.endSec - context.startSec));
   const absoluteRangeZh = `全片绝对秒，范围 ${Math.round(context.startSec)} 至 ${Math.round(context.endSec)} 秒`;
   const shot = props.shots!.items!;
-  props.shots!.description = buildNativeDeepReadDensityContract(lenSec)
+  props.shots!.description = buildNativeDeepReadDensityContract(lenSec, capSec)
     + "story与non_story_ad分别按条目分类要求填写。";
   shot.description = `story条目分两档：重点镜（起止与任一 keyMoments.atSec 前后 ${NATIVE_DEEP_READ_KEY_SHOT_WINDOW_SEC} 秒有交集）按顺序完整填写以下18字段：${Object.keys(shot.properties!).join("、")}；其余简写镜只填 startSec、endSec、evidenceRole、hintZh、actionZh，其它字段省略。`
     + "重点镜18字段逐项非空，依据本镜可见内容具体填写。先写本镜hintZh观察，再写详细分析。non_story_ad仅保留startSec、endSec、evidenceRole三个有内容的字段，hintZh固定为null空占位。";
@@ -1449,7 +1504,7 @@ function buildNativeDeepReadResponseSchemaVersion(context: NativeDeepReadSegment
   // 官方结构化输出支持propertyOrdering；仅约束逐镜生成顺序，与正文逐项顺序一致。
   shot.propertyOrdering = Object.keys(shot.properties!);
   shot.properties!.startSec = { type: "NUMBER", description: `${absoluteRangeZh}，填写实际起点，可保留一位小数。` };
-  shot.properties!.endSec = { type: "NUMBER", description: `${absoluteRangeZh}，生成本条前确定终点，满足startSec < endSec ≤ startSec + ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC}，可保留一位小数；真实长镜按单条上限连续分段。` };
+  shot.properties!.endSec = { type: "NUMBER", description: `${absoluteRangeZh}，生成本条前确定终点，满足startSec < endSec ≤ startSec + ${capSec}，可保留一位小数；真实长镜按单条上限连续分段。` };
   props.keyMoments!.description = NATIVE_DEEP_READ_KEY_MOMENT_SELECTION_ZH;
   const firstFrameSec = Number((Math.ceil(context.startSec * 10) / 10).toFixed(1));
   const lastFrameSec = Number((Math.ceil(context.endSec * 10) / 10 - 0.1).toFixed(1));
@@ -1593,7 +1648,10 @@ export function nativeDeepReadFrozenContractSha256(): string {
 // 0906 用户明确授权三分支required与类型标记；生成时约束结构，返回后由代码验证实际类型和非空内容。
 // 0906 追加授权：普通镜可以额外填写重点细节；只放宽返回后该方向的检查。
 // 0906 当前用户授权：撤销额外内容强迫、完整音画生成与缺口反馈；采样及输出参数保持不变。
-export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "72bbec15c7ec0bd6eb111543c73d239dc040e1d2731803643d0f6f9f31bf413e" as const;
+// 0920 用户授权解冻（原话「我授權解凍」）：本轮变更冻结项 —— 重试梯度 0.7/0.65×2/0.6×2、
+// 门禁容差与偏差线 15%→20%、单条证据段上限 30→60（一层）、密度与广告占比三条降 advisory。
+// 覆盖线保持 90%（用户原话「覆蓋率要百分之九十這條不變，不要求到百分之百」）。
+export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "7bb7da55e9d69289024f9fbc86fe8515314f63c384f4bf4d75c391bc8eacbc82" as const;
 
 export function assertNativeDeepReadFrozenContract(): void {
   const actual = nativeDeepReadFrozenContractSha256();
@@ -1611,14 +1669,15 @@ export function buildGeminiNativeDeepReadSegmentRequest(input: {
   fps: number;
   prompt: string;
   segmentContext: NativeDeepReadSegmentContext;
-  /** 只允许选择冻结梯度中的尝试序号；调用方不能覆盖 generationConfig。 */
-  attemptIndex?: 0 | 1 | 2;
+  /** 只允许选择冻结梯度中的尝试序号；调用方不能覆盖 generationConfig。0920 起共 5 档。 */
+  attemptIndex?: 0 | 1 | 2 | 3 | 4;
 }): Record<string, unknown> {
   assertNativeDeepReadFrozenContract();
   const attemptIndex = input.attemptIndex ?? 0;
   if (!Number.isSafeInteger(attemptIndex)
     || attemptIndex < 0 || attemptIndex >= NATIVE_DEEP_READ_RETRY_TEMPERATURES.length) {
-    throw new Error("原生精读只允许冻结的0.7/0.65/0.6三档尝试序号");
+    throw new Error(
+      `原生精读只允许冻结梯度内的尝试序号（${NATIVE_DEEP_READ_RETRY_TEMPERATURES.join("/")}，共 ${NATIVE_DEEP_READ_RETRY_TEMPERATURES.length} 发）`);
   }
   const generationConfig = {
     ...NATIVE_DEEP_READ_GENERATION_CONFIG,
@@ -3166,15 +3225,10 @@ function collectLongTakeAdvisories(input: {
     });
     physicalDurations = evidenceDurations;
   }
-  const physicalLongTakes = physicalDurations
-    .filter((shotLen) => shotLen > NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC);
-  if (physicalLongTakes.length > NATIVE_DEEP_READ_SHOT_LONG_TAKE_ALLOWANCE) {
-    out.push({
-      code: "long_take_count",
-      detailZh: `${input.labelZh}有 ${physicalLongTakes.length} 个超过 ${NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC} 秒的真实长镜（最长 ${Math.round(Math.max(...physicalLongTakes))} 秒），仅提示不拒收`,
-      segmentIndex: input.segmentIndex,
-    });
-  }
+  // 🔴 0920 用户令「只要一層就好」：原来这里按 15 秒软线再数一遍真实长镜并发
+  // `long_take_count`，那正是被撤掉的第二层。现在唯一的层是上面 60 秒（+20% 容差＝72 秒）的硬闸。
+  // `long_take_split_discontinuous`（长镜拆分不连续）不属于「层」，是结构判据，照旧保留。
+  void physicalDurations;
   return out;
 }
 
@@ -3683,7 +3737,7 @@ export function assertNativeDeepReadSegmentDensity(input: {
    *     后者正是「回得越少地板越低、越容易过」的洞。
    *
    * 上限与覆盖这两条与体裁无关的硬约束照旧：
-   *   · 单条证据段 ≤30 秒（用户三十余次实测拍板，不得放宽）
+   *   · 单条证据段 ≤60 秒（0829 定 30 秒；**0920 用户明令放宽到 60 且只留这一层**）
    *   · 段级覆盖率地板（整片必须读完，回 3 秒即拒）
    */
   const shotFloor = resolveNativeDeepReadDensityContract(lenSec).referenceShots;
@@ -3701,7 +3755,8 @@ export function assertNativeDeepReadSegmentDensity(input: {
    * 🔴 平均镜长门禁：接回 0826 就存在、后来被架空的那条线。
    *
    * 0826 代码注释原话：「温度只管发挥不管密度，密度必须靠代码门禁：
-   * 镜头数 ≥ ceil(段时长/6) · 平均每镜 ≤6s · 单镜 ≤15s（超了=合并了多次切镜）」。
+   * 镜头数 ≥ ceil(段时长/6) · 平均每镜 ≤6s · 单镜 ≤15s」（📜 0826 原文，三项均已失效：
+   * 镜数与均长 0920 降 advisory，单镜上限 0920 起是 60 秒一层）。
    * `NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC = 6` 常量一直在，但 0830 删镜数门禁时
    * 连它的消费者一起删了——常量成了死代码，全仓 grep `shot_avg_too_long` 零结果。
    *
@@ -3838,7 +3893,7 @@ export function assertNativeDeepReadEpisodeEvidence(input: {
   if (overlongShots.length > 0) {
     throw gateError(
       `第${input.episodeIndex}集整集卡有 ${overlongShots.length} 条证据超过`
-      + ` ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC} 秒（${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒 + 10% 容差）（最长`
+      + ` ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC} 秒（${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒 + ${Math.round(NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO * 100)}% 容差）（最长`
       + ` ${Math.max(...overlongShots.map((r) => r.lenSec)).toFixed(1)} 秒，起于`
       + ` ${overlongShots[0]!.startSec.toFixed(1)} 秒）：必须按镜内真实变化拆成连续证据段，`
       + `不许靠丢弃证据满足`,
@@ -3897,7 +3952,7 @@ export function assertNativeDeepReadEpisodeEvidence(input: {
     throw new Error(`第${input.episodeIndex}集整形后镜头覆盖率 ${(episodeCoverage.coverageRatio * 100).toFixed(2)}%，低于 90%，整集拒绝入库`);
   }
   if (episodeCoverage.coverageRatio < 1) {
-    noteEpisode("episode_coverage_gap", `整集原始镜头覆盖率 ${(episodeCoverage.coverageRatio * 100).toFixed(2)}%，缺口在 10% 容差内，保留真实区间`);
+    noteEpisode("episode_coverage_gap", `整集原始镜头覆盖率 ${(episodeCoverage.coverageRatio * 100).toFixed(2)}%，缺口在覆盖线 ${(NATIVE_DEEP_READ_SEGMENT_COVERAGE_RETRY_RATIO * 100).toFixed(0)}% 之上，保留真实区间`);
   }
   const storyShots = allShots.filter((shot) => shot.evidenceRole === "story");
   const storyDurationSec = storyShots.reduce(
@@ -4047,7 +4102,10 @@ export const NATIVE_DEEP_READ_QWEN_STRUCTURING_STARTED_LABEL = "Qwen3.8-Max 严�
 export function nativeDeepReadStructuringPolicyForModel(
   model: unknown,
 ): "structuring_chain" {
-  if (model !== undefined && model !== "glm-5.3") throw new Error("整形模型只允许 GLM-5.3");
+  // 0920 用户令换档 GLM-5.3 Flash；旧值 "glm-5.3" 继续接受（存量调用方与历史任务参数）。
+  if (model !== undefined && model !== EVOLINK_GLM_MODEL && model !== EVOLINK_GLM_LEGACY_MODEL_BEFORE_0920) {
+    throw new Error(`整形模型只允许 ${EVOLINK_GLM_MODEL}`);
+  }
   return "structuring_chain";
 }
 export function nativeDeepReadStructuringStartedLabel(policy: "structuring_chain" | "structuring_chain_qwen_first"): string {
@@ -4057,12 +4115,14 @@ export function nativeDeepReadStructuringStartedLabel(policy: "structuring_chain
 /** 整形链可接受的网关集合（缓存校验与通道锁共用）。 */
 export const STRUCTURING_GATEWAYS: ReadonlySet<string> = new Set<string>([
   ...Array.from(GLM_MODEL_GATEWAYS), ...STRUCTURING_CHAIN_GATEWAYS, ...STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS,
+  // 🔒 停用 ≠ 撤销识别：0920 撤档的 Qwen 三档写过的整形证据必须继续认，否则整段重新付费。
+  ...STRUCTURING_LEGACY_RECOGNIZED_GATEWAYS,
 ]);
 export function glmGatewayDisplayLabel(gateway: string): string {
   switch (gateway) {
     // 0905 用户令「整形哪个模型面板就显示哪个模型」：模型名在前，网关在后
-    case "evolink_glm": return "GLM-5.3 · EvoLink";
-    case "openrouter": return "GLM-5.3 · OpenRouter";
+    case "evolink_glm": return "GLM-5.3 Flash · EvoLink";
+    case "openrouter": return "GLM-5.3 Flash · OpenRouter";
     case "plan_bj_qwen": return "Qwen3.8-Max · 北京套餐";
     case "plan_sg_qwen": return "Qwen3.8-Max · 新加坡套餐";
     case "openrouter_qwen": return "Qwen3.8-Max · OpenRouter";
@@ -4376,6 +4436,29 @@ ${input.badJsonText}`,
  * 每段缓存的真实请求契约指纹。不能只 hash 一份“典型提示词”：真实集时长、段号、
  * 段数、hint、fps、音轨口径和来源只要有一项改变，都必须让旧缓存失效。
  */
+/**
+ * 🔒 **历史已付费分片的身份变体表（单一真源）**。
+ *
+ * 每次收紧/放宽提示词、schema 或整形模型，旧缓存的身份就换一次；不把旧身份列在这里，
+ * 已经买断的分片就会「查不到 → 重新付费」。0906 之前的四个收紧点各一个标记，
+ * 0920 换档（60 秒上限 + GLM Flash）再乘一维。
+ *
+ * ⚠️ 这张表**只增不减**。两处消费者（permanent 段读取与缓存命中校验）都必须用它，
+ * 不许各写一份——0906 就是两处判据分家炸的。
+ */
+export type NativeDeepReadLegacyFingerprintVariant = {
+  legacyBeforeCoverage0906?: boolean;
+  legacyBeforeExplicitShotWindows0906?: boolean;
+  legacyBeforeRequiredBranches0906?: boolean;
+  legacyBeforeStrict0906?: boolean;
+  legacyBefore0920?: boolean;
+};
+export const NATIVE_DEEP_READ_LEGACY_FINGERPRINT_VARIANTS:
+ReadonlyArray<NativeDeepReadLegacyFingerprintVariant> =
+  ([{}, { legacyBeforeCoverage0906: true }, { legacyBeforeExplicitShotWindows0906: true },
+    { legacyBeforeRequiredBranches0906: true }, { legacyBeforeStrict0906: true }] as const)
+    .flatMap((version) => [version, { ...version, legacyBefore0920: true }]);
+
 export function nativeDeepReadSegmentCacheFingerprint(input: {
   sourceDigest: string;
   episodeIndex: number;
@@ -4396,10 +4479,20 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
   legacyBeforeExplicitShotWindows0906?: boolean;
   /** 保留撤销额外内容强迫之前的付费请求身份。 */
   legacyBeforeCoverage0906?: boolean;
+  /**
+   * 🔒 仅识别 0920 换档前的已付费分片。两处身份在 0920 同时变了：
+   *   ① 提示词与 schema 里的单条证据段上限 30 → 60（用户令「放寬到六十秒…只要一層就好」）
+   *   ② glmRepairModel 由 `glm-5.3→z-ai/glm-5.3` 换成 Flash 两档
+   * 不复原＝**已买断的分片全部失配重买**。本标记只进身份计算，永不用于发请求。
+   */
+  legacyBefore0920?: boolean;
 }): string {
   const legacyCoverage = input.legacyBeforeCoverage0906 === true || input.legacyBeforeExplicitShotWindows0906 === true
     || input.legacyBeforeRequiredBranches0906 === true || input.legacyBeforeStrict0906 === true;
   const fps = resolveNativeDeepReadRequestFps(input.segment.endSec - input.segment.startSec, input.videoFps);
+  const capSec = input.legacyBefore0920 === true
+    ? NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC_BEFORE_0920
+    : NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC;
   let prompt = buildGeminiNativeDeepReadSegmentPromptVersion({
     episodeDurationSec: input.episodeDurationSec,
     startSec: input.segment.startSec,
@@ -4409,7 +4502,7 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
     hasAudio: input.hasAudio,
     videoFps: fps,
     hintZh: input.segment.hintZh || input.hintZh,
-  }, legacyCoverage);
+  }, legacyCoverage, capSec);
   const repairPrompt = buildNativeDeepReadGlmSegmentRepairPrompt({
     episodeIndex: input.episodeIndex,
     segmentIndex: input.segmentIndex,
@@ -4420,7 +4513,7 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
   });
   const legacySingleShape = input.legacyBeforeStrict0906 === true || input.legacyBeforeRequiredBranches0906 === true;
   const previousBranchGuidance = input.legacyBeforeExplicitShotWindows0906 === true || legacySingleShape;
-  const responseSchema = buildNativeDeepReadResponseSchemaVersion({ ...input.segment, segmentIndex: input.segmentIndex, hasAudio: input.hasAudio }, legacySingleShape, previousBranchGuidance, legacyCoverage) as NativeResponseSchemaNode;
+  const responseSchema = buildNativeDeepReadResponseSchemaVersion({ ...input.segment, segmentIndex: input.segmentIndex, hasAudio: input.hasAudio }, legacySingleShape, previousBranchGuidance, legacyCoverage, capSec) as NativeResponseSchemaNode;
   if (previousBranchGuidance) prompt = prompt.replace(NATIVE_DEEP_READ_BEFORE_COVERAGE_SHOT_DETAIL_GUIDE_ZH, NATIVE_DEEP_READ_LEGACY_SHOT_DETAIL_GUIDE_ZH)
     .replace("hintZh、detailLevel 之外的字段。", "hintZh 之外的字段。");
   if (legacySingleShape) prompt = prompt.replace(`${NATIVE_DEEP_READ_LEGACY_SHOT_DETAIL_GUIDE_ZH}\n`, "");
@@ -4489,7 +4582,9 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
     cacheSchemaVersion: NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION,
     planVersion: NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
     model: input.model ?? NATIVE_DEEP_READ_MODEL,
-    glmRepairModel: NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL,
+    glmRepairModel: input.legacyBefore0920 === true
+      ? `${EVOLINK_GLM_LEGACY_MODEL_BEFORE_0920}→${OPENROUTER_GLM_LEGACY_MODEL_BEFORE_0920}`
+      : NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL,
     responseSchema,
     generationConfig: NATIVE_DEEP_READ_GENERATION_CONFIG,
     retryGenerationConfig: NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG,
@@ -5081,7 +5176,7 @@ async function executeNativeDeepReadBatch(
           });
           if (!cached && params.structuringOnly && deps.readPermanentSegment) {
             cached = await deps.readPermanentSegment({ seriesKey: params.segmentCacheSeriesKey, episodeIndex: episode.episodeIndex,
-              segmentIndex, sourceDigest: episode.cacheSourceDigest!, fingerprints: [false, true].flatMap(hasAudio => [{}, { legacyBeforeCoverage0906: true }, { legacyBeforeExplicitShotWindows0906: true }, { legacyBeforeRequiredBranches0906: true }, { legacyBeforeStrict0906: true }].map(version => nativeDeepReadSegmentCacheFingerprint({
+              segmentIndex, sourceDigest: episode.cacheSourceDigest!, fingerprints: [false, true].flatMap(hasAudio => NATIVE_DEEP_READ_LEGACY_FINGERPRINT_VARIANTS.map(version => nativeDeepReadSegmentCacheFingerprint({
                 sourceDigest: episode.cacheSourceDigest!, episodeIndex: episode.episodeIndex, episodeDurationSec: episode.sourceDurationSec,
                 segment, segmentIndex, segmentCount: episode.segments.length, hasAudio, videoFps: episode.videoFps, hintZh: episode.hintZh, ...version,
               }))) });
@@ -5099,11 +5194,8 @@ async function executeNativeDeepReadBatch(
             videoFps: episode.videoFps,
             hintZh: episode.hintZh,
           };
-          const expectedFingerprints = [nativeDeepReadSegmentCacheFingerprint(fingerprintInput),
-            nativeDeepReadSegmentCacheFingerprint({ ...fingerprintInput, legacyBeforeCoverage0906: true }),
-            nativeDeepReadSegmentCacheFingerprint({ ...fingerprintInput, legacyBeforeExplicitShotWindows0906: true }),
-            nativeDeepReadSegmentCacheFingerprint({ ...fingerprintInput, legacyBeforeRequiredBranches0906: true }),
-            nativeDeepReadSegmentCacheFingerprint({ ...fingerprintInput, legacyBeforeStrict0906: true })];
+          const expectedFingerprints = NATIVE_DEEP_READ_LEGACY_FINGERPRINT_VARIANTS
+            .map((version) => nativeDeepReadSegmentCacheFingerprint({ ...fingerprintInput, ...version }));
           if (
             entry.sourceDigest !== episode.cacheSourceDigest
             || !expectedFingerprints.includes(entry.fingerprint)
