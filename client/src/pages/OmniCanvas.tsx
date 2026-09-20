@@ -1,4 +1,4 @@
-import { saveManhuaShotTimingDraft } from "@/lib/manhuaShotTimingDraft";
+import { saveManhuaShotTimingDraft, retimeManhuaWriterPack } from "@/lib/manhuaShotTimingDraft";
 import { retimeManhuaShot } from "@shared/manhuaShotTimingEdit";
 import { readManhuaTimedStoryboard as readShotTimingForEdit } from "@shared/manhuaTimedStoryboard";
 import { applyManhuaAssetDirection } from "@shared/manhuaDirectionCanonLibrary";
@@ -10537,11 +10537,8 @@ export default function OmniCanvas() {
                     if (Array.from(edits.values()).some(edit => JSON.stringify(edit.rows.map(row => [row.index,row.startSec,row.endSec])) !== JSON.stringify(canonical.rows.map(row => [row.index,row.startSec,row.endSec])))) throw new Error("当前存在不一致的秒位表，请先统一原稿，未保存。");
                     const episode = writerPack?.episodes.find(item => item.index === ep);
                     if (!episode) throw new Error("当前集剧本不存在，未保存。");
-                    const body = readShotTimingForEdit(episode.body).recognized ? retimeManhuaShot(episode.body,shotIndex,durationSec).text : `${episode.body}\n\n## 分镜表\n\n${canonical.table}`;
-                    const savedRows = readShotTimingForEdit(body);
-                    if (savedRows.errors.length || JSON.stringify(savedRows.rows.map(row => [row.index,row.startSec,row.endSec])) !== JSON.stringify(canonical.rows.map(row => [row.index,row.startSec,row.endSec]))) throw new Error("剧本与分镜秒位不一致，未保存，请先统一原稿。");
                     const next = current.map(b => edits.has(b.id) ? { ...b, outputText: edits.get(b.id)!.text } : b);
-                    const nextWriterPack = { ...writerPack!, episodes: writerPack!.episodes.map(item => item.index===ep ? {...item,body} : item) };
+                    const nextWriterPack = retimeManhuaWriterPack(writerPack!, ep, shotIndex, durationSec, canonical);
                     saveManhuaShotTimingDraft(next, edges, { writerPack: nextWriterPack, writerConfirmed: false, directorUnlocked: false });
                     blocksRef.current=next;setBlocks(next);
                     setWriterPack(nextWriterPack);
