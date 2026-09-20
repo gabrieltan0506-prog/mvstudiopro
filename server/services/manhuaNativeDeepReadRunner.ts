@@ -677,8 +677,16 @@ export const NATIVE_DEEP_READ_REQUIRED_RETRY_CODES: ReadonlySet<string> = new Se
   "audio_timeline_invalid",
 ]);
 
-/** 门禁未过的降温重试间隔（进契约 SHA 与请求指纹，非用户明令不得改）。 */
-export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS = 60_000;
+/**
+ * 门禁未过的降温重试间隔（进契约 SHA，非用户明令不得改）。
+ * 0920 用户令：「**重試改成間隔三十秒，不要六十秒了**」→ 60 秒改 30 秒。
+ */
+export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS = 30_000;
+/**
+ * 0920 换档前的降温重试间隔（60 秒）。**只进历史身份计算，永不用于真实等待**。
+ * 这个值进段缓存指纹（实测：60→30 两个指纹都变），不复原＝已买断分片全部失配重买。
+ */
+export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS_BEFORE_0920 = 60_000;
 /**
  * 503/429/RESOURCE_EXHAUSTED（视频服务器繁忙）专用退避：不降温、原档补发。
  * 0916 用户令：**隔 30 秒重试 4 次**；四次仍失败才停止，本次已终态分片留给下次续学。
@@ -1655,7 +1663,9 @@ export function nativeDeepReadFrozenContractSha256(): string {
 // 0920 用户授权解冻（原话「我授權解凍」）：本轮变更冻结项 —— 重试梯度 0.7/0.65×2/0.6×2、
 // 门禁容差与偏差线 15%→20%、单条证据段上限 30→60（一层）、密度与广告占比三条降 advisory。
 // 覆盖线保持 90%（用户原话「覆蓋率要百分之九十這條不變，不要求到百分之百」）。
-export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "b65ba4d8a2a38535bdcb0be5beb671d65de936c999a38f0c415eeebd8c8838bd" as const;
+// 0920 追加解冻（用户原话「重試改成間隔三十秒，不要六十秒了」）：降温重试间隔 60→30 秒；
+// 历史已付费分片按 legacyBefore0920 复原旧 60 秒身份（实测叠旗标后指纹逐位相同）。
+export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "4e7ee4fe001e912931c03b8738e759af6c062c59afd4f4e01b8868eefa529656" as const;
 
 export function assertNativeDeepReadFrozenContract(): void {
   const actual = nativeDeepReadFrozenContractSha256();
@@ -4596,7 +4606,9 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
     generationConfig: NATIVE_DEEP_READ_GENERATION_CONFIG,
     retryGenerationConfig: NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG,
     finalRetryGenerationConfig: NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG,
-    retryIntervalMs: NATIVE_DEEP_READ_RETRY_INTERVAL_MS,
+    retryIntervalMs: input.legacyBefore0920 === true
+      ? NATIVE_DEEP_READ_RETRY_INTERVAL_MS_BEFORE_0920
+      : NATIVE_DEEP_READ_RETRY_INTERVAL_MS,
     sourceDigest: input.sourceDigest,
     requestedFps: fps,
     prompt,

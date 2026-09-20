@@ -1808,7 +1808,7 @@ describe("GLM 结构化整形提示词纪律", () => {
     expect(prompt.system).toContain("秒位不重叠的两条镜头各自保留");
     expect(prompt.system).toContain("秒位不重叠的两条镜头各自保留");
     expect(prompt.system).toContain("能并的只有**秒位重叠的重复记录**");
-    expect(prompt.system).toContain("单条记录跨度 ≤ 30 秒");
+    expect(prompt.system).toContain("单条记录跨度 ≤ 60 秒");
     expect(prompt.system).toContain("连续覆盖整段");
     expect(prompt.system).toContain("并集去重");
     expect(prompt.system).toContain("钟表式（01:23）留给数字字段");
@@ -3979,7 +3979,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     try {
       await runManhuaNativeDeepReadBatch({ episodes: [twoSegmentEpisode] }, deps);
       // 常量本身是看守重点：改动它即改变重买行为
-      expect(NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO).toBe(0.15);
+      expect(NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO).toBe(0.20);
       // 🔒 白名单看守（用户 0830 晚圈定）：音轨段数与镜头覆盖进 20% 判据，
       // 声音事件条数（≈音轨长度密度）不进——安静段落天然少，不该为此重买。
       expect(NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES.has("audio_track_thin")).toBe(true);
@@ -5057,14 +5057,14 @@ describe("参数契约冻结 0901：0.70→0.65→0.60 + thinkingLevel MEDIUM", 
     expect(JSON.stringify(NATIVE_DEEP_READ_GENERATION_CONFIG)).not.toContain("thinkingBudget");
   });
 
-  it("候选固定0.70/0.65/0.60与下限0.60，回到 0827 验证可用的梯度", () => {
-    expect([...NATIVE_DEEP_READ_RETRY_TEMPERATURES]).toEqual([0.7, 0.65, 0.6]);
+  it("候选固定0.70/0.65x2/0.60x2 共五发与下限0.60（0920 用户令）", () => {
+    expect([...NATIVE_DEEP_READ_RETRY_TEMPERATURES]).toEqual([0.7, 0.65, 0.65, 0.6, 0.6]);
     expect(NATIVE_DEEP_READ_TEMPERATURE_MIN).toBe(0.6);
   });
 
-  it("候选参数：温度0.7/0.65/0.6 + MEDIUM + 默认12fps", () => {
+  it("候选参数：温度0.7/0.65x2/0.6x2 + MEDIUM + 默认12fps", () => {
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.temperature).toBe(0.7);
-    expect([...NATIVE_DEEP_READ_RETRY_TEMPERATURES]).toEqual([0.7, 0.65, 0.6]);
+    expect([...NATIVE_DEEP_READ_RETRY_TEMPERATURES]).toEqual([0.7, 0.65, 0.65, 0.6, 0.6]);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig)
       .toEqual({ thinkingLevel: "MEDIUM", includeThoughts: false });
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).not.toHaveProperty("thinkingBudget");
@@ -5086,8 +5086,8 @@ describe("参数契约冻结 0901：0.70→0.65→0.60 + thinkingLevel MEDIUM", 
     expect(NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_MIN).toBe(2);
   });
 
-  it("正负分区版本仍保持原有门禁阈值", () => {
-    expect(NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC).toBe(30);
+  it("正负分区版本门禁阈值：单条证据段硬上限 60 秒（0920 用户令），拆分下限仍 3 秒", () => {
+    expect(NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC).toBe(60);
     expect(NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC).toBe(3);
     expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-20260905-key-shot-tiers-v3");
   });
@@ -5368,11 +5368,11 @@ describe("0907 · 八坑补齐：费用闸 / 集级留存率不可达 / 三稿�
     expect(subs).not.toContain(span.endSec + 50);
   });
 
-  it("提示词参考值仍按 10%（进缓存指纹），门禁判定线 15%（不进指纹）", async () => {
+  it("提示词参考值仍按 10%（进缓存指纹），门禁判定线 20%（0920 用户令，不进指纹）", async () => {
     const m = await import("./manhuaNativeDeepReadRunner");
     expect(m.NATIVE_DEEP_READ_PROMPT_SHOT_FLOOR_RATIO).toBe(0.10);
-    expect(m.NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO).toBe(0.15);
-    expect(m.NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO).toBe(0.15);
+    expect(m.NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO).toBe(0.20);
+    expect(m.NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO).toBe(0.20);
     expect(m.resolveNativeDeepReadDensityContract(300).minStoryShots).toBe(Math.ceil(30 * 0.9));
   });
 });
@@ -5493,7 +5493,7 @@ describe("0905 · 整形按批次序号分流链", () => {
 
   it("整形模型只允许 GLM；旧 Qwen 值明确拒绝", async () => {
     const m = await import("./manhuaNativeDeepReadRunner");
-    expect(() => m.nativeDeepReadStructuringPolicyForModel("qwen3.8-max")).toThrow("只允许 GLM-5.3");
+    expect(() => m.nativeDeepReadStructuringPolicyForModel("qwen3.8-max")).toThrow("只允许 glm-5.3-flash");
     expect(m.nativeDeepReadStructuringPolicyForModel(undefined)).toBe("structuring_chain");
     expect(m.nativeDeepReadStructuringPolicyForModel("glm-5.3")).toBe("structuring_chain");
     expect(m.nativeDeepReadStructuringStartedLabel("structuring_chain")).not.toMatch(/^Qwen3\.8-Max/);
@@ -5723,10 +5723,10 @@ describe("三分支必填结构与实际时间类型", () => {
   });
   it("全部历史指纹和整形Schema保持字节身份，新请求使用新指纹", async () => {
     const input = { sourceDigest: "a".repeat(64), episodeIndex: 1, episodeDurationSec: 1122, segment: { startSec: 281, endSec: 562 }, segmentIndex: 1, segmentCount: 4, hasAudio: true, videoFps: 10 };
-    expect(nativeDeepReadSegmentCacheFingerprint({ ...input, legacyBeforeCoverage0906: true })).toBe("f3872c24c83082deae199217143260d47944cb496224f89afa60af382b666ea3");
-    expect(nativeDeepReadSegmentCacheFingerprint({ ...input, legacyBeforeExplicitShotWindows0906: true })).toBe("6f637b3628b5b7e919456911caa9789fd5b5e55e3d539458990e3d42a6be6bb6");
-    expect(nativeDeepReadSegmentCacheFingerprint({ ...input, legacyBeforeRequiredBranches0906: true })).toBe("ce7d5593718e491e66b24c4b9389f8719006557e376a0071c76b10a1a52d6434");
-    expect(nativeDeepReadSegmentCacheFingerprint({ ...input, legacyBeforeStrict0906: true })).toBe("7e41253732e877823905f0d834f8eacd9c83e8c663cd0623bb3716a9230ee47f");
+    expect(nativeDeepReadSegmentCacheFingerprint({ ...input, legacyBeforeCoverage0906: true, legacyBefore0920: true })).toBe("f3872c24c83082deae199217143260d47944cb496224f89afa60af382b666ea3");
+    expect(nativeDeepReadSegmentCacheFingerprint({ ...input, legacyBeforeExplicitShotWindows0906: true, legacyBefore0920: true })).toBe("6f637b3628b5b7e919456911caa9789fd5b5e55e3d539458990e3d42a6be6bb6");
+    expect(nativeDeepReadSegmentCacheFingerprint({ ...input, legacyBeforeRequiredBranches0906: true, legacyBefore0920: true })).toBe("ce7d5593718e491e66b24c4b9389f8719006557e376a0071c76b10a1a52d6434");
+    expect(nativeDeepReadSegmentCacheFingerprint({ ...input, legacyBeforeStrict0906: true, legacyBefore0920: true })).toBe("7e41253732e877823905f0d834f8eacd9c83e8c663cd0623bb3716a9230ee47f");
     expect(nativeDeepReadSegmentCacheFingerprint(input)).not.toBe("ce7d5593718e491e66b24c4b9389f8719006557e376a0071c76b10a1a52d6434");
     const { nativeDeepReadStructuringJsonSchema } = await import("./manhuaNativeDeepReadRunner");
     expect(createHash("sha256").update(JSON.stringify(nativeDeepReadStructuringJsonSchema())).digest("hex")).toBe("c343b78c17e87ecd0679cac4fa93a9a9dee5f6a339d6e65fa4a48819a7ab7ed0");
