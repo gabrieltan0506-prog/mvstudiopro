@@ -1,3 +1,4 @@
+import { ManhuaRewriteComparison } from "./ManhuaRewriteComparison";
 /** 项目顾问：读取证据、提出模板改写建议；正式稿仅经显式对比采用。 */
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -261,8 +262,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
         {rewrite && <section aria-label="改写原稿对比" className="space-y-2 rounded-lg border border-emerald-300/30 p-3 text-xs">
           <h3 className="font-semibold">第 {rewrite.episodeIndex} 集 · 改写对比</h3>
           <ul>{rewrite.changes.map((change, i) => <li key={i}>• {change}</li>)}</ul>
-          <details><summary>查看保留的原稿</summary><p className="whitespace-pre-wrap leading-6">{rewrite.originalBody}</p></details>
-          <details open><summary>查看改写全文</summary><p className="whitespace-pre-wrap leading-6">{rewrite.rewrittenBody}</p></details>
+          <ManhuaRewriteComparison before={rewrite.originalBody} after={rewrite.rewrittenBody} />
           <p className="text-amber-100">采用后本集及后续制作需重新确认，旧图/片归档保留；完整旧稿另存本机备份。</p>
           <button type="button" disabled={!props.onApplyRewrite || askMutation.isPending || project?.context.episodeIndex !== rewrite.episodeIndex || project?.context.episodeBody !== rewrite.originalBody} onClick={() => { if (props.onApplyRewrite?.(rewrite)) toast.success("改写已采用，请重新检查并确认剧本。"); }} className="rounded border border-emerald-300/40 px-3 py-2 disabled:opacity-40">采用这版改写</button>
           {(project?.context.episodeIndex !== rewrite.episodeIndex || project?.context.episodeBody !== rewrite.originalBody) && <p>当前剧本与原快照不同，已停止覆盖。原稿与建议仍保留供复制。</p>}

@@ -5,6 +5,7 @@ import {
   countDialogueLines,
   detectManhuaCanonWriterDrift,
   evaluateWriterPackAssetAndDensity,
+  evaluateWriterEpisodeDensity,
   evaluateWriterAssetTableThresholds,
   formatWriterAssetCanonFactoryAddon,
   deriveWriterAssetTablesFromScript,
@@ -342,4 +343,11 @@ describe("资产表门槛按剧本实际实体计（0909）", () => {
     expect(addon).not.toContain("待补");
     expect(addon).toContain("- 苏照雪：");
   });
+});
+
+it("密度门禁允许有行动的无对白正文，仍拒绝空分集和空正文",()=>{
+ const body="苏照雪推开破屋的木门，先按住墨屠肩头的伤口，再扶他坐到墙边。她看见门缝外晃过人影，立刻屏住呼吸，把桌上的灯移到身后，握紧药碗退到帘边。墨屠用手示意她躲开，自己扶着墙站起，脚步虚浮却仍挡住门口。".repeat(3);
+ expect(evaluateWriterEpisodeDensity({episodes:[{index:1,body,endHook:"门外的脚步停住。"}],targetSec:90}).ok).toBe(true);
+ expect(evaluateWriterEpisodeDensity({episodes:[],targetSec:90}).ok).toBe(false);
+ expect(evaluateWriterEpisodeDensity({episodes:[{index:1,body:"",endHook:"待续"}],targetSec:90}).ok).toBe(false);
 });

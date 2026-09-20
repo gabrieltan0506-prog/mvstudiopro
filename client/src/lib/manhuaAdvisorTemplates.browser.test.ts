@@ -24,6 +24,11 @@ it("生产面板推荐→选择改写→对比→采用只在用户点击后执�
  await page.waitForSelector('[aria-label="剧本模板优化"]');await click('推荐3—4个剧本模板方案');
  await page.waitForFunction(()=>document.body.textContent?.includes('选此方案，改写当前集'));
  await click('选此方案，改写当前集');await page.waitForSelector('[aria-label="改写原稿对比"]');
+ expect(await page.$eval('[aria-label="逐句差异对比"]', e => e.textContent)).toContain('套用前 · 完整原稿');
+ expect(await page.$eval('[aria-label="逐句差异对比"]', e => e.textContent)).toContain('套用后 · 完整改写');
+ expect(await page.$$eval('[data-diff-text="before"]', els => els.map(e=>e.textContent).join(''))).toBe('原稿：主角登船寻找信物。');
+ expect(await page.$('[data-diff-kind="changed"]')).not.toBeNull();
+
  expect(await page.evaluate(()=> (globalThis as any).fixture.applied.length)).toBe(0);
  expect(await page.evaluate(()=> (globalThis as any).fixture.requests.map((r:any)=>[Boolean(r.confirmPaid),r.manhuaContext.episodeBody]))).toEqual([[false,'原稿：主角登船寻找信物。'],[false,'原稿：主角登船寻找信物。']]);
  await click('采用这版改写');

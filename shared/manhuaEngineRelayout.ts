@@ -109,8 +109,7 @@ export function relayoutManhuaSegmentPlanForEngine(
   } else {
     next = splitHalves(plan, to);
     notesZh.push(`${plan.segments.length} 段×${from}s → ${next.segments.length} 段×${to}s：每段对白对半拆、表演/运镜按「；」对半拆`);
-    const dlgShort = next.segments.filter((s) => dialogueLinesOf(s).length < 3).length;
-    if (dlgShort) notesZh.push(`${dlgShort} 段拆后对白不足 3 句，导入前请补句`);
+    notesZh.push("拆段后检查行动、表演与因果衔接；允许无对白，不为凑句数补台词。");
   }
   if (input.toSegmentMax && next.segments.length > input.toSegmentMax) {
     notesZh.push(`重铺后 ${next.segments.length} 段超过该引擎上限 ${input.toSegmentMax}，请手动合并或删段`);

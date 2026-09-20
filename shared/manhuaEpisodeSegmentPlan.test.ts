@@ -224,28 +224,19 @@ describe("manhuaEpisodeSegmentPlan", () => {
     ).toBeGreaterThanOrEqual(3);
   });
 
-  it("rejects only two dialogue quotes in a 15s segment", () => {
-    const two = [
-      "#### 段01",
-      "- 意图：羞辱与隐忍对撞",
-      "- 对白：「罪户只配吃风。」「断粮的人才想杀人。」",
-      "- 表演：马县丞踢瓮冷笑；苏照雪接种子时眼神一凛、肩线绷紧。",
-      "- 场景：开荒村破屋",
-      "- 配色风格：冷灰雪白",
-      "- 角色：苏照雪、马县丞",
-      "- 服装道具：破袍、空粮瓮",
-      "- 光影运镜：中近景固定",
-    ].join("\n");
-    const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(
-      `${two}\n` + buildManhuaEpisodeSegmentPlanFixtureMarkdown().replace(/^###[^\n]+\n/, ""),
-    );
-    // 段01 仅 2 句应拦下，后续合格段不算连续
-    const q = evaluateManhuaEpisodeSegmentPlanQuality(
-      parseManhuaEpisodeSegmentPlanFromMarkdown(two),
-    );
-    expect(q.ok).toBe(false);
-    expect(q.issues.some((e) => /对白仅|至少 3/.test(e))).toBe(true);
-    void plan;
+  it("两句自然对白不因句数被拒，无对白须有可拍行动，空剧本仍拒绝", () => {
+    const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(buildManhuaEpisodeSegmentPlanFixtureMarkdown());
+    const beat = plan.segments[0]!;
+    const check = (dialogueZh: string, performanceZh = beat.performanceZh) => evaluateManhuaEpisodeSegmentPlanQuality({ ...plan, segments: [{...beat,dialogueZh,performanceZh}] }, {mode:"actual"});
+    expect(check('苏照雪：「你先去找医师，我留在这里拖住他。」裴玄策：「你受了伤，我不能让你一个人留下。」').ok).toBe(true);
+    expect(check('@角色1：「快跑！」').ok).toBe(true);
+    expect(check('@角色1「快跑！」').ok).toBe(true);
+    expect(check('').ok).toBe(true);
+    expect(check('无对白').ok).toBe(true);
+    expect(check('无对白','很紧张').ok).toBe(false);
+    expect(check('「谁在门外？」').issues.join()).toContain('说话人');
+    expect(check('苏照雪说先去找医师').issues.join()).toContain('引号');
+    expect(evaluateManhuaEpisodeSegmentPlanQuality(null,{mode:"actual"}).ok).toBe(false);
   });
 
   it("prompt block asks for 5–6 ×15s and performance", () => {
@@ -256,7 +247,8 @@ describe("manhuaEpisodeSegmentPlan", () => {
     expect(block).toMatch(/意图/);
     expect(block).toMatch(/对白/);
     expect(block).toMatch(/表演/);
-    expect(block).toMatch(/3–4/);
+    expect(block).toContain("不设最低句数");
+    expect(block).not.toMatch(/至少.*句|推荐 3–4/);
     expect(block).toMatch(/配色风格/);
     expect(block).toMatch(/光影运镜/);
   });
@@ -306,34 +298,34 @@ describe("manhuaEpisodeSegmentPlan", () => {
     expect(quotes).toContain("先活过今夜。");
   });
 
-  it("manhuaEpisodeDensityFloors：Seedance 2.5（targetSec=120、4段×30s）minDlg=12，不再按15s单位倒推成21", () => {
+  it("manhuaEpisodeDensityFloors：Seedance 2.5（targetSec=120、4段×30s）不设最低对白句数", () => {
     const floors = manhuaEpisodeDensityFloors(120, {
       segmentCount: 4,
       durationSecPerSegment: 30,
     });
-    expect(floors.minDlg).toBe(12);
+    expect(floors.minDlg).toBe(0);
   });
 
-  it("manhuaEpisodeDensityFloors：2.0-fast（90秒、6×15）minDlg 仍为 15", () => {
+  it("manhuaEpisodeDensityFloors：2.0-fast（90秒、6×15）不设最低对白句数", () => {
     const floors = manhuaEpisodeDensityFloors(90, {
       segmentCount: 6,
       durationSecPerSegment: 15,
     });
-    expect(floors.minDlg).toBe(15);
+    expect(floors.minDlg).toBe(0);
     // 无 layout 时按 targetSec/15 倒推，口径一致
-    expect(manhuaEpisodeDensityFloors(90).minDlg).toBe(15);
+    expect(manhuaEpisodeDensityFloors(90).minDlg).toBe(0);
   });
 
-  it("manhuaEpisodeDensityFloors：180秒长档（12×15）minDlg 精确 30、minBody 精确 280", () => {
+  it("manhuaEpisodeDensityFloors：180秒长档（12×15）对白不设下限、minBody 保留280", () => {
     const withLayout = manhuaEpisodeDensityFloors(180, {
       segmentCount: 12,
       durationSecPerSegment: 15,
     });
-    expect(withLayout.minDlg).toBe(30);
+    expect(withLayout.minDlg).toBe(0);
     expect(withLayout.minBody).toBe(280);
     // 无 layout 时仍精确落回旧阈值（源码注释硬要求）
     const legacy = manhuaEpisodeDensityFloors(180);
-    expect(legacy.minDlg).toBe(30);
+    expect(legacy.minDlg).toBe(0);
     expect(legacy.minBody).toBe(280);
   });
 
@@ -476,4 +468,16 @@ describe("manhuaEpisodeSegmentPlan", () => {
     const q = evaluateManhuaEpisodeSegmentPlanQuality(plan);
     expect(q.issues.some((s) => s.includes("缺字段"))).toBe(false);
   });
+});
+
+it("单字角色娘的发话提取与实际可拍表门禁，匿名对白仍拒绝",()=>{
+ const dialogue='娘：「慢点。」';
+ expect(extractManhuaSegmentDialogueQuotes(dialogue)).toEqual([dialogue]);
+ expect(extractManhuaDialogueSpeakerName(dialogue)).toBe("娘");
+ expect(extractManhuaDialogueSpeakerName('娘「慢点。」')).toBe("娘");
+ expect(extractManhuaSegmentDialogueQuotes('娘（喘息）：“慢点。”')).toEqual([dialogue]);
+ const plan=parseManhuaEpisodeSegmentPlanFromMarkdown(buildManhuaEpisodeSegmentPlanFixtureMarkdown());
+ const beat={...plan.segments[0],dialogueZh:dialogue,castZh:"娘",performanceZh:"娘扶住门框，抬手拦住孩子，喘息着摇头。"};
+ expect(evaluateManhuaEpisodeSegmentPlanQuality({...plan,segments:[beat]},{mode:"actual"}).ok).toBe(true);
+ expect(evaluateManhuaEpisodeSegmentPlanQuality({...plan,segments:[{...beat,dialogueZh:'「慢点。」'}]},{mode:"actual"}).issues.join()).toContain("说话人");
 });

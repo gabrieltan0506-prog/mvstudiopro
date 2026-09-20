@@ -1163,12 +1163,7 @@ export function fitManhuaViralBeatGridToSegments(
   }));
 }
 
-/**
- * 把卡片的密度建议套到目标段数上，并抬到门禁线。
- *
- * 卡片里的 8 句对白是长档口径的手写估值，而门禁按每段 3 句算，长档要 30 句。
- * 直接把 8 句发给编剧，他写完就卡门禁，退回来重写——写多少都在门禁线下。
- */
+/** 正文/场景按目标段数折算；旧模板的对白数量不再作为写作最低要求。 */
 export function fitManhuaViralDensityHintsToSegments(
   hints: ManhuaViralTemplateDensityHints,
   segments: number,
@@ -1178,7 +1173,7 @@ export function fitManhuaViralDensityHintsToSegments(
   const scale = want / LONG_TIER_SEGMENTS;
   return {
     minBodyChars: Math.max(floors.minBody, Math.round(hints.minBodyChars * scale)),
-    minDialogueLines: Math.max(floors.minDlg, Math.round(hints.minDialogueLines * scale)),
+    minDialogueLines: 0,
     minLocationHits: Math.max(floors.minLoc, hints.minLocationHits),
   };
 }
@@ -1268,7 +1263,7 @@ export function formatManhuaViralTemplateWriterAddonFromCard(
     tpl.audioStory?.audioBeatStructureZh ? `声音节奏规律：${tpl.audioStory.audioBeatStructureZh}` : "",
     tpl.audioStory?.mixNotesZh ? `混音规律：${tpl.audioStory.mixNotesZh}` : "",
     tpl.audioStory?.reusableAudioZh ? `可复用声音手法：${tpl.audioStory.reusableAudioZh}` : "",
-    `密度建议（约${tier.targetSec}秒/集·${segments}段）：正文≥${d.minBodyChars}字；「」对白≥${d.minDialogueLines}句；场景表命中≥${d.minLocationHits}`,
+    `密度建议（约${tier.targetSec}秒/集·${segments}段）：正文≥${d.minBodyChars}字；对白按人物与剧情需要自然表达，不设最低句数；场景表命中≥${d.minLocationHits}`,
     beats ? `节拍格：\n${beats}` : "",
     audioBeats ? `声音节拍格（只借功能，不复刻原句）：\n${audioBeats}` : "",
     "硬规则：只借结构与节奏；禁止抄外部剧名/台词/商标；成稿只写可拍动作与关系。",
