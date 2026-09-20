@@ -4135,6 +4135,7 @@ export async function prepareManhuaFactoryClipInput(input: {
       .filter(
         (b) =>
           b.id.startsWith("keyart-") &&
+          !b.archivedFromPreviousScript &&
           (getBlockEpisodeIndex(b) ?? 1) === epForSeg &&
           episodeSegmentContainsShot(working, epForSeg, localSeg, resolveKeyartShotIndex(b.id, b.prompt), runBlockPayload.videoModel),
       )
