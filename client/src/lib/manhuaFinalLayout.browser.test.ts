@@ -225,3 +225,19 @@ it('真实镜长按钮同步原稿与新分段，旧产物保留且无生成',as
   expect(after.writer.writerPack.episodes[0].body).toContain('7.944–12.944秒');
  }finally{await close();}
 },60000);
+
+it('镜长保存遇到剧本配额失败时不改变画布和确认态',async()=>{
+ const {page,close}=await mount();
+ try {
+  const timed='## 分镜表\n| 镜号 | 秒位 | 景别/运镜 | 画面 | 对白 |\n|---|---|---|---|---|\n| 1 | 0–4秒 | 中景横移 | 扶住同伴 | 无 |\n| 2 | 4–7秒 | 近景 | 点头 | 无 |';
+  await page.evaluate(timed=>{const p=(window as any).__ffcProps;p.onBlocksChange(p.blocks.map((b:any)=>b.episodeIndex===1&&/^(reverse|beats)-/.test(b.id)?{...b,outputText:timed}:b));(window as any).__wbProps.onWorkflowPhaseChange('storyboard');},timed);
+  await page.waitForSelector('[data-manhua-shot-timing]');
+  const before=await page.evaluate(()=>({blocks:JSON.stringify((window as any).__ffcProps.blocks),writer:localStorage.getItem('mv-manhua-writer-session-v1')}));
+  await page.evaluate(()=>{const set=Storage.prototype.setItem;Storage.prototype.setItem=function(k,v){if(k==='mv-manhua-writer-session-v1')throw new DOMException('Full','QuotaExceededError');return set.call(this,k,v);};});
+  await page.click('[data-manhua-shot-timing] summary');
+  await page.$eval('[aria-label="当前镜头时长"]',el=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!.call(el,'4.944');el.dispatchEvent(new Event('input',{bubbles:true}));});
+  await page.click('[data-manhua-shot-timing] button');
+  await page.waitForFunction(()=>document.querySelector('[data-manhua-shot-timing] [role="alert"]')?.textContent?.includes('时长未应用'));
+  expect(await page.evaluate(()=>({blocks:JSON.stringify((window as any).__ffcProps.blocks),writer:localStorage.getItem('mv-manhua-writer-session-v1')}))).toEqual(before);
+ }finally{await close();}
+},60000);

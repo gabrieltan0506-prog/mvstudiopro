@@ -1,3 +1,4 @@
+import { saveManhuaShotTimingDraft } from "@/lib/manhuaShotTimingDraft";
 import { retimeManhuaShot } from "@shared/manhuaShotTimingEdit";
 import { readManhuaTimedStoryboard as readShotTimingForEdit } from "@shared/manhuaTimedStoryboard";
 import { applyManhuaAssetDirection } from "@shared/manhuaDirectionCanonLibrary";
@@ -10540,9 +10541,10 @@ export default function OmniCanvas() {
                     const savedRows = readShotTimingForEdit(body);
                     if (savedRows.errors.length || JSON.stringify(savedRows.rows.map(row => [row.index,row.startSec,row.endSec])) !== JSON.stringify(canonical.rows.map(row => [row.index,row.startSec,row.endSec]))) throw new Error("剧本与分镜秒位不一致，未保存，请先统一原稿。");
                     const next = current.map(b => edits.has(b.id) ? { ...b, outputText: edits.get(b.id)!.text } : b);
-                    if (!saveCanvasState(next,edges)) throw new Error("本机草稿保存失败，未应用时长。");
+                    const nextWriterPack = { ...writerPack!, episodes: writerPack!.episodes.map(item => item.index===ep ? {...item,body} : item) };
+                    saveManhuaShotTimingDraft(next, edges, { writerPack: nextWriterPack, writerConfirmed: false, directorUnlocked: false });
                     blocksRef.current=next;setBlocks(next);
-                    setWriterPack(previous => previous ? { ...previous, episodes: previous.episodes.map(item => item.index===ep ? {...item,body} : item) } : previous);
+                    setWriterPack(nextWriterPack);
                     setWriterConfirmed(false);setDirectorUnlocked(false);bumpManhuaOutboundEpoch();
                     toast.message(`第${shotIndex}镜时长已保存，请重新确认剧本；原声与旧产物保留。`);
                   }}
