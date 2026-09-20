@@ -1,4 +1,5 @@
 import { createManhuaAudioFromShots } from "@shared/manhuaAudioFromShots";
+import { planCanvasDialogueTiming } from "@shared/canvasDialogueTimingPlan";
 import type { ManhuaWorkbenchShot } from "@shared/manhuaScriptWorkbench";
 import { canvasAudioMixSource } from "@shared/canvasAudioStudio";
 import { CanvasAudioMixControls } from "./CanvasAudioMixControls";
@@ -1384,7 +1385,28 @@ export function CanvasAudioStudioView({
                       <p>原声 {take.durationSec.toFixed(3)} 秒，当前窗口 {(cue.endSec - cue.startSec).toFixed(3)} 秒，还差 {(take.durationSec - (cue.endSec - cue.startSec)).toFixed(3)} 秒。保留完整原声。</p>
                       {cue.kind === "dialogue" && (() => {
                         const fit = canvasDialogueWindowFit(cue, take, state.cues, durationSec);
-                        return fit.issue ? <p>{fit.issue}</p> : <button className={buttonClass} disabled={locked} onClick={() => patchCue(cue.id, { endSec: fit.endSec })}>将本句窗口延长至 {fit.endSec.toFixed(3)} 秒</button>;
+                        if (!fit.issue) return <button className={buttonClass} disabled={locked} onClick={() => patchCue(cue.id, { endSec: fit.endSec })}>将本句窗口延长至 {fit.endSec.toFixed(3)} 秒</button>;
+                        const plan = planCanvasDialogueTiming(state.cues, cue.id, take, durationSec);
+                        return <><p>{fit.issue}</p>{plan.changes.length > 0 && <details className="mt-2">
+                          <summary>预览后续对白顺延</summary>
+                          <table className="my-2 w-full text-left"><thead><tr><th>角色</th><th>原时间</th><th>调整后</th></tr></thead><tbody>{plan.changes.map(row => <tr key={row.id}><td>{row.labelZh}</td><td>{row.fromStart.toFixed(3)}–{row.fromEnd.toFixed(3)}</td><td>{row.startSec.toFixed(3)}–{row.endSec.toFixed(3)}</td></tr>)}</tbody></table>
+                          <p>保留完整原声；对白调整后需核对镜头、动作及配乐节奏，并重新试听确认。</p>
+                          {plan.issue ? <p>{plan.issue}</p> : <button type="button" className={buttonClass} disabled={locked || state.pendingOperations.length > 0} onClick={() => {
+                            if (disabled || busy || current.current.state.pendingOperations.length > 0) return;
+                            setConfirmation(null);
+                            update(previous => {
+                              const actualCue = previous.cues.find(row => row.id === cue.id);
+                              const actualTake = actualCue?.takes.find(row => row.id === take.id);
+                              if (!actualTake) return previous;
+                              const latest = planCanvasDialogueTiming(previous.cues, cue.id, actualTake, current.current.durationSec);
+                              if (latest.issue) { setError(latest.issue); return previous; }
+                              return { ...previous, previewTake: undefined, cues: previous.cues.map(row => {
+                                const change = latest.changes.find(item => item.id === row.id);
+                                return change ? { ...row, startSec: change.startSec, endSec: change.endSec, approved: false } : row;
+                              }) };
+                            });
+                          }}>应用对白时间，待核对镜头</button>}
+                        </details>}</>;
                       })()}
                     </div>
                   )}

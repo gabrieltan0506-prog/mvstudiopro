@@ -1372,6 +1372,7 @@ export default function ManhuaScriptWorkbench({
     [onPreviewClipOutbound],
   );
   const [audioStudioOpen, setAudioStudioOpen] = useState(false);
+  const [audioStudioPhase, setAudioStudioPhase] = useState<WorkflowPhaseId | null>(null);
   const [previsStudioOpen,setPrevisStudioOpen] = useState(false);
   const [actionTimelineOpen, setActionTimelineOpen] = useState(false);
   const [modelStudioOpen, setModelStudioOpen] = useState(false);
@@ -4166,12 +4167,12 @@ export default function ManhuaScriptWorkbench({
             <button type="button" data-manhua-action="open-audio-studio" data-manhua-tool-home="cluster"
               disabled={Boolean(factoryBusy)}
               className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
-              onClick={() => { setAudioStudioOpen(value => !value); if (!activeClip) onEnsureSegmentClips?.(); }}>
+              onClick={() => { setAudioStudioOpen(value => audioStudioPhase !== activePhase || !value); setAudioStudioPhase(activePhase); if (!activeClip) onEnsureSegmentClips?.(); }}>
               本段对白与配乐
             </button>
           ) : null}
           {audioStudioOpen && onUpdateClipAudioStudio ? (
-            <section className="w-full rounded-xl border border-cyan-300/25 bg-[#0c121d] p-3" data-manhua-audio-studio>
+            <section className="w-full rounded-xl border border-cyan-300/25 bg-[#0c121d] p-3" data-manhua-audio-studio style={{ display: audioStudioPhase === activePhase ? undefined : "none" }}>
               <div className="mb-2 flex items-center justify-between text-sm text-cyan-50">
                 <span>第 {focusEpisode} 集 · 第 {activeSegNo} 段 · 对白与配乐</span>
                 <select aria-label="音轨工作台当前段" value={activeSegNo} disabled={Boolean(factoryBusy)} className="rounded border border-white/20 bg-[#0c121d] p-1 text-xs"
@@ -4253,7 +4254,8 @@ export default function ManhuaScriptWorkbench({
                                 if (!activeClip) onEnsureSegmentClips?.();
                               } else if (tool === "actionTimeline") setActionTimelineOpen((v) => !v);
                               else {
-                                setAudioStudioOpen((v) => !v);
+                                setAudioStudioOpen((v) => audioStudioPhase !== activePhase || !v);
+                                setAudioStudioPhase(activePhase);
                                 if (!activeClip) onEnsureSegmentClips?.();
                               }
                             }}
@@ -5119,7 +5121,7 @@ export default function ManhuaScriptWorkbench({
                   请先在上方「改题材」扩写或导入剧本，再回来确认大纲。
                 </p>
               ) : null}
-              {outlineComplete ? (
+              {outlineComplete && (outlineConfirmed || !writerPackReady || !onConfirmOutline) ? (
                 <button
                   type="button"
                   data-manhua-action="goto-assets"
