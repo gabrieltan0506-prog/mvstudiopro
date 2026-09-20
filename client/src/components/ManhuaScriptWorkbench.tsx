@@ -1,3 +1,4 @@
+import { ManhuaTimingRecovery } from "./ManhuaTimingRecovery";
 import { ManhuaShotTimingEditor } from "./ManhuaShotTimingEditor";
 import { ManhuaSevenCoreEditor } from "./canvas/ManhuaSevenCoreEditor";
 import { extractManhuaShotSevenCore, upsertManhuaShotSevenCore, clearManhuaShotSevenCore } from "@shared/manhuaSevenCoreSupplement";
@@ -5120,6 +5121,8 @@ export default function ManhuaScriptWorkbench({
                 {outlineEpisodes.find((ep) => ep.index === focusEpisode)?.endHook ? <p className="mt-3 text-xs text-amber-100/80">片尾悬念：{outlineEpisodes.find((ep) => ep.index === focusEpisode)?.endHook}</p> : null}
               </details>
             ) : null}
+            <ManhuaTimingRecovery body={outlineEpisodes.find(ep => ep.index === focusEpisode)?.body || ""}
+              disabled={Boolean(factoryBusy)} onRepair={onUpdateShotTiming} />
             {onChangeStoryEmotion ? (
               <ManhuaStoryEmotionPanel
                 episode={focusEpisode}
