@@ -86,6 +86,7 @@ function phases(outlineConfirmed: boolean, outlineComplete: boolean) {
     shots: [],
     roughClips: [],
     finalVideoUrl: "",
+    finalReviewChecklist: { readyForFinal: false, blockingZh: "" },
     dockSelectedCount: 0,
     activePhase: "outline",
     buildManhuaAssetsGapItems,
@@ -129,6 +130,10 @@ describe("工作台确认事实与编导能力分离", () => {
         button.props.onClick();
         expect(onConfirmOutline).toHaveBeenCalledOnce();
       } else expect(markup).toBe("");
+      const enterAssets = renderToStaticMarkup(jsxStarting("outlineComplete && (outlineConfirmed", {
+        outlineConfirmed, outlineComplete, writerPackReady: true, onConfirmOutline, selectPhase: vi.fn(),
+      }));
+      expect(enterAssets.includes('data-manhua-action="goto-assets"')).toBe(outlineConfirmed && outlineComplete);
       const warning = renderToStaticMarkup(
         jsxStarting("outlineComplete && !outlineConfirmed", {
           outlineComplete,
@@ -161,12 +166,13 @@ describe("工作台确认事实与编导能力分离", () => {
       node =>
         ts.isJsxExpression(node) &&
         Boolean(
-          node.expression?.getText(source).startsWith("outlineComplete ?")
+          node.expression?.getText(source).startsWith("outlineComplete && (outlineConfirmed")
         ) &&
         node.getText(source).includes('data-manhua-action="goto-assets"')
     ) as ts.JsxExpression;
     const button = execute(expression.expression!.getText(source), {
       outlineComplete: true,
+      outlineConfirmed: false, writerPackReady: false, onConfirmOutline: confirm,
       selectPhase: phase,
     });
     expect(renderToStaticMarkup(button)).toContain("进入资产设定");

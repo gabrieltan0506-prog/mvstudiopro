@@ -5119,7 +5119,7 @@ export default function ManhuaScriptWorkbench({
                   请先在上方「改题材」扩写或导入剧本，再回来确认大纲。
                 </p>
               ) : null}
-              {outlineComplete ? (
+              {outlineComplete && (outlineConfirmed || !writerPackReady || !onConfirmOutline) ? (
                 <button
                   type="button"
                   data-manhua-action="goto-assets"
