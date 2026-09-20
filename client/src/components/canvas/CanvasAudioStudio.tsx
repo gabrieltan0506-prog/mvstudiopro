@@ -197,8 +197,8 @@ export function CanvasAudioStudioView({
 }: Props & { services: CanvasAudioStudioServices }) {
   const durationSec = clampManhuaClipDurationSecForVideoModel(
     block.videoModel,
-    block.manhuaAutoSegment?.durationSec ??
-      parseManhuaClipTargetDurationSec(block.prompt)
+    parseManhuaClipTargetDurationSec(block.prompt) ??
+      block.manhuaAutoSegment?.durationSec
   );
   const { initialAudio, sourceIssue } = useMemo(() => {
     if (block.audioStudio || !sourceShots?.length) return { initialAudio: emptyCanvasAudioStudio(), sourceIssue: "" };
