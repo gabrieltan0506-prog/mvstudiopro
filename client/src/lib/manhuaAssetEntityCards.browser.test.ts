@@ -53,7 +53,7 @@ beforeAll(async () => {
         createRoot(document.getElementById('root')).render(
           <TooltipProvider>
             <ManhuaScriptWorkbench
-              blocks={[]} videoModel='seedance-2.5' topic='墨屠守护阿菁'
+              blocks={globalThis.assetUsageBlocks || []} videoModel='seedance-2.5' topic='墨屠守护阿菁'
               episodeCount={1} focusEpisode={1} onFocusEpisode={() => {}}
               characterIds={[]} propIds={[]} outlineConfirmed={true}
               workflowPhase='assets' customAssetRefs={refs} assetCanon={canon}
@@ -196,7 +196,7 @@ async function mountStoryboard(directorProbe = false, progressProbe = false): Pr
   return { page, close: async () => { await ctx.close().catch(() => {}); } };
 }
 
-async function mount(): Promise<{ page: Page; close: () => Promise<void> }> {
+async function mount(usageBlocks: unknown[] = []): Promise<{ page: Page; close: () => Promise<void> }> {
   const ctx = await browser.createBrowserContext();
   const page = await ctx.newPage();
   const errors: string[] = [];
@@ -207,12 +207,32 @@ async function mount(): Promise<{ page: Page; close: () => Promise<void> }> {
   );
   await page.goto("http://localhost/", { waitUntil: "domcontentloaded" }).catch(() => {});
   await page.setContent("<div id=root></div>");
+  await page.evaluate(value => { (window as any).assetUsageBlocks = value; }, usageBlocks);
   await page.evaluate(bundle);
   await page.waitForSelector("[data-manhua-custom-refs-role=character]", { timeout: 5_000 }).catch(error => { throw new Error(errors.join("\n") || String(error)); });
   return { page, close: async () => { await ctx.close().catch(() => {}); } };
 }
 
 describe("浏览器真实页面：资产页同名多版本收成实体卡", () => {
+  it("资产引用按真实版本和本集隔离，查看不会改变采用", async () => {
+    const clip = (episode: number, segment: number, id: string) => ({
+      id: `clip-e0${episode}-g0${segment}-audio`, type: 'video', episodeIndex: episode,
+      videoModel: 'seedance-2.5', x: 0, y: 0, w: 320, h: 240,
+      prompt: `【第${segment}段·10s】阿菁走路。\n【资产·Image对照】\n@角色1|id=${id}|label=阿菁|kind=角色|duty=identity`,
+    });
+    const { page, close } = await mount([clip(1, 1, 'a2'), clip(1, 2, 'a2'), clip(2, 3, 'a3')]);
+    try {
+      const before = await page.$eval('[data-manhua-asset-entity="wa_char_aqing"] [data-manhua-asset-entity-current-zh]', e => e.textContent);
+      expect(await page.$eval('[data-manhua-custom-ref-id="a2"] [data-manhua-asset-usage]', e => e.textContent)).toContain('本集编排引用：第1段、第2段');
+      await page.click('[title="查看阿菁-编辑，不改变采用版本"]');
+      const text = await page.$eval('[data-manhua-custom-ref-id="a3"] [data-manhua-asset-usage]', e => e.textContent);
+      expect(text).toContain('正在查看');
+      expect(text).toContain('本集暂无已编排引用');
+      expect(text).not.toContain('第3段');
+      expect(await page.$eval('[data-manhua-asset-entity="wa_char_aqing"] [data-manhua-asset-entity-current-zh]', e => e.textContent)).toBe(before);
+      expect(await page.evaluate(() => (window as any).fixture.keyart)).toBe(0);
+    } finally { await close(); }
+  }, 180_000);
   it("切换查看版本清除隐藏勾选，批量删除只处理仍可见的选择", async () => {
     const { page, close } = await mount();
     try {
