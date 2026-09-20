@@ -263,6 +263,12 @@ it('混合稿恢复保存失败时可见报错，原稿与修复入口保留', a
  const {page,close}=await mount(false,false,true);
  try {
   await page.waitForSelector('[data-manhua-timing-recovery]');
+  // 挂载后图片会异步转存本机；先等该独立迁移结束，再比较恢复按钮前后数据。
+  await page.waitForFunction(()=>{
+    const blocks=JSON.parse(localStorage.getItem('mv-freeform-canvas-v1')||'{}').blocks||[];
+    const images=blocks.filter((b:any)=>b.id.startsWith('keyart-')&&b.outputUrl);
+    return images.length>0&&images.every((b:any)=>b.outputUrl.startsWith('local-media:'));
+  },{timeout:30000});
   const before=await page.evaluate(()=>({writer:localStorage.getItem('mv-manhua-writer-session-v1'),canvas:localStorage.getItem('mv-freeform-canvas-v1')}));
   await page.evaluate(()=>{const set=Storage.prototype.setItem;Storage.prototype.setItem=function(k,v){if(k==='mv-manhua-writer-session-v1')throw new DOMException('Full','QuotaExceededError');return set.call(this,k,v);};});
   await page.click('[data-manhua-timing-recovery] button');
