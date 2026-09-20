@@ -21,6 +21,7 @@ import {
   createCanvasAudioCue,
   canvasAudioCueInputKey,
   getSelectedAudioTake,
+  canvasDialogueWindowFit,
   canvasAudioCueSchema,
   canvasMusicDraftSchema,
   type CanvasMusicDraft,
@@ -1379,9 +1380,13 @@ export function CanvasAudioStudioView({
                     试听后确认本段
                   </button>
                   {take.durationSec > cue.endSec - cue.startSec + 0.02 && (
-                    <p className="text-xs text-amber-200">
-                      音频超出秒窗，请调整；对白不会自动截断。
-                    </p>
+                    <div className="text-xs text-amber-200">
+                      <p>原声 {take.durationSec.toFixed(3)} 秒，当前窗口 {(cue.endSec - cue.startSec).toFixed(3)} 秒，还差 {(take.durationSec - (cue.endSec - cue.startSec)).toFixed(3)} 秒。保留完整原声。</p>
+                      {cue.kind === "dialogue" && (() => {
+                        const fit = canvasDialogueWindowFit(cue, take, state.cues, durationSec);
+                        return fit.issue ? <p>{fit.issue}</p> : <button className={buttonClass} disabled={locked} onClick={() => patchCue(cue.id, { endSec: fit.endSec })}>将本句窗口延长至 {fit.endSec.toFixed(3)} 秒</button>;
+                      })()}
+                    </div>
                   )}
                 </div>
               ))}

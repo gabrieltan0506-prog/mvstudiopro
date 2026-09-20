@@ -109,6 +109,19 @@ export function canvasAudioCueInputKey(cue: CanvasAudioCue): string {
     : [cue.kind, cue.source?.gcsUri ?? "", cue.sourceStartSec, cue.sourceEndSec,
       cue.volume, cue.fadeInSec, cue.fadeOutSec]);
 }
+/** 只延长当前对白窗口；不移动其他对白、不裁音频、不重新购买。 */
+export function canvasDialogueWindowFit(cue: CanvasAudioCue, take: CanvasAudioTake, cues: CanvasAudioCue[], durationSec: number): { endSec: number; issue: string } {
+  const endSec = Math.ceil((cue.startSec + take.durationSec) * 1000) / 1000;
+  if (cue.kind !== "dialogue" || !Number.isFinite(endSec) || take.durationSec <= 0 || cue.startSec < 0)
+    return { endSec, issue: "当前音频或时间窗无效" };
+  if (take.inputKey !== canvasAudioCueInputKey(cue)) return { endSec, issue: "台词或音色已修改，请选择与当前内容一致的候选" };
+  if (endSec > durationSec) return { endSec, issue: `需要延长本段至至少 ${endSec.toFixed(3)} 秒，请先调整镜头时长` };
+  const collision = cues.find(other => other.id !== cue.id && other.enabled && other.kind === "dialogue" &&
+    other.startSec < endSec && other.endSec > cue.startSec);
+  if (collision) return { endSec, issue: `与${collision.speakerZh || collision.labelZh || "另一句对白"}（${collision.startSec}–${collision.endSec}秒）冲突，请先调整对白与镜头安排` };
+  return { endSec, issue: "" };
+}
+
 export function getSelectedAudioTake(cue: CanvasAudioCue): CanvasAudioTake | undefined {
   return cue.takes.find(take => take.id === cue.selectedTakeId);
 }
