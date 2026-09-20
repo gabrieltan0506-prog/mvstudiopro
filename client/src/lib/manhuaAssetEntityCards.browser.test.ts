@@ -46,7 +46,7 @@ beforeAll(async () => {
         import { createRoot } from 'react-dom/client';
         import { TooltipProvider } from './client/src/components/ui/tooltip';
         import ManhuaScriptWorkbench from './client/src/components/ManhuaScriptWorkbench';
-        globalThis.fixture = { keyart: 0, openedIssue: undefined };
+        globalThis.fixture = { keyart: 0, openedIssue: undefined, updatedClip: undefined };
         const refs = ${JSON.stringify(REFS)};
         const canon = ${JSON.stringify(CANON)};
         createRoot(document.getElementById('root')).render(
@@ -60,6 +60,7 @@ beforeAll(async () => {
               onGenerateAllEpisodeKeyarts={async () => { globalThis.fixture.keyart += 1; }}
               onGenerateAsset3d={async () => {}}
               onGenerateSceneWorld={async () => {}}
+              onUpdateClipPrompt={(id,prompt) => { globalThis.fixture.updatedClip={id,prompt}; }}
               onUpdateClipPrevisStudio={() => {}}
               onChangeManhuaActionPlan={() => {}}
               onUpdateClipAudioStudio={() => {}}
@@ -111,6 +112,7 @@ beforeAll(async () => {
           videoModel: 'seedance-2.5',
           prompt: '【第' + n + '段·30s】墨屠第' + n + '段对白与动作。',
         }));
+        if (globalThis.directorProbe) blocks.push({...defaultCanvasBlock('text',0,0),id:'beats-e01-probe',episodeIndex:1,outputText:'## 分镜表\\n| 镜号 | 景别/运镜 | 内容 | 台词 | 情绪 | 微表情 | 语气 | 时长秒 |\\n| 1 | 双人中景缓推 | 阿菁握拳后松开 | 娘：慢点 | 隐忍 | 肩背轻颤后恢复 | 轻声 | 5 |\\n| 2 | 近景 | 娘看向阿菁 | 无对白 | 放松 | 眉头舒展 | | 5 |'});
         createRoot(document.getElementById('root')).render(
           <TooltipProvider>
             <ManhuaScriptWorkbench
@@ -118,7 +120,7 @@ beforeAll(async () => {
               episodeCount={1} focusEpisode={1} onFocusEpisode={() => {}}
               characterIds={[]} propIds={[]} outlineConfirmed={true}
               workflowPhase='storyboard' compactUi={false}
-              canvasSelectedBlockId='clip-e01-g03-cards'
+              canvasSelectedBlockId={globalThis.directorProbe ? 'clip-e01-g01-audio' : 'clip-e01-g03-cards'}
               directionCanon={{
                 mainCardId: 'main',
                 cards: [
@@ -136,6 +138,7 @@ beforeAll(async () => {
               onGenerateAllEpisodeKeyarts={async () => { globalThis.fixture.keyart += 1; }}
               onGenerateAsset3d={async () => {}}
               onGenerateSceneWorld={async () => {}}
+              onUpdateClipPrompt={(id,prompt) => { globalThis.fixture.updatedClip={id,prompt}; }}
               onUpdateClipPrevisStudio={() => {}}
               onChangeManhuaActionPlan={() => {}}
               onUpdateClipAudioStudio={() => {}}
@@ -168,7 +171,7 @@ afterAll(async () => {
   await browser?.close();
 }, 180_000);
 
-async function mountStoryboard(): Promise<{ page: Page; close: () => Promise<void> }> {
+async function mountStoryboard(directorProbe = false): Promise<{ page: Page; close: () => Promise<void> }> {
   const ctx = await browser.createBrowserContext();
   const page = await ctx.newPage();
   await page.setRequestInterception(true);
@@ -181,6 +184,7 @@ async function mountStoryboard(): Promise<{ page: Page; close: () => Promise<voi
   // 关掉简洁模式才会同时具备「工具条 + 分镜面板」两个静帧入口 —— 这是真能出现重复的那个状态，
   // 旧代码在这里就是两个按钮。
   await page.evaluate(() => window.localStorage.setItem("manhua_compact_ui", "0"));
+  await page.evaluate((enabled) => { (globalThis as any).directorProbe = enabled; }, directorProbe);
   await page.evaluate(storyboardBundle);
   await page.waitForFunction(() => /生成关键静帧|视觉简报|分镜/.test(document.body.innerText), {
     timeout: 30_000,
@@ -793,3 +797,28 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
     await ctx.close().catch(() => {});
   }, 180_000);
 });
+
+it("导演执行表与分类特效在真实工作台显示，采用只写当前段而不生成", async () => {
+  const {page,close}=await mountStoryboard(true);
+  try {
+    await page.waitForSelector("[data-manhua-director-execution]");
+    await page.click("[data-manhua-director-execution] summary");
+    expect(await page.$eval("[data-manhua-director-execution]",el=>el.textContent)).toContain("情绪与细微表演");
+    await page.click("[data-manhua-vfx-picker] summary");
+    await page.waitForSelector("[data-manhua-vfx-picker] button");
+    await page.click("[data-manhua-vfx-picker] button");
+    const description=await page.$eval('[aria-label="本镜特效描述"]',el=>(el as HTMLTextAreaElement).value);
+    expect(description.length).toBeGreaterThan(50);
+    const applied=await page.evaluate(()=>{
+      const button=Array.from(document.querySelectorAll<HTMLButtonElement>("[data-manhua-vfx-picker] button")).find(b=>b.textContent?.includes("采用到当前镜头"))!;
+      const enabled=!button.disabled; if(enabled) button.click(); return enabled;
+    });
+    expect(applied).toBe(true);
+    const result=await page.evaluate(()=>(globalThis as any).fixture);
+    expect(result.updatedClip.id).toMatch(/^clip-e01/);
+    expect(result.updatedClip.prompt).toContain("【用户补充】");
+    expect(result.updatedClip.prompt).toContain("【镜头特效：");
+    expect(result.updatedClip.prompt).toContain(description);
+    expect(result.keyart).toBe(0);
+  } finally {await close();}
+},180_000);

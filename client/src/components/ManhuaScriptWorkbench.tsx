@@ -1,3 +1,6 @@
+import { ManhuaVfxPicker } from "./canvas/ManhuaVfxPicker";
+import { extractManhuaShotVfx, upsertManhuaShotVfx } from "@shared/manhuaVfxSupplement";
+import { ManhuaDirectorExecutionTable } from "./canvas/ManhuaDirectorExecutionTable";
 import { manhuaEditTransitionOf, type ManhuaEditTransition } from "@shared/manhuaEditTransition";
 import { buildManhuaEditMultitrack } from "@shared/manhuaEditMultitrack";
 import { ManhuaDirectionOverridePanel } from "./canvas/ManhuaDirectionOverridePanel";
@@ -3283,9 +3286,18 @@ export default function ManhuaScriptWorkbench({
                   <p className="mt-1 text-[10px] leading-4 text-rose-100/70">
                     {activeShot.dialogueZh ? `「${activeShot.dialogueZh}」` : ""}
                     {activeShot.dialogueZh && (activeShot.emotionZh || activeShot.microExpressionZh) ? " · " : ""}
-                    {activeShot.emotionZh || activeShot.microExpressionZh || ""}
+                    {[activeShot.emotionZh, activeShot.microExpressionZh].filter(Boolean).join(" · ")}
                   </p>
                 ) : null}
+                <ManhuaDirectorExecutionTable shots={activeSegment?.shots || [activeShot]} />
+                <ManhuaVfxPicker key={`${focusEpisode}:${activeSegNo}:${activeShot.index}`} shotIndex={activeShot.index}
+                  initialDirection={extractManhuaShotVfx(activeClip?.prompt || "", activeShot.index)}
+                  disabled={shotSourceIsFallback || !activeClip || !onUpdateClipPrompt || Boolean(factoryBusy) || activeClip.status === "running" || activeClip.videoTaskStatus === "queued"}
+                  onApply={direction => {
+                    if (shotSourceIsFallback || !activeClip || !onUpdateClipPrompt || factoryBusy || activeClip.status === "running" || activeClip.videoTaskStatus === "queued") throw new Error("当前段暂不能编辑");
+                    onUpdateClipPrompt(activeClip.id, upsertManhuaShotVfx(activeClip.prompt || "", activeShot.index, direction));
+                    toast.success(`镜${activeShot.index}特效已保存，下次生成本段时采用`);
+                  }} />
                 {/* 对照图 01 右栏四个字段：时长 / 景别 / 机位运动 / 画面描述（0/200） */}
                 <dl data-manhua-shot-fields className="mt-3 grid grid-cols-1 gap-3">
                   {(
@@ -8975,7 +8987,7 @@ export default function ManhuaScriptWorkbench({
                               {shot.dialogueZh && (shot.emotionZh || shot.microExpressionZh)
                                 ? " · "
                                 : ""}
-                              {shot.emotionZh || shot.microExpressionZh || ""}
+                              {[shot.emotionZh, shot.microExpressionZh].filter(Boolean).join(" · ")}
                             </div>
                           ) : null}
                         </div>

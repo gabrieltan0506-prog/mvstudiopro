@@ -443,3 +443,18 @@ describe("recutWorkbenchShotsTo：换引擎重切", () => {
     expect(capture.paddedCount).toBe(0);
   });
 });
+
+it("合镜按原秒位保留触发反应恢复及各镜情绪语气，成片消费后镜微表情",()=>{
+ const source:ManhuaWorkbenchShot[]=[
+ {index:1,durationSec:2,cameraZh:"近景",actionZh:"听到脚步，抬眼看向门口",emotionZh:"惊惧",microExpressionZh:"眼睑收紧，嘴角僵住",voiceToneZh:"压低声音"},
+ {index:2,durationSec:3,cameraZh:"近景",actionZh:"认出母亲，缓慢松开拳头",emotionZh:"放松",microExpressionZh:"眉心舒展，嘴唇轻颤后恢复平稳",voiceToneZh:"气息渐稳"}];
+ const merged=recutWorkbenchShotsTo(source,1).shots[0]!;
+ expect(merged.durationSec).toBe(5);
+ expect(merged.emotionZh).toBe("本镜0–2秒：惊惧；本镜2–5秒：放松");
+ expect(merged.voiceToneZh).toBe("本镜0–2秒：压低声音；本镜2–5秒：气息渐稳");
+ expect(merged.microExpressionZh).toContain("本镜2–5秒：眉心舒展，嘴唇轻颤后恢复平稳");
+ expect(merged.actionZh.indexOf("听到脚步")).toBeLessThan(merged.actionZh.indexOf("认出母亲"));
+ const prompt=formatWorkbenchSegmentClipInjectBlock({segmentIndex:1,totalSegments:1,durationSec:5,shots:[merged]});
+ expect(prompt).toContain("嘴唇轻颤后恢复平稳");expect(prompt).toContain("本镜2–5秒");
+ expect(source[1].microExpressionZh).toBe("眉心舒展，嘴唇轻颤后恢复平稳");
+});

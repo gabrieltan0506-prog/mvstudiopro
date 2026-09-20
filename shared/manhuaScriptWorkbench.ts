@@ -326,27 +326,33 @@ export function recutWorkbenchShotsTo(
         .map((s) => String(s[key] || "").trim())
         .filter(Boolean)
         .join(key === "dialogueZh" ? " " : "；") || undefined;
+    const timedField = (chunk: ManhuaWorkbenchShot[], key: "actionZh" | "emotionZh" | "voiceToneZh" | "microExpressionZh") => {
+      if (chunk.length === 1) return String(chunk[0]![key] || "").trim() || undefined;
+      let cursor = 0;
+      return chunk.map(shot => {
+        const start = cursor;
+        cursor += Math.max(0, Number(shot.durationSec) || 0);
+        const value = String(shot[key] || "").trim();
+        return value ? `本镜${Number(start.toFixed(3))}–${Number(cursor.toFixed(3))}秒：${value}` : "";
+      }).filter(Boolean).join("；") || undefined;
+    };
     const firstOf = (chunk: ManhuaWorkbenchShot[], key: keyof ManhuaWorkbenchShot) =>
       chunk.map((s) => s[key]).find((v) => v !== undefined && v !== "");
     const out = buckets.map((chunk, bi) => {
       const head = chunk[0]!;
       if (chunk.length > 1) seams.push(bi + 1);
-      /**
-       * 只继承 head 会把被合并镜的**台词**和表演字段整条吞掉——「一句不丢」就只对
-       * actionZh 成立，dialogueZh 静默消失。台词必须拼起来；情绪/语气/微表情这些
-       * 单值字段取第一个非空（同段内本来就该一致）。
-       */
+      // 合并后保留原镜局部秒位，不能把触发、反应与恢复挤成同一瞬间。
       return {
         ...head,
         index: bi + 1,
         durationSec: chunk.reduce((n, s) => n + (Number(s.durationSec) || 0), 0),
-        actionZh: joinField(chunk, "actionZh") || "",
+        actionZh: timedField(chunk, "actionZh") || "",
         dialogueZh: joinField(chunk, "dialogueZh"),
         ...(joinField(chunk, "soundZh") ? { soundZh: joinField(chunk, "soundZh") } : {}),
         intentZh: firstOf(chunk, "intentZh") as string | undefined,
-        emotionZh: firstOf(chunk, "emotionZh") as string | undefined,
-        voiceToneZh: firstOf(chunk, "voiceToneZh") as string | undefined,
-        microExpressionZh: firstOf(chunk, "microExpressionZh") as string | undefined,
+        emotionZh: timedField(chunk, "emotionZh"),
+        voiceToneZh: timedField(chunk, "voiceToneZh"),
+        microExpressionZh: timedField(chunk, "microExpressionZh"),
       };
     });
     return { shots: out, mode: "merged", seamShotIndexes: seams };
@@ -720,14 +726,15 @@ function parseShotRowsFromText(raw: string): ParsedShotRow[] {
 
     // Markdown 表：| 1 | 近景 | 女主推门 | 或加台词/情绪列
     const table = line.match(
-      /^\|\s*(\d{1,2})\s*\|\s*([^|]*)\|\s*([^|]*)\|(?:\s*([^|]*)\|)?(?:\s*([^|]*)\|)?/,
+      /^\|\s*(\d{1,2})\s*\|\s*([^|]*)\|\s*([^|]*)\|(?:\s*([^|]*)\|)?(?:\s*([^|]*)\|)?(?:\s*([^|]*)\|)?(?:\s*([^|]*)\|)?(?:\s*([^|]*)\|)?/,
     );
     if (table?.[1] && table[3]) {
       const index = Math.max(1, parseInt(table[1], 10));
-      const cameraCell = String(table[2] || "").trim();
-      const actionCell = String(table[3] || "").trim();
-      const dialogueCell = String(table[4] || "").trim();
-      const emotionCell = String(table[5] || "").trim();
+      const readCell = (index: number) => String(table[index] || "").trim().replace(/<br\s*\/?\s*>/gi, "\n").replace(/&#124;/g, "|").replace(/&amp;/g, "&");
+      const cameraCell = readCell(2);
+      const actionCell = readCell(3);
+      const dialogueCell = readCell(4);
+      const emotionCell = readCell(5);
       if (looksLikeEnglishMotionOnly(actionCell)) continue;
       const split = splitCameraAndAction(
         cameraCell && actionCell ? `${cameraCell}：${actionCell}` : actionCell || cameraCell,
@@ -740,6 +747,9 @@ function parseShotRowsFromText(raw: string): ParsedShotRow[] {
           actionZh: split.actionZh || actionCell,
           dialogueZh: dialogueCell.replace(/^[「『"“]|[」』"”]$/g, ""),
           emotionZh: emotionCell,
+          microExpressionZh: readCell(6) || undefined,
+          voiceToneZh: readCell(7) || undefined,
+          durationSec: Number(readCell(8)) > 0 ? Number(readCell(8)) : undefined,
         }),
       );
       continue;
@@ -783,7 +793,7 @@ export function parseWorkbenchShotsFromTextResult(raw: string | undefined | null
   if (!text) return { shots: defaultWorkbenchShots(), isFallback: true };
 
   const rows = parseShotRowsFromText(text);
-  if (!rows.length || (rows.length < 2 && !hasExplicitManhuaShotBlocks(text))) return { shots: defaultWorkbenchShots(text.slice(0, 180)), isFallback: true };
+  if (!rows.length || (rows.length < 2 && !hasExplicitManhuaShotBlocks(text) && !/^\|\s*镜号\s*\|/m.test(text))) return { shots: defaultWorkbenchShots(text.slice(0, 180)), isFallback: true };
 
   // 重新编号为 1..n；有原稿秒位则保留，无秒位的旧表仍使用 0 占位。
   const shots = rows.map((row, i) => ({
