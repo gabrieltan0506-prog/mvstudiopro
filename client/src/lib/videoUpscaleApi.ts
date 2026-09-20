@@ -5,6 +5,7 @@
  * `canvasVideoUpscaleCredits`），前端只用同一共享函数做展示，不自算价。
  * 服务端有「用户+源URL+档位」天然幂等键：断线重发/重复点击不会双扣。
  */
+import { wavespeedSourceResolutionFromDimensions } from "@shared/wavespeedVideoUpscaleModels";
 import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
 
 export type VideoUpscaleTaskStatus =
@@ -83,6 +84,40 @@ export function probeVideoDurationSec(url: string): Promise<number | null> {
   });
 }
 
+export type VideoUpscaleSourceMetadata = {
+  sourceUrl: string; width: number; height: number; durationSec: number; sourceResolution: string;
+};
+
+/** 超分报价同时核验宽高与时长，结果绑定原片URL，不能借用节点默认分辨率。 */
+export function probeVideoUpscaleSource(url: string): Promise<VideoUpscaleSourceMetadata | null> {
+  return new Promise(resolve => {
+    let settled = false;
+    let video: HTMLVideoElement | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const done = (value: VideoUpscaleSourceMetadata | null) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (video) { video.onloadedmetadata = null; video.onerror = null; try { video.removeAttribute("src"); video.load(); } catch { /* 清理失败不吞掉探测回执。 */ } }
+      resolve(value);
+    };
+    try {
+      video = document.createElement("video");
+      video.preload = "metadata";
+      video.crossOrigin = "anonymous";
+      video.onloadedmetadata = () => {
+        const { videoWidth: width, videoHeight: height, duration } = video!;
+        const sourceResolution = wavespeedSourceResolutionFromDimensions(width, height);
+        done(sourceResolution && Number.isFinite(duration) && duration > 0 && duration <= 600
+          ? { sourceUrl: url, width, height, durationSec: Math.max(1, Math.round(duration)), sourceResolution } : null);
+      };
+      video.onerror = () => done(null);
+      timer = setTimeout(() => done(null), 15_000);
+      video.src = url;
+    } catch { done(null); }
+  });
+}
+
 export class VideoUpscaleSubmitError extends Error {
   constructor(
     message: string,
@@ -114,7 +149,7 @@ export async function startVideoUpscale(input: {
       target: input.target,
       durationSec: input.durationSec,
       episodeIndex: input.episodeIndex,
-      sourceResolution: input.sourceResolution || "720p",
+      sourceResolution: input.sourceResolution,
     }),
   });
   const json = (await res.json().catch(() => ({}))) as {

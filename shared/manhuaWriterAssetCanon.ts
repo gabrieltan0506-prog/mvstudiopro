@@ -449,14 +449,14 @@ export function evaluateWriterEpisodeDensity(input: {
   /** 目标秒数；默认按成片实际长度 90s。门槛随之按段数推算 */
   targetSec?: number;
   /**
-   * 真实成片布局（如 Seedance 2.5 = 4 段×30s）：只影响对白句数门槛，
+   * 真实成片布局（如 Seedance 2.5 = 4 段×30s）；对白不设最低句数，
    * 不传时按「总秒数 / 15」倒推段数，与旧行为一致。
    */
   segmentCount?: number;
   durationSecPerSegment?: number;
 }): WriterDensityGateResult {
   const target = input.targetSec ?? MANHUA_EPISODE_SEGMENT_TARGET_SEC;
-  const { minBody, minDlg, minLoc } = manhuaEpisodeDensityFloors(target, {
+  const { minBody, minLoc } = manhuaEpisodeDensityFloors(target, {
     segmentCount: input.segmentCount,
     durationSecPerSegment: input.durationSecPerSegment,
   });
@@ -468,6 +468,7 @@ export function evaluateWriterEpisodeDensity(input: {
     [l.nameZh, l.aliasZh].filter(Boolean),
   ) as string[];
   const errors: string[] = [];
+  if (!input.episodes?.length) errors.push("缺少分集剧本，不能确认空剧情包");
   const stats: WriterDensityGateResult["stats"] = [];
 
   for (const ep of input.episodes || []) {
@@ -491,11 +492,6 @@ export function evaluateWriterEpisodeDensity(input: {
     if (bodyChars < minBody) {
       errors.push(
         `第${ep.index}集正文过短（${bodyChars}字，至少约 ${minBody} 字），无法撑满约 ${target} 秒`,
-      );
-    }
-    if (dlg < minDlg) {
-      errors.push(
-        `第${ep.index}集有效对白约 ${dlg} 句，约 ${target} 秒的集至少 ${minDlg} 句（「」内短句）`,
       );
     }
     if (locNames.length && locHits < minLoc) {

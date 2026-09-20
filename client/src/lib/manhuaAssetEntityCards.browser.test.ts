@@ -132,6 +132,7 @@ beforeAll(async () => {
               onSelectDirectionSceneCard={() => {}}
               customAssetRefs={refs} assetCanon={canon}
               onUploadCustomAssets={async () => {}}
+              onGenerateKeyartShot={async () => { globalThis.fixture.keyart += 1; }}
               onGenerateAllEpisodeKeyarts={async () => { globalThis.fixture.keyart += 1; }}
               onGenerateAsset3d={async () => {}}
               onGenerateSceneWorld={async () => {}}
@@ -202,6 +203,23 @@ async function mount(): Promise<{ page: Page; close: () => Promise<void> }> {
 }
 
 describe("浏览器真实页面：资产页同名多版本收成实体卡", () => {
+  it("版本缩略条定位对应原卡，不改变采用职责或触发生成", async () => {
+    const { page, close } = await mount();
+    try {
+      const before = await page.$eval('[data-manhua-asset-entity="wa_char_aqing"] [data-manhua-asset-entity-current-zh]', e => e.textContent);
+      await page.evaluate(() => {
+        const original = HTMLElement.prototype.scrollIntoView;
+        HTMLElement.prototype.scrollIntoView = function(options) {
+          (window as any).__versionTarget = this.dataset.manhuaCustomRefId;
+          original.call(this, options);
+        };
+      });
+      await page.click('[title="查看阿菁-编辑，不改变采用版本"]');
+      expect(await page.evaluate(() => (window as any).__versionTarget)).toBe("a3");
+      expect(await page.$eval('[data-manhua-asset-entity="wa_char_aqing"] [data-manhua-asset-entity-current-zh]', e => e.textContent)).toBe(before);
+      expect(await page.evaluate(() => (window as any).fixture.keyart)).toBe(0);
+    } finally { await close(); }
+  }, 180_000);
   it("人物栏按实体分组，组头报当前采用的职责，计数报实体数与张数", async () => {
     const { page, close } = await mount();
     const seen = await page.evaluate(() => {
@@ -387,7 +405,7 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
    * 断言的是**恰好一个入口**——既不在两处重复，也不会某阶段无处可去。
    * 资产阶段：3D 归簇；白模／动作节奏／声音归抽屉。
    */
-  it("资产阶段：3D 模型留在主操作簇，白模／动作节奏／声音收进更多操作抽屉", async () => {
+  it("资产阶段：辅助工具统一收进更多操作抽屉", async () => {
     const { page, close } = await mount();
     const seen = await page.evaluate(() => {
       const cluster = Array.from(document.querySelectorAll('[data-manhua-tool-home="cluster"]')).map(
@@ -401,12 +419,7 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
       return { cluster, hasMore: Boolean(more) };
     });
     expect(seen.hasMore).toBe(true);
-    // 资产阶段主操作簇里只有 3D，没有段级工具
-    expect(seen.cluster).toContain("open-3d-model-studio");
-    expect(seen.cluster).toContain("open-world-studio");
-    expect(seen.cluster).not.toContain("open-previs-studio");
-    expect(seen.cluster).not.toContain("open-action-timeline");
-    expect(seen.cluster).not.toContain("open-audio-studio");
+    expect(seen.cluster).toEqual([]);
 
     const drawer = await page.evaluate(() => {
       const rows = Array.from(document.querySelectorAll("[data-manhua-secondary-tool]"));
@@ -415,26 +428,19 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
         homes: rows.map((b) => b.getAttribute("data-manhua-tool-home")),
       };
     });
-    expect(drawer.tools).toEqual(["previs", "actionTimeline", "audio"]);
-    expect(drawer.tools).not.toContain("world3d");
+    expect(drawer.tools).toEqual(["model3d", "world3d", "previs", "actionTimeline", "audio"]);
     expect(drawer.homes.every((h) => h === "drawer")).toBe(true);
-    // 3D 已经在簇里，抽屉里不许再出现一个
-    expect(drawer.tools).not.toContain("model3d");
     await close();
   }, 180_000);
 
-  it("分镜阶段反过来：段级工具回到主操作簇，3D 收进抽屉", async () => {
+  it("分镜阶段：辅助工具不占主操作簇", async () => {
     const { page, close } = await mountStoryboard();
     const cluster = await page.evaluate(() =>
       Array.from(document.querySelectorAll('[data-manhua-tool-home="cluster"]')).map((b) =>
         b.getAttribute("data-manhua-action"),
       ),
     );
-    expect(cluster).toContain("open-previs-studio");
-    expect(cluster).toContain("open-action-timeline");
-    expect(cluster).toContain("open-audio-studio");
-    expect(cluster).not.toContain("open-3d-model-studio");
-    expect(cluster).not.toContain("open-world-studio");
+    expect(cluster).toEqual([]);
     await close();
   }, 180_000);
 
@@ -532,6 +538,8 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
         order: { script: orderOf(script), preview: orderOf(preview), params: orderOf(params) },
         // 当前镜参数面板现在应该在右栏里，而不是在镜头清单那一栏
         paramsInRight: Boolean(params?.querySelector("[data-manhua-shot-params]")),
+        primaryInRight: Boolean(params?.querySelector('[data-manhua-action="generate-current-keyart"]')),
+        primaryCount: document.querySelectorAll('[data-manhua-action="generate-current-keyart"]').length,
         paramsInScript: Boolean(script?.querySelector("[data-manhua-shot-params]")),
         collapsedAssets: Boolean(document.querySelector("[data-manhua-storyboard-assets-collapsed]")),
       };
@@ -543,6 +551,8 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
     expect(seen.order.preview).toBe(2);
     expect(seen.order.params).toBe(3);
     expect(seen.paramsInRight).toBe(true);
+    expect(seen.primaryInRight).toBe(true);
+    expect(seen.primaryCount).toBe(1);
     expect(seen.paramsInScript).toBe(false);
 
     // 对照图 01 右栏四个字段：时长 / 景别 / 机位运动 / 画面描述（0/200）

@@ -1,7 +1,7 @@
 const CONTEXT_FIELD_LABELS: Record<string, string> = {
   seriesTitle: "剧名", episodeIndex: "集号", episodeTitle: "本集标题",
   stage: "当前阶段", videoModel: "成片引擎", writerConfirmed: "剧本确认状态",
-  episodeBody: "本集正文", assetSummary: "资产说明", shotSummary: "分镜说明",
+  episodeBody: "本集正文", assetSummary: "资产说明", shotSummary: "分镜说明", previsSummary: "白模规格",
   blockers: "待处理问题", directorStrategyId: "创作策略", history: "最近对话",
   directorStrategyRevision: "创作策略版本",
 };

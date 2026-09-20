@@ -110,6 +110,54 @@ async function settle(page: Page) {
   );
 }
 
+it("连续运镜保存终点，拆镜衔接不跳回起点且不自动提交", async () => {
+  const page = await open();
+  try {
+    await page.evaluate(() => {
+      const f = (window as any).fixture;
+      const block = structuredClone(f.block);
+      block.previsStudio.spec.cameras[0].endPosition = [4, -6, 3];
+      f.setBlock(block);
+    });
+    await settle(page);
+    await click(page, "拆分最后一个机位");
+    await settle(page);
+    const result = await page.evaluate(() => {
+      const f = (window as any).fixture;
+      return { cameras: f.block.previsStudio.spec.cameras, submits: f.submits.length, old: f.block.manhuaSegmentRefs.previs.url };
+    });
+    expect(result.cameras[0].endPosition).toEqual(result.cameras[1].position);
+    expect(result.cameras[1].endPosition).toEqual([4, -6, 3]);
+    expect(result.submits).toBe(0);
+    expect(result.old).toBe("https://offline.invalid/old.mp4");
+  } finally { await page.close(); }
+});
+
+it("收起专业参数仍可选择出场人物，保存失败不改变原人物或提交渲染", async () => {
+  const page = await open();
+  try {
+    await page.click("[data-previs-advanced] > summary");
+    await page.evaluate(() => { (window as any).fixture.rejectSave = true; });
+    await page.select('[aria-label="白模出场人物1"]', "character-mo");
+    await settle(page);
+    expect(await page.evaluate(() => (window as any).fixture.block.previsStudio.spec.actors[0].assetRef)).toBeUndefined();
+    await page.evaluate(() => { (window as any).fixture.rejectSave = false; });
+    await page.select('[aria-label="白模出场人物1"]', "character-mo");
+    await settle(page);
+    const result = await page.evaluate(() => ({
+      actor: (window as any).fixture.block.previsStudio.spec.actors[0],
+      submits: (window as any).fixture.submits.length,
+      open: (document.querySelector('[data-previs-advanced]') as HTMLDetailsElement).open,
+      reference: (window as any).fixture.block.manhuaSegmentRefs.previs.url,
+    }));
+    expect(result.actor.assetRef).toBe("character-mo");
+    expect(result.actor.nameZh).toBe("墨屠");
+    expect(result.submits).toBe(0);
+    expect(result.open).toBe(false);
+    expect(result.reference).toBe("https://offline.invalid/old.mp4");
+  } finally { await page.close(); }
+});
+
 it("米白主题覆盖真实预演表单与门户，退出漫剧模式后恢复原样式", async () => {
   const page = await open();
   try {

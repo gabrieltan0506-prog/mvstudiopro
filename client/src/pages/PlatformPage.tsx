@@ -15452,9 +15452,9 @@ export default function PlatformPage() {
                               ) : null}
                               {selectedManhuaProposal.densityHints ? (
                                 <div className="mt-1.5 text-[10px] text-[#c9c0e6]/50">
-                                  <span className="text-white/45">密度下限｜</span>
-                                  正文 {selectedManhuaProposal.densityHints.minBodyChars} 字 ｜ 对白{" "}
-                                  {selectedManhuaProposal.densityHints.minDialogueLines} 行 ｜ 场景{" "}
+                                  <span className="text-white/45">内容密度参考｜</span>
+                                  正文 {selectedManhuaProposal.densityHints.minBodyChars} 字 ｜ 来源对白量参考{" "}
+                                  {selectedManhuaProposal.densityHints.minDialogueLines} 行（非最低要求） ｜ 场景{" "}
                                   {selectedManhuaProposal.densityHints.minLocationHits} 处
                                 </div>
                               ) : null}

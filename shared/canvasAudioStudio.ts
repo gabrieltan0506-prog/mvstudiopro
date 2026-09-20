@@ -51,10 +51,24 @@ export const canvasAudioCueSchema = z.object({
   enabled: z.boolean().default(true),
 });
 export type CanvasAudioCue = z.infer<typeof canvasAudioCueSchema>;
+const musicModel = z.enum(["suno-v5.5-beta", "suno-v6-mini", "suno-v6", "suno-v6-wild"]);
+/** 本段配乐编辑草稿；付费确认不持久化，已有音频候选独立保留。 */
+export const canvasMusicDraftSchema = z.object({
+  prompt: text(16000),
+  durationSec: seconds,
+  model: musicModel,
+  brief: z.object({
+    model: musicModel, custom_mode: z.literal(true), instrumental: z.literal(true),
+    style: text(16000), prompt: text(16000), title: text(1000), duration: seconds,
+    negative_tags: text(2000), style_weight: z.number().finite(), weirdness_constraint: z.number().finite(),
+  }).nullable(),
+});
+export type CanvasMusicDraft = z.infer<typeof canvasMusicDraftSchema>;
 export const canvasAudioStudioSchema = z.object({
   schemaVersion: z.literal(1),
   cues: z.array(canvasAudioCueSchema).max(100),
   musicJobIds: z.array(text(120).min(1)).max(100),
+  musicDraft: canvasMusicDraftSchema.optional(),
   previewTake: canvasAudioTakeSchema.optional(),
   pendingOperations: z.array(z.object({
     id: text(120).min(1),

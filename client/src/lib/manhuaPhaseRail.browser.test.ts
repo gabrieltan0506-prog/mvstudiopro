@@ -131,5 +131,14 @@ it.skipIf(!process.env.MANHUA_LAYOUT_CSS_DIR)('阶段条390与1280按钮标签�
   }
   expect(await page.evaluate(()=>(window as any).__phaseClicks)).toEqual(['outline','assets','storyboard','edit','final','outline','assets','storyboard','edit','final']);
   writeFileSync(join(evidenceDir,(process.env.PROBE_TAG||'probe')+'-hits.json'),JSON.stringify(hits,null,2));
+  expect(await page.$$('[data-manhua-tool-home="cluster"]')).toHaveLength(0);
+  expect(await page.$eval('[data-manhua-project-settings]', el => (el as HTMLDetailsElement).open)).toBe(false);
+  await page.click('[data-manhua-action="open-more-tools"]');
+  await page.waitForSelector('[data-manhua-secondary-tool="previs"]', {visible:true});
+  await page.click('[data-manhua-secondary-tool="previs"]');
+  await page.waitForSelector('[data-manhua-toolbar-more]', {hidden:true});
+  await page.waitForSelector('[data-manhua-previs-studio]', {visible:true});
+  expect(await page.$eval('[data-previs-advanced]', el => (el as HTMLDetailsElement).open)).toBe(false);
+  await page.waitForSelector('[data-previs-cast]', {visible:true});
  }finally{await close();}
 },120000);

@@ -1,3 +1,4 @@
+import { buildManhuaDirectionCanonFromSelection } from "@shared/manhuaDirectionCanonLibrary";
 import { describe, expect, it } from "vitest";
 import {
   buildManhuaAdvisorProject,
@@ -207,6 +208,8 @@ describe("PR-12 · 上下文补喂与四类 issue", () => {
     const noLock = recommendManhua3dUsage({ segments, lockedCharacterNames: [] });
     expect(noLock.recommend).toBe(false);
     expect(noLock.suggestedSegmentIndex).toBeUndefined();
+    expect(noLock.recommendPrevis).toBe(true);
+    expect(noLock.previsSuggestedSegmentIndex).toBe(2);
     const talky = recommendManhua3dUsage({
       segments: [
         { intentZh: "两人对坐叙旧", dialogueZh: "「多年不见」", castZh: "阿菁、黑奇" },
@@ -220,6 +223,23 @@ describe("PR-12 · 上下文补喂与四类 issue", () => {
     const built = buildManhuaAdvisorProject({ ...base, segments, lockedCharacterNames: ["阿菁"] });
     expect(built.contextNotes.some((n) => n.includes("3D") && n.includes("第 2 段"))).toBe(true);
     expect(built.recommend3d?.recommend).toBe(true);
+  });
+
+  it("对白中的走位、上楼、道具互动和演唱会可独立推荐白模，不要求锁脸或昂贵资产", () => {
+    for (const intentZh of ["两人边走边谈", "她上楼继续对话", "他接过茶杯回答", "演唱会舞台上弹奏吉他"]) {
+      const result = recommendManhua3dUsage({ segments: [{ intentZh, dialogueZh: "对白持续", castZh: "甲" }], lockedCharacterNames: [] });
+      expect(result.recommend).toBe(false);
+      expect(result.recommendPrevis).toBe(true);
+      expect(result.previsSuggestedSegmentIndex).toBe(1);
+      expect(pickManhuaAdvisorPhaseNudge({ phase: "storyboard", issues: [], recommend3d: result })).toContain("通用白模");
+      expect(result.reasonZh).not.toContain("不建议用 3D");
+    }
+  });
+
+  it("打算和对白中的追杀不冒充实际动作，静态对白也不禁用白模", () => {
+    const result = recommendManhua3dUsage({ segments: [{ intentZh: "甲打算告诉乙往事，两人对坐", dialogueZh: "那年他们追逐打斗", castZh: "甲、乙" }], lockedCharacterNames: ["甲"] });
+    expect(result.recommendPrevis).toBe(false);
+    expect(result.reasonZh).toContain("仍可手动使用白模预演");
   });
 
   it("阶段顶部提示与进阶段气泡：取当前阶段第一条 issue，否则 3D 理由；每阶段只弹一次", () => {
@@ -282,4 +302,13 @@ describe("1471 R1 · 存储不可用", () => {
     expect(claimManhuaAdvisorNudgeOnce(() => store, "edit")).toBe(true);
     expect(claimManhuaAdvisorNudgeOnce(store, "edit")).toBe(false);
   });
+});
+
+it("当前导演包七核心检查进入真实顾问摘要", () => {
+ const bible = buildManhuaProjectBible({ topic: "墨菁传", pack, cast: { lane: "ancient", characterIds: [], ancientArchetypeIds: [], artStyleId: "cg", propIds: [], wardrobePropContinuityIds: [] } });
+ bible.directionCanon = buildManhuaDirectionCanonFromSelection({ mainCardId: "parallel_action_editing" })!;
+ const result = buildManhuaAdvisorProject({ ...base, bible, phase: "storyboard", selection: { episodeIndex: 1, segmentIndex: 1, shot: { index: 1, durationSec: 5, actionZh: "黑奇护住阿菁", cameraZh: "全景" } } });
+ for (const label of ["景别", "角度", "构图", "光影", "色调", "动势", "转场"]) expect(result.context.shotSummary).toContain(`七核心检查·${label}`);
+ expect(result.context.shotSummary).toContain("黑奇护住阿菁");
+ expect(manhuaCreativeAdvisorContextSchema.safeParse(result.context).success).toBe(true);
 });

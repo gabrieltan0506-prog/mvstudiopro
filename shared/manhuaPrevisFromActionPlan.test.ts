@@ -120,6 +120,17 @@ describe("1468 R1 · 边界：秒位吸附与短镜出水", () => {
 
 
 describe("1468 R2 · 套用草案可撤销", () => {
+  it("已选穿越机配方进入白模草案但不改人物和接触时序", () => {
+    const plan = buildBoatFight();
+    const shot = splitManhuaActionPlanForPrevis(plan).shots[0]!;
+    const base = manhuaPrevisDraftFromExecutableShot({ plan, shot, aspect: "16:9" });
+    const fpv = manhuaPrevisDraftFromExecutableShot({ plan, shot, aspect: "16:9", actionRecipeId: "action_fpv_stadium" });
+    expect(fpv.spec).not.toBeNull();
+    expect(fpv.spec!.actors).toEqual(base.spec!.actors);
+    expect(fpv.spec!.interactions).toEqual(base.spec!.interactions);
+    expect(fpv.spec!.cameras.every(c => c.endPosition)).toBe(true);
+    expect(fpv.cameraPromptZh.join(" ")).toContain("俯冲");
+  });
   it("套用把当前规格压进 specHistory 末尾；「恢复上一份」弹回原规格", () => {
     const plan = buildBoatFight();
     const { shots } = splitManhuaActionPlanForPrevis(plan);
@@ -127,7 +138,9 @@ describe("1468 R2 · 套用草案可撤销", () => {
     const studio = createManhuaPrevisStudio();
     const before = studio.spec;
     const applied = applyManhuaPrevisDraftToStudio(studio, d.spec!, "2026-09-16T00:00:00.000Z");
-    expect(applied.spec).toEqual(d.spec);
+    expect({ ...applied.spec, actors: applied.spec.actors.map(({ colorIndex: _color, ...actor }) => actor) }).toEqual(d.spec);
+    expect(new Set(applied.spec.actors.map(actor => actor.colorIndex)).size).toBe(applied.spec.actors.length);
+    expect(d.spec!.actors.every(actor => actor.colorIndex === undefined)).toBe(true);
     expect(applied.specHistory?.at(-1)).toEqual({ spec: before, createdAt: "2026-09-16T00:00:00.000Z", reasonZh: "套用动作计划草案前的配置" });
     // 与工作台「恢复上一份动作配置」同一算法：取末条回填、历史去尾
     const restored = { ...applied, spec: applied.specHistory!.at(-1)!.spec, specHistory: applied.specHistory!.slice(0, -1) };

@@ -16,6 +16,8 @@ import ManhuaTemplateTrialCompare, {
 } from "@/components/canvas/ManhuaTemplateTrialCompare";
 import PostProdWorkshopCard from "@/components/canvas/PostProdWorkshopCard";
 import ManhuaCreativeAdvisorPanel from "@/components/canvas/ManhuaCreativeAdvisorPanel";
+import { advisorReconfirmationFromEpisode } from "@/lib/manhuaAdvisorBackups";
+import { prepareAdvisorRewriteAdoption, persistAdvisorRewriteAdoption } from "@/lib/manhuaAdvisorAdoption";
 import { manhuaAdvisorMountKey } from "@/lib/manhuaAdvisorSession";
 import {
   buildManhuaAdvisorProject,
@@ -6377,6 +6379,15 @@ export default function OmniCanvas() {
       });
       return false;
     }
+    let fromEpisode: number | undefined;
+    try {
+      fromEpisode = user?.id != null
+        ? advisorReconfirmationFromEpisode(localStorage, String(user.id), writerPack, projectBible?.confirmedAt)
+        : undefined;
+    } catch {
+      toast.error("无法读取改写备份，未重新确认；请先检查本机存储。");
+      return false;
+    }
     setWriterConfirmBlockers([]);
     const canon = densityGate.canon;
     setWriterConfirmed(true);
@@ -6390,7 +6401,8 @@ export default function OmniCanvas() {
       topicOverride: topicForSpawn,
       charactersMd: writerPack.charactersMd,
     });
-    const continuity = resolveManhuaEpisodeSpawnContinuity(writerPack.episodes, writerFocusEpisode);
+    const continuity = resolveManhuaEpisodeSpawnContinuity(writerPack.episodes, fromEpisode ?? writerFocusEpisode);
+    if (fromEpisode != null) setWriterFocusEpisode(continuity.episodeIndex);
     const mainSceneId =
       canon.episodeMainSceneId[continuity.episodeIndex] || canon.locations[0]?.id || "";
     const identityFromCanon = formatWriterAssetCanonIdentityLock(canon, {
@@ -6478,8 +6490,8 @@ export default function OmniCanvas() {
     if (spawned.resolvedSceneId && !factorySceneId) {
       setFactorySceneId(spawned.resolvedSceneId);
     }
-    // 确认编剧 = 以新剧情铺链；先剥尽旧工厂产物，已出图/已出片会转存档保留。
-    const cleaned = stripManhuaFactoryCanvasArtifacts(blocks, edges);
+    // 顾问改写的再次确认保留此前集；普通新剧确认仍清理整条旧链。
+    const cleaned = stripManhuaFactoryCanvasArtifacts(blocks, edges, { fromEpisode });
     const next = {
       blocks: [...cleaned.blocks, ...spawned.blocks],
       edges: [...cleaned.edges, ...spawned.edges],
@@ -6517,6 +6529,8 @@ export default function OmniCanvas() {
     );
     return true;
   }, [
+    user?.id,
+    projectBible?.confirmedAt,
     projectBible?.storyEmotion,
     writerPack,
     factoryTopic,
@@ -13190,6 +13204,34 @@ export default function OmniCanvas() {
         userId={user?.id != null ? String(user.id) : undefined}
         confirmedProjectVersion={projectBible?.confirmedAt}
         project={advisorProject}
+        onApplyRewrite={(input) => {
+          let plan: ReturnType<typeof prepareAdvisorRewriteAdoption>;
+          try {
+            plan = prepareAdvisorRewriteAdoption({ candidate: input, writerPack, projectBible, blocks, edges,
+              overlays: directorBoardMotionOverlayBySegment,
+              busy: writerBusy || factoryBusy || assembleBusy || burnSubtitleBusy || Boolean(segmentRefBusyId) || Boolean(assetStandardizeBusyId) || asset3dBusyIds.length > 0 || sceneWorldBusyIds.length > 0 });
+            persistAdvisorRewriteAdoption({ plan, original: { writerPack: writerPack!, projectBible, blocks, edges, overlays: directorBoardMotionOverlayBySegment },
+              userId: String(user?.id ?? "local"), backupId: crypto.randomUUID(), createdAt: new Date().toISOString() });
+          } catch (error) {
+            toast.error(error instanceof Error ? error.message : "改写未能安全保存，未采用。");
+            return false;
+          }
+          const { candidate, writerPack: nextPack, canvas: cleaned, overlays } = plan;
+          setBlocks(cleaned.blocks);
+          setEdges(cleaned.edges);
+          bumpManhuaOutboundEpoch();
+          setDirectorBoardMotionOverlayBySegment(overlays);
+          materializedBoardIdsRef.current.clear();
+          setWriterPackDiff(diffManhuaWriterPacks(writerPack, nextPack));
+          setWriterPack(nextPack);
+          setWriterConfirmed(false);
+          setDirectorUnlocked(false);
+          setWorkflowPhase("outline");
+          setWriterFocusEpisode(candidate.episodeIndex);
+          setWriterConfirmBlockers([]);
+          setAdvisorOpen(false);
+          return true;
+        }}
         onLocate={(issue) => {
           setAdvisorOpen(false);
           locateAdvisorIssue(issue);

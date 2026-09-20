@@ -171,6 +171,22 @@ def action_amounts(actor, t):
             values['lookAt'] = action.get('lookAtId')
     return values
 
+def camera_pose(shot, frame):
+    begin=math.floor(shot['startSec']*24+.5)+1
+    end=math.floor(shot['endSec']*24+.5)
+    progress=max(0., min(1., (frame-begin)/max(1,end-begin)))
+    progress=progress*progress*(3-2*progress)
+    if shot.get('orbitDeg') is not None:
+        angle=math.radians(shot['orbitDeg'])*progress
+        x=shot['position'][0]-shot['target'][0]
+        y=shot['position'][1]-shot['target'][1]
+        return ([shot['target'][0]+x*math.cos(angle)-y*math.sin(angle),
+                 shot['target'][1]+x*math.sin(angle)+y*math.cos(angle),shot['position'][2]],shot['target'])
+    def mix(start, finish): return [a+(b-a)*progress for a,b in zip(start,finish)]
+    return (mix(shot['position'],shot.get('endPosition',shot['position'])),
+            mix(shot['target'],shot.get('endTarget',shot['target'])))
+
+
 def camera_position_at(t):
     """看向「镜头」时取当帧真正在用的那台机位。
 
@@ -181,7 +197,7 @@ def camera_position_at(t):
     for shot in spec['cameras']:
         begin = math.floor(shot['startSec']*24+.5)+1
         end = math.floor(shot['endSec']*24+.5)
-        if begin <= frame <= end: return Vector(shot['position'])
+        if begin <= frame <= end: return Vector(camera_pose(shot, frame)[0])
     return Vector(spec['cameras'][0]['position'])
 
 def look_target_world(actor, target_id, frame):
@@ -340,6 +356,17 @@ if spec.get('interactions') or has_swords:
         interaction_poses[frame]=poses
 
 rigs=[]
+# 与 shared/manhuaPrevisColors.ts 同源契约；颜色随身份固定，不随演员顺序变化。
+actor_palette = ['38bdf8', 'fb923c', 'c084fc', 'facc15', '34d399', 'f472b6']
+actor_color_ids = sorted((a['id'] for a in spec['actors']), key=lambda value: value.encode('utf-16-be'))
+actor_colors = {}
+for actor_id in actor_color_ids:
+    value = next(a.get('colorIndex') for a in spec['actors'] if a['id'] == actor_id)
+    if isinstance(value, int) and 0 <= value < 6 and value not in actor_colors.values():
+        actor_colors[actor_id] = value
+for actor_id in actor_color_ids:
+    if actor_id not in actor_colors:
+        actor_colors[actor_id] = next(i for i in range(6) if i not in actor_colors.values())
 for index,actor in enumerate(spec['actors']):
     contacts,stance=plan_contacts(actor)
     rest=points(actor,1,contacts[1])
@@ -359,7 +386,8 @@ for index,actor in enumerate(spec['actors']):
             # 只依据rest端点建轴，不拿已烘焙的首帧归零；旧白模、互动和尾翼路径保持原样。
             bone.matrix=Matrix.Translation(a) @ (b-a).to_track_quat('Y','Z').to_matrix().to_4x4()
     bpy.ops.object.mode_set(mode='OBJECT')
-    color=material(actor['nameZh'],[(.65,.72,.75),(.72,.58,.55),(.60,.64,.51),(.63,.59,.72),(.65,.69,.54),(.55,.65,.69)][index])
+    actor_hex = actor_palette[actor_colors[actor['id']]]
+    color=material(actor['nameZh'],tuple(int(actor_hex[i:i+2],16)/255 for i in (0,2,4)))
     for name,(a,b) in rest.items():
         radius=bone_radius(actor,name)
         obj=mesh(actor['id']+'_'+name,a,b,radius,color,name in ('head','body'))
@@ -481,6 +509,7 @@ def extra_vertices():
         for handle in creatures: yield from creature_vertices(handle,depsgraph)
     for model in models: yield from model_vertices(model)
 
+
 bpy.ops.object.camera_add()
 camera=bpy.context.object
 scene.camera=camera
@@ -489,10 +518,11 @@ for shot in spec['cameras']:
     # 与提交 schema 的 Math.round 一致，避免 .5 时 Python 银行家舍入错一帧。
     begin=math.floor(shot['startSec']*24+.5)+1
     end=math.floor(shot['endSec']*24+.5)
-    camera.location=shot['position']
-    camera.rotation_euler=(Vector(shot['target'])-camera.location).to_track_quat('-Z','Y').to_euler()
     camera.data.lens=shot['lens']
-    for f in (begin,end):
+    for f in range(begin,end+1):
+        position,target=camera_pose(shot,f)
+        camera.location=position
+        camera.rotation_euler=(Vector(target)-camera.location).to_track_quat('-Z','Y').to_euler()
         for prop in ('location','rotation_euler'):camera.keyframe_insert(prop,frame=f)
         camera.data.keyframe_insert('lens',frame=f)
 

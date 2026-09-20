@@ -18,6 +18,8 @@ import { manhuaSnapToFrameSec } from "./manhuaActionPlanTiming";
 import { assessManhuaCameraVariety, choreographManhuaCameras, manhuaCameraPromptZh, type ManhuaCameraStyle } from "./manhuaCameraGrammar";
 import { formatManhuaShotScheduleZh, scheduleManhuaSegmentShots, scheduledShotsToPrevisCameras } from "./manhuaShotScheduler.js";
 import { MANHUA_CAMERA_STYLE_LABEL_ZH, MANHUA_TEMPO_TIER_LABEL_ZH, type ManhuaCameraTempo } from "./manhuaCameraTempo";
+import { assignPrevisActorColors } from "./manhuaPrevisColors";
+import { previsCamerasFromActionRecipe } from "./manhuaPrevisCameraRecipe";
 
 export type ManhuaPrevisCharacterLink = {
   actorId: string;
@@ -70,6 +72,7 @@ export function manhuaPrevisDraftFromExecutableShot(input: {
   tempo?: ManhuaCameraTempo;
   /** 0916 运镜调度：本段可拍表对白原文；没有动作事件时按过肩公式出机位 */
   dialogueZh?: string;
+  actionRecipeId?: string;
 }): ManhuaPrevisDraftFromPlan {
   const { plan, shot } = input;
   const timing = manhuaPrevisTimingForExecutableShot(shot, input.resolvedCamera ?? null);
@@ -159,7 +162,7 @@ export function manhuaPrevisDraftFromExecutableShot(input: {
     durationSec: D, events: shot.events, cues: timing.contactCues, actorPositions, style,
     ...(tempo ? { tempo: { maxCuts: tempo.maxCuts, minShotSec: tempo.minShotSec, reactionHoldSec: tempo.reactionHoldSec, style, establishFirst: tempo.establishFirst, reactionToNonHuman: tempo.reactionToNonHuman, reactionLens: tempo.reactionLens }, nonHumanActorIds } : {}),
   });
-  let cameras: ManhuaPrevisSpec["cameras"] = choreo.cameras.map(({ startSec, endSec, position, target, lens }) => ({ startSec, endSec, position, target, lens }));
+  let cameras: ManhuaPrevisSpec["cameras"] = choreo.cameras.map(({ kind: _kind, eventId: _event, noteZh: _note, ...camera }) => camera);
   let cameraPromptZh = choreo.cameras.map((c) => manhuaCameraPromptZh(c, style));
   // 无动作事件的对白段：过肩公式出机位（谁在前景/过谁肩/拍谁脸 → 景别推情绪 → 关键句反应）
   const hasActionEvents = shot.events.length > 0;
@@ -179,9 +182,16 @@ export function manhuaPrevisDraftFromExecutableShot(input: {
     }
   }
   const tempoZh = tempo ? `${MANHUA_TEMPO_TIER_LABEL_ZH[tempo.tier]} · ${tempo.reasonZh}${input.cameraStyle && input.cameraStyle !== tempo.style ? `（风格档手改为${MANHUA_CAMERA_STYLE_LABEL_ZH[input.cameraStyle]}）` : ""}` : "";
+  const recipeCameras = previsCamerasFromActionRecipe(input.actionRecipeId, D, actors);
+  if (recipeCameras) {
+    cameras = recipeCameras;
+    cameraPromptZh = cameras.map((camera, index) => `${camera.startSec}—${camera.endSec}秒：穿越机${["俯冲", "侧掠", "拉升"][index]}，保持主体方向可辨。`);
+    summaryZh.push("沿用已选穿越机配方：俯冲→侧掠→拉升。当前是舞台飞行预演，尚未验证真实场景避障，不含鱼眼与运动模糊。");
+    scheduledReplaced = true;
+  }
   if (tempoZh) summaryZh.push(`节奏：${tempoZh}`);
-  summaryZh.push(`运镜 ${cameras.length} 镜（按接触点切）：` + cameraPromptZh.join("；"));
-  for (const n of choreo.notesZh) summaryZh.push(n);
+  summaryZh.push(`运镜 ${cameras.length} 段（${recipeCameras ? "连续飞行路径" : "按接触点切"}）：` + cameraPromptZh.join("；"));
+  if (!recipeCameras) for (const n of choreo.notesZh) summaryZh.push(n);
   // 对白段已由调度器换掉机位：不再拿动作文法那条「默认全景」去报多样性告警（否则每段对白都会误报全平视）
   if (!scheduledReplaced) for (const issue of assessManhuaCameraVariety(choreo.cameras)) summaryZh.push(`运镜提醒：${issue.messageZh}`);
   if (timing.padSec > 0) summaryZh.push(`源区间 ${(D - timing.padSec).toFixed(1)}s 取整为 ${D}s，末尾补 ${timing.padSec.toFixed(2)}s 待机`);
@@ -226,7 +236,7 @@ export function applyManhuaPrevisDraftToStudio(
   const { draftCameraPromptZh: _p, draftTempoZh: _t, ...rest } = studio;
   return {
     ...rest,
-    spec,
+    spec: { ...spec, actors: assignPrevisActorColors(spec.actors, assignPrevisActorColors(studio.spec.actors)) },
     specHistory: [
       ...(studio.specHistory ?? []),
       { spec: studio.spec, createdAt: nowIso, reasonZh: "套用动作计划草案前的配置" },

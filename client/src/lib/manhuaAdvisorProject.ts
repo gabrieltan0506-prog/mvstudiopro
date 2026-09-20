@@ -1,3 +1,4 @@
+import { resolveDirectorStyleBlocks, classifyManhuaDirectionSceneType } from "@shared/manhuaDirectionCanon";
 import { MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS as LIMITS, MANHUA_CREATIVE_ADVISOR_STRATEGY_IDS, type ManhuaCreativeAdvisorContext } from "@shared/manhuaCreativeAdvisor";
 import type { ManhuaWriterPack } from "@shared/manhuaWriterRoom";
 import type { ManhuaProjectBible } from "@shared/manhuaProjectBible";
@@ -6,6 +7,7 @@ import type { ManhuaWorkbenchShot } from "@shared/manhuaScriptWorkbench";
 import { customAssetRefClaimsAnchor } from "@shared/manhuaAssetScriptSync";
 import { normalizeCompilerEngineId } from "@shared/manhuaShotIR";
 import type { CanvasBlock } from "./canvasTypes";
+import { buildAdvisorPrevisSummary } from "./manhuaAdvisorPrevis";
 import { getBlockEpisodeIndex } from "./canvasDramaStudio";
 
 export type AdvisorSelection = {
@@ -43,7 +45,11 @@ export type Manhua3dUsageSegment = {
   castZh?: string | null;
 };
 export type Manhua3dUsageRecommendation = {
+  /** 是否值得生成/复用角色3D资产；不是白模预演门禁。 */
   recommend: boolean;
+  /** 通用白模空间预演无需先锁脸或先生成角色3D资产。 */
+  recommendPrevis?: boolean;
+  previsSuggestedSegmentIndex?: number;
   reasonZh: string;
   /** 1 起算的段号；首推一集只做一段 */
   suggestedSegmentIndex?: number;
@@ -80,38 +86,38 @@ export function formatManhuaAdvisorPipeline3dZh(input: { modelReady: number; rig
 }
 const PIPELINE_3D_PATTERN = /^模型就绪 (\d+)\/\d+ · 已绑骨 (\d+)\//;
 
-const ACTION_SEGMENT_PATTERN = /[打追斗劈掌剑爆]/;
+const ACTION_SEGMENT_PATTERN = /武打|打斗|交战|搏斗|追逐|追赶|追击|斗法|拔剑|挥剑|劈向|劈砍|出拳|出掌|一掌|击退|格挡|爆炸|冲击波/;
+const SPATIAL_SEGMENT_PATTERN = /走位|走向|走到|走入|走出|边走|行走|跑向|奔跑|移动|转身|绕行|穿过|上楼|下楼|楼梯|台阶|登船|上船|出水|跳跃|腾空|道具互动|持物|拿起|放下|递给|递过|接过|端起|举起|握住|推门|开门|演唱会|舞台|表演|演奏|弹奏|跳舞|伴舞|唱歌/;
 const MIN_3D_CHARACTER_SEGMENTS = 3;
 
-/**
- * 纯规则：建议用 3D 当且仅当本集存在武打/追逐/斗法段（段意图或对白含 打/追/斗/劈/掌/剑/爆），
- * 且同一已锁脸角色跨 ≥3 段出现。对话戏不建议；首推只做一段。
- */
+/** 只读段意图判断实际运动需求；对白中提到打斗不等于发生打斗。两类建议均不触发生成。 */
 export function recommendManhua3dUsage(input: {
   segments: Manhua3dUsageSegment[];
   lockedCharacterNames: string[];
 }): Manhua3dUsageRecommendation {
   const segments = input.segments || [];
-  if (!segments.length) return { recommend: false, reasonZh: "本集尚无可拍表，暂不判断是否用 3D。" };
-  const text = (seg: Manhua3dUsageSegment) => `${seg.intentZh || ""}\n${seg.dialogueZh || ""}`;
-  const actionIndexes = segments.map((seg, i) => (ACTION_SEGMENT_PATTERN.test(text(seg)) ? i : -1)).filter((i) => i >= 0);
-  if (!actionIndexes.length) return { recommend: false, reasonZh: "本集以对话戏为主，没有武打、追逐或斗法段；不建议用 3D，直接出图出片即可。" };
-  const names = Array.from(new Set((input.lockedCharacterNames || []).map((n) => String(n || "").trim()).filter(Boolean)));
-  if (!names.length) return { recommend: false, reasonZh: "本集有动作段，但还没有已锁脸的角色；先锁脸，再考虑 3D。" };
-  const appears = (seg: Manhua3dUsageSegment, name: string) => `${seg.castZh || ""}\n${text(seg)}`.includes(name);
+  if (!segments.length) return { recommend: false, recommendPrevis: false, reasonZh: "本集尚无可拍表，暂不判断空间预演或角色3D资产需求。" };
+  const actionIndexes = segments.map((seg, i) => (ACTION_SEGMENT_PATTERN.test(seg.intentZh || "") ? i : -1)).filter(i => i >= 0);
+  const spatialIndexes = segments.map((seg, i) => (ACTION_SEGMENT_PATTERN.test(seg.intentZh || "") || SPATIAL_SEGMENT_PATTERN.test(seg.intentZh || "") ? i : -1)).filter(i => i >= 0);
+  if (!spatialIndexes.length) return { recommend: false, recommendPrevis: false, reasonZh: "当前段意图未明确走位、空间或道具互动需求；对话本身不要求生成角色3D资产。如需安排站位或机位，仍可手动使用白模预演。" };
+  const previsSuggestedSegmentIndex = spatialIndexes[0]! + 1;
+  const previsReason = `第 ${previsSuggestedSegmentIndex} 段有运动或空间互动，建议先用通用白模检查站位、道具与机位；对白不影响使用，无需先锁脸或生成角色3D资产。`;
+  const names = Array.from(new Set((input.lockedCharacterNames || []).map(n => String(n || "").trim()).filter(Boolean)));
+  const appears = (seg: Manhua3dUsageSegment, name: string) => `${seg.castZh || ""}\n${seg.intentZh || ""}`.includes(name);
   for (const name of names) {
-    const hits = segments.filter((seg) => appears(seg, name)).length;
+    const hits = segments.filter(seg => appears(seg, name)).length;
     if (hits < MIN_3D_CHARACTER_SEGMENTS) continue;
-    const first = actionIndexes.find((i) => appears(segments[i]!, name));
+    const first = actionIndexes.find(i => appears(segments[i]!, name));
     if (first === undefined) continue;
     const segNo = first + 1;
     return {
-      recommend: true,
+      recommend: true, recommendPrevis: true, previsSuggestedSegmentIndex,
       suggestedSegmentIndex: segNo,
-      reasonZh: `「${name}」已锁脸且跨 ${hits} 段出现，第 ${segNo} 段是动作段；建议只把第 ${segNo} 段做成 3D 白模驱动，其余段照常出片。`,
+      reasonZh: `${previsReason}「${name}」已锁脸且跨 ${hits} 段出现，可另行评估复用角色3D资产，在第 ${segNo} 段先验证收益；不会自动建模或扣费。`,
     };
   }
-  return { recommend: false, reasonZh: `本集有动作段，但没有已锁脸角色跨 ${MIN_3D_CHARACTER_SEGMENTS} 段以上出现；3D 收益不够，不建议。` };
+  return { recommend: false, recommendPrevis: true, previsSuggestedSegmentIndex,
+    reasonZh: `${previsReason}当前没有足够的跨段锁脸动作复用证据，暂不额外建议生成角色3D资产。` };
 }
 
 /** 阶段条「顾问：…」取当前阶段第一条；当前阶段没有就取全局第一条。 */
@@ -145,7 +151,7 @@ export function pickManhuaAdvisorPhaseNudge(input: {
   recommend3d: Manhua3dUsageRecommendation | null;
 }): string | null {
   const top = pickManhuaAdvisorTopIssue(input.issues, input.phase);
-  const body = top?.text || (input.recommend3d?.recommend ? input.recommend3d.reasonZh : "");
+  const body = top?.text || (input.recommend3d?.recommend || input.recommend3d?.recommendPrevis ? input.recommend3d.reasonZh : "");
   return body ? `进入${PHASE_LABELS[input.phase]}：${body}` : null;
 }
 
@@ -321,17 +327,21 @@ export function buildManhuaAdvisorProject(input: {
     : null;
   if (recommend3d) {
     contextNotes.push(
-      `3D 决策规则：只有本集有武打、追逐或斗法段，且同一已锁脸角色跨 3 段以上出现，才建议用 3D；对话戏不用；首推一集只做一段。本集判定：${recommend3d.reasonZh}`,
+      `空间预演与3D资产分别判断：走位、上楼、道具互动、舞台演出及打斗可先用通用白模，含对白也适用；角色3D资产另按已锁脸角色跨段复用收益评估，不自动生成。本集判定：${recommend3d.reasonZh}`,
     );
   }
   const scoped = input.blocks.filter((b) => !b.archivedFromPreviousScript && (getBlockEpisodeIndex(b) ?? 1) === input.episodeIndex);
   const selected = input.selection?.episodeIndex === input.episodeIndex ? input.selection : null;
   const shot = selected?.shot;
   const selectionLabel = shot ? `第 ${selected!.segmentIndex} 段 · 镜 ${shot.index}` : "本集（未指定镜头）";
-  const shotSummary = shot
+  const baseShotSummary = shot
     ? `${selectionLabel}\n${JSON.stringify(shot)}`
     : scoped.filter((b) => /^(beats|reverse)-/.test(b.id) && b.outputText?.trim())
         .map((b) => `已生成${b.id.startsWith("beats-") ? "分镜" : "成片提示词"}：\n${b.outputText}`).join("\n") || "本集没有可读取的已生成分镜；未选中具体镜头。";
+  const directionReview = resolveDirectorStyleBlocks(input.bible?.directionCanon,
+    classifyManhuaDirectionSceneType(shot ? JSON.stringify(shot) : episode?.body || ""),
+    { episodeIndex: input.episodeIndex, segmentIndex: selected?.segmentIndex, shotIndex: shot?.index }).review;
+  const shotSummary = [directionReview, baseShotSummary].filter(Boolean).join("\n\n");
   // 只转发原始冻结身份；不能按当前注册表给旧项目凭空补上 revision。
   const rawStrategy = input.bible?.directorStrategyContract as { strategyId?: unknown; revision?: unknown } | null | undefined;
   const strategyId = MANHUA_CREATIVE_ADVISOR_STRATEGY_IDS.find((id) => id === rawStrategy?.strategyId);
@@ -347,6 +357,7 @@ export function buildManhuaAdvisorProject(input: {
       episodeBody: excerptEvidence(episode?.body || "", LIMITS.episodeBodyChars, "本集正文", contextNotes),
       assetSummary: excerptEvidence(assetSummary, LIMITS.assetSummaryChars, "资产摘要", contextNotes),
       shotSummary: excerptEvidence(shotSummary, LIMITS.shotSummaryChars, shot ? "选中镜头" : "本集分镜与成片提示词", contextNotes),
+      previsSummary: excerptEvidence(buildAdvisorPrevisSummary(scoped), LIMITS.previsSummaryChars, "本集白模规格", contextNotes),
       blockers: issues.map((issue) => issue.text),
       ...(strategyId ? { directorStrategyId: strategyId } : {}),
       ...(strategyId && strategyRevision ? { directorStrategyRevision: strategyRevision } : {}),

@@ -1,4 +1,5 @@
 import { manhuaGeneratedPrevisCoverageIssue, manhuaPrevisSourceLabel } from "@shared/manhuaPrevisScope";
+import { assignPrevisActorColors, previsActorColor } from "@shared/manhuaPrevisColors";
 import { parseManhuaClipTargetDurationSec } from "@shared/manhuaScriptWorkbench";
 import { clampManhuaClipDurationSecForVideoModel } from "@shared/manhuaSeedanceLayout";
 import { ManhuaPrevisActionLibrary } from "./ManhuaPrevisActionLibrary";
@@ -197,6 +198,7 @@ export function ManhuaPrevisStudioView({
     latest.current.block.id === clipId;
   const edit = (spec: ManhuaPrevisSpec) => {
     if (disabled || pendingId || lock.current) return false;
+    spec = { ...spec, actors: assignPrevisActorColors(spec.actors, assignPrevisActorColors(studio.spec.actors)) };
     if (spec.waterEmergence) {
       const water = spec.waterEmergence;
       const base = water.events[0]?.crossSec ?? 1;
@@ -803,6 +805,42 @@ export function ManhuaPrevisStudioView({
           恢复上一份动作配置（不改已采用参考）
         </button>
       ) : null}
+      <section className="space-y-2 rounded border border-cyan-300/20 p-3" data-previs-cast>
+        <p className="text-xs text-cyan-100">本次出场人物</p>
+        <div className="flex flex-wrap gap-3">
+          {studio.spec.actors.map((actor, index) => (
+            <label key={actor.id} className="text-xs">
+              <span className="mr-1 inline-block h-3 w-3 rounded-full" style={{ backgroundColor: previsActorColor(actor.id, studio.spec.actors).hex }} aria-hidden="true" />
+              {previsActorColor(actor.id, studio.spec.actors).nameZh} ·
+              {actor.nameZh || `人物 ${index + 1}`} ·
+              <select
+                aria-label={`白模出场人物${index + 1}`}
+                className={field}
+                value={actor.assetRef ?? ""}
+                disabled={disabled || Boolean(pendingId) || busy}
+                onChange={e => {
+                  const selected = characters.find(c => c.id === e.target.value);
+                  if (selected?.id === actor.assetRef) return;
+                  actorEdit(index, {
+                    assetRef: selected?.id,
+                    nameZh: selected?.label ?? actor.nameZh,
+                    riggedModel: undefined,
+                  });
+                }}
+              >
+                <option value="">自定义人物</option>
+                {actor.assetRef && !characters.some(c => c.id === actor.assetRef) ? (
+                  <option value={actor.assetRef}>{actor.nameZh}（原资产不可用）</option>
+                ) : null}
+                {characters.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+              </select>
+            </label>
+          ))}
+        </div>
+        <button type="button" className={button} onClick={() => setAdvancedOpen(true)}>
+          调整人数与站位
+        </button>
+      </section>
       <ManhuaPrevisActionLibrary spec={studio.spec} disabled={disabled || Boolean(pendingId) || busy} onChange={edit} />
       <details open={advancedOpen} onToggle={(e) => setAdvancedOpen(e.currentTarget.open)} className="space-y-2" data-previs-advanced>
         <summary className="text-xs text-cyan-100">高级参数 · 数字表（站位 / 动作 / 特效 / 出水 / 短打）</summary>
@@ -1779,6 +1817,15 @@ export function ManhuaPrevisStudioView({
                 )}
                 {numeric("镜头结束", camera.endSec, n => patch({ endSec: n }))}
                 {numeric("焦距", camera.lens, n => patch({ lens: n }), 1)}
+                <label className="text-xs">
+                  <input type="checkbox" aria-label={`机位${i + 1}连续移动`} disabled={disabled || Boolean(pendingId) || busy}
+                    checked={Boolean(camera.endPosition || camera.endTarget)}
+                    onChange={e => patch({ endPosition: e.target.checked ? [...camera.position] : undefined, endTarget: e.target.checked ? [...camera.target] : undefined, orbitDeg: undefined })} />
+                  连续移动（终点控制）
+                </label>
+                <label className="text-xs"><input type="checkbox" aria-label={`机位${i + 1}环绕`} disabled={disabled || Boolean(pendingId) || busy}
+                  checked={camera.orbitDeg !== undefined} onChange={e => patch({ orbitDeg: e.target.checked ? 30 : undefined, endPosition: undefined, endTarget: undefined })} />环绕主体</label>
+                {camera.orbitDeg !== undefined ? numeric("环绕角度", camera.orbitDeg, n => patch({ orbitDeg: n }), 5) : null}
                 {(["position", "target"] as const).flatMap(key =>
                   [0, 1, 2].map(axis =>
                     numeric(
@@ -1792,6 +1839,10 @@ export function ManhuaPrevisStudioView({
                     )
                   )
                 )}
+                {(["endPosition", "endTarget"] as const).flatMap(key => camera[key] ? [0, 1, 2].map(axis => numeric(
+                  `${key === "endPosition" ? "相机终点" : "看向终点"}${"XYZ"[axis]}`,
+                  camera[key]![axis], n => { const p = [...camera[key]!] as [number, number, number]; p[axis] = n; patch({ [key]: p }); }
+                )) : [])}
                 <button
                   className={button}
                   disabled={
@@ -1814,17 +1865,20 @@ export function ManhuaPrevisStudioView({
           <button
             className={button}
             disabled={
-              disabled || Boolean(pendingId) || studio.spec.cameras.length >= 8
+              disabled || Boolean(pendingId) || studio.spec.cameras.length >= 8 || studio.spec.cameras.at(-1)?.orbitDeg !== undefined
             }
             onClick={() => {
               const last = studio.spec.cameras.at(-1)!;
               const mid = (last.startSec + last.endSec) / 2;
+              const midpoint = (a: number[], b: number[]) => a.map((n, i) => (n + b[i]) / 2) as [number, number, number];
+              const position = midpoint(last.position, last.endPosition ?? last.position);
+              const target = midpoint(last.target, last.endTarget ?? last.target);
               edit({
                 ...studio.spec,
                 cameras: [
                   ...studio.spec.cameras.slice(0, -1),
-                  { ...last, endSec: mid },
-                  { ...last, startSec: mid },
+                  { ...last, endSec: mid, ...(last.endPosition ? { endPosition: position } : {}), ...(last.endTarget ? { endTarget: target } : {}) },
+                  { ...last, startSec: mid, position, target },
                 ],
               });
             }}

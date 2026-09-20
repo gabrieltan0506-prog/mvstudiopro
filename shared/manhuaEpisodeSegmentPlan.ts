@@ -1,6 +1,6 @@
 /**
  * 单集预算期 5–6 段 × 15s 可拍表：意图 / 对白 / 表演 / 场景配色 / 角色 / 服化道 / 光影运镜。
- * 禁止灌水：缺字段、寒暄对白、段间高度重复、对白过稀 → 质量不通过。
+ * 禁止灌水：缺字段、寒暄对白、段间高度重复、缺可拍行动 → 质量不通过。
  * 数值与 `manhuaScriptWorkbench` 的 MANHUA_SEGMENT_MIN/MAX/DEFAULT / 15s 对齐。
  * 成熟后再扩 10–12 段。
  */
@@ -23,8 +23,8 @@ export const MANHUA_EPISODE_SEGMENT_TARGET_SEC = 90;
 export const MANHUA_EPISODE_SEGMENT_TARGET_SEEDANCE_25_SEC = 120;
 export const MANHUA_EPISODE_SEGMENT_TARGET_MIN_SEC = 75;
 
-/** 每段约 15s：至少 3 句「」对白（推荐 3–4） */
-export const MANHUA_EPISODE_SEGMENT_MIN_DIALOGUE_QUOTES = 3;
+/** 兼容旧消费者：对白不设机械最低句数，可用行动与有意义的沉默推进。 */
+export const MANHUA_EPISODE_SEGMENT_MIN_DIALOGUE_QUOTES = 0;
 
 /**
  * 单集时长档位。
@@ -82,33 +82,10 @@ export function manhuaEpisodeSegmentsForTier(id: string | null | undefined): num
 const MIN_BODY_CHARS_PER_SEGMENT = 28;
 const MIN_LOCATION_HITS = 2;
 
-/** 单段对白句数门槛按段长走：15s 段 3 句，≥30s 段 4 句（段更长必须多几句才撑得满） */
-function minDialogueQuotesPerSegment(durationSecPerSegment: number): number {
-  return durationSecPerSegment >= 30 ? 4 : MANHUA_EPISODE_SEGMENT_MIN_DIALOGUE_QUOTES;
-}
-
-/**
- * 按目标秒数推密度门槛。
- *
- * 旧代码把三分钟档（10 段）的 30 句写死成默认值，而成片实际是 5–6 段共 90 秒，
- * 于是编剧被逼写出约一倍拍不出来的台词——多出来的那半永远进不了成片。
- *
- * 门槛取段数的 5/6，沿用原作者的留白比例（他把 12 段的三分钟档算作「约 10 段」）。
- * 这样 180s 仍精确落回旧阈值 280 字 / 30 句，90s 则落到 5 段 × 3 句 = 15 句。
- *
- * 门禁与节拍模板共用本函数：模板若自报一套更松的建议，编剧照着写就必然卡门禁。
- *
- * `layout` 只影响对白句数门槛（minDlg），正文字数门槛（minBody）不跟着走：
- * Seedance 2.5 是 4 段×30s＝120 秒，比 2.0-fast 的 90 秒更长，字数要求只能更高
- * 不能更低，所以 minBody 仍按「每 15 秒一个内容单元」的旧口径从 targetSec 反推，
- * 不能借用 2.5 的真实段数（4 段）去算，否则字数门槛反而比短档还松。
- * minDlg 则必须用真实段数与真实段长：2.5 每段实际 30 秒、写 4 句就是正常密度，
- * 如果仍按「总秒数 / 15」倒推出 8 个虚拟段再乘 3 句，门槛会变成 21 句，
- * 比真实能撑的台词量高出近一倍，逼编剧写注定拍不出来的对白。
- */
+/** 正文与场景仍须支撑目标时长；对白数量由剧情需要决定。 */
 export function manhuaEpisodeDensityFloors(
   targetSec: number,
-  layout?: { segmentCount?: number; durationSecPerSegment?: number } | null,
+  _layout?: { segmentCount?: number; durationSecPerSegment?: number } | null,
 ): {
   segments: number;
   minBody: number;
@@ -118,18 +95,10 @@ export function manhuaEpisodeDensityFloors(
   const segs = Math.max(1, Math.floor(targetSec / MANHUA_EPISODE_SEGMENT_DURATION_SEC));
   const gateSegs = Math.max(1, Math.round((segs * 5) / 6));
 
-  const realSegCount = Math.max(1, Math.floor(layout?.segmentCount ?? segs));
-  const durationPerSeg = Math.max(
-    1,
-    Math.floor(layout?.durationSecPerSegment ?? MANHUA_EPISODE_SEGMENT_DURATION_SEC),
-  );
-  const gateSegsForDlg = Math.max(1, Math.round((realSegCount * 5) / 6));
-  const dlgPerSeg = minDialogueQuotesPerSegment(durationPerSeg);
-
   return {
     segments: segs,
     minBody: gateSegs * MIN_BODY_CHARS_PER_SEGMENT,
-    minDlg: gateSegsForDlg * dlgPerSeg,
+    minDlg: MANHUA_EPISODE_SEGMENT_MIN_DIALOGUE_QUOTES,
     minLoc: gateSegs >= 5 ? MIN_LOCATION_HITS : 1,
   };
 }
@@ -199,7 +168,7 @@ function pickField(block: string, aliases: string[]): string {
     );
     const m = block.match(re)?.[1];
     // 阈值放到 ≥1：编剧明确写「无」（此段确无该字段）也算已填，不算漏填。
-    // 对白字段不走这里（见 dialogueZh 分支），密度仍由引号句数门禁把关，不受影响。
+    // 对白字段不走这里（见 dialogueZh 分支），对白另行检查格式，不要求凑句数。
     if (m && normalizeFieldLine(m).length >= 1) return normalizeFieldLine(m).slice(0, 400);
   }
   return "";
@@ -269,7 +238,7 @@ export function extractManhuaSegmentDialogueQuotes(dialogueZh: string): string[]
   const t = String(dialogueZh || "");
   const out: string[] = [];
   // 一次按出现位置扫描，重复句是独立发话；不按文本去重，也不把不同引号分批排序。
-  const re = /(?:([\u4e00-\u9fff·A-Za-z]{2,12})(?:[（(][^）)]{0,16}[）)])?\s*[：:]\s*)?(?:「([^」]+)」|“([^”]+)”|"([^"\n]+)")/g;
+  const re = /(?:(@角色\d+|[\u4e00-\u9fff·A-Za-z]{1,12})(?:[（(][^）)]{0,16}[）)])?\s*[：:]?\s*)?(?:「([^」]+)」|“([^”]+)”|"([^"\n]+)")/g;
   for (const m of Array.from(t.matchAll(re))) {
     const quote = String(m[2] ?? m[3] ?? m[4] ?? "").trim();
     if (!quote) continue;
@@ -284,8 +253,8 @@ export function extractManhuaDialogueSpeakerName(
 ): string {
   const t = String(dialogueZh || "").trim();
   const m =
-    t.match(/^([\u4e00-\u9fff·A-Za-z]{2,12})(?:[（(][^）)]{0,16}[）)])?\s*[：:]\s*[「『"“]/) ||
-    t.match(/^([\u4e00-\u9fff·A-Za-z]{2,12})\s*[「『"“]/);
+    t.match(/^(@角色\d+|[\u4e00-\u9fff·A-Za-z]{1,12})(?:[（(][^）)]{0,16}[）)])?\s*[：:]\s*[「『"“]/) ||
+    t.match(/^(@角色\d+|[\u4e00-\u9fff·A-Za-z]{1,12})\s*[「『"“]/);
   return String(m?.[1] || "").trim();
 }
 
@@ -456,22 +425,21 @@ export function evaluateManhuaEpisodeSegmentPlanQuality(
       if (actual) continue;
       break;
     }
-    const missing = FIELD_KEYS.filter((f) => !String(beat[f.key] || "").trim()).map((f) => f.aliases[0]);
+    const missing = FIELD_KEYS.filter((f) => f.key !== "dialogueZh" && !String(beat[f.key] || "").trim()).map((f) => f.aliases[0]);
     if (missing.length) {
       issues.push(`段${String(i).padStart(2, "0")} 缺字段：${missing.join("、")}`);
       if (actual) continue;
       break;
     }
-    if (isFillerDialogue(beat.dialogueZh)) {
+    const silent = !beat.dialogueZh.trim() || /^[（(]?(?:无|无对白|无台词|静默|沉默)[）)]?(?:[，；：].*)?$/.test(beat.dialogueZh.trim());
+    if (!silent && isFillerDialogue(beat.dialogueZh)) {
       issues.push(`段${String(i).padStart(2, "0")} 对白灌水或过短`);
       if (actual) continue;
       break;
     }
-    const quotes = countManhuaSegmentDialogueQuotes(beat.dialogueZh);
-    if (quotes < MANHUA_EPISODE_SEGMENT_MIN_DIALOGUE_QUOTES) {
-      issues.push(
-        `段${String(i).padStart(2, "0")} 对白仅 ${quotes} 句「」，约15秒段至少 ${MANHUA_EPISODE_SEGMENT_MIN_DIALOGUE_QUOTES} 句（推荐3–4句）`,
-      );
+    const quotes = extractManhuaSegmentDialogueQuotes(beat.dialogueZh);
+    if (!silent && (!quotes.length || quotes.some(line => !extractManhuaDialogueSpeakerName(line)))) {
+      issues.push(`段${String(i).padStart(2, "0")} 对白须用引号并标明说话人；无对白段可留空或写“无对白”，用可拍行动推进。`);
       if (actual) continue;
       break;
     }
@@ -489,12 +457,12 @@ export function evaluateManhuaEpisodeSegmentPlanQuality(
       if (actual) continue;
       break;
     }
-    if (seenDialogue.some((d) => nearDuplicate(d, beat.dialogueZh))) {
+    if (!silent && seenDialogue.some((d) => nearDuplicate(d, beat.dialogueZh))) {
       issues.push(`段${String(i).padStart(2, "0")} 对白与他段重复`);
       if (actual) continue;
       break;
     }
-    seenDialogue.push(beat.dialogueZh);
+    if (!silent) seenDialogue.push(beat.dialogueZh);
     readyCount += 1;
   }
 
@@ -547,7 +515,7 @@ export function formatManhuaEpisodeSegmentPlanPromptBlock(
     `（硬性：至少 ${minSegs} 段、至多 ${maxSegs} 段；推荐 ${n} 段；每段约 ${durationSec} 秒；整集约 ${minSec}–${maxSec} 秒。预算期勿写满十多段；禁止寒暄灌水、禁止段间复制粘贴。）`,
     `每一段必须用下列字段（缺一不可）：`,
     `- 意图：一句「观众应感到什么」（单一戏剧意图）；机位/光/表演只服务这一句。`,
-    `- 对白：至少 ${MANHUA_EPISODE_SEGMENT_MIN_DIALOGUE_QUOTES} 句直角引号「」（推荐 3–4 句），须推动关系/信息/冲突；禁止两句口号撑满 ${durationSec} 秒。每句带说话人（写法：苏照雪：「…」或 @角色N「…」），群戏尤其必须带——不带名字的台词成片里锁不到脸、口型没人认领。`,
+    `- 对白：不设最低句数，不按 ${durationSec} 秒凑台词；句子须通顺、符合人物身份与当下因果，回应眼前行动，避免整场三五字谜语口号。合理无对白段可留空或写“无对白”，但表演与行动必须可拍。每句对白用引号并带说话人（写法：苏照雪：「…」或 @角色N「…」），群戏尤其必须带——不带名字的台词成片里锁不到脸、口型没人认领。`,
     `- 表演：写清表情、肢体与情绪起伏（可拍），与对白气口对齐；禁止只写抽象词如「很生气」。`,
     /**
      * 这几栏原文会被直接拼进视频生成提示词，中间不再过模型润色。写成「推近」
@@ -585,7 +553,7 @@ export function buildManhuaEpisodeSegmentPlanFixtureMarkdown(): string {
     return [
       `#### 段${n}`,
       `- 意图：压迫感逼近，旧盟从硬撑到松口`,
-      `- 对白：「把玉珏交出来——第${k}次。」「你再装傻，我就掀了这屏风。」「……拿去，别碰她。」`,
+      `- 对白：苏照雪：「把玉珏交出来——第${k}次。」裴玄策：「你再装傻，我就掀了这屏风。」苏照雪：「……拿去，别碰她。」`,
       `- 表演：逼近方眉心紧、握拳指节发白；对方先冷笑再眼神一颤，后退半步攥袖。`,
       `- 场景：${scene}`,
       `- 配色风格：冷青主色，烛金辅，血锈点缀`,

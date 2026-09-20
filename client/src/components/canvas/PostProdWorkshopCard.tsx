@@ -22,11 +22,13 @@ import type { CanvasBlock } from "@/lib/canvasTypes";
 import {
   fetchVideoUpscaleStatus,
   isVideoUpscaleTerminal,
-  probeVideoDurationSec,
+  probeVideoUpscaleSource,
+  type VideoUpscaleSourceMetadata,
   startVideoUpscale,
   type VideoUpscaleTaskStatus,
   videoUpscaleStatusLabel,
 } from "@/lib/videoUpscaleApi";
+import { canWavespeedUpscale } from "@shared/wavespeedVideoUpscaleModels";
 import { canvasVideoUpscaleCredits } from "@shared/canvasGenerationPricing";
 import type { BgmBriefModel } from "@shared/manhuaBgmBrief";
 import {
@@ -409,7 +411,9 @@ export default function PostProdWorkshopCard({
   const [bgmFadeOut, setBgmFadeOut] = useState(1);
   const [loudVideoUrl, setLoudVideoUrl] = useState("");
   const [upscaleVideoUrl, setUpscaleVideoUrl] = useState("");
-  const [upscaleProbedSec, setUpscaleProbedSec] = useState<number | null>(null);
+  const [upscaleProbedSource, setUpscaleProbedSource] = useState<VideoUpscaleSourceMetadata | null>(null);
+  const upscaleSource = upscaleProbedSource?.sourceUrl === upscaleVideoUrl ? upscaleProbedSource : null;
+  const upscaleProbedSec = upscaleSource?.durationSec ?? null;
   const [upscaleProbeBusy, setUpscaleProbeBusy] = useState(false);
   const [upscaleSubmitBusy, setUpscaleSubmitBusy] = useState(false);
   const [upscaleJobs, setUpscaleJobs] = useState<TrackedUpscale[]>(() =>
@@ -430,7 +434,7 @@ export default function PostProdWorkshopCard({
   }, [upscaleJobs, userId]);
 
   useEffect(() => {
-    setUpscaleProbedSec(null);
+    setUpscaleProbedSource(null);
   }, [upscaleVideoUrl]);
 
   /** 超分任务由服务端持久化；本地只保存 taskId，刷新后继续查询同一任务，绝不重复提交。 */
@@ -722,11 +726,11 @@ export default function PostProdWorkshopCard({
     if (!upscaleVideoUrl || upscaleProbeBusy) return;
     setUpscaleProbeBusy(true);
     try {
-      const sec = await probeVideoDurationSec(upscaleVideoUrl);
-      if (!sec) throw new Error("读取视频真实时长失败，请检查成片链接后重试");
-      setUpscaleProbedSec(sec);
+      const measured = await probeVideoUpscaleSource(upscaleVideoUrl);
+      if (!measured) throw new Error("读取视频真实尺寸或时长失败，请检查成片链接后重试");
+      setUpscaleProbedSource(measured);
     } catch (error) {
-      setUpscaleProbedSec(null);
+      setUpscaleProbedSource(null);
       toast.error(error instanceof Error ? error.message : "读取视频时长失败");
     } finally {
       setUpscaleProbeBusy(false);
@@ -735,9 +739,10 @@ export default function PostProdWorkshopCard({
 
   const submitUpscale = async (target: "2k" | "4k") => {
     if (!upscaleVideoUrl || !upscaleProbedSec || upscaleSubmitBusy) {
-      toast.error("请先选择成片并读取真实时长");
+      toast.error("请先选择成片并读取真实尺寸与时长");
       return;
     }
+    if (!canWavespeedUpscale(upscaleSource?.sourceResolution, target)) { toast.error("该原片不支持此超分档位：480p最高2K，720p可选2K或4K。"); return; }
     const bgmMounted = jobs.some(job => {
       if (
         job.action !== "bgm_mount" ||
@@ -785,7 +790,7 @@ export default function PostProdWorkshopCard({
         target,
         durationSec: upscaleProbedSec,
         episodeIndex,
-        sourceResolution: directBlock?.videoResolution || "720p",
+        sourceResolution: upscaleSource!.sourceResolution,
       });
       setUpscaleJobs(prev =>
         [
@@ -1530,15 +1535,16 @@ export default function PostProdWorkshopCard({
                 {upscaleProbeBusy ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 ) : null}
-                读取真实时长
+                读取真实尺寸与时长
               </button>
             ) : (
               <div className="space-y-1.5 rounded-lg border border-white/10 bg-white/[0.03] p-2">
                 <p className="text-[10px] text-white/55">
-                  视频约 {upscaleProbedSec} 秒 · 按秒计费
+                  实测 {upscaleSource?.width}×{upscaleSource?.height} · 视频约 {upscaleProbedSec} 秒 · 按秒计费
                 </p>
+                <p className="text-[10px] text-white/50">{upscaleSource?.sourceResolution === "480p" ? "480p原片最高可放大到2K。" : !canWavespeedUpscale(upscaleSource?.sourceResolution, "2k") ? "原片已达2K及以上，无可用超分档位。" : "720p及以上原片可选2K或4K。"}</p>
                 <div className="grid grid-cols-2 gap-1">
-                  {(["2k", "4k"] as const).map(target => {
+                  {(["2k", "4k"] as const).filter(target => canWavespeedUpscale(upscaleSource?.sourceResolution, target)).map(target => {
                     const directBlock = blocks.find(
                       block =>
                         String(block.outputUrl || "").trim() === upscaleVideoUrl

@@ -90,11 +90,7 @@ describe("节拍格按档位缩放", () => {
 });
 
 describe("密度建议不得低于门禁", () => {
-  /**
-   * 卡片手写的 8 句是长档估值，门禁按每段 3 句算要 30 句。
-   * 照卡片写完必然被退回，编剧永远摸不到门禁线。
-   */
-  it("对白建议抬到门禁线，而不是照抄卡片的 8 句", () => {
+  it("旧卡片句数不再形成写作最低要求", () => {
     expect(hints.minDialogueLines).toBe(8);
     expect(fitManhuaViralDensityHintsToSegments(hints, 12).minDialogueLines).toBe(
       manhuaEpisodeDensityFloors(180).minDlg,
@@ -113,6 +109,7 @@ describe("密度建议不得低于门禁", () => {
     const short = formatManhuaViralTemplateWriterAddon("tpl_series_tierfixture", extras, "short");
     const floors = manhuaEpisodeDensityFloors(90);
     expect(short).toContain(`正文≥${floors.minBody}字`);
-    expect(short).toContain(`对白≥${floors.minDlg}句`);
+    expect(short).toContain("不设最低句数");
+    expect(short).not.toContain("对白≥");
   });
 });

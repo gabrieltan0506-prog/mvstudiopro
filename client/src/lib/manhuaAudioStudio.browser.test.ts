@@ -16,7 +16,7 @@ beforeAll(async () => {
       import {TooltipProvider} from './client/src/components/ui/tooltip';
       import {defaultCanvasBlock} from './client/src/lib/canvasTypes';
       const f=globalThis.fixture={updates:[],focus:[],review:0,calls:[]};
-      function App(){const [blocks,setBlocks]=useState([1,2].map(n=>({...defaultCanvasBlock('video',0,0),id:'clip-e01-g0'+n+'-audio',episodeIndex:1,videoModel:'seedance-2.5',prompt:'【第'+n+'段·30s】墨屠第'+n+'段对白与动作。'})));f.blocks=blocks;return <TooltipProvider><ManhuaScriptWorkbench blocks={blocks} videoModel='seedance-2.5' topic='墨屠守护阿菁' episodeCount={1} focusEpisode={1} onFocusEpisode={()=>{}} characterIds={[]} propIds={[]} outlineConfirmed={true} workflowPhase='storyboard' compactUi={true} onFocusBlock={id=>f.focus.push(id)} onReviewClipPromptsOnCanvas={()=>f.review++} onUpdateClipAudioStudio={(id,studio)=>{f.updates.push(id);setBlocks(rows=>rows.map(b=>b.id===id?{...b,audioStudio:studio}:b));}} /></TooltipProvider>;}
+      function App(){const [phase,setPhase]=useState("storyboard");f.setPhase=setPhase;const [blocks,setBlocks]=useState([1,2].map(n=>({...defaultCanvasBlock('video',0,0),id:'clip-e01-g0'+n+'-audio',episodeIndex:1,videoModel:'seedance-2.5',prompt:'【第'+n+'段·30s】墨屠第'+n+'段对白与动作。'})));f.blocks=blocks;return <TooltipProvider><ManhuaScriptWorkbench blocks={blocks} videoModel='seedance-2.5' topic='墨屠守护阿菁' episodeCount={1} focusEpisode={1} onFocusEpisode={()=>{}} characterIds={[]} propIds={[]} outlineConfirmed={true} workflowPhase={phase} compactUi={true} onFocusBlock={id=>f.focus.push(id)} onReviewClipPromptsOnCanvas={()=>f.review++} onUpdateClipAudioStudio={(id,studio)=>{f.updates.push(id);setBlocks(rows=>rows.map(b=>b.id===id?{...b,audioStudio:studio}:b));}} /></TooltipProvider>;}
       createRoot(document.getElementById('root')).render(<App/>);
     `,
     },
@@ -119,3 +119,12 @@ it("工厂原工作台直接打开音轨，切段分别保存且不跳画布或�
     await page.close();
   }
 }, 20_000);
+it('资产阶段通过更多操作打开声音工作台，不生成或改动成片',async()=>{
+ const page=await browser.newPage();page.setDefaultTimeout(5000);await page.setRequestInterception(true);page.on('request',r=>r.isNavigationRequest()?void r.respond({status:200,contentType:'text/html',body:'<div id="root"></div>'}):void r.abort());
+ try{await page.goto('http://localhost:41812');await page.addScriptTag({content:bundle});await page.waitForFunction(()=>Boolean((globalThis as any).fixture.setPhase));await page.evaluate(()=>(globalThis as any).fixture.setPhase('assets'));
+ await page.waitForSelector('[data-manhua-action="open-more-tools"]');await page.click('[data-manhua-action="open-more-tools"]');
+ await page.waitForSelector('[data-manhua-secondary-tool="audio"]');await page.click('[data-manhua-secondary-tool="audio"]');
+ await page.waitForSelector('section[aria-label="逐句配音、配乐与事件音效"]');
+ expect(await page.evaluate(()=>(globalThis as any).fixture.calls)).toEqual([]);expect(await page.evaluate(()=>(globalThis as any).fixture.updates)).toEqual([]);
+ }finally{await page.close();}
+},20000);

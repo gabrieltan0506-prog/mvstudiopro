@@ -637,14 +637,21 @@ export function isManhuaFactoryArtifactBlock(block: Pick<CanvasBlock, "id">): bo
 /** 已经烧过钱的节点：出过图或出过片 */
 export function manhuaBlockHasPaidOutput(block: CanvasBlock): boolean {
   if (String(block.outputUrl || "").trim()) return true;
-  return (block.outputUrls || []).some((u) => String(u || "").trim());
+  if ((block.outputUrls || []).some((u) => String(u || "").trim())) return true;
+  // 当前选中地址可能已清空；独立超分、历史成片及后期长期身份仍是已产出素材。
+  if (String(block.upscaledVideoUrl || "").trim()) return true;
+  if (block.manhuaFinalVersions?.some(version => String(version.url || version.gcsUri || "").trim())) return true;
+  if (String(block.manhuaFinalPostProd?.resultUrl || block.manhuaFinalPostProd?.resultGcsUri || "").trim()) return true;
+  // 登记成片与用户母轨也不能当未产出空节点删除。
+  return [block.manhuaSegmentRefs?.registered, block.manhuaSegmentRefs?.master]
+    .some(reference => String(reference?.url || reference?.gcsUri || "").trim().length > 0);
 }
 
 /** 音频工作不是空壳：旧候选、用户逐句编辑与在途单均须保留，不能随重分段删除。 */
 export function hasManhuaAudioWork(block: CanvasBlock): boolean {
   const studio = block.audioStudio;
   return Boolean(block.previsStudio || block.manhuaSegmentRefs?.previs)
-    || Boolean(studio && (studio.cues.length || studio.musicJobIds.length || studio.pendingOperations.length || studio.previewTake))
+    || Boolean(studio && (studio.cues.length || studio.musicJobIds.length || studio.pendingOperations.length || studio.previewTake || studio.musicDraft))
     || Boolean(block.seedance25RefAudioUrls?.length)
     || Boolean(block.uploadedAssets?.some(asset => asset.kind === "audio"));
 }
@@ -1466,7 +1473,7 @@ export function applyFactoryPrefsToBlocks(
       // 尽量保留已有分镜注入原文（避免 prefs 防抖冲掉动作描写）
       const keptShot = (() => {
         const m = String(b.prompt || "").match(/【分镜\s*\d+·静帧[\s\S]*$/i);
-        return m ? m[0].trim() : "";
+        return m ? stripManhuaDirectionStyleBlocks(m[0]).trim() : "";
       })();
       const editPlan = planManhuaKeyartEditFusion({
         characterIds: prefsCharacterIds,

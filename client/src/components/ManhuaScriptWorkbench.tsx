@@ -1442,6 +1442,7 @@ export default function ManhuaScriptWorkbench({
    * 工具区默认收起，用到才展开；已经传过参考图的那一栏保持展开，不替用户收走他在用的东西。
    */
   const [openCustomRefRoles, setOpenCustomRefRoles] = useState<Record<string, boolean>>({});
+  const [moreToolsOpen, setMoreToolsOpen] = useState(false);
   const [compactUi, setCompactUi] = useState(() => {
     try {
       return window.localStorage.getItem("manhua_compact_ui") !== "0";
@@ -2661,9 +2662,9 @@ export default function ManhuaScriptWorkbench({
       .map((shot) => {
         const hasContact = shot.events.some((e) => e.kind === "attack" || e.kind === "land" || e.kind === "emerge");
         const tempo = resolveManhuaCameraTempo({ intentZh, directionCardId: directionCanon?.mainCardId ?? null, hasContact });
-        return manhuaPrevisDraftFromExecutableShot({ plan: manhuaActionPlan, shot, resolvedCamera: null, aspect, links, tempo, cameraStyle, dialogueZh: getManhuaSegmentDialogueZh(shootablePlan, activeSegNo) });
+        return manhuaPrevisDraftFromExecutableShot({ plan: manhuaActionPlan, shot, resolvedCamera: null, aspect, links, tempo, cameraStyle, actionRecipeId, dialogueZh: getManhuaSegmentDialogueZh(shootablePlan, activeSegNo) });
       });
-  }, [manhuaActionPlan, focusEpisode, activeSegNo, assetLockRegistry.byRole.character, activeClip?.previsStudio?.spec.aspect, activeClip?.previsStudio?.cameraStyle, shootablePlan, directionCanon?.mainCardId]);
+  }, [manhuaActionPlan, focusEpisode, activeSegNo, assetLockRegistry.byRole.character, activeClip?.previsStudio?.spec.aspect, activeClip?.previsStudio?.cameraStyle, actionRecipeId, shootablePlan, directionCanon?.mainCardId]);
   const modelStudioCharacters = useMemo(
     () =>
       assetLockRegistry.byRole.character.map((a) => {
@@ -3270,8 +3271,6 @@ export default function ManhuaScriptWorkbench({
                 data-manhua-shot-params={activeShot.index}
                 className="mt-2 shrink-0 rounded-lg border border-cyan-400/25 bg-cyan-500/[0.06] p-2"
               >
-                {canvasSelectionBlock}
-                {directorCardBlock}
                 <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                   <span className="text-[11px] font-semibold text-cyan-50">
                     当前第 {String(activeShot.index).padStart(2, "0")} 镜
@@ -3288,7 +3287,7 @@ export default function ManhuaScriptWorkbench({
                   </p>
                 ) : null}
                 {/* 对照图 01 右栏四个字段：时长 / 景别 / 机位运动 / 画面描述（0/200） */}
-                <dl data-manhua-shot-fields className="mt-1.5 grid grid-cols-2 gap-x-2 gap-y-1">
+                <dl data-manhua-shot-fields className="mt-3 grid grid-cols-1 gap-3">
                   {(
                     [
                       ["镜头时长", shotParamFields.durationZh],
@@ -3297,9 +3296,9 @@ export default function ManhuaScriptWorkbench({
                     ] as Array<[string, string]>
                   ).map(([labelZh, valueZh]) => (
                     <div key={labelZh} data-manhua-shot-field={labelZh} className="min-w-0">
-                      <dt className="text-[9px] text-white/40">{labelZh}</dt>
+                      <dt className="text-xs text-white/55">{labelZh}</dt>
                       <dd
-                        className={`truncate text-[10px] ${
+                        className={`mt-1 whitespace-normal break-words text-sm ${
                           valueZh === "未标注" ? "text-amber-100/70" : "text-white/80"
                         }`}
                         title={valueZh}
@@ -3325,7 +3324,7 @@ export default function ManhuaScriptWorkbench({
                       {shotParamFields.descriptionLen}/{shotParamFields.descriptionLimit}
                     </span>
                   </div>
-                  <p className="mt-0.5 max-h-16 overflow-y-auto text-[10px] leading-4 text-white/70">
+                  <p className="mt-1 max-h-40 overflow-y-auto rounded-lg bg-black/20 p-2 text-sm leading-6 text-white/80">
                     {shotParamFields.descriptionZh || "本镜还没有画面描述"}
                   </p>
                 </div>
@@ -3362,6 +3361,22 @@ export default function ManhuaScriptWorkbench({
                     );
                   })}
                 </div>
+                {storyboardThreeColumn && onGenerateKeyartShot ? (
+                  <div className="mt-4">
+                    <button type="button" data-manhua-action="generate-current-keyart"
+                      disabled={Boolean(factoryBusy) || shotSourceIsFallback}
+                      onClick={() => runCurrentKeyart()}
+                      className="min-h-11 w-full rounded-lg bg-violet-600 px-3 py-2 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-40">
+                      {activeKeyart?.outputUrl || activeKeyart?.outputUrls?.length ? "重出当前镜静帧" : "生成当前镜静帧"}
+                    </button>
+                    <p className="mt-1 text-xs text-white/50">仅当前镜；双档生成两张，分别计费</p>
+                  </div>
+                ) : null}
+                <details className="mt-3 border-t border-white/10 pt-2">
+                  <summary className="cursor-pointer text-xs text-white/55">导演参数与画布关联</summary>
+                  {canvasSelectionBlock}
+                  {directorCardBlock}
+                </details>
               </div>
   ) : null;
 
@@ -3795,6 +3810,11 @@ export default function ManhuaScriptWorkbench({
               </span>
               <ManhuaShotSourceLabel isFallback={shotSourceIsFallback} />
             </div>
+            {!segmentCapacityPlan.ok ? (
+              <p role="alert" className="mt-1 text-xs text-rose-200">{segmentCapacityPlan.errorZh}</p>
+            ) : null}
+            <details className="mt-1" data-manhua-project-settings>
+              <summary className="cursor-pointer text-xs text-white/60">制作设置</summary>
             <div
               data-manhua-segment-capacity
               className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1.5 text-[10px] text-white/55"
@@ -3910,6 +3930,7 @@ export default function ManhuaScriptWorkbench({
                 <span className="font-semibold">创作策略 · 旧项目待升级</span>
               </div>
             ) : null}
+            </details>
             {immersive ? (
               <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px]">
                 <button
@@ -4126,7 +4147,7 @@ export default function ManhuaScriptWorkbench({
             </section>
           ) : null}
           {factoryBusy && onStopFactory ? null : (
-            <Popover>
+            <Popover open={moreToolsOpen} onOpenChange={setMoreToolsOpen}>
               <PopoverTrigger asChild>
                 <button
                   type="button"
@@ -4150,7 +4171,7 @@ export default function ManhuaScriptWorkbench({
                     主流程留在步骤条；这里收纳导演板、局部重跑与工作区设置。
                   </p>
                 </div>
-                {/* 二级工具：对象不在本阶段时收到这里，保证每个工具任一阶段恰好一个入口（判据在 manhuaSecondaryTools.ts） */}
+                {/* 二级工具统一收到这里，保证每个工具任一阶段恰好一个入口（判据在 manhuaSecondaryTools.ts） */}
                 {manhuaDrawerSecondaryTools(activePhase).length ? (
                   <div
                     data-manhua-toolbar-group="secondary-tools"
@@ -4158,7 +4179,7 @@ export default function ManhuaScriptWorkbench({
                   >
                     <div className="text-[11px] font-semibold text-white/80">二级工具</div>
                     <p className="mh-hint mt-0.5 text-[10px] leading-4 text-white/40">
-                      这些工具的对象不在本步：3D 模型挂在人物引用上，白模／动作节奏／声音跟着段走。点开仍可用。
+                      人物与场景用来准备资产；动作白模、动作节奏和声音用于当前片段。
                     </p>
                     <div className="mt-1.5 flex flex-wrap gap-1.5">
                       {manhuaDrawerSecondaryTools(activePhase).map((tool) => {
@@ -4181,6 +4202,7 @@ export default function ManhuaScriptWorkbench({
                             data-manhua-secondary-tool={tool}
                             disabled={Boolean(factoryBusy)}
                             onClick={() => {
+                              setMoreToolsOpen(false);
                               if (tool === "model3d") setModelStudioOpen((v) => !v);
                               else if (tool === "world3d") setWorldStudioOpen((v) => !v);
                               else if (tool === "previs") {
@@ -6895,7 +6917,26 @@ export default function ManhuaScriptWorkbench({
                           {group.sharedNoteZh ? (
                             <p className="mh-hint text-[10px] leading-4 text-white/40">{group.sharedNoteZh}</p>
                           ) : null}
-                          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                          {group.kind === "entity" && group.refs.length > 1 ? (
+                            <div className="mb-2 flex gap-2 overflow-x-auto pb-1" aria-label={`${group.titleZh}版本缩略图`}>
+                              {group.refs.map((version, versionIndex) => (
+                                <button type="button" key={version.id}
+                                  className="w-20 shrink-0 rounded border border-white/15 p-1 text-xs"
+                                  title={`查看${version.labelZh || `版本${versionIndex + 1}`}，不改变采用版本`}
+                                  onClick={event => {
+                                    const entity = event.currentTarget.closest('[data-manhua-asset-entity]');
+                                    const card = Array.from(entity?.querySelectorAll<HTMLElement>('[data-manhua-custom-ref-id]') ?? [])
+                                      .find(node => node.dataset.manhuaCustomRefId === version.id);
+                                    card?.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
+                                  }}>
+                                  <img src={version.url} alt="" loading="lazy" className="mb-1 h-16 w-full rounded object-cover" />
+                                  版本 {versionIndex + 1}
+                                  <span className="block truncate text-[10px] text-white/60">{group.useZhByRefId[version.id]}</span>
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                          <div className={group.kind === "entity" ? "flex gap-2 overflow-x-auto pb-2 [&>div]:w-72 [&>div]:shrink-0" : "grid grid-cols-2 gap-2 sm:grid-cols-3"}>
                         {group.refs.map((ref) => {
                           const groupUseZh = group.useZhByRefId[ref.id] || "";
                           const groupAlsoInZh = group.alsoInZhByRefId[ref.id] || "";
@@ -8271,12 +8312,14 @@ export default function ManhuaScriptWorkbench({
                     // 分镜阶段按对照图 01 固定为「左镜头清单 · 中主预览 · 右当前镜参数」：
                     // 列顺序用 CSS order 调（见各列的 storyboardColumnOrder），这里只给对应宽度。
                     storyboardThreeColumn
-                      ? "grid h-full min-h-0 min-w-[840px] grid-cols-[minmax(300px,0.78fr)_minmax(400px,1.28fr)_minmax(150px,0.36fr)] xl:min-w-0 xl:grid-cols-[minmax(340px,0.62fr)_minmax(520px,1.06fr)_minmax(180px,0.34fr)]"
+                      ? "grid h-full min-h-0 min-w-[840px] grid-cols-[minmax(200px,0.65fr)_minmax(360px,1.2fr)_minmax(260px,0.8fr)] xl:min-w-0 xl:grid-cols-[minmax(220px,0.65fr)_minmax(400px,1.2fr)_minmax(280px,0.8fr)]"
                       : "grid h-full min-h-0 min-w-[840px] grid-cols-[minmax(128px,0.34fr)_minmax(300px,0.78fr)_minmax(400px,1.28fr)] xl:min-w-0 xl:grid-cols-[152px_minmax(400px,0.58fr)_minmax(560px,1.08fr)]"
                   : storyboardThreeColumn
-                    ? "grid h-full min-h-0 min-w-[760px] grid-cols-[minmax(280px,0.8fr)_minmax(350px,1.15fr)_minmax(150px,0.4fr)] xl:min-w-0 xl:grid-cols-[minmax(300px,0.72fr)_minmax(420px,1.08fr)_minmax(180px,0.36fr)]"
+                    ? "grid h-full min-h-0 min-w-[760px] grid-cols-[minmax(180px,0.65fr)_minmax(320px,1.2fr)_minmax(240px,0.8fr)] xl:min-w-0 xl:grid-cols-[minmax(220px,0.65fr)_minmax(400px,1.2fr)_minmax(280px,0.8fr)]"
                     : "grid h-full min-h-0 min-w-[760px] grid-cols-[minmax(128px,0.38fr)_minmax(280px,0.8fr)_minmax(350px,1.15fr)] xl:min-w-0 xl:grid-cols-[168px_minmax(300px,0.72fr)_minmax(420px,1.08fr)]"
-                : "flex h-full min-h-0 w-full overflow-hidden")
+                : storyboardThreeColumn
+                  ? "grid h-full min-h-0 w-full grid-cols-[minmax(180px,0.65fr)_minmax(280px,1.2fr)_minmax(240px,0.8fr)] overflow-x-auto"
+                  : "flex h-full min-h-0 w-full overflow-hidden")
             }
           >
         {/* 左：本片段挂载（随胶片切换）+ 本集其他 */}
@@ -8284,7 +8327,7 @@ export default function ManhuaScriptWorkbench({
           data-manhua-column={storyboardThreeColumn ? "params" : "assets"}
           data-manhua-shot-mount={shotMount.mode}
           data-manhua-shot-mount-cast={String(mountedCastCount)}
-          style={storyboardThreeColumn ? { order: 3 } : undefined}
+          style={storyboardThreeColumn ? { order: 3, width: "auto", minWidth: 0 } : undefined}
           className={
             `max-md:!w-full max-md:min-w-0 ${narrowWorkbenchColumn !== "assets" ? "max-md:!hidden" : ""} ` + (immersive
               ? "h-full min-h-0 overflow-y-auto border-r border-white/10 p-2"
@@ -8525,7 +8568,7 @@ export default function ManhuaScriptWorkbench({
         {/* 中：分镜图卡（阿硕 C2：图为主、文为辅；右栏才是主预览） */}
         <section
           data-manhua-column="script"
-          style={storyboardThreeColumn ? { order: 1 } : undefined}
+          style={storyboardThreeColumn ? { order: 1, width: "auto", minWidth: 0 } : undefined}
           className={
             `max-md:!w-full max-md:min-w-0 ${narrowWorkbenchColumn !== "script" ? "max-md:!hidden" : ""} ` + (immersive
               ? "flex h-full min-h-0 flex-col overflow-hidden border-r border-white/10 p-2 md:p-2.5"
@@ -8781,8 +8824,10 @@ export default function ManhuaScriptWorkbench({
               )}
               {onGenerateKeyartShot ? (
                 <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <button type="button" data-manhua-action="generate-current-keyart" disabled={Boolean(factoryBusy) || !activeShot || shotSourceIsFallback} onClick={runCurrentKeyart} className="rounded-lg border border-cyan-300/40 bg-cyan-500/20 px-3 py-2 text-xs font-semibold text-cyan-50 disabled:opacity-40">{currentKeyartLabel}</button>
-                  <span className="text-[10px] text-white/45">仅当前镜，按顶部档位生成；双档两张分别计费</span>
+                  {!storyboardThreeColumn ? <>
+                    <button type="button" data-manhua-action="generate-current-keyart" disabled={Boolean(factoryBusy) || !activeShot || shotSourceIsFallback} onClick={runCurrentKeyart} className="rounded-lg border border-cyan-300/40 bg-cyan-500/20 px-3 py-2 text-xs font-semibold text-cyan-50 disabled:opacity-40">{currentKeyartLabel}</button>
+                    <span className="text-[10px] text-white/45">仅当前镜，按顶部档位生成；双档两张分别计费</span>
+                  </> : null}
                   <details><summary className="cursor-pointer text-xs text-white/50">高级批量操作</summary>
                     <button type="button" disabled={Boolean(factoryBusy)} onClick={runGenerateAllKeyarts} className="p-2 text-xs text-amber-100">补齐本集缺失静帧（按张计费）</button>
                     {onRerunKeyartsFromReverse ? <button type="button" disabled={Boolean(factoryBusy)} onClick={() => { if (!refuseIfBlocked(keyartGateHint)) onRerunKeyartsFromReverse(); }} className="p-2 text-xs text-amber-100">从反推重出本集全部静帧（按张计费）</button> : null}
@@ -9377,7 +9422,7 @@ export default function ManhuaScriptWorkbench({
         {/* 右：本集画布（阿硕式常驻）或单路视频结果 */}
         <aside
           data-manhua-column="preview"
-          style={storyboardThreeColumn ? { order: 2 } : undefined}
+          style={storyboardThreeColumn ? { order: 2, width: "auto", minWidth: 0 } : undefined}
           data-manhua-preview-kind={
             showCanvasDock
               ? "canvas"

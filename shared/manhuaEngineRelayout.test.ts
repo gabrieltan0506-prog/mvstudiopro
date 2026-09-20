@@ -127,3 +127,12 @@ describe("双引擎重铺", () => {
     expect(ro.notesZh.join("")).toContain("落单");
   });
 });
+
+it("拆分单句允许无对白半段，不补口号，序列化仍保留唯一发话",()=>{
+ const plan=fixture6;
+ const source={...plan,segments:[{...plan.segments[0],dialogueZh:'阿菁：「你先走，我去关上后门，免得追兵跟进来。」'}],segmentCount:1};
+ const result=relayoutManhuaSegmentPlanForEngine(source,{fromDurationSec:30,toDurationSec:15});
+ expect(result.dialoguePreserved).toBe(true);
+ expect(result.plan.segments.map(s=>s.dialogueZh)).toEqual([source.segments[0].dialogueZh,""]);
+ expect(result.notesZh.join()).not.toMatch(/不足.*句|请补句/);
+});

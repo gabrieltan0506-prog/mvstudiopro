@@ -220,7 +220,7 @@ function TemplateColumn({
       <div>
         <div className="mb-1 text-[10px] text-white/40">内容密度</div>
         <TextValue
-          value={`正文≥${card.densityHints.minBodyChars}字 · 对白≥${card.densityHints.minDialogueLines}句 · 场景≥${card.densityHints.minLocationHits}`}
+          value={`正文≥${card.densityHints.minBodyChars}字 · 来源对白量参考${card.densityHints.minDialogueLines}句（非最低要求） · 场景≥${card.densityHints.minLocationHits}`}
           changed={changed("densityHints")}
         />
       </div>

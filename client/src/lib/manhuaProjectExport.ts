@@ -596,6 +596,15 @@ function triggerDownload(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(href), 30_000);
 }
 
+/** 直接下载已有成片，复用鉴权下载通道，不重新合成或生成音轨。 */
+export async function downloadManhuaFinalVideo(url: string, title: string): Promise<void> {
+  if (!/^https?:\/\//i.test(url)) throw new Error("尚无可下载的成片");
+  const bytes = await fetchAsArrayBuffer(url);
+  if (!bytes.byteLength) throw new Error("成片文件为空，请检查原片链接");
+  const name = (title || "漫剧成片").replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").slice(0, 80);
+  triggerDownload(new Blob([bytes], { type: "video/mp4" }), `${name}.mp4`);
+}
+
 /**
  * 交付 SRT 用：淡变转场时上段末 cue 终点可能压过下段首 cue 起点（最多 1 秒，与烧字行为一致）。
  * 烧字滤镜能叠显，但外部剪辑软件导入重叠 cue 会报错，交付前把前一条终点压到后一条起点。

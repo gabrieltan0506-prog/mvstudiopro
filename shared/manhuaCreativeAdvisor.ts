@@ -18,6 +18,7 @@ export const MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS = {
   episodeBodyChars: 24_000,
   assetSummaryChars: 6_000,
   shotSummaryChars: 6_000,
+  previsSummaryChars: 6_000,
   blockers: 20,
   blockerChars: 500,
   historyItems: 8,
@@ -115,6 +116,8 @@ export const manhuaCreativeAdvisorContextSchema = z
       MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.shotSummaryChars,
       "分镜摘要",
     ),
+    /** 当前白模编辑规格摘要；不含媒体位置，不是实际视频审片。 */
+    previsSummary: contextText(MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.previsSummaryChars, "白模规格摘要").optional(),
     blockers: z
       .array(
         contextText(
