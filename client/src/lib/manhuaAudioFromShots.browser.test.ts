@@ -20,8 +20,8 @@ it('真实面板首次带入对白、保存恢复及手动清空不复活，全�
  expect(await page.$eval('[aria-label="1 音色"]',el=>(el as HTMLSelectElement).value)).toBe('');
  await page.evaluate(()=>(window as any).fixture.remount());await page.waitForFunction(()=>(window as any).fixture.updates===1);
  await page.evaluate(()=>(window as any).fixture.addTake());
- await page.waitForFunction(()=>[...document.querySelectorAll('button')].some(b=>b.textContent?.includes('将本句窗口延长至')));
- await page.evaluate(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.textContent?.includes('将本句窗口延长至'));b!.click();});
+ await page.waitForFunction(()=>Array.from(document.querySelectorAll('button')).some(b=>b.textContent?.includes('将本句窗口延长至')));
+ await page.evaluate(()=>{const b=Array.from(document.querySelectorAll('button')).find(b=>b.textContent?.includes('将本句窗口延长至'));b!.click();});
  await page.waitForFunction(()=>(window as any).fixture.block.audioStudio.cues[0].endSec===4.944);
  expect(await page.evaluate(()=>(window as any).fixture.block.audioStudio.cues[0].takes[0].id)).toBe('fit-original');
  expect(await page.evaluate(()=>(window as any).fixture.block.audioStudio.cues[0].approved)).toBe(false);
