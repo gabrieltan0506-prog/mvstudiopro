@@ -18,7 +18,7 @@ import { resolveCanvasMaterialUrl } from "@/lib/omniCanvasApi";
 import { compileCanvasDialogueInput } from "@shared/canvasDialogueControls";
 import { canvasAudioPreviewKey, loadCanvasMusicHistory } from "@/lib/canvasAudioStudioRecovery";
 import { parseManhuaClipTargetDurationSec } from "@shared/manhuaScriptWorkbench";
-import { clampManhuaClipDurationSecForVideoModel } from "@shared/manhuaSeedanceLayout";
+import { manhuaClipMaxDurationSecForVideoModel } from "@shared/manhuaSeedanceLayout";
 import {
   emptyCanvasAudioStudio,
   canvasAudioStudioSchema,
@@ -163,6 +163,8 @@ type Props = {
   block: CanvasBlock;
   /** 漫剧工厂简洁模式只保留声音摘要，详细逐轨编辑由用户展开。 */
   compact?: boolean;
+  /** 漫剧工厂当前分段的真实时长；音轨必须覆盖整段，不能按模型上限静默截短。 */
+  timelineDurationSec?: number;
   sourceShots?: ManhuaWorkbenchShot[];
   dialogueSources?: readonly CanvasBlock[];
   disabled?: boolean;
@@ -202,6 +204,7 @@ export function CanvasAudioStudio(props: Props) {
 export function CanvasAudioStudioView({
   block,
   compact = false,
+  timelineDurationSec,
   sourceShots,
   dialogueSources = [],
   disabled = false,
@@ -210,17 +213,42 @@ export function CanvasAudioStudioView({
   bgmModels,
   services,
 }: Props & { services: CanvasAudioStudioServices }) {
-  const durationSec = clampManhuaClipDurationSecForVideoModel(
-    block.videoModel,
-    parseManhuaClipTargetDurationSec(block.prompt) ??
-      block.manhuaAutoSegment?.durationSec
+  const requestedDurationSec = Number(
+    timelineDurationSec ??
+      parseManhuaClipTargetDurationSec(block.prompt) ??
+      block.manhuaAutoSegment?.durationSec ??
+      15,
   );
+  const durationSec = Number.isFinite(requestedDurationSec) && requestedDurationSec > 0
+    ? Math.min(3600, Math.max(1, Math.round(requestedDurationSec * 1000) / 1000))
+    : 15;
+  const modelMaxDurationSec = manhuaClipMaxDurationSecForVideoModel(block.videoModel);
+  const modelDurationIssue = durationSec > modelMaxDurationSec
+    ? `当前视频模型单次最多 ${modelMaxDurationSec} 秒，本段声音仍按完整 ${durationSec} 秒保留。请更换支持该时长的模型或重新分段；系统不会静默截断。`
+    : "";
   const { initialAudio, sourceIssue } = useMemo(() => {
     if (block.audioStudio || !sourceShots?.length) return { initialAudio: emptyCanvasAudioStudio(), sourceIssue: "" };
     try { return { initialAudio: createManhuaAudioFromShots(sourceShots, durationSec), sourceIssue: "" }; }
     catch { return { initialAudio: emptyCanvasAudioStudio(), sourceIssue: "本段对白超出音轨容量或字段限制，未截断原文；请先拆分本段或检查原稿。" }; }
   }, [block.audioStudio, sourceShots, durationSec]);
   const state = block.audioStudio ?? initialAudio;
+  const expectedScriptAudio = useMemo(() => {
+    if (!sourceShots?.length) return undefined;
+    try { return createManhuaAudioFromShots(sourceShots, durationSec); }
+    catch { return undefined; }
+  }, [sourceShots, durationSec]);
+  const currentScriptCues = state.cues.filter(cue => /^script-shot-\d+-line-\d+$/.test(cue.id));
+  const expectedScriptCues = expectedScriptAudio?.cues || [];
+  const scriptTimelineOutdated = currentScriptCues.length > 0 && (
+    currentScriptCues.length !== expectedScriptCues.length ||
+    expectedScriptCues.some(expected => {
+      const currentCue = currentScriptCues.find(cue => cue.id === expected.id);
+      return !currentCue || Math.abs(currentCue.startSec - expected.startSec) > 0.001 || Math.abs(currentCue.endSec - expected.endSec) > 0.001;
+    })
+  );
+  const canRefreshScriptTimeline = scriptTimelineOutdated && currentScriptCues.every(cue =>
+    cue.takes.length === 0 && !cue.selectedTakeId && !cue.approved && !cue.voice && !cue.voiceStateZh,
+  ) && !state.pendingOperations.some(row => row.cueId && currentScriptCues.some(cue => cue.id === row.cueId));
   useEffect(() => {
     if (!disabled && !block.audioStudio && initialAudio.cues.length && !sourceIssue) onChange(initialAudio);
   }, [block.id, block.audioStudio, disabled, initialAudio, sourceIssue, onChange]);
@@ -1013,6 +1041,20 @@ export function CanvasAudioStudioView({
           <p className="mt-3 text-[11px] leading-4 text-white/45">配乐与音效各自裁切，保留对白窗与留白。</p>
         </section>
       </div>
+      {modelDurationIssue ? <p role="alert" className="text-xs text-amber-200">{modelDurationIssue}</p> : null}
+      {scriptTimelineOutdated ? (
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-300/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+          <span>{canRefreshScriptTimeline
+            ? `当前对白秒轴仍是旧分段时长；可按 ${durationSec} 秒原稿重新排布，不生成音频、不扣费。`
+            : `当前对白秒轴仍是旧分段时长，但已有音色、候选、采用或在途任务；为避免覆盖，系统未自动改写。`}</span>
+          {canRefreshScriptTimeline && expectedScriptAudio ? (
+            <button type="button" className={buttonClass} disabled={disabled || busy} onClick={() => {
+              const retained = state.cues.filter(cue => !/^script-shot-\d+-line-\d+$/.test(cue.id));
+              onChange({ ...state, cues: [...expectedScriptAudio.cues, ...retained] });
+            }}>按当前原稿刷新对白秒轴</button>
+          ) : null}
+        </div>
+      ) : null}
       <details data-manhua-audio-editor open={editorOpen} onToggle={event => setEditorOpen(event.currentTarget.open)} className="rounded-xl border border-white/10 bg-black/10 p-2">
       <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold text-sky-100">编辑对白、配乐与音效</summary>
       <div className="mt-2 space-y-3">
