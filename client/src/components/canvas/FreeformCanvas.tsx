@@ -247,6 +247,7 @@ export function CanvasWanVideoReferencePicker({
               <button
                 key={url}
                 type="button"
+                aria-pressed={on}
                 disabled={disabled}
                 title={
                   disabled
@@ -3243,6 +3244,7 @@ export default function FreeformCanvas({
                                             <button
                                               key={a.id}
                                               type="button"
+                                              aria-pressed={on}
                                               title={a.fileName}
                                               onClick={() =>
                                                 toggle(
