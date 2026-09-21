@@ -304,3 +304,9 @@ describe("漫剧工厂段级参考进出片请求（无网络）", () => {
     expect(requests[0]!.videoUrls).toEqual([fresh]);
   });
 });
+
+ it("参考模式第11条音频不能被裁掉后照常建单", async () => {
+   const block = { ...defaultCanvasBlock("video", 0, 0), id: "reference-overflow", videoModel: "seedance-2.5" as const, seedance25WorkMode: "reference_to_video" as const, prompt: "人物走近", refImageUrl: "https://test.invalid/keyart.png", seedance25RefAudioUrls: Array.from({length:11}, (_,i)=>`https://test.invalid/voice-${i}.mp3`) };
+   await expect(runCanvasBlock({ ...deps, characterVoiceLocks: [] }, block)).rejects.toThrow(/参考音频上限 10/);
+   expect(requests).toHaveLength(0);
+ });

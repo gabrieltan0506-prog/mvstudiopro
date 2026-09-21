@@ -118,6 +118,14 @@ export function buildByteplusSeedance25SubmitBody(input: ByteplusSeedanceRunInpu
     (input.mode as SeedanceEvolinkMode | undefined) ||
     inferSeedanceMode({ imageUrls, videoUrls, audioUrls });
 
+  if (mode === "reference_to_video") {
+    const references = [imageUrls, videoUrls, audioUrls];
+    const limits = [30, 10, 10];
+    for (let i = 0; i < references.length; i++) {
+      if (references[i].length > limits[i]) throw new Error(`Seedance 2.5 参考${["图片", "视频", "音频"][i]}最多 ${limits[i]} 项；请调整素材后生成`);
+    }
+  }
+
   if (mode === "image_to_video" && imageUrls.length < 1) {
     throw new Error("图生视频需要至少 1 张图片");
   }
@@ -239,18 +247,16 @@ export async function pollByteplusVideoTaskOnce(
   if (status === "failed" || status === "cancelled" || status === "canceled") {
     return {
       state: "failed",
-      error: json.error?.message || json.message || `${label} 视频生成失败`,
+      error: [json.error?.code, json.error?.message || json.message || `${label} 视频生成失败`].filter(Boolean).join(": "),
     };
   }
   return { state: "running", status: status || "processing" };
 }
 
-/** 上游可回落 EvoLink 的错误（账号/配额/服务侧）；参数契约错误不回落。 */
+/** 仅明确的人脸隐私拒绝允许换通道；配额、网络与未知结果不回落。 */
 export function isByteplusFallbackableError(error: unknown): boolean {
   const msg = error instanceof Error ? error.message : String(error || "");
-  if (!msg) return true;
-  if (/需要提示词|需要至少|需要 1|无效|请填写/i.test(msg)) return false;
-  return true;
+  return /InputImageSensitiveContentDetected\.PrivacyInformation|may contain (?:a )?real (?:person|human)|real (?:human )?faces?|太像真人|包含真人|真人.{0,8}(人脸|肖像)|人脸.{0,8}(隐私|限制)/i.test(msg);
 }
 
 export async function submitByteplusSeedance25Video(
@@ -277,8 +283,7 @@ export async function submitByteplusSeedance25Video(
   const createJson = (await createRes.json().catch(() => ({}))) as ByteplusTaskJson;
   if (!createRes.ok) {
     throw new Error(
-      createJson.error?.message ||
-        createJson.message ||
+      [createJson.error?.code, createJson.error?.message || createJson.message].filter(Boolean).join(": ") ||
         `BytePlus 创建任务失败 (${createRes.status})`,
     );
   }

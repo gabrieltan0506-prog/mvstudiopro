@@ -92,9 +92,18 @@ describe("extractByteplusVideoUrl / fallbackable", () => {
     ).toBe("https://cdn.example/a.mp4");
   });
 
-  it("参数错误不回落；配额类可回落", () => {
+  it("仅明确人脸拒绝允许回落", () => {
     expect(isByteplusFallbackableError(new Error("图生视频需要至少 1 张图片"))).toBe(false);
-    expect(isByteplusFallbackableError(new Error("QuotaExceeded"))).toBe(true);
-    expect(isByteplusFallbackableError(new Error("ModelNotOpen"))).toBe(true);
+    expect(isByteplusFallbackableError(new Error("QuotaExceeded"))).toBe(false);
+    expect(isByteplusFallbackableError(new Error("ModelNotOpen"))).toBe(false);
+    expect(isByteplusFallbackableError(new Error("InputImageSensitiveContentDetected.PrivacyInformation"))).toBe(true);
+    expect(isByteplusFallbackableError(new Error("The image may contain real person"))).toBe(true);
+    expect(isByteplusFallbackableError(new Error("InputAudioSensitiveContentDetected"))).toBe(false);
+    expect(isByteplusFallbackableError(new Error("fetch failed"))).toBe(false);
+    expect(isByteplusFallbackableError(new Error("BytePlus 未返回任务 ID"))).toBe(false);
   });
+});
+
+it("BytePlus参考超限在建单前拒绝，不能靠回落裁掉素材", () => {
+  expect(() => buildByteplusSeedance25SubmitBody({ mode: "reference_to_video", prompt: "全部角色入镜", imageUrls: Array.from({length:31},(_,i)=>`https://example.test/${i}.png`) })).toThrow("请调整素材后生成");
 });

@@ -1,3 +1,4 @@
+import { formatEvolinkReferencePrompt } from "../../shared/evolinkReferencePrompt.js";
 import {
   SEEDANCE_25_COMING_SOON_LABEL_EN,
   clampSeedanceDuration,
@@ -203,7 +204,7 @@ export function buildEvolinkSeedanceRequest(input: EvolinkSeedanceRunInput): {
   duration: number;
 } {
   const version: SeedanceEvolinkVersion = parseSeedanceVersion(input.version);
-  const prompt = String(input.prompt || "").trim();
+  const prompt = formatEvolinkReferencePrompt(String(input.prompt || "").trim(), "seedance");
   if (!prompt) throw new Error(`Seedance ${version} 需要提示词`);
 
   const imageUrls = [
@@ -218,6 +219,17 @@ export function buildEvolinkSeedanceRequest(input: EvolinkSeedanceRunInput): {
     new Set((input.audioUrls || []).map(u => String(u || "").trim()).filter(Boolean)),
   );
   const mode = input.mode || inferSeedanceMode({ imageUrls: uniqueImages, videoUrls, audioUrls });
+  // 编号必须对应完整参考数组；超限不能裁掉角色或声轨后继续收费。
+  if (mode === "reference_to_video") {
+    const limits = version === "2.5" ? [30, 10, 10] : [9, 3, 3];
+    const references = [uniqueImages, videoUrls, audioUrls];
+    for (let index = 0; index < references.length; index++) {
+      const urls = references[index];
+      if (urls.length > limits[index]) {
+        throw new Error(`Seedance ${version} 参考${["图片", "视频", "音频"][index]}最多 ${limits[index]} 项，当前 ${urls.length} 项；请调整素材后生成`);
+      }
+    }
+  }
   const model = resolveSeedanceModelId(version, mode);
   const duration =
     mode === "video_edit"
@@ -251,9 +263,9 @@ export function buildEvolinkSeedanceRequest(input: EvolinkSeedanceRunInput): {
     if (uniqueImages.length + videoUrls.length + audioUrls.length < 1) {
       throw new Error(`${version} 多模态参考需要至少 1 个图片、视频或音频素材`);
     }
-    if (uniqueImages.length) body.image_urls = uniqueImages.slice(0, version === "2.5" ? 30 : 9);
-    if (videoUrls.length) body.video_urls = videoUrls.slice(0, version === "2.5" ? 10 : 3);
-    if (audioUrls.length) body.audio_urls = audioUrls.slice(0, version === "2.5" ? 10 : 3);
+    if (uniqueImages.length) body.image_urls = uniqueImages;
+    if (videoUrls.length) body.video_urls = videoUrls;
+    if (audioUrls.length) body.audio_urls = audioUrls;
   } else if (mode === "video_edit" || mode === "video_extend") {
     if (version !== "2.5") throw new Error("视频编辑与视频延长仅支持 Seedance 2.5");
     if (!videoUrls.length) {

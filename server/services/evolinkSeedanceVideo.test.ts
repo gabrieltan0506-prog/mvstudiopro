@@ -39,22 +39,15 @@ describe("buildEvolinkSeedanceRequest · Seedance 2.5 五模式", () => {
     expect(out.body.aspect_ratio).toBe("adaptive");
   });
 
-  it("多模态参考按 30/10/10 上限截取三类素材", () => {
-    const imageUrls = Array.from({ length: 32 }, (_, i) => `https://a/image-${i}.jpg`);
-    const videoUrls = Array.from({ length: 12 }, (_, i) => `https://a/video-${i}.mp4`);
-    const audioUrls = Array.from({ length: 12 }, (_, i) => `https://a/audio-${i}.mp3`);
-    const out = buildEvolinkSeedanceRequest({
-      version: "2.5",
-      mode: "reference_to_video",
-      prompt: "保持人物、场景和声线一致",
-      imageUrls,
-      videoUrls,
-      audioUrls,
-    });
-    expect(out.model).toBe("seedance-2.5-reference-to-video");
-    expect(out.body.image_urls).toHaveLength(30);
-    expect(out.body.video_urls).toHaveLength(10);
-    expect(out.body.audio_urls).toHaveLength(10);
+  it.each([
+    ["2.5", "imageUrls", 30], ["2.5", "videoUrls", 10], ["2.5", "audioUrls", 10],
+    ["2.0", "imageUrls", 9], ["2.0", "videoUrls", 3], ["2.0", "audioUrls", 3],
+  ] as const)("%s的%s超限在建单前拒绝，合法数组顺序保持", (version, field, limit) => {
+    const urls = Array.from({ length: limit }, (_, i) => `https://a/ref-${i}`);
+    const input = { version, mode: "reference_to_video" as const, prompt: "保留全部角色参考", [field]: urls };
+    const out = buildEvolinkSeedanceRequest(input);
+    expect(out.body[{ imageUrls: "image_urls", videoUrls: "video_urls", audioUrls: "audio_urls" }[field]]).toEqual(urls);
+    expect(() => buildEvolinkSeedanceRequest({ ...input, [field]: [...urls, "https://a/extra"] })).toThrow("请调整素材后生成");
   });
 
   it("视频编辑固定 duration=-1，并要求原视频", () => {

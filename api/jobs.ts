@@ -1905,14 +1905,7 @@ async function runSeedance25EvolinkJob(
   const { resolveSeedance25CanvasEngine } = await import(
     "../server/services/canvasVideoTask.js"
   );
-  const { hasPhotorealReferenceUrl } = await import("../shared/photorealMediaSignal.js");
   const preferByteplus = isByteplusSeedanceConfigured();
-  // 仿真人（photoreal 素材信号）只能走 EvoLink：BytePlus 拦真人照参考。
-  // 有 BytePlus 没 EvoLink 时不能扣费后必败，扣费前 503。
-  const isPhotorealRequest = hasPhotorealReferenceUrl([imageUrl, ...imageUrls, ...videoUrls]);
-  if (isPhotorealRequest && !isEvolinkSeedanceConfigured()) {
-    return { ok: false, status: 503, error: "仿真人通道暂不可用，请稍后重试" };
-  }
   if (!preferByteplus && !isEvolinkSeedanceConfigured()) {
     return { ok: false, status: 503, error: "视频服务暂不可用，请稍后重试" };
   }
@@ -2016,11 +2009,7 @@ async function runSeedance25EvolinkJob(
       requestKey;
     const taskInput = {
       ...manhuaPilotTaskFields(preparedPilot),
-      engine: resolveSeedance25CanvasEngine(mode, {
-        // 共享信号（覆盖 photoreal-age/、photoreal-gen/ 等派生路径），与 2.0 路由同口径；
-        // EvoLink 缺配置的 photoreal 已在扣费前 503，这里选中 EvoLink 引擎必有配置
-        photoreal: isPhotorealRequest,
-      }),
+      engine: resolveSeedance25CanvasEngine(mode),
       label,
       prompt,
       imageUrl,
