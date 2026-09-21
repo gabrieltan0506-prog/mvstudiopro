@@ -2,6 +2,21 @@ import { describe, expect, it } from "vitest";
 import { resolveManhuaWorkbenchNextCta } from "./manhuaWorkbenchNextCta";
 
 describe("resolveManhuaWorkbenchNextCta (阿硕步进)", () => {
+  it("回看已确认剧本和资产时，操作随当前页面而非后续产物进度", () => {
+    const progress = {
+      outlineComplete: true, assetsComplete: true, episodeSheetCount: 5,
+      stillsReadyEnough: false, videoBurnUnlocked: false, hasClip: false, factoryBusy: false,
+    };
+    for (const hasClip of [false, true]) {
+      expect(resolveManhuaWorkbenchNextCta({ ...progress, hasClip, activePhase: "outline" }))
+        .toMatchObject({ kind: "enter_assets", stepTitleZh: "剧本大纲", prevPhase: null, targetPhase: "assets" });
+      expect(resolveManhuaWorkbenchNextCta({ ...progress, hasClip, activePhase: "assets" }))
+        .toMatchObject({ kind: "enter_storyboard", stepTitleZh: "资产设定", prevPhase: "outline" });
+    }
+    expect(resolveManhuaWorkbenchNextCta({ ...progress, activePhase: "storyboard" }).kind).toBe("generate_keyarts");
+    expect(resolveManhuaWorkbenchNextCta({ ...progress, activePhase: "outline", outlineComplete: false }).kind).toBe("confirm_outline");
+    expect(resolveManhuaWorkbenchNextCta({ ...progress, activePhase: "outline", factoryBusy: true }).kind).toBe("busy");
+  });
   it("大纲步：生成本步内容", () => {
     const cta = resolveManhuaWorkbenchNextCta({
       outlineComplete: false,
