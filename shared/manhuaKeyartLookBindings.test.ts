@@ -178,3 +178,14 @@ describe("静帧消费本段真实造型", () => {
     ).toThrow(/造型/);
   });
 });
+
+it("无换装时也更新当前参考，移除嵌套旧清单并保留分镜及旧图", () => {
+ const old = {...block,prompt:"【静帧·用户参考融图】\n【画风执行·3D CG】\n融图参考 8 张：旧后院、旧人物\n【分镜3·静帧】黑奇抬头保护阿菁。"};
+ const result=compileManhuaKeyartLookBindings(old,{registry,allowedIds:["heiqi"],activeLookSetIds:[],bindCurrentAssets:true});
+ expect(result.prompt).not.toContain("旧后院");
+ expect(result.prompt).not.toContain("融图参考 8 张");
+ expect(result.prompt).toContain("黑奇抬头保护阿菁");
+ expect(result.refImageUrl).toBe("https://test.invalid/identity.png");
+ expect(result.outputUrl).toBe(old.outputUrl);
+ expect(result.outputUrls).toEqual(old.outputUrls);
+});

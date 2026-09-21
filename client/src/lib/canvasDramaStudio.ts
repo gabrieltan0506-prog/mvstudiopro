@@ -2602,10 +2602,28 @@ export function ensureManhuaFragmentClips(
         prompt: [stripManhuaDirectionStyleBlocks(keyart.prompt), keyframeDirection].filter(Boolean).join("\n\n"),
         manhuaKeyartSourceState: { ...keyart.manhuaKeyartSourceState, required: JSON.stringify({ ...withManhuaShotStateNote(originalShot, shots, opts), ...(localDirection ? { directionKeyframe: keyframeDirection } : {}) }) },
       } : keyart;
+      // 静帧只消费本镜出场；不能把同段后两镜的人物和整集场景一起灌给首镜。
+      const shotText = originalShot ? [originalShot.actionZh, originalShot.dialogueZh, originalShot.intentZh].filter(Boolean).join("；") : "";
+      const shotCast = originalShot ? resolveManhuaSegmentCastZh({
+        shots: [originalShot], registry: segmentRegistry, assetCanon: opts?.assetCanon,
+      }) : "";
+      const shotAssets = originalShot && opts?.assetCanon ? resolveManhuaSegmentClipAllowedAssets({
+        haystack: shotText,
+        castZh: shotCast,
+        sceneZh: sceneFromPlan || sceneFromKeyart || undefined,
+        sceneHaystack: [sceneFromPlan, originalShot.actionZh].filter(Boolean).join("；"),
+        propHaystack: shotText,
+        registry: segmentRegistry,
+        assetCanon: opts.assetCanon,
+        mainSceneId: mainScene?.id,
+        castCount: Math.max(1, shotCast.split("；").filter(Boolean).length, inferWorkbenchShotCastCount(originalShot.actionZh || "")),
+      }) : segAssets;
       refreshedKeyarts.set(keyart.id, compileManhuaKeyartLookBindings(sourceBoundKeyart, {
         registry: segmentRegistry,
-        allowedIds: segAssets.allowedIds,
-        activeLookSetIds: activeLookIds,
+        allowedIds: shotAssets.allowedIds,
+        activeLookSetIds: resolveActiveLookSetIdsForSegment({ lookSets, binding: segBinding, fallbackCharacterIds: shotAssets.characterIds }),
+        // 未出图的规划阶段仍可更新分镜；已有可用参考时才重绑，缺图由生成门禁处理。
+        bindCurrentAssets: Boolean(opts?.assetCanon && originalShot && shotAssets.allowedIds.some(id => assetPathById[id])),
       }));
     }
     const assetLockBlock = formatManhuaAssetImageBindBlock(segmentRegistry, 8, {
