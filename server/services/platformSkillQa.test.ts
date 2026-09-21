@@ -139,6 +139,8 @@ describe("漫剧工厂创作顾问上下文", () => {
     const system = payload.messages.find((message) => message.role === "system")?.content || "";
     const user = payload.messages.find((message) => message.role === "user")?.content || "";
     expect(system).toContain("只读诊断");
+    expect(system).toContain("可以说明用户界面中的模型名称及相关限制");
+    expect(system).not.toContain("不要暴露供应商、模型");
     expect(user).toContain("【本集正文·以实际提供范围为准】\n玄璃推门，黑奇拖着受伤的前腿后退。");
     expect(system).toContain("若带【已节选】");
     expect(system).toContain("不得声称已通读完整剧本");
@@ -146,6 +148,9 @@ describe("漫剧工厂创作顾问上下文", () => {
     expect(user).toContain("【生产编译器事实·仅供内部推理】");
     expect(user).toContain("规范引擎 ID：seedance-2.5");
     expect(user).toContain("提示词方言：seedance");
+    expect(user).toContain("明确告知当前模型不支持，并建议更换支持该需求的模型");
+    expect(user).toContain("不要求截断对白、丢弃参考素材");
+    expect(user).toContain("不自动修改工程或提交生成");
     expect(user).toContain("单段时长：4–30 秒");
     expect(user).toContain("参考上限：图片 30 项；视频 10 项；音频 10 项");
     expect(user).toContain("引用写法：图片=@图N；视频=@视频N；音频=@音频N");
