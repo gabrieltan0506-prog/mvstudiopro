@@ -59,7 +59,7 @@ beforeEach(() => {
         signRequests.push(gcsUri);
         return new Response(JSON.stringify({ ok: true, url: gcsUri === PREVIS_GCS ? PREVIS_FRESH : "https://test.invalid/other.bin" }));
       }
-      if (url !== "/api/jobs?op=seedanceI2V" || init?.method !== "POST") {
+      if (!["/api/jobs?op=seedanceI2V", "/api/jobs?op=hailuo3Video"].includes(url) || init?.method !== "POST") {
         throw new Error(`测试禁止真实网络与未声明请求：${url}`);
       }
       requests.push(JSON.parse(String(init.body)));
@@ -78,7 +78,27 @@ function audioBlock(kind: "bgm" | "sfx" = "bgm") {
   return { ...segmentBlock(), prompt: "【第2段·5s】0–5s：阿菁推门，听见脚步。", refVideoUrl: undefined, seedance25WorkMode: "reference_to_video" as const, audioStudio: studio, manhuaSegmentRefs: { master: { url: "https://test.invalid/master.wav", gcsUri: MASTER_GCS, durationSec: 5, fileName: "预混.wav", updatedAt: "2026-09-20", audioStudioSource: canvasAudioMixSource(studio.cues, 5) } } };
 }
 describe("声音消费门禁：真实出片函数", () => {
-  it.each(["happyhorse-1.1", "minimax-hailuo-3"] as const)("%s 即使有母轨也不能放行丢声音", async videoModel => {
+  it("H3真实出片入口将显式声音参考传入jobs", async () => {
+    const block = { ...segmentBlock(), id: "video-h3-ref", videoModel: "minimax-hailuo-3" as const,
+      prompt: "@图片1 人物用 @音频1 说话", refVideoUrl: undefined, manhuaSegmentRefs: undefined,
+      seedance25RefAudioUrls: [MASTER_GCS] };
+    await runCanvasBlock({ ...deps, characterVoiceLocks: [] }, block);
+    expect(requests).toHaveLength(1);
+    expect(requests[0].audioUrls).toEqual([MASTER_GCS]);
+    expect(String(requests[0].prompt)).toContain("Audio 1");
+  });
+  it("H3白模参考重新签名后仍保留Video 1动作职责", async () => {
+    const base = segmentBlock();
+    const block = { ...base, videoModel: "minimax-hailuo-3" as const, refVideoUrl: undefined,
+      prompt: "【第2段·5s】0–5s：人物背负前行。",
+      manhuaSegmentRefs: { previs: { ...base.manhuaSegmentRefs.previs, durationSec: 5, motionGuideZh: "背负前行，保持接触" } } };
+    await runCanvasBlock({ ...deps, characterVoiceLocks: [] }, block);
+    expect(requests).toHaveLength(1);
+    expect(requests[0].videoUrls).toEqual([PREVIS_FRESH]);
+    expect(String(requests[0].prompt)).toContain("Video 1");
+    expect(String(requests[0].prompt)).toContain("背负前行，保持接触");
+  });
+  it.each(["happyhorse-1.1"] as const)("%s 即使有母轨也不能放行丢声音", async videoModel => {
     await expect(runCanvasBlock(deps, { ...audioBlock(), videoModel })).rejects.toThrow(/不支持声音参考/);
     expect(requests).toEqual([]);
   });

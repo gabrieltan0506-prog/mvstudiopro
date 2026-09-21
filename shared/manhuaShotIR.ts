@@ -151,16 +151,18 @@ export const COMPILER_ENGINE_LIMITS = {
     status: "ready",
   },
   [CANVAS_VIDEO_MODEL_HAILUO_H3]: {
-    // 画布只开放 5/10/15 秒三档；OpenRouter 这条生产路由只消费图片参考。
+    // 画布只开放 5/10/15 秒；带参考音视频的请求走 EvoLink。
     minSegmentSec: 5,
     maxSegmentSec: 15,
     maxPromptChars: 7000,
     requiresIntegerSegmentSec: true,
     references: {
       image: HAILUO_REFERENCE_MAX.image,
-      video: 0,
-      audio: 0,
-      total: HAILUO_REFERENCE_MAX.image,
+      video: 3,
+      audio: 3,
+      total: 12,
+      minVideoItemSec: 2, maxVideoItemSec: 15, maxVideoTotalSec: 15,
+      minAudioItemSec: 2, maxAudioItemSec: 15, maxAudioTotalSec: 15,
     },
     dialect: "h3",
     status: "ready",

@@ -3127,8 +3127,9 @@ export default function FreeformCanvas({
                               {enhancePromptMutation.isPending ? "增强中…" : "增强提示词(3积分)"}
                             </button>
                           </div>
-                          {block.videoModel === "seedance-2.5" && canUseSeedance25 ? (
+                          {((block.videoModel === "seedance-2.5" && canUseSeedance25) || block.videoModel === "minimax-hailuo-3") ? (
                             <div className="space-y-2 rounded-lg border border-white/10 bg-white/[0.03] px-2 py-2">
+                              {block.videoModel === "seedance-2.5" ? <>
                               <label className="flex items-center gap-2 text-[11px] text-white/70">
                                 <span className="shrink-0 text-white/45">工作模式</span>
                                 <select
@@ -3184,6 +3185,7 @@ export default function FreeformCanvas({
                                   className="w-full resize-y rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-[11px] leading-5 text-white placeholder:text-white/30"
                                 />
                               </div>
+                              </> : <div className="text-[11px] text-white/70">H3 参考生成：图、视频与声音合计最多12个；视频与音频分别合计不超过15秒。视频参考会产生上游输入费用。</div>}
                               {(() => {
                                 const vids = (block.uploadedAssets || []).filter(
                                   (a) =>
@@ -3198,7 +3200,8 @@ export default function FreeformCanvas({
                                 const selectedV = new Set(block.seedance25RefVideoUrls || []);
                                 const selectedA = new Set(block.seedance25RefAudioUrls || []);
                                 const maxSeedanceVideoRefs =
-                                  resolveCanvasVideoReferencePickerLimit(block.videoModel) ?? 10;
+                                  block.videoModel === "minimax-hailuo-3" ? 3 : resolveCanvasVideoReferencePickerLimit(block.videoModel) ?? 10;
+                                const maxAudioRefs = block.videoModel === "minimax-hailuo-3" ? 3 : 10;
                                 const toggle = (
                                   set: Set<string>,
                                   url: string,
@@ -3222,7 +3225,7 @@ export default function FreeformCanvas({
                                     </div>
                                     {vids.length ? (
                                       <div className="flex flex-wrap gap-1.5">
-                                        {vids.slice(0, maxSeedanceVideoRefs).map((a) => {
+                                        {vids.map((a) => {
                                           const on = selectedV.has(a.url);
                                           return (
                                             <button
@@ -3255,15 +3258,14 @@ export default function FreeformCanvas({
                                                       MP4
                                                     </div>
                                                   )}
-                                                  {block.videoModel === "seedance-2.5" && <details><summary className="text-xs text-sky-100">可选：逐句配音与分段配乐</summary><CanvasAudioStudio block={block} disabled={block.status === "running"} onChange={audioStudio => patchOne(block.id, { audioStudio })} /></details>}
+                                                  {["seedance-2.5", "minimax-hailuo-3"].includes(block.videoModel || "") && <details><summary className="text-xs text-sky-100">可选：逐句配音与分段配乐</summary><CanvasAudioStudio block={block} disabled={block.status === "running"} onChange={audioStudio => patchOne(block.id, { audioStudio })} /></details>}
                                                   <div className="text-[10px] text-white/45">
-                                                    参考音频（最多 10）· 上传
+                                                    参考音频（最多 {maxAudioRefs}）· 上传
                                                     MP3/WAV 后勾选
                                                   </div>
                                                   {auds.length ? (
                                                     <div className="flex flex-wrap gap-1.5">
                                                       {auds
-                                                        .slice(0, 10)
                                                         .map(a => {
                                                           const durableAudioRef =
                                                             a.gcsUri || a.url;
@@ -3280,7 +3282,7 @@ export default function FreeformCanvas({
                                                                 toggle(
                                                                   selectedA,
                                                                   durableAudioRef,
-                                                                  10,
+                                                                  maxAudioRefs,
                                                                   "seedance25RefAudioUrls"
                                                                 )
                                                               }
@@ -3303,7 +3305,7 @@ export default function FreeformCanvas({
                                   </div>
                                 );
                               })()}
-                              {block.outputUrl &&
+                              {block.videoModel === "seedance-2.5" && block.outputUrl &&
                               /\.(mp4|mov|webm|m4v)(\?|$)/i.test(block.outputUrl) ? (
                                 <div className="space-y-1.5">
                                   <button

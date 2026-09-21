@@ -1,3 +1,5 @@
+import { submitEvolinkH3, EVOLINK_H3_MODEL } from "./evolinkHailuoVideo.js";
+import { preflightH3ReferenceMedia } from "./hailuoReferencePreflight.js";
 import { SubmitRejectedError } from "./submitOutcomeErrors.js";
 /**
  * 画布成片异步任务（Seedance OpenRouter / Hailuo / Happy Horse /
@@ -91,6 +93,7 @@ const WAN30_MAX_POLL_MS = Math.min(
 export type CanvasVideoEngine =
   | "seedance-openrouter"
   | "hailuo-openrouter"
+  | "hailuo-evolink"
   /** HappyHorse 旧引擎名：在途老单（含百炼 bailianTaskId）轮询收尾用；新提交也可被钉回 OpenRouter */
   | "happyhorse-openrouter"
   /** HappyHorse · EvoLink i2v（0825 拆百炼三通道） */
@@ -179,6 +182,7 @@ export type CanvasVideoTaskRecord = {
   wavespeedPredictionId?: string;
   /** 超分发送前落盘，崩溃后无句柄只能对账，禁止重投。 */
   upscaleSubmissionStartedAt?: string;
+  h3SubmissionStartedAt?: string;
   /** wan30:提交上游的随机种子,复现用 */
   seed?: number;
   /** wan30:连续 404 计数——创建后最终一致性只容忍有限次,防无效单白轮数小时(审查 P2) */
@@ -322,7 +326,8 @@ function isHappyHorseEngine(engine: CanvasVideoEngine): boolean {
 /** 走 EvoLink 任务号轮询的引擎（2.5 / Mini / 2.0 仿真人共用同一套 submit/poll） */
 function usesEvolinkTaskId(engine: CanvasVideoEngine): boolean {
   return (
-    engine === "seedance25-evolink"
+    engine === "hailuo-evolink"
+    || engine === "seedance25-evolink"
     || engine === "seedance-mini-evolink"
     || engine === "seedance20-evolink"
   );
@@ -652,6 +657,39 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
     return;
   }
 
+  if (task.engine === "hailuo-evolink") {
+    const input = {
+      prompt: task.prompt,
+      imageUrls: await Promise.all(Array.from(new Set([task.imageUrl, ...(task.imageUrls || [])].filter(Boolean) as string[])).map(u => resolveProtectedTaskMediaUrl(task, u))),
+      videoUrls: await Promise.all((task.videoUrls || []).map(u => resolveProtectedTaskMediaUrl(task, u))),
+      audioUrls: await resolveCanvasVideoAudioUrls(task.audioUrls, task.userId),
+      duration: task.duration, resolution: task.resolution || "768p", aspectRatio: task.aspectRatio || "16:9",
+    };
+    await preflightH3ReferenceMedia(input);
+    task.h3SubmissionStartedAt = new Date().toISOString();
+    await writeTask(task);
+    try {
+      const submitted = await submitEvolinkH3(input);
+      task.evolinkTaskId = submitted.evolinkTaskId;
+      task.model = EVOLINK_H3_MODEL;
+      task.provider = "evolink";
+      task.status = "running";
+      task.startedAt = task.startedAt || new Date().toISOString();
+      await writeTask(task);
+    } catch (error) {
+      if ((error as { kind?: string } | null)?.kind !== "rejected") {
+        task.status = "reconcile_manual";
+        task.error = "H3 提交结果待核对，已停止自动重试；不会重复生成或自动退款";
+        task.finishedAt = new Date().toISOString();
+        await writeTask(task);
+        await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {});
+        return;
+      }
+      throw error;
+    }
+    return;
+  }
+
   if (task.engine === "hailuo-openrouter") {
     const body = buildHailuoSubmitBodyFromTask(task);
     const submitted = await submitOpenRouterVideoJob(body);
@@ -929,6 +967,14 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
 
     await heartbeatActiveJob(task.taskId, TASK_TYPE).catch(() => {});
 
+    if (task.engine === "hailuo-evolink" && task.h3SubmissionStartedAt && !task.evolinkTaskId) {
+      task.status = "reconcile_manual";
+      task.error = "H3 提交回执尚未持久化，请核对原任务；已停止自动重试";
+      await writeTask(task);
+      await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {});
+      return task;
+    }
+
     if (task.engine === "wavespeed-upscale" && task.upscaleSubmissionStartedAt && !task.wavespeedPredictionId) {
       task.status = "reconcile_manual";
       task.error = "超分提交结果尚未确认，已停止重复提交并转对账";
@@ -982,6 +1028,13 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
           return after;
         }
       } catch (error) {
+        if (task.engine === "hailuo-evolink" && task.h3SubmissionStartedAt && (error as { kind?: string })?.kind !== "rejected") {
+          task.status = "reconcile_manual";
+          task.error = "H3 提交状态待核对，请勿重复生成";
+          await writeTask(task).catch(() => {});
+          await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {});
+          return task;
+        }
         if (task.engine === "wavespeed-upscale" && task.upscaleSubmissionStartedAt && (error as { kind?: string })?.kind !== "rejected") {
           task.status = "reconcile_manual";
           task.error = "超分提交结果尚未确认，已转对账，请勿重复提交";
@@ -1055,7 +1108,7 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
         }
         const snap = await pollEvolinkVideoTaskOnce(
           current.evolinkTaskId,
-          `Seedance ${current.seedanceVersion || (isMini ? "2.0-mini" : "2.5")}`,
+          current.engine === "hailuo-evolink" ? "MiniMax H3" : `Seedance ${current.seedanceVersion || (isMini ? "2.0-mini" : "2.5")}`,
         );
         if (snap.state === "running") {
           current.status = activePollStatus(current);
@@ -1068,7 +1121,7 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
         return succeedTask(
           current,
           videoUrl,
-          current.model || (isMini ? "seedance-2.0-mini" : "seedance-2.5"),
+          current.model || (current.engine === "hailuo-evolink" ? EVOLINK_H3_MODEL : isMini ? "seedance-2.0-mini" : "seedance-2.5"),
           "evolink",
         );
       }

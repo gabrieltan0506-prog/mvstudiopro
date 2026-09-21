@@ -16,7 +16,7 @@ beforeAll(async () => {
       import {TooltipProvider} from './client/src/components/ui/tooltip';
       import {defaultCanvasBlock} from './client/src/lib/canvasTypes';
       const f=globalThis.fixture={calls:[]};
-      function App(){const [blocks,setBlocks]=useState([{...defaultCanvasBlock('video',0),id:'video-test',videoModel:'seedance-2.0',videoResolution:'4K',prompt:'原台词与5秒动作',outputUrl:'',seedance25WorkMode:'video_edit',uploadedAssets:[]}]);f.blocks=blocks;return <TooltipProvider><FreeformCanvas blocks={blocks} edges={[]} onBlocksChange={setBlocks} onEdgesChange={()=>{}} runDeps={{}} /></TooltipProvider>;}
+      function App(){const [blocks,setBlocks]=useState([{...defaultCanvasBlock('video',0),id:'video-test',videoModel:'seedance-2.0',videoResolution:'4K',prompt:'原台词与5秒动作',outputUrl:'',seedance25WorkMode:'video_edit',uploadedAssets:[1,2,3,4].map(n=>({id:"audio-"+n,kind:"audio",fileName:"声音"+n+".wav",url:"https://example.test/"+n+".wav"}))}]);f.blocks=blocks;return <TooltipProvider><FreeformCanvas blocks={blocks} edges={[]} onBlocksChange={setBlocks} onEdgesChange={()=>{}} runDeps={{}} /></TooltipProvider>;}
       createRoot(document.getElementById('root')).render(<App/>);
     `,
     },
@@ -74,4 +74,18 @@ it("切模型同步合法画质和参考模式，保留原稿且零生成", asyn
   expect(await page.$$eval('select[aria-label="成片画质"] option',els=>els.map(e=>e.value))).toEqual(['720p','2K']);
   expect(await page.evaluate(()=>(window as any).fixture.calls)).toEqual([]);
  } finally {await page.close();}
+},30000);
+
+it("H3提供三条声音参考选择，超过容量不新增，也不展示编辑延长模式",async()=>{
+ const page=await browser.newPage();
+ try {
+  await page.setRequestInterception(true);page.on('request',r=>r.url().startsWith('http')?r.abort():r.continue());
+  await page.setContent('<div id="root"></div>');await page.addScriptTag({content:bundle});
+  await page.waitForSelector('select[aria-label="成片模型"]');await page.select('select[aria-label="成片模型"]','minimax-hailuo-3');
+  await page.waitForFunction(()=>document.body.innerText.includes('H3 参考生成'));
+  for(let n=1;n<=4;n++)await page.click('button[title="声音'+n+'.wav"]');
+  expect(await page.evaluate(()=>(window as any).fixture.blocks[0].seedance25RefAudioUrls)).toEqual([1,2,3].map(n=>'https://example.test/'+n+'.wav'));
+  expect(await page.$$eval('select option',els=>els.map(e=>e.value))).not.toContain('video_extend');
+  expect(await page.evaluate(()=>(window as any).fixture.calls)).toEqual([]);
+ }finally{await page.close();}
 },30000);

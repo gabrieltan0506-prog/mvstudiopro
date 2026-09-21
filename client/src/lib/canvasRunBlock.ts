@@ -1150,6 +1150,8 @@ export type Hailuo3CanvasRequestInput = {
   prompt: string;
   imageUrl?: string;
   imageUrls?: string[];
+  videoUrls?: string[];
+  audioUrls?: string[];
   aspectRatio: "9:16" | "16:9";
   duration?: number;
   resolution?: string;
@@ -1178,19 +1180,22 @@ export function prepareHailuo3CanvasOutbound(
         .filter(Boolean),
     ),
   );
+  const videoUrls = Array.from(new Set(input.videoUrls || []));
+  const audioUrls = Array.from(new Set(input.audioUrls || []));
   const duration = clampHailuoOpenRouterDuration(input.duration);
   const compile = tryCompileManhuaVideoPromptForOutbound({
     prompt: input.prompt,
     engine: "minimax-hailuo-3",
     durationSec: duration,
     imageRefCount: imageUrls.length,
-    videoRefCount: 0,
-    audioRefCount: 0,
+    videoRefCount: videoUrls.length,
+    audioRefCount: audioUrls.length,
   });
   const body: Record<string, unknown> = {
     prompt: compile.text,
     imageUrl: imageUrls[0] || undefined,
     imageUrls: imageUrls.length ? imageUrls : undefined,
+    videoUrls, audioUrls,
     aspectRatio: input.aspectRatio,
     duration,
     resolution: input.resolution,
@@ -1206,8 +1211,8 @@ export function prepareHailuo3CanvasOutbound(
     body,
     compile,
     durationSec: duration,
-    refCounts: { image: imageUrls.length, video: 0, audio: 0 },
-    refSlots: { imageUrls: [...imageUrls], videoUrls: [], audioUrls: [] },
+    refCounts: { image: imageUrls.length, video: videoUrls.length, audio: audioUrls.length },
+    refSlots: { imageUrls: [...imageUrls], videoUrls, audioUrls },
   };
 }
 
@@ -1227,6 +1232,8 @@ async function runHailuo3(
   aspectRatio: "9:16" | "16:9",
   opts?: {
     imageUrls?: string[];
+    videoUrls?: string[];
+    audioUrls?: string[];
     duration?: number;
     resolution?: string;
     /** 漫剧集号／段号：服务端据此走整集折算段价 */
@@ -1247,6 +1254,8 @@ async function runHailuo3(
     prompt,
     imageUrl,
     imageUrls: opts?.imageUrls,
+    videoUrls: opts?.videoUrls,
+    audioUrls: opts?.audioUrls,
     aspectRatio,
     duration: opts?.duration,
     resolution: opts?.resolution,
@@ -2865,10 +2874,10 @@ async function runCanvasBlockInner(
     // 逐段音轨守卫挪到段参考取舍之后：只有「本次真的会送母轨」才放行（见下方 segmentMasterEntry），
     // 母轨存在但超容量/编辑/延长/试片不送时仍按原规则拦，不让 cue 与母轨都静默丢掉
     const hasEnabledCues = Boolean(block.audioStudio?.cues.some(cue => cue.enabled !== false));
-    const cuesNeedReferenceMode = hasEnabledCues && (!useSeedance25 || (block.seedance25WorkMode && block.seedance25WorkMode !== "reference_to_video"));
+    const cuesNeedReferenceMode = hasEnabledCues && !useHailuoH3 && (!useSeedance25 || (block.seedance25WorkMode && block.seedance25WorkMode !== "reference_to_video"));
     // 母轨存在不等于当前引擎会发送音频；在任何付费准备器之前核对声音能力。
     const hasSegmentMaster = Boolean(isClip && block.manhuaSegmentRefs?.master && !runOptions?.pilotRun && block.seedance25WorkMode !== "video_extend");
-    const supportsAudioReferences = useSeedance25 || useWan30 ||
+    const supportsAudioReferences = useSeedance25 || useWan30 || useHailuoH3 ||
       ["seedance-2.0", "seedance-2.0-fast", "seedance-2.0-mini"].includes(videoModel);
     if ((hasEnabledCues || hasSegmentMaster) && !supportsAudioReferences) {
       throw new Error("当前生成档不支持声音参考，已采用的音轨或母轨不会被发送；请切换支持声音参考的生成档。本次未提交，原音频保留。");
@@ -3233,10 +3242,10 @@ async function runCanvasBlockInner(
         throw new Error("本段设置了留白或对白避让，请先在对白与配乐中预混母轨并采用当前版本，再出片；直接参考原音频不会执行这些混音设置。本次未提交。");
       }
 
-      const segmentCapSec = useWan30
+      const segmentCapSec = useWan30 || useHailuoH3
         ? MANHUA_SEGMENT_REFERENCE_CAP_SEC.wan30
         : MANHUA_SEGMENT_REFERENCE_CAP_SEC.seedance;
-      if(segmentRefs?.previs?.motionGuideZh && (useHappyHorse||useHailuoH3)){
+      if(segmentRefs?.previs?.motionGuideZh && useHappyHorse){
         throw new Error("当前生成档不支持动作白模视频参考；请切换支持视频参考的生成档，或明确移除本段白模。本次未提交。");
       }
       if(segmentRefs?.previs?.motionGuideZh && !manhuaSegmentReferenceFitsCap(segmentRefs.previs,segmentCapSec)){
@@ -3374,8 +3383,23 @@ async function runCanvasBlockInner(
         // 原样提交准备器产出的那一份，不再另构造
         url = await runHappyHorse(hhPrepared.body, hhGuard);
       } else if (useHailuoH3) {
-        // H3：OpenRouter 仅图参考（首帧 + input_references）；不传 Seedance 专属音/视频参考
+        // 纯图保留原通道；参考音视频由服务端按 H3 官方合同预检后走 EvoLink。
+        const h3MasterUrl = segmentMasterEntry ? String(segmentMasterEntry.gcsUri || segmentMasterEntry.url || "").trim() : undefined;
+        const h3Audio = compileCanvasAudioBindings({
+          studio: h3MasterUrl ? undefined : block.audioStudio,
+          existingAudioUrls: h3MasterUrl ? [h3MasterUrl] : [...(block.seedance25RefAudioUrls || []), ...seedanceAudioUrls],
+          durationSec: clipDuration,
+        });
+        const h3Videos = await refreshManhuaRegisteredClipUrls(block.manhuaSegmentRefs?.registered,
+          Array.from(new Set([...(segmentPrevisUrl ? [segmentPrevisUrl] : []), ...(block.seedance25RefVideoUrls || []), ...(!segmentPrevisUrl && continuityVideoUrl ? [continuityVideoUrl] : [])])));
+        const h3Prompt = [seedancePrompt, h3Audio.promptAppendix, formatManhuaSegmentReferenceGuideZh({
+          previsVideoIndex: segmentPrevisUrl ? 1 : 0,
+          motionGuideZh: segmentPrevisUrl ? segmentRefs?.previs?.motionGuideZh : undefined,
+          masterAudioIndex: h3MasterUrl ? h3Audio.audioUrls.indexOf(h3MasterUrl) + 1 : 0,
+        })].filter(Boolean).join("\n\n");
         const h3Opts = {
+          videoUrls: h3Videos,
+          audioUrls: h3Audio.audioUrls,
           imageUrls: httpsImages.length ? httpsImages : undefined,
           duration: clipDuration,
           resolution: block.videoResolution,
@@ -3387,7 +3411,7 @@ async function runCanvasBlockInner(
         } as const;
         const h3Guard = settleManhuaOutbound(
           prepareHailuo3CanvasOutbound({
-            prompt: seedancePrompt,
+            prompt: h3Prompt,
             imageUrl: seedStill,
             aspectRatio: ar,
             ...h3Opts,
@@ -3395,7 +3419,7 @@ async function runCanvasBlockInner(
           runOptions,
           { block, executingUserId: String(deps.userId || "") },
         );
-        url = await runHailuo3(seedancePrompt, seedStill, ar, {
+        url = await runHailuo3(h3Prompt, seedStill, ar, {
           ...h3Opts,
           beforeSubmit: h3Guard,
           onTaskId: (taskId) => deps.onVideoTaskCreated?.(block.id, { taskId, engine: videoModel }),

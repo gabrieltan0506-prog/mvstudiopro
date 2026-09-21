@@ -87,7 +87,7 @@ describe("三方言字段保全", () => {
     }
   });
 
-  it("H3:同字段自然语言保全;仅 Image N;无 @标记与 {}<>【】()", () => {
+  it("H3:三类参考自然语言保全;无 @标记与 {}<>【】()", () => {
     const out = compileEpisode(IR, "minimax-hailuo-3");
     expect(out.segments).toHaveLength(2);
     const all = out.segmentPrompts.join("\n");
@@ -99,10 +99,11 @@ describe("三方言字段保全", () => {
       expect(all).toContain(part);
     }
     expect(all).not.toMatch(/@图|@视频|@音频/);
-    expect(all).not.toMatch(/Audio \d|Video \d/);
+    expect(all).toMatch(/Audio \d/);
+    expect(all).toMatch(/Video \d/);
     expect(all).not.toMatch(/[{}<>【】()（）]/);
     expect(out.formatIssues.map((issue) => issue.kind)).toEqual(
-      expect.arrayContaining(["audio_refs", "video_refs"]),
+      expect.not.arrayContaining(["audio_refs", "video_refs"]),
     );
   });
 
@@ -148,12 +149,12 @@ describe("H3 图片参考上限(validateSegmentMediaRefs)", () => {
   it("compileEpisode 把超限问题带 segmentIndex 上抛进 formatIssues,并出 referencePlans", () => {
     const bad: EpisodeIR = {
       ...IR,
-      shots: [shot(1, 5, { mediaRefs: refs("video", 1, 3) })],
+      shots: [shot(1, 5, { mediaRefs: refs("video", 4, 3) })],
     };
     const out = compileEpisode(bad, "minimax-hailuo-3");
     expect(out.formatIssues.some((i) => i.kind === "video_refs" && i.segmentIndex === 1)).toBe(true);
-    expect(out.referencePlans[0]).toMatchObject({ segmentIndex: 1, mode: "h3_text_to_video" });
-    expect(out.referencePlans[0].bindings).toHaveLength(0);
+    expect(out.referencePlans[0]).toMatchObject({ segmentIndex: 1, mode: "h3_reference_to_video" });
+    expect(out.referencePlans[0].bindings).toHaveLength(4);
   });
 });
 
