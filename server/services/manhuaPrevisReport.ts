@@ -25,6 +25,17 @@ const point = z.tuple([
 ]);
 export const previsReportSchema = z
   .object({
+    piggyback: z.object({
+      carrierId: z.string().min(1),
+      passengerId: z.string().min(1),
+      samples: z.array(z.object({
+        frame: z.number().int().min(1).max(720),
+        supportError: z.number().finite().nonnegative().max(.005),
+        gripError: z.number().finite().nonnegative().max(.005),
+        passengerFootHeight: z.number().finite().min(.1),
+      }).strict()).min(48).max(720),
+      boundaryZh: z.string().min(1),
+    }).strict().optional(),
     frames: z.number().int().min(48).max(720),
     fps: z.literal(24),
     actors: z
@@ -201,13 +212,30 @@ export function validatePrevisReport(
     report.actors.length !== spec.actors.length
   )
     throw new Error("白模帧数或角色数量不一致");
+  if (spec.piggyback) {
+    const pair = report.piggyback;
+    if (!pair || pair.carrierId !== spec.piggyback.carrierId || pair.passengerId !== spec.piggyback.passengerId ||
+        pair.samples.length !== report.frames || pair.samples.some((row, i) => row.frame !== i+1))
+      throw new Error("背负逐帧接触证据缺失或人物不一致");
+  } else if (report.piggyback) throw new Error("出现了配置中没有的背负关系");
   report.actors.forEach((actor, index) => {
+    if ((actor.supportMode === "carried") !== (actor.id === spec.piggyback?.passengerId))
+      throw new Error("人物接地与被背负状态不一致");
     if (
       actor.id !== spec.actors[index].id ||
       actor.nameZh !== spec.actors[index].nameZh ||
       actor.offscreenFrames.some(frame => frame > report.frames)
     )
       throw new Error("白模关节检查未通过");
+    if (spec.actors[index].actions.some(action => action.kind === "limp_front_left")) {
+      const samples = z.array(z.object({
+        frame: z.number().int().positive(),
+        leftFrontHeight: z.number().finite().min(0.1),
+        supportKeys: z.array(z.enum(["0", "2", "3"])).min(2).max(3),
+      })).length(report.frames).parse(actor.limpSamples);
+      if (samples.some((sample, i) => sample.frame !== i+1 || new Set(sample.supportKeys).size !== sample.supportKeys.length))
+        throw new Error("左前腿跛行逐帧卸载证据不完整");
+    }
   });
   const expectedCreatures = spec.actors.filter(actor => actor.creature);
   const expectedModels = spec.actors.filter(actor => actor.riggedModel);

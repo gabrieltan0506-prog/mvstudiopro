@@ -1,7 +1,7 @@
 import { manhuaPrevisSpecSchema, type ManhuaPrevisStudio, type PrevisActionKind } from "@shared/manhuaPrevis";
 
 /** 仅收录现有白模渲染器已支持的基础动作；参数示意不代表渲染预览。 */
-export const PREVIS_LIBRARY_ACTIONS = ["idle", "guard", "strike", "bow", "walk"] as const;
+export const PREVIS_LIBRARY_ACTIONS = ["idle", "guard", "strike", "bow", "walk", "cough"] as const;
 
 /** 只在现有空档中添加动作，不改站位、不挤动旧动作或延长片长。 */
 export function addPrevisLibraryAction(
@@ -13,13 +13,14 @@ export function addPrevisLibraryAction(
   const actor = spec.actors.find(a => a.id === actorId);
   if (!actor || actor.shape !== "human") return { error: "请先选择一个人物角色。" };
   if (actor.actions.length >= 12) return { error: "这个角色已达到 12 个动作，请先整理已有动作。" };
+  const minimumDuration = kind === "cough" ? 1.2 : 0.5;
   let start = 0;
   let end = spec.durationSec;
-  for (const action of actor.actions) {
-    if (action.startSec - start >= 0.5) { end = action.startSec; break; }
+  for (const action of [...actor.actions].sort((a, b) => a.startSec - b.startSec)) {
+    if (action.startSec - start >= minimumDuration) { end = action.startSec; break; }
     start = Math.max(start, action.endSec);
   }
-  if (kind !== "walk" && end - start < 0.5) return { error: "片长内没有至少半秒的空档；请在专业参数中调整已有动作。" };
+  if (kind !== "walk" && end - start < minimumDuration) return { error: kind === "cough" ? "咳嗽需要至少 1.2 秒空档，才能完成掩口和缓气；请调整已有动作。" : "片长内没有至少半秒的空档；请在专业参数中调整已有动作。" };
   if (kind === "walk") {
     // 轨迹的静止边不能被前后移动合并跨过；只在真实移动边与动作空档的交集中排步态。
     const route = actor.motionRoute;

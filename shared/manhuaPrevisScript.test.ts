@@ -538,3 +538,12 @@ describe("草案动作词表是面板提示的唯一真源（0917 PR-D，扩到�
     expect(previsInitialDurationSec([{index:1,durationSec:31,actionZh:"原镜"}])).toBe(10);
   });
 });
+
+it('咳嗽落为可执行动作，背负混合镜不能只认咳嗽就算完成',()=>{
+ const result=compile('阿菁咳嗽。');
+ expect(result.errors).toEqual([]);expect(result.mappedShotIndices).toEqual([7]);
+ expect(result.spec?.actors[0].actions).toEqual([{kind:'cough',startSec:0,endSec:4}]);
+ expect(compile('阿菁背着家丁，家丁咳嗽。').mappedShotIndices).toEqual([]);
+ const short=compilePrevisScriptDraft({shots:[{index:1,durationSec:0.8,actionZh:'阿菁咳嗽。'}],characters,currentSpec:createManhuaPrevisStudio(2).spec});
+ expect(short.spec).toBeNull();
+});

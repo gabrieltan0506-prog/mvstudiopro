@@ -104,12 +104,24 @@ def position(actor, frame):
                    actor['start'][1]*(1-u)+actor['end'][1]*u, z))
 
 for _actor in spec['actors']:
+    for _action in _actor['actions']:
+        if _action['kind'] == 'limp_front_left' and (
+                _actor['shape'] != 'horse' or _actor.get('creature') or spec.get('waterEmergence') or
+                _action['startSec'] != 0 or _action['endSec'] != spec['durationSec']):
+            raise ValueError('左前腿跛行只支持整段基础四足；完整兽体未验收')
+        if _action['kind'] == 'limp_front_left':
+            _origin = position(_actor, 1)
+            if not any((position(_actor, f)-_origin).length > .001
+                       for f in range(2, scene.frame_end+1)):
+                raise ValueError('左前腿跛行需要实际移动路线，不能用原地抬腿代替')
     # 0917 审查：转身与 motionRoute 是两套朝向真源。schema 已拒绝同时给，但渲染层过去
     # 是「有轨迹就走轨迹」静默丢掉转身——白模不转，报告也不说，等于撒谎。这里硬失败。
     if _actor.get('motionRoute') and any(a['kind']=='turn' for a in _actor['actions']):
         raise ValueError('转身动作与分段运动轨迹不能同时给，朝向请写进轨迹节点')
     # 0917 三轮审查：带骨真模坐下会穿地（实测 1.7 米 −21.4 厘米 / 2.55 米 −32.2 厘米，
     # 见 test_previs_drama_rigged.py）。schema 已拒，渲染层再硬失败一次，旧存稿绕不过去。
+    if _actor.get('riggedModel') and any(a['kind']=='cough' for a in _actor['actions']):
+        raise ValueError('带骨角色咳嗽暂未通过掩口和收手位置验收，请使用基础白模预演')
     if _actor.get('riggedModel') and any(a['kind']=='sit' for a in _actor['actions']):
         raise ValueError('带骨角色暂不支持坐下：静止姿态差会让脚穿地（1.70 米约 21 厘米），待重定向补偿后开放（PR-F）；棍人角色可以坐下，带骨角色的看向/转身/行礼不受影响')
 
@@ -151,7 +163,7 @@ DRAMA_HOLD = ('sit','bow','gesture_point')
 
 def action_amounts(actor, t):
     values = {'wind':0.,'strike':0.,'guard':0.,'recoil':0.,
-              'walk':0.,'sit':0.,'bow':0.,'gesture_point':0.,'look':0.}
+              'walk':0.,'sit':0.,'bow':0.,'gesture_point':0.,'look':0.,'cough':0.,'cough_hold':0.}
     values['lookAt']=None
     for action in actor['actions']:
         if not action['startSec'] <= t <= action['endSec']: continue
@@ -164,6 +176,13 @@ def action_amounts(actor, t):
         elif action['kind'] in DRAMA_HOLD:
             # 起 20% 进姿势、末 25% 回中位，中间保持——坐下/行礼/指向都要「停得住」
             values[action['kind']] = smooth(u/.20)*(1-smooth((u-.75)/.25))
+        elif action['kind'] == 'cough':
+            # 掩口先于咳嗽，两次短收缩后留缓气；不移动支撑脚。
+            hold = smooth(u/.22)*(1-smooth((u-.76)/.24))
+            pulse = sum(smooth((u-start)/.06)*(1-smooth((u-start-.06)/.12))
+                        for start in (.28,.52))
+            values['cough_hold'] = hold
+            values['cough'] = hold*(.15+.85*pulse)
         elif action['kind'] == 'walk':
             values['walk'] = smooth(u/.15)*(1-smooth((u-.85)/.15))
         elif action['kind'] == 'look':
@@ -244,9 +263,11 @@ def points(actor, frame, contacts):
         pelvis=Vector((0,0,hip_z-lower))
         # 行礼：脊柱前倾，胸口前移下沉；坐下时上身略前倾保持重心
         bow=amounts['bow']
-        chest=pelvis+Vector((.10*amounts['strike']-.08*amounts['recoil']+.30*bow+.06*amounts['sit'],0,
-                             .43-.11*bow))
-        neck=chest+Vector((.05*bow,0,.14-.02*bow))
+        cough=amounts['cough']
+        cough_hold=amounts['cough_hold']
+        chest=pelvis+Vector((.10*amounts['strike']-.08*amounts['recoil']+.30*bow+.06*amounts['sit']+.13*cough,0,
+                             .43-.11*bow-.025*cough))
+        neck=chest+Vector((.05*bow+.025*cough,0,.14-.02*bow-.006*cough))
         # 看向：上身与头朝目标偏转（棍人骨骼只有端点，纯头部偏航不可见，必须连上身一起转）
         look=amounts['look']
         look_yaw=0.
@@ -269,7 +290,7 @@ def points(actor, frame, contacts):
         p['pelvis']=(pelvis-Vector((0,0,.08)),pelvis)
         p['spine']=(pelvis,chest)
         p['neck']=(chest,neck)
-        head_dir=Vector((math.cos(look_yaw),math.sin(look_yaw),0))*(.09*look+.06*bow)
+        head_dir=Vector((math.cos(look_yaw),math.sin(look_yaw),0))*(.09*look+.06*bow+.03*cough)
         p['head']=(neck,neck+head_dir+Vector((-.045*amounts['recoil'],0,.28+.10*math.sin(look_pitch))))
         for s in (-1,1):
             # 上身偏转：肩线跟着看向的偏航一起转，真模重定向时才看得出「转过去看」
@@ -284,6 +305,9 @@ def points(actor, frame, contacts):
             hand=shoulder+Vector((x+.18*amounts['guard']+swing+.42*point+.10*bow,s*.13,
                                   -.34+.35*amounts['wind']+.31*amounts['strike']+.50*amounts['guard']+.40*amounts['recoil']
                                   +.30*point-.06*abs(swing)))
+            if s == -1 and cough_hold > 0:
+                # 前手靠近口部而不穿进头部；动作结束恢复原手位。
+                hand = hand.lerp(neck+Vector((.20,-.04,.09)), cough_hold)
             elbow,hand=ik(shoulder,hand,.29,.29,(0,s,-.4))
             p['upper_arm'+str(s)]=(shoulder,elbow)
             p['forearm'+str(s)]=(elbow,hand)
@@ -297,13 +321,15 @@ def foot_offsets(actor):
 
 def plan_contacts(actor):
     offsets=foot_offsets(actor)
+    limp=any(a['kind']=='limp_front_left' for a in actor['actions'])
     if actor['id'] in water_events:
         return ({f:{key:transform(actor,f) @ Vector((*offset,.065)) for key,offset in offsets.items()} for f in range(1,scene.frame_end+1)},
                 {f:[] for f in range(1,scene.frame_end+1)})
     anchors={key:transform(actor,1) @ Vector((*offset,.065)) for key,offset in offsets.items()}
     result={}
     stance={}
-    keys=list(offsets)
+    # +X前、+Y左；key1是左前腿。伤腿不进入换脚或承重列表。
+    keys=[key for key in offsets if not (limp and key=='1')]
     for start in range(1,scene.frame_end+1,6):
         end=min(scene.frame_end,start+5)
         chosen=keys[((start-1)//6)%len(keys)]
@@ -315,6 +341,8 @@ def plan_contacts(actor):
             lift=before.lerp(goal,smooth(u)) if moving else before.copy()
             if moving: lift.z+=.09*math.sin(math.pi*u)
             result[f]={key:(lift.copy() if key==chosen else p.copy()) for key,p in anchors.items()}
+            if limp:
+                result[f]['1']=transform(actor,f) @ Vector((.35,.25,.48))
             stance[f]=[key for key in keys if key!=chosen or not moving]
         if moving: anchors[chosen]=goal
     return result,stance
@@ -336,11 +364,15 @@ for _actor in spec['actors']:
         _pre_contacts,_pre_stance=plan_contacts(_neutral)
         water_head_heights[_actor['id']]=float(points(_neutral,1,_pre_contacts[1])['head'][1].z)
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from previs_piggyback import validate_piggyback, apply_piggyback, measure_piggyback
+piggyback=validate_piggyback(spec)
+passenger_id=piggyback['passengerId'] if piggyback else None
 events=[]
 interaction_poses={}
 sword_handles=[]
 has_swords=any(a.get('weapon') for a in spec['actors'])
-if spec.get('interactions') or has_swords:
+if spec.get('interactions') or has_swords or piggyback:
     # Blender --python 不保证脚本所在目录位于sys.path；只添加服务器固定目录。
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from previs_interaction import validate_interactions, apply_interactions, measure_interactions
@@ -353,6 +385,7 @@ if spec.get('interactions') or has_swords:
         transforms={a['id']:transform(a,frame) for a in spec['actors']}
         apply_interactions(events,frame,poses,transforms,ik)
         if has_swords: apply_swords(spec,frame,poses,transforms,ik)
+        if piggyback: apply_piggyback(piggyback,poses)
         interaction_poses[frame]=poses
 
 rigs=[]
@@ -406,14 +439,14 @@ for index,actor in enumerate(spec['actors']):
         if actor.get('motionRoute') and frame>1:
             rig.rotation_euler.make_compatible(previous_rotation)
         rig.keyframe_insert('location',frame=frame);rig.keyframe_insert('rotation_euler',frame=frame)
-        frame_points=interaction_poses[frame][actor['id']] if events or has_swords else points(actor,frame,contacts[frame])
+        frame_points=interaction_poses[frame][actor['id']] if events or has_swords or piggyback else points(actor,frame,contacts[frame])
         for name,(a,b) in frame_points.items():
             pb=rig.pose.bones[name]
             d=b-a
             pb.rotation_mode='QUATERNION'
             pb.matrix=Matrix.Translation(a) @ d.to_track_quat('Y','Z').to_matrix().to_4x4() @ Matrix.Diagonal((1,d.length/pb.bone.length,1,1))
             for prop in ('location','rotation_quaternion','scale'):pb.keyframe_insert(prop,frame=frame)
-            if name.startswith('lower_leg'):
+            if name.startswith('lower_leg') and actor['id'] != passenger_id:
                 key=name[len('lower_leg'):]
                 max_error=max(max_error,(rig.matrix_world @ b-contacts[frame][key]).length)
     if max_error>.005: raise ValueError('关节落点不可达，请缩短路线或延长移动区间')
@@ -434,7 +467,7 @@ if any(actor.get('creature') for actor in spec['actors']):
     for actor,rig,contacts,_stance,_error in rigs:
         if actor.get('creature'):
             handle=build_creature(actor,rig,scene,lambda f,a=actor,c=contacts:
-                interaction_poses[f][a['id']] if events or has_swords else points(a,f,c[f]))
+                interaction_poses[f][a['id']] if events or has_swords or piggyback else points(a,f,c[f]))
             creatures.append(handle)
 if any(actor.get('riggedModel') for actor in spec['actors']):
     from previs_rigged_model import inspect_glb, import_rigged_model, retarget_from_source, apply_performance
@@ -637,19 +670,28 @@ if report['portraitFraming']=='auto':
 for actor,rig,contacts,stance,error in rigs:
     offscreen=[]
     drift=0.
+    limp_samples=[]
     previous={}
     for frame in range(1,scene.frame_end+1):
         scene.frame_set(frame)
         bpy.context.view_layer.update()
         for key in foot_offsets(actor):
             actual=rig.matrix_world @ rig.pose.bones['lower_leg'+key].tail
-            if key in stance[frame] and key in previous and previous[key][0]==frame-1 and previous[key][1]:
+            if actor['id'] != passenger_id and key in stance[frame] and key in previous and previous[key][0]==frame-1 and previous[key][1]:
                 drift=max(drift,(actual-previous[key][2]).length)
             previous[key]=(frame,key in stance[frame],actual.copy())
+        if any(a['kind']=='limp_front_left' for a in actor['actions']):
+            injured=rig.matrix_world @ rig.pose.bones['lower_leg1'].tail
+            limp_samples.append({'frame':frame,'leftFrontHeight':float(injured.z),'supportKeys':stance[frame]})
         names=['head']+['foot'+key for key in foot_offsets(actor)]
         if any(not (.02 <= (p:=world_to_camera_view(scene,camera,rig.matrix_world @ rig.pose.bones[name].tail)).x <= .98 and .02 <= p.y <= .98 and p.z>0) for name in names): offscreen.append(frame)
     report['actors'].append({'id':actor['id'],'nameZh':actor['nameZh'],'bones':len(rig.pose.bones),'contactError':error,'stanceDrift':drift,'offscreenFrames':offscreen})
+    if actor['id'] == passenger_id: report['actors'][-1]['supportMode']='carried'
+    if limp_samples: report['actors'][-1]['limpSamples']=limp_samples
     if offscreen:report['warnings'].append(actor['nameZh']+'存在头或脚出画，请人工审查镜头覆盖')
+if piggyback:
+    report['piggyback']=measure_piggyback(piggyback,rigs,scene,bpy.context.view_layer.update)
+    report['warnings'].append(report['piggyback']['boundaryZh'])
 if events:
     report['interactions']=measure_interactions(events,rigs,scene,bpy.context.view_layer.update)
 if has_swords:
@@ -698,6 +740,8 @@ if water_handles and (report['waterEmergence']['overlaps'] or report['waterEmerg
     raise ValueError('独立浪花存在重叠或出画，请调整站位和机位')
 if any(max(s['gripError'],s['handEndError'])>.005 for w in report.get('weapons',[]) for s in w['samples']):
     raise ValueError('持剑绑定误差未过验收')
+if piggyback and any(row['supportError']>.005 or row['gripError']>.005 or row['passengerFootHeight']<.1 for row in report['piggyback']['samples']):
+    raise ValueError('背负托腿、抱肩或悬空脚未达到接触要求')
 if any(row['contactError']>.005 for row in report.get('interactions',[])):
     raise ValueError('双人互动实际接触误差未过验收')
 if any(actor['stanceDrift']>.005 for actor in report['actors']):

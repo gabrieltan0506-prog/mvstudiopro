@@ -53,7 +53,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await browser?.close();
 });
-it.each(["idle", "guard", "strike", "bow"] as const)(
+it.each(["idle", "guard", "strike", "bow", "cough"] as const)(
   "真实动作库 %s 播放暂停、48帧投影与添加保存拒绝契约",
   async kind => {
     const page = await browser.newPage();

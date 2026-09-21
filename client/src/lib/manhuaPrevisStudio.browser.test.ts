@@ -1523,3 +1523,46 @@ it("空机位草稿保留站位编辑并提示补机位", async()=>{
  expect(await page.evaluate(()=>(window as any).fixture.submits.length)).toBe(0);
  }finally{await page.close();}
 });
+
+it("背负关系保存跟随路线，保存失败保留原稿，删除乘员清除关系且不生成", async () => {
+  const page = await open();
+  try {
+    await page.evaluate(() => {
+      const f = (window as any).fixture;
+      const block = structuredClone(f.block);
+      const first = block.previsStudio.spec.actors[0];
+      block.previsStudio.spec.actors = [first, { ...structuredClone(first), id: "carried-person", nameZh: "乘员", start: [1, 1], end: [2, 1] }];
+      f.setBlock(block);
+      f.rejectSave = true;
+    });
+    await settle(page);
+    const pair = await page.evaluate(() => {
+      const actors = (window as any).fixture.block.previsStudio.spec.actors;
+      return JSON.stringify([actors[0].id, actors[1].id]);
+    });
+    await page.select('[aria-label="背负人物关系"]', pair);
+    await settle(page);
+    expect(await page.evaluate(() => (window as any).fixture.block.previsStudio.spec.piggyback)).toBeUndefined();
+    await page.evaluate(() => { (window as any).fixture.rejectSave = false; });
+    await page.select('[aria-label="背负人物关系"]', pair);
+    await settle(page);
+    const saved = await page.evaluate(() => JSON.parse(JSON.stringify((window as any).fixture.block.previsStudio)));
+    expect(saved.spec.piggyback.passengerId).toBe("carried-person");
+    expect(saved.spec.actors[1].start).toEqual(saved.spec.actors[0].start);
+    expect(saved.spec.actors[1].end).toEqual(saved.spec.actors[0].end);
+    expect(saved.spec.actors[1].actions).toEqual([{ kind: "idle", startSec: 0, endSec: 10 }]);
+    await page.evaluate(() => {
+      const buttons = Array.from(document.querySelectorAll("button")).filter(b => b.textContent?.trim() === "移除角色");
+      buttons[1].click();
+    });
+    await settle(page);
+    const result = await page.evaluate(() => ({
+      pair: (window as any).fixture.block.previsStudio.spec.piggyback,
+      submits: (window as any).fixture.submits.length,
+      old: (window as any).fixture.block.manhuaSegmentRefs.previs.url,
+    }));
+    expect(result.pair).toBeUndefined();
+    expect(result.submits).toBe(0);
+    expect(result.old).toBe("https://offline.invalid/old.mp4");
+  } finally { await page.close(); }
+});
