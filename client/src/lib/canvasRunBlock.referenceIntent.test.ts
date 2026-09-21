@@ -438,6 +438,7 @@ describe("Seedance 2.5：重跑不继承本节点旧成片", () => {
 
   it("video_extend 仍以本节点旧成片为源片（延长依赖它）", async () => {
     const requests = offlineRequests("seedanceI2V");
+    const staleWhiteModel = "https://test.invalid/old-white-model.mp4";
     await runCanvasBlock(
       { userRole: "admin", optimizeCopy: async () => "" },
       {
@@ -448,10 +449,11 @@ describe("Seedance 2.5：重跑不继承本节点旧成片", () => {
         prompt: `【第1段·10s】${action}`,
         status: "done",
         outputUrl: stale,
+        seedance25RefVideoUrls: [staleWhiteModel],
       }
     );
     expect(requests).toHaveLength(1);
     expect(requests[0].workMode).toBe("video_extend");
-    expect(requests[0].videoUrls).toEqual([stale]);
+    expect(requests[0].videoUrls).toEqual([stale, staleWhiteModel]);
   });
 });

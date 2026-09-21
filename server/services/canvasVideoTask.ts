@@ -66,6 +66,10 @@ import { getGcsBucketName, signGcsObjectPathV4ReadUrl } from "./gcs.js";
 import { verifyCanvasMediaOwnership } from "./canvasMediaOwnership.js";
 import { resolveCanvasVideoAudioUrls } from "./canvasVideoAudioReference.js";
 import {
+  normalizePostProdObjectName,
+  userUploadsPrefix,
+} from "./postProdMediaSource.js";
+import {
   SEEDANCE_EVOLINK_CONTENT_FILTER,
   type SeedanceEvolinkMode,
 } from "../../shared/seedanceEvolinkModels.js";
@@ -409,10 +413,55 @@ function seedance25RunInput(task: CanvasVideoTaskRecord): EvolinkSeedanceRunInpu
   };
 }
 
+type ResolvedSeedanceTaskReferences = Pick<
+  EvolinkSeedanceRunInput,
+  "imageUrl" | "imageUrls" | "videoUrls" | "audioUrls"
+>;
+
+/**
+ * Seedance 的供应商不能读取画布登录链，也不能读取已经过期的 GCS 签名链。
+ * 任务记录仍保留原始稳定身份；只在提交前按当前用户的权威来源重签。
+ */
+async function resolveSeedanceTaskReferences(
+  task: CanvasVideoTaskRecord,
+): Promise<ResolvedSeedanceTaskReferences> {
+  const rawReferences = [
+    task.imageUrl,
+    ...(task.imageUrls || []),
+    ...(task.videoUrls || []),
+  ].filter((url): url is string => Boolean(url));
+  const ownedVideoObjects = rawReferences.some((url) =>
+    Boolean(extractSystemGcsObjectPath(url)),
+  )
+    ? await loadSucceededCanvasVideoOutputObjects(task.userId)
+    : new Set<string>();
+  const resolve = (url: string) =>
+    resolveProtectedTaskMediaUrl(task, url, ownedVideoObjects);
+  return {
+    imageUrl: task.imageUrl ? await resolve(task.imageUrl) : undefined,
+    imageUrls: await Promise.all((task.imageUrls || []).map(resolve)),
+    videoUrls: await Promise.all((task.videoUrls || []).map(resolve)),
+    audioUrls: await resolveCanvasVideoAudioUrls(task.audioUrls, task.userId),
+  };
+}
+
+async function resolveTaskVideoReferences(
+  task: CanvasVideoTaskRecord,
+  urls: readonly string[],
+): Promise<string[]> {
+  const ownedVideoObjects = urls.some((url) => Boolean(extractSystemGcsObjectPath(url)))
+    ? await loadSucceededCanvasVideoOutputObjects(task.userId)
+    : new Set<string>();
+  return Promise.all(
+    urls.map((url) => resolveProtectedTaskMediaUrl(task, url, ownedVideoObjects)),
+  );
+}
+
 async function submitSeedance25Evolink(task: CanvasVideoTaskRecord): Promise<void> {
+  const references = await resolveSeedanceTaskReferences(task);
   const submitted = await submitEvolinkSeedanceVideo({
     ...seedance25RunInput(task),
-    audioUrls: await resolveCanvasVideoAudioUrls(task.audioUrls, task.userId),
+    ...references,
   });
   task.engine = "seedance25-evolink";
   task.evolinkTaskId = submitted.evolinkTaskId;
@@ -448,12 +497,10 @@ async function submitSeedanceEvolinkVersioned(
   task: CanvasVideoTaskRecord,
   version: "2.0" | "2.0-fast" | "2.0-mini",
 ): Promise<void> {
+  const references = await resolveSeedanceTaskReferences(task);
   const submitted = await submitEvolinkSeedanceVideo({
     prompt: task.prompt,
-    imageUrl: task.imageUrl,
-    imageUrls: task.imageUrls,
-    videoUrls: task.videoUrls,
-    audioUrls: task.audioUrls,
+    ...references,
     quality: task.resolution,
     aspectRatio: task.aspectRatio,
     duration: task.duration,
@@ -476,14 +523,11 @@ async function submitSeedanceEvolinkVersioned(
 
 async function submitSeedance25Byteplus(task: CanvasVideoTaskRecord): Promise<void> {
   // 素材归属失败不是供应商失败，必须在回落捕获范围之外拒绝。
-  const audioUrls = await resolveCanvasVideoAudioUrls(task.audioUrls, task.userId);
+  const references = await resolveSeedanceTaskReferences(task);
   try {
     const submitted = await submitByteplusSeedance25Video({
       prompt: task.prompt,
-      imageUrl: task.imageUrl,
-      imageUrls: task.imageUrls,
-      videoUrls: task.videoUrls,
-      audioUrls,
+      ...references,
       aspectRatio: task.aspectRatio,
       duration: task.duration,
       resolution: task.resolution,
@@ -608,14 +652,96 @@ async function succeedTask(
 async function resolveProtectedTaskMediaUrl(
   task: CanvasVideoTaskRecord,
   u: string,
+  ownedVideoObjects?: ReadonlySet<string>,
 ): Promise<string> {
-  const m = String(u || "").match(/^(?:https?:\/\/[^/]+)?\/api\/canvas-media\/(.+)$/i);
-  if (!m) return u;
-  const objectPath = decodeURIComponent(m[1]);
-  if (!(await verifyCanvasMediaOwnership(task.userId, objectPath))) {
-    throw new Error("参考素材归属校验未通过,已拒绝提交(请用自己画布里的素材)");
+  const source = String(u || "").trim();
+  const canvasMedia = source.match(
+    /^(?:https?:\/\/[^/]+)?\/api\/canvas-media\/(.+)$/i,
+  );
+  if (canvasMedia) {
+    const objectPath = decodeURIComponent(canvasMedia[1].split("?")[0]);
+    if (!(await verifyCanvasMediaOwnership(task.userId, objectPath))) {
+      throw new Error("参考素材归属校验未通过,已拒绝提交(请用自己画布里的素材)");
+    }
+    return signGcsObjectPathV4ReadUrl(
+      getGcsBucketName(),
+      objectPath,
+      24 * 3600,
+    );
   }
-  return signGcsObjectPathV4ReadUrl(getGcsBucketName(), objectPath, 24 * 3600);
+
+  const objectPath = extractSystemGcsObjectPath(source);
+  if (!objectPath) {
+    const encodedBucket = getGcsBucketName().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (
+      new RegExp(`^gs://${encodedBucket}/`, "i").test(source) ||
+      new RegExp(`^https://storage\\.googleapis\\.com/${encodedBucket}/`, "i").test(source)
+    ) {
+      throw new Error("参考素材对象路径无效,已在提交前停止生成");
+    }
+    if (/^https?:\/\//i.test(source)) return source;
+    throw new Error("视频模型参考素材必须使用可读取的 URL,已在提交前停止生成");
+  }
+  const userId = String(task.userId);
+  const isOwnUpload = objectPath.startsWith(userUploadsPrefix(userId));
+  const isOwnVideoOutput = ownedVideoObjects?.has(objectPath) === true;
+  const isOwnedGenerated =
+    !isOwnUpload && !isOwnVideoOutput
+      ? await verifyCanvasMediaOwnership(task.userId, objectPath).catch(() => false)
+      : false;
+  if (!isOwnUpload && !isOwnedGenerated && !isOwnVideoOutput) {
+    throw new Error("参考素材尚未登记到当前账号,已在提交前停止生成");
+  }
+  return signGcsObjectPathV4ReadUrl(
+    getGcsBucketName(),
+    objectPath,
+    24 * 3600,
+  );
+}
+
+function extractSystemGcsObjectPath(source: string): string | null {
+  const bucket = getGcsBucketName();
+  const gs = source.match(/^gs:\/\/([^/]+)\/(.+)$/i);
+  if (gs) {
+    if (gs[1] !== bucket) return null;
+    return normalizePostProdObjectName(gs[2]);
+  }
+  const https = source.match(
+    /^https:\/\/storage\.googleapis\.com\/([^/]+)\/([^?]+)(?:\?.*)?$/i,
+  );
+  if (!https || https[1] !== bucket) return null;
+  try {
+    return normalizePostProdObjectName(decodeURIComponent(https[2]));
+  } catch {
+    return null;
+  }
+}
+
+async function loadSucceededCanvasVideoOutputObjects(
+  userId: number,
+): Promise<ReadonlySet<string>> {
+  const dir = await getTaskDir();
+  const objects = new Set<string>();
+  let names: string[] = [];
+  try {
+    names = await fs.readdir(dir);
+  } catch {
+    return objects;
+  }
+  for (const name of names) {
+    if (!name.endsWith(".json") || name.startsWith(".")) continue;
+    const prior = await readTask(name.slice(0, -5));
+    if (
+      prior?.status !== "succeeded" ||
+      prior.userId !== userId ||
+      !prior.videoUrl
+    ) {
+      continue;
+    }
+    const objectPath = extractSystemGcsObjectPath(prior.videoUrl);
+    if (objectPath) objects.add(objectPath);
+  }
+  return objects;
 }
 
 async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
@@ -661,7 +787,7 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
     const input = {
       prompt: task.prompt,
       imageUrls: await Promise.all(Array.from(new Set([task.imageUrl, ...(task.imageUrls || [])].filter(Boolean) as string[])).map(u => resolveProtectedTaskMediaUrl(task, u))),
-      videoUrls: await Promise.all((task.videoUrls || []).map(u => resolveProtectedTaskMediaUrl(task, u))),
+      videoUrls: await resolveTaskVideoReferences(task, task.videoUrls || []),
       audioUrls: await resolveCanvasVideoAudioUrls(task.audioUrls, task.userId),
       duration: task.duration, resolution: task.resolution || "768p", aspectRatio: task.aspectRatio || "16:9",
     };
@@ -845,7 +971,7 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
         prompt: task.prompt,
         imageUrls: images,
         audioUrls: await Promise.all((task.audioUrls || []).map((u) => resolveProtectedMediaUrl(u))),
-        videoUrls: await Promise.all((task.videoUrls || []).map((u) => resolveProtectedMediaUrl(u))),
+        videoUrls: await resolveTaskVideoReferences(task, task.videoUrls || []),
         duration: task.duration,
         resolution: task.resolution || "720p",
         aspectRatio: task.aspectRatio,

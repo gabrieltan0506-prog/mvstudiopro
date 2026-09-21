@@ -20,6 +20,8 @@ vi.mock("./gcs.js", async importOriginal => ({
   ...await importOriginal<typeof import("./gcs.js")>(),
   getGcsBucketName: () => "test-bucket",
   signGsUriV4ReadUrl: (uri: string) => `https://storage.googleapis.com/${uri.slice(5)}?signature=test-${++h.signed}`,
+  signGcsObjectPathV4ReadUrl: (bucket: string, objectPath: string) =>
+    `https://storage.googleapis.com/${bucket}/${objectPath}?signature=test-path-${++h.signed}`,
 }));
 vi.mock("../db", () => ({ getDb: async () => null }));
 vi.mock("./postProdMediaSource.js", async importOriginal => {
@@ -146,6 +148,55 @@ describe("真实任务写盘到供应商请求的音频交接", () => {
     expect(task.audioUrls).toEqual(["gs://test-bucket/post-prod/7/dialogue.wav"]);
     expect(h.openrouter).not.toHaveBeenCalled();
     expect(h.evolink.mock.calls[0][0].body.audio_urls[0]).toContain("signature=test-2");
+  });
+  it("延长模式把本人旧成片的过期签名换成供应商可读新链", async () => {
+    const old = "https://storage.googleapis.com/test-bucket/growth-camp/videos/old.mp4?X-Goog-Date=20260901T000000Z&X-Goog-Expires=3600&X-Goog-Signature=expired";
+    await fs.writeFile(path.join(dir, "cv_prior.json"), JSON.stringify({
+      taskId: "cv_prior", userId: 7, status: "succeeded", creditsCharged: 0,
+      engine: "seedance25-evolink", label: "旧成片", prompt: "旧", duration: 10,
+      videoUrl: old, createdAt: "2026-09-01T00:00:00.000Z", updatedAt: "2026-09-01T00:00:00.000Z",
+    }));
+    const { createCanvasVideoTask } = await import("./canvasVideoTask");
+    const created = await createCanvasVideoTask({
+      userId: 7, creditsCharged: 0, engine: "seedance25-evolink", label: "续片",
+      prompt: "正向延长十秒", videoUrls: [old], duration: 10, resolution: "720p",
+      workMode: "video_extend",
+    });
+    await vi.waitFor(() => expect(h.evolink).toHaveBeenCalledTimes(1));
+    expect(h.evolink.mock.calls[0][0].body.video_urls).toEqual([
+      "https://storage.googleapis.com/test-bucket/growth-camp/videos/old.mp4?signature=test-path-1",
+    ]);
+    const saved = JSON.parse(await fs.readFile(path.join(dir, `${created.taskId}.json`), "utf8"));
+    expect(saved.videoUrls).toEqual([old]);
+  });
+  it("未登记的同桶视频在供应商调用前拒绝", async () => {
+    const stolen = "https://storage.googleapis.com/test-bucket/growth-camp/videos/stolen.mp4?X-Goog-Signature=forged";
+    const { createCanvasVideoTask } = await import("./canvasVideoTask");
+    const created = await createCanvasVideoTask({
+      userId: 7, creditsCharged: 0, engine: "seedance25-evolink", label: "越权续片",
+      prompt: "正向延长十秒", videoUrls: [stolen], duration: 10, resolution: "720p",
+      workMode: "video_extend",
+    });
+    await vi.waitFor(async () => {
+      const saved = JSON.parse(await fs.readFile(path.join(dir, `${created.taskId}.json`), "utf8"));
+      expect(saved.status).toBe("failed");
+      expect(saved.error).toMatch(/尚未登记/);
+    });
+    expect(h.evolink).not.toHaveBeenCalled();
+  });
+  it("base64视频在供应商调用前拒绝", async () => {
+    const { createCanvasVideoTask } = await import("./canvasVideoTask");
+    const created = await createCanvasVideoTask({
+      userId: 7, creditsCharged: 0, engine: "seedance25-evolink", label: "错误视频输入",
+      prompt: "正向延长十秒", videoUrls: ["data:video/mp4;base64,AAAA"], duration: 10,
+      resolution: "720p", workMode: "video_extend",
+    });
+    await vi.waitFor(async () => {
+      const saved = JSON.parse(await fs.readFile(path.join(dir, `${created.taskId}.json`), "utf8"));
+      expect(saved.status).toBe("failed");
+      expect(saved.error).toMatch(/必须使用可读取的 URL/);
+    });
+    expect(h.evolink).not.toHaveBeenCalled();
   });
   it("worker拒绝越权素材，三个供应商均零提交", async () => {
     h.byteplusFailure = true; h.openrouterEnabled = true;

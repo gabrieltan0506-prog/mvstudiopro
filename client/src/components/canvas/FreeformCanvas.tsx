@@ -175,6 +175,18 @@ export function toggleCanvasVideoReferenceSelection(
   return [...current, url];
 }
 
+/** “当前成片再延长”只认当前结果为主片，主动清掉旧白模与旧勾选视频。 */
+export function currentCanvasOutputExtendPatch(outputUrlRaw: unknown): Pick<
+  CanvasBlock,
+  "seedance25WorkMode" | "seedance25RefVideoUrls"
+> {
+  const outputUrl = String(outputUrlRaw || "").trim();
+  return {
+    seedance25WorkMode: "video_extend",
+    seedance25RefVideoUrls: outputUrl ? [outputUrl] : [],
+  };
+}
+
 type CanvasWanVideoReferencePickerProps = {
   uploadedAssets: readonly CanvasUploadedAsset[];
   selectedUrls: readonly string[];
@@ -3311,15 +3323,10 @@ export default function FreeformCanvas({
                                   <button
                                     type="button"
                                     onClick={() =>
-                                      patchOne(block.id, {
-                                        seedance25WorkMode: "video_extend",
-                                        seedance25RefVideoUrls: Array.from(
-                                          new Set([
-                                            ...(block.seedance25RefVideoUrls || []),
-                                            block.outputUrl!,
-                                          ]),
-                                        ).slice(0, 10),
-                                      })
+                                      patchOne(
+                                        block.id,
+                                        currentCanvasOutputExtendPatch(block.outputUrl),
+                                      )
                                     }
                                     className="w-full rounded-lg border border-white/15 bg-white/[0.04] px-2 py-1.5 text-[11px] text-white/80 hover:bg-white/[0.08]"
                                   >

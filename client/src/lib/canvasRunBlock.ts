@@ -3493,7 +3493,9 @@ async function runCanvasBlockInner(
           looksLikeVideo(block.outputUrl)
             ? [block.outputUrl]
             : [];
-        const candidateVideoUrls = Array.from(new Set([...userVideoUrls, ...ownOutputAsSource]));
+        // 编辑/延长的本节点成片永远是主片（@视频1）；旧草稿里遗留的白模或
+        // 手工参考只能排在后面，不能把供应商的“延长对象”悄悄换掉。
+        const candidateVideoUrls = Array.from(new Set([...ownOutputAsSource, ...userVideoUrls]));
         const segmentGuide = formatManhuaSegmentReferenceGuideZh({
           previsVideoIndex: segmentPrevisUrl ? candidateVideoUrls.indexOf(segmentPrevisUrl) + 1 : 0,
           motionGuideZh: segmentPrevisUrl ? segmentRefs?.previs?.motionGuideZh : undefined,
