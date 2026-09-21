@@ -3034,6 +3034,7 @@ export default function ManhuaScriptWorkbench({
   const nextCta = useMemo(
     () =>
       resolveManhuaWorkbenchNextCta({
+        activePhase,
         outlineComplete,
         assetsComplete,
         episodeSheetCount: episodeSheetGallery.length,
@@ -3045,6 +3046,7 @@ export default function ManhuaScriptWorkbench({
         writerPackReady: Boolean(writerPackReady),
       }),
     [
+      activePhase,
       outlineComplete,
       assetsComplete,
       episodeSheetGallery.length,
@@ -3834,6 +3836,10 @@ export default function ManhuaScriptWorkbench({
   };
 
   const runNextCta = () => {
+    if (nextCta.kind === "enter_assets") {
+      selectPhase("assets");
+      return;
+    }
     if (nextCta.kind === "busy") {
       onStopFactory?.();
       return;
