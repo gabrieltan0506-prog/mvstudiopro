@@ -9167,7 +9167,7 @@ export default function OmniCanvas() {
                   setFactoryProgress(keyartProgressZh().text);
                   return;
                 }
-                setFactoryProgress(`第${episodeIndex}集 · 已完成 · ${label}`);
+                setFactoryProgress(opts?.pilotRun ? `第${episodeIndex}集 · 试片已生成，待审阅` : `第${episodeIndex}集 · 已完成 · ${label}`);
               },
               onStageError: (id, label, message) => {
                 if (label === MANHUA_FACTORY_STAGE_LABEL_ZH.keyart || id.startsWith("keyart-")) {
@@ -9286,7 +9286,7 @@ export default function OmniCanvas() {
             ms: Date.now() - runStartedAt,
             detail: `completed=${completed} skipped=${skipped}`,
           });
-          toast.success(`漫剧工厂完成：新跑 ${completed}` + (skipped ? ` · 跳过 ${skipped}` : ""));
+          toast.success(opts?.pilotRun ? "试片已生成，请审阅；正片保持不变" : `本次生成完成：新跑 ${completed}` + (skipped ? ` · 跳过 ${skipped}` : ""));
         }
         setFactoryProgress("");
       } catch (e: unknown) {
