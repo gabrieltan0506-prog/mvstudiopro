@@ -2453,7 +2453,7 @@ async function runCanvasBlockInner(
   }
   if (block.kind === "music") throw new Error("请在音乐节点中选择生成音乐、分镜或合成阶段");
   if (runOptions?.pilotRun) {
-    if (runOptions.pilotDurationSec === 5 && block.videoModel !== "seedance-2.5") throw new Error("当前生成档请使用10秒试片");
+    if (runOptions.pilotDurationSec === 5 && block.videoModel !== "seedance-2.5") throw new Error("当前视频模型不支持5秒试片，请更换支持5秒试片的视频模型。");
     if (
       block.kind !== "video" || !block.id.startsWith("clip-") ||
       block.seedance25WorkMode === "video_edit" || block.seedance25WorkMode === "video_extend"

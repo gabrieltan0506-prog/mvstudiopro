@@ -383,7 +383,7 @@ function cropTimelineLine(line: string, durationSec: 5 | 10): {
     // 试片可截短无声动作，不能把完整台词强塞进缩水后的窗口。
     const hasDialogue = /(?:说|道|问|答|喊|念|对白|台词|旁白|画外音)\s*[：:]?\s*[「『“"]|[：:|｜]\s*[「『“"]|(?:对白|台词|旁白|画外音)\s*[：:]\s*\S/.test(body);
     if (current.endSec > durationSec && hasDialogue) {
-      throw new Error(`${durationSec} 秒试片会截断 ${current.startSec}–${current.endSec} 秒的对白。请在分镜调整镜头时长，让这句完整落在试片内或移到 ${durationSec} 秒之后；本次未生成。`);
+      throw new Error(`当前视频模型的 ${durationSec} 秒试片设置无法容纳 ${current.startSec}–${current.endSec} 秒的完整对白，请更换支持所需时长的视频模型。本次未生成。`);
     }
     const head =
       current.endSec > durationSec

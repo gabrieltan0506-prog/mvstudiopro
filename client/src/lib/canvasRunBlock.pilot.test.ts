@@ -239,7 +239,7 @@ it("试片截断对白在鉴权建单和任何网络之前拒绝", async () => {
   const authorize = vi.fn();
   const block = { ...pilotBlock("seedance-2.5"), prompt: '0–8s：人物走入坊市。\n8–13s：@角色1说「娘，抓紧我，快到了。」' };
   const before = JSON.stringify(block);
-  await expect(runCanvasBlock({ userRole: "admin", userId: "test-user", optimizeCopy: async () => "", authorizeManhuaClip: authorize }, block, undefined, { pilotRun: true })).rejects.toThrow(/截断.*对白/);
+  await expect(runCanvasBlock({ userRole: "admin", userId: "test-user", optimizeCopy: async () => "", authorizeManhuaClip: authorize }, block, undefined, { pilotRun: true })).rejects.toThrow(/更换支持所需时长的视频模型/);
   expect(authorize).not.toHaveBeenCalled();
   expect(fetch).not.toHaveBeenCalled();
   expect(JSON.stringify(block)).toBe(before);
@@ -254,6 +254,19 @@ it("试片截断对白在鉴权建单和任何网络之前拒绝", async () => {
   expect(requests[0].body.duration).toBe(5);
   expect(JSON.stringify(requests[0].body)).not.toContain('抓紧我');
   expect(block.prompt).toContain('抓紧我');
+ });
+
+ it("不支持五秒试片的模型在鉴权和网络之前提示换模型", async () => {
+  const authorize = vi.fn();
+  const block = pilotBlock("wan-3.0");
+  await expect(runCanvasBlock(
+    { userRole: "admin", userId: "test-user", optimizeCopy: async () => "", authorizeManhuaClip: authorize },
+    block,
+    undefined,
+    { pilotRun: true, pilotDurationSec: 5 },
+  )).rejects.toThrow("当前视频模型不支持5秒试片，请更换支持5秒试片的视频模型。");
+  expect(authorize).not.toHaveBeenCalled();
+  expect(fetch).not.toHaveBeenCalled();
  });
 
  it("五秒试片编排与确认预览使用相同时长", async () => {
