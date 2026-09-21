@@ -1438,6 +1438,7 @@ export default function ManhuaScriptWorkbench({
   };
   /** 待生成虚线卡折条：默认收起（26 张铺满一屏太吵），点「展开补图」再出卡 */
   const [pendingOpenKinds, setPendingOpenKinds] = useState<ReadonlySet<string>>(new Set());
+  const [episodeSheetsOpen, setEpisodeSheetsOpen] = useState(false);
   const togglePendingOpen = (kind: string) => {
     setPendingOpenKinds((prev) => {
       const next = new Set(prev);
@@ -3653,6 +3654,7 @@ export default function ManhuaScriptWorkbench({
    * 而滚到画风选择区，保证点了总有落点、不静默。
    */
   const jumpToAssetsGapAnchor = (anchor: ManhuaAssetsGapAnchor) => {
+    if (anchor !== "style") setEpisodeSheetsOpen(true);
     selectPhase("assets");
     window.setTimeout(() => {
       const bySelector = (sel: string) => document.querySelector<HTMLElement>(sel);
@@ -3729,6 +3731,8 @@ export default function ManhuaScriptWorkbench({
     url: string;
     labelZh: string;
   } | null>(null);
+  const episodeSheetsRequired = pendingSheetAnchors.length > 0 || episodeSheetGallery.length === 0 || Boolean(cropTarget || sheetPreview || regenDraft);
+  const episodeSheetsVisible = episodeSheetsOpen || episodeSheetsRequired;
   const [autoRigAssetId, setAutoRigAssetId] = useState<string | null>(null);
   const autoRigAsset = customAssetRefs.find(ref => ref.id === autoRigAssetId);
   const autoRigEligibility = autoRigAsset ? evaluateManhuaAsset3dEligibility(autoRigAsset) : undefined;
@@ -5484,6 +5488,15 @@ export default function ManhuaScriptWorkbench({
               data-manhua-episode-sheets
               className="mt-3 space-y-2 rounded-xl border border-emerald-400/35 bg-emerald-500/[0.08] p-3"
             >
+              <button type="button"
+                aria-expanded={episodeSheetsVisible}
+                onClick={() => setEpisodeSheetsOpen((open) => !open)}
+                disabled={episodeSheetsRequired}
+                className="text-left text-[12px] font-semibold text-emerald-50/95">
+                {episodeSheetsVisible ? "▾" : "▸"} 本集设定图总览 · {episodeSheetGallery.length} 张
+                {pendingSheetAnchors.length > 0 ? ` · 待生成 ${pendingSheetAnchors.length}` : " · 定位画布与批量处理"}
+              </button>
+              <div hidden={!episodeSheetsVisible}>
               <div>
                 <div className="text-[11px] font-semibold text-emerald-50/95">
                   本集设定图 · {episodeSheetGallery.length} 张
@@ -6428,6 +6441,7 @@ export default function ManhuaScriptWorkbench({
                   </button>
                 </div>
               )}
+              </div>
             </div>
 
             {onArtStyleChange ? (
