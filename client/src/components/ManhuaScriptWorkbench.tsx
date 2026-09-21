@@ -1571,6 +1571,21 @@ export default function ManhuaScriptWorkbench({
   const editClipBlocks = useMemo(() => Array.from(new Map(
     [...episodeClips, ...(legacyClip ? [legacyClip] : [])].map((block) => [block.id, block]),
   ).values()), [episodeClips, legacyClip]);
+  // 仅展示本集已编排提示词中的真实资产 ID，不推断旧成片是否采用了当前图片。
+  const assetClipUsage = useMemo(() => {
+    const usage = new Map<string, Set<number>>();
+    for (const clip of editClipBlocks) {
+      const segment = resolveClipLocalSegmentIndex(clip.id, clip.prompt, focusEpisode);
+      if (!Number.isInteger(segment) || segment < 1) continue;
+      for (const row of parseManhuaAssetImageBindBlock(clip.prompt)) {
+        if (!row.id) continue;
+        const indexes = usage.get(row.id) ?? new Set<number>();
+        indexes.add(segment);
+        usage.set(row.id, indexes);
+      }
+    }
+    return usage;
+  }, [editClipBlocks, focusEpisode]);
   const story = blockByStage(blocks, focusEpisode, "story");
 
   // 与静帧展开、成片编排共用真实来源，不能拿待运行模板生成另一套界面骨架。
@@ -7180,6 +7195,15 @@ export default function ManhuaScriptWorkbench({
                                 loading="lazy"
                               />
                             </button>
+                            <div data-manhua-asset-usage className="border-t border-white/10 px-2 py-1.5 text-[11px] leading-5 text-white/65">
+                              {group.kind === "entity" ? <div className="font-semibold text-white/85">版本 {group.refs.findIndex(version => version.id === ref.id) + 1}{resolveManhuaAssetPreviewId(group.refs, assetPreviewByGroup[group.key]) === ref.id ? " · 正在查看" : ""}</div> : null}
+                              {assetClipUsage.get(ref.id)?.size ? (
+                                <>
+                                  <div>本集编排引用：{Array.from(assetClipUsage.get(ref.id)!).sort((a, b) => a - b).map(index => `第${index}段`).join("、")}</div>
+                                  <div className="text-[10px] text-white/45">已有成片不会自动更新</div>
+                                </>
+                              ) : <div>本集暂无已编排引用</div>}
+                            </div>
                             {ref.role === "character" && primaryDuty && onSetCharacterPrimaryRef ? (
                               primaryAnchor ? (
                                 <>
