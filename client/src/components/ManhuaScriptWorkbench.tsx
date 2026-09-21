@@ -2827,6 +2827,8 @@ export default function ManhuaScriptWorkbench({
     return resolveManhuaSegmentClipAllowedAssets({
       haystack: (activeSegment?.shots || []).flatMap((shot) => [shot.actionZh, shot.dialogueZh]).filter(Boolean).join("\n"),
       castZh: plannedCast,
+      wardrobePropZh: beat?.wardrobePropZh,
+      propHaystack: [beat?.wardrobePropZh, beat?.dialogueZh, beat?.performanceZh, ...(activeSegment?.shots || []).flatMap(shot => [shot.actionZh, shot.dialogueZh])].filter(Boolean).join("\n"),
       sceneZh: beat?.sceneZh,
       sceneHaystack: [beat?.performanceZh, beat?.sceneZh, ...(activeSegment?.shots || []).map(shot => shot.actionZh)].filter(Boolean).join("\n"),
       mainSceneId: assetCanon?.episodeMainSceneId[focusEpisode],
@@ -2835,19 +2837,20 @@ export default function ManhuaScriptWorkbench({
     });
   }, [activeSourceBeat, activeSegment, assetLockRegistry, assetCanon, focusEpisode]);
   const activeLookCharacterIds = activePlannedAssets.characterIds;
-  const showCustomAssetSummary = Boolean(assetCanon?.characters.length || assetCanon?.locations.length || customAssetRefs.some(ref => ref.role === "character" || ref.role === "scene"));
+  const showCustomAssetSummary = Boolean(assetCanon?.characters.length || assetCanon?.locations.length || assetCanon?.props.length || customAssetRefs.some(ref => ref.role === "character" || ref.role === "scene" || ref.role === "prop"));
   const [summaryImageStates, setSummaryImageStates] = useState<Record<string, "loaded" | "failed">>({});
   const compiledAssetRows = parseManhuaAssetImageBindBlock(activeClip?.prompt);
-  const currentAssetSummary = (["character", "scene"] as const).map(role => {
-    const plannedIds = role === "character" ? activePlannedAssets.characterIds : activePlannedAssets.sceneIds;
-    const compiled = compiledAssetRows.filter(row => row.tag.startsWith(role === "character" ? "@角色" : "@场景"));
+  const currentAssetSummary = (["character", "scene", "prop"] as const).map(role => {
+    const labelZh = role === "character" ? "角色参考" : role === "scene" ? "场景参考" : "道具参考";
+    const plannedIds = role === "character" ? activePlannedAssets.characterIds : role === "scene" ? activePlannedAssets.sceneIds : activePlannedAssets.propIds;
+    const compiled = compiledAssetRows.filter(row => row.tag.startsWith(role === "character" ? "@角色" : role === "scene" ? "@场景" : "@道具"));
     const ids = Array.from(new Set([...plannedIds, ...compiled.map(row => row.id)]));
     const rows = ids.map(id => {
       const slot = assetLockRegistry.byRole[role].find(item => item.id === id);
       const identity = slot?.seedLibraryId || id;
-      const anchor = (role === "character" ? assetCanon?.characters : assetCanon?.locations)?.find(item => item.id === identity);
+      const anchor = (role === "character" ? assetCanon?.characters : role === "scene" ? assetCanon?.locations : assetCanon?.props)?.find(item => item.id === identity);
       const path = String(slot?.path || "");
-      const prefix = role === "character" ? "charsheet-" : "sceneplate-";
+      const prefix = role === "character" ? "charsheet-" : role === "scene" ? "sceneplate-" : "propplate-";
       // 采用路径优先于节点身份：同名节点的新版本不是当前采用图，多版本也不擅自挑选。
       const candidates = blocks.filter(block => !block.archivedFromPreviousScript && block.id.startsWith(prefix) &&
         isBindableAssetPath(path) && mediaUrl(block) === path);
@@ -2855,7 +2858,7 @@ export default function ManhuaScriptWorkbench({
         path: isBindableAssetPath(path) ? path : "", planned: plannedIds.includes(id), compiled: compiled.some(row => row.id === id),
         nodeId: candidates.length === 1 ? candidates[0]!.id : undefined };
     });
-    return { role, rows, plannedCount: plannedIds.length, compiledCount: compiled.length };
+    return { role, labelZh, rows, plannedCount: plannedIds.length, compiledCount: compiled.length };
   });
   /** 方案 B：剧本确认 + 角色/场景锁定 + 角色图/场景图齐，才可进分镜出片 */
   const assetsComplete = assetGate.ready && !assetScriptStaleHintZh;
@@ -8496,7 +8499,7 @@ export default function ManhuaScriptWorkbench({
           {showCustomAssetSummary ? <div data-manhua-current-asset-summary className="space-y-3">
             <p className="text-[9px] text-white/50">当前段计划与节点编排；实际提交仍以生成前确认为准。</p>
             {currentAssetSummary.map(group => <section key={group.role} data-manhua-asset-role={group.role}>
-              <div className="text-[10px] text-white/70">{group.role === "character" ? "角色参考" : "场景参考"} · 本段计划 {group.plannedCount} · 已编排引用 {group.compiledCount}</div>
+              <div className="text-[10px] text-white/70">{group.labelZh} · 本段计划 {group.plannedCount} · 已编排引用 {group.compiledCount}</div>
               {group.role === "scene" && activePlannedAssets.sceneFallback ? <p className="text-[9px] text-amber-200/75">场景计划回落本集主场景，尚需核对本段地点。</p> : null}
               <div className="mt-1 grid grid-cols-2 gap-1">
                 {group.rows.map(row => <button key={row.id} type="button" data-manhua-current-asset={row.id} data-asset-planned={row.planned ? "true" : "false"} data-asset-image={!row.path ? "missing" : summaryImageStates[`${row.id}:${row.path}`] || "loading"}
@@ -8509,7 +8512,7 @@ export default function ManhuaScriptWorkbench({
                   <div className="p-1 text-[10px] text-white/80">{row.label}<span className="block text-[9px] text-white/50">{row.planned ? "本段计划" : "节点引用"} · {row.compiled ? "已编排引用" : "未编排引用"}</span></div>
                 </button>)}
               </div>
-              {!group.rows.length ? <p className="text-[10px] text-white/45">当前段未解析到{group.role === "character" ? "角色参考" : "场景参考"}计划或引用。</p> : null}
+              {!group.rows.length ? <p className="text-[10px] text-white/45">当前段未解析到{group.labelZh}计划或引用。</p> : null}
             </section>)}
             {activePlannedAssets.unmatchedCastNames.length ? <p className="text-[10px] text-amber-200">计划角色未匹配资产：{activePlannedAssets.unmatchedCastNames.join("、")}</p> : null}
             <button type="button" onClick={() => onOpenAssetWall?.()} className="text-[10px] text-cyan-200">打开资产墙核对</button>

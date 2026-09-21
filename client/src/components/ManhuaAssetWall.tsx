@@ -194,6 +194,7 @@ export default function ManhuaAssetWall({
 
   return (
     <div
+      data-manhua-asset-wall
       className={`rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.05] to-transparent p-3 md:p-4 ${
         disabled ? "opacity-60" : ""
       }`}
@@ -217,6 +218,7 @@ export default function ManhuaAssetWall({
         </div>
       </div>
 
+      <fieldset disabled={disabled} className="min-w-0 border-0 p-0">
       <label className="mt-2 block text-[10px] text-white/45">
         资产分类
         <select
@@ -346,6 +348,7 @@ export default function ManhuaAssetWall({
           />
         </div>
       ) : null}
+      </fieldset>
     </div>
   );
 }

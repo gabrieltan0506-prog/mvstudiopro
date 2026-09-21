@@ -15,7 +15,7 @@ it.each([false, true])("自定义当前段资产摘要保留身份、缺图并�
   import Workbench from './client/src/components/ManhuaScriptWorkbench';
   import {spawnManhuaDramaStudio,expandManhuaShotKeyartsAfterReverse,ensureManhuaFragmentClips} from './client/src/lib/canvasDramaStudio';
   import {recordManhuaKeyartLookOutput} from './shared/manhuaKeyartLookState';
-  const source='| 镜号 | 秒位 | 景别运镜 | 画面 | 对白 |\\n| --- | --- | --- | --- | --- |\\n| 1 | 0-5 | 近景固定 | 阿菁抬手护住墨菁 | 娘：「慢点。」 |\\n| 2 | 5-10 | 全景固定 | 墨菁守住门口 | 无 |';
+  const source='| 镜号 | 秒位 | 景别运镜 | 画面 | 对白 |\\n| --- | --- | --- | --- | --- |\\n| 1 | 0-5 | 近景固定 | 阿菁持玉佩抬手护住墨菁 | 娘：「慢点。」 |\\n| 2 | 5-10 | 全景固定 | 墨菁守住门口 | 无 |';
   const spawned=spawnManhuaDramaStudio({topic:'阿菁与墨菁',episodeIndex:1,videoModel:'seedance-2.5'});
   const reverse=spawned.blocks.find(b=>b.id.startsWith('reverse-'));
   const expanded=expandManhuaShotKeyartsAfterReverse(spawned.blocks.map(b=>b.id===reverse.id?{...b,status:'done',outputText:source}:b),spawned.edges,reverse.id);
@@ -24,8 +24,10 @@ it.each([false, true])("自定义当前段资产摘要保留身份、缺图并�
   const initial=ensured.blocks.map(b=>b.id.startsWith('keyart-')?record(b,'https://offline.invalid/'+b.id+'.png'):b);
   const refs=[{id:'custom-a',role:'character',url:'https://offline.invalid/character.png',source:'upload',labelZh:'阿菁',seedLibraryId:'wa_char_aqing',claimedAnchorIds:['wa_char_aqing'],refDuty:'identity',primaryBindings:[{anchorId:'wa_char_aqing',duty:'identity'}]},{id:'custom-scene',role:'scene',url:'https://offline.invalid/courtyard.png',source:'upload',labelZh:'庭院',seedLibraryId:'wa_scene_yard',claimedAnchorIds:['wa_scene_yard']}];
   refs.push({id:'custom-mother',role:'character',url:'https://offline.invalid/mother.png',source:'upload',labelZh:'娘',seedLibraryId:'wa_char_mother',claimedAnchorIds:['wa_char_mother'],refDuty:'identity',primaryBindings:[{anchorId:'wa_char_mother',duty:'identity'}]});
-  const canon={characters:[{id:'wa_char_mother',role:'character',nameZh:'娘',lookZh:'',promptZh:'娘'},{id:'wa_char_aqing',role:'character',nameZh:'阿菁',lookZh:''}],locations:[{id:'wa_scene_yard',role:'scene',nameZh:'庭院',lookZh:'',promptZh:'庭院'}],props:[],episodeMainSceneId:{1:'wa_scene_yard'}};
-  const graph=initial.map(b=>b.id.startsWith('clip-')?{...b,prompt:b.prompt+'\\n【资产·Image对照】\\n@角色1|id=custom-a|label=阿菁|kind=角色\\n@角色2|id=deleted-reference|label=旧引用缺图|kind=角色\\n@场景1|id=custom-scene|label=庭院|kind=场景'}:b);
+  refs.push({id:'custom-jade',role:'prop',url:'https://offline.invalid/jade.png',source:'upload',labelZh:'玉佩',seedLibraryId:'wa_prop_jade',claimedAnchorIds:['wa_prop_jade']});
+  const canon={characters:[{id:'wa_char_mother',role:'character',nameZh:'娘',lookZh:'',promptZh:'娘'},{id:'wa_char_aqing',role:'character',nameZh:'阿菁',lookZh:''}],locations:[{id:'wa_scene_yard',role:'scene',nameZh:'庭院',lookZh:'',promptZh:'庭院'}],props:[{id:'wa_prop_jade',role:'prop',nameZh:'玉佩',lookZh:'',promptZh:'玉佩'}],episodeMainSceneId:{1:'wa_scene_yard'}};
+  const graph=initial.map(b=>b.id.startsWith('clip-')?{...b,prompt:b.prompt+'\\n【资产·Image对照】\\n@角色1|id=custom-a|label=阿菁|kind=角色\\n@角色2|id=deleted-reference|label=旧引用缺图|kind=角色\\n@场景1|id=custom-scene|label=庭院|kind=场景\\n@道具1|id=custom-jade|label=玉佩|kind=道具\\n@道具2|id=deleted-prop|label=缺失旧道具|kind=道具'}:b);
+  graph.push({...initial[0],kind:'image',id:'propplate-wa_prop_jade',outputUrl:'https://offline.invalid/jade.png',prompt:'玉佩'});
   graph.push({...initial[0],kind:'image',id:'charsheet-wa_char_aqing',outputUrl:refs[0].url,prompt:'阿菁定妆'});
   const f=globalThis.fixture={focus:[],wall:0};
   function App(){const [shown,setShown]=useState(graph);const [liveRefs,setLiveRefs]=useState(refs);const [legacy,setLegacy]=useState(false);f.imageUrl=url=>{setLiveRefs(refs.map((r,i)=>i===0?{...r,url}:r));setShown(graph.map(b=>b.id==='charsheet-wa_char_aqing'?{...b,outputUrl:url}:b));};f.duplicate=()=>setShown([...graph,{...graph[graph.length-1],id:'charsheet-second-version'}]);f.wrongVersion=()=>setShown(graph.map(b=>b.id==='charsheet-wa_char_aqing'?{...b,outputUrl:'https://offline.invalid/another-version.png'}:b));f.legacy=()=>setLegacy(true);return <TooltipProvider><Workbench immersive={${immersive}} blocks={shown} videoModel='seedance-2.5' topic='阿菁在庭院' episodeCount={1} focusEpisode={1} onFocusEpisode={()=>{}} characterIds={[]} propIds={[]} outlineConfirmed={true} workflowPhase='storyboard' compactUi={false} customAssetRefs={legacy?[]:liveRefs} assetCanon={legacy?undefined:canon} onFocusBlock={id=>f.focus.push(id)} onOpenAssetWall={()=>f.wall++}/></TooltipProvider>;}
@@ -61,11 +63,18 @@ it.each([false, true])("自定义当前段资产摘要保留身份、缺图并�
       const layout=await page.evaluate(selector=>{const element=document.querySelector(selector)!;const rect=element.getBoundingClientRect();return {viewport:window.innerWidth,documentWidth:document.documentElement.scrollWidth,summaryWidth:rect.width,summaryScrollWidth:element.scrollWidth,visible:rect.width>0&&rect.height>0};},selector);
       layouts.push(layout);
       await page.screenshot({path:path.join(dir,`summary-${width}.png`),fullPage:false});
+      await page.$eval('[data-manhua-asset-role="prop"]', e=>e.scrollIntoView({block:'start',inline:'nearest'}));
+      await page.screenshot({path:path.join(dir,`props-${width}.png`),fullPage:false});
     }
     writeFileSync(path.join(dir,'layout.json'),JSON.stringify(layouts,null,2));
     expect(layouts.every(row=>row.visible && row.summaryScrollWidth<=row.summaryWidth+1 && row.documentWidth<=row.viewport)).toBe(true);
   }
 
+  expect(text).toContain('道具参考 · 本段计划 1 · 已编排引用 2');
+  expect(await page.$eval('[data-manhua-current-asset="custom-jade"]',e=>e.getAttribute('data-asset-planned'))).toBe('true');
+  expect(await page.$eval('[data-manhua-current-asset="deleted-prop"]',e=>e.getAttribute('data-asset-image'))).toBe('missing');
+  await page.$eval('[data-manhua-current-asset="custom-jade"]',(e:any)=>e.click());
+  expect(await page.evaluate(()=>(window as any).fixture.focus.pop())).toBe('propplate-wa_prop_jade');
   expect(text).toContain('阿菁');expect(text).toContain('庭院');
   expect(text).toContain('角色参考 · 本段计划 2');
   expect(await page.$eval('[data-manhua-current-asset="custom-mother"]',e=>e.getAttribute('data-asset-planned'))).toBe('true');

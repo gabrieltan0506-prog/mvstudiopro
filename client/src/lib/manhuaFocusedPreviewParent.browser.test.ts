@@ -97,3 +97,28 @@ it("真实Omni父级选镜和后台铺段不展开高级画布，主动审阅可
     expect(errors).toEqual([]);
   } finally {await close();}
 },180000);
+
+it("同项目往返自由画布后保留当前集、阶段、资产表与节点内容", async () => {
+  const { page, close } = await mount();
+  try {
+    await page.evaluate(() => {
+      const props = (window as any).__wbProps;
+      props.onFocusEpisode(2);
+      props.onWorkflowPhaseChange("assets");
+    });
+    await page.waitForFunction(() => (window as any).__wbProps.focusEpisode === 2 && (window as any).__wbProps.workflowPhase === "assets");
+    const snapshot = () => {
+      const p = (window as any).__wbProps;
+      return JSON.stringify({ episode: p.focusEpisode, phase: p.workflowPhase, refs: p.customAssetRefs, canon: p.assetCanon, blocks: p.blocks, episodes: p.outlineEpisodes });
+    };
+    const before = await page.evaluate(snapshot);
+    expect(JSON.parse(before).blocks.length).toBeGreaterThan(0);
+    expect(JSON.parse(before).canon.characters.length).toBeGreaterThan(0);
+    expect(JSON.parse(before).episodes).toHaveLength(2);
+    await page.click('button[title="切到自由画布"]');
+    await page.waitForSelector('button[title="切到漫剧工厂"]');
+    await page.click('button[title="切到漫剧工厂"]');
+    await page.waitForSelector('button[title="切到自由画布"]');
+    expect(await page.evaluate(snapshot)).toBe(before);
+  } finally { await close(); }
+}, 180_000);
