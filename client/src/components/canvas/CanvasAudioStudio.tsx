@@ -157,6 +157,13 @@ export type CanvasAudioStudioServices = {
   listMusic(): Promise<MusicJob[]>;
   queuePost(input: AudioTrimInput | AudioTimelineInput): Promise<JobResult>;
   getPost(input: { jobId: string }): Promise<JobResult | null>;
+  /** 已有原曲只走浏览器直传 GCS，返回长期身份和可播放 URL；不调用配乐生成。 */
+  uploadAudioFile?(file: File): Promise<{
+    gcsUri: string;
+    previewUrl: string;
+    durationSec: number;
+    fileName: string;
+  }>;
 };
 
 type Props = {
@@ -186,6 +193,7 @@ export function CanvasAudioStudio(props: Props) {
   const draft = trpc.mvAnalysis.draftManhuaBgmBrief.useMutation();
   const music = trpc.mvAnalysis.queueManhuaBgm.useMutation();
   const post = trpc.mvAnalysis.queuePostProd.useMutation();
+  const signedUpload = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const services: CanvasAudioStudioServices = {
     resolveAudio: resolveCanvasMaterialUrl,
     generateDialogue: input => dialogue.mutateAsync(input),
@@ -197,6 +205,42 @@ export function CanvasAudioStudio(props: Props) {
     listMusic: () => utils.mvAnalysis.listManhuaBgmJobs.fetch({ limit: 30 }),
     queuePost: input => post.mutateAsync(input),
     getPost: input => utils.mvAnalysis.getPostProdJob.fetch(input),
+    uploadAudioFile: async file => {
+      if (file.size <= 0 || file.size > 50 * 1024 * 1024)
+        throw new Error("原曲文件须大于 0 且不超过 50MB。");
+      const durationSec = await new Promise<number>((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const audio = document.createElement("audio");
+        const done = () => URL.revokeObjectURL(url);
+        audio.preload = "metadata";
+        audio.onloadedmetadata = () => {
+          const value = Number(audio.duration);
+          done();
+          if (!Number.isFinite(value) || value <= 0 || value > 3600)
+            reject(new Error("无法读取原曲时长，请换用 60 分钟以内的 MP3、WAV、M4A 或 AAC。"));
+          else resolve(value);
+        };
+        audio.onerror = () => {
+          done();
+          reject(new Error("无法读取原曲，请换用 MP3、WAV、M4A 或 AAC。"));
+        };
+        audio.src = url;
+      });
+      const { uploadOneCanvasAsset } = await import("@/lib/canvasUpload");
+      const asset = await uploadOneCanvasAsset({
+        file,
+        index: Date.now() % 1000,
+        getSignedUploadUrl: input => signedUpload.mutateAsync(input),
+      });
+      if (asset.kind !== "audio" || !asset.gcsUri)
+        throw new Error("只支持导入 MP3、WAV、M4A 或 AAC 原曲。");
+      return {
+        gcsUri: asset.gcsUri,
+        previewUrl: asset.previewUrl || asset.url,
+        durationSec,
+        fileName: asset.fileName,
+      };
+    },
   };
   return <CanvasAudioStudioView {...props} services={services} />;
 }
@@ -568,6 +612,38 @@ export function CanvasAudioStudioView({
     setVoiceCriteria({});
     setConfirmation(null);
   };
+  const importExistingMusic = (file: File) =>
+    action(async () => {
+      if (!services.uploadAudioFile)
+        throw new Error("当前入口暂不支持导入原曲，请重新打开正式漫剧工厂后再试。");
+      if (current.current.state.cues.length >= 100)
+        throw new Error("本段已达 100 条音轨草稿上限，原片段全部保留，未上传新原曲。");
+      const uploaded = await services.uploadAudioFile(file);
+      const cue = createCanvasAudioCue("bgm", crypto.randomUUID());
+      const clipEnd = Math.min(durationSec, uploaded.durationSec);
+      const configured = canvasAudioCueSchema.parse({
+        ...cue,
+        labelZh: uploaded.fileName.replace(/\.[^.]+$/, "") || "导入原曲",
+        shotZh: "本段背景音乐",
+        startSec: 0,
+        endSec: durationSec,
+        source: {
+          gcsUri: uploaded.gcsUri,
+          previewUrl: uploaded.previewUrl,
+          durationSec: uploaded.durationSec,
+          labelZh: `导入原曲 · ${uploaded.fileName}`,
+        },
+        sourceStartSec: 0,
+        sourceEndSec: clipEnd,
+        volume: 0.25,
+        fadeInSec: Math.min(0.5, clipEnd / 2),
+        fadeOutSec: Math.min(0.5, clipEnd / 2),
+        mix: { duckUnderDialogue: true, duckVolume: 0.25, silenceWindows: [] },
+      });
+      update(previous => ({ ...previous, cues: [...previous.cues, configured] }));
+      setActiveCueId(configured.id);
+      setConfirmation(null);
+    });
   const prepareDialogue = (cue: CanvasAudioCue) => {
     try {
       checkWindow(cue);
@@ -1098,9 +1174,27 @@ export function CanvasAudioStudioView({
       {(["dialogue", "bgm", "sfx"] as const).map(kind => <section key={kind} data-audio-group={kind} aria-label={{ dialogue: "角色配音编辑", bgm: "背景音乐编辑", sfx: "事件音效编辑" }[kind]} className="min-w-0 space-y-3 rounded-xl border border-white/15 bg-black/15 p-3">
         <header className="flex flex-wrap items-center justify-between gap-2">
           <div><h3 className="text-sm font-semibold">{{ dialogue: "角色配音", bgm: "背景音乐", sfx: "事件音效" }[kind]} <span className="text-xs font-normal text-white/45">{state.cues.filter(cue => cue.kind === kind).length} {kind === "dialogue" ? "句" : kind === "bgm" ? "段" : "条"}</span></h3><p className="mt-1 text-[11px] text-white/45">{{ dialogue: "写台词、选音色，试听后逐句采用。", bgm: "选原曲、裁秒窗，控制留白与对白避让。", sfx: "为片中实际发生的动作选音效，按秒点采用。" }[kind]}</p></div>
-          <button type="button" className={buttonClass} disabled={disabled || busy} onClick={() => addCue(kind)}>{{ dialogue: "添加一句对白", bgm: "添加一段配乐", sfx: "添加事件音效" }[kind]}</button>
+          <div className="flex flex-wrap gap-2">
+            {kind === "bgm" && services.uploadAudioFile ? (
+              <label className={`${buttonClass} cursor-pointer`}>
+                导入已有原曲
+                <input
+                  className="sr-only"
+                  type="file"
+                  accept="audio/mpeg,audio/wav,audio/mp4,audio/aac,.mp3,.wav,.m4a,.aac"
+                  disabled={disabled || busy}
+                  onChange={event => {
+                    const file = event.currentTarget.files?.[0];
+                    event.currentTarget.value = "";
+                    if (file) void importExistingMusic(file);
+                  }}
+                />
+              </label>
+            ) : null}
+            <button type="button" className={buttonClass} disabled={disabled || busy} onClick={() => addCue(kind)}>{{ dialogue: "添加一句对白", bgm: "添加一段配乐", sfx: "添加事件音效" }[kind]}</button>
+          </div>
         </header>
-        {!state.cues.some(cue => cue.kind === kind) && <p className="rounded-lg border border-dashed border-white/10 p-3 text-xs text-white/40">{{ dialogue: "还没有对白。每句生成前单独确认费用，生成后保留候选。", bgm: "还没有分段配乐。可选择已有原曲，或展开下方原曲制作。", sfx: "还没有事件音效。仅为本段需要的动作添加，不自动补声音。" }[kind]}</p>}
+        {!state.cues.some(cue => cue.kind === kind) && <p className="rounded-lg border border-dashed border-white/10 p-3 text-xs text-white/40">{{ dialogue: "还没有对白。每句生成前单独确认费用，生成后保留候选。", bgm: "还没有分段配乐。可直接导入已有原曲，或展开下方原曲制作；导入只上传并保存 URL，不重新生成配乐。", sfx: "还没有事件音效。仅为本段需要的动作添加，不自动补声音。" }[kind]}</p>}
       {state.cues.map((cue, index) => {
         if (cue.kind !== kind) return null;
         const pending = state.pendingOperations.some(

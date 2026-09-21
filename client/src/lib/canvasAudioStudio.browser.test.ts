@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { build } from "esbuild";
 import puppeteer, { type Browser } from "puppeteer";
 import path from "node:path";
+import { writeFileSync, unlinkSync } from "node:fs";
 
 let browser: Browser;
 let bundle: string;
@@ -17,7 +18,7 @@ beforeAll(async () => {
       import {CanvasAudioStudioView} from './client/src/components/canvas/CanvasAudioStudio';
       import {defaultCanvasBlock} from './client/src/lib/canvasTypes';
       import {emptyCanvasAudioStudio,createCanvasAudioCue,canvasAudioCueInputKey} from './shared/canvasAudioStudio';
-      const f=globalThis.fixture={calls:[],queries:[],musicQueries:[],history:{},posts:[],postQueries:[],postResult:null,masterEntries:[],dropSettle:false,state:null,result:null};
+      const f=globalThis.fixture={calls:[],queries:[],musicQueries:[],history:{},posts:[],postQueries:[],postResult:null,masterEntries:[],uploads:[],dropSettle:false,state:null,result:null};
       const services={
         resolveAudio:async uri=>{f.resolvedAudio=uri;return f.refreshedUrl||"";},
         generateDialogue:async input=>{f.calls.push(input);return {jobId:'test-job',status:'succeeded',result:{gcsUri:'gs://test-bucket/generated/test.mp3',audioUrl:'https://audio.test/test.mp3',bytes:12000,voiceGate:{durationSeconds:2.25}}};},
@@ -28,6 +29,7 @@ beforeAll(async () => {
         listMusic:async()=>[],
         queuePost:async input=>{f.posts.push(input);return {jobId:'post-'+f.posts.length,status:'queued'};},
         getPost:async input=>{f.postQueries.push(input.jobId);return f.postResult;},
+        uploadAudioFile:async file=>{f.uploads.push(file.name);return {gcsUri:'gs://test-bucket/uploads/u7/'+file.name,previewUrl:'https://audio.test/'+file.name,durationSec:90,fileName:file.name};},
       };
       function App(){
         const [block,setBlock]=useState({...defaultCanvasBlock('video',0,0),id:'audio-test',videoModel:'seedance-2.5',prompt:'目标时长：30秒。阿菁先护住受伤的墨屠。墨屠变身，展翼保护阿菁。',audioStudio:emptyCanvasAudioStudio()});
@@ -109,6 +111,32 @@ async function open() {
   return { context, page, click, fill };
 }
 describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
+  it("正式声音工作台导入已有原曲后只保存 GCS 来源，不触发配乐生成", async () => {
+    const { context, page } = await open();
+    const filePath = "/tmp/canvas-audio-existing-bgm.mp3";
+    writeFileSync(filePath, "fixture-audio");
+    try {
+      const input = await page.$('input[type="file"][accept*="audio/mpeg"]');
+      expect(input).not.toBeNull();
+      await input!.uploadFile(filePath);
+      await page.waitForFunction(() => (window as any).fixture.state.cues.some((cue: any) => cue.kind === "bgm" && cue.source?.gcsUri.includes("canvas-audio-existing-bgm.mp3")));
+      const result = await page.evaluate(() => {
+        const f = (window as any).fixture;
+        const cue = f.state.cues.find((row: any) => row.kind === "bgm");
+        return { cue, uploads: f.uploads, calls: f.calls };
+      });
+      expect(result.uploads).toEqual(["canvas-audio-existing-bgm.mp3"]);
+      expect(result.calls).toEqual([]);
+      expect(result.cue.source.durationSec).toBe(90);
+      expect(result.cue.sourceEndSec).toBe(30);
+      expect(result.cue.volume).toBe(0.25);
+      expect(result.cue.mix).toEqual({ duckUnderDialogue: true, duckVolume: 0.25, silenceWindows: [] });
+      expect(result.cue.approved).toBe(false);
+    } finally {
+      unlinkSync(filePath);
+      await context.close();
+    }
+  }, 20_000);
   it("部分配乐通过旧任务恢复及重新挂载仍提示缺失版本，不重新生成", async () => {
     const { context, page, click } = await open();
     try {
