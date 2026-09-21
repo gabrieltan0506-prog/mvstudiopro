@@ -43,7 +43,7 @@ afterAll(async () => {
 });
 
 /** 每个用例一个全新 BrowserContext：localStorage 隔离，第二条不沿用第一条的状态 */
-async function mount(): Promise<{ page: Page; close: () => Promise<void> }> {
+async function mount(pilotBoundary = false): Promise<{ page: Page; close: () => Promise<void> }> {
   const ctx = await browser.createBrowserContext();
   const p = await ctx.newPage();
   await p.setRequestInterception(true);
@@ -52,6 +52,7 @@ async function mount(): Promise<{ page: Page; close: () => Promise<void> }> {
   );
   await p.goto("http://localhost/", { waitUntil: "domcontentloaded" }).catch(() => {});
   await p.setContent("<div id=root></div>");
+  await p.evaluate((enabled) => { (window as unknown as { __pilotBoundaryTest?: boolean }).__pilotBoundaryTest = enabled; }, pilotBoundary);
   await p.evaluate(bundle);
   await p.waitForFunction(() => /进入引导式漫剧/.test(document.body.innerText), { timeout: 30_000 });
   await p.evaluate(() => {
@@ -61,7 +62,7 @@ async function mount(): Promise<{ page: Page; close: () => Promise<void> }> {
     (el as HTMLElement | undefined)?.click();
   });
   await p.waitForFunction(
-    () => Boolean((window as never as { __ffcProps?: unknown }).__ffcProps),
+    () => Boolean((window as never as { __ffcProps?: unknown }).__ffcProps) && Boolean((window as unknown as { __wbProps?: unknown }).__wbProps),
     { timeout: 30_000 },
   );
   return { page: p, close: async () => { await ctx.close().catch(() => {}); } };
@@ -130,34 +131,12 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
     await close();
   }, 180_000);
 
-  /**
-   * ⚠️【未完成·必须补】刻意 skip，不是覆盖。**当前卡点已收敛，记录在此。**
-   *
-   * 本轮按审查四条修完之后，失败点从「整条 180s 超时」推进到一个明确位置：
-   *  1. window.confirm 已接管 —— 真实入口确实弹了「只重跑第N镜静帧…继续？」并被确认；
-   *  2. 任务合同已按仓库真实口径接：POST /api/jobs → { jobId }，
-   *     GET /api/jobs/:id → { status: "succeeded", output }。改对之后不再空转轮询；
-   *  3. 不再用固定睡眠，改成轮询真实状态；
-   *  4. 精确点击节点内文案为「运行」的按钮。
-   *
-   * 途中两个实测结论（有诊断日志）：
-   *  - 页面会把回执图落成本机 blob:，所以不能按「产出 URL 含测试文件名」判完成；
-   *  - **逐张**调 onRerunKeyartShot 会互相冲掉：第三次重出之后，
-   *    前两张已完成的产出又回到了重出前的地址。因此改走批量入口
-   *    onRerunKeyartsFromReverse。
-   *
-   * 现在的卡点：批量重出**能跑完**（全部静帧换了产出、不再 running），
-   * 但真实预览仍报「本段原稿或造型已变更，请先重出对应关键静帧」。
-   * 也就是**造型/原镜回执没有被登记成 current**。原因尚未查实，不下结论。
-   * 下一步：打出重出前后该静帧的 manhuaKeyartLookState.required / generatedFor，
-   * 看是哪一侧没对上。
-   */
-  it("甲：真实重出静帧 → 真实确认 → 点真实「运行」→ POST 与确认逐字段相同", async () => {
-    const { page, close } = await mount();
+  /** 真实确认与画布按钮共用出站载荷；试片回执不得覆盖已有正片。 */
+  it.each([false, true])("甲：真实画布按钮与确认一致（试片=%s）", async (pilotBoundary) => {
+    const { page, close } = await mount(pilotBoundary);
     const result = await page.evaluate(async () => {
       type B = Record<string, unknown>;
       type WbProps = {
-        onRerunKeyartShot?: (blockId: string, shotIndex: number) => void;
         onRerunKeyartsFromReverse?: () => void;
         onPreviewClipOutbound?: (id: string) => Promise<{ body: B; snapshotId: string }>;
         onConfirmClipOutbound?: (id: string, snapshotId: string) => Promise<void>;
@@ -188,7 +167,6 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
       // 上一轮我把 wb 存成局部变量，重渲染后拿的还是旧回调——
       // 我据此说「逐张重出会互相冲掉」，那个结论因此**不成立**，已撤回。
       const wbNow = () => w.__wbProps;
-      if (!wbNow()?.onRerunKeyartShot) return { step: "no-rerun-keyart" as const };
       if (!wbNow()?.onPreviewClipOutbound || !wbNow()?.onConfirmClipOutbound) {
         return { step: "no-workbench-callbacks" as const };
       }
@@ -198,8 +176,6 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
       // ①② 先试一次真实预览；不通过就走真实「按原稿重出静帧」入口一次性重出，
       // 再等**全部静帧真的完成**（轮询真实状态，不用固定睡眠）。
       //
-      // 为什么不逐张：实测逐张调 onRerunKeyartShot 会互相冲掉——
-      // 第三次重出之后，前两张已完成的产出又回到了重出前的地址（有诊断日志为证）。
       let preview: { body: B; snapshotId: string } | null = null;
       let lastPreviewErr = "";
       let neededKeyartRerun = false;
@@ -269,6 +245,7 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
       ) as HTMLButtonElement | undefined;
       if (!runBtn) return { step: "no-run-button" as const };
       if (runBtn.disabled) return { step: "run-button-disabled" as const };
+      const beforeRun = JSON.parse(JSON.stringify(blocksNow().find(b => b.id === clip.id)));
       runBtn.click();
 
       // ⑤ 等真实成片 POST 出现，同样不用固定睡眠
@@ -279,7 +256,9 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
         return { step: "no-post" as const, why: String((e as Error)?.message || e) };
       }
 
+      await until(() => blocksNow().find(b => b.id === clip.id)?.status !== "running", 30_000, "生成回执落定");
       return {
+        beforeRun, afterRun: blocksNow().find(b => b.id === clip.id),
         step: "done" as const,
         posts: w.__posts!.filter(isClipPost).map((p) => p.body),
         previewBody: preview.body,
@@ -305,6 +284,12 @@ describe("浏览器真实链路：确认 → 点真实画布重跑 → POST 与�
       return rest;
     };
     expect(strip(result.posts[0]!)).toEqual(strip(result.previewBody));
+    if (pilotBoundary) {
+      expect(result.posts[0]!.duration).toBe(10);
+      for (const key of ["prompt", "outputUrl", "outputUrls", "lastFrameUrl", "videoTaskId", "videoIntentId"]) {
+        expect(result.afterRun?.[key], key).toEqual(result.beforeRun[key]);
+      }
+    }
     await close();
   }, 180_000);
 
