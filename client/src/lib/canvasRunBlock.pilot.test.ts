@@ -266,3 +266,19 @@ it("试片截断对白在鉴权建单和任何网络之前拒绝", async () => {
   expect(requests[0].body.duration).toBe(5);
   expect(authorize).toHaveBeenCalledWith(expect.objectContaining({durationSec:5}));
  });
+
+ it.each([false,true])("试片只归审核记录，保留正片原稿和旧片且不注册节点恢复（失败=%s）", async failed => {
+  const f=preparedPipelineFixture('0–30s：灯笼摇晃。');
+  f.block.outputUrl='https://test.invalid/full-original.mp4'; f.block.lastFrameUrl='https://test.invalid/full-tail.png'; f.block.status='done';
+  f.blocks=f.blocks.map(b=>b.id===f.block.id?f.block:b);
+  const created=vi.fn(); const changed=vi.fn(); const intent=vi.fn();
+  const deps={userRole:'admin' as const,userId:'test-user',optimizeCopy:async()=>'',onVideoTaskCreated:created,onManhuaPilotChanged:changed,onCanvasIntentChanged:intent};
+  if(failed) vi.stubGlobal('fetch',vi.fn(async()=>{throw Error('验收夹具：提交失败');}));
+  const confirmation=await confirmClipLikeUser({deps,blocks:f.blocks,edges:f.edges,blockId:f.block.id,pilotRun:true,pilotDurationSec:5});
+  const result=await runManhuaDramaFactoryPipeline({deps,blocks:f.blocks,edges:f.edges,episodeIndex:1,untilStage:'clip',forceFromStage:'clip',fragmentShotIndex:1,targetBlockIds:[f.block.id],preservePreparedTargetBlocks:true,maxRetries:0,pilotRun:true,pilotDurationSec:5,ensureOptions:{videoModel:'seedance-2.5'},resolveOutboundGate:gateFromConfirmations({[f.block.id]:confirmation})});
+  expect(result.errors.length).toBe(failed?1:0);
+  expect(requests).toHaveLength(failed?0:1);
+  const saved=result.blocks.find(b=>b.id===f.block.id)!;
+  expect(saved.prompt).toBe(f.block.prompt); expect(saved.outputUrl).toBe(f.block.outputUrl); expect(saved.lastFrameUrl).toBe(f.block.lastFrameUrl);
+  expect(saved.videoTaskId).toBeUndefined(); expect(created).not.toHaveBeenCalled(); expect(intent).not.toHaveBeenCalled(); expect(changed).toHaveBeenCalled();
+ });

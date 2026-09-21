@@ -8919,24 +8919,8 @@ export default function OmniCanvas() {
                   resolveClipLocalSegmentIndex(block.id, block.prompt, episodeIndex) === 1,
               );
               if (!pilotClip) throw new Error("首段成片节点未就绪，请先铺好分镜提示词");
-              const compiledPilot = compileManhuaPilotPrompt(pilotClip.prompt, opts.pilotDurationSec);
-              workingBlocks = workingBlocks.map((block) =>
-                block.id === pilotClip.id
-                  ? {
-                      ...block,
-                      prompt: compiledPilot.prompt,
-                      status: "idle" as const,
-                      error: undefined,
-                      manhuaClipQuality: undefined,
-                      outputUrl: undefined,
-                      outputUrls: mergeManhuaMediaVersions(
-                        [],
-                        [block.outputUrl, ...(block.outputUrls || [])],
-                      ),
-                      lastFrameUrl: undefined,
-                    }
-                  : block,
-              );
+              // 这里只验证秒轴；执行器裁本次请求，不能把试片短稿写回正片节点。
+              compileManhuaPilotPrompt(pilotClip.prompt, opts.pilotDurationSec);
               effectiveTargetBlockIds = [pilotClip.id];
               setBlocks(workingBlocks);
               setEdges(workingEdges);
