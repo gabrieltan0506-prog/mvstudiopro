@@ -64,7 +64,8 @@ import {
 } from "@/lib/canvasCredits";
 import { useAuth } from "@/_core/hooks/useAuth";
 import {
-  CANVAS_VIDEO_RESOLUTIONS,
+  canvasVideoResolutionsForModel,
+  resolveCanvasVideoResolution,
   canvasVideoClipCredits,
   normalizeCanvasVideoResolution,
 } from "@shared/canvasGenerationPricing";
@@ -2852,6 +2853,7 @@ export default function FreeformCanvas({
                           <label className="flex items-center gap-2 text-[11px] text-white/70">
                             <span className="shrink-0 text-white/45">成片档位</span>
                             <select
+                              aria-label="成片模型"
                               value={
                                 isCanvasProductVideoModel(block.videoModel)
                                   ? block.videoModel
@@ -2863,7 +2865,12 @@ export default function FreeformCanvas({
                                   toast.error(seedance25Gate.message || SEEDANCE_25_PAID_ONLY_LABEL_ZH);
                                   return;
                                 }
-                                patchOne(block.id, { videoModel: next });
+                                patchOne(block.id, {
+                                  videoModel: next,
+                                  videoResolution: resolveCanvasVideoResolution(next, block.videoResolution),
+                                  ...(isCanvasSeedance25VideoModel(next) && next !== block.videoModel
+                                    ? { seedance25WorkMode: "reference_to_video" as const } : {}),
+                                });
                               }}
                               className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
                             >
@@ -2896,31 +2903,32 @@ export default function FreeformCanvas({
                                 : block.videoModel === "seedance-2.5"
                                   ? "Seedance 2.5：官方五模式，最长约 30s；正式会员可用"
                                   : block.videoModel === "minimax-hailuo-3"
-                                    ? "Minimax H3：2K 成片，多图参考，固定 15s"
+                                    ? "Minimax H3：多图参考，5／10／15s，可选草稿或2K"
                                     : block.videoModel === "happyhorse-1.1"
                                       ? "Happy Horse 1.1：首帧图生，最长 15s；挂 2–9 张参考图自动切多图参考模式（提示词用 character1/character2 指代各图角色）"
                                       : block.videoModel === "wan-3.0"
                                         ? "多图参考 + 参考音频，可直出约 30s；排队时间较长，适合不赶时间的镜头"
                                         : "Seedance 2.0 fast：多图参考 + 运镜/动作/对白，更快更省，最长约 15s"}
                           </div>
-                          {/* 画质只对标准档开放：快速档定位是便宜快，H3 固定 2K，2.5 固定 720p */}
-                          {block.videoModel === "seedance-2.0" ? (
+                          {/* 只展示当前模型已接通且与计价一致的画质 */}
+                          {canvasVideoResolutionsForModel(block.videoModel).length > 1 ? (
                             <label className="flex items-center gap-2 text-[11px] text-white/70">
                               <span className="shrink-0 text-white/45">画质</span>
                               <select
-                                value={normalizeCanvasVideoResolution(block.videoResolution)}
+                                aria-label="成片画质"
+                                value={resolveCanvasVideoResolution(block.videoModel, block.videoResolution)}
                                 onChange={(e) =>
                                   patchOne(block.id, {
-                                    videoResolution: normalizeCanvasVideoResolution(e.target.value),
+                                    videoResolution: resolveCanvasVideoResolution(block.videoModel, e.target.value),
                                   })
                                 }
                                 className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
                               >
-                                {CANVAS_VIDEO_RESOLUTIONS.map((r) => (
+                                {canvasVideoResolutionsForModel(block.videoModel).map((r) => (
                                   <option key={r} value={r}>
                                     {r}
                                     {" · "}
-                                    {canvasVideoClipCredits({ resolution: r })} 积分/段
+                                    {canvasVideoClipCredits({ videoModel: block.videoModel, resolution: r, isEpisodeSegment: Number(block.episodeIndex) > 0, durationSec: parseManhuaClipDirectorCardSummary(block.prompt).durationSec ?? undefined })} 积分/段
                                   </option>
                                 ))}
                               </select>

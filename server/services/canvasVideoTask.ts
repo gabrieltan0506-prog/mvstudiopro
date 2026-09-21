@@ -194,17 +194,12 @@ export type CanvasVideoTaskRecord = {
 export function resolveSeedance25CanvasEngine(
   mode?: SeedanceEvolinkMode,
   opts?: {
-    /**
-     * 仿真人信号（用户 2026-08-10 明文）：写实人脸走 BytePlus 会被
-     * InputImageSensitiveContentDetected 拦住任务失败，只能走 EvoLink；CG 漫画风无碍。
-     * 信号来源是参考图 URL 的 photoreal 资产路径；用户自传真人照片识别不到，
-     * 由 BytePlus 失败回落 EvoLink 兜底（isByteplusFallbackableError 默认放行）。
-     */
+    /** 兼容旧调用参数；不再据此跳过 BytePlus。 */
     photoreal?: boolean;
   },
 ): CanvasVideoEngine {
   if (mode === "video_edit" || mode === "video_extend") return "seedance25-evolink";
-  if (opts?.photoreal) return "seedance25-evolink";
+  // 参考生成先请求 BytePlus，由明确的人脸拒绝决定回落，不凭素材风格预判。
   if (isByteplusSeedanceConfigured()) return "seedance25-byteplus";
   return "seedance25-evolink";
 }
@@ -508,24 +503,6 @@ async function submitSeedance25Byteplus(task: CanvasVideoTaskRecord): Promise<vo
       throw error;
     }
     const reason = error instanceof Error ? error.message : String(error);
-    /**
-     * CG 漫剧回落顺序（用户 2026-08-12 拍板）：BytePlus 挂了先去 OpenRouter（比 EvoLink 省 25%）。
-     * 例外仍去 EvoLink：①真人脸敏感错（OpenRouter 同为 BytePlus 转发方，一样拦脸）
-     * ②带参考视频的任务（OpenRouter 通道未接 video_urls，硬切会静默丢运镜参考）。
-     */
-    const faceBlocked = /InputImageSensitiveContentDetected|sensitive/i.test(reason);
-    if (!faceBlocked && !task.videoUrls?.length && isOpenRouterVideoConfigured()) {
-      console.warn(
-        `[canvasVideoTask] BytePlus Seedance 2.5 提交失败，回落 OpenRouter · task=${task.taskId} · ${reason}`,
-      );
-      task.fallbackReason = reason.slice(0, 200);
-      task.byteplusTaskId = undefined;
-      task.engine = "seedance-openrouter";
-      task.seedanceVersion = "2.5";
-      await writeTask(task);
-      await submitUpstream(task);
-      return;
-    }
     if (!isEvolinkSeedanceConfigured()) {
       throw error;
     }
@@ -1037,35 +1014,9 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
           return current;
         }
         if (snap.state === "failed") {
-          // 上游跑挂：CG 无参考视频先回落 OpenRouter（拍板口径），脸敏感/带参考视频回落 EvoLink；均不重复扣费
+          // 只对明确终态的人脸拒绝换通道，其他失败按原任务结束。
           const reason = snap.error;
-          const faceBlocked = /InputImageSensitiveContentDetected|sensitive/i.test(reason);
-          if (
-            !faceBlocked &&
-            !current.videoUrls?.length &&
-            isOpenRouterVideoConfigured() &&
-            !current.openRouterJobId
-          ) {
-            console.warn(
-              `[canvasVideoTask] BytePlus 任务失败，回落 OpenRouter · task=${current.taskId} · ${reason}`,
-            );
-            current.fallbackReason = reason.slice(0, 200);
-            current.byteplusTaskId = undefined;
-            current.engine = "seedance-openrouter";
-            current.seedanceVersion = "2.5";
-            current.status = "queued";
-            await writeTask(current);
-            try {
-              await submitUpstream(current);
-              const after = await readTask(taskId);
-              return after || current;
-            } catch (error) {
-              return failTask(
-                current,
-                error instanceof Error ? error.message : reason,
-              );
-            }
-          }
+          if (!isByteplusFallbackableError(reason)) return failTask(current, reason);
           if (isEvolinkSeedanceConfigured() && !current.evolinkTaskId) {
             console.warn(
               `[canvasVideoTask] BytePlus 任务失败，回落 EvoLink · task=${current.taskId} · ${reason}`,

@@ -3506,9 +3506,7 @@ async function runCanvasBlockInner(
             if (!outImages.length && !outVideos.length && !outAudios.length) {
               throw new Error("多模态参考需要至少一张图片、一条视频或一条音频");
             }
-            outImages = outImages.slice(0, 30);
-            outVideos = outVideos.slice(0, 10);
-            outAudios = outAudios.slice(0, 10);
+            // 保留完整参考，由下游出站编译器按真实数量拒绝超限，不能先裁剪再校验。
           } else {
             if (!outVideos.length) {
               throw new Error(
@@ -3531,9 +3529,6 @@ async function runCanvasBlockInner(
                 (await probeVideoDurationSec(outVideos[0])) || undefined;
             }
           }
-        } else {
-          outVideos = outVideos.slice(0, SEEDANCE_REFERENCE_MAX.video);
-          outAudios = outAudios.slice(0, SEEDANCE_REFERENCE_MAX.audio);
         }
         const seedanceOpts = {
           imageUrls: outImages.length ? outImages : undefined,

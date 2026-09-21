@@ -30,10 +30,10 @@ vi.mock("./evolinkSeedanceVideo.js", async importOriginal => {
 });
 vi.mock("./byteplusSeedanceVideo.js", async importOriginal => {
   const actual = await importOriginal<typeof import("./byteplusSeedanceVideo.js")>();
-  return { ...actual, isByteplusSeedanceConfigured: () => true, isByteplusFallbackableError: (error: unknown) => error instanceof Error && error.message === "test-fallback",
+  return { ...actual, isByteplusSeedanceConfigured: () => true,
     submitByteplusSeedance25Video: async (input: Parameters<typeof actual.buildByteplusSeedance25SubmitBody>[0]) => {
       h.byteplus(actual.buildByteplusSeedance25SubmitBody(input));
-      if (h.byteplusFailure) throw new Error("test-fallback");
+      if (h.byteplusFailure) throw new Error("InputImageSensitiveContentDetected.PrivacyInformation");
       return { byteplusTaskId: "bp-local-test", model: "seedance-2.5", mode: "reference_to_video" };
     }, pollByteplusVideoTaskOnce: async () => ({ state: "running", status: "processing" }),
   };
@@ -77,6 +77,10 @@ describe("真实任务写盘到供应商请求的音频交接", () => {
     });
     return saved;
   }
+  it("写实素材不跳过已配置BytePlus", async () => {
+    const { resolveSeedance25CanvasEngine } = await import("./canvasVideoTask");
+    expect(resolveSeedance25CanvasEngine("reference_to_video", { photoreal: true })).toBe("seedance25-byteplus");
+  });
   it("EvoLink最终body是HTTPS，任务持久化仍为GS", async () => {
     const task = await create("seedance25-evolink");
     expect(task.audioUrls).toEqual(["gs://test-bucket/post-prod/7/dialogue.wav"]);
@@ -94,12 +98,13 @@ describe("真实任务写盘到供应商请求的音频交接", () => {
     expect(task.audioUrls).toEqual(["gs://test-bucket/post-prod/7/dialogue.wav"]);
     expect(h.evolink.mock.calls[0][0].body.audio_urls[0]).toContain("signature=test-2");
   });
-  it("BytePlus回落OpenRouter也得到全量已签音频", async () => {
+  it("人脸拒绝即使OpenRouter可用仍只转EvoLink并保留音频", async () => {
     h.byteplusFailure = true; h.openrouterEnabled = true;
     const task = await create("seedance25-byteplus");
-    expect(task.engine).toBe("seedance-openrouter");
+    expect(task.engine).toBe("seedance25-evolink");
     expect(task.audioUrls).toEqual(["gs://test-bucket/post-prod/7/dialogue.wav"]);
-    expect(h.openrouter.mock.calls[0][0].input_references).toContainEqual({ type: "audio_url", audio_url: { url: "https://storage.googleapis.com/test-bucket/post-prod/7/dialogue.wav?signature=test-2" } });
+    expect(h.openrouter).not.toHaveBeenCalled();
+    expect(h.evolink.mock.calls[0][0].body.audio_urls[0]).toContain("signature=test-2");
   });
   it("worker拒绝越权素材，三个供应商均零提交", async () => {
     h.byteplusFailure = true; h.openrouterEnabled = true;
