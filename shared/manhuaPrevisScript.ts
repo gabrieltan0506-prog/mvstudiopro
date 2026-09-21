@@ -30,6 +30,8 @@ export const PREVIS_SCRIPT_DRAFT_KINDS = [
   ["sit", /(?:坐下|落座|坐到)/],
   ["gesture_point", /(?:指向|抬手指|伸手指)/],
   ["bow", /(?:行礼|拱手|鞠躬|俯身行礼)/],
+  ["cough", /(?:咳嗽|咳喘|轻咳)/],
+  ["limp_front_left", /(?:左前腿跛行|左前腿微跛)/],
 ] as const satisfies readonly (readonly [PrevisActionKind, RegExp])[];
 
 /**
@@ -361,7 +363,7 @@ export function compilePrevisScriptDraft(input: {
       continue;
     }
     const actor = actorFor(present[0]);
-    if (actor.shape === "horse" && kind !== "idle") {
+    if (actor.shape === "horse" && kind !== "idle" && kind !== "limp_front_left") {
       reject("四足角色不能套人体动作");
       continue;
     }
@@ -379,7 +381,7 @@ export function compilePrevisScriptDraft(input: {
       reject("原文写了动作目标，但走位/指向的目标白模还表达不了，请人工设站位或朝向");
       continue;
     }
-    if (kind === "walk") {
+    if (kind === "walk" || kind === "limp_front_left") {
       // 走位只出摆臂步态，位移来自站位区间；站着不动就不排走位，免得原地摆臂假装在走。
       // 判据与提交门禁共用 previsActorTravelsDuring，不在这里再写一遍。
       if (!previsActorTravelsDuring(actor, start, end)) {

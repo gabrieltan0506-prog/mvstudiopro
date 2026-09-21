@@ -9,6 +9,8 @@ import {
 } from "./manhuaPrevisEffects";
 import { previsRiggedModelSchema } from "./manhuaPrevisRig";
 
+import { previsPiggybackSchema, previsPiggybackIssues } from "./manhuaPrevisPiggyback";
+
 const point = z.tuple([
   z.number().finite().min(-12).max(12),
   z.number().finite().min(-12).max(12),
@@ -81,6 +83,8 @@ export const PREVIS_ACTION_LABELS = {
   sit: "坐下",
   gesture_point: "抬手指向",
   bow: "俯身行礼",
+  cough: "掩口咳嗽与缓气",
+  limp_front_left: "左前腿卸载跛行",
 } as const;
 /** 需要额外参数的动作：转身要目标朝向，看向要目标。 */
 export const PREVIS_ACTION_KINDS = [
@@ -94,6 +98,8 @@ export const PREVIS_ACTION_KINDS = [
   "sit",
   "gesture_point",
   "bow",
+  "cough",
+  "limp_front_left",
 ] as const;
 export type PrevisActionKind = (typeof PREVIS_ACTION_KINDS)[number];
 /** 打戏四类：四足角色与持剑白模只许这几类，扩库不放宽旧门禁。 */
@@ -220,6 +226,7 @@ const manhuaPrevisSpecBaseSchema = z
     timeMap: manhuaShotTimeMapSchema.optional(),
     actors: z.array(previsActorSchema).min(1).max(6),
     interactions: z.array(previsInteractionSchema).max(24).optional(),
+    piggyback: previsPiggybackSchema.optional(),
     scriptSource: previsScriptSourceSchema.optional(),
     waterEmergence: previsWaterEmergenceSchema.optional(),
     effects: previsEffectsSchema.optional(),
@@ -404,6 +411,8 @@ export function previsCapacityIssueZh(
 export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
   (spec, ctx) => {
     validatePrevisEffects(spec, ctx);
+    for (const message of previsPiggybackIssues(spec))
+      ctx.addIssue({ code: "custom", path: ["piggyback"], message });
     if (spec.timeMap) {
       for (const issue of validateManhuaShotTimeMap(spec.timeMap)) ctx.addIssue({code:"custom",path:["timeMap"],message:issue.messageZh});
       if (Math.abs(spec.timeMap.sourceDurationSec-spec.durationSec)>1e-6) ctx.addIssue({code:"custom",path:["timeMap"],message:"变速源时长与动作配置不一致，请重新设置快慢节奏"});
@@ -461,13 +470,21 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
           path: ["actors", i],
         });
       // 动作库只承诺人体关节；非人角色先提供站位和可见步态，不错误套人类动作。
-      if (actor.shape === "horse" && actor.actions.some(a => a.kind !== "idle"))
+      if (actor.shape === "horse" && actor.actions.some(a => a.kind !== "idle" && a.kind !== "limp_front_left"))
         ctx.addIssue({
           code: "custom",
-          message: "四足角色暂只支持站位与行走",
+          message: "四足角色只支持站位、行走或明确左前腿卸载的跛行",
           path: ["actors", i, "actions"],
         });
       actor.actions.forEach((action, j) => {
+        if (action.kind === "limp_front_left" && (
+          actor.shape !== "horse" || actor.creature || spec.waterEmergence ||
+          action.startSec !== 0 || action.endSec !== spec.durationSec ||
+          !previsActorTravelsDuring(actor, action.startSec, action.endSec)
+        ))
+          ctx.addIssue({ code: "custom", message: "左前腿跛行须为基础四足、覆盖整段且已有真实位移；完整兽体尚待接触验收", path: ["actors", i, "actions", j] });
+        if (action.kind === "cough" && action.endSec - action.startSec < 1.2)
+          ctx.addIssue({ code: "custom", message: "咳嗽动作至少1.2秒，需留出掩口和缓气时间", path: ["actors", i, "actions", j] });
         // 0917 PR-E：参数只属于需要它的动作，避免「填了没用」的假配置。
         if (action.kind === "turn" && !Number.isFinite(action.facingDeg as number))
           ctx.addIssue({
@@ -516,6 +533,8 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
         // 增量——腿够不着地，脚直接扎进地板：1.7 米模型 −21.4 厘米、2.55 米模型 −32.2 厘米，
         // 与身高成正比，不是夹具特例。走位实测只有 +2.0 厘米抬脚残差，不受影响。
         // 落脚校正上线之前，宁可拒绝提交，也不渲一个脚在地里的片子。
+        if (action.kind === "cough" && actor.riggedModel)
+          ctx.addIssue({ code: "custom", message: "咳嗽目前仅支持基础白模人物；完整人物的掩口和收手位置还未修正，请先使用基础白模预演。", path: ["actors", i, "actions", j] });
         if (action.kind === "sit" && actor.riggedModel)
           ctx.addIssue({
             code: "custom",
@@ -980,6 +999,7 @@ export function formatPrevisMotionGuide(spec: ManhuaPrevisSpec): string {
         a =>
           `${a.nameZh}右手持剑，手柄随手腕，参考只约束动作与比例，武器外观按该角色道具参考。`
       ),
+    ...(spec.piggyback ? [`整段由${(spec.actors.find(a => a.id === spec.piggyback!.carrierId)?.nameZh ?? "待重新选择的承载者")}背负${(spec.actors.find(a => a.id === spec.piggyback!.passengerId)?.nameZh ?? "待重新选择的乘员")}；开镜已背稳，双手托腿、乘员抱肩，乘员跟随同一路线且双脚离地，不新增上背或放下动作。`] : []),
     ...(spec.interactions ?? []).map(event => {
       const actor = spec.actors.find(a => a.id === event.actorId)!;
       const target = spec.actors.find(a => a.id === event.targetActorId)!;

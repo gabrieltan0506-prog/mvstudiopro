@@ -15,7 +15,7 @@ it("生产脚本或依赖变更后必须重采动作预览，不能悄悄用旧�
     ).toBe(hash);
   }
 });
-it("五动作每帧都是有限画内端点；待机静止，其他动作有真实差异", () => {
+it("动作库每帧都是有限画内端点；待机静止，其他动作有真实差异", () => {
   expect(Object.keys(samples.clips)).toEqual([...PREVIS_LIBRARY_ACTIONS]);
   expect(samples.fps).toBe(24);
   expect(samples.durationSec).toBe(2);

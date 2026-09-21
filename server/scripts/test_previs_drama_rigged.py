@@ -203,6 +203,20 @@ def source_height(actor_id):
             - min(b.head_local.z for b in rig.data.bones))
 
 
+# 咳嗽只验证新增动作，不重复运行已通过的坐下等旧用例。
+if '--cough-only' in arguments:
+    error = None
+    try:
+        with_actions('cough', {actor['id']: [{'kind':'cough','startSec':0,'endSec':2}] for actor in BASE['actors']})
+    except ValueError as exc:
+        error = str(exc)
+    assert error and '掩口和收手' in error, ('未拒绝未验收动作',error)
+    (root/'cough-rigged-check.json').write_text(json.dumps({'testFixturesOnly':True,'rejected':error,'knownFailure':'原探针1.70米带骨角色末帧手部距初始位置0.2945米'},ensure_ascii=False,indent=2))
+    print(error)
+    raise SystemExit(0)
+
+
+
 # ---------------------------------------------------------------- ① 站立基线
 idle_report = with_actions('idle-control', {'矮个': [{'kind': 'idle', 'startSec': 0, 'endSec': 2}],
                                             '高个': [{'kind': 'idle', 'startSec': 0, 'endSec': 2}]})
