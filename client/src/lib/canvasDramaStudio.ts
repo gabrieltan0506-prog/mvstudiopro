@@ -2468,6 +2468,7 @@ export function ensureManhuaFragmentClips(
       castZh: effectiveCastZh || planBeat?.castZh,
       wardrobePropZh: planBeat?.wardrobePropZh,
       sceneZh: sceneFromPlan || sceneFromKeyart || undefined,
+      sceneHaystack: [planBeat?.performanceZh, planBeat?.sceneZh, ...seg.shots.map(shot => shot.actionZh)].filter(Boolean).join("\n"),
       propHaystack,
       registry: segmentRegistry,
       assetCanon: opts?.assetCanon,
@@ -2601,10 +2602,28 @@ export function ensureManhuaFragmentClips(
         prompt: [stripManhuaDirectionStyleBlocks(keyart.prompt), keyframeDirection].filter(Boolean).join("\n\n"),
         manhuaKeyartSourceState: { ...keyart.manhuaKeyartSourceState, required: JSON.stringify({ ...withManhuaShotStateNote(originalShot, shots, opts), ...(localDirection ? { directionKeyframe: keyframeDirection } : {}) }) },
       } : keyart;
+      // 静帧只消费本镜出场；不能把同段后两镜的人物和整集场景一起灌给首镜。
+      const shotText = originalShot ? [originalShot.actionZh, originalShot.dialogueZh, originalShot.intentZh].filter(Boolean).join("；") : "";
+      const shotCast = originalShot ? resolveManhuaSegmentCastZh({
+        shots: [originalShot], registry: segmentRegistry, assetCanon: opts?.assetCanon,
+      }) : "";
+      const shotAssets = originalShot && opts?.assetCanon ? resolveManhuaSegmentClipAllowedAssets({
+        haystack: shotText,
+        castZh: shotCast,
+        sceneZh: sceneFromPlan || sceneFromKeyart || undefined,
+        sceneHaystack: [sceneFromPlan, originalShot.actionZh].filter(Boolean).join("；"),
+        propHaystack: shotText,
+        registry: segmentRegistry,
+        assetCanon: opts.assetCanon,
+        mainSceneId: mainScene?.id,
+        castCount: Math.max(1, shotCast.split("；").filter(Boolean).length, inferWorkbenchShotCastCount(originalShot.actionZh || "")),
+      }) : segAssets;
       refreshedKeyarts.set(keyart.id, compileManhuaKeyartLookBindings(sourceBoundKeyart, {
         registry: segmentRegistry,
-        allowedIds: segAssets.allowedIds,
-        activeLookSetIds: activeLookIds,
+        allowedIds: shotAssets.allowedIds,
+        activeLookSetIds: resolveActiveLookSetIdsForSegment({ lookSets, binding: segBinding, fallbackCharacterIds: shotAssets.characterIds }),
+        // 未出图的规划阶段仍可更新分镜；已有可用参考时才重绑，缺图由生成门禁处理。
+        bindCurrentAssets: Boolean(opts?.assetCanon && originalShot && shotAssets.allowedIds.some(id => assetPathById[id])),
       }));
     }
     const assetLockBlock = formatManhuaAssetImageBindBlock(segmentRegistry, 8, {
@@ -4236,7 +4255,8 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   /** 调用方已经为单节点编译好重拍/视频编辑载荷时，禁止 ensure 覆盖该节点。 */
   preservePreparedTargetBlocks?: boolean;
   onBlocksChange?: (blocks: CanvasBlock[]) => void;
-  /** 本次执行是首段 10 秒试片；只约束成片载荷，不修改草稿中的独立分镜原文。 */
+  /** 本次执行是首段5秒或10秒试片；只约束成片载荷，不修改草稿中的独立分镜原文。 */
+  pilotDurationSec?: 5 | 10;
   pilotRun?: boolean;
   /**
    * 生成前确认闸：按节点 id 返回「当前归属 + 该段的确认记录」。
@@ -4832,6 +4852,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
           {
             videoSubmissionKey,
             pilotRun: opts.pilotRun === true && stage === "clip",
+            pilotDurationSec: opts.pilotDurationSec,
             // 漫剧段成片：**强制生成前确认**。单段、批量、重跑都从这里下发，
             // 调用方不能自己决定传不传——闸绑在这一层，不在各调用点。
             // 先决条件已闭合：预览与运行共用 prepareManhuaFactoryClipInput（A 项），
@@ -4842,6 +4863,14 @@ export async function runManhuaDramaFactoryPipeline(opts: {
             resolveOutboundGate: opts.resolveOutboundGate,
           },
         );
+        if (opts.pilotRun && stage === "clip") {
+          // 短试片仅进入审核面板；正片稿、旧成片与尾帧保持原样。
+          publish(working.map(b => b.id === blockId ? block : b));
+          completedIds.push(blockId);
+          opts.onStageDone?.(blockId, i, orderedIds.length, label);
+          succeeded = true;
+          break;
+        }
         if (preparedVideoEdit && !String(out.outputUrl || out.outputUrls?.[0] || "").trim()) {
           throw new Error("未取得视频编辑结果，原片已保留；请先核对任务记录，不要重复提交");
         }
@@ -4941,7 +4970,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       const alreadyLogged = errors.some((e) => e.id === blockId);
       publish(
         working.map((b) =>
-          b.id === blockId ? { ...b, status: "error" as const, error: lastMessage } : b,
+          b.id === blockId ? (opts.pilotRun && stage === "clip" ? block : { ...b, status: "error" as const, error: lastMessage }) : b,
         ),
       );
       if (!alreadyLogged) {
@@ -4982,6 +5011,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   );
   if (
     !opts.signal?.aborted &&
+    !opts.pilotRun &&
     untilIdx >= clipStageIdx &&
     (opts.episodeIndex == null || opts.episodeIndex >= 1)
   ) {

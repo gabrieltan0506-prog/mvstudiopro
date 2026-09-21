@@ -1,4 +1,4 @@
-import { saveManhuaShotTimingDraft } from "@/lib/manhuaShotTimingDraft";
+import { saveManhuaShotTimingDraft, retimeManhuaWriterPack } from "@/lib/manhuaShotTimingDraft";
 import { retimeManhuaShot } from "@shared/manhuaShotTimingEdit";
 import { readManhuaTimedStoryboard as readShotTimingForEdit } from "@shared/manhuaTimedStoryboard";
 import { applyManhuaAssetDirection } from "@shared/manhuaDirectionCanonLibrary";
@@ -1201,6 +1201,9 @@ export default function OmniCanvas() {
     videoModel: activePilotVideoModel,
   });
   const activePilotGateEntry = pilotReview.review;
+  const [selectedPilotDurationSec, setSelectedPilotDurationSec] = useState<5 | 10>(10);
+  const pilotDurationSec = activePilotGateEntry && ["submitting", "generated", "approved", "reconcile_manual"].includes(activePilotGateEntry.status)
+    ? activePilotGateEntry.durationSec ?? 10 : activePilotVideoModel === "seedance-2.5" ? selectedPilotDurationSec : 10;
   const [directorUnlocked, setDirectorUnlocked] = useState(
     () => Boolean(initialWriterSession?.directorUnlocked),
   );
@@ -1211,7 +1214,7 @@ export default function OmniCanvas() {
     normalizeManhuaCustomAssetRefs(initialWriterSession?.customAssetRefs),
   );
   /**
-   * 长期资产的签名 url 会过期（如道具拼板切图，7 天）。有 gcsUri 的条目，
+   * 长期资产的签名 url 会过期（如道具拼板切图，7 天）。旧图缺 gcsUri 时从同一存储地址恢复，
    * 草稿加载/变动时只刷新无有效签名的地址，不能把新产物的七天签名降为一小时。
    * 同页后续过期由图片的有界显示回退处理；生成预检仍独立鉴权续签。
    * 按 gcsUri 去重，避免刚刷完又把自己刷一遍死循环。
@@ -1219,7 +1222,10 @@ export default function OmniCanvas() {
   const resignedPropGcsUriRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const stale = customAssetRefs.filter(
-      (r) => r.gcsUri && !resignedPropGcsUriRef.current.has(r.gcsUri) && !canKeepAssetImageDisplayUrl(r),
+      (r) => {
+        const gcsUri = r.gcsUri || assetImageGcsUri(r.url);
+        return gcsUri && !resignedPropGcsUriRef.current.has(gcsUri) && !canKeepAssetImageDisplayUrl({ ...r, gcsUri });
+      },
     );
     if (!stale.length) return;
     let cancelled = false;
@@ -1227,23 +1233,29 @@ export default function OmniCanvas() {
       const resolved = await Promise.all(
         stale.map(async (r) => {
           try {
-            const url = await resolveCanvasMaterialUrl(r.gcsUri!);
-            return { id: r.id, gcsUri: r.gcsUri!, url };
+            const gcsUri = r.gcsUri || assetImageGcsUri(r.url)!;
+            const url = await resolveCanvasMaterialUrl(gcsUri);
+            if (!/^https:\/\//i.test(url)) return null;
+            return { id: r.id, gcsUri, url, sourceUrl: r.url };
           } catch {
             return null;
           }
         }),
       );
       if (cancelled) return;
-      const byId = new Map<string, string>();
+      const byId = new Map<string, { gcsUri: string; url: string; sourceUrl: string }>();
       for (const r of resolved) {
         if (!r) continue;
         resignedPropGcsUriRef.current.add(r.gcsUri);
-        byId.set(r.id, r.url);
+        byId.set(r.id, r);
       }
       if (!byId.size) return;
       setCustomAssetRefs((prev) =>
-        prev.map((r) => (byId.has(r.id) ? { ...r, url: byId.get(r.id)! } : r)),
+        prev.map((r) => {
+          const fresh = byId.get(r.id);
+          // 异步续签不能覆盖期间更换的同 ID 图片。
+          return fresh && r.url === fresh.sourceUrl ? { ...r, gcsUri: fresh.gcsUri, url: fresh.url } : r;
+        }),
       );
     })();
     return () => {
@@ -4602,12 +4614,13 @@ export default function OmniCanvas() {
         isExtend,
         // 编辑是单目标的「已备原片」运行，上游图/文不参与；与编排器同口径。
         preparedVideoEdit: isEdit,
+        pilotDurationSec,
         // 只有新生成片段才谈试片
         pilotRun:
           !isEdit && !isExtend && activePilotGateEntry?.status !== "approved",
       };
     },
-    [activePilotGateEntry?.status],
+    [activePilotGateEntry?.status, pilotDurationSec],
   );
 
   /**
@@ -4673,7 +4686,7 @@ export default function OmniCanvas() {
         preparedVideoEdit: operation.preparedVideoEdit,
       });
       // 试片口径也在这里定：编辑／延长不是新试片，由操作本身派生
-      return { preparedBlock, upstream, runOptions: { pilotRun: operation.pilotRun } };
+      return { preparedBlock, upstream, runOptions: { pilotRun: operation.pilotRun, pilotDurationSec: operation.pilotDurationSec } };
     },
     [deriveClipOperationOptions, edges, shotContinuity, writerFocusEpisode],
   );
@@ -8616,8 +8629,9 @@ export default function OmniCanvas() {
         /** 质检试片要求一次提交时使用。 */
         maxRetries?: number;
         stopOnError?: boolean;
-        /** 首段固定 10 秒、零自动重试的小样。 */
+        /** 首段5秒或10秒、零自动重试的小样。 */
         pilotRun?: boolean;
+        pilotDurationSec?: 5 | 10;
         /** 已有小样上的重拍/编辑不受“先批小样”入口限制。 */
         bypassPilotGate?: boolean;
       },
@@ -8726,7 +8740,7 @@ export default function OmniCanvas() {
                 explicitWriterVideoModel || undefined,
               ),
               segmentIndex: pilotIndexes.length === 1 ? pilotIndexes[0]! : 1,
-              durationSec: opts?.pilotRun ? MANHUA_PILOT_DURATION_SEC : 15,
+              durationSec: opts?.pilotRun ? (opts.pilotDurationSec ?? MANHUA_PILOT_DURATION_SEC) : 15,
               pilotRun: opts?.pilotRun === true,
             });
           }
@@ -8905,24 +8919,8 @@ export default function OmniCanvas() {
                   resolveClipLocalSegmentIndex(block.id, block.prompt, episodeIndex) === 1,
               );
               if (!pilotClip) throw new Error("首段成片节点未就绪，请先铺好分镜提示词");
-              const compiledPilot = compileManhuaPilotPrompt(pilotClip.prompt);
-              workingBlocks = workingBlocks.map((block) =>
-                block.id === pilotClip.id
-                  ? {
-                      ...block,
-                      prompt: compiledPilot.prompt,
-                      status: "idle" as const,
-                      error: undefined,
-                      manhuaClipQuality: undefined,
-                      outputUrl: undefined,
-                      outputUrls: mergeManhuaMediaVersions(
-                        [],
-                        [block.outputUrl, ...(block.outputUrls || [])],
-                      ),
-                      lastFrameUrl: undefined,
-                    }
-                  : block,
-              );
+              // 这里只验证秒轴；执行器裁本次请求，不能把试片短稿写回正片节点。
+              compileManhuaPilotPrompt(pilotClip.prompt, opts.pilotDurationSec);
               effectiveTargetBlockIds = [pilotClip.id];
               setBlocks(workingBlocks);
               setEdges(workingEdges);
@@ -9096,6 +9094,7 @@ export default function OmniCanvas() {
               maxRetries: opts?.pilotRun ? 0 : opts?.maxRetries,
               stopOnError: opts?.pilotRun ? true : opts?.stopOnError,
               pilotRun: opts?.pilotRun === true,
+              pilotDurationSec: opts?.pilotDurationSec,
               // 单段、批量、重跑都从这里下发。currentScope 按**当前**账号/项目/节点现算，
               // 不从确认记录里读回来——那样等于自己和自己比。
               resolveOutboundGate: (blockId) => ({
@@ -9168,7 +9167,7 @@ export default function OmniCanvas() {
                   setFactoryProgress(keyartProgressZh().text);
                   return;
                 }
-                setFactoryProgress(`第${episodeIndex}集 · 已完成 · ${label}`);
+                setFactoryProgress(opts?.pilotRun ? `第${episodeIndex}集 · 试片已生成，待审阅` : `第${episodeIndex}集 · 已完成 · ${label}`);
               },
               onStageError: (id, label, message) => {
                 if (label === MANHUA_FACTORY_STAGE_LABEL_ZH.keyart || id.startsWith("keyart-")) {
@@ -9287,7 +9286,7 @@ export default function OmniCanvas() {
             ms: Date.now() - runStartedAt,
             detail: `completed=${completed} skipped=${skipped}`,
           });
-          toast.success(`漫剧工厂完成：新跑 ${completed}` + (skipped ? ` · 跳过 ${skipped}` : ""));
+          toast.success(opts?.pilotRun ? "试片已生成，请审阅；正片保持不变" : `本次生成完成：新跑 ${completed}` + (skipped ? ` · 跳过 ${skipped}` : ""));
         }
         setFactoryProgress("");
       } catch (e: unknown) {
@@ -10537,11 +10536,8 @@ export default function OmniCanvas() {
                     if (Array.from(edits.values()).some(edit => JSON.stringify(edit.rows.map(row => [row.index,row.startSec,row.endSec])) !== JSON.stringify(canonical.rows.map(row => [row.index,row.startSec,row.endSec])))) throw new Error("当前存在不一致的秒位表，请先统一原稿，未保存。");
                     const episode = writerPack?.episodes.find(item => item.index === ep);
                     if (!episode) throw new Error("当前集剧本不存在，未保存。");
-                    const body = readShotTimingForEdit(episode.body).recognized ? retimeManhuaShot(episode.body,shotIndex,durationSec).text : `${episode.body}\n\n## 分镜表\n\n${canonical.table}`;
-                    const savedRows = readShotTimingForEdit(body);
-                    if (savedRows.errors.length || JSON.stringify(savedRows.rows.map(row => [row.index,row.startSec,row.endSec])) !== JSON.stringify(canonical.rows.map(row => [row.index,row.startSec,row.endSec]))) throw new Error("剧本与分镜秒位不一致，未保存，请先统一原稿。");
                     const next = current.map(b => edits.has(b.id) ? { ...b, outputText: edits.get(b.id)!.text } : b);
-                    const nextWriterPack = { ...writerPack!, episodes: writerPack!.episodes.map(item => item.index===ep ? {...item,body} : item) };
+                    const nextWriterPack = retimeManhuaWriterPack(writerPack!, ep, shotIndex, durationSec, canonical);
                     saveManhuaShotTimingDraft(next, edges, { writerPack: nextWriterPack, writerConfirmed: false, directorUnlocked: false });
                     blocksRef.current=next;setBlocks(next);
                     setWriterPack(nextWriterPack);
@@ -10801,15 +10797,15 @@ export default function OmniCanvas() {
                   onGenerateFragment={({ shotIndex }) => {
                     const pilotLocked = activePilotGateEntry?.status !== "approved";
                     if (pilotLocked && shotIndex !== 1) {
-                      toast.message("请先生成并审阅首段 10 秒试片");
+                      toast.message("请先生成并审阅首段试片");
                       return;
                     }
                     if (activePilotGateEntry?.status === "generated") {
-                      toast.message("10 秒试片正在等待审阅");
+                      toast.message("试片正在等待审阅");
                       return;
                     }
                     const pad = String(shotIndex).padStart(2, "0");
-                    toast.message(pilotLocked ? "生成首段 10 秒试片" : `生成第 ${pad} 段成片`, {
+                    toast.message(pilotLocked ? `生成首段 ${pilotDurationSec} 秒试片` : `生成第 ${pad} 段成片`, {
                       description: pilotLocked
                         ? "本次只提交一次，不自动重试；质量达标后再解锁全片。"
                         : `本次 1 段 ${canvasVideoClipCredits({ isEpisodeSegment: true, videoModel: activePilotVideoModel })} 积分；缺静帧时只补本段。`,
@@ -10820,12 +10816,14 @@ export default function OmniCanvas() {
                       episodeIndexes: [writerFocusEpisode],
                       fragmentShotIndex: pilotLocked ? 1 : shotIndex,
                       pilotRun: pilotLocked,
+                      pilotDurationSec,
                     });
                   }}
                   pilotGate={{
                     status: activePilotGateEntry?.status || "not_started",
                     videoModel: activePilotVideoModel,
-                    durationSec: MANHUA_PILOT_DURATION_SEC,
+                    durationSec: pilotDurationSec,
+                    outputDurationSec: activePilotGateEntry?.durationSec ?? 10,
                     ...(activePilotGateEntry?.outputUrl
                       ? { outputUrl: activePilotGateEntry.outputUrl }
                       : {}),
@@ -10836,6 +10834,7 @@ export default function OmniCanvas() {
                   }}
                   onReviewPilot={handleReviewPilot}
                   onRefreshPilot={pilotReview.refresh}
+                  onPilotDurationChange={setSelectedPilotDurationSec}
                   directorBoardMainUrl={
                     directorBoardMainByEpisode[writerFocusEpisode]?.url ||
                     directorBoardUrlByEpisode[writerFocusEpisode] ||

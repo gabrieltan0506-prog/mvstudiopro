@@ -60,7 +60,8 @@ export function stripManhuaPromptSlop(text: string): string {
   return t
     .replace(/[，,]{2,}/g, "，")
     .replace(/[；;]{2,}/g, "；")
-    .replace(/\s{2,}/g, " ")
+    // 同步会处理完整分镜稿；只合并横向空白，保留标题、表头和行之间的换行。
+    .replace(/[^\S\r\n]{2,}/g, " ")
     .replace(/^[，,；;\s]+|[，,；;\s]+$/g, "")
     .trim();
 }

@@ -1346,3 +1346,24 @@ describe("L2(A) 描述词不单独锁人 · 真名才桥接", () => {
     expect(allowed.mode).toBe("matched");
   });
 });
+
+
+describe("分段场景来源隔离", () => {
+  it("静帧全库清单不能把坊市场景换成医馆后院", () => {
+    const canon = { characters: [], props: [], locations: [
+      { id: "market", role: "scene" as const, nameZh: "临水坊市", lookZh: "青石路", promptZh: "临水坊市" },
+      { id: "yard", role: "scene" as const, nameZh: "医馆后院", lookZh: "院墙", promptZh: "医馆后院" },
+    ], episodeMainSceneId: { 1: "market" } };
+    const registry = buildManhuaAssetLockRegistry({ assetCanon: canon, customRefs: [
+      { id: "custom-yard", role: "scene", source: "upload", labelZh: "医馆后院", url: "https://example.com/yard.png" },
+      { id: "custom-market", role: "scene", source: "upload", labelZh: "临水坊市", url: "https://example.com/market.png" },
+    ] });
+    const input = { registry, assetCanon: canon, mainSceneId: "market", haystack: "全库参考：医馆后院、临水坊市。", sceneHaystack: "阿菁背娘挪步，墨屠跟随。" };
+    expect(resolveManhuaSegmentClipAllowedAssets(input).sceneIds).toEqual(["custom-market"]);
+    expect(resolveManhuaSegmentClipAllowedAssets({ ...input, sceneZh: "医馆后院" }).sceneIds).toEqual(["custom-yard"]);
+    expect(resolveManhuaSegmentClipAllowedAssets({ ...input, sceneZh: "未建场景" }).sceneIds).toEqual([]);
+    const duplicate = { ...registry.byRole.scene.find(slot => slot.id === "custom-market")!, id: "market-v2", tag: "@场景99" };
+    const ambiguous = { ...registry, byRole: { ...registry.byRole, scene: [...registry.byRole.scene, duplicate] } };
+    expect(resolveManhuaSegmentClipAllowedAssets({ ...input, registry: ambiguous }).sceneIds).toEqual([]);
+  });
+});

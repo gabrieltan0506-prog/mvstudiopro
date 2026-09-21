@@ -261,7 +261,8 @@ function publicState(
 function taskMatchesPilot(
   task: CanvasVideoTaskRecord,
   userId: number,
-  scope: ManhuaPilotScope
+  scope: ManhuaPilotScope,
+  expectedDurationSec: 5 | 10 = 10
 ): boolean {
   const pilot = task.manhuaPilot;
   return Boolean(
@@ -271,7 +272,7 @@ function taskMatchesPilot(
       pilot.episodeIndex === scope.episodeIndex &&
       pilot.projectVersion === scope.projectVersion &&
       pilot.videoModel === scope.videoModel &&
-      task.duration === 10
+      task.duration === expectedDurationSec
   );
 }
 
@@ -303,7 +304,7 @@ async function reconcileRecordWithTask(
 ): Promise<PilotRegistryRecord> {
   const currentTaskId = record.state.taskId;
   if (!currentTaskId || !task || task.taskId !== currentTaskId) return record;
-  if (!taskMatchesPilot(task, record.userId, record.scope)) return record;
+  if (!taskMatchesPilot(task, record.userId, record.scope, record.state.durationSec ?? 10)) return record;
   if (record.state.status === "approved" || record.state.status === "rejected")
     return record;
   const updatedAt = task.updatedAt || new Date().toISOString();
@@ -325,6 +326,7 @@ async function reconcileRecordWithTask(
   } else if (record.state.status === "submitting") {
     nextState = { status: "submitting", taskId: task.taskId, updatedAt };
   }
+  nextState = { ...nextState, durationSec: task.duration === 5 ? 5 : 10 };
   if (JSON.stringify(nextState) === JSON.stringify(record.state)) return record;
   const next = {
     ...record,
@@ -355,6 +357,7 @@ async function refreshUnderLock(
     if (Number.isFinite(reservedAt) && Date.now() - reservedAt >= graceMs) {
       const state: ManhuaPilotReviewState = {
         status: "reconcile_manual",
+        durationSec: current.state.durationSec ?? 10,
         taskId: current.state.taskId,
         updatedAt: new Date().toISOString(),
       };
@@ -388,6 +391,7 @@ export async function prepareManhuaPilotSubmission(input: {
     input.actualVideoModel
   );
   if (submission.intent === "pilot") {
+    if (input.durationSec === 5 && input.actualVideoModel !== "seedance-2.5") throw new Error("当前生成档请使用10秒试片");
     assertManhuaPilotSubmissionAllowed(
       { status: "not_started" },
       submission,
@@ -411,6 +415,7 @@ export async function prepareManhuaPilotSubmission(input: {
     const now = new Date().toISOString();
     const nextState: ManhuaPilotReviewState = {
       status: "submitting",
+      durationSec: input.durationSec === 5 ? 5 : 10,
       taskId,
       updatedAt: now,
     };
@@ -449,6 +454,7 @@ export async function markManhuaPilotReservationFailed(input: {
     }
     const state: ManhuaPilotReviewState = {
       status: "failed",
+      durationSec: current.state.durationSec ?? 10,
       taskId: input.taskId,
       updatedAt: new Date().toISOString(),
     };
@@ -475,6 +481,7 @@ export async function markManhuaPilotReservationReconcileManual(input: {
     if (current.state.status !== "submitting") return current.state;
     const state: ManhuaPilotReviewState = {
       status: "reconcile_manual",
+      durationSec: current.state.durationSec ?? 10,
       taskId: input.taskId,
       updatedAt: new Date().toISOString(),
     };
@@ -551,12 +558,13 @@ export async function reviewManhuaPilot(input: {
       !task ||
       task.status !== "succeeded" ||
       !task.videoUrl ||
-      !taskMatchesPilot(task, input.userId, scope)
+      !taskMatchesPilot(task, input.userId, scope, current.state.durationSec ?? 10)
     ) {
       throw new Error("试片任务身份或成片结果校验失败");
     }
     const nextState: ManhuaPilotReviewState = {
       status: desiredStatus,
+      durationSec: current.state.durationSec ?? 10,
       taskId: task.taskId,
       outputUrl: task.videoUrl,
       updatedAt: new Date().toISOString(),

@@ -97,16 +97,17 @@ describe("首段试片的实际出站载荷（仅虚构网络边界）", () => {
         projectVersion: "a".repeat(64), episodeIndex: 1, segmentIndex: 1, intent: "pilot" as const,
       }));
       const created = vi.fn();
+      const pilotChanged = vi.fn();
       await runCanvasBlock(
-        { userRole: "admin", userId: "test-user", optimizeCopy: async () => "", authorizeManhuaClip: authorize, onVideoTaskCreated: created },
+        { userRole: "admin", userId: "test-user", optimizeCopy: async () => "", authorizeManhuaClip: authorize, onVideoTaskCreated: created, onManhuaPilotChanged: pilotChanged },
         pilotBlock(videoModel), undefined, { pilotRun: true, videoSubmissionKey: "test-explicit-submission" },
       );
       expect(authorize).toHaveBeenCalledWith({ episodeIndex: 1, segmentIndex: 1, videoModel, pilotRun: true, durationSec: 10 });
       expect(requests).toHaveLength(1);
       expect(requests[0]?.body.manhuaPilot).toEqual(await authorize.mock.results[0]?.value);
       expect(requests[0]?.body.idempotencyKey).toBe("test-explicit-submission");
-      expect(created).toHaveBeenCalledTimes(1);
-      expect(created).toHaveBeenCalledWith("clip-e01-g01", { taskId: "test-created-task", engine: videoModel });
+      expect(created).not.toHaveBeenCalled();
+      expect(pilotChanged).toHaveBeenCalled();
     },
   );
 
@@ -232,3 +233,53 @@ describe("首段试片的实际出站载荷（仅虚构网络边界）", () => {
     expect(requests).toEqual([]);
   });
 });
+
+
+it("试片截断对白在鉴权建单和任何网络之前拒绝", async () => {
+  const authorize = vi.fn();
+  const block = { ...pilotBlock("seedance-2.5"), prompt: '0–8s：人物走入坊市。\n8–13s：@角色1说「娘，抓紧我，快到了。」' };
+  const before = JSON.stringify(block);
+  await expect(runCanvasBlock({ userRole: "admin", userId: "test-user", optimizeCopy: async () => "", authorizeManhuaClip: authorize }, block, undefined, { pilotRun: true })).rejects.toThrow(/截断.*对白/);
+  expect(authorize).not.toHaveBeenCalled();
+  expect(fetch).not.toHaveBeenCalled();
+  expect(JSON.stringify(block)).toBe(before);
+});
+
+ it("五秒试片鉴权与实际请求采用同一时长，原稿不变", async () => {
+  const authorize = vi.fn(async () => ({ projectVersion: 'a'.repeat(64), episodeIndex: 1, segmentIndex: 1, intent: 'pilot' as const }));
+  const block = { ...pilotBlock('seedance-2.5'), prompt: '【第1段·13s】坊市\n0–5s：娘说「阿菁……慢点，我喘不上来。」\n5–8s：阿菁说「抓紧我。」' };
+  await runCanvasBlock({userRole:'admin',userId:'test-user',optimizeCopy:async()=>'',authorizeManhuaClip:authorize}, block, undefined, {pilotRun:true,pilotDurationSec:5});
+  expect(authorize).toHaveBeenCalledWith(expect.objectContaining({durationSec:5}));
+  expect(requests).toHaveLength(1);
+  expect(requests[0].body.duration).toBe(5);
+  expect(JSON.stringify(requests[0].body)).not.toContain('抓紧我');
+  expect(block.prompt).toContain('抓紧我');
+ });
+
+ it("五秒试片编排与确认预览使用相同时长", async () => {
+  const {block,blocks,edges}=preparedPipelineFixture('0–30s：灯笼摇晃。');
+  const authorize=vi.fn(async()=>({projectVersion:'a'.repeat(64),episodeIndex:1,segmentIndex:1,intent:'pilot' as const}));
+  const deps={userRole:'admin' as const,userId:'test-user',optimizeCopy:async()=>'',authorizeManhuaClip:authorize};
+  const confirmation=await confirmClipLikeUser({deps,blocks,edges,blockId:block.id,pilotRun:true,pilotDurationSec:5});
+  const result=await runManhuaDramaFactoryPipeline({deps:{...deps,authorizeManhuaClip:authorize},blocks,edges,episodeIndex:1,untilStage:'clip',forceFromStage:'clip',fragmentShotIndex:1,targetBlockIds:[block.id],preservePreparedTargetBlocks:true,maxRetries:0,pilotRun:true,pilotDurationSec:5,ensureOptions:{videoModel:'seedance-2.5'},resolveOutboundGate:gateFromConfirmations({[block.id]:confirmation})});
+  expect(result.errors).toEqual([]);
+  expect(requests).toHaveLength(1);
+  expect(requests[0].body.duration).toBe(5);
+  expect(authorize).toHaveBeenCalledWith(expect.objectContaining({durationSec:5}));
+ });
+
+ it.each([false,true])("试片只归审核记录，保留正片原稿和旧片且不注册节点恢复（失败=%s）", async failed => {
+  const f=preparedPipelineFixture('0–30s：灯笼摇晃。');
+  f.block.outputUrl='https://test.invalid/full-original.mp4'; f.block.lastFrameUrl='https://test.invalid/full-tail.png'; f.block.status='done';
+  f.blocks=f.blocks.map(b=>b.id===f.block.id?f.block:b);
+  const created=vi.fn(); const changed=vi.fn(); const intent=vi.fn();
+  const deps={userRole:'admin' as const,userId:'test-user',optimizeCopy:async()=>'',onVideoTaskCreated:created,onManhuaPilotChanged:changed,onCanvasIntentChanged:intent};
+  if(failed) vi.stubGlobal('fetch',vi.fn(async()=>{throw Error('验收夹具：提交失败');}));
+  const confirmation=await confirmClipLikeUser({deps,blocks:f.blocks,edges:f.edges,blockId:f.block.id,pilotRun:true,pilotDurationSec:5});
+  const result=await runManhuaDramaFactoryPipeline({deps,blocks:f.blocks,edges:f.edges,episodeIndex:1,untilStage:'clip',forceFromStage:'clip',fragmentShotIndex:1,targetBlockIds:[f.block.id],preservePreparedTargetBlocks:true,maxRetries:0,pilotRun:true,pilotDurationSec:5,ensureOptions:{videoModel:'seedance-2.5'},resolveOutboundGate:gateFromConfirmations({[f.block.id]:confirmation})});
+  expect(result.errors.length).toBe(failed?1:0);
+  expect(requests).toHaveLength(failed?0:1);
+  const saved=result.blocks.find(b=>b.id===f.block.id)!;
+  expect(saved.prompt).toBe(f.block.prompt); expect(saved.outputUrl).toBe(f.block.outputUrl); expect(saved.lastFrameUrl).toBe(f.block.lastFrameUrl);
+  expect(saved.videoTaskId).toBeUndefined(); expect(created).not.toHaveBeenCalled(); expect(intent).not.toHaveBeenCalled(); expect(changed).toHaveBeenCalled();
+ });

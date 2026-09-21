@@ -250,3 +250,25 @@ describe("compileManhuaPilotPrompt", () => {
     });
   });
 });
+
+
+describe("试片对白完整性", () => {
+  it("不能把跨过10秒的完整对白挤进2秒窗口", () => {
+    const original = '0–5s：母女走过坊市。\n5–8s：阿菁说「娘，抓紧我，快到了。」\n8–13s：曹三撇嘴，@角色4说「就牵着这一匹破马，你有钱付诊金吗？」';
+    expect(() => compileManhuaPilotPrompt(original)).toThrow(/截断.*对白/);
+    expect(original).toContain('8–13s');
+    expect(compileManhuaPilotPrompt('0–10s：娘说「慢一点。」').prompt).toContain('慢一点。');
+    expect(compileManhuaPilotPrompt('0–8s：母女走过坊市。\n10–13s：曹三说「站住。」').prompt).not.toContain('站住');
+  });
+});
+
+ it("五秒试片保留整句，跨窗对白仍拒绝且默认十秒不变", () => {
+  const source = '【第1段·13s】坊市\n0–5s：娘说「阿菁……慢点，我喘不上来。」\n5–8s：阿菁说「娘，抓紧我。」\n8–13s：曹三说「站住。」';
+  const result = compileManhuaPilotPrompt(source, 5);
+  expect(result.durationSec).toBe(5);
+  expect(result.prompt).toContain('第1段·5s');
+  expect(result.prompt).toContain('我喘不上来');
+  expect(result.prompt).not.toContain('抓紧我');
+  expect(() => compileManhuaPilotPrompt('0–6s：娘说「慢一点。」', 5)).toThrow('5 秒试片会截断');
+  expect(compileManhuaPilotPrompt('0–6s：娘说「慢一点。」').durationSec).toBe(10);
+ });

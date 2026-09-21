@@ -242,7 +242,7 @@ describe("manhuaPilotReview 服务端真相源", () => {
         actualVideoModel: "wan-3.0",
         durationSec: 15,
       })
-    ).rejects.toThrow("前 10 秒");
+    ).rejects.toThrow("前5秒或10秒");
   });
 
   it("已有 pending 也不能让错误段号或错误时长冒充同一试片复用", async () => {
@@ -270,7 +270,7 @@ describe("manhuaPilotReview 服务端真相源", () => {
         actualVideoModel: "wan-3.0",
         durationSec: 15,
       })
-    ).rejects.toThrow("前 10 秒");
+    ).rejects.toThrow("前5秒或10秒");
   });
 
   it("预留后长期找不到任务会进入人工核对态，记录损坏也不会被当成未开始覆盖", async () => {
@@ -379,3 +379,23 @@ describe("manhuaPilotReview 服务端真相源", () => {
     });
   });
 });
+
+ it("五秒试片恢复审核保留时长，改十秒仍复用原任务", async () => {
+  const {prepareManhuaPilotSubmission,reconcileManhuaPilotTask,getManhuaPilotReviewState,reviewManhuaPilot}=await import('./manhuaPilotReview');
+  const reserved=await prepareManhuaPilotSubmission({userId:77,submissionRaw:pilotRaw,actualVideoModel:'seedance-2.5',durationSec:5});
+  if(reserved.kind!=='pilot') throw new Error('未预留试片');
+  const repeat=await prepareManhuaPilotSubmission({userId:77,submissionRaw:pilotRaw,actualVideoModel:'seedance-2.5',durationSec:10});
+  expect(repeat).toMatchObject({kind:'reuse',review:{taskId:reserved.taskId,durationSec:5}});
+  const wrong=await writeTask(reserved.taskId,{userId:77,duration:10});
+  expect(await reconcileManhuaPilotTask(wrong)).toMatchObject({status:'submitting',durationSec:5});
+  const task=await writeTask(reserved.taskId,{userId:77,duration:5});
+  expect(await reconcileManhuaPilotTask(task)).toMatchObject({status:'generated',durationSec:5});
+  expect(await getManhuaPilotReviewState({userId:77,scopeRaw:scope})).toMatchObject({taskId:reserved.taskId,durationSec:5});
+  expect(await reviewManhuaPilot({userId:77,decisionRaw:{...scope,taskId:reserved.taskId,decision:'approve'}})).toMatchObject({status:'approved',durationSec:5});
+ });
+
+ it("五秒试片不支持的生成档在预留前拒绝", async () => {
+  const {prepareManhuaPilotSubmission,getManhuaPilotReviewState}=await import('./manhuaPilotReview');
+  await expect(prepareManhuaPilotSubmission({userId:78,submissionRaw:pilotRaw,actualVideoModel:'minimax-hailuo-3',durationSec:5})).rejects.toThrow('当前生成档');
+  expect(await getManhuaPilotReviewState({userId:78,scopeRaw:{...scope,videoModel:'minimax-hailuo-3'}})).toEqual({status:'not_started'});
+ });

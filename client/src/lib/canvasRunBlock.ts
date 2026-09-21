@@ -2208,7 +2208,7 @@ export async function previewCanvasBlockOutbound(
   deps: CanvasRunDeps,
   block: CanvasBlock,
   upstream: CanvasUpstreamContext = { visionImages: [], texts: [] },
-  runOptions?: { videoSubmissionKey?: string; pilotRun?: boolean },
+  runOptions?: { videoSubmissionKey?: string; pilotDurationSec?: 5 | 10; pilotRun?: boolean },
 ): Promise<CanvasOutboundPreview> {
   // 先拒绝再执行：不支持的组合一步都不许往生产路径走。
   const unsupported = resolveCanvasOutboundPreviewUnsupportedReason(block);
@@ -2333,6 +2333,16 @@ export async function runCanvasBlock(
   upstream: CanvasUpstreamContext = { visionImages: [], texts: [] },
   runOptions?: Parameters<typeof runCanvasBlockInner>[3],
 ): Promise<Awaited<ReturnType<typeof runCanvasBlockInner>>> {
+  if (runOptions?.pilotRun) {
+    // 试片由服务端审核记录恢复，不能注册成正片节点的自动恢复任务。
+    try {
+      return await runCanvasBlockInner({ ...deps, canvasIntentStorage: null,
+        onVideoTaskCreated: () => deps.onManhuaPilotChanged?.(),
+      }, block, upstream, runOptions);
+    } finally {
+      deps.onManhuaPilotChanged?.();
+    }
+  }
   const intentRun = block.kind === "video" ? resolveCanvasIntentForBlockRun(deps, block, runOptions) : null;
   if (!intentRun) return runCanvasBlockInner(deps, block, upstream, runOptions);
   const trackedDeps: CanvasRunDeps = {
@@ -2364,7 +2374,7 @@ async function runCanvasBlockInner(
     /** 同一次用户操作的自动重试必须复用；新一次显式运行不传旧值，自动生成新键。 */
     videoSubmissionKey?: string;
     /** 仅本次首段试片的执行约束，不写入节点、草稿或供应商字段。 */
-    pilotRun?: boolean;
+    pilotDurationSec?: 5 | 10; pilotRun?: boolean;
     /**
      * 生成前确认：走完整组装后在下单那一刻回卷，返回真实出站请求体。
      * 只由 previewCanvasBlockOutbound 使用；不写节点、不建单、不扣费。
@@ -2434,18 +2444,19 @@ async function runCanvasBlockInner(
   }
   if (block.kind === "music") throw new Error("请在音乐节点中选择生成音乐、分镜或合成阶段");
   if (runOptions?.pilotRun) {
+    if (runOptions.pilotDurationSec === 5 && block.videoModel !== "seedance-2.5") throw new Error("当前生成档请使用10秒试片");
     if (
       block.kind !== "video" || !block.id.startsWith("clip-") ||
       block.seedance25WorkMode === "video_edit" || block.seedance25WorkMode === "video_extend"
     ) {
-      throw new Error("10 秒试片只用于新生成片段，不能代替原片编辑或延长");
+      throw new Error("试片只用于新生成片段，不能代替原片编辑或延长");
     }
     // 只裁本次执行副本；独立秒级分镜原稿仍留在节点，正式生成时可继续使用。
     block = {
       ...block,
-      prompt: compileManhuaPilotPrompt(block.prompt).prompt,
+      prompt: compileManhuaPilotPrompt(block.prompt, runOptions.pilotDurationSec).prompt,
       ...(block.seedance25TimestampStoryboard != null ? {
-        seedance25TimestampStoryboard: compileManhuaPilotPrompt(block.seedance25TimestampStoryboard).prompt,
+        seedance25TimestampStoryboard: compileManhuaPilotPrompt(block.seedance25TimestampStoryboard, runOptions.pilotDurationSec).prompt,
       } : {}),
     };
   }
@@ -2842,7 +2853,7 @@ async function runCanvasBlockInner(
         segmentIndex: resolveClipLocalSegmentIndex(block.id, block.prompt, episodeIndex),
         videoModel,
         pilotRun: runOptions?.pilotRun === true,
-        durationSec: runOptions?.pilotRun ? MANHUA_PILOT_DURATION_SEC
+        durationSec: runOptions?.pilotRun ? (runOptions.pilotDurationSec ?? MANHUA_PILOT_DURATION_SEC)
           : clampManhuaClipDurationSecForVideoModel(videoModel, parseManhuaClipTargetDurationSec(block.prompt)),
       }));
     }
@@ -3195,7 +3206,7 @@ async function runCanvasBlockInner(
         `[canvasRunBlock] clip image-bind · assets=${assetRows.length} · kept=${keptEntries.length} · urls=${httpsImages.length} · bind=${String(imageBind).slice(0, 180)}`,
       );
       const clipDurationRaw =
-        runOptions?.pilotRun ? MANHUA_PILOT_DURATION_SEC :
+        runOptions?.pilotRun ? (runOptions.pilotDurationSec ?? MANHUA_PILOT_DURATION_SEC) :
         parseManhuaClipTargetDurationSec(motionPrompt) ??
         parseManhuaClipTargetDurationSec(block.prompt) ??
         undefined;
@@ -3259,7 +3270,7 @@ async function runCanvasBlockInner(
       if (cuesNeedReferenceMode && !segmentMasterEntry) {
         throw new Error(
           runOptions?.pilotRun
-            ? "10 秒试片不送母轨，逐段音轨也不会并入；请先停用本段配音再试片，或直接出正片"
+            ? "试片不送母轨，逐段音轨也不会并入；请先停用本段配音再试片，或直接出正片"
             : "已配置逐段音轨，请使用支持声音参考的多模态参考模式；不会静默忽略这些音轨",
         );
       }

@@ -221,7 +221,7 @@ window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       JSON.stringify({
         ok: true,
         review: {
-          status: "approved",
+          status: (window as unknown as { __pilotBoundaryTest?: boolean }).__pilotBoundaryTest ? "not_started" : "approved",
           taskId: "fixture-pilot-task",
           outputUrl: "https://example.com/pilot.mp4",
           updatedAt: "2026-09-15T00:00:00.000Z",

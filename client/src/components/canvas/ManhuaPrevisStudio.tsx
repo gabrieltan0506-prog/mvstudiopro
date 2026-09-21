@@ -1975,14 +1975,14 @@ export function ManhuaPrevisStudioView({
       </div>
       {adoptedJobId && studio.selectedJobId === adoptedJobId && onNextDraftVideo ? (
         <div className="flex flex-wrap items-center gap-2 rounded border border-emerald-300/30 bg-emerald-500/10 p-2" data-previs-next-draft-video>
-          <span className="text-xs text-emerald-100">白模已采用。下一步：生成本段草稿视频（Seedance 2.0 mini ≤15s），点了会走扣费确认，不会自动扣。</span>
+          <span className="text-xs text-emerald-100">白模已采用。下一步按当前视频模型与片段设置生成；提交前请核对提示词、参考和费用。</span>
           <button
             type="button"
             className={button}
             disabled={disabled || busy}
             onClick={() => onNextDraftVideo()}
           >
-            生成本段草稿视频
+            生成当前片段视频
           </button>
         </div>
       ) : null}

@@ -299,7 +299,7 @@ export function evaluateManhuaPilotGate(input: {
 
 export type ManhuaPilotPromptCompileResult = {
   prompt: string;
-  durationSec: typeof MANHUA_PILOT_DURATION_SEC;
+  durationSec: 5 | 10;
   hadTimeline: boolean;
   keptTimelineCount: number;
   removedTimelineCount: number;
@@ -354,7 +354,7 @@ function replaceTimelineEnd(match: TimelineMatch, endSec: number): string {
   return `${match.raw.slice(0, relativeEndIndex)}${endLabel}${match.raw.slice(relativeEndIndex + match.endRaw.length)}`;
 }
 
-function cropTimelineLine(line: string): {
+function cropTimelineLine(line: string, durationSec: 5 | 10): {
   line: string;
   hadTimeline: boolean;
   kept: number;
@@ -375,15 +375,21 @@ function cropTimelineLine(line: string): {
     const next = matches[index + 1];
     const bodyStart = current.index + current.length;
     const bodyEnd = next?.index ?? line.length;
-    if (current.startSec >= MANHUA_PILOT_DURATION_SEC) {
+    if (current.startSec >= durationSec) {
       removed += 1;
       continue;
     }
+    const body = line.slice(bodyStart, bodyEnd);
+    // 试片可截短无声动作，不能把完整台词强塞进缩水后的窗口。
+    const hasDialogue = /(?:说|道|问|答|喊|念|对白|台词|旁白|画外音)\s*[：:]?\s*[「『“"]|[：:|｜]\s*[「『“"]|(?:对白|台词|旁白|画外音)\s*[：:]\s*\S/.test(body);
+    if (current.endSec > durationSec && hasDialogue) {
+      throw new Error(`${durationSec} 秒试片会截断 ${current.startSec}–${current.endSec} 秒的对白。请在分镜调整镜头时长，让这句完整落在试片内或移到 ${durationSec} 秒之后；本次未生成。`);
+    }
     const head =
-      current.endSec > MANHUA_PILOT_DURATION_SEC
-        ? replaceTimelineEnd(current, MANHUA_PILOT_DURATION_SEC)
+      current.endSec > durationSec
+        ? replaceTimelineEnd(current, durationSec)
         : current.raw;
-    if (current.endSec > MANHUA_PILOT_DURATION_SEC) clamped += 1;
+    if (current.endSec > durationSec) clamped += 1;
     keptParts.push(`${head}${line.slice(bodyStart, bodyEnd)}`);
   }
   return {
@@ -395,32 +401,34 @@ function cropTimelineLine(line: string): {
   };
 }
 
-function replaceDeclaredDuration(text: string): string {
+function replaceDeclaredDuration(text: string, durationSec: 5 | 10): string {
   return text
     .replace(
       /(【第\s*\d+\s*段·(?:约)?)(\d+(?:\.\d+)?)(s】)/g,
-      `$1${MANHUA_PILOT_DURATION_SEC}$3`,
+      `$1${durationSec}$3`,
     )
     .replace(
       /(目标时长[：:]\s*约?\s*)(\d+(?:\.\d+)?)(\s*秒)/g,
-      `$1${MANHUA_PILOT_DURATION_SEC}$3`,
+      `$1${durationSec}$3`,
     )
     .replace(
       /(本段一条成片约\s*)(\d+(?:\.\d+)?)(\s*秒)/g,
-      `$1${MANHUA_PILOT_DURATION_SEC}$3`,
+      `$1${durationSec}$3`,
     );
 }
 
 /**
- * 把已有段成片提示词裁成首 10 秒。
+ * 把已有段成片提示词裁成指定的首5秒或10秒。
  *
  * 非秒轴行原样保留，因此身份锁、参考绑定、导演策略、空间调度及失败恢复说明
  * 不会被误删；函数不生成新的动作、对白或镜头内容。
  */
 export function compileManhuaPilotPrompt(
   prompt: string | null | undefined,
+  durationSec: 5 | 10 = 10,
 ): ManhuaPilotPromptCompileResult {
-  const lines = replaceDeclaredDuration(String(prompt || "")).split(/\r?\n/);
+  if (durationSec !== 5 && durationSec !== 10) throw new Error("试片时长只能选择5秒或10秒");
+  const lines = replaceDeclaredDuration(String(prompt || ""), durationSec).split(/\r?\n/);
   const output: string[] = [];
   let hadTimeline = false;
   let keptTimelineCount = 0;
@@ -428,7 +436,7 @@ export function compileManhuaPilotPrompt(
   let clampedTimelineCount = 0;
 
   for (const line of lines) {
-    const cropped = cropTimelineLine(line);
+    const cropped = cropTimelineLine(line, durationSec);
     hadTimeline ||= cropped.hadTimeline;
     keptTimelineCount += cropped.kept;
     removedTimelineCount += cropped.removed;
@@ -438,7 +446,7 @@ export function compileManhuaPilotPrompt(
 
   return {
     prompt: output.join("\n").replace(/\n{3,}/g, "\n\n").trim(),
-    durationSec: MANHUA_PILOT_DURATION_SEC,
+    durationSec: durationSec,
     hadTimeline,
     keptTimelineCount,
     removedTimelineCount,

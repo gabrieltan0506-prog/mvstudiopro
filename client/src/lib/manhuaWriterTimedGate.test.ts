@@ -46,6 +46,21 @@ import {
 
 const header =
   "| # | 秒位 | 景别·运镜 | 画面 | 台词/字幕 | 音效·配乐 |\n|---|---|---|---|---|---|";
+
+it("同步导演设置保留已确认分镜表的换行、秒位与对白", () => {
+  const confirmed = pack();
+  confirmed.episodes[0].body = `原剧情正文。\n\n## 分镜表\n\n${body}`;
+  const spawned = spawnManhuaDramaStudio({
+    topic: confirmed.seriesTitle, episodeIndex: 1,
+    writerContext: composeWriterPackFactoryContext(confirmed, 1),
+  });
+  const before = resolveShotsForEpisodeKeyarts(spawned.blocks, 1);
+  const synced = studio.applyFactoryPrefsToBlocks(spawned.blocks, {});
+  const after = resolveShotsForEpisodeKeyarts(synced, 1);
+  expect(after.map(({ durationSec, dialogueZh, actionZh }) => ({ durationSec, dialogueZh, actionZh })))
+    .toEqual(before.map(({ durationSec, dialogueZh, actionZh }) => ({ durationSec, dialogueZh, actionZh })));
+  expect(after.reduce((sum, shot) => sum + shot.durationSec, 0)).toBe(145);
+});
 const body = [
   header,
   ...Array.from(
@@ -542,4 +557,23 @@ describe("原稿导入至确认门禁", () => {
       expect(confirmed).not.toHaveBeenCalled();
     }
   );
+});
+
+
+it("长篇已确认原稿超过6000字仍完整进入分镜、静帧与片段编排", () => {
+  const input = pack();
+  input.episodes[0].body = "### 剧情与表演参考\n" + "她背着母亲沿街寻找医馆，先停下换气，再继续赶路。".repeat(300) + "\n\n## 当前分镜\n" + body;
+  const spawned = spawnManhuaDramaStudio({ topic: input.seriesTitle, episodeIndex: 1,
+    writerContext: composeWriterPackFactoryContext(input, 1), videoModel: "seedance-2.0-mini" });
+  const before = JSON.stringify(spawned.blocks);
+  const shots = resolveShotsForEpisodeKeyarts(spawned.blocks, 1);
+  expect(shots).toHaveLength(29);
+  expect(shots.map(shot => shot.durationSec)).toEqual(Array(29).fill(5));
+  expect(shots.at(-1)?.dialogueZh).toContain("第29株药草不能卖");
+  expect(JSON.stringify(spawned.blocks)).toBe(before);
+  const reverse = spawned.blocks.find(block => block.id.startsWith("reverse-"))!;
+  const expanded = expandManhuaShotKeyartsAfterReverse(spawned.blocks, spawned.edges, reverse.id, { videoModel: "seedance-2.0-mini" });
+  const compiled = ensureManhuaFragmentClips(expanded.blocks, expanded.edges, 1, { videoModel: "seedance-2.0-mini" });
+  expect(resolveShotsForEpisodeKeyarts(compiled.blocks, 1)).toEqual(shots);
+  expect(compiled.blocks.filter(block => block.id.startsWith("keyart-") && !block.archivedFromPreviousScript)).toHaveLength(29);
 });

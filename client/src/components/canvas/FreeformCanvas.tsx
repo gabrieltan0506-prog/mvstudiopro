@@ -318,7 +318,7 @@ type FreeformCanvasProps = {
   prepareManhuaClipRun?: (blockId: string) => Promise<{
     preparedBlock: CanvasBlock;
     upstream: { visionImages: Array<{ url: string }>; texts: string[] };
-    runOptions: { pilotRun?: boolean };
+    runOptions: { pilotRun?: boolean; pilotDurationSec?: 5 | 10 };
   }>;
   /** 外部请求选中并滚入视口（成片坞定位） */
   focusBlockId?: string | null;
@@ -1795,6 +1795,7 @@ export default function FreeformCanvas({
       referencePreparationRef.current.add(blockId);
       setPreparingReferenceIds(new Set(referencePreparationRef.current));
       let generationStarted = false;
+      let isPilotRun = false;
       try {
         const prepared = await prepareProjectVideoReferences(runBlockPayload, projectAssetRefs, undefined, contextStillCurrent);
         // 只对本次新接入的异步参考预检检查快照，既有工厂编译器仍自行管理状态。
@@ -1846,6 +1847,7 @@ export default function FreeformCanvas({
         // clip-* 走**生产唯一准备入口**：与工作台确认同一份准备、同一套试片/编辑口径。
         // 画布原来自己 collect 上游图、也不传 pilotRun，于是确认的与发出的可能不是同一份。
         const clipRun = isManhuaClip ? await prepareClipNow!(blockId) : null;
+        isPilotRun = clipRun?.runOptions.pilotRun === true;
         const out = await runCanvasBlock(
           submittedDeps,
           clipRun ? clipRun.preparedBlock : runBlockPayload,
@@ -1857,6 +1859,11 @@ export default function FreeformCanvas({
             resolveOutboundGate: isManhuaClip ? resolveGateNow : undefined,
           },
         );
+        if (clipRun?.runOptions.pilotRun) {
+          patchOne(blockId, { status: workingBlock.status, error: workingBlock.error });
+          toast.success("试片已生成，请回工作台审阅；正片保持不变");
+          return true;
+        }
         // MV镜头允许编辑，但旧请求结果只进入历史，不能覆盖已改过的新稿。
         if (blockId.startsWith("mvshot-")) {
           const current = blocksRef.current.find(row => row.id === blockId);
@@ -1910,7 +1917,7 @@ export default function FreeformCanvas({
           error: e,
         });
         if (!failure) return;
-        patchOne(blockId, failure);
+        patchOne(blockId, isPilotRun ? { status: workingBlock.status, error: workingBlock.error } : failure);
         toast.error(failure.error || "生成失败");
       } finally {
         referencePreparationRef.current.delete(blockId);

@@ -1,8 +1,7 @@
 /**
  * 关键静帧 · 官方 GPT-Image-2 edit（OpenAI images/edits）。
- * 身份锚点：人物库预览图（或用户上传，非 generated）→ 服务端垫图 → edits。
- * 禁止：用本集生成定妆图当身份；禁止缺底图时静默纯文生（易漂成无关主体）。
- * CG：仍用人库/自传垫图 + 画风硬锁改绘，不挂生成设定卡。
+ * 身份锚点：人物库、用户上传或已认领并选为当前身份的生成图 → 服务端垫图 → edits。
+ * 未采用的生成候选不自动锁脸；缺底图时不得静默纯文生。
  * 不走 EvoLink。
  */
 
@@ -27,6 +26,7 @@ import {
 } from "./manhuaCustomAssetRefs.js";
 import { buildManhuaAssetLockRegistry } from "./manhuaAssetLockRegistry.js";
 import type { ManhuaWriterAssetCanon } from "./manhuaWriterAssetCanon.js";
+import { customAssetRefClaimsAnchor } from "./manhuaAssetScriptSync.js";
 
 export type ManhuaKeyartEditRef = {
   id: string;
@@ -101,8 +101,7 @@ export function buildManhuaKeyartAncientHardLockZh(ancientArchetypeIds?: string[
 }
 
 /**
- * 收集角色库 / 场景示范 / 道具示范 / 用户上传（非 generated）可融图 URL，并给出 edit 计划。
- * 人物身份优先人物库预览；本集生成定妆 / generated 自传不进身份垫图。
+ * 收集可消费的参考图；生成角色须由当前剧本认领及用户主图选择共同确定。
  */
 export function planManhuaKeyartEditFusion(opts?: {
   characterIds?: string[] | null;
@@ -110,7 +109,7 @@ export function planManhuaKeyartEditFusion(opts?: {
   artStyleId?: string | null;
   sceneId?: string | null;
   propIds?: string[] | null;
-  /** 用户上传并勾选角色的参考图（HTTPS）；generated 不进人物身份 */
+  /** 用户参考图（HTTPS）；生成角色须有当前身份主图选择 */
   customRefs?: ManhuaCustomAssetRef[] | null;
   /** 系列人物/道具表：定妆特写格进 @道具N 子编号（跨集锁） */
   assetCanon?: ManhuaWriterAssetCanon | null;
@@ -124,7 +123,13 @@ export function planManhuaKeyartEditFusion(opts?: {
   const refs: ManhuaKeyartEditRef[] = [];
   const missingLabelsZh: string[] = [];
   const consumableRefs = consumableManhuaCustomAssetRefs(opts?.customRefs);
-  // 生成定妆不进人物身份垫图（易漂）；只认上传或库预览
+  const acceptsCharacter = (ref: ManhuaCustomAssetRef) => ref.source !== "generated" ||
+    Boolean(opts?.assetCanon?.characters.some((anchor) =>
+      customAssetRefClaimsAnchor(ref, anchor) &&
+      (ref.primaryBindings || []).some((binding) =>
+        binding.anchorId === anchor.id && binding.duty === "identity" && !binding.stateId,
+      ),
+    ));
   const customTagged = consumableRefs.filter(
     (
       c,
@@ -132,10 +137,10 @@ export function planManhuaKeyartEditFusion(opts?: {
       role: "character" | "scene" | "prop" | "wardrobe";
     } =>
       c.role !== "unset" &&
-      !(c.role === "character" && c.source === "generated"),
+      (c.role !== "character" || acceptsCharacter(c)),
   );
   const customChars = consumableCustomRefsByRole(consumableRefs, "character").filter(
-    (c) => c.source !== "generated",
+    acceptsCharacter,
   );
   const customScenes = consumableCustomRefsByRole(consumableRefs, "scene").filter(
     (c) => c.source !== "generated",
@@ -151,7 +156,7 @@ export function planManhuaKeyartEditFusion(opts?: {
    * 「传家玉佩、金步摇发簪、红金团扇。本镜尽量出现一次」，13 张静帧每张都挂着
    * 一把和剧情无关的红团扇与玉佩。场景同理。
    *
-   * 人物身份仍只认上传/库预览（generated 定妆易漂脸），那条不动。
+   * 人物生成图另外要求当前剧本认领和身份主图，不能把所有生成候选都送进来。
    */
   const preferCustomScene = consumableCustomRefsByRole(consumableRefs, "scene").length > 0;
   const preferCustomProp = consumableCustomRefsByRole(consumableRefs, "prop").length > 0;
