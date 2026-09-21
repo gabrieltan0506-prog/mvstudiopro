@@ -36,6 +36,7 @@ export async function confirmClipLikeUser(input: {
   blockId: string;
   episodeIndex?: number;
   pilotRun?: boolean;
+  pilotDurationSec?: 5 | 10;
 }): Promise<ManhuaOutboundConfirmation> {
   const fallbackBlock = input.blocks.find((b) => b.id === input.blockId);
   if (!fallbackBlock) throw new Error(`夹具里没有这个节点：${input.blockId}`);
@@ -50,6 +51,7 @@ export async function confirmClipLikeUser(input: {
   });
   const preview = await previewCanvasBlockOutbound(input.deps, preparedBlock, upstream, {
     pilotRun: input.pilotRun === true,
+    pilotDurationSec: input.pilotDurationSec,
   });
   const scope = testOutboundScope(input.blockId);
   return {

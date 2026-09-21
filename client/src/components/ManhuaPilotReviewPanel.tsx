@@ -3,6 +3,8 @@ import type { ManhuaPilotReviewState } from "@shared/manhuaPilotReview";
 
 export type ManhuaPilotPanelState = Partial<ManhuaPilotReviewState> & {
   status: ManhuaPilotReviewState["status"];
+  videoModel?: string;
+  outputDurationSec?: 5 | 10;
   reviewKey?: string;
   busy?: boolean;
   error?: string;
@@ -13,10 +15,12 @@ export function ManhuaPilotReviewPanel({
   state,
   onReview,
   onRefresh,
+  onDurationChange,
 }: {
   state: ManhuaPilotPanelState;
   onReview?: (decision: "approve" | "reject", taskId: string) => Promise<void>;
   onRefresh?: () => void;
+  onDurationChange?: (duration: 5 | 10) => void;
 }) {
   const [loadedUrl, setLoadedUrl] = useState("");
   const [mediaError, setMediaError] = useState("");
@@ -65,7 +69,7 @@ export function ManhuaPilotReviewPanel({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h3 className="text-xs font-semibold text-amber-50">
-            首段 10 秒质检门
+            首段 {state.outputUrl ? state.outputDurationSec ?? state.durationSec ?? 10 : state.durationSec ?? 10} 秒试片
           </h3>
           <p className="mt-1 text-[11px] text-slate-300">
             本次只审下方试片，批准后解锁本集当前生成档。
@@ -88,6 +92,17 @@ export function ManhuaPilotReviewPanel({
           </button>
         ) : null}
       </div>
+      {onDurationChange && state.videoModel === "seedance-2.5" && ["not_started", "failed", "rejected"].includes(state.status) ? (
+        <label className="mt-3 flex items-center gap-2 text-xs text-slate-200">
+          试片时长
+          <select aria-label="试片时长" value={state.durationSec ?? 10} disabled={busy || Boolean(state.error)}
+            onChange={event => onDurationChange(event.target.value === "5" ? 5 : 10)}
+            className="rounded border border-white/20 bg-slate-900 px-2 py-1">
+            <option value="5">5秒</option><option value="10">10秒</option>
+          </select>
+          <span className="text-slate-400">对白必须完整落在时长内</span>
+        </label>
+      ) : null}
       {outputUrl ? (
         <video
           key={`${state.taskId}:${outputUrl}`}
@@ -95,7 +110,7 @@ export function ManhuaPilotReviewPanel({
           controls
           playsInline
           preload="metadata"
-          aria-label="本次待审核的十秒试片"
+          aria-label={`本次待审核的${state.outputDurationSec ?? state.durationSec ?? 10}秒试片`}
           className="mt-3 max-h-72 w-full rounded bg-[#10171f]"
           onLoadedData={() => {
             setLoadedUrl(outputUrl);
@@ -120,7 +135,7 @@ export function ManhuaPilotReviewPanel({
                   ? "正在核对当前项目的审核记录…"
                   : state.error
                     ? "原审核记录尚未确认，暂不提交新的试片。"
-                    : "尚无可审试片，请先生成第 1 段的前 10 秒。"}
+                    : `尚无可审试片，请先生成第 1 段的前${state.durationSec ?? 10}秒。`}
         </p>
       )}
       {state.error || mediaError || actionError ? (

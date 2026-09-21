@@ -4237,7 +4237,8 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   /** 调用方已经为单节点编译好重拍/视频编辑载荷时，禁止 ensure 覆盖该节点。 */
   preservePreparedTargetBlocks?: boolean;
   onBlocksChange?: (blocks: CanvasBlock[]) => void;
-  /** 本次执行是首段 10 秒试片；只约束成片载荷，不修改草稿中的独立分镜原文。 */
+  /** 本次执行是首段5秒或10秒试片；只约束成片载荷，不修改草稿中的独立分镜原文。 */
+  pilotDurationSec?: 5 | 10;
   pilotRun?: boolean;
   /**
    * 生成前确认闸：按节点 id 返回「当前归属 + 该段的确认记录」。
@@ -4833,6 +4834,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
           {
             videoSubmissionKey,
             pilotRun: opts.pilotRun === true && stage === "clip",
+            pilotDurationSec: opts.pilotDurationSec,
             // 漫剧段成片：**强制生成前确认**。单段、批量、重跑都从这里下发，
             // 调用方不能自己决定传不传——闸绑在这一层，不在各调用点。
             // 先决条件已闭合：预览与运行共用 prepareManhuaFactoryClipInput（A 项），

@@ -23,6 +23,7 @@ beforeAll(async () => {
         episodeIndex:focusEpisode,
         videoModel:resolveManhuaEpisodeClipVideoModel(blocks,focusEpisode,picked ? uiModel : undefined)}}/>);
       f.renderPanel = state => root.render(<ManhuaPilotReviewPanel key={state.taskId + ':' + state.outputUrl} state={state}
+        onDurationChange={duration => {f.duration=duration;f.renderPanel({...state,durationSec:duration});}}
         onRefresh={() => f.refreshes = (f.refreshes || 0) + 1}
         onReview={(decision,taskId) => new Promise((resolve,reject) => f.decisions.push({decision,taskId,resolve,reject}))}/>);
     `,
@@ -56,7 +57,7 @@ beforeAll(async () => {
     ],
   });
   fixture = bundled.outputFiles[0]!.text;
-  browser = await puppeteer.launch({ headless: true });
+  browser = await puppeteer.launch({ headless: true, args: process.getuid?.() === 0 ? ["--no-sandbox"] : [] });
 }, 30000);
 afterAll(async () => {
   await browser?.close();
@@ -262,3 +263,24 @@ describe("真实审批组件与异步上下文（离线浏览器）", () => {
     }
   });
 });
+
+ it("五秒试片选择后显示一致，在途任务不能换时长", async () => {
+  const page=await openFixture();
+  try {
+    await page.evaluate("fixture.renderPanel({status:'not_started',durationSec:10,videoModel:'seedance-2.5'})");
+    await page.waitForSelector('[aria-label="试片时长"]');
+    await page.select('[aria-label="试片时长"]','5');
+    await page.waitForFunction("document.querySelector('h3').textContent.includes('5 秒')");
+    expect(await page.evaluate('fixture.duration')).toBe(5);
+    await page.evaluate("fixture.renderPanel({status:'submitting',taskId:'test-active',durationSec:5,videoModel:'seedance-2.5'})");
+    await page.waitForFunction("!document.querySelector('select')");
+    expect(await page.$eval('h3',e=>e.textContent)).toContain('5 秒');
+    await page.evaluate("fixture.renderPanel({status:'not_started',durationSec:10,videoModel:'hailuo-h3'})");
+    await page.waitForFunction("document.querySelector('h3').textContent.includes('10 秒')");
+    expect(await page.$('select')).toBeNull();
+    await page.evaluate("fixture.renderPanel({status:'rejected',durationSec:5,outputDurationSec:10,outputUrl:'https://example.com/test.mp4',videoModel:'seedance-2.5'})");
+    await page.waitForSelector('select');
+    expect(await page.$eval('h3',e=>e.textContent)).toContain('10 秒');
+    expect(await page.$eval('select',e=>(e as HTMLSelectElement).value)).toBe('5');
+  } finally {await page.close();}
+ });
