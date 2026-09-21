@@ -14,6 +14,7 @@ import type { ManhuaWorkflowPhase } from "./manhuaWriterSession.js";
 export type ManhuaWorkbenchPhaseId = ManhuaWorkflowPhase;
 
 export type ManhuaWorkbenchNextCtaKind =
+  | "enter_assets"
   | "confirm_outline"
   | "spawn_sheets"
   | "enter_storyboard"
@@ -37,6 +38,8 @@ export type ManhuaWorkbenchNextCta = {
 };
 
 export type ManhuaWorkbenchNextCtaInput = {
+  /** 用户正在查看的阶段；未提供时保持原进度推荐。 */
+  activePhase?: ManhuaWorkbenchPhaseId;
   outlineComplete: boolean;
   assetsComplete: boolean;
   /** 本集设定图墙张数（charsheet/sceneplate 有图） */
@@ -75,6 +78,20 @@ export function resolveManhuaWorkbenchNextCta(
           : "确认大纲后进入资产设定，再生成角色/场景设定卡",
       targetPhase: "outline",
       prevPhase: null,
+    };
+  }
+
+  if (input.activePhase === "outline") {
+    return {
+      kind: "enter_assets", labelZh: "进入资产设定", stepTitleZh: "剧本大纲",
+      hintZh: "核对本集剧情，再进入资产设定", targetPhase: "assets", prevPhase: null,
+    };
+  }
+
+  if (input.activePhase === "assets" && input.assetsComplete && input.episodeSheetCount > 0) {
+    return {
+      kind: "enter_storyboard", labelZh: "进入分镜", stepTitleZh: "资产设定",
+      hintZh: "核对人物、场景与道具，再进入分镜", targetPhase: "storyboard", prevPhase: "outline",
     };
   }
 

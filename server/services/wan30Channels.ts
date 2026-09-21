@@ -1,3 +1,4 @@
+import { formatEvolinkReferencePrompt } from "../../shared/evolinkReferencePrompt.js";
 /**
  * Wan 3.0 三通道路由（2026-08-25 用户拍板：OpenRouter → EvoLink → WaveSpeed，不走百炼官方）。
  *
@@ -147,7 +148,7 @@ export function buildEvolinkWanRequestBody(input: Wan30SubmitInput): Record<stri
   if (!images.length) throw new Error("Wan 3.0 成片需要至少一张参考图");
   const body: Record<string, unknown> = {
     model: EVOLINK_WAN30_MODEL,
-    prompt: String(input.prompt || "").trim(),
+    prompt: formatEvolinkReferencePrompt(String(input.prompt || "").trim(), "wan"),
     image_urls: images,
     duration: clampWan30Duration(input.duration),
     // EvoLink 管分辨率叫 quality（与 Seedance 同一约定），取值同 480p/720p/1080p

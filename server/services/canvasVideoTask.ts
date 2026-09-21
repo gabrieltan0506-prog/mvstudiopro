@@ -1,3 +1,5 @@
+import { submitEvolinkH3, EVOLINK_H3_MODEL } from "./evolinkHailuoVideo.js";
+import { preflightH3ReferenceMedia } from "./hailuoReferencePreflight.js";
 import { SubmitRejectedError } from "./submitOutcomeErrors.js";
 /**
  * 画布成片异步任务（Seedance OpenRouter / Hailuo / Happy Horse /
@@ -91,6 +93,7 @@ const WAN30_MAX_POLL_MS = Math.min(
 export type CanvasVideoEngine =
   | "seedance-openrouter"
   | "hailuo-openrouter"
+  | "hailuo-evolink"
   /** HappyHorse 旧引擎名：在途老单（含百炼 bailianTaskId）轮询收尾用；新提交也可被钉回 OpenRouter */
   | "happyhorse-openrouter"
   /** HappyHorse · EvoLink i2v（0825 拆百炼三通道） */
@@ -179,6 +182,7 @@ export type CanvasVideoTaskRecord = {
   wavespeedPredictionId?: string;
   /** 超分发送前落盘，崩溃后无句柄只能对账，禁止重投。 */
   upscaleSubmissionStartedAt?: string;
+  h3SubmissionStartedAt?: string;
   /** wan30:提交上游的随机种子,复现用 */
   seed?: number;
   /** wan30:连续 404 计数——创建后最终一致性只容忍有限次,防无效单白轮数小时(审查 P2) */
@@ -194,17 +198,12 @@ export type CanvasVideoTaskRecord = {
 export function resolveSeedance25CanvasEngine(
   mode?: SeedanceEvolinkMode,
   opts?: {
-    /**
-     * 仿真人信号（用户 2026-08-10 明文）：写实人脸走 BytePlus 会被
-     * InputImageSensitiveContentDetected 拦住任务失败，只能走 EvoLink；CG 漫画风无碍。
-     * 信号来源是参考图 URL 的 photoreal 资产路径；用户自传真人照片识别不到，
-     * 由 BytePlus 失败回落 EvoLink 兜底（isByteplusFallbackableError 默认放行）。
-     */
+    /** 兼容旧调用参数；不再据此跳过 BytePlus。 */
     photoreal?: boolean;
   },
 ): CanvasVideoEngine {
   if (mode === "video_edit" || mode === "video_extend") return "seedance25-evolink";
-  if (opts?.photoreal) return "seedance25-evolink";
+  // 参考生成先请求 BytePlus，由明确的人脸拒绝决定回落，不凭素材风格预判。
   if (isByteplusSeedanceConfigured()) return "seedance25-byteplus";
   return "seedance25-evolink";
 }
@@ -327,7 +326,8 @@ function isHappyHorseEngine(engine: CanvasVideoEngine): boolean {
 /** 走 EvoLink 任务号轮询的引擎（2.5 / Mini / 2.0 仿真人共用同一套 submit/poll） */
 function usesEvolinkTaskId(engine: CanvasVideoEngine): boolean {
   return (
-    engine === "seedance25-evolink"
+    engine === "hailuo-evolink"
+    || engine === "seedance25-evolink"
     || engine === "seedance-mini-evolink"
     || engine === "seedance20-evolink"
   );
@@ -508,24 +508,6 @@ async function submitSeedance25Byteplus(task: CanvasVideoTaskRecord): Promise<vo
       throw error;
     }
     const reason = error instanceof Error ? error.message : String(error);
-    /**
-     * CG 漫剧回落顺序（用户 2026-08-12 拍板）：BytePlus 挂了先去 OpenRouter（比 EvoLink 省 25%）。
-     * 例外仍去 EvoLink：①真人脸敏感错（OpenRouter 同为 BytePlus 转发方，一样拦脸）
-     * ②带参考视频的任务（OpenRouter 通道未接 video_urls，硬切会静默丢运镜参考）。
-     */
-    const faceBlocked = /InputImageSensitiveContentDetected|sensitive/i.test(reason);
-    if (!faceBlocked && !task.videoUrls?.length && isOpenRouterVideoConfigured()) {
-      console.warn(
-        `[canvasVideoTask] BytePlus Seedance 2.5 提交失败，回落 OpenRouter · task=${task.taskId} · ${reason}`,
-      );
-      task.fallbackReason = reason.slice(0, 200);
-      task.byteplusTaskId = undefined;
-      task.engine = "seedance-openrouter";
-      task.seedanceVersion = "2.5";
-      await writeTask(task);
-      await submitUpstream(task);
-      return;
-    }
     if (!isEvolinkSeedanceConfigured()) {
       throw error;
     }
@@ -671,6 +653,39 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
         { keyPrefix: "canvas-video/seedance", required: true },
       );
       await succeedTask(task, videoUrl, submitted.model, "openrouter");
+    }
+    return;
+  }
+
+  if (task.engine === "hailuo-evolink") {
+    const input = {
+      prompt: task.prompt,
+      imageUrls: await Promise.all(Array.from(new Set([task.imageUrl, ...(task.imageUrls || [])].filter(Boolean) as string[])).map(u => resolveProtectedTaskMediaUrl(task, u))),
+      videoUrls: await Promise.all((task.videoUrls || []).map(u => resolveProtectedTaskMediaUrl(task, u))),
+      audioUrls: await resolveCanvasVideoAudioUrls(task.audioUrls, task.userId),
+      duration: task.duration, resolution: task.resolution || "768p", aspectRatio: task.aspectRatio || "16:9",
+    };
+    await preflightH3ReferenceMedia(input);
+    task.h3SubmissionStartedAt = new Date().toISOString();
+    await writeTask(task);
+    try {
+      const submitted = await submitEvolinkH3(input);
+      task.evolinkTaskId = submitted.evolinkTaskId;
+      task.model = EVOLINK_H3_MODEL;
+      task.provider = "evolink";
+      task.status = "running";
+      task.startedAt = task.startedAt || new Date().toISOString();
+      await writeTask(task);
+    } catch (error) {
+      if ((error as { kind?: string } | null)?.kind !== "rejected") {
+        task.status = "reconcile_manual";
+        task.error = "H3 提交结果待核对，已停止自动重试；不会重复生成或自动退款";
+        task.finishedAt = new Date().toISOString();
+        await writeTask(task);
+        await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {});
+        return;
+      }
+      throw error;
     }
     return;
   }
@@ -952,6 +967,14 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
 
     await heartbeatActiveJob(task.taskId, TASK_TYPE).catch(() => {});
 
+    if (task.engine === "hailuo-evolink" && task.h3SubmissionStartedAt && !task.evolinkTaskId) {
+      task.status = "reconcile_manual";
+      task.error = "H3 提交回执尚未持久化，请核对原任务；已停止自动重试";
+      await writeTask(task);
+      await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {});
+      return task;
+    }
+
     if (task.engine === "wavespeed-upscale" && task.upscaleSubmissionStartedAt && !task.wavespeedPredictionId) {
       task.status = "reconcile_manual";
       task.error = "超分提交结果尚未确认，已停止重复提交并转对账";
@@ -1005,6 +1028,13 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
           return after;
         }
       } catch (error) {
+        if (task.engine === "hailuo-evolink" && task.h3SubmissionStartedAt && (error as { kind?: string })?.kind !== "rejected") {
+          task.status = "reconcile_manual";
+          task.error = "H3 提交状态待核对，请勿重复生成";
+          await writeTask(task).catch(() => {});
+          await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {});
+          return task;
+        }
         if (task.engine === "wavespeed-upscale" && task.upscaleSubmissionStartedAt && (error as { kind?: string })?.kind !== "rejected") {
           task.status = "reconcile_manual";
           task.error = "超分提交结果尚未确认，已转对账，请勿重复提交";
@@ -1037,35 +1067,9 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
           return current;
         }
         if (snap.state === "failed") {
-          // 上游跑挂：CG 无参考视频先回落 OpenRouter（拍板口径），脸敏感/带参考视频回落 EvoLink；均不重复扣费
+          // 只对明确终态的人脸拒绝换通道，其他失败按原任务结束。
           const reason = snap.error;
-          const faceBlocked = /InputImageSensitiveContentDetected|sensitive/i.test(reason);
-          if (
-            !faceBlocked &&
-            !current.videoUrls?.length &&
-            isOpenRouterVideoConfigured() &&
-            !current.openRouterJobId
-          ) {
-            console.warn(
-              `[canvasVideoTask] BytePlus 任务失败，回落 OpenRouter · task=${current.taskId} · ${reason}`,
-            );
-            current.fallbackReason = reason.slice(0, 200);
-            current.byteplusTaskId = undefined;
-            current.engine = "seedance-openrouter";
-            current.seedanceVersion = "2.5";
-            current.status = "queued";
-            await writeTask(current);
-            try {
-              await submitUpstream(current);
-              const after = await readTask(taskId);
-              return after || current;
-            } catch (error) {
-              return failTask(
-                current,
-                error instanceof Error ? error.message : reason,
-              );
-            }
-          }
+          if (!isByteplusFallbackableError(reason)) return failTask(current, reason);
           if (isEvolinkSeedanceConfigured() && !current.evolinkTaskId) {
             console.warn(
               `[canvasVideoTask] BytePlus 任务失败，回落 EvoLink · task=${current.taskId} · ${reason}`,
@@ -1104,7 +1108,7 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
         }
         const snap = await pollEvolinkVideoTaskOnce(
           current.evolinkTaskId,
-          `Seedance ${current.seedanceVersion || (isMini ? "2.0-mini" : "2.5")}`,
+          current.engine === "hailuo-evolink" ? "MiniMax H3" : `Seedance ${current.seedanceVersion || (isMini ? "2.0-mini" : "2.5")}`,
         );
         if (snap.state === "running") {
           current.status = activePollStatus(current);
@@ -1117,7 +1121,7 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
         return succeedTask(
           current,
           videoUrl,
-          current.model || (isMini ? "seedance-2.0-mini" : "seedance-2.5"),
+          current.model || (current.engine === "hailuo-evolink" ? EVOLINK_H3_MODEL : isMini ? "seedance-2.0-mini" : "seedance-2.5"),
           "evolink",
         );
       }

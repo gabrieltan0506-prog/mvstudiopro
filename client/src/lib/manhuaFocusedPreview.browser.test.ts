@@ -20,7 +20,7 @@ beforeAll(async () => {
       import {buildManhuaAutoSegmentBinding} from '@shared/manhuaAutoSegment';
       const f=globalThis.fixture={updates:[],focus:[],review:0,calls:[]};
       f.currentBinding=blocks=>buildManhuaAutoSegmentBinding(1,groupShotsIntoSegments(resolveShotsForEpisodeKeyarts(blocks,1),{videoModel:'seedance-2.5'})[0],'seedance-2.5');
-      function App(){const [phase,setPhase]=useState("storyboard");const [ep,setEp]=useState(1);f.setPhase=setPhase;f.episode=ep;const [blocks,setBlocks]=useState([1,2].map(n=>({...defaultCanvasBlock('image',0,0),id:'keyart-e01-s0'+n+'-preview',episodeIndex:1,outputUrl:n===1?'https://test.invalid/shot-1.png':undefined,prompt:'第'+n+'镜，医馆对话'})));f.blocks=blocks;f.setBlocks=setBlocks;return <TooltipProvider><ManhuaScriptWorkbench blocks={blocks} videoModel='seedance-2.5' topic='墨屠守护阿菁' episodeCount={13} focusEpisode={ep} onFocusEpisode={setEp} outlineEpisodes={Array.from({length:13},(_,i)=>({index:i+1,title:'集卡'+(i+1),body:'原文剧情'+(i+1),endHook:'片尾悬念'+(i+1)}))} characterIds={[]} propIds={[]} outlineConfirmed={true} workflowPhase={phase} compactUi={true} previewCanvas={<div data-test-canvas>原节点画布</div>} finalVideoUrl='https://test.invalid/old-final.mp4' onFocusBlock={id=>f.focus.push(id)} onReviewClipPromptsOnCanvas={()=>f.review++} onUpdateClipAudioStudio={(id,studio)=>{f.updates.push(id);setBlocks(rows=>rows.map(b=>b.id===id?{...b,audioStudio:studio}:b));}} /></TooltipProvider>;}
+      function App(){const [canRun,setCanRun]=useState(false);f.setCanRun=setCanRun;const [phase,setPhase]=useState("storyboard");const [ep,setEp]=useState(1);f.setPhase=setPhase;f.episode=ep;const [blocks,setBlocks]=useState([1,2].map(n=>({...defaultCanvasBlock('image',0,0),id:'keyart-e01-s0'+n+'-preview',episodeIndex:1,outputUrl:n===1?'https://test.invalid/shot-1.png':undefined,prompt:'第'+n+'镜，医馆对话'})));f.blocks=blocks;f.setBlocks=setBlocks;return <TooltipProvider><ManhuaScriptWorkbench canRun={canRun} blocks={blocks} videoModel='seedance-2.5' topic='墨屠守护阿菁' episodeCount={13} focusEpisode={ep} onFocusEpisode={setEp} outlineEpisodes={Array.from({length:13},(_,i)=>({index:i+1,title:'集卡'+(i+1),body:'原文剧情'+(i+1),endHook:'片尾悬念'+(i+1)}))} characterIds={[]} propIds={[]} outlineConfirmed={true} workflowPhase={phase} onWorkflowPhaseChange={setPhase} onGenerateAllEpisodeKeyarts={()=>f.calls.push("generate-keyarts")} compactUi={true} previewCanvas={<div data-test-canvas>原节点画布</div>} finalVideoUrl='https://test.invalid/old-final.mp4' onFocusBlock={id=>f.focus.push(id)} onReviewClipPromptsOnCanvas={()=>f.review++} onUpdateClipAudioStudio={(id,studio)=>{f.updates.push(id);setBlocks(rows=>rows.map(b=>b.id===id?{...b,audioStudio:studio}:b));}} /></TooltipProvider>;}
       createRoot(document.getElementById('root')).render(<App/>);
     `,
     },
@@ -104,4 +104,51 @@ it("分镜默认显示当前镜，选镜不打开高级画布且不借旧片旧�
     console.error('预览失败现场', await page.evaluate(() => ({preview: document.querySelector('[data-manhua-column="preview"]')?.outerHTML.slice(0,1500),blocks:(window as any).fixture?.blocks,errors:document.body.innerText.slice(-1600)})));
     throw error;
   } finally { await page.close(); }
+}, 30000);
+
+
+it("回看剧本时顶部按钮只进入资产，切页不生成也不改已有节点", async () => {
+  const page = await browser.newPage();
+  await page.setRequestInterception(true);
+  page.on("request", r => { if(r.isNavigationRequest()) void r.respond({status:200,contentType:"text/html",body:'<div id="root"></div>'}); else void r.abort(); });
+  try {
+    await page.goto("http://localhost:41813");
+    await page.addScriptTag({content:bundle});
+    await page.waitForSelector('[data-manhua-ashuo-step-title]');
+    const before = await page.evaluate(()=>{(window as any).fixture.setCanRun(true);return JSON.stringify((window as any).fixture.blocks);});
+    await page.click('[data-manhua-phase="outline"]');
+    await page.waitForFunction(()=>document.querySelector('[data-manhua-ashuo-step-title]')?.textContent === '剧本大纲');
+    expect(await page.$eval('[data-manhua-action="ashuo-prev"]', e=>(e as HTMLButtonElement).disabled)).toBe(true);
+    expect(await page.$eval('[data-manhua-action="ashuo-step-generate"]', e=>e.textContent)).toBe('进入资产设定');
+    await page.click('[data-manhua-action="ashuo-step-generate"]');
+    await page.waitForSelector('[data-manhua-phase-panel="assets"]');
+    expect(await page.evaluate(()=>JSON.stringify((window as any).fixture.blocks))).toBe(before);
+    expect(await page.evaluate(()=>(window as any).fixture.calls)).toEqual([]);
+  } finally { await page.close(); }
+}, 30000);
+
+
+it("已有设定总图默认收起，展开收起保留图片且不触发生成", async () => {
+  const page = await browser.newPage();
+  page.setDefaultTimeout(5000);
+  await page.setRequestInterception(true);
+  page.on("request", r => { if(r.isNavigationRequest()) void r.respond({status:200,contentType:"text/html",body:'<div id="root"></div>'}); else void r.abort(); });
+  try {
+    await page.goto("http://localhost:41813");
+    await page.addScriptTag({content:bundle});
+    await page.waitForSelector('[data-manhua-ashuo-step-title]');
+    await page.evaluate(()=>{const f=(window as any).fixture;f.setBlocks([...f.blocks,{...f.blocks[0],id:'charsheet-e01-gallery',outputUrl:'https://test.invalid/character.png'}]);f.setCanRun(true);f.setPhase('assets');});
+    await page.waitForSelector('[data-manhua-episode-sheets]');
+    expect(await page.$eval('[data-manhua-episode-sheets]',e=>e.querySelector('button')?.getAttribute('aria-expanded')==='true')).toBe(false);
+    const before=await page.evaluate(()=>JSON.stringify((window as any).fixture.blocks));
+    await page.click('[data-manhua-episode-sheets] > button');
+    expect(await page.$eval('[data-manhua-episode-sheets]',e=>e.querySelector('button')?.getAttribute('aria-expanded')==='true')).toBe(true);
+    expect(await page.$$('[data-manhua-episode-sheets-kind="charsheet"] img')).toHaveLength(1);
+    await page.click('[data-manhua-episode-sheets] > button');
+    expect(await page.$eval('[data-manhua-episode-sheets]',e=>e.querySelector('button')?.getAttribute('aria-expanded')==='true')).toBe(false);
+    expect(await page.evaluate(()=>JSON.stringify((window as any).fixture.blocks))).toBe(before);
+    expect(await page.evaluate(()=>(window as any).fixture.calls)).toEqual([]);
+    await page.evaluate(()=>{const f=(window as any).fixture;f.setBlocks(f.blocks.filter((b:any)=>!b.id.startsWith('charsheet')));});
+    await page.waitForFunction(()=>document.querySelector('[data-manhua-episode-sheets] > button')?.getAttribute('aria-expanded')==='true');
+  } catch(error) {console.error("总图诊断",await page.evaluate(()=>({body:document.body.innerText.slice(0,1300),details:document.querySelector("[data-manhua-episode-sheets]")?.outerHTML.slice(0,900),blocks:(window as any).fixture?.blocks})));throw error;} finally { await page.close(); }
 }, 30000);

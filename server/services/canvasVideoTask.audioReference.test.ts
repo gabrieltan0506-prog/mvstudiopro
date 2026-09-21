@@ -4,9 +4,18 @@ import os from "node:os";
 import path from "node:path";
 
 const h = vi.hoisted(() => ({
-  evolink: vi.fn(), byteplus: vi.fn(), openrouter: vi.fn(), signed: 0,
+  h3: vi.fn(), h3Unknown: false, evolink: vi.fn(), byteplus: vi.fn(), openrouter: vi.fn(), signed: 0,
   byteplusFailure: false, openrouterEnabled: false,
 }));
+vi.mock("./hailuoReferencePreflight.js", () => ({ preflightH3ReferenceMedia: vi.fn(async () => {}) }));
+vi.mock("./evolinkHailuoVideo.js", async importOriginal => {
+  const actual = await importOriginal<typeof import("./evolinkHailuoVideo.js")>();
+  return { ...actual, submitEvolinkH3: async (input: Parameters<typeof actual.buildEvolinkH3Body>[0]) => {
+    h.h3(actual.buildEvolinkH3Body(input));
+    if (h.h3Unknown) throw Object.assign(new Error("unknown"), { kind: "unknown" });
+    return { evolinkTaskId: "h3-local-test" };
+  } };
+});
 vi.mock("./gcs.js", async importOriginal => ({
   ...await importOriginal<typeof import("./gcs.js")>(),
   getGcsBucketName: () => "test-bucket",
@@ -30,10 +39,10 @@ vi.mock("./evolinkSeedanceVideo.js", async importOriginal => {
 });
 vi.mock("./byteplusSeedanceVideo.js", async importOriginal => {
   const actual = await importOriginal<typeof import("./byteplusSeedanceVideo.js")>();
-  return { ...actual, isByteplusSeedanceConfigured: () => true, isByteplusFallbackableError: (error: unknown) => error instanceof Error && error.message === "test-fallback",
+  return { ...actual, isByteplusSeedanceConfigured: () => true,
     submitByteplusSeedance25Video: async (input: Parameters<typeof actual.buildByteplusSeedance25SubmitBody>[0]) => {
       h.byteplus(actual.buildByteplusSeedance25SubmitBody(input));
-      if (h.byteplusFailure) throw new Error("test-fallback");
+      if (h.byteplusFailure) throw new Error("InputImageSensitiveContentDetected.PrivacyInformation");
       return { byteplusTaskId: "bp-local-test", model: "seedance-2.5", mode: "reference_to_video" };
     }, pollByteplusVideoTaskOnce: async () => ({ state: "running", status: "processing" }),
   };
@@ -57,6 +66,7 @@ describe("真实任务写盘到供应商请求的音频交接", () => {
   beforeEach(async () => {
     vi.resetModules();
     h.evolink.mockReset(); h.byteplus.mockReset(); h.openrouter.mockReset();
+    h.h3.mockReset(); h.h3Unknown = false;
     h.signed = 0; h.byteplusFailure = false; h.openrouterEnabled = false;
     dir = await fs.mkdtemp(path.join(os.tmpdir(), "video-audio-ref-test-"));
     process.env.CANVAS_VIDEO_TASK_DIR = dir;
@@ -67,16 +77,51 @@ describe("真实任务写盘到供应商请求的音频交接", () => {
     vi.unstubAllGlobals();
     await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
-  async function create(engine: "seedance25-evolink" | "seedance25-byteplus", audio = "gs://test-bucket/post-prod/7/dialogue.wav") {
+  async function create(engine: "seedance25-evolink" | "seedance25-byteplus" | "hailuo-evolink", audio = "gs://test-bucket/post-prod/7/dialogue.wav") {
     const { createCanvasVideoTask } = await import("./canvasVideoTask");
-    const task = await createCanvasVideoTask({ userId: 7, creditsCharged: 0, engine, label: "本机音频交接测试", prompt: "角色说话", audioUrls: [audio], duration: 5, resolution: "720p", workMode: "reference_to_video" });
+    const task = await createCanvasVideoTask({ userId: 7, creditsCharged: 0, engine, label: "本机音频交接测试", prompt: "角色说话", audioUrls: [audio], duration: 5, resolution: engine === "hailuo-evolink" ? "768p" : "720p", workMode: "reference_to_video" });
     let saved: Record<string, unknown> = {};
     await vi.waitFor(async () => {
       saved = JSON.parse(await fs.readFile(path.join(dir, `${task.taskId}.json`), "utf8"));
-      expect(["running", "failed"]).toContain(saved.status);
+      expect(["running", "failed", "reconcile_manual"]).toContain(saved.status);
     });
     return saved;
   }
+  it("H3音频身份写盘、请求现签，原句柄阻止重复建单", async () => {
+    const task = await create("hailuo-evolink");
+    expect(task.audioUrls).toEqual(["gs://test-bucket/post-prod/7/dialogue.wav"]);
+    expect(task.evolinkTaskId).toBe("h3-local-test");
+    expect(h.h3.mock.calls[0][0].audio_urls[0]).toContain("signature=test-");
+    const { canvasVideoTaskNeedsSubmit } = await import("./canvasVideoTask");
+    expect(canvasVideoTaskNeedsSubmit(task as never)).toBe(false);
+    expect(h.openrouter).not.toHaveBeenCalled();
+  });
+  it("H3未知提交进入对账，不回落OpenRouter", async () => {
+    h.h3Unknown = true;
+    const task = await create("hailuo-evolink");
+    expect(task.status).toBe("reconcile_manual");
+    expect(h.h3).toHaveBeenCalledTimes(1);
+    expect(h.openrouter).not.toHaveBeenCalled();
+    const { refundCreditsOnFailure } = await import("./paidJobLedger.js");
+    expect(refundCreditsOnFailure).not.toHaveBeenCalled();
+  });
+  it("H3提交后进程恢复无句柄时不重复生成或退款", async () => {
+    const task = await create("hailuo-evolink");
+    expect(task.h3SubmissionStartedAt).toBeTruthy();
+    delete task.evolinkTaskId;
+    task.status = "running";
+    await fs.writeFile(path.join(dir, `${task.taskId}.json`), JSON.stringify(task));
+    const { getCanvasVideoTask } = await import("./canvasVideoTask");
+    const restored = await getCanvasVideoTask(String(task.taskId), 7);
+    expect(restored?.status).toBe("reconcile_manual");
+    expect(h.h3).toHaveBeenCalledTimes(1);
+    const { refundCreditsOnFailure } = await import("./paidJobLedger.js");
+    expect(refundCreditsOnFailure).not.toHaveBeenCalled();
+  });
+  it("写实素材不跳过已配置BytePlus", async () => {
+    const { resolveSeedance25CanvasEngine } = await import("./canvasVideoTask");
+    expect(resolveSeedance25CanvasEngine("reference_to_video", { photoreal: true })).toBe("seedance25-byteplus");
+  });
   it("EvoLink最终body是HTTPS，任务持久化仍为GS", async () => {
     const task = await create("seedance25-evolink");
     expect(task.audioUrls).toEqual(["gs://test-bucket/post-prod/7/dialogue.wav"]);
@@ -94,12 +139,13 @@ describe("真实任务写盘到供应商请求的音频交接", () => {
     expect(task.audioUrls).toEqual(["gs://test-bucket/post-prod/7/dialogue.wav"]);
     expect(h.evolink.mock.calls[0][0].body.audio_urls[0]).toContain("signature=test-2");
   });
-  it("BytePlus回落OpenRouter也得到全量已签音频", async () => {
+  it("人脸拒绝即使OpenRouter可用仍只转EvoLink并保留音频", async () => {
     h.byteplusFailure = true; h.openrouterEnabled = true;
     const task = await create("seedance25-byteplus");
-    expect(task.engine).toBe("seedance-openrouter");
+    expect(task.engine).toBe("seedance25-evolink");
     expect(task.audioUrls).toEqual(["gs://test-bucket/post-prod/7/dialogue.wav"]);
-    expect(h.openrouter.mock.calls[0][0].input_references).toContainEqual({ type: "audio_url", audio_url: { url: "https://storage.googleapis.com/test-bucket/post-prod/7/dialogue.wav?signature=test-2" } });
+    expect(h.openrouter).not.toHaveBeenCalled();
+    expect(h.evolink.mock.calls[0][0].body.audio_urls[0]).toContain("signature=test-2");
   });
   it("worker拒绝越权素材，三个供应商均零提交", async () => {
     h.byteplusFailure = true; h.openrouterEnabled = true;

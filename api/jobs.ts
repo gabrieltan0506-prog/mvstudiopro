@@ -1905,14 +1905,7 @@ async function runSeedance25EvolinkJob(
   const { resolveSeedance25CanvasEngine } = await import(
     "../server/services/canvasVideoTask.js"
   );
-  const { hasPhotorealReferenceUrl } = await import("../shared/photorealMediaSignal.js");
   const preferByteplus = isByteplusSeedanceConfigured();
-  // 仿真人（photoreal 素材信号）只能走 EvoLink：BytePlus 拦真人照参考。
-  // 有 BytePlus 没 EvoLink 时不能扣费后必败，扣费前 503。
-  const isPhotorealRequest = hasPhotorealReferenceUrl([imageUrl, ...imageUrls, ...videoUrls]);
-  if (isPhotorealRequest && !isEvolinkSeedanceConfigured()) {
-    return { ok: false, status: 503, error: "仿真人通道暂不可用，请稍后重试" };
-  }
   if (!preferByteplus && !isEvolinkSeedanceConfigured()) {
     return { ok: false, status: 503, error: "视频服务暂不可用，请稍后重试" };
   }
@@ -2016,11 +2009,7 @@ async function runSeedance25EvolinkJob(
       requestKey;
     const taskInput = {
       ...manhuaPilotTaskFields(preparedPilot),
-      engine: resolveSeedance25CanvasEngine(mode, {
-        // 共享信号（覆盖 photoreal-age/、photoreal-gen/ 等派生路径），与 2.0 路由同口径；
-        // EvoLink 缺配置的 photoreal 已在扣费前 503，这里选中 EvoLink 引擎必有配置
-        photoreal: isPhotorealRequest,
-      }),
+      engine: resolveSeedance25CanvasEngine(mode),
       label,
       prompt,
       imageUrl,
@@ -4584,7 +4573,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
 
     /**
      * MiniMax H3（Hailuo 3）· OpenRouter POST /api/v1/videos。
-     * 画布 videoModel=minimax-hailuo-3；不走 EvoLink。
+     * 画布 videoModel=minimax-hailuo-3；音视频参考使用 EvoLink，纯图保留既有通道。
      */
     if (op === "hailuo3Video") {
       if (req.method !== "POST") {
@@ -4601,15 +4590,23 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       const imageUrls = Array.isArray(b.imageUrls)
         ? b.imageUrls.map((u: unknown) => s(u)).filter(Boolean)
         : undefined;
+      const videoUrls = Array.isArray(b.videoUrls) ? b.videoUrls.map((u: unknown) => s(u).trim()).filter(Boolean) : [];
+      const rawAudioUrls = Array.isArray(b.audioUrls) ? b.audioUrls.map((u: unknown) => s(u).trim()).filter(Boolean) : [];
+      const useEvolink = videoUrls.length > 0 || rawAudioUrls.length > 0;
+      let audioReferences: string[] = [];
       const aspectRatio = s(b.aspectRatio || q.aspectRatio || "16:9").trim() || "16:9";
       const generateAudio = !(
         String(b.generateAudio ?? q.generateAudio ?? "1").trim() === "0" || b.generateAudio === false
       );
+      if (useEvolink && !generateAudio) {
+        return res.status(400).json({ ok: false, error: "H3参考模式生成原生音频，不支持关闭；本次未扣费" });
+      }
       try {
         const { isOpenRouterHailuoConfigured } = await import(
           "../server/services/openrouterHailuoVideo.js"
         );
-        if (!isOpenRouterHailuoConfigured()) {
+        const { isEvolinkH3Configured, buildEvolinkH3Body } = await import("../server/services/evolinkHailuoVideo.js");
+        if (useEvolink ? !isEvolinkH3Configured() : !isOpenRouterHailuoConfigured()) {
           return res.status(503).json({
             ok: false,
             error: "视频服务暂不可用，请稍后重试",
@@ -4632,6 +4629,19 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
          * 只算一次，label / 扣费 / 任务参数 / 响应全用它，避免四处各归一化一遍再漂移。
          * 计价表没有 768p 档，H3 草稿档折到 720p 价；2K 才按 2K 收。
          */
+        if (useEvolink) {
+          try {
+            const { resolveCanvasVideoAudioReference } = await import("../server/services/canvasVideoAudioReference.js");
+            const audio = await Promise.all(rawAudioUrls.map((reference: string) => resolveCanvasVideoAudioReference({ reference, ownerUserId: hailuoViewer.userId })));
+            audioReferences = audio.map(a => a.storedReference);
+            const media = { videoUrls, audioUrls: audio.map(a => a.url) };
+            buildEvolinkH3Body({ prompt, imageUrls: Array.from(new Set([imageUrl, ...(imageUrls || [])].filter(Boolean) as string[])), ...media, duration, resolution, aspectRatio });
+            const { preflightH3ReferenceMedia } = await import("../server/services/hailuoReferencePreflight.js");
+            await preflightH3ReferenceMedia(media);
+          } catch {
+            return res.status(400).json({ ok: false, error: "H3 参考素材校验未通过，请核对格式、归属与音视频各合计不超过15秒；本次未扣费" });
+          }
+        }
         const billedResolution = resolution === "2K" ? "2K" : "720p";
         const label = `画布成片·H3（${resolution}·${duration}s）`;
         let preparedPilot: PreparedManhuaPilot;
@@ -4674,7 +4684,9 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           requestKey;
         const taskInput = {
           ...manhuaPilotTaskFields(preparedPilot),
-          engine: "hailuo-openrouter" as const,
+          engine: useEvolink ? "hailuo-evolink" as const : "hailuo-openrouter" as const,
+          videoUrls: useEvolink ? videoUrls : undefined,
+          audioUrls: useEvolink ? audioReferences : undefined,
           label,
           prompt,
           imageUrl,
@@ -4752,7 +4764,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             taskId: task.taskId,
             status: task.status,
             videoUrl: task.videoUrl || undefined,
-            provider: "openrouter",
+            provider: useEvolink ? "evolink" : "openrouter",
             version: "hailuo-3",
             resolution,
             creditsUsed: charged.credits,
