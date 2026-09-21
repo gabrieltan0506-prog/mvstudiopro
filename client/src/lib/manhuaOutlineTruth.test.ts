@@ -103,7 +103,7 @@ describe("工作台确认事实与编导能力分离", () => {
     [true, false],
     [true, true],
   ])(
-    "确认=%s、解锁=%s：真实阶段状态不误报，未确认按钮仍可触发",
+    "确认=%s、解锁=%s：真实阶段状态不误报",
     (outlineConfirmed, directorUnlocked) => {
       const outlineComplete = directorUnlocked || outlineConfirmed;
       const outline = phases(outlineConfirmed, outlineComplete).find(
@@ -113,72 +113,17 @@ describe("工作台确认事实与编导能力分离", () => {
         complete: outlineConfirmed,
         gapZh: outlineConfirmed ? "" : "请先确认剧本大纲",
       });
-      const onConfirmOutline = vi.fn();
-      const button = jsxStarting(
-        "!outlineConfirmed && writerPackReady && onConfirmOutline",
-        {
-          outlineConfirmed,
-          outlineComplete,
-          writerPackReady: true,
-          onConfirmOutline,
-        }
-      );
-      const markup = renderToStaticMarkup(button);
-      if (!outlineConfirmed) {
-        expect(markup).toContain('data-manhua-action="confirm-outline"');
-        expect(markup).not.toContain("disabled");
-        button.props.onClick();
-        expect(onConfirmOutline).toHaveBeenCalledOnce();
-      } else expect(markup).toBe("");
-      const enterAssets = renderToStaticMarkup(jsxStarting("outlineComplete && (outlineConfirmed", {
-        outlineConfirmed, outlineComplete, writerPackReady: true, onConfirmOutline, selectPhase: vi.fn(),
-      }));
-      expect(enterAssets.includes('data-manhua-action="goto-assets"')).toBe(outlineConfirmed && outlineComplete);
-      const warning = renderToStaticMarkup(
-        jsxStarting("outlineComplete && !outlineConfirmed", {
-          outlineComplete,
-          outlineConfirmed,
-        })
-      );
-      expect(warning.includes("当前剧本尚未确认")).toBe(
-        directorUnlocked && !outlineConfirmed
-      );
     }
   );
 
-  it("无可确认剧本不渲染确认按钮，已解锁仍保留进入资产能力", () => {
-    const confirm = vi.fn();
-    expect(
-      renderToStaticMarkup(
-        jsxStarting(
-          "!outlineConfirmed && writerPackReady && onConfirmOutline",
-          {
-            outlineConfirmed: false,
-            outlineComplete: true,
-            writerPackReady: false,
-            onConfirmOutline: confirm,
-          }
-        )
-      )
-    ).toBe("");
-    const phase = vi.fn();
-    const expression = findNode(
-      node =>
-        ts.isJsxExpression(node) &&
-        Boolean(
-          node.expression?.getText(source).startsWith("outlineComplete && (outlineConfirmed")
-        ) &&
-        node.getText(source).includes('data-manhua-action="goto-assets"')
-    ) as ts.JsxExpression;
-    const button = execute(expression.expression!.getText(source), {
-      outlineComplete: true,
-      outlineConfirmed: false, writerPackReady: false, onConfirmOutline: confirm,
-      selectPhase: phase,
-    });
-    expect(renderToStaticMarkup(button)).toContain("进入资产设定");
-    button.props.onClick();
-    expect(phase).toHaveBeenCalledWith("assets");
-    expect(confirm).not.toHaveBeenCalled();
+  it("大纲页不再复制确认与进入资产按钮，阶段主按钮是唯一主操作", () => {
+    const workbench = readFileSync(
+      new URL("../components/ManhuaScriptWorkbench.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(workbench).not.toContain('data-manhua-action="confirm-outline"');
+    expect(workbench).not.toContain('data-manhua-action="goto-assets"');
+    expect(workbench).toContain('data-manhua-action="ashuo-step-generate"');
   });
 
   it("六张人物参考真实registry只有人物槽，摘要不声称全部资产齐备", () => {

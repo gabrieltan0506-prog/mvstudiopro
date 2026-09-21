@@ -30,7 +30,8 @@ describe("成片阶段接线契约", () => {
 
   it("进 final 必须自动开坞 —— 第五格的面板就是坞", () => {
     expect(SRC).toContain("shouldOpenClipDockForPhase(workflowPhase)");
-    expect(SRC).toContain("setImmersiveWorkspaceView(workspaceViewForRestoredManhuaPhase(restoredPhase, Boolean(session.writerConfirmed)))");
+    expect(SRC).toContain('restoredPhase === "final" && manhuaUiMode === "workbench"');
+    expect(SRC).toContain("workspaceViewForRestoredManhuaPhase(restoredPhase, Boolean(session.writerConfirmed))");
   });
 
   it("返回工作台时只把 final 收回 edit，并切回工作台", () => {
@@ -104,7 +105,7 @@ describe("成片阶段接线契约", () => {
     const moreAt = WORKBENCH_SRC.indexOf("data-manhua-toolbar-more");
     const localClipAt = WORKBENCH_SRC.indexOf('data-manhua-action="generate-fragment"');
     expect(reviewAt).toBeGreaterThan(0);
-    expect(moreAt).toBeGreaterThan(reviewAt);
+    expect(reviewAt).toBeGreaterThan(moreAt);
     expect(localClipAt).toBeGreaterThan(moreAt);
     expect(WORKBENCH_SRC.match(/data-manhua-action="generate-fragment"/g)).toHaveLength(1);
   });

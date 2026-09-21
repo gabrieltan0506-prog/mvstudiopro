@@ -34,6 +34,46 @@ describe("resolveManhuaWorkbenchNextCta (阿硕步进)", () => {
     expect(cta.prevPhase).toBeNull();
   });
 
+  it("未确认剧本时可先看资产，但标题和主操作必须说清当前页面与返回动作", () => {
+    const cta = resolveManhuaWorkbenchNextCta({
+      activePhase: "assets",
+      outlineComplete: false,
+      assetsComplete: false,
+      episodeSheetCount: 0,
+      stillsReadyEnough: false,
+      videoBurnUnlocked: false,
+      hasClip: false,
+      factoryBusy: false,
+      writerPackReady: true,
+    });
+    expect(cta).toMatchObject({
+      kind: "confirm_outline",
+      labelZh: "返回并确认剧本大纲",
+      stepTitleZh: "资产设定",
+      targetPhase: "outline",
+      prevPhase: "outline",
+    });
+  });
+
+  it("状态切换瞬间仍按当前阶段显示标题，不闪回剧本大纲", () => {
+    const cta = resolveManhuaWorkbenchNextCta({
+      activePhase: "storyboard",
+      outlineComplete: false,
+      assetsComplete: false,
+      episodeSheetCount: 0,
+      stillsReadyEnough: false,
+      videoBurnUnlocked: false,
+      hasClip: false,
+      factoryBusy: false,
+    });
+    expect(cta).toMatchObject({
+      kind: "confirm_outline",
+      labelZh: "返回并确认剧本大纲",
+      stepTitleZh: "分镜 · 关键静帧",
+      targetPhase: "outline",
+    });
+  });
+
   it("资产步空墙：生成全部 + 生成本集角色设定卡", () => {
     const cta = resolveManhuaWorkbenchNextCta({
       outlineComplete: true,

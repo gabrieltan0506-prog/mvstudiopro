@@ -112,6 +112,12 @@ it("动作库选择添加保存同一spec，提交仍需显式生成且不采用
   const page=await open();
   try {
     expect(await page.$eval('[data-previs-advanced]', el => (el as HTMLDetailsElement).open)).toBe(false);
+    expect(await page.$eval('[data-previs-layout-editor]', el => (el as HTMLDetailsElement).open)).toBe(false);
+    expect(await page.evaluate(() => {
+      const library = document.querySelector('[data-previs-action-library]');
+      const layout = document.querySelector('[data-previs-layout-editor]');
+      return Boolean(library && layout && (library.compareDocumentPosition(layout) & Node.DOCUMENT_POSITION_FOLLOWING));
+    })).toBe(true);
     await click(page,"俯身行礼");
     await click(page,"添加所选动作");
     await page.waitForFunction(() => (window as any).fixture.block.previsStudio.spec.actors[0].actions.length === 1);

@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { build } from "esbuild";
 import puppeteer, { type Browser, type Page } from "puppeteer";
 import path from "node:path";
+import { mkdir, readFile, readdir } from "node:fs/promises";
 
 let browser: Browser;
 let bundle: string;
@@ -18,6 +19,8 @@ let bundle: string;
  * 重复只可能出现在两处同时具备的阶段，所以必须另挂一份分镜阶段的页面。
  */
 let storyboardBundle: string;
+let layoutCss = "";
+const assetEvidenceDir = "/tmp/mvs-asset-layout-probe";
 
 const REFS = [
   { id: "a1", url: "data:image/png;base64,iVBORw0KGgo=", role: "character", source: "generated", labelZh: "阿菁-候选", claimedAnchorIds: ["wa_char_aqing"] },
@@ -105,8 +108,14 @@ beforeAll(async () => {
         import { defaultCanvasBlock } from './client/src/lib/canvasTypes';
         import ManhuaScriptWorkbench from './client/src/components/ManhuaScriptWorkbench';
         globalThis.fixture = { keyart: 0, openedIssue: undefined };
-        const refs = ${JSON.stringify(REFS)};
-        const canon = ${JSON.stringify(CANON)};
+        const refs = [
+          ...${JSON.stringify(REFS)},
+          { id: 'mo-primary', url: 'data:image/png;base64,iVBORw0KGgo=', role: 'character', source: 'generated', labelZh: '墨菁-定妆', refDuty: 'identity', claimedAnchorIds: ['wa_char_mo'], primaryBindings: [{ anchorId: 'wa_char_mo', duty: 'identity' }] },
+          { id: 'scene-1', url: 'data:image/png;base64,iVBORw0KGgo=', role: 'scene', source: 'generated', labelZh: '临水坊市', refDuty: 'identity', claimedAnchorIds: ['scene-1'], primaryBindings: [{ anchorId: 'scene-1', duty: 'identity' }] },
+          { id: 'eye-base', url: 'https://example.com/eye-base.png', role: 'prop', source: 'generated', labelZh: '眼罩', seedLibraryId: 'wa_prop_eye', claimedAnchorIds: ['wa_prop_eye'] },
+          { id: 'eye-edit', url: 'https://example.com/eye-edit.png', role: 'prop', source: 'generated', labelZh: '眼罩·编辑', seedLibraryId: 'wa_prop_eye', claimedAnchorIds: ['wa_prop_eye'], primaryBindings: [{ anchorId: 'wa_prop_eye', duty: 'identity' }] },
+        ];
+        const canon = {...${JSON.stringify(CANON)}, locations:[{id:'scene-1',role:'scene',nameZh:'临水坊市',lookZh:'坊市街道'}], props:[{id:'wa_prop_eye',role:'prop',nameZh:'眼罩',lookZh:'旧布眼罩'}], episodeMainSceneId:{1:'scene-1'}};
         const blocks = [1, 2].map((n) => ({
           ...defaultCanvasBlock('video', 0, 0),
           id: 'clip-e01-g0' + n + '-audio',
@@ -114,12 +123,18 @@ beforeAll(async () => {
           videoModel: 'seedance-2.5',
           prompt: '【第' + n + '段·30s】墨屠第' + n + '段对白与动作。',
         }));
+        blocks.push(
+          {...defaultCanvasBlock('image',0,0),id:'charsheet-wa_char_aqing',episodeIndex:1,outputUrl:'https://example.com/aqing.png',prompt:'阿菁定妆'},
+          {...defaultCanvasBlock('image',0,0),id:'charsheet-wa_char_mo',episodeIndex:1,outputUrl:'https://example.com/mo.png',prompt:'墨菁定妆'},
+          {...defaultCanvasBlock('image',0,0),id:'sceneplate-scene-1',episodeIndex:1,outputUrl:'https://example.com/scene.png',prompt:'临水坊市'},
+          {...defaultCanvasBlock('image',0,0),id:'propsheet-wa_prop_eye',episodeIndex:1,outputUrl:'https://example.com/eye-sheet.png',prompt:'眼罩'},
+        );
         if (globalThis.directorProbe) blocks.push({...defaultCanvasBlock('text',0,0),id:'beats-e01-probe',episodeIndex:1,outputText:'## 分镜表\\n| 镜号 | 景别/运镜 | 内容 | 台词 | 情绪 | 微表情 | 语气 | 时长秒 |\\n| 1 | 双人中景缓推 | 阿菁握拳后松开 | 娘：慢点 | 隐忍 | 肩背轻颤后恢复 | 轻声 | 5 |\\n| 2 | 近景 | 娘看向阿菁 | 无对白 | 放松 | 眉头舒展 | | 5 |'});
         if (globalThis.progressProbe) blocks.push({...defaultCanvasBlock('image',0,0),id:'keyart-e01-s01-probe',episodeIndex:1,refImageUrl:'https://example.com/reference.png',prompt:'第1镜参考'});
         createRoot(document.getElementById('root')).render(
           <TooltipProvider>
             <ManhuaScriptWorkbench
-              blocks={blocks} videoModel='seedance-2.5' topic='墨屠守护阿菁'
+              canRun={true} blocks={blocks} videoModel='seedance-2.5' topic='墨屠守护阿菁'
               episodeCount={1} focusEpisode={1} onFocusEpisode={() => {}}
               characterIds={[]} propIds={[]} outlineConfirmed={true}
               workflowPhase='storyboard' compactUi={false}
@@ -168,6 +183,13 @@ beforeAll(async () => {
   storyboardBundle = storyboardBuilt.outputFiles[0]!.text;
 
   browser = await puppeteer.launch({ args: ["--no-sandbox"] });
+  const cssDir = process.env.MANHUA_LAYOUT_CSS_DIR;
+  if (cssDir) {
+    const cssFile = (await readdir(cssDir)).find(name => /^index-.*\.css$/.test(name));
+    if (!cssFile) throw new Error(`缺少主样式文件：${cssDir}`);
+    layoutCss = await readFile(path.join(cssDir, cssFile), "utf8");
+    await mkdir(assetEvidenceDir, { recursive: true });
+  }
 }, 180_000);
 
 afterAll(async () => {
@@ -183,6 +205,7 @@ async function mountStoryboard(directorProbe = false, progressProbe = false): Pr
   );
   await page.goto("http://localhost/", { waitUntil: "domcontentloaded" }).catch(() => {});
   await page.setContent("<div id=root></div>");
+  if (layoutCss) await page.addStyleTag({ content: layoutCss });
   // compactUi 是组件内部 state（localStorage `manhua_compact_ui`，默认 true），不是 prop。
   // 关掉简洁模式才会同时具备「工具条 + 分镜面板」两个静帧入口 —— 这是真能出现重复的那个状态，
   // 旧代码在这里就是两个按钮。
@@ -207,6 +230,7 @@ async function mount(usageBlocks: unknown[] = []): Promise<{ page: Page; close: 
   );
   await page.goto("http://localhost/", { waitUntil: "domcontentloaded" }).catch(() => {});
   await page.setContent("<div id=root></div>");
+  if (layoutCss) await page.addStyleTag({ content: layoutCss });
   await page.evaluate(value => { (window as any).assetUsageBlocks = value; }, usageBlocks);
   await page.evaluate(bundle);
   await page.waitForSelector("[data-manhua-custom-refs-role=character]", { timeout: 5_000 }).catch(error => { throw new Error(errors.join("\n") || String(error)); });
@@ -214,6 +238,52 @@ async function mount(usageBlocks: unknown[] = []): Promise<{ page: Page; close: 
 }
 
 describe("浏览器真实页面：资产页同名多版本收成实体卡", () => {
+  it.skipIf(!process.env.MANHUA_LAYOUT_CSS_DIR)("资产页桌面首屏只呈现当前分类，版本缩略条与实体主卡无横向溢出", async () => {
+    const { page, close } = await mount([
+      { id: "charsheet-wa_char_aqing", type: "image", episodeIndex: 1, outputUrl: REFS[1]!.url, prompt: "阿菁定妆" },
+      { id: "charsheet-wa_char_mo", type: "image", episodeIndex: 1, outputUrl: REFS[3]!.url, prompt: "墨菁定妆" },
+    ]);
+    try {
+      await page.setViewport({ width: 1280, height: 900 });
+      await page.waitForSelector('[data-manhua-asset-tabs]');
+      const geometry = await page.evaluate(() => {
+        const panel = document.querySelector('[data-manhua-phase-panel="assets"]') as HTMLElement;
+        const currentRole = document.querySelector('[data-manhua-custom-refs-role="character"]') as HTMLElement;
+        const groups = Array.from(currentRole.querySelectorAll<HTMLElement>('[data-manhua-asset-entity]'));
+        return {
+          pageOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          panelOverflow: panel.scrollWidth - panel.clientWidth,
+          visibleRoles: document.querySelectorAll('[data-manhua-custom-refs-role]').length,
+          visibleGroups: groups.length,
+          versionStrip: Boolean(currentRole.querySelector('[aria-label*="版本缩略图"]')),
+        };
+      });
+      expect(geometry.pageOverflow).toBeLessThanOrEqual(2);
+      expect(geometry.panelOverflow).toBeLessThanOrEqual(2);
+      expect(geometry.visibleRoles).toBe(1);
+      expect(geometry.visibleGroups).toBeGreaterThanOrEqual(2);
+      expect(geometry.versionStrip).toBe(true);
+      await page.screenshot({ path: path.join(assetEvidenceDir, "assets-1280.png"), fullPage: false });
+    } finally { await close(); }
+  }, 180_000);
+
+  it("资产页只显示当前分类，四个页签共用一个新增资产入口", async () => {
+    const { page, close } = await mount();
+    try {
+      expect(await page.$$('[data-manhua-asset-tabs] [role="tab"]')).toHaveLength(4);
+      expect(await page.$$('[data-manhua-action="add-asset"]')).toHaveLength(1);
+      expect(await page.$$('[data-manhua-action="confirm-assets"], [data-manhua-action="spawn-episode-sheets"]')).toHaveLength(0);
+      expect(await page.$$('[data-manhua-action="ashuo-step-generate"]')).toHaveLength(1);
+      expect(await page.$$('[data-manhua-custom-refs-role="character"]')).toHaveLength(1);
+      expect(await page.$$('[data-manhua-custom-refs-role="scene"]')).toHaveLength(0);
+      await page.click('[data-manhua-asset-tab="scene"]');
+      await page.waitForSelector('[data-manhua-custom-refs-role="scene"]');
+      expect(await page.$$('[data-manhua-custom-refs-role="character"]')).toHaveLength(0);
+      expect(await page.$$('[data-manhua-action="add-asset"]')).toHaveLength(1);
+      expect(await page.evaluate(() => (window as any).fixture.keyart)).toBe(0);
+    } finally { await close(); }
+  }, 180_000);
+
   it("资产引用按真实版本和本集隔离，查看不会改变采用", async () => {
     const clip = (episode: number, segment: number, id: string) => ({
       id: `clip-e0${episode}-g0${segment}-audio`, type: 'video', episodeIndex: episode,
@@ -249,19 +319,15 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
       expect(await page.evaluate(() => (window as any).fixture.keyart)).toBe(0);
     } finally { await close(); }
   }, 180_000);
-  it("版本缩略条定位对应原卡，不改变采用职责或触发生成", async () => {
+  it("版本缩略条切换当前可见卡，不改变采用职责或触发生成", async () => {
     const { page, close } = await mount();
     try {
       const before = await page.$eval('[data-manhua-asset-entity="wa_char_aqing"] [data-manhua-asset-entity-current-zh]', e => e.textContent);
-      await page.evaluate(() => {
-        const original = HTMLElement.prototype.scrollIntoView;
-        HTMLElement.prototype.scrollIntoView = function(options) {
-          (window as any).__versionTarget = this.dataset.manhuaCustomRefId;
-          original.call(this, options);
-        };
-      });
       await page.click('[title="查看阿菁-编辑，不改变采用版本"]');
-      expect(await page.evaluate(() => (window as any).__versionTarget)).toBe("a3");
+      await page.waitForFunction(() =>
+        getComputedStyle(document.querySelector('[data-manhua-custom-ref-id="a3"]')!).display !== 'none',
+      );
+      expect(await page.$eval('[data-manhua-custom-ref-id="a2"]', e => getComputedStyle(e).display)).toBe('none');
       expect(await page.$eval('[data-manhua-asset-entity="wa_char_aqing"] [data-manhua-asset-entity-current-zh]', e => e.textContent)).toBe(before);
       expect(await page.evaluate(() => (window as any).fixture.keyart)).toBe(0);
     } finally { await close(); }
@@ -320,7 +386,7 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
     await close();
   }, 180_000);
 
-  it("同屏「生成关键静帧」入口恰好一个，不是三个", async () => {
+  it("资产阶段不跨阶段暴露关键静帧入口", async () => {
     const { page, close } = await mount();
     const seen = await page.evaluate(() => {
       const buttons = Array.from(document.querySelectorAll("button")).filter(
@@ -332,9 +398,9 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
       };
     });
     const count = seen.count;
-    // 资产阶段：阶段主操作此刻不是静帧、分镜面板没挂载 → 入口归工具条，恰好一个
-    expect(count).toBe(1);
-    expect(seen.entries).toEqual(["toolbar"]);
+    // 资产阶段只显示本阶段主操作；关键静帧入口留到分镜阶段。
+    expect(count).toBe(0);
+    expect(seen.entries).toEqual([]);
     await close();
   }, 180_000);
 
@@ -343,19 +409,26 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
    * 让位逻辑一旦失效，同屏就会出现第二个。变异验证：把工具条的让位判断改成恒真 → 本条转红。
    */
   it("关掉简洁模式的分镜阶段（工具条+面板都具备条件）同屏仍然只有一个入口", async () => {
-    const { page, close } = await mountStoryboard();
+    // 主步骤按钮只有在真实分镜表存在时才进入「当前镜静帧」状态；
+    // 用导演表夹具验证实际用户路径，避免空夹具把按钮留在别的阶段。
+    const { page, close } = await mountStoryboard(true);
     const seen = await page.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll("button")).filter(
-        (b) => (b.textContent || "").replace(/\s+/g, "") === "生成关键静帧",
-      );
+      const buttons = Array.from(document.querySelectorAll("[data-manhua-keyart-entry]"));
       return {
         count: buttons.length,
         entries: buttons.map((b) => b.getAttribute("data-manhua-keyart-entry")),
         pointerText: /出静帧走底栏主操作/.test(document.body.innerText),
+        step: document.querySelector('[data-manhua-action="ashuo-step-generate"]')?.outerHTML,
       };
     });
-    expect(seen.count).toBe(1);
-    expect(seen.entries.filter(Boolean)).toHaveLength(1);
+    expect(seen.count, seen.step).toBe(1);
+    expect(seen.entries).toEqual(["step"]);
+    expect(await page.$eval('[data-manhua-action="ashuo-step-generate"]', (button) =>
+      (button.textContent || "").replace(/\s+/g, ""),
+    )).toBe("生成当前镜静帧");
+    await page.click('[data-manhua-action="ashuo-step-generate"]');
+    await page.waitForFunction(() => (globalThis as any).fixture.keyart === 1);
+    expect(await page.evaluate(() => (globalThis as any).fixture.keyart)).toBe(1);
     await close();
   }, 180_000);
 
@@ -620,6 +693,24 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
     expect(fields.descText).toContain("画面描述");
     expect(fields.descText).toMatch(/\d+\/200/);
     await close();
+  }, 180_000);
+
+  it("分镜挂载资产按道具实体只显示一次，并标明保留的版本数", async () => {
+    const { page, close } = await mountStoryboard();
+    try {
+      const props = await page.$$eval('[data-manhua-canon-entity^="propsheet:"]', (nodes) =>
+        nodes.map((node) => ({
+          id: node.getAttribute("data-manhua-canon-sheet"),
+          text: (node.textContent || "").replace(/\s+/g, " ").trim(),
+        })),
+      );
+      expect(props).toHaveLength(1);
+      expect(props[0]?.id).toBe("propsheet-custom-eye-edit");
+      expect(props[0]?.text).toContain("眼罩");
+      expect(props[0]?.text).toContain("3版");
+    } finally {
+      await close();
+    }
   }, 180_000);
 
   /**

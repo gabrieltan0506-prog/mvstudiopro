@@ -620,16 +620,22 @@ export function ManhuaPrevisStudioView({
         简化人体关节／四足站位，不是角色模型自动绑定。渲染不调用付费生成模型；预览后再采用，不会自动出成片。
       </p>
       <p className="text-xs text-cyan-100" data-previs-source-scope>{manhuaPrevisSourceLabel(studio.spec)}</p>
+      <ManhuaPrevisActionLibrary spec={studio.spec} disabled={disabled || Boolean(pendingId) || busy} onChange={edit} />
+      <details data-previs-layout-editor className="rounded border border-white/10 bg-white/[0.02] p-2">
+        <summary className="min-h-11 cursor-pointer py-2 text-xs font-semibold text-cyan-100">镜头、站位与动作节奏</summary>
+        <div className="mt-2 space-y-3">
       <ManhuaPrevisLayoutPreview key={studio.scopeId + block.id} spec={studio.spec} disabled={disabled || Boolean(pendingId) || busy} onChange={edit} />
       <ManhuaPrevisTempoControls key={studio.scopeId+block.id} spec={studio.spec} disabled={disabled || !!pendingId || busy} onChange={edit}/>
+        </div>
+      </details>
       {sourceShots.length > 0 ? (
-        <section
+        <details
           className="space-y-2 rounded border border-cyan-300/20 p-2"
           data-previs-script-draft
         >
-          <p className="text-xs text-cyan-100">
+          <summary className="min-h-11 cursor-pointer py-2 text-xs font-semibold text-cyan-100">
             本段原镜动作草案 · 不调用付费模型
-          </p>
+          </summary>
           <button
             className={button}
             disabled={disabled || Boolean(pendingId) || busy}
@@ -748,11 +754,11 @@ export function ManhuaPrevisStudioView({
               </button>
             </>
           ) : null}
-        </section>
+        </details>
       ) : null}
       {actionPlanDrafts.length ? (
-        <section className="space-y-2 rounded border border-cyan-300/30 p-2" data-previs-action-plan-drafts>
-          <p className="text-xs text-cyan-100">从动作节奏生成白模草案 · 不调用付费模型</p>
+        <details className="space-y-2 rounded border border-cyan-300/30 p-2" data-previs-action-plan-drafts>
+          <summary className="min-h-11 cursor-pointer py-2 text-xs font-semibold text-cyan-100">从动作节奏生成白模草案 · 不调用付费模型</summary>
           <p className="text-xs text-white/60">
             时间轴上排好的起手/接触/卸力已换算成白模时序（对齐 24 帧）。站位与机位为默认值，套用后可在「高级参数」微调；套用不提交渲染。
           </p>
@@ -811,7 +817,7 @@ export function ManhuaPrevisStudioView({
               </button>
             </div>
           ))}
-        </section>
+        </details>
       ) : null}
       {studio.specHistory?.length ? (
         <button
@@ -870,7 +876,6 @@ export function ManhuaPrevisStudioView({
           调整人数与站位
         </button>
       </section>
-      <ManhuaPrevisActionLibrary spec={studio.spec} disabled={disabled || Boolean(pendingId) || busy} onChange={edit} />
       <details open={advancedOpen} onToggle={(e) => setAdvancedOpen(e.currentTarget.open)} className="space-y-2" data-previs-advanced>
         <summary className="text-xs text-cyan-100">高级参数 · 数字表（站位 / 动作 / 特效 / 出水 / 短打）</summary>
       <div className="flex flex-wrap gap-3">

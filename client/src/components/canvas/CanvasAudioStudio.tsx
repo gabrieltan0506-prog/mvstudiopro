@@ -161,6 +161,8 @@ export type CanvasAudioStudioServices = {
 
 type Props = {
   block: CanvasBlock;
+  /** 漫剧工厂简洁模式只保留声音摘要，详细逐轨编辑由用户展开。 */
+  compact?: boolean;
   sourceShots?: ManhuaWorkbenchShot[];
   dialogueSources?: readonly CanvasBlock[];
   disabled?: boolean;
@@ -199,6 +201,7 @@ export function CanvasAudioStudio(props: Props) {
 
 export function CanvasAudioStudioView({
   block,
+  compact = false,
   sourceShots,
   dialogueSources = [],
   disabled = false,
@@ -234,11 +237,13 @@ export function CanvasAudioStudioView({
   const mounted = useRef(true);
   const busyRef = useRef(false);
   const [busy, setBusy] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(!compact);
   const [activeCueId, setActiveCueId] = useState<string | null>(null);
   const [voiceCriteria, setVoiceCriteria] = useState<CanvasVoiceMatchCriteria>({});
   const activeCue = activeCueId === null ? state.cues[0] : state.cues.find(cue => cue.id === activeCueId);
   const voiceMatch = activeCue?.kind === "dialogue" ? matchCanvasDialogueVoice(voiceCriteria) : undefined;
   useEffect(() => { setActiveCueId(null); setVoiceCriteria({}); }, [block.id]);
+  useEffect(() => { setEditorOpen(!compact); }, [block.id, compact]);
   const [error, setError] = useState("");
   const [musicJobs, setMusicJobs] = useState<MusicJob[]>([]);
   const musicDraft = state.musicDraft || { prompt: "", durationSec: 30, brief: null, model: bgmModels?.[0]?.model ?? "suno-v6" };
@@ -1008,6 +1013,9 @@ export function CanvasAudioStudioView({
           <p className="mt-3 text-[11px] leading-4 text-white/45">配乐与音效各自裁切，保留对白窗与留白。</p>
         </section>
       </div>
+      <details data-manhua-audio-editor open={editorOpen} onToggle={event => setEditorOpen(event.currentTarget.open)} className="rounded-xl border border-white/10 bg-black/10 p-2">
+      <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold text-sky-100">编辑对白、配乐与音效</summary>
+      <div className="mt-2 space-y-3">
       <p className="text-xs text-amber-100">
         {canvasAudioCapabilityHint(block)}
         母轨仅用于本段正常出片，局部编辑、视频延长和试片不注入母轨；出片前仍会校验音轨采用状态、母轨版本及容量。
@@ -1573,6 +1581,8 @@ export function CanvasAudioStudioView({
           {error}
         </p>
       )}
+      </div>
+      </details>
     </section>
   );
 }

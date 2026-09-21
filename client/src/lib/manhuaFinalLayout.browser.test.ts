@@ -245,7 +245,8 @@ it('镜长保存遇到剧本配额失败时不改变画布和确认态',async()=
 it('大纲页修复混合镜头稿，保留时长原文且不提交生成', async()=>{
  const {page,close}=await mount(false,false,true);
  try {
-  await page.waitForSelector('[data-manhua-timing-recovery]');
+ await page.waitForSelector('[data-manhua-timing-recovery]');
+  await page.click('[data-manhua-outline-details] > summary');
   const before=await page.evaluate(()=>({posts:JSON.stringify((window as any).__posts),writer:JSON.parse(localStorage.getItem('mv-manhua-writer-session-v1')!)}));
   await page.click('[data-manhua-timing-recovery] button');
   await page.waitForFunction(()=>!document.querySelector('[data-manhua-timing-recovery]'));
@@ -262,7 +263,8 @@ it('大纲页修复混合镜头稿，保留时长原文且不提交生成', asyn
 it('混合稿恢复保存失败时可见报错，原稿与修复入口保留', async()=>{
  const {page,close}=await mount(false,false,true);
  try {
-  await page.waitForSelector('[data-manhua-timing-recovery]');
+ await page.waitForSelector('[data-manhua-timing-recovery]');
+  await page.click('[data-manhua-outline-details] > summary');
   // 挂载后图片会异步转存本机；先等该独立迁移结束，再比较恢复按钮前后数据。
   await page.waitForFunction(()=>{
     const blocks=JSON.parse(localStorage.getItem('mv-freeform-canvas-v1')||'{}').blocks||[];
