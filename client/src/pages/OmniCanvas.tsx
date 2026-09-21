@@ -8919,24 +8919,8 @@ export default function OmniCanvas() {
                   resolveClipLocalSegmentIndex(block.id, block.prompt, episodeIndex) === 1,
               );
               if (!pilotClip) throw new Error("首段成片节点未就绪，请先铺好分镜提示词");
-              const compiledPilot = compileManhuaPilotPrompt(pilotClip.prompt, opts.pilotDurationSec);
-              workingBlocks = workingBlocks.map((block) =>
-                block.id === pilotClip.id
-                  ? {
-                      ...block,
-                      prompt: compiledPilot.prompt,
-                      status: "idle" as const,
-                      error: undefined,
-                      manhuaClipQuality: undefined,
-                      outputUrl: undefined,
-                      outputUrls: mergeManhuaMediaVersions(
-                        [],
-                        [block.outputUrl, ...(block.outputUrls || [])],
-                      ),
-                      lastFrameUrl: undefined,
-                    }
-                  : block,
-              );
+              // 这里只验证秒轴；执行器裁本次请求，不能把试片短稿写回正片节点。
+              compileManhuaPilotPrompt(pilotClip.prompt, opts.pilotDurationSec);
               effectiveTargetBlockIds = [pilotClip.id];
               setBlocks(workingBlocks);
               setEdges(workingEdges);
@@ -9183,7 +9167,7 @@ export default function OmniCanvas() {
                   setFactoryProgress(keyartProgressZh().text);
                   return;
                 }
-                setFactoryProgress(`第${episodeIndex}集 · 已完成 · ${label}`);
+                setFactoryProgress(opts?.pilotRun ? `第${episodeIndex}集 · 试片已生成，待审阅` : `第${episodeIndex}集 · 已完成 · ${label}`);
               },
               onStageError: (id, label, message) => {
                 if (label === MANHUA_FACTORY_STAGE_LABEL_ZH.keyart || id.startsWith("keyart-")) {
@@ -9302,7 +9286,7 @@ export default function OmniCanvas() {
             ms: Date.now() - runStartedAt,
             detail: `completed=${completed} skipped=${skipped}`,
           });
-          toast.success(`漫剧工厂完成：新跑 ${completed}` + (skipped ? ` · 跳过 ${skipped}` : ""));
+          toast.success(opts?.pilotRun ? "试片已生成，请审阅；正片保持不变" : `本次生成完成：新跑 ${completed}` + (skipped ? ` · 跳过 ${skipped}` : ""));
         }
         setFactoryProgress("");
       } catch (e: unknown) {

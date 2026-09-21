@@ -4845,6 +4845,14 @@ export async function runManhuaDramaFactoryPipeline(opts: {
             resolveOutboundGate: opts.resolveOutboundGate,
           },
         );
+        if (opts.pilotRun && stage === "clip") {
+          // 短试片仅进入审核面板；正片稿、旧成片与尾帧保持原样。
+          publish(working.map(b => b.id === blockId ? block : b));
+          completedIds.push(blockId);
+          opts.onStageDone?.(blockId, i, orderedIds.length, label);
+          succeeded = true;
+          break;
+        }
         if (preparedVideoEdit && !String(out.outputUrl || out.outputUrls?.[0] || "").trim()) {
           throw new Error("未取得视频编辑结果，原片已保留；请先核对任务记录，不要重复提交");
         }
@@ -4944,7 +4952,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       const alreadyLogged = errors.some((e) => e.id === blockId);
       publish(
         working.map((b) =>
-          b.id === blockId ? { ...b, status: "error" as const, error: lastMessage } : b,
+          b.id === blockId ? (opts.pilotRun && stage === "clip" ? block : { ...b, status: "error" as const, error: lastMessage }) : b,
         ),
       );
       if (!alreadyLogged) {
@@ -4985,6 +4993,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   );
   if (
     !opts.signal?.aborted &&
+    !opts.pilotRun &&
     untilIdx >= clipStageIdx &&
     (opts.episodeIndex == null || opts.episodeIndex >= 1)
   ) {

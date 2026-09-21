@@ -2333,6 +2333,16 @@ export async function runCanvasBlock(
   upstream: CanvasUpstreamContext = { visionImages: [], texts: [] },
   runOptions?: Parameters<typeof runCanvasBlockInner>[3],
 ): Promise<Awaited<ReturnType<typeof runCanvasBlockInner>>> {
+  if (runOptions?.pilotRun) {
+    // 试片由服务端审核记录恢复，不能注册成正片节点的自动恢复任务。
+    try {
+      return await runCanvasBlockInner({ ...deps, canvasIntentStorage: null,
+        onVideoTaskCreated: () => deps.onManhuaPilotChanged?.(),
+      }, block, upstream, runOptions);
+    } finally {
+      deps.onManhuaPilotChanged?.();
+    }
+  }
   const intentRun = block.kind === "video" ? resolveCanvasIntentForBlockRun(deps, block, runOptions) : null;
   if (!intentRun) return runCanvasBlockInner(deps, block, upstream, runOptions);
   const trackedDeps: CanvasRunDeps = {
@@ -3260,7 +3270,7 @@ async function runCanvasBlockInner(
       if (cuesNeedReferenceMode && !segmentMasterEntry) {
         throw new Error(
           runOptions?.pilotRun
-            ? "10 秒试片不送母轨，逐段音轨也不会并入；请先停用本段配音再试片，或直接出正片"
+            ? "试片不送母轨，逐段音轨也不会并入；请先停用本段配音再试片，或直接出正片"
             : "已配置逐段音轨，请使用支持声音参考的多模态参考模式；不会静默忽略这些音轨",
         );
       }
