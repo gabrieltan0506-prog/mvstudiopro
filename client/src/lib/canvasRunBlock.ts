@@ -3457,12 +3457,23 @@ async function runCanvasBlockInner(
               // 用户勾选/上传的参考视频排在接力成片之前：正文里的 @视频1 按数组顺序绑定。
               // refVideoUrl 为空时兜底到上传记录里的首个视频（uploadedVideoUrl），不静默丢失。
               // clip 段的 refVideoUrl 就是上段接力片（非用户勾选），有白模时同样不送
-              ...(useSeedance25 && userSelectedVideoUrl && !(isClip && segmentPrevisUrl)
+              // 显式勾选列表存在时以它为准。refVideoUrl / uploadedVideoUrl 只是旧草稿和
+              // 单文件上传的兜底，不能在用户改选另一条延长主片后继续偷偷混入旧片。
+              ...(useSeedance25 && !userRefVideos.length && userSelectedVideoUrl && !(isClip && segmentPrevisUrl)
                 ? [userSelectedVideoUrl]
                 : []),
               // 有白模时不再送上段接力片：三条 30 s 叠到 90 s 会被拒，
               // 且接力片没有序号说明，模型会把它也当站位参考。承接靠尾帧图（imageUrls）。
-              ...(continuityVideoUrl && !segmentPrevisUrl ? [continuityVideoUrl] : []),
+              ...(continuityVideoUrl &&
+              !segmentPrevisUrl &&
+              !(
+                useSeedance25 &&
+                userRefVideos.length > 0 &&
+                (block.seedance25WorkMode === "video_edit" ||
+                  block.seedance25WorkMode === "video_extend")
+              )
+                ? [continuityVideoUrl]
+                : []),
             ]),
           ),
         );
@@ -3483,19 +3494,18 @@ async function runCanvasBlockInner(
               audioUrls: candidateAudioUrls,
             })
           : undefined;
-        // 本节点旧成片只在「编辑/延长」才是源片。reference_to_video 重跑不得把上一条成片
-        // 静默追加进参考视频（0908 BytePlus 拒单：index 1 的 30.08s 旧片超过参考时长上限；
-        // 重跑本来就不该继承上一条）。
-        const ownOutputAsSource =
+        // 显式勾选的视频就是用户指定的编辑/延长来源，按勾选顺序保留 @视频1。
+        // 只有旧草稿没有任何显式视频时，才用本节点当前成片兜底；否则旧 outputUrl
+        // 会覆盖用户刚上传的裁短版本，供应商仍收到过长旧片。
+        const ownOutputFallback =
           useSeedance25 &&
           (workMode === "video_edit" || workMode === "video_extend") &&
+          userVideoUrls.length === 0 &&
           block.outputUrl &&
           looksLikeVideo(block.outputUrl)
             ? [block.outputUrl]
             : [];
-        // 编辑/延长的本节点成片永远是主片（@视频1）；旧草稿里遗留的白模或
-        // 手工参考只能排在后面，不能把供应商的“延长对象”悄悄换掉。
-        const candidateVideoUrls = Array.from(new Set([...ownOutputAsSource, ...userVideoUrls]));
+        const candidateVideoUrls = Array.from(new Set([...userVideoUrls, ...ownOutputFallback]));
         const segmentGuide = formatManhuaSegmentReferenceGuideZh({
           previsVideoIndex: segmentPrevisUrl ? candidateVideoUrls.indexOf(segmentPrevisUrl) + 1 : 0,
           motionGuideZh: segmentPrevisUrl ? segmentRefs?.previs?.motionGuideZh : undefined,

@@ -255,6 +255,23 @@ describe("漫剧工厂段级参考进出片请求（无网络）", () => {
     expect(String(requests[0]!.prompt)).not.toContain("站位白模");
     expect(signRequests).toEqual([]);
   });
+  it("视频延长显式改选上传片后，不再把节点旧成片或refVideoUrl塞回参考", async () => {
+    const oldSource = "https://test.invalid/old-30s.mp4";
+    const trimmedSource = "https://test.invalid/trimmed-29s.mp4";
+    const block = {
+      ...segmentBlock(),
+      status: "done" as const,
+      outputUrl: oldSource,
+      outputUrls: [oldSource],
+      refVideoUrl: oldSource,
+      seedance25WorkMode: "video_extend" as const,
+      seedance25RefVideoUrls: [trimmedSource],
+    };
+    await runCanvasBlock({ ...deps, characterVoiceLocks: [] }, block);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.workMode).toBe("video_extend");
+    expect(requests[0]!.videoUrls).toEqual([trimmedSource]);
+  });
   it("局部编辑模式不注入白模：@视频1 必须是原片", async () => {
     const source = "https://test.invalid/segment-c.mp4";
     const block = {
