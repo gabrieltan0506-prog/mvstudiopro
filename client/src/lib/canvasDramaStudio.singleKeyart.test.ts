@@ -74,3 +74,23 @@ it.each([false, true])("归档同镜旧图不混入段参考（残留连线=%s�
   expect(result).toEqual(baseline);
   expect(blocks.at(-1)).toEqual(archived);
 });
+
+it('单镜重编译绑定三名实际出演者（含单字署名），不混入下一镜角色或其他场景', () => {
+  const names = ['阿青', '墨马', '娘', '曹三'];
+  const characters = names.map((nameZh, i) => ({ id: `cast-${i}`, role: 'character' as const, nameZh, lookZh: nameZh, promptZh: nameZh }));
+  const locations = ['坊市', '后院'].map((nameZh,i)=>({id:`scene-${i}`,role:'scene' as const,nameZh,lookZh:nameZh,promptZh:nameZh}));
+  const canon = {characters,locations,props:[],episodeMainSceneId:{1:'scene-0'}};
+  const selected = [...characters, ...locations].map(a=>({id:a.id,role:a.role,labelZh:a.nameZh,url:`https://test.invalid/${a.id}.png`,source:'generated' as const,claimedAnchorIds:[a.id],claimSource:'manual' as const,...(a.role==='character'?{refDuty:'identity' as const,primaryBindings:[{anchorId:a.id,duty:'identity' as const}]}:{})}));
+  const g = spawnManhuaDramaStudio({topic:'背母求医',episodeIndex:1,customRefs:selected,assetCanon:canon});
+  const blocks=g.blocks.map(b=>b.id.startsWith('reverse-')?{...b,outputText:'| # | 秒位 | 景别·运镜 | 画面 | 台词/字幕 | 音效·配乐 |\n|---|---|---|---|---|---|\n| 1 | 0-5 | 中景 | 阿青背娘挪步，墨马跟随 | 娘：「慢点。」 | 脚步 |\n| 2 | 5-8 | 近景 | 曹三举掌 | —— | 嗡鸣 |\n| 3 | 8-13 | 中景 | 曹三收掌 | —— | 脚步 |',status:'done' as const}:b);
+  const before = blocks.find(b=>b.id.startsWith('keyart-'))!;
+  const prepared = prepareManhuaKeyartShotTarget(blocks,g.edges,1,1,{customRefs:selected,assetCanon:canon});
+  const target=prepared.blocks.find(b=>b.id===prepared.targetBlockId)!;
+  expect([target.refImageUrl,...target.editFusionUrls||[]]).toEqual(expect.arrayContaining(['https://test.invalid/cast-0.png','https://test.invalid/cast-1.png','https://test.invalid/cast-2.png','https://test.invalid/scene-0.png']));
+  expect([target.refImageUrl,...target.editFusionUrls||[]]).toHaveLength(4);
+  expect(target.prompt).not.toContain('参考图5');
+  expect(target.prompt).not.toContain('融图参考');
+  expect(target.prompt).not.toContain('后院');
+  expect(before).toEqual(blocks.find(b=>b.id===before.id));
+  for(const b of blocks.filter(b=>b.id!==target.id)) expect(prepared.blocks.find(n=>n.id===b.id)).toEqual(b);
+});

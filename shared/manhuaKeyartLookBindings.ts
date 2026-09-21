@@ -27,13 +27,15 @@ export function compileManhuaKeyartLookBindings<T extends KeyartLookBlock>(
     registry: ManhuaAssetLockRegistry;
     allowedIds: string[];
     activeLookSetIds: string[];
+    /** 已有当前剧本资产范围时，即使没有换装也重新绑定，避免沿用旧场景。 */
+    bindCurrentAssets?: boolean;
   }
 ): T & KeyartLookBlock {
   const { registry, activeLookSetIds } = options;
   const paths = buildManhuaAssetPathById(registry);
   const readyLooks = activeLookSetIds.filter(id => Boolean(paths[id]));
   // 尚未挂图的默认空位不改变旧行为；明确选择的缺图由段编译门禁拒绝。
-  if (!readyLooks.length && !block.prompt.includes(LOOK_MARK)) return block;
+  if (!options.bindCurrentAssets && !readyLooks.length && !block.prompt.includes(LOOK_MARK)) return block;
   const rows = resolveManhuaAssetImageBindRows(
     parseManhuaAssetImageBindBlock(
       formatManhuaAssetImageBindBlock(registry, 16, options)
@@ -52,6 +54,9 @@ export function compileManhuaKeyartLookBindings<T extends KeyartLookBlock>(
   const obsoleteMarks = [
     LOOK_MARK,
     "【身份短锁】",
+    "【道具短锁】",
+    "【场景短锁】",
+    "【定妆特写·道具子编号·跨集锁】",
     "【静帧·示范图融图】",
     "【静帧·用户参考融图】",
     "【静帧·人物库垫图·改图】",
@@ -59,7 +64,11 @@ export function compileManhuaKeyartLookBindings<T extends KeyartLookBlock>(
     "【静帧·人物库垫图·Image-2 Edit】",
     "【静帧·用户垫图·Image-2 Edit】",
   ];
-  let prompt = block.prompt;
+  // 旧融图段内有嵌套画风标题，不能遇到第一个【就截断，否则旧参考清单仍残留。
+  let prompt = block.prompt.replace(
+    /【静帧·(?:示范图融图|用户参考融图|人物库垫图·(?:改图|Image-2 Edit)|用户垫图·(?:改图|Image-2 Edit))】[\s\S]*?(?=\n【(?:创作策略|分镜\s*\d|导演法典|静帧·本段造型参考)|$)/g,
+    "",
+  );
   for (const mark of obsoleteMarks) {
     const start = prompt.indexOf(mark);
     if (start < 0) continue;
@@ -72,7 +81,7 @@ export function compileManhuaKeyartLookBindings<T extends KeyartLookBlock>(
     const duty = readyLooks.includes(row.id)
       ? "本镜外观与形态，以此图为准"
       : row.tag.startsWith("@角色")
-        ? "识别同一角色的身份；外观以该角色本段造型图为准"
+        ? readyLooks.length ? "识别同一角色的身份；外观以该角色本段造型图为准" : "保持该角色的身份、服装与形态"
         : "沿用本段场景或道具";
     return `参考图${index}：${row.labelZh}；${duty}。`;
   });

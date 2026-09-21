@@ -97,16 +97,17 @@ describe("首段试片的实际出站载荷（仅虚构网络边界）", () => {
         projectVersion: "a".repeat(64), episodeIndex: 1, segmentIndex: 1, intent: "pilot" as const,
       }));
       const created = vi.fn();
+      const pilotChanged = vi.fn();
       await runCanvasBlock(
-        { userRole: "admin", userId: "test-user", optimizeCopy: async () => "", authorizeManhuaClip: authorize, onVideoTaskCreated: created },
+        { userRole: "admin", userId: "test-user", optimizeCopy: async () => "", authorizeManhuaClip: authorize, onVideoTaskCreated: created, onManhuaPilotChanged: pilotChanged },
         pilotBlock(videoModel), undefined, { pilotRun: true, videoSubmissionKey: "test-explicit-submission" },
       );
       expect(authorize).toHaveBeenCalledWith({ episodeIndex: 1, segmentIndex: 1, videoModel, pilotRun: true, durationSec: 10 });
       expect(requests).toHaveLength(1);
       expect(requests[0]?.body.manhuaPilot).toEqual(await authorize.mock.results[0]?.value);
       expect(requests[0]?.body.idempotencyKey).toBe("test-explicit-submission");
-      expect(created).toHaveBeenCalledTimes(1);
-      expect(created).toHaveBeenCalledWith("clip-e01-g01", { taskId: "test-created-task", engine: videoModel });
+      expect(created).not.toHaveBeenCalled();
+      expect(pilotChanged).toHaveBeenCalled();
     },
   );
 
