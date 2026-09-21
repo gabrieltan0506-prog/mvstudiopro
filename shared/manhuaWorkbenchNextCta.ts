@@ -68,6 +68,23 @@ export function resolveManhuaWorkbenchNextCta(
   }
 
   if (!input.outlineComplete) {
+    if (input.activePhase && input.activePhase !== "outline") {
+      const stepTitleByPhase: Record<ManhuaWorkbenchPhaseId, string> = {
+        outline: "剧本大纲",
+        assets: "资产设定",
+        storyboard: "分镜 · 关键静帧",
+        edit: "成片剪辑台",
+        final: "终审与交付",
+      };
+      return {
+        kind: "confirm_outline",
+        labelZh: "返回并确认剧本大纲",
+        stepTitleZh: stepTitleByPhase[input.activePhase],
+        hintZh: "参考图可先上传；确认剧本后才能生成设定图和进入分镜",
+        targetPhase: "outline",
+        prevPhase: input.activePhase === "assets" ? "outline" : "assets",
+      };
+    }
     return {
       kind: "confirm_outline",
       labelZh: "生成本步内容",

@@ -764,9 +764,19 @@ export function planManhuaAssetImageSpawns(
       }
     }
     let spawned = 0;
-    for (const prop of canon.props) {
+    const seenPropEntityKeys = new Set<string>();
+    // 同名锚点优先处理用户明确点名重出的那一项；同一剧本道具只允许进入一次计划。
+    const propCandidates = [...canon.props].sort(
+      (a, b) => Number(isRegen(b.id)) - Number(isRegen(a.id)),
+    );
+    for (const prop of propCandidates) {
       if (spawned >= MANHUA_PROP_SHEET_MAX) break;
       if (!shouldSpawnManhuaPropPlate(prop)) continue;
+      const propEntityKey = String(prop.nameZh || prop.id)
+        .replace(/[\s·•_\-—–（）()《》「」『』]/g, "")
+        .toLocaleLowerCase("zh-CN");
+      if (seenPropEntityKeys.has(propEntityKey)) continue;
+      seenPropEntityKeys.add(propEntityKey);
       const existing = findAssetBlock(blocks, "propsheet-", prop.id);
       // 指定重出时：已有图也要按新提示词重来（例：修掉道具烧字）
       const regenThis = isRegen(prop.id);

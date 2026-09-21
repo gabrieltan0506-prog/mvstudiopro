@@ -2,8 +2,11 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { build } from "esbuild";
 import puppeteer, { type Browser } from "puppeteer";
 import path from "node:path";
+import { mkdir, readFile, readdir } from "node:fs/promises";
 let browser: Browser;
 let bundle: string;
+let layoutCss = "";
+const audioEvidenceDir = "/tmp/mvs-audio-layout-probe";
 beforeAll(async () => {
   const built = await build({
     stdin: {
@@ -50,6 +53,13 @@ beforeAll(async () => {
   });
   bundle = built.outputFiles[0]!.text;
   browser = await puppeteer.launch({ headless: true });
+  const cssDir = process.env.MANHUA_LAYOUT_CSS_DIR;
+  if (cssDir) {
+    const cssFile = (await readdir(cssDir)).find(name => /^index-.*\.css$/.test(name));
+    if (!cssFile) throw new Error(`缺少主样式文件：${cssDir}`);
+    layoutCss = await readFile(path.join(cssDir, cssFile), "utf8");
+    await mkdir(audioEvidenceDir, { recursive: true });
+  }
 }, 30_000);
 afterAll(async () => {
   await browser?.close();
@@ -70,12 +80,23 @@ it("工厂原工作台直接打开音轨，切段分别保存且不跳画布或�
   });
   try {
     await page.goto("http://localhost:41812");
+    if (layoutCss) await page.addStyleTag({ content: layoutCss });
     await page.addScriptTag({ content: bundle });
-    await page.waitForSelector('[data-manhua-action="open-audio-studio"]', {
+    await page.waitForSelector('[data-manhua-action="open-more-tools"]', {
       timeout: 10000,
     });
-    await page.click('[data-manhua-action="open-audio-studio"]');
+    await page.click('[data-manhua-action="open-more-tools"]');
+    await page.waitForSelector('[data-manhua-secondary-tool="audio"]');
+    await page.click('[data-manhua-secondary-tool="audio"]');
     await page.waitForSelector('section[aria-label="逐句配音、配乐与事件音效"]');
+    expect(await page.$eval('[data-manhua-audio-editor]', element => (element as HTMLDetailsElement).open)).toBe(false);
+    expect(await page.$$('[data-manhua-sound-summary] > section')).toHaveLength(3);
+    if (layoutCss) {
+      await page.setViewport({ width: 1280, height: 900 });
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      expect(overflow).toBeLessThanOrEqual(2);
+      await page.screenshot({ path: path.join(audioEvidenceDir, "factory-audio-1280.png"), fullPage: false });
+    }
     const add = () =>
       page.evaluate(() => {
         const button = Array.from(document.querySelectorAll("button")).find(b =>

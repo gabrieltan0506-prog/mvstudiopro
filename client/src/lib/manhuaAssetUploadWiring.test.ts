@@ -12,20 +12,19 @@ describe("漫剧参考图导入接线", () => {
     expect(WORKBENCH).toContain(
       'activePhase !== "outline" && activePhase !== "assets"',
     );
-    expect(WORKBENCH).toContain('data-manhua-action="open-assets-for-upload"');
+    expect(WORKBENCH).not.toContain('data-manhua-action="open-assets-for-upload"');
+    expect(WORKBENCH).toContain("data-manhua-quick-asset-upload");
     expect(WORKBENCH).toContain('if ((phase === "storyboard" || phase === "edit") && !outlineComplete)');
     expect(WORKBENCH).toContain("生成设定图和进入分镜仍需先确认剧本大纲");
   });
 
-  it("资产页顶部固定提供四个分类上传入口", () => {
+  it("资产页顶部提供分类页签和一个随当前分类切换的新增入口", () => {
     expect(WORKBENCH).toContain("data-manhua-quick-asset-upload");
     for (const role of ["character", "scene", "wardrobe", "prop"]) {
       expect(WORKBENCH).toContain(`["${role}",`);
     }
-    for (const label of ["导入人物图", "导入场景图", "导入服装图", "导入道具图"]) {
-      expect(WORKBENCH).toContain(label);
-    }
-    expect(WORKBENCH).toContain("void onUploadCustomAssets(files, role)");
+    expect(WORKBENCH).toContain('data-manhua-action="add-asset"');
+    expect(WORKBENCH).toContain("void onUploadCustomAssets(files, activeAssetRole)");
   });
 
   it("上传沿用现有签名直传生产链，并保存可续签的 GCS 地址", () => {

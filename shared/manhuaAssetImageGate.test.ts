@@ -790,4 +790,19 @@ describe("关键道具单件图", () => {
     );
     expect(plans.filter((p) => p.kind === "propsheet")).toHaveLength(MANHUA_PROP_SHEET_MAX);
   });
+
+  it("同名道具锚点只进入一次计划，避免重复扣费", () => {
+    const duplicate = {
+      ...canonWithProps,
+      props: [
+        canonWithProps.props[0],
+        { ...canonWithProps.props[0], id: "wa_prop_yupei_copy", nameZh: "双鱼 玉佩" },
+      ],
+    };
+    const plans = planManhuaAssetImageSpawns(
+      { assetCanon: duplicate, episodeIndex: 1 },
+      { forceEpisodeSheets: true },
+    );
+    expect(plans.filter((p) => p.kind === "propsheet")).toHaveLength(1);
+  });
 });
