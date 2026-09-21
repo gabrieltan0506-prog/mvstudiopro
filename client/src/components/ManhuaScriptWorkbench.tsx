@@ -4286,7 +4286,7 @@ export default function ManhuaScriptWorkbench({
                 </select>
                 <button type="button" onClick={() => setAudioStudioOpen(false)}>收起</button>
               </div>
-              {activeClip ? <CanvasAudioStudio key={activeClip.id} block={activeClip} compact={compactUi} sourceShots={activeSegment?.shots} dialogueSources={blocks}
+              {activeClip ? <CanvasAudioStudio key={activeClip.id} block={activeClip} compact={compactUi} timelineDurationSec={activeSegment?.durationSec} sourceShots={activeSegment?.shots} dialogueSources={blocks}
                 disabled={Boolean(factoryBusy) || activeClip.status === "running" || activeClip.videoTaskStatus === "queued"}
                 onChange={studio => onUpdateClipAudioStudio(activeClip.id, studio)}
                 onMasterTrackReady={onSetClipSegmentReference ? (entry) => onSetClipSegmentReference(activeClip.id, "master", entry) : undefined}
