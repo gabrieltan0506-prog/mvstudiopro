@@ -6946,7 +6946,10 @@ export default function ManhuaScriptWorkbench({
                       </div>
                     </div>
                     {expanded && refs.length ? (
-                      <div className="mt-2 space-y-3">
+                      <div
+                        className="mt-2 grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3"
+                        data-manhua-asset-entity-grid
+                      >
                         {roleGroups.groups.map((group) => (
                         <div
                           key={group.key}
@@ -7014,7 +7017,15 @@ export default function ManhuaScriptWorkbench({
                               ))}
                             </div>
                           ) : null}
-                          <div className={group.kind === "entity" ? "flex gap-2 overflow-x-auto pb-2 [&>div]:w-72 [&>div]:shrink-0" : "grid grid-cols-2 gap-2 sm:grid-cols-3"}>
+                          <div
+                            className={
+                              group.kind === "entity"
+                                ? compactUi
+                                  ? "grid grid-cols-1 gap-2"
+                                  : "flex gap-2 overflow-x-auto pb-2 [&>div]:w-72 [&>div]:shrink-0"
+                                : "grid grid-cols-2 gap-2 sm:grid-cols-3"
+                            }
+                          >
                         {group.refs.map((ref) => {
                           const groupUseZh = group.useZhByRefId[ref.id] || "";
                           const groupAlsoInZh = group.alsoInZhByRefId[ref.id] || "";
@@ -7147,7 +7158,11 @@ export default function ManhuaScriptWorkbench({
                               <ManhuaAssetImage
                                 src={ref.url}
                                 alt={displayNameZh || "漫剧资产参考图"}
-                                className="aspect-[3/4] w-full object-cover object-top"
+                                className={
+                                  compactUi
+                                    ? "h-44 w-full object-cover object-top"
+                                    : "aspect-[3/4] w-full object-cover object-top"
+                                }
                                 loading="lazy"
                               />
                             </button>

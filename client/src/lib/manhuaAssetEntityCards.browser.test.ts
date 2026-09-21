@@ -256,6 +256,7 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
           visibleRoles: document.querySelectorAll('[data-manhua-custom-refs-role]').length,
           visibleGroups: groups.length,
           versionStrip: Boolean(currentRole.querySelector('[aria-label*="版本缩略图"]')),
+          entityColumns: new Set(groups.slice(0, 3).map(group => Math.round(group.getBoundingClientRect().left))).size,
         };
       });
       expect(geometry.pageOverflow).toBeLessThanOrEqual(2);
@@ -263,6 +264,7 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
       expect(geometry.visibleRoles).toBe(1);
       expect(geometry.visibleGroups).toBeGreaterThanOrEqual(2);
       expect(geometry.versionStrip).toBe(true);
+      expect(geometry.entityColumns).toBeGreaterThanOrEqual(2);
       await page.screenshot({ path: path.join(assetEvidenceDir, "assets-1280.png"), fullPage: false });
     } finally { await close(); }
   }, 180_000);
