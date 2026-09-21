@@ -1,3 +1,4 @@
+import { summarizeManhuaFinalSegmentEvidence } from "@/lib/manhuaFinalSegmentEvidence";
 import { ManhuaTimingRecovery } from "./ManhuaTimingRecovery";
 import { ManhuaShotTimingEditor } from "./ManhuaShotTimingEditor";
 import { ManhuaSevenCoreEditor } from "./canvas/ManhuaSevenCoreEditor";
@@ -3302,22 +3303,10 @@ export default function ManhuaScriptWorkbench({
   const reviewTimeline = buildManhuaEditMultitrack({ roughClips, shots, stillIndexes: stillIndexSet, clipIndexes: clipIndexSet, fineCutByShot, subtitleEnabled: editSubtitleEnabled });
   const finalReviewChecklist = buildManhuaFinalReviewChecklist({
     plannedSegments: segments.length,
-    readyClips: episodeClips.filter(
-      (b) =>
-        b.status === "done" &&
-        manhuaClipQualityAllowsAssemble({ outputUrl: clipOutputUrl(b), quality: b.manhuaClipQuality }),
-    ).length,
+    ...summarizeManhuaFinalSegmentEvidence(segments, episodeClips, focusEpisode),
     keyartTotal: currentStillTarget,
     keyartPixelLocked: currentStillReady,
-    qualityPassedClips: episodeClips.filter((b) => b.status === "done" && clipOutputUrl(b) && b.manhuaClipQuality?.status === "passed").length,
-    qualityFailedClips: episodeClips.filter((b) => b.manhuaClipQuality?.status === "failed").length,
     finalCutVerified,
-    segmentsWithAudio: episodeClips.filter((b) => {
-      const cues = b.audioStudio?.cues || [];
-      const adopted = cues.some((cue) => cue.kind === "dialogue" && hasAdoptedManhuaAudio(cue));
-      const bgm = cues.some((cue) => cue.kind === "bgm" && hasAdoptedManhuaAudio(cue));
-      return adopted && bgm;
-    }).length,
     subtitleRequired: Boolean(editSubtitleEnabled || deliveryPackage?.subtitle?.needSubtitles),
     subtitleReady: Boolean(finalSubtitleTimeline?.cues.some((cue) => cue.textZh.trim())),
     finalCutStale: Boolean(finalCutStale),
@@ -3326,12 +3315,15 @@ export default function ManhuaScriptWorkbench({
   // 问题时间来自本集原稿分段；定位只切工作区，不发起生成或改变采用状态。
   const finalSegmentIssues = segments.flatMap(segment => {
     const candidates = episodeClips.filter(clip => resolveClipLocalSegmentIndex(clip.id, clip.prompt, focusEpisode) === segment.index);
-    const clip = candidates.find(item => item.status === "done" && clipOutputUrl(item)) || candidates[0];
-    const noVideo = !clip || clip.status !== "done" || !clipOutputUrl(clip);
-    const qualityPending = !noVideo && clip.manhuaClipQuality?.status !== "passed";
-    const dialoguePending = !noVideo && !qualityPending && clip.audioStudio?.cues.some(cue => cue.enabled && cue.kind === "dialogue" && !hasAdoptedManhuaAudio(cue));
+    const completed = candidates.filter(item => item.status === "done" && clipOutputUrl(item));
+    const passed = completed.filter(item => item.manhuaClipQuality?.status === "passed");
+    const noVideo = completed.length === 0;
+    const qualityPending = !noVideo && passed.length === 0;
+    const qualityFailed = qualityPending && completed.some(item => item.manhuaClipQuality?.status === "failed");
+    // 与逐段汇总一致，不任取候选；有通过候选时不让另一份失败候选遮住本段证据。
+    const dialoguePending = !noVideo && !qualityPending && passed.every(item => item.audioStudio?.cues.some(cue => cue.enabled && cue.kind === "dialogue" && !hasAdoptedManhuaAudio(cue)));
     if (!noVideo && !qualityPending && !dialoguePending) return [];
-    return [{ segment, targetAudio: Boolean(dialoguePending), labelZh: noVideo ? "尚无可用成片" : qualityPending ? (clip?.manhuaClipQuality?.status === "failed" ? "画面质检未通过" : "画面尚待质检") : "对白尚未确认采用" }];
+    return [{ segment, targetAudio: Boolean(dialoguePending), labelZh: noVideo ? "尚无可用成片" : qualityPending ? (qualityFailed ? "画面质检未通过" : "画面尚待质检") : "对白尚未确认采用" }];
   });
   const storyboardThreeColumn = activePhase === "storyboard" && shots.length > 0;
   const shotParamFields = buildManhuaShotParamFields(activeShot);
