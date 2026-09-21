@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import {
   CanvasWanVideoReferencePicker,
+  currentCanvasOutputExtendPatch,
   resolveCanvasVideoReferencePickerLimit,
   toggleCanvasVideoReferenceSelection,
 } from "@/components/canvas/FreeformCanvas";
@@ -17,6 +18,14 @@ const videoAsset = (index: number): CanvasUploadedAsset => ({
 });
 
 describe("FreeformCanvas · 引擎视频参考选择器", () => {
+  it("当前成片延长把旧白模移出参考列表", () => {
+    expect(
+      currentCanvasOutputExtendPatch("https://cdn.example/current.mp4"),
+    ).toEqual({
+      seedance25WorkMode: "video_extend",
+      seedance25RefVideoUrls: ["https://cdn.example/current.mp4"],
+    });
+  });
   it("Seedance 2.5 保持 10 条，Wan 3.0 独立使用 5 条真实上限", () => {
     expect(resolveCanvasVideoReferencePickerLimit("seedance-2.5")).toBe(10);
     expect(resolveCanvasVideoReferencePickerLimit("wan-3.0")).toBe(5);
