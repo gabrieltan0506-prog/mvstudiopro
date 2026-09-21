@@ -203,6 +203,22 @@ export function ManhuaPrevisStudioView({
     latest.current = { ...current, studio: next };
     return true;
   }
+  const setPiggyback = (carrierId: string, passengerId: string) => {
+    const carrier = studio.spec.actors.find(actor => actor.id === carrierId);
+    const passenger = studio.spec.actors.find(actor => actor.id === passengerId);
+    if (!carrier || !passenger || carrier === passenger) return;
+    edit({
+      ...studio.spec,
+      piggyback: { carrierId, passengerId },
+      actors: studio.spec.actors.map(actor => actor.id !== passengerId ? actor : {
+        ...actor,
+        start: [...carrier.start], end: [...carrier.end], facingDeg: carrier.facingDeg,
+        moveStartSec: carrier.moveStartSec, moveEndSec: carrier.moveEndSec,
+        motionRoute: carrier.motionRoute?.map(node => ({ ...node, position: [...node.position] })),
+        actions: [{ kind: "idle", startSec: 0, endSec: studio.spec.durationSec }],
+      }),
+    });
+  };
   const isCurrent = (scopeId: string, clipId: string) =>
     mounted.current &&
     latest.current.studio.scopeId === scopeId &&
@@ -934,6 +950,7 @@ export function ManhuaPrevisStudioView({
                 const gone = studio.spec.actors[index].id;
                 edit({
                   ...studio.spec,
+                  piggyback: studio.spec.piggyback && [studio.spec.piggyback.carrierId, studio.spec.piggyback.passengerId].includes(gone) ? undefined : studio.spec.piggyback,
                   actors: studio.spec.actors
                     .filter((_, i) => i !== index)
                     .map(other =>
@@ -1275,6 +1292,9 @@ export function ManhuaPrevisStudioView({
                   // 0917 三轮审查：带骨角色的坐下实测脚会穿地 21—32 厘米，提交处已拒。
                   // 面板上直接禁掉并写清原因，别让用户选了、排好了时间再被 schema 弹回来。
                   const sitBlocked = id === "sit" && Boolean(actor.riggedModel);
+                  const speciesBlocked = id === "limp_front_left"
+                    ? actor.shape !== "horse" || Boolean(actor.creature) || Boolean(studio.spec.waterEmergence)
+                    : actor.shape === "horse" && id !== "idle";
                   // 0917 四轮审查：一轮就定了「转身与运动轨迹是两套朝向真源」，schema 与渲染层
                   // 两处都硬拒，唯独面板没跟上——有轨迹的角色照样能选转身，排完时间提交才被弹回。
                   // 与上面坐下同一套做法：能拒的就在下拉里当场拒，并写清朝向该写到哪。
@@ -1283,7 +1303,7 @@ export function ManhuaPrevisStudioView({
                     <option
                       key={id}
                       value={id}
-                      disabled={(sitBlocked || turnBlocked) && action.kind !== id}
+                      disabled={(sitBlocked || turnBlocked || speciesBlocked) && action.kind !== id}
                     >
                       {sitBlocked
                         ? label + "（带骨角色暂不支持：静止姿态差会让脚穿地，待重定向补偿后开放；改用棍人角色可坐）"
@@ -1662,6 +1682,29 @@ export function ManhuaPrevisStudioView({
             增减角色会同步出水轨；站位、镜头和已有参考不会自动覆盖。
           </p>
         )}
+      </section>
+      <section className="space-y-2 rounded border border-white/15 p-2" data-previs-piggyback>
+        <p className="text-xs text-cyan-100">整段背负 · 从已背稳开始</p>
+        <p className="text-xs text-white/60">选择后，乘员跟随承载者的站位和路线，独立动作改为随行静止；可通过上方撤销恢复。暂不支持带衣模型、上背与放下。</p>
+        <label className="block text-xs">承载者与乘员
+          <select aria-label="背负人物关系" className={field} disabled={disabled || Boolean(pendingId)}
+            value={studio.spec.piggyback ? JSON.stringify([studio.spec.piggyback.carrierId, studio.spec.piggyback.passengerId]) : ""}
+            onChange={event => {
+              if (!event.target.value) { const { piggyback: _pair, ...rest } = studio.spec; edit(rest); return; }
+              const [carrierId, passengerId] = JSON.parse(event.target.value) as [string, string];
+              setPiggyback(carrierId, passengerId);
+            }}>
+            <option value="">不启用背负</option>
+            {studio.spec.actors.flatMap(carrier => studio.spec.actors.filter(passenger => passenger.id !== carrier.id).map(passenger => (
+              <option key={JSON.stringify([carrier.id, passenger.id])} value={JSON.stringify([carrier.id, passenger.id])}
+                disabled={[carrier, passenger].some(actor => actor.shape !== "human" || Boolean(actor.riggedModel || actor.creature || actor.weapon))}>
+                {carrier.nameZh} 背负 {passenger.nameZh}
+              </option>
+            )))}
+          </select>
+        </label>
+        {studio.spec.piggyback && <button type="button" className={button} disabled={disabled || Boolean(pendingId)}
+          onClick={() => setPiggyback(studio.spec.piggyback!.carrierId, studio.spec.piggyback!.passengerId)}>同步乘员跟随路线</button>}
       </section>
       <section
         className="space-y-2 rounded border border-white/15 p-2"

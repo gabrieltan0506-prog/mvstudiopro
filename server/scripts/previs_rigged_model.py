@@ -705,6 +705,73 @@ def import_rigged_model(local_path, actor_id, bone_map=None, forward_axis="-Y", 
         raise
 
 
+def apply_cough_contact(model, actions, frame_start, frame_end, fps=24):
+    """按真实骨长修正掩口；仅供受控诊断，生产门禁须在网格审片后解除。"""
+    from mathutils import Matrix, Vector
+    from previs_contact_ik import solve_limb
+    bpy = _bpy()
+    rig, mapping = model["rig"], model["boneMap"]
+    coughs = [a for a in actions if a.get("kind") == "cough"]
+    if not coughs:
+        return []
+    if not math.isfinite(fps) or fps <= 0 or not 1 <= frame_start <= frame_end <= 720:
+        raise ValueError("掩口修正帧范围无效")
+    for action in coughs:
+        if not 0 <= action["startSec"] < action["endSec"] or action["endSec"]-action["startSec"] < 1.2:
+            raise ValueError("掩口需要至少1.2秒")
+
+    def smooth(value):
+        u = max(0., min(1., value))
+        return u*u*(3-2*u)
+
+    def aim(bone, start, end):
+        rotation = bone.matrix.to_quaternion()
+        rotation = (rotation @ Vector((0, 1, 0))).rotation_difference((end-start).normalized()) @ rotation
+        bone.rotation_mode = "QUATERNION"
+        bone.matrix = Matrix.Translation(start) @ rotation.to_matrix().to_4x4()
+        bpy.context.view_layer.update()
+        for prop in ("location", "rotation_quaternion", "scale"):
+            bone.keyframe_insert(prop, frame=bpy.context.scene.frame_current)
+
+    rows = []
+    for frame in range(frame_start, frame_end+1):
+        t = (frame-1)/fps
+        active = [a for a in coughs if a["startSec"] <= t <= a["endSec"]]
+        if not active:
+            continue
+        if len(active) != 1:
+            raise ValueError("同一人物掩口动作窗口重叠")
+        action = active[0]
+        u = (t-action["startSec"])/(action["endSec"]-action["startSec"])
+        hold = smooth(u/.22)*(1-smooth((u-.76)/.24))
+        bpy.context.scene.frame_set(frame)
+        bpy.context.view_layer.update()
+        upper, lower, hand = [rig.pose.bones[mapping[name]] for name in ("upper_arm-1", "forearm-1", "hand-1")]
+        # 使用该帧原始腕点作回收基准，不能把上一帧修正结果作为新基准。
+        original_wrist = hand.head.copy()
+        original_hand_direction = (hand.tail-hand.head).normalized()
+        if hold < 1e-8:
+            rows.append({"frame": frame, "targetResidual": 0., "hold": hold})
+            continue
+        scale = (upper.bone.length+lower.bone.length)/.58
+        target = rig.pose.bones[mapping["head"]].head + Vector((.125, -.025, .055))*scale
+        wrist = original_wrist.lerp(target, hold)
+        original_bend = (lower.head-upper.head).normalized()
+        bend_hint = original_bend.lerp(Vector((.2, -.15, -1)).normalized(), hold)
+        solution = solve_limb(tuple(upper.head), tuple(wrist), upper.bone.length, lower.bone.length, tuple(bend_hint))
+        if solution["unreachableDistance"] > .005*scale:
+            raise ValueError("掩口目标超过真实手臂可达范围")
+        shoulder = upper.head.copy()
+        elbow, wrist = Vector(solution["joint"]), Vector(solution["end"])
+        aim(upper, shoulder, elbow)
+        aim(lower, elbow, wrist)
+        direction = original_hand_direction.lerp(Vector((-.1, .6, .8)).normalized(), hold).normalized()
+        aim(hand, wrist, wrist+direction*hand.bone.length)
+        rows.append({"frame": frame, "targetResidual": solution["unreachableDistance"], "hold": hold})
+    model["report"]["coughContact"] = {"frames": len(rows), "meshValidated": False, "normalSpeedValidated": False}
+    return rows
+
+
 def retarget_from_source(source_rig, model, frame_start, frame_end):
     """逐帧烘焙旋转到真实骨架，保目标骨长和层级；不是逐点复制拉断关节。
 
