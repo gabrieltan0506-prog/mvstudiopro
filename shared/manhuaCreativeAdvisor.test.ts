@@ -144,9 +144,9 @@ describe("resolveManhuaCreativeAdvisorEngineFacts", () => {
     expect(seedance.recognized && seedance.referenceSyntaxZh).toBe(
       "图片=@图N；视频=@视频N；音频=@音频N",
     );
-    expect(h3.recognized && h3.referenceSyntaxZh).toBe("图片=Image N");
-    expect(h3.recognized && h3.references.video).toBe(0);
-    expect(h3.recognized && h3.references.audio).toBe(0);
+    expect(h3.recognized && h3.referenceSyntaxZh).toBe("图片=Image N；视频=Video N；音频=Audio N");
+    expect(h3.recognized && h3.references.video).toBe(3);
+    expect(h3.recognized && h3.references.audio).toBe(3);
     expect(wan.recognized && wan.referenceSyntaxZh).toBe(
       "图片=Reference image N；视频=Reference video N；音频=Reference audio N",
     );

@@ -2,6 +2,17 @@ import { describe, expect, it } from "vitest";
 import { buildHailuo3CanvasRequestBody } from "./canvasRunBlock";
 
 describe("H3 画布提交体", () => {
+  it("参考音视频及职责进入真实请求，不只调整计数", () => {
+    const body = buildHailuo3CanvasRequestBody({
+      prompt: "@图片1 按 @视频1 动作，以 @音频1 说话",
+      imageUrls: ["https://example.test/a.png"], videoUrls: ["https://example.test/b.mp4"],
+      audioUrls: ["gs://test-bucket/post-prod/7/voice.wav"], aspectRatio: "9:16", duration: 5,
+    });
+    expect(body.videoUrls).toEqual(["https://example.test/b.mp4"]);
+    expect(body.audioUrls).toEqual(["gs://test-bucket/post-prod/7/voice.wav"]);
+    expect(body.prompt).toContain("Video 1");
+    expect(body.prompt).toContain("Audio 1");
+  });
   it("把 10 秒试片时长和画质写入真实 jobs 请求体", () => {
     const body = buildHailuo3CanvasRequestBody({
       prompt: "【第1段·15s】\n目标时长：约 10 秒\n0–10秒：人物向门口移动",

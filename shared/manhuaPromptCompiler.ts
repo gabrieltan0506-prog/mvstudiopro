@@ -123,9 +123,8 @@ function shotLineH3(shot: PositionedShot): string {
       ? `${shot.dialogue.speakerZh}${shot.dialogue.emotionZh ? `以${shot.dialogue.emotionZh}的语气` : ""}说：“${shot.dialogue.textZh}”`
       : "",
     shot.sfxZh ? `环境声为${shot.sfxZh}` : "",
-    // 生产 H3 路由只消费图片；音频/视频在 formatIssues 明确报错，不写入伪职责。
+    // 保留三类参考职责；音视频由 EvoLink 消费，超限由 formatIssues 拦截。
     (shot.mediaRefs ?? [])
-      .filter((ref) => ref.kind === "image")
       .map(formatH3MediaReference)
       .join("，"),
   ].filter(Boolean);
@@ -342,7 +341,7 @@ export function compileEpisode(ir: EpisodeIR, engine: CompilerEngineId): Compile
   const compiled = segments.map((segment) => {
     const rawRefs = collectRawSegmentRefs(segment);
     const refs = collectSegmentRefs(rawRefs);
-    const planRefs = profile.dialect === "h3" ? refs.filter((ref) => ref.kind === "image") : refs;
+    const planRefs = refs;
     const promptResult = compileSegmentPromptResult(segment, engine, ir.styleZh);
     return {
       segment,
