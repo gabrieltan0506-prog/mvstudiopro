@@ -53,7 +53,7 @@ describe("漫剧首10秒质检与视频编辑接线", () => {
     expect(assemble.slice(0, assemble.indexOf("const out ="))).not.toContain("chargeWorkflowStepMutation.mutateAsync");
   });
   it("forces the pilot through the real clip pipeline with one submission", () => {
-    expect(omniSource).toContain("compileManhuaPilotPrompt(pilotClip.prompt)");
+    expect(omniSource).toContain("compileManhuaPilotPrompt(pilotClip.prompt, opts.pilotDurationSec)");
     expect(omniSource).toContain("maxRetries: opts?.pilotRun ? 0");
     expect(omniSource).toContain("stopOnError: opts?.pilotRun ? true");
     expect(omniSource).toContain("pilotRun: opts?.pilotRun === true");
@@ -62,7 +62,7 @@ describe("漫剧首10秒质检与视频编辑接线", () => {
     expect(omniSource).toContain("authorizeManhuaClip: pilotReview.authorize");
     expect(omniSource).not.toContain("saveManhuaPilotGateStore");
     expect(workbenchSource).toContain("<ManhuaPilotReviewPanel");
-    expect(reviewPanelSource).toContain("首段 10 秒质检门");
+    expect(reviewPanelSource).toContain("state.durationSec ?? 10");
     expect(reviewPanelSource).toContain("质量达标，解锁");
     expect(reviewPanelSource).toContain("src={outputUrl}");
     expect(reviewPanelSource).toContain("onReview(decision, state.taskId)");

@@ -40,6 +40,7 @@ export const manhuaPilotReviewStateSchema = z
       "rejected",
       "failed",
     ]),
+    durationSec: z.union([z.literal(5), z.literal(10)]).optional(),
     taskId: z.string().min(1).max(180).optional(),
     outputUrl: z
       .string()
@@ -90,11 +91,11 @@ export function assertManhuaPilotSubmissionAllowed(
 ): void {
   if (submission.intent === "full") {
     if (state.status !== "approved")
-      throw new Error("请先审阅并批准本集当前生成档的 10 秒试片");
+      throw new Error("请先审阅并批准本集当前生成档的试片");
     return;
   }
-  if (submission.segmentIndex !== 1 || durationSec !== 10) {
-    throw new Error("试片只能生成第 1 段的前 10 秒");
+  if (submission.segmentIndex !== 1 || (durationSec !== 5 && durationSec !== 10)) {
+    throw new Error("试片只能生成第 1 段的前5秒或10秒");
   }
   if (state.status === "reconcile_manual") {
     throw new Error(

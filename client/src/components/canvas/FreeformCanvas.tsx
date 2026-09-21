@@ -318,7 +318,7 @@ type FreeformCanvasProps = {
   prepareManhuaClipRun?: (blockId: string) => Promise<{
     preparedBlock: CanvasBlock;
     upstream: { visionImages: Array<{ url: string }>; texts: string[] };
-    runOptions: { pilotRun?: boolean };
+    runOptions: { pilotRun?: boolean; pilotDurationSec?: 5 | 10 };
   }>;
   /** 外部请求选中并滚入视口（成片坞定位） */
   focusBlockId?: string | null;

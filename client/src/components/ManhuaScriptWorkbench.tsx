@@ -668,13 +668,14 @@ type Props = {
   }) => void;
   /** 本集缺成片/质检失败的段号依次生成 */
   onGenerateMissingFragments?: (segmentIndexes: number[], sourceIdentity: string) => void;
-  /** 首段 10 秒质检门；未通过时只开放第 1 段试片。 */
+  /** 首段试片审核；未通过时只开放第1段试片。 */
   pilotGate?: ManhuaPilotPanelState & {
     videoModel: string;
-    durationSec: number;
+    durationSec: 5 | 10;
   } | null;
   onReviewPilot?: (decision: "approve" | "reject", taskId: string) => Promise<void>;
   onRefreshPilot?: () => void;
+  onPilotDurationChange?: (duration: 5 | 10) => void;
   /** 资产锁定后：一次生成本集全部分镜静帧（主路径） */
   onGenerateAllEpisodeKeyarts?: () => void;
   /** 画布竖排：资产行 → 静帧行 → 成片提示词行 */
@@ -1265,6 +1266,7 @@ export default function ManhuaScriptWorkbench({
   pilotGate,
   onReviewPilot,
   onRefreshPilot,
+  onPilotDurationChange,
   onGenerateAllEpisodeKeyarts,
   onLayoutReadableChain,
   onEnsureSegmentClips,
@@ -3005,11 +3007,11 @@ export default function ManhuaScriptWorkbench({
     }
     if (refuseIfBlocked(clipGateHint)) return;
     if (pilotLocked && activeSegNo !== 1) {
-      toast.message("请先生成并审阅第 1 段的 10 秒试片");
+      toast.message("请先生成并审阅第 1 段的试片");
       return;
     }
     if (pilotGate?.status === "generated") {
-      toast.message("10 秒试片正在等待审阅");
+      toast.message("试片正在等待审阅");
       return;
     }
     if (activePhase !== "storyboard") setActivePhase("storyboard");
@@ -4460,7 +4462,7 @@ export default function ManhuaScriptWorkbench({
                 </div>
                 {pilotLocked && pilotGate ? <ManhuaPilotReviewPanel
                   key={`${pilotGate.reviewKey}:${pilotGate.taskId}:${pilotGate.outputUrl}`}
-                  state={pilotGate} onReview={onReviewPilot} onRefresh={onRefreshPilot}
+                  state={pilotGate} onReview={onReviewPilot} onRefresh={onRefreshPilot} onDurationChange={onPilotDurationChange}
                 /> : null}
                 <div className="flex flex-wrap items-center gap-1.5">
               <button
@@ -4482,7 +4484,7 @@ export default function ManhuaScriptWorkbench({
                 }
               >
                 {pilotLocked && activeSegNo === 1
-                  ? "生成首段 10 秒试片"
+                  ? `生成首段 ${pilotGate?.durationSec ?? 10} 秒试片`
                   : `生成第 ${String(activeSegNo).padStart(2, "0")} 段成片 · ${canvasVideoClipCredits({ isEpisodeSegment: true, videoModel: episodeVideoModel })} 积分`}
               </button>
           {onLayoutReadableChain ? (
