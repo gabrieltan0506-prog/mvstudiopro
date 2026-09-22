@@ -608,6 +608,59 @@ async function startServer() {
     }
   });
 
+  // 白模预览与分层下载统一经 Fly 中转，避免中国网络直连 GCS 失败。
+  // 对象地址只从本人已成功任务回执读取；客户端不能提交任意 gs://。
+  app.get("/api/manhua-previs-media/:jobId/:asset", async (req, res) => {
+    try {
+      res.setHeader("Cache-Control", "private, no-store, max-age=0");
+      const jobId = String(req.params.jobId || "");
+      const asset = String(req.params.asset || "");
+      if (!/^prv_[a-f0-9]{48}$/.test(jobId) || (asset !== "preview" && asset !== "layers")) {
+        return res.status(404).json({ error: "not found" });
+      }
+      const ctx = await createContext({ req: req as any, res: res as any } as any);
+      const userId = Number(ctx.user?.id);
+      if (!Number.isFinite(userId) || userId <= 0) {
+        if (ctx.authUnavailable) return res.status(503).json({ error: "Auth store unavailable, retry" });
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+      const { getJobByIdStrict } = await import("../jobs/repository.js");
+      const { resolveManhuaPrevisMedia } = await import("../services/manhuaPrevisMedia.js");
+      const source = resolveManhuaPrevisMedia(
+        await getJobByIdStrict(jobId),
+        userId,
+        asset,
+      );
+      if (!source) return res.status(404).json({ error: "not found" });
+      const range = String(req.headers.range || "").trim();
+      if (range && !/^bytes=\d*-\d*$/.test(range)) {
+        return res.status(416).end();
+      }
+      const { signGsUriV4ReadUrl } = await import("../services/gcs.js");
+      const upstream = await fetch(signGsUriV4ReadUrl(source.gcsUri, 300), {
+        headers: range ? { Range: range } : undefined,
+      });
+      if (!upstream.ok && upstream.status !== 206) {
+        await upstream.body?.cancel().catch(() => {});
+        return res.status(upstream.status === 416 ? 416 : 502).json({ error: "media unavailable" });
+      }
+      res.status(upstream.status);
+      for (const header of ["content-length", "content-range", "accept-ranges", "etag", "last-modified"] as const) {
+        const value = upstream.headers.get(header);
+        if (value) res.setHeader(header, value);
+      }
+      res.setHeader("Content-Type", upstream.headers.get("content-type") || source.contentType);
+      res.setHeader("Content-Disposition", `${asset === "preview" ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(source.fileName)}`);
+      if (!upstream.body) return res.end();
+      const { Readable } = await import("node:stream");
+      Readable.fromWeb(upstream.body as any).on("error", () => res.destroy()).pipe(res);
+    } catch (error) {
+      console.error("[ManhuaPrevisMedia] proxy failed:", error);
+      if (!res.headersSent) return res.status(503).json({ error: "media temporarily unavailable" });
+      return res.destroy();
+    }
+  });
+
   app.get("/api/jobs/manhua-learn", async (req, res) => {
     try {
       res.setHeader("Cache-Control", "private, no-store, max-age=0");

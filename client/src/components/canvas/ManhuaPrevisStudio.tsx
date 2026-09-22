@@ -60,6 +60,9 @@ type Result = {
     format: "previs-layers-v1";
   };
 };
+const isPrevisMediaUrl = (value: unknown) =>
+  typeof value === "string" &&
+  (value.startsWith("https://") || value.startsWith("/api/manhua-previs-media/"));
 export type PrevisResponse = {
   jobId: string;
   status: string;
@@ -289,7 +292,7 @@ export function ManhuaPrevisStudioView({
       }
       if (
         response.params.spec.exportLayers &&
-        (!result.layerBundle?.url?.startsWith("https://") ||
+        (!isPrevisMediaUrl(result.layerBundle?.url) ||
           result.layerBundle.format !== "previs-layers-v1")
       ) {
         setError("遮罩与深度层包回执未确认，请查询原任务；不要重复生成");
@@ -489,7 +492,7 @@ export function ManhuaPrevisStudioView({
             result.requestId !== response.params.requestId ||
             result.clipId !== block.id ||
             (response.params.spec.exportLayers &&
-              (!result.layerBundle?.url?.startsWith("https://") ||
+              (!isPrevisMediaUrl(result.layerBundle?.url) ||
                 result.layerBundle.format !== "previs-layers-v1"))
           )
             continue;
@@ -570,7 +573,7 @@ export function ManhuaPrevisStudioView({
     if (
       take.spec.exportLayers &&
       (preview?.requestId !== take.requestId ||
-        !preview.layerBundle?.url?.startsWith("https://") ||
+        !isPrevisMediaUrl(preview.layerBundle?.url) ||
         preview.layerBundle.format !== "previs-layers-v1")
     ) {
       setError(
@@ -2072,7 +2075,7 @@ export function ManhuaPrevisStudioView({
             采用为本段参考
           </button>
           {preview?.requestId === take.requestId &&
-            preview.layerBundle?.url?.startsWith("https://") && (
+            isPrevisMediaUrl(preview.layerBundle?.url) && (
               <a
                 className={button}
                 href={preview.layerBundle.url}

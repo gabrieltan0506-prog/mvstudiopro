@@ -210,3 +210,36 @@ it("0917：同编号已有任务时再确认不再核回执；无任务时业务
   await expect(submitPrevisTask(7, input, io)).rejects.toThrow("gcs_download_failed");
   await expect(submitPrevisTask(7, input, io)).rejects.not.toBeInstanceOf(PrevisRejectedError);
 });
+
+it("白模成功回执把预览和分层地址固定为本人鉴权的 Fly 中转", async () => {
+  const s = createManhuaPrevisStudio(2, "11111111-1111-4111-8111-111111111111");
+  const input = {
+    requestId: "44444444-4444-4444-8444-444444444444",
+    scopeId: s.scopeId,
+    clipId: "clip-1",
+    spec: { ...s.spec, exportLayers: true },
+  };
+  const id = previsTaskId(7, input.requestId);
+  const gcsUri = `gs://bucket/post-prod/7/previs/${input.requestId}/preview.mp4`;
+  const d: PrevisTaskDeps = {
+    load: async () => ({
+      id, userId: "7", type: "post_prod", provider: "blender-previs", status: "succeeded",
+      input: { action: "manhua_previs", params: input }, error: null,
+      createdAt: new Date(), updatedAt: new Date(),
+      output: {
+        requestId: input.requestId, clipId: input.clipId, durationSec: input.spec.durationSec,
+        gcsUri,
+        layerBundle: {
+          gcsUri: gcsUri.replace("preview.mp4", "layer-bundle.zip"),
+          format: "previs-layers-v1", bytes: 123, sha256: "a".repeat(64),
+        },
+      },
+    }),
+    insert: vi.fn(),
+    sign: uri => `https://storage.invalid/${encodeURIComponent(uri)}`,
+  };
+  const response = await getPrevisTask(7, input.requestId, d);
+  const output = response!.output as any;
+  expect(output.url).toBe(`/api/manhua-previs-media/${id}/preview`);
+  expect(output.layerBundle.url).toBe(`/api/manhua-previs-media/${id}/layers`);
+});

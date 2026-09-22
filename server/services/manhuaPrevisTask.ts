@@ -130,8 +130,27 @@ function present(
     input?.action !== "manhua_previs"
   )
     throw new Error("白模任务不存在");
+  const response = buildPostProdJobResponse(row, d.sign)!;
+  const output = response.output && typeof response.output === "object" && !Array.isArray(response.output)
+    ? response.output as Record<string, unknown>
+    : null;
+  if (output && typeof output.gcsUri === "string" && output.gcsUri.startsWith("gs://")) {
+    const layerBundle = output.layerBundle && typeof output.layerBundle === "object" && !Array.isArray(output.layerBundle)
+      ? output.layerBundle as Record<string, unknown>
+      : null;
+    response.output = {
+      ...output,
+      url: `/api/manhua-previs-media/${encodeURIComponent(row.id)}/preview`,
+      ...(layerBundle
+        ? { layerBundle: {
+            ...layerBundle,
+            url: `/api/manhua-previs-media/${encodeURIComponent(row.id)}/layers`,
+          } }
+        : {}),
+    };
+  }
   return {
-    ...buildPostProdJobResponse(row, d.sign)!,
+    ...response,
     params: manhuaPrevisRequestSchema.parse(input.params),
   };
 }
