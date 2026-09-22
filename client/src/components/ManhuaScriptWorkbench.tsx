@@ -5083,7 +5083,7 @@ export default function ManhuaScriptWorkbench({
           data-manhua-phase-panel="outline"
           className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6"
         >
-          <div className="mx-auto max-w-5xl" data-manhua-outline-surface>
+          <div className="mx-auto w-full" data-manhua-outline-surface>
             <div className="flex items-end justify-between gap-3">
               <div>
                 <div className="text-[15px] font-semibold text-white/95">系列梗概</div>
@@ -5120,7 +5120,7 @@ export default function ManhuaScriptWorkbench({
               </div>
             </div>
             {outlineEpisodes.length ? (
-              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3" aria-label="分集卡片" data-manhua-episode-grid>
+              <div className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-3" aria-label="分集卡片" data-manhua-episode-grid>
                 {outlineEpisodes.map((ep) => (
                   <button
                     key={ep.index}
@@ -5179,7 +5179,7 @@ export default function ManhuaScriptWorkbench({
           data-manhua-assets-ready={assetsComplete ? "true" : "false"}
           className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6"
         >
-          <div className="mx-auto max-w-4xl">
+          <div className="mx-auto w-full" data-manhua-assets-surface>
             {outlineComplete && !outlineConfirmed ? (
               <p data-manhua-outline-unconfirmed className="mb-3 text-[11px] text-amber-100/80">
                 编导区已解锁，当前剧本尚未确认；已有参考图不代表剧本资产已齐备。
@@ -8207,7 +8207,7 @@ export default function ManhuaScriptWorkbench({
           data-manhua-phase-panel="edit"
           className="flex min-h-0 flex-1 flex-col overflow-hidden border-t border-white/5"
         >
-          <div className="flex items-center justify-between gap-3 border-b border-white/10 p-3 text-xs">
+          <div data-manhua-edit-header className="flex items-center justify-between gap-3 border-b border-white/10 p-3 text-xs">
             <span>第{focusEpisode}集 · {fineCutInCanvas ? "自由画布精剪" : "工厂粗剪与质检"} · 沿用本集素材与采用版本</span>
             {fineCutInCanvas ? <button type="button" onClick={onReturnFineCutReview} className="rounded border px-3 py-1">返回工厂终审</button> : !compactUi && onOpenFineCutCanvas && <button type="button" onClick={onOpenFineCutCanvas} className="rounded border px-3 py-1">到自由画布精剪</button>}
           </div>
@@ -8370,6 +8370,7 @@ export default function ManhuaScriptWorkbench({
           }
         >
           <div
+            data-manhua-storyboard-workspace
             className={
               "max-md:!grid max-md:!w-full max-md:!min-w-0 max-md:!grid-cols-1 " + (immersive
                 ? showCanvasDock

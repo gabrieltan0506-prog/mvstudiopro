@@ -616,15 +616,15 @@
   background: var(--mh-page) !important;
   color: var(--mh-ink) !important;
   border: 1px solid #d8d0c3 !important;
-  border-radius: 24px !important;
-  box-shadow: 0 18px 60px rgb(58 45 30 / 14%) !important;
+  border-radius: 16px !important;
+  box-shadow: 0 12px 38px rgb(58 45 30 / 11%) !important;
 }
 
 #manhua-workbench-shell.mh-redesign > :first-child {
   position: relative;
   z-index: 30;
-  min-height: 50px;
-  padding: 8px 18px !important;
+  min-height: 40px;
+  padding: 5px 16px !important;
   background: rgb(255 253 248 / 96%);
   border-bottom: 1px solid var(--mh-line) !important;
 }
@@ -646,7 +646,7 @@
 
 #manhua-workbench-shell.mh-redesign [data-manhua-project-settings] {
   position: absolute;
-  top: 8px;
+  top: 4px;
   right: 142px;
   z-index: 90;
   color: var(--mh-muted);
@@ -654,7 +654,7 @@
 
 #manhua-workbench-shell.mh-redesign [data-manhua-project-settings] > summary {
   list-style: none;
-  min-height: 32px;
+  min-height: 30px;
   display: inline-flex;
   align-items: center;
   border: 1px solid var(--mh-line);
@@ -678,16 +678,17 @@
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-workflow-rail] {
-  min-height: 44px;
+  min-height: 34px;
   gap: 2px !important;
-  padding: 6px 18px !important;
+  padding: 3px 18px !important;
   background: var(--mh-panel) !important;
   border-bottom: 1px solid var(--mh-line) !important;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-phase] {
   min-width: auto !important;
-  min-height: 30px;
+  min-height: 26px;
+  padding: 2px 7px !important;
   border: 0 !important;
   border-radius: 999px !important;
   background: transparent !important;
@@ -696,21 +697,21 @@
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-phase][data-manhua-phase-status="current"] {
-  background: #e5f5f1 !important;
-  color: #4f35ca !important;
+  background: #e0f4ef !important;
+  color: #0b735f !important;
   box-shadow: none !important;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-ashuo-step-bar] {
-  min-height: 54px;
-  padding: 8px 18px !important;
+  min-height: 44px;
+  padding: 5px 18px !important;
   background: var(--mh-panel) !important;
   border-bottom: 1px solid var(--mh-line) !important;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-ashuo-step-bar] button[data-manhua-action="ashuo-step-generate"] {
-  min-width: 176px;
-  min-height: 38px;
+  min-width: 164px;
+  min-height: 34px;
   border: 0 !important;
   border-radius: 14px !important;
   background: var(--mh-purple) !important;
@@ -719,14 +720,14 @@
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-phase-panel] {
-  padding: 24px !important;
+  padding: 14px 18px 18px !important;
   background: var(--mh-page) !important;
   color: var(--mh-ink) !important;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-phase-panel] > :first-child {
   width: 100%;
-  max-width: 1180px !important;
+  max-width: 1680px !important;
   margin-inline: auto;
 }
 
@@ -742,13 +743,13 @@
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-outline-surface] {
-  padding: 24px;
+  padding: 18px;
   border: 1px solid var(--mh-line);
-  border-radius: 22px;
+  border-radius: 18px;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-episode-card] {
-  min-height: 148px;
+  min-height: 116px;
   border-color: var(--mh-line) !important;
   background: #fbf8f1 !important;
   color: var(--mh-ink) !important;
@@ -788,7 +789,7 @@
 
 #manhua-workbench-shell.mh-redesign [data-manhua-final-dashboard] {
   gap: 16px !important;
-  max-width: 1180px;
+  max-width: 1680px;
   margin-inline: auto;
 }
 
@@ -841,11 +842,22 @@
   background: #ebe6dd !important;
 }
 
-#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] > :first-child {
+#manhua-workbench-shell.mh-redesign [data-manhua-storyboard-workspace] {
+  gap: 12px;
+  padding: 12px;
+  background: var(--mh-page);
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-column] {
   border: 1px solid var(--mh-line);
-  border-radius: 22px;
+  border-radius: 16px;
   background: var(--mh-panel);
-  box-shadow: 0 14px 40px rgb(57 45 31 / 10%);
+  box-shadow: 0 8px 24px rgb(57 45 31 / 8%);
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-column="preview"] {
+  border-color: #cfc7ba;
+  background: #fdfbf6 !important;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-shot-params] {
@@ -897,20 +909,49 @@
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-blocker-card] {
-  margin: 8px 18px 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  column-gap: 12px;
+  margin: 6px 18px 0;
+  padding: 5px 10px !important;
   border: 1px solid #efb5a9 !important;
-  border-radius: 16px;
+  border-radius: 10px;
   background: #fff2ee !important;
   color: #8f2d2d !important;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-blocker-card] ul {
-  margin-top: 4px !important;
+  display: flex;
+  min-width: 0;
+  gap: 6px !important;
+  margin-top: 0 !important;
+  overflow-x: auto;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-blocker-card] button {
-  min-height: 28px;
-  padding-block: 4px !important;
+  min-height: 24px;
+  max-width: 720px;
+  padding-block: 2px !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-blocker-card] [data-manhua-advisory-count] {
+  grid-column: 1 / -1;
+}
+
+/* 五个阶段共用同一创作宽度，避免剧本/资产/剪辑被锁在旧版窄列里。 */
+#manhua-workbench-shell.mh-redesign :is(
+  [data-manhua-outline-surface],
+  [data-manhua-assets-surface],
+  [data-manhua-final-dashboard],
+  [data-manhua-panel="edit-multitrack"]
+) {
+  width: min(100%, 1680px) !important;
+  max-width: 1680px !important;
+  margin-inline: auto !important;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-blocker-card] * {
@@ -955,14 +996,20 @@
 
 #manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="edit"]
   [data-manhua-panel="edit-multitrack"] {
-  max-width: 1180px;
-  width: calc(100% - 48px);
-  margin: 20px auto;
-  padding: 22px !important;
+  width: 100%;
+  margin: 0 auto;
+  padding: 18px !important;
   border: 1px solid var(--mh-line);
   border-radius: 22px;
   background: var(--mh-panel);
   box-shadow: 0 14px 40px rgb(57 45 31 / 9%);
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-edit-header] {
+  min-height: 38px;
+  padding: 6px 18px !important;
+  background: #f8f4ed !important;
+  color: var(--mh-muted) !important;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-edit-drawer-toggle] {
@@ -995,5 +1042,12 @@
   }
   #manhua-workbench-shell.mh-redesign [data-manhua-phase-panel] {
     padding: 12px !important;
+  }
+  #manhua-workbench-shell.mh-redesign [data-manhua-blocker-card] {
+    display: block;
+    margin-inline: 10px;
+  }
+  #manhua-workbench-shell.mh-redesign [data-manhua-blocker-card] ul {
+    margin-top: 4px !important;
   }
 }
