@@ -28,6 +28,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
   templates: PublicManhuaViralTemplateCard[];
   onApplyRewrite?: (candidate: AdvisorRewriteCandidate) => boolean;
   onRequestTrial: (template: PublicManhuaViralTemplateCard) => void;
+  focusSection?: "templates" | null;
 }) {
   const { open, onClose, userId, confirmedProjectVersion, project, onLocate, stageZh, selectedTemplate, templates, onRequestTrial } = props;
   const sessionKey = userId && confirmedProjectVersion ? manhuaAdvisorSessionKey(userId, confirmedProjectVersion) : null;
@@ -62,6 +63,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
   const inFlight = useRef(false);
   const mounted = useRef(true);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const templateSectionRef = useRef<HTMLElement | null>(null);
   const askMutation = trpc.mvAnalysis.askPlatformSkillQa.useMutation({ retry: false });
   const sessionStorageBlocked = Boolean((sessionKey && !initial.writable) || initialRewrite.error);
   // 唯一 pending 槽仍属于这个非终态请求；先恢复，不能被新问题覆盖。
@@ -77,6 +79,10 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     catch { setStorageError("本机空间不足，本次对话未保存；关闭页面前请复制需要的内容。"); }
   }, [turns, sessionKey, sessionStorageBlocked]);
   useEffect(() => { listRef.current?.scrollTo({ top: listRef.current.scrollHeight }); }, [turns, open, pendingPaid, failed]);
+  useEffect(() => {
+    if (!open || props.focusSection !== "templates") return;
+    requestAnimationFrame(() => templateSectionRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }));
+  }, [open, props.focusSection]);
 
   async function submit(request: PendingQuestion, confirmPaid: boolean) {
     if (inFlight.current || !userId || sessionStorageBlocked) return;
@@ -255,7 +261,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
           <h3 className="font-semibold">本次读取范围</h3>
           {project.contextNotes.map((note) => <p key={note}>{note}</p>)}
         </section> : null}
-        <section aria-label="剧本模板优化" className="rounded-lg border border-cyan-300/20 p-3 text-xs">
+        <section ref={templateSectionRef} aria-label="剧本模板优化" className="rounded-lg border border-cyan-300/20 p-3 text-xs">
           <p className="text-white/65">根据当前故事推荐模板，再选择方案改写本集。推荐与改写沿用顾问问答额度，超额先确认。</p>
           <button type="button" disabled={!userId || !project || askMutation.isPending || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={recommendTemplates} className="mt-2 rounded border border-cyan-300/30 px-3 py-2 disabled:opacity-40">推荐3—4个剧本模板方案</button>
         </section>

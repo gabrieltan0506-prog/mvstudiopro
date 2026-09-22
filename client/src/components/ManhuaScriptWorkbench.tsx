@@ -465,6 +465,8 @@ type Props = {
   /** 阶段条当前格旁的「顾问：…」一行；点它打开顾问面板并定位 */
   advisorTopIssue?: { id: string; text: string } | null;
   onOpenAdvisorIssue?: (issueId?: string) => void;
+  /** 打开创作顾问并直接定位剧本模板优化；只打开，不自动提问或扣点。 */
+  onOpenAdvisorTemplates?: () => void;
   /**
    * 全部顾问问题（含阻断/提醒分级），用来在主任务条下面集中显示阻断卡。
    * 只读消费，判据仍在 `manhuaAdvisorProject`，这里不重算。
@@ -1169,6 +1171,7 @@ export default function ManhuaScriptWorkbench({
   onAdvisorSelectionChange,
   onAdvisorSignalsChange,
   advisorTopIssue = null,
+  onOpenAdvisorTemplates,
   onOpenAdvisorIssue,
   advisorIssues,
   onPreviewClipOutbound,
@@ -3522,7 +3525,9 @@ export default function ManhuaScriptWorkbench({
                       disabled={Boolean(factoryBusy) || shotSourceIsFallback}
                       onClick={() => runCurrentKeyart()}
                       className="min-h-11 w-full rounded-lg bg-violet-600 px-3 py-2 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-40">
-                      {activeKeyart?.outputUrl || activeKeyart?.outputUrls?.length ? "重出当前镜静帧" : "生成当前镜静帧"}
+                      <span data-manhua-action="ashuo-step-generate" data-manhua-keyart-entry="step">
+                        {activeKeyart?.outputUrl || activeKeyart?.outputUrls?.length ? "重出当前镜静帧" : "生成当前镜静帧"}
+                      </span>
                     </button>
                     <p className="mt-1 text-xs text-white/50">仅当前镜；双档生成两张，分别计费</p>
                   </div>
@@ -4838,6 +4843,11 @@ export default function ManhuaScriptWorkbench({
                 <span className="block whitespace-nowrap text-[10px] font-semibold">
                   {phase.id === "assets" ? "资产设定" : phase.label}
                 </span>
+                {phase.gapZh ? (
+                  <span className="mh-phase-gap block max-w-[150px] truncate whitespace-nowrap text-[9px] font-normal opacity-65">
+                    {phase.gapZh}
+                  </span>
+                ) : null}
               </span>
             </button>
             {index < workflowPhases.length - 1 ? (
@@ -4851,6 +4861,7 @@ export default function ManhuaScriptWorkbench({
 
       <div
         data-manhua-ashuo-step-bar
+        data-manhua-step-bar-phase={activePhase}
         className="flex shrink-0 flex-wrap items-center gap-2 border-b border-white/10 bg-[#0a121c] px-3 py-2"
       >
         <div className="min-w-0 flex-1">
@@ -4873,7 +4884,7 @@ export default function ManhuaScriptWorkbench({
         >
           上一步
         </button>
-        <button
+        {activePhase === "edit" || activePhase === "final" ? <button
           type="button"
           data-manhua-action="ashuo-step-generate"
           data-manhua-full-spawn-armed={nextCta.kind === "spawn_sheets" ? (fullSpawnArmAt == null ? "false" : "true") : undefined}
@@ -4908,16 +4919,36 @@ export default function ManhuaScriptWorkbench({
                 : nextCta.kind === "generate_keyarts" && onGenerateKeyartShot
                   ? currentKeyartLabel
                   : nextCta.labelZh}
-        </button>
+        </button> : null}
       </div>
 
       {activePhase === "final" ? (
         <div data-manhua-phase-panel="final" className="min-h-0 flex-1 overflow-y-auto p-3">
           <div className="grid min-w-0 gap-4 lg:grid-cols-3" data-manhua-final-dashboard>
+            <section data-manhua-final-project-header className="flex items-center justify-between gap-6 rounded-xl border border-white/15 bg-white/[0.03] p-4 lg:col-span-3">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-16 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br from-emerald-500/20 to-violet-500/20 text-[10px] font-semibold text-white/55" aria-label="成片封面">
+                  第{focusEpisode}集
+                </div>
+                <div className="min-w-0">
+                  <h1 className="truncate text-lg font-bold text-white/95">{seriesTitle || topic || "未命名项目"} · 第{focusEpisode}集</h1>
+                  <p className="mt-1 text-xs text-white/50">漫剧成片 · 约 {reviewTimeline.totalSec || totalSec}s · {episodeVideoLabelZh}</p>
+                </div>
+              </div>
+              <div data-manhua-final-stage-line className="hidden min-w-[440px] items-start justify-between lg:flex">
+                {["素材剪辑", "初版生成", "质检审核", "终审成片", "交付导出"].map((label, index) => (
+                  <button type="button" key={label} onClick={() => index < 2 ? selectPhase("edit") : undefined} className="relative flex flex-1 flex-col items-center gap-1 text-center text-[10px] text-white/45">
+                    {index < 4 ? <span className="absolute left-1/2 top-3 h-px w-full bg-white/15" /> : null}
+                    <span className={`relative z-10 flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-bold ${index < 2 ? "border-emerald-400 bg-emerald-500 text-white" : index === 2 ? "border-emerald-500 bg-white text-emerald-700" : "border-white/20 bg-white text-white/45"}`}>{index < 2 ? "✓" : index + 1}</span>
+                    <span>{label}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
               {finalSegmentIssues.length ? <section data-manhua-final-issues className="rounded-xl border border-amber-300/30 bg-amber-500/[0.06] p-4 lg:col-span-3">
-                <h2 className="text-base font-semibold text-amber-100">先处理这 {finalSegmentIssues.length} 段，再完成终审</h2>
-                <div className="mt-3 grid max-h-80 gap-2 overflow-y-auto md:grid-cols-2">
-                  {finalSegmentIssues.map(issue => <button type="button" key={issue.segment.index}
+                <h2 className="text-base font-semibold text-amber-100">存在 {finalSegmentIssues.length} 处需要处理的问题，才能通过终审</h2>
+                <div className="mt-3 grid max-h-80 gap-2 overflow-y-auto">
+                  {finalSegmentIssues.slice(0, 1).map(issue => <button type="button" key={issue.segment.index}
                     data-manhua-review-issue={issue.segment.index}
                     className="flex min-h-11 w-full items-center justify-between gap-3 rounded border border-white/15 px-3 py-2 text-left text-sm hover:bg-white/10"
                     onClick={() => {
@@ -4930,9 +4961,29 @@ export default function ManhuaScriptWorkbench({
                     <span>第{issue.segment.index}段 · {issue.labelZh}<span className="mt-1 block text-white/50">剧本时间 {typeof issue.segment.sourceStartSec === "number" ? issue.segment.sourceStartSec.toFixed(1) : "未标"}–{typeof issue.segment.sourceEndSec === "number" ? issue.segment.sourceEndSec.toFixed(1) : "未标"} 秒</span></span>
                     <span className="shrink-0 text-cyan-100">去处理 →</span>
                   </button>)}
+                  {finalSegmentIssues.length > 1 ? (
+                    <div className="rounded-lg border border-white/10 bg-white/[0.02] p-2">
+                      <div className="mb-2 text-xs text-white/55">其余 {finalSegmentIssues.length - 1} 项</div>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {finalSegmentIssues.slice(1).map(issue => <button type="button" key={issue.segment.index}
+                          data-manhua-review-issue={issue.segment.index}
+                          className="flex min-h-11 w-full items-center justify-between gap-3 rounded border border-white/12 px-3 py-2 text-left text-sm hover:bg-white/10"
+                          onClick={() => {
+                            setActiveSegmentOverride(issue.segment.index);
+                            const index = shots.findIndex(shot => shot.index === issue.segment.shots[0]?.index);
+                            if (index >= 0) setShotIndex(index);
+                            selectPhase("storyboard");
+                            if (issue.targetAudio && outlineComplete) { setAudioStudioOpen(true); setAudioStudioPhase("storyboard"); }
+                          }}>
+                          <span>第{issue.segment.index}段 · {issue.labelZh}<span className="mt-1 block text-white/50">剧本时间 {typeof issue.segment.sourceStartSec === "number" ? issue.segment.sourceStartSec.toFixed(1) : "未标"}–{typeof issue.segment.sourceEndSec === "number" ? issue.segment.sourceEndSec.toFixed(1) : "未标"} 秒</span></span>
+                          <span className="shrink-0 text-cyan-100">去处理 →</span>
+                        </button>)}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </section> : null}
-            <section data-manhua-final-section="quality" className="min-w-0 rounded-xl border border-white/15 bg-white/[0.03] p-3 lg:order-2"><h2 className="mb-2 text-sm font-semibold">质检结果</h2>
+            <section data-manhua-final-section="quality" className="min-w-0 rounded-xl border border-white/15 bg-white/[0.03] p-3 lg:order-2"><div className="mb-2 flex items-center justify-between gap-2"><h2 className="text-sm font-semibold">质检结果</h2><strong className={finalReviewChecklist.failCount ? "text-rose-600" : "text-emerald-700"}>{finalReviewChecklist.items.filter(item => item.state === "pass").length}/{finalReviewChecklist.items.length} 项通过</strong></div>
         <div
           data-manhua-final-checklist
           data-manhua-final-ready={finalReviewChecklist.readyForFinal ? "1" : "0"}
@@ -4974,12 +5025,21 @@ export default function ManhuaScriptWorkbench({
           </ul>
         </div>
 
-              <button type="button" onClick={() => selectPhase("edit")} className="mt-3 min-h-11 rounded border border-white/20 px-3 text-xs">查看剪辑与字幕</button>
+              <button type="button" onClick={() => selectPhase("edit")} className="mt-3 min-h-11 rounded border border-white/20 px-3 text-xs">查看质检详情与修复</button>
             </section>
             <section data-manhua-final-section="delivery" className="min-w-0 rounded-xl border border-white/15 bg-white/[0.03] p-3 lg:order-3"><h2 className="mb-2 text-sm font-semibold">导出交付</h2><div id="manhua-final-delivery-host" /></section>
             <section data-manhua-final-section="timeline" className="min-w-0 rounded-xl border border-white/15 bg-white/[0.03] p-3 lg:order-1">
               <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-sm font-semibold">时间线 · 第{focusEpisode}集</h2><button type="button" className="min-h-11 rounded border border-white/20 px-3 text-xs" onClick={() => selectPhase("edit")}>查看与调整剪辑</button></div>
               <p className="mt-1 text-xs text-white/55">{roughClips.length ? `当前裁切与排序 · ${reviewTimeline.totalSec}s` : "暂无剪辑计划 · 0镜"} · {finalCutStale ? "旧成片已失效，请重新合成" : finalCutVerified ? "当前成片来源已核对" : "最终成片尚未核验"}</p>
+              <div data-manhua-final-timeline-steps className="mt-4 flex items-start justify-between">
+                {["素材上传", "初版生成", "质检完成", "待终审", "导出交付"].map((label, index) => (
+                  <div key={label} className="relative flex flex-1 flex-col items-center gap-1 text-center text-[10px] text-white/45">
+                    {index < 4 ? <span className="absolute left-1/2 top-3 h-px w-full bg-white/15" /> : null}
+                    <span className={`relative z-10 flex h-6 w-6 items-center justify-center rounded-full border font-bold ${index < 2 ? "border-emerald-500 bg-emerald-500 text-white" : index === 2 ? "border-emerald-600 bg-white text-emerald-700" : "border-white/20 bg-white text-white/45"}`}>{index < 2 ? "✓" : index + 1}</span>
+                    <span>{label}</span>
+                  </div>
+                ))}
+              </div>
               {finalVideoUrl ? <video controls preload="metadata" src={finalVideoUrl} className="mx-auto my-3 max-h-40 w-full rounded-lg bg-black" /> : <p className="py-3 text-xs text-white/50">尚无整集成片，请先处理上方缺口。</p>}
               <details data-manhua-review-timeline className="mt-3"><summary className="min-h-11 cursor-pointer py-3 text-sm text-white/70">查看逐镜剪辑计划 · {shots.length} 镜</summary><div className="mt-2 flex gap-2 overflow-x-auto pb-2">{reviewTimeline.tracks.find(track => track.kind === "v2_clip")?.segments.map(segment => <button type="button" key={segment.shotIndex} data-manhua-review-shot={segment.shotIndex} data-review-duration={segment.durationSec} onClick={() => { const index = shots.findIndex(shot => shot.index === segment.shotIndex); if (index >= 0) setShotIndex(index); selectPhase("edit"); }} className="min-h-16 min-w-32 shrink-0 rounded-lg border border-white/20 bg-white/[0.04] p-3 text-left text-xs"><strong>第{segment.shotIndex}镜 · {segment.durationSec.toFixed(1)}s</strong><span className="mt-1 block text-white/50">入{segment.inSec.toFixed(1)}s / 出{segment.outSec.toFixed(1)}s · {segment.hasMedia ? "已有片段" : "待生成"}</span></button>)}</div></details>
             </section>
@@ -5095,7 +5155,7 @@ export default function ManhuaScriptWorkbench({
                 当前第 {focusEpisode} 集 / 共 {Math.max(episodeCount, outlineEpisodes.length, 1)} 集
               </span>
             </div>
-            <div className="mt-4 rounded-2xl border border-cyan-300/15 bg-gradient-to-br from-cyan-500/[0.08] to-white/[0.025] p-5 shadow-[0_18px_50px_rgba(0,0,0,0.18)]">
+            <div data-manhua-series-summary-card className="relative mt-4 rounded-2xl border border-cyan-300/15 bg-gradient-to-br from-cyan-500/[0.08] to-white/[0.025] p-5 shadow-[0_18px_50px_rgba(0,0,0,0.18)]">
               <div className="text-[15px] font-semibold text-white/95">
                 {seriesTitle || topic || "未命名系列"}
               </div>
@@ -5118,6 +5178,16 @@ export default function ManhuaScriptWorkbench({
                   </>
                 ) : null}
               </div>
+              {onOpenAdvisorTemplates ? (
+                <button
+                  type="button"
+                  data-manhua-outline-ai-optimize
+                  onClick={onOpenAdvisorTemplates}
+                  className="shrink-0 rounded-xl border border-cyan-300/45 bg-cyan-500/10 px-4 py-2 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500/20"
+                >
+                  AI 优化梗概
+                </button>
+              ) : null}
             </div>
             {outlineEpisodes.length ? (
               <div className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-3" aria-label="分集卡片" data-manhua-episode-grid>
@@ -5141,6 +5211,9 @@ export default function ManhuaScriptWorkbench({
                     <p className="mt-2 line-clamp-3 text-xs leading-5 text-white/60">{ep.body?.trim() || "本集尚无剧情正文"}</p>
                   </button>
                 ))}
+                <div data-manhua-add-episode-card className="flex min-h-[132px] items-center justify-center rounded-2xl border border-dashed border-white/15 bg-white/[0.015] px-4 py-3 text-center text-xs text-white/45">
+                  <span><span className="mb-2 block text-2xl font-light">＋</span>新增剧集</span>
+                </div>
               </div>
             ) : null}
             <details className="mt-4 rounded-xl border border-white/10 bg-white/[0.02] p-3" data-manhua-outline-details>
@@ -5169,6 +5242,17 @@ export default function ManhuaScriptWorkbench({
                 请先在「改题材」扩写或导入剧本，再回来确认大纲。
               </p>
             ) : null}
+            <div className="mt-5 flex justify-end" data-manhua-phase-footer-action="outline">
+              <button
+                type="button"
+                data-manhua-action="ashuo-step-generate"
+                disabled={factoryBusy || nextCta.kind === "idle_done"}
+                onClick={runNextCta}
+                className="inline-flex min-h-12 items-center gap-2 rounded-xl bg-violet-600 px-6 text-sm font-bold text-white shadow-[0_12px_28px_rgba(109,74,255,.28)] disabled:opacity-40"
+              >
+                {nextCta.labelZh}
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
