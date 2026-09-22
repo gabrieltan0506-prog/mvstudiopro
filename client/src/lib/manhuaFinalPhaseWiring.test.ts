@@ -70,12 +70,20 @@ describe("成片阶段接线契约", () => {
     expect(block).toContain('setImmersiveWorkspaceView("workbench")');
   });
 
-  it("四个用户可见出口全部走收口函数", () => {
-    // 回到剧本工作室 + onGoWorkbench + 三处「切经典表单」
+  it("保留的用户可见出口全部走收口函数", () => {
+    // 回到剧本工作室 + onGoWorkbench + 两处兼容旧项目的「切经典表单」
     const calls = SRC.match(/closeClipDockToWorkbench/g) || [];
-    // 1 处定义 + 5 处调用
-    expect(calls.length).toBeGreaterThanOrEqual(6);
+    // 1 处定义 + 4 处调用
+    expect(calls.length).toBeGreaterThanOrEqual(5);
     expect(SRC).toContain("onClick={closeClipDockToWorkbench}");
+  });
+
+  it("沉浸工作台左上主导航不再暴露旧经典表单入口", () => {
+    const tablistAt = SRC.indexOf('role="tablist"');
+    const tablistEnd = SRC.indexOf("⇄ 自由画布", tablistAt);
+    expect(tablistAt).toBeGreaterThan(0);
+    expect(tablistEnd).toBeGreaterThan(tablistAt);
+    expect(SRC.slice(tablistAt, tablistEnd)).not.toContain("经典表单");
   });
 
   it("沉浸工作区必须把工作台、编剧室、成片坞做成互斥页签", () => {

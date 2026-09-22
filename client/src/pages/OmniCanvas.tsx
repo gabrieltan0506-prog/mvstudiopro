@@ -9847,16 +9847,6 @@ export default function OmniCanvas() {
                   </button>
                   <button
                     type="button"
-                    className="rounded-lg px-2.5 py-1.5 text-white/40 transition hover:bg-white/10 hover:text-white/70"
-                    onClick={() => {
-                      closeClipDockToWorkbench();
-                      setManhuaUiMode("form");
-                    }}
-                  >
-                    经典表单
-                  </button>
-                  <button
-                    type="button"
                     className="rounded-lg border border-white/15 px-2.5 py-1.5 font-semibold text-white/70 transition hover:bg-white/10 hover:text-white"
                     disabled={Boolean(factoryBusy || writerBusy || assembleBusy)}
                         onClick={() => selectCanvasMode("freeform")}
