@@ -6,6 +6,7 @@ import { assignPrevisActorColors, previsActorColor } from "@shared/manhuaPrevisC
 import { parseManhuaClipTargetDurationSec } from "@shared/manhuaScriptWorkbench";
 import { clampManhuaClipDurationSecForVideoModel } from "@shared/manhuaSeedanceLayout";
 import { ManhuaPrevisActionLibrary } from "./ManhuaPrevisActionLibrary";
+import { manhuaPrevisMediaUrl } from "@/lib/manhuaPrevisMediaUrl";
 import type { PreparedRigProfile } from "@/lib/manhuaPrevisProfiles";
 import { useEffect, useRef, useState } from "react";
 import { isDefiniteRejection, withRiggedModelSourceAssetRefs } from "@/lib/manhuaPrevisSubmit";
@@ -2008,7 +2009,7 @@ export function ManhuaPrevisStudioView({
       )}
       {preview && (
         <div>
-          <video key={preview.requestId} ref={previewVideo} controls src={preview.url} className="max-h-80 w-full"
+          <video key={preview.requestId} ref={previewVideo} controls src={manhuaPrevisMediaUrl(preview.url)} className="max-h-80 w-full"
             onTimeUpdate={event => setPreviewTime(event.currentTarget.currentTime)}
             onLoadedMetadata={() => setPreviewTime(0)} />
           <div data-previs-preview-controls className="flex flex-wrap items-center gap-2 py-2 text-xs text-white/80">
@@ -2082,7 +2083,7 @@ export function ManhuaPrevisStudioView({
             isPrevisMediaUrl(preview.layerBundle.url) && (
               <a
                 className={button}
-                href={preview.layerBundle.url}
+                href={manhuaPrevisMediaUrl(preview.layerBundle.url)}
                 download="遮罩与深度层包.zip"
                 target="_blank"
                 rel="noreferrer"

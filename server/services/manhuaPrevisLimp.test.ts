@@ -35,8 +35,12 @@ describe("左前腿跛行生产与恢复边界", () => {
     const actor = { id: spec.actors[0].id, nameZh: spec.actors[0].nameZh, bones: 19, contactError: 0, stanceDrift: 0, offscreenFrames: [] };
     const report = { frames: 48, fps: 24, warnings: [], actors: [actor] };
     expect(() => validatePrevisReport(report, spec)).toThrow();
-    const samples = Array.from({ length: 48 }, (_, i) => ({ frame: i+1, leftFrontHeight: .48, supportKeys: ["0", "2"] }));
+    const samples = Array.from({ length: 48 }, (_, i) => ({ frame: i+1, leftFrontHeight: .145 + .275 * Math.sin(Math.PI * ((i % 18) / 18)) ** 2, leftFrontForward: .60 - .18 * Math.cos(2 * Math.PI * ((i % 18) / 18)), supportKeys: ["0", "2"] }));
     expect(() => validatePrevisReport({ ...report, actors: [{ ...actor, limpSamples: samples }] }, spec)).not.toThrow();
+    const frozen = samples.map(sample => ({ ...sample, leftFrontHeight: .48 }));
+    expect(() => validatePrevisReport({ ...report, actors: [{ ...actor, limpSamples: frozen }] }, spec)).toThrow(/抬落差不足/);
+    const jumping = samples.map((sample, i) => ({ ...sample, leftFrontForward: i === 20 ? 1 : sample.leftFrontForward }));
+    expect(() => validatePrevisReport({ ...report, actors: [{ ...actor, limpSamples: jumping }] }, spec)).toThrow(/帧间跳变/);
     samples[20].supportKeys = ["0", "1"];
     expect(() => validatePrevisReport({ ...report, actors: [{ ...actor, limpSamples: samples }] }, spec)).toThrow();
   });
