@@ -97,6 +97,11 @@ it('真实终审三块、裁切回流、原Dock范围保留与未知失效',asyn
   expect(await page.$$('[data-manhua-final-section]')).toHaveLength(3);
   expect(await page.$$('[data-manhua-delivery-primary]')).toHaveLength(1);
   expect(await page.$eval('[data-manhua-final-ready]',e=>e.getAttribute('data-manhua-final-ready'))).toBe('0');
+  expect(await page.$$eval('[data-manhua-final-stage-state]',nodes=>nodes.map(node=>node.getAttribute('data-manhua-final-stage-state')))).toEqual(['current','pending','pending','pending','pending']);
+  expect(await page.$$eval('[data-manhua-final-timeline-state]',nodes=>nodes.map(node=>node.getAttribute('data-manhua-final-timeline-state')))).toEqual(['current','pending','pending','pending','pending']);
+  expect(await page.$eval('[data-manhua-final-stage-line]',e=>e.textContent)).not.toContain('✓');
+  expect(await page.$$eval('[data-manhua-final-stage-line] button',nodes=>nodes.slice(2).every(node=>(node as HTMLButtonElement).disabled))).toBe(true);
+  expect(await page.$eval('[data-manhua-final-media-shots]',e=>e.textContent)).toMatch(/\d+\/\d+ 镜有成片/);
   expect(await page.$eval('[data-manhua-final-section="timeline"]',e=>e.textContent)).toContain('当前成片来源已核对');
   expect(await page.$$('[data-manhua-final-check-state="unknown"]')).not.toHaveLength(0);
   await page.select('[aria-label="交付包导出范围"]','selected');

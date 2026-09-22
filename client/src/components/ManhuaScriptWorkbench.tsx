@@ -3366,6 +3366,8 @@ export default function ManhuaScriptWorkbench({
    * 线上现状是没有成片时仍展示一大堆不可执行项（README 原话），这里反过来先说清缺什么。
    */
   const reviewTimeline = buildManhuaEditMultitrack({ roughClips, shots, stillIndexes: stillIndexSet, clipIndexes: clipIndexSet, fineCutByShot, subtitleEnabled: editSubtitleEnabled });
+  const reviewClipTimelineSegments = reviewTimeline.tracks.find((track) => track.kind === "v2_clip")?.segments || [];
+  const reviewMediaShotCount = reviewClipTimelineSegments.filter((segment) => segment.hasMedia).length;
   const finalReviewChecklist = buildManhuaFinalReviewChecklist({
     plannedSegments: segments.length,
     ...summarizeManhuaFinalSegmentEvidence(segments, episodeClips, focusEpisode),
@@ -3377,6 +3379,23 @@ export default function ManhuaScriptWorkbench({
     finalCutStale: Boolean(finalCutStale),
     hasFinalVideo: Boolean(finalVideoUrl),
   });
+  /**
+   * 终审两条进度线必须读真实证据，不能把前两步写死成绿色勾。
+   * 旧长片存在但当前段素材不齐／已失效时，也不能继续显示“初版生成完成”。
+   */
+  const finalContentReady = finalReviewChecklist.items.find((item) => item.id === "content")?.state === "pass";
+  const finalDraftReady = finalContentReady && Boolean(finalVideoUrl) && !finalCutStale;
+  const finalQualityReady = finalDraftReady && finalReviewChecklist.items
+    .filter((item) => item.id !== "cut_fresh")
+    .every((item) => item.state === "pass" || item.state === "not_required");
+  const finalProgressStates = [
+    finalContentReady,
+    finalDraftReady,
+    finalQualityReady,
+    finalReviewChecklist.readyForFinal,
+    false,
+  ];
+  const finalCurrentProgressIndex = Math.max(0, finalProgressStates.findIndex((complete) => !complete));
   // 问题时间来自本集原稿分段；定位只切工作区，不发起生成或改变采用状态。
   const finalSegmentIssues = segments.flatMap(segment => {
     const candidates = episodeClips.filter(clip => resolveClipLocalSegmentIndex(clip.id, clip.prompt, focusEpisode) === segment.index);
@@ -4937,9 +4956,9 @@ export default function ManhuaScriptWorkbench({
               </div>
               <div data-manhua-final-stage-line className="hidden min-w-[440px] items-start justify-between lg:flex">
                 {["素材剪辑", "初版生成", "质检审核", "终审成片", "交付导出"].map((label, index) => (
-                  <button type="button" key={label} onClick={() => index < 2 ? selectPhase("edit") : undefined} className="relative flex flex-1 flex-col items-center gap-1 text-center text-[10px] text-white/45">
+                  <button type="button" key={label} disabled={index >= 2} data-manhua-final-stage-state={finalProgressStates[index] ? "complete" : index === finalCurrentProgressIndex ? "current" : "pending"} onClick={() => index < 2 ? selectPhase("edit") : undefined} className="relative flex flex-1 flex-col items-center gap-1 text-center text-[10px] text-white/45 disabled:cursor-default">
                     {index < 4 ? <span className="absolute left-1/2 top-3 h-px w-full bg-white/15" /> : null}
-                    <span className={`relative z-10 flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-bold ${index < 2 ? "border-emerald-400 bg-emerald-500 text-white" : index === 2 ? "border-emerald-500 bg-white text-emerald-700" : "border-white/20 bg-white text-white/45"}`}>{index < 2 ? "✓" : index + 1}</span>
+                    <span className={`relative z-10 flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-bold ${finalProgressStates[index] ? "border-emerald-400 bg-emerald-500 text-white" : index === finalCurrentProgressIndex ? "border-amber-400 bg-amber-50 text-amber-800" : "border-white/20 bg-white text-white/45"}`}>{finalProgressStates[index] ? "✓" : index + 1}</span>
                     <span>{label}</span>
                   </button>
                 ))}
@@ -5030,18 +5049,18 @@ export default function ManhuaScriptWorkbench({
             <section data-manhua-final-section="delivery" className="min-w-0 rounded-xl border border-white/15 bg-white/[0.03] p-3 lg:order-3"><h2 className="mb-2 text-sm font-semibold">导出交付</h2><div id="manhua-final-delivery-host" /></section>
             <section data-manhua-final-section="timeline" className="min-w-0 rounded-xl border border-white/15 bg-white/[0.03] p-3 lg:order-1">
               <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-sm font-semibold">时间线 · 第{focusEpisode}集</h2><button type="button" className="min-h-11 rounded border border-white/20 px-3 text-xs" onClick={() => selectPhase("edit")}>查看与调整剪辑</button></div>
-              <p className="mt-1 text-xs text-white/55">{roughClips.length ? `当前裁切与排序 · ${reviewTimeline.totalSec}s` : "暂无剪辑计划 · 0镜"} · {finalCutStale ? "旧成片已失效，请重新合成" : finalCutVerified ? "当前成片来源已核对" : "最终成片尚未核验"}</p>
+              <p data-manhua-final-media-shots={`${reviewMediaShotCount}/${reviewClipTimelineSegments.length}`} className="mt-1 text-xs text-white/55">{reviewClipTimelineSegments.length ? `${reviewMediaShotCount ? "当前裁切与排序" : "计划时间线"} · ${reviewTimeline.totalSec}s · ${reviewMediaShotCount}/${reviewClipTimelineSegments.length} 镜有成片` : "暂无剪辑计划 · 0镜"} · {finalCutStale ? "旧成片已失效，请重新合成" : finalCutVerified ? "当前成片来源已核对" : "最终成片尚未核验"}</p>
               <div data-manhua-final-timeline-steps className="mt-4 flex items-start justify-between">
                 {["素材上传", "初版生成", "质检完成", "待终审", "导出交付"].map((label, index) => (
-                  <div key={label} className="relative flex flex-1 flex-col items-center gap-1 text-center text-[10px] text-white/45">
+                  <div key={label} data-manhua-final-timeline-state={finalProgressStates[index] ? "complete" : index === finalCurrentProgressIndex ? "current" : "pending"} className="relative flex flex-1 flex-col items-center gap-1 text-center text-[10px] text-white/45">
                     {index < 4 ? <span className="absolute left-1/2 top-3 h-px w-full bg-white/15" /> : null}
-                    <span className={`relative z-10 flex h-6 w-6 items-center justify-center rounded-full border font-bold ${index < 2 ? "border-emerald-500 bg-emerald-500 text-white" : index === 2 ? "border-emerald-600 bg-white text-emerald-700" : "border-white/20 bg-white text-white/45"}`}>{index < 2 ? "✓" : index + 1}</span>
+                    <span className={`relative z-10 flex h-6 w-6 items-center justify-center rounded-full border font-bold ${finalProgressStates[index] ? "border-emerald-500 bg-emerald-500 text-white" : index === finalCurrentProgressIndex ? "border-amber-400 bg-amber-50 text-amber-800" : "border-white/20 bg-white text-white/45"}`}>{finalProgressStates[index] ? "✓" : index + 1}</span>
                     <span>{label}</span>
                   </div>
                 ))}
               </div>
               {finalVideoUrl ? <video controls preload="metadata" src={finalVideoUrl} className="mx-auto my-3 max-h-40 w-full rounded-lg bg-black" /> : <p className="py-3 text-xs text-white/50">尚无整集成片，请先处理上方缺口。</p>}
-              <details data-manhua-review-timeline className="mt-3"><summary className="min-h-11 cursor-pointer py-3 text-sm text-white/70">查看逐镜剪辑计划 · {shots.length} 镜</summary><div className="mt-2 flex gap-2 overflow-x-auto pb-2">{reviewTimeline.tracks.find(track => track.kind === "v2_clip")?.segments.map(segment => <button type="button" key={segment.shotIndex} data-manhua-review-shot={segment.shotIndex} data-review-duration={segment.durationSec} onClick={() => { const index = shots.findIndex(shot => shot.index === segment.shotIndex); if (index >= 0) setShotIndex(index); selectPhase("edit"); }} className="min-h-16 min-w-32 shrink-0 rounded-lg border border-white/20 bg-white/[0.04] p-3 text-left text-xs"><strong>第{segment.shotIndex}镜 · {segment.durationSec.toFixed(1)}s</strong><span className="mt-1 block text-white/50">入{segment.inSec.toFixed(1)}s / 出{segment.outSec.toFixed(1)}s · {segment.hasMedia ? "已有片段" : "待生成"}</span></button>)}</div></details>
+              <details data-manhua-review-timeline className="mt-3"><summary className="min-h-11 cursor-pointer py-3 text-sm text-white/70">查看逐镜剪辑计划 · {shots.length} 镜</summary><div className="mt-2 flex gap-2 overflow-x-auto pb-2">{reviewClipTimelineSegments.map(segment => <button type="button" key={segment.shotIndex} data-manhua-review-shot={segment.shotIndex} data-review-duration={segment.durationSec} onClick={() => { const index = shots.findIndex(shot => shot.index === segment.shotIndex); if (index >= 0) setShotIndex(index); selectPhase("edit"); }} className="min-h-16 min-w-32 shrink-0 rounded-lg border border-white/20 bg-white/[0.04] p-3 text-left text-xs"><strong>第{segment.shotIndex}镜 · {segment.durationSec.toFixed(1)}s</strong><span className="mt-1 block text-white/50">入{segment.inSec.toFixed(1)}s / 出{segment.outSec.toFixed(1)}s · {segment.hasMedia ? "已有片段" : "待生成"}</span></button>)}</div></details>
             </section>
           </div>
         </div>
