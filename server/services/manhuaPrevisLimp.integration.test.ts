@@ -30,7 +30,7 @@ describe.skipIf(!process.env.PREVIS_BLENDER_TEST)("跛行白模真实渲染", ()
       { signal: AbortSignal.timeout(180_000) },
       {
         blender: process.env.PREVIS_BLENDER_TEST!,
-        useXvfb: false,
+        useXvfb: process.platform === "linux",
         run: runPrevisProcess,
         upload: async ({ objectName, buffer }) => {
           await writeFile(path.join(out, path.basename(objectName)), buffer);
