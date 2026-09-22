@@ -231,6 +231,7 @@ export function validatePrevisReport(
       const samples = z.array(z.object({
         frame: z.number().int().positive(),
         leftFrontHeight: z.number().finite().min(0.1),
+        leftFrontForward: z.number().finite(),
         supportKeys: z.array(z.enum(["0", "2", "3"])).min(2).max(3),
       })).length(report.frames).parse(actor.limpSamples);
       if (samples.some((sample, i) => sample.frame !== i+1 || new Set(sample.supportKeys).size !== sample.supportKeys.length))
@@ -238,6 +239,9 @@ export function validatePrevisReport(
       const heights = samples.map(sample => sample.leftFrontHeight);
       if (Math.max(...heights) - Math.min(...heights) < 0.18)
         throw new Error("左前腿跛行抬落差不足，不能用恒定悬腿冒充跛行");
+      if (samples.slice(1).some((sample, index) =>
+        Math.abs(sample.leftFrontForward - samples[index].leftFrontForward) > 0.08))
+        throw new Error("左前腿跛行轨迹帧间跳变过大");
     }
   });
   const expectedCreatures = spec.actors.filter(actor => actor.creature);

@@ -40,10 +40,13 @@ describe.skipIf(!process.env.PREVIS_BLENDER_TEST)("跛行白模真实渲染", ()
     );
     const samples = result.report.actors[0].limpSamples as Array<{
       leftFrontHeight: number;
+      leftFrontForward: number;
       supportKeys: string[];
     }>;
     const heights = samples.map(sample => sample.leftFrontHeight);
     expect(Math.max(...heights) - Math.min(...heights)).toBeGreaterThanOrEqual(.18);
+    expect(Math.max(...samples.slice(1).map((sample, i) =>
+      Math.abs(sample.leftFrontForward - samples[i].leftFrontForward)))).toBeLessThanOrEqual(.08);
     expect(samples.every(sample => !sample.supportKeys.includes("1"))).toBe(true);
     expect(result.bytes).toBeGreaterThan(1000);
   }, 210_000);

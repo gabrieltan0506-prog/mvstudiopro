@@ -349,8 +349,9 @@ def plan_contacts(actor):
                 # 18帧一个完整伤腿周期：向前探脚、抬高避重、缩短落回。
                 # 最低仍离地约8cm，伤腿永不加入stance；高度变化则由报告逐帧验收，
                 # 防止旧版“每帧固定0.48m”的僵硬悬腿再次被当成跛行。
-                phase=((f-1)%18)/17
-                injured_x=.60+.18*(2*phase-1)
+                phase=((f-1)%18)/18
+                # 余弦往返保证第18→19帧首尾连续；线性0→1会在循环点瞬移0.36米。
+                injured_x=.60-.18*math.cos(2*math.pi*phase)
                 injured_z=.145+.275*(math.sin(math.pi*phase)**2)
                 result[f]['1']=transform(actor,f) @ Vector((injured_x,.25,injured_z))
             stance[f]=[key for key in keys if key!=chosen or not moving]
@@ -692,7 +693,9 @@ for actor,rig,contacts,stance,error in rigs:
             previous[key]=(frame,key in stance[frame],actual.copy())
         if any(a['kind']=='limp_front_left' for a in actor['actions']):
             injured=rig.matrix_world @ rig.pose.bones['lower_leg1'].tail
-            limp_samples.append({'frame':frame,'leftFrontHeight':float(injured.z),'supportKeys':stance[frame]})
+            injured_local=rig.matrix_world.inverted() @ injured
+            limp_samples.append({'frame':frame,'leftFrontHeight':float(injured.z),
+                                 'leftFrontForward':float(injured_local.x),'supportKeys':stance[frame]})
         names=['head']+['foot'+key for key in foot_offsets(actor)]
         if any(not (.02 <= (p:=world_to_camera_view(scene,camera,rig.matrix_world @ rig.pose.bones[name].tail)).x <= .98 and .02 <= p.y <= .98 and p.z>0) for name in names): offscreen.append(frame)
     report['actors'].append({'id':actor['id'],'nameZh':actor['nameZh'],'bones':len(rig.pose.bones),'contactError':error,'stanceDrift':drift,'offscreenFrames':offscreen})
