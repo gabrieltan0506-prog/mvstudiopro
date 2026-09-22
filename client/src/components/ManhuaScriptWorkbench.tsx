@@ -3976,7 +3976,8 @@ export default function ManhuaScriptWorkbench({
     <div
       id="manhua-workbench-shell"
       data-manhua-layout={immersive ? "immersive-3col" : "card-3col"}
-      className={`${compactUi ? "mh-compact " : ""}${
+      data-manhua-active-phase={activePhase}
+      className={`mh-redesign ${compactUi ? "mh-compact " : ""}${
         immersive
           ? "flex h-full min-h-0 w-full flex-col overflow-hidden bg-[#0a0d14]"
           : "mt-1 flex h-[calc(100dvh-5.75rem)] min-h-[620px] min-w-0 w-full flex-col overflow-hidden rounded-xl border border-white/12 bg-[#0a0d14] shadow-[0_12px_48px_rgba(0,0,0,0.45)]"
