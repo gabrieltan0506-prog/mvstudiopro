@@ -623,10 +623,18 @@
 #manhua-workbench-shell.mh-redesign > :first-child {
   position: relative;
   z-index: 30;
-  min-height: 72px;
-  padding: 14px 22px !important;
+  min-height: 50px;
+  padding: 8px 18px !important;
   background: rgb(255 253 248 / 96%);
   border-bottom: 1px solid var(--mh-line) !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-project-identity] {
+  max-width: calc(100% - 150px);
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-legacy-local-nav] {
+  display: none !important;
 }
 
 #manhua-workbench-shell.mh-redesign > :first-child [data-manhua-toolbar-cluster] {
@@ -637,42 +645,72 @@
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-project-settings] {
+  position: absolute;
+  top: 8px;
+  right: 142px;
+  z-index: 90;
   color: var(--mh-muted);
 }
 
+#manhua-workbench-shell.mh-redesign [data-manhua-project-settings] > summary {
+  list-style: none;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--mh-line);
+  border-radius: 10px;
+  background: #fbf8f1;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-project-settings][open] {
+  width: min(720px, calc(100vw - 40px));
+  padding: 8px 12px 12px;
+  border: 1px solid var(--mh-line);
+  border-radius: 14px;
+  background: var(--mh-panel);
+  box-shadow: 0 18px 50px rgb(47 39 29 / 18%);
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-draft-retention-hint] {
+  display: none !important;
+}
+
 #manhua-workbench-shell.mh-redesign [data-manhua-workflow-rail] {
-  gap: 10px !important;
-  padding: 14px 22px !important;
-  background: #faf7f0 !important;
+  min-height: 44px;
+  gap: 2px !important;
+  padding: 6px 18px !important;
+  background: var(--mh-panel) !important;
   border-bottom: 1px solid var(--mh-line) !important;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-phase] {
-  min-height: 70px;
-  border: 1px solid var(--mh-line) !important;
-  border-radius: 16px !important;
-  background: var(--mh-panel) !important;
+  min-width: auto !important;
+  min-height: 30px;
+  border: 0 !important;
+  border-radius: 999px !important;
+  background: transparent !important;
   color: var(--mh-muted) !important;
   box-shadow: none !important;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-phase][data-manhua-phase-status="current"] {
-  border-color: #8a73ff !important;
-  background: var(--mh-purple-soft) !important;
+  background: #e5f5f1 !important;
   color: #4f35ca !important;
-  box-shadow: 0 8px 20px rgb(109 74 255 / 13%) !important;
+  box-shadow: none !important;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-ashuo-step-bar] {
-  min-height: 76px;
-  padding: 12px 22px !important;
+  min-height: 54px;
+  padding: 8px 18px !important;
   background: var(--mh-panel) !important;
   border-bottom: 1px solid var(--mh-line) !important;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-ashuo-step-bar] button[data-manhua-action="ashuo-step-generate"] {
-  min-width: 210px;
-  min-height: 46px;
+  min-width: 176px;
+  min-height: 38px;
   border: 0 !important;
   border-radius: 14px !important;
   background: var(--mh-purple) !important;
@@ -859,11 +897,20 @@
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-blocker-card] {
-  margin: 12px 22px 0;
+  margin: 8px 18px 0;
   border: 1px solid #efb5a9 !important;
   border-radius: 16px;
   background: #fff2ee !important;
   color: #8f2d2d !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-blocker-card] ul {
+  margin-top: 4px !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-blocker-card] button {
+  min-height: 28px;
+  padding-block: 4px !important;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-blocker-card] * {
@@ -939,11 +986,12 @@
 
 @media (max-width: 900px) {
   #manhua-workbench-shell.mh-redesign [data-manhua-workflow-rail] {
-    gap: 6px !important;
-    padding: 10px !important;
+    justify-content: flex-start;
+    gap: 2px !important;
+    padding: 6px 10px !important;
   }
   #manhua-workbench-shell.mh-redesign [data-manhua-phase] {
-    min-width: 148px;
+    min-width: auto !important;
   }
   #manhua-workbench-shell.mh-redesign [data-manhua-phase-panel] {
     padding: 12px !important;

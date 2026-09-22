@@ -3984,8 +3984,8 @@ export default function ManhuaScriptWorkbench({
       }`}
     >
       {/* 顶栏 */}
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-white/10 px-3 py-1.5 md:px-4">
-        <div className="flex min-w-0 items-center gap-2">
+      <div data-manhua-product-header className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 px-3 py-1.5 md:px-4">
+        <div data-manhua-project-identity className="flex min-w-0 items-center gap-2">
           <Clapperboard className="h-4 w-4 shrink-0 text-cyan-300" />
           <div className="min-w-0">
             <div className="truncate text-[13px] font-semibold text-white/95">
@@ -3999,7 +3999,7 @@ export default function ManhuaScriptWorkbench({
             {!segmentCapacityPlan.ok ? (
               <p role="alert" className="mt-1 text-xs text-rose-200">{segmentCapacityPlan.errorZh}</p>
             ) : null}
-            <details className="mt-1" data-manhua-project-settings>
+            <details data-manhua-project-settings>
               <summary className="cursor-pointer text-xs text-white/60">制作设置</summary>
             <div
               data-manhua-segment-capacity
@@ -4118,7 +4118,7 @@ export default function ManhuaScriptWorkbench({
             ) : null}
             </details>
             {immersive ? (
-              <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px]">
+              <div data-manhua-legacy-local-nav className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px]">
                 <button
                   type="button"
                   onClick={() => selectPhase("assets")}
@@ -4796,17 +4796,15 @@ export default function ManhuaScriptWorkbench({
         </div>
       ) : null}
 
-      {/* 只留一条阶段轨（大纲→资产→分镜→成片→终审），内部键 edit/final 保持旧草稿兼容。 */}
+      {/* 阶段轨只承担定位。缺口和动作留在当前阶段标题栏，避免五张大卡挤占创作空间。 */}
       <div
         data-manhua-workflow-rail
         data-manhua-ashuo-stepper
-        className="flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-cyan-400/25 bg-gradient-to-r from-cyan-500/[0.1] via-[#0a121c] to-transparent px-3 py-2"
+        aria-label="漫剧制作阶段"
+        className="flex shrink-0 items-center justify-center gap-1 overflow-x-auto border-b border-white/10 bg-[#0a121c] px-3 py-1.5"
       >
-        <span className="mr-1 shrink-0 text-[10px] font-semibold tracking-[0.12em] text-cyan-200/70">
-          阶段
-        </span>
         {workflowPhases.map((phase, index) => (
-          <div key={phase.id} className="flex shrink-0 flex-1 max-sm:flex-none items-center gap-1.5">
+          <div key={phase.id} className="flex shrink-0 items-center gap-1">
             <button
               type="button"
               data-manhua-phase={phase.id}
@@ -4814,14 +4812,15 @@ export default function ManhuaScriptWorkbench({
                 phase.complete ? "complete" : phase.current ? "current" : "pending"
               }
               onClick={() => selectPhase(phase.id)}
-              className={`flex min-w-[132px] flex-1 items-center gap-2 rounded-md border px-2.5 py-1.5 text-left ${
+              title={phase.gapZh ? `${phase.label}：${phase.gapZh}` : phase.label}
+              className={`group flex items-center gap-1.5 rounded-full px-2 py-1 text-left ${
                 phase.complete
-                  ? "border-emerald-400/25 bg-emerald-500/[0.08] text-emerald-50"
+                  ? "text-emerald-50"
                   : phase.current
                     ? phase.id === "edit"
-                      ? "border-violet-400/45 bg-violet-500/[0.12] text-violet-50"
-                      : "border-cyan-400/45 bg-cyan-500/[0.12] text-cyan-50 shadow-[0_0_14px_rgba(34,211,238,0.15)]"
-                    : "border-white/10 bg-white/[0.025] text-white/40"
+                      ? "bg-violet-500/[0.12] text-violet-50"
+                      : "bg-cyan-500/[0.12] text-cyan-50"
+                    : "text-white/40 hover:bg-white/[0.04] hover:text-white/65"
               }`}
             >
               <span
@@ -4835,48 +4834,10 @@ export default function ManhuaScriptWorkbench({
               >
                 {phase.complete ? <CheckCircle2 className="h-3.5 w-3.5" /> : phase.index}
               </span>
-              <span className="min-w-0 flex-1">
-                <span className="block whitespace-nowrap text-[11px] font-semibold">
+              <span className="min-w-0">
+                <span className="block whitespace-nowrap text-[10px] font-semibold">
                   {phase.id === "assets" ? "资产设定" : phase.label}
                 </span>
-                {/* 缺口一直算了却没渲染：只显示「待开始」等于把排查成本推给用户 */}
-                {phase.gapZh ? (
-                  <span
-                    data-manhua-phase-gap
-                    title={phase.gapZh}
-                    className="block truncate text-[8px] leading-tight opacity-70"
-                  >
-                    {phase.gapZh}
-                    {/* 外层整格已是 <button>，内层不许再嵌 button——span 拦掉冒泡自己跳。
-                        truncate 单行容器塞多个链接会被省略号吃掉（审查 P2），只渲染首个；
-                        完整缺口清单在 title 悬浮里。 */}
-                    {phase.gapActions?.slice(0, 1).map((a) => (
-                      <span
-                        key={`${a.anchor}-${a.labelZh}`}
-                        role="button"
-                        tabIndex={0}
-                        data-manhua-phase-gap-jump={a.anchor}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          jumpToAssetsGapAnchor(a.anchor);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.stopPropagation();
-                            e.preventDefault();
-                            jumpToAssetsGapAnchor(a.anchor);
-                          }
-                        }}
-                        className="ml-1 cursor-pointer text-cyan-200/90 underline decoration-dotted underline-offset-2 hover:text-cyan-100"
-                      >
-                        {a.labelZh}→
-                      </span>
-                    ))}
-                  </span>
-                ) : null}
-              </span>
-              <span className="ml-auto shrink-0 self-start text-[8px] opacity-60">
-                {phase.complete ? "已完成" : phase.current ? "当前" : "待开始"}
               </span>
             </button>
             {index < workflowPhases.length - 1 ? (
