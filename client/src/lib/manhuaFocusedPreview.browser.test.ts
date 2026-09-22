@@ -2,6 +2,8 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { build } from "esbuild";
 import puppeteer, { type Browser } from "puppeteer";
 import path from "node:path";
+import { mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { tmpdir } from "node:os";
 let browser: Browser;
 let bundle: string;
 beforeAll(async () => {
@@ -94,6 +96,18 @@ it("分镜默认显示当前镜，选镜不打开高级画布且不借旧片旧�
     await page.waitForFunction(()=>document.querySelector('[data-manhua-column="preview"]')?.getAttribute('data-manhua-preview-url')==='https://test.invalid/segment-1.mp4',{timeout:5000});
     await page.evaluate(()=>(window as any).fixture.setPhase('outline'));
     await page.waitForSelector('[data-manhua-outline-surface]');
+    const cssDir=process.env.MANHUA_LAYOUT_CSS_DIR;
+    if(cssDir){
+      for(const file of readdirSync(cssDir).filter(name=>name.endsWith('.css')))await page.addStyleTag({content:readFileSync(path.join(cssDir,file),'utf8')});
+      await page.setViewport({width:1280,height:900});
+      const layout=await page.$eval('[data-manhua-outline-surface]',element=>{const rect=element.getBoundingClientRect();return {left:rect.left,right:rect.right,width:rect.width,viewport:innerWidth,scroll:document.documentElement.scrollWidth};});
+      expect(layout.width).toBeGreaterThan(1100);
+      expect(layout.left).toBeGreaterThanOrEqual(0);
+      expect(layout.right).toBeLessThanOrEqual(layout.viewport+1);
+      expect(layout.scroll).toBeLessThanOrEqual(layout.viewport+1);
+      const evidenceDir=path.join(tmpdir(),'mvs-outline-layout-probe');mkdirSync(evidenceDir,{recursive:true});
+      await page.screenshot({path:path.join(evidenceDir,'outline-1280.png'),fullPage:false});
+    }
     expect(await page.$$('[data-manhua-episode-grid]')).toHaveLength(1);
     await page.waitForSelector('[data-manhua-episode-card="13"]');
     expect(await page.$$('[data-manhua-episode-card]')).toHaveLength(13);
