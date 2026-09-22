@@ -235,6 +235,9 @@ export function validatePrevisReport(
       })).length(report.frames).parse(actor.limpSamples);
       if (samples.some((sample, i) => sample.frame !== i+1 || new Set(sample.supportKeys).size !== sample.supportKeys.length))
         throw new Error("左前腿跛行逐帧卸载证据不完整");
+      const heights = samples.map(sample => sample.leftFrontHeight);
+      if (Math.max(...heights) - Math.min(...heights) < 0.18)
+        throw new Error("左前腿跛行抬落差不足，不能用恒定悬腿冒充跛行");
     }
   });
   const expectedCreatures = spec.actors.filter(actor => actor.creature);
