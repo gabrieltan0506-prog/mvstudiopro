@@ -92,7 +92,7 @@ async function mount(first = false, both = false): Promise<{ page: Page; close: 
 
 
 
-it.skipIf(!process.env.MANHUA_LAYOUT_CSS_DIR)('阶段条390与1280按钮标签不相互覆盖且横向可达',async()=>{
+it.skipIf(!process.env.MANHUA_LAYOUT_CSS_DIR)('阶段条保持单行紧凑且390与1280均可点击',async()=>{
  const {page,close}=await mount();
  try{
   const cssDir=process.env.MANHUA_LAYOUT_CSS_DIR!;
@@ -105,13 +105,13 @@ it.skipIf(!process.env.MANHUA_LAYOUT_CSS_DIR)('阶段条390与1280按钮标签�
   for(const width of [390,1280]){
    await page.setViewport({width,height:900});
    await page.$eval('[data-manhua-workflow-rail]',el=>el.scrollLeft=0);
-   const metrics=await page.$eval('[data-manhua-workflow-rail]',rail=>({rail:{width:rail.clientWidth,scrollWidth:rail.scrollWidth},buttons:Array.from(rail.querySelectorAll('[data-manhua-phase]')).map(el=>{const r=el.getBoundingClientRect();const icon=el.children[0].getBoundingClientRect();const label=el.children[1].children[0] as HTMLElement;const lr=label.getBoundingClientRect();const st=getComputedStyle(el);return {id:el.getAttribute('data-manhua-phase'),x:r.x,right:r.right,width:r.width,minWidth:st.minWidth,shrink:st.flexShrink,labelWidth:label.clientWidth,labelScroll:label.scrollWidth,iconRight:icon.right,labelX:lr.x};})}));
+   const metrics=await page.$eval('[data-manhua-workflow-rail]',rail=>{const rr=rail.getBoundingClientRect();return {rail:{width:rail.clientWidth,scrollWidth:rail.scrollWidth,height:rr.height},buttons:Array.from(rail.querySelectorAll('[data-manhua-phase]')).map(el=>{const r=el.getBoundingClientRect();const icon=el.children[0].getBoundingClientRect();const label=el.children[1].children[0] as HTMLElement;const lr=label.getBoundingClientRect();const st=getComputedStyle(el);return {id:el.getAttribute('data-manhua-phase'),x:r.x,right:r.right,width:r.width,minWidth:st.minWidth,shrink:st.flexShrink,labelWidth:label.clientWidth,labelScroll:label.scrollWidth,iconRight:icon.right,labelX:lr.x};})};});
    results.push({width,...metrics});
    await page.screenshot({path:join(evidenceDir,(process.env.PROBE_TAG||'probe')+'-'+width+'.png')});
   }
   writeFileSync(join(evidenceDir,(process.env.PROBE_TAG||'probe')+'-metrics.json'),JSON.stringify(results,null,2));
   for(const r of results)for(let i=1;i<r.buttons.length;i++)expect(r.buttons[i].x).toBeGreaterThanOrEqual(r.buttons[i-1].right);
-  for(const r of results)for(const b of r.buttons){expect(b.width).toBeGreaterThanOrEqual(132);expect(b.labelWidth).toBeGreaterThanOrEqual(b.labelScroll);expect(b.labelX).toBeGreaterThanOrEqual(b.iconRight);}
+  for(const r of results){expect(r.rail.height).toBeLessThanOrEqual(48);for(const b of r.buttons){expect(b.width).toBeLessThan(112);expect(b.labelWidth).toBeGreaterThanOrEqual(b.labelScroll);expect(b.labelX).toBeGreaterThanOrEqual(b.iconRight);}}
   if(process.env.PROBE_BASELINE_METRICS){
    const baseline=JSON.parse(readFileSync(process.env.PROBE_BASELINE_METRICS,'utf8'));
    expect(results.find(r=>r.width===1280)).toEqual(baseline.find((r:any)=>r.width===1280));
