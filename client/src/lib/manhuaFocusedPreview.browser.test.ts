@@ -99,14 +99,16 @@ it("分镜默认显示当前镜，选镜不打开高级画布且不借旧片旧�
     const cssDir=process.env.MANHUA_LAYOUT_CSS_DIR;
     if(cssDir){
       for(const file of readdirSync(cssDir).filter(name=>name.endsWith('.css')))await page.addStyleTag({content:readFileSync(path.join(cssDir,file),'utf8')});
-      await page.setViewport({width:1280,height:900});
-      const layout=await page.$eval('[data-manhua-outline-surface]',element=>{const rect=element.getBoundingClientRect();return {left:rect.left,right:rect.right,width:rect.width,viewport:innerWidth,scroll:document.documentElement.scrollWidth};});
-      expect(layout.width).toBeGreaterThan(1100);
-      expect(layout.left).toBeGreaterThanOrEqual(0);
-      expect(layout.right).toBeLessThanOrEqual(layout.viewport+1);
-      expect(layout.scroll).toBeLessThanOrEqual(layout.viewport+1);
       const evidenceDir=path.join(tmpdir(),'mvs-outline-layout-probe');mkdirSync(evidenceDir,{recursive:true});
-      await page.screenshot({path:path.join(evidenceDir,'outline-1280.png'),fullPage:false});
+      for (const width of [1280, 3840]) {
+        await page.setViewport({width,height:900});
+        const layout=await page.$eval('[data-manhua-outline-surface]',element=>{const rect=element.getBoundingClientRect();return {left:rect.left,right:rect.right,width:rect.width,viewport:innerWidth,scroll:document.documentElement.scrollWidth};});
+        expect(layout.width).toBeGreaterThan(width * 0.9);
+        expect(layout.left).toBeGreaterThanOrEqual(0);
+        expect(layout.right).toBeLessThanOrEqual(layout.viewport+1);
+        expect(layout.scroll).toBeLessThanOrEqual(layout.viewport+1);
+        await page.screenshot({path:path.join(evidenceDir,`outline-${width}.png`),fullPage:false});
+      }
     }
     expect(await page.$$('[data-manhua-episode-grid]')).toHaveLength(1);
     expect(await page.$$('[data-manhua-outline-ai-optimize]')).toHaveLength(1);
