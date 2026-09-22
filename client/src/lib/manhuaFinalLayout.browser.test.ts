@@ -118,11 +118,12 @@ it('真实终审三块、裁切回流、原Dock范围保留与未知失效',asyn
   expect(await page.$eval("[data-manhua-ashuo-step-title]",e=>e.textContent)).toBe("终审与交付");
   expect(await page.$eval("[data-manhua-action=ashuo-step-generate]",e=>e.textContent)).toBe("返回精剪");
   const geometry=[];
-  for(const width of [1280,390]){
+  for(const width of [3840,1280,390]){
    await page.setViewport({width,height:900});
    await page.$eval('[data-manhua-phase-panel="final"]',e=>e.scrollIntoView());
-   const rects=await page.evaluate(()=>Array.from(document.querySelectorAll('[data-manhua-final-section],[data-manhua-delivery-primary],[aria-label="交付包导出范围"]')).map(e=>{const r=e.getBoundingClientRect();return {tag:e.getAttribute('data-manhua-final-section')||e.getAttribute('aria-label')||'delivery',x:r.x,width:r.width,height:r.height};}));geometry.push({width,rects});
+   const rects=await page.evaluate(()=>Array.from(document.querySelectorAll('[data-manhua-final-dashboard],[data-manhua-final-section],[data-manhua-delivery-primary],[aria-label="交付包导出范围"]')).map(e=>{const r=e.getBoundingClientRect();return {tag:e.hasAttribute('data-manhua-final-dashboard')?'dashboard':e.getAttribute('data-manhua-final-section')||e.getAttribute('aria-label')||'delivery',x:r.x,width:r.width,height:r.height};}));geometry.push({width,rects});
    if(cssDir){expect(rects.every(r=>r.width>0&&r.x>=0&&r.x+r.width<=width+1)).toBe(true);expect(rects.filter(r=>r.tag==='delivery'||r.tag==='交付包导出范围').every(r=>r.height>=44)).toBe(true);}
+   if(cssDir&&width===3840)expect(rects.find(r=>r.tag==='dashboard')!.width).toBeGreaterThan(width*0.9);
    await page.screenshot({path:join(evidenceDir,'final-layout-'+width+'.png'),fullPage:false});
    for(const section of ['quality','delivery']){await page.$eval('[data-manhua-final-section="'+section+'"]',e=>e.scrollIntoView({block:'center'}));await page.screenshot({path:join(evidenceDir,'final-'+section+'-'+width+'.png'),fullPage:false});}
   }
@@ -271,6 +272,17 @@ it('混合稿恢复保存失败时可见报错，原稿与修复入口保留', a
     const images=blocks.filter((b:any)=>b.id.startsWith('keyart-')&&b.outputUrl);
     return images.length>0&&images.every((b:any)=>b.outputUrl.startsWith('local-media:'));
   },{timeout:30000});
+  // 转存回调与 localStorage 持久化不是同一个微任务；高负载并行浏览器套件里，
+  // 图片都已变成 local-media 后，最后一次画布保存仍可能晚几十到数百毫秒。
+  // 连续 500ms 未变化才取回滚基线，避免把后台转存误报成恢复按钮改写画布。
+  await page.waitForFunction(()=>{
+    const current=localStorage.getItem('mv-freeform-canvas-v1')||'';
+    const now=Date.now();
+    const state=(globalThis as any).__canvasStorageStability as {value:string;since:number}|undefined;
+    if(state?.value===current)return now-state.since>=500;
+    (globalThis as any).__canvasStorageStability={value:current,since:now};
+    return false;
+  },{polling:100,timeout:30000});
   const before=await page.evaluate(()=>({writer:localStorage.getItem('mv-manhua-writer-session-v1'),canvas:localStorage.getItem('mv-freeform-canvas-v1')}));
   await page.evaluate(()=>{const set=Storage.prototype.setItem;Storage.prototype.setItem=function(k,v){if(k==='mv-manhua-writer-session-v1')throw new DOMException('Full','QuotaExceededError');return set.call(this,k,v);};});
   await page.click('[data-manhua-timing-recovery] button');

@@ -5327,7 +5327,10 @@ export default function ManhuaScriptWorkbench({
                 ) : null}
               </div>
             ) : null}
-            <div className="flex flex-wrap items-start justify-between gap-3">
+            <div
+              data-manhua-assets-secondary-tools
+              className="flex flex-wrap items-start justify-between gap-3"
+            >
               <div>
                 <div className={`text-[15px] font-bold tracking-wide text-white/95 ${compactUi ? "hidden" : ""}`}>
                   生成本集角色设定卡
@@ -8140,7 +8143,7 @@ export default function ManhuaScriptWorkbench({
               </span>
             </div>
 
-            <div className="mt-4 grid gap-3 md:grid-cols-3">
+            <div data-manhua-assets-library-summary className="mt-4 grid gap-3 md:grid-cols-3">
               <section className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
                 <div className="mb-2 flex items-center justify-between text-[11px] font-semibold text-white/70">
                   <span>角色 · {(characters.length || 0) + (archetypes.length || 0)}</span>
@@ -8280,6 +8283,17 @@ export default function ManhuaScriptWorkbench({
                   ) : null}
                 </div>
               </section>
+            </div>
+            <div className="mt-5 flex justify-end" data-manhua-phase-footer-action="assets">
+              <button
+                type="button"
+                data-manhua-action="ashuo-step-generate"
+                disabled={factoryBusy || nextCta.kind === "idle_done"}
+                onClick={runNextCta}
+                className="inline-flex min-h-12 items-center gap-2 rounded-xl bg-violet-600 px-6 text-sm font-bold text-white shadow-[0_12px_28px_rgba(109,74,255,.28)] disabled:opacity-40"
+              >
+                {nextCta.labelZh}
+              </button>
             </div>
           </div>
         </div>
@@ -9159,7 +9173,7 @@ export default function ManhuaScriptWorkbench({
               </div>
               {/* 三栏模式下当前镜参数在右栏；非三栏（窄屏/非分镜阶段）留在清单下面 */}
               {storyboardThreeColumn ? null : shotParamsPanel}
-              <p className="mh-hint mt-2 text-[10px] leading-snug text-white/35">
+              <p data-manhua-shot-list-hint className="mh-hint mt-2 text-[10px] leading-snug text-white/35">
                 确认简报 → 静帧锁脸服场 → 审阅段成片提示词 → 本段一轮成片吃多镜表演；改台词只重出本段，勿整集重烧。
               </p>
               {clipPromptReviewOpen ? (

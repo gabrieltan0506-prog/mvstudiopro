@@ -618,6 +618,10 @@
   border: 1px solid #d8d0c3 !important;
   border-radius: 16px !important;
   box-shadow: 0 12px 38px rgb(58 45 30 / 11%) !important;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  margin-inline: 0;
 }
 
 #manhua-workbench-shell.mh-redesign > :first-child {
@@ -723,12 +727,15 @@
   padding: 14px 18px 18px !important;
   background: var(--mh-page) !important;
   color: var(--mh-ink) !important;
+  min-width: 0;
+  overflow-x: hidden;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-phase-panel] > :first-child {
   width: 100%;
-  max-width: 1680px !important;
-  margin-inline: auto;
+  max-width: none !important;
+  min-width: 0;
+  margin-inline: 0;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-outline-surface],
@@ -949,9 +956,10 @@
   [data-manhua-final-dashboard],
   [data-manhua-panel="edit-multitrack"]
 ) {
-  width: min(100%, 1680px) !important;
-  max-width: 1680px !important;
-  margin-inline: auto !important;
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0;
+  margin-inline: 0 !important;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-blocker-card] * {
@@ -1063,15 +1071,15 @@
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-outline-surface] {
-  width: min(100%, 1120px) !important;
-  max-width: 1120px !important;
+  width: 100% !important;
+  max-width: none !important;
   padding: 24px !important;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-episode-grid] {
   display: grid !important;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(240px, 280px);
+  grid-auto-columns: clamp(240px, 22vw, 340px);
   grid-template-columns: none !important;
   justify-content: start;
   overflow-x: auto;
@@ -1112,8 +1120,28 @@
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="assets"] [data-manhua-assets-surface] {
-  width: min(100%, 1240px) !important;
-  max-width: 1240px !important;
+  width: 100% !important;
+  max-width: none !important;
+}
+
+/* 精简模式只保留目标稿的「分类页签 + 实体版本卡 + 主操作」。
+   被收起的旧式批量面板仍可从顶部“更多操作”切回完整模式，不移除生产能力。 */
+#manhua-workbench-shell.mh-redesign.mh-compact [data-manhua-phase-panel="assets"] :is(
+  [data-manhua-assets-secondary-tools],
+  [data-manhua-episode-sheets],
+  [data-manhua-art-style-picker],
+  [data-manhua-cast-selected],
+  [data-manhua-look-sets],
+  [data-manhua-art-style],
+  [data-manhua-writer-canon],
+  [data-manhua-asset-ready],
+  [data-manhua-assets-library-summary]
+) {
+  display: none !important;
+}
+
+#manhua-workbench-shell.mh-redesign.mh-compact [data-manhua-custom-refs] {
+  margin-top: 12px !important;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-asset-entity-grid] {
@@ -1129,20 +1157,63 @@
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-storyboard-workspace] {
-  grid-template-columns: minmax(210px, 260px) minmax(360px, 1fr) minmax(260px, 320px) !important;
-  width: min(100%, 1240px);
-  max-width: 1240px;
-  margin-inline: auto;
+  grid-template-columns: minmax(230px, 0.72fr) minmax(420px, 1.55fr) minmax(280px, 0.9fr) !important;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  margin-inline: 0;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-column="preview"] [data-manhua-media-frame] {
-  max-width: 360px;
+  width: min(100%, 260px) !important;
+  max-width: 260px;
   margin-inline: auto;
+  flex: 0 0 auto !important;
+  border-radius: 12px;
+  background: #111 !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-column="preview"] [data-manhua-shot-pair-preview] {
+  width: 100% !important;
+  max-height: none;
+  margin-inline: auto;
+  aspect-ratio: auto;
+  flex: 1 1 auto !important;
+  border: 0 !important;
+  background: transparent !important;
+}
+
+/* 改后稿的分镜首屏只保留左清单、中预览、右参数；旧成片段胶片条留在完整模式。 */
+#manhua-workbench-shell.mh-redesign.mh-compact [data-manhua-filmstrip] {
+  display: none !important;
+}
+
+#manhua-workbench-shell.mh-redesign.mh-compact [data-manhua-column="script"] [data-manhua-shot] > button {
+  display: grid !important;
+  grid-template-columns: 58px minmax(0, 1fr);
+  min-height: 58px;
+}
+
+#manhua-workbench-shell.mh-redesign.mh-compact [data-manhua-column="script"] [data-manhua-shot] > button > :first-child {
+  width: 58px !important;
+  height: 58px !important;
+  aspect-ratio: 1;
+}
+
+#manhua-workbench-shell.mh-redesign.mh-compact [data-manhua-column="script"] [data-manhua-shot] > button > :nth-child(2) {
+  min-width: 0;
+  align-self: center;
+}
+
+#manhua-workbench-shell.mh-redesign.mh-compact [data-manhua-column="script"] [data-manhua-shot] > button > :nth-child(2) > :nth-child(n + 3),
+#manhua-workbench-shell.mh-redesign.mh-compact [data-manhua-shot-list-hint] {
+  display: none !important;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="edit"] [data-manhua-panel="edit-multitrack"] {
-  width: min(100%, 1240px) !important;
-  max-width: 1240px !important;
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0;
   overflow: auto;
 }
 
@@ -1152,7 +1223,7 @@
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-edit-clip-card] {
-  min-width: 230px;
+  min-width: clamp(220px, 18vw, 320px);
   border-color: var(--mh-line) !important;
   background: #fbf8f1 !important;
   color: var(--mh-ink) !important;
@@ -1169,8 +1240,9 @@
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-final-dashboard] {
-  width: min(100%, 1240px) !important;
-  max-width: 1240px !important;
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-final-project-header] {

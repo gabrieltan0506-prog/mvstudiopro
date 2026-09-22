@@ -196,7 +196,7 @@ afterAll(async () => {
   await browser?.close();
 }, 180_000);
 
-async function mountStoryboard(directorProbe = false, progressProbe = false): Promise<{ page: Page; close: () => Promise<void> }> {
+async function mountStoryboard(directorProbe = false, progressProbe = false, compact = false): Promise<{ page: Page; close: () => Promise<void> }> {
   const ctx = await browser.createBrowserContext();
   const page = await ctx.newPage();
   await page.setRequestInterception(true);
@@ -209,7 +209,7 @@ async function mountStoryboard(directorProbe = false, progressProbe = false): Pr
   // compactUi 是组件内部 state（localStorage `manhua_compact_ui`，默认 true），不是 prop。
   // 关掉简洁模式才会同时具备「工具条 + 分镜面板」两个静帧入口 —— 这是真能出现重复的那个状态，
   // 旧代码在这里就是两个按钮。
-  await page.evaluate(() => window.localStorage.setItem("manhua_compact_ui", "0"));
+  await page.evaluate((enabled) => window.localStorage.setItem("manhua_compact_ui", enabled ? "1" : "0"), compact);
   await page.evaluate((enabled) => { (globalThis as any).directorProbe = enabled; }, directorProbe);
   await page.evaluate((enabled) => { (globalThis as any).progressProbe = enabled; }, progressProbe);
   await page.evaluate(storyboardBundle);
@@ -645,7 +645,8 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
    * 断言的是**视觉列序**（CSS order），不是 DOM 顺序 —— 真实页面上用户看到的是左中右。
    */
   it("分镜阶段固定三栏：左镜头清单、中主预览、右当前镜参数；挂载资产退成折叠", async () => {
-    const { page, close } = await mountStoryboard();
+    const { page, close } = await mountStoryboard(false, false, true);
+    await page.setViewport({ width: 1280, height: 900 });
     const seen = await page.evaluate(() => {
       const pick = (name: string) => document.querySelector(`[data-manhua-column="${name}"]`);
       const orderOf = (el: Element | null) =>
@@ -694,6 +695,23 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
     expect(fields.rows.find((r) => r.label === "镜头时长")?.value).toMatch(/秒|未标注/);
     expect(fields.descText).toContain("画面描述");
     expect(fields.descText).toMatch(/\d+\/200/);
+    for (const width of [1280, 3840]) {
+      await page.setViewport({ width, height: 900 });
+      const geometry = await page.$eval('[data-manhua-storyboard-workspace]', (workspace) => ({
+        width: workspace.getBoundingClientRect().width,
+        pageOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      }));
+      expect(geometry.width).toBeGreaterThan(width * 0.9);
+      expect(geometry.pageOverflow).toBeLessThanOrEqual(2);
+      await page.evaluate(() => {
+        window.scrollTo(0, 0);
+        document.querySelectorAll<HTMLElement>("*").forEach((element) => {
+          element.scrollTop = 0;
+          element.scrollLeft = 0;
+        });
+      });
+      await page.screenshot({ path: path.join(assetEvidenceDir, `storyboard-${width}.png`), fullPage: false });
+    }
     await close();
   }, 180_000);
 
