@@ -4958,7 +4958,7 @@ export default function ManhuaScriptWorkbench({
                 {["素材剪辑", "初版生成", "质检审核", "终审成片", "交付导出"].map((label, index) => (
                   <button type="button" key={label} disabled={index >= 2} data-manhua-final-stage-state={finalProgressStates[index] ? "complete" : index === finalCurrentProgressIndex ? "current" : "pending"} onClick={() => index < 2 ? selectPhase("edit") : undefined} className="relative flex flex-1 flex-col items-center gap-1 text-center text-[10px] text-white/45 disabled:cursor-default">
                     {index < 4 ? <span className="absolute left-1/2 top-3 h-px w-full bg-white/15" /> : null}
-                    <span className={`relative z-10 flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-bold ${finalProgressStates[index] ? "border-emerald-400 bg-emerald-500 text-white" : index === finalCurrentProgressIndex ? "border-amber-400 bg-amber-50 text-amber-800" : "border-white/20 bg-white text-white/45"}`}>{finalProgressStates[index] ? "✓" : index + 1}</span>
+                    <span className={`relative z-10 flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-bold ${finalProgressStates[index] ? "border-emerald-400 bg-emerald-500 text-white" : index === finalCurrentProgressIndex ? "border-amber-400 bg-amber-50 text-amber-800" : "border-white/25 bg-slate-950/80 text-white/60"}`}>{finalProgressStates[index] ? "✓" : index + 1}</span>
                     <span>{label}</span>
                   </button>
                 ))}
@@ -5054,7 +5054,7 @@ export default function ManhuaScriptWorkbench({
                 {["素材上传", "初版生成", "质检完成", "待终审", "导出交付"].map((label, index) => (
                   <div key={label} data-manhua-final-timeline-state={finalProgressStates[index] ? "complete" : index === finalCurrentProgressIndex ? "current" : "pending"} className="relative flex flex-1 flex-col items-center gap-1 text-center text-[10px] text-white/45">
                     {index < 4 ? <span className="absolute left-1/2 top-3 h-px w-full bg-white/15" /> : null}
-                    <span className={`relative z-10 flex h-6 w-6 items-center justify-center rounded-full border font-bold ${finalProgressStates[index] ? "border-emerald-500 bg-emerald-500 text-white" : index === finalCurrentProgressIndex ? "border-amber-400 bg-amber-50 text-amber-800" : "border-white/20 bg-white text-white/45"}`}>{finalProgressStates[index] ? "✓" : index + 1}</span>
+                    <span className={`relative z-10 flex h-6 w-6 items-center justify-center rounded-full border font-bold ${finalProgressStates[index] ? "border-emerald-500 bg-emerald-500 text-white" : index === finalCurrentProgressIndex ? "border-amber-400 bg-amber-50 text-amber-800" : "border-white/25 bg-slate-950/80 text-white/60"}`}>{finalProgressStates[index] ? "✓" : index + 1}</span>
                     <span>{label}</span>
                   </div>
                 ))}
@@ -5230,9 +5230,6 @@ export default function ManhuaScriptWorkbench({
                     <p className="mt-2 line-clamp-3 text-xs leading-5 text-white/60">{ep.body?.trim() || "本集尚无剧情正文"}</p>
                   </button>
                 ))}
-                <div data-manhua-add-episode-card className="flex min-h-[132px] items-center justify-center rounded-2xl border border-dashed border-white/15 bg-white/[0.015] px-4 py-3 text-center text-xs text-white/45">
-                  <span><span className="mb-2 block text-2xl font-light">＋</span>新增剧集</span>
-                </div>
               </div>
             ) : null}
             <details className="mt-4 rounded-xl border border-white/10 bg-white/[0.02] p-3" data-manhua-outline-details>
