@@ -20,9 +20,9 @@ beforeAll(async () => {
       import {resolveShotsForEpisodeKeyarts} from './client/src/lib/canvasDramaStudio';
       import {groupShotsIntoSegments} from '@shared/manhuaScriptWorkbench';
       import {buildManhuaAutoSegmentBinding} from '@shared/manhuaAutoSegment';
-      const f=globalThis.fixture={updates:[],focus:[],review:0,calls:[]};
+      const f=globalThis.fixture={updates:[],focus:[],review:0,calls:[],advisor:0};
       f.currentBinding=blocks=>buildManhuaAutoSegmentBinding(1,groupShotsIntoSegments(resolveShotsForEpisodeKeyarts(blocks,1),{videoModel:'seedance-2.5'})[0],'seedance-2.5');
-      function App(){const [canRun,setCanRun]=useState(true);f.setCanRun=setCanRun;const [phase,setPhase]=useState("storyboard");const [ep,setEp]=useState(1);f.setPhase=setPhase;f.episode=ep;const [blocks,setBlocks]=useState([1,2].map(n=>({...defaultCanvasBlock('image',0,0),id:'keyart-e01-s0'+n+'-preview',episodeIndex:1,outputUrl:n===1?'https://test.invalid/shot-1.png':undefined,prompt:'第'+n+'镜，医馆对话'})));f.blocks=blocks;f.setBlocks=setBlocks;return <TooltipProvider><ManhuaScriptWorkbench canRun={canRun} blocks={blocks} videoModel='seedance-2.5' topic='墨屠守护阿菁' episodeCount={13} focusEpisode={ep} onFocusEpisode={setEp} outlineEpisodes={Array.from({length:13},(_,i)=>({index:i+1,title:'集卡'+(i+1),body:'原文剧情'+(i+1),endHook:'片尾悬念'+(i+1)}))} characterIds={[]} propIds={[]} outlineConfirmed={true} workflowPhase={phase} onWorkflowPhaseChange={setPhase} onGenerateAllEpisodeKeyarts={()=>f.calls.push("generate-keyarts")} compactUi={true} previewCanvas={<div data-test-canvas>原节点画布</div>} finalVideoUrl='https://test.invalid/old-final.mp4' onFocusBlock={id=>f.focus.push(id)} onReviewClipPromptsOnCanvas={()=>f.review++} onUpdateClipAudioStudio={(id,studio)=>{f.updates.push(id);setBlocks(rows=>rows.map(b=>b.id===id?{...b,audioStudio:studio}:b));}} /></TooltipProvider>;}
+      function App(){const [canRun,setCanRun]=useState(true);f.setCanRun=setCanRun;const [phase,setPhase]=useState("storyboard");const [ep,setEp]=useState(1);f.setPhase=setPhase;f.episode=ep;const [blocks,setBlocks]=useState([1,2].map(n=>({...defaultCanvasBlock('image',0,0),id:'keyart-e01-s0'+n+'-preview',episodeIndex:1,outputUrl:n===1?'https://test.invalid/shot-1.png':undefined,prompt:'第'+n+'镜，医馆对话'})));f.blocks=blocks;f.setBlocks=setBlocks;return <TooltipProvider><ManhuaScriptWorkbench canRun={canRun} blocks={blocks} videoModel='seedance-2.5' topic='墨屠守护阿菁' episodeCount={13} focusEpisode={ep} onFocusEpisode={setEp} outlineEpisodes={Array.from({length:13},(_,i)=>({index:i+1,title:'集卡'+(i+1),body:'原文剧情'+(i+1),endHook:'片尾悬念'+(i+1)}))} characterIds={[]} propIds={[]} outlineConfirmed={true} workflowPhase={phase} onWorkflowPhaseChange={setPhase} onGenerateAllEpisodeKeyarts={()=>f.calls.push("generate-keyarts")} onOpenAdvisorTemplates={()=>f.advisor++} compactUi={true} previewCanvas={<div data-test-canvas>原节点画布</div>} finalVideoUrl='https://test.invalid/old-final.mp4' onFocusBlock={id=>f.focus.push(id)} onReviewClipPromptsOnCanvas={()=>f.review++} onUpdateClipAudioStudio={(id,studio)=>{f.updates.push(id);setBlocks(rows=>rows.map(b=>b.id===id?{...b,audioStudio:studio}:b));}} /></TooltipProvider>;}
       createRoot(document.getElementById('root')).render(<App/>);
     `,
     },
@@ -109,6 +109,9 @@ it("分镜默认显示当前镜，选镜不打开高级画布且不借旧片旧�
       await page.screenshot({path:path.join(evidenceDir,'outline-1280.png'),fullPage:false});
     }
     expect(await page.$$('[data-manhua-episode-grid]')).toHaveLength(1);
+    expect(await page.$$('[data-manhua-outline-ai-optimize]')).toHaveLength(1);
+    await page.click('[data-manhua-outline-ai-optimize]');
+    expect(await page.evaluate(()=>(window as any).fixture.advisor)).toBe(1);
     await page.waitForSelector('[data-manhua-episode-card="13"]');
     expect(await page.$$('[data-manhua-episode-card]')).toHaveLength(13);
     expect(await page.$eval('[data-manhua-outline-details]',e=>!(e as HTMLDetailsElement).open)).toBe(true);
@@ -140,6 +143,9 @@ it("回看剧本时顶部按钮只进入资产，切页不生成也不改已有�
     await page.waitForFunction(()=>document.querySelector('[data-manhua-ashuo-step-title]')?.textContent === '剧本大纲');
     expect(await page.$$('[data-manhua-outline-surface]')).toHaveLength(1);
     expect(await page.$$('[data-manhua-episode-grid]')).toHaveLength(1);
+    expect(await page.$$('[data-manhua-outline-ai-optimize]')).toHaveLength(1);
+    await page.click('[data-manhua-outline-ai-optimize]');
+    expect(await page.evaluate(()=>(window as any).fixture.advisor)).toBe(1);
     expect(await page.$$('[data-manhua-episode-card]')).toHaveLength(13);
     expect(await page.$eval('[data-manhua-outline-details]',e=>!(e as HTMLDetailsElement).open)).toBe(true);
     expect(await page.$$('[data-manhua-phase-panel="outline"] [data-manhua-action="confirm-outline"], [data-manhua-phase-panel="outline"] [data-manhua-action="goto-assets"], [data-manhua-phase-panel="outline"] [data-manhua-action="open-assets-for-upload"]')).toHaveLength(0);

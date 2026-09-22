@@ -227,7 +227,7 @@ export default function ManhuaEditMultitrackPanel({
   const [burnConfirmedKey, setBurnConfirmedKey] = useState<string | null>(null);
   const burnArmed = burnConfirmedKey === burnConsentKey;
   const [videoEditInstruction, setVideoEditInstruction] = useState("");
-  const [activeDrawer, setActiveDrawer] = useState<string | null>("cut");
+  const [activeDrawer, setActiveDrawer] = useState<string | null>(null);
   const submitBurn = () => {
     if (!onBurnSubtitle || burnSubtitleBusy) return;
     try {
@@ -336,31 +336,71 @@ export default function ManhuaEditMultitrackPanel({
         ))}
       </div>
 
-      <div data-manhua-edit-timeline-scroll className="min-w-0 shrink-0 overflow-x-auto rounded-lg border border-white/10 bg-black/35 p-3">
-        <div className="space-y-3" style={{ minWidth: Math.max(640, roughClips.length * 110) }}>
-        {tracks.map((t) => (
-          <TrackRow
-            key={t.kind}
-            track={t}
-            activeShotIndex={activeShotIndex}
-            onSelectShot={onSelectShot}
-          />
-        ))}
-        <div className="relative mt-1 h-3 border-t border-dashed border-white/15">
-          <div
-            className="absolute top-0 bottom-0 w-px bg-rose-400/80"
-            style={{ left: "0%" }}
-            title="播放头"
-          />
-          <div className="absolute inset-x-0 top-0.5 flex justify-between px-0.5 text-sm text-white/30">
-            <span>0s</span>
-            <span>{Math.round(totalSec / 2)}s</span>
-            <span>{totalSec}s</span>
+      <div data-manhua-edit-clip-strip className="flex min-w-0 shrink-0 gap-3 overflow-x-auto pb-2">
+        {roughClips.map((clip, index) => {
+          const media = shotMedia.find((row) => row.shotIndex === clip.shotIndex);
+          const on = clip.shotIndex === activeShotIndex;
+          return (
+            <button
+              key={`clip-card-${clip.shotIndex}`}
+              type="button"
+              data-manhua-edit-clip-card={clip.shotIndex}
+              data-manhua-edit-clip-active={on ? "true" : "false"}
+              onClick={() => onSelectShot?.(clip.shotIndex)}
+              className={`group min-w-[220px] max-w-[260px] flex-1 overflow-hidden rounded-2xl border text-left transition ${
+                on
+                  ? "border-violet-400/60 bg-violet-500/10 shadow-lg"
+                  : "border-white/12 bg-white/[0.03] hover:border-white/25"
+              }`}
+            >
+              <div className="relative aspect-[16/8] overflow-hidden bg-black/45">
+                {media?.outputUrl ? (
+                  <video
+                    src={media.outputUrl}
+                    muted
+                    preload="metadata"
+                    className="h-full w-full object-cover transition group-hover:scale-[1.02]"
+                  />
+                ) : (
+                  <div className="flex h-full items-center justify-center text-sm text-white/35">待生成片段</div>
+                )}
+                <span className="absolute left-2 top-2 rounded-full bg-black/60 px-2 py-1 text-xs font-semibold text-white">
+                  {index + 1}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3 px-3 py-2.5">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-white/90">片段 {String(index + 1).padStart(2, "0")}</div>
+                  <div className="mt-0.5 text-xs text-white/45">镜 {clip.shotIndex} · {clip.durationSec}s</div>
+                </div>
+                <span className={`h-2.5 w-2.5 rounded-full ${clipIndexes.has(clip.shotIndex) ? "bg-emerald-400" : "bg-white/20"}`} />
+              </div>
+            </button>
+          );
+        })}
+        {!roughClips.length ? (
+          <div className="flex min-h-36 min-w-full items-center justify-center rounded-2xl border border-dashed border-white/15 text-sm text-white/40">
+            尚无片段，请先完成分镜成片
           </div>
-        </div>
+        ) : null}
       </div>
 
-      </div>
+      <details data-manhua-edit-full-tracks className="shrink-0 rounded-xl border border-white/12 bg-white/[0.025]">
+        <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-white/70">展开完整轨道 · {tracks.length} 轨 / {roughClips.length} 镜</summary>
+        <div data-manhua-edit-timeline-scroll className="min-w-0 overflow-x-auto border-t border-white/10 p-3">
+          <div className="space-y-3" style={{ minWidth: Math.max(640, roughClips.length * 110) }}>
+            {tracks.map((t) => (
+              <TrackRow key={t.kind} track={t} activeShotIndex={activeShotIndex} onSelectShot={onSelectShot} />
+            ))}
+            <div className="relative mt-1 h-3 border-t border-dashed border-white/15">
+              <div className="absolute inset-y-0 left-0 w-px bg-rose-400/80" title="播放头" />
+              <div className="absolute inset-x-0 top-0.5 flex justify-between px-0.5 text-sm text-white/30">
+                <span>0s</span><span>{Math.round(totalSec / 2)}s</span><span>{totalSec}s</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </details>
 
       <div id="manhua-edit-drawer-cut" data-manhua-edit-drawer="cut" hidden={activeDrawer !== "cut"} className="shrink-0 rounded-xl border border-white/15 bg-black/25 p-3">
         <h3 className="text-sm font-semibold text-white/90">剪辑工具</h3>

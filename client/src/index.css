@@ -989,7 +989,7 @@
 
 #manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="assets"]
   :is([data-manhua-custom-refs-role], [data-manhua-asset-entity]) {
-  background: var(--mh-panel) !important;
+  background-color: var(--mh-panel) !important;
   border-color: var(--mh-line) !important;
   color: var(--mh-ink) !important;
 }
@@ -1029,6 +1029,249 @@
 #manhua-workbench-shell.mh-redesign [data-manhua-edit-drawer] {
   border-color: var(--mh-line) !important;
   background: #f8f4ed !important;
+}
+
+/* 0922 目标图级骨架：每一阶段是一块聚焦工作台，而不是旧长页的浅色换肤。 */
+#manhua-workbench-shell.mh-redesign [data-manhua-project-identity] {
+  min-height: 40px;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-workflow-rail] {
+  min-height: 44px;
+  padding-block: 7px !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-phase] > span:first-child {
+  width: 22px;
+  height: 22px;
+  border: 1px solid #c9c1b5;
+  background: #fffdf8 !important;
+  color: #7c8490 !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-phase][data-manhua-phase-status="complete"] > span:first-child,
+#manhua-workbench-shell.mh-redesign [data-manhua-phase][data-manhua-phase-status="current"] > span:first-child {
+  border-color: #15927a;
+  background: #15927a !important;
+  color: #fff !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-step-bar-phase="outline"],
+#manhua-workbench-shell.mh-redesign [data-manhua-step-bar-phase="assets"],
+#manhua-workbench-shell.mh-redesign [data-manhua-step-bar-phase="storyboard"] {
+  min-height: 42px;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-outline-surface] {
+  width: min(100%, 1120px) !important;
+  max-width: 1120px !important;
+  padding: 24px !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-episode-grid] {
+  display: grid !important;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(240px, 280px);
+  grid-template-columns: none !important;
+  justify-content: start;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-episode-card],
+#manhua-workbench-shell.mh-redesign [data-manhua-add-episode-card] {
+  min-height: 142px;
+  border-radius: 16px !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-outline-details] {
+  margin-top: 18px !important;
+  border-color: var(--mh-line) !important;
+  background: #fbf8f1 !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-series-summary-card] {
+  padding-right: 190px !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-outline-ai-optimize] {
+  position: absolute;
+  right: 20px;
+  top: 20px;
+  min-height: 40px;
+  border-color: #80d5c8 !important;
+  background: #e4f7f1 !important;
+  color: #087866 !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-footer-action] {
+  position: static;
+  margin-inline: -4px;
+  padding: 14px 4px 2px;
+  background: linear-gradient(to bottom, rgb(255 253 248 / 0%), var(--mh-panel) 38%);
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="assets"] [data-manhua-assets-surface] {
+  width: min(100%, 1240px) !important;
+  max-width: 1240px !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-asset-entity-grid] {
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  gap: 14px !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-asset-entity] {
+  min-height: 290px;
+  border-radius: 18px !important;
+  box-shadow: 0 8px 24px rgb(57 45 31 / 7%);
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-storyboard-workspace] {
+  grid-template-columns: minmax(210px, 260px) minmax(360px, 1fr) minmax(260px, 320px) !important;
+  width: min(100%, 1240px);
+  max-width: 1240px;
+  margin-inline: auto;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-column="preview"] [data-manhua-media-frame] {
+  max-width: 360px;
+  margin-inline: auto;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="edit"] [data-manhua-panel="edit-multitrack"] {
+  width: min(100%, 1240px) !important;
+  max-width: 1240px !important;
+  overflow: auto;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-edit-clip-strip] {
+  scrollbar-width: thin;
+  scrollbar-color: #c9c1b5 transparent;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-edit-clip-card] {
+  min-width: 230px;
+  border-color: var(--mh-line) !important;
+  background: #fbf8f1 !important;
+  color: var(--mh-ink) !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-edit-clip-card][data-manhua-edit-clip-active="true"] {
+  border-color: #8a73ff !important;
+  background: var(--mh-purple-soft) !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-edit-full-tracks] {
+  border-color: var(--mh-line) !important;
+  background: #f8f4ed !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-final-dashboard] {
+  width: min(100%, 1240px) !important;
+  max-width: 1240px !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-final-project-header] {
+  background: var(--mh-panel) !important;
+  border-color: var(--mh-line) !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="final"] {
+  padding: 14px 18px 18px !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-final-dashboard] {
+  gap: 14px !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-final-dashboard] > section[data-manhua-final-project-header] {
+  min-height: 104px;
+  padding: 16px 20px !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-final-dashboard] > section[data-manhua-final-issues] {
+  min-height: 0;
+  padding: 16px 20px !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-final-dashboard] > section[data-manhua-final-section] {
+  min-height: 270px;
+  padding: 16px !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-final-issues] [data-manhua-review-issue] {
+  min-height: 42px !important;
+  padding: 8px 12px !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-final-checklist] {
+  border: 0 !important;
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-final-checklist] > div:first-child {
+  display: none;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-final-checklist] ul {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 0 !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-final-checklist] li {
+  min-height: 0 !important;
+  padding: 7px 9px !important;
+  line-height: 1.25 !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-final-checklist] li span:last-child {
+  display: none !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-final-section="delivery"] [data-manhua-delivery-gaps] {
+  display: none !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-final-section="delivery"] > div > div,
+#manhua-workbench-shell.mh-redesign [data-manhua-final-section="delivery"] [data-manhua-delivery-group] {
+  border: 0 !important;
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-final-section="delivery"] details {
+  display: none !important;
+}
+
+/* 终审自带项目身份和五步交付线，移除工作台通用栏的重复占位。 */
+#manhua-workbench-shell.mh-redesign[data-manhua-active-phase="final"] > :is(
+  [data-manhua-product-header],
+  [data-manhua-draft-retention-hint],
+  [data-manhua-workflow-rail],
+  [data-manhua-ashuo-step-bar]
+) {
+  display: none !important;
+}
+
+@media (max-width: 1050px) {
+  #manhua-workbench-shell.mh-redesign [data-manhua-asset-entity-grid] {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
+@media (max-width: 640px) {
+  #manhua-workbench-shell.mh-redesign [data-manhua-series-summary-card] {
+    padding-right: 20px !important;
+  }
+  #manhua-workbench-shell.mh-redesign [data-manhua-outline-ai-optimize] {
+    position: static;
+    margin-top: 14px;
+  }
 }
 
 @media (max-width: 900px) {

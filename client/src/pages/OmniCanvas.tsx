@@ -1394,6 +1394,7 @@ export default function OmniCanvas() {
   );
   /** 创作顾问面板开合：会话内不持久化——顾问是随手问，不是常驻工序 */
   const [advisorOpen, setAdvisorOpen] = useState(false);
+  const [advisorFocusSection, setAdvisorFocusSection] = useState<"templates" | null>(null);
   const [advisorSelection, setAdvisorSelection] = useState<AdvisorSelection | null>(null);
   /** 工作台上报的缺口／关键帧／3D 状态；工作台未挂载时为 null，顾问按未知处理 */
   const [advisorSignals, setAdvisorSignals] = useState<ManhuaWorkbenchAdvisorSignals | null>(null);
@@ -10177,6 +10178,11 @@ export default function OmniCanvas() {
                       ? advisorProject.issues.find((i) => i.id === issueId) || advisorTopIssue
                       : advisorTopIssue;
                     if (picked) locateAdvisorIssue(picked);
+                    setAdvisorFocusSection(null);
+                    setAdvisorOpen(true);
+                  }}
+                  onOpenAdvisorTemplates={() => {
+                    setAdvisorFocusSection("templates");
                     setAdvisorOpen(true);
                   }}
                   blocks={blocks}
@@ -13192,7 +13198,7 @@ export default function OmniCanvas() {
         <div className="fixed top-[4.5rem] right-4 z-[59] flex flex-col items-end gap-2">
           <button
             type="button"
-            onClick={() => { setAdvisorOpen(true); setAdvisorNudge(null); }}
+            onClick={() => { setAdvisorFocusSection(null); setAdvisorOpen(true); setAdvisorNudge(null); }}
             aria-expanded={advisorOpen}
             data-manhua-advisor-open
             className="relative rounded-full border border-cyan-300/40 bg-[#10171f]/95 px-4 py-2.5 text-[12px] font-bold text-cyan-100 shadow-xl backdrop-blur transition hover:bg-cyan-500/20"
@@ -13219,6 +13225,7 @@ export default function OmniCanvas() {
                 className="min-w-0 flex-1 text-left hover:underline"
                 onClick={() => {
                   if (advisorTopIssue) locateAdvisorIssue(advisorTopIssue);
+                  setAdvisorFocusSection(null);
                   setAdvisorOpen(true);
                   setAdvisorNudge(null);
                 }}
@@ -13235,6 +13242,7 @@ export default function OmniCanvas() {
         userId={user?.id != null ? String(user.id) : undefined}
         confirmedProjectVersion={projectBible?.confirmedAt}
         project={advisorProject}
+        focusSection={advisorFocusSection}
         onApplyRewrite={(input) => {
           let plan: ReturnType<typeof prepareAdvisorRewriteAdoption>;
           try {
@@ -13260,15 +13268,17 @@ export default function OmniCanvas() {
           setWorkflowPhase("outline");
           setWriterFocusEpisode(candidate.episodeIndex);
           setWriterConfirmBlockers([]);
+          setAdvisorFocusSection(null);
           setAdvisorOpen(false);
           return true;
         }}
         onLocate={(issue) => {
+          setAdvisorFocusSection(null);
           setAdvisorOpen(false);
           locateAdvisorIssue(issue);
         }}
         open={canvasMode === "manhua" && advisorOpen}
-        onClose={() => setAdvisorOpen(false)}
+        onClose={() => { setAdvisorOpen(false); setAdvisorFocusSection(null); }}
         stageZh={MANHUA_ADVISOR_STAGE_LABELS[workflowPhase]}
         selectedTemplate={selectedViralTemplate}
         templates={approvedViralTemplateCards}
@@ -13278,6 +13288,7 @@ export default function OmniCanvas() {
           setPublicTemplateId(tpl.publicId);
           // 查看试写入口只改变候选模板与视图，不撤销当前剧本确认或重铺资产。
           // 正式稿变更仍须在试写对照里显式“套用到全集”，走 expandWriterRoom。
+          setAdvisorFocusSection(null);
           setAdvisorOpen(false);
           setManhuaUiMode("workbench");
           // 审查 P1：装着试写按钮的 factory 区在沉浸态下只在 topic 视图可见，
