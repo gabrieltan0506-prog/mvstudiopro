@@ -1086,8 +1086,7 @@
   padding-bottom: 4px;
 }
 
-#manhua-workbench-shell.mh-redesign [data-manhua-episode-card],
-#manhua-workbench-shell.mh-redesign [data-manhua-add-episode-card] {
+#manhua-workbench-shell.mh-redesign [data-manhua-episode-card] {
   min-height: 142px;
   border-radius: 16px !important;
 }

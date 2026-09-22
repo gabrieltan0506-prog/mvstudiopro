@@ -86,6 +86,16 @@ describe("成片阶段接线契约", () => {
     expect(SRC.slice(tablistAt, tablistEnd)).not.toContain("经典表单");
   });
 
+  it("大纲页不展示没有处理器的新增剧集假入口", () => {
+    expect(WORKBENCH_SRC).not.toContain("data-manhua-add-episode-card");
+    expect(WORKBENCH_SRC).not.toContain("＋</span>新增剧集");
+  });
+
+  it("终审待办步骤使用深色底，避免白底白字", () => {
+    expect(WORKBENCH_SRC.match(/bg-slate-950\/80 text-white\/60/g)).toHaveLength(2);
+    expect(WORKBENCH_SRC).not.toContain("bg-white text-white/45");
+  });
+
   it("沉浸工作区必须把工作台、编剧室、成片坞做成互斥页签", () => {
     expect(SRC).toContain('role="tablist"');
     expect(SRC).toContain('immersiveWorkspaceView === "topic"');
