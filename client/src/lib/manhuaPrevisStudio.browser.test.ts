@@ -302,6 +302,27 @@ it("编辑真实角色和动作后提交当前配置，候选不自动采用，�
   }
 });
 
+it("四足角色可直接添加覆盖整段的左前腿跛行动作", async () => {
+  const page = await open();
+  try {
+    await page.select('[aria-label="角色1形体"]', "horse");
+    await page.evaluate(() => {
+      const button = Array.from(document.querySelectorAll("button")).find(
+        node => node.textContent?.trim() === "添加动作"
+      ) as HTMLButtonElement | undefined;
+      button?.click();
+    });
+    await settle(page);
+    expect(
+      await page.evaluate(
+        () => (window as any).fixture.block.previsStudio.spec.actors[0].actions
+      )
+    ).toEqual([{ kind: "limp_front_left", startSec: 0, endSec: 10 }]);
+  } finally {
+    await page.close();
+  }
+});
+
 it("编辑中清空名称可以保存草稿，但无效配置不能提交渲染", async () => {
   const page = await open();
   try {

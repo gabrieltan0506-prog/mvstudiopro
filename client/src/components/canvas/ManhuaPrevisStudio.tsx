@@ -1387,7 +1387,6 @@ export function ManhuaPrevisStudioView({
             disabled={
               disabled ||
               Boolean(pendingId) ||
-              actor.shape !== "human" ||
               actor.actions.length >= 12
             }
             onClick={() =>
@@ -1395,7 +1394,7 @@ export function ManhuaPrevisStudioView({
                 actions: [
                   ...actor.actions,
                   {
-                    kind: "guard",
+                    kind: actor.shape === "horse" ? "limp_front_left" : "guard",
                     startSec: actor.actions.at(-1)?.endSec ?? 0,
                     endSec: studio.spec.durationSec,
                   },
