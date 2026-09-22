@@ -597,3 +597,355 @@
 .mh-compact .mh-hint {
   display: none !important;
 }
+
+/*
+ * 漫剧工厂 2026-09 改版外壳。
+ * 目标不是给旧深色长页换颜色，而是把正式流程收成清晰的项目抬头、
+ * 五阶段导航和一块当前工作台。内部专业控件仍按原状态保留在折叠区。
+ */
+#manhua-workbench-shell.mh-redesign {
+  --mh-page: #f3efe7;
+  --mh-panel: #fffdf8;
+  --mh-ink: #243248;
+  --mh-muted: #687386;
+  --mh-line: #ddd6ca;
+  --mh-purple: #6d4aff;
+  --mh-purple-soft: #eeeaff;
+  --mh-green: #13866f;
+  color-scheme: light;
+  background: var(--mh-page) !important;
+  color: var(--mh-ink) !important;
+  border: 1px solid #d8d0c3 !important;
+  border-radius: 24px !important;
+  box-shadow: 0 18px 60px rgb(58 45 30 / 14%) !important;
+}
+
+#manhua-workbench-shell.mh-redesign > :first-child {
+  position: relative;
+  z-index: 30;
+  min-height: 72px;
+  padding: 14px 22px !important;
+  background: rgb(255 253 248 / 96%);
+  border-bottom: 1px solid var(--mh-line) !important;
+}
+
+#manhua-workbench-shell.mh-redesign > :first-child [data-manhua-toolbar-cluster] {
+  position: relative;
+  z-index: 70;
+  margin-inline: auto;
+  max-width: none;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-project-settings] {
+  color: var(--mh-muted);
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-workflow-rail] {
+  gap: 10px !important;
+  padding: 14px 22px !important;
+  background: #faf7f0 !important;
+  border-bottom: 1px solid var(--mh-line) !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-phase] {
+  min-height: 70px;
+  border: 1px solid var(--mh-line) !important;
+  border-radius: 16px !important;
+  background: var(--mh-panel) !important;
+  color: var(--mh-muted) !important;
+  box-shadow: none !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-phase][data-manhua-phase-status="current"] {
+  border-color: #8a73ff !important;
+  background: var(--mh-purple-soft) !important;
+  color: #4f35ca !important;
+  box-shadow: 0 8px 20px rgb(109 74 255 / 13%) !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-ashuo-step-bar] {
+  min-height: 76px;
+  padding: 12px 22px !important;
+  background: var(--mh-panel) !important;
+  border-bottom: 1px solid var(--mh-line) !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-ashuo-step-bar] button[data-manhua-action="ashuo-step-generate"] {
+  min-width: 210px;
+  min-height: 46px;
+  border: 0 !important;
+  border-radius: 14px !important;
+  background: var(--mh-purple) !important;
+  color: white !important;
+  box-shadow: 0 10px 24px rgb(109 74 255 / 24%) !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel] {
+  padding: 24px !important;
+  background: var(--mh-page) !important;
+  color: var(--mh-ink) !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel] > :first-child {
+  width: 100%;
+  max-width: 1180px !important;
+  margin-inline: auto;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-outline-surface],
+#manhua-workbench-shell.mh-redesign [data-manhua-final-dashboard] > section,
+#manhua-workbench-shell.mh-redesign [data-manhua-blocker-card],
+#manhua-workbench-shell.mh-redesign [data-manhua-quick-asset-upload],
+#manhua-workbench-shell.mh-redesign [data-manhua-episode-sheets] {
+  background: var(--mh-panel) !important;
+  border-color: var(--mh-line) !important;
+  color: var(--mh-ink) !important;
+  box-shadow: 0 10px 30px rgb(66 52 35 / 8%) !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-outline-surface] {
+  padding: 24px;
+  border: 1px solid var(--mh-line);
+  border-radius: 22px;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-episode-card] {
+  min-height: 148px;
+  border-color: var(--mh-line) !important;
+  background: #fbf8f1 !important;
+  color: var(--mh-ink) !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-episode-card][aria-pressed="true"] {
+  border-color: #8a73ff !important;
+  background: var(--mh-purple-soft) !important;
+  box-shadow: 0 10px 24px rgb(109 74 255 / 12%) !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-quick-asset-upload] {
+  top: 0;
+  padding: 12px 14px !important;
+  border-radius: 18px !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-asset-tab] {
+  min-height: 38px;
+  padding-inline: 16px !important;
+  border-radius: 12px !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-asset-tab][aria-selected="true"] {
+  background: var(--mh-purple-soft) !important;
+  color: #4f35ca !important;
+  box-shadow: inset 0 0 0 1px #9a87ff !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-action="add-asset"] {
+  min-height: 38px;
+  border: 0 !important;
+  border-radius: 12px !important;
+  background: var(--mh-green) !important;
+  color: white !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-final-dashboard] {
+  gap: 16px !important;
+  max-width: 1180px;
+  margin-inline: auto;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-final-issues] {
+  background: #fff4ee !important;
+  border-color: #edb79f !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-final-dashboard] > section {
+  min-height: 220px;
+  padding: 20px !important;
+  border-radius: 20px !important;
+}
+
+#manhua-workbench-shell.mh-redesign :is(
+  [class~="text-white"],
+  [class*="text-white/"],
+  [class*="text-slate-"],
+  [class*="text-gray-"],
+  [class*="text-zinc-"]
+) {
+  color: var(--mh-ink);
+}
+
+#manhua-workbench-shell.mh-redesign [class*="text-cyan-"] { color: #096b76; }
+#manhua-workbench-shell.mh-redesign [class*="text-sky-"] { color: #246282; }
+#manhua-workbench-shell.mh-redesign [class*="text-violet-"] { color: #5737bd; }
+#manhua-workbench-shell.mh-redesign [class*="text-purple-"] { color: #5737bd; }
+#manhua-workbench-shell.mh-redesign [class*="text-emerald-"] { color: #0c6f59; }
+#manhua-workbench-shell.mh-redesign [class*="text-amber-"] { color: #76501b; }
+#manhua-workbench-shell.mh-redesign [class*="text-yellow-"] { color: #76501b; }
+#manhua-workbench-shell.mh-redesign [class*="text-rose-"] { color: #992d3e; }
+#manhua-workbench-shell.mh-redesign [class*="text-red-"] { color: #992d3e; }
+
+#manhua-workbench-shell.mh-redesign :is([class*="border-white"], [class*="divide-white"]) {
+  border-color: var(--mh-line);
+}
+
+#manhua-workbench-shell.mh-redesign :is([class*="bg-[#0"], [class*="bg-[#1"], [class*="bg-white/"]) {
+  background-color: var(--mh-panel);
+}
+
+#manhua-workbench-shell.mh-redesign :is(input, textarea, select) {
+  background: #fbf8f1 !important;
+  color: var(--mh-ink) !important;
+  border-color: #cfc6b8 !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] {
+  background: #ebe6dd !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] > :first-child {
+  border: 1px solid var(--mh-line);
+  border-radius: 22px;
+  background: var(--mh-panel);
+  box-shadow: 0 14px 40px rgb(57 45 31 / 10%);
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-shot-params] {
+  margin: 0 !important;
+  padding: 16px !important;
+  border-color: var(--mh-line) !important;
+  border-radius: 18px !important;
+  background: var(--mh-panel) !important;
+  color: var(--mh-ink) !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-shot-params] [data-manhua-shot-field] {
+  padding-bottom: 10px;
+  border-bottom: 1px solid #ebe4da;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-shot-description] p {
+  background: #f1ece4 !important;
+  color: var(--mh-ink) !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-final-issues],
+#manhua-workbench-shell.mh-redesign [data-manhua-final-issues] * {
+  color: #843827 !important;
+}
+
+#manhua-workbench-shell.mh-redesign button[data-manhua-action="ashuo-step-generate"],
+#manhua-workbench-shell.mh-redesign [data-manhua-edit-generate-current] {
+  color: white !important;
+}
+
+/* 顶部只承担项目身份和当前动作；低频工具继续留在「更多操作」。 */
+#manhua-workbench-shell.mh-redesign [data-manhua-toolbar-cluster] > :is(
+  [data-manhua-action="open-3d-model-studio"],
+  [data-manhua-action="open-world-studio"],
+  [data-manhua-action="open-previs-studio"],
+  [data-manhua-action="open-action-timeline"],
+  [data-manhua-action="open-audio-studio"]
+) {
+  display: none !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-action="open-more-tools"] {
+  min-height: 38px;
+  border-radius: 12px !important;
+  border-color: #cfc6b8 !important;
+  background: #fbf8f1 !important;
+  color: var(--mh-ink) !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-blocker-card] {
+  margin: 12px 22px 0;
+  border: 1px solid #efb5a9 !important;
+  border-radius: 16px;
+  background: #fff2ee !important;
+  color: #8f2d2d !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-blocker-card] * {
+  color: #8f2d2d !important;
+}
+
+#manhua-workbench-shell.mh-redesign :is(
+  [data-manhua-canon-drift-banner],
+  [data-manhua-asset-stale-banner],
+  [data-manhua-cast-mismatch],
+  [data-manhua-no-face-lock]
+) {
+  color: #7d382d !important;
+  background: #fff5e8 !important;
+  border-color: #e4c69d !important;
+}
+
+#manhua-workbench-shell.mh-redesign :is(
+  [data-manhua-canon-drift-banner],
+  [data-manhua-asset-stale-banner],
+  [data-manhua-cast-mismatch],
+  [data-manhua-no-face-lock]
+) * {
+  color: #7d382d !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-episode-sheets] {
+  color: var(--mh-ink) !important;
+  background: var(--mh-panel) !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-episode-sheets] * {
+  color: var(--mh-ink);
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="assets"]
+  :is([data-manhua-custom-refs-role], [data-manhua-asset-entity]) {
+  background: var(--mh-panel) !important;
+  border-color: var(--mh-line) !important;
+  color: var(--mh-ink) !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="edit"]
+  [data-manhua-panel="edit-multitrack"] {
+  max-width: 1180px;
+  width: calc(100% - 48px);
+  margin: 20px auto;
+  padding: 22px !important;
+  border: 1px solid var(--mh-line);
+  border-radius: 22px;
+  background: var(--mh-panel);
+  box-shadow: 0 14px 40px rgb(57 45 31 / 9%);
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-edit-drawer-toggle] {
+  border-color: var(--mh-line) !important;
+  border-radius: 14px !important;
+  background: #f8f4ed !important;
+  color: var(--mh-ink) !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-edit-drawer-toggle][aria-expanded="true"] {
+  border-color: #8a73ff !important;
+  background: var(--mh-purple-soft) !important;
+  color: #4f35ca !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-edit-timeline-scroll],
+#manhua-workbench-shell.mh-redesign [data-manhua-edit-drawer] {
+  border-color: var(--mh-line) !important;
+  background: #f8f4ed !important;
+}
+
+@media (max-width: 900px) {
+  #manhua-workbench-shell.mh-redesign [data-manhua-workflow-rail] {
+    gap: 6px !important;
+    padding: 10px !important;
+  }
+  #manhua-workbench-shell.mh-redesign [data-manhua-phase] {
+    min-width: 148px;
+  }
+  #manhua-workbench-shell.mh-redesign [data-manhua-phase-panel] {
+    padding: 12px !important;
+  }
+}
