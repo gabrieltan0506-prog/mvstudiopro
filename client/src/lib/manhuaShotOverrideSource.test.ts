@@ -16,6 +16,8 @@ import {
 import { parseManhuaEpisodeSegmentPlanFromMarkdown } from "@shared/manhuaEpisodeSegmentPlan";
 import {
   upsertShotDialogueSection,
+  patchShotDialogueSection,
+  parseShotDialogueTable,
   MANHUA_DIALOGUE_SILENCE_TOKEN,
 } from "@shared/manhuaShotDialoguePersist";
 import { parseShotDescriptionTable, patchShotDescriptionSection } from "@shared/manhuaShotDescriptionPersist";
@@ -111,7 +113,12 @@ describe("对白覆盖不能抢占真实分镜", () => {
 
   it("真实工作台回调将当前镜描述同时写入剧本包和三种节点，不触碰别集", () => {
     let pack = { episodes: [{ index: 1, body: "第一集正文" }, { index: 2, body: "第二集正文" }] };
-    let nodes = [block("story-e01", "故事"), reverse, beats, block("beats-e02", "第二集节拍")];
+    let nodes = [
+      block("story-e01", "故事"), reverse, beats,
+      { ...block("story-e01-empty", ""), prompt: "只是一段待生成提示词", status: "error" as const },
+      { ...block("reverse-e01-error", "失败前已有正文"), status: "error" as const },
+      block("beats-e02", "第二集节拍"),
+    ];
     const save = handler("onUpsertShotDescriptions", {
       writerFocusEpisode: 1,
       setWriterPack: (updater: (value: typeof pack) => typeof pack) => { pack = updater(pack); },
@@ -126,7 +133,33 @@ describe("对白覆盖不能抢占真实分镜", () => {
     expect(pack.episodes[1]!.body).toBe("第二集正文");
     expect(nodes.slice(0, 3).map(node => parseShotDescriptionTable(node.outputText || "")[1]))
       .toEqual(Array(3).fill("阿菁背娘走向医馆，墨屠守在侧后方"));
-    expect(nodes[3]!.outputText).toBe("第二集节拍");
+    expect(nodes[3]).toMatchObject({ outputText: "", status: "error" });
+    expect(parseShotDescriptionTable(nodes[4]!.outputText || "")[1]).toBe("阿菁背娘走向医馆，墨屠守在侧后方");
+    expect(nodes[4]!.status).toBe("error");
+    expect(nodes[5]!.outputText).toBe("第二集节拍");
+  });
+  it("台词与描述直改不把无正文或失败节点伪装成已生成", () => {
+    let pack = { episodes: [{ index: 1, body: "第一集正文" }] };
+    let nodes = [
+      block("story-e01", "真实正文"),
+      { ...block("reverse-e01", ""), prompt: "未生成的提示词", status: "error" as const },
+      { ...block("beats-e01", "失败前已有正文"), status: "error" as const },
+    ];
+    const saveDialogue = handler("onUpsertShotDialogues", {
+      writerFocusEpisode: 1,
+      setWriterPack: (updater: (value: typeof pack) => typeof pack) => { pack = updater(pack); },
+      handleBlocksChange: (updater: (value: typeof nodes) => typeof nodes) => { nodes = updater(nodes); },
+      patchShotDialogueSection,
+      getBlockEpisodeIndex: (node: CanvasBlock) => Number(node.id.match(/e(\d\d)/)?.[1] || 1),
+      stageKeyFromBlockId: (id: string) => id.split("-")[0],
+    });
+    const approvedLine = "娘：阿菁，(咳嗽聲加喘氣聲) 還有多久到醫館呀？";
+    saveDialogue({ 1: approvedLine }, 1);
+    expect(parseShotDialogueTable(pack.episodes[0]!.body)[1]).toBe(approvedLine);
+    expect(parseShotDialogueTable(nodes[0]!.outputText || "")[1]).toBe(approvedLine);
+    expect(nodes[1]).toMatchObject({ outputText: "", status: "error" });
+    expect(parseShotDialogueTable(nodes[2]!.outputText || "")[1]).toBe(approvedLine);
+    expect(nodes[2]!.status).toBe("error");
   });
   it("反推三镜动作和5/5/5秒不变，最新对白及静音同时消费", () => {
     const shots = studio.resolveShotsForEpisodeKeyarts(sourceBlocks(), 1);

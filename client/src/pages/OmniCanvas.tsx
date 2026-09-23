@@ -10595,11 +10595,12 @@ export default function OmniCanvas() {
                         ) {
                           return b;
                         }
-                        const base = b.outputText || b.prompt || "";
+                        const base = String(b.outputText || "");
+                        // 台词编辑也不能把仅有提示词的失败/未生成节点标成已完成。
+                        if (!base.trim()) return b;
                         return {
                           ...b,
                           outputText: patchShotDialogueSection(base, dialogues),
-                          status: "done" as const,
                         };
                       }),
                     );
@@ -10616,10 +10617,12 @@ export default function OmniCanvas() {
                       if ((getBlockEpisodeIndex(block) ?? 1) !== ep) return block;
                       const stage = stageKeyFromBlockId(block.id);
                       if (stage !== "story" && stage !== "reverse" && stage !== "beats") return block;
+                      // 没有真实正文的节点不能靠一次描述编辑伪装成已生成；失败态也不在此处改写。
+                      const sourceText = String(block.outputText || "");
+                      if (!sourceText.trim()) return block;
                       return {
                         ...block,
-                        outputText: patchShotDescriptionSection(block.outputText || block.prompt || "", descriptions),
-                        status: "done" as const,
+                        outputText: patchShotDescriptionSection(sourceText, descriptions),
                       };
                     }));
                     toast.success("本镜描述已存本机，旧图保留；云端备份请用顶部入口。");
