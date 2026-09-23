@@ -3613,6 +3613,10 @@ async function processPlatformJob(
             distillPercent: Math.round(((p.fileIndex || 0) * 40 + within) / fileTotal),
           });
         },
+        // 0923 用户令：EPUB 转好的 PDF 一出来就写进进度，前端立刻出下载按钮（后面提炼失败也能下）
+        onConvertedPdf: async (all) => {
+          await patchProgress({ epubPdfs: all });
+        },
         onProgress: async (p) => {
           const frac = p.totalChunks > 0 ? Math.min(1, p.doneChunks / p.totalChunks) : 0;
           await patchProgress({
@@ -3646,6 +3650,7 @@ async function processPlatformJob(
         pageCount: plan.pageCount,
         credits: plan.credits,
         pages: plan.pages,
+        epubPdfs: prepared.convertedPdfs,
       };
       return await finishKnowledgeCardProduction(platformJobId!, Number(jobUserId), {
         version: 1, output,
