@@ -334,7 +334,8 @@ export function CanvasAudioStudioView({
   const musicDraft = state.musicDraft || { prompt: "", durationSec: 30, brief: null, model: bgmModels?.[0]?.model ?? "suno-v6" };
   const musicPrompt = musicDraft.prompt;
   const musicDuration = musicDraft.durationSec;
-  const brief = musicDraft.brief;
+  // 旧草稿只供恢复历史记录，不能从已下架版本直接再次发起付费生成。
+  const brief = isBgmV6Model(musicDraft.brief?.model) ? musicDraft.brief : null;
   const bgmModel = isBgmV6Model(musicDraft.model) ? musicDraft.model : "suno-v6";
   const [resumable, setResumable] = useState<Record<string, JobResult>>({});
   const [confirmation, setConfirmation] = useState<

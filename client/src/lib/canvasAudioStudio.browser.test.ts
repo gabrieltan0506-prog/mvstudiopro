@@ -132,12 +132,17 @@ describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
     try {
       await page.evaluate(() => {
         const f = (window as any).fixture;
-        f.configure({ ...f.state, musicDraft: { prompt: "", durationSec: 30, brief: null, model: "suno-v5.5-beta" } });
+        f.configure({ ...f.state, musicDraft: { prompt: "", durationSec: 30, brief: {
+          model: "suno-v5.5-beta", custom_mode: true, instrumental: true, style: "旧版",
+          prompt: "旧版提示", title: "旧曲", duration: 30, negative_tags: "",
+          style_weight: 0.5, weirdness_constraint: 0.5,
+        }, model: "suno-v5.5-beta" } });
       });
       await page.waitForFunction(() => (window as any).fixture.state.musicDraft?.model === "suno-v5.5-beta");
       await page.evaluate(() => { Array.from(document.querySelectorAll("summary")).find(el => el.textContent?.includes("生成配乐原曲"))?.click(); });
       await fill("配乐剧情与情绪推进", "护送途中逐渐紧张");
       expect(await page.$eval('[aria-label="配乐方式"]', element => (element as HTMLSelectElement).value)).toBe("suno-v6");
+      expect(await page.$('[aria-label="配乐生成提示词"]')).toBeNull();
       await click("整理配乐要求");
       await page.waitForSelector('[aria-label="配乐生成提示词"]');
       expect(await page.evaluate(() => (window as any).fixture.lastMusicDraft.model)).toBe("suno-v6");
