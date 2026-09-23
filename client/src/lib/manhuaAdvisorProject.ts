@@ -72,6 +72,8 @@ export type AdvisorProjectSignals = {
   credits?: string;
   /** 本集可拍表（3D 规则输入） */
   segments?: Manhua3dUsageSegment[];
+  /** 同集工作台真实分镜规划；不得当作已通过质量门禁的可拍表。 */
+  workbenchPlan?: { episodeIndex: number; segments: Manhua3dUsageSegment[] };
   /** 已锁脸角色名（3D 规则输入） */
   lockedCharacterNames?: string[];
 };
@@ -323,8 +325,12 @@ export function buildManhuaAdvisorProject(input: {
   }
   const queueZh = clipSignal(input.queue, LIMITS.signalChars);
   const creditsZh = clipSignal(input.credits, LIMITS.signalChars);
-  const recommend3d = input.segments
-    ? recommendManhua3dUsage({ segments: input.segments, lockedCharacterNames: input.lockedCharacterNames || [] })
+  const plannedSegments = input.workbenchPlan?.episodeIndex === input.episodeIndex ? input.workbenchPlan.segments : [];
+  const usesWorkbenchPlan = !input.segments?.length && plannedSegments.length > 0;
+  const recommendationSegments = usesWorkbenchPlan ? plannedSegments : input.segments;
+  if (usesWorkbenchPlan) contextNotes.push(`本集尚无结构化可拍表；以下空间建议读取工作台现有 ${plannedSegments.length} 段分镜规划，不代表可拍表质量已通过。`);
+  const recommend3d = recommendationSegments
+    ? recommendManhua3dUsage({ segments: recommendationSegments, lockedCharacterNames: input.lockedCharacterNames || [] })
     : null;
   if (recommend3d) {
     contextNotes.push(

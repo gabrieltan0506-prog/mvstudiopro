@@ -323,6 +323,8 @@ import type { ManhuaStoryEmotion } from "@shared/manhuaStoryEmotion";
 import { ManhuaStoryEmotionPanel } from "./canvas/ManhuaStoryEmotionPanel";
 
 export type ManhuaWorkbenchAdvisorSignals = {
+  episodeIndex: number;
+  plannedSegments: Array<{ intentZh: string; dialogueZh: string }>;
   assetGap: string;
   keyframeBlock: string;
   pipeline3d: string;
@@ -2988,6 +2990,11 @@ export default function ManhuaScriptWorkbench({
     const count = (kind: ManhuaCanonSheetKind) => pendingSheetAnchors.filter((a) => a.kind === kind).length;
     const characterRefs = customAssetRefs.filter((r) => r.role === "character");
     onAdvisorSignalsChange({
+      episodeIndex: focusEpisode,
+      plannedSegments: segments.map((segment) => ({
+        intentZh: segment.shots.map((shot) => shot.actionZh).filter(Boolean).join("\n"),
+        dialogueZh: segment.shots.filter((shot) => !shot.dialogueSuppressed).map((shot) => shot.dialogueZh || "").filter(Boolean).join("\n"),
+      })),
       assetGap: formatManhuaAdvisorAssetGapZh({ characters: count("charsheet"), scenes: count("sceneplate"), props: count("propsheet") }),
       keyframeBlock: videoBurnHint || "",
       pipeline3d: formatManhuaAdvisorPipeline3dZh({
@@ -2998,7 +3005,7 @@ export default function ManhuaScriptWorkbench({
       }),
       lockedCharacterNames: assetLockRegistry.byRole.character.map((slot) => String(slot.labelZh || "").trim()).filter(Boolean),
     });
-  }, [onAdvisorSignalsChange, pendingSheetAnchors, customAssetRefs, videoBurnHint, riggedAssetIds, episodeClips, assetLockRegistry.byRole.character]);
+  }, [onAdvisorSignalsChange, focusEpisode, segments, pendingSheetAnchors, customAssetRefs, videoBurnHint, riggedAssetIds, episodeClips, assetLockRegistry.byRole.character]);
   useEffect(() => () => { onAdvisorSignalsChange?.(null); }, [onAdvisorSignalsChange]);
 
   /** 门槛只用于点击时报错，禁止拿来把按钮静默变灰 */

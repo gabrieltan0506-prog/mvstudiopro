@@ -25,6 +25,27 @@ const pack: ManhuaWriterPack = {
 const base = { pack, bible: null, episodeIndex: 1, phase: "assets" as const, videoModel: "seedance-2.0-mini", writerConfirmed: false, refs: [], blocks: [] };
 
 describe("创作顾问的真实项目生产者", () => {
+  it("正文无可拍表时读取同集工作台规划，但不冒充质量通过", () => {
+    const result = buildManhuaAdvisorProject({ ...base, segments: [], workbenchPlan: {
+      episodeIndex: 1, segments: [{ intentZh: "墨屠走向阿菁并格挡一掌", dialogueZh: "别怕" }],
+    } });
+    expect(result.contextNotes.join("\n")).toContain("工作台现有 1 段分镜规划");
+    expect(result.contextNotes.join("\n")).toContain("不代表可拍表质量已通过");
+    expect(result.contextNotes.join("\n")).toContain("建议先用通用白模");
+    expect(result.contextNotes.join("\n")).not.toContain("暂不判断");
+    expect(manhuaCreativeAdvisorContextSchema.safeParse(result.context).success).toBe(true);
+  });
+
+  it("切集时拒绝旧集工作台信号，并保留正文可拍表优先级", () => {
+    const workbenchPlan = { episodeIndex: 2, segments: [{ intentZh: "异集走位打斗" }] };
+    const other = buildManhuaAdvisorProject({ ...base, segments: [], workbenchPlan });
+    expect(other.contextNotes.join("\n")).not.toContain("工作台现有");
+    expect(other.contextNotes.join("\n")).toContain("暂不判断");
+    const original = buildManhuaAdvisorProject({ ...base, segments: [{ intentZh: "静坐" }], workbenchPlan: { ...workbenchPlan, episodeIndex: 1 } });
+    expect(original.contextNotes.join("\n")).not.toContain("工作台现有");
+    expect(original.contextNotes.join("\n")).toContain("未明确走位");
+  });
+
   it("复现线上六图未认领，不编造人物绑定或质量通过", () => {
     const result = buildManhuaAdvisorProject({ ...base, refs: Array.from({ length: 6 }, (_, i) => ({
       id: `r${i}`, role: "character" as const, source: "upload" as const, url: `https://example.com/${i}.png`, labelZh: `候选${i}`,
