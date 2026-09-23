@@ -55,9 +55,9 @@ beforeAll(async () => {
   browser = await puppeteer.launch({ headless: true });
   const cssDir = process.env.MANHUA_LAYOUT_CSS_DIR;
   if (cssDir) {
-    const cssFile = (await readdir(cssDir)).find(name => /^index-.*\.css$/.test(name));
-    if (!cssFile) throw new Error(`缺少主样式文件：${cssDir}`);
-    layoutCss = await readFile(path.join(cssDir, cssFile), "utf8");
+    const cssFiles = (await readdir(cssDir)).filter(name => /^(index|OmniCanvas)-.*\.css$/.test(name)).sort((a, b) => Number(b.startsWith("index-")) - Number(a.startsWith("index-")));
+    if (cssFiles.length !== 2) throw new Error(`缺少主样式或工厂主题样式：${cssDir}`);
+    layoutCss = (await Promise.all(cssFiles.map(file => readFile(path.join(cssDir, file), "utf8")))).join("\n");
     await mkdir(audioEvidenceDir, { recursive: true });
   }
 }, 30_000);
@@ -74,7 +74,7 @@ it("工厂原工作台直接打开音轨，切段分别保存且不跳画布或�
       void request.respond({
         status: 200,
         contentType: "text/html",
-        body: '<html><link rel="icon" href="data:,"><div id="root"></div></html>',
+        body: '<html><link rel="icon" href="data:,"><div id="root" data-manhua-theme="cream"></div></html>',
       });
     else void request.abort();
   });
@@ -82,19 +82,24 @@ it("工厂原工作台直接打开音轨，切段分别保存且不跳画布或�
     await page.goto("http://localhost:41812");
     if (layoutCss) await page.addStyleTag({ content: layoutCss });
     await page.addScriptTag({ content: bundle });
-    await page.waitForSelector('[data-manhua-action="open-more-tools"]', {
+    await page.waitForSelector('[data-manhua-action="open-audio-studio"]', {
       timeout: 10000,
     });
-    await page.click('[data-manhua-action="open-more-tools"]');
-    await page.waitForSelector('[data-manhua-secondary-tool="audio"]');
-    await page.click('[data-manhua-secondary-tool="audio"]');
+    await page.click('[data-manhua-action="open-audio-studio"]');
     await page.waitForSelector('section[aria-label="逐句配音、配乐与事件音效"]');
-    expect(await page.$eval('[data-manhua-audio-editor]', element => (element as HTMLDetailsElement).open)).toBe(false);
+    expect(await page.$eval('[data-manhua-audio-editor]', element => (element as HTMLDetailsElement).open)).toBe(true);
     expect(await page.$$('[data-manhua-sound-summary] > section')).toHaveLength(3);
     if (layoutCss) {
       await page.setViewport({ width: 1280, height: 900 });
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
       expect(overflow).toBeLessThanOrEqual(2);
+      const audioInset = await page.evaluate(() => {
+        const shell = document.querySelector('[data-manhua-product-header]')!.getBoundingClientRect();
+        const panel = document.querySelector('[data-manhua-audio-studio]')!.getBoundingClientRect();
+        return { left: panel.left - shell.left, widthRatio: panel.width / shell.width };
+      });
+      expect(audioInset.left).toBeLessThan(40);
+      expect(audioInset.widthRatio).toBeGreaterThan(0.9);
       await page.screenshot({ path: path.join(audioEvidenceDir, "factory-audio-1280.png"), fullPage: false });
     }
     const add = () =>

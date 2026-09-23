@@ -901,10 +901,19 @@
   [data-manhua-action="open-3d-model-studio"],
   [data-manhua-action="open-world-studio"],
   [data-manhua-action="open-previs-studio"],
-  [data-manhua-action="open-action-timeline"],
-  [data-manhua-action="open-audio-studio"]
+  [data-manhua-action="open-action-timeline"]
 ) {
   display: none !important;
+}
+
+/* 声音面板展开时独占一行，不挤在项目标题右侧形成巨大留白。 */
+#manhua-workbench-shell.mh-redesign [data-manhua-product-header]:has([data-manhua-audio-studio]:not([hidden])) {
+  flex-wrap: wrap;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-product-header]:has([data-manhua-audio-studio]:not([hidden])) [data-manhua-toolbar-cluster] {
+  width: 100%;
+  min-width: 0;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-action="open-more-tools"] {

@@ -4,7 +4,9 @@ export const CANVAS_DIALOGUE_EMOTION_TAGS = [
   "excited", "sarcastic", "scornful", "curious", "tired", "mischievously", "empathetic",
   "reluctantly", "serious", "very slowly", "very fast",
 ] as const;
-const tags = new Set<string>(CANVAS_DIALOGUE_EMOTION_TAGS);
+/** 官方富语言标签在文本中的当前位置插入拟声，不改变后续台词语气。 */
+export const CANVAS_DIALOGUE_SOUND_TAGS = ["cough", "gasp"] as const;
+const tags = new Set<string>([...CANVAS_DIALOGUE_EMOTION_TAGS, ...CANVAS_DIALOGUE_SOUND_TAGS]);
 
 export function assertCanvasDialogueInputControls(input: string): void {
   const remainder = input.replace(/\[([^\[\]]+)\]/g, (_match, name: string) => {

@@ -4,6 +4,7 @@ import { readManhuaTimedStoryboard as readShotTimingForEdit } from "@shared/manh
 import { applyManhuaAssetDirection } from "@shared/manhuaDirectionCanonLibrary";
 import { normalizeManhuaEditTransitions, manhuaEditTransitionOf, manhuaAssembleTransitionOf } from "@shared/manhuaEditTransition";
 import { CREDIT_COSTS } from "@shared/plans";
+import { persistCanvasAudioBlock } from "@/lib/canvasAudioPersist";
 import ManhuaFinalDeliverySurface from "@/components/ManhuaFinalDeliverySurface";
 import "@/styles/manhuaCream.css";
 import { capManhuaMediaHistory } from "@shared/manhuaMediaHistoryCap";
@@ -5265,6 +5266,13 @@ export default function OmniCanvas() {
     [],
   );
 
+  const persistClipAudioStudio = useCallback((clipId: string, audioStudio: NonNullable<CanvasBlock["audioStudio"]>) => {
+    // 付费请求发出前同步确认任务号已保存，不能依赖稍后执行的 React updater。
+    return persistCanvasAudioBlock(blocksRef, clipId,
+      block => ({ ...block, audioStudio, error: undefined }),
+      next => saveCanvasState(next, edges), setBlocks);
+  }, [edges]);
+
   // 进页一次：清掉历史成片节点里误写的网址（裸奔）+ 本机媒体库回灌
   useEffect(() => {
     let cancelled = false;
@@ -9945,7 +9953,7 @@ export default function OmniCanvas() {
                     {backupExportProgress && <p role="status" aria-live="polite" className="mt-1 max-w-56 text-[10px] text-white/70">{backupExportProgress} 请勿重复操作。</p>}
                   </div>
                 ) : null}
-                <OpenAiImageVariantSwitch compact />
+                <OpenAiImageVariantSwitch compact hideModelNames />
                 {canShowCanvasDebug ? (
                   <button
                     type="button"
@@ -10675,6 +10683,7 @@ export default function OmniCanvas() {
                         blocks={blocks}
                         edges={edges}
                         onBlocksChange={handleBlocksChange}
+                        onPersistAudioStudio={persistClipAudioStudio}
                         onEdgesChange={handleEdgesChange}
                         runDeps={runDeps}
                         focusBlockId={focusBlockId}
@@ -11027,20 +11036,16 @@ export default function OmniCanvas() {
                     });
                   }}
                   onSetClipSegmentReference={(clipId, slot, entry) => {
-                    patchClipBlockPersist(clipId, (b) => setManhuaSegmentReference(b, slot, entry));
+                    const saved = persistCanvasAudioBlock(blocksRef, clipId,
+                      block => setManhuaSegmentReference(block, slot, entry),
+                      next => saveCanvasState(next, edges), setBlocks);
+                    if (!saved) return false;
                     toast.message("预混母轨已挂到本段", {
                       description: `${entry.durationSec ? `${entry.durationSec.toFixed(1)} 秒，` : ""}下次出片作为唯一音轨 @音频1；逐句配音不再并列送。`,
                     });
+                    return true;
                   }}
-                  onUpdateClipAudioStudio={(clipId, audioStudio) => {
-                    setBlocks(prev => {
-                      const target = prev.find(block => block.id === clipId);
-                      if (!target || target.status === "running" || target.videoTaskStatus === "queued") return prev;
-                      const next = prev.map(block => block.id === clipId ? { ...block, audioStudio, error: undefined } : block);
-                      saveCanvasState(next, edges);
-                      return next;
-                    });
-                  }}
+                  onUpdateClipAudioStudio={persistClipAudioStudio}
                   onUpdateClipPrevisStudio={canUseManhua3d ? (clipId,previsStudio,reference)=>{
                     const current=blocksRef.current;
                     const target=current.find(block=>block.id===clipId);
@@ -12266,6 +12271,7 @@ export default function OmniCanvas() {
                         blocks={blocks}
                         edges={edges}
                         onBlocksChange={handleBlocksChange}
+                        onPersistAudioStudio={persistClipAudioStudio}
                         onEdgesChange={handleEdgesChange}
                         runDeps={runDeps}
                         focusBlockId={focusBlockId}
@@ -12970,6 +12976,7 @@ export default function OmniCanvas() {
             blocks={blocks}
             edges={edges}
             onBlocksChange={handleBlocksChange}
+            onPersistAudioStudio={persistClipAudioStudio}
             onEdgesChange={handleEdgesChange}
             runDeps={runDeps}
             focusBlockId={focusBlockId}

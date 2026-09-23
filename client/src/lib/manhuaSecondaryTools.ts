@@ -1,4 +1,4 @@
-/** 二级工具统一收进更多操作，主操作区只承接当前制作步骤。 */
+/** 声音是分镜和剪辑的常用操作；其余二级工具保留在抽屉。 */
 export type ManhuaSecondaryTool = "model3d" | "world3d" | "previs" | "actionTimeline" | "audio";
 
 export const MANHUA_SECONDARY_TOOL_LABEL_ZH: Record<ManhuaSecondaryTool, string> = {
@@ -6,15 +6,16 @@ export const MANHUA_SECONDARY_TOOL_LABEL_ZH: Record<ManhuaSecondaryTool, string>
   world3d: "3D 场景",
   previs: "本段动作白模",
   actionTimeline: "本段动作节奏",
-  audio: "音轨工作台",
+  audio: "配音与背景音乐",
 };
 
 export type ManhuaSecondaryToolHome = "cluster" | "drawer";
 
 export function manhuaSecondaryToolHome(
-  _tool: ManhuaSecondaryTool,
-  _phase: string,
+  tool: ManhuaSecondaryTool,
+  phase: string,
 ): ManhuaSecondaryToolHome {
+  if (tool === "audio" && (phase === "storyboard" || phase === "edit")) return "cluster";
   return "drawer";
 }
 

@@ -23,7 +23,7 @@ beforeAll(async () => {
         resolveAudio:async uri=>{f.resolvedAudio=uri;return f.refreshedUrl||"";},
         generateDialogue:async input=>{f.calls.push(input);return {jobId:'test-job',status:'succeeded',result:{gcsUri:'gs://test-bucket/generated/test.mp3',audioUrl:'https://audio.test/test.mp3',bytes:12000,voiceGate:{durationSeconds:2.25}}};},
         getDialogue:async input=>{f.queries.push(input);return f.result;},
-        draftMusic:async()=>({brief:{model:'suno-v6',custom_mode:true,instrumental:true,style:'恢宏',prompt:'展翼时释放气势',title:'守护',duration:30,negative_tags:'',style_weight:0.5,weirdness_constraint:0.5}}),
+        draftMusic:async input=>{f.lastMusicDraft=input;return {brief:{model:input.model,custom_mode:true,instrumental:true,style:'恢宏',prompt:'展翼时释放气势',title:'守护',duration:30,negative_tags:'',style_weight:0.5,weirdness_constraint:0.5}};},
         generateMusic:async input=>{f.calls.push(input);return {jobId:'bgm-test',status:'queued'};},
         getMusic:async input=>{f.musicQueries.push(input.jobId);return f.history[input.jobId]||{jobId:input.jobId,status:'running',variants:[],titleZh:'守护',durationSec:30};},
         listMusic:async()=>[],
@@ -37,10 +37,10 @@ beforeAll(async () => {
         const [withMasterCb,setWithMasterCb]=useState(false);
         f.state=block.audioStudio;f.block=block;f.configure=audioStudio=>setBlock(b=>({...b,audioStudio}));f.show=setVisible;f.short=()=>setBlock(b=>({...b,prompt:'目标时长：5秒'}));
         f.setMasterCb=setWithMasterCb;f.setMaster=entry=>setBlock(b=>({...b,manhuaSegmentRefs:{...(b.manhuaSegmentRefs||{}),master:entry}}));
-        const onMasterTrackReady=withMasterCb?entry=>{f.masterEntries.push(entry);f.setMaster(entry);}:undefined;
+        const onMasterTrackReady=withMasterCb?entry=>{if(f.rejectMasterSave)return false;f.masterEntries.push(entry);f.setMaster(entry);return true;}:undefined;
         f.longCues=()=>{const cues=Array.from({length:6},(_,i)=>{const cue={...createCanvasAudioCue('dialogue','long-'+i),speakerZh:'角色',voice:'longanlufeng',textZh:'长台词'.repeat(1000),shotZh:'镜头',startSec:i*4,endSec:i*4+3,approved:true,selectedTakeId:'take-'+i};cue.takes=[{id:'take-'+i,gcsUri:'gs://test-bucket/post-prod/7/'+i+'.wav',previewUrl:'https://audio.test/'+i+'.wav',durationSec:2,createdAt:'2026-09-08',inputKey:canvasAudioCueInputKey(cue)}];return cue;});setBlock(b=>({...b,audioStudio:{...b.audioStudio,cues}}));};
         f.addBgm=()=>{const cue=createCanvasAudioCue('bgm','bgm-a');cue.shotZh='变身展翼';cue.startSec=13;cue.endSec=21;cue.source={gcsUri:'gs://test-bucket/generated/source.mp3',previewUrl:'https://audio.test/source.mp3',durationSec:27.77,labelZh:'27秒原曲'};cue.sourceStartSec=13;cue.sourceEndSec=21;setBlock(b=>({...b,audioStudio:{...b.audioStudio,cues:[...b.audioStudio.cues,cue]}}));};
-        const onChange=audioStudio=>setBlock(b=>f.dropSettle&&audioStudio.pendingOperations.length<b.audioStudio.pendingOperations.length?b:({...b,audioStudio}));
+        const onChange=audioStudio=>{if(f.rejectSave)return false;setBlock(b=>f.dropSettle&&audioStudio.pendingOperations.length<b.audioStudio.pendingOperations.length?b:({...b,audioStudio}));return true;};
         return visible&&<CanvasAudioStudioView block={block} services={services} onChange={onChange} onMasterTrackReady={onMasterTrackReady}/>;
       }
       createRoot(document.getElementById('root')).render(<App/>);
@@ -111,6 +111,89 @@ async function open() {
   return { context, page, click, fill };
 }
 describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
+  it("娘的咳嗽与吸气按钮在光标处插入声音，不朗读说明文字", async () => {
+    const { context, page, click, fill } = await open();
+    try {
+      await click("添加一句对白");
+      await fill("1 本句台词", "阿菁，还有多久到医馆呀？");
+      await page.$eval('[aria-label="1 本句台词"]', element => {
+        const input = element as HTMLTextAreaElement;
+        input.focus();
+        input.setSelectionRange(3, 3);
+      });
+      await click("咳嗽");
+      await click("喘气（吸气）");
+      await page.waitForFunction(() => (window as any).fixture.state.cues[0]?.textZh === "阿菁，[cough][gasp]还有多久到医馆呀？");
+      expect(await page.evaluate(() => (window as any).fixture.calls)).toEqual([]);
+    } finally { await context.close(); }
+  }, 20_000);
+  it("配乐方式只使用三个现有版本且切换后重新确认要求", async () => {
+    const { context, page, click, fill } = await open();
+    try {
+      await page.evaluate(() => { Array.from(document.querySelectorAll("summary")).find(el => el.textContent?.includes("生成配乐原曲"))?.click(); });
+      await fill("配乐剧情与情绪推进", "护送途中逐渐紧张");
+      for (const model of ["suno-v6-mini", "suno-v6-wild", "suno-v6"]) {
+        await page.select('[aria-label="配乐方式"]', model);
+        expect(await page.$('[aria-label="配乐生成提示词"]')).toBeNull();
+        await click("整理配乐要求");
+        await page.waitForSelector('[aria-label="配乐生成提示词"]');
+        expect(await page.evaluate(() => (window as any).fixture.lastMusicDraft.model)).toBe(model);
+        expect(await page.evaluate(() => (window as any).fixture.state.musicDraft.brief.model)).toBe(model);
+      }
+      expect(await page.evaluate(() => (window as any).fixture.calls)).toEqual([]);
+    } finally { await context.close(); }
+  }, 20_000);
+  it("声音状态无法保存时不提交免费合听任务", async () => {
+    const { context, page, click } = await open();
+    try {
+      await page.evaluate(() => { const f = (window as any).fixture; f.longCues(); f.rejectSave = true; });
+      await page.waitForFunction(() => (window as any).fixture.state.cues.length === 6);
+      await click("合听已确认秒窗");
+      await page.waitForSelector('[role="alert"]');
+      expect(await page.evaluate(() => (window as any).fixture.posts)).toEqual([]);
+      expect(await page.evaluate(() => (window as any).fixture.state.pendingOperations)).toEqual([]);
+    } finally { await context.close(); }
+  }, 20_000);
+  it("配乐任务编号保存失败时不发起生成也不增加恢复编号", async () => {
+    const { context, page, click, fill } = await open();
+    try {
+      await page.evaluate(() => { Array.from(document.querySelectorAll("summary")).find(el => el.textContent?.includes("生成配乐原曲"))?.click(); });
+      await fill("配乐剧情与情绪推进", "墨屠守护阿菁，变身后音乐收束");
+      await click("整理配乐要求");
+      await page.waitForSelector('[aria-label="配乐生成提示词"]');
+      await click("生成这版配乐");
+      await page.waitForSelector('[role="dialog"]');
+      await page.evaluate(() => { (window as any).fixture.rejectSave = true; });
+      await click("确认生成");
+      await page.waitForFunction(() => document.body.textContent?.includes("已阻止本次新提交"));
+      expect(await page.evaluate(() => (window as any).fixture.calls)).toHaveLength(0);
+      expect(await page.evaluate(() => (window as any).fixture.state.musicJobIds)).toHaveLength(0);
+      expect(await page.evaluate(() => (window as any).fixture.state.pendingOperations)).toHaveLength(0);
+    } finally { await context.close(); }
+  }, 20_000);
+
+  it("任务编号保存失败时不调用付费配音，修复保存后才能提交", async () => {
+    const { context, page, click, fill } = await open();
+    try {
+      await click("添加一句对白");
+      await fill("1 镜头与动作", "墨屠护住阿菁");
+      await fill("1 说话角色", "墨屠");
+      await fill("1 本句台词", "别怕。");
+      await click("生成本句");
+      await page.waitForSelector('[role="dialog"]');
+      await page.evaluate(() => { (window as any).fixture.rejectSave = true; });
+      await click("确认生成");
+      await page.waitForFunction(() => document.body.textContent?.includes("已阻止本次新提交"));
+      expect(await page.evaluate(() => (window as any).fixture.calls)).toHaveLength(0);
+      expect(await page.evaluate(() => (window as any).fixture.state.pendingOperations)).toHaveLength(0);
+      await page.evaluate(() => { (window as any).fixture.rejectSave = false; });
+      await click("生成本句");
+      await page.waitForSelector('[role="dialog"]');
+      await click("确认生成");
+      await page.waitForFunction(() => (window as any).fixture.calls.length === 1);
+    } finally { await context.close(); }
+  }, 20_000);
+
   it("正式声音工作台导入已有原曲后只保存 GCS 来源，不触发配乐生成", async () => {
     const { context, page } = await open();
     const filePath = "/tmp/canvas-audio-existing-bgm.mp3";
@@ -237,6 +320,7 @@ describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
       await fill("1 镜头与动作", "墨屠护翼");
       await fill("1 说话角色", "墨屠");
       await fill("1 本句台词", "别怕。");
+      await page.$$eval('[data-cue-id] details > summary', rows => { const row = rows.find(el => el.textContent === "高级语气组合"); (row as HTMLElement).click(); });
       await fill("1 语气标签", "[unknown_magic_voice]");
       await click("生成本句");
       await page.waitForSelector('[role="alert"]');
@@ -505,6 +589,24 @@ describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
     output: { gcsUri: "gs://test-bucket/post-prod/7/premix.wav", url: "https://audio.test/premix.wav", durationSec: 12.5 },
   };
 
+  it("母轨保存失败保留原任务且不宣告挂载", async () => {
+    const { context, page } = await open();
+    try {
+      await page.evaluate((pending, result) => {
+        const f = (window as any).fixture;
+        f.postResult = result;
+        f.rejectMasterSave = true;
+        f.setMasterCb(true);
+        f.configure({ ...f.state, pendingOperations: [pending] });
+        f.show(false);
+      }, PREMIX_PENDING, PREMIX_RESULT);
+      await page.waitForFunction(() => !document.querySelector("section"));
+      await page.evaluate(() => (window as any).fixture.show(true));
+      await page.waitForFunction(() => document.body.textContent?.includes("预混母轨暂未保存"));
+      expect(await page.evaluate(() => ({ pending: (window as any).fixture.state.pendingOperations.length, masters: (window as any).fixture.masterEntries.length }))).toEqual({ pending: 1, masters: 0 });
+    } finally { await context.close(); }
+  }, 20_000);
+
   it("预混母轨回来：有回调则挂 master 一次并 settle；无回调保留 pending 不 settle", async () => {
     const { context, page } = await open();
     try {
@@ -627,7 +729,7 @@ it("修改对白内容、声音状态和情绪后保留旧候选，恢复编辑�
     await page.waitForFunction(() => (window as any).fixture.state.cues[0].approved);
     await fill("1 本句台词", "站到我身后！");
     await fill("1 声音状态", "变身后");
-    await fill("1 语气标签", "[serious]");
+    await page.click('[aria-label="1 语气：严肃"]');
     const changed = await page.evaluate(() => ({ cue: (window as any).fixture.state.cues[0], calls: (window as any).fixture.calls.length }));
     expect(changed.cue.approved).toBe(false);
     expect(changed.cue.takes).toHaveLength(1);

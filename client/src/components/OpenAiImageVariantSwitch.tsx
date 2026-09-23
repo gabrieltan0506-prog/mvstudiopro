@@ -13,7 +13,7 @@ import { readOpenAiImageVariantMode, writeOpenAiImageVariantPref } from "@/lib/o
 const MODES: OpenAiImageVariantMode[] = ["flare", "sunburst", "both"];
 const SHORT: Record<OpenAiImageVariantMode, string> = { flare: "Flare", sunburst: "Sunburst", both: "双档" };
 
-export default function OpenAiImageVariantSwitch({ compact }: { compact?: boolean }) {
+export default function OpenAiImageVariantSwitch({ compact, hideModelNames = false }: { compact?: boolean; hideModelNames?: boolean }) {
   const [mode, setMode] = useState<OpenAiImageVariantMode>(() => readOpenAiImageVariantMode());
   useEffect(() => {
     const onStorage = () => setMode(readOpenAiImageVariantMode());
@@ -27,9 +27,9 @@ export default function OpenAiImageVariantSwitch({ compact }: { compact?: boolea
   return (
     <div
       className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 p-0.5"
-      title="OpenAI 官方出图模型：Flare 快、Sunburst 改图精度高；双档=画布图片节点两档各出一张（扣两张费）；WaveSpeed / EvoLink 只在官方失败时兜底"
+      title={hideModelNames ? "快速出图、精细改图，或各生成一张作对比。双版本分别计费，旧图保留。" : "OpenAI 官方出图模型：Flare 快、Sunburst 改图精度高；双档=画布图片节点两档各出一张（扣两张费）；WaveSpeed / EvoLink 只在官方失败时兜底"}
       role="radiogroup"
-      aria-label="出图模型档位"
+      aria-label={hideModelNames ? "图片生成方式" : "出图模型档位"}
     >
       {MODES.map((v) => (
         <button
@@ -42,7 +42,7 @@ export default function OpenAiImageVariantSwitch({ compact }: { compact?: boolea
             mode === v ? "bg-[rgba(73,230,255,0.16)] text-[#8cefff]" : "text-[#b7add8] hover:bg-white/10"
           }`}
         >
-          {compact ? SHORT[v] : OPENAI_IMAGE_VARIANT_MODE_LABEL_ZH[v]}
+          {hideModelNames ? { flare: "快速出图", sunburst: "精细改图", both: "双版本对比" }[v] : compact ? SHORT[v] : OPENAI_IMAGE_VARIANT_MODE_LABEL_ZH[v]}
         </button>
       ))}
     </div>
