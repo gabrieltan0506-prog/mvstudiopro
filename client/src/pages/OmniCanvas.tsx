@@ -1509,6 +1509,7 @@ export default function OmniCanvas() {
     selection: advisorSelection,
     gate: advisorGate.errors,
     segments: advisorGate.segments,
+    workbenchPlan: advisorSignals ? { episodeIndex: advisorSignals.episodeIndex, segments: advisorSignals.plannedSegments } : undefined,
     assetGap: advisorSignals?.assetGap,
     keyframeBlock: advisorSignals?.keyframeBlock,
     pipeline3d: advisorSignals?.pipeline3d,
