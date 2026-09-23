@@ -17,6 +17,7 @@ import {
   upsertShotDialogueSection,
   MANHUA_DIALOGUE_SILENCE_TOKEN,
 } from "@shared/manhuaShotDialoguePersist";
+import { parseShotDescriptionTable, patchShotDescriptionSection } from "@shared/manhuaShotDescriptionPersist";
 import { canvasVideoClipCredits } from "@shared/canvasGenerationPricing";
 
 const text = [
@@ -73,6 +74,42 @@ function handler(name: string, deps: Record<string, unknown>) {
 }
 
 describe("对白覆盖不能抢占真实分镜", () => {
+  it("画面描述从用户覆盖表进入同一分镜生产者，别镜动作与秒位不变", () => {
+    const editedReverse = { ...reverse, outputText: patchShotDescriptionSection(text, { 1: "阿菁背娘走向医馆，墨屠守在侧后方" }) };
+    const editedBeats = { ...beats, outputText: patchShotDescriptionSection(override, { 1: "阿菁背娘走向医馆门口，墨屠守在侧后方" }) };
+    const shots = studio.resolveShotsForEpisodeKeyarts([editedBeats, editedReverse], 1);
+    expect(shots.map(shot => [shot.actionZh, shot.durationSec])).toEqual([
+      ["阿菁背娘走向医馆门口，墨屠守在侧后方", 5],
+      ["墨屠张开黑翼", 5],
+      ["墨屠护住阿菁", 5],
+    ]);
+    expect(shots[0]?.dialogueZh).toBe("阿菁：留在我身边");
+    const keyarts = shots.map(shot => ({ ...defaultCanvasBlock("image", 0, 0), id: `keyart-e01-s${String(shot.index).padStart(2, "0")}` }));
+    const compiled = studio.ensureManhuaFragmentClips([editedBeats, editedReverse, ...keyarts], [], 1, { videoModel: "seedance-2.0-mini" });
+    const outgoing = compiled.blocks.filter(item => item.id.startsWith("clip-")).map(item => item.prompt).join("\n");
+    expect(outgoing).toContain("阿菁背娘走向医馆门口，墨屠守在侧后方");
+    expect(outgoing).not.toContain("阿菁牵住墨屠");
+  });
+
+  it("真实工作台回调将当前镜描述同时写入剧本包和三种节点，不触碰别集", () => {
+    let pack = { episodes: [{ index: 1, body: "第一集正文" }, { index: 2, body: "第二集正文" }] };
+    let nodes = [block("story-e01", "故事"), reverse, beats, block("beats-e02", "第二集节拍")];
+    const save = handler("onUpsertShotDescriptions", {
+      writerFocusEpisode: 1,
+      setWriterPack: (updater: (value: typeof pack) => typeof pack) => { pack = updater(pack); },
+      handleBlocksChange: (updater: (value: typeof nodes) => typeof nodes) => { nodes = updater(nodes); },
+      patchShotDescriptionSection,
+      getBlockEpisodeIndex: (node: CanvasBlock) => Number(node.id.match(/e(\d\d)/)?.[1] || 1),
+      stageKeyFromBlockId: (id: string) => id.split("-")[0],
+      toast: { success: vi.fn() },
+    });
+    save({ 1: "阿菁背娘走向医馆，墨屠守在侧后方" });
+    expect(parseShotDescriptionTable(pack.episodes[0]!.body)[1]).toBe("阿菁背娘走向医馆，墨屠守在侧后方");
+    expect(pack.episodes[1]!.body).toBe("第二集正文");
+    expect(nodes.slice(0, 3).map(node => parseShotDescriptionTable(node.outputText || "")[1]))
+      .toEqual(Array(3).fill("阿菁背娘走向医馆，墨屠守在侧后方"));
+    expect(nodes[3]!.outputText).toBe("第二集节拍");
+  });
   it("反推三镜动作和5/5/5秒不变，最新对白及静音同时消费", () => {
     const shots = studio.resolveShotsForEpisodeKeyarts(sourceBlocks(), 1);
     expect(shots).toHaveLength(3);

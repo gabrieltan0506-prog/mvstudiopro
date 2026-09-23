@@ -265,6 +265,7 @@ import { normalizeManhuaAutoSegmentBinding } from "@shared/manhuaAutoSegment";
 import { extractManhuaSceneHintFromPrompt } from "@shared/manhuaClipDialogueTimeline";
 import { upsertShotAngleSection } from "@shared/manhuaShotAnglePersist";
 import { patchShotDialogueSection } from "@shared/manhuaShotDialoguePersist";
+import { patchShotDescriptionSection } from "@shared/manhuaShotDescriptionPersist";
 import {
   listScreenwriterGenres,
   MANHUA_SCENE_GENRE_LABEL_ZH,
@@ -3638,7 +3639,7 @@ export default function OmniCanvas() {
     pushDebug,
   ]);
 
-  /** 登录后防抖上传云端；本机仍各自写，互不依赖 */
+  /** 登录后更新本机草稿快照；云端备份由顶部入口手动触发。 */
   useEffect(() => {
     if (!user?.id || !cloudSyncReady) return;
     // 扩写/出片期间停云同步，避免直传狂刷拖死长任务
@@ -10602,6 +10603,26 @@ export default function OmniCanvas() {
                         };
                       }),
                     );
+                  }}
+                  onUpsertShotDescriptions={(descriptions) => {
+                    const ep = writerFocusEpisode;
+                    setWriterPack(prev => prev ? {
+                      ...prev,
+                      episodes: prev.episodes.map(episode => episode.index === ep
+                        ? { ...episode, body: patchShotDescriptionSection(episode.body || "", descriptions) }
+                        : episode),
+                    } : prev);
+                    handleBlocksChange(prev => prev.map(block => {
+                      if ((getBlockEpisodeIndex(block) ?? 1) !== ep) return block;
+                      const stage = stageKeyFromBlockId(block.id);
+                      if (stage !== "story" && stage !== "reverse" && stage !== "beats") return block;
+                      return {
+                        ...block,
+                        outputText: patchShotDescriptionSection(block.outputText || block.prompt || "", descriptions),
+                        status: "done" as const,
+                      };
+                    }));
+                    toast.success("本镜描述已存本机，旧图保留；云端备份请用顶部入口。");
                   }}
                   onFocusBlock={(id) => {
                     // 选镜只同步选中节点；高级模式由工作台显式操作打开。

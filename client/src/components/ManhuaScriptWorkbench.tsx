@@ -1,6 +1,7 @@
 import { summarizeManhuaFinalSegmentEvidence } from "@/lib/manhuaFinalSegmentEvidence";
 import { ManhuaTimingRecovery } from "./ManhuaTimingRecovery";
 import { ManhuaShotTimingEditor } from "./ManhuaShotTimingEditor";
+import { ManhuaShotDescriptionEditor } from "./ManhuaShotDescriptionEditor";
 import { ManhuaSevenCoreEditor } from "./canvas/ManhuaSevenCoreEditor";
 import { extractManhuaShotSevenCore, upsertManhuaShotSevenCore, clearManhuaShotSevenCore } from "@shared/manhuaSevenCoreSupplement";
 import { ManhuaVfxPicker } from "./canvas/ManhuaVfxPicker";
@@ -798,6 +799,7 @@ type Props = {
     dialogues: Record<number, string>,
     segmentIndex: number,
   ) => void;
+  onUpsertShotDescriptions?: (descriptions: Record<number, string>) => void;
 };
 
 function blockByStage(blocks: CanvasBlock[], episode: number, stage: string): CanvasBlock | undefined {
@@ -1314,6 +1316,7 @@ export default function ManhuaScriptWorkbench({
   onUpdateShotTiming,
   onUpsertShotAngles,
   onUpsertShotDialogues,
+  onUpsertShotDescriptions,
 }: Props) {
   const dockCanvas = Boolean(previewCanvas);
   const continuity = shotContinuity || {
@@ -3514,7 +3517,13 @@ export default function ManhuaScriptWorkbench({
                 ) : null}
                 {onUpdateShotTiming && <ManhuaShotTimingEditor key={`${focusEpisode}:${activeShot.index}:${activeShot.durationSec}`} shotIndex={activeShot.index} durationSec={activeShot.durationSec}
                   disabled={shotSourceIsFallback || Boolean(factoryBusy)} onApply={onUpdateShotTiming} />}
-                <div data-manhua-shot-description className="mt-1.5">
+                {onUpsertShotDescriptions ? <ManhuaShotDescriptionEditor
+                  key={`${focusEpisode}:${activeShot.index}:${shotParamFields.descriptionZh}`}
+                  shotIndex={activeShot.index}
+                  description={shotParamFields.descriptionZh}
+                  disabled={shotSourceIsFallback || Boolean(factoryBusy)}
+                  onApply={(index, description) => onUpsertShotDescriptions({ [index]: description })}
+                /> : <div data-manhua-shot-description className="mt-1.5">
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="text-[9px] text-white/40">画面描述</span>
                     <span
@@ -3528,9 +3537,9 @@ export default function ManhuaScriptWorkbench({
                   <p className="mt-1 max-h-40 overflow-y-auto rounded-lg bg-black/20 p-2 text-sm leading-6 text-white/80">
                     {shotParamFields.descriptionZh || "本镜还没有画面描述"}
                   </p>
-                </div>
+                </div>}
                 <p className="mh-hint mt-1 text-[9px] leading-4 text-white/35">
-                  镜位只改本镜，不动其它镜；改完出图前不扣费。
+                  当前镜参数只改本镜，不动其它镜；保存前后均不会自动出图或扣费。
                 </p>
                 <div className="mt-1 flex flex-wrap gap-0.5" data-manhua-shot-angles={activeShot.index}>
                   {MANHUA_CAMERA_ANGLE_ORDER.map((id) => {
