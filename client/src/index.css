@@ -942,26 +942,36 @@
   background: var(--mh-panel);
 }
 
+@media (min-width: 1200px) {
+  #manhua-workbench-shell.mh-redesign [data-manhua-audio-studio] [data-manhua-sound-summary] {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  #manhua-workbench-shell.mh-redesign [data-manhua-audio-studio] [data-manhua-sound-summary] > :first-child {
+    grid-column: 1 / -1;
+  }
+}
+
 #manhua-workbench-shell.mh-redesign:has([data-manhua-audio-studio]:not([hidden]))
   :is([data-manhua-phase-panel="outline"], [data-manhua-phase-panel="assets"], [data-manhua-phase-panel="storyboard"], [data-manhua-phase-panel="edit"]) {
   margin-right: calc(clamp(440px, 35vw, 620px) + 18px);
 }
 
-@media (max-width: 1499px) {
+@media (max-width: 1199px) {
   #manhua-workbench-shell.mh-redesign [data-manhua-audio-studio]:not([hidden]) {
     top: auto;
     right: 12px;
     bottom: 12px;
     left: 12px;
     width: auto;
-    height: min(36vh, 320px);
+    height: min(30vh, 260px);
     box-shadow: 0 -12px 32px rgb(37 49 65 / 15%);
   }
 
   #manhua-workbench-shell.mh-redesign:has([data-manhua-audio-studio]:not([hidden]))
     :is([data-manhua-phase-panel="outline"], [data-manhua-phase-panel="assets"], [data-manhua-phase-panel="storyboard"], [data-manhua-phase-panel="edit"]) {
     margin-right: 0;
-    margin-bottom: calc(min(36vh, 320px) + 12px);
+    margin-bottom: calc(min(30vh, 260px) + 12px);
   }
 }
 

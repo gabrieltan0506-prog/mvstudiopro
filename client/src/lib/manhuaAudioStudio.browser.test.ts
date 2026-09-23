@@ -93,17 +93,31 @@ it("工厂原工作台直接打开音轨，切段分别保存且不跳画布或�
       await page.setViewport({ width: 1280, height: 900 });
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
       expect(overflow).toBeLessThanOrEqual(2);
+      const mediumDock = await page.evaluate(() => {
+        const panel = document.querySelector('[data-manhua-audio-studio]')!.getBoundingClientRect();
+        const storyboard = document.querySelector('[data-manhua-phase-panel="storyboard"]')!.getBoundingClientRect();
+        const media = document.querySelector('[data-manhua-media-frame]')!.getBoundingClientRect();
+        const summary = document.querySelector('[data-manhua-sound-summary]')!;
+        const firstSummary = summary.firstElementChild!.getBoundingClientRect();
+        return { gap: panel.left - storyboard.right, storyboardWidth: storyboard.width, mediaHeight: media.height, firstSummaryRatio: firstSummary.width / summary.getBoundingClientRect().width };
+      });
+      await page.screenshot({ path: path.join(audioEvidenceDir, "factory-audio-1280.png"), fullPage: false });
+      expect(mediumDock.gap).toBeGreaterThanOrEqual(-2);
+      expect(mediumDock.storyboardWidth).toBeGreaterThan(700);
+      expect(mediumDock.mediaHeight).toBeGreaterThan(200);
+      expect(mediumDock.firstSummaryRatio).toBeGreaterThan(0.9);
+      await page.setViewport({ width: 1024, height: 900 });
       const bottomDock = await page.evaluate(() => {
         const shell = document.querySelector('[data-manhua-product-header]')!.getBoundingClientRect();
         const panel = document.querySelector('[data-manhua-audio-studio]')!.getBoundingClientRect();
         const storyboard = document.querySelector('[data-manhua-phase-panel="storyboard"]')!.getBoundingClientRect();
         return { left: panel.left - shell.left, widthRatio: panel.width / shell.width, gap: panel.top - storyboard.bottom, storyboardHeight: storyboard.height };
       });
-      await page.screenshot({ path: path.join(audioEvidenceDir, "factory-audio-1280.png"), fullPage: false });
       expect(bottomDock.left).toBeLessThan(40);
       expect(bottomDock.widthRatio).toBeGreaterThan(0.9);
       expect(bottomDock.gap).toBeGreaterThanOrEqual(-2);
-      expect(bottomDock.storyboardHeight).toBeGreaterThan(180);
+      expect(bottomDock.storyboardHeight).toBeGreaterThan(230);
+      await page.screenshot({ path: path.join(audioEvidenceDir, "factory-audio-1024.png"), fullPage: false });
       await page.setViewport({ width: 1800, height: 1000 });
       const sideDock = await page.evaluate(() => {
         const panel = document.querySelector('[data-manhua-audio-studio]')!.getBoundingClientRect();
