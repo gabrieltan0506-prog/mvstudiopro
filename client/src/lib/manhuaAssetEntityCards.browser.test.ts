@@ -62,6 +62,7 @@ beforeAll(async () => {
               characterIds={globalThis.assetGenerateProbe ? ['wa_char_aqing'] : []} propIds={[]} outlineConfirmed={true}
               workflowPhase='assets' customAssetRefs={refs} assetCanon={canon}
               onRemoveCustomAsset={(id) => globalThis.fixture.removed.push(id)}
+              onCustomAssetLabelChange={(id, label) => { globalThis.fixture.labelUpdate = { id, label }; }}
               onUploadCustomAssets={async (files, role) => { globalThis.fixture.uploads.push({role,names:Array.from(files).map(file=>file.name)}); }}
               onGenerateCustomAssetFromLibrary={async (input) => { globalThis.fixture.libraryGenerate.push(input); }}
               onGenerateAllEpisodeKeyarts={async () => { globalThis.fixture.keyart += 1; }}
@@ -286,6 +287,28 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
       expect(geometry.focusedDomOrder).toBe(true);
       expect(geometry.versionRailAfterMain).toBe(true);
       expect(geometry.versionRailAtRight).toBe(true);
+      const editorAccess = await page.evaluate(() => {
+        const header = document.querySelector<HTMLElement>('[data-manhua-quick-asset-upload]')!;
+        const scroller = document.querySelector<HTMLElement>('[data-manhua-assets-scroll]')!;
+        const input = scroller.querySelector<HTMLInputElement>('input[placeholder*="改名认领"]')!;
+        input.scrollIntoView({ block: 'center' });
+        const headerBox = header.getBoundingClientRect();
+        const scrollBox = scroller.getBoundingClientRect();
+        const inputBox = input.getBoundingClientRect();
+        const hit = document.elementFromPoint(inputBox.left + inputBox.width / 2, inputBox.top + inputBox.height / 2);
+        return {
+          separateScroll: header.parentElement === scroller.parentElement && !header.contains(scroller),
+          headerAboveEditor: headerBox.bottom <= scrollBox.top + 1,
+          inputInsideEditor: inputBox.top >= scrollBox.top && inputBox.bottom <= scrollBox.bottom,
+          inputClickable: hit === input,
+        };
+      });
+      expect(editorAccess).toEqual({
+        separateScroll: true,
+        headerAboveEditor: true,
+        inputInsideEditor: true,
+        inputClickable: true,
+      });
       await page.screenshot({ path: path.join(assetEvidenceDir, "assets-1280.png"), fullPage: false });
       await page.setViewport({width:390,height:900});
       const mobileAccess = await page.evaluate(() => {
@@ -769,17 +792,19 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
       });
       const access = await page.evaluate(() => {
         const aside = document.querySelector('[data-manhua-column="params"]')!;
+        const preview = document.querySelector<HTMLElement>('[data-manhua-shot-pair-preview]')!;
         const button = aside.querySelector('[data-manhua-action="generate-current-keyart"]')!;
         const description = aside.querySelector('[data-manhua-shot-description]')!;
         const outer = aside.getBoundingClientRect();
         const action = button.getBoundingClientRect();
         const editor = description.getBoundingClientRect();
         const hit = document.elementFromPoint(action.left + action.width / 2, action.top + action.height / 2);
-        return { actionVisible: action.top >= outer.top && action.bottom <= outer.bottom && action.bottom <= innerHeight, actionClickable: hit === button || button.contains(hit), editorVisible: editor.top >= outer.top && editor.bottom <= outer.bottom };
+        return { actionVisible: action.top >= outer.top && action.bottom <= outer.bottom && action.bottom <= innerHeight, actionClickable: hit === button || button.contains(hit), editorVisible: editor.top >= outer.top && editor.bottom <= outer.bottom, previewHeight: preview.getBoundingClientRect().height };
       });
       expect(access.actionVisible, `${width}px 首屏主操作被遮挡`).toBe(true);
       expect(access.actionClickable, `${width}px 主操作被其他层盖住`).toBe(true);
       expect(access.editorVisible, `${width}px 画面描述编辑区域被遮挡`).toBe(true);
+      expect(access.previewHeight, `${width}px 中央预览被压成窄条`).toBeGreaterThanOrEqual(440);
       await page.screenshot({ path: path.join(assetEvidenceDir, `storyboard-${width}.png`), fullPage: false });
     }
     await close();

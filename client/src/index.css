@@ -1223,6 +1223,28 @@
   box-shadow: 0 8px 24px rgb(57 45 31 / 7%);
 }
 
+/* 工厂里的资产与镜头操作靠近左下角，安装入口只在其他页面展示。 */
+body:has(#manhua-workbench-shell) [data-pwa-install-button] {
+  display: none;
+}
+
+/* 分镜和成片整体滚动：项目栏、流程条和告警滚走后，编辑区取得完整视口。 */
+#manhua-workbench-shell.mh-redesign:is(
+  [data-manhua-active-phase="storyboard"],
+  [data-manhua-active-phase="edit"]
+) {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+#manhua-workbench-shell.mh-redesign :is(
+  [data-manhua-phase-panel="storyboard"],
+  [data-manhua-phase-panel="edit"]
+) {
+  flex: 0 0 auto;
+  min-height: 100%;
+}
+
 #manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-storyboard-workspace] {
   grid-template-columns: minmax(230px, 0.72fr) minmax(420px, 1.55fr) minmax(280px, 0.9fr) !important;
   width: 100%;
@@ -1242,12 +1264,17 @@
 
 #manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-column="preview"] [data-manhua-shot-pair-preview] {
   width: 100% !important;
+  min-height: min(500px, 70vh);
   max-height: none;
   margin-inline: auto;
   aspect-ratio: auto;
-  flex: 1 1 auto !important;
+  flex: 0 0 auto !important;
   border: 0 !important;
   background: transparent !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-column="preview"] {
+  overflow-y: auto;
 }
 
 /* 改后稿的分镜首屏只保留左清单、中预览、右参数；旧成片段胶片条留在完整模式。 */
