@@ -65,6 +65,22 @@ export function openRouterProviderLockForTier(tier: KnowledgeCardTier): Record<s
   return null;
 }
 
+/**
+ * 0923 用户令「3 段给 OpenRouter、3 段给 EvoLink」：EvoLink 路的链序。
+ * 同一模型档内 EvoLink 先、OpenRouter 后（各档之间顺序不变），千问两跳原样放最后。
+ */
+export function evolinkFirstChain(order: readonly KnowledgeCardGatewayStep[]): KnowledgeCardGatewayStep[] {
+  const out: KnowledgeCardGatewayStep[] = [];
+  const tiers: KnowledgeCardTier[] = [];
+  for (const s of order) if (!tiers.includes(s.tier)) tiers.push(s.tier);
+  for (const tier of tiers) {
+    const steps = order.filter((s) => s.tier === tier);
+    if (tier === "qwen") out.push(...steps);
+    else out.push(...steps.filter((s) => s.gateway === "evolink"), ...steps.filter((s) => s.gateway !== "evolink"));
+  }
+  return out;
+}
+
 /** 按已配置的钥匙过滤；顺序与重复跳一律保留 */
 export function filterConfiguredSteps(
   order: readonly KnowledgeCardGatewayStep[],
