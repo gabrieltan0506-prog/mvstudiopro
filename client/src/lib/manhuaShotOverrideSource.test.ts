@@ -7,6 +7,7 @@ import { buildManhuaAssembleSubtitleSource } from "./manhuaAssembleSubtitleSourc
 import {
   resolveManhuaAdvisorShotsFromBlocks,
   manhuaSegmentSelectionIdentity,
+  isManhuaWorkbenchKeyartCurrent,
 } from "../components/ManhuaScriptWorkbench";
 import {
   groupShotsIntoSegments,
@@ -89,6 +90,23 @@ describe("对白覆盖不能抢占真实分镜", () => {
     const outgoing = compiled.blocks.filter(item => item.id.startsWith("clip-")).map(item => item.prompt).join("\n");
     expect(outgoing).toContain("阿菁背娘走向医馆门口，墨屠守在侧后方");
     expect(outgoing).not.toContain("阿菁牵住墨屠");
+    const original = studio.ensureManhuaFragmentClips([beats, reverse, ...keyarts], [], 1, { videoModel: "seedance-2.0-mini" });
+    const sourceKeyart = original.blocks.find(item => item.id === "keyart-e01-s01")!;
+    const oldImageUrl = "https://test.invalid/old-shot-1.png";
+    const adopted = {
+      ...sourceKeyart,
+      outputUrl: oldImageUrl,
+      manhuaKeyartSourceState: {
+        ...sourceKeyart.manhuaKeyartSourceState!,
+        generatedFor: sourceKeyart.manhuaKeyartSourceState!.required,
+        generatedUrl: oldImageUrl,
+      },
+    };
+    expect(isManhuaWorkbenchKeyartCurrent(adopted)).toBe(true);
+    const changed = studio.ensureManhuaFragmentClips([editedBeats, editedReverse, adopted, ...keyarts.slice(1)], [], 1, { videoModel: "seedance-2.0-mini" });
+    const stale = changed.blocks.find(item => item.id === adopted.id)!;
+    expect(stale.outputUrl).toBe(oldImageUrl);
+    expect(isManhuaWorkbenchKeyartCurrent(stale)).toBe(false);
   });
 
   it("真实工作台回调将当前镜描述同时写入剧本包和三种节点，不触碰别集", () => {

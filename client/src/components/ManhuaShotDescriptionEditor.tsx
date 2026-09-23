@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 
 export function ManhuaShotDescriptionEditor({ shotIndex, description, disabled, onApply }: {
   shotIndex: number;
@@ -12,7 +12,7 @@ export function ManhuaShotDescriptionEditor({ shotIndex, description, disabled, 
   return <div data-manhua-shot-description className="mt-3">
     <div className="flex items-baseline justify-between gap-2">
       <label htmlFor={`manhua-shot-description-${shotIndex}`} className="text-xs text-white/70">画面描述 · 可直接修改</label>
-      <span className="text-xs tabular-nums text-white/45">{value.length}/200</span>
+      <span className={`text-xs tabular-nums ${value.length > 200 ? "text-rose-200" : "text-white/45"}`}>{value.length}/200</span>
     </div>
     <textarea
       id={`manhua-shot-description-${shotIndex}`}
@@ -26,7 +26,7 @@ export function ManhuaShotDescriptionEditor({ shotIndex, description, disabled, 
     />
     {error && <p role="alert" className="mt-1 text-xs text-rose-200">{error}</p>}
     <div className="mt-2 flex flex-wrap items-center gap-2">
-      <button type="button" disabled={disabled || !trimmed || trimmed === description.trim()}
+      <button type="button" disabled={disabled || !trimmed || value.length > 200 || trimmed === description.trim()}
         className="min-h-10 rounded-lg border border-cyan-300/40 px-3 text-xs text-cyan-50 disabled:opacity-40"
         onClick={() => {
           if (!trimmed) { setError("画面描述不能为空，原稿未修改。"); return; }
