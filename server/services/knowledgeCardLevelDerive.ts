@@ -6,6 +6,7 @@
  */
 import { countMarkdownSections, mergeDistilledMarkdownChunks } from "./knowledgeCardDistill.js";
 import { touchKnowledgeCardDistillActivity } from "./knowledgeCardDistillActivity.js";
+import { retryKnowledgeCardChain } from "./knowledgeCardChainRetry.js";
 import {
   KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER,
   KNOWLEDGE_CARD_GLM_FIRST_ORDER,
@@ -229,8 +230,17 @@ async function chatOnceInner(gw: DeriveGateway, params: { system: string; user: 
   return out;
 }
 
-/** 按网关链调用：一家坏了（HTTP 错 / 空内容 / 截断）换下一家 */
+/** 按网关链调用；整条链都失败时隔 30 秒重跑，最多 3 次（0923 用户令） */
 async function deriveChat(params: { system: string; user: string; model?: string; maxTokens: number; abortSignal?: AbortSignal }): Promise<string> {
+  return retryKnowledgeCardChain(() => deriveChainOnce(params), {
+    label: "knowledgeCardLevelDerive",
+    abortSignal: params.abortSignal,
+    isRetryable: (err) => !isSseContentSafetyError(err) && !/未配置/.test(err instanceof Error ? err.message : String(err)),
+  });
+}
+
+/** 按网关链调用一遍：一家坏了（HTTP 错 / 空内容 / 截断）换下一家 */
+async function deriveChainOnce(params: { system: string; user: string; model?: string; maxTokens: number; abortSignal?: AbortSignal }): Promise<string> {
   // 终审第五条：model（来自服务端 receipt）决定链序，不再丢弃
   const gateways = deriveGateways(params.model);
   if (!gateways.length) throw new Error("精华版派生未配置（EVOLINK_API_KEY / OPENROUTER_API_KEY）");

@@ -16,6 +16,7 @@
 import { extractFirstChoicePlainText } from "../_core/llm.js";
 export { knowledgeCardDistillActivity, touchKnowledgeCardDistillActivity } from "./knowledgeCardDistillActivity.js";
 import { touchKnowledgeCardDistillActivity } from "./knowledgeCardDistillActivity.js";
+import { retryKnowledgeCardChain } from "./knowledgeCardChainRetry.js";
 import { shouldSkipKnowledgeCardDistill } from "../../shared/knowledgeCardPagination.js";
 import {
   resolveKnowledgeCardDetailLevel,
@@ -930,6 +931,19 @@ async function invokeDistillLlm(params: {
   /** 覆盖链序（挑页的降档尾段用：只走精细档的 Qwen 尾跳，不多出第 5 跳） */
   chainOverride?: readonly KnowledgeCardGatewayStep[];
 }): Promise<string> {
+  // 0923 用户令：整条通道链都失败（模型服务异常）隔 30 秒重跑，最多 3 次，不直接报到前端
+  return retryKnowledgeCardChain(() => invokeDistillChainOnce(params), {
+    label: "knowledgeCardDistill",
+    abortSignal: params.abortSignal,
+    isRetryable: (err) => {
+      if (isKnowledgeCardCancelledError(err, params.abortSignal) || isSseContentSafetyError(err)) return false;
+      // 额度/配置/安全拒答等确定性失败：重试也一样
+      return isSseIncompleteStreamError(err) || !isFatalDistillError(err);
+    },
+  });
+}
+
+async function invokeDistillChainOnce(params: Parameters<typeof invokeDistillLlm>[0]): Promise<string> {
   const chain = params.chainOverride
     ? filterConfiguredSteps(params.chainOverride, {
         evolink: Boolean(getEvolinkApiKey()),

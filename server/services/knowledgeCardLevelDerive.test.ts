@@ -84,6 +84,7 @@ describe("0923 派生额度：8.5 万字的书不再被思考吃光输出", () =
     vi.stubEnv("OPENROUTER_API_KEY", "test-or");
     vi.stubEnv("EVOLINK_API_KEY", "test-evo");
     vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "test-sg");
+    vi.stubEnv("KNOWLEDGE_CARD_CHAIN_RETRY_DELAY_MS", "0");
     const fetchMock = vi.fn(async () =>
       new Response(JSON.stringify({ choices: [{ message: { content: "## 半截\n\n写到一半" }, finish_reason: "length" }] }), {
         status: 200,
@@ -95,7 +96,7 @@ describe("0923 派生额度：8.5 万字的书不再被思考吃光输出", () =
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toBe(KNOWLEDGE_CARD_DERIVE_TRUNCATED_MESSAGE);
     expect((err as Error).message).not.toMatch(/算力紧张/);
-    // 每个通道都真的试过，不是第一家截断就放弃
-    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(3);
+    // 每个通道都真的试过（六跳），整条链还按 0923 用户令重跑了 3 次：6 × 4
+    expect(fetchMock.mock.calls.length).toBe(24);
   });
 });
