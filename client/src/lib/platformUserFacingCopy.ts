@@ -51,3 +51,10 @@ export function sanitizePlatformUserMessageOrNull(raw: string): string | null {
   if (INTERNAL_ENGINE_PATTERN.test(text)) return null;
   return text;
 }
+
+/**
+ * 知识卡：接口回的是网关错误页（HTML）而不是数据时给用户的话。
+ * 0923 用户令「如实报错」——这类失败来自发布重启 / 网关超时，不是上游算力紧张。
+ */
+export const KNOWLEDGE_CARD_GATEWAY_PAGE_MESSAGE =
+  "服务连接中断（收到错误页面而不是结果，常见于系统更新重启或网关超时），请稍后重试";

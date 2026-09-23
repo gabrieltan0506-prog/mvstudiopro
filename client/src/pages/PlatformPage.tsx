@@ -140,7 +140,7 @@ import {
 } from "@shared/manhuaNativeDeepReadJob";
 import { formatManhuaTemplateNativeBeatZh } from "@/lib/manhuaTemplateNativeBeat";
 import { trpc } from "@/lib/trpc";
-import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
+import { sanitizePlatformUserMessage, KNOWLEDGE_CARD_GATEWAY_PAGE_MESSAGE } from "@/lib/platformUserFacingCopy";
 import { normalizeDouyinVideoUrl, shouldSkipLocalLearnFallback } from "@shared/manhuaLearnYtdlp";
 import type { AssetAnalysisHandoffPayload } from "@/lib/platformAssetAnalysisHandoff";
 import { buildBlueOceanLexicon, type BlueOceanLexicon } from "@shared/blueOceanLexicon";
@@ -8198,6 +8198,16 @@ export default function PlatformPage() {
   const exportKnowledgeCardPdfMutation = trpc.mvAnalysis.exportKnowledgeCardPdf.useMutation();
   const [knowledgeCardPdfBusy, setKnowledgeCardPdfBusy] = useState(false);
   const [knowledgeCardPdfUrl, setKnowledgeCardPdfUrl] = useState<string | null>(null);
+  /** 0923 用户令：上传 EPUB 后给「转好的 PDF」下载按钮（服务端 GCS 存档签名链接，下载经 Fly 临时转存） */
+  const [knowledgeCardEpubPdfs, setKnowledgeCardEpubPdfs] = useState<Array<{ fileName: string; url: string }>>([]);
+  const [knowledgeCardEpubPdfBusy, setKnowledgeCardEpubPdfBusy] = useState<string | null>(null);
+  /** 已下载（存档已删）的链接：之后的进度轮询/终态回包不许再把按钮带回来 */
+  const knowledgeCardEpubPdfTakenRef = useRef<Set<string>>(new Set());
+  const deleteKnowledgeCardEpubPdfMutation = trpc.mvAnalysis.deleteKnowledgeCardEpubPdf.useMutation();
+  const showKnowledgeCardEpubPdfs = (list: Array<{ fileName: string; url: string }>) => {
+    const fresh = list.filter((p) => !knowledgeCardEpubPdfTakenRef.current.has(p.url));
+    setKnowledgeCardEpubPdfs(fresh);
+  };
   const [knowledgeCardDownloading, setKnowledgeCardDownloading] = useState<number | null>(null);
   const downloadKnowledgeCardImage = async (url: string, index: number) => {
     if (knowledgeCardDownloading !== null) return;
@@ -8258,6 +8268,28 @@ export default function PlatformPage() {
     } finally {
       markInflight(runId, idx, false);
       setCustomNoteBusy(false);
+    }
+  };
+
+  /** EPUB 转好的 PDF：GCS 存档，下载时经 Fly 临时空间转存（国内可达），与整套导出同一路径 */
+  const downloadKnowledgeCardEpubPdf = async (pdf: { fileName: string; url: string }) => {
+    if (knowledgeCardEpubPdfBusy) return;
+    setKnowledgeCardEpubPdfBusy(pdf.url);
+    try {
+      const downloadUrl = await cachePhotoTemporaryMedia(pdf.url, "pdf");
+      triggerTemporaryDownload(downloadUrl, pdf.fileName || "epub.pdf");
+      // 0923 用户令：下载后直接删档、按钮消失。Fly 临时副本已建好（下载走它，12 小时自动过期），
+      // 所以此刻删 GCS 存档不影响这次下载
+      knowledgeCardEpubPdfTakenRef.current.add(pdf.url);
+      setKnowledgeCardEpubPdfs((prev) => prev.filter((p) => p.url !== pdf.url));
+      deleteKnowledgeCardEpubPdfMutation.mutateAsync({ url: pdf.url }).catch((err) => {
+        console.warn("[knowledgeCard] EPUB PDF 存档删除失败：", err);
+      });
+    } catch (e) {
+      const raw = String((e as { message?: string })?.message || "");
+      toast.error(`PDF 下载失败：${raw.slice(0, 120) || "请稍后重试"}（链接 7 天内有效，过期请重新上传 EPUB）`, { duration: 10_000 });
+    } finally {
+      setKnowledgeCardEpubPdfBusy(null);
     }
   };
 
@@ -8454,6 +8486,8 @@ export default function PlatformPage() {
     bumpCustomNoteRevision();
     setCustomNoteFullMarkdown(null);
     setCustomNoteCompactMarkdown(null);
+    // 新一轮提炼：上一本 EPUB 的 PDF 按钮不再挂着（本轮转档成功会重新出现）
+    setKnowledgeCardEpubPdfs([]);
     const queued = await prepareKnowledgeCardCopyMutation.mutateAsync({
       sourceText: args.sourceText,
       files: args.files?.length ? args.files : undefined,
@@ -8506,7 +8540,10 @@ export default function PlatformPage() {
           distillPercent?: number;
           distillStage?: string; distillStageDone?: number; distillStageTotal?: number; distillFileName?: string;
           distillPhase?: string; distillDoneChunks?: number; distillTotalChunks?: number;
+          epubPdfs?: Array<{ fileName: string; url: string }>;
         };
+        // EPUB 一转完就出下载按钮，不等提炼结束（后面提炼失败也能下载）
+        if (Array.isArray(out.epubPdfs) && out.epubPdfs.length) showKnowledgeCardEpubPdfs(out.epubPdfs);
         const label = stageLabel(out);
         args.onStatus?.(label);
         setCustomNoteProgress({
@@ -8518,7 +8555,8 @@ export default function PlatformPage() {
     });
     if (job.status === "failed") throw new Error(job.error || "提炼失败，请稍后重试");
     setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromDistill(98), label: "提炼完成" });
-    const out = (job.output || {}) as { distilledMarkdown?: string };
+    const out = (job.output || {}) as { distilledMarkdown?: string; epubPdfs?: Array<{ fileName: string; url: string }> };
+    if (Array.isArray(out.epubPdfs) && out.epubPdfs.length) showKnowledgeCardEpubPdfs(out.epubPdfs);
     return String(out.distilledMarkdown || "").trim();
     } finally {
       // 只清自己那单：迟到的旧轮询不许把新任务的终止按钮抹掉
@@ -8669,12 +8707,13 @@ export default function PlatformPage() {
       message.includes("Unexpected end of JSON input") ||
       message.includes("Unexpected token") ||
       message.includes("is not valid JSON") ||
-      message.includes("An error o") ||
-      message.includes("模型返回格式异常") ||
-      message.includes("模型服务暂时异常")
+      message.includes("An error o")
     ) {
-      return "算力紧张或请求超时，请稍后重试";
+      // 0923 用户令「如实报错」：这里收到的是网关错误页而不是接口数据（发布重启、网关超时都会这样），
+      // 不是上游算力紧张——以前统一写「算力紧张」，用户排查方向全错
+      return KNOWLEDGE_CARD_GATEWAY_PAGE_MESSAGE;
     }
+    // 「模型返回格式异常 / 模型服务暂时异常」本身是中文业务句，落到这里原样给用户，不再改写成算力紧张
     return message || "生成失败，请稍后重试";
   };
 
@@ -15881,6 +15920,22 @@ export default function PlatformPage() {
                       {customNoteUploadStatus}
                     </span>
                   ) : null}
+                  {knowledgeCardEpubPdfs.length > 0 ? (
+                    <span className="flex w-full flex-wrap items-center gap-2">
+                      {knowledgeCardEpubPdfs.map((pdf) => (
+                        <button
+                          key={pdf.url}
+                          type="button"
+                          disabled={Boolean(knowledgeCardEpubPdfBusy)}
+                          onClick={() => void downloadKnowledgeCardEpubPdf(pdf)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-[#8cefff]/40 px-2.5 py-1 text-[11px] font-semibold text-[#8cefff] hover:bg-[#8cefff]/10 disabled:opacity-50"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          {knowledgeCardEpubPdfBusy === pdf.url ? "正在准备下载…" : `下载 EPUB 转好的 PDF · ${pdf.fileName}`}
+                        </button>
+                      ))}
+                    </span>
+                  ) : null}
                   {customNotePendingMeta.length > 0 ? (
                     <span className="w-full text-[11px] text-[#c9c0e6]/55">
                       待处理 {customNotePendingMeta.length} 个：
@@ -16043,6 +16098,7 @@ export default function PlatformPage() {
                       setCustomNoteInfographicLabelZh(null);
                       setCustomNoteProgress({ status: "idle", percent: 0 });
                       setKnowledgeCardPdfUrl(null);
+                      setKnowledgeCardEpubPdfs([]);
                       setKnowledgeCardInflight([]);
                       renderRunIdRef.current += 1;
                       renderedDraftRef.current = "";

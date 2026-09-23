@@ -6,6 +6,7 @@
  */
 import { countMarkdownSections, mergeDistilledMarkdownChunks } from "./knowledgeCardDistill.js";
 import { touchKnowledgeCardDistillActivity } from "./knowledgeCardDistillActivity.js";
+import { retryKnowledgeCardChain } from "./knowledgeCardChainRetry.js";
 import {
   KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER,
   KNOWLEDGE_CARD_GLM_FIRST_ORDER,
@@ -32,8 +33,15 @@ export const KNOWLEDGE_CARD_DERIVE_MODEL_DASHSCOPE_SG = String(process.env.KNOWL
 const EVOLINK_DIRECT_CHAT_URL = String(process.env.EVOLINK_DIRECT_CHAT_URL || "https://direct.evolink.ai/v1/chat/completions").trim();
 const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DASHSCOPE_SG_PLAN_CHAT_URL = "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions";
-/** 每批最多喂多少字（DeepSeek 上下文 100 万 token，8 万字一批留足输出与推理余量） */
-const DERIVE_BATCH_MAX_CHARS = Math.max(20_000, Number(process.env.KNOWLEDGE_CARD_DERIVE_BATCH_CHARS) || 80_000);
+/**
+ * 每批最多喂多少字。0923 用户拍板 3 万字：8 万字一批时思考 high 先吃掉大半输出额度，
+ * 五个通道全部「上游输出被截断（预算耗尽）」，8.5 万字的书派生拖了 20 分钟。
+ */
+const DERIVE_BATCH_MAX_CHARS = Math.max(20_000, Number(process.env.KNOWLEDGE_CARD_DERIVE_BATCH_CHARS) || 30_000);
+/** 派生每批输出额度保底（0923 用户拍板提高）：思考与正文共用 max_tokens，按字数÷2 给会被思考吃光 */
+export const DERIVE_MIN_OUTPUT_TOKENS = 64_000;
+/** 所有通道都截断时给用户看的话：如实说是长度不够，不说成算力紧张 */
+export const KNOWLEDGE_CARD_DERIVE_TRUNCATED_MESSAGE = "精华版压缩超出输出长度（所有通道都没写完），请稍后重试";
 const DERIVE_TIMEOUT_MS = Math.max(120_000, Number(process.env.KNOWLEDGE_CARD_DERIVE_TIMEOUT_MS) || 15 * 60_000);
 
 type DeriveGateway = {
@@ -222,12 +230,23 @@ async function chatOnceInner(gw: DeriveGateway, params: { system: string; user: 
   return out;
 }
 
-/** 按网关链调用：一家坏了（HTTP 错 / 空内容 / 截断）换下一家 */
+/** 按网关链调用；整条链都失败时隔 30 秒重跑，最多 3 次（0923 用户令） */
 async function deriveChat(params: { system: string; user: string; model?: string; maxTokens: number; abortSignal?: AbortSignal }): Promise<string> {
+  return retryKnowledgeCardChain(() => deriveChainOnce(params), {
+    label: "knowledgeCardLevelDerive",
+    abortSignal: params.abortSignal,
+    isRetryable: (err) => !isSseContentSafetyError(err) && !/未配置/.test(err instanceof Error ? err.message : String(err)),
+  });
+}
+
+/** 按网关链调用一遍：一家坏了（HTTP 错 / 空内容 / 截断）换下一家 */
+async function deriveChainOnce(params: { system: string; user: string; model?: string; maxTokens: number; abortSignal?: AbortSignal }): Promise<string> {
   // 终审第五条：model（来自服务端 receipt）决定链序，不再丢弃
   const gateways = deriveGateways(params.model);
   if (!gateways.length) throw new Error("精华版派生未配置（EVOLINK_API_KEY / OPENROUTER_API_KEY）");
   let lastError: Error | null = null;
+  // 如实报错：只有每一跳都是截断，才说「所有通道都没写完」
+  let allTruncated = true;
   for (let i = 0; i < gateways.length; i++) {
     params.abortSignal?.throwIfAborted();
     const gw = gateways[i]!;
@@ -237,9 +256,11 @@ async function deriveChat(params: { system: string; user: string; model?: string
     } catch (err) {
       if (isSseContentSafetyError(err) || params.abortSignal?.aborted) throw err;
       lastError = err instanceof Error ? err : new Error(String(err));
+      if (!/截断/.test(lastError.message)) allTruncated = false;
       if (i < gateways.length - 1) console.warn(`[knowledgeCardLevelDerive] ${gw.name} 失败 → 改走 ${gateways[i + 1]!.name}：${lastError.message.slice(0, 160)}`);
     }
   }
+  if (lastError && allTruncated) throw new Error(KNOWLEDGE_CARD_DERIVE_TRUNCATED_MESSAGE, { cause: lastError });
   throw lastError || new Error("精华版派生失败");
 }
 
@@ -285,7 +306,7 @@ export async function deriveKnowledgeCardCompact(params: {
         user: batch.join("\n\n"),
         model,
         abortSignal: params.abortSignal,
-        maxTokens: Math.min(120_000, Math.max(8_000, Math.ceil(batch.join("").length / 2))),
+        maxTokens: Math.min(120_000, Math.max(DERIVE_MIN_OUTPUT_TOKENS, Math.ceil(batch.join("").length / 2))),
       });
       const got = countMarkdownSections(raw);
       if (got < 1 || got > keep * 2 + 2) {

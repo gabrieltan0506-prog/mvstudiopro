@@ -16,6 +16,7 @@
 import { extractFirstChoicePlainText } from "../_core/llm.js";
 export { knowledgeCardDistillActivity, touchKnowledgeCardDistillActivity } from "./knowledgeCardDistillActivity.js";
 import { touchKnowledgeCardDistillActivity } from "./knowledgeCardDistillActivity.js";
+import { KNOWLEDGE_CARD_CHAIN_RETRY_DELAY_MS, KNOWLEDGE_CARD_CHAIN_RETRY_ROUNDS, retryKnowledgeCardChain, waitAbortable } from "./knowledgeCardChainRetry.js";
 import { shouldSkipKnowledgeCardDistill } from "../../shared/knowledgeCardPagination.js";
 import {
   resolveKnowledgeCardDetailLevel,
@@ -55,6 +56,7 @@ import {
   type KnowledgeCardPageSelection,
 } from "./knowledgeCardDocumentPages.js";
 import { convertEpubToPdf, isEpubFile } from "./knowledgeCardEpubToPdf.js";
+import { archiveConvertedEpubPdf, type KnowledgeCardConvertedPdf } from "./knowledgeCardEpubPdfArchive.js";
 import { looksLikeTriageJson, invokePageTriageJson } from "./knowledgeCardPageTriage.js";
 
 /** 百炼新加坡 Token Plan（Qwen 官方兜底）；与整形链 `plan_sg_qwen` 同一端点与密钥 */
@@ -155,7 +157,8 @@ const DISTILL_PROFILES: Record<KnowledgeCardDistillModelId, KnowledgeCardDistill
     effortChunk: envStr("KNOWLEDGE_CARD_DISTILL_DEEPSEEK_EFFORT_CHUNK", "high"),
     effortFinal: envStr("KNOWLEDGE_CARD_DISTILL_DEEPSEEK_EFFORT_FINAL", "high"),
     requestTimeoutMs: envNum("KNOWLEDGE_CARD_DISTILL_DEEPSEEK_TIMEOUT_MS", 240_000, 60_000, 480_000),
-    chunkRetries: envNum("KNOWLEDGE_CARD_DISTILL_DEEPSEEK_CHUNK_RETRIES", 2, 0, 4),
+    // 0923 用户令：每段隔 30 秒重试 3 次
+    chunkRetries: envNum("KNOWLEDGE_CARD_DISTILL_DEEPSEEK_CHUNK_RETRIES", KNOWLEDGE_CARD_CHAIN_RETRY_ROUNDS, 0, 4),
     minSectionsPerChunk: envNum("KNOWLEDGE_CARD_DISTILL_DEEPSEEK_MIN_SECTIONS", 3, 2, 24),
     refineMaxChars: envNum("KNOWLEDGE_CARD_DISTILL_DEEPSEEK_REFINE_MAX_CHARS", 48_000, 0, 200_000),
     bulletsPerSection: { min: 2, max: 4 },
@@ -170,7 +173,8 @@ const DISTILL_PROFILES: Record<KnowledgeCardDistillModelId, KnowledgeCardDistill
     effortChunk: envStr("KNOWLEDGE_CARD_DISTILL_GLM_EFFORT_CHUNK", "high"),
     effortFinal: envStr("KNOWLEDGE_CARD_DISTILL_GLM_EFFORT_FINAL", "high"),
     requestTimeoutMs: envNum("KNOWLEDGE_CARD_DISTILL_GLM_TIMEOUT_MS", 240_000, 60_000, 480_000),
-    chunkRetries: envNum("KNOWLEDGE_CARD_DISTILL_GLM_CHUNK_RETRIES", 2, 0, 4),
+    // 0923 用户令：每段隔 30 秒重试 3 次
+    chunkRetries: envNum("KNOWLEDGE_CARD_DISTILL_GLM_CHUNK_RETRIES", KNOWLEDGE_CARD_CHAIN_RETRY_ROUNDS, 0, 4),
     minSectionsPerChunk: envNum("KNOWLEDGE_CARD_DISTILL_GLM_MIN_SECTIONS", 3, 2, 24),
     refineMaxChars: envNum("KNOWLEDGE_CARD_DISTILL_GLM_REFINE_MAX_CHARS", 48_000, 0, 200_000),
     bulletsPerSection: { min: 3, max: 5 },
@@ -392,7 +396,11 @@ export type KnowledgeCardExtractResult = {
   methods: string[];
   /** PDF / EPUB 逐页备料（含选中页图）；docx/pptx 只有文字 */
   documents: KnowledgeCardDocumentPageSet[];
+  /** EPUB 转好的 PDF（0923 用户令：给下载按钮）；签名 https，7 天有效 */
+  convertedPdfs?: KnowledgeCardConvertedPdf[];
 };
+
+export type { KnowledgeCardConvertedPdf } from "./knowledgeCardEpubPdfArchive.js";
 
 function isPdfFile(mimeType: string, fileName?: string): boolean {
   return String(mimeType || "").toLowerCase() === "application/pdf" || String(fileName || "").toLowerCase().endsWith(".pdf");
@@ -413,6 +421,8 @@ export async function extractKnowledgeCardUploads(
     abortSignal?: AbortSignal;
     selectPages?: (sheets: KnowledgeCardContactSheet[], pageCount: number) => Promise<KnowledgeCardPageSelection[]>;
     onProgress?: (p: KnowledgeCardExtractProgress) => void | Promise<void>;
+    /** EPUB 一转完就回调（后面提炼失败也能下载转好的 PDF） */
+    onConvertedPdf?: (all: KnowledgeCardConvertedPdf[]) => void | Promise<void>;
   } = {},
 ): Promise<KnowledgeCardExtractResult> {
   const docParts: string[] = [];
@@ -420,6 +430,7 @@ export async function extractKnowledgeCardUploads(
   const imageUrls: string[] = [];
   const methods: string[] = [];
   const documents: KnowledgeCardDocumentPageSet[] = [];
+  const convertedPdfs: KnowledgeCardConvertedPdf[] = [];
   const pagesEnabled = Boolean(options.selectPages && options.userId && options.userId > 0);
   const fileTotal = files.length;
 
@@ -475,6 +486,13 @@ export async function extractKnowledgeCardUploads(
         `${name}:epub_to_pdf(${converted.chapterCount} chapters, images ${converted.images.total}/downscaled ${converted.images.downscaled}, shards ${converted.shardCount}${converted.mode === "stripped" ? `/stripped shards ${converted.strippedShards.join("+")} (${converted.images.stripped} images)` : ""})`,
       );
       await report("converting", 1, 1);
+      if (options.userId && options.userId > 0) {
+        const archived = await archiveConvertedEpubPdf({ pdf: converted.pdf, fileName: name, userId: options.userId, abortSignal: options.abortSignal });
+        if (archived) {
+          convertedPdfs.push(archived);
+          await options.onConvertedPdf?.(convertedPdfs.slice());
+        }
+      }
     } else if (isPdfFile(file.mimeType, file.fileName)) {
       pdfBuffer = buffer;
     }
@@ -524,6 +542,7 @@ export async function extractKnowledgeCardUploads(
     imageUrls,
     methods,
     documents,
+    convertedPdfs,
   };
 }
 
@@ -929,7 +948,26 @@ async function invokeDistillLlm(params: {
   abortSignal?: AbortSignal;
   /** 覆盖链序（挑页的降档尾段用：只走精细档的 Qwen 尾跳，不多出第 5 跳） */
   chainOverride?: readonly KnowledgeCardGatewayStep[];
+  /**
+   * 整链重试开关（默认开）。分段提炼自己在「每一段」这层隔 30 秒重试 3 次，传 false 关掉这层，
+   * 避免两层相乘（0923 用户拍板：只放一层）。
+   */
+  chainRetry?: boolean;
 }): Promise<string> {
+  if (params.chainRetry === false) return invokeDistillChainOnce(params);
+  // 0923 用户令：整条通道链都失败（模型服务异常）隔 30 秒重跑，最多 3 次，不直接报到前端
+  return retryKnowledgeCardChain(() => invokeDistillChainOnce(params), {
+    label: "knowledgeCardDistill",
+    abortSignal: params.abortSignal,
+    isRetryable: (err) => {
+      if (isKnowledgeCardCancelledError(err, params.abortSignal) || isSseContentSafetyError(err)) return false;
+      // 额度/配置/安全拒答等确定性失败：重试也一样
+      return isSseIncompleteStreamError(err) || !isFatalDistillError(err);
+    },
+  });
+}
+
+async function invokeDistillChainOnce(params: Parameters<typeof invokeDistillLlm>[0]): Promise<string> {
   const chain = params.chainOverride
     ? filterConfiguredSteps(params.chainOverride, {
         evolink: Boolean(getEvolinkApiKey()),
@@ -991,7 +1029,6 @@ function isFatalDistillError(error: unknown): boolean {
   return /额度不足|通道不可用|未配置|请先输入|未能从文件|HTTP 40[13]|安全分类器拒答|内容被安全策略拦截/.test(message);
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * 单段提炼：失败退避重试，仍失败则把该段对半细切分别提再拼。
@@ -1015,6 +1052,8 @@ async function distillOneChunkWithRetry(params: {
   for (let attempt = 0; attempt <= params.retries; attempt++) {
     try {
       return await invokeDistillLlm({
+        // 重试放在本层（隔 30 秒 × 3 次），整链那层关掉，不叠加
+        chainRetry: false,
         abortSignal: params.abortSignal,
         sourceText: params.chunk,
         imageUrls: params.imageUrls,
@@ -1035,10 +1074,15 @@ async function distillOneChunkWithRetry(params: {
       console.warn(
         `[knowledgeCardDistill] ${params.chunkLabel} attempt ${attempt + 1}/${params.retries + 1} failed: ${lastError.message.slice(0, 160)}`,
       );
-      // 退避基数按调用时读，测试可置 0（生产默认 2 秒起）
+      // 0923 用户令：隔 30 秒重试（原 2 秒、4 秒递增作废）；间隔按调用时读，测试可置 0
       const backoffMs = Number(process.env.KNOWLEDGE_CARD_DISTILL_RETRY_BACKOFF_MS);
-      const base = Number.isFinite(backoffMs) && backoffMs >= 0 ? backoffMs : 2_000;
-      if (attempt < params.retries && base > 0) await sleep(base * (attempt + 1));
+      const wait = Number.isFinite(backoffMs) && backoffMs >= 0 ? backoffMs : KNOWLEDGE_CARD_CHAIN_RETRY_DELAY_MS;
+      if (attempt < params.retries && wait > 0) {
+        // 等待期间刷心跳、可被终止打断
+        touchKnowledgeCardDistillActivity();
+        await waitAbortable(wait, params.abortSignal);
+        touchKnowledgeCardDistillActivity();
+      }
     }
   }
 
@@ -1595,6 +1639,8 @@ export type PrepareKnowledgeCardCopyResult = {
   detailLevel: KnowledgeCardDetailLevel;
   /** 逐页备料摘要（不含图数据） */
   documents: Array<{ docKey: string; fileName: string; pageCount: number; selectedPages: number[] }>;
+  /** EPUB 转好的 PDF 下载链接（0923 用户令） */
+  convertedPdfs: KnowledgeCardConvertedPdf[];
 };
 
 /** 目录页扫读回包 */
@@ -1712,6 +1758,8 @@ export async function prepareKnowledgeCardCopy(input: {
   extracted?: KnowledgeCardExtractResult;
   onProgress?: (p: KnowledgeCardDistillProgress) => void | Promise<void>;
   onExtractProgress?: (p: KnowledgeCardExtractProgress) => void | Promise<void>;
+  /** EPUB 一转完就回调，调用方写进任务进度让前端立刻出下载按钮 */
+  onConvertedPdf?: (all: KnowledgeCardConvertedPdf[]) => void | Promise<void>;
   /** 用户点「终止」：在途请求立刻断，段与段之间也不再往下跑 */
   abortSignal?: AbortSignal;
 }): Promise<PrepareKnowledgeCardCopyResult> {
@@ -1728,6 +1776,7 @@ export async function prepareKnowledgeCardCopy(input: {
           userId: input.userId,
           selectPages: input.userId ? makeKnowledgeCardPageSelector(modelName, input.abortSignal) : undefined,
           onProgress: input.onExtractProgress,
+          onConvertedPdf: input.onConvertedPdf,
         })
       : { documentText: "", nonPageDocumentText: "", imageUrls: [], methods: [], documents: [] });
 
@@ -1755,6 +1804,7 @@ export async function prepareKnowledgeCardCopy(input: {
       distillModel: null,
       detailLevel,
       documents: documentsSummary,
+      convertedPdfs: extracted.convertedPdfs ?? [],
     };
   }
 
@@ -1796,6 +1846,7 @@ export async function prepareKnowledgeCardCopy(input: {
       distillModel: modelName,
       detailLevel,
       documents: documentsSummary,
+      convertedPdfs: extracted.convertedPdfs ?? [],
     };
   } catch (err) {
     // 用户终止：原样上抛，别被下面的兜底改写成「算力紧张」——

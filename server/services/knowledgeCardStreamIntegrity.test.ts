@@ -13,6 +13,8 @@ import { invokeDeepSeekJsonChatRaw } from "./platformTopicShortlist";
 import { KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK } from "../../shared/knowledgeCardDistillModels";
 
 beforeEach(() => {
+  // 整链重试（0923：隔 30 秒 × 3 次）测试里不真等
+  vi.stubEnv("KNOWLEDGE_CARD_CHAIN_RETRY_DELAY_MS", "0");
   vi.stubEnv("EVOLINK_API_KEY", "evo");
   vi.stubEnv("OPENROUTER_API_KEY", "or");
   vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "sg");
@@ -192,9 +194,10 @@ describe("P1 流式完整性：断流不得当成稿（主提炼真实链路）"
   });
 
   it("六跳全部断流：整体失败，不交半截稿", async () => {
-    const { calls } = stubFetch(Array.from({ length: 6 }, () => () => errorFrameStream(SECTIONS.slice(0, 60))));
+    // 六跳一轮 × （首轮 + 整链重试 3 次）
+    const { calls } = stubFetch(Array.from({ length: 24 }, () => () => errorFrameStream(SECTIONS.slice(0, 60))));
     await expect(distillOnce()).rejects.toThrow();
-    expect(calls).toHaveLength(6);
+    expect(calls).toHaveLength(24);
   });
 });
 
@@ -261,9 +264,10 @@ describe("P2 锁定自营供应商无端点：换下一跳；安全拒绝：终�
   });
 
   it("六跳全失败：抛错，不交空稿", async () => {
-    const { calls } = stubFetch(Array.from({ length: 6 }, () => noEndpoints));
+    // 六跳一轮 × （首轮 + 整链重试 3 次）
+    const { calls } = stubFetch(Array.from({ length: 24 }, () => noEndpoints));
     await expect(distillOnce()).rejects.toThrow();
-    expect(calls).toHaveLength(6);
+    expect(calls).toHaveLength(24);
   });
 });
 
