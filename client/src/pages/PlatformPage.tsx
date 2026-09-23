@@ -140,7 +140,7 @@ import {
 } from "@shared/manhuaNativeDeepReadJob";
 import { formatManhuaTemplateNativeBeatZh } from "@/lib/manhuaTemplateNativeBeat";
 import { trpc } from "@/lib/trpc";
-import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
+import { sanitizePlatformUserMessage, KNOWLEDGE_CARD_GATEWAY_PAGE_MESSAGE } from "@/lib/platformUserFacingCopy";
 import { normalizeDouyinVideoUrl, shouldSkipLocalLearnFallback } from "@shared/manhuaLearnYtdlp";
 import type { AssetAnalysisHandoffPayload } from "@/lib/platformAssetAnalysisHandoff";
 import { buildBlueOceanLexicon, type BlueOceanLexicon } from "@shared/blueOceanLexicon";
@@ -8669,12 +8669,13 @@ export default function PlatformPage() {
       message.includes("Unexpected end of JSON input") ||
       message.includes("Unexpected token") ||
       message.includes("is not valid JSON") ||
-      message.includes("An error o") ||
-      message.includes("模型返回格式异常") ||
-      message.includes("模型服务暂时异常")
+      message.includes("An error o")
     ) {
-      return "算力紧张或请求超时，请稍后重试";
+      // 0923 用户令「如实报错」：这里收到的是网关错误页而不是接口数据（发布重启、网关超时都会这样），
+      // 不是上游算力紧张——以前统一写「算力紧张」，用户排查方向全错
+      return KNOWLEDGE_CARD_GATEWAY_PAGE_MESSAGE;
     }
+    // 「模型返回格式异常 / 模型服务暂时异常」本身是中文业务句，落到这里原样给用户，不再改写成算力紧张
     return message || "生成失败，请稍后重试";
   };
 

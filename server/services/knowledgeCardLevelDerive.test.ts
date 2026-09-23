@@ -1,5 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { batchSections, compactTargetSections, deriveKnowledgeCardCompact, splitMarkdownSections } from "./knowledgeCardLevelDerive";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  batchSections,
+  compactTargetSections,
+  deriveKnowledgeCardCompact,
+  DERIVE_MIN_OUTPUT_TOKENS,
+  KNOWLEDGE_CARD_DERIVE_TRUNCATED_MESSAGE,
+  splitMarkdownSections,
+} from "./knowledgeCardLevelDerive";
 
 const sec = (i: number, extra = "") => `## 第${i}节标题\n\n图：示意${i}\n\n- 要点A${i}\n- 要点B${i}\n\n| 列 | 值 |\n|---|---|\n| k${i} | v${i} |${extra}\n`;
 const book = (n: number) => `# 书名\n\n${Array.from({ length: n }, (_, i) => sec(i + 1)).join("\n")}`;
@@ -44,5 +51,51 @@ describe("知识卡精华版派生（完整版长稿为真源）", () => {
 
     const garbage = async () => "这不是小节格式的输出";
     await expect(deriveKnowledgeCardCompact({ fullMarkdown: book(40), targetSections: 8, chat: garbage as never })).rejects.toThrow(/输出异常/);
+  });
+});
+
+describe("0923 派生额度：8.5 万字的书不再被思考吃光输出", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  // 约 8.5 万字、150 节：与 0923 实际失败那本同量级
+  const bigBook = () => `# 书名\n\n${Array.from({ length: 150 }, (_, i) => `## 第${i + 1}节\n\n${"正文内容".repeat(140)}\n`).join("\n")}`;
+
+  it("每批不超过 3 万字，每批输出额度不低于 6.4 万 token", async () => {
+    const seen: Array<{ chars: number; maxTokens: number }> = [];
+    const chat = async (p: { system: string; user: string; maxTokens: number }) => {
+      seen.push({ chars: p.user.length, maxTokens: p.maxTokens });
+      const keep = Number(/挑出[^0-9]*(\d+)\s*节/.exec(p.system)?.[1] || 0);
+      return splitMarkdownSections(p.user).sections.slice(0, keep).join("\n\n");
+    };
+    const full = bigBook();
+    expect(full.length).toBeGreaterThan(80_000);
+    await deriveKnowledgeCardCompact({ fullMarkdown: full, chat: chat as never });
+    expect(seen.length).toBeGreaterThanOrEqual(3);
+    // 批内节与节之间用空行拼接，允许每节多出两个换行
+    expect(seen.every((c) => c.chars <= 30_000 + 2 * 150)).toBe(true);
+    expect(seen.every((c) => c.maxTokens >= DERIVE_MIN_OUTPUT_TOKENS)).toBe(true);
+    expect(DERIVE_MIN_OUTPUT_TOKENS).toBe(64_000);
+  });
+
+  it("所有通道都截断时如实报「超出输出长度」，不报算力紧张", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-or");
+    vi.stubEnv("EVOLINK_API_KEY", "test-evo");
+    vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "test-sg");
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ choices: [{ message: { content: "## 半截\n\n写到一半" }, finish_reason: "length" }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const err = await deriveKnowledgeCardCompact({ fullMarkdown: book(60), targetSections: 10 }).catch((e: Error) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe(KNOWLEDGE_CARD_DERIVE_TRUNCATED_MESSAGE);
+    expect((err as Error).message).not.toMatch(/算力紧张/);
+    // 每个通道都真的试过，不是第一家截断就放弃
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(3);
   });
 });

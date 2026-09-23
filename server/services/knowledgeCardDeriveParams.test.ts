@@ -102,7 +102,8 @@ describe("派生链真实适配层参数契约（终审 P2）", () => {
     const evoGlm = calls[1]!.body;
     expect(evoGlm.model).toBe("glm-5.3-flash");
     expect(evoGlm.reasoning_effort).toBe("high");
-    expect(evoGlm.max_tokens).toBe(8_000);
+    // 0923：派生每批输出保底 6.4 万（思考与正文共用额度），GLM 档不翻倍
+    expect(evoGlm.max_tokens).toBe(64_000);
     expect("thinking" in evoGlm).toBe(false);
     expect("enable_thinking" in evoGlm).toBe(false);
     // 第三跳（OpenRouter DeepSeek）：锁 DeepSeek 自营，max_tokens 翻倍留给思维链
@@ -110,7 +111,7 @@ describe("派生链真实适配层参数契约（终审 P2）", () => {
     expect(orDs.model).toBe("deepseek/deepseek-v4.1-flash");
     expect(orDs.provider).toEqual({ order: ["DeepSeek"], allow_fallbacks: false });
     expect(orDs.reasoning).toEqual({ effort: "high" });
-    expect(orDs.max_tokens).toBe(16_000);
+    expect(orDs.max_tokens).toBe(128_000);
     expect(orDs.temperature).toBe(0.2);
   });
 
@@ -130,7 +131,8 @@ describe("派生链真实适配层参数契约（终审 P2）", () => {
     // 共享顺序里没有 evolink:qwen 跳；这里验的是真实末跳 OpenRouter Qwen 的契约
     const lastBody = calls[calls.length - 1]!.body;
     expect(lastBody.model).toBe("qwen/qwen3.8-max");
-    expect(lastBody.max_tokens).toBe(8_000);
+    // 保底 6.4 万到 Qwen 档仍被 32768 封顶（Qwen 输出上限）
+    expect(lastBody.max_tokens).toBe(32_768);
     expect("provider" in lastBody).toBe(false);
   });
 
@@ -145,8 +147,8 @@ describe("派生链真实适配层参数契约（终审 P2）", () => {
     expect(body.model).toBe("deepseek-v4-flash-vision-exp");
     expect(body.thinking).toEqual({ type: "enabled" });
     expect(body.reasoning_effort).toBe("high");
-    // maxTokens=8000（小样本下限）→ DeepSeek 档翻倍 16000 留给思维链
-    expect(body.max_tokens).toBe(16_000);
+    // maxTokens=64000（0923 保底）→ DeepSeek 档翻倍 128000 留给思维链
+    expect(body.max_tokens).toBe(128_000);
     expect("enable_thinking" in body).toBe(false);
     expect("max_completion_tokens" in body).toBe(false);
     // EvoLink 不是 OpenRouter，不带 provider 字段
@@ -163,7 +165,7 @@ describe("派生链真实适配层参数契约（终审 P2）", () => {
     expect(body.model).toBe("deepseek/deepseek-v4.1-flash");
     expect(body.provider).toEqual({ order: ["DeepSeek"], allow_fallbacks: false });
     expect(body.reasoning).toEqual({ effort: "high" });
-    expect(body.max_tokens).toBe(16_000);
+    expect(body.max_tokens).toBe(128_000);
   });
 });
 
