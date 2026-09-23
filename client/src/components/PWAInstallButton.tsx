@@ -88,7 +88,7 @@ export function PWAInstallButton() {
   return (
     <>
       {/* 左下：避开右上 Pro Agent / 顶栏；勿再放 bottom-right */}
-      <div className="fixed bottom-5 left-3 z-[55] max-w-[calc(100vw-1.5rem)] sm:bottom-6 sm:left-4">
+      <div data-pwa-install-button className="fixed bottom-5 left-3 z-[55] max-w-[calc(100vw-1.5rem)] sm:bottom-6 sm:left-4">
         <Button
           type="button"
           onClick={onFabClick}

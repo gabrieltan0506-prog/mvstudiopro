@@ -5317,18 +5317,13 @@ export default function ManhuaScriptWorkbench({
         <div
           data-manhua-phase-panel="assets"
           data-manhua-assets-ready={assetsComplete ? "true" : "false"}
-          className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6"
+          className="flex min-h-0 flex-1 flex-col overflow-hidden"
         >
-          <div className="mx-auto w-full" data-manhua-assets-surface>
-            {outlineComplete && !outlineConfirmed ? (
-              <p data-manhua-outline-unconfirmed className="mb-3 text-[11px] text-amber-100/80">
-                编导区已解锁，当前剧本尚未确认；已有参考图不代表剧本资产已齐备。
-              </p>
-            ) : null}
+          <div className="mx-auto flex h-full min-h-0 w-full flex-col" data-manhua-assets-surface>
             {onUploadCustomAssets ? (
               <div
                 data-manhua-quick-asset-upload
-                className="sticky top-0 z-10 mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-cyan-300/25 bg-[#111925]/95 p-2.5 shadow-lg backdrop-blur"
+                className="mx-4 mt-3 flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-xl border border-cyan-300/25 bg-[#111925]/95 p-2.5 shadow-lg md:mx-6"
               >
                 <div className="flex flex-wrap gap-1" role="tablist" aria-label="资产分类" data-manhua-asset-tabs>
                   {(
@@ -5382,6 +5377,12 @@ export default function ManhuaScriptWorkbench({
                   </p>
                 ) : null}
               </div>
+            ) : null}
+            <div data-manhua-assets-scroll className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6">
+            {outlineComplete && !outlineConfirmed ? (
+              <p data-manhua-outline-unconfirmed className="mb-3 text-[11px] text-amber-100/80">
+                编导区已解锁，当前剧本尚未确认；已有参考图不代表剧本资产已齐备。
+              </p>
             ) : null}
             <div
               data-manhua-assets-secondary-tools
@@ -8354,6 +8355,7 @@ export default function ManhuaScriptWorkbench({
               >
                 {nextCta.labelZh}
               </button>
+            </div>
             </div>
           </div>
         </div>
