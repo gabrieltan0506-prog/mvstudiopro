@@ -107,7 +107,7 @@ beforeAll(async () => {
         import { TooltipProvider } from './client/src/components/ui/tooltip';
         import { defaultCanvasBlock } from './client/src/lib/canvasTypes';
         import ManhuaScriptWorkbench from './client/src/components/ManhuaScriptWorkbench';
-        globalThis.fixture = { keyart: 0, openedIssue: undefined };
+        globalThis.fixture = { keyart: 0, openedIssue: undefined, dialogueUpdate: undefined, descriptionUpdate: undefined };
         const refs = [
           ...${JSON.stringify(REFS)},
           { id: 'mo-primary', url: 'data:image/png;base64,iVBORw0KGgo=', role: 'character', source: 'generated', labelZh: '墨菁-定妆', refDuty: 'identity', claimedAnchorIds: ['wa_char_mo'], primaryBindings: [{ anchorId: 'wa_char_mo', duty: 'identity' }] },
@@ -157,6 +157,8 @@ beforeAll(async () => {
               onGenerateAsset3d={async () => {}}
               onGenerateSceneWorld={async () => {}}
               onUpdateClipPrompt={(id,prompt) => { globalThis.fixture.updatedClip={id,prompt}; }}
+              onUpsertShotDialogues={globalThis.dialogueProbe ? (dialogues, segmentIndex) => { globalThis.fixture.dialogueUpdate={dialogues,segmentIndex}; } : undefined}
+              onUpsertShotDescriptions={globalThis.descriptionProbe ? (descriptions) => { globalThis.fixture.descriptionUpdate=descriptions; } : undefined}
               onUpdateClipPrevisStudio={() => {}}
               onChangeManhuaActionPlan={() => {}}
               onUpdateClipAudioStudio={() => {}}
@@ -196,7 +198,7 @@ afterAll(async () => {
   await browser?.close();
 }, 180_000);
 
-async function mountStoryboard(directorProbe = false, progressProbe = false, compact = false): Promise<{ page: Page; close: () => Promise<void> }> {
+async function mountStoryboard(directorProbe = false, progressProbe = false, compact = false, dialogueProbe = false, descriptionProbe = false): Promise<{ page: Page; close: () => Promise<void> }> {
   const ctx = await browser.createBrowserContext();
   const page = await ctx.newPage();
   await page.setRequestInterception(true);
@@ -212,6 +214,8 @@ async function mountStoryboard(directorProbe = false, progressProbe = false, com
   await page.evaluate((enabled) => window.localStorage.setItem("manhua_compact_ui", enabled ? "1" : "0"), compact);
   await page.evaluate((enabled) => { (globalThis as any).directorProbe = enabled; }, directorProbe);
   await page.evaluate((enabled) => { (globalThis as any).progressProbe = enabled; }, progressProbe);
+  await page.evaluate((enabled) => { (globalThis as any).dialogueProbe = enabled; }, dialogueProbe);
+  await page.evaluate((enabled) => { (globalThis as any).descriptionProbe = enabled; }, descriptionProbe);
   await page.evaluate(storyboardBundle);
   await page.waitForFunction(() => /生成关键静帧|视觉简报|分镜/.test(document.body.innerText), {
     timeout: 30_000,
@@ -554,14 +558,14 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
     await close();
   }, 180_000);
 
-  it("分镜阶段：辅助工具不占主操作簇", async () => {
+  it("分镜阶段：声音直达入口保留，其他辅助工具不占主操作簇", async () => {
     const { page, close } = await mountStoryboard();
     const cluster = await page.evaluate(() =>
       Array.from(document.querySelectorAll('[data-manhua-tool-home="cluster"]')).map((b) =>
         b.getAttribute("data-manhua-action"),
       ),
     );
-    expect(cluster).toEqual([]);
+    expect(cluster).toEqual(["open-audio-studio"]);
     await close();
   }, 180_000);
 
@@ -713,6 +717,55 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
       await page.screenshot({ path: path.join(assetEvidenceDir, `storyboard-${width}.png`), fullPage: false });
     }
     await close();
+  }, 180_000);
+
+  it("当前镜右栏可边看预览边改台词，沿既有剧本写回入口", async () => {
+    const { page, close } = await mountStoryboard(true, false, true, true);
+    try {
+      const selector = '[data-manhua-current-shot-dialogue="1"]';
+      await page.waitForSelector(selector);
+      const layout = await page.evaluate((inputSelector) => {
+        const input = document.querySelector(inputSelector)!;
+        const params = document.querySelector('[data-manhua-column="params"]')!;
+        const preview = document.querySelector('[data-manhua-column="preview"]')!;
+        return {
+          inParams: params.contains(input),
+          previewVisible: preview.getBoundingClientRect().width > 0,
+          fontSize: parseFloat(getComputedStyle(input).fontSize),
+        };
+      }, selector);
+      expect(layout.inParams).toBe(true);
+      expect(layout.previewVisible).toBe(true);
+      expect(layout.fontSize).toBeGreaterThanOrEqual(14);
+      await page.click(selector);
+      await page.keyboard.type("阿");
+      expect(await page.evaluate(() => (globalThis as any).fixture.dialogueUpdate)).toEqual({ dialogues: { 1: "娘：慢点阿" }, segmentIndex: 1 });
+    } finally {
+      await close();
+    }
+  }, 180_000);
+
+  it("当前镜右栏可边看图边保存画面描述，只提交本镜内容", async () => {
+    const { page, close } = await mountStoryboard(true, false, true, false, true);
+    try {
+      const selector = '[data-manhua-shot-description-input="1"]';
+      await page.waitForSelector(selector);
+      expect(await page.evaluate((inputSelector) => {
+        const input = document.querySelector(inputSelector)!;
+        const params = document.querySelector('[data-manhua-column="params"]')!;
+        const preview = document.querySelector('[data-manhua-column="preview"]')!;
+        return params.contains(input) && preview.getBoundingClientRect().width > 0;
+      }, selector)).toBe(true);
+      await page.click(selector, { clickCount: 3 });
+      await page.keyboard.press("Backspace");
+      await page.keyboard.type("阿菁背娘走向医馆，墨屠守在侧后方");
+      await page.evaluate(() => {
+        const button = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(item => item.textContent?.includes("保存本镜描述"));
+        if (!button) throw new Error("未找到保存本镜描述按钮");
+        button.click();
+      });
+      expect(await page.evaluate(() => (globalThis as any).fixture.descriptionUpdate)).toEqual({ 1: "阿菁背娘走向医馆，墨屠守在侧后方" });
+    } finally { await close(); }
   }, 180_000);
 
   it("分镜挂载资产按道具实体只显示一次，并标明保留的版本数", async () => {

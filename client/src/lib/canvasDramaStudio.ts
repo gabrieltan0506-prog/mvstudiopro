@@ -199,6 +199,7 @@ import {
 } from "@shared/manhuaSegmentCapacity";
 import { applyShotAnglesFromText } from "@shared/manhuaShotAnglePersist";
 import { applyShotDialoguesFromText } from "@shared/manhuaShotDialoguePersist";
+import { applyShotDescriptionsFromText } from "@shared/manhuaShotDescriptionPersist";
 import { mergeManhuaDerivedClipPrompt } from "@shared/manhuaClipUserSupplement";
 import { extractManhuaSceneHintFromPrompt, parseManhuaDialogueCues } from "@shared/manhuaClipDialogueTimeline";
 import {
@@ -1932,7 +1933,9 @@ export function resolveShotsForEpisodeKeyartsResult(
     [beatsText, reverseText, storyText].find(text => text && hasExplicitManhuaShotStructure(text));
   const selectedText = shotSource || reverseText || beatsText || storyText;
   const result = generated.find(source => source.text === selectedText)?.result || parseSource(selectedText);
-  const withAngles = applyShotAnglesFromText(result.shots, `${reverseText}\n${beatsText}`);
+  const withReverseDescriptions = applyShotDescriptionsFromText(result.shots, reverseText);
+  const withDescriptions = applyShotDescriptionsFromText(withReverseDescriptions, beatsText);
+  const withAngles = applyShotAnglesFromText(withDescriptions, `${reverseText}\n${beatsText}`);
   // 工作台的「成片台词」会把覆盖表同时写回 reverse / beats。这里是静帧与段成片
   // 共用的真实分镜生产者，必须在分段、说话人绑定和提示词编译之前消费覆盖表。
   // 顺序与工作台一致：先 reverse、后 beats；两边都有时以 beats 的较新值为准。
@@ -4176,7 +4179,7 @@ export async function prepareManhuaFactoryClipInput(input: {
       throw new Error("原稿分镜已变更或旧图尚未核对原镜身份，请先重出对应关键静帧；原图保留，本次未提交视频。");
     }
     if (segKeyarts.some((keyart) => !isManhuaKeyartLookCurrent(keyart))) {
-      throw new Error("本段造型已变更，请先重出对应关键静帧；原图已保留，本次未提交视频。");
+      throw new Error("本段原稿或造型已变更，请先重出对应关键静帧；原图已保留，本次未提交视频。");
     }
     if (segUrls.length) {
       runBlockPayload = {

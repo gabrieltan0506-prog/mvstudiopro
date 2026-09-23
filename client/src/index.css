@@ -604,6 +604,7 @@
  * 五阶段导航和一块当前工作台。内部专业控件仍按原状态保留在折叠区。
  */
 #manhua-workbench-shell.mh-redesign {
+  position: relative;
   --mh-page: #f3efe7;
   --mh-panel: #fffdf8;
   --mh-ink: #243248;
@@ -906,14 +907,72 @@
   display: none !important;
 }
 
-/* 声音面板展开时独占一行，不挤在项目标题右侧形成巨大留白。 */
+/* 分镜画面始终留在主工作区；声音工具在桌面侧停靠、窄屏底部停靠并独立滚动。 */
 #manhua-workbench-shell.mh-redesign [data-manhua-product-header]:has([data-manhua-audio-studio]:not([hidden])) {
-  flex-wrap: wrap;
+  position: static;
+  z-index: auto;
+  flex-wrap: nowrap;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-product-header]:has([data-manhua-audio-studio]:not([hidden])) [data-manhua-toolbar-cluster] {
-  width: 100%;
+  position: static;
+  z-index: auto;
+  width: auto;
   min-width: 0;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-audio-studio]:not([hidden]) {
+  position: absolute;
+  z-index: 40;
+  top: 112px;
+  right: 12px;
+  bottom: 12px;
+  width: clamp(440px, 35vw, 620px);
+  max-height: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-shadow: -12px 0 32px rgb(37 49 65 / 15%);
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-audio-studio]:not([hidden]) > :first-child {
+  position: sticky;
+  top: -12px;
+  z-index: 1;
+  padding: 10px 0;
+  background: var(--mh-panel);
+}
+
+@media (min-width: 1200px) {
+  #manhua-workbench-shell.mh-redesign [data-manhua-audio-studio] [data-manhua-sound-summary] {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  #manhua-workbench-shell.mh-redesign [data-manhua-audio-studio] [data-manhua-sound-summary] > :first-child {
+    grid-column: 1 / -1;
+  }
+}
+
+#manhua-workbench-shell.mh-redesign:has([data-manhua-audio-studio]:not([hidden]))
+  :is([data-manhua-phase-panel="outline"], [data-manhua-phase-panel="assets"], [data-manhua-phase-panel="storyboard"], [data-manhua-phase-panel="edit"]) {
+  margin-right: calc(clamp(440px, 35vw, 620px) + 18px);
+}
+
+@media (max-width: 1199px) {
+  #manhua-workbench-shell.mh-redesign [data-manhua-audio-studio]:not([hidden]) {
+    top: auto;
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    width: auto;
+    height: min(30vh, 260px);
+    box-shadow: 0 -12px 32px rgb(37 49 65 / 15%);
+  }
+
+  #manhua-workbench-shell.mh-redesign:has([data-manhua-audio-studio]:not([hidden]))
+    :is([data-manhua-phase-panel="outline"], [data-manhua-phase-panel="assets"], [data-manhua-phase-panel="storyboard"], [data-manhua-phase-panel="edit"]) {
+    margin-right: 0;
+    margin-bottom: calc(min(30vh, 260px) + 12px);
+  }
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-action="open-more-tools"] {

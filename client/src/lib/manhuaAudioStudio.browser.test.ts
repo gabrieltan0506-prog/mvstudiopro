@@ -93,14 +93,41 @@ it("工厂原工作台直接打开音轨，切段分别保存且不跳画布或�
       await page.setViewport({ width: 1280, height: 900 });
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
       expect(overflow).toBeLessThanOrEqual(2);
-      const audioInset = await page.evaluate(() => {
+      const mediumDock = await page.evaluate(() => {
+        const panel = document.querySelector('[data-manhua-audio-studio]')!.getBoundingClientRect();
+        const storyboard = document.querySelector('[data-manhua-phase-panel="storyboard"]')!.getBoundingClientRect();
+        const media = document.querySelector('[data-manhua-media-frame]')!.getBoundingClientRect();
+        const summary = document.querySelector('[data-manhua-sound-summary]')!;
+        const firstSummary = summary.firstElementChild!.getBoundingClientRect();
+        return { gap: panel.left - storyboard.right, storyboardWidth: storyboard.width, mediaHeight: media.height, firstSummaryRatio: firstSummary.width / summary.getBoundingClientRect().width };
+      });
+      await page.screenshot({ path: path.join(audioEvidenceDir, "factory-audio-1280.png"), fullPage: false });
+      expect(mediumDock.gap).toBeGreaterThanOrEqual(-2);
+      expect(mediumDock.storyboardWidth).toBeGreaterThan(700);
+      expect(mediumDock.mediaHeight).toBeGreaterThan(200);
+      expect(mediumDock.firstSummaryRatio).toBeGreaterThan(0.9);
+      await page.setViewport({ width: 1024, height: 900 });
+      const bottomDock = await page.evaluate(() => {
         const shell = document.querySelector('[data-manhua-product-header]')!.getBoundingClientRect();
         const panel = document.querySelector('[data-manhua-audio-studio]')!.getBoundingClientRect();
-        return { left: panel.left - shell.left, widthRatio: panel.width / shell.width };
+        const storyboard = document.querySelector('[data-manhua-phase-panel="storyboard"]')!.getBoundingClientRect();
+        return { left: panel.left - shell.left, widthRatio: panel.width / shell.width, gap: panel.top - storyboard.bottom, storyboardHeight: storyboard.height };
       });
-      expect(audioInset.left).toBeLessThan(40);
-      expect(audioInset.widthRatio).toBeGreaterThan(0.9);
-      await page.screenshot({ path: path.join(audioEvidenceDir, "factory-audio-1280.png"), fullPage: false });
+      expect(bottomDock.left).toBeLessThan(40);
+      expect(bottomDock.widthRatio).toBeGreaterThan(0.9);
+      expect(bottomDock.gap).toBeGreaterThanOrEqual(-2);
+      expect(bottomDock.storyboardHeight).toBeGreaterThan(230);
+      await page.screenshot({ path: path.join(audioEvidenceDir, "factory-audio-1024.png"), fullPage: false });
+      await page.setViewport({ width: 1800, height: 1000 });
+      const sideDock = await page.evaluate(() => {
+        const panel = document.querySelector('[data-manhua-audio-studio]')!.getBoundingClientRect();
+        const storyboard = document.querySelector('[data-manhua-phase-panel="storyboard"]')!.getBoundingClientRect();
+        return { gap: panel.left - storyboard.right, storyboardWidth: storyboard.width, panelHeight: panel.height };
+      });
+      expect(sideDock.gap).toBeGreaterThanOrEqual(-2);
+      expect(sideDock.storyboardWidth).toBeGreaterThan(840);
+      expect(sideDock.panelHeight).toBeGreaterThan(400);
+      await page.screenshot({ path: path.join(audioEvidenceDir, "factory-audio-1800.png"), fullPage: false });
     }
     const add = () =>
       page.evaluate(() => {
@@ -147,10 +174,11 @@ it("工厂原工作台直接打开音轨，切段分别保存且不跳画布或�
 }, 20_000);
 it('资产阶段通过更多操作打开声音工作台，不生成或改动成片',async()=>{
  const page=await browser.newPage();page.setDefaultTimeout(5000);await page.setRequestInterception(true);page.on('request',r=>r.isNavigationRequest()?void r.respond({status:200,contentType:'text/html',body:'<div id="root"></div>'}):void r.abort());
- try{await page.goto('http://localhost:41812');await page.addScriptTag({content:bundle});await page.waitForFunction(()=>Boolean((globalThis as any).fixture.setPhase));await page.evaluate(()=>(globalThis as any).fixture.setPhase('assets'));
+ try{await page.setViewport({width:1800,height:1000});await page.goto('http://localhost:41812');if(layoutCss)await page.addStyleTag({content:layoutCss});await page.addScriptTag({content:bundle});await page.waitForFunction(()=>Boolean((globalThis as any).fixture.setPhase));await page.evaluate(()=>(globalThis as any).fixture.setPhase('assets'));
  await page.waitForSelector('[data-manhua-action="open-more-tools"]');await page.click('[data-manhua-action="open-more-tools"]');
  await page.waitForSelector('[data-manhua-secondary-tool="audio"]');await page.click('[data-manhua-secondary-tool="audio"]');
  await page.waitForSelector('section[aria-label="逐句配音、配乐与事件音效"]');
+ if(layoutCss){const layout=await page.evaluate(()=>{const panel=document.querySelector('[data-manhua-audio-studio]')!.getBoundingClientRect();const assets=document.querySelector('[data-manhua-phase-panel="assets"]')!.getBoundingClientRect();return{gap:panel.left-assets.right,assetsWidth:assets.width};});expect(layout.gap).toBeGreaterThanOrEqual(-2);expect(layout.assetsWidth).toBeGreaterThan(840);}
  expect(await page.evaluate(()=>(globalThis as any).fixture.calls)).toEqual([]);expect(await page.evaluate(()=>(globalThis as any).fixture.updates)).toEqual([]);
  }finally{await page.close();}
 },20000);

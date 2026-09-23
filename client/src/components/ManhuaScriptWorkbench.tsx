@@ -1,6 +1,7 @@
 import { summarizeManhuaFinalSegmentEvidence } from "@/lib/manhuaFinalSegmentEvidence";
 import { ManhuaTimingRecovery } from "./ManhuaTimingRecovery";
 import { ManhuaShotTimingEditor } from "./ManhuaShotTimingEditor";
+import { ManhuaShotDescriptionEditor } from "./ManhuaShotDescriptionEditor";
 import { ManhuaSevenCoreEditor } from "./canvas/ManhuaSevenCoreEditor";
 import { extractManhuaShotSevenCore, upsertManhuaShotSevenCore, clearManhuaShotSevenCore } from "@shared/manhuaSevenCoreSupplement";
 import { ManhuaVfxPicker } from "./canvas/ManhuaVfxPicker";
@@ -798,6 +799,7 @@ type Props = {
     dialogues: Record<number, string>,
     segmentIndex: number,
   ) => void;
+  onUpsertShotDescriptions?: (descriptions: Record<number, string>) => void;
 };
 
 function blockByStage(blocks: CanvasBlock[], episode: number, stage: string): CanvasBlock | undefined {
@@ -1314,6 +1316,7 @@ export default function ManhuaScriptWorkbench({
   onUpdateShotTiming,
   onUpsertShotAngles,
   onUpsertShotDialogues,
+  onUpsertShotDescriptions,
 }: Props) {
   const dockCanvas = Boolean(previewCanvas);
   const continuity = shotContinuity || {
@@ -2977,7 +2980,7 @@ export default function ManhuaScriptWorkbench({
       ? "请先出齐本段所需关键静帧（按原镜一镜一张，尾段可少于 3 张）"
       : !keyartsPixelLocked
         ? episodeKeyartReview.error || (staleLookStillCount
-          ? "本段造型已变更，请重出对应关键静帧；旧图仍保留，不会自动生成。"
+          ? "本段原稿或造型已变更，请重出对应关键静帧；旧图仍保留，不会自动生成。"
           : "关键静帧须垫图改图锁定（改图模式 + 定妆/场景参考图），纯文生成的图不能出成片")
         : !productionProgress.keyartsReady
           ? "请先完成垫图改图锁定的关键静帧"
@@ -3437,10 +3440,28 @@ export default function ManhuaScriptWorkbench({
                     {activeShotKeyartStateZh}
                   </span>
                 </div>
-                {activeShot.dialogueZh || activeShot.emotionZh || activeShot.microExpressionZh ? (
-                  <p className="mt-1 text-[10px] leading-4 text-rose-100/70">
-                    {activeShot.dialogueZh ? `「${activeShot.dialogueZh}」` : ""}
-                    {activeShot.dialogueZh && (activeShot.emotionZh || activeShot.microExpressionZh) ? " · " : ""}
+                {onUpsertShotDialogues ? (
+                  <label className="mt-2 block text-xs font-medium text-rose-100/85">
+                    当前镜台词 · 可直接修改
+                    <textarea
+                      data-manhua-current-shot-dialogue={activeShot.index}
+                      aria-label={`第${activeShot.index}镜台词`}
+                      value={activeShot.dialogueZh === MANHUA_DIALOGUE_SILENCE_TOKEN ? "" : activeShot.dialogueZh || ""}
+                      placeholder="无对白可留空"
+                      maxLength={80}
+                      rows={2}
+                      onChange={(event) => {
+                        const line = event.target.value.slice(0, 80);
+                        onUpsertShotDialogues({ [activeShot.index]: line.trim() || MANHUA_DIALOGUE_SILENCE_TOKEN }, activeSegNo);
+                      }}
+                      className="mt-1 block w-full resize-y rounded-lg border border-rose-300/35 bg-black/25 px-3 py-2 text-sm leading-6 text-white outline-none placeholder:text-white/35 focus:border-rose-200"
+                    />
+                  </label>
+                ) : activeShot.dialogueZh ? (
+                  <p className="mt-2 text-sm leading-6 text-rose-100/85">「{activeShot.dialogueZh}」</p>
+                ) : null}
+                {activeShot.emotionZh || activeShot.microExpressionZh ? (
+                  <p className="mt-1 text-xs leading-5 text-rose-100/65">
                     {[activeShot.emotionZh, activeShot.microExpressionZh].filter(Boolean).join(" · ")}
                   </p>
                 ) : null}
@@ -3496,7 +3517,13 @@ export default function ManhuaScriptWorkbench({
                 ) : null}
                 {onUpdateShotTiming && <ManhuaShotTimingEditor key={`${focusEpisode}:${activeShot.index}:${activeShot.durationSec}`} shotIndex={activeShot.index} durationSec={activeShot.durationSec}
                   disabled={shotSourceIsFallback || Boolean(factoryBusy)} onApply={onUpdateShotTiming} />}
-                <div data-manhua-shot-description className="mt-1.5">
+                {onUpsertShotDescriptions ? <ManhuaShotDescriptionEditor
+                  key={`${focusEpisode}:${activeShot.index}:${shotParamFields.descriptionZh}`}
+                  shotIndex={activeShot.index}
+                  description={shotParamFields.descriptionZh}
+                  disabled={shotSourceIsFallback || Boolean(factoryBusy)}
+                  onApply={(index, description) => onUpsertShotDescriptions({ [index]: description })}
+                /> : <div data-manhua-shot-description className="mt-1.5">
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="text-[9px] text-white/40">画面描述</span>
                     <span
@@ -3510,9 +3537,9 @@ export default function ManhuaScriptWorkbench({
                   <p className="mt-1 max-h-40 overflow-y-auto rounded-lg bg-black/20 p-2 text-sm leading-6 text-white/80">
                     {shotParamFields.descriptionZh || "本镜还没有画面描述"}
                   </p>
-                </div>
+                </div>}
                 <p className="mh-hint mt-1 text-[9px] leading-4 text-white/35">
-                  镜位只改本镜，不动其它镜；改完出图前不扣费。
+                  当前镜参数只改本镜，不动其它镜；保存前后均不会自动出图或扣费。
                 </p>
                 <div className="mt-1 flex flex-wrap gap-0.5" data-manhua-shot-angles={activeShot.index}>
                   {MANHUA_CAMERA_ANGLE_ORDER.map((id) => {
@@ -4302,13 +4329,15 @@ export default function ManhuaScriptWorkbench({
           {onUpdateClipAudioStudio && manhuaSecondaryToolHome("audio", activePhase) === "cluster" ? (
             <button type="button" data-manhua-action="open-audio-studio" data-manhua-tool-home="cluster"
               disabled={Boolean(factoryBusy)}
+              aria-controls="manhua-audio-studio"
+              aria-expanded={audioStudioOpen && audioStudioPhase === activePhase}
               className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
               onClick={() => { setAudioStudioOpen(value => audioStudioPhase !== activePhase || !value); setAudioStudioPhase(activePhase); if (!activeClip) onEnsureSegmentClips?.(); }}>
               配音与背景音乐
             </button>
           ) : null}
           {audioStudioOpen && onUpdateClipAudioStudio ? (
-            <section className="w-full rounded-xl border border-cyan-300/25 bg-[#0c121d] p-3" data-manhua-audio-studio hidden={audioStudioPhase !== activePhase}>
+            <section id="manhua-audio-studio" aria-label="当前段配音与背景音乐" className="w-full rounded-xl border border-cyan-300/25 bg-[#0c121d] p-3" data-manhua-audio-studio hidden={audioStudioPhase !== activePhase}>
               <div className="mb-2 flex items-center justify-between text-sm text-cyan-50">
                 <span>第 {focusEpisode} 集 · 第 {activeSegNo} 段 · 配音与背景音乐</span>
                 <select aria-label="音轨工作台当前段" value={activeSegNo} disabled={Boolean(factoryBusy)} className="rounded border border-white/20 bg-[#0c121d] p-1 text-xs"
