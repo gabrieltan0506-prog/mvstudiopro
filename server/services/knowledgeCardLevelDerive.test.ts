@@ -99,4 +99,25 @@ describe("0923 派生额度：8.5 万字的书不再被思考吃光输出", () =
     // 每个通道都真的试过（六跳），整条链还按 0923 用户令重跑了 3 次：6 × 4
     expect(fetchMock.mock.calls.length).toBe(24);
   });
+
+  it("只有部分通道截断（其它是 503）：不说「所有通道都没写完」，报最后一跳的真实错误", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-or");
+    vi.stubEnv("EVOLINK_API_KEY", "test-evo");
+    vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "test-sg");
+    vi.stubEnv("KNOWLEDGE_CARD_CHAIN_RETRY_DELAY_MS", "0");
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    let n = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      n += 1;
+      // 每轮六跳：前五跳 503，末跳截断
+      if (n % 6 !== 0) return new Response("upstream down", { status: 503 });
+      return new Response(JSON.stringify({ choices: [{ message: { content: "## 半截" }, finish_reason: "length" }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }));
+    const err = await deriveKnowledgeCardCompact({ fullMarkdown: book(60), targetSections: 10 }).catch((e: Error) => e);
+    expect((err as Error).message).not.toBe(KNOWLEDGE_CARD_DERIVE_TRUNCATED_MESSAGE);
+    expect((err as Error).message).toMatch(/截断/);
+  });
 });

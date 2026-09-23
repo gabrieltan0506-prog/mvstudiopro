@@ -245,6 +245,8 @@ async function deriveChainOnce(params: { system: string; user: string; model?: s
   const gateways = deriveGateways(params.model);
   if (!gateways.length) throw new Error("精华版派生未配置（EVOLINK_API_KEY / OPENROUTER_API_KEY）");
   let lastError: Error | null = null;
+  // 如实报错：只有每一跳都是截断，才说「所有通道都没写完」
+  let allTruncated = true;
   for (let i = 0; i < gateways.length; i++) {
     params.abortSignal?.throwIfAborted();
     const gw = gateways[i]!;
@@ -254,10 +256,11 @@ async function deriveChainOnce(params: { system: string; user: string; model?: s
     } catch (err) {
       if (isSseContentSafetyError(err) || params.abortSignal?.aborted) throw err;
       lastError = err instanceof Error ? err : new Error(String(err));
+      if (!/截断/.test(lastError.message)) allTruncated = false;
       if (i < gateways.length - 1) console.warn(`[knowledgeCardLevelDerive] ${gw.name} 失败 → 改走 ${gateways[i + 1]!.name}：${lastError.message.slice(0, 160)}`);
     }
   }
-  if (lastError && /截断/.test(lastError.message)) throw new Error(KNOWLEDGE_CARD_DERIVE_TRUNCATED_MESSAGE, { cause: lastError });
+  if (lastError && allTruncated) throw new Error(KNOWLEDGE_CARD_DERIVE_TRUNCATED_MESSAGE, { cause: lastError });
   throw lastError || new Error("精华版派生失败");
 }
 
