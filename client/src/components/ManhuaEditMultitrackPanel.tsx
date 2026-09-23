@@ -21,7 +21,6 @@ import {
 } from "@shared/manhuaEditMultitrack";
 import type { ManhuaRoughCutClip } from "@shared/manhuaEditWorkflowBank";
 import type { ManhuaWorkbenchShot } from "@shared/manhuaScriptWorkbench";
-import { listRoughTimelineStages } from "@shared/manhuaEditWorkflowBank";
 import {
   clampFineCut,
   defaultFineCut,
@@ -208,7 +207,6 @@ export default function ManhuaEditMultitrackPanel({
     fineCutByShot,
     subtitleEnabled,
   });
-  const stages = listRoughTimelineStages();
   const plannedCues = useMemo(
     () =>
       buildManhuaSubtitleCues({
@@ -288,20 +286,20 @@ export default function ManhuaEditMultitrackPanel({
       data-manhua-panel="edit-multitrack"
       className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto p-3 text-sm [&_button]:min-h-8 [&_button]:text-sm [&_label]:text-sm [&_p]:text-sm"
     >
-      <div className="flex shrink-0 flex-wrap items-start justify-between gap-2">
+      <header data-manhua-edit-overview className="flex shrink-0 flex-wrap items-center justify-between gap-4 rounded-2xl border border-white/12 bg-white/[0.03] p-4">
         <div>
-          <div className="flex items-center gap-1.5 text-base font-semibold text-white/90">
+          <h1 className="flex items-center gap-1.5 text-lg font-semibold text-white/90">
             <Scissors className="h-4 w-4 text-violet-200" />
-            剪辑台
+            成片剪辑台
             <span className="text-sm font-normal text-white/40">
               {roughClips.length ? `约 ${totalSec}s · ${roughClips.length}镜` : "暂无剪辑计划 · 0镜"}
             </span>
-          </div>
+          </h1>
           <p className="mt-1 max-w-xl text-sm leading-relaxed text-white/40">
-            先选片段，再调整剪辑、画面或字幕。确认后生成当前版本，原成片保留。
+            先看本集片段顺序，再调整剪辑、画面与字幕。生成当前版本时保留旧成片。
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div data-manhua-edit-primary-actions className="flex flex-wrap items-center gap-2">
           {onGenerateCurrentVersion ? <button type="button" data-manhua-edit-generate-current disabled={factoryBusy || !clipIndexes.size} onClick={onGenerateCurrentVersion} className="min-h-11 rounded-xl border border-violet-300/50 bg-violet-500/30 px-4 py-2 text-sm font-semibold text-violet-50 disabled:opacity-40">{factoryBusy ? "正在处理…" : `生成成片（当前版本${currentVersionCredits == null ? "" : ` · ${currentVersionCredits}积分`}）`}</button> : null}
           {onSuggestAutoCuts ? (
             <button
@@ -315,28 +313,15 @@ export default function ManhuaEditMultitrackPanel({
               {suggestAutoCutsBusy ? "分析气口…" : "建议切点"}
             </button>
           ) : null}
-          {stages.map((s) => (
-            <span
-              key={s.id}
-              className="rounded border border-white/10 bg-white/[0.03] px-1.5 py-0.5 text-sm text-white/45"
-              title={s.jobZh}
-            >
-              {s.nameZh}
-            </span>
-          ))}
-
         </div>
-      </div>
+      </header>
 
-      <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4" aria-label="剪辑工具抽屉">
-        {[["cut", "剪辑工具"], ["effects", "特效与滤镜"], ["subtitles", "转场与字幕"], ["export", "导出设置"]].map(([id, label]) => (
-          <button key={id} type="button" data-manhua-edit-drawer-toggle={id} aria-expanded={activeDrawer === id} aria-controls={`manhua-edit-drawer-${id}`} onClick={() => setActiveDrawer(current => current === id ? null : id)} className={`min-h-11 rounded-lg border px-3 py-2 text-sm font-semibold ${activeDrawer === id ? "border-violet-300/50 bg-violet-500/20 text-violet-50" : "border-white/15 bg-white/[0.03] text-white/70"}`}>
-            {label} {activeDrawer === id ? "▴" : "▾"}
-          </button>
-        ))}
-      </div>
-
-      <div data-manhua-edit-clip-strip className="flex min-w-0 shrink-0 gap-3 overflow-x-auto pb-2">
+      <section data-manhua-edit-timeline aria-label="本集成片时间线" className="shrink-0 rounded-2xl border border-white/12 bg-white/[0.025] p-3">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-base font-semibold text-white/90">本集片段时间线</h2>
+          <p className="text-sm text-white/45">{roughClips.length} 镜 · 约 {totalSec}s · 点选片段后可裁切和排序</p>
+        </div>
+      <div data-manhua-edit-clip-strip className="flex min-w-0 gap-2 overflow-x-auto pb-2">
         {roughClips.map((clip, index) => {
           const media = shotMedia.find((row) => row.shotIndex === clip.shotIndex);
           const on = clip.shotIndex === activeShotIndex;
@@ -347,13 +332,13 @@ export default function ManhuaEditMultitrackPanel({
               data-manhua-edit-clip-card={clip.shotIndex}
               data-manhua-edit-clip-active={on ? "true" : "false"}
               onClick={() => onSelectShot?.(clip.shotIndex)}
-              className={`group min-w-[220px] max-w-[260px] flex-1 overflow-hidden rounded-2xl border text-left transition ${
+              className={`group flex min-w-[184px] max-w-[220px] flex-1 items-center overflow-hidden rounded-xl border text-left transition ${
                 on
                   ? "border-violet-400/60 bg-violet-500/10 shadow-lg"
                   : "border-white/12 bg-white/[0.03] hover:border-white/25"
               }`}
             >
-              <div className="relative aspect-[16/8] overflow-hidden bg-black/45">
+              <div className="relative h-16 w-20 shrink-0 overflow-hidden bg-black/45">
                 {media?.outputUrl ? (
                   <video
                     src={media.outputUrl}
@@ -362,16 +347,16 @@ export default function ManhuaEditMultitrackPanel({
                     className="h-full w-full object-cover transition group-hover:scale-[1.02]"
                   />
                 ) : (
-                  <div className="flex h-full items-center justify-center text-sm text-white/35">待生成片段</div>
+                  <div className="flex h-full items-center justify-center px-1 text-center text-xs text-white/35">待生成片段</div>
                 )}
-                <span className="absolute left-2 top-2 rounded-full bg-black/60 px-2 py-1 text-xs font-semibold text-white">
+                <span className="absolute left-1 top-1 rounded-full bg-black/60 px-1.5 py-0.5 text-[10px] font-semibold text-white">
                   {index + 1}
                 </span>
               </div>
-              <div className="flex items-center justify-between gap-3 px-3 py-2.5">
+              <div className="flex min-w-0 flex-1 items-center justify-between gap-2 px-2 py-1.5">
                 <div className="min-w-0">
-                  <div className="truncate text-sm font-semibold text-white/90">片段 {String(index + 1).padStart(2, "0")}</div>
-                  <div className="mt-0.5 text-xs text-white/45">镜 {clip.shotIndex} · {clip.durationSec}s</div>
+                  <div className="truncate text-xs font-semibold text-white/90">片段 {String(index + 1).padStart(2, "0")}</div>
+                  <div className="mt-0.5 text-[11px] text-white/45">镜 {clip.shotIndex} · {clip.durationSec}s</div>
                 </div>
                 <span className={`h-2.5 w-2.5 rounded-full ${clipIndexes.has(clip.shotIndex) ? "bg-emerald-400" : "bg-white/20"}`} />
               </div>
@@ -384,6 +369,15 @@ export default function ManhuaEditMultitrackPanel({
           </div>
         ) : null}
       </div>
+      </section>
+
+      <nav data-manhua-edit-tools aria-label="剪辑工具抽屉" className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4">
+        {[["cut", "剪辑工具"], ["effects", "特效与滤镜"], ["subtitles", "转场与字幕"], ["export", "导出设置"]].map(([id, label]) => (
+          <button key={id} type="button" data-manhua-edit-drawer-toggle={id} aria-expanded={activeDrawer === id} aria-controls={`manhua-edit-drawer-${id}`} onClick={() => setActiveDrawer(current => current === id ? null : id)} className={`min-h-11 rounded-lg border px-3 py-2 text-sm font-semibold ${activeDrawer === id ? "border-violet-300/50 bg-violet-500/20 text-violet-50" : "border-white/15 bg-white/[0.03] text-white/70"}`}>
+            {label} {activeDrawer === id ? "▴" : "▾"}
+          </button>
+        ))}
+      </nav>
 
       <details data-manhua-edit-full-tracks className="shrink-0 rounded-xl border border-white/12 bg-white/[0.025]">
         <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-white/70">展开完整轨道 · {tracks.length} 轨 / {roughClips.length} 镜</summary>
@@ -495,6 +489,7 @@ export default function ManhuaEditMultitrackPanel({
           {roughClips.map((c, i) => (
             <div
               key={`ord-${c.shotIndex}`}
+              data-manhua-edit-order-row={c.shotIndex}
               className={`flex min-w-[96px] shrink-0 items-center gap-1 rounded-md border px-1.5 py-1 ${
                 c.shotIndex === activeShotIndex
                   ? "border-violet-400/45 bg-violet-500/15"
@@ -504,6 +499,7 @@ export default function ManhuaEditMultitrackPanel({
               <div className="flex flex-col">
                 <button
                   type="button"
+                  aria-label={`将第 ${c.shotIndex} 镜上移`}
                   className="text-sm text-white/35 hover:text-white/70"
                   onClick={() => move(i, -1)}
                 >
@@ -511,6 +507,7 @@ export default function ManhuaEditMultitrackPanel({
                 </button>
                 <button
                   type="button"
+                  aria-label={`将第 ${c.shotIndex} 镜下移`}
                   className="text-sm text-white/35 hover:text-white/70"
                   onClick={() => move(i, 1)}
                 >

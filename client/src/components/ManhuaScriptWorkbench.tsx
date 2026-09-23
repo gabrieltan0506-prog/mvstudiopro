@@ -3465,29 +3465,6 @@ export default function ManhuaScriptWorkbench({
                     {[activeShot.emotionZh, activeShot.microExpressionZh].filter(Boolean).join(" · ")}
                   </p>
                 ) : null}
-                <ManhuaDirectorExecutionTable shots={activeSegment?.shots || [activeShot]} />
-                {sevenCoreReadError && <p role="alert" className="text-xs text-amber-100">{sevenCoreReadError}，原内容已保留。</p>}
-                <ManhuaSevenCoreEditor key={`seven:${focusEpisode}:${activeSegNo}:${activeShot.index}`} shotIndex={activeShot.index}
-                  initialValues={sevenCoreValues}
-                  disabled={Boolean(sevenCoreReadError) || shotSourceIsFallback || !activeClip || !onUpdateClipPrompt || Boolean(factoryBusy) || activeClip.status === "running" || activeClip.videoTaskStatus === "queued"}
-                  onApply={values => {
-                    if (shotSourceIsFallback || !activeClip || !onUpdateClipPrompt || factoryBusy || activeClip.status === "running" || activeClip.videoTaskStatus === "queued") throw new Error("当前段暂不能编辑");
-                    onUpdateClipPrompt(activeClip.id, upsertManhuaShotSevenCore(activeClip.prompt || "", activeShot.index, values));
-                    toast.success(`镜${activeShot.index}导演要求已保存，下次生成本段时采用`);
-                  }}
-                  onClear={() => {
-                    if (shotSourceIsFallback || !activeClip || !onUpdateClipPrompt || factoryBusy || activeClip.status === "running" || activeClip.videoTaskStatus === "queued") throw new Error("当前段暂不能编辑");
-                    onUpdateClipPrompt(activeClip.id, clearManhuaShotSevenCore(activeClip.prompt || "", activeShot.index));
-                    toast.success(`已清除镜${activeShot.index}的七项自定义要求`);
-                  }} />
-                <ManhuaVfxPicker key={`${focusEpisode}:${activeSegNo}:${activeShot.index}`} shotIndex={activeShot.index}
-                  initialDirection={extractManhuaShotVfx(activeClip?.prompt || "", activeShot.index)}
-                  disabled={shotSourceIsFallback || !activeClip || !onUpdateClipPrompt || Boolean(factoryBusy) || activeClip.status === "running" || activeClip.videoTaskStatus === "queued"}
-                  onApply={direction => {
-                    if (shotSourceIsFallback || !activeClip || !onUpdateClipPrompt || factoryBusy || activeClip.status === "running" || activeClip.videoTaskStatus === "queued") throw new Error("当前段暂不能编辑");
-                    onUpdateClipPrompt(activeClip.id, upsertManhuaShotVfx(activeClip.prompt || "", activeShot.index, direction));
-                    toast.success(`镜${activeShot.index}特效已保存，下次生成本段时采用`);
-                  }} />
                 {/* 对照图 01 右栏四个字段：时长 / 景别 / 机位运动 / 画面描述（0/200） */}
                 <dl data-manhua-shot-fields className="mt-3 grid grid-cols-1 gap-3">
                   {(
@@ -3538,6 +3515,31 @@ export default function ManhuaScriptWorkbench({
                     {shotParamFields.descriptionZh || "本镜还没有画面描述"}
                   </p>
                 </div>}
+                <section data-manhua-shot-advanced aria-label="导演执行、七项要求与特效" className="mt-3 space-y-3 border-t border-white/10 pt-3">
+                <ManhuaDirectorExecutionTable shots={activeSegment?.shots || [activeShot]} />
+                {sevenCoreReadError && <p role="alert" className="text-xs text-amber-100">{sevenCoreReadError}，原内容已保留。</p>}
+                <ManhuaSevenCoreEditor key={`seven:${focusEpisode}:${activeSegNo}:${activeShot.index}`} shotIndex={activeShot.index}
+                  initialValues={sevenCoreValues}
+                  disabled={Boolean(sevenCoreReadError) || shotSourceIsFallback || !activeClip || !onUpdateClipPrompt || Boolean(factoryBusy) || activeClip.status === "running" || activeClip.videoTaskStatus === "queued"}
+                  onApply={values => {
+                    if (shotSourceIsFallback || !activeClip || !onUpdateClipPrompt || factoryBusy || activeClip.status === "running" || activeClip.videoTaskStatus === "queued") throw new Error("当前段暂不能编辑");
+                    onUpdateClipPrompt(activeClip.id, upsertManhuaShotSevenCore(activeClip.prompt || "", activeShot.index, values));
+                    toast.success(`镜${activeShot.index}导演要求已保存，下次生成本段时采用`);
+                  }}
+                  onClear={() => {
+                    if (shotSourceIsFallback || !activeClip || !onUpdateClipPrompt || factoryBusy || activeClip.status === "running" || activeClip.videoTaskStatus === "queued") throw new Error("当前段暂不能编辑");
+                    onUpdateClipPrompt(activeClip.id, clearManhuaShotSevenCore(activeClip.prompt || "", activeShot.index));
+                    toast.success(`已清除镜${activeShot.index}的七项自定义要求`);
+                  }} />
+                <ManhuaVfxPicker key={`${focusEpisode}:${activeSegNo}:${activeShot.index}`} shotIndex={activeShot.index}
+                  initialDirection={extractManhuaShotVfx(activeClip?.prompt || "", activeShot.index)}
+                  disabled={shotSourceIsFallback || !activeClip || !onUpdateClipPrompt || Boolean(factoryBusy) || activeClip.status === "running" || activeClip.videoTaskStatus === "queued"}
+                  onApply={direction => {
+                    if (shotSourceIsFallback || !activeClip || !onUpdateClipPrompt || factoryBusy || activeClip.status === "running" || activeClip.videoTaskStatus === "queued") throw new Error("当前段暂不能编辑");
+                    onUpdateClipPrompt(activeClip.id, upsertManhuaShotVfx(activeClip.prompt || "", activeShot.index, direction));
+                    toast.success(`镜${activeShot.index}特效已保存，下次生成本段时采用`);
+                  }} />
+                </section>
                 <p className="mh-hint mt-1 text-[9px] leading-4 text-white/35">
                   当前镜参数只改本镜，不动其它镜；保存前后均不会自动出图或扣费。
                 </p>
@@ -8492,7 +8494,7 @@ export default function ManhuaScriptWorkbench({
         </ManhuaFineCutSurface>
       ) : null}
 
-      {/* 阿硕工作流：左本集资产｜中片段脚本｜右本集画布；外层给定高，内层再横移，避免画布高度塌缩 */}
+      {/* 分镜主任务：镜头清单、当前镜预览、参数编辑同屏。 */}
       <div
         data-manhua-phase-panel="storyboard"
         className={
@@ -8501,6 +8503,17 @@ export default function ManhuaScriptWorkbench({
             : "flex min-h-0 flex-1 flex-col overflow-hidden"
         }
       >
+        {activePhase === "storyboard" ? (
+          <header data-manhua-storyboard-header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-white/[0.03] px-4 py-3">
+            <div className="min-w-0">
+              <h1 className="text-base font-bold text-white/95">分镜工作区 · 第 {focusEpisode} 集</h1>
+              <p className="mt-0.5 text-xs text-white/55">第 {activeShotNo || "—"} 镜 / {shots.length} 镜 · 左侧选镜，中央看图，右侧修改当前镜</p>
+            </div>
+            <span className="rounded-full border border-white/15 bg-white/[0.04] px-3 py-1.5 text-xs text-white/70">
+              静帧 {episodeStillCount}/{Math.max(shots.length, 1)} · 成片 {episodeClips.filter((clip) => Boolean(clipOutputUrl(clip))).length}/{segments.length}
+            </span>
+          </header>
+        ) : null}
         <nav aria-label="分镜工作区视图" className="flex shrink-0 gap-2 border-b border-white/10 p-2 md:hidden">
           {([['script', '镜头'], ['preview', '主预览'], ['assets', '参数与资产']] as const).map(([column, label]) => (
             <button key={column} type="button" data-manhua-narrow-column={column}
@@ -8525,7 +8538,7 @@ export default function ManhuaScriptWorkbench({
                 ? showCanvasDock
                   ? // 常规桌面先让三栏在当前视口内弹性收缩；极窄窗口才由外层横向滚动兜底。
                     // 分镜阶段按对照图 01 固定为「左镜头清单 · 中主预览 · 右当前镜参数」：
-                    // 列顺序用 CSS order 调（见各列的 storyboardColumnOrder），这里只给对应宽度。
+                    // DOM 顺序与视觉顺序一致；三列宽度只决定空间分配。
                     storyboardThreeColumn
                       ? "grid h-full min-h-0 min-w-[840px] grid-cols-[minmax(200px,0.65fr)_minmax(360px,1.2fr)_minmax(260px,0.8fr)] xl:min-w-0 xl:grid-cols-[minmax(220px,0.65fr)_minmax(400px,1.2fr)_minmax(280px,0.8fr)]"
                       : "grid h-full min-h-0 min-w-[840px] grid-cols-[minmax(128px,0.34fr)_minmax(300px,0.78fr)_minmax(400px,1.28fr)] xl:min-w-0 xl:grid-cols-[152px_minmax(400px,0.58fr)_minmax(560px,1.08fr)]"
@@ -8537,262 +8550,13 @@ export default function ManhuaScriptWorkbench({
                   : "flex h-full min-h-0 w-full overflow-hidden")
             }
           >
-        {/* 左：本片段挂载（随胶片切换）+ 本集其他 */}
-        <aside
-          data-manhua-column={storyboardThreeColumn ? "params" : "assets"}
-          data-manhua-shot-mount={shotMount.mode}
-          data-manhua-shot-mount-cast={String(mountedCastCount)}
-          style={storyboardThreeColumn ? { order: 3, width: "auto", minWidth: 0 } : undefined}
-          className={
-            `max-md:!w-full max-md:min-w-0 ${narrowWorkbenchColumn !== "assets" ? "max-md:!hidden" : ""} ` + (immersive
-              ? "h-full min-h-0 overflow-y-auto border-r border-white/10 p-2"
-              : "min-h-0 w-[180px] shrink-0 overflow-y-auto border-r border-white/10 p-2")
-          }
-        >
-          {/* 分镜阶段：这一栏是「当前镜参数」，本段挂载资产退成折叠（README：分镜阶段不再长驻资产墙） */}
-          {storyboardThreeColumn ? shotParamsPanel : null}
-          {/*
-            剧本本人的定妆与场景。这一栏原先只列题材原型（「雨夜江湖刀客」之类），
-            剧本里的角色一张都不在，看着满满当当其实一张脸都没锁——
-            成片于是每段自己捏一张，十段十个人。缺图的留可点占位格，就地补。
-          */}
-          {episodeSheetGallery.length || pendingSheetAnchors.length ? (
-            storyboardThreeColumn ? (
-              // 分镜阶段这一栏让给当前镜参数，挂载资产退成折叠（README：分镜阶段不再长驻资产墙）；
-              // 不是删掉——要核对锁脸/场景时点开就在原地，不用切回资产阶段。
-              <details
-                data-manhua-storyboard-assets-collapsed
-                className="mb-2.5 rounded-lg border border-white/10 bg-white/[0.02] p-1.5"
-              >
-                <summary className="cursor-pointer text-[10px] text-white/55">
-                  本段挂载资产（{episodeSheetEntityGroups.length + pendingSheetAnchors.length}）
-                </summary>
-                <div className="mt-1.5 space-y-2">{storyboardCanonAssets}</div>
-              </details>
-            ) : (
-              <div data-manhua-storyboard-canon-assets className="mb-2.5 space-y-2">{storyboardCanonAssets}              </div>
-            )
-          ) : null}
-
-          {showCustomAssetSummary ? <details data-manhua-current-asset-summary open={!compactUi || undefined} className="rounded-lg border border-white/10 bg-white/[0.02] p-1.5">
-            <summary className="cursor-pointer text-[10px] text-white/65">
-              本段资产 · 角色 {currentAssetSummary.find(group => group.role === "character")?.rows.length || 0}
-              {' / '}场景 {currentAssetSummary.find(group => group.role === "scene")?.rows.length || 0}
-              {' / '}道具 {currentAssetSummary.find(group => group.role === "prop")?.rows.length || 0}
-            </summary>
-            <div className="mt-2 space-y-3">
-            <p className="text-[9px] text-white/50">当前段计划与节点编排；实际提交仍以生成前确认为准。</p>
-            {currentAssetSummary.map(group => <section key={group.role} data-manhua-asset-role={group.role}>
-              <div className="text-[10px] text-white/70">{group.labelZh} · 本段计划 {group.plannedCount} · 已编排引用 {group.compiledCount}</div>
-              {group.role === "scene" && activePlannedAssets.sceneFallback ? <p className="text-[9px] text-amber-200/75">场景计划回落本集主场景，尚需核对本段地点。</p> : null}
-              <div className="mt-1 grid grid-cols-2 gap-1">
-                {group.rows.map(row => <button key={row.id} type="button" data-manhua-current-asset={row.id} data-asset-planned={row.planned ? "true" : "false"} data-asset-image={!row.path ? "missing" : summaryImageStates[`${row.id}:${row.path}`] || "loading"}
-                  onClick={() => row.nodeId && onFocusBlock ? onFocusBlock(row.nodeId) : onOpenAssetWall?.()}
-                  className="overflow-hidden rounded border border-white/15 bg-black/30 text-left">
-                  {row.path && summaryImageStates[`${row.id}:${row.path}`] !== "failed" ? <img src={row.path} alt="" className="aspect-square w-full object-cover"
-                    onLoad={() => setSummaryImageStates(previous => ({ ...previous, [`${row.id}:${row.path}`]: "loaded" }))}
-                    onError={() => setSummaryImageStates(previous => ({ ...previous, [`${row.id}:${row.path}`]: "failed" }))} />
-                    : <div className="p-3 text-[10px] text-amber-200">{row.path ? "参考图加载失败" : "缺参考图"}</div>}
-                  <div className="p-1 text-[10px] text-white/80">{row.label}<span className="block text-[9px] text-white/50">{row.planned ? "本段计划" : "节点引用"} · {row.compiled ? "已编排引用" : "未编排引用"}</span></div>
-                </button>)}
-              </div>
-              {!group.rows.length ? <p className="text-[10px] text-white/45">当前段未解析到{group.labelZh}计划或引用。</p> : null}
-            </section>)}
-            {activePlannedAssets.unmatchedCastNames.length ? <p className="text-[10px] text-amber-200">计划角色未匹配资产：{activePlannedAssets.unmatchedCastNames.join("、")}</p> : null}
-            <button type="button" onClick={() => onOpenAssetWall?.()} className="text-[10px] text-cyan-200">打开资产墙核对</button>
-            </div>
-          </details> : <>
-          <div className="text-[10px] font-semibold tracking-wide text-white/40">
-            角色 · 上场 {mountedCastCount}/
-            {(characters.length || 0) + (archetypes.length || 0)}
-          </div>
-          <div className="mt-1.5 grid grid-cols-3 gap-1.5">
-            {characters.map((c) => {
-              const onShot = mountedCharacterIdSet.has(c!.id);
-              return (
-                <button
-                  key={c!.id}
-                  type="button"
-                  data-manhua-mount-char={c!.id}
-                  data-manhua-mount-on={onShot ? "true" : "false"}
-                  onClick={() => onOpenCharacterCard?.()}
-                  className={`overflow-hidden rounded-lg border text-left ${
-                    onShot
-                      ? "border-cyan-400/55 bg-cyan-500/10 ring-1 ring-cyan-400/30"
-                      : "border-white/10 bg-black/40 opacity-45"
-                  }`}
-                  title={onShot ? "本片段上场" : "本集其他·本片段未挂"}
-                >
-                  <img
-                    src={getManhuaCharacterPreviewUrl(c!.id)}
-                    alt=""
-                    className="aspect-square w-full object-cover object-top"
-                    loading="lazy"
-                  />
-                  <div className="truncate px-1 py-0.5 text-[9px] text-white/80">
-                    {onShot ? "● " : ""}
-                    {c!.nameZh}
-                  </div>
-                </button>
-              );
-            })}
-            {archetypes.map((a) => {
-              const onShot = mountedArchetypeIdSet.has(a!.id);
-              return (
-                <button
-                  key={a!.id}
-                  type="button"
-                  data-manhua-mount-arch={a!.id}
-                  data-manhua-mount-on={onShot ? "true" : "false"}
-                  onClick={() => onOpenCharacterCard?.()}
-                  className={`overflow-hidden rounded-lg border text-left ${
-                    onShot
-                      ? "border-amber-400/55 bg-gradient-to-b from-amber-500/25 to-black/50 ring-1 ring-amber-400/30"
-                      : "border-amber-400/20 bg-gradient-to-b from-amber-500/10 to-black/50 opacity-45"
-                  }`}
-                  title={
-                    onShot
-                      ? `${a!.nameZh} · 本片段上场`
-                      : `${a!.nameZh} · 本集其他`
-                  }
-                >
-                  <div className="flex aspect-square w-full flex-col justify-between p-1.5">
-                    <span className="rounded bg-black/45 px-1 py-0.5 text-[8px] text-amber-100/80">
-                      {onShot ? "上场" : "本集"}
-                    </span>
-                    <div>
-                      <div className="line-clamp-2 text-[10px] font-semibold leading-tight text-amber-50">
-                        {a!.nameZh}
-                      </div>
-                      <div className="mt-0.5 line-clamp-2 text-[8px] leading-snug text-white/45">
-                        {(a!.wardrobeLayers || []).slice(0, 2).join("·") || "古装层次"}
-                      </div>
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-            {!characters.length && !archetypes.length ? (
-              <button
-                type="button"
-                onClick={() => onOpenCharacterCard?.()}
-                className="col-span-3 rounded-lg border border-dashed border-white/15 px-2 py-5 text-center text-[10px] text-white/40"
-              >
-                尚未套用角色 · 打开角色卡
-              </button>
-            ) : null}
-          </div>
-
-          <div className="mt-3 flex items-center justify-between">
-            <div className="text-[10px] font-semibold tracking-wide text-white/40">
-              场景 · {sceneDemos.length || (scene ? 1 : 0)}
-            </div>
-            <button
-              type="button"
-              onClick={() => onOpenAssetWall?.()}
-              className="text-[10px] text-cyan-200/80 underline-offset-2 hover:underline"
-            >
-              资产墙
-            </button>
-          </div>
-          <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-            {sceneDemos.map((d) => {
-              const url = getManhuaDemoAssetPublicUrl(d.id);
-              return (
-                <button
-                  key={d.id}
-                  type="button"
-                  onClick={() => onOpenAssetWall?.()}
-                  className="overflow-hidden rounded-lg border border-white/12 bg-black/40 text-left"
-                  title={d.nameZh}
-                >
-                  {url ? (
-                    <img src={url} alt="" className="aspect-video w-full object-cover" loading="lazy" />
-                  ) : (
-                    <div className="flex aspect-video items-center justify-center text-[9px] text-white/30">
-                      待生成
-                    </div>
-                  )}
-                  <div className="truncate px-1 py-0.5 text-[9px] text-white/70">{d.nameZh}</div>
-                </button>
-              );
-            })}
-            {!sceneDemos.length ? (
-              <div className="col-span-2 rounded-lg border border-white/10 bg-black/35 px-2 py-3 text-[11px] text-white/55">
-                {scene ? scene.nameZh : "未选场景（铺板时按题材推荐）"}
-              </div>
-            ) : null}
-          </div>
-
-          </>}
-
-          {/*
-            题材库内的通用道具（传家玉佩、金步摇发簪之类）。剧本自己有道具表时
-            这一栏得让位：上面「关键道具」列的才是本剧要锁的那几件，两栏并排都叫
-            「道具」只会让人以为库内那三件已经锁上了——它们跟这部戏没关系。
-          */}
-          {assetCanon?.props?.length ? null : (
-          <>
-          <div className="mt-3 text-[10px] font-semibold tracking-wide text-white/40">
-            道具 · 上场 {shotMount.propIds.length}/{props.length}
-          </div>
-          <div className="mt-1.5 grid grid-cols-3 gap-1.5">
-            {props.map((p) => {
-              const onShot = mountedPropIdSet.has(p!.id);
-              return (
-                <button
-                  key={p!.id}
-                  type="button"
-                  data-manhua-mount-prop={p!.id}
-                  data-manhua-mount-on={onShot ? "true" : "false"}
-                  onClick={() => onOpenAssetWall?.()}
-                  className={`overflow-hidden rounded-md border text-left ${
-                    onShot
-                      ? "border-cyan-400/45 bg-black/40 ring-1 ring-cyan-400/25"
-                      : "border-white/10 bg-black/40 opacity-45"
-                  }`}
-                  title={onShot ? `${p!.nameZh} · 本片段` : `${p!.nameZh} · 本集其他`}
-                >
-                  <img
-                    src={getManhuaDemoAssetPublicUrl(p!.id)}
-                    alt=""
-                    className="aspect-square w-full object-cover"
-                    loading="lazy"
-                    onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).style.opacity = "0.2";
-                    }}
-                  />
-                  <div className="truncate px-1 py-0.5 text-[9px] text-white/65">{p!.nameZh}</div>
-                </button>
-              );
-            })}
-            {!props.length ? (
-              <button
-                type="button"
-                onClick={() => onOpenAssetWall?.()}
-                className="col-span-3 rounded-lg border border-dashed border-white/15 px-2 py-4 text-center text-[10px] text-white/40"
-              >
-                未点选道具 · 打开资产墙
-              </button>
-            ) : null}
-          </div>
-          </>
-          )}
-
-          <ManhuaMotionEntryButton
-            panelRef={directorOverlayPanelRef}
-            onOpenPathTab={() => setScriptTab("path")}
-            pathTrackLabelZh={pathTrackLabelZh}
-            narrativeLightingLabelZh={narrativeLightingLabelZh}
-          />
-        </aside>
-
-        {/* 中：分镜图卡（阿硕 C2：图为主、文为辅；右栏才是主预览） */}
+        {/* 左：镜头清单与当前镜 */}
         <section
           data-manhua-column="script"
-          style={storyboardThreeColumn ? { order: 1, width: "auto", minWidth: 0 } : undefined}
           className={
-            `max-md:!w-full max-md:min-w-0 ${narrowWorkbenchColumn !== "script" ? "max-md:!hidden" : ""} ` + (immersive
+            `max-md:!w-full max-md:min-w-0 ${narrowWorkbenchColumn !== "script" ? "max-md:!hidden" : ""} ` + (storyboardThreeColumn
+              ? "flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-r border-white/10 p-2 md:p-2.5"
+              : immersive
               ? "flex h-full min-h-0 flex-col overflow-hidden border-r border-white/10 p-2 md:p-2.5"
               : "flex min-h-0 w-[min(28vw,300px)] shrink-0 flex-col overflow-hidden border-r border-white/10 p-2 md:p-2.5")
           }
@@ -8808,53 +8572,6 @@ export default function ManhuaScriptWorkbench({
                 </span>
                 <ManhuaShotSourceLabel isFallback={shotSourceIsFallback} />
               </div>
-              {episodeStillCount === 0 ? (
-                <div className="mt-1.5 flex max-w-xl flex-col gap-1.5">
-                  {onSegmentIntentChange && activeSourceBeat ? (
-                    <label className="flex flex-col gap-0.5">
-                      <span className="text-[9px] font-medium text-cyan-100/70">
-                        本段意图（观众应感到什么）
-                      </span>
-                      <input
-                        data-manhua-segment-intent={activeSegNo}
-                        value={String(
-                          activeSegment?.shots.find((s) => s.intentZh)?.intentZh ||
-                            activeShot?.intentZh ||
-                            activeSourceBeat.intentZh ||
-                            "",
-                        )}
-                        onChange={(e) => onSegmentIntentChange(activeSourceBeat.index, e.target.value)}
-                        placeholder="例：压迫感逼近，旧盟从硬撑到松口"
-                        className="w-full rounded-md border border-cyan-400/25 bg-black/40 px-2 py-1 text-[11px] text-white/85 placeholder:text-white/30"
-                      />
-                    </label>
-                  ) : null}
-                  {onSegmentCastChange && activeSourceBeat ? (
-                    <label className="flex flex-col gap-0.5">
-                      <span className="text-[9px] font-medium text-cyan-100/70">
-                        本段出场（写真名，用顿号分开）
-                      </span>
-                      <input
-                        data-manhua-segment-cast={activeSegNo}
-                        value={String(
-                          activeSourceBeat.castZh ||
-                            inferManhuaCastZhFromDialogue(
-                              "",
-                              activeSourceBeat.dialogueZh || "",
-                            ) ||
-                            "",
-                        )}
-                        onChange={(e) => onSegmentCastChange(activeSourceBeat.index, e.target.value)}
-                        placeholder="例：苏文谦、苏照雪"
-                        className="w-full rounded-md border border-cyan-400/25 bg-black/40 px-2 py-1 text-[11px] text-white/85 placeholder:text-white/30"
-                      />
-                      <span className="text-[9px] leading-4 text-white/35">
-                        写资产库真名，成片才锁对人脸；只写「黑衣剑客」容易对错。
-                      </span>
-                    </label>
-                  ) : null}
-                </div>
-              ) : null}
             </div>
             {onSegmentLookBindingsChange && activeLookCharacterIds.length > 0 ? (
               <details className="my-2 rounded-lg border border-cyan-400/20 bg-cyan-500/[0.04] p-2" data-manhua-segment-looks>
@@ -8950,112 +8667,6 @@ export default function ManhuaScriptWorkbench({
 
           {scriptTab === "shots" ? (
             <>
-              {/* 有静帧后收起文字墙，只留图卡 + 一行状态（阿硕 C2） */}
-              {episodeStillCount > 0 ? (
-                <div
-                  data-manhua-visual-brief-gate
-                  data-manhua-stills-ready={stillsReadyEnough ? "true" : "false"}
-                  className="mt-1.5 flex shrink-0 flex-wrap items-center justify-between gap-1.5 rounded-md border border-cyan-400/25 bg-cyan-500/[0.06] px-2 py-1"
-                >
-                  <span className="text-[10px] text-cyan-50/85">
-                    静帧 {episodeStillCount}/
-                    {Math.max(expectedStillCount, 1)}
-                    {stillsReadyEnough
-                      ? " · 已垫图锁"
-                      : keyartsPixelLocked
-                        ? " · 垫图锁过·张数未齐"
-                        : " · 待垫图改图"}
-                    {episodeKeyarts.some((b) => b.status === "error")
-                      ? ` · 失败 ${episodeKeyarts.filter((b) => b.status === "error").length}`
-                      : ""}
-                  </span>
-                  <span className="text-[9px] text-white/35">点图卡 → 右栏居中</span>
-                </div>
-              ) : (
-                <>
-                  <p className="mh-hint mt-2 max-h-14 shrink-0 overflow-y-auto rounded-lg border border-white/8 bg-black/30 px-2.5 py-2 text-[11px] leading-relaxed text-white/55">
-                    {(
-                      story?.outputText ||
-                      story?.prompt ||
-                      topic ||
-                      "铺板并跑过故事节点后，此处显示本集摘要。"
-                    ).slice(0, 360)}
-                  </p>
-
-                  <div
-                    data-manhua-visual-brief-gate
-                    data-manhua-stills-ready="false"
-                    className="mt-2 shrink-0 rounded-lg border border-cyan-400/30 bg-cyan-500/[0.07] px-2.5 py-2"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="text-[11px] font-semibold text-cyan-50/90">视觉简报</div>
-                      <span className="text-[9px] text-white/40">
-                        {keyartsPixelLocked ? "垫图锁过·张数未齐" : "待垫图改图"} · 静帧 0/
-                        {Math.max(expectedStillCount, 1)}
-                      </span>
-                    </div>
-                    <div className="mt-1.5 grid max-h-28 gap-1 overflow-y-auto text-[10px] leading-4 text-white/65">
-                      {visualBrief.pathLabelZh ? (
-                        <div>运镜：{visualBrief.pathLabelZh}</div>
-                      ) : null}
-                      {visualBrief.actionLabelZh ? (
-                        <div>动作轨：{visualBrief.actionLabelZh}</div>
-                      ) : null}
-                      {visualBrief.scenes[0] ? (
-                        <div>场景：{visualBrief.scenes.slice(0, 2).join(" · ")}</div>
-                      ) : null}
-                      {visualBrief.cameras[0] ? (
-                        <div>镜头：{visualBrief.cameras.slice(0, 2).join(" · ")}</div>
-                      ) : null}
-                      {(() => {
-                        const ang = getManhuaCameraAngle(shotAngleByIndex[activeShotNo]);
-                        return ang ? <div>机位：{ang.nameZh} · {ang.techHintZh}</div> : null;
-                      })()}
-                      {visualBrief.motions[0] ? (
-                        <div>动作：{visualBrief.motions.slice(0, 2).join(" · ")}</div>
-                      ) : null}
-                      {visualBrief.events[0] ? (
-                        <div>事件：{visualBrief.events.slice(0, 2).join(" · ")}</div>
-                      ) : null}
-                      {visualBrief.performanceLines?.[0] ? (
-                        <div>表演：{visualBrief.performanceLines.slice(0, 2).join(" ｜ ")}</div>
-                      ) : null}
-                    </div>
-                    <div className="mt-1.5 flex flex-wrap gap-1.5">
-                      {!onGenerateKeyartShot && onGenerateAllEpisodeKeyarts &&
-                      manhuaKeyartEntryVisible("panel", keyartEntryState) ? (
-                        <button
-                          type="button"
-                          data-manhua-keyart-entry="panel"
-                          disabled={Boolean(factoryBusy)}
-                          onClick={runGenerateAllKeyarts}
-                          className="rounded-md border border-cyan-300/40 bg-cyan-500/15 px-2 py-1 text-[10px] font-semibold text-cyan-50 hover:bg-cyan-500/25 disabled:opacity-40"
-                        >
-                          生成关键静帧
-                        </button>
-                      ) : !onGenerateKeyartShot && onGenerateAllEpisodeKeyarts ? (
-                        <p className="text-[9px] leading-4 text-white/40">
-                          出静帧走底栏主操作「
-                          {keyartEntryState.stageCtaIsKeyart ? "生成关键静帧" : "生成全部"}
-                          」，这里不再放第二个按钮（同一个动作按张扣费）
-                        </p>
-                      ) : null}
-                    </div>
-                  </div>
-                </>
-              )}
-              {onGenerateKeyartShot ? (
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  {!storyboardThreeColumn ? <>
-                    <button type="button" data-manhua-action="generate-current-keyart" disabled={Boolean(factoryBusy) || !activeShot || shotSourceIsFallback} onClick={runCurrentKeyart} className="rounded-lg border border-cyan-300/40 bg-cyan-500/20 px-3 py-2 text-xs font-semibold text-cyan-50 disabled:opacity-40">{currentKeyartLabel}</button>
-                    <span className="text-[10px] text-white/45">仅当前镜，按顶部档位生成；双档两张分别计费</span>
-                  </> : null}
-                  <details><summary className="cursor-pointer text-xs text-white/50">高级批量操作</summary>
-                    <button type="button" disabled={Boolean(factoryBusy)} onClick={runGenerateAllKeyarts} className="p-2 text-xs text-amber-100">补齐本集缺失静帧（按张计费）</button>
-                    {onRerunKeyartsFromReverse ? <button type="button" disabled={Boolean(factoryBusy)} onClick={() => { if (!refuseIfBlocked(keyartGateHint)) onRerunKeyartsFromReverse(); }} className="p-2 text-xs text-amber-100">从反推重出本集全部静帧（按张计费）</button> : null}
-                  </details>
-                </div>
-              ) : null}
               <div className="mt-2 shrink-0 text-[11px] font-semibold text-white/70">
                 分镜（{shots.length}）· 当前第 {activeShot?.index ?? "—"} 镜
                 <ManhuaShotSourceLabel isFallback={shotSourceIsFallback} />
@@ -9222,6 +8833,162 @@ export default function ManhuaScriptWorkbench({
                   );
                 })}
               </div>
+              <details data-manhua-storyboard-preparation className="mt-2 shrink-0 rounded-lg border border-white/10 px-2 py-1">
+                <summary className="cursor-pointer text-[10px] font-semibold text-white/60">视觉简报与生成准备</summary>
+              {episodeStillCount === 0 ? (
+                <div className="mt-1.5 flex max-w-xl flex-col gap-1.5">
+                  {onSegmentIntentChange && activeSourceBeat ? (
+                    <label className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-medium text-cyan-100/70">
+                        本段意图（观众应感到什么）
+                      </span>
+                      <input
+                        data-manhua-segment-intent={activeSegNo}
+                        value={String(
+                          activeSegment?.shots.find((s) => s.intentZh)?.intentZh ||
+                            activeShot?.intentZh ||
+                            activeSourceBeat.intentZh ||
+                            "",
+                        )}
+                        onChange={(e) => onSegmentIntentChange(activeSourceBeat.index, e.target.value)}
+                        placeholder="例：压迫感逼近，旧盟从硬撑到松口"
+                        className="w-full rounded-md border border-cyan-400/25 bg-black/40 px-2 py-1 text-[11px] text-white/85 placeholder:text-white/30"
+                      />
+                    </label>
+                  ) : null}
+                  {onSegmentCastChange && activeSourceBeat ? (
+                    <label className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-medium text-cyan-100/70">
+                        本段出场（写真名，用顿号分开）
+                      </span>
+                      <input
+                        data-manhua-segment-cast={activeSegNo}
+                        value={String(
+                          activeSourceBeat.castZh ||
+                            inferManhuaCastZhFromDialogue(
+                              "",
+                              activeSourceBeat.dialogueZh || "",
+                            ) ||
+                            "",
+                        )}
+                        onChange={(e) => onSegmentCastChange(activeSourceBeat.index, e.target.value)}
+                        placeholder="例：苏文谦、苏照雪"
+                        className="w-full rounded-md border border-cyan-400/25 bg-black/40 px-2 py-1 text-[11px] text-white/85 placeholder:text-white/30"
+                      />
+                      <span className="text-[9px] leading-4 text-white/35">
+                        写资产库真名，成片才锁对人脸；只写「黑衣剑客」容易对错。
+                      </span>
+                    </label>
+                  ) : null}
+                </div>
+              ) : null}
+              {/* 有静帧后收起文字墙，只留图卡 + 一行状态（阿硕 C2） */}
+              {episodeStillCount > 0 ? (
+                <div
+                  data-manhua-visual-brief-gate
+                  data-manhua-stills-ready={stillsReadyEnough ? "true" : "false"}
+                  className="mt-1.5 flex shrink-0 flex-wrap items-center justify-between gap-1.5 rounded-md border border-cyan-400/25 bg-cyan-500/[0.06] px-2 py-1"
+                >
+                  <span className="text-[10px] text-cyan-50/85">
+                    静帧 {episodeStillCount}/
+                    {Math.max(expectedStillCount, 1)}
+                    {stillsReadyEnough
+                      ? " · 已垫图锁"
+                      : keyartsPixelLocked
+                        ? " · 垫图锁过·张数未齐"
+                        : " · 待垫图改图"}
+                    {episodeKeyarts.some((b) => b.status === "error")
+                      ? ` · 失败 ${episodeKeyarts.filter((b) => b.status === "error").length}`
+                      : ""}
+                  </span>
+                  <span className="text-[9px] text-white/35">点图卡 → 右栏居中</span>
+                </div>
+              ) : (
+                <>
+                  <p className="mh-hint mt-2 max-h-14 shrink-0 overflow-y-auto rounded-lg border border-white/8 bg-black/30 px-2.5 py-2 text-[11px] leading-relaxed text-white/55">
+                    {(
+                      story?.outputText ||
+                      story?.prompt ||
+                      topic ||
+                      "铺板并跑过故事节点后，此处显示本集摘要。"
+                    ).slice(0, 360)}
+                  </p>
+
+                  <div
+                    data-manhua-visual-brief-gate
+                    data-manhua-stills-ready="false"
+                    className="mt-2 shrink-0 rounded-lg border border-cyan-400/30 bg-cyan-500/[0.07] px-2.5 py-2"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-[11px] font-semibold text-cyan-50/90">视觉简报</div>
+                      <span className="text-[9px] text-white/40">
+                        {keyartsPixelLocked ? "垫图锁过·张数未齐" : "待垫图改图"} · 静帧 0/
+                        {Math.max(expectedStillCount, 1)}
+                      </span>
+                    </div>
+                    <div className="mt-1.5 grid max-h-28 gap-1 overflow-y-auto text-[10px] leading-4 text-white/65">
+                      {visualBrief.pathLabelZh ? (
+                        <div>运镜：{visualBrief.pathLabelZh}</div>
+                      ) : null}
+                      {visualBrief.actionLabelZh ? (
+                        <div>动作轨：{visualBrief.actionLabelZh}</div>
+                      ) : null}
+                      {visualBrief.scenes[0] ? (
+                        <div>场景：{visualBrief.scenes.slice(0, 2).join(" · ")}</div>
+                      ) : null}
+                      {visualBrief.cameras[0] ? (
+                        <div>镜头：{visualBrief.cameras.slice(0, 2).join(" · ")}</div>
+                      ) : null}
+                      {(() => {
+                        const ang = getManhuaCameraAngle(shotAngleByIndex[activeShotNo]);
+                        return ang ? <div>机位：{ang.nameZh} · {ang.techHintZh}</div> : null;
+                      })()}
+                      {visualBrief.motions[0] ? (
+                        <div>动作：{visualBrief.motions.slice(0, 2).join(" · ")}</div>
+                      ) : null}
+                      {visualBrief.events[0] ? (
+                        <div>事件：{visualBrief.events.slice(0, 2).join(" · ")}</div>
+                      ) : null}
+                      {visualBrief.performanceLines?.[0] ? (
+                        <div>表演：{visualBrief.performanceLines.slice(0, 2).join(" ｜ ")}</div>
+                      ) : null}
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {!onGenerateKeyartShot && onGenerateAllEpisodeKeyarts &&
+                      manhuaKeyartEntryVisible("panel", keyartEntryState) ? (
+                        <button
+                          type="button"
+                          data-manhua-keyart-entry="panel"
+                          disabled={Boolean(factoryBusy)}
+                          onClick={runGenerateAllKeyarts}
+                          className="rounded-md border border-cyan-300/40 bg-cyan-500/15 px-2 py-1 text-[10px] font-semibold text-cyan-50 hover:bg-cyan-500/25 disabled:opacity-40"
+                        >
+                          生成关键静帧
+                        </button>
+                      ) : !onGenerateKeyartShot && onGenerateAllEpisodeKeyarts ? (
+                        <p className="text-[9px] leading-4 text-white/40">
+                          出静帧走底栏主操作「
+                          {keyartEntryState.stageCtaIsKeyart ? "生成关键静帧" : "生成全部"}
+                          」，这里不再放第二个按钮（同一个动作按张扣费）
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+                </>
+              )}
+              {onGenerateKeyartShot ? (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  {!storyboardThreeColumn ? <>
+                    <button type="button" data-manhua-action="generate-current-keyart" disabled={Boolean(factoryBusy) || !activeShot || shotSourceIsFallback} onClick={runCurrentKeyart} className="rounded-lg border border-cyan-300/40 bg-cyan-500/20 px-3 py-2 text-xs font-semibold text-cyan-50 disabled:opacity-40">{currentKeyartLabel}</button>
+                    <span className="text-[10px] text-white/45">仅当前镜，按顶部档位生成；双档两张分别计费</span>
+                  </> : null}
+                  <details><summary className="cursor-pointer text-xs text-white/50">高级批量操作</summary>
+                    <button type="button" disabled={Boolean(factoryBusy)} onClick={runGenerateAllKeyarts} className="p-2 text-xs text-amber-100">补齐本集缺失静帧（按张计费）</button>
+                    {onRerunKeyartsFromReverse ? <button type="button" disabled={Boolean(factoryBusy)} onClick={() => { if (!refuseIfBlocked(keyartGateHint)) onRerunKeyartsFromReverse(); }} className="p-2 text-xs text-amber-100">从反推重出本集全部静帧（按张计费）</button> : null}
+                  </details>
+                </div>
+              ) : null}
+              </details>
               {/* 三栏模式下当前镜参数在右栏；非三栏（窄屏/非分镜阶段）留在清单下面 */}
               {storyboardThreeColumn ? null : shotParamsPanel}
               <p data-manhua-shot-list-hint className="mh-hint mt-2 text-[10px] leading-snug text-white/35">
@@ -9641,10 +9408,9 @@ export default function ManhuaScriptWorkbench({
           )}
         </section>
 
-        {/* 右：本集画布（阿硕式常驻）或单路视频结果 */}
+        {/* 中：当前镜主预览与画布 */}
         <aside
           data-manhua-column="preview"
-          style={storyboardThreeColumn ? { order: 2, width: "auto", minWidth: 0 } : undefined}
           data-manhua-preview-kind={
             showCanvasDock
               ? "canvas"
@@ -9656,7 +9422,9 @@ export default function ManhuaScriptWorkbench({
           }
           data-manhua-preview-url={previewFinalVideoUrl || previewUrl || ""}
           className={
-            `max-md:!w-full max-md:min-w-0 ${narrowWorkbenchColumn !== "preview" ? "max-md:!hidden" : ""} ` + (immersive
+            `max-md:!w-full max-md:min-w-0 ${narrowWorkbenchColumn !== "preview" ? "max-md:!hidden" : ""} ` + (storyboardThreeColumn
+              ? "flex h-full min-h-0 min-w-0 flex-col p-2 md:p-2.5"
+              : immersive
               ? "flex h-full min-h-0 flex-col p-1.5 md:p-2"
               : showCanvasDock
                 ? "flex min-h-0 min-w-0 flex-1 flex-col p-2"
@@ -10169,6 +9937,257 @@ export default function ManhuaScriptWorkbench({
             ) : null}
           </div>
         </aside>
+        {/* 右：当前镜参数与本段资产 */}
+        <aside
+          data-manhua-column={storyboardThreeColumn ? "params" : "assets"}
+          data-manhua-shot-mount={shotMount.mode}
+          data-manhua-shot-mount-cast={String(mountedCastCount)}
+          className={
+            `max-md:!w-full max-md:min-w-0 ${narrowWorkbenchColumn !== "assets" ? "max-md:!hidden" : ""} ` + (storyboardThreeColumn
+              ? "h-full min-h-0 min-w-0 overflow-y-auto border-r border-white/10 p-2"
+              : immersive
+              ? "h-full min-h-0 overflow-y-auto border-r border-white/10 p-2"
+              : "min-h-0 w-[180px] shrink-0 overflow-y-auto border-r border-white/10 p-2")
+          }
+        >
+          {/* 分镜阶段：这一栏是「当前镜参数」，本段挂载资产退成折叠（README：分镜阶段不再长驻资产墙） */}
+          {storyboardThreeColumn ? shotParamsPanel : null}
+          {/*
+            剧本本人的定妆与场景。这一栏原先只列题材原型（「雨夜江湖刀客」之类），
+            剧本里的角色一张都不在，看着满满当当其实一张脸都没锁——
+            成片于是每段自己捏一张，十段十个人。缺图的留可点占位格，就地补。
+          */}
+          {episodeSheetGallery.length || pendingSheetAnchors.length ? (
+            storyboardThreeColumn ? (
+              // 分镜阶段这一栏让给当前镜参数，挂载资产退成折叠（README：分镜阶段不再长驻资产墙）；
+              // 不是删掉——要核对锁脸/场景时点开就在原地，不用切回资产阶段。
+              <details
+                data-manhua-storyboard-assets-collapsed
+                className="mb-2.5 rounded-lg border border-white/10 bg-white/[0.02] p-1.5"
+              >
+                <summary className="cursor-pointer text-[10px] text-white/55">
+                  本段挂载资产（{episodeSheetEntityGroups.length + pendingSheetAnchors.length}）
+                </summary>
+                <div className="mt-1.5 space-y-2">{storyboardCanonAssets}</div>
+              </details>
+            ) : (
+              <div data-manhua-storyboard-canon-assets className="mb-2.5 space-y-2">{storyboardCanonAssets}              </div>
+            )
+          ) : null}
+
+          {showCustomAssetSummary ? <details data-manhua-current-asset-summary open={!compactUi || undefined} className="rounded-lg border border-white/10 bg-white/[0.02] p-1.5">
+            <summary className="cursor-pointer text-[10px] text-white/65">
+              本段资产 · 角色 {currentAssetSummary.find(group => group.role === "character")?.rows.length || 0}
+              {' / '}场景 {currentAssetSummary.find(group => group.role === "scene")?.rows.length || 0}
+              {' / '}道具 {currentAssetSummary.find(group => group.role === "prop")?.rows.length || 0}
+            </summary>
+            <div className="mt-2 space-y-3">
+            <p className="text-[9px] text-white/50">当前段计划与节点编排；实际提交仍以生成前确认为准。</p>
+            {currentAssetSummary.map(group => <section key={group.role} data-manhua-asset-role={group.role}>
+              <div className="text-[10px] text-white/70">{group.labelZh} · 本段计划 {group.plannedCount} · 已编排引用 {group.compiledCount}</div>
+              {group.role === "scene" && activePlannedAssets.sceneFallback ? <p className="text-[9px] text-amber-200/75">场景计划回落本集主场景，尚需核对本段地点。</p> : null}
+              <div className="mt-1 grid grid-cols-2 gap-1">
+                {group.rows.map(row => <button key={row.id} type="button" data-manhua-current-asset={row.id} data-asset-planned={row.planned ? "true" : "false"} data-asset-image={!row.path ? "missing" : summaryImageStates[`${row.id}:${row.path}`] || "loading"}
+                  onClick={() => row.nodeId && onFocusBlock ? onFocusBlock(row.nodeId) : onOpenAssetWall?.()}
+                  className="overflow-hidden rounded border border-white/15 bg-black/30 text-left">
+                  {row.path && summaryImageStates[`${row.id}:${row.path}`] !== "failed" ? <img src={row.path} alt="" className="aspect-square w-full object-cover"
+                    onLoad={() => setSummaryImageStates(previous => ({ ...previous, [`${row.id}:${row.path}`]: "loaded" }))}
+                    onError={() => setSummaryImageStates(previous => ({ ...previous, [`${row.id}:${row.path}`]: "failed" }))} />
+                    : <div className="p-3 text-[10px] text-amber-200">{row.path ? "参考图加载失败" : "缺参考图"}</div>}
+                  <div className="p-1 text-[10px] text-white/80">{row.label}<span className="block text-[9px] text-white/50">{row.planned ? "本段计划" : "节点引用"} · {row.compiled ? "已编排引用" : "未编排引用"}</span></div>
+                </button>)}
+              </div>
+              {!group.rows.length ? <p className="text-[10px] text-white/45">当前段未解析到{group.labelZh}计划或引用。</p> : null}
+            </section>)}
+            {activePlannedAssets.unmatchedCastNames.length ? <p className="text-[10px] text-amber-200">计划角色未匹配资产：{activePlannedAssets.unmatchedCastNames.join("、")}</p> : null}
+            <button type="button" onClick={() => onOpenAssetWall?.()} className="text-[10px] text-cyan-200">打开资产墙核对</button>
+            </div>
+          </details> : <>
+          <div className="text-[10px] font-semibold tracking-wide text-white/40">
+            角色 · 上场 {mountedCastCount}/
+            {(characters.length || 0) + (archetypes.length || 0)}
+          </div>
+          <div className="mt-1.5 grid grid-cols-3 gap-1.5">
+            {characters.map((c) => {
+              const onShot = mountedCharacterIdSet.has(c!.id);
+              return (
+                <button
+                  key={c!.id}
+                  type="button"
+                  data-manhua-mount-char={c!.id}
+                  data-manhua-mount-on={onShot ? "true" : "false"}
+                  onClick={() => onOpenCharacterCard?.()}
+                  className={`overflow-hidden rounded-lg border text-left ${
+                    onShot
+                      ? "border-cyan-400/55 bg-cyan-500/10 ring-1 ring-cyan-400/30"
+                      : "border-white/10 bg-black/40 opacity-45"
+                  }`}
+                  title={onShot ? "本片段上场" : "本集其他·本片段未挂"}
+                >
+                  <img
+                    src={getManhuaCharacterPreviewUrl(c!.id)}
+                    alt=""
+                    className="aspect-square w-full object-cover object-top"
+                    loading="lazy"
+                  />
+                  <div className="truncate px-1 py-0.5 text-[9px] text-white/80">
+                    {onShot ? "● " : ""}
+                    {c!.nameZh}
+                  </div>
+                </button>
+              );
+            })}
+            {archetypes.map((a) => {
+              const onShot = mountedArchetypeIdSet.has(a!.id);
+              return (
+                <button
+                  key={a!.id}
+                  type="button"
+                  data-manhua-mount-arch={a!.id}
+                  data-manhua-mount-on={onShot ? "true" : "false"}
+                  onClick={() => onOpenCharacterCard?.()}
+                  className={`overflow-hidden rounded-lg border text-left ${
+                    onShot
+                      ? "border-amber-400/55 bg-gradient-to-b from-amber-500/25 to-black/50 ring-1 ring-amber-400/30"
+                      : "border-amber-400/20 bg-gradient-to-b from-amber-500/10 to-black/50 opacity-45"
+                  }`}
+                  title={
+                    onShot
+                      ? `${a!.nameZh} · 本片段上场`
+                      : `${a!.nameZh} · 本集其他`
+                  }
+                >
+                  <div className="flex aspect-square w-full flex-col justify-between p-1.5">
+                    <span className="rounded bg-black/45 px-1 py-0.5 text-[8px] text-amber-100/80">
+                      {onShot ? "上场" : "本集"}
+                    </span>
+                    <div>
+                      <div className="line-clamp-2 text-[10px] font-semibold leading-tight text-amber-50">
+                        {a!.nameZh}
+                      </div>
+                      <div className="mt-0.5 line-clamp-2 text-[8px] leading-snug text-white/45">
+                        {(a!.wardrobeLayers || []).slice(0, 2).join("·") || "古装层次"}
+                      </div>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+            {!characters.length && !archetypes.length ? (
+              <button
+                type="button"
+                onClick={() => onOpenCharacterCard?.()}
+                className="col-span-3 rounded-lg border border-dashed border-white/15 px-2 py-5 text-center text-[10px] text-white/40"
+              >
+                尚未套用角色 · 打开角色卡
+              </button>
+            ) : null}
+          </div>
+
+          <div className="mt-3 flex items-center justify-between">
+            <div className="text-[10px] font-semibold tracking-wide text-white/40">
+              场景 · {sceneDemos.length || (scene ? 1 : 0)}
+            </div>
+            <button
+              type="button"
+              onClick={() => onOpenAssetWall?.()}
+              className="text-[10px] text-cyan-200/80 underline-offset-2 hover:underline"
+            >
+              资产墙
+            </button>
+          </div>
+          <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+            {sceneDemos.map((d) => {
+              const url = getManhuaDemoAssetPublicUrl(d.id);
+              return (
+                <button
+                  key={d.id}
+                  type="button"
+                  onClick={() => onOpenAssetWall?.()}
+                  className="overflow-hidden rounded-lg border border-white/12 bg-black/40 text-left"
+                  title={d.nameZh}
+                >
+                  {url ? (
+                    <img src={url} alt="" className="aspect-video w-full object-cover" loading="lazy" />
+                  ) : (
+                    <div className="flex aspect-video items-center justify-center text-[9px] text-white/30">
+                      待生成
+                    </div>
+                  )}
+                  <div className="truncate px-1 py-0.5 text-[9px] text-white/70">{d.nameZh}</div>
+                </button>
+              );
+            })}
+            {!sceneDemos.length ? (
+              <div className="col-span-2 rounded-lg border border-white/10 bg-black/35 px-2 py-3 text-[11px] text-white/55">
+                {scene ? scene.nameZh : "未选场景（铺板时按题材推荐）"}
+              </div>
+            ) : null}
+          </div>
+
+          </>}
+
+          {/*
+            题材库内的通用道具（传家玉佩、金步摇发簪之类）。剧本自己有道具表时
+            这一栏得让位：上面「关键道具」列的才是本剧要锁的那几件，两栏并排都叫
+            「道具」只会让人以为库内那三件已经锁上了——它们跟这部戏没关系。
+          */}
+          {assetCanon?.props?.length ? null : (
+          <>
+          <div className="mt-3 text-[10px] font-semibold tracking-wide text-white/40">
+            道具 · 上场 {shotMount.propIds.length}/{props.length}
+          </div>
+          <div className="mt-1.5 grid grid-cols-3 gap-1.5">
+            {props.map((p) => {
+              const onShot = mountedPropIdSet.has(p!.id);
+              return (
+                <button
+                  key={p!.id}
+                  type="button"
+                  data-manhua-mount-prop={p!.id}
+                  data-manhua-mount-on={onShot ? "true" : "false"}
+                  onClick={() => onOpenAssetWall?.()}
+                  className={`overflow-hidden rounded-md border text-left ${
+                    onShot
+                      ? "border-cyan-400/45 bg-black/40 ring-1 ring-cyan-400/25"
+                      : "border-white/10 bg-black/40 opacity-45"
+                  }`}
+                  title={onShot ? `${p!.nameZh} · 本片段` : `${p!.nameZh} · 本集其他`}
+                >
+                  <img
+                    src={getManhuaDemoAssetPublicUrl(p!.id)}
+                    alt=""
+                    className="aspect-square w-full object-cover"
+                    loading="lazy"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).style.opacity = "0.2";
+                    }}
+                  />
+                  <div className="truncate px-1 py-0.5 text-[9px] text-white/65">{p!.nameZh}</div>
+                </button>
+              );
+            })}
+            {!props.length ? (
+              <button
+                type="button"
+                onClick={() => onOpenAssetWall?.()}
+                className="col-span-3 rounded-lg border border-dashed border-white/15 px-2 py-4 text-center text-[10px] text-white/40"
+              >
+                未点选道具 · 打开资产墙
+              </button>
+            ) : null}
+          </div>
+          </>
+          )}
+
+          <ManhuaMotionEntryButton
+            panelRef={directorOverlayPanelRef}
+            onOpenPathTab={() => setScriptTab("path")}
+            pathTrackLabelZh={pathTrackLabelZh}
+            narrativeLightingLabelZh={narrativeLightingLabelZh}
+          />
+        </aside>
+
           </div>
         </div>
 

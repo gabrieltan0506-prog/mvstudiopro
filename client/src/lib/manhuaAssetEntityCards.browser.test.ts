@@ -653,15 +653,13 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
     await page.setViewport({ width: 1280, height: 900 });
     const seen = await page.evaluate(() => {
       const pick = (name: string) => document.querySelector(`[data-manhua-column="${name}"]`);
-      const orderOf = (el: Element | null) =>
-        el ? Number(window.getComputedStyle(el).order || "0") : null;
       const script = pick("script");
       const preview = pick("preview");
       const params = pick("params");
       return {
         hasParamsColumn: Boolean(params),
         hasAssetsColumn: Boolean(pick("assets")),
-        order: { script: orderOf(script), preview: orderOf(preview), params: orderOf(params) },
+        domOrder: Array.from(document.querySelector('[data-manhua-storyboard-workspace]')?.children || []).map((el) => el.getAttribute('data-manhua-column')),
         // 当前镜参数面板现在应该在右栏里，而不是在镜头清单那一栏
         paramsInRight: Boolean(params?.querySelector("[data-manhua-shot-params]")),
         primaryInRight: Boolean(params?.querySelector('[data-manhua-action="generate-current-keyart"]')),
@@ -672,10 +670,7 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
     });
     expect(seen.hasParamsColumn, "右栏没有变成当前镜参数").toBe(true);
     expect(seen.hasAssetsColumn, "分镜阶段不该还有常驻资产栏").toBe(false);
-    // 左 1 · 中 2 · 右 3
-    expect(seen.order.script).toBe(1);
-    expect(seen.order.preview).toBe(2);
-    expect(seen.order.params).toBe(3);
+    expect(seen.domOrder).toEqual(["script", "preview", "params"]);
     expect(seen.paramsInRight).toBe(true);
     expect(seen.primaryInRight).toBe(true);
     expect(seen.primaryCount).toBe(1);
