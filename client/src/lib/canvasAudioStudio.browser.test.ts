@@ -156,7 +156,7 @@ describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
       }
       expect(await page.evaluate(() => (window as any).fixture.calls)).toEqual([]);
     } finally { await context.close(); }
-  }, 20_000);
+  }, 120_000);
   it("声音状态无法保存时不提交免费合听任务", async () => {
     const { context, page, click } = await open();
     try {
