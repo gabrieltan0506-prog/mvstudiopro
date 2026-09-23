@@ -4302,13 +4302,15 @@ export default function ManhuaScriptWorkbench({
           {onUpdateClipAudioStudio && manhuaSecondaryToolHome("audio", activePhase) === "cluster" ? (
             <button type="button" data-manhua-action="open-audio-studio" data-manhua-tool-home="cluster"
               disabled={Boolean(factoryBusy)}
+              aria-controls="manhua-audio-studio"
+              aria-expanded={audioStudioOpen && audioStudioPhase === activePhase}
               className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
               onClick={() => { setAudioStudioOpen(value => audioStudioPhase !== activePhase || !value); setAudioStudioPhase(activePhase); if (!activeClip) onEnsureSegmentClips?.(); }}>
               配音与背景音乐
             </button>
           ) : null}
           {audioStudioOpen && onUpdateClipAudioStudio ? (
-            <section className="w-full rounded-xl border border-cyan-300/25 bg-[#0c121d] p-3" data-manhua-audio-studio hidden={audioStudioPhase !== activePhase}>
+            <section id="manhua-audio-studio" aria-label="当前段配音与背景音乐" className="w-full rounded-xl border border-cyan-300/25 bg-[#0c121d] p-3" data-manhua-audio-studio hidden={audioStudioPhase !== activePhase}>
               <div className="mb-2 flex items-center justify-between text-sm text-cyan-50">
                 <span>第 {focusEpisode} 集 · 第 {activeSegNo} 段 · 配音与背景音乐</span>
                 <select aria-label="音轨工作台当前段" value={activeSegNo} disabled={Boolean(factoryBusy)} className="rounded border border-white/20 bg-[#0c121d] p-1 text-xs"

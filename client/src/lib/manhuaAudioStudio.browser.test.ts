@@ -93,14 +93,27 @@ it("工厂原工作台直接打开音轨，切段分别保存且不跳画布或�
       await page.setViewport({ width: 1280, height: 900 });
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
       expect(overflow).toBeLessThanOrEqual(2);
-      const audioInset = await page.evaluate(() => {
+      const bottomDock = await page.evaluate(() => {
         const shell = document.querySelector('[data-manhua-product-header]')!.getBoundingClientRect();
         const panel = document.querySelector('[data-manhua-audio-studio]')!.getBoundingClientRect();
-        return { left: panel.left - shell.left, widthRatio: panel.width / shell.width };
+        const storyboard = document.querySelector('[data-manhua-phase-panel="storyboard"]')!.getBoundingClientRect();
+        return { left: panel.left - shell.left, widthRatio: panel.width / shell.width, gap: panel.top - storyboard.bottom, storyboardHeight: storyboard.height };
       });
-      expect(audioInset.left).toBeLessThan(40);
-      expect(audioInset.widthRatio).toBeGreaterThan(0.9);
       await page.screenshot({ path: path.join(audioEvidenceDir, "factory-audio-1280.png"), fullPage: false });
+      expect(bottomDock.left).toBeLessThan(40);
+      expect(bottomDock.widthRatio).toBeGreaterThan(0.9);
+      expect(bottomDock.gap).toBeGreaterThanOrEqual(-2);
+      expect(bottomDock.storyboardHeight).toBeGreaterThan(180);
+      await page.setViewport({ width: 1800, height: 1000 });
+      const sideDock = await page.evaluate(() => {
+        const panel = document.querySelector('[data-manhua-audio-studio]')!.getBoundingClientRect();
+        const storyboard = document.querySelector('[data-manhua-phase-panel="storyboard"]')!.getBoundingClientRect();
+        return { gap: panel.left - storyboard.right, storyboardWidth: storyboard.width, panelHeight: panel.height };
+      });
+      expect(sideDock.gap).toBeGreaterThanOrEqual(-2);
+      expect(sideDock.storyboardWidth).toBeGreaterThan(840);
+      expect(sideDock.panelHeight).toBeGreaterThan(400);
+      await page.screenshot({ path: path.join(audioEvidenceDir, "factory-audio-1800.png"), fullPage: false });
     }
     const add = () =>
       page.evaluate(() => {
