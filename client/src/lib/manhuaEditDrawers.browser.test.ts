@@ -191,6 +191,19 @@ it('剪辑界面可读性：窄屏只滚动时间线，工具正文不少于14�
     expect(Math.min(...layout.fonts)).toBeGreaterThanOrEqual(14);
     if(width===390)expect(layout.scroll).toBe(true);
     await page.evaluate(id=>document.querySelector(`[data-manhua-edit-drawer="${id}"]`)?.scrollIntoView({block:"start"}),drawer);
+    const reachable=await page.evaluate(id=>{
+     const panel=document.querySelector('[data-manhua-panel="edit-multitrack"]') as HTMLElement;
+     const drawerEl=document.querySelector(`[data-manhua-edit-drawer="${id}"]`) as HTMLElement;
+     const control=drawerEl.querySelector('input,select,button') as HTMLElement | null;
+     if(!control)return {visible:false,hit:false};
+     control.scrollIntoView({block:'center'});
+     const rect=control.getBoundingClientRect();
+     const panelRect=panel.getBoundingClientRect();
+     const hit=document.elementFromPoint(rect.left+rect.width/2,rect.top+rect.height/2);
+     return {visible:rect.top>=panelRect.top&&rect.bottom<=panelRect.bottom&&rect.bottom<=innerHeight,hit:hit===control||control.contains(hit)};
+    },drawer);
+    expect(reachable.visible,`${width}px ${drawer} 编辑控件被遮挡`).toBe(true);
+    expect(reachable.hit,`${width}px ${drawer} 编辑控件无法点选`).toBe(true);
     await page.screenshot({path:join(evidenceDir,`readable-${width}-${drawer}.png`),fullPage:false});
    }
   }

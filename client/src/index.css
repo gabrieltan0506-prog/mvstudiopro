@@ -1404,6 +1404,12 @@
 }
 
 @media (max-width: 640px) {
+  #manhua-workbench-shell.mh-redesign [data-manhua-asset-entity-grid] {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+  #manhua-workbench-shell.mh-redesign [data-manhua-asset-entity] {
+    min-height: 0;
+  }
   #manhua-workbench-shell.mh-redesign [data-manhua-series-summary-card] {
     padding-right: 20px !important;
   }

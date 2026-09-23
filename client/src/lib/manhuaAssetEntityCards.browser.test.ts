@@ -50,18 +50,20 @@ beforeAll(async () => {
         import { createRoot } from 'react-dom/client';
         import { TooltipProvider } from './client/src/components/ui/tooltip';
         import ManhuaScriptWorkbench from './client/src/components/ManhuaScriptWorkbench';
-        globalThis.fixture = { keyart: 0, removed: [], openedIssue: undefined, updatedClip: undefined };
+        globalThis.fixture = { keyart: 0, removed: [], uploads: [], libraryGenerate: [], openedIssue: undefined, updatedClip: undefined };
         const refs = ${JSON.stringify(REFS)};
         const canon = ${JSON.stringify(CANON)};
         createRoot(document.getElementById('root')).render(
           <TooltipProvider>
             <ManhuaScriptWorkbench
+              canRun={globalThis.assetGenerateProbe}
               blocks={globalThis.assetUsageBlocks || []} videoModel='seedance-2.5' topic='墨屠守护阿菁'
               episodeCount={1} focusEpisode={1} onFocusEpisode={() => {}}
-              characterIds={[]} propIds={[]} outlineConfirmed={true}
+              characterIds={globalThis.assetGenerateProbe ? ['wa_char_aqing'] : []} propIds={[]} outlineConfirmed={true}
               workflowPhase='assets' customAssetRefs={refs} assetCanon={canon}
               onRemoveCustomAsset={(id) => globalThis.fixture.removed.push(id)}
-              onUploadCustomAssets={async () => {}}
+              onUploadCustomAssets={async (files, role) => { globalThis.fixture.uploads.push({role,names:Array.from(files).map(file=>file.name)}); }}
+              onGenerateCustomAssetFromLibrary={async (input) => { globalThis.fixture.libraryGenerate.push(input); }}
               onGenerateAllEpisodeKeyarts={async () => { globalThis.fixture.keyart += 1; }}
               onGenerateAsset3d={async () => {}}
               onGenerateSceneWorld={async () => {}}
@@ -223,7 +225,7 @@ async function mountStoryboard(directorProbe = false, progressProbe = false, com
   return { page, close: async () => { await ctx.close().catch(() => {}); } };
 }
 
-async function mount(usageBlocks: unknown[] = []): Promise<{ page: Page; close: () => Promise<void> }> {
+async function mount(usageBlocks: unknown[] = [], assetGenerateProbe = false): Promise<{ page: Page; close: () => Promise<void> }> {
   const ctx = await browser.createBrowserContext();
   const page = await ctx.newPage();
   const errors: string[] = [];
@@ -236,6 +238,7 @@ async function mount(usageBlocks: unknown[] = []): Promise<{ page: Page; close: 
   await page.setContent("<div id=root></div>");
   if (layoutCss) await page.addStyleTag({ content: layoutCss });
   await page.evaluate(value => { (window as any).assetUsageBlocks = value; }, usageBlocks);
+  await page.evaluate(value => { (window as any).assetGenerateProbe = value; }, assetGenerateProbe);
   await page.evaluate(bundle);
   await page.waitForSelector("[data-manhua-custom-refs-role=character]", { timeout: 5_000 }).catch(error => { throw new Error(errors.join("\n") || String(error)); });
   return { page, close: async () => { await ctx.close().catch(() => {}); } };
@@ -254,6 +257,14 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
         const panel = document.querySelector('[data-manhua-phase-panel="assets"]') as HTMLElement;
         const currentRole = document.querySelector('[data-manhua-custom-refs-role="character"]') as HTMLElement;
         const groups = Array.from(currentRole.querySelectorAll<HTMLElement>('[data-manhua-asset-entity]'));
+        const toolbar = document.querySelector('[data-manhua-asset-tabs]')!;
+        const gallery = document.querySelector('[data-manhua-custom-refs]')!;
+        const technicalSheets = document.querySelector('[data-manhua-episode-sheets]')!;
+        const rail = currentRole.querySelector('[data-manhua-asset-version-rail]')!;
+        const media = rail.parentElement!;
+        const main = media.querySelector('[data-manhua-custom-ref-id]')!;
+        const railRect = rail.getBoundingClientRect();
+        const mainRect = main.getBoundingClientRect();
         return {
           pageOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
           panelOverflow: panel.scrollWidth - panel.clientWidth,
@@ -261,6 +272,9 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
           visibleGroups: groups.length,
           versionStrip: Boolean(currentRole.querySelector('[aria-label*="版本缩略图"]')),
           entityColumns: new Set(groups.slice(0, 3).map(group => Math.round(group.getBoundingClientRect().left))).size,
+          focusedDomOrder: Boolean(toolbar.compareDocumentPosition(gallery) & Node.DOCUMENT_POSITION_FOLLOWING) && Boolean(gallery.compareDocumentPosition(technicalSheets) & Node.DOCUMENT_POSITION_FOLLOWING),
+          versionRailAfterMain: Boolean(main.compareDocumentPosition(rail) & Node.DOCUMENT_POSITION_FOLLOWING),
+          versionRailAtRight: railRect.left >= mainRect.right && railRect.right <= panel.getBoundingClientRect().right,
         };
       });
       expect(geometry.pageOverflow).toBeLessThanOrEqual(2);
@@ -269,7 +283,29 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
       expect(geometry.visibleGroups).toBeGreaterThanOrEqual(2);
       expect(geometry.versionStrip).toBe(true);
       expect(geometry.entityColumns).toBeGreaterThanOrEqual(2);
+      expect(geometry.focusedDomOrder).toBe(true);
+      expect(geometry.versionRailAfterMain).toBe(true);
+      expect(geometry.versionRailAtRight).toBe(true);
       await page.screenshot({ path: path.join(assetEvidenceDir, "assets-1280.png"), fullPage: false });
+      await page.setViewport({width:390,height:900});
+      const mobileAccess = await page.evaluate(() => {
+        const panel = document.querySelector('[data-manhua-phase-panel="assets"]') as HTMLElement;
+        const add = document.querySelector('[data-manhua-action="add-asset"]') as HTMLElement;
+        const railButton = document.querySelector('[data-manhua-asset-version-rail] button') as HTMLElement;
+        const reachable = (element: HTMLElement) => {
+          element.scrollIntoView({block:'center'});
+          const rect=element.getBoundingClientRect();
+          const hit=document.elementFromPoint(rect.left+rect.width/2,rect.top+rect.height/2);
+          return rect.left>=0 && rect.right<=innerWidth && rect.top>=0 && rect.bottom<=innerHeight && (hit===element || element.contains(hit));
+        };
+        const entity=document.querySelector('[data-manhua-asset-entity="wa_char_aqing"]') as HTMLElement;
+        return {overflow:panel.scrollWidth-panel.clientWidth,entityWidth:entity.getBoundingClientRect().width,add:reachable(add),version:reachable(railButton)};
+      });
+      expect(mobileAccess.overflow).toBeLessThanOrEqual(2);
+      expect(mobileAccess.entityWidth).toBeGreaterThanOrEqual(300);
+      expect(mobileAccess.add).toBe(true);
+      expect(mobileAccess.version).toBe(true);
+      await page.screenshot({path:path.join(assetEvidenceDir,'assets-390.png'),fullPage:false});
     } finally { await close(); }
   }, 180_000);
 
@@ -288,6 +324,24 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
       expect(await page.$$('[data-manhua-action="add-asset"]')).toHaveLength(1);
       expect(await page.evaluate(() => (window as any).fixture.keyart)).toBe(0);
     } finally { await close(); }
+  }, 180_000);
+
+  it("资产页新增与基于库生成进入所选人物分类的真实回调", async () => {
+    const {page,close}=await mount([],true);
+    try {
+      await page.evaluate(() => {
+        const input=document.querySelector('[data-manhua-action="add-asset"] input') as HTMLInputElement;
+        const transfer=new DataTransfer();
+        transfer.items.add(new File(['asset-probe'],'probe-character.png',{type:'image/png'}));
+        input.files=transfer.files;
+        input.dispatchEvent(new Event('change',{bubbles:true}));
+      });
+      await page.waitForFunction(() => (window as any).fixture.uploads.length===1);
+      expect(await page.evaluate(() => (window as any).fixture.uploads[0])).toEqual({role:'character',names:['probe-character.png']});
+      await page.click('[data-manhua-custom-refs-role="character"] [data-manhua-action="generate-asset-from-library"]');
+      await page.waitForFunction(() => (window as any).fixture.libraryGenerate.length===1);
+      expect(await page.evaluate(() => (window as any).fixture.libraryGenerate[0])).toEqual({role:'character',seedLibraryId:'wa_char_aqing'});
+    } finally {await close();}
   }, 180_000);
 
   it("资产引用按真实版本和本集隔离，查看不会改变采用", async () => {
@@ -315,7 +369,11 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
       await page.click('[title="查看阿菁-定妆，不改变采用版本"]');
       await page.click('[data-manhua-custom-ref-id="a2"] input[type=checkbox]');
       await page.click('[data-manhua-custom-ref-id="z9"] input[type=checkbox]');
+      await page.$eval('[title="查看阿菁-编辑，不改变采用版本"]', element => element.scrollIntoView({block:'center'}));
+      const versionAccess = await page.$eval('[title="查看阿菁-编辑，不改变采用版本"]', element => {const rect=element.getBoundingClientRect(); const hit=document.elementFromPoint(rect.left+rect.width/2,rect.top+rect.height/2);return hit===element || element.contains(hit);});
+      expect(versionAccess).toBe(true);
       await page.click('[title="查看阿菁-编辑，不改变采用版本"]');
+      await page.waitForFunction(() => document.querySelector('[title="查看阿菁-编辑，不改变采用版本"]')?.getAttribute('aria-pressed') === 'true');
       await page.waitForFunction(() => getComputedStyle(document.querySelector('[data-manhua-custom-ref-id="a2"]')!).display === 'none');
       expect(await page.$eval('[data-manhua-custom-ref-id="a2"] input', e => (e as HTMLInputElement).checked)).toBe(false);
       expect(await page.$eval('[data-manhua-custom-ref-id="z9"] input', e => (e as HTMLInputElement).checked)).toBe(true);
@@ -646,7 +704,7 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
 
   /**
    * 对照图 01 第三格 + README「分镜页固定三栏：镜头清单、主预览、当前镜参数」。
-   * 断言的是**视觉列序**（CSS order），不是 DOM 顺序 —— 真实页面上用户看到的是左中右。
+   * 断言实际 DOM 与视觉列序一致，并检查首屏编辑和主操作没有被遮挡。
    */
   it("分镜阶段固定三栏：左镜头清单、中主预览、右当前镜参数；挂载资产退成折叠", async () => {
     const { page, close } = await mountStoryboard(false, false, true);
@@ -709,6 +767,19 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
           element.scrollLeft = 0;
         });
       });
+      const access = await page.evaluate(() => {
+        const aside = document.querySelector('[data-manhua-column="params"]')!;
+        const button = aside.querySelector('[data-manhua-action="generate-current-keyart"]')!;
+        const description = aside.querySelector('[data-manhua-shot-description]')!;
+        const outer = aside.getBoundingClientRect();
+        const action = button.getBoundingClientRect();
+        const editor = description.getBoundingClientRect();
+        const hit = document.elementFromPoint(action.left + action.width / 2, action.top + action.height / 2);
+        return { actionVisible: action.top >= outer.top && action.bottom <= outer.bottom && action.bottom <= innerHeight, actionClickable: hit === button || button.contains(hit), editorVisible: editor.top >= outer.top && editor.bottom <= outer.bottom };
+      });
+      expect(access.actionVisible, `${width}px 首屏主操作被遮挡`).toBe(true);
+      expect(access.actionClickable, `${width}px 主操作被其他层盖住`).toBe(true);
+      expect(access.editorVisible, `${width}px 画面描述编辑区域被遮挡`).toBe(true);
       await page.screenshot({ path: path.join(assetEvidenceDir, `storyboard-${width}.png`), fullPage: false });
     }
     await close();
@@ -1002,6 +1073,7 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
 it("导演执行表与分类特效在真实工作台显示，采用只写当前段而不生成", async () => {
   const {page,close}=await mountStoryboard(true);
   try {
+    await page.click("[data-manhua-shot-advanced] > summary");
     await page.waitForSelector("[data-manhua-director-execution]");
     await page.click("[data-manhua-director-execution] summary");
     expect(await page.$eval("[data-manhua-director-execution]",el=>el.textContent)).toContain("情绪与细微表演");
@@ -1031,6 +1103,7 @@ it("导演执行表与分类特效在真实工作台显示，采用只写当前�
 it("七核心编辑从真实分镜右栏写入当前段，不触发生成", async () => {
   const {page,close}=await mountStoryboard(true);
   try {
+    await page.click("[data-manhua-shot-advanced] > summary");
     await page.waitForSelector("[data-manhua-seven-core-editor]");
     expect(await page.$eval("[data-manhua-seven-core-editor]",el=>(el as HTMLDetailsElement).open)).toBe(false);
     await page.click("[data-manhua-seven-core-editor] summary");
