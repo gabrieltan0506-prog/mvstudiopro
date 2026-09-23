@@ -46,7 +46,7 @@ import {
   Square,
   X,
 } from "lucide-react";
-import { VIDEO_MODEL_OPTIONS, type CanvasBlock } from "@/lib/canvasTypes";
+import { type CanvasBlock } from "@/lib/canvasTypes";
 import { CanvasAudioStudio } from "@/components/canvas/CanvasAudioStudio";
 import { ManhuaPrevisStudio } from "@/components/canvas/ManhuaPrevisStudio";
 import { ManhuaActionTimeline } from "@/components/canvas/ManhuaActionTimeline";
@@ -717,7 +717,7 @@ type Props = {
   /** 写回段成片节点 prompt（审阅编辑） */
   onUpdateClipPrompt?: (clipId: string, prompt: string) => void;
   /** 在工厂内按当前段保存声音，不跳转到自由画布。 */
-  onUpdateClipAudioStudio?: (clipId: string, studio: NonNullable<CanvasBlock["audioStudio"]>) => void;
+  onUpdateClipAudioStudio?: (clipId: string, studio: NonNullable<CanvasBlock["audioStudio"]>) => boolean | void;
   onUpdateClipPrevisStudio?: (clipId:string,studio:NonNullable<CanvasBlock["previsStudio"]>,reference?:ManhuaSegmentReferenceEntry)=>void|boolean;
   /** 0915 动作节奏（PR-2）：本集动作计划；OmniCanvas 是唯一状态源，这里只展示与回传 */
   manhuaActionPlan?: ManhuaActionPlan | null;
@@ -725,7 +725,7 @@ type Props = {
   manhuaActionPlanBindingContext?: ManhuaActionPlanBindingContext | null;
   onChangeManhuaActionPlan?: (episodeIndex: number, plan: ManhuaActionPlan | null) => void;
   /** 配音间「一键预混母轨」出好后挂到本段 manhuaSegmentRefs（slot 固定 master） */
-  onSetClipSegmentReference?: (clipId: string, slot: "master", entry: ManhuaSegmentReferenceEntry) => void;
+  onSetClipSegmentReference?: (clipId: string, slot: "master", entry: ManhuaSegmentReferenceEntry) => boolean | void;
   onResumeFromFailure?: () => void;
   /** 从编导反推强制重跑本集静帧（覆盖旧图；工作台主路径入口） */
   onRerunKeyartsFromReverse?: () => void;
@@ -1645,8 +1645,7 @@ export default function ManhuaScriptWorkbench({
   const episodeKeyarts = episodeKeyartReview.blocks;
   const staleLookStillCount = episodeKeyarts.filter((block) => !isManhuaWorkbenchKeyartCurrent(block)).length;
   const keyart = episodeKeyarts[0];
-  const episodeVideoLabelZh =
-    VIDEO_MODEL_OPTIONS.find((m) => m.id === episodeVideoModel)?.label || "成片";
+  const episodeVideoLabelZh = "视频制作";
   const segments = useMemo(
     () =>
       groupShotsIntoSegments(shots, {
@@ -4305,20 +4304,20 @@ export default function ManhuaScriptWorkbench({
               disabled={Boolean(factoryBusy)}
               className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
               onClick={() => { setAudioStudioOpen(value => audioStudioPhase !== activePhase || !value); setAudioStudioPhase(activePhase); if (!activeClip) onEnsureSegmentClips?.(); }}>
-              本段对白与配乐
+              配音与背景音乐
             </button>
           ) : null}
           {audioStudioOpen && onUpdateClipAudioStudio ? (
-            <section className="w-full rounded-xl border border-cyan-300/25 bg-[#0c121d] p-3" data-manhua-audio-studio style={{ display: audioStudioPhase === activePhase ? undefined : "none" }}>
+            <section className="w-full rounded-xl border border-cyan-300/25 bg-[#0c121d] p-3" data-manhua-audio-studio hidden={audioStudioPhase !== activePhase}>
               <div className="mb-2 flex items-center justify-between text-sm text-cyan-50">
-                <span>第 {focusEpisode} 集 · 第 {activeSegNo} 段 · 对白与配乐</span>
+                <span>第 {focusEpisode} 集 · 第 {activeSegNo} 段 · 配音与背景音乐</span>
                 <select aria-label="音轨工作台当前段" value={activeSegNo} disabled={Boolean(factoryBusy)} className="rounded border border-white/20 bg-[#0c121d] p-1 text-xs"
                   onChange={event => { const next = Number(event.target.value); setActiveSegmentOverride(next); const firstShot = segments.find(segment => segment.index === next)?.shots[0]; if (firstShot) { const index = shots.findIndex(shot => shot.index === firstShot.index); if (index >= 0) setShotIndex(index); } }}>
                   {segments.map(segment => <option key={segment.index} value={segment.index}>第 {segment.index} 段</option>)}
                 </select>
                 <button type="button" onClick={() => setAudioStudioOpen(false)}>收起</button>
               </div>
-              {activeClip ? <CanvasAudioStudio key={activeClip.id} block={activeClip} compact={compactUi} timelineDurationSec={activeSegment?.durationSec} sourceShots={activeSegment?.shots} dialogueSources={blocks}
+              {activeClip ? <CanvasAudioStudio key={activeClip.id} block={activeClip} compact={false} timelineDurationSec={activeSegment?.durationSec} sourceShots={activeSegment?.shots} dialogueSources={blocks}
                 disabled={Boolean(factoryBusy) || activeClip.status === "running" || activeClip.videoTaskStatus === "queued"}
                 onChange={studio => onUpdateClipAudioStudio(activeClip.id, studio)}
                 onMasterTrackReady={onSetClipSegmentReference ? (entry) => onSetClipSegmentReference(activeClip.id, "master", entry) : undefined}

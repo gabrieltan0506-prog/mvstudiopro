@@ -170,10 +170,10 @@ export type BgmBriefModel = "suno-v5.5-beta" | "suno-v6-mini" | "suno-v6" | "sun
 export const BGM_BRIEF_MODELS: readonly BgmBriefModel[] = ["suno-v6", "suno-v6-wild", "suno-v6-mini"];
 export const BGM_BRIEF_DEFAULT_MODEL: BgmBriefModel = "suno-v6";
 export const BGM_BRIEF_MODEL_LABEL_ZH: Record<BgmBriefModel, string> = {
-  "suno-v5.5-beta": "Suno v5.5（已下架）",
-  "suno-v6": "Suno v6（TTAPI·默认）",
-  "suno-v6-wild": "Suno v6-wild（TTAPI·实验）",
-  "suno-v6-mini": "Suno v6-mini（TTAPI·快）",
+  "suno-v5.5-beta": "旧版配乐（已下架）",
+  "suno-v6": "标准配乐",
+  "suno-v6-wild": "探索配乐（实验）",
+  "suno-v6-mini": "快速配乐",
 };
 export type BgmV6Model = "suno-v6-mini" | "suno-v6" | "suno-v6-wild";
 export function isBgmV6Model(model: unknown): model is BgmV6Model {
@@ -310,4 +310,3 @@ export function buildManhuaBgmBrief(input: BgmBriefInput): BgmBrief {
     weirdness_constraint: BGM_WEIRDNESS_CONSTRAINT,
   };
 }
-

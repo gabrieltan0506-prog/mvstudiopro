@@ -21,10 +21,12 @@ describe("二级工具的家", () => {
     }
   });
 
-  it("制作阶段的辅助工具也收进抽屉，不挤占当前主操作", () => {
+  it("分镜与剪辑直达声音，其余辅助工具留在抽屉", () => {
     for (const phase of PHASES) {
-      expect(manhuaDrawerSecondaryTools(phase)).toEqual(TOOLS);
-      for (const tool of TOOLS) expect(manhuaSecondaryToolHome(tool, phase)).toBe("drawer");
+      const directAudio = phase === "storyboard" || phase === "edit";
+      expect(manhuaDrawerSecondaryTools(phase)).toEqual(TOOLS.filter(tool => !directAudio || tool !== "audio"));
+      expect(manhuaSecondaryToolHome("audio", phase)).toBe(directAudio ? "cluster" : "drawer");
+      for (const tool of TOOLS.filter(tool => tool !== "audio")) expect(manhuaSecondaryToolHome(tool, phase)).toBe("drawer");
     }
   });
 
@@ -38,7 +40,7 @@ describe("二级工具的家", () => {
     expect(manhuaSecondaryToolHome("world3d", "storyboard")).toBe("drawer");
     expect(manhuaSecondaryToolHome("audio", "assets")).toBe("drawer");
     expect(manhuaDrawerSecondaryTools("assets")).toEqual(TOOLS);
-    expect(manhuaDrawerSecondaryTools("storyboard")).toEqual(TOOLS);
+    expect(manhuaDrawerSecondaryTools("storyboard")).toEqual(TOOLS.filter(tool => tool !== "audio"));
   });
 
   it("抽屉里的顺序固定，不随阶段跳动；每个工具都有中文名", () => {

@@ -311,6 +311,7 @@ type FreeformCanvasProps = {
   blocks: CanvasBlock[];
   edges: CanvasEdge[];
   onBlocksChange: (blocks: BlocksUpdater) => void;
+  onPersistAudioStudio?: (blockId: string, studio: NonNullable<CanvasBlock["audioStudio"]>) => boolean;
   /**
    * 画布选中的节点变了就报出去（对照图 02：侧栏要显示所选镜头）。
    * 只读上报，不接管选中；父级拿它解析「这是第几段第几镜」。
@@ -810,6 +811,7 @@ export default function FreeformCanvas({
   blocks,
   edges,
   onBlocksChange,
+  onPersistAudioStudio,
   onSelectedBlockIdChange,
   onEdgesChange,
   runDeps,
@@ -3272,7 +3274,7 @@ export default function FreeformCanvas({
                                                       MP4
                                                     </div>
                                                   )}
-                                                  {["seedance-2.5", "minimax-hailuo-3"].includes(block.videoModel || "") && <details><summary className="text-xs text-sky-100">可选：逐句配音与分段配乐</summary><CanvasAudioStudio block={block} disabled={block.status === "running"} onChange={audioStudio => patchOne(block.id, { audioStudio })} /></details>}
+                                                  {["seedance-2.5", "minimax-hailuo-3"].includes(block.videoModel || "") && <details><summary className="text-xs text-sky-100">可选：逐句配音与分段配乐</summary><CanvasAudioStudio block={block} disabled={block.status === "running" || block.videoTaskStatus === "queued"} onChange={audioStudio => onPersistAudioStudio?.(block.id, audioStudio) ?? false} /></details>}
                                                   <div className="text-[10px] text-white/45">
                                                     参考音频（最多 {maxAudioRefs}）· 上传
                                                     MP3/WAV 后勾选

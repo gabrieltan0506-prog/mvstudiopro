@@ -43,6 +43,33 @@ beforeAll(async () => {
 },180_000);
 afterAll(async()=>{await browser?.close();});
 
+it("配音与背景音乐界面不展示模型名称且查看设置不会生成", async () => {
+ const context = await browser.createBrowserContext();
+ const page = await context.newPage();
+ try {
+  await page.setRequestInterception(true);
+  page.on("request", request => void request.abort());
+  await page.setContent('<div id="root"></div>');
+  await page.addStyleTag({ content: stylesheet });
+  await page.addScriptTag({ content: bundle });
+  await page.waitForSelector('[data-manhua-audio-editor]');
+  expect(await page.$eval('body', el => el.textContent)).toContain("配音与背景音乐");
+  expect(await page.$eval('body', el => el.textContent)).not.toMatch(/TTS|Suno|Qwen|TTAPI|Seedance|Mureka|WaveSpeed|EvoLink/i);
+  expect(await page.$('[aria-label="配乐来源"]')).toBeNull();
+  expect(await page.$$eval('[aria-label="配乐方式"] option', options => options.map(option => [(option as HTMLOptionElement).value, option.textContent]))).toEqual([
+    ["suno-v6", "标准配乐"], ["suno-v6-wild", "探索配乐（实验）"], ["suno-v6-mini", "快速配乐"],
+  ]);
+  await page.click('[aria-label="声音制作快捷入口"] button:nth-child(2)');
+  expect(await page.$eval('[data-audio-group="bgm"]', el => el.getBoundingClientRect().top)).toBeLessThan(100);
+  expect(await page.evaluate(() => (window as any).fixture.calls)).toEqual([]);
+  await page.click('[aria-label="生成第2句配音"]');
+  await page.waitForSelector('[aria-label="确认音频费用"]');
+  expect(await page.$eval('[aria-label="确认音频费用"]', el => el.textContent)).toContain("阿菁：门外是谁？");
+  expect(await page.$eval('[aria-label="确认音频费用"]', el => el.getBoundingClientRect().bottom)).toBeLessThanOrEqual(601);
+  expect(await page.evaluate(() => (window as any).fixture.calls)).toEqual([]);
+ } finally { await context.close(); }
+}, 20_000);
+
 it("真实声音面板按种类分组、采用状态随原handler变化，不更换cue身份或额外付费",async()=>{
  const context=await browser.createBrowserContext();const page=await context.newPage();const errors:string[]=[];page.on("pageerror",e=>errors.push(String(e)));
  try {

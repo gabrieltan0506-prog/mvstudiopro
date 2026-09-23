@@ -12,7 +12,7 @@ import { trpc } from "@/lib/trpc";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import { canvasAudioCapabilityHint } from "@/lib/canvasAudioCapabilityHint";
 import type { ManhuaSegmentReferenceEntry } from "@shared/manhuaSegmentReference";
-import { BGM_BRIEF_MODEL_LABEL_ZH, type BgmBriefModel } from "@shared/manhuaBgmBrief";
+import { BGM_BRIEF_MODELS, BGM_BRIEF_MODEL_LABEL_ZH, isBgmV6Model, type BgmBriefModel } from "@shared/manhuaBgmBrief";
 import { buildPremixTimelineClips, isPremixPendingKey, PREMIX_PENDING_PREFIX } from "@/lib/manhuaPremixMaster";
 import { resolveCanvasMaterialUrl } from "@/lib/omniCanvasApi";
 import { compileCanvasDialogueInput } from "@shared/canvasDialogueControls";
@@ -51,6 +51,11 @@ const VOICES = QWEN_TTS_VOICE_CATALOG.filter(row =>
   id: buildQwenTtsVoiceId("plus", row.suffix),
   label: `${row.nameZh} · ${row.gender} · ${row.traitZh}`,
 }));
+const SPEECH_MOODS = [
+  ["自然", ""], ["虚弱", "[tired]"], ["安抚", "[empathetic]"],
+  ["严肃", "[serious]"], ["悲伤", "[sad]"], ["愤怒", "[angry]"],
+  ["惊慌", "[panicked]"], ["低声", "[whispers]"], ["好奇", "[curious]"],
+] as const;
 export type CanvasVoiceMatchCriteria = { gender?: "男" | "女" | "中性"; ageBand?: "child" | "adult" | "senior"; traitLike?: string };
 /** 现有音轨没有稳定角色 ID，只消费显式目录条件，禁止按姓名跨句借声。 */
 export function matchCanvasDialogueVoice(criteria: CanvasVoiceMatchCriteria) {
@@ -175,13 +180,13 @@ type Props = {
   sourceShots?: ManhuaWorkbenchShot[];
   dialogueSources?: readonly CanvasBlock[];
   disabled?: boolean;
-  onChange: (next: CanvasAudioStudioState) => void;
+  onChange: (next: CanvasAudioStudioState) => boolean | void;
   /**
    * 一键预混母轨出好后回调：对白原音量 + BGM 压 12 dB 带淡入淡出，合成一条 ≤30 s 单轨，
    * 由上层挂到本段 manhuaSegmentRefs.master（出片时作唯一 @音频1）。不传则不显示按钮。
    */
-  onMasterTrackReady?: (entry: ManhuaSegmentReferenceEntry) => void;
-  /** 配乐来源可选项：Suno v6 / v6-wild / v6-mini（TTAPI 网关，全员可选）。不传则缺省 v6，不显示下拉。 */
+  onMasterTrackReady?: (entry: ManhuaSegmentReferenceEntry) => boolean | void;
+  /** 保留后台配乐配置及默认值；前台不展示模型或供应商名称。 */
   bgmModels?: Array<{ model: BgmBriefModel; labelZh: string }>;
 };
 
@@ -268,7 +273,7 @@ export function CanvasAudioStudioView({
     : 15;
   const modelMaxDurationSec = manhuaClipMaxDurationSecForVideoModel(block.videoModel);
   const modelDurationIssue = durationSec > modelMaxDurationSec
-    ? `当前视频模型单次最多 ${modelMaxDurationSec} 秒，本段声音仍按完整 ${durationSec} 秒保留。请更换支持该时长的模型或重新分段；系统不会静默截断。`
+    ? `当前视频生成方式单次最多 ${modelMaxDurationSec} 秒，本段声音仍按完整 ${durationSec} 秒保留。请调整生成方式或重新分段；系统不会静默截断。`
     : "";
   const { initialAudio, sourceIssue } = useMemo(() => {
     if (block.audioStudio || !sourceShots?.length) return { initialAudio: emptyCanvasAudioStudio(), sourceIssue: "" };
@@ -310,6 +315,14 @@ export function CanvasAudioStudioView({
   const busyRef = useRef(false);
   const [busy, setBusy] = useState(false);
   const [editorOpen, setEditorOpen] = useState(!compact);
+  const audioGroups = useRef<Partial<Record<"dialogue" | "bgm" | "sfx", HTMLElement | null>>>({});
+  const dialogueInputs = useRef<Record<string, HTMLTextAreaElement | null>>({});
+  const [jumpToGroup, setJumpToGroup] = useState<"dialogue" | "bgm" | "sfx" | null>(null);
+  useEffect(() => {
+    if (!editorOpen || !jumpToGroup) return;
+    audioGroups.current[jumpToGroup]?.scrollIntoView({ block: "start" });
+    setJumpToGroup(null);
+  }, [editorOpen, jumpToGroup]);
   const [activeCueId, setActiveCueId] = useState<string | null>(null);
   const [voiceCriteria, setVoiceCriteria] = useState<CanvasVoiceMatchCriteria>({});
   const activeCue = activeCueId === null ? state.cues[0] : state.cues.find(cue => cue.id === activeCueId);
@@ -321,8 +334,9 @@ export function CanvasAudioStudioView({
   const musicDraft = state.musicDraft || { prompt: "", durationSec: 30, brief: null, model: bgmModels?.[0]?.model ?? "suno-v6" };
   const musicPrompt = musicDraft.prompt;
   const musicDuration = musicDraft.durationSec;
-  const brief = musicDraft.brief;
-  const bgmModel = musicDraft.model;
+  // 旧草稿只供恢复历史记录，不能从已下架版本直接再次发起付费生成。
+  const brief = isBgmV6Model(musicDraft.brief?.model) ? musicDraft.brief : null;
+  const bgmModel = isBgmV6Model(musicDraft.model) ? musicDraft.model : "suno-v6";
   const [resumable, setResumable] = useState<Record<string, JobResult>>({});
   const [confirmation, setConfirmation] = useState<
     | { kind: "dialogue"; cueId: string; inputKey: string }
@@ -353,10 +367,14 @@ export function CanvasAudioStudioView({
   const update = (
     fn: (previous: CanvasAudioStudioState) => CanvasAudioStudioState
   ) => {
-    if (!mounted.current || current.current.block.id !== block.id) return;
+    if (!mounted.current || current.current.block.id !== block.id) return false;
     const next = fn(current.current.state);
+    if (current.current.onChange(next) === false) {
+      setError("当前片段忙碌或声音状态未能保存，已阻止本次新提交。请保留页面，待任务结束或备份并释放浏览器空间后重试。");
+      return false;
+    }
     current.current.state = next;
-    current.current.onChange(next);
+    return true;
   };
   const patchMusicDraft = (patch: Partial<CanvasMusicDraft>) => {
     if (!mounted.current || current.current.block.id !== block.id) return;
@@ -387,6 +405,18 @@ export function CanvasAudioStudioView({
       ...previous,
       cues: previous.cues.map(cue => (cue.id === id ? parsed.data : cue)),
     }));
+  };
+  const insertDialogueSound = (cue: CanvasAudioCue, tag: "[cough]" | "[gasp]") => {
+    const input = dialogueInputs.current[cue.id];
+    const start = input?.selectionStart ?? cue.textZh.length;
+    const end = input?.selectionEnd ?? start;
+    const next = cue.textZh.slice(0, start) + tag + cue.textZh.slice(end);
+    if (next.length > 4000) return;
+    patchCue(cue.id, { textZh: next });
+    requestAnimationFrame(() => {
+      input?.focus();
+      input?.setSelectionRange(start + tag.length, start + tag.length);
+    });
   };
   const settle = (id: string, take?: CanvasAudioTake) =>
     update(previous => {
@@ -550,7 +580,7 @@ export function CanvasAudioStudioView({
                   settle(pending.id, take);
                   continue;
                 }
-                masterReady({
+                const masterSaved = masterReady({
                   url: take.previewUrl,
                   gcsUri: take.gcsUri,
                   fileName: `预混母轨-${block.id}.wav`,
@@ -558,6 +588,10 @@ export function CanvasAudioStudioView({
                   durationSec: take.durationSec,
                   updatedAt: new Date().toISOString(),
                 });
+                if (masterSaved === false) {
+                  setError("预混母轨暂未保存，已保留原任务编号；请保留页面，待片段空闲或释放浏览器空间后重试。");
+                  continue;
+                }
               } else if (!pending.cueId) {
                 update(previous => ({ ...previous, previewTake: take }));
               }
@@ -704,6 +738,7 @@ export function CanvasAudioStudioView({
           !original.speakerZh
         )
           throw new Error("原配音回执信息不足，请保留原单等待核对。");
+        if (!update(previous => previous)) return;
         const result = await services.generateDialogue({
           billingRequestId: original.billingRequestId,
           input: original.input,
@@ -739,7 +774,7 @@ export function CanvasAudioStudioView({
             "本句已达 100 条候选上限，旧音频全部保留，本次未提交。"
           );
         const jobId = requestId;
-        update(previous => ({
+        if (!update(previous => ({
           ...previous,
           pendingOperations: [
             ...previous.pendingOperations,
@@ -750,7 +785,7 @@ export function CanvasAudioStudioView({
               inputKey: saved.inputKey,
             },
           ],
-        }));
+        }))) return;
         const result = await services
           .generateDialogue({
             billingRequestId: requestId,
@@ -777,14 +812,14 @@ export function CanvasAudioStudioView({
             "配乐任务记录已达 100 条，旧任务全部保留，本次未提交。"
           );
         const jobId = `bgm_${requestId.replace(/-/g, "")}`;
-        update(previous => ({
+        if (!update(previous => ({
           ...previous,
           musicJobIds: [...previous.musicJobIds, jobId],
           pendingOperations: [
             ...previous.pendingOperations,
             { id: jobId, kind: "bgm", inputKey: JSON.stringify(saved.brief) },
           ],
-        }));
+        }))) return;
         await services.generateMusic({
           billingRequestId: requestId,
           brief: saved.brief,
@@ -812,6 +847,7 @@ export function CanvasAudioStudioView({
       )
         throw new Error("裁切区间必须在来源音频真实时长内。");
       const inputKey = canvasAudioCueInputKey(cue);
+      if (!update(previous => previous)) return;
       const result = await services.queuePost({
         action: "audio_trim",
         params: {
@@ -870,6 +906,7 @@ export function CanvasAudioStudioView({
       canvasAudioStudioSchema.parse({ ...current.current.state, pendingOperations: [
         ...current.current.state.pendingOperations, { id: "preflight-preview", kind: "post_prod", inputKey: previewKey },
       ] });
+      if (!update(previous => previous)) return;
       const result = await services.queuePost({
         action: "audio_timeline",
         params: {
@@ -904,6 +941,7 @@ export function CanvasAudioStudioView({
       canvasAudioStudioSchema.parse({ ...current.current.state, pendingOperations: [
         ...current.current.state.pendingOperations, { id: "preflight-premix", kind: "post_prod", inputKey: premixKey },
       ] });
+      if (!update(previous => previous)) return;
       const result = await services.queuePost({
         action: "audio_timeline",
         params: { durationSec, clips },
@@ -943,6 +981,22 @@ export function CanvasAudioStudioView({
         </summary>
         <div className="mt-2 space-y-2">
           <label className="block text-xs">
+            配乐方式
+            <select
+              className={fieldClass}
+              aria-label="配乐方式"
+              value={bgmModel}
+              disabled={disabled || busy}
+              onChange={event => {
+                if (isBgmV6Model(event.target.value)) patchMusicDraft({ model: event.target.value, brief: null });
+              }}
+            >
+              {BGM_BRIEF_MODELS.filter(model => !bgmModels || bgmModels.some(option => option.model === model)).map(model => (
+                <option key={model} value={model}>{BGM_BRIEF_MODEL_LABEL_ZH[model]}</option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-xs">
             剧情与情绪推进
             <textarea
               className={fieldClass}
@@ -973,30 +1027,9 @@ export function CanvasAudioStudioView({
               }}
             />
           </label>
-          {bgmModels?.length ? (
-            <label className="block text-xs">
-              配乐来源
-              <select
-                aria-label="配乐来源"
-                className={fieldClass}
-                value={bgmModel}
-                disabled={disabled || busy}
-                onChange={event => {
-                  patchMusicDraft({ model: event.target.value as typeof bgmModel, brief: null });
-                  setConfirmation(null);
-                }}
-              >
-                {bgmModels.map(item => (
-                  <option key={item.model} value={item.model}>
-                    {item.labelZh}
-                  </option>
-                ))}
-              </select>
-              <span className="mt-1 block text-[10px] text-amber-200/80">
-                原曲按所填目标秒数提交（10–360整数秒），成品可再按段表裁。
-              </span>
-            </label>
-          ) : null}
+          <p className="text-xs text-white/60">
+            按剧情、情绪和目标时长生成背景音乐；原曲支持 10–360 整数秒，生成前确认费用，生成后试听并选择使用片段。
+          </p>
           <button
             className={buttonClass}
             disabled={disabled || busy || !musicPrompt.trim() || !Number.isInteger(musicDuration) || musicDuration < 10 || musicDuration > 360}
@@ -1021,7 +1054,7 @@ export function CanvasAudioStudioView({
             <>
               {brief.model !== "suno-v5.5-beta" ? (
                 <p className="text-[10px] text-amber-200/80">
-                  来源：{BGM_BRIEF_MODEL_LABEL_ZH[brief.model]}
+                  背景音乐生成方案已选定
                 </p>
               ) : null}
               <label className="block text-xs">
@@ -1090,9 +1123,14 @@ export function CanvasAudioStudioView({
       onKeyDown={event => event.stopPropagation()}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold">对白与配乐</h3>
+        <h3 className="text-sm font-semibold">配音与背景音乐</h3>
         <span className="text-[11px] text-white/50">逐句试听 · 分段采用 · 保留原版本</span>
       </div>
+      <nav aria-label="声音制作快捷入口" className="flex flex-wrap gap-2">
+        {([["dialogue", "配音"], ["bgm", "背景音乐"], ["sfx", "音效"]] as const).map(([kind, label]) =>
+          <button key={kind} type="button" className={buttonClass}
+            onClick={() => { setEditorOpen(true); setJumpToGroup(kind); }}>{label}</button>)}
+      </nav>
       <div data-manhua-sound-summary data-manhua-sound-multitrack={soundSummary.hasRealMultitrack ? "1" : "0"} className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)]">
         <section aria-label="当前片段声音预览" className="flex min-w-0 items-start gap-3 rounded-xl border border-sky-200/20 bg-sky-500/[0.06] p-3">
           {block.outputUrl ? <video aria-label="当前片段画面" src={block.outputUrl} controls playsInline preload="metadata" className="aspect-[4/3] w-28 shrink-0 rounded-lg bg-black object-contain"/> : <div className="flex min-h-20 w-28 shrink-0 items-center justify-center rounded-lg border border-dashed border-white/15 bg-black/20 p-3 text-center text-xs text-white/45">本段尚无成片画面，可先制作并试听声音。</div>}
@@ -1171,7 +1209,7 @@ export function CanvasAudioStudioView({
         </button>
         <p className="text-[11px] text-white/50">仅处理上方当前音轨；对白仍须确认费用，配乐与音效仅裁切已选来源。原曲制作在下方单独确认。</p>
       </section>
-      {(["dialogue", "bgm", "sfx"] as const).map(kind => <section key={kind} data-audio-group={kind} aria-label={{ dialogue: "角色配音编辑", bgm: "背景音乐编辑", sfx: "事件音效编辑" }[kind]} className="min-w-0 space-y-3 rounded-xl border border-white/15 bg-black/15 p-3">
+      {(["dialogue", "bgm", "sfx"] as const).map(kind => <section key={kind} ref={element => { audioGroups.current[kind] = element; }} data-audio-group={kind} aria-label={{ dialogue: "角色配音编辑", bgm: "背景音乐编辑", sfx: "事件音效编辑" }[kind]} className="min-w-0 scroll-mt-4 space-y-3 rounded-xl border border-white/15 bg-black/15 p-3">
         <header className="flex flex-wrap items-center justify-between gap-2">
           <div><h3 className="text-sm font-semibold">{{ dialogue: "角色配音", bgm: "背景音乐", sfx: "事件音效" }[kind]} <span className="text-xs font-normal text-white/45">{state.cues.filter(cue => cue.kind === kind).length} {kind === "dialogue" ? "句" : kind === "bgm" ? "段" : "条"}</span></h3><p className="mt-1 text-[11px] text-white/45">{{ dialogue: "写台词、选音色，试听后逐句采用。", bgm: "选原曲、裁秒窗，控制留白与对白避让。", sfx: "为片中实际发生的动作选音效，按秒点采用。" }[kind]}</p></div>
           <div className="flex flex-wrap gap-2">
@@ -1311,6 +1349,7 @@ export function CanvasAudioStudioView({
                 <label className="block text-xs">
                   本句台词
                   <textarea
+                    ref={element => { dialogueInputs.current[cue.id] = element; }}
                     aria-label={`${index + 1} 本句台词`}
                     maxLength={4000}
                     className={fieldClass}
@@ -1322,6 +1361,16 @@ export function CanvasAudioStudioView({
                     }
                   />
                 </label>
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="text-white/55">光标处加入声音：</span>
+                  <button type="button" className={buttonClass} disabled={disabled || busy || Boolean(pending)}
+                    onMouseDown={event => event.preventDefault()}
+                    onClick={() => insertDialogueSound(cue, "[cough]")}>咳嗽</button>
+                  <button type="button" className={buttonClass} disabled={disabled || busy || Boolean(pending)}
+                    onMouseDown={event => event.preventDefault()}
+                    onClick={() => insertDialogueSound(cue, "[gasp]")}>喘气（吸气）</button>
+                  <span className="text-white/55">生成后试听，确认不是把说明念出来。</span>
+                </div>
                 <label className="block text-xs">
                   音色
                   <select
@@ -1342,8 +1391,20 @@ export function CanvasAudioStudioView({
                     ))}
                   </select>
                 </label>
+                <fieldset className="space-y-2">
+                  <legend className="text-xs">说话语气</legend>
+                  <div className="flex flex-wrap gap-2">
+                    {SPEECH_MOODS.map(([label, value]) => <button key={label} type="button"
+                      className={buttonClass} aria-label={`${index + 1} 语气：${label}`}
+                      aria-pressed={cue.emotion === value} disabled={disabled || busy || Boolean(pending)}
+                      onClick={() => patchCue(cue.id, { emotion: value })}>{label}</button>)}
+                  </div>
+                  <p className="text-[11px] text-white/50">只影响说话方式，不会把语气名称念出来；咳嗽、喘气需单独核对实际声音。</p>
+                </fieldset>
+                <details>
+                  <summary className="text-xs">高级语气组合</summary>
                 <label className="block text-xs">
-                  语气标签
+                  语气标签（可选）
                   <input
                     aria-label={`${index + 1} 语气标签`}
                     maxLength={80}
@@ -1356,7 +1417,14 @@ export function CanvasAudioStudioView({
                     }
                   />
                 </label>
-
+                </details>
+                <button type="button" className={buttonClass}
+                  aria-label={`生成第${index + 1}句配音`}
+                  disabled={disabled || busy || Boolean(pending)}
+                  onClick={() => { setActiveCueId(cue.id); prepareDialogue(cue); }}>
+                  生成这句配音 · {CANVAS_TTS_CREDITS_PER_LINE} 积分
+                </button>
+                <p className="text-[11px] text-white/50">先确认费用，再生成；新配音保留为候选，试听采用后才用于出片。</p>
               </>
             ) : (
               <>
@@ -1603,8 +1671,13 @@ export function CanvasAudioStudioView({
         <div
           role="dialog"
           aria-label="确认音频费用"
+          ref={element => { element?.scrollIntoView({ block: "nearest" }); }}
           className="space-y-2 rounded border border-amber-300/40 bg-amber-900/20 p-3"
         >
+          {confirmation.kind === "dialogue" && <p className="text-sm font-semibold">
+            {state.cues.find(cue => cue.id === confirmation.cueId)?.speakerZh}：
+            {state.cues.find(cue => cue.id === confirmation.cueId)?.textZh}
+          </p>}
           <p className="text-xs">
             {confirmation.kind === "resume"
               ? "恢复原单音频保存与结算，不重新配音，不重复扣费。"

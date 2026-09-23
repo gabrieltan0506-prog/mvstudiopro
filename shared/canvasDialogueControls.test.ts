@@ -12,5 +12,7 @@ describe("单句语气控制编译", () => {
     expect(() => assertCanvasDialogueInputControls("[invented]别怕。")).toThrow();
     expect(() => assertCanvasDialogueInputControls("[serious]")).toThrow();
     expect(() => assertCanvasDialogueInputControls("[serious]别怕。")).not.toThrow();
+    expect(compileCanvasDialogueInput("阿菁，[cough][gasp]还有多久到医馆呀？", "[tired]")).toBe("[tired]阿菁，[cough][gasp]还有多久到医馆呀？");
+    expect(() => assertCanvasDialogueInputControls("阿菁，[pant]还有多久到医馆呀？")).toThrow();
   });
 });
