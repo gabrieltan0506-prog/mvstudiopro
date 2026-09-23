@@ -8185,6 +8185,19 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         return { success: true as const, ...result };
       }),
 
+    /** EPUB 转好的 PDF：下载（Fly 临时副本已建好）后删 GCS 存档（0923 用户令）；只认本人 epub- 存档 */
+    deleteKnowledgeCardEpubPdf: protectedProcedure
+      .input(z.object({ url: z.string().min(1).max(4096) }))
+      .mutation(async ({ input, ctx }) => {
+        const { deleteEpubPdfArchive } = await import("./services/knowledgeCardEpubPdfArchive.js");
+        try {
+          await deleteEpubPdfArchive({ url: input.url, userId: ctx.user.id });
+        } catch (e) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "删除失败" });
+        }
+        return { success: true as const };
+      }),
+
     /** 平台图文卡：OCR + Qwen3.8 Max 提炼精华（费用含在后续页费；本接口不扣积分）。 */
     prepareKnowledgeCardCopy: protectedProcedure
       .input(

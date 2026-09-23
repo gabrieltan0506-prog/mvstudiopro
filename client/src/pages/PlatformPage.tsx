@@ -8201,6 +8201,13 @@ export default function PlatformPage() {
   /** 0923 用户令：上传 EPUB 后给「转好的 PDF」下载按钮（服务端 GCS 存档签名链接，下载经 Fly 临时转存） */
   const [knowledgeCardEpubPdfs, setKnowledgeCardEpubPdfs] = useState<Array<{ fileName: string; url: string }>>([]);
   const [knowledgeCardEpubPdfBusy, setKnowledgeCardEpubPdfBusy] = useState<string | null>(null);
+  /** 已下载（存档已删）的链接：之后的进度轮询/终态回包不许再把按钮带回来 */
+  const knowledgeCardEpubPdfTakenRef = useRef<Set<string>>(new Set());
+  const deleteKnowledgeCardEpubPdfMutation = trpc.mvAnalysis.deleteKnowledgeCardEpubPdf.useMutation();
+  const showKnowledgeCardEpubPdfs = (list: Array<{ fileName: string; url: string }>) => {
+    const fresh = list.filter((p) => !knowledgeCardEpubPdfTakenRef.current.has(p.url));
+    setKnowledgeCardEpubPdfs(fresh);
+  };
   const [knowledgeCardDownloading, setKnowledgeCardDownloading] = useState<number | null>(null);
   const downloadKnowledgeCardImage = async (url: string, index: number) => {
     if (knowledgeCardDownloading !== null) return;
@@ -8271,6 +8278,13 @@ export default function PlatformPage() {
     try {
       const downloadUrl = await cachePhotoTemporaryMedia(pdf.url, "pdf");
       triggerTemporaryDownload(downloadUrl, pdf.fileName || "epub.pdf");
+      // 0923 用户令：下载后直接删档、按钮消失。Fly 临时副本已建好（下载走它，12 小时自动过期），
+      // 所以此刻删 GCS 存档不影响这次下载
+      knowledgeCardEpubPdfTakenRef.current.add(pdf.url);
+      setKnowledgeCardEpubPdfs((prev) => prev.filter((p) => p.url !== pdf.url));
+      deleteKnowledgeCardEpubPdfMutation.mutateAsync({ url: pdf.url }).catch((err) => {
+        console.warn("[knowledgeCard] EPUB PDF 存档删除失败：", err);
+      });
     } catch (e) {
       const raw = String((e as { message?: string })?.message || "");
       toast.error(`PDF 下载失败：${raw.slice(0, 120) || "请稍后重试"}（链接 7 天内有效，过期请重新上传 EPUB）`, { duration: 10_000 });
@@ -8472,8 +8486,8 @@ export default function PlatformPage() {
     bumpCustomNoteRevision();
     setCustomNoteFullMarkdown(null);
     setCustomNoteCompactMarkdown(null);
-    // 换了一批上传文件：上一本 EPUB 的 PDF 按钮不再挂着
-    if (args.files?.length) setKnowledgeCardEpubPdfs([]);
+    // 新一轮提炼：上一本 EPUB 的 PDF 按钮不再挂着（本轮转档成功会重新出现）
+    setKnowledgeCardEpubPdfs([]);
     const queued = await prepareKnowledgeCardCopyMutation.mutateAsync({
       sourceText: args.sourceText,
       files: args.files?.length ? args.files : undefined,
@@ -8529,7 +8543,7 @@ export default function PlatformPage() {
           epubPdfs?: Array<{ fileName: string; url: string }>;
         };
         // EPUB 一转完就出下载按钮，不等提炼结束（后面提炼失败也能下载）
-        if (Array.isArray(out.epubPdfs) && out.epubPdfs.length) setKnowledgeCardEpubPdfs(out.epubPdfs);
+        if (Array.isArray(out.epubPdfs) && out.epubPdfs.length) showKnowledgeCardEpubPdfs(out.epubPdfs);
         const label = stageLabel(out);
         args.onStatus?.(label);
         setCustomNoteProgress({
@@ -8542,7 +8556,7 @@ export default function PlatformPage() {
     if (job.status === "failed") throw new Error(job.error || "提炼失败，请稍后重试");
     setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromDistill(98), label: "提炼完成" });
     const out = (job.output || {}) as { distilledMarkdown?: string; epubPdfs?: Array<{ fileName: string; url: string }> };
-    if (Array.isArray(out.epubPdfs) && out.epubPdfs.length) setKnowledgeCardEpubPdfs(out.epubPdfs);
+    if (Array.isArray(out.epubPdfs) && out.epubPdfs.length) showKnowledgeCardEpubPdfs(out.epubPdfs);
     return String(out.distilledMarkdown || "").trim();
     } finally {
       // 只清自己那单：迟到的旧轮询不许把新任务的终止按钮抹掉

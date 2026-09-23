@@ -13,7 +13,7 @@ function chainRetryDelayMs(): number {
   return Number.isFinite(raw) && raw >= 0 ? raw : KNOWLEDGE_CARD_CHAIN_RETRY_DELAY_MS;
 }
 
-function waitAbortable(ms: number, signal?: AbortSignal): Promise<void> {
+export function waitAbortable(ms: number, signal?: AbortSignal): Promise<void> {
   if (ms <= 0) return Promise.resolve();
   return new Promise((resolve, reject) => {
     signal?.throwIfAborted();
