@@ -335,7 +335,7 @@ export function CanvasAudioStudioView({
   const musicPrompt = musicDraft.prompt;
   const musicDuration = musicDraft.durationSec;
   const brief = musicDraft.brief;
-  const bgmModel = musicDraft.model;
+  const bgmModel = isBgmV6Model(musicDraft.model) ? musicDraft.model : "suno-v6";
   const [resumable, setResumable] = useState<Record<string, JobResult>>({});
   const [confirmation, setConfirmation] = useState<
     | { kind: "dialogue"; cueId: string; inputKey: string }
