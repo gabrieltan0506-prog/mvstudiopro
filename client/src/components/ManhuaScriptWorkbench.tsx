@@ -3437,10 +3437,28 @@ export default function ManhuaScriptWorkbench({
                     {activeShotKeyartStateZh}
                   </span>
                 </div>
-                {activeShot.dialogueZh || activeShot.emotionZh || activeShot.microExpressionZh ? (
-                  <p className="mt-1 text-[10px] leading-4 text-rose-100/70">
-                    {activeShot.dialogueZh ? `「${activeShot.dialogueZh}」` : ""}
-                    {activeShot.dialogueZh && (activeShot.emotionZh || activeShot.microExpressionZh) ? " · " : ""}
+                {onUpsertShotDialogues ? (
+                  <label className="mt-2 block text-xs font-medium text-rose-100/85">
+                    当前镜台词 · 可直接修改
+                    <textarea
+                      data-manhua-current-shot-dialogue={activeShot.index}
+                      aria-label={`第${activeShot.index}镜台词`}
+                      value={activeShot.dialogueZh === MANHUA_DIALOGUE_SILENCE_TOKEN ? "" : activeShot.dialogueZh || ""}
+                      placeholder="无对白可留空"
+                      maxLength={80}
+                      rows={2}
+                      onChange={(event) => {
+                        const line = event.target.value.slice(0, 80);
+                        onUpsertShotDialogues({ [activeShot.index]: line.trim() || MANHUA_DIALOGUE_SILENCE_TOKEN }, activeSegNo);
+                      }}
+                      className="mt-1 block w-full resize-y rounded-lg border border-rose-300/35 bg-black/25 px-3 py-2 text-sm leading-6 text-white outline-none placeholder:text-white/35 focus:border-rose-200"
+                    />
+                  </label>
+                ) : activeShot.dialogueZh ? (
+                  <p className="mt-2 text-sm leading-6 text-rose-100/85">「{activeShot.dialogueZh}」</p>
+                ) : null}
+                {activeShot.emotionZh || activeShot.microExpressionZh ? (
+                  <p className="mt-1 text-xs leading-5 text-rose-100/65">
                     {[activeShot.emotionZh, activeShot.microExpressionZh].filter(Boolean).join(" · ")}
                   </p>
                 ) : null}
