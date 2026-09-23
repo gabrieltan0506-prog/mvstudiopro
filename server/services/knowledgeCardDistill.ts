@@ -39,6 +39,7 @@ import {
   KNOWLEDGE_CARD_PREMIUM_FALLBACK_TAIL,
   filterConfiguredSteps,
   openRouterProviderLockForTier,
+  evolinkFirstChain,
   type KnowledgeCardGatewayStep,
   type KnowledgeCardTier,
 } from "./knowledgeCardGatewayOrder.js";
@@ -742,6 +743,13 @@ async function invokeDistillViaGateway(params: {
   detailLevel?: KnowledgeCardDetailLevel;
   /** 覆盖默认输出上限（最终统稿用） */
   maxTokens?: number;
+  /**
+   * JSON 模式（挑页用）：OpenRouter 跳带 response_format json_object。
+   * 0923 实测：选 GLM 时挑页走本通用通道，无 JSON 约束，GLM 两家都回提炼稿而非挑页 JSON。
+   * 只加 OpenRouter 的 GLM / DeepSeek 跳：锁定的 Z.AI、DeepSeek 自营均支持 response_format（公开 endpoints 核过；
+   * Z.AI 不支持 structured_outputs，所以用 json_object 不用 json_schema strict）。千问跳不加（用户令），EvoLink 未核不加。
+   */
+  jsonObject?: boolean;
 }): Promise<string> {
   const userContent = buildDistillUserContent(params);
   const hasImages = params.imageUrls.length > 0 || (params.pageImages?.length ?? 0) > 0;
@@ -817,6 +825,8 @@ async function invokeDistillViaGateway(params: {
     // OpenRouter 的 DeepSeek / GLM 跳各锁各的自营，不落到转售方（0911 用户令）
     const providerLock = openRouterProviderLockForTier(tier);
     if (providerLock) body.provider = providerLock;
+    // 千问跳不加（0923 用户令：千问不管它）
+    if (params.jsonObject && tier !== "qwen") body.response_format = { type: "json_object" };
     // 档位按 tier 各自映射：GLM 只认 low/high/max（medium 会被静默降级），DeepSeek 走自己的表
     body.reasoning = { effort: tier === "glm" ? glm53ReasoningEffort(params.effort) : deepseekReasoningEffort(params.effort) };
     // 审查 P1：降档跳（GLM / Qwen）不能沿用 DeepSeek 的翻倍逻辑——统稿 120k×2=240k 超其输出上限，
@@ -901,7 +911,7 @@ async function invokeDistillViaGateway(params: {
  * - 精细档：EvoLink(DeepSeek) → OpenRouter(DeepSeek) → 新加坡(Qwen) → OpenRouter(Qwen)
  * - 轻量档：新加坡(Qwen) → OpenRouter(Qwen) → EvoLink(Qwen)
  */
-export function distillGatewayChain(modelName: KnowledgeCardDistillModelId): DistillGatewayStep[] {
+export function distillGatewayChain(modelName: KnowledgeCardDistillModelId): KnowledgeCardGatewayStep[] {
   const configured = {
     evolink: Boolean(getEvolinkApiKey()),
     dashscope_sg: Boolean(getDashscopeSgPlanKey()),
@@ -953,6 +963,8 @@ async function invokeDistillLlm(params: {
    * 避免两层相乘（0923 用户拍板：只放一层）。
    */
   chainRetry?: boolean;
+  /** 挑页 JSON 模式，透传到单跳（见 invokeDistillViaGateway） */
+  jsonObject?: boolean;
 }): Promise<string> {
   if (params.chainRetry === false) return invokeDistillChainOnce(params);
   // 0923 用户令：整条通道链都失败（模型服务异常）隔 30 秒重跑，最多 3 次，不直接报到前端
@@ -1047,6 +1059,8 @@ async function distillOneChunkWithRetry(params: {
   effort: string;
   docKeys?: string[];
   detailLevel?: KnowledgeCardDetailLevel;
+  /** 这一段走哪条路（0923 双路由）：不传＝默认链序（OpenRouter 先） */
+  chainOverride?: readonly KnowledgeCardGatewayStep[];
 }): Promise<string> {
   let lastError: Error | null = null;
   for (let attempt = 0; attempt <= params.retries; attempt++) {
@@ -1054,6 +1068,7 @@ async function distillOneChunkWithRetry(params: {
       return await invokeDistillLlm({
         // 重试放在本层（隔 30 秒 × 3 次），整链那层关掉，不叠加
         chainRetry: false,
+        chainOverride: params.chainOverride,
         abortSignal: params.abortSignal,
         sourceText: params.chunk,
         imageUrls: params.imageUrls,
@@ -1109,6 +1124,8 @@ async function distillOneChunkWithRetry(params: {
             // 只有带图的那一半才给标记规则
             docKeys: i === 0 && params.pageImages?.length ? params.docKeys : [],
             detailLevel: params.detailLevel,
+            // 细切的半段仍走原来那条路
+            chainOverride: params.chainOverride,
           }),
         );
       }
@@ -1524,6 +1541,9 @@ export function buildPageAlignedChunks(
 }
 
 /** 短文一次直出（顶档）；长文按模型 profile 分段（中档）→ 合并 → 顶档统稿。（导出供分段失败回归用） */
+/** 0923 用户令：分段提炼每条路 3 个工位（两条路共 6 段并发）；统稿并发仍按 profile.concurrency */
+export const KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE = 3;
+
 export async function invokeDistillLlmPossiblyChunked(params: {
   sourceText: string;
   /** 逐页文档之外的文字（docx/pptx 抽字 + 用户贴的文本）；有逐页文档时只把它当补充段，不与逐页正文重复 */
@@ -1568,7 +1588,7 @@ export async function invokeDistillLlmPossiblyChunked(params: {
     : splitSourceTextForDistill(text, profile.chunkChars).map((piece, i) => ({ text: piece, pageImages: [], label: `第 ${i + 1} 段` }));
   console.info(
     `[knowledgeCardDistill] long doc ${text.length} chars → ${chunks.length} chunks ` +
-      `(model=${params.modelName} chunkChars=${profile.chunkChars} concurrency=${profile.concurrency} effort=${profile.effortChunk} level=${params.detailLevel} refPages=${allPageImages.length} docs=${params.documents.length})`,
+      `(model=${params.modelName} chunkChars=${profile.chunkChars} concurrency=${KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE}×2路 effort=${profile.effortChunk} level=${params.detailLevel} refPages=${allPageImages.length} docs=${params.documents.length})`,
   );
 
   const outputs: DistillChunkResult[] = new Array(chunks.length);
@@ -1580,10 +1600,21 @@ export async function invokeDistillLlmPossiblyChunked(params: {
   let done = 0;
   await params.onProgress?.({ doneChunks: 0, totalChunks: chunks.length, phase: "distilling" });
 
-  for (let i = 0; i < chunks.length; i += profile.concurrency) {
-    const batchIdx = chunks.slice(i, i + profile.concurrency).map((_, j) => i + j);
-    await Promise.all(
-      batchIdx.map(async (idx) => {
+  /**
+   * 0923 用户令：两条路各 3 个工位（OpenRouter 先 / EvoLink 先），共 6 段并发；
+   * 谁先做完谁接下一段——快的那条路多做，不再整波等最慢那一段。
+   * 两条路的链都保留完整兜底（一条路挂了照样换到另一家）。
+   */
+  const defaultChain = distillGatewayChain(params.modelName);
+  const routes: Array<readonly KnowledgeCardGatewayStep[]> = [defaultChain, evolinkFirstChain(defaultChain)];
+  let nextIdx = 0;
+  // 某段致命失败（额度/拒答/终止）：其它工位不再领新段
+  let stopped = false;
+  const worker = async (chain: readonly KnowledgeCardGatewayStep[]) => {
+    while (!stopped && nextIdx < chunks.length) {
+      params.abortSignal?.throwIfAborted();
+      const idx = nextIdx++;
+      try {
         const chunk = chunks[idx]!;
         outputs[idx] = await distillOneChunkOrSkip(params.onNotice, chunks.length, idx, chunk.label, () => distillOneChunkWithRetry({
           abortSignal: params.abortSignal,
@@ -1599,12 +1630,19 @@ export async function invokeDistillLlmPossiblyChunked(params: {
           // 只有带参考页图的段才下发标记规则，没图的段不给模型编标记的口子
           docKeys: chunk.pageImages.length ? Array.from(new Set(chunk.pageImages.map((p) => p.docKey))) : [],
           detailLevel: params.detailLevel,
+          chainOverride: chain,
         }));
-        done += 1;
-      }),
-    );
-    await params.onProgress?.({ doneChunks: done, totalChunks: chunks.length, phase: "distilling" });
-  }
+      } catch (err) {
+        stopped = true;
+        throw err;
+      }
+      done += 1;
+      await params.onProgress?.({ doneChunks: done, totalChunks: chunks.length, phase: "distilling" });
+    }
+  };
+  await Promise.all(
+    routes.flatMap((chain) => Array.from({ length: KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE }, () => worker(chain))),
+  );
 
   // 审查 P1：只有真正成功的段进正文；全失败＝本次没有稿子，按失败结算
   const failedChunks = outputs.filter((o): o is Extract<DistillChunkResult, { ok: false }> => !o?.ok);
@@ -1711,6 +1749,8 @@ export function makeKnowledgeCardPageSelector(modelName: KnowledgeCardDistillMod
             systemOverride: buildPageTriageSystem(),
             timeoutMs: 180_000,
             chainOverride: fallbackChain,
+            // 0923 热修：挑页要 JSON，OpenRouter 跳开 json_object（选 GLM 时这里是整条挑页链）
+            jsonObject: true,
             // 终审第五条：JSON 校验放进每一跳——新加坡回非 JSON 要在跳内判失败换下一跳，
             // 而不是整个 fallback 回来才发现；合法的 {"pages":[]} 是成功，降门槛放行
             minOutputChars: 2,
