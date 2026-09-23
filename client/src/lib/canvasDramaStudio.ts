@@ -4179,7 +4179,7 @@ export async function prepareManhuaFactoryClipInput(input: {
       throw new Error("原稿分镜已变更或旧图尚未核对原镜身份，请先重出对应关键静帧；原图保留，本次未提交视频。");
     }
     if (segKeyarts.some((keyart) => !isManhuaKeyartLookCurrent(keyart))) {
-      throw new Error("本段造型已变更，请先重出对应关键静帧；原图已保留，本次未提交视频。");
+      throw new Error("本段原稿或造型已变更，请先重出对应关键静帧；原图已保留，本次未提交视频。");
     }
     if (segUrls.length) {
       runBlockPayload = {

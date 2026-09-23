@@ -2980,7 +2980,7 @@ export default function ManhuaScriptWorkbench({
       ? "请先出齐本段所需关键静帧（按原镜一镜一张，尾段可少于 3 张）"
       : !keyartsPixelLocked
         ? episodeKeyartReview.error || (staleLookStillCount
-          ? "本段造型已变更，请重出对应关键静帧；旧图仍保留，不会自动生成。"
+          ? "本段原稿或造型已变更，请重出对应关键静帧；旧图仍保留，不会自动生成。"
           : "关键静帧须垫图改图锁定（改图模式 + 定妆/场景参考图），纯文生成的图不能出成片")
         : !productionProgress.keyartsReady
           ? "请先完成垫图改图锁定的关键静帧"
