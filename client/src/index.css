@@ -943,7 +943,7 @@
 }
 
 #manhua-workbench-shell.mh-redesign:has([data-manhua-audio-studio]:not([hidden]))
-  :is([data-manhua-phase-panel="storyboard"], [data-manhua-phase-panel="edit"]) {
+  :is([data-manhua-phase-panel="outline"], [data-manhua-phase-panel="assets"], [data-manhua-phase-panel="storyboard"], [data-manhua-phase-panel="edit"]) {
   margin-right: calc(clamp(440px, 35vw, 620px) + 18px);
 }
 
@@ -959,7 +959,7 @@
   }
 
   #manhua-workbench-shell.mh-redesign:has([data-manhua-audio-studio]:not([hidden]))
-    :is([data-manhua-phase-panel="storyboard"], [data-manhua-phase-panel="edit"]) {
+    :is([data-manhua-phase-panel="outline"], [data-manhua-phase-panel="assets"], [data-manhua-phase-panel="storyboard"], [data-manhua-phase-panel="edit"]) {
     margin-right: 0;
     margin-bottom: calc(min(36vh, 320px) + 12px);
   }

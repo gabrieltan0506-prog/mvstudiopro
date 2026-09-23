@@ -160,10 +160,11 @@ it("工厂原工作台直接打开音轨，切段分别保存且不跳画布或�
 }, 20_000);
 it('资产阶段通过更多操作打开声音工作台，不生成或改动成片',async()=>{
  const page=await browser.newPage();page.setDefaultTimeout(5000);await page.setRequestInterception(true);page.on('request',r=>r.isNavigationRequest()?void r.respond({status:200,contentType:'text/html',body:'<div id="root"></div>'}):void r.abort());
- try{await page.goto('http://localhost:41812');await page.addScriptTag({content:bundle});await page.waitForFunction(()=>Boolean((globalThis as any).fixture.setPhase));await page.evaluate(()=>(globalThis as any).fixture.setPhase('assets'));
+ try{await page.setViewport({width:1800,height:1000});await page.goto('http://localhost:41812');if(layoutCss)await page.addStyleTag({content:layoutCss});await page.addScriptTag({content:bundle});await page.waitForFunction(()=>Boolean((globalThis as any).fixture.setPhase));await page.evaluate(()=>(globalThis as any).fixture.setPhase('assets'));
  await page.waitForSelector('[data-manhua-action="open-more-tools"]');await page.click('[data-manhua-action="open-more-tools"]');
  await page.waitForSelector('[data-manhua-secondary-tool="audio"]');await page.click('[data-manhua-secondary-tool="audio"]');
  await page.waitForSelector('section[aria-label="逐句配音、配乐与事件音效"]');
+ if(layoutCss){const layout=await page.evaluate(()=>{const panel=document.querySelector('[data-manhua-audio-studio]')!.getBoundingClientRect();const assets=document.querySelector('[data-manhua-phase-panel="assets"]')!.getBoundingClientRect();return{gap:panel.left-assets.right,assetsWidth:assets.width};});expect(layout.gap).toBeGreaterThanOrEqual(-2);expect(layout.assetsWidth).toBeGreaterThan(840);}
  expect(await page.evaluate(()=>(globalThis as any).fixture.calls)).toEqual([]);expect(await page.evaluate(()=>(globalThis as any).fixture.updates)).toEqual([]);
  }finally{await page.close();}
 },20000);
