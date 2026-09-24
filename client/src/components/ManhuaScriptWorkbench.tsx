@@ -672,6 +672,8 @@ type Props = {
     keyartId?: string;
     clipId?: string;
   }) => void;
+  /** 将已有视频登记到当前原稿的指定段；不依赖预先生成静帧节点。 */
+  onRegisterSegmentClip?: (segmentIndex: number, file: File) => void;
   /** 本集缺成片/质检失败的段号依次生成 */
   onGenerateMissingFragments?: (segmentIndexes: number[], sourceIdentity: string) => void;
   /** 首段试片审核；未通过时只开放第1段试片。 */
@@ -1270,6 +1272,7 @@ export default function ManhuaScriptWorkbench({
   assetShareBilling,
   onSpawnAndRunClip,
   onGenerateFragment,
+  onRegisterSegmentClip,
   onGenerateMissingFragments,
   pilotGate,
   onReviewPilot,
@@ -10373,6 +10376,30 @@ export default function ManhuaScriptWorkbench({
                     title={`生成第 ${seg.index} 段成片（约 ${seg.durationSec}s）`}
                   >
                     {clipUrl ? "重出本段成片" : "生成本段成片"}
+                  </button>
+                ) : null}
+                {onRegisterSegmentClip ? (
+                  <button
+                    type="button"
+                    data-manhua-action="register-segment-clip"
+                    data-manhua-register-segment={seg.index}
+                    disabled={Boolean(factoryBusy)}
+                    onClick={() => {
+                      const input = document.createElement("input");
+                      input.type = "file";
+                      input.accept = "video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm";
+                      input.onchange = () => {
+                        const file = input.files?.[0];
+                        input.remove();
+                        if (file) onRegisterSegmentClip(seg.index, file);
+                      };
+                      document.body.appendChild(input);
+                      input.click();
+                    }}
+                    className="w-full border-t border-fuchsia-400/25 py-0.5 text-[8px] font-semibold text-fuchsia-100/80 hover:bg-fuchsia-500/15 disabled:opacity-35"
+                    title={`把已有视频登记为第 ${seg.index} 段；登记后仍需质检放行`}
+                  >
+                    登记已有成片
                   </button>
                 ) : null}
               </div>

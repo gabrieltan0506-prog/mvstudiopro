@@ -15,7 +15,8 @@ describe("漫剧工厂段级参考接线", () => {
     expect(omniSource).toContain("segmentRefBusyId={segmentRefBusyId}");
     const handler = omniSource.split("const handleSegmentReferenceUpload = useCallback(")[1]!.split("const handleSegmentReferenceClear")[0]!;
     expect(handler).toContain("uploadOneCanvasAsset({");
-    expect(handler).toContain("registerManhuaExistingClip(b, entry)");
+    expect(handler).toContain("registerManhuaExistingClip(block, entry)");
+    expect(handler).toContain("createManhuaRegisteredSegmentClip({");
     expect(handler).toContain("setManhuaSegmentReference(b, slot, entry)");
     expect(handler).toContain("manhuaSegmentReferenceKindError(slot, inferCanvasAssetKind(file))");
     expect(dockSource).toContain('onSegmentReferenceUpload(it.blockId, "registered", file)');
