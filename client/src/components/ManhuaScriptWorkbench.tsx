@@ -827,23 +827,30 @@ function keyartsForEpisode(blocks: CanvasBlock[], episode: number): CanvasBlock[
  * 但下次改一处就会分叉。推导也收到这里，同源做到入参层。
  */
 export function manhuaShotKeyartInputOf(key?: CanvasBlock) {
-  const thumb = mediaUrl(key);
+  const output = keyartOutputUrl(key);
   return {
-    hasImage: Boolean(thumb),
-    failed: Boolean(key && (key.status === "error" || Boolean(key.error))) && !thumb,
-    running: key?.status === "running" && !thumb,
-    pixelLocked: Boolean(thumb && key && isManhuaKeyartPixelLocked(key)),
+    hasImage: Boolean(output),
+    failed: Boolean(key && (key.status === "error" || Boolean(key.error))) && !output,
+    running: key?.status === "running" && !output,
+    pixelLocked: Boolean(output && key && isManhuaKeyartPixelLocked(key)),
     // 垫图只是输入；只有已有成图才报告原稿或造型过期，旧图继续保留。
-    sourceCurrent: !key || !Boolean(key.outputUrl || key.outputUrls?.some((url) => url.trim())) || isManhuaWorkbenchKeyartCurrent(key),
+    sourceCurrent: !key || !output || isManhuaWorkbenchKeyartCurrent(key),
   };
+}
+
+/** 当前镜真正生成的图；参考图只用于预览与输入，不能计入完成进度。 */
+export function keyartOutputUrl(b?: {
+  outputUrl?: string | null;
+  outputUrls?: string[] | null;
+}): string | undefined {
+  return b?.outputUrl?.trim() || b?.outputUrls?.find((url) => url.trim())?.trim() || undefined;
 }
 
 function mediaUrl(b?: CanvasBlock): string | undefined {
   if (!b) return undefined;
   // 成图优先（含 local-media: / blob:）；缺成图时回退垫图/融合参考
   return (
-    b.outputUrl ||
-    b.outputUrls?.[0] ||
+    keyartOutputUrl(b) ||
     b.refImageUrl ||
     b.editFusionUrls?.[0] ||
     undefined
@@ -1066,9 +1073,10 @@ export function resolveManhuaSourcePlanBeat(
 /** 造型相同但原镜已改稿的旧图，也不能成为新段的生成凭据。 */
 export function isManhuaWorkbenchKeyartCurrent(block: Pick<CanvasBlock,
   "manhuaKeyartLookState" | "manhuaKeyartSourceState" | "outputUrl"
->): boolean {
-  return isManhuaKeyartLookCurrent(block) && isManhuaKeyartLookCurrent({
-    ...block,
+> & Partial<Pick<CanvasBlock, "outputUrls">>): boolean {
+  const generated = { ...block, outputUrl: keyartOutputUrl(block) };
+  return isManhuaKeyartLookCurrent(generated) && isManhuaKeyartLookCurrent({
+    ...generated,
     manhuaKeyartLookState: block.manhuaKeyartSourceState,
   });
 }
@@ -1715,14 +1723,14 @@ export default function ManhuaScriptWorkbench({
       maxChars: 900,
     });
   }, [story?.outputText, story?.prompt, reverse?.outputText, reverse?.prompt, topic]);
-  const episodeStillCount = episodeKeyarts.filter((b) => mediaUrl(b)).length;
+  const episodeStillCount = episodeKeyarts.filter((b) => keyartOutputUrl(b)).length;
   // 当前剧本镜头才是进度分母；垫图、过期图和已移出本稿的旧镜头不能算可用。
   const currentShotKeys = shots.length
     ? shots.map(shot => episodeKeyarts.find(block => resolveKeyartShotIndex(block.id, block.prompt) === shot.index))
     : episodeKeyarts;
   const currentStillTarget = currentShotKeys.length;
   const currentStillReady = currentShotKeys.filter(block => block &&
-    Boolean(block.outputUrl || block.outputUrls?.some(url => url.trim())) &&
+    Boolean(keyartOutputUrl(block)) &&
     manhuaShotKeyartState(manhuaShotKeyartInputOf(block)) === "ready").length;
 
   // A（用户 2026-07-29）：静帧门禁按「一镜一张」的实际分镜节点数算，不用「段×3」估算硬顶。
@@ -1759,7 +1767,7 @@ export default function ManhuaScriptWorkbench({
   const stillIndexSet = useMemo(() => {
     const s = new Set<number>();
     for (const b of episodeKeyarts) {
-      if (mediaUrl(b)) s.add(resolveKeyartShotIndex(b.id, b.prompt));
+      if (keyartOutputUrl(b)) s.add(resolveKeyartShotIndex(b.id, b.prompt));
     }
     return s;
   }, [episodeKeyarts]);
@@ -2144,13 +2152,15 @@ export default function ManhuaScriptWorkbench({
     clipQuality?.status === "passed" && clipVideoUrl ? clipVideoUrl : undefined;
   // 有成片就播：质检未过/服务暂不可用时仍可看，避免「生成成功却像失败」
   const playableClipUrl = approvedClipUrl || clipVideoUrl;
-  const anyKeyartUrl = episodeKeyarts.map(mediaUrl).find(Boolean);
+  const anyKeyartUrl = episodeKeyarts.map(keyartOutputUrl).find(Boolean);
   // 分镜只展示当前镜或当前段的产物，缺图不借其它镜头冒充。
   const focusedClipPreview = activePhase === "storyboard" &&
-    Boolean(clipOutputUrl(activeClip)) && (shotPreviewMode === "clip" || !mediaUrl(activeKeyart));
+    Boolean(clipOutputUrl(activeClip)) && (shotPreviewMode === "clip" || !keyartOutputUrl(activeKeyart));
   const previewUrl = activePhase === "storyboard"
     ? focusedClipPreview ? clipOutputUrl(activeClip) : mediaUrl(activeKeyart)
-    : playableClipUrl || mediaUrl(activeKeyart) || anyKeyartUrl;
+    : playableClipUrl || keyartOutputUrl(activeKeyart) || anyKeyartUrl;
+  const previewIsReference = activePhase === "storyboard" && !focusedClipPreview &&
+    Boolean(previewUrl) && !keyartOutputUrl(activeKeyart);
   const previewIsVideo = activePhase === "storyboard"
     ? focusedClipPreview
     : Boolean(playableClipUrl);
@@ -2158,7 +2168,7 @@ export default function ManhuaScriptWorkbench({
   // 覆盖当前镜或当前阶段内容，否则用户会误以为正在审阅本镜产物。
   const previewFinalVideoUrl =
     activePhase === "edit" || activePhase === "final" ? finalVideoUrl : undefined;
-  const activeShotStillUrl = mediaUrl(activeKeyart);
+  const activeShotStillUrl = keyartOutputUrl(activeKeyart);
   const annotateStillUrl = activeShotStillUrl || anyKeyartUrl;
   const previewStillUrl = activePhase === "storyboard" ? activeShotStillUrl : annotateStillUrl;
   const directorOverlaySegment = segments.find((segment) => segment.index === activeSegNo);
@@ -2171,7 +2181,7 @@ export default function ManhuaScriptWorkbench({
   const activeBoardBaseUrl = resolveManhuaDirectorOverlayBaseUrl({
     segmentIndex: activeSegNo,
     segmentBoardUrls: directorBoardSegUrls,
-    segmentFirstShotStillUrl: mediaUrl(segmentFirstShotKeyart),
+    segmentFirstShotStillUrl: keyartOutputUrl(segmentFirstShotKeyart),
   });
   const [activeBoardImageMeta, setActiveBoardImageMeta] = useState<{
     url: string;
@@ -2196,7 +2206,7 @@ export default function ManhuaScriptWorkbench({
       segmentIndex: activeSegNo,
       baseAspectRatio: activeBoardImageGeometry.baseAspectRatio,
       segmentBoardUrls: directorBoardSegUrls,
-      segmentFirstShotStillUrl: mediaUrl(segmentFirstShotKeyart),
+      segmentFirstShotStillUrl: keyartOutputUrl(segmentFirstShotKeyart),
       beat,
       shots: segment?.shots,
       assetCanon,
@@ -2373,7 +2383,7 @@ export default function ManhuaScriptWorkbench({
       const keyarts = seg.shots.map((s) =>
         episodeKeyarts.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === s.index),
       );
-      const withImage = keyarts.filter((b) => Boolean(mediaUrl(b)));
+      const withImage = keyarts.filter((b) => Boolean(keyartOutputUrl(b)));
       const beat = resolveManhuaSourcePlanBeat(shootablePlan, shots, seg);
       return {
         index: seg.index,
@@ -2388,7 +2398,7 @@ export default function ManhuaScriptWorkbench({
         unlockedCount: withImage.filter((b) => b && (!isManhuaKeyartPixelLocked(b) || !isManhuaWorkbenchKeyartCurrent(b))).length,
         clip: segClip,
         // 段封面用段内首张已出静帧；缺图留占位，不挂假图
-        thumb: withImage.length ? mediaUrl(withImage[0]) : "",
+        thumb: withImage.length ? keyartOutputUrl(withImage[0]) : "",
         firstKeyartId: withImage[0]?.id || keyarts.find(Boolean)?.id || "",
         sceneZh: String(beat?.sceneZh || "").trim(),
       };
@@ -3080,7 +3090,7 @@ export default function ManhuaScriptWorkbench({
           (b) => resolveClipLocalSegmentIndex(b.id, b.prompt, focusEpisode) === activeSegNo,
         )?.id ||
         episodeClips[0]?.id ||
-        episodeKeyarts.find((b) => mediaUrl(b))?.id ||
+        episodeKeyarts.find((b) => keyartOutputUrl(b))?.id ||
         "";
       window.setTimeout(() => {
         if (focusId) focusBlockAndOpenCanvas(focusId);
@@ -8613,6 +8623,7 @@ export default function ManhuaScriptWorkbench({
                   const keyartRunning = keyartInput.running;
                   const keyartStale = manhuaShotKeyartState(keyartInput) === "stale";
                   const keyartUnlocked = keyartInput.hasImage && (!keyartInput.pixelLocked || keyartStale);
+                  const referenceOnly = Boolean(thumb && !keyartOutputUrl(shotKey));
                   return (
                     <div
                       key={shot.index}
@@ -8655,7 +8666,11 @@ export default function ManhuaScriptWorkbench({
                                 alt=""
                                 className="h-full w-full object-cover"
                               />
-                              {keyartUnlocked ? (
+                              {referenceOnly ? (
+                                <span className={`absolute inset-x-0 bottom-0 px-1 py-0.5 text-center text-[9px] font-semibold ${keyartFailed ? "bg-red-900/85 text-red-50" : keyartRunning ? "bg-cyan-950/85 text-cyan-50" : "bg-amber-950/85 text-amber-50"}`}>
+                                  {keyartFailed ? "出图失败 · 参考保留" : keyartRunning ? "出图中 · 参考保留" : "垫图参考 · 待生成"}
+                                </span>
+                              ) : keyartUnlocked ? (
                                 <span className="absolute inset-x-0 bottom-0 bg-red-900/80 px-1 py-0.5 text-center text-[9px] font-semibold text-red-50">
                                   {keyartStale ? "已变更 · 待重出" : "未垫图锁"}
                                 </span>
@@ -9349,6 +9364,7 @@ export default function ManhuaScriptWorkbench({
                   : "empty"
           }
           data-manhua-preview-url={previewFinalVideoUrl || previewUrl || ""}
+          data-manhua-preview-reference={previewIsReference ? "true" : "false"}
           className={
             `max-md:!w-full max-md:min-w-0 ${narrowWorkbenchColumn !== "preview" ? "max-md:!hidden" : ""} ` + (storyboardThreeColumn
               ? "flex h-full min-h-0 min-w-0 flex-col p-2 md:p-2.5"
@@ -9361,10 +9377,10 @@ export default function ManhuaScriptWorkbench({
         >
           <div className="mb-1.5 flex shrink-0 flex-wrap items-center justify-between gap-2">
             <div className="text-[12px] font-semibold text-white/90">
-              {showCanvasDock ? "高级节点画布" : activePhase === "storyboard" ? (previewIsVideo ? `第 ${activeSegNo} 段成片 · 包含当前镜` : `当前镜预览 · ${String(activeShotNo).padStart(2, "0")}`) : previewIsVideo || previewFinalVideoUrl ? "视频结果" : "预览"}
+              {showCanvasDock ? "高级节点画布" : activePhase === "storyboard" ? (previewIsVideo ? `第 ${activeSegNo} 段成片 · 包含当前镜` : `${previewIsReference ? "垫图参考" : "当前镜预览"} · ${String(activeShotNo).padStart(2, "0")}`) : previewIsVideo || previewFinalVideoUrl ? "视频结果" : "预览"}
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
-              {activePhase === "storyboard" && !showCanvasDock && mediaUrl(activeKeyart) && clipOutputUrl(activeClip) ? (
+              {activePhase === "storyboard" && !showCanvasDock && keyartOutputUrl(activeKeyart) && clipOutputUrl(activeClip) ? (
                 <div className="inline-flex gap-1" aria-label="当前镜预览内容">
                   <button type="button" aria-pressed={shotPreviewMode === "still"} onClick={() => setShotPreviewMode("still")} className="rounded border border-white/15 px-2 py-1 text-xs text-white/80 aria-pressed:bg-cyan-500/20">本镜静帧</button>
                   <button type="button" aria-pressed={shotPreviewMode === "clip"} onClick={() => setShotPreviewMode("clip")} className="rounded border border-white/15 px-2 py-1 text-xs text-white/80 aria-pressed:bg-cyan-500/20">本段成片</button>
@@ -9396,7 +9412,7 @@ export default function ManhuaScriptWorkbench({
                               description: "直接下载被浏览器拦下，请在新页面右键另存。",
                             });
                           } else {
-                            toast.success(isVid ? "开始下载成片" : "开始下载静帧");
+                            toast.success(isVid ? "开始下载成片" : previewIsReference ? "开始下载垫图参考" : "开始下载静帧");
                           }
                         } catch (e) {
                           toast.error(e instanceof Error ? e.message : "下载失败");
@@ -9405,7 +9421,7 @@ export default function ManhuaScriptWorkbench({
                         }
                       }}
                       className="inline-flex items-center gap-1 rounded-md border border-emerald-400/35 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-50 hover:bg-emerald-500/25 disabled:opacity-40"
-                      title={isVid ? "下载本段成片" : "下载这张静帧"}
+                      title={isVid ? "下载本段成片" : previewIsReference ? "下载垫图参考" : "下载这张静帧"}
                     >
                       <Download className="h-3 w-3" />
                       {downloadBusy ? "下载中" : "下载"}
@@ -9478,6 +9494,10 @@ export default function ManhuaScriptWorkbench({
               ) : previewIsVideo ? (
                 <span className="rounded-full border border-amber-400/35 bg-amber-500/12 px-2 py-0.5 text-[9px] font-medium text-amber-50">
                   成片可播
+                </span>
+              ) : previewIsReference ? (
+                <span className="rounded-full border border-amber-400/30 bg-amber-500/10 px-2 py-0.5 text-[9px] text-amber-100/80">
+                  垫图参考 · {activeShotKeyartStateZh === "待出分镜图" ? "尚未生成" : activeShotKeyartStateZh || "尚未生成"}
                 </span>
               ) : previewUrl ? (
                 <span className="rounded-full border border-white/15 bg-white/[0.04] px-2 py-0.5 text-[9px] text-white/50">
@@ -10124,7 +10144,7 @@ export default function ManhuaScriptWorkbench({
       {/* 底胶片挂在分镜面板内，避免与三栏抢 shell 高度把画布压成 ~28px */}
       <div
         data-manhua-filmstrip
-        data-manhua-keyart-ready={episodeKeyarts.filter((b) => mediaUrl(b)).length}
+        data-manhua-keyart-ready={episodeStillCount}
         data-manhua-shot-count={Math.max(episodeKeyarts.length, shots.length, 1)}
         className="max-h-[132px] shrink-0 overflow-hidden border-t border-white/10 bg-[#080b12] px-2.5 py-1 md:px-3"
       >
@@ -10174,10 +10194,10 @@ export default function ManhuaScriptWorkbench({
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[9px] text-white/35">
-              已出静帧 {episodeKeyarts.filter((b) => mediaUrl(b)).length}/
+              已出静帧 {episodeStillCount}/
               {Math.max(expectedStillCount, 1)}
-              {episodeKeyarts.filter((b) => b.status === "error" && !mediaUrl(b)).length
-                ? ` · 失败 ${episodeKeyarts.filter((b) => b.status === "error" && !mediaUrl(b)).length}`
+              {episodeKeyarts.filter((b) => b.status === "error" && !keyartOutputUrl(b)).length
+                ? ` · 失败 ${episodeKeyarts.filter((b) => b.status === "error" && !keyartOutputUrl(b)).length}`
                 : ""}
             </span>
             <div className="flex gap-1 overflow-x-auto">
@@ -10430,7 +10450,7 @@ export default function ManhuaScriptWorkbench({
             const thumb =
               (epClipReady ? clipOutputUrl(epClipReady) : undefined) ||
               epKeys.map(mediaUrl).find(Boolean);
-            const stillReady = epKeys.some((b) => Boolean(mediaUrl(b)));
+            const stillReady = epKeys.some((b) => Boolean(keyartOutputUrl(b)));
             const bound = bibleBoundEpisodes.includes(ep);
             const on = ep === focusEpisode;
             return (

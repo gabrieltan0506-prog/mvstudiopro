@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { manhuaShotKeyartInputOf, isManhuaWorkbenchKeyartCurrent } from "../components/ManhuaScriptWorkbench";
+import { keyartOutputUrl, manhuaShotKeyartInputOf, isManhuaWorkbenchKeyartCurrent } from "../components/ManhuaScriptWorkbench";
 import { defaultCanvasBlock } from "./canvasTypes";
 import { manhuaShotKeyartState, manhuaShotKeyartStateZh } from "./manhuaShotKeyartState";
 
@@ -23,10 +23,24 @@ describe("原稿过期静帧的真实UI入参", () => {
     expect(manhuaShotKeyartState(manhuaShotKeyartInputOf())).toBe("idle");
   });
 
-  it("只挂参考图尚未生成时，保留未锁定而不伪称旧产物过期", () => {
+  it("只挂参考图尚未生成时，不计成图或旧产物", () => {
     const block = current();
     block.outputUrl = "";
     block.manhuaKeyartSourceState.generatedFor = "old";
+    expect(keyartOutputUrl(block)).toBeUndefined();
+    expect(manhuaShotKeyartState(manhuaShotKeyartInputOf(block))).toBe("idle");
+    block.status = "running";
+    expect(manhuaShotKeyartState(manhuaShotKeyartInputOf(block))).toBe("running");
+    block.status = "error";
+    expect(manhuaShotKeyartState(manhuaShotKeyartInputOf(block))).toBe("error");
+  });
+
+  it("只有真实输出可算静帧，多输出取首个非空值", () => {
+    const block = current();
+    block.outputUrl = "";
+    block.outputUrls = ["", receipt.generatedUrl];
+    expect(keyartOutputUrl(block)).toBe(receipt.generatedUrl);
+    // 像素锁仍要求主 outputUrl 与造型回执一致；仅备用输出不得放行成片。
     expect(manhuaShotKeyartState(manhuaShotKeyartInputOf(block))).toBe("unlocked");
   });
 });
