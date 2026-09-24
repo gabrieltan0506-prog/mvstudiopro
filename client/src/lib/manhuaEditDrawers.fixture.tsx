@@ -157,7 +157,7 @@ function buildSeededCanvas() {
       status: "done" as const,
       manhuaClipQuality: { status: "passed" as const, checks: { CHARACTER_MATCH:true, SCENE_MATCH:true, PLOT_MATCH:true, CAMERA_MOTION:true, LIGHTING:true, DURATION_OK:true, NO_UNRELATED_CONTENT:true }, failedKeys:[],raw:"offline",reviewedAt:"2026-09-20T00:00:00Z", summary:"离线夹具明确通过", attempts:1 },
       outputUrl: PREV_CLIP.replace("seg1", b.id),
-      outputUrls: [PREV_CLIP.replace("seg1", b.id)],
+      outputUrls: [PREV_CLIP.replace("seg1", b.id), `https://example.com/${b.id}-previous.mp4`],
       lastFrameUrl: PREV_TAIL,
     };
   });

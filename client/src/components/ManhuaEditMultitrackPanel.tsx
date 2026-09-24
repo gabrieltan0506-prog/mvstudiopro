@@ -250,6 +250,8 @@ export default function ManhuaEditMultitrackPanel({
   const activeVersions = activeQc?.clipBlockId
     ? clipVersionsByBlockId?.[activeQc.clipBlockId]
     : undefined;
+  const adoptedVersionUrl = activeVersions?.activeUrl || activeVersions?.urls[0];
+  const alternateVersionUrl = activeVersions?.urls.find((url) => url !== adoptedVersionUrl);
 
   const activeClip = roughClips.find((c) => c.shotIndex === activeShotIndex);
   const sourceSegmentByShot = new Map<number, number>();
@@ -770,7 +772,24 @@ export default function ManhuaEditMultitrackPanel({
       <div id="manhua-edit-drawer-effects" data-manhua-edit-drawer="effects" hidden={activeDrawer !== "effects"} className="shrink-0 rounded-xl border border-white/15 bg-black/25 p-3">
         <h3 className="text-sm font-semibold text-white/90">特效与滤镜</h3>
         <div className="space-y-3 pt-2">
-<p className="text-sm text-white/55">已有片段可提交局部画面编辑，原片保留。独立滤镜、调色与特效参数尚未接通，不会自动作用于成片。</p>
+          <p className="text-sm text-white/55">选中片段后可局部修改画面；编辑结果回来后，在这里并排看当前采用版与另一版本，再决定采用哪版。独立滤镜和调色参数尚未接通。</p>
+          {adoptedVersionUrl ? (
+            <div data-manhua-effect-preview className="grid min-w-0 gap-2 lg:grid-cols-2">
+              <div className="min-w-0 rounded-lg border border-emerald-300/25 bg-emerald-500/[0.06] p-2">
+                <p className="mb-1 text-sm font-semibold text-emerald-100">当前采用版</p>
+                <video controls preload="metadata" src={adoptedVersionUrl} className="aspect-video max-h-56 w-full rounded bg-black object-contain" />
+              </div>
+              {alternateVersionUrl ? (
+                <div className="min-w-0 rounded-lg border border-white/15 bg-white/[0.03] p-2">
+                  <p className="mb-1 text-sm font-semibold text-white/80">另一版本</p>
+                  <video controls preload="metadata" src={alternateVersionUrl} className="aspect-video max-h-56 w-full rounded bg-black object-contain" />
+                  {activeQc?.clipBlockId && onSelectClipVersion ? (
+                    <button type="button" data-manhua-effect-adopt-version disabled={factoryBusy} onClick={() => onSelectClipVersion(activeQc.clipBlockId!, alternateVersionUrl)} className="mt-2 rounded border border-cyan-300/35 bg-cyan-500/15 px-2 py-1 text-sm font-semibold text-cyan-50 disabled:opacity-40">采用此版并重新质检</button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
             {activeQc?.clipBlockId && activeQc.gate !== "missing" && onVideoEditClip ? (
               <div className="mt-2 rounded-md border border-cyan-400/20 bg-cyan-500/[0.06] p-2">
                 <label className="block text-sm font-semibold text-cyan-50/85">

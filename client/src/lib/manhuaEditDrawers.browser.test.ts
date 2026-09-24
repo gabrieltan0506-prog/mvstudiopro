@@ -153,7 +153,11 @@ it('真实四抽屉裁切进入当前版本合成与持久化，旧版本保留'
  await page.waitForFunction(() => document.querySelectorAll('[data-manhua-edit-segment-card]').length > 3);
  const sourceOrder=await page.$$eval('[data-manhua-edit-segment-card]',rows=>rows.map(row=>Number(row.getAttribute('data-manhua-edit-source-segment'))));
  expect(sourceOrder.slice(0,4)).toEqual([1,2,1,2]);
- await page.click('[data-manhua-edit-drawer-toggle="effects"]');expect(await page.$eval('[data-manhua-edit-drawer="effects"]',e=>e.textContent)).toContain('尚未接通');
+ await page.click('[data-manhua-edit-drawer-toggle="effects"]');
+ expect(await page.$eval('[data-manhua-edit-drawer="effects"]',e=>e.textContent)).toContain('尚未接通');
+ expect(await page.$$('[data-manhua-effect-preview] video')).toHaveLength(2);
+ await page.$eval('[data-manhua-edit-drawer="effects"]',el=>el.scrollIntoView({block:'start'}));
+ await page.screenshot({path:join(evidenceDir,'effects-compare-1280.png'),fullPage:false});
  await page.click('[data-manhua-edit-drawer-toggle="subtitles"]');expect(await page.$eval('[data-manhua-edit-drawer="subtitles"]',e=>e.textContent)).toContain('转场应用于本集片段之间');
  await page.click('[data-manhua-edit-drawer-toggle="export"]');
  await page.$eval('[data-manhua-edit-generate-current]',el=>el.scrollIntoView({block:'center'}));
@@ -240,5 +244,25 @@ it('剪辑界面可读性：窄屏只滚动时间线，工具正文不少于14�
     await page.screenshot({path:join(evidenceDir,`readable-${width}-${drawer}.png`),fullPage:false});
    }
   }
+ } finally {await close();}
+},120000);
+
+it('画面版本并排预览后采用另一版，旧版保留且质检失效', async () => {
+ const {page,close}=await mount();
+ try {
+  await page.evaluate(()=>(window as any).__wbProps.onWorkflowPhaseChange('edit'));
+  await page.waitForSelector('[data-manhua-edit-drawer-toggle="effects"]');
+  await page.click('[data-manhua-edit-drawer-toggle="effects"]');
+  await page.waitForSelector('[data-manhua-effect-adopt-version]');
+  const urls=await page.$$eval('[data-manhua-effect-preview] video',videos=>videos.map(video=>video.getAttribute('src')));
+  expect(urls).toHaveLength(2);
+  expect(urls[0]).not.toBe(urls[1]);
+  const clipId=await page.evaluate(url=>(window as any).__ffcProps.blocks.find((block:any)=>block.outputUrl===url)?.id,urls[0]);
+  expect(clipId).toBeTruthy();
+  await page.click('[data-manhua-effect-adopt-version]');
+  await page.waitForFunction(({clipId,url})=>(window as any).__ffcProps.blocks.some((block:any)=>block.id===clipId&&block.outputUrl===url&&block.manhuaClipQuality==null),{}, {clipId,url:urls[1]});
+  const stored=await page.evaluate(id=>(window as any).__ffcProps.blocks.find((block:any)=>block.id===id),clipId);
+  expect(stored.outputUrls).toContain(urls[0]);
+  expect(stored.outputUrls).toContain(urls[1]);
  } finally {await close();}
 },120000);
