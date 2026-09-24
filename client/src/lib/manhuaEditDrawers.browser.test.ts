@@ -346,3 +346,49 @@ it('正式工作流分镜的看图、编辑和主操作同屏', async () => {
   await page.screenshot({path:join(evidenceDir,'workbench-storyboard-focused-3840.png')});
  } finally {await close();}
 },120000);
+
+it('浏览器放大后分镜与成片编辑仍在可见视口', async () => {
+ const {page,close}=await mount();
+ const client=await page.createCDPSession();
+ try {
+  await page.setViewport({width:1232,height:648,deviceScaleFactor:2});
+  const cssDir=process.env.MANHUA_LAYOUT_CSS_DIR;
+  if(cssDir)for(const file of readdirSync(cssDir).filter(n=>n.endsWith('.css')))await page.addStyleTag({content:readFileSync(join(cssDir,file),'utf8')});
+  await page.evaluate(()=>(window as any).__wbProps.onWorkflowPhaseChange('storyboard'));
+  await page.waitForSelector('[data-manhua-storyboard-workspace]');
+  await client.send('Emulation.setPageScaleFactor',{pageScaleFactor:1.167611});
+  await page.waitForFunction(()=>Boolean(window.visualViewport && window.visualViewport.width < innerWidth-100));
+  await page.waitForFunction(()=>document.querySelector<HTMLElement>('#manhua-workbench-shell')!.getBoundingClientRect().right <= window.visualViewport!.offsetLeft+window.visualViewport!.width);
+  const result=await page.evaluate(()=>{
+   const rect=(selector:string)=>document.querySelector<HTMLElement>(selector)!.getBoundingClientRect();
+   const visibleRight=window.visualViewport!.offsetLeft+window.visualViewport!.width;
+   const preview=rect('[data-manhua-shot-pair-preview]');
+   const editor=rect('[data-manhua-column="params"] [data-manhua-shot-description]');
+   const action=rect('[data-manhua-column="params"] [data-manhua-action="generate-current-keyart"]');
+   const qc=document.querySelector<HTMLDetailsElement>('[data-manhua-clip-quality]')!;
+   return {visibleRight,previewHeight:preview.height,previewRight:preview.right,editorRight:editor.right,actionRight:action.right,actionBottom:action.bottom,qcOpen:qc.open,scale:window.visualViewport!.scale};
+  });
+  expect(result.scale).toBeGreaterThan(1.1);
+  expect(result.previewRight).toBeLessThan(result.visibleRight);
+  expect(result.editorRight).toBeLessThan(result.visibleRight);
+  expect(result.actionRight).toBeLessThan(result.visibleRight);
+  expect(result.actionBottom).toBeLessThan(648);
+  expect(result.previewHeight).toBeGreaterThan(210);
+  expect(result.qcOpen).toBe(false);
+  await page.screenshot({path:join(evidenceDir,'workbench-storyboard-zoomed-1232x648.png')});
+  await page.evaluate(()=>(window as any).__wbProps.onWorkflowPhaseChange('edit'));
+  await page.waitForSelector('[data-manhua-edit-current-segment]');
+  const edit=await page.evaluate(()=>{
+   const visibleRight=window.visualViewport!.offsetLeft+window.visualViewport!.width;
+   const rect=(selector:string)=>document.querySelector<HTMLElement>(selector)!.getBoundingClientRect();
+   return {visibleRight,segmentRight:rect('[data-manhua-edit-current-segment]').right,timelineRight:rect('[data-manhua-edit-timeline]').right,generateRight:rect('[data-manhua-edit-generate-current]').right,segmentCount:document.querySelectorAll('[data-manhua-edit-segment-card]').length};
+  });
+  expect(edit.segmentCount).toBeGreaterThan(0);
+  expect(edit.segmentRight).toBeLessThan(edit.visibleRight);
+  expect(edit.timelineRight).toBeLessThan(edit.visibleRight);
+  expect(edit.generateRight).toBeLessThan(edit.visibleRight);
+ } finally {
+  await client.detach();
+  await close();
+ }
+},120000);

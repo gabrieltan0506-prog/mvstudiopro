@@ -1468,6 +1468,22 @@ export default function ManhuaScriptWorkbench({
   const [openCustomRefRoles, setOpenCustomRefRoles] = useState<Record<string, boolean>>({});
   const [activeAssetRole, setActiveAssetRole] = useState<ManhuaCustomAssetRole>("character");
   const [moreToolsOpen, setMoreToolsOpen] = useState(false);
+  const [visibleViewportWidth, setVisibleViewportWidth] = useState<number | null>(null);
+  useEffect(() => {
+    const updateVisibleWidth = () => {
+      const width = window.visualViewport?.width;
+      setVisibleViewportWidth(
+        width && width < window.innerWidth - 16 ? Math.max(320, Math.floor(width - 32)) : null,
+      );
+    };
+    updateVisibleWidth();
+    window.visualViewport?.addEventListener("resize", updateVisibleWidth);
+    window.addEventListener("resize", updateVisibleWidth);
+    return () => {
+      window.visualViewport?.removeEventListener("resize", updateVisibleWidth);
+      window.removeEventListener("resize", updateVisibleWidth);
+    };
+  }, []);
   const [compactUi, setCompactUi] = useState(() => {
     try {
       return window.localStorage.getItem("manhua_compact_ui") !== "0";
@@ -4035,6 +4051,7 @@ export default function ManhuaScriptWorkbench({
       id="manhua-workbench-shell"
       data-manhua-layout={immersive ? "immersive-3col" : "card-3col"}
       data-manhua-active-phase={activePhase}
+      style={visibleViewportWidth ? { maxWidth: visibleViewportWidth } : undefined}
       className={`mh-redesign ${compactUi ? "mh-compact " : ""}${
         immersive
           ? "flex h-full min-h-0 w-full flex-col overflow-hidden bg-[#0a0d14]"
@@ -9671,7 +9688,9 @@ export default function ManhuaScriptWorkbench({
               </div>
             </div>
           ) : null}
-          <div
+          <details
+            key={`${activePhase}-${clipQuality?.status || "idle"}`}
+            open={activePhase !== "storyboard" || clipQuality?.status === "failed" || clipQuality?.status === "unverified"}
             data-manhua-clip-quality={clipQuality?.status || "idle"}
             className={`mt-2 shrink-0 rounded-lg border px-2.5 py-2 ${
               clipQuality?.status === "passed"
@@ -9683,7 +9702,7 @@ export default function ManhuaScriptWorkbench({
                     : "border-white/10 bg-white/[0.025]"
             }`}
           >
-            <div className="flex items-center justify-between gap-2">
+            <summary className="flex cursor-pointer items-center justify-between gap-2">
               <div className="flex items-center gap-1.5 text-[10px] font-semibold text-white/75">
                 <ShieldCheck className="h-3.5 w-3.5 text-cyan-200/80" />
                 智能质检
@@ -9705,7 +9724,7 @@ export default function ManhuaScriptWorkbench({
                     ? "生成后自动检查"
                     : "等待成片"}
               </span>
-            </div>
+            </summary>
             <div className="mt-1.5 grid grid-cols-3 gap-1">
               {CLIP_QUALITY_ROWS.map(([key, label]) => {
                 const passed = clipQuality?.checks[key] === true;
@@ -9787,7 +9806,7 @@ export default function ManhuaScriptWorkbench({
                 ) : null}
               </div>
             ) : null}
-          </div>
+          </details>
           {((previewUrl && !previewIsVideo) ||
             (clipQuality?.status === "failed" &&
               /文字|设定卡|姓名条|字幕|重出静帧/.test(clipQuality.summary || ""))) &&
