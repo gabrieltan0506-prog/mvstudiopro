@@ -246,6 +246,49 @@ async function mount(usageBlocks: unknown[] = [], assetGenerateProbe = false): P
 }
 
 describe("浏览器真实页面：资产页同名多版本收成实体卡", () => {
+  it.skipIf(!process.env.MANHUA_LAYOUT_CSS_DIR)("1055px 可视宽下五步与资产分类同屏可用", async () => {
+    const { page, close } = await mount([
+      { id: "charsheet-wa_char_aqing", type: "image", episodeIndex: 1, outputUrl: REFS[1]!.url, prompt: "阿菁定妆" },
+      { id: "charsheet-wa_char_mo", type: "image", episodeIndex: 1, outputUrl: REFS[3]!.url, prompt: "墨菁定妆" },
+    ]);
+    try {
+      await page.setViewport({ width: 1055, height: 648 });
+      const geometry = await page.evaluate(() => {
+        const rail = document.querySelector<HTMLElement>("[data-manhua-workflow-rail]")!;
+        const stages = Array.from(rail.querySelectorAll<HTMLElement>("[data-manhua-phase]"));
+        const tabs = document.querySelector<HTMLElement>("[data-manhua-asset-tabs]")!;
+        const add = document.querySelector<HTMLElement>("[data-manhua-action=add-asset]")!;
+        const scroller = document.querySelector<HTMLElement>("[data-manhua-assets-scroll]")!;
+        const input = scroller.querySelector<HTMLInputElement>('input[placeholder*="改名认领"]')!;
+        input.scrollIntoView({ block: "center" });
+        const inputRect = input.getBoundingClientRect();
+        const hit = document.elementFromPoint(inputRect.left + inputRect.width / 2, inputRect.top + inputRect.height / 2);
+        const within = (element: HTMLElement) => {
+          const rect = element.getBoundingClientRect();
+          return rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight;
+        };
+        const railRect = rail.getBoundingClientRect();
+        return {
+          overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          railOverflow: rail.scrollWidth - rail.clientWidth,
+          stagesVisible: stages.length === 5 && stages.every(stage => within(stage) && stage.getBoundingClientRect().right <= railRect.right),
+          tabsVisible: within(tabs) && tabs.getBoundingClientRect().right <= railRect.right,
+          addVisible: within(add) && add.getBoundingClientRect().right <= railRect.right,
+          editorClickable: within(input) && hit === input,
+        };
+      });
+      await page.screenshot({ path: path.join(assetEvidenceDir, "assets-1055.png"), fullPage: false });
+      expect(geometry).toEqual({
+        overflow: 0,
+        railOverflow: 0,
+        stagesVisible: true,
+        tabsVisible: true,
+        addVisible: true,
+        editorClickable: true,
+      });
+    } finally { await close(); }
+  }, 180_000);
+
   it.skipIf(!process.env.MANHUA_LAYOUT_CSS_DIR)("资产页桌面首屏只呈现当前分类，版本缩略条与实体主卡无横向溢出", async () => {
     const { page, close } = await mount([
       { id: "charsheet-wa_char_aqing", type: "image", episodeIndex: 1, outputUrl: REFS[1]!.url, prompt: "阿菁定妆" },

@@ -4109,7 +4109,7 @@ export default function ManhuaScriptWorkbench({
           <Clapperboard className="h-4 w-4 shrink-0 text-cyan-300" />
           <div className="min-w-0">
             <div className="truncate text-[13px] font-semibold text-white/95">
-              {seriesTitle || topic || "剧本工作室"}
+              <span data-manhua-project-name>{seriesTitle || topic || "剧本工作室"}</span>
               <span className="ml-2 text-[11px] font-normal text-white/40">
                 第{focusEpisode}集 · {segments.length} 段 · 规划约 {totalSec}s · {episodeVideoLabelZh}
                 {artStyleLabelZh ? ` · ${artStyleLabelZh}` : ""}
@@ -4135,11 +4135,9 @@ export default function ManhuaScriptWorkbench({
           open={immersive ? undefined : true}
           className="min-w-0 shrink-0"
         >
-          {immersive ? (
-            <summary className="cursor-pointer rounded-lg border border-white/15 px-3 py-1.5 text-[11px] text-white/70">
-              更多制作工具
-            </summary>
-          ) : null}
+          <summary className={immersive ? "cursor-pointer rounded-lg border border-white/15 px-3 py-1.5 text-[11px] text-white/70" : "hidden"}>
+            更多制作工具
+          </summary>
         <div
           data-manhua-toolbar-cluster
           className="mx-auto flex flex-wrap items-center justify-center gap-1.5 [&_[data-manhua-action-cost=spend]]:ring-1 [&_[data-manhua-action-cost=spend]]:ring-amber-300/35 [&_[data-manhua-action-cost=spend]]:ring-offset-1 [&_[data-manhua-action-cost=spend]]:ring-offset-[#0a121c]"

@@ -1125,6 +1125,26 @@
   max-width: 26ch;
 }
 
+/* 原窗口约 1055px：保留剧名，将解释性元数据收起，五阶段及资产分类完整留在主轨。 */
+@media (min-width: 901px) and (max-width: 1100px) {
+  #manhua-workbench-shell.mh-redesign [data-manhua-product-header] {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 12ch) auto;
+  }
+  #manhua-workbench-shell.mh-redesign [data-manhua-product-header] [data-manhua-project-identity] {
+    max-width: 12ch;
+  }
+  #manhua-workbench-shell.mh-redesign [data-manhua-project-identity] [data-manhua-project-name] {
+    display: inline-block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: middle;
+  }
+  #manhua-workbench-shell.mh-redesign [data-manhua-project-identity] [data-manhua-project-name] ~ span {
+    display: none;
+  }
+}
+
 @media (min-width: 1200px) {
   #manhua-workbench-shell.mh-redesign [data-manhua-product-header] {
     padding-right: 16px !important;
