@@ -1,4 +1,6 @@
-import type { CanvasBlock } from "./canvasTypes";
+import { defaultCanvasBlock, isCanvasProductVideoModel, makeCanvasBlockId, type CanvasBlock } from "./canvasTypes";
+import { buildManhuaAutoSegmentBinding } from "@shared/manhuaAutoSegment";
+import type { ManhuaWorkbenchSegment } from "@shared/manhuaScriptWorkbench";
 import { mergeManhuaMediaVersions } from "./manhuaMediaVersions";
 import { emptyManhuaClipQualityChecks } from "@shared/manhuaClipQuality";
 import {
@@ -12,6 +14,41 @@ import type { CanvasAssetKind } from "./canvasTypes";
 
 export const MANHUA_REGISTERED_CLIP_SUMMARY_ZH =
   "外部成片登记：未经智能质检；确认画面无误后在成片坞「未质检放行」即可合成";
+
+/** 当前剧本尚无逐镜静帧时，也能把已有视频登记到准确的集/段修订身份。 */
+export function createManhuaRegisteredSegmentClip(input: {
+  episodeIndex: number;
+  episodeTitle?: string;
+  segment: ManhuaWorkbenchSegment;
+  videoModel: string;
+  parent?: CanvasBlock;
+  entry: ManhuaSegmentReferenceEntry;
+}): CanvasBlock {
+  const { episodeIndex, episodeTitle, segment, videoModel, parent, entry } = input;
+  const block = defaultCanvasBlock("video", (parent?.x ?? 0) + 220, parent?.y ?? 0);
+  const sourceDurationSec = Number(entry.durationSec);
+  if (!Number.isFinite(sourceDurationSec) || sourceDurationSec <= 0) {
+    throw new Error("登记成片需要可读取的视频时长");
+  }
+  if (!isCanvasProductVideoModel(videoModel)) {
+    throw new Error("登记成片需要有效的当前成片引擎");
+  }
+  return registerManhuaExistingClip({
+    ...block,
+    id: makeCanvasBlockId(`clip-e${String(episodeIndex).padStart(2, "0")}-g${String(segment.index).padStart(2, "0")}-registered`),
+    episodeIndex,
+    episodeTitle,
+    parentId: parent?.id,
+    videoModel,
+    prompt: `第${episodeIndex}集第${segment.index}段·外部成片登记`,
+    manhuaAutoSegment: buildManhuaAutoSegmentBinding(episodeIndex, segment, videoModel),
+    manhuaEditTrim: {
+      sourceDurationSec,
+      inSec: 0,
+      outSec: Math.min(sourceDurationSec, segment.durationSec),
+    },
+  }, entry);
+}
 
 /** 槽位与文件种类对不上时给出中文原因；对上返回 null。 */
 export function manhuaSegmentReferenceKindError(

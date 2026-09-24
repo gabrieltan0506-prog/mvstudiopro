@@ -177,6 +177,7 @@ import {
   MANHUA_REGISTERED_CLIP_SUMMARY_ZH,
   manhuaSegmentReferenceKindError,
   probeMediaFileDurationSec,
+  createManhuaRegisteredSegmentClip,
   registerManhuaExistingClip,
 } from "@/lib/manhuaSegmentRefs";
 import {
@@ -262,7 +263,7 @@ import {
   resolveKeyartShotIndex,
   resolveSegmentIndexFromShotIndex,
 } from "@shared/manhuaScriptWorkbench";
-import { normalizeManhuaAutoSegmentBinding } from "@shared/manhuaAutoSegment";
+import { buildManhuaAutoSegmentBinding, normalizeManhuaAutoSegmentBinding } from "@shared/manhuaAutoSegment";
 import { extractManhuaSceneHintFromPrompt } from "@shared/manhuaClipDialogueTimeline";
 import { upsertShotAngleSection } from "@shared/manhuaShotAnglePersist";
 import { patchShotDialogueSection } from "@shared/manhuaShotDialoguePersist";
@@ -9582,8 +9583,13 @@ export default function OmniCanvas() {
         toast.message("请等待当前生成结束");
         return;
       }
-      if (!blocks.some((b) => b.id === clipBlockId)) {
+      const planned = /^clip-e(\d{2})-g(\d{2})-planned$/.exec(clipBlockId);
+      if (!planned && !blocksRef.current.some((b) => b.id === clipBlockId)) {
         toast.message("找不到成片节点");
+        return;
+      }
+      if (planned && (slot !== "registered" || !writerConfirmed || Number(planned[1]) !== writerFocusEpisode)) {
+        toast.error("当前剧本或登记段已变化，请回工作台重新选择");
         return;
       }
       const kindError = manhuaSegmentReferenceKindError(slot, inferCanvasAssetKind(file));
@@ -9598,6 +9604,20 @@ export default function OmniCanvas() {
       setSegmentRefBusyId(clipBlockId);
       setSegmentRefProgress(0);
       try {
+        const plannedSegment = planned
+          ? groupShotsIntoSegments(resolveShotsForEpisodeKeyarts(blocksRef.current, writerFocusEpisode), {
+              videoModel: activePilotVideoModel,
+            }).find((segment) => segment.index === Number(planned[2]))
+          : undefined;
+        if (planned && !plannedSegment) throw new Error("当前原稿找不到此段，请重新打开工作台");
+        const plannedRevision = plannedSegment
+          ? buildManhuaAutoSegmentBinding(writerFocusEpisode, plannedSegment, activePilotVideoModel).revision
+          : "";
+        // 先探本地文件，再上传大视频；不让不合段长的旧片占用 GCS 上传和用户时间。
+        const durationSec = await probeMediaFileDurationSec(file);
+        if (plannedSegment && (durationSec == null || Math.abs(durationSec - plannedSegment.durationSec) > 1.5)) {
+          throw new Error(`第${plannedSegment.index}段规划${plannedSegment.durationSec}秒，所选视频${durationSec == null ? "时长无法读取" : `${durationSec.toFixed(1)}秒`}，请选对应片段`);
+        }
         const { uploadOneCanvasAsset } = await import("@/lib/canvasUpload");
         const asset = await uploadOneCanvasAsset({
           file,
@@ -9605,7 +9625,6 @@ export default function OmniCanvas() {
           getSignedUploadUrl: (input) => getSignedUrlMutation.mutateAsync(input),
           onProgress: (fraction) => setSegmentRefProgress(fraction),
         });
-        const durationSec = await probeMediaFileDurationSec(file);
         const entry: ManhuaSegmentReferenceEntry = {
           url: asset.url,
           gcsUri: asset.gcsUri,
@@ -9614,7 +9633,48 @@ export default function OmniCanvas() {
           updatedAt: new Date().toISOString(),
         };
         if (slot === "registered") {
-          patchClipBlockPersist(clipBlockId, (b) => registerManhuaExistingClip(b, entry));
+          if (plannedSegment) {
+            const liveWriter = loadManhuaWriterSessionFromStorage();
+            const plannedBody = writerPack?.episodes.find((episode) => episode.index === writerFocusEpisode)?.body;
+            const liveBody = liveWriter?.writerPack?.episodes.find((episode) => episode.index === writerFocusEpisode)?.body;
+            if (!liveWriter?.writerConfirmed || !plannedBody || liveBody !== plannedBody || liveWriter.writerPack?.seriesTitle !== writerPack?.seriesTitle) {
+              throw new Error("上传期间编剧稿已变化，文件未登记，请重新确认当前剧本");
+            }
+            const currentBlocks = blocksRef.current;
+            const currentSegment = groupShotsIntoSegments(resolveShotsForEpisodeKeyarts(currentBlocks, writerFocusEpisode), {
+              videoModel: activePilotVideoModel,
+            }).find((segment) => segment.index === plannedSegment.index);
+            if (!currentSegment || buildManhuaAutoSegmentBinding(writerFocusEpisode, currentSegment, activePilotVideoModel).revision !== plannedRevision) {
+              throw new Error("上传期间原稿分段已变化，文件未登记，请重新核对段号");
+            }
+            const existing = queuedManhuaClipBlocks(currentBlocks, writerFocusEpisode, activePilotVideoModel).find((block) => {
+              const binding = normalizeManhuaAutoSegmentBinding(block.manhuaAutoSegment);
+              return binding?.segmentIndex === plannedSegment.index && binding.revision === plannedRevision;
+            });
+            if (existing) {
+              patchClipBlockPersist(existing.id, (block) => registerManhuaExistingClip(block, entry));
+            } else {
+              const parent = currentBlocks.find((block) => block.id.startsWith(`story-e${String(writerFocusEpisode).padStart(2, "0")}`) && !block.archivedFromPreviousScript);
+              const created = createManhuaRegisteredSegmentClip({
+                episodeIndex: writerFocusEpisode,
+                episodeTitle: writerPack?.episodes.find((episode) => episode.index === writerFocusEpisode)?.title,
+                segment: currentSegment,
+                videoModel: activePilotVideoModel,
+                parent,
+                entry,
+              });
+              setBlocks((prev) => {
+                const next = [...prev, created];
+                setEdges((eds) => {
+                  saveCanvasState(next, eds);
+                  return eds;
+                });
+                return next;
+              });
+            }
+          } else {
+            patchClipBlockPersist(clipBlockId, (block) => registerManhuaExistingClip(block, entry));
+          }
           setDockSelectedIds((prev) => {
             const next = new Set(prev);
             next.delete(clipBlockId);
@@ -9638,7 +9698,7 @@ export default function OmniCanvas() {
         setSegmentRefBusyId(null);
       }
     },
-    [factoryBusy, blocks, getSignedUrlMutation, patchClipBlockPersist, segmentRefBusyId],
+    [factoryBusy, writerConfirmed, writerFocusEpisode, activePilotVideoModel, writerPack, getSignedUrlMutation, patchClipBlockPersist, segmentRefBusyId],
   );
   const handleSegmentReferenceClear = useCallback(
     (clipBlockId: string, slot: ManhuaSegmentReferenceSlot) => {
@@ -11225,6 +11285,13 @@ export default function OmniCanvas() {
                       episodeIndexes: [writerFocusEpisode],
                       fragmentShotIndexes: plannedSegments,
                     });
+                  }}
+                  onRegisterSegmentClip={(segmentIndex, file) => {
+                    void handleSegmentReferenceUpload(
+                      `clip-e${String(writerFocusEpisode).padStart(2, "0")}-g${String(segmentIndex).padStart(2, "0")}-planned`,
+                      "registered",
+                      file,
+                    );
                   }}
                   onVideoEditClip={handleVideoEditClip}
                   onSelectClipVersion={handleSelectClipVersion}
