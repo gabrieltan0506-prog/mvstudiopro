@@ -10,7 +10,8 @@
  * 流水，按 action + createdAt >= 今日零点 计数——限流必须在服务端生效，
  * 前端只做展示。
  */
-import { and, count, eq, gte } from "drizzle-orm";
+import { and, count, desc, eq, gte, isNotNull } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { getDb } from "../db.js";
 import { stripeUsageLogs } from "../../drizzle/schema-stripe.js";
 
@@ -21,6 +22,11 @@ export const MANHUA_WRITER_TRIAL_DAILY_LIMIT = 3;
 /** 超限文案：拍板原话，前后端一致 */
 export const MANHUA_WRITER_TRIAL_LIMIT_MESSAGE =
   "今日试写次数已用完，明天再来或直接套用全集";
+
+/** 试写与付费扩写共用同一模板内容指纹；变更后旧对比不得直接套用。 */
+export function fingerprintManhuaWriterTemplateAddon(addon: string): string {
+  return createHash("sha256").update(addon).digest("hex");
+}
 
 function startOfTodayLocal(): Date {
   const d = new Date();
@@ -88,7 +94,7 @@ export async function logManhuaWriterTrialUse(params: {
   topic: string;
 }): Promise<void> {
   const db = await getDb();
-  if (!db) return;
+  if (!db) throw new Error("试写额度数据库暂不可用");
   await db.insert(stripeUsageLogs).values({
     userId: params.userId,
     action: MANHUA_WRITER_TRIAL_ACTION,
@@ -97,6 +103,58 @@ export async function logManhuaWriterTrialUse(params: {
     chargeKey: params.chargeKey,
     description: `模板免费试写 · ${params.publicTemplateId} · ${String(params.topic || "").slice(0, 60)}`,
     balanceAfter: null,
+  });
+}
+
+export type SavedManhuaWriterTrialResult = {
+  input: { topic: string; brief: string; publicTemplateId: string };
+  withTemplate: ManhuaWriterTrialDraft;
+  control: ManhuaWriterTrialDraft;
+  appliedTemplate: { publicId: string; nameZh: string };
+  templateFingerprint: string;
+  trialsLeftToday: number;
+};
+
+/** 成功两稿和本次输入写回同一零点数流水，响应丢失或刷新后仍可取回。 */
+export async function saveManhuaWriterTrialResult(params: {
+  userId: number;
+  chargeKey: string;
+  result: SavedManhuaWriterTrialResult;
+}): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("试写结果数据库暂不可用");
+  const rows = await db.update(stripeUsageLogs)
+    .set({ metadata: JSON.stringify(params.result) })
+    .where(and(
+      eq(stripeUsageLogs.userId, params.userId),
+      eq(stripeUsageLogs.chargeKey, params.chargeKey),
+      eq(stripeUsageLogs.action, MANHUA_WRITER_TRIAL_ACTION),
+    ))
+    .returning({ id: stripeUsageLogs.id });
+  if (!rows.length) throw new Error("试写额度记录不存在");
+}
+
+export async function getRecentManhuaWriterTrialResults(userId: number): Promise<SavedManhuaWriterTrialResult[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select({ metadata: stripeUsageLogs.metadata })
+    .from(stripeUsageLogs)
+    .where(and(
+      eq(stripeUsageLogs.userId, userId),
+      eq(stripeUsageLogs.action, MANHUA_WRITER_TRIAL_ACTION),
+      isNotNull(stripeUsageLogs.metadata),
+    ))
+    .orderBy(desc(stripeUsageLogs.createdAt), desc(stripeUsageLogs.id))
+    .limit(30);
+  return rows.flatMap((row) => {
+    try {
+      const result = JSON.parse(row.metadata || "") as SavedManhuaWriterTrialResult;
+      return result?.input?.publicTemplateId && result?.control?.logline && result?.withTemplate?.logline &&
+        /^[a-f0-9]{64}$/.test(result.templateFingerprint || "")
+        ? [result] : [];
+    } catch {
+      return [];
+    }
   });
 }
 
@@ -163,10 +221,15 @@ export function buildManhuaWriterTrialPrompt(params: {
   brief: string;
   /** 服务端由 approved 卡编译的创作 Skill 软策略；对照版传空串 */
   templateAddon: string;
+  /** 模板试写必须基于本次真实对照稿修改，避免把两次独立采样误称模板效果 */
+  controlDraft?: ManhuaWriterTrialDraft;
 }): string {
   const addon = String(params.templateAddon || "").trim();
+  const control = params.controlDraft;
   return [
-    "你是竖屏漫剧连载编剧。根据用户题材，只写第 1 集的「大纲级试写」，不写正文分段。",
+    control
+      ? "你是竖屏漫剧连载编剧。以下已有第 1 集大纲，请只依据给定创作 Skill 对它做必要的局部改写；未受 Skill 影响的文字逐字保留。禁止重写成另一版剧情。"
+      : "你是竖屏漫剧连载编剧。根据用户题材，只写第 1 集的「大纲级试写」，不写正文分段。",
     "硬规则：",
     "1. 全文约 300–600 字，超出视为失败。",
     "2. 成稿禁止导演名、真实剧集/电影片名、「仿写某某」「致敬某某」，禁止出现任何模型名或供应商名。",
@@ -185,6 +248,13 @@ export function buildManhuaWriterTrialPrompt(params: {
       : []),
     `【用户题材】${params.topic || "（未填，请基于补充条件合理拟定）"}`,
     ...(params.brief ? [`【补充条件】${params.brief}`] : []),
+    ...(control ? [
+      "【唯一修改底稿】以下是本次刚生成的对照稿。人物、事件与既有节拍顺序必须保留；只修改模板确实改善的片段。三段标记及节拍数量保持一致。不要解释修改过程。",
+      `【单集梗概】${control.logline}`,
+      "【节拍点】",
+      ...control.beats.map((beat, index) => `${index + 1}. ${beat}`),
+      `【开场钩子】${control.openingHook}`,
+    ] : []),
   ].join("\n");
 }
 

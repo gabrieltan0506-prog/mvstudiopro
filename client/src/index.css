@@ -1228,21 +1228,20 @@ body:has(#manhua-workbench-shell) [data-pwa-install-button] {
   display: none;
 }
 
-/* 分镜和成片整体滚动：项目栏、流程条和告警滚走后，编辑区取得完整视口。 */
+/* 分镜与成片由各自工作区负责滚动，外壳始终给编辑区完整剩余高度。 */
 #manhua-workbench-shell.mh-redesign:is(
   [data-manhua-active-phase="storyboard"],
   [data-manhua-active-phase="edit"]
 ) {
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 #manhua-workbench-shell.mh-redesign :is(
   [data-manhua-phase-panel="storyboard"],
   [data-manhua-phase-panel="edit"]
 ) {
-  flex: 0 0 auto;
-  min-height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-storyboard-workspace] {

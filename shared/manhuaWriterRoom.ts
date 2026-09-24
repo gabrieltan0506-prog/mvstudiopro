@@ -403,6 +403,19 @@ export function writerPackLooksReady(pack: ManhuaWriterPack | null | undefined):
   return hooks.length >= Math.min(pack.episodes.length, 2);
 }
 
+/** 付费扩写扣点前的最低结构门槛；解析器会为缺失的集补空壳，不能把空壳当成成稿。 */
+export function writerPackHasCompletePaidEpisodes(pack: ManhuaWriterPack, expectedCount: number): boolean {
+  if (!writerPackLooksReady(pack) || pack.episodes.length !== expectedCount) return false;
+  return pack.episodes.every((episode, index) => {
+    const block = pack.rawMarkdown.match(new RegExp(`##\\s*第${episode.index}集\\n+([\\s\\S]*?)(?=\\n##\\s*第\\d+集|$)`))?.[1] || "";
+    const explicitBody = block.match(/###\s*本集剧情[^\S\n]*\n([\s\S]*?)(?=###\s*片尾钩子|$)/)?.[1]?.trim() || "";
+    return episode.index === index + 1 &&
+      explicitBody.length >= 20 &&
+      episode.body.trim().length >= 20 &&
+      episode.endHook.trim().length >= 4;
+  });
+}
+
 /** 换剧备份 / 工程包：把剧情包打成可读 Markdown */
 export function formatManhuaWriterPackMarkdown(pack: ManhuaWriterPack | null | undefined): string {
   if (!pack) return "";

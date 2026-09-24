@@ -4061,7 +4061,30 @@ export default function OmniCanvas() {
     staleTime: 30_000,
     retry: 1,
   });
+  const trialWriterRecentQuery = trpc.mvAnalysis.manhuaWriterTrialRecent.useQuery(undefined, {
+    staleTime: 30_000,
+    retry: 1,
+  });
   const [trialWriterResult, setTrialWriterResult] = useState<ManhuaWriterTrialResult | null>(null);
+  const [trialWriterError, setTrialWriterError] = useState("");
+  const [trialWriterInput, setTrialWriterInput] = useState<{ topic: string; brief: string; publicTemplateId: string } | null>(null);
+  const [trialWriterDismissed, setTrialWriterDismissed] = useState(false);
+  const [staleTrialFingerprint, setStaleTrialFingerprint] = useState("");
+  useEffect(() => {
+    const saved = trialWriterRecentQuery.data?.find((result) =>
+      result.input.topic === factoryTopic.trim() &&
+      result.input.brief === writerBrief.trim() &&
+      result.input.publicTemplateId === publicTemplateId,
+    );
+    if (!saved) return;
+    const sameDisplayed = trialWriterInput?.topic === saved.input.topic &&
+      trialWriterInput?.brief === saved.input.brief &&
+      trialWriterInput?.publicTemplateId === saved.input.publicTemplateId;
+    if (sameDisplayed && (trialWriterResult || trialWriterDismissed)) return;
+    setTrialWriterResult(saved);
+    setTrialWriterInput(saved.input);
+    setTrialWriterDismissed(false);
+  }, [trialWriterRecentQuery.data, trialWriterResult, trialWriterInput, trialWriterDismissed, factoryTopic, writerBrief, publicTemplateId]);
   /** 编剧室全员走公开面：服务端只回匿名功能卡（内部 id/真名永不进本页） */
   const manhuaViralTemplatesQuery = trpc.manhuaViralTemplate.listApprovedPublic.useQuery(undefined, {
     staleTime: 60_000,
@@ -5584,7 +5607,7 @@ export default function OmniCanvas() {
     ],
   );
 
-  const expandWriterRoom = useCallback(async (opts?: { fromEpisodeOverride?: number }) => {
+  const expandWriterRoom = useCallback(async (opts?: { fromEpisodeOverride?: number; templateTrialFingerprint?: string }) => {
     const topic = factoryTopic.trim();
     const brief = writerBrief.trim();
     if (!topic && !brief) {
@@ -5685,6 +5708,7 @@ export default function OmniCanvas() {
       count,
       writerExpandTier,
       publicTemplateId,
+      templateTrialFingerprint: opts?.templateTrialFingerprint,
       writerLengthTierId,
       selectedVideoModel,
       fromEpisode,
@@ -5704,6 +5728,7 @@ export default function OmniCanvas() {
           tier: writerExpandTier,
           requestId: expandRequestId,
           publicTemplateId: publicTemplateId || undefined,
+          templateTrialFingerprint: opts?.templateTrialFingerprint,
           lengthTierId: writerLengthTierId,
           videoModel: selectedVideoModel,
           fromEpisode: fromEpisode || undefined,
@@ -5724,6 +5749,9 @@ export default function OmniCanvas() {
         }),
       ]);
       writerExpandRetryRef.current = null;
+      if (!res.ready || !res.pack?.episodes?.every((episode) => String(episode.body || "").trim().length >= 20)) {
+        throw new Error("扩写结果不完整，旧稿和试写对照均已保留；请核对扣点记录后重试");
+      }
       // 局部改写：保留集沿用旧正文，资产表按名取并集，新角色照样进表
       const pack = spliceManhuaWriterPackFromEpisode(
         writerPack,
@@ -5934,6 +5962,9 @@ export default function OmniCanvas() {
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "扩写失败";
+      if (opts?.templateTrialFingerprint && msg.includes("剧情增强方案在试写后已更新")) {
+        setStaleTrialFingerprint(opts.templateTrialFingerprint);
+      }
       pushDebug("expandWriterPack:error", {
         level: "error",
         ms: Date.now() - t0,
@@ -9722,7 +9753,7 @@ export default function OmniCanvas() {
     void runFactory("clip", { forceFromStageByEpisode, episodeIndexes: toRun });
   }, [blocks, runFactory, resolveRunEpisodeIndexes, writerFocusEpisode]);
 
-  /** 工作台模式即沉浸三栏（不要求已确认；未确认时灰掉生成，题材从顶栏「改题材」进） */
+  /** 工作台模式即沉浸三栏（未确认时灰掉生成，编剧入口在紧凑顶栏） */
   const immersiveWorkbench =
     canvasMode === "manhua" && manhuaUiMode === "workbench";
 
@@ -9772,12 +9803,12 @@ export default function OmniCanvas() {
           : "min-h-dvh bg-transparent text-white"
       }
     >
-      <Navbar />
+      <Navbar compact={immersiveWorkbench} />
       {assetConfirmationDialog}
       <main
         className={
           immersiveWorkbench
-            ? "flex min-h-0 flex-1 flex-col overflow-hidden px-0 pb-0 pt-16"
+            ? "flex min-h-0 flex-1 flex-col overflow-hidden px-0 pb-0 pt-12"
             : "px-4 pb-10 pt-24 md:px-6"
         }
       >
@@ -9795,34 +9826,28 @@ export default function OmniCanvas() {
                 : "mb-5"
             }
           >
-            <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
+            <div data-manhua-workspace-topbar={immersiveWorkbench ? "compact" : undefined} className="flex shrink-0 flex-wrap items-center justify-between gap-3">
               {immersiveWorkbench ? (
-                <div
-                  role="tablist"
-                  aria-label="漫剧工厂工作区"
-                  className="flex min-w-0 flex-wrap items-center gap-1 rounded-xl border border-white/10 bg-black/25 p-1 text-[11px]"
-                >
+                <nav aria-label="漫剧工厂工作区" className="flex min-w-0 items-center gap-4 overflow-x-auto whitespace-nowrap py-1 text-xs">
                   <button
                     type="button"
-                    role="tab"
-                    aria-selected={immersiveWorkspaceView === "workbench"}
-                    className={`rounded-lg px-2.5 py-1.5 transition ${
+                    aria-current={immersiveWorkspaceView === "workbench" ? "page" : undefined}
+                    className={`border-b pb-1 transition ${
                       immersiveWorkspaceView === "workbench"
-                        ? "bg-cyan-400/15 font-medium text-cyan-50"
-                        : "text-white/50 hover:bg-white/10 hover:text-white/75"
+                        ? "border-cyan-300 font-semibold text-cyan-50"
+                        : "border-transparent text-white/55 hover:text-white"
                     }`}
                     onClick={closeClipDockToWorkbench}
                   >
-                    剧本工作室
+                    工作台
                   </button>
                   <button
                     type="button"
-                    role="tab"
-                    aria-selected={immersiveWorkspaceView === "topic"}
-                    className={`rounded-lg px-2.5 py-1.5 transition ${
+                    aria-current={immersiveWorkspaceView === "topic" ? "page" : undefined}
+                    className={`border-b pb-1 transition ${
                       immersiveWorkspaceView === "topic"
-                        ? "bg-cyan-400/15 font-medium text-cyan-50"
-                        : "text-white/50 hover:bg-white/10 hover:text-white/75"
+                        ? "border-cyan-300 font-semibold text-cyan-50"
+                        : "border-transparent text-white/55 hover:text-white"
                     }`}
                     onClick={() => {
                       setImmersiveWorkspaceView("topic");
@@ -9833,16 +9858,15 @@ export default function OmniCanvas() {
                       }, 40);
                     }}
                   >
-                    改题材
+                    编剧
                   </button>
                   <button
                     type="button"
-                    role="tab"
-                    aria-selected={immersiveWorkspaceView === "clip_dock"}
-                    className={`rounded-lg px-2.5 py-1.5 transition ${
+                    aria-current={immersiveWorkspaceView === "clip_dock" ? "page" : undefined}
+                    className={`border-b pb-1 transition ${
                       immersiveWorkspaceView === "clip_dock"
-                        ? "bg-cyan-400/15 font-medium text-cyan-50"
-                        : "text-white/50 hover:bg-white/10 hover:text-white/75"
+                        ? "border-cyan-300 font-semibold text-cyan-50"
+                        : "border-transparent text-white/55 hover:text-white"
                     }`}
                     onClick={() => {
                       setImmersiveWorkspaceView("clip_dock");
@@ -9857,14 +9881,14 @@ export default function OmniCanvas() {
                   </button>
                   <button
                     type="button"
-                    className="rounded-lg border border-white/15 px-2.5 py-1.5 font-semibold text-white/70 transition hover:bg-white/10 hover:text-white"
+                    className="border-b border-transparent pb-1 font-medium text-white/55 transition hover:text-white"
                     disabled={Boolean(factoryBusy || writerBusy || assembleBusy)}
                         onClick={() => selectCanvasMode("freeform")}
                     title="切到自由画布"
                   >
-                    ⇄ 自由画布
+                    自由画布
                   </button>
-                </div>
+                </nav>
               ) : (
                 <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary">
                   {/* 0903 用户令：模式互切钉在标题旁边显眼处，不藏边角 */}
@@ -9904,7 +9928,16 @@ export default function OmniCanvas() {
                   )}
                 </div>
               )}
-              <div className="flex flex-wrap items-center gap-2">
+              <details
+                key={immersiveWorkbench ? "compact-tools" : "full-tools"}
+                data-canvas-workspace-tools
+                open={!immersiveWorkbench}
+                className={immersiveWorkbench ? "relative text-xs" : ""}
+              >
+                <summary className={immersiveWorkbench ? "cursor-pointer list-none rounded-md border border-white/15 px-2 py-1.5 text-white/65" : "hidden"}>
+                  工具
+                </summary>
+              <div className={immersiveWorkbench ? "absolute right-0 top-full z-40 mt-2 flex w-64 flex-wrap items-center gap-2 rounded-xl border border-white/15 bg-[#101821] p-3 shadow-xl" : "flex flex-wrap items-center gap-2"}>
                 {canvasMode === "manhua" ? (
                   /* 备份中心(0820 用户拍板):备份/倒出/回填坐一起,随时可选;15 分钟自动增量备份兜底 */
                   <div className="relative" data-canvas-backup-menu>
@@ -9978,6 +10011,7 @@ export default function OmniCanvas() {
                   </button>
                 ) : null}
               </div>
+              </details>
             </div>
             {canShowCanvasDebug && debugMode ? (
               immersiveWorkbench ? (
@@ -9999,11 +10033,7 @@ export default function OmniCanvas() {
                 </div>
               )
             ) : null}
-            {!(
-              canvasMode === "manhua" &&
-              writerConfirmed &&
-              manhuaUiMode === "workbench"
-            ) ? (
+            {!immersiveWorkbench ? (
               <>
                 <h1 className="mt-3 text-3xl font-black tracking-tight md:text-4xl">
                   {canvasMode === "manhua"
@@ -10147,7 +10177,7 @@ export default function OmniCanvas() {
 
             {canvasMode === "manhua" || (canvasMode === "freeform" && workflowPhase === "edit") ? (
             <div className={canvasMode === "freeform" ? "hidden" : "contents"}>
-            {/* 工作台主屏：沉浸三栏（未确认也可进壳；题材从顶栏「改题材」） */}
+            {/* 工作台主屏：沉浸三栏；编剧入口保留在紧凑顶栏。 */}
             {(manhuaUiMode === "workbench" || (canvasMode === "freeform" && workflowPhase === "edit")) &&
             !(immersiveWorkbench && immersiveExtrasOpen) ? (
               <div
@@ -11327,7 +11357,7 @@ export default function OmniCanvas() {
               </div>
             ) : null}
 
-            {/* 沉浸主屏时默认藏长页；点「改题材/成片坞」再展开 */}
+            {/* 沉浸主屏时默认藏长页；点「编剧/成片坞」再展开。 */}
             <div
               id="manhua-post-workbench"
               className={
@@ -11341,7 +11371,7 @@ export default function OmniCanvas() {
             {immersiveWorkbench && immersiveExtrasOpen ? (
               <div className="mb-3 flex items-center justify-between gap-2">
                 <span className="text-[12px] text-white/55">
-                  {immersiveWorkspaceView === "topic" ? "题材 · 编剧室" : "成片坞 · 后期"}
+                  {immersiveWorkspaceView === "topic" ? "编剧" : "成片坞 · 后期"}
                 </span>
                 <button
                   type="button"
@@ -11649,6 +11679,8 @@ export default function OmniCanvas() {
                           toast.error("请先填写题材，或至少写几句补充条件");
                           return;
                         }
+                        setTrialWriterError("");
+                        setTrialWriterDismissed(false);
                         trialWriterMutation.mutate(
                           {
                             requestId: crypto.randomUUID(),
@@ -11659,11 +11691,21 @@ export default function OmniCanvas() {
                           {
                             onSuccess: (res) => {
                               setTrialWriterResult(res);
+                              setTrialWriterInput({ topic, brief, publicTemplateId });
                               void trialWriterQuotaQuery.refetch();
+                              void trialWriterRecentQuery.refetch();
+                              window.requestAnimationFrame(() => {
+                                const comparison = document.querySelector<HTMLElement>("[data-manhua-template-trial-compare]");
+                                comparison?.scrollIntoView({ behavior: "smooth", block: "start" });
+                                comparison?.focus({ preventScroll: true });
+                              });
                             },
                             onError: (err) => {
-                              toast.error(err.message || "试写失败，请稍后重试");
+                              const message = err.message || "试写失败，请稍后重试";
+                              setTrialWriterError(message);
+                              toast.error(message);
                               void trialWriterQuotaQuery.refetch();
+                              void trialWriterRecentQuery.refetch();
                             },
                           },
                         );
@@ -11681,17 +11723,39 @@ export default function OmniCanvas() {
                     ) : null}
                   </div>
                 ) : null}
-                {trialWriterResult ? (
+                {trialWriterError ? (
+                  <p role="alert" className="mt-2 rounded-lg border border-rose-300/30 bg-rose-500/10 p-3 text-xs text-rose-100">
+                    {trialWriterError}。{trialWriterResult ? "已生成的对照仍保留，可核对额度后再试。" : "尚无可显示的对照稿；请核对今日剩余额度。"}
+                  </p>
+                ) : null}
+                {trialWriterResult && trialWriterInput && (
+                  trialWriterInput.topic !== factoryTopic.trim() ||
+                  trialWriterInput.brief !== writerBrief.trim() ||
+                  trialWriterInput.publicTemplateId !== publicTemplateId ||
+                  trialWriterResult.appliedTemplate.publicId !== publicTemplateId
+                ) ? <p className="mt-2 text-xs text-amber-100" role="status">题材、补充条件或模板已改变，请重新试写后再套用全集。</p> : null}
+                {trialWriterResult && trialWriterInput && trialWriterDismissed &&
+                  trialWriterInput.topic === factoryTopic.trim() &&
+                  trialWriterInput.brief === writerBrief.trim() &&
+                  trialWriterInput.publicTemplateId === publicTemplateId ? (
+                  <button type="button" className="mt-2 rounded-lg border border-cyan-300/30 px-3 py-1.5 text-xs text-cyan-100" onClick={() => setTrialWriterDismissed(false)}>重新打开已保存的试写对比</button>
+                ) : null}
+                {trialWriterResult && trialWriterInput &&
+                  !trialWriterDismissed &&
+                  trialWriterInput.topic === factoryTopic.trim() &&
+                  trialWriterInput.brief === writerBrief.trim() &&
+                  trialWriterInput.publicTemplateId === publicTemplateId &&
+                  trialWriterResult.appliedTemplate.publicId === publicTemplateId ? (
                   <ManhuaTemplateTrialCompare
                     result={trialWriterResult}
                     applying={writerBusy}
+                    stale={staleTrialFingerprint === trialWriterResult.templateFingerprint}
                     onApply={() => {
                       // 「套用到全集」原路走现有付费扩写：模板 id 已在 publicTemplateId state，
                       // 不新造计费，确认与扣费口径都在 expandWriterRoom 内部
-                      setTrialWriterResult(null);
-                      void expandWriterRoom();
+                      void expandWriterRoom({ templateTrialFingerprint: trialWriterResult.templateFingerprint });
                     }}
-                    onClose={() => setTrialWriterResult(null)}
+                    onClose={() => setTrialWriterDismissed(true)}
                   />
                 ) : null}
               </div>

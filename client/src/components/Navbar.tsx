@@ -53,7 +53,7 @@ function isNavItemActive(href: string, locationPath: string): boolean {
   return !wantTab;
 }
 
-export default function Navbar() {
+export default function Navbar({ compact = false }: { compact?: boolean }) {
   const { user, isAuthenticated, logout } = useAuth();
   const [location, navigate] = useLocation();
   const manhuaAdvisorActive = useManhuaAdvisorScope(location);
@@ -85,19 +85,19 @@ export default function Navbar() {
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 border-b border-border/50 bg-background/80 backdrop-blur-xl">
-      <div className="container flex h-16 items-center justify-between">
+      <div className={`container flex items-center justify-between ${compact ? "h-12" : "h-16"}`}>
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2.5 no-underline shrink-0">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary">
+          <div className={`flex items-center justify-center rounded-lg bg-primary ${compact ? "h-7 w-7" : "h-9 w-9"}`}>
             <Film className="h-5 w-5 text-primary-foreground" />
           </div>
-          <span className="text-lg font-bold tracking-tight text-foreground">
+          <span className={`${compact ? "text-sm" : "text-lg"} font-bold tracking-tight text-foreground`}>
             MV Studio <span className="text-primary">Pro</span>
           </span>
         </Link>
 
         {/* Desktop Nav */}
-        <div className="hidden xl:flex items-center gap-0.5">
+        <div className={`${compact ? "hidden" : "hidden xl:flex"} items-center gap-0.5`}>
           {navItems.map((item) =>
             item.beta && !canOpenResearch ? (
               <span

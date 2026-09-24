@@ -295,7 +295,7 @@ it("真实父页面转场坐标选择、旧版失效及当前集请求闭合", a
     for (const b of await page.$$("button")) {
       if (
         await b.evaluate(
-          e => e.textContent?.trim() === "剧本工作室" && e.checkVisibility()
+          e => e.textContent?.trim() === "工作台" && Boolean(e.closest('[data-manhua-workspace-topbar]')) && e.checkVisibility()
         )
       ) {
         await b.click();

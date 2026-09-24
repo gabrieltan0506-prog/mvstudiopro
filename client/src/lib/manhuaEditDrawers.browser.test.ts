@@ -99,8 +99,35 @@ it('真实四抽屉裁切进入当前版本合成与持久化，旧版本保留'
  if(cssDir)for(const file of readdirSync(cssDir).filter(n=>n.endsWith('.css')))await page.addStyleTag({content:readFileSync(join(cssDir,file),'utf8')});
  await page.evaluate(()=>(window as any).__wbProps.onWorkflowPhaseChange('edit'));
  await page.waitForSelector('[data-manhua-edit-generate-current]');
- const editStructure=await page.$eval('[data-manhua-panel="edit-multitrack"]',el=>Array.from(el.children).map(child=>child.getAttribute('data-manhua-edit-overview')!==null?'overview':child.getAttribute('data-manhua-edit-timeline')!==null?'timeline':child.getAttribute('data-manhua-edit-tools')!==null?'tools':child.getAttribute('data-manhua-edit-full-tracks')!==null?'tracks':'other'));
- expect(editStructure.slice(0,4)).toEqual(['overview','timeline','tools','tracks']);
+ const layout=await page.$eval('[data-manhua-panel="edit-multitrack"]',panel=>{
+  const shell=document.querySelector<HTMLElement>('#manhua-workbench-shell')!;
+  const timeline=panel.querySelector<HTMLElement>('[data-manhua-edit-timeline]')!;
+  const nav=document.querySelector<HTMLElement>('[data-manhua-workspace-topbar]')!;
+  const siteNav=document.querySelector<HTMLElement>('nav.fixed')!;
+  return {timelineTop:timeline.getBoundingClientRect().top,panelBottom:panel.getBoundingClientRect().bottom,viewportHeight:innerHeight,shellOverflow:shell.scrollHeight-shell.clientHeight,navText:nav.innerText,siteNavHeight:siteNav.getBoundingClientRect().height,siteNavText:siteNav.innerText};
+ });
+ expect(layout.navText).toContain('工作台');
+ expect(layout.navText).toContain('编剧');
+ expect(layout.navText).not.toContain('改题材');
+ expect(layout.siteNavHeight).toBeLessThanOrEqual(50);
+ expect(layout.siteNavText).not.toContain('平台创作');
+ expect(layout.timelineTop).toBeLessThan(layout.viewportHeight/2);
+ expect(layout.panelBottom).toBeGreaterThan(layout.viewportHeight-110);
+ expect(layout.shellOverflow).toBeLessThanOrEqual(2);
+ await page.screenshot({path:join(evidenceDir,'workbench-edit-before-reorder-1280.png')});
+ const editStructure=await page.$eval('[data-manhua-panel="edit-multitrack"]',el=>Array.from(el.children).map(child=>child.getAttribute('data-manhua-edit-overview')!==null?'overview':child.getAttribute('data-manhua-edit-timeline')!==null?'timeline':child.getAttribute('data-manhua-edit-current-segment')!==null?'current':child.getAttribute('data-manhua-edit-tools')!==null?'tools':child.getAttribute('data-manhua-edit-full-tracks')!==null?'tracks':'other'));
+ expect(editStructure.slice(0,5)).toEqual(['overview','timeline','current','tools','tracks']);
+ const currentWorkArea=await page.$eval('[data-manhua-edit-current-segment]',el=>({height:el.getBoundingClientRect().height,visible:el.getBoundingClientRect().top<innerHeight}));
+ expect(currentWorkArea.height).toBeGreaterThanOrEqual(280);
+ expect(currentWorkArea.visible).toBe(true);
+ const segmentCards=await page.$$('[data-manhua-edit-segment-card]');
+ expect(segmentCards.length).toBeGreaterThan(0);
+ expect(segmentCards.length).toBeLessThan((await page.$$('[data-manhua-edit-clip-card]')).length);
+ expect(await page.$$('[data-manhua-edit-timeline] [data-manhua-edit-clip-card]')).toHaveLength(0);
+ await segmentCards[1]!.click();
+ expect(await segmentCards[1]!.evaluate(el=>el.getAttribute('data-manhua-edit-segment-active'))).toBe('true');
+ expect(await page.$eval('[data-manhua-edit-current-segment]',el=>el.textContent)).toContain('来源第 2 段');
+ await page.click('[data-manhua-edit-drawer-toggle="cut"]');
  const clipCards=await page.$$('[data-manhua-edit-clip-card]');
  expect(clipCards.length).toBeGreaterThan(1);
  const secondShot=Number(await clipCards[1]!.evaluate(el=>el.getAttribute('data-manhua-edit-clip-card')));
@@ -114,12 +141,18 @@ it('真实四抽屉裁切进入当前版本合成与持久化，旧版本保留'
  await page.$eval('[data-manhua-edit-section="fine-cut"]',el=>{const label=Array.from(el.querySelectorAll('label')).find(e=>e.textContent?.includes('入点'))!;(Array.from(label.querySelectorAll('button')).find(e=>e.textContent?.trim()==='+') as HTMLButtonElement).click();});
  await page.waitForFunction(({shot,before})=>{const label=Array.from(document.querySelectorAll('[data-manhua-edit-section="fine-cut"] label')).find(e=>e.textContent?.includes('入点'));return Number(label?.querySelector('span')?.textContent)===before+0.5&&(window as any).__ffcProps.blocks.some((b:any)=>b.manhuaEditTrim?.shotPieces?.some((p:any)=>p.shotIndex===shot&&p.trimInSec>0));},{}, {shot:secondShot,before:beforeTrim});
  const savedTrim=await page.evaluate(shot=>(window as any).__ffcProps.blocks.flatMap((b:any)=>b.manhuaEditTrim?.shotPieces||[]).find((piece:any)=>piece.shotIndex===shot)?.trimInSec,secondShot);
- await page.click('[data-manhua-edit-drawer-toggle="cut"]');
  const originalOrder=await page.$$eval('[data-manhua-edit-clip-card]',rows=>rows.map(row=>Number(row.getAttribute('data-manhua-edit-clip-card'))));
  await page.click(`[aria-label="将第 ${originalOrder[0]} 镜下移"]`);
  await page.waitForFunction(([first,second])=>{const cards=Array.from(document.querySelectorAll('[data-manhua-edit-clip-card]'));return Number(cards[0]?.getAttribute('data-manhua-edit-clip-card'))===second&&Number(cards[1]?.getAttribute('data-manhua-edit-clip-card'))===first;},{},originalOrder.slice(0,2));
  const savedOrder=await page.evaluate(()=>(window as any).__ffcProps.blocks.flatMap((b:any)=>b.manhuaEditTrim?.shotPieces||[]).filter((p:any)=>p.timelineOrder!==undefined).sort((a:any,b:any)=>a.timelineOrder-b.timelineOrder).map((p:any)=>p.shotIndex));
  expect(savedOrder.slice(0,2)).toEqual([originalOrder[1],originalOrder[0]]);
+ const firstSegmentShotCount=Number((await page.$eval('[data-manhua-edit-segment-card="1"]',el=>el.textContent))?.match(/(\d+) 镜/)?.[1]);
+ expect(firstSegmentShotCount).toBeGreaterThan(1);
+ const boundaryShot=originalOrder[firstSegmentShotCount-1]!;
+ await page.click(`[aria-label="将第 ${boundaryShot} 镜下移"]`);
+ await page.waitForFunction(() => document.querySelectorAll('[data-manhua-edit-segment-card]').length > 3);
+ const sourceOrder=await page.$$eval('[data-manhua-edit-segment-card]',rows=>rows.map(row=>Number(row.getAttribute('data-manhua-edit-source-segment'))));
+ expect(sourceOrder.slice(0,4)).toEqual([1,2,1,2]);
  await page.click('[data-manhua-edit-drawer-toggle="effects"]');expect(await page.$eval('[data-manhua-edit-drawer="effects"]',e=>e.textContent)).toContain('尚未接通');
  await page.click('[data-manhua-edit-drawer-toggle="subtitles"]');expect(await page.$eval('[data-manhua-edit-drawer="subtitles"]',e=>e.textContent)).toContain('转场应用于本集片段之间');
  await page.click('[data-manhua-edit-drawer-toggle="export"]');
@@ -142,7 +175,7 @@ it('真实四抽屉裁切进入当前版本合成与持久化，旧版本保留'
  const final=receipt.blocks.find((b:any)=>b.id==='final-e01');expect(final.outputUrls).toContain(old);expect(final.manhuaFinalVersions.some((v:any)=>v.url===final.outputUrl && v.sourceKey)).toBe(true);
  expect(JSON.stringify(receipt.storage)).toContain(final.outputUrl);
  let reopened=false;
- for(const button of await page.$$('button')){if(await button.evaluate(el=>el.textContent?.trim()==='剧本工作室' && el.checkVisibility())){await button.click();reopened=true;break;}}
+ for(const button of await page.$$('button')){if(await button.evaluate(el=>el.textContent?.trim()==='工作台' && el.closest('[data-manhua-workspace-topbar]') && el.checkVisibility())){await button.click();reopened=true;break;}}
  expect(reopened).toBe(true);
  await page.waitForSelector('[data-manhua-edit-generate-current]');
  expect(await page.evaluate(()=>(window as any).__wbProps.finalCutVerified)).toBe(true);
