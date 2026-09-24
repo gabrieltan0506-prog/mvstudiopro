@@ -21,7 +21,10 @@ it("原稿变更显示stale并保留旧图，新原稿回执恢复ready", async 
   const expanded=expandManhuaShotKeyartsAfterReverse(spawned.blocks.map(b=>b.id===reverse.id?{...b,status:'done',outputText:source}:b),spawned.edges,reverse.id);
   const ensured=ensureManhuaFragmentClips(expanded.blocks,expanded.edges,1,{videoModel:'seedance-2.5'});
   const record=(b,url)=>({...b,status:'done',imageMode:'edit',refImageUrl:'https://offline.invalid/character.png',outputUrl:url,outputUrls:[...(b.outputUrls||[]),url],manhuaKeyartLookState:recordManhuaKeyartLookOutput(b,url),manhuaKeyartSourceState:recordManhuaKeyartLookOutput({manhuaKeyartLookState:b.manhuaKeyartSourceState},url)});
-  const initial=ensured.blocks.map(b=>b.id.startsWith('keyart-')?record(b,'https://offline.invalid/'+b.id+'.png'):b);
+  const current=ensured.blocks.map(b=>b.id.startsWith('keyart-')?record(b,'https://offline.invalid/'+b.id+'.png'):b);
+  const archivedStill={...current.find(b=>b.id.startsWith('keyart-')),id:'keyart-e02-archived-only',episodeIndex:2,archivedFromPreviousScript:true};
+  const archivedClip={...current.find(b=>b.id.startsWith('clip-')),id:'clip-e02-archived-only',episodeIndex:2,archivedFromPreviousScript:true,status:'done',outputUrl:'https://offline.invalid/old-clip.mp4',manhuaClipQuality:{status:'passed'}};
+  const initial=[...current,archivedStill,archivedClip];
   const firstKeyartId=initial.find(b=>b.id.startsWith('keyart-')).id;
   const f=globalThis.fixture={};
   function App(){const [blocks,setBlocks]=useState(initial);f.blocks=blocks;
@@ -29,7 +32,7 @@ it("原稿变更显示stale并保留旧图，新原稿回执恢复ready", async 
    f.recordNew=()=>setBlocks(current=>current.map(b=>b.id.startsWith('keyart-')?record(b,'https://offline.invalid/new-'+b.id+'.png'):b));
    f.resetFirstToReference=()=>setBlocks(current=>current.map(b=>b.id===firstKeyartId?{...b,status:'idle',outputUrl:'',outputUrls:[]}:b));
    f.setFirstReferenceStatus=(status)=>setBlocks(current=>current.map(b=>b.id===firstKeyartId?{...b,status}:b));
-   return <TooltipProvider><Workbench blocks={blocks} videoModel='seedance-2.5' topic='阿菁与墨菁' episodeCount={1} focusEpisode={1} onFocusEpisode={()=>{}} characterIds={[]} propIds={[]} outlineConfirmed={true} workflowPhase='storyboard' compactUi={false}/></TooltipProvider>;
+   return <TooltipProvider><Workbench blocks={blocks} videoModel='seedance-2.5' topic='阿菁与墨菁' episodeCount={2} focusEpisode={1} onFocusEpisode={()=>{}} characterIds={[]} propIds={[]} outlineConfirmed={true} workflowPhase='storyboard' compactUi={false}/></TooltipProvider>;
   }
   createRoot(document.getElementById('root')).render(<App/>);
  `},bundle:true,write:false,format:"iife",platform:"browser",jsx:"automatic",alias:{"@":path.resolve("client/src"),"@shared":path.resolve("shared")},loader:{".png":"dataurl",".svg":"dataurl",".jpg":"dataurl",".css":"text"},define:{"process.env.NODE_ENV":'"production"',"import.meta.env":"__VITE_ENV__"},banner:{js:'var __VITE_ENV__={DEV:false,PROD:true,MODE:"production",SSR:false};'},logLevel:"silent"});
@@ -41,6 +44,9 @@ it("原稿变更显示stale并保留旧图，新原稿回执恢复ready", async 
   await page.waitForSelector(selector,{timeout:30000}).catch(async e=>{writeFileSync(path.join(dir,'mount-failure.txt'),JSON.stringify({errors,text:await page.evaluate(()=>document.body.innerText)},null,2));throw e;});
   const read=()=>page.evaluate(selector=>({state:document.querySelector(selector)?.getAttribute('data-manhua-keyart-status'),url:document.querySelector(selector)?.getAttribute('data-manhua-keyart-url'),right:document.querySelector('[data-manhua-shot-params-status]')?.textContent,blocks:(window as any).fixture.blocks}),selector);
   const before=await read();expect(before.state).toBe('ready');
+  const archivedEpisode=await page.$eval('[data-manhua-episode-thumbnail="2"]',el=>({text:el.textContent,image:!!el.querySelector('img')}));
+  expect(archivedEpisode.text).toContain('待跑');
+  expect(archivedEpisode.image).toBe(false);
   await page.evaluate(()=>(window as any).fixture.changeSource());await page.waitForFunction(selector=>document.querySelector(selector)?.getAttribute('data-manhua-keyart-status')==='stale',{},selector);
   const stale=await read();expect(stale.right).toContain('已变更');expect(stale.url).toBe(before.url);
   const original=before.blocks.find((b:any)=>b.outputUrl===before.url);expect(stale.blocks.find((b:any)=>b.id===original.id).outputUrls).toEqual(original.outputUrls);

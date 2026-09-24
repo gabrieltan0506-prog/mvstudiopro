@@ -810,7 +810,7 @@ function blockByStage(blocks: CanvasBlock[], episode: number, stage: string): Ca
 
 function keyartsForEpisode(blocks: CanvasBlock[], episode: number): CanvasBlock[] {
   return blocks
-    .filter((b) => b.id.startsWith("keyart-") && (getBlockEpisodeIndex(b) ?? 1) === episode)
+    .filter((b) => b.id.startsWith("keyart-") && !b.archivedFromPreviousScript && (getBlockEpisodeIndex(b) ?? 1) === episode)
     .sort(
       (a, b) =>
         resolveKeyartShotIndex(a.id, a.prompt) - resolveKeyartShotIndex(b.id, b.prompt) ||
@@ -10435,7 +10435,7 @@ export default function ManhuaScriptWorkbench({
           {episodeIndexes.map((ep) => {
             const epKeys = keyartsForEpisode(blocks, ep);
             const epClips = blocks.filter(
-              (b) => b.id.startsWith("clip-") && (getBlockEpisodeIndex(b) ?? 1) === ep,
+              (b) => b.id.startsWith("clip-") && !b.archivedFromPreviousScript && (getBlockEpisodeIndex(b) ?? 1) === ep,
             );
             // 集级 ready 只认真实产出
             const epClipReady = epClips.find(
@@ -10457,6 +10457,7 @@ export default function ManhuaScriptWorkbench({
               <button
                 key={ep}
                 type="button"
+                data-manhua-episode-thumbnail={ep}
                 onClick={() => {
                   onFocusEpisode(ep);
                   setShotIndex(0);
