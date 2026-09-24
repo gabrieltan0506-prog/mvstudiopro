@@ -19,6 +19,7 @@ import { Film, Layers, Loader2,
 import { trpc } from "@/lib/trpc";
 import { copyText } from "@/lib/copyText";
 import type { CanvasBlock } from "@/lib/canvasTypes";
+import { getBlockEpisodeIndex, isManhuaFactoryArtifactBlock } from "@/lib/canvasDramaStudio";
 import {
   fetchVideoUpscaleStatus,
   isVideoUpscaleTerminal,
@@ -60,10 +61,12 @@ import {
   ACTION_LABEL,
   isPostProdAudioAction,
   buildPostProdClipOptions,
+  isCurrentManhuaClipBlock,
   jobsStorageKey,
   loadStoredJobs,
   mergeClipOptions,
   mergeRemoteJobs,
+  postProdJobMatchesScope,
   persistJobs,
   shouldNotifyTerminal,
   type PostProdJobStatus,
@@ -74,6 +77,7 @@ const AUDIO_EXT_RE = /\.(mp3|wav|m4a|aac|flac|ogg)(\?|$)/i;
 
 type TrackedUpscale = {
   taskId: string;
+  scopeKey?: string;
   sourceUrl: string;
   sourceLabel: string;
   target: "2k" | "4k";
@@ -87,6 +91,22 @@ type TrackedUpscale = {
 
 function upscaleStorageKey(userId: string): string {
   return `postProd.upscale.v1.u${userId}`;
+}
+
+function bgmScopeStorageKey(userId: string): string {
+  return `postProd.bgmScopes.v1.u${userId}`;
+}
+
+function loadBgmJobScopes(userId: string): Record<string, string> {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(bgmScopeStorageKey(userId)) || "{}");
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return Object.fromEntries(Object.entries(value).filter(([id, scope]) =>
+      id.length > 0 && typeof scope === "string" && scope.startsWith("manhua:")
+    ).slice(-30)) as Record<string, string>;
+  } catch {
+    return {};
+  }
 }
 
 function loadTrackedUpscales(userId: string): TrackedUpscale[] {
@@ -124,6 +144,7 @@ type PostProdWorkshopCardProps = {
    */
   storyEmotion?: ManhuaStoryEmotion | null;
   focusEpisode?: number;
+  projectScopeKey: string;
   sceneSpaceRefs?: readonly ManhuaSceneSpaceRef[];
   spatialContexts?: readonly ManhuaSpatialContext[];
 };
@@ -168,6 +189,7 @@ export default function PostProdWorkshopCard({
   bgmSeedNoteZh,
   storyEmotion,
   focusEpisode,
+  projectScopeKey,
   sceneSpaceRefs = [],
   spatialContexts = [],
 }: PostProdWorkshopCardProps) {
@@ -179,10 +201,14 @@ export default function PostProdWorkshopCard({
   // 0902 配乐间解锁给创作者：余额校验与按发扣费在服务端（worker 建单前扣、建单失败退）
   const canUseScoringRoom = true;
 
-  /** 画布成片:视频节点已出片的(签名链走 jobs 证据放行) */
+  const currentClipBlocks = useMemo(() =>
+    !projectScopeKey || focusEpisode == null ? [] : blocks.filter(block => isCurrentManhuaClipBlock(block, focusEpisode)),
+  [blocks, focusEpisode, projectScopeKey]);
+
+  /** 当前剧本版本的工厂成片；自由画布和旧剧节点不进入候选。 */
   const blockClipOptions = useMemo(
     () =>
-      blocks
+      currentClipBlocks
         .filter(b => b.kind === "video" && String(b.outputUrl || "").trim())
         .map(b => ({
           id: b.id,
@@ -193,13 +219,13 @@ export default function PostProdWorkshopCard({
               .trim()
               .slice(0, 24) || b.id.slice(0, 12)),
         })),
-    [blocks]
+    [currentClipBlocks]
   );
 
-  /** 音频素材:各节点上传里的音频文件(uploads/u<uid>/ 前缀放行) */
+  /** 音频只取当前集成片节点上的上传件。 */
   const audioOptions = useMemo(() => {
     const out: Array<{ id: string; url: string; label: string }> = [];
-    for (const b of blocks) {
+    for (const b of currentClipBlocks) {
       for (const a of b.uploadedAssets ?? []) {
         const isAudio =
           a.kind === "audio" ||
@@ -212,16 +238,17 @@ export default function PostProdWorkshopCard({
       }
     }
     return out;
-  }, [blocks]);
+  }, [currentClipBlocks]);
 
   const currentStoryContext = useMemo(
     () => blocks
       .filter(block => !block.archivedFromPreviousScript &&
+        Boolean(projectScopeKey) && isManhuaFactoryArtifactBlock(block) &&
         (block.kind === "text" || block.kind === "video") &&
-        (focusEpisode == null || Number(block.episodeIndex) === focusEpisode))
+        (focusEpisode == null || getBlockEpisodeIndex(block) === focusEpisode))
       .map(block => String(block.outputText || block.prompt || "").trim())
       .filter(Boolean).join("\n"),
-    [blocks, focusEpisode]
+    [blocks, focusEpisode, projectScopeKey]
   );
   const storyContextKey = JSON.stringify([focusEpisode, currentStoryContext]);
   const [scoreStoryDraft, setScoreStoryDraft] = useState<{ sourceKey: string; text: string } | null>(null);
@@ -243,9 +270,10 @@ export default function PostProdWorkshopCard({
       .filter(
         b =>
           b.kind === "video" &&
-          !b.archivedFromPreviousScript &&
+          Boolean(projectScopeKey) &&
           Number(b.episodeIndex) > 0 &&
           (focusEpisode == null || Number(b.episodeIndex) === focusEpisode) &&
+          isCurrentManhuaClipBlock(b, Number(b.episodeIndex)) &&
           String(b.prompt || "").includes("〔")
       )
       .map(b => ({
@@ -283,11 +311,18 @@ export default function PostProdWorkshopCard({
         storyEmotion: { ...emotion, moods: emotion.moods.length ? emotion.moods : spatial.moods, hasSilenceBreak: emotion.hasSilenceBreak || spatial.hasSilenceBreak },
       }),
     };
-  }, [blocks, bgmSeedNoteZh, storyEmotion, sceneSpaceRefs, spatialContexts, focusEpisode]);
+  }, [blocks, bgmSeedNoteZh, storyEmotion, sceneSpaceRefs, spatialContexts, focusEpisode, projectScopeKey]);
   const [scoreBrief, setScoreBrief] = useState<EditableBgmBrief | null>(null);
+  const bgmPendingUserKey = `${userId}:${projectScopeKey}`;
+  const [bgmJobScopes, setBgmJobScopes] = useState<Record<string, string>>(() => loadBgmJobScopes(userId));
   const [bgmPending, setBgmPending] = useState<ManhuaBgmPendingJob | null>(() =>
-    readPendingManhuaBgmJob(localStorage, Date.now(), userId)
+    readPendingManhuaBgmJob(localStorage, Date.now(), bgmPendingUserKey)
   );
+  const saveBgmJobScope = useCallback((jobId: string) => {
+    const next = Object.fromEntries(Object.entries({ ...loadBgmJobScopes(userId), [jobId]: projectScopeKey }).slice(-30));
+    try { localStorage.setItem(bgmScopeStorageKey(userId), JSON.stringify(next)); } catch { /* 当前页仍有来源记录 */ }
+    setBgmJobScopes(next);
+  }, [projectScopeKey, userId]);
   const [generatedBgmVariants, setGeneratedBgmVariants] = useState<
     ManhuaBgmVariant[]
   >([]);
@@ -322,12 +357,12 @@ export default function PostProdWorkshopCard({
   );
   useEffect(() => {
     if (!canUseScoringRoom || !bgmJobsQuery.data) return;
-    const rows = bgmJobsQuery.data;
+    const rows = bgmJobsQuery.data.filter(row => bgmJobScopes[row.jobId] === projectScopeKey);
     const active = rows.find(
       row => row.status === "queued" || row.status === "running"
     );
     if (active) {
-      const local = readPendingManhuaBgmJob(localStorage, Date.now(), userId);
+      const local = readPendingManhuaBgmJob(localStorage, Date.now(), bgmPendingUserKey);
       const next: ManhuaBgmPendingJob = {
         jobId: active.jobId,
         billingRequestId:
@@ -338,24 +373,22 @@ export default function PostProdWorkshopCard({
           local?.jobId === active.jobId ? local.createdAtMs : Date.now(),
       };
       setBgmPending(next);
-      writePendingManhuaBgmJob(localStorage, next, userId);
+      writePendingManhuaBgmJob(localStorage, next, bgmPendingUserKey);
     } else {
       setBgmPending(null);
-      clearPendingManhuaBgmJob(localStorage, userId);
+      clearPendingManhuaBgmJob(localStorage, bgmPendingUserKey);
     }
     const succeeded = rows.find(
       row => row.status === "succeeded" && row.variants.length > 0
     );
-    if (succeeded) {
-      setGeneratedBgmVariants(
-        readManhuaBgmVariants({ variants: succeeded.variants })
-      );
-    }
-  }, [bgmJobsQuery.data, canUseScoringRoom, userId]);
+    setGeneratedBgmVariants(succeeded
+      ? readManhuaBgmVariants({ variants: succeeded.variants })
+      : []);
+  }, [bgmJobsQuery.data, canUseScoringRoom, bgmJobScopes, projectScopeKey, bgmPendingUserKey]);
 
   const latestBgmFailure = useMemo(
-    () => bgmJobsQuery.data?.find(row => row.status === "failed") ?? null,
-    [bgmJobsQuery.data]
+    () => bgmJobsQuery.data?.find(row => bgmJobScopes[row.jobId] === projectScopeKey && row.status === "failed") ?? null,
+    [bgmJobsQuery.data, bgmJobScopes, projectScopeKey]
   );
 
   const scoringAudioOptions = useMemo(
@@ -473,20 +506,24 @@ export default function PostProdWorkshopCard({
               !upscaleNotifiedRef.current.has(job.taskId)
             ) {
               upscaleNotifiedRef.current.add(job.taskId);
-              setBgmVideoUrl(snapshot.videoUrl);
-              setLoudVideoUrl(snapshot.videoUrl);
-              toast.success(`高清版已完成（${job.target.toUpperCase()}）`, {
-                description: "已自动加入 BGM 贴装与响度验收的成片列表。",
-              });
+              if (job.scopeKey === projectScopeKey) {
+                setBgmVideoUrl(snapshot.videoUrl);
+                setLoudVideoUrl(snapshot.videoUrl);
+                toast.success(`高清版已完成（${job.target.toUpperCase()}）`, {
+                  description: "已自动加入 BGM 贴装与响度验收的成片列表。",
+                });
+              }
             } else if (
               (snapshot.status === "failed" ||
                 snapshot.status === "reconcile_manual") &&
               !upscaleNotifiedRef.current.has(job.taskId)
             ) {
               upscaleNotifiedRef.current.add(job.taskId);
-              toast.error(videoUpscaleStatusLabel(snapshot.status), {
-                description: snapshot.error || undefined,
-              });
+              if (job.scopeKey === projectScopeKey) {
+                toast.error(videoUpscaleStatusLabel(snapshot.status), {
+                  description: snapshot.error || undefined,
+                });
+              }
             }
           } catch {
             /* 查询错误视为瞬态；服务端任务仍在，下一轮继续查同一 taskId。 */
@@ -503,11 +540,13 @@ export default function PostProdWorkshopCard({
       upscalePollingRef.current = false;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [projectScopeKey]);
 
   const [jobs, setJobs] = useState<TrackedJob[]>(() =>
     loadStoredJobs(jobsStorageKey(userId), localStorage)
   );
+  const scopedJobs = useMemo(() => jobs.filter(job => postProdJobMatchesScope(job, projectScopeKey)), [jobs, projectScopeKey]);
+  const scopedUpscaleJobs = useMemo(() => upscaleJobs.filter(job => job.scopeKey === projectScopeKey), [upscaleJobs, projectScopeKey]);
   const jobsRef = useRef(jobs);
   jobsRef.current = jobs;
 
@@ -631,19 +670,19 @@ export default function PostProdWorkshopCard({
 
   /** 后期产物直接进入下一道工序(gcsUri 优先);与画布成片合并去重 */
   const postProdClipOptions = useMemo(
-    () => buildPostProdClipOptions(jobs),
-    [jobs]
+    () => buildPostProdClipOptions(scopedJobs),
+    [scopedJobs]
   );
   const upscaleClipOptions = useMemo(
     () =>
-      upscaleJobs
+      scopedUpscaleJobs
         .filter(job => job.status === "succeeded" && job.videoUrl)
         .map(job => ({
           id: `upscale:${job.taskId}`,
           url: job.videoUrl!,
           label: `${job.target.toUpperCase()} 高清版 · ${job.sourceLabel}`,
         })),
-    [upscaleJobs]
+    [scopedUpscaleJobs]
   );
   const clipOptions = useMemo(
     () =>
@@ -685,6 +724,10 @@ export default function PostProdWorkshopCard({
           },
       label: string
     ) => {
+      if (!projectScopeKey) {
+        toast.error("请先确认当前剧本，再从本集成片选择素材");
+        return;
+      }
       try {
         const res = await queueMutation.mutateAsync(input);
         updateJobs(prev => [
@@ -692,6 +735,7 @@ export default function PostProdWorkshopCard({
             jobId: res.jobId,
             action: input.action,
             label,
+            scopeKey: projectScopeKey,
             status: "queued",
             createdAt: Date.now(),
           },
@@ -704,7 +748,7 @@ export default function PostProdWorkshopCard({
         });
       }
     },
-    [queueMutation, updateJobs],
+    [queueMutation, updateJobs, projectScopeKey],
   );
 
   const submitConcat = () => {
@@ -724,6 +768,10 @@ export default function PostProdWorkshopCard({
 
   const probeUpscaleSource = async () => {
     if (!upscaleVideoUrl || upscaleProbeBusy) return;
+    if (!clipOptions.some(option => option.url === upscaleVideoUrl)) {
+      toast.error("当前剧本没有这段成片，请重新选择");
+      return;
+    }
     setUpscaleProbeBusy(true);
     try {
       const measured = await probeVideoUpscaleSource(upscaleVideoUrl);
@@ -742,8 +790,12 @@ export default function PostProdWorkshopCard({
       toast.error("请先选择成片并读取真实尺寸与时长");
       return;
     }
+    if (!clipOptions.some(option => option.url === upscaleVideoUrl)) {
+      toast.error("当前剧本没有这段成片，请重新选择");
+      return;
+    }
     if (!canWavespeedUpscale(upscaleSource?.sourceResolution, target)) { toast.error("该原片不支持此超分档位：480p最高2K，720p可选2K或4K。"); return; }
-    const bgmMounted = jobs.some(job => {
+    const bgmMounted = scopedJobs.some(job => {
       if (
         job.action !== "bgm_mount" ||
         job.status !== "succeeded" ||
@@ -765,7 +817,7 @@ export default function PostProdWorkshopCard({
       toast.error(deliveryDecision.reasonZh);
       return;
     }
-    const directBlock = blocks.find(
+    const directBlock = currentClipBlocks.find(
       block => String(block.outputUrl || "").trim() === upscaleVideoUrl
     );
     const episodeIndex =
@@ -796,6 +848,7 @@ export default function PostProdWorkshopCard({
         [
           {
             taskId: started.taskId,
+            scopeKey: projectScopeKey,
             sourceUrl: upscaleVideoUrl,
             sourceLabel: option?.label || "成片",
             target,
@@ -882,6 +935,10 @@ export default function PostProdWorkshopCard({
   };
 
   const queueScoringBrief = async () => {
+    if (!projectScopeKey) {
+      toast.error("请先确认当前剧本，再生成本集配乐");
+      return;
+    }
     const gate = canSubmitManhuaBgm({
       hasDraft: Boolean(scoreBrief),
       pending: bgmPending,
@@ -905,6 +962,7 @@ export default function PostProdWorkshopCard({
         billingRequestId,
         brief: scoreBrief,
       });
+      saveBgmJobScope(result.jobId);
       const pending: ManhuaBgmPendingJob = {
         jobId: result.jobId,
         billingRequestId,
@@ -913,7 +971,7 @@ export default function PostProdWorkshopCard({
         createdAtMs: Date.now(),
       };
       setBgmPending(pending);
-      writePendingManhuaBgmJob(localStorage, pending, userId);
+      writePendingManhuaBgmJob(localStorage, pending, bgmPendingUserKey);
       await bgmJobsQuery.refetch();
       toast.success("配乐已入队", { description: `单号 ${result.jobId}` });
     } catch (error) {
@@ -970,7 +1028,12 @@ export default function PostProdWorkshopCard({
       toast.error("BGM 贴装需要选一段成片和一条音频");
       return;
     }
-    const pendingUpscale = upscaleJobs.find(
+    if (!clipOptions.some(option => option.url === bgmVideoUrl) ||
+      !scoringAudioOptions.some(option => option.url === bgmAudioUrl)) {
+      toast.error("成片或音频不属于当前剧本，请重新选择");
+      return;
+    }
+    const pendingUpscale = scopedUpscaleJobs.find(
       job =>
         job.sourceUrl === bgmVideoUrl && !isVideoUpscaleTerminal(job.status)
     );
@@ -1012,6 +1075,10 @@ export default function PostProdWorkshopCard({
   const submitLoudness = () => {
     if (!loudVideoUrl) {
       toast.error("响度验收需要选一段成片");
+      return;
+    }
+    if (!clipOptions.some(option => option.url === loudVideoUrl)) {
+      toast.error("当前剧本没有这段成片，请重新选择");
       return;
     }
     void submit(
@@ -1545,7 +1612,7 @@ export default function PostProdWorkshopCard({
                 <p className="text-[10px] text-white/50">{upscaleSource?.sourceResolution === "480p" ? "480p原片最高可放大到2K。" : !canWavespeedUpscale(upscaleSource?.sourceResolution, "2k") ? "原片已达2K及以上，无可用超分档位。" : "720p及以上原片可选2K或4K。"}</p>
                 <div className="grid grid-cols-2 gap-1">
                   {(["2k", "4k"] as const).filter(target => canWavespeedUpscale(upscaleSource?.sourceResolution, target)).map(target => {
-                    const directBlock = blocks.find(
+                    const directBlock = currentClipBlocks.find(
                       block =>
                         String(block.outputUrl || "").trim() === upscaleVideoUrl
                     );
@@ -1569,7 +1636,7 @@ export default function PostProdWorkshopCard({
                 </div>
               </div>
             )}
-            {upscaleJobs.slice(0, 3).map(job => (
+            {scopedUpscaleJobs.slice(0, 3).map(job => (
               <div
                 key={job.taskId}
                 className="rounded-lg border border-white/10 bg-black/20 px-2 py-1 text-[10px] text-white/60"
@@ -1768,9 +1835,9 @@ export default function PostProdWorkshopCard({
       </div>
 
       {/* 任务列表(服务端为主来源;此处为本人任务展示) */}
-      {jobs.length > 0 ? (
+      {scopedJobs.length > 0 ? (
         <div className="mt-3 space-y-1">
-          {jobs.slice(0, 10).map(job => {
+          {scopedJobs.slice(0, 10).map(job => {
             const badge = statusBadge(job.status);
             return (
               <div

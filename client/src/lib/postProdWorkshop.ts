@@ -5,6 +5,8 @@
  * - 后期产物(拼接/BGM)可直接进入下一道工序(gcsUri 优先,不依赖旧读取地址);
  * - 异常缓存结构清理、终态只提示一次的判定。
  */
+import type { CanvasBlock } from "./canvasTypes";
+import { getBlockEpisodeIndex, isManhuaFinalVideoBlockId, stageKeyFromBlockId } from "./canvasDramaStudio";
 
 export type PostProdAction = "concat" | "bgm_mount" | "burn_subtitle" | "loudness_check" | "audio_trim" | "audio_timeline" | "audio_extract";
 export type PostProdJobStatus = "queued" | "running" | "succeeded" | "failed";
@@ -13,6 +15,8 @@ export type TrackedJob = {
   jobId: string;
   action: PostProdAction;
   label: string;
+  /** 剧名、集号与本集剧本共同决定的工作流范围；旧任务无来源时不进入素材候选。 */
+  scopeKey?: string;
   status: PostProdJobStatus;
   createdAt: number;
   output?: Record<string, unknown> | null;
@@ -40,6 +44,29 @@ const ACTIONS: readonly string[] = [
 ];
 const STATUSES: readonly string[] = ["queued", "running", "succeeded", "failed"];
 
+export function manhuaPostProdScopeKey(seriesTitle: string, episodeIndex: number, episodeBody: string): string {
+  if (!seriesTitle.trim() || !episodeBody.trim()) return "";
+  const source = JSON.stringify([seriesTitle.trim(), Math.max(1, Math.floor(episodeIndex)), episodeBody.trim()]);
+  let first = 0x811c9dc5;
+  let second = 0x9747b28c;
+  for (let i = 0; i < source.length; i++) {
+    const code = source.charCodeAt(i);
+    first = Math.imul(first ^ code, 0x01000193) >>> 0;
+    second = Math.imul(second ^ code, 0x01000193) >>> 0;
+  }
+  return `manhua:${first.toString(16).padStart(8, "0")}${second.toString(16).padStart(8, "0")}`;
+}
+
+export function postProdJobMatchesScope(job: Pick<TrackedJob, "scopeKey">, scopeKey: string): boolean {
+  return Boolean(scopeKey) && job.scopeKey === scopeKey;
+}
+
+export function isCurrentManhuaClipBlock(block: CanvasBlock, episodeIndex: number): boolean {
+  return !block.archivedFromPreviousScript &&
+    (stageKeyFromBlockId(block.id) === "clip" || isManhuaFinalVideoBlockId(block.id)) &&
+    getBlockEpisodeIndex(block) === episodeIndex;
+}
+
 export function isPostProdAudioAction(action: PostProdAction): boolean {
   return action === "audio_trim" || action === "audio_timeline" || action === "audio_extract";
 }
@@ -59,7 +86,8 @@ export function normalizeStoredJobs(value: unknown): TrackedJob[] {
       return (
         typeof record.jobId === "string" &&
         ACTIONS.includes(String(record.action)) &&
-        STATUSES.includes(String(record.status))
+        STATUSES.includes(String(record.status)) &&
+        (record.scopeKey == null || typeof record.scopeKey === "string")
       );
     })
     .slice(0, 30);
@@ -118,6 +146,7 @@ export function mergeRemoteJobs(local: TrackedJob[], remote: RemotePostProdJob[]
       jobId: r.jobId,
       action,
       label: cached?.label ?? ACTION_LABEL[action],
+      scopeKey: cached?.scopeKey,
       status: (STATUSES.includes(r.status) ? r.status : "failed") as PostProdJobStatus,
       createdAt: Number.isFinite(createdAt) && createdAt > 0 ? createdAt : cached?.createdAt ?? 0,
       // 服务端明确返回 null 时清除旧缓存,不继续使用旧产物

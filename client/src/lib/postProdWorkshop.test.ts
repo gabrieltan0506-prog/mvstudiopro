@@ -4,18 +4,45 @@
  * 产物进入下一道工序(gcsUri 优先) / 终态只提示一次。
  */
 import { describe, expect, it } from "vitest";
+import type { CanvasBlock } from "./canvasTypes";
 import {
   buildPostProdClipOptions,
+  isCurrentManhuaClipBlock,
   isPostProdAudioAction,
   jobsStorageKey,
   loadStoredJobs,
   mergeClipOptions,
   mergeRemoteJobs,
+  manhuaPostProdScopeKey,
   normalizeStoredJobs,
+  postProdJobMatchesScope,
   persistJobs,
   shouldNotifyTerminal,
   type TrackedJob,
 } from "./postProdWorkshop";
+
+describe("漫剧后期素材范围", () => {
+  const block = (id: string, episodeIndex?: number, archivedFromPreviousScript?: boolean) =>
+    ({ id, kind: "video", episodeIndex, archivedFromPreviousScript }) as CanvasBlock;
+
+  it("仅当前集工厂片进入候选，旧稿、自由画布与别集均排除", () => {
+    expect(isCurrentManhuaClipBlock(block("clip-e01-g02-auto", 1), 1)).toBe(true);
+    expect(isCurrentManhuaClipBlock(block("final-e01", 1), 1)).toBe(true);
+    expect(isCurrentManhuaClipBlock(block("clip-e02-g01-auto", 2), 1)).toBe(false);
+    expect(isCurrentManhuaClipBlock(block("clip-e01-g02-auto", 1, true), 1)).toBe(false);
+    expect(isCurrentManhuaClipBlock(block("video-freeform-1", 1), 1)).toBe(false);
+  });
+
+  it("同剧不同集或改稿产生不同范围；无来源旧任务不能供当前集使用", () => {
+    const current = manhuaPostProdScopeKey("墨菁传", 1, "坊市一掌");
+    expect(current).toBe(manhuaPostProdScopeKey("墨菁传", 1, "坊市一掌"));
+    expect(current).not.toBe(manhuaPostProdScopeKey("墨菁传", 2, "坊市一掌"));
+    expect(current).not.toBe(manhuaPostProdScopeKey("墨菁传", 1, "坊市一掌·改稿"));
+    expect(manhuaPostProdScopeKey("", 1, "")).toBe("");
+    expect(postProdJobMatchesScope({ scopeKey: current }, current)).toBe(true);
+    expect(postProdJobMatchesScope({}, current)).toBe(false);
+  });
+});
 
 function fakeStorage(initial: Record<string, string> = {}) {
   const map = new Map(Object.entries(initial));
@@ -106,7 +133,7 @@ describe("服务端为主的恢复合并", () => {
   it("本地展示字段保留,状态/产物以服务端为准;本地独有的终态任务不保留", () => {
     const merged = mergeRemoteJobs(
       [
-        job({ jobId: "r1", status: "queued", label: "拼接 3 段(720p)" }),
+        job({ jobId: "r1", status: "queued", label: "拼接 3 段(720p)", scopeKey: "manhua:current" }),
         // 终态且服务端没有 → 不保留(进行中的保留场景见"合并时序缺口"组)
         job({ jobId: "local-done", status: "succeeded" }),
       ],
@@ -124,6 +151,7 @@ describe("服务端为主的恢复合并", () => {
     expect(merged.map((j) => j.jobId)).toEqual(["r1"]);
     expect(merged[0].label).toBe("拼接 3 段(720p)");
     expect(merged[0].status).toBe("succeeded");
+    expect(merged[0].scopeKey).toBe("manhua:current");
     expect((merged[0].output as { gcsUri?: string }).gcsUri).toBe("gs://b/post-prod/7/y.mp4");
   });
 });

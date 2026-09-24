@@ -20,6 +20,7 @@ import ManhuaTemplateTrialCompare, {
   type ManhuaWriterTrialResult,
 } from "@/components/canvas/ManhuaTemplateTrialCompare";
 import PostProdWorkshopCard from "@/components/canvas/PostProdWorkshopCard";
+import { manhuaPostProdScopeKey } from "@/lib/postProdWorkshop";
 import ManhuaCreativeAdvisorPanel from "@/components/canvas/ManhuaCreativeAdvisorPanel";
 import { advisorReconfirmationFromEpisode } from "@/lib/manhuaAdvisorBackups";
 import { prepareAdvisorRewriteAdoption, persistAdvisorRewriteAdoption } from "@/lib/manhuaAdvisorAdoption";
@@ -1176,6 +1177,11 @@ export default function OmniCanvas() {
   const [writerFocusEpisode, setWriterFocusEpisode] = useState(() =>
     Math.max(1, Math.floor(Number(initialWriterSession?.focusEpisode) || 1)),
   );
+  const postProdScopeKey = useMemo(() => writerConfirmed ? manhuaPostProdScopeKey(
+    writerPack?.seriesTitle || "",
+    writerFocusEpisode,
+    writerPack?.episodes.find(episode => episode.index === writerFocusEpisode)?.body || "",
+  ) : "", [writerPack, writerFocusEpisode, writerConfirmed]);
   /**
    * 动作计划绑定上下文：只从本集导演板 overlay 解析（屏幕点如实给 screen；相机路径无秒数 → 未解析）。
    * previs 相机与 ShotIR 相机的登记待接（PR-2 断点，见知识库）。
@@ -13037,9 +13043,10 @@ export default function OmniCanvas() {
               {/* 后期工坊(蓝图二):三件套已上线,卡内只挂真实工序;按用户挂载防串单 */}
               {user?.id ? (
                 <PostProdWorkshopCard
-                  key={String(user.id)}
+                  key={`${user.id}:${postProdScopeKey}`}
                   blocks={blocks}
                   userId={String(user.id)}
+                  projectScopeKey={postProdScopeKey}
                   userRole={userRole}
                   bgmSeedNoteZh={audioReferenceLock?.bgmNoteZh || ""}
                   storyEmotion={storyEmotionForDownstream}
