@@ -89,6 +89,24 @@ async function mount(first = false, both = false): Promise<{ page: Page; close: 
   return { page: p, close: async () => { await ctx.close().catch(() => {}); } };
 }
 
+it('沉浸顶栏只保留四个去处，创作顾问仍可从工具打开', async () => {
+ const {page,close}=await mount();
+ const errors:string[]=[];page.on('pageerror',error=>errors.push(String(error)));
+ try {
+  const labels=await page.$$eval('[aria-label="漫剧工厂工作区"] > button',buttons=>buttons.map(button=>button.textContent?.trim()));
+  expect(labels).toEqual(['工作台','编剧','成片坞','自由画布']);
+  const tools='[data-canvas-workspace-tools]';
+  expect(await page.$eval(tools,el=>(el as HTMLDetailsElement).open)).toBe(false);
+  await page.click(`${tools} > summary`);
+  expect(await page.$eval(tools,el=>(el as HTMLDetailsElement).open)).toBe(true);
+  expect(await page.$$('[data-manhua-advisor-open]')).toHaveLength(1);
+  expect(await page.$eval(tools,el=>el.textContent)).not.toContain('切换模式');
+  await page.click(`${tools} [data-manhua-advisor-open]`);
+  await page.waitForFunction(()=>document.querySelector('[data-manhua-advisor-open]')?.getAttribute('aria-expanded')==='true');
+  expect(errors).toEqual([]);
+ } finally {await close();}
+}, 120_000);
+
 
 
 it('真实四抽屉裁切进入当前版本合成与持久化，旧版本保留',async()=>{

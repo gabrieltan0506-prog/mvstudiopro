@@ -9954,15 +9954,6 @@ export default function OmniCanvas() {
                   >
                     自由画布
                   </button>
-                  <button
-                    type="button"
-                    data-manhua-advisor-open
-                    aria-expanded={advisorOpen}
-                    className="border-b border-transparent pb-1 font-medium text-white/55 transition hover:text-white"
-                    onClick={() => { setAdvisorFocusSection(null); setAdvisorOpen(true); setAdvisorNudge(null); }}
-                  >
-                    创作顾问{advisorProject.issues.length ? ` (${advisorProject.issues.length})` : ""}
-                  </button>
                 </nav>
               ) : (
                 <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary">
@@ -10063,6 +10054,17 @@ export default function OmniCanvas() {
                   </div>
                 ) : null}
                 <OpenAiImageVariantSwitch compact hideModelNames />
+                {immersiveWorkbench && canvasMode === "manhua" ? (
+                  <button
+                    type="button"
+                    data-manhua-advisor-open
+                    aria-expanded={advisorOpen}
+                    className="rounded-lg border border-white/15 bg-white/5 px-2.5 py-1 text-[11px] text-white/70 hover:bg-white/10 hover:text-white"
+                    onClick={() => { setAdvisorFocusSection(null); setAdvisorOpen(true); setAdvisorNudge(null); }}
+                  >
+                    创作顾问{advisorProject.issues.length ? ` (${advisorProject.issues.length})` : ""}
+                  </button>
+                ) : null}
                 {canShowCanvasDebug ? (
                   <button
                     type="button"
@@ -10076,7 +10078,7 @@ export default function OmniCanvas() {
                     {debugMode ? "Debug On" : "Debug Off"}
                   </button>
                 ) : null}
-                {canvasMode !== "pick" ? (
+                {canvasMode !== "pick" && !immersiveWorkbench ? (
                   <button
                     type="button"
                     onClick={() => selectCanvasMode("pick")}
