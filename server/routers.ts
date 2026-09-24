@@ -9950,6 +9950,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           requestId: z.string().uuid(),
           /** 可选创作 Skill 公开句柄；服务端只接受 GCS approved 真卡片。 */
           publicTemplateId: z.string().regex(/^mt_[a-z0-9]{4,16}$/i).optional(),
+          /** 从免费试写“套用全集”进入时锁定用户看到的模板版本，服务端在扣点前核对。 */
+          templateTrialFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
           /** @deprecated 旧客户端兼容；普通用户仅允许其中的 mt_*，tpl_* 只向监管会话放行。 */
           viralTemplateId: z.string().max(64).optional(),
           /** 单集时长档位：90s 半强度 / 180s 全长（2.5 时由 videoModel 覆盖段表） */
@@ -9987,6 +9989,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           buildManhuaWriterExpandPrompt,
           clampWriterEpisodeCount,
           parseManhuaWriterPack,
+          writerPackHasCompletePaidEpisodes,
           writerPackLooksReady,
         } = await import("../shared/manhuaWriterRoom.js");
         const { resolveManhuaSeedanceLayoutProfile } = await import(
@@ -10052,9 +10055,22 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               message: "所选剧情增强方案内容不完整，未调用扩写模型",
             });
           }
+          if (input.templateTrialFingerprint) {
+            const { fingerprintManhuaWriterTemplateAddon } = await import("./services/manhuaWriterTrial.js");
+            const currentFingerprint = fingerprintManhuaWriterTemplateAddon(viralTemplateAddon);
+            if (currentFingerprint !== input.templateTrialFingerprint) {
+              throw new TRPCError({
+                code: "CONFLICT",
+                message: "剧情增强方案在试写后已更新，请重新试写再套用；本次未扣点",
+              });
+            }
+          }
           appliedInternalTemplateId = resolved.card.id;
           // 商业机密边界：完整卡只喂模型；浏览器响应一律匿名句柄（监管在监管面板看全量）
           appliedTemplate = resolved.appliedTemplate;
+        }
+        if (input.templateTrialFingerprint && !requestedTemplateId) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "请先选择与试写一致的剧情增强方案" });
         }
         const episodeCount = clampWriterEpisodeCount(input.episodeCount);
         // 局部改写按实际重写集数计费（按集计价的拍板语义）：fromEpisode 起重写到末集。
@@ -10124,6 +10140,14 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           });
         }
 
+        const pack = parseManhuaWriterPack(markdown, episodeCount, { topic });
+        if (!writerPackHasCompletePaidEpisodes(pack, episodeCount)) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "扩写结果缺少完整分集正文或片尾钩子，原稿未替换，本次未扣点",
+          });
+        }
+
         // 先出稿再原子扣点：上游失败不扣；相同 requestId + 相同请求的网络重试不双扣。
         await deductCreditsAmount(
           userId,
@@ -10132,8 +10156,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           `编剧室连载扩写（${manhuaWriterExpandTierLabel(quota.runTier)}）· ${billableEpisodes} 集${fromEpisodeReq > 0 ? `（第 ${fromEpisodeReq} 集起局部改写）` : ""}`,
           { chargeKey },
         );
-
-        const pack = parseManhuaWriterPack(markdown, episodeCount, { topic });
         return {
           markdown,
           pack,
@@ -10172,6 +10194,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       };
     }),
 
+    manhuaWriterTrialRecent: protectedProcedure.query(async ({ ctx }) => {
+      const { getRecentManhuaWriterTrialResults } = await import("./services/manhuaWriterTrial.js");
+      return getRecentManhuaWriterTrialResults(ctx.user.id);
+    }),
+
     /**
      * 模板免费试写（单集大纲级，两版对比）：选模板 → 免费看「套模板 vs 常规」差异 →
      * 满意再走现有 expandManhuaWriterPack 付费链路。
@@ -10199,9 +10226,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           countManhuaWriterTrialToday,
           deleteManhuaWriterTrialUse,
           findManhuaWriterTrialByChargeKey,
+          fingerprintManhuaWriterTemplateAddon,
           logManhuaWriterTrialUse,
           parseManhuaWriterTrialDraft,
           resolveManhuaWriterTrialGate,
+          saveManhuaWriterTrialResult,
           sanitizeManhuaWriterTrialInput,
         } = await import("./services/manhuaWriterTrial.js");
 
@@ -10241,7 +10270,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             publicTemplateId: input.publicTemplateId,
             topic: trialInput.topic || trialInput.brief,
           });
-        } catch {
+        } catch (err) {
+          if (err instanceof Error && err.message === "试写额度数据库暂不可用") {
+            throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: "试写额度暂不可用，请稍后重试；本次未提交生成" });
+          }
           throw new TRPCError({
             code: "CONFLICT",
             message: "这次试写已经生成过了，请换个题材或补充条件再试",
@@ -10291,52 +10323,58 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           });
         }
 
-        // 两版并行：套模板版 vs 无模板对照版；模型通道与正式扩写同一条，
-        // 但强制最低档（excellent）+ 恒 1 集——试写是「看差异」，不是免费扩写
+        // 先写无模板底稿，再以该稿做模板限定改写；两稿差异才可归因于本次模板操作。
+        // 仍是原有两次最低档调用，恒 1 集；失败退还免费额度。
         const { runManhuaWriterExpand } = await import("./services/manhuaWriterExpandRun.js");
-        const promptWith = buildManhuaWriterTrialPrompt({
-          topic: trialInput.topic,
-          brief: trialInput.brief,
-          templateAddon,
-        });
         const promptControl = buildManhuaWriterTrialPrompt({
           topic: trialInput.topic,
           brief: trialInput.brief,
           templateAddon: "",
         });
-        let withRaw = "";
-        let controlRaw = "";
+        let withDraft;
+        let controlDraft;
         try {
-          [withRaw, controlRaw] = await Promise.all([
-            runManhuaWriterExpand({ prompt: promptWith, tier: "excellent", episodeCount: 1 }),
-            runManhuaWriterExpand({ prompt: promptControl, tier: "excellent", episodeCount: 1 }),
-          ]);
+          const controlRaw = await runManhuaWriterExpand({ prompt: promptControl, tier: "excellent", episodeCount: 1 });
+          controlDraft = parseManhuaWriterTrialDraft(controlRaw);
+          if (!controlDraft) throw new Error("对照稿结构不完整");
+          const promptWith = buildManhuaWriterTrialPrompt({
+            topic: trialInput.topic,
+            brief: trialInput.brief,
+            templateAddon,
+            controlDraft,
+          });
+          const withRaw = await runManhuaWriterExpand({ prompt: promptWith, tier: "excellent", episodeCount: 1 });
+          withDraft = parseManhuaWriterTrialDraft(withRaw);
+          if (!withDraft || withDraft.beats.length !== controlDraft.beats.length) {
+            throw new Error("模板改写结构不完整");
+          }
         } catch (err) {
           await refundTrialSlot();
-          const msg = err instanceof Error ? err.message : String(err);
           throw new TRPCError({
             code: "SERVICE_UNAVAILABLE",
-            message: `模板试写暂时不可用：${msg.slice(0, 200)}（本次不计入额度）`,
-          });
-        }
-        const withDraft = parseManhuaWriterTrialDraft(withRaw);
-        const controlDraft = parseManhuaWriterTrialDraft(controlRaw);
-        if (!withDraft || !controlDraft) {
-          // 解析失败退占位：模型没交出可对比的两版，就不该消耗用户额度
-          await refundTrialSlot();
-          throw new TRPCError({
-            code: "INTERNAL_SERVER_ERROR",
-            message: "试写结果不完整，请再试一次（本次不计入额度）",
+            message: "模板试写未生成完整对比，请重试（本次不计入额度）",
           });
         }
 
-        // 完整商业卡零下发：浏览器只拿匿名回执 + 两版精简稿
-        return {
+        // 完整商业卡零下发；两版精简稿先与免费额度流水同存，响应丢失时可恢复。
+        const result = {
+          input: { topic: trialInput.topic, brief: trialInput.brief, publicTemplateId: input.publicTemplateId },
           withTemplate: withDraft,
           control: controlDraft,
           appliedTemplate: resolved.appliedTemplate,
+          templateFingerprint: fingerprintManhuaWriterTemplateAddon(templateAddon),
           trialsLeftToday: Math.max(0, gate.trialsLeft - (isAdminUser ? 0 : 1)),
         };
+        try {
+          await saveManhuaWriterTrialResult({ userId, chargeKey, result });
+        } catch {
+          await refundTrialSlot();
+          throw new TRPCError({
+            code: "SERVICE_UNAVAILABLE",
+            message: "试写结果保存失败，请重试（本次不计入额度）",
+          });
+        }
+        return result;
       }),
 
     /**

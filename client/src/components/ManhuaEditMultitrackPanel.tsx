@@ -51,6 +51,8 @@ import {
 import ManhuaDeliveryEditSection from "@/components/ManhuaDeliveryEditSection";
 
 type Props = {
+  compactLayout?: boolean;
+  segmentGroups?: Array<{ index: number; durationSec: number; shotIndexes: number[] }>;
   roughClips: ManhuaRoughCutClip[];
   shots: ManhuaWorkbenchShot[];
   stillIndexes: Set<number>;
@@ -156,6 +158,8 @@ function TrackRow({
 }
 
 export default function ManhuaEditMultitrackPanel({
+  compactLayout = false,
+  segmentGroups,
   roughClips,
   shots,
   stillIndexes,
@@ -246,8 +250,40 @@ export default function ManhuaEditMultitrackPanel({
   const activeVersions = activeQc?.clipBlockId
     ? clipVersionsByBlockId?.[activeQc.clipBlockId]
     : undefined;
+  const adoptedVersionUrl = activeVersions?.activeUrl || activeVersions?.urls[0];
+  const alternateVersionUrl = activeVersions?.urls.find((url) => url !== adoptedVersionUrl);
 
   const activeClip = roughClips.find((c) => c.shotIndex === activeShotIndex);
+  const sourceSegmentByShot = new Map<number, number>();
+  segmentGroups?.forEach((segment) => segment.shotIndexes.forEach((shotIndex) => {
+    if (!sourceSegmentByShot.has(shotIndex)) sourceSegmentByShot.set(shotIndex, segment.index);
+  }));
+  // 按真实粗剪顺序切成连续段。同一来源段被跨段重排时会显示多个段块，避免时间线谎称仍只有四段。
+  const segmentCards: Array<{ sourceIndex: number; shots: ManhuaRoughCutClip[]; durationSec: number; mediaUrl?: string; active: boolean; ready: boolean }> = [];
+  roughClips.forEach((clip, order) => {
+    const sourceIndex = sourceSegmentByShot.get(clip.shotIndex) ?? order + 1;
+    const last = segmentCards[segmentCards.length - 1];
+    const card = last?.sourceIndex === sourceIndex ? last : {
+      sourceIndex,
+      shots: [],
+      durationSec: 0,
+      mediaUrl: undefined,
+      active: false,
+      ready: false,
+    };
+    if (card !== last) segmentCards.push(card);
+    card.shots.push(clip);
+    const trim = clampFineCut(clip.durationSec, fineCutByShot[clip.shotIndex] ?? defaultFineCut(clip.durationSec));
+    card.durationSec += trim.outSec - trim.inSec;
+    const outputUrl = shotMedia.find((row) => row.shotIndex === clip.shotIndex)?.outputUrl;
+    card.mediaUrl ||= outputUrl || undefined;
+    card.active ||= clip.shotIndex === activeShotIndex;
+    card.ready ||= Boolean(outputUrl);
+  });
+  const selectedSegment = segmentCards.find((segment) => segment.active) || segmentCards[0];
+  const selectedSegmentMedia = selectedSegment?.shots
+    .map((clip) => shotMedia.find((row) => row.shotIndex === clip.shotIndex)?.outputUrl)
+    .find((url): url is string => Boolean(url));
   const activeTrim = activeClip
     ? clampFineCut(
         activeClip.durationSec,
@@ -286,18 +322,18 @@ export default function ManhuaEditMultitrackPanel({
       data-manhua-panel="edit-multitrack"
       className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto p-3 text-sm [&_button]:min-h-8 [&_button]:text-sm [&_label]:text-sm [&_p]:text-sm"
     >
-      <header data-manhua-edit-overview className="flex shrink-0 flex-wrap items-center justify-between gap-4 rounded-2xl border border-white/12 bg-white/[0.03] p-4">
+      <header data-manhua-edit-overview className={`flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/12 bg-white/[0.03] ${compactLayout ? "p-2.5" : "p-4"}`}>
         <div>
           <h1 className="flex items-center gap-1.5 text-lg font-semibold text-white/90">
             <Scissors className="h-4 w-4 text-violet-200" />
             成片剪辑台
             <span className="text-sm font-normal text-white/40">
-              {roughClips.length ? `约 ${totalSec}s · ${roughClips.length}镜` : "暂无剪辑计划 · 0镜"}
+              {segmentCards.length ? `约 ${totalSec}s · ${segmentCards.length}个连续段块` : "暂无剪辑计划 · 0段"}
             </span>
           </h1>
-          <p className="mt-1 max-w-xl text-sm leading-relaxed text-white/40">
+          {!compactLayout ? <p className="mt-1 max-w-xl text-sm leading-relaxed text-white/40">
             先看本集片段顺序，再调整剪辑、画面与字幕。生成当前版本时保留旧成片。
-          </p>
+          </p> : null}
         </div>
         <div data-manhua-edit-primary-actions className="flex flex-wrap items-center gap-2">
           {onGenerateCurrentVersion ? <button type="button" data-manhua-edit-generate-current disabled={factoryBusy || !clipIndexes.size} onClick={onGenerateCurrentVersion} className="min-h-11 rounded-xl border border-violet-300/50 bg-violet-500/30 px-4 py-2 text-sm font-semibold text-violet-50 disabled:opacity-40">{factoryBusy ? "正在处理…" : `生成成片（当前版本${currentVersionCredits == null ? "" : ` · ${currentVersionCredits}积分`}）`}</button> : null}
@@ -319,57 +355,74 @@ export default function ManhuaEditMultitrackPanel({
       <section data-manhua-edit-timeline aria-label="本集成片时间线" className="shrink-0 rounded-2xl border border-white/12 bg-white/[0.025] p-3">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-base font-semibold text-white/90">本集片段时间线</h2>
-          <p className="text-sm text-white/45">{roughClips.length} 镜 · 约 {totalSec}s · 点选片段后可裁切和排序</p>
+          <p className="text-sm text-white/45">{segmentCards.length} 段 · 约 {totalSec}s · 点选片段后在剪辑工具中细调</p>
         </div>
-      <div data-manhua-edit-clip-strip className="flex min-w-0 gap-2 overflow-x-auto pb-2">
-        {roughClips.map((clip, index) => {
-          const media = shotMedia.find((row) => row.shotIndex === clip.shotIndex);
-          const on = clip.shotIndex === activeShotIndex;
-          return (
-            <button
-              key={`clip-card-${clip.shotIndex}`}
-              type="button"
-              data-manhua-edit-clip-card={clip.shotIndex}
-              data-manhua-edit-clip-active={on ? "true" : "false"}
-              onClick={() => onSelectShot?.(clip.shotIndex)}
-              className={`group flex min-w-[184px] max-w-[220px] flex-1 items-center overflow-hidden rounded-xl border text-left transition ${
-                on
-                  ? "border-violet-400/60 bg-violet-500/10 shadow-lg"
-                  : "border-white/12 bg-white/[0.03] hover:border-white/25"
-              }`}
-            >
-              <div className="relative h-16 w-20 shrink-0 overflow-hidden bg-black/45">
-                {media?.outputUrl ? (
-                  <video
-                    src={media.outputUrl}
-                    muted
-                    preload="metadata"
-                    className="h-full w-full object-cover transition group-hover:scale-[1.02]"
-                  />
-                ) : (
-                  <div className="flex h-full items-center justify-center px-1 text-center text-xs text-white/35">待生成片段</div>
-                )}
-                <span className="absolute left-1 top-1 rounded-full bg-black/60 px-1.5 py-0.5 text-[10px] font-semibold text-white">
-                  {index + 1}
-                </span>
-              </div>
-              <div className="flex min-w-0 flex-1 items-center justify-between gap-2 px-2 py-1.5">
-                <div className="min-w-0">
-                  <div className="truncate text-xs font-semibold text-white/90">片段 {String(index + 1).padStart(2, "0")}</div>
-                  <div className="mt-0.5 text-[11px] text-white/45">镜 {clip.shotIndex} · {clip.durationSec}s</div>
-                </div>
-                <span className={`h-2.5 w-2.5 rounded-full ${clipIndexes.has(clip.shotIndex) ? "bg-emerald-400" : "bg-white/20"}`} />
-              </div>
-            </button>
-          );
-        })}
-        {!roughClips.length ? (
+      <div data-manhua-edit-segment-strip className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        {segmentCards.map((segment, order) => (
+          <button
+            key={`segment-card-${order}`}
+            type="button"
+            data-manhua-edit-segment-card={order + 1}
+            data-manhua-edit-source-segment={segment.sourceIndex}
+            data-manhua-edit-segment-active={segment.active ? "true" : "false"}
+            onClick={() => onSelectShot?.(segment.shots[0]!.shotIndex)}
+            className={`group flex min-w-0 items-center overflow-hidden rounded-xl border text-left transition ${segment.active ? "border-violet-400/60 bg-violet-500/10" : "border-white/12 bg-white/[0.03] hover:border-white/25"}`}
+          >
+            <div className="relative h-20 w-24 shrink-0 overflow-hidden bg-black/45">
+              {segment.mediaUrl ? <video src={segment.mediaUrl} muted preload="metadata" className="h-full w-full object-cover" /> : <div className="flex h-full items-center justify-center px-1 text-center text-xs text-white/35">待生成片段</div>}
+            </div>
+            <div className="min-w-0 flex-1 px-2 py-1.5">
+              <div className="truncate text-xs font-semibold text-white/90">片段 {String(order + 1).padStart(2, "0")} · 来源第 {segment.sourceIndex} 段</div>
+              <div className="mt-1 text-[11px] text-white/45">{Math.round(segment.durationSec * 10) / 10}s · {segment.shots.length} 镜</div>
+              <div className={`mt-1 text-[11px] ${segment.ready ? "text-emerald-300" : "text-white/35"}`}>{segment.ready ? "源镜有画面 · 待合成排序" : "源镜待生成"}</div>
+            </div>
+          </button>
+        ))}
+        {!segmentCards.length ? (
           <div className="flex min-h-36 min-w-full items-center justify-center rounded-2xl border border-dashed border-white/15 text-sm text-white/40">
             尚无片段，请先完成分镜成片
           </div>
         ) : null}
       </div>
       </section>
+
+      {selectedSegment ? <section data-manhua-edit-current-segment aria-label="当前片段工作区" className="grid min-h-[280px] min-w-0 flex-1 gap-3 rounded-2xl border border-white/12 bg-black/20 p-3 lg:grid-cols-[minmax(0,1.6fr)_minmax(270px,0.7fr)]">
+        <div className="flex min-h-0 min-w-0 flex-col">
+          <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="text-sm font-semibold text-white/85">当前片段 · 来源第 {selectedSegment.sourceIndex} 段</h2>
+            <span className="text-xs text-white/45">{selectedSegment.shots.length} 镜 · {Math.round(selectedSegment.durationSec * 10) / 10}s</span>
+          </div>
+          <div className="flex min-h-[190px] flex-1 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-[#070b11]">
+            {selectedSegmentMedia ? <video key={selectedSegmentMedia} src={selectedSegmentMedia} controls playsInline preload="metadata" className="h-full max-h-[48vh] w-full object-contain" aria-label={`来源第 ${selectedSegment.sourceIndex} 段已生成画面预览`} /> : <div className="px-5 text-center text-sm text-white/45">这段还没有可播放的源画面。生成后会在这里预览，已保存的镜头顺序和剪辑点保留。</div>}
+          </div>
+          {selectedSegmentMedia ? <p className="mt-2 text-[11px] text-white/45">预览的是本段已生成源片；剪辑顺序、转场和字幕以「生成成片」后的当前版本为准。</p> : null}
+        </div>
+        <div className="flex min-h-0 min-w-0 flex-col rounded-xl border border-white/10 bg-white/[0.025] p-3">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-white/85">本段镜头与进出点</h3>
+            <button type="button" onClick={() => setActiveDrawer("cut")} className="rounded border border-white/15 px-2 py-1 text-xs text-white/65">打开剪辑工具</button>
+          </div>
+          <div className="mt-2 min-h-0 flex-1 space-y-1 overflow-y-auto">
+            {selectedSegment.shots.map((clip) => {
+              const trim = clampFineCut(clip.durationSec, fineCutByShot[clip.shotIndex] ?? defaultFineCut(clip.durationSec));
+              return <button key={clip.shotIndex} type="button" onClick={() => onSelectShot?.(clip.shotIndex)} data-manhua-edit-segment-shot={clip.shotIndex} className={`flex w-full items-center justify-between gap-2 rounded-lg border px-2 py-1.5 text-left ${clip.shotIndex === activeShotIndex ? "border-violet-300/45 bg-violet-500/15 text-white" : "border-white/10 text-white/65 hover:bg-white/[0.04]"}`}>
+                <span className="text-xs font-medium">镜 {String(clip.shotIndex).padStart(2, "0")}</span>
+                <span className="text-[11px] tabular-nums text-white/50">{trim.inSec.toFixed(1)}–{trim.outSec.toFixed(1)}s</span>
+              </button>;
+            })}
+          </div>
+          {activeClip && activeTrim && selectedSegment.shots.some((clip) => clip.shotIndex === activeClip.shotIndex) ? <div className="mt-2 grid grid-cols-2 gap-2 border-t border-white/10 pt-2">
+            {(["inSec", "outSec"] as const).map((edge) => <div key={edge} className="rounded-lg border border-white/10 p-2">
+              <div className="text-[11px] text-white/50">{edge === "inSec" ? "入点" : "出点"}</div>
+              <div className="mt-1 flex items-center justify-between gap-1">
+                <button type="button" aria-label={`${edge === "inSec" ? "入点" : "出点"}减0.5秒`} onClick={() => nudgeTrim(edge, -0.5)} className="rounded border border-white/15 px-1.5 text-xs">−</button>
+                <span className="text-xs tabular-nums text-white/80">{activeTrim[edge].toFixed(1)}s</span>
+                <button type="button" aria-label={`${edge === "inSec" ? "入点" : "出点"}加0.5秒`} onClick={() => nudgeTrim(edge, 0.5)} className="rounded border border-white/15 px-1.5 text-xs">+</button>
+              </div>
+            </div>)}
+          </div> : <p className="mt-2 text-xs text-white/40">选中本段镜头即可调整进出点。</p>}
+        </div>
+      </section> : null}
 
       <nav data-manhua-edit-tools aria-label="剪辑工具抽屉" className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4">
         {[["cut", "剪辑工具"], ["effects", "特效与滤镜"], ["subtitles", "转场与字幕"], ["export", "导出设置"]].map(([id, label]) => (
@@ -398,6 +451,13 @@ export default function ManhuaEditMultitrackPanel({
 
       <div id="manhua-edit-drawer-cut" data-manhua-edit-drawer="cut" hidden={activeDrawer !== "cut"} className="shrink-0 rounded-xl border border-white/15 bg-black/25 p-3">
         <h3 className="text-sm font-semibold text-white/90">剪辑工具</h3>
+        <div data-manhua-edit-clip-strip className="mt-2 flex min-w-0 gap-2 overflow-x-auto pb-2">
+          {roughClips.map((clip) => (
+            <button key={clip.shotIndex} type="button" data-manhua-edit-clip-card={clip.shotIndex} data-manhua-edit-clip-active={clip.shotIndex === activeShotIndex ? "true" : "false"} onClick={() => onSelectShot?.(clip.shotIndex)} className="min-w-28 rounded-lg border border-white/15 px-2 py-1 text-left text-xs text-white/75">
+              镜 {clip.shotIndex} · {clip.durationSec}s
+            </button>
+          ))}
+        </div>
         <div className="space-y-3 pt-2">
       {/* 细剪 */}
       <div
@@ -712,7 +772,24 @@ export default function ManhuaEditMultitrackPanel({
       <div id="manhua-edit-drawer-effects" data-manhua-edit-drawer="effects" hidden={activeDrawer !== "effects"} className="shrink-0 rounded-xl border border-white/15 bg-black/25 p-3">
         <h3 className="text-sm font-semibold text-white/90">特效与滤镜</h3>
         <div className="space-y-3 pt-2">
-<p className="text-sm text-white/55">已有片段可提交局部画面编辑，原片保留。独立滤镜、调色与特效参数尚未接通，不会自动作用于成片。</p>
+          <p className="text-sm text-white/55">选中片段后可局部修改画面；编辑结果回来后，在这里并排看当前采用版与另一版本，再决定采用哪版。独立滤镜和调色参数尚未接通。</p>
+          {adoptedVersionUrl ? (
+            <div data-manhua-effect-preview className="grid min-w-0 gap-2 lg:grid-cols-2">
+              <div className="min-w-0 rounded-lg border border-emerald-300/25 bg-emerald-500/[0.06] p-2">
+                <p className="mb-1 text-sm font-semibold text-emerald-100">当前采用版</p>
+                <video controls preload="metadata" src={adoptedVersionUrl} className="aspect-video max-h-56 w-full rounded bg-black object-contain" />
+              </div>
+              {alternateVersionUrl ? (
+                <div className="min-w-0 rounded-lg border border-white/15 bg-white/[0.03] p-2">
+                  <p className="mb-1 text-sm font-semibold text-white/80">另一版本</p>
+                  <video controls preload="metadata" src={alternateVersionUrl} className="aspect-video max-h-56 w-full rounded bg-black object-contain" />
+                  {activeQc?.clipBlockId && onSelectClipVersion ? (
+                    <button type="button" data-manhua-effect-adopt-version disabled={factoryBusy} onClick={() => onSelectClipVersion(activeQc.clipBlockId!, alternateVersionUrl)} className="mt-2 rounded border border-cyan-300/35 bg-cyan-500/15 px-2 py-1 text-sm font-semibold text-cyan-50 disabled:opacity-40">采用此版并重新质检</button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
             {activeQc?.clipBlockId && activeQc.gate !== "missing" && onVideoEditClip ? (
               <div className="mt-2 rounded-md border border-cyan-400/20 bg-cyan-500/[0.06] p-2">
                 <label className="block text-sm font-semibold text-cyan-50/85">

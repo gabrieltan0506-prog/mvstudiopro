@@ -3992,7 +3992,7 @@ export default function ManhuaScriptWorkbench({
       selectPhase(nextCta.targetPhase);
       if (!writerPackReady || !onConfirmOutline) {
         toast.error("还差一步", {
-          description: "请先在「改题材」扩写或导入剧本，再确认大纲",
+          description: "请先在「编剧」扩写或导入剧本，再确认大纲",
         });
         return;
       }
@@ -4232,6 +4232,17 @@ export default function ManhuaScriptWorkbench({
           本仓有过误点烧掉一整批积分（曾清掉 18 张）的事故，
           双重确认拦的是点下去之后，颜色分组拦的是**点错本身**。
         */}
+        <details
+          key={`tools-${activePhase}`}
+          data-manhua-workspace-tools
+          open={!immersive || activePhase === "outline"}
+          className="min-w-0 shrink-0"
+        >
+          {immersive && activePhase !== "outline" ? (
+            <summary className="cursor-pointer rounded-lg border border-white/15 px-3 py-1.5 text-[11px] text-white/70">
+              更多制作工具
+            </summary>
+          ) : null}
         <div
           data-manhua-toolbar-cluster
           className="mx-auto flex flex-wrap items-center justify-center gap-1.5 [&_[data-manhua-action-cost=spend]]:ring-1 [&_[data-manhua-action-cost=spend]]:ring-amber-300/35 [&_[data-manhua-action-cost=spend]]:ring-offset-1 [&_[data-manhua-action-cost=spend]]:ring-offset-[#0a121c]"
@@ -4820,9 +4831,10 @@ export default function ManhuaScriptWorkbench({
             </Popover>
           )}
         </div>
+        </details>
       </div>
 
-      <div
+      {(activePhase !== "storyboard" && activePhase !== "edit" && activePhase !== "assets") ? <div
         data-manhua-draft-retention-hint
         className={
           // 沉浸分镜把高度留给三栏画布；提示缩成单行
@@ -4833,7 +4845,7 @@ export default function ManhuaScriptWorkbench({
         title={MANHUA_DRAFT_RETENTION_HINT_ZH}
       >
         {MANHUA_DRAFT_RETENTION_HINT_ZH}
-      </div>
+      </div> : null}
       {factoryBusy ? (
         <div
           data-manhua-status="running"
@@ -4921,7 +4933,7 @@ export default function ManhuaScriptWorkbench({
       <div
         data-manhua-ashuo-step-bar
         data-manhua-step-bar-phase={activePhase}
-        className="flex shrink-0 flex-wrap items-center gap-2 border-b border-white/10 bg-[#0a121c] px-3 py-2"
+        className={`${activePhase === "storyboard" || activePhase === "edit" ? "hidden" : "flex"} shrink-0 flex-wrap items-center gap-2 border-b border-white/10 bg-[#0a121c] px-3 py-2`}
       >
         <div className="min-w-0 flex-1">
           <div
@@ -4930,7 +4942,7 @@ export default function ManhuaScriptWorkbench({
           >
             {activePhase === "final" ? "终审与交付" : activePhase === "edit" ? "成片剪辑台" : nextCta.stepTitleZh}
           </div>
-          <p className="mh-hint mt-0.5 text-[11px] leading-snug text-white/50">{activePhase === "final" ? "核对当前剪辑、质检结果，再选择范围生成交付包" : activePhase === "edit" ? "调整本集片段后，生成当前版本；旧成片保留" : nextCta.hintZh}</p>
+          {activePhase !== "assets" ? <p className="mh-hint mt-0.5 text-[11px] leading-snug text-white/50">{activePhase === "final" ? "核对当前剪辑、质检结果，再选择范围生成交付包" : activePhase === "edit" ? "调整本集片段后，生成当前版本；旧成片保留" : nextCta.hintZh}</p> : null}
         </div>
         <button
           type="button"
@@ -5107,15 +5119,17 @@ export default function ManhuaScriptWorkbench({
       ) : null}
       {/* 阻断卡集中显示：不藏提示、不替用户点按钮，只把「卡着几条、先解哪条、点哪跳去修」说清 */}
       {mainTask.blocked && activePhase !== "final" ? (
-        <div
+        <details
+          key={`blockers-${activePhase}`}
+          open={activePhase !== "storyboard" && activePhase !== "edit" && activePhase !== "assets"}
           data-manhua-blocker-card
           data-manhua-blocker-count={mainTask.blockers.length}
           className="shrink-0 border-b border-rose-300/25 bg-rose-500/[0.07] px-3 py-2"
         >
-          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <summary className="flex cursor-pointer flex-wrap items-baseline gap-x-2 gap-y-0.5">
             <span className="text-[12px] font-bold text-rose-50">{mainTask.headlineZh}</span>
             <span className="mh-hint text-[10px] text-rose-50/70">{mainTask.hintZh}</span>
-          </div>
+          </summary>
           <ul className="mt-1.5 grid gap-1 sm:grid-cols-2">
             {mainTask.blockers.map((issue) => (
               <li key={issue.id}>
@@ -5148,7 +5162,7 @@ export default function ManhuaScriptWorkbench({
               另有 {mainTask.advisories.length} 条提醒（不挡出片）：{mainTask.advisories[0]!.text}
             </p>
           ) : null}
-        </div>
+        </details>
       ) : null}
 
       {/* 0917 线上实测：3D 模型面板的「绑骨」在任何阶段都可点，弹层却只在资产阶段挂载 → 分镜阶段点了静默无反应。挪到阶段分支外，与阶段无关。 */}
@@ -5295,7 +5309,7 @@ export default function ManhuaScriptWorkbench({
             </details>
             {!outlineConfirmed && !writerPackReady ? (
               <p className="mt-4 text-[11px] text-amber-100/80">
-                请先在「改题材」扩写或导入剧本，再回来确认大纲。
+                请先在「编剧」扩写或导入剧本，再回来确认大纲。
               </p>
             ) : null}
             <div className="mt-5 flex justify-end" data-manhua-phase-footer-action="outline">
@@ -8367,11 +8381,17 @@ export default function ManhuaScriptWorkbench({
           data-manhua-phase-panel="edit"
           className="flex min-h-0 flex-1 flex-col overflow-hidden border-t border-white/5"
         >
-          <div data-manhua-edit-header className="flex items-center justify-between gap-3 border-b border-white/10 p-3 text-xs">
+          {fineCutInCanvas || (!compactUi && onOpenFineCutCanvas) ? <div data-manhua-edit-header className="flex items-center justify-between gap-3 border-b border-white/10 p-3 text-xs">
             <span>第{focusEpisode}集 · {fineCutInCanvas ? "自由画布精剪" : "工厂粗剪与质检"} · 沿用本集素材与采用版本</span>
-            {fineCutInCanvas ? <button type="button" onClick={onReturnFineCutReview} className="rounded border px-3 py-1">返回工厂终审</button> : !compactUi && onOpenFineCutCanvas && <button type="button" onClick={onOpenFineCutCanvas} className="rounded border px-3 py-1">到自由画布精剪</button>}
-          </div>
+            {fineCutInCanvas ? <button type="button" onClick={onReturnFineCutReview} className="rounded border px-3 py-1">返回工厂终审</button> : <button type="button" onClick={onOpenFineCutCanvas} className="rounded border px-3 py-1">到自由画布精剪</button>}
+          </div> : null}
           <ManhuaEditMultitrackPanel
+            compactLayout={immersive}
+            segmentGroups={segments.map((segment) => ({
+              index: segment.index,
+              durationSec: segment.durationSec,
+              shotIndexes: segment.shots.map((shot) => shot.index),
+            }))}
             editTransition={manhuaEditTransitionOf(editTransitionByEpisode, focusEpisode)}
             onEditTransitionChange={onEditTransitionChange ? next => onEditTransitionChange(focusEpisode, next) : undefined}
             onGenerateCurrentVersion={onGenerateCurrentVersion ? () => onGenerateCurrentVersion(focusEpisode) : undefined}

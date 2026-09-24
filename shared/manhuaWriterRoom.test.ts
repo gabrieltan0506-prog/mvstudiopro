@@ -7,6 +7,7 @@ import {
   importManhuaWriterPackFromText,
   isPlaceholderSeriesTitle,
   parseManhuaWriterPack,
+  writerPackHasCompletePaidEpisodes,
   writerPackLooksReady,
   spliceManhuaWriterPackFromEpisode,
 } from "./manhuaWriterRoom";
@@ -52,6 +53,15 @@ const SAMPLE = `## 系列标题
 `;
 
 describe("manhuaWriterRoom", () => {
+  it("付费扩写只接受真实且非空的每集正文和片尾钩子", () => {
+    const good = SAMPLE.replace("昔日盟友举杯如常。", "昔日盟友举杯如常，她发现杯底藏着母亲留下的密令。")
+      .replace("她故意露出破绽。", "她故意露出破绽，引诱密探在众人眼前交出伪造的账册。")
+      .replace("朝堂哗然。", "朝堂哗然，守门人竟在此刻锁上大门阻断她的退路。");
+    expect(writerPackHasCompletePaidEpisodes(parseManhuaWriterPack(good, 3), 3)).toBe(true);
+    expect(writerPackHasCompletePaidEpisodes(parseManhuaWriterPack(good.replace(/## 第2集[\s\S]*?(?=## 第3集)/, ""), 3), 3)).toBe(false);
+    expect(writerPackHasCompletePaidEpisodes(parseManhuaWriterPack(good.replace("她踏入旧府，昔日盟友举杯如常，她发现杯底藏着母亲留下的密令。", ""), 3), 3)).toBe(false);
+    expect(writerPackHasCompletePaidEpisodes(parseManhuaWriterPack(good.replace("幕后之人，竟唤她旧名。", "谁？"), 3), 3)).toBe(false);
+  });
   it("clamps episode count 2–6", () => {
     expect(clampWriterEpisodeCount(1)).toBe(2);
     expect(clampWriterEpisodeCount(3)).toBe(3);

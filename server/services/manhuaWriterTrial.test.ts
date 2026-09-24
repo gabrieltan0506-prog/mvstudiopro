@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   MANHUA_WRITER_TRIAL_DAILY_LIMIT,
   buildManhuaWriterTrialPrompt,
+  fingerprintManhuaWriterTemplateAddon,
   parseManhuaWriterTrialDraft,
   resolveManhuaWriterTrialGate,
   sanitizeManhuaWriterTrialInput,
@@ -62,6 +63,11 @@ describe("sanitizeManhuaWriterTrialInput", () => {
 });
 
 describe("buildManhuaWriterTrialPrompt", () => {
+  it("模板内容改动后指纹改变，旧试写不能误用于付费扩写", () => {
+    const oldFingerprint = fingerprintManhuaWriterTemplateAddon("悲愤节拍 v1");
+    expect(oldFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(fingerprintManhuaWriterTemplateAddon("悲愤节拍 v2")).not.toBe(oldFingerprint);
+  });
   it("套模板版包含 Skill 块；对照版不含", () => {
     const base = { topic: "权谋复仇", brief: "对手是旧盟友" };
     const withTpl = buildManhuaWriterTrialPrompt({ ...base, templateAddon: "能力简介：三拍反转" });
@@ -80,6 +86,21 @@ describe("buildManhuaWriterTrialPrompt", () => {
     expect(p).toContain("【节拍点】");
     expect(p).toContain("【开场钩子】");
     expect(p).toContain("300–600 字");
+  });
+
+  it("模板版以本次对照稿为唯一底稿，保留人物事件及节拍数量", () => {
+    const p = buildManhuaWriterTrialPrompt({
+      topic: "归来复仇", brief: "", templateAddon: "冲突递进",
+      controlDraft: {
+        logline: "她找回祖宅，却发现地契被偷换。",
+        beats: ["她潜入拍卖会。", "弟弟抬价。", "旧友交出钥匙。"],
+        openingHook: "灵堂里，她推门而入。",
+      },
+    });
+    expect(p).toContain("【唯一修改底稿】");
+    expect(p).toContain("她找回祖宅，却发现地契被偷换。");
+    expect(p).toContain("1. 她潜入拍卖会。");
+    expect(p).toContain("未受 Skill 影响的文字逐字保留");
   });
 });
 

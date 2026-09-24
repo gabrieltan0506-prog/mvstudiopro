@@ -780,9 +780,11 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
       const geometry = await page.$eval('[data-manhua-storyboard-workspace]', (workspace) => ({
         width: workspace.getBoundingClientRect().width,
         pageOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        shellOverflow: (() => { const shell = document.querySelector<HTMLElement>('#manhua-workbench-shell')!; return shell.scrollHeight - shell.clientHeight; })(),
       }));
       expect(geometry.width).toBeGreaterThan(width * 0.9);
       expect(geometry.pageOverflow).toBeLessThanOrEqual(2);
+      expect(geometry.shellOverflow, `${width}px 工作区仍靠整页滚动才能看到分镜`).toBeLessThanOrEqual(2);
       await page.evaluate(() => {
         window.scrollTo(0, 0);
         document.querySelectorAll<HTMLElement>("*").forEach((element) => {
