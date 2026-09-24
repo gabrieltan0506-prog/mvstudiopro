@@ -1111,10 +1111,10 @@
   min-height: 40px;
 }
 
-/* 分镜、资产和成片共用一行项目身份与阶段跳转；告警保留在下一行。 */
+/* 阶段与资产分类先占顶栏主轨，项目名和低频工具退到右侧。 */
 #manhua-workbench-shell.mh-redesign [data-manhua-product-header] {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 26ch) auto;
   gap: 8px;
   min-height: 34px;
   padding-block: 2px !important;
@@ -1122,29 +1122,27 @@
 
 #manhua-workbench-shell.mh-redesign [data-manhua-project-identity] {
   min-height: 28px;
-  max-width: none;
+  max-width: 26ch;
 }
 
 @media (min-width: 1200px) {
   #manhua-workbench-shell.mh-redesign [data-manhua-product-header] {
-    padding-right: 108px !important;
+    padding-right: 16px !important;
   }
-}
-
-#manhua-workbench-shell.mh-redesign[data-manhua-active-phase="assets"] [data-manhua-product-header] {
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-
-#manhua-workbench-shell.mh-redesign[data-manhua-active-phase="assets"] [data-manhua-product-header] [data-manhua-workflow-rail] {
-  grid-column: 1 / -1;
-  width: 100%;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-product-header] [data-manhua-workflow-rail] {
   min-height: 0;
+  width: 100%;
   padding: 0 !important;
   border: 0 !important;
   background: transparent !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-product-header] [data-manhua-phase-group] {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-product-header] [data-manhua-phase] {
@@ -1247,6 +1245,13 @@
   margin-inline: -4px;
   padding: 14px 4px 2px;
   background: linear-gradient(to bottom, rgb(255 253 248 / 0%), var(--mh-panel) 38%);
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-footer-action="assets"] {
+  margin: 0;
+  padding: 8px 18px;
+  border-top: 1px solid var(--mh-line);
+  background: var(--mh-panel);
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="assets"] [data-manhua-assets-surface] {
@@ -1510,6 +1515,12 @@ body:has(#manhua-workbench-shell) [data-pwa-install-button] {
 }
 
 @media (max-width: 900px) {
+  #manhua-workbench-shell.mh-redesign [data-manhua-product-header] {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  #manhua-workbench-shell.mh-redesign [data-manhua-product-header] [data-manhua-project-identity] {
+    display: none;
+  }
   #manhua-workbench-shell.mh-redesign [data-manhua-workflow-rail] {
     justify-content: flex-start;
     gap: 2px !important;

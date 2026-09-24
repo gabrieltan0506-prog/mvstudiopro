@@ -4063,6 +4063,48 @@ export default function ManhuaScriptWorkbench({
     >
       {/* 顶栏 */}
       <div data-manhua-product-header className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 px-3 py-1.5 md:px-4">
+        <nav data-manhua-workflow-rail data-manhua-ashuo-stepper aria-label="漫剧制作阶段" className="flex min-w-0 items-center gap-1 overflow-x-auto">
+          {workflowPhases.map((phase) => (
+            <div key={phase.id} data-manhua-phase-group={phase.id} className="flex shrink-0 items-center gap-1">
+              <button
+                type="button"
+                data-manhua-phase={phase.id}
+                data-manhua-phase-status={phase.complete ? "complete" : phase.current ? "current" : "pending"}
+                onClick={() => selectPhase(phase.id)}
+                title={phase.gapZh ? `${phase.label}：${phase.gapZh}` : phase.label}
+                className="inline-flex shrink-0 items-center rounded-lg px-2 py-1 text-[11px] font-semibold"
+              >
+                <span data-manhua-phase-badge aria-hidden="true" className="mr-1 inline-flex shrink-0 items-center justify-center rounded-full text-[9px]">
+                  {phase.complete ? "✓" : phase.index}
+                </span>
+                {phase.label}
+              </button>
+              {phase.id === "assets" && activePhase === "assets" ? (
+                <span data-manhua-quick-asset-upload className="flex shrink-0 items-center gap-1 border-l border-white/15 pl-1">
+                  <span role="tablist" aria-label="资产分类" data-manhua-asset-tabs className="flex items-center gap-1">
+                    {([ ["character", "人物"], ["scene", "场景"], ["prop", "道具"], ["wardrobe", "造型"] ] as const).map(([role, labelZh]) => {
+                      const roleGroups = buildManhuaAssetRoleGroups({ refs: customAssetRefs, assetCanon, role });
+                      const count = roleGroups.entityCount || roleGroups.imageCount;
+                      return <button key={role} type="button" role="tab" aria-selected={activeAssetRole === role}
+                        data-manhua-asset-tab={role} onClick={() => setActiveAssetRole(role)}
+                        className={`shrink-0 rounded-md px-2 py-1 text-[11px] font-semibold ${activeAssetRole === role ? "bg-cyan-500/25 text-cyan-50 ring-1 ring-cyan-300/45" : "text-white/55 hover:bg-white/[0.06] hover:text-white/80"}`}>
+                        {labelZh} ({count})
+                      </button>;
+                    })}
+                  </span>
+                  {onUploadCustomAssets ? <label data-manhua-action="add-asset" className="shrink-0 cursor-pointer rounded-md border border-emerald-300/45 px-2 py-1 text-[11px] font-semibold text-emerald-50" title="上传到当前资产分类">
+                    ＋新增
+                    <input type="file" accept="image/*" multiple className="hidden" onChange={(event) => {
+                      const files = event.target.files;
+                      if (files?.length) void onUploadCustomAssets(files, activeAssetRole);
+                      event.target.value = "";
+                    }} />
+                  </label> : null}
+                </span>
+              ) : null}
+            </div>
+          ))}
+        </nav>
         <div data-manhua-project-identity className="flex min-w-0 items-center gap-2">
           <Clapperboard className="h-4 w-4 shrink-0 text-cyan-300" />
           <div className="min-w-0">
@@ -4806,48 +4848,6 @@ export default function ManhuaScriptWorkbench({
           )}
         </div>
         </details>
-        <nav data-manhua-workflow-rail data-manhua-ashuo-stepper aria-label="漫剧制作阶段" className="flex min-w-0 items-center gap-1 overflow-x-auto">
-          {workflowPhases.map((phase) => (
-            <React.Fragment key={phase.id}>
-              <button
-                type="button"
-                data-manhua-phase={phase.id}
-                data-manhua-phase-status={phase.complete ? "complete" : phase.current ? "current" : "pending"}
-                onClick={() => selectPhase(phase.id)}
-                title={phase.gapZh ? `${phase.label}：${phase.gapZh}` : phase.label}
-                className="inline-flex shrink-0 items-center rounded-lg px-2 py-1 text-[11px] font-semibold"
-              >
-                <span data-manhua-phase-badge aria-hidden="true" className="mr-1 inline-flex shrink-0 items-center justify-center rounded-full text-[9px]">
-                  {phase.complete ? "✓" : phase.index}
-                </span>
-                {phase.label}
-              </button>
-              {phase.id === "assets" && activePhase === "assets" ? (
-                <span data-manhua-quick-asset-upload className="flex shrink-0 items-center gap-1 border-l border-white/15 pl-1">
-                  <span role="tablist" aria-label="资产分类" data-manhua-asset-tabs className="flex items-center gap-1">
-                    {([ ["character", "人物"], ["scene", "场景"], ["prop", "道具"], ["wardrobe", "造型"] ] as const).map(([role, labelZh]) => {
-                      const roleGroups = buildManhuaAssetRoleGroups({ refs: customAssetRefs, assetCanon, role });
-                      const count = roleGroups.entityCount || roleGroups.imageCount;
-                      return <button key={role} type="button" role="tab" aria-selected={activeAssetRole === role}
-                        data-manhua-asset-tab={role} onClick={() => setActiveAssetRole(role)}
-                        className={`shrink-0 rounded-md px-2 py-1 text-[11px] font-semibold ${activeAssetRole === role ? "bg-cyan-500/25 text-cyan-50 ring-1 ring-cyan-300/45" : "text-white/55 hover:bg-white/[0.06] hover:text-white/80"}`}>
-                        {labelZh} ({count})
-                      </button>;
-                    })}
-                  </span>
-                  {onUploadCustomAssets ? <label data-manhua-action="add-asset" className="shrink-0 cursor-pointer rounded-md border border-emerald-300/45 px-2 py-1 text-[11px] font-semibold text-emerald-50" title="上传到当前资产分类">
-                    ＋新增
-                    <input type="file" accept="image/*" multiple className="hidden" onChange={(event) => {
-                      const files = event.target.files;
-                      if (files?.length) void onUploadCustomAssets(files, activeAssetRole);
-                      event.target.value = "";
-                    }} />
-                  </label> : null}
-                </span>
-              ) : null}
-            </React.Fragment>
-          ))}
-        </nav>
       </div>
 
       {(activePhase !== "storyboard" && activePhase !== "edit" && activePhase !== "assets") ? <div
@@ -4888,8 +4888,8 @@ export default function ManhuaScriptWorkbench({
         </div>
       ) : null}
 
-      {/* 五个阶段已与项目身份同列，工作区从此处直接开始。 */}
-      <div
+      {/* 资产分类已接在顶部阶段旁，资产区直接承接实体卡。 */}
+      {activePhase !== "assets" ? <div
         data-manhua-ashuo-step-bar
         data-manhua-step-bar-phase={activePhase}
         className={`${activePhase === "storyboard" || activePhase === "edit" ? "hidden" : "flex"} shrink-0 flex-wrap items-center gap-2 border-b border-white/10 bg-[#0a121c] px-3 py-2`}
@@ -4901,7 +4901,7 @@ export default function ManhuaScriptWorkbench({
           >
             {activePhase === "final" ? "终审与交付" : activePhase === "edit" ? "成片剪辑台" : nextCta.stepTitleZh}
           </div>
-          {activePhase !== "assets" ? <p className="mh-hint mt-0.5 text-[11px] leading-snug text-white/50">{activePhase === "final" ? "核对当前剪辑、质检结果，再选择范围生成交付包" : activePhase === "edit" ? "调整本集片段后，生成当前版本；旧成片保留" : nextCta.hintZh}</p> : null}
+          <p className="mh-hint mt-0.5 text-[11px] leading-snug text-white/50">{activePhase === "final" ? "核对当前剪辑、质检结果，再选择范围生成交付包" : activePhase === "edit" ? "调整本集片段后，生成当前版本；旧成片保留" : nextCta.hintZh}</p>
         </div>
         <button
           type="button"
@@ -4950,7 +4950,7 @@ export default function ManhuaScriptWorkbench({
                   ? currentKeyartLabel
                   : nextCta.labelZh}
         </button> : null}
-      </div>
+      </div> : null}
 
       {activePhase === "final" ? (
         <div data-manhua-phase-panel="final" className="min-h-0 flex-1 overflow-y-auto p-3">
@@ -5310,7 +5310,7 @@ export default function ManhuaScriptWorkbench({
                 </div>
                 <p className="mh-hint mt-1 text-[11px] leading-5 text-white/45">
                   {assetCanon?.characters.length
-                    ? "以剧本人物表与系列场景池为准；使用顶部唯一主按钮「生成全部」出定妆与场景空镜。"
+                    ? "以剧本人物表与系列场景池为准；使用页底主按钮生成定妆与场景空镜。"
                     : "人物、场景、服装、道具分栏上传或生成，上传时先选分类，不设未归类池。"}
                   {customSummaryZh ? ` 已归类：${customSummaryZh}` : ""}
                 </p>
@@ -7687,7 +7687,7 @@ export default function ManhuaScriptWorkbench({
               ) : (
                 <div className="mt-1.5 flex flex-wrap items-center gap-2">
                   <p className="mh-hint text-[10px] text-white/40">
-                    尚未出设定图。使用顶部唯一主按钮「生成全部」；也可在当前分类新增参考资产。
+                    尚未出设定图。使用页底主按钮生成；也可在当前分类新增参考资产。
                   </p>
                 </div>
               )}
@@ -8261,7 +8261,8 @@ export default function ManhuaScriptWorkbench({
                 </div>
               </section>
             </div>
-            <div className="mt-5 flex justify-end" data-manhua-phase-footer-action="assets">
+            </div>
+            <div className="flex shrink-0 justify-end" data-manhua-phase-footer-action="assets">
               <button
                 type="button"
                 data-manhua-action="ashuo-step-generate"
@@ -8271,7 +8272,6 @@ export default function ManhuaScriptWorkbench({
               >
                 {nextCta.labelZh}
               </button>
-            </div>
             </div>
           </div>
         </div>
