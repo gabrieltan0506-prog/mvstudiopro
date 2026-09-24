@@ -3465,8 +3465,38 @@ export default function ManhuaScriptWorkbench({
                     {[activeShot.emotionZh, activeShot.microExpressionZh].filter(Boolean).join(" · ")}
                   </p>
                 ) : null}
+                {storyboardThreeColumn && onGenerateKeyartShot ? (
+                  <div data-manhua-shot-primary-action className="mt-2">
+                    <button type="button" data-manhua-action="generate-current-keyart"
+                      disabled={Boolean(factoryBusy) || shotSourceIsFallback}
+                      onClick={() => runCurrentKeyart()}
+                      className="min-h-10 w-full rounded-lg bg-violet-600 px-3 py-2 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-40">
+                      <span data-manhua-action="ashuo-step-generate" data-manhua-keyart-entry="step">
+                        {activeKeyart?.outputUrl || activeKeyart?.outputUrls?.length ? "重出当前镜静帧" : "生成当前镜静帧"}
+                      </span>
+                    </button>
+                    <p className="mt-1 text-[11px] text-white/50">仅当前镜；双档生成两张，分别计费</p>
+                  </div>
+                ) : null}
+                {onUpsertShotDescriptions ? <ManhuaShotDescriptionEditor
+                  key={`${focusEpisode}:${activeShot.index}:${shotParamFields.descriptionZh}`}
+                  shotIndex={activeShot.index}
+                  description={shotParamFields.descriptionZh}
+                  disabled={shotSourceIsFallback || Boolean(factoryBusy)}
+                  onApply={(index, description) => onUpsertShotDescriptions({ [index]: description })}
+                /> : <div data-manhua-shot-description className="mt-1.5">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-[9px] text-white/40">画面描述</span>
+                    <span className={`text-[9px] tabular-nums ${shotParamFields.overLimit ? "text-rose-200" : "text-white/35"}`}>
+                      {shotParamFields.descriptionLen}/{shotParamFields.descriptionLimit}
+                    </span>
+                  </div>
+                  <p className="mt-1 max-h-40 overflow-y-auto rounded-lg bg-black/20 p-2 text-sm leading-6 text-white/80">
+                    {shotParamFields.descriptionZh || "本镜还没有画面描述"}
+                  </p>
+                </div>}
                 {/* 对照图 01 右栏四个字段：时长 / 景别 / 机位运动 / 画面描述（0/200） */}
-                <dl data-manhua-shot-fields className="mt-3 grid grid-cols-1 gap-3">
+                <dl data-manhua-shot-fields className="mt-3 grid grid-cols-3 gap-2">
                   {(
                     [
                       ["镜头时长", shotParamFields.durationZh],
@@ -3494,40 +3524,6 @@ export default function ManhuaScriptWorkbench({
                 ) : null}
                 {onUpdateShotTiming && <ManhuaShotTimingEditor key={`${focusEpisode}:${activeShot.index}:${activeShot.durationSec}`} shotIndex={activeShot.index} durationSec={activeShot.durationSec}
                   disabled={shotSourceIsFallback || Boolean(factoryBusy)} onApply={onUpdateShotTiming} />}
-                {onUpsertShotDescriptions ? <ManhuaShotDescriptionEditor
-                  key={`${focusEpisode}:${activeShot.index}:${shotParamFields.descriptionZh}`}
-                  shotIndex={activeShot.index}
-                  description={shotParamFields.descriptionZh}
-                  disabled={shotSourceIsFallback || Boolean(factoryBusy)}
-                  onApply={(index, description) => onUpsertShotDescriptions({ [index]: description })}
-                /> : <div data-manhua-shot-description className="mt-1.5">
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className="text-[9px] text-white/40">画面描述</span>
-                    <span
-                      className={`text-[9px] tabular-nums ${
-                        shotParamFields.overLimit ? "text-rose-200" : "text-white/35"
-                      }`}
-                    >
-                      {shotParamFields.descriptionLen}/{shotParamFields.descriptionLimit}
-                    </span>
-                  </div>
-                  <p className="mt-1 max-h-40 overflow-y-auto rounded-lg bg-black/20 p-2 text-sm leading-6 text-white/80">
-                    {shotParamFields.descriptionZh || "本镜还没有画面描述"}
-                  </p>
-                </div>}
-                {storyboardThreeColumn && onGenerateKeyartShot ? (
-                  <div className="mt-4">
-                    <button type="button" data-manhua-action="generate-current-keyart"
-                      disabled={Boolean(factoryBusy) || shotSourceIsFallback}
-                      onClick={() => runCurrentKeyart()}
-                      className="min-h-11 w-full rounded-lg bg-violet-600 px-3 py-2 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-40">
-                      <span data-manhua-action="ashuo-step-generate" data-manhua-keyart-entry="step">
-                        {activeKeyart?.outputUrl || activeKeyart?.outputUrls?.length ? "重出当前镜静帧" : "生成当前镜静帧"}
-                      </span>
-                    </button>
-                    <p className="mt-1 text-xs text-white/50">仅当前镜；双档生成两张，分别计费</p>
-                  </div>
-                ) : null}
                 <details data-manhua-shot-advanced className="mt-3 border-t border-white/10 pt-2">
                   <summary className="cursor-pointer text-xs font-semibold text-white/60">专业参数 · 镜位、导演要求与特效</summary>
                   <div className="mt-2 space-y-3">
@@ -4061,6 +4057,31 @@ export default function ManhuaScriptWorkbench({
             {!segmentCapacityPlan.ok ? (
               <p role="alert" className="mt-1 text-xs text-rose-200">{segmentCapacityPlan.errorZh}</p>
             ) : null}
+          </div>
+        </div>
+        {/*
+          主操作簇居中(用户 0820:高频按钮别压在最右上角,挪到画面上方中间)。
+
+          花钱动作统一带 data-manhua-action-cost="spend"，样式上给一圈暖色描边，
+          与「对齐画布竖排」这类无害动作区分开 ——
+          本仓有过误点烧掉一整批积分（曾清掉 18 张）的事故，
+          双重确认拦的是点下去之后，颜色分组拦的是**点错本身**。
+        */}
+        <details
+          key={`tools-${activePhase}`}
+          data-manhua-workspace-tools
+          open={immersive ? undefined : true}
+          className="min-w-0 shrink-0"
+        >
+          {immersive ? (
+            <summary className="cursor-pointer rounded-lg border border-white/15 px-3 py-1.5 text-[11px] text-white/70">
+              更多制作工具
+            </summary>
+          ) : null}
+        <div
+          data-manhua-toolbar-cluster
+          className="mx-auto flex flex-wrap items-center justify-center gap-1.5 [&_[data-manhua-action-cost=spend]]:ring-1 [&_[data-manhua-action-cost=spend]]:ring-amber-300/35 [&_[data-manhua-action-cost=spend]]:ring-offset-1 [&_[data-manhua-action-cost=spend]]:ring-offset-[#0a121c]"
+        >
             <details data-manhua-project-settings>
               <summary className="cursor-pointer text-xs text-white/60">制作设置</summary>
             <div
@@ -4179,74 +4200,7 @@ export default function ManhuaScriptWorkbench({
               </div>
             ) : null}
             </details>
-            {immersive ? (
-              <div data-manhua-legacy-local-nav className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px]">
-                <button
-                  type="button"
-                  onClick={() => selectPhase("assets")}
-                  className={`rounded px-1.5 py-0.5 font-medium ${
-                    activePhase === "assets"
-                      ? "bg-cyan-500/25 text-cyan-50"
-                      : "text-white/55 hover:bg-white/10 hover:text-white/85"
-                  }`}
-                >
-                  本集资产
-                </button>
-                <span aria-hidden className="text-white/25">
-                  ｜
-                </span>
-                <button
-                  type="button"
-                  onClick={() => selectPhase("outline")}
-                  className={`rounded px-1.5 py-0.5 font-medium ${
-                    activePhase === "outline"
-                      ? "bg-cyan-500/25 text-cyan-50"
-                      : "text-white/55 hover:bg-white/10 hover:text-white/85"
-                  }`}
-                >
-                  本集剧本
-                </button>
-                <span aria-hidden className="text-white/25">
-                  ｜
-                </span>
-                <button
-                  type="button"
-                  onClick={() => selectPhase("storyboard")}
-                  className={`rounded px-1.5 py-0.5 font-medium ${
-                    activePhase === "storyboard"
-                      ? "bg-cyan-500/25 text-cyan-50"
-                      : "text-white/55 hover:bg-white/10 hover:text-white/85"
-                  }`}
-                >
-                  {dockCanvas ? "本集画布" : "视频结果"}
-                </button>
-              </div>
-            ) : null}
-          </div>
-        </div>
-        {/*
-          主操作簇居中(用户 0820:高频按钮别压在最右上角,挪到画面上方中间)。
 
-          花钱动作统一带 data-manhua-action-cost="spend"，样式上给一圈暖色描边，
-          与「对齐画布竖排」这类无害动作区分开 ——
-          本仓有过误点烧掉一整批积分（曾清掉 18 张）的事故，
-          双重确认拦的是点下去之后，颜色分组拦的是**点错本身**。
-        */}
-        <details
-          key={`tools-${activePhase}`}
-          data-manhua-workspace-tools
-          open={!immersive || activePhase === "outline"}
-          className="min-w-0 shrink-0"
-        >
-          {immersive && activePhase !== "outline" ? (
-            <summary className="cursor-pointer rounded-lg border border-white/15 px-3 py-1.5 text-[11px] text-white/70">
-              更多制作工具
-            </summary>
-          ) : null}
-        <div
-          data-manhua-toolbar-cluster
-          className="mx-auto flex flex-wrap items-center justify-center gap-1.5 [&_[data-manhua-action-cost=spend]]:ring-1 [&_[data-manhua-action-cost=spend]]:ring-amber-300/35 [&_[data-manhua-action-cost=spend]]:ring-offset-1 [&_[data-manhua-action-cost=spend]]:ring-offset-[#0a121c]"
-        >
           {factoryBusy && onStopFactory ? (
             <button
               type="button"
@@ -4832,6 +4786,48 @@ export default function ManhuaScriptWorkbench({
           )}
         </div>
         </details>
+        <nav data-manhua-workflow-rail data-manhua-ashuo-stepper aria-label="漫剧制作阶段" className="flex min-w-0 items-center gap-1 overflow-x-auto">
+          {workflowPhases.map((phase) => (
+            <React.Fragment key={phase.id}>
+              <button
+                type="button"
+                data-manhua-phase={phase.id}
+                data-manhua-phase-status={phase.complete ? "complete" : phase.current ? "current" : "pending"}
+                onClick={() => selectPhase(phase.id)}
+                title={phase.gapZh ? `${phase.label}：${phase.gapZh}` : phase.label}
+                className="inline-flex shrink-0 items-center rounded-lg px-2 py-1 text-[11px] font-semibold"
+              >
+                <span data-manhua-phase-badge aria-hidden="true" className="mr-1 inline-flex shrink-0 items-center justify-center rounded-full text-[9px]">
+                  {phase.complete ? "✓" : phase.index}
+                </span>
+                {phase.label}
+              </button>
+              {phase.id === "assets" && activePhase === "assets" ? (
+                <span data-manhua-quick-asset-upload className="flex shrink-0 items-center gap-1 border-l border-white/15 pl-1">
+                  <span role="tablist" aria-label="资产分类" data-manhua-asset-tabs className="flex items-center gap-1">
+                    {([ ["character", "人物"], ["scene", "场景"], ["prop", "道具"], ["wardrobe", "造型"] ] as const).map(([role, labelZh]) => {
+                      const roleGroups = buildManhuaAssetRoleGroups({ refs: customAssetRefs, assetCanon, role });
+                      const count = roleGroups.entityCount || roleGroups.imageCount;
+                      return <button key={role} type="button" role="tab" aria-selected={activeAssetRole === role}
+                        data-manhua-asset-tab={role} onClick={() => setActiveAssetRole(role)}
+                        className={`shrink-0 rounded-md px-2 py-1 text-[11px] font-semibold ${activeAssetRole === role ? "bg-cyan-500/25 text-cyan-50 ring-1 ring-cyan-300/45" : "text-white/55 hover:bg-white/[0.06] hover:text-white/80"}`}>
+                        {labelZh} ({count})
+                      </button>;
+                    })}
+                  </span>
+                  {onUploadCustomAssets ? <label data-manhua-action="add-asset" className="shrink-0 cursor-pointer rounded-md border border-emerald-300/45 px-2 py-1 text-[11px] font-semibold text-emerald-50" title="上传到当前资产分类">
+                    ＋新增
+                    <input type="file" accept="image/*" multiple className="hidden" onChange={(event) => {
+                      const files = event.target.files;
+                      if (files?.length) void onUploadCustomAssets(files, activeAssetRole);
+                      event.target.value = "";
+                    }} />
+                  </label> : null}
+                </span>
+              ) : null}
+            </React.Fragment>
+          ))}
+        </nav>
       </div>
 
       {(activePhase !== "storyboard" && activePhase !== "edit" && activePhase !== "assets") ? <div
@@ -4872,64 +4868,7 @@ export default function ManhuaScriptWorkbench({
         </div>
       ) : null}
 
-      {/* 阶段轨只承担定位。缺口和动作留在当前阶段标题栏，避免五张大卡挤占创作空间。 */}
-      <div
-        data-manhua-workflow-rail
-        data-manhua-ashuo-stepper
-        aria-label="漫剧制作阶段"
-        className="flex shrink-0 items-center justify-center gap-1 overflow-x-auto border-b border-white/10 bg-[#0a121c] px-3 py-1.5"
-      >
-        {workflowPhases.map((phase, index) => (
-          <div key={phase.id} className="flex shrink-0 items-center gap-1">
-            <button
-              type="button"
-              data-manhua-phase={phase.id}
-              data-manhua-phase-status={
-                phase.complete ? "complete" : phase.current ? "current" : "pending"
-              }
-              onClick={() => selectPhase(phase.id)}
-              title={phase.gapZh ? `${phase.label}：${phase.gapZh}` : phase.label}
-              className={`group flex items-center gap-1.5 rounded-full px-2 py-1 text-left ${
-                phase.complete
-                  ? "text-emerald-50"
-                  : phase.current
-                    ? phase.id === "edit"
-                      ? "bg-violet-500/[0.12] text-violet-50"
-                      : "bg-cyan-500/[0.12] text-cyan-50"
-                    : "text-white/40 hover:bg-white/[0.04] hover:text-white/65"
-              }`}
-            >
-              <span
-                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
-                  phase.complete
-                    ? "bg-emerald-400 text-emerald-950"
-                    : phase.current
-                      ? "bg-cyan-300 text-cyan-950"
-                      : "bg-white/10 text-white/45"
-                }`}
-              >
-                {phase.complete ? <CheckCircle2 className="h-3.5 w-3.5" /> : phase.index}
-              </span>
-              <span className="min-w-0">
-                <span className="block whitespace-nowrap text-[10px] font-semibold">
-                  {phase.id === "assets" ? "资产设定" : phase.label}
-                </span>
-                {phase.gapZh ? (
-                  <span className="mh-phase-gap block max-w-[150px] truncate whitespace-nowrap text-[9px] font-normal opacity-65">
-                    {phase.gapZh}
-                  </span>
-                ) : null}
-              </span>
-            </button>
-            {index < workflowPhases.length - 1 ? (
-              <span aria-hidden className="text-[10px] text-white/25">
-                →
-              </span>
-            ) : null}
-          </div>
-        ))}
-      </div>
-
+      {/* 五个阶段已与项目身份同列，工作区从此处直接开始。 */}
       <div
         data-manhua-ashuo-step-bar
         data-manhua-step-bar-phase={activePhase}
@@ -5334,65 +5273,8 @@ export default function ManhuaScriptWorkbench({
           className="flex min-h-0 flex-1 flex-col overflow-hidden"
         >
           <div className="mx-auto flex h-full min-h-0 w-full flex-col" data-manhua-assets-surface>
-            {onUploadCustomAssets ? (
-              <div
-                data-manhua-quick-asset-upload
-                className="mx-4 mt-3 flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-xl border border-cyan-300/25 bg-[#111925]/95 p-2.5 shadow-lg md:mx-6"
-              >
-                <div className="flex flex-wrap gap-1" role="tablist" aria-label="资产分类" data-manhua-asset-tabs>
-                  {(
-                    [
-                      ["character", "人物"],
-                      ["scene", "场景"],
-                      ["prop", "道具"],
-                      ["wardrobe", "造型"],
-                    ] as const
-                  ).map(([role, labelZh]) => {
-                    const count = buildManhuaAssetRoleGroups({ refs: customAssetRefs, assetCanon, role }).groups.length;
-                    return (
-                      <button
-                        key={role}
-                        type="button"
-                        role="tab"
-                        aria-selected={activeAssetRole === role}
-                        data-manhua-asset-tab={role}
-                        onClick={() => setActiveAssetRole(role)}
-                        className={`rounded-lg px-3 py-1.5 text-[11px] font-semibold ${
-                          activeAssetRole === role
-                            ? "bg-cyan-500/25 text-cyan-50 ring-1 ring-cyan-300/45"
-                            : "text-white/50 hover:bg-white/[0.06] hover:text-white/80"
-                        }`}
-                      >
-                        {labelZh} <span className="text-white/35">({count})</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                <label
-                  data-manhua-action="add-asset"
-                  className="inline-flex cursor-pointer items-center rounded-lg border border-emerald-300/45 bg-emerald-500/20 px-3 py-1.5 text-[11px] font-semibold text-emerald-50 hover:bg-emerald-500/30"
-                >
-                  ＋ 新增资产
-                  <input
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    className="hidden"
-                    onChange={(e) => {
-                      const files = e.target.files;
-                      if (files?.length) void onUploadCustomAssets(files, activeAssetRole);
-                      e.target.value = "";
-                    }}
-                  />
-                </label>
-                {!outlineComplete ? (
-                  <p className="w-full rounded-lg bg-amber-500/10 px-2 py-1 text-[10px] text-amber-100/80">
-                    参考图可先上传；确认剧本大纲后才能生成设定图或进入分镜。
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
             <div data-manhua-assets-scroll className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6">
+            {!outlineComplete ? <p className="mb-2 text-[11px] text-amber-100/80">参考图可先上传；确认剧本大纲后才能生成设定图或进入分镜。</p> : null}
             {outlineComplete && !outlineConfirmed ? (
               <p data-manhua-outline-unconfirmed className="mb-3 text-[11px] text-amber-100/80">
                 编导区已解锁，当前剧本尚未确认；已有参考图不代表剧本资产已齐备。
@@ -8533,12 +8415,11 @@ export default function ManhuaScriptWorkbench({
         }
       >
         {activePhase === "storyboard" ? (
-          <header data-manhua-storyboard-header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-white/[0.03] px-4 py-3">
-            <div className="min-w-0">
-              <h1 className="text-base font-bold text-white/95">分镜工作区 · 第 {focusEpisode} 集</h1>
-              <p className="mt-0.5 text-xs text-white/55">第 {activeShotNo || "—"} 镜 / {shots.length} 镜 · 左侧选镜，中央看图，右侧修改当前镜</p>
-            </div>
-            <span className="rounded-full border border-white/15 bg-white/[0.04] px-3 py-1.5 text-xs text-white/70">
+          <header data-manhua-storyboard-header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-white/10 bg-white/[0.03] px-3 py-1.5">
+            <h1 className="min-w-0 truncate text-sm font-bold text-white/95">
+              分镜 · 第 {focusEpisode} 集 · 镜 {activeShotNo || "—"}/{shots.length}
+            </h1>
+            <span className="shrink-0 text-[11px] text-white/70">
               静帧 {episodeStillCount}/{Math.max(shots.length, 1)} · 成片 {episodeClips.filter((clip) => Boolean(clipOutputUrl(clip))).length}/{segments.length}
             </span>
           </header>

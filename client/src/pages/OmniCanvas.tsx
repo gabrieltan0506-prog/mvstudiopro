@@ -9888,6 +9888,15 @@ export default function OmniCanvas() {
                   >
                     自由画布
                   </button>
+                  <button
+                    type="button"
+                    data-manhua-advisor-open
+                    aria-expanded={advisorOpen}
+                    className="border-b border-transparent pb-1 font-medium text-white/55 transition hover:text-white"
+                    onClick={() => { setAdvisorFocusSection(null); setAdvisorOpen(true); setAdvisorNudge(null); }}
+                  >
+                    创作顾问{advisorProject.issues.length ? ` (${advisorProject.issues.length})` : ""}
+                  </button>
                 </nav>
               ) : (
                 <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary">
@@ -13279,15 +13288,15 @@ export default function OmniCanvas() {
         </div>
       </main>
 
-      {/* 漫剧页的唯一右上顾问入口，普通用户走既有鉴权问答，不开放管理接口。 */}
-      {canvasMode === "manhua" && !advisorOpen ? (
-        <div className="fixed top-[4.5rem] right-4 z-[59] flex flex-col items-end gap-2">
+      {/* 非沉浸页面沿用浮动入口；沉浸工作区入口在顶导航，避免遮住阶段与画面。 */}
+      {canvasMode === "manhua" && !advisorOpen && !immersiveWorkbench ? (
+        <div className="pointer-events-none fixed top-[4.5rem] right-4 z-[59] flex flex-col items-end gap-2">
           <button
             type="button"
             onClick={() => { setAdvisorFocusSection(null); setAdvisorOpen(true); setAdvisorNudge(null); }}
             aria-expanded={advisorOpen}
             data-manhua-advisor-open
-            className="relative rounded-full border border-cyan-300/40 bg-[#10171f]/95 px-4 py-2.5 text-[12px] font-bold text-cyan-100 shadow-xl backdrop-blur transition hover:bg-cyan-500/20"
+            className="pointer-events-auto relative rounded-full border border-cyan-300/40 bg-[#10171f]/95 px-4 py-2.5 text-[12px] font-bold text-cyan-100 shadow-xl backdrop-blur transition hover:bg-cyan-500/20"
           >
             创作顾问
             {advisorProject.issues.length ? (
@@ -13300,11 +13309,11 @@ export default function OmniCanvas() {
               </span>
             ) : null}
           </button>
-          {advisorNudge ? (
+          {advisorNudge && manhuaUiMode !== "workbench" ? (
             <div
               role="status"
               data-manhua-advisor-nudge
-              className="flex max-w-[280px] items-start gap-2 rounded-lg border border-amber-300/40 bg-[#161a10]/95 px-3 py-2 text-[11px] leading-5 text-amber-50 shadow-xl backdrop-blur"
+              className="pointer-events-auto flex max-w-[280px] items-start gap-2 rounded-lg border border-amber-300/40 bg-[#161a10]/95 px-3 py-2 text-[11px] leading-5 text-amber-50 shadow-xl backdrop-blur"
             >
               <button
                 type="button"

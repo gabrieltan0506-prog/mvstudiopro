@@ -19,7 +19,7 @@ export function ManhuaShotDescriptionEditor({ shotIndex, description, disabled, 
       data-manhua-shot-description-input={shotIndex}
       value={value}
       maxLength={200}
-      rows={4}
+      rows={3}
       disabled={disabled}
       onChange={event => { setValue(event.target.value); setError(""); }}
       className="mt-1 block w-full resize-y rounded-lg border border-white/25 bg-black/20 p-3 text-sm leading-6 text-white outline-none focus:border-cyan-300 disabled:opacity-50"

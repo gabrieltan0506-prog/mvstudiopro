@@ -638,10 +638,6 @@
   max-width: calc(100% - 150px);
 }
 
-#manhua-workbench-shell.mh-redesign [data-manhua-legacy-local-nav] {
-  display: none !important;
-}
-
 #manhua-workbench-shell.mh-redesign > :first-child [data-manhua-toolbar-cluster] {
   position: relative;
   z-index: 70;
@@ -650,9 +646,9 @@
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-project-settings] {
-  position: absolute;
-  top: 4px;
-  right: 142px;
+  position: relative;
+  top: auto;
+  right: auto;
   z-index: 90;
   color: var(--mh-muted);
 }
@@ -670,6 +666,9 @@
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-project-settings][open] {
+  position: absolute;
+  top: 34px;
+  right: 0;
   width: min(720px, calc(100vw - 40px));
   padding: 8px 12px 12px;
   border: 1px solid var(--mh-line);
@@ -742,7 +741,6 @@
 #manhua-workbench-shell.mh-redesign [data-manhua-outline-surface],
 #manhua-workbench-shell.mh-redesign [data-manhua-final-dashboard] > section,
 #manhua-workbench-shell.mh-redesign [data-manhua-blocker-card],
-#manhua-workbench-shell.mh-redesign [data-manhua-quick-asset-upload],
 #manhua-workbench-shell.mh-redesign [data-manhua-episode-sheets] {
   background: var(--mh-panel) !important;
   border-color: var(--mh-line) !important;
@@ -770,15 +768,16 @@
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-quick-asset-upload] {
-  top: 0;
-  padding: 12px 14px !important;
-  border-radius: 18px !important;
+  padding: 0 0 0 6px !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-asset-tab] {
-  min-height: 38px;
-  padding-inline: 16px !important;
-  border-radius: 12px !important;
+  min-height: 26px;
+  padding-inline: 8px !important;
+  border-radius: 8px !important;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-asset-tab][aria-selected="true"] {
@@ -788,9 +787,9 @@
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-action="add-asset"] {
-  min-height: 38px;
+  min-height: 26px;
   border: 0 !important;
-  border-radius: 12px !important;
+  border-radius: 8px !important;
   background: var(--mh-green) !important;
   color: white !important;
 }
@@ -1112,6 +1111,70 @@
   min-height: 40px;
 }
 
+/* 分镜、资产和成片共用一行项目身份与阶段跳转；告警保留在下一行。 */
+#manhua-workbench-shell.mh-redesign [data-manhua-product-header] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  min-height: 34px;
+  padding-block: 2px !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-project-identity] {
+  min-height: 28px;
+  max-width: none;
+}
+
+@media (min-width: 1200px) {
+  #manhua-workbench-shell.mh-redesign [data-manhua-product-header] {
+    padding-right: 108px !important;
+  }
+}
+
+#manhua-workbench-shell.mh-redesign[data-manhua-active-phase="assets"] [data-manhua-product-header] {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+#manhua-workbench-shell.mh-redesign[data-manhua-active-phase="assets"] [data-manhua-product-header] [data-manhua-workflow-rail] {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-product-header] [data-manhua-workflow-rail] {
+  min-height: 0;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-product-header] [data-manhua-phase] {
+  min-height: 25px;
+  padding: 3px 8px !important;
+  white-space: nowrap;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-product-header] [data-manhua-phase-badge] {
+  width: 16px;
+  height: 16px;
+  line-height: 1;
+}
+
+#manhua-workbench-shell.mh-redesign:is(
+  [data-manhua-active-phase="assets"],
+  [data-manhua-active-phase="storyboard"],
+  [data-manhua-active-phase="edit"]
+) [data-manhua-blocker-card] {
+  padding: 3px 12px !important;
+}
+
+#manhua-workbench-shell.mh-redesign:is(
+  [data-manhua-active-phase="assets"],
+  [data-manhua-active-phase="storyboard"],
+  [data-manhua-active-phase="edit"]
+) [data-manhua-blocker-card] summary {
+  line-height: 1.2;
+}
+
 #manhua-workbench-shell.mh-redesign [data-manhua-workflow-rail] {
   min-height: 44px;
   padding-block: 7px !important;
@@ -1256,18 +1319,20 @@ body:has(#manhua-workbench-shell) [data-pwa-install-button] {
   width: min(100%, 260px) !important;
   max-width: 260px;
   margin-inline: auto;
-  flex: 0 0 auto !important;
+  flex: 1 1 auto !important;
+  min-height: 0;
+  max-height: 100%;
   border-radius: 12px;
   background: #111 !important;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-column="preview"] [data-manhua-shot-pair-preview] {
   width: 100% !important;
-  min-height: min(500px, 70vh);
+  min-height: 0;
   max-height: none;
   margin-inline: auto;
   aspect-ratio: auto;
-  flex: 0 0 auto !important;
+  flex: 1 1 auto !important;
   border: 0 !important;
   background: transparent !important;
 }
@@ -1415,7 +1480,6 @@ body:has(#manhua-workbench-shell) [data-pwa-install-button] {
 
 /* 终审自带项目身份和五步交付线，移除工作台通用栏的重复占位。 */
 #manhua-workbench-shell.mh-redesign[data-manhua-active-phase="final"] > :is(
-  [data-manhua-product-header],
   [data-manhua-draft-retention-hint],
   [data-manhua-workflow-rail],
   [data-manhua-ashuo-step-bar]
