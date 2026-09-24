@@ -7,6 +7,7 @@
  */
 import type { CanvasBlock } from "./canvasTypes";
 import { getBlockEpisodeIndex, isManhuaFinalVideoBlockId, stageKeyFromBlockId } from "./canvasDramaStudio";
+import { manhuaClipQualityAllowsAssemble } from "@shared/manhuaClipQuality";
 
 export type PostProdAction = "concat" | "bgm_mount" | "burn_subtitle" | "loudness_check" | "audio_trim" | "audio_timeline" | "audio_extract";
 export type PostProdJobStatus = "queued" | "running" | "succeeded" | "failed";
@@ -65,6 +66,14 @@ export function isCurrentManhuaClipBlock(block: CanvasBlock, episodeIndex: numbe
   return !block.archivedFromPreviousScript &&
     (stageKeyFromBlockId(block.id) === "clip" || isManhuaFinalVideoBlockId(block.id)) &&
     getBlockEpisodeIndex(block) === episodeIndex;
+}
+
+/** 后期付费工序只接收本集已放行的真实视频；外部登记片默认需先经质检或人工放行。 */
+export function isCurrentManhuaAssemblableClipBlock(block: CanvasBlock, episodeIndex: number): boolean {
+  return isCurrentManhuaClipBlock(block, episodeIndex) && manhuaClipQualityAllowsAssemble({
+    outputUrl: block.outputUrl,
+    quality: block.manhuaClipQuality,
+  });
 }
 
 export function isPostProdAudioAction(action: PostProdAction): boolean {

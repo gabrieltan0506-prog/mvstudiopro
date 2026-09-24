@@ -61,6 +61,7 @@ import {
   ACTION_LABEL,
   isPostProdAudioAction,
   buildPostProdClipOptions,
+  isCurrentManhuaAssemblableClipBlock,
   isCurrentManhuaClipBlock,
   jobsStorageKey,
   loadStoredJobs,
@@ -209,7 +210,7 @@ export default function PostProdWorkshopCard({
   const blockClipOptions = useMemo(
     () =>
       currentClipBlocks
-        .filter(b => b.kind === "video" && String(b.outputUrl || "").trim())
+        .filter(b => b.kind === "video" && focusEpisode != null && isCurrentManhuaAssemblableClipBlock(b, focusEpisode))
         .map(b => ({
           id: b.id,
           url: String(b.outputUrl).trim(),
@@ -219,7 +220,7 @@ export default function PostProdWorkshopCard({
               .trim()
               .slice(0, 24) || b.id.slice(0, 12)),
         })),
-    [currentClipBlocks]
+    [currentClipBlocks, focusEpisode]
   );
 
   /** 音频只取当前集成片节点上的上传件。 */

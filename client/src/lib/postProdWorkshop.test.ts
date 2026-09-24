@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import type { CanvasBlock } from "./canvasTypes";
 import {
   buildPostProdClipOptions,
+  isCurrentManhuaAssemblableClipBlock,
   isCurrentManhuaClipBlock,
   isPostProdAudioAction,
   jobsStorageKey,
@@ -31,6 +32,18 @@ describe("漫剧后期素材范围", () => {
     expect(isCurrentManhuaClipBlock(block("clip-e02-g01-auto", 2), 1)).toBe(false);
     expect(isCurrentManhuaClipBlock(block("clip-e01-g02-auto", 1, true), 1)).toBe(false);
     expect(isCurrentManhuaClipBlock(block("video-freeform-1", 1), 1)).toBe(false);
+  });
+
+  it("外部登记片未经质检放行不能进入后期拼接候选", () => {
+    const clip = { ...block("clip-e01-g02-registered-test", 1), outputUrl: "https://x.test/clip.mp4" };
+    const unverified = { ...clip, manhuaClipQuality: { status: "unverified", userAcceptedDespiteQc: false } } as CanvasBlock;
+    expect(isCurrentManhuaAssemblableClipBlock(unverified, 1)).toBe(false);
+    expect(isCurrentManhuaAssemblableClipBlock({
+      ...unverified,
+      manhuaClipQuality: { ...unverified.manhuaClipQuality!, userAcceptedDespiteQc: true },
+    }, 1)).toBe(true);
+    expect(isCurrentManhuaAssemblableClipBlock({ ...clip, outputUrl: "" }, 1)).toBe(false);
+    expect(isCurrentManhuaAssemblableClipBlock({ ...clip, archivedFromPreviousScript: true }, 1)).toBe(false);
   });
 
   it("同剧不同集或改稿产生不同范围；无来源旧任务不能供当前集使用", () => {
