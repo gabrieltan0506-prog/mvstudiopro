@@ -104,22 +104,40 @@ it('真实四抽屉裁切进入当前版本合成与持久化，旧版本保留'
   const timeline=panel.querySelector<HTMLElement>('[data-manhua-edit-timeline]')!;
   const nav=document.querySelector<HTMLElement>('[data-manhua-workspace-topbar]')!;
   const siteNav=document.querySelector<HTMLElement>('nav.fixed')!;
-  return {timelineTop:timeline.getBoundingClientRect().top,panelBottom:panel.getBoundingClientRect().bottom,viewportHeight:innerHeight,shellOverflow:shell.scrollHeight-shell.clientHeight,navText:nav.innerText,siteNavHeight:siteNav.getBoundingClientRect().height,siteNavText:siteNav.innerText};
+  const current=panel.querySelector<HTMLElement>('[data-manhua-edit-current-segment]')!;
+  const primary=panel.querySelector<HTMLElement>('[data-manhua-edit-generate-current]')!;
+  return {timelineTop:timeline.getBoundingClientRect().top,timelineBottom:timeline.getBoundingClientRect().bottom,currentTop:current.getBoundingClientRect().top,currentBottom:current.getBoundingClientRect().bottom,primaryBottom:primary.getBoundingClientRect().bottom,panelBottom:panel.getBoundingClientRect().bottom,viewportHeight:innerHeight,shellOverflow:shell.scrollHeight-shell.clientHeight,navText:nav.innerText,siteNavHeight:siteNav.getBoundingClientRect().height,siteNavText:siteNav.innerText};
  });
  expect(layout.navText).toContain('工作台');
  expect(layout.navText).toContain('编剧');
  expect(layout.navText).not.toContain('改题材');
  expect(layout.siteNavHeight).toBeLessThanOrEqual(50);
  expect(layout.siteNavText).not.toContain('平台创作');
- expect(layout.timelineTop).toBeLessThan(layout.viewportHeight/2);
+ expect(layout.currentTop).toBeLessThan(layout.viewportHeight/2);
+ expect(layout.currentBottom).toBeLessThan(layout.viewportHeight);
+ expect(layout.timelineBottom).toBeLessThan(layout.viewportHeight);
+ expect(layout.primaryBottom).toBeLessThan(layout.viewportHeight);
  expect(layout.panelBottom).toBeGreaterThan(layout.viewportHeight-110);
  expect(layout.shellOverflow).toBeLessThanOrEqual(2);
- await page.screenshot({path:join(evidenceDir,'workbench-edit-before-reorder-1280.png')});
+ await page.screenshot({path:join(evidenceDir,'workbench-edit-focused-1280.png')});
  const editStructure=await page.$eval('[data-manhua-panel="edit-multitrack"]',el=>Array.from(el.children).map(child=>child.getAttribute('data-manhua-edit-overview')!==null?'overview':child.getAttribute('data-manhua-edit-timeline')!==null?'timeline':child.getAttribute('data-manhua-edit-current-segment')!==null?'current':child.getAttribute('data-manhua-edit-tools')!==null?'tools':child.getAttribute('data-manhua-edit-full-tracks')!==null?'tracks':'other'));
- expect(editStructure.slice(0,5)).toEqual(['overview','timeline','current','tools','tracks']);
+ expect(editStructure.slice(0,5)).toEqual(['overview','current','timeline','tools','tracks']);
  const currentWorkArea=await page.$eval('[data-manhua-edit-current-segment]',el=>({height:el.getBoundingClientRect().height,visible:el.getBoundingClientRect().top<innerHeight}));
  expect(currentWorkArea.height).toBeGreaterThanOrEqual(280);
  expect(currentWorkArea.visible).toBe(true);
+ await page.setViewport({width:1232,height:769});
+ const compactScreen=await page.evaluate(()=>{
+  const current=document.querySelector<HTMLElement>('[data-manhua-edit-current-segment]')!;
+  const timeline=document.querySelector<HTMLElement>('[data-manhua-edit-timeline]')!;
+  const primary=document.querySelector<HTMLElement>('[data-manhua-edit-generate-current]')!;
+  return {currentTop:current.getBoundingClientRect().top,currentBottom:current.getBoundingClientRect().bottom,timelineBottom:timeline.getBoundingClientRect().bottom,primaryBottom:primary.getBoundingClientRect().bottom,viewport:innerHeight};
+ });
+ expect(compactScreen.currentTop).toBeLessThan(compactScreen.viewport/2);
+ expect(compactScreen.currentBottom).toBeLessThan(compactScreen.viewport);
+ expect(compactScreen.timelineBottom).toBeLessThan(compactScreen.viewport);
+ expect(compactScreen.primaryBottom).toBeLessThan(compactScreen.viewport);
+ await page.screenshot({path:join(evidenceDir,'workbench-edit-focused-1232x769.png')});
+ await page.setViewport({width:1280,height:900});
  const segmentCards=await page.$$('[data-manhua-edit-segment-card]');
  expect(segmentCards.length).toBeGreaterThan(0);
  expect(segmentCards.length).toBeLessThan((await page.$$('[data-manhua-edit-clip-card]')).length);
@@ -264,5 +282,67 @@ it('画面版本并排预览后采用另一版，旧版保留且质检失效', a
   const stored=await page.evaluate(id=>(window as any).__ffcProps.blocks.find((block:any)=>block.id===id),clipId);
   expect(stored.outputUrls).toContain(urls[0]);
   expect(stored.outputUrls).toContain(urls[1]);
+ } finally {await close();}
+},120000);
+
+it('正式工作流分镜的看图、编辑和主操作同屏', async () => {
+ const {page,close}=await mount();
+ try {
+  await page.setViewport({width:1280,height:900});
+  const cssDir=process.env.MANHUA_LAYOUT_CSS_DIR;
+  if(cssDir)for(const file of readdirSync(cssDir).filter(n=>n.endsWith('.css')))await page.addStyleTag({content:readFileSync(join(cssDir,file),'utf8')});
+  await page.evaluate(()=>(window as any).__wbProps.onWorkflowPhaseChange('storyboard'));
+  await page.waitForSelector('[data-manhua-storyboard-workspace]');
+  const result=await page.evaluate(()=>{
+   const preview=document.querySelector<HTMLElement>('[data-manhua-shot-pair-preview]')!;
+   const params=document.querySelector<HTMLElement>('[data-manhua-column="params"]')!;
+   const action=params.querySelector<HTMLElement>('[data-manhua-action="generate-current-keyart"]')!;
+   const editor=params.querySelector<HTMLElement>('[data-manhua-shot-description]')!;
+   const nav=document.querySelector<HTMLElement>('[data-manhua-product-header] [data-manhua-workflow-rail]')!;
+   const rect=(el:HTMLElement)=>el.getBoundingClientRect();
+   const actionBox=rect(action), editorBox=rect(editor), previewBox=rect(preview), navBox=rect(nav);
+   const hit=document.elementFromPoint(actionBox.left+actionBox.width/2,actionBox.top+actionBox.height/2);
+   const shell=document.querySelector<HTMLElement>('#manhua-workbench-shell')!;
+   return {previewTop:previewBox.top,previewBottom:previewBox.bottom,previewHeight:previewBox.height,actionBottom:actionBox.bottom,actionClickable:hit===action||action.contains(hit),editorBottom:editorBox.bottom,navBottom:navBox.bottom,shellOverflow:shell.scrollHeight-shell.clientHeight,phaseLinks:nav.querySelectorAll('[data-manhua-phase]').length,viewport:innerHeight};
+  });
+  expect(result.phaseLinks).toBe(5);
+  expect(result.navBottom).toBeLessThan(result.previewTop);
+  expect(result.previewHeight).toBeGreaterThan(320);
+  expect(result.previewBottom).toBeLessThan(result.viewport);
+  expect(result.actionBottom).toBeLessThan(result.viewport);
+  expect(result.actionClickable).toBe(true);
+  expect(result.editorBottom).toBeLessThan(result.viewport);
+  expect(result.shellOverflow).toBeLessThanOrEqual(2);
+  await page.screenshot({path:join(evidenceDir,'workbench-storyboard-focused-1280.png')});
+  await page.setViewport({width:1232,height:769});
+  const compact=await page.evaluate(()=>{
+   const preview=document.querySelector<HTMLElement>('[data-manhua-shot-pair-preview]')!;
+   const params=document.querySelector<HTMLElement>('[data-manhua-column="params"]')!;
+   const action=params.querySelector<HTMLElement>('[data-manhua-action="generate-current-keyart"]')!;
+   const editor=params.querySelector<HTMLElement>('[data-manhua-shot-description]')!;
+   const final=document.querySelector<HTMLElement>('[data-manhua-product-header] [data-manhua-phase="final"]')!;
+   const finalBox=final.getBoundingClientRect();
+   const hit=document.elementFromPoint(finalBox.left+finalBox.width/2,finalBox.top+finalBox.height/2);
+   return {previewBottom:preview.getBoundingClientRect().bottom,previewHeight:preview.getBoundingClientRect().height,actionBottom:action.getBoundingClientRect().bottom,editorBottom:editor.getBoundingClientRect().bottom,finalClickable:hit===final||final.contains(hit),finalBox:{left:finalBox.left,right:finalBox.right,top:finalBox.top,bottom:finalBox.bottom},hitText:hit?.textContent?.slice(0,80),hitTag:hit?.tagName,viewport:innerHeight};
+  });
+  await page.screenshot({path:join(evidenceDir,'workbench-storyboard-focused-1232x769.png')});
+  expect(compact.previewHeight).toBeGreaterThan(260);
+  expect(compact.previewBottom).toBeLessThan(compact.viewport);
+  expect(compact.actionBottom).toBeLessThan(compact.viewport);
+  expect(compact.editorBottom).toBeLessThan(compact.viewport);
+  expect(compact.finalClickable,JSON.stringify(compact)).toBe(true);
+  await page.setViewport({width:3840,height:900});
+  const wide=await page.evaluate(()=>{
+   const workspace=document.querySelector<HTMLElement>('[data-manhua-storyboard-workspace]')!;
+   const preview=document.querySelector<HTMLElement>('[data-manhua-shot-pair-preview]')!;
+   const params=document.querySelector<HTMLElement>('[data-manhua-column="params"]')!;
+   const shell=document.querySelector<HTMLElement>('#manhua-workbench-shell')!;
+   return {workspaceWidth:workspace.getBoundingClientRect().width,previewHeight:preview.getBoundingClientRect().height,paramsRight:params.getBoundingClientRect().right,shellOverflow:shell.scrollWidth-shell.clientWidth,viewport:innerWidth};
+  });
+  expect(wide.workspaceWidth).toBeGreaterThan(wide.viewport*0.9);
+  expect(wide.previewHeight).toBeGreaterThan(320);
+  expect(wide.paramsRight).toBeLessThan(wide.viewport);
+  expect(wide.shellOverflow).toBeLessThanOrEqual(2);
+  await page.screenshot({path:join(evidenceDir,'workbench-storyboard-focused-3840.png')});
  } finally {await close();}
 },120000);

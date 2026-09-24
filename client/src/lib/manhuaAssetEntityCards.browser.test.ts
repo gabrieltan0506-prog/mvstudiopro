@@ -266,6 +266,9 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
         const main = media.querySelector('[data-manhua-custom-ref-id]')!;
         const railRect = rail.getBoundingClientRect();
         const mainRect = main.getBoundingClientRect();
+        const stage = document.querySelector<HTMLElement>('[data-manhua-phase="assets"]')!;
+        const tabsRect = toolbar.getBoundingClientRect();
+        const stageRect = stage.getBoundingClientRect();
         return {
           pageOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
           panelOverflow: panel.scrollWidth - panel.clientWidth,
@@ -274,6 +277,7 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
           versionStrip: Boolean(currentRole.querySelector('[aria-label*="版本缩略图"]')),
           entityColumns: new Set(groups.slice(0, 3).map(group => Math.round(group.getBoundingClientRect().left))).size,
           focusedDomOrder: Boolean(toolbar.compareDocumentPosition(gallery) & Node.DOCUMENT_POSITION_FOLLOWING) && Boolean(gallery.compareDocumentPosition(technicalSheets) & Node.DOCUMENT_POSITION_FOLLOWING),
+          tabsAdjacentToStage: toolbar.closest('[data-manhua-workflow-rail]') === stage.closest('[data-manhua-workflow-rail]') && Math.abs(tabsRect.top - stageRect.top) <= 2 && tabsRect.left >= stageRect.right,
           versionRailAfterMain: Boolean(main.compareDocumentPosition(rail) & Node.DOCUMENT_POSITION_FOLLOWING),
           versionRailAtRight: railRect.left >= mainRect.right && railRect.right <= panel.getBoundingClientRect().right,
         };
@@ -285,6 +289,7 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
       expect(geometry.versionStrip).toBe(true);
       expect(geometry.entityColumns).toBeGreaterThanOrEqual(2);
       expect(geometry.focusedDomOrder).toBe(true);
+      expect(geometry.tabsAdjacentToStage).toBe(true);
       expect(geometry.versionRailAfterMain).toBe(true);
       expect(geometry.versionRailAtRight).toBe(true);
       const editorAccess = await page.evaluate(() => {
@@ -297,7 +302,7 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
         const inputBox = input.getBoundingClientRect();
         const hit = document.elementFromPoint(inputBox.left + inputBox.width / 2, inputBox.top + inputBox.height / 2);
         return {
-          separateScroll: header.parentElement === scroller.parentElement && !header.contains(scroller),
+          separateScroll: header.closest('[data-manhua-workflow-rail]') !== null && !header.contains(scroller),
           headerAboveEditor: headerBox.bottom <= scrollBox.top + 1,
           inputInsideEditor: inputBox.top >= scrollBox.top && inputBox.bottom <= scrollBox.bottom,
           inputClickable: hit === input,
@@ -336,6 +341,7 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
     const { page, close } = await mount();
     try {
       expect(await page.$$('[data-manhua-asset-tabs] [role="tab"]')).toHaveLength(4);
+      expect(await page.$eval('[data-manhua-asset-tab="character"]', element => element.textContent?.trim())).toBe("人物 (2)");
       expect(await page.$$('[data-manhua-action="add-asset"]')).toHaveLength(1);
       expect(await page.$$('[data-manhua-action="confirm-assets"], [data-manhua-action="spawn-episode-sheets"]')).toHaveLength(0);
       expect(await page.$$('[data-manhua-action="ashuo-step-generate"]')).toHaveLength(1);

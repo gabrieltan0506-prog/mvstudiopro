@@ -352,40 +352,6 @@ export default function ManhuaEditMultitrackPanel({
         </div>
       </header>
 
-      <section data-manhua-edit-timeline aria-label="本集成片时间线" className="shrink-0 rounded-2xl border border-white/12 bg-white/[0.025] p-3">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-base font-semibold text-white/90">本集片段时间线</h2>
-          <p className="text-sm text-white/45">{segmentCards.length} 段 · 约 {totalSec}s · 点选片段后在剪辑工具中细调</p>
-        </div>
-      <div data-manhua-edit-segment-strip className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-4">
-        {segmentCards.map((segment, order) => (
-          <button
-            key={`segment-card-${order}`}
-            type="button"
-            data-manhua-edit-segment-card={order + 1}
-            data-manhua-edit-source-segment={segment.sourceIndex}
-            data-manhua-edit-segment-active={segment.active ? "true" : "false"}
-            onClick={() => onSelectShot?.(segment.shots[0]!.shotIndex)}
-            className={`group flex min-w-0 items-center overflow-hidden rounded-xl border text-left transition ${segment.active ? "border-violet-400/60 bg-violet-500/10" : "border-white/12 bg-white/[0.03] hover:border-white/25"}`}
-          >
-            <div className="relative h-20 w-24 shrink-0 overflow-hidden bg-black/45">
-              {segment.mediaUrl ? <video src={segment.mediaUrl} muted preload="metadata" className="h-full w-full object-cover" /> : <div className="flex h-full items-center justify-center px-1 text-center text-xs text-white/35">待生成片段</div>}
-            </div>
-            <div className="min-w-0 flex-1 px-2 py-1.5">
-              <div className="truncate text-xs font-semibold text-white/90">片段 {String(order + 1).padStart(2, "0")} · 来源第 {segment.sourceIndex} 段</div>
-              <div className="mt-1 text-[11px] text-white/45">{Math.round(segment.durationSec * 10) / 10}s · {segment.shots.length} 镜</div>
-              <div className={`mt-1 text-[11px] ${segment.ready ? "text-emerald-300" : "text-white/35"}`}>{segment.ready ? "源镜有画面 · 待合成排序" : "源镜待生成"}</div>
-            </div>
-          </button>
-        ))}
-        {!segmentCards.length ? (
-          <div className="flex min-h-36 min-w-full items-center justify-center rounded-2xl border border-dashed border-white/15 text-sm text-white/40">
-            尚无片段，请先完成分镜成片
-          </div>
-        ) : null}
-      </div>
-      </section>
-
       {selectedSegment ? <section data-manhua-edit-current-segment aria-label="当前片段工作区" className="grid min-h-[280px] min-w-0 flex-1 gap-3 rounded-2xl border border-white/12 bg-black/20 p-3 lg:grid-cols-[minmax(0,1.6fr)_minmax(270px,0.7fr)]">
         <div className="flex min-h-0 min-w-0 flex-col">
           <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
@@ -423,6 +389,38 @@ export default function ManhuaEditMultitrackPanel({
           </div> : <p className="mt-2 text-xs text-white/40">选中本段镜头即可调整进出点。</p>}
         </div>
       </section> : null}
+
+      <section data-manhua-edit-timeline aria-label="本集成片时间线" className="shrink-0 rounded-xl border border-white/12 bg-white/[0.025] p-2">
+        <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-white/90">本集片段 · {segmentCards.length} 段 / 约 {totalSec}s</h2>
+        </div>
+      <div data-manhua-edit-segment-strip className="flex min-w-0 gap-2 overflow-x-auto">
+        {segmentCards.map((segment, order) => (
+          <button
+            key={`segment-card-${order}`}
+            type="button"
+            data-manhua-edit-segment-card={order + 1}
+            data-manhua-edit-source-segment={segment.sourceIndex}
+            data-manhua-edit-segment-active={segment.active ? "true" : "false"}
+            onClick={() => onSelectShot?.(segment.shots[0]!.shotIndex)}
+            className={`group flex min-w-[190px] flex-1 items-center overflow-hidden rounded-lg border text-left transition ${segment.active ? "border-violet-400/60 bg-violet-500/10" : "border-white/12 bg-white/[0.03] hover:border-white/25"}`}
+          >
+            <div className="relative h-12 w-14 shrink-0 overflow-hidden bg-black/45">
+              {segment.mediaUrl ? <video src={segment.mediaUrl} muted preload="metadata" className="h-full w-full object-cover" /> : <div className="flex h-full items-center justify-center px-1 text-center text-xs text-white/35">待生成片段</div>}
+            </div>
+            <div className="min-w-0 flex-1 px-2 py-1.5">
+              <div className="truncate text-xs font-semibold text-white/90">片段 {String(order + 1).padStart(2, "0")} · 来源第 {segment.sourceIndex} 段</div>
+              <div className="text-[11px] text-white/45">{Math.round(segment.durationSec * 10) / 10}s · {segment.shots.length} 镜 · {segment.ready ? "有源画面" : "待生成"}</div>
+            </div>
+          </button>
+        ))}
+        {!segmentCards.length ? (
+          <div className="flex min-h-36 min-w-full items-center justify-center rounded-2xl border border-dashed border-white/15 text-sm text-white/40">
+            尚无片段，请先完成分镜成片
+          </div>
+        ) : null}
+      </div>
+      </section>
 
       <nav data-manhua-edit-tools aria-label="剪辑工具抽屉" className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4">
         {[["cut", "剪辑工具"], ["effects", "特效与滤镜"], ["subtitles", "转场与字幕"], ["export", "导出设置"]].map(([id, label]) => (
