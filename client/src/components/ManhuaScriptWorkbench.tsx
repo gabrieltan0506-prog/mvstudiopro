@@ -2830,9 +2830,6 @@ export default function ManhuaScriptWorkbench({
     const canonSections = kinds.map((section) => ({
       ...section,
       rows: section.anchors.map((anchor) => {
-        const generated = episodeSheetGallery.some(
-          (item) => item.kind === section.kind && item.anchorId === anchor.id,
-        );
         const custom = customAssetRefs.some(
           (ref) => ref.role === section.role && /^https:\/\//i.test(String(ref.url || "")) && customAssetRefClaimsAnchor(ref, anchor),
         );
@@ -2843,6 +2840,8 @@ export default function ManhuaScriptWorkbench({
               ? block.id.startsWith("sceneplate-")
               : block.id.startsWith("propsheet-")) && block.id.includes(anchor.id),
         );
+        // mediaUrl() 会回退垫图；资产就绪只能认真正产出或已认领的参考图。
+        const generated = blocksForAnchor.some((block) => Boolean(keyartOutputUrl(block)));
         const status: ManhuaAssetOverviewStatus = blocksForAnchor.some((block) => block.status === "running")
           ? "running"
           : blocksForAnchor.some((block) => block.status === "error" || Boolean(block.error))
@@ -2876,7 +2875,7 @@ export default function ManhuaScriptWorkbench({
       titleZh: "造型",
       rows: lookRows,
     }];
-  }, [assetCanon, blocks, characterLookSets, customAssetRefs, episodeSheetGallery, resolvedLookSets]);
+  }, [assetCanon, blocks, characterLookSets, customAssetRefs, resolvedLookSets]);
   const assetLockRegistry = useMemo(
     () =>
       buildManhuaAssetLockRegistry({
@@ -5496,7 +5495,7 @@ export default function ManhuaScriptWorkbench({
                   { ready: 0, pending: 0, running: 0, failed: 0 },
                 );
                 const statusLabel: Record<string, string> = {
-                  ready: "就绪", pending: "待补", running: "生成中", failed: "失败",
+                  ready: "有图", pending: "待补", running: "生成中", failed: "失败",
                 };
                 const statusClass: Record<string, string> = {
                   ready: "border-emerald-300/25 bg-emerald-400/10 text-emerald-100/85",
@@ -5522,7 +5521,7 @@ export default function ManhuaScriptWorkbench({
                     >
                       <span>{section.titleZh} · {section.rows.length}</span>
                       <span className="text-[9px] font-normal text-white/45">
-                        就绪 {counts.ready} · 待补 {counts.pending}{counts.running ? ` · 生成中 ${counts.running}` : ""}{counts.failed ? ` · 失败 ${counts.failed}` : ""}
+                        有图 {counts.ready} · 待补 {counts.pending}{counts.running ? ` · 生成中 ${counts.running}` : ""}{counts.failed ? ` · 失败 ${counts.failed}` : ""}
                       </span>
                     </button>
                     <div className="mt-1.5 flex max-h-16 flex-wrap gap-1 overflow-y-auto" data-manhua-asset-overview-anchors={section.role}>
@@ -5539,7 +5538,9 @@ export default function ManhuaScriptWorkbench({
                             window.requestAnimationFrame(() => {
                               const target = section.role === "wardrobe"
                                 ? document.querySelector("[data-manhua-look-sets]")
-                                : document.querySelector(`[data-manhua-custom-refs-role="${section.role}"]`);
+                                : Array.from(document.querySelectorAll("[data-manhua-asset-entity]")).find(
+                                    (element) => element.getAttribute("data-manhua-asset-entity") === row.id,
+                                  ) || document.querySelector(`[data-manhua-custom-refs-role="${section.role}"]`);
                               target?.scrollIntoView({ block: "nearest" });
                             });
                           }}

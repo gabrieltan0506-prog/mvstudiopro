@@ -426,6 +426,7 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
     };
     const { page, close } = await mount([
       { id: "charsheet-wa_char_01", kind: "image", status: "done", outputUrl: "https://example.com/character.png" },
+      { id: "charsheet-wa_char_02", kind: "image", status: "done", refImageUrl: "https://example.com/reference-only.png" },
       { id: "sceneplate-wa_scene_03", kind: "image", status: "running" },
       { id: "propsheet-wa_prop_02", kind: "image", status: "error", error: "failed" },
     ], false, {
@@ -460,6 +461,7 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
       expect(overview.idsByRole.prop).toHaveLength(2);
       expect(overview.idsByRole.wardrobe).toHaveLength(1);
       expect(overview.idsByRole.character).toContainEqual({ id: "wa_char_01", status: "ready" });
+      expect(overview.idsByRole.character).toContainEqual({ id: "wa_char_02", status: "pending" });
       expect(overview.idsByRole.scene).toContainEqual({ id: "wa_scene_03", status: "running" });
       expect(overview.idsByRole.prop).toContainEqual({ id: "wa_prop_02", status: "failed" });
       expect(overview.idsByRole.wardrobe).toContainEqual({ id: "lookset-wa_char_01-1", status: "ready" });
