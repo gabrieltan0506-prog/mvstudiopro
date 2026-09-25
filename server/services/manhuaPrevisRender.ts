@@ -13,6 +13,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   manhuaPrevisRequestSchema,
+  PREVIS_FULL_RES_RENDER_UNIT_BUDGET,
+  previsRenderCostUnits,
   type ManhuaPrevisRequest,
 } from "../../shared/manhuaPrevis";
 import { previsPlaybackDuration, previsPlaybackFrames, previsPlaybackFilter } from "../../shared/manhuaPrevisPlayback";
@@ -25,6 +27,16 @@ import {
 } from "./manhuaPrevisLayers";
 import { preparePrevisModels } from "./manhuaPrevisModels";
 export type { PrevisRenderReport } from "./manhuaPrevisReport";
+
+/** 高负荷只降 Blender 的逐帧分辨率；存证的 blend 保持标准尺寸，MP4 编码恢复标准尺寸。 */
+export function previsRenderProfile(spec: ManhuaPrevisRequest["spec"]) {
+  const reduced = previsRenderCostUnits(spec) > PREVIS_FULL_RES_RENDER_UNIT_BUDGET;
+  const [width, height] = spec.aspect === "16:9" ? [960, 540] : [540, 960];
+  return {
+    renderPercentage: reduced ? 75 : 100,
+    outputScaleFilter: reduced ? `scale=${width}:${height}:flags=bicubic` : undefined,
+  };
+}
 
 /** 超时杀整个 xvfb/Blender 进程组，不只杀 shell 留下后台渲染。 */
 export function runPrevisProcess(
@@ -278,12 +290,16 @@ export async function renderManhuaPrevis(
       signal: options.signal,
     });
     // 只加载本次固定脚本生成的场景。长时渲染前，报告和场景已永久存储。
+    const renderProfile = previsRenderProfile(input.spec);
     const renderArgs = [
       "--background",
       "--disable-autoexec",
       path.join(dir, "scene.blend"),
       "--threads",
       "2",
+      ...(renderProfile.renderPercentage < 100
+        ? ["--python-expr", `import bpy; bpy.context.scene.render.resolution_percentage=${renderProfile.renderPercentage}`]
+        : []),
       "--render-anim",
     ];
     {
@@ -307,6 +323,7 @@ export async function renderManhuaPrevis(
         throw new Error("白模渲染存在空帧");
     }
     const mp4 = path.join(dir, "preview.mp4");
+    const videoFilters = [previsPlaybackFilter(input.spec), renderProfile.outputScaleFilter].filter((value): value is string => Boolean(value));
     await d.run(
       "ffmpeg",
       [
@@ -316,7 +333,7 @@ export async function renderManhuaPrevis(
         "24",
         "-i",
         path.join(dir, "frames/frame-%04d.png"),
-        ...(previsPlaybackFilter(input.spec) ? ["-vf", previsPlaybackFilter(input.spec)!] : []),
+        ...(videoFilters.length ? ["-vf", videoFilters.join(",")] : []),
         "-an",
         "-c:v",
         "libx264",

@@ -43,7 +43,7 @@ describe("独立出水契约、草稿与参考", () => {
   it("保留全部事件、原预算及确切指南秒位", () => {
     const { spec } = fixture();
     expect(manhuaPrevisSpecSchema.parse(spec)).toEqual(spec);
-    expect(PREVIS_RENDER_UNIT_BUDGET).toBe(2700);
+    expect(PREVIS_RENDER_UNIT_BUDGET).toBe(2800);
     const guide = formatPrevisMotionGuide(spec);
     expect(guide).toContain("同时冲出");
     expect(guide).toContain(

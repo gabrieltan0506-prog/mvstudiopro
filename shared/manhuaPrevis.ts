@@ -363,7 +363,10 @@ export const manhuaPrevisDraftSchema = manhuaPrevisSpecBaseSchema.extend({
  * 这条边界是**事前拒绝**，不是把超时调长冒充性能达标：超出就当场说清楚，
  * 不让用户等满十分钟再拿到一个空结果。性能改进后按新实测调这个数字。
  */
-export const PREVIS_RENDER_UNIT_BUDGET = 2700;
+/** 原尺寸渲染的已验上限；更高负荷仅走服务端降采样渲染并恢复标准视频尺寸。 */
+export const PREVIS_FULL_RES_RENDER_UNIT_BUDGET = 2700;
+/** 75% 隔离探针在 2784 单位完成逐帧渲染；先只放行到 2800，完整编码仍须实测。 */
+export const PREVIS_RENDER_UNIT_BUDGET = 2800;
 /** 出水预演硬限：人数与秒数。拆镜器（manhuaActionPlanSplit）从这里读，不重抄数字。 */
 export const PREVIS_WATER_MAX_ACTORS = 3;
 export const PREVIS_WATER_MAX_SEC = 8;

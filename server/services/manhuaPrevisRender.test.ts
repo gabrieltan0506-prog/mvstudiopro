@@ -12,10 +12,19 @@ import path from "node:path";
 import { createManhuaPrevisStudio } from "../../shared/manhuaPrevis";
 import {
   blenderLaunchCommand,
+  previsRenderProfile,
   renderManhuaPrevis,
   runPrevisProcess,
   type PrevisRenderDeps,
 } from "./manhuaPrevisRender";
+
+it("四角色29秒只降逐帧分辨率，最终视频仍恢复标准横竖尺寸", () => {
+  const base = createManhuaPrevisStudio(29).spec;
+  const spec = { ...base, actors: Array.from({ length: 4 }, (_, i) => ({ ...base.actors[0], id: `actor-${i}` })) };
+  expect(previsRenderProfile(spec)).toEqual({ renderPercentage: 75, outputScaleFilter: "scale=960:540:flags=bicubic" });
+  expect(previsRenderProfile({ ...spec, aspect: "9:16" })).toEqual({ renderPercentage: 75, outputScaleFilter: "scale=540:960:flags=bicubic" });
+  expect(previsRenderProfile(base)).toEqual({ renderPercentage: 100, outputScaleFilter: undefined });
+});
 
 it("0917 生产白模渲染同样 nice -n 10 起 Blender；未开降优先级时命令原样", () => {
   const args = ["--background", "--python", "render.py"];
