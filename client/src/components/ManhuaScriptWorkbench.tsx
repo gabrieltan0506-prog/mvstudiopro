@@ -384,6 +384,8 @@ type ManhuaPendingSheetAnchor = {
   lookZh: string;
 };
 
+type ManhuaAssetOverviewStatus = "ready" | "pending" | "running" | "failed";
+
 /** 来源说明不改变镜数、预算、生成权限或旧稿内容。 */
 export function ManhuaShotSourceLabel({ isFallback }: { isFallback: boolean }) {
   return (
@@ -2804,6 +2806,76 @@ export default function ManhuaScriptWorkbench({
       ),
     [characterLookSets, characterIds, assetCanon],
   );
+  const assetOverview = useMemo(() => {
+    const kinds = [
+      {
+        role: "character" as const,
+        kind: "charsheet" as const,
+        titleZh: "人物",
+        anchors: assetCanon?.characters || [],
+      },
+      {
+        role: "scene" as const,
+        kind: "sceneplate" as const,
+        titleZh: "场景",
+        anchors: assetCanon?.locations || [],
+      },
+      {
+        role: "prop" as const,
+        kind: "propsheet" as const,
+        titleZh: "道具",
+        anchors: (assetCanon?.props || []).filter(shouldSpawnManhuaPropPlate).slice(0, MANHUA_PROP_SHEET_MAX),
+      },
+    ];
+    const canonSections = kinds.map((section) => ({
+      ...section,
+      rows: section.anchors.map((anchor) => {
+        const custom = customAssetRefs.some(
+          (ref) => ref.role === section.role && /^https:\/\//i.test(String(ref.url || "")) && customAssetRefClaimsAnchor(ref, anchor),
+        );
+        const blocksForAnchor = blocks.filter((block) =>
+          (section.kind === "charsheet"
+            ? block.id.startsWith("charsheet-")
+            : section.kind === "sceneplate"
+              ? block.id.startsWith("sceneplate-")
+              : block.id.startsWith("propsheet-")) && block.id.includes(anchor.id),
+        );
+        // mediaUrl() 会回退垫图；资产就绪只能认真正产出或已认领的参考图。
+        const generated = blocksForAnchor.some((block) => Boolean(keyartOutputUrl(block)));
+        const status: ManhuaAssetOverviewStatus = blocksForAnchor.some((block) => block.status === "running")
+          ? "running"
+          : blocksForAnchor.some((block) => block.status === "error" || Boolean(block.error))
+            ? "failed"
+            : generated || custom
+              ? "ready"
+              : "pending";
+        return { id: anchor.id, label: anchor.nameZh || anchor.id, status };
+      }),
+    }));
+    const persistedLookSetIds = new Set((characterLookSets || []).map((set) => String(set.id || "")).filter(Boolean));
+    const savedLookSets = resolvedLookSets.filter((set) => persistedLookSetIds.has(set.id));
+    const lookRows = savedLookSets.map((set) => {
+      const refId = set.wardrobeRefId || set.lookRefId;
+      const ref = customAssetRefs.find((candidate) => candidate.id === refId && candidate.role === "wardrobe");
+      const character = assetCanon?.characters.find((candidate) => candidate.id === set.characterId);
+      return {
+        id: set.id,
+        label: `${character?.nameZh || set.characterId} · ${set.labelZh || `造型${set.index}`}`,
+        status: ref && /^https:\/\//i.test(String(ref.url || "")) ? "ready" as const : "pending" as const,
+      };
+    });
+    const referencedLookIds = new Set(savedLookSets.flatMap((set) => [set.lookRefId, set.wardrobeRefId].filter(Boolean)));
+    for (const ref of customAssetRefs) {
+      if (ref.role !== "wardrobe" || !/^https:\/\//i.test(String(ref.url || "")) || referencedLookIds.has(ref.id)) continue;
+      lookRows.push({ id: ref.id, label: ref.labelZh || "服装参考", status: "ready" });
+    }
+    return [...canonSections, {
+      role: "wardrobe" as const,
+      kind: "lookset" as const,
+      titleZh: "造型",
+      rows: lookRows,
+    }];
+  }, [assetCanon, blocks, characterLookSets, customAssetRefs, resolvedLookSets]);
   const assetLockRegistry = useMemo(
     () =>
       buildManhuaAssetLockRegistry({
@@ -5411,6 +5483,77 @@ export default function ManhuaScriptWorkbench({
                 ) : null}
               </div>
             </div>
+
+            <section
+              data-manhua-asset-status-overview
+              aria-label="资产锚点与状态"
+              className="mt-3 grid grid-cols-1 gap-2 xl:grid-cols-4"
+            >
+              {assetOverview.map((section) => {
+                const counts = section.rows.reduce<Record<ManhuaAssetOverviewStatus, number>>(
+                  (summary, row) => ({ ...summary, [row.status]: summary[row.status] + 1 }),
+                  { ready: 0, pending: 0, running: 0, failed: 0 },
+                );
+                const statusLabel: Record<string, string> = {
+                  ready: "有图", pending: "待补", running: "生成中", failed: "失败",
+                };
+                const statusClass: Record<string, string> = {
+                  ready: "border-emerald-300/25 bg-emerald-400/10 text-emerald-100/85",
+                  pending: "border-white/10 bg-white/[0.035] text-white/55",
+                  running: "border-sky-300/30 bg-sky-400/10 text-sky-100",
+                  failed: "border-rose-300/30 bg-rose-400/10 text-rose-100",
+                };
+                const selected = activeAssetRole === section.role;
+                return (
+                  <div key={section.role} className="min-w-0 rounded-lg border border-white/10 bg-black/20 px-2.5 py-2">
+                    <button
+                      type="button"
+                      data-manhua-asset-overview-category={section.role}
+                      aria-pressed={selected}
+                      onClick={() => {
+                        setActiveAssetRole(section.role);
+                        setOpenCustomRefRoles((prev) => ({ ...prev, [section.role]: true }));
+                        window.requestAnimationFrame(() => {
+                          document.querySelector(`[data-manhua-custom-refs-role="${section.role}"]`)?.scrollIntoView({ block: "nearest" });
+                        });
+                      }}
+                      className={`flex w-full items-center justify-between gap-2 text-left text-[11px] font-semibold ${selected ? "text-cyan-100" : "text-white/85"}`}
+                    >
+                      <span>{section.titleZh} · {section.rows.length}</span>
+                      <span className="text-[9px] font-normal text-white/45">
+                        有图 {counts.ready} · 待补 {counts.pending}{counts.running ? ` · 生成中 ${counts.running}` : ""}{counts.failed ? ` · 失败 ${counts.failed}` : ""}
+                      </span>
+                    </button>
+                    <div className="mt-1.5 flex max-h-16 flex-wrap gap-1 overflow-y-auto" data-manhua-asset-overview-anchors={section.role}>
+                      {section.rows.length ? section.rows.map((row) => (
+                        <button
+                          key={row.id}
+                          type="button"
+                          data-manhua-asset-overview-anchor={row.id}
+                          data-manhua-asset-overview-status={row.status}
+                          title={`${row.label} · ${statusLabel[row.status]}`}
+                          onClick={() => {
+                            setActiveAssetRole(section.role);
+                            setOpenCustomRefRoles((prev) => ({ ...prev, [section.role]: true }));
+                            window.requestAnimationFrame(() => {
+                              const target = section.role === "wardrobe"
+                                ? document.querySelector("[data-manhua-look-sets]")
+                                : Array.from(document.querySelectorAll("[data-manhua-asset-entity]")).find(
+                                    (element) => element.getAttribute("data-manhua-asset-entity") === row.id,
+                                  ) || document.querySelector(`[data-manhua-custom-refs-role="${section.role}"]`);
+                              target?.scrollIntoView({ block: "nearest" });
+                            });
+                          }}
+                          className={`max-w-full truncate rounded border px-1.5 py-0.5 text-[9px] ${statusClass[row.status] || statusClass.pending}`}
+                        >
+                          {row.label} · {statusLabel[row.status] || "待补"}
+                        </button>
+                      )) : <span className="text-[9px] text-white/35">暂无剧本锚点或已保存造型</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </section>
 
             {canonWriterDriftHintZh ? (
               <div

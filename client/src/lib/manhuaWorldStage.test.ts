@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSrcDoc, buildStageSceneConfig, stageCameraRigs, type ManhuaStageCharacter } from "../components/canvas/ManhuaWorldStagePreview";
+import { buildSrcDoc, buildStageSceneConfig, stageCameraRigs, stageSceneSignature, type ManhuaStageCharacter } from "../components/canvas/ManhuaWorldStagePreview";
 
 const actors: ManhuaStageCharacter[] = [
   { id: "actor-a", assetRef: "ref-a", labelZh: "甲", glbUrl: "https://x/a.glb", stagePoint: [0, 0] },
@@ -7,11 +7,12 @@ const actors: ManhuaStageCharacter[] = [
 ];
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>(r => { resolve = r; });
-  return { promise, resolve };
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((r, j) => { resolve = r; reject = j; });
+  return { promise, resolve, reject };
 }
 /** 执行生产 iframe 脚本，用受控加载信号取代网络/WebGL；不冒充真实画面验收。 */
-async function harness(characters = actors) {
+async function harness(characters = actors, failedWorldAttempts = 0) {
   const config = buildStageSceneConfig({ spz500kUrl: "https://x/w.spz" }, characters, stageCameraRigs(characters).establish, "revision-7")!;
   const html = buildSrcDoc(config);
   const script = html.slice(html.indexOf('const CONFIG ='), html.lastIndexOf('</script>'))
@@ -22,9 +23,19 @@ async function harness(characters = actors) {
   const xyz = () => ({ set() {}, setScalar() {} });
   class Object3d {
     position = xyz(); quaternion = xyz(); scale = xyz(); rotation = { x: 0, z: 0 };
-    add() {} traverse() {} lookAt() {} updateProjectionMatrix() {}
+    add() {} remove() {} traverse() {} lookAt() {} updateProjectionMatrix() {}
   }
-  class Splat extends Object3d { initialized = world.promise; numSplats = 10; }
+  let splatInstances = 0;
+  class Splat extends Object3d {
+    initialized: Promise<void>;
+    numSplats = 10;
+    constructor() {
+      super();
+      splatInstances += 1;
+      this.initialized = splatInstances <= failedWorldAttempts
+        ? Promise.reject(new Error("Failed to fetch")) : world.promise;
+    }
+  }
   const three = {
     Scene: Object3d, Group: Object3d, HemisphereLight: Object3d, DirectionalLight: Object3d,
     Color: Object3d, GridHelper: Object3d,
@@ -38,10 +49,17 @@ async function harness(characters = actors) {
   const run = new Function("loadModule", "document", "window", "parent", `return (async () => {${script}})()`);
   const done = run(loadModule, document, window, { postMessage: (m: Record<string, unknown>) => messages.push(m) });
   for (let i = 0; i < 8; i++) await Promise.resolve();
-  return { config, messages, world, loading, done, gltf: () => ({ scene: new Object3d() }) };
+  return { config, messages, world, loading, done, splatInstances: () => splatInstances, gltf: () => ({ scene: new Object3d() }) };
 }
 
 describe("片场生产脚本必需资产门禁", () => {
+  it("相同场景内容的新对象保持同一签名，真实资产或站位变化才换实例", () => {
+    const world = { spz500kUrl: "https://x/w.spz", colliderGlbUrl: "https://x/c.glb", metricScaleFactor: 1.2 };
+    const initial = stageSceneSignature(world, actors);
+    expect(stageSceneSignature({ ...world }, actors.map((actor) => ({ ...actor, stagePoint: [...actor.stagePoint] as [number, number] })))).toBe(initial);
+    expect(stageSceneSignature({ ...world, spz500kUrl: "https://x/new.spz" }, actors)).not.toBe(initial);
+    expect(stageSceneSignature(world, [{ ...actors[0]!, stagePoint: [1, 0] }, actors[1]!] )).not.toBe(initial);
+  });
   it("缺 GLB 的演员仍在预期名单中；不会过滤后冒充完整", () => {
     const config = buildStageSceneConfig({ spz500kUrl: "https://x/w.spz" }, [actors[0]!, { ...actors[1]!, glbUrl: "" }], stageCameraRigs(actors).establish)!;
     expect(config.characters.map(a => a.id)).toEqual(["actor-a", "actor-b"]);
@@ -63,5 +81,21 @@ describe("片场生产脚本必需资产门禁", () => {
     h.loading.get("https://x/a.glb")!(h.gltf());
     await h.done;
     expect(h.messages[0]).toMatchObject({ type: "ready", loaded: ["world", "actor-a"], failed: [{ id: "actor-b", kind: "actor", message: "缺少可用的人物模型" }] });
+  });
+  it("已有高斯文件首次断流时只重试读取一次，第二次成功才回 ready", async () => {
+    const h = await harness([], 1);
+    h.world.resolve();
+    await h.done;
+    expect(h.splatInstances()).toBe(2);
+    expect(h.messages).toEqual([{ source: "manhua-world-stage", revision: "revision-7", type: "ready", loaded: ["world"], failed: [] }]);
+  });
+  it("两次读取都断流时明确报错，不循环重试或误报 ready", async () => {
+    const h = await harness([], 2);
+    await h.done;
+    expect(h.splatInstances()).toBe(2);
+    expect(h.messages).toEqual([{
+      source: "manhua-world-stage", revision: "revision-7", type: "error",
+      message: "世界高斯（.spz）加载失败：Failed to fetch",
+    }]);
   });
 });
