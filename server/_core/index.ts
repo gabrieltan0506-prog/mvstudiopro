@@ -233,6 +233,15 @@ async function startServer() {
   // Keep JSON/urlencoded limits aligned with larger creator uploads and long debug payloads.
   // Global CORS middleware for all API routes
   app.use("/api", (req, res, next) => {
+    // Fly 的全局 OPTIONS 会在 jobs handler 前结束；公开世界素材要单独响应
+    // sandbox iframe 的 Origin:null 预检，不改变其余鉴权 API 的来源规则。
+    if (req.method === "OPTIONS" && req.path === "/jobs" && String(req.query.op || "").toLowerCase() === "manhuabridgemedia") {
+      res.header("Access-Control-Allow-Origin", "*");
+      res.header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+      res.header("Access-Control-Allow-Headers", "Range");
+      res.header("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges");
+      return res.status(204).end();
+    }
     applyApiCors(req, res);
     if (req.method === "OPTIONS") {
       return res.status(204).end();

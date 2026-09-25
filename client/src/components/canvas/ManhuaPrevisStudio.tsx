@@ -626,6 +626,11 @@ export function ManhuaPrevisStudioView({
         本段动作白模 ·
         简化人体关节／四足站位，不是角色模型自动绑定。渲染不调用付费生成模型；预览后再采用，不会自动出成片。
       </p>
+      <div className="grid gap-2 rounded border border-cyan-300/20 bg-cyan-300/[0.05] p-2 text-[11px] leading-5 text-cyan-50 sm:grid-cols-3" aria-label="动作白模用途说明">
+        <p><b>先排动作：</b>把本段人物、马、机位和接触时点放进同一时间轴，提前看站位、遮挡与运动方向。</p>
+        <p><b>再审预演：</b>渲染后逐帧检查人数、背负、接触和穿模，再按正常速度播放；有问题就改规格并重渲。</p>
+        <p><b>最后采用：</b>审过的白模可作为本段视频的动作参考。它不会替你生成角色形象、配音或最终成片。</p>
+      </div>
       <p className="text-xs text-cyan-100" data-previs-source-scope>{manhuaPrevisSourceLabel(studio.spec)}</p>
       <ManhuaPrevisActionLibrary spec={studio.spec} disabled={disabled || Boolean(pendingId) || busy} onChange={edit} />
       <details data-previs-layout-editor className="rounded border border-white/10 bg-white/[0.02] p-2">

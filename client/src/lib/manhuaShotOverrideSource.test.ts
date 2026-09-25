@@ -77,6 +77,16 @@ function handler(name: string, deps: Record<string, unknown>) {
 }
 
 describe("对白覆盖不能抢占真实分镜", () => {
+  it("旧工作流只有 story idle prompt 保存描述时，刷新后分镜与出片真源仍读取该覆盖", () => {
+    const story = { ...block("story-e01", ""), prompt: patchShotDescriptionSection("本集确认稿", { 1: "阿菁背着病母，娘双脚离地；墨屠跛行跟随" }), status: "idle" as const };
+    const oldBeats = { ...beats, outputText: "", prompt: override, status: "idle" as const };
+    const oldReverse = { ...reverse, outputText: "", prompt: text, status: "idle" as const };
+    const shots = studio.resolveShotsForEpisodeKeyarts([oldBeats, oldReverse, story], 1);
+    expect(shots[0]?.actionZh).toBe("阿菁背着病母，娘双脚离地；墨屠跛行跟随");
+    expect(shots[0]?.durationSec).toBe(5);
+    const newerBeats = { ...oldBeats, prompt: patchShotDescriptionSection(override, { 1: "阿菁背着病母跑向医馆" }) };
+    expect(studio.resolveShotsForEpisodeKeyarts([newerBeats, oldReverse, story], 1)[0]?.actionZh).toBe("阿菁背着病母跑向医馆");
+  });
   it("画面描述从用户覆盖表进入同一分镜生产者，别镜动作与秒位不变", () => {
     const editedReverse = { ...reverse, outputText: patchShotDescriptionSection(text, { 1: "阿菁背娘走向医馆，墨屠守在侧后方" }) };
     const editedBeats = { ...beats, outputText: patchShotDescriptionSection(override, { 1: "阿菁背娘走向医馆门口，墨屠守在侧后方" }) };

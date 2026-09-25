@@ -2812,6 +2812,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (opNormalized === "manhuabridgemedia") {
       // PR-9 Fly 编辑桥：卷上工作副本的公开读取（spz/glb/全景等，可能上百 MB → 流式 + Range）
+      // 3D 预览运行在 sandbox iframe（Origin: null）；公开桥资源需要允许无凭证跨源 fetch。
+      // 只作用于此公开媒体分支，不放宽其他鉴权 API 的 CORS。
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.removeHeader("Access-Control-Allow-Credentials");
+      res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Range");
+      res.setHeader("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges");
+      res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+      if (req.method === "OPTIONS") return res.status(204).end();
       if (req.method !== "GET" && req.method !== "HEAD") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
       }
