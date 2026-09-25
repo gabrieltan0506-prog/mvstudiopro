@@ -27,6 +27,7 @@ import type { ManhuaSegmentReferenceEntry } from "@shared/manhuaSegmentReference
 import type { ManhuaDirectionCanon, ManhuaDirectionSceneType } from "@shared/manhuaDirectionCanon";
 import { listManhuaDirectionCards, MANHUA_DIRECTION_SCENE_TYPES, MANHUA_DIRECTION_SCENE_TYPE_LABEL_ZH } from "@shared/manhuaDirectionCanonLibrary";
 import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { assertOpenAiImagePromptWithinLimit } from "@shared/manhuaKeyartPromptCompact";
 import type { BgmBriefModel } from "@shared/manhuaBgmBrief";
 import { isManhuaKeyartLookCurrent } from "@shared/manhuaKeyartLookState";
@@ -148,12 +149,37 @@ import {
   MANHUA_SECONDARY_TOOL_LABEL_ZH,
   manhuaDrawerSecondaryTools,
   manhuaSecondaryToolHome,
+  type ManhuaSecondaryTool,
 } from "@/lib/manhuaSecondaryTools";
 import {
   manhuaShotKeyartState,
   manhuaShotKeyartStateZh,
 } from "@/lib/manhuaShotKeyartState";
 import type { AdvisorIssue } from "@/lib/manhuaAdvisorProject";
+
+function SecondaryStudioSurface({ immersive, title, onClose, children }: {
+  immersive: boolean;
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  if (!immersive) return <>{children}</>;
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <div data-manhua-secondary-studio-overlay className="fixed inset-0 z-[90] flex justify-end bg-black/65">
+      <section role="dialog" aria-modal="true" aria-label={title}
+        className="flex h-full w-[min(94vw,64rem)] min-w-0 flex-col border-l border-white/20 bg-[#0a121c] text-white shadow-2xl">
+        <header className="flex shrink-0 items-center justify-between border-b border-white/15 px-4 py-3">
+          <strong className="text-sm">{title}</strong>
+          <button type="button" onClick={onClose} aria-label={`关闭${title}`}
+            className="rounded-lg border border-white/20 px-3 py-1.5 text-xs hover:bg-white/10">关闭</button>
+        </header>
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">{children}</div>
+      </section>
+    </div>,
+    document.body,
+  );
+}
 import {
   buildManhuaAtReferenceIndex,
   resolveManhuaAtReferences,
@@ -1404,6 +1430,15 @@ export default function ManhuaScriptWorkbench({
   const [actionTimelineOpen, setActionTimelineOpen] = useState(false);
   const [modelStudioOpen, setModelStudioOpen] = useState(false);
   const [worldStudioOpen, setWorldStudioOpen] = useState(false);
+  const toggleSecondaryTool = (tool: ManhuaSecondaryTool) => {
+    setModelStudioOpen(tool === "model3d" && !modelStudioOpen);
+    setWorldStudioOpen(tool === "world3d" && !worldStudioOpen);
+    setPrevisStudioOpen(tool === "previs" && !previsStudioOpen);
+    setActionTimelineOpen(tool === "actionTimeline" && !actionTimelineOpen);
+    setAudioStudioOpen(tool === "audio" && (audioStudioPhase !== activePhase || !audioStudioOpen));
+    if (tool === "audio") setAudioStudioPhase(activePhase);
+    if ((tool === "audio" || tool === "previs") && !activeClip) onEnsureSegmentClips?.();
+  };
   /** 免费裁字弹层：拖框选保留区，框外（含烧字边缘）裁掉 */
   const [cropTarget, setCropTarget] = useState<{ id: string; url: string; labelZh: string } | null>(null);
   const [cropRect, setCropRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
@@ -4285,10 +4320,10 @@ export default function ManhuaScriptWorkbench({
           ) : (
             null
           )}
-          {(onGenerateAsset3d || onImportAsset3d) && manhuaSecondaryToolHome("model3d", activePhase) === "cluster" ? <button type="button" data-manhua-action="open-3d-model-studio" data-manhua-tool-home="cluster" disabled={Boolean(factoryBusy)}
+          {(onGenerateAsset3d || onImportAsset3d) && manhuaSecondaryToolHome("model3d", activePhase, immersive) === "cluster" ? <button type="button" data-manhua-action="open-3d-model-studio" data-manhua-tool-home="cluster" disabled={Boolean(factoryBusy)}
             className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
-            onClick={()=>setModelStudioOpen(value=>!value)}>3D 模型（就绪 {manhua3dModelCounts(modelStudioCharacters, riggedAssetIds).ready}/{modelStudioCharacters.length}）</button> : null}
-          {modelStudioOpen ? <Manhua3dModelStudio
+            onClick={()=>toggleSecondaryTool("model3d")}>3D 模型（就绪 {manhua3dModelCounts(modelStudioCharacters, riggedAssetIds).ready}/{modelStudioCharacters.length}）</button> : null}
+          {modelStudioOpen ? <SecondaryStudioSurface immersive={immersive} title="3D 模型" onClose={() => setModelStudioOpen(false)}><Manhua3dModelStudio
             characters={modelStudioCharacters}
             busyIds={asset3dBusyIds}
             disabled={Boolean(factoryBusy)}
@@ -4303,11 +4338,11 @@ export default function ManhuaScriptWorkbench({
               // 用候选图（A-pose）绑骨：把来源钉在锁脸图上，白模/场景预览随之切到该模型；用回锁脸图自己的模型则清钉
               onCustomAssetRigSourceChange?.(characterId, sourceRefId===characterId ? null : sourceRefId);
               setAutoRigAssetId(sourceRefId);
-            } : undefined}/> : null}
-          {onGenerateSceneWorld && manhuaSecondaryToolHome("world3d", activePhase) === "cluster" ? <button type="button" data-manhua-action="open-world-studio" data-manhua-tool-home="cluster" disabled={Boolean(factoryBusy)}
+            } : undefined}/></SecondaryStudioSurface> : null}
+          {onGenerateSceneWorld && manhuaSecondaryToolHome("world3d", activePhase, immersive) === "cluster" ? <button type="button" data-manhua-action="open-world-studio" data-manhua-tool-home="cluster" disabled={Boolean(factoryBusy)}
             className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
-            onClick={()=>setWorldStudioOpen(value=>!value)}>3D 场景（就绪 {manhuaWorldCounts(worldStudioScenes).ready}/{worldStudioScenes.length}）</button> : null}
-          {worldStudioOpen && onGenerateSceneWorld ? <ManhuaWorldStudio
+            onClick={()=>toggleSecondaryTool("world3d")}>3D 场景（就绪 {manhuaWorldCounts(worldStudioScenes).ready}/{worldStudioScenes.length}）</button> : null}
+          {worldStudioOpen && onGenerateSceneWorld ? <SecondaryStudioSurface immersive={immersive} title="3D 场景" onClose={() => setWorldStudioOpen(false)}><ManhuaWorldStudio
             scenes={worldStudioScenes}
             busyIds={sceneWorldBusyIds}
             disabled={Boolean(factoryBusy)}
@@ -4317,8 +4352,8 @@ export default function ManhuaScriptWorkbench({
             stageCharacters={worldStageCharacters}
             onExportStageFrame={onExportSceneStageFrame ? (id, blob, frame) => onExportSceneStageFrame(id, blob, { ...frame, episode: focusEpisode, segmentIndex: activeSegNo }) : undefined}
             layoutActors={worldLayoutActors}
-            onSubmitLayoutWorld={onSubmitLayoutSceneWorld}/> : null}
-          {worldStudioOpen && onToggleStageFrameAdoption ? <div className="w-full">
+            onSubmitLayoutWorld={onSubmitLayoutSceneWorld}/>
+          {onToggleStageFrameAdoption ? <div className="w-full">
             <ManhuaStageFrameAdoptPanel
               refs={customAssetRefs}
               shots={stageFrameShotOptions}
@@ -4326,11 +4361,11 @@ export default function ManhuaScriptWorkbench({
               disabled={Boolean(factoryBusy)}
               onToggleAdopt={onToggleStageFrameAdoption}
               actorLabelOf={(id)=>assetLockRegistry.byRole.character.find(a=>a.id===id)?.labelZh||id}/>
-          </div> : null}
-          {onUpdateClipPrevisStudio && manhuaSecondaryToolHome("previs", activePhase) === "cluster" ? <button type="button" data-manhua-action="open-previs-studio" data-manhua-tool-home="cluster" disabled={Boolean(factoryBusy)}
+          </div> : null}</SecondaryStudioSurface> : null}
+          {onUpdateClipPrevisStudio && manhuaSecondaryToolHome("previs", activePhase, immersive) === "cluster" ? <button type="button" data-manhua-action="open-previs-studio" data-manhua-tool-home="cluster" disabled={Boolean(factoryBusy)}
             className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
-            onClick={()=>{setPrevisStudioOpen(value=>!value);if(!activeClip)onEnsureSegmentClips?.();}}>本段动作白模</button> : null}
-          {previsStudioOpen&&onUpdateClipPrevisStudio ? <div className="w-full">
+            onClick={()=>toggleSecondaryTool("previs")}>本段动作白模</button> : null}
+          {previsStudioOpen&&onUpdateClipPrevisStudio ? <SecondaryStudioSurface immersive={immersive} title="本段动作白模" onClose={() => setPrevisStudioOpen(false)}><div className="w-full">
             <p className="mb-2 text-xs text-cyan-100">第 {focusEpisode} 集 · 第 {activeSegNo} 段 · 动作白模</p>
             {activeClip?<ManhuaPrevisStudio key={`${activeClip.id}:${activeClip.previsStudio?.scopeId??"new"}`} block={activeClip}
               characters={assetLockRegistry.byRole.character.map(a=>{
@@ -4353,11 +4388,11 @@ export default function ManhuaScriptWorkbench({
               disabled={Boolean(factoryBusy)||activeClip.status==="running"||activeClip.videoTaskStatus==="queued"}
               onChange={(studio,reference)=>onUpdateClipPrevisStudio(activeClip.id,studio,reference)}/>
               :<p className="text-xs text-amber-100">请先确认分段剧本并建立本段成片节点；此操作不会生成付费成片。</p>}
-          </div>:null}
-          {onChangeManhuaActionPlan && manhuaSecondaryToolHome("actionTimeline", activePhase) === "cluster" ? <button type="button" data-manhua-action="open-action-timeline" data-manhua-tool-home="cluster" disabled={Boolean(factoryBusy)}
+          </div></SecondaryStudioSurface>:null}
+          {onChangeManhuaActionPlan && manhuaSecondaryToolHome("actionTimeline", activePhase, immersive) === "cluster" ? <button type="button" data-manhua-action="open-action-timeline" data-manhua-tool-home="cluster" disabled={Boolean(factoryBusy)}
             className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
-            onClick={()=>setActionTimelineOpen(value=>!value)}>本段动作节奏</button> : null}
-          {actionTimelineOpen&&onChangeManhuaActionPlan ? <ManhuaActionTimeline
+            onClick={()=>toggleSecondaryTool("actionTimeline")}>本段动作节奏</button> : null}
+          {actionTimelineOpen&&onChangeManhuaActionPlan ? <SecondaryStudioSurface immersive={immersive} title="本段动作节奏" onClose={() => setActionTimelineOpen(false)}><ManhuaActionTimeline
             episodeIndex={focusEpisode}
             segmentIndex={activeSegNo}
             plan={manhuaActionPlan ?? null}
@@ -4365,19 +4400,19 @@ export default function ManhuaScriptWorkbench({
             actors={assetLockRegistry.byRole.character.map(a=>({id:a.id,label:a.labelZh}))}
             bindingContext={manhuaActionPlanBindingContext ?? null}
             disabled={Boolean(factoryBusy)}
-            onChange={(plan)=>onChangeManhuaActionPlan(focusEpisode, plan)}/> : null}
-          {onUpdateClipAudioStudio && manhuaSecondaryToolHome("audio", activePhase) === "cluster" ? (
+            onChange={(plan)=>onChangeManhuaActionPlan(focusEpisode, plan)}/></SecondaryStudioSurface> : null}
+          {onUpdateClipAudioStudio && manhuaSecondaryToolHome("audio", activePhase, immersive) === "cluster" ? (
             <button type="button" data-manhua-action="open-audio-studio" data-manhua-tool-home="cluster"
               disabled={Boolean(factoryBusy)}
               aria-controls="manhua-audio-studio"
               aria-expanded={audioStudioOpen && audioStudioPhase === activePhase}
               className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
-              onClick={() => { setAudioStudioOpen(value => audioStudioPhase !== activePhase || !value); setAudioStudioPhase(activePhase); if (!activeClip) onEnsureSegmentClips?.(); }}>
+              onClick={() => toggleSecondaryTool("audio")}>
               配音与背景音乐
             </button>
           ) : null}
           {audioStudioOpen && onUpdateClipAudioStudio ? (
-            <section id="manhua-audio-studio" aria-label="当前段配音与背景音乐" className="w-full rounded-xl border border-cyan-300/25 bg-[#0c121d] p-3" data-manhua-audio-studio hidden={audioStudioPhase !== activePhase}>
+            <SecondaryStudioSurface immersive={immersive} title="配音与背景音乐" onClose={() => setAudioStudioOpen(false)}><section id="manhua-audio-studio" aria-label="当前段配音与背景音乐" className="w-full rounded-xl border border-cyan-300/25 bg-[#0c121d] p-3" data-manhua-audio-studio hidden={audioStudioPhase !== activePhase}>
               <div className="mb-2 flex items-center justify-between text-sm text-cyan-50">
                 <span>第 {focusEpisode} 集 · 第 {activeSegNo} 段 · 配音与背景音乐</span>
                 <select aria-label="音轨工作台当前段" value={activeSegNo} disabled={Boolean(factoryBusy)} className="rounded border border-white/20 bg-[#0c121d] p-1 text-xs"
@@ -4393,8 +4428,10 @@ export default function ManhuaScriptWorkbench({
                 bgmModels={bgmModels} /> : (
                 <p className="text-xs text-amber-100">当前段尚未建立成片节点。请先确认分段剧本；本入口不生成视频、不扣费，也不切换工作区。</p>
               )}
-            </section>
+            </section></SecondaryStudioSurface>
           ) : null}
+        </div>
+        </details>
           {factoryBusy && onStopFactory ? null : (
             <Popover open={moreToolsOpen} onOpenChange={setMoreToolsOpen}>
               <PopoverTrigger asChild>
@@ -4421,7 +4458,7 @@ export default function ManhuaScriptWorkbench({
                   </p>
                 </div>
                 {/* 二级工具统一收到这里，保证每个工具任一阶段恰好一个入口（判据在 manhuaSecondaryTools.ts） */}
-                {manhuaDrawerSecondaryTools(activePhase).length ? (
+                {manhuaDrawerSecondaryTools(activePhase, immersive).length ? (
                   <div
                     data-manhua-toolbar-group="secondary-tools"
                     className="mb-3 rounded-lg border border-white/10 bg-white/[0.025] p-2"
@@ -4431,7 +4468,7 @@ export default function ManhuaScriptWorkbench({
                       人物与场景用来准备资产；动作白模、动作节奏和声音用于当前片段。
                     </p>
                     <div className="mt-1.5 flex flex-wrap gap-1.5">
-                      {manhuaDrawerSecondaryTools(activePhase).map((tool) => {
+                      {manhuaDrawerSecondaryTools(activePhase, immersive).map((tool) => {
                         const enabled =
                           tool === "model3d"
                             ? Boolean(onGenerateAsset3d || onImportAsset3d)
@@ -4452,17 +4489,7 @@ export default function ManhuaScriptWorkbench({
                             disabled={Boolean(factoryBusy)}
                             onClick={() => {
                               setMoreToolsOpen(false);
-                              if (tool === "model3d") setModelStudioOpen((v) => !v);
-                              else if (tool === "world3d") setWorldStudioOpen((v) => !v);
-                              else if (tool === "previs") {
-                                setPrevisStudioOpen((v) => !v);
-                                if (!activeClip) onEnsureSegmentClips?.();
-                              } else if (tool === "actionTimeline") setActionTimelineOpen((v) => !v);
-                              else {
-                                setAudioStudioOpen((v) => audioStudioPhase !== activePhase || !v);
-                                setAudioStudioPhase(activePhase);
-                                if (!activeClip) onEnsureSegmentClips?.();
-                              }
+                              toggleSecondaryTool(tool);
                             }}
                             className="rounded-lg border border-white/15 bg-white/[0.04] px-2.5 py-1.5 text-[11px] text-white/70 hover:bg-white/[0.08] disabled:opacity-40"
                           >
@@ -4854,8 +4881,6 @@ export default function ManhuaScriptWorkbench({
               </PopoverContent>
             </Popover>
           )}
-        </div>
-        </details>
       </div>
 
       {(activePhase !== "storyboard" && activePhase !== "edit" && activePhase !== "assets") ? <div
@@ -5134,7 +5159,7 @@ export default function ManhuaScriptWorkbench({
 
       {/* 0917 线上实测：3D 模型面板的「绑骨」在任何阶段都可点，弹层却只在资产阶段挂载 → 分镜阶段点了静默无反应。挪到阶段分支外，与阶段无关。 */}
       {autoRigAsset && autoRigEligibility?.eligible && autoRigEligibility.currentModel3d?.status === "succeeded" && onApplyRiggedModel ? (
-        <div className="fixed inset-0 z-[81] flex items-center justify-center bg-black/80 p-4">
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 p-4">
           <ManhuaAutoRigEditor
             key={`${autoRigAsset.id}:${autoRigEligibility.sourceVersion}`}
             assetRef={autoRigAsset.id}
@@ -5150,7 +5175,7 @@ export default function ManhuaScriptWorkbench({
       {/* 同上：3D 模型面板「预览」在任何阶段可点，弹层只在资产阶段挂载 → 一并挪出阶段分支 */}
       {model3dPreview ? (
         <div
-          className="fixed inset-0 z-[76] flex items-center justify-center bg-black/85 px-4 py-6"
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-black/85 px-4 py-6"
           onClick={() => setModel3dPreview(null)}
         >
           <div

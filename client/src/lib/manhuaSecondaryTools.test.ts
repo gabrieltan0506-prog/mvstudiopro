@@ -47,4 +47,11 @@ describe("二级工具的家", () => {
     expect(manhuaDrawerSecondaryTools("final")).toEqual(TOOLS);
     for (const tool of TOOLS) expect(MANHUA_SECONDARY_TOOL_LABEL_ZH[tool].length).toBeGreaterThan(1);
   });
+
+  it("沉浸模式顶部工具收起时，声音也有可见的抽屉入口", () => {
+    for (const phase of PHASES) {
+      expect(manhuaDrawerSecondaryTools(phase, true)).toEqual(TOOLS);
+      for (const tool of TOOLS) expect(manhuaSecondaryToolHome(tool, phase, true)).toBe("drawer");
+    }
+  });
 });
