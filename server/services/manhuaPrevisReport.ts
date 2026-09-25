@@ -17,6 +17,7 @@ import {
   type ManhuaPrevisRequest,
 } from "../../shared/manhuaPrevis";
 import { PREVIS_BODY_BONES } from "../../shared/manhuaPrevisRig";
+import { expectedPiggybackMotion, previsPiggybackSlipCatchSchema } from "../../shared/manhuaPrevisPiggyback";
 
 const point = z.tuple([
   z.number().finite(),
@@ -28,9 +29,12 @@ export const previsReportSchema = z
     piggyback: z.object({
       carrierId: z.string().min(1),
       passengerId: z.string().min(1),
+      slipCatch: previsPiggybackSlipCatchSchema.optional(),
       samples: z.array(z.object({
         frame: z.number().int().min(1).max(720),
-        supportError: z.number().finite().nonnegative().max(.005),
+        supportError: z.number().finite().nonnegative().max(.2),
+        expectedSupportGap: z.number().finite().nonnegative().max(.2).optional(),
+        actualDropMeters: z.number().finite().min(-.005).max(.2).optional(),
         gripError: z.number().finite().nonnegative().max(.005),
         passengerFootHeight: z.number().finite().min(.1),
       }).strict()).min(48).max(720),
@@ -217,6 +221,21 @@ export function validatePrevisReport(
     if (!pair || pair.carrierId !== spec.piggyback.carrierId || pair.passengerId !== spec.piggyback.passengerId ||
         pair.samples.length !== report.frames || pair.samples.some((row, i) => row.frame !== i+1))
       throw new Error("背负逐帧接触证据缺失或人物不一致");
+    const sourceEvent = spec.piggyback.slipCatch;
+    const measuredEvent = pair.slipCatch;
+    if (Boolean(sourceEvent) !== Boolean(measuredEvent) ||
+        (sourceEvent && measuredEvent &&
+          (["slipStartSec", "catchSec", "recoverEndSec", "dropMeters"] as const)
+            .some(key => sourceEvent[key] !== measuredEvent[key])) ||
+        pair.samples.some(row => {
+          const expected = expectedPiggybackMotion(sourceEvent, row.frame);
+          return (sourceEvent && row.expectedSupportGap === undefined) ||
+            (sourceEvent && row.actualDropMeters === undefined) ||
+            Math.abs((row.expectedSupportGap ?? 0) - expected.supportGap) > .005 ||
+            Math.abs(row.supportError - expected.supportGap) > .005 ||
+            Math.abs((row.actualDropMeters ?? 0) - expected.dropMeters) > .005;
+        }))
+      throw new Error("背负滑落与接住的逐帧接触证据不一致");
   } else if (report.piggyback) throw new Error("出现了配置中没有的背负关系");
   report.actors.forEach((actor, index) => {
     if ((actor.supportMode === "carried") !== (actor.id === spec.piggyback?.passengerId))

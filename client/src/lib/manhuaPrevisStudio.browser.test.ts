@@ -1572,6 +1572,14 @@ it("背负关系保存跟随路线，保存失败保留原稿，删除乘员清�
     expect(saved.spec.actors[1].start).toEqual(saved.spec.actors[0].start);
     expect(saved.spec.actors[1].end).toEqual(saved.spec.actors[0].end);
     expect(saved.spec.actors[1].actions).toEqual([{ kind: "idle", startSec: 0, endSec: 10 }]);
+    await page.click('[aria-label="中途滑落并托住"]');
+    await settle(page);
+    const withSlip = await page.evaluate(() => (window as any).fixture.block.previsStudio.spec.piggyback.slipCatch);
+    expect(withSlip).toEqual({ slipStartSec: 1, catchSec: 1.6, recoverEndSec: 2.4, dropMeters: .12 });
+    expect(await page.$('[aria-label="重新托住秒"]')).not.toBeNull();
+    await page.click('[aria-label="中途滑落并托住"]');
+    await settle(page);
+    expect(await page.evaluate(() => (window as any).fixture.block.previsStudio.spec.piggyback.slipCatch)).toBeUndefined();
     await page.evaluate(() => {
       const buttons = Array.from(document.querySelectorAll("button")).filter(b => b.textContent?.trim() === "移除角色");
       buttons[1].click();

@@ -31,4 +31,22 @@ describe("整段背负配置和草稿恢复", () => {
       expect(manhuaPrevisSpecSchema.safeParse(s.spec).success).toBe(false);
     }
   });
+  it("短时滑落、接住和复位随草稿恢复，时间越界或乱序会被拦下", () => {
+    const studio = fixture();
+    studio.spec.piggyback!.slipCatch = {
+      slipStartSec: .25, catchSec: .9, recoverEndSec: 1.8, dropMeters: .12,
+    };
+    const restored = manhuaPrevisStudioSchema.parse(JSON.parse(JSON.stringify(studio)));
+    expect(restored.spec.piggyback?.slipCatch).toEqual(studio.spec.piggyback?.slipCatch);
+    expect(manhuaPrevisSpecSchema.safeParse(restored.spec).success).toBe(true);
+    for (const patch of [
+      { catchSec: .3 },
+      { recoverEndSec: 2.2 },
+      { dropMeters: .3 },
+    ]) {
+      const bad = structuredClone(studio.spec);
+      bad.piggyback!.slipCatch = { ...bad.piggyback!.slipCatch!, ...patch };
+      expect(manhuaPrevisSpecSchema.safeParse(bad).success).toBe(false);
+    }
+  });
 });

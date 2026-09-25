@@ -4,7 +4,26 @@ from mathutils import Vector, Matrix
 from previs_contact_ik import solve_limb
 
 
-def solve_piggyback(carrier, passenger):
+def piggyback_motion(pair, frame):
+    """源时间上的滑落/接住曲线；旧关系始终返回零。"""
+    event = pair.get('slipCatch')
+    if not event:
+        return 0., 0.
+    t = (frame-1)/24
+    start, catch, recovered = (event[key] for key in ('slipStartSec', 'catchSec', 'recoverEndSec'))
+    depth = event['dropMeters']
+    if t <= start or t >= recovered:
+        return 0., 0.
+    if t < catch:
+        u = (t-start)/(catch-start)
+        eased = u*u*(3-2*u)
+        # 托腿的手短暂跟不上滑落；到最低点必须重新接住。
+        return depth*eased, depth*.65*math.sin(math.pi*u)
+    u = (t-catch)/(recovered-catch)
+    return depth*(1-u*u*(3-2*u)), 0.
+
+
+def solve_piggyback(carrier, passenger, drop_m=0., support_gap_m=0.):
     """两具同尺度骨点使用承载者局部坐标；返回双方姿态，不修改输入。"""
     poses = [{k: tuple(v.copy() for v in pair) for k, pair in p.items()}
              for p in (carrier, passenger)]
@@ -43,7 +62,7 @@ def solve_piggyback(carrier, passenger):
         a[upper], a[lower] = (root, joint), (joint, end)
     chest = a['spine'][1]
     # 先锁背部间距与乘员骨盆，再由真实肢体长度解算抱肩及托腿接触。
-    shift = chest + Vector((-.32, 0, -.12)) - b['spine'][0]
+    shift = chest + Vector((-.32, 0, -.12-drop_m)) - b['spine'][0]
     for key, pair in list(b.items()):
         b[key] = tuple(v + shift for v in pair)
     contacts = []
@@ -68,7 +87,7 @@ def solve_piggyback(carrier, passenger):
         limb(b, 'upper_leg'+key, 'lower_leg'+key, 'foot'+key,
              hip, ankle, (1, side*.3, 0), (1, 0, 0))
         knee = b['lower_leg'+key][0]
-        support = knee + Vector((0, 0, -.035))
+        support = knee + Vector((0, 0, -.035+support_gap_m))
         wrist = limb(a, 'upper_arm'+key, 'forearm'+key, 'hand'+key,
                      a['upper_arm'+key][0], support, (-.3, side, -.5), (1, 0, .2))
         shoulder = a['upper_arm'+key][0]
@@ -85,8 +104,18 @@ def validate_piggyback(spec):
     pair = spec.get('piggyback')
     if not pair:
         return None
-    if set(pair) != {'carrierId', 'passengerId'}:
+    if set(pair) not in ({'carrierId', 'passengerId'}, {'carrierId', 'passengerId', 'slipCatch'}):
         raise ValueError('背负关系字段无效')
+    event = pair.get('slipCatch')
+    if event:
+        if set(event) != {'slipStartSec', 'catchSec', 'recoverEndSec', 'dropMeters'} or not all(
+                isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) for v in event.values()):
+            raise ValueError('背负滑落事件字段无效')
+        if not (0 <= event['slipStartSec'] and
+                event['slipStartSec']+.2 <= event['catchSec'] and
+                event['catchSec']+.2 <= event['recoverEndSec'] <= spec['durationSec'] and
+                .06 <= event['dropMeters'] <= .18):
+            raise ValueError('背负滑落须依次设置开始、接住、恢复，且不超出本段')
     actors = {a['id']: a for a in spec['actors']}
     aid, bid = pair['carrierId'], pair['passengerId']
     if aid == bid or aid not in actors or bid not in actors:
@@ -103,10 +132,11 @@ def validate_piggyback(spec):
     return pair
 
 
-def apply_piggyback(pair, poses):
+def apply_piggyback(pair, poses, frame):
     """双方同一根变换；一次更新两人的局部姿态，顺序不依赖演员列表。"""
     aid, bid = pair['carrierId'], pair['passengerId']
-    poses[aid], poses[bid], _ = solve_piggyback(poses[aid], poses[bid])
+    drop, gap = piggyback_motion(pair, frame)
+    poses[aid], poses[bid], _ = solve_piggyback(poses[aid], poses[bid], drop, gap)
 
 
 def measure_piggyback(pair, rigs, scene, update):
@@ -127,5 +157,11 @@ def measure_piggyback(pair, rigs, scene, update):
             support.append((wrist-knee_target).length)
             grip.append((hand-shoulder).length)
             heights.append((b.matrix_world @ b.pose.bones['foot'+key].head).z)
-        rows.append({'frame': frame, 'supportError': max(support), 'gripError': max(grip), 'passengerFootHeight': min(heights)})
-    return {**pair, 'samples': rows, 'boundaryZh': '整段已背稳的基础人形预演；不含上背、放下或完整衣物网格验收。'}
+        _, expected_gap = piggyback_motion(pair, frame)
+        actual_drop = (a.matrix_world @ a.pose.bones['spine'].tail).z - (b.matrix_world @ b.pose.bones['spine'].head).z - .12
+        rows.append({'frame': frame, 'supportError': max(support), 'expectedSupportGap': expected_gap,
+                     'actualDropMeters': actual_drop, 'gripError': max(grip), 'passengerFootHeight': min(heights)})
+    boundary = ('从已背稳到中途滑落、接住并复位的基础人形预演；不含上背、放下或完整衣物网格验收。'
+                if pair.get('slipCatch') else
+                '整段已背稳的基础人形预演；不含上背、放下或完整衣物网格验收。')
+    return {**pair, 'samples': rows, 'boundaryZh': boundary}

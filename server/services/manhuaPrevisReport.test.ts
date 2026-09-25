@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createManhuaPrevisStudio } from "../../shared/manhuaPrevis";
 import { PREVIS_BODY_BONES } from "../../shared/manhuaPrevisRig";
+import { expectedPiggybackMotion } from "../../shared/manhuaPrevisPiggyback";
 import { validatePrevisReport } from "./manhuaPrevisReport";
 
 function fixture() {
@@ -86,6 +87,37 @@ describe("白模报告双向动作契约", () => {
     else if (mode === "nan") event.actualPoint[0] = NaN;
     else event.actualPoint.push(1);
     expect(() => validatePrevisReport(f.report, f.spec)).toThrow();
+  });
+});
+
+describe("背负滑落逐帧报告", () => {
+  it("按配置重算接触曲线，拒绝报告自填的假接住数据", () => {
+    const f = fixture();
+    delete f.spec.interactions;
+    f.spec.actors[1].start = [...f.spec.actors[0].start];
+    f.spec.actors[1].end = [...f.spec.actors[0].end];
+    f.spec.actors[1].actions = [{ kind: "idle", startSec: 0, endSec: 2 }];
+    const slipCatch = { slipStartSec: .25, catchSec: .9, recoverEndSec: 1.8, dropMeters: .12 };
+    f.spec.piggyback = { carrierId: f.spec.actors[0].id, passengerId: f.spec.actors[1].id, slipCatch };
+    const samples = Array.from({ length: 48 }, (_, i) => {
+      const frame = i + 1;
+      const motion = expectedPiggybackMotion(slipCatch, frame);
+      return { frame, supportError: motion.supportGap, expectedSupportGap: motion.supportGap,
+        actualDropMeters: motion.dropMeters, gripError: 0, passengerFootHeight: .4 };
+    });
+    const report = { frames: 48, fps: 24, warnings: [],
+      actors: f.report.actors.map((actor, i) => ({ ...actor, supportMode: i ? "carried" : "grounded" })),
+      piggyback: { carrierId: f.spec.actors[0].id, passengerId: f.spec.actors[1].id, slipCatch,
+        samples, boundaryZh: "基础人形测试" } };
+    expect(validatePrevisReport(report, f.spec)).toEqual(report);
+    report.piggyback.samples[14].supportError = 0;
+    expect(() => validatePrevisReport(report, f.spec)).toThrow(/逐帧接触/);
+    report.piggyback.samples[14].supportError = samples[14].expectedSupportGap;
+    report.piggyback.samples[14].expectedSupportGap = 0;
+    expect(() => validatePrevisReport(report, f.spec)).toThrow(/逐帧接触/);
+    report.piggyback.samples[14].expectedSupportGap = expectedPiggybackMotion(slipCatch, 15).supportGap;
+    report.piggyback.samples[14].actualDropMeters = 0;
+    expect(() => validatePrevisReport(report, f.spec)).toThrow(/逐帧接触/);
   });
 });
 
