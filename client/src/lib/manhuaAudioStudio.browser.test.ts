@@ -19,7 +19,7 @@ beforeAll(async () => {
       import {TooltipProvider} from './client/src/components/ui/tooltip';
       import {defaultCanvasBlock} from './client/src/lib/canvasTypes';
       const f=globalThis.fixture={updates:[],focus:[],review:0,calls:[]};
-      function App(){const [phase,setPhase]=useState("storyboard");f.setPhase=setPhase;const [blocks,setBlocks]=useState([1,2].map(n=>({...defaultCanvasBlock('video',0,0),id:'clip-e01-g0'+n+'-audio',episodeIndex:1,videoModel:'seedance-2.5',prompt:'【第'+n+'段·30s】墨屠第'+n+'段对白与动作。'})));f.blocks=blocks;return <TooltipProvider><ManhuaScriptWorkbench blocks={blocks} videoModel='seedance-2.5' topic='墨屠守护阿菁' episodeCount={1} focusEpisode={1} onFocusEpisode={()=>{}} characterIds={[]} propIds={[]} outlineConfirmed={true} workflowPhase={phase} compactUi={true} onFocusBlock={id=>f.focus.push(id)} onReviewClipPromptsOnCanvas={()=>f.review++} onUpdateClipAudioStudio={(id,studio)=>{f.updates.push(id);setBlocks(rows=>rows.map(b=>b.id===id?{...b,audioStudio:studio}:b));}} /></TooltipProvider>;}
+      function App(){const [phase,setPhase]=useState("storyboard");f.setPhase=setPhase;const [blocks,setBlocks]=useState([1,2].map(n=>({...defaultCanvasBlock('video',0,0),id:'clip-e01-g0'+n+'-audio',episodeIndex:1,videoModel:'seedance-2.5',prompt:'【第'+n+'段·30s】墨屠第'+n+'段对白与动作。'})));f.blocks=blocks;return <TooltipProvider><ManhuaScriptWorkbench blocks={blocks} videoModel='seedance-2.5' topic='墨屠守护阿菁' episodeCount={1} focusEpisode={1} onFocusEpisode={()=>{}} characterIds={[]} propIds={[]} outlineConfirmed={true} workflowPhase={phase} compactUi={true} immersive={location.hash.includes('immersive')} onFocusBlock={id=>f.focus.push(id)} onReviewClipPromptsOnCanvas={()=>f.review++} onGenerateSceneWorld={()=>{}} onUpdateClipPrevisStudio={()=>{}} onUpdateClipAudioStudio={(id,studio)=>{f.updates.push(id);setBlocks(rows=>rows.map(b=>b.id===id?{...b,audioStudio:studio}:b));}} /></TooltipProvider>;}
       createRoot(document.getElementById('root')).render(<App/>);
     `,
     },
@@ -52,7 +52,7 @@ beforeAll(async () => {
     define: { "process.env.NODE_ENV": '"test"', "import.meta.env": "{}" },
   });
   bundle = built.outputFiles[0]!.text;
-  browser = await puppeteer.launch({ headless: true });
+  browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox"] });
   const cssDir = process.env.MANHUA_LAYOUT_CSS_DIR;
   if (cssDir) {
     const cssFiles = (await readdir(cssDir)).filter(name => /^(index|OmniCanvas)-.*\.css$/.test(name)).sort((a, b) => Number(b.startsWith("index-")) - Number(a.startsWith("index-")));
@@ -182,3 +182,45 @@ it('资产阶段通过更多操作打开声音工作台，不生成或改动成�
  expect(await page.evaluate(()=>(globalThis as any).fixture.calls)).toEqual([]);expect(await page.evaluate(()=>(globalThis as any).fixture.updates)).toEqual([]);
  }finally{await page.close();}
 },20000);
+
+it('沉浸工作台收起顶部工具时，声音仍可从抽屉打开并关闭，不挤压分镜', async () => {
+  const page = await browser.newPage();
+  page.setDefaultTimeout(8000);
+  await page.setRequestInterception(true);
+  page.on('request', request => request.isNavigationRequest()
+    ? void request.respond({ status: 200, contentType: 'text/html', body: '<div id="root"></div>' })
+    : void request.abort());
+  try {
+    await page.setViewport({ width: 1440, height: 900 });
+    await page.goto('http://localhost:41812/#immersive');
+    if (layoutCss) await page.addStyleTag({ content: layoutCss });
+    await page.addScriptTag({ content: bundle });
+    await page.waitForSelector('[data-manhua-workspace-tools]');
+    expect(await page.$eval('[data-manhua-workspace-tools]', el => (el as HTMLDetailsElement).open)).toBe(false);
+    const before = await page.$eval('[data-manhua-phase-panel="storyboard"]', el => el.getBoundingClientRect().height);
+    await page.click('[data-manhua-action="open-more-tools"]');
+    await page.waitForSelector('[data-manhua-secondary-tool="audio"]', { visible: true });
+    await page.click('[data-manhua-secondary-tool="audio"]');
+    await page.waitForSelector('[data-manhua-secondary-studio-overlay] [data-manhua-audio-studio]', { visible: true });
+    expect(await page.$eval('[data-manhua-workspace-tools]', el => (el as HTMLDetailsElement).open)).toBe(false);
+    const after = await page.$eval('[data-manhua-phase-panel="storyboard"]', el => el.getBoundingClientRect().height);
+    expect(after).toBe(before);
+    await page.click('[aria-label="关闭配音与背景音乐"]');
+    await page.waitForSelector('[data-manhua-secondary-studio-overlay]', { hidden: true });
+    await page.click('[data-manhua-action="open-more-tools"]');
+    await page.click('[data-manhua-secondary-tool="world3d"]');
+    await page.waitForSelector('[data-manhua-secondary-studio-overlay] [data-manhua-world-studio]', { visible: true });
+    if (layoutCss) await page.screenshot({ path: path.join(audioEvidenceDir, 'immersive-world-1440.png') });
+    await page.click('[aria-label="关闭3D 场景"]');
+    await page.waitForSelector('[data-manhua-secondary-studio-overlay]', { hidden: true });
+    await page.click('[data-manhua-action="open-more-tools"]');
+    await page.click('[data-manhua-secondary-tool="previs"]');
+    await page.waitForSelector('[data-manhua-secondary-studio-overlay] [data-manhua-previs-studio]', { visible: true });
+    if (layoutCss) await page.screenshot({ path: path.join(audioEvidenceDir, 'immersive-previs-1440.png') });
+    await page.click('[aria-label="关闭本段动作白模"]');
+    await page.waitForSelector('[data-manhua-secondary-studio-overlay]', { hidden: true });
+    expect(await page.evaluate(() => (globalThis as any).fixture.calls)).toEqual([]);
+  } finally {
+    await page.close();
+  }
+}, 30_000);

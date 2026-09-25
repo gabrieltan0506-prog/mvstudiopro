@@ -14,14 +14,16 @@ export type ManhuaSecondaryToolHome = "cluster" | "drawer";
 export function manhuaSecondaryToolHome(
   tool: ManhuaSecondaryTool,
   phase: string,
+  immersive = false,
 ): ManhuaSecondaryToolHome {
+  if (immersive) return "drawer";
   if (tool === "audio" && (phase === "storyboard" || phase === "edit")) return "cluster";
   return "drawer";
 }
 
 /** 这个阶段要在抽屉里列出哪些工具（顺序固定，不随阶段跳动） */
-export function manhuaDrawerSecondaryTools(phase: string): ManhuaSecondaryTool[] {
+export function manhuaDrawerSecondaryTools(phase: string, immersive = false): ManhuaSecondaryTool[] {
   return (["model3d", "world3d", "previs", "actionTimeline", "audio"] as const).filter(
-    (tool) => manhuaSecondaryToolHome(tool, phase) === "drawer",
+    (tool) => manhuaSecondaryToolHome(tool, phase, immersive) === "drawer",
   );
 }
