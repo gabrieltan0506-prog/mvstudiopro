@@ -8499,18 +8499,26 @@ export default function ManhuaScriptWorkbench({
               : "flex min-h-0 w-[min(28vw,300px)] shrink-0 flex-col overflow-hidden border-r border-white/10 p-2 md:p-2.5")
           }
         >
-          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
+          <div className="flex shrink-0 flex-col gap-1">
             <div className="min-w-0 flex-1">
-              <div className="text-[12px] font-semibold text-white/85">
-                第 {String(activeSegNo).padStart(2, "0")} 段
+              <div className={`text-[12px] font-semibold text-white/85 ${compactUi ? "truncate" : ""}`}>
+                {compactUi ? `分镜（${shots.length}）· 第 ${String(activeSegNo).padStart(2, "0")} 段` : `第 ${String(activeSegNo).padStart(2, "0")} 段`}
+                {compactUi ? ` · 镜 ${activeShot?.index ?? "—"}/${shots.length || 1}` : null}
+                {!compactUi ? <>
                 {story?.episodeTitle ? ` · ${story.episodeTitle}` : ""}
                 <span className="ml-2 font-normal text-white/40">
                   {activeSegment?.durationSec ?? 15}s · 静帧 {activeShot?.index ?? "—"}/
                   {shots.length || 1} · {episodeVideoLabelZh}
                 </span>
                 <ManhuaShotSourceLabel isFallback={shotSourceIsFallback} />
+                </> : null}
               </div>
             </div>
+            <details data-manhua-shot-tools open={!compactUi} className="min-w-0 rounded-md border border-white/10 px-1.5 py-0.5">
+              <summary className="cursor-pointer truncate text-[10px] font-medium text-white/60">
+                本段设置 · 造型 / 运镜 / 粗剪{episodeKeyartReview.error || staleLookStillCount ? " · 有静帧待处理" : ""}
+              </summary>
+              <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
             {onSegmentLookBindingsChange && activeLookCharacterIds.length > 0 ? (
               <details className="my-2 rounded-lg border border-cyan-400/20 bg-cyan-500/[0.04] p-2" data-manhua-segment-looks>
                 <summary className="cursor-pointer text-[11px] font-medium text-cyan-50">本段造型 · 保持角色身份</summary>
@@ -8601,14 +8609,16 @@ export default function ManhuaScriptWorkbench({
                 </button>
               ))}
             </div>
+              </div>
+            </details>
           </div>
 
           {scriptTab === "shots" ? (
             <>
-              <div className="mt-2 shrink-0 text-[11px] font-semibold text-white/70">
+              {!compactUi ? <div className="mt-2 shrink-0 text-[11px] font-semibold text-white/70">
                 分镜（{shots.length}）· 当前第 {activeShot?.index ?? "—"} 镜
                 <ManhuaShotSourceLabel isFallback={shotSourceIsFallback} />
-              </div>
+              </div> : null}
               <div className="mt-1.5 min-h-0 flex-1 space-y-2 overflow-y-auto pr-0.5">
                 {shots.map((shot, i) => {
                   const on = i === Math.min(shotIndex, shots.length - 1);
