@@ -312,6 +312,8 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
       await page.waitForSelector('[data-manhua-asset-tabs]');
       const geometry = await page.evaluate(() => {
         const panel = document.querySelector('[data-manhua-phase-panel="assets"]') as HTMLElement;
+        const scroller = document.querySelector('[data-manhua-assets-scroll]') as HTMLElement;
+        const overview = document.querySelector('[data-manhua-asset-status-overview]') as HTMLDetailsElement;
         const currentRole = document.querySelector('[data-manhua-custom-refs-role="character"]') as HTMLElement;
         const groups = Array.from(currentRole.querySelectorAll<HTMLElement>('[data-manhua-asset-entity]'));
         const toolbar = document.querySelector('[data-manhua-asset-tabs]')!;
@@ -328,6 +330,9 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
         return {
           pageOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
           panelOverflow: panel.scrollWidth - panel.clientWidth,
+          overviewCollapsed: !overview.open,
+          firstCardInView: groups[0]!.getBoundingClientRect().top >= scroller.getBoundingClientRect().top
+            && groups[0]!.getBoundingClientRect().top < scroller.getBoundingClientRect().bottom,
           visibleRoles: document.querySelectorAll('[data-manhua-custom-refs-role]').length,
           visibleGroups: groups.length,
           versionStrip: Boolean(currentRole.querySelector('[aria-label*="版本缩略图"]')),
@@ -340,6 +345,8 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
       });
       expect(geometry.pageOverflow).toBeLessThanOrEqual(2);
       expect(geometry.panelOverflow).toBeLessThanOrEqual(2);
+      expect(geometry.overviewCollapsed).toBe(true);
+      expect(geometry.firstCardInView).toBe(true);
       expect(geometry.visibleRoles).toBe(1);
       expect(geometry.visibleGroups).toBeGreaterThanOrEqual(2);
       expect(geometry.versionStrip).toBe(true);
@@ -466,6 +473,15 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
       expect(overview.idsByRole.prop).toContainEqual({ id: "wa_prop_02", status: "failed" });
       expect(overview.idsByRole.wardrobe).toContainEqual({ id: "lookset-wa_char_01-1", status: "ready" });
 
+      const collapsed = await page.$eval('[data-manhua-asset-status-overview]', element => ({
+        open: (element as HTMLDetailsElement).open,
+        summary: element.querySelector('summary')?.textContent || '',
+      }));
+      expect(collapsed.open).toBe(false);
+      expect(collapsed.summary).toContain('有图 2/14');
+      expect(collapsed.summary).toContain('生成中 1');
+      expect(collapsed.summary).toContain('失败 1');
+      await page.click('[data-manhua-asset-status-overview] summary');
       await page.click('[data-manhua-asset-overview-category="scene"]');
       await page.click('[data-manhua-asset-overview-anchor="wa_prop_02"]');
       expect(await page.evaluate(() => (window as any).fixture.keyart)).toBe(0);
@@ -830,7 +846,7 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
       await page.waitForSelector('[data-manhua-phase="final"]', { timeout: 30_000 });
       const out = await page.evaluate(() => {
         const cell = document.querySelector('[data-manhua-phase="final"]')!;
-        return (cell.textContent || "").replace(/\s+/g, " ").trim();
+        return cell.getAttribute("title") || "";
       });
       await ctx.close().catch(() => {});
       return out;
@@ -1273,6 +1289,9 @@ it("七核心编辑从真实分镜右栏写入当前段，不触发生成", asyn
 
 it("真实工作台进度按全部原稿镜头统计，输入垫图不算已出图",async()=>{
  const {page,close}=await mountStoryboard(true,true);
- try {expect(await page.evaluate(()=>document.body.innerText)).toContain("可用静帧 0/2");}
+ try {
+   const status = await page.$eval('[data-manhua-phase="storyboard"]', el => el.getAttribute("title") || "");
+   expect(status).toMatch(/静帧 0\/2/);
+ }
  finally {await close();}
 },180_000);

@@ -2876,6 +2876,15 @@ export default function ManhuaScriptWorkbench({
       rows: lookRows,
     }];
   }, [assetCanon, blocks, characterLookSets, customAssetRefs, resolvedLookSets]);
+  const assetOverviewCounts = useMemo(() => {
+    const rows = assetOverview.flatMap((section) => section.rows);
+    return {
+      total: rows.length,
+      ready: rows.filter((row) => row.status === "ready").length,
+      running: rows.filter((row) => row.status === "running").length,
+      failed: rows.filter((row) => row.status === "failed").length,
+    };
+  }, [assetOverview]);
   const assetLockRegistry = useMemo(
     () =>
       buildManhuaAssetLockRegistry({
@@ -5484,11 +5493,19 @@ export default function ManhuaScriptWorkbench({
               </div>
             </div>
 
-            <section
+            <details
               data-manhua-asset-status-overview
               aria-label="资产锚点与状态"
-              className="mt-3 grid grid-cols-1 gap-2 xl:grid-cols-4"
+              className="mt-2 rounded-lg border border-white/10 bg-white/[0.025] px-3 py-2"
             >
+              <summary className="cursor-pointer text-[11px] font-semibold text-white/75">
+                资产清单与进度
+                <span className="ml-2 font-normal text-white/55">有图 {assetOverviewCounts.ready}/{assetOverviewCounts.total}</span>
+                {assetOverviewCounts.running ? <span className="ml-2 text-sky-200">生成中 {assetOverviewCounts.running}</span> : null}
+                {assetOverviewCounts.failed ? <span className="ml-2 text-rose-200">失败 {assetOverviewCounts.failed}</span> : null}
+                <span className="ml-2 font-normal text-white/45">展开按名称定位</span>
+              </summary>
+              <div className="mt-2 grid grid-cols-1 gap-2 xl:grid-cols-4">
               {assetOverview.map((section) => {
                 const counts = section.rows.reduce<Record<ManhuaAssetOverviewStatus, number>>(
                   (summary, row) => ({ ...summary, [row.status]: summary[row.status] + 1 }),
@@ -5553,7 +5570,8 @@ export default function ManhuaScriptWorkbench({
                   </div>
                 );
               })}
-            </section>
+              </div>
+            </details>
 
             {canonWriterDriftHintZh ? (
               <div
