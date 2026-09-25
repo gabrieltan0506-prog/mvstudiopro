@@ -138,6 +138,35 @@ describe("对白覆盖不能抢占真实分镜", () => {
     expect(nodes[4]!.status).toBe("error");
     expect(nodes[5]!.outputText).toBe("第二集节拍");
   });
+  it("旧工作流的 idle 分镜真源位于 prompt 时，保存描述会进入同一生产者且不伪造完成态", () => {
+    let pack = { episodes: [{ index: 1, body: text }] };
+    let nodes = [
+      { ...reverse, outputText: "", prompt: text, status: "idle" as const },
+      { ...beats, outputText: "", prompt: text, status: "idle" as const },
+      { ...block("story-e01", ""), prompt: "尚未生成的空模板", status: "idle" as const },
+      { ...block("reverse-e02", ""), prompt: text, status: "idle" as const },
+    ];
+    const save = handler("onUpsertShotDescriptions", {
+      writerFocusEpisode: 1,
+      setWriterPack: (updater: (value: typeof pack) => typeof pack) => { pack = updater(pack); },
+      handleBlocksChange: (updater: (value: typeof nodes) => typeof nodes) => { nodes = updater(nodes); },
+      patchShotDescriptionSection,
+      hasExplicitManhuaShotStructure: studio.hasExplicitManhuaShotStructure,
+      getBlockEpisodeIndex: (node: CanvasBlock) => Number(node.id.match(/e(\d\d)/)?.[1] || 1),
+      stageKeyFromBlockId: (id: string) => id.split("-")[0],
+      toast: { success: vi.fn() },
+    });
+    const changed = "阿菁背着娘，娘双脚离地；墨屠左前腿蜷起跛行";
+    save({ 1: changed });
+    expect(parseShotDescriptionTable(pack.episodes[0]!.body)[1]).toBe(changed);
+    expect(nodes.slice(0, 2).map(node => parseShotDescriptionTable(node.prompt)[1])).toEqual([changed, changed]);
+    expect(nodes.map(node => node.status)).toEqual(["idle", "idle", "idle", "idle"]);
+    expect(nodes[2]!.prompt).toBe("尚未生成的空模板");
+    expect(nodes[3]!.prompt).toBe(text);
+    const shots = studio.resolveShotsForEpisodeKeyarts(nodes, 1);
+    expect(shots[0]?.actionZh).toBe(changed);
+    expect(shots[1]?.actionZh).toBe("墨屠张开黑翼");
+  });
   it("台词与描述直改不把无正文或失败节点伪装成已生成", () => {
     let pack = { episodes: [{ index: 1, body: "第一集正文" }] };
     let nodes = [
