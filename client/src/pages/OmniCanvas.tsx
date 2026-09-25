@@ -213,6 +213,7 @@ import {
   applyTopicToFactoryStory,
   filterBlocksByEpisode,
   getBlockEpisodeIndex,
+  hasExplicitManhuaShotStructure,
   isTransientFactoryError,
   manhuaEpisodeHasFactoryChain,
   replaceManhuaEpisodeChain,
@@ -10724,13 +10725,16 @@ export default function OmniCanvas() {
                       if ((getBlockEpisodeIndex(block) ?? 1) !== ep) return block;
                       const stage = stageKeyFromBlockId(block.id);
                       if (stage !== "story" && stage !== "reverse" && stage !== "beats") return block;
-                      // 没有真实正文的节点不能靠一次描述编辑伪装成已生成；失败态也不在此处改写。
+                      // 既有正文优先；旧工作流把已确认分镜放在 idle 节点的 prompt，
+                      // 描述必须写回实际分镜源，但保持 idle 状态，不能伪装成生成完成。
                       const sourceText = String(block.outputText || "");
-                      if (!sourceText.trim()) return block;
-                      return {
+                      if (sourceText.trim()) return {
                         ...block,
                         outputText: patchShotDescriptionSection(sourceText, descriptions),
                       };
+                      const prompt = String(block.prompt || "");
+                      if (block.status !== "idle" || !hasExplicitManhuaShotStructure(prompt)) return block;
+                      return { ...block, prompt: patchShotDescriptionSection(prompt, descriptions) };
                     }));
                     toast.success("本镜描述已存本机，旧图保留；云端备份请用顶部入口。");
                   }}
