@@ -70,7 +70,7 @@ describe("拆镜器：四人船战", () => {
     expect(shots).toEqual([]);
   });
 
-  it("交锋镜超预算（人数 × 秒 × 24 > 2700）→ too_many_actors_for_shot", () => {
+  it("交锋镜超自订预算（人数 × 秒 × 24）→ too_many_actors_for_shot", () => {
     const plan = buildBoatFight();
     const cap = { ...defaultManhuaPrevisCapability(), renderUnitBudget: 24 * 8 * 3 }; // 8 秒只允许 3 人
     const { shots, issues } = splitManhuaActionPlanForPrevis(plan, cap);

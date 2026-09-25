@@ -323,15 +323,15 @@ describe("单次渲染预算：按实测定的能力边界（0911）", () => {
   it("成本按帧数×角色数算；六角色30秒就是那次烧满十分钟没出片的规格", () => {
     expect(previsRenderCostUnits({ durationSec: 30, actors: new Array(6) })).toBe(4320);
     expect(previsRenderCostUnits({ durationSec: 5, actors: new Array(1) })).toBe(120);
-    expect(PREVIS_RENDER_UNIT_BUDGET).toBe(2700);
+    expect(PREVIS_RENDER_UNIT_BUDGET).toBe(2800);
   });
 
   it("超预算给的是能照做的中文：说清上限、同角色数最长几秒、同片长最多几个角色", () => {
     const issue = previsCapacityIssueZh({ durationSec: 30, actors: new Array(6) });
     expect(issue).toContain("6 个角色 × 30 秒");
     expect(issue).toContain("4320");
-    expect(issue).toContain("2700");
-    expect(issue).toContain("最多 18 秒");
+    expect(issue).toContain("2800");
+    expect(issue).toContain("最多 19 秒");
     expect(issue).toContain("请拆成多段");
   });
 
@@ -340,6 +340,7 @@ describe("单次渲染预算：按实测定的能力边界（0911）", () => {
     expect(previsCapacityIssueZh({ durationSec: 30, actors: new Array(3) })).toBeNull();
     expect(previsCapacityIssueZh({ durationSec: 18, actors: new Array(6) })).toBeNull();
     expect(manhuaPrevisSpecSchema.safeParse(specOf(3, 20)).success).toBe(true);
+    expect(manhuaPrevisSpecSchema.safeParse(specOf(4, 29)).success).toBe(true);
   });
 
   it("schema 事前拒绝超预算作业，不让它进渲染烧满时限", () => {
@@ -350,7 +351,7 @@ describe("单次渲染预算：按实测定的能力边界（0911）", () => {
 
   it("同角色数的最长片长随预算算出来，至少给 2 秒", () => {
     expect(previsMaxDurationSec(1)).toBeGreaterThanOrEqual(30);
-    expect(previsMaxDurationSec(6)).toBe(18);
+    expect(previsMaxDurationSec(6)).toBe(19);
     expect(previsMaxDurationSec(60)).toBe(2);
   });
 });
