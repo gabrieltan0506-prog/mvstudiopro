@@ -52,7 +52,7 @@ beforeAll(async () => {
     define: { "process.env.NODE_ENV": '"test"', "import.meta.env": "{}" },
   });
   bundle = built.outputFiles[0]!.text;
-  browser = await puppeteer.launch({ headless: true });
+  browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox"] });
   const cssDir = process.env.MANHUA_LAYOUT_CSS_DIR;
   if (cssDir) {
     const cssFiles = (await readdir(cssDir)).filter(name => /^(index|OmniCanvas)-.*\.css$/.test(name)).sort((a, b) => Number(b.startsWith("index-")) - Number(a.startsWith("index-")));
