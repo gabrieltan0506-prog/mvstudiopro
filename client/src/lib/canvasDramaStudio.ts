@@ -1933,7 +1933,10 @@ export function resolveShotsForEpisodeKeyartsResult(
     [beatsText, reverseText, storyText].find(text => text && hasExplicitManhuaShotStructure(text));
   const selectedText = shotSource || reverseText || beatsText || storyText;
   const result = generated.find(source => source.text === selectedText)?.result || parseSource(selectedText);
-  const withReverseDescriptions = applyShotDescriptionsFromText(result.shots, reverseText);
+  // 旧项目只把镜头描述存进 story 的 idle prompt；它仍是本集已保存的
+  // 用户覆盖表。先应用这份底稿，再让 reverse / beats 中较新的覆盖接管。
+  const withStoryDescriptions = applyShotDescriptionsFromText(result.shots, storyText);
+  const withReverseDescriptions = applyShotDescriptionsFromText(withStoryDescriptions, reverseText);
   const withDescriptions = applyShotDescriptionsFromText(withReverseDescriptions, beatsText);
   const withAngles = applyShotAnglesFromText(withDescriptions, `${reverseText}\n${beatsText}`);
   // 工作台的「成片台词」会把覆盖表同时写回 reverse / beats。这里是静帧与段成片

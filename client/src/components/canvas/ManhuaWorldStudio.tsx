@@ -229,6 +229,11 @@ export function ManhuaWorldStudio(props: Props) {
         </label>
         <span className="text-white/50">流程：场景空镜 → 生成世界（Marble，按档扣费）→ 全景/碰撞网格/高斯文件落 Fly，可直接用于角色进场景与多机位关键帧</span>
       </div>
+      <div className="mb-3 grid gap-2 rounded-lg border border-cyan-300/20 bg-cyan-300/[0.05] p-2 text-[11px] leading-5 text-cyan-50 sm:grid-cols-3" aria-label="3DGS 场景用途说明">
+        <p><b>用在哪：</b>同一场景的不同镜头可复用空间与机位。例如“临水坊市”用于坊市镜头；医馆、后院和河滩需要各自的场景。</p>
+        <p><b>怎么用：</b>点“预览与产物”看全景与高斯场景，摆入角色并导出视角图，再作为该镜关键帧的空间参考。</p>
+        <p><b>不会自动做：</b>3DGS 是场景空间，不含人物表演、对白或成片；角色模型、白模动作与镜头画面仍需分别检查。</p>
+      </div>
       {!scenes.length ? <p className="text-[11px] text-amber-100">本剧还没有锁定的场景资产，先在资产区出场景空镜并确认。</p> : null}
       <ul className="flex flex-col gap-1">
         {rows.map(({ s, stage, labelZh, reasonZh }) => {
