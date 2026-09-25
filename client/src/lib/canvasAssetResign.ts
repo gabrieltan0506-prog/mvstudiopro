@@ -12,8 +12,42 @@
  */
 import type { CanvasBlock, CanvasUploadedAsset } from "./canvasTypes";
 import { resolveCanvasMaterialUrl } from "./omniCanvasApi";
+import { gsUriFromSignedGcsUrl } from "@shared/manhuaMultiview";
 
 export type CanvasAssetSigner = (gcsUri: string) => Promise<string>;
+
+/** 生图请求的库图不一定在 uploadedAssets 内；提交前逐张重签，失败时不建立付费任务。 */
+export async function resignCanvasImageEditReferences(
+  refs: { refImageUrl: string; referenceImageUrls: readonly string[]; maskUrl?: string },
+  sign: CanvasAssetSigner = resolveCanvasMaterialUrl,
+): Promise<{ refImageUrl: string; referenceImageUrls: string[]; maskUrl?: string }> {
+  const pending = new Map<string, Promise<string>>();
+  const refresh = async (url: string): Promise<string> => {
+    const gcsUri = gsUriFromSignedGcsUrl(url);
+    // 公开 GCS 对象可直接使用；只处理会到期的签名链接。
+    if (!gcsUri || !/[?&](?:X-Goog-Signature|Signature)=/i.test(url)) return url;
+    let task = pending.get(gcsUri);
+    if (!task) {
+      task = (async () => {
+        try {
+          const fresh = String(await sign(gcsUri) || "").trim();
+          if (gsUriFromSignedGcsUrl(fresh) !== gcsUri) throw new Error("signed_object_mismatch");
+          return fresh;
+        } catch {
+          throw new Error("参考图临时链接续签失败，未提交生图任务。请稍后重试。");
+        }
+      })();
+      pending.set(gcsUri, task);
+    }
+    return task;
+  };
+  const [refImageUrl, referenceImageUrls, maskUrl] = await Promise.all([
+    refresh(refs.refImageUrl),
+    Promise.all(refs.referenceImageUrls.map(refresh)),
+    refs.maskUrl ? refresh(refs.maskUrl) : Promise.resolve(undefined),
+  ]);
+  return { refImageUrl, referenceImageUrls, ...(maskUrl ? { maskUrl } : {}) };
+}
 
 export type CanvasAssetResigner = {
   /** 单条：命中上传件则换新签名，否则原样返回（含 undefined / 空串）。 */

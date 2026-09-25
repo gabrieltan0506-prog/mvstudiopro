@@ -21,7 +21,7 @@ import {
   isManhuaVideoEditBlock,
 } from "./manhuaMediaVersions";
 import { resolveCanvasMaterialUrl, runGeminiScript } from "./omniCanvasApi";
-import { createCanvasAssetResigner, resignCanvasBlockUploadedReferences } from "./canvasAssetResign";
+import { createCanvasAssetResigner, resignCanvasBlockUploadedReferences, resignCanvasImageEditReferences } from "./canvasAssetResign";
 import {
   formatManhuaSegmentReferenceGuideZh,
   manhuaSegmentReferenceFitsCap,
@@ -2724,11 +2724,15 @@ async function runCanvasBlockInner(
     const gptUserId = String(deps.userId || "");
     // 设定图与静帧分走两把官方密钥（本道打不通由服务端借另一把）
     const imageLane = resolveOpenAiImageLaneForBlockId(block.id);
+    // 角色/场景库参考不在 uploadedAssets：在真正建图像任务前逐张续签，避免草稿里的旧 GCS 链过期。
+    const freshEditRefs = isEdit
+      ? await resignCanvasImageEditReferences({ refImageUrl: editRef, referenceImageUrls: fusionUrls, maskUrl: maskUrl || undefined })
+      : undefined;
     const gptImageOpts = isEdit
       ? {
-          refImageUrl: editRef,
-          referenceImageUrls: fusionUrls,
-          maskUrl: maskUrl || undefined,
+          refImageUrl: freshEditRefs!.refImageUrl,
+          referenceImageUrls: freshEditRefs!.referenceImageUrls,
+          maskUrl: freshEditRefs!.maskUrl,
           openaiOnly: false,
           userId: gptUserId,
           imageLane,
