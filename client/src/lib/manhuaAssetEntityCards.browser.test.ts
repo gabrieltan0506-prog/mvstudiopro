@@ -51,8 +51,8 @@ beforeAll(async () => {
         import { TooltipProvider } from './client/src/components/ui/tooltip';
         import ManhuaScriptWorkbench from './client/src/components/ManhuaScriptWorkbench';
         globalThis.fixture = { keyart: 0, removed: [], uploads: [], libraryGenerate: [], openedIssue: undefined, updatedClip: undefined };
-        const refs = ${JSON.stringify(REFS)};
-        const canon = ${JSON.stringify(CANON)};
+        const refs = globalThis.assetOverviewRefs || ${JSON.stringify(REFS)};
+        const canon = globalThis.assetOverviewCanon || ${JSON.stringify(CANON)};
         createRoot(document.getElementById('root')).render(
           <TooltipProvider>
             <ManhuaScriptWorkbench
@@ -61,6 +61,7 @@ beforeAll(async () => {
               episodeCount={1} focusEpisode={1} onFocusEpisode={() => {}}
               characterIds={globalThis.assetGenerateProbe ? ['wa_char_aqing'] : []} propIds={[]} outlineConfirmed={true}
               workflowPhase='assets' customAssetRefs={refs} assetCanon={canon}
+              characterLookSets={globalThis.assetOverviewLookSets || []}
               onRemoveCustomAsset={(id) => globalThis.fixture.removed.push(id)}
               onCustomAssetLabelChange={(id, label) => { globalThis.fixture.labelUpdate = { id, label }; }}
               onUploadCustomAssets={async (files, role) => { globalThis.fixture.uploads.push({role,names:Array.from(files).map(file=>file.name)}); }}
@@ -226,7 +227,11 @@ async function mountStoryboard(directorProbe = false, progressProbe = false, com
   return { page, close: async () => { await ctx.close().catch(() => {}); } };
 }
 
-async function mount(usageBlocks: unknown[] = [], assetGenerateProbe = false): Promise<{ page: Page; close: () => Promise<void> }> {
+async function mount(
+  usageBlocks: unknown[] = [],
+  assetGenerateProbe = false,
+  assetOverviewFixture?: { refs: unknown[]; canon: unknown; lookSets: unknown[] },
+): Promise<{ page: Page; close: () => Promise<void> }> {
   const ctx = await browser.createBrowserContext();
   const page = await ctx.newPage();
   const errors: string[] = [];
@@ -240,6 +245,14 @@ async function mount(usageBlocks: unknown[] = [], assetGenerateProbe = false): P
   if (layoutCss) await page.addStyleTag({ content: layoutCss });
   await page.evaluate(value => { (window as any).assetUsageBlocks = value; }, usageBlocks);
   await page.evaluate(value => { (window as any).assetGenerateProbe = value; }, assetGenerateProbe);
+  if (assetOverviewFixture) {
+    await page.evaluate(value => {
+      const target = window as any;
+      target.assetOverviewRefs = value.refs;
+      target.assetOverviewCanon = value.canon;
+      target.assetOverviewLookSets = value.lookSets;
+    }, assetOverviewFixture);
+  }
   await page.evaluate(bundle);
   await page.waitForSelector("[data-manhua-custom-refs-role=character]", { timeout: 5_000 }).catch(error => { throw new Error(errors.join("\n") || String(error)); });
   return { page, close: async () => { await ctx.close().catch(() => {}); } };
@@ -395,6 +408,66 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
       expect(await page.$$('[data-manhua-custom-refs-role="character"]')).toHaveLength(0);
       expect(await page.$$('[data-manhua-action="add-asset"]')).toHaveLength(1);
       expect(await page.evaluate(() => (window as any).fixture.keyart)).toBe(0);
+    } finally { await close(); }
+  }, 180_000);
+
+  it("资产总览显示六类人物、五个场景、两件道具和真实造型状态，点击不生成", async () => {
+    const character = (n: number) => ({
+      id: `wa_char_${String(n).padStart(2, "0")}`, role: "character", nameZh: `人物${n}`, lookZh: "深色短发与长衣",
+    });
+    const scene = (n: number) => ({
+      id: `wa_scene_${String(n).padStart(2, "0")}`, role: "scene", nameZh: `场景${n}`, lookZh: "石墙与木窗构成的空间",
+    });
+    const prop = (n: number) => ({
+      id: `wa_prop_${String(n).padStart(2, "0")}`, role: "prop", nameZh: `道具${n}`, lookZh: "有磨损的铜制器物",
+    });
+    const wardrobeRef = {
+      id: "wardrobe-night", url: "https://example.com/night.png", role: "wardrobe", labelZh: "夜行装",
+    };
+    const { page, close } = await mount([
+      { id: "charsheet-wa_char_01", kind: "image", status: "done", outputUrl: "https://example.com/character.png" },
+      { id: "sceneplate-wa_scene_03", kind: "image", status: "running" },
+      { id: "propsheet-wa_prop_02", kind: "image", status: "error", error: "failed" },
+    ], false, {
+      refs: [wardrobeRef],
+      canon: {
+        characters: Array.from({ length: 6 }, (_, i) => character(i + 1)),
+        locations: Array.from({ length: 5 }, (_, i) => scene(i + 1)),
+        props: Array.from({ length: 2 }, (_, i) => prop(i + 1)),
+        episodeMainSceneId: {},
+      },
+      lookSets: [{
+        id: "lookset-wa_char_01-1", characterId: "wa_char_01", index: 1, labelZh: "夜行装", wardrobeRefId: wardrobeRef.id,
+      }],
+    });
+    try {
+      const overview = await page.evaluate(() => {
+        const sections = Array.from(document.querySelectorAll<HTMLElement>("[data-manhua-asset-overview-anchors]"));
+        const idsByRole = Object.fromEntries(sections.map(section => [
+          section.dataset.manhuaAssetOverviewAnchors,
+          Array.from(section.querySelectorAll<HTMLElement>("[data-manhua-asset-overview-anchor]"))
+            .map(anchor => ({ id: anchor.dataset.manhuaAssetOverviewAnchor, status: anchor.dataset.manhuaAssetOverviewStatus })),
+        ]));
+        return {
+          idsByRole,
+          categories: Array.from(document.querySelectorAll<HTMLElement>("[data-manhua-asset-overview-category]"))
+            .map(category => category.dataset.manhuaAssetOverviewCategory),
+        };
+      });
+      expect(overview.categories).toEqual(["character", "scene", "prop", "wardrobe"]);
+      expect(overview.idsByRole.character).toHaveLength(6);
+      expect(overview.idsByRole.scene).toHaveLength(5);
+      expect(overview.idsByRole.prop).toHaveLength(2);
+      expect(overview.idsByRole.wardrobe).toHaveLength(1);
+      expect(overview.idsByRole.character).toContainEqual({ id: "wa_char_01", status: "ready" });
+      expect(overview.idsByRole.scene).toContainEqual({ id: "wa_scene_03", status: "running" });
+      expect(overview.idsByRole.prop).toContainEqual({ id: "wa_prop_02", status: "failed" });
+      expect(overview.idsByRole.wardrobe).toContainEqual({ id: "lookset-wa_char_01-1", status: "ready" });
+
+      await page.click('[data-manhua-asset-overview-category="scene"]');
+      await page.click('[data-manhua-asset-overview-anchor="wa_prop_02"]');
+      expect(await page.evaluate(() => (window as any).fixture.keyart)).toBe(0);
+      expect(await page.evaluate(() => (window as any).fixture.libraryGenerate)).toEqual([]);
     } finally { await close(); }
   }, 180_000);
 

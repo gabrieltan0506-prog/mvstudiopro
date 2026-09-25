@@ -112,6 +112,23 @@ export function stageCameraRigs(characters: readonly ManhuaStageCharacter[]): Re
   };
 }
 
+/** 只在场景内容改变时重建 iframe；上层刷新数据时可能传来内容相同的新对象。 */
+export function stageSceneSignature(world: ManhuaWorld3dAssets, characters: readonly ManhuaStageCharacter[]): string {
+  return JSON.stringify({
+    spzUrl: world.spz500kUrl ?? "",
+    colliderUrl: world.colliderGlbUrl ?? "",
+    scale: world.metricScaleFactor ?? null,
+    ground: world.groundPlaneOffset ?? null,
+    actors: characters.map((actor) => ({
+      id: actor.id,
+      glbUrl: actor.glbUrl,
+      stagePoint: actor.stagePoint,
+      heightM: actor.heightM ?? null,
+      yawDeg: actor.yawDeg ?? null,
+    })),
+  });
+}
+
 export function buildSrcDoc(config: StageSceneConfig): string {
   const payload = escapeForScript(JSON.stringify(config));
   return `<!DOCTYPE html>
@@ -157,11 +174,29 @@ if (THREE && SplatMesh) {
     applyCamera(CONFIG.initialCamera);
 
     const q = CONFIG.transform.quaternionXYZW, t = CONFIG.transform.translationStage, s = CONFIG.transform.scale;
-    const splat = new SplatMesh({ url: CONFIG.spzUrl });
-    splat.quaternion.set(q[0], q[1], q[2], q[3]);
-    splat.scale.setScalar(s);
-    splat.position.set(t[0], t[1], t[2]);
-    scene.add(splat);
+    // 短暂断流时仅重试读取同一份已生成资产；不重新提交 3D 世界生成任务。
+    const loadWorldSplat = async () => {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const url = attempt ? CONFIG.spzUrl + (CONFIG.spzUrl.includes("?") ? "&" : "?") + "stageRetry=1" : CONFIG.spzUrl;
+        const candidate = new SplatMesh({ url });
+        candidate.quaternion.set(q[0], q[1], q[2], q[3]);
+        candidate.scale.setScalar(s);
+        candidate.position.set(t[0], t[1], t[2]);
+        scene.add(candidate);
+        try {
+          if (!candidate.initialized || typeof candidate.initialized.then !== "function") throw new Error("SplatMesh 没有 initialized 信号");
+          await candidate.initialized;
+          if (candidate.numSplats !== undefined && !(candidate.numSplats > 0)) throw new Error("高斯数为 0");
+          return;
+        } catch (error) {
+          scene.remove(candidate);
+          try { candidate.dispose?.(); } catch { /* 加载未完成时清理失败，不覆盖原始网络错误。 */ }
+          const message = String(error && error.message ? error.message : error);
+          if (attempt || !/fetch|network|timeout/i.test(message)) throw error;
+          msg.textContent = "世界高斯读取中断，正在重试已有文件…";
+        }
+      }
+    };
 
     const loader = new GLTFLoader();
     const loadGltf = (url) => new Promise((resolve, reject) => {
@@ -173,11 +208,7 @@ if (THREE && SplatMesh) {
     let canExport = false;
     const required = [];
     // 世界高斯：SparkJS SplatMesh 解码完成信号是 initialized（Promise）；没有这个信号就不能当已加载
-    required.push({ id: "world", kind: "world", promise: (async () => {
-      if (!splat.initialized || typeof splat.initialized.then !== "function") throw new Error("SplatMesh 没有 initialized 信号");
-      await splat.initialized;
-      if (splat.numSplats !== undefined && !(splat.numSplats > 0)) throw new Error("高斯数为 0");
-    })() });
+    required.push({ id: "world", kind: "world", promise: loadWorldSplat() });
     if (CONFIG.colliderUrl) {
       required.push({ id: "collider", kind: "collider", promise: loadGltf(CONFIG.colliderUrl).then((gltf) => {
         collider = gltf.scene;
@@ -260,12 +291,14 @@ export function ManhuaWorldStagePreview(props: Props) {
   const [noteZh, setNoteZh] = useState<string>("");
   const [failures, setFailures] = useState<StageAssetFailure[]>([]);
   const [exporting, setExporting] = useState(false);
-  const rigs = useMemo(() => stageCameraRigs(characters), [characters]);
-  // 世界/人物/碰撞任一变化 = 新实例版本；旧实例的 ready/frame 一律作废
-  const config = useMemo(() => {
+  const sceneSignature = stageSceneSignature(world, characters);
+  // 签名覆盖场景、人物和机位的实际输入；仅引用变化不应重载高斯和 iframe。
+  const scene = useMemo(() => {
+    const rigs = stageCameraRigs(characters);
     revisionCounter.current += 1;
-    return buildStageSceneConfig(world, characters, rigs.establish, `r${revisionCounter.current}`);
-  }, [world, characters, rigs]);
+    return { rigs, config: buildStageSceneConfig(world, characters, rigs.establish, `r${revisionCounter.current}`) };
+  }, [sceneSignature]);
+  const { rigs, config } = scene;
   const revision = config?.revision ?? "";
   const liveState = useRef({ revision, cameraKind });
   liveState.current = { revision, cameraKind };
