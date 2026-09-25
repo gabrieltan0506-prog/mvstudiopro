@@ -376,7 +376,7 @@ for _actor in spec['actors']:
         water_head_heights[_actor['id']]=float(points(_neutral,1,_pre_contacts[1])['head'][1].z)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from previs_piggyback import validate_piggyback, apply_piggyback, measure_piggyback
+from previs_piggyback import validate_piggyback, apply_piggyback, measure_piggyback, piggyback_motion
 piggyback=validate_piggyback(spec)
 passenger_id=piggyback['passengerId'] if piggyback else None
 events=[]
@@ -396,7 +396,7 @@ if spec.get('interactions') or has_swords or piggyback:
         transforms={a['id']:transform(a,frame) for a in spec['actors']}
         apply_interactions(events,frame,poses,transforms,ik)
         if has_swords: apply_swords(spec,frame,poses,transforms,ik)
-        if piggyback: apply_piggyback(piggyback,poses)
+        if piggyback: apply_piggyback(piggyback,poses,frame)
         interaction_poses[frame]=poses
 
 rigs=[]
@@ -753,7 +753,9 @@ if water_handles and (report['waterEmergence']['overlaps'] or report['waterEmerg
     raise ValueError('独立浪花存在重叠或出画，请调整站位和机位')
 if any(max(s['gripError'],s['handEndError'])>.005 for w in report.get('weapons',[]) for s in w['samples']):
     raise ValueError('持剑绑定误差未过验收')
-if piggyback and any(row['supportError']>.005 or row['gripError']>.005 or row['passengerFootHeight']<.1 for row in report['piggyback']['samples']):
+if piggyback and any(abs(row['supportError']-row['expectedSupportGap'])>.005 or
+                     abs(row['actualDropMeters']-piggyback_motion(piggyback,row['frame'])[0])>.005 or
+                     row['gripError']>.005 or row['passengerFootHeight']<.1 for row in report['piggyback']['samples']):
     raise ValueError('背负托腿、抱肩或悬空脚未达到接触要求')
 if any(row['contactError']>.005 for row in report.get('interactions',[])):
     raise ValueError('双人互动实际接触误差未过验收')

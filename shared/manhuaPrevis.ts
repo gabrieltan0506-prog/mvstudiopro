@@ -1002,7 +1002,9 @@ export function formatPrevisMotionGuide(spec: ManhuaPrevisSpec): string {
         a =>
           `${a.nameZh}右手持剑，手柄随手腕，参考只约束动作与比例，武器外观按该角色道具参考。`
       ),
-    ...(spec.piggyback ? [`整段由${(spec.actors.find(a => a.id === spec.piggyback!.carrierId)?.nameZh ?? "待重新选择的承载者")}背负${(spec.actors.find(a => a.id === spec.piggyback!.passengerId)?.nameZh ?? "待重新选择的乘员")}；开镜已背稳，双手托腿、乘员抱肩，乘员跟随同一路线且双脚离地，不新增上背或放下动作。`] : []),
+    ...(spec.piggyback ? [`整段由${(spec.actors.find(a => a.id === spec.piggyback!.carrierId)?.nameZh ?? "待重新选择的承载者")}背负${(spec.actors.find(a => a.id === spec.piggyback!.passengerId)?.nameZh ?? "待重新选择的乘员")}；开镜已背稳，乘员抱肩并跟随同一路线且双脚离地。${spec.piggyback.slipCatch
+      ? `${spec.piggyback.slipCatch.slipStartSec}秒乘员向下滑落约${spec.piggyback.slipCatch.dropMeters}米，承载者的手短暂失去托腿接触，${spec.piggyback.slipCatch.catchSec}秒重新托住腿，${spec.piggyback.slipCatch.recoverEndSec}秒扶回稳定背负；不新增上背或放下动作。`
+      : "双手始终托腿；不新增上背或放下动作。"}`] : []),
     ...(spec.interactions ?? []).map(event => {
       const actor = spec.actors.find(a => a.id === event.actorId)!;
       const target = spec.actors.find(a => a.id === event.targetActorId)!;
