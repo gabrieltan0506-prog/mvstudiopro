@@ -1744,6 +1744,32 @@ export default function ManhuaScriptWorkbench({
     }
   }, [blocks, focusEpisode, episodeVideoModel, assetCanon, customAssetRefs, characterLookSets, segmentLookBindings]);
   const episodeKeyarts = episodeKeyartReview.blocks;
+  const completedKeyartShots = episodeKeyarts
+    .filter((block) => keyartOutputUrl(block))
+    .map((block) => resolveKeyartShotIndex(block.id, block.prompt))
+    .filter((index) => shots.some((shot) => shot.index === index));
+  const completedKeyartShotKey = completedKeyartShots.join(",");
+  const keyartFollowRef = useRef({ episode: focusEpisode, seen: completedKeyartShotKey, running: false, enabled: true });
+  useEffect(() => {
+    const follow = keyartFollowRef.current;
+    if (!factoryBusy || activePhase !== "storyboard") {
+      keyartFollowRef.current = { episode: focusEpisode, seen: completedKeyartShotKey, running: false, enabled: true };
+      return;
+    }
+    if (!follow.running || follow.episode !== focusEpisode) {
+      keyartFollowRef.current = { episode: focusEpisode, seen: completedKeyartShotKey, running: true, enabled: true };
+      return;
+    }
+    const seen = new Set(follow.seen.split(",").filter(Boolean).map(Number));
+    const newShot = completedKeyartShots.findLast((index) => !seen.has(index));
+    follow.seen = completedKeyartShotKey;
+    if (newShot == null || !follow.enabled) return;
+    const nextIndex = shots.findIndex((shot) => shot.index === newShot);
+    if (nextIndex >= 0) {
+      setShotIndex(nextIndex);
+      setActiveSegmentOverride(null);
+    }
+  }, [activePhase, completedKeyartShotKey, factoryBusy, focusEpisode, shots]);
   const staleLookStillCount = episodeKeyarts.filter((block) => !isManhuaWorkbenchKeyartCurrent(block)).length;
   const keyart = episodeKeyarts[0];
   const episodeVideoLabelZh = "视频制作";
@@ -2321,6 +2347,7 @@ export default function ManhuaScriptWorkbench({
   };
   /** 胶片 / 分镜列表：切镜后立刻把对应静帧或段成片滚入画布并高亮 */
   const selectShotAndFocusCanvas = (shotListIndex: number, preferredSegmentIndex?: number) => {
+    if (factoryBusy) keyartFollowRef.current.enabled = false;
     const i = Math.max(0, Math.min(shotListIndex, Math.max(shots.length, 1) - 1));
     setShotIndex(i);
     const shot = shots[i];
