@@ -3627,15 +3627,21 @@ export default function ManhuaScriptWorkbench({
                 ) : null}
                 {storyboardThreeColumn && onGenerateKeyartShot ? (
                   <div data-manhua-shot-primary-action className="mt-2">
+                    <button type="button" data-manhua-action="generate-missing-keyarts"
+                      disabled={Boolean(factoryBusy) || shotSourceIsFallback || !onGenerateAllEpisodeKeyarts || currentStillPresent >= currentStillTarget}
+                      onClick={() => runGenerateAllKeyarts()}
+                      className="min-h-10 w-full rounded-lg bg-violet-600 px-3 py-2 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-40">
+                      <span data-manhua-action="ashuo-step-generate" data-manhua-keyart-entry="step">
+                        补齐本集缺失静帧（{Math.max(0, currentStillTarget - currentStillPresent)}张）
+                      </span>
+                    </button>
+                    <p className="mt-1 text-[11px] text-white/50">按张计费；已出的镜头跳过，提交前会再次确认。</p>
                     <button type="button" data-manhua-action="generate-current-keyart"
                       disabled={Boolean(factoryBusy) || shotSourceIsFallback}
                       onClick={() => runCurrentKeyart()}
-                      className="min-h-10 w-full rounded-lg bg-violet-600 px-3 py-2 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-40">
-                      <span data-manhua-action="ashuo-step-generate" data-manhua-keyart-entry="step">
-                        {activeKeyart?.outputUrl || activeKeyart?.outputUrls?.length ? "重出当前镜静帧" : "生成当前镜静帧"}
-                      </span>
+                      className="mt-2 rounded-lg border border-white/25 px-3 py-1.5 text-xs text-white/75 hover:bg-white/10 disabled:opacity-40">
+                      {activeKeyart?.outputUrl || activeKeyart?.outputUrls?.length ? "重出当前镜静帧" : "生成当前镜静帧"}
                     </button>
-                    <p className="mt-1 text-[11px] text-white/50">仅当前镜；双档生成两张，分别计费</p>
                   </div>
                 ) : null}
                 {onUpsertShotDescriptions ? <ManhuaShotDescriptionEditor
@@ -3955,9 +3961,9 @@ export default function ManhuaScriptWorkbench({
   const FULL_SPAWN_CONFIRM_MS = 5000;
   const [fullSpawnArmAt, setFullSpawnArmAt] = useState<number | null>(null);
   /**
-   * 「生成关键静帧」同屏只留一个入口。这个动作重跑整条管线、重写段表并按张扣费（0917 事故），
-   * 原先工具条 / 阶段底栏 / 分镜面板三处同名按钮 = 三个误点机会。裁决在
-   * `manhuaKeyartEntry.ts`：阶段主操作优先 → 分镜面板就地补图 → 工具条兜底，恒有一个。
+   * 本集补缺静帧同屏只留一个主入口；当前镜重出另列为单镜操作。
+   * 原先工具条 / 阶段底栏 / 分镜面板三处同名按钮会造成误点扣费。裁决在
+   * `manhuaKeyartEntry.ts`：阶段主操作优先 → 分镜面板就地补图 → 工具条兜底。
    */
   const keyartEntryState = {
     stageCtaIsKeyart:
@@ -4131,8 +4137,22 @@ export default function ManhuaScriptWorkbench({
 
   const runGenerateAllKeyarts = () => {
     if (refuseIfBlocked(keyartGateHint)) return;
+    if (!onGenerateAllEpisodeKeyarts) {
+      toast.error("本集批量补图暂不可用，请稍后重试");
+      return;
+    }
+    if (shotSourceIsFallback || currentStillTarget < 2) {
+      toast.error("请先确认本集分镜表，再补齐静帧");
+      return;
+    }
+    const missing = Math.max(0, currentStillTarget - currentStillPresent);
+    if (missing === 0) {
+      toast.message("本集静帧已齐；如需改图，请使用当前镜重出");
+      return;
+    }
+    if (!window.confirm(`第 ${focusEpisode} 集共 ${currentStillTarget} 镜，已出 ${currentStillPresent} 张，本次只补缺失的 ${missing} 张，按张计费；已出的图保留并跳过。确认开始吗？`)) return;
     setActivePhase("storyboard");
-    onGenerateAllEpisodeKeyarts?.();
+    onGenerateAllEpisodeKeyarts();
   };
 
   const runNextCta = () => {
@@ -4164,11 +4184,7 @@ export default function ManhuaScriptWorkbench({
       return;
     }
     if (nextCta.kind === "generate_keyarts") {
-      if (onGenerateKeyartShot) {
-        setActivePhase("storyboard");
-        runCurrentKeyart();
-      }
-      else runGenerateAllKeyarts();
+      runGenerateAllKeyarts();
       return;
     }
     if (nextCta.kind === "generate_all_clips") {
@@ -5075,8 +5091,8 @@ export default function ManhuaScriptWorkbench({
                 ? fullSpawnRemainSec > 0
                   ? `确认全部生成（${fullSpawnRemainSec}s）`
                   : "再点一次确认全部生成"
-                : nextCta.kind === "generate_keyarts" && onGenerateKeyartShot
-                  ? currentKeyartLabel
+                : nextCta.kind === "generate_keyarts" && onGenerateAllEpisodeKeyarts
+                  ? `补齐本集缺失静帧（${Math.max(0, currentStillTarget - currentStillPresent)}张）`
                   : nextCta.labelZh}
         </button> : null}
       </div> : null}

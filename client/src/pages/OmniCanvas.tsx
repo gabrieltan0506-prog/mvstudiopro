@@ -10932,6 +10932,8 @@ export default function OmniCanvas() {
                     void runFactory("keyart", {
                       episodeIndexes: [writerFocusEpisode],
                       keyartOnlyFromConfirmedShots: true,
+                      // 批量付费补图不自动重交失败镜；成功镜逐张保留，失败镜由用户核任务后再补。
+                      maxRetries: 0,
                     });
                   }}
                   onGenerateFragment={({ shotIndex }) => {
