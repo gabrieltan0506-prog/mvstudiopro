@@ -41,6 +41,12 @@ export type KnowledgeCardDocumentPage = {
   imageGcsUri?: string;
   /** 目录页扫读给出的选中理由 */
   reason?: string;
+  /**
+   * 0926 扫描版 OCR：没有文字层的页渲染成图只用来**读字**（与上面的参考页图严格分开：
+   * 不写〔参考原页〕标记、出图不拿来重画），存在单独的 ocr/ 目录。已是参考页的扫描页不重复渲染。
+   */
+  ocrImageUrl?: string;
+  ocrImageGcsUri?: string;
 };
 
 export type KnowledgeCardDocumentPageSet = {
@@ -70,6 +76,19 @@ export function knowledgeCardDocumentKey(buffer: Buffer): string {
 export function knowledgeCardPageObjectName(userId: number, docKey: string, pageNumber: number): string {
   return `knowledge-card-distill/pages/u${userId}/${docKey}/p-${String(pageNumber).padStart(3, "0")}.jpg`;
 }
+/** 扫描版读字用的页图：与参考页分目录，参考页解析永远找不到它 */
+export function knowledgeCardOcrPageObjectName(userId: number, docKey: string, pageNumber: number): string {
+  return `knowledge-card-distill/pages/u${userId}/${docKey}/ocr/p-${String(pageNumber).padStart(3, "0")}.jpg`;
+}
+
+/** 这一页有没有文字层：扫描页 pdftotext 抽出来是空的 */
+export function isKnowledgeCardScannedPage(page: Pick<KnowledgeCardDocumentPage, "text">): boolean {
+  return !String(page.text || "").replace(/\s+/g, "");
+}
+
+/** 扫描页按连续页码成批渲染，一批不超过一次读图请求的页数（0926 用户定 8 页） */
+export const KNOWLEDGE_CARD_OCR_RENDER_BATCH = 8;
+
 export function knowledgeCardSheetObjectName(userId: number, docKey: string, sheetIndex: number): string {
   return `knowledge-card-distill/sheets/u${userId}/${docKey}/s-${String(sheetIndex).padStart(3, "0")}.jpg`;
 }
@@ -229,7 +248,10 @@ export async function prepareKnowledgeCardDocumentPages(params: {
     const selectedPages = Array.from(selectedMap.keys()).sort((a, b) => a - b);
     await params.onProgress?.("select", sheets.length, sheets.length);
 
-    await params.onProgress?.("render", 0, selectedPages.length);
+    // 扫描页（无文字层、且不是参考页）要渲染成读字用的图；进度与参考页渲染合算，不倒退
+    const scannedPages = pages.filter((p) => isKnowledgeCardScannedPage(p) && !selectedMap.has(p.pageNumber)).map((p) => p.pageNumber);
+    const renderTotal = selectedPages.length + scannedPages.length;
+    await params.onProgress?.("render", 0, renderTotal);
     let done = 0;
     for (let i = 0; i < selectedPages.length; i += PAGE_UPLOAD_CONCURRENCY) {
       params.abortSignal?.throwIfAborted();
@@ -250,7 +272,38 @@ export async function prepareKnowledgeCardDocumentPages(params: {
       );
       params.abortSignal?.throwIfAborted();
       for (const result of batchResults) if (result.status === "rejected") throw result.reason;
-      await params.onProgress?.("render", done, selectedPages.length);
+      await params.onProgress?.("render", done, renderTotal);
+    }
+
+    // 扫描页读字图：按连续页码一批最多 8 页渲染，渲完即传即弃，整本不驻留内存
+    for (let i = 0; i < scannedPages.length; ) {
+      params.abortSignal?.throwIfAborted();
+      const first = scannedPages[i]!;
+      let last = first;
+      while (i + 1 < scannedPages.length && scannedPages[i + 1] === last + 1 && last - first + 1 < KNOWLEDGE_CARD_OCR_RENDER_BATCH) {
+        i += 1;
+        last = scannedPages[i]!;
+      }
+      i += 1;
+      const rendered = await renderPdfPagesToJpeg(pdfPath, dir, `o${first}`, PAGE_RENDER_WIDTH, { first, last }, params.abortSignal);
+      const runPages = Array.from({ length: last - first + 1 }, (_, k) => first + k);
+      for (let j = 0; j < runPages.length; j += PAGE_UPLOAD_CONCURRENCY) {
+        const batch = runPages.slice(j, j + PAGE_UPLOAD_CONCURRENCY);
+        const results = await Promise.allSettled(
+          batch.map(async (pageNumber) => {
+            const jpeg = rendered.get(pageNumber);
+            if (!jpeg) throw new Error(`原稿第 ${pageNumber} 页（扫描页）渲染失败`);
+            const uploaded = await awaitKnowledgeCardAbort(uploadPage(knowledgeCardOcrPageObjectName(params.userId, docKey, pageNumber), jpeg), params.abortSignal);
+            const page = pages[pageNumber - 1]!;
+            page.ocrImageUrl = uploaded.url;
+            page.ocrImageGcsUri = uploaded.gcsUri;
+            done += 1;
+          }),
+        );
+        params.abortSignal?.throwIfAborted();
+        for (const result of results) if (result.status === "rejected") throw result.reason;
+      }
+      await params.onProgress?.("render", done, renderTotal);
     }
     params.abortSignal?.throwIfAborted();
     return { docKey, fileName: params.fileName, pageCount: total, pages, selectedPages };

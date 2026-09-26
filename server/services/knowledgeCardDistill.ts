@@ -268,7 +268,7 @@ function buildDistillSystem(minSections: number, modelName?: string | null, docK
     : `\n0. **成稿档：精华版（优先重点 + 简单解说）**：只取优先级最高的重点，每条配一句到位的简单解说（说清是什么、怎么用即可），不铺陈次要分支、不展开长论证；篇幅短、页数少是这档的目的。`;
   const refRule = docKeys?.length
     ? `\n7. **参考原页标记**：用户会附上原稿中版式有特色的页（表格、思维导图、分式图解、左右对比），每张图前都标了「原稿 docKey 第 N 页」。某小节的内容对应这些页时，在该小节末尾单独一行写标记，格式 \`${docKeys.map((k) => formatKnowledgeCardPageRef(k, [1])).join("\` 或 \`")}\`（docKey 照抄该图前标注的那个，页码写该图标注的真实页码，多页用逗号）。只能引用本次附带的图；没有对应参考页的小节不写标记；不得编造 docKey 或页码。`
-    : "";
+    : `\n7. **没有原稿参考页时自己出表格**（0926 用户令）：本次没有附带值得重画的原稿页，凡是分类、对比、参数、时间线、步骤、优缺点这类有结构的内容，都由你整理成 Markdown 表格（表头清楚、每格一句短语、不超过 6 列）承载，不要散成长列表。`;
   return `你是知识卡片内容主编。任务：把用户提供的文稿/幻灯片抽字/图片 OCR 结果，提炼成可直接做「疏朗图文知识卡片」的简体中文 Markdown（读图 OCR 与提炼同时完成，不要只吐生文本）。
 
 **目标**：让没读过原文的人在几分钟内读懂这份材料**讲了什么、关键结论是什么、怎么用**。${detailLevel === "full" ? "是**主要与次要重点全收**：宁多勿漏，用表格压实。" : "是**精华版：只提炼主要重点**，不是逐段搬运。"}
@@ -512,9 +512,13 @@ export async function extractKnowledgeCardUploads(
       });
       documents.push(set);
       const text = set.pages.map((pg) => pg.text).filter(Boolean).join("\n\n").trim();
+      const ocrPages = set.pages.filter((pg) => pg.ocrImageUrl).length;
       if (text) {
         docParts.push(`【文件·${name}】\n${text}`);
-        methods.push(`${name}:pdf_pages(${set.pageCount}p, ref ${set.selectedPages.length}p)`);
+        methods.push(`${name}:pdf_pages(${set.pageCount}p, ref ${set.selectedPages.length}p${ocrPages ? `, ocr ${ocrPages}p` : ""})`);
+      } else if (ocrPages) {
+        // 0926 扫描版：没有文字层，页图交给分段提炼读字（每次 8 页）
+        methods.push(`${name}:pdf_scanned_ocr(${set.pageCount}p, ocr ${ocrPages}p, ref ${set.selectedPages.length}p)`);
       } else {
         methods.push(`${name}:pdf_pages_no_text`);
       }
@@ -670,11 +674,14 @@ function buildDistillUserContent(params: {
   sourceText: string;
   imageUrls: string[];
   pageImages?: DistillPageImage[];
+  /** 扫描页读字图（0926）：只读字，不打〔参考原页〕标记 */
+  ocrImages?: DistillPageImage[];
   minSections: number;
   /** 本次只提炼整本中的一段（分段模式） */
   chunkLabel?: string;
 }): Array<Record<string, unknown>> {
   const pageImages = params.pageImages || [];
+  const ocrImages = params.ocrImages || [];
   const textBlock = [
     params.chunkLabel
       ? `本次只处理长文档的${params.chunkLabel}。只就本段内容**挑出最值得记住的重点**（约 ${params.minSections} 个 ## 小节），次要枝节可以整段舍弃；不要复述其它章节、不要写「本段/以上」这类过渡语，不要输出未经提炼的长原文：`
@@ -682,6 +689,9 @@ function buildDistillUserContent(params: {
     params.sourceText.trim() || "（无纯文本，请主要依据附图提炼）",
     params.imageUrls.length
       ? `\n附图 ${params.imageUrls.length} 张：请提取文字与图表要点，并入精华，去掉重复。`
+      : "",
+    ocrImages.length
+      ? `\n扫描页 ${ocrImages.length} 张（原稿没有文字层，已标页码）：先识读页上文字当作本段原文，再按上面的要求提炼。广告页、版权页、出版信息、封面封底、空白页、与正文无关的单独插页一律跳过，不写进成稿。这些扫描页只用来读字，**不要**为它们写〔参考原页〕标记。`
       : "",
     pageImages.length
       ? `\n原稿参考页 ${pageImages.length} 张（已标页码）：这些页的版式结构有特色（表格/导图/分式图解/对比）。提炼对应知识点时保留其结构关系（表头与行列、导图分支、步骤顺序、对比两侧），并在对应小节末尾单独一行写 ${formatKnowledgeCardPageRef(pageImages[0]!.docKey, [pageImages[0]!.pageNumber])} 这种标记（页码写真实参考页，可写多页）。`
@@ -693,6 +703,10 @@ function buildDistillUserContent(params: {
   const userContent: Array<Record<string, unknown>> = [{ type: "text", text: textBlock }];
   for (const url of params.imageUrls) {
     userContent.push({ type: "image_url", image_url: { url, detail: "high" } });
+  }
+  for (const page of ocrImages) {
+    userContent.push({ type: "text", text: `【扫描页 第 ${page.pageNumber} 页（只读字）】` });
+    userContent.push({ type: "image_url", image_url: { url: page.url, detail: "high" } });
   }
   for (const page of pageImages) {
     userContent.push({ type: "text", text: `【原稿 ${page.docKey} 第 ${page.pageNumber} 页${page.reason ? `：${page.reason}` : ""}】` });
@@ -733,6 +747,7 @@ async function invokeDistillViaGateway(params: {
   sourceText: string;
   imageUrls: string[];
   pageImages?: DistillPageImage[];
+  ocrImages?: DistillPageImage[];
   modelName: KnowledgeCardDistillModelId;
   minSections: number;
   effort: string;
@@ -752,7 +767,7 @@ async function invokeDistillViaGateway(params: {
   jsonObject?: boolean;
 }): Promise<string> {
   const userContent = buildDistillUserContent(params);
-  const hasImages = params.imageUrls.length > 0 || (params.pageImages?.length ?? 0) > 0;
+  const hasImages = params.imageUrls.length > 0 || (params.pageImages?.length ?? 0) > 0 || (params.ocrImages?.length ?? 0) > 0;
   // 这一跳实际执行的模型档：链里给了就用链里的；没给（旧调用/测试）按请求档位
   const tier: KnowledgeCardTier =
     params.tier ?? (params.modelName === KNOWLEDGE_CARD_DISTILL_MODEL_GLM ? "glm" : "deepseek");
@@ -937,6 +952,8 @@ async function invokeDistillLlm(params: {
   sourceText: string;
   imageUrls: string[];
   pageImages?: DistillPageImage[];
+  /** 扫描页读字图（0926） */
+  ocrImages?: DistillPageImage[];
   modelName: KnowledgeCardDistillModelId;
   minSections: number;
   effort: string;
@@ -1052,6 +1069,8 @@ async function distillOneChunkWithRetry(params: {
   chunk: string;
   imageUrls: string[];
   pageImages?: DistillPageImage[];
+  /** 扫描页读字图（0926） */
+  ocrImages?: DistillPageImage[];
   modelName: KnowledgeCardDistillModelId;
   minSections: number;
   chunkLabel: string;
@@ -1073,6 +1092,7 @@ async function distillOneChunkWithRetry(params: {
         sourceText: params.chunk,
         imageUrls: params.imageUrls,
         pageImages: params.pageImages,
+        ocrImages: params.ocrImages,
         modelName: params.modelName,
         minSections: params.minSections,
         effort: params.effort,
@@ -1116,6 +1136,7 @@ async function distillOneChunkWithRetry(params: {
             chunk: halves[i]!,
             imageUrls: i === 0 ? params.imageUrls : [],
             pageImages: i === 0 ? params.pageImages : [],
+            ocrImages: i === 0 ? params.ocrImages : [],
             modelName: params.modelName,
             minSections: Math.max(2, Math.ceil(params.minSections / halves.length)),
             chunkLabel: `${params.chunkLabel}-${i + 1}`,
@@ -1490,7 +1511,7 @@ export type KnowledgeCardDistillProgress = {
   phase: "distilling" | "refining";
 };
 
-type DistillChunk = { text: string; pageImages: DistillPageImage[]; label: string };
+type DistillChunk = { text: string; pageImages: DistillPageImage[]; ocrImages: DistillPageImage[]; label: string };
 
 /**
  * 按页对齐分段：同一段里的文字与被选中的参考页图来自同一段页码，
@@ -1509,33 +1530,39 @@ export function buildPageAlignedChunks(
   maxImagesPerChunk: number = DISTILL_MAX_PAGE_IMAGES_PER_CALL,
 ): DistillChunk[] {
   const chunks: DistillChunk[] = [];
-  let current: { parts: string[]; chars: number; images: DistillPageImage[]; from: string } | null = null;
+  let current: { parts: string[]; chars: number; images: DistillPageImage[]; ocr: DistillPageImage[]; from: string } | null = null;
   const flush = () => {
     if (!current) return;
     const text = current.parts.join("\n\n").trim();
-    if (text || current.images.length) chunks.push({ text, pageImages: current.images, label: current.from });
+    if (text || current.images.length || current.ocr.length) chunks.push({ text, pageImages: current.images, ocrImages: current.ocr, label: current.from });
     current = null;
   };
   for (const doc of documents) {
     for (const page of doc.pages) {
       const text = page.text ? `【${doc.fileName} 第 ${page.pageNumber} 页】\n${page.text}` : "";
-      const overflowByChars = current && current.chars + text.length > chunkChars && (current.chars > 0 || current.images.length);
-      const overflowByImages = current && page.imageUrl && current.images.length >= maxImagesPerChunk;
+      // 参考页图与扫描读字图合计不超过一次请求的上限（0926 用户定 8 页）
+      const pageHasImage = Boolean(page.imageUrl || page.ocrImageUrl);
+      const imagesNow = current ? current.images.length + current.ocr.length : 0;
+      const overflowByChars = current && current.chars + text.length > chunkChars && (current.chars > 0 || imagesNow > 0);
+      const overflowByImages = current && pageHasImage && imagesNow >= maxImagesPerChunk;
       if (overflowByChars || overflowByImages) flush();
-      if (!current) current = { parts: [], chars: 0, images: [], from: `${doc.fileName} p${page.pageNumber}` };
+      if (!current) current = { parts: [], chars: 0, images: [], ocr: [], from: `${doc.fileName} p${page.pageNumber}` };
       if (text) {
         current.parts.push(text);
         current.chars += text.length;
       }
       if (page.imageUrl) {
+        // 参考页（扫描页被选为参考页时也只挂这一张，模型顺带读字）
         current.images.push({ docKey: doc.docKey, pageNumber: page.pageNumber, url: page.imageUrl, reason: page.reason });
+      } else if (page.ocrImageUrl) {
+        current.ocr.push({ docKey: doc.docKey, pageNumber: page.pageNumber, url: page.ocrImageUrl });
       }
     }
     flush();
   }
   const extra = String(extraText || "").trim();
   if (extra) {
-    for (const piece of splitSourceTextForDistill(extra, chunkChars)) chunks.push({ text: piece, pageImages: [], label: "补充文字" });
+    for (const piece of splitSourceTextForDistill(extra, chunkChars)) chunks.push({ text: piece, pageImages: [], ocrImages: [], label: "补充文字" });
   }
   return chunks;
 }
@@ -1566,8 +1593,10 @@ export async function invokeDistillLlmPossiblyChunked(params: {
     d.pages.filter((p) => p.imageUrl).map((p) => ({ docKey: d.docKey, pageNumber: p.pageNumber, url: p.imageUrl!, reason: p.reason })),
   );
 
+  // 扫描页读字图只在分段里按 8 页一批带（0926）；有扫描页就不走短文单发
+  const hasOcrPages = params.documents.some((d) => d.pages.some((p) => p.ocrImageUrl));
   // 短文单发；但参考页图超过单请求上限时仍走分段，避免整本页图塞进一个请求
-  if ((!text || text.length <= profile.chunkThreshold) && allPageImages.length <= DISTILL_MAX_PAGE_IMAGES_PER_CALL) {
+  if (!hasOcrPages && (!text || text.length <= profile.chunkThreshold) && allPageImages.length <= DISTILL_MAX_PAGE_IMAGES_PER_CALL) {
     return invokeDistillLlm({
       abortSignal: params.abortSignal,
       sourceText: text,
@@ -1585,7 +1614,7 @@ export async function invokeDistillLlmPossiblyChunked(params: {
   const pageDocs = params.documents.filter((d) => d.pages.length);
   const chunks: DistillChunk[] = pageDocs.length
     ? buildPageAlignedChunks(pageDocs, params.extraText, profile.chunkChars)
-    : splitSourceTextForDistill(text, profile.chunkChars).map((piece, i) => ({ text: piece, pageImages: [], label: `第 ${i + 1} 段` }));
+    : splitSourceTextForDistill(text, profile.chunkChars).map((piece, i) => ({ text: piece, pageImages: [], ocrImages: [], label: `第 ${i + 1} 段` }));
   console.info(
     `[knowledgeCardDistill] long doc ${text.length} chars → ${chunks.length} chunks ` +
       `(model=${params.modelName} chunkChars=${profile.chunkChars} concurrency=${KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE}×2路 effort=${profile.effortChunk} level=${params.detailLevel} refPages=${allPageImages.length} docs=${params.documents.length})`,
@@ -1622,6 +1651,7 @@ export async function invokeDistillLlmPossiblyChunked(params: {
           // 用户附图只挂第一段；原稿参考页跟随所在段
           imageUrls: idx === 0 ? urls : [],
           pageImages: chunk.pageImages,
+          ocrImages: chunk.ocrImages,
           modelName: params.modelName,
           minSections: minSectionsPerChunk,
           chunkLabel: `第 ${idx + 1}/${chunks.length} 段（${chunk.label}）`,
@@ -1829,10 +1859,13 @@ export async function prepareKnowledgeCardCopy(input: {
       extracted.documentText ||
       pasted
     : pasted;
+  // 0926 扫描版：页图要进分段提炼读字，文字层为空也不算「没内容」
+  const ocrPageCount = extracted.documents.reduce((n, d) => n + d.pages.filter((p) => p.ocrImageUrl).length, 0);
   const skip =
     !input.forceDistill &&
     shouldSkipKnowledgeCardDistill(mergedRaw, hasUploads) &&
-    extracted.imageUrls.length === 0;
+    extracted.imageUrls.length === 0 &&
+    ocrPageCount === 0;
   const documentsSummary = extracted.documents.map((d) => ({ docKey: d.docKey, fileName: d.fileName, pageCount: d.pageCount, selectedPages: d.selectedPages }));
 
   if (skip) {
@@ -1848,16 +1881,18 @@ export async function prepareKnowledgeCardCopy(input: {
     };
   }
 
-  if (!mergedRaw && extracted.imageUrls.length === 0) {
-    throw new Error("请先输入文案或上传文件/图片");
-  }
-
-  if (hasUploads && !mergedRaw && extracted.imageUrls.length === 0) {
-    throw new Error("未能从文件抽出文字（扫描版 PDF 请改传可选中文字的 PDF，或上传关键页图片）");
+  // 判断顺序（0926 修）：旧版两条条件相同，先报「请先输入」，有上传的那句永远到不了，用户上传了还被叫去上传
+  if (!mergedRaw && extracted.imageUrls.length === 0 && ocrPageCount === 0) {
+    throw new Error(
+      hasUploads
+        ? "未能从文件读出任何内容（文件为空、读取失败或页面渲染失败），请换一份文件重试"
+        : "请先输入文案或上传文件/图片",
+    );
   }
 
   const urls = extracted.imageUrls;
-  const sourceChars = mergedRaw.length + urls.length * 500;
+  // 扫描页按每页 500 字估（与附图同口径），否则整本扫描书只按 0 字给节数
+  const sourceChars = mergedRaw.length + (urls.length + ocrPageCount) * 500;
   const minSectionsTotal = suggestKnowledgeCardMinSections(Math.max(mergedRaw.length, sourceChars), detailLevel);
 
   try {
