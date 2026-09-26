@@ -251,8 +251,11 @@ async function deriveChainOnce(params: { system: string; user: string; model?: s
     params.abortSignal?.throwIfAborted();
     const gw = gateways[i]!;
     touchKnowledgeCardDistillActivity();
+    const hopStartedAt = Date.now();
     try {
-      return await chatOnce(gw, params);
+      const out = await chatOnce(gw, params);
+      console.info(`[knowledgeCardLevelDerive] 成功 ${gw.name}:${gw.tier} 用时 ${Math.round((Date.now() - hopStartedAt) / 1000)}s${i > 0 ? ` · 第 ${i + 1} 跳` : ""}`);
+      return out;
     } catch (err) {
       if (isSseContentSafetyError(err) || params.abortSignal?.aborted) throw err;
       lastError = err instanceof Error ? err : new Error(String(err));
