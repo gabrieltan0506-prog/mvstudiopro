@@ -22,6 +22,8 @@ import {
 } from "@shared/manhuaShotDialoguePersist";
 import { parseShotDescriptionTable, patchShotDescriptionSection } from "@shared/manhuaShotDescriptionPersist";
 import { canvasVideoClipCredits } from "@shared/canvasGenerationPricing";
+import { createManhuaAudioFromShots } from "@shared/manhuaAudioFromShots";
+import { canvasAudioCueInputKey } from "@shared/canvasAudioStudio";
 
 const text = [
   "| # | 秒位 | 景别·运镜 | 画面 | 台词/字幕 | 音效·配乐 |",
@@ -119,6 +121,52 @@ describe("对白覆盖不能抢占真实分镜", () => {
     const stale = changed.blocks.find(item => item.id === adopted.id)!;
     expect(stale.outputUrl).toBe(oldImageUrl);
     expect(isManhuaWorkbenchKeyartCurrent(stale)).toBe(false);
+  });
+
+  it("只改台词仍沿用已锁静帧，成片改读新句；旧TTS受阻且画面变更仍使旧图失效", async () => {
+    const originalShots = studio.resolveShotsForEpisodeKeyarts(sourceBlocks(), 1);
+    const sourceKeyarts = originalShots.map(shot => ({ ...defaultCanvasBlock("image", 0, 0), id: `keyart-e01-s${String(shot.index).padStart(2, "0")}` }));
+    const first = studio.ensureManhuaFragmentClips([...sourceBlocks(), ...sourceKeyarts], [], 1, { videoModel: "seedance-2.0-mini" });
+    const sourceKeyart = first.blocks.find(item => item.id.startsWith("keyart-") && item.id.includes("s01"))!;
+    const imageUrl = "https://test.invalid/shot-1.png";
+    const adopted = {
+      ...sourceKeyart,
+      outputUrl: imageUrl,
+      manhuaKeyartSourceState: {
+        ...sourceKeyart.manhuaKeyartSourceState!,
+        generatedFor: sourceKeyart.manhuaKeyartSourceState!.required,
+        generatedUrl: imageUrl,
+      },
+    };
+    const newDialogue = "阿菁：先送娘去医馆";
+    const changedBeats = { ...beats, outputText: patchShotDialogueSection(beats.outputText || "", { 1: newDialogue }) };
+    const dialogueOnly = studio.ensureManhuaFragmentClips(
+      [changedBeats, reverse, adopted, ...first.blocks.filter(item => item.id.startsWith("keyart-") && item.id !== adopted.id)],
+      [], 1, { videoModel: "seedance-2.0-mini" },
+    );
+    const kept = dialogueOnly.blocks.find(item => item.id === adopted.id)!;
+    expect(kept.outputUrl).toBe(imageUrl);
+    expect(isManhuaWorkbenchKeyartCurrent(kept)).toBe(true);
+    expect(dialogueOnly.blocks.filter(item => item.id.startsWith("clip-")).map(item => item.prompt).join("\n")).toContain("阿菁说「先送娘去医馆」");
+    const clip = dialogueOnly.blocks.find(item => item.id.startsWith("clip-"))!;
+    const oldAudioDraft = createManhuaAudioFromShots(originalShots, 15);
+    const oldAudio = { ...oldAudioDraft, cues: oldAudioDraft.cues.map(cue => ({
+      ...cue, selectedTakeId: "old-take", approved: true,
+      takes: [{ id: "old-take", gcsUri: "gs://test-bucket/old.wav", previewUrl: "", durationSec: 1,
+        createdAt: "2026-09-26", inputKey: canvasAudioCueInputKey(cue) }],
+    })) };
+    const withOldAudio = dialogueOnly.blocks.map(item => item.id === clip.id ? { ...item, audioStudio: oldAudio } : item);
+    await expect(studio.prepareManhuaFactoryClipInput({
+      blocks: withOldAudio, edges: dialogueOnly.edges, blockId: clip.id,
+      fallbackBlock: { ...clip, audioStudio: oldAudio }, stage: "clip", episodeIndex: 1, preparedVideoEdit: false,
+    })).rejects.toThrow("已有TTS语音需按新台词重新生成");
+
+    const changedVisual = { ...changedBeats, outputText: patchShotDescriptionSection(changedBeats.outputText || "", { 1: "阿菁独自走进医馆" }) };
+    const visualChanged = studio.ensureManhuaFragmentClips(
+      [changedVisual, reverse, adopted, ...first.blocks.filter(item => item.id.startsWith("keyart-") && item.id !== adopted.id)],
+      [], 1, { videoModel: "seedance-2.0-mini" },
+    );
+    expect(isManhuaWorkbenchKeyartCurrent(visualChanged.blocks.find(item => item.id === adopted.id)!)).toBe(false);
   });
 
   it("真实工作台回调将当前镜描述同时写入剧本包和三种节点，不触碰别集", () => {

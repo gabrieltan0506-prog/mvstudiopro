@@ -30,7 +30,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNod
 import { createPortal } from "react-dom";
 import { assertOpenAiImagePromptWithinLimit } from "@shared/manhuaKeyartPromptCompact";
 import type { BgmBriefModel } from "@shared/manhuaBgmBrief";
-import { isManhuaKeyartLookCurrent } from "@shared/manhuaKeyartLookState";
+import { isManhuaKeyartLookCurrent, isManhuaKeyartSourceCurrent } from "@shared/manhuaKeyartLookState";
 import { buildWorkbenchShotsFromSegmentPlan } from "@shared/manhuaStoryDistill";
 import {
   AlertTriangle,
@@ -1135,9 +1135,9 @@ export function isManhuaWorkbenchKeyartCurrent(block: Pick<CanvasBlock,
   "manhuaKeyartLookState" | "manhuaKeyartSourceState" | "outputUrl"
 > & Partial<Pick<CanvasBlock, "outputUrls">>): boolean {
   const generated = { ...block, outputUrl: keyartOutputUrl(block) };
-  return isManhuaKeyartLookCurrent(generated) && isManhuaKeyartLookCurrent({
-    ...generated,
-    manhuaKeyartLookState: block.manhuaKeyartSourceState,
+  return isManhuaKeyartLookCurrent(generated) && isManhuaKeyartSourceCurrent({
+    manhuaKeyartSourceState: block.manhuaKeyartSourceState,
+    outputUrl: generated.outputUrl,
   });
 }
 

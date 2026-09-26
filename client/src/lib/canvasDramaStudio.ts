@@ -62,7 +62,8 @@ import {
   type ManhuaCharacterLookSet,
 } from "@shared/manhuaCharacterLookSets";
 import { compileManhuaKeyartLookBindings, appendManhuaKeyartLookContinuity } from "@shared/manhuaKeyartLookBindings";
-import { isManhuaKeyartLookCurrent, recordManhuaKeyartLookOutput } from "@shared/manhuaKeyartLookState";
+import { isManhuaKeyartLookCurrent, isManhuaKeyartSourceCurrent, recordManhuaKeyartLookOutput } from "@shared/manhuaKeyartLookState";
+import { manhuaClipSavedDialogueIssue } from "./manhuaAudioScriptSource";
 import {
   resolveEpisodeMainScene,
   type ManhuaWriterAssetCanon,
@@ -4129,6 +4130,17 @@ export async function prepareManhuaFactoryClipInput(input: {
   if (stage === "clip" && !preparedVideoEdit) {
     const epForSeg = getBlockEpisodeIndex(runBlockPayload) ?? opts.episodeIndex ?? 1;
     const localSeg = resolveClipLocalSegmentIndex(blockId, runBlockPayload.prompt, epForSeg);
+    const sourceShots = resolveShotsForEpisodeKeyarts(working, epForSeg);
+    const binding = normalizeManhuaAutoSegmentBinding(runBlockPayload.manhuaAutoSegment);
+    const sourceSegment = groupShotsIntoSegments(sourceShots, { videoModel: runBlockPayload.videoModel }).find(segment => segment.index === localSeg);
+    const bindingMatches = !binding || Boolean(sourceSegment &&
+      Math.abs((sourceSegment.sourceStartSec ?? 0) - binding.sourceStartSec) <= 0.001 &&
+      Math.abs((sourceSegment.sourceEndSec ?? 0) - binding.sourceEndSec) <= 0.001 &&
+      sourceSegment.shots.map(shot => shot.index).join(",") === binding.shotIndexes.join(","));
+    // 使用当前分段里的连续镜片段；超长单镜不可拿整镜台词误判续段TTS。
+    const clipShots = bindingMatches ? sourceSegment?.shots || [] : [];
+    const audioIssue = manhuaClipSavedDialogueIssue(runBlockPayload.audioStudio, clipShots, binding?.durationSec || sourceSegment?.durationSec || 15);
+    if (audioIssue) throw new Error(audioIssue);
     let prevClipUrl: string | undefined;
     if (shotCont.clipFromPrevTail && !runBlockPayload.refVideoUrl) {
       prevClipUrl = resolvePreviousSegmentClipUrl(working, epForSeg, localSeg, { segmentIndexIsLocal: true });
@@ -4178,7 +4190,7 @@ export async function prepareManhuaFactoryClipInput(input: {
       )
       .sort(sortKeyartBlocks);
     const segUrls = segKeyarts.map((b) => mediaUrlOf(b)).filter(Boolean) as string[];
-    if (segKeyarts.some(keyart => !isManhuaKeyartLookCurrent({ ...keyart, manhuaKeyartLookState: keyart.manhuaKeyartSourceState }))) {
+    if (segKeyarts.some(keyart => !isManhuaKeyartSourceCurrent(keyart))) {
       throw new Error("原稿分镜已变更或旧图尚未核对原镜身份，请先重出对应关键静帧；原图保留，本次未提交视频。");
     }
     if (segKeyarts.some((keyart) => !isManhuaKeyartLookCurrent(keyart))) {

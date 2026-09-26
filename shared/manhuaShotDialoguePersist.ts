@@ -16,10 +16,16 @@ export function parseShotDialogueTable(text: string): Record<number, string> {
     const m = line.match(/^\|\s*(\d{1,2})\s*\|\s*([^|]*)\|/);
     if (!m?.[1]) continue;
     const idx = Math.max(1, parseInt(m[1], 10));
-    const cell = String(m[2] || "")
-      .trim()
-      .replace(/^[「『"“]|[」』"”]$/g, "")
-      .slice(0, 80);
+    const raw = String(m[2] || "").trim();
+    const wrappingPair = ([
+      ["「", "」"],
+      ["『", "』"],
+      ['"', '"'],
+      ["“", "”"],
+    ] as const).find(([open, close]) =>
+      raw.startsWith(open) && raw.endsWith(close) && raw.indexOf(close, 1) === raw.length - 1,
+    );
+    const cell = (wrappingPair ? raw.slice(1, -1) : raw).slice(0, 80);
     if (cell) out[idx] = cell;
   }
   return out;
