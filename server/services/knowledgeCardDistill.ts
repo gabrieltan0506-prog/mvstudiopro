@@ -51,6 +51,7 @@ import {
 import { extractDocumentText } from "../growth/documentExtract.js";
 import {
   formatKnowledgeCardPageRef,
+  isKnowledgeCardScannedPage,
   prepareKnowledgeCardDocumentPages,
   type KnowledgeCardContactSheet,
   type KnowledgeCardDocumentPageSet,
@@ -1859,8 +1860,12 @@ export async function prepareKnowledgeCardCopy(input: {
       extracted.documentText ||
       pasted
     : pasted;
-  // 0926 扫描版：页图要进分段提炼读字，文字层为空也不算「没内容」
-  const ocrPageCount = extracted.documents.reduce((n, d) => n + d.pages.filter((p) => p.ocrImageUrl).length, 0);
+  // 0926 扫描版：页图要进分段提炼读字，文字层为空也不算「没内容」。
+  // 被挑成参考页的扫描页只挂参考页图（没有 ocrImageUrl），也要算：小扫描件整本都被挑成参考页时不能报「读不出」
+  const ocrPageCount = extracted.documents.reduce(
+    (n, d) => n + d.pages.filter((p) => p.ocrImageUrl || (p.imageUrl && isKnowledgeCardScannedPage(p))).length,
+    0,
+  );
   const skip =
     !input.forceDistill &&
     shouldSkipKnowledgeCardDistill(mergedRaw, hasUploads) &&

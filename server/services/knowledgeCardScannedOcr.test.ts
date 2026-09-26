@@ -200,6 +200,34 @@ describe("prepare：扫描版不再被判「没内容」；判断顺序修正", 
     expect(out.distilledMarkdown).toContain("## 一节标题");
   });
 
+  it("小扫描件整本都被挑成参考页（没有读字图）：照常进提炼，参考页图随请求发出", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "o");
+    vi.stubEnv("EVOLINK_API_KEY", "e");
+    vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "s");
+    vi.stubEnv("KNOWLEDGE_CARD_CHAIN_RETRY_DELAY_MS", "0");
+    vi.stubEnv("KNOWLEDGE_CARD_DISTILL_RETRY_BACKOFF_MS", "0");
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const bodies: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init?: { body?: unknown }) => {
+      bodies.push(String(init?.body ?? ""));
+      return new Response(JSON.stringify({ choices: [{ message: { content: "# 总标题\n\n## 一节标题\n\n- 要点一条内容足够\n- 要点二条内容足够" }, finish_reason: "stop" }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }));
+    const out = await prepareKnowledgeCardCopy({
+      forceDistill: true,
+      distillModel: KNOWLEDGE_CARD_DISTILL_MODEL_GLM,
+      userId: 7,
+      files: [{ gcsUri: "gs://b/x.pdf", mimeType: "application/pdf", fileName: "x.pdf" }],
+      extracted: { documentText: "", nonPageDocumentText: "", imageUrls: [], methods: [], documents: [scannedDoc(2, [1, 2])] },
+    });
+    expect(out.skippedDistill).toBe(false);
+    expect(out.sourceChars).toBe(1000);
+    expect(bodies.some((b) => b.includes("https://signed/ref/p1.jpg") && b.includes("https://signed/ref/p2.jpg"))).toBe(true);
+  });
+
   it("有上传但什么都读不出：说是文件读不出来，不叫用户「请先上传」", async () => {
     await expect(prepareKnowledgeCardCopy({
       forceDistill: true,
