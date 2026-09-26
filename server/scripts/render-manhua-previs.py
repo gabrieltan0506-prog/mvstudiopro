@@ -29,6 +29,9 @@ scene.render.resolution_x, scene.render.resolution_y = (960, 540) if spec['aspec
 scene.render.resolution_percentage = 100
 scene.render.fps = 24
 scene.frame_start, scene.frame_end = 1, spec['durationSec'] * 24
+def actor_visible(actor, frame):
+    ranges=actor.get('visibleRanges')
+    return ranges is None or any(round(item['startSec']*24)<frame<=round(item['endSec']*24) for item in ranges)
 scene.render.image_settings.file_format = 'PNG'
 scene.world.color = (.09, .09, .09)
 scene.display.shading.light = 'STUDIO'
@@ -537,6 +540,33 @@ if creatures and not models:
     validate_projection_work(sum(len(obj.data.vertices) for handle in creatures for obj in handle['meshes']),
         scene.frame_end,spec['aspect']=='9:16')
 
+# 在场窗口真正控制画面网格。模型替身原本恒隐藏；尾翼另有显形曲线，合成时保留其原有可见条件。
+primary_meshes={}
+display_meshes={}
+for actor,rig,_contacts,_stance,_error in rigs:
+    model=next((item for item in models if item['actorId']==actor['id']),None)
+    primary_meshes[actor['id']]=model['meshes'] if model else [obj for obj in rig.children if obj.type=='MESH']
+    display_meshes[actor['id']]=list(primary_meshes[actor['id']])
+    display_meshes[actor['id']].extend(obj for sword_actor,_sword_rig,root in sword_handles if sword_actor['id']==actor['id'] for obj in root.children if obj.type=='MESH')
+    display_meshes[actor['id']].extend(obj for creature in creatures if creature['ownerId']==actor['id'] for obj in creature['meshes'])
+intrinsic_visible={obj.name:not obj.hide_render for meshes in display_meshes.values() for obj in meshes}
+for actor,rig,_contacts,_stance,_error in rigs:
+    if not actor.get('visibleRanges'): continue
+    meshes=display_meshes[actor['id']]
+    creature=next((item for item in creatures if item['ownerId']==actor['id']),None)
+    for frame in range(1,scene.frame_end+1):
+        scene.frame_set(frame)
+        onstage=actor_visible(actor,frame)
+        for obj in meshes:
+            originally_visible=(creature['frames'][frame-1]['visibleFraction']>0 if creature and obj in creature['meshes'] else intrinsic_visible[obj.name])
+            visible=onstage and originally_visible
+            obj.hide_render=not visible
+            obj.hide_viewport=not visible
+            obj.keyframe_insert('hide_render',frame=frame)
+            obj.keyframe_insert('hide_viewport',frame=frame)
+        if creature and not onstage: creature['frames'][frame-1]['visibleFraction']=0.
+scene.frame_set(1)
+
 def model_vertices(model):
     depsgraph=bpy.context.evaluated_depsgraph_get()
     for obj in model['meshes']:
@@ -641,6 +671,7 @@ def _bones_in_frame():
         if scale is None: return False
         kx,ky=scale
         for actor,rig,_c,_s,_e in rigs:
+            if not actor_visible(actor,frame): continue
             for bone in rig.pose.bones:
                 radius=bone_margin_radius(actor,bone.name)
                 for point in (bone.head,bone.tail):
@@ -680,12 +711,22 @@ if report['portraitFraming']=='auto':
     report['warnings'].append('竖屏未收紧构图：按当前站位与动作，收紧后会有人物被切出画，已保持原画幅。想要更饱满的竖屏构图，可让角色更靠近画面中心或缩小彼此间距。')
 for actor,rig,contacts,stance,error in rigs:
     offscreen=[]
+    visible_frames=[]
     drift=0.
     limp_samples=[]
     previous={}
     for frame in range(1,scene.frame_end+1):
         scene.frame_set(frame)
         bpy.context.view_layer.update()
+        if not actor_visible(actor,frame):
+            if actor.get('visibleRanges') and any(not obj.hide_render for obj in display_meshes[actor['id']]):
+                raise ValueError('角色离场帧仍有主体或附属网格参与渲染')
+            previous.clear()
+            continue
+        if actor.get('visibleRanges'):
+            if not primary_meshes[actor['id']] or not any(not obj.hide_render for obj in primary_meshes[actor['id']]):
+                raise ValueError('角色在场帧未实际显示主体网格')
+            visible_frames.append(frame)
         for key in foot_offsets(actor):
             actual=rig.matrix_world @ rig.pose.bones['lower_leg'+key].tail
             if actor['id'] != passenger_id and key in stance[frame] and key in previous and previous[key][0]==frame-1 and previous[key][1]:
@@ -699,6 +740,7 @@ for actor,rig,contacts,stance,error in rigs:
         names=['head']+['foot'+key for key in foot_offsets(actor)]
         if any(not (.02 <= (p:=world_to_camera_view(scene,camera,rig.matrix_world @ rig.pose.bones[name].tail)).x <= .98 and .02 <= p.y <= .98 and p.z>0) for name in names): offscreen.append(frame)
     report['actors'].append({'id':actor['id'],'nameZh':actor['nameZh'],'bones':len(rig.pose.bones),'contactError':error,'stanceDrift':drift,'offscreenFrames':offscreen})
+    if actor.get('visibleRanges'): report['actors'][-1]['visibleFrames']=visible_frames
     if actor['id'] == passenger_id: report['actors'][-1]['supportMode']='carried'
     if limp_samples: report['actors'][-1]['limpSamples']=limp_samples
     if offscreen:report['warnings'].append(actor['nameZh']+'存在头或脚出画，请人工审查镜头覆盖')
@@ -712,11 +754,13 @@ if has_swords:
     report['interactions'] = report.get('interactions',[]) + sword_contacts
     report['interactions'].sort(key=lambda row: next(i for i,e in enumerate(events) if e['id']==row['id']))
     for weapon in report['weapons']:
-        if any(s['offscreen'] for s in weapon['samples']): report['warnings'].append('练习剑存在出画，请调整机位并审查')
+        owner=next(a for a in spec['actors'] if a['id']==weapon['actorId'])
+        if any(s['offscreen'] and actor_visible(owner,s['frame']) for s in weapon['samples']): report['warnings'].append('练习剑存在出画，请调整机位并审查')
 if creatures or models:
-    def offscreen_frames(vertices):
+    def offscreen_frames(vertices, actor_id):
         outside=[]
         for frame in range(1,scene.frame_end+1):
+            if not actor_visible(next(a for a in spec['actors'] if a['id']==actor_id),frame): continue
             scene.frame_set(frame)
             bpy.context.view_layer.update()
             project=make_projector(scene,camera)
@@ -728,7 +772,7 @@ if creatures or models:
         report['creatures']=[]
         for handle in creatures:
             item=summarize_creature(handle)
-            item['offscreenFrames']=offscreen_frames(lambda h=handle: creature_vertices(h))
+            item['offscreenFrames']=offscreen_frames(lambda h=handle: creature_vertices(h),handle['ownerId'])
             report['creatures'].append(item)
             report['warnings'].append(item['boundaryZh'])
             if item['offscreenFrames']: report['warnings'].append('尾翼存在出画，请调整机位后重新预演')
@@ -736,7 +780,7 @@ if creatures or models:
         report['models']=[]
         for model in models:
             item=dict(model['report'])
-            item['offscreenFrames']=offscreen_frames(lambda m=model: model_vertices(m))
+            item['offscreenFrames']=offscreen_frames(lambda m=model: model_vertices(m),model['actorId'])
             report['models'].append(item)
             report['warnings'].append(item['boundaryZh'])
             if item['offscreenFrames']: report['warnings'].append('带骨角色网格存在出画，请调整机位后重新预演')

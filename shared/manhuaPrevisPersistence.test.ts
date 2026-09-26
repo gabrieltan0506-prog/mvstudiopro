@@ -15,6 +15,7 @@ function advanced() {
     }};
   studio.spec.actors.push({...structuredClone(human),id:'horse-test',assetRef:'horse-test',nameZh:'四足测试',shape:'horse',riggedModel:undefined,
     creature:{preset:'four_tail_black_wings',transformStartSec:.5,transformEndSec:3.5}});
+  studio.spec.actors[1].visibleRanges=[{startSec:1,endSec:4}];
   studio.spec.scriptSource={compilerVersion:1,shots:[{index:7,durationSec:4,actionZh:'测试人物静立，四足显形。'}],unmappedShotIndices:[7]};
   studio.specHistory=[{spec:structuredClone(studio.spec),createdAt:'2026-09-13T00:00:00Z',reasonZh:'确认前原稿'}];
   return studio;
@@ -88,7 +89,7 @@ describe('高级白模持久化及严格提交',()=>{
     expect(manhuaPrevisDraftSchema.safeParse(spec).success).toBe(true);
     expect(manhuaPrevisSpecSchema.safeParse(spec).success).toBe(false);
   });
-  it('记录现行旧预算按人数计，不证明模型或尾翼额外成本已验收',()=>{
+  it('保守渲染预算按全部角色整段计算，模型或尾翼额外成本未验',()=>{
     const spec=advanced().spec;
     expect(previsRenderCostUnits(spec)).toBe(4*24*2);
     const plain=structuredClone(spec);for(const a of plain.actors){delete a.riggedModel;delete a.creature;}

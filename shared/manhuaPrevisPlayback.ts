@@ -28,6 +28,7 @@ export function previsPresentationGuideSpec(spec: ManhuaPrevisSpec): ManhuaPrevi
   const {timeMap, ...rest} = spec;
   return {...rest, durationSec:previsPlaybackDuration(spec),
     actors:spec.actors.map(a=>({...a,moveStartSec:t(a.moveStartSec),moveEndSec:t(a.moveEndSec),
+      ...(a.visibleRanges?{visibleRanges:a.visibleRanges.map(r=>({startSec:t(r.startSec),endSec:t(r.endSec)}))}:{}),
       actions:a.actions.map(x=>({...x,startSec:t(x.startSec),endSec:t(x.endSec)})),
       ...(a.motionRoute?{motionRoute:a.motionRoute.map(n=>({...n,timeSec:t(n.timeSec)}))}:{}),
       ...(a.creature?{creature:{...a.creature,transformStartSec:t(a.creature.transformStartSec),transformEndSec:t(a.creature.transformEndSec)}}:{}),

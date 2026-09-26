@@ -209,7 +209,6 @@ import type { ManhuaAssetStandardizeQuality } from "@shared/manhuaAssetStandardi
 import { MANHUA_REF_DUTIES } from "@shared/manhuaDirectingWorkflow";
 import ModelViewer from "@/components/ModelViewer";
 import {
-  areManhuaKeyartsPixelLocked,
   isBindableAssetPath,
   isManhuaKeyartPixelLocked,
   buildManhuaAssetLockRegistry,
@@ -865,6 +864,37 @@ export function manhuaShotKeyartInputOf(key?: CanvasBlock) {
     pixelLocked: Boolean(output && key && isManhuaKeyartPixelLocked(key)),
     // 垫图只是输入；只有已有成图才报告原稿或造型过期，旧图继续保留。
     sourceCurrent: !key || !output || isManhuaWorkbenchKeyartCurrent(key),
+  };
+}
+
+/** 成片门禁逐镜核当前原稿；未铺节点不能把 2/18 误算成 2/2。 */
+export function summarizeManhuaCurrentShotKeyarts(
+  shots: readonly Pick<ManhuaWorkbenchShot, "index">[],
+  keyarts: readonly CanvasBlock[],
+) {
+  const indexes = shots.map((shot) => shot.index);
+  const uniqueShots = indexes.every((index) => Number.isInteger(index) && index > 0) &&
+    new Set(indexes).size === indexes.length;
+  const firstKeyartByShot = new Map<number, CanvasBlock>();
+  for (const keyart of keyarts) {
+    const index = resolveKeyartShotIndex(keyart.id, keyart.prompt);
+    if (!firstKeyartByShot.has(index)) firstKeyartByShot.set(index, keyart);
+  }
+  let present = 0;
+  let ready = 0;
+  for (const index of indexes) {
+    const keyart = firstKeyartByShot.get(index);
+    if (!keyart || !keyartOutputUrl(keyart)) continue;
+    present += 1;
+    if (manhuaShotKeyartState(manhuaShotKeyartInputOf(keyart)) === "ready") ready += 1;
+  }
+  const target = shots.length;
+  return {
+    target,
+    present,
+    ready,
+    countReady: uniqueShots && target > 0 && present === target,
+    pixelLocked: present > 0 && ready === present,
   };
 }
 
@@ -1765,29 +1795,16 @@ export default function ManhuaScriptWorkbench({
     });
   }, [story?.outputText, story?.prompt, reverse?.outputText, reverse?.prompt, topic]);
   const episodeStillCount = episodeKeyarts.filter((b) => keyartOutputUrl(b)).length;
-  // 当前剧本镜头才是进度分母；垫图、过期图和已移出本稿的旧镜头不能算可用。
-  const currentShotKeys = shots.length
-    ? shots.map(shot => episodeKeyarts.find(block => resolveKeyartShotIndex(block.id, block.prompt) === shot.index))
-    : episodeKeyarts;
-  const currentStillTarget = currentShotKeys.length;
-  const currentStillReady = currentShotKeys.filter(block => block &&
-    Boolean(keyartOutputUrl(block)) &&
-    manhuaShotKeyartState(manhuaShotKeyartInputOf(block)) === "ready").length;
-
-  // A（用户 2026-07-29）：静帧门禁按「一镜一张」的实际分镜节点数算，不用「段×3」估算硬顶。
-  // 已铺出静帧节点后，目标 = 实际已铺节点数（旧稿 13 张不该被新 plan 段×3=18 判成缺 5 张）；
-  // 尚未铺任何静帧节点时，才用分镜数（段×3）排队首次生成。
-  const expectedStillCount =
-    episodeKeyarts.length > 0 ? episodeKeyarts.length : shots.length;
-  const stillsCountReady =
-    expectedStillCount > 0
-      ? episodeStillCount >= expectedStillCount
-      : episodeStillCount > 0;
-  /** Skill：资产须垫图改图锁定；仅有成图 URL 不算可烧成片 */
-  const keyartsPixelLocked = areManhuaKeyartsPixelLocked(episodeKeyarts, {
-    minCount: expectedStillCount > 0 ? expectedStillCount : 1,
-  });
-  const stillsReadyEnough = stillsCountReady && keyartsPixelLocked && staleLookStillCount === 0;
+  // 当前原稿真实镜号是唯一分母；旧稿13镜按13，不用段数或已铺节点数猜镜数。
+  const currentShotKeyarts = summarizeManhuaCurrentShotKeyarts(shots, episodeKeyarts);
+  const currentStillTarget = currentShotKeyarts.target;
+  const currentStillPresent = currentShotKeyarts.present;
+  const currentStillReady = currentShotKeyarts.ready;
+  const expectedStillCount = currentStillTarget;
+  const stillsCountReady = currentShotKeyarts.countReady;
+  /** 有图仍需垫图改图锁定且来源现行；缺镜另由 countReady 拦截。 */
+  const keyartsPixelLocked = currentShotKeyarts.pixelLocked;
+  const stillsReadyEnough = !shotSourceIsFallback && stillsCountReady && keyartsPixelLocked && staleLookStillCount === 0;
 
   const totalSec = workbenchShotTotalSec(shots, episodeVideoModel);
   /** 本集容量模式与对照：超容量且为 block 模式时，生成入口会在扣费前被拦（runFactory 同源） */
@@ -3279,19 +3296,14 @@ export default function ManhuaScriptWorkbench({
     const stages = ["story", "bible", "beats", "reverse", "keyart", "clip"] as const;
     return stages.map((stage) => {
       if (stage === "keyart") {
-        // 须出齐且垫图锁过，才算阶段完成；禁止「有一张图就打勾」
-        // A：目标按「一镜一张」的实际已铺节点数算（未铺时才用段×3 分镜数排队）
-        const expected =
-          episodeKeyarts.length > 0 ? episodeKeyarts.length : shots.length;
-        const has =
-          expected > 0
-            ? episodeStillCount >= expected && keyartsPixelLocked && staleLookStillCount === 0
-            : episodeStillCount > 0 && keyartsPixelLocked && staleLookStillCount === 0;
+        // 阶段条与出片按钮使用同一逐镜门禁，缺节点不能显示已完成。
+        const expected = currentStillTarget;
+        const has = stillsReadyEnough;
         return {
           stage,
           label:
-            episodeKeyarts.length > 1
-              ? `${MANHUA_FACTORY_STAGE_LABEL_ZH[stage]} ${episodeStillCount}/${Math.max(expected, 1)}`
+            expected > 1
+              ? `${MANHUA_FACTORY_STAGE_LABEL_ZH[stage]} ${currentStillPresent}/${expected}`
               : MANHUA_FACTORY_STAGE_LABEL_ZH[stage],
           has,
           blockId: activeKeyart?.id || episodeKeyarts[0]?.id,
@@ -3338,10 +3350,9 @@ export default function ManhuaScriptWorkbench({
     activeKeyart?.id,
     activeClip?.id,
     legacyClip?.id,
-    episodeStillCount,
-    shots.length,
-    keyartsPixelLocked,
-    staleLookStillCount,
+    currentStillTarget,
+    currentStillPresent,
+    stillsReadyEnough,
   ]);
   /** 勾选集是 Set：直接进依赖数组不会因元素增减触发重算，取 size */
   const dockSelectedCount = dockSelectedIds?.size ?? 0;
@@ -8649,7 +8660,7 @@ export default function ManhuaScriptWorkbench({
               分镜 · 第 {focusEpisode} 集 · 镜 {activeShotNo || "—"}/{shots.length}
             </h1>
             <span className="shrink-0 text-[11px] text-white/70">
-              静帧 {episodeStillCount}/{Math.max(shots.length, 1)} · 成片 {episodeClips.filter((clip) => Boolean(clipOutputUrl(clip))).length}/{segments.length}
+              静帧 {currentStillPresent}/{Math.max(currentStillTarget, 1)} · 成片 {episodeClips.filter((clip) => Boolean(clipOutputUrl(clip))).length}/{segments.length}
             </span>
           </header>
         ) : null}
@@ -9044,7 +9055,7 @@ export default function ManhuaScriptWorkbench({
                   className="mt-1.5 flex shrink-0 flex-wrap items-center justify-between gap-1.5 rounded-md border border-cyan-400/25 bg-cyan-500/[0.06] px-2 py-1"
                 >
                   <span className="text-[10px] text-cyan-50/85">
-                    静帧 {episodeStillCount}/
+                    静帧 {currentStillPresent}/
                     {Math.max(expectedStillCount, 1)}
                     {stillsReadyEnough
                       ? " · 已垫图锁"
@@ -10405,7 +10416,7 @@ export default function ManhuaScriptWorkbench({
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[9px] text-white/35">
-              已出静帧 {episodeStillCount}/
+              已出静帧 {currentStillPresent}/
               {Math.max(expectedStillCount, 1)}
               {episodeKeyarts.filter((b) => b.status === "error" && !keyartOutputUrl(b)).length
                 ? ` · 失败 ${episodeKeyarts.filter((b) => b.status === "error" && !keyartOutputUrl(b)).length}`

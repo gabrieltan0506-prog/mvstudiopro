@@ -12,6 +12,8 @@ import {
   previsCapacityIssueZh,
   previsMaxDurationSec,
   previsRenderCostUnits,
+  previsActorVisibleAtFrame,
+  type ManhuaPrevisSpec,
 } from "./manhuaPrevis";
 import {
   normalizeManhuaSegmentReferences,
@@ -324,6 +326,24 @@ describe("单次渲染预算：按实测定的能力边界（0911）", () => {
     expect(previsRenderCostUnits({ durationSec: 30, actors: new Array(6) })).toBe(4320);
     expect(previsRenderCostUnits({ durationSec: 5, actors: new Array(1) })).toBe(120);
     expect(PREVIS_RENDER_UNIT_BUDGET).toBe(2800);
+  });
+
+  it("在场窗口不绕过保守容量：五角色30秒仍超限", () => {
+    const spec = specOf(5, 30) as ManhuaPrevisSpec;
+    const ranges = [[0, 25], [0, 30], [0, 4], [4, 19], [14, 30]];
+    spec.actors.forEach((actor, i) => { actor.visibleRanges = [{ startSec: ranges[i][0], endSec: ranges[i][1] }]; });
+    expect(previsRenderCostUnits(spec)).toBe(3600);
+    expect(previsCapacityIssueZh(spec)).toContain("3600");
+    expect(manhuaPrevisSpecSchema.safeParse(spec).success).toBe(false);
+    expect(previsActorVisibleAtFrame(spec.actors[2], 96)).toBe(true);
+    expect(previsActorVisibleAtFrame(spec.actors[2], 97)).toBe(false);
+    expect(formatPrevisMotionGuide(spec)).toContain("仅在0—4秒在场");
+    const four = { ...spec, actors: spec.actors.slice(0, 4) };
+    expect(previsRenderCostUnits(four)).toBe(2880);
+    expect(manhuaPrevisSpecSchema.safeParse(four).success).toBe(false);
+    const bad = structuredClone(spec);
+    bad.actors[2].visibleRanges = [{ startSec: 0.01, endSec: 4 }];
+    expect(manhuaPrevisSpecSchema.safeParse(bad).success).toBe(false);
   });
 
   it("超预算给的是能照做的中文：说清上限、同角色数最长几秒、同片长最多几个角色", () => {

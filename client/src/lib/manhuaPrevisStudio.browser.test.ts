@@ -1796,3 +1796,23 @@ it("背负关系保存跟随路线，保存失败保留原稿，删除乘员清�
     expect(result.old).toBe("https://offline.invalid/old.mp4");
   } finally { await page.close(); }
 });
+
+it("新增在场区间只在剩余时间足一帧时显示，并产生正时长", async () => {
+  const page = await open();
+  try {
+    await click(page, "设置在场区间");
+    await settle(page);
+    expect(await page.evaluate(() => Array.from(document.querySelectorAll("button")).some(b => b.textContent?.trim() === "新增在场区间"))).toBe(false);
+    const end = '[aria-label="角色1在场1结束秒"]';
+    await page.click(end, { clickCount: 3 });
+    await page.keyboard.press("Backspace");
+    await page.keyboard.type("5");
+    await settle(page);
+    await click(page, "新增在场区间");
+    await settle(page);
+    expect(await page.evaluate(() => (window as any).fixture.block.previsStudio.spec.actors[0].visibleRanges)).toEqual([
+      { startSec: 0, endSec: 5 }, { startSec: 5, endSec: 6 },
+    ]);
+    expect(await page.evaluate(() => (window as any).fixture.submits.length)).toBe(0);
+  } finally { await page.close(); }
+});

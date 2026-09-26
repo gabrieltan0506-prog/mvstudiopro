@@ -25,6 +25,8 @@ import {
   PREVIS_LOOK_AT_CAMERA,
   normalizeFacingDeg,
   previsActionForKind,
+  previsRenderCostUnits,
+  PREVIS_RENDER_UNIT_BUDGET,
   previsSpecKey,
   type ManhuaPrevisRequest,
   type ManhuaPrevisSpec,
@@ -881,6 +883,7 @@ export function ManhuaPrevisStudioView({
       ) : null}
       <section className="space-y-2 rounded border border-cyan-300/20 p-3" data-previs-cast>
         <p className="text-xs text-cyan-100">本次出场人物</p>
+        <p className="text-xs text-cyan-100">渲染容量：{previsRenderCostUnits(studio.spec)} / {PREVIS_RENDER_UNIT_BUDGET}；所有角色均按整段计入，在场区间只控制画面，不提高容量。请逐镜核对白模角色、对白和接触。</p>
         <div className="flex flex-wrap gap-3">
           {studio.spec.actors.map((actor, index) => (
             <label key={actor.id} className="text-xs">
@@ -1010,6 +1013,27 @@ export function ManhuaPrevisStudioView({
             >
               移除角色
             </button>
+          </div>
+          <div className="space-y-1 rounded border border-white/10 p-2 text-xs text-white/70">
+            <div className="flex flex-wrap items-center gap-2">
+              <span>在场区间（24 帧/秒；区间外不出镜）</span>
+              <button type="button" className={button} disabled={disabled || Boolean(pendingId)} onClick={() => actorEdit(index, { visibleRanges: actor.visibleRanges ? undefined : [{ startSec: 0, endSec: studio.spec.durationSec }] })}>
+                {actor.visibleRanges ? "恢复整段在场" : "设置在场区间"}
+              </button>
+            </div>
+            {actor.visibleRanges?.map((range, rangeIndex) => (
+              <div key={rangeIndex} className="flex flex-wrap items-center gap-2">
+                {numeric(`角色${index + 1}在场${rangeIndex + 1}开始秒`, range.startSec, n => actorEdit(index, { visibleRanges: actor.visibleRanges!.map((r, i) => i === rangeIndex ? { ...r, startSec: n } : r) }), 1 / 24)}
+                {numeric(`角色${index + 1}在场${rangeIndex + 1}结束秒`, range.endSec, n => actorEdit(index, { visibleRanges: actor.visibleRanges!.map((r, i) => i === rangeIndex ? { ...r, endSec: n } : r) }), 1 / 24)}
+                <button type="button" className={button} disabled={disabled || Boolean(pendingId) || actor.visibleRanges?.length === 1} onClick={() => actorEdit(index, { visibleRanges: actor.visibleRanges!.filter((_, i) => i !== rangeIndex) })}>删除区间</button>
+              </div>
+            ))}
+            {actor.visibleRanges && actor.visibleRanges.length < 12 && actor.visibleRanges.at(-1)!.endSec + 1 / 24 <= studio.spec.durationSec + 1e-6 ? (
+              <button type="button" className={button} disabled={disabled || Boolean(pendingId)} onClick={() => {
+                const startSec = actor.visibleRanges!.at(-1)!.endSec;
+                actorEdit(index, { visibleRanges: [...actor.visibleRanges!, { startSec, endSec: Math.min(studio.spec.durationSec, startSec + 1) }] });
+              }}>新增在场区间</button>
+            ) : null}
           </div>
           <details className="rounded border border-white/10 bg-white/[0.025] p-2">
             <summary className="cursor-pointer text-xs text-white/60">
