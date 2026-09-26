@@ -29,6 +29,15 @@ describe("一键预混母轨 · 时间轴片段", () => {
     expect(bgm!.fadeInSec + bgm!.fadeOutSec).toBeLessThanOrEqual(1.5);
     expect(bgm!.fadeInSec).toBe(0.5);
   });
+  it("把逐句对白与配乐各自调好的音量写进实际母轨片段", () => {
+    const cues = [
+      { ...cueWithTake("dialogue", "d1", 0, 3, 2), volume: 0.6 },
+      { ...cueWithTake("dialogue", "d2", 3, 6, 2), volume: 0.8 },
+      { ...cueWithTake("bgm", "b1", 0, 8, 7), volume: 0.18 },
+    ];
+    expect(buildPremixTimelineClips({ cues, durationSec: 10, getSelectedTake, inputKeyOf: canvasAudioCueInputKey }).map(clip => clip.volume)).toEqual([0.6, 0.8, 0.18]);
+    expect(cues[0]!.takes[0]!.inputKey).toBe(canvasAudioCueInputKey(cues[0]!));
+  });
   it("没有采用音轨、秒窗越界、内容改过、音频长于秒窗都报中文错", () => {
     expect(() => buildPremixTimelineClips({ cues: [], durationSec: 30, getSelectedTake, inputKeyOf: canvasAudioCueInputKey })).toThrow(/至少一条音轨/);
     expect(() => buildPremixTimelineClips({ cues: [cueWithTake("dialogue", "d", 28, 33, 2)], durationSec: 30, getSelectedTake, inputKeyOf: canvasAudioCueInputKey })).toThrow(/秒窗超出/);

@@ -17,6 +17,8 @@ it("SFX同一长期身份及留白避让经过真实云草稿清洗、消费",()
  const master=normalizeManhuaSegmentReferenceEntry({url:'https://test.invalid/master.wav',audioStudioSource:canvasAudioMixSource([sound],6)})!;
  expect(()=>assertCanvasAudioMasterCurrent(master,studio,6)).not.toThrow();
  expect(()=>assertCanvasAudioMasterCurrent(master,{...studio,cues:[{...sound,mix:{...sound.mix,duckVolume:0.5}}]},6)).toThrow('旧版');
+ expect(()=>assertCanvasAudioMasterCurrent(master,{...studio,cues:[{...sound,volume:0.4}]},6)).toThrow('旧版');
+ expect(canvasAudioCueInputKey({...sound,volume:0.4})).toBe(canvasAudioCueInputKey(sound));
  expect(getSelectedAudioTake(sound)?.inputKey).toBe(canvasAudioCueInputKey({...sound,mix:{...sound.mix,duckVolume:0.5}}));
 });
 it("真实后期入参按对白实长避让、留白留空，不挪动来源时间",()=>{

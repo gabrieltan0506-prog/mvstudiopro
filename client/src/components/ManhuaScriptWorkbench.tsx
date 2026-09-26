@@ -8673,10 +8673,10 @@ export default function ManhuaScriptWorkbench({
         {activePhase === "storyboard" ? (
           <header data-manhua-storyboard-header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-white/10 bg-white/[0.03] px-3 py-1.5">
             <h1 className="min-w-0 truncate text-sm font-bold text-white/95">
-              分镜 · 第 {focusEpisode} 集 · 镜 {activeShotNo || "—"}/{shots.length}
+              分镜 · 第 {focusEpisode} 集 · 当前选中镜 {activeShotNo || "—"}/{shots.length}
             </h1>
             <span className="shrink-0 text-[11px] text-white/70">
-              静帧 {currentStillPresent}/{Math.max(currentStillTarget, 1)} · 成片 {episodeClips.filter((clip) => Boolean(clipOutputUrl(clip))).length}/{segments.length}
+              已出静帧 {currentStillPresent}/{Math.max(currentStillTarget, 1)} · 成片 {episodeClips.filter((clip) => Boolean(clipOutputUrl(clip))).length}/{segments.length}
             </span>
           </header>
         ) : null}

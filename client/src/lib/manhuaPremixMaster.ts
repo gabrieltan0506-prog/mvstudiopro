@@ -1,7 +1,7 @@
 import { applyCanvasAudioMixPlan, assertCanvasAudioMixCapacity } from "@shared/canvasAudioMixPlan";
 /**
  * 一键预混母轨（0908 墨菁传实录搬进配音间）：
- * 对白按秒窗原音量落位；配乐压到 −12 dB（线性 0.25）并带淡入淡出；合成一条本段时长的单轨，
+ * 对白与配乐按各自保存的音量落位；配乐默认 0.25 并带淡入淡出；合成一条本段时长的单轨，
  * 挂到 manhuaSegmentRefs.master，出片时作唯一 @音频1（逐句配音不再并列送，避免撞供应商 30 s 上限）。
  * 走现成的 audio_timeline 后期任务（ffmpeg：adelay + volume + afade + amix + alimiter），免费。
  */
@@ -81,7 +81,7 @@ export function buildPremixTimelineClips(input: {
       sourceStartSec: 0,
       sourceEndSec: take.durationSec,
       startSec: cue.startSec,
-      volume: isBgm ? PREMIX_BGM_VOLUME : 1,
+      volume: cue.volume,
       fadeInSec: Math.round(fadeIn * 1000) / 1000,
       fadeOutSec: Math.round(fadeOut * 1000) / 1000,
     }, cues);

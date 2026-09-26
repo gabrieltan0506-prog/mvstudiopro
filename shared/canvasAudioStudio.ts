@@ -98,16 +98,15 @@ export function createCanvasAudioCue(kind: CanvasAudioCue["kind"], id: string): 
   return {
     id, kind, labelZh: "", shotZh: "", startSec: kind === "dialogue" ? 1.5 : 0,
     endSec: 5, speakerZh: "", voiceStateZh: "", textZh: "", emotion: "", voice: "",
-    sourceStartSec: 0, sourceEndSec: 5, volume: 1, fadeInSec: 0, fadeOutSec: 0,
+    sourceStartSec: 0, sourceEndSec: 5, volume: kind === "bgm" ? 0.25 : 1, fadeInSec: 0, fadeOutSec: 0,
     takes: [], approved: false, enabled: true,
   };
 }
-/** 时间与镜头变化不重新购买配音；BGM 裁切参数变化则对应新的确定性产物。 */
+/** 音量与淡入淡出在合听/母轨应用；源音频裁切才需新的免费裁切产物。 */
 export function canvasAudioCueInputKey(cue: CanvasAudioCue): string {
   return JSON.stringify(cue.kind === "dialogue"
     ? [cue.kind, cue.speakerZh, cue.voiceStateZh, cue.textZh, cue.emotion, cue.voice]
-    : [cue.kind, cue.source?.gcsUri ?? "", cue.sourceStartSec, cue.sourceEndSec,
-      cue.volume, cue.fadeInSec, cue.fadeOutSec]);
+    : [cue.kind, cue.source?.gcsUri ?? "", cue.sourceStartSec, cue.sourceEndSec, "mix-v2"]);
 }
 /** 只延长当前对白窗口；不移动其他对白、不裁音频、不重新购买。 */
 export function canvasDialogueWindowFit(cue: CanvasAudioCue, take: CanvasAudioTake, cues: CanvasAudioCue[], durationSec: number): { endSec: number; issue: string } {
@@ -185,7 +184,8 @@ export function compileCanvasAudioBindings(input: {
 /** 混音用料完整身份；不包含会过期的试听URL，也不触发重新购买单条音频。 */
 export function canvasAudioMixSource(cues: readonly CanvasAudioCue[], durationSec: number): string {
   return JSON.stringify(cues.filter(cue => cue.approved && cue.enabled !== false).map(cue => {
-    const row: unknown[] = [cue.id, canvasAudioCueInputKey(cue), cue.selectedTakeId, cue.startSec, cue.endSec, durationSec];
+    const row: unknown[] = [cue.id, canvasAudioCueInputKey(cue), cue.selectedTakeId, cue.startSec, cue.endSec, durationSec,
+      cue.volume, cue.fadeInSec, cue.fadeOutSec];
     if (cue.mix) row.push(cue.mix);
     return row;
   }));
