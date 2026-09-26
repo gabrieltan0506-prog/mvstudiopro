@@ -2,6 +2,7 @@ import { gcsTransferUrl, isGcsTransferUrl } from "@/lib/gcsTransfer";
 import type { ComponentProps } from "react";
 import { findCanvasDialogueReuse, restoreCanvasDialogueCandidate } from "@/lib/canvasDialogueReuse";
 import { createManhuaAudioFromShots } from "@shared/manhuaAudioFromShots";
+import { manhuaScriptCueSourceIssue } from "@/lib/manhuaAudioScriptSource";
 import { planCanvasDialogueTiming } from "@shared/canvasDialogueTimingPlan";
 import type { ManhuaWorkbenchShot } from "@shared/manhuaScriptWorkbench";
 import { canvasAudioMixSource } from "@shared/canvasAudioStudio";
@@ -313,8 +314,8 @@ export function CanvasAudioStudioView({
     musicJobCount: state.musicJobIds.length,
     hasPremixMaster: Boolean(block.manhuaSegmentRefs?.master?.gcsUri || block.manhuaSegmentRefs?.master?.url),
   });
-  const current = useRef({ state, onChange, services, block, onMasterTrackReady, durationSec, dialogueSources });
-  current.current = { state, onChange, services, block, onMasterTrackReady, durationSec, dialogueSources };
+  const current = useRef({ state, onChange, services, block, onMasterTrackReady, durationSec, dialogueSources, sourceShots, expectedScriptAudio });
+  current.current = { state, onChange, services, block, onMasterTrackReady, durationSec, dialogueSources, sourceShots, expectedScriptAudio };
   const mounted = useRef(true);
   const busyRef = useRef(false);
   const [busy, setBusy] = useState(false);
@@ -684,6 +685,8 @@ export function CanvasAudioStudioView({
     });
   const prepareDialogue = (cue: CanvasAudioCue) => {
     try {
+      const sourceIssue = manhuaScriptCueSourceIssue(cue, expectedScriptAudio?.cues, Boolean(sourceShots?.length));
+      if (sourceIssue) throw new Error(sourceIssue);
       checkWindow(cue);
       if (
         cue.takes.length >= 100 ||
@@ -766,17 +769,23 @@ export function CanvasAudioStudioView({
       }
       if (current.current.state.pendingOperations.length >= 100)
         throw new Error("待处理任务已达 100 条，先处理原任务，不再建立新单。");
-      const requestId = crypto.randomUUID();
       if (saved.kind === "dialogue") {
         const cue = current.current.state.cues.find(
           row => row.id === saved.cueId
         );
         if (!cue || canvasAudioCueInputKey(cue) !== saved.inputKey)
           throw new Error("对白已修改，请重新确认本句费用。");
+        const sourceIssue = manhuaScriptCueSourceIssue(
+          cue,
+          current.current.expectedScriptAudio?.cues,
+          Boolean(current.current.sourceShots?.length),
+        );
+        if (sourceIssue) throw new Error(sourceIssue);
         if (cue.takes.length >= 100)
           throw new Error(
             "本句已达 100 条候选上限，旧音频全部保留，本次未提交。"
           );
+        const requestId = crypto.randomUUID();
         const jobId = requestId;
         if (!update(previous => ({
           ...previous,
@@ -815,6 +824,7 @@ export function CanvasAudioStudioView({
           throw new Error(
             "配乐任务记录已达 100 条，旧任务全部保留，本次未提交。"
           );
+        const requestId = crypto.randomUUID();
         const jobId = `bgm_${requestId.replace(/-/g, "")}`;
         if (!update(previous => ({
           ...previous,
