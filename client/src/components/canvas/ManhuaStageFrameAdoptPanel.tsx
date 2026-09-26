@@ -53,8 +53,8 @@ export function ManhuaStageFrameAdoptPanel(props: Props) {
           const sourceZh = formatManhuaStageFrameSourceZh(ref, actorLabelOf);
           return (
             <li key={ref.id} className="flex flex-wrap items-center gap-2 text-[11px]" data-stage-frame-ref={ref.id}>
-              <img src={ref.url} alt={ref.labelZh || ref.id} className="h-10 w-10 rounded object-cover" />
-              <span className="min-w-[6rem] font-medium text-white/85">{ref.labelZh || ref.id}</span>
+              <img src={ref.url} alt={ref.labelZh || "视角图"} className="h-10 w-10 rounded object-cover" />
+              <span className="min-w-[6rem] font-medium text-white/85">{ref.labelZh || "视角图"}</span>
               <span className="text-white/45">{sourceZh}</span>
               <span className="ml-auto flex flex-wrap gap-1">
                 {shots.map((shot) => {

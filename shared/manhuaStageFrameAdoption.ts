@@ -159,15 +159,17 @@ export function toggleManhuaStageFrameAdoption(current: readonly ManhuaStageFram
   return [...list, { shotId, adoptedAt: now }].slice(-MANHUA_STAGE_FRAME_ADOPTION_MAX);
 }
 
-/** 确认框/出站摘要用的一句中文来源说明：这张图来自哪个世界、哪个机位、哪些人、哪一镜 */
+/** 面向创作者的来源说明；世界任务与场景版本仅留在 stageFrame 中供失效判定。 */
 export function formatManhuaStageFrameSourceZh(ref: StageFrameRefLike, labelOfActor?: (id: string) => string): string {
   const b = ref.stageFrame;
   if (!b) return "";
   const cam = b.viewLabelZh || b.cameraKind;
-  const actors = b.actorIds.map((id) => labelOfActor?.(id) || id).join("、");
+  const actors = b.actorIds.map((id) => {
+    const label = labelOfActor?.(id);
+    return label && label !== id ? label : "未命名人物";
+  }).join("、");
   const shot = b.episode && b.segmentIndex ? `第${b.episode}集段${String(b.segmentIndex).padStart(2, "0")}` : "";
-  const world = b.worldId ? `世界 ${b.worldId.slice(0, 8)}` : `世界任务 ${b.worldTaskId.slice(0, 10)}`;
-  return [shot, `${cam}机位`, actors ? `人物 ${actors}` : "", world].filter(Boolean).join(" · ");
+  return [shot, `${cam}机位`, actors ? `人物 ${actors}` : "", "场景视角图"].filter(Boolean).join(" · ");
 }
 
 /** 出站必须报告已采用但失效的引用，不能当成未采用静默删除。 */
@@ -175,7 +177,7 @@ export function requireManhuaStageFramesForSegment<T extends StageFrameRefLike>(
   for (const ref of refs) for (const adoption of ref.stageFrameAdoptions || []) {
     if (!isManhuaShotIdOfSegment(adoption.shotId, ctx.episode, ctx.segmentIndex)) continue;
     const state = evaluateManhuaStageFrameAdoption(ref, {...ctx,shotId:adoption.shotId});
-    if (!state.usable) throw new Error(`已采用的片场视角图「${ref.labelZh || ref.id}」失效：${state.reasonZh || "来源绑定缺失"}；请取消采用或重新导出，本次未提交。`);
+    if (!state.usable) throw new Error(`已采用的片场视角图「${ref.labelZh || "视角图"}」失效：${state.reasonZh || "来源绑定缺失"}；请取消采用或重新导出，本次未提交。`);
   }
   return listManhuaUsableStageFramesForSegment(refs,ctx);
 }

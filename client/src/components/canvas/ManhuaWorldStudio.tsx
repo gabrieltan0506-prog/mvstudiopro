@@ -5,8 +5,6 @@
  */
 import { useMemo, useState } from "react";
 import {
-  MANHUA_WORLD_3D_MODEL_CREDITS,
-  MANHUA_WORLD_3D_MODEL_LABEL_ZH,
   MANHUA_WORLD_3D_MODELS,
   type ManhuaWorld3dEligibility,
   type ManhuaWorld3dModel,
@@ -62,6 +60,12 @@ type Stage = "blocked" | "none" | "building" | "review" | "failed" | "ready";
 
 const btn = "rounded border border-cyan-300/30 px-2 py-1 text-[11px] text-cyan-50 disabled:opacity-40";
 const btnPrimary = "rounded border border-cyan-300/60 bg-cyan-500/20 px-2 py-1 text-[11px] text-cyan-50 disabled:opacity-40";
+const MODEL_LABEL_ZH: Record<ManhuaWorld3dModel, string> = {
+  "marble-1.1-plus": "大场景",
+  "marble-1.1": "标准场景",
+  "marble-1.0": "经典场景",
+  "marble-1.0-draft": "快速草稿",
+};
 
 export function manhuaWorldStageOf(s: ManhuaWorldStudioScene): { stage: Stage; labelZh: string; reasonZh?: string } {
   if (!s.eligibility.eligible) return { stage: "blocked", labelZh: "还不能生成", reasonZh: s.eligibility.reasonZh };
@@ -72,11 +76,11 @@ export function manhuaWorldStageOf(s: ManhuaWorldStudioScene): { stage: Stage; l
     case "running":
       return { stage: "building", labelZh: "生成中…（约 1–5 分钟）" };
     case "reconcile_manual":
-      return { stage: "review", labelZh: "结果待核对", reasonZh: w.errorZh };
+      return { stage: "review", labelZh: "结果待核对", reasonZh: "请稍后查看结果，暂勿重复生成" };
     case "failed":
-      return { stage: "failed", labelZh: "生成失败", reasonZh: w.errorZh };
+      return { stage: "failed", labelZh: "生成失败", reasonZh: "可重试生成" };
     case "succeeded":
-      return { stage: "ready", labelZh: w.assets?.spz500kGcsUri ? "世界就绪 · 已归档" : "世界就绪 · 归档中" };
+      return { stage: "ready", labelZh: w.assets?.spz500kGcsUri ? "场景已就绪" : "场景准备中" };
   }
 }
 
@@ -143,7 +147,7 @@ function LayoutPanel(props: {
       const png = new Blob([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], { type: "image/png" });
       setDraft({ sourceKey, previewUrl: depthPreviewDataUrl(quantizeDepthTo8bit(r), r.width, r.height), png, bytes: bytes.byteLength, meta: r.meta, actorCount: actors.length });
     } catch (error) {
-      setErrorZh(error instanceof Error ? error.message : "深度全景生成失败");
+      setErrorZh("布局预览生成失败，请调整站位后重试");
     }
   }
   const prompt = textPrompt.trim();
@@ -158,8 +162,7 @@ function LayoutPanel(props: {
         <>
           <img src={draft.previewUrl} alt={`${scene.labelZh} 深度全景`} className="h-16 rounded border border-white/10 object-cover" data-depth-preview />
           <span className="text-white/45" data-depth-upload-meta>
-            上传 {draft.meta.width}×{draft.meta.height} RGB 8bit PNG（{Math.ceil(draft.bytes / 1024)} KB）· z_min {draft.meta.zMin}m / z_max {draft.meta.zMax}m · 编码 {draft.meta.encoding}（官方对数反相，近亮）
-            · 费用：上色一步按上游回执记账 + 建世界 {MANHUA_WORLD_3D_MODEL_CREDITS[model].min === MANHUA_WORLD_3D_MODEL_CREDITS[model].max ? MANHUA_WORLD_3D_MODEL_CREDITS[model].min : `${MANHUA_WORLD_3D_MODEL_CREDITS[model].min}–${MANHUA_WORLD_3D_MODEL_CREDITS[model].max}`} credits
+            布局预览已准备。生成场景会产生费用，实际用量以生成记录为准。
           </span>
           <button
             type="button"
@@ -220,19 +223,19 @@ export function ManhuaWorldStudio(props: Props) {
         <span className="text-cyan-100">3D 场景 · 全员一览</span>
         <span className="rounded bg-white/10 px-1.5 py-0.5">世界就绪 {counts.ready}/{counts.total}</span>
         <label className="flex items-center gap-1 text-white/70">
-          模型档
-          <select aria-label="3D 世界模型档" className="rounded border border-white/20 bg-black/40 px-1 py-0.5 text-[11px] text-white" value={model} disabled={disabled} onChange={(e) => setModel(e.target.value as ManhuaWorld3dModel)}>
+          场景质量
+          <select aria-label="3D 场景质量" className="rounded border border-white/20 bg-black/40 px-1 py-0.5 text-[11px] text-white" value={model} disabled={disabled} onChange={(e) => setModel(e.target.value as ManhuaWorld3dModel)}>
             {MANHUA_WORLD_3D_MODELS.map((m) => (
-              <option key={m} value={m}>{MANHUA_WORLD_3D_MODEL_LABEL_ZH[m]}</option>
+              <option key={m} value={m}>{MODEL_LABEL_ZH[m]}</option>
             ))}
           </select>
         </label>
-        <span className="text-white/50">流程：场景空镜 → 生成世界（Marble，按档扣费）→ 全景/碰撞网格/高斯文件落 Fly，可直接用于角色进场景与多机位关键帧</span>
+        <span className="text-white/50">选择场景并生成 3D 空间，完成后可预览、选机位并导出镜头参考图。</span>
       </div>
-      <div className="mb-3 grid gap-2 rounded-lg border border-cyan-300/20 bg-cyan-300/[0.05] p-2 text-[11px] leading-5 text-cyan-50 sm:grid-cols-3" aria-label="3DGS 场景用途说明">
+      <div className="mb-3 grid gap-2 rounded-lg border border-cyan-300/20 bg-cyan-300/[0.05] p-2 text-[11px] leading-5 text-cyan-50 sm:grid-cols-3" aria-label="3D 场景用途说明">
         <p><b>用在哪：</b>同一场景的不同镜头可复用空间与机位。例如“临水坊市”用于坊市镜头；医馆、后院和河滩需要各自的场景。</p>
-        <p><b>怎么用：</b>点“预览与产物”看全景与高斯场景，摆入角色并导出视角图，再作为该镜关键帧的空间参考。</p>
-        <p><b>不会自动做：</b>3DGS 是场景空间，不含人物表演、对白或成片；角色模型、白模动作与镜头画面仍需分别检查。</p>
+        <p><b>怎么用：</b>点“查看场景”预览空间，选好机位后导出视角图，再用作该镜的参考。</p>
+        <p><b>后续步骤：</b>场景只提供空间参考；人物动作、对白和成片仍需在后续步骤制作。</p>
       </div>
       {!scenes.length ? <p className="text-[11px] text-amber-100">本剧还没有锁定的场景资产，先在资产区出场景空镜并确认。</p> : null}
       <ul className="flex flex-col gap-1">
@@ -285,11 +288,11 @@ export function ManhuaWorldStudio(props: Props) {
                 ) : null}
                 {stage === "ready" && assets ? (
                   <button type="button" className={btn} disabled={disabled} onClick={() => setOpenPreviewId((prev) => (prev === s.id ? null : s.id))}>
-                    {openPreviewId === s.id ? "收起" : "预览与产物"}
+                    {openPreviewId === s.id ? "收起" : "查看场景"}
                   </button>
                 ) : null}
                 {(stage === "ready" || stage === "failed" || stage === "review") && onRemove ? (
-                  <button type="button" className={btn} disabled={disabled || busy} title="删除上游世界（省存储）；Fly/GCS 产物归档保留" onClick={() => void onRemove(s.id)}>
+                  <button type="button" className={btn} disabled={disabled || busy} title="删除这个场景的 3D 世界" onClick={() => void onRemove(s.id)}>
                     删除世界
                   </button>
                 ) : null}
@@ -299,20 +302,6 @@ export function ManhuaWorldStudio(props: Props) {
                   <div className="flex flex-wrap gap-2">
                     {assets.panoUrl ? <img src={assets.panoUrl} alt={`${s.labelZh} 全景`} className="h-32 rounded object-cover" /> : null}
                     {!assets.panoUrl && assets.thumbnailUrl ? <img src={assets.thumbnailUrl} alt={`${s.labelZh} 缩略图`} className="h-32 rounded object-cover" /> : null}
-                    <div className="flex flex-col gap-1 text-[11px]">
-                      {assets.caption ? <p className="text-white/70">{assets.caption}</p> : null}
-                      <p className="text-white/60">
-                        尺度 {assets.metricScaleFactor ?? "未给"} · 地面偏移 {assets.groundPlaneOffset ?? "未给"}
-                        {world?.worldId ? ` · world ${world.worldId.slice(0, 8)}` : ""}
-                      </p>
-                      <p className="flex flex-wrap gap-2">
-                        {assets.spz500kUrl ? <a className="underline" href={assets.spz500kUrl} target="_blank" rel="noreferrer">高斯 500k（.spz）</a> : null}
-                        {assets.colliderGlbUrl ? <a className="underline" href={assets.colliderGlbUrl} target="_blank" rel="noreferrer">碰撞网格（.glb）</a> : null}
-                        {assets.panoUrl ? <a className="underline" href={assets.panoUrl} target="_blank" rel="noreferrer">全景图</a> : null}
-                        {assets.worldMarbleUrl ? <a className="underline" href={assets.worldMarbleUrl} target="_blank" rel="noreferrer">在 Marble 打开（需外网）</a> : null}
-                      </p>
-                      <p className="text-white/45">产物走 Fly 稳定地址，中国可达；归档 {assets.spz500kGcsUri ? "已完成" : "进行中"}。</p>
-                    </div>
                   </div>
                   <div className="mt-2">
                     <ManhuaWorldStagePreview
@@ -346,7 +335,7 @@ export function ManhuaWorldStudio(props: Props) {
             </button>
           ) : (
             <span className="flex items-center gap-1 rounded bg-amber-500/20 px-2 py-1">
-              将提交 {selectedBuildable.length} 单 Marble（{MANHUA_WORLD_3D_MODEL_LABEL_ZH[model]}，逐单扣费；失败的留在勾选里）
+              将为 {selectedBuildable.length} 个场景分别生成（{MODEL_LABEL_ZH[model]}，逐单计费；失败的留在勾选里）
               <button type="button" className={btnPrimary} disabled={batchBusy} onClick={() => void runBatch()}>确认</button>
               <button type="button" className={btn} onClick={() => setConfirmBatch(false)}>取消</button>
             </span>

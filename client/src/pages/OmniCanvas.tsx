@@ -2033,7 +2033,7 @@ export default function OmniCanvas() {
       }
       if (
         !window.confirm(
-          `将用「${ref.labelZh || "这张场景图"}」生成 3D 世界（${options.model}，约 1–5 分钟）。此操作会调用外部生成服务并产生实际调用成本；场景图不会被替换。确认继续？`,
+          `将用「${ref.labelZh || "这张场景图"}」生成可旋转的 3D 场景，预计约 1–5 分钟。此操作会产生实际生成费用；原场景图会保留。确认继续？`,
         )
       ) {
         return;
@@ -2101,14 +2101,14 @@ export default function OmniCanvas() {
       const ref = customAssetRefs.find((item) => item.id === sceneRefId);
       const current = ref?.world3d;
       if (!ref || !current) return;
-      if (!window.confirm("将删除上游 3D 世界（不再计存储）；已落 Fly/GCS 的产物归档保留。确认继续？")) return;
+      if (!window.confirm("将从当前项目移除这个 3D 场景。已导出的图片会保留，但镜头中已采用的视角可能需要重新确认。确认继续？")) return;
       const token = manhuaWorldOperationGuard.current.begin(sceneRefId);
       if (!token) return;
       setSceneWorldBusyIds(manhuaWorldOperationGuard.current.assetIds());
       try {
         await removeManhuaWorldMutation.mutateAsync({ taskId: current.taskId });
         setCustomAssetRefs((prev) => normalizeManhuaCustomAssetRefs(prev.map((r) => (r.id === sceneRefId ? { ...r, world3d: undefined } : r))));
-        toast.success("3D 世界已删除，产物归档保留");
+        toast.success("3D 场景已移除；已导出的图片仍保留");
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "3D 世界删除失败");
       } finally {
@@ -2199,7 +2199,7 @@ export default function OmniCanvas() {
       }
       if (
         !window.confirm(
-          `将按本段白模布局生成「${ref.labelZh || "这张场景图"}」的 3D 世界（${options.model}，深度全景上色 + 建世界两步，约 2–8 分钟）。此操作会调用外部生成服务并产生实际调用成本。确认继续？`,
+          `将按本段白模布局生成「${ref.labelZh || "这张场景图"}」的可旋转 3D 场景，预计约 2–8 分钟。此操作会产生实际生成费用。确认继续？`,
         )
       ) {
         return;
@@ -8674,6 +8674,8 @@ export default function OmniCanvas() {
         fragmentShotIndexes?: number[];
         /** true：覆盖重出本集全部关键静帧；默认只补失败/缺失 */
         overwriteKeyarts?: boolean;
+        /** 已确认分镜只补缺图：跳过故事、角色和反推生成，不改写现有段表。 */
+        keyartOnlyFromConfirmedShots?: boolean;
         /** 单镜重拍/编辑已预编译，ensure 不得覆盖。 */
         preservePreparedTargetBlocks?: boolean;
         /** 避免 setState 与立即运行之间竞态：本次执行直接采用这些完整节点。 */
@@ -8752,8 +8754,9 @@ export default function OmniCanvas() {
         ) {
           throw new Error("视频编辑目标或集段不匹配，请重新选择一个已有片段；本次未提交");
         }
-        const spawned = preparedEditOnly || opts?.keyartShotIndex !== undefined ? { blocks, edges } : ensureStudioSpawned(factoryTopic);
-        const cleanedGraph = preparedEditOnly || opts?.keyartShotIndex !== undefined
+        const preserveConfirmedShots = opts?.keyartOnlyFromConfirmedShots === true;
+        const spawned = preparedEditOnly || preserveConfirmedShots || opts?.keyartShotIndex !== undefined ? { blocks, edges } : ensureStudioSpawned(factoryTopic);
+        const cleanedGraph = preparedEditOnly || preserveConfirmedShots || opts?.keyartShotIndex !== undefined
           ? spawned
           : sanitizeManhuaRecapUpstreamLinks(spawned.blocks, spawned.edges);
         workingBlocks = cleanedGraph.blocks;
@@ -8769,7 +8772,7 @@ export default function OmniCanvas() {
           saveCanvasState(workingBlocks, workingEdges);
         }
         if (
-          !preparedEditOnly && (cleanedGraph.edges.length !== spawned.edges.length ||
+          !preparedEditOnly && !preserveConfirmedShots && (cleanedGraph.edges.length !== spawned.edges.length ||
           spawned.blocks.some(
             (b) => b.id.startsWith("story-") && Boolean(b.parentId?.startsWith("recap_card-")),
           ))
@@ -8835,7 +8838,7 @@ export default function OmniCanvas() {
             setFactoryProgress("");
             return;
           }
-          workingBlocks = applyFactoryPrefsToBlocks(workingBlocks, {
+          if (!preserveConfirmedShots) workingBlocks = applyFactoryPrefsToBlocks(workingBlocks, {
             directionCanon: activeDirectionCanon,
             craftShotIds: selectedCraftShotIds,            pathCameraRecipeIds: selectedPathRecipeIds,
             narrativeLightingIds: selectedNarrativeLightingIds,
@@ -8857,7 +8860,7 @@ export default function OmniCanvas() {
             customRefs: consumableCustomAssetRefs,
             assetCanon: projectBible?.assetCanon,
           });
-          if (opts?.keyartShotIndex === undefined) {
+          if (!preserveConfirmedShots && opts?.keyartShotIndex === undefined) {
             setBlocks(workingBlocks);
             saveCanvasState(workingBlocks, workingEdges);
           }
@@ -9140,6 +9143,7 @@ export default function OmniCanvas() {
               shotContinuity,
               skipDone: true,
               overwriteKeyarts: opts?.overwriteKeyarts === true,
+              keyartOnlyFromConfirmedShots: opts?.keyartOnlyFromConfirmedShots === true,
               preservePreparedTargetBlocks:
                 opts?.pilotRun || opts?.preservePreparedTargetBlocks === true,
               ensureOptions,
@@ -10915,70 +10919,19 @@ export default function OmniCanvas() {
                       return;
                     }
                     setFactoryRunScope("focus");
-                    ensureStudioSpawned(factoryTopic);
-                    // 出图前把角色/场景/服装/运镜锁进每镜静帧提示词
-                    setBlocks((prev) => {
-                      const next = applyFactoryPrefsToBlocks(prev, {
-          directionCanon: activeDirectionCanon,
-                        craftShotIds: selectedCraftShotIds,                        pathCameraRecipeIds: selectedPathRecipeIds,
-                        narrativeLightingIds: selectedNarrativeLightingIds,
-                        maleHairstyleIds: selectedMaleHairstyleIds,
-                        maleMicroExpressionIds: selectedMaleMicroIds,
-                        promoCoverLayoutIds: selectedPromoLayoutIds,
-                        actionCameraRecipeIds: selectedActionRecipeIds,
-                        cineVocabIds: selectedCineVocabIds,
-                        cineVocabLocale: factoryCineVocabLocale,
-                        wardrobePropContinuityIds: selectedWardrobeIds,
-                        sceneId,
-                        propIds: factoryPropIds,
-                        genreId: factoryGenreId || undefined,
-                        characterIds: selectedCharacterIds,
-                        ancientArchetypeIds: factoryAncientArchetypeIds,
-                        identityLockZh: factoryIdentityLockZh || castBundle.identityLockZh,
-                        artStyleId: factoryArtStyleId,
-                        videoReverseOutputMode: factoryReverseMode,
-                        customRefs: consumableCustomAssetRefs,
-                        assetCanon: projectBible?.assetCanon,
-                      });
-                      setEdges((eds) => {
-                        saveCanvasState(next, eds);
-                        return eds;
-                      });
-                      // 用刷新后的 next 计数，避免闭包旧 blocks 导致「跳过张数」不准；
-                      // 只认这一轮会跑的静帧，否则改选引擎后残留的旧节点会让 toast 谎报还差几张
-                      const epKeys = queuedManhuaKeyartBlocks(
-                        next,
-                        writerFocusEpisode,
-                        explicitWriterVideoModel || undefined,
-                      ).filter((b) => (getBlockEpisodeIndex(b) ?? 1) === writerFocusEpisode);
-                      const already = epKeys.filter((b) =>
-                        Boolean(b.outputUrl || b.outputUrls?.[0]),
-                      ).length;
-                      const expected = Math.max(
-                        epKeys.length,
-                        countExpectedManhuaKeyartShots(
-                          next,
-                          writerFocusEpisode,
-                          explicitWriterVideoModel || undefined,
-                        ),
-                      );
-                      if (already > 0) {
-                        const need = Math.max(0, expected - already);
-                        queueMicrotask(() => {
-                          toast.message(
-                            need > 0
-                              ? `已出 ${already}/${expected} 张将跳过，本次补 ${need} 张失败/空白`
-                              : `已出 ${already}/${expected} 张将跳过；本集静帧已齐`,
-                            {
-                              description: "要从头覆盖全部静帧，请用「重出静帧」。",
-                            },
-                          );
-                        });
-                      }
-                      return next;
-                    });
+                    // 补图读取已确认分镜，不在点击时重铺画布或改写现有镜头。
+                    const epKeys = queuedManhuaKeyartBlocks(blocks, writerFocusEpisode, explicitWriterVideoModel || undefined);
+                    const already = epKeys.filter((b) => Boolean(b.outputUrl || b.outputUrls?.[0])).length;
+                    const expected = countExpectedManhuaKeyartShots(blocks, writerFocusEpisode, explicitWriterVideoModel || undefined);
+                    if (already > 0) toast.message(
+                      expected > already
+                        ? `已出 ${already}/${expected} 张将跳过，本次只补缺失静帧`
+                        : `已出 ${already}/${expected} 张将跳过；本集静帧已齐`,
+                      { description: "要从头覆盖全部静帧，请用「重出静帧」。" },
+                    );
                     void runFactory("keyart", {
                       episodeIndexes: [writerFocusEpisode],
+                      keyartOnlyFromConfirmedShots: true,
                     });
                   }}
                   onGenerateFragment={({ shotIndex }) => {

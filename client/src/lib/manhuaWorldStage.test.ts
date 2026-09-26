@@ -12,12 +12,13 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 /** 执行生产 iframe 脚本，用受控加载信号取代网络/WebGL；不冒充真实画面验收。 */
-async function harness(characters = actors, failedWorldAttempts = 0) {
+async function harness(characters = actors, failedWorldAttempts = 0, exportFailure?: "render" | "canvas" | "empty") {
   const config = buildStageSceneConfig({ spz500kUrl: "https://x/w.spz" }, characters, stageCameraRigs(characters).establish, "revision-7")!;
   const html = buildSrcDoc(config);
   const script = html.slice(html.indexOf('const CONFIG ='), html.lastIndexOf('</script>'))
     .replaceAll('await import(', 'await loadModule(');
   const messages: Record<string, unknown>[] = [];
+  const messageHandlers: Array<(event: { data: Record<string, unknown> }) => void> = [];
   const world = deferred<void>();
   const loading = new Map<string, (value: unknown) => void>();
   const xyz = () => ({ set() {}, setScalar() {} });
@@ -41,15 +42,33 @@ async function harness(characters = actors, failedWorldAttempts = 0) {
     Color: Object3d, GridHelper: Object3d,
     PerspectiveCamera: class extends Object3d { up = xyz(); },
     Box3: class { min = { y: 0 }; max = { y: 1 }; setFromObject() { return this; } },
-    WebGLRenderer: class { domElement = {}; setPixelRatio() {} setSize() {} setAnimationLoop() {} },
+    WebGLRenderer: class {
+      domElement = { style: {}, addEventListener() {}, toDataURL() {
+        if (exportFailure === "canvas") throw new Error("canvas failed");
+        if (exportFailure === "empty") return "data:,";
+        return "data:image/png;base64,dGVzdA==";
+      } };
+      setPixelRatio() {} setSize() {} setAnimationLoop() {}
+      render() { if (exportFailure === "render") throw new Error("render failed"); }
+    },
   };
   const loadModule = async (name: string) => name === "three" ? three : name.includes("GLTFLoader") ? { GLTFLoader: class { load(url: string, resolve: (v: unknown) => void) { loading.set(url, resolve); } } } : { SplatMesh: Splat };
   const document = { getElementById: () => ({ textContent: "", remove() {} }), body: { appendChild() {} } };
-  const window = { innerWidth: 640, innerHeight: 360, devicePixelRatio: 1, addEventListener() {} };
+  const window = { innerWidth: 640, innerHeight: 360, devicePixelRatio: 1,
+    addEventListener(type: string, handler: (event: { data: Record<string, unknown> }) => void) {
+      if (type === "message") messageHandlers.push(handler);
+    },
+  };
   const run = new Function("loadModule", "document", "window", "parent", `return (async () => {${script}})()`);
   const done = run(loadModule, document, window, { postMessage: (m: Record<string, unknown>) => messages.push(m) });
   for (let i = 0; i < 8; i++) await Promise.resolve();
-  return { config, messages, world, loading, done, splatInstances: () => splatInstances, gltf: () => ({ scene: new Object3d() }) };
+  return {
+    config, messages, world, loading, done, splatInstances: () => splatInstances,
+    gltf: () => ({ scene: new Object3d() }),
+    exportFrame: (requestId: number) => messageHandlers.forEach((handler) => handler({ data: {
+      source: "manhua-world-stage-host", revision: config.revision, type: "export", requestId,
+    } })),
+  };
 }
 
 describe("片场生产脚本必需资产门禁", () => {
@@ -95,7 +114,20 @@ describe("片场生产脚本必需资产门禁", () => {
     expect(h.splatInstances()).toBe(2);
     expect(h.messages).toEqual([{
       source: "manhua-world-stage", revision: "revision-7", type: "error",
-      message: "世界高斯（.spz）加载失败：Failed to fetch",
+      message: "3D 场景加载失败，请稍后重试",
     }]);
+  });
+  it.each(["render", "canvas", "empty"] as const)("%s 导出失败携带原请求号，场景保持就绪并可再次导出", async (stage) => {
+    const h = await harness([], 0, stage);
+    h.world.resolve();
+    await h.done;
+    expect(h.messages[0]).toMatchObject({ type: "ready", loaded: ["world"], failed: [] });
+    h.exportFrame(41);
+    expect(h.messages.at(-1)).toEqual({
+      source: "manhua-world-stage", revision: "revision-7", type: "export_error",
+      requestId: 41, message: "视角图导出失败，请重试",
+    });
+    h.exportFrame(42);
+    expect(h.messages.at(-1)).toMatchObject({ type: "export_error", requestId: 42 });
   });
 });

@@ -4295,9 +4295,16 @@ export async function runManhuaDramaFactoryPipeline(opts: {
    * （forceFromStage 不再强迫已出静帧重烧）
    */
   overwriteKeyarts?: boolean;
+  /** 已确认分镜的补图操作：只运行当前镜头静帧，不重跑上游 LLM 节点。 */
+  keyartOnlyFromConfirmedShots?: boolean;
   /** 真实段编译上下文；所有单段/整集/续跑路径必须与工作台审阅使用同一份。 */
   ensureOptions?: ManhuaFragmentClipEnsureOptions;
 }): Promise<ManhuaFactoryPipelineResult> {
+  if (opts.keyartOnlyFromConfirmedShots &&
+    (opts.untilStage !== "keyart" || opts.episodeIndex == null || opts.keyartShotIndex != null ||
+      opts.fragmentShotIndex != null || opts.overwriteKeyarts || opts.forceFromStage != null || opts.targetBlockIds?.length)) {
+    return { blocks: opts.blocks, completedIds: [], skippedIds: [], errors: [{ id: "keyart-scope", message: "补齐静帧的运行范围无效，未提交生成" }], awaitingConfirmationIds: [], pausedDownstreamIds: [] };
+  }
   // 默认不因单镜失败停整链（多镜一次出齐）；仅显式 stopOnError:true 才断
   const stopOnError = opts.stopOnError === true;
   const skipDone = opts.skipDone !== false;
@@ -4365,7 +4372,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   const hadPoisonedRecapLink = opts.blocks.some(
     (b) => b.id.startsWith("story-") && Boolean(b.parentId?.startsWith("recap_card-")),
   );
-  const sanitized = preparedVideoEdit || opts.keyartShotIndex !== undefined
+  const sanitized = preparedVideoEdit || opts.keyartShotIndex !== undefined || opts.keyartOnlyFromConfirmedShots
     ? { blocks: opts.blocks.map((b) => ({ ...b })), edges: opts.edges }
     : sanitizeManhuaRecapUpstreamLinks(opts.blocks.map((b) => ({ ...b })), opts.edges);
   let working = sanitized.blocks;
@@ -4380,7 +4387,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
           .filter((entry): entry is readonly [string, CanvasBlock] => Boolean(entry)),
       )
     : null;
-  if (hadPoisonedRecapLink && !preparedVideoEdit && opts.keyartShotIndex === undefined) {
+  if (hadPoisonedRecapLink && !preparedVideoEdit && !opts.keyartOnlyFromConfirmedShots && opts.keyartShotIndex === undefined) {
     // 旧画布误挂 recap→story 时，写回清理后的 parentId，避免手点节点仍吃到提要图
     opts.onBlocksChange?.(working);
   }
@@ -4405,8 +4412,14 @@ export async function runManhuaDramaFactoryPipeline(opts: {
         (getBlockEpisodeIndex(b) ?? 1) === opts.episodeIndex) &&
       Boolean(b.outputText?.trim()),
   );
-  if (!singleKeyartTarget && !preparedVideoEdit && reverseReady && runsShotMedia && !regeneratesSource) {
-    const expanded = expandManhuaShotKeyartsAfterReverse(working, edges, reverseReady.id, {
+  const confirmedShotReverse = opts.keyartOnlyFromConfirmedShots
+    ? working.find(b => b.id.startsWith("reverse-") && (getBlockEpisodeIndex(b) ?? 1) === opts.episodeIndex)
+    : undefined;
+  if (opts.keyartOnlyFromConfirmedShots && !confirmedShotReverse) {
+    return { blocks: opts.blocks, completedIds: [], skippedIds: [], errors: [{ id: "keyart-source", message: "本集分镜节点未就绪，未提交生成" }], awaitingConfirmationIds: [], pausedDownstreamIds: [] };
+  }
+  if (!singleKeyartTarget && !preparedVideoEdit && (reverseReady || confirmedShotReverse) && runsShotMedia && !regeneratesSource) {
+    const expanded = expandManhuaShotKeyartsAfterReverse(working, edges, (confirmedShotReverse || reverseReady)!.id, {
       ...ensureOptions,
     });
     working = expanded.blocks;
@@ -4472,6 +4485,15 @@ export async function runManhuaDramaFactoryPipeline(opts: {
         opts.episodeIndex,
         ensureOptions.videoModel,
       );
+  if (opts.keyartOnlyFromConfirmedShots) {
+    const activeKeyarts = queuedManhuaKeyartBlocks(working, opts.episodeIndex, ensureOptions.videoModel);
+    const expected = countExpectedManhuaKeyartShots(working, opts.episodeIndex, ensureOptions.videoModel);
+    if (expected < 2 || activeKeyarts.length !== expected) {
+      return { blocks: opts.blocks, completedIds: [], skippedIds: [], errors: [{ id: "keyart-scope", message: `本集分镜 ${expected} 镜与静帧节点 ${activeKeyarts.length} 张不一致，未提交生成` }], awaitingConfirmationIds: [], pausedDownstreamIds: [] };
+    }
+    const activeIds = new Set(activeKeyarts.map(b => b.id));
+    orderedIds = orderedIds.filter(id => activeIds.has(id));
+  }
   orderedIds = filterManhuaFactoryTargetIds(orderedIds, resolvedTargetIds);
   const forceIdx = resolvedForceFromStage
     ? MANHUA_FACTORY_STAGE_ORDER.indexOf(resolvedForceFromStage)
