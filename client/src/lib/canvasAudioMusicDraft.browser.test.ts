@@ -21,7 +21,7 @@ it("配乐草稿经过真实云草稿清洗，切段及卸载恢复，修改清�
  const open=async()=>page.evaluate(()=>{document.querySelectorAll('details').forEach(d=>d.open=true);});
  try{
  await page.setRequestInterception(true);page.on('request',r=>r.isNavigationRequest()?void r.respond({status:200,contentType:'text/html',body:'<div id="root"></div>'}):void r.abort());await page.goto('http://localhost:41821');await page.addScriptTag({content:built.outputFiles[0]!.text});await page.waitForSelector('[aria-label="配乐剧情与情绪推进"]');await open();
- await page.type('[aria-label="配乐剧情与情绪推进"]','追逐转为释然');await page.select('[aria-label="配乐来源"]','suno-v6-mini');
+ await page.type('[aria-label="配乐剧情与情绪推进"]','追逐转为释然');await page.select('[aria-label="配乐方式"]','suno-v6-mini');
  await page.click('[aria-label="配乐原曲目标时长"]',{clickCount:3});await page.keyboard.type('45');
  await clickText('整理配乐要求');await page.waitForFunction(()=>Boolean((globalThis as any).fixture.rows[0].audioStudio.musicDraft?.brief));
  await clickText('生成这版配乐');expect(await page.evaluate(()=>Array.from(document.querySelectorAll('button')).some(b=>b.textContent?.trim()==='确认生成'))).toBe(true);
@@ -32,7 +32,7 @@ it("配乐草稿经过真实云草稿清洗，切段及卸载恢复，修改清�
  await page.evaluate(()=>(globalThis as any).fixture.switch(1));await page.waitForFunction(()=>(document.querySelector('[aria-label="配乐剧情与情绪推进"]') as HTMLTextAreaElement)?.value==='');await open();await page.type('[aria-label="配乐剧情与情绪推进"]','第二段独立配乐');
  await page.evaluate(()=>(globalThis as any).fixture.switch(0));await page.waitForFunction(()=>(document.querySelector('[aria-label="配乐剧情与情绪推进"]') as HTMLTextAreaElement)?.value==='追逐转为释然，保留悬念');
  await page.evaluate(()=>(globalThis as any).fixture.show(false));await page.waitForFunction(()=>!document.querySelector('[aria-label="配乐剧情与情绪推进"]'));await page.evaluate(()=>(globalThis as any).fixture.show(true));await page.waitForSelector('[aria-label="配乐剧情与情绪推进"]');
- expect(await page.$eval('[aria-label="配乐剧情与情绪推进"]',e=>(e as HTMLTextAreaElement).value)).toBe('追逐转为释然，保留悬念');expect(await page.$eval('[aria-label="配乐来源"]',e=>(e as HTMLSelectElement).value)).toBe('suno-v6-mini');
+ expect(await page.$eval('[aria-label="配乐剧情与情绪推进"]',e=>(e as HTMLTextAreaElement).value)).toBe('追逐转为释然，保留悬念');expect(await page.$eval('[aria-label="配乐方式"]',e=>(e as HTMLSelectElement).value)).toBe('suno-v6-mini');
  const result=await page.evaluate(()=>(globalThis as any).fixture);expect(result.rows[0].audioStudio.musicDraft.durationSec).toBe(45);expect(result.rows[0].audioStudio.musicDraft.brief.prompt).toContain('[End]');expect(result.rows[0].audioStudio.musicDraft.brief.style).toContain('低音鼓');expect(result.rows[1].audioStudio.musicDraft.prompt).toBe('第二段独立配乐');expect(result.rows[0].audioStudio.cues[0].takes[0].id).toBe('old-take');expect(result.paid).toBe(0);
  }finally{await browser.close();}
 },60000);

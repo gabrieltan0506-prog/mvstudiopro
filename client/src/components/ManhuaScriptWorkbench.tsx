@@ -30,7 +30,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNod
 import { createPortal } from "react-dom";
 import { assertOpenAiImagePromptWithinLimit } from "@shared/manhuaKeyartPromptCompact";
 import type { BgmBriefModel } from "@shared/manhuaBgmBrief";
-import { isManhuaKeyartLookCurrent } from "@shared/manhuaKeyartLookState";
+import { isManhuaKeyartLookCurrent, isManhuaKeyartSourceCurrent } from "@shared/manhuaKeyartLookState";
 import { buildWorkbenchShotsFromSegmentPlan } from "@shared/manhuaStoryDistill";
 import {
   AlertTriangle,
@@ -1135,9 +1135,9 @@ export function isManhuaWorkbenchKeyartCurrent(block: Pick<CanvasBlock,
   "manhuaKeyartLookState" | "manhuaKeyartSourceState" | "outputUrl"
 > & Partial<Pick<CanvasBlock, "outputUrls">>): boolean {
   const generated = { ...block, outputUrl: keyartOutputUrl(block) };
-  return isManhuaKeyartLookCurrent(generated) && isManhuaKeyartLookCurrent({
-    ...generated,
-    manhuaKeyartLookState: block.manhuaKeyartSourceState,
+  return isManhuaKeyartLookCurrent(generated) && isManhuaKeyartSourceCurrent({
+    manhuaKeyartSourceState: block.manhuaKeyartSourceState,
+    outputUrl: generated.outputUrl,
   });
 }
 
@@ -1744,6 +1744,32 @@ export default function ManhuaScriptWorkbench({
     }
   }, [blocks, focusEpisode, episodeVideoModel, assetCanon, customAssetRefs, characterLookSets, segmentLookBindings]);
   const episodeKeyarts = episodeKeyartReview.blocks;
+  const completedKeyartShots = episodeKeyarts
+    .filter((block) => keyartOutputUrl(block))
+    .map((block) => resolveKeyartShotIndex(block.id, block.prompt))
+    .filter((index) => shots.some((shot) => shot.index === index));
+  const completedKeyartShotKey = completedKeyartShots.join(",");
+  const keyartFollowRef = useRef({ episode: focusEpisode, seen: completedKeyartShotKey, running: false, enabled: true });
+  useEffect(() => {
+    const follow = keyartFollowRef.current;
+    if (!factoryBusy || activePhase !== "storyboard") {
+      keyartFollowRef.current = { episode: focusEpisode, seen: completedKeyartShotKey, running: false, enabled: true };
+      return;
+    }
+    if (!follow.running || follow.episode !== focusEpisode) {
+      keyartFollowRef.current = { episode: focusEpisode, seen: completedKeyartShotKey, running: true, enabled: true };
+      return;
+    }
+    const seen = new Set(follow.seen.split(",").filter(Boolean).map(Number));
+    const newShot = completedKeyartShots.findLast((index) => !seen.has(index));
+    follow.seen = completedKeyartShotKey;
+    if (newShot == null || !follow.enabled) return;
+    const nextIndex = shots.findIndex((shot) => shot.index === newShot);
+    if (nextIndex >= 0) {
+      setShotIndex(nextIndex);
+      setActiveSegmentOverride(null);
+    }
+  }, [activePhase, completedKeyartShotKey, factoryBusy, focusEpisode, shots]);
   const staleLookStillCount = episodeKeyarts.filter((block) => !isManhuaWorkbenchKeyartCurrent(block)).length;
   const keyart = episodeKeyarts[0];
   const episodeVideoLabelZh = "视频制作";
@@ -2321,6 +2347,7 @@ export default function ManhuaScriptWorkbench({
   };
   /** 胶片 / 分镜列表：切镜后立刻把对应静帧或段成片滚入画布并高亮 */
   const selectShotAndFocusCanvas = (shotListIndex: number, preferredSegmentIndex?: number) => {
+    if (factoryBusy) keyartFollowRef.current.enabled = false;
     const i = Math.max(0, Math.min(shotListIndex, Math.max(shots.length, 1) - 1));
     setShotIndex(i);
     const shot = shots[i];
@@ -8673,10 +8700,10 @@ export default function ManhuaScriptWorkbench({
         {activePhase === "storyboard" ? (
           <header data-manhua-storyboard-header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-white/10 bg-white/[0.03] px-3 py-1.5">
             <h1 className="min-w-0 truncate text-sm font-bold text-white/95">
-              分镜 · 第 {focusEpisode} 集 · 镜 {activeShotNo || "—"}/{shots.length}
+              分镜 · 第 {focusEpisode} 集 · 当前选中镜 {activeShotNo || "—"}/{shots.length}
             </h1>
             <span className="shrink-0 text-[11px] text-white/70">
-              静帧 {currentStillPresent}/{Math.max(currentStillTarget, 1)} · 成片 {episodeClips.filter((clip) => Boolean(clipOutputUrl(clip))).length}/{segments.length}
+              已出静帧 {currentStillPresent}/{Math.max(currentStillTarget, 1)} · 成片 {episodeClips.filter((clip) => Boolean(clipOutputUrl(clip))).length}/{segments.length}
             </span>
           </header>
         ) : null}

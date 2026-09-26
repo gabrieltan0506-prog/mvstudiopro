@@ -2,6 +2,8 @@ import { gcsTransferUrl, isGcsTransferUrl } from "@/lib/gcsTransfer";
 import type { ComponentProps } from "react";
 import { findCanvasDialogueReuse, restoreCanvasDialogueCandidate } from "@/lib/canvasDialogueReuse";
 import { createManhuaAudioFromShots } from "@shared/manhuaAudioFromShots";
+import { manhuaBgmArcFromShots } from "@shared/manhuaBgmArcFromShots";
+import { manhuaScriptCueSourceIssue } from "@/lib/manhuaAudioScriptSource";
 import { planCanvasDialogueTiming } from "@shared/canvasDialogueTimingPlan";
 import type { ManhuaWorkbenchShot } from "@shared/manhuaScriptWorkbench";
 import { canvasAudioMixSource } from "@shared/canvasAudioStudio";
@@ -69,8 +71,12 @@ export function matchCanvasDialogueVoice(criteria: CanvasVoiceMatchCriteria) {
 const fieldClass =
   "min-w-0 w-full rounded border border-white/15 bg-black/30 px-2 py-1.5 text-xs text-white";
 /** 播放复用已鉴权传输，原候选和投料地址保持不变。 */
-function CanvasAudioPlayer({ src, ...props }: ComponentProps<"audio">) {
-  return <audio {...props} src={src ? gcsTransferUrl(src) : src}
+function CanvasAudioPlayer({ src, previewVolume = 1, ...props }: ComponentProps<"audio"> & { previewVolume?: number }) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.volume = Math.max(0, Math.min(1, previewVolume));
+  }, [previewVolume]);
+  return <audio {...props} ref={audioRef} src={src ? gcsTransferUrl(src) : src}
     crossOrigin={src && isGcsTransferUrl(src) ? "use-credentials" : props.crossOrigin} />;
 }
 
@@ -275,11 +281,15 @@ export function CanvasAudioStudioView({
   const modelDurationIssue = durationSec > modelMaxDurationSec
     ? `当前视频生成方式单次最多 ${modelMaxDurationSec} 秒，本段声音仍按完整 ${durationSec} 秒保留。请调整生成方式或重新分段；系统不会静默截断。`
     : "";
+  const suggestedMusicPrompt = useMemo(() => manhuaBgmArcFromShots(sourceShots || [], durationSec), [sourceShots, durationSec]);
   const { initialAudio, sourceIssue } = useMemo(() => {
     if (block.audioStudio || !sourceShots?.length) return { initialAudio: emptyCanvasAudioStudio(), sourceIssue: "" };
-    try { return { initialAudio: createManhuaAudioFromShots(sourceShots, durationSec), sourceIssue: "" }; }
+    try { return { initialAudio: { ...createManhuaAudioFromShots(sourceShots, durationSec), musicDraft: {
+      prompt: suggestedMusicPrompt, durationSec: Math.max(10, Math.ceil(durationSec)),
+      brief: null, model: bgmModels?.[0]?.model ?? "suno-v6" as const,
+    } }, sourceIssue: "" }; }
     catch { return { initialAudio: emptyCanvasAudioStudio(), sourceIssue: "本段对白超出音轨容量或字段限制，未截断原文；请先拆分本段或检查原稿。" }; }
-  }, [block.audioStudio, sourceShots, durationSec]);
+  }, [block.audioStudio, sourceShots, durationSec, suggestedMusicPrompt, bgmModels]);
   const state = block.audioStudio ?? initialAudio;
   const expectedScriptAudio = useMemo(() => {
     if (!sourceShots?.length) return undefined;
@@ -303,8 +313,15 @@ export function CanvasAudioStudioView({
     cue.takes.length === 0 && !cue.selectedTakeId && !cue.approved && !cue.voice && !cue.voiceStateZh,
   ) && !state.pendingOperations.some(row => row.cueId && currentScriptCues.some(cue => cue.id === row.cueId));
   useEffect(() => {
-    if (!disabled && !block.audioStudio && initialAudio.cues.length && !sourceIssue) onChange(initialAudio);
+    if (!disabled && !block.audioStudio && (initialAudio.cues.length || initialAudio.musicDraft) && !sourceIssue) onChange(initialAudio);
   }, [block.id, block.audioStudio, disabled, initialAudio, sourceIssue, onChange]);
+  useEffect(() => {
+    if (disabled || !block.audioStudio || block.audioStudio.musicDraft || !suggestedMusicPrompt) return;
+    onChange({ ...block.audioStudio, musicDraft: {
+      prompt: suggestedMusicPrompt, durationSec: Math.max(10, Math.ceil(durationSec)),
+      brief: null, model: bgmModels?.[0]?.model ?? "suno-v6",
+    } });
+  }, [block.audioStudio, bgmModels, disabled, durationSec, onChange, suggestedMusicPrompt]);
   /** 对照图 02 第三格的三块摘要；混合轨不伪装多轨（对照图 04 的 mvs-sound-edit 硬要求） */
   const soundSummary = buildManhuaSoundPanelSummary({
     segmentIndex: resolveClipLocalSegmentIndex(block.id, block.prompt, Number(block.episodeIndex) || 1),
@@ -313,8 +330,8 @@ export function CanvasAudioStudioView({
     musicJobCount: state.musicJobIds.length,
     hasPremixMaster: Boolean(block.manhuaSegmentRefs?.master?.gcsUri || block.manhuaSegmentRefs?.master?.url),
   });
-  const current = useRef({ state, onChange, services, block, onMasterTrackReady, durationSec, dialogueSources });
-  current.current = { state, onChange, services, block, onMasterTrackReady, durationSec, dialogueSources };
+  const current = useRef({ state, onChange, services, block, onMasterTrackReady, durationSec, dialogueSources, sourceShots, expectedScriptAudio });
+  current.current = { state, onChange, services, block, onMasterTrackReady, durationSec, dialogueSources, sourceShots, expectedScriptAudio };
   const mounted = useRef(true);
   const busyRef = useRef(false);
   const [busy, setBusy] = useState(false);
@@ -394,10 +411,12 @@ export function CanvasAudioStudioView({
     setConfirmation(null);
     const previousCue = current.current.state.cues.find(cue => cue.id === id);
     if (!previousCue) return;
+    const volumeOnly = Object.keys(patch).length === 1 && patch.volume !== undefined;
+    const selectedTake = getSelectedAudioTake(previousCue);
     const parsed = canvasAudioCueSchema.safeParse({
       ...previousCue,
       ...patch,
-      approved: false,
+      approved: volumeOnly && selectedTake?.inputKey === canvasAudioCueInputKey(previousCue) ? previousCue.approved : false,
     });
     if (!parsed.success || (patch.speakerZh?.length ?? 0) > 100) {
       setError(
@@ -684,6 +703,8 @@ export function CanvasAudioStudioView({
     });
   const prepareDialogue = (cue: CanvasAudioCue) => {
     try {
+      const sourceIssue = manhuaScriptCueSourceIssue(cue, expectedScriptAudio?.cues, Boolean(sourceShots?.length));
+      if (sourceIssue) throw new Error(sourceIssue);
       checkWindow(cue);
       if (
         cue.takes.length >= 100 ||
@@ -766,17 +787,23 @@ export function CanvasAudioStudioView({
       }
       if (current.current.state.pendingOperations.length >= 100)
         throw new Error("待处理任务已达 100 条，先处理原任务，不再建立新单。");
-      const requestId = crypto.randomUUID();
       if (saved.kind === "dialogue") {
         const cue = current.current.state.cues.find(
           row => row.id === saved.cueId
         );
         if (!cue || canvasAudioCueInputKey(cue) !== saved.inputKey)
           throw new Error("对白已修改，请重新确认本句费用。");
+        const sourceIssue = manhuaScriptCueSourceIssue(
+          cue,
+          current.current.expectedScriptAudio?.cues,
+          Boolean(current.current.sourceShots?.length),
+        );
+        if (sourceIssue) throw new Error(sourceIssue);
         if (cue.takes.length >= 100)
           throw new Error(
             "本句已达 100 条候选上限，旧音频全部保留，本次未提交。"
           );
+        const requestId = crypto.randomUUID();
         const jobId = requestId;
         if (!update(previous => ({
           ...previous,
@@ -815,6 +842,7 @@ export function CanvasAudioStudioView({
           throw new Error(
             "配乐任务记录已达 100 条，旧任务全部保留，本次未提交。"
           );
+        const requestId = crypto.randomUUID();
         const jobId = `bgm_${requestId.replace(/-/g, "")}`;
         if (!update(previous => ({
           ...previous,
@@ -858,9 +886,9 @@ export function CanvasAudioStudioView({
           audioUri: source.gcsUri,
           sourceStartSec: cue.sourceStartSec,
           sourceEndSec: cue.sourceEndSec,
-          volume: cue.volume,
-          fadeInSec: cue.fadeInSec,
-          fadeOutSec: cue.fadeOutSec,
+          volume: 1,
+          fadeInSec: 0,
+          fadeOutSec: 0,
         },
       });
       update(previous => ({
@@ -900,9 +928,9 @@ export function CanvasAudioStudioView({
           sourceStartSec: 0,
           sourceEndSec: take.durationSec,
           startSec: cue.startSec,
-          volume: 1,
-          fadeInSec: 0,
-          fadeOutSec: 0,
+          volume: cue.volume,
+          fadeInSec: cue.fadeInSec,
+          fadeOutSec: cue.fadeOutSec,
         }, cues);
       });
       assertCanvasAudioMixCapacity(clips);
@@ -927,7 +955,7 @@ export function CanvasAudioStudioView({
       }));
     });
   /**
-   * 一键预混母轨：已确认的对白按秒窗原音量落位；已确认的配乐压到 PREMIX_BGM_VOLUME 并带淡入淡出，
+   * 一键预混母轨：已确认的对白与配乐按各自保存的音量和淡入淡出落位，
    * 合成一条本段时长的单轨。走同一个 audio_timeline 后期任务（免费），结果不进合听预览，直接挂 master。
    */
   const createPremix = () =>
@@ -1316,6 +1344,13 @@ export function CanvasAudioStudioView({
               {numberField("片内开始秒", "startSec")}
               {numberField("片内结束秒", "endSec")}
             </div>
+            <label className="block text-xs text-white/70">
+              {cue.kind === "dialogue" ? "本句对白音量" : cue.kind === "bgm" ? "本段配乐音量" : "本条音效音量"} · {Math.round(cue.volume * 100)}%
+              <input type="range" min="0" max="1" step="0.01" value={cue.volume}
+                aria-label={`${index + 1} ${cue.kind === "dialogue" ? "对白" : cue.kind === "bgm" ? "配乐" : "音效"}试听音量`}
+                className="w-full" disabled={locked}
+                onChange={event => patchCue(cue.id, { volume: Number(event.target.value) })} />
+            </label>
             {cue.kind === "dialogue" ? (
               <>
                 <div className="grid grid-cols-2 gap-2">
@@ -1547,6 +1582,7 @@ export function CanvasAudioStudioView({
                       className="w-full h-8"
                       controls
                       src={source.previewUrl}
+                      previewVolume={cue.volume}
                       onError={event =>
                         void restoreAudio(event.currentTarget, source.gcsUri)
                       }
@@ -1557,10 +1593,12 @@ export function CanvasAudioStudioView({
                 <div className="grid grid-cols-2 gap-2">
                   {numberField("源音频裁切起点", "sourceStartSec")}
                   {numberField("源音频裁切终点", "sourceEndSec")}
-                  {numberField("音量", "volume")}
                   {numberField("淡入秒", "fadeInSec")}
                   {numberField("淡出秒", "fadeOutSec")}
                 </div>
+                {cue.takes.some(take => take.inputKey !== "source" && take.inputKey !== canvasAudioCueInputKey(cue)) && (
+                  <p className="text-xs text-amber-200">旧裁切音频已保留。要让新音量准确进入合听，请用上方「只裁这一段 · 免费」从原曲重新裁切并试听确认；不会重做原曲。</p>
+                )}
 
               </>
             )}
@@ -1571,7 +1609,7 @@ export function CanvasAudioStudioView({
                 {reuseCandidates.map(candidate => (
                   <div key={candidate.take.id} className="mt-3 space-y-2 rounded bg-white/5 p-2">
                     <p className="text-xs">{candidate.take.durationSec.toFixed(3)} 秒 · {candidate.emotion || "自然情绪"} · {VOICES.find(voice => voice.id === candidate.voice)?.label || candidate.voice || "未标音色"}</p>
-                    <CanvasAudioPlayer controls preload="none" src={candidate.take.previewUrl} className="h-8 w-full" onError={event => void restoreAudio(event.currentTarget, candidate.take.gcsUri)} />
+                    <CanvasAudioPlayer controls preload="none" src={candidate.take.previewUrl} previewVolume={cue.volume} className="h-8 w-full" onError={event => void restoreAudio(event.currentTarget, candidate.take.gcsUri)} />
                     <button type="button" className={buttonClass} disabled={locked || cue.takes.length >= 100} onClick={() => {
                       if (locked || busyRef.current) return;
                       setConfirmation(null);
@@ -1605,6 +1643,7 @@ export function CanvasAudioStudioView({
                     aria-label={`${index + 1} 候选 ${takeIndex + 1}`}
                     controls
                     src={take.previewUrl}
+                    previewVolume={cue.volume}
                     onError={event =>
                       void restoreAudio(event.currentTarget, take.gcsUri)
                     }
@@ -1748,7 +1787,7 @@ export function CanvasAudioStudioView({
                 row => !row.cueId && row.kind === "post_prod"
               )
             }
-            title="对白原音量、配乐压 12 dB 带淡入淡出，合成一条本段单轨并挂为本段母轨（出片时作唯一 @音频1）。免费。"
+            title="按每句对白和每段配乐已保存的音量混成一条本段母轨，出片时作唯一 @音频1。免费。"
             onClick={() => void createPremix()}
           >
             {block.manhuaSegmentRefs?.master ? "重新预混母轨 · 免费" : "一键预混母轨 · 免费"}

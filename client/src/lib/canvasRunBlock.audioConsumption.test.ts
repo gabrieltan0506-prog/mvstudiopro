@@ -131,6 +131,16 @@ describe("声音消费门禁：真实出片函数", () => {
     await expect(runCanvasBlock(deps, { ...block, manhuaSegmentRefs: undefined })).rejects.toThrow(/预混母轨/);
     expect(requests).toEqual([]);
   });
+  it("逐句音量或淡入淡出改变时，未预混不得把原音频直接送去出片", async () => {
+    const block = audioBlock();
+    block.audioStudio.cues[0]!.mix!.silenceWindows = [];
+    block.audioStudio.cues[0]!.volume = 0.18;
+    await expect(runCanvasBlock(deps, { ...block, manhuaSegmentRefs: undefined })).rejects.toThrow(/音量.*预混母轨/);
+    block.audioStudio.cues[0]!.volume = 1;
+    block.audioStudio.cues[0]!.fadeInSec = 0.5;
+    await expect(runCanvasBlock(deps, { ...block, manhuaSegmentRefs: undefined })).rejects.toThrow(/淡入淡出.*预混母轨/);
+    expect(requests).toEqual([]);
+  });
   it("预混只含部分采用音轨时不得静默跳过另一个启用cue", async () => {
     const block = audioBlock(); block.audioStudio.cues.push({ ...block.audioStudio.cues[0]!, id: "unapproved", approved: false });
     await expect(runCanvasBlock(deps, block)).rejects.toThrow(/启用但未采用/);

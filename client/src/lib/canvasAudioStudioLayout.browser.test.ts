@@ -81,6 +81,14 @@ it("真实声音面板按种类分组、采用状态随原handler变化，不更
   expect(await page.$eval('[aria-label="角色配音摘要"]',el=>el.textContent)).toContain("已采用 1 句");
   expect(await page.$eval('[data-cue-id="line-ajing"]',el=>el.textContent)).toContain("已采用");
   expect(await page.$eval('[data-audio-group="bgm"]',el=>el.textContent)).toContain("生成配乐原曲");
+  await page.$eval('[aria-label="2 对白试听音量"]', el => { const input = el as HTMLInputElement; Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '0.42'); input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true })); });
+  await page.waitForFunction(() => (window as any).fixture.state.cues[1].volume === 0.42);
+  expect(await page.$eval('[aria-label="2 候选 1"]', el => (el as HTMLAudioElement).volume)).toBeCloseTo(0.42);
+  expect(await page.evaluate(() => (window as any).fixture.state.cues[1].approved)).toBe(true);
+  await page.$eval('[aria-label="1 配乐试听音量"]', el => { const input = el as HTMLInputElement; Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '0.18'); input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true })); });
+  await page.waitForFunction(() => (window as any).fixture.state.cues[0].volume === 0.18);
+  expect(await page.$eval('[aria-label="1 候选 1"]', el => (el as HTMLAudioElement).volume)).toBeCloseTo(0.18);
+  expect((await page.evaluate(() => (window as any).fixture.compile())).masterError).toContain('旧版');
   const originalDialogue = await page.evaluate(() => (window as any).fixture.state.cues[1]);
   await page.click('[aria-label="1 镜头与动作"]', { clickCount: 3 });
   await page.type('[aria-label="1 镜头与动作"]', "门厅停步后配乐进入");

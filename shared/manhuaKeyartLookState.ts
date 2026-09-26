@@ -38,6 +38,26 @@ export function isManhuaKeyartLookCurrent(block: {
   );
 }
 
+/** 静帧只随画面和造型失效；对白、说话人及声音留给成片与 TTS 校验。兼容旧版完整镜头回执。 */
+export function isManhuaKeyartSourceCurrent(block: {
+  manhuaKeyartSourceState?: unknown;
+  outputUrl?: string | null;
+}): boolean {
+  const state = normalizeManhuaKeyartLookState(block.manhuaKeyartSourceState);
+  if (!state) return true;
+  if (state.required === "invalid" || !block.outputUrl || state.generatedUrl !== block.outputUrl || !state.generatedFor) return false;
+  const visualSource = (raw: string): string => {
+    try {
+      const value: unknown = JSON.parse(raw);
+      if (!value || typeof value !== "object" || Array.isArray(value)) return raw;
+      const visual = { ...value } as Record<string, unknown>;
+      for (const key of ["dialogueZh", "dialogueSuppressed", "dialogueSpeakerNameZh", "additionalDialogueCues", "voiceToneZh", "soundZh"]) delete visual[key];
+      return JSON.stringify(visual);
+    } catch { return raw; }
+  };
+  return visualSource(state.required) === visualSource(state.generatedFor);
+}
+
 export function recordManhuaKeyartLookOutput(
   block: { manhuaKeyartLookState?: unknown },
   outputUrl?: string

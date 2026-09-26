@@ -3240,10 +3240,12 @@ async function runCanvasBlockInner(
         throw new Error("本段仍有启用但未采用的音轨，请先确认采用并重新预混，或停用该音轨；已有母轨不会代替未确认的声音。本次未提交。");
       }
       assertCanvasAudioMasterCurrent(segmentRefs?.master, block.audioStudio, clipDuration);
-      const needsRenderedMix = block.audioStudio?.cues.some(cue => cue.enabled !== false && cue.kind !== "dialogue" &&
-        (cue.mix?.silenceWindows.length || (cue.mix?.duckUnderDialogue && cue.mix.duckVolume < 1)));
+      const needsRenderedMix = block.audioStudio?.cues.some(cue => cue.enabled !== false && (
+        cue.volume !== 1 || cue.fadeInSec > 0 || cue.fadeOutSec > 0 ||
+        (cue.kind !== "dialogue" && (cue.mix?.silenceWindows.length || (cue.mix?.duckUnderDialogue && cue.mix.duckVolume < 1)))
+      ));
       if (needsRenderedMix && !segmentRefs?.master?.audioStudioSource) {
-        throw new Error("本段设置了留白或对白避让，请先在对白与配乐中预混母轨并采用当前版本，再出片；直接参考原音频不会执行这些混音设置。本次未提交。");
+        throw new Error("本段设置了音量、淡入淡出、留白或对白避让，请先在对白与配乐中预混母轨并采用当前版本，再出片；直接参考原音频不会执行这些混音设置。本次未提交。");
       }
 
       const segmentCapSec = useWan30 || useHailuoH3

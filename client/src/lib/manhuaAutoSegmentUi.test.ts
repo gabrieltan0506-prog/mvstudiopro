@@ -7,6 +7,7 @@ import {
   resolveManhuaSegmentBatchCharge,
   manhuaSegmentSelectionIdentity,
   isManhuaWorkbenchKeyartCurrent,
+  keyartOutputUrl,
   resolveManhuaSourcePlanBeat,
 } from "../components/ManhuaScriptWorkbench.js";
 import { resolveShotsForEpisodeKeyarts, ensureManhuaFragmentClips, expandManhuaShotKeyartsAfterReverse, spawnManhuaDramaStudio, queuedManhuaClipBlocks } from "./canvasDramaStudio";
@@ -67,7 +68,7 @@ describe("漫剧自动分段 UI 消费", () => {
       activeBoardBaseUrl: common.segmentBoardUrls[2], activeBoardImageGeometry: { baseAspectRatio: "16:9" },
       activeSegNo: 2, segments, shots, shootablePlan, buildWorkbenchShotsFromSegmentPlan, resolveManhuaSourcePlanBeat,
       focusEpisode: 1, directorBoardSegUrls: common.segmentBoardUrls, segmentFirstShotKeyart: undefined,
-      mediaUrl: () => undefined, directorBoardMotionOverlays: {}, compileManhuaSegmentDirectorBoardOverlay,
+      mediaUrl: () => undefined, keyartOutputUrl, directorBoardMotionOverlays: {}, compileManhuaSegmentDirectorBoardOverlay,
       assetCanon: undefined,
     });
     expect(result).toEqual(compileManhuaSegmentDirectorBoardOverlay(common));
@@ -92,7 +93,7 @@ describe("漫剧自动分段 UI 消费", () => {
       activeBoardBaseUrl: board, activeBoardImageGeometry: { baseAspectRatio: "16:9" },
       activeSegNo: 1, segments, shots, shootablePlan: { segments: [] }, resolveManhuaSourcePlanBeat,
       focusEpisode: 1, directorBoardSegUrls: { 1: board }, segmentFirstShotKeyart: undefined,
-      mediaUrl: () => undefined, directorBoardMotionOverlays: {}, compileManhuaSegmentDirectorBoardOverlay, assetCanon,
+      mediaUrl: () => undefined, keyartOutputUrl, directorBoardMotionOverlays: {}, compileManhuaSegmentDirectorBoardOverlay, assetCanon,
     });
     expect(overlay.actorRoutes).toMatchObject([{ entityId: "黑奇", entityKind: "character" }]);
     const expanded = expandManhuaShotKeyartsAfterReverse(blocks, spawned.edges, reverse.id, { videoModel: "seedance-2.0" });

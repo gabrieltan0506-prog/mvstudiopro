@@ -16,6 +16,18 @@ describe("manhuaShotDialoguePersist", () => {
     expect(map[2]).toBe("你早就知道了？");
   });
 
+  it("keeps each speaker's closing quote when a shot has multiple lines", () => {
+    const dialogue = "娘：「阿菁，那馬是怎麼回事呀？」 阿菁：「娘，先睡一会，等等就到医馆了。」";
+    const first = upsertShotDialogueSection("前文", { 16: dialogue });
+    expect(parseShotDialogueTable(first)[16]).toBe(dialogue);
+    expect(parseShotDialogueTable(patchShotDialogueSection(first, { 15: "墨屠：「好痛。」" }))[16]).toBe(dialogue);
+  });
+
+  it("removes only a quote pair wrapping the whole cell", () => {
+    const text = "## 分镜台词\n\n| 镜号 | 台词 |\n| --- | --- |\n| 1 | 「整句」 |\n| 2 | 「第一句」 「第二句」 |";
+    expect(parseShotDialogueTable(text)).toEqual({ 1: "整句", 2: "「第一句」 「第二句」" });
+  });
+
   it("applies dialogue overrides onto shots", () => {
     const shots = applyShotDialoguesFromText(
       [
