@@ -955,7 +955,7 @@ export function CanvasAudioStudioView({
       }));
     });
   /**
-   * 一键预混母轨：已确认的对白按秒窗原音量落位；已确认的配乐压到 PREMIX_BGM_VOLUME 并带淡入淡出，
+   * 一键预混母轨：已确认的对白与配乐按各自保存的音量和淡入淡出落位，
    * 合成一条本段时长的单轨。走同一个 audio_timeline 后期任务（免费），结果不进合听预览，直接挂 master。
    */
   const createPremix = () =>
