@@ -288,11 +288,15 @@ export function CanvasAudioStudioView({
   }, [sourceShots, durationSec]);
   const currentScriptCues = state.cues.filter(cue => /^script-shot-\d+-line-\d+$/.test(cue.id));
   const expectedScriptCues = expectedScriptAudio?.cues || [];
-  const scriptTimelineOutdated = currentScriptCues.length > 0 && (
+  const scriptTimelineOutdated = Boolean(block.audioStudio && sourceShots?.length) && (
     currentScriptCues.length !== expectedScriptCues.length ||
     expectedScriptCues.some(expected => {
       const currentCue = currentScriptCues.find(cue => cue.id === expected.id);
-      return !currentCue || Math.abs(currentCue.startSec - expected.startSec) > 0.001 || Math.abs(currentCue.endSec - expected.endSec) > 0.001;
+      return !currentCue ||
+        Math.abs(currentCue.startSec - expected.startSec) > 0.001 ||
+        Math.abs(currentCue.endSec - expected.endSec) > 0.001 ||
+        currentCue.speakerZh !== expected.speakerZh ||
+        currentCue.textZh !== expected.textZh;
     })
   );
   const canRefreshScriptTimeline = scriptTimelineOutdated && currentScriptCues.every(cue =>
@@ -1159,13 +1163,13 @@ export function CanvasAudioStudioView({
       {scriptTimelineOutdated ? (
         <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-300/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
           <span>{canRefreshScriptTimeline
-            ? `当前对白秒轴仍是旧分段时长；可按 ${durationSec} 秒原稿重新排布，不生成音频、不扣费。`
-            : `当前对白秒轴仍是旧分段时长，但已有音色、候选、采用或在途任务；为避免覆盖，系统未自动改写。`}</span>
+            ? `当前已保存对白与原稿的台词、角色或秒轴不一致；可按 ${durationSec} 秒原稿刷新，不生成音频、不扣费。`
+            : `当前已保存对白与原稿的台词、角色或秒轴不一致，但已有音色、候选、采用或在途任务；请逐句核对，系统不会覆盖已有成果。`}</span>
           {canRefreshScriptTimeline && expectedScriptAudio ? (
             <button type="button" className={buttonClass} disabled={disabled || busy} onClick={() => {
               const retained = state.cues.filter(cue => !/^script-shot-\d+-line-\d+$/.test(cue.id));
               onChange({ ...state, cues: [...expectedScriptAudio.cues, ...retained] });
-            }}>按当前原稿刷新对白秒轴</button>
+            }}>按当前原稿刷新对白</button>
           ) : null}
         </div>
       ) : null}
