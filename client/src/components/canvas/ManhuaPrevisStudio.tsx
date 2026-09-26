@@ -2140,7 +2140,11 @@ export function ManhuaPrevisStudioView({
               }
               video.pause();
               const total = Math.round(preview.durationSec * 24);
-              const frame = Math.max(0, Math.min(total - 1, Math.round(video.currentTime * 24)));
+              if (video.ended || (Number.isFinite(video.duration) && video.currentTime >= video.duration - 0.001)) {
+                setError("已到片尾，请用“上一帧”回到最后一帧画面，再标记审片。");
+                return;
+              }
+              const frame = Math.max(0, Math.min(total - 1, Math.floor(video.currentTime * 24 + 0.001)));
               setReviewedFrames(current => current.includes(frame) ? current : [...current, frame]);
               setError("");
               if (frame + 1 < total) video.currentTime = (frame + 1) / 24;

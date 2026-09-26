@@ -323,9 +323,15 @@ if (THREE && SplatMesh) {
 <\/script></body></html>`;
 }
 
-async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
+export async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
   const res = await fetch(dataUrl);
-  return res.blob();
+  const blob = await res.blob();
+  const signature = new Uint8Array(await blob.slice(0, 8).arrayBuffer());
+  if (blob.type !== "image/png" || blob.size <= 8
+    || ![137, 80, 78, 71, 13, 10, 26, 10].every((byte, index) => signature[index] === byte)) {
+    throw new Error("invalid_png");
+  }
+  return blob;
 }
 
 export function ManhuaWorldStagePreview(props: Props) {
@@ -350,7 +356,7 @@ export function ManhuaWorldStagePreview(props: Props) {
   const liveState = useRef({ revision, cameraKind });
   liveState.current = { revision, cameraKind };
   const exportCounter = useRef(0);
-  const pendingExport = useRef<{ requestId: number; revision: string; cameraKind: StageCameraKind; frame: ManhuaStageFrameExport; deliver: Props["onExportStageFrame"] } | null>(null);
+  const pendingExport = useRef<{ requestId: number; revision: string; cameraKind: StageCameraKind; frame: ManhuaStageFrameExport; deliver: Props["onExportStageFrame"]; phase: "capturing" | "decoding" | "saving" } | null>(null);
   const srcDoc = useMemo(() => (config ? buildSrcDoc(config) : ""), [config]);
   const expectedActorIds = useMemo(() => (config?.characters ?? []).map((c) => c.id), [config]);
 
@@ -358,8 +364,10 @@ export function ManhuaWorldStagePreview(props: Props) {
     setStatus("loading");
     setNoteZh("");
     setFailures([]);
-    setExporting(false);
-    pendingExport.current = null;
+    if (pendingExport.current?.phase !== "saving") {
+      setExporting(false);
+      pendingExport.current = null;
+    }
   }, [revision]);
 
   const send = useCallback(
@@ -389,12 +397,14 @@ export function ManhuaWorldStagePreview(props: Props) {
           setNoteZh("");
         }
       } else if (m.type === "error") {
-        pendingExport.current = null;
+        if (pendingExport.current?.phase !== "saving") {
+          pendingExport.current = null;
+          setExporting(false);
+        }
         setStatus("error");
         setNoteZh(m.message || "3D 场景暂时无法打开");
-        setExporting(false);
       } else if (m.type === "export_error") {
-        if (m.requestId !== pendingExport.current?.requestId) return;
+        if (m.requestId !== pendingExport.current?.requestId || pendingExport.current?.phase !== "capturing") return;
         pendingExport.current = null;
         setExporting(false);
         setNoteZh("视角图导出失败，请重试");
@@ -402,7 +412,7 @@ export function ManhuaWorldStagePreview(props: Props) {
         setNoteZh(m.message || "");
       } else if (m.type === "frame" && m.dataUrl) {
         const pending = pendingExport.current;
-        if (!pending || m.requestId !== pending.requestId || pending.revision !== revision) return;
+        if (!pending || pending.phase !== "capturing" || m.requestId !== pending.requestId || pending.revision !== revision) return;
         if (m.cameraKind !== pending.cameraKind || pending.cameraKind !== cameraKind) {
           pendingExport.current = null;
           setExporting(false);
@@ -418,16 +428,20 @@ export function ManhuaWorldStagePreview(props: Props) {
           setNoteZh("视角数据不完整，请重新导出");
           return;
         }
+        pending.phase = "decoding";
         void (async () => {
           try {
             const blob = await dataUrlToBlob(m.dataUrl!);
             if (pendingExport.current !== pending || liveState.current.revision !== pending.revision || liveState.current.cameraKind !== pending.cameraKind) return;
-            pendingExport.current = null;
+            pending.phase = "saving";
             await pending.deliver?.(blob, { ...pending.frame, camera: rig });
           } catch {
-            setNoteZh("视角图保存失败，请重新导出");
+            if (pendingExport.current === pending) setNoteZh("视角图保存失败，请重新导出");
           } finally {
-            setExporting(false);
+            if (pendingExport.current === pending) {
+              pendingExport.current = null;
+              setExporting(false);
+            }
           }
         })();
       }
@@ -455,8 +469,11 @@ export function ManhuaWorldStagePreview(props: Props) {
         <span className="text-white/60">机位</span>
         {STAGE_CAMERA_KINDS.map((k) => (
           <button key={k} type="button" className={cameraKind === k ? btnOn : btn} disabled={!loaded} onClick={() => {
-            pendingExport.current = null;
-            setExporting(false);
+            // 已开始上传的视角图无法取消；换机位也要等本次保存结束，避免并发提交。
+            if (pendingExport.current?.phase !== "saving") {
+              pendingExport.current = null;
+              setExporting(false);
+            }
             if (cameraKind === k) send({ type: "camera", rig: rigs[k], cameraKind: k });
             else setCameraKind(k);
           }} title={rigs[k].labelZh}>
@@ -476,12 +493,13 @@ export function ManhuaWorldStagePreview(props: Props) {
             disabled={status !== "ready" || exporting}
             title={status === "partial" ? "有人物/资产没加载成功，不能导出" : undefined}
             onClick={() => {
+              if (pendingExport.current) return;
               const requestId = ++exportCounter.current;
               const frame: ManhuaStageFrameExport = {
                 viewLabelZh: STAGE_CAMERA_LABEL_ZH[cameraKind], cameraKind, actorIds: expectedActorIds,
                 revision, camera: structuredClone(rigs[cameraKind]), actors: structuredClone([...characters]), timeSec: 0,
               };
-              pendingExport.current = { requestId, revision, cameraKind, frame, deliver: onExportStageFrame };
+              pendingExport.current = { requestId, revision, cameraKind, frame, deliver: onExportStageFrame, phase: "capturing" };
               setExporting(true);
               send({ type: "export", requestId, viewLabelZh: frame.viewLabelZh, cameraKind });
             }}

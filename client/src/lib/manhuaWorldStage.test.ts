@@ -1,10 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { buildSrcDoc, buildStageSceneConfig, stageCameraRigs, stageSceneSignature, type ManhuaStageCharacter } from "../components/canvas/ManhuaWorldStagePreview";
+import { buildSrcDoc, buildStageSceneConfig, dataUrlToBlob, stageCameraRigs, stageSceneSignature, type ManhuaStageCharacter } from "../components/canvas/ManhuaWorldStagePreview";
 
 const actors: ManhuaStageCharacter[] = [
   { id: "actor-a", assetRef: "ref-a", labelZh: "甲", glbUrl: "https://x/a.glb", stagePoint: [0, 0] },
   { id: "actor-b", assetRef: "ref-b", labelZh: "乙", glbUrl: "https://x/b.glb", stagePoint: [0, 2] },
 ];
+const VALID_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+l6YQAAAAASUVORK5CYII=";
+
+it("主机拒绝空白或伪造 PNG，不把无图内容送入上传", async () => {
+  await expect(dataUrlToBlob("data:image/png;base64,")).rejects.toThrow("invalid_png");
+  await expect(dataUrlToBlob("data:image/png;base64,dGVzdA==")).rejects.toThrow("invalid_png");
+  expect((await dataUrlToBlob(VALID_PNG)).size).toBeGreaterThan(8);
+});
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (error: Error) => void;
@@ -19,12 +26,22 @@ async function harness(characters = actors, failedWorldAttempts = 0, exportFailu
     .replaceAll('await import(', 'await loadModule(');
   const messages: Record<string, unknown>[] = [];
   const messageHandlers: Array<(event: { data: Record<string, unknown> }) => void> = [];
+  const pointerHandlers = new Map<string, (event: Record<string, unknown>) => void>();
   const world = deferred<void>();
   const loading = new Map<string, (value: unknown) => void>();
-  const xyz = () => ({ set() {}, setScalar() {} });
+  class Vector3 {
+    constructor(public x = 0, public y = 0, public z = 0) {}
+    set(x: number, y: number, z: number) { this.x = x; this.y = y; this.z = z; return this; }
+    setScalar(value: number) { return this.set(value, value, value); }
+    distanceTo(other: Vector3) { return Math.hypot(this.x - other.x, this.y - other.y, this.z - other.z); }
+    clone() { return new Vector3(this.x, this.y, this.z); }
+    addScaledVector(other: Vector3, scale: number) { return this.set(this.x + other.x * scale, this.y + other.y * scale, this.z + other.z * scale); }
+    toArray() { return [this.x, this.y, this.z]; }
+  }
+  const xyz = () => new Vector3();
   class Object3d {
     position = xyz(); quaternion = xyz(); scale = xyz(); rotation = { x: 0, z: 0 };
-    add() {} remove() {} traverse() {} lookAt() {} updateProjectionMatrix() {}
+    add() {} remove() {} traverse() {} lookAt(_x: number, _y: number, _z: number) {} updateProjectionMatrix() {}
   }
   let splatInstances = 0;
   class Splat extends Object3d {
@@ -38,12 +55,19 @@ async function harness(characters = actors, failedWorldAttempts = 0, exportFailu
     }
   }
   const three = {
-    Scene: Object3d, Group: Object3d, HemisphereLight: Object3d, DirectionalLight: Object3d,
+    Scene: Object3d, Group: Object3d, HemisphereLight: Object3d, DirectionalLight: Object3d, Vector3,
     Color: Object3d, GridHelper: Object3d,
-    PerspectiveCamera: class extends Object3d { up = xyz(); },
+    PerspectiveCamera: class extends Object3d {
+      up = xyz(); position = new Vector3(); direction = new Vector3(1, 0, 0);
+      lookAt(x: number, y: number, z: number) {
+        const length = Math.hypot(x - this.position.x, y - this.position.y, z - this.position.z) || 1;
+        this.direction.set((x - this.position.x) / length, (y - this.position.y) / length, (z - this.position.z) / length);
+      }
+      getWorldDirection(target: Vector3) { return target.set(this.direction.x, this.direction.y, this.direction.z); }
+    },
     Box3: class { min = { y: 0 }; max = { y: 1 }; setFromObject() { return this; } },
     WebGLRenderer: class {
-      domElement = { style: {}, addEventListener() {}, toDataURL() {
+      domElement = { style: {}, setPointerCapture() {}, addEventListener(type: string, handler: (event: Record<string, unknown>) => void) { pointerHandlers.set(type, handler); }, toDataURL() {
         if (exportFailure === "canvas") throw new Error("canvas failed");
         if (exportFailure === "empty") return "data:,";
         return "data:image/png;base64,dGVzdA==";
@@ -65,9 +89,11 @@ async function harness(characters = actors, failedWorldAttempts = 0, exportFailu
   return {
     config, messages, world, loading, done, splatInstances: () => splatInstances,
     gltf: () => ({ scene: new Object3d() }),
-    exportFrame: (requestId: number) => messageHandlers.forEach((handler) => handler({ data: {
-      source: "manhua-world-stage-host", revision: config.revision, type: "export", requestId,
+    send: (message: Record<string, unknown>) => messageHandlers.forEach((handler) => handler({ data: {
+      source: "manhua-world-stage-host", revision: config.revision, ...message,
     } })),
+    exportFrame(requestId: number) { this.send({ type: "export", requestId }); },
+    pointer: (type: string, event: Record<string, unknown>) => pointerHandlers.get(type)?.(event),
   };
 }
 
@@ -130,4 +156,104 @@ describe("片场生产脚本必需资产门禁", () => {
     h.exportFrame(42);
     expect(h.messages.at(-1)).toMatchObject({ type: "export_error", requestId: 42 });
   });
+  it("拖动后的实际朝向随原请求导出，同机位预设可复位", async () => {
+    const h = await harness([], 0);
+    h.world.resolve();
+    await h.done;
+    h.pointer("pointerdown", { pointerType: "mouse", button: 0, pointerId: 1, clientX: 0, clientY: 0 });
+    h.pointer("pointermove", { pointerId: 1, clientX: 100, clientY: 0 });
+    h.exportFrame(51);
+    const dragged = h.messages.at(-1) as { type: string; requestId: number; cameraRig: { position: number[]; target: number[] } };
+    expect(dragged.type).toBe("frame");
+    expect(dragged.requestId).toBe(51);
+    expect(dragged.cameraRig.position).toEqual(h.config.initialCamera.position);
+    expect(dragged.cameraRig.target[0]).not.toBeCloseTo(h.config.initialCamera.target[0]);
+    h.send({ type: "camera", rig: h.config.initialCamera, cameraKind: "establish" });
+    h.exportFrame(52);
+    const reset = h.messages.at(-1) as { requestId: number; cameraRig: { target: number[] } };
+    expect(reset.requestId).toBe(52);
+    reset.cameraRig.target.forEach((value, index) => expect(value).toBeCloseTo(h.config.initialCamera.target[index]!));
+  });
 });
+
+it("宿主上传开始后切机位仍保持忙碌，旧回执不能放开新请求", async () => {
+  const { build } = await import("esbuild");
+  const { default: puppeteer } = await import("puppeteer");
+  const { default: path } = await import("node:path");
+  const built = await build({
+    stdin: {
+      resolveDir: process.cwd(), loader: "tsx",
+      contents: `
+        import React from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { ManhuaWorldStagePreview } from './client/src/components/canvas/ManhuaWorldStagePreview';
+        const f = window.fixture = { calls: [], resolves: [] };
+        const onExportStageFrame = (blob, frame) => new Promise(resolve => {
+          f.calls.push({ size: blob.size, cameraKind: frame.cameraKind, camera: frame.camera });
+          f.resolves.push(resolve);
+        });
+        createRoot(document.getElementById('root')).render(
+          <ManhuaWorldStagePreview sceneLabelZh="测试场景"
+            world={{ spz500kUrl: 'https://assets.example/world.spz' }}
+            characters={[]} onExportStageFrame={onExportStageFrame} />);
+      `,
+    },
+    bundle: true, write: false, platform: "browser", format: "iife", jsx: "automatic",
+    alias: { "@": path.resolve("client/src"), "@shared": path.resolve("shared") },
+    define: { "process.env.NODE_ENV": '"test"', "import.meta.env": "{}" },
+  });
+  const browser = await puppeteer.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setRequestInterception(true);
+    page.on("request", (request) => {
+      if (request.url() === "http://localhost:41804/") {
+        void request.respond({ status: 200, contentType: "text/html", body: '<!doctype html><div id="root"></div>' });
+      } else void request.abort();
+    });
+    await page.goto("http://localhost:41804/", { waitUntil: "domcontentloaded" });
+    await page.addScriptTag({ content: built.outputFiles[0]!.text });
+    await page.waitForSelector('[data-stage-status="error"] iframe');
+    const child = page.frames().find((frame) => frame.parentFrame());
+    if (!child) throw new Error("测试 iframe 未挂载");
+    const revision = await page.$eval("[data-stage-revision]", (el) => el.getAttribute("data-stage-revision"));
+    const ready = () => child.evaluate((rev) => parent.postMessage({ source: "manhua-world-stage", revision: rev, type: "ready", loaded: ["world"], failed: [] }, "*"), revision);
+    await ready();
+    await page.waitForSelector('[data-stage-status="ready"]');
+    const rig = { kind: "establish", position: [0, -7, 2.6], target: [0, 0, 1], lens: 28, labelZh: "建立·高位全景" };
+    const frame = (requestId: number) => child.evaluate((payload) => parent.postMessage(payload, "*"), {
+      source: "manhua-world-stage", revision, type: "frame", requestId,
+      cameraKind: "establish", dataUrl: VALID_PNG, cameraRig: rig,
+    });
+    const exportButton = () => page.evaluate(() => Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("视角图"))?.click());
+    const busy = () => page.evaluate(() => Boolean(Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("保存中") && b.disabled)));
+    await exportButton();
+    await frame(1);
+    await page.waitForFunction(() => (window as any).fixture.calls.length === 1);
+    expect(await busy()).toBe(true);
+    await child.evaluate((rev) => parent.postMessage({ source: "manhua-world-stage", revision: rev, type: "error", message: "preview failed" }, "*"), revision);
+    await page.waitForSelector('[data-stage-status="error"]');
+    await ready();
+    await page.waitForSelector('[data-stage-status="ready"]');
+    expect(await busy()).toBe(true);
+    await page.evaluate(() => Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.trim() === "建立")?.click());
+    expect(await busy()).toBe(true);
+    await exportButton();
+    expect(await page.evaluate(() => (window as any).fixture.calls.length)).toBe(1);
+    await page.evaluate(() => (window as any).fixture.resolves[0]());
+    await page.waitForFunction(() => Array.from(document.querySelectorAll("button")).some((b) => b.textContent?.includes("保存当前视角图") && !b.disabled));
+    await exportButton();
+    await frame(1);
+    expect(await page.evaluate(() => (window as any).fixture.calls.length)).toBe(1);
+    expect(await busy()).toBe(true);
+    await frame(2);
+    await page.waitForFunction(() => (window as any).fixture.calls.length === 2);
+    const calls = await page.evaluate(() => (window as any).fixture.calls);
+    expect(calls[0].size).toBeGreaterThan(0);
+    expect(calls[1].cameraKind).toBe("establish");
+    expect(calls[0].camera).toEqual(rig);
+    await page.evaluate(() => (window as any).fixture.resolves[1]());
+  } finally {
+    await browser.close();
+  }
+}, 30_000);

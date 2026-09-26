@@ -18,6 +18,7 @@ beforeAll(async () => {
       import {ManhuaPrevisStudioView} from './client/src/components/canvas/ManhuaPrevisStudio';
       import {createManhuaPrevisStudio} from './shared/manhuaPrevis';
       const f=globalThis.fixture={submits:[],gets:[],lists:[],updates:[],mode:'success',getResult:null};
+      f.createStudio=createManhuaPrevisStudio;
       f.old={url:'https://offline.invalid/old.mp4',gcsUri:'gs://test/old.mp4',updatedAt:'2026-09-01T00:00:00Z'};
       f.makeBlock=(scope='11111111-1111-4111-8111-111111111111')=>({id:'clip-e01-g01',previsStudio:createManhuaPrevisStudio(10,scope),manhuaSegmentRefs:{previs:f.old}});
       f.response=(input)=>({jobId:'prv_test_job',status:'succeeded',params:input,output:{requestId:input.requestId,clipId:input.clipId,spec:input.spec,durationSec:input.spec.durationSec,gcsUri:'gs://test/unrelated-storage-folder/output.mp4',url:'https://offline.invalid/new.mp4',report:{warnings:['离线测试，不代表动作质量验收']},...(input.spec.exportLayers?{layerBundle:{gcsUri:'gs://test/layer-bundle.zip',url:'https://offline.invalid/layers.zip',format:'previs-layers-v1',bytes:1234,sha256:'a'.repeat(64)}}:{})}});
@@ -62,7 +63,7 @@ afterAll(async () => {
   await browser?.close();
 });
 
-async function open(strict = false, keyed = false) {
+async function open(strict = false, keyed = false, reviewMedia?: Buffer) {
   const page = await browser.newPage();
   page.setDefaultTimeout(5_000);
   await page.setRequestInterception(true);
@@ -76,6 +77,18 @@ async function open(strict = false, keyed = false) {
         contentType: "text/html",
         body: '<html><link rel="icon" href="data:,"><div id="root"></div></html>',
       });
+    else if (reviewMedia && request.url() === "http://localhost:41819/review.mp4") {
+      const range = /^bytes=(\d+)-(\d*)$/.exec(request.headers().range || "");
+      const start = range ? Number(range[1]) : 0;
+      const end = range?.[2] ? Math.min(Number(range[2]), reviewMedia.length - 1) : reviewMedia.length - 1;
+      const body = reviewMedia.subarray(start, end + 1);
+      void request.respond({
+        status: range ? 206 : 200,
+        contentType: "video/mp4",
+        headers: { "Accept-Ranges": "bytes", "Content-Length": String(body.length), ...(range ? { "Content-Range": `bytes ${start}-${end}/${reviewMedia.length}` } : {}) },
+        body,
+      });
+    }
     else void request.abort();
   });
   await page.goto("http://localhost:41819");
@@ -385,6 +398,102 @@ it("未逐帧审片及常速复核的候选不能替换旧参考", async () => {
     await settle(page);
     expect(await page.$eval("[data-previs-reviewed-frames]", node => node.textContent)).toContain("0/240");
     expect(await page.$$eval("[data-previs-review-gate] input[type=checkbox]", nodes => nodes.map(node => (node as HTMLInputElement).checked))).toEqual([false, false]);
+  } finally { await page.close(); }
+});
+
+it("真实媒体片尾不能冒充末帧，回到末帧后可从头常速复核", async () => {
+  // 现成的 3.2 秒本地素材只验证浏览器 seek/play/ended 事件；服务端帧数与时长契约另有渲染门禁。
+  const media = await readFile(path.resolve("client/public/blog-assets/happyhorse-720p-3s.mp4"));
+  const page = await open(false, false, media);
+  try {
+    await page.evaluate(() => {
+      const f = (window as any).fixture;
+      const scope = f.block.previsStudio.scopeId;
+      f.setBlock((block: any) => ({ ...block, previsStudio: f.createStudio(3, scope) }));
+      const original = f.response;
+      f.response = (input: any) => {
+        const response = original(input);
+        response.output.url = "http://localhost:41819/review.mp4";
+        return response;
+      };
+    });
+    await settle(page);
+    await click(page, "确认生成动作白模");
+    await page.waitForFunction(() => {
+      const video = document.querySelector<HTMLVideoElement>("[data-manhua-previs-studio] video");
+      return video && video.readyState >= 2 && Math.abs(video.duration - 3.2) < 0.1;
+    }, { timeout: 10_000 }).catch(async () => {
+      const state = await page.evaluate(() => ({
+        alert: document.querySelector('[role="alert"]')?.textContent,
+        status: document.querySelector('[role="status"]')?.textContent,
+        submits: (window as any).fixture.submits.length,
+        history: (window as any).fixture.block.previsStudio.history.length,
+        video: (() => { const v = document.querySelector<HTMLVideoElement>("[data-manhua-previs-studio] video"); return v ? { readyState: v.readyState, duration: v.duration, error: v.error?.code } : null; })(),
+      }));
+      throw new Error(`真实媒体未就绪：${JSON.stringify(state)}`);
+    });
+    await page.evaluate(() => {
+      document.querySelector<HTMLVideoElement>("[data-manhua-previs-studio] video")!.currentTime = 0.025;
+    });
+    await page.waitForFunction(() => {
+      const video = document.querySelector<HTMLVideoElement>("[data-manhua-previs-studio] video")!;
+      return !video.seeking && video.currentTime > 0.02 && video.currentTime < 0.03;
+    });
+    await click(page, "确认当前帧并看下一帧");
+    await page.evaluate(() => {
+      document.querySelector<HTMLVideoElement>("[data-manhua-previs-studio] video")!.currentTime = 0;
+    });
+    await page.waitForFunction(() => {
+      const video = document.querySelector<HTMLVideoElement>("[data-manhua-previs-studio] video")!;
+      return !video.seeking && video.currentTime < 0.005;
+    });
+    await click(page, "确认当前帧并看下一帧");
+    await settle(page);
+    expect(await page.$eval("[data-previs-reviewed-frames]", node => node.textContent)).toContain("1/72");
+    await page.evaluate(() => {
+      const video = document.querySelector<HTMLVideoElement>("[data-manhua-previs-studio] video")!;
+      video.currentTime = video.duration;
+    });
+    await page.waitForFunction(() => {
+      const video = document.querySelector<HTMLVideoElement>("[data-manhua-previs-studio] video")!;
+      return !video.seeking && video.currentTime >= video.duration - 0.01;
+    }, { timeout: 10_000 }).catch(async () => {
+      const state = await page.$eval("[data-manhua-previs-studio] video", node => {
+        const video = node as HTMLVideoElement;
+        return { currentTime: video.currentTime, duration: video.duration, seeking: video.seeking, readyState: video.readyState, networkState: video.networkState, error: video.error?.code };
+      });
+      throw new Error(`真实媒体定位失败：${JSON.stringify(state)}`);
+    });
+    await click(page, "确认当前帧并看下一帧");
+    await settle(page);
+    expect(await page.$eval("[data-previs-reviewed-frames]", node => node.textContent)).toContain("1/72");
+    expect(await page.$eval('[role="alert"]', node => node.textContent)).toContain("已到片尾");
+    await page.evaluate(() => {
+      document.querySelector<HTMLVideoElement>("[data-manhua-previs-studio] video")!.currentTime = 3 - 1 / 24;
+    });
+    await page.waitForFunction(() => {
+      const video = document.querySelector<HTMLVideoElement>("[data-manhua-previs-studio] video")!;
+      return !video.seeking && video.currentTime > 2.9 && video.currentTime < 3;
+    });
+    await click(page, "确认当前帧并看下一帧");
+    await settle(page);
+    expect(await page.$eval("[data-previs-reviewed-frames]", node => node.textContent)).toContain("2/72");
+    await page.evaluate(() => {
+      document.querySelector<HTMLVideoElement>("[data-manhua-previs-studio] video")!.currentTime = 2.99;
+    });
+    await page.waitForFunction(() => {
+      const video = document.querySelector<HTMLVideoElement>("[data-manhua-previs-studio] video")!;
+      return !video.seeking && video.currentTime > 2.98 && video.currentTime < 3;
+    });
+    await click(page, "确认当前帧并看下一帧");
+    await settle(page);
+    expect(await page.$eval("[data-previs-reviewed-frames]", node => node.textContent)).toContain("2/72");
+    await click(page, "从头常速播放");
+    await page.waitForFunction(() => {
+      const checks = document.querySelectorAll<HTMLInputElement>("[data-previs-review-gate] input[type=checkbox]");
+      return checks[1] && !checks[1].disabled;
+    }, { timeout: 10_000 });
+    expect(await page.$eval("[data-manhua-previs-studio] video", node => (node as HTMLVideoElement).ended)).toBe(true);
   } finally { await page.close(); }
 });
 
