@@ -9930,14 +9930,34 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
       }),
 
-    /**
-     * 自定义创作工作台 · 深度优化文案（纯 LLM，无出图）。
-     * 扣 {@link CREDIT_COSTS.platformOptimizeCustomCopy} 积分/次。
-     */
-    /**
-     * /canvas 编剧室连载扩写：四档自选，所有调用按集数计价。
-     * 须先选定成片引擎（2.0 / 2.0-fast / 2.5），按选型铺段数与秒数。
-     */
+    /** 从当前集完整原稿生成一版付费模板候选；只返回候选，正式稿仍待用户采用。 */
+    generateManhuaTemplateCandidate: protectedProcedure
+      .input(z.object({
+        requestId: z.string().uuid(),
+        publicTemplateId: z.string().regex(/^mt_[a-z0-9]{4,16}$/i),
+        episodeNumber: z.number().int().min(1).max(9999),
+        sourceMarkdown: z.string().min(300).max(8000),
+        sourceSha256: z.string().regex(/^[a-f0-9]{64}$/),
+        tier: z.literal("excellent").optional(),
+        confirmPaid: z.boolean(),
+      }).strict())
+      .mutation(async ({ ctx, input }) => {
+        const { generateManhuaTemplateCandidate } = await import("./services/manhuaTemplateRewriteCandidate.js");
+        return generateManhuaTemplateCandidate({ ...input, userId: ctx.user.id });
+      }),
+
+    /** 本机候选记录丢失时，按登录用户、原稿指纹和集次恢复最多两张已结算匿名候选。 */
+    listManhuaTemplateCandidateHistory: protectedProcedure
+      .input(z.object({
+        episodeNumber: z.number().int().min(1).max(9999),
+        sourceSha256: z.string().regex(/^[a-f0-9]{64}$/),
+      }).strict())
+      .query(async ({ ctx, input }) => {
+        const { listManhuaTemplateCandidateHistory } = await import("./services/manhuaTemplateRewriteCandidate.js");
+        return listManhuaTemplateCandidateHistory({ ...input, userId: ctx.user.id });
+      }),
+
+    /** /canvas 编剧室连载扩写：四档自选，所有调用按集数计价。 */
     expandManhuaWriterPack: protectedProcedure
       .input(
         z.object({

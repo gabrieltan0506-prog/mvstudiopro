@@ -22,8 +22,10 @@ import ManhuaTemplateTrialCompare, {
 import PostProdWorkshopCard from "@/components/canvas/PostProdWorkshopCard";
 import { manhuaPostProdScopeKey } from "@/lib/postProdWorkshop";
 import ManhuaCreativeAdvisorPanel from "@/components/canvas/ManhuaCreativeAdvisorPanel";
+import ManhuaOutlineTemplateRewrite from "@/components/canvas/ManhuaOutlineTemplateRewrite";
 import { advisorReconfirmationFromEpisode } from "@/lib/manhuaAdvisorBackups";
 import { prepareAdvisorRewriteAdoption, persistAdvisorRewriteAdoption } from "@/lib/manhuaAdvisorAdoption";
+import type { AdvisorRewriteCandidate } from "@/lib/manhuaAdvisorTemplates";
 import { manhuaAdvisorMountKey } from "@/lib/manhuaAdvisorSession";
 import {
   buildManhuaAdvisorProject,
@@ -9861,6 +9863,36 @@ export default function OmniCanvas() {
     customAssetRefs,
   ]);
 
+  function applyTemplateRewriteCandidate(input: AdvisorRewriteCandidate): boolean {
+    let plan: ReturnType<typeof prepareAdvisorRewriteAdoption>;
+    try {
+      plan = prepareAdvisorRewriteAdoption({ candidate: input, writerPack, projectBible, blocks, edges,
+        overlays: directorBoardMotionOverlayBySegment,
+        busy: writerBusy || factoryBusy || assembleBusy || burnSubtitleBusy || Boolean(segmentRefBusyId) || Boolean(assetStandardizeBusyId) || asset3dBusyIds.length > 0 || sceneWorldBusyIds.length > 0 });
+      persistAdvisorRewriteAdoption({ plan, original: { writerPack: writerPack!, projectBible, blocks, edges, overlays: directorBoardMotionOverlayBySegment },
+        userId: String(user?.id ?? "local"), backupId: crypto.randomUUID(), createdAt: new Date().toISOString() });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "改写未能安全保存，未采用。");
+      return false;
+    }
+    const { candidate, writerPack: nextPack, canvas: cleaned, overlays } = plan;
+    setBlocks(cleaned.blocks);
+    setEdges(cleaned.edges);
+    bumpManhuaOutboundEpoch();
+    setDirectorBoardMotionOverlayBySegment(overlays);
+    materializedBoardIdsRef.current.clear();
+    setWriterPackDiff(diffManhuaWriterPacks(writerPack, nextPack));
+    setWriterPack(nextPack);
+    setWriterConfirmed(false);
+    setDirectorUnlocked(false);
+    setWorkflowPhase("outline");
+    setWriterFocusEpisode(candidate.episodeIndex);
+    setWriterConfirmBlockers([]);
+    setAdvisorFocusSection(null);
+    setAdvisorOpen(false);
+    return true;
+  }
+
   return (
     <div
       data-manhua-theme={canvasMode === "manhua" ? "cream" : undefined}
@@ -10293,6 +10325,20 @@ export default function OmniCanvas() {
                     setAdvisorFocusSection("templates");
                     setAdvisorOpen(true);
                   }}
+                  rewriteWorkspace={<ManhuaOutlineTemplateRewrite
+                    key={manhuaAdvisorMountKey(user?.id != null ? String(user.id) : undefined, projectBible?.confirmedAt, writerPack)}
+                    userId={user?.id != null ? String(user.id) : undefined}
+                    confirmedProjectVersion={projectBible?.confirmedAt}
+                    project={advisorProject}
+                    templates={approvedViralTemplateCards}
+                    onApplyRewrite={applyTemplateRewriteCandidate}
+                    onOpenFreePreview={(publicId) => {
+                      setPublicTemplateId(publicId);
+                      setManhuaUiMode("workbench");
+                      setImmersiveWorkspaceView("topic");
+                      setWorkflowPhase("outline");
+                    }}
+                  />}
                   blocks={blocks}
                   videoModel={activePilotVideoModel}
                   directorStrategyContract={directorStrategyContract}
@@ -13418,35 +13464,7 @@ export default function OmniCanvas() {
         confirmedProjectVersion={projectBible?.confirmedAt}
         project={advisorProject}
         focusSection={advisorFocusSection}
-        onApplyRewrite={(input) => {
-          let plan: ReturnType<typeof prepareAdvisorRewriteAdoption>;
-          try {
-            plan = prepareAdvisorRewriteAdoption({ candidate: input, writerPack, projectBible, blocks, edges,
-              overlays: directorBoardMotionOverlayBySegment,
-              busy: writerBusy || factoryBusy || assembleBusy || burnSubtitleBusy || Boolean(segmentRefBusyId) || Boolean(assetStandardizeBusyId) || asset3dBusyIds.length > 0 || sceneWorldBusyIds.length > 0 });
-            persistAdvisorRewriteAdoption({ plan, original: { writerPack: writerPack!, projectBible, blocks, edges, overlays: directorBoardMotionOverlayBySegment },
-              userId: String(user?.id ?? "local"), backupId: crypto.randomUUID(), createdAt: new Date().toISOString() });
-          } catch (error) {
-            toast.error(error instanceof Error ? error.message : "改写未能安全保存，未采用。");
-            return false;
-          }
-          const { candidate, writerPack: nextPack, canvas: cleaned, overlays } = plan;
-          setBlocks(cleaned.blocks);
-          setEdges(cleaned.edges);
-          bumpManhuaOutboundEpoch();
-          setDirectorBoardMotionOverlayBySegment(overlays);
-          materializedBoardIdsRef.current.clear();
-          setWriterPackDiff(diffManhuaWriterPacks(writerPack, nextPack));
-          setWriterPack(nextPack);
-          setWriterConfirmed(false);
-          setDirectorUnlocked(false);
-          setWorkflowPhase("outline");
-          setWriterFocusEpisode(candidate.episodeIndex);
-          setWriterConfirmBlockers([]);
-          setAdvisorFocusSection(null);
-          setAdvisorOpen(false);
-          return true;
-        }}
+        onApplyRewrite={applyTemplateRewriteCandidate}
         onLocate={(issue) => {
           setAdvisorFocusSection(null);
           setAdvisorOpen(false);

@@ -1247,17 +1247,21 @@
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-series-summary-card] {
-  padding-right: 190px !important;
+  padding-right: 20px !important;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-outline-ai-optimize] {
-  position: absolute;
-  right: 20px;
-  top: 20px;
+  position: static;
   min-height: 40px;
   border-color: #80d5c8 !important;
   background: #e4f7f1 !important;
   color: #087866 !important;
+}
+
+#manhua-workbench-shell.mh-redesign [data-manhua-outline-template-entry] {
+  border-color: #c3b5ef !important;
+  background: #f2edff !important;
+  color: #5a36a0 !important;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-phase-footer-action] {
@@ -1529,8 +1533,7 @@ body:has(#manhua-workbench-shell) [data-pwa-install-button] {
     padding-right: 20px !important;
   }
   #manhua-workbench-shell.mh-redesign [data-manhua-outline-ai-optimize] {
-    position: static;
-    margin-top: 14px;
+    margin-top: 0;
   }
 }
 

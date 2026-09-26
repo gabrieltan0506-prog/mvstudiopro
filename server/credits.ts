@@ -320,6 +320,17 @@ export async function deductCreditsAmount(
     return { success: true, cost: 0, remainingBalance: -1, source: "none" as const };
   }
 
+  const chargeKey = String(opts?.chargeKey || "").trim().slice(0, 120) || undefined;
+  // 先读已落账的同键扣费：余额可能已被上一腿用尽，账户角色也可能变化。
+  // 未命中时仍由下方原子扣减和唯一索引解决并发，不把此读取当作扣费锁。
+  if (chargeKey) {
+    const prior = await findChargeByKey(db, userId, chargeKey);
+    if (prior) return prior.source === "team"
+      ? { success: true, cost: prior.cost, remainingBalance: -1, source: "team" as const,
+          teamId: prior.teamId, teamMemberId: prior.teamMemberId, alreadyCharged: true }
+      : { success: true, cost: prior.cost, remainingBalance: -1, source: "personal" as const, alreadyCharged: true };
+  }
+
   if (await isAdmin(userId)) {
     return {
       success: true,
@@ -328,8 +339,6 @@ export async function deductCreditsAmount(
       source: "admin" as const,
     };
   }
-
-  const chargeKey = String(opts?.chargeKey || "").trim().slice(0, 120) || undefined;
 
   // 先确保余额行存在，否则条件 UPDATE 会扑空
   const balance = await getOrCreateBalance(userId);
