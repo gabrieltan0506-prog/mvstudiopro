@@ -150,6 +150,20 @@ function episode(
 }
 
 describe("工作台展示与真实编排使用同源分镜", () => {
+  it("墨菁传已确认首集18镜保留有声镜对白和无声镜", () => {
+    const confirmed = readFileSync(
+      new URL("./fixtures/mojing-episode1-confirmed-shot-table.md", import.meta.url),
+      "utf8",
+    );
+    const shots = workbench.parseWorkbenchShotsFromText(confirmed);
+    expect(shots).toHaveLength(18);
+    expect(shots[0].dialogueZh).toContain("娘：「阿菁……慢点，我喘不上来。」");
+    expect(shots[1].dialogueZh || "").toBe("");
+    expect(shots[7].dialogueZh).toContain("墨屠：「打她之前，问过我吗？」");
+    expect(shots[14].dialogueZh).toContain("娘：「阿菁……那马……」");
+    expect(shots[16].dialogueZh).toContain("墨屠：「三天太短。取吧。」");
+  });
+
   it("只有story原稿时保留真实逐镜，不让其他阶段模板覆盖", () => {
     const h = episode(18);
     const blocks = h.blocks.map(block => ({
@@ -189,7 +203,11 @@ describe("工作台展示与真实编排使用同源分镜", () => {
       expect(runInNewContext(memo("shots"), { ...h.scope, blocks })()).toEqual(
         expected
       );
-      expect(actual[0].dialogueZh).toBe("把玉珏交出来——第1次。");
+      // 首镜可以是无对白建立镜；完整台词以段表为准，静帧只带本镜发话。
+      expect(plan.extractManhuaSegmentDialogueQuotes(
+        plan.parseManhuaEpisodeSegmentPlanFromMarkdown(text).segments[0].dialogueZh,
+      )).toContain("苏照雪：「把玉珏交出来——第1次。」");
+      expect(actual.some((shot) => Boolean(shot.dialogueZh))).toBe(true);
     }
   );
   it("beats只有待运行模板时，实际工作台派生值使用reverse成稿而非默认骨架", () => {
