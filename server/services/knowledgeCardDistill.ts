@@ -655,8 +655,22 @@ function distillFetchTimeoutMs(
  * 统稿比单段慢得多（输入是整本的提炼稿、输出还要重排全局），
  * 探针里 Kimi 用分段档超时会直接 abort，把 32 节的中间稿留给用户。
  */
-function distillRefineTimeoutMs(modelName: KnowledgeCardDistillModelId): number {
-  return Math.min(480_000, Math.round(DISTILL_PROFILES[modelName].requestTimeoutMs * 1.8));
+function distillRefineTimeoutMs(_modelName: KnowledgeCardDistillModelId): number {
+  // 0926 用户令：分组统稿 / 收紧节数单跳 10 分钟（旧 4 分钟 × 1.8 ≈ 7.2 分钟，0923 GLM 两家都超时）
+  return KNOWLEDGE_CARD_REFINE_TIMEOUT_MS;
+}
+
+export const KNOWLEDGE_CARD_REFINE_TIMEOUT_MS = 10 * 60_000;
+
+/**
+ * 统稿链（0926 用户令「超时交给 DeepSeek」）：选 GLM 时 GLM 只试首跳一次，失败直接交 DeepSeek 两家，再千问兜底；
+ * 不再在第二家 GLM 上再等一轮。选 DeepSeek 时链序不变。
+ */
+export function knowledgeCardRefineChain(modelName: KnowledgeCardDistillModelId): KnowledgeCardGatewayStep[] {
+  const chain = distillGatewayChain(modelName);
+  if (resolveKnowledgeCardDistillModel(modelName) !== KNOWLEDGE_CARD_DISTILL_MODEL_GLM) return chain;
+  const firstGlm = chain.findIndex((s) => s.tier === "glm");
+  return chain.filter((s, i) => s.tier !== "glm" || i === firstGlm);
 }
 
 function mapFetchAbortError(err: unknown): Error {
@@ -766,8 +780,18 @@ async function invokeDistillViaGateway(params: {
    * Z.AI 不支持 structured_outputs，所以用 json_object 不用 json_schema strict）。千问跳不加（用户令），EvoLink 未核不加。
    */
   jsonObject?: boolean;
+  /**
+   * 0926 用户令：挑页等非提炼任务的用户消息不套提炼外壳（「请一次性完成：读文/读图 + 提炼…」）。
+   * 实测 GLM 两家被外壳带偏，把挑页答成提炼稿；与 DeepSeek 挑页专链一样只发原话 + 图。
+   */
+  plainUserContent?: boolean;
 }): Promise<string> {
-  const userContent = buildDistillUserContent(params);
+  const userContent: Array<Record<string, unknown>> = params.plainUserContent
+    ? [
+        { type: "text", text: params.sourceText },
+        ...params.imageUrls.map((url) => ({ type: "image_url", image_url: { url, detail: "high" } })),
+      ]
+    : buildDistillUserContent(params);
   const hasImages = params.imageUrls.length > 0 || (params.pageImages?.length ?? 0) > 0 || (params.ocrImages?.length ?? 0) > 0;
   // 这一跳实际执行的模型档：链里给了就用链里的；没给（旧调用/测试）按请求档位
   const tier: KnowledgeCardTier =
@@ -983,6 +1007,8 @@ async function invokeDistillLlm(params: {
   chainRetry?: boolean;
   /** 挑页 JSON 模式，透传到单跳（见 invokeDistillViaGateway） */
   jsonObject?: boolean;
+  /** 不套提炼外壳（挑页用，见 invokeDistillViaGateway） */
+  plainUserContent?: boolean;
 }): Promise<string> {
   if (params.chainRetry === false) return invokeDistillChainOnce(params);
   // 0923 用户令：整条通道链都失败（模型服务异常）隔 30 秒重跑，最多 3 次，不直接报到前端
@@ -1012,10 +1038,18 @@ async function invokeDistillChainOnce(params: Parameters<typeof invokeDistillLlm
     params.abortSignal?.throwIfAborted();
     const step = chain[i]!;
     touchKnowledgeCardDistillActivity();
+    const hopStartedAt = Date.now();
     try {
       const out = await distillGatewayInvoker({ ...params, gateway: step.gateway, tier: step.tier, modelName: params.modelName });
       const problem = params.validate?.(out);
       if (problem) throw new Error(`坏输出：${problem}`);
+      // 0926 用户令：每跳成功记路由与用时，超时等参数按实测定，不靠猜
+      console.info(
+        `[knowledgeCardDistill] 成功 ${gatewayLabel(step.gateway, step.tier)} 用时 ${Math.round((Date.now() - hopStartedAt) / 1000)}s` +
+          `${params.chunkLabel ? ` · ${params.chunkLabel}` : ""}` +
+          `${params.ocrImages?.length ? ` · 读字图 ${params.ocrImages.length}` : ""}${params.pageImages?.length ? ` · 参考图 ${params.pageImages.length}` : ""}` +
+          `${i > 0 ? ` · 第 ${i + 1} 跳` : ""}`,
+      );
       return out;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
@@ -1089,6 +1123,8 @@ async function distillOneChunkWithRetry(params: {
         // 重试放在本层（隔 30 秒 × 3 次），整链那层关掉，不叠加
         chainRetry: false,
         chainOverride: params.chainOverride,
+        // 读图段 6 分钟（0926 用户令）；纯文字段不传，走 profile 默认
+        ...(params.ocrImages?.length ? { timeoutMs: KNOWLEDGE_CARD_OCR_CHUNK_TIMEOUT_MS } : {}),
         abortSignal: params.abortSignal,
         sourceText: params.chunk,
         imageUrls: params.imageUrls,
@@ -1334,6 +1370,7 @@ async function refineOnce(params: {
         params.detailLevel,
       ),
       timeoutMs: params.stage === "final" ? DISTILL_FINAL_REFINE_TIMEOUT_MS : distillRefineTimeoutMs(params.modelName),
+      chainOverride: knowledgeCardRefineChain(params.modelName),
       maxTokens: params.stage === "final" ? DISTILL_FINAL_MAX_TOKENS : undefined,
       // 坏内容当失败换下一家网关，而不是在这里默默保留原稿
       validate: (text) =>
@@ -1569,6 +1606,9 @@ export function buildPageAlignedChunks(
 }
 
 /** 短文一次直出（顶档）；长文按模型 profile 分段（中档）→ 合并 → 顶档统稿。（导出供分段失败回归用） */
+/** 0926 用户令：带扫描页读字图的段单跳超时 6 分钟（读图 + 提炼比纯文字重）；纯文字段仍按 profile */
+export const KNOWLEDGE_CARD_OCR_CHUNK_TIMEOUT_MS = 6 * 60_000;
+
 /** 0923 用户令：分段提炼每条路 3 个工位（两条路共 6 段并发）；统稿并发仍按 profile.concurrency */
 export const KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE = 3;
 
@@ -1782,6 +1822,8 @@ export function makeKnowledgeCardPageSelector(modelName: KnowledgeCardDistillMod
             chainOverride: fallbackChain,
             // 0923 热修：挑页要 JSON，OpenRouter 跳开 json_object（选 GLM 时这里是整条挑页链）
             jsonObject: true,
+            // 0926：用户消息只发挑页原话 + 目录页图，不套提炼外壳
+            plainUserContent: true,
             // 终审第五条：JSON 校验放进每一跳——新加坡回非 JSON 要在跳内判失败换下一跳，
             // 而不是整个 fallback 回来才发现；合法的 {"pages":[]} 是成功，降门槛放行
             minOutputChars: 2,
