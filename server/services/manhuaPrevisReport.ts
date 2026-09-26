@@ -14,6 +14,7 @@ import {
 } from "./manhuaPrevisWaterReport";
 import {
   previsCreatureSchema,
+  previsActorVisibleAtFrame,
   type ManhuaPrevisRequest,
 } from "../../shared/manhuaPrevis";
 import { PREVIS_BODY_BONES } from "../../shared/manhuaPrevisRig";
@@ -52,6 +53,7 @@ export const previsReportSchema = z
             contactError: z.number().finite().nonnegative().max(0.005),
             stanceDrift: z.number().finite().nonnegative().max(0.005),
             offscreenFrames: z.array(z.number().int().min(1).max(720)).max(720),
+            visibleFrames: z.array(z.number().int().min(1).max(720)).max(720).optional(),
           })
           .passthrough()
       )
@@ -246,6 +248,16 @@ export function validatePrevisReport(
       actor.offscreenFrames.some(frame => frame > report.frames)
     )
       throw new Error("白模关节检查未通过");
+    const expectedVisibleFrames = Array.from({ length: report.frames }, (_, i) => i + 1)
+      .filter(frame => previsActorVisibleAtFrame(spec.actors[index], frame));
+    if (spec.actors[index].visibleRanges &&
+        (actor.visibleFrames?.length !== expectedVisibleFrames.length ||
+         actor.visibleFrames.some((frame, i) => frame !== expectedVisibleFrames[i])))
+      throw new Error("角色在场逐帧报告缺失或与提交区间不一致");
+    if (!spec.actors[index].visibleRanges && actor.visibleFrames)
+      throw new Error("白模报告含未配置的在场帧");
+    if (actor.offscreenFrames.some(frame => !previsActorVisibleAtFrame(spec.actors[index], frame)))
+      throw new Error("离场角色不应计入出画报告");
     if (spec.actors[index].actions.some(action => action.kind === "limp_front_left")) {
       const samples = z.array(z.object({
         frame: z.number().int().positive(),
@@ -358,7 +370,7 @@ export function validatePrevisReport(
         stage.frame !== index + 1 ||
         Math.abs(stage.timeSec - time) > 1e-7 ||
         Math.abs(stage.progress - progress) > 1e-7 ||
-        stage.visibleFraction !== (progress > 0 ? 1 : 0)
+        stage.visibleFraction !== (progress > 0 && previsActorVisibleAtFrame(actor, index + 1) ? 1 : 0)
       )
         throw new Error("白模尾翼逐帧展开报告不一致");
     });

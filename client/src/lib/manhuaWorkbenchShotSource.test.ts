@@ -8,6 +8,9 @@ import * as plan from "@shared/manhuaEpisodeSegmentPlan";
 import * as layout from "@shared/manhuaSeedanceLayout";
 import * as dialogues from "@shared/manhuaShotDialoguePersist";
 import { buildWorkbenchShotsFromSegmentPlan } from "@shared/manhuaStoryDistill";
+import { isManhuaKeyartPixelLocked } from "@shared/manhuaAssetLockRegistry";
+import { isManhuaKeyartLookCurrent } from "@shared/manhuaKeyartLookState";
+import { manhuaShotKeyartState } from "./manhuaShotKeyartState";
 
 const source = readFileSync(
   new URL("../components/ManhuaScriptWorkbench.tsx", import.meta.url),
@@ -39,6 +42,60 @@ function memo(name: string) {
     compilerOptions: { target: ts.ScriptTarget.ES2022 },
   }).outputText;
 }
+
+function initializer(name: string) {
+  let expression = "";
+  function visit(node: ts.Node) {
+    if (ts.isVariableDeclaration(node) && node.name.getText(tree) === name && node.initializer)
+      expression = node.initializer.getText(tree);
+    ts.forEachChild(node, visit);
+  }
+  visit(tree);
+  if (!expression) throw new Error(`未找到生产状态：${name}`);
+  return ts.transpileModule(`(${expression})`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+}
+
+function currentShotKeyartGate() {
+  const names = new Set([
+    "keyartOutputUrl",
+    "isManhuaWorkbenchKeyartCurrent",
+    "manhuaShotKeyartInputOf",
+    "summarizeManhuaCurrentShotKeyarts",
+  ]);
+  const declarations: string[] = [];
+  for (const node of tree.statements) {
+    if (ts.isFunctionDeclaration(node) && node.name && names.has(node.name.text)) {
+      declarations.push(node.getText(tree).replace(/^export\s+/, ""));
+    }
+  }
+  expect(declarations).toHaveLength(names.size);
+  const js = ts.transpileModule(declarations.join("\n"), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  return runInNewContext(`${js}\nsummarizeManhuaCurrentShotKeyarts`, {
+    resolveKeyartShotIndex: workbench.resolveKeyartShotIndex,
+    isManhuaKeyartPixelLocked,
+    isManhuaKeyartLookCurrent,
+    manhuaShotKeyartState,
+  }) as (shots: Array<{ index: number }>, keyarts: Array<Record<string, unknown>>) => {
+    target: number;
+    present: number;
+    ready: number;
+    countReady: boolean;
+    pixelLocked: boolean;
+  };
+}
+
+const shotRows = (count: number) => Array.from({ length: count }, (_, i) => ({ index: i + 1 }));
+const lockedFrame = (index: number) => ({
+  id: `keyart-e01-s${String(index).padStart(2, "0")}-fixture`,
+  prompt: `镜${index}`,
+  outputUrl: `https://example.invalid/frame-${index}.png`,
+  imageMode: "edit",
+  refImageUrl: "https://example.invalid/scene.png",
+});
 
 function episode(
   count: number,
@@ -174,5 +231,61 @@ describe("工作台展示与真实编排使用同源分镜", () => {
     });
     expect(uiSegments).toEqual(actual);
     expect(uiSegments).toHaveLength(10);
+  });
+});
+
+describe("工作台逐镜静帧出片门禁", () => {
+  const gate = currentShotKeyartGate();
+
+  it("18镜只铺两张锁图仍显示2/18，出片门与阶段条都不放行", () => {
+    const result = gate(shotRows(18), [lockedFrame(1), lockedFrame(2)]);
+    expect(result).toMatchObject({ target: 18, present: 2, ready: 2, countReady: false, pixelLocked: true });
+    const stages = runInNewContext(memo("stageStrip"), {
+      blocks: [], focusEpisode: 1, episodeKeyarts: [lockedFrame(1), lockedFrame(2)],
+      episodeClips: [], activeKeyart: undefined, activeClip: undefined, legacyClip: undefined,
+      currentStillTarget: result.target, currentStillPresent: result.present,
+      stillsReadyEnough: result.countReady && result.pixelLocked,
+      MANHUA_FACTORY_STAGE_LABEL_ZH: studio.MANHUA_FACTORY_STAGE_LABEL_ZH,
+      blockByStage: () => undefined, manhuaClipQualityAllowsAssemble: () => false,
+      clipOutputUrl: () => undefined,
+    })() as Array<{ stage: string; has: boolean; label: string }>;
+    expect(stages.find((stage) => stage.stage === "keyart")).toMatchObject({ has: false });
+    expect(stages.find((stage) => stage.stage === "keyart")?.label).toContain("2/18");
+  });
+
+  it("旧稿真实13镜配13张现行锁图可通过，不按段数补虚数", () => {
+    expect(gate(shotRows(13), shotRows(13).map((shot) => lockedFrame(shot.index))))
+      .toMatchObject({ target: 13, present: 13, ready: 13, countReady: true, pixelLocked: true });
+  });
+
+  it("缺一镜不能拿同镜重复图或旧稿孤儿图凑数", () => {
+    const frames = shotRows(17).map((shot) => lockedFrame(shot.index));
+    frames.push({ ...lockedFrame(17), id: "keyart-e01-s17-extra" });
+    frames.push(lockedFrame(19));
+    expect(gate(shotRows(18), frames)).toMatchObject({ target: 18, present: 17, ready: 17, countReady: false });
+  });
+
+  it("有图但没垫图锁或来源过期不能算当前镜就绪", () => {
+    const stale = { ...lockedFrame(2), manhuaKeyartSourceState: { required: "new", generatedFor: "old", generatedUrl: lockedFrame(2).outputUrl } };
+    const result = gate(shotRows(3), [lockedFrame(1), stale, { ...lockedFrame(3), imageMode: "generate" }]);
+    expect(result).toMatchObject({ target: 3, present: 3, ready: 1, countReady: true, pixelLocked: false });
+  });
+
+  it("没有当前原稿镜头时不因遗留图放行", () => {
+    expect(gate([], [lockedFrame(1)])).toMatchObject({ target: 0, present: 0, ready: 0, countReady: false });
+  });
+
+  it("占位分镜即使配齐旧锁图也不得视为可出片", () => {
+    const result = gate(shotRows(3), shotRows(3).map((shot) => lockedFrame(shot.index)));
+    expect(result).toMatchObject({ countReady: true, pixelLocked: true });
+    const readyExpression = initializer("stillsReadyEnough");
+    const ready = (shotSourceIsFallback: boolean) => runInNewContext(readyExpression, {
+      shotSourceIsFallback,
+      stillsCountReady: result.countReady,
+      keyartsPixelLocked: result.pixelLocked,
+      staleLookStillCount: 0,
+    });
+    expect(ready(true)).toBe(false);
+    expect(ready(false)).toBe(true);
   });
 });

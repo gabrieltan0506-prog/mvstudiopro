@@ -185,6 +185,11 @@ export const previsActorSchema = z
     colorIndex: z.number().int().min(0).max(5).optional(),
     /** 仅标明对应的项目角色；不声称为无骨骼 GLB 自动蒙皮。 */
     assetRef: z.string().max(160).optional(),
+    /** 半开在场区间，边界对齐24fps；缺省表示整段在场。 */
+    visibleRanges: z.array(z.object({
+      startSec: z.number().finite().min(0).max(30),
+      endSec: z.number().finite().positive().max(30),
+    }).strict()).min(1).max(12).optional(),
     weapon: z.literal("practice_sword").optional(),
     motionRoute: z.array(previsMotionRouteNodeSchema).min(2).max(12).optional(),
     creature: previsCreatureSchema.optional(),
@@ -373,12 +378,21 @@ export const PREVIS_WATER_MAX_SEC = 8;
 /** 预算换算用的采样帧率（与 previsRenderCostUnits 一致） */
 export const PREVIS_BUDGET_FPS = 24;
 
-/** 该 spec 的渲染成本单位：帧数 × 角色数 */
+/** 保守容量单位：完整帧数 × 总角色数。在场隐藏尚未证明可降低端到端渲染开销。 */
 export function previsRenderCostUnits(spec: {
   durationSec: number;
-  actors: unknown[];
+  actors: readonly unknown[];
 }): number {
-  return Math.round(spec.durationSec * 24 * spec.actors.length);
+  return Math.round(spec.durationSec * PREVIS_BUDGET_FPS * spec.actors.length);
+}
+
+export function previsActorVisibleAtFrame(
+  actor: { visibleRanges?: readonly { startSec: number; endSec: number }[] },
+  frame: number,
+): boolean {
+  return !actor.visibleRanges || actor.visibleRanges.some(range =>
+    Math.round(range.startSec * PREVIS_BUDGET_FPS) < frame &&
+    frame <= Math.round(range.endSec * PREVIS_BUDGET_FPS));
 }
 
 /** 同角色数下、预算内允许的最长片长（秒），至少 2 秒 */
@@ -392,7 +406,7 @@ export function previsMaxDurationSec(
 
 /** 超预算时给一句能照做的中文；在预算内返回 null */
 export function previsCapacityIssueZh(
-  spec: { durationSec: number; actors: unknown[] },
+  spec: { durationSec: number; actors: readonly unknown[] },
   budget = PREVIS_RENDER_UNIT_BUDGET
 ): string | null {
   const units = previsRenderCostUnits(spec);
@@ -431,6 +445,27 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
     if (new Set(spec.actors.map(a => a.id)).size !== spec.actors.length)
       ctx.addIssue({ code: "custom", message: "角色编号不能重复" });
     spec.actors.forEach((actor, i) => {
+      actor.visibleRanges?.forEach((range, j) => {
+        if (range.endSec > spec.durationSec || range.startSec >= range.endSec ||
+            [range.startSec, range.endSec].some(t => Math.abs(t * PREVIS_BUDGET_FPS - Math.round(t * PREVIS_BUDGET_FPS)) > 1e-6) ||
+            (j > 0 && range.startSec < actor.visibleRanges![j - 1].endSec))
+          ctx.addIssue({ code: "custom", message: "角色在场区间须按24帧对齐、位于片长内，且顺序不重叠", path: ["actors", i, "visibleRanges", j] });
+      });
+      const visibleThrough = (startSec: number, endSec: number) =>
+        !actor.visibleRanges || actor.visibleRanges.some(range => range.startSec <= startSec + 1e-6 && range.endSec >= endSec - 1e-6);
+      if (actor.visibleRanges && (spec.piggyback && [spec.piggyback.carrierId, spec.piggyback.passengerId].includes(actor.id) || spec.waterEmergence?.events.some(event => event.actorId === actor.id)))
+        ctx.addIssue({ code: "custom", message: "背负和出水角色暂须整段在场", path: ["actors", i, "visibleRanges"] });
+      actor.actions.forEach((action, j) => {
+        if (!visibleThrough(action.startSec, action.endSec))
+          ctx.addIssue({ code: "custom", message: "动作须完整落在角色在场区间内", path: ["actors", i, "actions", j] });
+        const target = action.kind === "look" ? spec.actors.find(other => other.id === action.lookAtId) : undefined;
+        if (target?.visibleRanges && !target.visibleRanges.some(range => range.startSec <= action.startSec + 1e-6 && range.endSec >= action.endSec - 1e-6))
+          ctx.addIssue({ code: "custom", message: "注视目标须在动作期间持续在场", path: ["actors", i, "actions", j] });
+      });
+      actor.riggedModel?.performance?.cues.forEach((cue, j) => {
+        if (!visibleThrough(cue.startSec, cue.endSec))
+          ctx.addIssue({ code: "custom", message: "表演须完整落在角色在场区间内", path: ["actors", i, "riggedModel", "performance", "cues", j] });
+      });
       if (
         actor.creature &&
         (actor.shape !== "horse" ||
@@ -736,6 +771,9 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
       const path = ["interactions", index];
       const actor = spec.actors.find(a => a.id === event.actorId);
       const target = spec.actors.find(a => a.id === event.targetActorId);
+      for (const participant of [actor, target])
+        if (participant?.visibleRanges && !participant.visibleRanges.some(range => range.startSec <= event.startSec + 1e-6 && range.endSec >= event.endSec - 1e-6))
+          ctx.addIssue({ code: "custom", message: "双人事件双方须在整个接触区间持续在场", path });
       if (
         !actor ||
         !target ||
@@ -974,7 +1012,7 @@ export function formatPrevisMotionGuide(spec: ManhuaPrevisSpec): string {
     ),
     ...spec.actors.map(
       (a, index) =>
-        `白模角色${index + 1}对应${a.nameZh}${a.assetRef ? `（${a.assetRef}）` : ""}：${spec.waterEmergence ? "按下方出水时间与竖直轨迹" : a.actions.length ? a.actions.map(x => `${x.startSec}—${x.endSec}秒${PREVIS_ACTION_LABELS[x.kind]}`).join("；") : "按参考站位和步态"}。`
+        `白模角色${index + 1}对应${a.nameZh}${a.assetRef ? `（${a.assetRef}）` : ""}${a.visibleRanges ? `，仅在${a.visibleRanges.map(r => `${r.startSec}—${r.endSec}秒`).join("、")}在场，其他时间不得出镜` : ""}：${spec.waterEmergence ? "按下方出水时间与竖直轨迹" : a.actions.length ? a.actions.map(x => `${x.startSec}—${x.endSec}秒${PREVIS_ACTION_LABELS[x.kind]}`).join("；") : "按参考站位和步态"}。`
     ),
     ...spec.actors
       .filter(a => a.motionRoute)

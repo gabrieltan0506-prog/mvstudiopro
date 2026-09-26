@@ -52,6 +52,20 @@ function fixture() {
   return { spec, report };
 }
 describe("白模报告双向动作契约", () => {
+  it("在场窗口须逐帧对齐，离场帧不得冒充出画或在场", () => {
+    const f = fixture();
+    delete f.spec.interactions;
+    f.spec.actors[0].visibleRanges = [{ startSec: 0, endSec: 1 }];
+    const { interactions: _, ...report } = f.report;
+    const actor = report.actors[0] as { visibleFrames?: number[]; offscreenFrames: number[] };
+    actor.visibleFrames = Array.from({ length: 24 }, (_, i) => i + 1);
+    expect(validatePrevisReport(report, f.spec)).toEqual(report);
+    actor.visibleFrames[23] = 25;
+    expect(() => validatePrevisReport(report, f.spec)).toThrow(/在场逐帧/);
+    actor.visibleFrames[23] = 24;
+    actor.offscreenFrames = [25];
+    expect(() => validatePrevisReport(report, f.spec)).toThrow(/离场角色/);
+  });
   it("读取真实接触坐标并保留报告字段", () => {
     const f = fixture();
     expect(validatePrevisReport(f.report, f.spec)).toEqual(f.report);

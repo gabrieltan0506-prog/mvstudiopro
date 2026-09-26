@@ -643,7 +643,11 @@ def import_rigged_model(local_path, actor_id, bone_map=None, forward_axis="-Y", 
         # glTF导入器会创建骨骼显示辅助体；只排除真正被custom_shape引用的对象，不按名字猜。
         objects = [o for o in bpy.context.scene.objects if o not in before]
         rigs = [o for o in objects if o.type == "ARMATURE"]
-        helpers = {b.custom_shape for r in rigs for b in r.pose.bones if b.custom_shape}
+        helpers = {b.custom_shape for r in rigs for b in r.pose.bones if b.custom_shape is not None}
+        # glTF 的骨骼显示辅助体不是角色蒙皮；不能在离场窗口外漏进画面。
+        for helper in helpers:
+            helper.hide_render = True
+            helper.hide_viewport = True
         objects = [o for o in objects if o not in helpers]
         meshes = [o for o in objects if o.type == "MESH"]
         if len(rigs) != 1 or not meshes:
