@@ -55,6 +55,16 @@ describe("manhuaWriterExpandRun", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("优秀档 Qwen 剧本候选保持 medium 推理档", async () => {
+    fetchMock.mockResolvedValueOnce(chatResponse("完整测试剧本"));
+    const { runManhuaWriterExpand } = await import("./manhuaWriterExpandRun.js");
+    await runManhuaWriterExpand({ prompt: "候选剧本", tier: "excellent", episodeCount: 1 });
+    const body = JSON.parse(String(fetchMock.mock.calls[0]![1]?.body));
+    expect(body.model).toBe("qwen3.8-max");
+    expect(body.reasoning_effort).toBe("medium");
+    expect(body).not.toHaveProperty("thinking_budget");
+  });
+
   it("fails outright when every channel is truncated", async () => {
     fetchMock.mockResolvedValue(chatResponse("half a script...", { finishReason: "length" }));
     const { runManhuaWriterExpand, MANHUA_WRITER_EXPAND_CAPACITY_MESSAGE } = await import(

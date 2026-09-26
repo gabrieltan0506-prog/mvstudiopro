@@ -498,6 +498,8 @@ type Props = {
   onOpenAdvisorIssue?: (issueId?: string) => void;
   /** 打开创作顾问并直接定位剧本模板优化；只打开，不自动提问或扣点。 */
   onOpenAdvisorTemplates?: () => void;
+  /** 剧本页独立模板改写入口；创作顾问只保留可选辅助。 */
+  rewriteWorkspace?: ReactNode;
   /**
    * 全部顾问问题（含阻断/提醒分级），用来在主任务条下面集中显示阻断卡。
    * 只读消费，判据仍在 `manhuaAdvisorProject`，这里不重算。
@@ -1214,6 +1216,7 @@ export default function ManhuaScriptWorkbench({
   onAdvisorSignalsChange,
   advisorTopIssue = null,
   onOpenAdvisorTemplates,
+  rewriteWorkspace,
   onOpenAdvisorIssue,
   advisorIssues,
   onPreviewClipOutbound,
@@ -1364,6 +1367,7 @@ export default function ManhuaScriptWorkbench({
   };
   const activeArtStyleId: ManhuaArtStyleId = normalizeManhuaArtStyleId(artStyleId);
   const [shotIndex, setShotIndex] = useState(0);
+  const [outlineTemplateOpen, setOutlineTemplateOpen] = useState(false);
   const [clipPromptReviewOpen, setClipPromptReviewOpen] = useState(false);
   /**
    * 每段的「实际出站内容」。按段按需计算——展开时一次性给所有段算会重复续签、
@@ -5324,16 +5328,27 @@ export default function ManhuaScriptWorkbench({
                   </>
                 ) : null}
               </div>
-              {onOpenAdvisorTemplates ? (
-                <button
-                  type="button"
-                  data-manhua-outline-ai-optimize
-                  onClick={onOpenAdvisorTemplates}
-                  className="shrink-0 rounded-xl border border-cyan-300/45 bg-cyan-500/10 px-4 py-2 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500/20"
-                >
-                  AI 优化梗概
-                </button>
+              {onOpenAdvisorTemplates || rewriteWorkspace ? (
+                <div className="mt-4 flex flex-wrap items-start gap-2">
+                  {onOpenAdvisorTemplates ? <button
+                    type="button"
+                    data-manhua-outline-ai-optimize
+                    onClick={onOpenAdvisorTemplates}
+                    className="shrink-0 rounded-xl border border-cyan-300/45 bg-cyan-500/10 px-4 py-2 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500/20"
+                  >
+                    AI 优化梗概
+                  </button> : null}
+                  {rewriteWorkspace ? <button
+                    type="button"
+                    data-manhua-outline-template-entry
+                    aria-expanded={outlineTemplateOpen}
+                    aria-controls="manhua-outline-template-panel"
+                    onClick={() => setOutlineTemplateOpen(value => !value)}
+                    className="min-h-10 rounded-xl border border-violet-300/50 bg-violet-500/15 px-4 py-2 text-xs font-semibold text-violet-100 transition hover:bg-violet-500/25"
+                  >剧情增强模板 · 自选付费改写</button> : null}
+                </div>
               ) : null}
+              {rewriteWorkspace ? <div id="manhua-outline-template-panel" data-manhua-outline-template-panel hidden={!outlineTemplateOpen} className="mt-3">{rewriteWorkspace}</div> : null}
             </div>
             {outlineEpisodes.length ? (
               <div className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-3" aria-label="分集卡片" data-manhua-episode-grid>

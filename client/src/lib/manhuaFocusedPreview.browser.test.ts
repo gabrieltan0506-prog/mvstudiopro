@@ -22,7 +22,7 @@ beforeAll(async () => {
       import {buildManhuaAutoSegmentBinding} from '@shared/manhuaAutoSegment';
       const f=globalThis.fixture={updates:[],focus:[],review:0,calls:[],advisor:0};
       f.currentBinding=blocks=>buildManhuaAutoSegmentBinding(1,groupShotsIntoSegments(resolveShotsForEpisodeKeyarts(blocks,1),{videoModel:'seedance-2.5'})[0],'seedance-2.5');
-      function App(){const [canRun,setCanRun]=useState(true);f.setCanRun=setCanRun;const [phase,setPhase]=useState("storyboard");const [ep,setEp]=useState(1);f.setPhase=setPhase;f.episode=ep;const [blocks,setBlocks]=useState([1,2].map(n=>({...defaultCanvasBlock('image',0,0),id:'keyart-e01-s0'+n+'-preview',episodeIndex:1,outputUrl:n===1?'https://test.invalid/shot-1.png':undefined,prompt:'第'+n+'镜，医馆对话'})));f.blocks=blocks;f.setBlocks=setBlocks;return <TooltipProvider><ManhuaScriptWorkbench canRun={canRun} blocks={blocks} videoModel='seedance-2.5' topic='墨屠守护阿菁' episodeCount={13} focusEpisode={ep} onFocusEpisode={setEp} outlineEpisodes={Array.from({length:13},(_,i)=>({index:i+1,title:'集卡'+(i+1),body:'原文剧情'+(i+1),endHook:'片尾悬念'+(i+1)}))} characterIds={[]} propIds={[]} outlineConfirmed={true} workflowPhase={phase} onWorkflowPhaseChange={setPhase} onGenerateAllEpisodeKeyarts={()=>f.calls.push("generate-keyarts")} onOpenAdvisorTemplates={()=>f.advisor++} compactUi={true} previewCanvas={<div data-test-canvas>原节点画布</div>} finalVideoUrl='https://test.invalid/old-final.mp4' onFocusBlock={id=>f.focus.push(id)} onReviewClipPromptsOnCanvas={()=>f.review++} onUpdateClipAudioStudio={(id,studio)=>{f.updates.push(id);setBlocks(rows=>rows.map(b=>b.id===id?{...b,audioStudio:studio}:b));}} /></TooltipProvider>;}
+      function App(){const [canRun,setCanRun]=useState(true);f.setCanRun=setCanRun;const [phase,setPhase]=useState("storyboard");const [ep,setEp]=useState(1);f.setPhase=setPhase;f.episode=ep;const [blocks,setBlocks]=useState([1,2].map(n=>({...defaultCanvasBlock('image',0,0),id:'keyart-e01-s0'+n+'-preview',episodeIndex:1,outputUrl:n===1?'https://test.invalid/shot-1.png':undefined,prompt:'第'+n+'镜，医馆对话'})));f.blocks=blocks;f.setBlocks=setBlocks;return <TooltipProvider><ManhuaScriptWorkbench canRun={canRun} blocks={blocks} videoModel='seedance-2.5' topic='墨屠守护阿菁' episodeCount={13} focusEpisode={ep} onFocusEpisode={setEp} outlineEpisodes={Array.from({length:13},(_,i)=>({index:i+1,title:'集卡'+(i+1),body:'原文剧情'+(i+1),endHook:'片尾悬念'+(i+1)}))} characterIds={[]} propIds={[]} outlineConfirmed={true} workflowPhase={phase} onWorkflowPhaseChange={setPhase} onGenerateAllEpisodeKeyarts={()=>f.calls.push("generate-keyarts")} onOpenAdvisorTemplates={()=>f.advisor++} rewriteWorkspace={<div data-test-rewrite-workspace>剧本页独立模板工作区</div>} compactUi={true} previewCanvas={<div data-test-canvas>原节点画布</div>} finalVideoUrl='https://test.invalid/old-final.mp4' onFocusBlock={id=>f.focus.push(id)} onReviewClipPromptsOnCanvas={()=>f.review++} onUpdateClipAudioStudio={(id,studio)=>{f.updates.push(id);setBlocks(rows=>rows.map(b=>b.id===id?{...b,audioStudio:studio}:b));}} /></TooltipProvider>;}
       createRoot(document.getElementById('root')).render(<App/>);
     `,
     },
@@ -112,6 +112,13 @@ it("分镜默认显示当前镜，选镜不打开高级画布且不借旧片旧�
     }
     expect(await page.$$('[data-manhua-episode-grid]')).toHaveLength(1);
     expect(await page.$$('[data-manhua-outline-ai-optimize]')).toHaveLength(1);
+    expect(await page.$$('[data-manhua-outline-template-entry]')).toHaveLength(1);
+    expect(await page.$eval('[data-manhua-outline-template-entry]', e => e.getAttribute('aria-expanded'))).toBe('false');
+    await page.click('[data-manhua-outline-template-entry]');
+    expect(await page.$eval('[data-manhua-outline-template-entry]', e => e.getAttribute('aria-expanded'))).toBe('true');
+    expect(await page.$eval('[data-manhua-outline-template-panel]', e => (e as HTMLElement).hidden)).toBe(false);
+    expect(await page.$eval('[data-test-rewrite-workspace]', e => e.textContent)).toContain('独立模板工作区');
+    expect(await page.evaluate(() => (window as any).fixture.advisor)).toBe(0);
     await page.click('[data-manhua-outline-ai-optimize]');
     expect(await page.evaluate(()=>(window as any).fixture.advisor)).toBe(1);
     await page.waitForSelector('[data-manhua-episode-card="13"]');
