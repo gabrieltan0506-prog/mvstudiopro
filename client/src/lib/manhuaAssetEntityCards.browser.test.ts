@@ -111,7 +111,8 @@ beforeAll(async () => {
         import { TooltipProvider } from './client/src/components/ui/tooltip';
         import { defaultCanvasBlock } from './client/src/lib/canvasTypes';
         import ManhuaScriptWorkbench from './client/src/components/ManhuaScriptWorkbench';
-        globalThis.fixture = { keyart: 0, openedIssue: undefined, dialogueUpdate: undefined, descriptionUpdate: undefined };
+        globalThis.fixture = { keyart: 0, shotKeyart: 0, batchKeyart: 0, confirmedText: '', openedIssue: undefined, dialogueUpdate: undefined, descriptionUpdate: undefined };
+        globalThis.confirm = (message) => { globalThis.fixture.confirmedText = String(message); return true; };
         const refs = [
           ...${JSON.stringify(REFS)},
           { id: 'mo-primary', url: 'data:image/png;base64,iVBORw0KGgo=', role: 'character', source: 'generated', labelZh: '墨菁-定妆', refDuty: 'identity', claimedAnchorIds: ['wa_char_mo'], primaryBindings: [{ anchorId: 'wa_char_mo', duty: 'identity' }] },
@@ -156,8 +157,8 @@ beforeAll(async () => {
               onSelectDirectionSceneCard={() => {}}
               customAssetRefs={refs} assetCanon={canon}
               onUploadCustomAssets={async () => {}}
-              onGenerateKeyartShot={async () => { globalThis.fixture.keyart += 1; }}
-              onGenerateAllEpisodeKeyarts={async () => { globalThis.fixture.keyart += 1; }}
+              onGenerateKeyartShot={async () => { globalThis.fixture.keyart += 1; globalThis.fixture.shotKeyart += 1; }}
+              onGenerateAllEpisodeKeyarts={async () => { globalThis.fixture.keyart += 1; globalThis.fixture.batchKeyart += 1; }}
               onGenerateAsset3d={async () => {}}
               onGenerateSceneWorld={async () => {}}
               onUpdateClipPrompt={(id,prompt) => { globalThis.fixture.updatedClip={id,prompt}; }}
@@ -636,7 +637,7 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
    * 让位逻辑一旦失效，同屏就会出现第二个。变异验证：把工具条的让位判断改成恒真 → 本条转红。
    */
   it("关掉简洁模式的分镜阶段（工具条+面板都具备条件）同屏仍然只有一个入口", async () => {
-    // 主步骤按钮只有在真实分镜表存在时才进入「当前镜静帧」状态；
+    // 主步骤按钮只有在真实分镜表存在时才进入补齐本集静帧状态；
     // 用导演表夹具验证实际用户路径，避免空夹具把按钮留在别的阶段。
     const { page, close } = await mountStoryboard(true);
     const seen = await page.evaluate(() => {
@@ -652,10 +653,21 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
     expect(seen.entries).toEqual(["step"]);
     expect(await page.$eval('[data-manhua-action="ashuo-step-generate"]', (button) =>
       (button.textContent || "").replace(/\s+/g, ""),
-    )).toBe("生成当前镜静帧");
+    )).toBe("补齐本集缺失静帧（2张）");
     await page.click('[data-manhua-action="ashuo-step-generate"]');
     await page.waitForFunction(() => (globalThis as any).fixture.keyart === 1);
-    expect(await page.evaluate(() => (globalThis as any).fixture.keyart)).toBe(1);
+    expect(await page.evaluate(() => (globalThis as any).fixture)).toMatchObject({
+      keyart: 1,
+      shotKeyart: 0,
+      batchKeyart: 1,
+      confirmedText: expect.stringContaining("只补缺失的 2 张，按张计费"),
+    });
+    await page.evaluate(() => { globalThis.confirm = () => false; });
+    await page.click('[data-manhua-action="ashuo-step-generate"]');
+    expect(await page.evaluate(() => (globalThis as any).fixture.batchKeyart)).toBe(1);
+    await page.click('[data-manhua-action="generate-current-keyart"]');
+    await page.waitForFunction(() => (globalThis as any).fixture.shotKeyart === 1);
+    expect(await page.evaluate(() => (globalThis as any).fixture.batchKeyart)).toBe(1);
     await close();
   }, 180_000);
 
