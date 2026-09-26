@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createManhuaPrevisStudio } from "../../shared/manhuaPrevis";
 import {
@@ -7,6 +7,56 @@ import {
   runPrevisProcess,
   type PrevisRenderReport,
 } from "./manhuaPrevisRender";
+import { validatePrevisReport } from "./manhuaPrevisReport";
+
+describe.skipIf(!process.env.PREVIS_BLENDER_TEST)("角色在场窗口真实场景", () => {
+  it("相邻角色切换保留整段帧数，场外主体网格不可见", async () => {
+    const spec = createManhuaPrevisStudio(2, "11111111-1111-4111-8111-111111111111").spec;
+    spec.actors[0].actions = [];
+    spec.actors[0].weapon = "practice_sword";
+    spec.actors[0].visibleRanges = [{ startSec: 0, endSec: 1 }];
+    spec.actors.push({ ...structuredClone(spec.actors[0]), id: "actor-2", nameZh: "第二人", shape: "horse", weapon: undefined, creature: { preset: "four_tail_black_wings", transformStartSec: 0.25, transformEndSec: 1.5 }, start: [0.5, 0], end: [0.5, 0], visibleRanges: [{ startSec: 1, endSec: 2 }] });
+    const root = process.env.PREVIS_TEST_OUTPUT || "/private/tmp/manhua-previs-onstage";
+    await mkdir(root, { recursive: true });
+    const dir = await mkdtemp(path.join(root, "take-"));
+    await writeFile(path.join(dir, "spec.json"), JSON.stringify(spec));
+    await runPrevisProcess(process.env.PREVIS_BLENDER_TEST!, [
+      "--background", "--factory-startup", "--disable-autoexec", "--threads", "2",
+      "--python-exit-code", "1", "--python", path.resolve("server/scripts/render-manhua-previs.py"),
+      "--", path.join(dir, "spec.json"), dir,
+    ], AbortSignal.timeout(120_000));
+    const report = JSON.parse(await readFile(path.join(dir, "report.json"), "utf8"));
+    expect(validatePrevisReport(report, spec)).toEqual(report);
+    expect(report.frames).toBe(48);
+    expect(report.actors.map((actor: { visibleFrames: number[] }) => [actor.visibleFrames[0], actor.visibleFrames.at(-1)])).toEqual([[1, 24], [25, 48]]);
+    console.log("PREVIS_ONSTAGE_EVIDENCE", dir);
+  }, 150_000);
+  it("服务端产出48帧可解码整段视频并保存同一份在场报告", async () => {
+    const spec = createManhuaPrevisStudio(2, "11111111-1111-4111-8111-111111111111").spec;
+    spec.actors[0].actions = [];
+    spec.actors[0].visibleRanges = [{ startSec: 0, endSec: 1 }];
+    spec.actors.push({ ...structuredClone(spec.actors[0]), id: "actor-2", nameZh: "第二人", start: [0.5, 0], end: [0.5, 0], visibleRanges: [{ startSec: 1, endSec: 2 }] });
+    const root = process.env.PREVIS_TEST_OUTPUT || "/private/tmp/manhua-previs-onstage";
+    await mkdir(root, { recursive: true });
+    const dir = await mkdtemp(path.join(root, "video-"));
+    const result = await renderManhuaPrevis({
+      requestId: "33333333-3333-4333-8333-333333333333",
+      scopeId: "11111111-1111-4111-8111-111111111111",
+      clipId: "clip-onstage", spec,
+    }, "7", { signal: AbortSignal.timeout(150_000) }, {
+      blender: process.env.PREVIS_BLENDER_TEST!, useXvfb: process.platform === "linux", run: runPrevisProcess,
+      upload: async ({ objectName, buffer }) => {
+        await writeFile(path.join(dir, path.basename(objectName)), buffer);
+        return { bucket: "test-bucket", objectName, gcsUri: `gs://test-bucket/${objectName}` };
+      },
+    });
+    expect(result.report.frames).toBe(48);
+    expect(result.report.actors.map(actor => actor.visibleFrames?.length)).toEqual([24, 24]);
+    expect(result.bytes).toBeGreaterThan(1000);
+    expect((await readFile(path.join(dir, "preview.mp4"))).length).toBe(result.bytes);
+    console.log("PREVIS_ONSTAGE_VIDEO_EVIDENCE", dir);
+  }, 180_000);
+});
 
 // 显式 opt-in，只跑本机渲染；存储替身写临时验收目录，不访问任何生产凭证。
 describe.skipIf(!process.env.PREVIS_BLENDER_TEST)("白模真实渲染", () => {
