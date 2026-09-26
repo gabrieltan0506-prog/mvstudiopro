@@ -3116,6 +3116,47 @@ slow dolly in, soft rain, trembling hand
     }
   });
 
+  it("补齐已确认分镜只生成缺图，不重跑未完成的故事和角色节点", async () => {
+    const spawned = spawnManhuaDramaStudio({ topic: "坊市一掌", episodeIndex: 1 });
+    const approvedShots = Array.from({ length: 18 }, (_, index) => `${index + 1}. 第 ${index + 1} 镜：阿菁与墨屠在坊市对峙曹三`).join("\n");
+    const blocks = spawned.blocks.map((block) => {
+      if (block.id.startsWith("story-") || block.id.startsWith("beats-")) {
+        return { ...block, prompt: approvedShots };
+      }
+      if (block.id.startsWith("keyart-")) {
+        return { ...block, status: "done" as const, outputUrl: "https://cdn.example/locked-first.png", refImageUrl: "https://cdn.example/pad.png", imageMode: "edit" as const };
+      }
+      return block;
+    });
+    expect(countExpectedManhuaKeyartShots(blocks, 1)).toBe(18);
+    const spy = vi.spyOn(canvasRunBlock, "runCanvasBlock").mockImplementation(async (_deps, block) => {
+      if (!block.id.startsWith("keyart-")) throw new Error(`上游节点被误跑：${block.id}`);
+      return { outputUrl: `https://cdn.example/${block.id}.png` };
+    });
+    try {
+      const result = await runManhuaDramaFactoryPipeline({
+        deps: { optimizeCopy: async () => "" }, blocks, edges: spawned.edges,
+        episodeIndex: 1, untilStage: "keyart", keyartOnlyFromConfirmedShots: true,
+        skipDone: true, maxRetries: 0,
+      });
+      expect(result.errors).toEqual([]);
+      expect(spy.mock.calls).toHaveLength(17);
+      expect(spy.mock.calls.every(([, block]) => block.id.startsWith("keyart-"))).toBe(true);
+      expect(queuedManhuaKeyartBlocks(result.blocks, 1)).toHaveLength(18);
+      expect(result.blocks.find((block) => block.id.startsWith("story-"))?.status).toBe("idle");
+      for (const stage of ["story-", "beats-"]) {
+        const before = blocks.find((block) => block.id.startsWith(stage));
+        const after = result.blocks.find((block) => block.id.startsWith(stage));
+        expect(after?.prompt).toBe(before?.prompt);
+        expect(after?.outputText).toBe(before?.outputText);
+        expect(after?.status).toBe(before?.status);
+      }
+      expect(result.blocks.find((block) => block.id.startsWith("keyart-") && resolveKeyartShotIndex(block.id, block.prompt) === 1)?.outputUrl).toBe("https://cdn.example/locked-first.png");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("prefs refresh keeps existing keyart pad when new plan has no base", () => {
     const { blocks } = spawnManhuaDramaStudio({
       topic: "江湖刀客雨夜客栈",

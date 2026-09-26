@@ -169,6 +169,12 @@ export function ManhuaPrevisStudioView({
   const [preview, setPreview] = useState<Result | null>(null);
   const previewVideo = useRef<HTMLVideoElement>(null);
   const [previewTime, setPreviewTime] = useState(0);
+  const [reviewedRequestId, setReviewedRequestId] = useState("");
+  const [reviewedFrames, setReviewedFrames] = useState<number[]>([]);
+  const [frameReviewConfirmed, setFrameReviewConfirmed] = useState(false);
+  const [normalSpeedConfirmed, setNormalSpeedConfirmed] = useState(false);
+  const [normalSpeedPlayed, setNormalSpeedPlayed] = useState(false);
+  const normalPlaybackStarted = useRef(false);
   const [busy, setBusy] = useState(false);
   // 0917 PR-D：服务端连续查不到原编号时给一个可放弃的出口，别让用户永远卡在「确认原请求」。
   // 判据是「连续查不到满 10 分钟」——入队成功的任务最迟几秒内就查得到，十分钟仍为空说明这单没建成。
@@ -304,6 +310,12 @@ export function ManhuaPrevisStudioView({
         return;
       }
       setPreview({ ...result, spec: response.params.spec });
+      setReviewedRequestId(response.params.requestId);
+      setReviewedFrames([]);
+      setFrameReviewConfirmed(false);
+      setNormalSpeedConfirmed(false);
+      setNormalSpeedPlayed(false);
+      normalPlaybackStarted.current = false;
       const old = current.studio.history.find(t => t.jobId === response.jobId);
       const take = {
         jobId: response.jobId,
@@ -588,6 +600,17 @@ export function ManhuaPrevisStudioView({
       );
       return;
     }
+    if (
+      preview?.requestId !== take.requestId ||
+      reviewedRequestId !== take.requestId ||
+      reviewedFrames.length !== Math.round(take.durationSec * 24) ||
+      !frameReviewConfirmed ||
+      !normalSpeedPlayed ||
+      !normalSpeedConfirmed
+    ) {
+      setError("请先预览这条白模，逐帧检查并按正常速度复核后，再采用为本段参考。未审候选和旧参考均保留。");
+      return;
+    }
     const old = block.manhuaSegmentRefs?.previs;
     const reference: ManhuaSegmentReferenceEntry = {
       url: take.url,
@@ -617,6 +640,7 @@ export function ManhuaPrevisStudioView({
       )
     )
       return;
+    setError("");
     setAdoptedJobId(take.jobId);
     setStatus("已采用为本段白模参考，旧参考保留；尚未验证最终生成片跟随质量");
   }
@@ -2051,7 +2075,31 @@ export function ManhuaPrevisStudioView({
         <div>
           <video key={preview.requestId} ref={previewVideo} controls src={manhuaPrevisMediaUrl(preview.url)} className="max-h-80 w-full"
             onTimeUpdate={event => setPreviewTime(event.currentTarget.currentTime)}
-            onLoadedMetadata={() => setPreviewTime(0)} />
+            onLoadedMetadata={() => setPreviewTime(0)}
+            onPlay={event => {
+              if (event.currentTarget.playbackRate !== 1) normalPlaybackStarted.current = false;
+              else if (event.currentTarget.currentTime <= 1 / 24) normalPlaybackStarted.current = true;
+            }}
+            onSeeking={() => {
+              if (normalPlaybackStarted.current) {
+                normalPlaybackStarted.current = false;
+                setNormalSpeedPlayed(false);
+                setNormalSpeedConfirmed(false);
+              }
+            }}
+            onRateChange={event => {
+              if (event.currentTarget.playbackRate !== 1) {
+                normalPlaybackStarted.current = false;
+                setNormalSpeedPlayed(false);
+                setNormalSpeedConfirmed(false);
+              }
+            }}
+            onEnded={event => {
+              if (normalPlaybackStarted.current && event.currentTarget.playbackRate === 1 && event.currentTarget.currentTime >= preview.durationSec - 1 / 24 - 0.01) {
+                setNormalSpeedPlayed(true);
+              }
+              normalPlaybackStarted.current = false;
+            }} />
           <div data-previs-preview-controls className="flex flex-wrap items-center gap-2 py-2 text-xs text-white/80">
             <span>定位问题：{previewTime.toFixed(2)} 秒</span>
             {[-1, 1].map(direction => (
@@ -2081,6 +2129,48 @@ export function ManhuaPrevisStudioView({
             {preview.report?.warnings?.join("；") ||
               "请检查动作节拍、遮挡和接触；技术检查不等于表演质量通过。"}
           </p>
+          <div data-previs-review-gate className="space-y-1 rounded border border-amber-200/25 p-2 text-xs text-amber-50">
+            <p>本次审片仅对应当前预览。逐帧记录问题帧号和修正结果，再按正常速度播放检查动作节奏；有未解决问题时先修改并重新渲染。</p>
+            <p data-previs-reviewed-frames>已检查 {reviewedFrames.length}/{Math.round(preview.durationSec * 24)} 帧（24 帧/秒）</p>
+            <button type="button" className={button} onClick={() => {
+              const video = previewVideo.current;
+              if (!video || video.readyState < 2 || video.seeking) {
+                setError("当前帧尚未加载，请等待画面显示后再标记审片。");
+                return;
+              }
+              video.pause();
+              const total = Math.round(preview.durationSec * 24);
+              if (video.ended || (Number.isFinite(video.duration) && video.currentTime >= video.duration - 0.001)) {
+                setError("已到片尾，请用“上一帧”回到最后一帧画面，再标记审片。");
+                return;
+              }
+              const frame = Math.max(0, Math.min(total - 1, Math.floor(video.currentTime * 24 + 0.001)));
+              setReviewedFrames(current => current.includes(frame) ? current : [...current, frame]);
+              setError("");
+              if (frame + 1 < total) video.currentTime = (frame + 1) / 24;
+              setPreviewTime(video.currentTime);
+            }}>确认当前帧并看下一帧</button>
+            <label className="flex items-start gap-2">
+              <input type="checkbox" checked={frameReviewConfirmed} disabled={reviewedFrames.length !== Math.round(preview.durationSec * 24)} onChange={event => setFrameReviewConfirmed(event.target.checked)} />
+              我已记录并处理本次白模的人数、站位、接触与穿模问题
+            </label>
+            <button type="button" className={button} onClick={() => {
+              const video = previewVideo.current;
+              if (!video || video.readyState < 2) {
+                setError("白模画面尚未加载，暂不能常速播放。");
+                return;
+              }
+              video.pause();
+              video.currentTime = 0;
+              video.playbackRate = 1;
+              setError("");
+              void video.play().catch(() => setError("播放未开始，请在预览播放器中从头播放。"));
+            }}>从头常速播放</button>
+            <label className="flex items-start gap-2">
+              <input type="checkbox" checked={normalSpeedConfirmed} disabled={!normalSpeedPlayed} onChange={event => setNormalSpeedConfirmed(event.target.checked)} />
+              我已从头到尾按正常速度播放本次白模，确认动作节奏和切镜连续性{normalSpeedPlayed ? "（已播放）" : "（请从头播放至结束）"}
+            </label>
+          </div>
         </div>
       )}
       {studio.history.map(take => (

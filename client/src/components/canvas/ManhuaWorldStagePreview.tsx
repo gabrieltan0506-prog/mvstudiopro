@@ -136,7 +136,7 @@ export function buildSrcDoc(config: StageSceneConfig): string {
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net blob:; worker-src blob:; connect-src https: blob: data:; img-src https: data: blob:; style-src 'unsafe-inline';">
 <style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1018;color:#cfe;font:12px system-ui}#msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:12px;pointer-events:none}canvas{display:block}</style>
 <script type="importmap">${escapeForScript(JSON.stringify({ imports: { three: THREE_URL, "three/addons/": THREE_ADDONS_URL, "@sparkjsdev/spark": SPARK_URL } }))}</script>
-</head><body><div id="msg">正在加载渲染器…</div>
+</head><body><div id="msg">正在打开 3D 场景…</div>
 <script type="module">
 const CONFIG = ${payload};
 const msg = document.getElementById("msg");
@@ -148,7 +148,7 @@ try {
   ({ GLTFLoader } = await import("three/addons/loaders/GLTFLoader.js"));
   ({ SplatMesh } = await import("@sparkjsdev/spark"));
 } catch (e) {
-  fail("3D 世界预览需要加载渲染器（three.js / SparkJS 拉取失败：" + (e && e.message ? e.message : "网络受限") + "）");
+  fail("3D 场景暂时无法打开，请稍后重试");
 }
 if (THREE && SplatMesh) {
   try {
@@ -164,7 +164,9 @@ if (THREE && SplatMesh) {
     const sun = new THREE.DirectionalLight(0xffffff, 1.0); sun.position.set(3, -5, 8); scene.add(sun);
     const grid = new THREE.GridHelper(20, 20, 0x2a5a6a, 0x1a3a44); grid.rotation.x = Math.PI / 2; scene.add(grid);
 
+    let activeRig = CONFIG.initialCamera;
     const applyCamera = (rig) => {
+      activeRig = rig;
       camera.position.set(rig.position[0], rig.position[1], rig.position[2]);
       camera.lookAt(rig.target[0], rig.target[1], rig.target[2]);
       // 35mm 全画幅等效：vfov = 2·atan(12 / lens)
@@ -172,6 +174,40 @@ if (THREE && SplatMesh) {
       camera.updateProjectionMatrix();
     };
     applyCamera(CONFIG.initialCamera);
+    // 场景文件由服务端提供；拖动只改变本机预览机位，不为每个像素发送网络请求。
+    renderer.domElement.style.cursor = "grab";
+    renderer.domElement.style.touchAction = "none";
+    let drag = null;
+    renderer.domElement.addEventListener("pointerdown", (ev) => {
+      if (ev.pointerType === "mouse" && ev.button !== 0) return;
+      const dir = camera.getWorldDirection(new THREE.Vector3());
+      drag = {
+        id: ev.pointerId, x: ev.clientX, y: ev.clientY,
+        yaw: Math.atan2(dir.y, dir.x), pitch: Math.asin(Math.max(-1, Math.min(1, dir.z))),
+        distance: Math.max(0.1, camera.position.distanceTo(new THREE.Vector3(...activeRig.target))),
+      };
+      renderer.domElement.setPointerCapture(ev.pointerId);
+      renderer.domElement.style.cursor = "grabbing";
+    });
+    renderer.domElement.addEventListener("pointermove", (ev) => {
+      if (!drag || drag.id !== ev.pointerId) return;
+      const yaw = drag.yaw - (ev.clientX - drag.x) * 0.005;
+      const pitch = Math.max(-1.35, Math.min(1.35, drag.pitch + (ev.clientY - drag.y) * 0.005));
+      const xy = Math.cos(pitch);
+      camera.lookAt(
+        camera.position.x + Math.cos(yaw) * xy * drag.distance,
+        camera.position.y + Math.sin(yaw) * xy * drag.distance,
+        camera.position.z + Math.sin(pitch) * drag.distance,
+      );
+    });
+    const endDrag = (ev) => {
+      if (!drag || drag.id !== ev.pointerId) return;
+      drag = null;
+      renderer.domElement.style.cursor = "grab";
+    };
+    renderer.domElement.addEventListener("pointerup", endDrag);
+    renderer.domElement.addEventListener("pointercancel", endDrag);
+    renderer.domElement.addEventListener("lostpointercapture", endDrag);
 
     const q = CONFIG.transform.quaternionXYZW, t = CONFIG.transform.translationStage, s = CONFIG.transform.scale;
     // 短暂断流时仅重试读取同一份已生成资产；不重新提交 3D 世界生成任务。
@@ -193,7 +229,7 @@ if (THREE && SplatMesh) {
           try { candidate.dispose?.(); } catch { /* 加载未完成时清理失败，不覆盖原始网络错误。 */ }
           const message = String(error && error.message ? error.message : error);
           if (attempt || !/fetch|network|timeout/i.test(message)) throw error;
-          msg.textContent = "世界高斯读取中断，正在重试已有文件…";
+          msg.textContent = "场景读取中断，正在重试…";
         }
       }
     };
@@ -243,9 +279,20 @@ if (THREE && SplatMesh) {
       if (m.type === "camera" && m.rig) { applyCamera(m.rig); cameraKind = String(m.cameraKind || ""); }
       if (m.type === "collider" && collider) collider.visible = Boolean(m.visible);
       if (m.type === "export" && canExport) {
-        renderer.render(scene, camera);
-        try { post({ type: "frame", dataUrl: renderer.domElement.toDataURL("image/png"), viewLabelZh: m.viewLabelZh || "", cameraKind: String(m.cameraKind || cameraKind), requestId: m.requestId }); }
-        catch (e) { post({ type: "error", message: "导出失败：" + (e && e.message ? e.message : "canvas") }); }
+        try {
+          renderer.render(scene, camera);
+          const dataUrl = renderer.domElement.toDataURL("image/png");
+          if (!dataUrl.startsWith("data:image/png;base64,") || dataUrl.length <= "data:image/png;base64,".length) throw new Error("empty_png");
+          const direction = camera.getWorldDirection(new THREE.Vector3());
+          const distance = Math.max(0.1, camera.position.distanceTo(new THREE.Vector3(...activeRig.target)));
+          const target = camera.position.clone().addScaledVector(direction, distance);
+          post({
+            type: "frame", dataUrl,
+            viewLabelZh: m.viewLabelZh || "", cameraKind: String(m.cameraKind || cameraKind), requestId: m.requestId,
+            cameraRig: { ...activeRig, position: camera.position.toArray(), target: target.toArray() },
+          });
+        }
+        catch (e) { post({ type: "export_error", requestId: m.requestId, message: "视角图导出失败，请重试" }); }
       }
     });
     window.addEventListener("resize", () => { renderer.setSize(window.innerWidth, window.innerHeight); camera.aspect = window.innerWidth / Math.max(1, window.innerHeight); camera.updateProjectionMatrix(); });
@@ -263,22 +310,28 @@ if (THREE && SplatMesh) {
       else failed.push({ id: r.id, kind: r.kind, message: String(res.reason && res.reason.message ? res.reason.message : res.reason || "load_failed").slice(0, 160) });
     });
     if (failed.some((f) => f.kind === "world")) {
-      fail("世界高斯（.spz）加载失败：" + failed.find((f) => f.kind === "world").message);
+      fail("3D 场景加载失败，请稍后重试");
     } else {
       msg.remove();
       canExport = failed.length === 0;
       post({ type: "ready", loaded, failed });
     }
   } catch (e) {
-    fail("3D 世界预览初始化失败：" + (e && e.message ? e.message : "WebGL"));
+    fail("3D 场景暂时无法打开，请稍后重试");
   }
 }
 <\/script></body></html>`;
 }
 
-async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
+export async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
   const res = await fetch(dataUrl);
-  return res.blob();
+  const blob = await res.blob();
+  const signature = new Uint8Array(await blob.slice(0, 8).arrayBuffer());
+  if (blob.type !== "image/png" || blob.size <= 8
+    || ![137, 80, 78, 71, 13, 10, 26, 10].every((byte, index) => signature[index] === byte)) {
+    throw new Error("invalid_png");
+  }
+  return blob;
 }
 
 export function ManhuaWorldStagePreview(props: Props) {
@@ -303,7 +356,7 @@ export function ManhuaWorldStagePreview(props: Props) {
   const liveState = useRef({ revision, cameraKind });
   liveState.current = { revision, cameraKind };
   const exportCounter = useRef(0);
-  const pendingExport = useRef<{ requestId: number; revision: string; cameraKind: StageCameraKind; frame: ManhuaStageFrameExport; deliver: Props["onExportStageFrame"] } | null>(null);
+  const pendingExport = useRef<{ requestId: number; revision: string; cameraKind: StageCameraKind; frame: ManhuaStageFrameExport; deliver: Props["onExportStageFrame"]; phase: "capturing" | "decoding" | "saving" } | null>(null);
   const srcDoc = useMemo(() => (config ? buildSrcDoc(config) : ""), [config]);
   const expectedActorIds = useMemo(() => (config?.characters ?? []).map((c) => c.id), [config]);
 
@@ -311,8 +364,10 @@ export function ManhuaWorldStagePreview(props: Props) {
     setStatus("loading");
     setNoteZh("");
     setFailures([]);
-    setExporting(false);
-    pendingExport.current = null;
+    if (pendingExport.current?.phase !== "saving") {
+      setExporting(false);
+      pendingExport.current = null;
+    }
   }, [revision]);
 
   const send = useCallback(
@@ -324,7 +379,7 @@ export function ManhuaWorldStagePreview(props: Props) {
 
   useEffect(() => {
     const onMessage = (ev: MessageEvent) => {
-      const m = (ev.data || {}) as { source?: string; revision?: string; type?: string; message?: string; dataUrl?: string; viewLabelZh?: string; cameraKind?: string; requestId?: number; loaded?: string[]; failed?: StageAssetFailure[] };
+      const m = (ev.data || {}) as { source?: string; revision?: string; type?: string; message?: string; dataUrl?: string; viewLabelZh?: string; cameraKind?: string; cameraRig?: StageCameraRig; requestId?: number; loaded?: string[]; failed?: StageAssetFailure[] };
       if (m.source !== "manhua-world-stage" || ev.source !== iframeRef.current?.contentWindow) return;
       // 旧实例迟到的消息：作废
       if (m.revision !== revision) return;
@@ -335,37 +390,58 @@ export function ManhuaWorldStagePreview(props: Props) {
         setFailures(failed);
         if (missingActors.length || failed.length) {
           setStatus("partial");
-          const labels = missingActors.map((id) => characters.find((c) => c.id === id)?.labelZh || id);
-          setNoteZh(
-            `${missingActors.length ? `缺人物：${labels.join("、")}（${missingActors.join("、")}）；` : ""}${failed.map((f) => `${f.kind === "collider" ? "碰撞网格" : f.id} ${f.message}`).join("；")}。可预览，不能导出为关键帧。`,
-          );
+          const labels = missingActors.map((id) => characters.find((c) => c.id === id)?.labelZh || "未命名人物");
+          setNoteZh(`${labels.length ? `人物未载入：${labels.join("、")}。` : ""}${failed.some((f) => f.kind === "collider") ? "场景辅助数据未载入。" : ""}可预览，暂不能导出视角图。`);
         } else {
           setStatus("ready");
           setNoteZh("");
         }
       } else if (m.type === "error") {
+        if (pendingExport.current?.phase !== "saving") {
+          pendingExport.current = null;
+          setExporting(false);
+        }
         setStatus("error");
-        setNoteZh(m.message || "渲染器不可用");
+        setNoteZh(m.message || "3D 场景暂时无法打开");
+      } else if (m.type === "export_error") {
+        if (m.requestId !== pendingExport.current?.requestId || pendingExport.current?.phase !== "capturing") return;
+        pendingExport.current = null;
         setExporting(false);
+        setNoteZh("视角图导出失败，请重试");
       } else if (m.type === "warn") {
         setNoteZh(m.message || "");
       } else if (m.type === "frame" && m.dataUrl) {
         const pending = pendingExport.current;
-        if (!pending || m.requestId !== pending.requestId || pending.revision !== revision) return;
+        if (!pending || pending.phase !== "capturing" || m.requestId !== pending.requestId || pending.revision !== revision) return;
         if (m.cameraKind !== pending.cameraKind || pending.cameraKind !== cameraKind) {
           pendingExport.current = null;
           setExporting(false);
           setNoteZh("导出期间切换了机位，这帧已作废，请重新导出");
           return;
         }
+        const rig = m.cameraRig;
+        if (!rig || !Array.isArray(rig.position) || !Array.isArray(rig.target)
+          || rig.position.length !== 3 || rig.target.length !== 3
+          || ![...rig.position, ...rig.target, rig.lens].every((value) => typeof value === "number" && Number.isFinite(value))) {
+          pendingExport.current = null;
+          setExporting(false);
+          setNoteZh("视角数据不完整，请重新导出");
+          return;
+        }
+        pending.phase = "decoding";
         void (async () => {
           try {
             const blob = await dataUrlToBlob(m.dataUrl!);
             if (pendingExport.current !== pending || liveState.current.revision !== pending.revision || liveState.current.cameraKind !== pending.cameraKind) return;
-            pendingExport.current = null;
-            await pending.deliver?.(blob, pending.frame);
+            pending.phase = "saving";
+            await pending.deliver?.(blob, { ...pending.frame, camera: rig });
+          } catch {
+            if (pendingExport.current === pending) setNoteZh("视角图保存失败，请重新导出");
           } finally {
-            setExporting(false);
+            if (pendingExport.current === pending) {
+              pendingExport.current = null;
+              setExporting(false);
+            }
           }
         })();
       }
@@ -383,7 +459,7 @@ export function ManhuaWorldStagePreview(props: Props) {
   }, [colliderVisible, loaded, send]);
 
   if (!config) {
-    return <p className="text-[11px] text-amber-100">这个世界还没有可用的高斯文件（.spz），暂不能进场景。</p>;
+    return <p className="text-[11px] text-amber-100">这个场景还不能预览，请稍后重试。</p>;
   }
   const btn = "rounded border border-cyan-300/30 px-2 py-0.5 text-[11px] text-cyan-50 disabled:opacity-40";
   const btnOn = "rounded border border-cyan-300/70 bg-cyan-500/25 px-2 py-0.5 text-[11px] text-cyan-50";
@@ -392,14 +468,22 @@ export function ManhuaWorldStagePreview(props: Props) {
       <div className="flex flex-wrap items-center gap-1 text-[11px]">
         <span className="text-white/60">机位</span>
         {STAGE_CAMERA_KINDS.map((k) => (
-          <button key={k} type="button" className={cameraKind === k ? btnOn : btn} disabled={!loaded} onClick={() => setCameraKind(k)} title={rigs[k].labelZh}>
+          <button key={k} type="button" className={cameraKind === k ? btnOn : btn} disabled={!loaded} onClick={() => {
+            // 已开始上传的视角图无法取消；换机位也要等本次保存结束，避免并发提交。
+            if (pendingExport.current?.phase !== "saving") {
+              pendingExport.current = null;
+              setExporting(false);
+            }
+            if (cameraKind === k) send({ type: "camera", rig: rigs[k], cameraKind: k });
+            else setCameraKind(k);
+          }} title={rigs[k].labelZh}>
             {STAGE_CAMERA_LABEL_ZH[k]}
           </button>
         ))}
         {config.colliderUrl ? (
           <label className="ml-2 flex items-center gap-1 text-white/70">
             <input type="checkbox" checked={colliderVisible} disabled={!loaded} onChange={(e) => setColliderVisible(e.target.checked)} />
-            显示碰撞网格
+            显示场景辅助线
           </label>
         ) : null}
         {onExportStageFrame ? (
@@ -409,32 +493,32 @@ export function ManhuaWorldStagePreview(props: Props) {
             disabled={status !== "ready" || exporting}
             title={status === "partial" ? "有人物/资产没加载成功，不能导出" : undefined}
             onClick={() => {
+              if (pendingExport.current) return;
               const requestId = ++exportCounter.current;
               const frame: ManhuaStageFrameExport = {
                 viewLabelZh: STAGE_CAMERA_LABEL_ZH[cameraKind], cameraKind, actorIds: expectedActorIds,
                 revision, camera: structuredClone(rigs[cameraKind]), actors: structuredClone([...characters]), timeSec: 0,
               };
-              pendingExport.current = { requestId, revision, cameraKind, frame, deliver: onExportStageFrame };
+              pendingExport.current = { requestId, revision, cameraKind, frame, deliver: onExportStageFrame, phase: "capturing" };
               setExporting(true);
-              send({ type: "camera", rig: rigs[cameraKind], cameraKind });
               send({ type: "export", requestId, viewLabelZh: frame.viewLabelZh, cameraKind });
             }}
           >
-            {exporting ? "导出中…" : "导出当前视角 PNG"}
+            {exporting ? "保存中…" : "保存当前视角图"}
           </button>
         ) : null}
       </div>
       <p className="text-[10px] text-white/45">
-        {characters.length ? `本段预期 ${characters.length} 个人物（平地摆位，未验证真实表面）；` : "本段没有已就绪的人物 GLB，只看场景；"}
-        机位规则与白模一致：过肩在第二人身后 0.9/侧 0.45/高 1.55，单人正前 1.6，建立高位全景。
+        在画面中拖动可旋转视角；切换机位会回到该机位的初始角度。
+        {characters.length ? `本段有 ${characters.length} 个人物；` : "本段暂未摆入人物；"}
         {rigs.ots.kind === "single" && cameraKind === "ots" ? " 缺过肩对象，过肩退为单人正面。" : ""}
-        {status === "loading" ? " 资产加载中（世界高斯 + 每个人物都要真实加载成功才算就绪）。" : ""}
+        {status === "loading" ? " 场景加载中…" : ""}
       </p>
       <div className="relative w-full overflow-hidden rounded border border-cyan-300/20 bg-black" style={{ height }}>
         <iframe key={revision} ref={iframeRef} title={`${sceneLabelZh} 3D 世界预览`} srcDoc={srcDoc} sandbox="allow-scripts" className="h-full w-full" style={{ border: 0 }} />
         {status === "error" ? (
           <div className="absolute inset-0 flex items-center justify-center bg-black/70 p-3 text-center text-[11px] text-amber-100" data-stage-placeholder>
-            3D 世界预览需要加载渲染器。{noteZh}
+            {noteZh}
           </div>
         ) : null}
       </div>
@@ -447,7 +531,7 @@ export function ManhuaWorldStagePreview(props: Props) {
         <ul className="text-[10px] text-amber-100/80" data-stage-failures>
           {failures.map((f) => (
             <li key={`${f.kind}:${f.id}`}>
-              {f.kind === "actor" ? "人物" : f.kind === "collider" ? "碰撞" : "世界"} {f.id}：{f.message}
+              {f.kind === "actor" ? characters.find((c) => c.id === f.id)?.labelZh || "人物" : f.kind === "collider" ? "场景辅助数据" : "3D 场景"}：加载失败
             </li>
           ))}
         </ul>

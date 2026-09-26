@@ -72,12 +72,16 @@ describe("视角图采用到某一镜", () => {
     expect(normalizeManhuaStageFrameAdoptions("nope")).toEqual([]);
   });
 
-  it("来源说明给的是世界、机位、人物、集段，不是中文标签猜的", () => {
+  it("来源说明保留机位、人物、集段，不显示内部世界或人物编号", () => {
     const s = formatManhuaStageFrameSourceZh(ref("a"), (id) => ({ c_aj: "阿菁", c_cs: "曹三" })[id] || id);
     expect(s).toContain("第1集段04");
     expect(s).toContain("过肩机位");
     expect(s).toContain("人物 阿菁、曹三");
-    expect(s).toContain("世界 world-ab");
+    expect(s).toContain("场景视角图");
+    expect(s).not.toContain("world-abc");
+    expect(s).not.toContain("mw_w1");
+    expect(formatManhuaStageFrameSourceZh(ref("a", { stageFrame: binding({ worldId: undefined }) }))).not.toContain("mw_w1");
+    expect(formatManhuaStageFrameSourceZh(ref("a"))).toContain("未命名人物");
     expect(formatManhuaStageFrameSourceZh({ id: "x" })).toBe("");
   });
 
@@ -118,5 +122,6 @@ it("出站不静默删除失效采用，空人物世界不能冒充有人", asyn
   const {requireManhuaStageFramesForSegment}=await import('./manhuaStageFrameAdoption');
   expect(()=>requireManhuaStageFramesForSegment([ref('stale',{stageFrame:binding({worldTaskId:'gone'})})],ctx)).toThrow('失效');
   expect(()=>requireManhuaStageFramesForSegment([ref('missing',{stageFrame:undefined})],ctx)).toThrow('来源绑定缺失');
+  expect(()=>requireManhuaStageFramesForSegment([ref('internal-ref-42',{labelZh:undefined,stageFrame:binding({worldTaskId:'gone'})})],ctx)).toThrow('「视角图」失效');
   expect(evaluateManhuaStageFrameAdoption(ref('empty',{stageFrame:binding({actorIds:[]})}),ctx)).toMatchObject({usable:false,staleCode:'actors_changed'});
 });
