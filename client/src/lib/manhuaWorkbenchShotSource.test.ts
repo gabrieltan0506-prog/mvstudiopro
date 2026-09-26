@@ -160,7 +160,7 @@ describe("工作台展示与真实编排使用同源分镜", () => {
     expect(shots[0].dialogueZh).toContain("娘：「阿菁……慢点，我喘不上来。」");
     expect(shots[1].dialogueZh || "").toBe("");
     expect(shots[7].dialogueZh).toContain("墨屠：「打她之前，问过我吗？」");
-    expect(shots[14].dialogueZh).toContain("娘：「阿菁……那马……」");
+    expect(shots[14].dialogueZh).toContain("娘：「阿菁，那馬是怎麼回事呀？」");
     expect(shots[16].dialogueZh).toContain("墨屠：「三天太短。取吧。」");
   });
 
