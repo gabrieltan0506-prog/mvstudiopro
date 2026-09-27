@@ -18,7 +18,7 @@ beforeAll(async () => {
       import {CanvasAudioStudioView} from './client/src/components/canvas/CanvasAudioStudio';
       import {defaultCanvasBlock} from './client/src/lib/canvasTypes';
       import {emptyCanvasAudioStudio,createCanvasAudioCue,canvasAudioCueInputKey} from './shared/canvasAudioStudio';
-      const f=globalThis.fixture={calls:[],queries:[],musicQueries:[],history:{},posts:[],postQueries:[],postResult:null,masterEntries:[],uploads:[],dropSettle:false,state:null,result:null};
+      const f=globalThis.fixture={calls:[],queries:[],musicQueries:[],history:{},recentMusic:[],posts:[],postQueries:[],postResult:null,masterEntries:[],uploads:[],dropSettle:false,state:null,result:null};
       const services={
         resolveAudio:async uri=>{f.resolvedAudio=uri;return f.refreshedUrl||"";},
         generateDialogue:async input=>{f.calls.push(input);return {jobId:'test-job',status:'succeeded',result:{gcsUri:'gs://test-bucket/generated/test.mp3',audioUrl:'https://audio.test/test.mp3',bytes:12000,voiceGate:{durationSeconds:2.25}}};},
@@ -26,7 +26,7 @@ beforeAll(async () => {
         draftMusic:async input=>{f.lastMusicDraft=input;return {brief:{model:input.model,custom_mode:true,instrumental:true,style:'恢宏',prompt:'展翼时释放气势',title:'守护',duration:30,negative_tags:'',style_weight:0.5,weirdness_constraint:0.5}};},
         generateMusic:async input=>{f.calls.push(input);return {jobId:'bgm-test',status:'queued'};},
         getMusic:async input=>{f.musicQueries.push(input.jobId);return f.history[input.jobId]||{jobId:input.jobId,status:'running',variants:[],titleZh:'守护',durationSec:30};},
-        listMusic:async()=>[],
+        listMusic:async()=>f.recentMusic,
         queuePost:async input=>{f.posts.push(input);return {jobId:'post-'+f.posts.length,status:'queued'};},
         getPost:async input=>{f.postQueries.push(input.jobId);return f.postResult;},
         uploadAudioFile:async file=>{f.uploads.push(file.name);return {gcsUri:'gs://test-bucket/uploads/u7/'+file.name,previewUrl:'https://audio.test/'+file.name,durationSec:90,fileName:file.name};},
@@ -280,12 +280,17 @@ describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
       await page.evaluate(() => {
         const f = (window as any).fixture;
         f.history.old = { jobId: "old", status: "succeeded", titleZh: "早期守护原曲", durationSec: 27, variants: [{ index: 0, gcsUri: "gs://test-bucket/post-prod/7/old.wav", previewUrl: "https://audio.test/old.wav" }] };
+        f.recentMusic = [{ jobId: "other", status: "succeeded", titleZh: "其他段原曲", durationSec: 30, variants: [{ index: 0, gcsUri: "gs://test-bucket/post-prod/7/other.wav", previewUrl: "https://audio.test/other.wav" }] }];
         f.configure({ ...f.state, musicJobIds: ["old"] });
       });
       await click("刷新配乐素材");
-      await page.waitForSelector('audio[aria-label="早期守护原曲 版本 1"]');
+      await page.waitForSelector('audio[aria-label="本段原曲 · 早期守护原曲 · 任务 old · 版本 1"]');
+      expect(await page.evaluate(() => Array.from(document.querySelectorAll('audio[aria-label]')).filter(el => el.getAttribute('aria-label')?.includes('原曲 ·')).map(el => el.getAttribute('aria-label')))).toEqual([
+        "本段原曲 · 早期守护原曲 · 任务 old · 版本 1",
+        "其他段原曲 · 其他段原曲 · 任务 other · 版本 1",
+      ]);
       await page.evaluate(() => {
-        const el = document.querySelector('audio[aria-label="早期守护原曲 版本 1"]')!;
+        const el = document.querySelector('audio[aria-label="本段原曲 · 早期守护原曲 · 任务 old · 版本 1"]')!;
         Object.defineProperty(el, "duration", { value: 27 });
         el.dispatchEvent(new Event("loadedmetadata", { bubbles: true }));
       });

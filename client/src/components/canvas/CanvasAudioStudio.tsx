@@ -1583,17 +1583,18 @@ export function CanvasAudioStudioView({
                     选择原曲 · {source ? "已选原曲" : "尚未选择"}
                   </summary>
                   <div className="space-y-2 py-2">
-                    {musicJobs.flatMap(job =>
+                    {musicJobs.slice().sort((left, right) =>
+                      Number(state.musicJobIds.includes(right.jobId)) - Number(state.musicJobIds.includes(left.jobId))
+                    ).flatMap(job =>
                       job.variants.map(variant => {
                         const id = `${job.jobId}:${variant.index}`;
                         const duration = loadedSources[id];
+                        const sourceLabel = `${state.musicJobIds.includes(job.jobId) ? "本段原曲" : "其他段原曲"} · ${job.titleZh} · 任务 ${job.jobId.slice(0, 8)} · 版本 ${variant.index + 1}`;
                         return (
                           <div key={id} className="space-y-1">
-                            <div className="text-xs">
-                              {job.titleZh} · 版本 {variant.index + 1}
-                            </div>
+                            <div className="text-xs">{sourceLabel}</div>
                             <CanvasAudioPlayer
-                              aria-label={`${job.titleZh} 版本 ${variant.index + 1}`}
+                              aria-label={sourceLabel}
                               className="w-full h-8"
                               controls
                               preload="metadata"
@@ -1615,6 +1616,7 @@ export function CanvasAudioStudioView({
                             />
                             <button
                               className={buttonClass}
+                              aria-label={`选择${sourceLabel}`}
                               disabled={locked || !duration}
                               onClick={() =>
                                 selectSource(cue, {
