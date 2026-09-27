@@ -10746,7 +10746,7 @@ export default function OmniCanvas() {
                     handleBlocksChange((prev) =>
                       prev.map((b) => {
                         if ((getBlockEpisodeIndex(b) ?? 1) !== ep) return b;
-                        if (b.kind === "video" && b.audioStudio && resolveClipLocalSegmentIndex(b.id, b.prompt, ep) === segmentIndex) {
+                        if (isManhuaClipBlockId(b.id) && b.audioStudio && resolveClipLocalSegmentIndex(b.id, b.prompt, ep) === segmentIndex) {
                           return { ...b, audioStudio: syncEditedShotDialoguesToAudio(b.audioStudio, segmentShots, segmentDurationSec, dialogues) };
                         }
                         const stage = stageKeyFromBlockId(b.id);
