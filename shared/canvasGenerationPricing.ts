@@ -98,12 +98,14 @@ export const CANVAS_VIDEO_UPSCALE_MAX_BILLED_SEC = 600;
  */
 export const CANVAS_FREEFORM_RETAIL_MULTIPLIER = 1.1;
 
-/**
- * TTS 对白配音（0902 解锁给创作者）：Qwen-Audio-3.0-TTS-Plus 一句合成。
- * 成本约 ¥0.1/句以内（1 积分≈¥0.65），零售 3 积分/句覆盖成本＋验声门禁开销。
- * 按「句」计费而非字符：一句一次合成、一次验声，口径简单可预期。
- */
+/** 旧单的冻结价格；已有任务不得按新规则追补。 */
 export const CANVAS_TTS_CREDITS_PER_LINE = 3;
+
+/** 新单以归一化音频的实测时长计费，每开始 0.2 秒收 2 积分。 */
+export function canvasTtsCreditsForDuration(durationSec: number): number {
+  if (!Number.isFinite(durationSec) || durationSec <= 0 || durationSec > 3600) throw new Error("配音实测时长无效，不能结算");
+  return Math.max(1, Math.ceil(durationSec * 5 - 1e-9)) * 2;
+}
 
 /**
  * Suno 配乐（0902 解锁给创作者；0910 起走 TTAPI Suno v6，每发 ≈$0.06）：一发出 2 条变体。

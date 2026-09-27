@@ -27,23 +27,32 @@ import { settleCanvasDialogueCharge } from "./canvasDialogueCharge";
 describe("原配音账恢复（使用实际扣费函数，数据库边界离线）", () => {
   beforeEach(() => { h.balance = 3; h.prior = null; h.executes = 0; });
   it("首次恰好扣光3积分，完成状态丢失后重放不再尝试余额扣减", async () => {
-    await settleCanvasDialogueCharge(7, "original-request");
+    await settleCanvasDialogueCharge(7, "original-request", 3);
     expect(h.balance).toBe(0);
     expect(h.executes).toBe(1);
-    await settleCanvasDialogueCharge(7, "original-request");
+    await settleCanvasDialogueCharge(7, "original-request", 3);
     expect(h.balance).toBe(0);
     expect(h.executes).toBe(1);
   });
   it("扣费回包中断后二次权威读账成功，不谎报不足", async () => {
     let recorded = false;
     const deduct = vi.fn(async () => { recorded = true; throw Error("数据库回包中断"); });
-    await settleCanvasDialogueCharge(7, "original-request", { read: async () => recorded ? { action: "manhuaDialogueTts", creditsCost: 3 } : null, deduct });
+    await settleCanvasDialogueCharge(7, "original-request", 3, { read: async () => recorded ? { action: "manhuaDialogueTts", creditsCost: 3 } : null, deduct });
     expect(deduct).toHaveBeenCalledTimes(1);
   });
   it("无原账且确实不足或账目金额不符不能冒充恢复成功", async () => {
     const deduct = vi.fn(async () => { throw Error("不足"); });
-    await expect(settleCanvasDialogueCharge(7, "original-request", { read: async () => null, deduct })).rejects.toThrow("不足");
-    await expect(settleCanvasDialogueCharge(7, "original-request", { read: async () => ({ action: "manhuaDialogueTts", creditsCost: 2 }), deduct })).rejects.toThrow("不一致");
+    await expect(settleCanvasDialogueCharge(7, "original-request", 3, { read: async () => null, deduct })).rejects.toThrow("不足");
+    await expect(settleCanvasDialogueCharge(7, "original-request", 3, { read: async () => ({ action: "manhuaDialogueTts", creditsCost: 2 }), deduct })).rejects.toThrow("不一致");
     expect(deduct).toHaveBeenCalledTimes(1);
+  });
+  it("新单按每 0.2 秒 2 积分结算，同键恢复不再扣费", async () => {
+    let prior: { action: string; creditsCost: number } | null = null;
+    const deduct = vi.fn(async (_uid: number, cost: number) => { prior = { action: "manhuaDialogueTts", creditsCost: cost }; return { success: true, cost, remainingBalance: 0, source: "personal" as const }; });
+    const deps = { read: async () => prior, deduct };
+    await settleCanvasDialogueCharge(7, "duration-request", 48, deps);
+    await settleCanvasDialogueCharge(7, "duration-request", 48, deps);
+    expect(deduct).toHaveBeenCalledTimes(1);
+    expect(deduct).toHaveBeenCalledWith(7, 48, "manhuaDialogueTts", expect.any(String), expect.any(Object));
   });
 });

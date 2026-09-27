@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-/** 剧情音轨的持久契约：候选与采用分离，不借角色全局声线锁存声音状态。 */
+/** 剧情音轨的持久契约：候选与采用分离，角色声线在首次采用后持久锁定。 */
 const text = (max: number) => z.string().max(max);
 const seconds = z.number().finite().min(0).max(3600);
 const mediaUri = z.string().min(1).max(4096).refine(
@@ -11,6 +11,7 @@ export const canvasAudioTakeSchema = z.object({
   gcsUri: mediaUri,
   previewUrl: z.string().max(8192).default(""),
   durationSec: z.number().finite().positive().max(3600),
+  creditsCost: z.number().finite().int().min(0).max(36000).optional(),
   bytes: z.number().int().positive().optional(),
   requestId: text(120).optional(),
   createdAt: text(80),
@@ -29,6 +30,7 @@ export const canvasAudioCueSchema = z.object({
   textZh: text(4000),
   emotion: text(80),
   voice: text(80),
+  voiceLock: z.object({ speakerZh: text(120).min(1), voice: text(80).min(1) }).optional(),
   source: z.object({
     gcsUri: mediaUri,
     previewUrl: z.string().max(8192),

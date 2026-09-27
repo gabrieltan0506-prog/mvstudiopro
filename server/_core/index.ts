@@ -670,6 +670,32 @@ async function startServer() {
     }
   });
 
+  // 音轨试听经 Fly 临时盘中转；客户端只提交已登记的 gs:// 身份，服务端逐次验主。
+  app.get("/api/manhua-audio-media", async (req, res) => {
+    try {
+      const ctx = await createContext({ req: req as any, res: res as any } as any);
+      const userId = Number(ctx.user?.id);
+      if (!Number.isFinite(userId) || userId <= 0) {
+        return res.status(ctx.authUnavailable ? 503 : 401).json({ error: "unauthorized" });
+      }
+      const uri = typeof req.query.gcsUri === "string" ? req.query.gcsUri : "";
+      if (uri.length > 512 || !/^gs:\/\/[^/]+\/.+\.(?:mp3|wav|m4a|aac|ogg|opus)$/i.test(uri)) {
+        return res.status(404).json({ error: "not found" });
+      }
+      const { resolveRegisteredPostProdMediaSource } = await import("../services/postProdMediaSource.js");
+      const verified = await resolveRegisteredPostProdMediaSource({ userId: String(userId), source: uri });
+      const { serveManhuaAudioFromFly } = await import("../services/manhuaAudioFlyCache.js");
+      await serveManhuaAudioFromFly(req, res, verified);
+    } catch (error) {
+      console.error("[ManhuaAudioMedia] unavailable:", error instanceof Error ? error.message : String(error));
+      if (error instanceof Error && error.message === "audio source missing" && !res.headersSent) {
+        return res.status(410).json({ error: "音频原件已丢失，Fly 暂存也不可用，需要重新生成" });
+      }
+      if (!res.headersSent) return res.status(503).json({ error: "audio temporarily unavailable" });
+      res.destroy();
+    }
+  });
+
   app.get("/api/jobs/manhua-learn", async (req, res) => {
     try {
       res.setHeader("Cache-Control", "private, no-store, max-age=0");

@@ -216,6 +216,22 @@ export async function getLocalMediaRecordBySource(sourceUrl: string): Promise<Ma
   return record?.blob?.size && record.sourceUrl === source ? record : null;
 }
 
+/** 音轨试听成功后保存到当前浏览器的本机媒体库；云草稿仍只保存 GCS 身份。 */
+export async function cacheLocalAudioMedia(sourceUri: string, blob: Blob): Promise<void> {
+  if (!sourceUri.startsWith("gs://") || !blob.size) throw new Error("音轨来源或内容无效");
+  const id = await sourceRecordId(sourceUri);
+  if (await getLocalMediaRecord(id)) return;
+  await putLocalMediaRecord({
+    id,
+    blockId: "audio-preview",
+    slot: "ref",
+    blob,
+    mime: blob.type || "audio/wav",
+    sourceUrl: sourceUri,
+    updatedAt: Date.now(),
+  });
+}
+
 export type ManhuaBackupMediaInput = { sourceUrl: string; blob: Blob; mime: string; gcsUri?: string };
 
 async function mediaBytesHash(blob: Blob): Promise<string> {

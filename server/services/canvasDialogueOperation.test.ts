@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { canvasDialogueInputSchema, canvasDialogueJobId, generateCanvasDialogue, getCanvasDialogue,
+import { canvasDialogueDigest, canvasDialogueInputSchema, canvasDialogueJobId, generateCanvasDialogue, getCanvasDialogue,
   type CanvasDialogueDeps, type CanvasDialogueInput, type CanvasDialogueRecord } from "./canvasDialogueOperation";
 
 const input: CanvasDialogueInput = { billingRequestId: "12345678-1234-4123-8123-123456789abc",
@@ -22,7 +22,7 @@ function harness() {
     balance: vi.fn(async () => 100),
     synthesize: vi.fn(async () => upstream),
     mirror: vi.fn(async (source, uid, id) => ({ gcsUri: `gs://test-bucket/post-prod/${uid}/dialogue/${id}.mp3`,
-      bytes: source.bytes, voice: source.voice, voiceGate: source.voiceGate, provider: source.provider })),
+      bytes: source.bytes, durationSec: 2.8, voice: source.voice, voiceGate: source.voiceGate, provider: source.provider })),
     charge: vi.fn(async () => {}),
     sign: vi.fn(uri => `https://example.invalid/preview?object=${encodeURIComponent(uri)}`),
   };
@@ -41,7 +41,8 @@ describe("逐句配音持久操作", () => {
     expect(result.voiceStateZh).toBe("变身后");
     expect(deps.synthesize).toHaveBeenCalledWith(expect.objectContaining({ input: input.input, voice: input.voice, ownerUserId: 7 }));
     expect(deps.synthesize).not.toHaveBeenCalledWith(expect.objectContaining({ input: expect.stringContaining("变身后") }));
-    expect(deps.charge).toHaveBeenCalledWith(7, input.billingRequestId);
+    expect(deps.charge).toHaveBeenCalledWith(7, input.billingRequestId, 28);
+    expect(result.creditsCost).toBe(28);
     expect(records.values().next().value?.output?.upstream?.gcsUri).toBe(upstream.gcsUri);
   });
   it("相同编号并发只抢占一次，不会重复合成", async () => {
@@ -51,6 +52,18 @@ describe("逐句配音持久操作", () => {
     const recovered = await generateCanvasDialogue(7, input, deps);
     expect(recovered.status).toBe("succeeded");
     expect(deps.synthesize).toHaveBeenCalledTimes(1);
+  });
+  it("旧任务恢复沿用原定价，不按新时长追补", async () => {
+    const { deps, records } = harness();
+    const id = canvasDialogueJobId(7, input.billingRequestId);
+    records.set(id, { id, userId: "7", status: "running", updatedAt: new Date(),
+      input: { action: "canvas_dialogue_line", digest: canvasDialogueDigest(input), params: input },
+      output: { stage: "audio_received", upstream } });
+    const result = await generateCanvasDialogue(7, input, deps);
+    expect(result.status).toBe("succeeded");
+    expect(result.creditsCost).toBe(3);
+    expect(deps.charge).toHaveBeenCalledWith(7, input.billingRequestId, 3);
+    expect(deps.synthesize).not.toHaveBeenCalled();
   });
   it.each(["input", "voice", "speakerZh", "voiceStateZh"] as const)("同号修改 %s 必须冲突", async field => {
     const { deps } = harness();
@@ -96,7 +109,7 @@ describe("逐句配音持久操作", () => {
     expect((await generateCanvasDialogue(7, input, deps)).status).toBe("succeeded");
     expect(deps.synthesize).toHaveBeenCalledTimes(1);
     expect(deps.mirror).toHaveBeenCalledTimes(1);
-    expect(deps.charge).toHaveBeenNthCalledWith(2, 7, input.billingRequestId);
+    expect(deps.charge).toHaveBeenNthCalledWith(2, 7, input.billingRequestId, 28);
   });
   it("回执写入失败只重试保存，不调用第二次上游", async () => {
     const { deps } = harness();
@@ -107,8 +120,8 @@ describe("逐句配音持久操作", () => {
   });
   it("余额不足不能占位或调用上游", async () => {
     const { deps } = harness();
-    deps.balance = vi.fn(async () => 2);
-    await expect(generateCanvasDialogue(7, input, deps)).rejects.toThrow("3 积分");
+    deps.balance = vi.fn(async () => 0);
+    await expect(generateCanvasDialogue(7, input, deps)).rejects.toThrow("2 积分");
     expect(deps.claim).not.toHaveBeenCalled();
     expect(deps.synthesize).not.toHaveBeenCalled();
   });
