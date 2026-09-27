@@ -16,7 +16,8 @@ import { canvasAudioCapabilityHint } from "@/lib/canvasAudioCapabilityHint";
 import type { ManhuaSegmentReferenceEntry } from "@shared/manhuaSegmentReference";
 import { BGM_BRIEF_MODELS, BGM_BRIEF_MODEL_LABEL_ZH, isBgmV6Model, type BgmBriefModel } from "@shared/manhuaBgmBrief";
 import { buildPremixTimelineClips, isPremixPendingKey, PREMIX_PENDING_PREFIX } from "@/lib/manhuaPremixMaster";
-import { resolveCanvasMaterialUrl } from "@/lib/omniCanvasApi";
+import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
+import { cacheLocalAudioMedia, getLocalMediaRecordBySource } from "@/lib/manhuaLocalMediaStore";
 import { compileCanvasDialogueInput } from "@shared/canvasDialogueControls";
 import { canvasAudioPreviewKey, loadCanvasMusicHistory } from "@/lib/canvasAudioStudioRecovery";
 import { parseManhuaClipTargetDurationSec } from "@shared/manhuaScriptWorkbench";
@@ -71,12 +72,33 @@ export function matchCanvasDialogueVoice(criteria: CanvasVoiceMatchCriteria) {
 const fieldClass =
   "min-w-0 w-full rounded border border-white/15 bg-black/30 px-2 py-1.5 text-xs text-white";
 /** 播放复用已鉴权传输，原候选和投料地址保持不变。 */
-function CanvasAudioPlayer({ src, previewVolume = 1, ...props }: ComponentProps<"audio"> & { previewVolume?: number }) {
+function CanvasAudioPlayer({ src, previewVolume = 1, localSource, onPlay, ...props }: ComponentProps<"audio"> & { previewVolume?: number; localSource?: string }) {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const [localUrl, setLocalUrl] = useState("");
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = Math.max(0, Math.min(1, previewVolume));
   }, [previewVolume]);
-  return <audio {...props} ref={audioRef} src={src ? gcsTransferUrl(src) : src}
+  useEffect(() => {
+    let active = true;
+    let objectUrl = "";
+    setLocalUrl("");
+    if (localSource) void getLocalMediaRecordBySource(localSource).then(record => {
+      if (!active || !record?.blob?.size) return;
+      objectUrl = URL.createObjectURL(record.blob);
+      setLocalUrl(objectUrl);
+    }).catch(() => {});
+    return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [localSource]);
+  const remoteUrl = src ? gcsTransferUrl(src) : src;
+  return <audio {...props} ref={audioRef} src={localUrl || remoteUrl}
+    onPlay={event => {
+      onPlay?.(event);
+      if (localSource && !localUrl && remoteUrl) {
+        void fetch(remoteUrl, { credentials: "include" }).then(async response => {
+          if (response.ok) await cacheLocalAudioMedia(localSource, await response.blob());
+        }).catch(() => {});
+      }
+    }}
     crossOrigin={src && isGcsTransferUrl(src) ? "use-credentials" : props.crossOrigin} />;
 }
 
@@ -197,6 +219,8 @@ type Props = {
   onMasterTrackReady?: (entry: ManhuaSegmentReferenceEntry) => boolean | void;
   /** 保留后台配乐配置及默认值；前台不展示模型或供应商名称。 */
   bgmModels?: Array<{ model: BgmBriefModel; labelZh: string }>;
+  /** 正式适配器经 Fly 播放；离线视图保留测试传入的素材地址。 */
+  proxyAudio?: boolean;
 };
 
 
@@ -210,7 +234,7 @@ export function CanvasAudioStudio(props: Props) {
   const post = trpc.mvAnalysis.queuePostProd.useMutation();
   const signedUpload = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const services: CanvasAudioStudioServices = {
-    resolveAudio: resolveCanvasMaterialUrl,
+    resolveAudio: async gcsUri => withLongJobsFlyDirect(`/api/manhua-audio-media?gcsUri=${encodeURIComponent(gcsUri)}`),
     generateDialogue: input => dialogue.mutateAsync(input),
     getDialogue: input =>
       utils.canvasAudio.getDialogue.fetch({ billingRequestId: input.jobId }),
@@ -259,7 +283,7 @@ export function CanvasAudioStudio(props: Props) {
       };
     },
   };
-  return <CanvasAudioStudioView {...props} services={services} />;
+  return <CanvasAudioStudioView {...props} proxyAudio services={services} />;
 }
 
 export function CanvasAudioStudioView({
@@ -272,8 +296,33 @@ export function CanvasAudioStudioView({
   onChange,
   onMasterTrackReady,
   bgmModels,
+  proxyAudio = false,
   services,
 }: Props & { services: CanvasAudioStudioServices }) {
+  const audioPreviewUrl = (gcsUri: string, fallback: string) =>
+    proxyAudio && gcsUri.startsWith("gs://")
+      ? withLongJobsFlyDirect(`/api/manhua-audio-media?gcsUri=${encodeURIComponent(gcsUri)}`)
+      : fallback;
+  const downloadAudio = async (gcsUri: string, fallback: string, name: string) => {
+    try {
+      const local = proxyAudio ? await getLocalMediaRecordBySource(gcsUri) : null;
+      const blob = local?.blob || await (async () => {
+        const response = await fetch(audioPreviewUrl(gcsUri, fallback), { credentials: "include" });
+        if (!response.ok) throw new Error("下载失败");
+        return response.blob();
+      })();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = name;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch {
+      setError("音频原件与暂存均无法读取；请核对原件是否仍在，丢失后需重新生成。");
+    }
+  };
   const requestedDurationSec = Number(
     timelineDurationSec ??
       parseManhuaClipTargetDurationSec(block.prompt) ??
@@ -414,7 +463,7 @@ export function CanvasAudioStudioView({
     refreshedAudio.current.add(gcsUri);
     try {
       const url = await services.resolveAudio(gcsUri);
-      if (mounted.current && element.isConnected && /^https:\/\//.test(url)) {
+      if (mounted.current && element.isConnected && (/^https:\/\//.test(url) || url.startsWith("/api/"))) {
         if (isGcsTransferUrl(url)) element.crossOrigin = "use-credentials";
         else element.removeAttribute("crossorigin");
         element.src = gcsTransferUrl(url);
@@ -1228,6 +1277,7 @@ export function CanvasAudioStudioView({
         <h3 className="text-sm font-semibold">配音与背景音乐</h3>
         <span className="text-[11px] text-white/50">逐句试听 · 分段采用 · 保留原版本</span>
       </div>
+      {proxyAudio && <p className="text-xs text-amber-100">音频先从本机浏览器缓存读取，缺失时经 Fly 暂存回源；Fly 暂存仅保留 24 小时。请及时下载所选音轨。若原件也已丢失，需重新生成。</p>}
       <nav aria-label="声音制作快捷入口" className="flex flex-wrap gap-2">
         {([["dialogue", "配音"], ["bgm", "背景音乐"], ["sfx", "音效"]] as const).map(([kind, label]) =>
           <button key={kind} type="button" className={buttonClass}
@@ -1319,7 +1369,7 @@ export function CanvasAudioStudioView({
                     <button type="button" className={buttonClass} disabled={disabled || busy || state.pendingOperations.some(row => row.cueId === activeCue.id)} onClick={() => patchCue(activeCue.id, { voice: voiceId })}>{activeCue.voice === voiceId ? "当前音色" : "选择音色"}</button>
                   </div>
                   <div className="mt-2"><p className="mb-1 text-white/50">官方目录试音</p><CanvasAudioPlayer aria-label={`${entry.nameZh} 免费音色预览`} controls preload="none" src={`/audio/qwen-base-voice-preview/${entry.suffix}.opus`} previewVolume={activeCue.volume} className="h-8 w-full" /></div>
-                  {sample ? <div className="mt-2"><p className="mb-1 text-white/50">已有原声示例：{sample.textZh.slice(0, 50)}</p><CanvasAudioPlayer aria-label={`${entry.nameZh} 已生成原声试听`} controls preload="none" src={sample.take.previewUrl} previewVolume={activeCue.volume} className="h-8 w-full" onError={event => void restoreAudio(event.currentTarget, sample.take.gcsUri)} /></div> : null}
+                  {sample ? <div className="mt-2"><p className="mb-1 text-white/50">已有原声示例：{sample.textZh.slice(0, 50)}</p><CanvasAudioPlayer aria-label={`${entry.nameZh} 已生成原声试听`} controls preload="none" src={audioPreviewUrl(sample.take.gcsUri, sample.take.previewUrl)} localSource={proxyAudio ? sample.take.gcsUri : undefined} previewVolume={activeCue.volume} className="h-8 w-full" onError={event => void restoreAudio(event.currentTarget, sample.take.gcsUri)} /></div> : null}
                 </div>;
               })}
             </div>
@@ -1601,7 +1651,8 @@ export function CanvasAudioStudioView({
                               className="w-full h-8"
                               controls
                               preload="metadata"
-                              src={variant.previewUrl}
+                              src={audioPreviewUrl(variant.gcsUri, variant.previewUrl)}
+                              localSource={proxyAudio ? variant.gcsUri : undefined}
                               onError={event =>
                                 void restoreAudio(
                                   event.currentTarget,
@@ -1650,7 +1701,8 @@ export function CanvasAudioStudioView({
                             className="w-full h-8"
                             controls
                             preload="metadata"
-                            src={asset.previewUrl || asset.url}
+                            src={audioPreviewUrl(asset.gcsUri!, asset.previewUrl || asset.url)}
+                            localSource={proxyAudio ? asset.gcsUri! : undefined}
                             onError={event =>
                               void restoreAudio(
                                 event.currentTarget,
@@ -1697,13 +1749,15 @@ export function CanvasAudioStudioView({
                     <CanvasAudioPlayer
                       className="w-full h-8"
                       controls
-                      src={source.previewUrl}
+                      src={audioPreviewUrl(source.gcsUri, source.previewUrl)}
+                      localSource={proxyAudio ? source.gcsUri : undefined}
                       previewVolume={cue.volume}
                       onError={event =>
                         void restoreAudio(event.currentTarget, source.gcsUri)
                       }
                       preload="none"
                     />
+                    <button type="button" className={buttonClass} onClick={() => void downloadAudio(source.gcsUri, source.previewUrl, `bgm-${cue.id}.mp3`)}>下载这段原曲</button>
                   </div>
                 )}
                 <div className="grid grid-cols-2 gap-2">
@@ -1725,7 +1779,7 @@ export function CanvasAudioStudioView({
                 {reuseCandidates.map(candidate => (
                   <div key={candidate.take.id} className="mt-3 space-y-2 rounded bg-white/5 p-2">
                     <p className="text-xs">{candidate.take.durationSec.toFixed(3)} 秒 · {candidate.emotion || "自然情绪"} · {VOICES.find(voice => voice.id === candidate.voice)?.label || candidate.voice || "未标音色"}</p>
-                    <CanvasAudioPlayer controls preload="none" src={candidate.take.previewUrl} previewVolume={cue.volume} className="h-8 w-full" onError={event => void restoreAudio(event.currentTarget, candidate.take.gcsUri)} />
+                    <CanvasAudioPlayer controls preload="none" src={audioPreviewUrl(candidate.take.gcsUri, candidate.take.previewUrl)} localSource={proxyAudio ? candidate.take.gcsUri : undefined} previewVolume={cue.volume} className="h-8 w-full" onError={event => void restoreAudio(event.currentTarget, candidate.take.gcsUri)} />
                     <button type="button" className={buttonClass} disabled={locked || cue.takes.length >= 100} onClick={() => {
                       if (locked || busyRef.current) return;
                       setConfirmation(null);
@@ -1759,13 +1813,15 @@ export function CanvasAudioStudioView({
                     className="w-full h-8"
                     aria-label={`${index + 1} 候选 ${takeIndex + 1}`}
                     controls
-                    src={take.previewUrl}
+                    src={audioPreviewUrl(take.gcsUri, take.previewUrl)}
+                    localSource={proxyAudio ? take.gcsUri : undefined}
                     previewVolume={cue.volume}
                     onError={event =>
                       void restoreAudio(event.currentTarget, take.gcsUri)
                     }
                     preload="none"
                   />
+                  <button type="button" className={buttonClass} onClick={() => void downloadAudio(take.gcsUri, take.previewUrl, `${cue.kind}-${cue.id}-${takeIndex + 1}.${take.gcsUri.match(/\.(mp3|wav|m4a|aac|ogg|opus)$/i)?.[1]?.toLowerCase() || "wav"}`)}>下载这条音轨</button>
                   <button
                     className={buttonClass}
                     disabled={
@@ -1930,7 +1986,8 @@ export function CanvasAudioStudioView({
           <CanvasAudioPlayer
             className="w-full h-8"
             controls
-            src={state.previewTake.previewUrl}
+            src={audioPreviewUrl(state.previewTake.gcsUri, state.previewTake.previewUrl)}
+            localSource={proxyAudio ? state.previewTake.gcsUri : undefined}
             onError={event =>
               void restoreAudio(event.currentTarget, state.previewTake!.gcsUri)
             }
