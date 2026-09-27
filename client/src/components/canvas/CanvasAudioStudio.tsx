@@ -723,9 +723,12 @@ export function CanvasAudioStudioView({
       return;
     }
     const cue = createCanvasAudioCue(kind, crypto.randomUUID());
+    const timedCue = kind === "bgm"
+      ? { ...cue, startSec: 0, endSec: durationSec, sourceEndSec: durationSec }
+      : cue;
     update(previous => ({
       ...previous,
-      cues: [...previous.cues, { ...cue, voice: VOICES[0]?.id || "" }],
+      cues: [...previous.cues, { ...timedCue, voice: VOICES[0]?.id || "" }],
     }));
     setActiveCueId(cue.id);
     setVoiceCriteria({});

@@ -277,6 +277,10 @@ describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
     const { context, page, click } = await open();
     try {
       await click("添加一段配乐");
+      expect(await page.evaluate(() => {
+        const cue = (window as any).fixture.state.cues.find((row: any) => row.kind === "bgm");
+        return [cue.startSec, cue.endSec, cue.sourceStartSec, cue.sourceEndSec];
+      })).toEqual([0, 30, 0, 30]);
       await page.evaluate(() => {
         const f = (window as any).fixture;
         f.history.old = { jobId: "old", status: "succeeded", titleZh: "早期守护原曲", durationSec: 27, variants: [{ index: 0, gcsUri: "gs://test-bucket/post-prod/7/old.wav", previewUrl: "https://audio.test/old.wav" }] };
@@ -297,6 +301,10 @@ describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
       await page.waitForFunction(() => Array.from(document.querySelectorAll("button")).some(b => b.textContent?.includes("选这条原曲") && !b.disabled));
       await click("选这条原曲");
       await page.waitForFunction(() => (window as any).fixture.state.cues[0].source?.gcsUri.endsWith("old.wav"));
+      expect(await page.evaluate(() => {
+        const cue = (window as any).fixture.state.cues[0];
+        return [cue.startSec, cue.endSec, cue.sourceStartSec, cue.sourceEndSec];
+      })).toEqual([0, 30, 0, 27]);
       expect(await page.evaluate(() => (window as any).fixture.musicQueries)).toContain("old");
     } finally { await context.close(); }
   }, 20_000);
