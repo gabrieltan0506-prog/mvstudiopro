@@ -1,46 +1,67 @@
 import { canvasAudioCueInputKey, type CanvasAudioCue, type CanvasAudioStudio } from "@shared/canvasAudioStudio";
 import type { ManhuaWorkbenchShot } from "@shared/manhuaScriptWorkbench";
 import { createManhuaAudioFromShots } from "@shared/manhuaAudioFromShots";
+import { MANHUA_DIALOGUE_SILENCE_TOKEN } from "@shared/manhuaShotDialoguePersist";
 
-const SCRIPT_CUE_ID = /^script-shot-\d+-line-\d+$/;
-
-/** 只拦截与原镜绑定的旧对白；用户自行添加的对白仍可独立制作。 */
-export function manhuaScriptCueSourceIssue(
-  cue: CanvasAudioCue,
-  expectedCues: readonly CanvasAudioCue[] | undefined,
-  hasSourceShots: boolean,
-): string | undefined {
-  if (!SCRIPT_CUE_ID.test(cue.id)) return undefined;
-  if (!hasSourceShots) return "本段分镜原稿尚未读取到，无法核对这句旧音轨；未提交付费配音。";
-  const expected = expectedCues?.find(row => row.id === cue.id);
-  if (expected &&
-    expected.speakerZh === cue.speakerZh &&
-    expected.textZh === cue.textZh
-  ) return undefined;
-  return "本句与当前分镜原稿的台词或角色不一致；先按原稿刷新或逐句核对，未提交付费配音。";
-}
-
-/** 成片付费提交前复核已存TTS是否仍对应当前镜稿；旧候选保留但不能混进新口型。 */
-export function manhuaClipSavedDialogueIssue(
-  studio: CanvasAudioStudio | undefined,
+/** 分镜台词保存时同步对应镜的音轨；旧候选留作历史，旧采用立即失效。 */
+export function syncEditedShotDialoguesToAudio(
+  studio: CanvasAudioStudio,
   shots: ManhuaWorkbenchShot[],
   durationSec: number,
+  dialogues: Record<number, string>,
+): CanvasAudioStudio {
+  const changedShots = new Set(Object.keys(dialogues).map(Number));
+  if (!changedShots.size) return studio;
+  const nextShots = shots.map(shot => {
+    if (!changedShots.has(shot.index)) return shot;
+    const value = dialogues[shot.index]?.trim() || MANHUA_DIALOGUE_SILENCE_TOKEN;
+    return {
+      ...shot,
+      dialogueZh: value === MANHUA_DIALOGUE_SILENCE_TOKEN ? "" : value,
+      dialogueSuppressed: value === MANHUA_DIALOGUE_SILENCE_TOKEN,
+      additionalDialogueCues: [],
+    };
+  });
+  const generated = createManhuaAudioFromShots(nextShots, durationSec).cues
+    .filter(cue => /^script-shot-(\d+)-line-\d+$/.test(cue.id) && changedShots.has(Number(cue.id.match(/^script-shot-(\d+)-line-/)?.[1])));
+  const freshById = new Map(generated.map(cue => [cue.id, cue]));
+  const consumed = new Set<string>();
+  const cues = studio.cues.map(cue => {
+    const match = cue.kind === "dialogue" ? cue.id.match(/^script-shot-(\d+)-line-\d+$/) : null;
+    if (!match || !changedShots.has(Number(match[1]))) return cue;
+    const fresh = freshById.get(cue.id);
+    if (!fresh) return { ...cue, textZh: "", enabled: false, selectedTakeId: undefined, approved: false };
+    consumed.add(cue.id);
+    if (cue.textZh === fresh.textZh && cue.speakerZh === fresh.speakerZh) return cue;
+    const sameSpeaker = cue.speakerZh === fresh.speakerZh;
+    return {
+      ...cue,
+      textZh: fresh.textZh,
+      speakerZh: fresh.speakerZh,
+      shotZh: fresh.shotZh,
+      enabled: true,
+      voice: sameSpeaker ? cue.voice : "",
+      voiceLock: sameSpeaker ? cue.voiceLock : undefined,
+      selectedTakeId: undefined,
+      approved: false,
+    };
+  });
+  for (const fresh of generated) if (!consumed.has(fresh.id)) cues.push(fresh);
+  return { ...studio, cues };
+}
+
+/** 当前音轨台词是唯一真源；成片前只阻止旧候选混进修改后的台词。 */
+export function manhuaClipSavedDialogueIssue(
+  studio: CanvasAudioStudio | undefined,
+  _shots: ManhuaWorkbenchShot[],
+  _durationSec: number,
 ): string | undefined {
-  const scriptCues = studio?.cues.filter(cue => SCRIPT_CUE_ID.test(cue.id)) || [];
-  const generatedCues = scriptCues.filter(cue => cue.takes.some(take => take.id === cue.selectedTakeId));
-  // 只有草稿、尚未生成TTS时，台词修改不要求重新购买配音。
-  if (!generatedCues.length) return undefined;
-  if (!shots.length) return "当前分段原稿不可用，旧配音未提交成片。";
-  let expected: CanvasAudioCue[];
-  try { expected = createManhuaAudioFromShots(shots, durationSec).cues; }
-  catch { return "当前分段对白无法校验，旧配音未提交成片。"; }
-  if (generatedCues.some(cue => {
-    const current = expected.find(row => row.id === cue.id);
+  const selectedCues = studio?.cues.filter(cue => cue.kind === "dialogue" && cue.selectedTakeId) || [];
+  if (selectedCues.some(cue => {
     const selectedTake = cue.takes.find(take => take.id === cue.selectedTakeId);
-    return !current || current.speakerZh !== cue.speakerZh || current.textZh !== cue.textZh ||
-      selectedTake?.inputKey !== canvasAudioCueInputKey(cue);
+    return selectedTake?.inputKey !== canvasAudioCueInputKey(cue);
   })) {
-    return "台词或说话人已变更，已有TTS语音需按新台词重新生成并确认；静帧保留，本次未提交成片。";
+    return "当前台词、说话人或音色与已选TTS不一致；请按当前编辑重新生成并确认语音。静帧保留，本次未提交成片。";
   }
   return undefined;
 }

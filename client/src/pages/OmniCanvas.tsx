@@ -270,6 +270,7 @@ import { buildManhuaAutoSegmentBinding, normalizeManhuaAutoSegmentBinding } from
 import { extractManhuaSceneHintFromPrompt } from "@shared/manhuaClipDialogueTimeline";
 import { upsertShotAngleSection } from "@shared/manhuaShotAnglePersist";
 import { patchShotDialogueSection } from "@shared/manhuaShotDialoguePersist";
+import { syncEditedShotDialoguesToAudio } from "@/lib/manhuaAudioScriptSource";
 import { patchShotDescriptionSection } from "@shared/manhuaShotDescriptionPersist";
 import {
   listScreenwriterGenres,
@@ -10724,7 +10725,7 @@ export default function OmniCanvas() {
                       }),
                     );
                   }}
-                  onUpsertShotDialogues={(dialogues, _segmentIndex) => {
+                  onUpsertShotDialogues={(dialogues, segmentIndex, segmentShots, segmentDurationSec) => {
                     const ep = writerFocusEpisode;
                     // writerPack 是刷新/云草稿后的剧本文本真源；只写画布节点会在恢复后复活旧台词。
                     setWriterPack((prev) =>
@@ -10745,6 +10746,9 @@ export default function OmniCanvas() {
                     handleBlocksChange((prev) =>
                       prev.map((b) => {
                         if ((getBlockEpisodeIndex(b) ?? 1) !== ep) return b;
+                        if (isManhuaClipBlockId(b.id) && b.audioStudio && resolveClipLocalSegmentIndex(b.id, b.prompt, ep) === segmentIndex) {
+                          return { ...b, audioStudio: syncEditedShotDialoguesToAudio(b.audioStudio, segmentShots, segmentDurationSec, dialogues) };
+                        }
                         const stage = stageKeyFromBlockId(b.id);
                         if (
                           stage !== "story" &&
