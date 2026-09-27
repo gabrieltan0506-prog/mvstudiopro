@@ -115,8 +115,11 @@ it("建议应用后真实当前音轨生成消费新voice；另一句保持原�
   await click("添加一句对白");await fill("2 镜头与动作","家丁转头");await fill("2 说话角色","家丁");await fill("2 本句台词","站住。");
   const second=await page.evaluate(()=>(window as any).fixture.state.cues[1].id);
   expect(await page.$eval('[aria-label="当前音轨"]', el => (el as HTMLSelectElement).value)).toBe(second);
+  expect(await page.$$eval('[aria-label="音色分类"] button', buttons => buttons.map(button => button.textContent))).toEqual(['男', '女', '自定义音色']);
+  expect(await page.$$eval('[aria-label="2 音色"] option', options => options.length)).toBe(0);
   await page.evaluate(()=>{const d=Array.from(document.querySelectorAll('details')).find(d=>d.querySelector('summary')?.textContent?.includes('声线匹配建议'));if(d)d.open=true;});
-  await page.select('[aria-label="匹配性别"]','男');await page.select('[aria-label="匹配年龄"]','senior');
+  await page.evaluate(() => (Array.from(document.querySelectorAll('[aria-label="音色分类"] button')).find(button => button.textContent === '男') as HTMLButtonElement).click());
+  await page.select('[aria-label="匹配年龄"]','senior');
   expect(await page.evaluate(()=>document.body.textContent)).toContain('尚未试听验证');
   const before=await page.evaluate(()=>(window as any).fixture.state.cues.map((c:any)=>c.voice));
   await click('应用建议音色');
@@ -125,12 +128,12 @@ it("建议应用后真实当前音轨生成消费新voice；另一句保持原�
   await click('生成本句');expect(await page.evaluate(()=>(window as any).fixture.calls.length)).toBe(0);await click('确认生成');
   await page.waitForFunction(()=>(window as any).fixture.state.cues[1].takes.length===1);
   const result=await page.evaluate(()=>({calls:(window as any).fixture.calls,cues:(window as any).fixture.state.cues}));
-  expect(result.calls).toHaveLength(1);expect(result.calls[0].voice).toBe(after[1]);expect(result.calls[0].speakerZh).toBe('家丁');expect(result.cues[0].takes).toHaveLength(0);expect(result.cues[1].approved).toBe(false);
+  expect(result.calls).toHaveLength(1);expect(result.calls[0].voice).toBe(after[1]);expect(result.calls[0].speakerZh).toBe('家丁');expect(result.calls[0].speakerId).toBeTruthy();expect(result.cues[1].speakerId).toBe(result.calls[0].speakerId);expect(result.cues[0].takes).toHaveLength(0);expect(result.cues[1].approved).toBe(false);
   await page.evaluate(()=>{const f=(window as any).fixture;f.configure({...f.state,cues:f.state.cues.map((c:any,i:number)=>i===1?{...c,approved:true,selectedTakeId:c.takes[0].id}:c)});});
-  await page.select('[aria-label="匹配性别"]','女');
+  await page.evaluate(() => (Array.from(document.querySelectorAll('[aria-label="音色分类"] button')).find(button => button.textContent === '女') as HTMLButtonElement).click());
   await click('应用建议音色');
   const changed=await page.evaluate(()=>(window as any).fixture.state.cues[1]);
-  expect(changed.approved).toBe(false);expect(changed.takes).toEqual(result.cues[1].takes);expect(changed.voice).not.toBe(result.calls[0].voice);
+  expect(changed.approved).toBe(true);expect(changed.takes).toEqual(result.cues[1].takes);expect(changed.voice).toBe(result.calls[0].voice);
 
  }finally{await context.close();}
 },30000);
@@ -144,6 +147,8 @@ it("新增第二句自动选中；显式切回第一句只生成第一句", asyn
   const ids=await page.evaluate(()=>(window as any).fixture.state.cues.map((c:any)=>c.id));
   expect(await page.$eval('[aria-label="当前音轨"]',el=>(el as HTMLSelectElement).value)).toBe(ids[1]);
   await page.select('[aria-label="当前音轨"]',ids[0]);
+  await page.evaluate(() => (Array.from(document.querySelectorAll('[aria-label="音色分类"] button')).find(button => button.textContent === '女') as HTMLButtonElement).click());
+  await click('应用建议音色');
   await click("生成本句");await page.waitForSelector('[role="dialog"]');await click("确认生成");
   await page.waitForFunction(()=>(window as any).fixture.state.cues[0].takes.length===1);
   const result=await page.evaluate(()=>({calls:(window as any).fixture.calls,cues:(window as any).fixture.state.cues}));

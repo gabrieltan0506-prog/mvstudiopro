@@ -138,6 +138,8 @@ describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
       });
       await click("咳嗽");
       await page.waitForFunction(() => (window as any).fixture.state.cues[0]?.textZh === "阿菁，[cough]还有多久到医馆呀？");
+      await page.waitForFunction(() => (document.querySelector('[aria-label="1 本句台词"]') as HTMLTextAreaElement)?.value === "阿菁，[cough]还有多久到医馆呀？");
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
       await click("喘气（吸气）");
       await page.waitForFunction(() => (window as any).fixture.state.cues[0]?.textZh === "阿菁，[cough][gasp]还有多久到医馆呀？");
       expect(await page.evaluate(() => (window as any).fixture.calls)).toEqual([]);

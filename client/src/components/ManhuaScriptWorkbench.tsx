@@ -4563,6 +4563,7 @@ export default function ManhuaScriptWorkbench({
                 <button type="button" onClick={() => setAudioStudioOpen(false)}>收起</button>
               </div>
               {activeClip ? <CanvasAudioStudio key={activeClip.id} block={activeClip} compact={false} timelineDurationSec={activeSegment?.durationSec} sourceShots={activeSegment?.shots} dialogueSources={blocks}
+                characters={assetCanon?.characters.map(character => ({ id: character.id, nameZh: character.nameZh, aliasZh: character.aliasZh }))}
                 disabled={Boolean(factoryBusy) || activeClip.status === "running" || activeClip.videoTaskStatus === "queued"}
                 onChange={studio => onUpdateClipAudioStudio(activeClip.id, studio)}
                 onMasterTrackReady={onSetClipSegmentReference ? (entry) => onSetClipSegmentReference(activeClip.id, "master", entry) : undefined}

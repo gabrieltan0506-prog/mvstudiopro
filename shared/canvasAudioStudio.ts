@@ -26,11 +26,13 @@ export const canvasAudioCueSchema = z.object({
   startSec: seconds,
   endSec: seconds,
   speakerZh: text(120),
+  /** 稳定角色身份；旧音轨可缺省，工厂新配音须绑定资产角色 ID。 */
+  speakerId: text(120).optional(),
   voiceStateZh: text(120),
   textZh: text(4000),
   emotion: text(80),
   voice: text(80),
-  voiceLock: z.object({ speakerZh: text(120).min(1), voice: text(80).min(1) }).optional(),
+  voiceLock: z.object({ speakerZh: text(120).min(1), speakerId: text(120).optional(), voice: text(80).min(1) }).optional(),
   source: z.object({
     gcsUri: mediaUri,
     previewUrl: z.string().max(8192),
@@ -107,7 +109,9 @@ export function createCanvasAudioCue(kind: CanvasAudioCue["kind"], id: string): 
 /** 音量与淡入淡出在合听/母轨应用；源音频裁切才需新的免费裁切产物。 */
 export function canvasAudioCueInputKey(cue: CanvasAudioCue): string {
   return JSON.stringify(cue.kind === "dialogue"
-    ? [cue.kind, cue.speakerZh, cue.voiceStateZh, cue.textZh, cue.emotion, cue.voice]
+    ? cue.speakerId
+      ? [cue.kind, cue.speakerId, cue.speakerZh, cue.voiceStateZh, cue.textZh, cue.emotion, cue.voice]
+      : [cue.kind, cue.speakerZh, cue.voiceStateZh, cue.textZh, cue.emotion, cue.voice]
     : [cue.kind, cue.source?.gcsUri ?? "", cue.sourceStartSec, cue.sourceEndSec, "mix-v2"]);
 }
 /** 只延长当前对白窗口；不移动其他对白、不裁音频、不重新购买。 */
