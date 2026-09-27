@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { jobs } from "../../drizzle/schema";
-import { CANVAS_TTS_CREDITS_PER_LINE } from "../../shared/canvasGenerationPricing";
+import { CANVAS_TTS_CREDITS_PER_LINE, canvasTtsCreditsForDuration } from "../../shared/canvasGenerationPricing";
 import { assertCanvasDialogueInputControls } from "../../shared/canvasDialogueControls";
 import { getDb } from "../db";
 import { getCredits } from "../credits";
@@ -12,6 +12,7 @@ import { normalizeDialogueAudio } from "./postProduction";
 import { synthesizeManhuaDialoguePreferred, type ManhuaDialogueTtsRouteResult } from "./manhuaDialogueTtsRoute";
 import { getGcsBucketName, signGsUriV4ReadUrl, uploadBufferToGcs } from "./gcs";
 import { readBgmAudioWithLimit } from "./manhuaScoringRoom";
+import { assertReferenceVoiceOwner } from "./canvasVoiceReference";
 
 export const CANVAS_DIALOGUE_ACTION = "canvas_dialogue_line";
 export const canvasDialogueInputSchema = z.object({
@@ -24,7 +25,7 @@ export const canvasDialogueInputSchema = z.object({
 export type CanvasDialogueInput = z.output<typeof canvasDialogueInputSchema>;
 export type CanvasDialogueResult = Pick<ManhuaDialogueTtsRouteResult, "gcsUri" | "bytes" | "voice" | "voiceGate" | "provider"> & { durationSec?: number };
 export type CanvasDialogueRecord = {
-  id: string; userId: string; input: { action: string; digest: string; params: CanvasDialogueInput };
+  id: string; userId: string; input: { action: string; digest: string; params: CanvasDialogueInput; pricingVersion?: "duration_v2" };
   status: string; updatedAt: Date;
   output: { stage: string; upstream?: ManhuaDialogueTtsRouteResult; result?: CanvasDialogueResult } | null;
 };
@@ -53,8 +54,9 @@ export type CanvasDialogueDeps = {
   balance: (userId: number) => Promise<number>;
   synthesize: typeof synthesizeManhuaDialoguePreferred;
   mirror: (result: ManhuaDialogueTtsRouteResult, userId: number, id: string) => Promise<CanvasDialogueResult>;
-  charge: (userId: number, requestId: string) => Promise<void>;
+  charge: (userId: number, requestId: string, creditsCost: number) => Promise<void>;
   sign: (uri: string) => string;
+  checkVoiceOwner?: (userId: number, voice: string) => Promise<void>;
 };
 
 async function database() {
@@ -103,6 +105,7 @@ const realDeps: CanvasDialogueDeps = {
   },
   charge: settleCanvasDialogueCharge,
   sign: uri => signGsUriV4ReadUrl(uri, 7 * 24 * 3600),
+  checkVoiceOwner: assertReferenceVoiceOwner,
 };
 
 function responseFor(row: CanvasDialogueRecord, deps: CanvasDialogueDeps): CanvasDialogueResponse {
@@ -113,7 +116,8 @@ function responseFor(row: CanvasDialogueRecord, deps: CanvasDialogueDeps): Canva
     jobId: row.id, billingRequestId: params.billingRequestId,
     status: done ? "succeeded" : uncertain ? "reconcile_manual" : "running",
     speakerZh: params.speakerZh, voiceStateZh: params.voiceStateZh, input: params.input, voice: params.voice,
-    creditsCost: CANVAS_TTS_CREDITS_PER_LINE,
+    creditsCost: row.input.pricingVersion === "duration_v2" && Number.isFinite(row.output?.result?.durationSec) && (row.output?.result?.durationSec ?? 0) > 0
+      ? canvasTtsCreditsForDuration(row.output!.result!.durationSec!) : row.input.pricingVersion === "duration_v2" ? 0 : CANVAS_TTS_CREDITS_PER_LINE,
     canResumeSettlement: Boolean(!done && (row.output?.upstream || row.output?.result)),
     ...(done ? { result: { ...done, audioUrl: deps.sign(done.gcsUri) } }
       : { message: row.output?.upstream || row.output?.result
@@ -125,15 +129,16 @@ function responseFor(row: CanvasDialogueRecord, deps: CanvasDialogueDeps): Canva
 export async function generateCanvasDialogue(userId: number, rawInput: CanvasDialogueInput, deps: CanvasDialogueDeps = realDeps): Promise<CanvasDialogueResponse> {
   if (!Number.isSafeInteger(userId) || userId <= 0) throw new CanvasDialogueError("conflict", "登录身份无效");
   const input = canvasDialogueInputSchema.parse(rawInput);
+  await (deps.checkVoiceOwner || assertReferenceVoiceOwner)(userId, input.voice);
   try { assertCanvasDialogueInputControls(input.input); }
   catch (error) { throw new CanvasDialogueError("conflict", error instanceof Error ? error.message : "语气标签不合法"); }
   const id = canvasDialogueJobId(userId, input.billingRequestId);
   const digest = canvasDialogueDigest(input);
   let row = await deps.load(id, userId);
   if (!row) {
-    if (await deps.balance(userId) < CANVAS_TTS_CREDITS_PER_LINE) throw new CanvasDialogueError("payment", `本句配音需要 ${CANVAS_TTS_CREDITS_PER_LINE} 积分`);
+    if (await deps.balance(userId) < 2) throw new CanvasDialogueError("payment", "配音按实测时长计费，账户至少需有 2 积分");
     const fresh: CanvasDialogueRecord = { id, userId: String(userId), status: "running", updatedAt: new Date(),
-      input: { action: CANVAS_DIALOGUE_ACTION, digest, params: input }, output: { stage: "generating" } };
+      input: { action: CANVAS_DIALOGUE_ACTION, digest, params: input, pricingVersion: "duration_v2" }, output: { stage: "generating" } };
     if (await deps.claim(fresh)) {
       let upstream: ManhuaDialogueTtsRouteResult;
       try {
@@ -159,9 +164,11 @@ export async function generateCanvasDialogue(userId: number, rawInput: CanvasDia
   if (row.status === "succeeded" || (!row.output?.upstream && !row.output?.result)) return responseFor(row, deps);
   try {
     const result = row.output.result ?? await deps.mirror(row.output.upstream!, userId, id);
+    const creditsCost = row.input.pricingVersion === "duration_v2"
+      ? canvasTtsCreditsForDuration(result.durationSec ?? NaN) : CANVAS_TTS_CREDITS_PER_LINE;
     const output = { ...row.output, stage: "settlement_pending", result };
     await deps.save(id, userId, output);
-    await deps.charge(userId, input.billingRequestId);
+    await deps.charge(userId, input.billingRequestId, creditsCost);
     await deps.save(id, userId, { ...output, stage: "done" }, true);
   } catch {
     // 结算结果未知时绝不显示“未扣费”；原素材与 chargeKey 留在同一任务中。

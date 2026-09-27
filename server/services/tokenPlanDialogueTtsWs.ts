@@ -57,6 +57,7 @@ export type TokenPlanTtsSocketFactory = (
 
 export type TokenPlanDialogueTtsWsDependencies = {
   env?: NodeJS.ProcessEnv;
+  routes?: WsRoute[];
   socketFactory?: TokenPlanTtsSocketFactory;
   maxAudioBytes?: number;
   inspectAudio?: (
@@ -112,6 +113,7 @@ export function normalizeTokenPlanWsVoice(voice: string): string {
     throw new TokenPlanDialogueTtsConfigurationError("token_plan_tts_voice_empty");
   }
   const prefix = `${TOKEN_PLAN_DIALOGUE_TTS_WS_MODEL}-`;
+  if (trimmed.startsWith(`${prefix}mvsref-`)) return trimmed;
   return trimmed.startsWith(prefix) ? trimmed.slice(prefix.length) : trimmed;
 }
 
@@ -326,7 +328,7 @@ export async function synthesizeTokenPlanDialogueWs(
     throw new TokenPlanDialogueTtsConfigurationError("token_plan_tts_input_empty");
   }
   const voice = normalizeTokenPlanWsVoice(input.voice);
-  const routes = resolveTokenPlanDialogueTtsWsRoutes(
+  const routes = dependencies.routes || resolveTokenPlanDialogueTtsWsRoutes(
     dependencies.env || process.env
   );
   const socketFactory = dependencies.socketFactory || defaultSocketFactory;

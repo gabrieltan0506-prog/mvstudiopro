@@ -13,6 +13,7 @@ import {
   TokenPlanDialogueTtsExplicitRejectionError,
 } from "./tokenPlanDialogueTts.js";
 import { synthesizeTokenPlanDialogueWs } from "./tokenPlanDialogueTtsWs.js";
+import { REFERENCE_VOICE_MODEL, REFERENCE_VOICE_PREFIX, resolveReferenceVoiceWorkspace } from "./canvasVoiceReference.js";
 
 export type ManhuaDialogueTtsRouteResult = {
   audioUrl: string;
@@ -21,7 +22,7 @@ export type ManhuaDialogueTtsRouteResult = {
   voice: string;
   generationId: string;
   /** 实际走的路，透传给面板/账单描述 */
-  provider: "token-plan-singapore" | "token-plan-beijing" | "openrouter";
+  provider: "token-plan-singapore" | "token-plan-beijing" | "openrouter" | "bailian-singapore";
   voiceGate: ManhuaDialogueVoiceGateResult;
 };
 
@@ -36,6 +37,8 @@ export type ManhuaDialogueTtsRouteInput = {
 export type ManhuaDialogueTtsRouteDependencies = {
   synthesizeTokenPlan?: typeof synthesizeTokenPlanDialogueWs;
   synthesizeOpenRouter?: typeof synthesizeQwenDialogue;
+  synthesizeReference?: typeof synthesizeTokenPlanDialogueWs;
+  resolveReferenceWorkspace?: typeof resolveReferenceVoiceWorkspace;
 };
 
 function isTokenPlanFallbackAllowed(error: unknown): boolean {
@@ -83,6 +86,14 @@ export async function synthesizeManhuaDialoguePreferred(
     dependencies.synthesizeTokenPlan || synthesizeTokenPlanDialogueWs;
   const synthesizeOpenRouter =
     dependencies.synthesizeOpenRouter || synthesizeQwenDialogue;
+
+  if (input.voice.startsWith(`${REFERENCE_VOICE_MODEL}-${REFERENCE_VOICE_PREFIX}-`)) {
+    const workspace = (dependencies.resolveReferenceWorkspace || resolveReferenceVoiceWorkspace)();
+    const result = await (dependencies.synthesizeReference || synthesizeTokenPlanDialogueWs)({ input: input.input, voice: input.voice, ownerUserId: input.ownerUserId, signal: input.signal },
+      { routes: [{ region: "singapore", endpoint: workspace.websocketUrl, apiKey: workspace.apiKey }] });
+    return { audioUrl: result.audioUrl, gcsUri: result.gcsUri, bytes: result.bytes, voice: input.voice,
+      generationId: result.generationId, provider: "bailian-singapore", voiceGate: result.voiceGate };
+  }
 
   const skipPlan = isPlanVoiceRecentlyRejected(input.voice);
   try {

@@ -39,6 +39,7 @@ beforeAll(async () => {
         f.setMasterCb=setWithMasterCb;f.setMaster=entry=>setBlock(b=>({...b,manhuaSegmentRefs:{...(b.manhuaSegmentRefs||{}),master:entry}}));
         const onMasterTrackReady=withMasterCb?entry=>{if(f.rejectMasterSave)return false;f.masterEntries.push(entry);f.setMaster(entry);return true;}:undefined;
         f.longCues=()=>{const cues=Array.from({length:6},(_,i)=>{const cue={...createCanvasAudioCue('dialogue','long-'+i),speakerZh:'角色',voice:'longanlufeng',textZh:'长台词'.repeat(1000),shotZh:'镜头',startSec:i*4,endSec:i*4+3,approved:true,selectedTakeId:'take-'+i};cue.takes=[{id:'take-'+i,gcsUri:'gs://test-bucket/post-prod/7/'+i+'.wav',previewUrl:'https://audio.test/'+i+'.wav',durationSec:2,createdAt:'2026-09-08',inputKey:canvasAudioCueInputKey(cue)}];return cue;});setBlock(b=>({...b,audioStudio:{...b.audioStudio,cues}}));};
+        f.lockTwo=()=>{const first={...createCanvasAudioCue('dialogue','lock-a'),speakerZh:'阿菁',voice:'qwen-audio-3.0-tts-plus-longcanzhuyue',textZh:'先走。',shotZh:'第一镜',startSec:0,endSec:3,approved:true,selectedTakeId:'confirmed',voiceLock:{speakerZh:'阿菁',voice:'qwen-audio-3.0-tts-plus-longcanzhuyue'}};first.takes=[{id:'confirmed',gcsUri:'gs://test-bucket/confirmed.wav',previewUrl:'https://audio.test/confirmed.wav',durationSec:2,createdAt:'2026-09-27',inputKey:canvasAudioCueInputKey(first)}];const next={...createCanvasAudioCue('dialogue','lock-b'),speakerZh:'阿菁',voice:'qwen-audio-3.0-tts-plus-longanlufeng',textZh:'我来了。',shotZh:'第二镜',startSec:4,endSec:7};setBlock(b=>({...b,audioStudio:{...b.audioStudio,cues:[first,next]}}));};
         f.addBgm=()=>{const cue=createCanvasAudioCue('bgm','bgm-a');cue.shotZh='变身展翼';cue.startSec=13;cue.endSec=21;cue.source={gcsUri:'gs://test-bucket/generated/source.mp3',previewUrl:'https://audio.test/source.mp3',durationSec:27.77,labelZh:'27秒原曲'};cue.sourceStartSec=13;cue.sourceEndSec=21;setBlock(b=>({...b,audioStudio:{...b.audioStudio,cues:[...b.audioStudio.cues,cue]}}));};
         const onChange=audioStudio=>{if(f.rejectSave)return false;setBlock(b=>f.dropSettle&&audioStudio.pendingOperations.length<b.audioStudio.pendingOperations.length?b:({...b,audioStudio}));return true;};
         return visible&&<CanvasAudioStudioView block={block} services={services} onChange={onChange} onMasterTrackReady={onMasterTrackReady}/>;
@@ -111,6 +112,20 @@ async function open() {
   return { context, page, click, fill };
 }
 describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
+  it("首句确认的角色音色阻止同角色异声生成，改台词后仍能沿用", async () => {
+    const { context, page, click, fill } = await open();
+    try {
+      await page.evaluate(() => (window as any).fixture.lockTwo());
+      await page.waitForSelector('[data-cue-id="lock-b"]');
+      await page.click('[aria-label="生成第2句配音"]');
+      expect(await page.evaluate(() => (window as any).fixture.calls)).toEqual([]);
+      expect(await page.$eval('[role="alert"]', element => element.textContent)).toContain("已锁定其他音色");
+      await click("应用角色锁定音色");
+      await page.waitForFunction(() => (window as any).fixture.state.cues[1].voice === "qwen-audio-3.0-tts-plus-longcanzhuyue");
+      await fill("1 本句台词", "换一句台词。");
+      expect(await page.evaluate(() => (window as any).fixture.state.cues[0].voiceLock.voice)).toBe("qwen-audio-3.0-tts-plus-longcanzhuyue");
+    } finally { await context.close(); }
+  }, 20_000);
   it("娘的咳嗽与吸气按钮在光标处插入声音，不朗读说明文字", async () => {
     const { context, page, click, fill } = await open();
     try {
@@ -122,6 +137,7 @@ describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
         input.setSelectionRange(3, 3);
       });
       await click("咳嗽");
+      await page.waitForFunction(() => (window as any).fixture.state.cues[0]?.textZh === "阿菁，[cough]还有多久到医馆呀？");
       await click("喘气（吸气）");
       await page.waitForFunction(() => (window as any).fixture.state.cues[0]?.textZh === "阿菁，[cough][gasp]还有多久到医馆呀？");
       expect(await page.evaluate(() => (window as any).fixture.calls)).toEqual([]);
@@ -296,7 +312,12 @@ describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
     try {
       await page.evaluate(() => (window as any).fixture.addBgm());
       await page.waitForSelector('[data-cue-id="bgm-a"]');
-      await fill("1 音量", "2");
+      await page.$eval('[aria-label="1 配乐试听音量"]', element => {
+        const input = element as HTMLInputElement;
+        input.value = "2";
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      });
       expect(
         await page.evaluate(() => (window as any).fixture.state.cues[0].volume)
       ).toBe(1);
@@ -482,7 +503,7 @@ describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
       );
       expect(changed.approved).toBe(false);
       expect(changed.takes).toHaveLength(1);
-      await page.click('input[type="checkbox"]');
+      await page.click('[data-cue-id] input[type="checkbox"]');
       await page.waitForFunction(
         () => (window as any).fixture.state.cues[0].enabled === false
       );
@@ -491,7 +512,7 @@ describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
           () => (window as any).fixture.state.cues[0].takes.length
         )
       ).toBe(1);
-      expect(await page.$eval("audio", el => el.getAttribute("src"))).toBe(
+      expect(await page.$eval('audio[aria-label="1 候选 1"]', el => el.getAttribute("src"))).toBe(
         "https://audio.test/test.mp3"
       );
     } finally {

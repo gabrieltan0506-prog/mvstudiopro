@@ -39,6 +39,19 @@ const input = {
 describe("synthesizeManhuaDialoguePreferred", () => {
   beforeEach(() => resetPlanVoiceRejectMemo());
 
+  it("参考音色只走建声时同一业务空间的TTS，不掉入其他账号兜底", async () => {
+    const voice = "qwen-audio-3.0-tts-plus-mvsref-abc123";
+    const synthesizeReference = vi.fn(async () => ({ ...planResult, voice }));
+    const synthesizeOpenRouter = vi.fn();
+    const result = await synthesizeManhuaDialoguePreferred({ ...input, voice }, {
+      resolveReferenceWorkspace: () => ({ apiKey: "test-key", customizationUrl: "https://workspace.test/custom", websocketUrl: "wss://workspace.test/ws" }),
+      synthesizeReference: synthesizeReference as any, synthesizeOpenRouter: synthesizeOpenRouter as any,
+    });
+    expect(result.provider).toBe("bailian-singapore");
+    expect(synthesizeReference).toHaveBeenCalledWith(expect.objectContaining({ voice }), expect.objectContaining({ routes: [expect.objectContaining({ endpoint: "wss://workspace.test/ws" })] }));
+    expect(synthesizeOpenRouter).not.toHaveBeenCalled();
+  });
+
   it("prefers the token plan route when it succeeds", async () => {
     const synthesizeOpenRouter = vi.fn();
     const result = await synthesizeManhuaDialoguePreferred(input, {

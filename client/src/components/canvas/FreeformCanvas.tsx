@@ -3274,7 +3274,7 @@ export default function FreeformCanvas({
                                                       MP4
                                                     </div>
                                                   )}
-                                                  {["seedance-2.5", "minimax-hailuo-3"].includes(block.videoModel || "") && <details><summary className="text-xs text-sky-100">可选：逐句配音与分段配乐</summary><CanvasAudioStudio block={block} disabled={block.status === "running" || block.videoTaskStatus === "queued"} onChange={audioStudio => onPersistAudioStudio?.(block.id, audioStudio) ?? false} /></details>}
+                                                  {["seedance-2.5", "minimax-hailuo-3"].includes(block.videoModel || "") && <details><summary className="text-xs text-sky-100">可选：逐句配音与分段配乐</summary><CanvasAudioStudio block={block} dialogueSources={blocks} disabled={block.status === "running" || block.videoTaskStatus === "queued"} onChange={audioStudio => onPersistAudioStudio?.(block.id, audioStudio) ?? false} /></details>}
                                                   <div className="text-[10px] text-white/45">
                                                     参考音频（最多 {maxAudioRefs}）· 上传
                                                     MP3/WAV 后勾选
