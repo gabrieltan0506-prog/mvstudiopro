@@ -46,7 +46,7 @@ it("工厂音轨按真实分段时长保留并显式刷新旧秒轴，不调用�
     await page.setContent('<div id="root"></div>');
     await page.addScriptTag({ content: built.outputFiles[0]!.text });
     await page.waitForFunction(() => document.body.textContent?.includes("本段 25 秒"));
-    expect(await page.evaluate(() => document.body.textContent)).toContain("当前已保存对白与原稿的台词、角色或秒轴不一致");
+    expect(await page.evaluate(() => document.body.textContent)).toContain("对白秒窗已手动调整；可按当前音轨生成与采用");
     await page.evaluate(() => {
       const button = Array.from(document.querySelectorAll("button")).find(row => row.textContent?.includes("按当前原稿刷新对白"));
       (button as HTMLButtonElement).click();

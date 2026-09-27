@@ -15,11 +15,9 @@ export function manhuaScriptCueSourceIssue(
   const expected = expectedCues?.find(row => row.id === cue.id);
   if (expected &&
     expected.speakerZh === cue.speakerZh &&
-    expected.textZh === cue.textZh &&
-    Math.abs(expected.startSec - cue.startSec) <= 0.001 &&
-    Math.abs(expected.endSec - cue.endSec) <= 0.001
+    expected.textZh === cue.textZh
   ) return undefined;
-  return "本句与当前分镜原稿的台词、角色或秒窗不一致；先按原稿刷新或逐句核对，未提交付费配音。";
+  return "本句与当前分镜原稿的台词或角色不一致；先按原稿刷新或逐句核对，未提交付费配音。";
 }
 
 /** 成片付费提交前复核已存TTS是否仍对应当前镜稿；旧候选保留但不能混进新口型。 */

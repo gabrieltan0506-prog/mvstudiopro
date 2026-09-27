@@ -298,17 +298,21 @@ export function CanvasAudioStudioView({
   }, [sourceShots, durationSec]);
   const currentScriptCues = state.cues.filter(cue => /^script-shot-\d+-line-\d+$/.test(cue.id));
   const expectedScriptCues = expectedScriptAudio?.cues || [];
-  const scriptTimelineOutdated = Boolean(block.audioStudio && sourceShots?.length) && (
+  const scriptContentOutdated = Boolean(block.audioStudio && sourceShots?.length) && (
     currentScriptCues.length !== expectedScriptCues.length ||
     expectedScriptCues.some(expected => {
       const currentCue = currentScriptCues.find(cue => cue.id === expected.id);
       return !currentCue ||
-        Math.abs(currentCue.startSec - expected.startSec) > 0.001 ||
-        Math.abs(currentCue.endSec - expected.endSec) > 0.001 ||
         currentCue.speakerZh !== expected.speakerZh ||
         currentCue.textZh !== expected.textZh;
     })
   );
+  const scriptTimelineOutdated = scriptContentOutdated || Boolean(block.audioStudio && sourceShots?.length) &&
+    expectedScriptCues.some(expected => {
+      const currentCue = currentScriptCues.find(cue => cue.id === expected.id);
+      return currentCue && (Math.abs(currentCue.startSec - expected.startSec) > 0.001 ||
+        Math.abs(currentCue.endSec - expected.endSec) > 0.001);
+    });
   const canRefreshScriptTimeline = scriptTimelineOutdated && currentScriptCues.every(cue =>
     cue.takes.length === 0 && !cue.selectedTakeId && !cue.approved && !cue.voice && !cue.voiceStateZh,
   ) && !state.pendingOperations.some(row => row.cueId && currentScriptCues.some(cue => cue.id === row.cueId));
@@ -1190,7 +1194,9 @@ export function CanvasAudioStudioView({
       {modelDurationIssue ? <p role="alert" className="text-xs text-amber-200">{modelDurationIssue}</p> : null}
       {scriptTimelineOutdated ? (
         <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-300/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
-          <span>{canRefreshScriptTimeline
+          <span>{!scriptContentOutdated
+            ? "对白秒窗已手动调整；可按当前音轨生成与采用，实际原声时长和对白冲突仍会检查。"
+            : canRefreshScriptTimeline
             ? `当前已保存对白与原稿的台词、角色或秒轴不一致；可按 ${durationSec} 秒原稿刷新，不生成音频、不扣费。`
             : `当前已保存对白与原稿的台词、角色或秒轴不一致，但已有音色、候选、采用或在途任务；请逐句核对，系统不会覆盖已有成果。`}</span>
           {canRefreshScriptTimeline && expectedScriptAudio ? (
