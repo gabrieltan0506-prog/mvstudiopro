@@ -3,7 +3,7 @@ import type { ComponentProps } from "react";
 import { findCanvasDialogueReuse, restoreCanvasDialogueCandidate } from "@/lib/canvasDialogueReuse";
 import { createManhuaAudioFromShots } from "@shared/manhuaAudioFromShots";
 import { manhuaBgmArcFromShots } from "@shared/manhuaBgmArcFromShots";
-import { manhuaScriptCueSourceIssue } from "@/lib/manhuaAudioScriptSource";
+import { manhuaScriptCueSourceIssue, manhuaScriptCueVerification } from "@/lib/manhuaAudioScriptSource";
 import { planCanvasDialogueTiming } from "@shared/canvasDialogueTimingPlan";
 import type { ManhuaWorkbenchShot } from "@shared/manhuaScriptWorkbench";
 import { canvasAudioMixSource } from "@shared/canvasAudioStudio";
@@ -357,9 +357,7 @@ export function CanvasAudioStudioView({
     currentScriptCues.length !== expectedScriptCues.length ||
     expectedScriptCues.some(expected => {
       const currentCue = currentScriptCues.find(cue => cue.id === expected.id);
-      return !currentCue ||
-        currentCue.speakerZh !== expected.speakerZh ||
-        currentCue.textZh !== expected.textZh;
+      return !currentCue || Boolean(manhuaScriptCueSourceIssue(currentCue, expectedScriptCues, true));
     })
   );
   const scriptTimelineOutdated = scriptContentOutdated || Boolean(block.audioStudio && sourceShots?.length) &&
@@ -1563,6 +1561,19 @@ export function CanvasAudioStudioView({
                     }
                   />
                 </label>
+                {(() => {
+                  const expected = expectedScriptCues.find(row => row.id === cue.id);
+                  const issue = manhuaScriptCueSourceIssue(cue, expectedScriptCues, Boolean(sourceShots?.length));
+                  return expected && issue ? (
+                    <div className="rounded border border-amber-300/30 bg-amber-500/10 p-2 text-xs text-amber-100">
+                      <p>本句与分镜原稿不同。核对角色、台词与时间窗后，可保留当前编辑生成配音；原稿再变更时需重新核对。</p>
+                      <button type="button" className={`${buttonClass} mt-2`} disabled={disabled || busy || Boolean(pending)}
+                        onClick={() => patchCue(cue.id, { sourceVerification: manhuaScriptCueVerification(cue, expected) })}>
+                        确认采用本句当前编辑
+                      </button>
+                    </div>
+                  ) : null;
+                })()}
                 <div className="flex flex-wrap items-center gap-2 text-xs">
                   <span className="text-white/55">光标处加入声音：</span>
                   <button type="button" className={buttonClass} disabled={disabled || busy || Boolean(pending)}

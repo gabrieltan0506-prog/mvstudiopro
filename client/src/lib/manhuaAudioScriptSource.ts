@@ -4,6 +4,13 @@ import { createManhuaAudioFromShots } from "@shared/manhuaAudioFromShots";
 
 const SCRIPT_CUE_ID = /^script-shot-\d+-line-\d+$/;
 
+export function manhuaScriptCueVerification(cue: CanvasAudioCue, expected: CanvasAudioCue): string {
+  return JSON.stringify([
+    expected.id, expected.speakerZh, expected.textZh, expected.startSec, expected.endSec,
+    cue.speakerZh, cue.textZh,
+  ]);
+}
+
 /** 只拦截与原镜绑定的旧对白；用户自行添加的对白仍可独立制作。 */
 export function manhuaScriptCueSourceIssue(
   cue: CanvasAudioCue,
@@ -13,11 +20,11 @@ export function manhuaScriptCueSourceIssue(
   if (!SCRIPT_CUE_ID.test(cue.id)) return undefined;
   if (!hasSourceShots) return "本段分镜原稿尚未读取到，无法核对这句旧音轨；未提交付费配音。";
   const expected = expectedCues?.find(row => row.id === cue.id);
-  if (expected &&
-    expected.speakerZh === cue.speakerZh &&
-    expected.textZh === cue.textZh
-  ) return undefined;
-  return "本句与当前分镜原稿的台词或角色不一致；先按原稿刷新或逐句核对，未提交付费配音。";
+  if (expected && (
+    (expected.speakerZh === cue.speakerZh && expected.textZh === cue.textZh) ||
+    cue.sourceVerification === manhuaScriptCueVerification(cue, expected)
+  )) return undefined;
+  return "本句与当前分镜原稿的台词或角色不一致；请逐句核对并确认采用当前编辑，未提交付费配音。";
 }
 
 /** 成片付费提交前复核已存TTS是否仍对应当前镜稿；旧候选保留但不能混进新口型。 */
@@ -37,7 +44,7 @@ export function manhuaClipSavedDialogueIssue(
   if (generatedCues.some(cue => {
     const current = expected.find(row => row.id === cue.id);
     const selectedTake = cue.takes.find(take => take.id === cue.selectedTakeId);
-    return !current || current.speakerZh !== cue.speakerZh || current.textZh !== cue.textZh ||
+    return Boolean(manhuaScriptCueSourceIssue(cue, expected, true)) ||
       selectedTake?.inputKey !== canvasAudioCueInputKey(cue);
   })) {
     return "台词或说话人已变更，已有TTS语音需按新台词重新生成并确认；静帧保留，本次未提交成片。";
