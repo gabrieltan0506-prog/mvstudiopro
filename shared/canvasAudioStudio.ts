@@ -31,6 +31,8 @@ export const canvasAudioCueSchema = z.object({
   voiceStateZh: text(120),
   textZh: text(4000),
   emotion: text(80),
+  /** 新句默认采用确定性情境演技；手动选语气（含自然）后关闭。 */
+  autoEmotion: z.boolean().optional(),
   voice: text(80),
   voiceLock: z.object({ speakerZh: text(120).min(1), speakerId: text(120).optional(), voice: text(80).min(1) }).optional(),
   source: z.object({

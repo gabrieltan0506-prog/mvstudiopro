@@ -17,7 +17,7 @@ import { BGM_BRIEF_MODELS, BGM_BRIEF_MODEL_LABEL_ZH, isBgmV6Model, type BgmBrief
 import { buildPremixTimelineClips, isPremixPendingKey, PREMIX_PENDING_PREFIX } from "@/lib/manhuaPremixMaster";
 import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
 import { cacheLocalAudioMedia, getLocalMediaRecordBySource } from "@/lib/manhuaLocalMediaStore";
-import { compileCanvasDialogueInput } from "@shared/canvasDialogueControls";
+import { compileCanvasDialogueInput, resolveCanvasDialogueEmotion, suggestCanvasDialogueEmotion } from "@shared/canvasDialogueControls";
 import { canvasAudioPreviewKey, loadCanvasMusicHistory } from "@/lib/canvasAudioStudioRecovery";
 import { parseManhuaClipTargetDurationSec } from "@shared/manhuaScriptWorkbench";
 import { manhuaClipMaxDurationSecForVideoModel } from "@shared/manhuaSeedanceLayout";
@@ -812,6 +812,7 @@ export function CanvasAudioStudioView({
       setConfirmation(null);
     });
   const prepareDialogue = (cue: CanvasAudioCue) => {
+    const suggestedEmotion = resolveCanvasDialogueEmotion({ ...cue, hasCandidates: cue.takes.length > 0 });
     let roleId = cue.speakerId || resolveCharacterId(cue.speakerZh);
     if (!roleId && characters.length) {
       setError(`角色「${cue.speakerZh || "未填"}」未绑定人物资产 ID，请先在本句选择对应角色。`);
@@ -842,9 +843,9 @@ export function CanvasAudioStudioView({
         !cue.voice
       )
         throw new Error("先填写说话角色、台词并选择音色。");
-      if (cue.speakerId !== roleId) {
-        if (!update(previous => ({ ...previous, cues: previous.cues.map(row => row.id === cue.id ? { ...row, speakerId: roleId } : row) }))) return;
-        cue = { ...cue, speakerId: roleId };
+      if (cue.speakerId !== roleId || cue.emotion !== suggestedEmotion) {
+        if (!update(previous => ({ ...previous, cues: previous.cues.map(row => row.id === cue.id ? { ...row, speakerId: roleId, emotion: suggestedEmotion } : row) }))) return;
+        cue = { ...cue, speakerId: roleId, emotion: suggestedEmotion };
       }
       setError("");
       setConfirmation({
@@ -1423,6 +1424,7 @@ export function CanvasAudioStudioView({
         const locked = disabled || busy || pending;
         const source = sourceFor(cue);
         const reuseCandidates = findCanvasDialogueReuse(block, cue, dialogueSources);
+        const actingSuggestion = cue.kind === "dialogue" ? suggestCanvasDialogueEmotion(cue) : undefined;
         const numberField = (
           label: string,
           key:
@@ -1581,11 +1583,16 @@ export function CanvasAudioStudioView({
                 </div>
                 <fieldset className="space-y-2">
                   <legend className="text-xs">说话语气</legend>
+                  {actingSuggestion && <div className="text-[11px] text-cyan-100">
+                    情境演技建议：{actingSuggestion.reasonZh}。新句未手动选语气时，生成前自动使用；已有候选只在你点「应用建议」后改变。
+                    {cue.emotion !== actingSuggestion.tag && <button type="button" className={buttonClass}
+                      disabled={disabled || busy || Boolean(pending)} onClick={() => patchCue(cue.id, { emotion: actingSuggestion.tag, autoEmotion: true })}>应用演技建议</button>}
+                  </div>}
                   <div className="flex flex-wrap gap-2">
                     {SPEECH_MOODS.map(([label, value]) => <button key={label} type="button"
                       className={buttonClass} aria-label={`${index + 1} 语气：${label}`}
                       aria-pressed={cue.emotion === value} disabled={disabled || busy || Boolean(pending)}
-                      onClick={() => patchCue(cue.id, { emotion: value })}>{label}</button>)}
+                      onClick={() => patchCue(cue.id, { emotion: value, autoEmotion: false })}>{label}</button>)}
                   </div>
                   <p className="text-[11px] text-white/50">只影响说话方式，不会把语气名称念出来；咳嗽、喘气需单独核对实际声音。</p>
                 </fieldset>
@@ -1601,7 +1608,7 @@ export function CanvasAudioStudioView({
                     placeholder="可选，如 [serious][empathetic]"
                     value={cue.emotion}
                     onChange={event =>
-                      patchCue(cue.id, { emotion: event.target.value })
+                      patchCue(cue.id, { emotion: event.target.value, autoEmotion: false })
                     }
                   />
                 </label>
@@ -1811,8 +1818,7 @@ export function CanvasAudioStudioView({
                     className={buttonClass}
                     disabled={
                       locked ||
-                      take.inputKey !== canvasAudioCueInputKey(cue) ||
-                      take.durationSec > cue.endSec - cue.startSec + 0.02
+                      take.inputKey !== canvasAudioCueInputKey(cue)
                     }
                     onClick={() =>
                       speakerLock && (speakerLock.conflict || speakerLock.voice !== cue.voice) ? setError(`${cue.speakerZh}已锁定其他音色，本候选不能覆盖角色锁。`) : update(previous => ({
@@ -1834,7 +1840,7 @@ export function CanvasAudioStudioView({
                   </button>
                   {take.durationSec > cue.endSec - cue.startSec + 0.02 && (
                     <div className="text-xs text-amber-200">
-                      <p>原声 {take.durationSec.toFixed(3)} 秒，当前窗口 {(cue.endSec - cue.startSec).toFixed(3)} 秒，还差 {(take.durationSec - (cue.endSec - cue.startSec)).toFixed(3)} 秒。保留完整原声。</p>
+                      <p>可先按听审结果采用完整原声。原声 {take.durationSec.toFixed(3)} 秒，当前窗口 {(cue.endSec - cue.startSec).toFixed(3)} 秒，还差 {(take.durationSec - (cue.endSec - cue.startSec)).toFixed(3)} 秒；合听和出片前仍需安排足够时长，不会截断对白。</p>
                       {cue.kind === "dialogue" && (() => {
                         const fit = canvasDialogueWindowFit(cue, take, state.cues, durationSec);
                         if (!fit.issue) return <button className={buttonClass} disabled={locked} onClick={() => patchCue(cue.id, { endSec: fit.endSec })}>将本句窗口延长至 {fit.endSec.toFixed(3)} 秒</button>;
@@ -1880,6 +1886,9 @@ export function CanvasAudioStudioView({
             {state.cues.find(cue => cue.id === confirmation.cueId)?.speakerZh}：
             {state.cues.find(cue => cue.id === confirmation.cueId)?.textZh}
           </p>}
+          {confirmation.kind === "dialogue" && <p className="text-xs text-cyan-100">实际合成输入：{
+            (() => { const cue = state.cues.find(row => row.id === confirmation.cueId); return cue ? compileCanvasDialogueInput(cue.textZh, cue.emotion) : ""; })()
+          }</p>}
           <p className="text-xs">
             {confirmation.kind === "resume"
               ? "恢复原单音频保存与结算，不重新配音，不重复扣费。"
