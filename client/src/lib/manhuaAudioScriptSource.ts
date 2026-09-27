@@ -41,6 +41,7 @@ export function syncEditedShotDialoguesToAudio(
       shotZh: fresh.shotZh,
       enabled: true,
       voice: sameSpeaker ? cue.voice : "",
+      speakerId: sameSpeaker ? cue.speakerId : undefined,
       voiceLock: sameSpeaker ? cue.voiceLock : undefined,
       selectedTakeId: undefined,
       approved: false,

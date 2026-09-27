@@ -20,6 +20,7 @@ export const canvasDialogueInputSchema = z.object({
   input: z.string().trim().min(1).max(4000),
   voice: z.string().trim().min(1).max(80),
   speakerZh: z.string().trim().min(1).max(100),
+  speakerId: z.string().trim().min(1).max(120).optional(),
   voiceStateZh: z.string().trim().max(200).default(""),
 }).strict();
 export type CanvasDialogueInput = z.output<typeof canvasDialogueInputSchema>;
@@ -32,7 +33,7 @@ export type CanvasDialogueRecord = {
 export type CanvasDialogueResponse = {
   jobId: string; billingRequestId: string;
   status: "running" | "succeeded" | "reconcile_manual";
-  speakerZh: string; voiceStateZh: string; input: string; voice: string;
+  speakerZh: string; speakerId?: string; voiceStateZh: string; input: string; voice: string;
   creditsCost: number; message?: string;
   /** 仅显式原编号确认可恢复保存/结算；查询绝不扣费。 */
   canResumeSettlement: boolean;
@@ -115,7 +116,7 @@ function responseFor(row: CanvasDialogueRecord, deps: CanvasDialogueDeps): Canva
   return {
     jobId: row.id, billingRequestId: params.billingRequestId,
     status: done ? "succeeded" : uncertain ? "reconcile_manual" : "running",
-    speakerZh: params.speakerZh, voiceStateZh: params.voiceStateZh, input: params.input, voice: params.voice,
+    speakerZh: params.speakerZh, speakerId: params.speakerId, voiceStateZh: params.voiceStateZh, input: params.input, voice: params.voice,
     creditsCost: row.input.pricingVersion === "duration_v2" && Number.isFinite(row.output?.result?.durationSec) && (row.output?.result?.durationSec ?? 0) > 0
       ? canvasTtsCreditsForDuration(row.output!.result!.durationSec!) : row.input.pricingVersion === "duration_v2" ? 0 : CANVAS_TTS_CREDITS_PER_LINE,
     canResumeSettlement: Boolean(!done && (row.output?.upstream || row.output?.result)),

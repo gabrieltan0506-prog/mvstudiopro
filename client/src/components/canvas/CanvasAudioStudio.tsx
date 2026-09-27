@@ -36,7 +36,7 @@ import {
   type CanvasAudioTake,
 } from "@shared/canvasAudioStudio";
 import { buildManhuaSoundPanelSummary, hasAdoptedManhuaAudio } from "@shared/manhuaSoundPanelSummary";
-import { collectSpeakerVoiceLocks } from "@shared/canvasSpeakerVoiceLock";
+import { collectSpeakerVoiceLocks, speakerVoiceLockKey } from "@shared/canvasSpeakerVoiceLock";
 import { resolveClipLocalSegmentIndex } from "@shared/manhuaScriptWorkbench";
 import {
   CANVAS_BGM_CREDITS_PER_RUN,
@@ -51,7 +51,7 @@ const VOICES = QWEN_TTS_VOICE_CATALOG.filter(row =>
   row.lang.includes("中文")
 ).map(row => ({
   id: buildQwenTtsVoiceId("plus", row.suffix),
-  label: `${row.nameZh} · ${row.gender} · ${row.traitZh}`,
+  label: `${row.gender} · ${row.traitZh} · ${row.sceneZh}`,
 }));
 const SPEECH_MOODS = [
   ["自然", ""], ["虚弱", "[tired]"], ["安抚", "[empathetic]"],
@@ -59,13 +59,13 @@ const SPEECH_MOODS = [
   ["惊慌", "[panicked]"], ["低声", "[whispers]"], ["好奇", "[curious]"],
 ] as const;
 export type CanvasVoiceMatchCriteria = { gender?: "男" | "女" | "中性"; ageBand?: "child" | "adult" | "senior"; traitLike?: string };
-/** 现有音轨没有稳定角色 ID，只消费显式目录条件，禁止按姓名跨句借声。 */
+/** 目录匹配只选择候选音色；最终声线由持久化角色 ID 约束。 */
 export function matchCanvasDialogueVoice(criteria: CanvasVoiceMatchCriteria) {
   if (!criteria.gender && !criteria.ageBand && !criteria.traitLike?.trim()) return { reasonZh: "请填写至少一项目录筛选条件；不会按角色姓名借用其他对白音色。" };
   const ages = criteria.ageBand === "child" ? { maxAge: 12 } : criteria.ageBand === "senior" ? { minAge: 55 } : criteria.ageBand === "adult" ? { minAge: 18, maxAge: 54 } : {};
   const entry = pickQwenTtsVoice({ gender: criteria.gender, ...ages, traitLike: criteria.traitLike?.trim(), lang: "中文" });
   if (!entry) return { reasonZh: "目录中没有同时符合这些条件的声线；原音色保持不变。" };
-  return { voice: buildQwenTtsVoiceId("plus", entry.suffix), reasonZh: `目录候选：${entry.nameZh} · ${entry.gender} · ${entry.age ?? "年龄未标"}岁 · ${entry.traitZh}。按所填条件筛选，尚未试听验证。` };
+  return { voice: buildQwenTtsVoiceId("plus", entry.suffix), reasonZh: `目录候选：${entry.gender} · ${entry.age ?? "年龄未标"}岁 · ${entry.traitZh}。按所填条件筛选，尚未试听验证。` };
 }
 
 const fieldClass =
@@ -128,6 +128,7 @@ type JobResult = {
   input?: string;
   voice?: string;
   speakerZh?: string;
+  speakerId?: string;
   voiceStateZh?: string;
   creditsCost?: number;
 };
@@ -171,6 +172,7 @@ export type CanvasAudioStudioServices = {
     input: string;
     voice: string;
     speakerZh: string;
+    speakerId?: string;
     voiceStateZh: string;
   }): Promise<JobResult>;
   getDialogue(input: { jobId: string }): Promise<JobResult | null>;
@@ -209,6 +211,7 @@ type Props = {
   timelineDurationSec?: number;
   sourceShots?: ManhuaWorkbenchShot[];
   dialogueSources?: readonly CanvasBlock[];
+  characters?: readonly { id: string; nameZh: string; aliasZh?: string }[];
   disabled?: boolean;
   onChange: (next: CanvasAudioStudioState) => boolean | void;
   /**
@@ -291,6 +294,7 @@ export function CanvasAudioStudioView({
   timelineDurationSec,
   sourceShots,
   dialogueSources = [],
+  characters = [],
   disabled = false,
   onChange,
   onMasterTrackReady,
@@ -379,18 +383,20 @@ export function CanvasAudioStudioView({
   }, [editorOpen, jumpToGroup]);
   const [activeCueId, setActiveCueId] = useState<string | null>(null);
   const [voiceCriteria, setVoiceCriteria] = useState<CanvasVoiceMatchCriteria>({});
+  const [voiceTab, setVoiceTab] = useState<"男" | "女" | "自定义音色">("女");
+  const [voicePickerOpen, setVoicePickerOpen] = useState(false);
   const [voicePage, setVoicePage] = useState(0);
   const activeCue = activeCueId === null ? state.cues[0] : state.cues.find(cue => cue.id === activeCueId);
   const voiceMatch = activeCue?.kind === "dialogue" ? matchCanvasDialogueVoice(voiceCriteria) : undefined;
   const voiceCatalogMatches = useMemo(() => QWEN_TTS_VOICE_CATALOG.filter(entry => {
     if (!entry.lang.includes("中文")) return false;
-    if (voiceCriteria.gender && entry.gender !== voiceCriteria.gender) return false;
+    if (voiceTab === "自定义音色" || entry.gender !== voiceTab) return false;
     if (voiceCriteria.ageBand === "child" && (entry.age === null || entry.age > 12)) return false;
     if (voiceCriteria.ageBand === "adult" && (entry.age === null || entry.age < 18 || entry.age > 54)) return false;
     if (voiceCriteria.ageBand === "senior" && (entry.age === null || entry.age < 55)) return false;
     const keyword = voiceCriteria.traitLike?.trim();
     return !keyword || `${entry.nameZh} ${entry.traitZh} ${entry.sceneZh}`.includes(keyword);
-  }), [voiceCriteria]);
+  }), [voiceCriteria, voiceTab]);
   const voiceSamples = useMemo(() => {
     const samples = new Map<string, { take: CanvasAudioTake; textZh: string }>();
     for (const source of [block, ...dialogueSources]) {
@@ -402,7 +408,19 @@ export function CanvasAudioStudioView({
     }
     return samples;
   }, [block, dialogueSources]);
-  const speakerVoiceLocks = useMemo(() => collectSpeakerVoiceLocks([block, ...(dialogueSources || []).filter(source => source.id !== block.id)]), [block, dialogueSources]);
+  const resolveCharacterId = (speakerZh: string): string | undefined => {
+    const name = speakerZh.trim();
+    const matches = characters.filter(character => character.nameZh.trim() === name || character.aliasZh?.trim() === name);
+    if (matches.length === 1) return matches[0]!.id;
+    if (characters.length) return undefined;
+    const savedIds = new Set([block, ...dialogueSources].flatMap(source => source.audioStudio?.cues || [])
+      .filter(cue => cue.kind === "dialogue" && cue.speakerZh.trim() === name)
+      .map(cue => cue.speakerId || cue.voiceLock?.speakerId).filter((id): id is string => Boolean(id)));
+    return savedIds.size === 1 ? Array.from(savedIds)[0] : undefined;
+  };
+  const lockKey = (cue: Pick<CanvasAudioCue, "speakerId" | "speakerZh">) =>
+    speakerVoiceLockKey({ ...cue, speakerId: cue.speakerId || resolveCharacterId(cue.speakerZh) });
+  const speakerVoiceLocks = useMemo(() => collectSpeakerVoiceLocks([block, ...(dialogueSources || []).filter(source => source.id !== block.id)], resolveCharacterId), [block, dialogueSources, characters]);
   const [referenceVoices, setReferenceVoices] = useState<Array<{ requestId: string; status: string; labelZh: string; voiceId?: string; message?: string }>>([]);
   const [referenceConsent, setReferenceConsent] = useState(false);
   useEffect(() => {
@@ -411,7 +429,7 @@ export function CanvasAudioStudioView({
     void services.listReferenceVoices().then(rows => { if (alive) setReferenceVoices(rows); }).catch(() => {});
     return () => { alive = false; };
   }, [block.id, editorOpen]);
-  useEffect(() => { setActiveCueId(null); setVoiceCriteria({}); setVoicePage(0); }, [block.id]);
+  useEffect(() => { setActiveCueId(null); setVoiceCriteria({}); setVoicePage(0); setVoicePickerOpen(false); }, [block.id]);
   useEffect(() => { setEditorOpen(!compact); }, [block.id, compact]);
   const [error, setError] = useState("");
   const [musicJobs, setMusicJobs] = useState<MusicJob[]>([]);
@@ -475,11 +493,12 @@ export function CanvasAudioStudioView({
     const previousCue = current.current.state.cues.find(cue => cue.id === id);
     if (!previousCue) return;
     const nextSpeaker = (patch.speakerZh ?? previousCue.speakerZh).trim();
-    if (previousCue.voiceLock && nextSpeaker !== previousCue.voiceLock.speakerZh) {
+    const nextId = patch.speakerId ?? (nextSpeaker === previousCue.speakerZh.trim() ? previousCue.speakerId : resolveCharacterId(nextSpeaker));
+    if (previousCue.voiceLock && (nextSpeaker !== previousCue.voiceLock.speakerZh || (previousCue.voiceLock.speakerId && nextId !== previousCue.voiceLock.speakerId))) {
       setError("此句已锁定角色声线；更改角色须先核对该角色已采用的全部对白。");
       return;
     }
-    const lock = speakerVoiceLocks.get(nextSpeaker);
+    const lock = speakerVoiceLocks.get(lockKey({ speakerId: nextId, speakerZh: nextSpeaker })) || speakerVoiceLocks.get(nextSpeaker);
     if (previousCue.kind === "dialogue" && lock && (lock.conflict || (patch.voice !== undefined && patch.voice !== lock.voice))) {
       setError(lock.conflict ? `${nextSpeaker}已有不同的已采用音色，请先核对冲突音轨。` : `${nextSpeaker}的声音已锁定，同集对白须沿用该音色。`);
       return;
@@ -489,6 +508,7 @@ export function CanvasAudioStudioView({
     const parsed = canvasAudioCueSchema.safeParse({
       ...previousCue,
       ...patch,
+      speakerId: nextId,
       approved: volumeOnly && selectedTake?.inputKey === canvasAudioCueInputKey(previousCue) ? previousCue.approved : false,
     });
     if (!parsed.success || (patch.speakerZh?.length ?? 0) > 100) {
@@ -503,12 +523,14 @@ export function CanvasAudioStudioView({
     }));
   };
   const insertDialogueSound = (cue: CanvasAudioCue, tag: "[cough]" | "[gasp]") => {
+    const latest = current.current.state.cues.find(row => row.id === cue.id) || cue;
     const input = dialogueInputs.current[cue.id];
-    const start = input?.selectionStart ?? cue.textZh.length;
+    const start = input?.selectionStart ?? latest.textZh.length;
     const end = input?.selectionEnd ?? start;
-    const next = cue.textZh.slice(0, start) + tag + cue.textZh.slice(end);
+    const next = latest.textZh.slice(0, start) + tag + latest.textZh.slice(end);
     if (next.length > 4000) return;
     patchCue(cue.id, { textZh: next });
+    input?.setSelectionRange(start + tag.length, start + tag.length);
     requestAnimationFrame(() => {
       input?.focus();
       input?.setSelectionRange(start + tag.length, start + tag.length);
@@ -790,7 +812,16 @@ export function CanvasAudioStudioView({
       setConfirmation(null);
     });
   const prepareDialogue = (cue: CanvasAudioCue) => {
-    const lock = speakerVoiceLocks.get(cue.speakerZh.trim());
+    let roleId = cue.speakerId || resolveCharacterId(cue.speakerZh);
+    if (!roleId && characters.length) {
+      setError(`角色「${cue.speakerZh || "未填"}」未绑定人物资产 ID，请先在本句选择对应角色。`);
+      return;
+    }
+    if (!roleId) {
+      roleId = [block, ...dialogueSources].flatMap(source => source.audioStudio?.cues || [])
+        .find(other => other.kind === "dialogue" && other.speakerZh.trim() === cue.speakerZh.trim() && other.speakerId)?.speakerId || crypto.randomUUID();
+    }
+    const lock = speakerVoiceLocks.get(lockKey({ ...cue, speakerId: roleId })) || speakerVoiceLocks.get(cue.speakerZh.trim());
     if (lock?.conflict || (lock && cue.voice !== lock.voice)) {
       setError(lock?.conflict ? `${cue.speakerZh}已有冲突的角色音色，先核对已采用音轨。` : `${cue.speakerZh}已锁定其他音色；先应用锁定音色再生成。`);
       return;
@@ -811,6 +842,10 @@ export function CanvasAudioStudioView({
         !cue.voice
       )
         throw new Error("先填写说话角色、台词并选择音色。");
+      if (cue.speakerId !== roleId) {
+        if (!update(previous => ({ ...previous, cues: previous.cues.map(row => row.id === cue.id ? { ...row, speakerId: roleId } : row) }))) return;
+        cue = { ...cue, speakerId: roleId };
+      }
       setError("");
       setConfirmation({
         kind: "dialogue",
@@ -860,6 +895,7 @@ export function CanvasAudioStudioView({
           input: original.input,
           voice: original.voice,
           speakerZh: original.speakerZh,
+          speakerId: original.speakerId,
           voiceStateZh: original.voiceStateZh || "",
         });
         const take =
@@ -908,6 +944,7 @@ export function CanvasAudioStudioView({
             input: compileCanvasDialogueInput(cue.textZh, cue.emotion),
             voice: cue.voice,
             speakerZh: cue.speakerZh,
+            speakerId: cue.speakerId,
             voiceStateZh: cue.voiceStateZh,
           })
           .catch(caught => {
@@ -1299,10 +1336,13 @@ export function CanvasAudioStudioView({
             {state.cues.map((cue, index) => <option key={cue.id} value={cue.id}>{index + 1} · {cue.kind === "dialogue" ? `对白 · ${cue.speakerZh || "未填角色"}` : cue.kind === "bgm" ? "配乐" : "音效"}</option>)}
           </select>
         </label>
-        {activeCue?.kind === "dialogue" && <details>
-          <summary className="text-xs">音色分类与免费试听</summary>
+        {activeCue?.kind === "dialogue" && <div id="canvas-voice-picker" className="rounded border border-white/10 p-2">
+          <div className="flex flex-wrap gap-2" aria-label="音色分类">
+            {(["男", "女", "自定义音色"] as const).map(category => <button key={category} type="button" className={buttonClass} aria-pressed={voiceTab === category}
+              onClick={() => { setVoiceTab(category); setVoicePage(0); setVoiceCriteria(previous => ({ ...previous, gender: category === "自定义音色" ? undefined : category })); setVoicePickerOpen(true); }}>{category}</button>)}
+          </div>
+          {voiceTab !== "自定义音色" && voicePickerOpen && <>
           <div className="mt-2 grid grid-cols-2 gap-2">
-            <label className="text-xs">目录性别<select aria-label="匹配性别" className={fieldClass} value={voiceCriteria.gender || ""} onChange={event => { setVoicePage(0); setVoiceCriteria(prev => ({ ...prev, gender: event.target.value as CanvasVoiceMatchCriteria["gender"] || undefined })); }}><option value="">不限</option><option>男</option><option>女</option><option>中性</option></select></label>
             <label className="text-xs">目录年龄<select aria-label="匹配年龄" className={fieldClass} value={voiceCriteria.ageBand || ""} onChange={event => { setVoicePage(0); setVoiceCriteria(prev => ({ ...prev, ageBand: event.target.value as CanvasVoiceMatchCriteria["ageBand"] || undefined })); }}><option value="">不限</option><option value="child">儿童（12岁及以下）</option><option value="adult">成年（18–54岁）</option><option value="senior">年长（55岁及以上）</option></select></label>
             <label className="col-span-2 text-xs">特质或场景关键词<input aria-label="匹配特质" className={fieldClass} maxLength={80} value={voiceCriteria.traitLike || ""} onChange={event => { setVoicePage(0); setVoiceCriteria(prev => ({ ...prev, traitLike: event.target.value })); }}/></label>
           </div>
@@ -1316,20 +1356,20 @@ export function CanvasAudioStudioView({
                 const sample = voiceSamples.get(voiceId);
                 return <div key={voiceId} className="rounded border border-white/10 p-2 text-xs">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span>{entry.nameZh} · {entry.gender} · {entry.age ?? "年龄未标"}岁 · {entry.traitZh} · {entry.sceneZh}</span>
+                    <span>{entry.gender} · {entry.age ?? "年龄未标"}岁 · {entry.traitZh} · {entry.sceneZh}</span>
                     <button type="button" className={buttonClass} disabled={disabled || busy || state.pendingOperations.some(row => row.cueId === activeCue.id)} onClick={() => patchCue(activeCue.id, { voice: voiceId })}>{activeCue.voice === voiceId ? "当前音色" : "选择音色"}</button>
                   </div>
-                  <div className="mt-2"><p className="mb-1 text-white/50">官方目录试音</p><CanvasAudioPlayer aria-label={`${entry.nameZh} 免费音色预览`} controls preload="none" src={`/audio/qwen-base-voice-preview/${entry.suffix}.opus`} previewVolume={activeCue.volume} className="h-8 w-full" /></div>
-                  {sample ? <div className="mt-2"><p className="mb-1 text-white/50">已有原声示例：{sample.textZh.slice(0, 50)}</p><CanvasAudioPlayer aria-label={`${entry.nameZh} 已生成原声试听`} controls preload="none" src={audioPreviewUrl(sample.take.gcsUri, sample.take.previewUrl)} localSource={proxyAudio ? sample.take.gcsUri : undefined} previewVolume={activeCue.volume} className="h-8 w-full" onError={event => void restoreAudio(event.currentTarget, sample.take.gcsUri)} /></div> : null}
+                  <div className="mt-2"><p className="mb-1 text-white/50">官方目录试音</p><CanvasAudioPlayer aria-label={`${entry.gender} ${entry.traitZh} 免费音色预览`} controls preload="none" src={`/audio/qwen-base-voice-preview/${entry.suffix}.opus`} previewVolume={activeCue.volume} className="h-8 w-full" /></div>
+                  {sample ? <div className="mt-2"><p className="mb-1 text-white/50">已有原声示例：{sample.textZh.slice(0, 50)}</p><CanvasAudioPlayer aria-label={`${entry.gender} ${entry.traitZh} 已生成原声试听`} controls preload="none" src={audioPreviewUrl(sample.take.gcsUri, sample.take.previewUrl)} localSource={proxyAudio ? sample.take.gcsUri : undefined} previewVolume={activeCue.volume} className="h-8 w-full" onError={event => void restoreAudio(event.currentTarget, sample.take.gcsUri)} /></div> : null}
                 </div>;
               })}
             </div>
             <div className="flex gap-2"><button type="button" className={buttonClass} disabled={voicePage === 0} onClick={() => setVoicePage(page => page - 1)}>上一页</button><button type="button" className={buttonClass} disabled={(voicePage + 1) * 30 >= voiceCatalogMatches.length} onClick={() => setVoicePage(page => page + 1)}>下一页</button></div>
             <p className="text-[11px] text-white/45">目录试音来自阿里云百炼官方基础音色样本包；正式对白仍须按句生成、试听并结算。</p>
-          </div>
-        </details>}
-        {activeCue?.kind === "dialogue" && <details className="rounded border border-cyan-300/20 p-2">
-          <summary className="cursor-pointer text-xs">上传参考音色 · 对白仍由 TTS 生成</summary>
+          </div></>}
+        </div>}
+        {activeCue?.kind === "dialogue" && voiceTab === "自定义音色" && <div className="rounded border border-cyan-300/20 p-2">
+          <p className="text-xs">自定义音色 · 上传参考音色</p>
           <p className="mt-2 text-xs text-white/65">上传本人有权使用的 3–30 秒清晰人声，建立可复用音色。上传不生成对白；之后逐句 TTS 按实际时长统一计费。</p>
           <label className="mt-2 flex items-center gap-2 text-xs"><input type="checkbox" checked={referenceConsent} onChange={event => setReferenceConsent(event.target.checked)} />我确认有权使用此声音</label>
           <label className={`${buttonClass} mt-2 inline-block cursor-pointer`}>选择参考录音
@@ -1338,13 +1378,13 @@ export function CanvasAudioStudioView({
           </label>
           <div className="mt-2 space-y-2">{referenceVoices.map(asset => <div key={asset.requestId} className="rounded border border-white/10 p-2 text-xs">
             <span>{asset.labelZh} · {asset.status === "ready" ? "可用于TTS" : "待核对"}</span>
-            {asset.voiceId && <button type="button" className={`${buttonClass} ml-2`} disabled={disabled || busy || Boolean(speakerVoiceLocks.get(activeCue.speakerZh.trim()))}
+            {asset.voiceId && <button type="button" className={`${buttonClass} ml-2`} disabled={disabled || busy || Boolean(speakerVoiceLocks.get(lockKey(activeCue)))}
               onClick={() => patchCue(activeCue.id, { voice: asset.voiceId })}>选为本句音色</button>}
             {asset.message && <p className="mt-1 text-amber-100">{asset.message}</p>}
           </div>)}</div>
           <button type="button" className={`${buttonClass} mt-2`} disabled={disabled || busy || !services.listReferenceVoices}
             onClick={() => void action(async () => { if (services.listReferenceVoices) setReferenceVoices(await services.listReferenceVoices()); })}>刷新参考音色状态</button>
-        </details>}
+        </div>}
         <button type="button" className={buttonClass} disabled={disabled || busy || !activeCue || state.pendingOperations.some(row => row.cueId === activeCue.id)} onClick={() => { if (!activeCue) return; if (activeCue.kind === "dialogue") prepareDialogue(activeCue); else void trim(activeCue); }}>
           {activeCue?.kind === "dialogue" ? "生成本句 · 按原声时长计费" : "只裁这一段 · 免费"}
         </button>
@@ -1379,7 +1419,7 @@ export function CanvasAudioStudioView({
         const pending = state.pendingOperations.some(
           row => row.cueId === cue.id
         );
-        const speakerLock = cue.kind === "dialogue" ? speakerVoiceLocks.get(cue.speakerZh.trim()) : undefined;
+        const speakerLock = cue.kind === "dialogue" ? speakerVoiceLocks.get(lockKey(cue)) || speakerVoiceLocks.get(cue.speakerZh.trim()) : undefined;
         const locked = disabled || busy || pending;
         const source = sourceFor(cue);
         const reuseCandidates = findCanvasDialogueReuse(block, cue, dialogueSources);
@@ -1477,6 +1517,14 @@ export function CanvasAudioStudioView({
                       }
                     />
                   </label>
+                  {characters.length > 0 && <label className="text-xs">绑定角色 ID
+                    <select aria-label={`${index + 1} 绑定角色 ID`} className={fieldClass} disabled={disabled || Boolean(cue.voiceLock)}
+                      value={cue.speakerId || resolveCharacterId(cue.speakerZh) || ""}
+                      onChange={event => { const character = characters.find(row => row.id === event.target.value); if (character) patchCue(cue.id, { speakerId: character.id, speakerZh: character.nameZh }); }}>
+                      <option value="">请选择人物资产</option>
+                      {characters.map(character => <option key={character.id} value={character.id}>{character.nameZh}</option>)}
+                    </select>
+                  </label>}
                   <label className="text-xs">
                     声音状态
                     <input
@@ -1524,27 +1572,13 @@ export function CanvasAudioStudioView({
                     onClick={() => insertDialogueSound(cue, "[gasp]")}>喘气（吸气）</button>
                   <span className="text-white/55">生成后试听，确认不是把说明念出来。</span>
                 </div>
-                <label className="block text-xs">
-                  音色
-                  <select
-                    aria-label={`${index + 1} 音色`}
-                    className={fieldClass}
-                    disabled={disabled || Boolean(speakerLock)}
-                    value={cue.voice}
-                    onChange={event =>
-                      patchCue(cue.id, { voice: event.target.value })
-                    }
-                  >
-                    <option value="">请选择音色</option>
-                    {cue.voice && !VOICES.some(voice => voice.id === cue.voice) && <option value={cue.voice}>已保存的角色音色</option>}
-                    {referenceVoices.filter(asset => asset.voiceId && asset.voiceId !== cue.voice).map(asset => <option key={asset.requestId} value={asset.voiceId}>{asset.labelZh} · 参考音色</option>)}
-                    {VOICES.map(voice => (
-                      <option key={voice.id} value={voice.id}>
-                        {voice.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span>音色：{VOICES.find(voice => voice.id === cue.voice)?.label || referenceVoices.find(asset => asset.voiceId === cue.voice)?.labelZh || (cue.voice ? "已保存的角色音色" : "未选择")}</span>
+                  <button type="button" className={buttonClass} aria-label={`${index + 1} 选择音色`} disabled={disabled || Boolean(speakerLock)}
+                    onClick={() => { setActiveCueId(cue.id); setVoicePickerOpen(true); const entry = QWEN_TTS_VOICE_CATALOG.find(row => buildQwenTtsVoiceId("plus", row.suffix) === cue.voice); setVoiceTab(entry?.gender === "男" ? "男" : entry?.gender === "女" ? "女" : "自定义音色"); requestAnimationFrame(() => document.getElementById("canvas-voice-picker")?.scrollIntoView({ block: "start" })); }}>
+                    选择音色并免费试听
+                  </button>
+                </div>
                 <fieldset className="space-y-2">
                   <legend className="text-xs">说话语气</legend>
                   <div className="flex flex-wrap gap-2">
@@ -1789,7 +1823,7 @@ export function CanvasAudioStudioView({
                                 ...row,
                                 selectedTakeId: take.id,
                                 approved: true,
-                                voiceLock: row.kind === "dialogue" ? (row.voiceLock || { speakerZh: row.speakerZh.trim(), voice: row.voice }) : row.voiceLock,
+                                voiceLock: row.kind === "dialogue" ? { speakerZh: row.speakerZh.trim(), speakerId: row.speakerId, voice: row.voice } : row.voiceLock,
                               }
                             : row
                         ),

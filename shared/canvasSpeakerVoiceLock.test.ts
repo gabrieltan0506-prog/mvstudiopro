@@ -5,6 +5,12 @@ import { canvasAudioStudioSchema, createCanvasAudioCue, emptyCanvasAudioStudio }
 const cue = (id: string, speakerZh: string, voice: string, approved = true) => ({ ...createCanvasAudioCue("dialogue", id), speakerZh, voice, approved,
   selectedTakeId: "take", takes: [{ id: "take", gcsUri: "gs://test/audio.wav", previewUrl: "", durationSec: 2, createdAt: "now", inputKey: "source" }] });
 describe("角色TTS音色锁", () => {
+  it("使用人物资产ID识别改名角色，并迁移同名旧锁", () => {
+    const first = { ...cue("a", "娘", "voice-a"), speakerId: "wa_char_mother", voiceLock: { speakerZh: "娘", speakerId: "wa_char_mother", voice: "voice-a" } };
+    const legacy = cue("b", "娘", "voice-b");
+    const locks = collectSpeakerVoiceLocks([{ audioStudio: { cues: [first, legacy] } }], name => name === "娘" ? "wa_char_mother" : undefined);
+    expect(locks.get("id:wa_char_mother")?.conflict).toBe(true);
+  });
   it("从已采用的真实候选建立锁，跨段跨集复用", () => {
     const locks = collectSpeakerVoiceLocks([{ episodeIndex: 1, audioStudio: { cues: [cue("a", "阿菁", "voice-a"), cue("b", "娘", "voice-b", false)] } },
       { episodeIndex: 2, audioStudio: { cues: [cue("c", "阿菁", "voice-a")] } }]);
