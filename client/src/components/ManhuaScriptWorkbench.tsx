@@ -829,6 +829,8 @@ type Props = {
   onUpsertShotDialogues?: (
     dialogues: Record<number, string>,
     segmentIndex: number,
+    segmentShots: ManhuaWorkbenchShot[],
+    segmentDurationSec: number,
   ) => void;
   onUpsertShotDescriptions?: (descriptions: Record<number, string>) => void;
 };
@@ -3639,7 +3641,7 @@ export default function ManhuaScriptWorkbench({
                       rows={2}
                       onChange={(event) => {
                         const line = event.target.value.slice(0, 80);
-                        onUpsertShotDialogues({ [activeShot.index]: line.trim() || MANHUA_DIALOGUE_SILENCE_TOKEN }, activeSegNo);
+                        onUpsertShotDialogues({ [activeShot.index]: line.trim() || MANHUA_DIALOGUE_SILENCE_TOKEN }, activeSegNo, activeSegment?.shots || [], activeSegment?.durationSec || 15);
                       }}
                       className="mt-1 block w-full resize-y rounded-lg border border-rose-300/35 bg-black/25 px-3 py-2 text-sm leading-6 text-white outline-none placeholder:text-white/35 focus:border-rose-200"
                     />
@@ -9001,7 +9003,7 @@ export default function ManhuaScriptWorkbench({
                                       [shot.index]:
                                         line.trim() || MANHUA_DIALOGUE_SILENCE_TOKEN,
                                     };
-                                    onUpsertShotDialogues?.(next, activeSegNo);
+                                    onUpsertShotDialogues?.(next, activeSegNo, activeSegment?.shots || [], activeSegment?.durationSec || 15);
                                   }}
                                   className="mt-0.5 w-full rounded border border-rose-400/25 bg-black/35 px-1.5 py-1 text-[10px] text-rose-50 outline-none placeholder:text-white/25 focus:border-rose-300/45"
                                 />

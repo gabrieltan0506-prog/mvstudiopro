@@ -3,7 +3,6 @@ import type { ComponentProps } from "react";
 import { findCanvasDialogueReuse, restoreCanvasDialogueCandidate } from "@/lib/canvasDialogueReuse";
 import { createManhuaAudioFromShots } from "@shared/manhuaAudioFromShots";
 import { manhuaBgmArcFromShots } from "@shared/manhuaBgmArcFromShots";
-import { manhuaScriptCueSourceIssue, manhuaScriptCueVerification } from "@/lib/manhuaAudioScriptSource";
 import { planCanvasDialogueTiming } from "@shared/canvasDialogueTimingPlan";
 import type { ManhuaWorkbenchShot } from "@shared/manhuaScriptWorkbench";
 import { canvasAudioMixSource } from "@shared/canvasAudioStudio";
@@ -346,29 +345,6 @@ export function CanvasAudioStudioView({
     catch { return { initialAudio: emptyCanvasAudioStudio(), sourceIssue: "本段对白超出音轨容量或字段限制，未截断原文；请先拆分本段或检查原稿。" }; }
   }, [block.audioStudio, sourceShots, durationSec, suggestedMusicPrompt, bgmModels]);
   const state = block.audioStudio ?? initialAudio;
-  const expectedScriptAudio = useMemo(() => {
-    if (!sourceShots?.length) return undefined;
-    try { return createManhuaAudioFromShots(sourceShots, durationSec); }
-    catch { return undefined; }
-  }, [sourceShots, durationSec]);
-  const currentScriptCues = state.cues.filter(cue => /^script-shot-\d+-line-\d+$/.test(cue.id));
-  const expectedScriptCues = expectedScriptAudio?.cues || [];
-  const scriptContentOutdated = Boolean(block.audioStudio && sourceShots?.length) && (
-    currentScriptCues.length !== expectedScriptCues.length ||
-    expectedScriptCues.some(expected => {
-      const currentCue = currentScriptCues.find(cue => cue.id === expected.id);
-      return !currentCue || Boolean(manhuaScriptCueSourceIssue(currentCue, expectedScriptCues, true));
-    })
-  );
-  const scriptTimelineOutdated = scriptContentOutdated || Boolean(block.audioStudio && sourceShots?.length) &&
-    expectedScriptCues.some(expected => {
-      const currentCue = currentScriptCues.find(cue => cue.id === expected.id);
-      return currentCue && (Math.abs(currentCue.startSec - expected.startSec) > 0.001 ||
-        Math.abs(currentCue.endSec - expected.endSec) > 0.001);
-    });
-  const canRefreshScriptTimeline = scriptTimelineOutdated && currentScriptCues.every(cue =>
-    cue.takes.length === 0 && !cue.selectedTakeId && !cue.approved && !cue.voiceLock && !cue.voice && !cue.voiceStateZh,
-  ) && !state.pendingOperations.some(row => row.cueId && currentScriptCues.some(cue => cue.id === row.cueId));
   useEffect(() => {
     if (!disabled && !block.audioStudio && (initialAudio.cues.length || initialAudio.musicDraft) && !sourceIssue) onChange(initialAudio);
   }, [block.id, block.audioStudio, disabled, initialAudio, sourceIssue, onChange]);
@@ -387,8 +363,8 @@ export function CanvasAudioStudioView({
     musicJobCount: state.musicJobIds.length,
     hasPremixMaster: Boolean(block.manhuaSegmentRefs?.master?.gcsUri || block.manhuaSegmentRefs?.master?.url),
   });
-  const current = useRef({ state, onChange, services, block, onMasterTrackReady, durationSec, dialogueSources, sourceShots, expectedScriptAudio });
-  current.current = { state, onChange, services, block, onMasterTrackReady, durationSec, dialogueSources, sourceShots, expectedScriptAudio };
+  const current = useRef({ state, onChange, services, block, onMasterTrackReady, durationSec, dialogueSources, sourceShots });
+  current.current = { state, onChange, services, block, onMasterTrackReady, durationSec, dialogueSources, sourceShots };
   const mounted = useRef(true);
   const busyRef = useRef(false);
   const [busy, setBusy] = useState(false);
@@ -820,8 +796,6 @@ export function CanvasAudioStudioView({
       return;
     }
     try {
-      const sourceIssue = manhuaScriptCueSourceIssue(cue, expectedScriptAudio?.cues, Boolean(sourceShots?.length));
-      if (sourceIssue) throw new Error(sourceIssue);
       checkWindow(cue);
       if (
         cue.takes.length >= 100 ||
@@ -910,12 +884,6 @@ export function CanvasAudioStudioView({
         );
         if (!cue || canvasAudioCueInputKey(cue) !== saved.inputKey)
           throw new Error("对白已修改，请重新确认本句费用。");
-        const sourceIssue = manhuaScriptCueSourceIssue(
-          cue,
-          current.current.expectedScriptAudio?.cues,
-          Boolean(current.current.sourceShots?.length),
-        );
-        if (sourceIssue) throw new Error(sourceIssue);
         if (cue.takes.length >= 100)
           throw new Error(
             "本句已达 100 条候选上限，旧音频全部保留，本次未提交。"
@@ -1306,21 +1274,6 @@ export function CanvasAudioStudioView({
         </section>
       </div>
       {modelDurationIssue ? <p role="alert" className="text-xs text-amber-200">{modelDurationIssue}</p> : null}
-      {scriptTimelineOutdated ? (
-        <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-300/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
-          <span>{!scriptContentOutdated
-            ? "对白秒窗已手动调整；可按当前音轨生成与采用，实际原声时长和对白冲突仍会检查。"
-            : canRefreshScriptTimeline
-            ? `当前已保存对白与原稿的台词、角色或秒轴不一致；可按 ${durationSec} 秒原稿刷新，不生成音频、不扣费。`
-            : `当前已保存对白与原稿的台词、角色或秒轴不一致，但已有音色、候选、采用或在途任务；请逐句核对，系统不会覆盖已有成果。`}</span>
-          {canRefreshScriptTimeline && expectedScriptAudio ? (
-            <button type="button" className={buttonClass} disabled={disabled || busy} onClick={() => {
-              const retained = state.cues.filter(cue => !/^script-shot-\d+-line-\d+$/.test(cue.id));
-              onChange({ ...state, cues: [...expectedScriptAudio.cues, ...retained] });
-            }}>按当前原稿刷新对白</button>
-          ) : null}
-        </div>
-      ) : null}
       <details data-manhua-audio-editor open={editorOpen} onToggle={event => setEditorOpen(event.currentTarget.open)} className="rounded-xl border border-white/10 bg-black/10 p-2">
       <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold text-sky-100">编辑对白、配乐与音效</summary>
       <div className="mt-2 space-y-3">
@@ -1561,19 +1514,6 @@ export function CanvasAudioStudioView({
                     }
                   />
                 </label>
-                {(() => {
-                  const expected = expectedScriptCues.find(row => row.id === cue.id);
-                  const issue = manhuaScriptCueSourceIssue(cue, expectedScriptCues, Boolean(sourceShots?.length));
-                  return expected && issue ? (
-                    <div className="rounded border border-amber-300/30 bg-amber-500/10 p-2 text-xs text-amber-100">
-                      <p>本句与分镜原稿不同。核对角色、台词与时间窗后，可保留当前编辑生成配音；原稿再变更时需重新核对。</p>
-                      <button type="button" className={`${buttonClass} mt-2`} disabled={disabled || busy || Boolean(pending)}
-                        onClick={() => patchCue(cue.id, { sourceVerification: manhuaScriptCueVerification(cue, expected) })}>
-                        确认采用本句当前编辑
-                      </button>
-                    </div>
-                  ) : null;
-                })()}
                 <div className="flex flex-wrap items-center gap-2 text-xs">
                   <span className="text-white/55">光标处加入声音：</span>
                   <button type="button" className={buttonClass} disabled={disabled || busy || Boolean(pending)}

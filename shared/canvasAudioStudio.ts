@@ -28,8 +28,6 @@ export const canvasAudioCueSchema = z.object({
   speakerZh: text(120),
   voiceStateZh: text(120),
   textZh: text(4000),
-  /** 逐句确认改写时绑定的原稿与当前文字；原稿再变更后自动失效。 */
-  sourceVerification: text(12000).optional(),
   emotion: text(80),
   voice: text(80),
   voiceLock: z.object({ speakerZh: text(120).min(1), voice: text(80).min(1) }).optional(),

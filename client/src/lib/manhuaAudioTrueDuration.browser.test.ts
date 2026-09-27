@@ -3,37 +3,23 @@ import { build } from "esbuild";
 import puppeteer from "puppeteer";
 import path from "node:path";
 
-it("工厂音轨按真实分段时长保留并显式刷新旧秒轴，不调用生成", async () => {
+it("音轨里修改后的台词可直接进入付费确认，不再被分镜原稿阻挡", async () => {
   const built = await build({
     stdin: {
-      resolveDir: process.cwd(),
-      loader: "tsx",
-      contents: `
+      resolveDir: process.cwd(), loader: "tsx", contents: `
         import React,{useState} from 'react';
         import {createRoot} from 'react-dom/client';
         import {CanvasAudioStudioView} from './client/src/components/canvas/CanvasAudioStudio';
         import {defaultCanvasBlock} from './client/src/lib/canvasTypes';
         import {createManhuaAudioFromShots} from './shared/manhuaAudioFromShots';
-        const shots=[
-          {index:1,durationSec:5,cameraZh:'中景',actionZh:'阿菁背娘挪步',dialogueZh:'娘：「慢点，我喘不上来。」'},
-          {index:2,durationSec:4,cameraZh:'近景',actionZh:'墨屠跛行'},
-          {index:3,durationSec:4,cameraZh:'特写',actionZh:'曹三聚光',dialogueZh:'曹三：「你有钱付诊金吗？」'},
-          {index:4,durationSec:4,cameraZh:'中景',actionZh:'墨屠撞摊'},
-          {index:5,durationSec:4,cameraZh:'中景',actionZh:'阿菁挡在马前',dialogueZh:'阿菁：「住手！」'},
-          {index:6,durationSec:4,cameraZh:'中近景',actionZh:'曹三逼近',dialogueZh:'曹三：「门都没有。」'},
-        ];
-        const stale=createManhuaAudioFromShots(shots,15);
+        const shots=[{index:1,durationSec:5,cameraZh:'近景',actionZh:'背娘疾走',dialogueZh:'娘：「阿菁，慢点。」'}];
+        const original=createManhuaAudioFromShots(shots,5);
         const f=globalThis.fixture={calls:[]};
         const services=new Proxy({}, {get:(_,key)=>key==='listMusic'||key==='listReferenceVoices'?async()=>[]:async()=>{f.calls.push(key);throw Error('禁止生成');}});
-        function App(){const [block,setBlock]=useState({...defaultCanvasBlock('video',0,0),id:'clip-e01-g01-audio',videoModel:'seedance-2.5',prompt:'【第1段·15s】旧节点',audioStudio:stale});f.block=block;return <CanvasAudioStudioView block={block} timelineDurationSec={25} sourceShots={shots} services={services} onChange={audioStudio=>setBlock(current=>({...current,audioStudio}))}/>;}
+        function App(){const [block,setBlock]=useState({...defaultCanvasBlock('video',0,0),id:'clip-e01-g01-audio',videoModel:'seedance-2.5',prompt:'第1段',audioStudio:{...original,cues:original.cues.map(cue=>({...cue,textZh:'[cough][gasp]阿菁，走慢一點啊，要不我氣喘不上來。',voice:'test-voice'}))}});f.block=block;return <CanvasAudioStudioView block={block} timelineDurationSec={5} sourceShots={shots} services={services} onChange={audioStudio=>setBlock(current=>({...current,audioStudio}))}/>;}
         createRoot(document.getElementById('root')).render(<App/>);
       `,
-    },
-    bundle: true,
-    write: false,
-    platform: "browser",
-    format: "iife",
-    jsx: "automatic",
+    }, bundle: true, write: false, platform: "browser", format: "iife", jsx: "automatic",
     alias: { "@": path.resolve("client/src"), "@shared": path.resolve("shared") },
   });
   const browser = await puppeteer.launch({ headless: true });
@@ -45,110 +31,13 @@ it("工厂音轨按真实分段时长保留并显式刷新旧秒轴，不调用�
     page.on("request", request => void request.abort());
     await page.setContent('<div id="root"></div>');
     await page.addScriptTag({ content: built.outputFiles[0]!.text });
-    await page.waitForFunction(() => document.body.textContent?.includes("本段 25 秒"));
-    expect(await page.evaluate(() => document.body.textContent)).toContain("对白秒窗已手动调整；可按当前音轨生成与采用");
-    await page.evaluate(() => {
-      const button = Array.from(document.querySelectorAll("button")).find(row => row.textContent?.includes("按当前原稿刷新对白"));
-      (button as HTMLButtonElement).click();
-    });
-    await page.waitForFunction(() => (globalThis as any).fixture.block.audioStudio.cues.some((cue: any) => cue.endSec === 25));
-    expect(await page.evaluate(() => (globalThis as any).fixture.block.audioStudio.cues.map((cue: any) => [cue.id, cue.startSec, cue.endSec]))).toEqual([
-      ["script-shot-1-line-1", 0, 5],
-      ["script-shot-3-line-1", 9, 13],
-      ["script-shot-5-line-1", 17, 21],
-      ["script-shot-6-line-1", 21, 25],
-    ]);
-    expect(await page.evaluate(() => (globalThis as any).fixture.calls)).toEqual([]);
-    expect(errors).toEqual([]);
-  } finally {
-    await browser.close();
-  }
-}, 120_000);
-
-it("同一秒轴但剧本对白已改时提示并显式刷新，且不提交付费任务", async () => {
-  const built = await build({
-    stdin: {
-      resolveDir: process.cwd(),
-      loader: "tsx",
-      contents: `
-        import React,{useState} from 'react';
-        import {createRoot} from 'react-dom/client';
-        import {CanvasAudioStudioView} from './client/src/components/canvas/CanvasAudioStudio';
-        import {defaultCanvasBlock} from './client/src/lib/canvasTypes';
-        import {createManhuaAudioFromShots} from './shared/manhuaAudioFromShots';
-        const oldShots=[{index:15,durationSec:5,cameraZh:'近景',actionZh:'娘望向墨屠',dialogueZh:'娘：「阿菁……那马……」'}];
-        const newShots=[{...oldShots[0],dialogueZh:'娘：「阿菁，那馬是怎麼回事呀？」'}];
-        const stale=createManhuaAudioFromShots(oldShots,5);
-        const f=globalThis.fixture={calls:[]};
-        const services=new Proxy({}, {get:(_,key)=>key==='listMusic'||key==='listReferenceVoices'?async()=>[]:async()=>{f.calls.push(key);throw Error('禁止生成');}});
-        function App(){const [block,setBlock]=useState({...defaultCanvasBlock('video',0,0),id:'clip-e01-g03-audio',videoModel:'seedance-2.5',prompt:'第3段',audioStudio:stale});const [shots,setShots]=useState(newShots);f.block=block;f.protect=()=>setBlock(current=>({...current,audioStudio:{...stale,cues:stale.cues.map(cue=>({...cue,voice:'saved-voice'}))}}));f.clear=()=>setBlock(current=>({...current,audioStudio:{...stale,cues:[]}}));f.freshVoice=()=>setBlock(current=>({...current,audioStudio:{...createManhuaAudioFromShots(newShots,5),cues:createManhuaAudioFromShots(newShots,5).cues.map(cue=>({...cue,voice:'saved-voice'}))}}));f.sourceDrift=()=>setShots(oldShots);return <CanvasAudioStudioView block={block} timelineDurationSec={5} sourceShots={shots} services={services} onChange={audioStudio=>setBlock(current=>({...current,audioStudio}))}/>;}
-        createRoot(document.getElementById('root')).render(<App/>);
-      `,
-    },
-    bundle: true,
-    write: false,
-    platform: "browser",
-    format: "iife",
-    jsx: "automatic",
-    alias: { "@": path.resolve("client/src"), "@shared": path.resolve("shared") },
-  });
-  const browser = await puppeteer.launch({ headless: true });
-  try {
-    const page = await browser.newPage();
-    const errors: string[] = [];
-    page.on("pageerror", error => errors.push(String(error)));
-    await page.setRequestInterception(true);
-    page.on("request", request => void request.abort());
-    await page.setContent('<div id="root"></div>');
-    await page.addScriptTag({ content: built.outputFiles[0]!.text });
-    await page.waitForFunction(() => document.body.textContent?.includes("当前已保存对白与原稿的台词"));
-    expect(await page.evaluate(() => (globalThis as any).fixture.block.audioStudio.cues[0].textZh)).toBe("阿菁……那马……");
-    await page.evaluate(() => {
-      const button = Array.from(document.querySelectorAll("button")).find(row => row.textContent?.includes("按当前原稿刷新对白"));
-      (button as HTMLButtonElement).click();
-    });
-    await page.waitForFunction(() => (globalThis as any).fixture.block.audioStudio.cues[0].textZh.includes("怎麼回事呀"));
-    expect(await page.evaluate(() => (globalThis as any).fixture.block.audioStudio.cues[0].textZh)).toBe("阿菁，那馬是怎麼回事呀？");
-    await page.evaluate(() => (globalThis as any).fixture.protect());
-    await page.waitForFunction(() => document.body.textContent?.includes("已有音色、候选"));
-    expect(await page.evaluate(() => (globalThis as any).fixture.block.audioStudio.cues[0].textZh)).toBe("阿菁……那马……");
-    expect(await page.evaluate(() => Array.from(document.querySelectorAll("button")).some(row => row.textContent?.includes("按当前原稿刷新对白")))).toBe(false);
-    await page.evaluate(() => (document.querySelector('button[aria-label="生成第1句配音"]') as HTMLButtonElement).click());
-    await page.waitForFunction(() => document.body.textContent?.includes("未提交付费配音"));
-    expect(await page.evaluate(() => document.body.textContent?.includes("确认生成"))).toBe(false);
-    expect(await page.evaluate(() => (globalThis as any).fixture.calls)).toEqual([]);
-    await page.evaluate(() => {
-      const button = Array.from(document.querySelectorAll("button")).find(row => row.textContent?.includes("确认采用本句当前编辑"));
-      (button as HTMLButtonElement).click();
-    });
-    await page.waitForFunction(() => Boolean((globalThis as any).fixture.block.audioStudio.cues[0]?.sourceVerification));
+    await page.waitForFunction(() => Boolean(document.querySelector('button[aria-label="生成第1句配音"]')));
     await page.evaluate(() => (document.querySelector('button[aria-label="生成第1句配音"]') as HTMLButtonElement).click());
     await page.waitForFunction(() => document.body.textContent?.includes("确认生成"));
+    expect(await page.evaluate(() => document.body.textContent)).not.toContain("按当前原稿刷新对白");
     expect(await page.evaluate(() => (globalThis as any).fixture.calls)).toEqual([]);
-    await page.evaluate(() => {
-      const button = Array.from(document.querySelectorAll("button")).find(row => row.textContent?.trim() === "取消");
-      (button as HTMLButtonElement).click();
-    });
-    await page.evaluate(() => (globalThis as any).fixture.clear());
-    await page.waitForFunction(() => Array.from(document.querySelectorAll("button")).some(row => row.textContent?.includes("按当前原稿刷新对白")));
-    expect(await page.evaluate(() => (globalThis as any).fixture.block.audioStudio.cues)).toEqual([]);
-    await page.evaluate(() => (globalThis as any).fixture.freshVoice());
-    await page.waitForFunction(() => (globalThis as any).fixture.block.audioStudio.cues[0]?.voice === "saved-voice");
-    await page.evaluate(() => (document.querySelector('button[aria-label="生成第1句配音"]') as HTMLButtonElement).click());
-    await page.waitForFunction(() => document.body.textContent?.includes("确认生成"));
-    await page.evaluate(() => (globalThis as any).fixture.sourceDrift());
-    await page.waitForFunction(() => document.body.textContent?.includes("当前已保存对白与原稿的台词"));
-    await page.evaluate(() => {
-      const button = Array.from(document.querySelectorAll("button")).find(row => row.textContent?.trim() === "确认生成");
-      (button as HTMLButtonElement).click();
-    });
-    await page.waitForFunction(() => document.body.textContent?.includes("未提交付费配音"), { timeout: 5000 });
-    expect(await page.evaluate(() => (globalThis as any).fixture.calls)).toEqual([]);
-    expect(await page.evaluate(() => (globalThis as any).fixture.block.audioStudio.pendingOperations)).toEqual([]);
     expect(errors).toEqual([]);
-  } finally {
-    await browser.close();
-  }
+  } finally { await browser.close(); }
 }, 120_000);
 
 it("模型时长不足时提示换模型或重分段而不截短音轨", async () => {
