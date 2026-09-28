@@ -3,7 +3,7 @@
  * 给运镜文法（choreographManhuaCameras）的切镜上限、最短镜长、反应镜停留与风格档。
  * 纯函数、无副作用；reasonZh 一句话说明为何快/慢，进白模草案摘要。
  */
-import type { ManhuaCameraStyle } from "./manhuaCameraGrammar";
+import type { ManhuaCameraStyle } from "./manhuaCameraDirection";
 import { getManhuaDirectionCard } from "./manhuaDirectionCanonLibrary";
 
 export type ManhuaCameraTempoTier = "fast" | "slow" | "neutral";
