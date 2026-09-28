@@ -15,11 +15,9 @@ import type { ManhuaExecutableShot } from "./manhuaActionPlanSplit";
 import type { ManhuaResolvedCameraSource } from "./manhuaActionPlanBindings";
 import { manhuaPrevisTimingForExecutableShot, type ManhuaPrevisTiming } from "./manhuaPrevisTiming";
 import { manhuaSnapToFrameSec } from "./manhuaActionPlanTiming";
-import { assessManhuaCameraVariety, choreographManhuaCameras, manhuaCameraPromptZh, type ManhuaCameraStyle } from "./manhuaCameraGrammar";
-import { formatManhuaShotScheduleZh, scheduleManhuaSegmentShots, scheduledShotsToPrevisCameras } from "./manhuaShotScheduler.js";
+import { assessManhuaCameraVariety, choreographManhuaCameras, manhuaCameraPromptZh, type ManhuaCameraStyle, formatManhuaShotScheduleZh, scheduleManhuaSegmentShots, scheduledShotsToPrevisCameras, previsCamerasFromActionRecipe } from "./manhuaCameraDirection";
 import { MANHUA_CAMERA_STYLE_LABEL_ZH, MANHUA_TEMPO_TIER_LABEL_ZH, type ManhuaCameraTempo } from "./manhuaCameraTempo";
 import { assignPrevisActorColors } from "./manhuaPrevisColors";
-import { previsCamerasFromActionRecipe } from "./manhuaPrevisCameraRecipe";
 
 export type ManhuaPrevisCharacterLink = {
   actorId: string;
