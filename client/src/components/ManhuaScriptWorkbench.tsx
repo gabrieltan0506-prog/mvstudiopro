@@ -823,7 +823,7 @@ type Props = {
   onArtStyleChange?: (id: ManhuaArtStyleId) => void;
   /** 创作顾问：同步规划产物到工厂节点 */
   /** 机位选定写回反推/节拍（供工厂注入） */
-  onUpdateShotTiming?: (shotIndex: number, durationSec: number) => void;
+  onUpdateShotTiming?: (shotIndex: number, durationSec: number, segmentBreakBefore?: boolean) => void;
   onUpsertShotAngles?: (angles: Record<number, string>) => void;
   /** 分镜台词写回（成片注入用；静帧不读字面） */
   onUpsertShotDialogues?: (
@@ -3717,7 +3717,7 @@ export default function ManhuaScriptWorkbench({
                     机位原文：{shotParamFields.rawCameraZh}
                   </p>
                 ) : null}
-                {onUpdateShotTiming && <ManhuaShotTimingEditor key={`${focusEpisode}:${activeShot.index}:${activeShot.durationSec}`} shotIndex={activeShot.index} durationSec={activeShot.durationSec}
+                {onUpdateShotTiming && <ManhuaShotTimingEditor key={`${focusEpisode}:${activeShot.index}:${activeShot.durationSec}:${activeShot.segmentBreakBefore}`} shotIndex={activeShot.index} durationSec={activeShot.durationSec} segmentBreakBefore={activeShot.segmentBreakBefore}
                   disabled={shotSourceIsFallback || Boolean(factoryBusy)} onApply={onUpdateShotTiming} />}
                 <details data-manhua-shot-advanced className="mt-3 border-t border-white/10 pt-2">
                   <summary className="cursor-pointer text-xs font-semibold text-white/60">专业参数 · 镜位、导演要求与特效</summary>

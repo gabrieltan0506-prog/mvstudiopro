@@ -5,6 +5,23 @@ import { buildManhuaWriterSession, serializeManhuaWriterSession, MANHUA_WRITER_S
 import type { CanvasBlock, CanvasEdge } from './canvasTypes';
 import { slimBlocksForLocalPersist } from './manhuaCloudDraftSync';
 
+/** 与分镜生产者同源读取：旧画布可能仅把完整秒位表存于 prompt。 */
+export function retimeManhuaCanvasNodes(nodes: CanvasBlock[], shotIndex: number, durationSec: number, segmentBreakBefore?: boolean) {
+  const source = (block: CanvasBlock) => block.outputText || block.prompt || '';
+  const timed = nodes.filter(block => readManhuaTimedStoryboard(source(block)).recognized);
+  if (!timed.length) throw new Error('当前原稿没有完整秒位表，请在剧本编辑中补齐后再调整。');
+  const edits = new Map(timed.map(block => [block.id, retimeManhuaShot(source(block), shotIndex, durationSec, segmentBreakBefore)]));
+  const canonical = edits.values().next().value!;
+  const timing = (rows: typeof canonical.rows) => rows.map(row => [row.index, row.startSec, row.endSec, Boolean(row.segmentBreakBefore)]);
+  if (Array.from(edits.values()).some(edit => JSON.stringify(timing(edit.rows)) !== JSON.stringify(timing(canonical.rows))))
+    throw new Error('当前存在不一致的秒位表，请先统一原稿，未保存。');
+  return { canonical, apply: (block: CanvasBlock): CanvasBlock => {
+    const edit = edits.get(block.id);
+    if (!edit) return block;
+    return block.outputText ? { ...block, outputText: edit.text } : { ...block, prompt: edit.text };
+  } };
+}
+
 /** 时长修改必须同时保存剧本与画布，不使用截断原稿的配额降级路径。 */
 export function saveManhuaShotTimingDraft(blocks: CanvasBlock[], edges: CanvasEdge[], writer: ManhuaWriterSessionPartial,
   storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> = localStorage) {
@@ -28,17 +45,17 @@ export function saveManhuaShotTimingDraft(blocks: CanvasBlock[], edges: CanvasEd
 
 /** 当前秒位表接管生产；旧分段保留为创作参考，不能再次被当作另一份生产计划。 */
 export function retimeManhuaWriterPack(pack: ManhuaWriterPack, episodeIndex: number, shotIndex: number,
-  durationSec: number, canonical: ReturnType<typeof retimeManhuaShot>): ManhuaWriterPack {
+  durationSec: number, canonical: ReturnType<typeof retimeManhuaShot>, segmentBreakBefore?: boolean): ManhuaWriterPack {
   const episode = pack.episodes.find(item => item.index === episodeIndex);
   if (!episode) throw new Error('当前集剧本不存在，未保存。');
   const timed = readManhuaTimedStoryboard(episode.body);
-  let body = timed.recognized ? retimeManhuaShot(episode.body, shotIndex, durationSec).text
+  let body = timed.recognized ? retimeManhuaShot(episode.body, shotIndex, durationSec, segmentBreakBefore).text
     : `${episode.body}\n\n## 分镜表\n\n${canonical.table}`;
   // 只更改旧段落的标题；表演、灯光、对白等原始文字全部留下，修复已保存的混合稿亦可重复执行。
   body = body.replace(/^(#{2,4})[ \t]*段[ \t]*0*(\d+)[ \t]*$/gm,
     '$1 原分段参考 $2（非当前分镜）');
   const saved = readManhuaTimedStoryboard(body);
-  const timing = (rows: typeof saved.rows) => rows.map(row => [row.index, row.startSec, row.endSec]);
+  const timing = (rows: typeof saved.rows) => rows.map(row => [row.index, row.startSec, row.endSec, Boolean(row.segmentBreakBefore)]);
   if (saved.errors.length || JSON.stringify(timing(saved.rows)) !== JSON.stringify(timing(canonical.rows)))
     throw new Error('剧本与分镜秒位不一致，未保存，请先统一原稿。');
   const next = { ...pack, episodes: pack.episodes.map(item => item.index === episodeIndex ? {...item, body} : item) };

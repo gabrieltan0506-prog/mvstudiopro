@@ -13,6 +13,7 @@ import {
 } from "@shared/manhuaDirectionCanonLibrary";
 import { buildWorkbenchShotsFromSegmentPlan } from "@shared/manhuaStoryDistill";
 import { readManhuaTimedStoryboard } from "@shared/manhuaTimedStoryboard";
+import { createManhuaAudioFromShots } from "@shared/manhuaAudioFromShots";
 import { buildManhuaAutoSegmentBinding, normalizeManhuaAutoSegmentBinding } from "@shared/manhuaAutoSegment";
 import {
   collectDocumentAssets,
@@ -2327,6 +2328,28 @@ export function ensureManhuaFragmentClips(
     resolveClipLocalSegmentIndex(a.id, a.prompt, ep) - resolveClipLocalSegmentIndex(b.id, b.prompt, ep) ||
     a.id.localeCompare(b.id),
   );
+  /** 仅显式拆分同一原段时复用逐句候选；旧段保留归档，配乐与在途单不跨段搬运。 */
+  const splitAudioSourceFor = (segmentShots: ManhuaWorkbenchShot[]) => {
+    const shotIndexes = segmentShots.map(shot => shot.index);
+    const matches = existingSegClips.filter(clip => {
+      const old = normalizeManhuaAutoSegmentBinding(clip.manhuaAutoSegment);
+      let oldShots: ManhuaWorkbenchShot[] = [];
+      try {
+        const revision = JSON.parse(old?.revision || "{}");
+        oldShots = Array.isArray(revision.shots) ? revision.shots : [];
+      } catch { return false; }
+      return old?.episodeIndex === ep && old.shotIndexes.length > shotIndexes.length
+        && shotIndexes.every(index => old.shotIndexes.includes(index))
+        && segmentShots.every(shot => {
+          const previous = oldShots.find(candidate => candidate.index === shot.index);
+          return previous?.actionZh === shot.actionZh
+            && previous?.dialogueZh === shot.dialogueZh
+            && JSON.stringify(previous?.additionalDialogueCues || []) === JSON.stringify(shot.additionalDialogueCues || []);
+        })
+        && clip.audioStudio?.cues.some(cue => cue.kind === "dialogue" && cue.takes.length);
+    });
+    return matches.length === 1 ? matches[0] : undefined;
+  };
   /** 键 = 全集连续段号；兼容旧集内 g01 重计 */
   const clipBySeg = new Map<number, CanvasBlock>();
   for (const clip of existingSegClips) {
@@ -2818,6 +2841,30 @@ export function ensureManhuaFragmentClips(
       });
       continue;
     }
+    const splitSource = splitAudioSourceFor(seg.shots);
+    const splitAudio = splitSource && (() => {
+      const skeleton = createManhuaAudioFromShots(seg.shots, seg.durationSec);
+      const oldCues = new Map(splitSource.audioStudio!.cues.filter(cue => cue.kind === "dialogue").map(cue => [cue.id, cue]));
+      const cues = skeleton.cues.map(cue => {
+        const old = oldCues.get(cue.id);
+        if (!old?.takes.length) return cue;
+        return {
+          ...cue,
+          speakerZh: old.speakerZh,
+          speakerId: old.speakerId,
+          voiceStateZh: old.voiceStateZh,
+          textZh: old.textZh,
+          emotion: old.emotion,
+          autoEmotion: old.autoEmotion,
+          voice: old.voice,
+          voiceLock: old.voiceLock,
+          takes: old.takes,
+          selectedTakeId: undefined,
+          approved: false,
+        };
+      });
+      return cues.some(cue => cue.takes.length) ? { ...skeleton, cues } : undefined;
+    })();
     const clone: CanvasBlock = {
       ...template,
       kind: "video",
@@ -2852,8 +2899,8 @@ export function ensureManhuaFragmentClips(
       seedance25RefAudioUrls: undefined,
       // 段级白模/母轨/登记成片属于某一段，新段不能借模板的。已有段走上面 existing 分支原样保留。
       manhuaSegmentRefs: undefined,
-      // 模板只借布局与引擎；新段/新原稿不能继承另一段的对白、配乐或在途单。
-      audioStudio: undefined,
+      // 新段不借模板声音；仅同源显式拆片按镜号带回付费对白候选，须重新审核采用。
+      audioStudio: splitAudio,
       previsStudio: undefined,
       seedance25TimestampStoryboard: undefined,
       seedance25ReshootFromSec: undefined,

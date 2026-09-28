@@ -1,9 +1,10 @@
 import { expect, it } from 'vitest';
-import { retimeManhuaWriterPack } from './manhuaShotTimingDraft';
+import { retimeManhuaWriterPack, retimeManhuaCanvasNodes } from './manhuaShotTimingDraft';
 import { retimeManhuaShot } from '@shared/manhuaShotTimingEdit';
 import { parseManhuaEpisodeSegmentPlanFromMarkdown } from '@shared/manhuaEpisodeSegmentPlan';
 import { readManhuaTimedStoryboard } from '@shared/manhuaTimedStoryboard';
 import type { ManhuaWriterPack } from '@shared/manhuaWriterRoom';
+import type { CanvasBlock } from './canvasTypes';
 const table='| 镜号 | 秒位 | 景别/运镜 | 画面 | 对白 |\n|---|---|---|---|---|\n|1|0–4秒|中景|扶稳病母|娘：「慢点，我喘不上来。」|\n|2|4–7秒|近景|回头|阿菁：「快到了。」|';
 const original='原剧情\n#### 段01\n- 意图：送母亲就医\n- 对白：娘：「慢点，我喘不上来。」\n- 表演：扶稳病母\n- 光影运镜：暖灯下横移';
 const pack={seriesTitle:'故事',logline:'就医',charactersMd:'阿菁、娘',propsMd:'药碗',locationsMd:'街道',episodes:[{index:1,title:'就医',body:original,endHook:'到了吗？'},{index:2,title:'医馆',body:'下一集原文',endHook:'等天亮'}],rawMarkdown:'旧导出稿'.repeat(30),episodeCount:2} as ManhuaWriterPack;
@@ -26,4 +27,13 @@ it('修复旧版已经写入的混合稿，不重复追加秒位表或丢弃对�
  expect(parseManhuaEpisodeSegmentPlanFromMarkdown(next.episodes[0].body).segments).toHaveLength(0);
  expect(readManhuaTimedStoryboard(next.episodes[0].body).rows).toHaveLength(2);
  expect(next.rawMarkdown).toContain('娘：「慢点，我喘不上来。」');
+});
+it('旧画布只有 prompt 秒位表时，时长修改写回同一生产字段',()=>{
+ const block={id:'story-e01-old',prompt:table,outputText:''} as CanvasBlock;
+ const {canonical,apply}=retimeManhuaCanvasNodes([block],1,5);
+ const updated=apply(block);
+ expect(canonical.rows.map(r=>[r.startSec,r.endSec])).toEqual([[0,5],[5,8]]);
+ expect(readManhuaTimedStoryboard(updated.prompt||'').rows.map(r=>[r.startSec,r.endSec])).toEqual([[0,5],[5,8]]);
+ expect(updated.outputText).toBe('');
+ expect(block.prompt).toBe(table);
 });

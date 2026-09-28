@@ -1,6 +1,4 @@
-import { saveManhuaShotTimingDraft, retimeManhuaWriterPack } from "@/lib/manhuaShotTimingDraft";
-import { retimeManhuaShot } from "@shared/manhuaShotTimingEdit";
-import { readManhuaTimedStoryboard as readShotTimingForEdit } from "@shared/manhuaTimedStoryboard";
+import { saveManhuaShotTimingDraft, retimeManhuaWriterPack, retimeManhuaCanvasNodes } from "@/lib/manhuaShotTimingDraft";
 import { applyManhuaAssetDirection } from "@shared/manhuaDirectionCanonLibrary";
 import { normalizeManhuaEditTransitions, manhuaEditTransitionOf, manhuaAssembleTransitionOf } from "@shared/manhuaEditTransition";
 import { CREDIT_COSTS } from "@shared/plans";
@@ -10687,22 +10685,18 @@ export default function OmniCanvas() {
                         ?.scrollIntoView({ behavior: "smooth", block: "start" });
                     }, 60);
                   }}
-                  onUpdateShotTiming={(shotIndex, durationSec) => {
+                  onUpdateShotTiming={(shotIndex, durationSec, segmentBreakBefore) => {
                     if (factoryBusy) throw new Error("当前任务运行中，请完成后再调整时长。");
                     const current = blocksRef.current;
                     const ep = writerFocusEpisode;
                     const sameEpisode = (b: CanvasBlock) => (getBlockEpisodeIndex(b) ?? 1) === ep;
                     if (current.some(b => sameEpisode(b) && (b.status === "running" || b.videoTaskStatus === "queued" || b.audioStudio?.pendingOperations.length))) throw new Error("本集仍有在途任务，请完成后再调整时长。");
                     const nodes = current.filter(b => sameEpisode(b) && !b.archivedFromPreviousScript && /^(story|beats|reverse)-/.test(b.id));
-                    const timed = nodes.filter(b => readShotTimingForEdit(b.outputText || "").recognized);
-                    if (!timed.length) throw new Error("当前原稿没有完整秒位表，请在剧本编辑中补齐后再调整。");
-                    const edits = new Map(timed.map(b => [b.id, retimeManhuaShot(b.outputText || "", shotIndex, durationSec)]));
-                    const canonical = edits.values().next().value!;
-                    if (Array.from(edits.values()).some(edit => JSON.stringify(edit.rows.map(row => [row.index,row.startSec,row.endSec])) !== JSON.stringify(canonical.rows.map(row => [row.index,row.startSec,row.endSec])))) throw new Error("当前存在不一致的秒位表，请先统一原稿，未保存。");
+                    const { canonical, apply } = retimeManhuaCanvasNodes(nodes, shotIndex, durationSec, segmentBreakBefore);
                     const episode = writerPack?.episodes.find(item => item.index === ep);
                     if (!episode) throw new Error("当前集剧本不存在，未保存。");
-                    const next = current.map(b => edits.has(b.id) ? { ...b, outputText: edits.get(b.id)!.text } : b);
-                    const nextWriterPack = retimeManhuaWriterPack(writerPack!, ep, shotIndex, durationSec, canonical);
+                    const next = current.map(apply);
+                    const nextWriterPack = retimeManhuaWriterPack(writerPack!, ep, shotIndex, durationSec, canonical, segmentBreakBefore);
                     saveManhuaShotTimingDraft(next, edges, { writerPack: nextWriterPack, writerConfirmed: false, directorUnlocked: false });
                     blocksRef.current=next;setBlocks(next);
                     setWriterPack(nextWriterPack);
