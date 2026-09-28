@@ -248,7 +248,11 @@ const manhuaPrevisSpecBaseSchema = z
             endTarget: cameraPoint.optional(),
             /** 围绕当前注视点的水平环绕角度；不改变人物动作速度。 */
             orbitDeg: z.number().finite().min(-180).max(180).optional(),
+            /** 环绕途中相机高度的总升降（米，正为升）；只与环绕同用。 */
+            orbitRise: z.number().finite().min(-8).max(8).optional(),
             lens: z.number().int().min(18).max(65),
+            /** 本镜结束时的焦距：与机位同一平滑进度连续推拉，不是切镜。 */
+            endLens: z.number().int().min(18).max(65).optional(),
           })
           .strict()
       )
@@ -345,7 +349,9 @@ export const manhuaPrevisDraftSchema = manhuaPrevisSpecBaseSchema.extend({
           endPosition: draftCameraPoint.optional(),
           endTarget: draftCameraPoint.optional(),
           orbitDeg: draftNumber.optional(),
+          orbitRise: draftNumber.optional(),
           lens: draftNumber,
+          endLens: draftNumber.optional(),
         })
         .strict()
     )
@@ -856,6 +862,11 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
         const radius = Math.hypot(camera.position[0] - camera.target[0], camera.position[1] - camera.target[1]);
         if (radius < 0.5 || Math.abs(camera.target[0]) + radius > 30 || Math.abs(camera.target[1]) + radius > 30)
           ctx.addIssue({ code: "custom", message: "环绕半径须至少半米，环绕范围须留在舞台内", path: ["cameras", i] });
+        const endZ = camera.position[2] + (camera.orbitRise ?? 0);
+        if (endZ < 0.2 || endZ > 15)
+          ctx.addIssue({ code: "custom", message: "环绕升降后的相机高度须在0.2—15米之间", path: ["cameras", i] });
+      } else if (camera.orbitRise !== undefined) {
+        ctx.addIssue({ code: "custom", message: "环绕升降只能与环绕同用", path: ["cameras", i] });
       }
       if (Math.round(camera.endSec * 24) <= Math.round(camera.startSec * 24))
         ctx.addIssue({
@@ -1006,7 +1017,8 @@ export function formatPrevisMotionGuide(spec: ManhuaPrevisSpec): string {
   if (spec.timeMap) return "白模已按统一时间表变速；以下秒位均为成片呈现时间，直接跟随参考，不重复变速。\n" + formatPrevisMotionGuide(previsPresentationGuideSpec(spec));
   return [
     "参考中的关节姿态、落脚、蓄力—出手—回收及保护反应按对应秒位读取；不继承白模外形。",
-    ...spec.cameras.filter(c => c.orbitDeg).map(c => `${c.startSec}—${c.endSec}秒围绕（${c.target.join("，")}）水平环绕${c.orbitDeg}度，保持半径和高度；人物速度不由环绕改变。`),
+    ...spec.cameras.filter(c => c.orbitDeg).map(c => `${c.startSec}—${c.endSec}秒围绕（${c.target.join("，")}）水平环绕${c.orbitDeg}度，${c.orbitRise ? `保持半径，同时${c.orbitRise > 0 ? "升高" : "降低"}${Math.abs(c.orbitRise)}米` : "保持半径和高度"}；人物速度不由环绕改变。`),
+    ...spec.cameras.filter(c => c.endLens !== undefined && c.endLens !== c.lens).map(c => `${c.startSec}—${c.endSec}秒焦距从${c.lens}毫米连续${c.endLens! > c.lens ? "推到" : "拉到"}${c.endLens}毫米，与机位同步平滑起停。`),
     ...spec.cameras.filter(c => c.endPosition || c.endTarget).map(c =>
       `${c.startSec}—${c.endSec}秒相机从（${c.position.join("，")}）连续移动到（${(c.endPosition ?? c.position).join("，")}），看向从（${c.target.join("，")}）到（${(c.endTarget ?? c.target).join("，")}）；平滑起停，切镜时不跨镜连移。`
     ),

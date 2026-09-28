@@ -16,6 +16,31 @@ export function previsLayoutActorPosition(actor: ManhuaPrevisSpec["actors"][numb
   }
   return mix([...actor.start, 0], [...actor.end, 0], clamp((time - actor.moveStartSec) / Math.max(1 / 24, actor.moveEndSec - actor.moveStartSec)));
 }
+/** 与渲染脚本同一朝向真源：有分段轨迹按节点平滑插值，否则按转身动作；0° 朝舞台 +X。 */
+export function previsLayoutActorFacingDeg(actor: ManhuaPrevisSpec["actors"][number], time: number): number {
+  const route = actor.motionRoute;
+  const turn = (from: number, to: number, u: number) => {
+    let delta = ((to - from + 180) % 360 + 360) % 360 - 180;
+    if (Math.abs(delta + 180) < 1e-8) delta = 180;
+    return from + delta * u;
+  };
+  if (route?.length) {
+    if (time <= route[0].timeSec) return route[0].facingDeg;
+    for (let i = 1; i < route.length; i++) {
+      const a = route[i - 1], b = route[i];
+      if (time <= b.timeSec) return turn(a.facingDeg, b.facingDeg, smooth((time - a.timeSec) / (b.timeSec - a.timeSec)));
+    }
+    return route[route.length - 1].facingDeg;
+  }
+  let facing = actor.facingDeg;
+  for (const action of actor.actions) {
+    if (action.kind !== "turn" || action.facingDeg == null) continue;
+    if (time >= action.endSec) { facing = action.facingDeg; continue; }
+    if (time <= action.startSec) break;
+    return turn(facing, action.facingDeg, smooth((time - action.startSec) / (action.endSec - action.startSec)));
+  }
+  return facing;
+}
 /** 对齐生产脚本24fps取帧和相机平滑插值。 */
 export function previsLayoutCamera(spec: ManhuaPrevisSpec, time: number) {
   const frame = Math.min(spec.durationSec * 24, Math.floor(Math.max(0, time) * 24) + 1);
@@ -27,9 +52,9 @@ export function previsLayoutCamera(spec: ManhuaPrevisSpec, time: number) {
   const target = mix(shot.target, shot.endTarget ?? shot.target, u);
   if (shot.orbitDeg != null) {
     const a = shot.orbitDeg * Math.PI / 180 * u, x = shot.position[0] - shot.target[0], y = shot.position[1] - shot.target[1];
-    position = [shot.target[0] + x * Math.cos(a) - y * Math.sin(a), shot.target[1] + x * Math.sin(a) + y * Math.cos(a), shot.position[2]];
+    position = [shot.target[0] + x * Math.cos(a) - y * Math.sin(a), shot.target[1] + x * Math.sin(a) + y * Math.cos(a), shot.position[2] + (shot.orbitRise ?? 0) * u];
   }
-  return { position, target, lensMm: shot.lens };
+  return { position, target, lensMm: shot.lens + ((shot.endLens ?? shot.lens) - shot.lens) * u };
 }
 export function movePrevisLayoutEndpoint(spec: ManhuaPrevisSpec, id: string, endpoint: "start" | "end", point: [number, number]): ManhuaPrevisSpec {
   const position = point.map(v => Math.round(Math.max(-12, Math.min(12, v)) * 10) / 10) as [number, number];

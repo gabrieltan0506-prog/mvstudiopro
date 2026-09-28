@@ -4524,6 +4524,8 @@ export default function ManhuaScriptWorkbench({
                 return { id: a.id, label: a.labelZh, model: source ? { taskId: source.model.taskId } : undefined };
               }))}
               sourceShots={activeSegment?.shots.map(shot=>({index:shot.index,durationSec:shot.durationSec,actionZh:shot.actionZh}))}
+              directionShots={activeSegment?.shots.map(shot=>({index:shot.index,durationSec:shot.durationSec,cameraZh:shot.cameraZh||"",actionZh:shot.actionZh}))}
+              directionCardId={directionCanon?.mainCardId ?? null}
               actionPlanDrafts={previsDraftsFromPlan}
               onNextDraftVideo={onGenerateFragment ? runGenerateFragment : undefined}
               disabled={Boolean(factoryBusy)||activeClip.status==="running"||activeClip.videoTaskStatus==="queued"}
