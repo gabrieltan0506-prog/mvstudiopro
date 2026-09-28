@@ -1,4 +1,4 @@
-import { evaluateManhuaAsset3dEligibility, type ManhuaAsset3dRef } from "@shared/manhuaAsset3d";
+import { evaluateManhuaAsset3dEligibility, manhuaAsset3dSourceIdentity, type ManhuaAsset3dRef } from "@shared/manhuaAsset3d";
 import type { ManhuaCustomAssetRef } from "@shared/manhuaCustomAssetRefs";
 
 /** 提交和导入共用同步锁，避免连续点击在 React 更新前发出第二个请求。 */
@@ -34,7 +34,7 @@ export function applyManhua3dBinding(
     if (
       ref.id !== assetId ||
       !evaluateManhuaAsset3dEligibility(ref).eligible ||
-      (ref.gcsUri || ref.url) !== model.sourceVersion ||
+      manhuaAsset3dSourceIdentity(ref.gcsUri || ref.url) !== manhuaAsset3dSourceIdentity(model.sourceVersion) ||
       (ref.model3d?.taskId || null) !== expectedTaskId ||
       (ref.model3d?.taskId === model.taskId && ref.model3d.updatedAt > model.updatedAt)
     )

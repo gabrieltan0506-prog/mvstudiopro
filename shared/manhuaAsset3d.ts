@@ -1,3 +1,15 @@
+import { gsUriFromSignedGcsUrl } from "./manhuaMultiview";
+
+/**
+ * 3D 模型来源图身份：同一 GCS 对象的签名 https 转成 gs://（签名轮换不算换图）；
+ * 其他地址原样严格比较——查询串可能就是图的身份，不能去掉。
+ */
+export function manhuaAsset3dSourceIdentity(version: string | null | undefined): string {
+  const v = String(version || "").trim();
+  if (/^gs:\/\//i.test(v)) return v;
+  return gsUriFromSignedGcsUrl(v) || v;
+}
+
 export const MANHUA_ASSET_3D_STATUSES = [
   "queued",
   "running",
@@ -86,8 +98,9 @@ export function evaluateManhuaAsset3dEligibility(
       sourceVersion,
     };
   }
+  // 同一张图的 gs:// 与签名 https 视为同一版本；只按字符串比较会把旧任务的成功模型当成过期丢掉
   const currentModel3d =
-    input.model3d?.sourceVersion === sourceVersion ? input.model3d : undefined;
+    input.model3d && manhuaAsset3dSourceIdentity(input.model3d.sourceVersion) === manhuaAsset3dSourceIdentity(sourceVersion) ? input.model3d : undefined;
   return { eligible: true, sourceVersion, currentModel3d };
 }
 
