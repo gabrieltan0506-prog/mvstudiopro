@@ -734,7 +734,7 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
-          if [ -f /tmp/growth-backup/OFFLOAD_SKIP ] || [ -f /tmp/growth-archive-offload/EMPTY ]; then
+          if [ -f /tmp/growth-backup/OFFLOAD_SKIP ] || [ -f /tmp/growth-archive-offload/EMPTY ] || [ -f /tmp/growth-archive-offload/UPLOAD_EMPTY ]; then
             echo "No archive shards to offload"
             exit 0
           fi
@@ -833,7 +833,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ -f /tmp/growth-backup/OFFLOAD_SKIP ] || [ -f /tmp/growth-archive-offload/EMPTY ]; then
+          if [ -f /tmp/growth-backup/OFFLOAD_SKIP ] || [ -f /tmp/growth-archive-offload/EMPTY ] || [ -f /tmp/growth-archive-offload/UPLOAD_EMPTY ]; then
             echo "No archive shards to publish"
             exit 0
           fi
@@ -927,15 +927,14 @@ jobs:
           done < /tmp/growth-archive-offload/manifest-assets.tsv
           upload_and_readback_asset /tmp/growth-archive-offload/offload-manifest.json
           sha256sum /tmp/growth-archive-offload/offload-manifest.json > /tmp/growth-archive-offload/DELETE_READY
-          printf '本批实际已上传并回读验证归档：%s 个。源数据保留；剩余数量见规划与延期记录。\n' "$(wc -l < /tmp/growth-archive-offload/archives.tsv)" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          printf '本批实际已上传并回读验证归档：%s 个。仅在生产恢复验证成功且源指纹未变后删除；剩余数量见规划与延期记录。\n' "$(wc -l < /tmp/growth-archive-offload/archives.tsv)" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
       - name: Delete only release-verified unchanged archive shards from Fly
-        # 0901 用户冻结：当前冷备只上传/验真，不自动删除任何平台源数据。
-        # 后续释放空间必须另走“仅 B站 + 冻结抓取 + 显式授权”的专用流程。
-        if: ${{ false }}
+        # 0928 用户授权：只删除本批 GitHub 回读、生产恢复和源指纹三重验证通过的旧归档。
+        if: ${{ success() && env.BACKUP_DEFERRED != 'true' }}
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
-          if [ -f /tmp/growth-backup/OFFLOAD_SKIP ] || [ -f /tmp/growth-archive-offload/EMPTY ]; then
+          if [ -f /tmp/growth-backup/OFFLOAD_SKIP ] || [ -f /tmp/growth-archive-offload/EMPTY ] || [ -f /tmp/growth-archive-offload/UPLOAD_EMPTY ]; then
             exit 0
           fi
           test -s /tmp/growth-archive-offload/DELETE_READY
@@ -967,7 +966,16 @@ jobs:
             fi
             # 与独立 offload 使用同一删除门禁：正式镜像必须先以生产读取器恢复并解析成功。
             flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+              -C "node --input-type=module - '$dir' '$archive_bytes' '$archive_sha'" \
+              < scripts/growth-archive-restore-prefetch.mjs
+            flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
               -C "sh -lc 'export GROWTH_GITHUB_OFFLOAD_CACHE_DIR=/tmp/growth-cold-verify-$dir; export GROWTH_COLD_VERIFY_CLEANUP=1; exec pnpm exec tsx server/growth/growthArchiveColdRestoreCli.ts $dir'"
+            # 快照已排除当时最新两桶；删源前再读正式机当前最新两桶。检查失败也保留源。
+            if ! flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+              -C "node -e 'const fs=require(\"node:fs\");const dir=process.argv[1];const names=fs.readdirSync(\"/data/growth/archive\",{withFileTypes:true}).filter(e=>e.isDirectory()&&/^[0-9]{4}-[0-9]{2}-[0-9]{2}(-[0-9]{2})?$/.test(e.name)).map(e=>e.name).sort();if(names.slice(-2).includes(dir))process.exit(45)' '$dir'"; then
+              echo "::warning::无法确认 $dir 不在最新两桶，保留 Fly 源目录"
+              continue
+            fi
             DELETED=false
             for attempt in $(seq 1 20); do
               if flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
@@ -984,6 +992,64 @@ jobs:
           flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
             -C "sh -s -- cleanup '$BATCH_ID'" \
             < scripts/growth-archive-offload-remote.sh
+      - name: Restore-verify and delete bounded reused archive shards
+        if: ${{ success() && env.BACKUP_DEFERRED != 'true' }}
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -s /tmp/growth-archive-offload/reclaim.tsv ]; then exit 0; fi
+          BATCH_ID=$(cat /tmp/growth-archive-offload/batch-id.txt)
+          mkdir -p /tmp/growth-archive-offload/reclaim-readback
+          while IFS=$'\t' read -r dir source_fingerprint source_bytes archive_name archive_bytes archive_sha manifest_name manifest_bytes manifest_sha manifest_tag; do
+            [ -n "$dir" ] || continue
+            [[ "$dir" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}(-[0-9]{2})?$ ]]
+            [[ "$source_fingerprint" =~ ^[0-9a-f]{64}$ ]]
+            [[ "$archive_sha" =~ ^[0-9a-f]{64}$ ]]
+            [[ "$manifest_sha" =~ ^[0-9a-f]{64}$ ]]
+            test "$archive_name" = "archive-$dir.tar.gz"
+            test "$manifest_name" = "archive-$dir.manifest.json"
+            readback="/tmp/growth-archive-offload/reclaim-readback/$manifest_name"
+            rm -f "$readback"
+            gh release download "$manifest_tag" -p "$manifest_name" -D /tmp/growth-archive-offload/reclaim-readback --clobber
+            test "$(stat -c%s "$readback")" = "$manifest_bytes"
+            test "$(sha256sum "$readback" | awk '{print $1}')" = "$manifest_sha"
+            node - "$readback" "$dir" "$source_fingerprint" "$archive_name" "$archive_bytes" "$archive_sha" <<'NODE'
+          const fs = require("node:fs");
+          const [file, dir, fingerprint, asset, bytes, sha] = process.argv.slice(2);
+          const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
+          if (manifest.schemaVersion !== 1 || manifest.dir !== dir || manifest.sourceFingerprint !== fingerprint
+            || manifest.archive?.assetName !== asset || manifest.archive.bytes !== Number(bytes)
+            || manifest.archive.sha256 !== sha || manifest.parts?.length !== 1
+            || manifest.parts[0].assetName !== asset || manifest.parts[0].bytes !== Number(bytes)
+            || manifest.parts[0].sha256 !== sha || manifest.parts[0].index !== 0) {
+            throw new Error("reused archive manifest changed after planning");
+          }
+          NODE
+            flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+              -C "node --input-type=module - '$dir' '$archive_bytes' '$archive_sha'" \
+              < scripts/growth-archive-restore-prefetch.mjs
+            flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+              -C "sh -lc 'export GROWTH_GITHUB_OFFLOAD_CACHE_DIR=/tmp/growth-cold-verify-$dir; export GROWTH_COLD_VERIFY_CLEANUP=1; exec pnpm exec tsx server/growth/growthArchiveColdRestoreCli.ts $dir'"
+            # 快照已排除当时最新两桶；删源前再读正式机当前最新两桶。检查失败也保留源。
+            if ! flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+              -C "node -e 'const fs=require(\"node:fs\");const dir=process.argv[1];const names=fs.readdirSync(\"/data/growth/archive\",{withFileTypes:true}).filter(e=>e.isDirectory()&&/^[0-9]{4}-[0-9]{2}-[0-9]{2}(-[0-9]{2})?$/.test(e.name)).map(e=>e.name).sort();if(names.slice(-2).includes(dir))process.exit(45)' '$dir'"; then
+              echo "::warning::无法确认 $dir 不在最新两桶，保留 Fly 源目录"
+              continue
+            fi
+            DELETED=false
+            for attempt in $(seq 1 20); do
+              if flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+                -C "sh -s -- delete '$BATCH_ID' '$dir' '$source_fingerprint'" \
+                < scripts/growth-archive-offload-remote.sh; then
+                DELETED=true
+                break
+              fi
+              echo "采集 lease 或前台任务繁忙，已备份旧归档继续让行：$dir（${attempt}/20）"
+              sleep 30
+            done
+            test "$DELETED" = "true"
+          done < /tmp/growth-archive-offload/reclaim.tsv
       - name: Retain platform-current on Fly after cold backup
         if: env.BACKUP_DEFERRED != 'true'
         run: |

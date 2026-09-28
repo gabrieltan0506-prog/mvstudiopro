@@ -79,7 +79,7 @@ acquire_collection_lease() {
       fi
       touch "$COLLECTION_LOCK"
     done
-  ) &
+  ) >/dev/null 2>&1 &
   heartbeat_pid=$!
 }
 
@@ -203,6 +203,10 @@ delete_verified_source() {
   dir="${1:-}"
   expected_fingerprint="${2:-}"
   validate_dir_name "$dir"
+  if ! printf '%s\n' "$dir" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}(-[0-9]{2})?$'; then
+    echo "只允许删除旧的日期归档目录: $dir" >&2
+    exit 64
+  fi
   if [ "${#expected_fingerprint}" -ne 64 ]; then
     echo "非法源指纹: $dir" >&2
     exit 64
@@ -212,6 +216,13 @@ delete_verified_source() {
   esac
   acquire_collection_lease
   trap 'release_collection_lease' EXIT HUP INT TERM
+  # 在同一把采集 lease 内复查最新两桶，避免外部检查与实际删除之间出现新桶。
+  newest_two=$(find "$ARCHIVE_ROOT" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; \
+    | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}(-[0-9]{2})?$' | LC_ALL=C sort | tail -n 2) || true
+  if printf '%s\n' "$newest_two" | grep -Fxq -- "$dir"; then
+    echo "归档目录属于当前最新两桶，拒绝删除: $dir" >&2
+    exit 45
+  fi
   source_dir="$ARCHIVE_ROOT/$dir"
   if [ ! -e "$source_dir" ]; then
     rm -rf -- "$snapshot_root/$dir"

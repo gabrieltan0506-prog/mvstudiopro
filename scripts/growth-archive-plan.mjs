@@ -13,7 +13,8 @@ export function planArchiveBatch(snapshot, assets, manifests) {
   const byName = new Map(assets.map(asset => [asset.name, asset]));
   const pending = [],
     reused = [],
-    selected = [];
+    selected = [],
+    reclaim = [];
   const validAsset = (name, bytes, sha) => {
     const asset = byName.get(name);
     return (
@@ -38,6 +39,7 @@ export function planArchiveBatch(snapshot, assets, manifests) {
     )
       throw new Error("归档快照清单非法，停止规划");
     let verified = false;
+    let reclaimRow = null;
     try {
       const name = `archive-${dir}.manifest.json`,
         raw = manifests.get(name);
@@ -62,10 +64,20 @@ export function planArchiveBatch(snapshot, assets, manifests) {
         manifest.parts[0].assetName === manifest.archive.assetName &&
         manifest.parts[0].bytes === manifest.archive.bytes &&
         manifest.parts[0].sha256 === manifest.archive.sha256;
+      if (verified && /^\d{4}-\d{2}-\d{2}(?:-\d{2})?$/.test(dir)) {
+        const manifestAsset = byName.get(name);
+        reclaimRow = [
+          dir, fingerprint, bytes,
+          manifest.archive.assetName, manifest.archive.bytes, manifest.archive.sha256,
+          name, manifestAsset.size, manifestAsset.digest.slice("sha256:".length),
+          manifestAsset.releaseTag || growthColdStoreReleaseTag(name),
+        ].join("\t");
+      }
     } catch {
       /* 缺失或损坏的旧清单不能充当备份凭证。 */
     }
     (verified ? reused : pending).push(line);
+    if (reclaimRow) reclaim.push(reclaimRow);
   }
   let totalBytes = 0;
   for (const line of pending) {
@@ -78,9 +90,19 @@ export function planArchiveBatch(snapshot, assets, manifests) {
     selected.push(line);
     totalBytes += bytes;
   }
+  const reclaimSelected = [];
+  let reclaimBytes = 0;
+  for (const line of reclaim) {
+    const bytes = Number(line.split("\t")[2]);
+    if (reclaimSelected.length && (reclaimSelected.length >= 4 || reclaimBytes + bytes > 512 * 1024 * 1024)) break;
+    reclaimSelected.push(line);
+    reclaimBytes += bytes;
+  }
   return {
     selected,
     reused: reused.length,
+    reclaim: reclaimSelected,
+    reclaimRemaining: reclaim.length - reclaimSelected.length,
     pending: pending.length,
     remaining: pending.length - selected.length,
   };
@@ -122,7 +144,7 @@ export function loadArchiveInventory(directory, snapshot, repo, gh) {
         `repos/${repo}/releases/${release.id}/assets?per_page=100`,
       ])
     ).flat();
-    assets.push(...entries);
+    assets.push(...entries.map(asset => ({ ...asset, releaseTag: release.tag_name })));
     const names = entries
       .filter(asset => /^archive-.+\.manifest\.json$/.test(asset.name))
       .map(asset => asset.name);
@@ -141,6 +163,27 @@ export function loadArchiveInventory(directory, snapshot, repo, gh) {
       manifests.set(name, fs.readFileSync(path.join(cached, name), "utf8"));
   }
   return { assets, manifests };
+}
+
+export function writeArchivePlan(directory, plan) {
+  for (const marker of ["EMPTY", "UPLOAD_EMPTY"])
+    fs.rmSync(path.join(directory, marker), { force: true });
+  fs.writeFileSync(
+    path.join(directory, "selected.tsv"),
+    plan.selected.length ? plan.selected.join("\n") + "\n" : ""
+  );
+  fs.writeFileSync(
+    path.join(directory, "reclaim.tsv"),
+    plan.reclaim.length ? plan.reclaim.join("\n") + "\n" : ""
+  );
+  fs.writeFileSync(
+    path.join(directory, "plan.json"),
+    JSON.stringify(plan, null, 2)
+  );
+  if (!plan.selected.length && !plan.reclaim.length)
+    fs.writeFileSync(path.join(directory, "EMPTY"), "");
+  if (!plan.selected.length && plan.reclaim.length)
+    fs.writeFileSync(path.join(directory, "UPLOAD_EMPTY"), "");
 }
 
 function main(directory) {
@@ -166,17 +209,8 @@ function main(directory) {
     gh
   );
   const plan = planArchiveBatch(snapshot, assets, manifests);
-  fs.writeFileSync(
-    path.join(directory, "selected.tsv"),
-    plan.selected.length ? plan.selected.join("\n") + "\n" : ""
-  );
-  fs.writeFileSync(
-    path.join(directory, "plan.json"),
-    JSON.stringify(plan, null, 2)
-  );
-  if (!plan.selected.length)
-    fs.writeFileSync(path.join(directory, "EMPTY"), "");
-  const summary = `归档规划：已验证且未变化 ${plan.reused} 个；本批计划 ${plan.selected.length} 个；另有 ${plan.remaining} 个待后续批次。计划数量不代表上传成功。`;
+  writeArchivePlan(directory, plan);
+  const summary = `归档规划：已验证且未变化 ${plan.reused} 个，本批待生产恢复后清理 ${plan.reclaim.length} 个；本批新备份 ${plan.selected.length} 个；另有新备份 ${plan.remaining} 个、旧归档清理 ${plan.reclaimRemaining} 个待后续批次。计划数量不代表删除成功。`;
   console.log(summary);
   if (process.env.GITHUB_STEP_SUMMARY)
     fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary + "\n");
