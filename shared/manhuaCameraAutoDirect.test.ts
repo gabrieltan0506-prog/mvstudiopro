@@ -87,3 +87,51 @@ describe("白模相机扩展字段", () => {
     expect(manhuaPrevisSpecSchema.safeParse(withCam({ endLens: 80 })).success).toBe(false);
   });
 });
+
+describe("自动排镜输出一定过白模相机合同（审查反例）", () => {
+  const valid = (input: Parameters<typeof directManhuaCamerasFromShots>[0]) => {
+    const p = directManhuaCamerasFromShots(input);
+    expect(p.errorsZh).toEqual([]);
+    const spec = { ...createManhuaPrevisStudio(input.durationSec).spec, aspect: input.aspect ?? "16:9", cameras: p.cameras.map(({ shotIndex: _s, noteZh: _n, ...c }) => c) };
+    const r = manhuaPrevisSpecSchema.safeParse(spec);
+    expect(r.success ? [] : r.error.issues.map((i) => i.message)).toEqual([]);
+    return p;
+  };
+  const one: ManhuaDirectedActor[] = [{ id: "a", nameZh: "阿菁", shape: "human", at: () => [0, 0] }];
+  it("0.5 秒的镜写了快切也切不开：改为一镜内连续运动，不产出零帧机位", () => {
+    const p = valid({ durationSec: 3, actors: one, shots: [{ index: 1, durationSec: 0.5, cameraZh: "近景→特写；平视；快切" }, { index: 2, durationSec: 2.5, cameraZh: "中景；平视；定机" }] });
+    expect(p.cameras.filter((c) => c.shotIndex === 1)).toHaveLength(1);
+    expect(p.notesZh.join("")).toContain("改为一镜内连续运动");
+  });
+  it("不足一帧的镜直接报错，不猜着并镜", () => {
+    const p = directManhuaCamerasFromShots({ durationSec: 3, actors: one, shots: [{ index: 1, durationSec: 0.01, cameraZh: "近景" }, { index: 2, durationSec: 2.99, cameraZh: "中景" }] });
+    expect(p.cameras).toEqual([]);
+    expect(p.errorsZh[0]).toContain("不足一帧");
+  });
+  it("过肩接横移时相对向量扫过看向点：途中也保持半米以上", () => {
+    valid({ durationSec: 3, aspect: "9:16", shots: [{ index: 1, durationSec: 3, cameraZh: "近景脸；曹三肩后；横移", actionZh: "先生冲击墨屠眼罩" }],
+      actors: [{ id: "m", nameZh: "墨屠", shape: "horse", at: () => [0, 0], facingAt: () => 0 }, { id: "c", nameZh: "曹三", shape: "human", at: () => [0.4, 0], facingAt: () => 180 }] });
+  });
+  it("环绕圈出舞台就不环绕，说明里也不写环绕", () => {
+    const p = valid({ durationSec: 3, shots: [{ index: 1, durationSec: 3, cameraZh: "远景背影；墨屠侧后方；绕到侧面下降", actionZh: "曹三冲击先生" }],
+      actors: [{ id: "m", nameZh: "墨屠", shape: "human", at: () => [-8, 6], facingAt: () => 30 }, { id: "c", nameZh: "曹三", shape: "human", at: () => [12, -12], facingAt: () => 180 }, { id: "x", nameZh: "先生", shape: "human", at: () => [11.5, -11.5], facingAt: () => 0 }] });
+    expect(p.cameras[0]!.orbitDeg).toBeUndefined();
+    expect(p.cameras[0]!.noteZh).not.toContain("环绕");
+  });
+  it("景别×机位×运镜×站位网格全部过合同", { timeout: 20000 }, () => {
+    const scales = ["极近景", "特写蹄", "近景手", "中景", "全景", "远景背影", "近景→中景", "特写→全景，切", "极近景→低角中景→全景，反打"];
+    const angles = ["俯拍", "低角仰拍", "地面低机位", "过阿菁肩", "曹三肩后", ""];
+    const moves = ["推近", "后拉", "横移", "上升", "下降", "环绕上升", "环绕下降", "跟拍", "抬镜", ""];
+    const casts: ManhuaDirectedActor[][] = [
+      one,
+      [{ id: "a", nameZh: "阿菁", shape: "human", at: () => [11.8, -11.8], facingAt: () => 90 }, { id: "c", nameZh: "曹三", shape: "human", at: () => [11.8, -11.8], facingAt: () => -90 }],
+      [{ id: "a", nameZh: "阿菁", shape: "human", at: (s) => [-12 + s * 4, -12 + s * 4], facingAt: () => 45 }, { id: "m", nameZh: "墨屠", shape: "horse", at: () => [0.3, 0], facingAt: () => 180 }, { id: "c", nameZh: "曹三", shape: "human", at: () => [0, 0], facingAt: () => 0 }],
+    ];
+    let n = 0;
+    for (const cast of casts) for (const aspect of ["16:9", "9:16"] as const) for (const s of scales) for (const a of angles) for (const m of moves) {
+      valid({ durationSec: 4, aspect, actors: cast, shots: [{ index: 1, durationSec: 1, cameraZh: `${s}；${a}；${m}`, actionZh: "曹三冲击墨屠肩，阿菁反应回头" }, { index: 2, durationSec: 3, cameraZh: `${s}曹三；${a}；${m}` }] });
+      n += 1;
+    }
+    expect(n).toBe(3 * 2 * scales.length * angles.length * moves.length);
+  });
+});

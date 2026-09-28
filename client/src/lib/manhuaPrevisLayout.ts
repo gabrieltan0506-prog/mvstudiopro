@@ -19,16 +19,17 @@ export function previsLayoutActorPosition(actor: ManhuaPrevisSpec["actors"][numb
 /** 与渲染脚本同一朝向真源：有分段轨迹按节点平滑插值，否则按转身动作；0° 朝舞台 +X。 */
 export function previsLayoutActorFacingDeg(actor: ManhuaPrevisSpec["actors"][number], time: number): number {
   const route = actor.motionRoute;
-  const turn = (from: number, to: number, u: number) => {
+  // 取最短弧 [-180, 180)；轨迹节点（previs_route.route_pose）把恰好 180° 定为正向，转身动作（turn_facing）不改，保持 -180
+  const turn = (from: number, to: number, u: number, positiveHalfTurn: boolean) => {
     let delta = ((to - from + 180) % 360 + 360) % 360 - 180;
-    if (Math.abs(delta + 180) < 1e-8) delta = 180;
+    if (positiveHalfTurn && Math.abs(delta + 180) < 1e-8) delta = 180;
     return from + delta * u;
   };
   if (route?.length) {
     if (time <= route[0].timeSec) return route[0].facingDeg;
     for (let i = 1; i < route.length; i++) {
       const a = route[i - 1], b = route[i];
-      if (time <= b.timeSec) return turn(a.facingDeg, b.facingDeg, smooth((time - a.timeSec) / (b.timeSec - a.timeSec)));
+      if (time <= b.timeSec) return turn(a.facingDeg, b.facingDeg, smooth((time - a.timeSec) / (b.timeSec - a.timeSec)), true);
     }
     return route[route.length - 1].facingDeg;
   }
@@ -37,7 +38,7 @@ export function previsLayoutActorFacingDeg(actor: ManhuaPrevisSpec["actors"][num
     if (action.kind !== "turn" || action.facingDeg == null) continue;
     if (time >= action.endSec) { facing = action.facingDeg; continue; }
     if (time <= action.startSec) break;
-    return turn(facing, action.facingDeg, smooth((time - action.startSec) / (action.endSec - action.startSec)));
+    return turn(facing, action.facingDeg, smooth((time - action.startSec) / (action.endSec - action.startSec)), false);
   }
   return facing;
 }

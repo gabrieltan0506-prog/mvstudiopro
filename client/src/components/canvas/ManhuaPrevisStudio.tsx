@@ -209,6 +209,7 @@ export function ManhuaPrevisStudioView({
   const [autoCameraMessage, setAutoCameraMessage] = useState<{ ok: boolean; text: string } | null>(null);
   /** 白模时长覆盖本段前几镜时（如第1段 17 秒＝镜1–4），只排被覆盖的镜；对不上镜头边界就不猜 */
   function autoDirectCameras() {
+    if (disabled || pendingId || lock.current) return;
     const D = studio.spec.durationSec;
     const covered: ManhuaDirectedShot[] = [];
     let sum = 0;
@@ -240,12 +241,20 @@ export function ManhuaPrevisStudioView({
       setAutoCameraMessage({ ok: false, text: plan.errorsZh.join("；") });
       return;
     }
-    const lines = formatManhuaDirectedCamerasZh(plan);
+    const cameras = plan.cameras.map(({ shotIndex: _shot, noteZh: _note, ...camera }) => camera);
+    // 只拦相机合同：其他字段（角色、动作）仍在编辑中时不因它们挡住排镜
+    const cameraIssue = manhuaPrevisSpecSchema.safeParse({ ...studio.spec, cameras }).error?.issues.find(issue => issue.path[0] === "cameras");
+    if (cameraIssue) {
+      setAutoCameraMessage({ ok: false, text: `自动排出的机位未过白模校验（${cameraIssue.message}），现有机位未改动` });
+      return;
+    }
+    // 工作台存档合同：最多 8 条、每条 ≤400 字（角色名很长时截断）
+    const lines = formatManhuaDirectedCamerasZh(plan).slice(0, 8).map(line => (line.length > 400 ? `${line.slice(0, 399)}…` : line));
     const ok = publish({
       ...studio,
-      spec: { ...studio.spec, cameras: plan.cameras.map(({ shotIndex: _shot, noteZh: _note, ...camera }) => camera) },
+      spec: { ...studio.spec, cameras },
       specHistory: [...(studio.specHistory ?? []), { spec: studio.spec, createdAt: new Date().toISOString(), reasonZh: "按分镜自动排运镜前的机位" }],
-      draftCameraPromptZh: lines.slice(0, 8),
+      draftCameraPromptZh: lines,
     });
     if (ok !== false)
       setAutoCameraMessage({ ok: true, text: `已按镜${covered[0]!.index}–${covered.at(-1)!.index}排出 ${plan.cameras.length} 个机位，尚未渲染${plan.notesZh.length ? `；${plan.notesZh.join("；")}` : ""}` });
@@ -2047,7 +2056,7 @@ export function ManhuaPrevisStudioView({
                 <label className="text-xs">
                   <input type="checkbox" aria-label={`机位${i + 1}连续移动`} disabled={disabled || Boolean(pendingId) || busy}
                     checked={Boolean(camera.endPosition || camera.endTarget)}
-                    onChange={e => patch({ endPosition: e.target.checked ? [...camera.position] : undefined, endTarget: e.target.checked ? [...camera.target] : undefined, orbitDeg: undefined })} />
+                    onChange={e => patch({ endPosition: e.target.checked ? [...camera.position] : undefined, endTarget: e.target.checked ? [...camera.target] : undefined, orbitDeg: undefined, orbitRise: undefined })} />
                   连续移动（终点控制）
                 </label>
                 <label className="text-xs"><input type="checkbox" aria-label={`机位${i + 1}环绕`} disabled={disabled || Boolean(pendingId) || busy}
@@ -2104,12 +2113,15 @@ export function ManhuaPrevisStudioView({
               const midpoint = (a: number[], b: number[]) => a.map((n, i) => (n + b[i]) / 2) as [number, number, number];
               const position = midpoint(last.position, last.endPosition ?? last.position);
               const target = midpoint(last.target, last.endTarget ?? last.target);
+              // 焦距推拉同样从中点拆开，避免切点处焦距跳回起点、再推一遍
+              const { endLens, ...rest } = last;
+              const midLens = Math.round((last.lens + (endLens ?? last.lens)) / 2);
               edit({
                 ...studio.spec,
                 cameras: [
                   ...studio.spec.cameras.slice(0, -1),
-                  { ...last, endSec: mid, ...(last.endPosition ? { endPosition: position } : {}), ...(last.endTarget ? { endTarget: target } : {}) },
-                  { ...last, startSec: mid, position, target },
+                  { ...rest, endSec: mid, ...(last.endPosition ? { endPosition: position } : {}), ...(last.endTarget ? { endTarget: target } : {}), ...(endLens !== undefined && midLens !== last.lens ? { endLens: midLens } : {}) },
+                  { ...rest, startSec: mid, position, target, lens: midLens, ...(endLens !== undefined && endLens !== midLens ? { endLens } : {}) },
                 ],
               });
             }}

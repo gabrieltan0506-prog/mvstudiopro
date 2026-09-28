@@ -172,6 +172,7 @@ it("连续运镜保存终点，拆镜衔接不跳回起点且不自动提交", a
       const f = (window as any).fixture;
       const block = structuredClone(f.block);
       block.previsStudio.spec.cameras[0].endPosition = [4, -6, 3];
+      block.previsStudio.spec.cameras[0].endLens = 61;
       f.setBlock(block);
     });
     await settle(page);
@@ -183,8 +184,30 @@ it("连续运镜保存终点，拆镜衔接不跳回起点且不自动提交", a
     });
     expect(result.cameras[0].endPosition).toEqual(result.cameras[1].position);
     expect(result.cameras[1].endPosition).toEqual([4, -6, 3]);
+    // 焦距推拉也从中点拆开：切点处不跳回起点焦距
+    expect(result.cameras[0]).toMatchObject({ lens: 35, endLens: 48 });
+    expect(result.cameras[1]).toMatchObject({ lens: 48, endLens: 61 });
     expect(result.submits).toBe(0);
     expect(result.old).toBe("https://offline.invalid/old.mp4");
+  } finally { await page.close(); }
+});
+
+it("环绕改成连续移动时一并清掉环绕升降，不留孤立的升降值", async () => {
+  const page = await open();
+  try {
+    await page.evaluate(() => {
+      const f = (window as any).fixture;
+      const block = structuredClone(f.block);
+      Object.assign(block.previsStudio.spec.cameras[0], { orbitDeg: 30, orbitRise: 1 });
+      f.setBlock(block);
+    });
+    await settle(page);
+    await page.evaluate(() => (document.querySelector('[aria-label="机位1连续移动"]') as HTMLInputElement).click());
+    await settle(page);
+    const camera = await page.evaluate(() => (window as any).fixture.block.previsStudio.spec.cameras[0]);
+    expect(camera.orbitDeg).toBeUndefined();
+    expect(camera.orbitRise).toBeUndefined();
+    expect(camera.endPosition).toEqual(camera.position);
   } finally { await page.close(); }
 });
 
