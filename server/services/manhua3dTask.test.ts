@@ -290,6 +290,64 @@ describe("manhua3dTask", () => {
     expect(submitMultiview).toHaveBeenCalledTimes(1);
   });
 
+  it("0929 单图源图：sourceImageUrl 是 sourceVersion 同对象的旧签名 → 提交前按 gs:// 现签；其他来源原样用", async () => {
+    const submit = vi.fn().mockResolvedValue({ predictionId: "pred-fresh" });
+    const signGlb = vi.fn((gs: string) => `https://signed.test/${gs.replace("gs://", "")}?fresh=1`);
+    setManhua3dTaskDependenciesForTests({
+      isConfigured: () => true,
+      submit,
+      submitMultiview: vi.fn(),
+      signGlb: signGlb as never,
+      poll: vi.fn().mockResolvedValue({ state: "running", status: "processing" }),
+    });
+    const stale = "https://storage.googleapis.com/b/generated/%E5%A8%98.png?X-Goog-Date=20260928T160846Z&X-Goog-Expires=3600&X-Goog-Signature=old";
+    const created = await createManhua3dTask({
+      userId: 7, assetRef: "character:mother", sourceVersion: "gs://b/generated/娘.png", sourceImageUrl: stale,
+    });
+    expect(created.status).toBe("running");
+    expect(signGlb).toHaveBeenCalledWith("gs://b/generated/娘.png", 2 * 60 * 60);
+    expect(submit.mock.calls[0]?.[0]).toMatchObject({ image: "https://signed.test/b/generated/娘.png?fresh=1" });
+
+    // 反例：版本不是 gs://，或签名链接指向别的对象 → 不重签，原样提交
+    await createManhua3dTask({
+      userId: 7, assetRef: "character:hash", sourceVersion: "sha256:mother-v1", sourceImageUrl: "https://assets.test/mother.png",
+    });
+    await createManhua3dTask({
+      userId: 7, assetRef: "character:other", sourceVersion: "gs://b/generated/other.png", sourceImageUrl: stale,
+    });
+    expect(submit.mock.calls.map(call => call[0].image)).toEqual([
+      "https://signed.test/b/generated/娘.png?fresh=1",
+      "https://assets.test/mother.png",
+      stale,
+    ]);
+    expect(signGlb).toHaveBeenCalledTimes(1);
+  });
+
+  it("0929 单图源图签名失败：没有出站 → failed（可重试），不是 reconcile_manual；恢复后重试提交新签名", async () => {
+    const submit = vi.fn().mockResolvedValue({ predictionId: "pred-after-sign" });
+    const signGlb = vi
+      .fn()
+      .mockImplementationOnce(() => { throw new Error("kms unavailable"); })
+      .mockImplementation((gs: string) => `https://signed.test/${gs.replace("gs://", "")}`);
+    setManhua3dTaskDependenciesForTests({
+      isConfigured: () => true,
+      submit,
+      submitMultiview: vi.fn(),
+      signGlb: signGlb as never,
+      poll: vi.fn().mockResolvedValue({ state: "running", status: "processing" }),
+    });
+    const failed = await createManhua3dTask({
+      userId: 7, assetRef: "character:mother", sourceVersion: "gs://b/m.png",
+      sourceImageUrl: "https://storage.googleapis.com/b/m.png?X-Goog-Signature=old",
+    });
+    expect(failed.status).toBe("failed");
+    expect(failed.errorZh).toContain("未提交上游");
+    expect(submit).not.toHaveBeenCalled();
+    const retried = await retryManhua3dTask(failed.taskId, 7);
+    expect(retried?.status).toBe("running");
+    expect(submit.mock.calls[0]?.[0]).toMatchObject({ image: "https://signed.test/b/m.png" });
+  });
+
   it("1469 R2 ② 已有 predictionId 的多视角任务：worker 推进只 poll，不再提交任何一路", async () => {
     const submit = vi.fn();
     const submitMultiview = vi.fn().mockResolvedValue({ predictionId: "pred-mv-poll" });

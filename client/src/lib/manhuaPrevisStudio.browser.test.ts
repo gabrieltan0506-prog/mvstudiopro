@@ -63,7 +63,7 @@ afterAll(async () => {
   await browser?.close();
 });
 
-async function open(strict = false, keyed = false, reviewMedia?: Buffer) {
+async function open(strict = false, keyed = false, reviewMedia?: Buffer, expandTune = true) {
   const page = await browser.newPage();
   page.setDefaultTimeout(5_000);
   await page.setRequestInterception(true);
@@ -101,7 +101,9 @@ async function open(strict = false, keyed = false, reviewMedia?: Buffer) {
   );
   await page.addScriptTag({ content: bundle });
   await page.waitForSelector("[data-manhua-previs-studio]");
-  // 专业编辑回归显式打开数字表；默认收起由动作库入口探针单独验证。
+  // 0929 三步化：手动微调区默认收起；专业编辑回归先展开它，再显式打开数字表。默认收起由三步探针单独验证。
+  if (!expandTune) return page;
+  await page.click("[data-previs-tune] > summary");
   await page.click("[data-previs-advanced] > summary");
   return page;
 }
@@ -208,6 +210,33 @@ it("环绕改成连续移动时一并清掉环绕升降，不留孤立的升降�
     expect(camera.orbitDeg).toBeUndefined();
     expect(camera.orbitRise).toBeUndefined();
     expect(camera.endPosition).toEqual(camera.position);
+  } finally { await page.close(); }
+});
+
+it("0929 三步化：默认只露出场人物、自动排运镜、生成审片三步；手动微调收起，「调整人数与站位」一步展开", async () => {
+  const page = await open(false, false, undefined, false);
+  try {
+    // 在收起的 <details> 里算不可见（只看祖先，advanced 自身也是 details）
+    const visible = (selector: string) => page.evaluate(sel => {
+      const el = document.querySelector(sel) as HTMLElement | null;
+      return Boolean(el && el.checkVisibility() && !el.parentElement?.closest("details:not([open])"));
+    }, selector);
+    expect(await page.evaluate(() => (document.querySelector("[data-previs-tune]") as HTMLDetailsElement).open)).toBe(false);
+    expect(await visible("[data-previs-intro]")).toBe(true);
+    expect(await visible('[aria-label="白模出场人物1"]')).toBe(true);
+    expect(await visible("[data-previs-auto-camera]")).toBe(true);
+    expect(await visible("[data-previs-step-render]")).toBe(true);
+    expect(await visible("[data-previs-advanced]")).toBe(false);
+    // 三步顺序：人物 → 运镜 → 微调（可选）→ 生成
+    const order = await page.evaluate(() => ["[data-previs-intro]", '[aria-label="白模出场人物1"]', "[data-previs-auto-camera]", "[data-previs-tune]", "[data-previs-step-render]"]
+      .map(sel => document.querySelector(sel)!)
+      .every((el, i, all) => i === 0 || Boolean(all[i - 1].compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)));
+    expect(order).toBe(true);
+    await click(page, "调整人数与站位");
+    await settle(page);
+    expect(await page.evaluate(() => (document.querySelector("[data-previs-tune]") as HTMLDetailsElement).open)).toBe(true);
+    expect(await visible("[data-previs-advanced]")).toBe(true);
+    expect(await page.evaluate(() => (window as any).fixture.submits.length)).toBe(0);
   } finally { await page.close(); }
 });
 

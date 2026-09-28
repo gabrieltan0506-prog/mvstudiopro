@@ -171,6 +171,7 @@ export function ManhuaPrevisStudioView({
   );
   // 专业参数默认收起，之后保留用户手动开合，不因草案变化重置。
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [tuneOpen, setTuneOpen] = useState(false);
   const studio = block.previsStudio ?? initial;
   const latest = useRef({ studio, onChange, services, disabled, block });
   latest.current = { studio, onChange, services, disabled, block };
@@ -718,16 +719,91 @@ export function ManhuaPrevisStudioView({
       data-manhua-previs-studio
       className="w-full space-y-3 rounded-lg border border-cyan-300/25 bg-[#0c121d] p-3"
     >
-      <p className="text-xs text-white/70">
-        本段动作白模 ·
-        简化人体关节／四足站位，不是角色模型自动绑定。渲染不调用付费生成模型；预览后再采用，不会自动出成片。
+      <p className="text-xs leading-5 text-white/75" data-previs-intro>
+        按分镜自动排好运镜，渲染几何预演，逐帧审过再采用为本段视频的动作参考。渲染不调用付费生成模型，也不会自动出成片。
       </p>
-      <div className="grid gap-2 rounded border border-cyan-300/20 bg-cyan-300/[0.05] p-2 text-[11px] leading-5 text-cyan-50 sm:grid-cols-3" aria-label="动作白模用途说明">
-        <p><b>先排动作：</b>把本段人物、马、机位和接触时点放进同一时间轴，提前看站位、遮挡与运动方向。</p>
-        <p><b>再审预演：</b>渲染后逐帧检查人数、背负、接触和穿模，再按正常速度播放；有问题就改规格并重渲。</p>
-        <p><b>最后采用：</b>审过的白模可作为本段视频的动作参考。它不会替你生成角色形象、配音或最终成片。</p>
-      </div>
       <p className="text-xs text-cyan-100" data-previs-source-scope>{manhuaPrevisSourceLabel(studio.spec)}</p>
+      <section className="space-y-2 rounded border border-cyan-300/20 p-3" data-previs-cast>
+        <p className="text-sm font-medium text-cyan-50">第 1 步 · 本次出场人物</p>
+        <p className="text-xs text-cyan-100">渲染容量：{previsRenderCostUnits(studio.spec)} / {PREVIS_RENDER_UNIT_BUDGET}；所有角色均按整段计入，在场区间只控制画面，不提高容量。请逐镜核对白模角色、对白和接触。</p>
+        <div className="flex flex-wrap gap-3">
+          {studio.spec.actors.map((actor, index) => (
+            <label key={actor.id} className="text-xs">
+              <span className="mr-1 inline-block h-3 w-3 rounded-full" style={{ backgroundColor: previsActorColor(actor.id, studio.spec.actors).hex }} aria-hidden="true" />
+              {previsActorColor(actor.id, studio.spec.actors).nameZh} ·
+              {actor.nameZh || `人物 ${index + 1}`} ·
+              <select
+                aria-label={`白模出场人物${index + 1}`}
+                className={field}
+                value={actor.assetRef ?? ""}
+                disabled={disabled || Boolean(pendingId) || busy}
+                onChange={e => {
+                  const selected = characters.find(c => c.id === e.target.value);
+                  if (selected?.id === actor.assetRef) return;
+                  actorEdit(index, {
+                    assetRef: selected?.id,
+                    nameZh: selected?.label ?? actor.nameZh,
+                    riggedModel: undefined,
+                  });
+                }}
+              >
+                <option value="">自定义人物</option>
+                {actor.assetRef && !characters.some(c => c.id === actor.assetRef) ? (
+                  <option value={actor.assetRef}>{actor.nameZh}（原资产不可用）</option>
+                ) : null}
+                {characters.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+              </select>
+            </label>
+          ))}
+        </div>
+        <button type="button" className={button} onClick={() => { setTuneOpen(true); setAdvancedOpen(true); }}>
+          调整人数与站位
+        </button>
+      </section>
+      <section className="space-y-2 rounded-lg border border-cyan-300/40 bg-cyan-500/[0.06] p-3" data-previs-auto-camera>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-medium text-cyan-50">第 2 步 · 运镜</span>
+          <button
+            type="button"
+            className="rounded bg-cyan-400/90 px-3 py-1.5 text-xs font-medium text-[#06121c] disabled:opacity-40"
+            disabled={disabled || Boolean(pendingId) || busy || !directionShots.length}
+            onClick={autoDirectCameras}
+          >
+            按分镜自动排运镜
+          </button>
+          <span className="text-[11px] text-white/60">读每镜的景别、机位和运镜描述，自动排推拉、升降、环绕与切镜；可撤销</span>
+        </div>
+        {autoCameraMessage ? <p className={`text-[11px] ${autoCameraMessage.ok ? "text-emerald-200" : "text-amber-100"}`}>{autoCameraMessage.text}</p> : null}
+        {studio.draftCameraPromptZh?.length ? (
+          <ol className="list-decimal space-y-0.5 pl-4 text-[11px] text-white/75" data-previs-auto-camera-lines>
+            {studio.draftCameraPromptZh.map((line, i) => <li key={i}>{line}</li>)}
+          </ol>
+        ) : null}
+      </section>
+      {studio.specHistory?.length ? (
+        <button
+          className={button}
+          disabled={disabled || Boolean(pendingId) || busy}
+          onClick={() => {
+            const history = studio.specHistory ?? [];
+            const old = history.at(-1);
+            if (old && !disabled && !pendingId && !lock.current) {
+              // 回退规格时把草案带来的运镜句一并清掉，句子不能和旧规格对不上
+              const { draftCameraPromptZh: _p, draftTempoZh: _t, ...rest } = studio;
+              setAutoCameraMessage(null);
+              publish({
+                ...rest,
+                spec: old.spec,
+                specHistory: history.slice(0, -1),
+              });
+            }
+          }}
+        >
+          恢复上一份动作配置（不改已采用参考）
+        </button>
+      ) : null}
+      <details open={tuneOpen} onToggle={(e) => setTuneOpen(e.currentTarget.open)} className="space-y-3 rounded-lg border border-white/10 bg-white/[0.02] p-2" data-previs-tune>
+        <summary className="min-h-11 cursor-pointer py-2 text-xs font-semibold text-white/70">手动微调（可选）· 动作库、站位与节奏、剧本草案、数字表、相机逐项</summary>
       <ManhuaPrevisActionLibrary spec={studio.spec} disabled={disabled || Boolean(pendingId) || busy} onChange={edit} />
       <details data-previs-layout-editor className="rounded border border-white/10 bg-white/[0.02] p-2">
         <summary className="min-h-11 cursor-pointer py-2 text-xs font-semibold text-cyan-100">镜头、站位与动作节奏</summary>
@@ -927,65 +1003,6 @@ export function ManhuaPrevisStudioView({
           ))}
         </details>
       ) : null}
-      {studio.specHistory?.length ? (
-        <button
-          className={button}
-          disabled={disabled || Boolean(pendingId) || busy}
-          onClick={() => {
-            const history = studio.specHistory ?? [];
-            const old = history.at(-1);
-            if (old && !disabled && !pendingId && !lock.current) {
-              // 回退规格时把草案带来的运镜句一并清掉，句子不能和旧规格对不上
-              const { draftCameraPromptZh: _p, draftTempoZh: _t, ...rest } = studio;
-              setAutoCameraMessage(null);
-              publish({
-                ...rest,
-                spec: old.spec,
-                specHistory: history.slice(0, -1),
-              });
-            }
-          }}
-        >
-          恢复上一份动作配置（不改已采用参考）
-        </button>
-      ) : null}
-      <section className="space-y-2 rounded border border-cyan-300/20 p-3" data-previs-cast>
-        <p className="text-xs text-cyan-100">本次出场人物</p>
-        <p className="text-xs text-cyan-100">渲染容量：{previsRenderCostUnits(studio.spec)} / {PREVIS_RENDER_UNIT_BUDGET}；所有角色均按整段计入，在场区间只控制画面，不提高容量。请逐镜核对白模角色、对白和接触。</p>
-        <div className="flex flex-wrap gap-3">
-          {studio.spec.actors.map((actor, index) => (
-            <label key={actor.id} className="text-xs">
-              <span className="mr-1 inline-block h-3 w-3 rounded-full" style={{ backgroundColor: previsActorColor(actor.id, studio.spec.actors).hex }} aria-hidden="true" />
-              {previsActorColor(actor.id, studio.spec.actors).nameZh} ·
-              {actor.nameZh || `人物 ${index + 1}`} ·
-              <select
-                aria-label={`白模出场人物${index + 1}`}
-                className={field}
-                value={actor.assetRef ?? ""}
-                disabled={disabled || Boolean(pendingId) || busy}
-                onChange={e => {
-                  const selected = characters.find(c => c.id === e.target.value);
-                  if (selected?.id === actor.assetRef) return;
-                  actorEdit(index, {
-                    assetRef: selected?.id,
-                    nameZh: selected?.label ?? actor.nameZh,
-                    riggedModel: undefined,
-                  });
-                }}
-              >
-                <option value="">自定义人物</option>
-                {actor.assetRef && !characters.some(c => c.id === actor.assetRef) ? (
-                  <option value={actor.assetRef}>{actor.nameZh}（原资产不可用）</option>
-                ) : null}
-                {characters.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-              </select>
-            </label>
-          ))}
-        </div>
-        <button type="button" className={button} onClick={() => setAdvancedOpen(true)}>
-          调整人数与站位
-        </button>
-      </section>
       <details open={advancedOpen} onToggle={(e) => setAdvancedOpen(e.currentTarget.open)} className="space-y-2" data-previs-advanced>
         <summary className="text-xs text-cyan-100">高级参数 · 数字表（站位 / 动作 / 特效 / 出水 / 短打）</summary>
       <div className="flex flex-wrap gap-3">
@@ -2017,26 +2034,6 @@ export function ManhuaPrevisStudioView({
         </p>
       </section>
       </details>
-      <section className="space-y-2 rounded-lg border border-cyan-300/40 bg-cyan-500/[0.06] p-3" data-previs-auto-camera>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm font-medium text-cyan-50">运镜</span>
-          <button
-            type="button"
-            className="rounded bg-cyan-400/90 px-3 py-1.5 text-xs font-medium text-[#06121c] disabled:opacity-40"
-            disabled={disabled || Boolean(pendingId) || busy || !directionShots.length}
-            onClick={autoDirectCameras}
-          >
-            按分镜自动排运镜
-          </button>
-          <span className="text-[11px] text-white/60">读每镜的景别、机位和运镜描述，自动排推拉、升降、环绕与切镜；可撤销</span>
-        </div>
-        {autoCameraMessage ? <p className={`text-[11px] ${autoCameraMessage.ok ? "text-emerald-200" : "text-amber-100"}`}>{autoCameraMessage.text}</p> : null}
-        {studio.draftCameraPromptZh?.length ? (
-          <ol className="list-decimal space-y-0.5 pl-4 text-[11px] text-white/75" data-previs-auto-camera-lines>
-            {studio.draftCameraPromptZh.map((line, i) => <li key={i}>{line}</li>)}
-          </ol>
-        ) : null}
-      </section>
       <details>
         <summary className="text-xs text-cyan-100">
           专业调度 · 相机与切镜
@@ -2137,6 +2134,9 @@ export function ManhuaPrevisStudioView({
           </button>
         </div>
       </details>
+      </details>
+      <p className="text-sm font-medium text-cyan-50" data-previs-step-render>第 3 步 · 生成与审片</p>
+      <p className="text-[11px] text-white/60">生成后逐帧看人数、背负、接触和穿模，再从头按正常速度播放一遍；没问题再点「采用为本段参考」。</p>
       <div className="flex flex-wrap gap-2">
         <button
           className={button}

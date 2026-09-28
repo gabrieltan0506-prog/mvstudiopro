@@ -17,6 +17,7 @@ import {
   uploadBufferToGcsIfAbsent,
 } from "./gcs.js";
 import { assertValidGlb2, Glb2StreamValidator } from "../../shared/glbValidation.js";
+import { gsUriFromSignedGcsUrl } from "../../shared/manhuaMultiview.js";
 import {
   pollWavespeedTripo3dOnce,
   isWavespeedTripo3dConfigured,
@@ -472,6 +473,19 @@ async function resolveMultiviewImageUrls(record: Manhua3dTaskRecord): Promise<st
   return out;
 }
 
+/**
+ * 单图源图：sourceImageUrl 是 sourceVersion 同一 gs:// 对象的签名链接时，提交前现签——
+ * 前端给的是页面打开时缓存的签名，可能早已过期（0929 娘建模：签名过期 37 分钟，上游下载失败仍计费）。
+ * 其他来源原样使用。
+ */
+function resolveSourceImageUrl(record: Manhua3dTaskRecord): string {
+  const gs = String(record.sourceVersion || "").trim();
+  if (!/^gs:\/\/[^/]+\/.+/i.test(gs) || gsUriFromSignedGcsUrl(record.sourceImageUrl) !== gs) {
+    return record.sourceImageUrl;
+  }
+  return dependencies.signGlb(gs, 2 * 60 * 60);
+}
+
 function toView(record: Manhua3dTaskRecord): Manhua3dTaskView {
   const {
     taskId,
@@ -615,6 +629,14 @@ export async function advanceManhua3dTask(
           return markFailed(record, "视角图签名失败，未提交上游，可重试", error);
         }
       }
+      let sourceImage = record.sourceImageUrl;
+      if (!multiviewImages) {
+        try {
+          sourceImage = resolveSourceImageUrl(record);
+        } catch (error) {
+          return markFailed(record, "源图签名失败，未提交上游，可重试", error);
+        }
+      }
       // POST 前先落“待人工对账”。若进程恰在出站后、句柄落盘前退出，重启也绝不重复建单。
       record.status = "reconcile_manual";
       record.errorZh = "提交结果正在确认，为避免重复生成不会自动重试";
@@ -627,7 +649,7 @@ export async function advanceManhua3dTask(
               ...record.options,
             })
           : await dependencies.submit({
-              image: record.sourceImageUrl,
+              image: sourceImage,
               ...record.options,
             });
         record.predictionId = submitted.predictionId;

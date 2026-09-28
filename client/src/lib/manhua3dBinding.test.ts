@@ -67,6 +67,14 @@ describe("人物 3D 提交与迟到回写", () => {
     expect(applyManhua3dBinding([reclassified], "horse", model("new"), null)[0]).toBe(reclassified);
   });
 
+  it("0929 回执来源版本是同一对象的签名 https 也能回写；换成别的对象仍拒绝", () => {
+    const signedSame = { ...model("signed"), sourceVersion: "https://storage.googleapis.com/test-bucket/uploads/u1/character.png?X-Goog-Signature=abc" };
+    expect(applyManhua3dBinding([asset()], "horse", signedSame, null)[0].model3d?.taskId).toBe("signed");
+    const signedOther = { ...signedSame, sourceVersion: "https://storage.googleapis.com/test-bucket/uploads/u1/other.png?X-Goog-Signature=abc" };
+    const current = asset();
+    expect(applyManhua3dBinding([current], "horse", signedOther, null)[0]).toBe(current);
+  });
+
   it("同一任务的倒序状态不回退，续签回执仍能更新预览地址", () => {
     const current = asset(model("same", 20));
     expect(

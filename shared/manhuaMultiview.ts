@@ -77,6 +77,16 @@ export function gsUriFromSignedGcsUrl(url: string): string {
   }
 }
 
+/**
+ * 定妆图版本身份：同一 GCS 对象的签名 https（路径式／子域式）归一为 gs://，签名轮换或事后补记 gcsUri 不算换图；
+ * 其他地址原样严格比较——查询串可能就是图的身份，不能去掉。人物 3D 与四视角草稿共用这一口径。
+ */
+export function manhuaSourceVersionIdentity(version: string | null | undefined): string {
+  const v = String(version || "").trim();
+  if (/^gs:\/\//i.test(v)) return v;
+  return gsUriFromSignedGcsUrl(v) || v;
+}
+
 /** 视角图的稳定身份：优先 gs://，否则去掉查询串的 https（签名轮换不改身份） */
 export function manhuaMultiviewImageIdentity(view: Pick<ManhuaMultiviewDraftView, "url" | "gcsUri">): string {
   const gs = String(view.gcsUri || "").trim();
@@ -138,7 +148,7 @@ export function evaluateManhuaMultiviewReadiness(
 ): ManhuaMultiviewReadiness {
   const missingAll = [...MANHUA_MULTIVIEW_VIEWS];
   if (!draft) return { ready: false, reasonZh: "还没有四视角图", missing: missingAll };
-  if (draft.sourceVersion !== sourceVersion) {
+  if (manhuaSourceVersionIdentity(draft.sourceVersion) !== manhuaSourceVersionIdentity(sourceVersion)) {
     return { ready: false, reasonZh: "定妆图已换，四视角图需按新图重出", missing: missingAll };
   }
   const ordered = orderManhuaMultiviewViews(draft.views);
@@ -186,6 +196,6 @@ export function mergeManhuaMultiviewDraft(
   produced: ManhuaMultiviewDraftView,
   now = Date.now(),
 ): ManhuaMultiviewDraft {
-  const keep = existing && existing.sourceVersion === sourceVersion ? existing.views.filter((v) => v.view !== produced.view) : [];
+  const keep = existing && manhuaSourceVersionIdentity(existing.sourceVersion) === manhuaSourceVersionIdentity(sourceVersion) ? existing.views.filter((v) => v.view !== produced.view) : [];
   return { sourceVersion, views: orderManhuaMultiviewViews([...keep, produced]), updatedAt: now };
 }
