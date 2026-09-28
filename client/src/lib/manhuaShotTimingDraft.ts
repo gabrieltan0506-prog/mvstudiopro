@@ -5,6 +5,23 @@ import { buildManhuaWriterSession, serializeManhuaWriterSession, MANHUA_WRITER_S
 import type { CanvasBlock, CanvasEdge } from './canvasTypes';
 import { slimBlocksForLocalPersist } from './manhuaCloudDraftSync';
 
+/** 与分镜生产者同源读取：旧画布可能仅把完整秒位表存于 prompt。 */
+export function retimeManhuaCanvasNodes(nodes: CanvasBlock[], shotIndex: number, durationSec: number) {
+  const source = (block: CanvasBlock) => block.outputText || block.prompt || '';
+  const timed = nodes.filter(block => readManhuaTimedStoryboard(source(block)).recognized);
+  if (!timed.length) throw new Error('当前原稿没有完整秒位表，请在剧本编辑中补齐后再调整。');
+  const edits = new Map(timed.map(block => [block.id, retimeManhuaShot(source(block), shotIndex, durationSec)]));
+  const canonical = edits.values().next().value!;
+  const timing = (rows: typeof canonical.rows) => rows.map(row => [row.index, row.startSec, row.endSec]);
+  if (Array.from(edits.values()).some(edit => JSON.stringify(timing(edit.rows)) !== JSON.stringify(timing(canonical.rows))))
+    throw new Error('当前存在不一致的秒位表，请先统一原稿，未保存。');
+  return { canonical, apply: (block: CanvasBlock): CanvasBlock => {
+    const edit = edits.get(block.id);
+    if (!edit) return block;
+    return block.outputText ? { ...block, outputText: edit.text } : { ...block, prompt: edit.text };
+  } };
+}
+
 /** 时长修改必须同时保存剧本与画布，不使用截断原稿的配额降级路径。 */
 export function saveManhuaShotTimingDraft(blocks: CanvasBlock[], edges: CanvasEdge[], writer: ManhuaWriterSessionPartial,
   storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> = localStorage) {
