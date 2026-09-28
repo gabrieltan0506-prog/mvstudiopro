@@ -13,6 +13,7 @@ import {
   MANHUA_MULTIVIEW_VIEWS,
   MANHUA_MULTIVIEW_VIEW_LABEL_ZH,
   evaluateManhuaMultiviewReadiness,
+  manhuaSourceVersionIdentity,
   orderManhuaMultiviewViews,
   type ManhuaMultiviewDraft,
   type ManhuaMultiviewView,
@@ -321,7 +322,7 @@ export function ManhuaMultiviewPanel(props: {
 }) {
   const { labelZh, draft, sourceVersion, busy, disabled, canSubmit, rebuild, onGenerate, onSubmit } = props;
   const readiness = evaluateManhuaMultiviewReadiness(draft, sourceVersion);
-  const stale = Boolean(draft && draft.sourceVersion !== sourceVersion);
+  const stale = Boolean(draft && manhuaSourceVersionIdentity(draft.sourceVersion) !== manhuaSourceVersionIdentity(sourceVersion));
   const views = draft && !stale ? orderManhuaMultiviewViews(draft.views) : [];
   const byView = new Map(views.map((v) => [v.view, v] as const));
   const missing = MANHUA_MULTIVIEW_VIEWS.filter((v) => !byView.has(v));

@@ -94,6 +94,21 @@ describe("manhuaMultiview", () => {
     expect(d4.sourceVersion).toBe("gs://b/new-face.png");
   });
 
+  it("0929 定妆图身份：草稿记签名 https、当前记同对象 gs://（或签名轮换）不算换图；别的对象仍算换图", () => {
+    const gs = "gs://b/generated/墨屠.png";
+    const signedOld = "https://storage.googleapis.com/b/generated/%E5%A2%A8%E5%B1%A0.png?X-Goog-Signature=old";
+    const signedOther = "https://storage.googleapis.com/b/generated/other.png?X-Goog-Signature=old";
+    const draft = { sourceVersion: signedOld, views: [view("front"), view("left")], updatedAt: 1 };
+    expect(evaluateManhuaMultiviewReadiness(draft, gs).ready).toBe(true);
+    expect(evaluateManhuaMultiviewReadiness(draft, signedOld.replace("old", "new")).ready).toBe(true);
+    expect(evaluateManhuaMultiviewReadiness({ ...draft, sourceVersion: signedOther }, gs)).toMatchObject({ ready: false, reasonZh: expect.stringContaining("已换") });
+    // 合并：同一张图的旧草稿保留其余视角，版本迁到当前写法
+    const merged = mergeManhuaMultiviewDraft(draft, gs, view("back"), 2);
+    expect(merged.views.map((v) => v.view)).toEqual(["front", "left", "back"]);
+    expect(merged.sourceVersion).toBe(gs);
+    expect(mergeManhuaMultiviewDraft({ ...draft, sourceVersion: signedOther }, gs, view("back"), 2).views.map((v) => v.view)).toEqual(["back"]);
+  });
+
   it("提示词含视角说明、保持一致与白底正交约束", () => {
     const p = buildManhuaMultiviewPrompt("back", "墨屠");
     expect(p).toContain("「墨屠」");

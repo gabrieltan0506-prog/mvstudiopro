@@ -1,13 +1,11 @@
-import { gsUriFromSignedGcsUrl } from "./manhuaMultiview";
+import { manhuaSourceVersionIdentity } from "./manhuaMultiview";
 
 /**
  * 3D 模型来源图身份：同一 GCS 对象的签名 https 转成 gs://（签名轮换不算换图）；
- * 其他地址原样严格比较——查询串可能就是图的身份，不能去掉。
+ * 其他地址原样严格比较——查询串可能就是图的身份，不能去掉。与四视角草稿同一口径（manhuaSourceVersionIdentity）。
  */
 export function manhuaAsset3dSourceIdentity(version: string | null | undefined): string {
-  const v = String(version || "").trim();
-  if (/^gs:\/\//i.test(v)) return v;
-  return gsUriFromSignedGcsUrl(v) || v;
+  return manhuaSourceVersionIdentity(version);
 }
 
 export const MANHUA_ASSET_3D_STATUSES = [
