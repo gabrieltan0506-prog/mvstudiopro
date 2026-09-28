@@ -193,17 +193,25 @@ def action_amounts(actor, t):
             values['lookAt'] = action.get('lookAtId')
     return values
 
-def camera_pose(shot, frame):
+def camera_progress(shot, frame):
     begin=math.floor(shot['startSec']*24+.5)+1
     end=math.floor(shot['endSec']*24+.5)
     progress=max(0., min(1., (frame-begin)/max(1,end-begin)))
-    progress=progress*progress*(3-2*progress)
+    return progress*progress*(3-2*progress)
+
+def camera_lens(shot, frame):
+    """一镜内变焦与机位共用同一平滑进度；没有终点焦距就是常量。"""
+    return shot['lens']+(shot.get('endLens',shot['lens'])-shot['lens'])*camera_progress(shot,frame)
+
+def camera_pose(shot, frame):
+    progress=camera_progress(shot,frame)
     if shot.get('orbitDeg') is not None:
         angle=math.radians(shot['orbitDeg'])*progress
         x=shot['position'][0]-shot['target'][0]
         y=shot['position'][1]-shot['target'][1]
         return ([shot['target'][0]+x*math.cos(angle)-y*math.sin(angle),
-                 shot['target'][1]+x*math.sin(angle)+y*math.cos(angle),shot['position'][2]],shot['target'])
+                 shot['target'][1]+x*math.sin(angle)+y*math.cos(angle),
+                 shot['position'][2]+shot.get('orbitRise',0)*progress],shot['target'])
     def mix(start, finish): return [a+(b-a)*progress for a,b in zip(start,finish)]
     return (mix(shot['position'],shot.get('endPosition',shot['position'])),
             mix(shot['target'],shot.get('endTarget',shot['target'])))
@@ -592,9 +600,9 @@ for shot in spec['cameras']:
     # 与提交 schema 的 Math.round 一致，避免 .5 时 Python 银行家舍入错一帧。
     begin=math.floor(shot['startSec']*24+.5)+1
     end=math.floor(shot['endSec']*24+.5)
-    camera.data.lens=shot['lens']
     for f in range(begin,end+1):
         position,target=camera_pose(shot,f)
+        camera.data.lens=camera_lens(shot,f)
         camera.location=position
         camera.rotation_euler=(Vector(target)-camera.location).to_track_quat('-Z','Y').to_euler()
         for prop in ('location','rotation_euler'):camera.keyframe_insert(prop,frame=f)

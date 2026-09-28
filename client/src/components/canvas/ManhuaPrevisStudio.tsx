@@ -17,6 +17,8 @@ import type { ManhuaSegmentReferenceEntry } from "@shared/manhuaSegmentReference
 import { applyManhuaPrevisDraftToStudio, type ManhuaPrevisDraftFromPlan } from "@shared/manhuaPrevisFromActionPlan";
 import { appendManhuaCameraPromptToMotionGuide, MANHUA_CAMERA_PROMPT_BLOCK_MAX_CHARS, MANHUA_CAMERA_STYLE_LABEL_ZH } from "@shared/manhuaCameraTempo";
 import type { ManhuaCameraStyle } from "@shared/manhuaCameraGrammar";
+import { directManhuaCamerasFromShots, formatManhuaDirectedCamerasZh, type ManhuaDirectedShot } from "@shared/manhuaCameraDirection";
+import { previsLayoutActorFacingDeg, previsLayoutActorPosition } from "@/lib/manhuaPrevisLayout";
 import {
   createManhuaPrevisStudio,
   formatPrevisMotionGuide,
@@ -95,6 +97,10 @@ type Props = {
     model?: { taskId: string; assetRef?: string };
   }>;
   sourceShots?: PrevisSourceShot[];
+  /** 0929：本段分镜的景别/机位/运镜原文，用于按分镜自动排运镜（不进草案身份键） */
+  directionShots?: ManhuaDirectedShot[];
+  /** 本集导演包主卡；只取卡片里已写明、能落到机位上的手法 */
+  directionCardId?: string | null;
   profiles?: PreparedRigProfile[];
   /** PR-6：采用白模成功后露出「下一步：生成本段草稿视频」；走工作台既有的本段成片入口（扣费确认沿用） */
   onNextDraftVideo?: () => void;
@@ -149,6 +155,8 @@ export function ManhuaPrevisStudioView({
   onChange,
   services,
   sourceShots = [],
+  directionShots = [],
+  directionCardId = null,
   profiles = [],
   actionPlanDrafts = [],
   onNextDraftVideo,
@@ -198,6 +206,59 @@ export function ManhuaPrevisStudioView({
     };
   }, []);
   const pendingId = studio.pending?.requestId;
+  const [autoCameraMessage, setAutoCameraMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  /** 白模时长覆盖本段前几镜时（如第1段 17 秒＝镜1–4），只排被覆盖的镜；对不上镜头边界就不猜 */
+  function autoDirectCameras() {
+    if (disabled || pendingId || lock.current) return;
+    const D = studio.spec.durationSec;
+    const covered: ManhuaDirectedShot[] = [];
+    let sum = 0;
+    for (const shot of directionShots) {
+      if (sum >= D - 1e-6) break;
+      covered.push(shot);
+      sum += shot.durationSec;
+    }
+    if (!covered.length || Math.abs(sum - D) > 1e-6) {
+      setAutoCameraMessage({ ok: false, text: `白模 ${D} 秒对不上分镜镜头边界（${directionShots.map(s => `镜${s.index} ${s.durationSec}秒`).join("、")}），请把白模时长改成从第一镜起连续几镜的合计` });
+      return;
+    }
+    const passengerId = studio.spec.piggyback?.passengerId;
+    const plan = directManhuaCamerasFromShots({
+      shots: covered,
+      durationSec: D,
+      aspect: studio.spec.aspect,
+      directionCardId,
+      actors: studio.spec.actors.map(actor => ({
+        id: actor.id,
+        nameZh: actor.nameZh,
+        shape: actor.shape,
+        at: (sec: number) => previsLayoutActorPosition(actor, sec).slice(0, 2) as [number, number],
+        facingAt: (sec: number) => previsLayoutActorFacingDeg(actor, sec),
+        ...(actor.id === passengerId && studio.spec.piggyback ? { carriedBy: studio.spec.piggyback.carrierId } : {}),
+      })),
+    });
+    if (plan.errorsZh.length) {
+      setAutoCameraMessage({ ok: false, text: plan.errorsZh.join("；") });
+      return;
+    }
+    const cameras = plan.cameras.map(({ shotIndex: _shot, noteZh: _note, ...camera }) => camera);
+    // 只拦相机合同：其他字段（角色、动作）仍在编辑中时不因它们挡住排镜
+    const cameraIssue = manhuaPrevisSpecSchema.safeParse({ ...studio.spec, cameras }).error?.issues.find(issue => issue.path[0] === "cameras");
+    if (cameraIssue) {
+      setAutoCameraMessage({ ok: false, text: `自动排出的机位未过白模校验（${cameraIssue.message}），现有机位未改动` });
+      return;
+    }
+    // 工作台存档合同：最多 8 条、每条 ≤400 字（角色名很长时截断）
+    const lines = formatManhuaDirectedCamerasZh(plan).slice(0, 8).map(line => (line.length > 400 ? `${line.slice(0, 399)}…` : line));
+    const ok = publish({
+      ...studio,
+      spec: { ...studio.spec, cameras },
+      specHistory: [...(studio.specHistory ?? []), { spec: studio.spec, createdAt: new Date().toISOString(), reasonZh: "按分镜自动排运镜前的机位" }],
+      draftCameraPromptZh: lines,
+    });
+    if (ok !== false)
+      setAutoCameraMessage({ ok: true, text: `已按镜${covered[0]!.index}–${covered.at(-1)!.index}排出 ${plan.cameras.length} 个机位，尚未渲染${plan.notesZh.length ? `；${plan.notesZh.join("；")}` : ""}` });
+  }
   function publish(next: Studio, reference?: ManhuaSegmentReferenceEntry) {
     const current = latest.current;
     const targetDuration = parseManhuaClipTargetDurationSec(current.block.prompt || "");
@@ -268,6 +329,12 @@ export function ManhuaPrevisStudioView({
           ),
         },
       };
+    }
+    // 手动改了机位，草案/自动排镜写下的逐镜运镜句就对不上了：一并清掉，不带着旧句进运动指引
+    if (JSON.stringify(spec.cameras) !== JSON.stringify(studio.spec.cameras)) {
+      const { draftCameraPromptZh: _stale, ...rest } = studio;
+      setAutoCameraMessage(null);
+      return publish({ ...rest, spec });
     }
     return publish({ ...studio, spec });
   };
@@ -870,6 +937,7 @@ export function ManhuaPrevisStudioView({
             if (old && !disabled && !pendingId && !lock.current) {
               // 回退规格时把草案带来的运镜句一并清掉，句子不能和旧规格对不上
               const { draftCameraPromptZh: _p, draftTempoZh: _t, ...rest } = studio;
+              setAutoCameraMessage(null);
               publish({
                 ...rest,
                 spec: old.spec,
@@ -1949,6 +2017,26 @@ export function ManhuaPrevisStudioView({
         </p>
       </section>
       </details>
+      <section className="space-y-2 rounded-lg border border-cyan-300/40 bg-cyan-500/[0.06] p-3" data-previs-auto-camera>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-medium text-cyan-50">运镜</span>
+          <button
+            type="button"
+            className="rounded bg-cyan-400/90 px-3 py-1.5 text-xs font-medium text-[#06121c] disabled:opacity-40"
+            disabled={disabled || Boolean(pendingId) || busy || !directionShots.length}
+            onClick={autoDirectCameras}
+          >
+            按分镜自动排运镜
+          </button>
+          <span className="text-[11px] text-white/60">读每镜的景别、机位和运镜描述，自动排推拉、升降、环绕与切镜；可撤销</span>
+        </div>
+        {autoCameraMessage ? <p className={`text-[11px] ${autoCameraMessage.ok ? "text-emerald-200" : "text-amber-100"}`}>{autoCameraMessage.text}</p> : null}
+        {studio.draftCameraPromptZh?.length ? (
+          <ol className="list-decimal space-y-0.5 pl-4 text-[11px] text-white/75" data-previs-auto-camera-lines>
+            {studio.draftCameraPromptZh.map((line, i) => <li key={i}>{line}</li>)}
+          </ol>
+        ) : null}
+      </section>
       <details>
         <summary className="text-xs text-cyan-100">
           专业调度 · 相机与切镜
@@ -1975,12 +2063,16 @@ export function ManhuaPrevisStudioView({
                 <label className="text-xs">
                   <input type="checkbox" aria-label={`机位${i + 1}连续移动`} disabled={disabled || Boolean(pendingId) || busy}
                     checked={Boolean(camera.endPosition || camera.endTarget)}
-                    onChange={e => patch({ endPosition: e.target.checked ? [...camera.position] : undefined, endTarget: e.target.checked ? [...camera.target] : undefined, orbitDeg: undefined })} />
+                    onChange={e => patch({ endPosition: e.target.checked ? [...camera.position] : undefined, endTarget: e.target.checked ? [...camera.target] : undefined, orbitDeg: undefined, orbitRise: undefined })} />
                   连续移动（终点控制）
                 </label>
                 <label className="text-xs"><input type="checkbox" aria-label={`机位${i + 1}环绕`} disabled={disabled || Boolean(pendingId) || busy}
-                  checked={camera.orbitDeg !== undefined} onChange={e => patch({ orbitDeg: e.target.checked ? 30 : undefined, endPosition: undefined, endTarget: undefined })} />环绕主体</label>
+                  checked={camera.orbitDeg !== undefined} onChange={e => patch({ orbitDeg: e.target.checked ? 30 : undefined, orbitRise: undefined, endPosition: undefined, endTarget: undefined })} />环绕主体</label>
                 {camera.orbitDeg !== undefined ? numeric("环绕角度", camera.orbitDeg, n => patch({ orbitDeg: n }), 5) : null}
+                {camera.orbitDeg !== undefined ? numeric("环绕升降（米）", camera.orbitRise ?? 0, n => patch({ orbitRise: n || undefined }), 0.1) : null}
+                <label className="text-xs"><input type="checkbox" aria-label={`机位${i + 1}焦距推拉`} disabled={disabled || Boolean(pendingId) || busy}
+                  checked={camera.endLens !== undefined} onChange={e => patch({ endLens: e.target.checked ? camera.lens : undefined })} />焦距推拉</label>
+                {camera.endLens !== undefined ? numeric("终点焦距", camera.endLens, n => patch({ endLens: n }), 1) : null}
                 {(["position", "target"] as const).flatMap(key =>
                   [0, 1, 2].map(axis =>
                     numeric(
@@ -2028,12 +2120,15 @@ export function ManhuaPrevisStudioView({
               const midpoint = (a: number[], b: number[]) => a.map((n, i) => (n + b[i]) / 2) as [number, number, number];
               const position = midpoint(last.position, last.endPosition ?? last.position);
               const target = midpoint(last.target, last.endTarget ?? last.target);
+              // 焦距推拉同样从中点拆开，避免切点处焦距跳回起点、再推一遍
+              const { endLens, ...rest } = last;
+              const midLens = Math.round((last.lens + (endLens ?? last.lens)) / 2);
               edit({
                 ...studio.spec,
                 cameras: [
                   ...studio.spec.cameras.slice(0, -1),
-                  { ...last, endSec: mid, ...(last.endPosition ? { endPosition: position } : {}), ...(last.endTarget ? { endTarget: target } : {}) },
-                  { ...last, startSec: mid, position, target },
+                  { ...rest, endSec: mid, ...(last.endPosition ? { endPosition: position } : {}), ...(last.endTarget ? { endTarget: target } : {}), ...(endLens !== undefined && midLens !== last.lens ? { endLens: midLens } : {}) },
+                  { ...rest, startSec: mid, position, target, lens: midLens, ...(endLens !== undefined && endLens !== midLens ? { endLens } : {}) },
                 ],
               });
             }}

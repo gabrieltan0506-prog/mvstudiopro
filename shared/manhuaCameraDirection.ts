@@ -2,6 +2,7 @@
 import type { ManhuaActionEvent } from "./manhuaActionPlan";
 import { MANHUA_TIMING_FPS, manhuaSnapToFrameSec } from "./manhuaActionPlanTiming";
 import type { ManhuaPrevisSpec } from "./manhuaPrevis";
+import { getManhuaDirectionCard } from "./manhuaDirectionCanonLibrary";
 import { extractManhuaDialogueSpeakerName, extractManhuaSegmentDialogueQuotes } from "./manhuaEpisodeSegmentPlan.js";
 
 // ===== manhuaCameraGrammar.ts =====
@@ -833,4 +834,495 @@ export function previsCamerasFromActionRecipe(recipeId: string | undefined, dura
   const points: [number, number, number][] = [[x - 5, y - 8, 8], [x - 3, y - 4, 2.5], [x + 3, y - 3, 2.5], [x + 5, y + 4, 7]];
   const times = [0, Math.round(durationSec * 24 / 3) / 24, Math.round(durationSec * 24 * 2 / 3) / 24, durationSec];
   return points.slice(0, -1).map((position, i) => ({ startSec: times[i], endSec: times[i + 1], position, endPosition: points[i + 1], target, lens: 24 }));
+}
+
+// ===== 按分镜自动排运镜 =====
+/**
+ * 分镜表每镜「景别起止；角度/机位；运镜」→ 白模相机（0929）。
+ * 手填机位的替代：景别决定焦段与取景高度，部位词（蹄/手/肩/眼罩/碗/背影）按渲染脚本的角色比例和朝向定焦点，
+ * 角度决定机位高低与过肩，运镜动词决定终点、变焦、升降与环绕；「→」配「切/反打/先…再」拆成硬切，否则一镜内连续运动。
+ * 导演包只按已写进卡片的手法生效：非人角色先成为人物 → 写了反应的镜头给非人角色长焦；复杂空间先说清一件事 → 首镜无主视角时提示，不改分镜。
+ * 纯函数；站位与朝向由调用方按白模同一套轨迹求值传入，本函数不猜人物位置。
+ */
+export type ManhuaDirectedShot = { index: number; durationSec: number; cameraZh: string; actionZh?: string };
+export type ManhuaDirectedActor = {
+  id: string;
+  nameZh: string;
+  shape: string;
+  /** 该角色在某源秒的舞台平面站位（与白模渲染同一套站位/轨迹） */
+  at: (sec: number) => [number, number];
+  /** 该角色在某源秒的朝向（度，0° 朝 +X）；缺省按 0° */
+  facingAt?: (sec: number) => number;
+  /** 被谁背着（背负乘员）：头和身体按背上的高度算 */
+  carriedBy?: string;
+};
+export type ManhuaDirectedCamera = ManhuaPrevisSpec["cameras"][number] & { shotIndex: number; noteZh: string };
+export type ManhuaDirectedCameraPlan = { cameras: ManhuaDirectedCamera[]; notesZh: string[]; errorsZh: string[] };
+
+type DirectScale = { zh: string; lens: number; frameH: number };
+/** 取景高度（米，画面竖向覆盖）按人体 1.75 米估：全景约全身加余量、中景约膝上、近景约胸上、特写约脸 */
+const DIRECT_SCALES: Array<{ re: RegExp } & DirectScale> = [
+  { re: /极近景|大特写/, zh: "极近景", lens: 65, frameH: 0.24 },
+  { re: /特写/, zh: "特写", lens: 60, frameH: 0.4 },
+  { re: /中近景/, zh: "中近景", lens: 45, frameH: 0.95 },
+  { re: /近景/, zh: "近景", lens: 50, frameH: 0.7 },
+  { re: /中全景/, zh: "中全景", lens: 32, frameH: 2.3 },
+  { re: /中景/, zh: "中景", lens: 35, frameH: 1.5 },
+  { re: /远景/, zh: "远景", lens: 24, frameH: 6.5 },
+  { re: /全景/, zh: "全景", lens: 28, frameH: 3.4 },
+];
+type DirectPartKey = "feet" | "table" | "hand" | "shoulder" | "back" | "head" | "body";
+/** 部位词 → 焦点；minFrameH 保证白模几何在画里读得出（蹄要两条前腿、手要带前臂） */
+const DIRECT_PARTS: Array<{ re: RegExp; key: DirectPartKey; zh: string; minFrameH: number }> = [
+  { re: /蹄|腿|脚|步/, key: "feet", zh: "脚下", minFrameH: 0.6 },
+  // 白模没有碗/桌道具：取景放宽到能看清角色与桌面的关系
+  { re: /碗|药|桌|台|摊/, key: "table", zh: "桌面", minFrameH: 0.75 },
+  { re: /手|掌|脉/, key: "hand", zh: "手部", minFrameH: 0.55 },
+  { re: /肩|伤|血口/, key: "shoulder", zh: "肩部", minFrameH: 0.5 },
+  { re: /背影/, key: "back", zh: "背影", minFrameH: 0.9 },
+  { re: /眼罩|眼|头|脸|耳|血咳|咳/, key: "head", zh: "头部", minFrameH: 0.35 },
+];
+/** 部位在角色本地坐标（前 +X、左 +Y、高 Z），对应渲染脚本的棍人、四足与背负比例 */
+const PART_LOCAL: Record<"human" | "animal" | "carried", Record<DirectPartKey, [number, number, number]>> = {
+  human: { head: [0, 0, 1.6], shoulder: [0, 0, 1.4], hand: [0.3, -0.2, 1.15], feet: [0.05, 0, 0.2], table: [0.55, 0, 1.0], back: [0, 0, 1.3], body: [0, 0, 1.2] },
+  // 四足的「桌面」按肩伤垂到桌面的位置（「肩伤悬在碗上方」）
+  animal: { head: [1.05, 0, 1.95], shoulder: [0.55, 0, 1.45], hand: [0.55, 0, 1.45], feet: [0.6, 0.2, 0.3], table: [0.6, 0, 1.15], back: [-0.3, 0, 1.3], body: [0.1, 0, 1.3] },
+  carried: { head: [-0.2, 0, 1.85], shoulder: [-0.2, 0, 1.6], hand: [0, 0.2, 1.5], feet: [0.1, 0, 0.9], table: [0.55, 0, 1.0], back: [-0.2, 0, 1.55], body: [-0.2, 0, 1.45] },
+};
+const DIRECT_GROUP = /三人|两人|众人|人马|双人/;
+/** 通用称谓别名（角色名或其尾字是左侧称谓时生效） */
+const DIRECT_ROLE_ALIASES: ReadonlyArray<readonly [string, readonly string[]]> = [
+  ["娘", ["母亲", "娘亲", "病母"]],
+  ["爹", ["父亲"]],
+  ["先生", []],
+  ["师父", ["师傅"]],
+];
+/** 「过肩/肩后/侧后方」说的是机位，不是拍肩部 */
+const stripOver = (text: string) => text.replace(/过[^\s，；→、]{0,6}?肩|肩后|侧后方|身后/g, "");
+
+type DirectMove = { follow: boolean; push: number; pull: number; truck: boolean; rise: boolean; descend: boolean; orbit: boolean; hold: boolean };
+function parseDirectMove(text: string): DirectMove {
+  return {
+    follow: /跟拍|跟随|跟移|贴身跟|跟入|跟背影|跟蹄|跟阿|跟马|跟[^\s，；]{0,2}(?:走|行|跨|进)|随[^\s，；]{0,6}(?:视线|移|走)/.test(text),
+    push: /短促前推|短推|微推|轻推/.test(text) ? 0.22 : /推近|前推|推进|缓推|压近|推向|推到|推/.test(text) ? 0.4 : 0,
+    pull: /后拉|拉远|拉开|退半步|后退/.test(text) ? 0.45 : 0,
+    // 「横切」是快速切镜，不是横移
+    truck: /横移|平移|侧移/.test(text),
+    rise: /抬镜|上升|升起|抬起|上摇|升/.test(text),
+    descend: /下降|下压|降下|俯冲|落下/.test(text),
+    orbit: /环绕|绕|弧移|掠|旋转/.test(text),
+    hold: /定机|定格|定一拍|固定|刹|骤停|再停|停/.test(text),
+  };
+}
+type V3 = [number, number, number];
+const unit2 = (x: number, y: number): [number, number] => { const l = Math.hypot(x, y); return l < 1e-6 ? [0, -1] : [x / l, y / l]; };
+
+export function directManhuaCamerasFromShots(input: {
+  shots: ManhuaDirectedShot[];
+  actors: ManhuaDirectedActor[];
+  durationSec: number;
+  aspect?: "16:9" | "9:16";
+  directionCardId?: string | null;
+  maxCuts?: number;
+}): ManhuaDirectedCameraPlan {
+  const errorsZh: string[] = [];
+  const notesZh: string[] = [];
+  const D = input.durationSec;
+  const total = input.shots.reduce((n, s) => n + s.durationSec, 0);
+  if (!input.shots.length) errorsZh.push("本段没有分镜，不能自动排运镜");
+  if (Math.abs(total - D) > 1e-6) errorsZh.push(`分镜合计 ${total} 秒与白模时长 ${D} 秒不一致，先把白模时长改成 ${total} 秒`);
+  // 白模合同：每个机位至少 1 帧（与 schema 同一 Math.round 口径）；不足一帧的镜不猜着并入邻镜
+  let shotEdge = 0;
+  for (const s of input.shots) {
+    const from = Math.round(shotEdge * MANHUA_TIMING_FPS);
+    shotEdge += s.durationSec;
+    if (!(Math.round(shotEdge * MANHUA_TIMING_FPS) > from)) errorsZh.push(`镜${s.index} 时长 ${s.durationSec} 秒不足一帧，先合并分镜`);
+  }
+  if (!input.actors.length) errorsZh.push("白模还没有角色，先绑定角色再排运镜");
+  if (errorsZh.length) return { cameras: [], notesZh, errorsZh };
+  const maxCuts = Math.min(MANHUA_CAMERA_MAX_CUTS, Math.max(1, input.maxCuts ?? MANHUA_CAMERA_MAX_CUTS));
+  const sensorH = input.aspect === "9:16" ? 36 : 20.25;
+  const hints = input.directionCardId ? manhuaDirectionCameraHints(input.directionCardId) : { reactionToNonHuman: false, masterViewFirst: false };
+
+  const isAnimal = (a: ManhuaDirectedActor) => a.shape !== "human";
+  const kindOf = (a: ManhuaDirectedActor) => (a.carriedBy ? "carried" : isAnimal(a) ? "animal" : "human");
+  const fwdOf = (a: ManhuaDirectedActor, sec: number): [number, number] => {
+    const f = ((a.facingAt?.(sec) ?? 0) * Math.PI) / 180;
+    return [Math.cos(f), Math.sin(f)];
+  };
+  const partPoint = (a: ManhuaDirectedActor, key: DirectPartKey, sec: number): V3 => {
+    const [x, y] = a.at(sec);
+    const [c, s] = fwdOf(a, sec);
+    const l = PART_LOCAL[kindOf(a)][key];
+    return [x + c * l[0] - s * l[1], y + s * l[0] + c * l[1], l[2]];
+  };
+  const aliasesOf = (a: ManhuaDirectedActor): string[] => {
+    const base = a.nameZh.split(/[-·（(]/)[0]!.trim();
+    const list = [a.nameZh.trim(), base];
+    // 通用称谓：分镜常用「马/兽」「先生」「母亲」指代角色；只按形体与称谓表补，不按具体剧名
+    if (a.shape === "horse") list.push("伤马", "马");
+    if (isAnimal(a)) list.push("神兽", "兽");
+    for (const [role, extra] of DIRECT_ROLE_ALIASES) if (base === role || base.endsWith(role)) list.push(role, ...extra);
+    return Array.from(new Set(list.filter(Boolean))).sort((x, y) => y.length - x.length);
+  };
+  const mentions = (text: string) => {
+    const hits: Array<{ actor: ManhuaDirectedActor; at: number }> = [];
+    for (const a of input.actors) {
+      let best = -1;
+      for (const alias of aliasesOf(a)) {
+        const i = text.indexOf(alias);
+        if (i >= 0 && (best < 0 || i < best)) best = i;
+      }
+      if (best >= 0) hits.push({ actor: a, at: best });
+    }
+    return hits.sort((x, y) => x.at - y.at).map((h) => h.actor);
+  };
+  const hitPartText = (text: string, target: ManhuaDirectedActor) => {
+    for (const alias of aliasesOf(target)) {
+      const i = text.indexOf(alias);
+      if (i >= 0) return text.slice(i + alias.length, i + alias.length + 3);
+    }
+    return "";
+  };
+  /** 3/4 正面：顺着角色朝向转到 -Y 机位侧（不越轴）；拍背影则从身后 */
+  const viewDir = (a: ManhuaDirectedActor | undefined, sec: number, back: boolean): [number, number] => {
+    if (!a) return [0, -1];
+    const [fx, fy] = fwdOf(a, sec);
+    return back ? unit2(-fx * 0.8, -fy * 0.8 - 0.6) : unit2(fx * 0.6, fy * 0.6 - 0.8);
+  };
+  const rotate = (v: [number, number], rad: number): [number, number] => [v[0] * Math.cos(rad) - v[1] * Math.sin(rad), v[0] * Math.sin(rad) + v[1] * Math.cos(rad)];
+
+  type Cut = { shotIndex: number; camera: ManhuaPrevisSpec["cameras"][number]; noteZh: string; splitGroup: number; reaction: boolean; animalClose: boolean };
+  const cuts: Cut[] = [];
+  let cursor = 0;
+  let group = 0;
+  for (const shot of input.shots) {
+    const shotStart = cursor;
+    const shotEnd = cursor + shot.durationSec;
+    cursor = shotEnd;
+    group += 1;
+    const text = String(shot.cameraZh || "").trim();
+    const parts = text.split(/[；;]/).map((s) => s.trim()).filter(Boolean);
+    const scalePart = parts[0] ?? "";
+    const restText = parts.slice(1).join("；");
+    const pieces = scalePart.split(/→|->/).map((s) => s.trim()).filter(Boolean);
+    const actionText = String(shot.actionZh || "");
+    const actionMentions = mentions(actionText);
+    // 每个硬切至少 MIN_CUT_SEC；镜太短切不开时按「短于此的镜并入邻镜」改为一镜内连续运动
+    const wantsHardCut = pieces.length > 1 && /切|反打|先[^；]*再|快切|硬切/.test(text);
+    const hardCut = wantsHardCut && shot.durationSec + 1e-9 >= pieces.length * MIN_CUT_SEC;
+    if (wantsHardCut && !hardCut) notesZh.push(`镜${shot.index} 只有 ${shot.durationSec} 秒，切不开 ${pieces.length} 个景别，改为一镜内连续运动`);
+    const firstShare = /快切|即切|骤|一拍/.test(text) ? 0.3 : 0.45;
+    const move = parseDirectMove(restText || scalePart);
+    // 运镜段的逗号分句：首个带部位的分句归前一景别，末个归后一景别（「跟蹄一拍，抬镜露眼罩」）；「沿某人出掌方向」是交锋轴
+    const clauses = restText.split(/[，,；;]/).map((s) => s.trim()).filter(Boolean);
+    const partClauses = clauses.filter((c) => !/^沿/.test(c) && DIRECT_PARTS.some((p) => p.re.test(stripOver(c))));
+    const alongMatch = restText.match(/沿([^\s，；、]{1,6}?)(?:出掌|出手|视线|目光)?方向/);
+    const axisActor = alongMatch ? mentions(alongMatch[1] ?? "")[0] : undefined;
+    const axisOther = axisActor ? actionMentions.find((m) => m !== axisActor) : undefined;
+    // 「跟马跨槛」「跟阿菁急转」：后一景别跟拍的对象
+    const followTarget = mentions((restText.match(/跟([^\s，；、]{1,4})/) ?? [])[1] ?? "")[0];
+    const shoulderOf = (piece: string): ManhuaDirectedActor | null => {
+      const m = `${piece}；${restText}`.match(/([^\s，；→、]{1,6}?)(?:肩后|侧后方|身后)|过([^\s，；→、]{1,6}?)肩/);
+      return m ? mentions(m[1] || m[2] || "")[0] ?? null : null;
+    };
+    const heightOf = (piece: string): "ground" | "low" | "high" | "eye" => {
+      if (/地面|贴地/.test(piece) || (/地面|贴地/.test(restText) && /极近|蹄|脚/.test(piece))) return "ground";
+      if (/低角|低机位|仰拍|仰角|门槛低/.test(piece)) return "low";
+      if (/俯拍|高位|俯视|俯/.test(piece)) return "high";
+      if (/低角|低机位|仰拍|仰角/.test(restText) && !/平视/.test(piece)) return "low";
+      if (/俯拍|高位|俯视/.test(restText)) return "high";
+      return "eye";
+    };
+
+    /** 一个景别片段 → 焦点、机位方向、距离（sec 为取站位的时刻） */
+    const frame = (piece: string, sec: number, over: ManhuaDirectedActor | null, last: boolean, fallback: DirectScale) => {
+      const scale = DIRECT_SCALES.find((s) => s.re.test(piece)) ?? fallback;
+      const named = mentions(piece);
+      const groupShot = DIRECT_GROUP.test(piece);
+      const impact = /冲击|命中|受击|受力|接触/.test(piece) && actionMentions.length > 1;
+      // 部位分句只给近景以内；收尾分句写了揭示（抬镜露眼罩、推到、落在）时，终点即使是中景也落到该部位
+      const pickClause = (last ? partClauses.at(-1) : partClauses[0]) ?? "";
+      const clausePart = scale.frameH <= 0.95 || (last && /露|抬|推到|落在/.test(pickClause)) ? pickClause : "";
+      const hitText = impact ? hitPartText(actionText, actionMentions[1]!) : "";
+      const partText = DIRECT_PARTS.some((p) => p.re.test(stripOver(piece))) ? stripOver(piece) : hitText || stripOver(clausePart);
+      const part = DIRECT_PARTS.find((p) => p.re.test(partText));
+      const animal0 = input.actors.find(isAnimal);
+      // 「曹三肩后过肩」里的曹三是机位，不是被拍的人
+      const own = named.filter((a) => a !== over);
+      const travel = (a: ManhuaDirectedActor) => { const p0 = a.at(sec), p1 = a.at(Math.min(sec + 3, D)); return Math.hypot(p1[0] - p0[0], p1[1] - p0[1]); };
+      let lead: ManhuaDirectedActor | undefined;
+      if (own.length) lead = own[0];
+      else if (impact) lead = actionMentions[1];
+      else if (over) lead = actionMentions.find((a) => a !== over) ?? input.actors.find((a) => a !== over);
+      // 背影：分镜写了「某人肩后」就拍此人背影，否则取这几秒走得最远的人
+      else if (part?.key === "back" && actionMentions.length) lead = shoulderOf(piece) ?? [...actionMentions].sort((x, y) => travel(y) - travel(x))[0];
+      else if (last && followTarget) lead = followTarget;
+      else if (part && /蹄|眼罩/.test(partText) && animal0) lead = animal0;
+      else lead = actionMentions[0];
+      const axisPair = scale.frameH >= 1.5 && !own.length && !over && axisActor && axisOther ? [axisActor, axisOther] : null;
+      // 群像：写明的人都框进来；「人马」只写到马时补上剧情里第一个人
+      const groupSubjects = own.length > 1 ? own : own.length === 1 ? [own[0]!, ...actionMentions.filter((a) => a !== own[0] && !isAnimal(a)).slice(0, 1)] : actionMentions.length > 1 ? actionMentions : input.actors;
+      const subjects = groupShot ? groupSubjects : axisPair ?? (lead ? [lead] : []);
+      const key: DirectPartKey = part?.key ?? (scale.frameH >= 1.5 || subjects.length > 1 ? "body" : "head");
+      let focus: V3;
+      if (subjects.length > 1) {
+        const pts = subjects.map((a) => partPoint(a, "body", sec));
+        focus = [pts.reduce((n, p) => n + p[0], 0) / pts.length, pts.reduce((n, p) => n + p[1], 0) / pts.length, 1.2];
+      } else if (lead) focus = partPoint(lead, key, sec);
+      else focus = [0, 0, 1.2];
+      let dir = viewDir(lead, sec, key === "back");
+      if (lead && isAnimal(lead) && (key === "shoulder" || key === "table")) {
+        // 四足的肩与肩下：从侧面略偏后拍，免得马颈挡在机位与焦点之间
+        const [fx, fy] = fwdOf(lead, sec);
+        const side: [number, number] = fx <= 0 ? [fy, -fx] : [-fy, fx];
+        const s = side[1] <= 0 ? side : ([-side[0], -side[1]] as [number, number]);
+        dir = unit2(s[0] - fx * 0.3, s[1] - fy * 0.3);
+      }
+      if (impact && lead && actionMentions[0]) {
+        // 冲击：焦点压在命中处与出手的手之间，机位垂直于出手方向、留在 -Y 侧
+        const hand = partPoint(actionMentions[0], "hand", sec);
+        focus = [focus[0] + (hand[0] - focus[0]) * 0.35, focus[1] + (hand[1] - focus[1]) * 0.35, focus[2] + (hand[2] - focus[2]) * 0.35];
+        const axis = unit2(focus[0] - hand[0], focus[1] - hand[1]);
+        const n: [number, number] = [-axis[1], axis[0]];
+        dir = n[1] <= 0 ? n : [-n[0], -n[1]];
+      } else if (axisPair) {
+        const p0 = axisPair[0]!.at(sec), p1 = axisPair[1]!.at(sec);
+        const back = unit2(p0[0] - p1[0], p0[1] - p1[1]);
+        dir = unit2(back[0] * 0.8, back[1] * 0.8 - 0.6);
+      }
+      let spread = 0;
+      for (const a of subjects) for (const b of subjects) spread = Math.max(spread, Math.hypot(a.at(sec)[0] - b.at(sec)[0], a.at(sec)[1] - b.at(sec)[1]));
+      const animalWhole = lead && isAnimal(lead) && !part && scale.frameH >= 1.5 ? 1.3 : 1;
+      // 白模没有碗/桌：四足角色的桌面镜至少框进肩到头，让「肩伤悬在碗上方」的关系读得出
+      const animalTable = lead && isAnimal(lead) && key === "table" ? 1.1 : 0;
+      const frameH = Math.max(scale.frameH * animalWhole, part?.minFrameH ?? 0, animalTable, subjects.length > 1 ? ((spread + 1.2) * 9) / 16 : 0);
+      const dist = Math.max(0.6, (frameH * scale.lens) / sensorH);
+      return { scale, subjects, lead, part, focus, dir, dist, frameH };
+    };
+    const place = (f: ReturnType<typeof frame>, height: ReturnType<typeof heightOf>, dir: [number, number]): V3 => {
+      const [fx, fy, fz] = f.focus;
+      if (height === "high") return pt(fx + dir[0] * f.dist * 0.8, fy + dir[1] * f.dist * 0.8, fz + f.dist * 0.6);
+      if (height === "ground") return pt(fx + dir[0] * f.dist, fy + dir[1] * f.dist, 0.3);
+      if (height === "low") return pt(fx + dir[0] * f.dist, fy + dir[1] * f.dist, Math.max(0.35, Math.min(0.8, fz - 0.7)));
+      return pt(fx + dir[0] * f.dist, fy + dir[1] * f.dist, Math.max(0.6, fz + 0.05));
+    };
+
+    const build = (piece: string, pieceEnd: string | null, secA: number, secB: number, cutIndex: number, applyMove: boolean) => {
+      const fb = DIRECT_SCALES.find((s) => s.zh === "中景")!;
+      const over = /过肩|肩后|侧后方/.test(piece) || (cutIndex === 0 && /肩后|侧后方/.test(restText)) ? shoulderOf(piece) : null;
+      const a = frame(piece, secA, over, !pieceEnd && cutIndex > 0, fb);
+      const b = pieceEnd ? frame(pieceEnd, secB, null, true, a.scale) : null;
+      const swing = ((cuts.length % 3) - 1) * 0.26;
+      let dir = rotate(a.dir, swing);
+      const height = heightOf(piece);
+      let position: V3;
+      const target: V3 = pt(...a.focus);
+      let overZh = "";
+      if (over && a.lead && over !== a.lead) {
+        const o = over.at(secA), s = a.lead.at(secA);
+        if (Math.hypot(s[0] - o[0], s[1] - o[1]) < 0.35) {
+          // 背负等同位：机位贴在承载者肩侧前方看乘员的脸
+          const [fx, fy] = fwdOf(over, secA);
+          const side: [number, number] = [-fy, fx][1] <= 0 ? [-fy, fx] : [fy, -fx];
+          dir = unit2(fx * 0.5 + side[0] * 0.85, fy * 0.5 + side[1] * 0.85);
+          position = pt(a.focus[0] + dir[0] * a.dist, a.focus[1] + dir[1] * a.dist, a.focus[2]);
+        } else {
+          const u = unit2(s[0] - o[0], s[1] - o[1]);
+          const side: [number, number] = [-u[1], u[0]][1] <= 0 ? [-u[1], u[0]] : [u[1], -u[0]];
+          const sh = partPoint(over, "shoulder", secA);
+          position = pt(sh[0] - u[0] * 0.7 + side[0] * 0.45, sh[1] - u[1] * 0.7 + side[1] * 0.45, sh[2] + 0.15);
+          dir = unit2(-u[0], -u[1]);
+        }
+        overZh = `过${over.nameZh}肩`;
+      } else {
+        position = place(a, height, dir);
+      }
+      const camera: ManhuaPrevisSpec["cameras"][number] = { startSec: fr(secA), endSec: fr(secB), position, target, lens: a.scale.lens };
+      const noteParts = [`${a.scale.zh}${a.part ? `·${a.part.zh}` : ""}`, overZh || (height === "high" ? "俯拍" : height === "low" ? "低角仰拍" : height === "ground" ? "贴地低机位" : "平视")];
+      let endPosition: V3 | undefined;
+      let endTarget: V3 | undefined;
+      let endLens: number | undefined;
+      if (b) {
+        endTarget = pt(...b.focus);
+        endPosition = place(b, heightOf(pieceEnd!), dir);
+        if (b.scale.lens !== a.scale.lens) endLens = b.scale.lens;
+        noteParts.push(`连续到${b.scale.zh}${b.part ? `·${b.part.zh}` : ""}`);
+      }
+      if (applyMove) {
+        let p: V3 = [...(endPosition ?? position)];
+        let t: V3 = [...(endTarget ?? target)];
+        const moved: string[] = [];
+        if (move.follow && !b && a.lead) {
+          const s0 = a.lead.at(secA), s1 = a.lead.at(secB);
+          const dx = s1[0] - s0[0], dy = s1[1] - s0[1];
+          if (Math.hypot(dx, dy) > 0.05) {
+            p = [p[0] + dx, p[1] + dy, p[2]]; t = [t[0] + dx, t[1] + dy, t[2]];
+            moved.push(`跟${a.lead.nameZh}`);
+          }
+        }
+        if (move.truck) {
+          const side: [number, number] = [-dir[1], dir[0]];
+          p = [p[0] + side[0] * 1.2, p[1] + side[1] * 1.2, p[2]]; t = [t[0] + side[0] * 0.5, t[1] + side[1] * 0.5, t[2]];
+          moved.push("横移");
+        }
+        if (move.push && !move.pull) {
+          p = [t[0] + (p[0] - t[0]) * (1 - move.push), t[1] + (p[1] - t[1]) * (1 - move.push), t[2] + (p[2] - t[2]) * (1 - move.push)];
+          endLens = Math.min(65, (endLens ?? a.scale.lens) + 6);
+          moved.push(move.push < 0.3 ? "短推" : "推近");
+        } else if (move.pull) {
+          p = [t[0] + (p[0] - t[0]) * (1 + move.pull), t[1] + (p[1] - t[1]) * (1 + move.pull), t[2] + (p[2] - t[2]) * (1 + move.pull)];
+          endLens = Math.max(18, (endLens ?? a.scale.lens) - 6);
+          moved.push("拉开");
+        }
+        if (move.rise && !move.descend && !b) { p = [p[0], p[1], p[2] + 1.0]; t = [t[0], t[1], t[2] + 0.4]; moved.push("抬升"); }
+        if (move.descend && !move.rise) { p = [p[0], p[1], Math.max(0.35, p[2] - 1.2)]; moved.push("下降"); }
+        // 环绕先判放得下（半径 ≥0.6 米、环绕圈在舞台 ±30 内），放不下就走下面同一终点的直线运动，说明不写环绕
+        const orbitR = Math.hypot(position[0] - target[0], position[1] - target[1]);
+        const orbitFits = orbitR >= 0.6 && Math.max(Math.abs(target[0]), Math.abs(target[1])) + orbitR <= 30;
+        const wantsOrbit = move.orbit && !b && !move.follow && !move.truck;
+        if (wantsOrbit && !orbitFits) notesZh.push(`镜${shot.index} 环绕半径不足或超出舞台，改为直线运动`);
+        if (wantsOrbit && orbitFits) {
+          camera.orbitDeg = cuts.length % 2 ? -40 : 40;
+          if (move.rise || move.descend) camera.orbitRise = move.rise ? 1.0 : -Math.max(0, Math.min(1.2, position[2] - 0.35));
+          moved.push(`环绕${Math.abs(camera.orbitDeg)}°`);
+        } else if (moved.length || endPosition) {
+          endPosition = pt(...p); endTarget = pt(...t);
+        }
+        if (b && move.rise) moved.push("抬镜");
+        if (moved.length) noteParts.push(moved.join("·"));
+        if (move.hold) noteParts.push("落定");
+      }
+      if (camera.orbitDeg === undefined) {
+        if (endPosition && endPosition.some((n, i) => Math.abs(n - position[i]!) > 1e-3)) camera.endPosition = endPosition;
+        if (endTarget && endTarget.some((n, i) => Math.abs(n - target[i]!) > 1e-3)) camera.endTarget = endTarget;
+      }
+      if (endLens !== undefined && Math.round(endLens) !== camera.lens) camera.endLens = Math.round(endLens);
+      keepCameraClear(camera);
+      const who = (b && b.subjects.length && !a.subjects.length ? b.subjects : a.subjects).map((s) => s.nameZh).join("、");
+      cuts.push({ shotIndex: shot.index, camera, noteZh: `镜${shot.index} ${noteParts.join("·")}${who ? `：${who}` : ""}`, splitGroup: group, reaction: /反应|回头|痛喘|痛/.test(`${piece}${actionText}`), animalClose: [a, b].some((f) => f && f.lead && isAnimal(f.lead) && f.scale.frameH <= 0.95) });
+    };
+
+    if (hardCut) {
+      const firstEnd = fr(Math.max(shotStart + MIN_CUT_SEC, Math.min(shotEnd - MIN_CUT_SEC, shotStart + shot.durationSec * firstShare)));
+      const bounds = [shotStart, firstEnd, ...pieces.slice(2).map((_, i) => fr(firstEnd + ((shotEnd - firstEnd) * (i + 1)) / (pieces.length - 1))), shotEnd];
+      pieces.forEach((piece, i) => build(piece, null, bounds[i]!, bounds[i + 1]!, i, i === pieces.length - 1));
+    } else {
+      build(pieces[0] ?? scalePart, pieces.length > 1 ? pieces[pieces.length - 1]! : null, shotStart, shotEnd, 0, true);
+    }
+  }
+
+  // 超过切镜上限：把同一分镜内的硬切合并成连续运动（先并最短的分镜），不丢分镜
+  while (cuts.length > maxCuts) {
+    const groups = new Map<number, Cut[]>();
+    for (const c of cuts) groups.set(c.splitGroup, [...(groups.get(c.splitGroup) ?? []), c]);
+    const g = Array.from(groups.values()).filter((x) => x.length > 1).sort((x, y) => (x.at(-1)!.camera.endSec - x[0]!.camera.startSec) - (y.at(-1)!.camera.endSec - y[0]!.camera.startSec))[0];
+    if (!g) { errorsZh.push(`分镜 ${input.shots.length} 镜超过白模 ${maxCuts} 个机位上限，需先合并分镜`); break; }
+    const first = g[0]!, last = g[g.length - 1]!;
+    const merged: ManhuaPrevisSpec["cameras"][number] = {
+      startSec: first.camera.startSec, endSec: last.camera.endSec, position: first.camera.position, target: first.camera.target, lens: first.camera.lens,
+      endPosition: last.camera.endPosition ?? last.camera.position, endTarget: last.camera.endTarget ?? last.camera.target,
+      ...((last.camera.endLens ?? last.camera.lens) !== first.camera.lens ? { endLens: last.camera.endLens ?? last.camera.lens } : {}),
+    };
+    keepCameraClear(merged);
+    cuts.splice(cuts.indexOf(first), g.length, { ...first, camera: merged, noteZh: `${first.noteZh}（机位上限：与下一切合为连续运动）` });
+    notesZh.push(`镜${first.shotIndex}：白模最多 ${maxCuts} 个机位，原硬切改为一镜内连续运动`);
+  }
+
+  // 导演包「非人角色先成为人物」：分镜写了反应的非人角色近景，焦段至少 55，让它像人物一样被看清
+  if (hints.reactionToNonHuman) {
+    for (const c of cuts) {
+      // 按角色形体判定非人与景别，不按剧中名字
+      if (!c.reaction || !c.animalClose || c.camera.lens >= 55) continue;
+      c.camera.lens = 55;
+      if (c.camera.endLens !== undefined && c.camera.endLens <= 55) delete c.camera.endLens;
+      c.noteZh += "（导演包：非人角色反应镜 55mm）";
+    }
+  }
+  if (hints.masterViewFirst) {
+    const first = input.shots[0];
+    if (first && !/全景|远景|俯拍|建立/.test(first.cameraZh)) notesZh.push("导演包「复杂空间先说清一件事」：本段首镜不是主视角全景；若本段进入新场景，审片时确认空间与路线是否读得懂（未自动改分镜）");
+  }
+  for (let i = 1; i < cuts.length; i += 1) {
+    const p = cuts[i - 1]!.camera, c = cuts[i]!.camera;
+    if (p.lens === c.lens && Math.abs(p.position[2] - c.position[2]) < 0.3 && !c.endPosition && !c.orbitDeg && !p.endPosition && !p.orbitDeg)
+      notesZh.push(`镜${cuts[i]!.shotIndex}与上一机位同焦段同高度且都不动，可能显得单调`);
+  }
+  const cameras: ManhuaDirectedCamera[] = cuts.map((c) => ({ ...c.camera, shotIndex: c.shotIndex, noteZh: c.noteZh }));
+  if (cameras.length) {
+    cameras[0]!.startSec = 0;
+    for (let i = 1; i < cameras.length; i += 1) cameras[i]!.startSec = cameras[i - 1]!.endSec;
+    cameras[cameras.length - 1]!.endSec = D;
+  }
+  return { cameras, notesZh, errorsZh };
+}
+
+/** 运动途中与看向点至少留 0.6 米（白模合同 0.5 米）；环绕半径不足时退回固定机位 */
+function keepCameraClear(camera: ManhuaPrevisSpec["cameras"][number]) {
+  if (camera.orbitDeg !== undefined) {
+    const r = Math.hypot(camera.position[0] - camera.target[0], camera.position[1] - camera.target[1]);
+    // 白模合同：半径 ≥0.5 米且环绕圈留在舞台 ±30 内；不满足就退回下面的直线/固定机位检查
+    if (r < 0.6 || Math.abs(camera.target[0]) + r > 30 || Math.abs(camera.target[1]) + r > 30) {
+      delete camera.orbitDeg;
+      delete camera.orbitRise;
+    } else {
+      if (camera.orbitRise !== undefined) {
+        // 升降后高度须在 0.2–15 米
+        const rise = Math.round((clampZ(camera.position[2] + camera.orbitRise) - camera.position[2]) * 100) / 100;
+        if (Math.abs(rise) < 0.01) delete camera.orbitRise;
+        else camera.orbitRise = rise;
+      }
+      return;
+    }
+  }
+  for (const key of ["position", "endPosition"] as const) {
+    const p = camera[key];
+    if (!p) continue;
+    const t = key === "position" ? camera.target : camera.endTarget ?? camera.target;
+    const v = [p[0] - t[0], p[1] - t[1], p[2] - t[2]];
+    const l = Math.hypot(v[0]!, v[1]!, v[2]!);
+    if (l < 0.6) {
+      const u = l < 1e-6 ? [0, -1, 0] : v.map((n) => n / l);
+      camera[key] = pt(t[0] + u[0]! * 0.6, t[1] + u[1]! * 0.6, t[2] + u[2]! * 0.6);
+    }
+  }
+  // 两端都够远不等于途中够远：过肩接横移、反打并镜时相对向量会扫过看向点（schema 按途中最近距离判）
+  const d = cameraClosestApproach(camera);
+  if (d >= 0.6) return;
+  const target = camera.target, endTarget = camera.endTarget ?? camera.target;
+  const d0 = camera.position.map((n, j) => n - target[j]!);
+  const d1 = (camera.endPosition ?? camera.position).map((n, j) => n - endTarget[j]!);
+  if (d >= 0.3) {
+    // 按比例整体外推，保留原运动形状
+    const k = 0.6 / d;
+    camera.position = pt(target[0] + d0[0]! * k, target[1] + d0[1]! * k, target[2] + d0[2]! * k);
+    camera.endPosition = pt(endTarget[0] + d1[0]! * k, endTarget[1] + d1[1]! * k, endTarget[2] + d1[2]! * k);
+  } else {
+    // 几乎穿过看向点：保持起点相对位置随看向点平移
+    camera.endPosition = pt(endTarget[0] + d0[0]!, endTarget[1] + d0[1]!, endTarget[2] + d0[2]!);
+  }
+  // 贴舞台边界被夹回时仍不够：退成固定机位（起点已保证 ≥0.6 米）
+  if (cameraClosestApproach(camera) < 0.55) { delete camera.endPosition; delete camera.endTarget; }
+}
+
+/** 与 manhuaPrevisSpecSchema 同一口径：相机相对看向点的向量在运动途中离看向点的最近距离 */
+function cameraClosestApproach(camera: ManhuaPrevisSpec["cameras"][number]): number {
+  const d0 = camera.position.map((n, j) => n - camera.target[j]!);
+  const end = camera.endPosition ?? camera.position, endTarget = camera.endTarget ?? camera.target;
+  const travel = end.map((n, j) => n - endTarget[j]! - d0[j]!);
+  const tt = travel.reduce((s, n) => s + n * n, 0);
+  const u = tt ? Math.max(0, Math.min(1, -d0.reduce((s, n, j) => s + n * travel[j]!, 0) / tt)) : 0;
+  return Math.hypot(...d0.map((n, j) => n + u * travel[j]!));
+}
+
+/** 导演包里已写明、且能落到机位上的两条手法（按卡片原文判定，不扩写） */
+export function manhuaDirectionCameraHints(cardId: string): { reactionToNonHuman: boolean; masterViewFirst: boolean } {
+  const card = getManhuaDirectionCard(cardId);
+  const text = card ? [card.labelZh, ...card.rules.flatMap((r) => [r.titleZh, r.ruleZh])].join("\n") : "";
+  return { reactionToNonHuman: /非人角色先成为人物/.test(text), masterViewFirst: /复杂空间先说清一件事|主视角/.test(text) };
+}
+
+/** 自动排镜摘要（界面与成片提示词同源） */
+export function formatManhuaDirectedCamerasZh(plan: ManhuaDirectedCameraPlan): string[] {
+  return plan.cameras.map((c) => `${c.startSec.toFixed(2)}–${c.endSec.toFixed(2)}s ${c.noteZh}（${c.lens}${c.endLens ? `→${c.endLens}` : ""}mm）`);
 }

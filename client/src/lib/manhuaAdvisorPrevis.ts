@@ -17,7 +17,7 @@ export function buildAdvisorPrevisSummary(blocks: CanvasBlock[]): string {
       lines.push(`动作：${actor.actions.map(a => `${a.startSec}—${a.endSec}秒${PREVIS_ACTION_LABELS[a.kind]}${a.lookAtId ? `注视${a.lookAtId}` : ""}${a.facingDeg != null ? `朝向${a.facingDeg}度` : ""}`).join("；") || "无独立动作"}`);
     }
     lines.push(`接触事件：${spec.interactions?.map(e => `${e.actorId}→${e.targetActorId} ${e.kind} 起${e.startSec}/接触${e.contactSec}/收${e.endSec}秒`).join("；") || "未设置，不代表画面已发生接触"}`);
-    lines.push(`机位：${spec.cameras.map(c => `${c.startSec}—${c.endSec}秒，位置${JSON.stringify(c.position)}→${JSON.stringify(c.endPosition || c.position)}，看向${JSON.stringify(c.target)}→${JSON.stringify(c.endTarget || c.target)}，环绕${c.orbitDeg || 0}度，镜头${c.lens}mm`).join("；")}`);
+    lines.push(`机位：${spec.cameras.map(c => `${c.startSec}—${c.endSec}秒，位置${JSON.stringify(c.position)}→${JSON.stringify(c.endPosition || c.position)}，看向${JSON.stringify(c.target)}→${JSON.stringify(c.endTarget || c.target)}，环绕${c.orbitDeg || 0}度${c.orbitRise ? `（同时${c.orbitRise > 0 ? "升" : "降"}${Math.abs(c.orbitRise)}米）` : ""}，镜头${c.lens}${c.endLens !== undefined && c.endLens !== c.lens ? `→${c.endLens}` : ""}mm`).join("；")}`);
     if (spec.waterEmergence) lines.push(`出水事件：${spec.waterEmergence.events.map(e => `${e.actorId}在${e.crossSec}秒出水，上升${e.riseSec}秒`).join("；")}`);
     if (spec.scriptSource?.unmappedShotIndices.length) lines.push(`未映射原剧本镜号：${spec.scriptSource.unmappedShotIndices.join("、")}`);
     lines.push(`节奏文字说明：${studio.draftTempoZh || "无"}；文字说明不证明渲染已执行慢动作或子弹时间。`);
