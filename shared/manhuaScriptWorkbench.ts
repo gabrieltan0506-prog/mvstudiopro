@@ -60,6 +60,8 @@ export type ManhuaWorkbenchShot = {
   index: number;
   /** 原可拍表段号，重排或改机位时保留；不按镜头数量猜段。 */
   sourceSegmentIndex?: number;
+  /** 本镜之前强制开始一个新的制作片段；前面已完成的片段保持原样。 */
+  segmentBreakBefore?: boolean;
   durationSec: number;
   cameraZh: string;
   actionZh: string;
@@ -465,6 +467,7 @@ export function groupShotsIntoSegments(
   };
   for (const shot of shots) {
     const duration = resolveShotDurationSecForSegment(shot);
+    if (shot.segmentBreakBefore) flush();
     if (duration > maxSec) {
       flush();
       const count = Math.ceil(duration / maxSec);
@@ -588,6 +591,7 @@ function splitCameraAndAction(rawBody: string): { cameraZh: string; actionZh: st
 
 type ParsedShotRow = {
   soundZh?: string;
+  segmentBreakBefore?: boolean;
   index: number;
   cameraZh: string;
   actionZh: string;
@@ -703,6 +707,7 @@ function parseShotRowsFromText(raw: string): ParsedShotRow[] {
       durationSec:
         Number.isFinite(row.endSec - row.startSec) && row.endSec > row.startSec
           ? row.endSec - row.startSec : undefined,
+      ...(row.segmentBreakBefore ? { segmentBreakBefore: true } : {}),
       dialogueZh:
         /^(?:[-—–]+|无|无对白)$/.test(row.dialogueZh) ||
         /^(?:闪回)?字幕\s*[:：]/.test(row.dialogueZh)
@@ -799,6 +804,7 @@ export function parseWorkbenchShotsFromTextResult(raw: string | undefined | null
   const shots = rows.map((row, i) => ({
     index: i + 1,
     durationSec: row.durationSec || 0,
+    ...(row.segmentBreakBefore ? { segmentBreakBefore: true } : {}),
     cameraZh: row.cameraZh || DEFAULT_CAMERAS[i % DEFAULT_CAMERAS.length]!,
     ...(row.cameraAngleId ? { cameraAngleId: row.cameraAngleId } : {}),
     // 动作参与静帧、角色匹配、成片和修订身份；展示长度不能静默裁掉生产正文。

@@ -5,6 +5,8 @@ export type ManhuaTimedStoryboardRow = {
   endSec: number;
   cameraZh: string;
   actionZh: string;
+  /** 显式制作片段切点，写在该镜动作单元格开头，不进入模型动作提示词。 */
+  segmentBreakBefore?: boolean;
   dialogueZh: string;
   /** 混合音频列中明确与台词分开的音效/配乐，不能作为对白朗读。 */
   soundZh?: string;
@@ -143,7 +145,8 @@ function readTimedRows(text: string): {
       startSec,
       endSec: columns.startClock ? (duration ? startSec + Number(duration[1]) : NaN) : (match ? Number(match[2]) : NaN),
       cameraZh: columns.camera.map(column => cells[column] || "").filter(cell => cell && !/^[-—–]+$/.test(cell)).join("；"),
-      actionZh: cells[columns.action] || "",
+      actionZh: (cells[columns.action] || "").replace(/^【新段】\s*/, ""),
+      ...(/^【新段】/.test(cells[columns.action] || "") ? { segmentBreakBefore: true } : {}),
       dialogueZh: audio?.dialogueZh ?? cells[columns.dialogue] ?? "",
       ...(audio ? { soundZh: audio.soundZh } : {}),
     };

@@ -74,6 +74,7 @@ import {
 } from "@shared/manhuaDirectorStrategy";
 import { getManhuaDirectorStrategyV1Snapshot } from "@shared/manhuaDirectorStrategyV1Snapshot";
 import { emptyCanvasAudioStudio, createCanvasAudioCue } from "@shared/canvasAudioStudio";
+import { retimeManhuaCanvasNodes } from "./manhuaShotTimingDraft";
 
 describe("分段音轨身份与改稿恢复", () => {
   const audioWork = () => ({
@@ -92,6 +93,32 @@ describe("分段音轨身份与改稿恢复", () => {
     const result = ensureManhuaFragmentClips(ready, expanded.edges, 1, { videoModel: "seedance-2.0-mini" });
     return { ...result, reverseId: reverse.id, clipIds: queuedManhuaClipBlocks(result.blocks, 1, "seedance-2.0-mini").map(b => b.id) };
   }
+  it("在镜16切片保留已完成的第二段与其音轨，旧第三段候选只归档不挪给新片", () => {
+    const spawned = spawnManhuaDramaStudio({ topic: "墨菁传", episodeIndex: 1, videoModel: "seedance-2.5" });
+    const reverse = spawned.blocks.find(b => b.id.startsWith("reverse-"))!;
+    const rows = Array.from({ length: 18 }, (_, i) => `| ${i + 1} | ${i * 5}–${(i + 1) * 5}秒 | 近景 | 镜${i + 1}动作 | 无 |`);
+    const outputText = `## 分镜表\n| 镜号 | 秒位 | 景别/运镜 | 画面 | 对白 |\n|---|---|---|---|---|\n${rows.join("\n")}`;
+    const source = spawned.blocks.map(b => b.id === reverse.id ? { ...b, status: "done" as const, outputText } : b);
+    const expanded = expandManhuaShotKeyartsAfterReverse(source, spawned.edges, reverse.id, { videoModel: "seedance-2.5" });
+    const ready = expanded.blocks.map(b => b.id.startsWith("keyart-") ? { ...b, status: "done" as const, outputUrl: `https://example.test/${b.id}.png` } : b);
+    const initial = ensureManhuaFragmentClips(ready, expanded.edges, 1, { videoModel: "seedance-2.5" });
+    const clips = queuedManhuaClipBlocks(initial.blocks, 1, "seedance-2.5");
+    expect(clips).toHaveLength(3);
+    const second = clips[1]!;
+    const third = clips[2]!;
+    const work = audioWork();
+    const staged = initial.blocks.map(b => b.id === second.id ? { ...b, outputUrl: "https://example.test/second.mp4", audioStudio: work }
+      : b.id === third.id ? { ...b, audioStudio: work } : b);
+    const edited = retimeManhuaCanvasNodes(staged.filter(b => b.id === reverse.id), 16, 5, true);
+    const updated = staged.map(edited.apply);
+    const result = ensureManhuaFragmentClips(updated, initial.edges, 1, { videoModel: "seedance-2.5" });
+    const active = queuedManhuaClipBlocks(result.blocks, 1, "seedance-2.5");
+    expect(active).toHaveLength(4);
+    expect(active[1]).toMatchObject({ id: second.id, outputUrl: "https://example.test/second.mp4", audioStudio: work });
+    expect(active[2]?.audioStudio).toBeUndefined();
+    expect(active[3]?.audioStudio).toBeUndefined();
+    expect(result.blocks.find(b => b.id === third.id)).toMatchObject({ archivedFromPreviousScript: true, audioStudio: work });
+  });
   it("同段同修订保留候选；新铺另一段不克隆模板音轨", () => {
     const initial = prepare();
     expect(initial.clipIds).toHaveLength(6);

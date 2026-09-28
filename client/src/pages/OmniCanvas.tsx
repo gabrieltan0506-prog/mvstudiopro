@@ -10685,18 +10685,18 @@ export default function OmniCanvas() {
                         ?.scrollIntoView({ behavior: "smooth", block: "start" });
                     }, 60);
                   }}
-                  onUpdateShotTiming={(shotIndex, durationSec) => {
+                  onUpdateShotTiming={(shotIndex, durationSec, segmentBreakBefore) => {
                     if (factoryBusy) throw new Error("当前任务运行中，请完成后再调整时长。");
                     const current = blocksRef.current;
                     const ep = writerFocusEpisode;
                     const sameEpisode = (b: CanvasBlock) => (getBlockEpisodeIndex(b) ?? 1) === ep;
                     if (current.some(b => sameEpisode(b) && (b.status === "running" || b.videoTaskStatus === "queued" || b.audioStudio?.pendingOperations.length))) throw new Error("本集仍有在途任务，请完成后再调整时长。");
                     const nodes = current.filter(b => sameEpisode(b) && !b.archivedFromPreviousScript && /^(story|beats|reverse)-/.test(b.id));
-                    const { canonical, apply } = retimeManhuaCanvasNodes(nodes, shotIndex, durationSec);
+                    const { canonical, apply } = retimeManhuaCanvasNodes(nodes, shotIndex, durationSec, segmentBreakBefore);
                     const episode = writerPack?.episodes.find(item => item.index === ep);
                     if (!episode) throw new Error("当前集剧本不存在，未保存。");
                     const next = current.map(apply);
-                    const nextWriterPack = retimeManhuaWriterPack(writerPack!, ep, shotIndex, durationSec, canonical);
+                    const nextWriterPack = retimeManhuaWriterPack(writerPack!, ep, shotIndex, durationSec, canonical, segmentBreakBefore);
                     saveManhuaShotTimingDraft(next, edges, { writerPack: nextWriterPack, writerConfirmed: false, directorUnlocked: false });
                     blocksRef.current=next;setBlocks(next);
                     setWriterPack(nextWriterPack);
