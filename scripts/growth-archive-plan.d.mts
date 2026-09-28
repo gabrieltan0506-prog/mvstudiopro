@@ -3,10 +3,13 @@ export interface ArchiveReleaseAsset {
   size: number;
   digest?: string | null;
   state: string;
+  releaseTag?: string;
 }
 export interface ArchiveBatchPlan {
   selected: string[];
   reused: number;
+  reclaim: string[];
+  reclaimRemaining: number;
   pending: number;
   remaining: number;
 }
@@ -15,6 +18,7 @@ export function planArchiveBatch(
   assets: ArchiveReleaseAsset[],
   manifests: Map<string, string>
 ): ArchiveBatchPlan;
+export function writeArchivePlan(directory: string, plan: ArchiveBatchPlan): void;
 export function loadArchiveInventory(
   directory: string,
   snapshot: string,

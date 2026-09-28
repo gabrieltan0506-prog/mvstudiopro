@@ -182,6 +182,26 @@ describe("归档传输实际子进程保护", () => {
     );
     expect(missing.code).toBe(66);
   });
+  it("删源在采集 lease 内保留最新两桶，且只接受日期归档", async () => {
+    const root = await temp();
+    const archive = path.join(root, "archive");
+    for (const dir of ["2026-08-01-00", "2026-08-02-00", "2026-08-03-00"]) {
+      await fs.mkdir(path.join(archive, dir), { recursive: true });
+      await fs.writeFile(path.join(archive, dir, "record.json"), dir);
+    }
+    const env = { GROWTH_STORE_DIR: root };
+    const prepared = await run("sh", [remote, "prepare", "test-batch"], { env });
+    expect(prepared.code, prepared.stderr).toBe(0);
+    const fingerprint = prepared.stdout.toString().trim().split("\t")[1];
+    expect(fingerprint).toMatch(/^[0-9a-f]{64}$/);
+    const recent = await run("sh", [remote, "delete", "test-batch", "2026-08-03-00", fingerprint], { env });
+    expect(recent.code).not.toBe(0);
+    expect(recent.stderr).toContain("最新两桶");
+    await expect(fs.stat(path.join(archive, "2026-08-03-00"))).resolves.toBeTruthy();
+    const invalid = await run("sh", [remote, "delete", "test-batch", "platform-current", fingerprint], { env });
+    expect(invalid.code).not.toBe(0);
+    await expect(fs.stat(path.join(archive, "2026-08-01-00"))).resolves.toBeTruthy();
+  });
 });
 
 const workflows = ["growth-backup.yml", "growth-archive-offload.yml"];
