@@ -25,3 +25,12 @@ describe("白模规格到顾问真实消息链",()=>{
   expect(manhuaCreativeAdvisorContextSchema.safeParse({...base,previsSummary:"https://private.invalid/clip"}).success).toBe(false);
  });
 });
+describe("顾问看到的机位含一镜内变焦与环绕升降",()=>{
+ it("焦距推拉与环绕升降写进机位描述",()=>{
+  const block=clip();const cam=block.previsStudio!.spec.cameras[0]!;
+  block.previsStudio!.spec.cameras=[{...cam,endLens:60},];
+  expect(buildAdvisorPrevisSummary([block])).toMatch(new RegExp(`镜头${cam.lens}→60mm`));
+  block.previsStudio!.spec.cameras=[{...cam,orbitDeg:40,orbitRise:1}];
+  expect(buildAdvisorPrevisSummary([block])).toContain("同时升1米");
+ });
+});

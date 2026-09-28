@@ -135,3 +135,19 @@ describe("自动排镜输出一定过白模相机合同（审查反例）", () =
     expect(n).toBe(3 * 2 * scales.length * angles.length * moves.length);
   });
 });
+
+describe("自动排镜不绑定具体剧名", () => {
+  const still = (x: number, y: number) => () => [x, y] as [number, number];
+  const reactionShot = [{ index: 1, durationSec: 4, cameraZh: "近景；平视；推近", actionZh: "白泽回头，痛喘一声" }];
+  it("非人判定按形体：名字里没有马/墨的四足也拿到反应镜长焦", () => {
+    const plan = directManhuaCamerasFromShots({ shots: reactionShot, durationSec: 4, directionCardId: "embodied_fable_system",
+      actors: [{ id: "bz", nameZh: "白泽", shape: "horse", at: still(0, 0) }, { id: "p", nameZh: "少年", shape: "human", at: still(2, 0) }] });
+    expect(plan.errorsZh).toEqual([]);
+    expect(plan.cameras[0]!.lens).toBeGreaterThanOrEqual(55);
+  });
+  it("名字带「墨」的人不被当成非人角色", () => {
+    const plan = directManhuaCamerasFromShots({ shots: [{ ...reactionShot[0]!, actionZh: "墨尘回头，痛喘一声" }], durationSec: 4, directionCardId: "embodied_fable_system",
+      actors: [{ id: "mc", nameZh: "墨尘", shape: "human", at: still(0, 0) }, { id: "h", nameZh: "黑马", shape: "horse", at: still(2, 0) }] });
+    expect(plan.cameras[0]!.lens).toBe(50);
+  });
+});

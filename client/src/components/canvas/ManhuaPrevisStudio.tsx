@@ -330,6 +330,12 @@ export function ManhuaPrevisStudioView({
         },
       };
     }
+    // 手动改了机位，草案/自动排镜写下的逐镜运镜句就对不上了：一并清掉，不带着旧句进运动指引
+    if (JSON.stringify(spec.cameras) !== JSON.stringify(studio.spec.cameras)) {
+      const { draftCameraPromptZh: _stale, ...rest } = studio;
+      setAutoCameraMessage(null);
+      return publish({ ...rest, spec });
+    }
     return publish({ ...studio, spec });
   };
   function consume(response: PrevisResponse) {
@@ -931,6 +937,7 @@ export function ManhuaPrevisStudioView({
             if (old && !disabled && !pendingId && !lock.current) {
               // 回退规格时把草案带来的运镜句一并清掉，句子不能和旧规格对不上
               const { draftCameraPromptZh: _p, draftTempoZh: _t, ...rest } = studio;
+              setAutoCameraMessage(null);
               publish({
                 ...rest,
                 spec: old.spec,

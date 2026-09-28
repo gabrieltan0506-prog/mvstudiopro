@@ -890,6 +890,13 @@ const PART_LOCAL: Record<"human" | "animal" | "carried", Record<DirectPartKey, [
   carried: { head: [-0.2, 0, 1.85], shoulder: [-0.2, 0, 1.6], hand: [0, 0.2, 1.5], feet: [0.1, 0, 0.9], table: [0.55, 0, 1.0], back: [-0.2, 0, 1.55], body: [-0.2, 0, 1.45] },
 };
 const DIRECT_GROUP = /三人|两人|众人|人马|双人/;
+/** 通用称谓别名（角色名或其尾字是左侧称谓时生效） */
+const DIRECT_ROLE_ALIASES: ReadonlyArray<readonly [string, readonly string[]]> = [
+  ["娘", ["母亲", "娘亲", "病母"]],
+  ["爹", ["父亲"]],
+  ["先生", []],
+  ["师父", ["师傅"]],
+];
 /** 「过肩/肩后/侧后方」说的是机位，不是拍肩部 */
 const stripOver = (text: string) => text.replace(/过[^\s，；→、]{0,6}?肩|肩后|侧后方|身后/g, "");
 
@@ -952,9 +959,10 @@ export function directManhuaCamerasFromShots(input: {
   const aliasesOf = (a: ManhuaDirectedActor): string[] => {
     const base = a.nameZh.split(/[-·（(]/)[0]!.trim();
     const list = [a.nameZh.trim(), base];
-    if (isAnimal(a)) list.push("伤马", "神兽", "马", "兽");
-    if (/先生/.test(base)) list.push("先生");
-    if (base === "娘") list.push("母亲", "病母");
+    // 通用称谓：分镜常用「马/兽」「先生」「母亲」指代角色；只按形体与称谓表补，不按具体剧名
+    if (a.shape === "horse") list.push("伤马", "马");
+    if (isAnimal(a)) list.push("神兽", "兽");
+    for (const [role, extra] of DIRECT_ROLE_ALIASES) if (base === role || base.endsWith(role)) list.push(role, ...extra);
     return Array.from(new Set(list.filter(Boolean))).sort((x, y) => y.length - x.length);
   };
   const mentions = (text: string) => {
@@ -984,7 +992,7 @@ export function directManhuaCamerasFromShots(input: {
   };
   const rotate = (v: [number, number], rad: number): [number, number] => [v[0] * Math.cos(rad) - v[1] * Math.sin(rad), v[0] * Math.sin(rad) + v[1] * Math.cos(rad)];
 
-  type Cut = { shotIndex: number; camera: ManhuaPrevisSpec["cameras"][number]; noteZh: string; splitGroup: number; reaction: boolean };
+  type Cut = { shotIndex: number; camera: ManhuaPrevisSpec["cameras"][number]; noteZh: string; splitGroup: number; reaction: boolean; animalClose: boolean };
   const cuts: Cut[] = [];
   let cursor = 0;
   let group = 0;
@@ -1192,7 +1200,7 @@ export function directManhuaCamerasFromShots(input: {
       if (endLens !== undefined && Math.round(endLens) !== camera.lens) camera.endLens = Math.round(endLens);
       keepCameraClear(camera);
       const who = (b && b.subjects.length && !a.subjects.length ? b.subjects : a.subjects).map((s) => s.nameZh).join("、");
-      cuts.push({ shotIndex: shot.index, camera, noteZh: `镜${shot.index} ${noteParts.join("·")}${who ? `：${who}` : ""}`, splitGroup: group, reaction: /反应|回头|痛喘|痛/.test(`${piece}${actionText}`) });
+      cuts.push({ shotIndex: shot.index, camera, noteZh: `镜${shot.index} ${noteParts.join("·")}${who ? `：${who}` : ""}`, splitGroup: group, reaction: /反应|回头|痛喘|痛/.test(`${piece}${actionText}`), animalClose: [a, b].some((f) => f && f.lead && isAnimal(f.lead) && f.scale.frameH <= 0.95) });
     };
 
     if (hardCut) {
@@ -1224,7 +1232,8 @@ export function directManhuaCamerasFromShots(input: {
   // 导演包「非人角色先成为人物」：分镜写了反应的非人角色近景，焦段至少 55，让它像人物一样被看清
   if (hints.reactionToNonHuman) {
     for (const c of cuts) {
-      if (!c.reaction || !/神兽|马|兽|墨/.test(c.noteZh) || !/特写|近景/.test(c.noteZh) || c.camera.lens >= 55) continue;
+      // 按角色形体判定非人与景别，不按剧中名字
+      if (!c.reaction || !c.animalClose || c.camera.lens >= 55) continue;
       c.camera.lens = 55;
       if (c.camera.endLens !== undefined && c.camera.endLens <= 55) delete c.camera.endLens;
       c.noteZh += "（导演包：非人角色反应镜 55mm）";
