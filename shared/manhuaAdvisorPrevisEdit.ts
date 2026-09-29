@@ -1,3 +1,4 @@
+import { previsPiggybackSetDownSchema } from "./manhuaPrevisPiggyback";
 import { z } from "zod";
 import { previsPlaybackDuration } from "./manhuaPrevisPlayback";
 import { manhuaPrevisSpecSchema, previsActorSchema, PREVIS_ACTION_KINDS, type ManhuaPrevisSpec, type ManhuaPrevisStudio, manhuaPrevisRequestSchema, type ManhuaPrevisRequest } from "./manhuaPrevis";
@@ -42,13 +43,14 @@ export function withAdvisorPrevisVideo(target: AdvisorPrevisTarget, source: Advi
   if (!source || target.clipId !== source.target.clipId || target.scopeId !== source.target.scopeId) return target;
   return advisorPrevisTargetSchema.parse({ ...target, previousPreviewRequestId: source.requestId, previousPreviewSpecJson: source.specJson });
 }
-const actorEdit = previsActorSchema.pick({ id: true, start: true, end: true, moveStartSec: true, moveEndSec: true, facingDeg: true, motionRoute: true, actions: true }).partial().required({ id: true }).strict();
+const actorEdit = previsActorSchema.pick({ id: true, start: true, end: true, moveStartSec: true, moveEndSec: true, facingDeg: true, motionRoute: true, actions: true, hitReaction: true }).partial().required({ id: true }).strict();
 export const advisorPrevisPatchSchema = z.object({
   kind: z.literal("previs_edit_v1"), summaryZh: safeText(1200),
   unsupportedZh: z.array(safeText(300)).max(12),
   cameras: manhuaPrevisSpecSchema.shape.cameras.optional(),
   actors: z.array(actorEdit).max(6).optional(),
-}).strict().refine(v => Boolean(v.cameras || v.actors?.length || v.unsupportedZh.length), "顾问未提供有效修改或能力说明");
+  setDown: previsPiggybackSetDownSchema.optional(),
+}).strict().refine(v => Boolean(v.cameras || v.actors?.length || v.setDown || v.unsupportedZh.length), "顾问未提供有效修改或能力说明");
 export type AdvisorPrevisPatch = z.infer<typeof advisorPrevisPatchSchema>;
 export const advisorPrevisCandidateSchema = z.object({ target: advisorPrevisTargetSchema, patch: advisorPrevisPatchSchema }).strict();
 export type AdvisorPrevisCandidate = z.infer<typeof advisorPrevisCandidateSchema>;
@@ -63,7 +65,9 @@ export function applyAdvisorPrevisPatch(spec: ManhuaPrevisSpec, patch: AdvisorPr
   const edits = patch.actors || [];
   if (new Set(edits.map(a => a.id)).size !== edits.length) throw new Error("角色修改重复，未应用");
   if (edits.some(e => !spec.actors.some(a => a.id === e.id))) throw new Error("顾问引用了本段不存在的角色，未应用");
+  if (patch.setDown && !spec.piggyback) throw new Error("当前没有背负关系，不能凭空放下乘员");
   const next = manhuaPrevisSpecSchema.parse({ ...spec,
+    ...(patch.setDown ? {piggyback: {...spec.piggyback!, setDown: patch.setDown}} : {}),
     cameras: patch.cameras ?? spec.cameras,
     actors: spec.actors.map(a => ({ ...a, ...edits.find(e => e.id === a.id) })),
   });
@@ -120,7 +124,7 @@ export function adoptAdvisorPrevisTrial(clipId: string, studio: ManhuaPrevisStud
 export const ADVISOR_PREVIS_EDIT_INSTRUCTIONS = `\n【白模调度候选模式】
 当前上下文提供的是指定片段的完整编辑规格。用户用自然语言要求修改动作或摄影机时，先结合剧情、场景、已有导演手法与运镜代码配方给出调度提案。在summaryZh说明剧情目的、为什么使用这组景别/机位/走位、与上一版差异及可继续调整的方向；不可只列数字。本模式覆盖普通问答的answer字符串格式：在外层JSON的answer字段直接放一个JSON对象，不要代码围栏，不要将对象或换行二次转义。先输出summaryZh，供用户流式阅读，随后给出完整候选。answer对象内容为：
 {"kind":"previs_edit_v1","summaryZh":"逐项说明哪些秒窗/人物/机位改了什么","unsupportedZh":[],"cameras":[完整的替换机位数组],"actors":[{"id":"原有角色ID","motionRoute":[{"timeSec":0,"position":[0,0],"facingDeg":0}],"start":[0,0],"end":[0,0],"moveStartSec":0,"moveEndSec":10,"facingDeg":0,"actions":[{"kind":"walk","startSec":0,"endSec":10}]}]}
-仅填写需要修改的cameras或actors；actors每项必须保留原id，只填改动字段，不能改变身份、模型、角色数、时长、画幅、音频、参考、在场区间或背负。不得输出Python/命令/URL。unsupportedZh只填写用户明确提出且无法实现的要求；用户没有要求的音效、材质、表情、手持抖动等能力边界不要列入。用户说保留动作与对白是锁定条件，不是不支持项。只调整镜头即可满足时，unsupportedZh必须为[]。真正不支持的要求不能悄悄忽略，该候选不会应用。
-动作类型：${PREVIS_ACTION_KINDS.join("、")}。动作不能重叠；look需要lookAtId（本段角色ID或camera），turn需要facingDeg，其他动作不填这些字段。移动路线2–12点、按秒严格递增，从0到时长-1/24；坐标范围±12米、朝向±180度；路线起末点同步start/end。背负承载者只走位/静立，乘员不独立行动；四足仅支持limp_front_left，覆盖整段，不能套用人类打斗/握物。
+仅填写需要修改的cameras或actors；actors每项必须保留原id，只填改动字段，不能改变身份、模型、角色数、时长、画幅、音频、参考、在场区间或背负双方身份。可以仅通过setDown为已有背负增加完整放下时序。不得输出Python/命令/URL。unsupportedZh只填写用户明确提出且无法实现的要求；用户没有要求的音效、材质、表情、手持抖动等能力边界不要列入。用户说保留动作与对白是锁定条件，不是不支持项。只调整镜头即可满足时，unsupportedZh必须为[]。真正不支持的要求不能悄悄忽略，该候选不会应用。
+动作类型：${PREVIS_ACTION_KINDS.join("、")}。动作不能重叠；look需要lookAtId（本段角色ID或camera），turn需要facingDeg，其他动作不填这些字段。移动路线2–12点、按秒严格递增，从0到时长-1/24；坐标范围±12米、朝向±180度；路线起末点同步start/end。背负承载者在放下前只走位/静立，乘员不独立行动。完整放下用answer对象的setDown:{startSec,groundSec,releaseSec,endSec}：依次为降低开始、落地坐稳、松手、起身结束，各阶段至少0.75/0.25/0.25秒，按24帧对齐，endSec不晚于时长-1/24。期间承载者须停止位移与转身，动作表不要叠加walk；之后可独立走位，乘员自动留在放下地点坐稳。双方路线仍必须相同，乘员落地后的固定由渲染器执行。四足limp_front_left覆盖整段；四足受击另用该actor的hitReaction:{sourceActorId,startSec,contactSec,endSec}，绑定本段出掌者和其strike窗口中的接触时刻。受击不会取消跛行或套用人体动作。
 相机1–8个，连续覆盖0到本段时长；startSec/endSec，position/target是[x,y,z]米，x/y±30、z0.2–15；lens/endLens是18–65mm整数（焦距增大视角收紧）；可填endPosition/endTarget，或orbitDeg±180与orbitRise±8（须与非零环绕同用），两种运动写法二选一：直线模式只填endPosition/endTarget，不填orbitDeg/orbitRise；环绕模式只填orbitDeg/orbitRise，删除endPosition/endTarget。零值也不能作为兼容占位。时序对齐24fps，贴合当前人物真实位置、朝向及动作目标。不能每镜机械套FOV/下降/旋转，需有剧情触发并保持轴线。
 上下文如有previousPreviewSpecJson表示上次未应用的试看。追问时延续上次试看并按新需求修正，输出相对specJson原工作流的累计修改，不能丢掉用户此前要求。只生成可继续修改的调度提案，用户明确说生成试看或点击生成试看后，由系统校验合格候选并在当前3D页渲染；只讨论时不渲染，方案回包本身不代表视频已生成；不满意可继续聊并修正提案再生成。用户满意点击应用之后才写回工作流，不声称已应用或审片通过。answer对象序列化后总长不超过11000字符。`;

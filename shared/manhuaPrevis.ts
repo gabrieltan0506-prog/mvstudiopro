@@ -201,6 +201,12 @@ export const previsActorSchema = z
     moveStartSec: z.number().finite().min(0).max(30),
     moveEndSec: z.number().finite().positive().max(30),
     facingDeg: z.number().finite().min(-180).max(180),
+    hitReaction: z.object({
+      sourceActorId: z.string().min(1).max(100),
+      startSec: z.number().finite().min(0),
+      contactSec: z.number().finite().min(0),
+      endSec: z.number().finite().min(0),
+    }).strict().optional(),
     actions: z
       .array(
         z
@@ -462,6 +468,15 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
         !actor.visibleRanges || actor.visibleRanges.some(range => range.startSec <= startSec + 1e-6 && range.endSec >= endSec - 1e-6);
       if (actor.visibleRanges && (spec.piggyback && [spec.piggyback.carrierId, spec.piggyback.passengerId].includes(actor.id) || spec.waterEmergence?.events.some(event => event.actorId === actor.id)))
         ctx.addIssue({ code: "custom", message: "背负和出水角色暂须整段在场", path: ["actors", i, "visibleRanges"] });
+      if (actor.hitReaction) {
+        const hit=actor.hitReaction;
+        const attacker=spec.actors.find(a=>a.id===hit.sourceActorId && a.id!==actor.id);
+        if (actor.shape!=="horse" || actor.creature || actor.riggedModel || !attacker || attacker.shape!=="human" ||
+            !attacker.actions.some(a=>a.kind==="strike" && a.startSec<=hit.contactSec && a.endSec>=hit.contactSec) ||
+            !(hit.startSec+1/24<=hit.contactSec && hit.contactSec+.25<=hit.endSec && hit.endSec<=spec.durationSec) ||
+            [hit.startSec,hit.contactSec,hit.endSec].some(t=>Math.abs(t*24-Math.round(t*24))>1e-6) || !visibleThrough(hit.startSec,hit.endSec))
+          ctx.addIssue({code:"custom",path:["actors",i,"hitReaction"],message:"四足受击须绑定同场出掌人物、接触时刻和恢复窗口，按24帧对齐且在片长内"});
+      }
       actor.actions.forEach((action, j) => {
         if (!visibleThrough(action.startSec, action.endSec))
           ctx.addIssue({ code: "custom", message: "动作须完整落在角色在场区间内", path: ["actors", i, "actions", j] });
@@ -1060,9 +1075,10 @@ export function formatPrevisMotionGuide(spec: ManhuaPrevisSpec): string {
         a =>
           `${a.nameZh}右手持剑，手柄随手腕，参考只约束动作与比例，武器外观按该角色道具参考。`
       ),
-    ...(spec.piggyback ? [`整段由${(spec.actors.find(a => a.id === spec.piggyback!.carrierId)?.nameZh ?? "待重新选择的承载者")}背负${(spec.actors.find(a => a.id === spec.piggyback!.passengerId)?.nameZh ?? "待重新选择的乘员")}；开镜已背稳，乘员抱肩并跟随同一路线且双脚离地。${spec.piggyback.slipCatch
-      ? `${spec.piggyback.slipCatch.slipStartSec}秒乘员向下滑落约${spec.piggyback.slipCatch.dropMeters}米，承载者的手短暂失去托腿接触，${spec.piggyback.slipCatch.catchSec}秒重新托住腿，${spec.piggyback.slipCatch.recoverEndSec}秒扶回稳定背负；不新增上背或放下动作。`
-      : "双手始终托腿；不新增上背或放下动作。"}`] : []),
+    ...(spec.piggyback ? [`${spec.piggyback.setDown ? `0—${spec.piggyback.setDown.startSec}秒由` : "整段由"}${(spec.actors.find(a => a.id === spec.piggyback!.carrierId)?.nameZh ?? "待重新选择的承载者")}背负${(spec.actors.find(a => a.id === spec.piggyback!.passengerId)?.nameZh ?? "待重新选择的乘员")}；开镜已背稳，乘员抱肩并跟随同一路线且双脚离地。${spec.piggyback.slipCatch
+      ? `${spec.piggyback.slipCatch.slipStartSec}秒乘员向下滑落约${spec.piggyback.slipCatch.dropMeters}米，承载者的手短暂失去托腿接触，${spec.piggyback.slipCatch.catchSec}秒重新托住腿，${spec.piggyback.slipCatch.recoverEndSec}秒扶回稳定背负；不新增上背动作。`
+      : "放下前双手托腿。"}${spec.piggyback.setDown ? `${spec.piggyback.setDown.startSec}秒开始完整放下，${spec.piggyback.setDown.groundSec}秒落地坐稳，${spec.piggyback.setDown.releaseSec}秒松手，${spec.piggyback.setDown.endSec}秒承载者起身；乘员此后固定坐在原地点，承载者独立行动。` : "未设置放下，维持背负。"}`] : []),
+    ...spec.actors.filter(a=>a.hitReaction).map(a=>`${a.hitReaction!.contactSec}秒，${a.nameZh}受${spec.actors.find(b=>b.id===a.hitReaction!.sourceActorId)?.nameZh}出掌击中，胸颈快速后缩下沉，支撑脚保持接地，${a.hitReaction!.endSec}秒恢复；原跛行持续。`),
     ...(spec.interactions ?? []).map(event => {
       const actor = spec.actors.find(a => a.id === event.actorId)!;
       const target = spec.actors.find(a => a.id === event.targetActorId)!;

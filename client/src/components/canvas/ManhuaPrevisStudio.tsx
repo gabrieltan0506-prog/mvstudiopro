@@ -360,7 +360,8 @@ export function ManhuaPrevisStudioView({
       ...studio.spec,
       piggyback: { carrierId, passengerId,
         ...(prior?.carrierId === carrierId && prior.passengerId === passengerId && prior.slipCatch
-          ? { slipCatch: prior.slipCatch } : {}) },
+          ? { slipCatch: prior.slipCatch } : {}),
+        ...(prior?.carrierId === carrierId && prior.passengerId === passengerId && prior.setDown ? {setDown: prior.setDown} : {}) },
       actors: studio.spec.actors.map(actor => actor.id !== passengerId ? actor : {
         ...actor,
         start: [...carrier.start], end: [...carrier.end], facingDeg: carrier.facingDeg,
@@ -2134,8 +2135,8 @@ export function ManhuaPrevisStudioView({
         )}
       </section>
       <section className="space-y-2 rounded border border-white/15 p-2" data-previs-piggyback>
-        <p className="text-xs text-cyan-100">整段背负 · 可设置中途滑落与托住</p>
-        <p className="text-xs text-white/60">开镜已背稳。乘员跟随承载者的站位和路线；滑落时短暂失去托腿接触，到指定秒数重新托住。暂不支持带衣模型、上背与放下。</p>
+        <p className="text-xs text-cyan-100">背负 · 滑落托住与完整放下</p>
+        <p className="text-xs text-white/60">开镜已背稳。乘员跟随承载者的站位和路线；滑落时短暂失去托腿接触，到指定秒数重新托住。可设置连续放下：降低、落地坐稳、松手、起身；之后乘员留在原地。暂不支持带衣模型和上背。</p>
         <label className="block text-xs">承载者与乘员
           <select aria-label="背负人物关系" className={field} disabled={disabled || Boolean(pendingId)}
             value={studio.spec.piggyback ? JSON.stringify([studio.spec.piggyback.carrierId, studio.spec.piggyback.passengerId]) : ""}
@@ -2175,6 +2176,17 @@ export function ManhuaPrevisStudioView({
             }} />
           中途滑落、接住并扶稳
         </label>}
+        {studio.spec.piggyback && <label className="flex items-center gap-2 text-xs">
+          <input type="checkbox" aria-label="完整放下乘员" checked={Boolean(studio.spec.piggyback.setDown)} disabled={disabled || Boolean(pendingId)} onChange={event=>{
+            const {setDown: _prior,...pair}=studio.spec.piggyback!;
+            const endSec=Math.floor((studio.spec.durationSec-.25)*24)/24;
+            edit({...studio.spec,piggyback:{...pair,...(event.target.checked ? {setDown:{startSec:Math.max(0,endSec-2),groundSec:endSec-.75,releaseSec:endSec-.25,endSec}} : {})}});
+          }}/>完整放下乘员（期间须停稳）
+        </label>}
+        {studio.spec.piggyback?.setDown && (()=>{
+          const pair=studio.spec.piggyback!, down=pair.setDown!;
+          return <div className="flex flex-wrap gap-2">{([['startSec','开始降低秒'],['groundSec','落地坐稳秒'],['releaseSec','松手秒'],['endSec','起身结束秒']] as const).map(([key,label])=><div key={key}>{numeric(label,down[key],n=>edit({...studio.spec,piggyback:{...pair,setDown:{...down,[key]:Math.round(n*24)/24}}}),1/24)}</div>)}</div>;
+        })()}
         {studio.spec.piggyback?.slipCatch && (() => {
           const pair = studio.spec.piggyback!;
           const slip = pair.slipCatch!;

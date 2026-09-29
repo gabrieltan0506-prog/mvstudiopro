@@ -8,6 +8,7 @@ import { manhuaPrevisSpecSchema, PREVIS_ACTION_LABELS, type ManhuaPrevisSpec } f
 
 function Configuration({ spec }: { spec: ManhuaPrevisSpec }) {
   return <div className="space-y-3 text-xs leading-5">
+    {spec.piggyback?.setDown && <p>完整放下：{spec.piggyback.setDown.startSec}秒开始降低 → {spec.piggyback.setDown.groundSec}秒落地坐稳 → {spec.piggyback.setDown.releaseSec}秒松手 → {spec.piggyback.setDown.endSec}秒起身；乘员留在原地。</p>}
     <ol className="list-decimal pl-4">{spec.cameras.map((c, i) => <li key={i} className="mb-2">
       <b>{c.startSec.toFixed(2)}—{c.endSec.toFixed(2)}秒 · {c.lens}{c.endLens && c.endLens !== c.lens ? `→${c.endLens}` : ""}mm</b>
       <p>机位 {c.position.join("，")}{c.endPosition ? ` → ${c.endPosition.join("，")}` : ""}；看向 {c.target.join("，")}{c.endTarget ? ` → ${c.endTarget.join("，")}` : ""}</p>
@@ -15,6 +16,7 @@ function Configuration({ spec }: { spec: ManhuaPrevisSpec }) {
     </li>)}</ol>
     {spec.actors.map(a => <section key={a.id} className="border-t border-white/10 pt-2"><b>{a.nameZh}</b>
       <p>路径：{a.motionRoute?.map(n => `${n.timeSec.toFixed(2)}秒 (${n.position.join("，")}) 朝向${n.facingDeg}°`).join(" → ") || `${a.start.join("，")} → ${a.end.join("，")}`}</p>
+      {a.hitReaction && <p>受击：{a.hitReaction.startSec}—{a.hitReaction.endSec}秒，{a.hitReaction.contactSec}秒受击；出手者：{spec.actors.find(b=>b.id===a.hitReaction!.sourceActorId)?.nameZh}</p>}
       <p>动作：{a.actions.map(v => `${v.startSec.toFixed(2)}—${v.endSec.toFixed(2)}秒 ${PREVIS_ACTION_LABELS[v.kind]}`).join("；") || "无独立动作"}</p>
     </section>)}
   </div>;

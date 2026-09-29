@@ -18,7 +18,7 @@ import {
   type ManhuaPrevisRequest,
 } from "../../shared/manhuaPrevis";
 import { PREVIS_BODY_BONES } from "../../shared/manhuaPrevisRig";
-import { expectedPiggybackMotion, previsPiggybackSlipCatchSchema } from "../../shared/manhuaPrevisPiggyback";
+import { expectedPiggybackMotion, previsPiggybackSlipCatchSchema, previsPiggybackSetDownSchema } from "../../shared/manhuaPrevisPiggyback";
 
 const point = z.tuple([
   z.number().finite(),
@@ -31,13 +31,17 @@ export const previsReportSchema = z
       carrierId: z.string().min(1),
       passengerId: z.string().min(1),
       slipCatch: previsPiggybackSlipCatchSchema.optional(),
+      setDown: previsPiggybackSetDownSchema.optional(),
       samples: z.array(z.object({
         frame: z.number().int().min(1).max(720),
-        supportError: z.number().finite().nonnegative().max(.2),
+        supportError: z.number().finite().nonnegative().max(30),
         expectedSupportGap: z.number().finite().nonnegative().max(.2).optional(),
-        actualDropMeters: z.number().finite().min(-.005).max(.2).optional(),
-        gripError: z.number().finite().nonnegative().max(.005),
-        passengerFootHeight: z.number().finite().min(.1),
+        actualDropMeters: z.number().finite().min(-30).max(30).optional(),
+        gripError: z.number().finite().nonnegative().max(30),
+        passengerFootHeight: z.number().finite().min(-.005),
+        stage: z.enum(["carried","lowering","supported","released","seated"]).optional(),
+        pelvisHeight: z.number().finite().optional(),
+        passengerRoot: point.optional(),
       }).strict()).min(48).max(720),
       boundaryZh: z.string().min(1),
     }).strict().optional(),
@@ -223,6 +227,25 @@ export function validatePrevisReport(
     if (!pair || pair.carrierId !== spec.piggyback.carrierId || pair.passengerId !== spec.piggyback.passengerId ||
         pair.samples.length !== report.frames || pair.samples.some((row, i) => row.frame !== i+1))
       throw new Error("背负逐帧接触证据缺失或人物不一致");
+    const down = spec.piggyback.setDown;
+    if (JSON.stringify(down) !== JSON.stringify(pair.setDown)) throw new Error("放下时序与回执不一致");
+    let stoppedRoot: number[] | undefined;
+    for (const row of pair.samples) {
+      const t=(row.frame-1)/24;
+      if (!down || t<=down.startSec) {
+        if (row.supportError>.2 || row.gripError>.005 || row.passengerFootHeight<.1 || row.actualDropMeters !== undefined && (row.actualDropMeters<-.005 || row.actualDropMeters>.2)) throw new Error("背负接触未通过");
+      }
+      if (down) {
+        const stage=t<=down.startSec ? "carried" : t<down.groundSec ? "lowering" : t<down.releaseSec ? "supported" : t<down.endSec ? "released" : "seated";
+        if (row.stage!==stage || row.pelvisHeight===undefined || !row.passengerRoot) throw new Error("放下逐帧阶段证据缺失");
+        if (t>down.startSec) {
+          stoppedRoot ??= row.passengerRoot;
+          if (row.passengerRoot.some((v,i)=>Math.abs(v-stoppedRoot![i])>.005)) throw new Error("放下后乘员仍跟随承载者移动");
+          if (t<=down.releaseSec && row.supportError>.005 || t<=down.groundSec && row.gripError>.005) throw new Error("放下尚未落稳就失去接触");
+          if (t>=down.groundSec && (row.passengerFootHeight>.07 || Math.abs(row.pelvisHeight-.14)>.005)) throw new Error("放下未实际落地坐稳");
+        }
+      } else if (row.stage) throw new Error("未配置放下却出现放下阶段");
+    }
     const sourceEvent = spec.piggyback.slipCatch;
     const measuredEvent = pair.slipCatch;
     if (Boolean(sourceEvent) !== Boolean(measuredEvent) ||
@@ -230,6 +253,7 @@ export function validatePrevisReport(
           (["slipStartSec", "catchSec", "recoverEndSec", "dropMeters"] as const)
             .some(key => sourceEvent[key] !== measuredEvent[key])) ||
         pair.samples.some(row => {
+          if (down && (row.frame-1)/24 > down.startSec) return false;
           const expected = expectedPiggybackMotion(sourceEvent, row.frame);
           return (sourceEvent && row.expectedSupportGap === undefined) ||
             (sourceEvent && row.actualDropMeters === undefined) ||
@@ -258,6 +282,11 @@ export function validatePrevisReport(
       throw new Error("白模报告含未配置的在场帧");
     if (actor.offscreenFrames.some(frame => !previsActorVisibleAtFrame(spec.actors[index], frame)))
       throw new Error("离场角色不应计入出画报告");
+    const hit=spec.actors[index].hitReaction;
+    if (hit) {
+      const measured=z.object({sourceActorId:z.string(),startSec:z.number(),contactSec:z.number(),endSec:z.number(),samples:z.array(z.object({frame:z.number().int(),bodyHead:point,bodyTail:point,amount:z.number().min(0).max(1)})).length(report.frames)}).parse(actor.hitReaction);
+      if ((["sourceActorId","startSec","contactSec","endSec"] as const).some(k=>hit[k]!==measured[k]) || measured.samples.some((r,i)=>r.frame!==i+1) || !measured.samples.some(r=>r.amount>.99)) throw new Error("四足受击逐帧证据缺失或事件不一致");
+    } else if (actor.hitReaction) throw new Error("未配置四足受击却出现事件回执");
     if (spec.actors[index].actions.some(action => action.kind === "limp_front_left")) {
       const samples = z.array(z.object({
         frame: z.number().int().positive(),

@@ -50,3 +50,23 @@ describe("整段背负配置和草稿恢复", () => {
     }
   });
 });
+
+it("完整放下保持同一人物并允许放下后走位，拒绝移动中放下及乱序",()=>{
+ const s=fixture().spec; s.durationSec=5;s.cameras[0].endSec=5;
+ for(const a of s.actors){a.moveEndSec=1;a.actions=[{kind:a.id==='carrier'?'walk':'idle',startSec:0,endSec:1}];}
+ s.piggyback!.setDown={startSec:1,groundSec:2,releaseSec:2.5,endSec:3};
+ expect(manhuaPrevisSpecSchema.safeParse(s).success).toBe(true);
+ const bad=structuredClone(s);bad.piggyback!.setDown!.groundSec=.5;
+ expect(manhuaPrevisSpecSchema.safeParse(bad).success).toBe(false);
+ const moving=structuredClone(s);for(const a of moving.actors)a.moveEndSec=4;
+ expect(manhuaPrevisSpecSchema.safeParse(moving).success).toBe(false);
+});
+it("四足受击必须绑定真实出掌人物与接触时刻",()=>{
+ const s=createManhuaPrevisStudio(5).spec;
+ const source=s.actors[0];source.actions=[{kind:'strike',startSec:1,endSec:3}];
+ const horse={...structuredClone(source),id:'horse',nameZh:'墨屠',shape:'horse' as const,actions:[],hitReaction:{sourceActorId:source.id,startSec:1.5,contactSec:2,endSec:3}};
+ s.actors.push(horse);
+ expect(manhuaPrevisSpecSchema.safeParse(s).success).toBe(true);
+ horse.hitReaction.sourceActorId='missing';
+ expect(manhuaPrevisSpecSchema.safeParse(s).success).toBe(false);
+});
