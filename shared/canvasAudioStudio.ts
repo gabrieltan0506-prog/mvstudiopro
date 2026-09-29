@@ -16,6 +16,9 @@ export const canvasAudioTakeSchema = z.object({
   requestId: text(120).optional(),
   createdAt: text(80),
   inputKey: text(16000),
+  /** 0929：由原候选变速派生（0.5–2 倍）；台词与音色不变，沿用原 inputKey。 */
+  speed: z.number().finite().min(0.5).max(2).optional(),
+  derivedFromTakeId: text(120).optional(),
 });
 export type CanvasAudioTake = z.infer<typeof canvasAudioTakeSchema>;
 export const canvasAudioCueSchema = z.object({

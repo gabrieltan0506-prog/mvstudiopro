@@ -23,6 +23,7 @@ beforeAll(async () => {
         resolveAudio:async uri=>{f.resolvedAudio=uri;return f.refreshedUrl||"";},
         generateDialogue:async input=>{f.calls.push(input);return {jobId:'test-job',status:'succeeded',result:{gcsUri:'gs://test-bucket/generated/test.mp3',audioUrl:'https://audio.test/test.mp3',bytes:12000,voiceGate:{durationSeconds:2.25}}};},
         getDialogue:async input=>{f.queries.push(input);return f.result;},
+        speedDialogueTake:async input=>{(f.speedCalls=f.speedCalls||[]).push(input);return {gcsUri:input.gcsUri.replace(/\.wav$/,'-x'+input.speed.toFixed(2).replace('.','p')+'.wav'),durationSec:6.144/input.speed,bytes:9000,speed:input.speed};},
         draftMusic:async input=>{f.lastMusicDraft=input;return {brief:{model:input.model,custom_mode:true,instrumental:true,style:'恢宏',prompt:'展翼时释放气势',title:'守护',duration:30,negative_tags:'',style_weight:0.5,weirdness_constraint:0.5}};},
         generateMusic:async input=>{f.calls.push(input);return {jobId:'bgm-test',status:'queued'};},
         getMusic:async input=>{f.musicQueries.push(input.jobId);return f.history[input.jobId]||{jobId:input.jobId,status:'running',variants:[],titleZh:'守护',durationSec:30};},
@@ -40,6 +41,7 @@ beforeAll(async () => {
         const onMasterTrackReady=withMasterCb?entry=>{if(f.rejectMasterSave)return false;f.masterEntries.push(entry);f.setMaster(entry);return true;}:undefined;
         f.longCues=()=>{const cues=Array.from({length:6},(_,i)=>{const cue={...createCanvasAudioCue('dialogue','long-'+i),speakerZh:'角色',voice:'longanlufeng',textZh:'长台词'.repeat(1000),shotZh:'镜头',startSec:i*4,endSec:i*4+3,approved:true,selectedTakeId:'take-'+i};cue.takes=[{id:'take-'+i,gcsUri:'gs://test-bucket/post-prod/7/'+i+'.wav',previewUrl:'https://audio.test/'+i+'.wav',durationSec:2,createdAt:'2026-09-08',inputKey:canvasAudioCueInputKey(cue)}];return cue;});setBlock(b=>({...b,audioStudio:{...b.audioStudio,cues}}));};
         f.lockTwo=()=>{const first={...createCanvasAudioCue('dialogue','lock-a'),speakerZh:'阿菁',voice:'qwen-audio-3.0-tts-plus-longcanzhuyue',textZh:'先走。',shotZh:'第一镜',startSec:0,endSec:3,approved:true,selectedTakeId:'confirmed',voiceLock:{speakerZh:'阿菁',voice:'qwen-audio-3.0-tts-plus-longcanzhuyue'}};first.takes=[{id:'confirmed',gcsUri:'gs://test-bucket/confirmed.wav',previewUrl:'https://audio.test/confirmed.wav',durationSec:2,createdAt:'2026-09-27',inputKey:canvasAudioCueInputKey(first)}];const next={...createCanvasAudioCue('dialogue','lock-b'),speakerZh:'阿菁',voice:'qwen-audio-3.0-tts-plus-longanlufeng',textZh:'我来了。',shotZh:'第二镜',startSec:4,endSec:7};setBlock(b=>({...b,audioStudio:{...b.audioStudio,cues:[first,next]}}));};
+        f.overrun=()=>{const cue={...createCanvasAudioCue('dialogue','over-a'),speakerZh:'曹三',voice:'longanlufeng',textZh:'就牵着这一匹破马，你有钱付诊金吗？',shotZh:'镜3',startSec:8.736,endSec:13.736};cue.takes=[{id:'orig',gcsUri:'gs://test-bucket/post-prod/7/dialogue/orig.wav',previewUrl:'',durationSec:6.144,createdAt:'2026-09-28',inputKey:canvasAudioCueInputKey(cue)}];setBlock(b=>({...b,audioStudio:{...emptyCanvasAudioStudio(),cues:[cue]}}));};
         f.addBgm=()=>{const cue=createCanvasAudioCue('bgm','bgm-a');cue.shotZh='变身展翼';cue.startSec=13;cue.endSec=21;cue.source={gcsUri:'gs://test-bucket/generated/source.mp3',previewUrl:'https://audio.test/source.mp3',durationSec:27.77,labelZh:'27秒原曲'};cue.sourceStartSec=13;cue.sourceEndSec=21;setBlock(b=>({...b,audioStudio:{...b.audioStudio,cues:[...b.audioStudio.cues,cue]}}));};
         const onChange=audioStudio=>{if(f.rejectSave)return false;setBlock(b=>f.dropSettle&&audioStudio.pendingOperations.length<b.audioStudio.pendingOperations.length?b:({...b,audioStudio}));return true;};
         return visible&&<CanvasAudioStudioView block={block} services={services} onChange={onChange} onMasterTrackReady={onMasterTrackReady}/>;
@@ -112,6 +114,27 @@ async function open() {
   return { context, page, click, fill };
 }
 describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
+  it("0929 对白长于秒窗：默认给出刚好放进窗口的倍速，生成变速新候选（同台词可确认），原候选保留、变速件不再叠加变速", async () => {
+    const { context, page, click } = await open();
+    try {
+      await page.evaluate(() => (window as any).fixture.overrun());
+      await page.waitForSelector('[data-cue-id="over-a"]');
+      expect(await page.$eval('[aria-label="1 候选 1 语速"]', el => (el as HTMLSelectElement).value)).toBe("1.23");
+      await click("按 1.23 倍生成新候选");
+      await page.waitForFunction(() => (window as any).fixture.state.cues[0].takes.length === 2);
+      const state = await page.evaluate(() => (window as any).fixture.state.cues[0]);
+      expect(await page.evaluate(() => (window as any).fixture.speedCalls)).toEqual([{ gcsUri: "gs://test-bucket/post-prod/7/dialogue/orig.wav", speed: 1.23 }]);
+      expect(state.takes[0].id).toBe("orig");
+      expect(state.takes[1]).toMatchObject({ id: "orig-x1.23", speed: 1.23, derivedFromTakeId: "orig", inputKey: state.takes[0].inputKey, gcsUri: "gs://test-bucket/post-prod/7/dialogue/orig-x1p23.wav" });
+      expect(state.takes[1].durationSec).toBeLessThanOrEqual(5);
+      expect(await page.$$eval("[data-dialogue-speed]", els => els.length)).toBe(1);
+      await page.evaluate(() => {
+        const buttons = Array.from(document.querySelectorAll('[data-cue-id="over-a"] button')).filter(b => b.textContent?.includes("试听后确认本段"));
+        (buttons[1] as HTMLButtonElement).click();
+      });
+      await page.waitForFunction(() => (window as any).fixture.state.cues[0].selectedTakeId === "orig-x1.23");
+    } finally { await context.close(); }
+  }, 20_000);
   it("首句确认的角色音色阻止同角色异声生成，改台词后仍能沿用", async () => {
     const { context, page, click, fill } = await open();
     try {
