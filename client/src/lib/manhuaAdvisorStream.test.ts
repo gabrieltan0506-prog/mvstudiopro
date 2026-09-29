@@ -7,6 +7,8 @@ it("未闭合转义与嵌套调度摘要可逐步显示", () => {
   expect(partialJsonString('{"answer":"第一行\\n下一句\\u4', "answer")).toBe("第一行\n下一句");
   const raw = JSON.stringify({ answer: JSON.stringify({ summaryZh: "下沉后切近景", cameras: [] }) });
   expect(readableAdvisorStream(raw, true)).toBe("下沉后切近景");
+  expect(readableAdvisorStream('{"answer":{"summaryZh":"曹三逼近时短推', true)).toBe("曹三逼近时短推");
+  expect(readableAdvisorStream('{"answer":{"summaryZh":"下沉后切近景","cameras":[', true)).toBe("下沉后切近景");
 });
 it("流到 UI 早于最终回执；仅结果事件可成功，原请求与付费授权保留", async () => {
   let ctrl!: ReadableStreamDefaultController<Uint8Array>;

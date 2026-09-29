@@ -31,7 +31,10 @@ export function partialJsonString(text: string, key: string): string {
 }
 export function readableAdvisorStream(raw: string, previs: boolean): string {
   const answer = partialJsonString(raw, "answer");
-  return previs ? partialJsonString(answer, "summaryZh") : answer;
+  if (!previs) return answer;
+  // 新协议直接输出对象，旧会话仍兼容字符串里的候选。
+  const objectStart = /"answer"\s*:\s*\{/.exec(raw);
+  return partialJsonString(objectStart ? raw.slice(objectStart.index + objectStart[0].length) : answer, "summaryZh");
 }
 
 export async function streamManhuaAdvisor(input: Input, onText: (text: string) => void, onModel?: (label: string) => void): Promise<Result> {

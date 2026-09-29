@@ -89,3 +89,18 @@ it("GLM OpenRouter 最后一跳保持流式与 JSON 契约", async () => {
   expect(fetchMock.mock.calls[0][0]).toBe("https://openrouter.ai/api/v1/chat/completions");
   expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ model: "z-ai/glm-5.3-flash", stream: true, response_format: { type: "json_object" }, provider: { order: ["Z.AI"], allow_fallbacks: false } });
 });
+
+// 真实探针曾耗尽推理预算却无正文，必须检查实际请求体而非只 mock 顾问结果。
+it.each([
+  [modelName, "auto", { reasoning: { enabled: false } }],
+  ["deepseek-v4.1-flash", "evolink_flash_only", { thinking: { type: "disabled" } }],
+] as const)("顾问 %s 显式关闭推理且保留流式 JSON", async (modelName, openAiGateway, expected) => {
+  vi.stubEnv("OPENROUTER_API_KEY", "sk-test-only-not-real"); vi.stubEnv("EVOLINK_API_KEY", "test-key");
+  const fetchMock = vi.fn().mockResolvedValue(new Response('data: {"choices":[{"delta":{"content":"{}"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', { headers: { "content-type": "text/event-stream" } }));
+  vi.stubGlobal("fetch", fetchMock);
+  await invokeLLM({ provider: "openai", modelName, openAiGateway, reasoningEffort: "none", response_format: { type: "json_object" }, messages: [{ role: "user", content: "test" }] });
+  const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+  expect(body).toMatchObject({ ...expected, stream: true, response_format: { type: "json_object" } });
+  expect(body.reasoning_effort).toBeUndefined();
+  expect(body.reasoning?.effort).toBeUndefined();
+});

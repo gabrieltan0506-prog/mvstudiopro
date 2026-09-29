@@ -7,9 +7,9 @@ const { invokeLLMMock, resolvePlatformSkillsPromptMock, getDbMock } = vi.hoisted
   resolvePlatformSkillsPromptMock: vi.fn(),
 }));
 
-vi.mock("../_core/llm.js", () => ({
+vi.mock("../_core/llm.js", async (importOriginal) => ({
   invokeLLM: invokeLLMMock,
-  extractJsonString: (text: string) => text,
+  extractJsonString: (await importOriginal<typeof import("../_core/llm.js")>()).extractJsonString,
   extractFirstChoicePlainText: (response: {
     choices?: Array<{ message?: { content?: unknown } }>;
   }) => String(response.choices?.[0]?.message?.content || ""),
@@ -35,7 +35,7 @@ import {
 import type { ManhuaCreativeAdvisorContext } from "../../shared/manhuaCreativeAdvisor";
 import { MANHUA_DIRECTOR_STRATEGY_APPROVED_MANIFEST_VERSION } from "../../shared/manhuaDirectorStrategy";
 import { createManhuaPrevisStudio } from "../../shared/manhuaPrevis";
-import { makeAdvisorPrevisTarget } from "../../shared/manhuaAdvisorPrevisEdit";
+import { makeAdvisorPrevisTarget, parseAdvisorPrevisPatch } from "../../shared/manhuaAdvisorPrevisEdit";
 
 function manhuaContext(
   overrides: Partial<ManhuaCreativeAdvisorContext> = {},
@@ -61,7 +61,7 @@ function manhuaContext(
   };
 }
 
-function llmJson(answer = "建议先缩短人物距离，再检查反应镜。") {
+function llmJson(answer: unknown = "建议先缩短人物距离，再检查反应镜。") {
   return {
     choices: [
       {
@@ -131,9 +131,43 @@ describe("漫剧工厂创作顾问上下文", () => {
     invokeLLMMock.mockResolvedValue(llmJson(JSON.stringify(patch)));
     const result = await askPlatformSkillQa({ userId: 7, question: "推近到人物", isAdmin: true, manhuaContext: manhuaContext({ previsEdit: makeAdvisorPrevisTarget("clip-1", studio) }) });
     expect(JSON.parse(result.answer)).toEqual(patch);
-    expect(invokeLLMMock.mock.calls[0][0]).toMatchObject({ modelName: "deepseek/deepseek-v4.1-flash", reasoningEffort: "high", openRouterProviderPreferences: { require_parameters: true } });
+    expect(invokeLLMMock.mock.calls[0][0]).toMatchObject({ modelName: "deepseek/deepseek-v4.1-flash", reasoningEffort: "none", openRouterProviderPreferences: { require_parameters: true } });
     expect(invokeLLMMock.mock.calls[0][0].max_tokens).toBe(16_384);
     expect(invokeLLMMock.mock.calls[0][0].messages[0].content).toContain("用户满意点击应用之后才写回工作流");
+    expect(studio.history).toHaveLength(0);
+  });
+  it("短句调整只携带白模事实，不混入成片模型参数或二次转义规格", () => {
+    const studio = createManhuaPrevisStudio(5);
+    const question = "镜头更有压迫感，动作对白别改。";
+    const messages = buildManhuaCreativeAdvisorLlmMessages({ question, context: manhuaContext({ previsEdit: makeAdvisorPrevisTarget("clip-1", studio) }) });
+    expect(messages[1].content).toContain(question);
+    expect(messages[1].content).toContain(JSON.stringify(studio.spec.cameras));
+    expect(messages[1].content).not.toContain("生产编译器事实");
+    expect(messages[1].content).not.toContain("库内通用手法");
+    expect(messages[0].content).not.toContain("answer字符串格式：直接回答");
+  });
+  it("3D 环境未建白模也接上自动导演包与运镜库", () => {
+    const messages = buildManhuaCreativeAdvisorLlmMessages({ question: "把场景拍得更紧张", context: manhuaContext({ studio3d: {} }) });
+    expect(messages[1].content).toContain("自动从下列已批准导演包");
+    expect(messages[1].content).toContain("红蓝双轨一镜");
+    expect(messages[1].content).not.toContain("生产编译器事实");
+  });
+  it("非法机位向下一跳反馈具体校验错误，仍限制原四跳", async () => {
+    const studio = createManhuaPrevisStudio(5);
+    const patch = { kind: "previs_edit_v1", summaryZh: "缓推近景", unsupportedZh: [], cameras: studio.spec.cameras.map(c => ({ ...c, endLens: 55 })) };
+    invokeLLMMock.mockResolvedValueOnce(llmJson({ ...patch, cameras: patch.cameras.map(c => ({ ...c, orbitDeg: 15, endPosition: [1, 1, 1] })) })).mockResolvedValueOnce(llmJson(patch));
+    await askPlatformSkillQa({ userId: 7, question: "压迫感强一点", isAdmin: true, manhuaContext: manhuaContext({ previsEdit: makeAdvisorPrevisTarget("clip-1", studio) }) });
+    expect(invokeLLMMock).toHaveBeenCalledTimes(2);
+    expect(invokeLLMMock.mock.calls[1][0].messages.at(-1).content).toContain("环绕与直线终点不能同时使用");
+  });
+  it.each(["object", "fenced-string"])("%s 候选只需一次调用，完整外壳不被内层代码围栏破坏", async format => {
+    const studio = createManhuaPrevisStudio(5);
+    const patch = { kind: "previs_edit_v1", summaryZh: "曹三逼近时短推，随即切阿菁反应", unsupportedZh: [], cameras: studio.spec.cameras.map(c => ({ ...c, endLens: 55 })) };
+    const answer = format === "object" ? patch : "```json\n" + JSON.stringify(patch, null, 2) + "\n```";
+    invokeLLMMock.mockResolvedValue(llmJson(answer));
+    const result = await askPlatformSkillQa({ userId: 7, question: "更有压迫感", isAdmin: true, manhuaContext: manhuaContext({ previsEdit: makeAdvisorPrevisTarget("clip-1", studio) }) });
+    expect(parseAdvisorPrevisPatch(result.answer)).toEqual(patch);
+    expect(invokeLLMMock).toHaveBeenCalledTimes(1);
     expect(studio.history).toHaveLength(0);
   });
   it("四跳白模非法候选必须失败，不能将最后一次解析壳当成功返回", async () => {
@@ -185,7 +219,7 @@ describe("漫剧工厂创作顾问上下文", () => {
       /Christopher Nolan|J\.J\. Abrams|Ridley Scott|James Cameron|Justin Lin|Steven Spielberg|Guillermo del Toro|吴宇森|曹译文/i,
     );
     expect(payload.max_tokens).toBe(32_768);
-    expect(payload).toMatchObject({ modelName: "deepseek/deepseek-v4.1-flash", reasoningEffort: "high" });
+    expect(payload).toMatchObject({ modelName: "deepseek/deepseek-v4.1-flash", reasoningEffort: "none" });
     expect(payload.response_format).toEqual({ type: "json_object" });
   });
 

@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { streamManhuaAdvisor } from "@/lib/manhuaAdvisorStream";
 import { advisorPrevisTrialSchema } from "@shared/manhuaAdvisorPrevisEdit";
 import { manhuaPrevisSpecSchema } from "@shared/manhuaPrevis";
@@ -25,7 +26,9 @@ function readableAdvice(text: string) {
 }
 
 export default function ManhuaCreativeAdvisorPanel(props: {
+  dockHost?: HTMLElement | null;
   previsTarget?: AdvisorPrevisTarget;
+  studio3d?: { directionCardId?: string; directionCardVersion?: string };
   previsIssue?: string;
   onLeavePrevis?: () => void;
   onPreparePrevis?: (candidate: AdvisorPrevisCandidate) => AdvisorPrevisTrial;
@@ -83,7 +86,14 @@ export default function ManhuaCreativeAdvisorPanel(props: {
   const [quota, setQuota] = useState<{ remaining: number; price: number } | null>(null);
   const [streamPending, setStreamPending] = useState(false);
   const [streamText, setStreamText] = useState("");
-  const [streamModel, setStreamModel] = useState("DeepSeek V4.1 Flash");
+  const [retrying, setRetrying] = useState(false);
+  const [elapsedSec, setElapsedSec] = useState(0);
+  useEffect(() => {
+    if (!streamPending) return;
+    const startedAt = Date.now(); setElapsedSec(0);
+    const timer = window.setInterval(() => setElapsedSec(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => window.clearInterval(timer);
+  }, [streamPending]);
   const inFlight = useRef(false);
   const mounted = useRef(true);
   const questionRef = useRef<HTMLTextAreaElement | null>(null);
@@ -130,6 +140,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     inFlight.current = true;
     setStreamPending(true);
     setStreamText("");
+    setRetrying(false);
     if (mounted.current) {
       setPendingPaid(null);
       setFailed(null);
@@ -157,7 +168,8 @@ export default function ManhuaCreativeAdvisorPanel(props: {
         return;
       }
       const input = { requestId: request.requestId, question: request.question, rawQuestion: request.rawQuestion, manhuaContext: request.manhuaContext, confirmPaid: confirmPaid || undefined, confirmedCredits: confirmPaid ? confirmedCredits : undefined };
-      const res = await streamManhuaAdvisor(input, text => { if (mounted.current) setStreamText(text); }, label => { if (mounted.current) setStreamModel(label); });
+      let responseAttempt = 0;
+      const res = await streamManhuaAdvisor(input, text => { if (mounted.current) setStreamText(text); }, () => { if (mounted.current) setRetrying(++responseAttempt > 1); });
       const answer = String(res.answer || "").trim();
       if (!answer) throw new Error("本次没有收到有效回答，请重试原问题。");
       if (request.manhuaContext?.previsEdit) {
@@ -215,7 +227,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     if (previsEdit && previsCandidate?.target.clipId === previsEdit.clipId && previsCandidate.target.specJson === previsEdit.specJson) {
       try { previsEdit = { ...previsEdit, previousPreviewSpecJson: advisorPrevisSpecJson(applyAdvisorPrevisPatch(manhuaPrevisSpecSchema.parse(JSON.parse(previsEdit.specJson)), previsCandidate.patch)) }; } catch { /* 未支持要求不继承为已执行配置。 */ }
     }
-    const result = project ? manhuaCreativeAdvisorContextSchema.safeParse({ ...project.context, history: advisorRecentHistory(turns), ...(previsEdit ? { previsEdit } : {}) }) : null;
+    const result = project ? manhuaCreativeAdvisorContextSchema.safeParse({ ...project.context, history: advisorRecentHistory(turns), ...(previsEdit ? { previsEdit } : {}), ...(props.studio3d ? { studio3d: props.studio3d } : {}) }) : null;
     if (result && !result.success) {
       toast.error("当前上下文超出读取范围或包含不适合发送的内容", {
         description: result.error.issues.map(formatManhuaAdvisorContextIssue).join("；"),
@@ -297,10 +309,11 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     ["检查白模规格", "检查当前白模规格的角色与站位、持物及接触对象、机位变化、动作时段和节奏说明，结合正文指出遗漏。只检查已提供的规格；明确哪些问题必须逐帧与常速观看实际媒体，不宣称已审片。"],
     ["下一步怎么做", "根据当前状态，下一步应该做什么？"],
   ];
-  return (
+  const panel = (
     <aside data-manhua-creative-advisor aria-label="创作顾问"
       onKeyDown={(event) => { if (event.key === "Escape") onClose(); }}
-      className={`fixed bottom-0 right-0 top-[4.5rem] z-[60] flex w-full ${props.previsTarget || previsCandidate ? "max-w-[920px]" : "max-w-[420px]"} flex-col border-l border-cyan-200/15 bg-[#10171f] text-white shadow-2xl`}>
+      data-advisor-docked={props.dockHost ? "true" : undefined}
+      className={`${props.dockHost ? "relative h-full min-h-0 w-full" : "fixed bottom-0 right-0 top-[4.5rem] z-[60] w-full max-w-[420px]"} flex flex-col border-l border-cyan-200/15 bg-[#10171f] text-white shadow-2xl`}>
       <header className="flex items-start justify-between gap-3 border-b border-white/10 px-4 py-3">
         <div className="min-w-0">
           <h2 className="text-base font-semibold text-cyan-100">创作顾问</h2>
@@ -354,7 +367,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
         </div>)}
         {previsKey && (props.previsTarget || previsCandidate) && <details className="text-xs"><summary onClick={recoverPreviews} className="cursor-pointer py-2 text-cyan-100">找回本项目的独立试看</summary>{savedPreviews.map(({ key, trial }) => <button key={key} type="button" className="my-1 block rounded border border-white/20 px-2 py-2 text-left" onClick={() => { try { localStorage.setItem(`${previsKey}:trial`, trial.request.requestId); localStorage.setItem(previsKey, JSON.stringify(trial.candidate)); setAutoPrevisStart(false); setPrevisCandidate(trial.candidate); } catch { toast.error("试看恢复记录无法保存，未切换。"); } }}>{trial.candidate.patch.summaryZh} · {trial.request.spec.durationSec}秒</button>)}</details>}
         {previsCandidate && <ManhuaAdvisorPrevisComparison key={JSON.stringify(previsCandidate)} candidate={previsCandidate} storageKey={previsKey ? `${previsKey}:trial` : null} autoStart={autoPrevisStart} onPrepare={props.onPreparePrevis} onRevise={() => { setDraft("保留这版其他安排，我想调整："); questionRef.current?.focus(); }} disabled={asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onApply={props.onApplyPrevis} />}
-        {asking && <div role="status" className="whitespace-pre-wrap rounded-lg border border-cyan-300/20 p-3 text-sm leading-6 text-cyan-100"><p className="mb-2 text-xs">{streamModel} · {streamText ? "正在生成建议，尚未校验完成…" : "正在结合项目分析…"}</p>{streamText}</div>}
+        {asking && <div role="status" className="whitespace-pre-wrap rounded-lg border border-cyan-300/20 p-3 text-sm leading-6 text-cyan-100"><p className="mb-2 text-xs">{streamText ? "正在生成方案，完成后校验…" : retrying ? "上一次方案未通过检查，正在重新生成…" : "正在分析剧情与场景…"} 已等待 {elapsedSec} 秒</p>{streamText}<p className="mt-2 text-xs text-white/55">当前是方案阶段，白模尚未开始渲染；完成后可选择生成试看。</p></div>}
         {pendingPaid && <div role="alert" className="rounded-lg border border-amber-300/30 bg-amber-400/10 p-3 text-xs leading-5 text-amber-100">
           <p>{pendingPaid.hint}</p><p className="mt-1">原问题：{pendingPaid.request.label}（按提问时快照继续）</p><p className="mt-1 whitespace-pre-wrap text-white/75">{pendingPaid.request.rawQuestion}</p>
           {!sessionKey && <p className="mt-2 font-semibold">先确认项目后再付费咨询，避免改稿丢回执。本次不会发起扣点请求。</p>}
@@ -368,7 +381,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
         <div className="flex items-end gap-2">
           <textarea ref={questionRef} aria-label="向创作顾问提问" value={draft} onChange={(event) => setDraft(event.target.value)} rows={3} maxLength={1200} disabled={!userId || sessionStorageBlocked}
             onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send(draft); } }}
-            placeholder={props.previsTarget ? "例如：曹三逼近时推紧镜头，出手前下沉到侧面，接触时切马肩特写。只改10—17秒。" : "问当前剧本、人物或镜头…"} className="min-w-0 flex-1 resize-none rounded-lg border border-white/20 bg-black/20 px-3 py-2 text-sm outline-none focus:border-cyan-300" />
+            placeholder={props.previsTarget ? "例如：曹三逼近时更有压迫感，镜头更有冲击力。动作和对白别改。" : "问当前剧本、人物或镜头…"} className="min-w-0 flex-1 resize-none rounded-lg border border-white/20 bg-black/20 px-3 py-2 text-sm outline-none focus:border-cyan-300" />
           <button type="button" disabled={!userId || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked || draft.trim().length < 2} onClick={() => send(draft)} className="rounded-lg bg-cyan-400 px-3 py-2.5 text-sm font-semibold text-slate-950 disabled:opacity-40">{quota && !quotaQuery.data?.exempt && quota.remaining === 0 ? `咨询 · ${quota.price} 积分（先确认）` : "发送"}</button>
         </div>
         <p className="mt-2 text-[11px] leading-4 text-white/45">{props.previsTarget ? "先提议、再试看；可以多轮修改，满意后点击应用。" : "顾问建议需由你确认采用。"}{sessionKey ? "历史按已确认项目版本保存在本机。" : "未确认稿仅保留本次页面会话，改稿后重新咨询。"}追问携带最近 8 条，长答复标记为节选。</p>
@@ -382,4 +395,5 @@ export default function ManhuaCreativeAdvisorPanel(props: {
       </footer>
     </aside>
   );
+  return props.dockHost ? createPortal(panel, props.dockHost) : panel;
 }

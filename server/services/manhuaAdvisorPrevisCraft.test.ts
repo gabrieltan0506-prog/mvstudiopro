@@ -13,3 +13,11 @@ it("采用真实导演卡版本与运镜代码目录，不向生产泄漏内部�
   if (card.internal?.personName) expect(text).not.toContain(card.internal.personName);
   expect(buildAdvisorPrevisCraftBlock({ ...target, directionCardVersion: "旧版本" })).toContain("禁止擅自套用新版");
 });
+
+it("未指定导演包时自动提供已批准库，用户不必知道包名", () => {
+  const text = buildAdvisorPrevisCraftBlock({});
+  expect(text).toContain("自动从下列已批准导演包");
+  expect(text).toContain("情感与空间因果先于醒目技术");
+  expect(text).toContain("红蓝双轨一镜");
+  expect(text).toContain("不让用户提供包名或配方名");
+});

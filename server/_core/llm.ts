@@ -1384,7 +1384,11 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     model: target.modelName,
     messages: params.messages.map(normalizeMessage),
   };
-  if (evolinkFlash) {
+  // DeepSeek 的 none 使用供应商明确的关闭开关；不把 none 静默提升为 high。
+  if (isDeepSeekV41Flash && params.reasoningEffort === "none") {
+    if (evolinkFlash) payload.thinking = { type: "disabled" };
+    else payload.reasoning = { enabled: false };
+  } else if (evolinkFlash) {
     payload.reasoning_effort = reasoningEffort;
     if (isDeepSeekV41Flash) payload.thinking = { type: "enabled" };
   } else if ((isGlm53 || isDeepSeekV41Flash) && reasoningEffort) {
