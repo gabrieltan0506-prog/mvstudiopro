@@ -12,7 +12,8 @@ import{createManhuaPrevisStudio}from'./shared/manhuaPrevis';
 import{makeAdvisorPrevisTarget,prepareAdvisorPrevisTrial,adoptAdvisorPrevisTrial}from'./shared/manhuaAdvisorPrevisEdit';
 const f=globalThis.fixture={submits:[],queries:[],writes:[],ready:false};
 const studio=createManhuaPrevisStudio(5,'11111111-1111-4111-8111-111111111111');
-const candidate={target:makeAdvisorPrevisTarget('clip-1',studio),patch:{kind:'previs_edit_v1',summaryZh:'缓推到人物近景',unsupportedZh:[],cameras:studio.spec.cameras.map(c=>({...c,endLens:60}))}};
+studio.spec.actors.push({...structuredClone(studio.spec.actors[0]),id:'mother',nameZh:'娘',start:[-1,.65],end:[-1,.65]});
+const candidate={target:makeAdvisorPrevisTarget('clip-1',studio),patch:{kind:'previs_edit_v1',summaryZh:'缓推到人物近景',unsupportedZh:[],interactions:[{id:'support',kind:'support_walk',actorId:'actor-1',targetActorId:'mother',startSec:0,contactSec:1,endSec:5}],cameras:studio.spec.cameras.map(c=>({...c,endLens:60}))}};
 f.studio=studio;f.original=JSON.stringify(studio);f.videoSources=[];
 f.response=request=>({jobId:'previs-test-job',status:f.ready?'succeeded':'queued',params:request,output:f.ready?{requestId:request.requestId,clipId:request.clipId,gcsUri:'gs://test/preview.mp4',url:'/api/manhua-previs-media/test/preview',durationSec:5}:null});
 createRoot(document.getElementById('root')).render(<ManhuaAdvisorPrevisComparison candidate={candidate} onPreviewReady={source=>f.videoSources.push(source)} storageKey='test:trial' previewHost={document.getElementById('preview')} autoStart onPrepare={c=>prepareAdvisorPrevisTrial('clip-1',f.studio,c)} onApply={(trial,res)=>{f.studio=adoptAdvisorPrevisTrial('clip-1',f.studio,trial,res);f.writes.push(trial.request.requestId);return true;}}/>);
@@ -30,6 +31,7 @@ it("独立渲染和刷新不写原场景；观看并确认后才允许应用真�
   await page.waitForFunction(() => (globalThis as any).fixture.submits.length === 1);
   expect(await page.evaluate(() => (globalThis as any).fixture.writes)).toEqual([]);
   expect(await page.evaluate(() => JSON.stringify((globalThis as any).fixture.studio) === (globalThis as any).fixture.original)).toBe(true);
+  expect(await page.evaluate(() => (globalThis as any).fixture.submits[0].spec.interactions[0].kind)).toBe("support_walk");
   const id = await page.evaluate(() => (globalThis as any).fixture.submits[0].requestId);
   await page.reload(); await page.addScriptTag({ content: bundle });
   await page.waitForFunction(() => (globalThis as any).fixture.queries.length > 0);
@@ -52,6 +54,7 @@ it("独立渲染和刷新不写原场景；观看并确认后才允许应用真�
   await page.evaluate(() => Array.from(document.querySelectorAll('button')).find(b => b.textContent === '应用这版到工作流')?.click());
   await page.waitForFunction(() => (globalThis as any).fixture.writes.length === 1);
   expect(await page.evaluate(() => (globalThis as any).fixture.studio.history[0].requestId)).toBe(id);
+  expect(await page.evaluate(() => (globalThis as any).fixture.studio.spec.interactions[0].kind)).toBe("support_walk");
   expect(await page.evaluate(() => (globalThis as any).fixture.studio.specHistory[0].reasonZh)).toContain(id);
   await page.close();
 }, 20000);

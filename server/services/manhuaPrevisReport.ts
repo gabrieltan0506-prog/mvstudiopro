@@ -191,13 +191,15 @@ export const previsReportSchema = z
         z
           .object({
             id: z.string().min(1),
-            kind: z.enum(["strike_recoil", "strike_guard", "sword_guard"]),
+            kind: z.enum(["strike_recoil", "strike_guard", "sword_guard", "support_walk"]),
             actorId: z.string().min(1),
             targetActorId: z.string().min(1),
             contactFrame: z.number().int().min(1).max(720),
             contactError: z.number().finite().nonnegative().max(0.005),
             actualPoint: point,
             targetPoint: point,
+            supportSamples: z.array(z.object({frame:z.number().int().min(1).max(720),actualPoint:point,targetPoint:point,
+              gripPoint:point,shoulderPoint:point}).strict()).min(1).max(720).optional(),
           })
           .strict()
       )
@@ -458,6 +460,13 @@ export function validatePrevisReport(
       actual.contactFrame > report.frames
     )
       throw new Error("白模双人交互报告与动作不一致");
+    if (event.kind === "support_walk") {
+      const first=Math.round(event.contactSec*24)+1, count=Math.round(event.endSec*24)-first+1;
+      if (actual.supportSamples?.length!==count || actual.supportSamples.some((s,i)=>s.frame!==first+i ||
+        Math.hypot(...s.actualPoint.map((v,k)=>v-s.targetPoint[k]))>.005 ||
+        Math.hypot(...s.gripPoint.map((v,k)=>v-s.shoulderPoint[k]))>.005))
+        throw new Error("搀扶逐帧搭肩与扶臂接触缺失或超差");
+    } else if (actual.supportSamples) throw new Error("非搀扶事件不能带搀扶报告");
     if (event.kind === "sword_guard") {
       for (const [id, measuredPoint] of [
         [event.actorId, actual.actualPoint],

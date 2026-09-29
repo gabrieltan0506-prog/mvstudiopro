@@ -52,6 +52,17 @@ function fixture() {
   return { spec, report };
 }
 describe("白模报告双向动作契约", () => {
+  it("搀扶必须提交连续全部接触帧，搭肩与扶臂都不能脱开", () => {
+    const {spec,report}=fixture();spec.interactions![0].kind="support_walk";
+    const base={...report,interactions:[{...report.interactions[0],kind:"support_walk",supportSamples:Array.from({length:24},(_,i)=>({frame:i+25,actualPoint:[0,0,1],targetPoint:[0,0,1],gripPoint:[0,.1,1],shoulderPoint:[0,.1,1]}))}]};
+    expect(()=>validatePrevisReport(base,spec)).not.toThrow();
+    for(const mutation of ["missing","frame","grip","support"]){
+      const bad=structuredClone(base);const rows=bad.interactions[0].supportSamples;
+      if(mutation==="missing")rows.pop();if(mutation==="frame")rows[3].frame=29;
+      if(mutation==="grip")rows[3].gripPoint[0]=.02;if(mutation==="support")rows[3].actualPoint[0]=.02;
+      expect(()=>validatePrevisReport(bad,spec)).toThrow(/搀扶/);
+    }
+  });
   it("在场窗口须逐帧对齐，离场帧不得冒充出画或在场", () => {
     const f = fixture();
     delete f.spec.interactions;

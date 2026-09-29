@@ -52,6 +52,16 @@ jobs:
           echo "== Blender =="; cat artifacts/auto-rig-smoke/blender-version.txt
           grep -q "^Blender " artifacts/auto-rig-smoke/blender-version.txt
           echo "== TEST_OK =="; grep "^TEST_OK" artifacts/auto-rig-smoke/smoke.log
+      - name: Verify sustained support contact inside the built image
+        timeout-minutes: 5
+        run: |
+          mkdir -p artifacts/support-walk
+          docker run --rm --platform linux/amd64 \
+            -v "$PWD/artifacts/support-walk:/out" \
+            mvstudiopro-pr-smoke:${{ github.sha }} \
+            blender --background --factory-startup --disable-autoexec --threads 1 --python-exit-code 1 \
+              --python server/scripts/test-previs-support-walk.py -- /out
+          sudo chmod -R a+rX artifacts/support-walk
       - name: Run drama-action previs smoke inside the built image
         timeout-minutes: 20
         run: |
@@ -111,6 +121,7 @@ jobs:
         with:
           name: auto-rig-smoke-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
+            artifacts/support-walk/**/*.json
             artifacts/auto-rig-smoke/smoke.log
             artifacts/auto-rig-smoke/blender-version.txt
             artifacts/auto-rig-smoke/tested-sha.txt
