@@ -8,7 +8,7 @@ const base = (over: Record<string, unknown> = {}) => ({
   eligibility: { eligible: true, sourceVersion: "v1", ...over },
 });
 const model = (status: string, extra: Record<string, unknown> = {}) => ({
-  status, taskId: "m3d_1", sourceImageUrl: "https://x/y.png", sourceVersion: "v1", ...extra,
+  status, taskId: "m3d_1", sourceImageUrl: "https://x/y.png", sourceVersion: "v1", ...(status === "succeeded" ? { glbUrl: "https://x/model.glb" } : {}), ...extra,
 });
 
 describe("3D 模型工作台 · 阶段判定", () => {
@@ -27,6 +27,11 @@ describe("3D 模型工作台 · 阶段判定", () => {
   it("已绑骨优先于模型状态；但不可建模的人不会被标成已绑骨", () => {
     expect(manhua3dModelStageOf(base({ currentModel3d: model("succeeded") }) as never, true).stage).toBe("rigged");
     expect(manhua3dModelStageOf(base({ eligible: false, reasonZh: "x" }) as never, true).stage).toBe("blocked");
+  });
+  it("建模任务成功但缺模型链接时仍待核对，不算可预览就绪", () => {
+    const missing = base({ currentModel3d: model("succeeded", { glbUrl: "" }) }) as never;
+    expect(manhua3dModelStageOf(missing, false)).toMatchObject({ stage: "review", labelZh: "模型任务完成 · 缺预览链接" });
+    expect(manhua3dModelCounts([missing], [])).toEqual({ total: 1, ready: 0, rigged: 0 });
   });
 });
 

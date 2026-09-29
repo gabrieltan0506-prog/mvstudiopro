@@ -6,8 +6,10 @@
  *
  * 不新造后端：全部走既有 onGenerateAsset3d / onImportAsset3d / 预览 / 绑骨回调。
  * 建模走 WaveSpeed Tripo（扣积分）：批量前先显示人数并确认。
+ * 0929 简化：每行只露一个按状态的主按钮（建模 / 重试建模 / 预览），上传 GLB、四视角建模、绑骨收进「更多」；只搬位置与文案，回调与扣费不变。
  */
 import { useMemo, useState } from "react";
+import ModelViewer from "@/components/ModelViewer";
 import type { ManhuaAsset3dEligibility } from "@shared/manhuaAsset3d";
 import {
   MANHUA_MULTIVIEW_VIEWS,
@@ -38,7 +40,6 @@ type Props = {
   disabled?: boolean;
   onGenerate?: (id: string) => void | Promise<void>;
   onImport?: (id: string, file: File) => void | Promise<void>;
-  onPreview?: (id: string, glbUrl: string, labelZh: string) => void;
   /** 打开绑骨编辑器：sourceRefId = 模型所在 ref（可能是候选图）；characterId = 人物锁脸 ref（用于钉选来源） */
   onRig?: (sourceRefId: string, characterId: string) => void;
   /** 有绑骨成品（白模可直接用）的角色 id */
@@ -61,7 +62,9 @@ export function manhua3dModelStageOf(c: Manhua3dModelStudioCharacter, rigged: bo
   const m = c.eligibility.currentModel3d;
   if (rigged) return { stage: "rigged", labelZh: "已绑骨 · 白模可用" };
   // 绑骨来源解析到候选图（锁脸图没就绪模型、建模失败，或用户钉选了 A-pose）：按候选图算就绪，绑骨用它
-  if (c.rigSource?.isCandidate) return { stage: "ready", labelZh: `候选图模型就绪 · 待绑骨（${c.rigSource.labelZh}）` };
+  if (c.rigSource?.isCandidate) return c.rigSource.model.glbUrl
+    ? { stage: "ready", labelZh: `候选图模型就绪 · 待绑骨（${c.rigSource.labelZh}）` }
+    : { stage: "review", labelZh: "候选图模型缺预览链接", reasonZh: "刷新页面获取模型链接；仍无链接时保留原任务号核查，勿重复建模。" };
   if (!m) return { stage: "none", labelZh: "未建模" };
   switch (m.status) {
     case "queued":
@@ -72,7 +75,9 @@ export function manhua3dModelStageOf(c: Manhua3dModelStudioCharacter, rigged: bo
     case "failed":
       return { stage: "failed", labelZh: "建模失败", reasonZh: m.errorZh };
     case "succeeded":
-      return { stage: "ready", labelZh: "模型就绪 · 待绑骨" };
+      return m.glbUrl
+        ? { stage: "ready", labelZh: "模型文件可预览 · 待绑骨" }
+        : { stage: "review", labelZh: "模型任务完成 · 缺预览链接", reasonZh: "刷新页面获取模型链接；仍无链接时保留原任务号核查，勿重复建模。" };
   }
 }
 
@@ -132,10 +137,11 @@ const STAGE_CLASS: Record<Stage, string> = {
 };
 
 export function Manhua3dModelStudio(props: Props) {
-  const { characters, busyIds, disabled, onGenerate, onImport, onPreview, onRig, onGenerateMultiview, onSubmitMultiview } = props;
+  const { characters, busyIds, disabled, onGenerate, onImport, onRig, onGenerateMultiview, onSubmitMultiview } = props;
   const riggedIds = props.riggedIds ?? [];
   const multiviewDrafts = props.multiviewDrafts ?? {};
   const [multiviewOpenId, setMultiviewOpenId] = useState<string | null>(null);
+  const [preview, setPreview] = useState<{ id: string; url: string; labelZh: string } | null>(null);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [confirmBatch, setConfirmBatch] = useState(false);
   const [batchBusy, setBatchBusy] = useState(false);
@@ -167,9 +173,9 @@ export function Manhua3dModelStudio(props: Props) {
     <section className="w-full rounded-xl border border-cyan-300/25 bg-[#0c121d] p-3 text-white" data-manhua-3d-model-studio>
       <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
         <span className="text-cyan-100">3D 模型 · 全员一览</span>
-        <span className="rounded bg-white/10 px-1.5 py-0.5">模型就绪 {counts.ready}/{counts.total}</span>
+        <span className="rounded bg-white/10 px-1.5 py-0.5">模型可预览或已绑骨 {counts.ready}/{counts.total}</span>
         <span className="rounded bg-white/10 px-1.5 py-0.5">已绑骨 {counts.rigged}/{counts.total}</span>
-        <span className="text-white/50">流程：人物图 → 建模（Tripo，扣积分）→ 预览核对 → 绑骨 → 白模可用；导入自己的 GLB 可跳过建模</span>
+        <span className="text-white/50" data-model-studio-hint>建模请选含头到脚、双脚完整可见的全身人物图；半身图可能只生成半身模型。建模扣积分，预览可在这里旋转核对；上传 GLB、四视角建模、绑骨在「更多」里。</span>
       </div>
       {!characters.length ? <p className="text-[11px] text-amber-100">本剧还没有锁定的人物资产，先在资产区锁角色。</p> : null}
       <ul className="flex flex-col gap-1">
@@ -178,6 +184,13 @@ export function Manhua3dModelStudio(props: Props) {
           const model = c.eligibility.currentModel3d;
           const rigSource = c.rigSource;
           const canBuild = (stage === "none" || stage === "failed") && !busy && Boolean(onGenerate);
+          // 预览看的是白模/场景实际用的那个模型：绑骨来源（锁脸图自己的，或同人物候选图的）优先
+          const previewModel = rigSource?.model ?? (model?.status === "succeeded" ? model : undefined);
+          const canPreview = (stage === "ready" || stage === "rigged") && Boolean(previewModel);
+          const canImport = c.eligibility.eligible && Boolean(onImport) && !busy;
+          const canMultiview = c.eligibility.eligible && Boolean(onGenerateMultiview && onSubmitMultiview);
+          const canRig = Boolean(rigSource && onRig);
+          const hasMore = canImport || canMultiview || canRig;
           return (
             <li key={c.id} className="flex flex-wrap items-center gap-2 rounded bg-white/5 px-2 py-1 text-[11px]" data-character-id={c.id} data-stage={stage}>
               <input
@@ -198,67 +211,93 @@ export function Manhua3dModelStudio(props: Props) {
               <span className="min-w-[4rem] font-medium">{c.labelZh}</span>
               <span className={`rounded px-1.5 py-0.5 ${STAGE_CLASS[stage]}`}>{busy ? "处理中…" : labelZh}</span>
               {reasonZh ? <span className="text-amber-100">{reasonZh}</span> : null}
-              <span className="ml-auto flex gap-1">
+              <span className="ml-auto flex flex-wrap items-center gap-1">
+                {/* 主按钮只露一个：未建模「建模」、失败「重试建模」、建好「预览」；建模中/待核对/不能建模只看状态 */}
                 {canBuild ? (
-                  <button type="button" className={btnPrimary} disabled={disabled} onClick={() => void onGenerate?.(c.id)}>
+                  <button type="button" className={btnPrimary} disabled={disabled} data-model-primary="build" onClick={() => void onGenerate?.(c.id)}>
                     {stage === "failed" ? "重试建模" : "建模"}
                   </button>
-                ) : null}
-                {c.eligibility.eligible && onImport && !busy ? (
-                  <label className={`${btn} cursor-pointer`} title="上传本机 GLB 作为这个人物的模型（替代 Tripo 建模，不扣积分）；与人物卡里「导入 GLB 校验」不同：那是校验已建好的模型">
-                    上传 GLB 替代建模
-                    <input
-                      type="file"
-                      accept=".glb,model/gltf-binary"
-                      className="hidden"
-                      disabled={disabled}
-                      onChange={(e) => {
-                        const file = e.currentTarget.files?.[0];
-                        e.currentTarget.value = "";
-                        if (file) void onImport(c.id, file);
-                      }}
-                    />
-                  </label>
-                ) : null}
-                {model?.status === "succeeded" && model.glbUrl && onPreview ? (
-                  <button type="button" className={btn} disabled={disabled} onClick={() => onPreview(c.id, model.glbUrl!, c.labelZh)}>
+                ) : canPreview ? (
+                  <button
+                    type="button"
+                    className={btnPrimary}
+                    disabled={disabled || !previewModel?.glbUrl}
+                    data-model-primary="preview"
+                    title={previewModel?.glbUrl ? undefined : "模型已建好，但还没拿到预览链接：刷新页面后再试"}
+                    onClick={() => {
+                      if (!previewModel?.glbUrl) return;
+                      setPreview({ id: c.id, url: previewModel.glbUrl, labelZh: c.labelZh });
+                    }}
+                  >
                     预览
                   </button>
                 ) : null}
-                {rigSource && onRig ? (
-                  <button
-                    type="button"
-                    className={stage === "rigged" ? btn : btnPrimary}
-                    disabled={disabled || busy}
-                    data-rig-source-ref={rigSource.refId}
-                    title={rigSource.isCandidate ? `绑骨用候选图「${rigSource.labelZh}」的模型（原定妆与高模保留，A-pose 只作绑骨生产资产）` : undefined}
-                    onClick={() => onRig(rigSource.refId, c.id)}
-                  >
-                    {stage === "rigged" ? "重新绑骨" : rigSource.isCandidate ? `绑骨（用「${rigSource.labelZh}」）` : "绑骨"}
-                  </button>
-                ) : null}
-                {(c.rigOptions?.length ?? 0) > 1 && onRig
-                  ? c.rigOptions!
-                      .filter((o) => o.refId !== rigSource?.refId)
-                      .map((o) => (
-                        <button key={o.refId} type="button" className={btn} disabled={disabled || busy} data-rig-source-ref={o.refId} onClick={() => onRig(o.refId, c.id)}>
-                          改用「{o.labelZh}」绑骨
+                {hasMore ? (
+                  <details className="relative" data-model-more>
+                    <summary className={`${btn} cursor-pointer list-none`}>更多</summary>
+                    <span className="mt-1 flex flex-wrap gap-1">
+                      {canImport ? (
+                        <label className={`${btn} cursor-pointer`} title="上传本机 GLB 作为这个人物的模型（替代建模，不扣积分）；与人物卡里「导入 GLB 校验」不同：那是校验已建好的模型">
+                          上传 GLB 替代建模
+                          <input
+                            type="file"
+                            accept=".glb,model/gltf-binary"
+                            className="hidden"
+                            disabled={disabled}
+                            onChange={(e) => {
+                              const file = e.currentTarget.files?.[0];
+                              e.currentTarget.value = "";
+                              if (file) void onImport?.(c.id, file);
+                            }}
+                          />
+                        </label>
+                      ) : null}
+                      {canMultiview ? (
+                        <button
+                          type="button"
+                          className={btn}
+                          disabled={disabled}
+                          data-manhua-action="toggle-multiview"
+                          title="用定妆图改出前/左/后/右四张白底视角图，过目后再提交多视角建模；比单图更保侧面与背面细节"
+                          onClick={() => setMultiviewOpenId((prev) => (prev === c.id ? null : c.id))}
+                        >
+                          {multiviewOpenId === c.id ? "收起四视角" : multiviewDrafts[c.id] ? "查看四视角" : "四视角建模"}
                         </button>
-                      ))
-                  : null}
-                {c.eligibility.eligible && onGenerateMultiview && onSubmitMultiview ? (
-                  <button
-                    type="button"
-                    className={btn}
-                    disabled={disabled}
-                    data-manhua-action="toggle-multiview"
-                    title="用定妆图改出前/左/后/右四张白底视角图，过目后再提交 Tripo 多视角建模；比单图更保侧面与背面细节"
-                    onClick={() => setMultiviewOpenId((prev) => (prev === c.id ? null : c.id))}
-                  >
-                    {multiviewOpenId === c.id ? "收起四视角" : multiviewDrafts[c.id] ? "查看四视角" : "四视角建模"}
-                  </button>
+                      ) : null}
+                      {rigSource && onRig ? (
+                        <button
+                          type="button"
+                          className={btn}
+                          disabled={disabled || busy}
+                          data-rig-source-ref={rigSource.refId}
+                          title={rigSource.isCandidate ? `绑骨用候选图「${rigSource.labelZh}」的模型（原定妆与高模保留，A-pose 只作绑骨生产资产）` : undefined}
+                          onClick={() => onRig(rigSource.refId, c.id)}
+                        >
+                          {stage === "rigged" ? "重新绑骨" : rigSource.isCandidate ? `绑骨（用「${rigSource.labelZh}」）` : "绑骨"}
+                        </button>
+                      ) : null}
+                      {(c.rigOptions?.length ?? 0) > 1 && onRig
+                        ? c.rigOptions!
+                            .filter((o) => o.refId !== rigSource?.refId)
+                            .map((o) => (
+                              <button key={o.refId} type="button" className={btn} disabled={disabled || busy} data-rig-source-ref={o.refId} onClick={() => onRig(o.refId, c.id)}>
+                                改用「{o.labelZh}」绑骨
+                              </button>
+                            ))
+                        : null}
+                    </span>
+                  </details>
                 ) : null}
               </span>
+              {preview?.id === c.id && preview.url === previewModel?.glbUrl ? (
+                <div className="mt-1 w-full rounded border border-cyan-300/30 bg-black/40 p-2" data-model-inline-preview>
+                  <div className="mb-1 flex items-center justify-between gap-2 text-[11px]">
+                    <span>{preview.labelZh} · 拖动旋转，核对是否从头到脚完整</span>
+                    <button type="button" className={btn} onClick={() => setPreview(null)}>收起预览</button>
+                  </div>
+                  <ModelViewer glbUrl={preview.url} height={360} />
+                </div>
+              ) : null}
               {multiviewOpenId === c.id && onGenerateMultiview && onSubmitMultiview ? (
                 <ManhuaMultiviewPanel
                   labelZh={c.labelZh}
@@ -292,7 +331,7 @@ export function Manhua3dModelStudio(props: Props) {
             </button>
           ) : (
             <span className="flex items-center gap-1 rounded bg-amber-500/20 px-2 py-1">
-              将提交 {selectedBuildable.length} 单 Tripo 建模（逐人扣积分，原图不会被替换）
+              将提交 {selectedBuildable.length} 单建模（逐人扣积分，原图不会被替换）
               <button type="button" className={btnPrimary} disabled={batchBusy} onClick={() => void runBatch()}>确认</button>
               <button type="button" className={btn} onClick={() => setConfirmBatch(false)}>取消</button>
             </span>
@@ -366,7 +405,7 @@ export function ManhuaMultiviewPanel(props: {
           className={btnPrimary}
           disabled={disabled || busy || !readiness.ready || !canSubmit}
           data-manhua-action="submit-multiview"
-          title={!readiness.ready ? readiness.reasonZh : !canSubmit ? "建模中或结果待核对，先等它结束" : rebuild ? "用四视角重建并替换现有模型（扣积分；旧 GLB 保留在任务记录）" : "提交 Tripo H3.1 多视角建模（扣积分）"}
+          title={!readiness.ready ? readiness.reasonZh : !canSubmit ? "建模中或结果待核对，先等它结束" : rebuild ? "用四视角重建并替换现有模型（扣积分；旧 GLB 保留在任务记录）" : "提交多视角建模（扣积分）"}
           onClick={onSubmit}
         >
           {rebuild ? "用四视角重建模型" : "提交多视角建模"}

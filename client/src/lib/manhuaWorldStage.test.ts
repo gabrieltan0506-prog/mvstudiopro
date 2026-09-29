@@ -218,6 +218,12 @@ it("宿主上传开始后切机位仍保持忙碌，旧回执不能放开新请�
     if (!child) throw new Error("测试 iframe 未挂载");
     const revision = await page.$eval("[data-stage-revision]", (el) => el.getAttribute("data-stage-revision"));
     const ready = () => child.evaluate((rev) => parent.postMessage({ source: "manhua-world-stage", revision: rev, type: "ready", loaded: ["world"], failed: [] }, "*"), revision);
+    await child.evaluate((rev) => parent.postMessage({
+      source: "manhua-world-stage", revision: rev, type: "ready", loaded: ["world"],
+      failed: [{ id: "collider", kind: "collider", message: "network", code: "network" }],
+    }, "*"), revision);
+    await page.waitForSelector('[data-stage-status="ready"] [data-stage-reload]');
+    expect(await page.evaluate(() => !Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("保存当前视角图"))?.disabled)).toBe(true);
     await ready();
     await page.waitForSelector('[data-stage-status="ready"]');
     const rig = { kind: "establish", position: [0, -7, 2.6], target: [0, 0, 1], lens: 28, labelZh: "建立·高位全景" };
