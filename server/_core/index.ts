@@ -10,6 +10,7 @@ import net from "net";
 import { nanoid } from "nanoid";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
+import { registerManhuaAdvisorStream } from "../routers/manhuaAdvisorStream";
 import { appRouter } from "../routers";
 import uploadRouter from "../upload";
 import manhuaLocalVideoUploadRouter from "../manhuaLocalVideoUpload.js";
@@ -257,6 +258,7 @@ async function startServer() {
   // File upload
   app.use(uploadRouter);
   registerAuthApiRoutes(app);
+  registerManhuaAdvisorStream(app);
   registerPhotoTemporaryMedia(app);
   registerSmsAuthRoutes(app);
   registerSpeechApiRoutes(app);

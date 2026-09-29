@@ -1,3 +1,4 @@
+import { streamManhuaAdvisor } from "@/lib/manhuaAdvisorStream";
 import { advisorPrevisTrialSchema } from "@shared/manhuaAdvisorPrevisEdit";
 import { manhuaPrevisSpecSchema } from "@shared/manhuaPrevis";
 import { advisorPrevisCandidateSchema, parseAdvisorPrevisPatch, type AdvisorPrevisCandidate, type AdvisorPrevisTarget, type AdvisorPrevisTrial, type AdvisorPrevisReceipt, applyAdvisorPrevisPatch, advisorPrevisSpecJson } from "@shared/manhuaAdvisorPrevisEdit";
@@ -80,12 +81,15 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     message: "上次问答尚未收到回执。恢复会沿用原请求编号，不自动发起新的问答。",
   } : null);
   const [quota, setQuota] = useState<{ remaining: number; price: number } | null>(null);
+  const [streamPending, setStreamPending] = useState(false);
+  const [streamText, setStreamText] = useState("");
+  const [streamModel, setStreamModel] = useState("DeepSeek V4.1 Flash");
   const inFlight = useRef(false);
   const mounted = useRef(true);
   const questionRef = useRef<HTMLTextAreaElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const templateSectionRef = useRef<HTMLElement | null>(null);
-  const askMutation = trpc.mvAnalysis.askPlatformSkillQa.useMutation({ retry: false });
+  const asking = streamPending;
   const quotaQuery = trpc.mvAnalysis.getManhuaAdvisorQuota.useQuery(undefined, { enabled: open && Boolean(userId), staleTime: 0, retry: false, refetchOnWindowFocus: true });
   useEffect(() => { if (quotaQuery.data) setQuota({ remaining: quotaQuery.data.remaining, price: quotaQuery.data.price }); }, [quotaQuery.data?.remaining, quotaQuery.data?.price]);
   const sessionStorageBlocked = Boolean((sessionKey && !initial.writable) || initialRewrite.error);
@@ -101,7 +105,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     try { localStorage.setItem(sessionKey, JSON.stringify(turns)); setStorageError(""); }
     catch { setStorageError("本机空间不足，本次对话未保存；关闭页面前请复制需要的内容。"); }
   }, [turns, sessionKey, sessionStorageBlocked]);
-  useEffect(() => { listRef.current?.scrollTo({ top: listRef.current.scrollHeight }); }, [turns, open, pendingPaid, failed]);
+  useEffect(() => { listRef.current?.scrollTo({ top: listRef.current.scrollHeight }); }, [turns, open, pendingPaid, failed, streamText]);
   useEffect(() => {
     if (!open || props.focusSection !== "templates") return;
     requestAnimationFrame(() => templateSectionRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }));
@@ -109,6 +113,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
 
   async function submit(request: PendingQuestion, confirmPaid: boolean, confirmedCredits?: number) {
     if (inFlight.current || !userId || sessionStorageBlocked) return;
+    if (!request.manhuaContext) { toast.error("请先选择漫剧项目，再向创作顾问提问；本次未调用模型。"); return; }
     if (!quotaQuery.data || quotaQuery.isError) { toast.error("暂时无法核对今日额度，本次未提交、未扣费。请刷新额度后重试。"); return; }
     const capturedSessionKey = sessionKey;
     const capturedRecoveryKey = recoveryKey;
@@ -123,6 +128,8 @@ export default function ManhuaCreativeAdvisorPanel(props: {
       return;
     }
     inFlight.current = true;
+    setStreamPending(true);
+    setStreamText("");
     if (mounted.current) {
       setPendingPaid(null);
       setFailed(null);
@@ -149,7 +156,8 @@ export default function ManhuaCreativeAdvisorPanel(props: {
         }
         return;
       }
-      const res = await askMutation.mutateAsync({ requestId: request.requestId, question: request.question, rawQuestion: request.rawQuestion, manhuaContext: request.manhuaContext, confirmPaid: confirmPaid || undefined, confirmedCredits: confirmPaid ? confirmedCredits : undefined });
+      const input = { requestId: request.requestId, question: request.question, rawQuestion: request.rawQuestion, manhuaContext: request.manhuaContext, confirmPaid: confirmPaid || undefined, confirmedCredits: confirmPaid ? confirmedCredits : undefined };
+      const res = await streamManhuaAdvisor(input, text => { if (mounted.current) setStreamText(text); }, label => { if (mounted.current) setStreamModel(label); });
       const answer = String(res.answer || "").trim();
       if (!answer) throw new Error("本次没有收到有效回答，请重试原问题。");
       if (request.manhuaContext?.previsEdit) {
@@ -195,7 +203,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
       if (/已用完|PAYMENT_REQUIRED|扣除.*积分/.test(message) && !/不足/.test(message)) {
         setPendingPaid({ request, credits: Number(message.match(/扣除\s*(\d+)\s*积分/)?.[1]) || undefined, hint: message.replace(/\b(?:Sol|Terra)\b/g, "").replace(/（成本\+60%）/g, "") });
       } else setFailed({ request, confirmPaid, confirmedCredits, message: formatManhuaAdvisorError(message), newAttempt: /ADVISOR_OPERATION_(?:FAILED|MISMATCH)/.test(message) });
-    } finally { inFlight.current = false; }
+    } finally { inFlight.current = false; if (mounted.current) { setStreamPending(false); setStreamText(""); } }
   }
 
   function send(rawQuestion: string, wrappedQuestion?: string) {
@@ -316,14 +324,14 @@ export default function ManhuaCreativeAdvisorPanel(props: {
         </section> : null}
         {!props.previsTarget && !props.previsIssue && <section ref={templateSectionRef} aria-label="剧本模板优化" className="rounded-lg border border-cyan-300/20 p-3 text-xs">
           <p className="text-white/65">根据当前故事推荐模板，再选择方案改写本集。推荐与改写沿用顾问问答额度，超额先确认。</p>
-          <button type="button" disabled={!userId || !project || askMutation.isPending || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={recommendTemplates} className="mt-2 rounded border border-cyan-300/30 px-3 py-2 disabled:opacity-40">推荐3—4个剧本模板方案</button>
+          <button type="button" disabled={!userId || !project || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={recommendTemplates} className="mt-2 rounded border border-cyan-300/30 px-3 py-2 disabled:opacity-40">推荐3—4个剧本模板方案</button>
         </section>}
         {rewrite && <section aria-label="改写原稿对比" className="space-y-2 rounded-lg border border-emerald-300/30 p-3 text-xs">
           <h3 className="font-semibold">第 {rewrite.episodeIndex} 集 · 改写对比</h3>
           <ul>{rewrite.changes.map((change, i) => <li key={i}>• {change}</li>)}</ul>
           <ManhuaRewriteComparison before={rewrite.originalBody} after={rewrite.rewrittenBody} />
           <p className="text-amber-100">采用后本集及后续制作需重新确认，旧图/片归档保留；完整旧稿另存本机备份。</p>
-          <button type="button" disabled={!props.onApplyRewrite || askMutation.isPending || project?.context.episodeIndex !== rewrite.episodeIndex || project?.context.episodeBody !== rewrite.originalBody} onClick={() => { if (props.onApplyRewrite?.(rewrite)) toast.success("改写已采用，请重新检查并确认剧本。"); }} className="rounded border border-emerald-300/40 px-3 py-2 disabled:opacity-40">采用这版改写</button>
+          <button type="button" disabled={!props.onApplyRewrite || asking || project?.context.episodeIndex !== rewrite.episodeIndex || project?.context.episodeBody !== rewrite.originalBody} onClick={() => { if (props.onApplyRewrite?.(rewrite)) toast.success("改写已采用，请重新检查并确认剧本。"); }} className="rounded border border-emerald-300/40 px-3 py-2 disabled:opacity-40">采用这版改写</button>
           {(project?.context.episodeIndex !== rewrite.episodeIndex || project?.context.episodeBody !== rewrite.originalBody) && <p>当前剧本与原快照不同，已停止覆盖。原稿与建议仍保留供复制。</p>}
         </section>}
         <section aria-label="旧稿备份" className="space-y-2 border-t border-white/10 pt-3 text-xs">
@@ -339,29 +347,29 @@ export default function ManhuaCreativeAdvisorPanel(props: {
           {turn.role === "advisor" && parseAdvisorTemplatePlans(turn.text, templates).map(plan => <section key={plan.publicId} className="mt-2 space-y-2 rounded border border-cyan-300/25 p-3 text-xs">
             <h3 className="font-semibold">{templates.find(t => t.publicId === plan.publicId)?.nameZh}</h3>
             <p>{plan.reason}</p><ul>{plan.changes.map((change, i) => <li key={i}>• {change}</li>)}</ul><p>保留：{plan.preserve}</p>
-            <button type="button" disabled={askMutation.isPending || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={() => requestRewrite(plan)} className="rounded border border-cyan-300/40 px-2 py-1 disabled:opacity-40">选此方案，改写当前集</button>
+            <button type="button" disabled={asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={() => requestRewrite(plan)} className="rounded border border-cyan-300/40 px-2 py-1 disabled:opacity-40">选此方案，改写当前集</button>
             <button type="button" onClick={() => onRequestTrial(templates.find(t => t.publicId === plan.publicId)!)} className="ml-2 text-cyan-100">免费试写大纲对比</button>
           </section>)}
           {turn.role === "advisor" && findMentionedTemplates(turn.text, templates).map((template) => <button key={template.publicId} type="button" onClick={() => onRequestTrial(template)} className="mt-2 rounded border border-cyan-300/30 px-2 py-1 text-xs text-cyan-100">查看「{template.nameZh}」试写入口 →</button>)}
         </div>)}
         {previsKey && (props.previsTarget || previsCandidate) && <details className="text-xs"><summary onClick={recoverPreviews} className="cursor-pointer py-2 text-cyan-100">找回本项目的独立试看</summary>{savedPreviews.map(({ key, trial }) => <button key={key} type="button" className="my-1 block rounded border border-white/20 px-2 py-2 text-left" onClick={() => { try { localStorage.setItem(`${previsKey}:trial`, trial.request.requestId); localStorage.setItem(previsKey, JSON.stringify(trial.candidate)); setAutoPrevisStart(false); setPrevisCandidate(trial.candidate); } catch { toast.error("试看恢复记录无法保存，未切换。"); } }}>{trial.candidate.patch.summaryZh} · {trial.request.spec.durationSec}秒</button>)}</details>}
-        {previsCandidate && <ManhuaAdvisorPrevisComparison key={JSON.stringify(previsCandidate)} candidate={previsCandidate} storageKey={previsKey ? `${previsKey}:trial` : null} autoStart={autoPrevisStart} onPrepare={props.onPreparePrevis} onRevise={() => { setDraft("保留这版其他安排，我想调整："); questionRef.current?.focus(); }} disabled={askMutation.isPending || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onApply={props.onApplyPrevis} />}
-        {askMutation.isPending && <p role="status" className="text-xs text-cyan-200">正在核对本次问题与项目证据…</p>}
+        {previsCandidate && <ManhuaAdvisorPrevisComparison key={JSON.stringify(previsCandidate)} candidate={previsCandidate} storageKey={previsKey ? `${previsKey}:trial` : null} autoStart={autoPrevisStart} onPrepare={props.onPreparePrevis} onRevise={() => { setDraft("保留这版其他安排，我想调整："); questionRef.current?.focus(); }} disabled={asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onApply={props.onApplyPrevis} />}
+        {asking && <div role="status" className="whitespace-pre-wrap rounded-lg border border-cyan-300/20 p-3 text-sm leading-6 text-cyan-100"><p className="mb-2 text-xs">{streamModel} · {streamText ? "正在生成建议，尚未校验完成…" : "正在结合项目分析…"}</p>{streamText}</div>}
         {pendingPaid && <div role="alert" className="rounded-lg border border-amber-300/30 bg-amber-400/10 p-3 text-xs leading-5 text-amber-100">
           <p>{pendingPaid.hint}</p><p className="mt-1">原问题：{pendingPaid.request.label}（按提问时快照继续）</p><p className="mt-1 whitespace-pre-wrap text-white/75">{pendingPaid.request.rawQuestion}</p>
           {!sessionKey && <p className="mt-2 font-semibold">先确认项目后再付费咨询，避免改稿丢回执。本次不会发起扣点请求。</p>}
-          <div className="mt-2 flex gap-3">{sessionKey && <button type="button" disabled={askMutation.isPending || sessionStorageBlocked || !pendingPaid.credits} onClick={() => void submit(pendingPaid.request, true, pendingPaid.credits)} className="rounded border border-amber-200/40 px-3 py-1">确认支付 {pendingPaid.credits ?? "待核对"} 积分并继续</button>}<button type="button" onClick={() => setPendingPaid(null)}>取消</button></div>
+          <div className="mt-2 flex gap-3">{sessionKey && <button type="button" disabled={asking || sessionStorageBlocked || !pendingPaid.credits} onClick={() => void submit(pendingPaid.request, true, pendingPaid.credits)} className="rounded border border-amber-200/40 px-3 py-1">确认支付 {pendingPaid.credits ?? "待核对"} 积分并继续</button>}<button type="button" onClick={() => setPendingPaid(null)}>取消</button></div>
         </div>}
-        {failed && <div role="alert" className="rounded-lg border border-rose-300/25 p-3 text-xs text-rose-100"><p>{failed.message}</p><p className="mt-1 text-white/70">原问题：{failed.request.label}</p><p className="mt-1 whitespace-pre-wrap text-white/70">{failed.request.rawQuestion}</p>{!failed.newAttempt && <p className="mt-2 text-amber-100">此请求仍未决，请先恢复原问题；草稿可以继续编辑，但不会覆盖恢复记录。</p>}<button type="button" disabled={askMutation.isPending || sessionStorageBlocked || (failed.confirmPaid && !sessionKey)} onClick={() => void submit(failed.newAttempt ? { ...failed.request, requestId: crypto.randomUUID() } : failed.request, failed.newAttempt ? false : failed.confirmPaid, failed.newAttempt ? undefined : failed.confirmedCredits)} className="mt-2 rounded border border-white/20 px-3 py-1">{failed.newAttempt ? "重新提问（新的一次，重新检查额度）" : "恢复原问题（沿用原请求编号）"}</button></div>}
+        {failed && <div role="alert" className="rounded-lg border border-rose-300/25 p-3 text-xs text-rose-100"><p>{failed.message}</p><p className="mt-1 text-white/70">原问题：{failed.request.label}</p><p className="mt-1 whitespace-pre-wrap text-white/70">{failed.request.rawQuestion}</p>{!failed.newAttempt && <p className="mt-2 text-amber-100">此请求仍未决，请先恢复原问题；草稿可以继续编辑，但不会覆盖恢复记录。</p>}<button type="button" disabled={asking || sessionStorageBlocked || (failed.confirmPaid && !sessionKey)} onClick={() => void submit(failed.newAttempt ? { ...failed.request, requestId: crypto.randomUUID() } : failed.request, failed.newAttempt ? false : failed.confirmPaid, failed.newAttempt ? undefined : failed.confirmedCredits)} className="mt-2 rounded border border-white/20 px-3 py-1">{failed.newAttempt ? "重新提问（新的一次，重新检查额度）" : "恢复原问题（沿用原请求编号）"}</button></div>}
       </div>
       {(props.previsTarget || props.previsIssue) && <div className="border-t border-cyan-300/20 px-3 py-2 text-xs text-cyan-100"><b>正在调整当前片段的白模</b><p>{props.previsIssue || "直接说出人物走向、动作和镜头变化；先讨论调度方案，选定后生成独立试看；不满意继续修改，满意才应用。"}</p><button type="button" className="mt-1 underline" onClick={props.onLeavePrevis}>返回普通咨询</button></div>}
       <footer className="border-t border-white/10 p-3">
-        {!props.previsTarget && !props.previsIssue && <div className="mb-2 flex flex-wrap gap-2">{quick.map(([label, question]) => <button key={label} type="button" disabled={!userId || askMutation.isPending || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={() => send(question!)} className="rounded-md border border-white/15 px-2 py-1.5 text-xs text-white/75 hover:border-cyan-300/60 disabled:opacity-40">{label}</button>)}</div>}
+        {!props.previsTarget && !props.previsIssue && <div className="mb-2 flex flex-wrap gap-2">{quick.map(([label, question]) => <button key={label} type="button" disabled={!userId || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={() => send(question!)} className="rounded-md border border-white/15 px-2 py-1.5 text-xs text-white/75 hover:border-cyan-300/60 disabled:opacity-40">{label}</button>)}</div>}
         <div className="flex items-end gap-2">
           <textarea ref={questionRef} aria-label="向创作顾问提问" value={draft} onChange={(event) => setDraft(event.target.value)} rows={3} maxLength={1200} disabled={!userId || sessionStorageBlocked}
             onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send(draft); } }}
             placeholder={props.previsTarget ? "例如：曹三逼近时推紧镜头，出手前下沉到侧面，接触时切马肩特写。只改10—17秒。" : "问当前剧本、人物或镜头…"} className="min-w-0 flex-1 resize-none rounded-lg border border-white/20 bg-black/20 px-3 py-2 text-sm outline-none focus:border-cyan-300" />
-          <button type="button" disabled={!userId || askMutation.isPending || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked || draft.trim().length < 2} onClick={() => send(draft)} className="rounded-lg bg-cyan-400 px-3 py-2.5 text-sm font-semibold text-slate-950 disabled:opacity-40">{quota && !quotaQuery.data?.exempt && quota.remaining === 0 ? `咨询 · ${quota.price} 积分（先确认）` : "发送"}</button>
+          <button type="button" disabled={!userId || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked || draft.trim().length < 2} onClick={() => send(draft)} className="rounded-lg bg-cyan-400 px-3 py-2.5 text-sm font-semibold text-slate-950 disabled:opacity-40">{quota && !quotaQuery.data?.exempt && quota.remaining === 0 ? `咨询 · ${quota.price} 积分（先确认）` : "发送"}</button>
         </div>
         <p className="mt-2 text-[11px] leading-4 text-white/45">{props.previsTarget ? "先提议、再试看；可以多轮修改，满意后点击应用。" : "顾问建议需由你确认采用。"}{sessionKey ? "历史按已确认项目版本保存在本机。" : "未确认稿仅保留本次页面会话，改稿后重新咨询。"}追问携带最近 8 条，长答复标记为节选。</p>
         <section aria-label="今日咨询额度" className="mt-2 rounded-lg border border-cyan-300/25 bg-cyan-400/5 p-3 text-xs leading-5" aria-live="polite">

@@ -7102,6 +7102,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 manhuaContext: input.manhuaContext,
                 paidCreditsAlreadyCharged: deducted.cost,
                 freeQuotaReserved: Boolean(freeQuotaDay),
+                onStream: ctx.advisorStream,
               });
               const completed = { success: true as const, ...result };
               const persisted = await markManhuaAdvisorSucceededWithRetry(

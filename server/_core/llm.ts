@@ -1,7 +1,9 @@
 import crypto from "node:crypto";
+import { assertSseContentSafety, readGlmSseStream } from "../services/sseChatStream";
 import { GoogleGenAI } from "@google/genai";
 import { ENV } from "./env";
 import { isGsUri } from "../services/gcs";
+import { isOpenRouterDeepSeekV41FlashModel } from "../services/openrouterDeepSeekV41Flash";
 import {
   COMETAPI_GPT_5_1_MODEL_ID,
   getCometApiBaseUrl,
@@ -15,7 +17,7 @@ import {
   normalizeEvolinkChatModel,
   toOpenAiCompatibleChatUserMessage,
 } from "../services/evolinkChatModel";
-import { OPENROUTER_GLM_PROVIDER_LOCK, glm53ReasoningEffort, isGlm53Model } from "../services/glmModels";
+import { OPENROUTER_DEEPSEEK_PROVIDER_LOCK, OPENROUTER_GLM_PROVIDER_LOCK, glm53ReasoningEffort, isGlm53Model } from "../services/glmModels";
 import {
   isOhMyGptChatEndpoint,
   isOhMyGptGpt56FamilyModel,
@@ -103,6 +105,8 @@ export type ToolChoice =
   | ToolChoiceExplicit;
 
 export type InvokeParams = {
+  /** 顾问正文实时输出；完整性与最终 JSON 校验仍由服务端执行。 */
+  onContentDelta?: (delta: string) => void;
   messages: Message[];
   tools?: Tool[];
   toolChoice?: ToolChoice;
@@ -134,7 +138,7 @@ export type InvokeParams = {
    * - `official_only`：**仅** `api.openai.com`（禁止 Evolink / OpenRouter）——画布 Terra 多模态等专线
    * - `evolink_primary`：仅调用方显式启用；EvoLink 主、官方 OpenAI 仅可重试错误备用
    */
-  openAiGateway?: "auto" | "official_only" | "evolink_primary";
+  openAiGateway?: "auto" | "official_only" | "evolink_primary" | "evolink_flash_only";
   /** 同一批次在主/备通道与重试间保持不变，用于幂等审计。 */
   requestId?: string;
   /** 仅直连 OpenRouter 时透传；用于参数能力、价格帽与数据策略约束。 */
@@ -702,7 +706,7 @@ const resolveTarget = (
   modelTier: ModelTier | undefined,
   preferredProvider?: Provider,
   explicitModelName?: string,
-  openAiGateway: "auto" | "official_only" | "evolink_primary" = "auto",
+  openAiGateway: "auto" | "official_only" | "evolink_primary" | "evolink_flash_only" = "auto",
 ): LlmTarget => {
   if (preferredProvider === "anthropic") {
     const anthropicKey = String(process.env.ANTHROPIC_API_KEY || "").trim();
@@ -721,6 +725,12 @@ const resolveTarget = (
 
   if (preferredProvider === "openai" || modelTier === "gpt5" || modelTier === "gpt54") {
     const candidate = String(explicitModelName || getOpenAiModelName(modelTier)).trim();
+    if (openAiGateway === "evolink_flash_only") {
+      if (!["deepseek-v4.1-flash", "glm-5.3-flash"].includes(candidate)) throw new Error("不支持的顾问备用模型");
+      const apiKey = getEvolinkApiKey();
+      if (!apiKey) throw new Error("顾问备用通道暂未配置");
+      return { provider: "openai", apiUrl: EVOLINK_CHAT_COMPLETIONS_URL, apiKey, modelName: candidate };
+    }
     const officialOnly = openAiGateway === "official_only";
     const evolinkPrimary = openAiGateway === "evolink_primary";
 
@@ -1327,11 +1337,15 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
   const normalizedResponseFormat = normalizeResponseFormat(params);
   const modelId = String(target.modelName || "").trim();
   const isKimiK3 = isOpenRouterKimiK3Model(modelId);
+  const isDeepSeekV41Flash = isOpenRouterDeepSeekV41FlashModel(modelId) || modelId === "deepseek-v4.1-flash";
+  const isFlashStream = isDeepSeekV41Flash || modelId === "glm-5.3-flash" || modelId === "z-ai/glm-5.3-flash";
+  const evolinkFlash = params.openAiGateway === "evolink_flash_only";
   // 0911：deepseek/deepseek-v4-pro-0813 三天后下架，这条 reasoning 型分支改由 GLM 5.3 系走
   const isGlm53 = isGlm53Model(modelId);
-  /** Kimi K3、GLM 5.3 reasoning 与 GPT-5 系均不发送 temperature/top_p。 */
+  /** 推理模型不额外发送采样参数。 */
   const supportsSamplingControls =
     !isKimiK3
+    && !isDeepSeekV41Flash
     && !isGlm53
     && !/^gpt-5(?:[.-]|$)/i.test(modelId)
     && !/^openai\/gpt-5/i.test(modelId);
@@ -1350,6 +1364,9 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     } else {
       reasoningEffort = OPENROUTER_KIMI_K3_REASONING_EFFORT;
     }
+  } else if (isDeepSeekV41Flash) {
+    // OpenRouter 模型目录列明 low/high/max，默认 high；不发送 GPT 专用档位。
+    reasoningEffort = params.reasoningEffort === "low" || params.reasoningEffort === "max" ? params.reasoningEffort : "high";
   } else if (isGlm53) {
     // GLM 5.3 恒开思考关不掉，只有 low/high/max 真正生效（medium/xhigh 会被静默降级）
     reasoningEffort = glm53ReasoningEffort(params.reasoningEffort);
@@ -1367,7 +1384,10 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     model: target.modelName,
     messages: params.messages.map(normalizeMessage),
   };
-  if (isGlm53 && reasoningEffort) {
+  if (evolinkFlash) {
+    payload.reasoning_effort = reasoningEffort;
+    if (isDeepSeekV41Flash) payload.thinking = { type: "enabled" };
+  } else if ((isGlm53 || isDeepSeekV41Flash) && reasoningEffort) {
     payload.reasoning = { effort: reasoningEffort };
   } else if (reasoningEffort) {
     payload.reasoning_effort = reasoningEffort;
@@ -1381,7 +1401,7 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
         : undefined;
 
   if (typeof maxCompletionTokens === "number" && maxCompletionTokens > 0) {
-    if (isGlm53) payload.max_tokens = Math.floor(maxCompletionTokens);
+    if (isGlm53 || isDeepSeekV41Flash) payload.max_tokens = Math.floor(maxCompletionTokens);
     else payload.max_completion_tokens = Math.floor(maxCompletionTokens);
   }
 
@@ -1405,12 +1425,20 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
   if (normalizedResponseFormat) {
     payload.response_format = normalizedResponseFormat;
   }
-  if (isGlm53) {
+  if (isGlm53 && !evolinkFlash) {
     // OpenRouter 上锁 Z.AI 自营；调用方给了偏好就并进去（0911 用户令：不落转售方）
     // 锁放在后面：调用方偏好只能补 require_parameters / max_price 之类，不能解开 order / allow_fallbacks
     payload.provider = { ...(params.openRouterProviderPreferences || {}), ...OPENROUTER_GLM_PROVIDER_LOCK };
-  } else if (params.openRouterProviderPreferences) {
+  } else if (isDeepSeekV41Flash && !evolinkFlash) {
+    // 沿用知识卡同款自营锁，参数与供应商保持可验证。
+    payload.provider = { ...(params.openRouterProviderPreferences || {}), ...OPENROUTER_DEEPSEEK_PROVIDER_LOCK };
+  } else if (params.openRouterProviderPreferences && !evolinkFlash) {
     payload.provider = params.openRouterProviderPreferences;
+  }
+
+  if (isFlashStream) {
+    payload.stream = true;
+    payload.stream_options = { include_usage: true };
   }
 
   const postChatCompletions = async (
@@ -1469,8 +1497,14 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
       );
     }
 
-    const rawText = await response.text();
+    const rawText = isFlashStream && contentType.includes("text/event-stream") && response.body
+      ? await readGlmSseStream(response.body, undefined, { strictCompletion: true, onContentDelta: params.onContentDelta })
+      : await response.text();
     const parsed = parseChatCompletionBody(rawText, label, response.status);
+    if (isFlashStream) assertSseContentSafety(parsed.choices?.[0]?.finish_reason);
+    if (isFlashStream && parsed.choices?.[0]?.finish_reason !== "stop") {
+      throw new Error("顾问回答未完整结束，请恢复原问题");
+    }
     return {
       ...parsed,
       provider: label === "Evolink" ? "evolink" : label === "OpenAI" ? "openai" : parsed.provider,
