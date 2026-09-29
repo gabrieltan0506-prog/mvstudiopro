@@ -1,3 +1,4 @@
+import { manhuaPrevisAudioSchema } from "./manhuaPrevisAudio";
 /** 动作白模配置：只有数据，没有用户 Python／命令／任意素材 URL。 */
 import { z } from "zod";
 import { manhuaShotTimeMapSchema, validateManhuaShotTimeMap } from "./manhuaActionPlanTiming";
@@ -911,6 +912,8 @@ export const manhuaPrevisRequestSchema = z
     scopeId: z.string().uuid(),
     clipId: z.string().min(1).max(160),
     spec: manhuaPrevisSpecSchema,
+    audio: manhuaPrevisAudioSchema.optional(),
+    quality: z.enum(["draft", "standard"]).optional(),
   })
   .strict();
 export type ManhuaPrevisRequest = z.infer<typeof manhuaPrevisRequestSchema>;
@@ -918,6 +921,9 @@ export type ManhuaPrevisRequest = z.infer<typeof manhuaPrevisRequestSchema>;
 export const manhuaPrevisStudioSchema = z
   .object({
     version: z.literal(1),
+    audioEnabled: z.boolean().optional(),
+    audioStartSec: z.number().finite().min(0).max(3600).optional(),
+    loopBgm: z.boolean().optional(),
     scopeId: z.string().uuid(),
     spec: manhuaPrevisDraftSchema,
     /** 请求先落草稿再提交；断网刷新只查询同编号，不自动下新任务。 */
@@ -961,6 +967,8 @@ export const manhuaPrevisStudioSchema = z
           durationSec: z.number().positive().max(30),
           createdAt: z.string().max(100),
           spec: manhuaPrevisSpecSchema,
+          audio: manhuaPrevisAudioSchema.optional(),
+          quality: z.enum(["draft", "standard"]).optional(),
         })
         .strict()
     ),

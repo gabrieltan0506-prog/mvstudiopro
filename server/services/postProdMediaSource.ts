@@ -320,7 +320,7 @@ export async function resolvePostProdInputSources(
   deps: PostProdMediaDeps = realDeps,
 ): Promise<PostProdJobInput> {
   // 预演/绑骨只携带受控参数和本人模型任务ID；专用渲染器重新核对来源，拒绝外部URL或脚本。
-  if(input.input.action === "manhua_previs" || input.input.action === "manhua_auto_rig") return postProdJobInputSchema.parse(input.input);
+  if((input.input.action === "manhua_previs" && !input.input.params.audio) || input.input.action === "manhua_auto_rig") return postProdJobInputSchema.parse(input.input);
   const userId = String(input.userId);
   const bucket = deps.getBucket();
   const context: PostProdMediaContext = await buildPostProdMediaContext(userId, bucket, deps);
@@ -328,6 +328,15 @@ export async function resolvePostProdInputSources(
     resolveRegisteredPostProdMediaSource({ userId, source }, deps, context);
 
   const job = input.input;
+  if (job.action === "manhua_previs") {
+    if (job.params.audio) {
+      // 白模长期身份只允许gs，校验不改写快照，避免幂等参数漂移。
+      for (const uri of Array.from(new Set(job.params.audio.clips.map(clip => clip.audioUri)))) {
+        if (await resolve(uri) !== uri) throw new Error("白模音轨存储身份不一致");
+      }
+    }
+    return postProdJobInputSchema.parse(job);
+  }
   if (job.action === "audio_trim") {
     return postProdJobInputSchema.parse({
       ...job, params: { ...job.params, audioUri: await resolve(job.params.audioUri) },

@@ -8,14 +8,15 @@ beforeAll(async () => {
   const result = await build({ stdin: { resolveDir: process.cwd(), loader: "tsx", contents: `
 import React,{useState} from 'react';import{createRoot}from'react-dom/client';
 import Panel from './client/src/components/canvas/ManhuaCreativeAdvisorPanel';
+import {ManhuaSecondaryStudioSurface as Surface} from './client/src/components/canvas/ManhuaSecondaryStudioSurface';
 import{createManhuaPrevisStudio}from'./shared/manhuaPrevis';
 import{makeAdvisorPrevisTarget,prepareAdvisorPrevisTrial}from'./shared/manhuaAdvisorPrevisEdit';
 const f=globalThis.fixture={asks:[],renders:[],writes:[]};const studio=createManhuaPrevisStudio(5);f.studio=studio;
-function App(){const[open,setOpen]=useState(true);f.setOpen=setOpen;return <Panel open={open} userId='1' confirmedProjectVersion='iteration-test' onClose={()=>setOpen(false)} templates={[]} onRequestTrial={()=>{}} previsTarget={makeAdvisorPrevisTarget('clip-1',studio)} onPreparePrevis={c=>prepareAdvisorPrevisTrial('clip-1',studio,c)} onApplyPrevis={t=>{f.writes.push(t);return true;}} project={{context:{seriesTitle:'墨菁传',episodeIndex:1,episodeTitle:'入市',stage:'storyboard',videoModel:'未选择',writerConfirmed:true,episodeBody:'曹三逼近，阿菁挡在马前。',assetSummary:'',shotSummary:'',blockers:[]},issues:[],contextNotes:[],selectionLabel:'第1段'}}/>}
+function App(){const[open,setOpen]=useState(true);const[host,setHost]=useState(null);f.setOpen=setOpen;return <><Surface immersive title='本段动作白模' advisorOpen={open} onAdvisorDockChange={setHost} onOpenAdvisor={()=>setOpen(true)} onClose={()=>{}}><div data-scene-view>原有3D场景与白模预览</div></Surface><Panel dockHost={host} open={open} userId='1' confirmedProjectVersion='iteration-test' onClose={()=>setOpen(false)} templates={[]} onRequestTrial={()=>{}} previsTarget={makeAdvisorPrevisTarget('clip-1',studio)} onPreparePrevis={c=>prepareAdvisorPrevisTrial('clip-1',studio,c)} onApplyPrevis={t=>{f.writes.push(t);return true;}} project={{context:{seriesTitle:'墨菁传',episodeIndex:1,episodeTitle:'入市',stage:'storyboard',videoModel:'未选择',writerConfirmed:true,episodeBody:'曹三逼近，阿菁挡在马前。',assetSummary:'',shotSummary:'',blockers:[]},issues:[],contextNotes:[],selectionLabel:'第1段'}}/></>}
 createRoot(document.getElementById('root')).render(<App/>);
 ` }, bundle: true, write: false, platform: "browser", format: "iife", jsx: "automatic", alias: { "@": path.resolve("client/src"), "@shared": path.resolve("shared") }, plugins: [{ name: "多轮顾问离线边界", setup(b) {
     b.onResolve({ filter: /^@\/lib\/manhuaAdvisorStream$/ }, () => ({ path: "stream", namespace: "stream-test" }));
-    b.onLoad({ filter: /.*/, namespace: "stream-test" }, () => ({ loader: "js", contents: `import {trpc} from '@/lib/trpc';export async function streamManhuaAdvisor(input,onText){onText('正在逐步输出调度建议');await new Promise(r=>setTimeout(r,30));return trpc.mvAnalysis.askPlatformSkillQa.useMutation().mutateAsync(input);}` }));
+    b.onLoad({ filter: /.*/, namespace: "stream-test" }, () => ({ loader: "js", contents: `import {trpc} from '@/lib/trpc';export async function streamManhuaAdvisor(input,onText,onModel){onModel?.('DeepSeek V4.1 Flash · OpenRouter');onText('正在逐步输出调度建议');await new Promise(r=>setTimeout(r,30));return trpc.mvAnalysis.askPlatformSkillQa.useMutation().mutateAsync(input);}` }));
     b.onResolve({ filter: /^@\/lib\/trpc$/ }, () => ({ path: "trpc", namespace: "offline" }));
     b.onLoad({ filter: /.*/, namespace: "offline" }, () => ({ loader: "js", contents: `export const trpc={mvAnalysis:{getManhuaAdvisorQuota:{useQuery:()=>({data:{remaining:5,price:8,exempt:false},isError:false,refetch:async()=>({})})},askPlatformSkillQa:{useMutation:()=>({isPending:false,mutateAsync:async input=>{const f=globalThis.fixture;f.asks.push(input);if(f.requirePaid&&!input.confirmPaid)throw new Error("今日标准顾问免费5次已用完。继续将扣除8积分/次，请确认后重试。");const spec=JSON.parse(input.manhuaContext.previsEdit.specJson);return{answer:JSON.stringify({kind:'previs_edit_v1',summaryZh:f.asks.length===1?'先缓推强化威胁，再看阿菁反应':'保留缓推，减小推近幅度',unsupportedZh:[],cameras:spec.cameras.map(c=>({...c,endLens:f.asks.length===1?60:50}))}),remainingFreeToday:5-f.asks.length,paidUnitCredits:8};}})}},manhuaPrevis:{submit:{useMutation:()=>({isPending:false,mutateAsync:async r=>{const f=globalThis.fixture;f.renders.push(r);return{jobId:'test-render',status:'queued',params:r,output:null};}})}},useUtils:()=>({manhuaPrevis:{get:{fetch:async()=>null}}})};` }));
   } }], define: { "process.env.NODE_ENV": '"development"', "import.meta.env": "{}" } });
@@ -27,9 +28,13 @@ it("先提案不自动渲染，追问继承上版，用户选定后才渲染，�
   page.on("request", r => r.isNavigationRequest() ? void r.respond({ status: 200, contentType: "text/html", body: '<div id="root"></div>' }) : void r.abort());
   await page.goto("http://localhost:41829/"); await page.addScriptTag({ content: bundle });
   await page.waitForSelector('textarea[aria-label="向创作顾问提问"]');
+  expect(await page.$eval('[data-manhua-creative-advisor]', e => Boolean(e.closest('[role=dialog][aria-label="本段动作白模"]')))).toBe(true);
+  expect(await page.$('[data-scene-view]')).not.toBeNull();
   expect(await page.$eval('[aria-label="今日咨询额度"]', e => e.textContent)).toContain("今日咨询免费剩余 5/5 次");
   await page.type('textarea', '曹三逼近时加强压迫感'); await page.keyboard.press('Enter');
   await page.waitForFunction(() => document.body.textContent?.includes('先缓推强化威胁'));
+  expect(await page.$('[data-scene-view]')).not.toBeNull();
+  expect(await page.$eval('[data-manhua-creative-advisor]', e => e.textContent)).not.toMatch(/DeepSeek|OpenRouter|EvoLink|GLM/);
   expect(await page.evaluate(() => (globalThis as any).fixture.renders.length)).toBe(0);
   await page.evaluate(() => Array.from(document.querySelectorAll('button')).find(b => b.textContent === '继续修改这版方案')?.click());
   await page.type('textarea', '镜头不要推得太近'); await page.keyboard.press('Enter');

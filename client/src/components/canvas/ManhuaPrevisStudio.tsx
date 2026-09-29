@@ -1,3 +1,4 @@
+import { buildManhuaPrevisAudio, type ManhuaPrevisAudio } from "@shared/manhuaPrevisAudio";
 import { ManhuaPrevisTempoControls } from "./ManhuaPrevisTempoControls";
 import { previsPlaybackDuration } from "@shared/manhuaPrevisPlayback";
 import { ManhuaPrevisLayoutPreview } from "./ManhuaPrevisLayoutPreview";
@@ -56,6 +57,8 @@ type Result = {
   clipId: string;
   requestId: string;
   spec: ManhuaPrevisSpec;
+  audio?: ManhuaPrevisAudio;
+  quality?: "draft" | "standard";
   report?: { warnings?: string[] };
   layerBundle?: {
     gcsUri: string;
@@ -413,8 +416,14 @@ export function ManhuaPrevisStudioView({
   function consume(response: PrevisResponse) {
     if (!mounted.current) return;
     const current = latest.current;
+    const adoptedTrial = current.studio.history.some(t =>
+      t.jobId === response.jobId && t.requestId === response.params.requestId &&
+      JSON.stringify(t.spec) === JSON.stringify(response.params.spec) &&
+      JSON.stringify(t.audio) === JSON.stringify(response.params.audio) &&
+      t.quality === response.params.quality
+    );
     if (
-      response.params.scopeId !== current.studio.scopeId ||
+      (response.params.scopeId !== current.studio.scopeId && !adoptedTrial) ||
       response.params.clipId !== current.block.id
     )
       return;
@@ -436,7 +445,8 @@ export function ManhuaPrevisStudioView({
         !result.url ||
         Math.abs(result.durationSec - previsPlaybackDuration(response.params.spec)) > 0.05 ||
         result.requestId !== response.params.requestId ||
-        result.clipId !== response.params.clipId
+        result.clipId !== response.params.clipId ||
+        JSON.stringify(result.audio) !== JSON.stringify(response.params.audio) || result.quality !== response.params.quality
       ) {
         setError("产物回执不完整，请查询原任务");
         return;
@@ -468,6 +478,8 @@ export function ManhuaPrevisStudioView({
         durationSec: result.durationSec,
         createdAt: old?.createdAt ?? new Date().toISOString(),
         spec: response.params.spec,
+        ...(response.params.audio ? { audio: response.params.audio } : {}),
+        ...(response.params.quality ? { quality: response.params.quality } : {}),
       };
       publish({
         ...current.studio,
@@ -602,12 +614,17 @@ export function ManhuaPrevisStudioView({
     lock.current = true;
     setBusy(true);
     setError("");
-    const input = studio.pending ?? {
+    let input: ManhuaPrevisRequest;
+    try { input = studio.pending ?? {
       requestId: crypto.randomUUID(),
       scopeId: studio.scopeId,
       clipId: block.id,
       spec: parsed.data,
-    };
+      quality: "draft",
+      ...(studio.audioEnabled !== false ? { audio: buildManhuaPrevisAudio(block.audioStudio, parsed.data, studio.audioStartSec ?? 0, studio.loopBgm ?? false) } : {}),
+    }; } catch (error) {
+      setError(error instanceof Error ? error.message : "请检查音轨"); lock.current = false; setBusy(false); return;
+    }
     try {
       // 同一段状态先保留请求，再入队。响应只入候选，不自动替换本段参考。
       if (!publish({ ...studio, pending: input })) return;
@@ -651,6 +668,7 @@ export function ManhuaPrevisStudioView({
             Math.abs(result.durationSec - previsPlaybackDuration(response.params.spec)) > 0.05 ||
             result.requestId !== response.params.requestId ||
             result.clipId !== block.id ||
+            JSON.stringify(result.audio) !== JSON.stringify(response.params.audio) || result.quality !== response.params.quality ||
             (response.params.spec.exportLayers &&
               (!result.layerBundle ||
                 !isPrevisMediaUrl(result.layerBundle.url) ||
@@ -665,6 +683,8 @@ export function ManhuaPrevisStudioView({
             durationSec: result.durationSec,
             createdAt: new Date().toISOString(),
             spec: response.params.spec,
+        ...(response.params.audio ? { audio: response.params.audio } : {}),
+        ...(response.params.quality ? { quality: response.params.quality } : {}),
           };
           const index = history.findIndex(t => t.jobId === take.jobId);
           if (index < 0) history.push(take);
@@ -800,6 +820,10 @@ export function ManhuaPrevisStudioView({
       setError("请先预览这条白模，逐帧检查并按正常速度复核后，再采用为本段参考。未审候选和旧参考均保留。");
       return;
     }
+    try {
+      const currentAudio = studio.audioEnabled !== false ? buildManhuaPrevisAudio(block.audioStudio, take.spec, studio.audioStartSec ?? 0, studio.loopBgm ?? false) : undefined;
+      if (JSON.stringify(currentAudio) !== JSON.stringify(take.audio)) throw new Error("当前音轨与此白模版本不同，请重新试看并审片后采用；旧视频保留。");
+    } catch (error) { setError(error instanceof Error ? error.message : "音轨无法核对"); return; }
     const old = block.manhuaSegmentRefs?.previs;
     const reference: ManhuaSegmentReferenceEntry = {
       url: take.url,

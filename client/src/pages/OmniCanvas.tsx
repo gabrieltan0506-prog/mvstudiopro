@@ -23,6 +23,7 @@ import ManhuaTemplateTrialCompare, {
 } from "@/components/canvas/ManhuaTemplateTrialCompare";
 import PostProdWorkshopCard from "@/components/canvas/PostProdWorkshopCard";
 import { manhuaPostProdScopeKey } from "@/lib/postProdWorkshop";
+import { buildManhuaPrevisAudio } from "@shared/manhuaPrevisAudio";
 import ManhuaCreativeAdvisorPanel from "@/components/canvas/ManhuaCreativeAdvisorPanel";
 import ManhuaOutlineTemplateRewrite from "@/components/canvas/ManhuaOutlineTemplateRewrite";
 import { advisorReconfirmationFromEpisode } from "@/lib/manhuaAdvisorBackups";
@@ -1412,6 +1413,9 @@ export default function OmniCanvas() {
   );
   /** 创作顾问面板开合：会话内不持久化——顾问是随手问，不是常驻工序 */
   const [advisorOpen, setAdvisorOpen] = useState(false);
+  const [advisor3dContext, setAdvisor3dContext] = useState<{ directionCardId?: string; directionCardVersion?: string } | undefined>();
+  const [advisorPreviewHost, setAdvisorPreviewHost] = useState<HTMLDivElement | null>(null);
+  const [advisorDockHost, setAdvisorDockHost] = useState<HTMLDivElement | null>(null);
   const [advisorPrevisClipId, setAdvisorPrevisClipId] = useState<string | null>(null);
   const [advisorFocusSection, setAdvisorFocusSection] = useState<"templates" | null>(null);
   const [advisorSelection, setAdvisorSelection] = useState<AdvisorSelection | null>(null);
@@ -1559,7 +1563,10 @@ export default function OmniCanvas() {
     const clip = blocksRef.current.find(b => b.id === candidate.target.clipId && !b.archivedFromPreviousScript);
     if (!clip?.previsStudio) throw new Error("本段白模不存在，未提交。");
     if (clip.status === "running" || clip.videoTaskStatus === "queued") throw new Error("本段仍在制作，请等待结束。");
-    return prepareAdvisorPrevisTrial(clip.id, advisorPrevisCurrentStudio(clip.previsStudio), candidate);
+    const trial = prepareAdvisorPrevisTrial(clip.id, advisorPrevisCurrentStudio(clip.previsStudio), candidate);
+    trial.request.quality = "draft";
+    if (clip.previsStudio.audioEnabled !== false) trial.request.audio = buildManhuaPrevisAudio(clip.audioStudio, trial.request.spec, clip.previsStudio.audioStartSec ?? 0, clip.previsStudio.loopBgm ?? false);
+    return trial;
   };
   const applyAdvisorPrevis = (trial: AdvisorPrevisTrial, receipt: AdvisorPrevisReceipt): boolean => {
     const candidate = trial.candidate;
@@ -1569,6 +1576,9 @@ export default function OmniCanvas() {
       const clip = current.find(b => b.id === candidate.target.clipId && !b.archivedFromPreviousScript);
       if (!clip?.previsStudio) throw new Error("本段白模已不存在，未应用。");
       if (clip.status === "running" || clip.videoTaskStatus === "queued") throw new Error("本段视频正在处理，暂不能修改。");
+      const currentAudio = clip.previsStudio.audioEnabled !== false
+        ? buildManhuaPrevisAudio(clip.audioStudio, trial.request.spec, clip.previsStudio.audioStartSec ?? 0, clip.previsStudio.loopBgm ?? false) : undefined;
+      if (JSON.stringify(currentAudio) !== JSON.stringify(trial.request.audio)) throw new Error("音轨或秒窗已变化，请按当前声音重新试看后再应用；旧视频保留。");
       const previsStudio = adoptAdvisorPrevisTrial(clip.id, advisorPrevisCurrentStudio(clip.previsStudio), trial, receipt);
       const next = current.map(b => b === clip ? { ...b, previsStudio } : b);
       if (!saveCanvasState(next, edges)) throw new Error("配置保存失败，原白模未改动。");
@@ -10177,7 +10187,7 @@ export default function OmniCanvas() {
                     data-manhua-advisor-open
                     aria-expanded={advisorOpen}
                     className="rounded-lg border border-white/15 bg-white/5 px-2.5 py-1 text-[11px] text-white/70 hover:bg-white/10 hover:text-white"
-                    onClick={() => { setAdvisorPrevisClipId(null); setAdvisorFocusSection(null); setAdvisorOpen(true); setAdvisorNudge(null); }}
+                    onClick={() => { setAdvisorPrevisClipId(null); setAdvisor3dContext(undefined); setAdvisorFocusSection(null); setAdvisorOpen(true); setAdvisorNudge(null); }}
                   >
                     创作顾问{advisorProject.issues.length ? ` (${advisorProject.issues.length})` : ""}
                   </button>
@@ -10397,7 +10407,7 @@ export default function OmniCanvas() {
                   finalCutStale={finalCutStale.stale}
                   finalCutVerified={finalCutStale.verified}
                   onOpenAdvisorIssue={(issueId) => {
-                    setAdvisorPrevisClipId(null);
+                    setAdvisorPrevisClipId(null); setAdvisor3dContext(undefined);
                     // 点阻断卡里某一条就定位那一条；点阶段条旁的那行仍然定位顶部项
                     const picked = issueId
                       ? advisorProject.issues.find((i) => i.id === issueId) || advisorTopIssue
@@ -10406,9 +10416,19 @@ export default function OmniCanvas() {
                     setAdvisorFocusSection(null);
                     setAdvisorOpen(true);
                   }}
-                  onOpenAdvisorPrevis={canUseManhua3d ? (clipId) => { setAdvisorPrevisClipId(clipId); setAdvisorFocusSection(null); setAdvisorOpen(true); } : undefined}
+                  onOpenAdvisor3d={canUseManhua3d ? (clipId) => {
+                    const clip = blocks.find(b => b.id === clipId && !b.archivedFromPreviousScript);
+                    const direction = resolveManhuaDirectionCard(activeDirectionCanon, "storyboard", classifyManhuaDirectionSceneType(clip?.prompt || ""), { episodeIndex: writerFocusEpisode, ...(clip ? { segmentIndex: resolveClipLocalSegmentIndex(clip.id, clip.prompt, writerFocusEpisode) } : {}) });
+                    setAdvisorPrevisClipId(clip?.previsStudio ? clip.id : null);
+                    setAdvisor3dContext(direction ? { directionCardId: direction.card.id, directionCardVersion: direction.card.version } : {});
+                    setAdvisorFocusSection(null); setAdvisorOpen(true);
+                  } : undefined}
+                  advisorOpen={advisorOpen}
+                  onAdvisorDockChange={setAdvisorDockHost}
+                  onAdvisorPreviewHostChange={setAdvisorPreviewHost}
+                  onOpenAdvisorPrevis={canUseManhua3d ? (clipId) => { setAdvisor3dContext(undefined); setAdvisorPrevisClipId(clipId); setAdvisorFocusSection(null); setAdvisorOpen(true); } : undefined}
                   onOpenAdvisorTemplates={() => {
-                    setAdvisorPrevisClipId(null);
+                    setAdvisorPrevisClipId(null); setAdvisor3dContext(undefined);
                     setAdvisorFocusSection("templates");
                     setAdvisorOpen(true);
                   }}
@@ -13477,7 +13497,7 @@ export default function OmniCanvas() {
         <div className="pointer-events-none fixed top-[4.5rem] right-4 z-[59] flex flex-col items-end gap-2">
           <button
             type="button"
-            onClick={() => { setAdvisorPrevisClipId(null); setAdvisorFocusSection(null); setAdvisorOpen(true); setAdvisorNudge(null); }}
+            onClick={() => { setAdvisorPrevisClipId(null); setAdvisor3dContext(undefined); setAdvisorFocusSection(null); setAdvisorOpen(true); setAdvisorNudge(null); }}
             aria-expanded={advisorOpen}
             data-manhua-advisor-open
             className="pointer-events-auto relative rounded-full border border-cyan-300/40 bg-[#10171f]/95 px-4 py-2.5 text-[12px] font-bold text-cyan-100 shadow-xl backdrop-blur transition hover:bg-cyan-500/20"
@@ -13521,6 +13541,9 @@ export default function OmniCanvas() {
         userId={user?.id != null ? String(user.id) : undefined}
         confirmedProjectVersion={projectBible?.confirmedAt}
         project={advisorProject}
+        dockHost={advisorDockHost}
+        previewHost={advisorPreviewHost}
+        studio3d={advisor3dContext}
         previsTarget={advisorPrevisEditing.target}
         previsIssue={advisorPrevisEditing.issue}
         onLeavePrevis={() => setAdvisorPrevisClipId(null)}

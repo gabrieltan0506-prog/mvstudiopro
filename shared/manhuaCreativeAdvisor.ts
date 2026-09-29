@@ -119,6 +119,11 @@ export const manhuaCreativeAdvisorContextSchema = z
     ),
     /** 当前白模编辑规格摘要；不含媒体位置，不是实际视频审片。 */
     previsEdit: advisorPrevisTargetSchema.optional(),
+    /** 3D 场景咨询不依赖已创建白模；只传导演卡身份，由服务端查真实手法库。 */
+    studio3d: z.object({
+      directionCardId: contextText(100, "导演包ID").optional(),
+      directionCardVersion: contextText(100, "导演包版本").optional(),
+    }).strict().optional(),
     previsSummary: contextText(MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.previsSummaryChars, "白模规格摘要").optional(),
     blockers: z
       .array(
