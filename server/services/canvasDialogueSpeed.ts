@@ -57,15 +57,22 @@ export async function speedCanvasDialogueTake(
   const match = /^gs:\/\/([^/]+)\/(.+)$/.exec(String(input.gcsUri || "").trim());
   const prefix = `post-prod/${userId}/dialogue/`;
   const objectName = match?.[2] || "";
+  // 文件名只收对白原件的安全字符：gcs.ts 会把其他字符规整成「-」，校验名与实际读写名必须是同一个（防 %2F、空格等编码绕行）
   if (!match || match[1] !== bucket || !objectName.startsWith(prefix) || !/\.wav$/i.test(objectName)
-    || objectName.includes("..") || objectName.slice(prefix.length).includes("/")) {
+    || objectName.includes("..") || !/^[A-Za-z0-9._-]+$/.test(objectName.slice(prefix.length))) {
     throw new CanvasDialogueError("conflict", "只能对本人的对白候选变速");
   }
   if (isCanvasDialogueSpeedDerivedObject(objectName)) throw new CanvasDialogueError("conflict", "请从原始候选变速，避免倍速叠加");
   const signal = AbortSignal.timeout(120_000);
-  const audio = await deps.download(`gs://${bucket}/${objectName}`);
-  const stretched = await deps.stretch(audio, speed, signal);
   const target = canvasDialogueSpeedObjectName(objectName, speed);
-  await deps.upload(target, stretched.buffer, signal);
-  return { gcsUri: `gs://${bucket}/${target}`, durationSec: stretched.durationSec, bytes: stretched.buffer.length, speed };
+  try {
+    const audio = await deps.download(`gs://${bucket}/${objectName}`);
+    const stretched = await deps.stretch(audio, speed, signal);
+    await deps.upload(target, stretched.buffer, signal);
+    return { gcsUri: `gs://${bucket}/${target}`, durationSec: stretched.durationSec, bytes: stretched.buffer.length, speed };
+  } catch (error) {
+    // 变速免费、可重复：不能落到路由的兜底文案「配音操作未能确认…勿重复生成」
+    console.warn("[canvasDialogueSpeed] failed:", error instanceof Error ? error.message : String(error));
+    throw new CanvasDialogueError("unavailable", "变速未完成，原候选保留，可稍后重试");
+  }
 }

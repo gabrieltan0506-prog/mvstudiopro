@@ -9,7 +9,7 @@ const deps = () => ({
   bucket: () => "b",
   download: vi.fn(async () => Buffer.from("wav")),
   stretch: vi.fn(async (_audio: Buffer, speed: number) => ({ buffer: Buffer.alloc(1000), durationSec: 5.568 / speed })),
-  upload: vi.fn(async () => undefined),
+  upload: vi.fn(async (_objectName: string, _buffer: Buffer, _signal: AbortSignal) => undefined),
 });
 
 describe("对白候选变速 0.5–2 倍", () => {
@@ -23,7 +23,10 @@ describe("对白候选变速 0.5–2 倍", () => {
   it("拒绝：别人的文件、别的桶、非对白目录、已变速件、区间外、1 倍", async () => {
     const d = deps();
     for (const gcsUri of ["gs://b/post-prod/2/dialogue/x.wav", "gs://other/post-prod/1/dialogue/x.wav", "gs://b/post-prod/1/bgm/x.wav",
-      "gs://b/post-prod/1/dialogue/../2/x.wav", "gs://b/post-prod/1/dialogue/sub/x.wav", "gs://b/post-prod/1/dialogue/x.mp3"]) {
+      "gs://b/post-prod/1/dialogue/../2/x.wav", "gs://b/post-prod/1/dialogue/sub/x.wav", "gs://b/post-prod/1/dialogue/x.mp3",
+      // 用户号前缀碰撞、双斜杠、大小写、编码绕行（gcs.ts 会把 % 与空格规整成「-」，校验名与读写名须一致）
+      "gs://b/post-prod/10/dialogue/x.wav", "gs://b/post-prod//1/dialogue/x.wav", "gs://b/post-prod/1/dialogue//x.wav", "gs://b/Post-Prod/1/dialogue/x.wav",
+      "GS://b/post-prod/1/dialogue/x.wav", "gs://b/post-prod/1/dialogue/%2E%2E%2F2%2Fx.wav", "gs://b/post-prod/1/dialogue/a b.wav"]) {
       await expect(speedCanvasDialogueTake(1, { gcsUri, speed: 1.2 }, d)).rejects.toThrow("本人");
     }
     await expect(speedCanvasDialogueTake(1, { gcsUri: "gs://b/post-prod/1/dialogue/x-x1p20.wav", speed: 1.1 }, d)).rejects.toThrow("原始候选");
@@ -31,6 +34,11 @@ describe("对白候选变速 0.5–2 倍", () => {
     await expect(speedCanvasDialogueTake(1, { gcsUri: "gs://b/post-prod/1/dialogue/x.wav", speed: 2.01 }, d)).rejects.toThrow("0.5–2");
     await expect(speedCanvasDialogueTake(1, { gcsUri: "gs://b/post-prod/1/dialogue/x.wav", speed: 1 }, d)).rejects.toThrow("无需");
     expect(d.download).not.toHaveBeenCalled();
+    expect(d.upload).not.toHaveBeenCalled();
+  });
+  it("读写或 ffmpeg 失败：报可重试，不落到「配音操作未能确认…勿重复生成」兜底", async () => {
+    const d = { ...deps(), download: vi.fn(async () => { throw new Error("gcs_download_failed:404:"); }) };
+    await expect(speedCanvasDialogueTake(1, { gcsUri: "gs://b/post-prod/1/dialogue/dlg_a.wav", speed: 1.2 }, d)).rejects.toMatchObject({ kind: "unavailable", message: expect.stringContaining("可稍后重试") });
     expect(d.upload).not.toHaveBeenCalled();
   });
   it("真实 ffmpeg：2 倍时长减半、0.5 倍时长加倍，输出 48k 双声道", async () => {

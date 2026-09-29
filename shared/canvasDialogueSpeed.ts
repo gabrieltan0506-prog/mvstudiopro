@@ -19,7 +19,8 @@ export function isCanvasDialogueSpeedDerivedObject(objectName: string): boolean 
  * 超出 2 倍仍放不下时返回上限 2，并由调用方提示改时间窗。
  */
 export function suggestCanvasDialogueSpeed(takeDurationSec: number, windowSec: number): { speed: number; fits: boolean } | null {
-  if (!(takeDurationSec > 0) || !(windowSec > 0) || takeDurationSec <= windowSec + 0.05) return null;
+  // 容差与工作台「原声超出窗口」提示同为 0.02 秒：提示出现时必须同时给出可用倍速
+  if (!(takeDurationSec > 0) || !(windowSec > 0) || takeDurationSec <= windowSec + 0.02) return null;
   const needed = Math.ceil((takeDurationSec / windowSec) * 100) / 100;
   return needed <= CANVAS_DIALOGUE_SPEED_MAX ? { speed: needed, fits: true } : { speed: CANVAS_DIALOGUE_SPEED_MAX, fits: false };
 }

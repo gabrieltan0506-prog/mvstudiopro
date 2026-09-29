@@ -7,6 +7,8 @@ describe("对白语速建议", () => {
     expect(6.144 / 1.23).toBeLessThanOrEqual(5);
     expect(suggestCanvasDialogueSpeed(5.02, 5)).toBeNull();
     expect(suggestCanvasDialogueSpeed(3, 5)).toBeNull();
+    // 工作台超窗提示阈值是 0.02 秒：5.04 秒已提示超窗，必须同时给出倍速
+    expect(suggestCanvasDialogueSpeed(5.04, 5)).toEqual({ speed: 1.01, fits: true });
   });
   it("2 倍仍放不下：返回上限并标记放不下", () => {
     expect(suggestCanvasDialogueSpeed(6.216, 1.5)).toEqual({ speed: 2, fits: false });
