@@ -104,6 +104,7 @@ type Props = {
   profiles?: PreparedRigProfile[];
   /** PR-6：采用白模成功后露出「下一步：生成本段草稿视频」；走工作台既有的本段成片入口（扣费确认沿用） */
   onNextDraftVideo?: () => void;
+  onOpenAdvisor?: () => void;
   onChange: (
     studio: Studio,
     reference?: ManhuaSegmentReferenceEntry
@@ -160,6 +161,7 @@ export function ManhuaPrevisStudioView({
   profiles = [],
   actionPlanDrafts = [],
   onNextDraftVideo,
+  onOpenAdvisor,
 }: Props & { services: PrevisServices }) {
   const [initial] = useState(
     () => block.previsStudio ?? createManhuaPrevisStudio(
@@ -839,6 +841,10 @@ export function ManhuaPrevisStudioView({
       <p className="text-xs leading-5 text-white/75" data-previs-intro>
         按分镜自动排好运镜，渲染几何预演，逐帧审过再采用为本段视频的动作参考。渲染不调用付费生成模型，也不会自动出成片。
       </p>
+      {onOpenAdvisor && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-cyan-300/30 bg-cyan-500/10 p-3" data-previs-advisor-entry>
+        <div><strong className="text-sm text-cyan-100">用自然语言调整运镜与动作</strong><p className="mt-1 text-xs text-white/70">告诉创作顾问谁往哪里走、何时做什么、镜头如何变化；先讨论方案，再渲染试看；不满意继续修改，满意后再应用。</p></div>
+        <button type="button" className={button} disabled={disabled || Boolean(pendingId) || busy} onClick={onOpenAdvisor}>让创作顾问调整</button>
+      </div>}
       <p className="text-xs text-cyan-100" data-previs-source-scope>{manhuaPrevisSourceLabel(studio.spec)}</p>
       {!preview && (
         <section data-previs-player-empty className="rounded border border-cyan-300/30 bg-black/25 p-5 text-sm text-white/75">

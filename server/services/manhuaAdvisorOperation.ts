@@ -433,3 +433,11 @@ export async function withManhuaAdvisorHeartbeat<T>(
     clearInterval(timer);
   }
 }
+
+/** 额度被另一并发请求用完时，回到原请求的待确认状态；尚未调用模型或扣费。 */
+export async function awaitManhuaAdvisorPaymentConfirmation(jobId: string): Promise<boolean> {
+  const db = await getDb(); if (!db) throw new Error("顾问请求暂不可用");
+  const rows = await db.update(jobs).set({ status: "queued", updatedAt: new Date() })
+    .where(and(eq(jobs.id, jobId), eq(jobs.status, "running"), sql`${jobs.output} IS NULL`, sql`${jobs.input}->>'action' = ${MANHUA_ADVISOR_JOB_ACTION}`)).returning({ id: jobs.id });
+  return rows.length === 1;
+}

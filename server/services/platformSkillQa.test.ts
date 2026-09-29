@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { invokeLLMMock, resolvePlatformSkillsPromptMock } = vi.hoisted(() => ({
+const { invokeLLMMock, resolvePlatformSkillsPromptMock, getDbMock } = vi.hoisted(() => ({
   invokeLLMMock: vi.fn(),
+  getDbMock: vi.fn(),
   resolvePlatformSkillsPromptMock: vi.fn(),
 }));
 
@@ -15,8 +16,10 @@ vi.mock("../_core/llm.js", () => ({
 }));
 
 vi.mock("../db.js", () => ({
-  getDb: vi.fn().mockResolvedValue(null),
+  getDb: getDbMock,
 }));
+
+vi.mock("./manhuaAdvisorDailyQuota", () => ({ readAdvisorDailyQuota: async () => { if (!await getDbMock()) throw new Error("今日顾问额度暂不可用"); return { used: 0 }; } }));
 
 vi.mock("./platformSkillsService.js", () => ({
   resolvePlatformSkillsPrompt: resolvePlatformSkillsPromptMock,
@@ -31,6 +34,8 @@ import {
 } from "./platformSkillQa";
 import type { ManhuaCreativeAdvisorContext } from "../../shared/manhuaCreativeAdvisor";
 import { MANHUA_DIRECTOR_STRATEGY_APPROVED_MANIFEST_VERSION } from "../../shared/manhuaDirectorStrategy";
+import { createManhuaPrevisStudio } from "../../shared/manhuaPrevis";
+import { makeAdvisorPrevisTarget } from "../../shared/manhuaAdvisorPrevisEdit";
 
 function manhuaContext(
   overrides: Partial<ManhuaCreativeAdvisorContext> = {},
@@ -75,6 +80,7 @@ function llmJson(answer = "建议先缩短人物距离，再检查反应镜。")
 }
 
 beforeEach(() => {
+  getDbMock.mockReset(); getDbMock.mockResolvedValue(null);
   invokeLLMMock.mockReset();
   invokeLLMMock.mockResolvedValue(llmJson());
   resolvePlatformSkillsPromptMock.mockReset();
@@ -119,6 +125,22 @@ describe("evidence soft heuristics", () => {
 });
 
 describe("漫剧工厂创作顾问上下文", () => {
+  it("白模候选通过实际规格检查，LLM只产生候选、不获得写回权限", async () => {
+    const studio = createManhuaPrevisStudio(5);
+    const patch = { kind: "previs_edit_v1", summaryZh: "缓推近景", unsupportedZh: [], cameras: studio.spec.cameras.map(c => ({ ...c, endLens: 60 })) };
+    invokeLLMMock.mockResolvedValue(llmJson(JSON.stringify(patch)));
+    const result = await askPlatformSkillQa({ userId: 7, question: "推近到人物", isAdmin: true, manhuaContext: manhuaContext({ previsEdit: makeAdvisorPrevisTarget("clip-1", studio) }) });
+    expect(JSON.parse(result.answer)).toEqual(patch);
+    expect(invokeLLMMock.mock.calls[0][0].max_tokens).toBe(16_384);
+    expect(invokeLLMMock.mock.calls[0][0].messages[0].content).toContain("用户满意点击应用之后才写回工作流");
+    expect(studio.history).toHaveLength(0);
+  });
+  it("连续两次白模非法候选必须失败，不能将最后一次解析壳当成功返回", async () => {
+    const studio = createManhuaPrevisStudio(5);
+    invokeLLMMock.mockResolvedValue(llmJson(JSON.stringify({ kind: "previs_edit_v1", summaryZh: "错误机位", unsupportedZh: [], cameras: studio.spec.cameras.map(c => ({ ...c, endSec: 4 })) })));
+    await expect(askPlatformSkillQa({ userId: 7, question: "推近到人物", isAdmin: true, manhuaContext: manhuaContext({ previsEdit: makeAdvisorPrevisTarget("clip-1", studio) }) })).rejects.toThrow();
+    expect(invokeLLMMock).toHaveBeenCalledTimes(2);
+  });
   it("真实 ask 调用把完整当前集与阶段投影送入 invokeLLM，不混入趋势或来源名", async () => {
     const result = await askPlatformSkillQa({
       userId: 7,
@@ -290,7 +312,13 @@ describe("漫剧工厂创作顾问上下文", () => {
     expect(uniqueTask).toBe(rawQuestion);
   });
 
+  it("普通用户额度存储不可用时拒绝模型调用，不能当成五次免费", async () => {
+    await expect(askPlatformSkillQa({ userId: 7, question: "如何运镜", isAdmin: false, manhuaContext: manhuaContext() })).rejects.toThrow("今日顾问额度暂不可用");
+    expect(invokeLLMMock).not.toHaveBeenCalled();
+  });
+
   it("漫剧路由已扣点后即使服务层跨日重新计数为免费，回执仍以预扣事实为准", async () => {
+    getDbMock.mockResolvedValue({ select: () => ({ from: () => ({ where: async () => [{ c: 0 }] }) }), insert: () => ({ values: async () => {} }) });
     const result = await askPlatformSkillQa({
       userId: 7,
       question: "这一镜怎么调整？",

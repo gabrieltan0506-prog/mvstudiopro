@@ -6746,6 +6746,15 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
      * 创作顾问问答：Sol/Terra 分桶免费额度；超额按成本×1.6 扣点。
      * 若检测到生图意图，返回 imageOffer（须用户再点确认才扣费生图）。
      */
+    /** 进入顾问即展示额度；未知额度不得当作免费，也不触发模型或扣费。 */
+    getManhuaAdvisorQuota: protectedProcedure.query(async ({ ctx }) => {
+      const exempt = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+      const { countPlatformSkillQaToday } = await import("./services/platformSkillQa.js");
+      const { resolvePlatformSkillQaPaidCredits } = await import("./config/platformSwitches.js");
+      const used = exempt ? 0 : await countPlatformSkillQaToday(ctx.user.id, "terra", true);
+      return { dailyLimit: 5, remaining: Math.max(0, 5 - used), price: resolvePlatformSkillQaPaidCredits("terra"), exempt, resetsAt: new Date((Math.floor((Date.now() + 8 * 3600_000) / 86400_000) + 1) * 86400_000 - 8 * 3600_000).toISOString() };
+    }),
+
     askPlatformSkillQa: protectedProcedure
       .input(
         z.object({
@@ -6767,6 +6776,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           qaModel: z.enum(["gpt-5.6-terra", "gpt-5.6-sol"]).optional(),
           /** 超额付费确认（前端 confirm 后传 true） */
           confirmPaid: z.boolean().optional(),
+          /** 锁定确认页展示的积分，价格变化须重新确认。 */
+          confirmedCredits: z.number().int().positive().max(10000).optional(),
           /** 同一次漫剧顾问发送/确认/网络重试保持不变；新提问生成新 UUID。 */
           requestId: z.string().uuid().optional(),
           /** 漫剧工厂当前集真实上下文；strict schema 禁止夹带身份、URL 或凭证字段。 */
@@ -6868,10 +6879,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
         const usedToday = isAdminUser
           ? 0
-          : await countPlatformSkillQaToday(ctx.user.id, qaMode);
-        const needPay = !isAdminUser && usedToday >= dailyLimit;
+          : await countPlatformSkillQaToday(ctx.user.id, qaMode, Boolean(input.manhuaContext));
+        let needPay = !isAdminUser && usedToday >= dailyLimit;
 
-        if (needPay && !input.confirmPaid) {
+        if (needPay && (!input.confirmPaid || (advisorOperationInput && input.confirmedCredits !== paidUnit))) {
           throw new TRPCError({
             code: "PAYMENT_REQUIRED",
             message: advisorOperationInput
@@ -6927,6 +6938,23 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           }
 
           const jobId = operation.jobId;
+          let freeQuotaDay: string | undefined;
+          if (!isAdminUser) {
+            const { reserveAdvisorDailyQuota } = await import("./services/manhuaAdvisorDailyQuota.js");
+            const quota = await reserveAdvisorDailyQuota(ctx.user.id, "consult", input.requestId!);
+            needPay = !quota.reserved;
+            if (quota.reserved) freeQuotaDay = quota.day;
+            if (needPay && (!input.confirmPaid || input.confirmedCredits !== paidUnit)) {
+              const { awaitManhuaAdvisorPaymentConfirmation } = await import("./services/manhuaAdvisorOperation.js");
+              if (!await awaitManhuaAdvisorPaymentConfirmation(jobId)) throw new TRPCError({ code: "CONFLICT", message: "原请求状态正在变化，请查询原请求" });
+              throw new TRPCError({ code: "PAYMENT_REQUIRED", message: `今日咨询免费 ${dailyLimit} 次已用完。继续将扣除 ${paidUnit} 积分/次，请确认后重试。` });
+            }
+          }
+          const restoreFreeQuota = async () => {
+            if (!freeQuotaDay) return;
+            const { releaseAdvisorDailyQuota } = await import("./services/manhuaAdvisorDailyQuota.js");
+            await releaseAdvisorDailyQuota(ctx.user.id, "consult", input.requestId!, freeQuotaDay);
+          };
           const taskType = MANHUA_ADVISOR_TASK_TYPE;
           const chargeKey = `${taskType}/${jobId}`.slice(0, 120);
           const {
@@ -7040,6 +7068,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 deducted.cost,
               );
               if (!reconciled) throw new Error("advisor_register_reconcile_persist_failed");
+              await restoreFreeQuota();
             } catch (reconcileError) {
               console.error(
                 `[askPlatformSkillQa] register reconcile pending jobId=${jobId}`,
@@ -7072,6 +7101,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 qaModel,
                 manhuaContext: input.manhuaContext,
                 paidCreditsAlreadyCharged: deducted.cost,
+                freeQuotaReserved: Boolean(freeQuotaDay),
               });
               const completed = { success: true as const, ...result };
               const persisted = await markManhuaAdvisorSucceededWithRetry(
@@ -7127,6 +7157,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 creditsRefunded,
               );
               if (!reconciled) throw new Error("advisor_refund_reconcile_persist_failed");
+              await restoreFreeQuota();
             } catch (refundError) {
               console.error(`[askPlatformSkillQa] refund pending jobId=${jobId}`, refundError);
               throw new TRPCError({
