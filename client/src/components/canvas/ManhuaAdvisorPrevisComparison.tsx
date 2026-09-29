@@ -3,7 +3,7 @@ import { trpc } from "@/lib/trpc";
 import { manhuaPrevisMediaUrl } from "@/lib/manhuaPrevisMediaUrl";
 import type { PrevisResponse } from "./ManhuaPrevisStudio";
 import { useState, useRef, useEffect } from "react";
-import { applyAdvisorPrevisPatch, validateAdvisorPrevisReceipt, advisorPrevisTrialSchema, type AdvisorPrevisTrial, type AdvisorPrevisReceipt, type AdvisorPrevisCandidate } from "@shared/manhuaAdvisorPrevisEdit";
+import { applyAdvisorPrevisPatch, validateAdvisorPrevisReceipt, advisorPrevisTrialSchema, type AdvisorPrevisTrial, type AdvisorPrevisReceipt, type AdvisorPrevisCandidate, type AdvisorPrevisVideoSource, advisorPrevisSpecJson } from "@shared/manhuaAdvisorPrevisEdit";
 import { manhuaPrevisSpecSchema, PREVIS_ACTION_LABELS, type ManhuaPrevisSpec } from "@shared/manhuaPrevis";
 
 function Configuration({ spec }: { spec: ManhuaPrevisSpec }) {
@@ -19,10 +19,11 @@ function Configuration({ spec }: { spec: ManhuaPrevisSpec }) {
     </section>)}
   </div>;
 }
-export function ManhuaAdvisorPrevisComparison({ candidate, storageKey, autoStart, previewHost, disabled, onPrepare, onApply, onRevise }: {
+export function ManhuaAdvisorPrevisComparison({ candidate, storageKey, autoStart, previewHost, disabled, onPrepare, onApply, onRevise, onPreviewReady }: {
   previewHost?: HTMLElement | null;
   candidate: AdvisorPrevisCandidate; storageKey: string | null; autoStart: boolean; disabled?: boolean;
   onRevise?: () => void;
+  onPreviewReady?: (source: AdvisorPrevisVideoSource) => void;
   onPrepare?: (value: AdvisorPrevisCandidate) => AdvisorPrevisTrial;
   onApply?: (trial: AdvisorPrevisTrial, receipt: AdvisorPrevisReceipt) => boolean;
 }) {
@@ -54,6 +55,7 @@ export function ManhuaAdvisorPrevisComparison({ candidate, storageKey, autoStart
     if (!value) { setStatus("暂未查到原请求，请确认原请求；不会自动新建。"); return; }
     if (value.status === "succeeded") {
       const verified = validateAdvisorPrevisReceipt(active.request, value);
+      onPreviewReady?.({ target: active.candidate.target, requestId: active.request.requestId, specJson: advisorPrevisSpecJson(active.request.spec) });
       setReceipt(verified); setStatus("试看已生成，工作流尚未修改"); setError("");
     } else if (value.status === "failed") { setStatus("试看失败，工作流未修改"); setError(value.error || "请调整需求后重新咨询"); }
     else { setStatus(value.status === "queued" ? "独立试看排队中，工作流未修改" : "独立试看渲染中，工作流未修改"); setError(""); }

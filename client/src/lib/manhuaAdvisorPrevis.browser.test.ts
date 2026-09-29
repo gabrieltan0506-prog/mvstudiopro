@@ -13,9 +13,9 @@ import{makeAdvisorPrevisTarget,prepareAdvisorPrevisTrial,adoptAdvisorPrevisTrial
 const f=globalThis.fixture={submits:[],queries:[],writes:[],ready:false};
 const studio=createManhuaPrevisStudio(5,'11111111-1111-4111-8111-111111111111');
 const candidate={target:makeAdvisorPrevisTarget('clip-1',studio),patch:{kind:'previs_edit_v1',summaryZh:'缓推到人物近景',unsupportedZh:[],cameras:studio.spec.cameras.map(c=>({...c,endLens:60}))}};
-f.studio=studio;f.original=JSON.stringify(studio);
+f.studio=studio;f.original=JSON.stringify(studio);f.videoSources=[];
 f.response=request=>({jobId:'previs-test-job',status:f.ready?'succeeded':'queued',params:request,output:f.ready?{requestId:request.requestId,clipId:request.clipId,gcsUri:'gs://test/preview.mp4',url:'/api/manhua-previs-media/test/preview',durationSec:5}:null});
-createRoot(document.getElementById('root')).render(<ManhuaAdvisorPrevisComparison candidate={candidate} storageKey='test:trial' previewHost={document.getElementById('preview')} autoStart onPrepare={c=>prepareAdvisorPrevisTrial('clip-1',f.studio,c)} onApply={(trial,res)=>{f.studio=adoptAdvisorPrevisTrial('clip-1',f.studio,trial,res);f.writes.push(trial.request.requestId);return true;}}/>);
+createRoot(document.getElementById('root')).render(<ManhuaAdvisorPrevisComparison candidate={candidate} onPreviewReady={source=>f.videoSources.push(source)} storageKey='test:trial' previewHost={document.getElementById('preview')} autoStart onPrepare={c=>prepareAdvisorPrevisTrial('clip-1',f.studio,c)} onApply={(trial,res)=>{f.studio=adoptAdvisorPrevisTrial('clip-1',f.studio,trial,res);f.writes.push(trial.request.requestId);return true;}}/>);
 ` }, bundle: true, write: false, platform: "browser", format: "iife", jsx: "automatic", alias: { "@": path.resolve("client/src"), "@shared": path.resolve("shared") }, plugins: [{ name: "离线白模确认门", setup(b) {
     b.onResolve({ filter: /^@\/lib\/trpc$/ }, () => ({ path: "trpc", namespace: "offline" }));
     b.onLoad({ filter: /.*/, namespace: "offline" }, () => ({ loader: "js", contents: `export const trpc={manhuaPrevis:{submit:{useMutation:()=>({isPending:false,mutateAsync:async r=>{const f=globalThis.fixture;f.submits.push(r);return f.response(r);}})}},useUtils:()=>({manhuaPrevis:{get:{fetch:async({requestId})=>{const f=globalThis.fixture;f.queries.push(requestId);const r=JSON.parse(localStorage.getItem('test:trial:'+requestId)).request;return f.response(r);}}}})};` }));
@@ -38,6 +38,8 @@ it("独立渲染和刷新不写原场景；观看并确认后才允许应用真�
   await page.evaluate(() => { (globalThis as any).fixture.ready = true; const b = Array.from(document.querySelectorAll('button')).find(b => b.textContent === '确认原试看请求（不新建）'); b?.click(); });
   await page.waitForSelector('video[aria-label="顾问独立白模试看"]');
   expect(await page.evaluate(() => (globalThis as any).fixture.submits[0].requestId)).toBe(id);
+  expect(await page.evaluate(() => (globalThis as any).fixture.videoSources.at(-1))).toMatchObject({ requestId: id, target: { clipId: "clip-1" } });
+  expect(await page.evaluate(() => JSON.parse((globalThis as any).fixture.videoSources.at(-1).specJson).cameras[0].endLens)).toBe(60);
   expect(await page.evaluate(() => (globalThis as any).fixture.writes)).toEqual([]);
   expect(await page.$('#preview video')).not.toBeNull();
   expect(await page.$('#root video')).toBeNull();

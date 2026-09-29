@@ -7,6 +7,7 @@ export const advisorPrevisTargetSchema = z.object({
   directionCardId: safeText(100).optional(), directionCardVersion: safeText(100).optional(),
   clipId: safeText(160), scopeId: z.string().uuid(), specJson: safeText(30000),
   previousPreviewSpecJson: safeText(30000).optional(),
+  previousPreviewRequestId: z.string().uuid().optional(),
 }).strict().superRefine((v, ctx) => {
   try {
     for (const raw of [v.specJson, v.previousPreviewSpecJson].filter(Boolean)) {
@@ -23,8 +24,23 @@ export function advisorPrevisSpecJson(spec: ManhuaPrevisStudio["spec"]): string 
   const { scriptSource: _source, ...rest } = spec;
   return JSON.stringify({ ...rest, actors: spec.actors.map(({ assetRef: _asset, riggedModel: _rig, ...actor }) => actor) });
 }
-export function makeAdvisorPrevisTarget(clipId: string, studio: ManhuaPrevisStudio): AdvisorPrevisTarget {
-  return advisorPrevisTargetSchema.parse({ clipId, scopeId: studio.scopeId, specJson: advisorPrevisSpecJson(studio.spec) });
+export function makeAdvisorPrevisTarget(clipId: string, studio: ManhuaPrevisStudio, previewRequestId?: string): AdvisorPrevisTarget {
+  const specJson = advisorPrevisSpecJson(studio.spec);
+  const preview = previewRequestId
+    ? studio.history.find(h => h.requestId === previewRequestId)
+    : [...studio.history].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  if (previewRequestId && !preview) throw new Error("所选白模版本尚未恢复，请重新预览后再打开顾问");
+  return advisorPrevisTargetSchema.parse({ clipId, scopeId: studio.scopeId, specJson,
+    ...(preview ? { previousPreviewRequestId: preview.requestId, previousPreviewSpecJson: advisorPrevisSpecJson(preview.spec) } : {}) });
+}
+/** 已完成的独立试看只作为下轮输入；不写入工作流或采用状态。 */
+export const advisorPrevisVideoSourceSchema = z.object({
+  target: advisorPrevisTargetSchema, requestId: z.string().uuid(), specJson: safeText(30000),
+}).strict();
+export type AdvisorPrevisVideoSource = z.infer<typeof advisorPrevisVideoSourceSchema>;
+export function withAdvisorPrevisVideo(target: AdvisorPrevisTarget, source: AdvisorPrevisVideoSource | null): AdvisorPrevisTarget {
+  if (!source || target.clipId !== source.target.clipId || target.scopeId !== source.target.scopeId) return target;
+  return advisorPrevisTargetSchema.parse({ ...target, previousPreviewRequestId: source.requestId, previousPreviewSpecJson: source.specJson });
 }
 const actorEdit = previsActorSchema.pick({ id: true, start: true, end: true, moveStartSec: true, moveEndSec: true, facingDeg: true, motionRoute: true, actions: true }).partial().required({ id: true }).strict();
 export const advisorPrevisPatchSchema = z.object({

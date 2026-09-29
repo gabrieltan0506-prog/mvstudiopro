@@ -107,7 +107,7 @@ type Props = {
   profiles?: PreparedRigProfile[];
   /** PR-6：采用白模成功后露出「下一步：生成本段草稿视频」；走工作台既有的本段成片入口（扣费确认沿用） */
   onNextDraftVideo?: () => void;
-  onOpenAdvisor?: () => void;
+  onOpenAdvisor?: (requestId?: string) => void;
   onChange: (
     studio: Studio,
     reference?: ManhuaSegmentReferenceEntry
@@ -867,7 +867,7 @@ export function ManhuaPrevisStudioView({
       </p>
       {onOpenAdvisor && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-cyan-300/30 bg-cyan-500/10 p-3" data-previs-advisor-entry>
         <div><strong className="text-sm text-cyan-100">用自然语言调整运镜与动作</strong><p className="mt-1 text-xs text-white/70">告诉创作顾问谁往哪里走、何时做什么、镜头如何变化；先讨论方案，再渲染试看；不满意继续修改，满意后再应用。</p></div>
-        <button type="button" className={button} disabled={disabled || Boolean(pendingId) || busy} onClick={onOpenAdvisor}>让创作顾问调整</button>
+        <button type="button" className={button} disabled={disabled || Boolean(pendingId) || busy} onClick={() => onOpenAdvisor(preview?.requestId)}>让创作顾问调整</button>
       </div>}
       <p className="text-xs text-cyan-100" data-previs-source-scope>{manhuaPrevisSourceLabel(studio.spec)}</p>
       {!preview && (

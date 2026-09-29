@@ -104,3 +104,14 @@ it.each([
   expect(body.reasoning_effort).toBeUndefined();
   expect(body.reasoning?.effort).toBeUndefined();
 });
+
+it("FlashX真实传输规范化保留video_url和Z.AI锁", async () => {
+ vi.stubEnv("OPENROUTER_API_KEY", "sk-test-only-not-real");
+ const fetchMock = vi.fn().mockResolvedValue(new Response('data: {"choices":[{"delta":{"content":"{}"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', { headers: { "content-type": "text/event-stream" } }));
+ vi.stubGlobal("fetch", fetchMock);
+ await invokeLLM({ provider: "openai", modelName: "z-ai/glm-5.3-flashx", messages: [{ role: "user", content: [{ type: "text", text: "分析本片画面" }, { type: "video_url", video_url: { url: "https://test.invalid/actual.mp4" } }] }] });
+ const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+ expect(body.messages[0].content[1]).toEqual({ type: "video_url", video_url: { url: "https://test.invalid/actual.mp4" } });
+ expect(body.provider).toMatchObject({ order: ["Z.AI"], allow_fallbacks: false });
+ expect(fetchMock).toHaveBeenCalledTimes(1);
+});
