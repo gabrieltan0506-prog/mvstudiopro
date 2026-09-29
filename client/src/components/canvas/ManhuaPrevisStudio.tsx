@@ -210,6 +210,11 @@ export function ManhuaPrevisStudioView({
   const [autoCameraMessage, setAutoCameraMessage] = useState<{ ok: boolean; text: string } | null>(null);
   /** 0929：同一段里分两条白模时（如第1段镜5–6、放下娘），自动排镜从这一镜起连续覆盖；null＝本段首镜。 */
   const [directionStartShot, setDirectionStartShot] = useState<number | null>(null);
+  /** 0929：导入已排好的白模规格（粘贴 JSON → 站内校验 → 核对摘要 → 套用，可撤销、不自动渲染） */
+  const [importText, setImportText] = useState("");
+  const [importError, setImportError] = useState("");
+  const [importPreview, setImportPreview] = useState<{ spec: ManhuaPrevisSpec; lines: string[]; warnings: string[] } | null>(null);
+  const [importReviewed, setImportReviewed] = useState(false);
   /** 白模时长覆盖本段前几镜时（如第1段 17 秒＝镜1–4），只排被覆盖的镜；对不上镜头边界就不猜 */
   function autoDirectCameras() {
     if (disabled || pendingId || lock.current) return;
@@ -224,14 +229,11 @@ export function ManhuaPrevisStudioView({
       covered.push(shot);
       sum += shot.durationSec;
     }
-    // 尾差（<1 秒）补在末镜：末镜机位定格到白模结尾，不改分镜时长（0929：第3段A/B 22.216/22.784 秒对 23 秒白模）
+    // 尾差（<1 秒）：按分镜真实合计排机位（切点不被推迟），排好后只把末机位延到白模结尾；不改分镜时长
+    // （0929：第3段A/B 22.216/22.784 秒对 23 秒白模；审查：补在末镜时长上会把末镜内硬切点后移）
     const tailSec = D - sum;
-    if (covered.length && tailSec > 1e-6 && tailSec < 1) {
-      const last = covered[covered.length - 1]!;
-      covered[covered.length - 1] = { ...last, durationSec: last.durationSec + tailSec };
-      sum = D;
-    }
-    if (!covered.length || Math.abs(sum - D) > 1e-6) {
+    const padTail = covered.length > 0 && tailSec > 1e-6 && tailSec < 1;
+    if (!covered.length || (!padTail && Math.abs(sum - D) > 1e-6)) {
       const from = directionShots.slice(startAt);
       setAutoCameraMessage({ ok: false, text: `白模 ${D} 秒对不上分镜镜头边界（从镜${from[0]?.index ?? "?"}起：${from.map(s => `镜${s.index} ${s.durationSec}秒`).join("、")}），请把白模时长改成从起始镜起连续几镜的合计，或换一个起始镜` });
       return;
@@ -239,7 +241,7 @@ export function ManhuaPrevisStudioView({
     const passengerId = studio.spec.piggyback?.passengerId;
     const plan = directManhuaCamerasFromShots({
       shots: covered,
-      durationSec: D,
+      durationSec: padTail ? sum : D,
       aspect: studio.spec.aspect,
       directionCardId,
       actors: studio.spec.actors.map(actor => ({
@@ -256,6 +258,7 @@ export function ManhuaPrevisStudioView({
       return;
     }
     const cameras = plan.cameras.map(({ shotIndex: _shot, noteZh: _note, ...camera }) => camera);
+    if (padTail && cameras.length) cameras[cameras.length - 1] = { ...cameras[cameras.length - 1]!, endSec: D };
     // 只拦相机合同：其他字段（角色、动作）仍在编辑中时不因它们挡住排镜
     const cameraIssue = manhuaPrevisSpecSchema.safeParse({ ...studio.spec, cameras }).error?.issues.find(issue => issue.path[0] === "cameras");
     if (cameraIssue) {
@@ -271,7 +274,49 @@ export function ManhuaPrevisStudioView({
       draftCameraPromptZh: lines,
     });
     if (ok !== false)
-      setAutoCameraMessage({ ok: true, text: `已按镜${covered[0]!.index}–${covered.at(-1)!.index}排出 ${plan.cameras.length} 个机位，尚未渲染${tailSec > 1e-6 && tailSec < 1 ? `；分镜合计比白模短 ${tailSec.toFixed(3)} 秒，镜${covered.at(-1)!.index}机位定格补到结尾` : ""}${plan.notesZh.length ? `；${plan.notesZh.join("；")}` : ""}` });
+      setAutoCameraMessage({ ok: true, text: `已按镜${covered[0]!.index}–${covered.at(-1)!.index}排出 ${plan.cameras.length} 个机位，尚未渲染${padTail ? `；分镜合计比白模短 ${tailSec.toFixed(3)} 秒，镜${covered.at(-1)!.index}末机位延长到结尾（该机位运镜随之放慢）` : ""}${plan.notesZh.length ? `；${plan.notesZh.join("；")}` : ""}` });
+  }
+  function checkImportedSpec() {
+    setImportError("");
+    setImportPreview(null);
+    setImportReviewed(false);
+    let raw: unknown;
+    try { raw = JSON.parse(importText); } catch { setImportError("不是有效的 JSON，请粘贴完整的白模规格。"); return; }
+    // 允许直接贴规格，或贴带 spec 字段的整份白模配置
+    const candidate = raw && typeof raw === "object" && !Array.isArray(raw) && "spec" in raw && !("actors" in raw) ? (raw as { spec: unknown }).spec : raw;
+    const parsed = manhuaPrevisSpecSchema.safeParse(candidate);
+    if (!parsed.success) {
+      setImportError(`规格未通过白模校验：${parsed.error.issues.slice(0, 6).map(issue => issue.message).join("；")}`);
+      return;
+    }
+    const spec = parsed.data;
+    const name = (id: string) => spec.actors.find(actor => actor.id === id)?.nameZh || id;
+    const warnings = spec.actors
+      .filter(actor => actor.assetRef && !characters.some(character => character.id === actor.assetRef))
+      .map(actor => `${actor.nameZh || actor.id} 绑定的人物在本项目里找不到，套用后按自定义人物显示`);
+    const lines = [
+      `${spec.durationSec} 秒 · ${spec.aspect} · 渲染容量 ${previsRenderCostUnits(spec)} / ${PREVIS_RENDER_UNIT_BUDGET}`,
+      `角色：${spec.actors.map(actor => `${actor.nameZh || actor.id}（${actor.shape === "horse" ? "四足" : "人形"}）`).join("、")}`,
+      spec.piggyback ? `背负：${name(spec.piggyback.carrierId)} 背 ${name(spec.piggyback.passengerId)}` : "无背负",
+      `机位 ${spec.cameras.length} 个；套用后可再点「按分镜自动排运镜」按本段分镜重排`,
+    ];
+    setImportPreview({ spec, lines, warnings });
+  }
+  function applyImportedSpec() {
+    if (!importPreview || !importReviewed || disabled || pendingId || lock.current || busy) return;
+    const { draftCameraPromptZh: _p, draftTempoZh: _t, ...rest } = studio;
+    const spec = { ...importPreview.spec, actors: assignPrevisActorColors(importPreview.spec.actors, assignPrevisActorColors(studio.spec.actors)) };
+    const ok = publish({
+      ...rest,
+      spec,
+      specHistory: [...(studio.specHistory ?? []), { spec: studio.spec, createdAt: new Date().toISOString(), reasonZh: "导入白模规格前的配置" }],
+    });
+    if (ok === false) return;
+    setImportPreview(null);
+    setImportText("");
+    setImportReviewed(false);
+    setAutoCameraMessage(null);
+    setStatus("已套用导入的规格，尚未渲染");
   }
   function publish(next: Studio, reference?: ManhuaSegmentReferenceEntry) {
     const current = latest.current;
@@ -1027,6 +1072,31 @@ export function ManhuaPrevisStudioView({
           ))}
         </details>
       ) : null}
+      <details className="space-y-2 rounded border border-white/15 p-2" data-previs-import>
+        <summary className="min-h-11 cursor-pointer py-2 text-xs font-semibold text-white/80">导入白模规格 · 粘贴已排好的站位、动作与机位</summary>
+        <p className="text-[11px] text-white/60">粘贴白模规格 JSON（例如按分镜排好的第3段A）。先检查、核对摘要再套用；原配置进撤销历史，不会自动渲染。</p>
+        <textarea
+          aria-label="白模规格 JSON"
+          rows={6}
+          value={importText}
+          disabled={disabled || Boolean(pendingId) || busy}
+          onChange={event => { setImportText(event.target.value); setImportPreview(null); setImportReviewed(false); setImportError(""); }}
+          className="w-full rounded border border-white/20 bg-black/30 p-2 font-mono text-[11px] text-white"
+        />
+        <button type="button" className={button} disabled={disabled || Boolean(pendingId) || busy || !importText.trim()} onClick={checkImportedSpec}>检查规格</button>
+        {importError ? <p role="alert" className="text-[11px] text-amber-100">{importError}</p> : null}
+        {importPreview ? (
+          <div className="space-y-1 rounded bg-white/5 p-2 text-[11px] text-white/80" data-previs-import-preview>
+            <ul className="list-disc space-y-0.5 pl-4">{importPreview.lines.map(line => <li key={line}>{line}</li>)}</ul>
+            {importPreview.warnings.map(warning => <p key={warning} className="text-amber-100">{warning}</p>)}
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={importReviewed} onChange={event => setImportReviewed(event.target.checked)} />
+              我已核对时长、角色、背负与机位；套用后原配置可撤销
+            </label>
+            <button type="button" className={button} disabled={!importReviewed || disabled || Boolean(pendingId) || busy} onClick={applyImportedSpec}>套用到本段</button>
+          </div>
+        ) : null}
+      </details>
       <details open={advancedOpen} onToggle={(e) => setAdvancedOpen(e.currentTarget.open)} className="space-y-2" data-previs-advanced>
         <summary className="text-xs text-cyan-100">高级参数 · 数字表（站位 / 动作 / 特效 / 出水 / 短打）</summary>
       <div className="flex flex-wrap gap-3">

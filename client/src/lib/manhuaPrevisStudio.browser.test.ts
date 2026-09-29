@@ -285,7 +285,18 @@ it("0929 分镜合计带小数（第3段A 22.216 秒对 23 秒白模）：尾差
     expect(cameras.at(-1)!.endSec).toBe(10);
     const text = await page.evaluate(() => document.querySelector("[data-previs-auto-camera]")!.textContent || "");
     expect(text).toContain("短 0.600 秒");
-    expect(text).toContain("镜2机位定格补到结尾");
+    expect(text).toContain("镜2末机位延长到结尾");
+    // 末镜内有硬切：切点按分镜真实合计算，不因补尾差后移（审查实测：不补 5.625 秒，补在末镜时长上会变 5.792 秒）
+    await page.evaluate(() => (window as any).fixture.setDirectionShots([
+      { index: 1, durationSec: 4, cameraZh: "全景；平视；定机" },
+      { index: 2, durationSec: 5.4, cameraZh: "近景→特写；快切后短推" },
+    ]));
+    await settle(page);
+    await click(page, "按分镜自动排运镜");
+    await settle(page);
+    const cut = await page.evaluate(() => ((window as any).fixture.block.previsStudio.spec.cameras as Array<{ startSec: number; endSec: number }>).map(c => c.startSec));
+    expect(cut.some(sec => Math.abs(sec - 5.625) < 0.01)).toBe(true);
+    expect(cut.some(sec => Math.abs(sec - 5.792) < 0.01)).toBe(false);
     // 尾差 1.5 秒：不补，报对不上，机位不动
     await page.evaluate(() => (window as any).fixture.setDirectionShots([
       { index: 1, durationSec: 4, cameraZh: "全景；平视；定机" },
@@ -297,6 +308,56 @@ it("0929 分镜合计带小数（第3段A 22.216 秒对 23 秒白模）：尾差
     await settle(page);
     expect(await page.evaluate(() => document.querySelector("[data-previs-auto-camera]")!.textContent || "")).toContain("对不上");
     expect(await page.evaluate(() => JSON.stringify((window as any).fixture.block.previsStudio.spec.cameras))).toBe(before);
+  } finally { await page.close(); }
+});
+
+it("0929 导入白模规格：先检查再核对才能套用，原配置进撤销历史、不自动渲染；坏 JSON 与校验不过的规格不改配置", async () => {
+  const page = await open(false, false, undefined, false);
+  try {
+    await page.evaluate(() => { const tune = document.querySelector("[data-previs-tune]") as HTMLDetailsElement; tune.open = true; (document.querySelector("[data-previs-import]") as HTMLDetailsElement).open = true; });
+    const before = await page.evaluate(() => JSON.stringify((window as any).fixture.block.previsStudio.spec));
+    const setText = async (text: string) => page.evaluate(value => {
+      const area = document.querySelector('[aria-label="白模规格 JSON"]') as HTMLTextAreaElement;
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      setter.call(area, value); area.dispatchEvent(new Event("input", { bubbles: true }));
+    }, text);
+    // 坏 JSON
+    await setText("{不是 JSON");
+    await settle(page);
+    await click(page, "检查规格");
+    await settle(page);
+    expect(await page.$eval("[data-previs-import] [role=alert]", el => el.textContent)).toContain("不是有效的 JSON");
+    // 校验不过：白模时长必须整秒
+    const bad = await page.evaluate(() => JSON.stringify({ ...(window as any).fixture.block.previsStudio.spec, durationSec: 22.216 }));
+    await setText(bad);
+    await settle(page);
+    await click(page, "检查规格");
+    await settle(page);
+    expect(await page.$eval("[data-previs-import] [role=alert]", el => el.textContent)).toContain("规格未通过白模校验");
+    expect(await page.evaluate(() => JSON.stringify((window as any).fixture.block.previsStudio.spec))).toBe(before);
+    // 合法规格（带 spec 外壳）：改角色名与人物绑定
+    const good = await page.evaluate(() => {
+      const spec = structuredClone((window as any).fixture.block.previsStudio.spec);
+      spec.actors[0].nameZh = "导入的阿菁"; spec.actors[0].assetRef = "character-mo";
+      return JSON.stringify({ spec });
+    });
+    await setText(good);
+    await settle(page);
+    await click(page, "检查规格");
+    await settle(page);
+    const preview = await page.$eval("[data-previs-import-preview]", el => el.textContent || "");
+    expect(preview).toContain("导入的阿菁");
+    expect(preview).toContain("10 秒");
+    // 未勾核对不能套用
+    expect(await page.$eval("[data-previs-import-preview] button", el => (el as HTMLButtonElement).disabled)).toBe(true);
+    await page.click("[data-previs-import-preview] input[type=checkbox]");
+    await click(page, "套用到本段");
+    await settle(page);
+    const studio = await page.evaluate(() => (window as any).fixture.block.previsStudio);
+    expect(studio.spec.actors[0].nameZh).toBe("导入的阿菁");
+    expect(studio.specHistory.at(-1).reasonZh).toBe("导入白模规格前的配置");
+    expect(JSON.stringify(studio.specHistory.at(-1).spec)).toBe(before);
+    expect(await page.evaluate(() => (window as any).fixture.submits.length)).toBe(0);
   } finally { await page.close(); }
 });
 
