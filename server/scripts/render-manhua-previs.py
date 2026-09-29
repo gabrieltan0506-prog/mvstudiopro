@@ -756,6 +756,7 @@ for actor,rig,contacts,stance,error in rigs:
     for frame in range(1,scene.frame_end+1):
         scene.frame_set(frame)
         bpy.context.view_layer.update()
+        if actor.get('hitReaction'): hit_samples.append({'frame':frame,'bodyHead':list(rig.matrix_world @ rig.pose.bones['body'].head),'bodyTail':list(rig.matrix_world @ rig.pose.bones['body'].tail),'amount':hit_amount(actor,(frame-1)/24),**hit_cues[actor['id']]['samples'][frame-1]})
         if not actor_visible(actor,frame):
             if actor.get('visibleRanges') and any(not obj.hide_render for obj in display_meshes[actor['id']]):
                 raise ValueError('角色离场帧仍有主体或附属网格参与渲染')
@@ -775,7 +776,6 @@ for actor,rig,contacts,stance,error in rigs:
             injured_local=rig.matrix_world.inverted() @ injured
             limp_samples.append({'frame':frame,'leftFrontHeight':float(injured.z),
                                  'leftFrontForward':float(injured_local.x),'supportKeys':stance[frame]})
-        if actor.get('hitReaction'): hit_samples.append({'frame':frame,'bodyHead':list(rig.matrix_world @ rig.pose.bones['body'].head),'bodyTail':list(rig.matrix_world @ rig.pose.bones['body'].tail),'amount':hit_amount(actor,(frame-1)/24),**hit_cues[actor['id']]['samples'][frame-1]})
         names=['head']+['foot'+key for key in foot_offsets(actor)]
         if any(not (.02 <= (p:=world_to_camera_view(scene,camera,rig.matrix_world @ rig.pose.bones[name].tail)).x <= .98 and .02 <= p.y <= .98 and p.z>0) for name in names): offscreen.append(frame)
     report['actors'].append({'id':actor['id'],'nameZh':actor['nameZh'],'bones':len(rig.pose.bones),'contactError':error,'stanceDrift':drift,'offscreenFrames':offscreen})
