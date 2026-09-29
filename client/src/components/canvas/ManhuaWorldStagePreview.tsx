@@ -14,6 +14,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ManhuaWorld3dAssets } from "@shared/manhuaWorld3d";
 import {
+  classifyManhuaStageLoadFailure,
+  describeManhuaStageLoadFailure,
+  describeManhuaStageModelIssue,
+  type ManhuaStageModelIssue,
+  type ManhuaStageReasonZh,
+} from "@/lib/manhuaStageActorModel";
+import {
   STAGE_CAMERA_KINDS,
   STAGE_CAMERA_LABEL_ZH,
   marbleToStageTransform,
@@ -29,6 +36,8 @@ export type ManhuaStageCharacter = {
   labelZh: string;
   /** 已就绪的人物 GLB（https） */
   glbUrl: string;
+  /** glbUrl 为空时由页面按人物绑定与模型任务状态给出的原因（resolveManhuaStageActorModel），不参与场景签名 */
+  modelIssue?: ManhuaStageModelIssue;
   /** 舞台点（米，Z 上） */
   stagePoint: readonly [number, number];
   heightM?: number;
@@ -47,13 +56,14 @@ export type ManhuaStageFrameExport = {
   timeSec: 0;
 };
 
-export type StageAssetFailure = { id: string; kind: "world" | "collider" | "actor"; message: string };
+/** code 由 iframe 按错误类型打：http（带 status）/ network / parse / no_position / missing_url；页面侧据此归类，不按文字猜 */
+export type StageAssetFailure = { id: string; kind: "world" | "collider" | "actor"; message: string; code?: string; status?: number };
 
 type Props = {
   sceneLabelZh: string;
   world: ManhuaWorld3dAssets;
   characters: readonly ManhuaStageCharacter[];
-  height?: number;
+  height?: number | string;
   /** 导出当前视角 PNG（供关键帧参考）；不传则不显示导出按钮 */
   onExportStageFrame?: (blob: Blob, frame: ManhuaStageFrameExport) => void | Promise<void>;
 };
@@ -99,16 +109,45 @@ export function buildStageSceneConfig(world: ManhuaWorld3dAssets, characters: re
   };
 }
 
-/** 主体 = 第一个人物，过肩对象 = 第二个；没人则以原点为主体 */
-export function stageCameraRigs(characters: readonly ManhuaStageCharacter[]): Record<StageCameraKind, StageCameraRig> {
-  const subject = characters[0];
-  const over = characters[1];
+/** 初始机位至少离所有人物中心一定距离；背负乘员与近距离站位也不能把镜头压进模型。 */
+function clearStageCamera(rig: StageCameraRig, characters: readonly ManhuaStageCharacter[], minDistanceM: number): StageCameraRig {
+  const target = rig.target;
+  const dx = rig.position[0] - target[0];
+  const dy = rig.position[1] - target[1];
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  let distance = len;
+  const occupied: Array<{ near: number; far: number }> = [];
+  for (const actor of characters) {
+    const ax = actor.stagePoint[0] - target[0];
+    const ay = actor.stagePoint[1] - target[1];
+    const projected = ax * ux + ay * uy;
+    const perpendicularSquared = ax * ax + ay * ay - projected * projected;
+    if (perpendicularSquared < minDistanceM * minDistanceM) {
+      const halfWidth = Math.sqrt(Math.max(0, minDistanceM * minDistanceM - perpendicularSquared));
+      occupied.push({ near: projected - halfWidth, far: projected + halfWidth });
+    }
+  }
+  occupied.sort((a, b) => a.near - b.near);
+  for (const range of occupied) {
+    if (distance >= range.near && distance < range.far) distance = range.far + 0.01;
+  }
+  const position: [number, number, number] = [target[0] + ux * distance, target[1] + uy * distance, rig.position[2]];
+  return { ...rig, position };
+}
+
+/** 过肩者可选；被拍主体为名单中另一人，没人则以原点为主体。 */
+export function stageCameraRigs(characters: readonly ManhuaStageCharacter[], shoulderActorId?: string): Record<StageCameraKind, StageCameraRig> {
+  const over = characters.find((actor) => actor.id === shoulderActorId) ?? characters[1];
+  const subject = characters.find((actor) => actor.id !== over?.id) ?? characters[0];
   const subjectStage = [subject?.stagePoint[0] ?? 0, subject?.stagePoint[1] ?? 0, 0] as const;
   const overStage = over ? ([over.stagePoint[0], over.stagePoint[1], 0] as const) : undefined;
+  const facingRad = ((subject?.yawDeg ?? 0) * Math.PI) / 180;
   return {
     establish: threeCameraRigForKeyframe({ subjectStage, kind: "establish" }),
-    ots: threeCameraRigForKeyframe({ subjectStage, kind: "ots", overStage }),
-    single: threeCameraRigForKeyframe({ subjectStage, kind: "single" }),
+    ots: clearStageCamera(threeCameraRigForKeyframe({ subjectStage, kind: "ots", overStage }), characters, 1.2),
+    single: clearStageCamera(threeCameraRigForKeyframe({ subjectStage, kind: "single", facingStage: [Math.sin(facingRad), -Math.cos(facingRad)] }), characters, 1.2),
   };
 }
 
@@ -165,10 +204,12 @@ if (THREE && SplatMesh) {
     const grid = new THREE.GridHelper(20, 20, 0x2a5a6a, 0x1a3a44); grid.rotation.x = Math.PI / 2; scene.add(grid);
 
     let activeRig = CONFIG.initialCamera;
+    let viewDistance = 1;
     const applyCamera = (rig) => {
       activeRig = rig;
       camera.position.set(rig.position[0], rig.position[1], rig.position[2]);
       camera.lookAt(rig.target[0], rig.target[1], rig.target[2]);
+      viewDistance = Math.max(0.1, camera.position.distanceTo(new THREE.Vector3(...rig.target)));
       // 35mm 全画幅等效：vfov = 2·atan(12 / lens)
       camera.fov = (2 * Math.atan(12 / Math.max(10, rig.lens)) * 180) / Math.PI;
       camera.updateProjectionMatrix();
@@ -181,10 +222,11 @@ if (THREE && SplatMesh) {
     renderer.domElement.addEventListener("pointerdown", (ev) => {
       if (ev.pointerType === "mouse" && ev.button !== 0) return;
       const dir = camera.getWorldDirection(new THREE.Vector3());
+      const target = camera.position.clone().addScaledVector(dir, viewDistance);
       drag = {
         id: ev.pointerId, x: ev.clientX, y: ev.clientY,
-        yaw: Math.atan2(dir.y, dir.x), pitch: Math.asin(Math.max(-1, Math.min(1, dir.z))),
-        distance: Math.max(0.1, camera.position.distanceTo(new THREE.Vector3(...activeRig.target))),
+        yaw: Math.atan2(-dir.y, -dir.x), pitch: Math.asin(Math.max(-1, Math.min(1, -dir.z))),
+        distance: viewDistance, target,
       };
       renderer.domElement.setPointerCapture(ev.pointerId);
       renderer.domElement.style.cursor = "grabbing";
@@ -194,11 +236,12 @@ if (THREE && SplatMesh) {
       const yaw = drag.yaw - (ev.clientX - drag.x) * 0.005;
       const pitch = Math.max(-1.35, Math.min(1.35, drag.pitch + (ev.clientY - drag.y) * 0.005));
       const xy = Math.cos(pitch);
-      camera.lookAt(
-        camera.position.x + Math.cos(yaw) * xy * drag.distance,
-        camera.position.y + Math.sin(yaw) * xy * drag.distance,
-        camera.position.z + Math.sin(pitch) * drag.distance,
+      camera.position.set(
+        drag.target.x + Math.cos(yaw) * xy * drag.distance,
+        drag.target.y + Math.sin(yaw) * xy * drag.distance,
+        drag.target.z + Math.sin(pitch) * drag.distance,
       );
+      camera.lookAt(drag.target.x, drag.target.y, drag.target.z);
     });
     const endDrag = (ev) => {
       if (!drag || drag.id !== ev.pointerId) return;
@@ -208,6 +251,16 @@ if (THREE && SplatMesh) {
     renderer.domElement.addEventListener("pointerup", endDrag);
     renderer.domElement.addEventListener("pointercancel", endDrag);
     renderer.domElement.addEventListener("lostpointercapture", endDrag);
+    renderer.domElement.addEventListener("wheel", (ev) => {
+      ev.preventDefault();
+      const deltaPx = ev.deltaY * (ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? window.innerHeight : 1);
+      const next = Math.max(0.6, Math.min(80, viewDistance * Math.exp(deltaPx * 0.0015)));
+      const direction = camera.getWorldDirection(new THREE.Vector3());
+      camera.position.addScaledVector(direction, viewDistance - next);
+      viewDistance = next;
+      // 拖动期间滚轮改变半径时同步，下一次移动不会弹回原距离。
+      if (drag) drag.distance = next;
+    }, { passive: false });
 
     const q = CONFIG.transform.quaternionXYZW, t = CONFIG.transform.translationStage, s = CONFIG.transform.scale;
     // 短暂断流时仅重试读取同一份已生成资产；不重新提交 3D 世界生成任务。
@@ -235,9 +288,15 @@ if (THREE && SplatMesh) {
     };
 
     const loader = new GLTFLoader();
+    // 失败带 code 回传：HTTP 状态取 three HttpError.response.status；fetch 抛 TypeError 即网络失败；其余为模型解析失败
+    const tagged = (message, code, status) => Object.assign(new Error(message), { code, ...(typeof status === "number" ? { status } : {}) });
     const loadGltf = (url) => new Promise((resolve, reject) => {
-      if (!String(url || "").startsWith("https://")) { reject(new Error("缺少可用的人物模型")); return; }
-      loader.load(url, resolve, undefined, (e) => reject(new Error(e && e.message ? e.message : "load_failed")));
+      if (!String(url || "").startsWith("https://")) { reject(tagged("缺少可用的人物模型", "missing_url")); return; }
+      loader.load(url, resolve, undefined, (e) => {
+        const status = e && e.response && typeof e.response.status === "number" ? e.response.status : undefined;
+        const network = !status && Boolean(e) && (e instanceof TypeError || e.name === "TypeError");
+        reject(tagged(e && e.message ? e.message : "load_failed", status ? "http" : network ? "network" : "parse", status));
+      });
     });
     let collider = null;
     let cameraKind = "";
@@ -255,12 +314,12 @@ if (THREE && SplatMesh) {
       }) });
     }
     for (const ch of CONFIG.characters) {
-      required.push({ id: ch.id, kind: "actor", promise: (Number.isFinite(ch.stagePoint[0]) && Number.isFinite(ch.stagePoint[1]) ? loadGltf(ch.glbUrl) : Promise.reject(new Error("人物站位未确认"))).then((gltf) => {
+      required.push({ id: ch.id, kind: "actor", promise: (Number.isFinite(ch.stagePoint[0]) && Number.isFinite(ch.stagePoint[1]) ? loadGltf(ch.glbUrl) : Promise.reject(tagged("人物站位未确认", "no_position"))).then((gltf) => {
         const root = new THREE.Group();
         const model = gltf.scene;
         const box = new THREE.Box3().setFromObject(model);
         const nativeHeight = box.max.y - box.min.y;
-        if (!Number.isFinite(nativeHeight) || nativeHeight <= 1e-6) throw new Error("人物模型为空或高度无效");
+        if (!Number.isFinite(nativeHeight) || nativeHeight <= 1e-6) throw tagged("人物模型为空或高度无效", "parse");
         // Y 上 → 舞台 Z 上：绕 X +90°
         model.rotation.x = Math.PI / 2;
         const scaleK = ch.heightM / nativeHeight;
@@ -284,8 +343,7 @@ if (THREE && SplatMesh) {
           const dataUrl = renderer.domElement.toDataURL("image/png");
           if (!dataUrl.startsWith("data:image/png;base64,") || dataUrl.length <= "data:image/png;base64,".length) throw new Error("empty_png");
           const direction = camera.getWorldDirection(new THREE.Vector3());
-          const distance = Math.max(0.1, camera.position.distanceTo(new THREE.Vector3(...activeRig.target)));
-          const target = camera.position.clone().addScaledVector(direction, distance);
+          const target = camera.position.clone().addScaledVector(direction, viewDistance);
           post({
             type: "frame", dataUrl,
             viewLabelZh: m.viewLabelZh || "", cameraKind: String(m.cameraKind || cameraKind), requestId: m.requestId,
@@ -307,13 +365,17 @@ if (THREE && SplatMesh) {
     results.forEach((res, i) => {
       const r = required[i];
       if (res.status === "fulfilled") loaded.push(r.id);
-      else failed.push({ id: r.id, kind: r.kind, message: String(res.reason && res.reason.message ? res.reason.message : res.reason || "load_failed").slice(0, 160) });
+      else failed.push({
+        id: r.id, kind: r.kind, message: String(res.reason && res.reason.message ? res.reason.message : res.reason || "load_failed").slice(0, 160),
+        ...(res.reason && typeof res.reason.code === "string" ? { code: res.reason.code } : {}),
+        ...(res.reason && typeof res.reason.status === "number" ? { status: res.reason.status } : {}),
+      });
     });
     if (failed.some((f) => f.kind === "world")) {
       fail("3D 场景加载失败，请稍后重试");
     } else {
       msg.remove();
-      canExport = failed.length === 0;
+      canExport = failed.every((item) => item.kind === "collider");
       post({ type: "ready", loaded, failed });
     }
   } catch (e) {
@@ -335,23 +397,28 @@ export async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
 }
 
 export function ManhuaWorldStagePreview(props: Props) {
-  const { sceneLabelZh, world, characters, height = 360, onExportStageFrame } = props;
+  const { sceneLabelZh, world, characters, height = "clamp(520px, 68vh, 820px)", onExportStageFrame } = props;
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const revisionCounter = useRef(0);
   const [cameraKind, setCameraKind] = useState<StageCameraKind>("establish");
+  const [shoulderActorId, setShoulderActorId] = useState<string | undefined>();
   const [colliderVisible, setColliderVisible] = useState(false);
   const [status, setStatus] = useState<"loading" | "ready" | "partial" | "error">("loading");
+  const [loadedActorCount, setLoadedActorCount] = useState(0);
   const [noteZh, setNoteZh] = useState<string>("");
   const [failures, setFailures] = useState<StageAssetFailure[]>([]);
   const [exporting, setExporting] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  /** 「重新载入」：只重读同一份已生成的场景与模型文件，不提交任何生成任务 */
+  const [reloadNonce, setReloadNonce] = useState(0);
   const sceneSignature = stageSceneSignature(world, characters);
   // 签名覆盖场景、人物和机位的实际输入；仅引用变化不应重载高斯和 iframe。
   const scene = useMemo(() => {
-    const rigs = stageCameraRigs(characters);
     revisionCounter.current += 1;
-    return { rigs, config: buildStageSceneConfig(world, characters, rigs.establish, `r${revisionCounter.current}`) };
-  }, [sceneSignature]);
-  const { rigs, config } = scene;
+    return buildStageSceneConfig(world, characters, stageCameraRigs(characters).establish, `r${revisionCounter.current}`);
+  }, [sceneSignature, reloadNonce]);
+  const rigs = useMemo(() => stageCameraRigs(characters, shoulderActorId), [sceneSignature, shoulderActorId]);
+  const config = scene;
   const revision = config?.revision ?? "";
   const liveState = useRef({ revision, cameraKind });
   liveState.current = { revision, cameraKind };
@@ -362,6 +429,7 @@ export function ManhuaWorldStagePreview(props: Props) {
 
   useEffect(() => {
     setStatus("loading");
+    setLoadedActorCount(0);
     setNoteZh("");
     setFailures([]);
     if (pendingExport.current?.phase !== "saving") {
@@ -387,14 +455,16 @@ export function ManhuaWorldStagePreview(props: Props) {
         const failed = Array.isArray(m.failed) ? m.failed : [];
         const loaded = new Set(Array.isArray(m.loaded) ? m.loaded : []);
         const missingActors = expectedActorIds.filter((id) => !loaded.has(id));
+        setLoadedActorCount(expectedActorIds.length - missingActors.length);
         setFailures(failed);
-        if (missingActors.length || failed.length) {
+        const essentialFailures = failed.filter((item) => item.kind !== "collider");
+        if (missingActors.length || essentialFailures.length) {
           setStatus("partial");
           const labels = missingActors.map((id) => characters.find((c) => c.id === id)?.labelZh || "未命名人物");
-          setNoteZh(`${labels.length ? `人物未载入：${labels.join("、")}。` : ""}${failed.some((f) => f.kind === "collider") ? "场景辅助数据未载入。" : ""}可预览，暂不能导出视角图。`);
+          setNoteZh(`${labels.length ? `人物未载入：${labels.join("、")}。` : ""}${essentialFailures.some((f) => f.kind === "world") ? "世界画面未载入。" : ""}可预览，暂不能导出视角图。`);
         } else {
           setStatus("ready");
-          setNoteZh("");
+          setNoteZh(failed.some((item) => item.kind === "collider") ? "场景辅助碰撞数据未载入，世界和人物已载入，仍可保存视角图。" : "");
         }
       } else if (m.type === "error") {
         if (pendingExport.current?.phase !== "saving") {
@@ -402,6 +472,7 @@ export function ManhuaWorldStagePreview(props: Props) {
           setExporting(false);
         }
         setStatus("error");
+        setLoadedActorCount(0);
         setNoteZh(m.message || "3D 场景暂时无法打开");
       } else if (m.type === "export_error") {
         if (m.requestId !== pendingExport.current?.requestId || pendingExport.current?.phase !== "capturing") return;
@@ -435,6 +506,7 @@ export function ManhuaWorldStagePreview(props: Props) {
             if (pendingExport.current !== pending || liveState.current.revision !== pending.revision || liveState.current.cameraKind !== pending.cameraKind) return;
             pending.phase = "saving";
             await pending.deliver?.(blob, { ...pending.frame, camera: rig });
+            if (pendingExport.current === pending) setNoteZh("保存请求已返回；请在下方核对新候选图，再选择要采用的镜头。未采用的图不会进入视频输入。");
           } catch {
             if (pendingExport.current === pending) setNoteZh("视角图保存失败，请重新导出");
           } finally {
@@ -450,6 +522,18 @@ export function ManhuaWorldStagePreview(props: Props) {
     return () => window.removeEventListener("message", onMessage);
   }, [cameraKind, characters, expectedActorIds, onExportStageFrame, revision]);
 
+  /**
+   * 人物载入问题：没有模型的按页面数据说原因（绑定、建模状态、定妆图是否换过）；
+   * 有模型却没载入的按 iframe 回报的 HTTP 状态 / 网络错误 / 解析失败归类。每条都给一句怎么办。
+   */
+  const actorReasons = useMemo(() => characters.flatMap((c): Array<ManhuaStageReasonZh & { id: string; labelZh: string; code: string }> => {
+    if (!c.glbUrl) return [{ id: c.id, labelZh: c.labelZh, code: c.modelIssue?.code ?? "no_model", ...describeManhuaStageModelIssue(c.modelIssue) }];
+    const failure = failures.find((f) => f.kind === "actor" && f.id === c.id);
+    if (!failure) return [];
+    const code = classifyManhuaStageLoadFailure({ code: failure.code, status: failure.status, glbUrl: c.glbUrl });
+    return [{ id: c.id, labelZh: c.labelZh, code, ...describeManhuaStageLoadFailure(code, failure.status) }];
+  }), [characters, failures]);
+  const colliderFailed = failures.some((f) => f.kind === "collider");
   const loaded = status === "ready" || status === "partial";
   useEffect(() => {
     if (loaded) send({ type: "camera", rig: rigs[cameraKind], cameraKind });
@@ -457,6 +541,14 @@ export function ManhuaWorldStagePreview(props: Props) {
   useEffect(() => {
     if (loaded) send({ type: "collider", visible: colliderVisible });
   }, [colliderVisible, loaded, send]);
+  useEffect(() => {
+    if (!expanded) return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setExpanded(false);
+    };
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [expanded]);
 
   if (!config) {
     return <p className="text-[11px] text-amber-100">这个场景还不能预览，请稍后重试。</p>;
@@ -464,8 +556,16 @@ export function ManhuaWorldStagePreview(props: Props) {
   const btn = "rounded border border-cyan-300/30 px-2 py-0.5 text-[11px] text-cyan-50 disabled:opacity-40";
   const btnOn = "rounded border border-cyan-300/70 bg-cyan-500/25 px-2 py-0.5 text-[11px] text-cyan-50";
   return (
-    <div className="flex w-full flex-col gap-1" data-manhua-world-stage data-stage-status={status} data-stage-revision={revision}>
+    <div className={`flex w-full flex-col gap-1 ${expanded ? "fixed inset-2 z-[100] overflow-y-auto rounded-lg border border-cyan-300/40 bg-[#0b1018] p-3 shadow-2xl md:inset-4" : ""}`} data-manhua-world-stage data-stage-status={status} data-stage-revision={revision} data-stage-expanded={expanded}>
+      <div className="flex flex-wrap gap-1 text-[11px]" data-stage-load-summary>
+        <span className={`rounded px-2 py-0.5 ${loaded ? "bg-emerald-500/20 text-emerald-100" : "bg-white/10 text-white/70"}`} data-world-load-state={loaded ? "loaded" : status}>世界画面：{loaded ? "已载入" : status === "error" ? "载入失败" : "载入中"}</span>
+        <span className={`rounded px-2 py-0.5 ${loadedActorCount === expectedActorIds.length && loaded ? "bg-emerald-500/20 text-emerald-100" : "bg-amber-500/15 text-amber-100"}`} data-actor-load-count={`${loadedActorCount}/${expectedActorIds.length}`}>人物模型：{expectedActorIds.length ? `${loadedActorCount}/${expectedActorIds.length} 已载入` : "本段未摆人物"}</span>
+        <span className="text-white/50">世界与全部预期人物均载入后，才能保存视角图。</span>
+      </div>
       <div className="flex flex-wrap items-center gap-1 text-[11px]">
+        <button type="button" className={btn} aria-label={expanded ? "退出放大场景" : "放大场景"} onClick={() => setExpanded((value) => !value)}>
+          {expanded ? "退出放大" : "放大场景"}
+        </button>
         <span className="text-white/60">机位</span>
         {STAGE_CAMERA_KINDS.map((k) => (
           <button key={k} type="button" className={cameraKind === k ? btnOn : btn} disabled={!loaded} onClick={() => {
@@ -480,18 +580,36 @@ export function ManhuaWorldStagePreview(props: Props) {
             {STAGE_CAMERA_LABEL_ZH[k]}
           </button>
         ))}
+        {characters.length > 1 ? (
+          <label className="flex items-center gap-1 text-white/70">
+            从谁肩后拍
+            <select aria-label="从谁肩后拍" className="rounded border border-cyan-300/30 bg-[#101822] px-1 py-0.5 text-white" value={characters.some((actor) => actor.id === shoulderActorId) ? shoulderActorId : characters[1]?.id} disabled={!loaded || pendingExport.current?.phase === "saving"} onChange={(event) => {
+              pendingExport.current = null;
+              setExporting(false);
+              setShoulderActorId(event.target.value);
+              setCameraKind("ots");
+            }}>
+              {characters.map((actor) => <option key={actor.id} value={actor.id}>{actor.labelZh || actor.id}</option>)}
+            </select>
+          </label>
+        ) : null}
         {config.colliderUrl ? (
           <label className="ml-2 flex items-center gap-1 text-white/70">
-            <input type="checkbox" checked={colliderVisible} disabled={!loaded} onChange={(e) => setColliderVisible(e.target.checked)} />
+            <input type="checkbox" checked={colliderVisible} disabled={!loaded || colliderFailed} onChange={(e) => setColliderVisible(e.target.checked)} />
             显示场景辅助线
           </label>
+        ) : null}
+        {status === "partial" || status === "error" || colliderFailed ? (
+          <button type="button" className={btn} data-stage-reload title="重新读取已生成的场景与人物模型，不会重新生成" onClick={() => setReloadNonce((n) => n + 1)}>
+            重新载入
+          </button>
         ) : null}
         {onExportStageFrame ? (
           <button
             type="button"
             className={`ml-auto ${btn}`}
             disabled={status !== "ready" || exporting}
-            title={status === "partial" ? "有人物/资产没加载成功，不能导出" : undefined}
+            title={status === "partial" ? "有人物/资产没加载成功，不能导出" : status === "loading" ? "机位切换后等待场景载入完成" : exporting ? "正在保存当前视角图" : undefined}
             onClick={() => {
               if (pendingExport.current) return;
               const requestId = ++exportCounter.current;
@@ -509,12 +627,14 @@ export function ManhuaWorldStagePreview(props: Props) {
         ) : null}
       </div>
       <p className="text-[10px] text-white/45">
-        在画面中拖动可旋转视角；切换机位会回到该机位的初始角度。
+        在画面中拖动可旋转视角，滚轮可推近或推远；切换机位会回到该机位的初始角度。
         {characters.length ? `本段有 ${characters.length} 个人物；` : "本段暂未摆入人物；"}
         {rigs.ots.kind === "single" && cameraKind === "ots" ? " 缺过肩对象，过肩退为单人正面。" : ""}
-        {status === "loading" ? " 场景加载中…" : ""}
+        {status === "loading" ? " 场景加载中，载入完成后才能保存视角图。" : ""}
+        {status === "partial" ? " 有人物或资产未载入，暂不能保存视角图。" : ""}
+        {exporting ? " 视角图正在保存，请稍候。" : ""}
       </p>
-      <div className="relative w-full overflow-hidden rounded border border-cyan-300/20 bg-black" style={{ height }}>
+      <div className="relative w-full overflow-hidden rounded border border-cyan-300/20 bg-black" style={{ height: expanded ? "max(340px, calc(100dvh - 180px))" : height }} data-stage-viewer>
         <iframe key={revision} ref={iframeRef} title={`${sceneLabelZh} 3D 世界预览`} srcDoc={srcDoc} sandbox="allow-scripts" className="h-full w-full" style={{ border: 0 }} />
         {status === "error" ? (
           <div className="absolute inset-0 flex items-center justify-center bg-black/70 p-3 text-center text-[11px] text-amber-100" data-stage-placeholder>
@@ -527,13 +647,14 @@ export function ManhuaWorldStagePreview(props: Props) {
           {noteZh}
         </p>
       ) : null}
-      {status === "partial" && failures.length ? (
-        <ul className="text-[10px] text-amber-100/80" data-stage-failures>
-          {failures.map((f) => (
-            <li key={`${f.kind}:${f.id}`}>
-              {f.kind === "actor" ? characters.find((c) => c.id === f.id)?.labelZh || "人物" : f.kind === "collider" ? "场景辅助数据" : "3D 场景"}：加载失败
+      {actorReasons.length || colliderFailed ? (
+        <ul className="flex flex-col gap-0.5 text-[10px] text-amber-100/90" data-stage-failures>
+          {actorReasons.map((r) => (
+            <li key={`actor:${r.id}`} data-actor-id={r.id} data-actor-issue={r.code}>
+              <b className="font-medium text-amber-50">{r.labelZh}</b>：{r.titleZh}。{r.fixZh}
             </li>
           ))}
+          {colliderFailed ? <li data-actor-issue="collider">场景辅助线没载入：不影响看场景，点「重新载入」重试。</li> : null}
         </ul>
       ) : null}
     </div>

@@ -128,6 +128,9 @@ export function ManhuaPrevisRigControls({
   const validSource = Boolean(
     model && form.sourceJobId === model.taskId && !incompatible
   );
+  const errorKind = !error ? null :
+    /模型|版本|人形|四足|魔化/.test(error) ? "source" :
+    /保存/.test(error) ? "save" : "form";
   const appendCue = () => {
     const start = Number(form.cues.at(-1)?.endSec) || 0;
     if (durationSec - start < 0.5 || form.cues.length >= 24) return;
@@ -196,6 +199,20 @@ export function ManhuaPrevisRigControls({
           </button>
         </div>
       </div>
+      {errorKind && (
+        <div role="alert" className="mb-3 flex flex-wrap items-center gap-2 rounded border border-amber-300/35 bg-amber-500/10 p-2 text-amber-100" data-previs-rig-error={errorKind}>
+          <span className="min-w-0 flex-1 break-words">
+            <strong>{errorKind === "source" ? "模型来源需核对" : errorKind === "save" ? "配置尚未保存" : "表单需要修正"}：</strong>{error}
+          </span>
+          {errorKind === "source" ? (
+            <a className={button} href="#previs-cast">返回人物选择</a>
+          ) : errorKind === "save" ? (
+            <button type="button" className={button} disabled={disabled} onClick={apply}>重试应用配置</button>
+          ) : (
+            <button type="button" className={button} onClick={() => setMode(/表演|注视|时间|起点|终点/.test(error) ? "create" : "prepare")}>查看待修正设置</button>
+          )}
+        </div>
+      )}
       <div hidden={mode !== "create"} className="space-y-3">
         {!model ? (
           <p className="rounded bg-white/5 p-2 text-white/65">
@@ -245,8 +262,8 @@ export function ManhuaPrevisRigControls({
             disabled={disabled || !validSource}
             className="space-y-3 disabled:opacity-50"
           >
-            {!validSource ? (
-              <p role="alert" className="text-amber-200">
+            {!validSource && !error ? (
+              <p className="text-amber-200">
                 模型版本已变化，请到角色准备重新核对；旧配置仍保留。
               </p>
             ) : null}
@@ -769,11 +786,6 @@ export function ManhuaPrevisRigControls({
           </button>
         </div>
       </fieldset>
-      {error && (
-        <p role="alert" className="mt-2 break-words text-red-300">
-          未应用：{error}
-        </p>
-      )}
       {notice && (
         <p role="status" className="mt-2 text-cyan-200">
           {notice}
