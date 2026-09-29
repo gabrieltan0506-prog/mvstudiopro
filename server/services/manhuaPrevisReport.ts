@@ -1,5 +1,6 @@
 /** 渲染与恢复共用的真实报告门禁，不能以存证哈希代替动作验收。 */
 import { z } from "zod";
+import {cameraTimingReportSchema,validateCameraTimingReport} from "./manhuaPrevisCameraReport";
 import {
   effectsReportSchema,
   validateEffectsReport,
@@ -154,6 +155,7 @@ export const previsReportSchema = z
       .optional(),
     waterEmergence: waterReportSchema.optional(),
     motionRoutes: routeReportSchema.optional(),
+    cameraTiming: cameraTimingReportSchema.optional(),
     effects: effectsReportSchema.optional(),
     weapons: z
       .array(
@@ -284,8 +286,12 @@ export function validatePrevisReport(
       throw new Error("离场角色不应计入出画报告");
     const hit=spec.actors[index].hitReaction;
     if (hit) {
-      const measured=z.object({sourceActorId:z.string(),startSec:z.number(),contactSec:z.number(),endSec:z.number(),samples:z.array(z.object({frame:z.number().int(),bodyHead:point,bodyTail:point,amount:z.number().min(0).max(1)})).length(report.frames)}).parse(actor.hitReaction);
+      const measured=z.object({sourceActorId:z.string(),startSec:z.number(),contactSec:z.number(),endSec:z.number(),samples:z.array(z.object({frame:z.number().int(),bodyHead:point,bodyTail:point,amount:z.number().min(0).max(1),palmCenter:point,impactPoint:point,palmVisible:z.boolean(),injuryVisible:z.boolean()})).length(report.frames)}).parse(actor.hitReaction);
       if ((["sourceActorId","startSec","contactSec","endSec"] as const).some(k=>hit[k]!==measured[k]) || measured.samples.some((r,i)=>r.frame!==i+1) || !measured.samples.some(r=>r.amount>.99)) throw new Error("四足受击逐帧证据缺失或事件不一致");
+      const impactFrame=Math.round(hit.contactSec*24)+1, impact=measured.samples[impactFrame-1];
+      if (!impact?.palmVisible || !impact.injuryVisible || Math.hypot(...impact.palmCenter.map((v,j)=>v-impact.impactPoint[j]))>.005 ||
+          measured.samples.some(r=>r.injuryVisible!==((r.frame-1)/24>=hit.contactSec && previsActorVisibleAtFrame(spec.actors[index],r.frame))||((r.frame-1)/24<hit.contactSec&&r.amount>1e-6)))
+        throw new Error("出掌命中、受伤标记或接触后受力时序不一致");
     } else if (actor.hitReaction) throw new Error("未配置四足受击却出现事件回执");
     if (spec.actors[index].actions.some(action => action.kind === "limp_front_left")) {
       const samples = z.array(z.object({
@@ -483,6 +489,7 @@ export function validatePrevisReport(
   }
   validateWaterReport(report.waterEmergence, spec);
   validateRouteReport(report.motionRoutes, spec);
+  validateCameraTimingReport(report.cameraTiming, spec);
   validateEffectsReport(report.effects, spec);
   return report;
 }

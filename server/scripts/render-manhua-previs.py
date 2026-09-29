@@ -203,15 +203,12 @@ def action_amounts(actor, t):
             values['lookAt'] = action.get('lookAtId')
     return values
 
-def camera_progress(shot, frame):
-    begin=math.floor(shot['startSec']*24+.5)+1
-    end=math.floor(shot['endSec']*24+.5)
-    progress=max(0., min(1., (frame-begin)/max(1,end-begin)))
-    return progress*progress*(3-2*progress)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from previs_camera_timing import camera_progress
 
 def camera_lens(shot, frame):
-    """一镜内变焦与机位共用同一平滑进度；没有终点焦距就是常量。"""
-    return shot['lens']+(shot.get('endLens',shot['lens'])-shot['lens'])*camera_progress(shot,frame)
+    """焦距独立卡点；没有终点焦距就是常量。"""
+    return shot['lens']+(shot.get('endLens',shot['lens'])-shot['lens'])*camera_progress(shot,frame,'lensWindow')
 
 def camera_pose(shot, frame):
     progress=camera_progress(shot,frame)
@@ -256,9 +253,10 @@ def look_target_world(actor, target_id, frame):
 
 def hit_amount(actor,t):
     hit=actor.get('hitReaction')
-    if not hit or not hit['startSec']<=t<=hit['endSec']: return 0.
-    if t<=hit['contactSec']: return smooth((t-hit['startSec'])/(hit['contactSec']-hit['startSec']))
-    return 1-smooth((t-hit['contactSec'])/(hit['endSec']-hit['contactSec']))
+    if not hit or not hit['contactSec']<=t<=hit['endSec']: return 0.
+    peak=hit['contactSec']+min(2/24,(hit['endSec']-hit['contactSec'])/4)
+    if t<=peak: return smooth((t-hit['contactSec'])/(peak-hit['contactSec']))
+    return 1-smooth((t-peak)/(hit['endSec']-peak))
 
 def points(actor, frame, contacts):
     t = (frame-1)/24
@@ -492,6 +490,10 @@ for index,actor in enumerate(spec['actors']):
                 max_error=max(max_error,(rig.matrix_world @ b-contacts[frame][key]).length)
     if max_error>.005: raise ValueError('关节落点不可达，请缩短路线或延长移动区间')
     rigs.append((actor,rig,contacts,stance,max_error))
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from previs_hit_cues import build_hit_cues
+hit_cues=build_hit_cues(spec,rigs,scene,actor_visible)
 
 water_handles=build_water(spec,rigs,scene) if water_events else None
 if has_swords:
@@ -734,6 +736,14 @@ report={'frames':scene.frame_end,'fps':24,'actors':[],'warnings':[],
 # 收紧与否是 1.78 倍的二值跳变，站位或动作跨过临界点画面会整体突变。
 # 这个决定原本只落在 report.json 里、前端看不到，用户会看到「有的竖屏变大了、有的没变」
 # 却拿不到任何解释——所以退回时写一条人话进 warnings（前端已在展示 warnings）。
+if any(shot.get('motionWindow') or shot.get('lensWindow') for shot in spec['cameras']):
+    camera_samples=[]
+    for frame in range(1,scene.frame_end+1):
+        scene.frame_set(frame);bpy.context.view_layer.update()
+        index=next(i for i,c in enumerate(spec['cameras']) if math.floor(c['startSec']*24+.5)<frame<=math.floor(c['endSec']*24+.5))
+        camera_samples.append({'frame':frame,'shotIndex':index,'position':list(camera.matrix_world.translation),
+            'forward':list((camera.matrix_world.to_3x3()@Vector((0,0,-1))).normalized()),'lens':float(camera.data.lens)})
+    report['cameraTiming']=camera_samples
 if report['portraitFraming']=='auto':
     report['warnings'].append('竖屏未收紧构图：按当前站位与动作，收紧后会有人物被切出画，已保持原画幅。想要更饱满的竖屏构图，可让角色更靠近画面中心或缩小彼此间距。')
 for actor,rig,contacts,stance,error in rigs:
@@ -765,7 +775,7 @@ for actor,rig,contacts,stance,error in rigs:
             injured_local=rig.matrix_world.inverted() @ injured
             limp_samples.append({'frame':frame,'leftFrontHeight':float(injured.z),
                                  'leftFrontForward':float(injured_local.x),'supportKeys':stance[frame]})
-        if actor.get('hitReaction'): hit_samples.append({'frame':frame,'bodyHead':list(rig.matrix_world @ rig.pose.bones['body'].head),'bodyTail':list(rig.matrix_world @ rig.pose.bones['body'].tail),'amount':hit_amount(actor,(frame-1)/24)})
+        if actor.get('hitReaction'): hit_samples.append({'frame':frame,'bodyHead':list(rig.matrix_world @ rig.pose.bones['body'].head),'bodyTail':list(rig.matrix_world @ rig.pose.bones['body'].tail),'amount':hit_amount(actor,(frame-1)/24),**hit_cues[actor['id']]['samples'][frame-1]})
         names=['head']+['foot'+key for key in foot_offsets(actor)]
         if any(not (.02 <= (p:=world_to_camera_view(scene,camera,rig.matrix_world @ rig.pose.bones[name].tail)).x <= .98 and .02 <= p.y <= .98 and p.z>0) for name in names): offscreen.append(frame)
     report['actors'].append({'id':actor['id'],'nameZh':actor['nameZh'],'bones':len(rig.pose.bones),'contactError':error,'stanceDrift':drift,'offscreenFrames':offscreen})

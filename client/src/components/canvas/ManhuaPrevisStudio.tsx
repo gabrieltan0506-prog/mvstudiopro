@@ -2370,16 +2370,24 @@ export function ManhuaPrevisStudioView({
                 <label className="text-xs">
                   <input type="checkbox" aria-label={`机位${i + 1}连续移动`} disabled={disabled || Boolean(pendingId) || busy}
                     checked={Boolean(camera.endPosition || camera.endTarget)}
-                    onChange={e => patch({ endPosition: e.target.checked ? [...camera.position] : undefined, endTarget: e.target.checked ? [...camera.target] : undefined, orbitDeg: undefined, orbitRise: undefined })} />
+                    onChange={e => patch({ endPosition: e.target.checked ? [...camera.position] : undefined, endTarget: e.target.checked ? [...camera.target] : undefined, orbitDeg: undefined, orbitRise: undefined, motionWindow: undefined })} />
                   连续移动（终点控制）
                 </label>
                 <label className="text-xs"><input type="checkbox" aria-label={`机位${i + 1}环绕`} disabled={disabled || Boolean(pendingId) || busy}
-                  checked={camera.orbitDeg !== undefined} onChange={e => patch({ orbitDeg: e.target.checked ? 30 : undefined, orbitRise: undefined, endPosition: undefined, endTarget: undefined })} />环绕主体</label>
+                  checked={camera.orbitDeg !== undefined} onChange={e => patch({ orbitDeg: e.target.checked ? 30 : undefined, orbitRise: undefined, endPosition: undefined, endTarget: undefined, motionWindow: undefined })} />环绕主体</label>
                 {camera.orbitDeg !== undefined ? numeric("环绕角度", camera.orbitDeg, n => patch({ orbitDeg: n }), 5) : null}
                 {camera.orbitDeg !== undefined ? numeric("环绕升降（米）", camera.orbitRise ?? 0, n => patch({ orbitRise: n || undefined }), 0.1) : null}
                 <label className="text-xs"><input type="checkbox" aria-label={`机位${i + 1}焦距推拉`} disabled={disabled || Boolean(pendingId) || busy}
-                  checked={camera.endLens !== undefined} onChange={e => patch({ endLens: e.target.checked ? camera.lens : undefined })} />焦距推拉</label>
+                  checked={camera.endLens !== undefined} onChange={e => patch({ endLens: e.target.checked ? camera.lens : undefined, lensWindow: undefined })} />焦距推拉</label>
                 {camera.endLens !== undefined ? numeric("终点焦距", camera.endLens, n => patch({ endLens: n }), 1) : null}
+                {(["motionWindow", "lensWindow"] as const).map(key => {
+                  const title = key === "motionWindow" ? "运镜卡点" : "变焦卡点";
+                  const available = key === "motionWindow" ? Boolean(camera.endPosition || camera.endTarget || camera.orbitDeg !== undefined) : camera.endLens !== undefined;
+                  if (!available) return null;
+                  return <div key={key} className="flex flex-wrap gap-2"><label className="text-xs"><input type="checkbox" aria-label={`机位${i + 1}${title}`} disabled={disabled || Boolean(pendingId) || busy}
+                    checked={Boolean(camera[key])} onChange={e => patch({[key]:e.target.checked ? {startSec:camera.startSec,endSec:camera.endSec} : undefined})} />{title}（窗外停住）</label>
+                    {camera[key] ? <>{numeric(`${title}开始秒`,camera[key]!.startSec,n=>patch({[key]:{...camera[key]!,startSec:n}}),1/24)}{numeric(`${title}结束秒`,camera[key]!.endSec,n=>patch({[key]:{...camera[key]!,endSec:n}}),1/24)}</> : null}</div>;
+                })}
                 {(["position", "target"] as const).flatMap(key =>
                   [0, 1, 2].map(axis =>
                     numeric(
@@ -2419,7 +2427,7 @@ export function ManhuaPrevisStudioView({
           <button
             className={button}
             disabled={
-              disabled || Boolean(pendingId) || studio.spec.cameras.length >= 8 || studio.spec.cameras.at(-1)?.orbitDeg !== undefined
+              disabled || Boolean(pendingId) || studio.spec.cameras.length >= 8 || studio.spec.cameras.at(-1)?.orbitDeg !== undefined || Boolean(studio.spec.cameras.at(-1)?.motionWindow || studio.spec.cameras.at(-1)?.lensWindow)
             }
             onClick={() => {
               const last = studio.spec.cameras.at(-1)!;
@@ -2440,7 +2448,7 @@ export function ManhuaPrevisStudioView({
               });
             }}
           >
-            拆分最后一个机位
+            {studio.spec.cameras.at(-1)?.motionWindow || studio.spec.cameras.at(-1)?.lensWindow ? "先关闭末镜卡点，再拆分机位" : "拆分最后一个机位"}
           </button>
         </div>
       </details>

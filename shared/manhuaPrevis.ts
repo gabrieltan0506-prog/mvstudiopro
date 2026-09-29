@@ -1,3 +1,4 @@
+import { previsCameraWindowSchema } from "./manhuaPrevisCameraTiming";
 import { manhuaPrevisAudioSchema } from "./manhuaPrevisAudio";
 /** 动作白模配置：只有数据，没有用户 Python／命令／任意素材 URL。 */
 import { z } from "zod";
@@ -258,8 +259,10 @@ const manhuaPrevisSpecBaseSchema = z
             /** 环绕途中相机高度的总升降（米，正为升）；只与环绕同用。 */
             orbitRise: z.number().finite().min(-8).max(8).optional(),
             lens: z.number().int().min(18).max(65),
-            /** 本镜结束时的焦距：与机位同一平滑进度连续推拉，不是切镜。 */
+            /** 终点焦距；可用独立秒窗完成短促变焦并停住。 */
             endLens: z.number().int().min(18).max(65).optional(),
+            motionWindow: previsCameraWindowSchema.optional(),
+            lensWindow: previsCameraWindowSchema.optional(),
           })
           .strict()
       )
@@ -359,6 +362,8 @@ export const manhuaPrevisDraftSchema = manhuaPrevisSpecBaseSchema.extend({
           orbitRise: draftNumber.optional(),
           lens: draftNumber,
           endLens: draftNumber.optional(),
+          motionWindow: z.object({startSec:draftNumber,endSec:draftNumber}).strict().optional(),
+          lensWindow: z.object({startSec:draftNumber,endSec:draftNumber}).strict().optional(),
         })
         .strict()
     )
@@ -873,6 +878,18 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
         });
     });
     spec.cameras.forEach((camera, i) => {
+      for (const key of ["motionWindow", "lensWindow"] as const) {
+        const window = camera[key];
+        if (!window) continue;
+        if (window.startSec < camera.startSec || window.endSec > camera.endSec ||
+            Math.round(window.endSec * 24) - Math.round(window.startSec * 24) < 2 ||
+            [window.startSec, window.endSec].some(t => Math.abs(t * 24 - Math.round(t * 24)) > 1e-7))
+          ctx.addIssue({code:"custom",message:"运镜与变焦秒窗须在本镜内、对齐24帧且至少两帧",path:["cameras",i,key]});
+        if (key === "lensWindow" && camera.endLens === undefined)
+          ctx.addIssue({code:"custom",message:"变焦秒窗需要终点焦距",path:["cameras",i,key]});
+        if (key === "motionWindow" && !camera.endPosition && !camera.endTarget && camera.orbitDeg === undefined)
+          ctx.addIssue({code:"custom",message:"运镜秒窗需要移动终点或环绕",path:["cameras",i,key]});
+      }
       if (camera.orbitDeg !== undefined) {
         if (camera.endPosition || camera.endTarget) ctx.addIssue({ code: "custom", message: "环绕与直线终点不能同时使用", path: ["cameras", i] });
         const radius = Math.hypot(camera.position[0] - camera.target[0], camera.position[1] - camera.target[1]);
@@ -1040,10 +1057,10 @@ export function formatPrevisMotionGuide(spec: ManhuaPrevisSpec): string {
   if (spec.timeMap) return "白模已按统一时间表变速；以下秒位均为成片呈现时间，直接跟随参考，不重复变速。\n" + formatPrevisMotionGuide(previsPresentationGuideSpec(spec));
   return [
     "参考中的关节姿态、落脚、蓄力—出手—回收及保护反应按对应秒位读取；不继承白模外形。",
-    ...spec.cameras.filter(c => c.orbitDeg).map(c => `${c.startSec}—${c.endSec}秒围绕（${c.target.join("，")}）水平环绕${c.orbitDeg}度，${c.orbitRise ? `保持半径，同时${c.orbitRise > 0 ? "升高" : "降低"}${Math.abs(c.orbitRise)}米` : "保持半径和高度"}；人物速度不由环绕改变。`),
-    ...spec.cameras.filter(c => c.endLens !== undefined && c.endLens !== c.lens).map(c => `${c.startSec}—${c.endSec}秒焦距从${c.lens}毫米连续${c.endLens! > c.lens ? "推到" : "拉到"}${c.endLens}毫米，与机位同步平滑起停。`),
+    ...spec.cameras.filter(c => c.orbitDeg).map(c => `${c.startSec}—${c.endSec}秒围绕（${c.target.join("，")}）水平环绕${c.orbitDeg}度，${c.orbitRise ? `保持半径，同时${c.orbitRise > 0 ? "升高" : "降低"}${Math.abs(c.orbitRise)}米` : "保持半径和高度"}；${c.motionWindow ? `只在${c.motionWindow.startSec}—${c.motionWindow.endSec}秒环绕，其前后停住；` : ""}人物速度不由环绕改变。`),
+    ...spec.cameras.filter(c => c.endLens !== undefined && c.endLens !== c.lens).map(c => `${c.startSec}—${c.endSec}秒焦距从${c.lens}毫米连续${c.endLens! > c.lens ? "推到" : "拉到"}${c.endLens}毫米，${c.lensWindow ? `在${c.lensWindow.startSec}—${c.lensWindow.endSec}秒变焦，其前后停住` : "按整镜平滑起停"}。`),
     ...spec.cameras.filter(c => c.endPosition || c.endTarget).map(c =>
-      `${c.startSec}—${c.endSec}秒相机从（${c.position.join("，")}）连续移动到（${(c.endPosition ?? c.position).join("，")}），看向从（${c.target.join("，")}）到（${(c.endTarget ?? c.target).join("，")}）；平滑起停，切镜时不跨镜连移。`
+      `${c.startSec}—${c.endSec}秒相机从（${c.position.join("，")}）连续移动到（${(c.endPosition ?? c.position).join("，")}），看向从（${c.target.join("，")}）到（${(c.endTarget ?? c.target).join("，")}）；${c.motionWindow ? `只在${c.motionWindow.startSec}—${c.motionWindow.endSec}秒移动，其前后停住` : "平滑起停"}，切镜时不跨镜连移。`
     ),
     ...spec.actors.map(
       (a, index) =>
