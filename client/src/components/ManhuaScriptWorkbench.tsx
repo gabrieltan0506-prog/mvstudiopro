@@ -477,6 +477,8 @@ type Props = {
   /** 剧情包已出、尚未确认编剧 */
   writerPackReady?: boolean;
   onConfirmOutline?: () => void;
+  /** 本集已有带付费产物的链条时：只恢复确认，不重铺（只改了镜头时长/切点时用）。 */
+  onRestoreOutlineConfirmation?: () => void;
   /** 打开可粘贴/导入完整人物表的编剧入口；缺 canon 时禁止只给不可操作的认领提示。 */
   onOpenWriterEditor?: () => void;
   /** 把内部真实选中镜只读上报给同页顾问；无镜头时上报 null。 */
@@ -1243,6 +1245,7 @@ export default function ManhuaScriptWorkbench({
   outlineConfirmed,
   writerPackReady,
   onConfirmOutline,
+  onRestoreOutlineConfirmation,
   onOpenWriterEditor,
   onAdvisorSelectionChange,
   onAdvisorSignalsChange,
@@ -5459,7 +5462,18 @@ export default function ManhuaScriptWorkbench({
                 请先在「编剧」扩写或导入剧本，再回来确认大纲。
               </p>
             ) : null}
-            <div className="mt-5 flex justify-end" data-manhua-phase-footer-action="outline">
+            <div className="mt-5 flex flex-wrap items-center justify-end gap-3" data-manhua-phase-footer-action="outline">
+              {!outlineConfirmed && onRestoreOutlineConfirmation ? (
+                <button
+                  type="button"
+                  data-manhua-action="restore-outline-confirmation"
+                  disabled={Boolean(factoryBusy)}
+                  onClick={onRestoreOutlineConfirmation}
+                  className="inline-flex min-h-12 items-center rounded-xl border border-violet-300/50 px-5 text-sm font-semibold text-violet-900 disabled:opacity-40"
+                >
+                  只恢复确认（不重铺已有静帧与片段）
+                </button>
+              ) : null}
               <button
                 type="button"
                 data-manhua-action="ashuo-step-generate"

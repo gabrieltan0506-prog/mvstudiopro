@@ -23,7 +23,7 @@ beforeAll(async () => {
       f.makeBlock=(scope='11111111-1111-4111-8111-111111111111')=>({id:'clip-e01-g01',previsStudio:createManhuaPrevisStudio(10,scope),manhuaSegmentRefs:{previs:f.old}});
       f.response=(input)=>({jobId:'prv_test_job',status:'succeeded',params:input,output:{requestId:input.requestId,clipId:input.clipId,spec:input.spec,durationSec:input.spec.durationSec,gcsUri:'gs://test/unrelated-storage-folder/output.mp4',url:'https://offline.invalid/new.mp4',report:{warnings:['离线测试，不代表动作质量验收']},...(input.spec.exportLayers?{layerBundle:{gcsUri:'gs://test/layer-bundle.zip',url:'https://offline.invalid/layers.zip',format:'previs-layers-v1',bytes:1234,sha256:'a'.repeat(64)}}:{})}});
       const services={submit:async input=>{f.submits.push(structuredClone(input));if(f.mode==='defer')return new Promise(resolve=>f.resolveSubmit=resolve);if(f.mode==='unknown')throw Error('离线模拟断网');const response=f.response(input);if(globalThis.keyedFixture)f.getResult=response;return response;},get:async id=>{f.gets.push(id);return f.getResult;},list:async (...args)=>{f.lists.push(args);if(f.mode==='defer-list')return new Promise(resolve=>f.resolveList=resolve);return {items:[],nextCursor:null};}};
-      function App(){const [block,setBlock]=useState(()=>globalThis.keyedFixture?{...f.makeBlock(),previsStudio:undefined}:f.makeBlock());const [characters,setCharacters]=useState([{id:'character-mo',label:'墨屠'}]);const [shots,setShots]=useState([]);f.block=block;f.setBlock=setBlock;f.characters=characters;f.setCharacters=setCharacters;f.shots=shots;f.setShots=setShots;return <ManhuaPrevisStudioView key={globalThis.keyedFixture?block.id+':'+(block.previsStudio?.scopeId??'new'):undefined} block={block} characters={characters} sourceShots={shots} services={services} onChange={(studio,reference)=>{f.updates.push({studio:structuredClone(studio),reference});if(f.rejectSave)return false;setBlock(current=>({...current,previsStudio:studio,manhuaSegmentRefs:reference?{...current.manhuaSegmentRefs,previs:reference}:current.manhuaSegmentRefs}));return true;}}/>;}
+      function App(){const [block,setBlock]=useState(()=>globalThis.keyedFixture?{...f.makeBlock(),previsStudio:undefined}:f.makeBlock());const [characters,setCharacters]=useState([{id:'character-mo',label:'墨屠'}]);const [shots,setShots]=useState([]);const [directionShots,setDirectionShots]=useState([]);f.setDirectionShots=setDirectionShots;f.block=block;f.setBlock=setBlock;f.characters=characters;f.setCharacters=setCharacters;f.shots=shots;f.setShots=setShots;return <ManhuaPrevisStudioView key={globalThis.keyedFixture?block.id+':'+(block.previsStudio?.scopeId??'new'):undefined} block={block} characters={characters} sourceShots={shots} directionShots={directionShots} services={services} onChange={(studio,reference)=>{f.updates.push({studio:structuredClone(studio),reference});if(f.rejectSave)return false;setBlock(current=>({...current,previsStudio:studio,manhuaSegmentRefs:reference?{...current.manhuaSegmentRefs,previs:reference}:current.manhuaSegmentRefs}));return true;}}/>;}
       createRoot(document.getElementById('root')).render(globalThis.strictFixture?<StrictMode><App/></StrictMode>:<App/>);
       `,
     },
@@ -236,6 +236,35 @@ it("0929 三步化：默认只露出场人物、自动排运镜、生成审片�
     await settle(page);
     expect(await page.evaluate(() => (document.querySelector("[data-previs-tune]") as HTMLDetailsElement).open)).toBe(true);
     expect(await visible("[data-previs-advanced]")).toBe(true);
+    expect(await page.evaluate(() => (window as any).fixture.submits.length)).toBe(0);
+  } finally { await page.close(); }
+});
+
+it("0929 同段第二条白模：选「从镜3起」，自动排镜只覆盖镜3–4，时长对不上时报从哪一镜起", async () => {
+  const page = await open(false, false, undefined, false);
+  try {
+    await page.evaluate(() => (window as any).fixture.setDirectionShots([
+      { index: 1, durationSec: 4, cameraZh: "全景；平视；定机" },
+      { index: 2, durationSec: 6, cameraZh: "中景；平视；横移" },
+      { index: 3, durationSec: 4, cameraZh: "近景；平视；短推" },
+      { index: 4, durationSec: 6, cameraZh: "特写；平视；定机" },
+    ]));
+    await settle(page);
+    await page.select('[aria-label="白模从第几镜起"]', "3");
+    await click(page, "按分镜自动排运镜");
+    await settle(page);
+    const lines = await page.evaluate(() => (window as any).fixture.block.previsStudio.draftCameraPromptZh as string[] | undefined);
+    expect(lines?.length).toBeGreaterThan(0);
+    expect(lines!.every(line => /镜[34]/.test(line))).toBe(true);
+    expect(lines!.some(line => /镜[12](?!\d)/.test(line))).toBe(false);
+    // 从镜2起：6+4=10 秒同样对得上；从镜4起只有 6 秒对不上 10 秒白模，报错写明起始镜，机位不动
+    await page.select('[aria-label="白模从第几镜起"]', "4");
+    const before = await page.evaluate(() => JSON.stringify((window as any).fixture.block.previsStudio.spec.cameras));
+    await click(page, "按分镜自动排运镜");
+    await settle(page);
+    const text = await page.evaluate(() => document.querySelector("[data-previs-auto-camera]")!.textContent || "");
+    expect(text).toContain("从镜4起");
+    expect(await page.evaluate(() => JSON.stringify((window as any).fixture.block.previsStudio.spec.cameras))).toBe(before);
     expect(await page.evaluate(() => (window as any).fixture.submits.length)).toBe(0);
   } finally { await page.close(); }
 });

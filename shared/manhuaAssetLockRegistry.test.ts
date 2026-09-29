@@ -1366,4 +1366,23 @@ describe("分段场景来源隔离", () => {
     const ambiguous = { ...registry, byRole: { ...registry.byRole, scene: [...registry.byRole.scene, duplicate] } };
     expect(resolveManhuaSegmentClipAllowedAssets({ ...input, registry: ambiguous }).sceneIds).toEqual([]);
   });
+
+  it("0929 主场景有两张关联图（原图＋后来生成的「新场景·…」）：镜头没点地名时回落到与剧本场景同名的那张", () => {
+    const canon = { characters: [], props: [], locations: [
+      { id: "market", role: "scene" as const, nameZh: "临水坊市", lookZh: "青石路", promptZh: "临水坊市" },
+    ], episodeMainSceneId: { 1: "market" } };
+    const refs = [
+      { id: "custom-market", role: "scene" as const, source: "generated" as const, labelZh: "临水坊市", seedLibraryId: "market", url: "https://example.com/market.png" },
+      { id: "custom-market-new", role: "scene" as const, source: "generated" as const, labelZh: "新场景·market", seedLibraryId: "market", url: "https://example.com/market-new.png" },
+    ];
+    const registry = buildManhuaAssetLockRegistry({ assetCanon: canon, customRefs: refs });
+    // 镜09 原文：只写墨屠变身细节，不点人名也不点地名
+    const input = { registry, assetCanon: canon, mainSceneId: "market", haystack: "瘸腿撑直、棕毛褪浅、肩伤金纹扩散；变化连续而非跳形", sceneHaystack: "瘸腿撑直、棕毛褪浅、肩伤金纹扩散" };
+    const allowed = resolveManhuaSegmentClipAllowedAssets(input);
+    expect(allowed.sceneIds).toEqual(["custom-market"]);
+    expect(allowed.sceneFallback).toBe(true);
+    // 两张都叫「临水坊市」仍不猜
+    const twin = buildManhuaAssetLockRegistry({ assetCanon: canon, customRefs: [refs[0], { ...refs[1], labelZh: "临水坊市" }] });
+    expect(resolveManhuaSegmentClipAllowedAssets({ ...input, registry: twin }).sceneIds).toEqual([]);
+  });
 });

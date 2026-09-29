@@ -2328,17 +2328,23 @@ export function ensureManhuaFragmentClips(
     resolveClipLocalSegmentIndex(a.id, a.prompt, ep) - resolveClipLocalSegmentIndex(b.id, b.prompt, ep) ||
     a.id.localeCompare(b.id),
   );
-  /** 仅显式拆分同一原段时复用逐句候选；旧段保留归档，配乐与在途单不跨段搬运。 */
+  /**
+   * 显式拆分同一原段，或同一组镜头只改时长（画面、对白原文不变）时复用逐句候选；旧段保留归档，配乐与在途单不跨段搬运。
+   * 0929：只改镜15时长就会让刚拆出的 A 段整段换新节点，原先要求「新段镜数更少」会把已听审候选留在归档里。
+   */
   const splitAudioSourceFor = (segmentShots: ManhuaWorkbenchShot[]) => {
     const shotIndexes = segmentShots.map(shot => shot.index);
     const matches = existingSegClips.filter(clip => {
       const old = normalizeManhuaAutoSegmentBinding(clip.manhuaAutoSegment);
       let oldShots: ManhuaWorkbenchShot[] = [];
+      let oldVideoModel = "";
       try {
         const revision = JSON.parse(old?.revision || "{}");
         oldShots = Array.isArray(revision.shots) ? revision.shots : [];
+        oldVideoModel = String(revision.videoModel || "");
       } catch { return false; }
-      return old?.episodeIndex === ep && old.shotIndexes.length > shotIndexes.length
+      // 换模型/改档后的新分段绝不继承旧声音：同一组镜头放宽成 >= 后，同容量引擎互换（如 2.0→2.0-fast）分组不变，必须按引擎挡住
+      return old?.episodeIndex === ep && oldVideoModel === clipVideoModel && old.shotIndexes.length >= shotIndexes.length
         && shotIndexes.every(index => old.shotIndexes.includes(index))
         && segmentShots.every(shot => {
           const previous = oldShots.find(candidate => candidate.index === shot.index);

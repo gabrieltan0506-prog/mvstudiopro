@@ -934,9 +934,12 @@ export function resolveManhuaSegmentClipAllowedAssets(input: {
       const anchor = input.assetCanon?.locations.find(location => location.id === main);
       const direct = main ? scenes.find(slot => slot.id === main) : undefined;
       const linked = main ? scenes.filter(slot => slot.seedLibraryId === main) : [];
-      const named = anchor ? scenes.filter(slot => slot.labelZh === anchor.nameZh || (anchor.aliasZh && slot.labelZh === anchor.aliasZh)) : [];
-      // 旧上传图未认领时只接受唯一同名图，多版本不按库序猜选。
-      const hit = direct || (linked.length === 1 ? linked[0] : linked.length === 0 && named.length === 1 ? named[0] : undefined);
+      const sameName = (slot: (typeof scenes)[number]) => Boolean(anchor && (slot.labelZh === anchor.nameZh || (anchor.aliasZh && slot.labelZh === anchor.aliasZh)));
+      const named = scenes.filter(sameName);
+      // 多个版本都关联到主场景时（如后来生成的「新场景·…」自动命名图），只认名字与剧本场景完全一致的那一张；
+      // 仍不唯一就不选。旧上传图未认领时同样只接受唯一同名图，多版本不按库序猜选。
+      const linkedNamed = linked.filter(sameName);
+      const hit = direct || (linked.length === 1 ? linked[0] : linked.length > 1 ? (linkedNamed.length === 1 ? linkedNamed[0] : undefined) : named.length === 1 ? named[0] : undefined);
       // 仅当文案完全点不到场景时，才回落本集主场景（场景可共用；角色绝不可假锁）
       if (hit) {
         sceneIds = [hit.id];

@@ -208,19 +208,23 @@ export function ManhuaPrevisStudioView({
   }, []);
   const pendingId = studio.pending?.requestId;
   const [autoCameraMessage, setAutoCameraMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  /** 0929：同一段里分两条白模时（如第1段镜5–6、放下娘），自动排镜从这一镜起连续覆盖；null＝本段首镜。 */
+  const [directionStartShot, setDirectionStartShot] = useState<number | null>(null);
   /** 白模时长覆盖本段前几镜时（如第1段 17 秒＝镜1–4），只排被覆盖的镜；对不上镜头边界就不猜 */
   function autoDirectCameras() {
     if (disabled || pendingId || lock.current) return;
     const D = studio.spec.durationSec;
     const covered: ManhuaDirectedShot[] = [];
     let sum = 0;
-    for (const shot of directionShots) {
+    const startAt = Math.max(0, directionShots.findIndex(shot => shot.index === directionStartShot));
+    for (const shot of directionShots.slice(startAt)) {
       if (sum >= D - 1e-6) break;
       covered.push(shot);
       sum += shot.durationSec;
     }
     if (!covered.length || Math.abs(sum - D) > 1e-6) {
-      setAutoCameraMessage({ ok: false, text: `白模 ${D} 秒对不上分镜镜头边界（${directionShots.map(s => `镜${s.index} ${s.durationSec}秒`).join("、")}），请把白模时长改成从第一镜起连续几镜的合计` });
+      const from = directionShots.slice(startAt);
+      setAutoCameraMessage({ ok: false, text: `白模 ${D} 秒对不上分镜镜头边界（从镜${from[0]?.index ?? "?"}起：${from.map(s => `镜${s.index} ${s.durationSec}秒`).join("、")}），请把白模时长改成从起始镜起连续几镜的合计，或换一个起始镜` });
       return;
     }
     const passengerId = studio.spec.piggyback?.passengerId;
@@ -763,6 +767,17 @@ export function ManhuaPrevisStudioView({
       <section className="space-y-2 rounded-lg border border-cyan-300/40 bg-cyan-500/[0.06] p-3" data-previs-auto-camera>
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium text-cyan-50">第 2 步 · 运镜</span>
+          {directionShots.length > 1 ? (
+            <select
+              aria-label="白模从第几镜起"
+              className="rounded border border-white/20 bg-[#0b1220] px-2 py-1 text-xs text-white"
+              disabled={disabled || Boolean(pendingId) || busy}
+              value={directionStartShot ?? directionShots[0]!.index}
+              onChange={event => { setDirectionStartShot(Number(event.target.value)); setAutoCameraMessage(null); }}
+            >
+              {directionShots.map(shot => <option key={shot.index} value={shot.index}>从镜{shot.index}起</option>)}
+            </select>
+          ) : null}
           <button
             type="button"
             className="rounded bg-cyan-400/90 px-3 py-1.5 text-xs font-medium text-[#06121c] disabled:opacity-40"
