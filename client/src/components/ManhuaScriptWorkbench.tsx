@@ -56,8 +56,10 @@ import { Manhua3dModelStudio, manhua3dModelCounts, manhua3dRigLookupCharacters }
 import { resolveManhuaRigSource } from "@shared/manhuaRigSource";
 import { ManhuaWorldStudio, manhuaWorldCounts, type ManhuaStageFrameBindingDraft, type ManhuaWorldGenerateOptions, type ManhuaWorldLayoutActor, type ManhuaWorldLayoutSubmitOptions } from "@/components/canvas/ManhuaWorldStudio";
 import { ManhuaStageFrameAdoptPanel } from "@/components/canvas/ManhuaStageFrameAdoptPanel";
+import { evaluateManhuaStageFrameAdoption } from "@shared/manhuaStageFrameAdoption";
 import { manhuaActionPlanShotId } from "@/lib/manhuaActionPlanEditor";
 import type { ManhuaStageCharacter } from "@/components/canvas/ManhuaWorldStagePreview";
+import { resolveManhuaStageActorModel } from "@/lib/manhuaStageActorModel";
 import { evaluateManhuaWorld3dEligibility } from "@shared/manhuaWorld3d";
 import { buildManhuaStateDerivePromptZh } from "@shared/manhuaCharacterStates";
 import { splitManhuaActionPlanForPrevis } from "@shared/manhuaActionPlanSplit";
@@ -3051,18 +3053,36 @@ export default function ManhuaScriptWorkbench({
       currentWorldTaskIdBySourceVersion,
     };
   }, [customAssetRefs, focusEpisode, activeSegNo, activeClip?.previsStudio?.spec.actors]);
+  const stageFrameProgress = useMemo(() => {
+    const frames = customAssetRefs.filter((ref) => ref.stageFrame?.episode === focusEpisode && ref.stageFrame?.segmentIndex === activeSegNo);
+    return {
+      saved: frames.length,
+      adopted: frames.reduce((count, ref) => count + stageFrameShotOptions.filter((shot) =>
+        evaluateManhuaStageFrameAdoption(ref, { ...stageFrameAdoptContext, shotId: shot.shotId }).usable,
+      ).length, 0),
+    };
+  }, [customAssetRefs, focusEpisode, activeSegNo, stageFrameShotOptions, stageFrameAdoptContext]);
+  const previsStatusParts = [
+    activeClip?.previsStudio?.selectedJobId ? "已有采用参考，请核对是否对应当前配置" : "",
+    activeClip?.previsStudio?.pending ? "有待查询的渲染任务，请回白模面板查原编号" : "",
+    !activeClip?.previsStudio?.selectedJobId && activeClip?.previsStudio?.history.length
+      ? `已有 ${activeClip.previsStudio.history.length} 条候选，尚未采用` : "",
+  ].filter(Boolean);
+  const previsStatusZh = previsStatusParts.join("；") || "尚未渲染或采用";
   const worldStageCharacters = useMemo((): ManhuaStageCharacter[] => {
     const actors = activeClip?.previsStudio?.spec.actors || [];
     // 本段 actor 是必需名单；缺模型仍保留，让加载门禁明确报缺，不能从名单中消失。
     return actors.map((actor): ManhuaStageCharacter => {
       const ref = customAssetRefs.find((r) => r.id === actor.assetRef);
-      // 0916：模型来源与绑骨/白模同口径——锁脸图没就绪模型时用同人物候选图（A-pose）的模型
-      const model = resolveManhuaRigSource(ref, customAssetRefs).source?.model ?? (ref ? evaluateManhuaAsset3dEligibility(ref).currentModel3d : undefined);
+      // 0916：模型来源与绑骨/白模同口径——锁脸图没就绪模型时用同人物候选图（A-pose）的模型；
+      // 0929：没有可用模型时一并带出原因（未绑定 / 未建模 / 定妆图换过 / 建模中 / 失败 / 缺预览链接），预览按它说怎么办
+      const { glbUrl, issue } = resolveManhuaStageActorModel(actor.assetRef, customAssetRefs);
       return {
         id: actor.id,
         assetRef: actor.assetRef,
-        labelZh: actor.nameZh || ref?.labelZh || actor.id,
-        glbUrl: model?.status === "succeeded" ? model.glbUrl || "" : "",
+        labelZh: actor.nameZh && actor.nameZh !== "未命名人物" ? actor.nameZh : ref?.labelZh || actor.id,
+        glbUrl,
+        ...(issue ? { modelIssue: issue } : {}),
         stagePoint: [actor.start[0], actor.start[1]],
         yawDeg: actor.facingDeg,
       };
@@ -4466,7 +4486,7 @@ export default function ManhuaScriptWorkbench({
           )}
           {(onGenerateAsset3d || onImportAsset3d) && manhuaSecondaryToolHome("model3d", activePhase, immersive) === "cluster" ? <button type="button" data-manhua-action="open-3d-model-studio" data-manhua-tool-home="cluster" disabled={Boolean(factoryBusy)}
             className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
-            onClick={()=>toggleSecondaryTool("model3d")}>3D 模型（就绪 {manhua3dModelCounts(modelStudioCharacters, riggedAssetIds).ready}/{modelStudioCharacters.length}）</button> : null}
+            onClick={()=>toggleSecondaryTool("model3d")}>3D 模型（可预览或已绑骨 {manhua3dModelCounts(modelStudioCharacters, riggedAssetIds).ready}/{modelStudioCharacters.length}）</button> : null}
           {modelStudioOpen ? <SecondaryStudioSurface immersive={immersive} title="3D 模型" onClose={() => setModelStudioOpen(false)}><Manhua3dModelStudio
             characters={modelStudioCharacters}
             busyIds={asset3dBusyIds}
@@ -4476,17 +4496,16 @@ export default function ManhuaScriptWorkbench({
             onGenerateMultiview={onGenerateAsset3dMultiview}
             onSubmitMultiview={onSubmitAsset3dMultiview}
             multiviewDrafts={multiviewDrafts}
-            onPreview={(_id, url, labelZh)=>setModel3dPreview({ url, labelZh })}
             riggedIds={riggedAssetIds}
             onRig={onApplyRiggedModel ? (sourceRefId, characterId)=>{
               // 用候选图（A-pose）绑骨：把来源钉在锁脸图上，白模/场景预览随之切到该模型；用回锁脸图自己的模型则清钉
               onCustomAssetRigSourceChange?.(characterId, sourceRefId===characterId ? null : sourceRefId);
               setAutoRigAssetId(sourceRefId);
             } : undefined}/></SecondaryStudioSurface> : null}
-          {onGenerateSceneWorld && manhuaSecondaryToolHome("world3d", activePhase, immersive) === "cluster" ? <button type="button" data-manhua-action="open-world-studio" data-manhua-tool-home="cluster" disabled={Boolean(factoryBusy)}
+          {(worldStudioScenes.length > 0 || onGenerateSceneWorld) && manhuaSecondaryToolHome("world3d", activePhase, immersive) === "cluster" ? <button type="button" data-manhua-action="open-world-studio" data-manhua-tool-home="cluster" disabled={Boolean(factoryBusy)}
             className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
-            onClick={()=>toggleSecondaryTool("world3d")}>3D 场景（就绪 {manhuaWorldCounts(worldStudioScenes).ready}/{worldStudioScenes.length}）</button> : null}
-          {worldStudioOpen && onGenerateSceneWorld ? <SecondaryStudioSurface immersive={immersive} title="3D 场景" onClose={() => setWorldStudioOpen(false)}><ManhuaWorldStudio
+            onClick={()=>toggleSecondaryTool("world3d")}>3D 场景（可载入 {manhuaWorldCounts(worldStudioScenes).ready}/{worldStudioScenes.length}）</button> : null}
+          {worldStudioOpen && (worldStudioScenes.length > 0 || onGenerateSceneWorld) ? <SecondaryStudioSurface immersive={immersive} title="3D 场景" onClose={() => setWorldStudioOpen(false)}><ManhuaWorldStudio
             scenes={worldStudioScenes}
             busyIds={sceneWorldBusyIds}
             disabled={Boolean(factoryBusy)}
@@ -4494,6 +4513,10 @@ export default function ManhuaScriptWorkbench({
             onRetry={onRetrySceneWorld}
             onRemove={onRemoveSceneWorld}
             stageCharacters={worldStageCharacters}
+            previsStatusZh={previsStatusZh}
+            onOpenPrevis={onUpdateClipPrevisStudio ? () => toggleSecondaryTool("previs") : undefined}
+            savedFrameCount={stageFrameProgress.saved}
+            adoptedFrameCount={stageFrameProgress.adopted}
             onExportStageFrame={onExportSceneStageFrame ? (id, blob, frame) => onExportSceneStageFrame(id, blob, { ...frame, episode: focusEpisode, segmentIndex: activeSegNo }) : undefined}
             layoutActors={worldLayoutActors}
             onSubmitLayoutWorld={onSubmitLayoutSceneWorld}/>
@@ -4511,6 +4534,10 @@ export default function ManhuaScriptWorkbench({
             onClick={()=>toggleSecondaryTool("previs")}>本段动作白模</button> : null}
           {previsStudioOpen&&onUpdateClipPrevisStudio ? <SecondaryStudioSurface immersive={immersive} title="本段动作白模" onClose={() => setPrevisStudioOpen(false)}><div className="w-full">
             <p className="mb-2 text-xs text-cyan-100">第 {focusEpisode} 集 · 第 {activeSegNo} 段 · 动作白模</p>
+            <div className="mb-2 flex flex-wrap items-center gap-2 rounded border border-cyan-300/20 bg-cyan-500/5 p-2 text-[11px] text-white/75" data-previs-world-link>
+              <span>3D 场景可尝试载入 {manhuaWorldCounts(worldStudioScenes).ready}/{worldStudioScenes.length} 个；它只取本段人物起点站位，白模动作和切镜以这里的预演为准。</span>
+              {worldStudioScenes.length > 0 || onGenerateSceneWorld ? <button type="button" className="rounded border border-cyan-300/30 px-2 py-1 text-cyan-50" onClick={() => toggleSecondaryTool("world3d")}>查看 3D 场景与视角图</button> : null}
+            </div>
             {activeClip?<ManhuaPrevisStudio key={`${activeClip.id}:${activeClip.previsStudio?.scopeId??"new"}`} block={activeClip}
               characters={assetLockRegistry.byRole.character.map(a=>{
                 const ref=customAssetRefs.find(ref=>ref.id===a.id);

@@ -156,7 +156,7 @@ describe("片场生产脚本必需资产门禁", () => {
     h.exportFrame(42);
     expect(h.messages.at(-1)).toMatchObject({ type: "export_error", requestId: 42 });
   });
-  it("拖动后的实际朝向随原请求导出，同机位预设可复位", async () => {
+  it("拖动围绕观察点旋转，保持主体与距离；当前机位导出后可复位", async () => {
     const h = await harness([], 0);
     h.world.resolve();
     await h.done;
@@ -166,13 +166,42 @@ describe("片场生产脚本必需资产门禁", () => {
     const dragged = h.messages.at(-1) as { type: string; requestId: number; cameraRig: { position: number[]; target: number[] } };
     expect(dragged.type).toBe("frame");
     expect(dragged.requestId).toBe(51);
-    expect(dragged.cameraRig.position).toEqual(h.config.initialCamera.position);
-    expect(dragged.cameraRig.target[0]).not.toBeCloseTo(h.config.initialCamera.target[0]);
+    expect(dragged.cameraRig.position).not.toEqual(h.config.initialCamera.position);
+    dragged.cameraRig.target.forEach((value, index) => expect(value).toBeCloseTo(h.config.initialCamera.target[index]!));
+    const radius = (rig: { position: number[]; target: number[] }) => Math.hypot(...rig.position.map((n, i) => n - rig.target[i]!));
+    expect(radius(dragged.cameraRig)).toBeCloseTo(radius(h.config.initialCamera), 6);
+    h.pointer("wheel", { deltaY: -200, preventDefault() {} });
+    h.exportFrame(53);
+    const zoomed = h.messages.at(-1) as { cameraRig: { position: number[]; target: number[] } };
+    h.pointer("pointermove", { pointerId: 1, clientX: 120, clientY: 10 });
+    h.exportFrame(54);
+    const continued = h.messages.at(-1) as { cameraRig: { position: number[]; target: number[] } };
+    expect(radius(continued.cameraRig)).toBeCloseTo(radius(zoomed.cameraRig), 6);
+    continued.cameraRig.target.forEach((value, index) => expect(value).toBeCloseTo(h.config.initialCamera.target[index]!));
     h.send({ type: "camera", rig: h.config.initialCamera, cameraKind: "establish" });
     h.exportFrame(52);
     const reset = h.messages.at(-1) as { requestId: number; cameraRig: { target: number[] } };
     expect(reset.requestId).toBe(52);
     reset.cameraRig.target.forEach((value, index) => expect(value).toBeCloseTo(h.config.initialCamera.target[index]!));
+  });
+  it("在 3D 画面滚轮推近与推远，导出的是当前相机位置；重选机位可复位", async () => {
+    const h = await harness([], 0);
+    h.world.resolve();
+    await h.done;
+    let prevented = 0;
+    h.pointer("wheel", { deltaY: -300, preventDefault() { prevented += 1; } });
+    h.exportFrame(61);
+    const close = h.messages.at(-1) as { cameraRig: { position: number[] } };
+    expect(prevented).toBe(1);
+    expect(close.cameraRig.position).not.toEqual(h.config.initialCamera.position);
+    h.pointer("wheel", { deltaY: 300, preventDefault() { prevented += 1; } });
+    h.exportFrame(62);
+    const far = h.messages.at(-1) as { cameraRig: { position: number[] } };
+    far.cameraRig.position.forEach((value, index) => expect(value).toBeCloseTo(h.config.initialCamera.position[index]!, 5));
+    h.send({ type: "camera", rig: h.config.initialCamera, cameraKind: "establish" });
+    h.exportFrame(63);
+    const reset = h.messages.at(-1) as { cameraRig: { position: number[] } };
+    expect(reset.cameraRig.position).toEqual(h.config.initialCamera.position);
   });
 });
 
@@ -214,10 +243,21 @@ it("宿主上传开始后切机位仍保持忙碌，旧回执不能放开新请�
     await page.goto("http://localhost:41804/", { waitUntil: "domcontentloaded" });
     await page.addScriptTag({ content: built.outputFiles[0]!.text });
     await page.waitForSelector('[data-stage-status="error"] iframe');
+    await page.click('button[aria-label="放大场景"]');
+    await page.waitForSelector('[data-stage-expanded="true"] button[aria-label="退出放大场景"]');
+    expect(await page.$eval("[data-stage-viewer]", (el) => (el as HTMLElement).style.height)).toContain("100dvh");
+    await page.keyboard.press("Escape");
+    await page.waitForSelector('[data-stage-expanded="false"] button[aria-label="放大场景"]');
     const child = page.frames().find((frame) => frame.parentFrame());
     if (!child) throw new Error("测试 iframe 未挂载");
     const revision = await page.$eval("[data-stage-revision]", (el) => el.getAttribute("data-stage-revision"));
     const ready = () => child.evaluate((rev) => parent.postMessage({ source: "manhua-world-stage", revision: rev, type: "ready", loaded: ["world"], failed: [] }, "*"), revision);
+    await child.evaluate((rev) => parent.postMessage({
+      source: "manhua-world-stage", revision: rev, type: "ready", loaded: ["world"],
+      failed: [{ id: "collider", kind: "collider", message: "network", code: "network" }],
+    }, "*"), revision);
+    await page.waitForSelector('[data-stage-status="ready"] [data-stage-reload]');
+    expect(await page.evaluate(() => !Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("保存当前视角图"))?.disabled)).toBe(true);
     await ready();
     await page.waitForSelector('[data-stage-status="ready"]');
     const rig = { kind: "establish", position: [0, -7, 2.6], target: [0, 0, 1], lens: 28, labelZh: "建立·高位全景" };

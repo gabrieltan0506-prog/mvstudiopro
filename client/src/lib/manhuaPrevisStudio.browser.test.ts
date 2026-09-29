@@ -126,6 +126,7 @@ async function settle(page: Page) {
 }
 async function markCurrentPreviewFrames(page: Page) {
   await page.waitForSelector("[data-previs-review-gate]");
+  if (await page.$("details[data-previs-review-gate]:not([open])")) await page.click("[data-previs-review-gate] > summary");
   await page.evaluate(() => {
     const video = document.querySelector<HTMLVideoElement>("[data-manhua-previs-studio] video")!;
     const total = Math.round(Number(document.querySelector<HTMLInputElement>('[aria-label="白模预览时间"]')!.max) * 24);
@@ -265,6 +266,98 @@ it("0929 同段第二条白模：选「从镜3起」，自动排镜只覆盖镜3
     const text = await page.evaluate(() => document.querySelector("[data-previs-auto-camera]")!.textContent || "");
     expect(text).toContain("从镜4起");
     expect(await page.evaluate(() => JSON.stringify((window as any).fixture.block.previsStudio.spec.cameras))).toBe(before);
+    expect(await page.evaluate(() => (window as any).fixture.submits.length)).toBe(0);
+  } finally { await page.close(); }
+});
+
+it("0929 分镜合计带小数（第3段A 22.216 秒对 23 秒白模）：尾差不足 1 秒补在末镜；尾差 ≥1 秒仍报对不上", async () => {
+  const page = await open(false, false, undefined, false);
+  try {
+    // 夹具白模 10 秒：镜1 4 秒＋镜2 5.4 秒＝9.4 秒，尾差 0.6 秒；镜3 会冲过结尾
+    await page.evaluate(() => (window as any).fixture.setDirectionShots([
+      { index: 1, durationSec: 4, cameraZh: "全景；平视；定机" },
+      { index: 2, durationSec: 5.4, cameraZh: "近景；平视；短推" },
+      { index: 3, durationSec: 6, cameraZh: "中景；平视；横移" },
+    ]));
+    await settle(page);
+    await click(page, "按分镜自动排运镜");
+    await settle(page);
+    const cameras = await page.evaluate(() => (window as any).fixture.block.previsStudio.spec.cameras as Array<{ startSec: number; endSec: number }>);
+    expect(cameras.at(-1)!.endSec).toBe(10);
+    const text = await page.evaluate(() => document.querySelector("[data-previs-auto-camera]")!.textContent || "");
+    expect(text).toContain("短 0.600 秒");
+    expect(text).toContain("镜2末机位延长到结尾");
+    // 末镜内有硬切：切点按分镜真实合计算，不因补尾差后移（审查实测：不补 5.625 秒，补在末镜时长上会变 5.792 秒）
+    await page.evaluate(() => (window as any).fixture.setDirectionShots([
+      { index: 1, durationSec: 4, cameraZh: "全景；平视；定机" },
+      { index: 2, durationSec: 5.4, cameraZh: "近景→特写；快切后短推" },
+    ]));
+    await settle(page);
+    await click(page, "按分镜自动排运镜");
+    await settle(page);
+    const cut = await page.evaluate(() => ((window as any).fixture.block.previsStudio.spec.cameras as Array<{ startSec: number; endSec: number }>).map(c => c.startSec));
+    expect(cut.some(sec => Math.abs(sec - 5.625) < 0.01)).toBe(true);
+    expect(cut.some(sec => Math.abs(sec - 5.792) < 0.01)).toBe(false);
+    // 尾差 1.5 秒：不补，报对不上，机位不动
+    await page.evaluate(() => (window as any).fixture.setDirectionShots([
+      { index: 1, durationSec: 4, cameraZh: "全景；平视；定机" },
+      { index: 2, durationSec: 4.5, cameraZh: "近景；平视；短推" },
+    ]));
+    await settle(page);
+    const before = await page.evaluate(() => JSON.stringify((window as any).fixture.block.previsStudio.spec.cameras));
+    await click(page, "按分镜自动排运镜");
+    await settle(page);
+    expect(await page.evaluate(() => document.querySelector("[data-previs-auto-camera]")!.textContent || "")).toContain("对不上");
+    expect(await page.evaluate(() => JSON.stringify((window as any).fixture.block.previsStudio.spec.cameras))).toBe(before);
+  } finally { await page.close(); }
+});
+
+it("0929 导入白模规格：先检查再核对才能套用，原配置进撤销历史、不自动渲染；坏 JSON 与校验不过的规格不改配置", async () => {
+  const page = await open(false, false, undefined, false);
+  try {
+    await page.evaluate(() => { const tune = document.querySelector("[data-previs-tune]") as HTMLDetailsElement; tune.open = true; (document.querySelector("[data-previs-import]") as HTMLDetailsElement).open = true; });
+    const before = await page.evaluate(() => JSON.stringify((window as any).fixture.block.previsStudio.spec));
+    const setText = async (text: string) => page.evaluate(value => {
+      const area = document.querySelector('[aria-label="白模规格 JSON"]') as HTMLTextAreaElement;
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      setter.call(area, value); area.dispatchEvent(new Event("input", { bubbles: true }));
+    }, text);
+    // 坏 JSON
+    await setText("{不是 JSON");
+    await settle(page);
+    await click(page, "检查规格");
+    await settle(page);
+    expect(await page.$eval("[data-previs-import] [role=alert]", el => el.textContent)).toContain("不是有效的 JSON");
+    // 校验不过：白模时长必须整秒
+    const bad = await page.evaluate(() => JSON.stringify({ ...(window as any).fixture.block.previsStudio.spec, durationSec: 22.216 }));
+    await setText(bad);
+    await settle(page);
+    await click(page, "检查规格");
+    await settle(page);
+    expect(await page.$eval("[data-previs-import] [role=alert]", el => el.textContent)).toContain("规格未通过白模校验");
+    expect(await page.evaluate(() => JSON.stringify((window as any).fixture.block.previsStudio.spec))).toBe(before);
+    // 合法规格（带 spec 外壳）：改角色名与人物绑定
+    const good = await page.evaluate(() => {
+      const spec = structuredClone((window as any).fixture.block.previsStudio.spec);
+      spec.actors[0].nameZh = "导入的阿菁"; spec.actors[0].assetRef = "character-mo";
+      return JSON.stringify({ spec });
+    });
+    await setText(good);
+    await settle(page);
+    await click(page, "检查规格");
+    await settle(page);
+    const preview = await page.$eval("[data-previs-import-preview]", el => el.textContent || "");
+    expect(preview).toContain("导入的阿菁");
+    expect(preview).toContain("10 秒");
+    // 未勾核对不能套用
+    expect(await page.$eval("[data-previs-import-preview] button", el => (el as HTMLButtonElement).disabled)).toBe(true);
+    await page.click("[data-previs-import-preview] input[type=checkbox]");
+    await click(page, "套用到本段");
+    await settle(page);
+    const studio = await page.evaluate(() => (window as any).fixture.block.previsStudio);
+    expect(studio.spec.actors[0].nameZh).toBe("导入的阿菁");
+    expect(studio.specHistory.at(-1).reasonZh).toBe("导入白模规格前的配置");
+    expect(JSON.stringify(studio.specHistory.at(-1).spec)).toBe(before);
     expect(await page.evaluate(() => (window as any).fixture.submits.length)).toBe(0);
   } finally { await page.close(); }
 });
@@ -449,6 +542,7 @@ it("未逐帧审片及常速复核的候选不能替换旧参考", async () => {
     expect(await page.evaluate(() => (window as any).fixture.block.manhuaSegmentRefs.previs.gcsUri)).toBe("gs://test/old.mp4");
     expect(await page.$eval('[role="alert"]', node => node.textContent)).toContain("逐帧检查");
     await markCurrentPreviewFrames(page);
+    if (await page.$("details[data-previs-review-gate]:not([open])")) await page.click("[data-previs-review-gate] > summary");
     await page.click("[data-previs-review-gate] input[type=checkbox]");
     await click(page, "采用为本段参考");
     await settle(page);
@@ -632,6 +726,10 @@ it("提交结果不明后确认原编号，绝不创建第二个请求身份", a
     });
     await click(page, "确认生成动作白模");
     await page.waitForSelector('[role="alert"]');
+    expect(await page.$eval("[data-previs-recovery]", el => el.textContent)).toContain("提交或查询结果未确认");
+    await click(page, "查询原编号");
+    await page.waitForFunction(() => (window as any).fixture.gets.length > 0);
+    expect(await page.evaluate(() => (window as any).fixture.submits.length)).toBe(1);
     await click(page, "确认原请求（不新建编号）");
     await page.waitForFunction(
       () => (window as any).fixture.submits.length === 2
@@ -650,6 +748,32 @@ it("提交结果不明后确认原编号，绝不创建第二个请求身份", a
   } finally {
     await page.close();
   }
+});
+
+it("渲染明确失败显示原因与配置入口，保留旧参考且不留待确认编号", async () => {
+  const page = await open();
+  try {
+    await page.evaluate(() => {
+      (window as any).fixture.response = (input: any) => ({
+        jobId: "prv_failed_job", status: "failed", params: input,
+        output: null, error: "人物站位超出可渲染范围",
+      });
+    });
+    await click(page, "确认生成动作白模");
+    await page.waitForFunction(() => Boolean(document.querySelector("[data-previs-recovery]")));
+    const actual = await page.evaluate(() => ({
+      message: document.querySelector("[data-previs-recovery]")?.textContent,
+      pending: (window as any).fixture.block.previsStudio.pending,
+      old: (window as any).fixture.block.manhuaSegmentRefs.previs.url,
+      submits: (window as any).fixture.submits.length,
+    }));
+    expect(actual.message).toContain("本次渲染失败");
+    expect(actual.message).toContain("人物站位超出可渲染范围");
+    expect(actual.message).toContain("检查人物与配置");
+    expect(actual.pending).toBeUndefined();
+    expect(actual.old).toBe("https://offline.invalid/old.mp4");
+    expect(actual.submits).toBe(1);
+  } finally { await page.close(); }
 });
 
 it("恢复草稿中的在途编号只查询原单，成功后保留候选且不自动提交", async () => {
@@ -1206,6 +1330,12 @@ it("角色配置保存被拒时不显示已保存且保留原状态", async () =
     expect(await page.evaluate(() => (window as any).fixture.submits)).toEqual(
       []
     );
+    expect(await page.$eval('[data-previs-rig-error="save"]', el => el.textContent)).toContain("配置尚未保存");
+    await page.evaluate(() => { (window as any).fixture.rejectSave = false; });
+    await click(page, "重试应用配置");
+    await settle(page);
+    expect(await page.evaluate(() => (window as any).fixture.block.previsStudio.spec.actors[0].riggedModel?.sourceJobId)).toBe("m3d_test");
+    expect(await page.evaluate(() => (window as any).fixture.submits.length)).toBe(0);
   } finally {
     await page.close();
   }
@@ -1895,5 +2025,32 @@ it("新增在场区间只在剩余时间足一帧时显示，并产生正时长"
       { startSec: 0, endSec: 5 }, { startSec: 5, endSec: 6 },
     ]);
     expect(await page.evaluate(() => (window as any).fixture.submits.length)).toBe(0);
+  } finally { await page.close(); }
+});
+
+
+it("打开已有历史的白模面板即载入最近渲染，播放器先于配置且不会自动采用或重提", async () => {
+  const page = await open(false, true, undefined, false);
+  try {
+    await page.evaluate(() => {
+      const f = (window as any).fixture;
+      const b = f.makeBlock('33333333-3333-4333-8333-333333333333');
+      const studio = b.previsStudio;
+      const input = {scopeId: studio.scopeId, clipId:b.id, requestId:'44444444-4444-4444-8444-444444444444',spec:studio.spec};
+      f.getResult = f.response(input);
+      studio.history = [
+        {jobId:'old-job', requestId:'55555555-5555-4555-8555-555555555555', gcsUri:'gs://test/old-preview.mp4',url:'https://offline.invalid/old-preview.mp4', durationSec:10, createdAt:'2026-09-28T01:00:00Z', spec:studio.spec},
+        {jobId:f.getResult.jobId, requestId:input.requestId, gcsUri:f.getResult.output.gcsUri,url:f.getResult.output.url,durationSec:10,createdAt:'2026-09-29T01:00:00Z',spec:studio.spec},
+      ];
+      f.setBlock(b);
+    });
+    await page.waitForSelector('[data-previs-player] video');
+    const result = await page.evaluate(() => {
+      const f = (window as any).fixture;
+      const player = document.querySelector('[data-previs-player]')!;
+      const cast = document.querySelector('[data-previs-cast]')!;
+      return {gets:f.gets,submits:f.submits.length,adopted:f.block.previsStudio.selectedJobId ?? null,reference:f.block.manhuaSegmentRefs.previs.url,playerFirst:Boolean(player.compareDocumentPosition(cast) & Node.DOCUMENT_POSITION_FOLLOWING)};
+    });
+    expect(result).toEqual({gets:['44444444-4444-4444-8444-444444444444'],submits:0,adopted:null,reference:'https://offline.invalid/old.mp4',playerFirst:true});
   } finally { await page.close(); }
 });
