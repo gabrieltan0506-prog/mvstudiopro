@@ -277,11 +277,7 @@ export function ManhuaWorldStudio(props: Props) {
               </span>
               {openPreviewId === s.id && canView && assets ? (
                 <div className="mt-1 w-full rounded border border-cyan-300/20 bg-black/30 p-2" data-manhua-world-preview>
-                  <div className="flex flex-wrap gap-2">
-                    {assets.panoUrl ? <img src={assets.panoUrl} alt={`${s.labelZh} 全景`} className="h-32 rounded object-cover" /> : null}
-                    {!assets.panoUrl && assets.thumbnailUrl ? <img src={assets.thumbnailUrl} alt={`${s.labelZh} 缩略图`} className="h-32 rounded object-cover" /> : null}
-                  </div>
-                  <div className="mt-2">
+                  <div>
                     <ManhuaWorldStagePreview
                       sceneLabelZh={s.labelZh}
                       world={assets}

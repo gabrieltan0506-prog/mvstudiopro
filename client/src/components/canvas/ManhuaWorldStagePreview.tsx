@@ -63,7 +63,7 @@ type Props = {
   sceneLabelZh: string;
   world: ManhuaWorld3dAssets;
   characters: readonly ManhuaStageCharacter[];
-  height?: number;
+  height?: number | string;
   /** 导出当前视角 PNG（供关键帧参考）；不传则不显示导出按钮 */
   onExportStageFrame?: (blob: Blob, frame: ManhuaStageFrameExport) => void | Promise<void>;
 };
@@ -203,11 +203,11 @@ if (THREE && SplatMesh) {
     const sun = new THREE.DirectionalLight(0xffffff, 1.0); sun.position.set(3, -5, 8); scene.add(sun);
     const grid = new THREE.GridHelper(20, 20, 0x2a5a6a, 0x1a3a44); grid.rotation.x = Math.PI / 2; scene.add(grid);
 
-    let activeRig = CONFIG.initialCamera;
+    let viewDistance = 1;
     const applyCamera = (rig) => {
-      activeRig = rig;
       camera.position.set(rig.position[0], rig.position[1], rig.position[2]);
       camera.lookAt(rig.target[0], rig.target[1], rig.target[2]);
+      viewDistance = Math.max(0.1, camera.position.distanceTo(new THREE.Vector3(...rig.target)));
       // 35mm 全画幅等效：vfov = 2·atan(12 / lens)
       camera.fov = (2 * Math.atan(12 / Math.max(10, rig.lens)) * 180) / Math.PI;
       camera.updateProjectionMatrix();
@@ -223,7 +223,7 @@ if (THREE && SplatMesh) {
       drag = {
         id: ev.pointerId, x: ev.clientX, y: ev.clientY,
         yaw: Math.atan2(dir.y, dir.x), pitch: Math.asin(Math.max(-1, Math.min(1, dir.z))),
-        distance: Math.max(0.1, camera.position.distanceTo(new THREE.Vector3(...activeRig.target))),
+        distance: viewDistance,
       };
       renderer.domElement.setPointerCapture(ev.pointerId);
       renderer.domElement.style.cursor = "grabbing";
@@ -247,6 +247,14 @@ if (THREE && SplatMesh) {
     renderer.domElement.addEventListener("pointerup", endDrag);
     renderer.domElement.addEventListener("pointercancel", endDrag);
     renderer.domElement.addEventListener("lostpointercapture", endDrag);
+    renderer.domElement.addEventListener("wheel", (ev) => {
+      ev.preventDefault();
+      const deltaPx = ev.deltaY * (ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? window.innerHeight : 1);
+      const next = Math.max(0.6, Math.min(80, viewDistance * Math.exp(deltaPx * 0.0015)));
+      const direction = camera.getWorldDirection(new THREE.Vector3());
+      camera.position.addScaledVector(direction, viewDistance - next);
+      viewDistance = next;
+    }, { passive: false });
 
     const q = CONFIG.transform.quaternionXYZW, t = CONFIG.transform.translationStage, s = CONFIG.transform.scale;
     // 短暂断流时仅重试读取同一份已生成资产；不重新提交 3D 世界生成任务。
@@ -329,8 +337,7 @@ if (THREE && SplatMesh) {
           const dataUrl = renderer.domElement.toDataURL("image/png");
           if (!dataUrl.startsWith("data:image/png;base64,") || dataUrl.length <= "data:image/png;base64,".length) throw new Error("empty_png");
           const direction = camera.getWorldDirection(new THREE.Vector3());
-          const distance = Math.max(0.1, camera.position.distanceTo(new THREE.Vector3(...activeRig.target)));
-          const target = camera.position.clone().addScaledVector(direction, distance);
+          const target = camera.position.clone().addScaledVector(direction, viewDistance);
           post({
             type: "frame", dataUrl,
             viewLabelZh: m.viewLabelZh || "", cameraKind: String(m.cameraKind || cameraKind), requestId: m.requestId,
@@ -384,7 +391,7 @@ export async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
 }
 
 export function ManhuaWorldStagePreview(props: Props) {
-  const { sceneLabelZh, world, characters, height = 360, onExportStageFrame } = props;
+  const { sceneLabelZh, world, characters, height = "clamp(520px, 68vh, 820px)", onExportStageFrame } = props;
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const revisionCounter = useRef(0);
   const [cameraKind, setCameraKind] = useState<StageCameraKind>("establish");
@@ -602,14 +609,14 @@ export function ManhuaWorldStagePreview(props: Props) {
         ) : null}
       </div>
       <p className="text-[10px] text-white/45">
-        在画面中拖动可旋转视角；切换机位会回到该机位的初始角度。
+        在画面中拖动可旋转视角，滚轮可推近或推远；切换机位会回到该机位的初始角度。
         {characters.length ? `本段有 ${characters.length} 个人物；` : "本段暂未摆入人物；"}
         {rigs.ots.kind === "single" && cameraKind === "ots" ? " 缺过肩对象，过肩退为单人正面。" : ""}
         {status === "loading" ? " 场景加载中，载入完成后才能保存视角图。" : ""}
         {status === "partial" ? " 有人物或资产未载入，暂不能保存视角图。" : ""}
         {exporting ? " 视角图正在保存，请稍候。" : ""}
       </p>
-      <div className="relative w-full overflow-hidden rounded border border-cyan-300/20 bg-black" style={{ height }}>
+      <div className="relative w-full overflow-hidden rounded border border-cyan-300/20 bg-black" style={{ height }} data-stage-viewer>
         <iframe key={revision} ref={iframeRef} title={`${sceneLabelZh} 3D 世界预览`} srcDoc={srcDoc} sandbox="allow-scripts" className="h-full w-full" style={{ border: 0 }} />
         {status === "error" ? (
           <div className="absolute inset-0 flex items-center justify-center bg-black/70 p-3 text-center text-[11px] text-amber-100" data-stage-placeholder>

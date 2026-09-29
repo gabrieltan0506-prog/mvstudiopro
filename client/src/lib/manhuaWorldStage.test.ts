@@ -174,6 +174,25 @@ describe("片场生产脚本必需资产门禁", () => {
     expect(reset.requestId).toBe(52);
     reset.cameraRig.target.forEach((value, index) => expect(value).toBeCloseTo(h.config.initialCamera.target[index]!));
   });
+  it("在 3D 画面滚轮推近与推远，导出的是当前相机位置；重选机位可复位", async () => {
+    const h = await harness([], 0);
+    h.world.resolve();
+    await h.done;
+    let prevented = 0;
+    h.pointer("wheel", { deltaY: -300, preventDefault() { prevented += 1; } });
+    h.exportFrame(61);
+    const close = h.messages.at(-1) as { cameraRig: { position: number[] } };
+    expect(prevented).toBe(1);
+    expect(close.cameraRig.position).not.toEqual(h.config.initialCamera.position);
+    h.pointer("wheel", { deltaY: 300, preventDefault() { prevented += 1; } });
+    h.exportFrame(62);
+    const far = h.messages.at(-1) as { cameraRig: { position: number[] } };
+    far.cameraRig.position.forEach((value, index) => expect(value).toBeCloseTo(h.config.initialCamera.position[index]!, 5));
+    h.send({ type: "camera", rig: h.config.initialCamera, cameraKind: "establish" });
+    h.exportFrame(63);
+    const reset = h.messages.at(-1) as { cameraRig: { position: number[] } };
+    expect(reset.cameraRig.position).toEqual(h.config.initialCamera.position);
+  });
 });
 
 it("宿主上传开始后切机位仍保持忙碌，旧回执不能放开新请求", async () => {
