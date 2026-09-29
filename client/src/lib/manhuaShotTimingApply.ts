@@ -1,5 +1,7 @@
 import type { ManhuaWriterPack } from "@shared/manhuaWriterRoom";
 import { parseManhuaEpisodeSegmentPlanFromMarkdown } from "@shared/manhuaEpisodeSegmentPlan";
+import { resolveKeyartShotIndex } from "@shared/manhuaScriptWorkbench";
+import { readManhuaTimedStoryboard } from "@shared/manhuaTimedStoryboard";
 import {
   countManhuaRenderedClipsToArchiveOnResegment,
   ensureManhuaFragmentClips,
@@ -43,4 +45,27 @@ export function applyManhuaShotTimingEdit(input: {
   } catch (error) {
     return { blocks: retimed, edges: input.edges, writerPack, resegmentError: error instanceof Error ? error.message : String(error) };
   }
+}
+
+/**
+ * 「只恢复确认（不重铺）」的前提：未确认只是因为改了时长/切点，而不是改写了剧情。
+ * 有待确认的顾问改写，或本集秒位表里有镜头没有现行静帧节点（剧情从某段起重写后会被清掉），都必须走「确认剧本大纲」重铺。
+ */
+export function manhuaRestoreConfirmationBlocker(input: {
+  blocks: CanvasBlock[];
+  writerPack: ManhuaWriterPack | null | undefined;
+  episodeIndex: number;
+  /** advisorReconfirmationFromEpisode 的结果：非空＝有采用的顾问改写待确认 */
+  advisorReconfirmFromEpisode: number | undefined;
+}): string {
+  if (input.advisorReconfirmFromEpisode != null) return "有已采用的顾问改写尚未确认，不能只恢复确认；请用「确认剧本大纲」。";
+  const body = input.writerPack?.episodes.find(episode => episode.index === input.episodeIndex)?.body || "";
+  const timed = readManhuaTimedStoryboard(body);
+  if (!timed.recognized || !timed.rows.length) return "本集剧本没有完整秒位表，不能只恢复确认；请用「确认剧本大纲」。";
+  const live = new Set(input.blocks
+    .filter(b => b.id.startsWith("keyart-") && !b.archivedFromPreviousScript && (getBlockEpisodeIndex(b) ?? 1) === input.episodeIndex)
+    .map(b => resolveKeyartShotIndex(b.id, b.prompt)));
+  const missing = timed.rows.map(row => row.index).filter(index => !live.has(index));
+  if (missing.length) return `本集剧本的镜${missing.slice(0, 6).join("、")}没有现行静帧节点（可能改写过剧情），不能只恢复确认；请用「确认剧本大纲」。`;
+  return "";
 }

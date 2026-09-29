@@ -2337,11 +2337,14 @@ export function ensureManhuaFragmentClips(
     const matches = existingSegClips.filter(clip => {
       const old = normalizeManhuaAutoSegmentBinding(clip.manhuaAutoSegment);
       let oldShots: ManhuaWorkbenchShot[] = [];
+      let oldVideoModel = "";
       try {
         const revision = JSON.parse(old?.revision || "{}");
         oldShots = Array.isArray(revision.shots) ? revision.shots : [];
+        oldVideoModel = String(revision.videoModel || "");
       } catch { return false; }
-      return old?.episodeIndex === ep && old.shotIndexes.length >= shotIndexes.length
+      // 换模型/改档后的新分段绝不继承旧声音：同一组镜头放宽成 >= 后，同容量引擎互换（如 2.0→2.0-fast）分组不变，必须按引擎挡住
+      return old?.episodeIndex === ep && oldVideoModel === clipVideoModel && old.shotIndexes.length >= shotIndexes.length
         && shotIndexes.every(index => old.shotIndexes.includes(index))
         && segmentShots.every(shot => {
           const previous = oldShots.find(candidate => candidate.index === shot.index);

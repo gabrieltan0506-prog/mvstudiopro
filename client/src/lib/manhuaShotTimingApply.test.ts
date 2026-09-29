@@ -3,7 +3,7 @@ import { createCanvasAudioCue, emptyCanvasAudioStudio } from "@shared/canvasAudi
 import { readManhuaTimedStoryboard } from "@shared/manhuaTimedStoryboard";
 import type { ManhuaWriterPack } from "@shared/manhuaWriterRoom";
 import { ensureManhuaFragmentClips, expandManhuaShotKeyartsAfterReverse, queuedManhuaClipBlocks, spawnManhuaDramaStudio } from "./canvasDramaStudio";
-import { applyManhuaShotTimingEdit } from "./manhuaShotTimingApply";
+import { applyManhuaShotTimingEdit, manhuaRestoreConfirmationBlocker } from "./manhuaShotTimingApply";
 
 function chain() {
   const spawned = spawnManhuaDramaStudio({ topic: "墨菁传", episodeIndex: 1, videoModel: "seedance-2.5" });
@@ -67,5 +67,23 @@ describe("改镜头时长／切点：就地重排分段，不重铺整集", () =
     expect(writerPack.episodes[0]!.body).toBe(bodyBefore);
     expect(staged.find(b => b.id === third.id)).toMatchObject({ outputUrl: "https://example.test/third.mp4" });
     expect(staged.find(b => b.id === third.id)?.archivedFromPreviousScript).toBeFalsy();
+  });
+});
+
+describe("只恢复确认（不重铺）的前提", () => {
+  it("只改了时长：每镜都有现行静帧、无待确认改写 → 放行", () => {
+    const { initial, writerPack } = chain();
+    const edited = applyManhuaShotTimingEdit({ blocks: initial.blocks, edges: initial.edges, writerPack, episodeIndex: 1, shotIndex: 14, durationSec: 10.032, ensureOptions: { videoModel: "seedance-2.5" }, confirmArchive: () => true });
+    expect(manhuaRestoreConfirmationBlocker({ blocks: edited.blocks, writerPack: edited.writerPack, episodeIndex: 1, advisorReconfirmFromEpisode: undefined })).toBe("");
+  });
+  it("有待确认的顾问改写，或剧情从某段起重写后后段静帧被清掉 → 拒绝，指向「确认剧本大纲」", () => {
+    const { initial, writerPack } = chain();
+    expect(manhuaRestoreConfirmationBlocker({ blocks: initial.blocks, writerPack, episodeIndex: 1, advisorReconfirmFromEpisode: 1 })).toContain("顾问改写");
+    const rewritten = initial.blocks.filter(b => !(b.id.startsWith("keyart-") && /-s1[3-8]-/.test(b.id)));
+    const blocker = manhuaRestoreConfirmationBlocker({ blocks: rewritten, writerPack, episodeIndex: 1, advisorReconfirmFromEpisode: undefined });
+    expect(blocker).toContain("镜13");
+    expect(blocker).toContain("确认剧本大纲");
+    const archived = initial.blocks.map(b => b.id.startsWith("keyart-") && /-s1[3-8]-/.test(b.id) ? { ...b, archivedFromPreviousScript: true } : b);
+    expect(manhuaRestoreConfirmationBlocker({ blocks: archived, writerPack, episodeIndex: 1, advisorReconfirmFromEpisode: undefined })).toContain("镜13");
   });
 });

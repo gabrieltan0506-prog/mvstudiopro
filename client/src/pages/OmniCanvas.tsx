@@ -248,7 +248,7 @@ import {
   manhuaBlockHasPaidOutput,
 } from "@/lib/canvasDramaStudio";
 import { MANHUA_CANVAS_LAYOUT } from "@/lib/manhuaCanvasLayout";
-import { applyManhuaShotTimingEdit } from "@/lib/manhuaShotTimingApply";
+import { applyManhuaShotTimingEdit, manhuaRestoreConfirmationBlocker } from "@/lib/manhuaShotTimingApply";
 import {
   collectManhuaClipDockItems,
   collectManhuaAssembleClipsFromDock,
@@ -6419,13 +6419,27 @@ export default function OmniCanvas() {
    * 只改了时长/切点时，用这里恢复确认：不重铺、不归档，已有静帧、音轨、白模与成片原地保留。
    */
   const restoreWriterConfirmation = useCallback(() => {
+    let advisorReconfirmFromEpisode: number | undefined;
+    try {
+      advisorReconfirmFromEpisode = user?.id != null
+        ? advisorReconfirmationFromEpisode(localStorage, String(user.id), writerPack, projectBible?.confirmedAt)
+        : undefined;
+    } catch {
+      toast.error("无法读取改写备份，未恢复确认；请先检查本机存储。");
+      return;
+    }
+    const blocker = manhuaRestoreConfirmationBlocker({ blocks, writerPack, episodeIndex: writerFocusEpisode, advisorReconfirmFromEpisode });
+    if (blocker) {
+      toast.error(blocker);
+      return;
+    }
     if (!window.confirm(
       "只恢复剧本确认，不重铺链条：已有静帧、音轨、白模和成片原地保留。适用于只改了镜头时长或制作片段切点；改过台词或剧情请改用「确认剧本大纲」重铺。继续？",
     )) return;
     setWriterConfirmed(true);
     setDirectorUnlocked(true);
     toast.success("已恢复剧本确认，本集链条未改动。");
-  }, []);
+  }, [blocks, writerPack, writerFocusEpisode, user?.id, projectBible?.confirmedAt]);
   const confirmWriterToDirector = useCallback((): boolean => {
     // 审查 P1：确认这一下用同一份法典快照——冻结进 Bible 的和初铺进节点的必须是同一张卡
     const confirmedDirectionCanon = activeDirectionCanon;
