@@ -811,7 +811,8 @@ export async function askPlatformSkillQa(params: {
   }
   // 已附视频时不向未核实支持视频的备用通道降级，也不悄悄删视频重试。
   const advisorHops = previewVideo ? MANHUA_ADVISOR_HOPS.slice(0, 1) : MANHUA_ADVISOR_HOPS;
-  const ASK_MAX_ATTEMPTS = manhuaContext ? advisorHops.length : 3;
+  // 视频只走已核实可接收 MP4 的通道；规格拒绝时在同一通道反馈一次，不降级成纯文字。
+  const ASK_MAX_ATTEMPTS = manhuaContext ? (previewVideo ? 2 : advisorHops.length) : 3;
   let parsed: ReturnType<typeof parseAskJson> | null = null;
   let lastErr = "";
   let usedModel = modelName;
@@ -819,7 +820,7 @@ export async function askPlatformSkillQa(params: {
   for (let attempt = 1; attempt <= ASK_MAX_ATTEMPTS; attempt += 1) {
     let candidateRaw: string | undefined;
     try {
-      const hop = manhuaContext ? advisorHops[attempt - 1] : undefined;
+      const hop = manhuaContext ? advisorHops[Math.min(attempt - 1, advisorHops.length - 1)] : undefined;
       if (hop) params.onStream?.("reset", hop.label);
       const response = await invokeLLM({
         ...(manhuaContext ? { onContentDelta: (text: string) => params.onStream?.("delta", text) } : {}),
@@ -850,6 +851,8 @@ export async function askPlatformSkillQa(params: {
       lastErr = e instanceof Error ? e.message : String(e);
       if (manhuaContext?.previsEdit && candidateRaw) repairMessage = buildAdvisorPrevisRepairMessage(candidateRaw, lastErr);
       console.warn(`[askPlatformSkillQa] attempt ${attempt}/${ASK_MAX_ATTEMPTS}:`, lastErr.slice(0, 240));
+      // 传输失败没有候选可修，不能为了凑次数重复发送完整视频。
+      if (previewVideo && !repairMessage) break;
       if (attempt < ASK_MAX_ATTEMPTS) {
         await new Promise((r) => setTimeout(r, 350 * attempt));
       }

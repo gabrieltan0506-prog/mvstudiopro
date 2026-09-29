@@ -165,6 +165,27 @@ describe("漫剧工厂创作顾问上下文", () => {
     expect(invokeLLMMock).toHaveBeenCalledTimes(2);
     expect(invokeLLMMock.mock.calls[1][0].messages.at(-1).content).toContain("环绕与直线终点不能同时使用");
   });
+  it("携带真实视频的候选规格错误只在同一视频通道修正一次", async () => {
+    const studio = createManhuaPrevisStudio(5);
+    const patch = { kind: "previs_edit_v1", summaryZh: "人物退后并修正机位", unsupportedZh: [], cameras: studio.spec.cameras.map(c => ({ ...c, endLens: 55 })) };
+    resolveVideoMock.mockResolvedValue({ requestId: crypto.randomUUID(), url: "data:video/mp4;base64,dGVzdA==", durationSec: 5 });
+    invokeLLMMock.mockResolvedValueOnce(llmJson({ ...patch, cameras: patch.cameras.map(c => ({ ...c, endSec: 4 })) })).mockResolvedValueOnce(llmJson(patch));
+    const result = await askPlatformSkillQa({ userId: 7, question: "修正本段机位并生成试看", isAdmin: true, manhuaContext: manhuaContext({ previsEdit: makeAdvisorPrevisTarget("clip-1", studio) }) });
+    expect(JSON.parse(result.answer)).toEqual(patch);
+    expect(invokeLLMMock).toHaveBeenCalledTimes(2);
+    const first = invokeLLMMock.mock.calls[0][0], second = invokeLLMMock.mock.calls[1][0];
+    expect(second.modelName).toBe(first.modelName);
+    expect(second.openAiGateway).toBe(first.openAiGateway);
+    expect(second.messages.at(-1).content).toContain("最后机位须覆盖到片尾");
+    expect(second.messages.some((message: {content: unknown}) => Array.isArray(message.content) && message.content.some((part: {type: string}) => part.type === "video_url"))).toBe(true);
+  });
+  it("视频通道传输失败不自动重送", async () => {
+    const studio = createManhuaPrevisStudio(5);
+    resolveVideoMock.mockResolvedValue({ requestId: crypto.randomUUID(), url: "data:video/mp4;base64,dGVzdA==", durationSec: 5 });
+    invokeLLMMock.mockRejectedValue(new Error("视频供应商暂不可用"));
+    await expect(askPlatformSkillQa({ userId: 7, question: "修正本段机位", isAdmin: true, manhuaContext: manhuaContext({ previsEdit: makeAdvisorPrevisTarget("clip-1", studio) }) })).rejects.toThrow();
+    expect(invokeLLMMock).toHaveBeenCalledTimes(1);
+  });
   it.each(["object", "fenced-string", "direct-object"])("%s 候选只需一次调用，完整外壳不被内层代码围栏破坏", async format => {
     const studio = createManhuaPrevisStudio(5);
     const patch = { kind: "previs_edit_v1", summaryZh: "曹三逼近时短推，随即切阿菁反应", unsupportedZh: [], cameras: studio.spec.cameras.map(c => ({ ...c, endLens: 55 })) };
