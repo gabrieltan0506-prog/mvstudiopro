@@ -222,10 +222,11 @@ if (THREE && SplatMesh) {
     renderer.domElement.addEventListener("pointerdown", (ev) => {
       if (ev.pointerType === "mouse" && ev.button !== 0) return;
       const dir = camera.getWorldDirection(new THREE.Vector3());
+      const target = camera.position.clone().addScaledVector(dir, viewDistance);
       drag = {
         id: ev.pointerId, x: ev.clientX, y: ev.clientY,
-        yaw: Math.atan2(dir.y, dir.x), pitch: Math.asin(Math.max(-1, Math.min(1, dir.z))),
-        distance: viewDistance,
+        yaw: Math.atan2(-dir.y, -dir.x), pitch: Math.asin(Math.max(-1, Math.min(1, -dir.z))),
+        distance: viewDistance, target,
       };
       renderer.domElement.setPointerCapture(ev.pointerId);
       renderer.domElement.style.cursor = "grabbing";
@@ -235,11 +236,12 @@ if (THREE && SplatMesh) {
       const yaw = drag.yaw - (ev.clientX - drag.x) * 0.005;
       const pitch = Math.max(-1.35, Math.min(1.35, drag.pitch + (ev.clientY - drag.y) * 0.005));
       const xy = Math.cos(pitch);
-      camera.lookAt(
-        camera.position.x + Math.cos(yaw) * xy * drag.distance,
-        camera.position.y + Math.sin(yaw) * xy * drag.distance,
-        camera.position.z + Math.sin(pitch) * drag.distance,
+      camera.position.set(
+        drag.target.x + Math.cos(yaw) * xy * drag.distance,
+        drag.target.y + Math.sin(yaw) * xy * drag.distance,
+        drag.target.z + Math.sin(pitch) * drag.distance,
       );
+      camera.lookAt(drag.target.x, drag.target.y, drag.target.z);
     });
     const endDrag = (ev) => {
       if (!drag || drag.id !== ev.pointerId) return;
@@ -256,6 +258,8 @@ if (THREE && SplatMesh) {
       const direction = camera.getWorldDirection(new THREE.Vector3());
       camera.position.addScaledVector(direction, viewDistance - next);
       viewDistance = next;
+      // 拖动期间滚轮改变半径时同步，下一次移动不会弹回原距离。
+      if (drag) drag.distance = next;
     }, { passive: false });
 
     const q = CONFIG.transform.quaternionXYZW, t = CONFIG.transform.translationStage, s = CONFIG.transform.scale;

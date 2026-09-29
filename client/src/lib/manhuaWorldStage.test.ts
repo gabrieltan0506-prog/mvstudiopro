@@ -156,7 +156,7 @@ describe("片场生产脚本必需资产门禁", () => {
     h.exportFrame(42);
     expect(h.messages.at(-1)).toMatchObject({ type: "export_error", requestId: 42 });
   });
-  it("拖动后的实际朝向随原请求导出，同机位预设可复位", async () => {
+  it("拖动围绕观察点旋转，保持主体与距离；当前机位导出后可复位", async () => {
     const h = await harness([], 0);
     h.world.resolve();
     await h.done;
@@ -166,8 +166,18 @@ describe("片场生产脚本必需资产门禁", () => {
     const dragged = h.messages.at(-1) as { type: string; requestId: number; cameraRig: { position: number[]; target: number[] } };
     expect(dragged.type).toBe("frame");
     expect(dragged.requestId).toBe(51);
-    expect(dragged.cameraRig.position).toEqual(h.config.initialCamera.position);
-    expect(dragged.cameraRig.target[0]).not.toBeCloseTo(h.config.initialCamera.target[0]);
+    expect(dragged.cameraRig.position).not.toEqual(h.config.initialCamera.position);
+    dragged.cameraRig.target.forEach((value, index) => expect(value).toBeCloseTo(h.config.initialCamera.target[index]!));
+    const radius = (rig: { position: number[]; target: number[] }) => Math.hypot(...rig.position.map((n, i) => n - rig.target[i]!));
+    expect(radius(dragged.cameraRig)).toBeCloseTo(radius(h.config.initialCamera), 6);
+    h.pointer("wheel", { deltaY: -200, preventDefault() {} });
+    h.exportFrame(53);
+    const zoomed = h.messages.at(-1) as { cameraRig: { position: number[]; target: number[] } };
+    h.pointer("pointermove", { pointerId: 1, clientX: 120, clientY: 10 });
+    h.exportFrame(54);
+    const continued = h.messages.at(-1) as { cameraRig: { position: number[]; target: number[] } };
+    expect(radius(continued.cameraRig)).toBeCloseTo(radius(zoomed.cameraRig), 6);
+    continued.cameraRig.target.forEach((value, index) => expect(value).toBeCloseTo(h.config.initialCamera.target[index]!));
     h.send({ type: "camera", rig: h.config.initialCamera, cameraKind: "establish" });
     h.exportFrame(52);
     const reset = h.messages.at(-1) as { requestId: number; cameraRig: { target: number[] } };
