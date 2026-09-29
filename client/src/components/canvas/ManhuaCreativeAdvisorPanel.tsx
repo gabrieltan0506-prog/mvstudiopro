@@ -1,3 +1,4 @@
+import { advisorPrevisVideoSourceSchema, withAdvisorPrevisVideo, type AdvisorPrevisVideoSource } from "@shared/manhuaAdvisorPrevisEdit";
 import { requestsAdvisorPrevisRender } from "@/lib/manhuaAdvisorPrevisIntent";
 import { createPortal } from "react-dom";
 import { streamManhuaAdvisor } from "@/lib/manhuaAdvisorStream";
@@ -55,6 +56,24 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     try { const raw = previsKey && localStorage.getItem(previsKey); return raw ? advisorPrevisCandidateSchema.parse(JSON.parse(raw)) : null; }
     catch { return null; }
   });
+  const [previewVideoSource, setPreviewVideoSource] = useState<AdvisorPrevisVideoSource | null>(() => {
+    try { const raw = previsKey && localStorage.getItem(`${previsKey}:video-source`); return raw ? advisorPrevisVideoSourceSchema.parse(JSON.parse(raw)) : null; }
+    catch { return null; }
+  });
+  function rememberPreviewVideo(source: AdvisorPrevisVideoSource) {
+    setPreviewVideoSource(source);
+    try { if (previsKey) localStorage.setItem(`${previsKey}:video-source`, JSON.stringify(source)); }
+    catch { setStorageError("试看已生成，但视频修改基线未保存；请保持页面开启。"); }
+  }
+  const lastSelectedVideo = useRef(props.previsTarget?.previousPreviewRequestId);
+  useEffect(() => {
+    const selected = props.previsTarget?.previousPreviewRequestId;
+    if (selected !== lastSelectedVideo.current) {
+      lastSelectedVideo.current = selected;
+      setPreviewVideoSource(null);
+      try { if (previsKey) localStorage.removeItem(`${previsKey}:video-source`); } catch { /* 本次显式选择优先于旧缓存。 */ }
+    }
+  }, [props.previsTarget?.previousPreviewRequestId, previsKey]);
   const [autoPrevisStart, setAutoPrevisStart] = useState(false);
   const [savedPreviews, setSavedPreviews] = useState<Array<{ key: string; trial: AdvisorPrevisTrial }>>([]);
   const rewriteKey = sessionKey ? `${sessionKey}:rewrite` : null;
@@ -225,8 +244,8 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     const question = rawQuestion.trim();
     if (question.length < 2 || question.length > 1200) { toast.error("请输入 2—1200 字的问题，内容不会被自动截断。"); return; }
     if (props.previsIssue) { toast.error(props.previsIssue); return; }
-    let previsEdit = props.previsTarget;
-    if (previsEdit && previsCandidate?.target.clipId === previsEdit.clipId && previsCandidate.target.specJson === previsEdit.specJson) {
+    let previsEdit = props.previsTarget ? withAdvisorPrevisVideo(props.previsTarget, previewVideoSource) : undefined;
+    if (previsEdit && !previsEdit.previousPreviewRequestId && previsCandidate?.target.clipId === previsEdit.clipId && previsCandidate.target.specJson === previsEdit.specJson) {
       try { previsEdit = { ...previsEdit, previousPreviewSpecJson: advisorPrevisSpecJson(applyAdvisorPrevisPatch(manhuaPrevisSpecSchema.parse(JSON.parse(previsEdit.specJson)), previsCandidate.patch)) }; } catch { /* 未支持要求不继承为已执行配置。 */ }
     }
     const result = project ? manhuaCreativeAdvisorContextSchema.safeParse({ ...project.context, history: advisorRecentHistory(turns), ...(previsEdit ? { previsEdit } : {}), ...(props.studio3d ? { studio3d: props.studio3d } : {}) }) : null;
@@ -368,7 +387,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
           {turn.role === "advisor" && findMentionedTemplates(turn.text, templates).map((template) => <button key={template.publicId} type="button" onClick={() => onRequestTrial(template)} className="mt-2 rounded border border-cyan-300/30 px-2 py-1 text-xs text-cyan-100">查看「{template.nameZh}」试写入口 →</button>)}
         </div>)}
         {previsKey && (props.previsTarget || previsCandidate) && <details className="text-xs"><summary onClick={recoverPreviews} className="cursor-pointer py-2 text-cyan-100">找回本项目的独立试看</summary>{savedPreviews.map(({ key, trial }) => <button key={key} type="button" className="my-1 block rounded border border-white/20 px-2 py-2 text-left" onClick={() => { try { localStorage.setItem(`${previsKey}:trial`, trial.request.requestId); localStorage.setItem(previsKey, JSON.stringify(trial.candidate)); setAutoPrevisStart(false); setPrevisCandidate(trial.candidate); } catch { toast.error("试看恢复记录无法保存，未切换。"); } }}>{trial.candidate.patch.summaryZh} · {trial.request.spec.durationSec}秒</button>)}</details>}
-        {previsCandidate && <ManhuaAdvisorPrevisComparison key={JSON.stringify(previsCandidate)} candidate={previsCandidate} previewHost={props.previewHost} storageKey={previsKey ? `${previsKey}:trial` : null} autoStart={autoPrevisStart} onPrepare={props.onPreparePrevis} onRevise={() => { setDraft("保留这版其他安排，我想调整："); questionRef.current?.focus(); }} disabled={asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onApply={props.onApplyPrevis} />}
+        {previsCandidate && <ManhuaAdvisorPrevisComparison key={JSON.stringify(previsCandidate)} candidate={previsCandidate} previewHost={props.previewHost} storageKey={previsKey ? `${previsKey}:trial` : null} autoStart={autoPrevisStart} onPreviewReady={rememberPreviewVideo} onPrepare={props.onPreparePrevis} onRevise={() => { setDraft("保留这版其他安排，我想调整："); questionRef.current?.focus(); }} disabled={asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onApply={props.onApplyPrevis} />}
         {asking && <div role="status" className="whitespace-pre-wrap rounded-lg border border-cyan-300/20 p-3 text-sm leading-6 text-cyan-100"><p className="mb-2 text-xs">{streamText ? "正在生成方案，完成后校验…" : retrying ? "上一次方案未通过检查，正在重新生成…" : "正在分析剧情与场景…"} 已等待 {elapsedSec} 秒</p>{streamText}<p className="mt-2 text-xs text-white/55">正在校验方案；明确要求生成试看时，通过后会直接渲染到本页预览。</p></div>}
         {pendingPaid && <div role="alert" className="rounded-lg border border-amber-300/30 bg-amber-400/10 p-3 text-xs leading-5 text-amber-100">
           <p>{pendingPaid.hint}</p><p className="mt-1">原问题：{pendingPaid.request.label}（按提问时快照继续）</p><p className="mt-1 whitespace-pre-wrap text-white/75">{pendingPaid.request.rawQuestion}</p>
@@ -377,7 +396,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
         </div>}
         {failed && <div role="alert" className="rounded-lg border border-rose-300/25 p-3 text-xs text-rose-100"><p>{failed.message}</p><p className="mt-1 text-white/70">原问题：{failed.request.label}</p><p className="mt-1 whitespace-pre-wrap text-white/70">{failed.request.rawQuestion}</p>{!failed.newAttempt && <p className="mt-2 text-amber-100">此请求仍未决，请先恢复原问题；草稿可以继续编辑，但不会覆盖恢复记录。</p>}<button type="button" disabled={asking || sessionStorageBlocked || (failed.confirmPaid && !sessionKey)} onClick={() => void submit(failed.newAttempt ? { ...failed.request, requestId: crypto.randomUUID() } : failed.request, failed.newAttempt ? false : failed.confirmPaid, failed.newAttempt ? undefined : failed.confirmedCredits)} className="mt-2 rounded border border-white/20 px-3 py-1">{failed.newAttempt ? "重新提问（新的一次，重新检查额度）" : "恢复原问题（沿用原请求编号）"}</button></div>}
       </div>
-      {(props.previsTarget || props.previsIssue) && <div className="border-t border-cyan-300/20 px-3 py-2 text-xs text-cyan-100"><b>正在调整当前片段的白模</b><p>{props.previsIssue || "直接说出人物走向、动作和镜头变化；说“生成试看”即可在本页生成视频；只讨论时不渲染，不满意继续修改，满意才应用。"}</p><button type="button" className="mt-1 underline" onClick={props.onLeavePrevis}>返回普通咨询</button></div>}
+      {(props.previsTarget || props.previsIssue) && <div className="border-t border-cyan-300/20 px-3 py-2 text-xs text-cyan-100"><b>正在调整当前片段的白模</b>{props.previsTarget && withAdvisorPrevisVideo(props.previsTarget, previewVideoSource).previousPreviewRequestId && <p>本轮将读取已有白模视频，结合剧情与导演手法调整；已采用音轨由程序复用。</p>}<p>{props.previsIssue || "直接说出人物走向、动作和镜头变化；说“生成试看”即可在本页生成视频；只讨论时不渲染，不满意继续修改，满意才应用。"}</p><button type="button" className="mt-1 underline" onClick={props.onLeavePrevis}>返回普通咨询</button></div>}
       <footer className="border-t border-white/10 p-3">
         {!props.previsTarget && !props.previsIssue && <div className="mb-2 flex flex-wrap gap-2">{quick.map(([label, question]) => <button key={label} type="button" disabled={!userId || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={() => send(question!)} className="rounded-md border border-white/15 px-2 py-1.5 text-xs text-white/75 hover:border-cyan-300/60 disabled:opacity-40">{label}</button>)}</div>}
         <div className="flex items-end gap-2">

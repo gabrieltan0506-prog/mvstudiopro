@@ -1417,6 +1417,7 @@ export default function OmniCanvas() {
   const [advisorPreviewHost, setAdvisorPreviewHost] = useState<HTMLDivElement | null>(null);
   const [advisorDockHost, setAdvisorDockHost] = useState<HTMLDivElement | null>(null);
   const [advisorPrevisClipId, setAdvisorPrevisClipId] = useState<string | null>(null);
+  const [advisorPreviewSelection, setAdvisorPreviewSelection] = useState<{ clipId: string; requestId?: string } | null>(null);
   const [advisorFocusSection, setAdvisorFocusSection] = useState<"templates" | null>(null);
   const [advisorSelection, setAdvisorSelection] = useState<AdvisorSelection | null>(null);
   /** 工作台上报的缺口／关键帧／3D 状态；工作台未挂载时为 null，顾问按未知处理 */
@@ -1548,9 +1549,9 @@ export default function OmniCanvas() {
       if (!clip?.previsStudio) throw new Error("请先到本段动作白模配置出场人物，再打开顾问。");
       if (clip.previsStudio.pending) throw new Error("本段正在渲染，结束后再调整。");
       const direction = resolveManhuaDirectionCard(activeDirectionCanon, "storyboard", classifyManhuaDirectionSceneType(clip.prompt || ""), { episodeIndex: writerFocusEpisode, segmentIndex: resolveClipLocalSegmentIndex(clip.id, clip.prompt, writerFocusEpisode) });
-      return { target: { ...makeAdvisorPrevisTarget(clip.id, clip.previsStudio), ...(direction ? { directionCardId: direction.card.id, directionCardVersion: direction.card.version } : {}) } };
+      return { target: { ...makeAdvisorPrevisTarget(clip.id, clip.previsStudio, advisorPreviewSelection?.clipId === clip.id ? advisorPreviewSelection.requestId : undefined), ...(direction ? { directionCardId: direction.card.id, directionCardVersion: direction.card.version } : {}) } };
     } catch (e) { return { issue: e instanceof Error ? e.message : "本段白模暂不能调整" }; }
-  }, [blocks, advisorPrevisClipId, activeDirectionCanon, writerFocusEpisode]);
+  }, [blocks, advisorPrevisClipId, advisorPreviewSelection, activeDirectionCanon, writerFocusEpisode]);
   const advisorPrevisCurrentStudio = (studio: import("@shared/manhuaPrevis").ManhuaPrevisStudio) => ({
     ...studio,
     spec: withRiggedModelSourceAssetRefs(studio.spec, customAssetRefs.map(ref => {
@@ -10426,7 +10427,7 @@ export default function OmniCanvas() {
                   advisorOpen={advisorOpen}
                   onAdvisorDockChange={setAdvisorDockHost}
                   onAdvisorPreviewHostChange={setAdvisorPreviewHost}
-                  onOpenAdvisorPrevis={canUseManhua3d ? (clipId) => { setAdvisor3dContext(undefined); setAdvisorPrevisClipId(clipId); setAdvisorFocusSection(null); setAdvisorOpen(true); } : undefined}
+                  onOpenAdvisorPrevis={canUseManhua3d ? (clipId, requestId) => { setAdvisorPreviewSelection({ clipId, requestId }); setAdvisor3dContext(undefined); setAdvisorPrevisClipId(clipId); setAdvisorFocusSection(null); setAdvisorOpen(true); } : undefined}
                   onOpenAdvisorTemplates={() => {
                     setAdvisorPrevisClipId(null); setAdvisor3dContext(undefined);
                     setAdvisorFocusSection("templates");

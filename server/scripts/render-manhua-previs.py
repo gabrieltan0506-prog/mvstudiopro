@@ -100,6 +100,8 @@ def smooth(value):
 
 def position(actor, frame):
     t = (frame-1)/24
+    pair=spec.get('piggyback') or {}
+    if actor['id']==pair.get('passengerId') and pair.get('setDown'): t=min(t,pair['setDown']['startSec'])
     if actor.get('motionRoute'): return route_pose(actor,t)[0]
     u = max(0., min(1., (t-actor['moveStartSec'])/(actor['moveEndSec']-actor['moveStartSec'])))
     z=root_z(water_events[actor['id']],t,water_head_heights[actor['id']]) if actor['id'] in water_head_heights else 0
@@ -107,6 +109,12 @@ def position(actor, frame):
                    actor['start'][1]*(1-u)+actor['end'][1]*u, z))
 
 for _actor in spec['actors']:
+    hit=_actor.get('hitReaction')
+    if hit:
+        attacker=next((a for a in spec['actors'] if a['id']==hit.get('sourceActorId') and a['id']!=_actor['id']),None)
+        if set(hit)!={'sourceActorId','startSec','contactSec','endSec'} or _actor['shape']!='horse' or _actor.get('creature') or _actor.get('riggedModel') or not attacker or attacker['shape']!='human': raise ValueError('四足受击身份无效')
+        if not all(isinstance(hit[k],(int,float)) and math.isfinite(hit[k]) and abs(hit[k]*24-round(hit[k]*24))<1e-6 for k in ('startSec','contactSec','endSec')) or not (0<=hit['startSec'] and hit['startSec']+1/24<=hit['contactSec'] and hit['contactSec']+.25<=hit['endSec']<=spec['durationSec']): raise ValueError('四足受击秒窗无效')
+        if not any(a['kind']=='strike' and a['startSec']<=hit['contactSec']<=a['endSec'] for a in attacker['actions']): raise ValueError('受击未对应同场出掌')
     for _action in _actor['actions']:
         if _action['kind'] == 'limp_front_left' and (
                 _actor['shape'] != 'horse' or _actor.get('creature') or spec.get('waterEmergence') or
@@ -147,6 +155,8 @@ def turn_facing(actor, t):
     return facing
 
 def transform(actor, frame):
+    pair=spec.get('piggyback') or {}
+    if actor['id']==pair.get('passengerId') and pair.get('setDown'): frame=min(frame,round(pair['setDown']['startSec']*24)+1)
     facing=route_pose(actor,(frame-1)/24)[1] if actor.get('motionRoute') else turn_facing(actor,(frame-1)/24)
     return Matrix.Translation(position(actor, frame)) @ Matrix.Rotation(math.radians(facing), 4, 'Z')
 
@@ -193,15 +203,12 @@ def action_amounts(actor, t):
             values['lookAt'] = action.get('lookAtId')
     return values
 
-def camera_progress(shot, frame):
-    begin=math.floor(shot['startSec']*24+.5)+1
-    end=math.floor(shot['endSec']*24+.5)
-    progress=max(0., min(1., (frame-begin)/max(1,end-begin)))
-    return progress*progress*(3-2*progress)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from previs_camera_timing import camera_progress
 
 def camera_lens(shot, frame):
-    """一镜内变焦与机位共用同一平滑进度；没有终点焦距就是常量。"""
-    return shot['lens']+(shot.get('endLens',shot['lens'])-shot['lens'])*camera_progress(shot,frame)
+    """焦距独立卡点；没有终点焦距就是常量。"""
+    return shot['lens']+(shot.get('endLens',shot['lens'])-shot['lens'])*camera_progress(shot,frame,'lensWindow')
 
 def camera_pose(shot, frame):
     progress=camera_progress(shot,frame)
@@ -244,20 +251,28 @@ def look_target_world(actor, target_id, frame):
             return Vector((base.x,base.y,base.z+(1.15 if other['shape']=='horse' else 1.45)))
     return None
 
+def hit_amount(actor,t):
+    hit=actor.get('hitReaction')
+    if not hit or not hit['contactSec']<=t<=hit['endSec']: return 0.
+    peak=hit['contactSec']+min(2/24,(hit['endSec']-hit['contactSec'])/4)
+    if t<=peak: return smooth((t-hit['contactSec'])/(peak-hit['contactSec']))
+    return 1-smooth((t-peak)/(hit['endSec']-peak))
+
 def points(actor, frame, contacts):
     t = (frame-1)/24
     amounts = action_amounts(actor,t)
     horse = actor['shape'] == 'horse'
     keys = list(contacts)
+    impact=hit_amount(actor,t) if horse else 0.
     # 坐下：髋下沉，脚不动 → 下面的 IK 自然把膝盖顶出来
-    hip_z = (1.02 if horse else .80)-.09*amounts['wind']-.08*amounts['recoil']-.30*amounts['sit']
+    hip_z = (1.02 if horse else .80)-.10*impact-.09*amounts['wind']-.08*amounts['recoil']-.30*amounts['sit']
     inv = transform(actor,frame).inverted()
     ankles = {key:inv @ contacts[key] for key in keys}
     limp = horse and any(a['kind']=='limp_front_left' for a in actor['actions'])
     # 伤腿的真实抬落差直接来自逐帧脚点。最低点仍离地，表示卸载而非承重；
     # 前肩在伤腿接近地面时短促下沉，让常速播放也能读出不对称节奏。
     limp_guard = smooth((.24-ankles['1'].z)/.10) if limp else 0.
-    hips = {key:Vector((offset[0],offset[1],hip_z)) for key,offset in foot_offsets(actor).items()}
+    hips = {key:Vector((offset[0]-.08*impact,offset[1],hip_z)) for key,offset in foot_offsets(actor).items()}
     limb = .53 if horse else .43
     lower = 0.
     for key in keys:
@@ -274,6 +289,7 @@ def points(actor, frame, contacts):
         p['body']=(Vector((-.7,0,1.2-lower)),Vector((.65,0,1.2-lower-.07*limp_guard)))
         p['neck']=(Vector((.6,0,1.15-lower-.07*limp_guard)),Vector((.85,0,1.9-lower-.04*limp_guard)))
         p['head']=(Vector((.7,0,1.96-lower-.04*limp_guard)),Vector((1.3,0,1.96-lower-.04*limp_guard)))
+        for key in ('body','neck','head'): p[key]=tuple(v+Vector((-.08*impact,0,-.10*impact)) for v in p[key])
     else:
         pelvis=Vector((0,0,hip_z-lower))
         # 行礼：脊柱前倾，胸口前移下沉；坐下时上身略前倾保持重心
@@ -392,6 +408,7 @@ piggyback=validate_piggyback(spec)
 passenger_id=piggyback['passengerId'] if piggyback else None
 events=[]
 interaction_poses={}
+setdown_reference={}
 sword_handles=[]
 has_swords=any(a.get('weapon') for a in spec['actors'])
 if spec.get('interactions') or has_swords or piggyback:
@@ -407,7 +424,7 @@ if spec.get('interactions') or has_swords or piggyback:
         transforms={a['id']:transform(a,frame) for a in spec['actors']}
         apply_interactions(events,frame,poses,transforms,ik)
         if has_swords: apply_swords(spec,frame,poses,transforms,ik)
-        if piggyback: apply_piggyback(piggyback,poses,frame)
+        if piggyback: apply_piggyback(piggyback,poses,frame,setdown_reference)
         interaction_poses[frame]=poses
 
 rigs=[]
@@ -473,6 +490,10 @@ for index,actor in enumerate(spec['actors']):
                 max_error=max(max_error,(rig.matrix_world @ b-contacts[frame][key]).length)
     if max_error>.005: raise ValueError('关节落点不可达，请缩短路线或延长移动区间')
     rigs.append((actor,rig,contacts,stance,max_error))
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from previs_hit_cues import build_hit_cues
+hit_cues=build_hit_cues(spec,rigs,scene,actor_visible)
 
 water_handles=build_water(spec,rigs,scene) if water_events else None
 if has_swords:
@@ -715,6 +736,14 @@ report={'frames':scene.frame_end,'fps':24,'actors':[],'warnings':[],
 # 收紧与否是 1.78 倍的二值跳变，站位或动作跨过临界点画面会整体突变。
 # 这个决定原本只落在 report.json 里、前端看不到，用户会看到「有的竖屏变大了、有的没变」
 # 却拿不到任何解释——所以退回时写一条人话进 warnings（前端已在展示 warnings）。
+if any(shot.get('motionWindow') or shot.get('lensWindow') for shot in spec['cameras']):
+    camera_samples=[]
+    for frame in range(1,scene.frame_end+1):
+        scene.frame_set(frame);bpy.context.view_layer.update()
+        index=next(i for i,c in enumerate(spec['cameras']) if math.floor(c['startSec']*24+.5)<frame<=math.floor(c['endSec']*24+.5))
+        camera_samples.append({'frame':frame,'shotIndex':index,'position':list(camera.matrix_world.translation),
+            'forward':list((camera.matrix_world.to_3x3()@Vector((0,0,-1))).normalized()),'lens':float(camera.data.lens)})
+    report['cameraTiming']=camera_samples
 if report['portraitFraming']=='auto':
     report['warnings'].append('竖屏未收紧构图：按当前站位与动作，收紧后会有人物被切出画，已保持原画幅。想要更饱满的竖屏构图，可让角色更靠近画面中心或缩小彼此间距。')
 for actor,rig,contacts,stance,error in rigs:
@@ -722,10 +751,12 @@ for actor,rig,contacts,stance,error in rigs:
     visible_frames=[]
     drift=0.
     limp_samples=[]
+    hit_samples=[]
     previous={}
     for frame in range(1,scene.frame_end+1):
         scene.frame_set(frame)
         bpy.context.view_layer.update()
+        if actor.get('hitReaction'): hit_samples.append({'frame':frame,'bodyHead':list(rig.matrix_world @ rig.pose.bones['body'].head),'bodyTail':list(rig.matrix_world @ rig.pose.bones['body'].tail),'amount':hit_amount(actor,(frame-1)/24),**hit_cues[actor['id']]['samples'][frame-1]})
         if not actor_visible(actor,frame):
             if actor.get('visibleRanges') and any(not obj.hide_render for obj in display_meshes[actor['id']]):
                 raise ValueError('角色离场帧仍有主体或附属网格参与渲染')
@@ -751,6 +782,7 @@ for actor,rig,contacts,stance,error in rigs:
     if actor.get('visibleRanges'): report['actors'][-1]['visibleFrames']=visible_frames
     if actor['id'] == passenger_id: report['actors'][-1]['supportMode']='carried'
     if limp_samples: report['actors'][-1]['limpSamples']=limp_samples
+    if hit_samples: report['actors'][-1]['hitReaction']={**actor['hitReaction'],'samples':hit_samples}
     if offscreen:report['warnings'].append(actor['nameZh']+'存在头或脚出画，请人工审查镜头覆盖')
 if piggyback:
     report['piggyback']=measure_piggyback(piggyback,rigs,scene,bpy.context.view_layer.update)
@@ -805,10 +837,21 @@ if water_handles and (report['waterEmergence']['overlaps'] or report['waterEmerg
     raise ValueError('独立浪花存在重叠或出画，请调整站位和机位')
 if any(max(s['gripError'],s['handEndError'])>.005 for w in report.get('weapons',[]) for s in w['samples']):
     raise ValueError('持剑绑定误差未过验收')
-if piggyback and any(abs(row['supportError']-row['expectedSupportGap'])>.005 or
+if piggyback and not piggyback.get('setDown') and any(abs(row['supportError']-row['expectedSupportGap'])>.005 or
                      abs(row['actualDropMeters']-piggyback_motion(piggyback,row['frame'])[0])>.005 or
                      row['gripError']>.005 or row['passengerFootHeight']<.1 for row in report['piggyback']['samples']):
     raise ValueError('背负托腿、抱肩或悬空脚未达到接触要求')
+if piggyback and piggyback.get('setDown'):
+    down=piggyback['setDown']; root=None
+    for row in report['piggyback']['samples']:
+        t=(row['frame']-1)/24
+        if t<=down['startSec']:
+            if abs(row['supportError']-row['expectedSupportGap'])>.005 or row['gripError']>.005 or row['passengerFootHeight']<.1: raise ValueError('放下前背负接触失效')
+        else:
+            root=root or row['passengerRoot']
+            if any(abs(a-b)>.005 for a,b in zip(root,row['passengerRoot'])): raise ValueError('放下后乘员漂移')
+            if (t<=down['releaseSec'] and row['supportError']>.005) or (t<=down['groundSec'] and row['gripError']>.005): raise ValueError('放下接触过早分离')
+            if t>=down['groundSec'] and (row['passengerFootHeight']>.07 or abs(row['pelvisHeight']-.14)>.005): raise ValueError('乘员未落地坐稳')
 if any(row['contactError']>.005 for row in report.get('interactions',[])):
     raise ValueError('双人互动实际接触误差未过验收')
 if any(actor['stanceDrift']>.005 for actor in report['actors']):

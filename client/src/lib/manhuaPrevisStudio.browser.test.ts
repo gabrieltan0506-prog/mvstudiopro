@@ -17,10 +17,14 @@ beforeAll(async () => {
       import {createRoot} from 'react-dom/client';
       import {ManhuaPrevisStudioView} from './client/src/components/canvas/ManhuaPrevisStudio';
       import {createManhuaPrevisStudio} from './shared/manhuaPrevis';
+      import {createCanvasAudioCue,canvasAudioCueInputKey,emptyCanvasAudioStudio} from './shared/canvasAudioStudio';
       const f=globalThis.fixture={submits:[],gets:[],lists:[],updates:[],mode:'success',getResult:null};
       f.createStudio=createManhuaPrevisStudio;
+      const cue={...createCanvasAudioCue('bgm','offline-bgm'),approved:true,selectedTakeId:'offline-take',startSec:0,endSec:10};
+      cue.takes=[{id:'offline-take',gcsUri:'gs://test/offline-bgm.wav',previewUrl:'',createdAt:'test',durationSec:10,inputKey:canvasAudioCueInputKey(cue)}];
+      const audioStudio={...emptyCanvasAudioStudio(),cues:[cue]};
       f.old={url:'https://offline.invalid/old.mp4',gcsUri:'gs://test/old.mp4',updatedAt:'2026-09-01T00:00:00Z'};
-      f.makeBlock=(scope='11111111-1111-4111-8111-111111111111')=>({id:'clip-e01-g01',previsStudio:{...createManhuaPrevisStudio(10,scope),audioEnabled:false},manhuaSegmentRefs:{previs:f.old}});
+      f.makeBlock=(scope='11111111-1111-4111-8111-111111111111')=>({id:'clip-e01-g01',audioStudio,previsStudio:{...createManhuaPrevisStudio(10,scope),audioEnabled:false},manhuaSegmentRefs:{previs:f.old}});
       f.response=(input)=>({jobId:'prv_test_job',status:'succeeded',params:input,output:{requestId:input.requestId,clipId:input.clipId,spec:input.spec,audio:input.audio,quality:input.quality,durationSec:input.spec.durationSec,gcsUri:'gs://test/unrelated-storage-folder/output.mp4',url:'https://offline.invalid/new.mp4',report:{warnings:['离线测试，不代表动作质量验收']},...(input.spec.exportLayers?{layerBundle:{gcsUri:'gs://test/layer-bundle.zip',url:'https://offline.invalid/layers.zip',format:'previs-layers-v1',bytes:1234,sha256:'a'.repeat(64)}}:{})}});
       const services={submit:async input=>{f.submits.push(structuredClone(input));if(f.mode==='defer')return new Promise(resolve=>f.resolveSubmit=resolve);if(f.mode==='unknown')throw Error('离线模拟断网');const response=f.response(input);if(globalThis.keyedFixture)f.getResult=response;return response;},get:async id=>{f.gets.push(id);return f.getResult;},list:async (...args)=>{f.lists.push(args);if(f.mode==='defer-list')return new Promise(resolve=>f.resolveList=resolve);return {items:[],nextCursor:null};}};
       function App(){const [block,setBlock]=useState(()=>globalThis.keyedFixture?{...f.makeBlock(),previsStudio:undefined}:f.makeBlock());const [characters,setCharacters]=useState([{id:'character-mo',label:'墨屠'}]);const [shots,setShots]=useState([]);const [directionShots,setDirectionShots]=useState([]);f.setDirectionShots=setDirectionShots;f.block=block;f.setBlock=setBlock;f.characters=characters;f.setCharacters=setCharacters;f.shots=shots;f.setShots=setShots;return <ManhuaPrevisStudioView key={globalThis.keyedFixture?block.id+':'+(block.previsStudio?.scopeId??'new'):undefined} block={block} characters={characters} sourceShots={shots} directionShots={directionShots} services={services} onChange={(studio,reference)=>{f.updates.push({studio:structuredClone(studio),reference});if(f.rejectSave)return false;setBlock(current=>({...current,previsStudio:studio,manhuaSegmentRefs:reference?{...current.manhuaSegmentRefs,previs:reference}:current.manhuaSegmentRefs}));return true;}}/>;}
@@ -211,6 +215,26 @@ it("环绕改成连续移动时一并清掉环绕升降，不留孤立的升降�
     expect(camera.orbitDeg).toBeUndefined();
     expect(camera.orbitRise).toBeUndefined();
     expect(camera.endPosition).toEqual(camera.position);
+  } finally { await page.close(); }
+});
+
+it("独立卡点在草稿中保留，关闭焦距推拉清掉变焦卡点", async () => {
+  const page = await open();
+  try {
+    await page.evaluate(() => {
+      const f = (window as any).fixture;
+      const block = structuredClone(f.block);
+      Object.assign(block.previsStudio.spec.cameras[0], { endPosition: [0,-6,2], endLens: 55, motionWindow: {startSec:1,endSec:2}, lensWindow: {startSec:2.5,endSec:2.75} });
+      f.setBlock(block);
+    });
+    await settle(page);
+    expect(await page.evaluate(() => (document.querySelector('[aria-label="机位1变焦卡点"]') as HTMLInputElement).checked)).toBe(true);
+    await page.evaluate(() => (document.querySelector('[aria-label="机位1焦距推拉"]') as HTMLInputElement).click());
+    await settle(page);
+    const camera = await page.evaluate(() => (window as any).fixture.block.previsStudio.spec.cameras[0]);
+    expect(camera.endLens).toBeUndefined();
+    expect(camera.lensWindow).toBeUndefined();
+    expect(camera.motionWindow).toEqual({startSec:1,endSec:2});
   } finally { await page.close(); }
 });
 
@@ -584,7 +608,7 @@ it("真实媒体片尾不能冒充末帧，回到末帧后可从头常速复核"
     await page.evaluate(() => {
       const f = (window as any).fixture;
       const scope = f.block.previsStudio.scopeId;
-      f.setBlock((block: any) => ({ ...block, previsStudio: f.createStudio(3, scope) }));
+      f.setBlock((block: any) => ({ ...block, previsStudio: { ...f.createStudio(3, scope), audioEnabled: false } }));
       const original = f.response;
       f.response = (input: any) => {
         const response = original(input);
@@ -1992,6 +2016,13 @@ it("背负关系保存跟随路线，保存失败保留原稿，删除乘员清�
     await page.click('[aria-label="中途滑落并托住"]');
     await settle(page);
     expect(await page.evaluate(() => (window as any).fixture.block.previsStudio.spec.piggyback.slipCatch)).toBeUndefined();
+    await page.click('[aria-label="完整放下乘员"]');
+    await settle(page);
+    expect(await page.evaluate(() => (window as any).fixture.block.previsStudio.spec.piggyback.setDown)).toEqual({startSec:7.75,groundSec:9,releaseSec:9.5,endSec:9.75});
+    expect(await page.$('[aria-label="落地坐稳秒"]')).not.toBeNull();
+    await page.click('[aria-label="完整放下乘员"]');
+    await settle(page);
+    expect(await page.evaluate(() => (window as any).fixture.block.previsStudio.spec.piggyback.setDown)).toBeUndefined();
     await page.evaluate(() => {
       const buttons = Array.from(document.querySelectorAll("button")).filter(b => b.textContent?.trim() === "移除角色");
       buttons[1].click();

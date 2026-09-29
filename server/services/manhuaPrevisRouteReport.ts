@@ -48,7 +48,8 @@ export function validateRouteReport(
       throw Error("运动轨逐帧回执缺失");
     for (let i = 0; i < row.samples.length; i++) {
       const s = row.samples[i],
-        t = i / 24;
+        t = spec.piggyback?.passengerId === actor.id && spec.piggyback.setDown
+          ? Math.min(i / 24, spec.piggyback.setDown.startSec) : i / 24;
       let k = 0;
       while (k < nodes.length - 2 && t > nodes[k + 1].timeSec) k++;
       const a = nodes[k],

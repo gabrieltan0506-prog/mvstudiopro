@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { invokeLLMMock, resolvePlatformSkillsPromptMock, getDbMock } = vi.hoisted(() => ({
+const { invokeLLMMock, resolvePlatformSkillsPromptMock, getDbMock, resolveVideoMock } = vi.hoisted(() => ({
   invokeLLMMock: vi.fn(),
+  resolveVideoMock: vi.fn(),
   getDbMock: vi.fn(),
   resolvePlatformSkillsPromptMock: vi.fn(),
 }));
@@ -14,6 +15,8 @@ vi.mock("../_core/llm.js", async (importOriginal) => ({
     choices?: Array<{ message?: { content?: unknown } }>;
   }) => String(response.choices?.[0]?.message?.content || ""),
 }));
+
+vi.mock("./manhuaAdvisorPrevisVideo", () => ({ resolveAdvisorPrevisVideo: resolveVideoMock }));
 
 vi.mock("../db.js", () => ({
   getDb: getDbMock,
@@ -81,6 +84,7 @@ function llmJson(answer: unknown = "建议先缩短人物距离，再检查反�
 }
 
 beforeEach(() => {
+  resolveVideoMock.mockReset(); resolveVideoMock.mockResolvedValue(null);
   getDbMock.mockReset(); getDbMock.mockResolvedValue(null);
   invokeLLMMock.mockReset();
   invokeLLMMock.mockResolvedValue(llmJson());
@@ -458,3 +462,19 @@ it("GLM 两跳失败后 DeepSeek 成功即停止，沿用同一上下文", async
   expect(invokeLLMMock).toHaveBeenCalledTimes(3);
   expect(invokeLLMMock.mock.calls[2][0].messages).toEqual(invokeLLMMock.mock.calls[0][0].messages);
 });
+
+ it("顾问生产入口实际附视频到同一用户消息，失败不降级为纯文字", async () => {
+  const studio = createManhuaPrevisStudio(5);
+  const target = { ...makeAdvisorPrevisTarget("clip-1", studio), previousPreviewRequestId: crypto.randomUUID() };
+  resolveVideoMock.mockResolvedValue({ requestId: target.previousPreviewRequestId, durationSec: 5, url: "https://test.invalid/video.mp4" });
+  invokeLLMMock.mockResolvedValue(llmJson({ kind: "previs_edit_v1", summaryZh: "从画面发现主体偏右，调整构图", unsupportedZh: [], cameras: studio.spec.cameras.map(c => ({ ...c, endLens: 60 })) }));
+  await askPlatformSkillQa({ userId: 7, isAdmin: true, question: "依据这个视频调整构图", manhuaContext: manhuaContext({ previsEdit: target }) });
+  expect(resolveVideoMock).toHaveBeenCalledWith(7, target);
+  const messages = invokeLLMMock.mock.calls[0][0].messages;
+  expect(messages.map((m: any) => m.role)).toEqual(["system", "user"]);
+  expect(messages[1].content).toContainEqual({ type: "video_url", video_url: { url: "https://test.invalid/video.mp4" } });
+  expect(messages[0].content).toContain("不能听取音轨");
+  invokeLLMMock.mockClear(); invokeLLMMock.mockRejectedValue(new Error("video unavailable"));
+  await expect(askPlatformSkillQa({ userId: 7, isAdmin: true, question: "依据视频调整", manhuaContext: manhuaContext({ previsEdit: target }) })).rejects.toThrow();
+  expect(invokeLLMMock).toHaveBeenCalledTimes(1);
+ });

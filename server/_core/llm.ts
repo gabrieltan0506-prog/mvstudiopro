@@ -72,7 +72,8 @@ export type FileContent = {
   };
 };
 
-export type MessageContent = string | TextContent | ImageContent | FileContent;
+export type VideoContent = { type: "video_url"; video_url: { url: string } };
+export type MessageContent = string | TextContent | ImageContent | FileContent | VideoContent;
 
 export type Message = {
   role: Role;
@@ -504,12 +505,12 @@ const ensureArray = (
 
 const normalizeContentPart = (
   part: MessageContent,
-): TextContent | ImageContent | FileContent => {
+): TextContent | ImageContent | FileContent | VideoContent => {
   if (typeof part === "string") {
     return { type: "text", text: part };
   }
 
-  if (part.type === "text" || part.type === "image_url" || part.type === "file_url") {
+  if (part.type === "text" || part.type === "image_url" || part.type === "file_url" || part.type === "video_url") {
     return part;
   }
 
@@ -888,7 +889,8 @@ async function fetchUrlAsBase64(url: string, fallbackMimeType?: string) {
   };
 }
 
-async function contentPartToGeminiPart(part: TextContent | ImageContent | FileContent): Promise<GeminiPart> {
+async function contentPartToGeminiPart(part: TextContent | ImageContent | FileContent | VideoContent): Promise<GeminiPart> {
+  if (part.type === "video_url") throw new Error("本次视频输入仅支持已核实的顾问视频通道");
   if (part.type === "text") {
     return { text: part.text };
   }

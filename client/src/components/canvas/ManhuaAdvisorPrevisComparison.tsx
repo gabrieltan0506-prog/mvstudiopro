@@ -3,11 +3,12 @@ import { trpc } from "@/lib/trpc";
 import { manhuaPrevisMediaUrl } from "@/lib/manhuaPrevisMediaUrl";
 import type { PrevisResponse } from "./ManhuaPrevisStudio";
 import { useState, useRef, useEffect } from "react";
-import { applyAdvisorPrevisPatch, validateAdvisorPrevisReceipt, advisorPrevisTrialSchema, type AdvisorPrevisTrial, type AdvisorPrevisReceipt, type AdvisorPrevisCandidate } from "@shared/manhuaAdvisorPrevisEdit";
+import { applyAdvisorPrevisPatch, validateAdvisorPrevisReceipt, advisorPrevisTrialSchema, type AdvisorPrevisTrial, type AdvisorPrevisReceipt, type AdvisorPrevisCandidate, type AdvisorPrevisVideoSource, advisorPrevisSpecJson } from "@shared/manhuaAdvisorPrevisEdit";
 import { manhuaPrevisSpecSchema, PREVIS_ACTION_LABELS, type ManhuaPrevisSpec } from "@shared/manhuaPrevis";
 
 function Configuration({ spec }: { spec: ManhuaPrevisSpec }) {
   return <div className="space-y-3 text-xs leading-5">
+    {spec.piggyback?.setDown && <p>完整放下：{spec.piggyback.setDown.startSec}秒开始降低 → {spec.piggyback.setDown.groundSec}秒落地坐稳 → {spec.piggyback.setDown.releaseSec}秒松手 → {spec.piggyback.setDown.endSec}秒起身；乘员留在原地。</p>}
     <ol className="list-decimal pl-4">{spec.cameras.map((c, i) => <li key={i} className="mb-2">
       <b>{c.startSec.toFixed(2)}—{c.endSec.toFixed(2)}秒 · {c.lens}{c.endLens && c.endLens !== c.lens ? `→${c.endLens}` : ""}mm</b>
       <p>机位 {c.position.join("，")}{c.endPosition ? ` → ${c.endPosition.join("，")}` : ""}；看向 {c.target.join("，")}{c.endTarget ? ` → ${c.endTarget.join("，")}` : ""}</p>
@@ -15,14 +16,16 @@ function Configuration({ spec }: { spec: ManhuaPrevisSpec }) {
     </li>)}</ol>
     {spec.actors.map(a => <section key={a.id} className="border-t border-white/10 pt-2"><b>{a.nameZh}</b>
       <p>路径：{a.motionRoute?.map(n => `${n.timeSec.toFixed(2)}秒 (${n.position.join("，")}) 朝向${n.facingDeg}°`).join(" → ") || `${a.start.join("，")} → ${a.end.join("，")}`}</p>
+      {a.hitReaction && <p>受击：{a.hitReaction.startSec}—{a.hitReaction.endSec}秒，{a.hitReaction.contactSec}秒受击；出手者：{spec.actors.find(b=>b.id===a.hitReaction!.sourceActorId)?.nameZh}</p>}
       <p>动作：{a.actions.map(v => `${v.startSec.toFixed(2)}—${v.endSec.toFixed(2)}秒 ${PREVIS_ACTION_LABELS[v.kind]}`).join("；") || "无独立动作"}</p>
     </section>)}
   </div>;
 }
-export function ManhuaAdvisorPrevisComparison({ candidate, storageKey, autoStart, previewHost, disabled, onPrepare, onApply, onRevise }: {
+export function ManhuaAdvisorPrevisComparison({ candidate, storageKey, autoStart, previewHost, disabled, onPrepare, onApply, onRevise, onPreviewReady }: {
   previewHost?: HTMLElement | null;
   candidate: AdvisorPrevisCandidate; storageKey: string | null; autoStart: boolean; disabled?: boolean;
   onRevise?: () => void;
+  onPreviewReady?: (source: AdvisorPrevisVideoSource) => void;
   onPrepare?: (value: AdvisorPrevisCandidate) => AdvisorPrevisTrial;
   onApply?: (trial: AdvisorPrevisTrial, receipt: AdvisorPrevisReceipt) => boolean;
 }) {
@@ -54,6 +57,7 @@ export function ManhuaAdvisorPrevisComparison({ candidate, storageKey, autoStart
     if (!value) { setStatus("暂未查到原请求，请确认原请求；不会自动新建。"); return; }
     if (value.status === "succeeded") {
       const verified = validateAdvisorPrevisReceipt(active.request, value);
+      onPreviewReady?.({ target: active.candidate.target, requestId: active.request.requestId, specJson: advisorPrevisSpecJson(active.request.spec) });
       setReceipt(verified); setStatus("试看已生成，工作流尚未修改"); setError("");
     } else if (value.status === "failed") { setStatus("试看失败，工作流未修改"); setError(value.error || "请调整需求后重新咨询"); }
     else { setStatus(value.status === "queued" ? "独立试看排队中，工作流未修改" : "独立试看渲染中，工作流未修改"); setError(""); }

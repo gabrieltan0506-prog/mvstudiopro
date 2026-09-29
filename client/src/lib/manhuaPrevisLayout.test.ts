@@ -35,6 +35,12 @@ describe("白模布局与生产规格", () => {
     const u = (24 - 1) / 47, s = u * u * (3 - 2 * u);
     expect(previsLayoutCamera(spec, 23/24)!.lensMm).toBeCloseTo(24 + 36 * s);
   });
+  it("布局预览同步独立移动、短促变焦与窗外停顿", () => {
+    const spec = createManhuaPrevisStudio(4).spec;
+    spec.cameras = [{startSec:0,endSec:4,position:[0,-8,3],endPosition:[0,-6,3],target:[0,0,1],lens:28,endLens:55,motionWindow:{startSec:1,endSec:2},lensWindow:{startSec:2.5,endSec:2.75}}];
+    expect(previsLayoutCamera(spec, 2.25)).toMatchObject({position:[0,-6,3],lensMm:28});
+    expect(previsLayoutCamera(spec, 3.5)).toMatchObject({position:[0,-6,3],lensMm:55});
+  });
   it("朝向插值与渲染脚本同源：轨迹节点恰好 180° 正向转，转身动作恰好 180° 走 -180", () => {
     const spec = createManhuaPrevisStudio(2).spec;
     const turner = { ...spec.actors[0], facingDeg: 0, actions: [{ kind: "turn" as const, startSec: 0, endSec: 2, facingDeg: 180 }] };

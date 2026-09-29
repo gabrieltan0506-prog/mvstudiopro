@@ -1,3 +1,4 @@
+import { previsCameraWindowSchema } from "./manhuaPrevisCameraTiming";
 import { manhuaPrevisAudioSchema } from "./manhuaPrevisAudio";
 /** 动作白模配置：只有数据，没有用户 Python／命令／任意素材 URL。 */
 import { z } from "zod";
@@ -201,6 +202,12 @@ export const previsActorSchema = z
     moveStartSec: z.number().finite().min(0).max(30),
     moveEndSec: z.number().finite().positive().max(30),
     facingDeg: z.number().finite().min(-180).max(180),
+    hitReaction: z.object({
+      sourceActorId: z.string().min(1).max(100),
+      startSec: z.number().finite().min(0),
+      contactSec: z.number().finite().min(0),
+      endSec: z.number().finite().min(0),
+    }).strict().optional(),
     actions: z
       .array(
         z
@@ -252,8 +259,10 @@ const manhuaPrevisSpecBaseSchema = z
             /** 环绕途中相机高度的总升降（米，正为升）；只与环绕同用。 */
             orbitRise: z.number().finite().min(-8).max(8).optional(),
             lens: z.number().int().min(18).max(65),
-            /** 本镜结束时的焦距：与机位同一平滑进度连续推拉，不是切镜。 */
+            /** 终点焦距；可用独立秒窗完成短促变焦并停住。 */
             endLens: z.number().int().min(18).max(65).optional(),
+            motionWindow: previsCameraWindowSchema.optional(),
+            lensWindow: previsCameraWindowSchema.optional(),
           })
           .strict()
       )
@@ -353,6 +362,8 @@ export const manhuaPrevisDraftSchema = manhuaPrevisSpecBaseSchema.extend({
           orbitRise: draftNumber.optional(),
           lens: draftNumber,
           endLens: draftNumber.optional(),
+          motionWindow: z.object({startSec:draftNumber,endSec:draftNumber}).strict().optional(),
+          lensWindow: z.object({startSec:draftNumber,endSec:draftNumber}).strict().optional(),
         })
         .strict()
     )
@@ -462,6 +473,15 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
         !actor.visibleRanges || actor.visibleRanges.some(range => range.startSec <= startSec + 1e-6 && range.endSec >= endSec - 1e-6);
       if (actor.visibleRanges && (spec.piggyback && [spec.piggyback.carrierId, spec.piggyback.passengerId].includes(actor.id) || spec.waterEmergence?.events.some(event => event.actorId === actor.id)))
         ctx.addIssue({ code: "custom", message: "背负和出水角色暂须整段在场", path: ["actors", i, "visibleRanges"] });
+      if (actor.hitReaction) {
+        const hit=actor.hitReaction;
+        const attacker=spec.actors.find(a=>a.id===hit.sourceActorId && a.id!==actor.id);
+        if (actor.shape!=="horse" || actor.creature || actor.riggedModel || !attacker || attacker.shape!=="human" ||
+            !attacker.actions.some(a=>a.kind==="strike" && a.startSec<=hit.contactSec && a.endSec>=hit.contactSec) ||
+            !(hit.startSec+1/24<=hit.contactSec && hit.contactSec+.25<=hit.endSec && hit.endSec<=spec.durationSec) ||
+            [hit.startSec,hit.contactSec,hit.endSec].some(t=>Math.abs(t*24-Math.round(t*24))>1e-6) || !visibleThrough(hit.startSec,hit.endSec))
+          ctx.addIssue({code:"custom",path:["actors",i,"hitReaction"],message:"四足受击须绑定同场出掌人物、接触时刻和恢复窗口，按24帧对齐且在片长内"});
+      }
       actor.actions.forEach((action, j) => {
         if (!visibleThrough(action.startSec, action.endSec))
           ctx.addIssue({ code: "custom", message: "动作须完整落在角色在场区间内", path: ["actors", i, "actions", j] });
@@ -858,6 +878,18 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
         });
     });
     spec.cameras.forEach((camera, i) => {
+      for (const key of ["motionWindow", "lensWindow"] as const) {
+        const window = camera[key];
+        if (!window) continue;
+        if (window.startSec < camera.startSec || window.endSec > camera.endSec ||
+            Math.round(window.endSec * 24) - Math.round(window.startSec * 24) < 2 ||
+            [window.startSec, window.endSec].some(t => Math.abs(t * 24 - Math.round(t * 24)) > 1e-7))
+          ctx.addIssue({code:"custom",message:"运镜与变焦秒窗须在本镜内、对齐24帧且至少两帧",path:["cameras",i,key]});
+        if (key === "lensWindow" && camera.endLens === undefined)
+          ctx.addIssue({code:"custom",message:"变焦秒窗需要终点焦距",path:["cameras",i,key]});
+        if (key === "motionWindow" && !camera.endPosition && !camera.endTarget && camera.orbitDeg === undefined)
+          ctx.addIssue({code:"custom",message:"运镜秒窗需要移动终点或环绕",path:["cameras",i,key]});
+      }
       if (camera.orbitDeg !== undefined) {
         if (camera.endPosition || camera.endTarget) ctx.addIssue({ code: "custom", message: "环绕与直线终点不能同时使用", path: ["cameras", i] });
         const radius = Math.hypot(camera.position[0] - camera.target[0], camera.position[1] - camera.target[1]);
@@ -1025,10 +1057,10 @@ export function formatPrevisMotionGuide(spec: ManhuaPrevisSpec): string {
   if (spec.timeMap) return "白模已按统一时间表变速；以下秒位均为成片呈现时间，直接跟随参考，不重复变速。\n" + formatPrevisMotionGuide(previsPresentationGuideSpec(spec));
   return [
     "参考中的关节姿态、落脚、蓄力—出手—回收及保护反应按对应秒位读取；不继承白模外形。",
-    ...spec.cameras.filter(c => c.orbitDeg).map(c => `${c.startSec}—${c.endSec}秒围绕（${c.target.join("，")}）水平环绕${c.orbitDeg}度，${c.orbitRise ? `保持半径，同时${c.orbitRise > 0 ? "升高" : "降低"}${Math.abs(c.orbitRise)}米` : "保持半径和高度"}；人物速度不由环绕改变。`),
-    ...spec.cameras.filter(c => c.endLens !== undefined && c.endLens !== c.lens).map(c => `${c.startSec}—${c.endSec}秒焦距从${c.lens}毫米连续${c.endLens! > c.lens ? "推到" : "拉到"}${c.endLens}毫米，与机位同步平滑起停。`),
+    ...spec.cameras.filter(c => c.orbitDeg).map(c => `${c.startSec}—${c.endSec}秒围绕（${c.target.join("，")}）水平环绕${c.orbitDeg}度，${c.orbitRise ? `保持半径，同时${c.orbitRise > 0 ? "升高" : "降低"}${Math.abs(c.orbitRise)}米` : "保持半径和高度"}；${c.motionWindow ? `只在${c.motionWindow.startSec}—${c.motionWindow.endSec}秒环绕，其前后停住；` : ""}人物速度不由环绕改变。`),
+    ...spec.cameras.filter(c => c.endLens !== undefined && c.endLens !== c.lens).map(c => `${c.startSec}—${c.endSec}秒焦距从${c.lens}毫米连续${c.endLens! > c.lens ? "推到" : "拉到"}${c.endLens}毫米，${c.lensWindow ? `在${c.lensWindow.startSec}—${c.lensWindow.endSec}秒变焦，其前后停住` : "按整镜平滑起停"}。`),
     ...spec.cameras.filter(c => c.endPosition || c.endTarget).map(c =>
-      `${c.startSec}—${c.endSec}秒相机从（${c.position.join("，")}）连续移动到（${(c.endPosition ?? c.position).join("，")}），看向从（${c.target.join("，")}）到（${(c.endTarget ?? c.target).join("，")}）；平滑起停，切镜时不跨镜连移。`
+      `${c.startSec}—${c.endSec}秒相机从（${c.position.join("，")}）连续移动到（${(c.endPosition ?? c.position).join("，")}），看向从（${c.target.join("，")}）到（${(c.endTarget ?? c.target).join("，")}）；${c.motionWindow ? `只在${c.motionWindow.startSec}—${c.motionWindow.endSec}秒移动，其前后停住` : "平滑起停"}，切镜时不跨镜连移。`
     ),
     ...spec.actors.map(
       (a, index) =>
@@ -1060,9 +1092,10 @@ export function formatPrevisMotionGuide(spec: ManhuaPrevisSpec): string {
         a =>
           `${a.nameZh}右手持剑，手柄随手腕，参考只约束动作与比例，武器外观按该角色道具参考。`
       ),
-    ...(spec.piggyback ? [`整段由${(spec.actors.find(a => a.id === spec.piggyback!.carrierId)?.nameZh ?? "待重新选择的承载者")}背负${(spec.actors.find(a => a.id === spec.piggyback!.passengerId)?.nameZh ?? "待重新选择的乘员")}；开镜已背稳，乘员抱肩并跟随同一路线且双脚离地。${spec.piggyback.slipCatch
-      ? `${spec.piggyback.slipCatch.slipStartSec}秒乘员向下滑落约${spec.piggyback.slipCatch.dropMeters}米，承载者的手短暂失去托腿接触，${spec.piggyback.slipCatch.catchSec}秒重新托住腿，${spec.piggyback.slipCatch.recoverEndSec}秒扶回稳定背负；不新增上背或放下动作。`
-      : "双手始终托腿；不新增上背或放下动作。"}`] : []),
+    ...(spec.piggyback ? [`${spec.piggyback.setDown ? `0—${spec.piggyback.setDown.startSec}秒由` : "整段由"}${(spec.actors.find(a => a.id === spec.piggyback!.carrierId)?.nameZh ?? "待重新选择的承载者")}背负${(spec.actors.find(a => a.id === spec.piggyback!.passengerId)?.nameZh ?? "待重新选择的乘员")}；开镜已背稳，乘员抱肩并跟随同一路线且双脚离地。${spec.piggyback.slipCatch
+      ? `${spec.piggyback.slipCatch.slipStartSec}秒乘员向下滑落约${spec.piggyback.slipCatch.dropMeters}米，承载者的手短暂失去托腿接触，${spec.piggyback.slipCatch.catchSec}秒重新托住腿，${spec.piggyback.slipCatch.recoverEndSec}秒扶回稳定背负；不新增上背动作。`
+      : "放下前双手托腿。"}${spec.piggyback.setDown ? `${spec.piggyback.setDown.startSec}秒开始完整放下，${spec.piggyback.setDown.groundSec}秒落地坐稳，${spec.piggyback.setDown.releaseSec}秒松手，${spec.piggyback.setDown.endSec}秒承载者起身；乘员此后固定坐在原地点，承载者独立行动。` : "未设置放下，维持背负。"}`] : []),
+    ...spec.actors.filter(a=>a.hitReaction).map(a=>`${a.hitReaction!.contactSec}秒，${a.nameZh}受${spec.actors.find(b=>b.id===a.hitReaction!.sourceActorId)?.nameZh}出掌击中，胸颈快速后缩下沉，支撑脚保持接地，${a.hitReaction!.endSec}秒恢复；原跛行持续。`),
     ...(spec.interactions ?? []).map(event => {
       const actor = spec.actors.find(a => a.id === event.actorId)!;
       const target = spec.actors.find(a => a.id === event.targetActorId)!;

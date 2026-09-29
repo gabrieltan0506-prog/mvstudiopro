@@ -480,7 +480,7 @@ type Props = {
   onOpenAdvisorIssue?: (issueId?: string) => void;
   /** 打开创作顾问并直接定位剧本模板优化；只打开，不自动提问或扣点。 */
   onOpenAdvisorTemplates?: () => void;
-  onOpenAdvisorPrevis?: (clipId: string) => void;
+  onOpenAdvisorPrevis?: (clipId: string, requestId?: string) => void;
   onOpenAdvisor3d?: (clipId?: string) => void;
   advisorOpen?: boolean;
   onAdvisorDockChange?: (host: HTMLDivElement | null) => void;
@@ -4558,7 +4558,7 @@ export default function ManhuaScriptWorkbench({
               sourceShots={activeSegment?.shots.map(shot=>({index:shot.index,durationSec:shot.durationSec,actionZh:shot.actionZh}))}
               directionShots={activeSegment?.shots.map(shot=>({index:shot.index,durationSec:shot.durationSec,cameraZh:shot.cameraZh||"",actionZh:shot.actionZh}))}
               directionCardId={directionCanon?.mainCardId ?? null}
-              onOpenAdvisor={onOpenAdvisorPrevis ? () => { onOpenAdvisorPrevis(activeClip.id); } : undefined}
+              onOpenAdvisor={onOpenAdvisorPrevis ? (requestId) => { onOpenAdvisorPrevis(activeClip.id, requestId); } : undefined}
               actionPlanDrafts={previsDraftsFromPlan}
               onNextDraftVideo={onGenerateFragment ? runGenerateFragment : undefined}
               disabled={Boolean(factoryBusy)||activeClip.status==="running"||activeClip.videoTaskStatus==="queued"}

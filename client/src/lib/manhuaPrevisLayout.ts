@@ -1,3 +1,4 @@
+import { previsCameraProgress } from "@shared/manhuaPrevisCameraTiming";
 import type { ManhuaPrevisSpec } from "@shared/manhuaPrevis";
 export type Vec3 = [number, number, number];
 const clamp = (x: number) => Math.max(0, Math.min(1, x));
@@ -47,15 +48,15 @@ export function previsLayoutCamera(spec: ManhuaPrevisSpec, time: number) {
   const frame = Math.min(spec.durationSec * 24, Math.floor(Math.max(0, time) * 24) + 1);
   const shot = spec.cameras.find(c => frame >= Math.round(c.startSec * 24) + 1 && frame <= Math.round(c.endSec * 24)) ?? spec.cameras[spec.cameras.length - 1];
   if (!shot) return null;
-  const begin = Math.round(shot.startSec * 24) + 1, end = Math.round(shot.endSec * 24);
-  const u = smooth((frame - begin) / Math.max(1, end - begin));
+  const u = previsCameraProgress(shot, frame, shot.motionWindow);
+  const lensProgress = previsCameraProgress(shot, frame, shot.lensWindow);
   let position = mix(shot.position, shot.endPosition ?? shot.position, u);
   const target = mix(shot.target, shot.endTarget ?? shot.target, u);
   if (shot.orbitDeg != null) {
     const a = shot.orbitDeg * Math.PI / 180 * u, x = shot.position[0] - shot.target[0], y = shot.position[1] - shot.target[1];
     position = [shot.target[0] + x * Math.cos(a) - y * Math.sin(a), shot.target[1] + x * Math.sin(a) + y * Math.cos(a), shot.position[2] + (shot.orbitRise ?? 0) * u];
   }
-  return { position, target, lensMm: shot.lens + ((shot.endLens ?? shot.lens) - shot.lens) * u };
+  return { position, target, lensMm: shot.lens + ((shot.endLens ?? shot.lens) - shot.lens) * lensProgress };
 }
 export function movePrevisLayoutEndpoint(spec: ManhuaPrevisSpec, id: string, endpoint: "start" | "end", point: [number, number]): ManhuaPrevisSpec {
   const position = point.map(v => Math.round(Math.max(-12, Math.min(12, v)) * 10) / 10) as [number, number];

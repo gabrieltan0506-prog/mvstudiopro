@@ -104,7 +104,7 @@ def validate_piggyback(spec):
     pair = spec.get('piggyback')
     if not pair:
         return None
-    if set(pair) not in ({'carrierId', 'passengerId'}, {'carrierId', 'passengerId', 'slipCatch'}):
+    if not {'carrierId','passengerId'}.issubset(pair) or set(pair)-{'carrierId','passengerId','slipCatch','setDown'}:
         raise ValueError('背负关系字段无效')
     event = pair.get('slipCatch')
     if event:
@@ -125,16 +125,33 @@ def validate_piggyback(spec):
         raise ValueError('背负当前只允许已验基础人形骨架，完整网格尚待验收')
     if spec.get('waterEmergence') or any(aid in (e['actorId'], e['targetActorId']) or bid in (e['actorId'], e['targetActorId']) for e in spec.get('interactions', [])):
         raise ValueError('背负与出水或同人物其他接触冲突')
-    if any(e['kind'] not in ('walk', 'idle') for e in a['actions']) or any(e['kind'] != 'idle' for e in b['actions']):
+    if any(e['kind'] not in ('walk', 'idle') and (not pair.get('setDown') or e['startSec'] < pair['setDown']['endSec']) for e in a['actions']) or any(e['kind'] != 'idle' for e in b['actions']):
         raise ValueError('背负乘员不能叠加独立动作')
     if any(a.get(k) != b.get(k) for k in ('start', 'end', 'facingDeg', 'moveStartSec', 'moveEndSec', 'motionRoute')):
         raise ValueError('背负双方须使用同一站位路线')
+    down=pair.get('setDown')
+    if down:
+        if set(down)!={'startSec','groundSec','releaseSec','endSec'} or not all(isinstance(v,(float,int)) and not isinstance(v,bool) and math.isfinite(v) and abs(v*24-round(v*24))<1e-6 for v in down.values()):
+            raise ValueError('放下时序字段无效')
+        if not (0<=down['startSec'] and down['startSec']+.75<=down['groundSec'] and down['groundSec']+.25<=down['releaseSec'] and down['releaseSec']+.25<=down['endSec']<=spec['durationSec']-1/24):
+            raise ValueError('放下须按顺序完成降低、落地、松手、起身')
+        if event and event['recoverEndSec']>down['startSec']: raise ValueError('滑落接住与放下冲突')
+        route=a.get('motionRoute')
+        moving=any(down['startSec']<n['timeSec'] and down['endSec']>route[i-1]['timeSec'] and (n['position']!=route[i-1]['position'] or n['facingDeg']!=route[i-1]['facingDeg']) for i,n in enumerate(route or []) if i>0) if route else (a['start']!=a['end'] and down['startSec']<a['moveEndSec'] and down['endSec']>a['moveStartSec'])
+        if moving or any(e['kind']!='idle' and e['startSec']<down['endSec'] and e['endSec']>down['startSec'] for e in a['actions']):
+            raise ValueError('放下期间必须停稳，不叠加其他动作')
     return pair
 
 
-def apply_piggyback(pair, poses, frame):
+def apply_piggyback(pair, poses, frame, fixed=None):
     """双方同一根变换；一次更新两人的局部姿态，顺序不依赖演员列表。"""
     aid, bid = pair['carrierId'], pair['passengerId']
+    if pair.get('setDown'):
+        if fixed is None: raise ValueError('放下参考姿态容器缺失')
+        if (frame-1)/24 >= pair['setDown']['startSec'] and not fixed:
+            fixed.update({k:{name:tuple(v.copy() for v in vs) for name,vs in poses[k].items()} for k in (aid,bid)})
+        poses[aid], poses[bid] = set_down_pose(pair, poses[aid], poses[bid], frame, fixed)
+        return
     drop, gap = piggyback_motion(pair, frame)
     poses[aid], poses[bid], _ = solve_piggyback(poses[aid], poses[bid], drop, gap)
 
@@ -159,9 +176,73 @@ def measure_piggyback(pair, rigs, scene, update):
             heights.append((b.matrix_world @ b.pose.bones['foot'+key].head).z)
         _, expected_gap = piggyback_motion(pair, frame)
         actual_drop = (a.matrix_world @ a.pose.bones['spine'].tail).z - (b.matrix_world @ b.pose.bones['spine'].head).z - .12
+        t=(frame-1)/24
+        down=pair.get('setDown')
+        stage=('carried' if t<=down['startSec'] else 'lowering' if t<down['groundSec'] else 'supported' if t<down['releaseSec'] else 'released' if t<down['endSec'] else 'seated') if down else None
         rows.append({'frame': frame, 'supportError': max(support), 'expectedSupportGap': expected_gap,
-                     'actualDropMeters': actual_drop, 'gripError': max(grip), 'passengerFootHeight': min(heights)})
+                     'actualDropMeters': actual_drop, 'gripError': max(grip), 'passengerFootHeight': min(heights),
+                     **({'stage':stage,'pelvisHeight':(b.matrix_world @ b.pose.bones['spine'].head).z,'passengerRoot':list(b.matrix_world.translation)} if down else {})})
     boundary = ('从已背稳到中途滑落、接住并复位的基础人形预演；不含上背、放下或完整衣物网格验收。'
                 if pair.get('slipCatch') else
                 '整段已背稳的基础人形预演；不含上背、放下或完整衣物网格验收。')
+    if pair.get('setDown'): boundary='连续降低、落地支撑、松手和起身；乘员留在原地。程序接触检查不代替逐帧画面与常速验收。'
     return {**pair, 'samples': rows, 'boundaryZh': boundary}
+
+def set_down_pose(pair, carrier, passenger, frame, fixed):
+    """从背负连续降低到落地坐姿，支撑后松手；不切换既成姿态。"""
+    event = pair['setDown']
+    t = (frame-1)/24
+    if t <= event['startSec']:
+        drop, gap = piggyback_motion(pair, frame)
+        a, b, _ = solve_piggyback(carrier, passenger, drop, gap)
+        return a, b
+    def ease(x):
+        x=max(0.,min(1.,x)); return x*x*(3-2*x)
+    lower=ease((t-event['startSec'])/(event['groundSec']-event['startSec']))
+    release=ease((t-event['groundSec'])/(event['releaseSec']-event['groundSec']))
+    rise=ease((t-event['releaseSec'])/(event['endSec']-event['releaseSec']))
+    current_carrier=carrier
+    carrier,passenger=fixed[pair['carrierId']],fixed[pair['passengerId']]
+    carried_a, carried_b, _ = solve_piggyback(carrier, passenger)
+    def copy_pose(p): return {k:tuple(v.copy() for v in vs) for k,vs in p.items()}
+    a, b = copy_pose(carried_a), copy_pose(carried_b)
+    def shift_torso(p, source, target):
+        delta=target-source['spine'][0]
+        for k,vs in source.items():
+            if not k.startswith(('upper_leg','lower_leg','foot')): p[k]=tuple(v+delta for v in vs)
+    # 承载者下蹲；松手后从同一落点起身。腿端点由IK保持接地。
+    crouch=Vector((.10,0,.32))
+    hip=carried_a['spine'][0].lerp(crouch,lower).lerp(carrier['spine'][0],rise)
+    shift_torso(a,carried_a,hip)
+    for k,vs in list(a.items()):
+        if not k.startswith(('upper_leg','lower_leg','foot')): a[k]=tuple(v.lerp(carrier[k][i],rise) for i,v in enumerate(vs))
+    # 乘员落地后固定坐在原地，后续承载者位移不再驱动乘员。
+    seat=Vector((-.24,0,.14))
+    mother_hip=carried_b['spine'][0].lerp(seat,lower)
+    shift_torso(b,carried_b,mother_hip)
+    def limb(p, source, upper, lower_key, tip, root, target, bend, direction):
+        l1=(source[upper][1]-source[upper][0]).length
+        l2=(source[lower_key][1]-source[lower_key][0]).length
+        result=solve_limb(root,target,l1,l2,bend)
+        if result['unreachableDistance']>.005: raise ValueError('放下动作接触不可达，须调整角色间距')
+        joint,end=Vector(result['joint']),Vector(result['end'])
+        length=(source[tip][1]-source[tip][0]).length
+        p[upper]=(root,joint);p[lower_key]=(joint,end)
+        p[tip]=(end,end+Vector(direction).normalized()*length)
+    for side in (-1,1):
+        key=str(side)
+        root=carried_a['upper_leg'+key][0]+hip-carried_a['spine'][0]
+        limb(a,carrier,'upper_leg'+key,'lower_leg'+key,'foot'+key,root,carrier['lower_leg'+key][1],(1,0,0),(1,0,0))
+        root=carried_b['upper_leg'+key][0]+mother_hip-carried_b['spine'][0]
+        ankle=carried_b['lower_leg'+key][1].lerp(Vector((.18,side*.33,.065)),lower)
+        limb(b,passenger,'upper_leg'+key,'lower_leg'+key,'foot'+key,root,ankle,(1,side*.2,0),(1,0,0))
+        support=b['lower_leg'+key][0]+Vector((0,0,-.035))
+        natural=carrier['forearm'+key][1]
+        wrist=support.lerp(natural,rise)
+        limb(a,carrier,'upper_arm'+key,'forearm'+key,'hand'+key,a['upper_arm'+key][0],wrist,(-.3,side,-.5),(1,0,.2))
+        grip=a['upper_arm'+key][0]+Vector((.075,0,.025))
+        lap=b['lower_leg'+key][0]+Vector((-.04,0,.07))
+        limb(b,passenger,'upper_arm'+key,'forearm'+key,'hand'+key,b['upper_arm'+key][0],grip.lerp(lap,release),(.4,side,-.3),(1,0,-.2))
+    if t >= event['endSec']:
+        a=copy_pose(current_carrier)
+    return a,b
