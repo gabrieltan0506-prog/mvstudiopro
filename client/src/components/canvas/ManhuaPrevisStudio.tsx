@@ -219,8 +219,17 @@ export function ManhuaPrevisStudioView({
     const startAt = Math.max(0, directionShots.findIndex(shot => shot.index === directionStartShot));
     for (const shot of directionShots.slice(startAt)) {
       if (sum >= D - 1e-6) break;
+      // 白模规格只能取整秒，分镜按真实对白排时常带小数：下一镜会冲过白模结尾、而尾差不足 1 秒时，停在这里补尾差
+      if (covered.length && sum + shot.durationSec > D + 1e-6 && D - sum < 1) break;
       covered.push(shot);
       sum += shot.durationSec;
+    }
+    // 尾差（<1 秒）补在末镜：末镜机位定格到白模结尾，不改分镜时长（0929：第3段A/B 22.216/22.784 秒对 23 秒白模）
+    const tailSec = D - sum;
+    if (covered.length && tailSec > 1e-6 && tailSec < 1) {
+      const last = covered[covered.length - 1]!;
+      covered[covered.length - 1] = { ...last, durationSec: last.durationSec + tailSec };
+      sum = D;
     }
     if (!covered.length || Math.abs(sum - D) > 1e-6) {
       const from = directionShots.slice(startAt);
@@ -262,7 +271,7 @@ export function ManhuaPrevisStudioView({
       draftCameraPromptZh: lines,
     });
     if (ok !== false)
-      setAutoCameraMessage({ ok: true, text: `已按镜${covered[0]!.index}–${covered.at(-1)!.index}排出 ${plan.cameras.length} 个机位，尚未渲染${plan.notesZh.length ? `；${plan.notesZh.join("；")}` : ""}` });
+      setAutoCameraMessage({ ok: true, text: `已按镜${covered[0]!.index}–${covered.at(-1)!.index}排出 ${plan.cameras.length} 个机位，尚未渲染${tailSec > 1e-6 && tailSec < 1 ? `；分镜合计比白模短 ${tailSec.toFixed(3)} 秒，镜${covered.at(-1)!.index}机位定格补到结尾` : ""}${plan.notesZh.length ? `；${plan.notesZh.join("；")}` : ""}` });
   }
   function publish(next: Studio, reference?: ManhuaSegmentReferenceEntry) {
     const current = latest.current;

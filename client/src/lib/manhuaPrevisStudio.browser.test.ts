@@ -269,6 +269,37 @@ it("0929 同段第二条白模：选「从镜3起」，自动排镜只覆盖镜3
   } finally { await page.close(); }
 });
 
+it("0929 分镜合计带小数（第3段A 22.216 秒对 23 秒白模）：尾差不足 1 秒补在末镜；尾差 ≥1 秒仍报对不上", async () => {
+  const page = await open(false, false, undefined, false);
+  try {
+    // 夹具白模 10 秒：镜1 4 秒＋镜2 5.4 秒＝9.4 秒，尾差 0.6 秒；镜3 会冲过结尾
+    await page.evaluate(() => (window as any).fixture.setDirectionShots([
+      { index: 1, durationSec: 4, cameraZh: "全景；平视；定机" },
+      { index: 2, durationSec: 5.4, cameraZh: "近景；平视；短推" },
+      { index: 3, durationSec: 6, cameraZh: "中景；平视；横移" },
+    ]));
+    await settle(page);
+    await click(page, "按分镜自动排运镜");
+    await settle(page);
+    const cameras = await page.evaluate(() => (window as any).fixture.block.previsStudio.spec.cameras as Array<{ startSec: number; endSec: number }>);
+    expect(cameras.at(-1)!.endSec).toBe(10);
+    const text = await page.evaluate(() => document.querySelector("[data-previs-auto-camera]")!.textContent || "");
+    expect(text).toContain("短 0.600 秒");
+    expect(text).toContain("镜2机位定格补到结尾");
+    // 尾差 1.5 秒：不补，报对不上，机位不动
+    await page.evaluate(() => (window as any).fixture.setDirectionShots([
+      { index: 1, durationSec: 4, cameraZh: "全景；平视；定机" },
+      { index: 2, durationSec: 4.5, cameraZh: "近景；平视；短推" },
+    ]));
+    await settle(page);
+    const before = await page.evaluate(() => JSON.stringify((window as any).fixture.block.previsStudio.spec.cameras));
+    await click(page, "按分镜自动排运镜");
+    await settle(page);
+    expect(await page.evaluate(() => document.querySelector("[data-previs-auto-camera]")!.textContent || "")).toContain("对不上");
+    expect(await page.evaluate(() => JSON.stringify((window as any).fixture.block.previsStudio.spec.cameras))).toBe(before);
+  } finally { await page.close(); }
+});
+
 it("收起专业参数仍可选择出场人物，保存失败不改变原人物或提交渲染", async () => {
   const page = await open();
   try {
