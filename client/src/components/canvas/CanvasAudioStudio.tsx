@@ -7,6 +7,7 @@ import { planCanvasDialogueTiming } from "@shared/canvasDialogueTimingPlan";
 import { CANVAS_DIALOGUE_SPEED_MAX, CANVAS_DIALOGUE_SPEED_MIN, CANVAS_DIALOGUE_SPEED_WARN, suggestCanvasDialogueSpeed } from "@shared/canvasDialogueSpeed";
 import type { ManhuaWorkbenchShot } from "@shared/manhuaScriptWorkbench";
 import { canvasAudioMixSource } from "@shared/canvasAudioStudio";
+import { auditCanvasAudioDuration } from "@shared/canvasAudioDurationAudit";
 import { CanvasAudioMixControls } from "./CanvasAudioMixControls";
 import { applyCanvasAudioMixPlan, assertCanvasAudioMixCapacity } from "@shared/canvasAudioMixPlan";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -372,6 +373,7 @@ export function CanvasAudioStudioView({
     musicJobCount: state.musicJobIds.length,
     hasPremixMaster: Boolean(block.manhuaSegmentRefs?.master?.gcsUri || block.manhuaSegmentRefs?.master?.url),
   });
+  const durationAudit = auditCanvasAudioDuration(state.cues, durationSec);
   const current = useRef({ state, onChange, services, block, onMasterTrackReady, durationSec, dialogueSources, sourceShots });
   current.current = { state, onChange, services, block, onMasterTrackReady, durationSec, dialogueSources, sourceShots };
   const mounted = useRef(true);
@@ -1344,6 +1346,11 @@ export function CanvasAudioStudioView({
           <p className="mt-3 text-[11px] leading-4 text-white/45">配乐与音效各自裁切，保留对白窗与留白。</p>
         </section>
       </div>
+      <section aria-label="声音时长体检" data-audio-duration-audit className="rounded-lg border border-cyan-300/25 bg-cyan-500/[0.06] p-3 text-xs">
+        <h4 className="font-semibold text-cyan-50">声音时长体检 · 本段 {durationSec.toFixed(2)} 秒</h4>
+        <p className="mt-1 text-white/75">对白 {durationAudit.dialogueReadyCount}/{durationAudit.dialogueCount} 句已采用且放得进秒窗；背景音乐已覆盖 {durationAudit.bgmCoveredSec.toFixed(2)} 秒，未覆盖 {durationAudit.bgmUncoveredSec.toFixed(2)} 秒（可按剧情留白）。</p>
+        {durationAudit.issuesZh.length ? <ul className="mt-2 list-disc space-y-1 pl-4 text-amber-100">{durationAudit.issuesZh.slice(0, 4).map((issue, i) => <li key={`${i}:${issue}`}>{issue}</li>)}{durationAudit.issuesZh.length > 4 ? <li>另有 {durationAudit.issuesZh.length - 4} 项，请逐条检查音轨</li> : null}</ul> : <p className="mt-1 text-emerald-100">已采用音频的时长与秒窗相符；仍须试听内容与口型。</p>}
+      </section>
       {modelDurationIssue ? <p role="alert" className="text-xs text-amber-200">{modelDurationIssue}</p> : null}
       <details data-manhua-audio-editor open={editorOpen} onToggle={event => setEditorOpen(event.currentTarget.open)} className="rounded-xl border border-white/10 bg-black/10 p-2">
       <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold text-sky-100">编辑对白、配乐与音效</summary>

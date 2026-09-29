@@ -504,7 +504,7 @@ describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
       }));
       expect(result.calls).toHaveLength(1);
       expect(result.calls[0].voiceStateZh).toBe("变身后沉稳有威势");
-      expect(result.calls[0].input).toBe("别怕，站我身后。");
+      expect(result.calls[0].input).toBe("[empathetic]别怕，站我身后。");
       expect(result.cue.approved).toBe(false);
       expect(result.cue.selectedTakeId).toBeUndefined();
       expect(result.cue.takes[0].durationSec).toBe(2.25);
