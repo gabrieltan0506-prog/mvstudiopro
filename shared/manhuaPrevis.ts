@@ -20,7 +20,7 @@ const point = z.tuple([
 export const previsInteractionSchema = z
   .object({
     id: z.string().min(1).max(100),
-    kind: z.enum(["strike_recoil", "strike_guard", "sword_guard"]),
+    kind: z.enum(["strike_recoil", "strike_guard", "sword_guard", "support_walk"]),
     actorId: z.string().min(1).max(100),
     targetActorId: z.string().min(1).max(100),
     startSec: z.number().finite().min(0).max(30),
@@ -846,10 +846,14 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
             "互动秒位须对齐24帧，接触前后各留至少四分之一秒且覆盖在片长内",
           path,
         });
+      if (event.kind === "support_walk" && (event.endSec !== spec.durationSec || event.contactSec-event.startSec < 1 || spec.waterEmergence ||
+          spec.piggyback && [spec.piggyback.carrierId,spec.piggyback.passengerId].some(id=>[event.actorId,event.targetActorId].includes(id))))
+        ctx.addIssue({code:"custom",path,message:"搀扶须留至少1秒扶稳并持续至片尾，暂不叠加出水或背负"});
       for (const participant of [actor, target]) {
         if (
           participant?.actions.some(
             action =>
+              !(event.kind === "support_walk" && ["walk", "idle"].includes(action.kind)) &&
               action.startSec < event.endSec && action.endSec > event.startSec
           )
         )
@@ -1099,6 +1103,7 @@ export function formatPrevisMotionGuide(spec: ManhuaPrevisSpec): string {
     ...(spec.interactions ?? []).map(event => {
       const actor = spec.actors.find(a => a.id === event.actorId)!;
       const target = spec.actors.find(a => a.id === event.targetActorId)!;
+      if (event.kind === "support_walk") return `${event.startSec}秒${actor.nameZh}接近并扶住${target.nameZh}，${event.contactSec}秒扶稳；保持搭肩与扶臂接触共同走到片尾，不能当作独立并排行走。`;
       return `${event.startSec}—${event.endSec}秒，${actor.nameZh}向${target.nameZh}出手，${event.contactSec}秒${event.kind === "sword_guard" ? "双方右手持剑，剑刃交叉格挡；接触后受方卸力、双方回收至持剑准备姿态" : event.kind === "strike_guard" ? "双手接触格挡" : "触及胸前后受方后缩"}；双方按同一事件时序，不拆成无关动作。`;
     }),
     ...spec.actors

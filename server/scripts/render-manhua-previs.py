@@ -852,6 +852,9 @@ if piggyback and piggyback.get('setDown'):
             if any(abs(a-b)>.005 for a,b in zip(root,row['passengerRoot'])): raise ValueError('放下后乘员漂移')
             if (t<=down['releaseSec'] and row['supportError']>.005) or (t<=down['groundSec'] and row['gripError']>.005): raise ValueError('放下接触过早分离')
             if t>=down['groundSec'] and (row['passengerFootHeight']>.07 or abs(row['pelvisHeight']-.14)>.005): raise ValueError('乘员未落地坐稳')
+if any((Vector(s['actualPoint'])-Vector(s['targetPoint'])).length>.005 or (Vector(s['gripPoint'])-Vector(s['shoulderPoint'])).length>.005
+       for row in report.get('interactions',[]) for s in row.get('supportSamples',[])):
+    raise ValueError('搀扶逐帧搭肩与扶臂接触未通过')
 if any(row['contactError']>.005 for row in report.get('interactions',[])):
     raise ValueError('双人互动实际接触误差未过验收')
 if any(actor['stanceDrift']>.005 for actor in report['actors']):

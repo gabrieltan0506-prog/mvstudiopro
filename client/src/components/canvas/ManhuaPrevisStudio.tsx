@@ -2204,7 +2204,7 @@ export function ManhuaPrevisStudioView({
         className="space-y-2 rounded border border-white/15 p-2"
         data-previs-interactions
       >
-        <p className="text-xs text-cyan-100">双人短打 · 白模角色互动</p>
+        <p className="text-xs text-cyan-100">双人接触 · 短打与搀扶</p>
         {studio.spec.actors.some(actor => actor.riggedModel) && (
           <p className="text-xs text-amber-100">
             已绑定角色暂不参与双人短打，请使用角色动作与表演。既有互动保留，可移除或改选未绑定的人体白模。
@@ -2222,10 +2222,10 @@ export function ManhuaPrevisStudioView({
             <div key={event.id} className="flex flex-wrap items-center gap-2">
               {(["actorId", "targetActorId"] as const).map(key => (
                 <label key={key} className="text-xs text-white/70">
-                  {key === "actorId" ? "出手者" : "受方"}
+                  {event.kind === "support_walk" ? (key === "actorId" ? "扶助者" : "被扶者") : (key === "actorId" ? "出手者" : "受方")}
                   <select
                     className={field}
-                    aria-label={`互动${index + 1}${key === "actorId" ? "出手者" : "受方"}`}
+                    aria-label={`互动${index + 1}${event.kind === "support_walk" ? (key === "actorId" ? "扶助者" : "被扶者") : (key === "actorId" ? "出手者" : "受方")}`}
                     value={event[key]}
                     disabled={disabled || Boolean(pendingId)}
                     onChange={e => {
@@ -2261,9 +2261,10 @@ export function ManhuaPrevisStudioView({
                 value={event.kind}
                 disabled={disabled || Boolean(pendingId)}
                 onChange={e =>
-                  patch({ kind: e.target.value as typeof event.kind })
+                  patch({ kind: e.target.value as typeof event.kind, ...(e.target.value === "support_walk" ? { endSec: studio.spec.durationSec, contactSec: Math.max(event.contactSec,event.startSec+1) } : {}) })
                 }
               >
+                <option value="support_walk">扶稳同行（保持到片尾）</option>
                 <option value="strike_recoil">胸前接触后缩</option>
                 <option value="strike_guard">抬手接触格挡</option>
                 <option value="sword_guard">

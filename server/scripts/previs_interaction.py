@@ -14,7 +14,7 @@ def validate_interactions(spec):
     occupied = {}
     ids = set()
     for event in events:
-        if event['id'] in ids or event['kind'] not in ('strike_recoil', 'strike_guard', 'sword_guard'):
+        if event['id'] in ids or event['kind'] not in ('strike_recoil', 'strike_guard', 'sword_guard', 'support_walk'):
             raise ValueError('互动编号重复或动作类型无效')
         ids.add(event['id'])
         if event['actorId'] == event['targetActorId']:
@@ -29,9 +29,25 @@ def validate_interactions(spec):
         start, contact, end = times
         if not 0 <= start < contact < end <= spec['durationSec'] or contact >= spec['durationSec']:
             raise ValueError('互动起点、接触点与终点次序无效')
+        if event['kind']=='support_walk' and (end!=spec['durationSec'] or contact-start<1 or spec.get('waterEmergence') or
+                any(actors[event[k]].get('riggedModel') or actors[event[k]].get('weapon') for k in ('actorId','targetActorId')) or
+                any(event[k] in (spec.get('piggyback',{}).get('carrierId'),spec.get('piggyback',{}).get('passengerId')) for k in ('actorId','targetActorId'))):
+            raise ValueError('搀扶需要基础人体、至少1秒扶稳、保持至片尾，不能叠加背负或出水')
+        if event['kind']=='support_walk':
+            from previs_route import route_pose
+            def root_at(actor,t):
+                if actor.get('motionRoute'): return route_pose(actor,t)[0]
+                u=max(0.,min(1.,(t-actor['moveStartSec'])/(actor['moveEndSec']-actor['moveStartSec'])))
+                return Vector((*actor['start'],0)).lerp(Vector((*actor['end'],0)),u)
+            for key in ('actorId','targetActorId'):
+                participant=actors[event[key]]; origin=root_at(participant,start)
+                if any((root_at(participant,f/24)-origin).length>.005 for f in range(round(start*24),round(contact*24)+1)):
+                    raise ValueError('搀扶抬手至扶稳期间须停立，路线必须包含停顿节点')
+                if (root_at(participant,(spec['durationSec']*24-1)/24)-origin).length<.1:
+                    raise ValueError('扶稳同行需要真实走位，不能只站着搭肩')
         for key in ('actorId', 'targetActorId'):
             actor = actors[event[key]]
-            for a, b in occupied.get(actor['id'], []) + [(a['startSec'], a['endSec']) for a in actor['actions']]:
+            for a, b in occupied.get(actor['id'], []) + [(a['startSec'], a['endSec']) for a in actor['actions'] if not (event['kind']=='support_walk' and a['kind'] in ('walk','idle'))]:
                 if start < b and a < end:
                     raise ValueError('互动与角色其他动作时间冲突')
             occupied.setdefault(actor['id'], []).append((start, end))
@@ -68,6 +84,22 @@ def apply_interactions(events, frame, poses, transforms, ik):
         aid, tid = event['actorId'], event['targetActorId']
         attack, target = poses[aid], poses[tid]
         am, tm = transforms[aid], transforms[tid]
+        if event['kind']=='support_walk':
+            # 同帧实际根矩阵确定近侧，不按演员数组顺序猜测；扶稳后每帧检查空间和朝向。
+            relative=am.inverted() @ tm.translation
+            side=1 if relative.y>0 else -1
+            if t>=contact and (abs(relative.x)>.10 or not .55<=abs(relative.y)<=.75 or
+                               am.to_quaternion().rotation_difference(tm.to_quaternion()).angle>.05):
+                raise ValueError('搀扶双方须同向同步，保持0.55—0.75米侧向间距且前后差不超过0.1米')
+            weight=smooth((t-start)/(contact-start))
+            shoulder=am @ attack['upper_arm'+str(side)][0]
+            patient_side=-side
+            wanted=tm.inverted() @ shoulder
+            aim_arm(target,patient_side,arm_tip(target,patient_side).lerp(wanted,weight),ik)
+            a,b=target['forearm'+str(patient_side)]
+            support=am.inverted() @ (tm @ a.lerp(b,.5))
+            aim_arm(attack,side,arm_tip(attack,side).lerp(support,weight),ik)
+            continue
         # 受击只在真实接触时刻后发生；回到事件结束时的中性姿态。
         reaction = math.sin(math.pi*max(0., (t-contact)/(end-contact))) if t >= contact else 0.
         recoil = Vector((-.06*reaction, 0, -.025*reaction))
@@ -104,6 +136,25 @@ def measure_interactions(events, rigs, scene, update):
     result = []
     for event in events:
         if event['kind'] == 'sword_guard':
+            continue
+        if event['kind']=='support_walk':
+            samples=[]
+            attack,target=by_id[event['actorId']],by_id[event['targetActorId']]
+            for frame in range(round(event['contactSec']*24)+1,round(event['endSec']*24)+1):
+                scene.frame_set(frame); update()
+                relative=attack.matrix_world.inverted() @ target.matrix_world.translation
+                side=1 if relative.y>0 else -1
+                grip=target.matrix_world @ target.pose.bones['hand'+str(-side)].tail
+                shoulder=attack.matrix_world @ attack.pose.bones['upper_arm'+str(side)].head
+                support=attack.matrix_world @ attack.pose.bones['hand'+str(side)].tail
+                forearm=target.pose.bones['forearm'+str(-side)]
+                wanted=target.matrix_world @ forearm.head.lerp(forearm.tail,.5)
+                samples.append({'frame':frame,'actualPoint':list(support),'targetPoint':list(wanted),
+                                'gripPoint':list(grip),'shoulderPoint':list(shoulder)})
+            first=samples[0]
+            result.append({**{k:event[k] for k in ('id','kind','actorId','targetActorId')},
+                           'contactFrame':first['frame'],'contactError':(Vector(first['actualPoint'])-Vector(first['targetPoint'])).length,
+                           'actualPoint':first['actualPoint'],'targetPoint':first['targetPoint'],'supportSamples':samples})
             continue
         frame = math.floor(event['contactSec']*24+.5)+1
         scene.frame_set(frame)

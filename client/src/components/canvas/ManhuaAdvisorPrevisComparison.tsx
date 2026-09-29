@@ -3,12 +3,13 @@ import { trpc } from "@/lib/trpc";
 import { manhuaPrevisMediaUrl } from "@/lib/manhuaPrevisMediaUrl";
 import type { PrevisResponse } from "./ManhuaPrevisStudio";
 import { useState, useRef, useEffect } from "react";
-import { applyAdvisorPrevisPatch, validateAdvisorPrevisReceipt, advisorPrevisTrialSchema, type AdvisorPrevisTrial, type AdvisorPrevisReceipt, type AdvisorPrevisCandidate, type AdvisorPrevisVideoSource, advisorPrevisSpecJson } from "@shared/manhuaAdvisorPrevisEdit";
+import { advisorPrevisCandidateSchema, applyAdvisorPrevisPatch, validateAdvisorPrevisReceipt, advisorPrevisTrialSchema, type AdvisorPrevisTrial, type AdvisorPrevisReceipt, type AdvisorPrevisCandidate, type AdvisorPrevisVideoSource, advisorPrevisSpecJson } from "@shared/manhuaAdvisorPrevisEdit";
 import { manhuaPrevisSpecSchema, PREVIS_ACTION_LABELS, type ManhuaPrevisSpec } from "@shared/manhuaPrevis";
 
 function Configuration({ spec }: { spec: ManhuaPrevisSpec }) {
   return <div className="space-y-3 text-xs leading-5">
     {spec.piggyback?.setDown && <p>完整放下：{spec.piggyback.setDown.startSec}秒开始降低 → {spec.piggyback.setDown.groundSec}秒落地坐稳 → {spec.piggyback.setDown.releaseSec}秒松手 → {spec.piggyback.setDown.endSec}秒起身；乘员留在原地。</p>}
+    {spec.interactions?.filter(e=>e.kind==="support_walk").map(e=><p key={e.id}>搀扶：{spec.actors.find(a=>a.id===e.actorId)?.nameZh}扶着{spec.actors.find(a=>a.id===e.targetActorId)?.nameZh}；{e.startSec}秒抬手，{e.contactSec}秒扶稳，保持搭肩与扶臂接触至{e.endSec}秒。</p>)}
     <ol className="list-decimal pl-4">{spec.cameras.map((c, i) => <li key={i} className="mb-2">
       <b>{c.startSec.toFixed(2)}—{c.endSec.toFixed(2)}秒 · {c.lens}{c.endLens && c.endLens !== c.lens ? `→${c.endLens}` : ""}mm</b>
       <p>机位 {c.position.join("，")}{c.endPosition ? ` → ${c.endPosition.join("，")}` : ""}；看向 {c.target.join("，")}{c.endTarget ? ` → ${c.endTarget.join("，")}` : ""}</p>
@@ -36,7 +37,7 @@ export function ManhuaAdvisorPrevisComparison({ candidate, storageKey, autoStart
       const id = storageKey && localStorage.getItem(storageKey);
       const raw = id && localStorage.getItem(`${storageKey}:${id}`);
       const trial = raw ? advisorPrevisTrialSchema.parse(JSON.parse(raw)) : null;
-      return { trial: trial && JSON.stringify(trial.candidate) === JSON.stringify(candidate) ? trial : null, issue: "" };
+      return { trial: trial && JSON.stringify(trial.candidate) === JSON.stringify(advisorPrevisCandidateSchema.parse(candidate)) ? trial : null, issue: "" };
     } catch { return { trial: null, issue: "上次试看记录无法读取，已停止自动提交，原记录保留。" }; }
   });
   const [trial, setTrial] = useState<AdvisorPrevisTrial | null>(initial.trial);
