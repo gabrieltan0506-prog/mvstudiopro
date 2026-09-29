@@ -1,6 +1,6 @@
 import { isSseContentSafetyError } from "./sseChatStream";
 import { buildAdvisorPrevisCraftBlock } from "./manhuaAdvisorPrevisCraft";
-import { manhuaAdvisorReasoningEffort, MANHUA_ADVISOR_HOPS, OPENROUTER_DEEPSEEK_V41_FLASH_MODEL, MANHUA_ADVISOR_REASONING_EFFORT, MANHUA_ADVISOR_MAX_OUTPUT_TOKENS } from "./openrouterDeepSeekV41Flash";
+import { manhuaAdvisorReasoningEffort, MANHUA_ADVISOR_HOPS, MANHUA_ADVISOR_REASONING_EFFORT, MANHUA_ADVISOR_MAX_OUTPUT_TOKENS } from "./openrouterDeepSeekV41Flash";
 import { ADVISOR_PREVIS_EDIT_INSTRUCTIONS, parseAdvisorPrevisPatch, applyAdvisorPrevisPatch } from "../../shared/manhuaAdvisorPrevisEdit";
 import { manhuaPrevisSpecSchema } from "../../shared/manhuaPrevis";
 /**
@@ -457,7 +457,7 @@ export function parseAskJson(raw: string, previsMode = false): {
 } {
   const text = String(raw || "").trim();
   if (looksLikeUpstreamGarbage(text)) {
-    throw new Error("算力紧张或请求超时，请稍后重试");
+    throw new Error("顾问返回内容为空或格式异常，请重新生成");
   }
   let parsed: Record<string, unknown> = {};
   try {
@@ -466,15 +466,22 @@ export function parseAskJson(raw: string, previsMode = false): {
     catch { parsed = JSON.parse(extractJsonString(text) || text) as Record<string, unknown>; }
   } catch {
     if (looksLikeUpstreamGarbage(text) || text.length < 8) {
-      throw new Error("算力紧张或请求超时，请稍后重试");
+      throw new Error("顾问返回内容为空或格式异常，请重新生成");
     }
     parsed = { answer: text };
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("顾问返回格式不符合要求，缺少有效回答");
+  }
+  // FlashX 可直接返回候选对象；仍走同一严格合同，不能把任意 JSON 当成功回答。
+  if (previsMode && parsed.kind === "previs_edit_v1" && !Object.hasOwn(parsed, "answer")) {
+    parsed = { answer: JSON.stringify(parseAdvisorPrevisPatch(JSON.stringify(parsed))), creationRelated: true };
   }
   const answer = (previsMode && parsed.answer && typeof parsed.answer === "object"
     ? JSON.stringify(parsed.answer) : String(parsed.answer || "")).trim();
   if (previsMode && answer.length > 12_000) throw new Error("白模方案超过完整处理范围，请精简后重新生成");
   if (!answer || looksLikeUpstreamGarbage(answer)) {
-    throw new Error("算力紧张或请求超时，请稍后重试");
+    throw new Error("顾问返回格式不符合要求，缺少有效回答");
   }
   // 若模型仍吐出看板腔，硬拒并让上层重试
   if (
@@ -697,7 +704,7 @@ export async function askPlatformSkillQa(params: {
     );
   }
 
-  const modelName = manhuaContext ? OPENROUTER_DEEPSEEK_V41_FLASH_MODEL : resolvePlatformSkillQaOpenAiModel({
+  const modelName = manhuaContext ? MANHUA_ADVISOR_HOPS[0].modelName : resolvePlatformSkillQaOpenAiModel({
     requested: params.qaModel,
     isSupervisor: true,
   });
@@ -805,7 +812,7 @@ export async function askPlatformSkillQa(params: {
         provider: "openai",
         modelName: hop?.modelName || modelName,
         ...(hop ? { openAiGateway: hop.gateway, abortSignal: AbortSignal.timeout(180_000) } : {}),
-        // 漫剧顾问走固定 DeepSeek 版本；普通平台问答沿用原模型与预算。
+        // 漫剧顾问按固定优先级逐跳调用；普通平台问答沿用原模型与预算。
         max_tokens: manhuaContext?.previsEdit ? 16_384 : manhuaContext ? MANHUA_ADVISOR_MAX_OUTPUT_TOKENS : PLATFORM_SKILL_QA_MAX_OUTPUT_TOKENS,
         response_format: { type: "json_object" },
         ...(manhuaContext ? { openRouterProviderPreferences: { require_parameters: true } } : {}),

@@ -33,3 +33,10 @@ it.each(["eof", "payment"])("%s 不采信增量为成功且不自动重试", asy
   await expect(streamManhuaAdvisor({ manhuaContext: {} } as any, () => {})).rejects.toThrow(kind === "payment" ? /PAYMENT_REQUIRED/ : /连接中断/);
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
+
+it("FlashX直接候选可流式显示摘要，但普通回答不泄露候选JSON", () => {
+  const raw = '{"kind":"previs_edit_v1","summaryZh":"镜头拉开，保留四人位置","cameras":[{"position":[1';
+  expect(readableAdvisorStream(raw, true)).toBe("镜头拉开，保留四人位置");
+  expect(readableAdvisorStream(raw, false)).toBe("");
+  expect(readableAdvisorStream('{"kind":"other","summaryZh":"错误类型"}', true)).toBe("");
+});

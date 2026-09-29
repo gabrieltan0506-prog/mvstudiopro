@@ -27,6 +27,7 @@ vi.mock("./platformSkillsService.js", () => ({
 
 import {
   askPlatformSkillQa,
+  parseAskJson,
   buildManhuaCreativeAdvisorLlmMessages,
   classifyPlatformSkillQaKind,
   shouldFetchTrendEvidence,
@@ -131,7 +132,7 @@ describe("漫剧工厂创作顾问上下文", () => {
     invokeLLMMock.mockResolvedValue(llmJson(JSON.stringify(patch)));
     const result = await askPlatformSkillQa({ userId: 7, question: "推近到人物", isAdmin: true, manhuaContext: manhuaContext({ previsEdit: makeAdvisorPrevisTarget("clip-1", studio) }) });
     expect(JSON.parse(result.answer)).toEqual(patch);
-    expect(invokeLLMMock.mock.calls[0][0]).toMatchObject({ modelName: "deepseek/deepseek-v4.1-flash", reasoningEffort: "none", openRouterProviderPreferences: { require_parameters: true } });
+    expect(invokeLLMMock.mock.calls[0][0]).toMatchObject({ modelName: "z-ai/glm-5.3-flashx", reasoningEffort: "low", openRouterProviderPreferences: { require_parameters: true } });
     expect(invokeLLMMock.mock.calls[0][0].max_tokens).toBe(16_384);
     expect(invokeLLMMock.mock.calls[0][0].messages[0].content).toContain("用户满意点击应用之后才写回工作流");
     expect(studio.history).toHaveLength(0);
@@ -160,15 +161,30 @@ describe("漫剧工厂创作顾问上下文", () => {
     expect(invokeLLMMock).toHaveBeenCalledTimes(2);
     expect(invokeLLMMock.mock.calls[1][0].messages.at(-1).content).toContain("环绕与直线终点不能同时使用");
   });
-  it.each(["object", "fenced-string"])("%s 候选只需一次调用，完整外壳不被内层代码围栏破坏", async format => {
+  it.each(["object", "fenced-string", "direct-object"])("%s 候选只需一次调用，完整外壳不被内层代码围栏破坏", async format => {
     const studio = createManhuaPrevisStudio(5);
     const patch = { kind: "previs_edit_v1", summaryZh: "曹三逼近时短推，随即切阿菁反应", unsupportedZh: [], cameras: studio.spec.cameras.map(c => ({ ...c, endLens: 55 })) };
     const answer = format === "object" ? patch : "```json\n" + JSON.stringify(patch, null, 2) + "\n```";
-    invokeLLMMock.mockResolvedValue(llmJson(answer));
+    invokeLLMMock.mockResolvedValue(format === "direct-object"
+      ? { choices: [{ message: { content: JSON.stringify(patch) } }] }
+      : llmJson(answer));
     const result = await askPlatformSkillQa({ userId: 7, question: "更有压迫感", isAdmin: true, manhuaContext: manhuaContext({ previsEdit: makeAdvisorPrevisTarget("clip-1", studio) }) });
     expect(parseAdvisorPrevisPatch(result.answer)).toEqual(patch);
     expect(invokeLLMMock).toHaveBeenCalledTimes(1);
     expect(studio.history).toHaveLength(0);
+  });
+  it("直接候选仍严格拒绝合同外字段，不能借兼容绕过身份保护", () => {
+    const studio = createManhuaPrevisStudio(5);
+    const patch = { kind: "previs_edit_v1", summaryZh: "缓推近景", unsupportedZh: [], cameras: studio.spec.cameras, durationSec: 99 };
+    expect(() => parseAskJson(JSON.stringify(patch), true)).toThrow();
+  });
+  it.each(["null", "[]", '{"unexpected":true}', '{"answer":""}'])("畸形回答 %s 准确报告格式错误，不误报超时", raw => {
+    expect(() => parseAskJson(raw, true)).toThrow(/格式/);
+    expect(() => parseAskJson(raw, true)).not.toThrow(/超时/);
+  });
+  it("普通问答不将直接白模候选当回答", () => {
+    const studio = createManhuaPrevisStudio(5);
+    expect(() => parseAskJson(JSON.stringify({ kind: "previs_edit_v1", summaryZh: "缓推近景", unsupportedZh: [], cameras: studio.spec.cameras }))).toThrow(/缺少有效回答/);
   });
   it("四跳白模非法候选必须失败，不能将最后一次解析壳当成功返回", async () => {
     const studio = createManhuaPrevisStudio(5);
@@ -219,7 +235,7 @@ describe("漫剧工厂创作顾问上下文", () => {
       /Christopher Nolan|J\.J\. Abrams|Ridley Scott|James Cameron|Justin Lin|Steven Spielberg|Guillermo del Toro|吴宇森|曹译文/i,
     );
     expect(payload.max_tokens).toBe(32_768);
-    expect(payload).toMatchObject({ modelName: "deepseek/deepseek-v4.1-flash", reasoningEffort: "none" });
+    expect(payload).toMatchObject({ modelName: "z-ai/glm-5.3-flashx", reasoningEffort: "low" });
     expect(payload.response_format).toEqual({ type: "json_object" });
   });
 
@@ -424,21 +440,21 @@ describe("漫剧工厂创作顾问上下文", () => {
 });
 
 
-it("顾问按 DeepSeek OR→Evo→GLM Evo→OR 自动切换，四跳失败即终止", async () => {
+it("顾问按 GLM OR→Evo→DeepSeek OR→Evo 自动切换，四跳失败即终止", async () => {
   invokeLLMMock.mockRejectedValue(new Error("temporary unavailable"));
   const events: string[] = [];
   await expect(askPlatformSkillQa({ userId: 1, isAdmin: true, question: "请优化这一镜", manhuaContext: manhuaContext(), onStream: (event, text) => { if (event === "reset") events.push(text || ""); } })).rejects.toThrow();
   expect(invokeLLMMock.mock.calls.map(([p]) => [p.modelName, p.openAiGateway])).toEqual([
+    ["z-ai/glm-5.3-flashx", "auto"], ["glm-5.3-flashx", "evolink_flash_only"],
     ["deepseek/deepseek-v4.1-flash", "auto"], ["deepseek-v4.1-flash", "evolink_flash_only"],
-    ["glm-5.3-flash", "evolink_flash_only"], ["z-ai/glm-5.3-flash", "auto"],
   ]);
   expect(events).toHaveLength(4);
   for (const [p] of invokeLLMMock.mock.calls) expect(p.response_format).toEqual({ type: "json_object" });
 });
-it("第二模型成功即停止，沿用同一上下文且清除上一跳增量", async () => {
+it("GLM 两跳失败后 DeepSeek 成功即停止，沿用同一上下文", async () => {
   invokeLLMMock.mockRejectedValueOnce(new Error("timeout")).mockRejectedValueOnce(new Error("timeout")).mockResolvedValue(llmJson());
   const result = await askPlatformSkillQa({ userId: 1, isAdmin: true, question: "请优化这一镜", manhuaContext: manhuaContext() });
-  expect(result.modelName).toBe("glm-5.3-flash");
+  expect(result.modelName).toBe("deepseek/deepseek-v4.1-flash");
   expect(invokeLLMMock).toHaveBeenCalledTimes(3);
   expect(invokeLLMMock.mock.calls[2][0].messages).toEqual(invokeLLMMock.mock.calls[0][0].messages);
 });

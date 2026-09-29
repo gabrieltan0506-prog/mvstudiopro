@@ -23,6 +23,10 @@ export const GLM_53_EVOLINK_MODEL = "glm-5.3" as const;
 export const GLM_53_FLASH_OPENROUTER_MODEL = "z-ai/glm-5.3-flash" as const;
 export const GLM_53_FLASH_EVOLINK_MODEL = "glm-5.3-flash" as const;
 
+/** 顾问 FlashX 高速版本；保留其他业务的 Flash 标识。 */
+export const GLM_53_FLASHX_OPENROUTER_MODEL = "z-ai/glm-5.3-flashx" as const;
+export const GLM_53_FLASHX_EVOLINK_MODEL = "glm-5.3-flashx" as const;
+
 /** OpenRouter 上把 GLM 锁到 Z.AI 自营 */
 export const OPENROUTER_GLM_PROVIDER_LOCK = {
   order: ["Z.AI"],
@@ -40,7 +44,8 @@ export const OPENROUTER_DEEPSEEK_PROVIDER_LOCK = {
 export function isGlm53Model(modelId?: string | null): boolean {
   const v = String(modelId || "").trim().toLowerCase();
   return v === GLM_53_OPENROUTER_MODEL || v === GLM_53_EVOLINK_MODEL
-    || v === GLM_53_FLASH_OPENROUTER_MODEL || v === GLM_53_FLASH_EVOLINK_MODEL;
+    || v === GLM_53_FLASH_OPENROUTER_MODEL || v === GLM_53_FLASH_EVOLINK_MODEL
+    || v === GLM_53_FLASHX_OPENROUTER_MODEL || v === GLM_53_FLASHX_EVOLINK_MODEL;
 }
 
 /** GLM 5.3 的思考档：只有 low/high/max 真正生效，其余一律按 high 发 */
