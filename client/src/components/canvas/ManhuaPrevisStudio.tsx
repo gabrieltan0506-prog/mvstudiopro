@@ -462,7 +462,7 @@ export function ManhuaPrevisStudioView({
           : [...current.studio.history, take],
       });
     } else if (response.status === "failed") {
-      setError(response.error || "渲染未完成，请检查配置；旧参考保留");
+      setError(`渲染任务失败：${response.error || "请检查配置；旧参考保留"}`);
       if (matching) publish({ ...current.studio, pending: undefined });
     }
   }
@@ -670,6 +670,30 @@ export function ManhuaPrevisStudioView({
       if (mounted.current) setBusy(false);
     }
   }
+  async function queryPending() {
+    const id = latest.current.studio.pending?.requestId;
+    if (!id || lock.current) return;
+    lock.current = true;
+    setBusy(true);
+    try {
+      const response = await services.get(id);
+      if (!isCurrent(studio.scopeId, block.id) || latest.current.studio.pending?.requestId !== id) return;
+      setError("");
+      if (response) {
+        missingSince.current = null;
+        clearPrevisMissingSince(previsStore(), id);
+        setAbandonable(false);
+        consume(response);
+      }
+      else setStatus("原编号暂未查到，已保留；稍后可再查，不会新建任务");
+    } catch {
+      if (isCurrent(studio.scopeId, block.id))
+        setError("查询暂不可用，原编号已保留；稍后重试查询，不要重新生成");
+    } finally {
+      lock.current = false;
+      if (mounted.current) setBusy(false);
+    }
+  }
   const numeric = (
     label: string,
     value: number,
@@ -781,7 +805,7 @@ export function ManhuaPrevisStudioView({
         按分镜自动排好运镜，渲染几何预演，逐帧审过再采用为本段视频的动作参考。渲染不调用付费生成模型，也不会自动出成片。
       </p>
       <p className="text-xs text-cyan-100" data-previs-source-scope>{manhuaPrevisSourceLabel(studio.spec)}</p>
-      <section className="space-y-2 rounded border border-cyan-300/20 p-3" data-previs-cast>
+      <section id="previs-cast" className="space-y-2 rounded border border-cyan-300/20 p-3" data-previs-cast>
         <p className="text-sm font-medium text-cyan-50">第 1 步 · 本次出场人物</p>
         <p className="text-xs text-cyan-100">渲染容量：{previsRenderCostUnits(studio.spec)} / {PREVIS_RENDER_UNIT_BUDGET}；所有角色均按整段计入，在场区间只控制画面，不提高容量。请逐镜核对白模角色、对白和接触。</p>
         <div className="flex flex-wrap gap-3">
@@ -2257,9 +2281,7 @@ export function ManhuaPrevisStudioView({
             原编号不存在，放弃它
           </button>
         ) : null}
-        <span role="status" className="text-xs text-white/65">
-          {status}
-        </span>
+        <span role="status" className="text-xs text-white/65">{error ? "" : status}</span>
       </div>
       {adoptedJobId && studio.selectedJobId === adoptedJobId && onNextDraftVideo ? (
         <div className="flex flex-wrap items-center gap-2 rounded border border-emerald-300/30 bg-emerald-500/10 p-2" data-previs-next-draft-video>
@@ -2280,13 +2302,22 @@ export function ManhuaPrevisStudioView({
         </p>
       )}
       {error && (
-        <p role="alert" className="text-xs text-amber-200">
-          {error}
-        </p>
+        <div role="alert" className="flex flex-wrap items-center gap-2 rounded border border-amber-300/35 bg-amber-500/10 p-2 text-xs text-amber-100" data-previs-recovery>
+          <span className="min-w-0 flex-1 break-words"><strong>{/回执|层包/.test(error) ? "产物待核对" : pendingId ? "提交或查询结果未确认" : error.startsWith("渲染任务失败：") ? "本次渲染失败" : /历史|续签/.test(error) ? "历史读取失败" : /帧|播放|画面/.test(error) ? "预览审片受阻" : "配置需检查"}：</strong>{error.replace(/^渲染任务失败：/, "")}</span>
+          {pendingId ? (
+            <button type="button" className={button} disabled={busy} onClick={() => void queryPending()}>查询原编号</button>
+          ) : /历史|续签/.test(error) ? (
+            <button type="button" className={button} disabled={busy} onClick={() => void recover()}>重读本段历史</button>
+          ) : /帧|播放|画面/.test(error) && preview ? (
+            <button type="button" className={button} onClick={() => { previewVideo.current?.load(); setNormalSpeedConfirmed(false); setNormalSpeedPlayed(false); normalPlaybackStarted.current = false; setError(""); }}>重新载入预览</button>
+          ) : (
+            <a className={button} href="#previs-cast">检查人物与配置</a>
+          )}
+        </div>
       )}
       {preview && (
         <div>
-          <video key={preview.requestId} ref={previewVideo} controls src={manhuaPrevisMediaUrl(preview.url)} className="max-h-80 w-full"
+          <video key={preview.requestId} ref={previewVideo} controls src={manhuaPrevisMediaUrl(preview.url)} className="max-h-[70vh] w-full bg-black object-contain"
             onTimeUpdate={event => setPreviewTime(event.currentTarget.currentTime)}
             onLoadedMetadata={() => setPreviewTime(0)}
             onPlay={event => {

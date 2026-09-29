@@ -233,6 +233,11 @@ it("宿主上传开始后切机位仍保持忙碌，旧回执不能放开新请�
     await page.goto("http://localhost:41804/", { waitUntil: "domcontentloaded" });
     await page.addScriptTag({ content: built.outputFiles[0]!.text });
     await page.waitForSelector('[data-stage-status="error"] iframe');
+    await page.click('button[aria-label="放大场景"]');
+    await page.waitForSelector('[data-stage-expanded="true"] button[aria-label="退出放大场景"]');
+    expect(await page.$eval("[data-stage-viewer]", (el) => (el as HTMLElement).style.height)).toContain("100dvh");
+    await page.keyboard.press("Escape");
+    await page.waitForSelector('[data-stage-expanded="false"] button[aria-label="放大场景"]');
     const child = page.frames().find((frame) => frame.parentFrame());
     if (!child) throw new Error("测试 iframe 未挂载");
     const revision = await page.$eval("[data-stage-revision]", (el) => el.getAttribute("data-stage-revision"));

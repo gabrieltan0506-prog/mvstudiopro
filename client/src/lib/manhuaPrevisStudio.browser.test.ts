@@ -724,6 +724,10 @@ it("提交结果不明后确认原编号，绝不创建第二个请求身份", a
     });
     await click(page, "确认生成动作白模");
     await page.waitForSelector('[role="alert"]');
+    expect(await page.$eval("[data-previs-recovery]", el => el.textContent)).toContain("提交或查询结果未确认");
+    await click(page, "查询原编号");
+    await page.waitForFunction(() => (window as any).fixture.gets.length > 0);
+    expect(await page.evaluate(() => (window as any).fixture.submits.length)).toBe(1);
     await click(page, "确认原请求（不新建编号）");
     await page.waitForFunction(
       () => (window as any).fixture.submits.length === 2
@@ -742,6 +746,32 @@ it("提交结果不明后确认原编号，绝不创建第二个请求身份", a
   } finally {
     await page.close();
   }
+});
+
+it("渲染明确失败显示原因与配置入口，保留旧参考且不留待确认编号", async () => {
+  const page = await open();
+  try {
+    await page.evaluate(() => {
+      (window as any).fixture.response = (input: any) => ({
+        jobId: "prv_failed_job", status: "failed", params: input,
+        output: null, error: "人物站位超出可渲染范围",
+      });
+    });
+    await click(page, "确认生成动作白模");
+    await page.waitForFunction(() => Boolean(document.querySelector("[data-previs-recovery]")));
+    const actual = await page.evaluate(() => ({
+      message: document.querySelector("[data-previs-recovery]")?.textContent,
+      pending: (window as any).fixture.block.previsStudio.pending,
+      old: (window as any).fixture.block.manhuaSegmentRefs.previs.url,
+      submits: (window as any).fixture.submits.length,
+    }));
+    expect(actual.message).toContain("本次渲染失败");
+    expect(actual.message).toContain("人物站位超出可渲染范围");
+    expect(actual.message).toContain("检查人物与配置");
+    expect(actual.pending).toBeUndefined();
+    expect(actual.old).toBe("https://offline.invalid/old.mp4");
+    expect(actual.submits).toBe(1);
+  } finally { await page.close(); }
 });
 
 it("恢复草稿中的在途编号只查询原单，成功后保留候选且不自动提交", async () => {
@@ -1298,6 +1328,12 @@ it("角色配置保存被拒时不显示已保存且保留原状态", async () =
     expect(await page.evaluate(() => (window as any).fixture.submits)).toEqual(
       []
     );
+    expect(await page.$eval('[data-previs-rig-error="save"]', el => el.textContent)).toContain("配置尚未保存");
+    await page.evaluate(() => { (window as any).fixture.rejectSave = false; });
+    await click(page, "重试应用配置");
+    await settle(page);
+    expect(await page.evaluate(() => (window as any).fixture.block.previsStudio.spec.actors[0].riggedModel?.sourceJobId)).toBe("m3d_test");
+    expect(await page.evaluate(() => (window as any).fixture.submits.length)).toBe(0);
   } finally {
     await page.close();
   }

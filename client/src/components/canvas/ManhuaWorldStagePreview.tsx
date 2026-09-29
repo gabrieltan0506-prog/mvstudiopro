@@ -203,8 +203,10 @@ if (THREE && SplatMesh) {
     const sun = new THREE.DirectionalLight(0xffffff, 1.0); sun.position.set(3, -5, 8); scene.add(sun);
     const grid = new THREE.GridHelper(20, 20, 0x2a5a6a, 0x1a3a44); grid.rotation.x = Math.PI / 2; scene.add(grid);
 
+    let activeRig = CONFIG.initialCamera;
     let viewDistance = 1;
     const applyCamera = (rig) => {
+      activeRig = rig;
       camera.position.set(rig.position[0], rig.position[1], rig.position[2]);
       camera.lookAt(rig.target[0], rig.target[1], rig.target[2]);
       viewDistance = Math.max(0.1, camera.position.distanceTo(new THREE.Vector3(...rig.target)));
@@ -402,6 +404,7 @@ export function ManhuaWorldStagePreview(props: Props) {
   const [noteZh, setNoteZh] = useState<string>("");
   const [failures, setFailures] = useState<StageAssetFailure[]>([]);
   const [exporting, setExporting] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   /** 「重新载入」：只重读同一份已生成的场景与模型文件，不提交任何生成任务 */
   const [reloadNonce, setReloadNonce] = useState(0);
   const sceneSignature = stageSceneSignature(world, characters);
@@ -534,6 +537,14 @@ export function ManhuaWorldStagePreview(props: Props) {
   useEffect(() => {
     if (loaded) send({ type: "collider", visible: colliderVisible });
   }, [colliderVisible, loaded, send]);
+  useEffect(() => {
+    if (!expanded) return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setExpanded(false);
+    };
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [expanded]);
 
   if (!config) {
     return <p className="text-[11px] text-amber-100">这个场景还不能预览，请稍后重试。</p>;
@@ -541,13 +552,16 @@ export function ManhuaWorldStagePreview(props: Props) {
   const btn = "rounded border border-cyan-300/30 px-2 py-0.5 text-[11px] text-cyan-50 disabled:opacity-40";
   const btnOn = "rounded border border-cyan-300/70 bg-cyan-500/25 px-2 py-0.5 text-[11px] text-cyan-50";
   return (
-    <div className="flex w-full flex-col gap-1" data-manhua-world-stage data-stage-status={status} data-stage-revision={revision}>
+    <div className={`flex w-full flex-col gap-1 ${expanded ? "fixed inset-2 z-[100] overflow-y-auto rounded-lg border border-cyan-300/40 bg-[#0b1018] p-3 shadow-2xl md:inset-4" : ""}`} data-manhua-world-stage data-stage-status={status} data-stage-revision={revision} data-stage-expanded={expanded}>
       <div className="flex flex-wrap gap-1 text-[11px]" data-stage-load-summary>
         <span className={`rounded px-2 py-0.5 ${loaded ? "bg-emerald-500/20 text-emerald-100" : "bg-white/10 text-white/70"}`} data-world-load-state={loaded ? "loaded" : status}>世界画面：{loaded ? "已载入" : status === "error" ? "载入失败" : "载入中"}</span>
         <span className={`rounded px-2 py-0.5 ${loadedActorCount === expectedActorIds.length && loaded ? "bg-emerald-500/20 text-emerald-100" : "bg-amber-500/15 text-amber-100"}`} data-actor-load-count={`${loadedActorCount}/${expectedActorIds.length}`}>人物模型：{expectedActorIds.length ? `${loadedActorCount}/${expectedActorIds.length} 已载入` : "本段未摆人物"}</span>
         <span className="text-white/50">世界与全部预期人物均载入后，才能保存视角图。</span>
       </div>
       <div className="flex flex-wrap items-center gap-1 text-[11px]">
+        <button type="button" className={btn} aria-label={expanded ? "退出放大场景" : "放大场景"} onClick={() => setExpanded((value) => !value)}>
+          {expanded ? "退出放大" : "放大场景"}
+        </button>
         <span className="text-white/60">机位</span>
         {STAGE_CAMERA_KINDS.map((k) => (
           <button key={k} type="button" className={cameraKind === k ? btnOn : btn} disabled={!loaded} onClick={() => {
@@ -616,7 +630,7 @@ export function ManhuaWorldStagePreview(props: Props) {
         {status === "partial" ? " 有人物或资产未载入，暂不能保存视角图。" : ""}
         {exporting ? " 视角图正在保存，请稍候。" : ""}
       </p>
-      <div className="relative w-full overflow-hidden rounded border border-cyan-300/20 bg-black" style={{ height }} data-stage-viewer>
+      <div className="relative w-full overflow-hidden rounded border border-cyan-300/20 bg-black" style={{ height: expanded ? "max(340px, calc(100dvh - 180px))" : height }} data-stage-viewer>
         <iframe key={revision} ref={iframeRef} title={`${sceneLabelZh} 3D 世界预览`} srcDoc={srcDoc} sandbox="allow-scripts" className="h-full w-full" style={{ border: 0 }} />
         {status === "error" ? (
           <div className="absolute inset-0 flex items-center justify-center bg-black/70 p-3 text-center text-[11px] text-amber-100" data-stage-placeholder>
