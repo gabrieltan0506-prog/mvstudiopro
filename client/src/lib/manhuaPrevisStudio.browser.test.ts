@@ -126,6 +126,7 @@ async function settle(page: Page) {
 }
 async function markCurrentPreviewFrames(page: Page) {
   await page.waitForSelector("[data-previs-review-gate]");
+  if (await page.$("details[data-previs-review-gate]:not([open])")) await page.click("[data-previs-review-gate] > summary");
   await page.evaluate(() => {
     const video = document.querySelector<HTMLVideoElement>("[data-manhua-previs-studio] video")!;
     const total = Math.round(Number(document.querySelector<HTMLInputElement>('[aria-label="白模预览时间"]')!.max) * 24);
@@ -541,6 +542,7 @@ it("未逐帧审片及常速复核的候选不能替换旧参考", async () => {
     expect(await page.evaluate(() => (window as any).fixture.block.manhuaSegmentRefs.previs.gcsUri)).toBe("gs://test/old.mp4");
     expect(await page.$eval('[role="alert"]', node => node.textContent)).toContain("逐帧检查");
     await markCurrentPreviewFrames(page);
+    if (await page.$("details[data-previs-review-gate]:not([open])")) await page.click("[data-previs-review-gate] > summary");
     await page.click("[data-previs-review-gate] input[type=checkbox]");
     await click(page, "采用为本段参考");
     await settle(page);
@@ -2023,5 +2025,32 @@ it("新增在场区间只在剩余时间足一帧时显示，并产生正时长"
       { startSec: 0, endSec: 5 }, { startSec: 5, endSec: 6 },
     ]);
     expect(await page.evaluate(() => (window as any).fixture.submits.length)).toBe(0);
+  } finally { await page.close(); }
+});
+
+
+it("打开已有历史的白模面板即载入最近渲染，播放器先于配置且不会自动采用或重提", async () => {
+  const page = await open(false, true, undefined, false);
+  try {
+    await page.evaluate(() => {
+      const f = (window as any).fixture;
+      const b = f.makeBlock('33333333-3333-4333-8333-333333333333');
+      const studio = b.previsStudio;
+      const input = {scopeId: studio.scopeId, clipId:b.id, requestId:'44444444-4444-4444-8444-444444444444',spec:studio.spec};
+      f.getResult = f.response(input);
+      studio.history = [
+        {jobId:'old-job', requestId:'55555555-5555-4555-8555-555555555555', gcsUri:'gs://test/old-preview.mp4',url:'https://offline.invalid/old-preview.mp4', durationSec:10, createdAt:'2026-09-28T01:00:00Z', spec:studio.spec},
+        {jobId:f.getResult.jobId, requestId:input.requestId, gcsUri:f.getResult.output.gcsUri,url:f.getResult.output.url,durationSec:10,createdAt:'2026-09-29T01:00:00Z',spec:studio.spec},
+      ];
+      f.setBlock(b);
+    });
+    await page.waitForSelector('[data-previs-player] video');
+    const result = await page.evaluate(() => {
+      const f = (window as any).fixture;
+      const player = document.querySelector('[data-previs-player]')!;
+      const cast = document.querySelector('[data-previs-cast]')!;
+      return {gets:f.gets,submits:f.submits.length,adopted:f.block.previsStudio.selectedJobId ?? null,reference:f.block.manhuaSegmentRefs.previs.url,playerFirst:Boolean(player.compareDocumentPosition(cast) & Node.DOCUMENT_POSITION_FOLLOWING)};
+    });
+    expect(result).toEqual({gets:['44444444-4444-4444-8444-444444444444'],submits:0,adopted:null,reference:'https://offline.invalid/old.mp4',playerFirst:true});
   } finally { await page.close(); }
 });
