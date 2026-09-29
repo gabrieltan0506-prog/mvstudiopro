@@ -38,6 +38,8 @@ export async function readWithIdleTimeout<T>(
 export type SseReadOptions = {
   /** 断流一律判失败（抛错→网关层换下一跳），不把半截正文当成功 */
   strictCompletion?: boolean;
+  /** 仅正文增量；推理内容不向用户展示。 */
+  onContentDelta?: (delta: string) => void;
 };
 
 /** 成功的结束原因：只有这些才算生成正常收口 */
@@ -156,6 +158,7 @@ export async function readGlmSseStream(
     const delta = chunk.choices?.[0]?.delta?.content;
     if (typeof delta === "string") content += delta;
     if (Buffer.byteLength(content) > cap) throw new Error("GLM 链响应超过处理上限");
+    if (typeof delta === "string" && delta) options.onContentDelta?.(delta);
     const fr = chunk.choices?.[0]?.finish_reason;
     if (fr) finishReason = String(fr);
     if (chunk.usage) usage = chunk.usage;

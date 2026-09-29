@@ -131,6 +131,7 @@ describe("漫剧工厂创作顾问上下文", () => {
     invokeLLMMock.mockResolvedValue(llmJson(JSON.stringify(patch)));
     const result = await askPlatformSkillQa({ userId: 7, question: "推近到人物", isAdmin: true, manhuaContext: manhuaContext({ previsEdit: makeAdvisorPrevisTarget("clip-1", studio) }) });
     expect(JSON.parse(result.answer)).toEqual(patch);
+    expect(invokeLLMMock.mock.calls[0][0]).toMatchObject({ modelName: "deepseek/deepseek-v4.1-flash", reasoningEffort: "high", openRouterProviderPreferences: { require_parameters: true } });
     expect(invokeLLMMock.mock.calls[0][0].max_tokens).toBe(16_384);
     expect(invokeLLMMock.mock.calls[0][0].messages[0].content).toContain("用户满意点击应用之后才写回工作流");
     expect(studio.history).toHaveLength(0);
@@ -183,7 +184,8 @@ describe("漫剧工厂创作顾问上下文", () => {
     expect(`${system}\n${user}`).not.toMatch(
       /Christopher Nolan|J\.J\. Abrams|Ridley Scott|James Cameron|Justin Lin|Steven Spielberg|Guillermo del Toro|吴宇森|曹译文/i,
     );
-    expect(payload.max_tokens).toBe(131_072);
+    expect(payload.max_tokens).toBe(32_768);
+    expect(payload).toMatchObject({ modelName: "deepseek/deepseek-v4.1-flash", reasoningEffort: "high" });
     expect(payload.response_format).toEqual({ type: "json_object" });
   });
 
@@ -218,6 +220,7 @@ describe("漫剧工厂创作顾问上下文", () => {
       messages: Array<{ role: string; content: string }>;
     };
     expect(payload.messages[0]?.content).toContain("可查内部趋势库");
+    expect(payload).toMatchObject({ modelName: "moonshotai/kimi-k3", max_tokens: 131_072 });
     expect(payload.messages[1]?.content).toContain("请解释镜头节奏");
     expect(payload.messages[1]?.content).not.toContain("这段文字不应进入旧平台问答");
     expect(payload.messages[1]?.content).not.toContain("【当前漫剧项目上下文");

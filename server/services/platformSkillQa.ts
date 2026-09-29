@@ -1,4 +1,5 @@
 import { buildAdvisorPrevisCraftBlock } from "./manhuaAdvisorPrevisCraft";
+import { OPENROUTER_DEEPSEEK_V41_FLASH_MODEL, MANHUA_ADVISOR_REASONING_EFFORT, MANHUA_ADVISOR_MAX_OUTPUT_TOKENS } from "./openrouterDeepSeekV41Flash";
 import { ADVISOR_PREVIS_EDIT_INSTRUCTIONS, parseAdvisorPrevisPatch, applyAdvisorPrevisPatch } from "../../shared/manhuaAdvisorPrevisEdit";
 import { manhuaPrevisSpecSchema } from "../../shared/manhuaPrevis";
 /**
@@ -593,6 +594,7 @@ async function buildWebEvidenceForQuestion(question: string): Promise<string> {
 }
 
 export async function askPlatformSkillQa(params: {
+  onStream?: (event: "reset" | "delta", text?: string) => void;
   userId: number;
   /** 前端整理后的结构化问答包装；路由上限 4000 字。 */
   question: string;
@@ -666,11 +668,11 @@ export async function askPlatformSkillQa(params: {
     );
   }
 
-  const modelName = resolvePlatformSkillQaOpenAiModel({
+  const modelName = manhuaContext ? OPENROUTER_DEEPSEEK_V41_FLASH_MODEL : resolvePlatformSkillQaOpenAiModel({
     requested: params.qaModel,
     isSupervisor: true,
   });
-  const reasoningEffort = resolvePlatformSkillQaReasoningEffort(qaMode);
+  const reasoningEffort = manhuaContext ? MANHUA_ADVISOR_REASONING_EFFORT : resolvePlatformSkillQaReasoningEffort(qaMode);
   const qaKind = classifyPlatformSkillQaKind(question);
   let llmMessages: Array<{ role: "system" | "user"; content: string }>;
   if (manhuaContext) {
@@ -764,12 +766,15 @@ export async function askPlatformSkillQa(params: {
   let lastErr = "";
   for (let attempt = 1; attempt <= ASK_MAX_ATTEMPTS; attempt += 1) {
     try {
+      if (manhuaContext) params.onStream?.("reset");
       const response = await invokeLLM({
+        ...(manhuaContext ? { onContentDelta: (text: string) => params.onStream?.("delta", text) } : {}),
         provider: "openai",
         modelName,
-        /** OpenRouter Kimi K3 · reasoning max（slug 直连 OpenRouter） */
-        max_tokens: manhuaContext?.previsEdit ? 16_384 : PLATFORM_SKILL_QA_MAX_OUTPUT_TOKENS,
+        // 漫剧顾问走固定 DeepSeek 版本；普通平台问答沿用原模型与预算。
+        max_tokens: manhuaContext?.previsEdit ? 16_384 : manhuaContext ? MANHUA_ADVISOR_MAX_OUTPUT_TOKENS : PLATFORM_SKILL_QA_MAX_OUTPUT_TOKENS,
         response_format: { type: "json_object" },
+        ...(manhuaContext ? { openRouterProviderPreferences: { require_parameters: true } } : {}),
         reasoningEffort: reasoningEffort === "low" || reasoningEffort === "high" ? reasoningEffort : "max",
         messages: llmMessages,
       });

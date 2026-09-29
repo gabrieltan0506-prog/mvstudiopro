@@ -5,6 +5,8 @@ import { sdk } from "./sdk";
 import { readSupervisorSession, type SupervisorSession } from "../services/supervisor-session";
 
 export type TrpcContext = {
+  /** 只由已鉴权 SSE 入口注入，浏览器不能指定。 */
+  advisorStream?: (event: "reset" | "delta", text?: string) => void;
   req: CreateExpressContextOptions["req"];
   res: CreateExpressContextOptions["res"];
   user: User | null;
