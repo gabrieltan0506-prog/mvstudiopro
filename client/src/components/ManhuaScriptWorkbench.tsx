@@ -501,6 +501,7 @@ type Props = {
   onOpenAdvisorIssue?: (issueId?: string) => void;
   /** 打开创作顾问并直接定位剧本模板优化；只打开，不自动提问或扣点。 */
   onOpenAdvisorTemplates?: () => void;
+  onOpenAdvisorPrevis?: (clipId: string) => void;
   /** 剧本页独立模板改写入口；创作顾问只保留可选辅助。 */
   rewriteWorkspace?: ReactNode;
   /**
@@ -1253,6 +1254,7 @@ export default function ManhuaScriptWorkbench({
   onAdvisorSignalsChange,
   advisorTopIssue = null,
   onOpenAdvisorTemplates,
+  onOpenAdvisorPrevis,
   rewriteWorkspace,
   onOpenAdvisorIssue,
   advisorIssues,
@@ -4556,6 +4558,7 @@ export default function ManhuaScriptWorkbench({
               sourceShots={activeSegment?.shots.map(shot=>({index:shot.index,durationSec:shot.durationSec,actionZh:shot.actionZh}))}
               directionShots={activeSegment?.shots.map(shot=>({index:shot.index,durationSec:shot.durationSec,cameraZh:shot.cameraZh||"",actionZh:shot.actionZh}))}
               directionCardId={directionCanon?.mainCardId ?? null}
+              onOpenAdvisor={onOpenAdvisorPrevis ? () => { setPrevisStudioOpen(false); onOpenAdvisorPrevis(activeClip.id); } : undefined}
               actionPlanDrafts={previsDraftsFromPlan}
               onNextDraftVideo={onGenerateFragment ? runGenerateFragment : undefined}
               disabled={Boolean(factoryBusy)||activeClip.status==="running"||activeClip.videoTaskStatus==="queued"}

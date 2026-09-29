@@ -14,6 +14,7 @@ const recoverySchema = z.object({
   format: z.literal("manhua-advisor-pending-v1"),
   request: pendingRequestSchema,
   confirmPaid: z.boolean(),
+  confirmedCredits: z.number().int().positive().max(10000).optional(),
 }).strict();
 export type AdvisorPendingRequest = z.infer<typeof pendingRequestSchema>;
 export type AdvisorPendingRecovery = z.infer<typeof recoverySchema>;
@@ -70,8 +71,8 @@ export function loadAdvisorPendingRecovery(
   }
 }
 
-export function makeAdvisorPendingRecovery(request: AdvisorPendingRequest, confirmPaid: boolean): AdvisorPendingRecovery {
-  return recoverySchema.parse({ format: "manhua-advisor-pending-v1", request, confirmPaid });
+export function makeAdvisorPendingRecovery(request: AdvisorPendingRequest, confirmPaid: boolean, confirmedCredits?: number): AdvisorPendingRecovery {
+  return recoverySchema.parse({ format: "manhua-advisor-pending-v1", request, confirmPaid, confirmedCredits });
 }
 
 /** 按用户与已确认项目版本隔离；旧版仅按剧名的记录归属不明，不自动迁入。 */

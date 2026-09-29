@@ -61,14 +61,15 @@ describe("顾问会话隔离与追问", () => {
   });
   it("刷新恢复保留同一个请求编号、问题快照和此前确认，不自动新建请求", () => {
     const request = { requestId: "11111111-1111-4111-8111-111111111111", question: "【问题】检查本集", rawQuestion: "检查本集", label: "第 1 集 · 分镜" };
-    const pending = makeAdvisorPendingRecovery(request, true);
+    const pending = makeAdvisorPendingRecovery(request, true, 8);
+    expect(pending.confirmedCredits).toBe(8);
     expect(parseAdvisorPendingRecovery(JSON.stringify(pending))).toEqual(pending);
     expect(parseAdvisorPendingRecovery(null)).toBeNull();
     expect(() => parseAdvisorPendingRecovery(JSON.stringify({ ...pending, request: { ...request, requestId: "另一个不合法编号" } }))).toThrow();
     expect(() => parseAdvisorPendingRecovery(JSON.stringify({ ...pending, confirmPaid: "true" }))).toThrow();
     const panel = readFileSync(new URL("../components/canvas/ManhuaCreativeAdvisorPanel.tsx", import.meta.url), "utf8");
     expect(panel).toContain("requestId: request.requestId");
-    expect(panel).toContain("makeAdvisorPendingRecovery(request, confirmPaid)");
+    expect(panel).toContain("makeAdvisorPendingRecovery(request, confirmPaid, confirmedCredits)");
     expect(panel).toContain("useMutation({ retry: false })");
     expect(panel).toContain("persistAdvisorCompletedExchange(localStorage, capturedSessionKey, request, answer)");
     expect(panel).toContain("mergeAdvisorCompletedExchange(prev, request, answer)");

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { CanvasDialogueError, canvasDialogueInputSchema, generateCanvasDialogue, getCanvasDialogue, listCanvasDialogue } from "../services/canvasDialogueOperation";
 import { canvasVoiceReferenceInputSchema, createCanvasVoiceReference, listCanvasVoiceReferences } from "../services/canvasVoiceReference";
+import { speedCanvasDialogueTake } from "../services/canvasDialogueSpeed";
 
 async function safely<T>(operation: () => Promise<T>): Promise<T> {
   try { return await operation(); }
@@ -20,4 +21,7 @@ export const canvasAudioRouter = router({
   listDialogue: protectedProcedure.input(z.object({ limit: z.number().int().min(1).max(100).default(30) })).query(({ ctx, input }) => safely(() => listCanvasDialogue(ctx.user.id, input.limit))),
   createReferenceVoice: protectedProcedure.input(canvasVoiceReferenceInputSchema).mutation(({ ctx, input }) => safely(() => createCanvasVoiceReference(ctx.user.id, input))),
   listReferenceVoices: protectedProcedure.query(({ ctx }) => safely(() => listCanvasVoiceReferences(ctx.user.id))),
+  /** 0929：对白候选变速 0.5–2 倍（免费、不调 TTS），返回新候选文件。 */
+  speedDialogueTake: protectedProcedure.input(z.object({ gcsUri: z.string().trim().min(8).max(512), speed: z.number().finite().min(0.5).max(2) }))
+    .mutation(({ ctx, input }) => safely(() => speedCanvasDialogueTake(ctx.user.id, input))),
 });

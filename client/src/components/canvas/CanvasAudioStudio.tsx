@@ -4,8 +4,10 @@ import { findCanvasDialogueReuse, restoreCanvasDialogueCandidate } from "@/lib/c
 import { createManhuaAudioFromShots } from "@shared/manhuaAudioFromShots";
 import { manhuaBgmArcFromShots } from "@shared/manhuaBgmArcFromShots";
 import { planCanvasDialogueTiming } from "@shared/canvasDialogueTimingPlan";
+import { CANVAS_DIALOGUE_SPEED_MAX, CANVAS_DIALOGUE_SPEED_MIN, CANVAS_DIALOGUE_SPEED_WARN, suggestCanvasDialogueSpeed } from "@shared/canvasDialogueSpeed";
 import type { ManhuaWorkbenchShot } from "@shared/manhuaScriptWorkbench";
 import { canvasAudioMixSource } from "@shared/canvasAudioStudio";
+import { auditCanvasAudioDuration } from "@shared/canvasAudioDurationAudit";
 import { CanvasAudioMixControls } from "./CanvasAudioMixControls";
 import { applyCanvasAudioMixPlan, assertCanvasAudioMixCapacity } from "@shared/canvasAudioMixPlan";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -176,6 +178,8 @@ export type CanvasAudioStudioServices = {
     voiceStateZh: string;
   }): Promise<JobResult>;
   getDialogue(input: { jobId: string }): Promise<JobResult | null>;
+  /** 0929：对白候选按 0.5–2 倍变速派生新候选（免费、不调 TTS）。 */
+  speedDialogueTake?(input: { gcsUri: string; speed: number }): Promise<{ gcsUri: string; durationSec: number; bytes: number; speed: number }>;
   createReferenceVoice?(input: { requestId: string; gcsUri: string; labelZh: string; consent: true }): Promise<{ requestId: string; status: string; labelZh: string; voiceId?: string; message?: string }>;
   listReferenceVoices?(): Promise<Array<{ requestId: string; status: string; labelZh: string; voiceId?: string; message?: string }>>;
   draftMusic(input: {
@@ -230,6 +234,7 @@ type Props = {
 export function CanvasAudioStudio(props: Props) {
   const utils = trpc.useUtils();
   const dialogue = trpc.canvasAudio.generateDialogue.useMutation();
+  const speedTake = trpc.canvasAudio.speedDialogueTake.useMutation();
   const referenceVoice = trpc.canvasAudio.createReferenceVoice.useMutation();
   const draft = trpc.mvAnalysis.draftManhuaBgmBrief.useMutation();
   const music = trpc.mvAnalysis.queueManhuaBgm.useMutation();
@@ -238,6 +243,7 @@ export function CanvasAudioStudio(props: Props) {
   const services: CanvasAudioStudioServices = {
     resolveAudio: async gcsUri => withLongJobsFlyDirect(`/api/manhua-audio-media?gcsUri=${encodeURIComponent(gcsUri)}`),
     generateDialogue: input => dialogue.mutateAsync(input),
+    speedDialogueTake: input => speedTake.mutateAsync(input),
     getDialogue: input =>
       utils.canvasAudio.getDialogue.fetch({ billingRequestId: input.jobId }),
     createReferenceVoice: input => referenceVoice.mutateAsync(input),
@@ -367,6 +373,7 @@ export function CanvasAudioStudioView({
     musicJobCount: state.musicJobIds.length,
     hasPremixMaster: Boolean(block.manhuaSegmentRefs?.master?.gcsUri || block.manhuaSegmentRefs?.master?.url),
   });
+  const durationAudit = auditCanvasAudioDuration(state.cues, durationSec);
   const current = useRef({ state, onChange, services, block, onMasterTrackReady, durationSec, dialogueSources, sourceShots });
   current.current = { state, onChange, services, block, onMasterTrackReady, durationSec, dialogueSources, sourceShots };
   const mounted = useRef(true);
@@ -432,6 +439,9 @@ export function CanvasAudioStudioView({
   useEffect(() => { setActiveCueId(null); setVoiceCriteria({}); setVoicePage(0); setVoicePickerOpen(false); }, [block.id]);
   useEffect(() => { setEditorOpen(!compact); }, [block.id, compact]);
   const [error, setError] = useState("");
+  /** 0929：每条原始对白候选的变速选择与在途标记 */
+  const [speedDraft, setSpeedDraft] = useState<Record<string, number>>({});
+  const [speedBusyTakeId, setSpeedBusyTakeId] = useState<string | null>(null);
   const [musicJobs, setMusicJobs] = useState<MusicJob[]>([]);
   const musicDraft = state.musicDraft || { prompt: "", durationSec: 30, brief: null, model: bgmModels?.[0]?.model ?? "suno-v6" };
   const musicPrompt = musicDraft.prompt;
@@ -488,6 +498,31 @@ export function CanvasAudioStudioView({
     });
   };
   const setBrief = (next: MusicBrief | null) => patchMusicDraft({ brief: next });
+  /** 0929：原始对白候选按倍速派生新候选；台词与音色不变沿用原 inputKey，仍须试听后确认。 */
+  const deriveSpeedTake = async (cueId: string, take: CanvasAudioCue["takes"][number], speed: number) => {
+    if (!services.speedDialogueTake || speedBusyTakeId || take.speed) return;
+    setError("");
+    setSpeedBusyTakeId(take.id);
+    try {
+      const result = await services.speedDialogueTake({ gcsUri: take.gcsUri, speed });
+      const id = `${take.id}-x${result.speed.toFixed(2)}`;
+      update(previous => ({
+        ...previous,
+        cues: previous.cues.map(row => {
+          if (row.id !== cueId || row.takes.some(existing => existing.id === id)) return row;
+          if (row.takes.length >= 100) { setError("本句候选已满 100 条，请先清理旧候选。"); return row; }
+          return { ...row, takes: [...row.takes, {
+            id, gcsUri: result.gcsUri, previewUrl: "", durationSec: result.durationSec, bytes: result.bytes,
+            createdAt: new Date().toISOString(), inputKey: take.inputKey, speed: result.speed, derivedFromTakeId: take.id,
+          }] };
+        }),
+      }));
+    } catch (speedError) {
+      setError(speedError instanceof Error ? speedError.message : "变速未完成，原候选保留。");
+    } finally {
+      if (mounted.current) setSpeedBusyTakeId(null);
+    }
+  };
   const patchCue = (id: string, patch: Partial<CanvasAudioCue>) => {
     setConfirmation(null);
     const previousCue = current.current.state.cues.find(cue => cue.id === id);
@@ -1311,6 +1346,11 @@ export function CanvasAudioStudioView({
           <p className="mt-3 text-[11px] leading-4 text-white/45">配乐与音效各自裁切，保留对白窗与留白。</p>
         </section>
       </div>
+      <section aria-label="声音时长体检" data-audio-duration-audit className="rounded-lg border border-cyan-300/25 bg-cyan-500/[0.06] p-3 text-xs">
+        <h4 className="font-semibold text-cyan-50">声音时长体检 · 本段 {durationSec.toFixed(2)} 秒</h4>
+        <p className="mt-1 text-white/75">对白 {durationAudit.dialogueReadyCount}/{durationAudit.dialogueCount} 句已采用且放得进秒窗；背景音乐已覆盖 {durationAudit.bgmCoveredSec.toFixed(2)} 秒，未覆盖 {durationAudit.bgmUncoveredSec.toFixed(2)} 秒（可按剧情留白）。</p>
+        {durationAudit.issuesZh.length ? <ul className="mt-2 list-disc space-y-1 pl-4 text-amber-100">{durationAudit.issuesZh.slice(0, 4).map((issue, i) => <li key={`${i}:${issue}`}>{issue}</li>)}{durationAudit.issuesZh.length > 4 ? <li>另有 {durationAudit.issuesZh.length - 4} 项，请逐条检查音轨</li> : null}</ul> : <p className="mt-1 text-emerald-100">已采用音频的时长与秒窗相符；仍须试听内容与口型。</p>}
+      </section>
       {modelDurationIssue ? <p role="alert" className="text-xs text-amber-200">{modelDurationIssue}</p> : null}
       <details data-manhua-audio-editor open={editorOpen} onToggle={event => setEditorOpen(event.currentTarget.open)} className="rounded-xl border border-white/10 bg-black/10 p-2">
       <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold text-sky-100">编辑对白、配乐与音效</summary>
@@ -1794,7 +1834,7 @@ export function CanvasAudioStudioView({
               .map((take, takeIndex) => (
                 <div key={take.id} className="space-y-1 rounded bg-white/5 p-2">
                   <div className="text-xs">
-                    候选 {takeIndex + 1} · {take.durationSec.toFixed(2)} 秒{" "}
+                    候选 {takeIndex + 1} · {take.durationSec.toFixed(2)} 秒{take.speed ? ` · ${take.speed.toFixed(2)} 倍速` : ""}{" "}
                     {take.creditsCost !== undefined ? `· 结算 ${take.creditsCost.toFixed(1)} 积分 ` : ""}
                     {cue.selectedTakeId === take.id && hasAdoptedManhuaAudio(cue) ? <span className="ml-1 rounded bg-emerald-500/15 px-1.5 py-0.5 text-emerald-100">已采用</span> : null}
                     {take.inputKey !== canvasAudioCueInputKey(cue)
@@ -1838,6 +1878,31 @@ export function CanvasAudioStudioView({
                   >
                     试听后确认本段
                   </button>
+                  {cue.kind === "dialogue" && !take.speed && services.speedDialogueTake && (() => {
+                    const suggestion = suggestCanvasDialogueSpeed(take.durationSec, cue.endSec - cue.startSec);
+                    const chosen = speedDraft[take.id] ?? (suggestion?.fits ? suggestion.speed : 1);
+                    const options = Array.from(new Set([
+                      ...Array.from({ length: Math.round((CANVAS_DIALOGUE_SPEED_MAX - CANVAS_DIALOGUE_SPEED_MIN) / 0.05) + 1 }, (_, i) => Math.round((CANVAS_DIALOGUE_SPEED_MIN + i * 0.05) * 100) / 100),
+                      ...(suggestion?.fits ? [suggestion.speed] : []),
+                    ])).sort((a, b) => a - b);
+                    return (
+                      <div className="flex flex-wrap items-center gap-2 text-xs" data-dialogue-speed>
+                        <label className="flex items-center gap-1">语速
+                          <select aria-label={`${index + 1} 候选 ${takeIndex + 1} 语速`} className="rounded bg-black/30 px-1 py-0.5" disabled={locked || Boolean(speedBusyTakeId)}
+                            value={chosen} onChange={event => setSpeedDraft(previous => ({ ...previous, [take.id]: Number(event.target.value) }))}>
+                            {options.map(value => <option key={value} value={value}>{value.toFixed(2)} 倍{suggestion?.fits && value === suggestion.speed ? "（刚好放进窗口）" : ""}</option>)}
+                          </select>
+                        </label>
+                        <button type="button" className={buttonClass} disabled={locked || Boolean(speedBusyTakeId) || chosen === 1 || cue.takes.length >= 100}
+                          onClick={() => void deriveSpeedTake(cue.id, take, chosen)}>
+                          {speedBusyTakeId === take.id ? "变速中…" : `按 ${chosen.toFixed(2)} 倍生成新候选`}
+                        </button>
+                        <span className="text-white/60">约 {(take.durationSec / chosen).toFixed(2)} 秒 · 保持音高、免费；原候选保留，新候选需试听确认</span>
+                        {chosen > CANVAS_DIALOGUE_SPEED_WARN && <span className="text-amber-200">超过 {CANVAS_DIALOGUE_SPEED_WARN} 倍听感会明显偏快</span>}
+                        {suggestion && !suggestion.fits && <span className="text-amber-200">2 倍仍放不下当前窗口，请延长窗口或顺延后续对白</span>}
+                      </div>
+                    );
+                  })()}
                   {take.durationSec > cue.endSec - cue.startSec + 0.02 && (
                     <div className="text-xs text-amber-200">
                       <p>可先按听审结果采用完整原声。原声 {take.durationSec.toFixed(3)} 秒，当前窗口 {(cue.endSec - cue.startSec).toFixed(3)} 秒，还差 {(take.durationSec - (cue.endSec - cue.startSec)).toFixed(3)} 秒；合听和出片前仍需安排足够时长，不会截断对白。</p>

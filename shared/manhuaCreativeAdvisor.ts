@@ -1,3 +1,4 @@
+import { advisorPrevisTargetSchema } from "./manhuaAdvisorPrevisEdit";
 import { z } from "zod";
 import type { ManhuaDirectorStrategyId } from "./manhuaDirectorStrategy.js";
 import {
@@ -117,6 +118,7 @@ export const manhuaCreativeAdvisorContextSchema = z
       "分镜摘要",
     ),
     /** 当前白模编辑规格摘要；不含媒体位置，不是实际视频审片。 */
+    previsEdit: advisorPrevisTargetSchema.optional(),
     previsSummary: contextText(MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.previsSummaryChars, "白模规格摘要").optional(),
     blockers: z
       .array(

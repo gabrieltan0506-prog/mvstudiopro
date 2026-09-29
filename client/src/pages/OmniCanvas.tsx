@@ -1,3 +1,7 @@
+import { classifyManhuaDirectionSceneType, resolveManhuaDirectionCard } from "@shared/manhuaDirectionCanon";
+import { withRiggedModelSourceAssetRefs } from "@/lib/manhuaPrevisSubmit";
+import { resolveManhuaRigSource } from "@shared/manhuaRigSource";
+import { makeAdvisorPrevisTarget, prepareAdvisorPrevisTrial, adoptAdvisorPrevisTrial, type AdvisorPrevisCandidate, type AdvisorPrevisTrial, type AdvisorPrevisReceipt } from "@shared/manhuaAdvisorPrevisEdit";
 import { saveManhuaShotTimingDraft } from "@/lib/manhuaShotTimingDraft";
 import { applyManhuaAssetDirection } from "@shared/manhuaDirectionCanonLibrary";
 import { normalizeManhuaEditTransitions, manhuaEditTransitionOf, manhuaAssembleTransitionOf } from "@shared/manhuaEditTransition";
@@ -1408,6 +1412,7 @@ export default function OmniCanvas() {
   );
   /** 创作顾问面板开合：会话内不持久化——顾问是随手问，不是常驻工序 */
   const [advisorOpen, setAdvisorOpen] = useState(false);
+  const [advisorPrevisClipId, setAdvisorPrevisClipId] = useState<string | null>(null);
   const [advisorFocusSection, setAdvisorFocusSection] = useState<"templates" | null>(null);
   const [advisorSelection, setAdvisorSelection] = useState<AdvisorSelection | null>(null);
   /** 工作台上报的缺口／关键帧／3D 状态；工作台未挂载时为 null，顾问按未知处理 */
@@ -1532,6 +1537,47 @@ export default function OmniCanvas() {
     // 页面没有积分余额查询；不为顾问新增请求
     credits: "未知",
   }), [writerPack, projectBible, writerFocusEpisode, workflowPhase, explicitWriterVideoModel, writerConfirmed, customAssetRefs, blocks, advisorSelection, advisorGate, advisorSignals, assembleBusy, factoryBusy, writerBusy]);
+  const advisorPrevisEditing = useMemo(() => {
+    if (!advisorPrevisClipId) return {};
+    const clip = blocks.find(b => b.id === advisorPrevisClipId && !b.archivedFromPreviousScript);
+    try {
+      if (!clip?.previsStudio) throw new Error("请先到本段动作白模配置出场人物，再打开顾问。");
+      if (clip.previsStudio.pending) throw new Error("本段正在渲染，结束后再调整。");
+      const direction = resolveManhuaDirectionCard(activeDirectionCanon, "storyboard", classifyManhuaDirectionSceneType(clip.prompt || ""), { episodeIndex: writerFocusEpisode, segmentIndex: resolveClipLocalSegmentIndex(clip.id, clip.prompt, writerFocusEpisode) });
+      return { target: { ...makeAdvisorPrevisTarget(clip.id, clip.previsStudio), ...(direction ? { directionCardId: direction.card.id, directionCardVersion: direction.card.version } : {}) } };
+    } catch (e) { return { issue: e instanceof Error ? e.message : "本段白模暂不能调整" }; }
+  }, [blocks, advisorPrevisClipId, activeDirectionCanon, writerFocusEpisode]);
+  const advisorPrevisCurrentStudio = (studio: import("@shared/manhuaPrevis").ManhuaPrevisStudio) => ({
+    ...studio,
+    spec: withRiggedModelSourceAssetRefs(studio.spec, customAssetRefs.map(ref => {
+      const source = resolveManhuaRigSource(ref, customAssetRefs).source;
+      return { id: ref.id, model: source ? { taskId: source.model.taskId, assetRef: source.refId } : undefined };
+    })),
+  });
+  const prepareAdvisorPrevis = (candidate: AdvisorPrevisCandidate): AdvisorPrevisTrial => {
+    if (!canUseManhua3d || factoryBusy) throw new Error("当前不能提交白模试看。");
+    const clip = blocksRef.current.find(b => b.id === candidate.target.clipId && !b.archivedFromPreviousScript);
+    if (!clip?.previsStudio) throw new Error("本段白模不存在，未提交。");
+    if (clip.status === "running" || clip.videoTaskStatus === "queued") throw new Error("本段仍在制作，请等待结束。");
+    return prepareAdvisorPrevisTrial(clip.id, advisorPrevisCurrentStudio(clip.previsStudio), candidate);
+  };
+  const applyAdvisorPrevis = (trial: AdvisorPrevisTrial, receipt: AdvisorPrevisReceipt): boolean => {
+    const candidate = trial.candidate;
+    try {
+      if (!canUseManhua3d || factoryBusy) throw new Error("当前无法修改白模，请等待正在进行的制作结束。");
+      const current = blocksRef.current;
+      const clip = current.find(b => b.id === candidate.target.clipId && !b.archivedFromPreviousScript);
+      if (!clip?.previsStudio) throw new Error("本段白模已不存在，未应用。");
+      if (clip.status === "running" || clip.videoTaskStatus === "queued") throw new Error("本段视频正在处理，暂不能修改。");
+      const previsStudio = adoptAdvisorPrevisTrial(clip.id, advisorPrevisCurrentStudio(clip.previsStudio), trial, receipt);
+      const next = current.map(b => b === clip ? { ...b, previsStudio } : b);
+      if (!saveCanvasState(next, edges)) throw new Error("配置保存失败，原白模未改动。");
+      blocksRef.current = next;
+      setBlocks(next);
+      toast.success("已按你的确认应用这版试看，原配置已保留；可回白模工作台继续审片。");
+      return true;
+    } catch (e) { toast.error(e instanceof Error ? e.message : "未能应用建议"); return false; }
+  };
   const advisorTopIssue = useMemo(() => pickManhuaAdvisorTopIssue(advisorProject.issues, workflowPhase), [advisorProject.issues, workflowPhase]);
   const locateAdvisorIssue = useCallback((issue: AdvisorIssue) => {
     setWorkflowPhase(issue.phase);
@@ -10131,7 +10177,7 @@ export default function OmniCanvas() {
                     data-manhua-advisor-open
                     aria-expanded={advisorOpen}
                     className="rounded-lg border border-white/15 bg-white/5 px-2.5 py-1 text-[11px] text-white/70 hover:bg-white/10 hover:text-white"
-                    onClick={() => { setAdvisorFocusSection(null); setAdvisorOpen(true); setAdvisorNudge(null); }}
+                    onClick={() => { setAdvisorPrevisClipId(null); setAdvisorFocusSection(null); setAdvisorOpen(true); setAdvisorNudge(null); }}
                   >
                     创作顾问{advisorProject.issues.length ? ` (${advisorProject.issues.length})` : ""}
                   </button>
@@ -10351,6 +10397,7 @@ export default function OmniCanvas() {
                   finalCutStale={finalCutStale.stale}
                   finalCutVerified={finalCutStale.verified}
                   onOpenAdvisorIssue={(issueId) => {
+                    setAdvisorPrevisClipId(null);
                     // 点阻断卡里某一条就定位那一条；点阶段条旁的那行仍然定位顶部项
                     const picked = issueId
                       ? advisorProject.issues.find((i) => i.id === issueId) || advisorTopIssue
@@ -10359,7 +10406,9 @@ export default function OmniCanvas() {
                     setAdvisorFocusSection(null);
                     setAdvisorOpen(true);
                   }}
+                  onOpenAdvisorPrevis={canUseManhua3d ? (clipId) => { setAdvisorPrevisClipId(clipId); setAdvisorFocusSection(null); setAdvisorOpen(true); } : undefined}
                   onOpenAdvisorTemplates={() => {
+                    setAdvisorPrevisClipId(null);
                     setAdvisorFocusSection("templates");
                     setAdvisorOpen(true);
                   }}
@@ -13428,7 +13477,7 @@ export default function OmniCanvas() {
         <div className="pointer-events-none fixed top-[4.5rem] right-4 z-[59] flex flex-col items-end gap-2">
           <button
             type="button"
-            onClick={() => { setAdvisorFocusSection(null); setAdvisorOpen(true); setAdvisorNudge(null); }}
+            onClick={() => { setAdvisorPrevisClipId(null); setAdvisorFocusSection(null); setAdvisorOpen(true); setAdvisorNudge(null); }}
             aria-expanded={advisorOpen}
             data-manhua-advisor-open
             className="pointer-events-auto relative rounded-full border border-cyan-300/40 bg-[#10171f]/95 px-4 py-2.5 text-[12px] font-bold text-cyan-100 shadow-xl backdrop-blur transition hover:bg-cyan-500/20"
@@ -13472,6 +13521,11 @@ export default function OmniCanvas() {
         userId={user?.id != null ? String(user.id) : undefined}
         confirmedProjectVersion={projectBible?.confirmedAt}
         project={advisorProject}
+        previsTarget={advisorPrevisEditing.target}
+        previsIssue={advisorPrevisEditing.issue}
+        onLeavePrevis={() => setAdvisorPrevisClipId(null)}
+        onPreparePrevis={prepareAdvisorPrevis}
+        onApplyPrevis={applyAdvisorPrevis}
         focusSection={advisorFocusSection}
         onApplyRewrite={applyTemplateRewriteCandidate}
         onLocate={(issue) => {

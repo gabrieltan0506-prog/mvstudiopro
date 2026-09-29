@@ -18,6 +18,7 @@ it("显式原曲21秒覆盖剧情策略余量，真实确认提交仍为21秒",a
  const click=async(text:string)=>page.evaluate(text=>{const b=Array.from(document.querySelectorAll('button')).find(b=>b.textContent?.includes(text));if(!b)throw Error(text);b.click();},text);
  try{
  await page.setRequestInterception(true);page.on('request',r=>r.isNavigationRequest()?void r.respond({status:200,contentType:'text/html',body:'<div id="root"></div>'}):void r.abort());await page.goto('http://localhost:41823');await page.addScriptTag({content:built.outputFiles[0]!.text});await page.waitForSelector('[aria-label="配乐原曲目标时长"]');
+ expect(await page.$eval('[data-audio-duration-audit]',e=>e.textContent)).toContain('背景音乐已覆盖 0.00 秒，未覆盖 21.00 秒');
  expect(await page.$eval('[aria-label="配乐原曲目标时长"]',e=>[e.getAttribute('min'),e.getAttribute('max'),e.getAttribute('step')])).toEqual(['10','360','1']);
  await click('整理配乐要求');await page.waitForFunction(()=>Boolean((globalThis as any).fixture.state.musicDraft.brief));
  expect(await page.evaluate(()=>(globalThis as any).fixture.strategyDuration)).toBe(24);
