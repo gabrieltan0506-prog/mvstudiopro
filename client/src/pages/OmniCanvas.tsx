@@ -1,4 +1,4 @@
-import { saveManhuaShotTimingDraft, retimeManhuaWriterPack, retimeManhuaCanvasNodes } from "@/lib/manhuaShotTimingDraft";
+import { saveManhuaShotTimingDraft } from "@/lib/manhuaShotTimingDraft";
 import { applyManhuaAssetDirection } from "@shared/manhuaDirectionCanonLibrary";
 import { normalizeManhuaEditTransitions, manhuaEditTransitionOf, manhuaAssembleTransitionOf } from "@shared/manhuaEditTransition";
 import { CREDIT_COSTS } from "@shared/plans";
@@ -244,8 +244,11 @@ import {
   syncManhuaClipAssetEdges,
   type ManhuaFactoryStageKey,
   countManhuaRenderedClipsToArchiveOnResegment,
+  isManhuaFactoryArtifactBlock,
+  manhuaBlockHasPaidOutput,
 } from "@/lib/canvasDramaStudio";
 import { MANHUA_CANVAS_LAYOUT } from "@/lib/manhuaCanvasLayout";
+import { applyManhuaShotTimingEdit } from "@/lib/manhuaShotTimingApply";
 import {
   collectManhuaClipDockItems,
   collectManhuaAssembleClipsFromDock,
@@ -6405,6 +6408,24 @@ export default function OmniCanvas() {
   ]);
 
   // 返回是否确认成功：调用方据此决定是否切视图（失败时 extras 已被切开展示门禁红字，勿再关）
+  /** 本集已有带付费产物的工厂节点：「确认剧本大纲」会把它们归档重铺，才需要提供不重铺的恢复入口。 */
+  const focusEpisodeHasPaidChain = useMemo(
+    () => blocks.some(b => (getBlockEpisodeIndex(b) ?? 1) === writerFocusEpisode && !b.archivedFromPreviousScript
+      && isManhuaFactoryArtifactBlock(b) && manhuaBlockHasPaidOutput(b)),
+    [blocks, writerFocusEpisode],
+  );
+  /**
+   * 0929：旧版改镜头时长会把剧本退回「未确认」，而重新确认会归档整集链条重铺。
+   * 只改了时长/切点时，用这里恢复确认：不重铺、不归档，已有静帧、音轨、白模与成片原地保留。
+   */
+  const restoreWriterConfirmation = useCallback(() => {
+    if (!window.confirm(
+      "只恢复剧本确认，不重铺链条：已有静帧、音轨、白模和成片原地保留。适用于只改了镜头时长或制作片段切点；改过台词或剧情请改用「确认剧本大纲」重铺。继续？",
+    )) return;
+    setWriterConfirmed(true);
+    setDirectorUnlocked(true);
+    toast.success("已恢复剧本确认，本集链条未改动。");
+  }, []);
   const confirmWriterToDirector = useCallback((): boolean => {
     // 审查 P1：确认这一下用同一份法典快照——冻结进 Bible 的和初铺进节点的必须是同一张卡
     const confirmedDirectionCanon = activeDirectionCanon;
@@ -10438,6 +10459,7 @@ export default function OmniCanvas() {
                   onConfirmOutline={() => {
                     confirmWriterToDirector();
                   }}
+                  onRestoreOutlineConfirmation={!writerConfirmed && focusEpisodeHasPaidChain ? restoreWriterConfirmation : undefined}
                   onOpenWriterEditor={() => {
                     setImmersiveWorkspaceView("topic");
                     window.setTimeout(() => {
@@ -10691,17 +10713,37 @@ export default function OmniCanvas() {
                     const ep = writerFocusEpisode;
                     const sameEpisode = (b: CanvasBlock) => (getBlockEpisodeIndex(b) ?? 1) === ep;
                     if (current.some(b => sameEpisode(b) && (b.status === "running" || b.videoTaskStatus === "queued" || b.audioStudio?.pendingOperations.length))) throw new Error("本集仍有在途任务，请完成后再调整时长。");
-                    const nodes = current.filter(b => sameEpisode(b) && !b.archivedFromPreviousScript && /^(story|beats|reverse)-/.test(b.id));
-                    const { canonical, apply } = retimeManhuaCanvasNodes(nodes, shotIndex, durationSec, segmentBreakBefore);
-                    const episode = writerPack?.episodes.find(item => item.index === ep);
-                    if (!episode) throw new Error("当前集剧本不存在，未保存。");
-                    const next = current.map(apply);
-                    const nextWriterPack = retimeManhuaWriterPack(writerPack!, ep, shotIndex, durationSec, canonical, segmentBreakBefore);
-                    saveManhuaShotTimingDraft(next, edges, { writerPack: nextWriterPack, writerConfirmed: false, directorUnlocked: false });
-                    blocksRef.current=next;setBlocks(next);
-                    setWriterPack(nextWriterPack);
-                    setWriterConfirmed(false);setDirectorUnlocked(false);bumpManhuaOutboundEpoch();
-                    toast.message(`第${shotIndex}镜时长已保存，请重新确认剧本；原声与旧产物保留。`);
+                    if (!writerPack?.episodes.some(item => item.index === ep)) throw new Error("当前集剧本不存在，未保存。");
+                    const segmentModel = explicitWriterVideoModel || undefined;
+                    const edited = applyManhuaShotTimingEdit({
+                      blocks: current, edges, writerPack, episodeIndex: ep, shotIndex, durationSec, segmentBreakBefore,
+                      // 字段与 runFactory 的 ensureOptions 一致；改一处须同改。
+                      ensureOptions: {
+                        storyEmotionLineByEpisodeSegment,
+                        directionCanon: activeDirectionCanon,
+                        assetCanon: projectBible?.assetCanon,
+                        characterSheetUrlById: collectManhuaCharacterSheetUrlById(current, projectBible?.assetCanon),
+                        propImageUrlById: collectManhuaPropImageUrlById(customAssetRefs, projectBible?.assetCanon),
+                        customRefs: consumableCustomAssetRefs,
+                        characterLookSets,
+                        lookRefs: customAssetRefs,
+                        segmentLookBindings,
+                        directorBoardUrlByEpisode,
+                        directorBoardUrlByEpisodeSegment,
+                        directorBoardMotionOverlayByEpisodeSegment: directorBoardMotionOverlayBySegment,
+                        videoModel: segmentModel,
+                        segmentCapacityMode: getManhuaSegmentCapacityMode(segmentCapacityModeByEpisode, ep),
+                        lengthTierId: writerLengthTierId,
+                      },
+                      confirmArchive: count => window.confirm(`第${ep}集有 ${count} 段已出片的成片与新分段不一致。继续会把它们停放到历史，按新分段需重新出片；取消则本次时长不改。继续？`),
+                    });
+                    saveManhuaShotTimingDraft(edited.blocks, edited.edges, { writerPack: edited.writerPack });
+                    blocksRef.current=edited.blocks;setBlocks(edited.blocks);
+                    if (edited.edges !== edges) setEdges(edited.edges);
+                    setWriterPack(edited.writerPack);
+                    bumpManhuaOutboundEpoch();
+                    if (edited.resegmentError) toast.error(`第${shotIndex}镜时长已保存，但分段未能重排：${edited.resegmentError}`);
+                    else toast.message(`第${shotIndex}镜时长已保存并重排分段；静帧与已出片原地保留，新拆出的段需重新采用对白。`);
                   }}
                   onUpsertShotAngles={(angles) => {
                     const ep = writerFocusEpisode;

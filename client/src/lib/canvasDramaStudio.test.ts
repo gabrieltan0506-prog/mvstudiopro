@@ -150,6 +150,42 @@ describe("分段音轨身份与改稿恢复", () => {
     }
     expect(next.blocks.find(b => b.id === old.id)?.audioStudio).toEqual(studio);
   });
+  it("0929 同一组镜头只改时长：新节点按镜号带回已听审对白候选（未采用），配乐不跟", () => {
+    const spawned = spawnManhuaDramaStudio({ topic: "墨菁传", episodeIndex: 1, videoModel: "seedance-2.5" });
+    const reverse = spawned.blocks.find(b => b.id.startsWith("reverse-"))!;
+    const rows = Array.from({ length: 18 }, (_, i) => {
+      const index = i + 1;
+      const dialogue = index === 14 ? "阿菁：先送娘去治病" : index === 15 ? "娘：阿菁，那马是怎么回事" : "无";
+      return `| ${index} | ${i * 5}–${(i + 1) * 5}秒 | 近景 | 镜${index}动作 | ${dialogue} |`;
+    });
+    const outputText = `## 分镜表\n| 镜号 | 秒位 | 景别/运镜 | 画面 | 对白 |\n|---|---|---|---|---|\n${rows.join("\n")}`;
+    const source = spawned.blocks.map(b => b.id === reverse.id ? { ...b, status: "done" as const, outputText } : b);
+    const expanded = expandManhuaShotKeyartsAfterReverse(source, spawned.edges, reverse.id, { videoModel: "seedance-2.5" });
+    const ready = expanded.blocks.map(b => b.id.startsWith("keyart-") ? { ...b, status: "done" as const, outputUrl: `https://example.test/${b.id}.png` } : b);
+    const initial = ensureManhuaFragmentClips(ready, expanded.edges, 1, { videoModel: "seedance-2.5" });
+    // 先在镜16切开：第三段 = 镜13–15
+    const split = retimeManhuaCanvasNodes(initial.blocks.filter(b => b.id === reverse.id), 16, 5, true);
+    const afterSplit = ensureManhuaFragmentClips(initial.blocks.map(split.apply), initial.edges, 1, { videoModel: "seedance-2.5" });
+    const segA = queuedManhuaClipBlocks(afterSplit.blocks, 1, "seedance-2.5")[2]!;
+    const paid = (id: string) => ({ id: `take-${id}`, gcsUri: `gs://test-bucket/${id}.wav`, previewUrl: "", durationSec: 4, createdAt: "2026-09-28", inputKey: `old-${id}` });
+    const cue = (id: string) => ({ ...createCanvasAudioCue("dialogue", id), speakerZh: "原角色", textZh: `已审${id}`, voice: "locked-voice", takes: [paid(id)], selectedTakeId: `take-${id}`, approved: true });
+    const studio = { ...emptyCanvasAudioStudio(), cues: [cue("script-shot-14-line-1"), cue("script-shot-15-line-1"), { ...createCanvasAudioCue("bgm", "music"), takes: [paid("music")], approved: true }] };
+    const staged = afterSplit.blocks.map(b => b.id === segA.id ? { ...b, audioStudio: studio } : b);
+    // 再只改镜15时长：同一组镜头（13–15），画面与对白不变
+    const retime = retimeManhuaCanvasNodes(staged.filter(b => b.id === reverse.id), 15, 8.184, false);
+    const next = ensureManhuaFragmentClips(staged.map(retime.apply), afterSplit.edges, 1, { videoModel: "seedance-2.5" });
+    const clips = queuedManhuaClipBlocks(next.blocks, 1, "seedance-2.5");
+    expect(clips).toHaveLength(4);
+    expect(clips[2]!.id).not.toBe(segA.id);
+    expect(clips[2]!.audioStudio?.cues.map(c => c.id)).toEqual(["script-shot-14-line-1", "script-shot-15-line-1"]);
+    for (const candidate of clips[2]!.audioStudio!.cues) {
+      expect(candidate.takes).toHaveLength(1);
+      expect(candidate.approved).toBe(false);
+      expect(candidate.selectedTakeId).toBeUndefined();
+    }
+    expect(clips[2]!.audioStudio!.cues.some(c => c.kind === "bgm")).toBe(false);
+    expect(next.blocks.find(b => b.id === segA.id)).toMatchObject({ archivedFromPreviousScript: true, audioStudio: studio });
+  });
   it("同段同修订保留候选；新铺另一段不克隆模板音轨", () => {
     const initial = prepare();
     expect(initial.clipIds).toHaveLength(6);

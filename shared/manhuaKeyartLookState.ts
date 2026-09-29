@@ -38,7 +38,10 @@ export function isManhuaKeyartLookCurrent(block: {
   );
 }
 
-/** 静帧只随画面和造型失效；对白、说话人及声音留给成片与 TTS 校验。兼容旧版完整镜头回执。 */
+/**
+ * 静帧只随画面和造型失效；对白、说话人及声音留给成片与 TTS 校验。兼容旧版完整镜头回执。
+ * 镜头时长与制作片段切点只影响成片排时，一帧静图不因它们重出（0929：改镜14时长把已锁静帧判成「已变更·待重出」）。
+ */
 export function isManhuaKeyartSourceCurrent(block: {
   manhuaKeyartSourceState?: unknown;
   outputUrl?: string | null;
@@ -51,7 +54,7 @@ export function isManhuaKeyartSourceCurrent(block: {
       const value: unknown = JSON.parse(raw);
       if (!value || typeof value !== "object" || Array.isArray(value)) return raw;
       const visual = { ...value } as Record<string, unknown>;
-      for (const key of ["dialogueZh", "dialogueSuppressed", "dialogueSpeakerNameZh", "additionalDialogueCues", "voiceToneZh", "soundZh"]) delete visual[key];
+      for (const key of ["dialogueZh", "dialogueSuppressed", "dialogueSpeakerNameZh", "additionalDialogueCues", "voiceToneZh", "soundZh", "durationSec", "segmentBreakBefore"]) delete visual[key];
       return JSON.stringify(visual);
     } catch { return raw; }
   };

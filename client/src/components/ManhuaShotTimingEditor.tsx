@@ -17,7 +17,7 @@ export function ManhuaShotTimingEditor({ shotIndex, durationSec, segmentBreakBef
       <input aria-label="从本镜开始新制作片段" type="checkbox" checked={breakBefore} disabled={disabled}
         onChange={event => setBreakBefore(event.target.checked)} />从本镜开始新制作片段
     </label>}
-    <p className="my-2 text-xs text-white/60">后续镜头顺延，保留原台词。保存后须重新确认剧本和分段；旧片段及其音轨保留为历史版本，新片段需重新核对音轨绑定。不会自动生成。</p>
+    <p className="my-2 text-xs text-white/60">后续镜头顺延，保留原台词。保存后就地重排分段，不用重新确认剧本：静帧与已出片原地保留；时长或切点变了的段换新节点，旧段音轨留在历史，已听审对白按镜号带回、需重新采用。不会自动生成。</p>
     {error && <p role="alert" className="text-xs text-rose-200">{error}</p>}
     <button type="button" disabled={disabled || (Number(value) === durationSec && breakBefore === segmentBreakBefore)} className="min-h-11 rounded border border-cyan-300/30 px-3 text-sm disabled:opacity-40" onClick={() => {
       const seconds=Number(value);
