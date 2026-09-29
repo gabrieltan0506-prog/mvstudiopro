@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { trpc } from "@/lib/trpc";
 import { manhuaPrevisMediaUrl } from "@/lib/manhuaPrevisMediaUrl";
 import type { PrevisResponse } from "./ManhuaPrevisStudio";
@@ -18,7 +19,8 @@ function Configuration({ spec }: { spec: ManhuaPrevisSpec }) {
     </section>)}
   </div>;
 }
-export function ManhuaAdvisorPrevisComparison({ candidate, storageKey, autoStart, disabled, onPrepare, onApply, onRevise }: {
+export function ManhuaAdvisorPrevisComparison({ candidate, storageKey, autoStart, previewHost, disabled, onPrepare, onApply, onRevise }: {
+  previewHost?: HTMLElement | null;
   candidate: AdvisorPrevisCandidate; storageKey: string | null; autoStart: boolean; disabled?: boolean;
   onRevise?: () => void;
   onPrepare?: (value: AdvisorPrevisCandidate) => AdvisorPrevisTrial;
@@ -46,6 +48,7 @@ export function ManhuaAdvisorPrevisComparison({ candidate, storageKey, autoStart
   let before: ManhuaPrevisSpec | undefined, after: ManhuaPrevisSpec | undefined, issue = "";
   try { before = manhuaPrevisSpecSchema.parse(JSON.parse(candidate.target.specJson)); after = applyAdvisorPrevisPatch(before, candidate.patch); }
   catch (e) { issue = e instanceof Error ? e.message : "候选未通过检查"; }
+  const currentHost = previewHost?.dataset.clipId === candidate.target.clipId ? previewHost : null;
   function consume(value: PrevisResponse | null, active: AdvisorPrevisTrial) {
     if (!alive.current) return;
     if (!value) { setStatus("暂未查到原请求，请确认原请求；不会自动新建。"); return; }
@@ -57,6 +60,7 @@ export function ManhuaAdvisorPrevisComparison({ candidate, storageKey, autoStart
   }
   async function start(existing?: AdvisorPrevisTrial) {
     if (busy.current || disabled || issue || initial.issue) return;
+    if (!currentHost) { setError("请在当前片段的3D页面内生成试看，视频将显示在本页预览。"); return; }
     if (!storageKey || !onPrepare) { setError("请先确认当前项目并从本段白模打开创作顾问，再生成试看。"); return; }
     busy.current = true;
     try {
@@ -70,9 +74,9 @@ export function ManhuaAdvisorPrevisComparison({ candidate, storageKey, autoStart
     finally { busy.current = false; }
   }
   useEffect(() => {
-    if (!autoStart || started.current || initial.trial || initial.issue || disabled || issue) return;
+    if (!autoStart || started.current || initial.trial || initial.issue || disabled || issue || !currentHost) return;
     started.current = true; void start();
-  }, [autoStart, disabled, issue]);
+  }, [autoStart, disabled, issue, currentHost]);
   useEffect(() => {
     if (!trial || receipt || !alive.current) return;
     let cancelled = false, timer: ReturnType<typeof setTimeout>;
@@ -98,7 +102,14 @@ export function ManhuaAdvisorPrevisComparison({ candidate, storageKey, autoStart
     <p role="status" className="text-sm text-cyan-100">{status}</p>
     {(!storageKey || !onPrepare) && <p role="alert" className="text-xs text-amber-100">请先确认当前项目并从本段白模打开创作顾问。</p>}
     {(issue || error) && <p role="alert" className="text-xs text-amber-100">{issue || error}</p>}
-    {receipt && <video aria-label="顾问独立白模试看" controls preload="metadata" className="max-h-[60vh] w-full bg-black" src={manhuaPrevisMediaUrl(receipt.output.url)} onPlay={() => setWatched(true)} />}
+    {currentHost && (trial || error) && createPortal(<section aria-label="3D页面白模视频预览" className="mb-4 space-y-2 rounded-xl border border-cyan-300/40 bg-black/20 p-3">
+      <h3 className="font-semibold text-cyan-100">顾问白模试看</h3>
+      <p role="status" className="text-sm">{status}</p>
+      {trial && <p className="text-xs text-white/70">{trial.request.audio ? `对白 ${trial.request.audio.dialogueCount} 句 · BGM ${trial.request.audio.bgmCount} 条` : "此版本为无声动作试看"}</p>}
+      {error && <p role="alert" className="text-sm text-amber-100">{error}</p>}
+      {receipt && <video key={receipt.output.requestId} aria-label="顾问独立白模试看" controls playsInline preload="metadata" className="max-h-[60vh] w-full bg-black" src={manhuaPrevisMediaUrl(receipt.output.url)} onPlay={() => setWatched(true)} />}
+      <p className="text-xs text-white/60">当前是独立试看，应用前不会改写本段配置；正式视频参考仍需逐帧与常速审片。</p>
+    </section>, currentHost)}
     {trial && <p className="text-xs text-white/50">试看编号：{trial.request.requestId}</p>}
     {!issue && !receipt && <button type="button" disabled={disabled || submit.isPending || Boolean(initial.issue) || !storageKey || !onPrepare} onClick={() => void start(trial || undefined)} className="min-h-10 rounded border border-cyan-300/40 px-3 text-sm">{trial ? "确认原试看请求（不新建）" : "按这个方案生成试看"}</button>}
     {before && after && <details><summary className="cursor-pointer py-2 text-sm">查看修改前后 · {before.durationSec}秒 / {before.actors.length}个角色</summary>

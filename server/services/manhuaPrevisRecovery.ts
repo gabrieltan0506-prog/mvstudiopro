@@ -1,3 +1,4 @@
+import { previsPlaybackDuration, previsPlaybackFrames } from "../../shared/manhuaPrevisPlayback";
 /** 只回收已存证的白模产物；不生成、不重排、不覆盖已有产物。 */
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
@@ -53,6 +54,8 @@ const resultSchema = z
     scopeId: z.string().uuid(),
     clipId: z.string(),
     spec: manhuaPrevisRequestSchema.shape.spec,
+    audio: manhuaPrevisRequestSchema.shape.audio,
+    quality: manhuaPrevisRequestSchema.shape.quality,
     gcsUri: z.string(),
     bytes: z
       .number()
@@ -60,7 +63,7 @@ const resultSchema = z
       .min(1000)
       .max(64 * 1024 * 1024),
     sha256: digest,
-    durationSec: z.number().int(),
+    durationSec: z.number().finite().positive(),
     width: z.number().int(),
     height: z.number().int(),
     sceneGcsUri: z.string(),
@@ -151,7 +154,8 @@ export async function recoverPrevisResult(
       result.requestId !== input.requestId ||
       result.scopeId !== input.scopeId ||
       result.clipId !== input.clipId ||
-      JSON.stringify(result.spec) !== JSON.stringify(input.spec)
+      JSON.stringify(result.spec) !== JSON.stringify(input.spec) ||
+      JSON.stringify(result.audio) !== JSON.stringify(input.audio) || result.quality !== input.quality
     )
       return row;
     for (const [field, name] of Object.entries({
@@ -177,24 +181,26 @@ export async function recoverPrevisResult(
         return row;
       if (name === "probe.json") {
         const stream = value?.streams?.[0];
+        const audioStream = value?.streams?.find((s: { codec_type?: string }) => s.codec_type === "audio");
         if (
-          value?.streams?.length !== 1 ||
+          value?.streams?.length !== (input.audio ? 2 : 1) ||
+          (input.audio && (!audioStream || audioStream.codec_name !== "aac" || Number(audioStream.sample_rate) !== 48000 || audioStream.channels !== 2 || !Number.isFinite(Number(audioStream.duration)) || Math.abs(Number(audioStream.duration) - input.audio.durationSec) > .05)) ||
           stream.width !== result.width ||
           stream.height !== result.height ||
-          Number(stream.nb_read_frames) !== result.report.frames ||
+          Number(stream.nb_read_frames) !== previsPlaybackFrames(input.spec) ||
           !Number.isFinite(Number(value?.format?.duration)) ||
-          Math.abs(Number(value.format.duration) - input.spec.durationSec) >
+          Math.abs(Number(value.format.duration) - previsPlaybackDuration(input.spec)) >
             0.05
         )
           return row;
       }
     }
     const [width, height] =
-      input.spec.aspect === "16:9" ? [960, 540] : [540, 960];
+      input.spec.aspect === "16:9" ? (input.quality === "draft" ? [480, 270] : [960, 540]) : (input.quality === "draft" ? [270, 480] : [540, 960]);
     if (
       result.width !== width ||
       result.height !== height ||
-      result.durationSec !== input.spec.durationSec ||
+      result.durationSec !== previsPlaybackDuration(input.spec) ||
       result.report.frames !== input.spec.durationSec * 24 ||
       result.report.actors.length !== input.spec.actors.length
     )

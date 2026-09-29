@@ -1,3 +1,4 @@
+import { createManhuaPrevisStudio } from "../../shared/manhuaPrevis";
 /**
  * 素材登记约束测试:
  * - jobs 记录只读取明确产物字段,普通文本字段不计入;完整对象名全等比较;
@@ -340,4 +341,13 @@ describe("本人上传前缀(第四类放行)", () => {
     await expect(resolveRegisteredPostProdMediaSource({ userId: "7", source: "https://blob.vercel-storage.com/renders/ep01-final.mp4.backup" }, d)).rejects.toThrow(/尚未登记/);
     await expect(resolveRegisteredPostProdMediaSource({ userId: "7", source: "https://evil.example/x.mp4" }, d)).rejects.toThrow(/尚未登记/);
   });
+});
+
+it("白模新增音轨同样核对本人素材，旧无声请求兼容", async () => {
+  const params = { requestId: "11111111-1111-4111-8111-111111111111", scopeId: "22222222-2222-4222-8222-222222222222", clipId: "test", spec: createManhuaPrevisStudio(2).spec };
+  await expect(resolvePostProdInputSources({ userId: "7", input: { action: "manhua_previs", params } }, deps())).resolves.toMatchObject({ params });
+  const audio = { version: 1 as const, startSec: 0, durationSec: 2, sourceKey: "test", dialogueCount: 1, bgmCount: 0, clips: [{ audioUri: "gs://bucket-a/uploads/u8/a.wav", sourceStartSec: 0, sourceEndSec: 1, startSec: 0, volume: 1, fadeInSec: 0, fadeOutSec: 0 }] };
+  await expect(resolvePostProdInputSources({ userId: "7", input: { action: "manhua_previs", params: { ...params, audio } } }, deps())).rejects.toThrow("素材尚未登记");
+  audio.clips[0].audioUri = "gs://bucket-a/uploads/u7/a.wav";
+  await expect(resolvePostProdInputSources({ userId: "7", input: { action: "manhua_previs", params: { ...params, audio } } }, deps())).resolves.toMatchObject({ params: { audio } });
 });

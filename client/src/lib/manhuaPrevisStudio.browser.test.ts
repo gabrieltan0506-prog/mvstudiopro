@@ -20,8 +20,8 @@ beforeAll(async () => {
       const f=globalThis.fixture={submits:[],gets:[],lists:[],updates:[],mode:'success',getResult:null};
       f.createStudio=createManhuaPrevisStudio;
       f.old={url:'https://offline.invalid/old.mp4',gcsUri:'gs://test/old.mp4',updatedAt:'2026-09-01T00:00:00Z'};
-      f.makeBlock=(scope='11111111-1111-4111-8111-111111111111')=>({id:'clip-e01-g01',previsStudio:createManhuaPrevisStudio(10,scope),manhuaSegmentRefs:{previs:f.old}});
-      f.response=(input)=>({jobId:'prv_test_job',status:'succeeded',params:input,output:{requestId:input.requestId,clipId:input.clipId,spec:input.spec,durationSec:input.spec.durationSec,gcsUri:'gs://test/unrelated-storage-folder/output.mp4',url:'https://offline.invalid/new.mp4',report:{warnings:['离线测试，不代表动作质量验收']},...(input.spec.exportLayers?{layerBundle:{gcsUri:'gs://test/layer-bundle.zip',url:'https://offline.invalid/layers.zip',format:'previs-layers-v1',bytes:1234,sha256:'a'.repeat(64)}}:{})}});
+      f.makeBlock=(scope='11111111-1111-4111-8111-111111111111')=>({id:'clip-e01-g01',previsStudio:{...createManhuaPrevisStudio(10,scope),audioEnabled:false},manhuaSegmentRefs:{previs:f.old}});
+      f.response=(input)=>({jobId:'prv_test_job',status:'succeeded',params:input,output:{requestId:input.requestId,clipId:input.clipId,spec:input.spec,audio:input.audio,quality:input.quality,durationSec:input.spec.durationSec,gcsUri:'gs://test/unrelated-storage-folder/output.mp4',url:'https://offline.invalid/new.mp4',report:{warnings:['离线测试，不代表动作质量验收']},...(input.spec.exportLayers?{layerBundle:{gcsUri:'gs://test/layer-bundle.zip',url:'https://offline.invalid/layers.zip',format:'previs-layers-v1',bytes:1234,sha256:'a'.repeat(64)}}:{})}});
       const services={submit:async input=>{f.submits.push(structuredClone(input));if(f.mode==='defer')return new Promise(resolve=>f.resolveSubmit=resolve);if(f.mode==='unknown')throw Error('离线模拟断网');const response=f.response(input);if(globalThis.keyedFixture)f.getResult=response;return response;},get:async id=>{f.gets.push(id);return f.getResult;},list:async (...args)=>{f.lists.push(args);if(f.mode==='defer-list')return new Promise(resolve=>f.resolveList=resolve);return {items:[],nextCursor:null};}};
       function App(){const [block,setBlock]=useState(()=>globalThis.keyedFixture?{...f.makeBlock(),previsStudio:undefined}:f.makeBlock());const [characters,setCharacters]=useState([{id:'character-mo',label:'墨屠'}]);const [shots,setShots]=useState([]);const [directionShots,setDirectionShots]=useState([]);f.setDirectionShots=setDirectionShots;f.block=block;f.setBlock=setBlock;f.characters=characters;f.setCharacters=setCharacters;f.shots=shots;f.setShots=setShots;return <ManhuaPrevisStudioView key={globalThis.keyedFixture?block.id+':'+(block.previsStudio?.scopeId??'new'):undefined} block={block} characters={characters} sourceShots={shots} directionShots={directionShots} services={services} onChange={(studio,reference)=>{f.updates.push({studio:structuredClone(studio),reference});if(f.rejectSave)return false;setBlock(current=>({...current,previsStudio:studio,manhuaSegmentRefs:reference?{...current.manhuaSegmentRefs,previs:reference}:current.manhuaSegmentRefs}));return true;}}/>;}
       createRoot(document.getElementById('root')).render(globalThis.strictFixture?<StrictMode><App/></StrictMode>:<App/>);
@@ -2029,14 +2029,14 @@ it("新增在场区间只在剩余时间足一帧时显示，并产生正时长"
 });
 
 
-it("打开已有历史的白模面板即载入最近渲染，播放器先于配置且不会自动采用或重提", async () => {
+it("打开已应用的顾问独立历史即载入最近渲染，播放器先于配置且不会自动采用或重提", async () => {
   const page = await open(false, true, undefined, false);
   try {
     await page.evaluate(() => {
       const f = (window as any).fixture;
       const b = f.makeBlock('33333333-3333-4333-8333-333333333333');
       const studio = b.previsStudio;
-      const input = {scopeId: studio.scopeId, clipId:b.id, requestId:'44444444-4444-4444-8444-444444444444',spec:studio.spec};
+      const input = {scopeId: '66666666-6666-4666-8666-666666666666', clipId:b.id, requestId:'44444444-4444-4444-8444-444444444444',spec:studio.spec};
       f.getResult = f.response(input);
       studio.history = [
         {jobId:'old-job', requestId:'55555555-5555-4555-8555-555555555555', gcsUri:'gs://test/old-preview.mp4',url:'https://offline.invalid/old-preview.mp4', durationSec:10, createdAt:'2026-09-28T01:00:00Z', spec:studio.spec},

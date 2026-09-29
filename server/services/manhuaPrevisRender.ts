@@ -1,3 +1,4 @@
+import { preparePrevisAudio } from "./manhuaPrevisAudio";
 /** 白模确定性渲染：受控 JSON → 固定脚本 → 实际帧 → MP4 → 本人持久产物。 */
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -29,7 +30,8 @@ import { preparePrevisModels } from "./manhuaPrevisModels";
 export type { PrevisRenderReport } from "./manhuaPrevisReport";
 
 /** 高负荷只降 Blender 的逐帧分辨率；存证的 blend 保持标准尺寸，MP4 编码恢复标准尺寸。 */
-export function previsRenderProfile(spec: ManhuaPrevisRequest["spec"]) {
+export function previsRenderProfile(spec: ManhuaPrevisRequest["spec"], quality?: ManhuaPrevisRequest["quality"]) {
+  if (quality === "draft") return { renderPercentage: 50, outputScaleFilter: undefined };
   const reduced = previsRenderCostUnits(spec) > PREVIS_FULL_RES_RENDER_UNIT_BUDGET;
   const [width, height] = spec.aspect === "16:9" ? [960, 540] : [540, 960];
   return {
@@ -110,6 +112,7 @@ export type PrevisRenderDeps = {
   /** 0917：白模渲染与绑骨同在一台 2 vCPU 机器上，生产（linux）一律 nice -n 10 起 Blender，让 web 先走；本机/测试不包。 */
   lowPriority?: boolean;
   prepareModels?: typeof preparePrevisModels;
+  prepareAudio?: typeof preparePrevisAudio;
 };
 /** 生产默认降优先级；MANHUA_BLENDER_NICE=0 可关（排障用）。 */
 export const blenderLowPriorityDefault = () =>
@@ -172,6 +175,10 @@ export async function renderManhuaPrevis(
   await writeFile(specPath, specBytes);
   let reportArchived = false;
   try {
+    const audioPath = await (d.prepareAudio ?? preparePrevisAudio)(input, userId, dir, options.signal, { run: d.run, archive: async (name, bytes) => {
+      const artifact = await d.upload({ objectName: `${prefix}/audio/${name}`, buffer: bytes, contentType: "application/json", signal: AbortSignal.timeout(30_000) });
+      await d.upload({ objectName: `${prefix}/audio/${name}.evidence.json`, buffer: Buffer.from(JSON.stringify({ requestId: input.requestId, name, gcsUri: artifact.gcsUri, bytes: bytes.length, sha256: sha(bytes) })), contentType: "application/json", signal: AbortSignal.timeout(30_000) });
+    } });
     const models = input.spec.actors.some(actor => actor.riggedModel)
       ? await (d.prepareModels ?? preparePrevisModels)(
           input.spec,
@@ -290,7 +297,7 @@ export async function renderManhuaPrevis(
       signal: options.signal,
     });
     // 只加载本次固定脚本生成的场景。长时渲染前，报告和场景已永久存储。
-    const renderProfile = previsRenderProfile(input.spec);
+    const renderProfile = previsRenderProfile(input.spec, input.quality);
     const renderArgs = [
       "--background",
       "--disable-autoexec",
@@ -333,8 +340,8 @@ export async function renderManhuaPrevis(
         "24",
         "-i",
         path.join(dir, "frames/frame-%04d.png"),
+        ...(audioPath ? ["-i", audioPath, "-map", "0:v:0", "-map", "1:a:0", "-c:a", "aac", "-b:a", "128k"] : ["-an"]),
         ...(videoFilters.length ? ["-vf", videoFilters.join(",")] : []),
-        "-an",
         "-c:v",
         "libx264",
         "-threads",
@@ -356,7 +363,7 @@ export async function renderManhuaPrevis(
         "error",
         "-count_frames",
         "-show_entries",
-        "stream=width,height,nb_read_frames:format=duration",
+        "stream=codec_type,codec_name,width,height,nb_read_frames,duration,sample_rate,channels:format=duration",
         "-of",
         "json",
         mp4,
@@ -429,10 +436,12 @@ export async function renderManhuaPrevis(
       signal: AbortSignal.timeout(30_000),
     });
     const stream = probe?.streams?.[0];
+    const audioStream = probe?.streams?.find((s: { codec_type?: string }) => s.codec_type === "audio");
     const [width, height] =
-      input.spec.aspect === "16:9" ? [960, 540] : [540, 960];
+      input.spec.aspect === "16:9" ? (input.quality === "draft" ? [480, 270] : [960, 540]) : (input.quality === "draft" ? [270, 480] : [540, 960]);
     if (
-      probe?.streams?.length !== 1 ||
+      probe?.streams?.length !== (input.audio ? 2 : 1) ||
+      (input.audio && (!audioStream || audioStream.codec_name !== "aac" || Number(audioStream.sample_rate) !== 48000 || audioStream.channels !== 2 || !Number.isFinite(Number(audioStream.duration)) || Math.abs(Number(audioStream.duration) - input.audio.durationSec) > .05)) ||
       stream?.width !== width ||
       stream?.height !== height ||
       !Number.isFinite(Number(probe?.format?.duration)) ||
@@ -579,6 +588,8 @@ export async function renderManhuaPrevis(
       clipId: input.clipId,
       requestId: input.requestId,
       spec: input.spec,
+      ...(input.audio ? { audio: input.audio } : {}),
+      ...(input.quality ? { quality: input.quality } : {}),
       ...(layerBundle ? { layerBundle } : {}),
     };
     // 先把完整回执存证，再交给 worker 落库；数据库暂时失败不应丢掉已生成产物。
@@ -613,6 +624,7 @@ export async function renderManhuaPrevis(
     await rm(path.join(dir, "frames"), { recursive: true, force: true }).catch(
       () => {}
     );
+    await rm(path.join(dir, "audio"), { recursive: true, force: true }).catch(() => {});
     await rm(path.join(dir, "preview.mp4"), { force: true }).catch(() => {});
     if (reportArchived)
       await rm(path.join(dir, "scene.blend"), { force: true }).catch(() => {});

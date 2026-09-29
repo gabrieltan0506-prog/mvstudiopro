@@ -527,7 +527,7 @@ describe("白模永久产物恢复", () => {
       "succeeded"
     );
     expect((await submitPrevisTask(7, f.input, d)).output).toMatchObject({
-      url: `signed:${f.result.gcsUri}`,
+      url: `/api/manhua-previs-media/${f.row.id}/preview`,
     });
     expect(
       (
@@ -544,4 +544,17 @@ describe("白模永久产物恢复", () => {
     ).rejects.toThrow("不同配置");
     expect(recover).toHaveBeenCalledTimes(3);
   });
+});
+
+it.each([false, true])("有声低清白模恢复必须具备匹配音频流；缺失=%s", async missing => {
+  const f = fixture();
+  const audio = { version: 1 as const, startSec: 0, durationSec: 2, sourceKey: "test", dialogueCount: 1, bgmCount: 0, clips: [{ audioUri: "gs://test/audio.wav", sourceStartSec: 0, sourceEndSec: 1, startSec: 0, volume: 1, fadeInSec: 0, fadeOutSec: 0 }] };
+  Object.assign(f.input, { audio, quality: "draft" });
+  Object.assign(f.result, { audio, quality: "draft", width: 480, height: 270 });
+  const request = Buffer.from(JSON.stringify(f.input));
+  f.objects.set(f.prefix + "request.json", request); f.result.requestSha256 = sha(request);
+  const probe = Buffer.from(JSON.stringify({ streams: [{ width: 480, height: 270, nb_read_frames: "48" }, ...(missing ? [] : [{ codec_type: "audio", codec_name: "aac", sample_rate: "48000", channels: 2, duration: "2" }])], format: { duration: "2" } }));
+  f.objects.set(f.prefix + "probe.json", probe); f.result.probeSha256 = sha(probe); f.seal();
+  const result = await recoverPrevisResult(f.row, 7, f.d);
+  expect(result.status).toBe(missing ? "failed" : "succeeded");
 });

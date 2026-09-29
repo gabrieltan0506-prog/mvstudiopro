@@ -1,3 +1,4 @@
+import { ManhuaPrevisAudioControls } from "./canvas/ManhuaPrevisAudioControls";
 import { summarizeManhuaFinalSegmentEvidence } from "@/lib/manhuaFinalSegmentEvidence";
 import { ManhuaTimingRecovery } from "./ManhuaTimingRecovery";
 import { ManhuaShotTimingEditor } from "./ManhuaShotTimingEditor";
@@ -483,6 +484,7 @@ type Props = {
   onOpenAdvisor3d?: (clipId?: string) => void;
   advisorOpen?: boolean;
   onAdvisorDockChange?: (host: HTMLDivElement | null) => void;
+  onAdvisorPreviewHostChange?: (host: HTMLDivElement | null) => void;
   /** 剧本页独立模板改写入口；创作顾问只保留可选辅助。 */
   rewriteWorkspace?: ReactNode;
   /**
@@ -1239,6 +1241,7 @@ export default function ManhuaScriptWorkbench({
   onOpenAdvisor3d,
   advisorOpen,
   onAdvisorDockChange,
+  onAdvisorPreviewHostChange,
   rewriteWorkspace,
   onOpenAdvisorIssue,
   advisorIssues,
@@ -1453,6 +1456,7 @@ export default function ManhuaScriptWorkbench({
     },
     [onPreviewClipOutbound],
   );
+  const [previsAudioOpen, setPrevisAudioOpen] = useState(false);
   const [audioStudioOpen, setAudioStudioOpen] = useState(false);
   const [audioStudioPhase, setAudioStudioPhase] = useState<WorkflowPhaseId | null>(null);
   const [previsStudioOpen,setPrevisStudioOpen] = useState(false);
@@ -4244,6 +4248,17 @@ export default function ManhuaScriptWorkbench({
     }
   };
 
+  const inSceneAudio = activeClip && onUpdateClipAudioStudio ? <div>
+    {onUpdateClipPrevisStudio && <ManhuaPrevisAudioControls block={activeClip} disabled={Boolean(factoryBusy) || activeClip.status === "running" || activeClip.videoTaskStatus === "queued"} onChange={studio => onUpdateClipPrevisStudio(activeClip.id, studio)} />}
+    <details open={previsAudioOpen} onToggle={event => setPrevisAudioOpen(event.currentTarget.open)} className="my-3 rounded border border-white/20 p-3">
+      <summary className="cursor-pointer text-sm text-cyan-100">本页对白与BGM · 采用已有声音、调整秒位和音量</summary>
+      {previsAudioOpen && <CanvasAudioStudio key={activeClip.id} block={activeClip} compact={false} timelineDurationSec={activeSegment?.durationSec} sourceShots={activeSegment?.shots} dialogueSources={blocks}
+        characters={assetCanon?.characters.map(character => ({ id: character.id, nameZh: character.nameZh, aliasZh: character.aliasZh }))}
+        disabled={Boolean(factoryBusy) || activeClip.status === "running" || activeClip.videoTaskStatus === "queued"}
+        onChange={studio => onUpdateClipAudioStudio(activeClip.id, studio)} bgmModels={bgmModels} />}
+    </details>
+  </div> : null;
+
   return (
     <div
       id="manhua-workbench-shell"
@@ -4473,7 +4488,7 @@ export default function ManhuaScriptWorkbench({
           {(onGenerateAsset3d || onImportAsset3d) && manhuaSecondaryToolHome("model3d", activePhase, immersive) === "cluster" ? <button type="button" data-manhua-action="open-3d-model-studio" data-manhua-tool-home="cluster" disabled={Boolean(factoryBusy)}
             className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
             onClick={()=>toggleSecondaryTool("model3d")}>3D 模型（可预览或已绑骨 {manhua3dModelCounts(modelStudioCharacters, riggedAssetIds).ready}/{modelStudioCharacters.length}）</button> : null}
-          {modelStudioOpen ? <SecondaryStudioSurface immersive={immersive} title="3D 模型" advisorOpen={advisorOpen} onAdvisorDockChange={onAdvisorDockChange} onOpenAdvisor={onOpenAdvisor3d ? () => onOpenAdvisor3d(activeClip?.id) : undefined} onClose={() => setModelStudioOpen(false)}><Manhua3dModelStudio
+          {modelStudioOpen ? <SecondaryStudioSurface immersive={immersive} title="3D 模型" advisorOpen={advisorOpen} onAdvisorDockChange={onAdvisorDockChange} onPreviewHostChange={onAdvisorPreviewHostChange} clipId={activeClip?.id} onOpenAdvisor={onOpenAdvisor3d ? () => onOpenAdvisor3d(activeClip?.id) : undefined} onClose={() => setModelStudioOpen(false)}><Manhua3dModelStudio
             characters={modelStudioCharacters}
             busyIds={asset3dBusyIds}
             disabled={Boolean(factoryBusy)}
@@ -4491,7 +4506,7 @@ export default function ManhuaScriptWorkbench({
           {(worldStudioScenes.length > 0 || onGenerateSceneWorld) && manhuaSecondaryToolHome("world3d", activePhase, immersive) === "cluster" ? <button type="button" data-manhua-action="open-world-studio" data-manhua-tool-home="cluster" disabled={Boolean(factoryBusy)}
             className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
             onClick={()=>toggleSecondaryTool("world3d")}>3D 场景（可载入 {manhuaWorldCounts(worldStudioScenes).ready}/{worldStudioScenes.length}）</button> : null}
-          {worldStudioOpen && (worldStudioScenes.length > 0 || onGenerateSceneWorld) ? <SecondaryStudioSurface immersive={immersive} title="3D 场景" advisorOpen={advisorOpen} onAdvisorDockChange={onAdvisorDockChange} onOpenAdvisor={onOpenAdvisor3d ? () => onOpenAdvisor3d(activeClip?.id) : undefined} onClose={() => setWorldStudioOpen(false)}><ManhuaWorldStudio
+          {worldStudioOpen && (worldStudioScenes.length > 0 || onGenerateSceneWorld) ? <SecondaryStudioSurface immersive={immersive} title="3D 场景" advisorOpen={advisorOpen} onAdvisorDockChange={onAdvisorDockChange} onPreviewHostChange={onAdvisorPreviewHostChange} clipId={activeClip?.id} onOpenAdvisor={onOpenAdvisor3d ? () => onOpenAdvisor3d(activeClip?.id) : undefined} onClose={() => setWorldStudioOpen(false)}><ManhuaWorldStudio
             scenes={worldStudioScenes}
             busyIds={sceneWorldBusyIds}
             disabled={Boolean(factoryBusy)}
@@ -4505,7 +4520,7 @@ export default function ManhuaScriptWorkbench({
             adoptedFrameCount={stageFrameProgress.adopted}
             onExportStageFrame={onExportSceneStageFrame ? (id, blob, frame) => onExportSceneStageFrame(id, blob, { ...frame, episode: focusEpisode, segmentIndex: activeSegNo }) : undefined}
             layoutActors={worldLayoutActors}
-            onSubmitLayoutWorld={onSubmitLayoutSceneWorld}/>
+            onSubmitLayoutWorld={onSubmitLayoutSceneWorld}/>{inSceneAudio}
           {onToggleStageFrameAdoption ? <div className="w-full">
             <ManhuaStageFrameAdoptPanel
               refs={customAssetRefs}
@@ -4518,12 +4533,13 @@ export default function ManhuaScriptWorkbench({
           {onUpdateClipPrevisStudio && manhuaSecondaryToolHome("previs", activePhase, immersive) === "cluster" ? <button type="button" data-manhua-action="open-previs-studio" data-manhua-tool-home="cluster" disabled={Boolean(factoryBusy)}
             className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
             onClick={()=>toggleSecondaryTool("previs")}>本段动作白模</button> : null}
-          {previsStudioOpen&&onUpdateClipPrevisStudio ? <SecondaryStudioSurface immersive={immersive} title="本段动作白模" advisorOpen={advisorOpen} onAdvisorDockChange={onAdvisorDockChange} onOpenAdvisor={activeClip && onOpenAdvisorPrevis ? () => onOpenAdvisorPrevis(activeClip.id) : undefined} onClose={() => setPrevisStudioOpen(false)}><div className="w-full">
+          {previsStudioOpen&&onUpdateClipPrevisStudio ? <SecondaryStudioSurface immersive={immersive} title="本段动作白模" advisorOpen={advisorOpen} onAdvisorDockChange={onAdvisorDockChange} onPreviewHostChange={onAdvisorPreviewHostChange} clipId={activeClip?.id} onOpenAdvisor={activeClip && onOpenAdvisorPrevis ? () => onOpenAdvisorPrevis(activeClip.id) : undefined} onClose={() => setPrevisStudioOpen(false)}><div className="w-full">
             <p className="mb-2 text-xs text-cyan-100">第 {focusEpisode} 集 · 第 {activeSegNo} 段 · 动作白模</p>
             <div className="mb-2 flex flex-wrap items-center gap-2 rounded border border-cyan-300/20 bg-cyan-500/5 p-2 text-[11px] text-white/75" data-previs-world-link>
               <span>3D 场景可尝试载入 {manhuaWorldCounts(worldStudioScenes).ready}/{worldStudioScenes.length} 个；它只取本段人物起点站位，白模动作和切镜以这里的预演为准。</span>
               {worldStudioScenes.length > 0 || onGenerateSceneWorld ? <button type="button" className="rounded border border-cyan-300/30 px-2 py-1 text-cyan-50" onClick={() => toggleSecondaryTool("world3d")}>查看 3D 场景与视角图</button> : null}
             </div>
+            {inSceneAudio}
             {activeClip?<ManhuaPrevisStudio key={`${activeClip.id}:${activeClip.previsStudio?.scopeId??"new"}`} block={activeClip}
               characters={assetLockRegistry.byRole.character.map(a=>{
                 const ref=customAssetRefs.find(ref=>ref.id===a.id);

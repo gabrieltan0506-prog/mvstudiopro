@@ -73,12 +73,14 @@ export const advisorPrevisReceiptSchema = z.object({
   jobId: z.string().min(1), status: z.literal("succeeded"), params: manhuaPrevisRequestSchema,
   output: z.object({ requestId: z.string().uuid(), clipId: z.string(), gcsUri: z.string().startsWith("gs://"),
     url: z.string().refine(v => v.startsWith("https://") || v.startsWith("/api/manhua-previs-media/")), durationSec: z.number().positive(),
+    audio: manhuaPrevisRequestSchema.shape.audio, quality: manhuaPrevisRequestSchema.shape.quality,
   }).passthrough(),
 }).passthrough();
 export type AdvisorPrevisReceipt = z.infer<typeof advisorPrevisReceiptSchema>;
 export function validateAdvisorPrevisReceipt(request: ManhuaPrevisRequest, raw: unknown): AdvisorPrevisReceipt {
   const res = advisorPrevisReceiptSchema.parse(raw);
   if (JSON.stringify(res.params) !== JSON.stringify(manhuaPrevisRequestSchema.parse(request)) || res.output.requestId !== request.requestId || res.output.clipId !== request.clipId || Math.abs(res.output.durationSec - previsPlaybackDuration(request.spec)) > 0.05) throw new Error("试看回执与当前请求不一致，不能应用");
+  if (JSON.stringify(res.output.audio) !== JSON.stringify(request.audio) || res.output.quality !== request.quality) throw new Error("试看音轨或画质回执不一致，不能应用");
   return res;
 }
 /** 独立 scope 保证未确认试看不会混入原片段恢复历史。只读现有工作流。 */
@@ -96,6 +98,7 @@ export function adoptAdvisorPrevisTrial(clipId: string, studio: ManhuaPrevisStud
   return { ...next, specHistory, history: [...next.history.filter(h => h.requestId !== receipt.params.requestId), {
     jobId: receipt.jobId, requestId: receipt.params.requestId, gcsUri: receipt.output.gcsUri, url: receipt.output.url,
     durationSec: receipt.output.durationSec, createdAt: new Date().toISOString(), spec: receipt.params.spec,
+    ...(receipt.params.audio ? { audio: receipt.params.audio } : {}), ...(receipt.params.quality ? { quality: receipt.params.quality } : {}),
   }] };
 }
 export const ADVISOR_PREVIS_EDIT_INSTRUCTIONS = `\n【白模调度候选模式】
@@ -104,4 +107,4 @@ export const ADVISOR_PREVIS_EDIT_INSTRUCTIONS = `\n【白模调度候选模式�
 仅填写需要修改的cameras或actors；actors每项必须保留原id，只填改动字段，不能改变身份、模型、角色数、时长、画幅、音频、参考、在场区间或背负。不得输出Python/命令/URL。unsupportedZh只填写用户明确提出且无法实现的要求；用户没有要求的音效、材质、表情、手持抖动等能力边界不要列入。用户说保留动作与对白是锁定条件，不是不支持项。只调整镜头即可满足时，unsupportedZh必须为[]。真正不支持的要求不能悄悄忽略，该候选不会应用。
 动作类型：${PREVIS_ACTION_KINDS.join("、")}。动作不能重叠；look需要lookAtId（本段角色ID或camera），turn需要facingDeg，其他动作不填这些字段。移动路线2–12点、按秒严格递增，从0到时长-1/24；坐标范围±12米、朝向±180度；路线起末点同步start/end。背负承载者只走位/静立，乘员不独立行动；四足仅支持limp_front_left，覆盖整段，不能套用人类打斗/握物。
 相机1–8个，连续覆盖0到本段时长；startSec/endSec，position/target是[x,y,z]米，x/y±30、z0.2–15；lens/endLens是18–65mm整数（焦距增大视角收紧）；可填endPosition/endTarget，或orbitDeg±180与orbitRise±8（须与非零环绕同用），两种运动写法二选一：直线模式只填endPosition/endTarget，不填orbitDeg/orbitRise；环绕模式只填orbitDeg/orbitRise，删除endPosition/endTarget。零值也不能作为兼容占位。时序对齐24fps，贴合当前人物真实位置、朝向及动作目标。不能每镜机械套FOV/下降/旋转，需有剧情触发并保持轴线。
-上下文如有previousPreviewSpecJson表示上次未应用的试看。追问时延续上次试看并按新需求修正，输出相对specJson原工作流的累计修改，不能丢掉用户此前要求。只生成可继续修改的调度提案，用户点击生成试看后系统才渲染；不满意可继续聊并修正提案再生成。用户满意点击应用之后才写回工作流，不声称已应用或审片通过。answer对象序列化后总长不超过11000字符。`;
+上下文如有previousPreviewSpecJson表示上次未应用的试看。追问时延续上次试看并按新需求修正，输出相对specJson原工作流的累计修改，不能丢掉用户此前要求。只生成可继续修改的调度提案，用户明确说生成试看或点击生成试看后，由系统校验合格候选并在当前3D页渲染；只讨论时不渲染，方案回包本身不代表视频已生成；不满意可继续聊并修正提案再生成。用户满意点击应用之后才写回工作流，不声称已应用或审片通过。answer对象序列化后总长不超过11000字符。`;

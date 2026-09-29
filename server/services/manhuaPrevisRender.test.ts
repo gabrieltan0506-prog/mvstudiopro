@@ -279,7 +279,7 @@ for (const abort of [false, true]) {
   });
 }
 
-function fixture() {
+function fixture(extra: Partial<import("../../shared/manhuaPrevis").ManhuaPrevisRequest> = {}) {
   const studio = createManhuaPrevisStudio(
     2,
     "11111111-1111-4111-8111-111111111111"
@@ -305,6 +305,7 @@ function fixture() {
   const d: PrevisRenderDeps = {
     blender: "test-blender",
     useXvfb: false,
+    prepareAudio: async () => extra.audio ? "/test/audio.wav" : undefined,
     upload: async ({ objectName, buffer }) => {
       stored.set(path.basename(objectName), buffer);
       return {
@@ -337,7 +338,7 @@ function fixture() {
         await writeFile(path.join(dir, "preview.mp4"), Buffer.alloc(1024));
       else
         return JSON.stringify({
-          streams: [{ width: 960, height: 540, nb_read_frames: "48" }],
+          streams: [{ width: extra.quality === "draft" ? 480 : 960, height: extra.quality === "draft" ? 270 : 540, nb_read_frames: "48" }, ...(extra.audio ? [{ codec_type: "audio", codec_name: "aac", sample_rate: "48000", channels: 2, duration: "2" }] : [])],
           format: { duration: "2" },
         });
       return "";
@@ -356,6 +357,7 @@ function fixture() {
           scopeId: studio.scopeId,
           clipId: "clip-test",
           spec: studio.spec,
+          ...extra,
         },
         "7",
         { signal: AbortSignal.timeout(10_000) },
@@ -587,3 +589,20 @@ it.skipIf(process.platform === "win32")(
     expect(alive).toBe(false);
   }
 );
+
+it("低清有声白模编码与回执闭合，缺音轨不能算成功", async () => {
+  const audio = { version: 1 as const, startSec: 0, durationSec: 2, sourceKey: "test", dialogueCount: 1, bgmCount: 0, clips: [{ audioUri: "gs://test/audio.wav", sourceStartSec: 0, sourceEndSec: 1, startSec: 0, volume: 1, fadeInSec: 0, fadeOutSec: 0 }] };
+  const f = fixture({ quality: "draft", audio });
+  const run = f.d.run;
+  f.d.run = async (command, args, signal) => {
+    if (command === "ffmpeg") { expect(args).toContain("1:a:0"); expect(args).not.toContain("-an"); }
+    if (args.includes("--render-anim")) expect(args).toContain("import bpy; bpy.context.scene.render.resolution_percentage=50");
+    return run(command, args, signal);
+  };
+  const result = await f.run();
+  expect(result).toMatchObject({ audio, quality: "draft", width: 480, height: 270, durationSec: 2 });
+  const bad = fixture({ quality: "draft", audio }), original = bad.d.run;
+  bad.d.run = async (command, args, signal) => command === "ffprobe" ? JSON.stringify({ streams: [{ width: 480, height: 270, nb_read_frames: "48" }], format: { duration: "2" } }) : original(command, args, signal);
+  await expect(bad.run()).rejects.toThrow("解码校验");
+  expect(bad.stored.has("result.json")).toBe(false);
+});

@@ -1,3 +1,4 @@
+import { validatePrevisAudioSources } from "./manhuaPrevisAudio";
 /** 沿用单并发后期 worker；本入口只落幂等队列，不执行浏览器同步长请求。 */
 import { createHash } from "node:crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
@@ -98,6 +99,7 @@ const real: PrevisTaskDeps = {
     // 只有业务判定（归属/回执不闭合）算明确拒绝；读盘、读 GCS 等基础设施异常原样上抛，前端保留编号再查。
     try {
       await resolvePrevisModels(input.spec, userId);
+      await validatePrevisAudioSources(input, String(userId));
     } catch (error) {
       if (error instanceof Manhua3dSourceRejectedError)
         throw new PrevisRejectedError(error.message);
