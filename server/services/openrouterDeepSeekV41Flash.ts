@@ -8,12 +8,12 @@ export function isOpenRouterDeepSeekV41FlashModel(model: string): boolean {
   return model.trim().toLowerCase() === OPENROUTER_DEEPSEEK_V41_FLASH_MODEL;
 }
 
-/** 用户指定的四跳顺序；一次咨询最多走完一遍，不另开额度或扣费。 */
+/** 0929 用户指定 GLM 优先、DeepSeek 备选；OpenRouter GLM 在传输层锁 Z.AI。一次咨询最多四跳，不另开额度或扣费。 */
 export const MANHUA_ADVISOR_HOPS = [
+  { modelName: "z-ai/glm-5.3-flashx", gateway: "auto", label: "GLM 5.3 FlashX · OpenRouter" },
+  { modelName: "glm-5.3-flashx", gateway: "evolink_flash_only", label: "GLM 5.3 FlashX · EvoLink" },
   { modelName: OPENROUTER_DEEPSEEK_V41_FLASH_MODEL, gateway: "auto", label: "DeepSeek V4.1 Flash · OpenRouter" },
   { modelName: "deepseek-v4.1-flash", gateway: "evolink_flash_only", label: "DeepSeek V4.1 Flash · EvoLink" },
-  { modelName: "glm-5.3-flash", gateway: "evolink_flash_only", label: "GLM 5.3 Flash · EvoLink" },
-  { modelName: "z-ai/glm-5.3-flash", gateway: "auto", label: "GLM 5.3 Flash · OpenRouter" },
 ] as const;
 
 /** 顾问需尽快给出可验候选；DeepSeek 关闭思考，强制思考的 GLM 用低档。 */

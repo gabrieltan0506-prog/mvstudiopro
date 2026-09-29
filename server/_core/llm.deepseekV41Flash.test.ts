@@ -69,7 +69,7 @@ it.each([null, "length", "error"])("DeepSeek 未正常结束 %s 不返回半成�
   await expect(invokeLLM({ provider: "openai", modelName, messages: [{ role: "user", content: "test" }] })).rejects.toThrow();
 });
 
-it.each(["deepseek-v4.1-flash", "glm-5.3-flash"])("EvoLink %s 使用原生字段与固定文本入口", async modelName => {
+it.each(["deepseek-v4.1-flash", "glm-5.3-flash", "glm-5.3-flashx"])("EvoLink %s 使用原生字段与固定文本入口", async modelName => {
   vi.stubEnv("EVOLINK_API_KEY", "test-evolink-not-real");
   const frame = { model: modelName, choices: [{ delta: { content: '{"answer":"测试"}' }, finish_reason: "stop" }] };
   const fetchMock = vi.fn().mockResolvedValue(new Response(`data: ${JSON.stringify(frame)}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } }));
@@ -81,13 +81,13 @@ it.each(["deepseek-v4.1-flash", "glm-5.3-flash"])("EvoLink %s 使用原生字段
   expect(body.provider).toBeUndefined(); expect(body.reasoning).toBeUndefined(); expect(body.max_completion_tokens).toBeUndefined();
   if (modelName.startsWith("deepseek")) expect(body.thinking).toEqual({ type: "enabled" });
 });
-it("GLM OpenRouter 最后一跳保持流式与 JSON 契约", async () => {
+it.each(["z-ai/glm-5.3-flash", "z-ai/glm-5.3-flashx"])("GLM %s 保持流式 JSON 且不能解除 Z.AI 锁", async modelName => {
   vi.stubEnv("OPENROUTER_API_KEY", "sk-test-only-not-real");
   const fetchMock = vi.fn().mockResolvedValue(new Response('data: {"choices":[{"delta":{"content":"{}"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', { headers: { "content-type": "text/event-stream" } }));
   vi.stubGlobal("fetch", fetchMock);
-  await invokeLLM({ provider: "openai", modelName: "z-ai/glm-5.3-flash", response_format: { type: "json_object" }, max_tokens: 16_384, messages: [{ role: "user", content: "test" }] });
+  await invokeLLM({ provider: "openai", modelName, openRouterProviderPreferences: { allow_fallbacks: true }, response_format: { type: "json_object" }, max_tokens: 16_384, messages: [{ role: "user", content: "test" }] });
   expect(fetchMock.mock.calls[0][0]).toBe("https://openrouter.ai/api/v1/chat/completions");
-  expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ model: "z-ai/glm-5.3-flash", stream: true, response_format: { type: "json_object" }, provider: { order: ["Z.AI"], allow_fallbacks: false } });
+  expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ model: modelName, stream: true, response_format: { type: "json_object" }, provider: { order: ["Z.AI"], allow_fallbacks: false, require_parameters: true } });
 });
 
 // 真实探针曾耗尽推理预算却无正文，必须检查实际请求体而非只 mock 顾问结果。
