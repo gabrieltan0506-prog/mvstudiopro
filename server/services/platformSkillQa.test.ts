@@ -136,11 +136,11 @@ describe("漫剧工厂创作顾问上下文", () => {
     expect(invokeLLMMock.mock.calls[0][0].messages[0].content).toContain("用户满意点击应用之后才写回工作流");
     expect(studio.history).toHaveLength(0);
   });
-  it("连续两次白模非法候选必须失败，不能将最后一次解析壳当成功返回", async () => {
+  it("四跳白模非法候选必须失败，不能将最后一次解析壳当成功返回", async () => {
     const studio = createManhuaPrevisStudio(5);
     invokeLLMMock.mockResolvedValue(llmJson(JSON.stringify({ kind: "previs_edit_v1", summaryZh: "错误机位", unsupportedZh: [], cameras: studio.spec.cameras.map(c => ({ ...c, endSec: 4 })) })));
     await expect(askPlatformSkillQa({ userId: 7, question: "推近到人物", isAdmin: true, manhuaContext: manhuaContext({ previsEdit: makeAdvisorPrevisTarget("clip-1", studio) }) })).rejects.toThrow();
-    expect(invokeLLMMock).toHaveBeenCalledTimes(2);
+    expect(invokeLLMMock).toHaveBeenCalledTimes(4);
   });
   it("真实 ask 调用把完整当前集与阶段投影送入 invokeLLM，不混入趋势或来源名", async () => {
     const result = await askPlatformSkillQa({
@@ -387,4 +387,24 @@ describe("漫剧工厂创作顾问上下文", () => {
     // 0909 用户拍板：管理者 Pro Agent 整体下线，路由不再存在
     expect(source).not.toContain("chatPlatformProAgent");
   });
+});
+
+
+it("顾问按 DeepSeek OR→Evo→GLM Evo→OR 自动切换，四跳失败即终止", async () => {
+  invokeLLMMock.mockRejectedValue(new Error("temporary unavailable"));
+  const events: string[] = [];
+  await expect(askPlatformSkillQa({ userId: 1, isAdmin: true, question: "请优化这一镜", manhuaContext: manhuaContext(), onStream: (event, text) => { if (event === "reset") events.push(text || ""); } })).rejects.toThrow();
+  expect(invokeLLMMock.mock.calls.map(([p]) => [p.modelName, p.openAiGateway])).toEqual([
+    ["deepseek/deepseek-v4.1-flash", "auto"], ["deepseek-v4.1-flash", "evolink_flash_only"],
+    ["glm-5.3-flash", "evolink_flash_only"], ["z-ai/glm-5.3-flash", "auto"],
+  ]);
+  expect(events).toHaveLength(4);
+  for (const [p] of invokeLLMMock.mock.calls) expect(p.response_format).toEqual({ type: "json_object" });
+});
+it("第二模型成功即停止，沿用同一上下文且清除上一跳增量", async () => {
+  invokeLLMMock.mockRejectedValueOnce(new Error("timeout")).mockRejectedValueOnce(new Error("timeout")).mockResolvedValue(llmJson());
+  const result = await askPlatformSkillQa({ userId: 1, isAdmin: true, question: "请优化这一镜", manhuaContext: manhuaContext() });
+  expect(result.modelName).toBe("glm-5.3-flash");
+  expect(invokeLLMMock).toHaveBeenCalledTimes(3);
+  expect(invokeLLMMock.mock.calls[2][0].messages).toEqual(invokeLLMMock.mock.calls[0][0].messages);
 });

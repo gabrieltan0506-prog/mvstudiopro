@@ -1,5 +1,6 @@
+import { isSseContentSafetyError } from "./sseChatStream";
 import { buildAdvisorPrevisCraftBlock } from "./manhuaAdvisorPrevisCraft";
-import { OPENROUTER_DEEPSEEK_V41_FLASH_MODEL, MANHUA_ADVISOR_REASONING_EFFORT, MANHUA_ADVISOR_MAX_OUTPUT_TOKENS } from "./openrouterDeepSeekV41Flash";
+import { MANHUA_ADVISOR_HOPS, OPENROUTER_DEEPSEEK_V41_FLASH_MODEL, MANHUA_ADVISOR_REASONING_EFFORT, MANHUA_ADVISOR_MAX_OUTPUT_TOKENS } from "./openrouterDeepSeekV41Flash";
 import { ADVISOR_PREVIS_EDIT_INSTRUCTIONS, parseAdvisorPrevisPatch, applyAdvisorPrevisPatch } from "../../shared/manhuaAdvisorPrevisEdit";
 import { manhuaPrevisSpecSchema } from "../../shared/manhuaPrevis";
 /**
@@ -53,6 +54,7 @@ export const PLATFORM_SKILL_QA_IMAGE_ACTION = "platformSkillQaImage";
 const PLATFORM_SKILL_QA_MAX_OUTPUT_TOKENS = 131_072;
 
 export type PlatformSkillQaAskResult = {
+  modelName?: string;
   answer: string;
   remainingFreeToday: number;
   usedToday: number;
@@ -761,16 +763,19 @@ export async function askPlatformSkillQa(params: {
     ];
   }
 
-  const ASK_MAX_ATTEMPTS = manhuaContext?.previsEdit ? 2 : 3;
+  const ASK_MAX_ATTEMPTS = manhuaContext ? MANHUA_ADVISOR_HOPS.length : 3;
   let parsed: ReturnType<typeof parseAskJson> | null = null;
   let lastErr = "";
+  let usedModel = modelName;
   for (let attempt = 1; attempt <= ASK_MAX_ATTEMPTS; attempt += 1) {
     try {
-      if (manhuaContext) params.onStream?.("reset");
+      const hop = manhuaContext ? MANHUA_ADVISOR_HOPS[attempt - 1] : undefined;
+      if (hop) params.onStream?.("reset", hop.label);
       const response = await invokeLLM({
         ...(manhuaContext ? { onContentDelta: (text: string) => params.onStream?.("delta", text) } : {}),
         provider: "openai",
-        modelName,
+        modelName: hop?.modelName || modelName,
+        ...(hop ? { openAiGateway: hop.gateway, abortSignal: AbortSignal.timeout(180_000) } : {}),
         // 漫剧顾问走固定 DeepSeek 版本；普通平台问答沿用原模型与预算。
         max_tokens: manhuaContext?.previsEdit ? 16_384 : manhuaContext ? MANHUA_ADVISOR_MAX_OUTPUT_TOKENS : PLATFORM_SKILL_QA_MAX_OUTPUT_TOKENS,
         response_format: { type: "json_object" },
@@ -784,9 +789,11 @@ export async function askPlatformSkillQa(params: {
         const patch = parseAdvisorPrevisPatch(parsed.answer);
         if (!patch.unsupportedZh.length) applyAdvisorPrevisPatch(manhuaPrevisSpecSchema.parse(JSON.parse(manhuaContext.previsEdit.specJson)), patch);
       }
+      usedModel = hop?.modelName || modelName;
       lastErr = "";
       break;
     } catch (e) {
+      if (isSseContentSafetyError(e)) throw e;
       // 候选检查失败时清掉本轮解析值，避免三次失败后仍返回无效候选。
       parsed = null;
       lastErr = e instanceof Error ? e.message : String(e);
@@ -841,6 +848,7 @@ export async function askPlatformSkillQa(params: {
 
   return {
     answer: parsed.answer,
+    ...(manhuaContext ? { modelName: usedModel } : {}),
     remainingFreeToday: Math.max(0, dailyLimit - Math.min(usedAfter, dailyLimit)),
     usedToday: usedAfter,
     dailyLimit,

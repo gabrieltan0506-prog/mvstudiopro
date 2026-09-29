@@ -83,6 +83,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
   const [quota, setQuota] = useState<{ remaining: number; price: number } | null>(null);
   const [streamPending, setStreamPending] = useState(false);
   const [streamText, setStreamText] = useState("");
+  const [streamModel, setStreamModel] = useState("DeepSeek V4.1 Flash");
   const inFlight = useRef(false);
   const mounted = useRef(true);
   const questionRef = useRef<HTMLTextAreaElement | null>(null);
@@ -156,7 +157,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
         return;
       }
       const input = { requestId: request.requestId, question: request.question, rawQuestion: request.rawQuestion, manhuaContext: request.manhuaContext, confirmPaid: confirmPaid || undefined, confirmedCredits: confirmPaid ? confirmedCredits : undefined };
-      const res = await streamManhuaAdvisor(input, text => { if (mounted.current) setStreamText(text); });
+      const res = await streamManhuaAdvisor(input, text => { if (mounted.current) setStreamText(text); }, label => { if (mounted.current) setStreamModel(label); });
       const answer = String(res.answer || "").trim();
       if (!answer) throw new Error("本次没有收到有效回答，请重试原问题。");
       if (request.manhuaContext?.previsEdit) {
@@ -353,7 +354,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
         </div>)}
         {previsKey && (props.previsTarget || previsCandidate) && <details className="text-xs"><summary onClick={recoverPreviews} className="cursor-pointer py-2 text-cyan-100">找回本项目的独立试看</summary>{savedPreviews.map(({ key, trial }) => <button key={key} type="button" className="my-1 block rounded border border-white/20 px-2 py-2 text-left" onClick={() => { try { localStorage.setItem(`${previsKey}:trial`, trial.request.requestId); localStorage.setItem(previsKey, JSON.stringify(trial.candidate)); setAutoPrevisStart(false); setPrevisCandidate(trial.candidate); } catch { toast.error("试看恢复记录无法保存，未切换。"); } }}>{trial.candidate.patch.summaryZh} · {trial.request.spec.durationSec}秒</button>)}</details>}
         {previsCandidate && <ManhuaAdvisorPrevisComparison key={JSON.stringify(previsCandidate)} candidate={previsCandidate} storageKey={previsKey ? `${previsKey}:trial` : null} autoStart={autoPrevisStart} onPrepare={props.onPreparePrevis} onRevise={() => { setDraft("保留这版其他安排，我想调整："); questionRef.current?.focus(); }} disabled={asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onApply={props.onApplyPrevis} />}
-        {asking && <div role="status" className="whitespace-pre-wrap rounded-lg border border-cyan-300/20 p-3 text-sm leading-6 text-cyan-100"><p className="mb-2 text-xs">DeepSeek V4.1 Flash · {streamText ? "正在生成建议，尚未校验完成…" : "正在结合项目分析…"}</p>{streamText}</div>}
+        {asking && <div role="status" className="whitespace-pre-wrap rounded-lg border border-cyan-300/20 p-3 text-sm leading-6 text-cyan-100"><p className="mb-2 text-xs">{streamModel} · {streamText ? "正在生成建议，尚未校验完成…" : "正在结合项目分析…"}</p>{streamText}</div>}
         {pendingPaid && <div role="alert" className="rounded-lg border border-amber-300/30 bg-amber-400/10 p-3 text-xs leading-5 text-amber-100">
           <p>{pendingPaid.hint}</p><p className="mt-1">原问题：{pendingPaid.request.label}（按提问时快照继续）</p><p className="mt-1 whitespace-pre-wrap text-white/75">{pendingPaid.request.rawQuestion}</p>
           {!sessionKey && <p className="mt-2 font-semibold">先确认项目后再付费咨询，避免改稿丢回执。本次不会发起扣点请求。</p>}

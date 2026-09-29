@@ -34,7 +34,7 @@ export function readableAdvisorStream(raw: string, previs: boolean): string {
   return previs ? partialJsonString(answer, "summaryZh") : answer;
 }
 
-export async function streamManhuaAdvisor(input: Input, onText: (text: string) => void): Promise<Result> {
+export async function streamManhuaAdvisor(input: Input, onText: (text: string) => void, onModel?: (label: string) => void): Promise<Result> {
   const url = withLongJobsFlyDirect("/api/manhua-advisor/stream");
   const response = await withFlyHealthGate(flyHealthProbeOriginForUrl(url), () => fetch(url, {
     method: "POST", credentials: "include", headers: { "Content-Type": "application/json", Accept: "text/event-stream" }, body: JSON.stringify(input),
@@ -55,8 +55,8 @@ export async function streamManhuaAdvisor(input: Input, onText: (text: string) =
     if (!payload) return;
     const data = JSON.parse(payload);
     if (event === "error") throw new Error(data.message || "顾问返回失败，请恢复原问题");
-    if (event === "reset") { raw = ""; onText(""); }
-    if (event === "delta") { raw += String(data.text || ""); onText(readableAdvisorStream(raw, Boolean(input.manhuaContext?.previsEdit))); }
+    if (event === "reset") { raw = ""; onText(""); if (typeof data.text === "string" && data.text) onModel?.(data.text); }
+    if (event === "delta") { raw += String(data.text || ""); if (raw.length > 4 * 1024 * 1024) throw new Error("顾问输出超过处理范围，请恢复原问题"); onText(readableAdvisorStream(raw, Boolean(input.manhuaContext?.previsEdit))); }
     if (event === "result") {
       if (typeof data.answer !== "string" || !data.answer.trim() || typeof data.remainingFreeToday !== "number") throw new Error("顾问回执不完整，请恢复原问题");
       result = data;
