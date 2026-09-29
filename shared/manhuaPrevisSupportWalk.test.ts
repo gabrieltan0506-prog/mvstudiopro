@@ -21,6 +21,14 @@ describe('顾问搀扶事件完整传递',()=>{
   const conflict={...raw,actors:[{...raw.actors[0],end:[9,9]}]};expect(()=>applyAdvisorPrevisPatch(spec,parseAdvisorPrevisPatch(JSON.stringify(conflict)))).toThrow();
   raw.actors[0].motionRoute[1].timeSec=3.95;expect(()=>applyAdvisorPrevisPatch(spec,parseAdvisorPrevisPatch(JSON.stringify(raw)))).toThrow();
  });
+ it('接受原样身份回传，但拒绝修改身份、造型与出场范围',()=>{
+  const {spec,event}=setup();const actor=spec.actors[0];
+  const raw={kind:'previs_edit_v1',summaryZh:'扶稳同行',unsupportedZh:[],interactions:[event],actors:[{id:actor.id,nameZh:actor.nameZh,colorIndex:actor.colorIndex,shape:actor.shape,visibleRanges:actor.visibleRanges}]};
+  expect(applyAdvisorPrevisPatch(spec,parseAdvisorPrevisPatch(JSON.stringify(raw))).actors).toEqual(spec.actors);
+  for(const changed of [{nameZh:'换人'},{shape:'horse'},{colorIndex:5},{visibleRanges:[{startSec:0,endSec:1}]}]){
+   expect(()=>applyAdvisorPrevisPatch(spec,parseAdvisorPrevisPatch(JSON.stringify({...raw,actors:[{...raw.actors[0],...changed}]})))).toThrow('锁定字段');
+  }
+ });
  it('拒绝坐姿叠加、过早松手、过短扶稳、未知人物',()=>{
   for(const variant of ['sit','early','short','missing']){
    const {spec,event}=setup();spec.interactions=[event];

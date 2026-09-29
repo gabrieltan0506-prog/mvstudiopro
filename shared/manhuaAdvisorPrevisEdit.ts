@@ -43,7 +43,7 @@ export function withAdvisorPrevisVideo(target: AdvisorPrevisTarget, source: Advi
   if (!source || target.clipId !== source.target.clipId || target.scopeId !== source.target.scopeId) return target;
   return advisorPrevisTargetSchema.parse({ ...target, previousPreviewRequestId: source.requestId, previousPreviewSpecJson: source.specJson });
 }
-const actorEdit = previsActorSchema.pick({ id: true, start: true, end: true, moveStartSec: true, moveEndSec: true, facingDeg: true, motionRoute: true, actions: true, hitReaction: true }).partial().required({ id: true }).strict();
+const actorEdit = previsActorSchema.pick({ id: true, nameZh: true, colorIndex: true, shape: true, visibleRanges: true, start: true, end: true, moveStartSec: true, moveEndSec: true, facingDeg: true, motionRoute: true, actions: true, hitReaction: true }).partial().required({ id: true }).strict();
 export const advisorPrevisPatchSchema = z.object({
   kind: z.literal("previs_edit_v1"), summaryZh: safeText(1200),
   unsupportedZh: z.array(safeText(300)).max(12),
@@ -83,6 +83,12 @@ export function applyAdvisorPrevisPatch(spec: ManhuaPrevisSpec, patch: AdvisorPr
     cameras: patch.cameras ?? spec.cameras,
     actors: spec.actors.map(a => {
       const edit=edits.find(e=>e.id===a.id), route=edit?.motionRoute;
+      // 模型可原样回传身份元数据，但不得借候选修改身份或在场状态。
+      for (const key of ["nameZh", "colorIndex", "shape", "visibleRanges"] as const) {
+        if (edit?.[key] !== undefined && JSON.stringify(edit[key]) !== JSON.stringify(a[key])) {
+          throw new Error(`顾问修改了角色锁定字段${key}，未应用`);
+        }
+      }
       // 路线是新位置的真源；只补省略的冗余字段，显式冲突仍交给严格schema拒绝。
       return {...a,...(route ? {start:route[0].position,end:route.at(-1)!.position,facingDeg:route[0].facingDeg} : {}),...edit};
     }),
