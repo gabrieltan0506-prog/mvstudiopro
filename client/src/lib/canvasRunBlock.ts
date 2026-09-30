@@ -2344,6 +2344,9 @@ export async function runCanvasBlock(
   upstream: CanvasUpstreamContext = { visionImages: [], texts: [] },
   runOptions?: Parameters<typeof runCanvasBlockInner>[3],
 ): Promise<Awaited<ReturnType<typeof runCanvasBlockInner>>> {
+  if (block.kind === "video" && block.manhuaGenerationHold && !runOptions?.previewOnly) {
+    throw new Error("本段已设为保留，不生成；原片与音轨保持。请先明确取消保留再重跑。");
+  }
   if (runOptions?.pilotRun) {
     // 试片由服务端审核记录恢复，不能注册成正片节点的自动恢复任务。
     try {

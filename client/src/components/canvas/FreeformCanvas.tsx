@@ -402,7 +402,10 @@ function blockEdgeAnchor(block: CanvasBlock) {
 }
 
 function patchBlock(blocks: CanvasBlock[], id: string, patch: Partial<CanvasBlock>) {
-  return blocks.map((b) => (b.id === id ? { ...b, ...patch } : b));
+  return blocks.map((b) => (b.id === id ? { ...b, ...patch,
+    manhuaPromptEdit: b.manhuaPromptEdit && typeof patch.prompt === "string"
+      ? { ...b.manhuaPromptEdit, text: patch.prompt } : patch.manhuaPromptEdit ?? b.manhuaPromptEdit,
+  } : b));
 }
 
 function assetKindLabel(kind: ReturnType<typeof inferCanvasAssetKindFromFileName>) {
@@ -1698,6 +1701,7 @@ export default function FreeformCanvas({
       if (referencePreparationRef.current.has(blockId)) return;
       const block = blocks.find((b) => b.id === blockId);
       if (!block) return;
+      if (block.manhuaGenerationHold) { toast.message("本段保留，不生成；原片与音轨保持"); return; }
       // 与工厂管线对齐：切断 recap→story 误连，避免手点节点吃到前情提要图
       const { blocks: safeBlocks, edges: safeEdges } = sanitizeManhuaRecapUpstreamLinks(blocks, edges);
       if (

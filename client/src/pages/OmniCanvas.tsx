@@ -1,3 +1,4 @@
+import { normalizeManhuaPromptSeconds } from "@shared/manhuaPromptSeconds";
 import ManhuaTemplatePicker from "@/components/canvas/ManhuaTemplatePicker";
 import { buildTemplateAdviceQuestion } from "@/lib/manhuaTemplateAdvice";
 import { MANHUA_SHOT_CORE_BANK } from "@shared/manhuaShotCoreBank";
@@ -9580,6 +9581,7 @@ export default function OmniCanvas() {
         toast.message("找不到成片节点");
         return;
       }
+      if (hit.manhuaGenerationHold) { toast.message("本段保留，不重拍"); return; }
       const episodeIndex = getBlockEpisodeIndex(hit) ?? writerFocusEpisode;
       const localFrag = resolveClipLocalSegmentIndex(hit.id, hit.prompt, episodeIndex);
       const attempt = Math.max(1, Math.floor((hit.manhuaRetake?.attempt || 0) + 1));
@@ -9658,6 +9660,7 @@ export default function OmniCanvas() {
         toast.error("没有可编辑的原片");
         return;
       }
+      if (hit.manhuaGenerationHold) { toast.message("本段保留，不编辑原片"); return; }
       if (!instruction) {
         toast.message("请先写清要改的画面");
         return;
@@ -11144,6 +11147,11 @@ export default function OmniCanvas() {
                     });
                   }}
                   onGenerateFragment={({ shotIndex }) => {
+                    if (blocksRef.current.some(block => block.manhuaGenerationHold &&
+                      (getBlockEpisodeIndex(block) ?? 1) === writerFocusEpisode &&
+                      resolveClipLocalSegmentIndex(block.id, block.prompt, writerFocusEpisode) === shotIndex)) {
+                      toast.message("本段保留，不生成"); return;
+                    }
                     const pilotLocked = activePilotGateEntry?.status !== "approved";
                     if (pilotLocked && shotIndex !== 1) {
                       toast.message("请先生成并审阅首段试片");
@@ -11166,6 +11174,8 @@ export default function OmniCanvas() {
                       fragmentShotIndex: pilotLocked ? 1 : shotIndex,
                       pilotRun: pilotLocked,
                       pilotDurationSec,
+                      maxRetries: 0,
+                      stopOnError: true,
                     });
                   }}
                   pilotGate={{
@@ -11359,10 +11369,37 @@ export default function OmniCanvas() {
                       else openManhuaFactoryCanvas();
                     }, 120);
                   }}
+                  onSaveFullClipPrompt={(clipId, text) => {
+                    text = text === null ? null : normalizeManhuaPromptSeconds(text).trim();
+                    const current = blocksRef.current.find(block => block.id === clipId);
+                    if (factoryBusy || !current?.manhuaAutoSegment?.revision || (text !== null && (!text.trim() || text.length > 120_000))) {
+                      toast.error("无法保存全文", { description: factoryBusy ? "请等待当前任务结束" : "本段原稿身份未就绪或提示词为空/过长" });
+                      return false;
+                    }
+                    const saved = persistCanvasAudioBlock(blocksRef, clipId, block => ({ ...block,
+                      prompt: text === null ? block.prompt : text.trim(),
+                      manhuaPromptEdit: text === null ? undefined : { text: text.trim(), sourceRevision: current.manhuaAutoSegment!.revision } }),
+                      next => {
+                        const fromIds = resolveManhuaClipRelatedAssetNodeIds({ clipPrompt: text ?? current.prompt, blocks: next, registry: manhuaAssetMaps.registry });
+                        const synced = syncManhuaClipAssetEdges(edges, clipId, fromIds);
+                        if (!saveCanvasState(next, synced)) return false;
+                        setEdges(synced);
+                        return true;
+                      }, setBlocks);
+                    if (!saved) toast.error("本段全文未保存，请保留编辑内容后重试");
+                    return saved;
+                  }}
+                  onSetClipGenerationHold={(clipId, hold) => {
+                    if (factoryBusy) { toast.message("请等待当前任务结束后设置保留"); return; }
+                    persistCanvasAudioBlock(blocksRef, clipId,
+                      block => ({ ...block, manhuaGenerationHold: hold || undefined }),
+                      next => saveCanvasState(next, edges), setBlocks);
+                  }}
                   onUpdateClipPrompt={(clipId, prompt) => {
                     setBlocks((prev) => {
                       const next = prev.map((b) =>
-                        b.id === clipId ? { ...b, prompt, error: undefined } : b,
+                        b.id === clipId ? { ...b, prompt, error: undefined,
+                          manhuaPromptEdit: b.manhuaPromptEdit ? { ...b.manhuaPromptEdit, text: prompt } : undefined } : b,
                       );
                       // 工作台敲 @ 锁人/场/道时，同步把对应资产节点接到这段成片
                       const fromIds = resolveManhuaClipRelatedAssetNodeIds({
@@ -11460,7 +11497,9 @@ export default function OmniCanvas() {
                       toast.message("原稿分段已变化，请重新选择并确认费用；本次未提交生成。");
                       return;
                     }
-                    const plannedSegments = Array.from(new Set(segmentIndexes)).sort((a, b) => a - b);
+                    const plannedSegments = Array.from(new Set(segmentIndexes)).filter(index => !blocksRef.current.some(block =>
+                      block.manhuaGenerationHold && (getBlockEpisodeIndex(block) ?? 1) === writerFocusEpisode &&
+                      resolveClipLocalSegmentIndex(block.id, block.prompt, writerFocusEpisode) === index)).sort((a, b) => a - b);
                     if (!plannedSegments.length) {
                       toast.message("本集段成片已齐，无需补跑");
                       return;

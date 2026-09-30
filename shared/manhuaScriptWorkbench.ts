@@ -1,3 +1,4 @@
+import { normalizeManhuaPromptSeconds } from "./manhuaPromptSeconds";
 /**
  * 剧本工作台：从工厂节点文本推导「片段内多镜」列表，供批量静帧与成片对齐。
  */
@@ -1317,7 +1318,7 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
   const storyCoreBlock = storyCore ? `【本段戏核】${storyCore}` : "";
   // 段头场景锁 + 光影氛围 + 秒轴（动作/运镜轨迹/景别）；资产/@Image 由 ensure 挂
   return stripManhuaClipForbiddenBoards(
-    stripManhuaPromptSlop([headBoard, storyCoreBlock, continuation, timeline, soundBlock, tailHold].filter(Boolean).join("\n")),
+    normalizeManhuaPromptSeconds(stripManhuaPromptSlop([headBoard, storyCoreBlock, continuation, timeline, soundBlock, tailHold].filter(Boolean).join("\n"))),
   );
 }
 

@@ -77,3 +77,56 @@ it("白模展开时直接打开当前段提示词，真实编译检查说明过�
     await page.screenshot({path:'/tmp/0930-video-prompts-entry.png'});
   } finally {await context.close();}
 },120000);
+
+it("整段可修改保存、未保存拦截单段生成、第二段保留并重新进入恢复", async () => {
+  const context = await browser.createBrowserContext();
+  const page = await context.newPage(); page.setDefaultTimeout(10000);
+  await page.setRequestInterception(true);
+  page.on("request", request => request.url().startsWith("data:") ? void request.continue() : void request.respond({ status: 200, contentType: "text/html", body: '<div id="root"></div>' }));
+  const enter = async () => {
+    await page.addStyleTag({ content: css }); await page.addScriptTag({ content: bundle });
+    await page.waitForFunction(() => Array.from(document.querySelectorAll("*")).some(e => !e.children.length && e.textContent?.includes("进入引导式漫剧")));
+    await page.evaluate(() => (Array.from(document.querySelectorAll("*")).find(e => !e.children.length && e.textContent?.includes("进入引导式漫剧")) as HTMLElement).click());
+    await page.waitForSelector('[data-manhua-action="open-video-prompts"]');
+    await page.click('[data-manhua-action="open-video-prompts"]');
+    await page.waitForSelector('[data-manhua-full-prompt-editor="1"]');
+  };
+  try {
+    await page.setViewport({ width: 1280, height: 700 }); await page.goto("http://localhost:41836/"); await enter();
+    const count = await page.$$eval('[data-manhua-prompt-segment]', rows => rows.length);
+    expect(count).toBeGreaterThanOrEqual(3);
+    expect(await page.$$eval('[data-manhua-generate-segment]', buttons => buttons.map(button => Number(button.getAttribute('data-manhua-generate-segment'))))).toEqual(Array.from({ length: count }, (_, i) => i + 1));
+    expect(await page.$eval('[aria-label="视频提示词"]', panel => panel.textContent)).not.toContain('确认并生成缺段');
+    const original = await page.$eval('[data-manhua-full-prompt-editor="1"]', e => (e as HTMLTextAreaElement).value);
+    const edited = original.replace(/0–[\d.]+s：/, '0–4.215999999s：') + '\n【本次全文修改】人物先抬眼，再回头，说「你在哪里？」';
+    const before = await page.evaluate(() => JSON.stringify((window as any).__posts));
+    await page.$eval('[data-manhua-full-prompt-editor="1"]', (node, text) => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+      setter.call(node, text); node.dispatchEvent(new Event('input', { bubbles: true }));
+    }, edited);
+    expect(await page.$eval('[data-manhua-full-prompt-editor="1"]', node => (node as HTMLTextAreaElement).value)).toBe(edited);
+    await page.click('[data-manhua-generate-segment="1"]');
+    expect(await page.$eval('[data-manhua-prompt-segment="1"]', node => node.textContent)).toContain('有未保存的修改');
+    expect(await page.evaluate(() => JSON.stringify((window as any).__posts))).toBe(before);
+    await page.click('[data-manhua-save-prompt="1"]');
+    await page.waitForFunction(() => (window as any).__wbProps.blocks.some((block: any) => block.manhuaPromptEdit?.text.includes('本次全文修改')));
+    const saved = await page.$eval('[data-manhua-full-prompt-editor="1"]', node => (node as HTMLTextAreaElement).value);
+    expect(saved).toContain('本次全文修改'); expect(saved).not.toMatch(/\d+\.\d{2,}(?:s|秒)/);
+    const secondBefore = await page.evaluate(() => {
+      const block = (window as any).__wbProps.blocks.find((b: any) => /-g02(?:-|$)/.test(b.id));
+      return { outputUrl: block.outputUrl, outputUrls: block.outputUrls, audioStudio: block.audioStudio };
+    });
+    await page.click('input[aria-label="第 2 段保留，不生成"]');
+    await page.waitForFunction(() => (document.querySelector('[data-manhua-generate-segment="2"]') as HTMLButtonElement)?.disabled);
+    await page.reload({ waitUntil: 'domcontentloaded' }); await enter();
+    expect(await page.$eval('[data-manhua-full-prompt-editor="1"]', node => (node as HTMLTextAreaElement).value)).toBe(saved);
+    expect(await page.$eval('input[aria-label="第 2 段保留，不生成"]', node => (node as HTMLInputElement).checked)).toBe(true);
+    expect(await page.$eval('[data-manhua-generate-segment="2"]', node => (node as HTMLButtonElement).disabled)).toBe(true);
+    expect(await page.evaluate(() => {
+      const block = (window as any).__wbProps.blocks.find((b: any) => /-g02(?:-|$)/.test(b.id));
+      return { outputUrl: block.outputUrl, outputUrls: block.outputUrls, audioStudio: block.audioStudio };
+    })).toEqual(secondBefore);
+    expect(await page.evaluate(() => (window as any).__posts)).toEqual([]);
+    await page.screenshot({ path: '/tmp/0930-segment-full-prompt-control.png' });
+  } finally { await context.close(); }
+}, 120000);

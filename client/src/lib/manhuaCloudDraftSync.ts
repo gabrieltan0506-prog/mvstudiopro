@@ -489,6 +489,8 @@ export function cloudDraftBlocksToCanvas(
         raw as { manhuaFinalPostProd?: CanvasBlock["manhuaFinalPostProd"] }
       ).manhuaFinalPostProd,
       manhuaFinalVersions: raw.manhuaFinalVersions,
+      manhuaGenerationHold: raw.manhuaGenerationHold === true || undefined,
+      manhuaPromptEdit: raw.manhuaPromptEdit,
       manhuaAutoSegment: raw.manhuaAutoSegment,
       manhuaRetake: raw.manhuaRetake,
       videoResolution: raw.videoResolution,

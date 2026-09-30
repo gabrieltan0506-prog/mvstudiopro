@@ -1,3 +1,4 @@
+import { normalizeManhuaPromptSeconds } from "./manhuaPromptSeconds";
 /**
  * 格式层规则引擎(零 token 零计费):标记归一化、避审替换、引擎钳制、
  * 多模态参考数量与时长校验。确定性纯函数,「整理格式(免费)」按钮直调。
@@ -143,7 +144,7 @@ export function formatPromptForEngine(
 
   const limits: CompilerEngineProfile = COMPILER_ENGINE_LIMITS[engine];
   const issues: FormatIssue[] = [];
-  let text = String(raw || "").trim();
+  let text = normalizeManhuaPromptSeconds(String(raw || "").trim());
 
   if (!text) {
     return {

@@ -16,7 +16,7 @@ describe("自动分段身份与连续窗口", () => {
     expect(shotIndexesForSegment(4, segments)).toEqual([101]);
     expect(segments.flatMap(s => s.shots).filter(s => s.dialogueZh)).toHaveLength(1);
     const prompt = formatWorkbenchSegmentClipInjectBlock({ segmentIndex: 4, durationSec: segments[3]!.durationSec, shots: segments[3]!.shots });
-    expect(prompt).toContain("原镜内23.25–31秒");
+    expect(prompt).toContain("原镜内23.3–31秒");
     expect(prompt).toContain("非剪辑切镜");
     expect(prompt).not.toContain("只说一遍");
     expect(JSON.stringify(source)).toBe(original);
