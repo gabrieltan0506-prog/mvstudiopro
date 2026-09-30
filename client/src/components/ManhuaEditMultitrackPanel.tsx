@@ -100,6 +100,9 @@ type Props = {
   onOpenClipDock?: () => void;
   onGenerateCurrentVersion?: () => void;
   currentVersionCredits?: number;
+  onRegisterSegmentClip?: (segmentIndex: number, file: File) => void;
+  registerClipBusy?: boolean;
+  registerClipProgress?: number | null;
   editTransition?: "cut" | "fade";
   onEditTransitionChange?: (next: "cut" | "fade") => void;
   deliveryPackage?: ManhuaDeliveryPackage | null;
@@ -196,6 +199,9 @@ export default function ManhuaEditMultitrackPanel({
   onOpenClipDock,
   onGenerateCurrentVersion,
   currentVersionCredits,
+  onRegisterSegmentClip,
+  registerClipBusy = false,
+  registerClipProgress = null,
   editTransition = "fade",
   onEditTransitionChange,
   deliveryPackage,
@@ -361,6 +367,29 @@ export default function ManhuaEditMultitrackPanel({
           <div className="flex min-h-[190px] flex-1 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-[#070b11]">
             {selectedSegmentMedia ? <video key={selectedSegmentMedia} src={selectedSegmentMedia} controls playsInline preload="metadata" className="h-full max-h-[48vh] w-full object-contain" aria-label={`来源第 ${selectedSegment.sourceIndex} 段已生成画面预览`} /> : <div className="px-5 text-center text-sm text-white/45">这段还没有可播放的源画面。生成后会在这里预览，已保存的镜头顺序和剪辑点保留。</div>}
           </div>
+          {!selectedSegmentMedia && onRegisterSegmentClip ? <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button type="button" data-manhua-edit-register-segment={selectedSegment.sourceIndex}
+              disabled={Boolean(factoryBusy) || registerClipBusy}
+              onClick={() => {
+                if (factoryBusy || registerClipBusy) return;
+                const segmentIndex = selectedSegment.sourceIndex;
+                const input = document.createElement("input");
+                input.type = "file";
+                input.accept = "video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm";
+                input.onchange = () => {
+                  const file = input.files?.[0];
+                  input.remove();
+                  if (file) onRegisterSegmentClip(segmentIndex, file);
+                };
+                input.oncancel = () => input.remove();
+                document.body.appendChild(input);
+                input.click();
+              }}
+              className="min-h-10 rounded-lg border border-cyan-300/35 px-3 py-2 text-xs text-cyan-100 disabled:opacity-40">
+              {registerClipBusy ? `正在登记成片${registerClipProgress == null ? "" : ` · ${Math.round(registerClipProgress * 100)}%`}` : `登记第 ${selectedSegment.sourceIndex} 段已有成片`}
+            </button>
+            <p className="text-xs text-white/45">选用已有原片，不重新生成或配音；登记后仍须检查画面和声音。</p>
+          </div> : null}
           {selectedSegmentMedia ? <p className="mt-2 text-[11px] text-white/45">预览的是本段已生成源片；剪辑顺序、转场和字幕以「生成成片」后的当前版本为准。</p> : null}
         </div>
         <div className="flex min-h-0 min-w-0 flex-col rounded-xl border border-white/10 bg-white/[0.025] p-3">
