@@ -1,3 +1,5 @@
+import ManhuaTemplatePicker from "@/components/canvas/ManhuaTemplatePicker";
+import { buildTemplateAdviceQuestion } from "@/lib/manhuaTemplateAdvice";
 import { MANHUA_SHOT_CORE_BANK } from "@shared/manhuaShotCoreBank";
 import { advisorWorldSourceRevision, type AdvisorWorldCandidate, type AdvisorWorldTarget } from "@shared/manhuaAdvisorWorld";
 import { classifyManhuaDirectionSceneType, resolveManhuaDirectionCard } from "@shared/manhuaDirectionCanon";
@@ -1127,6 +1129,8 @@ export default function OmniCanvas() {
   /** 次要入口：粘贴 / 上传已有剧本 */
   const [writerImportDraft, setWriterImportDraft] = useState("");
   const writerImportFileRef = useRef<HTMLInputElement | null>(null);
+  const writerImportEditorRef = useRef<HTMLDetailsElement | null>(null);
+  const writerImportTextRef = useRef<HTMLTextAreaElement | null>(null);
   const [writerPack, setWriterPack] = useState<ManhuaWriterPack | null>(
     () => initialWriterSession?.writerPack ?? null,
   );
@@ -1427,6 +1431,7 @@ export default function OmniCanvas() {
   const [advisorPrevisClipId, setAdvisorPrevisClipId] = useState<string | null>(null);
   const [advisorPreviewSelection, setAdvisorPreviewSelection] = useState<{ clipId: string; requestId?: string } | null>(null);
   const [advisorFocusSection, setAdvisorFocusSection] = useState<"templates" | null>(null);
+  const [advisorQuestionSeed, setAdvisorQuestionSeed] = useState<{ id: string; question: string; projectKey: string } | null>(null);
   const [advisorSelection, setAdvisorSelection] = useState<AdvisorSelection | null>(null);
   /** 工作台上报的缺口／关键帧／3D 状态；工作台未挂载时为 null，顾问按未知处理 */
   const [advisorSignals, setAdvisorSignals] = useState<ManhuaWorkbenchAdvisorSignals | null>(null);
@@ -11863,58 +11868,36 @@ export default function OmniCanvas() {
                     disabled={writerBusy || factoryBusy}
                     onClick={() => {
                       setPublicTemplateId(recommendedViralTemplate.publicId);
-                      setWriterConfirmed(false);
                     }}
                     className="mt-1.5 rounded-lg border border-amber-300/25 bg-amber-400/10 px-2.5 py-1.5 text-[10px] font-semibold text-amber-100 hover:bg-amber-400/15 disabled:opacity-50"
                   >
-                    推荐：{recommendedViralTemplate.nameZh || "剧情增强方案"}
+                    适合这个题材：{recommendedViralTemplate.storyPreview?.teaserTitleZh || recommendedViralTemplate.nameZh || "剧情增强方案"}
                   </button>
                 ) : null}
-                <select
+                <ManhuaTemplatePicker
+                  cards={approvedViralTemplateCards}
                   value={publicTemplateId}
-                  onChange={(e) => {
-                    setPublicTemplateId(e.target.value);
-                    setWriterConfirmed(false);
-                  }}
                   disabled={writerBusy || factoryBusy || manhuaViralTemplatesQuery.isLoading}
-                  className="mt-1.5 w-full rounded-lg border border-white/12 bg-black/50 px-2.5 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
-                >
-                  <option value="">不使用剧情增强</option>
-                  {(manhuaViralTemplatesQuery.data?.groups || []).map((group) => (
-                    <optgroup key={group.laneZh} label={group.laneZh}>
-                      {group.items.map((tpl) => (
-                        <option key={tpl.publicId} value={tpl.publicId}>
-                          {/* 公开卡本身即匿名（爆款节奏 公开码 · N 拍） */}
-                          {`${tpl.nameZh}${tpl.beatCount ? ` · ${tpl.beatCount} 拍` : ""}`}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
-                {selectedViralTemplate ? (
-                  <div className="mt-2 rounded-lg border border-cyan-200/15 bg-black/25 px-2.5 py-2 text-[10px] leading-4 text-white/60">
-                    <div className="font-semibold text-cyan-50/85">
-                      {selectedViralTemplate.nameZh || selectedViralTemplate.laneZh}
-                    </div>
-                    <div>
-                      <span className="text-cyan-100/75">特色：</span>
-                      {selectedViralTemplate.featureZh}
-                    </div>
-                    <div className="mt-0.5">
-                      <span className="text-cyan-100/75">简介：</span>
-                      {selectedViralTemplate.introZh}
-                    </div>
-                    <div className="mt-1 text-amber-100/70">具体剧情由当前大模型自由发挥。</div>
-                  </div>
-                ) : manhuaViralTemplatesQuery.isSuccess && approvedViralTemplateCards.length === 0 ? (
-                  <p className="mt-1.5 text-[10px] text-white/35">
-                    暂无可用的剧情增强方案；垃圾、待审和已拒绝内容不会显示。
-                  </p>
-                ) : (
-                  <p className="mt-1.5 text-[10px] text-white/35">
-                    只增强开场、冲突和追更钩子；题材、人物和已锁剧情始终优先。
-                  </p>
-                )}
+                  onChange={(id) => { setPublicTemplateId(id); }}
+                  onWrite={() => {
+                    if (writerImportEditorRef.current) writerImportEditorRef.current.open = true;
+                    requestAnimationFrame(() => {
+                      writerImportEditorRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+                      writerImportTextRef.current?.focus({ preventScroll: true });
+                    });
+                  }}
+                  onAskAdvisor={(card) => {
+                    advisor3dOpenVersion.current += 1;
+                    setAdvisor3dContext(undefined);
+                    setAdvisorPrevisClipId(null);
+                    setAdvisorFocusSection(null);
+                    setAdvisorQuestionSeed({ id: crypto.randomUUID(), question: buildTemplateAdviceQuestion(card), projectKey: manhuaAdvisorMountKey(user?.id != null ? String(user.id) : undefined, projectBible?.confirmedAt, writerPack) });
+                    setAdvisorOpen(true);
+                  }}
+                />
+                {manhuaViralTemplatesQuery.isSuccess && approvedViralTemplateCards.length === 0 ? (
+                  <p className="mt-1.5 text-[10px] text-white/35">暂无可用的剧情增强方案；待审和已拒绝内容不会显示。</p>
+                ) : null}
                 {/* 免费试写：选了模板才出现；先看单集差异，满意再走付费全集扩写 */}
                 {selectedViralTemplate ? (
                   <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -12330,20 +12313,26 @@ export default function OmniCanvas() {
               </div>
 
               <details
+                ref={writerImportEditorRef}
                 id="manhua-writer-import-editor"
                 className="mt-3 rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2"
               >
                 <summary className="cursor-pointer list-none text-[11px] font-medium text-white/55 marker:content-none [&::-webkit-details-marker]:hidden">
                   <span className="inline-flex items-center gap-1.5">
                     <FileUp className="h-3.5 w-3.5 text-white/40" />
-                    已有正版剧本？导入文本（粘贴 / .txt / .md）
+                    自己写 / 导入已有剧本
                   </span>
                 </summary>
                 <div className="mt-2 border-t border-white/8 pt-2">
                   <p className="text-[10px] leading-5 text-white/40">
-                    次要入口，不跑扩写。请自行确保版权合规。正文需含「第1集」「第2集」等分集标记，或粘贴平台扩写格式。
+                    可按选定模板的开篇方向自己写，也可粘贴已有剧本。正文需含「第1集」「第2集」等分集标记。写好后导入为剧情包，再确认采用。
                   </p>
+                  {selectedViralTemplate ? <p className="mt-2 text-[11px] leading-relaxed text-amber-100/85">
+                    写作参考 · {selectedViralTemplate.publicId.replace(/^mt_/i, "").toUpperCase()} · {selectedViralTemplate.storyPreview?.teaserTitleZh || selectedViralTemplate.nameZh}
+                    {selectedViralTemplate.storyPreview ? `：${selectedViralTemplate.storyPreview.premiseZh}` : ""}
+                  </p> : null}
                   <textarea
+                    ref={writerImportTextRef}
                     value={writerImportDraft}
                     onChange={(e) => setWriterImportDraft(e.target.value)}
                     disabled={writerBusy || factoryBusy}
@@ -13611,6 +13600,8 @@ export default function OmniCanvas() {
         onPreparePrevis={prepareAdvisorPrevis}
         onApplyPrevis={applyAdvisorPrevis}
         focusSection={advisorFocusSection}
+        questionSeed={advisorQuestionSeed?.projectKey === manhuaAdvisorMountKey(user?.id != null ? String(user.id) : undefined, projectBible?.confirmedAt, writerPack) ? advisorQuestionSeed : null}
+        onQuestionSeedApplied={() => setAdvisorQuestionSeed(null)}
         onApplyRewrite={applyTemplateRewriteCandidate}
         onLocate={(issue) => {
           setAdvisorFocusSection(null);

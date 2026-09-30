@@ -53,6 +53,8 @@ export default function ManhuaCreativeAdvisorPanel(props: {
   onApplyRewrite?: (candidate: AdvisorRewriteCandidate) => boolean;
   onRequestTrial: (template: PublicManhuaViralTemplateCard) => void;
   focusSection?: "templates" | null;
+  questionSeed?: { id: string; question: string } | null;
+  onQuestionSeedApplied?: () => void;
 }) {
   const { open, onClose, userId, confirmedProjectVersion, project, onLocate, stageZh, selectedTemplate, templates, onRequestTrial } = props;
   const sessionKey = userId && confirmedProjectVersion ? manhuaAdvisorSessionKey(userId, confirmedProjectVersion) : null;
@@ -157,6 +159,21 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     if (!open || props.focusSection !== "templates") return;
     requestAnimationFrame(() => templateSectionRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }));
   }, [open, props.focusSection]);
+
+  const appliedQuestionSeed = useRef<string | null>(null);
+  useEffect(() => {
+    const seed = props.questionSeed;
+    if (!open || !seed || appliedQuestionSeed.current === seed.id || asking || pendingPaid || unresolvedFailed || sessionStorageBlocked) return;
+    appliedQuestionSeed.current = seed.id;
+    // 用户从模板卡发起的新问题仅预填；保留正在编辑的提问，不自动发模型请求。
+    if (draft.trim() && draft.length + seed.question.length + 2 > 1200) {
+      toast.error("顾问输入区已有较长问题，请先发送或复制保存，再从模板卡提问。原问题已保留。");
+    } else {
+      setDraft(previous => previous.trim() ? `${previous}\n\n${seed.question}` : seed.question);
+    }
+    props.onQuestionSeedApplied?.();
+    requestAnimationFrame(() => questionRef.current?.focus());
+  }, [open, props.questionSeed, asking, pendingPaid, unresolvedFailed, sessionStorageBlocked]);
 
   async function submit(request: PendingQuestion, confirmPaid: boolean, confirmedCredits?: number) {
     if (inFlight.current || !userId || sessionStorageBlocked) return;
