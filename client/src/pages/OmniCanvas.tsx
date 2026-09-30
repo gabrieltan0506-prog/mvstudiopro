@@ -1,3 +1,4 @@
+import { advisorWorldSourceRevision, type AdvisorWorldCandidate, type AdvisorWorldTarget } from "@shared/manhuaAdvisorWorld";
 import { classifyManhuaDirectionSceneType, resolveManhuaDirectionCard } from "@shared/manhuaDirectionCanon";
 import { withRiggedModelSourceAssetRefs } from "@/lib/manhuaPrevisSubmit";
 import { resolveManhuaRigSource } from "@shared/manhuaRigSource";
@@ -1232,6 +1233,8 @@ export default function OmniCanvas() {
   const [customAssetRefs, setCustomAssetRefs] = useState<ManhuaCustomAssetRef[]>(() =>
     normalizeManhuaCustomAssetRefs(initialWriterSession?.customAssetRefs),
   );
+  const latestCustomAssetRefs = useRef(customAssetRefs);
+  latestCustomAssetRefs.current = customAssetRefs;
   /**
    * 长期资产的签名 url 会过期（如道具拼板切图，7 天）。旧图缺 gcsUri 时从同一存储地址恢复，
    * 草稿加载/变动时只刷新无有效签名的地址，不能把新产物的七天签名降为一小时。
@@ -1413,7 +1416,8 @@ export default function OmniCanvas() {
   );
   /** 创作顾问面板开合：会话内不持久化——顾问是随手问，不是常驻工序 */
   const [advisorOpen, setAdvisorOpen] = useState(false);
-  const [advisor3dContext, setAdvisor3dContext] = useState<{ directionCardId?: string; directionCardVersion?: string } | undefined>();
+  const advisor3dOpenVersion = useRef(0);
+  const [advisor3dContext, setAdvisor3dContext] = useState<{ directionCardId?: string; directionCardVersion?: string; worldTarget?: AdvisorWorldTarget } | undefined>();
   const [advisorPreviewHost, setAdvisorPreviewHost] = useState<HTMLDivElement | null>(null);
   const [advisorDockHost, setAdvisorDockHost] = useState<HTMLDivElement | null>(null);
   const [advisorPrevisClipId, setAdvisorPrevisClipId] = useState<string | null>(null);
@@ -1546,7 +1550,7 @@ export default function OmniCanvas() {
     if (!advisorPrevisClipId) return {};
     const clip = blocks.find(b => b.id === advisorPrevisClipId && !b.archivedFromPreviousScript);
     try {
-      if (!clip?.previsStudio) throw new Error("请先到本段动作白模配置出场人物，再打开顾问。");
+      if (!clip?.previsStudio) throw new Error("本段人物基线尚未保存，请从二级工具的动作白模标签打开顾问。");
       if (clip.previsStudio.pending) throw new Error("本段正在渲染，结束后再调整。");
       const direction = resolveManhuaDirectionCard(activeDirectionCanon, "storyboard", classifyManhuaDirectionSceneType(clip.prompt || ""), { episodeIndex: writerFocusEpisode, segmentIndex: resolveClipLocalSegmentIndex(clip.id, clip.prompt, writerFocusEpisode) });
       return { target: { ...makeAdvisorPrevisTarget(clip.id, clip.previsStudio, advisorPreviewSelection?.clipId === clip.id ? advisorPreviewSelection.requestId : undefined), ...(direction ? { directionCardId: direction.card.id, directionCardVersion: direction.card.version } : {}) } };
@@ -10188,7 +10192,7 @@ export default function OmniCanvas() {
                     data-manhua-advisor-open
                     aria-expanded={advisorOpen}
                     className="rounded-lg border border-white/15 bg-white/5 px-2.5 py-1 text-[11px] text-white/70 hover:bg-white/10 hover:text-white"
-                    onClick={() => { setAdvisorPrevisClipId(null); setAdvisor3dContext(undefined); setAdvisorFocusSection(null); setAdvisorOpen(true); setAdvisorNudge(null); }}
+                    onClick={() => { setAdvisorPrevisClipId(null); advisor3dOpenVersion.current += 1; setAdvisor3dContext(undefined); setAdvisorFocusSection(null); setAdvisorOpen(true); setAdvisorNudge(null); }}
                   >
                     创作顾问{advisorProject.issues.length ? ` (${advisorProject.issues.length})` : ""}
                   </button>
@@ -10408,7 +10412,7 @@ export default function OmniCanvas() {
                   finalCutStale={finalCutStale.stale}
                   finalCutVerified={finalCutStale.verified}
                   onOpenAdvisorIssue={(issueId) => {
-                    setAdvisorPrevisClipId(null); setAdvisor3dContext(undefined);
+                    setAdvisorPrevisClipId(null); advisor3dOpenVersion.current += 1; setAdvisor3dContext(undefined);
                     // 点阻断卡里某一条就定位那一条；点阶段条旁的那行仍然定位顶部项
                     const picked = issueId
                       ? advisorProject.issues.find((i) => i.id === issueId) || advisorTopIssue
@@ -10417,19 +10421,25 @@ export default function OmniCanvas() {
                     setAdvisorFocusSection(null);
                     setAdvisorOpen(true);
                   }}
-                  onOpenAdvisor3d={canUseManhua3d ? (clipId) => {
+                  onOpenAdvisor3d={canUseManhua3d ? async (clipId, sceneRefId, mode = "world") => {
+                    const openVersion = ++advisor3dOpenVersion.current;
                     const clip = blocks.find(b => b.id === clipId && !b.archivedFromPreviousScript);
                     const direction = resolveManhuaDirectionCard(activeDirectionCanon, "storyboard", classifyManhuaDirectionSceneType(clip?.prompt || ""), { episodeIndex: writerFocusEpisode, ...(clip ? { segmentIndex: resolveClipLocalSegmentIndex(clip.id, clip.prompt, writerFocusEpisode) } : {}) });
-                    setAdvisorPrevisClipId(clip?.previsStudio ? clip.id : null);
-                    setAdvisor3dContext(direction ? { directionCardId: direction.card.id, directionCardVersion: direction.card.version } : {});
+                    const eligibleScenes = customAssetRefs.filter(ref => ref.role === "scene" && evaluateManhuaWorld3dEligibility(ref).eligible);
+                    const scene = mode !== "world" ? undefined : sceneRefId ? customAssetRefs.find(ref => ref.id === sceneRefId && ref.role === "scene") : eligibleScenes.length === 1 ? eligibleScenes[0] : undefined;
+                    const eligibility = scene ? evaluateManhuaWorld3dEligibility(scene) : undefined;
+                    const worldTarget = scene && eligibility?.eligible ? { sceneRefId: scene.id, labelZh: scene.labelZh || "当前场景", sourceRevision: await advisorWorldSourceRevision(eligibility.sourceVersion), hintZh: (projectBible?.assetCanon?.locations.find(anchor => anchor.id === scene.seedLibraryId || anchor.nameZh === scene.labelZh)?.lookZh || scene.labelZh || "").slice(0, 2000), ...(eligibility.currentWorld3d ? { previousTaskId: eligibility.currentWorld3d.taskId } : {}) } : undefined;
+                    if (openVersion !== advisor3dOpenVersion.current || (scene && evaluateManhuaWorld3dEligibility(latestCustomAssetRefs.current.find(ref => ref.id === scene.id) || {}).sourceVersion !== eligibility?.sourceVersion)) return;
+                    setAdvisorPrevisClipId(null);
+                    setAdvisor3dContext(mode === "general" ? undefined : { ...(direction ? { directionCardId: direction.card.id, directionCardVersion: direction.card.version } : {}), ...(worldTarget ? { worldTarget } : {}) });
                     setAdvisorFocusSection(null); setAdvisorOpen(true);
                   } : undefined}
                   advisorOpen={advisorOpen}
                   onAdvisorDockChange={setAdvisorDockHost}
                   onAdvisorPreviewHostChange={setAdvisorPreviewHost}
-                  onOpenAdvisorPrevis={canUseManhua3d ? (clipId, requestId) => { setAdvisorPreviewSelection({ clipId, requestId }); setAdvisor3dContext(undefined); setAdvisorPrevisClipId(clipId); setAdvisorFocusSection(null); setAdvisorOpen(true); } : undefined}
+                  onOpenAdvisorPrevis={canUseManhua3d ? (clipId, requestId) => { setAdvisorPreviewSelection({ clipId, requestId }); advisor3dOpenVersion.current += 1; setAdvisor3dContext(undefined); setAdvisorPrevisClipId(clipId); setAdvisorFocusSection(null); setAdvisorOpen(true); } : undefined}
                   onOpenAdvisorTemplates={() => {
-                    setAdvisorPrevisClipId(null); setAdvisor3dContext(undefined);
+                    setAdvisorPrevisClipId(null); advisor3dOpenVersion.current += 1; setAdvisor3dContext(undefined);
                     setAdvisorFocusSection("templates");
                     setAdvisorOpen(true);
                   }}
@@ -13498,7 +13508,7 @@ export default function OmniCanvas() {
         <div className="pointer-events-none fixed top-[4.5rem] right-4 z-[59] flex flex-col items-end gap-2">
           <button
             type="button"
-            onClick={() => { setAdvisorPrevisClipId(null); setAdvisor3dContext(undefined); setAdvisorFocusSection(null); setAdvisorOpen(true); setAdvisorNudge(null); }}
+            onClick={() => { setAdvisorPrevisClipId(null); advisor3dOpenVersion.current += 1; setAdvisor3dContext(undefined); setAdvisorFocusSection(null); setAdvisorOpen(true); setAdvisorNudge(null); }}
             aria-expanded={advisorOpen}
             data-manhua-advisor-open
             className="pointer-events-auto relative rounded-full border border-cyan-300/40 bg-[#10171f]/95 px-4 py-2.5 text-[12px] font-bold text-cyan-100 shadow-xl backdrop-blur transition hover:bg-cyan-500/20"
@@ -13545,6 +13555,21 @@ export default function OmniCanvas() {
         dockHost={advisorDockHost}
         previewHost={advisorPreviewHost}
         studio3d={advisor3dContext}
+        worldTarget={advisor3dContext?.worldTarget}
+        worldTaskState={advisor3dContext?.worldTarget ? evaluateManhuaWorld3dEligibility(customAssetRefs.find(ref => ref.id === advisor3dContext.worldTarget?.sceneRefId) || {}).currentWorld3d?.status : undefined}
+        onGenerateWorld={async (candidate: AdvisorWorldCandidate) => {
+          if (!canUseManhua3d || factoryBusy) throw new Error("当前不能生成3D场景。");
+          const ref = customAssetRefs.find(ref => ref.id === candidate.target.sceneRefId && ref.role === "scene");
+          if (!ref) throw new Error("场景已不存在，未生成。");
+          const eligibility = evaluateManhuaWorld3dEligibility(ref);
+          if (!eligibility.eligible || await advisorWorldSourceRevision(eligibility.sourceVersion) !== candidate.target.sourceRevision || eligibility.currentWorld3d?.taskId !== candidate.target.previousTaskId) throw new Error("场景参考图或任务已变化，请重新咨询；未提交新任务。");
+          const latest = latestCustomAssetRefs.current.find(row => row.id === ref.id && row.role === "scene");
+          const latestEligibility = latest ? evaluateManhuaWorld3dEligibility(latest) : undefined;
+          if (!latestEligibility?.eligible || latestEligibility.sourceVersion !== eligibility.sourceVersion || latestEligibility.currentWorld3d?.taskId !== candidate.target.previousTaskId) throw new Error("核对期间场景已变化，未生成。");
+          if (eligibility.currentWorld3d && eligibility.currentWorld3d.status !== "failed") throw new Error("当前场景已有任务或产物，请保留原结果；不会重复付费生成。");
+          if (candidate.plan.sceneRefId !== ref.id) throw new Error("方案目标不一致，未生成。");
+          await generateSceneWorld(ref.id, { model: "marble-1.1", textPrompt: candidate.plan.textPrompt });
+        }}
         previsTarget={advisorPrevisEditing.target}
         previsIssue={advisorPrevisEditing.issue}
         onLeavePrevis={() => setAdvisorPrevisClipId(null)}
@@ -13558,7 +13583,7 @@ export default function OmniCanvas() {
           locateAdvisorIssue(issue);
         }}
         open={canvasMode === "manhua" && advisorOpen}
-        onClose={() => { setAdvisorOpen(false); setAdvisorFocusSection(null); }}
+        onClose={() => { advisor3dOpenVersion.current += 1; setAdvisorOpen(false); setAdvisorFocusSection(null); }}
         stageZh={MANHUA_ADVISOR_STAGE_LABELS[workflowPhase]}
         selectedTemplate={selectedViralTemplate}
         templates={approvedViralTemplateCards}

@@ -1,3 +1,4 @@
+import { ADVISOR_WORLD_INSTRUCTIONS, parseAdvisorWorldPlan } from "../../shared/manhuaAdvisorWorld";
 import { resolveAdvisorPrevisVideo } from "./manhuaAdvisorPrevisVideo";
 import { isSseContentSafetyError } from "./sseChatStream";
 import { buildAdvisorPrevisCraftBlock } from "./manhuaAdvisorPrevisCraft";
@@ -381,6 +382,10 @@ export function buildManhuaCreativeAdvisorLlmMessages(input: {
       ].filter(Boolean).join("\n") },
     ];
   }
+  if (input.context.worldTarget) return [
+    { role: "system", content: ADVISOR_WORLD_INSTRUCTIONS },
+    { role: "user", content: JSON.stringify({ target: input.context.worldTarget, episodeBody: input.context.episodeBody, assetSummary: input.context.assetSummary, shotSummary: input.context.shotSummary, history: input.context.history, question: rawQuestion }) },
+  ];
   const strategyBlock = buildNeutralDirectorStrategyBlock(input.context);
   const engineFactsBlock = input.context.studio3d ? "" : buildManhuaEngineFactsBlock(input.context);
   const craftBlock = input.context.studio3d ? "" : composeDistilledAdvisorSoftBlock(rawQuestion, {
@@ -480,7 +485,7 @@ export function parseAskJson(raw: string, previsMode = false): {
   }
   const answer = (previsMode && parsed.answer && typeof parsed.answer === "object"
     ? JSON.stringify(parsed.answer) : String(parsed.answer || "")).trim();
-  if (previsMode && answer.length > 12_000) throw new Error("白模方案超过完整处理范围，请精简后重新生成");
+  if (previsMode && answer.length > 12_000) throw new Error("方案超过完整处理范围，请精简后重新生成");
   if (!answer || looksLikeUpstreamGarbage(answer)) {
     throw new Error("顾问返回格式不符合要求，缺少有效回答");
   }
@@ -836,7 +841,8 @@ export async function askPlatformSkillQa(params: {
       });
       const raw = extractFirstChoicePlainText(response);
       candidateRaw = raw;
-      parsed = parseAskJson(raw, Boolean(manhuaContext?.previsEdit));
+      parsed = parseAskJson(raw, Boolean(manhuaContext?.previsEdit || manhuaContext?.worldTarget));
+      if (manhuaContext?.worldTarget) parseAdvisorWorldPlan(parsed.answer, manhuaContext.worldTarget);
       if (manhuaContext?.previsEdit) {
         const patch = parseAdvisorPrevisPatch(parsed.answer);
         if (!patch.unsupportedZh.length) applyAdvisorPrevisPatch(manhuaPrevisSpecSchema.parse(JSON.parse(manhuaContext.previsEdit.specJson)), patch);
@@ -849,7 +855,7 @@ export async function askPlatformSkillQa(params: {
       // 候选检查失败时清掉本轮解析值，避免三次失败后仍返回无效候选。
       parsed = null;
       lastErr = e instanceof Error ? e.message : String(e);
-      if (manhuaContext?.previsEdit && candidateRaw) repairMessage = buildAdvisorPrevisRepairMessage(candidateRaw, lastErr);
+      if ((manhuaContext?.previsEdit || manhuaContext?.worldTarget) && candidateRaw) repairMessage = buildAdvisorPrevisRepairMessage(candidateRaw, lastErr);
       console.warn(`[askPlatformSkillQa] attempt ${attempt}/${ASK_MAX_ATTEMPTS}:`, lastErr.slice(0, 240));
       // 传输失败没有候选可修，不能为了凑次数重复发送完整视频。
       if (previewVideo && !repairMessage) break;

@@ -1,3 +1,4 @@
+import { advisorWorldCandidateSchema, parseAdvisorWorldPlan, type AdvisorWorldTarget, type AdvisorWorldCandidate } from "@shared/manhuaAdvisorWorld";
 import { advisorPrevisVideoSourceSchema, withAdvisorPrevisVideo, type AdvisorPrevisVideoSource } from "@shared/manhuaAdvisorPrevisEdit";
 import { requestsAdvisorPrevisRender } from "@/lib/manhuaAdvisorPrevisIntent";
 import { createPortal } from "react-dom";
@@ -24,6 +25,7 @@ import { formatManhuaAdvisorContextIssue, formatManhuaAdvisorError } from "@/lib
 
 type PendingQuestion = AdvisorPendingRequest;
 function readableAdvice(text: string) {
+  try { const value = JSON.parse(text); if (value.kind === "world_plan_v1") return value.summaryZh; } catch { /* 普通文本按原路径显示。 */ }
   try { return parseAdvisorPrevisPatch(text).summaryZh; } catch { return formatAdvisorRewriteAnswer(text); }
 }
 
@@ -31,6 +33,9 @@ export default function ManhuaCreativeAdvisorPanel(props: {
   dockHost?: HTMLElement | null;
   previewHost?: HTMLElement | null;
   previsTarget?: AdvisorPrevisTarget;
+  worldTarget?: AdvisorWorldTarget;
+  worldTaskState?: string;
+  onGenerateWorld?: (candidate: AdvisorWorldCandidate) => Promise<void>;
   studio3d?: { directionCardId?: string; directionCardVersion?: string };
   previsIssue?: string;
   onLeavePrevis?: () => void;
@@ -52,6 +57,16 @@ export default function ManhuaCreativeAdvisorPanel(props: {
   const { open, onClose, userId, confirmedProjectVersion, project, onLocate, stageZh, selectedTemplate, templates, onRequestTrial } = props;
   const sessionKey = userId && confirmedProjectVersion ? manhuaAdvisorSessionKey(userId, confirmedProjectVersion) : null;
   const previsKey = sessionKey ? `${sessionKey}:previs-edit` : null;
+  const worldKey = sessionKey ? `${sessionKey}:world-plan` : null;
+  const [worldCandidate, setWorldCandidate] = useState<AdvisorWorldCandidate | null>(() => {
+    try { const raw = worldKey && localStorage.getItem(worldKey); return raw ? advisorWorldCandidateSchema.parse(JSON.parse(raw)) : null; } catch { return null; }
+  });
+  const [worldGenerating, setWorldGenerating] = useState(false);
+  const worldLock = useRef(false);
+  const activePrevisTarget = useRef(props.previsTarget);
+  activePrevisTarget.current = props.previsTarget;
+  const creationMode = Boolean(props.previsTarget || props.previsIssue || props.studio3d || props.worldTarget);
+  const worldMatches = Boolean(worldCandidate && props.worldTarget && JSON.stringify(worldCandidate.target) === JSON.stringify(props.worldTarget));
   const [previsCandidate, setPrevisCandidate] = useState<AdvisorPrevisCandidate | null>(() => {
     try { const raw = previsKey && localStorage.getItem(previsKey); return raw ? advisorPrevisCandidateSchema.parse(JSON.parse(raw)) : null; }
     catch { return null; }
@@ -76,6 +91,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
   }, [props.previsTarget?.previousPreviewRequestId, previsKey]);
   const [autoPrevisStart, setAutoPrevisStart] = useState(false);
   const [savedPreviews, setSavedPreviews] = useState<Array<{ key: string; trial: AdvisorPrevisTrial }>>([]);
+  useEffect(() => { setAutoPrevisStart(false); }, [props.previsTarget?.clipId, props.previsTarget?.specJson]);
   const rewriteKey = sessionKey ? `${sessionKey}:rewrite` : null;
   const [initialRewrite] = useState(() => {
     try { const raw = rewriteKey && localStorage.getItem(rewriteKey); return { candidate: raw ? advisorRewriteCandidateSchema.parse(JSON.parse(raw)) : null, error: "" }; }
@@ -193,13 +209,18 @@ export default function ManhuaCreativeAdvisorPanel(props: {
       const res = await streamManhuaAdvisor(input, text => { if (mounted.current) setStreamText(text); }, () => { if (mounted.current) setRetrying(++responseAttempt > 1); });
       const answer = String(res.answer || "").trim();
       if (!answer) throw new Error("本次没有收到有效回答，请重试原问题。");
+      if (request.manhuaContext?.worldTarget) {
+        const candidate = advisorWorldCandidateSchema.parse({ target: request.manhuaContext.worldTarget, plan: parseAdvisorWorldPlan(answer, request.manhuaContext.worldTarget) });
+        if (worldKey) { try { localStorage.setItem(worldKey, JSON.stringify(candidate)); } catch { if (mounted.current) setStorageError("场景方案保存失败，请保持当前页面。"); } }
+        if (mounted.current) setWorldCandidate(candidate);
+      }
       if (request.manhuaContext?.previsEdit) {
         const candidate = advisorPrevisCandidateSchema.parse({ target: request.manhuaContext.previsEdit, patch: parseAdvisorPrevisPatch(answer) });
         if (capturedPrevisKey) {
           try { localStorage.setItem(capturedPrevisKey, JSON.stringify(candidate)); }
           catch { if (mounted.current) setStorageError("调度建议未能保存，关闭页面前请保留当前对话。"); }
         }
-        if (mounted.current) { setPrevisCandidate(candidate); setAutoPrevisStart(requestsAdvisorPrevisRender(request.rawQuestion)); }
+        if (mounted.current) { setPrevisCandidate(candidate); setAutoPrevisStart(activePrevisTarget.current?.clipId === candidate.target.clipId && activePrevisTarget.current.specJson === candidate.target.specJson && requestsAdvisorPrevisRender(request.rawQuestion)); }
       }
       if (request.rawQuestion === TEMPLATE_PLAN_QUESTION && !parseAdvisorTemplatePlans(answer, templates).length && mounted.current) {
         toast.error("本次回答未提供3—4个合法模板方案，不能自动选择；原回答已保留供查看。");
@@ -248,7 +269,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     if (previsEdit && !previsEdit.previousPreviewRequestId && previsCandidate?.target.clipId === previsEdit.clipId && previsCandidate.target.specJson === previsEdit.specJson) {
       try { previsEdit = { ...previsEdit, previousPreviewSpecJson: advisorPrevisSpecJson(applyAdvisorPrevisPatch(manhuaPrevisSpecSchema.parse(JSON.parse(previsEdit.specJson)), previsCandidate.patch)) }; } catch { /* 未支持要求不继承为已执行配置。 */ }
     }
-    const result = project ? manhuaCreativeAdvisorContextSchema.safeParse({ ...project.context, history: advisorRecentHistory(turns), ...(previsEdit ? { previsEdit } : {}), ...(props.studio3d ? { studio3d: props.studio3d } : {}) }) : null;
+    const result = project ? manhuaCreativeAdvisorContextSchema.safeParse({ ...project.context, history: advisorRecentHistory(turns), ...(previsEdit ? { previsEdit } : {}), ...(props.studio3d ? { studio3d: { directionCardId: props.studio3d.directionCardId, directionCardVersion: props.studio3d.directionCardVersion } } : {}), ...(props.worldTarget ? { worldTarget: props.worldTarget } : {}) }) : null;
     if (result && !result.success) {
       toast.error("当前上下文超出读取范围或包含不适合发送的内容", {
         description: result.error.issues.map(formatManhuaAdvisorContextIssue).join("；"),
@@ -356,11 +377,11 @@ export default function ManhuaCreativeAdvisorPanel(props: {
           <h3 className="font-semibold">本次读取范围</h3>
           {project.contextNotes.map((note) => <p key={note}>{note}</p>)}
         </section> : null}
-        {!props.previsTarget && !props.previsIssue && <section ref={templateSectionRef} aria-label="剧本模板优化" className="rounded-lg border border-cyan-300/20 p-3 text-xs">
+        {!creationMode && <section ref={templateSectionRef} aria-label="剧本模板优化" className="rounded-lg border border-cyan-300/20 p-3 text-xs">
           <p className="text-white/65">根据当前故事推荐模板，再选择方案改写本集。推荐与改写沿用顾问问答额度，超额先确认。</p>
           <button type="button" disabled={!userId || !project || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={recommendTemplates} className="mt-2 rounded border border-cyan-300/30 px-3 py-2 disabled:opacity-40">推荐3—4个剧本模板方案</button>
         </section>}
-        {rewrite && <section aria-label="改写原稿对比" className="space-y-2 rounded-lg border border-emerald-300/30 p-3 text-xs">
+        {!creationMode && rewrite && <section aria-label="改写原稿对比" className="space-y-2 rounded-lg border border-emerald-300/30 p-3 text-xs">
           <h3 className="font-semibold">第 {rewrite.episodeIndex} 集 · 改写对比</h3>
           <ul>{rewrite.changes.map((change, i) => <li key={i}>• {change}</li>)}</ul>
           <ManhuaRewriteComparison before={rewrite.originalBody} after={rewrite.rewrittenBody} />
@@ -368,12 +389,12 @@ export default function ManhuaCreativeAdvisorPanel(props: {
           <button type="button" disabled={!props.onApplyRewrite || asking || project?.context.episodeIndex !== rewrite.episodeIndex || project?.context.episodeBody !== rewrite.originalBody} onClick={() => { if (props.onApplyRewrite?.(rewrite)) toast.success("改写已采用，请重新检查并确认剧本。"); }} className="rounded border border-emerald-300/40 px-3 py-2 disabled:opacity-40">采用这版改写</button>
           {(project?.context.episodeIndex !== rewrite.episodeIndex || project?.context.episodeBody !== rewrite.originalBody) && <p>当前剧本与原快照不同，已停止覆盖。原稿与建议仍保留供复制。</p>}
         </section>}
-        <section aria-label="旧稿备份" className="space-y-2 border-t border-white/10 pt-3 text-xs">
+        {!creationMode && <section aria-label="旧稿备份" className="space-y-2 border-t border-white/10 pt-3 text-xs">
           <button type="button" disabled={!userId || !project} onClick={refreshBackups} className="rounded border border-white/20 px-3 py-2 disabled:opacity-40">查找当前项目旧稿备份</button>
           <p className="text-white/50">仅下载备份JSON，不自动覆盖当前工程。未确认稿按剧名与正文共同匹配。</p>
           {backups.map(backup => <div key={backup.key} className="flex items-center justify-between gap-2"><span>第{backup.episodeIndex}集 · {new Date(backup.createdAt).toLocaleString("zh-CN")}</span><button type="button" onClick={() => { try { downloadAdvisorBackup(backup); } catch { toast.error("备份下载失败，原记录未改动。"); } }} className="shrink-0 text-cyan-100">下载旧稿JSON</button></div>)}
           {backupError && <p role="status" className="text-amber-100">{backupError}</p>}
-        </section>
+        </section>}
         {!turns.length && <p className="text-xs leading-5 text-white/60">结合当前剧本、参考图绑定和选中镜头给建议。只读取当前项目；未查看原图、原片时不会宣称质量通过。</p>}
         {turns.map((turn) => <div key={turn.id} className={turn.role === "user" ? "ml-8" : "mr-3"}>
           <div className={`whitespace-pre-wrap break-words rounded-lg px-3 py-2.5 text-[13px] leading-6 ${turn.role === "user" ? "bg-cyan-500/15 text-cyan-50" : "border border-white/10 bg-white/[0.035] text-white/85"}`}>{turn.role === "advisor" && parseAdvisorTemplatePlans(turn.text, templates).length ? "已根据当前故事给出以下方案，请选择后查看改写对比。" : turn.role === "advisor" ? readableAdvice(turn.text) : turn.text === TEMPLATE_PLAN_QUESTION ? "根据当前故事推荐3—4个剧本模板方案。" : turn.text === TEMPLATE_REWRITE_QUESTION ? "按所选方案改写当前集，先查看对比再采用。" : turn.text}</div>
@@ -387,7 +408,20 @@ export default function ManhuaCreativeAdvisorPanel(props: {
           {turn.role === "advisor" && findMentionedTemplates(turn.text, templates).map((template) => <button key={template.publicId} type="button" onClick={() => onRequestTrial(template)} className="mt-2 rounded border border-cyan-300/30 px-2 py-1 text-xs text-cyan-100">查看「{template.nameZh}」试写入口 →</button>)}
         </div>)}
         {previsKey && (props.previsTarget || previsCandidate) && <details className="text-xs"><summary onClick={recoverPreviews} className="cursor-pointer py-2 text-cyan-100">找回本项目的独立试看</summary>{savedPreviews.map(({ key, trial }) => <button key={key} type="button" className="my-1 block rounded border border-white/20 px-2 py-2 text-left" onClick={() => { try { localStorage.setItem(`${previsKey}:trial`, trial.request.requestId); localStorage.setItem(previsKey, JSON.stringify(trial.candidate)); setAutoPrevisStart(false); setPrevisCandidate(trial.candidate); } catch { toast.error("试看恢复记录无法保存，未切换。"); } }}>{trial.candidate.patch.summaryZh} · {trial.request.spec.durationSec}秒</button>)}</details>}
-        {previsCandidate && <ManhuaAdvisorPrevisComparison key={JSON.stringify(previsCandidate)} candidate={previsCandidate} previewHost={props.previewHost} storageKey={previsKey ? `${previsKey}:trial` : null} autoStart={autoPrevisStart} onPreviewReady={rememberPreviewVideo} onPrepare={props.onPreparePrevis} onRevise={() => { setDraft("保留这版其他安排，我想调整："); questionRef.current?.focus(); }} disabled={asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onApply={props.onApplyPrevis} />}
+        {props.previsTarget && previsCandidate && previsCandidate.target.clipId === props.previsTarget.clipId && <ManhuaAdvisorPrevisComparison key={JSON.stringify(previsCandidate)} candidate={previsCandidate} previewHost={props.previewHost} storageKey={previsKey ? `${previsKey}:trial` : null} autoStart={autoPrevisStart} onPreviewReady={rememberPreviewVideo} onPrepare={props.onPreparePrevis} onRevise={() => { setDraft("保留这版其他安排，我想调整："); questionRef.current?.focus(); }} disabled={asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onApply={props.onApplyPrevis} />}
+        {props.worldTarget && worldCandidate && <section aria-label="3DGS场景方案" className="space-y-2 rounded-lg border border-cyan-300/30 p-3 text-xs">
+          <strong>{worldCandidate.target.labelZh} · 场景方案</strong>
+          <p className="whitespace-pre-wrap">{worldCandidate.plan.summaryZh}</p>
+          <details><summary className="cursor-pointer py-2 text-cyan-100">查看完整生成提示词</summary><p className="whitespace-pre-wrap leading-5">{worldCandidate.plan.textPrompt}</p></details>
+          {!worldMatches && <p className="text-amber-100">这份方案属于另一张图或旧版本；请重新咨询，原方案保留。</p>}
+          <button type="button" disabled={!worldMatches || !props.onGenerateWorld || asking || worldGenerating || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked || Boolean(props.worldTarget.previousTaskId || props.worldTaskState)} className="min-h-11 rounded border border-cyan-300/50 px-3 disabled:opacity-40" onClick={async () => {
+            if (!worldMatches || !props.onGenerateWorld || worldLock.current) return;
+            worldLock.current = true; setWorldGenerating(true);
+            try { await props.onGenerateWorld(worldCandidate); } catch (error) { toast.error(error instanceof Error ? error.message : "场景未提交，请保留方案后重试。"); }
+            finally { worldLock.current = false; if (mounted.current) setWorldGenerating(false); }
+          }}>{worldGenerating ? "提交中…" : "确认方案，生成3DGS（费用另行确认）"}</button>
+          {(props.worldTarget.previousTaskId || props.worldTaskState) && <p className="text-white/65">此场景已有任务或产物，请在左侧检查原结果；不会重复提交。</p>}
+        </section>}
         {asking && <div role="status" className="whitespace-pre-wrap rounded-lg border border-cyan-300/20 p-3 text-sm leading-6 text-cyan-100"><p className="mb-2 text-xs">{streamText ? "正在生成方案，完成后校验…" : retrying ? "上一次方案未通过检查，正在重新生成…" : "正在分析剧情与场景…"} 已等待 {elapsedSec} 秒</p>{streamText}<p className="mt-2 text-xs text-white/55">正在校验方案；明确要求生成试看时，通过后会直接渲染到本页预览。</p></div>}
         {pendingPaid && <div role="alert" className="rounded-lg border border-amber-300/30 bg-amber-400/10 p-3 text-xs leading-5 text-amber-100">
           <p>{pendingPaid.hint}</p><p className="mt-1">原问题：{pendingPaid.request.label}（按提问时快照继续）</p><p className="mt-1 whitespace-pre-wrap text-white/75">{pendingPaid.request.rawQuestion}</p>
@@ -398,11 +432,11 @@ export default function ManhuaCreativeAdvisorPanel(props: {
       </div>
       {(props.previsTarget || props.previsIssue) && <div className="border-t border-cyan-300/20 px-3 py-2 text-xs text-cyan-100"><b>正在调整当前片段的白模</b>{props.previsTarget && withAdvisorPrevisVideo(props.previsTarget, previewVideoSource).previousPreviewRequestId && <p>本轮将读取已有白模视频，结合剧情与导演手法调整；已采用音轨由程序复用。</p>}<p>{props.previsIssue || "直接说出人物走向、动作和镜头变化；说“生成试看”即可在本页生成视频；只讨论时不渲染，不满意继续修改，满意才应用。"}</p><button type="button" className="mt-1 underline" onClick={props.onLeavePrevis}>返回普通咨询</button></div>}
       <footer className="border-t border-white/10 p-3">
-        {!props.previsTarget && !props.previsIssue && <div className="mb-2 flex flex-wrap gap-2">{quick.map(([label, question]) => <button key={label} type="button" disabled={!userId || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={() => send(question!)} className="rounded-md border border-white/15 px-2 py-1.5 text-xs text-white/75 hover:border-cyan-300/60 disabled:opacity-40">{label}</button>)}</div>}
+        {!creationMode && <div className="mb-2 flex flex-wrap gap-2">{quick.map(([label, question]) => <button key={label} type="button" disabled={!userId || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={() => send(question!)} className="rounded-md border border-white/15 px-2 py-1.5 text-xs text-white/75 hover:border-cyan-300/60 disabled:opacity-40">{label}</button>)}</div>}
         <div className="flex items-end gap-2">
           <textarea ref={questionRef} aria-label="向创作顾问提问" value={draft} onChange={(event) => setDraft(event.target.value)} rows={3} maxLength={1200} disabled={!userId || sessionStorageBlocked}
             onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send(draft); } }}
-            placeholder={props.previsTarget ? "例如：曹三逼近时更有压迫感，镜头更有冲击力。动作和对白别改。" : "问当前剧本、人物或镜头…"} className="min-w-0 flex-1 resize-none rounded-lg border border-white/20 bg-black/20 px-3 py-2 text-sm outline-none focus:border-cyan-300" />
+            placeholder={props.worldTarget ? "描述场景布局、时间和氛围；顾问会给出可确认的3DGS方案。" : props.previsTarget ? "例如：曹三逼近时更有压迫感，镜头更有冲击力。动作和对白别改。" : "问当前剧本、人物或镜头…"} className="min-w-0 flex-1 resize-none rounded-lg border border-white/20 bg-black/20 px-3 py-2 text-sm outline-none focus:border-cyan-300" />
           <button type="button" disabled={!userId || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked || draft.trim().length < 2} onClick={() => send(draft)} className="rounded-lg bg-cyan-400 px-3 py-2.5 text-sm font-semibold text-slate-950 disabled:opacity-40">{quota && !quotaQuery.data?.exempt && quota.remaining === 0 ? `咨询 · ${quota.price} 积分（先确认）` : "发送"}</button>
         </div>
         <p className="mt-2 text-[11px] leading-4 text-white/45">{props.previsTarget ? "说“生成试看”会直接渲染到本页；可以多轮修改，满意后点击应用。" : "顾问建议需由你确认采用。"}{sessionKey ? "历史按已确认项目版本保存在本机。" : "未确认稿仅保留本次页面会话，改稿后重新咨询。"}追问携带最近 8 条，长答复标记为节选。</p>

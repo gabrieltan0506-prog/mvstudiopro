@@ -1,3 +1,4 @@
+import { advisorWorldTargetSchema } from "./manhuaAdvisorWorld";
 import { advisorPrevisTargetSchema } from "./manhuaAdvisorPrevisEdit";
 import { z } from "zod";
 import type { ManhuaDirectorStrategyId } from "./manhuaDirectorStrategy.js";
@@ -119,6 +120,7 @@ export const manhuaCreativeAdvisorContextSchema = z
     ),
     /** 当前白模编辑规格摘要；不含媒体位置，不是实际视频审片。 */
     previsEdit: advisorPrevisTargetSchema.optional(),
+    worldTarget: advisorWorldTargetSchema.optional(),
     /** 3D 场景咨询不依赖已创建白模；只传导演卡身份，由服务端查真实手法库。 */
     studio3d: z.object({
       directionCardId: contextText(100, "导演包ID").optional(),
@@ -161,7 +163,9 @@ export const manhuaCreativeAdvisorContextSchema = z
     /** 如「余额 N · 本步预估 M」；取不到就「未知」 */
     creditsZh: contextText(MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.signalChars, "积分状态").optional(),
   })
-  .strict();
+  .strict().superRefine((context, ctx) => {
+    if (context.previsEdit && context.worldTarget) ctx.addIssue({ code: "custom", path: ["worldTarget"], message: "一次咨询只能指定白模或3D场景中的一个目标" });
+  });
 
 export type ManhuaCreativeAdvisorStage = z.infer<
   typeof manhuaCreativeAdvisorStageSchema
