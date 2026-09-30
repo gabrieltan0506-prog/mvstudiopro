@@ -29,6 +29,22 @@ async function open(): Promise<Page> {
   await page.waitForSelector('textarea'); return page;
 }
 async function confirm(page: Page) { await page.evaluate(() => Array.from(document.querySelectorAll('button')).find(b => b.textContent?.includes('确认方案，生成3DGS'))?.click()); }
+it("摄影灯光入口只预填问题，不咨询、不生成，发送时仍使用当前场景快照", async () => {
+  const page = await open();
+  try {
+    await page.evaluate(() => Array.from(document.querySelectorAll('button')).find(b => b.textContent === '优化摄影、氛围与表演')?.click());
+    await page.waitForFunction(() => (document.querySelector('textarea') as HTMLTextAreaElement)?.value.includes('FOV/景别'));
+    expect(await page.evaluate(() => (window as any).fixture.asks)).toEqual([]);
+    expect(await page.evaluate(() => (window as any).fixture.generations)).toEqual([]);
+    expect(await page.$eval('textarea', e => e === document.activeElement)).toBe(true);
+    expect(await page.$eval('textarea', e => (e as HTMLTextAreaElement).value)).toContain('喜怒哀乐');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('[aria-label="3DGS场景方案"]');
+    expect(await page.evaluate(() => (window as any).fixture.asks[0].manhuaContext.worldTarget.sceneRefId)).toBe('clinic');
+    expect(await page.evaluate(() => (window as any).fixture.generations)).toEqual([]);
+    await page.evaluate(() => localStorage.clear());
+  } finally { await page.close(); }
+});
 it("顾问真实方案先展示，明确确认才走原生成回调，提交中和已有任务不重复", async () => {
   const page = await open();
   try {
