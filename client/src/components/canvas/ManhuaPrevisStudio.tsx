@@ -434,7 +434,7 @@ export function ManhuaPrevisStudioView({
       clipId: block.id,
       spec: parsed.data,
       quality: "draft",
-      ...(studio.audioEnabled !== false ? { audio: buildManhuaPrevisAudio(block.audioStudio, parsed.data, studio.audioStartSec ?? 0, studio.loopBgm ?? false) } : {}),
+      ...(studio.audioEnabled === true ? { audio: buildManhuaPrevisAudio(block.audioStudio, parsed.data, studio.audioStartSec ?? 0, studio.loopBgm ?? false) } : {}),
     }; } catch (error) {
       setError(error instanceof Error ? error.message : "请检查音轨"); lock.current = false; setBusy(false); return;
     }
@@ -590,7 +590,7 @@ export function ManhuaPrevisStudioView({
       return;
     }
     try {
-      const currentAudio = studio.audioEnabled !== false ? buildManhuaPrevisAudio(block.audioStudio, take.spec, studio.audioStartSec ?? 0, studio.loopBgm ?? false) : undefined;
+      const currentAudio = studio.audioEnabled === true ? buildManhuaPrevisAudio(block.audioStudio, take.spec, studio.audioStartSec ?? 0, studio.loopBgm ?? false) : undefined;
       if (JSON.stringify(currentAudio) !== JSON.stringify(take.audio)) throw new Error("当前音轨与此白模版本不同，请重新试看并审片后采用；旧视频保留。");
     } catch (error) { setError(error instanceof Error ? error.message : "音轨无法核对"); return; }
     const old = block.manhuaSegmentRefs?.previs;

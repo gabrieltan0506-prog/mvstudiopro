@@ -39,7 +39,7 @@ beforeAll(async () => {
  const compiler = await compile(readFileSync("node_modules/tailwindcss/theme.css", "utf8") + "\n" + readFileSync("node_modules/tailwindcss/preflight.css", "utf8") + "\n@tailwind utilities;");
  stylesheet = compiler.build(candidates);
 
- browser=await puppeteer.launch({headless:true});
+ browser=await puppeteer.launch({headless:true, ...(process.getuid?.() === 0 ? { args: ["--no-sandbox"] } : {})});
 },180_000);
 afterAll(async()=>{await browser?.close();});
 
@@ -48,8 +48,8 @@ it("配音与背景音乐界面不展示模型名称且查看设置不会生成"
  const page = await context.newPage();
  try {
   await page.setRequestInterception(true);
-  page.on("request", request => void request.abort());
-  await page.setContent('<div id="root"></div>');
+  page.on("request", request => request.isNavigationRequest() ? void request.respond({status:200,contentType:"text/html",body:'<div id="root"></div>'}) : void request.abort());
+  await page.goto("http://localhost:41812/");
   await page.addStyleTag({ content: stylesheet });
   await page.addScriptTag({ content: bundle });
   await page.waitForSelector('[data-manhua-audio-editor]');

@@ -22,8 +22,10 @@ function Configuration({ spec }: { spec: ManhuaPrevisSpec }) {
     </section>)}
   </div>;
 }
-export function ManhuaAdvisorPrevisComparison({ candidate, storageKey, autoStart, previewHost, disabled, onPrepare, onApply, onRevise, onPreviewReady }: {
+export function ManhuaAdvisorPrevisComparison({ candidate, storageKey, autoStart, previewHost, actionHost, disabled, onCheckReady, onPrepare, onApply, onRevise, onPreviewReady }: {
   previewHost?: HTMLElement | null;
+  actionHost?: HTMLElement | null;
+  onCheckReady?: (candidate: AdvisorPrevisCandidate) => string;
   candidate: AdvisorPrevisCandidate; storageKey: string | null; autoStart: boolean; disabled?: boolean;
   onRevise?: () => void;
   onPreviewReady?: (source: AdvisorPrevisVideoSource) => void;
@@ -53,6 +55,8 @@ export function ManhuaAdvisorPrevisComparison({ candidate, storageKey, autoStart
   try { before = manhuaPrevisSpecSchema.parse(JSON.parse(candidate.target.specJson)); after = applyAdvisorPrevisPatch(before, candidate.patch); }
   catch (e) { issue = e instanceof Error ? e.message : "候选未通过检查"; }
   const currentHost = previewHost?.dataset.clipId === candidate.target.clipId ? previewHost : null;
+  const currentReadiness = onCheckReady?.(candidate) || "";
+  const readinessIssue = trial ? "" : currentReadiness;
   function consume(value: PrevisResponse | null, active: AdvisorPrevisTrial) {
     if (!alive.current) return;
     if (!value) { setStatus("暂未查到原请求，请确认原请求；不会自动新建。"); return; }
@@ -64,12 +68,13 @@ export function ManhuaAdvisorPrevisComparison({ candidate, storageKey, autoStart
     else { setStatus(value.status === "queued" ? "独立试看排队中，工作流未修改" : "独立试看渲染中，工作流未修改"); setError(""); }
   }
   async function start(existing?: AdvisorPrevisTrial) {
-    if (busy.current || disabled || issue || initial.issue) return;
+    if (busy.current || disabled || issue || initial.issue || (!existing && currentReadiness)) return;
     if (!currentHost) { setError("请在当前片段的3D页面内生成试看，视频将显示在本页预览。"); return; }
     if (!storageKey || !onPrepare) { setError("请先确认当前项目并从本段白模打开创作顾问，再生成试看。"); return; }
     busy.current = true;
     try {
       const next = existing || onPrepare(candidate);
+      if (!existing) { setReceipt(null); setWatched(false); setReviewed(false); setApplied(false); }
       // 只保存顾问试看恢复记录；不调用工作流写回或采用。
       localStorage.setItem(`${storageKey}:${next.request.requestId}`, JSON.stringify(next));
       localStorage.setItem(storageKey, next.request.requestId);
@@ -79,9 +84,9 @@ export function ManhuaAdvisorPrevisComparison({ candidate, storageKey, autoStart
     finally { busy.current = false; }
   }
   useEffect(() => {
-    if (!autoStart || started.current || initial.trial || initial.issue || disabled || issue || !currentHost) return;
+    if (!autoStart || started.current || initial.trial || initial.issue || disabled || issue || readinessIssue || !currentHost) return;
     started.current = true; void start();
-  }, [autoStart, disabled, issue, currentHost]);
+  }, [autoStart, disabled, issue, readinessIssue, currentHost]);
   useEffect(() => {
     if (!trial || receipt || !alive.current) return;
     let cancelled = false, timer: ReturnType<typeof setTimeout>;
@@ -101,12 +106,21 @@ export function ManhuaAdvisorPrevisComparison({ candidate, storageKey, autoStart
     } catch (e) { setError(e instanceof Error ? e.message : "原试看回执无法核验，未应用"); }
     finally { busy.current = false; }
   }
+  const action = <div data-advisor-previs-launch className="space-y-1">
+    {(issue || initial.issue || readinessIssue || !currentHost) && <p role="alert" className="max-h-14 overflow-y-auto text-xs text-amber-100">{issue || initial.issue || readinessIssue || "请打开当前片段的动作白模，试看将在同页显示。"}</p>}
+    {!receipt && <button type="button" disabled={disabled || submit.isPending || Boolean(issue || initial.issue || readinessIssue) || !currentHost || !storageKey || !onPrepare} onClick={() => void start(trial || undefined)} className="min-h-10 w-full rounded-lg bg-cyan-400 px-3 py-2 text-sm font-semibold text-slate-950 disabled:opacity-40">{submit.isPending ? "正在提交原试看…" : trial ? "查询／恢复这次白模试看" : "生成白模视频试看"}</button>}
+    {receipt && <>
+      {currentReadiness && <p role="alert" className="max-h-10 overflow-y-auto text-xs text-amber-100">{currentReadiness}</p>}
+      <button type="button" disabled={disabled || submit.isPending || Boolean(issue || currentReadiness) || !currentHost || !storageKey || !onPrepare} onClick={() => void start()} className="min-h-10 w-full rounded-lg border border-cyan-300/40 px-3 py-2 text-xs text-cyan-100 disabled:opacity-40">按当前音轨选择生成新试看</button>
+    </>}
+  </div>;
   return <section aria-label="白模调度修改对比" className="space-y-3 rounded-xl border border-cyan-300/35 bg-cyan-400/5 p-3">
+    {actionHost ? createPortal(action, actionHost) : action}
     <h3 className="font-semibold text-cyan-100">调度提案与试看 · 可反复修改</h3>
     <p className="whitespace-pre-wrap text-sm leading-6">{candidate.patch.summaryZh}</p>
     <p role="status" className="text-sm text-cyan-100">{status}</p>
     {(!storageKey || !onPrepare) && <p role="alert" className="text-xs text-amber-100">请先确认当前项目并从本段白模打开创作顾问。</p>}
-    {(issue || error) && <p role="alert" className="text-xs text-amber-100">{issue || error}</p>}
+    {(issue || currentReadiness || error) && <p role="alert" className="text-xs text-amber-100">{issue || currentReadiness || error}</p>}
     {currentHost && (trial || error) && createPortal(<section aria-label="3D页面白模视频预览" className="mb-4 space-y-2 rounded-xl border border-cyan-300/40 bg-black/20 p-3">
       <h3 className="font-semibold text-cyan-100">顾问白模试看</h3>
       <p role="status" className="text-sm">{status}</p>
@@ -116,7 +130,6 @@ export function ManhuaAdvisorPrevisComparison({ candidate, storageKey, autoStart
       <p className="text-xs text-white/60">当前是独立试看，应用前不会改写本段配置；正式视频参考仍需逐帧与常速审片。</p>
     </section>, currentHost)}
     {trial && <p className="text-xs text-white/50">试看编号：{trial.request.requestId}</p>}
-    {!issue && !receipt && <button type="button" disabled={disabled || submit.isPending || Boolean(initial.issue) || !storageKey || !onPrepare} onClick={() => void start(trial || undefined)} className="min-h-10 rounded border border-cyan-300/40 px-3 text-sm">{trial ? "确认原试看请求（不新建）" : "按这个方案生成试看"}</button>}
     {before && after && <details><summary className="cursor-pointer py-2 text-sm">查看修改前后 · {before.durationSec}秒 / {before.actors.length}个角色</summary>
       <div className="grid gap-4 md:grid-cols-2"><div><h4 className="mb-2 font-semibold">修改前</h4><Configuration spec={before} /></div><div><h4 className="mb-2 font-semibold text-cyan-200">试看配置</h4><Configuration spec={after} /></div></div>
     </details>}

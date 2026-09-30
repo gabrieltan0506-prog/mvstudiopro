@@ -7,6 +7,8 @@ const pendingRequestSchema = z.object({
   requestId: z.string().uuid(),
   question: z.string().min(2).max(4000),
   rawQuestion: z.string().min(2).max(1200),
+  /** 用户显式点击生成按钮的意图，恢复原请求时保留；不由模型授予。 */
+  previsRenderRequested: z.boolean().optional(),
   label: z.string().max(1000),
   manhuaContext: manhuaCreativeAdvisorContextSchema.optional(),
 }).strict();

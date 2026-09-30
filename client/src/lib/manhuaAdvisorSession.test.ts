@@ -60,7 +60,7 @@ describe("顾问会话隔离与追问", () => {
     expect(blocked.error).toContain("停止新的问答与扣点");
   });
   it("刷新恢复保留同一个请求编号、问题快照和此前确认，不自动新建请求", () => {
-    const request = { requestId: "11111111-1111-4111-8111-111111111111", question: "【问题】检查本集", rawQuestion: "检查本集", label: "第 1 集 · 分镜" };
+    const request = { requestId: "11111111-1111-4111-8111-111111111111", question: "【问题】检查本集", rawQuestion: "检查本集", label: "第 1 集 · 分镜", previsRenderRequested: true };
     const pending = makeAdvisorPendingRecovery(request, true, 8);
     expect(pending.confirmedCredits).toBe(8);
     expect(parseAdvisorPendingRecovery(JSON.stringify(pending))).toEqual(pending);
@@ -70,12 +70,12 @@ describe("顾问会话隔离与追问", () => {
     const panel = readFileSync(new URL("../components/canvas/ManhuaCreativeAdvisorPanel.tsx", import.meta.url), "utf8");
     expect(panel).toContain("requestId: request.requestId");
     expect(panel).toContain("makeAdvisorPendingRecovery(request, confirmPaid, confirmedCredits)");
-    expect(panel).toContain("useMutation({ retry: false })");
+    expect(panel).toContain("const res = await streamManhuaAdvisor(input,");
     expect(panel).toContain("persistAdvisorCompletedExchange(localStorage, capturedSessionKey, request, answer)");
     expect(panel).toContain("mergeAdvisorCompletedExchange(prev, request, answer)");
     expect(panel).toContain("if (confirmPaid && !capturedSessionKey)");
     expect(panel).toContain("if (confirmPaid && !recoveryWritten)");
-    expect(panel.indexOf("if (confirmPaid && !recoveryWritten)")).toBeLessThan(panel.indexOf("askMutation.mutateAsync"));
+    expect(panel.indexOf("if (confirmPaid && !recoveryWritten)")).toBeLessThan(panel.indexOf("const res = await streamManhuaAdvisor"));
     expect(panel).toContain("先确认项目后再付费咨询，避免改稿丢回执");
     expect(panel).not.toContain("capturedRecoveryKey && !initialRecovery.error");
     expect(panel).toContain("failed.newAttempt ? false : failed.confirmPaid");

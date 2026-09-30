@@ -7,6 +7,7 @@ import { planCanvasDialogueTiming } from "@shared/canvasDialogueTimingPlan";
 import { CANVAS_DIALOGUE_SPEED_MAX, CANVAS_DIALOGUE_SPEED_MIN, CANVAS_DIALOGUE_SPEED_WARN, suggestCanvasDialogueSpeed } from "@shared/canvasDialogueSpeed";
 import type { ManhuaWorkbenchShot } from "@shared/manhuaScriptWorkbench";
 import { canvasAudioMixSource } from "@shared/canvasAudioStudio";
+import { canvasBgmRangeIssue, canvasBgmSegmentMusicPrompt, fitCanvasBgmSegment, splitCanvasBgmSegment } from "@shared/canvasBgmSegments";
 import { auditCanvasAudioDuration } from "@shared/canvasAudioDurationAudit";
 import { CanvasAudioMixControls } from "./CanvasAudioMixControls";
 import { applyCanvasAudioMixPlan, assertCanvasAudioMixCapacity } from "@shared/canvasAudioMixPlan";
@@ -73,12 +74,13 @@ export function matchCanvasDialogueVoice(criteria: CanvasVoiceMatchCriteria) {
 const fieldClass =
   "min-w-0 w-full rounded border border-white/15 bg-black/30 px-2 py-1.5 text-xs text-white";
 /** 播放复用已鉴权传输，原候选和投料地址保持不变。 */
-function CanvasAudioPlayer({ src, previewVolume = 1, localSource, onPlay, ...props }: ComponentProps<"audio"> & { previewVolume?: number; localSource?: string }) {
+function CanvasAudioPlayer({ src, previewVolume = 1, localSource, onPlay, onTimeUpdate, playbackRange, ...props }: ComponentProps<"audio"> & { previewVolume?: number; localSource?: string; playbackRange?: { startSec: number; endSec: number } }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [localUrl, setLocalUrl] = useState("");
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = Math.max(0, Math.min(1, previewVolume));
   }, [previewVolume]);
+  useEffect(() => { if (playbackRange) audioRef.current?.pause(); }, [playbackRange?.startSec, playbackRange?.endSec]);
   useEffect(() => {
     let active = true;
     let objectUrl = "";
@@ -93,6 +95,7 @@ function CanvasAudioPlayer({ src, previewVolume = 1, localSource, onPlay, ...pro
   const remoteUrl = src ? gcsTransferUrl(src) : src;
   return <audio {...props} ref={audioRef} src={localUrl || remoteUrl}
     onPlay={event => {
+      if (playbackRange && (event.currentTarget.currentTime < playbackRange.startSec || event.currentTarget.currentTime >= playbackRange.endSec)) event.currentTarget.currentTime = playbackRange.startSec;
       onPlay?.(event);
       if (localSource && !localUrl && remoteUrl) {
         void fetch(remoteUrl, { credentials: "include" }).then(async response => {
@@ -100,11 +103,64 @@ function CanvasAudioPlayer({ src, previewVolume = 1, localSource, onPlay, ...pro
         }).catch(() => {});
       }
     }}
+    onTimeUpdate={event => {
+      if (playbackRange && event.currentTarget.currentTime >= playbackRange.endSec) {
+        event.currentTarget.pause();
+        event.currentTarget.currentTime = playbackRange.endSec;
+      }
+      onTimeUpdate?.(event);
+    }}
+    onSeeking={event => {
+      if (playbackRange && (event.currentTarget.currentTime < playbackRange.startSec || event.currentTarget.currentTime > playbackRange.endSec)) event.currentTarget.currentTime = playbackRange.startSec;
+      props.onSeeking?.(event);
+    }}
     crossOrigin={src && isGcsTransferUrl(src) ? "use-credentials" : props.crossOrigin} />;
 }
 
 const buttonClass =
   "rounded border border-white/20 px-2 py-1.5 text-xs text-white hover:bg-white/10 disabled:opacity-40";
+
+function CanvasBgmSegmentEditor({ cue, index, durationSec, locked, sourceUrl, proxyAudio, onRestore, onPatch, onSplit, onTrim, onError }: {
+  cue: CanvasAudioCue; index: number; durationSec: number; locked: boolean; sourceUrl: string; proxyAudio?: boolean;
+  onRestore: (element: HTMLAudioElement) => void; onPatch: (patch: Partial<CanvasAudioCue>) => void;
+  onSplit: (atSec: number) => void; onError: (issue: string) => void;
+  onTrim: () => void;
+}) {
+  const [cursor, setCursor] = useState<number | null>(null);
+  const [splitAt, setSplitAt] = useState<number>();
+  const issue = canvasBgmRangeIssue(cue);
+  const length = cue.sourceEndSec - cue.sourceStartSec;
+  const midpoint = Math.round((cue.startSec + Math.min(cue.endSec, cue.startSec + length)) * 500) / 1000;
+  const field = (label: string, key: "sourceStartSec" | "sourceEndSec") => <label className="text-xs text-white/70">{label}
+    <input aria-label={`${index + 1} ${label}`} type="number" min="0" max={cue.source?.durationSec} step="0.01" className={fieldClass} disabled={locked} value={cue[key]} onChange={e => onPatch({ [key]: Number(e.target.value) })}/>
+  </label>;
+  return <section aria-label={`${index + 1} 配乐选段与剧情分段`} data-bgm-segment-editor className="space-y-3 rounded-lg border border-cyan-300/20 bg-cyan-500/5 p-3">
+    <p className="text-xs text-cyan-100">先试听原曲，标记喜欢的起止秒；原曲生成多长与本段用多少可以不同。例如 25 秒原曲只选 5–20 秒，就是 15 秒配乐。</p>
+    <p className="text-xs text-white/70">当前原曲：{cue.source?.labelZh} · {cue.source?.durationSec.toFixed(2)} 秒</p>
+    <CanvasAudioPlayer aria-label={`${index + 1} 配乐原曲试听`} controls preload="none" className="h-8 w-full" src={sourceUrl} localSource={proxyAudio ? cue.source?.gcsUri : undefined} previewVolume={cue.volume}
+      onTimeUpdate={e => setCursor(Math.round(e.currentTarget.currentTime * 1000) / 1000)} onError={e => onRestore(e.currentTarget)}/>
+    <div className="flex flex-wrap items-center gap-2 text-xs">
+      <span>播放位置：{cursor === null ? "尚未播放" : `${cursor.toFixed(2)} 秒`}</span>
+      <button type="button" className={buttonClass} disabled={locked || cursor === null} onClick={() => cursor !== null && onPatch({ sourceStartSec: cursor })}>用播放位置设起点</button>
+      <button type="button" className={buttonClass} disabled={locked || cursor === null} onClick={() => cursor !== null && onPatch({ sourceEndSec: cursor })}>用播放位置设终点</button>
+    </div>
+    <div className="grid grid-cols-2 gap-2">{field("源音频裁切起点", "sourceStartSec")}{field("源音频裁切终点", "sourceEndSec")}</div>
+    {issue ? <p role="status" className="text-xs text-amber-200">{issue}</p> : <>
+      <p className="text-xs text-white/70">取原曲 {cue.sourceStartSec.toFixed(2)}–{cue.sourceEndSec.toFixed(2)} 秒，共 {length.toFixed(2)} 秒；放在片内 {cue.startSec.toFixed(2)} 秒开始。</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs">试听所选区间</span>
+        <CanvasAudioPlayer aria-label={`${index + 1} 配乐选段试听`} controls preload="none" className="h-8 min-w-0 flex-1" src={sourceUrl} localSource={proxyAudio ? cue.source?.gcsUri : undefined} previewVolume={cue.volume} playbackRange={{ startSec: cue.sourceStartSec, endSec: cue.sourceEndSec }} onError={e => onRestore(e.currentTarget)}/>
+        <button type="button" className={buttonClass} disabled={locked} onClick={() => { try { onPatch({ endSec: fitCanvasBgmSegment(cue, durationSec) }); } catch (e) { onError(e instanceof Error ? e.message : "选段放不进当前片内位置。"); } }}>按选段长度设置片内结束</button>
+        <button type="button" className={`${buttonClass} border-cyan-300/40 text-cyan-100`} disabled={locked || cue.takes.length >= 100} onClick={onTrim}>裁切此选段 · 免费</button>
+      </div>
+    </>}
+    <div className="flex flex-wrap items-end gap-2 border-t border-white/10 pt-2">
+      <label className="text-xs">在剧情第几秒切段<input aria-label={`${index + 1} 配乐剧情切段秒位`} className={fieldClass} type="number" min={cue.startSec} max={cue.endSec} step="0.01" disabled={locked} value={splitAt ?? midpoint} onChange={e => setSplitAt(Number(e.target.value))}/></label>
+      <button type="button" className={buttonClass} disabled={locked || Boolean(issue)} onClick={() => onSplit(splitAt ?? midpoint)}>在此处分成两段</button>
+    </div>
+    <p className="text-xs text-white/60">拆开后可分别选择柔情、悲伤、紧张等不同原曲，也可继续用同一曲的不同区间。每段单独裁切、试听、采用；原曲与旧候选保留。</p>
+  </section>;
+}
 
 type MusicBrief = {
   model: BgmBriefModel;
@@ -381,6 +437,7 @@ export function CanvasAudioStudioView({
   const [busy, setBusy] = useState(false);
   const [editorOpen, setEditorOpen] = useState(!compact);
   const audioGroups = useRef<Partial<Record<"dialogue" | "bgm" | "sfx", HTMLElement | null>>>({});
+  const musicComposerRef = useRef<HTMLDetailsElement | null>(null);
   const dialogueInputs = useRef<Record<string, HTMLTextAreaElement | null>>({});
   const [jumpToGroup, setJumpToGroup] = useState<"dialogue" | "bgm" | "sfx" | null>(null);
   useEffect(() => {
@@ -814,6 +871,22 @@ export function CanvasAudioStudioView({
     setVoiceCriteria({});
     setConfirmation(null);
   };
+  const splitBgm = (id: string, atSec: number) => {
+    if (disabled || busyRef.current) return;
+    const previous = current.current.state;
+    if (previous.cues.length >= 100) { setError("音轨草稿已达100条，原段保留，未拆分。"); return; }
+    if (previous.pendingOperations.some(row => row.cueId === id)) { setError("本段裁切任务仍在处理中，请先等待原任务结果。"); return; }
+    const cue = previous.cues.find(row => row.id === id);
+    if (!cue) return;
+    try {
+      const parts = splitCanvasBgmSegment(cue, atSec, crypto.randomUUID());
+      if (update(state => ({ ...state, cues: state.cues.flatMap(row => row.id === id ? parts : [row]) }))) {
+        setConfirmation(null);
+        setActiveCueId(parts[1].id);
+        setError("");
+      }
+    } catch (e) { setError(e instanceof Error ? e.message : "切段失败，原配乐保留。"); }
+  };
   const importExistingMusic = (file: File) =>
     action(async () => {
       if (!services.uploadAudioFile)
@@ -1144,13 +1217,13 @@ export function CanvasAudioStudioView({
         ],
       }));
     });
-  const selectSource = (cue: CanvasAudioCue, take: CanvasAudioTake) => {
+  const selectSource = (cue: CanvasAudioCue, take: CanvasAudioTake, labelZh?: string) => {
     patchCue(cue.id, {
       source: {
         gcsUri: take.gcsUri,
         previewUrl: take.previewUrl,
         durationSec: take.durationSec,
-        labelZh: cue.kind === "sfx" ? "已选音效来源" : "已选配乐原曲",
+        labelZh: (labelZh || (cue.kind === "sfx" ? "已选音效来源" : "已选配乐原曲")).slice(0, 200),
       },
       sourceStartSec: 0,
       sourceEndSec: Math.min(
@@ -1165,7 +1238,7 @@ export function CanvasAudioStudioView({
           {job.titleZh}：已保留 {job.variants.length} 个版本，另有 {job.missingVariants} 个版本未交付。请保留原任务等待核对，不要重复生成。
         </p>
       ))}
-      <details className="border-t border-white/15 pt-2">
+      <details ref={musicComposerRef} className="border-t border-white/15 pt-2">
         <summary className="text-xs font-semibold">
           生成配乐原曲 · 保留所有版本
         </summary>
@@ -1433,7 +1506,7 @@ export function CanvasAudioStudioView({
       </section>
       {(["dialogue", "bgm", "sfx"] as const).map(kind => <section key={kind} ref={element => { audioGroups.current[kind] = element; }} data-audio-group={kind} aria-label={{ dialogue: "角色配音编辑", bgm: "背景音乐编辑", sfx: "事件音效编辑" }[kind]} className="min-w-0 scroll-mt-4 space-y-3 rounded-xl border border-white/15 bg-black/15 p-3">
         <header className="flex flex-wrap items-center justify-between gap-2">
-          <div><h3 className="text-sm font-semibold">{{ dialogue: "角色配音", bgm: "背景音乐", sfx: "事件音效" }[kind]} <span className="text-xs font-normal text-white/45">{state.cues.filter(cue => cue.kind === kind).length} {kind === "dialogue" ? "句" : kind === "bgm" ? "段" : "条"}</span></h3><p className="mt-1 text-[11px] text-white/45">{{ dialogue: "写台词、选音色，试听后逐句采用。", bgm: "选原曲、裁秒窗，控制留白与对白避让。", sfx: "为片中实际发生的动作选音效，按秒点采用。" }[kind]}</p></div>
+          <div><h3 className="text-sm font-semibold">{{ dialogue: "角色配音", bgm: "背景音乐", sfx: "事件音效" }[kind]} <span className="text-xs font-normal text-white/45">{state.cues.filter(cue => cue.kind === kind).length} {kind === "dialogue" ? "句" : kind === "bgm" ? "段" : "条"}</span></h3><p className="mt-1 text-[11px] text-white/45">{{ dialogue: "写台词、选音色，试听后逐句采用。", bgm: "按剧情分段，每段选原曲和满意区间；音乐主题可以不同。无对白段结合眼神、站位、表演安排音乐与留白。", sfx: "为片中实际发生的动作选音效，按秒点采用。" }[kind]}</p></div>
           <div className="flex flex-wrap gap-2">
             {kind === "bgm" && services.uploadAudioFile ? (
               <label className={`${buttonClass} cursor-pointer`}>
@@ -1455,6 +1528,13 @@ export function CanvasAudioStudioView({
           </div>
         </header>
         {!state.cues.some(cue => cue.kind === kind) && <p className="rounded-lg border border-dashed border-white/10 p-3 text-xs text-white/40">{{ dialogue: "还没有对白。每句生成前单独确认费用，生成后保留候选。", bgm: "还没有分段配乐。可直接导入已有原曲，或展开下方原曲制作；导入只上传并保存 URL，不重新生成配乐。", sfx: "还没有事件音效。仅为本段需要的动作添加，不自动补声音。" }[kind]}</p>}
+        {kind === "bgm" && state.cues.some(cue => cue.kind === "bgm") ? <ol aria-label="剧情配乐分段表" className="space-y-1 rounded-lg bg-black/20 p-3 text-xs">
+          {state.cues.filter(cue => cue.kind === "bgm").sort((a,b) => a.startSec - b.startSec).map(cue => <li key={cue.id}>
+            <button type="button" className="w-full text-left text-cyan-100" onClick={() => { setActiveCueId(cue.id); document.querySelector(`[data-cue-id="${CSS.escape(cue.id)}"]`)?.scrollIntoView({ block: "nearest" }); }}>
+              {cue.startSec.toFixed(2)}–{cue.endSec.toFixed(2)} 秒 · {cue.labelZh || cue.shotZh || "待填写剧情位置与音乐主题"} · {hasAdoptedManhuaAudio(cue) ? "已采用" : "待试听采用"}{cue.enabled === false ? " · 本次不用" : ""}
+            </button>
+          </li>)}
+        </ol> : null}
       {state.cues.map((cue, index) => {
         if (cue.kind !== kind) return null;
         const pending = state.pendingOperations.some(
@@ -1484,7 +1564,7 @@ export function CanvasAudioStudioView({
               min="0"
               step="0.01"
               className={fieldClass}
-              disabled={disabled}
+              disabled={locked}
               value={cue[key]}
               onChange={event =>
                 patchCue(cue.id, { [key]: Number(event.target.value) })
@@ -1532,6 +1612,10 @@ export function CanvasAudioStudioView({
                 }
               />
             </label>
+            {cue.kind === "bgm" ? <><label className="block text-xs">剧情位置与音乐主题<input aria-label={`${index + 1} 剧情位置与音乐主题`} maxLength={200} className={fieldClass} disabled={locked} value={cue.labelZh} placeholder="例如：重逢 · 柔情；发现背叛 · 紧张" onChange={e => patchCue(cue.id, { labelZh: e.target.value })}/></label>
+              <button type="button" className={buttonClass} disabled={locked} onClick={() => { try { patchMusicDraft({ prompt: canvasBgmSegmentMusicPrompt(cue), brief: null }); setActiveCueId(cue.id); if (musicComposerRef.current) { musicComposerRef.current.open = true; musicComposerRef.current.scrollIntoView({ block: "nearest" }); } } catch (e) { setError(e instanceof Error ? e.message : "请先填写这段的音乐主题。"); } }}>为这一段准备原曲要求</button>
+              <p className="text-[11px] text-white/50">只填写下方原曲制作草稿，保留你选的生成时长。确认后才制作原曲；也可以直接选择已有音乐。</p>
+            </> : null}
             <div className="grid grid-cols-2 gap-2">
               {numberField("片内开始秒", "startSec")}
               {numberField("片内结束秒", "endSec")}
@@ -1713,7 +1797,7 @@ export function CanvasAudioStudioView({
                                   bytes: variant.bytes,
                                   inputKey: "source",
                                   createdAt: new Date().toISOString(),
-                                })
+                                }, `${job.titleZh || "配乐原曲"} · 版本${variant.index + 1}`)
                               }
                             >
                               {duration
@@ -1761,7 +1845,7 @@ export function CanvasAudioStudioView({
                                 durationSec: loadedSources[asset.id],
                                 inputKey: "source",
                                 createdAt: new Date().toISOString(),
-                              })
+                              }, asset.fileName)
                             }
                           >
                             选这条上传音频
@@ -1775,7 +1859,8 @@ export function CanvasAudioStudioView({
                     )}
                   </div>
                 </details>
-                {source && (
+                {source && cue.kind === "bgm" ? <CanvasBgmSegmentEditor cue={cue} index={index} durationSec={durationSec} locked={locked} proxyAudio={proxyAudio} sourceUrl={audioPreviewUrl(source.gcsUri, source.previewUrl)} onRestore={element => void restoreAudio(element, source.gcsUri)} onPatch={patch => patchCue(cue.id, patch)} onSplit={at => splitBgm(cue.id, at)} onTrim={() => { setActiveCueId(cue.id); void trim(cue); }} onError={setError}/> : null}
+                {source && cue.kind !== "bgm" && (
                   <div className="space-y-1 text-xs">
                     原曲 {source.durationSec.toFixed(2)} 秒
                     <CanvasAudioPlayer
@@ -1793,8 +1878,8 @@ export function CanvasAudioStudioView({
                   </div>
                 )}
                 <div className="grid grid-cols-2 gap-2">
-                  {numberField("源音频裁切起点", "sourceStartSec")}
-                  {numberField("源音频裁切终点", "sourceEndSec")}
+                  {cue.kind !== "bgm" ? numberField("源音频裁切起点", "sourceStartSec") : null}
+                  {cue.kind !== "bgm" ? numberField("源音频裁切终点", "sourceEndSec") : null}
                   {numberField("淡入秒", "fadeInSec")}
                   {numberField("淡出秒", "fadeOutSec")}
                 </div>
