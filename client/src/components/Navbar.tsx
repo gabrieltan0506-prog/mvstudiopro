@@ -91,7 +91,7 @@ export default function Navbar({ compact = false, workspaceNavigation }: { compa
           <div className={`flex items-center justify-center rounded-lg bg-primary ${compact ? "h-7 w-7" : "h-9 w-9"}`}>
             <Film className="h-5 w-5 text-primary-foreground" />
           </div>
-          <span className={`${compact ? "text-sm" : "text-lg"} font-bold tracking-tight text-foreground`}>
+          <span className={`${compact ? "hidden text-sm sm:inline" : "text-lg"} font-bold tracking-tight text-foreground`}>
             MV Studio <span className="text-primary">Pro</span>
           </span>
         </Link>

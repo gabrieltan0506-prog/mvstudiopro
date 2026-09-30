@@ -1558,6 +1558,9 @@ export default function OmniCanvas() {
     queue: assembleBusy ? "生成中：长片合成与配乐" : factoryBusy ? "生成中：工厂出片" : writerBusy ? "生成中：编剧扩写" : "空闲",
     // 页面没有积分余额查询；不为顾问新增请求
     credits: "未知",
+    writerBusy,
+    factoryBusy,
+    assembleBusy,
   }), [writerPack, projectBible, writerFocusEpisode, workflowPhase, explicitWriterVideoModel, writerConfirmed, customAssetRefs, blocks, advisorSelection, advisorGate, advisorSignals, assembleBusy, factoryBusy, writerBusy]);
   const advisorPrevisEditing = useMemo(() => {
     if (!advisorPrevisClipId) return {};
@@ -1613,6 +1616,10 @@ export default function OmniCanvas() {
     } catch (e) { toast.error(e instanceof Error ? e.message : "未能应用建议"); return false; }
   };
   const advisorTopIssue = useMemo(() => pickManhuaAdvisorTopIssue(advisorProject.issues, workflowPhase), [advisorProject.issues, workflowPhase]);
+  const advisorNeedsAttention = useMemo(() => new Set([
+    ...advisorProject.issues.map(issue => issue.id),
+    ...(advisorProject.generationSteps || []).flatMap(step => step.problems.map(problem => problem.id)),
+  ]).size, [advisorProject]);
   const locateAdvisorIssue = useCallback((issue: AdvisorIssue) => {
     setWorkflowPhase(issue.phase);
     setManhuaUiMode("workbench");
@@ -10164,6 +10171,19 @@ export default function OmniCanvas() {
                   )}
                 </div>
               )}
+                {canvasMode === "manhua" ? (
+                  <button
+                    type="button"
+                    data-manhua-advisor-open
+                    data-manhua-advisor-header
+                    aria-expanded={advisorOpen}
+                    aria-label={`创作顾问${advisorNeedsAttention ? `，${advisorNeedsAttention} 项需处理` : ""}`}
+                    className="shrink-0 whitespace-nowrap rounded-lg border border-cyan-300/35 bg-cyan-400/10 px-2.5 py-1.5 text-xs font-semibold text-cyan-100 hover:bg-cyan-400/20"
+                    onClick={() => { setAdvisorPrevisClipId(null); advisor3dOpenVersion.current += 1; setAdvisor3dContext(undefined); setAdvisorFocusSection(null); setAdvisorOpen(true); setAdvisorNudge(null); }}
+                  >
+                    创作顾问<span aria-live="polite">{advisorNeedsAttention ? ` (${advisorNeedsAttention})` : ""}</span>
+                  </button>
+                ) : null}
               <details
                 key={immersiveWorkbench ? "compact-tools" : "full-tools"}
                 data-canvas-workspace-tools
@@ -10224,17 +10244,6 @@ export default function OmniCanvas() {
                   </div>
                 ) : null}
                 <OpenAiImageVariantSwitch compact hideModelNames />
-                {immersiveWorkbench && canvasMode === "manhua" ? (
-                  <button
-                    type="button"
-                    data-manhua-advisor-open
-                    aria-expanded={advisorOpen}
-                    className="rounded-lg border border-white/15 bg-white/5 px-2.5 py-1 text-[11px] text-white/70 hover:bg-white/10 hover:text-white"
-                    onClick={() => { setAdvisorPrevisClipId(null); advisor3dOpenVersion.current += 1; setAdvisor3dContext(undefined); setAdvisorFocusSection(null); setAdvisorOpen(true); setAdvisorNudge(null); }}
-                  >
-                    创作顾问{advisorProject.issues.length ? ` (${advisorProject.issues.length})` : ""}
-                  </button>
-                ) : null}
                 {canShowCanvasDebug ? (
                   <button
                     type="button"
@@ -13594,27 +13603,9 @@ export default function OmniCanvas() {
         </div>
       </main>
 
-      {/* 非沉浸页面沿用浮动入口；沉浸工作区入口在顶导航，避免遮住阶段与画面。 */}
+      {/* 阶段提醒保留，顾问唯一入口常驻工作区顶栏。 */}
       {canvasMode === "manhua" && !advisorOpen && !immersiveWorkbench ? (
         <div className="pointer-events-none fixed top-[4.5rem] right-4 z-[59] flex flex-col items-end gap-2">
-          <button
-            type="button"
-            onClick={() => { setAdvisorPrevisClipId(null); advisor3dOpenVersion.current += 1; setAdvisor3dContext(undefined); setAdvisorFocusSection(null); setAdvisorOpen(true); setAdvisorNudge(null); }}
-            aria-expanded={advisorOpen}
-            data-manhua-advisor-open
-            className="pointer-events-auto relative rounded-full border border-cyan-300/40 bg-[#10171f]/95 px-4 py-2.5 text-[12px] font-bold text-cyan-100 shadow-xl backdrop-blur transition hover:bg-cyan-500/20"
-          >
-            创作顾问
-            {advisorProject.issues.length ? (
-              <span
-                data-manhua-advisor-badge
-                aria-label={`${advisorProject.issues.length} 条待处理`}
-                className="absolute -top-1.5 -right-1.5 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white"
-              >
-                {advisorProject.issues.length}
-              </span>
-            ) : null}
-          </button>
           {advisorNudge && manhuaUiMode !== "workbench" ? (
             <div
               role="status"

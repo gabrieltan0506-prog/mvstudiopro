@@ -41,6 +41,11 @@ it("品牌与工作区同一行；短窗口展开两组工具后顶栏不长高�
         return { headerHeight: header.height, brand: [brand.top,brand.bottom], workspace: [workspace.top,workspace.bottom], viewport: innerWidth, page: document.documentElement.scrollWidth };
       });
       expect(before.brand[0]).toBeLessThan(before.workspace[1]); expect(before.workspace[0]).toBeLessThan(before.brand[1]); expect(before.page).toBeLessThanOrEqual(width + 1);
+      const advisor = await page.$eval('[data-manhua-advisor-header]', node => {
+        const rect = node.getBoundingClientRect();
+        return { inTools: Boolean(node.closest('details')), visible: rect.width > 0 && rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight };
+      });
+      expect(advisor).toEqual({ inTools: false, visible: true });
       await page.click('[data-canvas-workspace-tools] > summary');
       await page.click('[data-manhua-workspace-tools] > summary');
       const expanded = await page.evaluate(() => {
