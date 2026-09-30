@@ -169,6 +169,11 @@ describe("漫剧工厂创作顾问上下文", () => {
       const messages = buildManhuaCreativeAdvisorLlmMessages({ question, context: test.context });
       expect(messages[1].content).toContain("横移跟走");
       expect(messages[1].content).toContain("叙事灯光目录");
+      expect(messages[1].content).toContain("【出场氛围与灯光候选库】");
+      expect(messages[1].content).toContain("【七核心镜头候选库】");
+      expect(messages[1].content).toContain("亮暗权力翻转");
+      if (!test.context.worldTarget) expect(messages[1].content).toContain("匹配剪辑");
+      else expect(messages[1].content).toContain("不在静态生成正文里写移动");
       expect(messages[1].content).toContain(test.scope);
       expect(messages[1].content).toContain(question);
       expect(messages[0].content).toContain(test.contract);

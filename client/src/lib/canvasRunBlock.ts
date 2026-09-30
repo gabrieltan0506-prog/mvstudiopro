@@ -1,3 +1,5 @@
+import { formatManhuaShotCoreCatalog } from "@shared/manhuaShotCoreBank";
+import { formatManhuaEntranceAtmosphereCatalog } from "@shared/manhuaEntranceAtmosphereBank";
 import { manhuaGeneratedPrevisCoverageIssue } from "@shared/manhuaPrevisScope";
 import { compileManhua3dImageTreatment } from "@shared/manhua3dMaterialPrompt";
 import { DEFAULT_CANVAS_VIDEO_MODEL, isCanvasWan30VideoModel, normalizeCanvasVideoModel, type CanvasBlock } from "./canvasTypes";
@@ -2375,6 +2377,19 @@ export async function runCanvasBlock(
   }
 }
 
+/** 旧节点或分片输入也须带完整候选库；只缺一库时单独补齐，不重复完整目录。 */
+function appendManhuaCraftCatalogs(source: string, stage: "writer" | "storyboard"): string {
+  const hasClosed = (name: string) => {
+    const start = source.indexOf(`【${name}】`);
+    return start >= 0 && source.indexOf(`【/${name}】`, start) > start;
+  };
+  return [
+    source,
+    !hasClosed("出场氛围与灯光候选库") ? formatManhuaEntranceAtmosphereCatalog(stage) : "",
+    !hasClosed("七核心镜头候选库") ? formatManhuaShotCoreCatalog(stage) : "",
+  ].filter(Boolean).join("\n\n");
+}
+
 async function runCanvasBlockInner(
   deps: CanvasRunDeps,
   block: CanvasBlock,
@@ -2507,7 +2522,7 @@ async function runCanvasBlockInner(
 
   if (block.kind === "video_reverse") {
     const hint = formatCanvasUpstreamPrompt(
-      prompt || "反推分镜表与 Seedance 微动句",
+      appendManhuaCraftCatalogs(prompt || "反推分镜表", "storyboard"),
       refTexts,
     );
     const text = await runVideoReversePrompt(
@@ -2542,8 +2557,11 @@ async function runCanvasBlockInner(
   // 关键静帧 / 段成片：本节点 prompt 已含导戏；禁止再拼上游 keyart/设定全文（古风板×N）
   const isKeyartBlock = block.id.startsWith("keyart-");
   const isClipBlock = block.id.startsWith("clip-");
+  const factoryCraftStage = /^(?:story|beats)-/.test(block.id)
+    ? block.id.startsWith("story-") ? "writer" : "storyboard" : null;
+  const basePrompt = prompt || "请根据上游内容完成本步骤生成。";
   const mergedPrompt = formatCanvasUpstreamPrompt(
-    prompt || "请根据上游内容完成本步骤生成。",
+    factoryCraftStage ? appendManhuaCraftCatalogs(basePrompt, factoryCraftStage) : basePrompt,
     isKeyartBlock || isClipBlock || block.musicMvShot ? [] : effectiveTexts,
   );
 
@@ -2580,7 +2598,8 @@ async function runCanvasBlockInner(
         const parts: string[] = [];
         let previousMarkdown = "";
         for (let i = 0; i < plan.chunks.length; i++) {
-          const chunk = plan.chunks[i]!;
+          // 分片可能把目录分到末片；每次实际请求都补齐完整库，正文仍逐字保留。
+          const chunk = factoryCraftStage ? appendManhuaCraftCatalogs(plan.chunks[i]!, factoryCraftStage) : plan.chunks[i]!;
           const partMarkdown = await deps.optimizeCopy({
             sourceText: chunk,
             optimizationBrief: buildManhuaFactoryOptimizeBrief({

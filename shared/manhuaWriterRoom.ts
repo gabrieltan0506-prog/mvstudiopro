@@ -1,3 +1,5 @@
+import { formatManhuaShotCoreCatalog } from "./manhuaShotCoreBank.js";
+import { formatManhuaEntranceAtmosphereCatalog } from "./manhuaEntranceAtmosphereBank.js";
 import { MANHUA_DIALOGUE_CRAFT_ZH } from "./manhuaDialogueCraft.js";
 /**
  * 漫剧「编剧室」：题材+短条件 → 可确认的多集剧情包（默认 3 集，2–6 可调）。
@@ -220,6 +222,8 @@ export function buildManhuaWriterExpandPrompt(opts: {
     resolveDirectorStyleBlocks(opts.directionCanon || null).story,
     // 手法条目库同时供段成片兜底补条：两端取同一套词，成片才不会各说各话
     formatCraftShotWriterVocabBlock(),
+    formatManhuaEntranceAtmosphereCatalog("writer"),
+    formatManhuaShotCoreCatalog("writer"),
     partialBlock,
     "",
     "请严格按下列结构输出：",

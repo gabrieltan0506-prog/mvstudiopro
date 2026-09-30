@@ -1,3 +1,5 @@
+import { formatManhuaShotCoreCatalog } from "@shared/manhuaShotCoreBank";
+import { formatManhuaEntranceAtmosphereCatalog } from "@shared/manhuaEntranceAtmosphereBank";
 import { compileManhuaSceneSpace, resolveManhuaSpatialActorIds } from "@shared/manhuaSceneSpace";
 /**
  * 漫剧工厂：一键铺节点 + 顺序自动跑（故事→角色→节拍→反推→静帧→Seedance）
@@ -1009,7 +1011,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   if (episodeHeader) {
     storyPrompt = `${episodeHeader}\n\n${storyPrompt}`;
   }
-  story.prompt = [storyPrompt, narrativeEngineBlock, directorStoryBlock, direction.story, directionMarker]
+  story.prompt = [storyPrompt, narrativeEngineBlock, formatManhuaEntranceAtmosphereCatalog("writer"), formatManhuaShotCoreCatalog("writer"), narrativeLightingBlock, directorStoryBlock, direction.story, directionMarker]
     .filter(Boolean)
     .join("\n\n");
   story.width = 400;
@@ -1054,6 +1056,8 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     actionCameraBlock,
     cineVocabBlock,
     narrativeLightingBlock,
+    formatManhuaEntranceAtmosphereCatalog("storyboard"),
+    formatManhuaShotCoreCatalog("storyboard"),
     maleMicroBlock,
     propAnchorBlock,
     directorStoryboardBlock,
@@ -1079,6 +1083,8 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     actionCameraBlock,
     cineVocabBlock,
     narrativeLightingBlock,
+    formatManhuaEntranceAtmosphereCatalog("storyboard"),
+    formatManhuaShotCoreCatalog("storyboard"),
     directorStoryboardBlock,
     direction.storyboard,
   ]
@@ -1511,17 +1517,20 @@ export function applyFactoryPrefsToBlocks(
     if (b.id.startsWith("beats-") || b.id.startsWith("reverse-")) {
       const withoutScopedStoryboard = String(b.prompt || "").replace(/\s?【逐镜分镜手法】[\s\S]*?【\/逐镜分镜手法】/g, "");
       let base = stripManhuaDirectionStyleBlocks(stripManhuaDirectorStrategyStage(withoutScopedStoryboard));
-      base = stripInjectBlock(base, "【手法条目库·原子镜头】");
+      base = stripMarkedSection(base, "【手法条目库·原子镜头】");
       base = stripMarkedSection(base, "【路径运镜配方】");
       base = stripMarkedSection(base, "【动作运镜配方】");
       base = stripMarkedSection(base, "【电影级可拍词表】");
-      base = stripMarkedSection(base, "【叙事灯光动机库】");
+      base = base.replace(/【叙事灯光动机库】[\s\S]*?【\/叙事灯光动机库】/g, "");
       base = stripMarkedSection(base, "【男生微表情库】");
       if (syncGenre) base = stripMarkedSection(base, "【编剧剧种模板");
       if (syncScene) {
         base = stripMarkedSection(base, "【漫剧场景资产库");
         base = stripMarkedSection(base, "【场景示范图锚点】");
       }
+      base = base.replace(/【出场氛围与灯光候选库】[\s\S]*?【\/出场氛围与灯光候选库】/g, "");
+      base = base.replace(/【七核心镜头候选库】[\s\S]*?【\/七核心镜头候选库】/g, "");
+      base = base.replace(/【叙事灯光动机库】[\s\S]*?【\/叙事灯光动机库】/g, "");
       base = stripMarkedSection(base, "【点选道具锚点】");
       base = stripMarkedSection(base, "【参考职责】");
       const parts = [
@@ -1534,6 +1543,8 @@ export function applyFactoryPrefsToBlocks(
         actionCameraBlock,
         cineVocabBlock,
         narrativeLightingBlock,
+        formatManhuaEntranceAtmosphereCatalog("storyboard"),
+        formatManhuaShotCoreCatalog("storyboard"),
         b.id.startsWith("beats-") && maleMicroBlock ? maleMicroBlock : "",
         (b.id.startsWith("beats-") || b.id.startsWith("clip-")) && stylePackBlock
           ? stylePackBlock
@@ -1554,6 +1565,9 @@ export function applyFactoryPrefsToBlocks(
       let base = stripManhuaDirectionStyleBlocks(stripManhuaDirectorStrategyStage(b.prompt));
       if (syncGenre) base = stripMarkedSection(base, "【编剧剧种模板");
       if (b.id.startsWith("story-")) {
+        base = base.replace(/【出场氛围与灯光候选库】[\s\S]*?【\/出场氛围与灯光候选库】/g, "");
+        base = base.replace(/【七核心镜头候选库】[\s\S]*?【\/七核心镜头候选库】/g, "");
+        base = base.replace(/【叙事灯光动机库】[\s\S]*?【\/叙事灯光动机库】/g, "");
         base = stripMarkedSection(base, "【漫剧场景资产库");
         base = stripMarkedSection(base, "【场景示范图锚点】");
       }
@@ -1578,6 +1592,9 @@ export function applyFactoryPrefsToBlocks(
         b.id.startsWith("bible-") && maleHairstyleBlock ? maleHairstyleBlock : "",
         b.id.startsWith("bible-") && wardrobeBlock ? wardrobeBlock : "",
         b.id.startsWith("bible-") && propAnchorBlock ? propAnchorBlock : "",
+        b.id.startsWith("story-") ? formatManhuaEntranceAtmosphereCatalog("writer") : "",
+        b.id.startsWith("story-") ? formatManhuaShotCoreCatalog("writer") : "",
+        b.id.startsWith("story-") ? narrativeLightingBlock : "",
         b.id.startsWith("story-") ? directorStoryBlock : directorAssetsBlock,
         b.id.startsWith("story-") ? prefsDirection.story : prefsDirection.assets,
         b.id.startsWith("story-") ? prefsDirectionMarker : "",

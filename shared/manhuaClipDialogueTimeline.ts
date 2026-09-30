@@ -221,6 +221,8 @@ function resolveBeatCameraSequenceZh(
   const entry = raw
     ? matchManhuaCameraMoveByNameZh(raw)
     : recommendManhuaCameraMoveFromText(actionZh);
+  // 只展开点名的短配方；已有具体自由文本的起终/焦段不能被模板替换。
+  if (raw && entry && raw !== entry.nameZh && !new RegExp(`^(?:远景|全景|中景|近景|特写|中近景)[·，,；; ]*${entry.nameZh}$`).test(raw)) return null;
   const seq = entry?.sequenceZh;
   if (!seq) return null;
   return `先${trimTrailPunct(seq[0].replace(/^先/, ""))}，后${trimTrailPunct(seq[1].replace(/^[后再]/, ""))}`;
@@ -242,7 +244,8 @@ function cameraTrajectoryZh(cameraZh: string, actionZh: string): string {
       ? raw.replace(frame, "").replace(/^[，,、\s]+/, "").trim() || "固定微动"
       : "固定微动";
   }
-  return move.slice(0, 48);
+  // 镜头自由文本可能包含焦段/FOV、构图、路线与灯光；完整保留，禁止静默裁尾。
+  return move;
 }
 
 /**

@@ -154,3 +154,13 @@ describe("parseManhuaWriterTrialDraft", () => {
     expect(d?.openingHook).toBe("开场文案");
   });
 });
+
+// 候选工艺可用于大纲，但不能使免费试写扩张成正文或镜头schema。
+it("两库进入真实试写prompt，仍保持大纲合同", () => {
+  const text = buildManhuaWriterTrialPrompt({ topic: "母女去医", brief: "原天气", templateAddon: "" });
+  expect(text).toContain("亮暗权力翻转");
+  expect(text).toContain("匹配剪辑");
+  expect(text).toContain("不增加可拍表");
+  expect(text).toContain("不输出可拍表、cameraZh/actionZh字段");
+  expect(text).not.toContain("景别/角度/构图/焦段FOV/摄影机起終与运动写入现有cameraZh");
+});

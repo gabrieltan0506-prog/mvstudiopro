@@ -1,3 +1,4 @@
+import { formatManhuaShotCoreCatalog } from "./manhuaShotCoreBank.js";
 import { MANHUA_PERFORMANCE_CRAFT_ZH, MANHUA_PERFORMANCE_REVIEW_ZH } from "./manhuaPerformanceCraft.js";
 /** 用户提供的七核心教学图转为决策检查项，不冒充某位导演的考据规律。 */
 export const MANHUA_SHOT_CORE_GUIDES = [
@@ -14,6 +15,7 @@ export function manhuaSevenCoreDirectives(stage: "storyboard" | "keyframe" | "cl
   const cores = stage === "keyframe" ? MANHUA_SHOT_CORE_GUIDES.slice(0, 5) : MANHUA_SHOT_CORE_GUIDES;
   if (stage === "review") return [MANHUA_PERFORMANCE_REVIEW_ZH, ...cores.map(c => `七核心检查·${c.labelZh}：对照本镜已确认方案与实际产物；缺少证据标未验证，发现问题定位镜号与受影响项，不凭任务成功判通过。${c.instructionZh}`)];
   return [
+    ...(stage === "storyboard" ? [formatManhuaShotCoreCatalog("storyboard")] : []),
     "七核心落实：以下为通用分镜决策检查项，不是导演生平规律；结合本阶段选卡手法与本镜剧情填写，用户明确锁定优先，没有依据不强加风格。",
     ...(stage === "keyframe" ? [] : [MANHUA_PERFORMANCE_CRAFT_ZH.replace(/\s*\n\s*/g, " ")]),
     ...cores.map(c => `${c.labelZh}：${c.instructionZh}`),

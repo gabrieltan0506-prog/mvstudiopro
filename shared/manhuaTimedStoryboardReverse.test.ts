@@ -26,15 +26,15 @@ describe("真实11列反推表匿名回归", () => {
       index: 1,
       startSec: 0,
       endSec: 4,
-      cameraZh: "中景；平视腰肩机位；横移跟拍",
-      actionZh: "甲背娘挪步",
+      cameraZh: "中景；平视腰肩机位；横移跟拍；街巷",
+      actionZh: "甲背娘挪步；灯光：冷青晨雾；转场/卡点：冷开场",
       dialogueZh: "娘：「慢点。」",
       soundZh: "咳喘",
     });
     const shots = parseWorkbenchShotsFromText(sample);
     expect(shots).toHaveLength(2);
     expect(shots.map(s => s.durationSec)).toEqual([4, 3]);
-    expect(shots[0].actionZh).toBe("甲背娘挪步");
+    expect(shots[0].actionZh).toBe("甲背娘挪步；灯光：冷青晨雾；转场/卡点：冷开场");
     expect(shots[0].dialogueZh).not.toContain("咳喘");
   });
   it("21镜匿名连续表总长86秒；不合并行、不补默认秒数", () => {

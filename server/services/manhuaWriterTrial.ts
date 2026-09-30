@@ -1,3 +1,5 @@
+import { formatManhuaShotCoreCatalog } from "../../shared/manhuaShotCoreBank.js";
+import { formatManhuaEntranceAtmosphereCatalog } from "../../shared/manhuaEntranceAtmosphereBank.js";
 /**
  * /canvas 编剧室 · 模板免费试写（单集大纲级，两版对比）。
  *
@@ -231,6 +233,8 @@ export function buildManhuaWriterTrialPrompt(params: {
       ? "你是竖屏漫剧连载编剧。以下已有第 1 集大纲，请只依据给定创作 Skill 对它做必要的局部改写；未受 Skill 影响的文字逐字保留。禁止重写成另一版剧情。"
       : "你是竖屏漫剧连载编剧。根据用户题材，只写第 1 集的「大纲级试写」，不写正文分段。",
     "硬规则：",
+    formatManhuaEntranceAtmosphereCatalog("trial"),
+    formatManhuaShotCoreCatalog("trial"),
     "1. 全文约 300–600 字，超出视为失败。",
     "2. 成稿禁止导演名、真实剧集/电影片名、「仿写某某」「致敬某某」，禁止出现任何模型名或供应商名。",
     "3. 严格按下面三段式输出，段落标记一字不差，不要代码围栏、不要多余寒暄：",
