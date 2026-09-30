@@ -11,6 +11,7 @@ import {
   resolveSiteOwnerOnlyAllowed,
 } from "../services/access-policy";
 import { describeManhuaTemplateLearnSourceZh, type ManhuaViralTemplateCard } from "../../shared/manhuaViralTemplateBank";
+import { buildManhuaTemplateStoryPreview } from "../services/manhuaTemplateStoryPreview";
 
 type NativeTemplateProgressSource = {
   attemptedSegments?: unknown;
@@ -132,6 +133,7 @@ export const manhuaViralTemplateRouter = router({
                   ? bank.toPublicManhuaViralTemplateCard(
                       { ...c, publicCode },
                       MANHUA_VIRAL_TEMPLATE_COPY[c.id],
+                      buildManhuaTemplateStoryPreview({ ...c, publicCode }),
                     )
                   : null;
                 if (!pub) {

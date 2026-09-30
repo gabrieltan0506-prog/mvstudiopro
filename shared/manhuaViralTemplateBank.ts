@@ -716,6 +716,15 @@ function parseManhuaViralTemplateRevision(
  * 公开功能卡（普通用户唯一可见形态）。商业机密边界：内部 id / 真名 / 来源 / 学习出处 /
  * 节拍与场景自由文本一概不出现——字段显式逐个构造，禁止从内部卡展开（fail-closed）。
  */
+export type ManhuaTemplateStoryPreview = {
+  teaserTitleZh?: string;
+  storyTypeZh: string;
+  premiseZh: string;
+  openingZh: string;
+  earlyProgressionZh: string;
+  presentationTagsZh: string[];
+};
+
 export type PublicManhuaViralTemplateCard = {
   /** 稳定公开句柄：`mt_${publicCode 小写}`；扩写入参可直接用它选模板 */
   publicId: string;
@@ -728,6 +737,8 @@ export type PublicManhuaViralTemplateCard = {
   /** 前台文案（人工润色的零具名稿，服务端文案表供给） */
   featureZh: string;
   introZh: string;
+  /** 仅匿名开篇方向，不含完整故事、反转、原节拍或可复用手法正文。 */
+  storyPreview?: ManhuaTemplateStoryPreview;
 };
 
 export function makePublicTemplateId(publicCode: string): string {
@@ -745,10 +756,16 @@ export function makeAnonymousTemplateNameZh(
 export function toPublicManhuaViralTemplateCard(
   card: ManhuaViralTemplateCard,
   copy?: { featureZh?: string; introZh?: string } | null,
+  storyPreview?: ManhuaTemplateStoryPreview,
 ): PublicManhuaViralTemplateCard | null {
   const code = String(card.publicCode || "").trim();
   if (!/^[A-Z0-9]{4,16}$/.test(code)) return null;
-  const learnedClassificationTagsZh = flattenManhuaTemplateClassification(card.classification);
+  // 选用前只公开少量故事/情绪标签；全量表演和视听标签属于应用时的服务端底料。
+  const learnedClassificationTagsZh = card.classification ? Array.from(new Set([
+    ...card.classification.emotionTagsZh.slice(0, 2),
+    ...card.classification.narrativeFeatureTagsZh.slice(0, 2),
+    ...card.classification.audienceExperienceTagsZh.slice(0, 2),
+  ].map(tag => String(tag || "").trim()).filter(Boolean))).slice(0, 6) : [];
   // 存量 approved 卡没有新 classification 字段时，公开面必须与私有分组采用同一
   // 兼容口径；否则卡虽然能显示，却永远无法被编剧室推荐器命中。
   const classificationTagsZh = learnedClassificationTagsZh.length
@@ -766,6 +783,14 @@ export function toPublicManhuaViralTemplateCard(
     introZh: String(
       copy?.introZh || `按 ${card.beatGrid.length} 个证据节拍组织剧情，核心特征：${classificationTagsZh.slice(0, 5).join("、") || "待重新学习"}。`,
     ).slice(0, 200),
+    ...(storyPreview ? { storyPreview: {
+      storyTypeZh: storyPreview.storyTypeZh.slice(0, 24),
+      ...(storyPreview.teaserTitleZh ? { teaserTitleZh: storyPreview.teaserTitleZh.slice(0, 32) } : {}),
+      premiseZh: storyPreview.premiseZh.slice(0, 90),
+      openingZh: storyPreview.openingZh.slice(0, 90),
+      earlyProgressionZh: storyPreview.earlyProgressionZh.slice(0, 90),
+      presentationTagsZh: storyPreview.presentationTagsZh.slice(0, 2).map(tag => tag.slice(0, 20)),
+    } } : {}),
   };
 }
 
@@ -1121,7 +1146,7 @@ export function recommendPublicManhuaViralTemplate(
   return cards
     .map((card) => ({
       card,
-      score: card.classificationTagsZh.reduce((sum, tag) => sum + (text.includes(tag) ? 1 : 0), 0),
+      score: Array.from(new Set([...card.classificationTagsZh, card.storyPreview?.storyTypeZh || "", ...(card.storyPreview?.presentationTagsZh || [])])).filter(Boolean).reduce((sum, tag) => sum + (text.includes(tag) ? 1 : 0), 0),
     }))
     .sort((a, b) => b.score - a.score)
     .find((row) => row.score > 0)?.card || null;

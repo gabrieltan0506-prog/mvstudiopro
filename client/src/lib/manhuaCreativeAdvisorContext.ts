@@ -103,7 +103,8 @@ function formatProjectSignals(signals: AdvisorProjectSignalsText | undefined, bu
 
 function formatTemplateLine(t: PublicManhuaViralTemplateCard): string {
   const tags = (t.classificationTagsZh || []).slice(0, 4).join("/");
-  return `- ${t.nameZh}（${t.laneZh}·${t.beatCount} 拍${tags ? `·${tags}` : ""}）：${clip(t.featureZh || t.introZh, 60)}`;
+  const preview = t.storyPreview;
+  return `- ${t.nameZh}（${preview?.storyTypeZh || t.laneZh}${tags ? `·${tags}` : ""}）：${clip(preview ? `${preview.premiseZh}；表现侧重：${preview.presentationTagsZh.join("、")}` : t.featureZh || t.introZh, 100)}`;
 }
 
 /**
@@ -123,7 +124,7 @@ export function buildAdvisorQuestion(input: AdvisorContextInput): string {
     const fixed = [
       "【身份】你是漫剧工厂的创作顾问，围绕另附的当前项目证据提供建议。",
       selected
-        ? `【当前候选模板】${clip(selected.nameZh, 160)}：${clip(selected.featureZh || selected.introZh, 240)}`
+        ? `【当前候选模板】${clip(selected.nameZh, 160)}：${clip(selected.storyPreview ? `${selected.storyPreview.premiseZh}；表现侧重：${selected.storyPreview.presentationTagsZh.join("、")}` : selected.featureZh || selected.introZh, 240)}`
         : "【当前候选模板】未选择；不需要为了答问选择模板。",
       "【回答要求】明确问题位置、依据、修改建议和影响范围；区分观察事实与建议。先给简短结论，再按用户要求展开。只给建议，不声称已经修改、生成或审过未读取的媒体。",
       `【用户问题】${question}`,
@@ -214,6 +215,8 @@ export function findMentionedTemplates(
       }
       idx = a.indexOf(t.nameZh, idx + 1);
     }
+    const code = t.publicId.replace(/^mt_/i, "");
+    if (/^[a-z0-9]{4,16}$/i.test(code) && new RegExp(`(?:^|[^a-z0-9])(?:mt_)?${code}(?![a-z0-9])`, "i").test(a)) matched = true;
     if (matched) {
       seen.add(t.publicId);
       hits.push(t);
