@@ -30,6 +30,21 @@ function phaseFirst(issues: readonly AdvisorIssue[], phase: string): AdvisorIssu
   return [...issues.filter((i) => i.phase === phase), ...issues.filter((i) => i.phase !== phase)];
 }
 
+/** 只说明处理入口，不执行生成，也不改变任何校验结果。 */
+export function manhuaIssueResolutionZh(issue: AdvisorIssue): string {
+  const actions: Record<string, string> = {
+    script: "导入或填写本集剧本，再确认正文。",
+    canon: "核对并确认剧本人物表，再认领人物参考图。",
+    engine: "选择本集成片引擎。",
+    "engine-conflict": "核对本集成片节点，统一成片引擎。",
+    gate: "打开剧本检查，按列出的要求修改后重新核对。",
+    scene: "确认场景表，或选择可用的场景参考图。",
+    "asset-gap": "进入资产设定，补齐列出的缺失参考。",
+    keyframe: "进入分镜核对对应镜头：缺图时补图；版本不一致时先核对画面和造型，确有变化再重出该镜；仅改对白或时长时应核查版本记录。",
+  };
+  return actions[issue.id] || "打开对应步骤，按这项检查的要求处理后重新核对。";
+}
+
 export function buildManhuaMainTaskState(input: {
   issues: readonly AdvisorIssue[];
   /** 当前阶段 id */
@@ -47,9 +62,9 @@ export function buildManhuaMainTaskState(input: {
     advisories,
     headlineZh: blocked
       ? thisPhase > 0
-        ? `本步卡着 ${thisPhase} 条，全片共 ${blockers.length} 条要解`
-        : `其他步骤还有 ${blockers.length} 项需要处理`
+        ? `本步待核对 ${thisPhase} 项`
+        : `制作待核对 ${blockers.length} 项`
       : "",
-    hintZh: blocked ? "点任意一条跳到该修的地方；解完主操作才会真的往下走" : "",
+    hintZh: blocked ? "查看未通过项与处理办法，点击进入对应步骤" : "",
   };
 }

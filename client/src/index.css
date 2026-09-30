@@ -964,27 +964,29 @@
   column-gap: 12px;
   margin: 6px 18px 0;
   padding: 5px 10px !important;
-  border: 1px solid #efb5a9 !important;
+  border: 1px solid #d8d0c3 !important;
   border-radius: 10px;
-  background: #fff2ee !important;
-  color: #8f2d2d !important;
+  background: #faf8f3 !important;
+  color: #334155 !important;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-blocker-card] ul {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
   min-width: 0;
   gap: 6px !important;
   margin-top: 0 !important;
-  overflow-x: auto;
+  overflow-wrap: anywhere;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-blocker-card] button {
   min-height: 24px;
-  max-width: 720px;
+  width: 100%;
+  max-width: none;
   padding-block: 2px !important;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  background: #fffdf8 !important;
+  border-color: #d8d0c3 !important;
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-blocker-card] [data-manhua-advisory-count] {
@@ -1005,7 +1007,7 @@
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-blocker-card] * {
-  color: #8f2d2d !important;
+  color: #334155 !important;
 }
 
 #manhua-workbench-shell.mh-redesign :is(

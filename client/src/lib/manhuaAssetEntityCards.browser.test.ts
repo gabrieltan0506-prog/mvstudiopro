@@ -698,11 +698,12 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
     expect(seen, "阻断卡没有渲染出来").not.toBeNull();
     if (!seen) throw new Error("阻断卡未挂载");
     expect(seen.count).toBe("2");
-    expect(seen.headline).toBe("本步卡着 1 条，全片共 2 条要解");
+    expect(seen.headline).toBe("本步待核对 1 项");
     // 夹具里「后续阶段」那条排在数组第一个：排序失效页面顺序就会反过来（变异验过会红）
     expect(seen.order.map((o) => o.id)).toEqual(["asset-gap", "keyframe"]);
-    expect(seen.order[0].text.startsWith("本步")).toBe(true);
-    expect(seen.order[1].text.startsWith("本步")).toBe(false);
+    expect(seen.order[0].text.startsWith("资产设定 · 未通过")).toBe(true);
+    expect(seen.order[1].text.startsWith("分镜 · 未通过")).toBe(true);
+    expect(seen.order[1].text).toContain("处理办法：进入分镜核对对应镜头");
     expect(seen.advisoryCount).toBe("1");
     expect(seen.advisoryText).toContain("不挡出片");
     const opened = await page.evaluate(() => {
@@ -710,6 +711,22 @@ describe("浏览器真实页面：资产页同名多版本收成实体卡", () =
       return (window as never as { fixture: { openedIssue?: string | null } }).fixture.openedIssue;
     });
     expect(opened).toBe("keyframe");
+    if (layoutCss) {
+      await page.evaluate(() => document.querySelector("[data-manhua-blocker-card]")?.setAttribute("open", ""));
+      for (const width of [1280, 390]) {
+        await page.setViewport({ width, height: 900 });
+        const style = await page.evaluate(() => {
+          const card = document.querySelector<HTMLElement>("[data-manhua-blocker-card]")!;
+          const resolution = card.querySelector<HTMLElement>("[data-manhua-resolution]")!;
+          return { color: getComputedStyle(resolution).color, background: getComputedStyle(card).backgroundColor, wrap: getComputedStyle(resolution.parentElement!).whiteSpace, overflow: card.scrollWidth - card.clientWidth };
+        });
+        expect(style.color).toBe("rgb(51, 65, 85)");
+        expect(style.background).toBe("rgb(250, 248, 243)");
+        expect(style.wrap).toBe("normal");
+        expect(style.overflow).toBeLessThanOrEqual(2);
+        await page.screenshot({ path: path.join(assetEvidenceDir, `checks-neutral-${width}.png`), fullPage: false });
+      }
+    }
     await close();
   }, 180_000);
 

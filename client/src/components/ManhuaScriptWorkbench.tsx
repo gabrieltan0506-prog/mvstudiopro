@@ -151,7 +151,7 @@ import {
   manhuaCanvasNodeBelongsToSegment,
   readManhuaCanvasNodeIdentity,
 } from "@shared/manhuaCanvasNodeIdentity";
-import { buildManhuaMainTaskState } from "@/lib/manhuaMainTaskBlockers";
+import { buildManhuaMainTaskState, manhuaIssueResolutionZh } from "@/lib/manhuaMainTaskBlockers";
 import {
   MANHUA_SECONDARY_TOOL_LABEL_ZH,
   manhuaDrawerSecondaryTools,
@@ -1783,6 +1783,10 @@ export default function ManhuaScriptWorkbench({
     }
   }, [activePhase, completedKeyartShotKey, factoryBusy, focusEpisode, shots]);
   const staleLookStillCount = episodeKeyarts.filter((block) => !isManhuaWorkbenchKeyartCurrent(block)).length;
+  const staleKeyartShotIndexes = Array.from(new Set(episodeKeyarts
+    .filter((block) => !isManhuaWorkbenchKeyartCurrent(block))
+    .map((block) => resolveKeyartShotIndex(block.id, block.prompt))
+    .filter((index) => index != null && index > 0))).sort((a, b) => a! - b!);
   const keyart = episodeKeyarts[0];
   const episodeVideoLabelZh = "视频制作";
   const segments = useMemo(
@@ -3242,7 +3246,7 @@ export default function ManhuaScriptWorkbench({
       ? "请先出齐本段所需关键静帧（按原镜一镜一张，尾段可少于 3 张）"
       : !keyartsPixelLocked
         ? episodeKeyartReview.error || (staleLookStillCount
-          ? "本段原稿或造型已变更，请重出对应关键静帧；旧图仍保留，不会自动生成。"
+          ? `${staleKeyartShotIndexes.length ? `第 ${staleKeyartShotIndexes.join("、")} 镜` : "本集"}静帧版本未通过核对。旧图保留；先核对画面和造型，确有变化再重出对应镜头。`
           : "关键静帧须垫图改图锁定（改图模式 + 定妆/场景参考图），纯文生成的图不能出成片")
         : !productionProgress.keyartsReady
           ? "请先完成垫图改图锁定的关键静帧"
@@ -5678,11 +5682,11 @@ clipPromptReviewOpen ? (
           open={activePhase !== "storyboard" && activePhase !== "edit" && activePhase !== "assets"}
           data-manhua-blocker-card
           data-manhua-blocker-count={mainTask.blockers.length}
-          className="shrink-0 border-b border-rose-300/25 bg-rose-500/[0.07] px-3 py-2"
+          className="shrink-0 border-b border-white/15 bg-white/[0.04] px-3 py-2"
         >
           <summary className="flex cursor-pointer flex-wrap items-baseline gap-x-2 gap-y-0.5">
-            <span className="text-[12px] font-bold text-rose-50">{mainTask.headlineZh}</span>
-            <span className="mh-hint text-[10px] text-rose-50/70">{mainTask.hintZh}</span>
+            <span className="text-[12px] font-semibold text-white/80">{mainTask.headlineZh}</span>
+            <span className="mh-hint text-[10px] text-white/60">{mainTask.hintZh}</span>
           </summary>
           <ul className="mt-1.5 grid gap-1 sm:grid-cols-2">
             {mainTask.blockers.map((issue) => (
@@ -5694,16 +5698,13 @@ clipPromptReviewOpen ? (
                   onClick={() => onOpenAdvisorIssue?.(issue.id)}
                   className={`w-full rounded border px-2 py-1 text-left text-[10px] leading-4 ${
                     issue.phase === activePhase
-                      ? "border-rose-300/45 bg-rose-500/12 text-rose-50 hover:bg-rose-500/22"
+                      ? "border-white/20 bg-white/[0.06] text-white/80 hover:bg-white/[0.1]"
                       : "border-white/12 bg-white/[0.03] text-white/65 hover:bg-white/[0.07]"
                   }`}
                 >
-                  <span className="mr-1 font-semibold">
-                    {issue.phase === activePhase
-                      ? "本步"
-                      : workflowPhases.find((p) => p.id === issue.phase)?.label || "后续"}
-                  </span>
-                  {issue.text}
+                  <span className="block font-semibold">{workflowPhases.find((p) => p.id === issue.phase)?.label || "制作"} · 未通过</span>
+                  <span className="mt-1 block">{issue.text.replace(/^关键静帧被拦：/, "关键静帧：")}</span>
+                  <span className="mt-1 block" data-manhua-resolution>处理办法：{manhuaIssueResolutionZh(issue)}</span>
                 </button>
               </li>
             ))}
@@ -9373,8 +9374,8 @@ clipPromptReviewOpen ? (
                                   {keyartFailed ? "出图失败 · 参考保留" : keyartRunning ? "出图中 · 参考保留" : "垫图参考 · 待生成"}
                                 </span>
                               ) : keyartUnlocked ? (
-                                <span className="absolute inset-x-0 bottom-0 bg-red-900/80 px-1 py-0.5 text-center text-[9px] font-semibold text-red-50">
-                                  {keyartStale ? "已变更 · 待重出" : "未垫图锁"}
+                                <span className="absolute inset-x-0 bottom-0 bg-slate-950/80 px-1 py-0.5 text-center text-[9px] font-semibold text-slate-100">
+                                  {keyartStale ? "版本待核对" : "参考图待锁定"}
                                 </span>
                               ) : (
                                 <span className="absolute left-1 top-1 rounded bg-emerald-600/90 px-1 py-px text-[8px] font-semibold text-white">
