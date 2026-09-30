@@ -694,6 +694,8 @@ type Props = {
   }) => void;
   /** 将已有视频登记到当前原稿的指定段；不依赖预先生成静帧节点。 */
   onRegisterSegmentClip?: (segmentIndex: number, file: File) => void;
+  segmentReferenceBusy?: boolean;
+  segmentReferenceProgress?: number | null;
   /** 本集缺成片/质检失败的段号依次生成 */
   onGenerateMissingFragments?: (segmentIndexes: number[], sourceIdentity: string) => void;
   /** 首段试片审核；未通过时只开放第1段试片。 */
@@ -1341,6 +1343,8 @@ export default function ManhuaScriptWorkbench({
   onSpawnAndRunClip,
   onGenerateFragment,
   onRegisterSegmentClip,
+  segmentReferenceBusy = false,
+  segmentReferenceProgress = null,
   onGenerateMissingFragments,
   pilotGate,
   onReviewPilot,
@@ -8610,6 +8614,9 @@ export default function ManhuaScriptWorkbench({
           </div> : null}
           <ManhuaEditMultitrackPanel
             compactLayout={immersive}
+            onRegisterSegmentClip={onRegisterSegmentClip}
+            registerClipBusy={segmentReferenceBusy}
+            registerClipProgress={segmentReferenceProgress}
             segmentGroups={segments.map((segment) => ({
               index: segment.index,
               durationSec: segment.durationSec,
@@ -10724,7 +10731,7 @@ export default function ManhuaScriptWorkbench({
                     type="button"
                     data-manhua-action="register-segment-clip"
                     data-manhua-register-segment={seg.index}
-                    disabled={Boolean(factoryBusy)}
+                    disabled={Boolean(factoryBusy) || segmentReferenceBusy}
                     onClick={() => {
                       const input = document.createElement("input");
                       input.type = "file";

@@ -9664,6 +9664,7 @@ export default function OmniCanvas() {
 
   // ── 段级参考（白模站位 / 预混母轨）与外部成片登记：0908 自由画布验证过的工艺接进工厂 ──
   const [segmentRefBusyId, setSegmentRefBusyId] = useState<string | null>(null);
+  const segmentReferenceUploadLocked = useRef(false);
   /** 段参考上传进度 0–1；null = 不在传 */
   const [segmentRefProgress, setSegmentRefProgress] = useState<number | null>(null);
   const patchClipBlockPersist = useCallback(
@@ -9699,10 +9700,11 @@ export default function OmniCanvas() {
         toast.error(kindError);
         return;
       }
-      if (segmentRefBusyId) {
+      if (segmentRefBusyId || segmentReferenceUploadLocked.current) {
         toast.message("上一段参考还在上传，稍等再传");
         return;
       }
+      segmentReferenceUploadLocked.current = true;
       setSegmentRefBusyId(clipBlockId);
       setSegmentRefProgress(0);
       try {
@@ -9796,6 +9798,7 @@ export default function OmniCanvas() {
       } catch (error) {
         toast.error(`上传失败：${error instanceof Error ? error.message : String(error)}`);
       } finally {
+        segmentReferenceUploadLocked.current = false;
         setSegmentRefProgress(null);
         setSegmentRefBusyId(null);
       }
@@ -11427,6 +11430,8 @@ export default function OmniCanvas() {
                       fragmentShotIndexes: plannedSegments,
                     });
                   }}
+                  segmentReferenceBusy={Boolean(segmentRefBusyId)}
+                  segmentReferenceProgress={segmentRefProgress}
                   onRegisterSegmentClip={(segmentIndex, file) => {
                     void handleSegmentReferenceUpload(
                       `clip-e${String(writerFocusEpisode).padStart(2, "0")}-g${String(segmentIndex).padStart(2, "0")}-planned`,

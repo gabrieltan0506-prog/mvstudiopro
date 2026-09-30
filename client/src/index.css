@@ -918,39 +918,11 @@
   display: none !important;
 }
 
-/* 分镜画面始终留在主工作区；声音工具在桌面侧停靠、窄屏底部停靠并独立滚动。 */
-#manhua-workbench-shell.mh-redesign [data-manhua-product-header]:has([data-manhua-audio-studio]:not([hidden])) {
-  position: static;
-  z-index: auto;
-  flex-wrap: nowrap;
-}
-
-#manhua-workbench-shell.mh-redesign [data-manhua-product-header]:has([data-manhua-audio-studio]:not([hidden])) [data-manhua-toolbar-cluster] {
-  position: static;
-  z-index: auto;
-  width: auto;
-  min-width: 0;
-}
-
+/* 声音和其余二级工具同页排布，滚动由标签内容区统一承担。 */
 #manhua-workbench-shell.mh-redesign [data-manhua-audio-studio]:not([hidden]) {
-  position: absolute;
-  z-index: 40;
-  top: 112px;
-  right: 12px;
-  bottom: 12px;
-  width: clamp(440px, 35vw, 620px);
-  max-height: none;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  box-shadow: -12px 0 32px rgb(37 49 65 / 15%);
-}
-
-#manhua-workbench-shell.mh-redesign [data-manhua-audio-studio]:not([hidden]) > :first-child {
-  position: sticky;
-  top: -12px;
-  z-index: 1;
-  padding: 10px 0;
-  background: var(--mh-panel);
+  position: static;
+  width: 100%;
+  min-width: 0;
 }
 
 @media (min-width: 1200px) {
@@ -960,29 +932,6 @@
 
   #manhua-workbench-shell.mh-redesign [data-manhua-audio-studio] [data-manhua-sound-summary] > :first-child {
     grid-column: 1 / -1;
-  }
-}
-
-#manhua-workbench-shell.mh-redesign:has([data-manhua-audio-studio]:not([hidden]))
-  :is([data-manhua-phase-panel="outline"], [data-manhua-phase-panel="assets"], [data-manhua-phase-panel="storyboard"], [data-manhua-phase-panel="edit"]) {
-  margin-right: calc(clamp(440px, 35vw, 620px) + 18px);
-}
-
-@media (max-width: 1199px) {
-  #manhua-workbench-shell.mh-redesign [data-manhua-audio-studio]:not([hidden]) {
-    top: auto;
-    right: 12px;
-    bottom: 12px;
-    left: 12px;
-    width: auto;
-    height: min(30vh, 260px);
-    box-shadow: 0 -12px 32px rgb(37 49 65 / 15%);
-  }
-
-  #manhua-workbench-shell.mh-redesign:has([data-manhua-audio-studio]:not([hidden]))
-    :is([data-manhua-phase-panel="outline"], [data-manhua-phase-panel="assets"], [data-manhua-phase-panel="storyboard"], [data-manhua-phase-panel="edit"]) {
-    margin-right: 0;
-    margin-bottom: calc(min(30vh, 260px) + 12px);
   }
 }
 
