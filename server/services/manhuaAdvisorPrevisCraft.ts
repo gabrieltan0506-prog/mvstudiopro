@@ -1,3 +1,5 @@
+import { formatManhuaShotCoreCatalog } from "../../shared/manhuaShotCoreBank.js";
+import { formatManhuaEntranceAtmosphereCatalog } from "../../shared/manhuaEntranceAtmosphereBank.js";
 import type { AdvisorPrevisTarget } from "../../shared/manhuaAdvisorPrevisEdit";
 import { listManhuaDirectionCards, getManhuaDirectionCard, buildManhuaDirectionCanonFromSelection } from "../../shared/manhuaDirectionCanonLibrary";
 import { resolveDirectorStyleBlocks } from "../../shared/manhuaDirectionCanon";
@@ -23,8 +25,10 @@ export function buildAdvisorPrevisCraftBlock(target: Pick<AdvisorPrevisTarget, "
     "【路径目录·按本次秒窗安排，不套用配方固定时长】",
     ...listPathCameraRecipes().map(r => `${r.nameZh}：适用${r.whenToUseZh}；${r.craftSummaryZh}；焦点顺序：${r.phases.map(p => p.focusZh).join("→")}`),
     "【叙事灯光目录·保留场景实际光源动机】",
-    ...listNarrativeLighting().map(r => `${r.nameZh}：适用${r.whenToUseZh}；${r.craftSummaryZh}`),
+    ...listNarrativeLighting().filter(r => !r.groupZh).map(r => `${r.nameZh}：适用${r.whenToUseZh}；${r.craftSummaryZh}`),
     `场景光感词库：${listCineVocabByCategory("lighting_feel").map(r => r.zh).join("、")}；仅选符合本场光源与情绪的词，不叠加互相冲突的光感。`,
+    formatManhuaEntranceAtmosphereCatalog(scope === "world" ? "world" : "advisor"),
+    formatManhuaShotCoreCatalog(scope === "world" ? "world" : "advisor"),
     "【场景氛围优化】逐镜结合地点、时间、天气、空间远近、材质、色调、明暗、背景动静与环境声，写明氛围起点、事件触发和结束状态，说明如何支持人物情绪与场景衔接。薄雾、风雨、烟尘等只有本场已有依据才使用，不凭空换天气、改建筑、添道具或改变已锁音轨；环境声建议沿用原音效合同。",
     scope !== "world" ? MANHUA_PERFORMANCE_CRAFT_ZH : "场景方案用布局、光源与环境层次服务剧情情绪；演员表情、动作和逐秒氛围变化属于正式影片建议，不写成静态3DGS已经执行。",
     scope !== "world" ? "【演员微表情与喜怒哀乐】逐镜点名角色、此刻想要什么、触发事件或台词、情绪起点→可见变化→收住状态；说明说话人与听者各自反应，并与既有秒窗同步。喜可用眼周松开、嘴角轻提；怒可用目光收紧、下颌绷住后释放；哀可用视线下落、短吸气和肩背下沉；乐可用眼神变亮、嘴角展开和身体松开。按性格、强度与景别选少量动作，不把四类全塞进每镜，不擅加哭泣/大笑/台词或改声音演法。动物用耳、眼、口鼻、颈肩、呼吸和重心表达，不套人的咬肌或手指动作。无面部动画的白模只能检验朝向、身体与机位，微表情、眼神光和情绪细节须标为正式影片待补充、尚未预演。" : "",

@@ -89,6 +89,7 @@ function readTimedRows(text: string): {
     time: number;
     camera: number[];
     action: number;
+    visual: Array<{ index: number; label: string }>;
     dialogue: number;
     duration: number;
     startClock: boolean;
@@ -115,14 +116,15 @@ function readTimedRows(text: string): {
         index: headings.findIndex(cell => /^(?:#|镜号|序号|镜头)$/.test(cell)),
         time,
         camera: startClock
-          ? ["景别", "角度", "运镜"].map(heading => headings.indexOf(heading))
-          : [headings.findIndex(cell => /景别|运镜|机位/.test(cell))],
+          ? [...["景别", "角度", "运镜"].map(heading => headings.indexOf(heading)), ...headings.map((cell, i) => /^(?:构图|焦段(?:.*)?|FOV(?:.*)?)$/i.test(cell) ? i : -1).filter(i => i >= 0)]
+          : headings.map((cell, i) => /景别|运镜|机位|角度|构图|焦段|FOV/i.test(cell) ? i : -1).filter(i => i >= 0),
+        visual: headings.map((cell, index) => ({ index, label: cell })).filter(item => /^(?:灯光|光影|氛围|场景氛围|色调|配色|转场(?:\/卡点)?|衔接)$/.test(item.label)),
         action: headings.findIndex(cell => /^(?:画面|内容|动作|主体动作)$/.test(cell)),
         dialogue: headings.findIndex(cell => startClock ? cell === "音频" : /台词|对白/.test(cell)),
         duration: headings.indexOf("时长建议"),
         startClock,
       };
-      if ([columns.index, columns.time, columns.action, columns.dialogue, ...columns.camera].some(value => value < 0) || startClock && columns.duration < 0)
+      if ([columns.index, columns.time, columns.action, columns.dialogue, ...columns.camera].some(value => value < 0) || !columns.camera.length || startClock && columns.duration < 0)
         errors.push(startClock ? "约时码分镜表缺镜号、约时码、景别/角度/运镜、主体动作、音频或时长建议列" : "秒位分镜表缺镜号、秒位、景别/运镜、画面或对白列");
       continue;
     }
@@ -145,7 +147,10 @@ function readTimedRows(text: string): {
       startSec,
       endSec: columns.startClock ? (duration ? startSec + Number(duration[1]) : NaN) : (match ? Number(match[2]) : NaN),
       cameraZh: columns.camera.map(column => cells[column] || "").filter(cell => cell && !/^[-—–]+$/.test(cell)).join("；"),
-      actionZh: (cells[columns.action] || "").replace(/^【新段】\s*/, ""),
+      actionZh: [
+        (cells[columns.action] || "").replace(/^【新段】\s*/, ""),
+        ...columns.visual.map(item => cells[item.index] && !/^[-—–]+$/.test(cells[item.index]!) ? `${item.label}：${cells[item.index]}` : ""),
+      ].filter(Boolean).join("；"),
       ...(/^【新段】/.test(cells[columns.action] || "") ? { segmentBreakBefore: true } : {}),
       dialogueZh: audio?.dialogueZh ?? cells[columns.dialogue] ?? "",
       ...(audio ? { soundZh: audio.soundZh } : {}),

@@ -1,3 +1,4 @@
+import { MANHUA_SHOT_CORE_BANK } from "@shared/manhuaShotCoreBank";
 import { advisorWorldSourceRevision, type AdvisorWorldCandidate, type AdvisorWorldTarget } from "@shared/manhuaAdvisorWorld";
 import { classifyManhuaDirectionSceneType, resolveManhuaDirectionCard } from "@shared/manhuaDirectionCanon";
 import { withRiggedModelSourceAssetRefs } from "@/lib/manhuaPrevisSubmit";
@@ -461,6 +462,7 @@ import {
   recommendPathCameraFromTopic,
 } from "@shared/manhuaPathCameraRecipeBank";
 import {
+  buildNarrativeLightingInjectBlock,
   getNarrativeLightingById,
   listNarrativeLighting,
   recommendNarrativeLightingFromTopic,
@@ -567,6 +569,8 @@ function loadCanvasWorkspaceMode(): CanvasWorkspaceMode {
 }
 
 type FactoryCharacterPrefs = {
+  narrativeLightingId?: string;
+  narrativeLightingManual?: boolean;
   topic?: string;
   femaleId?: string;
   maleId?: string;
@@ -983,8 +987,8 @@ export default function OmniCanvas() {
   const [craftShotManual, setCraftShotManual] = useState(false);
   const [factoryPathRecipeId, setFactoryPathRecipeId] = useState("");
   const [pathRecipeManual, setPathRecipeManual] = useState(false);
-  const [factoryNarrativeLightingId, setFactoryNarrativeLightingId] = useState("");
-  const [narrativeLightingManual, setNarrativeLightingManual] = useState(false);
+  const [factoryNarrativeLightingId, setFactoryNarrativeLightingId] = useState(() => getNarrativeLightingById(initialFactoryPrefs.narrativeLightingId)?.id || "");
+  const [narrativeLightingManual, setNarrativeLightingManual] = useState(Boolean(initialFactoryPrefs.narrativeLightingManual));
   const [factoryMaleHairstyleId, setFactoryMaleHairstyleId] = useState("");
   const [factoryMaleMicroId, setFactoryMaleMicroId] = useState("");
   const [maleMicroManual, setMaleMicroManual] = useState(false);
@@ -2968,6 +2972,8 @@ export default function OmniCanvas() {
 
   useEffect(() => {
     saveFactoryCharacterPrefs({
+      narrativeLightingId: factoryNarrativeLightingId,
+      narrativeLightingManual,
       topic: factoryTopic,
       femaleId: factoryFemaleId,
       maleId: factoryMaleId,
@@ -2984,6 +2990,8 @@ export default function OmniCanvas() {
     femaleLeadManual,
     maleLeadManual,
     artStyleManual,
+    factoryNarrativeLightingId,
+    narrativeLightingManual,
   ]);
 
   const spawnSameLayoutSheet = useCallback(
@@ -3255,6 +3263,8 @@ export default function OmniCanvas() {
     setWorkflowPhase(restoredPhase);
     setImmersiveWorkspaceView(restoredPhase === "final" && manhuaUiMode === "workbench" ? "workbench" : workspaceViewForRestoredManhuaPhase(restoredPhase, Boolean(session.writerConfirmed)));
     const prefs = draft.factoryPrefs || {};
+    setFactoryNarrativeLightingId(getNarrativeLightingById(String(prefs.narrativeLightingId || ""))?.id || "");
+    setNarrativeLightingManual(prefs.narrativeLightingManual === true);
     const restoredScope = String(prefs.assetSelectionScopeKey || "").trim();
     const sessionScope = manhuaAssetSelectionScopeKey(
       session.topic || "",
@@ -3719,6 +3729,8 @@ export default function OmniCanvas() {
     if (factoryBusy || writerBusy) return;
     const clientUpdatedAt = new Date().toISOString();
     const factoryPrefs = {
+      narrativeLightingId: factoryNarrativeLightingId,
+      narrativeLightingManual,
       topic: factoryTopic,
       femaleId: factoryFemaleId,
       maleId: factoryMaleId,
@@ -3820,6 +3832,8 @@ export default function OmniCanvas() {
     femaleLeadManual,
     maleLeadManual,
     artStyleManual,
+    factoryNarrativeLightingId,
+    narrativeLightingManual,
     // 审查 P2：本机双写快照里已经带 directionSelection，依赖也要带，否则只改导演卡不落盘
     directionSelection,
     // 1466 R1：快照里带 manhuaActionPlans，依赖也要带，否则只改时间轴再点「上传备份」传的是旧计划
@@ -5683,6 +5697,16 @@ export default function OmniCanvas() {
   const expandWriterRoom = useCallback(async (opts?: { fromEpisodeOverride?: number; templateTrialFingerprint?: string }) => {
     const topic = factoryTopic.trim();
     const brief = writerBrief.trim();
+    const designInject = [
+      buildNarrativeLightingInjectBlock(selectedNarrativeLightingIds),
+      buildMaleHairstyleInjectBlock(selectedMaleHairstyleIds),
+      buildMaleMicroExpressionInjectBlock(selectedMaleMicroIds),
+    ].filter(Boolean).join("\n\n");
+    const mergedBrief = [brief, designInject].filter(Boolean).join("\n\n");
+    if (mergedBrief.length > 2000) {
+      toast.error("补充条件与已选手法超过2000字，请精简补充条件后再扩写；原稿保留，本次未提交");
+      return;
+    }
     if (!topic && !brief) {
       toast.error("请先填写题材，或至少写几句补充条件");
       return;
@@ -5761,13 +5785,6 @@ export default function OmniCanvas() {
     if (opts?.fromEpisodeOverride != null) gateRecheckPendingRef.current = true;
     const t0 = Date.now();
     const count = clampWriterEpisodeCount(writerEpisodeCount);
-    const designInject = [
-      buildMaleHairstyleInjectBlock(selectedMaleHairstyleIds),
-      buildMaleMicroExpressionInjectBlock(selectedMaleMicroIds),
-    ]
-      .filter(Boolean)
-      .join("\n\n");
-    const mergedBrief = [brief, designInject].filter(Boolean).join("\n\n");
     const reqPreview = `topic=${topic}\nepisodes=${count}\nbrief:\n${mergedBrief.slice(0, 4000)}\npublicTemplate=${publicTemplateId || "off"}\nvideoModel=${selectedVideoModel}`;
     pushDebug("expandWriterPack:start", {
       detail: `topicLen=${topic.length} briefLen=${brief.length} episodes=${count} overwriteOld=1 publicTemplate=${publicTemplateId || "off"} videoModel=${selectedVideoModel}`,
@@ -5972,6 +5989,8 @@ export default function OmniCanvas() {
         videoModel: selectedVideoModel,
       };
       const factoryPrefs = {
+        narrativeLightingId: factoryNarrativeLightingId,
+        narrativeLightingManual,
         topic,
         femaleId: factoryFemaleId,
         maleId: factoryMaleId,
@@ -6084,6 +6103,9 @@ export default function OmniCanvas() {
     directorBoardBySegment,
     directorBoardMotionOverlayBySegment,
     syncCloudDraftPayload,
+    selectedNarrativeLightingIds,
+    factoryNarrativeLightingId,
+    narrativeLightingManual,
     // 审查 P1：扩写请求要带界面当前选的副卡/主卡
     directionSelection,
   ]);
@@ -12772,26 +12794,34 @@ export default function OmniCanvas() {
                   {factoryAdvancedOpen ? (
                     <div className="space-y-3 border-t border-white/8 px-3 py-3">
                       <div>
-                        <label className="block text-[11px] text-white/45">叙事灯光</label>
+                        <label className="block text-[11px] text-white/45">叙事灯光与出场氛围</label>
                         <select
                           value={factoryNarrativeLightingId}
                           onChange={(e) => {
                             setNarrativeLightingManual(true);
                             setFactoryNarrativeLightingId(e.target.value);
                           }}
-                          disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                          disabled={factoryBusy || writerBusy}
                           className="mt-1 w-full rounded-lg border border-amber-400/25 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
                         >
                           <option value="">不指定</option>
                           {listNarrativeLighting().map((e) => (
                             <option key={e.id} value={e.id}>
-                              {String(e.no).padStart(2, "0")} {e.nameZh}
+                              {e.groupZh ? "出场" : "叙事"} {String(e.no).padStart(2, "0")} {e.nameZh}
                             </option>
                           ))}
                         </select>
                         <p className="mt-1 text-[10px] text-amber-100/60">
-                          {recommendedNarrativeLighting.reasonZh}
+                          {getNarrativeLightingById(factoryNarrativeLightingId)?.whenToUseZh || recommendedNarrativeLighting.reasonZh}
                         </p>
+                        {factoryNarrativeLightingId ? <p className="mt-1 text-[10px] leading-relaxed text-white/60">{getNarrativeLightingById(factoryNarrativeLightingId)?.craftSummaryZh}</p> : null}
+                        <details className="mt-2 rounded-lg border border-white/10 p-2">
+                          <summary className="cursor-pointer text-[11px] text-white/70">七核心镜头手法参考</summary>
+                          <p className="mt-2 text-[10px] text-white/50">按本镜剧情选用。锁定的天气、人物、对白与音轨优先；转场须接住动作和空间关系。</p>
+                          <div className="mt-2 max-h-64 space-y-2 overflow-auto">
+                            {MANHUA_SHOT_CORE_BANK.map(entry => <div key={entry.id} className="text-[10px] leading-relaxed text-white/60"><span className="text-white/85">{entry.categoryZh} · {entry.nameZh}</span>：{entry.instructionZh}</div>)}
+                          </div>
+                        </details>
                       </div>
                       <div className="grid gap-2 sm:grid-cols-2">
                         <div>

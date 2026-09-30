@@ -1,3 +1,5 @@
+import { MANHUA_ENTRANCE_ATMOSPHERE_BANK, MANHUA_ENTRANCE_ATMOSPHERE_GUARD_ZH } from "./manhuaEntranceAtmosphereBank.js";
+
 /**
  * 叙事灯光动机库：安全→危险→真相→崩塌→决断等连续光语。
  * 与 craftShotBank lighting 互补；成稿只写光法，不写来源名。
@@ -12,6 +14,7 @@ export type ManhuaNarrativeLightingEntry = {
   whenToUseZh: string;
   craftSummaryZh: string;
   craftLockEn: string;
+  groupZh?: string;
 };
 
 export const MANHUA_NARRATIVE_LIGHTING_BANK: readonly ManhuaNarrativeLightingEntry[] = [
@@ -95,6 +98,17 @@ export const MANHUA_NARRATIVE_LIGHTING_BANK: readonly ManhuaNarrativeLightingEnt
     craftSummaryZh: "同场景可换色温/明暗比递进；每段只改一档光语。",
     craftLockEn: "five-stage light progression, one shift per beat",
   },
+  ...MANHUA_ENTRANCE_ATMOSPHERE_BANK.map(e => ({
+    id: e.id,
+    no: e.no,
+    nameZh: e.nameZh,
+    groupZh: "出场氛围与灯光",
+    stageZh: "出场",
+    effectZh: `${e.atmosphereZh}；叙事：${e.storyPurposeZh}`,
+    whenToUseZh: e.prerequisiteZh,
+    craftSummaryZh: `适用前提：${e.prerequisiteZh}；灯光：${e.lightingZh}；氛围：${e.atmosphereZh}；运镜：${e.cameraZh}`,
+    craftLockEn: "",
+  })),
 ];
 
 export function getNarrativeLightingById(id?: string | null): ManhuaNarrativeLightingEntry | null {
@@ -108,17 +122,19 @@ export function listNarrativeLighting(): readonly ManhuaNarrativeLightingEntry[]
 }
 
 export function buildNarrativeLightingInjectBlock(ids: string[]): string {
-  const picked = ids.map(getNarrativeLightingById).filter(Boolean) as ManhuaNarrativeLightingEntry[];
+  const picked = Array.from(new Set(ids)).map(getNarrativeLightingById).filter(Boolean) as ManhuaNarrativeLightingEntry[];
   if (!picked.length) return "";
   const lines = picked.map(
     (e, i) =>
-      `${i + 1}. 【叙事灯光·${e.stageZh}】${e.nameZh}：${e.craftSummaryZh}（效果：${e.effectZh}）\n   EN: ${e.craftLockEn}`,
+      `${i + 1}. 【叙事灯光·${e.stageZh}】${e.nameZh}：${e.craftSummaryZh}（效果：${e.effectZh}）${e.craftLockEn ? `\n   EN: ${e.craftLockEn}` : ""}`,
   );
   return [
     "【叙事灯光动机库】",
     "硬规则：成稿只写光法与动机；禁止导演名、片名、外仓品牌。",
+    MANHUA_ENTRANCE_ATMOSPHERE_GUARD_ZH,
     "本集主用下列光语（可按节拍递进，勿一次混炖）：",
     ...lines,
+    "【/叙事灯光动机库】",
   ].join("\n");
 }
 
