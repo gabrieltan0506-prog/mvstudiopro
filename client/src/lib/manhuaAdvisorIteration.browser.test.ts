@@ -53,6 +53,24 @@ it("先提案不自动渲染，追问继承上版，用户选定后才渲染，�
   await page.close();
 }, 20000);
 
+it("白模内的摄影氛围表演咨询不会自动生成试看", async () => {
+  const page = await browser.newPage(); await page.setRequestInterception(true);
+  page.on("request", r => r.isNavigationRequest() ? void r.respond({ status: 200, contentType: "text/html", body: '<div id="root"></div>' }) : void r.abort());
+  await page.goto("http://localhost:41829/"); await page.addScriptTag({ content: bundle });
+  try {
+    await page.waitForSelector('textarea');
+    await page.evaluate(() => Array.from(document.querySelectorAll('button')).find(b => b.textContent === '优化摄影、氛围与表演')?.click());
+    await page.waitForFunction(() => (document.querySelector('textarea') as HTMLTextAreaElement)?.value.includes('喜怒哀乐'));
+    expect(await page.evaluate(() => (globalThis as any).fixture.asks)).toHaveLength(0);
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => document.body.textContent?.includes('先缓推强化威胁'));
+    expect(await page.evaluate(() => (globalThis as any).fixture.asks[0].rawQuestion)).toContain('场景氛围');
+    expect(await page.evaluate(() => (globalThis as any).fixture.asks[0].manhuaContext.previsEdit.clipId)).toBe('clip-1');
+    expect(await page.evaluate(() => (globalThis as any).fixture.renders)).toHaveLength(0);
+    expect(await page.evaluate(() => (globalThis as any).fixture.writes)).toEqual([]);
+  } finally { await page.close(); }
+}, 20000);
+
 it("付费提示必须先展示明确积分，用户确认才带同额授权，取消不再次提交", async () => {
   const page = await browser.newPage(); await page.setRequestInterception(true);
   page.on("request", r => r.isNavigationRequest() ? void r.respond({ status: 200, contentType: "text/html", body: '<div id="root"></div>' }) : void r.abort());

@@ -157,6 +157,23 @@ describe("漫剧工厂创作顾问上下文", () => {
     expect(messages[1].content).toContain("红蓝双轨一镜");
     expect(messages[1].content).not.toContain("生产编译器事实");
   });
+  it("白模、场景与通用入口都携带摄影灯光依据，仍保留各自输出契约", () => {
+    const studio = createManhuaPrevisStudio(5);
+    const question = "开场横移到母女前侧，保留原声，补充灯光建议。";
+    const cases = [
+      { context: manhuaContext({ previsEdit: makeAdvisorPrevisTarget("clip-1", studio) }), scope: "unsupportedZh", contract: "previs_edit_v1" },
+      { context: manhuaContext({ worldTarget: { sceneRefId: "scene-clinic", labelZh: "诊台", sourceRevision: "a".repeat(64), hintZh: "露天" } }), scope: "textPrompt只写静态场景", contract: "world_plan_v1" },
+      { context: manhuaContext(), scope: "不自行改音轨、段长或提交生产", contract: "直接回答当前问题的完整 Markdown" },
+    ];
+    for (const test of cases) {
+      const messages = buildManhuaCreativeAdvisorLlmMessages({ question, context: test.context });
+      expect(messages[1].content).toContain("横移跟走");
+      expect(messages[1].content).toContain("叙事灯光目录");
+      expect(messages[1].content).toContain(test.scope);
+      expect(messages[1].content).toContain(question);
+      expect(messages[0].content).toContain(test.contract);
+    }
+  });
   it("非法机位向下一跳反馈具体校验错误，仍限制原四跳", async () => {
     const studio = createManhuaPrevisStudio(5);
     const patch = { kind: "previs_edit_v1", summaryZh: "缓推近景", unsupportedZh: [], cameras: studio.spec.cameras.map(c => ({ ...c, endLens: 55 })) };
@@ -509,6 +526,8 @@ it("场景顾问生产服务校验JSON方案，禁止用普通回答冒充可生
   expect(invokeLLMMock).toHaveBeenCalledTimes(1);
   expect(invokeLLMMock.mock.calls[0][0].messages[0].content).toContain("world_plan_v1");
   expect(invokeLLMMock.mock.calls[0][0].messages[0].content).not.toContain("成片引擎");
+  expect(invokeLLMMock.mock.calls[0][0].messages[1].content).toContain("叙事灯光目录");
+  expect(invokeLLMMock.mock.calls[0][0].messages[1].content).toContain("运镜与摄影目录");
   expect(resolveVideoMock).not.toHaveBeenCalled();
 });
 it("场景顾问不能交回另一场景或无效空提示词", async () => {

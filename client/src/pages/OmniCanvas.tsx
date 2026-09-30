@@ -10434,7 +10434,7 @@ export default function OmniCanvas() {
                     const worldTarget = scene && eligibility?.eligible ? { sceneRefId: scene.id, labelZh: scene.labelZh || "当前场景", sourceRevision: await advisorWorldSourceRevision(eligibility.sourceVersion), hintZh: (projectBible?.assetCanon?.locations.find(anchor => anchor.id === scene.seedLibraryId || anchor.nameZh === scene.labelZh)?.lookZh || scene.labelZh || "").slice(0, 2000), ...(eligibility.currentWorld3d ? { previousTaskId: eligibility.currentWorld3d.taskId } : {}) } : undefined;
                     if (openVersion !== advisor3dOpenVersion.current || (scene && evaluateManhuaWorld3dEligibility(latestCustomAssetRefs.current.find(ref => ref.id === scene.id) || {}).sourceVersion !== eligibility?.sourceVersion)) return;
                     setAdvisorPrevisClipId(null);
-                    setAdvisor3dContext(mode === "general" ? undefined : { ...(direction ? { directionCardId: direction.card.id, directionCardVersion: direction.card.version } : {}), ...(worldTarget ? { worldTarget } : {}) });
+                    setAdvisor3dContext({ ...(direction ? { directionCardId: direction.card.id, directionCardVersion: direction.card.version } : {}), ...(worldTarget ? { worldTarget } : {}) });
                     setAdvisorFocusSection(null); setAdvisorOpen(true);
                   } : undefined}
                   advisorOpen={advisorOpen}
