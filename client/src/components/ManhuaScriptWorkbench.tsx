@@ -1,3 +1,6 @@
+import { ManhuaSecondaryToolTabs } from "./canvas/ManhuaSecondaryToolTabs";
+import { createAdvisorPrevisStudio } from "@shared/manhuaAdvisorPrevisInitial";
+import { previsInitialDurationSec } from "@shared/manhuaPrevisScript";
 import { ManhuaPrevisAudioControls } from "./canvas/ManhuaPrevisAudioControls";
 import { summarizeManhuaFinalSegmentEvidence } from "@/lib/manhuaFinalSegmentEvidence";
 import { ManhuaTimingRecovery } from "./ManhuaTimingRecovery";
@@ -481,7 +484,7 @@ type Props = {
   /** 打开创作顾问并直接定位剧本模板优化；只打开，不自动提问或扣点。 */
   onOpenAdvisorTemplates?: () => void;
   onOpenAdvisorPrevis?: (clipId: string, requestId?: string) => void;
-  onOpenAdvisor3d?: (clipId?: string) => void;
+  onOpenAdvisor3d?: (clipId?: string, sceneRefId?: string, mode?: "model" | "world" | "general") => void;
   advisorOpen?: boolean;
   onAdvisorDockChange?: (host: HTMLDivElement | null) => void;
   onAdvisorPreviewHostChange?: (host: HTMLDivElement | null) => void;
@@ -1456,19 +1459,20 @@ export default function ManhuaScriptWorkbench({
     },
     [onPreviewClipOutbound],
   );
-  const [previsAudioOpen, setPrevisAudioOpen] = useState(false);
   const [audioStudioOpen, setAudioStudioOpen] = useState(false);
   const [audioStudioPhase, setAudioStudioPhase] = useState<WorkflowPhaseId | null>(null);
   const [previsStudioOpen,setPrevisStudioOpen] = useState(false);
   const [actionTimelineOpen, setActionTimelineOpen] = useState(false);
   const [modelStudioOpen, setModelStudioOpen] = useState(false);
   const [worldStudioOpen, setWorldStudioOpen] = useState(false);
+  const [activeSecondaryTool, setActiveSecondaryTool] = useState<ManhuaSecondaryTool | null>(null);
   const toggleSecondaryTool = (tool: ManhuaSecondaryTool) => {
-    setModelStudioOpen(tool === "model3d" && !modelStudioOpen);
-    setWorldStudioOpen(tool === "world3d" && !worldStudioOpen);
-    setPrevisStudioOpen(tool === "previs" && !previsStudioOpen);
-    setActionTimelineOpen(tool === "actionTimeline" && !actionTimelineOpen);
-    setAudioStudioOpen(tool === "audio" && (audioStudioPhase !== activePhase || !audioStudioOpen));
+    setActiveSecondaryTool(tool);
+    if (tool === "model3d") setModelStudioOpen(true);
+    if (tool === "world3d") setWorldStudioOpen(true);
+    if (tool === "previs") setPrevisStudioOpen(true);
+    if (tool === "actionTimeline") setActionTimelineOpen(true);
+    if (tool === "audio") setAudioStudioOpen(true);
     if (tool === "audio") setAudioStudioPhase(activePhase);
     if ((tool === "audio" || tool === "previs") && !activeClip) onEnsureSegmentClips?.();
   };
@@ -3059,6 +3063,34 @@ export default function ManhuaScriptWorkbench({
       ? `已有 ${activeClip.previsStudio.history.length} 条候选，尚未采用` : "",
   ].filter(Boolean);
   const previsStatusZh = previsStatusParts.join("；") || "尚未渲染或采用";
+  const previsStudioCharacters = assetLockRegistry.byRole.character.map(a => {
+    const ref = customAssetRefs.find(ref => ref.id === a.id);
+    const source = resolveManhuaRigSource(ref, customAssetRefs).source;
+    const anchor = assetCanon?.characters.find(c => c.id === (a.seedLibraryId || a.id));
+    return { id: a.id, label: anchor?.nameZh || a.labelZh, aliasZh: anchor?.aliasZh, tag: a.tag,
+      shape: /黑马|白马|骏马|马身|马体|四足|马匹|horse/i.test(anchor?.lookZh || "") ? "horse" as const : "human" as const,
+      model: source ? { taskId: source.model.taskId, assetRef: source.refId } : undefined };
+  });
+  const openPrevisAdvisor = (requestId?: string, preparedStudio?: NonNullable<CanvasBlock["previsStudio"]>) => {
+    if (!activeClip || !onOpenAdvisorPrevis || !onUpdateClipPrevisStudio || factoryBusy || activeClip.status === "running" || activeClip.videoTaskStatus === "queued") return;
+    try {
+      if (!activeClip.previsStudio && !preparedStudio) {
+        const shots = (activeSegment?.shots || []).map(shot => ({ index: shot.index, durationSec: shot.durationSec, actionZh: shot.actionZh }));
+        const durationSec = previsInitialDurationSec(shots, parseManhuaClipTargetDurationSec(activeClip.prompt || ""));
+        const studio = createAdvisorPrevisStudio({ durationSec, characters: previsStudioCharacters, shots, castZh: resolveManhuaSegmentCastZh({ castZh: activeSourceBeat?.castZh, dialogueZh: activeSourceBeat?.dialogueZh, shots: activeSegment?.shots, registry: assetLockRegistry, assetCanon }) });
+        if (onUpdateClipPrevisStudio(activeClip.id, studio) === false) throw new Error("本段人物配置未保存，请重试。");
+      }
+      onOpenAdvisorPrevis(activeClip.id, requestId);
+    } catch (error) { toast.error(error instanceof Error ? error.message : "本段人物读取失败"); }
+  };
+  const openSecondaryAdvisor = (tool: ManhuaSecondaryTool) => {
+    if (tool === "previs" || tool === "actionTimeline") openPrevisAdvisor();
+    else onOpenAdvisor3d?.(activeClip?.id, undefined, tool === "world3d" ? "world" : tool === "model3d" ? "model" : "general");
+  };
+  const selectSecondaryTool = (tool: ManhuaSecondaryTool) => {
+    toggleSecondaryTool(tool);
+    if (advisorOpen) openSecondaryAdvisor(tool);
+  };
   const worldStageCharacters = useMemo((): ManhuaStageCharacter[] => {
     const actors = activeClip?.previsStudio?.spec.actors || [];
     // 本段 actor 是必需名单；缺模型仍保留，让加载门禁明确报缺，不能从名单中消失。
@@ -4248,22 +4280,13 @@ export default function ManhuaScriptWorkbench({
     }
   };
 
-  const inSceneAudio = activeClip && onUpdateClipAudioStudio ? <div>
-    {onUpdateClipPrevisStudio && <ManhuaPrevisAudioControls block={activeClip} disabled={Boolean(factoryBusy) || activeClip.status === "running" || activeClip.videoTaskStatus === "queued"} onChange={studio => onUpdateClipPrevisStudio(activeClip.id, studio)} />}
-    <details open={previsAudioOpen} onToggle={event => setPrevisAudioOpen(event.currentTarget.open)} className="my-3 rounded border border-white/20 p-3">
-      <summary className="cursor-pointer text-sm text-cyan-100">本页对白与BGM · 采用已有声音、调整秒位和音量</summary>
-      {previsAudioOpen && <CanvasAudioStudio key={activeClip.id} block={activeClip} compact={false} timelineDurationSec={activeSegment?.durationSec} sourceShots={activeSegment?.shots} dialogueSources={blocks}
-        characters={assetCanon?.characters.map(character => ({ id: character.id, nameZh: character.nameZh, aliasZh: character.aliasZh }))}
-        disabled={Boolean(factoryBusy) || activeClip.status === "running" || activeClip.videoTaskStatus === "queued"}
-        onChange={studio => onUpdateClipAudioStudio(activeClip.id, studio)} bgmModels={bgmModels} />}
-    </details>
-  </div> : null;
 
   return (
     <div
       id="manhua-workbench-shell"
       data-manhua-layout={immersive ? "immersive-3col" : "card-3col"}
       data-manhua-active-phase={activePhase}
+      data-manhua-secondary-active={Boolean(activeSecondaryTool)}
       style={visibleViewportWidth ? { maxWidth: visibleViewportWidth } : undefined}
       className={`mh-redesign ${compactUi ? "mh-compact " : ""}${
         immersive
@@ -4485,130 +4508,11 @@ export default function ManhuaScriptWorkbench({
           ) : (
             null
           )}
-          {(onGenerateAsset3d || onImportAsset3d) && manhuaSecondaryToolHome("model3d", activePhase, immersive) === "cluster" ? <button type="button" data-manhua-action="open-3d-model-studio" data-manhua-tool-home="cluster" disabled={Boolean(factoryBusy)}
-            className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
-            onClick={()=>toggleSecondaryTool("model3d")}>3D 模型（可预览或已绑骨 {manhua3dModelCounts(modelStudioCharacters, riggedAssetIds).ready}/{modelStudioCharacters.length}）</button> : null}
-          {modelStudioOpen ? <SecondaryStudioSurface immersive={immersive} title="3D 模型" advisorOpen={advisorOpen} onAdvisorDockChange={onAdvisorDockChange} onPreviewHostChange={onAdvisorPreviewHostChange} clipId={activeClip?.id} onOpenAdvisor={onOpenAdvisor3d ? () => onOpenAdvisor3d(activeClip?.id) : undefined} onClose={() => setModelStudioOpen(false)}><Manhua3dModelStudio
-            characters={modelStudioCharacters}
-            busyIds={asset3dBusyIds}
-            disabled={Boolean(factoryBusy)}
-            onGenerate={onGenerateAsset3d}
-            onImport={onImportAsset3d}
-            onGenerateMultiview={onGenerateAsset3dMultiview}
-            onSubmitMultiview={onSubmitAsset3dMultiview}
-            multiviewDrafts={multiviewDrafts}
-            riggedIds={riggedAssetIds}
-            onRig={onApplyRiggedModel ? (sourceRefId, characterId)=>{
-              // 用候选图（A-pose）绑骨：把来源钉在锁脸图上，白模/场景预览随之切到该模型；用回锁脸图自己的模型则清钉
-              onCustomAssetRigSourceChange?.(characterId, sourceRefId===characterId ? null : sourceRefId);
-              setAutoRigAssetId(sourceRefId);
-            } : undefined}/></SecondaryStudioSurface> : null}
-          {(worldStudioScenes.length > 0 || onGenerateSceneWorld) && manhuaSecondaryToolHome("world3d", activePhase, immersive) === "cluster" ? <button type="button" data-manhua-action="open-world-studio" data-manhua-tool-home="cluster" disabled={Boolean(factoryBusy)}
-            className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
-            onClick={()=>toggleSecondaryTool("world3d")}>3D 场景（可载入 {manhuaWorldCounts(worldStudioScenes).ready}/{worldStudioScenes.length}）</button> : null}
-          {worldStudioOpen && (worldStudioScenes.length > 0 || onGenerateSceneWorld) ? <SecondaryStudioSurface immersive={immersive} title="3D 场景" advisorOpen={advisorOpen} onAdvisorDockChange={onAdvisorDockChange} onPreviewHostChange={onAdvisorPreviewHostChange} clipId={activeClip?.id} onOpenAdvisor={onOpenAdvisor3d ? () => onOpenAdvisor3d(activeClip?.id) : undefined} onClose={() => setWorldStudioOpen(false)}><ManhuaWorldStudio
-            scenes={worldStudioScenes}
-            busyIds={sceneWorldBusyIds}
-            disabled={Boolean(factoryBusy)}
-            onGenerate={onGenerateSceneWorld}
-            onRetry={onRetrySceneWorld}
-            onRemove={onRemoveSceneWorld}
-            stageCharacters={worldStageCharacters}
-            previsStatusZh={previsStatusZh}
-            onOpenPrevis={onUpdateClipPrevisStudio ? () => toggleSecondaryTool("previs") : undefined}
-            savedFrameCount={stageFrameProgress.saved}
-            adoptedFrameCount={stageFrameProgress.adopted}
-            onExportStageFrame={onExportSceneStageFrame ? (id, blob, frame) => onExportSceneStageFrame(id, blob, { ...frame, episode: focusEpisode, segmentIndex: activeSegNo }) : undefined}
-            layoutActors={worldLayoutActors}
-            onSubmitLayoutWorld={onSubmitLayoutSceneWorld}/>{inSceneAudio}
-          {onToggleStageFrameAdoption ? <div className="w-full">
-            <ManhuaStageFrameAdoptPanel
-              refs={customAssetRefs}
-              shots={stageFrameShotOptions}
-              context={stageFrameAdoptContext}
-              disabled={Boolean(factoryBusy)}
-              onToggleAdopt={onToggleStageFrameAdoption}
-              actorLabelOf={(id)=>assetLockRegistry.byRole.character.find(a=>a.id===id)?.labelZh||id}/>
-          </div> : null}</SecondaryStudioSurface> : null}
-          {onUpdateClipPrevisStudio && manhuaSecondaryToolHome("previs", activePhase, immersive) === "cluster" ? <button type="button" data-manhua-action="open-previs-studio" data-manhua-tool-home="cluster" disabled={Boolean(factoryBusy)}
-            className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
-            onClick={()=>toggleSecondaryTool("previs")}>本段动作白模</button> : null}
-          {previsStudioOpen&&onUpdateClipPrevisStudio ? <SecondaryStudioSurface immersive={immersive} title="本段动作白模" advisorOpen={advisorOpen} onAdvisorDockChange={onAdvisorDockChange} onPreviewHostChange={onAdvisorPreviewHostChange} clipId={activeClip?.id} onOpenAdvisor={activeClip && onOpenAdvisorPrevis ? () => onOpenAdvisorPrevis(activeClip.id) : undefined} onClose={() => setPrevisStudioOpen(false)}><div className="w-full">
-            <p className="mb-2 text-xs text-cyan-100">第 {focusEpisode} 集 · 第 {activeSegNo} 段 · 动作白模</p>
-            <div className="mb-2 flex flex-wrap items-center gap-2 rounded border border-cyan-300/20 bg-cyan-500/5 p-2 text-[11px] text-white/75" data-previs-world-link>
-              <span>3D 场景可尝试载入 {manhuaWorldCounts(worldStudioScenes).ready}/{worldStudioScenes.length} 个；它只取本段人物起点站位，白模动作和切镜以这里的预演为准。</span>
-              {worldStudioScenes.length > 0 || onGenerateSceneWorld ? <button type="button" className="rounded border border-cyan-300/30 px-2 py-1 text-cyan-50" onClick={() => toggleSecondaryTool("world3d")}>查看 3D 场景与视角图</button> : null}
-            </div>
-            {inSceneAudio}
-            {activeClip?<ManhuaPrevisStudio key={`${activeClip.id}:${activeClip.previsStudio?.scopeId??"new"}`} block={activeClip}
-              characters={assetLockRegistry.byRole.character.map(a=>{
-                const ref=customAssetRefs.find(ref=>ref.id===a.id);
-                // 0916：与 3D 模型工作台同口径——锁脸图没模型时用候选图（A-pose）的就绪模型
-                const source=resolveManhuaRigSource(ref,customAssetRefs).source;
-                const model=source?{taskId:source.model.taskId,assetRef:source.refId}:undefined;
-                // 资产卡标题可带造型/编辑后缀；动作匹配使用已绑定剧本角色名，不能拿展示标题当人物身份。
-                const anchor = assetCanon?.characters.find(c => c.id === (a.seedLibraryId || a.id));
-                return {id:a.id,label:anchor?.nameZh || a.labelZh,tag:a.tag,model};
-              })}
-              profiles={collectPreparedRigProfiles(blocks, assetLockRegistry.byRole.character.map(a => {
-                const ref = customAssetRefs.find(ref => ref.id === a.id);
-                const source = resolveManhuaRigSource(ref, customAssetRefs).source;
-                return { id: a.id, label: a.labelZh, model: source ? { taskId: source.model.taskId } : undefined };
-              }))}
-              sourceShots={activeSegment?.shots.map(shot=>({index:shot.index,durationSec:shot.durationSec,actionZh:shot.actionZh}))}
-              directionShots={activeSegment?.shots.map(shot=>({index:shot.index,durationSec:shot.durationSec,cameraZh:shot.cameraZh||"",actionZh:shot.actionZh}))}
-              directionCardId={directionCanon?.mainCardId ?? null}
-              onOpenAdvisor={onOpenAdvisorPrevis ? (requestId) => { onOpenAdvisorPrevis(activeClip.id, requestId); } : undefined}
-              actionPlanDrafts={previsDraftsFromPlan}
-              onNextDraftVideo={onGenerateFragment ? runGenerateFragment : undefined}
-              disabled={Boolean(factoryBusy)||activeClip.status==="running"||activeClip.videoTaskStatus==="queued"}
-              onChange={(studio,reference)=>onUpdateClipPrevisStudio(activeClip.id,studio,reference)}/>
-              :<p className="text-xs text-amber-100">请先确认分段剧本并建立本段成片节点；此操作不会生成付费成片。</p>}
-          </div></SecondaryStudioSurface>:null}
-          {onChangeManhuaActionPlan && manhuaSecondaryToolHome("actionTimeline", activePhase, immersive) === "cluster" ? <button type="button" data-manhua-action="open-action-timeline" data-manhua-tool-home="cluster" disabled={Boolean(factoryBusy)}
-            className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
-            onClick={()=>toggleSecondaryTool("actionTimeline")}>本段动作节奏</button> : null}
-          {actionTimelineOpen&&onChangeManhuaActionPlan ? <SecondaryStudioSurface immersive={immersive} title="本段动作节奏" onClose={() => setActionTimelineOpen(false)}><ManhuaActionTimeline
-            episodeIndex={focusEpisode}
-            segmentIndex={activeSegNo}
-            plan={manhuaActionPlan ?? null}
-            sourceShots={(activeSegment?.shots||[]).map(shot=>({index:shot.index,durationSec:shot.durationSec,actionZh:shot.actionZh}))}
-            actors={assetLockRegistry.byRole.character.map(a=>({id:a.id,label:a.labelZh}))}
-            bindingContext={manhuaActionPlanBindingContext ?? null}
-            disabled={Boolean(factoryBusy)}
-            onChange={(plan)=>onChangeManhuaActionPlan(focusEpisode, plan)}/></SecondaryStudioSurface> : null}
-          {onUpdateClipAudioStudio && manhuaSecondaryToolHome("audio", activePhase, immersive) === "cluster" ? (
-            <button type="button" data-manhua-action="open-audio-studio" data-manhua-tool-home="cluster"
-              disabled={Boolean(factoryBusy)}
-              aria-controls="manhua-audio-studio"
-              aria-expanded={audioStudioOpen && audioStudioPhase === activePhase}
-              className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
-              onClick={() => toggleSecondaryTool("audio")}>
-              配音与背景音乐
-            </button>
-          ) : null}
-          {audioStudioOpen && onUpdateClipAudioStudio ? (
-            <SecondaryStudioSurface immersive={immersive} title="配音与背景音乐" onClose={() => setAudioStudioOpen(false)}><section id="manhua-audio-studio" aria-label="当前段配音与背景音乐" className="w-full rounded-xl border border-cyan-300/25 bg-[#0c121d] p-3" data-manhua-audio-studio hidden={audioStudioPhase !== activePhase}>
-              <div className="mb-2 flex items-center justify-between text-sm text-cyan-50">
-                <span>第 {focusEpisode} 集 · 第 {activeSegNo} 段 · 配音与背景音乐</span>
-                <select aria-label="音轨工作台当前段" value={activeSegNo} disabled={Boolean(factoryBusy)} className="rounded border border-white/20 bg-[#0c121d] p-1 text-xs"
-                  onChange={event => { const next = Number(event.target.value); setActiveSegmentOverride(next); const firstShot = segments.find(segment => segment.index === next)?.shots[0]; if (firstShot) { const index = shots.findIndex(shot => shot.index === firstShot.index); if (index >= 0) setShotIndex(index); } }}>
-                  {segments.map(segment => <option key={segment.index} value={segment.index}>第 {segment.index} 段</option>)}
-                </select>
-                <button type="button" onClick={() => setAudioStudioOpen(false)}>收起</button>
-              </div>
-              {activeClip ? <CanvasAudioStudio key={activeClip.id} block={activeClip} compact={false} timelineDurationSec={activeSegment?.durationSec} sourceShots={activeSegment?.shots} dialogueSources={blocks}
-                characters={assetCanon?.characters.map(character => ({ id: character.id, nameZh: character.nameZh, aliasZh: character.aliasZh }))}
-                disabled={Boolean(factoryBusy) || activeClip.status === "running" || activeClip.videoTaskStatus === "queued"}
-                onChange={studio => onUpdateClipAudioStudio(activeClip.id, studio)}
-                onMasterTrackReady={onSetClipSegmentReference ? (entry) => onSetClipSegmentReference(activeClip.id, "master", entry) : undefined}
-                bgmModels={bgmModels} /> : (
-                <p className="text-xs text-amber-100">当前段尚未建立成片节点。请先确认分段剧本；本入口不生成视频、不扣费，也不切换工作区。</p>
-              )}
-            </section></SecondaryStudioSurface>
-          ) : null}
+
         </div>
         </details>
+          <button type="button" data-manhua-action="open-secondary-tools" aria-expanded={Boolean(activeSecondaryTool)} className="min-h-10 rounded-lg border border-cyan-300/35 bg-cyan-500/10 px-3 text-xs text-cyan-50" onClick={() => toggleSecondaryTool(activeSecondaryTool || (onUpdateClipPrevisStudio ? "previs" : onGenerateAsset3d || onImportAsset3d ? "model3d" : onGenerateSceneWorld ? "world3d" : onUpdateClipAudioStudio ? "audio" : "actionTimeline"))}>二级工具 · 3D / 白模 / 节奏 / 声音</button>
+
           {factoryBusy && onStopFactory ? null : (
             <Popover open={moreToolsOpen} onOpenChange={setMoreToolsOpen}>
               <PopoverTrigger asChild>
@@ -4666,7 +4570,7 @@ export default function ManhuaScriptWorkbench({
                             disabled={Boolean(factoryBusy)}
                             onClick={() => {
                               setMoreToolsOpen(false);
-                              toggleSecondaryTool(tool);
+                              selectSecondaryTool(tool);
                             }}
                             className="rounded-lg border border-white/15 bg-white/[0.04] px-2.5 py-1.5 text-[11px] text-white/70 hover:bg-white/[0.08] disabled:opacity-40"
                           >
@@ -5060,6 +4964,111 @@ export default function ManhuaScriptWorkbench({
           )}
       </div>
 
+          {activeSecondaryTool ? <SecondaryStudioSurface immersive={immersive} title="二级工具" advisorOpen={advisorOpen} onAdvisorDockChange={onAdvisorDockChange} onPreviewHostChange={onAdvisorPreviewHostChange} clipId={activeClip?.id}
+            onOpenAdvisor={onOpenAdvisor3d || onOpenAdvisorPrevis ? () => openSecondaryAdvisor(activeSecondaryTool) : undefined}
+            onClose={() => setActiveSecondaryTool(null)}>
+            <ManhuaSecondaryToolTabs active={activeSecondaryTool} tools={(["model3d", "world3d", "previs", "actionTimeline", "audio"] as const).filter(tool => tool === "model3d" ? Boolean(onGenerateAsset3d || onImportAsset3d) : tool === "world3d" ? Boolean(worldStudioScenes.length || onGenerateSceneWorld) : tool === "previs" ? Boolean(onUpdateClipPrevisStudio) : tool === "actionTimeline" ? Boolean(onChangeManhuaActionPlan) : Boolean(onUpdateClipAudioStudio))} onSelect={selectSecondaryTool} />
+
+          {modelStudioOpen ? <section role="tabpanel" id="manhua-tool-panel-model3d" aria-labelledby="manhua-tool-tab-model3d" hidden={activeSecondaryTool !== "model3d"}><Manhua3dModelStudio
+            characters={modelStudioCharacters}
+            busyIds={asset3dBusyIds}
+            disabled={Boolean(factoryBusy)}
+            onGenerate={onGenerateAsset3d}
+            onImport={onImportAsset3d}
+            onGenerateMultiview={onGenerateAsset3dMultiview}
+            onSubmitMultiview={onSubmitAsset3dMultiview}
+            multiviewDrafts={multiviewDrafts}
+            riggedIds={riggedAssetIds}
+            onRig={onApplyRiggedModel ? (sourceRefId, characterId)=>{
+              // 用候选图（A-pose）绑骨：把来源钉在锁脸图上，白模/场景预览随之切到该模型；用回锁脸图自己的模型则清钉
+              onCustomAssetRigSourceChange?.(characterId, sourceRefId===characterId ? null : sourceRefId);
+              setAutoRigAssetId(sourceRefId);
+            } : undefined}/></section> : null}
+
+          {worldStudioOpen && (worldStudioScenes.length > 0 || onGenerateSceneWorld) ? <section role="tabpanel" id="manhua-tool-panel-world3d" aria-labelledby="manhua-tool-tab-world3d" hidden={activeSecondaryTool !== "world3d"}><ManhuaWorldStudio
+            onOpenAdvisor={onOpenAdvisor3d ? (sceneRefId) => onOpenAdvisor3d(activeClip?.id, sceneRefId, "world") : undefined}
+            scenes={worldStudioScenes}
+            busyIds={sceneWorldBusyIds}
+            disabled={Boolean(factoryBusy)}
+            onGenerate={onGenerateSceneWorld}
+            onRetry={onRetrySceneWorld}
+            onRemove={onRemoveSceneWorld}
+            stageCharacters={worldStageCharacters}
+            previsStatusZh={previsStatusZh}
+            onOpenPrevis={onUpdateClipPrevisStudio ? () => selectSecondaryTool("previs") : undefined}
+            savedFrameCount={stageFrameProgress.saved}
+            adoptedFrameCount={stageFrameProgress.adopted}
+            onExportStageFrame={onExportSceneStageFrame ? (id, blob, frame) => onExportSceneStageFrame(id, blob, { ...frame, episode: focusEpisode, segmentIndex: activeSegNo }) : undefined}
+            layoutActors={worldLayoutActors}
+            onSubmitLayoutWorld={onSubmitLayoutSceneWorld}/>
+          {onToggleStageFrameAdoption ? <div className="w-full">
+            <ManhuaStageFrameAdoptPanel
+              refs={customAssetRefs}
+              shots={stageFrameShotOptions}
+              context={stageFrameAdoptContext}
+              disabled={Boolean(factoryBusy)}
+              onToggleAdopt={onToggleStageFrameAdoption}
+              actorLabelOf={(id)=>assetLockRegistry.byRole.character.find(a=>a.id===id)?.labelZh||id}/>
+          </div> : null}</section> : null}
+
+          {previsStudioOpen&&onUpdateClipPrevisStudio ? <section role="tabpanel" id="manhua-tool-panel-previs" aria-labelledby="manhua-tool-tab-previs" hidden={activeSecondaryTool !== "previs"}><div className="w-full">
+            <p className="mb-2 text-xs text-cyan-100">第 {focusEpisode} 集 · 第 {activeSegNo} 段 · 动作白模</p>
+            <div className="mb-2 flex flex-wrap items-center gap-2 rounded border border-cyan-300/20 bg-cyan-500/5 p-2 text-[11px] text-white/75" data-previs-world-link>
+              <span>3D 场景可尝试载入 {manhuaWorldCounts(worldStudioScenes).ready}/{worldStudioScenes.length} 个；它只取本段人物起点站位，白模动作和切镜以这里的预演为准。</span>
+              {worldStudioScenes.length > 0 || onGenerateSceneWorld ? <button type="button" className="rounded border border-cyan-300/30 px-2 py-1 text-cyan-50" onClick={() => selectSecondaryTool("world3d")}>查看 3D 场景与视角图</button> : null}
+            </div>
+            {activeClip && onUpdateClipAudioStudio ? <div className="mb-3 text-xs text-white/70"><button type="button" className="min-h-10 rounded border border-white/20 px-3" onClick={() => selectSecondaryTool("audio")}>查看与调整本段对白、BGM</button></div> : null}
+            {activeClip && onUpdateClipPrevisStudio ? <ManhuaPrevisAudioControls block={activeClip} disabled={Boolean(factoryBusy) || activeClip.status === "running" || activeClip.videoTaskStatus === "queued"} onChange={studio => onUpdateClipPrevisStudio(activeClip.id, studio)} /> : null}
+            {activeClip?<ManhuaPrevisStudio key={`${activeClip.id}:${activeClip.previsStudio?.scopeId??"new"}`} block={activeClip}
+              characters={previsStudioCharacters}
+              profiles={collectPreparedRigProfiles(blocks, assetLockRegistry.byRole.character.map(a => {
+                const ref = customAssetRefs.find(ref => ref.id === a.id);
+                const source = resolveManhuaRigSource(ref, customAssetRefs).source;
+                return { id: a.id, label: a.labelZh, model: source ? { taskId: source.model.taskId } : undefined };
+              }))}
+              sourceShots={activeSegment?.shots.map(shot=>({index:shot.index,durationSec:shot.durationSec,actionZh:shot.actionZh}))}
+              directionShots={activeSegment?.shots.map(shot=>({index:shot.index,durationSec:shot.durationSec,cameraZh:shot.cameraZh||"",actionZh:shot.actionZh}))}
+              directionCardId={directionCanon?.mainCardId ?? null}
+              onOpenAdvisor={onOpenAdvisorPrevis ? openPrevisAdvisor : undefined}
+              actionPlanDrafts={previsDraftsFromPlan}
+              onNextDraftVideo={onGenerateFragment ? runGenerateFragment : undefined}
+              disabled={Boolean(factoryBusy)||activeClip.status==="running"||activeClip.videoTaskStatus==="queued"}
+              onChange={(studio,reference)=>onUpdateClipPrevisStudio(activeClip.id,studio,reference)}/>
+              :<p className="text-xs text-amber-100">请先确认分段剧本并建立本段成片节点；此操作不会生成付费成片。</p>}
+          </div></section>:null}
+
+          {actionTimelineOpen&&onChangeManhuaActionPlan ? <section role="tabpanel" id="manhua-tool-panel-actionTimeline" aria-labelledby="manhua-tool-tab-actionTimeline" hidden={activeSecondaryTool !== "actionTimeline"}><ManhuaActionTimeline
+            episodeIndex={focusEpisode}
+            segmentIndex={activeSegNo}
+            plan={manhuaActionPlan ?? null}
+            sourceShots={(activeSegment?.shots||[]).map(shot=>({index:shot.index,durationSec:shot.durationSec,actionZh:shot.actionZh}))}
+            actors={assetLockRegistry.byRole.character.map(a=>({id:a.id,label:a.labelZh}))}
+            bindingContext={manhuaActionPlanBindingContext ?? null}
+            disabled={Boolean(factoryBusy)}
+            onChange={(plan)=>onChangeManhuaActionPlan(focusEpisode, plan)}/></section> : null}
+
+          {audioStudioOpen && onUpdateClipAudioStudio ? (
+            <section role="tabpanel" id="manhua-tool-panel-audio" aria-labelledby="manhua-tool-tab-audio" hidden={activeSecondaryTool !== "audio"}><section id="manhua-audio-studio" aria-label="当前段配音与背景音乐" className="w-full rounded-xl border border-cyan-300/25 bg-[#0c121d] p-3" data-manhua-audio-studio hidden={audioStudioPhase !== activePhase}>
+              <div className="mb-2 flex items-center justify-between text-sm text-cyan-50">
+                <span>第 {focusEpisode} 集 · 第 {activeSegNo} 段 · 配音与背景音乐</span>
+                <select aria-label="音轨工作台当前段" value={activeSegNo} disabled={Boolean(factoryBusy)} className="rounded border border-white/20 bg-[#0c121d] p-1 text-xs"
+                  onChange={event => { const next = Number(event.target.value); setActiveSegmentOverride(next); const firstShot = segments.find(segment => segment.index === next)?.shots[0]; if (firstShot) { const index = shots.findIndex(shot => shot.index === firstShot.index); if (index >= 0) setShotIndex(index); } }}>
+                  {segments.map(segment => <option key={segment.index} value={segment.index}>第 {segment.index} 段</option>)}
+                </select>
+                <button type="button" onClick={() => setActiveSecondaryTool(null)}>收起</button>
+              </div>
+              {activeClip ? <CanvasAudioStudio key={activeClip.id} block={activeClip} compact={false} timelineDurationSec={activeSegment?.durationSec} sourceShots={activeSegment?.shots} dialogueSources={blocks}
+                characters={assetCanon?.characters.map(character => ({ id: character.id, nameZh: character.nameZh, aliasZh: character.aliasZh }))}
+                disabled={Boolean(factoryBusy) || activeClip.status === "running" || activeClip.videoTaskStatus === "queued"}
+                onChange={studio => onUpdateClipAudioStudio(activeClip.id, studio)}
+                onMasterTrackReady={onSetClipSegmentReference ? (entry) => onSetClipSegmentReference(activeClip.id, "master", entry) : undefined}
+                bgmModels={bgmModels} /> : (
+                <p className="text-xs text-amber-100">当前段尚未建立成片节点。请先确认分段剧本；本入口不生成视频、不扣费，也不切换工作区。</p>
+              )}
+            </section></section>
+          ) : null}
+          </SecondaryStudioSurface> : null}
+
       {(activePhase !== "storyboard" && activePhase !== "edit" && activePhase !== "assets") ? <div
         data-manhua-draft-retention-hint
         className={
@@ -5196,7 +5205,7 @@ export default function ManhuaScriptWorkbench({
                       const index = shots.findIndex(shot => shot.index === issue.segment.shots[0]?.index);
                       if (index >= 0) setShotIndex(index);
                       selectPhase("storyboard");
-                      if (issue.targetAudio && outlineComplete) { setAudioStudioOpen(true); setAudioStudioPhase("storyboard"); }
+                      if (issue.targetAudio && outlineComplete) { setActiveSecondaryTool("audio"); setAudioStudioOpen(true); setAudioStudioPhase("storyboard"); }
                     }}>
                     <span>第{issue.segment.index}段 · {issue.labelZh}<span className="mt-1 block text-white/50">剧本时间 {typeof issue.segment.sourceStartSec === "number" ? issue.segment.sourceStartSec.toFixed(1) : "未标"}–{typeof issue.segment.sourceEndSec === "number" ? issue.segment.sourceEndSec.toFixed(1) : "未标"} 秒</span></span>
                     <span className="shrink-0 text-cyan-100">去处理 →</span>
@@ -5213,7 +5222,7 @@ export default function ManhuaScriptWorkbench({
                             const index = shots.findIndex(shot => shot.index === issue.segment.shots[0]?.index);
                             if (index >= 0) setShotIndex(index);
                             selectPhase("storyboard");
-                            if (issue.targetAudio && outlineComplete) { setAudioStudioOpen(true); setAudioStudioPhase("storyboard"); }
+                            if (issue.targetAudio && outlineComplete) { setActiveSecondaryTool("audio"); setAudioStudioOpen(true); setAudioStudioPhase("storyboard"); }
                           }}>
                           <span>第{issue.segment.index}段 · {issue.labelZh}<span className="mt-1 block text-white/50">剧本时间 {typeof issue.segment.sourceStartSec === "number" ? issue.segment.sourceStartSec.toFixed(1) : "未标"}–{typeof issue.segment.sourceEndSec === "number" ? issue.segment.sourceEndSec.toFixed(1) : "未标"} 秒</span></span>
                           <span className="shrink-0 text-cyan-100">去处理 →</span>
@@ -6358,7 +6367,7 @@ export default function ManhuaScriptWorkbench({
                                   ) : null}
                                 </div>
                               ) : null}
-                              {ref.role === "scene" && onCustomAssetSceneSpaceChange ? <ManhuaSceneSpacePanel asset={ref} actors={(assetCanon?.characters || []).map(c => ({ id: c.id, labelZh: c.nameZh }))} scopes={segments.flatMap(segment => [{ episode: focusEpisode, segmentIndex: segment.index, sourceRevision: buildManhuaAutoSegmentBinding(focusEpisode, segment, episodeVideoModel).revision, labelZh: `第${focusEpisode}集第${segment.index}段` }, ...segment.shots.map(shot => ({ episode: focusEpisode, segmentIndex: segment.index, sourceRevision: buildManhuaAutoSegmentBinding(focusEpisode, segment, episodeVideoModel).revision, shotId: String(shot.index), labelZh: `第${focusEpisode}集第${segment.index}段第${shot.index}镜` }))])} disabled={Boolean(factoryBusy)} onChange={space => onCustomAssetSceneSpaceChange(ref.id, space)}/> : null}
+                              {ref.role === "scene" && onCustomAssetSceneSpaceChange ? <ManhuaSceneSpacePanel asset={ref} actors={(assetCanon?.characters || []).map(c => ({ id: c.id, labelZh: c.nameZh }))} scopes={segments.flatMap(segment => [{ episode: focusEpisode, segmentIndex: segment.index, sourceRevision: buildManhuaAutoSegmentBinding(focusEpisode, segment, episodeVideoModel).revision, labelZh: `第${focusEpisode}集第${segment.index}段` }, ...segment.shots.map(shot => ({ episode: focusEpisode, segmentIndex: segment.index, sourceRevision: buildManhuaAutoSegmentBinding(focusEpisode, segment, episodeVideoModel).revision, shotId: String(shot.index), labelZh: `第${focusEpisode}集第${segment.index}段第${shot.index}镜` }))])} disabled={Boolean(factoryBusy)} onChange={space => onCustomAssetSceneSpaceChange(ref.id, space)} onOpenAdvisor={onOpenAdvisor3d ? () => { toggleSecondaryTool("world3d"); onOpenAdvisor3d(activeClip?.id, ref.id, "world"); } : undefined}/> : null}
                               {groupUseZh || groupAlsoInZh ? (
                                 <div className="flex flex-wrap items-center gap-1">
                                   {groupUseZh ? (

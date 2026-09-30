@@ -499,3 +499,19 @@ it("GLM 两跳失败后 DeepSeek 成功即停止，沿用同一上下文", async
   await expect(askPlatformSkillQa({ userId: 7, isAdmin: true, question: "依据视频调整", manhuaContext: manhuaContext({ previsEdit: target }) })).rejects.toThrow();
   expect(invokeLLMMock).toHaveBeenCalledTimes(1);
  });
+
+it("场景顾问生产服务校验JSON方案，禁止用普通回答冒充可生成方案", async () => {
+  const worldTarget = { sceneRefId: "scene-clinic", labelZh: "露天诊台", sourceRevision: "a".repeat(64), hintZh: "村外药庐" };
+  const plan = { kind: "world_plan_v1", sceneRefId: worldTarget.sceneRefId, summaryZh: "诊台靠树荫，留出入口通路。", textPrompt: "山村药庐外的木制诊台，清晨暖光，诊台与入口之间留出通路。" };
+  invokeLLMMock.mockResolvedValue(llmJson(plan));
+  const result = await askPlatformSkillQa({ userId: 7, isAdmin: true, question: "请安排诊台场景", manhuaContext: manhuaContext({ worldTarget, studio3d: {} }) });
+  expect(JSON.parse(result.answer)).toEqual(plan);
+  expect(invokeLLMMock).toHaveBeenCalledTimes(1);
+  expect(invokeLLMMock.mock.calls[0][0].messages[0].content).toContain("world_plan_v1");
+  expect(invokeLLMMock.mock.calls[0][0].messages[0].content).not.toContain("成片引擎");
+  expect(resolveVideoMock).not.toHaveBeenCalled();
+});
+it("场景顾问不能交回另一场景或无效空提示词", async () => {
+  invokeLLMMock.mockResolvedValue(llmJson({ kind: "world_plan_v1", sceneRefId: "other", summaryZh: "错误场景", textPrompt: "错误目标" }));
+  await expect(askPlatformSkillQa({ userId: 7, isAdmin: true, question: "安排诊台", manhuaContext: manhuaContext({ worldTarget: { sceneRefId: "scene-clinic", labelZh: "诊台", sourceRevision: "a".repeat(64), hintZh: "" } }) })).rejects.toThrow();
+});

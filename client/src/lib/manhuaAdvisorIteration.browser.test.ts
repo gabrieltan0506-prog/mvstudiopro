@@ -12,7 +12,7 @@ import {ManhuaSecondaryStudioSurface as Surface} from './client/src/components/c
 import{createManhuaPrevisStudio}from'./shared/manhuaPrevis';
 import{makeAdvisorPrevisTarget,prepareAdvisorPrevisTrial}from'./shared/manhuaAdvisorPrevisEdit';
 const f=globalThis.fixture={asks:[],renders:[],writes:[]};const studio=createManhuaPrevisStudio(5);f.studio=studio;
-function App(){const[open,setOpen]=useState(true);const[host,setHost]=useState(null);f.setOpen=setOpen;return <><Surface immersive title='本段动作白模' advisorOpen={open} onAdvisorDockChange={setHost} onOpenAdvisor={()=>setOpen(true)} onClose={()=>{}}><div data-scene-view>原有3D场景与白模预览</div></Surface><Panel dockHost={host} open={open} userId='1' confirmedProjectVersion='iteration-test' onClose={()=>setOpen(false)} templates={[]} onRequestTrial={()=>{}} previsTarget={makeAdvisorPrevisTarget('clip-1',studio)} onPreparePrevis={c=>prepareAdvisorPrevisTrial('clip-1',studio,c)} onApplyPrevis={t=>{f.writes.push(t);return true;}} project={{context:{seriesTitle:'墨菁传',episodeIndex:1,episodeTitle:'入市',stage:'storyboard',videoModel:'未选择',writerConfirmed:true,episodeBody:'曹三逼近，阿菁挡在马前。',assetSummary:'',shotSummary:'',blockers:[]},issues:[],contextNotes:[],selectionLabel:'第1段'}}/></>}
+function App(){const[open,setOpen]=useState(true);const[host,setHost]=useState(null);const[previewHost,setPreviewHost]=useState(null);f.setOpen=setOpen;return <><Surface immersive clipId='clip-1' title='本段动作白模' advisorOpen={open} onAdvisorDockChange={setHost} onPreviewHostChange={setPreviewHost} onOpenAdvisor={()=>setOpen(true)} onClose={()=>{}}><div data-scene-view>原有3D场景与白模预览</div></Surface><Panel dockHost={host} previewHost={previewHost} open={open} userId='1' confirmedProjectVersion='iteration-test' onClose={()=>setOpen(false)} templates={[]} onRequestTrial={()=>{}} previsTarget={makeAdvisorPrevisTarget('clip-1',studio)} onPreparePrevis={c=>prepareAdvisorPrevisTrial('clip-1',studio,c)} onApplyPrevis={t=>{f.writes.push(t);return true;}} project={{context:{seriesTitle:'墨菁传',episodeIndex:1,episodeTitle:'入市',stage:'storyboard',videoModel:'未选择',writerConfirmed:true,episodeBody:'曹三逼近，阿菁挡在马前。',assetSummary:'',shotSummary:'',blockers:[]},issues:[],contextNotes:[],selectionLabel:'第1段'}}/></>}
 createRoot(document.getElementById('root')).render(<App/>);
 ` }, bundle: true, write: false, platform: "browser", format: "iife", jsx: "automatic", alias: { "@": path.resolve("client/src"), "@shared": path.resolve("shared") }, plugins: [{ name: "多轮顾问离线边界", setup(b) {
     b.onResolve({ filter: /^@\/lib\/manhuaAdvisorStream$/ }, () => ({ path: "stream", namespace: "stream-test" }));
@@ -24,11 +24,11 @@ createRoot(document.getElementById('root')).render(<App/>);
 }, 30000);
 afterAll(async () => { await browser?.close(); });
 it("先提案不自动渲染，追问继承上版，用户选定后才渲染，收起重开不重建任务", async () => {
-  const page = await browser.newPage(); await page.setRequestInterception(true);
+  const page = await browser.newPage(); page.setDefaultTimeout(5000); await page.setRequestInterception(true);
   page.on("request", r => r.isNavigationRequest() ? void r.respond({ status: 200, contentType: "text/html", body: '<div id="root"></div>' }) : void r.abort());
   await page.goto("http://localhost:41829/"); await page.addScriptTag({ content: bundle });
   await page.waitForSelector('textarea[aria-label="向创作顾问提问"]');
-  expect(await page.$eval('[data-manhua-creative-advisor]', e => Boolean(e.closest('[role=dialog][aria-label="本段动作白模"]')))).toBe(true);
+  expect(await page.$eval('[data-manhua-creative-advisor]', e => Boolean(e.closest('[role=region][aria-label="本段动作白模"]')))).toBe(true);
   expect(await page.$('[data-scene-view]')).not.toBeNull();
   expect(await page.$eval('[aria-label="今日咨询额度"]', e => e.textContent)).toContain("今日咨询免费剩余 5/5 次");
   await page.type('textarea', '曹三逼近时加强压迫感'); await page.keyboard.press('Enter');
@@ -46,7 +46,7 @@ it("先提案不自动渲染，追问继承上版，用户选定后才渲染，�
   expect(await page.evaluate(() => (globalThis as any).fixture.renders[0].spec.cameras[0].endLens)).toBe(50);
   expect(await page.evaluate(() => (globalThis as any).fixture.writes)).toEqual([]);
   await page.evaluate(() => (globalThis as any).fixture.setOpen(false));
-  await page.waitForFunction(() => !document.querySelector('[data-manhua-creative-advisor]'));
+  await page.waitForFunction(() => { const panel = document.querySelector('[data-manhua-creative-advisor]') as HTMLElement | null; return !panel || panel.hidden; });
   await page.evaluate(() => (globalThis as any).fixture.setOpen(true));
   await page.waitForSelector('[data-manhua-creative-advisor]');
   expect(await page.evaluate(() => (globalThis as any).fixture.renders.length)).toBe(1);

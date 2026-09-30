@@ -634,6 +634,18 @@
   border-bottom: 1px solid var(--mh-line) !important;
 }
 
+/* 二级工具占用同页内容区；原制作页保留挂载，收起后恢复原状态。 */
+#manhua-workbench-shell.mh-redesign[data-manhua-secondary-active="true"] > :not([data-manhua-product-header]):not([data-manhua-secondary-studio]) {
+  display: none !important;
+}
+#manhua-workbench-shell.mh-redesign > [data-manhua-secondary-studio] {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+  width: auto;
+  margin: 10px;
+}
+
 #manhua-workbench-shell.mh-redesign [data-manhua-project-identity] {
   max-width: calc(100% - 150px);
 }
