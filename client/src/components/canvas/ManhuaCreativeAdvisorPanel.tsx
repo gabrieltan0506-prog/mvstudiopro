@@ -16,7 +16,7 @@ import { copyTextWithToast } from "@/lib/copyText";
 import { buildAdvisorQuestion, findMentionedTemplates } from "@/lib/manhuaCreativeAdvisorContext";
 import { manhuaCreativeAdvisorContextSchema } from "@shared/manhuaCreativeAdvisor";
 import type { PublicManhuaViralTemplateCard } from "@shared/manhuaViralTemplateBank";
-import type { buildManhuaAdvisorProject, AdvisorIssue } from "@/lib/manhuaAdvisorProject";
+import { resolveAdvisorVideoPromptContext, type buildManhuaAdvisorProject, type AdvisorIssue } from "@/lib/manhuaAdvisorProject";
 import { advisorRecentHistory, loadAdvisorMessages, loadAdvisorPendingRecovery, makeAdvisorPendingRecovery, manhuaAdvisorSessionKey, mergeAdvisorCompletedExchange, persistAdvisorCompletedExchange, type AdvisorMessage, type AdvisorMessagesLoadResult, type AdvisorPendingRequest, type AdvisorRecoveryLoadResult } from "@/lib/manhuaAdvisorSession";
 import { advisorRewriteCandidateSchema, buildTemplatePlanQuestion, buildTemplateRewriteQuestion, parseAdvisorRewrite, parseAdvisorTemplatePlans, formatAdvisorRewriteAnswer, TEMPLATE_PLAN_QUESTION, TEMPLATE_REWRITE_QUESTION, type AdvisorRewriteCandidate, type AdvisorTemplatePlan } from "@/lib/manhuaAdvisorTemplates";
 import { downloadAdvisorBackup, listAdvisorBackups, type AdvisorBackupEntry } from "@/lib/manhuaAdvisorBackups";
@@ -292,14 +292,19 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     if (previsEdit && !previsEdit.previousPreviewRequestId && previsCandidate?.target.clipId === previsEdit.clipId && previsCandidate.target.specJson === previsEdit.specJson) {
       try { previsEdit = { ...previsEdit, previousPreviewSpecJson: advisorPrevisSpecJson(applyAdvisorPrevisPatch(manhuaPrevisSpecSchema.parse(JSON.parse(previsEdit.specJson)), previsCandidate.patch)) }; } catch { /* 未支持要求不继承为已执行配置。 */ }
     }
-    const result = project ? manhuaCreativeAdvisorContextSchema.safeParse({ ...project.context, history: advisorRecentHistory(turns), ...(previsEdit ? { previsEdit } : {}), ...(props.studio3d ? { studio3d: { directionCardId: props.studio3d.directionCardId, directionCardVersion: props.studio3d.directionCardVersion } } : {}), ...(props.worldTarget ? { worldTarget: props.worldTarget } : {}) }) : null;
+    let questionContext = project?.context;
+    try {
+      if (project && questionContext) questionContext = resolveAdvisorVideoPromptContext({ context: questionContext, question, drafts: project.videoPromptDrafts, selectedSegmentIndex: project.selectedSegmentIndex });
+    } catch (error) { toast.error(error instanceof Error ? error.message : "无法读取本段提示词"); return; }
+    const result = questionContext ? manhuaCreativeAdvisorContextSchema.safeParse({ ...questionContext, history: advisorRecentHistory(turns), ...(previsEdit ? { previsEdit } : {}), ...(props.studio3d ? { studio3d: { directionCardId: props.studio3d.directionCardId, directionCardVersion: props.studio3d.directionCardVersion } } : {}), ...(props.worldTarget ? { worldTarget: props.worldTarget } : {}) }) : null;
     if (result && !result.success) {
       toast.error("当前上下文超出读取范围或包含不适合发送的内容", {
         description: result.error.issues.map(formatManhuaAdvisorContextIssue).join("；"),
       });
       return;
     }
-    const label = project ? `第 ${project.context.episodeIndex} 集 · ${MANHUA_ADVISOR_STAGE_LABELS[project.context.stage]} · ${project.selectionLabel}` : stageZh || "创作咨询";
+    const promptScope = questionContext?.shotSummary.match(/^【当前保存的(第 \d+ 段)视频提示词/)?.[1];
+    const label = project ? `第 ${project.context.episodeIndex} 集 · ${MANHUA_ADVISOR_STAGE_LABELS[project.context.stage]} · ${promptScope || project.selectionLabel}` : stageZh || "创作咨询";
     const request: PendingQuestion = {
       requestId: crypto.randomUUID(),
       ...(props.previsTarget && renderRequested ? { previsRenderRequested: true } : {}),

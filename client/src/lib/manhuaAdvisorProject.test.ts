@@ -9,6 +9,7 @@ import {
   pickManhuaAdvisorTopIssue,
   recommendManhua3dUsage,
   resolveManhuaAdvisorVideoModel,
+  resolveAdvisorVideoPromptContext,
 } from "./manhuaAdvisorProject";
 import { buildManhuaProjectBible } from "@shared/manhuaProjectBible";
 import { manhuaCreativeAdvisorContextSchema } from "@shared/manhuaCreativeAdvisor";
@@ -25,6 +26,21 @@ const pack: ManhuaWriterPack = {
 const base = { pack, bible: null, episodeIndex: 1, phase: "assets" as const, videoModel: "seedance-2.0-mini", writerConfirmed: false, refs: [], blocks: [] };
 
 describe("创作顾问的真实项目生产者", () => {
+  it("检查第一段读取保存节点全文和29秒，不受选中第二段或旧34秒摘要影响", () => {
+    const prompt = "【第1段·29s】\n当前保存的全文：娘说「阿菁……慢点」。";
+    const result = buildManhuaAdvisorProject({ ...base, blocks: [
+      { ...defaultCanvasBlock("video", 0, 0), id: "clip-e01-g01", episodeIndex: 1, prompt },
+      { ...defaultCanvasBlock("video", 0, 0), id: "clip-e02-g01", episodeIndex: 2, prompt: "其他集不能串入" },
+      { ...defaultCanvasBlock("video", 0, 0), id: "clip-e01-old", episodeIndex: 1, prompt: "旧归档稿", archivedFromPreviousScript: true },
+    ], selection: { episodeIndex: 1, segmentIndex: 2, shot: null } });
+    const context = resolveAdvisorVideoPromptContext({ context: { ...result.context, shotSummary: "旧摘要第一段34秒" }, drafts: result.videoPromptDrafts, selectedSegmentIndex: result.selectedSegmentIndex, question: "幫我檢查第一段的視頻生成提示詞" });
+    expect(context.shotSummary).toContain(prompt);
+    expect(context.shotSummary).toContain("29 秒");
+    expect(context.shotSummary).not.toMatch(/34秒|其他集|旧归档稿/);
+    expect(manhuaCreativeAdvisorContextSchema.safeParse(context).success).toBe(true);
+    expect(() => resolveAdvisorVideoPromptContext({ context, drafts: [{ segmentIndex: 1, blockId: "clip-e01-g01", prompt: "长".repeat(6001) }], question: "检查第1段提示词" })).toThrow("不能用节选冒充全文");
+    expect(() => resolveAdvisorVideoPromptContext({ context, drafts: [...result.videoPromptDrafts, ...result.videoPromptDrafts], question: "检查第一段提示词" })).toThrow("多个视频节点");
+  });
   it("正文无可拍表时读取同集工作台规划，但不冒充质量通过", () => {
     const result = buildManhuaAdvisorProject({ ...base, segments: [], workbenchPlan: {
       episodeIndex: 1, segments: [{ intentZh: "墨屠走向阿菁并格挡一掌", dialogueZh: "别怕" }],

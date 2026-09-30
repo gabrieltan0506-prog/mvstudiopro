@@ -22,7 +22,7 @@ describe("阻断卡集中显示", () => {
     });
     expect(state.blocked).toBe(true);
     expect(state.blockers.map((i) => i.id)).toEqual(["asset-gap", "gate", "keyframe"]);
-    expect(state.headlineZh).toBe("本步卡着 2 条，全片共 3 条要解");
+    expect(state.headlineZh).toBe("本步待核对 2 项");
     // 提醒项不许被藏掉——藏提示正是线上那个毛病本身
     expect(state.advisories.map((i) => i.id)).toEqual(["claims"]);
   });
@@ -33,7 +33,7 @@ describe("阻断卡集中显示", () => {
       phase: "assets",
     });
     expect(state.blocked).toBe(true);
-    expect(state.headlineZh).toBe("其他步骤还有 1 项需要处理");
+    expect(state.headlineZh).toBe("制作待核对 1 项");
   });
 
   it("只有提醒项时不算阻断，卡整张不渲染", () => {
