@@ -43,9 +43,12 @@ it("品牌与工作区同一行；短窗口展开两组工具后顶栏不长高�
       expect(before.brand[0]).toBeLessThan(before.workspace[1]); expect(before.workspace[0]).toBeLessThan(before.brand[1]); expect(before.page).toBeLessThanOrEqual(width + 1);
       const advisor = await page.$eval('[data-manhua-advisor-header]', node => {
         const rect = node.getBoundingClientRect();
-        return { inTools: Boolean(node.closest('details')), visible: rect.width > 0 && rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight };
+        return { inTools: Boolean(node.closest('details')), visible: rect.width > 0 && rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight,
+          besideFinal: node.parentElement?.hasAttribute('data-manhua-workflow-rail') && node.previousElementSibling?.getAttribute('data-manhua-phase-group') === 'final',
+          fontSize: parseFloat(getComputedStyle(node).fontSize) };
       });
-      expect(advisor).toEqual({ inTools: false, visible: true });
+      expect(advisor).toEqual({ inTools: false, visible: true, besideFinal: true, fontSize: 18 });
+      expect(await page.$$('[data-manhua-advisor-header]')).toHaveLength(1);
       await page.click('[data-canvas-workspace-tools] > summary');
       await page.click('[data-manhua-workspace-tools] > summary');
       const expanded = await page.evaluate(() => {
@@ -60,6 +63,11 @@ it("品牌与工作区同一行；短窗口展开两组工具后顶栏不长高�
       await page.click('[data-manhua-workspace-tools] > summary'); await page.click('[data-canvas-workspace-tools] > summary');
     }
     await page.screenshot({ path: "/tmp/0930-workspace-header-760.png" });
+    await page.click('[data-manhua-advisor-header]');
+    await page.waitForSelector('[data-advisor-generation-monitor]');
+    expect(await page.$eval('[data-manhua-advisor-header]', node => node.getAttribute('aria-expanded'))).toBe('true');
+    expect(await page.evaluate(() => (window as any).__posts)).toEqual([]);
+
   } finally { await context.close(); }
 }, 60000);
 it("白模展开时直接打开当前段提示词，真实编译检查说明过期原因且不建视频任务", async () => {

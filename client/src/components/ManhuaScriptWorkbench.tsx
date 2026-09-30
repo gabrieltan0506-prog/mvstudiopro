@@ -487,6 +487,8 @@ type Props = {
   onAdvisorAudioRequestHandled?: (id: string) => void;
   onOpenAdvisor3d?: (clipId?: string, sceneRefId?: string, mode?: "model" | "world" | "general") => void;
   advisorOpen?: boolean;
+  /** 共用创作顾问入口，固定在终审之后，沿用父级打开逻辑。 */
+  advisorAction?: ReactNode;
   onAdvisorDockChange?: (host: HTMLDivElement | null) => void;
   onAdvisorPreviewHostChange?: (host: HTMLDivElement | null) => void;
   /** 剧本页独立模板改写入口；创作顾问只保留可选辅助。 */
@@ -1251,6 +1253,7 @@ export default function ManhuaScriptWorkbench({
   onAdvisorAudioRequestHandled,
   onOpenAdvisor3d,
   advisorOpen,
+  advisorAction,
   onAdvisorDockChange,
   onAdvisorPreviewHostChange,
   rewriteWorkspace,
@@ -4712,6 +4715,7 @@ clipPromptReviewOpen ? (
               ) : null}
             </div>
           ))}
+          {advisorAction}
         </nav>
         <div data-manhua-project-identity className="flex min-w-0 items-center gap-2">
           <Clapperboard className="h-4 w-4 shrink-0 text-cyan-300" />

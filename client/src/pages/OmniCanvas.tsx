@@ -10068,6 +10068,21 @@ export default function OmniCanvas() {
     return true;
   }
 
+  const advisorInWorkflowRail = manhuaUiMode === "workbench" && !(immersiveWorkbench && immersiveExtrasOpen);
+  const creativeAdvisorAction = (
+    <button
+      type="button"
+      data-manhua-advisor-open
+      data-manhua-advisor-header
+      aria-expanded={advisorOpen}
+      aria-label={`创作顾问${advisorNeedsAttention ? `，${advisorNeedsAttention} 项需处理` : ""}`}
+      className="shrink-0 whitespace-nowrap rounded-lg border border-cyan-300/35 bg-cyan-400/10 px-3 py-2 text-[18px] font-bold text-cyan-100 hover:bg-cyan-400/20"
+      onClick={() => { setAdvisorPrevisClipId(null); advisor3dOpenVersion.current += 1; setAdvisor3dContext(undefined); setAdvisorFocusSection(null); setAdvisorOpen(true); setAdvisorNudge(null); }}
+    >
+      创作顾问<span aria-live="polite">{advisorNeedsAttention ? ` (${advisorNeedsAttention})` : ""}</span>
+    </button>
+  );
+
   const workspaceToolbar = (
             <div data-manhua-workspace-topbar={immersiveWorkbench ? "compact" : undefined} className={immersiveWorkbench ? "flex min-w-0 flex-1 items-center justify-between gap-3" : "flex shrink-0 flex-wrap items-center justify-between gap-3"}>
               {immersiveWorkbench ? (
@@ -10171,19 +10186,7 @@ export default function OmniCanvas() {
                   )}
                 </div>
               )}
-                {canvasMode === "manhua" ? (
-                  <button
-                    type="button"
-                    data-manhua-advisor-open
-                    data-manhua-advisor-header
-                    aria-expanded={advisorOpen}
-                    aria-label={`创作顾问${advisorNeedsAttention ? `，${advisorNeedsAttention} 项需处理` : ""}`}
-                    className="shrink-0 whitespace-nowrap rounded-lg border border-cyan-300/35 bg-cyan-400/10 px-2.5 py-1.5 text-xs font-semibold text-cyan-100 hover:bg-cyan-400/20"
-                    onClick={() => { setAdvisorPrevisClipId(null); advisor3dOpenVersion.current += 1; setAdvisor3dContext(undefined); setAdvisorFocusSection(null); setAdvisorOpen(true); setAdvisorNudge(null); }}
-                  >
-                    创作顾问<span aria-live="polite">{advisorNeedsAttention ? ` (${advisorNeedsAttention})` : ""}</span>
-                  </button>
-                ) : null}
+              {canvasMode === "manhua" && !advisorInWorkflowRail ? creativeAdvisorAction : null}
               <details
                 key={immersiveWorkbench ? "compact-tools" : "full-tools"}
                 data-canvas-workspace-tools
@@ -10481,6 +10484,7 @@ export default function OmniCanvas() {
                 }
               >
                 <ManhuaScriptWorkbench
+                  advisorAction={canvasMode === "manhua" ? creativeAdvisorAction : undefined}
                   onPreviewClipOutbound={previewClipOutbound}
                   onConfirmClipOutbound={confirmClipOutbound}
                   outboundConfirmedAtByBlock={outboundConfirmedAtByBlock}

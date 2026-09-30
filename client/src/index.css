@@ -1563,3 +1563,15 @@ body:has(#manhua-workbench-shell) [data-pwa-install-button] {
 #manhua-workbench-shell.mh-redesign [data-manhua-clip-prompt-review] pre,
 #manhua-workbench-shell.mh-redesign [data-manhua-clip-prompt-review] textarea { font-size: 13px; line-height: 1.8; }
 #manhua-workbench-shell.mh-redesign [data-manhua-clip-prompt-review] button { font-size: 12px; }
+
+/* 创作顾问紧跟终审；窄屏按阅读顺序换行，入口不滚出视口。 */
+#manhua-workbench-shell.mh-redesign [data-manhua-product-header] [data-manhua-workflow-rail] {
+  flex-wrap: wrap;
+  overflow: visible;
+}
+#manhua-workbench-shell.mh-redesign [data-manhua-workflow-rail] [data-manhua-advisor-header] {
+  min-height: 44px;
+  margin-left: 6px;
+  font-size: 18px;
+  line-height: 1.35;
+}
