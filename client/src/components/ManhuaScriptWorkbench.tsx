@@ -1,3 +1,4 @@
+import { normalizeManhuaPromptSeconds } from "@shared/manhuaPromptSeconds";
 import { ManhuaSecondaryToolTabs } from "./canvas/ManhuaSecondaryToolTabs";
 import { createAdvisorPrevisStudio } from "@shared/manhuaAdvisorPrevisInitial";
 import { previsInitialDurationSec } from "@shared/manhuaPrevisScript";
@@ -264,7 +265,6 @@ import {
 } from "@shared/manhuaEpisodeSegmentPlan";
 import { MANHUA_DIALOGUE_SILENCE_TOKEN } from "@shared/manhuaShotDialoguePersist";
 import {
-  extractManhuaClipUserSupplement,
   upsertManhuaClipUserSupplement,
 } from "@shared/manhuaClipUserSupplement";
 import { summarizeManhuaVisualBriefForUi } from "@shared/manhuaScriptVisualBrief";
@@ -281,8 +281,6 @@ import {
   compileManhuaSegmentDirectorBoardOverlay,
   resolveManhuaDirectorOverlayBaseUrl as resolveManhuaDirectorOverlayBaseUrlShared,
 } from "@shared/manhuaDirectorBoardOverlayCompile";
-import ManhuaPromptAssetChips from "@/components/ManhuaPromptAssetChips";
-import ManhuaPromptMentionEditor from "@/components/ManhuaPromptMentionEditor";
 import { downloadRemoteFile } from "@/lib/downloadRemoteFile";
 import { mergeManhuaMediaVersions } from "@/lib/manhuaMediaVersions";
 import ManhuaRoughEditTimeline from "@/components/ManhuaRoughEditTimeline";
@@ -744,6 +742,8 @@ type Props = {
   onReviewClipPromptsOnCanvas?: (opts?: { segmentIndex?: number; revealCanvas?: boolean }) => void;
   /** 写回段成片节点 prompt（审阅编辑） */
   onUpdateClipPrompt?: (clipId: string, prompt: string) => void;
+  onSetClipGenerationHold?: (clipId: string, hold: boolean) => void;
+  onSaveFullClipPrompt?: (clipId: string, text: string | null) => boolean;
   /** 在工厂内按当前段保存声音，不跳转到自由画布。 */
   onUpdateClipAudioStudio?: (clipId: string, studio: NonNullable<CanvasBlock["audioStudio"]>) => boolean | void;
   onUpdateClipPrevisStudio?: (clipId:string,studio:NonNullable<CanvasBlock["previsStudio"]>,reference?:ManhuaSegmentReferenceEntry)=>void|boolean;
@@ -1371,6 +1371,8 @@ export default function ManhuaScriptWorkbench({
   assetZipBusy = false,
   onReviewClipPromptsOnCanvas,
   onUpdateClipPrompt,
+  onSetClipGenerationHold,
+  onSaveFullClipPrompt,
   onUpdateClipAudioStudio,
   onUpdateClipPrevisStudio,
   manhuaActionPlan,
@@ -1618,10 +1620,7 @@ export default function ManhuaScriptWorkbench({
 
   const [downloadBusy, setDownloadBusy] = useState(false);
   const directorOverlayPanelRef = useRef<HTMLElement>(null);
-  /** 默认药丸视图；按段记「谁被切到了原文编辑」 */
-  const [rawPromptSegments, setRawPromptSegments] = useState<Set<number>>(
-    () => new Set(),
-  );
+  const [fullPromptDrafts, setFullPromptDrafts] = useState<Record<string, string>>({});
   /** 药丸缩略图：对照表只给 id，图得从已挂资产里配 */
   const chipThumbByAssetId = useMemo(() => {
     const out: Record<string, string> = {};
@@ -2440,6 +2439,7 @@ export default function ManhuaScriptWorkbench({
             (b) => resolveClipLocalSegmentIndex(b.id, b.prompt, focusEpisode) === seg.index,
           ) || (seg.index === 1 ? legacyClip : undefined);
         // 只认真实产出：垫图不算出片，否则铺完段就显示「段已齐」
+        if (segClip?.manhuaGenerationHold) return false;
         const playable = Boolean(clipOutputUrl(segClip));
         const failed = segClip?.manhuaClipQuality?.status === "failed";
         return !playable || failed;
@@ -3333,13 +3333,33 @@ export default function ManhuaScriptWorkbench({
     }
     toast.message("已打开当前段视频提示词", { description: "可修改本段文本，并核对真正发送给视频模型的内容；查看不生成视频。" });
   };
-  const runGenerateFragment = () => {
+  const runGenerateFragment = (segmentIndex = activeSegNo) => {
+    const row = filmstripSegments.find(segment => segment.index === segmentIndex);
+    if (!row?.clip?.id || !onGenerateFragment) {
+      toast.error("本段节点未就绪", { description: "请先铺齐本段节点，再核对提示词" });
+      return;
+    }
+    if (fullPromptDrafts[row.clip.id] !== undefined) {
+      toast.error("请先保存本段提示词", { description: "未保存的编辑不会用于生成" });
+      return;
+    }
+    if (row.clip.manhuaGenerationHold) {
+      toast.message("本段保留，不生成", { description: "原片与音轨保持；不会提交任务" });
+      return;
+    }
     if (pilotSubmissionBlocked) {
       toast.message("请先核对原试片任务并完成审核，不要重复生成");
       return;
     }
-    if (refuseIfBlocked(clipGateHint)) return;
-    if (pilotLocked && activeSegNo !== 1) {
+    const rowGate = explainManhuaClipActionGate({
+      outlineComplete, assetGate, assetScriptStaleHintZh, factoryBusy,
+      videoBurnHintZh: row.unlockedCount ? "本段静帧已变更，请先重出静帧" : undefined,
+      stillsReadyEnough: row.shotCount > 0 && row.stillReady >= row.shotCount,
+      segmentCastMismatchHintZh: segmentIndex === activeSegNo ? segmentCastMismatchHintZh : undefined,
+      segmentNoFaceLockHintZh: segmentIndex === activeSegNo ? segmentNoFaceLockHintZh : undefined,
+    });
+    if (refuseIfBlocked(rowGate)) return;
+    if (pilotLocked && segmentIndex !== 1) {
       toast.message("请先生成并审阅第 1 段的试片");
       return;
     }
@@ -3347,17 +3367,11 @@ export default function ManhuaScriptWorkbench({
       toast.message("试片正在等待审阅");
       return;
     }
-    if (activePhase !== "storyboard") setActivePhase("storyboard");
-    if (onGenerateFragment) {
-      onGenerateFragment({
-        // shotIndex 现为段号（工厂按段出一条成片）
-        shotIndex: activeSegNo,
-        keyartId: activeKeyart?.id,
-        clipId: activeClip?.id || clip?.id,
-      });
-      return;
-    }
-    onSpawnAndRunClip?.();
+    onGenerateFragment({
+      shotIndex: segmentIndex,
+      keyartId: row.firstKeyartId || undefined,
+      clipId: row.clip.id,
+    });
   };
 
   const nextCta = useMemo(
@@ -4345,6 +4359,22 @@ clipPromptReviewOpen ? (
               {row.durationSec}s · 镜{" "}
               {row.shotIndexes.map((n) => String(n).padStart(2, "0")).join("/")}
             </span>
+            <div className="flex flex-wrap items-center gap-2">
+              {row.clip?.id && onSetClipGenerationHold ? (
+                <label className="flex items-center gap-1 text-white/75">
+                  <input type="checkbox" aria-label={`第 ${row.segmentIndex} 段保留，不生成`}
+                    checked={Boolean(row.clip.manhuaGenerationHold)} disabled={Boolean(factoryBusy)}
+                    onChange={event => onSetClipGenerationHold(row.clip!.id, event.target.checked)} />
+                  保留本段，不生成
+                </label>
+              ) : null}
+              <button type="button" data-manhua-action="generate-after-prompt-review"
+                data-manhua-generate-segment={row.segmentIndex}
+                disabled={Boolean(factoryBusy) || Boolean(row.clip?.manhuaGenerationHold) || !row.clip?.id}
+                onClick={() => runGenerateFragment(row.segmentIndex)}
+                className="rounded border border-cyan-300/40 bg-cyan-500/20 px-2 py-1 text-[10px] font-semibold text-cyan-50 disabled:opacity-40">
+                {row.clip?.manhuaGenerationHold ? `第 ${row.segmentIndex} 段已保留` : `确认并生成第 ${row.segmentIndex} 段`}
+              </button>
             {row.clip?.id ? (
               <button
                 type="button"
@@ -4356,6 +4386,7 @@ clipPromptReviewOpen ? (
             ) : (
               <span className="text-amber-100/70">尚未铺节点</span>
             )}
+            </div>
           </div>
           {(() => {
             const p = String(row.clip?.prompt || "");
@@ -4462,79 +4493,41 @@ clipPromptReviewOpen ? (
             );
           })()}
           {(() => {
-            const promptText = String(row.clip?.prompt || "").replace(
-              /\n*【引擎光学】[^\n]*/g,
-              "",
-            );
-            const raw = rawPromptSegments.has(row.segmentIndex);
+            const promptText = normalizeManhuaPromptSeconds(String(row.clip?.prompt || ""));
             return (
               <>
-                <div className="mb-1 flex items-center justify-end">
-                  <button
-                    type="button"
-                    data-manhua-prompt-view={raw ? "raw" : "chips"}
-                    onClick={() =>
-                      setRawPromptSegments((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(row.segmentIndex)) {
-                          next.delete(row.segmentIndex);
-                        } else {
-                          next.add(row.segmentIndex);
-                        }
-                        return next;
-                      })
-                    }
-                    className="rounded border border-white/15 px-1.5 py-0.5 text-[9px] text-white/55 hover:bg-white/5"
-                  >
-                    {raw ? "查看系统编译" : "补充指令"}
-                  </button>
-                </div>
-                {raw ? (
-                  <ManhuaPromptMentionEditor
-                    segmentIndex={row.segmentIndex}
-                    disabled={
-                      !row.clip?.id || !onUpdateClipPrompt || factoryBusy
-                    }
-                    value={extractManhuaClipUserSupplement(promptText)}
-                    onChange={(next) => {
-                      if (row.clip?.id) {
-                        onUpdateClipPrompt?.(
-                          row.clip.id,
-                          upsertManhuaClipUserSupplement(promptText, next),
-                        );
-                      }
-                    }}
-                    thumbUrlByAssetId={chipThumbByAssetId}
-                    registry={assetLockRegistry}
-                    assetCanon={assetCanon}
-                    onRequestGenerateAsset={(c) => {
-                      toast.info(`「${c.labelZh}」还没有定妆图`, {
-                        description: "正在按剧本补这一张，出图后回来敲 @ 就能挂上",
-                      });
-                      void onConfirmAssetsAndPrepareImages?.();
-                    }}
-                    boardCandidate={
-                      directorBoardMainUrl
-                        ? {
-                            tag: `@板${focusEpisode}`,
-                            labelZh: `第${String(focusEpisode).padStart(2, "0")}集导演板（轨迹参考）`,
-                            thumbUrl: directorBoardMainUrl,
-                          }
-                        : null
-                    }
-                    placeholder={
-                      row.clip?.id
-                        ? "只写本段补充；输入 @ 挑人物/场景/道具/导演板。系统秒轴会随剧本与引擎自动更新"
-                        : "点「审阅」时会先铺段节点；若仍空请对齐画布竖排"
-                    }
-                  />
-                ) : (
-                  <ManhuaPromptAssetChips
-                    prompt={promptText}
-                    thumbUrlByAssetId={chipThumbByAssetId}
-                    className="rounded border border-white/10 bg-black/30 px-1.5 py-1"
-                  />
-                )}
+                <p className="mb-1 text-[10px] text-white/60">完整提示词 · 可直接修改并保存本段</p>
+                  <div className="space-y-2">
+                    <textarea aria-label={`第 ${row.segmentIndex} 段完整视频提示词`}
+                      data-manhua-full-prompt-editor={row.segmentIndex}
+                      disabled={!row.clip?.id || !onSaveFullClipPrompt || Boolean(factoryBusy)}
+                      value={fullPromptDrafts[row.clip?.id || ""] ?? promptText}
+                      onChange={event => { if (row.clip?.id) setFullPromptDrafts(previous => ({ ...previous, [row.clip!.id]: event.target.value })); }}
+                      className="min-h-72 w-full resize-y rounded border border-cyan-400/30 bg-black/40 p-2 text-xs leading-relaxed text-white/90"
+                    />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button type="button" data-manhua-save-prompt={row.segmentIndex}
+                        disabled={!row.clip?.id || !onSaveFullClipPrompt || Boolean(factoryBusy) || !String(fullPromptDrafts[row.clip?.id || ""] ?? promptText).trim()}
+                        onClick={() => {
+                          if (!row.clip?.id || !onSaveFullClipPrompt?.(row.clip.id, fullPromptDrafts[row.clip.id] ?? promptText)) return;
+                          setFullPromptDrafts(previous => { const next = { ...previous }; delete next[row.clip!.id]; return next; });
+                          clipOutboundGenerationRef.current[row.clip.id] = (clipOutboundGenerationRef.current[row.clip.id] || 0) + 1;
+                          setClipOutboundPreview(previous => { const next = { ...previous }; delete next[row.clip!.id]; return next; });
+                          toast.message(`第 ${row.segmentIndex} 段全文已保存`, { description: "生成前请重新核对实际发送内容；其他段不变" });
+                        }}
+                        className="rounded border border-cyan-300/40 bg-cyan-500/20 px-3 py-1 text-xs text-cyan-50">保存本段全文</button>
+                      {row.clip?.manhuaPromptEdit ? <button type="button" disabled={Boolean(factoryBusy) || Boolean(row.clip.manhuaGenerationHold)}
+                        onClick={() => {
+                          if (!onSaveFullClipPrompt?.(row.clip!.id, null)) return;
+                          setFullPromptDrafts(previous => { const next = { ...previous }; delete next[row.clip!.id]; return next; });
+                          clipOutboundGenerationRef.current[row.clip!.id] = (clipOutboundGenerationRef.current[row.clip!.id] || 0) + 1;
+                          setClipOutboundPreview(previous => { const next = { ...previous }; delete next[row.clip!.id]; return next; });
+                          onReviewClipPromptsOnCanvas?.({ segmentIndex: row.segmentIndex, revealCanvas: false });
+                        }} className="rounded border border-white/15 px-2 py-1 text-[10px] text-white/65">恢复系统稿</button> : null}
+                      <span className="text-[10px] text-white/55">{fullPromptDrafts[row.clip?.id || ""] !== undefined ? "有未保存的修改" : row.clip?.manhuaPromptEdit ? "使用已保存的全文稿" : "可编辑整段内容，保存后生效"}</span>
+                    </div>
+                  </div>
+
               </>
             );
           })()}
@@ -4653,38 +4646,7 @@ clipPromptReviewOpen ? (
           ) : null}
         </div>
       ))}
-      <div className="flex flex-wrap gap-1.5 pt-0.5">
-        <button
-          type="button"
-          data-manhua-action="generate-after-prompt-review"
-          disabled={Boolean(factoryBusy)}
-          onClick={() => {
-            setClipPromptReviewOpen(false);
-            runGenerateFragment();
-          }}
-          className="rounded-md border border-cyan-300/40 bg-cyan-500/20 px-2 py-1 text-[10px] font-semibold text-cyan-50 disabled:opacity-40"
-        >
-          确认并生成本段
-        </button>
-        {onGenerateMissingFragments ? (
-          <button
-            type="button"
-            disabled={
-              Boolean(factoryBusy) ||
-              pilotLocked ||
-              !missingFragmentIndexes.length
-            }
-            onClick={() => {
-              if (refuseIfBlocked(clipGateHint)) return;
-              setClipPromptReviewOpen(false);
-              onGenerateMissingFragments(missingFragmentIndexes, segmentSelectionIdentity);
-            }}
-            className="rounded-md border border-white/15 bg-white/[0.06] px-2 py-1 text-[10px] font-semibold text-white/75 disabled:opacity-40"
-          >
-            确认并生成缺段
-          </button>
-        ) : null}
-      </div>
+      <p className="text-[10px] text-white/55">逐段核对后，使用各段旁的按钮。本页不批量生成。</p>
     </div>
   ) : null
   );
@@ -5165,7 +5127,7 @@ clipPromptReviewOpen ? (
                 data-manhua-action="generate-fragment"
                   data-manhua-action-cost={manhuaToolbarActionCost("generate-fragment")}
                 disabled={Boolean(factoryBusy) || pilotSubmissionBlocked || (pilotLocked && activeSegNo !== 1)}
-                onClick={runGenerateFragment}
+                onClick={() => runGenerateFragment()}
                 className="inline-flex items-center gap-1 rounded-lg border border-white/15 bg-white/[0.04] px-2.5 py-1.5 text-[10px] font-semibold text-white/75 hover:bg-white/[0.08] disabled:opacity-45"
                 title={`当前第 ${String(activeSegNo).padStart(2, "0")} 段（含镜 ${String(activeShotNo).padStart(2, "0")}）：缺静帧则只补本段再出片`
                 }
@@ -5445,7 +5407,7 @@ clipPromptReviewOpen ? (
               directionCardId={directionCanon?.mainCardId ?? null}
               onOpenAdvisor={onOpenAdvisorPrevis ? openPrevisAdvisor : undefined}
               actionPlanDrafts={previsDraftsFromPlan}
-              onNextDraftVideo={onGenerateFragment ? runGenerateFragment : undefined}
+              onNextDraftVideo={onGenerateFragment ? () => runGenerateFragment() : undefined}
               disabled={Boolean(factoryBusy)||activeClip.status==="running"||activeClip.videoTaskStatus==="queued"}
               onChange={(studio,reference)=>onUpdateClipPrevisStudio(activeClip.id,studio,reference)}/>
               :<p className="text-xs text-amber-100">请先确认分段剧本并建立本段成片节点；此操作不会生成付费成片。</p>}

@@ -1,3 +1,4 @@
+import { normalizeManhuaClipPromptEdit } from "./manhuaClipPromptEdit";
 /**
  * 漫剧云端草稿：剧本、静帧与已有视频的恢复元数据；不存视频字节。
  */
@@ -114,6 +115,8 @@ export type ManhuaCloudDraftCanvasBlock = {
   /** final-eXX 的烧字任务身份与 GCS 长期身份。 */
   manhuaFinalPostProd?: ManhuaFinalPostProdBinding;
   manhuaFinalVersions?: ManhuaFinalVersionIdentity[];
+  manhuaGenerationHold?: boolean;
+  manhuaPromptEdit?: import("./manhuaClipPromptEdit").ManhuaClipPromptEdit;
   manhuaAutoSegment?: ManhuaAutoSegmentBinding;
   manhuaSpatialContext?: ManhuaSpatialContext;
   archivedFromPreviousScript?: boolean;
@@ -412,6 +415,8 @@ export function sanitizeManhuaCloudDraftBlock(
     status: b.status != null ? String(b.status).slice(0, 24) : undefined,
     manhuaKeyartLookState: normalizeManhuaKeyartLookState(b.manhuaKeyartLookState),
     manhuaKeyartSourceState: normalizeManhuaKeyartLookState(b.manhuaKeyartSourceState),
+    manhuaGenerationHold: b.manhuaGenerationHold === true || undefined,
+    manhuaPromptEdit: normalizeManhuaClipPromptEdit(b.manhuaPromptEdit),
     manhuaAutoSegment: normalizeManhuaAutoSegmentBinding(b.manhuaAutoSegment),
     manhuaSpatialContext: normalizeManhuaSpatialContext(b.manhuaSpatialContext),
     imageTreatment: b.imageTreatment === "preserve_3d" ? "preserve_3d" : undefined,

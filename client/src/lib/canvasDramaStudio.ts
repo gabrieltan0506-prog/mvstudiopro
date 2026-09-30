@@ -1,3 +1,4 @@
+import { resolveManhuaEditedClipPrompt } from "@shared/manhuaClipPromptEdit";
 import { formatManhuaShotCoreCatalog } from "@shared/manhuaShotCoreBank";
 import { formatManhuaEntranceAtmosphereCatalog } from "@shared/manhuaEntranceAtmosphereBank";
 import { compileManhuaSceneSpace, resolveManhuaSpatialActorIds } from "@shared/manhuaSceneSpace";
@@ -2447,6 +2448,8 @@ export function ensureManhuaFragmentClips(
       && candidateBinding.segmentIndex === binding.segmentIndex
       && candidateBinding.sourceStartSec === binding.sourceStartSec
       && candidateBinding.sourceEndSec === binding.sourceEndSec ? candidate : undefined;
+    if (candidate?.manhuaPromptEdit && !existing) throw new Error("本段原稿分段已变化，请先恢复系统稿再重新编辑全文；本次未提交");
+    if (candidate?.manhuaGenerationHold && !existing) throw new Error("保留段的原稿分段已变化，不能自动覆盖；请先核对保留原片与当前分段");
     const continuityAddon = ep > 1 || seg.index > 1 ? "【连续】承上段末帧脸服场，勿跳棚。" : "";
     const intentZh = String(seg.shots.find((s) => s.intentZh)?.intentZh || "").trim();
     // 只有同源计划可补充原段语义；自动段号不是旧计划段号。
@@ -2850,7 +2853,7 @@ export function ensureManhuaFragmentClips(
         ...generationBase,
         manhuaAutoSegment: binding,
         manhuaSpatialContext: spatialContext,
-        prompt: mergeManhuaDerivedClipPrompt(segPrompt, generationBase.prompt),
+        prompt: resolveManhuaEditedClipPrompt(mergeManhuaDerivedClipPrompt(segPrompt, generationBase.prompt), generationBase.manhuaPromptEdit, binding.revision),
         parentId: primary.id,
         refImageUrl: segUrls[0] || mediaUrlOf(primary) || existing.refImageUrl,
         editFusionUrls: segUrls.slice(1).slice(0, 15),
@@ -4888,6 +4891,12 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       }
       opts.onStageSkip?.(blockId, label);
       i += 1;
+      continue;
+    }
+    if (block.kind === "video" && block.manhuaGenerationHold) {
+      skippedIds.push(blockId);
+      opts.onStageSkip?.(blockId, "本段保留，不生成");
+      i++;
       continue;
     }
     if (!preparedVideoEdit && skipDone && !mustRerun && blockLooksDone(block)) {

@@ -1,3 +1,4 @@
+import { normalizeManhuaClipPromptEdit } from "@shared/manhuaClipPromptEdit";
 import { canvasMusicMvShotBindingSchema, type CanvasMusicMvShotBinding, normalizeCanvasMusicMvState, type CanvasMusicMvState } from "@shared/canvasMusicMv";
 import type { LucideIcon } from "lucide-react";
 import { canvasAudioStudioSchema, type CanvasAudioStudio } from "@shared/canvasAudioStudio";
@@ -308,6 +309,9 @@ export type CanvasBlock = {
   manhuaFinalPostProd?: ManhuaFinalPostProdBinding;
   /** 整集每个版本的任务/GCS 长期身份；本机与云草稿同批保存，不包含视频字节。 */
   manhuaFinalVersions?: ManhuaFinalVersionIdentity[];
+  /** 用户明确保留本段：禁止新生成、重跑或批量覆盖；媒体和音轨不变。 */
+  manhuaGenerationHold?: boolean;
+  manhuaPromptEdit?: import("@shared/manhuaClipPromptEdit").ManhuaClipPromptEdit;
   manhuaAutoSegment?: ManhuaAutoSegmentBinding;
   /** 实际分段编译得到的空间身份，供后期读取；不从展示文本反猜。 */
   manhuaSpatialContext?: ManhuaSpatialContext;
@@ -657,6 +661,8 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
     })(),
     manhuaFinalPostProd: normalizeManhuaFinalPostProdBinding(block.manhuaFinalPostProd),
     manhuaFinalVersions: normalizeManhuaFinalVersionIdentities(block.manhuaFinalVersions),
+    manhuaGenerationHold: block.manhuaGenerationHold === true || undefined,
+    manhuaPromptEdit: normalizeManhuaClipPromptEdit(block.manhuaPromptEdit),
     manhuaAutoSegment: normalizeManhuaAutoSegmentBinding(block.manhuaAutoSegment),
     manhuaSpatialContext: normalizeManhuaSpatialContext(block.manhuaSpatialContext),
   };

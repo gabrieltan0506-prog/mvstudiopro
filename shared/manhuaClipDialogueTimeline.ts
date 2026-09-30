@@ -1,3 +1,4 @@
+import { normalizeManhuaPromptSeconds } from "./manhuaPromptSeconds";
 /**
  * Seedance 成片导戏单（feel.mp4 课）：
  * 一轮生成写清——何时、说什么（语气/口型）、什么场景、切哪一镜、怎么运镜。
@@ -439,7 +440,7 @@ export function formatManhuaDialogueTimelineBlock(
   const toneLine = sharedBits.length
     ? `【表演基调】${sharedBits.join("｜")}（贯穿本段）。`
     : "";
-  return [toneLine, ...lines].filter(Boolean).join("\n");
+  return normalizeManhuaPromptSeconds([toneLine, ...lines].filter(Boolean).join("\n"));
 }
 
 /**
