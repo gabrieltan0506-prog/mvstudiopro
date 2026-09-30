@@ -29,6 +29,8 @@ import PostProdWorkshopCard from "@/components/canvas/PostProdWorkshopCard";
 import { manhuaPostProdScopeKey } from "@/lib/postProdWorkshop";
 import { buildManhuaPrevisAudio } from "@shared/manhuaPrevisAudio";
 import ManhuaCreativeAdvisorPanel from "@/components/canvas/ManhuaCreativeAdvisorPanel";
+import { ManhuaPrevisAudioControls } from "@/components/canvas/ManhuaPrevisAudioControls";
+import { checkManhuaAdvisorPrevisLaunch } from "@/lib/manhuaAdvisorPrevisLaunch";
 import ManhuaOutlineTemplateRewrite from "@/components/canvas/ManhuaOutlineTemplateRewrite";
 import { advisorReconfirmationFromEpisode } from "@/lib/manhuaAdvisorBackups";
 import { prepareAdvisorRewriteAdoption, persistAdvisorRewriteAdoption } from "@/lib/manhuaAdvisorAdoption";
@@ -1429,6 +1431,7 @@ export default function OmniCanvas() {
   const [advisorPreviewHost, setAdvisorPreviewHost] = useState<HTMLDivElement | null>(null);
   const [advisorDockHost, setAdvisorDockHost] = useState<HTMLDivElement | null>(null);
   const [advisorPrevisClipId, setAdvisorPrevisClipId] = useState<string | null>(null);
+  const [advisorAudioRequest, setAdvisorAudioRequest] = useState<{ id: string; clipId: string; scopeId: string } | null>(null);
   const [advisorPreviewSelection, setAdvisorPreviewSelection] = useState<{ clipId: string; requestId?: string } | null>(null);
   const [advisorFocusSection, setAdvisorFocusSection] = useState<"templates" | null>(null);
   const [advisorQuestionSeed, setAdvisorQuestionSeed] = useState<{ id: string; question: string; projectKey: string } | null>(null);
@@ -1572,6 +1575,12 @@ export default function OmniCanvas() {
       return { id: ref.id, model: source ? { taskId: source.model.taskId, assetRef: source.refId } : undefined };
     })),
   });
+  const advisorPrevisClip = blocks.find(b => b.id === advisorPrevisClipId && !b.archivedFromPreviousScript);
+  const checkAdvisorPrevisReady = (candidate?: AdvisorPrevisCandidate) => {
+    if (!canUseManhua3d || factoryBusy) return "当前不能生成白模，请等待正在进行的制作结束。";
+    const clip = blocksRef.current.find(b => b.id === (candidate?.target.clipId || advisorPrevisClipId));
+    return checkManhuaAdvisorPrevisLaunch(clip?.previsStudio ? { ...clip, previsStudio: advisorPrevisCurrentStudio(clip.previsStudio) } : clip, candidate);
+  };
   const prepareAdvisorPrevis = (candidate: AdvisorPrevisCandidate): AdvisorPrevisTrial => {
     if (!canUseManhua3d || factoryBusy) throw new Error("当前不能提交白模试看。");
     const clip = blocksRef.current.find(b => b.id === candidate.target.clipId && !b.archivedFromPreviousScript);
@@ -1579,7 +1588,7 @@ export default function OmniCanvas() {
     if (clip.status === "running" || clip.videoTaskStatus === "queued") throw new Error("本段仍在制作，请等待结束。");
     const trial = prepareAdvisorPrevisTrial(clip.id, advisorPrevisCurrentStudio(clip.previsStudio), candidate);
     trial.request.quality = "draft";
-    if (clip.previsStudio.audioEnabled !== false) trial.request.audio = buildManhuaPrevisAudio(clip.audioStudio, trial.request.spec, clip.previsStudio.audioStartSec ?? 0, clip.previsStudio.loopBgm ?? false);
+    if (clip.previsStudio.audioEnabled === true) trial.request.audio = buildManhuaPrevisAudio(clip.audioStudio, trial.request.spec, clip.previsStudio.audioStartSec ?? 0, clip.previsStudio.loopBgm ?? false);
     return trial;
   };
   const applyAdvisorPrevis = (trial: AdvisorPrevisTrial, receipt: AdvisorPrevisReceipt): boolean => {
@@ -1590,7 +1599,7 @@ export default function OmniCanvas() {
       const clip = current.find(b => b.id === candidate.target.clipId && !b.archivedFromPreviousScript);
       if (!clip?.previsStudio) throw new Error("本段白模已不存在，未应用。");
       if (clip.status === "running" || clip.videoTaskStatus === "queued") throw new Error("本段视频正在处理，暂不能修改。");
-      const currentAudio = clip.previsStudio.audioEnabled !== false
+      const currentAudio = clip.previsStudio.audioEnabled === true
         ? buildManhuaPrevisAudio(clip.audioStudio, trial.request.spec, clip.previsStudio.audioStartSec ?? 0, clip.previsStudio.loopBgm ?? false) : undefined;
       if (JSON.stringify(currentAudio) !== JSON.stringify(trial.request.audio)) throw new Error("音轨或秒窗已变化，请按当前声音重新试看后再应用；旧视频保留。");
       const previsStudio = adoptAdvisorPrevisTrial(clip.id, advisorPrevisCurrentStudio(clip.previsStudio), trial, receipt);
@@ -5388,6 +5397,23 @@ export default function OmniCanvas() {
       block => ({ ...block, audioStudio, error: undefined }),
       next => saveCanvasState(next, edges), setBlocks);
   }, [edges]);
+
+  const persistClipPrevisStudio = useCallback((clipId: string, previsStudio: NonNullable<CanvasBlock["previsStudio"]>, reference?: ManhuaSegmentReferenceEntry): boolean => {
+    const current=blocksRef.current;
+    const target=current.find(block=>block.id===clipId);
+    if(!target||(target.previsStudio&&target.previsStudio.scopeId!==previsStudio.scopeId))return false;
+    if(reference&&(factoryBusy||target.status==="running"||target.videoTaskStatus==="queued"))return false;
+    const next=current.map(block=>{
+      if(block!==target)return block;
+      const updated={...block,previsStudio};
+      return reference?setManhuaSegmentReference(updated,"previs",reference):updated;
+    });
+    // 编号真正保存成功才允许入队；不能在 React updater 里启动网络副作用。
+    if(!saveCanvasState(next,edges))return false;
+    blocksRef.current=next;
+    setBlocks(next);
+    return true;
+  }, [edges, factoryBusy]);
 
   // 进页一次：清掉历史成片节点里误写的网址（裸奔）+ 本机媒体库回灌
   useEffect(() => {
@@ -9955,6 +9981,16 @@ export default function OmniCanvas() {
   const immersiveWorkbench =
     canvasMode === "manhua" && manhuaUiMode === "workbench";
 
+  const [workspaceHeaderHeight, setWorkspaceHeaderHeight] = useState(48);
+  useEffect(() => {
+    if (!immersiveWorkbench) return;
+    const header = document.querySelector<HTMLElement>("[data-manhua-product-header]");
+    if (!header) return;
+    const read = () => setWorkspaceHeaderHeight(Math.max(0, Math.ceil(header.getBoundingClientRect().height)) + 8);
+    const observer = new ResizeObserver(read); observer.observe(header); read();
+    return () => observer.disconnect();
+  }, [immersiveWorkbench, immersiveWorkspaceView]);
+
   /** 进工作台时若静帧仍是默认大卡，自动缩略竖排一次，右栏才能一眼看全 */
   const immersiveAutoCompactKeyRef = useRef("");
   useEffect(() => {
@@ -10022,41 +10058,10 @@ export default function OmniCanvas() {
     return true;
   }
 
-  return (
-    <div
-      data-manhua-theme={canvasMode === "manhua" ? "cream" : undefined}
-      className={
-        immersiveWorkbench
-          ? "flex h-dvh flex-col overflow-hidden bg-transparent text-white"
-          : "min-h-dvh bg-transparent text-white"
-      }
-    >
-      <Navbar compact={immersiveWorkbench} />
-      {assetConfirmationDialog}
-      <main
-        className={
-          immersiveWorkbench
-            ? "flex min-h-0 flex-1 flex-col overflow-hidden px-0 pb-0 pt-12"
-            : "px-4 pb-10 pt-24 md:px-6"
-        }
-      >
-        <div
-          className={
-            immersiveWorkbench
-              ? "mx-auto flex min-h-0 w-full max-w-none flex-1 flex-col"
-              : "mx-auto max-w-[1920px]"
-          }
-        >
-          <div
-            className={
-              immersiveWorkbench
-                ? "mb-0 flex min-h-0 flex-1 flex-col px-3 py-1 md:px-4"
-                : "mb-5"
-            }
-          >
-            <div data-manhua-workspace-topbar={immersiveWorkbench ? "compact" : undefined} className="flex shrink-0 flex-wrap items-center justify-between gap-3">
+  const workspaceToolbar = (
+            <div data-manhua-workspace-topbar={immersiveWorkbench ? "compact" : undefined} className={immersiveWorkbench ? "flex min-w-0 flex-1 items-center justify-between gap-3" : "flex shrink-0 flex-wrap items-center justify-between gap-3"}>
               {immersiveWorkbench ? (
-                <nav aria-label="漫剧工厂工作区" className="flex min-w-0 items-center gap-4 overflow-x-auto whitespace-nowrap py-1 text-xs">
+                <nav aria-label="漫剧工厂工作区" className="flex min-w-0 flex-1 items-center gap-3 overflow-x-auto whitespace-nowrap py-1 text-xs sm:gap-4">
                   <button
                     type="button"
                     aria-current={immersiveWorkspaceView === "workbench" ? "page" : undefined}
@@ -10160,12 +10165,12 @@ export default function OmniCanvas() {
                 key={immersiveWorkbench ? "compact-tools" : "full-tools"}
                 data-canvas-workspace-tools
                 open={!immersiveWorkbench}
-                className={immersiveWorkbench ? "relative text-xs" : ""}
+                className={immersiveWorkbench ? "relative shrink-0 text-xs" : ""}
               >
                 <summary className={immersiveWorkbench ? "cursor-pointer list-none rounded-md border border-white/15 px-2 py-1.5 text-white/65" : "hidden"}>
                   工具
                 </summary>
-              <div className={immersiveWorkbench ? "absolute right-0 top-full z-40 mt-2 flex w-64 flex-wrap items-center gap-2 rounded-xl border border-white/15 bg-[#101821] p-3 shadow-xl" : "flex flex-wrap items-center gap-2"}>
+              <div className={immersiveWorkbench ? "absolute right-0 top-full z-40 flex w-64 overflow-y-auto flex-wrap items-center gap-2 rounded-xl border border-white/15 bg-[#101821] p-3 shadow-xl" : "flex flex-wrap items-center gap-2"} style={immersiveWorkbench ? { marginTop: workspaceHeaderHeight, maxHeight: `calc(100dvh - ${workspaceHeaderHeight + 64}px)` } : undefined}>
                 {canvasMode === "manhua" ? (
                   /* 备份中心(0820 用户拍板):备份/倒出/回填坐一起,随时可选;15 分钟自动增量备份兜底 */
                   <div className="relative" data-canvas-backup-menu>
@@ -10252,6 +10257,41 @@ export default function OmniCanvas() {
               </div>
               </details>
             </div>
+  );
+
+  return (
+    <div
+      data-manhua-theme={canvasMode === "manhua" ? "cream" : undefined}
+      className={
+        immersiveWorkbench
+          ? "flex h-dvh flex-col overflow-hidden bg-transparent text-white"
+          : "min-h-dvh bg-transparent text-white"
+      }
+    >
+      <Navbar compact={immersiveWorkbench} workspaceNavigation={immersiveWorkbench ? workspaceToolbar : undefined} />
+      {assetConfirmationDialog}
+      <main
+        className={
+          immersiveWorkbench
+            ? "flex min-h-0 flex-1 flex-col overflow-hidden px-0 pb-0 pt-12"
+            : "px-4 pb-10 pt-24 md:px-6"
+        }
+      >
+        <div
+          className={
+            immersiveWorkbench
+              ? "mx-auto flex min-h-0 w-full max-w-none flex-1 flex-col"
+              : "mx-auto max-w-[1920px]"
+          }
+        >
+          <div
+            className={
+              immersiveWorkbench
+                ? "mb-0 flex min-h-0 flex-1 flex-col px-3 py-1 md:px-4"
+                : "mb-5"
+            }
+          >
+            {!immersiveWorkbench ? workspaceToolbar : null}
             {canShowCanvasDebug && debugMode ? (
               immersiveWorkbench ? (
                 <ManhuaFactoryDebugPanel
@@ -10465,9 +10505,12 @@ export default function OmniCanvas() {
                     setAdvisorFocusSection(null); setAdvisorOpen(true);
                   } : undefined}
                   advisorOpen={advisorOpen}
+                  advisorPrevisActiveClipId={advisorPrevisClipId}
+                  advisorAudioRequest={advisorAudioRequest}
+                  onAdvisorAudioRequestHandled={id => setAdvisorAudioRequest(current => current?.id === id ? null : current)}
                   onAdvisorDockChange={setAdvisorDockHost}
                   onAdvisorPreviewHostChange={setAdvisorPreviewHost}
-                  onOpenAdvisorPrevis={canUseManhua3d ? (clipId, requestId) => { setAdvisorPreviewSelection({ clipId, requestId }); advisor3dOpenVersion.current += 1; setAdvisor3dContext(undefined); setAdvisorPrevisClipId(clipId); setAdvisorFocusSection(null); setAdvisorOpen(true); } : undefined}
+                  onOpenAdvisorPrevis={canUseManhua3d ? (clipId, requestId) => { setAdvisorSelection({ episodeIndex: writerFocusEpisode, shot: null, segmentIndex: resolveClipLocalSegmentIndex(clipId, blocksRef.current.find(b => b.id === clipId)?.prompt, writerFocusEpisode) }); setAdvisorPreviewSelection({ clipId, requestId }); advisor3dOpenVersion.current += 1; setAdvisor3dContext(undefined); setAdvisorPrevisClipId(clipId); setAdvisorFocusSection(null); setAdvisorOpen(true); } : undefined}
                   onOpenAdvisorTemplates={() => {
                     setAdvisorPrevisClipId(null); advisor3dOpenVersion.current += 1; setAdvisor3dContext(undefined);
                     setAdvisorFocusSection("templates");
@@ -11346,22 +11389,7 @@ export default function OmniCanvas() {
                     return true;
                   }}
                   onUpdateClipAudioStudio={persistClipAudioStudio}
-                  onUpdateClipPrevisStudio={canUseManhua3d ? (clipId,previsStudio,reference)=>{
-                    const current=blocksRef.current;
-                    const target=current.find(block=>block.id===clipId);
-                    if(!target||(target.previsStudio&&target.previsStudio.scopeId!==previsStudio.scopeId))return false;
-                    if(reference&&(factoryBusy||target.status==="running"||target.videoTaskStatus==="queued"))return false;
-                    const next=current.map(block=>{
-                      if(block!==target)return block;
-                      const updated={...block,previsStudio};
-                      return reference?setManhuaSegmentReference(updated,"previs",reference):updated;
-                    });
-                    // 编号真正保存成功才允许入队；不能在 React updater 里启动网络副作用。
-                    if(!saveCanvasState(next,edges))return false;
-                    blocksRef.current=next;
-                    setBlocks(next);
-                    return true;
-                  }:undefined}
+                  onUpdateClipPrevisStudio={canUseManhua3d ? persistClipPrevisStudio : undefined}
                   onLayoutReadableChain={() => {
                     setBlocks((prev) => {
                       try {
@@ -13596,6 +13624,10 @@ export default function OmniCanvas() {
         }}
         previsTarget={advisorPrevisEditing.target}
         previsIssue={advisorPrevisEditing.issue}
+        previsLabel={advisorPrevisClip?.previsStudio ? `第${writerFocusEpisode}集 · 第${resolveClipLocalSegmentIndex(advisorPrevisClip.id, advisorPrevisClip.prompt, writerFocusEpisode)}段 · ${advisorPrevisClip.previsStudio.spec.durationSec}秒` : undefined}
+        previsLaunchIssue={advisorPrevisClipId ? checkAdvisorPrevisReady() : undefined}
+        onCheckPrevisReady={candidate => checkAdvisorPrevisReady(candidate)}
+        previsAudioControls={advisorPrevisClip?.previsStudio ? <ManhuaPrevisAudioControls compact block={advisorPrevisClip} disabled={!canUseManhua3d || Boolean(factoryBusy) || advisorPrevisClip.status === "running" || advisorPrevisClip.videoTaskStatus === "queued"} onChange={studio => { if (!persistClipPrevisStudio(advisorPrevisClip.id, studio)) toast.error("本段白模音轨选择未保存，原设置保留。"); }} onOpenAudio={() => setAdvisorAudioRequest({ id: crypto.randomUUID(), clipId: advisorPrevisClip.id, scopeId: advisorPrevisClip.previsStudio!.scopeId })}/> : null}
         onLeavePrevis={() => setAdvisorPrevisClipId(null)}
         onPreparePrevis={prepareAdvisorPrevis}
         onApplyPrevis={applyAdvisorPrevis}

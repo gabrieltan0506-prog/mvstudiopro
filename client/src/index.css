@@ -638,6 +638,10 @@
 #manhua-workbench-shell.mh-redesign[data-manhua-secondary-active="true"] > :not([data-manhua-product-header]):not([data-manhua-secondary-studio]) {
   display: none !important;
 }
+/* 提示词是常驻入口打开的独立审阅区，不埋在镜头清单或画布节点下面。 */
+#manhua-workbench-shell.mh-redesign[data-manhua-prompt-active="true"] > :not([data-manhua-product-header]):not([data-manhua-clip-prompt-review]) {
+  display: none !important;
+}
 #manhua-workbench-shell.mh-redesign > [data-manhua-secondary-studio] {
   flex: 1;
   height: auto;
@@ -655,6 +659,16 @@
   z-index: 70;
   margin-inline: auto;
   max-width: none;
+}
+
+/* 沉浸工作台的制作工具浮层不撑高常驻顶栏。 */
+#manhua-workbench-shell.mh-redesign[data-manhua-layout="immersive-3col"] [data-manhua-product-header] [data-manhua-toolbar-cluster] {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-inline: 0;
+  background: var(--mh-panel);
+  color: var(--mh-ink);
 }
 
 #manhua-workbench-shell.mh-redesign [data-manhua-project-settings] {
@@ -1524,3 +1538,26 @@ body:has(#manhua-workbench-shell) [data-pwa-install-button] {
     margin-top: 4px !important;
   }
 }
+
+/* 手机保留完整阶段轨和核心入口；工具仍浮动，不展开成整页长工具栏。 */
+@media (max-width: 600px) {
+  #manhua-workbench-shell.mh-redesign [data-manhua-product-header] { grid-template-columns: minmax(0, 1fr); }
+  #manhua-workbench-shell.mh-redesign [data-manhua-header-actions] { min-width: 0; justify-content: space-between; gap: 4px; }
+  #manhua-workbench-shell.mh-redesign [data-manhua-header-actions] > button,
+  #manhua-workbench-shell.mh-redesign [data-manhua-header-actions] > details > summary { padding-inline: 6px !important; font-size: 10px; }
+}
+
+/* 视频提示词采用可阅读的浅色正文，不继承旧画布节点的半透明黑底。 */
+#manhua-workbench-shell.mh-redesign [data-manhua-clip-prompt-review] { background: var(--mh-page); }
+#manhua-workbench-shell.mh-redesign [data-manhua-prompt-segment],
+#manhua-workbench-shell.mh-redesign [data-manhua-clip-outbound],
+#manhua-workbench-shell.mh-redesign [data-manhua-clip-prompt-review] [data-manhua-prompt-chips],
+#manhua-workbench-shell.mh-redesign [data-manhua-clip-prompt-review] pre {
+  background: var(--mh-panel);
+  border-color: var(--mh-line);
+  color: var(--mh-ink) !important;
+}
+#manhua-workbench-shell.mh-redesign [data-manhua-clip-prompt-review] [data-manhua-prompt-chips],
+#manhua-workbench-shell.mh-redesign [data-manhua-clip-prompt-review] pre,
+#manhua-workbench-shell.mh-redesign [data-manhua-clip-prompt-review] textarea { font-size: 13px; line-height: 1.8; }
+#manhua-workbench-shell.mh-redesign [data-manhua-clip-prompt-review] button { font-size: 12px; }

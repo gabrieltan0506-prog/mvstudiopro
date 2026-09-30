@@ -2,7 +2,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Link, useLocation } from "wouter";
 import { Menu, Film, LogOut, User, LayoutDashboard, Shield, ChevronDown, FolderOpen } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { hasSupervisorAccess } from "@/lib/supervisorAccess";
 import {
   canOpenCompetitorResearch,
@@ -53,7 +53,7 @@ function isNavItemActive(href: string, locationPath: string): boolean {
   return !wantTab;
 }
 
-export default function Navbar({ compact = false }: { compact?: boolean }) {
+export default function Navbar({ compact = false, workspaceNavigation }: { compact?: boolean; workspaceNavigation?: ReactNode }) {
   const { user, isAuthenticated, logout } = useAuth();
   const [location, navigate] = useLocation();
   const manhuaAdvisorActive = useManhuaAdvisorScope(location);
@@ -85,7 +85,7 @@ export default function Navbar({ compact = false }: { compact?: boolean }) {
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 border-b border-border/50 bg-background/80 backdrop-blur-xl">
-      <div className={`container flex items-center justify-between ${compact ? "h-12" : "h-16"}`}>
+      <div className={compact ? "flex h-12 w-full items-center gap-3 px-3 md:px-4" : "container flex h-16 items-center justify-between"}>
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2.5 no-underline shrink-0">
           <div className={`flex items-center justify-center rounded-lg bg-primary ${compact ? "h-7 w-7" : "h-9 w-9"}`}>
@@ -95,6 +95,10 @@ export default function Navbar({ compact = false }: { compact?: boolean }) {
             MV Studio <span className="text-primary">Pro</span>
           </span>
         </Link>
+
+        {compact && workspaceNavigation ? (
+          <div data-navbar-workspace-navigation className="flex min-w-0 flex-1 items-center">{workspaceNavigation}</div>
+        ) : null}
 
         {/* Desktop Nav */}
         <div className={`${compact ? "hidden" : "hidden xl:flex"} items-center gap-0.5`}>

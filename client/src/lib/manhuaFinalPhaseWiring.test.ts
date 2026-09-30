@@ -79,8 +79,8 @@ describe("成片阶段接线契约", () => {
   });
 
   it("沉浸工作台左上主导航不再暴露旧经典表单入口", () => {
-    const tablistAt = SRC.indexOf('role="tablist"');
-    const tablistEnd = SRC.indexOf("⇄ 自由画布", tablistAt);
+    const tablistAt = SRC.indexOf('aria-label="漫剧工厂工作区"');
+    const tablistEnd = SRC.indexOf("</nav>", tablistAt);
     expect(tablistAt).toBeGreaterThan(0);
     expect(tablistEnd).toBeGreaterThan(tablistAt);
     expect(SRC.slice(tablistAt, tablistEnd)).not.toContain("经典表单");
@@ -97,7 +97,8 @@ describe("成片阶段接线契约", () => {
   });
 
   it("沉浸工作区必须把工作台、编剧室、成片坞做成互斥页签", () => {
-    expect(SRC).toContain('role="tablist"');
+    expect(SRC).toContain('aria-label="漫剧工厂工作区"');
+    expect(SRC).toContain('workspaceNavigation={immersiveWorkbench ? workspaceToolbar : undefined}');
     expect(SRC).toContain('immersiveWorkspaceView === "topic"');
     expect(SRC).toContain('immersiveWorkspaceView === "clip_dock"');
     expect(SRC).toMatch(/immersiveWorkspaceView !== "topic"[\s\S]{0,80}\? "hidden"/);

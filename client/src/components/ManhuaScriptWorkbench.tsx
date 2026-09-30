@@ -484,6 +484,9 @@ type Props = {
   /** 打开创作顾问并直接定位剧本模板优化；只打开，不自动提问或扣点。 */
   onOpenAdvisorTemplates?: () => void;
   onOpenAdvisorPrevis?: (clipId: string, requestId?: string) => void;
+  advisorPrevisActiveClipId?: string | null;
+  advisorAudioRequest?: { id: string; clipId: string; scopeId: string } | null;
+  onAdvisorAudioRequestHandled?: (id: string) => void;
   onOpenAdvisor3d?: (clipId?: string, sceneRefId?: string, mode?: "model" | "world" | "general") => void;
   advisorOpen?: boolean;
   onAdvisorDockChange?: (host: HTMLDivElement | null) => void;
@@ -1243,6 +1246,9 @@ export default function ManhuaScriptWorkbench({
   advisorTopIssue = null,
   onOpenAdvisorTemplates,
   onOpenAdvisorPrevis,
+  advisorPrevisActiveClipId,
+  advisorAudioRequest,
+  onAdvisorAudioRequestHandled,
   onOpenAdvisor3d,
   advisorOpen,
   onAdvisorDockChange,
@@ -1471,6 +1477,7 @@ export default function ManhuaScriptWorkbench({
   const [worldStudioOpen, setWorldStudioOpen] = useState(false);
   const [activeSecondaryTool, setActiveSecondaryTool] = useState<ManhuaSecondaryTool | null>(null);
   const toggleSecondaryTool = (tool: ManhuaSecondaryTool) => {
+    setClipPromptReviewOpen(false);
     setActiveSecondaryTool(tool);
     if (tool === "model3d") setModelStudioOpen(true);
     if (tool === "world3d") setWorldStudioOpen(true);
@@ -1555,6 +1562,7 @@ export default function ManhuaScriptWorkbench({
   const [openCustomRefRoles, setOpenCustomRefRoles] = useState<Record<string, boolean>>({});
   const [activeAssetRole, setActiveAssetRole] = useState<ManhuaCustomAssetRole>("character");
   const [moreToolsOpen, setMoreToolsOpen] = useState(false);
+  const workbenchToolsRef = useRef<HTMLDetailsElement | null>(null);
   const [visibleViewportWidth, setVisibleViewportWidth] = useState<number | null>(null);
   useEffect(() => {
     const updateVisibleWidth = () => {
@@ -3078,12 +3086,15 @@ export default function ManhuaScriptWorkbench({
   const openPrevisAdvisor = (requestId?: string, preparedStudio?: NonNullable<CanvasBlock["previsStudio"]>) => {
     if (!activeClip || !onOpenAdvisorPrevis || !onUpdateClipPrevisStudio || factoryBusy || activeClip.status === "running" || activeClip.videoTaskStatus === "queued") return;
     try {
-      if (!activeClip.previsStudio && !preparedStudio) {
+      let studio = preparedStudio || activeClip.previsStudio;
+      if (!studio) {
         const shots = (activeSegment?.shots || []).map(shot => ({ index: shot.index, durationSec: shot.durationSec, actionZh: shot.actionZh }));
         const durationSec = previsInitialDurationSec(shots, parseManhuaClipTargetDurationSec(activeClip.prompt || ""));
-        const studio = createAdvisorPrevisStudio({ durationSec, characters: previsStudioCharacters, shots, castZh: resolveManhuaSegmentCastZh({ castZh: activeSourceBeat?.castZh, dialogueZh: activeSourceBeat?.dialogueZh, shots: activeSegment?.shots, registry: assetLockRegistry, assetCanon }) });
-        if (onUpdateClipPrevisStudio(activeClip.id, studio) === false) throw new Error("本段人物配置未保存，请重试。");
+        studio = createAdvisorPrevisStudio({ durationSec, characters: previsStudioCharacters, shots, castZh: resolveManhuaSegmentCastZh({ castZh: activeSourceBeat?.castZh, dialogueZh: activeSourceBeat?.dialogueZh, shots: activeSegment?.shots, registry: assetLockRegistry, assetCanon }) });
       }
+      // 新打开白模顾问先无声预演；在同一会话切换音轨页后返回，保留用户刚选的带声状态。
+      if (!advisorOpen || advisorPrevisActiveClipId !== activeClip.id) studio = { ...studio, audioEnabled: false };
+      if (studio !== activeClip.previsStudio && onUpdateClipPrevisStudio(activeClip.id, studio) === false) throw new Error("本段白模设置未保存，请重试。原声音与配置保留。");
       onOpenAdvisorPrevis(activeClip.id, requestId);
     } catch (error) { toast.error(error instanceof Error ? error.message : "本段人物读取失败"); }
   };
@@ -3095,6 +3106,13 @@ export default function ManhuaScriptWorkbench({
     toggleSecondaryTool(tool);
     if (advisorOpen) openSecondaryAdvisor(tool);
   };
+  useEffect(() => {
+    if (!advisorAudioRequest) return;
+    if (activeClip?.id === advisorAudioRequest.clipId && activeClip.previsStudio?.scopeId === advisorAudioRequest.scopeId) {
+      setActiveSecondaryTool("audio"); setAudioStudioOpen(true); setAudioStudioPhase(activePhase);
+    } else toast.error("当前片段已变化，请从目标片段重新打开音轨；未切换或修改其他段。");
+    onAdvisorAudioRequestHandled?.(advisorAudioRequest.id);
+  }, [advisorAudioRequest, activeClip?.id, activeClip?.previsStudio?.scopeId, activePhase, onAdvisorAudioRequestHandled]);
   const worldStageCharacters = useMemo((): ManhuaStageCharacter[] => {
     const actors = activeClip?.previsStudio?.spec.actors || [];
     // 本段 actor 是必需名单；缺模型仍保留，让加载门禁明确报缺，不能从名单中消失。
@@ -3291,12 +3309,14 @@ export default function ManhuaScriptWorkbench({
       toast.error("还差一步", { description: "请先出关键静帧，有图后再审阅提示词" });
       return;
     }
+    setActiveSecondaryTool(null);
+    setMoreToolsOpen(false);
+    if (workbenchToolsRef.current) workbenchToolsRef.current.open = false;
     if (activePhase !== "storyboard") setActivePhase("storyboard");
     setClipPromptReviewOpen(true);
-    openCanvasDock();
     if (onReviewClipPromptsOnCanvas) {
       // 布局完成后再居中高亮，禁止先 focus 再甩节点到画布底
-      onReviewClipPromptsOnCanvas({ segmentIndex: activeSegNo });
+      onReviewClipPromptsOnCanvas({ segmentIndex: activeSegNo, revealCanvas: false });
     } else {
       onEnsureSegmentClips?.();
       onLayoutReadableChain?.();
@@ -3311,9 +3331,7 @@ export default function ManhuaScriptWorkbench({
         if (focusId) focusBlockAndOpenCanvas(focusId);
       }, 160);
     }
-    toast.message("已定位到成片提示词节点", {
-      description: "画布会滚到该段并高亮；可直接改提示词",
-    });
+    toast.message("已打开当前段视频提示词", { description: "可修改本段文本，并核对真正发送给视频模型的内容；查看不生成视频。" });
   };
   const runGenerateFragment = () => {
     if (pilotSubmissionBlocked) {
@@ -4285,12 +4303,399 @@ export default function ManhuaScriptWorkbench({
   };
 
 
+  const promptReviewFocusRef = useRef("");
+  useEffect(() => {
+    if (!clipPromptReviewOpen) { promptReviewFocusRef.current = ""; return; }
+    const row = segmentClipReviewList.find(item => item.segmentIndex === activeSegNo);
+    const key = `${focusEpisode}:${activeSegNo}:${row?.clip?.id || ""}`;
+    if (promptReviewFocusRef.current === key) return;
+    promptReviewFocusRef.current = key;
+    document.querySelector(`[data-manhua-prompt-segment="${activeSegNo}"]`)?.scrollIntoView({ block: "nearest" });
+    if (row?.clip?.id) void loadClipOutboundPreview(row.clip.id);
+  }, [clipPromptReviewOpen, segmentClipReviewList, activeSegNo, focusEpisode, loadClipOutboundPreview]);
+
+  const clipPromptReviewPanel = (
+clipPromptReviewOpen ? (
+    <div
+      role="region" aria-label="视频提示词"
+      data-manhua-clip-prompt-review
+      className="m-2 min-h-0 flex-1 space-y-3 overflow-y-auto rounded-lg border border-cyan-400/30 bg-cyan-500/[0.06] p-3"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-[11px] font-semibold text-cyan-50">
+          第{focusEpisode}集 · 视频提示词（当前第{activeSegNo}段）
+        </div>
+        <button
+          type="button"
+          className="rounded border border-white/15 px-1.5 py-0.5 text-[9px] text-white/55 hover:bg-white/5"
+          onClick={() => setClipPromptReviewOpen(false)}
+        >
+          收起
+        </button>
+      </div>
+      {segmentClipReviewList.map((row) => (
+        <div
+          key={`clip-prompt-seg-${row.segmentIndex}`}
+          data-manhua-prompt-segment={row.segmentIndex}
+          className="rounded-md border border-white/10 bg-black/30 p-1.5"
+        >
+          <div className="mb-1 flex flex-wrap items-center justify-between gap-1 text-[9px] text-white/55">
+            <span>
+              第 {String(row.segmentIndex).padStart(2, "0")} 段 · 约{" "}
+              {row.durationSec}s · 镜{" "}
+              {row.shotIndexes.map((n) => String(n).padStart(2, "0")).join("/")}
+            </span>
+            {row.clip?.id ? (
+              <button
+                type="button"
+                className="text-cyan-100/80 hover:underline"
+                onClick={() => focusBlockAndOpenCanvas(row.clip!.id)}
+              >
+                画布节点
+              </button>
+            ) : (
+              <span className="text-amber-100/70">尚未铺节点</span>
+            )}
+          </div>
+          {(() => {
+            const p = String(row.clip?.prompt || "");
+            const hasPad =
+              Boolean(String(row.clip?.refImageUrl || "").trim()) ||
+              /【垫图】|【像素垫图锁/.test(p);
+            const hasAssetLock = /【资产·Image对照】|【资产】|【资产锁/.test(p);
+            const hasDuty = /【参考职责】/.test(p);
+            const tags = p.match(/@(?:角色|场景|道具)\d+/g) || [];
+            // @引用断链检查：@图NN/@音N/@板N 指到不存在的实体就标红，
+            // 出片前一眼可见，绝不静默跳过（shared 解析器同源）
+            const atRefMissing = resolveManhuaAtReferences({
+              text: p,
+              index: buildManhuaAtReferenceIndex({
+                registry: assetLockRegistry,
+                boardUrlByEpisode: directorBoardMainUrl
+                  ? { [focusEpisode]: directorBoardMainUrl }
+                  : null,
+              }),
+              registry: assetLockRegistry,
+            }).missing;
+            const voiceGate = evaluateManhuaCrossSegmentVoiceGate({
+              localSegmentIndex: row.segmentIndex,
+              currentPrompt: p,
+              episodeSegmentPrompts:
+                collectManhuaEpisodeSegmentPromptsForVoiceGate(
+                  blocks,
+                  focusEpisode,
+                ),
+              voiceLocks: characterVoiceLocks,
+            });
+            return (
+              <div
+                data-manhua-clip-lock-chips={row.segmentIndex}
+                className="mb-1 flex flex-wrap gap-1"
+              >
+                <span
+                  className={`rounded px-1 py-px text-[8px] font-semibold ${
+                    hasPad
+                      ? "bg-emerald-500/25 text-emerald-50"
+                      : "bg-red-500/25 text-red-50"
+                  }`}
+                >
+                  {hasPad ? "垫图锁✓" : "垫图锁缺失"}
+                </span>
+                <span
+                  className={`rounded px-1 py-px text-[8px] font-semibold ${
+                    hasAssetLock
+                      ? "bg-emerald-500/25 text-emerald-50"
+                      : "bg-amber-500/20 text-amber-50"
+                  }`}
+                >
+                  {hasAssetLock ? "Image对照✓" : "Image对照缺失"}
+                </span>
+                {atRefMissing.map((t) => (
+                  <span
+                    key={`at-missing-${t}`}
+                    title={`@${t} 指到的资产不存在（可能已删除或敲错）；出片前请修正或删掉这个引用`}
+                    className="rounded bg-red-500/30 px-1 py-px text-[8px] font-semibold text-red-50"
+                  >
+                    @{t} 断链
+                  </span>
+                ))}
+                <span
+                  className={`rounded px-1 py-px text-[8px] font-semibold ${
+                    voiceGate.requiredTags.length === 0
+                      ? "bg-white/10 text-white/45"
+                      : voiceGate.missingTags.length === 0
+                        ? "bg-emerald-500/25 text-emerald-50"
+                        : "bg-white/10 text-white/45"
+                  }`}
+                  title={
+                    voiceGate.requiredTags.length
+                      ? voiceGate.missingTags.length === 0
+                        ? `已挂声线：${voiceGate.requiredTags.join("、")}`
+                        : voiceGate.messageZh || "声线可选，缺音不挡出片"
+                      : "声线可选；初登场常无参考音"
+                  }
+                >
+                  {voiceGate.requiredTags.length === 0
+                    ? "声线·可选"
+                    : voiceGate.missingTags.length === 0
+                      ? "声线已挂"
+                      : "声线未挂·不挡"}
+                </span>
+                <span
+                  className={`rounded px-1 py-px text-[8px] font-semibold ${
+                    hasDuty
+                      ? "bg-emerald-500/25 text-emerald-50"
+                      : "bg-white/10 text-white/45"
+                  }`}
+                >
+                  {hasDuty ? "参考职责✓" : "参考职责—"}
+                </span>
+                {tags.slice(0, 6).map((t) => (
+                  <span
+                    key={`${row.segmentIndex}-${t}`}
+                    className="rounded border border-cyan-400/30 bg-cyan-500/10 px-1 py-px font-mono text-[8px] text-cyan-50/90"
+                  >
+                    {t}
+                  </span>
+                ))}
+              </div>
+            );
+          })()}
+          {(() => {
+            const promptText = String(row.clip?.prompt || "").replace(
+              /\n*【引擎光学】[^\n]*/g,
+              "",
+            );
+            const raw = rawPromptSegments.has(row.segmentIndex);
+            return (
+              <>
+                <div className="mb-1 flex items-center justify-end">
+                  <button
+                    type="button"
+                    data-manhua-prompt-view={raw ? "raw" : "chips"}
+                    onClick={() =>
+                      setRawPromptSegments((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(row.segmentIndex)) {
+                          next.delete(row.segmentIndex);
+                        } else {
+                          next.add(row.segmentIndex);
+                        }
+                        return next;
+                      })
+                    }
+                    className="rounded border border-white/15 px-1.5 py-0.5 text-[9px] text-white/55 hover:bg-white/5"
+                  >
+                    {raw ? "查看系统编译" : "补充指令"}
+                  </button>
+                </div>
+                {raw ? (
+                  <ManhuaPromptMentionEditor
+                    segmentIndex={row.segmentIndex}
+                    disabled={
+                      !row.clip?.id || !onUpdateClipPrompt || factoryBusy
+                    }
+                    value={extractManhuaClipUserSupplement(promptText)}
+                    onChange={(next) => {
+                      if (row.clip?.id) {
+                        onUpdateClipPrompt?.(
+                          row.clip.id,
+                          upsertManhuaClipUserSupplement(promptText, next),
+                        );
+                      }
+                    }}
+                    thumbUrlByAssetId={chipThumbByAssetId}
+                    registry={assetLockRegistry}
+                    assetCanon={assetCanon}
+                    onRequestGenerateAsset={(c) => {
+                      toast.info(`「${c.labelZh}」还没有定妆图`, {
+                        description: "正在按剧本补这一张，出图后回来敲 @ 就能挂上",
+                      });
+                      void onConfirmAssetsAndPrepareImages?.();
+                    }}
+                    boardCandidate={
+                      directorBoardMainUrl
+                        ? {
+                            tag: `@板${focusEpisode}`,
+                            labelZh: `第${String(focusEpisode).padStart(2, "0")}集导演板（轨迹参考）`,
+                            thumbUrl: directorBoardMainUrl,
+                          }
+                        : null
+                    }
+                    placeholder={
+                      row.clip?.id
+                        ? "只写本段补充；输入 @ 挑人物/场景/道具/导演板。系统秒轴会随剧本与引擎自动更新"
+                        : "点「审阅」时会先铺段节点；若仍空请对齐画布竖排"
+                    }
+                  />
+                ) : (
+                  <ManhuaPromptAssetChips
+                    prompt={promptText}
+                    thumbUrlByAssetId={chipThumbByAssetId}
+                    className="rounded border border-white/10 bg-black/30 px-1.5 py-1"
+                  />
+                )}
+              </>
+            );
+          })()}
+          {onPreviewClipOutbound && row.clip?.id ? (
+            (() => {
+              const blockId = row.clip.id;
+              const preview = clipOutboundPreview[blockId];
+              return (
+                <div
+                  data-manhua-clip-outbound={row.segmentIndex}
+                  className="mt-1.5 rounded border border-white/10 bg-black/25 p-1.5"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-1">
+                    <span className="text-[9px] font-semibold text-white/60">
+                      实际发送内容
+                    </span>
+                    <div className="flex items-center gap-1">
+                      {outboundConfirmedAtByBlock?.[blockId] ? (
+                        <span className="rounded bg-emerald-500/25 px-1 py-px text-[8px] font-semibold text-emerald-50">
+                          已确认
+                        </span>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="rounded border border-white/15 px-1.5 py-0.5 text-[9px] text-white/70 hover:bg-white/5 disabled:opacity-50"
+                        disabled={preview?.state === "loading"}
+                        onClick={() => void loadClipOutboundPreview(blockId)}
+                      >
+                        {preview?.state === "loading"
+                          ? "正在核对…"
+                          : preview
+                            ? "重新核对"
+                            : "查看实际发送内容"}
+                      </button>
+                      {onConfirmClipOutbound &&
+                      preview?.state === "ready" &&
+                      !preview.blocked ? (
+                        <button
+                          type="button"
+                          className="rounded border border-emerald-300/40 bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-50 hover:bg-emerald-500/25"
+                          onClick={() => {
+                            void onConfirmClipOutbound(
+                              blockId,
+                              preview.snapshotId,
+                            ).catch((error) => {
+                              setClipOutboundPreview((prev) => ({
+                                ...prev,
+                                [blockId]: {
+                                  state: "error",
+                                  messageZh:
+                                    error instanceof Error
+                                      ? error.message
+                                      : "确认失败",
+                                },
+                              }));
+                            });
+                          }}
+                        >
+                          {outboundConfirmedAtByBlock?.[blockId]
+                            ? "重新确认"
+                            : "确认这一段"}
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                  {!preview ? (
+                    <div className="mt-1 text-[9px] text-white/40">
+                      上面显示的是节点里存的文本；真正发给引擎的会再过一层编译（方言、
+                      引用编号、时长与参考数量校验）。发车前请点开核对。
+                    </div>
+                  ) : preview.state === "error" ? (
+                    <div className="mt-1 rounded bg-amber-500/15 px-1.5 py-1 text-[9px] text-amber-50">
+                      {preview.messageZh}
+                    </div>
+                  ) : preview.state === "ready" ? (
+                    <div className="mt-1 space-y-1">
+                      {preview.blocked ? (
+                        <div className="rounded bg-red-500/25 px-1.5 py-1 text-[9px] font-semibold text-red-50">
+                          出站校验未通过，这一段现在点生成会被拦下、不会扣费：
+                          {preview.issuesZh.join("；")}
+                        </div>
+                      ) : preview.issuesZh.length ? (
+                        <div className="rounded bg-white/5 px-1.5 py-1 text-[9px] text-white/60">
+                          提示：{preview.issuesZh.join("；")}
+                        </div>
+                      ) : null}
+                      <div className="text-[9px] text-white/45">
+                        目标 {preview.durationSec}s · 参考 图
+                        {preview.refs.imageUrls.length}／视频
+                        {preview.refs.videoUrls.length}／音频
+                        {preview.refs.audioUrls.length}（按实际发送顺序）
+                      </div>
+                      <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-black/40 p-1.5 text-[9px] leading-relaxed text-white/80">
+                        {preview.promptText}
+                      </pre>
+                      {preview.refs.imageUrls.length ||
+                      preview.refs.videoUrls.length ||
+                      preview.refs.audioUrls.length ? (
+                        <ol className="space-y-0.5 text-[9px] text-white/50">
+                          {[
+                            ...preview.refs.imageUrls.map((u, i) => [`@图片${i + 1}`, u] as const),
+                            ...preview.refs.videoUrls.map((u, i) => [`@视频${i + 1}`, u] as const),
+                            ...preview.refs.audioUrls.map((u, i) => [`@audio${i + 1}`, u] as const),
+                          ].map(([tag, url]) => (
+                            <li key={`${tag}-${url}`} className="truncate" title={url}>
+                              {tag} · {url}
+                            </li>
+                          ))}
+                        </ol>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })()
+          ) : null}
+        </div>
+      ))}
+      <div className="flex flex-wrap gap-1.5 pt-0.5">
+        <button
+          type="button"
+          data-manhua-action="generate-after-prompt-review"
+          disabled={Boolean(factoryBusy)}
+          onClick={() => {
+            setClipPromptReviewOpen(false);
+            runGenerateFragment();
+          }}
+          className="rounded-md border border-cyan-300/40 bg-cyan-500/20 px-2 py-1 text-[10px] font-semibold text-cyan-50 disabled:opacity-40"
+        >
+          确认并生成本段
+        </button>
+        {onGenerateMissingFragments ? (
+          <button
+            type="button"
+            disabled={
+              Boolean(factoryBusy) ||
+              pilotLocked ||
+              !missingFragmentIndexes.length
+            }
+            onClick={() => {
+              if (refuseIfBlocked(clipGateHint)) return;
+              setClipPromptReviewOpen(false);
+              onGenerateMissingFragments(missingFragmentIndexes, segmentSelectionIdentity);
+            }}
+            className="rounded-md border border-white/15 bg-white/[0.06] px-2 py-1 text-[10px] font-semibold text-white/75 disabled:opacity-40"
+          >
+            确认并生成缺段
+          </button>
+        ) : null}
+      </div>
+    </div>
+  ) : null
+  );
+
   return (
     <div
       id="manhua-workbench-shell"
       data-manhua-layout={immersive ? "immersive-3col" : "card-3col"}
       data-manhua-active-phase={activePhase}
       data-manhua-secondary-active={Boolean(activeSecondaryTool)}
+      data-manhua-prompt-active={clipPromptReviewOpen}
       style={visibleViewportWidth ? { maxWidth: visibleViewportWidth } : undefined}
       className={`mh-redesign ${compactUi ? "mh-compact " : ""}${
         immersive
@@ -4366,18 +4771,21 @@ export default function ManhuaScriptWorkbench({
           本仓有过误点烧掉一整批积分（曾清掉 18 张）的事故，
           双重确认拦的是点下去之后，颜色分组拦的是**点错本身**。
         */}
+        <div data-manhua-header-actions className="flex shrink-0 items-center gap-2">
+        <button type="button" data-manhua-action="open-video-prompts" aria-expanded={clipPromptReviewOpen} disabled={Boolean(factoryBusy)} onClick={openClipPromptReview} className="shrink-0 rounded-lg border border-cyan-300/40 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-50">视频提示词</button>
         <details
+          ref={workbenchToolsRef}
           key={`tools-${activePhase}`}
           data-manhua-workspace-tools
           open={immersive ? undefined : true}
-          className="min-w-0 shrink-0"
+          className={immersive ? "relative min-w-0 shrink-0" : "min-w-0 shrink-0"}
         >
           <summary className={immersive ? "cursor-pointer rounded-lg border border-white/15 px-3 py-1.5 text-[11px] text-white/70" : "hidden"}>
             更多制作工具
           </summary>
         <div
           data-manhua-toolbar-cluster
-          className="mx-auto flex flex-wrap items-center justify-center gap-1.5 [&_[data-manhua-action-cost=spend]]:ring-1 [&_[data-manhua-action-cost=spend]]:ring-amber-300/35 [&_[data-manhua-action-cost=spend]]:ring-offset-1 [&_[data-manhua-action-cost=spend]]:ring-offset-[#0a121c]"
+          className={`${immersive ? "absolute right-0 top-full z-40 mt-2 max-h-[min(60dvh,28rem)] w-[min(48rem,calc(100vw-2rem))] overflow-y-auto rounded-xl border border-white/20 bg-[#101821] p-3 shadow-xl" : "mx-auto"} flex flex-wrap items-center justify-center gap-1.5 [&_[data-manhua-action-cost=spend]]:ring-1 [&_[data-manhua-action-cost=spend]]:ring-amber-300/35 [&_[data-manhua-action-cost=spend]]:ring-offset-1 [&_[data-manhua-action-cost=spend]]:ring-offset-[#0a121c]`}
         >
             <details data-manhua-project-settings>
               <summary className="cursor-pointer text-xs text-white/60">制作设置</summary>
@@ -4515,7 +4923,7 @@ export default function ManhuaScriptWorkbench({
 
         </div>
         </details>
-          <button type="button" data-manhua-action="open-secondary-tools" aria-expanded={Boolean(activeSecondaryTool)} className="min-h-10 rounded-lg border border-cyan-300/35 bg-cyan-500/10 px-3 text-xs text-cyan-50" onClick={() => toggleSecondaryTool(activeSecondaryTool || (onUpdateClipPrevisStudio ? "previs" : onGenerateAsset3d || onImportAsset3d ? "model3d" : onGenerateSceneWorld ? "world3d" : onUpdateClipAudioStudio ? "audio" : "actionTimeline"))}>二级工具 · 3D / 白模 / 节奏 / 声音</button>
+          <button type="button" data-manhua-action="open-secondary-tools" aria-expanded={Boolean(activeSecondaryTool)} className="min-h-10 rounded-lg border border-cyan-300/35 bg-cyan-500/10 px-3 text-xs text-cyan-50" onClick={() => toggleSecondaryTool(activeSecondaryTool || (onUpdateClipPrevisStudio ? "previs" : onGenerateAsset3d || onImportAsset3d ? "model3d" : onGenerateSceneWorld ? "world3d" : onUpdateClipAudioStudio ? "audio" : "actionTimeline"))}>3D · 白模 · 音轨</button>
 
           {factoryBusy && onStopFactory ? null : (
             <Popover open={moreToolsOpen} onOpenChange={setMoreToolsOpen}>
@@ -4966,8 +5374,10 @@ export default function ManhuaScriptWorkbench({
               </PopoverContent>
             </Popover>
           )}
+        </div>
       </div>
 
+          {clipPromptReviewPanel}
           {activeSecondaryTool ? <SecondaryStudioSurface immersive={immersive} title="二级工具" advisorOpen={advisorOpen} onAdvisorDockChange={onAdvisorDockChange} onPreviewHostChange={onAdvisorPreviewHostChange} clipId={activeClip?.id}
             onOpenAdvisor={onOpenAdvisor3d || onOpenAdvisorPrevis ? () => openSecondaryAdvisor(activeSecondaryTool) : undefined}
             onClose={() => setActiveSecondaryTool(null)}>
@@ -9267,376 +9677,6 @@ export default function ManhuaScriptWorkbench({
               <p data-manhua-shot-list-hint className="mh-hint mt-2 text-[10px] leading-snug text-white/35">
                 确认简报 → 静帧锁脸服场 → 审阅段成片提示词 → 本段一轮成片吃多镜表演；改台词只重出本段，勿整集重烧。
               </p>
-              {clipPromptReviewOpen ? (
-                <div
-                  data-manhua-clip-prompt-review
-                  className="mt-2 max-h-[42vh] space-y-2 overflow-y-auto rounded-lg border border-cyan-400/30 bg-cyan-500/[0.06] p-2"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-[11px] font-semibold text-cyan-50">
-                      段成片提示词（可改 · 约 {segments.length} 次调用）
-                    </div>
-                    <button
-                      type="button"
-                      className="rounded border border-white/15 px-1.5 py-0.5 text-[9px] text-white/55 hover:bg-white/5"
-                      onClick={() => setClipPromptReviewOpen(false)}
-                    >
-                      收起
-                    </button>
-                  </div>
-                  {segmentClipReviewList.map((row) => (
-                    <div
-                      key={`clip-prompt-seg-${row.segmentIndex}`}
-                      className="rounded-md border border-white/10 bg-black/30 p-1.5"
-                    >
-                      <div className="mb-1 flex flex-wrap items-center justify-between gap-1 text-[9px] text-white/55">
-                        <span>
-                          第 {String(row.segmentIndex).padStart(2, "0")} 段 · 约{" "}
-                          {row.durationSec}s · 镜{" "}
-                          {row.shotIndexes.map((n) => String(n).padStart(2, "0")).join("/")}
-                        </span>
-                        {row.clip?.id ? (
-                          <button
-                            type="button"
-                            className="text-cyan-100/80 hover:underline"
-                            onClick={() => focusBlockAndOpenCanvas(row.clip!.id)}
-                          >
-                            画布节点
-                          </button>
-                        ) : (
-                          <span className="text-amber-100/70">尚未铺节点</span>
-                        )}
-                      </div>
-                      {(() => {
-                        const p = String(row.clip?.prompt || "");
-                        const hasPad =
-                          Boolean(String(row.clip?.refImageUrl || "").trim()) ||
-                          /【垫图】|【像素垫图锁/.test(p);
-                        const hasAssetLock = /【资产·Image对照】|【资产】|【资产锁/.test(p);
-                        const hasDuty = /【参考职责】/.test(p);
-                        const tags = p.match(/@(?:角色|场景|道具)\d+/g) || [];
-                        // @引用断链检查：@图NN/@音N/@板N 指到不存在的实体就标红，
-                        // 出片前一眼可见，绝不静默跳过（shared 解析器同源）
-                        const atRefMissing = resolveManhuaAtReferences({
-                          text: p,
-                          index: buildManhuaAtReferenceIndex({
-                            registry: assetLockRegistry,
-                            boardUrlByEpisode: directorBoardMainUrl
-                              ? { [focusEpisode]: directorBoardMainUrl }
-                              : null,
-                          }),
-                          registry: assetLockRegistry,
-                        }).missing;
-                        const voiceGate = evaluateManhuaCrossSegmentVoiceGate({
-                          localSegmentIndex: row.segmentIndex,
-                          currentPrompt: p,
-                          episodeSegmentPrompts:
-                            collectManhuaEpisodeSegmentPromptsForVoiceGate(
-                              blocks,
-                              focusEpisode,
-                            ),
-                          voiceLocks: characterVoiceLocks,
-                        });
-                        return (
-                          <div
-                            data-manhua-clip-lock-chips={row.segmentIndex}
-                            className="mb-1 flex flex-wrap gap-1"
-                          >
-                            <span
-                              className={`rounded px-1 py-px text-[8px] font-semibold ${
-                                hasPad
-                                  ? "bg-emerald-500/25 text-emerald-50"
-                                  : "bg-red-500/25 text-red-50"
-                              }`}
-                            >
-                              {hasPad ? "垫图锁✓" : "垫图锁缺失"}
-                            </span>
-                            <span
-                              className={`rounded px-1 py-px text-[8px] font-semibold ${
-                                hasAssetLock
-                                  ? "bg-emerald-500/25 text-emerald-50"
-                                  : "bg-amber-500/20 text-amber-50"
-                              }`}
-                            >
-                              {hasAssetLock ? "Image对照✓" : "Image对照缺失"}
-                            </span>
-                            {atRefMissing.map((t) => (
-                              <span
-                                key={`at-missing-${t}`}
-                                title={`@${t} 指到的资产不存在（可能已删除或敲错）；出片前请修正或删掉这个引用`}
-                                className="rounded bg-red-500/30 px-1 py-px text-[8px] font-semibold text-red-50"
-                              >
-                                @{t} 断链
-                              </span>
-                            ))}
-                            <span
-                              className={`rounded px-1 py-px text-[8px] font-semibold ${
-                                voiceGate.requiredTags.length === 0
-                                  ? "bg-white/10 text-white/45"
-                                  : voiceGate.missingTags.length === 0
-                                    ? "bg-emerald-500/25 text-emerald-50"
-                                    : "bg-white/10 text-white/45"
-                              }`}
-                              title={
-                                voiceGate.requiredTags.length
-                                  ? voiceGate.missingTags.length === 0
-                                    ? `已挂声线：${voiceGate.requiredTags.join("、")}`
-                                    : voiceGate.messageZh || "声线可选，缺音不挡出片"
-                                  : "声线可选；初登场常无参考音"
-                              }
-                            >
-                              {voiceGate.requiredTags.length === 0
-                                ? "声线·可选"
-                                : voiceGate.missingTags.length === 0
-                                  ? "声线已挂"
-                                  : "声线未挂·不挡"}
-                            </span>
-                            <span
-                              className={`rounded px-1 py-px text-[8px] font-semibold ${
-                                hasDuty
-                                  ? "bg-emerald-500/25 text-emerald-50"
-                                  : "bg-white/10 text-white/45"
-                              }`}
-                            >
-                              {hasDuty ? "参考职责✓" : "参考职责—"}
-                            </span>
-                            {tags.slice(0, 6).map((t) => (
-                              <span
-                                key={`${row.segmentIndex}-${t}`}
-                                className="rounded border border-cyan-400/30 bg-cyan-500/10 px-1 py-px font-mono text-[8px] text-cyan-50/90"
-                              >
-                                {t}
-                              </span>
-                            ))}
-                          </div>
-                        );
-                      })()}
-                      {(() => {
-                        const promptText = String(row.clip?.prompt || "").replace(
-                          /\n*【引擎光学】[^\n]*/g,
-                          "",
-                        );
-                        const raw = rawPromptSegments.has(row.segmentIndex);
-                        return (
-                          <>
-                            <div className="mb-1 flex items-center justify-end">
-                              <button
-                                type="button"
-                                data-manhua-prompt-view={raw ? "raw" : "chips"}
-                                onClick={() =>
-                                  setRawPromptSegments((prev) => {
-                                    const next = new Set(prev);
-                                    if (next.has(row.segmentIndex)) {
-                                      next.delete(row.segmentIndex);
-                                    } else {
-                                      next.add(row.segmentIndex);
-                                    }
-                                    return next;
-                                  })
-                                }
-                                className="rounded border border-white/15 px-1.5 py-0.5 text-[9px] text-white/55 hover:bg-white/5"
-                              >
-                                {raw ? "查看系统编译" : "补充指令"}
-                              </button>
-                            </div>
-                            {raw ? (
-                              <ManhuaPromptMentionEditor
-                                segmentIndex={row.segmentIndex}
-                                disabled={
-                                  !row.clip?.id || !onUpdateClipPrompt || factoryBusy
-                                }
-                                value={extractManhuaClipUserSupplement(promptText)}
-                                onChange={(next) => {
-                                  if (row.clip?.id) {
-                                    onUpdateClipPrompt?.(
-                                      row.clip.id,
-                                      upsertManhuaClipUserSupplement(promptText, next),
-                                    );
-                                  }
-                                }}
-                                thumbUrlByAssetId={chipThumbByAssetId}
-                                registry={assetLockRegistry}
-                                assetCanon={assetCanon}
-                                onRequestGenerateAsset={(c) => {
-                                  toast.info(`「${c.labelZh}」还没有定妆图`, {
-                                    description: "正在按剧本补这一张，出图后回来敲 @ 就能挂上",
-                                  });
-                                  void onConfirmAssetsAndPrepareImages?.();
-                                }}
-                                boardCandidate={
-                                  directorBoardMainUrl
-                                    ? {
-                                        tag: `@板${focusEpisode}`,
-                                        labelZh: `第${String(focusEpisode).padStart(2, "0")}集导演板（轨迹参考）`,
-                                        thumbUrl: directorBoardMainUrl,
-                                      }
-                                    : null
-                                }
-                                placeholder={
-                                  row.clip?.id
-                                    ? "只写本段补充；输入 @ 挑人物/场景/道具/导演板。系统秒轴会随剧本与引擎自动更新"
-                                    : "点「审阅」时会先铺段节点；若仍空请对齐画布竖排"
-                                }
-                              />
-                            ) : (
-                              <ManhuaPromptAssetChips
-                                prompt={promptText}
-                                thumbUrlByAssetId={chipThumbByAssetId}
-                                className="rounded border border-white/10 bg-black/30 px-1.5 py-1"
-                              />
-                            )}
-                          </>
-                        );
-                      })()}
-                      {onPreviewClipOutbound && row.clip?.id ? (
-                        (() => {
-                          const blockId = row.clip.id;
-                          const preview = clipOutboundPreview[blockId];
-                          return (
-                            <div
-                              data-manhua-clip-outbound={row.segmentIndex}
-                              className="mt-1.5 rounded border border-white/10 bg-black/25 p-1.5"
-                            >
-                              <div className="flex flex-wrap items-center justify-between gap-1">
-                                <span className="text-[9px] font-semibold text-white/60">
-                                  实际发送内容
-                                </span>
-                                <div className="flex items-center gap-1">
-                                  {outboundConfirmedAtByBlock?.[blockId] ? (
-                                    <span className="rounded bg-emerald-500/25 px-1 py-px text-[8px] font-semibold text-emerald-50">
-                                      已确认
-                                    </span>
-                                  ) : null}
-                                  <button
-                                    type="button"
-                                    className="rounded border border-white/15 px-1.5 py-0.5 text-[9px] text-white/70 hover:bg-white/5 disabled:opacity-50"
-                                    disabled={preview?.state === "loading"}
-                                    onClick={() => void loadClipOutboundPreview(blockId)}
-                                  >
-                                    {preview?.state === "loading"
-                                      ? "正在核对…"
-                                      : preview
-                                        ? "重新核对"
-                                        : "查看实际发送内容"}
-                                  </button>
-                                  {onConfirmClipOutbound &&
-                                  preview?.state === "ready" &&
-                                  !preview.blocked ? (
-                                    <button
-                                      type="button"
-                                      className="rounded border border-emerald-300/40 bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-50 hover:bg-emerald-500/25"
-                                      onClick={() => {
-                                        void onConfirmClipOutbound(
-                                          blockId,
-                                          preview.snapshotId,
-                                        ).catch((error) => {
-                                          setClipOutboundPreview((prev) => ({
-                                            ...prev,
-                                            [blockId]: {
-                                              state: "error",
-                                              messageZh:
-                                                error instanceof Error
-                                                  ? error.message
-                                                  : "确认失败",
-                                            },
-                                          }));
-                                        });
-                                      }}
-                                    >
-                                      {outboundConfirmedAtByBlock?.[blockId]
-                                        ? "重新确认"
-                                        : "确认这一段"}
-                                    </button>
-                                  ) : null}
-                                </div>
-                              </div>
-                              {!preview ? (
-                                <div className="mt-1 text-[9px] text-white/40">
-                                  上面显示的是节点里存的文本；真正发给引擎的会再过一层编译（方言、
-                                  引用编号、时长与参考数量校验）。发车前请点开核对。
-                                </div>
-                              ) : preview.state === "error" ? (
-                                <div className="mt-1 rounded bg-amber-500/15 px-1.5 py-1 text-[9px] text-amber-50">
-                                  {preview.messageZh}
-                                </div>
-                              ) : preview.state === "ready" ? (
-                                <div className="mt-1 space-y-1">
-                                  {preview.blocked ? (
-                                    <div className="rounded bg-red-500/25 px-1.5 py-1 text-[9px] font-semibold text-red-50">
-                                      出站校验未通过，这一段现在点生成会被拦下、不会扣费：
-                                      {preview.issuesZh.join("；")}
-                                    </div>
-                                  ) : preview.issuesZh.length ? (
-                                    <div className="rounded bg-white/5 px-1.5 py-1 text-[9px] text-white/60">
-                                      提示：{preview.issuesZh.join("；")}
-                                    </div>
-                                  ) : null}
-                                  <div className="text-[9px] text-white/45">
-                                    目标 {preview.durationSec}s · 参考 图
-                                    {preview.refs.imageUrls.length}／视频
-                                    {preview.refs.videoUrls.length}／音频
-                                    {preview.refs.audioUrls.length}（按实际发送顺序）
-                                  </div>
-                                  <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-black/40 p-1.5 text-[9px] leading-relaxed text-white/80">
-                                    {preview.promptText}
-                                  </pre>
-                                  {preview.refs.imageUrls.length ||
-                                  preview.refs.videoUrls.length ||
-                                  preview.refs.audioUrls.length ? (
-                                    <ol className="space-y-0.5 text-[9px] text-white/50">
-                                      {[
-                                        ...preview.refs.imageUrls.map((u, i) => [`@图片${i + 1}`, u] as const),
-                                        ...preview.refs.videoUrls.map((u, i) => [`@视频${i + 1}`, u] as const),
-                                        ...preview.refs.audioUrls.map((u, i) => [`@audio${i + 1}`, u] as const),
-                                      ].map(([tag, url]) => (
-                                        <li key={`${tag}-${url}`} className="truncate" title={url}>
-                                          {tag} · {url}
-                                        </li>
-                                      ))}
-                                    </ol>
-                                  ) : null}
-                                </div>
-                              ) : null}
-                            </div>
-                          );
-                        })()
-                      ) : null}
-                    </div>
-                  ))}
-                  <div className="flex flex-wrap gap-1.5 pt-0.5">
-                    <button
-                      type="button"
-                      data-manhua-action="generate-after-prompt-review"
-                      disabled={Boolean(factoryBusy)}
-                      onClick={() => {
-                        setClipPromptReviewOpen(false);
-                        runGenerateFragment();
-                      }}
-                      className="rounded-md border border-cyan-300/40 bg-cyan-500/20 px-2 py-1 text-[10px] font-semibold text-cyan-50 disabled:opacity-40"
-                    >
-                      确认并生成本段
-                    </button>
-                    {onGenerateMissingFragments ? (
-                      <button
-                        type="button"
-                        disabled={
-                          Boolean(factoryBusy) ||
-                          pilotLocked ||
-                          !missingFragmentIndexes.length
-                        }
-                        onClick={() => {
-                          if (refuseIfBlocked(clipGateHint)) return;
-                          setClipPromptReviewOpen(false);
-                          onGenerateMissingFragments(missingFragmentIndexes, segmentSelectionIdentity);
-                        }}
-                        className="rounded-md border border-white/15 bg-white/[0.06] px-2 py-1 text-[10px] font-semibold text-white/75 disabled:opacity-40"
-                      >
-                        确认并生成缺段
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-              ) : null}
             </>
           ) : scriptTab === "edit" ? (
             <div className="mt-2 min-h-0 flex-1 overflow-y-auto pr-0.5">

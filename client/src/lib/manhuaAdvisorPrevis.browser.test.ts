@@ -21,7 +21,7 @@ createRoot(document.getElementById('root')).render(<ManhuaAdvisorPrevisCompariso
     b.onResolve({ filter: /^@\/lib\/trpc$/ }, () => ({ path: "trpc", namespace: "offline" }));
     b.onLoad({ filter: /.*/, namespace: "offline" }, () => ({ loader: "js", contents: `export const trpc={manhuaPrevis:{submit:{useMutation:()=>({isPending:false,mutateAsync:async r=>{const f=globalThis.fixture;f.submits.push(r);return f.response(r);}})}},useUtils:()=>({manhuaPrevis:{get:{fetch:async({requestId})=>{const f=globalThis.fixture;f.queries.push(requestId);const r=JSON.parse(localStorage.getItem('test:trial:'+requestId)).request;return f.response(r);}}}})};` }));
   } }], define: { "process.env.NODE_ENV": '"development"', "import.meta.env": "{}" } });
-  bundle = result.outputFiles[0]!.text; browser = await puppeteer.launch({ headless: true });
+  bundle = result.outputFiles[0]!.text; browser = await puppeteer.launch({ headless: true, ...(process.getuid?.() === 0 ? { args: ["--no-sandbox"] } : {}) });
 }, 30000);
 afterAll(async () => { await browser?.close(); });
 it("独立渲染和刷新不写原场景；观看并确认后才允许应用真实回执", async () => {
@@ -37,7 +37,7 @@ it("独立渲染和刷新不写原场景；观看并确认后才允许应用真�
   await page.waitForFunction(() => (globalThis as any).fixture.queries.length > 0);
   expect(await page.evaluate(() => (globalThis as any).fixture.submits)).toEqual([]);
   expect(await page.evaluate(() => (globalThis as any).fixture.queries)).toEqual([id]);
-  await page.evaluate(() => { (globalThis as any).fixture.ready = true; const b = Array.from(document.querySelectorAll('button')).find(b => b.textContent === '确认原试看请求（不新建）'); b?.click(); });
+  await page.evaluate(() => { (globalThis as any).fixture.ready = true; const b = Array.from(document.querySelectorAll('button')).find(b => b.textContent === '查询／恢复这次白模试看'); b?.click(); });
   await page.waitForSelector('video[aria-label="顾问独立白模试看"]');
   expect(await page.evaluate(() => (globalThis as any).fixture.submits[0].requestId)).toBe(id);
   expect(await page.evaluate(() => (globalThis as any).fixture.videoSources.at(-1))).toMatchObject({ requestId: id, target: { clipId: "clip-1" } });
