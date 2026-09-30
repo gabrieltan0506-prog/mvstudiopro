@@ -412,7 +412,7 @@ export function buildManhuaCreativeAdvisorLlmMessages(input: {
     "【当前镜头／本集分镜摘要】",
     input.context.shotSummary || "（当前尚无分镜摘要）",
     "",
-    "【当前白模编辑规格·仅结构证据，未读取视频】",
+    "【生成步骤监看与白模编辑规格·只读状态，未读取视频】",
     input.context.previsSummary || "（未提供白模规格，不能推测角色站位或动作）",
     "",
     buildAdvisorPrevisCraftBlock(input.context.studio3d || {}, "general"),

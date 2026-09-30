@@ -10,6 +10,7 @@ import { normalizeCompilerEngineId } from "@shared/manhuaShotIR";
 import type { CanvasBlock } from "./canvasTypes";
 import { buildAdvisorPrevisSummary } from "./manhuaAdvisorPrevis";
 import { getBlockEpisodeIndex } from "./canvasDramaStudio";
+import { buildManhuaAdvisorGenerationMonitor, advisorGenerationContextZh, type AdvisorGenerationStep } from "./manhuaAdvisorGenerationMonitor";
 
 export type AdvisorSelection = {
   episodeIndex: number;
@@ -104,6 +105,9 @@ export type AdvisorProjectSignals = {
   workbenchPlan?: { episodeIndex: number; segments: Manhua3dUsageSegment[] };
   /** 已锁脸角色名（3D 规则输入） */
   lockedCharacterNames?: string[];
+  writerBusy?: boolean;
+  factoryBusy?: boolean;
+  assembleBusy?: boolean;
 };
 
 export function formatManhuaAdvisorAssetGapZh(input: { characters: number; scenes: number; props: number }): string {
@@ -275,6 +279,7 @@ export function buildManhuaAdvisorProject(input: {
   recommend3d: Manhua3dUsageRecommendation | null;
   videoPromptDrafts: AdvisorVideoPromptDraft[];
   selectedSegmentIndex?: number;
+  generationSteps?: AdvisorGenerationStep[];
 } {
   const episode = input.pack?.episodes.find((ep) => ep.index === input.episodeIndex);
   const canon = input.bible?.assetCanon;
@@ -383,6 +388,7 @@ export function buildManhuaAdvisorProject(input: {
   const rawStrategy = input.bible?.directorStrategyContract as { strategyId?: unknown; revision?: unknown } | null | undefined;
   const strategyId = MANHUA_CREATIVE_ADVISOR_STRATEGY_IDS.find((id) => id === rawStrategy?.strategyId);
   const strategyRevision = typeof rawStrategy?.revision === "string" ? rawStrategy.revision.trim() : "";
+  const generationSteps = buildManhuaAdvisorGenerationMonitor({ ...input, issues, hasScript: Boolean(episode?.body.trim()) });
   return {
     context: {
       seriesTitle: excerptEvidence(input.pack?.seriesTitle || input.bible?.seriesTitle || "未命名项目", LIMITS.seriesTitleChars, "剧名", contextNotes),
@@ -394,7 +400,7 @@ export function buildManhuaAdvisorProject(input: {
       episodeBody: excerptEvidence(episode?.body || "", LIMITS.episodeBodyChars, "本集正文", contextNotes),
       assetSummary: excerptEvidence(assetSummary, LIMITS.assetSummaryChars, "资产摘要", contextNotes),
       shotSummary: excerptEvidence(shotSummary, LIMITS.shotSummaryChars, shot ? "选中镜头" : "本集分镜与成片提示词", contextNotes),
-      previsSummary: excerptEvidence(buildAdvisorPrevisSummary(scoped), LIMITS.previsSummaryChars, "本集白模规格", contextNotes),
+      previsSummary: excerptEvidence([advisorGenerationContextZh(generationSteps), buildAdvisorPrevisSummary(scoped)].filter(Boolean).join("\n\n"), LIMITS.previsSummaryChars, "本集生成步骤与白模规格", contextNotes),
       blockers: issues.map((issue) => issue.text),
       ...(strategyId ? { directorStrategyId: strategyId } : {}),
       ...(strategyId && strategyRevision ? { directorStrategyRevision: strategyRevision } : {}),
@@ -408,6 +414,7 @@ export function buildManhuaAdvisorProject(input: {
     issues,
     selectionLabel,
     contextNotes,
+    generationSteps,
     recommend3d,
     videoPromptDrafts: scoped.filter(block => block.kind === "video" && block.id.startsWith("clip-")).map(block => ({
       segmentIndex: resolveClipLocalSegmentIndex(block.id, block.prompt, input.episodeIndex),

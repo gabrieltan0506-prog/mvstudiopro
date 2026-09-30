@@ -17,6 +17,8 @@ import { buildAdvisorQuestion, findMentionedTemplates } from "@/lib/manhuaCreati
 import { manhuaCreativeAdvisorContextSchema } from "@shared/manhuaCreativeAdvisor";
 import type { PublicManhuaViralTemplateCard } from "@shared/manhuaViralTemplateBank";
 import { resolveAdvisorVideoPromptContext, type buildManhuaAdvisorProject, type AdvisorIssue } from "@/lib/manhuaAdvisorProject";
+import ManhuaAdvisorGenerationMonitor from "./ManhuaAdvisorGenerationMonitor";
+import { manhuaIssueResolutionZh } from "@/lib/manhuaMainTaskBlockers";
 import { advisorRecentHistory, loadAdvisorMessages, loadAdvisorPendingRecovery, makeAdvisorPendingRecovery, manhuaAdvisorSessionKey, mergeAdvisorCompletedExchange, persistAdvisorCompletedExchange, type AdvisorMessage, type AdvisorMessagesLoadResult, type AdvisorPendingRequest, type AdvisorRecoveryLoadResult } from "@/lib/manhuaAdvisorSession";
 import { advisorRewriteCandidateSchema, buildTemplatePlanQuestion, buildTemplateRewriteQuestion, parseAdvisorRewrite, parseAdvisorTemplatePlans, formatAdvisorRewriteAnswer, TEMPLATE_PLAN_QUESTION, TEMPLATE_REWRITE_QUESTION, type AdvisorRewriteCandidate, type AdvisorTemplatePlan } from "@/lib/manhuaAdvisorTemplates";
 import { downloadAdvisorBackup, listAdvisorBackups, type AdvisorBackupEntry } from "@/lib/manhuaAdvisorBackups";
@@ -409,10 +411,11 @@ export default function ManhuaCreativeAdvisorPanel(props: {
         </section>
         </details>
         {!userId && <p className="text-sm text-amber-100">登录后可以咨询当前项目。<a href="/login" className="ml-2 underline">去登录</a></p>}
+        {project?.generationSteps && <ManhuaAdvisorGenerationMonitor steps={project.generationSteps} onLocate={onLocate ? phase => onLocate({ id: "generation-step", phase, blocking: false, text: "查看生成步骤" }) : undefined} />}
         {project && <section aria-label="当前项目检查" className="border-l-2 border-cyan-400/65 pl-3">
           <h3 className="text-xs font-semibold text-white/85">当前项目检查 · 不消耗问答次数</h3>
           {project.issues.length ? project.issues.map((issue) => <div key={issue.id} className="mt-2 flex items-start gap-2 text-xs leading-5">
-            <span className="flex-1 text-amber-100/85">{issue.text}</span>
+            <div className="flex-1 text-white/75"><p>{issue.blocking ? "未通过" : "建议"}：{issue.text}</p><p className="text-white/55">处理办法：{manhuaIssueResolutionZh(issue)}</p></div>
             {onLocate && <button type="button" onClick={() => onLocate(issue)} className="shrink-0 rounded border border-white/15 px-2 text-cyan-100 hover:bg-cyan-500/15">去处理</button>}
           </div>) : <p className="mt-2 text-xs text-white/55">未发现上述结构缺项；尚未验证画面、声音或成片质量。</p>}
         </section>}
