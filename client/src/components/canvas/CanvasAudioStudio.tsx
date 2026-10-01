@@ -1434,7 +1434,7 @@ export function CanvasAudioStudioView({
       </section>
       {savedPromptAudio.issue ? <p role="alert" className="text-xs text-amber-200">{savedPromptAudio.issue}</p> : null}
       {savedPromptAudio.studio && savedPromptAudioDiffers(state, savedPromptAudio.studio) ? <section aria-label="保存全文与音轨对白核对" className="rounded border border-amber-400/30 p-3 text-xs text-amber-100">
-        <p>当前音轨台词或说话人与保存全文不一致。旧候选及采用记录保留；请核对原声绑定，不要重复生成。</p>
+        <p>当前音轨台词、人物绑定或秒窗与保存全文不一致。旧候选及采用记录保留；请核对原声绑定，不要重复生成。</p>
         <button type="button" className={buttonClass} disabled={disabled || busy}
           onClick={() => {
             try {

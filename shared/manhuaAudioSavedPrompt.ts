@@ -1,17 +1,35 @@
 import { canvasAudioStudioSchema, createCanvasAudioCue, emptyCanvasAudioStudio, type CanvasAudioStudio } from "./canvasAudioStudio";
 
+import type { ManhuaCustomAssetRef } from "./manhuaCustomAssetRefs";
+
 type Character = { id: string; nameZh: string; aliasZh?: string; referenceAssetIds?: readonly string[] };
+
+/** 音轨身份只接明确人物认领；图片锁的名称推导不能作为音色身份依据。 */
+export function resolveSavedPromptAudioCharacters(characters: readonly Character[], refs: readonly ManhuaCustomAssetRef[]): Character[] {
+  return characters.map(character => ({
+    ...character,
+    referenceAssetIds: refs.filter(ref => ref.role === "character" && ref.reviewStatus !== "needs_review" && (
+      ref.claimedAnchorIds?.includes(character.id) ||
+      (ref.claimSource !== "manual" && ref.seedLibraryId === character.id)
+    )).map(ref => ref.id),
+  }));
+}
 
 /** 保存全文是对白来源；只识别明确秒窗与说话标记，不把音效或导演说明读成台词。 */
 export function createManhuaAudioFromSavedPrompt(prompt: string, durationSec: number, characters: readonly Character[] = []): CanvasAudioStudio {
   const studio = emptyCanvasAudioStudio();
+  const dialoguePattern = /\{对白\/([^：:}]+)[：:]\s*(\d+(?:\.\d+)?)秒开口，\s*[“「]([^”」]+)[”」]|(@角色\d+)说[“「]([^”」]+)[”」]/g;
+  const unparsedDialogue = prompt.replace(dialoguePattern, "");
+  if (/(?:说|道|问|答|喊|念|对白|台词|旁白|画外音)\s*[：:]?\s*[“「『"]|(?:对白|台词|旁白|画外音)\s*[：:]\s*\S/.test(unparsedDialogue)) {
+    throw new Error("保存全文含无法完整读取的对白格式，请使用明确角色标记与独立秒窗；旧音轨保留，未漏句。 ");
+  }
   const windows = Array.from(prompt.matchAll(/^(?:###\s*)?(\d+(?:\.\d+)?)\s*[—–-]\s*(\d+(?:\.\d+)?)\s*(?:s\b|秒)\s*[:：]?/gm));
   const assetIds = new Map(Array.from(prompt.matchAll(/(@角色\d+)\|id=([^|\s]+)\|/g), match => [match[1]!, match[2]!]));
   for (let index = 0; index < windows.length; index++) {
     const window = windows[index]!;
     const body = prompt.slice(window.index! + window[0].length, windows[index + 1]?.index ?? prompt.length).split(/\n【(?:原稿声音|创作策略|垫图|资产)/)[0]!;
     const endSec = Number(window[2]);
-    const lines = Array.from(body.matchAll(/\{对白\/([^：:}]+)[：:]\s*(\d+(?:\.\d+)?)秒开口，\s*[“「]([^”」]+)[”」]|(@角色\d+)说[“「]([^”」]+)[”」]/g));
+    const lines = Array.from(body.matchAll(dialoguePattern));
     if (lines.length > 1) throw new Error("保存全文的同一秒窗有多句对白，请明确每句独立起止秒；旧音轨保留。");
     for (const line of lines) {
       const tag = (line[1] || line[4])!.trim();
@@ -34,7 +52,9 @@ export function createManhuaAudioFromSavedPrompt(prompt: string, durationSec: nu
 
 export function savedPromptAudioDiffers(studio: CanvasAudioStudio, saved: CanvasAudioStudio): boolean {
   const active = studio.cues.filter(cue => cue.kind === "dialogue" && cue.enabled !== false);
-  return active.length !== saved.cues.length || active.some((cue, index) => cue.textZh !== saved.cues[index]?.textZh || cue.speakerZh !== saved.cues[index]?.speakerZh);
+  return active.length !== saved.cues.length || active.some((cue, index) => cue.textZh !== saved.cues[index]?.textZh || cue.speakerZh !== saved.cues[index]?.speakerZh
+    || cue.speakerId !== saved.cues[index]?.speakerId
+    || cue.startSec !== saved.cues[index]?.startSec || cue.endSec !== saved.cues[index]?.endSec);
 }
 
 /** 仅由用户显式操作更新未生成草稿；有原声/候选/在途任务时拒绝覆盖。音乐与音效原样保留。 */

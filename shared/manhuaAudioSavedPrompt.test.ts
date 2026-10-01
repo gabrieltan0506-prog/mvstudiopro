@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
-import { createManhuaAudioFromSavedPrompt, savedPromptAudioDiffers, syncUnproducedAudioToSavedPrompt } from "./manhuaAudioSavedPrompt";
+import { createManhuaAudioFromSavedPrompt, resolveSavedPromptAudioCharacters, savedPromptAudioDiffers, syncUnproducedAudioToSavedPrompt } from "./manhuaAudioSavedPrompt";
 import { createCanvasAudioCue, emptyCanvasAudioStudio } from "./canvasAudioStudio";
 const fixture = (segment: number) => readFileSync(new URL(`../client/src/lib/__testutils__/fixtures/manhua-closure-1001/segment-${segment}.txt`, import.meta.url), "utf8");
 const characters = [{id:"cust_mtn5ko0y_01qwd",nameZh:"墨屠"},{id:"cust_mu3cnj74_qpe4b",nameZh:"阿菁"},{id:"cust_mu3cqjqb_nbgh1",nameZh:"曹三"},{id:"cust_mu3cyr8i_6y12m",nameZh:"娘"},{id:"cust_mu3cdav2_xshp2",nameZh:"坐堂先生",aliasZh:"先生"}];
@@ -44,4 +44,41 @@ it("角色cust图片通过明确seedLibrary桥绑定wa人物身份，不按标�
  const result=createManhuaAudioFromSavedPrompt(fixture(1),29,canonical);
  expect(result.cues.map(c=>c.speakerId)).toEqual(["wa_娘","wa_阿菁","wa_曹三","wa_阿菁","wa_曹三"]);
  expect(()=>createManhuaAudioFromSavedPrompt(fixture(1),29,canonical.map(c=>({...c,referenceAssetIds:[]})))).toThrow("未唯一绑定");
+});
+
+
+it.each([{ speakerId: "other-role" }, { startSec: 6.4 }, { endSec: 9.3 }])("同句同名仍识别人物ID或秒窗变化：%j", patch => {
+ const saved=createManhuaAudioFromSavedPrompt(fixture(4),24,characters);
+ const current={...saved,cues:saved.cues.map((cue,index)=>index===1?{...cue,...patch}:cue)};
+ expect(savedPromptAudioDiffers(current,saved)).toBe(true);
+ expect(savedPromptAudioDiffers(saved,saved)).toBe(false);
+});
+
+it("音轨桥只取明确seed或人工人物ID认领，拒绝名称推导及已清除认领", async()=>{
+ const {buildManhuaAssetLockRegistry}=await import("./manhuaAssetLockRegistry");
+ const anchor={id:"wa_ajing",role:"character" as const,nameZh:"阿菁",lookZh:"",promptZh:""};
+ const ref={id:"cust_same_label",role:"character" as const,url:"https://test.invalid/ajing.png",labelZh:"阿菁"};
+ const canon={characters:[anchor],locations:[],props:[],episodeMainSceneId:{}};
+ // 真实图片锁可以按名称找到图；这种推导不等于明确音轨身份认领。
+ expect(buildManhuaAssetLockRegistry({assetCanon:canon,customRefs:[ref]}).byRole.character[0]?.seedLibraryId).toBe(anchor.id);
+ const prompt='【第1段·5s】\n0–5s：@角色1说「原句。」\n【资产·Image对照】\n@角色1|id=cust_same_label|label=阿菁|kind=角色';
+ expect(()=>createManhuaAudioFromSavedPrompt(prompt,5,resolveSavedPromptAudioCharacters([anchor],[ref]))).toThrow("未唯一绑定");
+ const seeded={...ref,seedLibraryId:anchor.id};
+ expect(createManhuaAudioFromSavedPrompt(prompt,5,resolveSavedPromptAudioCharacters([anchor],[seeded])).cues[0]?.speakerId).toBe(anchor.id);
+ const claimed={...ref,claimSource:"manual" as const,claimedAnchorIds:[anchor.id]};
+ expect(createManhuaAudioFromSavedPrompt(prompt,5,resolveSavedPromptAudioCharacters([anchor],[claimed])).cues[0]?.speakerId).toBe(anchor.id);
+ expect(()=>createManhuaAudioFromSavedPrompt(prompt,5,resolveSavedPromptAudioCharacters([anchor],[{...seeded,claimSource:"manual",claimedAnchorIds:[]}]))).toThrow("未唯一绑定");
+});
+
+
+it.each([
+ '【第1段·5s】\n0–5s：娘说「原句」，其他人无对白。',
+ '【第1段·10s】\n0–5s：{对白/娘：0秒开口，“第一句”。}\n5–10s：娘说「第二句」。',
+ '【第1段·5s】\n0–5s：对白：原句。其他人无对白。',
+])("未支持格式不得静默漏句或借无对白声明清空：%s",prompt=>{
+ expect(()=>createManhuaAudioFromSavedPrompt(prompt,10,characters)).toThrow("无法完整读取的对白格式");
+});
+
+it("明确无对白稿仍可保留零句，不制造旧分镜对白",()=>{
+ expect(createManhuaAudioFromSavedPrompt('【第1段·5s】\n0–5s：人物走过，禁止对白。',5,characters).cues).toEqual([]);
 });

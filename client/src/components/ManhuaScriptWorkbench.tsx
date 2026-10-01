@@ -220,6 +220,7 @@ import {
   resolveManhuaVoiceExtractWindow,
   type ManhuaCharacterVoiceLock,
 } from "@shared/manhuaCharacterVoiceLock";
+import { resolveSavedPromptAudioCharacters } from "@shared/manhuaAudioSavedPrompt";
 import { type ManhuaAudioReferenceLock } from "@shared/manhuaAudioReferenceLock";
 import type { ManhuaDirectorStrategyContract } from "@shared/manhuaDirectorStrategy";
 import {
@@ -5468,7 +5469,7 @@ clipPromptReviewOpen ? (
                 <button type="button" onClick={() => setActiveSecondaryTool(null)}>收起</button>
               </div>
               {activeClip ? <CanvasAudioStudio key={activeClip.id} block={activeClip} compact={false} timelineDurationSec={activeSegment?.durationSec} sourceShots={activeSegment?.shots} dialogueSources={blocks}
-                characters={assetCanon?.characters.map(character => ({ id: character.id, nameZh: character.nameZh, aliasZh: character.aliasZh, referenceAssetIds: assetLockRegistry.byRole.character.filter(slot => slot.seedLibraryId === character.id || slot.id === character.id).map(slot => slot.id) }))}
+                characters={assetCanon ? resolveSavedPromptAudioCharacters(assetCanon.characters, consumableCustomAssetRefs) : undefined}
                 disabled={Boolean(factoryBusy) || activeClip.status === "running" || activeClip.videoTaskStatus === "queued"}
                 onChange={studio => onUpdateClipAudioStudio(activeClip.id, studio)}
                 onMasterTrackReady={onSetClipSegmentReference ? (entry) => onSetClipSegmentReference(activeClip.id, "master", entry) : undefined}
