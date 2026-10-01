@@ -106,9 +106,9 @@ describe("漫剧成片提示词唯一出站编译器", () => {
         prompt: "人物走近",
         engine: "minimax-hailuo-3",
         durationSec: 10,
-        videoRefCount: 1,
+        videoRefCount: 4,
       }),
-    ).toThrow(/参考视频上限 0/);
+    ).toThrow(/参考视频上限 3/);
     expect(() =>
       compileManhuaVideoPromptForOutbound({
         prompt: "人物走近",

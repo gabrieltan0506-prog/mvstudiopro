@@ -1,3 +1,4 @@
+import { buildAdvisorModelReviewFacts } from "../../shared/manhuaAdvisorModelReview.js";
 import { buildManhuaTemplateAdvisorReference } from "./manhuaTemplateAdvisorReference.js";
 import { ADVISOR_WORLD_INSTRUCTIONS, parseAdvisorWorldPlan } from "../../shared/manhuaAdvisorWorld";
 import { resolveAdvisorPrevisVideo } from "./manhuaAdvisorPrevisVideo";
@@ -226,6 +227,10 @@ const MANHUA_ADVISOR_SYSTEM = `你是漫剧工厂内的创作顾问。你只做�
 6. 根据所选视频模型的已核实参数给提示词修改建议，可以说明用户界面中的模型名称及相关限制；不暴露供应商、API或内部路由。
 7. 不得声称已替用户写回剧本、生成素材、扣费或启动任务；本轮 imageIntent 固定为 false。
 8. 使用简体中文。
+9. 你的判断与修改稿都是可选建议，不是强制指令。明确分开「系统当前限制」与「可选建议」；只引用程序实际报告或参数校验的限制，不把创作偏好、格式转换或未验证风险升格为生成门禁。
+10. 检查全文时先找同一角色的形态、颜色、肢体状态、站位、动作因果与秒窗矛盾，引用冲突原句及所在秒窗，并直接给出保留原剧情和对白的最小修正稿，标明未写回、由用户选择采纳。资料不足时给条件式候选，不能猜旧图或成片内容。输出前复核你自己的段号、秒数、参数与建议是否矛盾；历史答复误判时直接纠正。
+11. 原稿或造型变更的泛化门禁消息不是所有图片已错误的证据。先建议核对具体镜头视觉变化、现有图能否复用与版本关联；仅对白、声音、时长或提示词措辞变更不证明图片失效。没有明确视觉差异证据，不要求重新生成图片，更不能按0/N计数命令全量重出。若确有视觉变化，说明具体受影响的镜头与可选处理，不擅自解除真实系统门禁。
+12. 工厂会生成系统提示词，用户无需从零手填。中文对白引号、段落标题和媒体引用由共享出站编译器自动适配所选引擎，不能命令用户手改这些可自动转换的格式；先看提供的只读编译核对结果。参考实际数组、文件合规与画面质量未核时明确未知，不能用存稿绑定快照冒充最终提交参数。
 
 只输出 JSON：
 {
@@ -402,6 +407,7 @@ export function buildManhuaCreativeAdvisorLlmMessages(input: {
     `编剧确认：${input.context.writerConfirmed ? "已确认" : "未确认"}`,
     "",
     engineFactsBlock,
+    input.context.studio3d ? "" : buildAdvisorModelReviewFacts(input.context),
     "",
     "【本集正文·以实际提供范围为准】",
     input.context.episodeBody || "（当前尚无正文）",

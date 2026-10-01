@@ -35,7 +35,7 @@ export type AdvisorIssue = {
   blocking: boolean;
 };
 
-export type AdvisorVideoPromptDraft = { segmentIndex: number; blockId: string; prompt: string };
+export type AdvisorVideoPromptDraft = { segmentIndex: number; blockId: string; prompt: string; settings?: ManhuaCreativeAdvisorContext["videoPromptReview"] };
 
 /** 从已保存的节点读取全文供审稿；不是已编译的实际出站内容或成片。 */
 export function resolveAdvisorVideoPromptContext(input: {
@@ -44,7 +44,7 @@ export function resolveAdvisorVideoPromptContext(input: {
   drafts: AdvisorVideoPromptDraft[];
   selectedSegmentIndex?: number;
 }): ManhuaCreativeAdvisorContext {
-  if (!/提示[词詞]|prompt/i.test(input.question)) return input.context;
+  if (!/提示[词詞]|prompt|检查|檢查|核对|核對/i.test(input.question)) return input.context;
   const ordinal = input.question.match(/第\s*([0-9]+|[一二三四五六七八九十])\s*段/);
   const chinese = "一二三四五六七八九十";
   const segmentIndex = ordinal ? (/^\d+$/.test(ordinal[1]!) ? Number(ordinal[1]) : chinese.indexOf(ordinal[1]!) + 1) : input.selectedSegmentIndex;
@@ -52,7 +52,7 @@ export function resolveAdvisorVideoPromptContext(input: {
   const candidates = input.drafts.filter(draft => draft.segmentIndex === segmentIndex);
   if (candidates.length > 1) throw new Error(`第 ${segmentIndex} 段有多个视频节点，请先确认要检查的节点。`);
   const draft = candidates[0];
-  if (!draft?.prompt.trim()) return { ...input.context, shotSummary: `第 ${segmentIndex} 段没有可读取的已保存视频提示词；不得拿其他段或旧分镜摘要当成本段全文。` };
+  if (!draft?.prompt.trim()) return { ...input.context, shotSummary: `第 ${segmentIndex} 段没有可读取的已保存视频提示词；不得拿其他段或旧分镜摘要当成本段全文。`, videoPromptReview: undefined };
   const seconds = parseManhuaClipTargetDurationSec(draft.prompt);
   const summary = [
     `【当前保存的第 ${segmentIndex} 段视频提示词·全文】`,
@@ -60,7 +60,7 @@ export function resolveAdvisorVideoPromptContext(input: {
     draft.prompt,
   ].join("\n");
   if (summary.length > LIMITS.shotSummaryChars) throw new Error(`第 ${segmentIndex} 段提示词超过顾问全文读取上限，本次未发送；不能用节选冒充全文审查。`);
-  return { ...input.context, shotSummary: summary };
+  return { ...input.context, shotSummary: summary, videoPromptReview: draft.settings };
 }
 
 export type AdvisorVideoModelResolution = {
@@ -420,6 +420,14 @@ export function buildManhuaAdvisorProject(input: {
       segmentIndex: resolveClipLocalSegmentIndex(block.id, block.prompt, input.episodeIndex),
       blockId: block.id,
       prompt: block.prompt || "",
+      settings: {
+        blockId: block.id,
+        segmentIndex: resolveClipLocalSegmentIndex(block.id, block.prompt, input.episodeIndex),
+        prompt: block.prompt || "",
+        videoModel: block.videoModel,
+        aspectRatio: block.aspectRatio,
+        ...(block.videoResolution ? { resolution: block.videoResolution } : {}),
+      },
     })),
     ...(selected ? { selectedSegmentIndex: selected.segmentIndex } : {}),
   };
