@@ -55,6 +55,7 @@ export const canvasAudioCueSchema = z.object({
   fadeInSec: z.number().finite().min(0).max(30),
   fadeOutSec: z.number().finite().min(0).max(30),
   takes: z.array(canvasAudioTakeSchema).max(100),
+  separateReference: z.object({ take: canvasAudioTakeSchema, sourceKey: text(16000) }).optional(),
   selectedTakeId: text(120).optional(),
   approved: z.boolean(),
   enabled: z.boolean().default(true),
@@ -75,6 +76,7 @@ export const canvasMusicDraftSchema = z.object({
 export type CanvasMusicDraft = z.infer<typeof canvasMusicDraftSchema>;
 export const canvasAudioStudioSchema = z.object({
   schemaVersion: z.literal(1),
+  referenceMode: z.enum(["separate", "dialogue", "master"]).optional(),
   cues: z.array(canvasAudioCueSchema).max(100),
   musicJobIds: z.array(text(120).min(1)).max(100),
   musicDraft: canvasMusicDraftSchema.optional(),
@@ -154,17 +156,72 @@ export function validateCanvasAudioCue(cue: CanvasAudioCue, durationSec = 30): s
   return issues;
 }
 
-/** 仅约束本次明确采用的片段；没有音轨编辑数据时完全保留旧出片逻辑。 */
+/** 对白与配乐各自投料；旧的合听/母轨不代替独立角色绑定。 */
+export function usesSeparateCanvasAudio(studio: CanvasAudioStudio | undefined): boolean {
+  if (!studio || studio.referenceMode === "master") return false;
+  return studio.referenceMode === "dialogue" || studio.referenceMode === "separate";
+}
+export function canvasAudioNeedsProcessing(cue: CanvasAudioCue): boolean {
+  return cue.volume !== 1 || cue.fadeInSec > 0 || cue.fadeOutSec > 0 ||
+    (cue.kind !== "dialogue" && Boolean(cue.mix?.silenceWindows.length || (cue.mix?.duckUnderDialogue && cue.mix.duckVolume < 1)));
+}
+/** BGM独立参考使用整曲来源，不把段级裁切候选当整曲。 */
+export function canvasAudioReferenceSource(cue: CanvasAudioCue) {
+  const take = getSelectedAudioTake(cue);
+  if (!take) throw new Error("音轨缺少已采用原声");
+  return cue.kind === "bgm" && cue.source ? cue.source : take;
+}
+export function canvasSeparateReferenceKey(cue: CanvasAudioCue, cues: readonly CanvasAudioCue[]): string {
+  const source = canvasAudioReferenceSource(cue);
+  return JSON.stringify([canvasAudioCueInputKey(cue), cue.selectedTakeId, source.gcsUri, source.durationSec,
+    cue.startSec, cue.endSec, cue.volume, cue.fadeInSec, cue.fadeOutSec, cue.mix,
+    cue.mix?.duckUnderDialogue ? cues.filter(c => c.enabled && c.approved && c.kind === "dialogue")
+      .map(c => [c.id, c.startSec, getSelectedAudioTake(c)?.durationSec]) : []]);
+}
+export function canvasSeparateReference(cue: CanvasAudioCue, cues: readonly CanvasAudioCue[]) {
+  if (!canvasAudioNeedsProcessing(cue)) return canvasAudioReferenceSource(cue);
+  if (cue.separateReference?.sourceKey !== canvasSeparateReferenceKey(cue, cues)) {
+    throw new Error(`${cue.speakerZh || cue.labelZh || "音轨"}：请先按原参数准备独立音轨；不会合并对白与BGM。本次未提交。`);
+  }
+  const reference = cue.separateReference.take;
+  if (Math.abs(reference.durationSec - canvasAudioReferenceSource(cue).durationSec) > 0.02) {
+    throw new Error("独立音轨时长与整条原件不一致，本次未提交");
+  }
+  return reference;
+}
+
+/** 实际供应商累计容量；分路不是每条各有30秒额度。 */
+export function assertCanvasSeparateAudioCapacity(cues: readonly CanvasAudioCue[], extraUrls: readonly string[] = [], maxDurationSec = 30): void {
+  const sources = new Map<string, number>();
+  for (const cue of cues.filter(c => c.enabled)) {
+    const source = canvasAudioReferenceSource(cue);
+    const duration = source.durationSec;
+    if (duration < 2 || duration > maxDurationSec) throw new Error(`独立参考音频须为2–${maxDurationSec}秒，原件${duration.toFixed(3)}秒；不会自动裁短`);
+    const prepared = cue.separateReference;
+    const identity = canvasAudioNeedsProcessing(cue)
+      ? (prepared?.sourceKey === canvasSeparateReferenceKey(cue, cues) ? prepared.take.gcsUri : `${source.gcsUri}:${canvasSeparateReferenceKey(cue, cues)}`)
+      : source.gcsUri;
+    sources.set(identity, duration);
+  }
+  const total = Array.from(sources.values()).reduce((sum, duration) => sum + duration, 0);
+  if (total > maxDurationSec + 1e-6) throw new Error(`对白与BGM独立参考累计${total.toFixed(3)}秒，超过Seedance参考音频累计${maxDurationSec}秒上限；须调整投料方式，不会自动裁短或合并原声。本次未提交。`);
+  if (extraUrls.some(url => !sources.has(url))) throw new Error("额外声音参考时长尚未核实，无法确认累计容量；本次未提交");
+}
+
 export function compileCanvasAudioBindings(input: {
   studio?: CanvasAudioStudio;
   existingAudioUrls: readonly string[];
   durationSec: number;
+  maxAudioReferenceDurationSec?: number;
 }): { audioUrls: string[]; promptAppendix: string } {
   const base = Array.from(new Set(input.existingAudioUrls));
   if (!input.studio?.cues.length) return { audioUrls: base, promptAppendix: "" };
   const studio = canvasAudioStudioSchema.parse(input.studio);
-  const cues = studio.cues.filter(cue => cue.enabled).sort((a, b) => a.startSec - b.startSec);
-  if (!cues.length) return { audioUrls: base, promptAppendix: "" };
+  const cues = studio.cues.filter(cue => cue.enabled && (studio.referenceMode !== "dialogue" || cue.kind !== "bgm")).sort((a, b) => a.startSec - b.startSec);
+  if (!cues.length) {
+    if (studio.referenceMode === "dialogue") throw new Error("本段没有启用的对白或音效；BGM保留在后期，不会代替对白投料");
+    return { audioUrls: base, promptAppendix: "" };
+  }
   for (const cue of cues) {
     const errors = validateCanvasAudioCue(cue, input.durationSec);
     if (!cue.approved) errors.unshift("尚未确认采用");
@@ -177,19 +234,21 @@ export function compileCanvasAudioBindings(input: {
       throw new Error("对白音频发生重叠，请先调整逐句起止秒");
     }
   }
-  const audioUrls = Array.from(new Set([...base, ...cues.map(cue => getSelectedAudioTake(cue)!.gcsUri)]));
+  const separate = usesSeparateCanvasAudio(studio);
+  if (separate && input.maxAudioReferenceDurationSec !== undefined) assertCanvasSeparateAudioCapacity(cues, base, input.maxAudioReferenceDurationSec);
+  const referenceFor = (cue: CanvasAudioCue) => separate ? canvasSeparateReference(cue, cues) : getSelectedAudioTake(cue)!;
+  const audioUrls = Array.from(new Set([...base, ...cues.map(cue => referenceFor(cue).gcsUri)]));
   if (audioUrls.length > 10) throw new Error(`本次有 ${audioUrls.length} 条参考音频，超过 10 条上限，请明确减少选用片段`);
   const rows = cues.map(cue => {
-    const take = getSelectedAudioTake(cue)!;
-    const tag = `@audio${audioUrls.indexOf(take.gcsUri) + 1}`;
+    const tag = `@audio${audioUrls.indexOf(referenceFor(cue).gcsUri) + 1}`;
     const window = `${cue.startSec.toFixed(3)}–${cue.endSec.toFixed(3)}秒`;
     return cue.kind === "dialogue"
       ? `${window}，${cue.shotZh}。${tag}仅对应${cue.speakerZh}${cue.voiceStateZh ? `（${cue.voiceStateZh}）` : ""}的对白{${cue.textZh}}；在${cue.startSec.toFixed(3)}秒开始对应音频，按该音频发音同步开口，音频结束即闭口，其他角色不说此句；不继承为其他声音状态。`
       : cue.kind === "sfx"
         ? `${window}，${cue.shotZh}。<音效：${tag}对应${cue.labelZh || cue.shotZh}，从${cue.startSec.toFixed(3)}秒触发，不作为对白或配乐，不提前虚构画面中未发生的事件。>`
-      : `${window}，${cue.shotZh}。（从${cue.startSec.toFixed(3)}秒播放${tag}这条已裁好的音乐片段，音频结束或到${cue.endSec.toFixed(3)}秒停止；不循环、不跨段延长、不作为角色对白。）`;
+      : `${window}，${cue.shotZh}。（从${cue.startSec.toFixed(3)}秒播放${tag}${separate ? "这条独立音乐参考（整曲原件，保持其独立配乐身份）" : "这条已裁好的音乐片段"}，音频结束或到${cue.endSec.toFixed(3)}秒停止；不循环、不跨段延长、不作为角色对白。）`;
   });
-  return { audioUrls, promptAppendix: `【已确认的逐段声音时间表】\n${rows.join("\n")}\n对白、配乐按上述角色和时间窗分别使用；已给定音效按事件和时间窗使用，未提供的声音不冒充已制作。` };
+  return { audioUrls, promptAppendix: `【已确认的逐段声音时间表】\n${rows.join("\n")}\n${studio.referenceMode === "dialogue" ? "本次仅提供对白及已选音效，BGM由后期叠加；生成视频不要添加背景音乐。\n" : ""}对白、配乐按上述角色和时间窗分别使用；已给定音效按事件和时间窗使用，未提供的声音不冒充已制作。` };
 }
 
 /** 混音用料完整身份；不包含会过期的试听URL，也不触发重新购买单条音频。 */
