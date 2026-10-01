@@ -36,6 +36,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: 限制本次 CI 镜像上传并发
+        # 仅调整本次 GitHub runner 的 Docker，不触碰生产机器。
+        run: |
+          sudo python3 - <<'PYTHON'
+          import json
+          from pathlib import Path
+          config = Path('/etc/docker/daemon.json')
+          data = json.loads(config.read_text()) if config.exists() else {}
+          data['max-concurrent-uploads'] = 1
+          config.write_text(json.dumps(data))
+          PYTHON
+          sudo systemctl restart docker
       - uses: docker/setup-buildx-action@v3
       - name: Fetch pre-deploy growth status
         run: |
@@ -47,10 +59,12 @@ jobs:
           done
           echo "Warning: failed to fetch pre-deploy growth status, continuing deploy"
       - uses: superfly/flyctl-actions/setup-flyctl@v1
-      - name: Authenticate Fly registry & build-push image
-        # Fly「flyctl auth docker」寫入的 Registry 口令約 5 分鐘有效（官方文檔）。
-        # 將 auth 緊鄰於 buildx --push；若 Registry 間歇性報錯（含 tls/access），在重試環內重新 auth。
-        # setup-flyctl 使用 @v1 避免上游 @master 行為漂移。
+      - name: Build image once into runner Docker
+        # 构建不消耗 Registry 认证有效期；只构建一次，失败时不执行上传或部署。
+        run: docker buildx build --platform linux/amd64 -t "$IMAGE_REF" --load .
+      - name: Authenticate Fly registry & push built image
+        # 每轮上传前重新认证；Docker daemon 顺序上传镜像层，避免并发大层上传。
+        # 此处只能缓解上传链路故障；Registry 持续 502 时必须明确失败。
         run: |
           set -e
           fly_auth_retries() {
@@ -63,25 +77,9 @@ jobs:
             return 1
           }
 
-          push_attempt=1
-          max_push_attempts=3
-          while [ "${push_attempt}" -le "${max_push_attempts}" ]; do
-            echo ">>> Registry push attempt ${push_attempt}/${max_push_attempts} (fresh flyctl auth docker before buildx --push)"
-
-            fly_auth_retries || exit 1
-
-            if docker buildx build --platform linux/amd64 -t "$IMAGE_REF" --push .; then
-              exit 0
-            fi
-
-            if [ "${push_attempt}" -lt "${max_push_attempts}" ]; then
-              echo "buildx push failed; waiting 30s before re-auth retry..."
-              sleep 30
-            fi
-            push_attempt=$((push_attempt + 1))
-          done
-
-          exit 1
+          # 不再用完整构建循环反复掩盖上传失败。
+          fly_auth_retries || exit 1
+          docker push "$IMAGE_REF"
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
       - name: Deploy prebuilt image
