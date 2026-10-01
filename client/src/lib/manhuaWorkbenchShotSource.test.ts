@@ -9,7 +9,7 @@ import * as layout from "@shared/manhuaSeedanceLayout";
 import * as dialogues from "@shared/manhuaShotDialoguePersist";
 import { buildWorkbenchShotsFromSegmentPlan } from "@shared/manhuaStoryDistill";
 import { isManhuaKeyartPixelLocked } from "@shared/manhuaAssetLockRegistry";
-import { isManhuaKeyartLookCurrent } from "@shared/manhuaKeyartLookState";
+import { isManhuaKeyartLookCurrent, isManhuaKeyartSourceCurrent } from "@shared/manhuaKeyartLookState";
 import { manhuaShotKeyartState } from "./manhuaShotKeyartState";
 
 const source = readFileSync(
@@ -78,6 +78,7 @@ function currentShotKeyartGate() {
     resolveKeyartShotIndex: workbench.resolveKeyartShotIndex,
     isManhuaKeyartPixelLocked,
     isManhuaKeyartLookCurrent,
+    isManhuaKeyartSourceCurrent,
     manhuaShotKeyartState,
   }) as (shots: Array<{ index: number }>, keyarts: Array<Record<string, unknown>>) => {
     target: number;
@@ -283,10 +284,10 @@ describe("工作台逐镜静帧出片门禁", () => {
     expect(gate(shotRows(18), frames)).toMatchObject({ target: 18, present: 17, ready: 17, countReady: false });
   });
 
-  it("有图但没垫图锁或来源过期不能算当前镜就绪", () => {
+  it("来源差异不吞掉已有锁图；没有垫图锁仍不算就绪", () => {
     const stale = { ...lockedFrame(2), manhuaKeyartSourceState: { required: "new", generatedFor: "old", generatedUrl: lockedFrame(2).outputUrl } };
     const result = gate(shotRows(3), [lockedFrame(1), stale, { ...lockedFrame(3), imageMode: "generate" }]);
-    expect(result).toMatchObject({ target: 3, present: 3, ready: 1, countReady: true, pixelLocked: false });
+    expect(result).toMatchObject({ target: 3, present: 3, ready: 2, countReady: true, pixelLocked: false });
   });
 
   it("没有当前原稿镜头时不因遗留图放行", () => {
@@ -301,7 +302,7 @@ describe("工作台逐镜静帧出片门禁", () => {
       shotSourceIsFallback,
       stillsCountReady: result.countReady,
       keyartsPixelLocked: result.pixelLocked,
-      staleLookStillCount: 0,
+      episodeKeyartReview: { error: "" },
     });
     expect(ready(true)).toBe(false);
     expect(ready(false)).toBe(true);

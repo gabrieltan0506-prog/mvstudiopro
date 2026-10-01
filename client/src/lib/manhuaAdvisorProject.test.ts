@@ -26,6 +26,13 @@ const pack: ManhuaWriterPack = {
 const base = { pack, bible: null, episodeIndex: 1, phase: "assets" as const, videoModel: "seedance-2.0-mini", writerConfirmed: false, refs: [], blocks: [] };
 
 describe("创作顾问的真实项目生产者", () => {
+  it("版本建议不成为顾问或制作主任务阻断，真实缺图仍报阻断", () => {
+    const version = buildManhuaAdvisorProject({ ...base, keyframeBlock: "静帧版本提示：18 张已有静帧版本未匹配，可使用现有图。" });
+    expect(version.issues.find(i => i.id === "keyframe")).toMatchObject({ blocking: false });
+    const missing = buildManhuaAdvisorProject({ ...base, keyframeBlock: "缺少本段关键静帧" });
+    expect(missing.issues.find(i => i.id === "keyframe")).toMatchObject({ blocking: true });
+  });
+
   it("检查第一段读取保存节点全文和29秒，不受选中第二段或旧34秒摘要影响", () => {
     const prompt = "【第1段·29s】\n当前保存的全文：娘说「阿菁……慢点」。";
     const result = buildManhuaAdvisorProject({ ...base, blocks: [

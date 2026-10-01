@@ -382,16 +382,16 @@ export function formatManhuaKeyframeImage2Prompt(input: {
     .join("\n");
 }
 
-/** 全集导戏单是否就绪：每段至少 3 条按秒节拍 */
+/** 按实际分镜自动生成的导戏单：每段有节拍即可，不强加固定镜头数量。 */
 export function evaluateManhuaCueSheetReady(input: {
   segmentCount: number;
   cueSheets: Array<{ segmentIndex: number; beatCount: number }>;
 }): boolean {
-  const need = Math.max(1, Math.floor(input.segmentCount));
-  if (need < 1) return false;
+  const need = Math.floor(input.segmentCount);
+  if (!Number.isFinite(need) || need < 1) return false;
   const bySeg = new Map(input.cueSheets.map((c) => [c.segmentIndex, c.beatCount]));
   for (let i = 1; i <= need; i++) {
-    if ((bySeg.get(i) || 0) < MANHUA_DISTILL_KEYARTS_PER_SEGMENT_MIN) return false;
+    if ((bySeg.get(i) || 0) < 1) return false;
   }
   return true;
 }

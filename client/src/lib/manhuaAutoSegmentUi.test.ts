@@ -117,12 +117,12 @@ describe("漫剧自动分段 UI 消费", () => {
     expect(uiSource).not.toContain("}, [focusEpisode, episodeVideoModel, segments]);");
   });
 
-  it("原稿图过期时，造型图回执有效也不能放行视频", () => {
+  it("版本差异保留核对状态，不再作为页面强制重出条件", () => {
     const current = { required: "new", generatedFor: "new", generatedUrl: "https://example.test/still.png" };
     const block = { outputUrl: current.generatedUrl, manhuaKeyartLookState: current, manhuaKeyartSourceState: { ...current, generatedFor: "old" } };
     expect(isManhuaWorkbenchKeyartCurrent(block)).toBe(false);
     expect(isManhuaWorkbenchKeyartCurrent({ ...block, manhuaKeyartSourceState: current })).toBe(true);
-    expect(omniSource).toContain("!isManhuaWorkbenchKeyartCurrent(candidate)");
+    expect(omniSource).not.toContain("!isManhuaWorkbenchKeyartCurrent(candidate)");
   });
 
   it("真实批量回调只确认一次、一次提交；旧稿签名零确认零提交", () => {
@@ -137,7 +137,7 @@ describe("漫剧自动分段 UI 消费", () => {
     const confirm = vi.fn((_message: string) => true);
     const runFactory = vi.fn();
     const handler = productionHandler(omniSource, "onGenerateMissingFragments", {
-      blocks, writerFocusEpisode: 1, activePilotVideoModel: "seedance-2.0",
+      blocks, blocksRef: { current: blocks }, getBlockEpisodeIndex: () => 1, resolveClipLocalSegmentIndex: () => 1, writerFocusEpisode: 1, activePilotVideoModel: "seedance-2.0",
       groupShotsIntoSegments, resolveShotsForEpisodeKeyarts, manhuaSegmentSelectionIdentity,
       canvasVideoClipCredits, toast: { message: vi.fn() }, window: { confirm },
       setFactoryRunScope: vi.fn(), ensureStudioSpawned: vi.fn(), factoryTopic: "墨菁传", runFactory,

@@ -80,3 +80,11 @@ export function remapManhuaKeyartLookOutput(
     return state;
   return { ...state, generatedUrl: mappedCurrentUrl };
 }
+
+/** 版本回执只能提示核对，不能据此强制重出图片或拒绝已有图的成片输入。 */
+export const MANHUA_KEYART_VERSION_ADVICE_PREFIX = "静帧版本提示：";
+export function manhuaKeyartVersionAdviceZh(count: number): string {
+  return count > 0
+    ? `${MANHUA_KEYART_VERSION_ADVICE_PREFIX}${count} 张已有静帧与当前原稿或造型的版本回执未匹配，可继续使用现有图片。建议核对实际画面；只有确认需要改变画面时才选择更新对应图片，不会自动重出。`
+    : "";
+}

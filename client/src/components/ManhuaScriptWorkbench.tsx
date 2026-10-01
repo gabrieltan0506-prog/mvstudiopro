@@ -35,7 +35,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNod
 import { ManhuaSecondaryStudioSurface as SecondaryStudioSurface } from "./canvas/ManhuaSecondaryStudioSurface";
 import { assertOpenAiImagePromptWithinLimit } from "@shared/manhuaKeyartPromptCompact";
 import type { BgmBriefModel } from "@shared/manhuaBgmBrief";
-import { isManhuaKeyartLookCurrent, isManhuaKeyartSourceCurrent } from "@shared/manhuaKeyartLookState";
+import { isManhuaKeyartLookCurrent, isManhuaKeyartSourceCurrent, manhuaKeyartVersionAdviceZh } from "@shared/manhuaKeyartLookState";
 import { buildWorkbenchShotsFromSegmentPlan } from "@shared/manhuaStoryDistill";
 import {
   AlertTriangle,
@@ -886,7 +886,7 @@ export function summarizeManhuaCurrentShotKeyarts(
     const keyart = firstKeyartByShot.get(index);
     if (!keyart || !keyartOutputUrl(keyart)) continue;
     present += 1;
-    if (manhuaShotKeyartState(manhuaShotKeyartInputOf(keyart)) === "ready") ready += 1;
+    if (manhuaShotKeyartInputOf(keyart).pixelLocked) ready += 1;
   }
   const target = shots.length;
   return {
@@ -1786,10 +1786,6 @@ export default function ManhuaScriptWorkbench({
     }
   }, [activePhase, completedKeyartShotKey, factoryBusy, focusEpisode, shots]);
   const staleLookStillCount = episodeKeyarts.filter((block) => !isManhuaWorkbenchKeyartCurrent(block)).length;
-  const staleKeyartShotIndexes = Array.from(new Set(episodeKeyarts
-    .filter((block) => !isManhuaWorkbenchKeyartCurrent(block))
-    .map((block) => resolveKeyartShotIndex(block.id, block.prompt))
-    .filter((index) => index != null && index > 0))).sort((a, b) => a! - b!);
   const keyart = episodeKeyarts[0];
   const episodeVideoLabelZh = "视频制作";
   const segments = useMemo(
@@ -1847,9 +1843,9 @@ export default function ManhuaScriptWorkbench({
   const currentStillReady = currentShotKeyarts.ready;
   const expectedStillCount = currentStillTarget;
   const stillsCountReady = currentShotKeyarts.countReady;
-  /** 有图仍需垫图改图锁定且来源现行；缺镜另由 countReady 拦截。 */
+  /** 有图仍需垫图改图锁定；版本差异另作建议，缺镜由 countReady 拦截。 */
   const keyartsPixelLocked = currentShotKeyarts.pixelLocked;
-  const stillsReadyEnough = !shotSourceIsFallback && stillsCountReady && keyartsPixelLocked && staleLookStillCount === 0;
+  const stillsReadyEnough = !shotSourceIsFallback && stillsCountReady && keyartsPixelLocked && !episodeKeyartReview.error;
 
   const totalSec = workbenchShotTotalSec(shots, episodeVideoModel);
   /** 本集容量模式与对照：超容量且为 block 模式时，生成入口会在扣费前被拦（runFactory 同源） */
@@ -2500,7 +2496,7 @@ export default function ManhuaScriptWorkbench({
         sourceEndSec: seg.sourceEndSec,
         stillReady: withImage.length,
         // 有图但没走垫图改图 → 不能出成片，需重出该镜静帧
-        unlockedCount: withImage.filter((b) => b && (!isManhuaKeyartPixelLocked(b) || !isManhuaWorkbenchKeyartCurrent(b))).length,
+        unlockedCount: withImage.filter((b) => b && !isManhuaKeyartPixelLocked(b)).length,
         clip: segClip,
         // 段封面用段内首张已出静帧；缺图留占位，不挂假图
         thumb: withImage.length ? keyartOutputUrl(withImage[0]) : "",
@@ -3248,9 +3244,7 @@ export default function ManhuaScriptWorkbench({
     : !stillsCountReady
       ? "请先出齐本段所需关键静帧（按原镜一镜一张，尾段可少于 3 张）"
       : !keyartsPixelLocked
-        ? episodeKeyartReview.error || (staleLookStillCount
-          ? `${staleKeyartShotIndexes.length ? `第 ${staleKeyartShotIndexes.join("、")} 镜` : "本集"}静帧版本未通过核对。旧图保留；先核对画面和造型，确有变化再重出对应镜头。`
-          : "关键静帧须垫图改图锁定（改图模式 + 定妆/场景参考图），纯文生成的图不能出成片")
+        ? episodeKeyartReview.error || "关键静帧须垫图改图锁定（改图模式 + 定妆/场景参考图），请核对对应参考图"
         : !productionProgress.keyartsReady
           ? "请先完成垫图改图锁定的关键静帧"
           : "请先确认按秒导戏单（静帧锁定后自动生成）";
@@ -3267,7 +3261,7 @@ export default function ManhuaScriptWorkbench({
         dialogueZh: segment.shots.filter((shot) => !shot.dialogueSuppressed).map((shot) => shot.dialogueZh || "").filter(Boolean).join("\n"),
       })),
       assetGap: formatManhuaAdvisorAssetGapZh({ characters: count("charsheet"), scenes: count("sceneplate"), props: count("propsheet") }),
-      keyframeBlock: videoBurnHint || "",
+      keyframeBlock: videoBurnHint || manhuaKeyartVersionAdviceZh(staleLookStillCount),
       pipeline3d: formatManhuaAdvisorPipeline3dZh({
         modelReady: characterRefs.filter((r) => r.model3d?.status === "succeeded").length,
         rigged: riggedAssetIds.length,
@@ -3276,7 +3270,7 @@ export default function ManhuaScriptWorkbench({
       }),
       lockedCharacterNames: assetLockRegistry.byRole.character.map((slot) => String(slot.labelZh || "").trim()).filter(Boolean),
     });
-  }, [onAdvisorSignalsChange, focusEpisode, segments, pendingSheetAnchors, customAssetRefs, videoBurnHint, riggedAssetIds, episodeClips, assetLockRegistry.byRole.character]);
+  }, [onAdvisorSignalsChange, focusEpisode, segments, pendingSheetAnchors, customAssetRefs, videoBurnHint, staleLookStillCount, riggedAssetIds, episodeClips, assetLockRegistry.byRole.character]);
   useEffect(() => () => { onAdvisorSignalsChange?.(null); }, [onAdvisorSignalsChange]);
 
   /** 门槛只用于点击时报错，禁止拿来把按钮静默变灰 */
@@ -3360,7 +3354,7 @@ export default function ManhuaScriptWorkbench({
     }
     const rowGate = explainManhuaClipActionGate({
       outlineComplete, assetGate, assetScriptStaleHintZh, factoryBusy,
-      videoBurnHintZh: row.unlockedCount ? "本段静帧已变更，请先重出静帧" : undefined,
+      videoBurnHintZh: row.unlockedCount ? "本段静帧缺少垫图锁，请核对参考图" : undefined,
       stillsReadyEnough: row.shotCount > 0 && row.stillReady >= row.shotCount,
       segmentCastMismatchHintZh: segmentIndex === activeSegNo ? segmentCastMismatchHintZh : undefined,
       segmentNoFaceLockHintZh: segmentIndex === activeSegNo ? segmentNoFaceLockHintZh : undefined,
@@ -4537,6 +4531,10 @@ clipPromptReviewOpen ? (
 
               </>
             );
+          })()}
+          {(() => {
+            const advice = manhuaKeyartVersionAdviceZh(episodeKeyarts.filter(b => row.shotIndexes.includes(resolveKeyartShotIndex(b.id, b.prompt)) && !isManhuaWorkbenchKeyartCurrent(b)).length);
+            return advice ? <p role="status" className="mt-1 text-[10px] text-amber-200">{advice}</p> : null;
           })()}
           {onPreviewClipOutbound && row.clip?.id ? (
             (() => {
@@ -9276,7 +9274,7 @@ clipPromptReviewOpen ? (
             ) : null}
             {episodeKeyartReview.error || staleLookStillCount ? (
               <p role="status" className="rounded-lg border border-amber-300/25 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-100">
-                {episodeKeyartReview.error || `${staleLookStillCount} 张静帧尚未按当前原稿或造型生成，请重出对应镜头；旧图保留，不会自动生成。`}
+                {episodeKeyartReview.error || manhuaKeyartVersionAdviceZh(staleLookStillCount)}
               </p>
             ) : null}
             <div className="flex flex-wrap gap-1 rounded-lg border border-white/10 bg-black/30 p-0.5">
@@ -9358,7 +9356,7 @@ clipPromptReviewOpen ? (
                           }`}
                           title={
                             keyartStale
-                              ? "原稿或造型已变更，旧图保留；请重出本镜后再生成成片"
+                              ? "版本回执待核对，旧图保留且可继续出片；是否更新图片由你决定"
                               : keyartUnlocked
                               ? "有图但未垫图改图（缺参考图或非改图模式），不能出成片；请重出该镜静帧"
                               : undefined

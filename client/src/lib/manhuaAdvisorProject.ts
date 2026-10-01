@@ -1,3 +1,4 @@
+import { MANHUA_KEYART_VERSION_ADVICE_PREFIX } from "@shared/manhuaKeyartLookState";
 import { MANHUA_PERFORMANCE_REVIEW_ZH } from "@shared/manhuaPerformanceCraft";
 import { resolveDirectorStyleBlocks, classifyManhuaDirectionSceneType } from "@shared/manhuaDirectionCanon";
 import { MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS as LIMITS, MANHUA_CREATIVE_ADVISOR_STRATEGY_IDS, type ManhuaCreativeAdvisorContext } from "@shared/manhuaCreativeAdvisor";
@@ -344,7 +345,8 @@ export function buildManhuaAdvisorProject(input: {
   }
   const keyframeBlockZh = clipSignal(input.keyframeBlock, LIMITS.signalChars);
   if (keyframeBlockZh) {
-    issues.push({ id: "keyframe", text: `关键静帧被拦：${keyframeBlockZh}`, phase: "storyboard", blocking: true });
+    const advisory = keyframeBlockZh.startsWith(MANHUA_KEYART_VERSION_ADVICE_PREFIX);
+    issues.push({ id: "keyframe", text: advisory ? keyframeBlockZh : `关键静帧被拦：${keyframeBlockZh}`, phase: "storyboard", blocking: !advisory });
   }
   const pipeline3dZh = clipSignal(input.pipeline3d, LIMITS.signalChars);
   const pipelineMatch = PIPELINE_3D_PATTERN.exec(pipeline3dZh);

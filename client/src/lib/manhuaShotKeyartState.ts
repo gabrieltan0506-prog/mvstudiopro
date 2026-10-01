@@ -15,7 +15,7 @@ export const MANHUA_SHOT_KEYART_STATE_ZH: Record<ManhuaShotKeyartState, string> 
   running: "出图中…",
   error: "出图失败，可单镜重出",
   unlocked: "有图但没垫图锁，不能出片",
-  stale: "原稿或造型已变更，需重出本镜",
+  stale: "版本待核对，可使用现有图",
   ready: "已锁图，可出片",
 };
 
