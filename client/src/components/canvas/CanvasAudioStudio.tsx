@@ -1,6 +1,7 @@
 import { gcsTransferUrl, isGcsTransferUrl } from "@/lib/gcsTransfer";
 import type { ComponentProps } from "react";
 import { findCanvasDialogueReuse, restoreCanvasDialogueCandidate } from "@/lib/canvasDialogueReuse";
+import { createManhuaAudioFromSavedPrompt, savedPromptAudioDiffers, syncUnproducedAudioToSavedPrompt } from "@shared/manhuaAudioSavedPrompt";
 import { createManhuaAudioFromShots } from "@shared/manhuaAudioFromShots";
 import { manhuaBgmArcFromShots } from "@shared/manhuaBgmArcFromShots";
 import { planCanvasDialogueTiming } from "@shared/canvasDialogueTimingPlan";
@@ -271,7 +272,7 @@ type Props = {
   timelineDurationSec?: number;
   sourceShots?: ManhuaWorkbenchShot[];
   dialogueSources?: readonly CanvasBlock[];
-  characters?: readonly { id: string; nameZh: string; aliasZh?: string }[];
+  characters?: readonly { id: string; nameZh: string; aliasZh?: string; referenceAssetIds?: readonly string[] }[];
   disabled?: boolean;
   onChange: (next: CanvasAudioStudioState) => boolean | void;
   /**
@@ -389,8 +390,8 @@ export function CanvasAudioStudioView({
     }
   };
   const requestedDurationSec = Number(
-    timelineDurationSec ??
-      parseManhuaClipTargetDurationSec(block.prompt) ??
+    parseManhuaClipTargetDurationSec(block.prompt) ??
+      timelineDurationSec ??
       block.manhuaAutoSegment?.durationSec ??
       15,
   );
@@ -402,14 +403,21 @@ export function CanvasAudioStudioView({
     ? `当前视频生成方式单次最多 ${modelMaxDurationSec} 秒，本段声音仍按完整 ${durationSec} 秒保留。请调整生成方式或重新分段；系统不会静默截断。`
     : "";
   const suggestedMusicPrompt = useMemo(() => manhuaBgmArcFromShots(sourceShots || [], durationSec), [sourceShots, durationSec]);
+  const savedPromptAudio = useMemo(() => {
+    if (!block.manhuaPromptEdit) return { studio: undefined, issue: "" };
+    try { return { studio: createManhuaAudioFromSavedPrompt(block.prompt, durationSec, characters), issue: "" }; }
+    catch (error) { return { studio: undefined, issue: error instanceof Error ? error.message : "保存全文对白读取失败" }; }
+  }, [block.manhuaPromptEdit, block.prompt, durationSec, characters]);
   const { initialAudio, sourceIssue } = useMemo(() => {
-    if (block.audioStudio || !sourceShots?.length) return { initialAudio: emptyCanvasAudioStudio(), sourceIssue: "" };
-    try { return { initialAudio: { ...createManhuaAudioFromShots(sourceShots, durationSec), musicDraft: {
+    if (block.audioStudio) return { initialAudio: emptyCanvasAudioStudio(), sourceIssue: "" };
+    if (savedPromptAudio.issue) return { initialAudio: emptyCanvasAudioStudio(), sourceIssue: savedPromptAudio.issue };
+    if (!sourceShots?.length && !savedPromptAudio.studio) return { initialAudio: emptyCanvasAudioStudio(), sourceIssue: "" };
+    try { return { initialAudio: { ...(savedPromptAudio.studio ?? createManhuaAudioFromShots(sourceShots || [], durationSec)), musicDraft: {
       prompt: suggestedMusicPrompt, durationSec: Math.max(10, Math.ceil(durationSec)),
       brief: null, model: bgmModels?.[0]?.model ?? "suno-v6" as const,
     } }, sourceIssue: "" }; }
     catch { return { initialAudio: emptyCanvasAudioStudio(), sourceIssue: "本段对白超出音轨容量或字段限制，未截断原文；请先拆分本段或检查原稿。" }; }
-  }, [block.audioStudio, sourceShots, durationSec, suggestedMusicPrompt, bgmModels]);
+  }, [block.audioStudio, sourceShots, durationSec, suggestedMusicPrompt, bgmModels, savedPromptAudio]);
   const state = block.audioStudio ?? initialAudio;
   useEffect(() => {
     if (!disabled && !block.audioStudio && (initialAudio.cues.length || initialAudio.musicDraft) && !sourceIssue) onChange(initialAudio);
@@ -1424,6 +1432,19 @@ export function CanvasAudioStudioView({
         <p className="mt-1 text-white/75">对白 {durationAudit.dialogueReadyCount}/{durationAudit.dialogueCount} 句已采用且放得进秒窗；背景音乐已覆盖 {durationAudit.bgmCoveredSec.toFixed(2)} 秒，未覆盖 {durationAudit.bgmUncoveredSec.toFixed(2)} 秒（可按剧情留白）。</p>
         {durationAudit.issuesZh.length ? <ul className="mt-2 list-disc space-y-1 pl-4 text-amber-100">{durationAudit.issuesZh.slice(0, 4).map((issue, i) => <li key={`${i}:${issue}`}>{issue}</li>)}{durationAudit.issuesZh.length > 4 ? <li>另有 {durationAudit.issuesZh.length - 4} 项，请逐条检查音轨</li> : null}</ul> : <p className="mt-1 text-emerald-100">已采用音频的时长与秒窗相符；仍须试听内容与口型。</p>}
       </section>
+      {savedPromptAudio.issue ? <p role="alert" className="text-xs text-amber-200">{savedPromptAudio.issue}</p> : null}
+      {savedPromptAudio.studio && savedPromptAudioDiffers(state, savedPromptAudio.studio) ? <section aria-label="保存全文与音轨对白核对" className="rounded border border-amber-400/30 p-3 text-xs text-amber-100">
+        <p>当前音轨台词或说话人与保存全文不一致。旧候选及采用记录保留；请核对原声绑定，不要重复生成。</p>
+        <button type="button" className={buttonClass} disabled={disabled || busy}
+          onClick={() => {
+            try {
+              const latest = current.current;
+              const saved = createManhuaAudioFromSavedPrompt(latest.block.prompt, latest.durationSec, characters);
+              latest.onChange(syncUnproducedAudioToSavedPrompt(latest.state, saved));
+              setError("");
+            } catch (error) { setError(error instanceof Error ? error.message : "同步失败，旧音轨保留"); }
+          }}>按保存全文更新未生成对白草稿</button>
+      </section> : null}
       {modelDurationIssue ? <p role="alert" className="text-xs text-amber-200">{modelDurationIssue}</p> : null}
       <details data-manhua-audio-editor open={editorOpen} onToggle={event => setEditorOpen(event.currentTarget.open)} className="rounded-xl border border-white/10 bg-black/10 p-2">
       <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold text-sky-100">编辑对白、配乐与音效</summary>

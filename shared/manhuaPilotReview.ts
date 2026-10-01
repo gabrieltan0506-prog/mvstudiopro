@@ -90,8 +90,7 @@ export function assertManhuaPilotSubmissionAllowed(
   durationSec: number
 ): void {
   if (submission.intent === "full") {
-    if (state.status !== "approved")
-      throw new Error("请先审阅并批准本集当前生成档的试片");
+    // 正式生成独立于可选试片审核；鉴权、报价和幂等由正式任务链校验。
     return;
   }
   if (submission.segmentIndex !== 1 || (durationSec !== 5 && durationSec !== 10)) {

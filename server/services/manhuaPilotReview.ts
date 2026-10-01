@@ -390,6 +390,8 @@ export async function prepareManhuaPilotSubmission(input: {
     input.submissionRaw,
     input.actualVideoModel
   );
+  // 正式请求校验项目及提交契约后，交给正式任务链；不读取或修改试片记录。
+  if (submission.intent === "full") return { kind: "full", scope, submission };
   if (submission.intent === "pilot") {
     if (input.durationSec === 5 && input.actualVideoModel !== "seedance-2.5") throw new Error("当前生成档请使用10秒试片");
     assertManhuaPilotSubmissionAllowed(
@@ -408,8 +410,6 @@ export async function prepareManhuaPilotSubmission(input: {
       return { kind: "reuse", scope, review: state };
     }
     assertManhuaPilotSubmissionAllowed(state, submission, input.durationSec);
-    if (submission.intent === "full")
-      return { kind: "full", scope, submission };
 
     const taskId = `cv_pilot_${Date.now().toString(36)}_${randomUUID().slice(0, 12)}`;
     const now = new Date().toISOString();

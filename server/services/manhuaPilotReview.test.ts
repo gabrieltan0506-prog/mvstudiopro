@@ -67,6 +67,14 @@ async function writeTask(
 }
 
 describe("manhuaPilotReview 服务端真相源", () => {
+  it("正式29秒请求不读取或写入试片记录，且不伪造批准", async () => {
+    const { prepareManhuaPilotSubmission } = await import("./manhuaPilotReview");
+    const reviewDir = String(process.env.MANHUA_PILOT_REVIEW_DIR);
+    const snapshot = await fs.readdir(reviewDir).catch(() => []);
+    const result = await prepareManhuaPilotSubmission({ userId: 1024, submissionRaw: { ...pilotRaw, intent: "full" }, actualVideoModel: "seedance-2.5", durationSec: 29 });
+    expect(result.kind).toBe("full");
+    expect(await fs.readdir(reviewDir).catch(() => [])).toEqual(snapshot);
+  });
   it("并发首提只预留一个任务，后来的请求复用 submitting", async () => {
     const { prepareManhuaPilotSubmission } = await import(
       "./manhuaPilotReview"
@@ -215,7 +223,7 @@ describe("manhuaPilotReview 服务端真相源", () => {
     ).rejects.toThrow("试片已更新");
   });
 
-  it("未批准的 full、错误段号和错误时长都在服务端拒绝", async () => {
+  it("正式生成无需试片批准，显式试片仍检查段号及时长", async () => {
     const { prepareManhuaPilotSubmission } = await import(
       "./manhuaPilotReview"
     );
@@ -226,7 +234,7 @@ describe("manhuaPilotReview 服务端真相源", () => {
         actualVideoModel: "wan-3.0",
         durationSec: 30,
       })
-    ).rejects.toThrow("请先审阅并批准");
+    ).resolves.toMatchObject({ kind: "full" });
     await expect(
       prepareManhuaPilotSubmission({
         userId: 20,

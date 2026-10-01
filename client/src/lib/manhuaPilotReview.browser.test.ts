@@ -86,6 +86,18 @@ const generated = {
   outputUrl: "https://test.invalid/a.mp4",
 };
 describe("真实审批组件与异步上下文（离线浏览器）", () => {
+  it("试片状态读取失败不阻断完整正式授权，也不发额外试片读取", async () => {
+    const page = await openFixture();
+    try {
+      await page.evaluate(`fixture.renderHook(${JSON.stringify(scopeInput)})`);
+      await page.waitForFunction("fixture.loads.length === 1");
+      await page.evaluate("fixture.loads[0].reject(new Error('test pilot unavailable'))");
+      await page.waitForFunction("Boolean(fixture.hook.error)");
+      const submission = await page.evaluate(async () => (globalThis as any).fixture.hook.authorize({ episodeIndex:1, segmentIndex:1, videoModel:'seedance-2.5', pilotRun:false, durationSec:29 }));
+      expect(submission.intent).toBe("full");
+      expect(await page.evaluate("fixture.loads.length")).toBe(1);
+    } finally { await page.close(); }
+  });
   it("历史项目和切集后的状态请求与本集实际引擎一致", async () => {
     const page = await openFixture();
     try {

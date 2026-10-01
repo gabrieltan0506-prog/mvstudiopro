@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./extractVideoFrames", () => ({
@@ -110,6 +111,49 @@ describe("首段试片的实际出站载荷（仅虚构网络边界）", () => {
       expect(pilotChanged).toHaveBeenCalled();
     },
   );
+
+  it.each([[1,29],[3,23],[4,24]])("第%s段真实保存全文以%s秒正式意图编译，不被试片误拦", async (segmentIndex, durationSec) => {
+    const prompt = readFileSync(new URL(`./__testutils__/fixtures/manhua-closure-1001/segment-${segmentIndex}.txt`, import.meta.url), "utf8");
+    const authorize = vi.fn(async () => ({ projectVersion: "a".repeat(64), episodeIndex: 1, segmentIndex, intent: "full" as const }));
+    const block = { ...pilotBlock("seedance-2.5"), id: `clip-e01-g0${segmentIndex}`, prompt };
+    await runCanvasBlock({ userRole: "admin", optimizeCopy: async () => "", authorizeManhuaClip: authorize }, block);
+    expect(requests).toHaveLength(1);
+    expect(requests[0].body.duration).toBe(durationSec);
+    expect(requests[0].body.manhuaPilot).toMatchObject({ intent: "full", segmentIndex });
+    expect(String(requests[0].body.prompt).length).toBeGreaterThan(100);
+    if (segmentIndex === 1) {
+      expect(requests[0].body.prompt).toContain("就牵着这一匹破马，你有钱付诊金吗？小杂种，该不会是要拿它来抵药钱吧。");
+      expect(requests[0].body.prompt).toContain("8–13s");
+    }
+    expect(authorize).toHaveBeenCalledWith(expect.objectContaining({ pilotRun: false, durationSec }));
+  });
+
+  it("第三段待保存扶娘修订按23秒正式编译，保留四句原词与身份", async () => {
+    const prompt = readFileSync(new URL("./__testutils__/fixtures/manhua-closure-1001/segment-3-reviewed.txt", import.meta.url), "utf8");
+    const authorize = vi.fn(async () => ({ projectVersion: "a".repeat(64), episodeIndex: 1, segmentIndex: 3, intent: "full" as const }));
+    await runCanvasBlock({ userRole: "admin", optimizeCopy: async () => "", authorizeManhuaClip: authorize }, { ...pilotBlock("seedance-2.5"), id: "clip-e01-g03", prompt });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].body.duration).toBe(23);
+    const outbound = String(requests[0].body.prompt);
+    expect(outbound).toContain("扶娘同行");
+    expect(outbound).not.toContain("重新背稳娘");
+    expect(outbound).not.toContain("娘趴阿菁肩上");
+    for (const line of ["先送娘去治病，你到底还瞒了我多少秘密？", "好痛好痛，等等告诉你还不行吗？", "阿菁……那马……", "娘，先睡一会，等等就到医馆了。"]) expect(outbound).toContain(line);
+    expect(requests[0].body.manhuaPilot).toMatchObject({ intent: "full", segmentIndex: 3 });
+  });
+
+  it("29秒正式稿保留8–13秒完整对白，不触发十秒试片裁切", async () => {
+    const prompt = "【第1段·29s】\n0–8s：棕黑马右前蹄落地，左前腿悬空。\n8–13s：曹三说「你今日若不交出来，我便让你再也走不出这条街。」\n13–29s：人物回应并收招。";
+    const authorize = vi.fn(async () => ({ projectVersion: "a".repeat(64), episodeIndex: 1, segmentIndex: 1, intent: "full" as const }));
+    await runCanvasBlock({ userRole: "admin", optimizeCopy: async () => "", authorizeManhuaClip: authorize }, { ...pilotBlock("seedance-2.5"), prompt });
+    expect(authorize).toHaveBeenCalledWith(expect.objectContaining({ pilotRun: false, durationSec: 29 }));
+    expect(requests).toHaveLength(1);
+    expect(requests[0].body.duration).toBe(29);
+    expect(requests[0].body.manhuaPilot).toMatchObject({ intent: "full" });
+    expect(requests[0].body.prompt).toContain("你今日若不交出来");
+    expect(requests[0].body.prompt).toContain("13–29s");
+    expect(() => compileManhuaPilotPrompt(prompt, 10)).toThrow();
+  });
 
   it("画布直接运行未批准长片在网络/上游之前拒绝", async () => {
     const authorize = vi.fn(async () => { throw new Error("请先审阅并批准试片"); });
@@ -239,7 +283,7 @@ it("试片截断对白在鉴权建单和任何网络之前拒绝", async () => {
   const authorize = vi.fn();
   const block = { ...pilotBlock("seedance-2.5"), prompt: '0–8s：人物走入坊市。\n8–13s：@角色1说「娘，抓紧我，快到了。」' };
   const before = JSON.stringify(block);
-  await expect(runCanvasBlock({ userRole: "admin", userId: "test-user", optimizeCopy: async () => "", authorizeManhuaClip: authorize }, block, undefined, { pilotRun: true })).rejects.toThrow(/更换支持所需时长的视频模型/);
+  await expect(runCanvasBlock({ userRole: "admin", userId: "test-user", optimizeCopy: async () => "", authorizeManhuaClip: authorize }, block, undefined, { pilotRun: true })).rejects.toThrow(/选择正式完整段/);
   expect(authorize).not.toHaveBeenCalled();
   expect(fetch).not.toHaveBeenCalled();
   expect(JSON.stringify(block)).toBe(before);

@@ -226,6 +226,7 @@ import {
   groupShotsIntoSegments,
   MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
   parseManhuaClipTargetDurationSec,
+  resolveManhuaClipDisplayDurationSec,
   resolveClipLocalSegmentIndex,
   resolveClipSegmentIndex,
   resolveKeyartShotIndex,
@@ -692,6 +693,7 @@ type Props = {
   onGenerateFragment?: (opts: {
     /** 段号 1-based（工厂按段出一条成片） */
     shotIndex: number;
+    pilotRun?: boolean;
     keyartId?: string;
     clipId?: string;
   }) => void;
@@ -701,7 +703,7 @@ type Props = {
   segmentReferenceProgress?: number | null;
   /** 本集缺成片/质检失败的段号依次生成 */
   onGenerateMissingFragments?: (segmentIndexes: number[], sourceIdentity: string) => void;
-  /** 首段试片审核；未通过时只开放第1段试片。 */
+  /** 可选首段试片审核，不限制正式生成。 */
   pilotGate?: ManhuaPilotPanelState & {
     videoModel: string;
     durationSec: 5 | 10;
@@ -783,7 +785,7 @@ type Props = {
    * （Seedance 还会把 @图N 还原成 @图片N），两者不是同一个串。
    * 由持有 CanvasRunDeps 的画布页传入；本组件只展示，不发起生成。
    */
-  onPreviewClipOutbound?: (blockId: string) => Promise<{
+  onPreviewClipOutbound?: (blockId: string, pilotRun?: boolean) => Promise<{
     /** 这一份内容的标识；确认时原样回传，保证批准的就是用户看到的那一份 */
     snapshotId: string;
     body: Record<string, unknown>;
@@ -796,9 +798,11 @@ type Props = {
    * 确认这一段的出站内容。确认后到真正生成之间若提示词、模型、时长或参考素材有变化，
    * 运行前核对会中止本次提交、不扣费。出站校验未通过时拒绝确认并抛出原因。
    */
-  onConfirmClipOutbound?: (blockId: string, shownSnapshotId: string) => Promise<void>;
+  onConfirmClipOutbound?: (blockId: string, shownSnapshotId: string, pilotRun?: boolean) => Promise<void>;
   /** 各段确认时刻（毫秒）；用于显示「已确认」状态 */
   outboundConfirmedAtByBlock?: Record<string, number>;
+  /** 已确认出站指纹；只有与当前预览完全一致时才显示已确认。 */
+  outboundConfirmedSnapshotByBlock?: Record<string, string>;
   /** 确认编剧后：整屏编辑器壳（无圆角卡片、三栏占满视口） */
   immersive?: boolean;
   /**
@@ -1262,6 +1266,7 @@ export default function ManhuaScriptWorkbench({
   onPreviewClipOutbound,
   onConfirmClipOutbound,
   outboundConfirmedAtByBlock,
+  outboundConfirmedSnapshotByBlock,
   assetsSkipped: _assetsSkippedProp,
   onAssetsSkippedChange: _onAssetsSkippedChange,
   workflowPhase: workflowPhaseProp,
@@ -1434,16 +1439,17 @@ export default function ManhuaScriptWorkbench({
     >
   >({});
   /** 代际号：迟到的预览回执不得覆盖更新的一份 */
+  const [clipOutboundPilotById, setClipOutboundPilotById] = useState<Record<string, boolean>>({});
   const clipOutboundGenerationRef = useRef<Record<string, number>>({});
   const [narrowWorkbenchColumn, setNarrowWorkbenchColumn] = useState<"script" | "preview" | "assets">("script");
   const loadClipOutboundPreview = useCallback(
-    async (blockId: string) => {
+    async (blockId: string, pilotRun = false) => {
       if (!onPreviewClipOutbound || !blockId) return;
       const generation = (clipOutboundGenerationRef.current[blockId] || 0) + 1;
       clipOutboundGenerationRef.current[blockId] = generation;
       setClipOutboundPreview((prev) => ({ ...prev, [blockId]: { state: "loading" } }));
       try {
-        const preview = await onPreviewClipOutbound(blockId);
+        const preview = await onPreviewClipOutbound(blockId, pilotRun);
         if (clipOutboundGenerationRef.current[blockId] !== generation) return;
         setClipOutboundPreview((prev) => ({
           ...prev,
@@ -1652,6 +1658,11 @@ export default function ManhuaScriptWorkbench({
   /** 剪辑台字幕轨：开则生成轨数据，默认不烧字 */
   const [editSubtitleEnabled, setEditSubtitleEnabled] = useState(false);
   const bPersistKey = manhuaWorkbenchBPersistKey(topic || seriesTitle || "manhua", focusEpisode);
+  useEffect(() => {
+    for (const id of Object.keys(clipOutboundGenerationRef.current)) clipOutboundGenerationRef.current[id] += 1;
+    setClipOutboundPreview({});
+    setClipOutboundPilotById({});
+  }, [bPersistKey]);
   /** 只允许把已经完成当前集加载的状态写回该集，避免切集首帧把上一集状态写进新 key。 */
   const [hydratedBPersistKey, setHydratedBPersistKey] = useState<string | null>(null);
   /** 节点画布仅在用户主动进入高级模式时显示，默认聚焦当前镜媒体。 */
@@ -2457,7 +2468,7 @@ export default function ManhuaScriptWorkbench({
         ) || (seg.index === 1 ? legacyClip : undefined);
       return {
         segmentIndex: seg.index,
-        durationSec: seg.durationSec,
+        durationSec: resolveManhuaClipDisplayDurationSec(segClip?.prompt, seg.durationSec),
         clip: segClip,
         shotIndexes: seg.shots.map((s) => s.index),
       };
@@ -2488,7 +2499,7 @@ export default function ManhuaScriptWorkbench({
       const beat = resolveManhuaSourcePlanBeat(shootablePlan, shots, seg);
       return {
         index: seg.index,
-        durationSec: seg.durationSec,
+        durationSec: resolveManhuaClipDisplayDurationSec(segClip?.prompt, seg.durationSec),
         shotIndexes: seg.shots.map((s) => s.index),
         shotCount: seg.shots.length,
         continuation: seg.shots.some((shot) => shot.continuation),
@@ -3296,9 +3307,8 @@ export default function ManhuaScriptWorkbench({
     toast.error("还差一步", { description: hint });
     return true;
   };
-  const pilotLocked = Boolean(pilotGate && pilotGate.status !== "approved");
-  const pilotSubmissionBlocked = Boolean(pilotLocked && pilotGate && (
-    pilotGate.busy || pilotGate.error || ["submitting", "reconcile_manual", "generated"].includes(pilotGate.status)
+  const pilotSubmissionBlocked = Boolean(pilotGate && (
+    pilotGate.busy || pilotGate.error || ["submitting", "reconcile_manual", "generated", "approved"].includes(pilotGate.status)
   ));
   /**
    * 审阅提示词（阿硕/OiiOii：有静帧图 → 铺段节点到画布看提示词）。
@@ -3334,7 +3344,7 @@ export default function ManhuaScriptWorkbench({
     }
     toast.message("已打开当前段视频提示词", { description: "可修改本段文本，并核对真正发送给视频模型的内容；查看不生成视频。" });
   };
-  const runGenerateFragment = (segmentIndex = activeSegNo) => {
+  const runGenerateFragment = (segmentIndex = activeSegNo, pilotRun = false) => {
     const row = filmstripSegments.find(segment => segment.index === segmentIndex);
     if (!row?.clip?.id || !onGenerateFragment) {
       toast.error("本段节点未就绪", { description: "请先铺齐本段节点，再核对提示词" });
@@ -3348,7 +3358,7 @@ export default function ManhuaScriptWorkbench({
       toast.message("本段保留，不生成", { description: "原片与音轨保持；不会提交任务" });
       return;
     }
-    if (pilotSubmissionBlocked) {
+    if (pilotRun && pilotSubmissionBlocked) {
       toast.message("请先核对原试片任务并完成审核，不要重复生成");
       return;
     }
@@ -3360,16 +3370,13 @@ export default function ManhuaScriptWorkbench({
       segmentNoFaceLockHintZh: segmentIndex === activeSegNo ? segmentNoFaceLockHintZh : undefined,
     });
     if (refuseIfBlocked(rowGate)) return;
-    if (pilotLocked && segmentIndex !== 1) {
-      toast.message("请先生成并审阅第 1 段的试片");
-      return;
-    }
-    if (pilotGate?.status === "generated") {
-      toast.message("试片正在等待审阅");
+    if (pilotRun && segmentIndex !== 1) {
+      toast.message("试片只支持首段");
       return;
     }
     onGenerateFragment({
       shotIndex: segmentIndex,
+      pilotRun,
       keyartId: row.firstKeyartId || undefined,
       clipId: row.clip.id,
     });
@@ -4322,12 +4329,13 @@ export default function ManhuaScriptWorkbench({
   useEffect(() => {
     if (!clipPromptReviewOpen) { promptReviewFocusRef.current = ""; return; }
     const row = segmentClipReviewList.find(item => item.segmentIndex === activeSegNo);
-    const key = `${focusEpisode}:${activeSegNo}:${row?.clip?.id || ""}`;
+    const pilotRun = Boolean(row?.clip?.id && clipOutboundPilotById[row.clip.id]);
+    const key = `${bPersistKey}:${activeSegNo}:${row?.clip?.id || ""}:${pilotRun}`;
     if (promptReviewFocusRef.current === key) return;
     promptReviewFocusRef.current = key;
     document.querySelector(`[data-manhua-prompt-segment="${activeSegNo}"]`)?.scrollIntoView({ block: "nearest" });
-    if (row?.clip?.id) void loadClipOutboundPreview(row.clip.id);
-  }, [clipPromptReviewOpen, segmentClipReviewList, activeSegNo, focusEpisode, loadClipOutboundPreview]);
+    if (row?.clip?.id) void loadClipOutboundPreview(row.clip.id, pilotRun);
+  }, [clipPromptReviewOpen, segmentClipReviewList, activeSegNo, bPersistKey, clipOutboundPilotById, loadClipOutboundPreview]);
 
   const clipPromptReviewPanel = (
 clipPromptReviewOpen ? (
@@ -4540,6 +4548,8 @@ clipPromptReviewOpen ? (
             (() => {
               const blockId = row.clip.id;
               const preview = clipOutboundPreview[blockId];
+              const previewConfirmed = preview?.state === "ready" && Boolean(outboundConfirmedAtByBlock?.[blockId])
+                && outboundConfirmedSnapshotByBlock?.[blockId] === preview.snapshotId;
               return (
                 <div
                   data-manhua-clip-outbound={row.segmentIndex}
@@ -4550,7 +4560,18 @@ clipPromptReviewOpen ? (
                       实际发送内容
                     </span>
                     <div className="flex items-center gap-1">
-                      {outboundConfirmedAtByBlock?.[blockId] ? (
+                      {row.segmentIndex === 1 ? <select
+                        aria-label="核对生成意图"
+                        value={clipOutboundPilotById[blockId] ? "pilot" : "full"}
+                        onChange={event => {
+                          const pilotRun = event.target.value === "pilot";
+                          setClipOutboundPilotById(prev => ({ ...prev, [blockId]: pilotRun }));
+                          clipOutboundGenerationRef.current[blockId] = (clipOutboundGenerationRef.current[blockId] || 0) + 1;
+                          setClipOutboundPreview(prev => { const next = { ...prev }; delete next[blockId]; return next; });
+                        }}
+                        className="rounded bg-slate-900 text-[9px]"
+                      ><option value="full">正式完整段</option><option value="pilot">可选试片</option></select> : null}
+                      {previewConfirmed ? (
                         <span className="rounded bg-emerald-500/25 px-1 py-px text-[8px] font-semibold text-emerald-50">
                           已确认
                         </span>
@@ -4559,7 +4580,7 @@ clipPromptReviewOpen ? (
                         type="button"
                         className="rounded border border-white/15 px-1.5 py-0.5 text-[9px] text-white/70 hover:bg-white/5 disabled:opacity-50"
                         disabled={preview?.state === "loading"}
-                        onClick={() => void loadClipOutboundPreview(blockId)}
+                        onClick={() => void loadClipOutboundPreview(blockId, clipOutboundPilotById[blockId] === true)}
                       >
                         {preview?.state === "loading"
                           ? "正在核对…"
@@ -4574,10 +4595,13 @@ clipPromptReviewOpen ? (
                           type="button"
                           className="rounded border border-emerald-300/40 bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-50 hover:bg-emerald-500/25"
                           onClick={() => {
+                            const generation = clipOutboundGenerationRef.current[blockId];
                             void onConfirmClipOutbound(
                               blockId,
                               preview.snapshotId,
+                              clipOutboundPilotById[blockId] === true,
                             ).catch((error) => {
+                              if (clipOutboundGenerationRef.current[blockId] !== generation) return;
                               setClipOutboundPreview((prev) => ({
                                 ...prev,
                                 [blockId]: {
@@ -4591,7 +4615,7 @@ clipPromptReviewOpen ? (
                             });
                           }}
                         >
-                          {outboundConfirmedAtByBlock?.[blockId]
+                          {previewConfirmed
                             ? "重新确认"
                             : "确认这一段"}
                         </button>
@@ -5097,10 +5121,16 @@ clipPromptReviewOpen ? (
                 <div className="mb-2 text-[10px] font-semibold tracking-wide text-violet-100/75">
                   生成范围与画布
                 </div>
-                {pilotLocked && pilotGate ? <ManhuaPilotReviewPanel
+                {pilotGate ? <ManhuaPilotReviewPanel
                   key={`${pilotGate.reviewKey}:${pilotGate.taskId}:${pilotGate.outputUrl}`}
                   state={pilotGate} onReview={onReviewPilot} onRefresh={onRefreshPilot} onDurationChange={onPilotDurationChange}
                 /> : null}
+                {pilotGate && onGenerateFragment ? <button
+                  type="button" data-manhua-action="generate-optional-pilot"
+                  disabled={Boolean(factoryBusy) || pilotSubmissionBlocked}
+                  onClick={() => runGenerateFragment(1, true)}
+                  className="mb-2 rounded border border-white/15 px-2 py-1 text-[10px] text-white/70 disabled:opacity-45"
+                >生成首段 {pilotGate.durationSec ?? 10} 秒试片（可选）</button> : null}
                 <div className="flex flex-wrap items-center gap-1.5">
               <button
                 type="button"
@@ -5132,15 +5162,13 @@ clipPromptReviewOpen ? (
                 type="button"
                 data-manhua-action="generate-fragment"
                   data-manhua-action-cost={manhuaToolbarActionCost("generate-fragment")}
-                disabled={Boolean(factoryBusy) || pilotSubmissionBlocked || (pilotLocked && activeSegNo !== 1)}
+                disabled={Boolean(factoryBusy)}
                 onClick={() => runGenerateFragment()}
                 className="inline-flex items-center gap-1 rounded-lg border border-white/15 bg-white/[0.04] px-2.5 py-1.5 text-[10px] font-semibold text-white/75 hover:bg-white/[0.08] disabled:opacity-45"
                 title={`当前第 ${String(activeSegNo).padStart(2, "0")} 段（含镜 ${String(activeShotNo).padStart(2, "0")}）：缺静帧则只补本段再出片`
                 }
               >
-                {pilotLocked && activeSegNo === 1
-                  ? `生成首段 ${pilotGate?.durationSec ?? 10} 秒试片`
-                  : `生成第 ${String(activeSegNo).padStart(2, "0")} 段成片 · ${canvasVideoClipCredits({ isEpisodeSegment: true, videoModel: episodeVideoModel })} 积分`}
+                {`生成第 ${String(activeSegNo).padStart(2, "0")} 段成片 · ${canvasVideoClipCredits({ isEpisodeSegment: true, videoModel: episodeVideoModel })} 积分`}
               </button>
           {onLayoutReadableChain ? (
             <button
@@ -5163,7 +5191,7 @@ clipPromptReviewOpen ? (
               type="button"
               data-manhua-action="generate-selected-fragments"
                   data-manhua-action-cost={manhuaToolbarActionCost("generate-selected-fragments")}
-              disabled={Boolean(factoryBusy) || pilotLocked}
+              disabled={Boolean(factoryBusy)}
               onClick={() => {
                 if (refuseIfBlocked(clipGateHint)) return;
                 setActivePhase("storyboard");
@@ -5193,7 +5221,7 @@ clipPromptReviewOpen ? (
               type="button"
               data-manhua-action="generate-missing-fragments"
                   data-manhua-action-cost={manhuaToolbarActionCost("generate-missing-fragments")}
-              disabled={Boolean(factoryBusy) || pilotLocked}
+              disabled={Boolean(factoryBusy)}
               onClick={() => {
                 if (refuseIfBlocked(clipGateHint)) return;
                 if (!stillsReadyEnough) {
@@ -5440,7 +5468,7 @@ clipPromptReviewOpen ? (
                 <button type="button" onClick={() => setActiveSecondaryTool(null)}>收起</button>
               </div>
               {activeClip ? <CanvasAudioStudio key={activeClip.id} block={activeClip} compact={false} timelineDurationSec={activeSegment?.durationSec} sourceShots={activeSegment?.shots} dialogueSources={blocks}
-                characters={assetCanon?.characters.map(character => ({ id: character.id, nameZh: character.nameZh, aliasZh: character.aliasZh }))}
+                characters={assetCanon?.characters.map(character => ({ id: character.id, nameZh: character.nameZh, aliasZh: character.aliasZh, referenceAssetIds: assetLockRegistry.byRole.character.filter(slot => slot.seedLibraryId === character.id || slot.id === character.id).map(slot => slot.id) }))}
                 disabled={Boolean(factoryBusy) || activeClip.status === "running" || activeClip.videoTaskStatus === "queued"}
                 onChange={studio => onUpdateClipAudioStudio(activeClip.id, studio)}
                 onMasterTrackReady={onSetClipSegmentReference ? (entry) => onSetClipSegmentReference(activeClip.id, "master", entry) : undefined}
@@ -10711,9 +10739,7 @@ clipPromptReviewOpen ? (
                     data-manhua-action="retry-fragment"
                     data-manhua-retry-segment={seg.index}
                     disabled={
-                      Boolean(factoryBusy) ||
-                      pilotSubmissionBlocked ||
-                      (pilotLocked && seg.index !== 1)
+                      Boolean(factoryBusy)
                     }
                     onClick={() => {
                       if (refuseIfBlocked(clipGateHint)) return;

@@ -4751,12 +4751,9 @@ export default function OmniCanvas() {
         // 编辑是单目标的「已备原片」运行，上游图/文不参与；与编排器同口径。
         preparedVideoEdit: isEdit,
         pilotDurationSec,
-        // 只有新生成片段才谈试片
-        pilotRun:
-          !isEdit && !isExtend && activePilotGateEntry?.status !== "approved",
       };
     },
-    [activePilotGateEntry?.status, pilotDurationSec],
+    [pilotDurationSec],
   );
 
   /**
@@ -4781,10 +4778,11 @@ export default function OmniCanvas() {
   >(null);
 
   const prepareManhuaClipRunInput = useCallback(
-    async (blockId: string) => {
+    async (blockId: string, pilotRun = false) => {
       const block = blocksRef.current.find((item) => item.id === blockId);
       if (!block) throw new Error("该段节点已不存在，请刷新后重试");
       const operation = deriveClipOperationOptions(block);
+      if (pilotRun && (operation.isEdit || operation.isExtend)) throw new Error("原片编辑或延长不能作为试片");
 
       // **按操作类型分流的重编译，全在入口内完成。**
       //
@@ -4821,8 +4819,8 @@ export default function OmniCanvas() {
         shotContinuity,
         preparedVideoEdit: operation.preparedVideoEdit,
       });
-      // 试片口径也在这里定：编辑／延长不是新试片，由操作本身派生
-      return { preparedBlock, upstream, runOptions: { pilotRun: operation.pilotRun, pilotDurationSec: operation.pilotDurationSec } };
+      // 试片只取入口的显式选择；编辑／延长已在上方拒绝试片意图。
+      return { preparedBlock, upstream, runOptions: { pilotRun, pilotDurationSec: operation.pilotDurationSec } };
     },
     [deriveClipOperationOptions, edges, shotContinuity, writerFocusEpisode],
   );
@@ -4877,7 +4875,7 @@ export default function OmniCanvas() {
    * 不一致就拒绝并要求重新查看——否则用户看的是 A、批准的却是 B。
    */
   const confirmClipOutbound = useCallback(
-    async (blockId: string, shownSnapshotId: string) => {
+    async (blockId: string, shownSnapshotId: string, pilotRun = false) => {
       // await 之前先捕获当时的归属；await 之后再取一次比对。
       // 中间用户可能换账号、重新确认编剧稿、载入另一份云草稿——
       // 迟到的这一次不能写回，也不能拿旧世代的快照批准新工作区的内容。
@@ -4885,7 +4883,7 @@ export default function OmniCanvas() {
       const block = blocksRef.current.find((item) => item.id === blockId);
       if (!block) throw new Error("该段节点已不存在，请刷新后重试");
       // 确认走**生产唯一入口**，与画布重跑用的是同一个函数
-      const { preparedBlock, upstream, runOptions } = await prepareManhuaClipRunInput(blockId);
+      const { preparedBlock, upstream, runOptions } = await prepareManhuaClipRunInput(blockId, pilotRun);
       const preview = await previewCanvasBlockOutbound(runDeps, preparedBlock, upstream, runOptions);
       if (preview.compile.blocked || preview.compile.fatalZh) {
         throw new Error(
@@ -4929,7 +4927,7 @@ export default function OmniCanvas() {
   );
 
   const previewClipOutbound = useCallback(
-    async (blockId: string) => {
+    async (blockId: string, pilotRun = false) => {
       // 与确认同一口径：load 前捕获归属，await 后对照最新，不一致就弃置这次结果。
       // 否则跨项目同 blockId 的迟到回执会把新预览覆盖掉（0914 审查 P1-3）。
       const scopeAtStart = manhuaOutboundScope(blockId);
@@ -4937,7 +4935,7 @@ export default function OmniCanvas() {
       if (!block) throw new Error("该段节点已不存在，请刷新后重试");
       // 预览走**生产唯一入口**：画布重跑用的是同一个函数，
       // 所以「预览 === 真正发出去的」由结构保证。
-      const { preparedBlock, upstream, runOptions } = await prepareManhuaClipRunInput(blockId);
+      const { preparedBlock, upstream, runOptions } = await prepareManhuaClipRunInput(blockId, pilotRun);
       const preview = await previewCanvasBlockOutbound(runDeps, preparedBlock, upstream, runOptions);
 
       const scopeNow = manhuaOutboundScope(blockId);
@@ -9870,10 +9868,10 @@ export default function OmniCanvas() {
   const handleReviewPilot = useCallback(
     async (decision: "approve" | "reject", taskId: string) => {
       await pilotReview.decide(decision, taskId);
-      toast.message(decision === "approve" ? "10 秒试片已通过" : "10 秒试片已退回", {
+      toast.message(decision === "approve" ? "试片已通过" : "试片已退回", {
         description:
           decision === "approve"
-            ? "已解锁本集当前生成档的其余片段。"
+            ? "已保存本次试片审核结果；正式成片可独立生成。"
             : "可调整提示词、轨迹或生成档后重新生成首段试片。",
       });
     },
@@ -10478,6 +10476,7 @@ export default function OmniCanvas() {
                   onPreviewClipOutbound={previewClipOutbound}
                   onConfirmClipOutbound={confirmClipOutbound}
                   outboundConfirmedAtByBlock={outboundConfirmedAtByBlock}
+                  outboundConfirmedSnapshotByBlock={Object.fromEntries(Object.entries(outboundConfirmationsRef.current).map(([id, confirmation]) => [id, confirmation.fingerprint]))}
                   immersive={immersiveWorkbench}
                   onAdvisorSelectionChange={setAdvisorSelection}
                   onAdvisorSignalsChange={setAdvisorSignals}
@@ -11149,33 +11148,28 @@ export default function OmniCanvas() {
                       maxRetries: 0,
                     });
                   }}
-                  onGenerateFragment={({ shotIndex }) => {
+                  onGenerateFragment={({ shotIndex, pilotRun = false }) => {
                     if (blocksRef.current.some(block => block.manhuaGenerationHold &&
                       (getBlockEpisodeIndex(block) ?? 1) === writerFocusEpisode &&
                       resolveClipLocalSegmentIndex(block.id, block.prompt, writerFocusEpisode) === shotIndex)) {
                       toast.message("本段保留，不生成"); return;
                     }
-                    const pilotLocked = activePilotGateEntry?.status !== "approved";
-                    if (pilotLocked && shotIndex !== 1) {
-                      toast.message("请先生成并审阅首段试片");
-                      return;
-                    }
-                    if (activePilotGateEntry?.status === "generated") {
-                      toast.message("试片正在等待审阅");
+                    if (pilotRun && shotIndex !== 1) {
+                      toast.message("试片只支持首段");
                       return;
                     }
                     const pad = String(shotIndex).padStart(2, "0");
-                    toast.message(pilotLocked ? `生成首段 ${pilotDurationSec} 秒试片` : `生成第 ${pad} 段成片`, {
-                      description: pilotLocked
-                        ? "本次只提交一次，不自动重试；质量达标后再解锁全片。"
+                    toast.message(pilotRun ? `生成首段 ${pilotDurationSec} 秒试片` : `生成第 ${pad} 段成片`, {
+                      description: pilotRun
+                        ? "可选试片只提交一次，不自动重试；不会替换正式成片。"
                         : `本次 1 段 ${canvasVideoClipCredits({ isEpisodeSegment: true, videoModel: activePilotVideoModel })} 积分；缺静帧时只补本段。`,
                     });
                     setFactoryRunScope("focus");
                     ensureStudioSpawned(factoryTopic);
                     void runFactory("clip", {
                       episodeIndexes: [writerFocusEpisode],
-                      fragmentShotIndex: pilotLocked ? 1 : shotIndex,
-                      pilotRun: pilotLocked,
+                      fragmentShotIndex: shotIndex,
+                      pilotRun,
                       pilotDurationSec,
                       maxRetries: 0,
                       stopOnError: true,

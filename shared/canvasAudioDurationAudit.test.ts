@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { resolveManhuaClipDisplayDurationSec } from "./manhuaScriptWorkbench.js";
 import { auditCanvasAudioDuration } from "./canvasAudioDurationAudit.js";
 import { canvasAudioCueInputKey, createCanvasAudioCue, type CanvasAudioCue } from "./canvasAudioStudio.js";
 
@@ -40,4 +41,15 @@ describe("声音时长体检", () => {
     cue.takes[0]!.inputKey = canvasAudioCueInputKey(cue);
     expect(auditCanvasAudioDuration([cue], 10)).toMatchObject({ bgmCoveredSec: 0, bgmUncoveredSec: 10 });
   });
+});
+
+
+it("第四段24秒容纳原声至23.4秒，保持娘身份、音轨ID与原速", () => {
+ const rows = [adopted("dialogue", "先生", 0, 6.216, 6.216), adopted("dialogue", "娘", 6.216, 9.312, 3.096),
+  adopted("dialogue", "先生后句", 9.312, 13.2, 3.888), adopted("dialogue", "阿菁", 13.2, 17.184, 3.984),
+  adopted("dialogue", "墨屠", 17.184, 23.4, 6.216)];
+ const before = JSON.stringify(rows);
+ expect(auditCanvasAudioDuration(rows, 23).issuesZh).toContain("墨屠：对白秒窗超出本段或起止时间无效");
+ expect(auditCanvasAudioDuration(rows, resolveManhuaClipDisplayDurationSec("【第4段·24s】", 23))).toMatchObject({dialogueReadyCount:5,issuesZh:[]});
+ expect(JSON.stringify(rows)).toBe(before);
 });
