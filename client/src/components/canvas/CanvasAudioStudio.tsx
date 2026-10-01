@@ -8,6 +8,8 @@ import { manhuaBgmArcFromShots } from "@shared/manhuaBgmArcFromShots";
 import { planCanvasDialogueTiming } from "@shared/canvasDialogueTimingPlan";
 import { CANVAS_DIALOGUE_SPEED_MAX, CANVAS_DIALOGUE_SPEED_MIN, CANVAS_DIALOGUE_SPEED_WARN, suggestCanvasDialogueSpeed } from "@shared/canvasDialogueSpeed";
 import type { ManhuaWorkbenchShot } from "@shared/manhuaScriptWorkbench";
+import { buildSeparateAudioClips, SEPARATE_AUDIO_PREFIX } from "@/lib/canvasSeparateAudioReference";
+import { assertCanvasSeparateAudioCapacity, canvasAudioNeedsProcessing, canvasSeparateReferenceKey, usesSeparateCanvasAudio } from "@shared/canvasAudioStudio";
 import { canvasAudioMixSource } from "@shared/canvasAudioStudio";
 import { canvasBgmRangeIssue, canvasBgmSegmentMusicPrompt, fitCanvasBgmSegment, splitCanvasBgmSegment } from "@shared/canvasBgmSegments";
 import { auditCanvasAudioDuration } from "@shared/canvasAudioDurationAudit";
@@ -32,6 +34,7 @@ import {
   createCanvasAudioCue,
   canvasAudioCueInputKey,
   getSelectedAudioTake,
+  validateCanvasAudioCue,
   canvasDialogueWindowFit,
   canvasAudioCueSchema,
   canvasMusicDraftSchema,
@@ -780,6 +783,24 @@ export function CanvasAudioStudioView({
                 );
                 continue;
               }
+              if (pending.cueId && pending.inputKey.startsWith(SEPARATE_AUDIO_PREFIX)) {
+                const cue = current.current.state.cues.find(row => row.id === pending.cueId);
+                if (!cue) { setError("独立音轨原记录已改变，保留任务编号待核对。"); continue; }
+                const sourceKey = canvasSeparateReferenceKey(cue, current.current.state.cues);
+                const expectedKey = `${SEPARATE_AUDIO_PREFIX}${await canvasAudioPreviewKey(sourceKey)}`;
+                if (stopped) continue;
+                if (expectedKey !== pending.inputKey) {
+                  setError("音轨参数已改变，旧独立音轨保留，不替换当前绑定。");
+                  settle(pending.id, take);
+                  continue;
+                }
+                if (!update(previous => ({ ...previous, cues: previous.cues.map(row =>
+                  row.id === cue.id && canvasSeparateReferenceKey(row, previous.cues) === sourceKey
+                    ? { ...row, separateReference: { take, sourceKey } } : row),
+                  pendingOperations: previous.pendingOperations.filter(row => row.id !== pending.id),
+                }))) continue;
+                continue;
+              }
               if (!pending.cueId && isPremixPendingKey(pending.inputKey)) {
                 // 预混母轨只能由工厂配音间（带 onMasterTrackReady）收：自由画布同一节点也挂了本面板，
                 // 没有回调就保留 pending，回到工厂再挂，不能 settle 掉让 master 永远挂不上
@@ -1196,6 +1217,31 @@ export function CanvasAudioStudioView({
         ],
       }));
     });
+  const prepareSeparateReferences = (referenceMode: "separate" | "dialogue" = "separate") => action(async () => {
+    const snapshot = current.current.state;
+    const cues = snapshot.cues.filter(cue => cue.enabled && (referenceMode !== "dialogue" || cue.kind !== "bgm"));
+    for (const cue of cues) {
+      const issues = validateCanvasAudioCue(cue, durationSec);
+      if (!cue.approved || issues.length) throw new Error(issues.join("；") || "音轨尚未采用");
+    }
+    if (!cues.length) throw new Error("本段没有启用的对白或音效");
+    assertCanvasSeparateAudioCapacity(cues);
+    // 全部预检后才建免费处理任务，部分成功或网络错误只沿原任务编号恢复。
+    const plans = cues.filter(canvasAudioNeedsProcessing).map(cue => ({
+      cue, sourceKey: canvasSeparateReferenceKey(cue, snapshot.cues),
+      params: buildSeparateAudioClips(cue, snapshot.cues, durationSec),
+    })).filter(plan => plan.cue.separateReference?.sourceKey !== plan.sourceKey);
+    if (snapshot.pendingOperations.length + plans.length > 100) throw new Error("待处理任务已达上限");
+    if (!update(previous => ({ ...previous, referenceMode }))) return;
+    for (const plan of plans) {
+      const inputKey = `${SEPARATE_AUDIO_PREFIX}${await canvasAudioPreviewKey(plan.sourceKey)}`;
+      if (current.current.state.pendingOperations.some(row => row.cueId === plan.cue.id && row.inputKey === inputKey)) continue;
+      const result = await services.queuePost({ action: "audio_timeline", params: plan.params });
+      if (!update(previous => ({ ...previous, pendingOperations: [...previous.pendingOperations,
+        { id: result.jobId, kind: "post_prod", cueId: plan.cue.id, inputKey }],
+      }))) throw new Error(`独立音轨任务 ${result.jobId} 已提交但未保存，请保留编号，不重复处理`);
+    }
+  });
   /**
    * 一键预混母轨：已确认的对白与配乐按各自保存的音量和淡入淡出落位，
    * 合成一条本段时长的单轨。走同一个 audio_timeline 后期任务（免费），结果不进合听预览，直接挂 master。
@@ -1400,6 +1446,8 @@ export function CanvasAudioStudioView({
         <h3 className="text-sm font-semibold">配音与背景音乐</h3>
         <span className="text-[11px] text-white/50">逐句试听 · 分段采用 · 保留原版本</span>
       </div>
+      {state.referenceMode === "dialogue" && <p className="text-xs text-sky-100">本次只送对白及已选音效，BGM保留采用记录和原参数，待成片后叠加；旧母轨不参与本次生成。</p>}
+      {state.referenceMode !== "dialogue" && block.videoModel === "seedance-2.5" && usesSeparateCanvasAudio(state) && <p className="text-xs text-sky-100">对白按角色和秒窗独立绑定，BGM用整曲独立参考；各自按保存参数处理，不合并为母轨。原音频、采用记录及旧合听保留。</p>}
       {proxyAudio && <p className="text-xs text-amber-100">音频先从本机浏览器缓存读取，缺失时经 Fly 暂存回源；Fly 暂存仅保留 24 小时。请及时下载所选音轨。若原件也已丢失，需重新生成。</p>}
       {restoreSources.length > 0 && <details className="rounded border border-sky-200/20 p-2">
         <summary className="cursor-pointer text-xs">找回本段整套原声与配乐</summary>
@@ -1468,8 +1516,11 @@ export function CanvasAudioStudioView({
       <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold text-sky-100">编辑对白、配乐与音效</summary>
       <div className="mt-2 space-y-3">
       <p className="text-xs text-amber-100">
-        {canvasAudioCapabilityHint(block)}
-        母轨仅用于本段正常出片，局部编辑、视频延长和试片不注入母轨；出片前仍会校验音轨采用状态、母轨版本及容量。
+        {usesSeparateCanvasAudio(state) && block.videoModel === "seedance-2.5"
+          ? (state.referenceMode === "dialogue"
+              ? "只送已采用对白及音效，BGM待成片后叠加。原配乐采用记录、参数和旧母轨保留，旧母轨不参与本次生成。"
+              : "对白与BGM独立投料，保留各自参数。按原参数准备独立音轨后即可核对出片；旧母轨保留但不参与本次生成。")
+          : `${canvasAudioCapabilityHint(block)}母轨仅用于本段正常出片，局部编辑、视频延长和试片不注入母轨；出片前仍会校验音轨采用状态、母轨版本及容量。`}
       </p>
       <details className="rounded-lg border border-white/10 bg-black/15 p-2">
         <summary className="cursor-pointer text-xs text-sky-100">本段剧本与对白</summary>
@@ -2134,7 +2185,13 @@ export function CanvasAudioStudioView({
         {!onMasterTrackReady && state.pendingOperations.some(row => !row.cueId && isPremixPendingKey(row.inputKey)) ? (
           <span className="self-center text-xs text-amber-100">预混母轨已在排队：回漫剧工厂的配音间即可自动挂到本段。</span>
         ) : null}
-        {onMasterTrackReady ? (
+        {block.videoModel === "seedance-2.5" && state.cues.some(cue => cue.enabled && cue.kind === "dialogue") ? (
+          <><button className={buttonClass} disabled={disabled || busy || state.pendingOperations.length > 0}
+            onClick={() => void prepareSeparateReferences("dialogue")}>仅送对白，BGM后期叠加 · 免费准备</button>
+          <button className={buttonClass} disabled={disabled || busy || state.pendingOperations.length > 0}
+            onClick={() => void prepareSeparateReferences()}>按原参数准备独立音轨 · 免费</button></>
+        ) : null}
+        {onMasterTrackReady && !(block.videoModel === "seedance-2.5" && usesSeparateCanvasAudio(state)) ? (
           <button
             className={buttonClass}
             disabled={
@@ -2160,7 +2217,7 @@ export function CanvasAudioStudioView({
           刷新配乐素材
         </button>
       </div>
-      {block.manhuaSegmentRefs?.master?.audioStudioSource && block.manhuaSegmentRefs.master.audioStudioSource !== selectedSource && <p role="alert" className="text-xs text-amber-200">当前母轨与声音配置不一致，旧版保留；请重新合听后预混。</p>}
+      {!(block.videoModel === "seedance-2.5" && usesSeparateCanvasAudio(state)) && block.manhuaSegmentRefs?.master?.audioStudioSource && block.manhuaSegmentRefs.master.audioStudioSource !== selectedSource && <p role="alert" className="text-xs text-amber-200">当前母轨与声音配置不一致，旧版保留；请重新合听后预混。</p>}
       {state.previewTake && (
         <div className="text-xs">
           {state.previewTake.inputKey === selectedKey

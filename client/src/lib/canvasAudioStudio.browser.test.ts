@@ -18,6 +18,7 @@ beforeAll(async () => {
       import {CanvasAudioStudioView} from './client/src/components/canvas/CanvasAudioStudio';
       import {defaultCanvasBlock} from './client/src/lib/canvasTypes';
       import {emptyCanvasAudioStudio,createCanvasAudioCue,canvasAudioCueInputKey} from './shared/canvasAudioStudio';
+      globalThis.audioInputKey=canvasAudioCueInputKey;
       const f=globalThis.fixture={calls:[],queries:[],musicQueries:[],history:{},recentMusic:[],posts:[],postQueries:[],postResult:null,masterEntries:[],uploads:[],dropSettle:false,state:null,result:null};
       const services={
         resolveAudio:async uri=>{f.resolvedAudio=uri;return f.refreshedUrl||"";},
@@ -114,6 +115,53 @@ async function open() {
   return { context, page, click, fill };
 }
 describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
+  it("独立BGM处理从按钮到完成绑定，原对白/采用记录与旧母轨不变，重入不重复提交", async () => {
+    const { context, page, click } = await open();
+    try {
+      await page.evaluate(() => {
+        const f = (window as any).fixture;
+        f.lockTwo();
+      });
+      await page.waitForFunction(() => (window as any).fixture.state.cues.length === 2);
+      await page.evaluate(() => {
+        const f = (window as any).fixture;
+        const d = f.state.cues[0];
+        const b = { ...d, id: "full-bgm", kind: "bgm", speakerZh: "", voice: "", textZh: "", startSec: 0, endSec: 5,
+          source: { gcsUri: "gs://test-bucket/post-prod/7/full-bgm.wav", previewUrl: "", durationSec: 28, labelZh: "整曲" },
+          sourceStartSec: 0, sourceEndSec: 5, volume: 0.5, fadeInSec: 0, fadeOutSec: 0, selectedTakeId: "bgm-take" };
+        // 指纹与实际持久cue一致，通过共享输入身份构造旧采用候选。
+        b.takes = [{ ...d.takes[0], id: "bgm-take", durationSec: 5, gcsUri: "gs://test-bucket/post-prod/7/old-bgm-take.wav", inputKey: (window as any).audioInputKey(b) }];
+        f.configure({ ...f.state, cues: [d, b] });
+      });
+      await page.waitForFunction(() => document.body.innerText.includes("按原参数准备独立音轨"));
+      await click("按原参数准备独立音轨");
+      await page.waitForFunction(() => (window as any).fixture.posts.length === 1);
+      const post = await page.evaluate(() => (window as any).fixture.posts[0]);
+      expect(post.params.durationSec).toBe(28);
+      expect(post.params.clips).toEqual([{ audioUri: "gs://test-bucket/post-prod/7/full-bgm.wav", sourceStartSec: 0, sourceEndSec: 28, startSec: 0, volume: 0.5, fadeInSec: 0, fadeOutSec: 0 }]);
+      await page.evaluate(() => { (window as any).fixture.postResult = {status:"succeeded",result:{gcsUri:"gs://test-bucket/post-prod/7/bgm-gain.wav",audioUrl:"https://audio.test/gain.wav",durationSec:28}}; });
+      await page.waitForFunction(() => Boolean((window as any).fixture.state.cues[1].separateReference));
+      const state = await page.evaluate(() => (window as any).fixture.state);
+      expect(state.cues[0].selectedTakeId).toBe("confirmed");
+      expect(state.cues[1].selectedTakeId).toBe("bgm-take");
+      expect(state.cues[1].takes).toHaveLength(1);
+      expect(state.cues[1].separateReference.take.gcsUri).toBe("gs://test-bucket/post-prod/7/bgm-gain.wav");
+      await page.evaluate(() => (window as any).fixture.show(false));
+      await page.evaluate(() => (window as any).fixture.show(true));
+      await page.waitForSelector('section[aria-label="逐句配音、配乐与事件音效"]');
+      await click("按原参数准备独立音轨");
+      expect(await page.evaluate(() => (window as any).fixture.posts.length)).toBe(1);
+      const bgmBefore = await page.evaluate(() => JSON.stringify((window as any).fixture.state.cues[1]));
+      await click("仅送对白，BGM后期叠加 · 免费准备");
+      await page.waitForFunction(() => (window as any).fixture.state.referenceMode === "dialogue");
+      expect(await page.evaluate(() => (window as any).fixture.posts.length)).toBe(1);
+      expect(await page.evaluate(() => JSON.stringify((window as any).fixture.state.cues[1]))).toBe(bgmBefore);
+      await page.evaluate(() => (window as any).fixture.show(false));
+      await page.evaluate(() => (window as any).fixture.show(true));
+      await page.waitForFunction(() => document.body.innerText.includes("BGM保留采用记录和原参数"));
+    } finally { await context.close(); }
+  }, 20_000);
+
   it("0929 对白长于秒窗：默认给出刚好放进窗口的倍速，生成变速新候选（同台词可确认），原候选保留、变速件不再叠加变速", async () => {
     const { context, page, click } = await open();
     try {

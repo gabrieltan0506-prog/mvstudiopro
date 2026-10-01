@@ -5,7 +5,7 @@ import { formatManhuaEntranceAtmosphereCatalog } from "@shared/manhuaEntranceAtm
 import { manhuaGeneratedPrevisCoverageIssue } from "@shared/manhuaPrevisScope";
 import { compileManhua3dImageTreatment } from "@shared/manhua3dMaterialPrompt";
 import { DEFAULT_CANVAS_VIDEO_MODEL, isCanvasWan30VideoModel, normalizeCanvasVideoModel, type CanvasBlock } from "./canvasTypes";
-import { compileCanvasAudioBindings, assertCanvasAudioMasterCurrent } from "@shared/canvasAudioStudio";
+import { compileCanvasAudioBindings, assertCanvasAudioMasterCurrent, usesSeparateCanvasAudio } from "@shared/canvasAudioStudio";
 import { isLocalMediaPointer, resolveUrlForCloudSync } from "./manhuaLocalMediaStore";
 import { withFlyHealthGate } from "./flyHealthGate";
 import {
@@ -3184,12 +3184,15 @@ async function runCanvasBlockInner(
       // 各引擎按自己的时长上限取舍：Seedance 2.x ≤30 s，Wan 3.0 视频/音频各 ≤15 s；
       // 白模一旦送出就不再送上段接力片与旧成片（三条 30 s 叠到 90 s 会被拒，且接力片无序号说明）。
       // 局部编辑与视频延长的 @视频1 都必须是本段成片本身，白模/母轨不得插队
+      const useSeparateAudio = useSeedance25 && usesSeparateCanvasAudio(block.audioStudio);
       const segmentRefs =
         isClip &&
         !isManhuaVideoEditBlock(block) &&
         block.seedance25WorkMode !== "video_extend" &&
         !runOptions?.pilotRun
-          ? block.manhuaSegmentRefs
+          ? (useSeparateAudio
+              ? { ...block.manhuaSegmentRefs, master: undefined }
+              : block.manhuaSegmentRefs)
           : undefined;
       if (segmentRefs?.master && block.audioStudio?.cues.some(cue => cue.enabled !== false && !cue.approved)) {
         throw new Error("本段仍有启用但未采用的音轨，请先确认采用并重新预混，或停用该音轨；已有母轨不会代替未确认的声音。本次未提交。");
@@ -3199,7 +3202,7 @@ async function runCanvasBlockInner(
         cue.volume !== 1 || cue.fadeInSec > 0 || cue.fadeOutSec > 0 ||
         (cue.kind !== "dialogue" && (cue.mix?.silenceWindows.length || (cue.mix?.duckUnderDialogue && cue.mix.duckVolume < 1)))
       ));
-      if (needsRenderedMix && !segmentRefs?.master?.audioStudioSource) {
+      if (needsRenderedMix && !useSeparateAudio && !segmentRefs?.master?.audioStudioSource) {
         throw new Error("本段设置了音量、淡入淡出、留白或对白避让，请先在对白与配乐中预混母轨并采用当前版本，再出片；直接参考原音频不会执行这些混音设置。本次未提交。");
       }
 
@@ -3439,6 +3442,7 @@ async function runCanvasBlockInner(
           ),
         );
         const audioBindings = compileCanvasAudioBindings({
+          maxAudioReferenceDurationSec: useSeedance25 ? 30 : undefined,
           // 母轨就是唯一音轨：已采用的逐句配音也不并列（两套对白打架、总时长超 30 s）
           studio: segmentMasterUrl ? undefined : block.audioStudio,
           existingAudioUrls: segmentMasterUrl

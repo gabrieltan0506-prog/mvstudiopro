@@ -78,6 +78,29 @@ function audioBlock(kind: "bgm" | "sfx" = "bgm") {
   return { ...segmentBlock(), prompt: "【第2段·5s】0–5s：阿菁推门，听见脚步。", refVideoUrl: undefined, seedance25WorkMode: "reference_to_video" as const, audioStudio: studio, manhuaSegmentRefs: { master: { url: "https://test.invalid/master.wav", gcsUri: MASTER_GCS, durationSec: 5, fileName: "预混.wav", updatedAt: "2026-09-20", audioStudioSource: canvasAudioMixSource(studio.cues, 5) } } };
 }
 describe("声音消费门禁：真实出片函数", () => {
+  it.each(["separate", "dialogue"] as const)("%s模式真实出片：保留角色绑定，忽略旧预混母轨", async referenceMode => {
+    const block = audioBlock();
+    const bgm = block.audioStudio.cues[0]!;
+    bgm.mix = { duckUnderDialogue: false, duckVolume: 0.25, silenceWindows: [] };
+    bgm.volume = referenceMode === "dialogue" ? 0.5 : 1;
+    bgm.source = { gcsUri: "gs://test-bucket/post-prod/1/full-bgm.wav", previewUrl: "", durationSec: 25, labelZh: "整曲" };
+    bgm.sourceStartSec = 0; bgm.sourceEndSec = 5; bgm.shotZh = "独立背景音乐";
+    bgm.takes[0]!.inputKey = canvasAudioCueInputKey(bgm);
+    const dialogue = { ...createCanvasAudioCue("dialogue", "voice"), startSec: 0, endSec: 5,
+      speakerZh: "娘", textZh: "阿菁，慢一点。", voice: "original-voice", shotZh: "背母前行", mix: { duckUnderDialogue: false, duckVolume: 1, silenceWindows: [] }, approved: true, selectedTakeId: "voice-take" };
+    dialogue.takes.push({ id: "voice-take", gcsUri: "gs://test-bucket/post-prod/1/dialogue.wav", previewUrl: "", durationSec: 5, createdAt: "test", inputKey: canvasAudioCueInputKey(dialogue) });
+    block.audioStudio.cues.unshift(dialogue);
+    const before = JSON.stringify(block.audioStudio.cues);
+    await runCanvasBlock({ ...deps, characterVoiceLocks: [] }, { ...block, audioStudio: { ...block.audioStudio, referenceMode } });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.audioUrls).toEqual(referenceMode === "dialogue" ? [dialogue.takes[0]!.gcsUri] : [dialogue.takes[0]!.gcsUri, bgm.source.gcsUri]);
+    expect(JSON.stringify(block.audioStudio.cues)).toBe(before);
+    expect(String(requests[0]!.prompt)).toContain("仅对应娘");
+    expect(String(requests[0]!.prompt)).toContain(referenceMode === "dialogue" ? "不要添加背景音乐" : "独立音乐参考");
+    expect(String(requests[0]!.prompt)).not.toContain("最终音轨");
+    expect(signRequests).not.toContain(MASTER_GCS);
+  });
+
   it("H3真实出片入口将显式声音参考传入jobs", async () => {
     const block = { ...segmentBlock(), id: "video-h3-ref", videoModel: "minimax-hailuo-3" as const,
       prompt: "@图片1 人物用 @音频1 说话", refVideoUrl: undefined, manhuaSegmentRefs: undefined,
