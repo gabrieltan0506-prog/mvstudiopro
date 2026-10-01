@@ -118,6 +118,15 @@ export const manhuaCreativeAdvisorContextSchema = z
       MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.shotSummaryChars,
       "分镜摘要",
     ),
+    /** 保存节点的设置，不含媒体地址；旧请求可不传。参考数组须在出站确认时另核。 */
+    videoPromptReview: z.object({
+      blockId: contextText(180, "视频节点", true),
+      segmentIndex: z.number().int().positive(),
+      prompt: contextText(6000, "保存的视频提示词全文", true),
+      videoModel: contextText(80, "节点视频模型", true),
+      aspectRatio: z.enum(["9:16", "16:9"]),
+      resolution: z.enum(["720p", "1080p", "2K", "4K"]).optional(),
+    }).strict().optional(),
     /** 当前白模编辑规格摘要；不含媒体位置，不是实际视频审片。 */
     previsEdit: advisorPrevisTargetSchema.optional(),
     worldTarget: advisorWorldTargetSchema.optional(),

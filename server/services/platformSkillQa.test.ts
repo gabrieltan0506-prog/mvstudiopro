@@ -286,6 +286,17 @@ describe("漫剧工厂创作顾问上下文", () => {
     expect(payload.response_format).toEqual({ type: "json_object" });
   });
 
+  it("模型参数/实际存稿编译到模型，建议自纠与图片复用规则是系统指令", () => {
+    const messages = buildManhuaCreativeAdvisorLlmMessages({ question: "检查第一段", context: manhuaContext({ videoModel: "seedance-2.5", videoPromptReview: { blockId: "clip-e01-g01", segmentIndex: 1, prompt: "【第1段·29s】棕马前腿悬空，下一句蜷腿落地。娘说「慢点」。", videoModel: "seedance-2.5", aspectRatio: "9:16", resolution: "720p" } }) });
+    const system = messages[0]!.content;
+    expect(system).toContain("可选建议，不是强制指令");
+    expect(system).toContain("最小修正稿");
+    expect(system).toContain("没有明确视觉差异证据，不要求重新生成图片");
+    expect(system).toContain("用户无需从零手填");
+    expect(messages[1]!.content).toContain("{慢点}");
+    for (const model of ["seedance-2.0", "seedance-2.5", "minimax-hailuo-3", "wan-3.0"]) expect(messages[1]!.content).toContain(model);
+  });
+
   it("资产与终审阶段使用各自中性投影；无 context 保持原平台问答 system", async () => {
     const assets = buildManhuaCreativeAdvisorLlmMessages({
       question: "资产还缺什么？",

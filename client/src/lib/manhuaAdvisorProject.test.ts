@@ -35,6 +35,8 @@ describe("创作顾问的真实项目生产者", () => {
     ], selection: { episodeIndex: 1, segmentIndex: 2, shot: null } });
     const context = resolveAdvisorVideoPromptContext({ context: { ...result.context, shotSummary: "旧摘要第一段34秒" }, drafts: result.videoPromptDrafts, selectedSegmentIndex: result.selectedSegmentIndex, question: "幫我檢查第一段的視頻生成提示詞" });
     expect(context.shotSummary).toContain(prompt);
+    expect(context.videoPromptReview).toMatchObject({ blockId: "clip-e01-g01", prompt, aspectRatio: "9:16" });
+    expect(resolveAdvisorVideoPromptContext({ context: result.context, drafts: result.videoPromptDrafts, question: "检查第一段" }).videoPromptReview?.prompt).toBe(prompt);
     expect(context.shotSummary).toContain("29 秒");
     expect(context.shotSummary).not.toMatch(/34秒|其他集|旧归档稿/);
     expect(manhuaCreativeAdvisorContextSchema.safeParse(context).success).toBe(true);
