@@ -4559,6 +4559,21 @@ export default function OmniCanvas() {
       userId: user?.id ? String(user.id) : "",
       userPlan,
       userRole,
+      repairSceneTileOwnership: async (imageUrls) => {
+        // Only references actually compiled into this request; never touch other segments.
+        const identity = (url: string) => { try { return decodeURIComponent(new URL(url).pathname); } catch { return url.split("?")[0]; } };
+        const wanted = new Set(imageUrls.map(identity));
+        for (const ref of customAssetRefs) {
+          if (ref.role !== "scene" || !ref.tileUrls) continue;
+          const existingTiles = Object.fromEntries(Object.entries(ref.tileUrls)
+            .filter(([, url]) => typeof url === "string" && wanted.has(identity(url)))) as Partial<Record<ManhuaSceneTileSlot, string>>;
+          if (!Object.keys(existingTiles).length) continue;
+          const source = blocksRef.current.find((b) => b.id === `sceneplate-${ref.seedLibraryId}`);
+          const sheetUrl = source?.outputUrl || source?.outputUrls?.[0];
+          if (!sheetUrl) throw new Error("场景原图记录缺失，已在生成前停止");
+          await cropManhuaSheet2x2({ sheetUrl, existingTiles });
+        }
+      },
       authorizeManhuaClip: pilotReview.authorize,
       onManhuaPilotChanged: pilotReview.refresh,
       onVideoTaskCreated: () => pilotReview.refresh(),

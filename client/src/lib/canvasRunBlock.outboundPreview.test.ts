@@ -842,3 +842,24 @@ it("采用视角图进入真实请求与确认全文，超容量明确拒绝", a
   expect(bodies[0]!.prompt).toBe(preview.body.prompt);
   await expect(previewCanvasBlockOutbound({...deps,manhuaAdoptedStageFrames:()=>Array.from({length:40},(_,i)=>({...frame,url:`https://test.invalid/stage-${i}.png`}))},block)).rejects.toThrow("片场视角图不能全部进入请求");
 });
+
+
+describe("formal scene ownership repair before paid outbound", () => {
+  it("29-second full request repairs its actual image slots before the single unchanged POST", async () => {
+    const block = makeBlock({ videoDuration: 29, prompt: "【第1段·29s】0–29s：阿菁与母亲对话。@图片1提供人物身份。" });
+    const events: string[] = [];
+    const repair = vi.fn(async (images: string[]) => { expect(images).toEqual(["https://test.invalid/identity.png"]); events.push("repair"); });
+    const bodies = captureOutbound();
+    const underlying = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => { events.push("submit"); return underlying(url, init); });
+    await runCanvasBlock({ ...deps, repairSceneTileOwnership: repair }, block);
+    expect(events).toEqual(["repair", "submit"]); expect(bodies).toHaveLength(1);
+    expect(bodies[0].duration).toBe(29);
+  });
+  it("failed recovery produces zero paid submissions", async () => {
+    const repair = vi.fn(async () => { throw new Error("sheet_owner_forbidden"); });
+    const bodies = captureOutbound();
+    await expect(runCanvasBlock({ ...deps, repairSceneTileOwnership: repair }, makeBlock())).rejects.toThrow("sheet_owner_forbidden");
+    expect(bodies).toHaveLength(0);
+  });
+});

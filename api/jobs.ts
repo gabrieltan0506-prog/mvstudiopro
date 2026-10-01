@@ -4358,8 +4358,10 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       if (req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
       }
+      const viewer = await resolveJobUser(req);
+      if (!viewer) return res.status(401).json({ ok: false, error: "请先登录" });
       const sheetUrl = s(b.sheetUrl || q.sheetUrl || "").trim();
-      if (!/^https:\/\//i.test(sheetUrl)) {
+      if (!/^https:\/\//i.test(sheetUrl) && !sheetUrl.startsWith("/api/canvas-media/")) {
         return res.status(400).json({ ok: false, error: "请提供拼板 HTTPS 地址" });
       }
       try {
@@ -4368,6 +4370,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         );
         const tiles = await cropManhuaSheet2x2ToGcs({
           sheetUrl,
+          userId: viewer.userId,
+          existingTiles: b.existingTiles && typeof b.existingTiles === "object" ? b.existingTiles : undefined,
           objectPrefix: s(b.objectPrefix || q.objectPrefix || "").trim() || undefined,
         });
         return res.status(200).json({
