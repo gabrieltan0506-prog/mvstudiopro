@@ -1,6 +1,7 @@
 import { gcsTransferUrl, isGcsTransferUrl } from "@/lib/gcsTransfer";
 import type { ComponentProps } from "react";
 import { findCanvasDialogueReuse, restoreCanvasDialogueCandidate } from "@/lib/canvasDialogueReuse";
+import { findCanvasSegmentAudioSources, restoreCanvasSegmentAudio } from "@/lib/canvasSegmentAudioRestore";
 import { createManhuaAudioFromSavedPrompt, savedPromptAudioDiffers, syncUnproducedAudioToSavedPrompt } from "@shared/manhuaAudioSavedPrompt";
 import { createManhuaAudioFromShots } from "@shared/manhuaAudioFromShots";
 import { manhuaBgmArcFromShots } from "@shared/manhuaBgmArcFromShots";
@@ -504,6 +505,8 @@ export function CanvasAudioStudioView({
   useEffect(() => { setActiveCueId(null); setVoiceCriteria({}); setVoicePage(0); setVoicePickerOpen(false); }, [block.id]);
   useEffect(() => { setEditorOpen(!compact); }, [block.id, compact]);
   const [error, setError] = useState("");
+  const [restoreSourceId, setRestoreSourceId] = useState("");
+  const restoreSources = findCanvasSegmentAudioSources(block, dialogueSources);
   /** 0929：每条原始对白候选的变速选择与在途标记 */
   const [speedDraft, setSpeedDraft] = useState<Record<string, number>>({});
   const [speedBusyTakeId, setSpeedBusyTakeId] = useState<string | null>(null);
@@ -1398,6 +1401,21 @@ export function CanvasAudioStudioView({
         <span className="text-[11px] text-white/50">逐句试听 · 分段采用 · 保留原版本</span>
       </div>
       {proxyAudio && <p className="text-xs text-amber-100">音频先从本机浏览器缓存读取，缺失时经 Fly 暂存回源；Fly 暂存仅保留 24 小时。请及时下载所选音轨。若原件也已丢失，需重新生成。</p>}
+      {restoreSources.length > 0 && <details className="rounded border border-sky-200/20 p-2">
+        <summary className="cursor-pointer text-xs">找回本段整套原声与配乐</summary>
+        <p className="my-2 text-xs text-white/70">恢复所选旧节点的台词、角色、秒窗、音色、配乐和原采用记录。当前音轨保留为停用版本；剧本、图片及成片保持原样。恢复后请检查声音时长与保存全文，母轨须匹配恢复后的音轨版本。</p>
+        <select aria-label="本段原音轨来源" className={fieldClass} value={restoreSourceId} disabled={disabled || busy} onChange={event => setRestoreSourceId(event.target.value)}>
+          <option value="">请选择旧节点</option>
+          {restoreSources.map(source => <option key={source.id} value={source.id}>{source.archivedFromPreviousScript ? "已归档" : "已有版本"} · {source.id} · 已采用 {source.audioStudio!.cues.filter(cue => cue.enabled && cue.approved).length} 条</option>)}
+        </select>
+        <button type="button" className={`${buttonClass} mt-2`} disabled={disabled || busy || !restoreSources.some(source => source.id === restoreSourceId)} onClick={() => {
+          try {
+            const latest = current.current;
+            const restored = restoreCanvasSegmentAudio(latest.block, latest.dialogueSources, restoreSourceId, latest.state);
+            if (update(() => restored)) { setConfirmation(null); setError(""); setRestoreSourceId(""); }
+          } catch (issue) { setError(issue instanceof Error ? issue.message : "原音轨未能恢复，当前版本仍保留。"); }
+        }}>恢复本段整套音轨 · 不重新生成</button>
+      </details>}
       <nav aria-label="声音制作快捷入口" className="flex flex-wrap gap-2">
         {([["dialogue", "配音"], ["bgm", "背景音乐"], ["sfx", "音效"]] as const).map(([kind, label]) =>
           <button key={kind} type="button" className={buttonClass}

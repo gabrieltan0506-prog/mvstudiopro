@@ -1,11 +1,11 @@
 /**
- * 漫剧首段 10 秒质检门。
+ * 可选试片的旧审核记录与提示词裁切。
  *
- * 这一层只负责可持久化状态、生成放行判定和提示词的确定性裁切：
+ * 这一层只负责兼容旧审核记录和用户明确选择试片时的确定性裁切：
  * - 质检按「集号 + 成片引擎」隔离，换引擎不会沿用另一档的批准；
- * - 未批准时只能提交第 1 段、且请求时长必须恰好为 10 秒；
- * - 已生成但尚未审阅时禁止重复提交，避免等待期间重复扣费；
- * - 提示词只删除或缩短越过 10 秒的既有秒轴，不补写不存在的动作。
+ * - 正式生成不依赖试片批准状态，不在本文件进行放行判定；
+ * - 可选试片的防重复提交由服务端持久审核记录处理；
+ * - 仅试片裁切提示词，不改写正式稿、不补写不存在的动作。
  */
 
 export const MANHUA_PILOT_GATE_FORMAT = "mv-manhua-pilot-gate-v1" as const;
@@ -34,21 +34,6 @@ export type ManhuaPilotGateEntry = {
 };
 
 export type ManhuaPilotGateStore = Record<string, ManhuaPilotGateEntry>;
-
-export type ManhuaPilotGateReason =
-  | "approved"
-  | "pilot_required"
-  | "awaiting_review"
-  | "first_segment_only"
-  | "pilot_duration_must_be_10";
-
-export type ManhuaPilotGateDecision = {
-  allowed: boolean;
-  mode: "full" | "pilot" | "blocked";
-  effectiveDurationSec: number;
-  status: ManhuaPilotGateStatus;
-  reason: ManhuaPilotGateReason;
-};
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -234,67 +219,6 @@ export function reviewManhuaPilot(
       : {}),
     ...(input.decision === "reject" && rejectionNoteZh ? { rejectionNoteZh } : {}),
   });
-}
-
-/**
- * 生成入口的唯一放行判定。approved 只解锁同一集、同一引擎；换引擎重新试片。
- */
-export function evaluateManhuaPilotGate(input: {
-  store: unknown;
-  episodeIndex: number;
-  videoModel: string;
-  segmentIndex: number;
-  requestedDurationSec: number;
-}): ManhuaPilotGateDecision {
-  const entry = getManhuaPilotGateEntry(
-    input.store,
-    input.episodeIndex,
-    input.videoModel,
-  );
-  const status = entry?.status ?? "not_started";
-  if (status === "approved") {
-    return {
-      allowed: true,
-      mode: "full",
-      effectiveDurationSec: input.requestedDurationSec,
-      status,
-      reason: "approved",
-    };
-  }
-  if (status === "generated") {
-    return {
-      allowed: false,
-      mode: "blocked",
-      effectiveDurationSec: MANHUA_PILOT_DURATION_SEC,
-      status,
-      reason: "awaiting_review",
-    };
-  }
-  if (!Number.isInteger(input.segmentIndex) || input.segmentIndex !== 1) {
-    return {
-      allowed: false,
-      mode: "blocked",
-      effectiveDurationSec: MANHUA_PILOT_DURATION_SEC,
-      status,
-      reason: "first_segment_only",
-    };
-  }
-  if (input.requestedDurationSec !== MANHUA_PILOT_DURATION_SEC) {
-    return {
-      allowed: false,
-      mode: "blocked",
-      effectiveDurationSec: MANHUA_PILOT_DURATION_SEC,
-      status,
-      reason: "pilot_duration_must_be_10",
-    };
-  }
-  return {
-    allowed: true,
-    mode: "pilot",
-    effectiveDurationSec: MANHUA_PILOT_DURATION_SEC,
-    status,
-    reason: "pilot_required",
-  };
 }
 
 export type ManhuaPilotPromptCompileResult = {
