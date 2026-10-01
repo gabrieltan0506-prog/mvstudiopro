@@ -5,6 +5,7 @@
  * - 后期产物(拼接/BGM)可直接进入下一道工序(gcsUri 优先,不依赖旧读取地址);
  * - 异常缓存结构清理、终态只提示一次的判定。
  */
+import { canvasAudioCueInputKey, getSelectedAudioTake } from "@shared/canvasAudioStudio";
 import type { CanvasBlock } from "./canvasTypes";
 import { getBlockEpisodeIndex, isManhuaFinalVideoBlockId, stageKeyFromBlockId } from "./canvasDramaStudio";
 import { manhuaClipQualityAllowsAssemble } from "@shared/manhuaClipQuality";
@@ -234,4 +235,23 @@ export function shouldNotifyTerminal(
   if (!terminal || notified.has(jobId)) return false;
   notified.add(jobId);
   return true;
+}
+
+/** 从当前成片节点读取已采用的裁段；裁段生成使用单位增益，贴装时才应用保存的音量。 */
+export function adoptedPostProdBgmOptions(blocks: CanvasBlock[]) {
+  return blocks.flatMap(block => (block.audioStudio?.cues ?? []).flatMap(cue => {
+    const take = getSelectedAudioTake(cue);
+    if (cue.kind !== "bgm" || !cue.enabled || !cue.approved || !take?.gcsUri ||
+      take.inputKey !== canvasAudioCueInputKey(cue) || !(take.durationSec > 0)) return [];
+    const durationSec = Math.min(take.durationSec, cue.endSec - cue.startSec);
+    if (!(durationSec > 0)) return [];
+    const windows = cue.mix?.silenceWindows ?? [];
+    const volumeExpr = windows.reduceRight((tail, window) =>
+      `if(between(t,${window.startSec},${window.endSec}),0,${tail})`, String(cue.volume));
+    return [{ id: `${block.id}:${cue.id}:${take.id}`, url: take.gcsUri,
+      label: `已采用配乐 · ${cue.labelZh || block.id} · ${cue.startSec}–${cue.endSec}秒`,
+      settings: { entrySec: cue.startSec, durationSec, volume: cue.volume,
+        fadeInSec: cue.fadeInSec, fadeOutSec: cue.fadeOutSec,
+        volumeExpr: windows.length ? volumeExpr : undefined } }];
+  }));
 }

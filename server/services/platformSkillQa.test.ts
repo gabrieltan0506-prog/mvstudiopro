@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { invokeLLMMock, resolvePlatformSkillsPromptMock, getDbMock, resolveVideoMock } = vi.hoisted(() => ({
+const { invokeLLMMock, resolvePlatformSkillsPromptMock, getDbMock, resolveVideoMock, bgmAdvisorMock } = vi.hoisted(() => ({
   invokeLLMMock: vi.fn(),
+  bgmAdvisorMock:vi.fn(),
   resolveVideoMock: vi.fn(),
   getDbMock: vi.fn(),
   resolvePlatformSkillsPromptMock: vi.fn(),
@@ -15,6 +16,8 @@ vi.mock("../_core/llm.js", async (importOriginal) => ({
     choices?: Array<{ message?: { content?: unknown } }>;
   }) => String(response.choices?.[0]?.message?.content || ""),
 }));
+
+vi.mock("./manhuaAdvisorBgmMix",()=>({askManhuaBgmMix:bgmAdvisorMock,MANHUA_BGM_ADVISOR_MODEL:"gemini-3.8-flash"}));
 
 vi.mock("./manhuaAdvisorPrevisVideo", () => ({ resolveAdvisorPrevisVideo: resolveVideoMock }));
 
@@ -84,6 +87,7 @@ function llmJson(answer: unknown = "建议先缩短人物距离，再检查反�
 }
 
 beforeEach(() => {
+  bgmAdvisorMock.mockReset();
   resolveVideoMock.mockReset(); resolveVideoMock.mockResolvedValue(null);
   getDbMock.mockReset(); getDbMock.mockResolvedValue(null);
   invokeLLMMock.mockReset();
@@ -562,4 +566,25 @@ it("场景顾问生产服务校验JSON方案，禁止用普通回答冒充可生
 it("场景顾问不能交回另一场景或无效空提示词", async () => {
   invokeLLMMock.mockResolvedValue(llmJson({ kind: "world_plan_v1", sceneRefId: "other", summaryZh: "错误场景", textPrompt: "错误目标" }));
   await expect(askPlatformSkillQa({ userId: 7, isAdmin: true, question: "安排诊台", manhuaContext: manhuaContext({ worldTarget: { sceneRefId: "scene-clinic", labelZh: "诊台", sourceRevision: "a".repeat(64), hintZh: "" } }) })).rejects.toThrow();
+});
+
+describe("BGM专用Gemini路由",()=>{
+  const target={sourceKey:"current-music-v1",videoUri:"gs://test/post-prod/7/video.mp4",bgmUri:"gs://test/post-prod/7/music.wav",entrySec:0,durationSec:29,volume:0.5,fadeInSec:0,fadeOutSec:0};
+  it("只有配乐咨询调用Gemini，其他顾问继续GLM FlashX",async()=>{
+    bgmAdvisorMock.mockResolvedValue(JSON.stringify({answer:{kind:"bgm_mix_v1",sourceKey:target.sourceKey,summaryZh:"用音乐支持眼神中的忧虑",narrativeMix:[],duckUnderDialogue:false,uncertaintiesZh:[]}}));
+    const result=await askPlatformSkillQa({userId:7,isAdmin:true,question:"配乐如何呼应表演？",manhuaContext:manhuaContext({bgmMix:target})});
+    expect(result.modelName).toBe("gemini-3.8-flash");
+    expect(bgmAdvisorMock).toHaveBeenCalledOnce();
+    expect(invokeLLMMock).not.toHaveBeenCalled();
+    bgmAdvisorMock.mockClear();
+    const other=await askPlatformSkillQa({userId:7,isAdmin:true,question:"检查人物走位",manhuaContext:manhuaContext()});
+    expect(other.modelName).toBe("z-ai/glm-5.3-flashx");
+    expect(bgmAdvisorMock).not.toHaveBeenCalled();
+  });
+  it("音画读取或Gemini失败不回落GLM、不删除媒体重试",async()=>{
+    bgmAdvisorMock.mockRejectedValue(new Error("素材不可读取"));
+    await expect(askPlatformSkillQa({userId:7,isAdmin:true,question:"检查配乐",manhuaContext:manhuaContext({bgmMix:target})})).rejects.toThrow();
+    expect(bgmAdvisorMock).toHaveBeenCalledOnce();
+    expect(invokeLLMMock).not.toHaveBeenCalled();
+  });
 });

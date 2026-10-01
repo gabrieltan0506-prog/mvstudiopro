@@ -1,3 +1,4 @@
+import { advisorBgmMixTargetSchema } from "./manhuaAdvisorBgmMix";
 import { advisorWorldTargetSchema } from "./manhuaAdvisorWorld";
 import { advisorPrevisTargetSchema } from "./manhuaAdvisorPrevisEdit";
 import { z } from "zod";
@@ -130,6 +131,7 @@ export const manhuaCreativeAdvisorContextSchema = z
     /** 当前白模编辑规格摘要；不含媒体位置，不是实际视频审片。 */
     previsEdit: advisorPrevisTargetSchema.optional(),
     worldTarget: advisorWorldTargetSchema.optional(),
+    bgmMix: advisorBgmMixTargetSchema.optional(),
     /** 3D 场景咨询不依赖已创建白模；只传导演卡身份，由服务端查真实手法库。 */
     studio3d: z.object({
       directionCardId: contextText(100, "导演包ID").optional(),
@@ -173,6 +175,7 @@ export const manhuaCreativeAdvisorContextSchema = z
     creditsZh: contextText(MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.signalChars, "积分状态").optional(),
   })
   .strict().superRefine((context, ctx) => {
+    if (context.bgmMix && (context.previsEdit || context.worldTarget)) ctx.addIssue({code:"custom",path:["bgmMix"],message:"配乐咨询不能同时修改白模或场景"});
     if (context.previsEdit && context.worldTarget) ctx.addIssue({ code: "custom", path: ["worldTarget"], message: "一次咨询只能指定白模或3D场景中的一个目标" });
   });
 

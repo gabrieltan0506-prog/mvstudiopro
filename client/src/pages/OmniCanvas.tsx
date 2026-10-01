@@ -13341,6 +13341,7 @@ export default function OmniCanvas() {
                 <PostProdWorkshopCard
                   key={`${user.id}:${postProdScopeKey}`}
                   blocks={blocks}
+                  advisorContext={advisorProject?.context}
                   userId={String(user.id)}
                   projectScopeKey={postProdScopeKey}
                   userRole={userRole}

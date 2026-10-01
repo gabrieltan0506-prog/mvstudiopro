@@ -115,3 +115,11 @@ describe("BGM ffmpeg 时间线顺序", () => {
     )).toThrow("卡点音量表达式格式不正确");
   });
 });
+
+it("已采用配乐按进出秒窗结束，不循环填满片尾", () => {
+  const parsed = bgmMountParamsSchema.parse({...base, entrySec:3,bgmSeekSec:0,bgmDurationSec:5,fadeOutSec:0.4,duckUnderDialogue:false});
+  const plan = buildBgmFilterPlan(parsed,{durationSec:29,hasAudio:true});
+  expect(plan.filterGraph).toContain("atrim=start=0.000:end=5.000");
+  expect(plan.filterGraph).toContain("afade=t=out:st=7.600:d=0.400");
+  expect(plan.filterGraph).toContain("apad,atrim=0:29.000");
+});

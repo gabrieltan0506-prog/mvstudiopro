@@ -1,3 +1,7 @@
+import { BgmCreativeAdvisor } from "./BgmCreativeAdvisor";
+import type { ManhuaCreativeAdvisorContext } from "@shared/manhuaCreativeAdvisor";
+import { BgmNarrativeMixEditor } from "./BgmNarrativeMixEditor";
+import { bgmNarrativeMixSchema, type BgmNarrativeCue } from "@shared/manhuaBgmNarrativeMix";
 import { projectManhuaSpatialStoryCuesForBgm } from "@shared/manhuaSpatialStoryCue";
 import type { ManhuaSceneSpaceRef, ManhuaSpatialContext } from "@shared/manhuaSceneSpace";
 /**
@@ -59,6 +63,7 @@ import {
 import { canMountBgmNow, canUpscaleNow } from "@/lib/manhuaDeliveryOrder";
 import {
   ACTION_LABEL,
+  adoptedPostProdBgmOptions,
   isPostProdAudioAction,
   buildPostProdClipOptions,
   isCurrentManhuaAssemblableClipBlock,
@@ -135,6 +140,7 @@ function loadTrackedUpscales(userId: string): TrackedUpscale[] {
 
 type PostProdWorkshopCardProps = {
   blocks: CanvasBlock[];
+  advisorContext?: ManhuaCreativeAdvisorContext;
   userId: string;
   userRole?: string | null;
   /** 画布「BGM 风格说明」（audioReferenceLock.bgmNoteZh）——起草 brief 时自动作风格锚 */
@@ -185,6 +191,7 @@ function statusBadge(status: PostProdJobStatus): { text: string; cls: string } {
 
 export default function PostProdWorkshopCard({
   blocks,
+  advisorContext,
   userId,
   userRole,
   bgmSeedNoteZh,
@@ -223,9 +230,9 @@ export default function PostProdWorkshopCard({
     [currentClipBlocks, focusEpisode]
   );
 
-  /** 音频只取当前集成片节点上的上传件。 */
+  /** 当前集上传件及音轨工作台的已采用配乐。 */
   const audioOptions = useMemo(() => {
-    const out: Array<{ id: string; url: string; label: string }> = [];
+    const out: Array<{ id: string; url: string; label: string; settings?: ReturnType<typeof adoptedPostProdBgmOptions>[number]["settings"] }> = [...adoptedPostProdBgmOptions(currentClipBlocks)];
     for (const b of currentClipBlocks) {
       for (const a of b.uploadedAssets ?? []) {
         const isAudio =
@@ -392,7 +399,7 @@ export default function PostProdWorkshopCard({
     [bgmJobsQuery.data, bgmJobScopes, projectScopeKey]
   );
 
-  const scoringAudioOptions = useMemo(
+  const scoringAudioOptions = useMemo<Array<{ id: string; url: string; label: string; settings?: ReturnType<typeof adoptedPostProdBgmOptions>[number]["settings"] }>>(
     () => [
       ...generatedBgmVariants.map(variant => ({
         id: `generated-bgm-${variant.index}`,
@@ -439,6 +446,10 @@ export default function PostProdWorkshopCard({
   const [concatRes, setConcatRes] = useState<"720p" | "1080p">("720p");
   const [bgmVideoUrl, setBgmVideoUrl] = useState("");
   const [bgmAudioUrl, setBgmAudioUrl] = useState("");
+  const [bgmNarrativeMix, setBgmNarrativeMix] = useState<BgmNarrativeCue[]>([]);
+  const [bgmSourceSettingsKey, setBgmSourceSettingsKey] = useState("");
+  const [bgmAudioOptionId, setBgmAudioOptionId] = useState("");
+  const [bgmDurationSec, setBgmDurationSec] = useState<number | undefined>();
   const [bgmVolume, setBgmVolume] = useState(0.48);
   const [bgmDuckUnderDialogue, setBgmDuckUnderDialogue] = useState(false);
   const [bgmEntrySec, setBgmEntrySec] = useState(0);
@@ -717,6 +728,8 @@ export default function PostProdWorkshopCard({
               bgmSeekSec: number;
               volumeExpr?: string;
               duckUnderDialogue?: boolean;
+              bgmDurationSec?: number;
+              narrativeMix?: BgmNarrativeCue[];
               fadeInSec: number;
               fadeOutSec: number;
             };
@@ -985,6 +998,10 @@ export default function PostProdWorkshopCard({
   const applyGeneratedBgmVariant = (variant: ManhuaBgmVariant) => {
     setSelectedBgmVariant(variant.index);
     setBgmAudioUrl(variant.gcsUri);
+    setBgmNarrativeMix([]);
+    setBgmAudioOptionId(`generated-bgm-${variant.index}`);
+    setBgmSourceSettingsKey("");
+    setBgmDurationSec(undefined);
     const structure = variant.structure as BgmStructure | null;
     if (!structure || filmEvents.length === 0 || scoreDurationSec <= 0) {
       setBgmEntrySec(0);
@@ -1032,8 +1049,13 @@ export default function PostProdWorkshopCard({
       return;
     }
     if (!clipOptions.some(option => option.url === bgmVideoUrl) ||
-      !scoringAudioOptions.some(option => option.url === bgmAudioUrl)) {
+      !scoringAudioOptions.some(option => option.id === bgmAudioOptionId && option.url === bgmAudioUrl)) {
       toast.error("成片或音频不属于当前剧本，请重新选择");
+      return;
+    }
+    const currentMusic = scoringAudioOptions.find(option => option.id === bgmAudioOptionId);
+    if (bgmSourceSettingsKey && JSON.stringify(currentMusic?.settings) !== bgmSourceSettingsKey) {
+      toast.error("原配乐采用参数已变化，请重新选择后核对混音参数");
       return;
     }
     const pendingUpscale = scopedUpscaleJobs.find(
@@ -1057,6 +1079,16 @@ export default function PostProdWorkshopCard({
     ) {
       return;
     }
+    const narrative = bgmNarrativeMixSchema.safeParse(bgmNarrativeMix);
+    if (!narrative.success) {
+      toast.error(narrative.error.issues[0]?.message || "音乐强弱时间表不合法");
+      return;
+    }
+    if (narrative.data.some(cue => cue.startSec < bgmEntrySec ||
+      (bgmDurationSec != null && cue.endSec > bgmEntrySec + bgmDurationSec))) {
+      toast.error("音乐强弱段超出所选配乐进出窗口");
+      return;
+    }
     void submit(
       {
         action: "bgm_mount",
@@ -1064,6 +1096,8 @@ export default function PostProdWorkshopCard({
           videoUri: bgmVideoUrl,
           bgmUri: bgmAudioUrl,
           bgmVolume,
+          ...(narrative.data.length ? {narrativeMix:narrative.data} : {}),
+          ...(bgmDurationSec != null ? { bgmDurationSec } : {}),
           duckUnderDialogue: bgmDuckUnderDialogue,
           entrySec: bgmEntrySec,
           bgmSeekSec,
@@ -1670,7 +1704,7 @@ export default function PostProdWorkshopCard({
             <Music4 className="h-3.5 w-3.5 text-cyan-300" /> BGM 贴装
           </div>
           <p className="mt-1 text-[11px] leading-4 text-white/45">
-            侧链压对白、按整片时间线淡入淡出;短曲自动循环。音频先上传到任意节点。
+            可选择音轨工作台已采用的配乐，保留原参数；对白避让按需选择。已采用选段只在保存的秒窗内播放。
           </p>
           <div className="mt-2 space-y-1.5">
             <select
@@ -1686,23 +1720,34 @@ export default function PostProdWorkshopCard({
               ))}
             </select>
             <select
-              value={bgmAudioUrl}
+              value={bgmAudioOptionId}
               onChange={e => {
-                setBgmAudioUrl(e.target.value);
+                const option = scoringAudioOptions.find(option => option.id === e.target.value);
+                setBgmAudioOptionId(option?.id ?? "");
+                setBgmNarrativeMix([]);
+                setBgmAudioUrl(option?.url ?? "");
                 setSelectedBgmVariant(null);
                 setBgmSeekSec(0);
-                setBgmVolumeExpr(undefined);
+                const settings = option?.settings;
+                setBgmSourceSettingsKey(settings ? JSON.stringify(settings) : "");
+                setBgmDurationSec(settings?.durationSec);
+                setBgmVolume(settings?.volume ?? 0.48);
+                setBgmEntrySec(settings?.entrySec ?? 0);
+                setBgmFadeIn(settings?.fadeInSec ?? 0.5);
+                setBgmFadeOut(settings?.fadeOutSec ?? 1);
+                setBgmVolumeExpr(settings?.volumeExpr);
                 setBeatPreview([]);
               }}
               className={selectCls}
             >
               <option value="">选 BGM 音频…</option>
               {scoringAudioOptions.map(a => (
-                <option key={a.id} value={a.url}>
+                <option key={a.id} value={a.id}>
                   {a.label}
                 </option>
               ))}
             </select>
+            {bgmDurationSec != null ? <p className="text-xs text-white/55">已采用选段长 {bgmDurationSec.toFixed(2)} 秒，片内 {bgmEntrySec.toFixed(2)}–{(bgmEntrySec + bgmDurationSec).toFixed(2)} 秒播放；结束后留白，不循环。</p> : null}
             <label className="flex items-center gap-2 text-xs text-white/70">
               <input type="checkbox" checked={bgmDuckUnderDialogue} onChange={e => setBgmDuckUnderDialogue(e.target.checked)} />
               自动对白避让（可选）
@@ -1774,6 +1819,11 @@ export default function PostProdWorkshopCard({
                 />
               </label>
             </div>
+            <BgmCreativeAdvisor context={advisorContext} storageKey={`bgm-advisor:${userId}:${projectScopeKey}`} target={bgmVideoUrl && bgmAudioUrl && bgmDurationSec != null ? {
+              sourceKey: JSON.stringify([projectScopeKey,clipOptions.find(option=>option.url===bgmVideoUrl)?.id,bgmAudioOptionId,bgmSourceSettingsKey,bgmEntrySec,bgmDurationSec,bgmVolume,bgmFadeIn,bgmFadeOut]),
+              videoUri:bgmVideoUrl,bgmUri:bgmAudioUrl,entrySec:bgmEntrySec,durationSec:bgmDurationSec,volume:bgmVolume,fadeInSec:bgmFadeIn,fadeOutSec:bgmFadeOut,
+            } : undefined} onApply={plan=>{setBgmNarrativeMix(plan.narrativeMix);setBgmDuckUnderDialogue(plan.duckUnderDialogue);toast.success("配乐建议已写入时间表，尚未执行混音");}} />
+            <BgmNarrativeMixEditor value={bgmNarrativeMix} onChange={setBgmNarrativeMix} entrySec={bgmEntrySec} durationSec={bgmDurationSec} baseGain={bgmVolume} />
             <button
               type="button"
               disabled={busy}
