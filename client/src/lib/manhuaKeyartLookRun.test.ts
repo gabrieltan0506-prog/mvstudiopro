@@ -9,6 +9,7 @@ import {
   expandManhuaShotKeyartsAfterReverse,
   ensureManhuaFragmentClips,
   runManhuaDramaFactoryPipeline,
+  prepareManhuaFactoryClipInput,
   getBlockEpisodeIndex,
   queuedManhuaKeyartBlocks,
   queuedManhuaClipBlocks,
@@ -319,7 +320,7 @@ function actualWorkbenchReview(scope: Record<string, unknown>) {
 }
 
 describe("静帧造型的真实编排、节点重跑与请求边界", () => {
-  it("只有造型回执、没有原镜生成身份证据的旧图不得提交视频，旧图和任务保留", async () => {
+  it("没有原镜回执不强制重出图，但未做出站确认仍零提交并保留旧图任务", async () => {
     const data = fixture();
     const prepared = ensureManhuaFragmentClips(data.blocks, data.edges, 1, options);
     const clip = queuedManhuaClipBlocks(prepared.blocks, 1)[0]!;
@@ -329,13 +330,14 @@ describe("静帧造型的真实编排、节点重跑与请求边界", () => {
       manhuaKeyartLookState: recordManhuaKeyartLookOutput(b, b.outputUrl),
       manhuaKeyartSourceState: undefined,
     } : b);
-    const authorize = vi.fn(async () => ({ projectVersion: "a".repeat(64), episodeIndex: 1, segmentIndex: 1, intent: "pilot" as const }));
+    const authorize = vi.fn(async () => { throw new Error("测试拒绝付费确认"); });
     const result = await runManhuaDramaFactoryPipeline({
       blocks, edges: prepared.edges, episodeIndex: 1, untilStage: "clip", forceFromStage: "clip",
       targetBlockIds: [clip.id], ensureOptions: options, maxRetries: 0,
       deps: { optimizeCopy: async () => "", userRole: "admin", authorizeManhuaClip: authorize },
     });
-    expect(result.errors.some(e => /原稿分镜|原镜身份/.test(e.message))).toBe(true);
+    expect(result.errors.some(e => /还没有完成生成前确认/.test(e.message))).toBe(true);
+    expect(result.errors.some(e => /重出|原镜身份/.test(e.message))).toBe(false);
     expect(authorize).not.toHaveBeenCalled();
     expect(submitted).toHaveLength(0);
     const preserved = result.blocks.find(b => b.id === data.keyarts[0].id)!;
@@ -390,36 +392,19 @@ describe("静帧造型的真实编排、节点重跑与请求边界", () => {
     expect(JSON.stringify(data.blocks)).toBe(before);
     expect(submitted).toHaveLength(0);
   });
-  it("更换造型后旧静帧不能直出视频，页面和编排两入口都零提交", async () => {
+  it("版本不同也可准备已有图成片，页面与生产准备路径不写回或建单", async () => {
     const data = fixture();
-    const prepared = ensureManhuaFragmentClips(
-      data.blocks,
-      data.edges,
-      1,
-      options
-    );
-    const clip = prepared.blocks.find(
-      b => b.id.startsWith("clip-") && /-g01(?:-|$)/.test(b.id)
-    )!;
-    await expect(
-      actualRerun({ ...data, blocks: prepared.blocks, edges: prepared.edges })(
-        clip
-      )
-    ).rejects.toThrow(/重出对应关键静帧/);
-    const result = await runManhuaDramaFactoryPipeline({
-      blocks: prepared.blocks,
-      edges: prepared.edges,
-      deps: { optimizeCopy: async () => "", userRole: "admin" },
-      episodeIndex: 1,
-      untilStage: "clip",
-      forceFromStage: "clip",
-      targetBlockIds: [clip.id],
-      ensureOptions: options,
-      maxRetries: 0,
-    });
-    expect(
-      result.errors.some(error => /重出对应关键静帧/.test(error.message))
-    ).toBe(true);
+    const prepared = ensureManhuaFragmentClips(data.blocks, data.edges, 1, options);
+    const clip = prepared.blocks.find(b => b.id.startsWith("clip-") && /-g01(?:-|$)/.test(b.id))!;
+    const before = JSON.stringify(prepared.blocks);
+    expect(prepared.blocks.some(b => b.id.startsWith("keyart-") && !isManhuaWorkbenchKeyartCurrent(b))).toBe(true);
+    const patch = await actualRerun({ ...data, blocks: prepared.blocks, edges: prepared.edges })(clip);
+    expect(patch.prompt).toBeTruthy();
+    const result = await prepareManhuaFactoryClipInput({ blocks: prepared.blocks, edges: prepared.edges,
+      blockId: clip.id, fallbackBlock: clip, stage: "clip", episodeIndex: 1, preparedVideoEdit: false });
+    expect(result.preparedBlock.refImageUrl).toBe(data.keyarts[0]!.outputUrl);
+    expect(result.preparedBlock.editFusionUrls).toContain(data.keyarts[1]!.outputUrl);
+    expect(JSON.stringify(prepared.blocks)).toBe(before);
     expect(submitted).toHaveLength(0);
   });
   it("实际页面重跑回调同步更新 prompt 与图片，旧产物保留，最终请求读取新图", async () => {

@@ -14,6 +14,7 @@ import {
 } from "./manhuaScriptWorkbench";
 import {
   buildManhuaSecondCueSheet,
+  evaluateManhuaCueSheetReady,
   buildWorkbenchShotsFromSegmentPlan,
   formatManhuaKeyframeImage2Prompt,
   formatManhuaScreenplayEnginePromptBlock,
@@ -40,8 +41,10 @@ describe("manhuaStoryDistill", () => {
     expect(shots[0]?.keyframeRole).toBe("start");
     expect(shots[1]?.keyframeRole).toBe("key_action");
     expect(shots[2]?.keyframeRole).toBe("edit_out");
-    expect(shots[0]?.dialogueZh).toBe("把玉珏交出来——第1次。");
+    // 台词只落关键句镜；起幅不能重复朗读同一句。
+    expect(shots[0]?.dialogueZh).toBeUndefined();
     expect(shots[1]?.dialogueZh).toBeTruthy();
+    expect(plan.segments[0]!.dialogueZh).toContain(shots[1]!.dialogueZh!);
 
   });
 
@@ -82,6 +85,21 @@ describe("manhuaStoryDistill", () => {
     expect(img).toContain("关键静帧");
     expect(img).not.toMatch(/GPT|OpenAI|Seedance|Nano Banana/i);
     expect(formatManhuaScreenplayEnginePromptBlock()).toContain("故事发动机");
+  });
+
+
+  it("一镜或两镜自动导戏单可用，缺段或没有节拍仍准确报缺失", () => {
+    const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(buildManhuaEpisodeSegmentPlanFixtureMarkdown());
+    const shots = buildWorkbenchShotsFromSegmentPlan(plan);
+    for (const count of [1, 2]) {
+      const cue = buildManhuaSecondCueSheet({ segment: plan.segments[0]!, shots: shots.slice(0, count), durationSec: 8 });
+      expect(cue[0]?.startSec).toBe(0);
+      expect(cue.at(-1)?.endSec).toBe(8);
+      expect(evaluateManhuaCueSheetReady({ segmentCount: 1, cueSheets: [{ segmentIndex: 1, beatCount: cue.length }] })).toBe(true);
+    }
+    expect(evaluateManhuaCueSheetReady({ segmentCount: 2, cueSheets: [{ segmentIndex: 1, beatCount: 2 }] })).toBe(false);
+    expect(evaluateManhuaCueSheetReady({ segmentCount: 1, cueSheets: [{ segmentIndex: 1, beatCount: 0 }] })).toBe(false);
+    expect(evaluateManhuaCueSheetReady({ segmentCount: 0, cueSheets: [] })).toBe(false);
   });
 
   it("locks video until keyart+cue ready; allows burn without full asset/10-seg lock", () => {

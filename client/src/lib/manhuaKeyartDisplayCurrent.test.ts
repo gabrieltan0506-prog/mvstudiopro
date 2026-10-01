@@ -7,14 +7,14 @@ describe("原稿过期静帧的真实UI入参", () => {
   const receipt = { required: "new", generatedFor: "new", generatedUrl: "https://example.test/still.png" };
   const current = () => ({ ...defaultCanvasBlock("image", 0, 0), id: "keyart-e01-s01", imageMode: "edit" as const, refImageUrl: "https://example.test/ref.png", outputUrl: receipt.generatedUrl, manhuaKeyartLookState: { ...receipt }, manhuaKeyartSourceState: { ...receipt } });
 
-  it("造型有效但原稿已变时，卡片与参数栏不能宣称可出片", () => {
+  it("版本差异保留提示与旧回执，不误称画面已核", () => {
     const block = current();
     block.manhuaKeyartSourceState.generatedFor = "old";
     const saved = structuredClone(block);
     expect(isManhuaWorkbenchKeyartCurrent(block)).toBe(false);
     const input = manhuaShotKeyartInputOf(block);
     expect(manhuaShotKeyartState(input)).toBe("stale");
-    expect(manhuaShotKeyartStateZh(input)).toContain("已变更");
+    expect(manhuaShotKeyartStateZh(input)).toContain("版本待核对");
     expect(block).toEqual(saved);
   });
 
@@ -40,7 +40,7 @@ describe("原稿过期静帧的真实UI入参", () => {
     block.outputUrl = "";
     block.outputUrls = ["", receipt.generatedUrl];
     expect(keyartOutputUrl(block)).toBe(receipt.generatedUrl);
-    // 像素锁仍要求主 outputUrl 与造型回执一致；仅备用输出不得放行成片。
-    expect(manhuaShotKeyartState(manhuaShotKeyartInputOf(block))).toBe("unlocked");
+    // 备用真实产物仍有垫图锁；版本是否匹配由 sourceCurrent 独立提示。
+    expect(manhuaShotKeyartState(manhuaShotKeyartInputOf(block))).toBe("ready");
   });
 });

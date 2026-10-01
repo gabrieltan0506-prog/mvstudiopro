@@ -72,12 +72,13 @@ const options = {
 };
 
 describe("静帧消费本段真实造型", () => {
-  it("换造型保留旧图但不冒充已锁定，生成匹配后才解锁，本机云稿不丢状态", () => {
+  it("换造型保留旧图像素锁和未匹配回执，本机云稿不丢版本状态", () => {
     const prepared = compileManhuaKeyartLookBindings(
       { ...defaultCanvasBlock("image", 0, 0), ...block, id: "keyart-e01-s01" },
       options
     );
-    expect(isManhuaKeyartPixelLocked(prepared)).toBe(false);
+    expect(isManhuaKeyartPixelLocked(prepared)).toBe(true);
+    expect(isManhuaKeyartLookCurrent(prepared)).toBe(false);
     const generated = {
       ...prepared,
       outputUrl: "https://test.invalid/new.png",
@@ -91,7 +92,8 @@ describe("静帧消费本段真实造型", () => {
       ...options,
       activeLookSetIds: ["look-before"],
     });
-    expect(isManhuaKeyartPixelLocked(changed)).toBe(false);
+    expect(isManhuaKeyartPixelLocked(changed)).toBe(true);
+    expect(isManhuaKeyartLookCurrent(changed)).toBe(false);
     const local = normalizeCanvasBlock(JSON.parse(JSON.stringify(changed)));
     const cloud = parseManhuaCloudDraftPayload(
       JSON.stringify(

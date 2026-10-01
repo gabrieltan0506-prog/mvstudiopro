@@ -5,7 +5,6 @@
  * 编号：有垫图/融图进表；特写格逻辑号也可进表（logical://）。
  */
 import { getManhuaCharacterDisplayName, getManhuaCharacterPreviewUrl } from "./manhuaCharacterAssetLibrary.js";
-import { isManhuaKeyartLookCurrent } from "./manhuaKeyartLookState";
 import {
   getManhuaDemoAsset,
   getManhuaDemoAssetPublicUrl,
@@ -1548,7 +1547,7 @@ export function assignManhuaCanvasAssetAtTags<
   });
 }
 
-/** 关键静帧是否具备像素级资产锁（Edit + 垫图），而非仅有成图 URL */
+/** 关键静帧是否具备像素级资产锁（Edit + 垫图）；当前版本匹配另作核对建议。 */
 export function isManhuaKeyartPixelLocked(block: {
   id?: string;
   imageMode?: string | null;
@@ -1558,7 +1557,6 @@ export function isManhuaKeyartPixelLocked(block: {
   manhuaKeyartLookState?: unknown;
 }): boolean {
   if (!String(block.id || "").startsWith("keyart-")) return false;
-  if (!isManhuaKeyartLookCurrent(block)) return false;
   const hasOut = Boolean(
     String(block.outputUrl || "").trim() ||
       (Array.isArray(block.outputUrls) && block.outputUrls.some((u) => String(u || "").trim())),

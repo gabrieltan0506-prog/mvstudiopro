@@ -439,7 +439,7 @@ import ManhuaCharacterGallery from "@/components/ManhuaCharacterGallery";
 import ManhuaGuidedPathRail from "@/components/ManhuaGuidedPathRail";
 import ManhuaCastStrip from "@/components/ManhuaCastStrip";
 import ManhuaLiveProgressBoard from "@/components/ManhuaLiveProgressBoard";
-import ManhuaScriptWorkbench, { isManhuaWorkbenchKeyartCurrent, manhuaSegmentSelectionIdentity } from "@/components/ManhuaScriptWorkbench";
+import ManhuaScriptWorkbench, { manhuaSegmentSelectionIdentity } from "@/components/ManhuaScriptWorkbench";
 import ManhuaAssetWall from "@/components/ManhuaAssetWall";
 import { anchoredPanelStyle, getLastPointerAnchor } from "@/lib/anchoredPanel";
 import {
@@ -4789,7 +4789,7 @@ export default function OmniCanvas() {
       // **按操作类型分流的重编译，全在入口内完成。**
       //
       // 普通重生成才按当前字段重编译（走 compileManhuaRerun → ensureManhuaFragmentClips，
-      // 其中包含 clearManhuaVideoEditOperation 与关键图新鲜度检查）。
+      // 其中包含 clearManhuaVideoEditOperation 与关键图输入检查）。
       // 原片编辑／延长**不重编译**：那条路会把操作清成普通生成，
       // 用户确认的是「改这段原片」，发出去的却变成「重新生成一段」（0914 复审 P1）。
       //
@@ -5307,17 +5307,7 @@ export default function OmniCanvas() {
           ).some((candidate) => candidate.id === fresh.id)) {
             throw new Error("原稿分段已变化，旧片已保留；请从当前分段列表重新选择，不会重跑历史片段。");
           }
-          const segment = resolveClipLocalSegmentIndex(block.id, block.prompt, ep);
-          const autoSegment = normalizeManhuaAutoSegmentBinding(fresh?.manhuaAutoSegment);
-          const staleKeyarts = ensured.blocks.filter((candidate) =>
-            candidate.id.startsWith("keyart-") && !candidate.archivedFromPreviousScript &&
-            (getBlockEpisodeIndex(candidate) ?? 1) === ep &&
-            (autoSegment
-              ? autoSegment.shotIndexes.includes(resolveKeyartShotIndex(candidate.id, candidate.prompt))
-              : resolveSegmentIndexFromShotIndex(resolveKeyartShotIndex(candidate.id, candidate.prompt)) === segment) &&
-            !isManhuaWorkbenchKeyartCurrent(candidate),
-          );
-          if (staleKeyarts.length) throw new Error("本段原稿或造型已变更，请先重出对应关键静帧；原图已保留，本次未提交视频。");
+          // 静帧版本差异由工作台提示核对，不强制重出或阻断成片。
         }
         if (!fresh?.prompt?.trim()) {
           throw new Error("无法重算本段成片提示词，请先「审阅成片提示词」铺段");

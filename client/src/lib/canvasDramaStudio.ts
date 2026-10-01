@@ -66,7 +66,7 @@ import {
   type ManhuaCharacterLookSet,
 } from "@shared/manhuaCharacterLookSets";
 import { compileManhuaKeyartLookBindings, appendManhuaKeyartLookContinuity } from "@shared/manhuaKeyartLookBindings";
-import { isManhuaKeyartLookCurrent, isManhuaKeyartSourceCurrent, recordManhuaKeyartLookOutput } from "@shared/manhuaKeyartLookState";
+import { recordManhuaKeyartLookOutput } from "@shared/manhuaKeyartLookState";
 import { manhuaClipSavedDialogueIssue } from "./manhuaAudioScriptSource";
 import {
   resolveEpisodeMainScene,
@@ -4263,12 +4263,7 @@ export async function prepareManhuaFactoryClipInput(input: {
       )
       .sort(sortKeyartBlocks);
     const segUrls = segKeyarts.map((b) => mediaUrlOf(b)).filter(Boolean) as string[];
-    if (segKeyarts.some(keyart => !isManhuaKeyartSourceCurrent(keyart))) {
-      throw new Error("原稿分镜已变更或旧图尚未核对原镜身份，请先重出对应关键静帧；原图保留，本次未提交视频。");
-    }
-    if (segKeyarts.some((keyart) => !isManhuaKeyartLookCurrent(keyart))) {
-      throw new Error("本段原稿或造型已变更，请先重出对应关键静帧；原图已保留，本次未提交视频。");
-    }
+    // 已有图片按当前镜号取用；版本回执差异只作建议，不伪造新回执或重出图。
     if (segUrls.length) {
       runBlockPayload = {
         ...runBlockPayload,

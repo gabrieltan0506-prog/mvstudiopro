@@ -32,11 +32,11 @@ it("原稿变更显示stale并保留旧图，新原稿回执恢复ready", async 
    f.recordNew=()=>setBlocks(current=>current.map(b=>b.id.startsWith('keyart-')?record(b,'https://offline.invalid/new-'+b.id+'.png'):b));
    f.resetFirstToReference=()=>setBlocks(current=>current.map(b=>b.id===firstKeyartId?{...b,status:'idle',outputUrl:'',outputUrls:[]}:b));
    f.setFirstReferenceStatus=(status)=>setBlocks(current=>current.map(b=>b.id===firstKeyartId?{...b,status}:b));
-   return <TooltipProvider><Workbench blocks={blocks} videoModel='seedance-2.5' topic='阿菁与墨菁' episodeCount={2} focusEpisode={1} onFocusEpisode={()=>{}} characterIds={[]} propIds={[]} outlineConfirmed={true} workflowPhase='storyboard' compactUi={false}/></TooltipProvider>;
+   return <TooltipProvider><Workbench blocks={blocks} videoModel='seedance-2.5' topic='阿菁与墨菁' episodeCount={2} focusEpisode={1} onFocusEpisode={()=>{}} characterIds={[]} propIds={[]} outlineConfirmed={true} onAdvisorSignalsChange={signals=>{f.signals=signals;}} workflowPhase='storyboard' compactUi={false}/></TooltipProvider>;
   }
   createRoot(document.getElementById('root')).render(<App/>);
  `},bundle:true,write:false,format:"iife",platform:"browser",jsx:"automatic",alias:{"@":path.resolve("client/src"),"@shared":path.resolve("shared")},loader:{".png":"dataurl",".svg":"dataurl",".jpg":"dataurl",".css":"text"},define:{"process.env.NODE_ENV":'"production"',"import.meta.env":"__VITE_ENV__"},banner:{js:'var __VITE_ENV__={DEV:false,PROD:true,MODE:"production",SSR:false};'},logLevel:"silent"});
- const browser=await puppeteer.launch({headless:true});const page=await browser.newPage();const errors:string[]=[];page.on('pageerror',e=>errors.push(String(e)));
+ const browser=await puppeteer.launch({headless:true,executablePath:process.env.MANHUA_BROWSER_EXECUTABLE_PATH || undefined,args:process.env.MANHUA_BROWSER_PROBE_NO_SANDBOX === "1" ? ["--no-sandbox"] : []});const page=await browser.newPage();const errors:string[]=[];page.on('pageerror',e=>errors.push(String(e)));
  try {
   await page.setRequestInterception(true);page.on('request',r=>r.url().startsWith('data:')?r.continue():r.respond({status:200,body:''}));
   await page.goto('http://localhost/');await page.setContent('<div id="root"></div>');await page.evaluate(built.outputFiles[0].text);
@@ -48,7 +48,9 @@ it("原稿变更显示stale并保留旧图，新原稿回执恢复ready", async 
   expect(archivedEpisode.text).toContain('待跑');
   expect(archivedEpisode.image).toBe(false);
   await page.evaluate(()=>(window as any).fixture.changeSource());await page.waitForFunction(selector=>document.querySelector(selector)?.getAttribute('data-manhua-keyart-status')==='stale',{},selector);
-  const stale=await read();expect(stale.right).toContain('已变更');expect(stale.url).toBe(before.url);
+  const stale=await read();expect(stale.right).toContain('版本待核对');
+  expect(await page.$eval('[data-manhua-filmstrip]',el=>Number(el.getAttribute('data-manhua-keyart-ready')))).toBe(2);
+  expect(await page.evaluate(()=>(window as any).fixture.signals.keyframeBlock)).toContain('静帧版本提示：');expect(stale.url).toBe(before.url);
   const original=before.blocks.find((b:any)=>b.outputUrl===before.url);expect(stale.blocks.find((b:any)=>b.id===original.id).outputUrls).toEqual(original.outputUrls);
   await page.screenshot({path:path.join(dir,'stale.png'),fullPage:false});
   await page.evaluate(()=>(window as any).fixture.recordNew());await page.waitForFunction(selector=>document.querySelector(selector)?.getAttribute('data-manhua-keyart-status')==='ready',{},selector);
