@@ -6,6 +6,7 @@
 import {
   BYTEPLUS_ARK_API_BASE_DEFAULT,
   BYTEPLUS_SEEDANCE_25_MODEL_ID,
+  BYTEPLUS_SEEDANCE_20_MINI_MODEL_ID,
   clampByteplusSeedance25Duration,
   normalizeByteplusRatio,
   type ByteplusSeedance25Mode,
@@ -50,6 +51,8 @@ export function isByteplusSeedanceConfigured(): boolean {
 
 export type ByteplusSeedanceRunInput = {
   prompt: string;
+  /** 省略时保持既有 2.5；Mini 使用独立模型与时长。 */
+  version?: "2.5" | "2.0-mini";
   imageUrl?: string;
   imageUrls?: string[];
   videoUrls?: string[];
@@ -108,6 +111,7 @@ export function buildByteplusSeedance25SubmitBody(input: ByteplusSeedanceRunInpu
   mode: SeedanceEvolinkMode;
   duration: number;
 } {
+  const mini = input.version === "2.0-mini";
   const prompt = String(input.prompt || "").trim();
   if (!prompt) throw new Error("Seedance 2.5 需要提示词");
 
@@ -120,7 +124,7 @@ export function buildByteplusSeedance25SubmitBody(input: ByteplusSeedanceRunInpu
 
   if (mode === "reference_to_video") {
     const references = [imageUrls, videoUrls, audioUrls];
-    const limits = [30, 10, 10];
+    const limits = mini ? [9, 3, 3] : [30, 10, 10];
     for (let i = 0; i < references.length; i++) {
       if (references[i].length > limits[i]) throw new Error(`Seedance 2.5 参考${["图片", "视频", "音频"][i]}最多 ${limits[i]} 项；请调整素材后生成`);
     }
@@ -136,7 +140,12 @@ export function buildByteplusSeedance25SubmitBody(input: ByteplusSeedanceRunInpu
     throw new Error(mode === "video_edit" ? "视频编辑需要至少 1 条原视频" : "视频延长需要至少 1 条原视频");
   }
 
-  const duration =
+  if (mini && (mode === "video_edit" || mode === "video_extend")) throw new Error("Seedance Mini 不支持视频编辑或延长");
+  if (mini && input.duration != null && (!Number.isInteger(input.duration) || input.duration < 4 || input.duration > 15)) throw new Error("Seedance Mini 时长必须为4–15秒，不能截断正文");
+  if (mini && input.resolution && !["480p", "720p"].includes(input.resolution.toLowerCase())) throw new Error("Seedance Mini 仅支持480p或720p");
+  if (mini && audioUrls.length && !imageUrls.length && !videoUrls.length) throw new Error("Seedance Mini 不支持仅音频参考");
+  if (mini && mode === "image_to_video" && (imageUrls.length > 2 || videoUrls.length || audioUrls.length)) throw new Error("首尾帧不能与多模态参考混用");
+  const duration = mini ? clampSeedanceDuration("2.0-mini", input.duration) :
     mode === "video_edit"
       ? clampByteplusSeedance25Duration(15)
       : clampByteplusSeedance25Duration(
@@ -186,7 +195,9 @@ export function buildByteplusSeedance25SubmitBody(input: ByteplusSeedanceRunInpu
     }
   }
 
-  const model = getByteplusSeedance25ModelId();
+  const model = mini
+    ? String(process.env.BYTEPLUS_SEEDANCE_20_MINI_MODEL || "").trim() || BYTEPLUS_SEEDANCE_20_MINI_MODEL_ID
+    : getByteplusSeedance25ModelId();
   const body: Record<string, unknown> = {
     model,
     content,
@@ -195,7 +206,7 @@ export function buildByteplusSeedance25SubmitBody(input: ByteplusSeedanceRunInpu
     duration,
     watermark: input.watermark === true,
   };
-  const resolution = String(input.resolution || "").trim().toLowerCase();
+  const resolution = String(input.resolution || (mini ? "720p" : "")).trim().toLowerCase();
   if (resolution === "480p" || resolution === "720p" || resolution === "1080p") {
     body.resolution = resolution;
   }
@@ -282,10 +293,13 @@ export async function submitByteplusSeedance25Video(
   });
   const createJson = (await createRes.json().catch(() => ({}))) as ByteplusTaskJson;
   if (!createRes.ok) {
-    throw new Error(
+    const error = new Error(
       [createJson.error?.code, createJson.error?.message || createJson.message].filter(Boolean).join(": ") ||
         `BytePlus 创建任务失败 (${createRes.status})`,
     );
+    // Mini只把明确4xx供应商拒绝当终态；5xx/未知结果可能已经建单。
+    if (input.version === "2.0-mini" && createRes.status >= 400 && createRes.status < 500) Object.assign(error, { kind: "rejected" });
+    throw error;
   }
 
   const taskId = String(createJson.id || "").trim();

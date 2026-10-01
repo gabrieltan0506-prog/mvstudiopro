@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   BYTEPLUS_SEEDANCE_25_MODEL_ID,
   clampByteplusSeedance25Duration,
@@ -7,6 +7,7 @@ import {
   buildByteplusSeedance25SubmitBody,
   extractByteplusVideoUrl,
   isByteplusFallbackableError,
+  submitByteplusSeedance25Video,
 } from "./byteplusSeedanceVideo.js";
 
 describe("buildByteplusSeedance25SubmitBody", () => {
@@ -106,4 +107,41 @@ describe("extractByteplusVideoUrl / fallbackable", () => {
 
 it("BytePlus参考超限在建单前拒绝，不能靠回落裁掉素材", () => {
   expect(() => buildByteplusSeedance25SubmitBody({ mode: "reference_to_video", prompt: "全部角色入镜", imageUrls: Array.from({length:31},(_,i)=>`https://example.test/${i}.png`) })).toThrow("请调整素材后生成");
+});
+
+
+describe("BytePlus Mini官方参数与2.5隔离", () => {
+  it("Mini15秒480p保留9:16及参考人物，不改变2.5默认", () => {
+    const out = buildByteplusSeedance25SubmitBody({ version: "2.0-mini", prompt: "虚构人物同行", duration: 15, resolution: "480p", aspectRatio: "9:16", imageUrls: ["https://example.test/character.png"], mode: "reference_to_video" });
+    expect(out.body).toMatchObject({ model: "dreamina-seedance-2-0-mini-260615", duration: 15, resolution: "480p", ratio: "9:16" });
+    expect(out.body.content).toContainEqual({ type: "image_url", image_url: { url: "https://example.test/character.png" }, role: "reference_image" });
+    expect(buildByteplusSeedance25SubmitBody({ prompt: "x" }).model).toBe(BYTEPLUS_SEEDANCE_25_MODEL_ID);
+  });
+  it.each(["1080p", "2K"])("Mini拒绝未支持画质%s", resolution => {
+    expect(() => buildByteplusSeedance25SubmitBody({ version: "2.0-mini", prompt: "x", resolution })).toThrow("480p或720p");
+  });
+  it.each([3, 16, 15.5])("Mini拒绝时长%s而不截断", duration => {
+    expect(() => buildByteplusSeedance25SubmitBody({ version: "2.0-mini", prompt: "x", duration })).toThrow("4–15");
+  });
+  it.each([["imageUrls", 10], ["videoUrls", 4], ["audioUrls", 4]] as const)("Mini拒绝超限%s", (field, count) => {
+    expect(() => buildByteplusSeedance25SubmitBody({ version: "2.0-mini", prompt: "x", mode: "reference_to_video", imageUrls: ["https://example.test/character.png"], [field]: Array.from({ length: count }, (_, i) => `https://example.test/${i}.png`) })).toThrow("请调整素材");
+  });
+  it("拒绝音频单独输入与首尾帧混用参考", () => {
+    expect(() => buildByteplusSeedance25SubmitBody({ version: "2.0-mini", prompt: "x", audioUrls: ["https://example.test/a.wav"] })).toThrow("仅音频");
+    expect(() => buildByteplusSeedance25SubmitBody({ version: "2.0-mini", prompt: "x", mode: "image_to_video", imageUrls: ["https://example.test/a.png"], videoUrls: ["https://example.test/v.mp4"] })).toThrow("不能与多模态");
+  });
+});
+
+
+it("Mini创建明确4xx与未知5xx分类，不调用真实供应商", async () => {
+  vi.stubEnv("BYTEPLUS_ARK_API_KEY", "local-test-only");
+  try {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: { code: "AccountOverdue", message: "balance" } }), { status: 403 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(submitByteplusSeedance25Video({ version: "2.0-mini", prompt: "x", duration: 15, resolution: "480p" })).rejects.toMatchObject({ kind: "rejected", message: "AccountOverdue: balance" });
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ error: { code: "InternalError" } }), { status: 500 }));
+    const err = await submitByteplusSeedance25Video({ version: "2.0-mini", prompt: "x" }).catch(error => error);
+    expect(err.kind).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
 });

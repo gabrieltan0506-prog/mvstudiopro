@@ -5,7 +5,7 @@ import path from "node:path";
 
 const h = vi.hoisted(() => ({
   h3: vi.fn(), h3Unknown: false, evolink: vi.fn(), byteplus: vi.fn(), openrouter: vi.fn(), signed: 0,
-  byteplusFailure: false, openrouterEnabled: false,
+  byteplusFailure: false, byteplusUnknown: false, byteplusRejected: false, byteplusPollFailed: false, openrouterEnabled: false,
 }));
 vi.mock("./hailuoReferencePreflight.js", () => ({ preflightH3ReferenceMedia: vi.fn(async () => {}) }));
 vi.mock("./evolinkHailuoVideo.js", async importOriginal => {
@@ -35,7 +35,7 @@ vi.mock("./evolinkSeedanceVideo.js", async importOriginal => {
   return { ...actual, EVOLINK_SEEDANCE_POLL_INTERVAL_MS: 600000, isEvolinkSeedanceConfigured: () => true,
     submitEvolinkSeedanceVideo: async (input: Parameters<typeof actual.buildEvolinkSeedanceRequest>[0]) => {
       const request = actual.buildEvolinkSeedanceRequest(input); h.evolink(request);
-      return { evolinkTaskId: "ev-local-test", model: "seedance-2.5-reference-to-video", mode: "reference_to_video" };
+      return { evolinkTaskId: "ev-local-test", model: request.body.model, mode: "reference_to_video" };
     }, pollEvolinkVideoTaskOnce: async () => ({ state: "running", status: "processing" }),
   };
 });
@@ -44,9 +44,11 @@ vi.mock("./byteplusSeedanceVideo.js", async importOriginal => {
   return { ...actual, isByteplusSeedanceConfigured: () => true,
     submitByteplusSeedance25Video: async (input: Parameters<typeof actual.buildByteplusSeedance25SubmitBody>[0]) => {
       h.byteplus(actual.buildByteplusSeedance25SubmitBody(input));
-      if (h.byteplusFailure) throw new Error("InputImageSensitiveContentDetected.PrivacyInformation");
-      return { byteplusTaskId: "bp-local-test", model: "seedance-2.5", mode: "reference_to_video" };
-    }, pollByteplusVideoTaskOnce: async () => ({ state: "running", status: "processing" }),
+      if (h.byteplusFailure) throw Object.assign(new Error("InputImageSensitiveContentDetected.PrivacyInformation"), { kind: "rejected" });
+      if (h.byteplusUnknown) throw new Error("fetch failed");
+      if (h.byteplusRejected) throw Object.assign(new Error("AccountOverdue"), { kind: "rejected" });
+      return { byteplusTaskId: "bp-local-test", model: input.version === "2.0-mini" ? "dreamina-seedance-2-0-mini-260615" : "seedance-2.5", mode: "reference_to_video" };
+    }, pollByteplusVideoTaskOnce: async () => h.byteplusPollFailed ? ({ state: "failed", error: "InputImageSensitiveContentDetected.PrivacyInformation" }) : ({ state: "running", status: "processing" }),
   };
 });
 vi.mock("./openrouterVideoCore.js", async importOriginal => ({
@@ -67,9 +69,10 @@ describe("真实任务写盘到供应商请求的音频交接", () => {
   const priorDir = process.env.CANVAS_VIDEO_TASK_DIR;
   beforeEach(async () => {
     vi.resetModules();
+    vi.clearAllMocks();
     h.evolink.mockReset(); h.byteplus.mockReset(); h.openrouter.mockReset();
     h.h3.mockReset(); h.h3Unknown = false;
-    h.signed = 0; h.byteplusFailure = false; h.openrouterEnabled = false;
+    h.signed = 0; h.byteplusFailure = false; h.byteplusUnknown = false; h.byteplusRejected = false; h.byteplusPollFailed = false; h.openrouterEnabled = false;
     dir = await fs.mkdtemp(path.join(os.tmpdir(), "video-audio-ref-test-"));
     process.env.CANVAS_VIDEO_TASK_DIR = dir;
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("测试不允许联网"); }));
@@ -119,6 +122,64 @@ describe("真实任务写盘到供应商请求的音频交接", () => {
     expect(h.h3).toHaveBeenCalledTimes(1);
     const { refundCreditsOnFailure } = await import("./paidJobLedger.js");
     expect(refundCreditsOnFailure).not.toHaveBeenCalled();
+  });
+
+  async function createMini(key = "mini-stable") {
+    const { createCanvasVideoTask } = await import("./canvasVideoTask");
+    const task = await createCanvasVideoTask({ userId: 7, creditsCharged: 39, engine: "seedance-mini-byteplus", label: "Mini假服务回归", prompt: "虚构人物同行", imageUrls: ["https://example.test/character.png"], audioUrls: ["gs://test-bucket/post-prod/7/dialogue.wav"], duration: 15, resolution: "480p", seedanceVersion: "2.0-mini", workMode: "reference_to_video", idempotencyKey: key });
+    let saved: Record<string, unknown> = {};
+    await vi.waitFor(async () => {
+      saved = JSON.parse(await fs.readFile(path.join(dir, `${task.taskId}.json`), "utf8"));
+      expect(["running", "failed", "reconcile_manual"]).toContain(saved.status);
+    });
+    return saved;
+  }
+  it("Mini首发BytePlus，同键重送/刷新不重建且保持音频归属", async () => {
+    const task = await createMini();
+    expect(h.byteplus.mock.calls[0][0].body).toMatchObject({ model: "dreamina-seedance-2-0-mini-260615", duration: 15, resolution: "480p" });
+    expect(task.audioUrls).toEqual(["gs://test-bucket/post-prod/7/dialogue.wav"]);
+    expect(task.engine).toBe("seedance-mini-byteplus");
+    expect(task.model).toBe("dreamina-seedance-2-0-mini-260615");
+    expect((await createMini()).taskId).toBe(task.taskId);
+    const { getCanvasVideoTask } = await import("./canvasVideoTask");
+    await getCanvasVideoTask(String(task.taskId), 7);
+    expect(h.byteplus).toHaveBeenCalledTimes(1);
+    expect(h.evolink).not.toHaveBeenCalled();
+  });
+  it("Mini明确隐私拒绝才回落同Mini，不切2.5", async () => {
+    h.byteplusFailure = true;
+    const task = await createMini();
+    expect(task.engine).toBe("seedance-mini-evolink");
+    expect(h.evolink.mock.calls[0][0].body.model).toBe("seedance-2.0-mini-reference-to-video");
+    expect(h.openrouter).not.toHaveBeenCalled();
+  });
+  it("Mini受理后终态隐私拒绝也回落同Mini", async () => {
+    const task = await createMini(); h.byteplusPollFailed = true;
+    const { getCanvasVideoTask } = await import("./canvasVideoTask");
+    expect((await getCanvasVideoTask(String(task.taskId), 7))?.engine).toBe("seedance-mini-evolink");
+    expect(h.evolink.mock.calls[0][0].body.model).toBe("seedance-2.0-mini-reference-to-video");
+  });
+  it("Mini余额明确拒绝不回落，同键failed不重建", async () => {
+    h.byteplusRejected = true;
+    expect((await createMini()).status).toBe("failed");
+    await createMini();
+    expect(h.byteplus).toHaveBeenCalledTimes(1); expect(h.evolink).not.toHaveBeenCalled();
+  });
+  it("Mini未知创建转对账，不回落/退款/重建", async () => {
+    h.byteplusUnknown = true;
+    const task = await createMini();
+    expect(task.status).toBe("reconcile_manual");
+    await createMini();
+    expect(h.byteplus).toHaveBeenCalledTimes(1); expect(h.evolink).not.toHaveBeenCalled();
+    const { refundCreditsOnFailure, pauseActiveJob } = await import("./paidJobLedger.js");
+    expect(refundCreditsOnFailure).not.toHaveBeenCalled(); expect(pauseActiveJob).toHaveBeenCalled();
+  });
+  it("Mini创建后崩溃缺句柄，恢复只对账", async () => {
+    const task = await createMini(); delete task.byteplusTaskId; task.status = "running";
+    await fs.writeFile(path.join(dir, `${task.taskId}.json`), JSON.stringify(task));
+    const { getCanvasVideoTask } = await import("./canvasVideoTask");
+    expect((await getCanvasVideoTask(String(task.taskId), 7))?.status).toBe("reconcile_manual");
+    expect(h.byteplus).toHaveBeenCalledTimes(1); expect(h.evolink).not.toHaveBeenCalled();
   });
   it("写实素材不跳过已配置BytePlus", async () => {
     const { resolveSeedance25CanvasEngine } = await import("./canvasVideoTask");

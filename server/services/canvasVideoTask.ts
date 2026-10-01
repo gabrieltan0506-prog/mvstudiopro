@@ -35,6 +35,7 @@ import {
 } from "./openrouterVideoCore.js";
 import {
   BYTEPLUS_SEEDANCE_MAX_POLL_MS,
+  buildByteplusSeedance25SubmitBody,
   isByteplusFallbackableError,
   isByteplusSeedanceConfigured,
   pollByteplusVideoTaskOnce,
@@ -108,7 +109,8 @@ export type CanvasVideoEngine =
   | "happyhorse-auto"
   | "seedance25-byteplus"
   | "seedance25-evolink"
-  /** Seedance 2.0 Mini 草稿档：EvoLink 单路径（OpenRouter 没有 mini） */
+  /** Mini 新任务优先 BytePlus，旧 EvoLink 任务继续原通道。 */
+  | "seedance-mini-byteplus"
   | "seedance-mini-evolink"
   /** Seedance 2.0 标准档·仿真人正向路由：真人照参考被 BytePlus/OpenRouter 拦，扣费前直切 EvoLink */
   | "seedance20-evolink"
@@ -187,6 +189,7 @@ export type CanvasVideoTaskRecord = {
   /** 超分发送前落盘，崩溃后无句柄只能对账，禁止重投。 */
   upscaleSubmissionStartedAt?: string;
   h3SubmissionStartedAt?: string;
+  miniByteplusSubmissionStartedAt?: string;
   /** wan30:提交上游的随机种子,复现用 */
   seed?: number;
   /** wan30:连续 404 计数——创建后最终一致性只容忍有限次,防无效单白轮数小时(审查 P2) */
@@ -288,7 +291,7 @@ async function listActiveTaskIds(): Promise<string[]> {
 }
 
 function maxPollMs(engine: CanvasVideoEngine): number {
-  if (engine === "seedance25-evolink" || engine === "seedance25-byteplus") {
+  if (engine === "seedance25-evolink" || engine === "seedance25-byteplus" || engine === "seedance-mini-byteplus") {
     return Math.max(EVOLINK_SEEDANCE_MAX_POLL_MS, BYTEPLUS_SEEDANCE_MAX_POLL_MS);
   }
   if (engine === "seedance-mini-evolink" || engine === "seedance20-evolink") {
@@ -343,7 +346,7 @@ function usesEvolinkTaskId(engine: CanvasVideoEngine): boolean {
  */
 export function canvasVideoTaskNeedsSubmit(task: CanvasVideoTaskRecord): boolean {
   if (usesEvolinkTaskId(task.engine)) return !task.evolinkTaskId;
-  if (task.engine === "seedance25-byteplus") return !task.byteplusTaskId;
+  if (task.engine === "seedance25-byteplus" || task.engine === "seedance-mini-byteplus") return !task.byteplusTaskId;
   if (task.engine === "wavespeed-upscale" || task.engine === "wan30-wavespeed") {
     return !task.wavespeedPredictionId;
   }
@@ -478,10 +481,10 @@ async function submitSeedance25Evolink(task: CanvasVideoTaskRecord): Promise<voi
 }
 
 /**
- * Mini 草稿档提交。与 2.5 共用 EvoLink 提交/轮询，差别只在 version 与不做 BytePlus 主路径
- * ——BytePlus ModelArk 没有 mini 型号，回落无处可落，失败就按失败退费。
+ * Mini 的既有 EvoLink 提交路径，供旧任务与明确拒绝后的 fallback 使用。
  */
 async function submitSeedanceMiniEvolink(task: CanvasVideoTaskRecord): Promise<void> {
+  task.engine = "seedance-mini-evolink";
   return submitSeedanceEvolinkVersioned(task, "2.0-mini");
 }
 
@@ -522,11 +525,19 @@ async function submitSeedanceEvolinkVersioned(
 }
 
 async function submitSeedance25Byteplus(task: CanvasVideoTaskRecord): Promise<void> {
+  const mini = task.engine === "seedance-mini-byteplus";
   // 素材归属失败不是供应商失败，必须在回落捕获范围之外拒绝。
   const references = await resolveSeedanceTaskReferences(task);
+  if (mini) {
+    // 先纯校验再持久化单次创建意图；不得将本地参数错误记成已受理。
+    buildByteplusSeedance25SubmitBody({ prompt: task.prompt, ...references, version: "2.0-mini", aspectRatio: task.aspectRatio, duration: task.duration, resolution: task.resolution, generateAudio: task.generateAudio, mode: task.workMode });
+    task.miniByteplusSubmissionStartedAt = new Date().toISOString();
+    await writeTask(task);
+  }
   try {
     const submitted = await submitByteplusSeedance25Video({
       prompt: task.prompt,
+      version: mini ? "2.0-mini" : "2.5",
       ...references,
       aspectRatio: task.aspectRatio,
       duration: task.duration,
@@ -535,7 +546,7 @@ async function submitSeedance25Byteplus(task: CanvasVideoTaskRecord): Promise<vo
       watermark: false,
       mode: task.workMode,
     });
-    task.engine = "seedance25-byteplus";
+    task.engine = mini ? "seedance-mini-byteplus" : "seedance25-byteplus";
     task.byteplusTaskId = submitted.byteplusTaskId;
     task.model = submitted.model;
     task.workMode = submitted.mode;
@@ -548,6 +559,7 @@ async function submitSeedance25Byteplus(task: CanvasVideoTaskRecord): Promise<vo
       await succeedTask(task, videoUrl, submitted.model, "byteplus");
     }
   } catch (error) {
+    if (mini && (error as { kind?: string })?.kind !== "rejected") throw error;
     if (!isByteplusFallbackableError(error)) {
       throw error;
     }
@@ -561,7 +573,8 @@ async function submitSeedance25Byteplus(task: CanvasVideoTaskRecord): Promise<vo
     task.fallbackReason = reason.slice(0, 200);
     task.byteplusTaskId = undefined;
     await writeTask(task);
-    await submitSeedance25Evolink(task);
+    if (mini) await submitSeedanceMiniEvolink(task);
+    else await submitSeedance25Evolink(task);
   }
 }
 
@@ -935,7 +948,7 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
     return;
   }
 
-  if (task.engine === "seedance25-byteplus") {
+  if (task.engine === "seedance25-byteplus" || task.engine === "seedance-mini-byteplus") {
     await submitSeedance25Byteplus(task);
     return;
   }
@@ -1093,6 +1106,14 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
 
     await heartbeatActiveJob(task.taskId, TASK_TYPE).catch(() => {});
 
+    if (task.engine === "seedance-mini-byteplus" && task.miniByteplusSubmissionStartedAt && !task.byteplusTaskId) {
+      task.status = "reconcile_manual";
+      task.error = "BytePlus Mini创建回执待核对，已停止重复提交";
+      await writeTask(task);
+      await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {});
+      return task;
+    }
+
     if (task.engine === "hailuo-evolink" && task.h3SubmissionStartedAt && !task.evolinkTaskId) {
       task.status = "reconcile_manual";
       task.error = "H3 提交回执尚未持久化，请核对原任务；已停止自动重试";
@@ -1154,6 +1175,20 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
           return after;
         }
       } catch (error) {
+        if (task.engine === "seedance-mini-byteplus" && task.miniByteplusSubmissionStartedAt && (error as { kind?: string })?.kind !== "rejected") {
+          if (task.byteplusTaskId) {
+            // 已受理但镜像/写盘后续故障，保留同任务轮询，不重复创建或退款。
+            task.lastTransientError = (error instanceof Error ? error.message : String(error)).slice(0, 280);
+            await writeTask(task).catch(() => {});
+            return task;
+          }
+          task.status = "reconcile_manual";
+          task.error = "BytePlus Mini创建结果未知，请核对原任务；不重复生成或自动退款";
+          task.lastTransientError = (error instanceof Error ? error.message : String(error)).slice(0, 280);
+          await writeTask(task).catch(() => {});
+          await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {});
+          return task;
+        }
         if (task.engine === "hailuo-evolink" && task.h3SubmissionStartedAt && (error as { kind?: string })?.kind !== "rejected") {
           task.status = "reconcile_manual";
           task.error = "H3 提交状态待核对，请勿重复生成";
@@ -1178,7 +1213,7 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
     }
 
     try {
-      if (current.engine === "seedance25-byteplus") {
+      if (current.engine === "seedance25-byteplus" || current.engine === "seedance-mini-byteplus") {
         if (!current.byteplusTaskId) {
           return failTask(current, "视频服务未返回任务编号");
         }
@@ -1202,11 +1237,13 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
             );
             current.fallbackReason = reason.slice(0, 200);
             current.byteplusTaskId = undefined;
-            current.engine = "seedance25-evolink";
+            const mini = current.engine === "seedance-mini-byteplus";
+            current.engine = mini ? "seedance-mini-evolink" : "seedance25-evolink";
             current.status = "queued";
             await writeTask(current);
             try {
-              await submitSeedance25Evolink(current);
+              if (mini) await submitSeedanceMiniEvolink(current);
+              else await submitSeedance25Evolink(current);
               const after = await readTask(taskId);
               return after || current;
             } catch (error) {
@@ -1222,7 +1259,7 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
         return succeedTask(
           current,
           videoUrl,
-          current.model || "dreamina-seedance-2-5",
+          current.model || (current.engine === "seedance-mini-byteplus" ? "dreamina-seedance-2-0-mini" : "dreamina-seedance-2-5"),
           "byteplus",
         );
       }
