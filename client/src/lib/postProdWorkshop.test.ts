@@ -4,9 +4,11 @@
  * 产物进入下一道工序(gcsUri 优先) / 终态只提示一次。
  */
 import { describe, expect, it } from "vitest";
+import { createCanvasAudioCue, canvasAudioCueInputKey } from "@shared/canvasAudioStudio";
 import type { CanvasBlock } from "./canvasTypes";
 import {
   buildPostProdClipOptions,
+  adoptedPostProdBgmOptions,
   isCurrentManhuaAssemblableClipBlock,
   isCurrentManhuaClipBlock,
   isPostProdAudioAction,
@@ -251,5 +253,25 @@ describe("合并时序缺口(复审三轮)", () => {
       [{ jobId: "r1", action: "concat", status: "running", output: null, error: null, createdAt: 1 }],
     );
     expect(merged[0].output).toBeNull();
+  });
+});
+
+describe("已采用BGM进入后期", () => {
+  it("从采用裁段带入原音量、进出点与留白，不使用整曲或旧候选", () => {
+    const cue = { ...createCanvasAudioCue("bgm", "music"), id: "music", approved: true, enabled: true,
+      startSec: 3, endSec: 8, volume: 0.25, fadeInSec: 0.2, fadeOutSec: 0.4,
+      source: {gcsUri:"gs://test/full.wav",previewUrl:"",durationSec:30,labelZh:"原曲"},
+      sourceStartSec: 7, sourceEndSec: 12, selectedTakeId: "selected",
+      mix: { duckUnderDialogue: false, duckVolume: 0.1, silenceWindows: [{startSec:4,endSec:5}] } };
+    const take = { id:"selected", gcsUri:"gs://test/cut.wav", previewUrl:"", durationSec:5,
+      inputKey:canvasAudioCueInputKey(cue), createdAt:"2026-10-02T00:00:00+08:00" };
+    const block = {id:"clip-e01-g01", audioStudio:{schemaVersion:1,cues:[{...cue,takes:[take]}],musicJobIds:[],pendingOperations:[]}} as unknown as CanvasBlock;
+    const options = adoptedPostProdBgmOptions([block]);
+    expect(options).toHaveLength(1);
+    expect(options[0].url).toBe(take.gcsUri);
+    expect(options[0].settings).toEqual({entrySec:3,durationSec:5,volume:0.25,fadeInSec:0.2,fadeOutSec:0.4,volumeExpr:"if(between(t,4,5),0,0.25)"});
+    for (const patch of [{approved:false},{enabled:false},{sourceEndSec:13},{selectedTakeId:"missing"}]) {
+      expect(adoptedPostProdBgmOptions([{...block,audioStudio:{...block.audioStudio!,cues:[{...cue,takes:[take],...patch}]}} as CanvasBlock])).toEqual([]);
+    }
   });
 });

@@ -1,3 +1,5 @@
+import { askManhuaBgmMix, MANHUA_BGM_ADVISOR_MODEL } from "./manhuaAdvisorBgmMix";
+import { parseAdvisorBgmMixPlan } from "../../shared/manhuaAdvisorBgmMix";
 import { buildAdvisorModelReviewFacts, composeAdvisorPromptReviewAnswer } from "../../shared/manhuaAdvisorModelReview.js";
 import { buildManhuaTemplateAdvisorReference } from "./manhuaTemplateAdvisorReference.js";
 import { ADVISOR_WORLD_INSTRUCTIONS, parseAdvisorWorldPlan } from "../../shared/manhuaAdvisorWorld";
@@ -733,7 +735,7 @@ export async function askPlatformSkillQa(params: {
       question,
       rawQuestion: manhuaRawQuestion || undefined,
       context: manhuaContext,
-      templateReference: manhuaContext.previsEdit || manhuaContext.worldTarget || manhuaContext.studio3d ? "" : await buildManhuaTemplateAdvisorReference(manhuaRawQuestion || question),
+      templateReference: manhuaContext.bgmMix || manhuaContext.previsEdit || manhuaContext.worldTarget || manhuaContext.studio3d ? "" : await buildManhuaTemplateAdvisorReference(manhuaRawQuestion || question),
     });
     console.info("[askPlatformSkillQa] manhua context", {
       stage: manhuaContext.stage,
@@ -828,7 +830,7 @@ export async function askPlatformSkillQa(params: {
   // 已附视频时不向未核实支持视频的备用通道降级，也不悄悄删视频重试。
   const advisorHops = previewVideo ? MANHUA_ADVISOR_HOPS.slice(0, 1) : MANHUA_ADVISOR_HOPS;
   // 视频只走已核实可接收 MP4 的通道；规格拒绝时在同一通道反馈一次，不降级成纯文字。
-  const ASK_MAX_ATTEMPTS = manhuaContext ? (previewVideo ? 2 : advisorHops.length) : 3;
+  const ASK_MAX_ATTEMPTS = manhuaContext?.bgmMix ? 1 : manhuaContext ? (previewVideo ? 2 : advisorHops.length) : 3;
   let parsed: ReturnType<typeof parseAskJson> | null = null;
   let lastErr = "";
   let usedModel = modelName;
@@ -838,6 +840,15 @@ export async function askPlatformSkillQa(params: {
     try {
       const hop = manhuaContext ? advisorHops[Math.min(attempt - 1, advisorHops.length - 1)] : undefined;
       if (hop) params.onStream?.("reset", hop.label);
+      if (manhuaContext?.bgmMix) {
+        params.onStream?.("reset", "Gemini 3.8 Flash · 音画配乐分析");
+        const raw = await askManhuaBgmMix(params.userId, manhuaContext.bgmMix, llmMessages);
+        parsed = parseAskJson(raw, true);
+        parseAdvisorBgmMixPlan(parsed.answer, manhuaContext.bgmMix);
+        usedModel = MANHUA_BGM_ADVISOR_MODEL;
+        lastErr = "";
+        break;
+      }
       const response = await invokeLLM({
         ...(manhuaContext ? { onContentDelta: (text: string) => params.onStream?.("delta", text) } : {}),
         provider: "openai",

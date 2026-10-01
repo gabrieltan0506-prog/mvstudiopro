@@ -72,6 +72,11 @@ vi.mock("./services/paidJobLedger.js", () => ({
   markSettlementPending: (...args: unknown[]) => markSettlementPending(...args),
 }));
 
+vi.mock("./services/manhuaAdvisorDailyQuota.js",()=>({
+  reserveAdvisorDailyQuota:async()=>({reserved:false,day:"2026-10-02",used:99,limit:5}),
+  releaseAdvisorDailyQuota:async()=>{},
+}));
+
 import { appRouter } from "./routers";
 
 const REQUEST_ID = "6f9619ff-8b86-4d01-b42d-00cf4fc964ff";
@@ -112,7 +117,7 @@ const caller = () =>
   appRouter.createCaller({ user: { id: 7, role: "user" } } as never);
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   countPlatformSkillQaToday.mockResolvedValue(99);
   getCredits.mockResolvedValue({ totalAvailable: 100 });
   deductCreditsAmount.mockResolvedValue({
@@ -201,7 +206,7 @@ describe("askPlatformSkillQa · 漫剧顾问操作账本", () => {
       });
     const confirmed = await caller().mvAnalysis.askPlatformSkillQa({
       ...INPUT,
-      confirmPaid: true,
+      confirmPaid: true, confirmedCredits: 8,
     });
     expect(confirmed).toMatchObject({ success: true, answer: RESULT.answer });
     expect(reserveManhuaAdvisorOperation).toHaveBeenLastCalledWith(
@@ -239,7 +244,7 @@ describe("askPlatformSkillQa · 漫剧顾问操作账本", () => {
 
     const result = await caller().mvAnalysis.askPlatformSkillQa({
       ...INPUT,
-      confirmPaid: true,
+      confirmPaid: true, confirmedCredits: 8,
     });
     expect(result).toMatchObject({ success: true, answer: RESULT.answer });
     expect(deductCreditsAmount).toHaveBeenCalledWith(
@@ -319,7 +324,7 @@ describe("askPlatformSkillQa · 漫剧顾问操作账本", () => {
     askPlatformSkillQa.mockRejectedValueOnce(new Error("上游暂时不可用"));
     refundCreditsOnFailure.mockRejectedValueOnce(new Error("退款账本暂时不可用"));
     const error = await caller()
-      .mvAnalysis.askPlatformSkillQa({ ...INPUT, confirmPaid: true })
+      .mvAnalysis.askPlatformSkillQa({ ...INPUT, confirmPaid: true, confirmedCredits: 8 })
       .catch((caught: unknown) => caught);
     expect((error as Error).message).toContain("ADVISOR_OPERATION_REFUND_PENDING");
     expect((error as Error).message).not.toContain("上游暂时不可用");
@@ -352,7 +357,7 @@ describe("askPlatformSkillQa · 漫剧顾问操作账本", () => {
     deductCreditsAmount.mockRejectedValueOnce(new Error("扣分回执丢失"));
     refundChargeByKey.mockResolvedValueOnce({ refunded: 8 });
     const error = await caller()
-      .mvAnalysis.askPlatformSkillQa({ ...INPUT, confirmPaid: true })
+      .mvAnalysis.askPlatformSkillQa({ ...INPUT, confirmPaid: true, confirmedCredits: 8 })
       .catch((caught: unknown) => caught);
     expect((error as Error).message).toBe(
       "ADVISOR_OPERATION_FAILED：本次扣点未完成，请重新提问",
@@ -386,7 +391,7 @@ describe("askPlatformSkillQa · 漫剧顾问操作账本", () => {
       new Error("duplicate key value violates jobs_pkey"),
     );
     const error = await caller()
-      .mvAnalysis.askPlatformSkillQa({ ...INPUT, confirmPaid: true })
+      .mvAnalysis.askPlatformSkillQa({ ...INPUT, confirmPaid: true, confirmedCredits: 8 })
       .catch((caught: unknown) => caught);
     expect((error as Error).message).toBe(
       "ADVISOR_OPERATION_FAILED：本次问答未能开始，积分已原路退回，请重新提问",
@@ -414,7 +419,7 @@ describe("askPlatformSkillQa · 漫剧顾问操作账本", () => {
       });
     markManhuaAdvisorSucceededWithRetry.mockResolvedValueOnce(false);
     const error = await caller()
-      .mvAnalysis.askPlatformSkillQa({ ...INPUT, confirmPaid: true })
+      .mvAnalysis.askPlatformSkillQa({ ...INPUT, confirmPaid: true, confirmedCredits: 8 })
       .catch((caught: unknown) => caught);
     expect((error as Error).message).toBe(
       "ADVISOR_OPERATION_FAILED：本次问答未完成；积分已原路退回，请重新提问",
@@ -450,7 +455,7 @@ describe("askPlatformSkillQa · 漫剧顾问操作账本", () => {
     claimManhuaAdvisorRefundPending.mockResolvedValueOnce("succeeded");
     const result = await caller().mvAnalysis.askPlatformSkillQa({
       ...INPUT,
-      confirmPaid: true,
+      confirmPaid: true, confirmedCredits: 8,
     });
     expect(result).toMatchObject({ success: true, replayed: true, answer: RESULT.answer });
     expect(refundCreditsOnFailure).not.toHaveBeenCalled();
@@ -472,7 +477,7 @@ describe("askPlatformSkillQa · 漫剧顾问操作账本", () => {
       });
     askPlatformSkillQa.mockRejectedValueOnce(new Error("模型未返回合法 JSON"));
     const error = await caller()
-      .mvAnalysis.askPlatformSkillQa({ ...INPUT, confirmPaid: true })
+      .mvAnalysis.askPlatformSkillQa({ ...INPUT, confirmPaid: true, confirmedCredits: 8 })
       .catch((caught: unknown) => caught);
     expect((error as Error).message).toBe(
       "ADVISOR_OPERATION_FAILED：本次问答未完成；积分已原路退回，请重新提问",

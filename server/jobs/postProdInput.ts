@@ -5,6 +5,7 @@ import { autoRigRequestSchema } from "../../shared/manhuaAutoRig";
  * 不信任队列里已存的形状(强 schema 是防"半格式任务"进 ffmpeg 的第一道闸)。
  */
 import { z } from "zod";
+import { bgmNarrativeMixSchema } from "../../shared/manhuaBgmNarrativeMix";
 import { manhuaPrevisRequestSchema } from "../../shared/manhuaPrevis";
 
 const mediaSourceSchema = z.string().trim().min(1).max(2048);
@@ -52,10 +53,13 @@ export const bgmMountParamsSchema = z
     entrySec: z.number().min(0).max(3600).default(0),
     /** 从 BGM 曲内第几秒开始取；对应 ffmpeg atrim=start。 */
     bgmSeekSec: z.number().min(0).max(3600).default(0),
+    /** 已采用选段的播放时长；缺省保持旧整片循环行为。 */
+    bgmDurationSec: z.number().finite().positive().max(3600).optional(),
     fadeInSec: z.number().min(0).max(30).default(0.5),
     fadeOutSec: z.number().min(0).max(30).default(1),
     /** 可选自动避让；旧任务缺省沿用原处理，新工作台显式选择。 */
     duckUnderDialogue: z.boolean().optional(),
+    narrativeMix: bgmNarrativeMixSchema.optional(),
     /** 卡点表产出的片内分窗增益；缺省时保持旧版固定 bgmVolume。 */
     volumeExpr: z
       .string()

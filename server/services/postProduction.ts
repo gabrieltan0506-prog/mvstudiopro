@@ -1,3 +1,4 @@
+import { compileBgmNarrativeMix } from "../../shared/manhuaBgmNarrativeMix";
 /**
  * 媒体工坊核心:拼接 / BGM 贴装 / 音频裁段与秒锁试听 / 响度验收 / 字幕烧录。
  * 纯 ffmpeg + 规则引擎,零大模型 token;配方来自《雷击》《天雷劫》实弹工艺:
@@ -436,18 +437,26 @@ export function buildBgmFilterPlan(input: RawBgmMountParams, video: {
     Math.max(0, durationSec - 0.1),
   );
   const seekSec = Math.max(0, Number(normalized.bgmSeekSec) || 0);
-  const audibleSec = Math.max(0.1, durationSec - entrySec);
+  const audibleSec = Math.min(Math.max(0.1, durationSec - entrySec), normalized.bgmDurationSec ?? Infinity);
   const fadeInSec = Math.min(Math.max(0, Number(normalized.fadeInSec) || 0), audibleSec);
   const fadeOutSec = Math.min(Math.max(0, Number(normalized.fadeOutSec) || 0), audibleSec);
-  const fadeOutStartSec = Math.max(entrySec, durationSec - fadeOutSec);
+  const fadeOutStartSec = Math.max(entrySec, entrySec + audibleSec - fadeOutSec);
   const delayMs = Math.round(entrySec * 1000);
 
   const rawExpression = String(normalized.volumeExpr || "").trim();
   if (rawExpression && !isSafePostProdVolumeExpr(rawExpression)) {
     throw new Error("卡点音量表达式格式不正确");
   }
-  const volumeFilter = rawExpression
-    ? `volume='${rawExpression}':eval=frame`
+  for (const cue of normalized.narrativeMix ?? []) {
+    if (cue.startSec < entrySec || cue.endSec > entrySec + audibleSec)
+      throw new Error("音乐强弱段超出配乐实际进出窗口");
+  }
+  const expression = normalized.narrativeMix?.length
+    ? compileBgmNarrativeMix(normalized.narrativeMix, normalized.bgmVolume, rawExpression)
+    : rawExpression;
+  if (expression && !isSafePostProdVolumeExpr(expression)) throw new Error("音乐强弱表超出表达式容量");
+  const volumeFilter = expression
+    ? `volume='${expression}':eval=frame`
     : `volume=${normalized.bgmVolume}`;
 
   const bgmFilters = [
