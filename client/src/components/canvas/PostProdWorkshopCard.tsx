@@ -440,6 +440,7 @@ export default function PostProdWorkshopCard({
   const [bgmVideoUrl, setBgmVideoUrl] = useState("");
   const [bgmAudioUrl, setBgmAudioUrl] = useState("");
   const [bgmVolume, setBgmVolume] = useState(0.48);
+  const [bgmDuckUnderDialogue, setBgmDuckUnderDialogue] = useState(false);
   const [bgmEntrySec, setBgmEntrySec] = useState(0);
   const [bgmFadeIn, setBgmFadeIn] = useState(0.5);
   const [bgmFadeOut, setBgmFadeOut] = useState(1);
@@ -715,6 +716,7 @@ export default function PostProdWorkshopCard({
               entrySec: number;
               bgmSeekSec: number;
               volumeExpr?: string;
+              duckUnderDialogue?: boolean;
               fadeInSec: number;
               fadeOutSec: number;
             };
@@ -1062,6 +1064,7 @@ export default function PostProdWorkshopCard({
           videoUri: bgmVideoUrl,
           bgmUri: bgmAudioUrl,
           bgmVolume,
+          duckUnderDialogue: bgmDuckUnderDialogue,
           entrySec: bgmEntrySec,
           bgmSeekSec,
           ...(bgmVolumeExpr ? { volumeExpr: bgmVolumeExpr } : {}),
@@ -1700,6 +1703,11 @@ export default function PostProdWorkshopCard({
                 </option>
               ))}
             </select>
+            <label className="flex items-center gap-2 text-xs text-white/70">
+              <input type="checkbox" checked={bgmDuckUnderDialogue} onChange={e => setBgmDuckUnderDialogue(e.target.checked)} />
+              自动对白避让（可选）
+            </label>
+            <p className="text-xs text-white/55">音乐按剧情、表演与情绪安排。未勾选时保留设定增益及卡点变化，不自动压低音乐。</p>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-white/55">
               <label className="inline-flex items-center gap-1">
                 音量

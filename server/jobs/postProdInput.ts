@@ -54,6 +54,8 @@ export const bgmMountParamsSchema = z
     bgmSeekSec: z.number().min(0).max(3600).default(0),
     fadeInSec: z.number().min(0).max(30).default(0.5),
     fadeOutSec: z.number().min(0).max(30).default(1),
+    /** 可选自动避让；旧任务缺省沿用原处理，新工作台显式选择。 */
+    duckUnderDialogue: z.boolean().optional(),
     /** 卡点表产出的片内分窗增益；缺省时保持旧版固定 bgmVolume。 */
     volumeExpr: z
       .string()

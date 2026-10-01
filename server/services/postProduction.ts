@@ -467,15 +467,17 @@ export function buildBgmFilterPlan(input: RawBgmMountParams, video: {
   bgmFilters.push(`apad`, `atrim=0:${durationSec.toFixed(3)}`);
 
   const voiceSource = video.hasAudio ? "[0:a]" : "[2:a]";
+  const shouldDuck = normalized.duckUnderDialogue !== false;
   const voiceChain =
     `${voiceSource}apad,atrim=0:${durationSec.toFixed(3)},asetpts=PTS-STARTPTS,`
-    + "asplit=2[voxmix][voxkey]";
+    + (shouldDuck ? "asplit=2[voxmix][voxkey]" : "anull[voxmix]");
   // 旧入口没有独立对白轨，继续保留原音侧链；真实对白窗同时由 volumeExpr 手动压低。
   const duck = { threshold: 0.035, ratio: 7, attack: 6, release: 280 };
-  const mixChain =
-    `[bg][voxkey]sidechaincompress=threshold=${duck.threshold}:ratio=${duck.ratio}:`
-    + `attack=${duck.attack}:release=${duck.release}[bgd];`
-    + "[voxmix][bgd]amix=inputs=2:duration=longest:normalize=0,alimiter=limit=0.95[mix]";
+  const mixChain = shouldDuck
+    ? `[bg][voxkey]sidechaincompress=threshold=${duck.threshold}:ratio=${duck.ratio}:`
+      + `attack=${duck.attack}:release=${duck.release}[bgd];`
+      + "[voxmix][bgd]amix=inputs=2:duration=longest:normalize=0,alimiter=limit=0.95[mix]"
+    : "[voxmix][bg]amix=inputs=2:duration=longest:normalize=0,alimiter=limit=0.95[mix]";
 
   return {
     filterGraph: `[1:a]${bgmFilters.join(",")}[bg];${voiceChain};${mixChain}`,

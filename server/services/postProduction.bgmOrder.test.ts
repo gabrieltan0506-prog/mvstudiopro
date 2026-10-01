@@ -19,6 +19,17 @@ const base: BgmMountParams = {
 };
 
 describe("BGM ffmpeg 时间线顺序", () => {
+  it("按情绪卡点混音时可关闭统一对白避让，保留原片声音且无悬空侧链", () => {
+    const parsed = bgmMountParamsSchema.parse({ ...base, duckUnderDialogue: false, volumeExpr: "if(between(t,12,15),0.8,0.48)" });
+    expect(parsed.duckUnderDialogue).toBe(false);
+    const graph = buildBgmFilterPlan(parsed, { durationSec: 30, hasAudio: true }).filterGraph;
+    expect(graph).toContain("[0:a]apad");
+    expect(graph).toContain("volume='if(between(t,12,15),0.8,0.48)':eval=frame");
+    expect(graph).toContain("[voxmix][bg]amix");
+    expect(graph).not.toContain("sidechaincompress");
+    expect(graph).not.toContain("voxkey");
+    expect(buildBgmFilterPlan(base, { durationSec: 30, hasAudio: true }).filterGraph).toContain("sidechaincompress");
+  });
   it("卡点表产物穿过任务契约后进入真实 FFmpeg filter graph", () => {
     const structure: BgmStructure = {
       strongestAtSec: 5,
