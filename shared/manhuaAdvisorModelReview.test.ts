@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { advisorModelContract, ADVISOR_REVIEW_MODEL_IDS, buildAdvisorModelReviewFacts } from "./manhuaAdvisorModelReview";
+import { advisorModelContract, ADVISOR_REVIEW_MODEL_IDS, buildAdvisorModelReviewFacts, findAdvisorPromptContradictions, composeAdvisorPromptReviewAnswer } from "./manhuaAdvisorModelReview";
 import { manhuaCreativeAdvisorContextSchema, type ManhuaCreativeAdvisorContext } from "./manhuaCreativeAdvisor";
 import { tryCompileManhuaVideoPromptForOutbound } from "./manhuaOutboundPrompt";
 const context: ManhuaCreativeAdvisorContext = {
@@ -8,6 +8,28 @@ const context: ManhuaCreativeAdvisorContext = {
   videoPromptReview: { blockId: "clip-e01-g01", segmentIndex: 1, videoModel: "seedance-2.5", aspectRatio: "9:16", resolution: "720p", prompt: "【第1段·29s】\n棕马左前腿悬空。@图片1。娘说「慢点」。" },
 };
 describe("顾问共享模型合同和文本编译核对", () => {
+  const conflictingPrompt = "【第1段·29s】\n0–2.5s：棕马墨屠，左前腿明显蜷起悬空。\n5–8s：蜷腿落在湿石板，眼罩与肩伤同框；受伤的左前腿蜷起悬空，右前蹄吃力打滑。\n22–29s：阿菁前景偏左、黑马/眼罩占左。";
+  it("真实第一段措辞的两处候选送入模型与最终答复，漏报也不丢定位", () => {
+    const reviewContext = { ...context, videoPromptReview: { ...context.videoPromptReview!, prompt: conflictingPrompt } };
+    const snapshot = JSON.stringify(reviewContext);
+    expect(findAdvisorPromptContradictions(conflictingPrompt).map(f => [f.id, f.window])).toEqual([["limb-state", "5–8s"], ["horse-color", "22–29s"]]);
+    const facts = buildAdvisorModelReviewFacts(reviewContext);
+    expect(facts).toContain('"referenceCounts":"未验证"');
+    expect(facts).toContain('"id":"limb-state"');
+    const answer = composeAdvisorPromptReviewAnswer("未发现其他矛盾。", reviewContext);
+    expect(answer).toContain("右前蹄踩住湿石板，左前腿继续蜷起悬空");
+    expect(answer).toContain("棕马墨屠/眼罩");
+    expect(answer).toContain("不能证明数量合规或没有音视频参考");
+    expect(answer).toContain("系统现有门禁仍有效");
+    expect(JSON.stringify(reviewContext)).toBe(snapshot);
+  });
+  it("不同肢体、不同秒窗和明确变身不混为冲突，不声称无问题", () => {
+    expect(findAdvisorPromptContradictions("5–8s：左前腿悬空，右前腿落地。")).toEqual([]);
+    expect(findAdvisorPromptContradictions("5–8s：左前腿悬空。\n8–13s：左前腿落地。")).toEqual([]);
+    expect(findAdvisorPromptContradictions("0–5s：棕马墨屠。\n5–8s：变成黑马/眼罩。")).toEqual([]);
+    expect(composeAdvisorPromptReviewAnswer("建议核对", context)).toContain("不代表全文没有矛盾");
+    expect(composeAdvisorPromptReviewAnswer("白模方案", { ...context, studio3d: {} })).toBe("白模方案");
+  });
   it.each(ADVISOR_REVIEW_MODEL_IDS)("%s 能按生产模型合同读取参数，不串方言", id => {
     const contract = advisorModelContract(id);
     expect(contract.recognized).toBe(true);

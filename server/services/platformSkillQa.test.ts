@@ -286,6 +286,19 @@ describe("漫剧工厂创作顾问上下文", () => {
     expect(payload.response_format).toEqual({ type: "json_object" });
   });
 
+  it("保存提示词检查最终响应保留程序矛盾定位与素材未核边界，无额外模型调用或生图", async () => {
+    invokeLLMMock.mockResolvedValue(llmJson("仅发现颜色问题，引用数量合规。"));
+    const result = await askPlatformSkillQa({ userId: 7, isAdmin: true, question: "检查第一段", manhuaContext: manhuaContext({
+      videoModel: "seedance-2.5", videoPromptReview: { blockId: "clip-e01-g01", segmentIndex: 1, videoModel: "seedance-2.5", aspectRatio: "9:16", prompt: "【第1段·29s】\n0–5s：棕马墨屠。\n5–8s：蜷腿落在湿石板；左前腿蜷起悬空。\n22–29s：黑马/眼罩占左。" },
+    }) });
+    expect(invokeLLMMock).toHaveBeenCalledTimes(1);
+    expect(result.answer).toContain("5–8s");
+    expect(result.answer).toContain("22–29s");
+    expect(result.answer).toContain("引用数量与顺序、文件和画面尚未核验");
+    expect(result.imageOffer).toBeNull();
+    expect(result.creditsCharged).toBe(0);
+  });
+
   it("模型参数/实际存稿编译到模型，建议自纠与图片复用规则是系统指令", () => {
     const messages = buildManhuaCreativeAdvisorLlmMessages({ question: "检查第一段", context: manhuaContext({ videoModel: "seedance-2.5", videoPromptReview: { blockId: "clip-e01-g01", segmentIndex: 1, prompt: "【第1段·29s】棕马前腿悬空，下一句蜷腿落地。娘说「慢点」。", videoModel: "seedance-2.5", aspectRatio: "9:16", resolution: "720p" } }) });
     const system = messages[0]!.content;

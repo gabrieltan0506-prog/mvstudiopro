@@ -8,6 +8,40 @@ import { parseManhuaClipTargetDurationSec } from "./manhuaScriptWorkbench.js";
 
 export const ADVISOR_REVIEW_MODEL_IDS = ["seedance-2.0-mini", "seedance-2.0", "seedance-2.0-fast", "seedance-2.5", "minimax-hailuo-3", "wan-3.0"] as const;
 
+/** 文本中的明确冲突候选；不是画面结论，也不产生生成门禁。 */
+export function findAdvisorPromptContradictions(prompt: string) {
+  const findings: Array<{ id: string; window: string; evidence: string[]; suggestion: string }> = [];
+  const lines = prompt.split(/\r?\n/);
+  for (const line of lines) {
+    const window = line.match(/^\s*([\d.]+\s*[–—-]\s*[\d.]+s)[:：]/)?.[1];
+    if (!window) continue;
+    const airborne = line.match(/(?:受伤的)?左前腿[^，。；\n]{0,12}悬空/);
+    const grounded = line.match(/(?:左前腿|蜷腿)(?:明显)?落(?:在湿石板|地)/);
+    if (airborne && grounded) findings.push({
+      id: "limb-state", window, evidence: [grounded[0], airborne[0]],
+      suggestion: `可将“${grounded[0]}”改为“右前蹄踩住湿石板，左前腿继续蜷起悬空”，其余剧情与对白保留；请先确认“蜷腿”确指同一左前腿。`,
+    });
+    // 仅覆盖已明确命名的棕马墨屠与后文未命名的黑马/眼罩，避免将不同马匹或明确变身混为冲突。
+    if (/黑马\s*\/\s*眼罩/.test(line) && /棕马墨屠/.test(prompt) && !/变(?:成|为)|褪(?:成|为)|另(?:一|只|匹)/.test(line)) findings.push({
+      id: "horse-color", window, evidence: ["棕马墨屠", "黑马/眼罩"],
+      suggestion: "若此处仍是墨屠且没有变色，可将“黑马/眼罩”改为“棕马墨屠/眼罩”；只调整矛盾用词，不据此判断参考图错误。",
+    });
+  }
+  return findings;
+}
+
+/** 最终答复携带程序核对范围，防止模型漏报已定位候选或把存稿当作最终素材。 */
+export function composeAdvisorPromptReviewAnswer(answer: string, context: ManhuaCreativeAdvisorContext): string {
+  const review = context.videoPromptReview;
+  if (!review || context.studio3d || context.previsEdit || context.worldTarget) return answer;
+  const findings = findAdvisorPromptContradictions(review.prompt);
+  return [
+    `**本次核对范围：第${review.segmentIndex}段保存文本与节点设置。** 工厂自动生成并适配提示词，无需从零手填。最终图片/视频/音频数组、引用数量与顺序、文件和画面尚未核验；存稿编号不能证明数量合规或没有音视频参考。系统现有门禁仍有效，是否需要更新静帧须核具体版本和画面证据，下面都是可选建议，不自动改稿或生成。`,
+    ...(findings.length ? ["**程序定位的文本矛盾候选（供选择）**", ...findings.map(f => `- ${f.window}：“${f.evidence.join("”与“")}”。${f.suggestion}`)] : ["程序规则未定位明确候选，不代表全文没有矛盾，仍需顾问与人工核对。"]),
+    "**顾问分析（参考意见，以上核对范围与候选不因模型遗漏而取消）**", answer,
+  ].join("\n\n");
+}
+
 /** 完整登记已接通产品能力与调用职责，不能把不同供应商的字段混作同一个请求。 */
 export function advisorModelContract(model: string) {
   const facts = resolveManhuaCreativeAdvisorEngineFacts(model);
@@ -76,6 +110,8 @@ export function buildAdvisorModelReviewFacts(context: ManhuaCreativeAdvisorConte
     "【本次保存节点参数·只读核对】", JSON.stringify({ blockId: review.blockId, segmentIndex: review.segmentIndex, ...settings }),
     "【共享生产编译器只读核对·未提交】",
     JSON.stringify({ issues: compiled.issues, blocked: compiled.blocked, fatalZh: compiled.fatalZh, parameterFindings, text: compiled.text }),
+    "【程序定位的文本矛盾候选·需逐项回应，不是生成阻断】", JSON.stringify(findAdvisorPromptContradictions(review.prompt)),
+    "【素材证据范围】", JSON.stringify({ finalReferenceArrays: "未提供", referenceCounts: "未验证", referenceAbsence: "不能确认没有视频或音频参考", visualContent: "未读取画面" }),
     "上述只核保存文本与可确定设置。最终媒体数组、编号职责、参考时长、文件规格和上游路由尚未解析，不代表最终出站预览或能生成；不猜实际参考数量。存稿硬绑是快照，提交会重算，不能据此要求补图。",
     "顾问建议不改变系统门禁；把真实限制与可选修正分开。正文矛盾先给可采纳的最小修正稿，不能要求用户重新手填整段；不能因只改文字强迫重出图片。",
   ].join("\n");
