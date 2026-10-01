@@ -1,4 +1,4 @@
-import { buildAdvisorModelReviewFacts } from "../../shared/manhuaAdvisorModelReview.js";
+import { buildAdvisorModelReviewFacts, composeAdvisorPromptReviewAnswer } from "../../shared/manhuaAdvisorModelReview.js";
 import { buildManhuaTemplateAdvisorReference } from "./manhuaTemplateAdvisorReference.js";
 import { ADVISOR_WORLD_INSTRUCTIONS, parseAdvisorWorldPlan } from "../../shared/manhuaAdvisorWorld";
 import { resolveAdvisorPrevisVideo } from "./manhuaAdvisorPrevisVideo";
@@ -919,7 +919,7 @@ export async function askPlatformSkillQa(params: {
   }
 
   return {
-    answer: parsed.answer,
+    answer: manhuaContext ? composeAdvisorPromptReviewAnswer(parsed.answer, manhuaContext) : parsed.answer,
     ...(manhuaContext ? { modelName: usedModel } : {}),
     remainingFreeToday: Math.max(0, dailyLimit - Math.min(usedAfter, dailyLimit)),
     usedToday: usedAfter,
