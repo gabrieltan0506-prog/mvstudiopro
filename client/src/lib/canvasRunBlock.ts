@@ -2827,7 +2827,7 @@ async function runCanvasBlockInner(
     }
     const useHailuoH3 = isCanvasHailuoH3VideoModel(videoModel);
     const useHappyHorse = isCanvasHappyHorseVideoModel(videoModel);
-    if (useHappyHorse && manhuaPilot) throw new Error("当前生成档未接入试片审核，请先选择受支持的漫剧成片引擎");
+    if (useHappyHorse && manhuaPilot?.intent === "pilot") throw new Error("当前生成档未接入试片审核，请先选择受支持的漫剧成片引擎");
     const useWan30 = isCanvasWan30VideoModel(videoModel);
     const useSeedance25 = videoModel === "seedance-2.5";
     // 逐段音轨守卫挪到段参考取舍之后：只有「本次真的会送母轨」才放行（见下方 segmentMasterEntry），

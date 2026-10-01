@@ -72,7 +72,7 @@ export function ManhuaPilotReviewPanel({
             首段 {state.outputUrl ? state.outputDurationSec ?? state.durationSec ?? 10 : state.durationSec ?? 10} 秒试片
           </h3>
           <p className="mt-1 text-[11px] text-slate-300">
-            本次只审下方试片，批准后解锁本集当前生成档。
+            试片为可选预演，本次只审下方试片；正式成片可独立生成。
           </p>
           {state.taskId ? (
             <p className="mt-1 break-all font-mono text-[10px] text-slate-400">
@@ -135,7 +135,7 @@ export function ManhuaPilotReviewPanel({
                   ? "正在核对当前项目的审核记录…"
                   : state.error
                     ? "原审核记录尚未确认，暂不提交新的试片。"
-                    : `尚无可审试片，请先生成第 1 段的前${state.durationSec ?? 10}秒。`}
+                    : `尚无可审试片，可选择生成第 1 段的前${state.durationSec ?? 10}秒。`}
         </p>
       )}
       {state.error || mediaError || actionError ? (
@@ -163,7 +163,7 @@ export function ManhuaPilotReviewPanel({
             onClick={() => void decide("approve")}
             className="rounded border border-cyan-300/40 bg-cyan-500/20 px-3 py-2 text-xs font-semibold text-cyan-50 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300"
           >
-            {busy ? "正在保存审核…" : "质量达标，解锁"}
+            {busy ? "正在保存审核…" : "试片质量达标，批准"}
           </button>
         </div>
       ) : null}

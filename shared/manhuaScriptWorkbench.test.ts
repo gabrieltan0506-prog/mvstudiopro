@@ -18,6 +18,7 @@ import {
   type ManhuaWorkbenchShot,
   shotIndexesForSegment,
   parseManhuaClipTargetDurationSec,
+  resolveManhuaClipDisplayDurationSec,
   parseWorkbenchShotsFromText,
   pinnedManhuaSegmentCount,
   resolveClipSegmentIndex,
@@ -457,4 +458,11 @@ it("合镜按原秒位保留触发反应恢复及各镜情绪语气，成片消�
  const prompt=formatWorkbenchSegmentClipInjectBlock({segmentIndex:1,totalSegments:1,durationSec:5,shots:[merged]});
  expect(prompt).toContain("嘴唇轻颤后恢复平稳");expect(prompt).toContain("本镜2–5秒");
  expect(source[1].microExpressionZh).toBe("眉心舒展，嘴唇轻颤后恢复平稳");
+});
+
+// 第四段保存24秒稿不可仍展示旧23秒规划，原声23.4秒不应被误判超段。
+it("全文时长用于展示，原规划仅在没有标题时兜底", () => {
+  expect(resolveManhuaClipDisplayDurationSec("【第4段·24s】", 23)).toBe(24);
+  expect(resolveManhuaClipDisplayDurationSec("【第1段·29s】", 15)).toBe(29);
+  expect(resolveManhuaClipDisplayDurationSec(undefined, 23)).toBe(23);
 });

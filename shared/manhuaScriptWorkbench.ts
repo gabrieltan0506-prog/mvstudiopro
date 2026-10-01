@@ -268,6 +268,11 @@ export function parseManhuaClipTargetDurationSec(
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+/** 全文保存稿的时长优先用于生成与展示；不改原镜头分段、旧片或音轨。 */
+export function resolveManhuaClipDisplayDurationSec(prompt: string | undefined, plannedDurationSec: number): number {
+  return parseManhuaClipTargetDurationSec(prompt) ?? plannedDurationSec;
+}
+
 export type ManhuaWorkbenchSegment = {
   /** 1-based 段号 */
   index: number;

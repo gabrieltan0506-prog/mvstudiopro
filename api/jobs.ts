@@ -5887,8 +5887,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         }
 
         /**
-         * Mini 草稿档（用户 2026-08-09 拍板产品化）。上游只有 EvoLink 有 mini 型号，
-         * BytePlus ModelArk 无对应模型，所以这条没有回落路径：失败即失败退费。
+         * Mini 草稿档正式生成优先 BytePlus，保留明确人脸隐私拒绝时的 EvoLink fallback。
          * 2.5 在本函数开头已被 runSeedance25EvolinkJob 接走，走不到这里。
          */
         const seedanceVersion = parseSeedanceVersion(productVersion);
@@ -5906,14 +5905,21 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           b.duration ?? q.duration ?? b.durationSec ?? (isProbe ? 5 : 15),
         );
         const durationSec = typeof rawDuration === "number" ? rawDuration : isProbe ? 5 : 15;
-        const { isEvolinkSeedanceConfigured, runEvolinkSeedanceVideo } = await import(
+        const { isEvolinkSeedanceConfigured, runEvolinkSeedanceVideo, buildEvolinkSeedanceRequest } = await import(
           "../server/services/evolinkSeedanceVideo.js"
         );
-        if (!isEvolinkSeedanceConfigured()) {
-          return res.status(503).json({
-            ok: false,
-            error: "视频服务暂不可用，请稍后重试",
-          });
+        const { isByteplusSeedanceConfigured, buildByteplusSeedance25SubmitBody } = await import(
+          "../server/services/byteplusSeedanceVideo.js"
+        );
+        const preferByteplusMini = !isProbe && isByteplusSeedanceConfigured();
+        if (!preferByteplusMini && !isEvolinkSeedanceConfigured()) {
+          return res.status(503).json({ ok: false, error: "视频服务暂不可用，请稍后重试" });
+        }
+        if (!isProbe) {
+          const miniInput = { prompt, imageUrl, imageUrls, videoUrls, audioUrls, aspectRatio, duration: durationSec, resolution, generateAudio, version: "2.0-mini" as const };
+          if (preferByteplusMini) buildByteplusSeedance25SubmitBody(miniInput);
+          // 只有EvoLink作为主通道时预检；备用通道不能阻挡合法BytePlus主通道请求。
+          else buildEvolinkSeedanceRequest({ ...miniInput, quality: resolution });
         }
         const label = `画布成片·草稿·${resolution}（${durationSec}s）`;
         if (isProbe && b.manhuaPilot != null) {
@@ -5999,7 +6005,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           requestKey;
         const taskInput = {
           ...manhuaPilotTaskFields(preparedPilot),
-          engine: "seedance-mini-evolink" as const,
+          engine: preferByteplusMini ? "seedance-mini-byteplus" as const : "seedance-mini-evolink" as const,
           label,
           prompt,
           imageUrl,

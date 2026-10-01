@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const boundary = vi.hoisted(() => ({
   authenticate: vi.fn(),
@@ -78,6 +78,8 @@ afterAll(async () => {
   if (fixtureDir) await fs.rm(fixtureDir, { recursive: true, force: true });
 });
 
+beforeEach(() => { vi.clearAllMocks(); });
+
 async function request(
   op: string,
   method: "GET" | "POST",
@@ -122,7 +124,7 @@ describe("真实 jobs 审批路由与本地持久记录（鉴权/支付/网络�
     expect((await request("manhuaPilotReview", "GET")).status).toBe(405);
   });
 
-  it("未批准长片由实际生成API在扣费前拒绝", async () => {
+  it("未批准正式长片通过试片检查，仍受真实扣费保护", async () => {
     boundary.authenticate.mockResolvedValue({ id: 71, role: "admin" });
     const result = await request("hailuo3Video", "POST", {
       prompt: "虚构测试镜头",
@@ -130,9 +132,10 @@ describe("真实 jobs 审批路由与本地持久记录（鉴权/支付/网络�
       episodeIndex: 1,
       manhuaPilot: { ...submission, intent: "full" },
     });
-    expect(result.status).toBe(409);
-    expect(result.body.error).toContain("请先审阅并批准");
-    expect(boundary.charge).not.toHaveBeenCalled();
+    // 虚构扣费边界故意拒绝：已到正式扣费保护，而不是试片审批拦截。
+    expect(result.status).toBe(503);
+    expect(result.body.error).not.toContain("请先审阅并批准");
+    expect(boundary.charge).toHaveBeenCalledTimes(1);
     expect(fetch).not.toHaveBeenCalled();
   });
 

@@ -63,7 +63,7 @@ describe("漫剧首10秒质检与视频编辑接线", () => {
     expect(omniSource).not.toContain("saveManhuaPilotGateStore");
     expect(workbenchSource).toContain("<ManhuaPilotReviewPanel");
     expect(reviewPanelSource).toContain("state.durationSec ?? 10");
-    expect(reviewPanelSource).toContain("质量达标，解锁");
+    expect(reviewPanelSource).toContain("试片质量达标，批准");
     expect(reviewPanelSource).toContain("src={outputUrl}");
     expect(reviewPanelSource).toContain("onReview(decision, state.taskId)");
     expect(reviewHookSource).toContain("review.taskId !== taskId");
@@ -88,7 +88,7 @@ describe("漫剧首10秒质检与视频编辑接线", () => {
   });
 
   it("已有原片编辑绕开生成铺板与资产门禁，失败前不清旧版成品", () => {
-    expect(omniSource).toContain("preparedEditOnly ? { blocks, edges } : ensureStudioSpawned(factoryTopic)");
+    expect(omniSource).toContain("preparedEditOnly || preserveConfirmedShots || opts?.keyartShotIndex !== undefined ? { blocks, edges } : ensureStudioSpawned(factoryTopic)");
     expect(omniSource).toContain('!preparedEditOnly && (untilStage === "keyart" || untilStage === "clip")');
     expect(omniSource).toContain("block.id === opts.targetBlockIds?.[0]");
     const handler = omniSource.split("const handleVideoEditClip = useCallback(")[1]!

@@ -46,7 +46,7 @@ describe("服务端试片审批合同", () => {
       }).success
     ).toBe(false);
   });
-  it("未批准只允许首段十秒", () => {
+  it("显式试片只允许首段短片，正式生成不要求审批", () => {
     expect(() =>
       assertManhuaPilotSubmissionAllowed(
         { status: "not_started" },
@@ -74,7 +74,7 @@ describe("服务端试片审批合同", () => {
         { intent: "full", segmentIndex: 1 },
         30
       )
-    ).toThrow();
+    ).not.toThrow();
   });
   it.each(["submitting", "reconcile_manual", "generated", "approved"] as const)(
     "%s 时不能重烧试片",
@@ -88,7 +88,7 @@ describe("服务端试片审批合同", () => {
       ).toThrow();
     }
   );
-  it("已批准才允许整段；退回后可显式重新试片", () => {
+  it("正式整段独立生成；退回后可显式重新试片", () => {
     expect(() =>
       assertManhuaPilotSubmissionAllowed(
         { status: "approved" },

@@ -175,7 +175,9 @@ export function useManhuaPilotReview(input: {
         episodeIndex: request.episodeIndex,
         videoModel: request.videoModel,
       };
-      const latest = await loadManhuaPilotReview(requestedScope);
+      const latest = request.pilotRun
+        ? await loadManhuaPilotReview(requestedScope)
+        : { status: "not_started" as const };
       if (latestSource.current !== sourceKey)
         throw new Error("项目已切换，本次生成已停止");
       const submission: ManhuaPilotSubmission = {
