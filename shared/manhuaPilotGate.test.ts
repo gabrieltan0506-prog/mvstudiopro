@@ -3,7 +3,6 @@ import {
   MANHUA_PILOT_DURATION_SEC,
   compileManhuaPilotPrompt,
   createManhuaPilotGateEntry,
-  evaluateManhuaPilotGate,
   getManhuaPilotGateEntry,
   manhuaPilotGateKey,
   normalizeManhuaPilotGateStore,
@@ -12,7 +11,7 @@ import {
 } from "./manhuaPilotGate";
 
 describe("manhuaPilotGate", () => {
-  it("stores one independent 10s gate per episode and video model", () => {
+  it("preserves independent legacy pilot reviews per episode and video model", () => {
     let store = recordManhuaPilotGenerated({}, {
       episodeIndex: 1,
       videoModel: "seedance-2.5",
@@ -60,75 +59,6 @@ describe("manhuaPilotGate", () => {
     expect(manhuaPilotGateKey(1, "bad\nmodel")).toBeNull();
   });
 
-  it("only allows segment 1 at exactly 10s before approval", () => {
-    const base = {
-      store: {},
-      episodeIndex: 1,
-      videoModel: "minimax-hailuo-3",
-    };
-    expect(
-      evaluateManhuaPilotGate({
-        ...base,
-        segmentIndex: 1,
-        requestedDurationSec: MANHUA_PILOT_DURATION_SEC,
-      }),
-    ).toMatchObject({ allowed: true, mode: "pilot", reason: "pilot_required" });
-    expect(
-      evaluateManhuaPilotGate({ ...base, segmentIndex: 2, requestedDurationSec: 10 }),
-    ).toMatchObject({ allowed: false, reason: "first_segment_only" });
-    expect(
-      evaluateManhuaPilotGate({ ...base, segmentIndex: 1, requestedDurationSec: 15 }),
-    ).toMatchObject({ allowed: false, reason: "pilot_duration_must_be_10" });
-  });
-
-  it("blocks duplicate submissions while a generated pilot awaits review", () => {
-    const store = recordManhuaPilotGenerated({}, {
-      episodeIndex: 1,
-      videoModel: "seedance-2.0",
-      outputUrl: "https://cdn.example/pilot.mp4",
-    });
-    expect(
-      evaluateManhuaPilotGate({
-        store,
-        episodeIndex: 1,
-        videoModel: "seedance-2.0",
-        segmentIndex: 1,
-        requestedDurationSec: 10,
-      }),
-    ).toMatchObject({ allowed: false, status: "generated", reason: "awaiting_review" });
-  });
-
-  it("approval unlocks only the reviewed episode-model pair", () => {
-    const generated = recordManhuaPilotGenerated({}, {
-      episodeIndex: 4,
-      videoModel: "wan-3.0",
-      outputUrl: "https://cdn.example/pilot.mp4",
-    });
-    const approved = reviewManhuaPilot(generated, {
-      episodeIndex: 4,
-      videoModel: "wan-3.0",
-      decision: "approve",
-    });
-    expect(
-      evaluateManhuaPilotGate({
-        store: approved,
-        episodeIndex: 4,
-        videoModel: "wan-3.0",
-        segmentIndex: 3,
-        requestedDurationSec: 30,
-      }),
-    ).toMatchObject({ allowed: true, mode: "full", effectiveDurationSec: 30 });
-    expect(
-      evaluateManhuaPilotGate({
-        store: approved,
-        episodeIndex: 4,
-        videoModel: "seedance-2.5",
-        segmentIndex: 3,
-        requestedDurationSec: 30,
-      }),
-    ).toMatchObject({ allowed: false, reason: "first_segment_only" });
-  });
-
   it("cannot approve a missing pilot and allows a rejected pilot to be regenerated", () => {
     expect(
       reviewManhuaPilot({}, {
@@ -152,15 +82,6 @@ describe("manhuaPilotGate", () => {
       status: "rejected",
       rejectionNoteZh: "动作落点漂移",
     });
-    expect(
-      evaluateManhuaPilotGate({
-        store: rejected,
-        episodeIndex: 1,
-        videoModel: "wan-3.0",
-        segmentIndex: 1,
-        requestedDurationSec: 10,
-      }),
-    ).toMatchObject({ allowed: true, mode: "pilot" });
   });
 });
 
