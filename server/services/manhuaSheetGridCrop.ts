@@ -7,7 +7,7 @@
  * 发引擎前先在这里切开，段内只喂需要的那一个机位。
  */
 import sharp from "sharp";
-import { signGsUriV4ReadUrl, uploadBufferToGcs } from "./gcs.js";
+import { downloadGcsObject, getGcsBucketName, signGsUriV4ReadUrl, uploadBufferToGcsIfAbsent } from "./gcs.js";
 
 /** 与 buildManhuaSceneFourViewGridPrompt 的四格顺序一致 */
 export const MANHUA_SHEET_GRID_VIEWS = [
@@ -64,30 +64,80 @@ export type ManhuaSheetGridCropResult = {
   bytes: number;
 };
 
+import { registerCanvasMediaOwner, readCanvasMediaOwner, verifyCanvasMediaOwnership, type OwnerStore } from "./canvasMediaOwnership.js";
+
+/** Only our bucket is accepted; never fetch an arbitrary client URL. */
+export function sheetObjectPath(url: string, bucket = getGcsBucketName()): string {
+  let path = "";
+  if (url.startsWith("/api/canvas-media/")) path = decodeURIComponent(url.slice("/api/canvas-media/".length).split("?")[0]);
+  else if (url.startsWith(`gs://${bucket}/`)) path = url.slice(`gs://${bucket}/`.length);
+  else {
+    const parsed = new URL(url);
+    if (parsed.protocol === "https:" && ["www.mvstudiopro.com", "mvstudiopro.com", "api.mvstudiopro.com"].includes(parsed.hostname) && parsed.pathname.startsWith("/api/canvas-media/"))
+      path = decodeURIComponent(parsed.pathname.slice("/api/canvas-media/".length));
+    else {
+      if (parsed.protocol !== "https:" || parsed.hostname !== "storage.googleapis.com" ||
+          !parsed.pathname.startsWith(`/${bucket}/`)) throw new Error("sheet_source_invalid");
+      path = decodeURIComponent(parsed.pathname.slice(bucket.length + 2));
+    }
+  }
+  if (!/^(?:generated|manhua-(?:scene|sheet)-tiles)\/[A-Za-z0-9_/.\-]+$/.test(path) || path.includes(".."))
+    throw new Error("sheet_source_invalid");
+  return path;
+}
+
 /** 取远端拼板 → 切四格 → 各自落 GCS，返回可直接当垫图的签名地址 */
 export async function cropManhuaSheet2x2ToGcs(input: {
   sheetUrl: string;
+  userId: number;
+  existingTiles?: Partial<Record<ManhuaSheetGridSlot, string>>;
+  store?: OwnerStore;
   /** 落地对象名前缀，便于按项目/资产归档 */
   objectPrefix?: string;
 }): Promise<ManhuaSheetGridCropResult[]> {
-  const url = String(input.sheetUrl || "").trim();
-  if (!/^https:\/\//i.test(url)) throw new Error("sheet_url_invalid");
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`sheet_download_failed_${res.status}`);
-  const sheet = Buffer.from(await res.arrayBuffer());
+  const sourcePath = sheetObjectPath(String(input.sheetUrl || "").trim());
+  if (!sourcePath.startsWith("generated/") || !(await verifyCanvasMediaOwnership(input.userId, sourcePath, { store: input.store, skipCache: true })))
+    throw new Error("sheet_owner_forbidden");
+  const { buffer: sheet } = await downloadGcsObject({ gcsUri: `gs://${getGcsBucketName()}/${sourcePath}` });
   const tiles = await cropSheet2x2ToTiles(sheet);
   const prefix =
     String(input.objectPrefix || "").trim().replace(/[^\w/-]/g, "").replace(/^\/+|\/+$/g, "") ||
-    "manhua-sheet-tiles";
+    `manhua-sheet-tiles/user-${input.userId}`;
+  if (!/^manhua-(?:scene|sheet)-tiles\/[A-Za-z0-9_/-]+$/.test(prefix) || prefix.includes("..")) throw new Error("sheet_prefix_invalid");
+  // Validate every legacy object before the first registration. Client claims alone are never evidence.
+  const existing = new Map<ManhuaSheetGridSlot, string>();
+  if (input.existingTiles) {
+    for (const tile of tiles) {
+      const url = input.existingTiles[tile.slot];
+      if (!url) continue;
+      const objectPath = sheetObjectPath(url);
+      if (!new RegExp(`^manhua-(?:scene|sheet)-tiles/[A-Za-z0-9_/-]+/[0-9]+-${tile.slot}\\.png$`).test(objectPath))
+        throw new Error("sheet_tile_invalid");
+      const { buffer } = await downloadGcsObject({ gcsUri: `gs://${getGcsBucketName()}/${objectPath}` });
+      const expected = await sharp(tile.buffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      const actual = await sharp(buffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      if (expected.info.width !== actual.info.width || expected.info.height !== actual.info.height || !expected.data.equals(actual.data))
+        throw new Error("sheet_tile_source_mismatch");
+      const owner = await readCanvasMediaOwner({ objectPath, store: input.store });
+      if (owner && Number(owner.ownerUserId) !== input.userId) throw new Error("sheet_owner_conflict");
+      existing.set(tile.slot, objectPath);
+    }
+    if (!existing.size) throw new Error("sheet_tiles_empty");
+  }
   const stamp = Date.now();
   const out: ManhuaSheetGridCropResult[] = [];
   for (const tile of tiles) {
-    const objectName = `${prefix}/${stamp}-${tile.slot}.png`;
-    const { gcsUri } = await uploadBufferToGcs({
-      objectName,
-      buffer: tile.buffer,
-      contentType: "image/png",
-    });
+    if (input.existingTiles && !existing.has(tile.slot)) continue;
+    const objectName = existing.get(tile.slot) || `${prefix}/${stamp}-${tile.slot}.png`;
+    const gcsUri = `gs://${getGcsBucketName()}/${objectName}`;
+    if (!existing.has(tile.slot)) {
+      const upload = await uploadBufferToGcsIfAbsent({ objectName, buffer: tile.buffer,
+        contentType: "image/png", metadata: { ownerUserId: String(input.userId), sourceObject: sourcePath, slot: tile.slot } });
+      if (!upload.created) throw new Error("sheet_object_collision");
+    }
+    const outcome = await registerCanvasMediaOwner({ objectPath: objectName, ownerUserId: input.userId,
+      source: `sheet:${sourcePath}`, store: input.store });
+    if (outcome !== "created" && outcome !== "alreadyOwned") throw new Error(`sheet_owner_${outcome}`);
     out.push({
       slot: tile.slot,
       labelZh: tile.labelZh,

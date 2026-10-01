@@ -173,6 +173,7 @@ function resolveCanvasTextPrimaryModel(textModel: string | undefined): string {
 const CANVAS_GPT_IMAGE2_POLL_MAX_MS = 13 * 60_000;
 
 export type CanvasRunDeps = {
+  repairSceneTileOwnership?: (imageUrls: string[]) => Promise<void>;
   /** 所有工厂/画布 clip 共用的服务端审核预检；返回元数据仍由服务端再次验证。 */
   authorizeManhuaClip?: (request: {
     episodeIndex: number; segmentIndex: number; videoModel: string; pilotRun: boolean; durationSec: number;
@@ -1005,6 +1006,7 @@ async function runSeedanceProductVideo(
     /** 生成意图 ID（与 idempotencyKey 同值）；服务端按它做扣费前裁决 */
     intentId?: string;
     onTaskId?: (taskId: string) => void;
+    repairSceneTileOwnership?: (imageUrls: string[]) => Promise<void>;
     /** 健康门等待结束、fetch 紧前的最终核对 */
     beforeSubmit?: OutboundSubmitGuard;
   },
@@ -1022,6 +1024,7 @@ async function runSeedanceProductVideo(
         .join("；")}`,
     );
   }
+  await opts?.repairSceneTileOwnership?.(prepared.refSlots.imageUrls);
   const res = await withFlyHealthGate(probeOrigin, () => {
     // 健康等待已结束；这里到 fetch 之间不得再 await（0914 复审 P1）
     opts?.beforeSubmit?.();
@@ -3575,7 +3578,7 @@ async function runCanvasBlockInner(
           finalPrompt,
           seedanceFirstFrame,
           ar,
-          { ...seedanceOpts, beforeSubmit: seedanceGuard },
+          { ...seedanceOpts, beforeSubmit: seedanceGuard, repairSceneTileOwnership: deps.repairSceneTileOwnership },
         );
         url = seedanceOut.videoUrl;
         if (useSeedance25) {

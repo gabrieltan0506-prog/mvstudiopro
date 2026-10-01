@@ -17,14 +17,16 @@ export type ManhuaSheetTile = {
 export async function cropManhuaSheet2x2(input: {
   sheetUrl: string;
   objectPrefix?: string;
+  existingTiles?: Partial<Record<ManhuaSheetTileSlot, string>>;
 }): Promise<ManhuaSheetTile[]> {
   const url = withLongJobsFlyDirect("/api/jobs?op=manhuaCropSheet2x2");
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    credentials: "omit",
+    credentials: "include",
     body: JSON.stringify({
       sheetUrl: input.sheetUrl,
+      existingTiles: input.existingTiles,
       objectPrefix: input.objectPrefix || "",
     }),
   });
