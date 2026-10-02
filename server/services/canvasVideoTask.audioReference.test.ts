@@ -4,10 +4,12 @@ import os from "node:os";
 import path from "node:path";
 
 const h = vi.hoisted(() => ({
+  normalizeVideo: vi.fn(async (url: string, _userId?: number, _record?: any, _save?: any) => url),
   normalizeImage: vi.fn(async (url: string) => url),
   h3: vi.fn(), h3Unknown: false, evolink: vi.fn(), byteplus: vi.fn(), openrouter: vi.fn(), signed: 0,
   byteplusFailure: false, byteplusUnknown: false, byteplusRejected: false, byteplusPollFailed: false, byteplusPollReason: "InputImageSensitiveContentDetected.PrivacyInformation", openrouterEnabled: false,
 }));
+vi.mock("./seedanceReferenceVideoSize.js", async original => ({ ...await original<typeof import("./seedanceReferenceVideoSize.js")>(), normalizeSeedanceReferenceVideo: h.normalizeVideo }));
 vi.mock("./seedanceReferenceImageSize.js", () => ({ normalizeSeedanceReferenceImage: h.normalizeImage }));
 vi.mock("./hailuoReferencePreflight.js", () => ({ preflightH3ReferenceMedia: vi.fn(async () => {}) }));
 vi.mock("./evolinkHailuoVideo.js", async importOriginal => {
@@ -74,6 +76,7 @@ describe("真实任务写盘到供应商请求的音频交接", () => {
     vi.clearAllMocks();
     h.evolink.mockReset(); h.byteplus.mockReset(); h.openrouter.mockReset();
     h.h3.mockReset(); h.h3Unknown = false;
+    h.normalizeVideo.mockReset().mockImplementation(async (url: string) => url);
     h.normalizeImage.mockReset().mockImplementation(async (url: string) => url);
     h.signed = 0; h.byteplusFailure = false; h.byteplusUnknown = false; h.byteplusRejected = false; h.byteplusPollFailed = false; h.byteplusPollReason = "InputImageSensitiveContentDetected.PrivacyInformation"; h.openrouterEnabled = false;
     dir = await fs.mkdtemp(path.join(os.tmpdir(), "video-audio-ref-test-"));
@@ -215,6 +218,23 @@ describe("真实任务写盘到供应商请求的音频交接", () => {
     const task = await create("seedance25-evolink");
     expect(task.audioUrls).toEqual(["gs://test-bucket/post-prod/7/dialogue.wav"]);
     expect(h.evolink.mock.calls[0][0].body.audio_urls).toEqual(["https://storage.googleapis.com/test-bucket/post-prod/7/dialogue.wav?signature=test-1"]);
+  });
+  it("白模放大在途先持久化原单，未达标不建BytePlus或Evo单", async () => {
+    const { ReferenceVideoPending } = await import("./seedanceReferenceVideoSize.js");
+    h.normalizeVideo.mockImplementation(async (_url, _userId, record, save) => {
+      record.predictionId = "test-reference-upscale";
+      await save();
+      throw new ReferenceVideoPending("白模视频正在WaveSpeed高清放大");
+    });
+    const { createCanvasVideoTask } = await import("./canvasVideoTask");
+    const created = await createCanvasVideoTask({ userId: 7, creditsCharged: 0, engine: "seedance25-byteplus", label: "旧白模预处理", prompt: "虚构角色", videoUrls: ["https://example.test/white-model.mp4"], duration: 5, workMode: "reference_to_video" });
+    await vi.waitFor(async () => {
+      const saved = JSON.parse(await fs.readFile(path.join(dir, `${created.taskId}.json`), "utf8"));
+      expect(saved.lastTransientError).toContain("WaveSpeed");
+      expect(Object.values(saved.seedanceReferenceVideoUpscales)[0]).toMatchObject({ predictionId: "test-reference-upscale" });
+      expect(saved.status).not.toBe("failed");
+    });
+    expect(h.byteplus).not.toHaveBeenCalled(); expect(h.evolink).not.toHaveBeenCalled();
   });
   it("图片自动放大结果进入BytePlus及拒绝后的EvoLink，视频参考不被当作图片", async () => {
     h.byteplusFailure = true;
