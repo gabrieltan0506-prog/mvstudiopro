@@ -5,7 +5,7 @@ import { findCanvasSegmentAudioSources, restoreCanvasSegmentAudio } from "@/lib/
 import { createManhuaAudioFromSavedPrompt, savedPromptAudioDiffers, syncUnproducedAudioToSavedPrompt } from "@shared/manhuaAudioSavedPrompt";
 import { createManhuaAudioFromShots } from "@shared/manhuaAudioFromShots";
 import { manhuaBgmArcFromShots } from "@shared/manhuaBgmArcFromShots";
-import { planCanvasDialogueTiming } from "@shared/canvasDialogueTimingPlan";
+import { planCanvasDialogueTiming, planCanvasDialoguePrecision } from "@shared/canvasDialogueTimingPlan";
 import { CANVAS_DIALOGUE_SPEED_MAX, CANVAS_DIALOGUE_SPEED_MIN, CANVAS_DIALOGUE_SPEED_WARN, suggestCanvasDialogueSpeed } from "@shared/canvasDialogueSpeed";
 import type { ManhuaWorkbenchShot } from "@shared/manhuaScriptWorkbench";
 import { buildSeparateAudioClips, SEPARATE_AUDIO_PREFIX } from "@/lib/canvasSeparateAudioReference";
@@ -36,6 +36,7 @@ import {
   getSelectedAudioTake,
   validateCanvasAudioCue,
   canvasDialogueWindowFit,
+  ceilCanvasDialogueSecond,
   canvasAudioCueSchema,
   canvasMusicDraftSchema,
   type CanvasMusicDraft,
@@ -442,6 +443,7 @@ export function CanvasAudioStudioView({
     hasPremixMaster: Boolean(block.manhuaSegmentRefs?.master?.gcsUri || block.manhuaSegmentRefs?.master?.url),
   });
   const durationAudit = auditCanvasAudioDuration(state.cues, durationSec);
+  const dialogueTiming = planCanvasDialoguePrecision(state.cues, durationSec);
   const current = useRef({ state, onChange, services, block, onMasterTrackReady, durationSec, dialogueSources, sourceShots });
   current.current = { state, onChange, services, block, onMasterTrackReady, durationSec, dialogueSources, sourceShots };
   const mounted = useRef(true);
@@ -550,7 +552,10 @@ export function CanvasAudioStudioView({
   const update = (
     fn: (previous: CanvasAudioStudioState) => CanvasAudioStudioState
   ) => {
-    if (!mounted.current || current.current.block.id !== block.id) return false;
+    if (!mounted.current || current.current.block.id !== block.id) {
+      setError("当前声音编辑器已失效，修改未保存。请收起并重新打开本段音轨台，原音频仍保留。");
+      return false;
+    }
     const next = fn(current.current.state);
     if (current.current.onChange(next) === false) {
       setError("当前片段忙碌或声音状态未能保存，已阻止本次新提交。请保留页面，待任务结束或备份并释放浏览器空间后重试。");
@@ -1498,6 +1503,21 @@ export function CanvasAudioStudioView({
         <p className="mt-1 text-white/75">对白 {durationAudit.dialogueReadyCount}/{durationAudit.dialogueCount} 句已采用且放得进秒窗；背景音乐已覆盖 {durationAudit.bgmCoveredSec.toFixed(2)} 秒，未覆盖 {durationAudit.bgmUncoveredSec.toFixed(2)} 秒（可按剧情留白）。</p>
         {durationAudit.issuesZh.length ? <ul className="mt-2 list-disc space-y-1 pl-4 text-amber-100">{durationAudit.issuesZh.slice(0, 4).map((issue, i) => <li key={`${i}:${issue}`}>{issue}</li>)}{durationAudit.issuesZh.length > 4 ? <li>另有 {durationAudit.issuesZh.length - 4} 项，请逐条检查音轨</li> : null}</ul> : <p className="mt-1 text-emerald-100">已采用音频的时长与秒窗相符；仍须试听内容与口型。</p>}
       </section>
+      {dialogueTiming.changes.length > 0 && <details aria-label="整段对白秒窗预览" className="rounded border border-cyan-300/25 p-3 text-xs">
+        <summary>整理对白秒窗为一位小数</summary>
+        <p className="my-2">向后安排完整原声，保留已有留白；不裁尾、不变速、不重新配音。应用后须核对镜头并重新确认原候选。</p>
+        <table className="my-2 w-full text-left"><thead><tr><th>角色</th><th>原时间</th><th>调整后</th></tr></thead><tbody>{dialogueTiming.changes.map(row => <tr key={row.id}><td>{row.labelZh}</td><td>{row.fromStart}–{row.fromEnd}</td><td>{row.startSec.toFixed(1)}–{row.endSec.toFixed(1)}</td></tr>)}</tbody></table>
+        {dialogueTiming.issue ? <p>{dialogueTiming.issue}</p> : <button type="button" className={buttonClass} disabled={disabled || busy || state.pendingOperations.length > 0} onClick={() => {
+          const latest = current.current;
+          if (disabled || busy || latest.state.pendingOperations.length > 0) return;
+          const plan = planCanvasDialoguePrecision(latest.state.cues, latest.durationSec);
+          if (plan.issue) { setError(plan.issue); return; }
+          if (update(previous => ({ ...previous, previewTake: undefined, cues: previous.cues.map(row => {
+            const change = plan.changes.find(item => item.id === row.id);
+            return change ? { ...row, startSec: change.startSec, endSec: change.endSec, approved: false } : row;
+          }) }))) setError("");
+        }}>应用整段一位小数秒窗</button>}
+      </details>}
       {savedPromptAudio.issue ? <p role="alert" className="text-xs text-amber-200">{savedPromptAudio.issue}</p> : null}
       {savedPromptAudio.studio && savedPromptAudioDiffers(state, savedPromptAudio.studio) ? <section aria-label="保存全文与音轨对白核对" className="rounded border border-amber-400/30 p-3 text-xs text-amber-100">
         <p>当前音轨台词、人物绑定或秒窗与保存全文不一致。旧候选及采用记录保留；请核对原声绑定，不要重复生成。</p>
@@ -1652,13 +1672,19 @@ export function CanvasAudioStudioView({
               aria-label={`${index + 1} ${label}`}
               type="number"
               min="0"
-              step="0.01"
+              step={key === "startSec" || key === "endSec" ? "0.1" : "0.01"}
               className={fieldClass}
               disabled={locked}
               value={cue[key]}
               onChange={event =>
                 patchCue(cue.id, { [key]: Number(event.target.value) })
               }
+              onBlur={event => {
+                if (key !== "startSec" && key !== "endSec") return;
+                const value = Number(event.target.value);
+                const rounded = ceilCanvasDialogueSecond(value);
+                if (Number.isFinite(value) && value !== rounded) patchCue(cue.id, { [key]: rounded });
+              }}
             />
           </label>
         );
@@ -2083,11 +2109,11 @@ export function CanvasAudioStudioView({
                       <p>可先按听审结果采用完整原声。原声 {take.durationSec.toFixed(3)} 秒，当前窗口 {(cue.endSec - cue.startSec).toFixed(3)} 秒，还差 {(take.durationSec - (cue.endSec - cue.startSec)).toFixed(3)} 秒；合听和出片前仍需安排足够时长，不会截断对白。</p>
                       {cue.kind === "dialogue" && (() => {
                         const fit = canvasDialogueWindowFit(cue, take, state.cues, durationSec);
-                        if (!fit.issue) return <button className={buttonClass} disabled={locked} onClick={() => patchCue(cue.id, { endSec: fit.endSec })}>将本句窗口延长至 {fit.endSec.toFixed(3)} 秒</button>;
+                        if (!fit.issue) return <button className={buttonClass} disabled={locked} onClick={() => patchCue(cue.id, { endSec: fit.endSec })}>将本句窗口延长至 {fit.endSec.toFixed(1)} 秒</button>;
                         const plan = planCanvasDialogueTiming(state.cues, cue.id, take, durationSec);
                         return <><p>{fit.issue}</p>{plan.changes.length > 0 && <details className="mt-2">
                           <summary>预览后续对白顺延</summary>
-                          <table className="my-2 w-full text-left"><thead><tr><th>角色</th><th>原时间</th><th>调整后</th></tr></thead><tbody>{plan.changes.map(row => <tr key={row.id}><td>{row.labelZh}</td><td>{row.fromStart.toFixed(3)}–{row.fromEnd.toFixed(3)}</td><td>{row.startSec.toFixed(3)}–{row.endSec.toFixed(3)}</td></tr>)}</tbody></table>
+                          <table className="my-2 w-full text-left"><thead><tr><th>角色</th><th>原时间</th><th>调整后</th></tr></thead><tbody>{plan.changes.map(row => <tr key={row.id}><td>{row.labelZh}</td><td>{row.fromStart}–{row.fromEnd}</td><td>{row.startSec.toFixed(1)}–{row.endSec.toFixed(1)}</td></tr>)}</tbody></table>
                           <p>保留完整原声；对白调整后需核对镜头、动作及配乐节奏，并重新试听确认。</p>
                           {plan.issue ? <p>{plan.issue}</p> : <button type="button" className={buttonClass} disabled={locked || state.pendingOperations.length > 0} onClick={() => {
                             if (disabled || busy || current.current.state.pendingOperations.length > 0) return;

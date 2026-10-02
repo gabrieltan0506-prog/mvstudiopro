@@ -18,7 +18,7 @@ describe("逐句音轨的持久化与消费闭环", () => {
     const result = compileCanvasAudioBindings({ studio: block!.audioStudio, existingAudioUrls: ["gs://test-bucket/base.wav"], durationSec: 10 });
     expect(result.audioUrls[1]).toBe(studio.cues[0]!.takes[0]!.gcsUri);
     expect(result.promptAppendix).toContain("@audio2仅对应墨屠（变身后）的对白{跟紧我。}");
-    expect(result.promptAppendix).toContain("1.500–5.000秒，落地抬头");
+    expect(result.promptAppendix).toContain("1.5–5.0秒，落地抬头");
   });
   it("改声音状态后旧音频保留但不能继续自动采用", () => {
     const cue = readyCue(); cue.voiceStateZh = "变身前";
@@ -40,14 +40,28 @@ describe("逐句音轨的持久化与消费闭环", () => {
     expect(canvasAudioStudioSchema.safeParse({ ...emptyCanvasAudioStudio(), cues: [readyCue(), readyCue()] }).success).toBe(false);
     expect(() => compileCanvasAudioBindings({ studio: { ...emptyCanvasAudioStudio(), cues: [readyCue()] }, existingAudioUrls: Array.from({ length: 10 }, (_, i) => `gs://test-bucket/${i}.wav`), durationSec: 10 })).toThrow("超过 10 条");
   });
+  it("相邻原声秒窗的浮点尾差不误报重叠，真实一毫秒重叠仍拒绝", () => {
+    for (const [startSec, durationSec, nextStart] of [
+      [8.944, 5.088, 14.031999999999996],
+      [0, 6.216, 6.215999999999994],
+    ]) {
+      const first = { ...readyCue("first"), startSec, endSec: startSec + durationSec };
+      first.takes = [{ ...first.takes[0]!, durationSec }];
+      const second = { ...readyCue("second"), startSec: nextStart, endSec: nextStart + 2 };
+      const compile = () => compileCanvasAudioBindings({ studio: { ...emptyCanvasAudioStudio(), cues: [first, second] }, existingAudioUrls: [], durationSec: 24 });
+      expect(compile().audioUrls).toHaveLength(2);
+      second.startSec = startSec + durationSec - 0.001;
+      expect(compile).toThrow("对白音频发生重叠");
+    }
+  });
 });
 
 it("对白4.944秒原声延长不重购，拦截邻句冲突及片长越界", () => {
   const cue = {...readyCue(), startSec:0, endSec:4};
   const take = {...cue.takes[0]!, durationSec:4.944};
   cue.takes = [take];
-  expect(canvasDialogueWindowFit(cue,take,[cue],12)).toEqual({endSec:4.944,issue:""});
-  const fitted = {...cue,endSec:4.944};
+  expect(canvasDialogueWindowFit(cue,take,[cue],12)).toEqual({endSec:5,issue:""});
+  const fitted = {...cue,endSec:5};
   expect(canvasAudioCueInputKey(fitted)).toBe(take.inputKey);
   expect(compileCanvasAudioBindings({studio:{...emptyCanvasAudioStudio(),cues:[fitted]},existingAudioUrls:[],durationSec:12}).audioUrls).toHaveLength(1);
   expect(canvasDialogueWindowFit(cue,take,[cue,{...readyCue("line-2"),startSec:4,endSec:7,speakerZh:"阿菁"}],12).issue).toContain("阿菁");
