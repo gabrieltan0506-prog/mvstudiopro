@@ -1,6 +1,7 @@
 import { submitEvolinkH3, EVOLINK_H3_MODEL } from "./evolinkHailuoVideo.js";
 import { preflightH3ReferenceMedia } from "./hailuoReferencePreflight.js";
 import { SubmitRejectedError } from "./submitOutcomeErrors.js";
+import { normalizeSeedanceReferenceImage } from "./seedanceReferenceImageSize.js";
 /**
  * 画布成片异步任务（Seedance OpenRouter / Hailuo / Happy Horse /
  * Seedance 2.5 BytePlus 主路径 + EvoLink fallback）。
@@ -145,6 +146,8 @@ export type CanvasVideoTaskRecord = {
   prompt: string;
   imageUrl?: string;
   imageUrls?: string[];
+  /** 提交前实际图片对象，原始imageUrls保留用于恢复与对账。 */
+  seedancePreparedImageObjects?: string[];
   videoUrls?: string[];
   audioUrls?: string[];
   aspectRatio: string;
@@ -442,12 +445,30 @@ async function resolveSeedanceTaskReferences(
     : new Set<string>();
   const resolve = (url: string) =>
     resolveProtectedTaskMediaUrl(task, url, ownedVideoObjects);
-  return {
-    imageUrl: task.imageUrl ? await resolve(task.imageUrl) : undefined,
-    imageUrls: await Promise.all((task.imageUrls || []).map(resolve)),
+  const imageCache = new Map<string, Promise<string>>();
+  const resolveImage = (url: string) => {
+    let pending = imageCache.get(url);
+    if (!pending) {
+      pending = resolve(url).then(resolved => task.seedanceVersion === "2.5" || task.engine.startsWith("seedance25-")
+        ? normalizeSeedanceReferenceImage(resolved, task.userId) : resolved);
+      imageCache.set(url, pending);
+    }
+    return pending;
+  };
+  const references = {
+    imageUrl: task.imageUrl ? await resolveImage(task.imageUrl) : undefined,
+    imageUrls: await Promise.all((task.imageUrls || []).map(resolveImage)),
     videoUrls: await Promise.all((task.videoUrls || []).map(resolve)),
     audioUrls: await resolveCanvasVideoAudioUrls(task.audioUrls, task.userId),
   };
+  if (task.seedanceVersion === "2.5" || task.engine.startsWith("seedance25-")) {
+    task.seedancePreparedImageObjects = [references.imageUrl, ...references.imageUrls]
+      .filter((url): url is string => Boolean(url))
+      .map(url => extractSystemGcsObjectPath(url))
+      .filter((objectPath): objectPath is string => Boolean(objectPath));
+    await writeTask(task);
+  }
+  return references;
 }
 
 async function resolveTaskVideoReferences(

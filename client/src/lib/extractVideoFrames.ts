@@ -13,6 +13,13 @@ export type ExtractedVideoFrame = {
 export const VIDEO_FRAME_LOAD_TIMEOUT_MS = 20_000;
 export const VIDEO_FRAME_SEEK_TIMEOUT_MS = 10_000;
 
+/** 尾帧会作为生成参考图片上传；两条边均须达到供应商300像素下限。 */
+export function videoReferenceFrameSize(width: number, height: number, maxWidth = 768) {
+  const requiredScale = Math.max(Math.min(1, maxWidth / width), 300 / width, 300 / height);
+  const scale = requiredScale > 1 ? Math.ceil(requiredScale) : requiredScale;
+  return { width: Math.max(300, Math.ceil(width * scale)), height: Math.max(300, Math.ceil(height * scale)) };
+}
+
 function withTimeout<T>(
   run: Promise<T>,
   ms: number,
@@ -201,9 +208,9 @@ export async function extractVideoTailFramesFromUrl(
       await seek(video, t);
       const vw = video.videoWidth || 720;
       const vh = video.videoHeight || 1280;
-      const scale = Math.min(1, maxWidth / vw);
-      canvas.width = Math.max(1, Math.round(vw * scale));
-      canvas.height = Math.max(1, Math.round(vh * scale));
+      const size = videoReferenceFrameSize(vw, vh, maxWidth);
+      canvas.width = size.width;
+      canvas.height = size.height;
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       frames.push({
         tSec: t,
