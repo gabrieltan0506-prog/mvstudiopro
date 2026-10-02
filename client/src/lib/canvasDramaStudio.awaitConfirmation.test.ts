@@ -13,8 +13,9 @@ import {
   runManhuaDramaFactoryPipeline,
   spawnManhuaDramaStudio,
 } from "./canvasDramaStudio";
+import * as runner from "./canvasRunBlock";
 import { recordManhuaKeyartLookOutput } from "@shared/manhuaKeyartLookState";
-import { confirmClipLikeUser, gateFromConfirmations } from "./__testutils__/manhuaOutboundGate";
+import { confirmClipLikeUser, gateFromConfirmations, testOutboundScope } from "./__testutils__/manhuaOutboundGate";
 import type { ManhuaOutboundConfirmation } from "./canvasRunBlock";
 
 vi.mock("./flyHealthGate", () => ({
@@ -168,4 +169,43 @@ describe("批量：依赖变化 → 暂停等新确认", () => {
     expect(out.awaitingConfirmationIds).toEqual([]);
     expect(out.pausedDownstreamIds).toEqual([]);
   }, 30_000);
+});
+
+
+it("显式生成最多三路并发，保留各段任务回执和失败原片，不自动重试", async () => {
+  const graph = buildFactoryGraph();
+  const ids = graph.clipIds.slice(0, 4);
+  expect(ids.length).toBeGreaterThanOrEqual(3);
+  let active = 0, maximum = 0;
+  const starts: string[] = [];
+  const releases: Array<() => void> = [];
+  const run = vi.spyOn(runner, "runCanvasBlock").mockImplementation(async (deps, block) => {
+    starts.push(block.id); maximum = Math.max(maximum, ++active);
+    deps.onVideoTaskCreated?.(block.id, { taskId: `task-${block.id}`, engine: "seedance-2.5" });
+    await new Promise<void>(resolve => releases.push(resolve));
+    active--;
+    if (block.id === ids[1]) throw new Error("本段失败不重试");
+    return { outputUrl: `https://test.invalid/${block.id}.mp4` };
+  });
+  const published: typeof graph.blocks[] = [];
+  const pending = runManhuaDramaFactoryPipeline({
+    ...graph, deps, episodeIndex: 1, untilStage: "clip", forceFromStage: "clip", targetBlockIds: ids,
+    preservePreparedTargetBlocks: true, maxRetries: 2,
+    resolveOutboundGate: id => ({ currentScope: testOutboundScope(id), confirmOnGenerate:true }),
+    onBlocksChange: blocks => published.push(blocks),
+  });
+  await vi.waitFor(() => expect(starts).toHaveLength(3));
+  expect(maximum).toBe(3);
+  releases.splice(0).forEach(release => release());
+  if (ids.length > 3) {
+    await vi.waitFor(() => expect(starts).toHaveLength(4));
+    releases.splice(0).forEach(release => release());
+  }
+  const result = await pending;
+  expect(run).toHaveBeenCalledTimes(ids.length);
+  expect(result.errors).toHaveLength(1);
+  expect(result.completedIds).toHaveLength(ids.length - 1);
+  for (const id of ids) expect(result.blocks.find(b => b.id === id)?.videoTaskId).toBe(`task-${id}`);
+  for (const block of graph.blocks.filter(b => !ids.includes(b.id))) expect(result.blocks.find(b => b.id === block.id)).toEqual(block);
+  expect(published.at(-1)).toEqual(result.blocks);
 });

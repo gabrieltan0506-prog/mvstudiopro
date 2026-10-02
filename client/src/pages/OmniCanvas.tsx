@@ -11432,6 +11432,13 @@ export default function OmniCanvas() {
                   }}
                   segmentReferenceBusy={Boolean(segmentRefBusyId)}
                   segmentReferenceProgress={segmentRefProgress}
+                  onGenerateSelectedClips={(clipIds) => {
+                    const targets = blocks.filter(b => clipIds.includes(b.id) && b.kind === "video" && !b.manhuaGenerationHold && (getBlockEpisodeIndex(b) ?? 1) === writerFocusEpisode);
+                    if (!targets.length || targets.length !== clipIds.length) { toast.error("所选段无效或已保留，本次未提交"); return; }
+                    if (!window.confirm(`将生成所选 ${targets.length} 段，最多三路并发，每段按当前生成档计费；已有版本保留。继续？`)) return;
+                    void runFactory("clip", { episodeIndexes: [writerFocusEpisode], targetBlockIds: targets.map(b => b.id),
+                      preparedTargetBlocks: targets, preservePreparedTargetBlocks: true, forceFromStage: "clip", maxRetries: 0, stopOnError: false });
+                  }}
                   onRegisterSegmentClip={(segmentIndex, file) => {
                     void handleSegmentReferenceUpload(
                       `clip-e${String(writerFocusEpisode).padStart(2, "0")}-g${String(segmentIndex).padStart(2, "0")}-planned`,

@@ -1018,7 +1018,10 @@ export async function claimNextPostProdJob(filter?: PostProdClaimFilter): Promis
     // input 列是 json（非 jsonb），->> 直接可用；coalesce 成 '' 是为了让 action 缺失（NULL）的旧行
     // 不被 NOT IN 的三值逻辑吞掉，仍归 app 的 non_blender 通道领走（与 staleJobsReaper 同一写法）。
     const actionExpr = sql`coalesce(${jobs.input}->>'action', '')`;
-    const actionClause = filter === "blender"
+    const actionClause = filter === "bgm" ? eq(actionExpr, "bgm_mount")
+      : filter === "non_bgm" ? sql`${actionExpr} <> ${"bgm_mount"}`
+      : filter === "non_blender_non_bgm" ? notInArray(actionExpr, [...BLENDER_POST_PROD_ACTIONS, "bgm_mount"])
+      : filter === "blender"
       ? inArray(actionExpr, [...BLENDER_POST_PROD_ACTIONS])
       : filter === "non_blender"
         ? notInArray(actionExpr, [...BLENDER_POST_PROD_ACTIONS])
