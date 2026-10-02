@@ -169,6 +169,21 @@ describe("发送前落盘，意图 ID 即提交键", () => {
 });
 
 describe("重试复用 / 明确再生成", () => {
+  it("无手动确认时发送前仍落盘，网络中断后重开复用同一意图", async () => {
+    const block = makeBlock();
+    const storage = memoryStorage();
+    const deps = { optimizeCopy: async () => "", userRole: "admin", userId: "7", canvasIntentStorage: storage };
+    const opts = { enforceOutboundConfirmation: true, resolveOutboundGate: () => ({ currentScope: SCOPE, confirmOnGenerate: true }) };
+    const first = stubFetch(() => { throw new TypeError("Failed to fetch"); });
+    await expect(runCanvasBlock(deps, block, undefined, opts)).rejects.toThrow();
+    expect(first).toHaveLength(1);
+    const intentId = first[0].body!.intentId;
+    const second = stubFetch(() => ok({ ok: true, videoUrl: "https://test.invalid/r.mp4" }));
+    await runCanvasBlock(deps, block, undefined, opts);
+    expect(second).toHaveLength(1);
+    expect(second[0].body!.intentId).toBe(intentId);
+  });
+
   it("已发出后网络断（TypeError）→ 意图 unverified；同输入再跑复用**同一个** intentId，不另起一单", async () => {
     const block = makeBlock();
     const gate = await confirmedGate(block);

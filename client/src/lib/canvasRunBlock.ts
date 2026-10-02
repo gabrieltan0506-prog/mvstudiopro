@@ -1772,6 +1772,8 @@ export class ManhuaOutboundConfirmationMissingError extends Error {
 export type ManhuaOutboundGate = {
   currentScope: CanvasOutboundConfirmationScope;
   confirmation?: ManhuaOutboundConfirmation;
+  /** 点击生成即批准本次输入；查看发送内容仍可选，身份与提交指纹仍须校验。 */
+  confirmOnGenerate?: boolean;
 };
 
 /**
@@ -2282,6 +2284,30 @@ export async function runCanvasBlock(
 ): Promise<Awaited<ReturnType<typeof runCanvasBlockInner>>> {
   if (block.kind === "video" && block.manhuaGenerationHold && !runOptions?.previewOnly) {
     throw new Error("本段已设为保留，不生成；原片与音轨保持。请先明确取消保留再重跑。");
+  }
+  // 正式生成按钮已表达本次提交意愿，不依赖刷新会丢失的手动确认记录。
+  // 复用真实出站准备器，自动确认只属于这一次调用，随后仍执行账号、项目、指纹和幂等校验。
+  const sourceGate = runOptions?.resolveOutboundGate;
+  const initialGate = sourceGate ? sourceGate(block.id) : runOptions?.outboundGate;
+  if (!runOptions?.previewOnly && initialGate?.confirmOnGenerate && requiresManhuaOutboundConfirmation(block)) {
+    const scope = { ...initialGate.currentScope };
+    const preview = await previewCanvasBlockOutbound(deps, block, upstream, runOptions);
+    if (preview.compile.blocked || preview.compile.fatalZh) {
+      throw new Error(preview.compile.fatalZh || preview.compile.issues.map((issue) => issue.detailZh).join("；"));
+    }
+    const confirmation: ManhuaOutboundConfirmation = {
+      scope,
+      confirmedAt: Date.now(),
+      fingerprint: manhuaOutboundConfirmationFingerprint(preview, scope),
+    };
+    runOptions = {
+      ...runOptions,
+      enforceOutboundConfirmation: true,
+      resolveOutboundGate: () => {
+        const current = sourceGate ? sourceGate(block.id) : initialGate;
+        return current ? { ...current, confirmation } : undefined;
+      },
+    };
   }
   if (runOptions?.pilotRun) {
     // 试片由服务端审核记录恢复，不能注册成正片节点的自动恢复任务。

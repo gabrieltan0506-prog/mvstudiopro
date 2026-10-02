@@ -16,7 +16,7 @@ vi.mock("./longJobsFlyOrigin", () => ({
 import { compileManhuaPilotPrompt } from "@shared/manhuaPilotGate";
 import { defaultCanvasBlock, type CanvasBlock } from "./canvasTypes";
 import { runCanvasBlock } from "./canvasRunBlock";
-import { confirmClipLikeUser, gateFromConfirmations } from "./__testutils__/manhuaOutboundGate";
+import { confirmClipLikeUser, gateFromConfirmations, testOutboundScope } from "./__testutils__/manhuaOutboundGate";
 import { runManhuaDramaFactoryPipeline, spawnManhuaDramaStudio, expandManhuaShotKeyartsAfterReverse, ensureManhuaFragmentClips, resolveManhuaFragmentRunTargets } from "./canvasDramaStudio";
 import { buildManhuaAssetLockRegistry, buildManhuaAssetPathById } from "@shared/manhuaAssetLockRegistry";
 import { confirmManhuaSegmentLookBindingSource } from "@shared/manhuaCharacterLookSets";
@@ -69,6 +69,27 @@ function preparedPipelineFixture(storyboard: string) {
 }
 
 describe("首段试片的实际出站载荷（仅虚构网络边界）", () => {
+  it("刷新后无手动确认也可正式提交，旧确认不阻断本次输入", async () => {
+    const block = pilotBlock("seedance-2.5");
+    const authorize = vi.fn(async () => ({ projectVersion: "a".repeat(64), episodeIndex: 1, segmentIndex: 1, intent: "full" as const }));
+    await runCanvasBlock({ userRole: "admin", userId: "test-user", optimizeCopy: async () => "", authorizeManhuaClip: authorize }, block, undefined, {
+      enforceOutboundConfirmation: true,
+      resolveOutboundGate: () => ({ currentScope: testOutboundScope(block.id), confirmOnGenerate: true }),
+    });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].body.manhuaPilot).toMatchObject({ intent: "full" });
+  });
+  it("点击生成自动校验期间换项目仍零提交", async () => {
+    const block = pilotBlock("seedance-2.5");
+    let epoch = 1;
+    const authorize = vi.fn(async () => { epoch = 2; return { projectVersion: "a".repeat(64), episodeIndex: 1, segmentIndex: 1, intent: "full" as const }; });
+    await expect(runCanvasBlock({ userRole: "admin", userId: "test-user", optimizeCopy: async () => "", authorizeManhuaClip: authorize }, block, undefined, {
+      enforceOutboundConfirmation: true,
+      resolveOutboundGate: () => ({ currentScope: { ...testOutboundScope(block.id), epoch }, confirmOnGenerate: true }),
+    })).rejects.toThrow(/重新载入|世代/);
+    expect(requests).toHaveLength(0);
+  });
+
   it("本段选择的同角色形态图穿过编排及执行器进入最终 POST，缺路径时零提交", async () => {
     const spawned = spawnManhuaDramaStudio({ topic: "黑奇保护阿菁", episodeIndex: 1 });
     const reverse = spawned.blocks.find(b => b.id.startsWith("reverse-"))!;
