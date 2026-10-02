@@ -5,7 +5,7 @@ import path from "node:path";
 
 const h = vi.hoisted(() => ({
   h3: vi.fn(), h3Unknown: false, evolink: vi.fn(), byteplus: vi.fn(), openrouter: vi.fn(), signed: 0,
-  byteplusFailure: false, byteplusUnknown: false, byteplusRejected: false, byteplusPollFailed: false, openrouterEnabled: false,
+  byteplusFailure: false, byteplusUnknown: false, byteplusRejected: false, byteplusPollFailed: false, byteplusPollReason: "InputImageSensitiveContentDetected.PrivacyInformation", openrouterEnabled: false,
 }));
 vi.mock("./hailuoReferencePreflight.js", () => ({ preflightH3ReferenceMedia: vi.fn(async () => {}) }));
 vi.mock("./evolinkHailuoVideo.js", async importOriginal => {
@@ -48,7 +48,7 @@ vi.mock("./byteplusSeedanceVideo.js", async importOriginal => {
       if (h.byteplusUnknown) throw new Error("fetch failed");
       if (h.byteplusRejected) throw Object.assign(new Error("AccountOverdue"), { kind: "rejected" });
       return { byteplusTaskId: "bp-local-test", model: input.version === "2.0-mini" ? "dreamina-seedance-2-0-mini-260615" : "seedance-2.5", mode: "reference_to_video" };
-    }, pollByteplusVideoTaskOnce: async () => h.byteplusPollFailed ? ({ state: "failed", error: "InputImageSensitiveContentDetected.PrivacyInformation" }) : ({ state: "running", status: "processing" }),
+    }, pollByteplusVideoTaskOnce: async () => h.byteplusPollFailed ? ({ state: "failed", error: h.byteplusPollReason }) : ({ state: "running", status: "processing" }),
   };
 });
 vi.mock("./openrouterVideoCore.js", async importOriginal => ({
@@ -72,7 +72,7 @@ describe("真实任务写盘到供应商请求的音频交接", () => {
     vi.clearAllMocks();
     h.evolink.mockReset(); h.byteplus.mockReset(); h.openrouter.mockReset();
     h.h3.mockReset(); h.h3Unknown = false;
-    h.signed = 0; h.byteplusFailure = false; h.byteplusUnknown = false; h.byteplusRejected = false; h.byteplusPollFailed = false; h.openrouterEnabled = false;
+    h.signed = 0; h.byteplusFailure = false; h.byteplusUnknown = false; h.byteplusRejected = false; h.byteplusPollFailed = false; h.byteplusPollReason = "InputImageSensitiveContentDetected.PrivacyInformation"; h.openrouterEnabled = false;
     dir = await fs.mkdtemp(path.join(os.tmpdir(), "video-audio-ref-test-"));
     process.env.CANVAS_VIDEO_TASK_DIR = dir;
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("测试不允许联网"); }));
@@ -159,6 +159,28 @@ describe("真实任务写盘到供应商请求的音频交接", () => {
     expect((await getCanvasVideoTask(String(task.taskId), 7))?.engine).toBe("seedance-mini-evolink");
     expect(h.evolink.mock.calls[0][0].body.model).toBe("seedance-2.0-mini-reference-to-video");
   });
+  it("2.5明确拒绝转EvoLink，保留原音轨", async () => {
+    h.byteplusRejected = true;
+    const task = await create("seedance25-byteplus");
+    expect(task.engine).toBe("seedance25-evolink");
+    expect(task.status).toBe("running");
+    expect(task.evolinkTaskId).toBe("ev-local-test");
+    expect(task.audioUrls).toEqual(["gs://test-bucket/post-prod/7/dialogue.wav"]);
+    expect(h.evolink.mock.calls[0][0].body.audio_urls[0]).toContain("https://storage.googleapis.com/test-bucket/post-prod/7/dialogue.wav");
+    expect(h.byteplus).toHaveBeenCalledTimes(1);
+    expect(h.evolink).toHaveBeenCalledTimes(1);
+  });
+
+  it("2.5 上游非人脸失败终态只转交一次 EvoLink", async () => {
+    const task = await create("seedance25-byteplus");
+    h.byteplusPollFailed = true; h.byteplusPollReason = "InvalidParameter: video pixel count";
+    const { getCanvasVideoTask } = await import("./canvasVideoTask");
+    expect((await getCanvasVideoTask(String(task.taskId), 7))?.engine).toBe("seedance25-evolink");
+    await getCanvasVideoTask(String(task.taskId), 7);
+    expect(h.evolink).toHaveBeenCalledTimes(1);
+    expect(h.byteplus).toHaveBeenCalledTimes(1);
+  });
+
   it("Mini余额明确拒绝不回落，同键failed不重建", async () => {
     h.byteplusRejected = true;
     expect((await createMini()).status).toBe("failed");
@@ -184,6 +206,7 @@ describe("真实任务写盘到供应商请求的音频交接", () => {
   it("写实素材不跳过已配置BytePlus", async () => {
     const { resolveSeedance25CanvasEngine } = await import("./canvasVideoTask");
     expect(resolveSeedance25CanvasEngine("reference_to_video", { photoreal: true })).toBe("seedance25-byteplus");
+    expect(resolveSeedance25CanvasEngine("reference_to_video", { provider: "evolink" })).toBe("seedance25-evolink");
   });
   it("EvoLink最终body是HTTPS，任务持久化仍为GS", async () => {
     const task = await create("seedance25-evolink");

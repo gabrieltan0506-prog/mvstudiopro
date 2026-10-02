@@ -327,6 +327,14 @@ describe("首段试片的实际出站载荷（仅虚构网络边界）", () => {
       .toBe(block.seedance25TimestampStoryboard);
   });
 
+  it("显式 EvoLink 通道随正式请求发送，保留参考模式", async () => {
+    await runCanvasBlock({ userRole: "admin", optimizeCopy: async () => "" },
+      { ...pilotBlock("seedance-2.5"), seedance25Provider: "evolink" });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].body.seedance25Provider).toBe("evolink");
+    expect(requests[0].body.workMode).not.toBe("video_edit");
+  });
+
   it.each(["video_edit", "video_extend"] as const)("试片不能误用原片 %s 路径", async (mode) => {
     await expect(runCanvasBlock(
       { userRole: "admin", optimizeCopy: async () => "" },

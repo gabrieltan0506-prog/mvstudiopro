@@ -225,6 +225,7 @@ export type CanvasBlock = {
   musicMvShot?: CanvasMusicMvShotBinding;
   previsStudio?: ManhuaPrevisStudio;
   /** Seedance 2.5 官方五模式；兼容历史 XYQ 草稿值 */
+  seedance25Provider?: "auto" | "evolink";
   seedance25WorkMode?: CanvasSeedance25WorkMode;
   /** 局部重拍起止秒 */
   seedance25ReshootFromSec?: number;

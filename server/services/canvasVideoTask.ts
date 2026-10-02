@@ -207,8 +207,10 @@ export function resolveSeedance25CanvasEngine(
   opts?: {
     /** 兼容旧调用参数；不再据此跳过 BytePlus。 */
     photoreal?: boolean;
+    provider?: "auto" | "evolink";
   },
 ): CanvasVideoEngine {
+  if (opts?.provider === "evolink") return "seedance25-evolink";
   if (mode === "video_edit" || mode === "video_extend") return "seedance25-evolink";
   // 参考生成先请求 BytePlus，由明确的人脸拒绝决定回落，不凭素材风格预判。
   if (isByteplusSeedanceConfigured()) return "seedance25-byteplus";
@@ -560,7 +562,7 @@ async function submitSeedance25Byteplus(task: CanvasVideoTaskRecord): Promise<vo
     }
   } catch (error) {
     if (mini && (error as { kind?: string })?.kind !== "rejected") throw error;
-    if (!isByteplusFallbackableError(error)) {
+    if (!isByteplusFallbackableError(error, !mini)) {
       throw error;
     }
     const reason = error instanceof Error ? error.message : String(error);
@@ -1228,9 +1230,9 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
           return current;
         }
         if (snap.state === "failed") {
-          // 只对明确终态的人脸拒绝换通道，其他失败按原任务结束。
+          // 2.5 的明确失败终态统一转交；Mini 保留原有回落条件。
           const reason = snap.error;
-          if (!isByteplusFallbackableError(reason)) return failTask(current, reason);
+          if (!isByteplusFallbackableError(Object.assign(new Error(reason), { kind: "rejected" }), current.engine === "seedance25-byteplus")) return failTask(current, reason);
           if (isEvolinkSeedanceConfigured() && !current.evolinkTaskId) {
             console.warn(
               `[canvasVideoTask] BytePlus 任务失败，回落 EvoLink · task=${current.taskId} · ${reason}`,

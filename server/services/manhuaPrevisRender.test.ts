@@ -24,6 +24,8 @@ it("四角色29秒只降逐帧分辨率，最终视频仍恢复标准横竖尺�
   expect(previsRenderProfile(spec)).toEqual({ renderPercentage: 75, outputScaleFilter: "scale=960:540:flags=bicubic" });
   expect(previsRenderProfile({ ...spec, aspect: "9:16" })).toEqual({ renderPercentage: 75, outputScaleFilter: "scale=540:960:flags=bicubic" });
   expect(previsRenderProfile(base)).toEqual({ renderPercentage: 100, outputScaleFilter: undefined });
+  expect(previsRenderProfile(base, "draft")).toEqual({ renderPercentage: 50, outputScaleFilter: "scale=960:540:flags=bicubic" });
+  expect(previsRenderProfile({ ...base, aspect: "9:16" }, "draft")).toEqual({ renderPercentage: 50, outputScaleFilter: "scale=540:960:flags=bicubic" });
 });
 
 it("0917 生产白模渲染同样 nice -n 10 起 Blender；未开降优先级时命令原样", () => {
@@ -338,7 +340,7 @@ function fixture(extra: Partial<import("../../shared/manhuaPrevis").ManhuaPrevis
         await writeFile(path.join(dir, "preview.mp4"), Buffer.alloc(1024));
       else
         return JSON.stringify({
-          streams: [{ width: extra.quality === "draft" ? 480 : 960, height: extra.quality === "draft" ? 270 : 540, nb_read_frames: "48" }, ...(extra.audio ? [{ codec_type: "audio", codec_name: "aac", sample_rate: "48000", channels: 2, duration: "2" }] : [])],
+          streams: [{ width: 960, height: 540, nb_read_frames: "48" }, ...(extra.audio ? [{ codec_type: "audio", codec_name: "aac", sample_rate: "48000", channels: 2, duration: "2" }] : [])],
           format: { duration: "2" },
         });
       return "";
@@ -600,7 +602,7 @@ it("低清有声白模编码与回执闭合，缺音轨不能算成功", async (
     return run(command, args, signal);
   };
   const result = await f.run();
-  expect(result).toMatchObject({ audio, quality: "draft", width: 480, height: 270, durationSec: 2 });
+  expect(result).toMatchObject({ audio, quality: "draft", width: 960, height: 540, durationSec: 2 });
   const bad = fixture({ quality: "draft", audio }), original = bad.d.run;
   bad.d.run = async (command, args, signal) => command === "ffprobe" ? JSON.stringify({ streams: [{ width: 480, height: 270, nb_read_frames: "48" }], format: { duration: "2" } }) : original(command, args, signal);
   await expect(bad.run()).rejects.toThrow("解码校验");

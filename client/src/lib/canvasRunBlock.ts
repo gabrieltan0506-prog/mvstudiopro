@@ -815,6 +815,7 @@ export function resolveManhuaCanvasVideoImageReferenceMax(videoModelRaw: unknown
 }
 
 export type SeedanceCanvasRequestOptions = {
+    seedance25Provider?: "auto" | "evolink";
     imageUrls?: string[];
     videoUrls?: string[];
     /** 角色声线参考 mp3/wav（最多 3） */
@@ -934,6 +935,7 @@ export function buildSeedanceCanvasRequestBody(
   const body: Record<string, unknown> = {
     // 方言与引用上限只在出线这一刻统一把关；上面的时长解析仍认【第N段·Xs】。
     prompt: compile.text,
+    ...(version === "2.5" && opts?.seedance25Provider === "evolink" ? { seedance25Provider: "evolink" } : {}),
     imageUrl: imageUrl || imageUrls[0] || undefined,
     // 配额按版本分流：2.5 官方收图 30/视频 10/音频 10，2.0 系 9/3/3。
     imageUrls: imageUrls.length
@@ -3582,6 +3584,7 @@ async function runCanvasBlockInner(
                   : "2.0",
           duration: clipDuration,
           workMode: useSeedance25 ? workMode : undefined,
+          seedance25Provider: block.seedance25Provider,
           manhuaPilot,
           idempotencyKey: submissionKey,
           intentId: submissionKey,

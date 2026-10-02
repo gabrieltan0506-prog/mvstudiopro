@@ -31,7 +31,10 @@ export type { PrevisRenderReport } from "./manhuaPrevisReport";
 
 /** 高负荷只降 Blender 的逐帧分辨率；存证的 blend 保持标准尺寸，MP4 编码恢复标准尺寸。 */
 export function previsRenderProfile(spec: ManhuaPrevisRequest["spec"], quality?: ManhuaPrevisRequest["quality"]) {
-  if (quality === "draft") return { renderPercentage: 50, outputScaleFilter: undefined };
+  if (quality === "draft") {
+    const [width, height] = spec.aspect === "16:9" ? [960, 540] : [540, 960];
+    return { renderPercentage: 50, outputScaleFilter: `scale=${width}:${height}:flags=bicubic` };
+  }
   const reduced = previsRenderCostUnits(spec) > PREVIS_FULL_RES_RENDER_UNIT_BUDGET;
   const [width, height] = spec.aspect === "16:9" ? [960, 540] : [540, 960];
   return {
@@ -438,7 +441,7 @@ export async function renderManhuaPrevis(
     const stream = probe?.streams?.[0];
     const audioStream = probe?.streams?.find((s: { codec_type?: string }) => s.codec_type === "audio");
     const [width, height] =
-      input.spec.aspect === "16:9" ? (input.quality === "draft" ? [480, 270] : [960, 540]) : (input.quality === "draft" ? [270, 480] : [540, 960]);
+      input.spec.aspect === "16:9" ? [960, 540] : [540, 960];
     if (
       probe?.streams?.length !== (input.audio ? 2 : 1) ||
       (input.audio && (!audioStream || audioStream.codec_name !== "aac" || Number(audioStream.sample_rate) !== 48000 || audioStream.channels !== 2 || !Number.isFinite(Number(audioStream.duration)) || Math.abs(Number(audioStream.duration) - input.audio.durationSec) > .05)) ||
