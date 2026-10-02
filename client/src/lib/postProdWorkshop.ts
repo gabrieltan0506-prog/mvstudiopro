@@ -255,3 +255,10 @@ export function adoptedPostProdBgmOptions(blocks: CanvasBlock[]) {
         volumeExpr: windows.length ? volumeExpr : undefined } }];
   }));
 }
+
+/** 拼接画幅由用户选择，分辨率保持短边档位。 */
+export function postProdConcatDimensions(resolution: "720p" | "1080p", aspect: "9:16" | "16:9"): [number, number] {
+  const short = resolution === "1080p" ? 1080 : 720;
+  const long = resolution === "1080p" ? 1920 : 1280;
+  return aspect === "9:16" ? [short, long] : [long, short];
+}

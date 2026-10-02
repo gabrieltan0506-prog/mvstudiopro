@@ -8,6 +8,7 @@ import { createCanvasAudioCue, canvasAudioCueInputKey } from "@shared/canvasAudi
 import type { CanvasBlock } from "./canvasTypes";
 import {
   buildPostProdClipOptions,
+  postProdConcatDimensions,
   adoptedPostProdBgmOptions,
   isCurrentManhuaAssemblableClipBlock,
   isCurrentManhuaClipBlock,
@@ -273,5 +274,14 @@ describe("已采用BGM进入后期", () => {
     for (const patch of [{approved:false},{enabled:false},{sourceEndSec:13},{selectedTakeId:"missing"}]) {
       expect(adoptedPostProdBgmOptions([{...block,audioStudio:{...block.audioStudio!,cues:[{...cue,takes:[take],...patch}]}} as CanvasBlock])).toEqual([]);
     }
+  });
+});
+
+describe("拼接画幅契约", () => {
+  it("竖屏保持720/1080短边，横屏仍支持原有档位", () => {
+    expect(postProdConcatDimensions("720p", "9:16")).toEqual([720, 1280]);
+    expect(postProdConcatDimensions("1080p", "9:16")).toEqual([1080, 1920]);
+    expect(postProdConcatDimensions("720p", "16:9")).toEqual([1280, 720]);
+    expect(postProdConcatDimensions("1080p", "16:9")).toEqual([1920, 1080]);
   });
 });

@@ -63,6 +63,7 @@ import {
 import { canMountBgmNow, canUpscaleNow } from "@/lib/manhuaDeliveryOrder";
 import {
   ACTION_LABEL,
+  postProdConcatDimensions,
   adoptedPostProdBgmOptions,
   isPostProdAudioAction,
   buildPostProdClipOptions,
@@ -444,6 +445,7 @@ export default function PostProdWorkshopCard({
   // ---- 工序表单状态 ----
   const [concatSel, setConcatSel] = useState<string[]>([]);
   const [concatRes, setConcatRes] = useState<"720p" | "1080p">("720p");
+  const [concatAspect, setConcatAspect] = useState<"9:16" | "16:9">("9:16");
   const [bgmVideoUrl, setBgmVideoUrl] = useState("");
   const [bgmAudioUrl, setBgmAudioUrl] = useState("");
   const [bgmNarrativeMix, setBgmNarrativeMix] = useState<BgmNarrativeCue[]>([]);
@@ -775,10 +777,10 @@ export default function PostProdWorkshopCard({
       toast.error("拼接至少选 2 段成片(按点选顺序拼)");
       return;
     }
-    const [width, height] = concatRes === "1080p" ? [1920, 1080] : [1280, 720];
+    const [width, height] = postProdConcatDimensions(concatRes, concatAspect);
     void submit(
       { action: "concat", params: { clips: urls, width, height, fps: 30 } },
-      `拼接 ${urls.length} 段(${concatRes})`
+      `拼接 ${urls.length} 段(${concatAspect} · ${concatRes})`
     );
   };
 
@@ -1595,12 +1597,17 @@ export default function PostProdWorkshopCard({
           </div>
           <div className="mt-2 flex items-center gap-2">
             <select
+              aria-label="拼接分辨率"
               value={concatRes}
               onChange={(e) => setConcatRes(e.target.value as "720p" | "1080p")}
               className={selectCls + " w-24"}
             >
               <option value="720p">720p</option>
               <option value="1080p">1080p</option>
+            </select>
+            <select aria-label="拼接画幅" value={concatAspect} onChange={e => setConcatAspect(e.target.value as "9:16" | "16:9")} className={selectCls + " w-28"}>
+              <option value="9:16">9:16 竖屏</option>
+              <option value="16:9">16:9 横屏</option>
             </select>
             <button type="button" disabled={busy} onClick={submitConcat} className={goCls}>
               {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Scissors className="h-3.5 w-3.5" />}
