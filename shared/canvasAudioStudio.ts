@@ -121,13 +121,18 @@ export function canvasAudioCueInputKey(cue: CanvasAudioCue): string {
       : [cue.kind, cue.speakerZh, cue.voiceStateZh, cue.textZh, cue.emotion, cue.voice]
     : [cue.kind, cue.source?.gcsUri ?? "", cue.sourceStartSec, cue.sourceEndSec, "mix-v2"]);
 }
+/** 时间窗向上取到一位小数，原声真实时长保持原精度。 */
+export function ceilCanvasDialogueSecond(value: number): number {
+  const rounded = Math.ceil(value * 10 - Number.EPSILON * Math.max(1, Math.abs(value * 10)) * 8) / 10;
+  return rounded === 0 ? 0 : rounded;
+}
 /** 只延长当前对白窗口；不移动其他对白、不裁音频、不重新购买。 */
 export function canvasDialogueWindowFit(cue: CanvasAudioCue, take: CanvasAudioTake, cues: CanvasAudioCue[], durationSec: number): { endSec: number; issue: string } {
-  const endSec = Math.ceil((cue.startSec + take.durationSec) * 1000) / 1000;
+  const endSec = ceilCanvasDialogueSecond(cue.startSec + take.durationSec);
   if (cue.kind !== "dialogue" || !Number.isFinite(endSec) || take.durationSec <= 0 || cue.startSec < 0)
     return { endSec, issue: "当前音频或时间窗无效" };
   if (take.inputKey !== canvasAudioCueInputKey(cue)) return { endSec, issue: "台词或音色已修改，请选择与当前内容一致的候选" };
-  if (endSec > durationSec) return { endSec, issue: `需要延长本段至至少 ${endSec.toFixed(3)} 秒，请先调整镜头时长` };
+  if (endSec > durationSec) return { endSec, issue: `需要延长本段至至少 ${endSec.toFixed(1)} 秒，请先调整镜头时长` };
   const collision = cues.find(other => other.id !== cue.id && other.enabled && other.kind === "dialogue" &&
     other.startSec < endSec && other.endSec > cue.startSec);
   if (collision) return { endSec, issue: `与${collision.speakerZh || collision.labelZh || "另一句对白"}（${collision.startSec}–${collision.endSec}秒）冲突，请先调整对白与镜头安排` };
@@ -230,7 +235,10 @@ export function compileCanvasAudioBindings(input: {
   const dialogue = cues.filter(cue => cue.kind === "dialogue");
   for (let index = 1; index < dialogue.length; index++) {
     const previous = dialogue[index - 1]!;
-    if (dialogue[index]!.startSec < previous.startSec + getSelectedAudioTake(previous)!.durationSec) {
+    const previousEnd = previous.startSec + getSelectedAudioTake(previous)!.durationSec;
+    // 只容忍浮点加法尾差，不放宽到毫秒级真实重叠，也不移动或裁切原声。
+    const roundingTolerance = Number.EPSILON * Math.max(1, Math.abs(previousEnd), Math.abs(dialogue[index]!.startSec)) * 8;
+    if (dialogue[index]!.startSec < previousEnd - roundingTolerance) {
       throw new Error("对白音频发生重叠，请先调整逐句起止秒");
     }
   }
@@ -239,14 +247,16 @@ export function compileCanvasAudioBindings(input: {
   const referenceFor = (cue: CanvasAudioCue) => separate ? canvasSeparateReference(cue, cues) : getSelectedAudioTake(cue)!;
   const audioUrls = Array.from(new Set([...base, ...cues.map(cue => referenceFor(cue).gcsUri)]));
   if (audioUrls.length > 10) throw new Error(`本次有 ${audioUrls.length} 条参考音频，超过 10 条上限，请明确减少选用片段`);
+  // 新安排使用一位小数；未整理的旧秒窗仍按真实值展示，不能只改显示掩盖错位。
+  const formatSecond = (value: number) => value === Number(value.toFixed(1)) ? value.toFixed(1) : value.toFixed(3);
   const rows = cues.map(cue => {
     const tag = `@audio${audioUrls.indexOf(referenceFor(cue).gcsUri) + 1}`;
-    const window = `${cue.startSec.toFixed(3)}–${cue.endSec.toFixed(3)}秒`;
+    const window = `${formatSecond(cue.startSec)}–${formatSecond(cue.endSec)}秒`;
     return cue.kind === "dialogue"
-      ? `${window}，${cue.shotZh}。${tag}仅对应${cue.speakerZh}${cue.voiceStateZh ? `（${cue.voiceStateZh}）` : ""}的对白{${cue.textZh}}；在${cue.startSec.toFixed(3)}秒开始对应音频，按该音频发音同步开口，音频结束即闭口，其他角色不说此句；不继承为其他声音状态。`
+      ? `${window}，${cue.shotZh}。${tag}仅对应${cue.speakerZh}${cue.voiceStateZh ? `（${cue.voiceStateZh}）` : ""}的对白{${cue.textZh}}；在${formatSecond(cue.startSec)}秒开始对应音频，按该音频发音同步开口，音频结束即闭口，其他角色不说此句；不继承为其他声音状态。`
       : cue.kind === "sfx"
-        ? `${window}，${cue.shotZh}。<音效：${tag}对应${cue.labelZh || cue.shotZh}，从${cue.startSec.toFixed(3)}秒触发，不作为对白或配乐，不提前虚构画面中未发生的事件。>`
-      : `${window}，${cue.shotZh}。（从${cue.startSec.toFixed(3)}秒播放${tag}${separate ? "这条独立音乐参考（整曲原件，保持其独立配乐身份）" : "这条已裁好的音乐片段"}，音频结束或到${cue.endSec.toFixed(3)}秒停止；不循环、不跨段延长、不作为角色对白。）`;
+        ? `${window}，${cue.shotZh}。<音效：${tag}对应${cue.labelZh || cue.shotZh}，从${formatSecond(cue.startSec)}秒触发，不作为对白或配乐，不提前虚构画面中未发生的事件。>`
+      : `${window}，${cue.shotZh}。（从${formatSecond(cue.startSec)}秒播放${tag}${separate ? "这条独立音乐参考（整曲原件，保持其独立配乐身份）" : "这条已裁好的音乐片段"}，音频结束或到${formatSecond(cue.endSec)}秒停止；不循环、不跨段延长、不作为角色对白。）`;
   });
   return { audioUrls, promptAppendix: `【已确认的逐段声音时间表】\n${rows.join("\n")}\n${studio.referenceMode === "dialogue" ? "本次仅提供对白及已选音效，BGM由后期叠加；生成视频不要添加背景音乐。\n" : ""}对白、配乐按上述角色和时间窗分别使用；已给定音效按事件和时间窗使用，未提供的声音不冒充已制作。` };
 }

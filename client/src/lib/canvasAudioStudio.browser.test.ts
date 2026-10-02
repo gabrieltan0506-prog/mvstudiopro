@@ -77,7 +77,8 @@ beforeAll(async () => {
     define: { "process.env.NODE_ENV": '"test"', "import.meta.env": "{}" },
   });
   bundle = result.outputFiles[0]!.text;
-  browser = await puppeteer.launch({ headless: true });
+  // Fly 专用测试容器以 root 运行；仅离线夹具 Chromium 使用此启动参数。
+  browser = await puppeteer.launch({ headless: true, ...(process.getuid?.() === 0 ? { args: ["--no-sandbox"] } : {}) });
 }, 180_000);
 afterAll(async () => {
   await browser?.close();
@@ -115,6 +116,80 @@ async function open() {
   return { context, page, click, fill };
 }
 describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
+  it("整段一位小数预览到应用、重新采用及重入，不改原声、不提交付费；保存失败明确提示", async () => {
+    const { context, page, click } = await open();
+    try {
+      await page.evaluate(() => (window as any).fixture.lockTwo());
+      await page.waitForSelector('[data-cue-id="lock-a"]');
+      await page.evaluate(() => {
+        const f = (window as any).fixture;
+        const base = f.state.cues[0];
+        let start = 4;
+        const cues = [4.944, 5.088, 3.888, 4.296].map((durationSec, index) => {
+          const cue = { ...base, id: "dialogue-" + index, startSec: start, endSec: start + durationSec, selectedTakeId: "take-" + index };
+          cue.takes = [{ ...base.takes[0], id: "take-" + index, durationSec }];
+          start += durationSec;
+          return cue;
+        });
+        f.configure({ ...f.state, cues });
+      });
+      await page.waitForSelector('[aria-label="整段对白秒窗预览"]');
+      const original = await page.evaluate(() => (window as any).fixture.state.cues.map((c: any) => ({ takes: c.takes, selectedTakeId: c.selectedTakeId, voiceLock: c.voiceLock })));
+      const originalEnd = await page.evaluate(() => (window as any).fixture.state.cues[0].endSec);
+      await page.click('[aria-label="整段对白秒窗预览"] summary');
+      await page.evaluate(() => { (window as any).fixture.rejectSave = true; });
+      await click("应用整段一位小数秒窗");
+      expect(await page.$eval('[role="alert"]', el => el.textContent)).toContain("未能保存");
+      expect(await page.evaluate(() => (window as any).fixture.state.cues[0].endSec)).toBe(originalEnd);
+      await page.evaluate(() => { (window as any).fixture.rejectSave = false; });
+      await click("应用整段一位小数秒窗");
+      expect(await page.evaluate(() => (window as any).fixture.state.cues.map((c: any) => [c.startSec, c.endSec]))).toEqual([[4, 9], [9, 14.1], [14.1, 18], [18, 22.3]]);
+      expect(await page.evaluate(() => (window as any).fixture.state.cues.map((c: any) => ({ takes: c.takes, selectedTakeId: c.selectedTakeId, voiceLock: c.voiceLock })))).toEqual(original);
+      expect(await page.evaluate(() => (window as any).fixture.state.cues.every((c: any) => !c.approved))).toBe(true);
+      for (let index = 0; index < 4; index++) {
+        const selector = `[data-cue-id="dialogue-${index}"]`;
+        await page.evaluate(s => {
+          const button = Array.from(document.querySelectorAll(s + " button")).find(el => el.textContent?.includes("试听后确认本段"));
+          (button as HTMLButtonElement).click();
+        }, selector);
+      }
+      expect(await page.evaluate(() => (window as any).fixture.state.cues.every((c: any) => c.approved))).toBe(true);
+      await page.evaluate(() => (window as any).fixture.show(false));
+      await page.evaluate(() => (window as any).fixture.show(true));
+      await page.waitForSelector('[aria-label="1 片内结束秒"]');
+      expect(await page.$eval('[aria-label="2 片内结束秒"]', el => (el as HTMLInputElement).value)).toBe("14.1");
+      expect(await page.evaluate(() => (window as any).fixture.calls)).toEqual([]);
+      expect(await page.evaluate(() => (window as any).fixture.posts)).toEqual([]);
+    } finally { await context.close(); }
+  }, 20_000);
+  it("已采用原声的旧高精度秒窗可手动改成一位小数并在重入后保留", async () => {
+    const { context, page, fill } = await open();
+    try {
+      await page.evaluate(() => {
+        const f = (window as any).fixture;
+        f.lockTwo();
+      });
+      await page.waitForSelector('[data-cue-id="lock-a"]');
+      await page.evaluate(() => {
+        const f = (window as any).fixture;
+        f.configure({ ...f.state, cues: [{ ...f.state.cues[0], startSec: 4, endSec: 8.944 }] });
+      });
+      await page.waitForFunction(() => (document.querySelector('[aria-label="1 片内结束秒"]') as HTMLInputElement)?.value === "8.944");
+      await fill("1 片内结束秒", "9");
+      await page.keyboard.press("Tab");
+      expect(await page.evaluate(() => (window as any).fixture.state.cues[0].endSec)).toBe(9);
+      expect(await page.evaluate(() => (window as any).fixture.state.cues[0].selectedTakeId)).toBe("confirmed");
+      expect(await page.evaluate(() => (window as any).fixture.state.cues[0].takes.length)).toBe(1);
+      await page.evaluate(() => (window as any).fixture.show(false));
+      await page.evaluate(() => (window as any).fixture.show(true));
+      await page.waitForSelector('[aria-label="1 片内结束秒"]');
+      expect(await page.$eval('[aria-label="1 片内结束秒"]', el => (el as HTMLInputElement).value)).toBe("9");
+      await fill("1 片内结束秒", "14.1");
+      await page.keyboard.press("Tab");
+      expect(await page.evaluate(() => (window as any).fixture.state.cues[0].endSec)).toBe(14.1);
+      expect(await page.evaluate(() => (window as any).fixture.calls.length)).toBe(0);
+    } finally { await context.close(); }
+  }, 20_000);
   it("独立BGM处理从按钮到完成绑定，原对白/采用记录与旧母轨不变，重入不重复提交", async () => {
     const { context, page, click } = await open();
     try {
