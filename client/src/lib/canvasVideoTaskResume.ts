@@ -51,6 +51,7 @@ export function canvasVideoTaskInputFingerprint(block: CanvasBlock): string {
     pathCameraRecipeId: block.pathCameraRecipeId ?? null,
     pathAnnotationJson: block.pathAnnotationJson ?? null,
     seedance25TimestampStoryboard: block.seedance25TimestampStoryboard ?? null,
+    seedance25Provider: block.seedance25Provider ?? "auto",
     seedance25WorkMode: block.seedance25WorkMode ?? null,
     seedance25ReshootFromSec: block.seedance25ReshootFromSec ?? null,
     seedance25ReshootToSec: block.seedance25ReshootToSec ?? null,

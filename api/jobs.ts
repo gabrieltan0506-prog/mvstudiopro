@@ -1905,7 +1905,8 @@ async function runSeedance25EvolinkJob(
   const { resolveSeedance25CanvasEngine } = await import(
     "../server/services/canvasVideoTask.js"
   );
-  const preferByteplus = isByteplusSeedanceConfigured();
+  const selectedEngine = resolveSeedance25CanvasEngine(mode, { provider: body.seedance25Provider === "evolink" ? "evolink" : "auto" });
+  const preferByteplus = selectedEngine === "seedance25-byteplus";
   if (!preferByteplus && !isEvolinkSeedanceConfigured()) {
     return { ok: false, status: 503, error: "视频服务暂不可用，请稍后重试" };
   }
@@ -2009,7 +2010,7 @@ async function runSeedance25EvolinkJob(
       requestKey;
     const taskInput = {
       ...manhuaPilotTaskFields(preparedPilot),
-      engine: resolveSeedance25CanvasEngine(mode),
+      engine: selectedEngine,
       label,
       prompt,
       imageUrl,

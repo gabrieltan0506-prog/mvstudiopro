@@ -433,3 +433,11 @@ describe("MV 在途改稿后刷新恢复", () => {
     expect(result.patch.videoTaskStatus).toBe("succeeded");
   });
 });
+
+it("EvoLink 直发选择在云草稿恢复后保留，并区分原通道任务", () => {
+  const original = block({ videoModel: "seedance-2.5", seedance25Provider: "evolink" });
+  const snapshot = buildLocalCloudDraftSnapshot({ blocks: [original], edges: [], writerSession: {} });
+  const parsed = parseManhuaCloudDraftPayload(serializeCloudDraftForUpload(snapshot));
+  expect(cloudDraftBlocksToCanvas(parsed!.canvas.blocks)[0].seedance25Provider).toBe("evolink");
+  expect(canvasVideoTaskInputFingerprint(original)).not.toBe(canvasVideoTaskInputFingerprint({ ...original, seedance25Provider: "auto" }));
+});

@@ -93,13 +93,15 @@ describe("extractByteplusVideoUrl / fallbackable", () => {
     ).toBe("https://cdn.example/a.mp4");
   });
 
-  it("仅明确人脸拒绝允许回落", () => {
+  it("明确供应商拒绝允许回落，未知提交不回落", () => {
     expect(isByteplusFallbackableError(new Error("图生视频需要至少 1 张图片"))).toBe(false);
     expect(isByteplusFallbackableError(new Error("QuotaExceeded"))).toBe(false);
     expect(isByteplusFallbackableError(new Error("ModelNotOpen"))).toBe(false);
     expect(isByteplusFallbackableError(new Error("InputImageSensitiveContentDetected.PrivacyInformation"))).toBe(true);
     expect(isByteplusFallbackableError(new Error("The image may contain real person"))).toBe(true);
     expect(isByteplusFallbackableError(new Error("InputAudioSensitiveContentDetected"))).toBe(false);
+    expect(isByteplusFallbackableError(Object.assign(new Error("InvalidParameter: video pixel count must be greater than or equal to 407696"), { kind: "rejected" }), true)).toBe(true);
+    expect(isByteplusFallbackableError(Object.assign(new Error("AccountOverdue"), { kind: "rejected" }), true)).toBe(true);
     expect(isByteplusFallbackableError(new Error("fetch failed"))).toBe(false);
     expect(isByteplusFallbackableError(new Error("BytePlus 未返回任务 ID"))).toBe(false);
   });
@@ -141,7 +143,25 @@ it("Mini创建明确4xx与未知5xx分类，不调用真实供应商", async () 
     await expect(submitByteplusSeedance25Video({ version: "2.0-mini", prompt: "x", duration: 15, resolution: "480p" })).rejects.toMatchObject({ kind: "rejected", message: "AccountOverdue: balance" });
     fetchMock.mockImplementation(async () => new Response(JSON.stringify({ error: { code: "InternalError" } }), { status: 500 }));
     const err = await submitByteplusSeedance25Video({ version: "2.0-mini", prompt: "x" }).catch(error => error);
-    expect(err.kind).toBeUndefined();
+    expect(err.kind).toBe("unknown");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
+});
+
+
+it("2.5真实HTTP拒绝分类允许转交，有ID或5xx则禁止重复提交", async () => {
+  vi.stubEnv("BYTEPLUS_ARK_API_KEY", "test-key");
+  try {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: { code: "InvalidParameter", message: "video pixel count must be greater than or equal to 407696" } }), { status: 400 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const rejected = await submitByteplusSeedance25Video({ prompt: "x" }).catch(error => error);
+    expect(rejected.kind).toBe("rejected");
+    expect(isByteplusFallbackableError(rejected, true)).toBe(true);
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ id: "existing-task", error: { code: "InputImageSensitiveContentDetected.PrivacyInformation" } }), { status: 400 }));
+    const withId = await submitByteplusSeedance25Video({ prompt: "x" }).catch(error => error);
+    expect(isByteplusFallbackableError(withId, true)).toBe(false);
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ error: { code: "InternalError" } }), { status: 500 }));
+    const unknown = await submitByteplusSeedance25Video({ prompt: "x" }).catch(error => error);
+    expect(isByteplusFallbackableError(unknown, true)).toBe(false);
   } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
 });

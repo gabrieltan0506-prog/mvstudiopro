@@ -497,6 +497,7 @@ export function cloudDraftBlocksToCanvas(
       manhuaClipQuality: raw.manhuaClipQuality,
       archivedFromPreviousScript: raw.archivedFromPreviousScript,
       refVideoUrl: raw.refVideoUrl,
+      seedance25Provider: raw.seedance25Provider,
       seedance25WorkMode: raw.seedance25WorkMode,
       seedance25RefVideoUrls: raw.seedance25RefVideoUrls,
       seedance25RefAudioUrls: raw.seedance25RefAudioUrls,

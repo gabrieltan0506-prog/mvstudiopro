@@ -3150,6 +3150,13 @@ export default function FreeformCanvas({
                             <div className="space-y-2 rounded-lg border border-white/10 bg-white/[0.03] px-2 py-2">
                               {block.videoModel === "seedance-2.5" ? <>
                               <label className="flex items-center gap-2 text-[11px] text-white/70">
+                                <span className="shrink-0 text-white/45">生成通道</span>
+                                <select aria-label="Seedance 2.5生成通道" value={block.seedance25Provider || "auto"} disabled={block.status === "running" || block.videoTaskStatus === "queued"} onChange={e => patchOne(block.id, { seedance25Provider: e.target.value as CanvasBlock["seedance25Provider"] })} className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white">
+                                  <option value="auto">自动（BytePlus拒单转EvoLink）</option>
+                                  <option value="evolink">EvoLink直发</option>
+                                </select>
+                              </label>
+                              <label className="flex items-center gap-2 text-[11px] text-white/70">
                                 <span className="shrink-0 text-white/45">工作模式</span>
                                 <select
                                   value={normalizeSeedance25EvolinkMode(block.seedance25WorkMode)}

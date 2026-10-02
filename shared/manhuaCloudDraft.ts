@@ -126,6 +126,7 @@ export type ManhuaCloudDraftCanvasBlock = {
   manhuaKeyartSourceState?: import("./manhuaKeyartLookState").ManhuaKeyartLookState;
   error?: string;
   refVideoUrl?: string;
+  seedance25Provider?: "auto" | "evolink";
   seedance25WorkMode?: SeedanceEvolinkMode;
   seedance25RefVideoUrls?: string[];
   seedance25RefAudioUrls?: string[];
@@ -522,6 +523,7 @@ export function sanitizeManhuaCloudDraftBlock(
       refVideoUrl: isHttpUrl(b.refVideoUrl)
         ? String(b.refVideoUrl).trim()
         : undefined,
+      seedance25Provider: b.seedance25Provider === "evolink" ? "evolink" : undefined,
       seedance25WorkMode: isSeedance25EvolinkMode(b.seedance25WorkMode)
         ? b.seedance25WorkMode
         : undefined,

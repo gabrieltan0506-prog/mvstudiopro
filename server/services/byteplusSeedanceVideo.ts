@@ -264,8 +264,10 @@ export async function pollByteplusVideoTaskOnce(
   return { state: "running", status: status || "processing" };
 }
 
-/** 仅明确的人脸隐私拒绝允许换通道；配额、网络与未知结果不回落。 */
-export function isByteplusFallbackableError(error: unknown): boolean {
+/** 供应商明确拒绝允许转交；网络、5xx与缺少任务ID不能当成拒绝重投。 */
+export function isByteplusFallbackableError(error: unknown, allowExplicitRejection = false): boolean {
+  if ((error as { kind?: string } | null)?.kind === "unknown") return false;
+  if (allowExplicitRejection && (error as { kind?: string } | null)?.kind === "rejected") return true;
   const msg = error instanceof Error ? error.message : String(error || "");
   return /InputImageSensitiveContentDetected\.PrivacyInformation|may contain (?:a )?real (?:person|human)|real (?:human )?faces?|太像真人|包含真人|真人.{0,8}(人脸|肖像)|人脸.{0,8}(隐私|限制)/i.test(msg);
 }
@@ -297,8 +299,8 @@ export async function submitByteplusSeedance25Video(
       [createJson.error?.code, createJson.error?.message || createJson.message].filter(Boolean).join(": ") ||
         `BytePlus 创建任务失败 (${createRes.status})`,
     );
-    // Mini只把明确4xx供应商拒绝当终态；5xx/未知结果可能已经建单。
-    if (input.version === "2.0-mini" && createRes.status >= 400 && createRes.status < 500) Object.assign(error, { kind: "rejected" });
+    // 明确4xx且没有任务ID才属于拒绝；5xx/未知结果可能已经建单。
+    Object.assign(error, { kind: createRes.status >= 400 && createRes.status < 500 && !createJson.id ? "rejected" : "unknown" });
     throw error;
   }
 

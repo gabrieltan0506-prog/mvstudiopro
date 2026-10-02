@@ -87,6 +87,9 @@ describe("首段试片的实际出站载荷（仅虚构网络边界）", () => {
         authorizeCallsAtPost = authorize.mock.calls.length;
         const body = JSON.parse(String(init.body));
         expect(body.imageUrls.filter((u:string)=>u.includes("uploaded-tail"))).toEqual(["https://test.invalid/uploaded-tail-1.jpg"]);
+        expect(body.imageUrl).toBe(body.imageUrls[0]);
+        expect(body.imageUrls.at(-1)).toBe("https://test.invalid/uploaded-tail-1.jpg");
+        expect(body.prompt).toContain(`@图片${body.imageUrls.length}承接上段起幅`);
         expect(body.idempotencyKey).toBe(body.intentId);
         expect(Array.from(storageData.values()).join("")).toContain(body.intentId);
         expect(Array.from(storageData.values()).join("")).toContain('"status":"submitted"');
@@ -322,6 +325,14 @@ describe("首段试片的实际出站载荷（仅虚构网络边界）", () => {
     expect(requests[0]?.body.prompt).not.toContain("后段石桥断裂");
     expect(result.blocks.find((item) => item.id === block.id)?.seedance25TimestampStoryboard)
       .toBe(block.seedance25TimestampStoryboard);
+  });
+
+  it("显式 EvoLink 通道随正式请求发送，保留参考模式", async () => {
+    await runCanvasBlock({ userRole: "admin", optimizeCopy: async () => "" },
+      { ...pilotBlock("seedance-2.5"), seedance25Provider: "evolink" });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].body.seedance25Provider).toBe("evolink");
+    expect(requests[0].body.workMode).not.toBe("video_edit");
   });
 
   it.each(["video_edit", "video_extend"] as const)("试片不能误用原片 %s 路径", async (mode) => {
