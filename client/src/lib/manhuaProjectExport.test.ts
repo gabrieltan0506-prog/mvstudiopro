@@ -57,6 +57,17 @@ describe("manhuaProjectExport", () => {
     expect(episodeIndexesFromDockSelection(items, ["clip-e02-b", "keyart-e01-a"])).toEqual([1, 2]);
   });
 
+  it("失败段仍能换白模，但不把旧片当有效输出或加入合成", () => {
+    const clip = defaultCanvasBlock("video", 0, 0);
+    clip.id = "clip-e01-g03-auto-test"; clip.episodeIndex = 1; clip.status = "error";
+    clip.outputUrl = "https://example.test/old.mp4"; clip.manhuaClipQuality = passedQuality;
+    const items = collectManhuaClipDockItems([clip], { includePendingClips: true });
+    expect(items).toHaveLength(1); expect(items[0].outputUrl).toBeUndefined();
+    expect(collectManhuaAssembleClipsFromDock(items).filter((item) => item.clipUrl)).toHaveLength(0);
+    expect(selectExportableDockIds(items)).toHaveLength(0);
+    expect(collectManhuaClipDockItems([clip])).toHaveLength(0);
+  });
+
   it("keeps failed quality clips visible but blocks export until user accepts", () => {
     const clip = defaultCanvasBlock("video", 0, 0);
     clip.id = "clip-e01-failed";
