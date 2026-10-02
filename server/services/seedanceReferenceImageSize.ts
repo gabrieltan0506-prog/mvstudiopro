@@ -13,13 +13,13 @@ export async function normalizeSeedanceReferenceImage(url: string, userId: numbe
   const rotated = orientation && orientation >= 5;
   const w = rotated ? height : width, h = rotated ? width : height;
   if (w >= 300 && h >= 300) return url;
-  const factor = Math.ceil(Math.max(300 / w, 300 / h));
+  const factor = 2 ** Math.ceil(Math.log2(Math.max(300 / w, 300 / h)));
   const buffer = await image.rotate().resize(w * factor, h * factor).png().toBuffer();
   const output = await sharp(buffer).metadata();
   if (!output.width || !output.height || output.width < 300 || output.height < 300) {
     throw new Error("参考图片自动放大未达到尺寸要求，本次未提交供应商");
   }
-  // 内容寻址＋用户隔离，fallback和恢复可复用，不覆盖原图。
+  // 按2倍/4倍级联放大；内容寻址＋用户隔离，fallback和恢复可复用，不覆盖原图。
   const hash = createHash("sha256").update(buffer).digest("hex");
   const objectPath = `generated/seedance-reference-size/u${userId}/${hash}.png`;
   await uploadBufferToGcsIfAbsent({ objectName: objectPath, buffer, contentType: "image/png" });

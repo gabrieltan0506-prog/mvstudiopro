@@ -16,7 +16,7 @@ export const VIDEO_FRAME_SEEK_TIMEOUT_MS = 10_000;
 /** 尾帧会作为生成参考图片上传；两条边均须达到供应商300像素下限。 */
 export function videoReferenceFrameSize(width: number, height: number, maxWidth = 768) {
   const requiredScale = Math.max(Math.min(1, maxWidth / width), 300 / width, 300 / height);
-  const scale = requiredScale > 1 ? Math.ceil(requiredScale) : requiredScale;
+  const scale = requiredScale > 1 ? 2 ** Math.ceil(Math.log2(requiredScale)) : requiredScale;
   return { width: Math.max(300, Math.ceil(width * scale)), height: Math.max(300, Math.ceil(height * scale)) };
 }
 
