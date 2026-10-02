@@ -8,7 +8,7 @@ import { normalizeSeedanceReferenceImage } from "./seedanceReferenceImageSize.js
 
 beforeEach(() => { vi.resetAllMocks(); mocks.upload.mockResolvedValue({ created: true }); mocks.owner.mockResolvedValue("created"); mocks.sign.mockReturnValue("https://test.invalid/normalized.png"); });
 describe("Seedance 2.5实际参考图片尺寸归一化", () => {
-  it.each([[480,270,960,540], [270,480,540,960]])("%s×%s按2倍放大并登记隔离归属", async (width, height, expectedW, expectedH) => {
+  it.each([[480,270,960,540], [270,480,540,960], [100,100,400,400]])("%s×%s按2倍或4倍放大并登记隔离归属", async (width, height, expectedW, expectedH) => {
     mocks.download.mockResolvedValue(await sharp({ create: { width, height, channels: 3, background: "red" } }).png().toBuffer());
     expect(await normalizeSeedanceReferenceImage("https://test.invalid/source.png", 7)).toBe("https://test.invalid/normalized.png");
     const payload = mocks.upload.mock.calls[0][0];
