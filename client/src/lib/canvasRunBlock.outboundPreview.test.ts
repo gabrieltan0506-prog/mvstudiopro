@@ -863,3 +863,26 @@ describe("formal scene ownership repair before paid outbound", () => {
     expect(bodies).toHaveLength(0);
   });
 });
+
+
+it("locked first-segment preview and confirmed POST ignore a restored fight recipe", async () => {
+  const block = makeBlock({
+    videoDuration: 29,
+    pathCameraRecipeId: "path_05_action_burst",
+    prompt: "【第1段·29s】0–5s：阿菁背母奔走。5–8s：跛马跟随。8–29s：曹三威胁。镜头视觉秒轴保持原稿。切镜时原声连续。@图片1提供人物身份。",
+  });
+  const preview = await previewCanvasBlockOutbound(deps, block);
+  expect(preview.body.prompt).not.toMatch(/运镜配方|镜头看向/);
+  expect(preview.body.prompt).toContain("0–5s");
+  const bodies = captureOutbound();
+  const scope = { ...TEST_SCOPE, blockId: block.id };
+  await runCanvasBlock(deps, block, undefined, {
+    enforceOutboundConfirmation: true,
+    outboundGate: { currentScope: scope, confirmation: {
+      scope, confirmedAt: Date.now(),
+      fingerprint: manhuaOutboundConfirmationFingerprint(preview, scope),
+    } },
+  } as never);
+  expect(bodies).toHaveLength(1);
+  expect(bodies[0].prompt).toBe(preview.body.prompt);
+});
