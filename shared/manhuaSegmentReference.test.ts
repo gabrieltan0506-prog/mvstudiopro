@@ -7,6 +7,18 @@ import {
 } from "./manhuaSegmentReference";
 
 describe("manhuaSegmentReference · 段级白模/母轨/登记成片", () => {
+  it("更换白模清理旧对象的签名别名，保留其他参考、音轨和产物", () => {
+    const old = { url: "https://storage.googleapis.com/b/old.mp4?sig=1", gcsUri: "gs://b/old.mp4", updatedAt: "old" };
+    const current = { manhuaSegmentRefs: { previs: old }, seedance25RefVideoUrls: ["https://storage.googleapis.com/b/old.mp4?sig=2", "https://x.test/other.mp4"], refVideoUrl: old.url, outputUrl: "https://x.test/result.mp4", seedance25RefAudioUrls: ["gs://b/voice.wav"] };
+    const replacement = { url: "https://x.test/new.mp4", updatedAt: "new" };
+    const result = setManhuaSegmentReference(current, "previs", replacement);
+    expect(result.manhuaSegmentRefs.previs).toEqual(replacement);
+    expect(result.seedance25RefVideoUrls).toEqual(["https://x.test/other.mp4"]);
+    expect(result.refVideoUrl).toBeUndefined();
+    expect(result.outputUrl).toBe(current.outputUrl);
+    expect(result.seedance25RefAudioUrls).toEqual(current.seedance25RefAudioUrls);
+    expect(setManhuaSegmentReference(current, "master", replacement).seedance25RefVideoUrls).toEqual(current.seedance25RefVideoUrls);
+  });
   it("normalize 只留 https 或可重签的 gs:// 项，全空回 undefined", () => {
     expect(normalizeManhuaSegmentReferences(null)).toBeUndefined();
     expect(normalizeManhuaSegmentReferences({ previs: { url: "blob:abc" } })).toBeUndefined();

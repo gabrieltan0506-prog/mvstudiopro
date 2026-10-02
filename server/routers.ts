@@ -4402,7 +4402,7 @@ export const appRouter = router({
      * 存储范围与登记记录(未登记=普通输入提示,不创建任务)。
      */
     queuePostProd: protectedProcedure
-      .input(postProdJobInputSchema)
+      .input(postProdJobInputSchema.and(z.object({ scopeKey: z.string().max(128).optional() })))
       .mutation(async ({ ctx, input }) => {
         if(input.action === "manhua_previs" || input.action === "manhua_auto_rig") throw new TRPCError({code:"FORBIDDEN",message:input.action === "manhua_auto_rig" ? "请从人物模型绑骨入口提交" : "请从本段动作白模入口提交"});
         let normalizedInput;
@@ -4423,7 +4423,7 @@ export const appRouter = router({
           userId: String(ctx.user.id),
           type: "post_prod",
           provider: "ffmpeg-post-prod",
-          input: normalizedInput,
+          input: { ...normalizedInput, ...(input.scopeKey ? { scopeKey: input.scopeKey } : {}) },
         });
         return { jobId, status: "queued" as const };
       }),

@@ -123,6 +123,8 @@ export function persistJobs(storageKey: string, jobs: TrackedJob[], storage: Sto
 }
 
 export type RemotePostProdJob = {
+  scopeKey?: string;
+  sourceVideoUris?: string[];
   jobId: string;
   action?: unknown;
   status: string;
@@ -156,7 +158,7 @@ export function mergeRemoteJobs(local: TrackedJob[], remote: RemotePostProdJob[]
       jobId: r.jobId,
       action,
       label: cached?.label ?? ACTION_LABEL[action],
-      scopeKey: cached?.scopeKey,
+      scopeKey: r.scopeKey ?? cached?.scopeKey,
       status: (STATUSES.includes(r.status) ? r.status : "failed") as PostProdJobStatus,
       createdAt: Number.isFinite(createdAt) && createdAt > 0 ? createdAt : cached?.createdAt ?? 0,
       // 服务端明确返回 null 时清除旧缓存,不继续使用旧产物
@@ -261,4 +263,39 @@ export function postProdConcatDimensions(resolution: "720p" | "1080p", aspect: "
   const short = resolution === "1080p" ? 1080 : 720;
   const long = resolution === "1080p" ? 1920 : 1280;
   return aspect === "9:16" ? [short, long] : [long, short];
+}
+
+/** 旧任务没有持久化项目键时，只从当前集真实视频来源恢复；不按任务时间猜归属。 */
+export function recoverPostProdJobScopes(remote: RemotePostProdJob[], scopeKey: string, videoUrls: string[]): RemotePostProdJob[] {
+  const identity = (raw: string): string => {
+    if (raw.startsWith("gs://")) return raw;
+    try {
+      const url = new URL(raw);
+      if (url.hostname === "storage.googleapis.com") return `gs://${decodeURIComponent(url.pathname.slice(1))}`;
+      if (url.hostname.endsWith(".storage.googleapis.com")) return `gs://${url.hostname.slice(0, -".storage.googleapis.com".length)}${decodeURIComponent(url.pathname)}`;
+      return `${url.origin}${url.pathname}`;
+    } catch { return raw; }
+  };
+  const known = new Set(videoUrls.map(identity));
+  const scoped = remote.map(job => ({ ...job }));
+  // 后期任务可串联，先恢复源片再恢复它的下游；每个输入都必须归属于当前集。
+  for (let pass = 0; pass <= scoped.length; pass++) {
+    let changed = false;
+    for (const job of scoped) {
+      const sources = job.sourceVideoUris ?? [];
+      if (!job.scopeKey && scopeKey && sources.length && sources.every(uri => known.has(identity(uri)))) {
+        job.scopeKey = scopeKey;
+        changed = true;
+      }
+      if (job.status === "succeeded" && job.scopeKey === scopeKey && job.output && typeof job.output === "object") {
+        const out = job.output as Record<string, unknown>;
+        for (const uri of [out.gcsUri, out.url]) if (typeof uri === "string") {
+          const key = identity(uri);
+          if (!known.has(key)) { known.add(key); changed = true; }
+        }
+      }
+    }
+    if (!changed) break;
+  }
+  return scoped;
 }

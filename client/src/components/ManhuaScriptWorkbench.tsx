@@ -749,6 +749,7 @@ type Props = {
   /** 写回段成片节点 prompt（审阅编辑） */
   onUpdateClipPrompt?: (clipId: string, prompt: string) => void;
   onSetClipGenerationHold?: (clipId: string, hold: boolean) => void;
+  onUseOnlyBoundPrevis?: (clipId: string) => boolean;
   onSaveFullClipPrompt?: (clipId: string, text: string | null) => boolean;
   /** 在工厂内按当前段保存声音，不跳转到自由画布。 */
   onUpdateClipAudioStudio?: (clipId: string, studio: NonNullable<CanvasBlock["audioStudio"]>) => boolean | void;
@@ -1383,6 +1384,7 @@ export default function ManhuaScriptWorkbench({
   onReviewClipPromptsOnCanvas,
   onUpdateClipPrompt,
   onSetClipGenerationHold,
+  onUseOnlyBoundPrevis,
   onSaveFullClipPrompt,
   onUpdateClipAudioStudio,
   onUpdateClipPrevisStudio,
@@ -4569,6 +4571,17 @@ clipPromptReviewOpen ? (
                       实际发送内容
                     </span>
                     <div className="flex items-center gap-1">
+                      {row.clip.manhuaSegmentRefs?.previs && (row.clip.seedance25RefVideoUrls?.length || row.clip.refVideoUrl) && onUseOnlyBoundPrevis ? (
+                        <button type="button" disabled={Boolean(factoryBusy) || row.clip.status === "running" || row.clip.videoTaskStatus === "queued"}
+                          onClick={() => {
+                            if (!onUseOnlyBoundPrevis(blockId)) return;
+                            clipOutboundGenerationRef.current[blockId] = (clipOutboundGenerationRef.current[blockId] || 0) + 1;
+                            setClipOutboundPreview(prev => { const next = { ...prev }; delete next[blockId]; return next; });
+                            toast.message("已仅保留当前绑定白模，请重新核对发送内容");
+                          }} className="rounded border border-cyan-300/40 px-2 py-1 text-[10px] text-cyan-100">
+                          仅用当前白模（移除额外视频引用）
+                        </button>
+                      ) : null}
                       {row.segmentIndex === 1 ? <select
                         aria-label="核对生成意图"
                         value={clipOutboundPilotById[blockId] ? "pilot" : "full"}

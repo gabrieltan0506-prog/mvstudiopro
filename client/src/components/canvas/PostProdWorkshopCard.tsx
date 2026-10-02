@@ -73,6 +73,7 @@ import {
   loadStoredJobs,
   mergeClipOptions,
   mergeRemoteJobs,
+  recoverPostProdJobScopes,
   postProdJobMatchesScope,
   persistJobs,
   shouldNotifyTerminal,
@@ -587,7 +588,7 @@ export default function PostProdWorkshopCard({
     updateJobs(prev =>
       mergeRemoteJobs(
         prev,
-        data
+        recoverPostProdJobScopes(data
           .filter((r): r is NonNullable<typeof r> => r != null)
           .map(r => ({
             jobId: r.jobId,
@@ -596,10 +597,12 @@ export default function PostProdWorkshopCard({
             output: r.output,
             error: r.error,
             createdAt: r.createdAt as unknown,
-          }))
+            scopeKey: r.scopeKey,
+            sourceVideoUris: r.sourceVideoUris,
+          })), projectScopeKey, blocks.filter(block => isCurrentManhuaClipBlock(block, focusEpisode ?? 1)).flatMap(block => [block.outputUrl, ...(block.outputUrls || [])]).filter((url): url is string => Boolean(url)))
       )
     );
-  }, [jobsQuery.data, updateJobs]);
+  }, [jobsQuery.data, updateJobs, projectScopeKey, blocks, focusEpisode]);
 
   /** 15s 轮询未终态任务:上一轮未结束不开下一轮;终态只提示一次;403/404 收敛为失败 */
   const pollingRef = useRef(false);
@@ -747,7 +750,7 @@ export default function PostProdWorkshopCard({
         return;
       }
       try {
-        const res = await queueMutation.mutateAsync(input);
+        const res = await queueMutation.mutateAsync({ ...input, scopeKey: projectScopeKey });
         updateJobs(prev => [
           {
             jobId: res.jobId,

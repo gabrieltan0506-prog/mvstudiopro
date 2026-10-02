@@ -17,6 +17,7 @@ import {
   loadStoredJobs,
   mergeClipOptions,
   mergeRemoteJobs,
+  recoverPostProdJobScopes,
   manhuaPostProdScopeKey,
   normalizeStoredJobs,
   postProdJobMatchesScope,
@@ -283,5 +284,27 @@ describe("拼接画幅契约", () => {
     expect(postProdConcatDimensions("1080p", "9:16")).toEqual([1080, 1920]);
     expect(postProdConcatDimensions("720p", "16:9")).toEqual([1280, 720]);
     expect(postProdConcatDimensions("1080p", "16:9")).toEqual([1920, 1080]);
+  });
+});
+
+ describe("旧后期任务的范围恢复", () => {
+  it("冷缓存按来源恢复，并逆序追溯成功任务的下游", () => {
+    const result = recoverPostProdJobScopes([
+      {jobId:"down", action:"concat", status:"succeeded", sourceVideoUris:["gs://b/mix.mp4"], output:{gcsUri:"gs://b/join.mp4"}},
+      {jobId:"mix", action:"bgm_mount", status:"succeeded", sourceVideoUris:["https://storage.googleapis.com/b/source.mp4?old=1"], output:{gcsUri:"gs://b/mix.mp4"}},
+    ], "episode1", ["https://b.storage.googleapis.com/source.mp4?new=1"]);
+    expect(result.map(j=>j.scopeKey)).toEqual(["episode1","episode1"]);
+    expect(mergeRemoteJobs([], result)[0].scopeKey).toBe("episode1");
+  });
+  it("混合其他集、无来源、失败上游和显式其他范围不会串入", () => {
+    const result = recoverPostProdJobScopes([
+      {jobId:"mixed",status:"succeeded",sourceVideoUris:["gs://b/own.mp4","gs://b/other.mp4"]},
+      {jobId:"empty",status:"succeeded"},
+      {jobId:"failed",status:"failed",sourceVideoUris:["gs://b/own.mp4"],output:{gcsUri:"gs://b/failed.mp4"}},
+      {jobId:"child",status:"succeeded",sourceVideoUris:["gs://b/failed.mp4"]},
+      {jobId:"explicit",scopeKey:"episode2",status:"succeeded",sourceVideoUris:["gs://b/own.mp4"]},
+    ],"episode1",["gs://b/own.mp4"]);
+    expect(result.map(j=>j.scopeKey)).toEqual([undefined,undefined,"episode1",undefined,"episode2"]);
+    expect(mergeRemoteJobs([job({jobId:"explicit",scopeKey:"stale"})],result).find(j=>j.jobId==="explicit")?.scopeKey).toBe("episode2");
   });
 });
