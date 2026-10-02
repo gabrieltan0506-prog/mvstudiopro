@@ -62,6 +62,20 @@ describe("jsonDirectorMiddleware", () => {
     expect(motion).not.toMatch(/动机光下轻薄气氛粒子/);
   });
 
+  it("preserves a locked clip timeline when a restored recommendation exists", () => {
+    const prompt = "0–5s：阿菁背母奔走。5–8s：跛马跟随。镜头视觉秒轴保持原稿。切镜时原声连续。";
+    const result = compileI2VMotionPrompt(prompt, {
+      pathCameraRecipeId: "path_05_action_burst",
+      appendRecipeAsConstraint: true,
+    });
+    expect(result).toBe(prompt);
+    expect(result).not.toMatch(/运镜配方|起势|接触|反馈/);
+    expect(compileI2VMotionPrompt("0–5s：阿菁背母奔走。", {
+      pathCameraRecipeId: "path_05_action_burst",
+      appendRecipeAsConstraint: true,
+    })).toContain("【运镜配方·附加约束】");
+  });
+
   it("keeps short motion prompts", () => {
     const p = "Slow cinematic zoom out, wind blowing the dust, horse breathing";
     expect(compileI2VMotionPrompt(p, { hasReferenceImage: true })).toBe(p);

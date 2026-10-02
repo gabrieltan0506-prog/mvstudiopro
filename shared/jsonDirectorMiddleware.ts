@@ -364,7 +364,10 @@ export function compileI2VMotionPrompt(
   opts?: CompileI2VMotionPromptOpts,
 ): string {
   const recipeId = String(opts?.pathCameraRecipeId || "").trim();
-  if (recipeId) {
+  // 已审成片的锁定秒轴优先；刷新恢复的推荐配方不能追加另一套动作时间表。
+  const lockedClipTimeline = opts?.appendRecipeAsConstraint === true &&
+    /镜头视觉秒轴保持原稿/.test(String(rawPrompt || ""));
+  if (recipeId && !lockedClipTimeline) {
     const recipe = getPathCameraRecipeById(recipeId);
     if (recipe && !opts?.appendRecipeAsConstraint) {
       return compilePathCameraRecipeToMotionPrompt(recipe);
