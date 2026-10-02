@@ -13,6 +13,7 @@ vi.mock("./longJobsFlyOrigin", () => ({
   flyHealthProbeOriginForUrl: () => "https://test.invalid",
 }));
 
+import { extractVideoTailFramesFromUrl } from "./extractVideoFrames";
 import { compileManhuaPilotPrompt } from "@shared/manhuaPilotGate";
 import { defaultCanvasBlock, type CanvasBlock } from "./canvasTypes";
 import { runCanvasBlock } from "./canvasRunBlock";
@@ -69,6 +70,40 @@ function preparedPipelineFixture(storyboard: string) {
 }
 
 describe("首段试片的实际出站载荷（仅虚构网络边界）", () => {
+  it("动态接力尾帧只准备一次，变化的上传对象仍以同一最终载荷确认与提交", async () => {
+    const tail = vi.mocked(extractVideoTailFramesFromUrl);
+    tail.mockResolvedValue({ frames: Array.from({length: 4}, (_, i) => ({dataUrl: `data:image/jpeg;base64,${btoa(`frame-${i}`)}`, timestamp: i})), duration: 10 } as never);
+    let uploaded = 0;
+    let uploadsAtPost = 0;
+    let authorizeCallsAtPost = 0;
+    const authorize = vi.fn(async () => ({ projectVersion: "a".repeat(64), episodeIndex: 1, segmentIndex: 2, intent: "full" as const }));
+    const block = { ...pilotBlock("seedance-2.5"), id: "clip-e01-g02", refVideoUrl: "https://test.invalid/prior.mp4" };
+    const storageData = new Map<string,string>();
+    const storage = {getItem: (k:string) => storageData.get(k) ?? null, setItem: (k:string,v:string) => { storageData.set(k,v); }};
+    const originalFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        uploadsAtPost = uploaded;
+        authorizeCallsAtPost = authorize.mock.calls.length;
+        const body = JSON.parse(String(init.body));
+        expect(body.imageUrls.filter((u:string)=>u.includes("uploaded-tail"))).toEqual(["https://test.invalid/uploaded-tail-1.jpg"]);
+        expect(body.idempotencyKey).toBe(body.intentId);
+        expect(Array.from(storageData.values()).join("")).toContain(body.intentId);
+        expect(Array.from(storageData.values()).join("")).toContain('"status":"submitted"');
+      }
+      return originalFetch(url,init);
+    });
+    try {
+      await runCanvasBlock({userRole:"admin",userId:"test-user", optimizeCopy:async()=>"",authorizeManhuaClip:authorize,
+        uploadImageFile:async()=>`https://test.invalid/uploaded-tail-${++uploaded}.jpg`, canvasIntentStorage:storage},block,undefined,{
+        enforceOutboundConfirmation:true,resolveOutboundGate:()=>({currentScope:testOutboundScope(block.id),confirmOnGenerate:true}),
+      });
+      expect(requests).toHaveLength(1);
+      expect(uploadsAtPost).toBe(4);
+      expect(authorizeCallsAtPost).toBe(1);
+    } finally { tail.mockResolvedValue({frames:[]} as never); }
+  });
+
   it("刷新后无手动确认也可正式提交，旧确认不阻断本次输入", async () => {
     const block = pilotBlock("seedance-2.5");
     const authorize = vi.fn(async () => ({ projectVersion: "a".repeat(64), episodeIndex: 1, segmentIndex: 1, intent: "full" as const }));

@@ -102,7 +102,8 @@ import {
 } from "../services/manhuaScoringRoom.js";
 import { isTtapiSunoSubmissionUnknown } from "../services/ttapiSunoMusic.js";
 import { processPdfExportJob } from "./pdfExportJob";
-import { resolveJobWorkerRole, resolvePostProdClaimFilter } from "./workerRole.js";
+import { drainBgmQueue } from "./bgmQueue.js";
+import { resolveJobWorkerRole, resolvePostProdClaimFilter, type PostProdClaimFilter } from "./workerRole.js";
 // 只导入类型：rigAutoscale 仍走动态 import（app 机不该为这条链加载 Fly 客户端），类型在编译期就被擦掉。
 import type { RigStartState } from "./rigAutoscale.js";
 import {
@@ -4270,9 +4271,9 @@ export async function processPdfJobsOnce() {
   }
 }
 
-async function processOnePostProdJob(): Promise<boolean> {
+async function processOnePostProdJob(filter: PostProdClaimFilter = resolvePostProdClaimFilter(), claimedJob?: Awaited<ReturnType<typeof claimNextPostProdJob>>): Promise<boolean> {
   if (rigStopGate.requested) return false;
-  const job = await claimNextPostProdJob(resolvePostProdClaimFilter());
+  const job = claimedJob ?? await claimNextPostProdJob(filter);
   if (!job) return false;
 
   // 心跳刷新 updatedAt:stale reaper 只清"最后活动过旧"的 running 行,
@@ -4314,13 +4315,22 @@ async function processOnePostProdJob(): Promise<boolean> {
   return true;
 }
 
-/** 后期工坊独立通道:串行消化(单并发),不与普通媒体任务抢队列 */
+/** BGM最多三路；其他后期保持单路，rig仍只领取Blender任务。 */
 export async function processPostProdJobsOnce() {
   if (postProdProcessing || rigStopGate.requested) return;
   postProdProcessing = true;
   try {
-    while (await processOnePostProdJob()) {
-      // Drain post_prod only, one at a time.
+    const filter = resolvePostProdClaimFilter();
+    if (filter === "blender") {
+      while (await processOnePostProdJob(filter)) { /* rig保持单路 */ }
+    } else {
+      await Promise.all([
+        (async () => { while (await processOnePostProdJob(filter === "non_blender" ? "non_blender_non_bgm" : "non_bgm")) { /* 其他后期单路 */ } })(),
+        drainBgmQueue(
+          () => rigStopGate.requested ? Promise.resolve(null) : claimNextPostProdJob("bgm"),
+          job => processOnePostProdJob("bgm", job),
+        ),
+      ]);
     }
   } finally {
     postProdProcessing = false;

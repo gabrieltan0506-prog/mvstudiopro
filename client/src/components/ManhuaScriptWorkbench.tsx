@@ -691,6 +691,7 @@ type Props = {
 
   /** 生成当前选中段（段内缺静帧则先补 + 该段一条成片） */
   onSpawnAndRunClip?: () => void;
+  onGenerateSelectedClips?: (clipIds: string[]) => void;
   onGenerateFragment?: (opts: {
     /** 段号 1-based（工厂按段出一条成片） */
     shotIndex: number;
@@ -1357,6 +1358,7 @@ export default function ManhuaScriptWorkbench({
   assetShareBilling,
   onSpawnAndRunClip,
   onGenerateFragment,
+  onGenerateSelectedClips,
   onRegisterSegmentClip,
   segmentReferenceBusy = false,
   segmentReferenceProgress = null,
@@ -1418,6 +1420,7 @@ export default function ManhuaScriptWorkbench({
   const activeArtStyleId: ManhuaArtStyleId = normalizeManhuaArtStyleId(artStyleId);
   const [shotIndex, setShotIndex] = useState(0);
   const [outlineTemplateOpen, setOutlineTemplateOpen] = useState(false);
+  const [parallelClipSelection, setParallelClipSelection] = useState<string[]>([]);
   const [clipPromptReviewOpen, setClipPromptReviewOpen] = useState(false);
   /**
    * 每段的「实际出站内容」。按段按需计算——展开时一次性给所有段算会重复续签、
@@ -4370,6 +4373,11 @@ clipPromptReviewOpen ? (
               {row.shotIndexes.map((n) => String(n).padStart(2, "0")).join("/")}
             </span>
             <div className="flex flex-wrap items-center gap-2">
+              {row.clip?.id && onGenerateSelectedClips ? <label className="flex items-center gap-1">
+                <input type="checkbox" aria-label={`选择第 ${row.segmentIndex} 段并发生成`}
+                  checked={parallelClipSelection.includes(row.clip.id)} disabled={Boolean(factoryBusy || row.clip.manhuaGenerationHold)}
+                  onChange={event => setParallelClipSelection(ids => event.target.checked ? [...ids.filter(id => id !== row.clip!.id), row.clip!.id] : ids.filter(id => id !== row.clip!.id))} />选择并发
+              </label> : null}
               {row.clip?.id && onSetClipGenerationHold ? (
                 <label className="flex items-center gap-1 text-white/75">
                   <input type="checkbox" aria-label={`第 ${row.segmentIndex} 段保留，不生成`}
@@ -4676,7 +4684,10 @@ clipPromptReviewOpen ? (
           ) : null}
         </div>
       ))}
-      <p className="text-[10px] text-white/55">逐段核对后，使用各段旁的按钮。本页不批量生成。</p>
+      {onGenerateSelectedClips ? <button type="button" disabled={Boolean(factoryBusy) || !parallelClipSelection.length}
+        onClick={() => onGenerateSelectedClips(parallelClipSelection.filter(id => segmentClipReviewList.some(row => row.clip?.id === id && !row.clip.manhuaGenerationHold)))}
+        className="rounded border border-cyan-300/40 px-3 py-2 text-xs text-cyan-100 disabled:opacity-40">生成所选 {parallelClipSelection.length} 段（最多三路并发）</button> : null}
+      <p className="text-[10px] text-white/55">可单段生成，也可选择多段并发；每段独立保存任务与结果。</p>
     </div>
   ) : null
   );

@@ -7,7 +7,7 @@
  */
 export type JobWorkerRole = "app" | "rig";
 export const BLENDER_POST_PROD_ACTIONS = ["manhua_auto_rig", "manhua_previs"] as const;
-export type PostProdClaimFilter = "blender" | "non_blender" | undefined;
+export type PostProdClaimFilter = "blender" | "non_blender" | "bgm" | "non_bgm" | "non_blender_non_bgm" | undefined;
 
 export function resolveJobWorkerRole(env: NodeJS.ProcessEnv = process.env): JobWorkerRole {
   return String(env.JOB_WORKER_ROLE || "").trim().toLowerCase() === "rig" ? "rig" : "app";

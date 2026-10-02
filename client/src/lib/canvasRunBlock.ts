@@ -1009,6 +1009,7 @@ async function runSeedanceProductVideo(
     repairSceneTileOwnership?: (imageUrls: string[]) => Promise<void>;
     /** 健康门等待结束、fetch 紧前的最终核对 */
     beforeSubmit?: OutboundSubmitGuard;
+    preparedBody?: Record<string, unknown>;
   },
 ): Promise<SeedanceProductVideoResult> {
   // 与 Creative / TestLab 一致：直连 Fly/api 子域，避免 www→Vercel→Fly 反代 ~120s 被 ROUTER_EXTERNAL 腰斩
@@ -1032,7 +1033,7 @@ async function runSeedanceProductVideo(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify(prepared.body),
+      body: JSON.stringify(opts?.preparedBody ?? prepared.body),
     });
   });
   const text = await res.text();
@@ -1184,11 +1185,12 @@ async function runHailuo3(
     onTaskId?: (taskId: string) => void;
     /** 健康门等待结束、fetch 紧前的最终核对 */
     beforeSubmit?: OutboundSubmitGuard;
+    preparedBody?: Record<string, unknown>;
   },
 ): Promise<string> {
   const hailuoUrl = withLongJobsFlyDirect("/api/jobs?op=hailuo3Video");
   const probeOrigin = flyHealthProbeOriginForUrl(hailuoUrl);
-  const requestBody = buildHailuo3CanvasRequestBody({
+  const requestBody = opts?.preparedBody ?? buildHailuo3CanvasRequestBody({
     prompt,
     imageUrl,
     imageUrls: opts?.imageUrls,
@@ -1477,6 +1479,7 @@ async function runWan30(
     onTaskId?: (taskId: string) => void;
     /** 健康门等待结束、fetch 紧前的最终核对 */
     beforeSubmit?: OutboundSubmitGuard;
+    preparedBody?: Record<string, unknown>;
   },
 ): Promise<string> {
   const wanUrl = withLongJobsFlyDirect("/api/jobs?op=wan30Video");
@@ -1487,7 +1490,7 @@ async function runWan30(
   }
   // 载荷统一走 buildWan30RequestBody：提交键/seed 必须真实入 POST（三审 P0-1）。
   // 先构造好再进健康门，核对与 fetch 之间不留任何计算。
-  const wanBody = buildWan30RequestBody({
+  const wanBody = opts?.preparedBody ?? buildWan30RequestBody({
     // Wan 无 Seedance 的 @图片N 硬绑定语法，提示词由调用方按 Wan 口径编译，不过 Seedance 渲染器
     prompt,
     images,
@@ -1877,6 +1880,7 @@ function settleManhuaOutbound(
   prepared: CanvasEngineOutboundPreparation,
   runOptions:
     | {
+        onOutboundPrepared?: (prepared: CanvasEngineOutboundPreparation) => void;
         previewOnly?: boolean;
         enforceOutboundConfirmation?: boolean;
         outboundGate?: ManhuaOutboundGate;
@@ -1891,6 +1895,7 @@ function settleManhuaOutbound(
     executingUserId: string;
   },
 ): OutboundSubmitGuard {
+  if (!runOptions?.previewOnly) runOptions?.onOutboundPrepared?.(prepared);
   /**
    * 最终核对。**必须在健康门等待结束之后、`fetch` 紧前同步执行**，
    * 而且它与 fetch 之间不得再有 await。
@@ -2291,21 +2296,20 @@ export async function runCanvasBlock(
   const initialGate = sourceGate ? sourceGate(block.id) : runOptions?.outboundGate;
   if (!runOptions?.previewOnly && initialGate?.confirmOnGenerate && requiresManhuaOutboundConfirmation(block)) {
     const scope = { ...initialGate.currentScope };
-    const preview = await previewCanvasBlockOutbound(deps, block, upstream, runOptions);
-    if (preview.compile.blocked || preview.compile.fatalZh) {
-      throw new Error(preview.compile.fatalZh || preview.compile.issues.map((issue) => issue.detailZh).join("；"));
-    }
-    const confirmation: ManhuaOutboundConfirmation = {
-      scope,
-      confirmedAt: Date.now(),
-      fingerprint: manhuaOutboundConfirmationFingerprint(preview, scope),
-    };
+    // 入口只冻结身份；确认指纹在唯一一次准备完成后生成。
+    const confirmation: ManhuaOutboundConfirmation = { scope, confirmedAt: Date.now(), fingerprint: "" };
     runOptions = {
       ...runOptions,
       enforceOutboundConfirmation: true,
       resolveOutboundGate: () => {
         const current = sourceGate ? sourceGate(block.id) : initialGate;
         return current ? { ...current, confirmation } : undefined;
+      },
+      onOutboundPrepared: (prepared) => {
+        throwIfOutboundCompileBlocked(prepared.compile);
+        const currentGate = sourceGate ? sourceGate(block.id) : initialGate;
+        assertManhuaOutboundGate(block, currentGate ? { ...currentGate, confirmation } : undefined, String(deps.userId || ""));
+        confirmation.fingerprint = manhuaOutboundConfirmationFingerprint(prepared, scope);
       },
     };
   }
@@ -2319,25 +2323,37 @@ export async function runCanvasBlock(
       deps.onManhuaPilotChanged?.();
     }
   }
-  const intentRun = block.kind === "video" ? resolveCanvasIntentForBlockRun(deps, block, runOptions) : null;
-  if (!intentRun) return runCanvasBlockInner(deps, block, upstream, runOptions);
+  let intentRun = block.kind === "video" && !runOptions?.onOutboundPrepared
+    ? resolveCanvasIntentForBlockRun(deps, block, runOptions) : null;
+  if (!intentRun && !runOptions?.onOutboundPrepared) return runCanvasBlockInner(deps, block, upstream, runOptions);
+  const confirmPrepared = runOptions?.onOutboundPrepared;
+  const executionOptions = {
+    ...runOptions,
+    videoSubmissionKey: intentRun?.intent.intentId ?? runOptions?.videoSubmissionKey,
+    intentTracker: { submitted: () => intentRun?.submitted() },
+    ...(confirmPrepared ? { onOutboundPrepared: (prepared: CanvasEngineOutboundPreparation) => {
+      confirmPrepared(prepared);
+      // 确认与提交使用同一个请求体，先持久化再允许发送。
+      intentRun = resolveCanvasIntentForBlockRun(deps, block, runOptions);
+      if (intentRun) {
+        prepared.body.idempotencyKey = intentRun.intent.intentId;
+        prepared.body.intentId = intentRun.intent.intentId;
+      }
+    } } : {}),
+  };
   const trackedDeps: CanvasRunDeps = {
     ...deps,
     onVideoTaskCreated: (createdBlockId, info) => {
-      if (createdBlockId === block.id) intentRun.acknowledged(info.taskId, info.engine);
+      if (createdBlockId === block.id) intentRun?.acknowledged(info.taskId, info.engine);
       deps.onVideoTaskCreated?.(createdBlockId, info);
     },
   };
   try {
-    const out = await runCanvasBlockInner(trackedDeps, block, upstream, {
-      ...runOptions,
-      videoSubmissionKey: intentRun.intent.intentId,
-      intentTracker: intentRun,
-    });
-    intentRun.settled();
+    const out = await runCanvasBlockInner(trackedDeps, block, upstream, executionOptions);
+    intentRun?.settled();
     return out;
   } catch (error) {
-    intentRun.failed(error);
+    intentRun?.failed(error);
     throw error;
   }
 }
@@ -2393,6 +2409,8 @@ async function runCanvasBlockInner(
     enforceOutboundConfirmation?: boolean;
     /** 用户**明确再次生成**：即使输入相同也开新意图，避免同一份输入永远只能生成一次 */
     forceNewIntent?: boolean;
+    /** 内部：唯一一次准备结束后确认实际载荷并登记意图。 */
+    onOutboundPrepared?: (prepared: CanvasEngineOutboundPreparation) => void;
     /** 内部：由 runCanvasBlock 包装层注入，runner 在 fetch 紧前调 submitted() */
     intentTracker?: { submitted: () => void };
   },
@@ -2781,17 +2799,15 @@ async function runCanvasBlockInner(
       };
       // 原片编辑也走同一道闸。上一轮它在 block.kind==="video" 之后立刻提交，
       // 整条确认逻辑都绕过去了（0914 审查 P1-1 实测复现过）。
+      const editPrepared = { ...buildSeedanceCanvasRequestBody(editPrompt, undefined, ar, editOpts), engine: "seedance-2.5" };
       const editGuard = settleManhuaOutbound(
-        {
-          ...buildSeedanceCanvasRequestBody(editPrompt, undefined, ar, editOpts),
-          engine: "seedance-2.5",
-        },
+        editPrepared,
         runOptions,
         { block, executingUserId: String(deps.userId || "") },
       );
       const edited = await runSeedanceProductVideo(editPrompt, undefined, ar, {
         ...editOpts,
-        beforeSubmit: editGuard,
+        beforeSubmit: editGuard, preparedBody: editPrepared.body,
       });
       return {
         outputUrl: edited.videoUrl,
@@ -3329,19 +3345,15 @@ async function runCanvasBlockInner(
           manhuaPilot,
         } as const;
         // 与 Seedance 同一道闸：准备器产出 → 共用结算点 → 才提交。
+        const wanPrepared = prepareWan30Outbound({ prompt: wanPrompt, images: wanImages, aspectRatio: ar, ...wanOpts });
         const wanGuard = settleManhuaOutbound(
-          prepareWan30Outbound({
-            prompt: wanPrompt,
-            images: wanImages,
-            aspectRatio: ar,
-            ...wanOpts,
-          }),
+          wanPrepared,
           runOptions,
           { block, executingUserId: String(deps.userId || "") },
         );
         url = await runWan30(wanPrompt, wanImages, ar, {
           ...wanOpts,
-          beforeSubmit: wanGuard,
+          beforeSubmit: wanGuard, preparedBody: wanPrepared.body,
           onTaskId: (taskId) =>
             deps.onVideoTaskCreated?.(block.id, { taskId, engine: "wan-3.0" }),
         });
@@ -3402,19 +3414,15 @@ async function runCanvasBlockInner(
           idempotencyKey: submissionKey,
           intentId: submissionKey,
         } as const;
+        const h3Prepared = prepareHailuo3CanvasOutbound({ prompt: h3Prompt, imageUrl: seedStill, aspectRatio: ar, ...h3Opts });
         const h3Guard = settleManhuaOutbound(
-          prepareHailuo3CanvasOutbound({
-            prompt: h3Prompt,
-            imageUrl: seedStill,
-            aspectRatio: ar,
-            ...h3Opts,
-          }),
+          h3Prepared,
           runOptions,
           { block, executingUserId: String(deps.userId || "") },
         );
         url = await runHailuo3(h3Prompt, seedStill, ar, {
           ...h3Opts,
-          beforeSubmit: h3Guard,
+          beforeSubmit: h3Guard, preparedBody: h3Prepared.body,
           onTaskId: (taskId) => deps.onVideoTaskCreated?.(block.id, { taskId, engine: videoModel }),
         });
       } else {
@@ -3587,16 +3595,9 @@ async function runCanvasBlockInner(
         const seedanceFirstFrame =
           useSeedance25 && workMode === "text_to_video" ? undefined : seedStill;
         // 与预览同源：同一个准备器、同一个结算点。
+        const seedancePrepared = { ...buildSeedanceCanvasRequestBody(finalPrompt, seedanceFirstFrame, ar, seedanceOpts), engine: videoModel };
         const seedanceGuard = settleManhuaOutbound(
-          {
-            ...buildSeedanceCanvasRequestBody(
-              finalPrompt,
-              seedanceFirstFrame,
-              ar,
-              seedanceOpts,
-            ),
-            engine: videoModel,
-          },
+          seedancePrepared,
           runOptions,
           { block, executingUserId: String(deps.userId || "") },
         );
@@ -3604,7 +3605,7 @@ async function runCanvasBlockInner(
           finalPrompt,
           seedanceFirstFrame,
           ar,
-          { ...seedanceOpts, beforeSubmit: seedanceGuard, repairSceneTileOwnership: deps.repairSceneTileOwnership },
+          { ...seedanceOpts, beforeSubmit: seedanceGuard, preparedBody: seedancePrepared.body, repairSceneTileOwnership: deps.repairSceneTileOwnership },
         );
         url = seedanceOut.videoUrl;
         if (useSeedance25) {

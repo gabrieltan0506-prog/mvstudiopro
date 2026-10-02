@@ -4431,6 +4431,35 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       return { blocks: opts.blocks, completedIds: [], skippedIds: [], errors: [{ id: "shot-source", message: error instanceof Error ? error.message : "分镜原稿无效" }], awaitingConfirmationIds: [], pausedDownstreamIds: [] };
     }
   }
+  // 显式选择的独立成片最多三路并发；冻结本批参考，回写只合并各自节点。
+  if (!opts.pilotRun && opts.untilStage === "clip" && !opts.fragmentShotIndex &&
+      requestedTargets.length > 1 && requestedTargets.length === opts.targetBlockIds?.length &&
+      requestedTargets.every(b => b.kind === "video" && b.id.startsWith("clip-") && !isManhuaVideoEditBlock(b) && opts.resolveOutboundGate?.(b.id)?.confirmOnGenerate)) {
+    let merged = opts.blocks;
+    const results: ManhuaFactoryPipelineResult[] = [];
+    await mapWithConcurrency(requestedTargets, 3, async target => {
+      if (opts.signal?.aborted) return;
+      const result = await runManhuaDramaFactoryPipeline({
+        ...opts, blocks: opts.blocks, targetBlockIds: [target.id], maxRetries: 0,
+        preservePreparedTargetBlocks: true,
+        onBlocksChange: next => {
+          const updated = next.find(b => b.id === target.id);
+          if (updated) merged = merged.map(b => b.id === target.id ? updated : b);
+          opts.onBlocksChange?.(merged);
+        },
+      });
+      const updated = result.blocks.find(b => b.id === target.id);
+      if (updated) merged = merged.map(b => b.id === target.id ? updated : b);
+      results.push(result);
+    });
+    opts.onBlocksChange?.(merged);
+    return {
+      blocks: merged,
+      completedIds: results.flatMap(r => r.completedIds), skippedIds: results.flatMap(r => r.skippedIds),
+      errors: results.flatMap(r => r.errors), awaitingConfirmationIds: results.flatMap(r => r.awaitingConfirmationIds),
+      pausedDownstreamIds: results.flatMap(r => r.pausedDownstreamIds),
+    };
+  }
   /** 工厂内 ensure/反推展开必须吃同一张导演板表，禁止只靠工作台审阅路径传参 */
   const directorBoardUrlByEpisode = opts.deps.manhuaDirectorBoardUrlByEpisode ?? null;
   const directorBoardUrlByEpisodeSegment = opts.deps.manhuaDirectorBoardUrlByEpisodeSegment ?? null;
