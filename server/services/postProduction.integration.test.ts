@@ -180,6 +180,18 @@ describe.runIf(ffmpegOk)("后期三件套本地媒体验证", () => {
     expect(meta.durationSec).toBeLessThan(2.8);
   }, 60_000);
 
+  it("竖屏拼接保留9:16输出和两段完整音轨", async () => {
+    installFetchStub();
+    const out = await concatClips({ clips: ["gs://itest/port.mp4", "gs://itest/port.mp4"], width: 720, height: 1280, fps: 30 }, "7");
+    const buf = h.uploads.get(out.gcsUri.replace("gs://itest/", ""));
+    const meta = await probeBuffer(buf!);
+    expect([meta.width, meta.height]).toEqual([720, 1280]);
+    expect(meta.hasAudio).toBe(true);
+    expect(meta.durationSec).toBeGreaterThan(1.9);
+    expect(meta.durationSec).toBeLessThan(2.2);
+    expect(meta.audioDurationSec).toBeGreaterThan(1.9);
+  }, 60_000);
+
   it("音轨短于画面 + 音轨长于画面:apad/atrim 对齐;最后一段音轨短也覆盖到结尾", async () => {
     installFetchStub();
     const out = await concatClips(
