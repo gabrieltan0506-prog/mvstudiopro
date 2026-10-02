@@ -39,10 +39,12 @@ export const MANHUA_SHOT_SIZE_CONTRAST_MIN = 2;
  * 否则「大特写」会算成两镜、跨度判断跟着错。
  */
 export function readManhuaShotSizeSequence(
-  prompt: string | null | undefined,
+  prompt: string | null | undefined
 ): Array<{ nameZh: string; scale: number }> {
   const text = String(prompt || "");
-  const byLongest = [...SHOT_SIZE_SCALE].sort((a, b) => b[0].length - a[0].length);
+  const byLongest = [...SHOT_SIZE_SCALE].sort(
+    (a, b) => b[0].length - a[0].length
+  );
   const hits: Array<{ at: number; nameZh: string; scale: number }> = [];
   const taken: Array<[number, number]> = [];
   for (const [nameZh, scale] of byLongest) {
@@ -57,12 +59,14 @@ export function readManhuaShotSizeSequence(
       hits.push({ at, nameZh, scale });
     }
   }
-  return hits.sort((a, b) => a.at - b.at).map(({ nameZh, scale }) => ({ nameZh, scale }));
+  return hits
+    .sort((a, b) => a.at - b.at)
+    .map(({ nameZh, scale }) => ({ nameZh, scale }));
 }
 
 /** 相邻两镜景别跨度不足的第一处；没有则 null */
 export function findManhuaFlatShotSizeRun(
-  seq: Array<{ nameZh: string; scale: number }>,
+  seq: Array<{ nameZh: string; scale: number }>
 ): { fromZh: string; toZh: string } | null {
   for (let i = 1; i < seq.length; i++) {
     const prev = seq[i - 1]!;
@@ -98,15 +102,24 @@ export function formatManhuaEditCraftDirectives(input: {
   // 分镜数没传就按景别点名数估；两者都拿不到时按单镜处理
   const shots = Math.max(input.shotCount ?? 0, seq.length);
   const multiShot = shots > 1;
+  // 已审原稿的显式约束优先，补条不得反向重排镜头或截断跨切原声。
+  const lockedVisualTimeline = /镜头视觉秒轴保持原稿/.test(prompt);
+  const continuousCutAudio = /切镜时原声连续|原声跨切连续/.test(prompt);
 
   const lines: string[] = [];
 
-  if (multiShot) {
+  if (multiShot && lockedVisualTimeline) {
+    lines.push(
+      "按原稿已锁定的视觉秒轴、镜头顺序与景别切镜，不因对白尚未结束移动切点或增加停顿。"
+    );
+  } else if (multiShot) {
     const cutBits = [
       "切点卡情绪不卡秒",
-      hasDialogue(prompt)
-        ? "关键台词落地后停约 0.2 秒再切，禁止台词未说完就硬切（会像断片）"
-        : "在情绪转折处切，不在动作中段切",
+      continuousCutAudio
+        ? "对白跨切镜连续播放，切画面不截尾、不变速，画外发声仍属于原角色"
+        : hasDialogue(prompt)
+          ? "关键台词落地后停约 0.2 秒再切，禁止台词未说完就硬切（会像断片）"
+          : "在情绪转折处切，不在动作中段切",
       "拔剑/转身/出拳这类动作，切在发力那一帧",
     ];
     lines.push(`${cutBits.join("；")}。`);
@@ -115,18 +128,24 @@ export function formatManhuaEditCraftDirectives(input: {
     lines.push(
       flat
         ? `同场景相邻镜头必须拉开景别反差：现在「${flat.fromZh}→${flat.toZh}」跨度太小，改成中景→特写→全景这类大跨度，否则节奏像原地踏步。`
-        : "同场景相邻镜头保持景别反差（中景→特写→全景），忌连续两镜景别相近。",
+        : "同场景相邻镜头保持景别反差（中景→特写→全景），忌连续两镜景别相近。"
+    );
+  }
+
+  if (multiShot && lockedVisualTimeline && continuousCutAudio) {
+    lines.push(
+      "对白跨切镜连续播放，切画面不截尾、不变速，画外发声仍属于原角色；画内非说话角色闭口。"
     );
   }
 
   lines.push(
     input.crossScene
       ? "换场景处用 0.3–0.5 秒叠化或淡入淡出；禁止闪白、旋转、拉扯这类花哨特效。"
-      : "本段同一场景内一律直切，禁止转场特效（闪白、旋转、拉扯、叠化都不要）。",
+      : "本段同一场景内一律直切，禁止转场特效（闪白、旋转、拉扯、叠化都不要）。"
   );
 
   lines.push(
-    "声音补流畅度：人物走动补轻微脚步声，切到全景抬高环境底噪，换场景缝隙用关门/风声一类过渡音效盖住，紧张与爆发处给轻微情绪音效；不要配乐压过人声。",
+    "声音补流畅度：人物走动补轻微脚步声，切到全景抬高环境底噪，换场景缝隙用关门/风声一类过渡音效盖住，紧张与爆发处给轻微情绪音效；不要配乐压过人声。"
   );
 
   return [EDIT_CRAFT_MARK, ...lines].join("\n");

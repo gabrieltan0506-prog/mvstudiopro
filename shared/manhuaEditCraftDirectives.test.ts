@@ -8,9 +8,9 @@ import {
 describe("段内景别序列", () => {
   it("按出现顺序读，长词不被短词重复吃", () => {
     const seq = readManhuaShotSizeSequence(
-      "0–5s：中景，两人对峙。5–10s：大特写，眼尾一抖。10–15s：全景，摔门而出。",
+      "0–5s：中景，两人对峙。5–10s：大特写，眼尾一抖。10–15s：全景，摔门而出。"
     );
-    expect(seq.map((s) => s.nameZh)).toEqual(["中景", "大特写", "全景"]);
+    expect(seq.map(s => s.nameZh)).toEqual(["中景", "大特写", "全景"]);
   });
 
   it("没点名景别时返回空", () => {
@@ -27,7 +27,10 @@ describe("景别反差判定", () => {
   it("字面不同但跨度不足也要抓出来", () => {
     // 「近景→中近景」看着换了词，实际跨度 0，剪出来像原地踏步
     const seq = readManhuaShotSizeSequence("近景。中近景。");
-    expect(findManhuaFlatShotSizeRun(seq)).toEqual({ fromZh: "近景", toZh: "中近景" });
+    expect(findManhuaFlatShotSizeRun(seq)).toEqual({
+      fromZh: "近景",
+      toZh: "中近景",
+    });
   });
 
   it("连续同景别当然算平", () => {
@@ -80,7 +83,10 @@ describe("剪辑手法指令", () => {
   });
 
   it("跨场景段才给短转场额度", () => {
-    const out = formatManhuaEditCraftDirectives({ prompt: multi, crossScene: true });
+    const out = formatManhuaEditCraftDirectives({
+      prompt: multi,
+      crossScene: true,
+    });
     expect(out).toContain("0.3–0.5 秒");
     expect(out).not.toContain("一律直切");
   });
@@ -95,5 +101,27 @@ describe("剪辑手法指令", () => {
 
   it("空提示词不产出", () => {
     expect(formatManhuaEditCraftDirectives({ prompt: "" })).toBe("");
+  });
+
+  it("已锁视觉秒轴与跨切原声不被通用剪辑建议改写", () => {
+    const out = formatManhuaEditCraftDirectives({
+      prompt:
+        "0–2.5s：近景→中景，娘说「阿菁，慢一点」。2.5–5s：中景。镜头视觉秒轴保持原稿。切镜时原声连续。",
+      shotCount: 6,
+    });
+    expect(out).toContain("按原稿已锁定的视觉秒轴");
+    expect(out).toContain("切画面不截尾、不变速");
+    expect(out).not.toMatch(
+      /0\.2 秒|禁止台词未说完|改成中景|景别反差|切点卡情绪不卡秒/
+    );
+  });
+
+  it("仅有跨切声音要求时保留视觉剪辑建议，但不等待台词结束", () => {
+    const out = formatManhuaEditCraftDirectives({
+      prompt: `${multi}曹三原声跨切连续。`,
+    });
+    expect(out).toContain("切画面不截尾、不变速");
+    expect(out).toContain("保持景别反差");
+    expect(out).not.toMatch(/0\.2 秒|禁止台词未说完/);
   });
 });
