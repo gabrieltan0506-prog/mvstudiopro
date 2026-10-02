@@ -730,7 +730,7 @@ function extractSystemGcsObjectPath(source: string): string | null {
   }
 }
 
-async function loadSucceededCanvasVideoOutputObjects(
+export async function loadSucceededCanvasVideoOutputObjects(
   userId: number,
 ): Promise<ReadonlySet<string>> {
   const dir = await getTaskDir();

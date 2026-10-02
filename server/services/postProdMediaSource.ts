@@ -201,6 +201,12 @@ export async function loadSucceededJobOutputSources(
       else if (/^https:\/\//i.test(source)) urls.add(source);
     }
   }
+  // 画布视频使用独立持久任务登记簿，不在 jobs 表中；只接收本人成功任务的明确视频产物。
+  const uid = Number(userId);
+  if (Number.isSafeInteger(uid) && uid > 0) {
+    const { loadSucceededCanvasVideoOutputObjects } = await import("./canvasVideoTask.js");
+    for (const object of Array.from(await loadSucceededCanvasVideoOutputObjects(uid))) objects.add(object);
+  }
   return { objects, urls };
 }
 
