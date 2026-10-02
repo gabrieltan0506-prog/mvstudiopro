@@ -105,13 +105,30 @@ export function normalizeManhuaSegmentReferences(
 }
 
 export function setManhuaSegmentReference<
-  T extends { manhuaSegmentRefs?: ManhuaSegmentReferences },
+  T extends { manhuaSegmentRefs?: ManhuaSegmentReferences; seedance25RefVideoUrls?: string[]; refVideoUrl?: string },
 >(block: T, slot: ManhuaSegmentReferenceSlot, entry: ManhuaSegmentReferenceEntry | null): T {
   const next: ManhuaSegmentReferences = { ...(block.manhuaSegmentRefs || {}) };
+  const identity = (value: string) => {
+    if (value.startsWith("gs://")) return value;
+    try {
+      const url = new URL(value);
+      if (url.hostname === "storage.googleapis.com") return `gs://${decodeURIComponent(url.pathname.slice(1))}`;
+      if (url.hostname.endsWith(".storage.googleapis.com")) return `gs://${url.hostname.slice(0, -".storage.googleapis.com".length)}${decodeURIComponent(url.pathname)}`;
+      return `${url.origin}${url.pathname}`;
+    } catch { return value; }
+  };
+  const oldPrevis = slot === "previs" ? block.manhuaSegmentRefs?.previs : undefined;
+  const oldIds = new Set([oldPrevis?.url, oldPrevis?.gcsUri].filter((url): url is string => Boolean(url)).map(identity));
+  // 更换白模时移除同一旧对象在历史参考字段中的副本；其他显式参考保留。
+  const referencePatch = oldIds.size ? {
+    seedance25RefVideoUrls: block.seedance25RefVideoUrls?.filter(url => !oldIds.has(identity(url))),
+    refVideoUrl: block.refVideoUrl && oldIds.has(identity(block.refVideoUrl)) ? undefined : block.refVideoUrl,
+  } : {};
   if (entry) next[slot] = entry;
   else delete next[slot];
   return {
     ...block,
+    ...referencePatch,
     manhuaSegmentRefs: Object.keys(next).length ? next : undefined,
   };
 }
@@ -130,7 +147,7 @@ export function formatManhuaSegmentReferenceGuideZh(input: {
   const lines: string[] = [];
   if (input.previsVideoIndex && input.previsVideoIndex > 0) {
     lines.push(
-      `【段参考·白模】@视频${input.previsVideoIndex}是本段站位白模：严格按它的秒位复刻人物走位、全景近景特写的景别切换与推拉摇移环绕切镜的机位运动；灰色人偶、空白场景与网格一律不进画面，人物外观、服装、场景只按@图片N与正文。`,
+      `【段参考·白模】@视频${input.previsVideoIndex}是本段站位白模：按正文指定的参考职责约束人物站位、动作路径、遮挡和空间轴线；镜头秒轴、景别、机位运动与画幅以本段正文为准，不自动照搬白模运镜。灰色人偶、空白场景与网格一律不进画面，人物外观、服装、场景只按@图片N与正文。`,
     );
     if(input.motionGuideZh?.trim()) lines.push(`【白模动作】${input.motionGuideZh.trim()}`);
   }

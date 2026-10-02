@@ -11301,6 +11301,13 @@ export default function OmniCanvas() {
                       block => ({ ...block, manhuaGenerationHold: hold || undefined }),
                       next => saveCanvasState(next, edges), setBlocks);
                   }}
+                  onUseOnlyBoundPrevis={(clipId) => {
+                    const current = blocksRef.current.find(block => block.id === clipId);
+                    if (factoryBusy || !current?.manhuaSegmentRefs?.previs || current.status === "running" || current.videoTaskStatus === "queued") return false;
+                    return persistCanvasAudioBlock(blocksRef, clipId,
+                      block => ({ ...block, seedance25RefVideoUrls: [], refVideoUrl: undefined }),
+                      next => saveCanvasState(next, edges), setBlocks);
+                  }}
                   onUpdateClipPrompt={(clipId, prompt) => {
                     setBlocks((prev) => {
                       const next = prev.map((b) =>

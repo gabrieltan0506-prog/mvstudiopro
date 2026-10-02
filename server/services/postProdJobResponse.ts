@@ -27,7 +27,7 @@ export function buildPostProdJobResponse(
 
   const input =
     job.input && typeof job.input === "object" && !Array.isArray(job.input)
-      ? (job.input as { action?: unknown })
+      ? (job.input as { action?: unknown; scopeKey?: unknown; params?: unknown })
       : {};
 
   const originalOutput =
@@ -73,7 +73,15 @@ export function buildPostProdJobResponse(
     }
   }
 
+  const params = input.params && typeof input.params === "object" && !Array.isArray(input.params)
+    ? input.params as Record<string, unknown> : {};
+  const sourceVideoUris = typeof params.videoUri === "string" ? [params.videoUri]
+    : Array.isArray(params.clips) ? params.clips.flatMap(clip =>
+      clip && typeof clip === "object" && typeof clip.uri === "string" ? [clip.uri] : []) : [];
+
   return {
+    scopeKey: typeof input.scopeKey === "string" ? input.scopeKey : undefined,
+    sourceVideoUris,
     jobId: job.id,
     action: input.action,
     status: job.status,
