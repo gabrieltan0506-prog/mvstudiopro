@@ -87,6 +87,9 @@ describe("首段试片的实际出站载荷（仅虚构网络边界）", () => {
         authorizeCallsAtPost = authorize.mock.calls.length;
         const body = JSON.parse(String(init.body));
         expect(body.imageUrls.filter((u:string)=>u.includes("uploaded-tail"))).toEqual(["https://test.invalid/uploaded-tail-1.jpg"]);
+        expect(body.imageUrl).toBe(body.imageUrls[0]);
+        expect(body.imageUrls.at(-1)).toBe("https://test.invalid/uploaded-tail-1.jpg");
+        expect(body.prompt).toContain(`@图片${body.imageUrls.length}承接上段起幅`);
         expect(body.idempotencyKey).toBe(body.intentId);
         expect(Array.from(storageData.values()).join("")).toContain(body.intentId);
         expect(Array.from(storageData.values()).join("")).toContain('"status":"submitted"');

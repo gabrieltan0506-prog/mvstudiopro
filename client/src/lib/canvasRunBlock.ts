@@ -3593,7 +3593,9 @@ async function runCanvasBlockInner(
           resolution: block.videoResolution,
         } as const;
         const seedanceFirstFrame =
-          useSeedance25 && workMode === "text_to_video" ? undefined : seedStill;
+          useSeedance25 && workMode === "text_to_video" ? undefined :
+          // 多模态素材按导演编译顺序绑定；单独的起幅不能被服务端 prepend 到第1槽。
+          isClip && useSeedance25 && workMode === "reference_to_video" ? outImages[0] : seedStill;
         // 与预览同源：同一个准备器、同一个结算点。
         const seedancePrepared = { ...buildSeedanceCanvasRequestBody(finalPrompt, seedanceFirstFrame, ar, seedanceOpts), engine: videoModel };
         const seedanceGuard = settleManhuaOutbound(
