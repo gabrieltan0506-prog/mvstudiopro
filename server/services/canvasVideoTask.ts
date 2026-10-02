@@ -1,6 +1,7 @@
 import { submitEvolinkH3, EVOLINK_H3_MODEL } from "./evolinkHailuoVideo.js";
 import { preflightH3ReferenceMedia } from "./hailuoReferencePreflight.js";
 import { SubmitRejectedError } from "./submitOutcomeErrors.js";
+import { normalizeSeedanceReferenceVideo, ReferenceVideoPending, ReferenceVideoUnknown, type ReferenceVideoUpscaleRecord } from "./seedanceReferenceVideoSize.js";
 import { normalizeSeedanceReferenceImage } from "./seedanceReferenceImageSize.js";
 /**
  * 画布成片异步任务（Seedance OpenRouter / Hailuo / Happy Horse /
@@ -148,6 +149,8 @@ export type CanvasVideoTaskRecord = {
   imageUrls?: string[];
   /** 提交前实际图片对象，原始imageUrls保留用于恢复与对账。 */
   seedancePreparedImageObjects?: string[];
+  seedancePreparedVideoObjects?: string[];
+  seedanceReferenceVideoUpscales?: Record<string, ReferenceVideoUpscaleRecord>;
   videoUrls?: string[];
   audioUrls?: string[];
   aspectRatio: string;
@@ -319,7 +322,7 @@ function hasProviderTask(task: CanvasVideoTaskRecord): boolean {
       task.byteplusTaskId ||
       task.pollingUrl ||
       task.wavespeedPredictionId ||
-      task.bailianTaskId,
+      task.bailianTaskId || Object.values(task.seedanceReferenceVideoUpscales || {}).some(record => Boolean(record.predictionId || record.submissionStartedAt)),
   );
 }
 
@@ -455,10 +458,19 @@ async function resolveSeedanceTaskReferences(
     }
     return pending;
   };
+  const videoUrls: string[] = [];
+  for (const url of task.videoUrls || []) {
+    const resolved = await resolve(url);
+    const key = extractSystemGcsObjectPath(url) || url;
+    const record = (task.seedanceReferenceVideoUpscales ||= {})[key] ||= {};
+    videoUrls.push(task.seedanceVersion === "2.5" || task.engine.startsWith("seedance25-")
+      ? await normalizeSeedanceReferenceVideo(resolved, task.userId, record, () => writeTask(task), `${task.taskId}-reference-${videoUrls.length}`)
+      : resolved);
+  }
   const references = {
     imageUrl: task.imageUrl ? await resolveImage(task.imageUrl) : undefined,
     imageUrls: await Promise.all((task.imageUrls || []).map(resolveImage)),
-    videoUrls: await Promise.all((task.videoUrls || []).map(resolve)),
+    videoUrls,
     audioUrls: await resolveCanvasVideoAudioUrls(task.audioUrls, task.userId),
   };
   if (task.seedanceVersion === "2.5" || task.engine.startsWith("seedance25-")) {
@@ -466,6 +478,7 @@ async function resolveSeedanceTaskReferences(
       .filter((url): url is string => Boolean(url))
       .map(url => extractSystemGcsObjectPath(url))
       .filter((objectPath): objectPath is string => Boolean(objectPath));
+    task.seedancePreparedVideoObjects = references.videoUrls.map(url => extractSystemGcsObjectPath(url)).filter((value): value is string => Boolean(value));
     await writeTask(task);
   }
   return references;
@@ -1198,6 +1211,16 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
           return after;
         }
       } catch (error) {
+        if (error instanceof ReferenceVideoPending) {
+          task.lastTransientError = error.message;
+          await writeTask(task);
+          return task;
+        }
+        if (error instanceof ReferenceVideoUnknown) {
+          task.status = "reconcile_manual"; task.error = error.message;
+          await writeTask(task); await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {});
+          return task;
+        }
         if (task.engine === "seedance-mini-byteplus" && task.miniByteplusSubmissionStartedAt && (error as { kind?: string })?.kind !== "rejected") {
           if (task.byteplusTaskId) {
             // 已受理但镜像/写盘后续故障，保留同任务轮询，不重复创建或退款。

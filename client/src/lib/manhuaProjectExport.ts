@@ -91,6 +91,8 @@ export type CollectManhuaClipDockItemsOpts = {
    * 默认 true。
    */
   includePendingStory?: boolean;
+  /** 成片坞保留未出片和失败段的参考上传入口；不授权导出或合成空产物。 */
+  includePendingClips?: boolean;
 };
 
 export function collectManhuaClipDockItems(
@@ -114,7 +116,8 @@ export function collectManhuaClipDockItems(
     const isTextStage = TEXT_EXPORT_STAGES.has(stage);
     const hasText = Boolean(b.outputText?.trim()) && isTextStage;
     const pendingStory = stage === "story" && includePendingStory && !hasText;
-    if (!hasMedia && !hasText && !pendingStory) continue;
+    const pendingClip = stage === "clip" && opts?.includePendingClips === true;
+    if (!hasMedia && !hasText && !pendingStory && !pendingClip) continue;
     const episodeIndex = getBlockEpisodeIndex(b) ?? 1;
     // 集内段号：-gNN 是全集连续编号，必须经 resolveClipLocalSegmentIndex 折算
     // （clip-e02-g07 是第 2 集第 1 段，不是第 7 段）；它同时兼容旧 -sNN 与 prompt 标段
@@ -131,7 +134,7 @@ export function collectManhuaClipDockItems(
       label: pendingStory ? "故事链（待跑·可勾选运行）" : labelWithSeg,
       segIndex: segIndex > 0 ? segIndex : undefined,
       // clip 只认活动 outputUrl；outputUrls 是历史暂存（重跑旧片），仅供回看不供合成
-      outputUrl: stage === "clip" ? b.outputUrl : b.outputUrl || b.outputUrls?.[0],
+      outputUrl: stage === "clip" ? (hasMedia ? b.outputUrl : undefined) : b.outputUrl || b.outputUrls?.[0],
       outputText: b.outputText,
       kind: b.kind,
       clipQuality: b.manhuaClipQuality,

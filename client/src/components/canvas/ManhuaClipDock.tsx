@@ -191,7 +191,7 @@ export default function ManhuaClipDock({
       /* 隐私模式等无本机存储时忽略 */
     }
   }, [includeHistory]);
-  const items = useMemo(() => collectManhuaClipDockItems(blocks), [blocks]);
+  const items = useMemo(() => collectManhuaClipDockItems(blocks, { includePendingClips: true }), [blocks]);
   const blockById = useMemo(() => new Map(blocks.map((b) => [b.id, b] as const)), [blocks]);
   const summary = useMemo(() => summarizeManhuaDockExport(items, { blocks }), [items, blocks]);
   const assembleClips = useMemo(() => {
