@@ -280,7 +280,6 @@ import {
   resolveSegmentIndexFromShotIndex,
 } from "@shared/manhuaScriptWorkbench";
 import { buildManhuaAutoSegmentBinding, normalizeManhuaAutoSegmentBinding } from "@shared/manhuaAutoSegment";
-import { extractManhuaSceneHintFromPrompt } from "@shared/manhuaClipDialogueTimeline";
 import { upsertShotAngleSection } from "@shared/manhuaShotAnglePersist";
 import { patchShotDialogueSection } from "@shared/manhuaShotDialoguePersist";
 import { syncEditedShotDialoguesToAudio } from "@/lib/manhuaAudioScriptSource";
@@ -9140,118 +9139,8 @@ export default function OmniCanvas() {
               setEdges(workingEdges);
               saveCanvasState(workingBlocks, workingEdges);
             }
-            // 已有原片的局部编辑不是续拍；只豁免本次明确准备的同集同段单目标。
-            const preparedVideoEdit = isPreparedManhuaVideoEditRun({
-              episodeIndex,
-              fragmentShotIndex,
-              targetBlockIds: effectiveTargetBlockIds,
-              preparedTargetBlocks: opts?.preparedTargetBlocks,
-              preservePreparedTargetBlocks: opts?.preservePreparedTargetBlocks,
-            });
-            // 真正续拍仍须挂上一段尾帧/成片，并保留原来的链式深度检查。
-            if (
-              untilStage === "clip" &&
-              typeof fragmentShotIndex === "number" &&
-              fragmentShotIndex > 1 &&
-              !preparedVideoEdit
-            ) {
-              const {
-                canContinueManhuaChain,
-                manhuaContinuationRequiresLastFrame,
-                measureManhuaChainDepth,
-                formatManhuaChainReanchorHintZh,
-                normalizeManhuaChainSceneKey,
-              } = await import("@shared/manhuaDirectingWorkflow");
-              const currentClips = queuedManhuaClipBlocks(workingBlocks, episodeIndex, explicitWriterVideoModel || undefined);
-              const priorDone = currentClips
-                .filter(
-                  (b) =>
-                    b.id.startsWith("clip-") &&
-                    (getBlockEpisodeIndex(b) ?? 1) === episodeIndex &&
-                    resolveClipLocalSegmentIndex(b.id, b.prompt, episodeIndex) < fragmentShotIndex &&
-                    b.status === "done" &&
-                    Boolean(b.outputUrl || b.outputUrls?.[0]),
-                )
-                .sort((a, b) => resolveClipLocalSegmentIndex(a.id, a.prompt, episodeIndex) - resolveClipLocalSegmentIndex(b.id, b.prompt, episodeIndex));
-              const lastAccepted = priorDone.find((candidate) =>
-                resolveClipLocalSegmentIndex(candidate.id, candidate.prompt, episodeIndex) === fragmentShotIndex - 1,
-              );
-              const cont = manhuaContinuationRequiresLastFrame({
-                acceptedClipUrl: lastAccepted?.outputUrl || lastAccepted?.outputUrls?.[0],
-                lastFrameUrl: lastAccepted?.lastFrameUrl,
-              });
-              if (!cont.ok) {
-                toast.message(cont.hintZh || "请先完成上一段成片再续拍");
-                pushDebug("continuation:blocked", {
-                  level: "warn",
-                  detail: cont.hintZh || "no-last-frame",
-                });
-                break outer;
-              }
-              const priorSceneKeys = priorDone.map(
-                (b) =>
-                  extractManhuaSceneHintFromPrompt(b.prompt) ||
-                  `第${episodeIndex}集`,
-              );
-              const targetClip = currentClips.find(
-                (b) =>
-                  b.id.startsWith("clip-") &&
-                  (getBlockEpisodeIndex(b) ?? 1) === episodeIndex &&
-                  resolveClipLocalSegmentIndex(b.id, b.prompt, episodeIndex) === fragmentShotIndex,
-              );
-              const autoSegment = normalizeManhuaAutoSegmentBinding(targetClip?.manhuaAutoSegment);
-              const nextKeyart = workingBlocks.find(
-                (b) =>
-                  b.id.startsWith("keyart-") &&
-                  (getBlockEpisodeIndex(b) ?? 1) === episodeIndex &&
-                  (autoSegment
-                    ? autoSegment.shotIndexes.includes(resolveKeyartShotIndex(b.id, b.prompt))
-                    : resolveSegmentIndexFromShotIndex(resolveKeyartShotIndex(b.id, b.prompt)) ===
-                      fragmentShotIndex),
-              );
-              const nextSceneRaw =
-                extractManhuaSceneHintFromPrompt(nextKeyart?.prompt) ||
-                extractManhuaSceneHintFromPrompt(lastAccepted?.prompt) ||
-                `第${episodeIndex}集·段${fragmentShotIndex}`;
-              const sceneKey = normalizeManhuaChainSceneKey(nextSceneRaw);
-              const ignoreFirstN = chainIgnoreByScene[sceneKey] || 0;
-              const measured = measureManhuaChainDepth({
-                priorSceneKeys,
-                nextSceneKey: sceneKey,
-                ignoreFirstN,
-              });
-              const chain = canContinueManhuaChain({
-                sceneKey: measured.sceneKey,
-                depth: measured.depth,
-              });
-              if (!chain.ok) {
-                const hint = formatManhuaChainReanchorHintZh(measured.sceneKey);
-                toast.message(chain.reasonZh || hint, {
-                  description: "点右侧可重锚角色/场景设定图，然后重新开链续拍。",
-                  action: {
-                    label: "重锚设定板",
-                    onClick: () => {
-                      setChainIgnoreByScene((prev) => ({
-                        ...prev,
-                        [sceneKey]: priorSceneKeys.length,
-                      }));
-                      setManhuaAssetDrawer("assets");
-                      void confirmAssetsAndPrepareImages({
-                        episodeIndexOverride: episodeIndex,
-                      });
-                      toast.message("已标记重锚开链", {
-                        description: "设定图就绪后可再续拍本场。",
-                      });
-                    },
-                  },
-                });
-                pushDebug("continuation:chain-cap", {
-                  level: "warn",
-                  detail: `${measured.sceneKey}:depth=${measured.depth}`,
-                });
-                break outer;
-              }
-            }
+            // 各段按本段已确认参考和原声独立生成；前段成片、尾帧及链深度不再拦截提交。
+            // 已有接力素材仍由流水线按用户偏好使用，不要求前段先完成。
             if (opts?.keyartShotIndex !== undefined) {
               const prepared = prepareManhuaKeyartShotTarget(workingBlocks, workingEdges, episodeIndex, opts.keyartShotIndex, ensureOptions, opts.targetBlockIds?.[0]);
               const target = prepared.blocks.find((block) => block.id === prepared.targetBlockId)!;
@@ -9315,6 +9204,7 @@ export default function OmniCanvas() {
               resolveOutboundGate: (blockId) => ({
                 currentScope: manhuaOutboundScope(blockId),
                 confirmation: outboundConfirmationsRef.current[blockId],
+                confirmOnGenerate: true,
               }),
               signal: ac.signal,
               onBlocksChange: (next) => {
@@ -9495,6 +9385,9 @@ export default function OmniCanvas() {
               description: `部分未完成：${friendly}。可单独重出失败步骤。`,
             },
           );
+        } else if (completed === 0 && skipped === 0) {
+          pushDebug("factoryRun:empty", { level: "warn", detail: "no-submitted-or-completed-stage" });
+          toast.error("本次没有提交生成任务", { description: "没有可执行的节点，请检查本段生成范围；本次未新跑视频。" });
         } else {
           pushDebug("factoryRun:ok", {
             level: "ok",
@@ -11088,6 +10981,7 @@ export default function OmniCanvas() {
                         resolveManhuaOutboundGate={(blockId) => ({
                           currentScope: manhuaOutboundScope(blockId),
                           confirmation: outboundConfirmationsRef.current[blockId],
+                confirmOnGenerate: true,
                         })}
                         prepareManhuaClipRun={prepareManhuaClipRunInput}
                         projectAssetRefs={customAssetRefs}
@@ -12671,6 +12565,7 @@ export default function OmniCanvas() {
                         resolveManhuaOutboundGate={(blockId) => ({
                           currentScope: manhuaOutboundScope(blockId),
                           confirmation: outboundConfirmationsRef.current[blockId],
+                confirmOnGenerate: true,
                         })}
                         prepareManhuaClipRun={prepareManhuaClipRunInput}
                         projectAssetRefs={customAssetRefs}
@@ -13386,6 +13281,7 @@ export default function OmniCanvas() {
             resolveManhuaOutboundGate={(blockId) => ({
               currentScope: manhuaOutboundScope(blockId),
               confirmation: outboundConfirmationsRef.current[blockId],
+                confirmOnGenerate: true,
             })}
             prepareManhuaClipRun={prepareManhuaClipRunInput}
             projectAssetRefs={customAssetRefs}
