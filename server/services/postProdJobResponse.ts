@@ -77,7 +77,8 @@ export function buildPostProdJobResponse(
     ? input.params as Record<string, unknown> : {};
   const sourceVideoUris = typeof params.videoUri === "string" ? [params.videoUri]
     : Array.isArray(params.clips) ? params.clips.flatMap(clip =>
-      clip && typeof clip === "object" && typeof clip.uri === "string" ? [clip.uri] : []) : [];
+      typeof clip === "string" ? [clip]
+        : clip && typeof clip === "object" && typeof clip.uri === "string" ? [clip.uri] : []) : [];
 
   return {
     scopeKey: typeof input.scopeKey === "string" ? input.scopeKey : undefined,

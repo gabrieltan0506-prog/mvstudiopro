@@ -164,16 +164,19 @@ export const audioExtractParamsSchema = z
 export type AudioExtractParams = z.infer<typeof audioExtractParamsSchema>;
 export type RawAudioExtractParams = z.input<typeof audioExtractParamsSchema>;
 
+// 项目恢复标识是队列元数据；入口、素材归属解析和 worker 必须共同接受，不能用交集扩展 strict 对象。
+const postProdMetadataShape = { scopeKey: z.string().max(128).optional() };
+
 export const postProdJobInputSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("manhua_auto_rig"), params: autoRigRequestSchema }).strict(),
-  z.object({ action: z.literal("manhua_previs"), params: manhuaPrevisRequestSchema }).strict(),
-  z.object({ action: z.literal("audio_extract"), params: audioExtractParamsSchema }).strict(),
-  z.object({ action: z.literal("audio_trim"), params: audioTrimParamsSchema }).strict(),
-  z.object({ action: z.literal("audio_timeline"), params: audioTimelineParamsSchema }).strict(),
-  z.object({ action: z.literal("concat"), params: concatParamsSchema }).strict(),
-  z.object({ action: z.literal("bgm_mount"), params: bgmMountParamsSchema }).strict(),
-  z.object({ action: z.literal("loudness_check"), params: loudnessParamsSchema }).strict(),
-  z.object({ action: z.literal("burn_subtitle"), params: burnSubtitleParamsSchema }).strict(),
+  z.object({ ...postProdMetadataShape, action: z.literal("manhua_auto_rig"), params: autoRigRequestSchema }).strict(),
+  z.object({ ...postProdMetadataShape, action: z.literal("manhua_previs"), params: manhuaPrevisRequestSchema }).strict(),
+  z.object({ ...postProdMetadataShape, action: z.literal("audio_extract"), params: audioExtractParamsSchema }).strict(),
+  z.object({ ...postProdMetadataShape, action: z.literal("audio_trim"), params: audioTrimParamsSchema }).strict(),
+  z.object({ ...postProdMetadataShape, action: z.literal("audio_timeline"), params: audioTimelineParamsSchema }).strict(),
+  z.object({ ...postProdMetadataShape, action: z.literal("concat"), params: concatParamsSchema }).strict(),
+  z.object({ ...postProdMetadataShape, action: z.literal("bgm_mount"), params: bgmMountParamsSchema }).strict(),
+  z.object({ ...postProdMetadataShape, action: z.literal("loudness_check"), params: loudnessParamsSchema }).strict(),
+  z.object({ ...postProdMetadataShape, action: z.literal("burn_subtitle"), params: burnSubtitleParamsSchema }).strict(),
 ]);
 
 export type PostProdJobInput = z.infer<typeof postProdJobInputSchema>;
