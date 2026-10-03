@@ -1,7 +1,7 @@
 /**
  * 视频高清放大（WaveSpeed 2K/4K）客户端。
  *
- * 异步任务：POST 拿 taskId → 轮询 op=canvasVideoStatus。计费按秒（服务端真源
+ * 异步任务：POST 拿 taskId → 轮询 op=canvasVideoStatus。用户计费按每开始30秒（服务端真源
  * `canvasVideoUpscaleCredits`），前端只用同一共享函数做展示，不自算价。
  * 服务端有「用户+源URL+档位」天然幂等键：断线重发/重复点击不会双扣。
  */
@@ -34,7 +34,7 @@ export function videoUpscaleStatusLabel(
     case "queued":
       return "排队中";
     case "running":
-      return "放大中";
+      return "处理中";
     case "succeeded":
       return "已完成";
     case "failed":
@@ -56,7 +56,7 @@ export function isVideoUpscaleTerminal(
   );
 }
 
-/** 读视频真实时长（秒，四舍五入且至少1秒）——计费按秒，展示与提交都用真实元数据 */
+/** 读视频真实时长（向上取整且至少1秒），与服务端报价口径一致。 */
 export function probeVideoDurationSec(url: string): Promise<number | null> {
   return new Promise(resolve => {
     let settled = false;
@@ -72,7 +72,7 @@ export function probeVideoDurationSec(url: string): Promise<number | null> {
       video.onloadedmetadata = () =>
         done(
           Number.isFinite(video.duration) && video.duration > 0
-            ? Math.max(1, Math.round(video.duration))
+            ? Math.max(1, Math.ceil(video.duration))
             : null
         );
       video.onerror = () => done(null);
@@ -85,7 +85,7 @@ export function probeVideoDurationSec(url: string): Promise<number | null> {
 }
 
 export type VideoUpscaleSourceMetadata = {
-  sourceUrl: string; width: number; height: number; durationSec: number; sourceResolution: string;
+  sourceUrl: string; width: number; height: number; durationSec: number; sourceResolution: string; fps?: number | null; durationExactSec?: number;
 };
 
 /** 超分报价同时核验宽高与时长，结果绑定原片URL，不能借用节点默认分辨率。 */
@@ -109,7 +109,7 @@ export function probeVideoUpscaleSource(url: string): Promise<VideoUpscaleSource
         const { videoWidth: width, videoHeight: height, duration } = video!;
         const sourceResolution = wavespeedSourceResolutionFromDimensions(width, height);
         done(sourceResolution && Number.isFinite(duration) && duration > 0 && duration <= 600
-          ? { sourceUrl: url, width, height, durationSec: Math.max(1, Math.round(duration)), sourceResolution } : null);
+          ? { sourceUrl: url, width, height, durationSec: Math.max(1, Math.ceil(duration)), sourceResolution } : null);
       };
       video.onerror = () => done(null);
       timer = setTimeout(() => done(null), 15_000);
@@ -130,9 +130,13 @@ export class VideoUpscaleSubmitError extends Error {
 
 export async function startVideoUpscale(input: {
   videoUrl: string;
-  target: "2k" | "4k";
+  target?: "2k" | "4k";
+  targetFps?: 30 | 60;
+  combine?: boolean;
+  frameInterpolationProvider?: "ffmpeg";
+  scopeKey?: string;
   durationSec: number;
-  /** 漫剧集号：有值走整集批发价；缺省按自由画布零售 ×1.1 */
+  /** 漫剧集号用于项目归属；增强视频采用用户指定的统一价表 */
   episodeIndex?: number;
   sourceResolution?: string;
 }): Promise<{
@@ -140,13 +144,16 @@ export async function startVideoUpscale(input: {
   status: VideoUpscaleTaskStatus;
   creditsUsed: number;
 }> {
-  const res = await fetch(withLongJobsFlyDirect("/api/jobs?op=videoUpscale"), {
+  const res = await fetch(withLongJobsFlyDirect(`/api/jobs?op=${input.targetFps && !input.combine ? "videoInterpolate" : "videoUpscale"}`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify({
       videoUrl: input.videoUrl,
       target: input.target,
+      targetFps: input.targetFps,
+      frameInterpolationProvider: input.frameInterpolationProvider,
+      scopeKey: input.scopeKey,
       durationSec: input.durationSec,
       episodeIndex: input.episodeIndex,
       sourceResolution: input.sourceResolution,
@@ -210,4 +217,25 @@ export async function fetchVideoUpscaleStatus(
           ? "2k"
           : undefined,
   };
+}
+
+/** 工作流保护素材在服务端实读，禁止把gs地址交给浏览器video。 */
+export async function probeWorkflowVideoSource(videoUrl: string): Promise<VideoUpscaleSourceMetadata> {
+  const res = await fetch(withLongJobsFlyDirect("/api/jobs?op=videoEnhanceProbe"), { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ videoUrl }) });
+  const json = await res.json();
+  if (!res.ok || !json.ok || !json.metadata) throw new Error(json.error || "读取成片失败");
+  return json.metadata;
+}
+export async function fetchWorkflowVideoEnhanceTasks(scopeKey: string) {
+  const res = await fetch(withLongJobsFlyDirect(`/api/jobs?op=videoEnhanceList&scopeKey=${encodeURIComponent(scopeKey)}`), { credentials: "include", cache: "no-store" });
+  const json = await res.json();
+  if (!res.ok || !json.ok) throw new Error(json.error || "读取增强任务失败");
+  return json.tasks;
+}
+
+export async function importWorkflowVideoSource(videoUrl: string): Promise<string> {
+  const response = await fetch(withLongJobsFlyDirect("/api/jobs?op=videoEnhanceImport"), { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ videoUrl }) });
+  const data = await response.json();
+  if (!response.ok || !data.ok || !data.source?.gcsUri) throw new Error(data.error || "成品导入失败");
+  return String(data.source.gcsUri);
 }

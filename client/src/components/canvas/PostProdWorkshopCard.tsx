@@ -27,14 +27,16 @@ import { getBlockEpisodeIndex, isManhuaFactoryArtifactBlock } from "@/lib/canvas
 import {
   fetchVideoUpscaleStatus,
   isVideoUpscaleTerminal,
-  probeVideoUpscaleSource,
+  probeWorkflowVideoSource,
+  importWorkflowVideoSource,
+  fetchWorkflowVideoEnhanceTasks,
   type VideoUpscaleSourceMetadata,
   startVideoUpscale,
   type VideoUpscaleTaskStatus,
   videoUpscaleStatusLabel,
 } from "@/lib/videoUpscaleApi";
 import { canWavespeedUpscale } from "@shared/wavespeedVideoUpscaleModels";
-import { canvasVideoUpscaleCredits } from "@shared/canvasGenerationPricing";
+import { canvasVideoUpscaleCredits, canvasVideoEnhanceQuote, canvasVideoFrameCredits, canvasVideoEnhanceBillingUnits } from "@shared/canvasGenerationPricing";
 import type { BgmBriefModel } from "@shared/manhuaBgmBrief";
 import {
   beatTableToVolumeExpr,
@@ -88,7 +90,7 @@ type TrackedUpscale = {
   scopeKey?: string;
   sourceUrl: string;
   sourceLabel: string;
-  target: "2k" | "4k";
+  target: "2k" | "4k" | "30fps" | "60fps" | "2k-30fps" | "2k-60fps" | "4k-30fps" | "4k-60fps";
   status: VideoUpscaleTaskStatus;
   createdAt: number;
   episodeIndex?: number;
@@ -130,7 +132,7 @@ function loadTrackedUpscales(userId: string): TrackedUpscale[] {
         return (
           typeof row.taskId === "string" &&
           typeof row.sourceUrl === "string" &&
-          (row.target === "2k" || row.target === "4k") &&
+          (["2k", "4k", "30fps", "60fps", "2k-30fps", "2k-60fps", "4k-30fps", "4k-60fps"].includes(String(row.target))) &&
           typeof row.status === "string"
         );
       })
@@ -465,6 +467,7 @@ export default function PostProdWorkshopCard({
   const upscaleProbedSec = upscaleSource?.durationSec ?? null;
   const [upscaleProbeBusy, setUpscaleProbeBusy] = useState(false);
   const [upscaleSubmitBusy, setUpscaleSubmitBusy] = useState(false);
+  const [enhanceChoice, setEnhanceChoice] = useState<{ target: "2k" | "4k"; fps: 30 | 60 }>({ target: "2k", fps: 30 });
   const [upscaleJobs, setUpscaleJobs] = useState<TrackedUpscale[]>(() =>
     loadTrackedUpscales(userId)
   );
@@ -556,6 +559,25 @@ export default function PostProdWorkshopCard({
       upscalePollingRef.current = false;
       window.clearInterval(timer);
     };
+  }, [projectScopeKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const recover = async () => {
+      try {
+        const rows = await fetchWorkflowVideoEnhanceTasks(projectScopeKey) as TrackedUpscale[];
+        if (cancelled) return;
+        setUpscaleJobs(prev => {
+          const byId = new Map(prev.map(row => [row.taskId, row]));
+          for (const row of rows) if (row.scopeKey === projectScopeKey) byId.set(row.taskId, row);
+          return Array.from(byId.values()).sort((a, b) => b.createdAt - a.createdAt).slice(0, 12);
+        });
+      } catch { /* 服务端恢复失败不重提交；本地taskId继续轮询。 */ }
+    };
+    void recover();
+    const timer = window.setInterval(() => void recover(), 20_000);
+    window.addEventListener("focus", recover);
+    return () => { cancelled = true; window.clearInterval(timer); window.removeEventListener("focus", recover); };
   }, [projectScopeKey]);
 
   const [jobs, setJobs] = useState<TrackedJob[]>(() =>
@@ -739,6 +761,7 @@ export default function PostProdWorkshopCard({
               fadeOutSec: number;
             };
           }
+
         | {
             action: "loudness_check";
             params: { videoUri: string; windows: [] };
@@ -789,13 +812,9 @@ export default function PostProdWorkshopCard({
 
   const probeUpscaleSource = async () => {
     if (!upscaleVideoUrl || upscaleProbeBusy) return;
-    if (!clipOptions.some(option => option.url === upscaleVideoUrl)) {
-      toast.error("当前剧本没有这段成片，请重新选择");
-      return;
-    }
     setUpscaleProbeBusy(true);
     try {
-      const measured = await probeVideoUpscaleSource(upscaleVideoUrl);
+      const measured = await probeWorkflowVideoSource(upscaleVideoUrl);
       if (!measured) throw new Error("读取视频真实尺寸或时长失败，请检查成片链接后重试");
       setUpscaleProbedSource(measured);
     } catch (error) {
@@ -806,16 +825,13 @@ export default function PostProdWorkshopCard({
     }
   };
 
-  const submitUpscale = async (target: "2k" | "4k") => {
-    if (!upscaleVideoUrl || !upscaleProbedSec || upscaleSubmitBusy) {
-      toast.error("请先选择成片并读取真实尺寸与时长");
-      return;
+  const submitUpscale = async (target: "2k" | "4k" | undefined, targetFps: 30 | 60) => {
+    if (!upscaleVideoUrl || !upscaleSource || !upscaleProbedSec || upscaleSubmitBusy) {
+      toast.error("请先选择成片并读取真实尺寸与时长"); return;
     }
-    if (!clipOptions.some(option => option.url === upscaleVideoUrl)) {
-      toast.error("当前剧本没有这段成片，请重新选择");
-      return;
+    if ((target && !canWavespeedUpscale(upscaleSource.sourceResolution, target)) || !upscaleSource.fps || (!target && upscaleSource.fps >= targetFps - 0.01)) {
+      toast.error("该原片不支持所选超分档位，或尚未取得真实帧率"); return;
     }
-    if (!canWavespeedUpscale(upscaleSource?.sourceResolution, target)) { toast.error("该原片不支持此超分档位：480p最高2K，720p可选2K或4K。"); return; }
     const bgmMounted = scopedJobs.some(job => {
       if (
         job.action !== "bgm_mount" ||
@@ -834,7 +850,7 @@ export default function PostProdWorkshopCard({
       bgmMounted,
       target,
     });
-    if (!deliveryDecision.ok) {
+    if (target && !deliveryDecision.ok) {
       toast.error(deliveryDecision.reasonZh);
       return;
     }
@@ -844,23 +860,18 @@ export default function PostProdWorkshopCard({
     const episodeIndex =
       directBlock && Number(directBlock.episodeIndex) > 0
         ? Math.floor(Number(directBlock.episodeIndex))
-        : undefined;
-    const credits = canvasVideoUpscaleCredits(target, upscaleProbedSec, {
-      freeform: !episodeIndex,
-    });
-    if (
-      !window.confirm(
-        `确认提交 ${target.toUpperCase()} 高清放大？\n视频 ${upscaleProbedSec} 秒，预计扣 ${credits} 积分。\n任务创建后将按同一 taskId 恢复，不会因刷新重复提交。`
-      )
-    ) {
-      return;
-    }
+        : focusEpisode;
+    const quote = target ? canvasVideoEnhanceQuote(target, targetFps, upscaleProbedSec) : { units: canvasVideoEnhanceBillingUnits(upscaleProbedSec), totalCredits: canvasVideoFrameCredits(upscaleProbedSec, targetFps) };
     setUpscaleSubmitBusy(true);
     try {
       const option = clipOptions.find(item => item.url === upscaleVideoUrl);
       const started = await startVideoUpscale({
         videoUrl: upscaleVideoUrl,
         target,
+        combine: Boolean(target),
+        frameInterpolationProvider: "ffmpeg",
+        scopeKey: projectScopeKey,
+        targetFps,
         durationSec: upscaleProbedSec,
         episodeIndex,
         sourceResolution: upscaleSource!.sourceResolution,
@@ -872,7 +883,7 @@ export default function PostProdWorkshopCard({
             scopeKey: projectScopeKey,
             sourceUrl: upscaleVideoUrl,
             sourceLabel: option?.label || "成片",
-            target,
+            target: target ? `${target}-${targetFps}fps` as const : `${targetFps}fps` as const,
             status: started.status,
             createdAt: Date.now(),
             episodeIndex,
@@ -882,7 +893,7 @@ export default function PostProdWorkshopCard({
         ].slice(0, 12)
       );
       toast.success(
-        `高清放大已提交（${target.toUpperCase()} · ${started.creditsUsed} 积分）`
+        `${target ? target.toUpperCase() + "／" : "原尺寸／"}${targetFps}帧已提交，已扣 ${started.creditsUsed} 积分（${quote.units}个30秒单位）`
       );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "高清放大提交失败");
@@ -1208,6 +1219,7 @@ export default function PostProdWorkshopCard({
 
   return (
     <div
+      id="manhua-post-production"
       data-postprod-workshop
       className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4"
     >
@@ -1218,12 +1230,13 @@ export default function PostProdWorkshopCard({
           拼接 / 贴装 / 响度 0 积分
         </span>
         <span className="text-[11px] text-white/45">
-          高清放大按秒计费；产物落云端，顺序固定为成片 → 2K/4K → BGM → 响度验收
+          超分与补帧按每开始30秒合计计费，提交前显示扣分。已有原声与BGM保留。
         </span>
       </div>
 
       {canUseScoringRoom ? (
-        <div className="mt-3 rounded-xl border border-fuchsia-300/20 bg-fuchsia-500/[0.06] p-3">
+        <details className="mt-3 rounded-xl border border-fuchsia-300/20 bg-fuchsia-500/[0.06] p-3">
+          <summary className="cursor-pointer text-sm font-semibold text-white">配乐创作 · 展开</summary>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <div className="flex items-center gap-1.5 text-[13px] font-semibold text-white">
@@ -1554,12 +1567,12 @@ export default function PostProdWorkshopCard({
               </div>
             ) : null}
           </div>
-        </div>
+        </details>
       ) : null}
 
       <div className="mt-3 grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
         {/* 拼接 */}
-        <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+        <div id="manhua-post-concat" className="scroll-mt-24 rounded-xl border border-white/10 bg-black/25 p-3">
           <div className="flex items-center gap-1.5 text-[13px] font-semibold text-white">
             <Layers className="h-3.5 w-3.5 text-cyan-300" /> 拼接成片
           </div>
@@ -1620,15 +1633,16 @@ export default function PostProdWorkshopCard({
         </div>
 
         {/* 高清放大：与自由画布共用同一后端任务、计费、退款与恢复链。 */}
-        <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+        <div id="manhua-post-enhance" className="scroll-mt-24 rounded-xl border border-white/10 bg-black/25 p-3">
           <div className="flex items-center gap-1.5 text-[13px] font-semibold text-white">
-            <Maximize2 className="h-3.5 w-3.5 text-sky-300" /> 高清放大
+            <Maximize2 className="h-3.5 w-3.5 text-sky-300" /> 超分与补帧
           </div>
           <p className="mt-1 text-[11px] leading-4 text-white/45">
-            成片先放大到 2K/4K，再进入 BGM 贴装；原片保留，刷新后继续同一任务。
+            选择2K或4K，搭配30或60帧。先保留原尺寸与音轨补帧，再超分，保留原声与BGM，原片保留，刷新恢复同一任务。
           </p>
           <div className="mt-2 space-y-1.5">
             <select
+              aria-label="超分与补帧原片"
               value={upscaleVideoUrl}
               onChange={event => setUpscaleVideoUrl(event.target.value)}
               className={selectCls}
@@ -1640,50 +1654,47 @@ export default function PostProdWorkshopCard({
                 </option>
               ))}
             </select>
-            {!upscaleProbedSec ? (
-              <button
-                type="button"
-                disabled={!upscaleVideoUrl || upscaleProbeBusy}
-                onClick={() => void probeUpscaleSource()}
-                className={goCls}
-              >
-                {upscaleProbeBusy ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : null}
-                读取真实尺寸与时长
-              </button>
-            ) : (
-              <div className="space-y-1.5 rounded-lg border border-white/10 bg-white/[0.03] p-2">
-                <p className="text-[10px] text-white/55">
-                  实测 {upscaleSource?.width}×{upscaleSource?.height} · 视频约 {upscaleProbedSec} 秒 · 按秒计费
-                </p>
-                <p className="text-[10px] text-white/50">{upscaleSource?.sourceResolution === "480p" ? "480p原片最高可放大到2K。" : !canWavespeedUpscale(upscaleSource?.sourceResolution, "2k") ? "原片已达2K及以上，无可用超分档位。" : "720p及以上原片可选2K或4K。"}</p>
-                <div className="grid grid-cols-2 gap-1">
-                  {(["2k", "4k"] as const).filter(target => canWavespeedUpscale(upscaleSource?.sourceResolution, target)).map(target => {
-                    const directBlock = currentClipBlocks.find(
-                      block =>
-                        String(block.outputUrl || "").trim() === upscaleVideoUrl
-                    );
-                    const freeform = !(Number(directBlock?.episodeIndex) > 0);
-                    return (
-                      <button
-                        key={target}
-                        type="button"
-                        disabled={upscaleSubmitBusy}
-                        onClick={() => void submitUpscale(target)}
-                        className="rounded-lg border border-sky-300/35 bg-sky-500/10 px-2 py-1.5 text-[11px] text-sky-50 hover:bg-sky-500/15 disabled:opacity-45"
-                      >
-                        {target.toUpperCase()} ·{" "}
-                        {canvasVideoUpscaleCredits(target, upscaleProbedSec, {
-                          freeform,
-                        })}{" "}
-                        积分
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
+            <input
+              aria-label="云端成片链接"
+              placeholder="或粘贴本人云端成片链接（HTTPS / gs://）"
+              value={upscaleVideoUrl}
+              onChange={event => setUpscaleVideoUrl(event.target.value.trim())}
+              className={selectCls}
+              disabled={upscaleProbeBusy || upscaleSubmitBusy}
+            />
+            <p className="text-[11px] text-white/50">服务端校验素材归属后直接读取云端成片，无需下载到本机再上传。</p>
+            <button type="button" disabled={!upscaleVideoUrl || upscaleProbeBusy || upscaleSubmitBusy || !upscaleVideoUrl.startsWith("https://d2h7xmz5gqybh9.cloudfront.net/")} className={goCls} onClick={() => {
+              setUpscaleProbeBusy(true);
+              void importWorkflowVideoSource(upscaleVideoUrl).then(async source => {
+                setUpscaleVideoUrl(source);
+                setUpscaleProbedSource(await probeWorkflowVideoSource(source));
+                toast.success("云端成品已导入本人工作流，原视频保留");
+              }).catch(error => toast.error(error instanceof Error ? error.message : "导入失败")).finally(() => setUpscaleProbeBusy(false));
+            }}>导入WaveSpeed云端成品（不扣积分）</button>
+            <button type="button" disabled={!upscaleVideoUrl || upscaleProbeBusy} onClick={() => void probeUpscaleSource()} className={goCls}>
+              {upscaleProbeBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}读取真实尺寸、时长与帧率
+            </button>
+            {upscaleSource ? <p className="text-[11px] text-white/65">实测 {upscaleSource.width}×{upscaleSource.height} · {upscaleSource.durationExactSec?.toFixed(3) || upscaleProbedSec} 秒 · {upscaleSource.fps?.toFixed(2) || "未知"} 帧/秒</p> : <p className="text-[11px] text-white/50">先选择原片并读取真实参数，随后显示报价。</p>}
+            <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="成片增强组合">
+              {(["2k", "4k"] as const).flatMap(target => ([30, 60] as const).map(fps => {
+                const quote = upscaleProbedSec ? canvasVideoEnhanceQuote(target, fps, upscaleProbedSec) : null;
+                const selected = enhanceChoice.target === target && enhanceChoice.fps === fps;
+                return <button key={`${target}-${fps}`} type="button" role="radio" aria-checked={selected} disabled={upscaleSubmitBusy} onClick={() => setEnhanceChoice({ target, fps })} className={`rounded-lg border px-2 py-3 text-xs ${selected ? "border-sky-300 bg-sky-500/20 text-sky-50" : "border-white/15 text-white/65"}`}>
+                  {target.toUpperCase()}／{fps}帧{quote ? ` · ${quote.totalCredits}积分` : ""}
+                </button>;
+              }))}
+            </div>
+            {upscaleProbedSec ? (() => {
+              const quote = canvasVideoEnhanceQuote(enhanceChoice.target, enhanceChoice.fps, upscaleProbedSec);
+              return <p className="text-xs text-white/75">按{quote.units}个30秒单位（共{quote.billedSeconds}秒）计费：超分{quote.upscaleCredits}＋补帧{quote.frameCredits}＝{quote.totalCredits}积分。</p>;
+            })() : null}
+            <button type="button" disabled={!upscaleSource || upscaleSubmitBusy || busy || !upscaleSource.fps || !canWavespeedUpscale(upscaleSource.sourceResolution, enhanceChoice.target)} onClick={() => void submitUpscale(enhanceChoice.target, enhanceChoice.fps)} className={goCls}>
+              {upscaleSubmitBusy ? "正在提交…" : `提交${enhanceChoice.target.toUpperCase()}／${enhanceChoice.fps}帧${upscaleProbedSec ? ` · 扣${canvasVideoEnhanceQuote(enhanceChoice.target, enhanceChoice.fps, upscaleProbedSec).totalCredits}积分` : ""}`}
+            </button>
+            {upscaleSource && upscaleSource.fps && upscaleSource.fps < 59.99 ? <button type="button" className={goCls} disabled={upscaleSubmitBusy || upscaleProbeBusy || busy} onClick={() => void submitUpscale(undefined, 60)}>
+              {upscaleSubmitBusy ? "正在提交…" : `只补60帧·保留${upscaleSource.width}×${upscaleSource.height}·扣${canvasVideoFrameCredits(upscaleProbedSec!, 60)}积分`}
+            </button> : null}
+            <p className="text-[10px] text-white/50">每30秒：2K超分100积分，4K超分180积分；30帧补帧19积分，60帧补帧49积分。不足30秒按30秒计，一次合计扣分。</p>
             {scopedUpscaleJobs.slice(0, 3).map(job => (
               <div
                 key={job.taskId}

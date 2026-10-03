@@ -10031,7 +10031,7 @@ export default function OmniCanvas() {
                       }, 40);
                     }}
                   >
-                    成片坞
+                    成片与后期
                   </button>
                   <button
                     type="button"
@@ -11613,7 +11613,7 @@ export default function OmniCanvas() {
             {immersiveWorkbench && immersiveExtrasOpen ? (
               <div className="mb-3 flex items-center justify-between gap-2">
                 <span className="text-[12px] text-white/55">
-                  {immersiveWorkspaceView === "topic" ? "编剧" : "成片坞 · 后期"}
+                  {immersiveWorkspaceView === "topic" ? "编剧" : "成片与后期"}
                 </span>
                 <button
                   type="button"
@@ -13120,6 +13120,26 @@ export default function OmniCanvas() {
                 immersiveWorkbench && immersiveWorkspaceView !== "clip_dock" ? "hidden" : ""
               }`}
             >
+              <nav aria-label="成片与后期工具" className="mb-3 flex flex-wrap gap-2">
+                {[["manhua-post-concat", "拼接成片"], ["manhua-post-enhance", "2K／4K与30／60帧"], ["manhua-post-production", "混音与结果"], ["manhua-delivery-export", "成片与导出"]].map(([id, label]) => <button key={id} type="button" className="rounded-lg border border-cyan-300/30 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-50" onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" })}>{label}</button>)}
+              </nav>
+              {/* 后期工坊(蓝图二):三件套已上线,卡内只挂真实工序;按用户挂载防串单 */}
+              {user?.id ? (
+                <PostProdWorkshopCard
+                  key={`${user.id}:${postProdScopeKey}`}
+                  blocks={blocks}
+                  advisorContext={advisorProject?.context}
+                  userId={String(user.id)}
+                  projectScopeKey={postProdScopeKey}
+                  userRole={userRole}
+                  bgmSeedNoteZh={audioReferenceLock?.bgmNoteZh || ""}
+                  storyEmotion={storyEmotionForDownstream}
+                  sceneSpaceRefs={customAssetRefs}
+                  focusEpisode={writerFocusEpisode}
+                  spatialContexts={selectCurrentManhuaSpatialContexts(blocks, writerFocusEpisode, explicitWriterVideoModel)}
+                />
+              ) : null}
+              <div id="manhua-delivery-export" className="scroll-mt-24" />
               <ManhuaFinalDeliverySurface inReview={workflowPhase === "final" && manhuaUiMode === "workbench" && !(immersiveWorkbench && immersiveExtrasOpen)}>
               <ManhuaClipDock
                 videoModel={activePilotVideoModel}
@@ -13260,22 +13280,6 @@ export default function OmniCanvas() {
                 }}
               />
               </ManhuaFinalDeliverySurface>
-              {/* 后期工坊(蓝图二):三件套已上线,卡内只挂真实工序;按用户挂载防串单 */}
-              {user?.id ? (
-                <PostProdWorkshopCard
-                  key={`${user.id}:${postProdScopeKey}`}
-                  blocks={blocks}
-                  advisorContext={advisorProject?.context}
-                  userId={String(user.id)}
-                  projectScopeKey={postProdScopeKey}
-                  userRole={userRole}
-                  bgmSeedNoteZh={audioReferenceLock?.bgmNoteZh || ""}
-                  storyEmotion={storyEmotionForDownstream}
-                  sceneSpaceRefs={customAssetRefs}
-                  focusEpisode={writerFocusEpisode}
-                  spatialContexts={selectCurrentManhuaSpatialContexts(blocks, writerFocusEpisode, explicitWriterVideoModel)}
-                />
-              ) : null}
             </div>
             </div>
             </div>

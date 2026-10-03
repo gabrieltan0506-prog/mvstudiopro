@@ -76,6 +76,13 @@ vi.mock("./seedanceVideo.js", () => ({
   mirrorSeedanceMp4ToGcsSignedUrl: vi.fn(async (u: string) => `mirrored:${u}`),
 }));
 
+const enhancement = vi.hoisted(() => ({ finalize: vi.fn(), interpolate: vi.fn() }));
+vi.mock("./videoEnhanceOutput.js", () => ({
+  VideoEnhanceOutputMismatch: class extends Error {},
+  finalizeEnhancedVideo: enhancement.finalize,
+  interpolateVideo: enhancement.interpolate,
+}));
+
 const registerActiveJob = vi.fn(async (..._args: unknown[]) => {});
 const refundCreditsOnFailure = vi.fn(async (..._args: unknown[]) => ({ refunded: true, creditsRefunded: 388, status: "refunded" }));
 const pauseActiveJob = vi.fn(async (..._args: unknown[]) => {});
@@ -104,6 +111,8 @@ describe("canvasVideoTask 超时对账 + 幂等", () => {
     vi.resetModules();
     evolinkSubmit.mockReset();
     upscaleSubmit.mockReset();
+    enhancement.interpolate.mockReset().mockResolvedValue({ url: "https://test.invalid/ffmpeg60.mp4", gcsUri: "gs://test-only/ffmpeg60.mp4" });
+    enhancement.finalize.mockReset().mockResolvedValue({ url: "https://test.invalid/final.mp4", gcsUri: "gs://test-only/final.mp4" });
     evolinkPoll.mockReset();
     registerActiveJob.mockClear();
     wan30Submit.mockReset();
@@ -304,7 +313,7 @@ describe("canvasVideoTask 超时对账 + 幂等", () => {
     });
     await until(async () => {
       const t = await readTaskFile(created.taskId);
-      return t.status === "failed";
+      return t.status === "failed" && refundCreditsOnFailure.mock.calls.length === 1;
     });
     // 提交阶段失败 → failTask 已退分一次
     expect(refundCreditsOnFailure).toHaveBeenCalledTimes(1);
@@ -486,4 +495,48 @@ describe("canvasVideoTask 超时对账 + 幂等", () => {
     expect(task?.engine).toBe("happyhorse-evolink");
     expect(refundCreditsOnFailure).toHaveBeenCalledTimes(0);
   });
+  it("补帧阶段已发送却丢失回执时停止重投，保留扣分与原任务", async () => {
+    const m = await mod();
+    const taskId = await seedRunningTask({ engine: "wavespeed-upscale", evolinkTaskId: undefined, status: "queued", enhancePhase: "interpolate", upscaleSubmissionStartedAt: new Date().toISOString(), wavespeedPredictionId: undefined, upscaleTarget: "4k", frameTargetFps: 60 });
+    await until(async () => {
+      await m.getCanvasVideoTask(taskId, 7);
+      return (await readTaskFile(taskId)).status === "reconcile_manual";
+    });
+    expect(upscaleSubmit).not.toHaveBeenCalled();
+    expect(refundCreditsOnFailure).not.toHaveBeenCalled();
+  });
+
+  it("默认保真补帧只调用Fly计算，随后仅提交一次付费4K超分", async () => {
+    const m = await mod();
+    const { pollWavespeedUpscaleOnce } = await import("./wavespeedVideoUpscale.js");
+    (pollWavespeedUpscaleOnce as ReturnType<typeof vi.fn>).mockResolvedValue({ state: "completed", sourceUrl: "https://test.invalid/4k60.mp4" });
+    upscaleSubmit.mockResolvedValue({ predictionId: "upscale-once" });
+    const created = await m.createCanvasVideoTask({ userId:7, creditsCharged:916, engine:"wavespeed-upscale", label:"4K60", prompt:"", duration:107, upscaleSourceUrl:"gs://test-only/original.mp4", enhanceOriginalSource:"gs://test-only/original.mp4", upscaleTarget:"4k", frameTargetFps:60, framePasses:1,  });
+    await until(async () => { await m.getCanvasVideoTask(created.taskId,7); return (await readTaskFile(created.taskId)).status === "succeeded"; });
+    expect(enhancement.interpolate).toHaveBeenCalledTimes(1);
+    expect(upscaleSubmit).toHaveBeenCalledTimes(1);
+    expect(upscaleSubmit).toHaveBeenCalledWith(expect.objectContaining({ taskId:created.taskId, videoUrl:"gs://test-only/ffmpeg60.mp4", target:"4k" }));
+    expect(registerActiveJob).toHaveBeenCalledTimes(1);
+    expect(refundCreditsOnFailure).not.toHaveBeenCalled();
+  });
+
+  it("已有4K仅补60帧不提交超分，扣分快照保留196", async () => {
+    const m = await mod();
+    const created = await m.createCanvasVideoTask({ userId:7, creditsCharged:196, engine:"wavespeed-upscale", label:"4K只补60帧", prompt:"", duration:107, resolution:"4k", upscaleSourceUrl:"gs://test-only/4k30.mp4", enhanceOriginalSource:"gs://test-only/4k30.mp4", frameTargetFps:60, framePasses:1 });
+    await until(async () => { await m.getCanvasVideoTask(created.taskId,7); return (await readTaskFile(created.taskId)).status === "succeeded"; });
+    const task = await readTaskFile(created.taskId);
+    expect(task.videoUrl).toBe("https://test.invalid/ffmpeg60.mp4");
+    expect(task.creditsCharged).toBe(196);
+    expect(enhancement.interpolate).toHaveBeenCalledTimes(1);
+    expect(upscaleSubmit).not.toHaveBeenCalled();
+    expect(refundCreditsOnFailure).not.toHaveBeenCalled();
+  });
+  it("纯补帧落盘后恢复只交付已存结果，不重算或重新超分", async () => {
+    const m = await mod();
+    const taskId = await seedRunningTask({ engine:"wavespeed-upscale", evolinkTaskId:undefined, frameTargetFps:60, framePasses:1, enhancePhase:"upscale", frameStageUrl:"https://test.invalid/ffmpeg60.mp4", upscaleSourceUrl:"https://test.invalid/4k30.mp4" });
+    await until(async () => { await m.getCanvasVideoTask(taskId,7); return (await readTaskFile(taskId)).status === "succeeded"; });
+    expect(enhancement.interpolate).not.toHaveBeenCalled();
+    expect(upscaleSubmit).not.toHaveBeenCalled();
+  });
+
 });

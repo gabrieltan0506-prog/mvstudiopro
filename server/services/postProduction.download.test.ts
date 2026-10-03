@@ -18,6 +18,12 @@ vi.mock("./gcs.js", () => ({
   signGsUriV4ReadUrl: vi.fn((gsUri: string) =>
     `https://storage.googleapis.com/${String(gsUri).replace(/^gs:\/\//, "")}?signed=1`,
   ),
+  uploadStreamToGcs: vi.fn(async (params: { objectName: string; stream: ReadableStream<Uint8Array>; contentLength: number; signal?: AbortSignal }) => {
+    const bytes = (await new Response(params.stream).arrayBuffer()).byteLength;
+    if (bytes !== params.contentLength) throw new Error("上传长度错误");
+    params.signal?.throwIfAborted();
+    return { bucket:"bucket-a", objectName:params.objectName, gcsUri:`gs://bucket-a/${params.objectName}` };
+  }),
   uploadBufferToGcs: vi.fn(
     async (params: { objectName: string; signal?: AbortSignal }) => {
       params.signal?.throwIfAborted();
@@ -191,4 +197,17 @@ describe("上传步骤响应任务 signal", () => {
     ).rejects.toThrow();
     expect(h.uploadCalls).toHaveLength(0);
   });
+});
+
+it("无损补帧独立大文件预算走流式上传，旧工序预算仍为512MB", async () => {
+  const { uploadResult, MAX_RESULT_BYTES } = await import("./postProduction");
+  const { uploadStreamToGcs } = await import("./gcs.js");
+  const filePath = await tmpFile("stream.mp4");
+  const { writeFile } = await import("node:fs/promises");
+  await writeFile(filePath, Buffer.from("test-only"));
+  const result = await uploadResult({ filePath, userId:"7", kind:"fps60", ext:"mp4", contentType:"video/mp4", signal:NEVER, maxBytes:8*1024*1024*1024 });
+  expect(result.bytes).toBe(9);
+  expect(result.gcsUri).toContain("post-prod/7/");
+  expect(uploadStreamToGcs).toHaveBeenCalledWith(expect.objectContaining({ contentLength:9, signal:NEVER }));
+  expect(MAX_RESULT_BYTES).toBe(512*1024*1024);
 });

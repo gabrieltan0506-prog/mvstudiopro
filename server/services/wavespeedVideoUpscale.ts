@@ -83,13 +83,18 @@ export type WavespeedUpscalePollSnapshot =
 export async function submitWavespeedVideoUpscale(input: {
   taskId?: string;
   videoUrl: string;
-  target: WavespeedUpscaleTarget;
+  target?: WavespeedUpscaleTarget;
 }): Promise<{ predictionId: string }> {
   const apiKey = getWavespeedApiKey();
   if (!apiKey) throw new SubmitRejectedError("视频高清放大暂不可用，请稍后重试");
 
-  const source = String(input.videoUrl || "").trim();
+  let source = String(input.videoUrl || "").trim();
+  if (source.startsWith("gs://")) {
+    try { const { signGsUriV4ReadUrl } = await import("./gcs.js"); source = signGsUriV4ReadUrl(source, 3600); }
+    catch { throw new SubmitRejectedError("无法签名视频素材，未提交上游"); }
+  }
   if (!/^https?:\/\//i.test(source)) throw new SubmitRejectedError("需要一条可公开访问的视频地址");
+  if (input.target !== "2k" && input.target !== "4k") throw new SubmitRejectedError("超分目标必须为2K或4K");
 
   const evidenceId = input.taskId || `ws_${randomUUID()}`;
   const requestBody = JSON.stringify({ video: source, target_resolution: input.target });

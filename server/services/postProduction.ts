@@ -15,7 +15,7 @@ import { compileBgmNarrativeMix } from "../../shared/manhuaBgmNarrativeMix";
  */
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { createWriteStream } from "node:fs";
+import { createReadStream, createWriteStream } from "node:fs";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -23,7 +23,7 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
 import { z } from "zod";
-import { signGsUriV4ReadUrl, uploadBufferToGcs } from "./gcs.js";
+import { signGsUriV4ReadUrl, uploadBufferToGcs, uploadStreamToGcs } from "./gcs.js";
 import {
   audioTrimParamsSchema,
   audioTimelineParamsSchema,
@@ -150,39 +150,39 @@ export async function fetchPostProdSourceToFile(
   return meter.bytes;
 }
 
-async function uploadResult(params: {
+export async function uploadResult(params: {
   filePath: string;
   userId: string;
   kind: string;
   ext: string;
   contentType: string;
   signal: AbortSignal;
+  maxBytes?: number;
 }): Promise<{ gcsUri: string; url: string; bytes: number }> {
   params.signal.throwIfAborted();
   const st = await stat(params.filePath);
-  if (st.size > MAX_RESULT_BYTES) throw new Error("产物体积超过当前处理上限,请缩短素材或分批处理");
-  const buffer = await readFile(params.filePath, { signal: params.signal });
+  if (st.size > (params.maxBytes ?? MAX_RESULT_BYTES)) throw new Error("产物体积超过当前处理上限,请缩短素材或分批处理");
   params.signal.throwIfAborted();
   const safeUser = String(params.userId).replace(/[^0-9a-zA-Z_-]/g, "");
   const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   const objectName = `post-prod/${safeUser}/${stamp}/${params.kind}-${Date.now()}-${Math.random()
     .toString(36)
     .slice(2, 8)}.${params.ext}`;
-  const uploaded = await uploadBufferToGcs({
-    objectName,
-    buffer,
-    contentType: params.contentType,
-    signal: params.signal,
-  });
+  const uploaded = params.maxBytes && params.maxBytes > MAX_RESULT_BYTES
+    ? await uploadStreamToGcs({
+      objectName, stream: Readable.toWeb(createReadStream(params.filePath)) as ReadableStream<Uint8Array>,
+      contentLength: st.size, contentType: params.contentType, signal: params.signal,
+    })
+    : await uploadBufferToGcs({ objectName, buffer: await readFile(params.filePath, { signal: params.signal }), contentType: params.contentType, signal: params.signal });
   params.signal.throwIfAborted();
   return {
     gcsUri: uploaded.gcsUri,
     url: signGsUriV4ReadUrl(uploaded.gcsUri, 7 * 24 * 3600),
-    bytes: buffer.length,
+    bytes: st.size,
   };
 }
 
-async function probe(
+export async function probe(
   filePath: string,
   signal: AbortSignal,
 ): Promise<{

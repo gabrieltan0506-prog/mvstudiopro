@@ -62,7 +62,7 @@ export function metadataForUpscale(
   return {
     width,
     height,
-    durationSec: Math.max(1, Math.round(duration)),
+    durationSec: Math.max(1, Math.ceil(duration)),
     sourceResolution,
   };
 }
@@ -215,8 +215,10 @@ function UpscalePanel({
   generatedVideoUrl?: string;
 }) {
   const [uploaded, setUploaded] = useState("");
-  const [choice, setChoice] = useState<"uploaded" | "generated">("uploaded");
-  const source = choice === "generated" ? generatedVideoUrl || "" : uploaded;
+  const [choice, setChoice] = useState<"uploaded" | "generated" | "cloud">("uploaded");
+  const [cloudDraft, setCloudDraft] = useState("");
+  const [cloudSource, setCloudSource] = useState("");
+  const source = choice === "generated" ? generatedVideoUrl || "" : choice === "cloud" ? cloudSource : uploaded;
   const [probed, setProbed] = useState<{
     url: string;
     value: VideoMetadata;
@@ -418,7 +420,7 @@ function UpscalePanel({
     <section className="space-y-4 rounded-2xl border border-white/10 p-5">
       <h3 className="text-lg font-semibold">视频高清放大</h3>
       <p className="text-sm text-muted-foreground">
-        单独上传视频，或选择照片动画成片；原片和结果分别提供下载，临时保留12小时。
+        上传视频、选择照片动画成片，或直接粘贴云端视频网址；原片保留，结果临时保留12小时。
       </p>
       <label className="block">
         上传视频
@@ -441,10 +443,28 @@ function UpscalePanel({
         onChange={e => setChoice(e.target.value as typeof choice)}
       >
         <option value="uploaded">独立上传的视频</option>
+        <option value="cloud">云端视频网址</option>
         <option value="generated" disabled={!generatedVideoUrl}>
           照片动画成片
         </option>
       </select>
+      <div className="flex flex-wrap gap-2">
+        <input
+          aria-label="云端视频网址"
+          type="url"
+          placeholder="粘贴可播放的 HTTPS 云端视频网址"
+          value={cloudDraft}
+          disabled={busy}
+          onChange={event => setCloudDraft(event.target.value)}
+          className="min-w-0 flex-1 rounded-lg border bg-transparent px-3 py-2"
+        />
+        <button type="button" disabled={busy || !cloudDraft.trim()} className="rounded-lg border px-3 py-2" onClick={() => {
+          const url = cloudDraft.trim();
+          if (!/^https:\/\//i.test(url)) { setError("请粘贴 HTTPS 视频网址"); return; }
+          setCloudSource(url);
+          setChoice("cloud");
+        }}>读取云端视频</button>
+      </div>
       {source && (
         <div>
           <video

@@ -28,18 +28,18 @@ afterEach(() => {
 });
 
 describe("照片视频超分元数据与恢复边界", () => {
-  it("真实生日视频 1112×834 / 10.08s 不冒充720p，费用与服务端round对齐", () => {
+  it("真实生日视频 1112×834 / 10.08s 不冒充720p，费用与服务端ceil对齐", () => {
     const m = metadataForUpscale(1112, 834, 10.08);
     expect(m).toEqual({
       width: 1112,
       height: 834,
-      durationSec: 10,
+      durationSec: 11,
       sourceResolution: "1080p",
     });
     expect(
       canvasVideoUpscaleCredits("2k", m.durationSec, { freeform: true })
     ).toBe(
-      canvasVideoUpscaleCredits("2k", Math.round(10.08), { freeform: true })
+      canvasVideoUpscaleCredits("2k", Math.ceil(10.08), { freeform: true })
     );
     expect(metadataForUpscale(834, 1112, 10.51).durationSec).toBe(11);
   });
@@ -211,7 +211,7 @@ it("浏览器挂载：确认后单次提交、刷新只查原ID、用户隔离�
       Array.from(document.querySelectorAll("button")).some(b => !b.disabled)
     );
     await page.evaluate(() =>
-      (document.querySelector("button") as HTMLButtonElement).click()
+      (Array.from(document.querySelectorAll("button")).find(b => /^2K/.test(b.innerText)) as HTMLButtonElement).click()
     );
     await page.waitForFunction(() =>
       document.body.innerText.includes("task-2k")
@@ -221,7 +221,7 @@ it("浏览器挂载：确认后单次提交、刷新只查原ID、用户隔离�
       {
         videoUrl: "https://test.invalid/generated.mp4",
         target: "2k",
-        durationSec: 10,
+        durationSec: 11,
         sourceResolution: "1080p",
       },
     ]);
@@ -245,11 +245,11 @@ it("浏览器挂载：确认后单次提交、刷新只查原ID、用户隔离�
     await page.select('select[aria-label="视频来源"]', "generated");
     await page.waitForFunction(
       () =>
-        !!document.querySelectorAll("button")[1] &&
-        !(document.querySelectorAll("button")[1] as HTMLButtonElement).disabled
+        !!Array.from(document.querySelectorAll("button")).find(b => /^4K/.test(b.innerText)) &&
+        !(Array.from(document.querySelectorAll("button")).find(b => /^4K/.test(b.innerText)) as HTMLButtonElement).disabled
     );
     await page.evaluate(() =>
-      (document.querySelectorAll("button")[1] as HTMLButtonElement).click()
+      (Array.from(document.querySelectorAll("button")).find(b => /^4K/.test(b.innerText)) as HTMLButtonElement).click()
     );
     await page.waitForFunction(() =>
       document.body.innerText.includes("task-4k")
@@ -279,16 +279,16 @@ it("浏览器挂载：确认后单次提交、刷新只查原ID、用户隔离�
     ).toBe(2);
     await page.select('select[aria-label="视频来源"]', "generated");
     await page.waitForFunction(
-      () => !(document.querySelector("button") as HTMLButtonElement).disabled
+      () => !(Array.from(document.querySelectorAll("button")).find(b => /^2K/.test(b.innerText)) as HTMLButtonElement).disabled
     );
     await page.evaluate(() => {
       (window as any).fixture.denied = true;
-      (document.querySelector("button") as HTMLButtonElement).click();
+      (Array.from(document.querySelectorAll("button")).find(b => /^2K/.test(b.innerText)) as HTMLButtonElement).click();
     });
     await page.waitForFunction(
       () =>
         document.body.innerText.includes("积分不足") &&
-        !(document.querySelector("button") as HTMLButtonElement).disabled
+        !(Array.from(document.querySelectorAll("button")).find(b => /^2K/.test(b.innerText)) as HTMLButtonElement).disabled
     );
     await page.evaluate(() => {
       (window as any).fixture.denied = false;
@@ -297,11 +297,11 @@ it("浏览器挂载：确认后单次提交、刷新只查原ID、用户隔离�
     await page.waitForSelector('select[aria-label="视频来源"]');
     await page.select('select[aria-label="视频来源"]', "generated");
     await page.waitForFunction(
-      () => !(document.querySelector("button") as HTMLButtonElement).disabled
+      () => !(Array.from(document.querySelectorAll("button")).find(b => /^2K/.test(b.innerText)) as HTMLButtonElement).disabled
     );
     await page.evaluate(() => {
       (window as any).fixture.fail = true;
-      (document.querySelector("button") as HTMLButtonElement).click();
+      (Array.from(document.querySelectorAll("button")).find(b => /^2K/.test(b.innerText)) as HTMLButtonElement).click();
     });
     await page.waitForFunction(() =>
       document.body.innerText.includes("提交回执未确认")
@@ -313,7 +313,7 @@ it("浏览器挂载：确认后单次提交、刷新只查原ID、用户隔离�
     await page.select('select[aria-label="视频来源"]', "generated");
     expect(
       await page.evaluate(
-        () => (document.querySelector("button") as HTMLButtonElement).disabled
+        () => (Array.from(document.querySelectorAll("button")).find(b => /^2K/.test(b.innerText)) as HTMLButtonElement).disabled
       )
     ).toBe(true);
     expect(

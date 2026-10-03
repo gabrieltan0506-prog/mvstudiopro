@@ -49,15 +49,14 @@ describe("漫剧工厂 / 自由画布共用交付判据", () => {
     })).toEqual({ ok: true });
   });
 
-  it.each(MANHUA_DELIVERY_SURFACES)("%s：贴过 BGM 后拒绝反向超分", (surface) => {
+  it.each(MANHUA_DELIVERY_SURFACES)("%s：贴过BGM的成片允许超分并保留音轨", (surface) => {
     const result = canUpscaleNow({
       surface,
       hasDeliveryVideo: true,
       bgmMounted: true,
       target: "2k",
     });
-    expect(result.ok).toBe(false);
-    expect(result.ok === false && result.reasonZh).toContain("视频→2K/4K 超分→贴 BGM");
+    expect(result).toMatchObject({ ok: true, warnZh: expect.stringContaining("原声与BGM") });
   });
 
   it.each(MANHUA_DELIVERY_SURFACES)("%s：选了超分但没完成时贴 BGM 只告警", (surface) => {
