@@ -79,8 +79,7 @@ export default function PlatformTopicCoverDrProGpt54DebugPanel({
         共用 <code className="text-[#cda0ff]">imageGenFlowLog</code>
         ：<strong className="text-violet-200/90">A</strong> 步骤 0.5（DR-Pro）·{" "}
         <strong className="text-cyan-200/90">B</strong> 中文直送（指令组装，无英文化）·{" "}
-        <strong className="text-amber-200/90">C</strong> 生图（仅 OpenAI → OpenRouter GPT-IMAGE-2，无
-        NB2）。C 栏可避免「指令组装完以为卡住」——实际仍在绘图。
+        <strong className="text-amber-200/90">C</strong> 生图（高清图像生成）。C 栏可避免「指令组装完以为卡住」——实际仍在绘图。
       </p>
 
       <div className="mt-3 flex flex-wrap gap-2">
