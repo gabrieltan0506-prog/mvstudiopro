@@ -1,3 +1,5 @@
+import { ManhuaNovelSourcePanel } from "@/components/canvas/ManhuaNovelSourcePanel";
+import { prepareNovelExcerpt, type ManhuaNovelDraft } from "@shared/manhuaNovelSource";
 import { maskMediaProviderDetails } from "@/lib/maskMediaUrls";
 import { normalizeManhuaPromptSeconds } from "@shared/manhuaPromptSeconds";
 import ManhuaTemplatePicker from "@/components/canvas/ManhuaTemplatePicker";
@@ -1032,6 +1034,8 @@ export default function OmniCanvas() {
     castNames: string[];
   } | null>(null);
   const [writerBrief, setWriterBrief] = useState(() => initialWriterSession?.brief || "");
+  const [novelSaveError, setNovelSaveError] = useState(false);
+  const [novelDraft, setNovelDraft] = useState<ManhuaNovelDraft | null>(() => initialWriterSession?.novelDraft || null);
   const [publicTemplateId, setPublicTemplateId] = useState(
     () => String(initialWriterSession?.publicTemplateId || "").trim(),
   );
@@ -3136,6 +3140,7 @@ export default function OmniCanvas() {
       saveManhuaWriterSessionToStorage({
         topic: factoryTopic,
         brief: writerBrief,
+        novelDraft,
         episodeCount: writerEpisodeCount,
         focusEpisode: writerFocusEpisode,
         writerPack,
@@ -3164,6 +3169,7 @@ export default function OmniCanvas() {
   }, [
     factoryTopic,
     writerBrief,
+    novelDraft,
     writerEpisodeCount,
     writerFocusEpisode,
     writerPack,
@@ -3213,6 +3219,7 @@ export default function OmniCanvas() {
     })();
     setFactoryTopic(session.topic || "");
     setWriterBrief(session.brief || "");
+    setNovelDraft(session.novelDraft || null);
     setWriterEpisodeCount(clampWriterEpisodeCount(session.episodeCount));
     setWriterFocusEpisode(Math.max(1, Math.floor(Number(session.focusEpisode) || 1)));
     setWriterPack(session.writerPack);
@@ -3770,6 +3777,7 @@ export default function OmniCanvas() {
     const writerSession = {
       topic: factoryTopic,
       brief: writerBrief,
+      novelDraft,
       episodeCount: writerEpisodeCount,
       focusEpisode: writerFocusEpisode,
       writerPack,
@@ -3799,13 +3807,14 @@ export default function OmniCanvas() {
       chainIgnoreByScene,
     };
     // 本机双写补强（与既有 LS effect 叠加；失败不阻断）
-    persistManhuaDraftLocally({
+    const localWrite = persistManhuaDraftLocally({
       writerSession,
       blocks,
       edges,
       factoryPrefs,
       clientUpdatedAt,
     });
+    setNovelSaveError(Boolean(novelDraft?.text) && !localWrite.writerOk);
     // 手动上传按钮从这个 ref 取当前工作区快照
     latestDraftSnapshotRef.current = { writerSession, blocks, edges, factoryPrefs, clientUpdatedAt, manhuaActionPlans };
 
@@ -3819,6 +3828,7 @@ export default function OmniCanvas() {
     writerBusy,
     factoryTopic,
     writerBrief,
+    novelDraft,
     writerEpisodeCount,
     writerFocusEpisode,
     writerPack,
@@ -5739,6 +5749,10 @@ export default function OmniCanvas() {
   const expandWriterRoom = useCallback(async (opts?: { fromEpisodeOverride?: number; templateTrialFingerprint?: string }) => {
     const topic = factoryTopic.trim();
     const brief = writerBrief.trim();
+    if (novelDraft?.enabled && opts?.templateTrialFingerprint) { toast.error("小说改编请使用下方扩写入口，题材试写未读取小说原文"); return; }
+    let sourceExcerpt;
+    try { sourceExcerpt = novelDraft ? prepareNovelExcerpt(novelDraft) : undefined; }
+    catch (error) { toast.error(error instanceof Error ? error.message : "小说选段无效"); return; }
     const designInject = [
       buildNarrativeLightingInjectBlock(selectedNarrativeLightingIds),
       buildMaleHairstyleInjectBlock(selectedMaleHairstyleIds),
@@ -5837,6 +5851,7 @@ export default function OmniCanvas() {
     const expandSignature = JSON.stringify({
       topic,
       mergedBrief,
+      sourceExcerpt,
       count,
       writerExpandTier,
       publicTemplateId,
@@ -5856,6 +5871,7 @@ export default function OmniCanvas() {
         expandWriterMutation.mutateAsync({
           topic,
           brief: mergedBrief || undefined,
+          sourceExcerpt,
           episodeCount: count,
           tier: writerExpandTier,
           requestId: expandRequestId,
@@ -6013,6 +6029,7 @@ export default function OmniCanvas() {
       const writerSession = {
         topic,
         brief,
+        novelDraft,
         episodeCount: count,
         focusEpisode: 1,
         writerPack: pack,
@@ -6114,6 +6131,7 @@ export default function OmniCanvas() {
   }, [
     factoryTopic,
     writerBrief,
+    novelDraft,
     writerEpisodeCount,
     writerLengthTierId,
     writerVideoModel,
@@ -6274,6 +6292,7 @@ export default function OmniCanvas() {
         setWorkflowPhase("outline");
       }
       setWriterPack(res.pack);
+      setNovelDraft(previous => previous ? { ...previous, enabled: false } : null);
       setDirectorStrategyContract(
         resolveManhuaDirectorStrategyContract({
           topic: factoryTopic.trim() || res.pack.seriesTitle,
@@ -11834,6 +11853,7 @@ export default function OmniCanvas() {
                   </p>
                 )}
               </div>
+              <ManhuaNovelSourcePanel value={novelDraft} onChange={setNovelDraft} disabled={writerBusy || factoryBusy} episodes={writerPack?.episodes} saveError={novelSaveError} />
               <label className="mt-3 block text-[11px] text-white/45">补充条件（三到五句）</label>
               <textarea
                 value={writerBrief}
@@ -11886,12 +11906,13 @@ export default function OmniCanvas() {
                 {manhuaViralTemplatesQuery.isSuccess && approvedViralTemplateCards.length === 0 ? (
                   <p className="mt-1.5 text-[10px] text-white/35">暂无可用的剧情增强方案；待审和已拒绝内容不会显示。</p>
                 ) : null}
+                {novelDraft?.enabled ? <p className="mt-2 text-xs text-white/55">本次按所选小说原文改编，请使用下方扩写；题材模板试写不读取小说原文。</p> : null}
                 {/* 免费试写：选了模板才出现；先看单集差异，满意再走付费全集扩写 */}
                 {selectedViralTemplate ? (
                   <div className="mt-2 flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      disabled={writerBusy || factoryBusy || trialWriterMutation.isPending}
+                      disabled={writerBusy || factoryBusy || trialWriterMutation.isPending || Boolean(novelDraft?.enabled)}
                       onClick={() => {
                         if (trialWriterMutation.isPending) return; // 防连点：pending 期间不重复发
                         const topic = factoryTopic.trim();

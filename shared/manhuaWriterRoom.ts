@@ -1,3 +1,4 @@
+import { novelAdaptationPrompt, type ManhuaNovelExcerpt } from "./manhuaNovelSource.js";
 import { formatManhuaShotCoreCatalog } from "./manhuaShotCoreBank.js";
 import { formatManhuaEntranceAtmosphereCatalog } from "./manhuaEntranceAtmosphereBank.js";
 import { MANHUA_DIALOGUE_CRAFT_ZH } from "./manhuaDialogueCraft.js";
@@ -73,6 +74,10 @@ export type ManhuaWriterEpisode = {
   body: string;
   /** 片尾钩子（必填） */
   endHook: string;
+  /** Frozen source used for this episode; kept episodes retain their own source on partial rewrite. */
+  sourceExcerpt?: ManhuaNovelExcerpt;
+  sourceSha256?: string;
+  sourceNotes?: string;
 };
 
 export type ManhuaWriterPack = {
@@ -106,6 +111,7 @@ export const CANVAS_DIRECTOR_CRAFT_PROMPT_BLOCK = `【编导手法约束】
 
 /** 编剧室扩写 system/user 一体 prompt（给文本生成用） */
 export function buildManhuaWriterExpandPrompt(opts: {
+  sourceExcerpt?: ManhuaNovelExcerpt;
   topic: string;
   brief: string;
   episodeCount: number;
@@ -212,6 +218,7 @@ export function buildManhuaWriterExpandPrompt(opts: {
     `【成片铺排】${layout.labelZh}｜${layout.layoutHintZh}`,
     `【用户题材】${topic || "（未填，请基于补充条件合理拟定）"}`,
     brief ? `【补充条件】\n${brief}` : "【补充条件】（无，请在合理范围内自行补全并保持克制）",
+    novelAdaptationPrompt(opts.sourceExcerpt),
     viralTemplateBlock,
     propDemo,
     ancientBlock,
@@ -331,12 +338,14 @@ export function parseManhuaWriterPack(
       block.match(new RegExp(`###\\s*${epTitleAlias}\\n+([^\\n#]+)`))?.[1] ||
       "";
     const title = cleanWriterTitleLine(titleRaw) || `第${i}集`;
-    const body =
+    const bodyRaw =
       block.match(/###\s*本集剧情\n+([\s\S]*?)(?=\n###\s*片尾钩子|$)/)?.[1]?.trim() ||
       block.trim();
+    const body = bodyRaw.replace(/(?:^|\n)###\s*原文对照\n+[\s\S]*?(?=\n###|\n##|$)/, "").trim();
     const endHook =
       block.match(/###\s*片尾钩子\n+([\s\S]*?)(?=\n###|\n##|$)/)?.[1]?.trim() || "";
-    episodes.push({ index: i, title, body, endHook });
+    const sourceNotes = block.match(/###\s*原文对照\n+([\s\S]*?)(?=\n###|\n##|$)/)?.[1]?.trim();
+    episodes.push({ index: i, title, body, endHook, ...(sourceNotes ? { sourceNotes } : {}) });
   }
 
   return {

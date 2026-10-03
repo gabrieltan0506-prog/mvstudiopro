@@ -1,3 +1,4 @@
+import { novelExcerptSchema } from "../shared/manhuaNovelSource.js";
 import { canvasMusicMvRouter } from "./routers/canvasMusicMv";
 import { canvasMusicMvAssembleRouter } from "./routers/canvasMusicMvAssemble";
 import { buildManhuaDirectionCanonFromSelection } from "../shared/manhuaDirectionCanonLibrary.js";
@@ -9995,6 +9996,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         z.object({
           topic: z.string().max(500).optional(),
           brief: z.string().max(2000).optional(),
+          sourceExcerpt: novelExcerptSchema.optional(),
           episodeCount: z.number().int().min(2).max(6).optional(),
           /** 引擎档位：前台只展示中文档名，不显示供应商或模型名。 */
           tier: z.enum(["excellent", "superb", "top", "transcendent"]).optional(),
@@ -10028,6 +10030,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }),
       )
       .mutation(async ({ ctx, input }) => {
+        if (input.sourceExcerpt && input.templateTrialFingerprint) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "小说改编请使用正常扩写入口；题材试写未读取小说原文，不能直接套用" });
+        }
         const userId = ctx.user.id;
         const topic = String(input.topic || "").trim();
         const brief = String(input.brief || "").trim();
@@ -10154,6 +10159,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const prompt = buildManhuaWriterExpandPrompt({
           topic,
           brief,
+          sourceExcerpt: input.sourceExcerpt,
           episodeCount,
           lengthTierId: input.lengthTierId || layout.lengthTierId,
           videoModel: layout.videoModel,
@@ -10198,6 +10204,14 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             code: "INTERNAL_SERVER_ERROR",
             message: "扩写结果缺少完整分集正文或片尾钩子，原稿未替换，本次未扣点",
           });
+        }
+
+        if (input.sourceExcerpt) {
+          if (pack.episodes.some(episode => !episode.sourceNotes?.trim())) {
+            throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "改编结果缺少逐集原文对照，旧稿保留，本次未扣点" });
+          }
+          const sourceSha256 = createHash("sha256").update(input.sourceExcerpt.text).digest("hex");
+          pack.episodes = pack.episodes.map(episode => ({ ...episode, sourceExcerpt: input.sourceExcerpt, sourceSha256 }));
         }
 
         // 先出稿再原子扣点：上游失败不扣；相同 requestId + 相同请求的网络重试不双扣。

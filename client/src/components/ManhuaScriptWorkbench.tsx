@@ -1,3 +1,6 @@
+import { ManhuaShotSearch } from "./ManhuaShotSearch";
+import { filterManhuaShots } from "@/lib/manhuaShotSearch";
+import { ManhuaToolBoundary } from "./canvas/ManhuaToolBoundary";
 import { UrlMaskedTextarea } from "@/components/UrlMaskedTextarea";
 import { maskMediaUrls, maskMediaProviderDetails } from "@/lib/maskMediaUrls";
 import { normalizeManhuaPromptSeconds } from "@shared/manhuaPromptSeconds";
@@ -1419,6 +1422,9 @@ export default function ManhuaScriptWorkbench({
   };
   const activeArtStyleId: ManhuaArtStyleId = normalizeManhuaArtStyleId(artStyleId);
   const [shotIndex, setShotIndex] = useState(0);
+  const [shotSearch, setShotSearch] = useState({ episode: focusEpisode, query: "" });
+  const shotSearchQuery = shotSearch.episode === focusEpisode ? shotSearch.query : "";
+  useEffect(() => { setShotSearch({ episode: focusEpisode, query: "" }); }, [focusEpisode]);
   const [outlineTemplateOpen, setOutlineTemplateOpen] = useState(false);
   const [parallelClipSelection, setParallelClipSelection] = useState<string[]>([]);
   const [clipPromptReviewOpen, setClipPromptReviewOpen] = useState(false);
@@ -1733,6 +1739,7 @@ export default function ManhuaScriptWorkbench({
     () => resolveShotsForEpisodeKeyarts(blocks, focusEpisode),
     [blocks, focusEpisode],
   );
+  const visibleShots = useMemo(() => filterManhuaShots(shots, shotSearchQuery), [shots, shotSearchQuery]);
   const shotSourceIsFallback = useMemo(
     () => resolveShotsForEpisodeKeyartsResult(blocks, focusEpisode).isFallback,
     [blocks, focusEpisode],
@@ -3687,6 +3694,11 @@ export default function ManhuaScriptWorkbench({
                 ) : null}
                 {storyboardThreeColumn && onGenerateKeyartShot ? (
                   <div data-manhua-shot-primary-action className="mt-2">
+                    {currentStillTarget > 0 && currentStillPresent >= currentStillTarget ? (
+                      <p data-manhua-keyarts-complete role="status" className="rounded-lg border border-emerald-300/20 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-100/80">
+                        本集静帧已齐 · {currentStillPresent}/{currentStillTarget} 张
+                      </p>
+                    ) : <>
                     <button type="button" data-manhua-action="generate-missing-keyarts"
                       disabled={Boolean(factoryBusy) || shotSourceIsFallback || !onGenerateAllEpisodeKeyarts || currentStillPresent >= currentStillTarget}
                       onClick={() => runGenerateAllKeyarts()}
@@ -3696,6 +3708,7 @@ export default function ManhuaScriptWorkbench({
                       </span>
                     </button>
                     <p className="mt-1 text-[11px] text-white/50">按张计费；已出的镜头跳过，提交前会再次确认。</p>
+                    </>}
                     <button type="button" data-manhua-action="generate-current-keyart"
                       disabled={Boolean(factoryBusy) || shotSourceIsFallback}
                       onClick={() => runCurrentKeyart()}
@@ -5340,7 +5353,7 @@ clipPromptReviewOpen ? (
             onClose={() => setActiveSecondaryTool(null)}>
             <ManhuaSecondaryToolTabs active={activeSecondaryTool} tools={(["model3d", "world3d", "previs", "actionTimeline", "audio"] as const).filter(tool => tool === "model3d" ? Boolean(onGenerateAsset3d || onImportAsset3d) : tool === "world3d" ? Boolean(worldStudioScenes.length || onGenerateSceneWorld) : tool === "previs" ? Boolean(onUpdateClipPrevisStudio) : tool === "actionTimeline" ? Boolean(onChangeManhuaActionPlan) : Boolean(onUpdateClipAudioStudio))} onSelect={selectSecondaryTool} />
 
-          {modelStudioOpen ? <section role="tabpanel" id="manhua-tool-panel-model3d" aria-labelledby="manhua-tool-tab-model3d" hidden={activeSecondaryTool !== "model3d"}><Manhua3dModelStudio
+          {modelStudioOpen ? <section role="tabpanel" id="manhua-tool-panel-model3d" aria-labelledby="manhua-tool-tab-model3d" hidden={activeSecondaryTool !== "model3d"}><ManhuaToolBoundary title="人物与道具建模"><Manhua3dModelStudio
             characters={modelStudioCharacters}
             busyIds={asset3dBusyIds}
             disabled={Boolean(factoryBusy)}
@@ -5354,9 +5367,9 @@ clipPromptReviewOpen ? (
               // 用候选图（A-pose）绑骨：把来源钉在锁脸图上，白模/场景预览随之切到该模型；用回锁脸图自己的模型则清钉
               onCustomAssetRigSourceChange?.(characterId, sourceRefId===characterId ? null : sourceRefId);
               setAutoRigAssetId(sourceRefId);
-            } : undefined}/></section> : null}
+            } : undefined}/></ManhuaToolBoundary></section> : null}
 
-          {worldStudioOpen && (worldStudioScenes.length > 0 || onGenerateSceneWorld) ? <section role="tabpanel" id="manhua-tool-panel-world3d" aria-labelledby="manhua-tool-tab-world3d" hidden={activeSecondaryTool !== "world3d"}><ManhuaWorldStudio
+          {worldStudioOpen && (worldStudioScenes.length > 0 || onGenerateSceneWorld) ? <section role="tabpanel" id="manhua-tool-panel-world3d" aria-labelledby="manhua-tool-tab-world3d" hidden={activeSecondaryTool !== "world3d"}><ManhuaToolBoundary title="3DGS 场景"><ManhuaWorldStudio
             onOpenAdvisor={onOpenAdvisor3d ? (sceneRefId) => onOpenAdvisor3d(activeClip?.id, sceneRefId, "world") : undefined}
             scenes={worldStudioScenes}
             busyIds={sceneWorldBusyIds}
@@ -5380,9 +5393,9 @@ clipPromptReviewOpen ? (
               disabled={Boolean(factoryBusy)}
               onToggleAdopt={onToggleStageFrameAdoption}
               actorLabelOf={(id)=>assetLockRegistry.byRole.character.find(a=>a.id===id)?.labelZh||id}/>
-          </div> : null}</section> : null}
+          </div> : null}</ManhuaToolBoundary></section> : null}
 
-          {previsStudioOpen&&onUpdateClipPrevisStudio ? <section role="tabpanel" id="manhua-tool-panel-previs" aria-labelledby="manhua-tool-tab-previs" hidden={activeSecondaryTool !== "previs"}><div className="w-full">
+          {previsStudioOpen&&onUpdateClipPrevisStudio ? <section role="tabpanel" id="manhua-tool-panel-previs" aria-labelledby="manhua-tool-tab-previs" hidden={activeSecondaryTool !== "previs"}><ManhuaToolBoundary title="动作白模"><div className="w-full">
             <p className="mb-2 text-xs text-cyan-100">第 {focusEpisode} 集 · 第 {activeSegNo} 段 · 动作白模</p>
             <div className="mb-2 flex flex-wrap items-center gap-2 rounded border border-cyan-300/20 bg-cyan-500/5 p-2 text-[11px] text-white/75" data-previs-world-link>
               <span>3D 场景可尝试载入 {manhuaWorldCounts(worldStudioScenes).ready}/{worldStudioScenes.length} 个；它只取本段人物起点站位，白模动作和切镜以这里的预演为准。</span>
@@ -5406,7 +5419,7 @@ clipPromptReviewOpen ? (
               disabled={Boolean(factoryBusy)||activeClip.status==="running"||activeClip.videoTaskStatus==="queued"}
               onChange={(studio,reference)=>onUpdateClipPrevisStudio(activeClip.id,studio,reference)}/>
               :<p className="text-xs text-amber-100">请先确认分段剧本并建立本段成片节点；此操作不会生成付费成片。</p>}
-          </div></section>:null}
+          </div></ManhuaToolBoundary></section>:null}
 
           {actionTimelineOpen&&onChangeManhuaActionPlan ? <section role="tabpanel" id="manhua-tool-panel-actionTimeline" aria-labelledby="manhua-tool-tab-actionTimeline" hidden={activeSecondaryTool !== "actionTimeline"}><ManhuaActionTimeline
             episodeIndex={focusEpisode}
@@ -9300,8 +9313,12 @@ clipPromptReviewOpen ? (
                 分镜（{shots.length}）· 当前第 {activeShot?.index ?? "—"} 镜
                 <ManhuaShotSourceLabel isFallback={shotSourceIsFallback} />
               </div> : null}
+              <ManhuaShotSearch query={shotSearchQuery}
+                onQueryChange={query => setShotSearch({ episode: focusEpisode, query })}
+                results={visibleShots} total={shots.length} selectedIndex={shotIndex}
+                onSelect={selectShotAndFocusCanvas} />
               <div className="mt-1.5 min-h-0 flex-1 space-y-2 overflow-y-auto pr-0.5">
-                {shots.map((shot, i) => {
+                {visibleShots.map(({ shot, originalIndex: i }) => {
                   const on = i === Math.min(shotIndex, shots.length - 1);
                   // 严格按镜号对齐；禁止用列表下标顶替，避免有图/失败状态错位
                   const shotKey = episodeKeyarts.find(
