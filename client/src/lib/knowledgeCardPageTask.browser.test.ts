@@ -41,6 +41,14 @@ describe('知识卡刷新终止（真实浏览器导航，无生产调用）', (
     expect(await p.evaluate(() => sessionStorage.getItem('mvs-knowledge-card-page-requests.v1:1'))).toBe('[]');
     await p.close();
   });
+  it('出图请求未取得服务器编号前刷新，仍发送停止后续出图请求', async () => {
+    const p = await newPage(); const id = await begin(p, 'platform_composite_sheet_progress');
+    await p.evaluate(() => (window as any).detach());
+    await p.reload({ waitUntil: 'networkidle0' });
+    expect(stops).toContain(id);
+    expect(await p.evaluate(() => sessionStorage.getItem('mvs-knowledge-card-page-requests.v1:1'))).toBe('[]');
+    await p.close();
+  });
   it('卸载请求丢失，刷新后的页面仍补发；提交尚无后台编号也能停', async () => {
     const p = await newPage(); const id = await begin(p, 'knowledge_card_derive_level');
     // Simulate the browser dropping teardown events, with enqueue still awaiting its response.

@@ -8639,6 +8639,8 @@ export default function PlatformPage() {
     },
   ): Promise<string> => {
     knowledgeCardPageTasks.assertLive();
+    const pageRequestId = kind === "single_page_knowledge_card"
+      ? knowledgeCardPageTasks.begin("platform_composite_sheet_progress") : undefined;
     const sceneId = `custom-note-${notePage?.index ?? notePart ?? "single"}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const progressJobId = newPlatformCompositeProgressJobId();
     const title = extractInfographicSubjectFromUserCopy(trimmed);
@@ -8652,6 +8654,7 @@ export default function PlatformPage() {
     const scriptContext = trimmed;
     const res = await generateCustomNoteMutation.mutateAsync({
       sceneId,
+      pageRequestId,
       title,
       scriptContext,
       kind,
@@ -8679,6 +8682,8 @@ export default function PlatformPage() {
       allowBloggerTitle,
     });
     if (res.imageUrl) {
+      if (pageRequestId) knowledgeCardPageTasks.finish(pageRequestId);
+      knowledgeCardPageTasks.assertLive();
       return res.imageUrl;
     }
     if ((res as { isAsync?: boolean }).isAsync && (res as { progressJobId?: string }).progressJobId) {
@@ -8693,6 +8698,8 @@ export default function PlatformPage() {
           adaptiveBackoffAfterAttempts: 20,
           maxIntervalMs: 5000,
         });
+        if (pageRequestId) knowledgeCardPageTasks.finish(pageRequestId);
+        knowledgeCardPageTasks.assertLive();
         if (j.status === "failed") throw new Error(j.error || "生成失敗，請重試");
         const out = j.output as { compositeImageUrl?: string; imageUrl?: string } | null;
         const url = out?.compositeImageUrl || out?.imageUrl || "";
@@ -16052,7 +16059,7 @@ export default function PlatformPage() {
                     onCancel={customNoteDistillJobId || customNoteRendering ? cancelCustomNoteDistill : undefined}
                     cancelBusy={customNoteCancelBusy}
                   />
-                  <p className="text-xs text-muted-foreground">刷新或关闭页面会停止读档、提炼与派生；已完成的结果保留。</p>
+                  <p className="text-xs text-muted-foreground">刷新或关闭页面会停止读档、提炼、派生及后续出图；已提交供应商的图片仍会完成。</p>
                 </div>
               ) : null}
               {customNoteKind === "optimize_custom_copy" ? (

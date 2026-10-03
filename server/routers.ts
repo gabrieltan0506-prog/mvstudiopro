@@ -1,4 +1,4 @@
-import { createKnowledgeCardPageJob } from "./jobs/knowledgeCardPageTask";
+import { createKnowledgeCardPageJob, reserveKnowledgeCardImageJob, checkKnowledgeCardImageMaySubmit } from "./jobs/knowledgeCardPageTask";
 import { novelExcerptSchema } from "../shared/manhuaNovelSource.js";
 import { canvasMusicMvRouter } from "./routers/canvasMusicMv";
 import { canvasMusicMvAssembleRouter } from "./routers/canvasMusicMvAssemble";
@@ -8476,6 +8476,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             gridVariant: z.enum(["2x4", "3x4"]).optional(),
             /** 可選：客戶端生成並輪詢 GET /api/jobs/:id，實時顯示 imageGenFlowLog */
             progressJobId: z.string().min(8).max(64).optional(),
+            pageRequestId: z.string().uuid().optional(),
             executionDetails: z.string().max(4000).optional(),
             /** 上传素材拍摄手法摘要（景别/布光/走位），并入 2×4 中文脚本 */
             shootingTechniqueBrief: z.string().max(4000).optional(),
@@ -8506,6 +8507,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               .optional(),
           })
           .superRefine((data, ctx) => {
+            if (data.pageRequestId && data.kind !== "single_page_knowledge_card") {
+              ctx.addIssue({ code: z.ZodIssueCode.custom, message: "页面请求编号仅用于知识卡", path: ["pageRequestId"] });
+            }
             const pack = data.bulkCompositePack;
             if (!pack) return;
             const { packSceneIds, sequentialSlot } = pack;
@@ -8534,6 +8538,17 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       )
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
+        const imageReservation = input.pageRequestId
+          ? await reserveKnowledgeCardImageJob({ userId: String(userId), requestId: input.pageRequestId, params: { ...input } })
+          : null;
+        if (imageReservation && !imageReservation.claimed) {
+          return { success: true as const, imageUrl: null, totalCost: 0, kind: input.kind,
+            imageGenFlowLog: [], isAsync: true, progressJobId: imageReservation.id };
+        }
+        const beforeImageSubmit = imageReservation
+          ? () => checkKnowledgeCardImageMaySubmit(imageReservation.id) : undefined;
+        try {
+        await beforeImageSubmit?.();
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
         const supervisorOpsAllowed = resolvePlatformSupervisorOpsAllowed(ctx.user, ctx.supervisorSession);
         const enableCompositeDeepResearchProAdmin =
@@ -8600,6 +8615,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           const bulkTag = compositePack
             ? ` · 编导分镜套装（九折）第${compositePack.sequentialSlot + 1}/${compositePack.packSceneIds.length}笔`
             : "";
+          await beforeImageSubmit?.();
           compositeChargeReceipt = await deductCreditsAmount(
             userId,
             cost,
@@ -8634,7 +8650,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
 
         const progressJobIdRaw = String(input.progressJobId ?? "").trim();
-        const progressJobId = progressJobIdRaw.length >= 8 ? progressJobIdRaw : null;
+        const progressJobId = imageReservation?.id ?? (progressJobIdRaw.length >= 8 ? progressJobIdRaw : null);
 
         /**
          * 审查必须修（P0·8/9）：扣费 receipt 只活在请求闭包里——进程在
@@ -8813,7 +8829,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
         if (progressJobId) {
           try {
-            await insertRunningCompositeSheetProgressJob({
+            if (!imageReservation) await insertRunningCompositeSheetProgressJob({
               id: progressJobId,
               userId: String(userId),
               sceneId: input.sceneId,
@@ -8841,6 +8857,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             const stopHeartbeat = startCompositeHeartbeat();
             let imageUrl: string | null = null;
             try {
+              await beforeImageSubmit?.();
               // 动态加载与进度挂接也在 try 内：任何一步抛错都走统一退款+终态
               const { attachCompositeSheetFlowLogLiveSync } = await import("./jobs/compositeSheetLiveProgress.js");
               detachLiveProgress = attachCompositeSheetFlowLogLiveSync(imageGenFlowLog, progressJobId);
@@ -8853,6 +8870,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               const isTrial = !isAdminUser && (await resolveWatermark(userId, isAdminUser));
               appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);
               imageUrl = await generateSheet({
+                beforeImageSubmit,
                 kind: input.kind,
                 title: input.title,
                 scriptContext: enrichedCompositeScriptContext,
@@ -9087,6 +9105,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           kind: input.kind,
           imageGenFlowLog,
         };
+        } catch (error) {
+          // Before the background worker starts, all errors still need a terminal progress row.
+          if (imageReservation) await markJobFailed(imageReservation.id, error instanceof Error ? error.message : String(error));
+          throw error;
+        }
       }),
 
     /**

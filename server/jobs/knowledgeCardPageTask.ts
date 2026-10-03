@@ -12,7 +12,7 @@ export function knowledgeCardPageJobId(userId: string, action: KnowledgeCardPage
 }
 
 export async function createKnowledgeCardPageJob(args: {
-  userId: string; action: KnowledgeCardPageAction; requestId?: string; params: Record<string, unknown>;
+  userId: string; action: Exclude<KnowledgeCardPageAction, "platform_composite_sheet_progress">; requestId?: string; params: Record<string, unknown>;
 }): Promise<string> {
   const id = args.requestId ? knowledgeCardPageJobId(args.userId, args.action, args.requestId) : nanoid(16);
   const input = { action: args.action, params: args.params };
@@ -45,7 +45,43 @@ export async function cancelKnowledgeCardPageRequest(args: {
   await db.insert(jobs).values({
     id, userId: args.userId, type: "platform", provider: "evolink", status: "failed", attempts: 0,
     input: { action: args.action, cancelRequestedAt: new Date().toISOString() },
-    error: "页面已刷新或关闭，已停止读档",
+    error: "页面已刷新或关闭，已停止知识卡后续处理",
   }).onConflictDoNothing({ target: jobs.id });
-  return requestPlatformJobCancel({ jobId: id, userId: args.userId, actions: [args.action], queuedError: "页面已刷新或关闭，已停止读档" });
+  return requestPlatformJobCancel({ jobId: id, userId: args.userId, actions: [args.action], queuedError: "页面已刷新或关闭，已停止知识卡后续处理" });
+}
+
+/** Claim before charging. A refresh tombstone or duplicate request never buys another image. */
+export async function reserveKnowledgeCardImageJob(args: {
+  userId: string; requestId: string; params: Record<string, unknown>;
+}): Promise<{ id: string; claimed: boolean }> {
+  const action = "platform_composite_sheet_progress" as const;
+  const id = knowledgeCardPageJobId(args.userId, action, args.requestId);
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable — cannot reserve knowledge card image");
+  const inserted = await db.insert(jobs).values({
+    id, userId: args.userId, type: "platform", provider: "vertex", status: "running", attempts: 1,
+    input: { action, params: args.params },
+    output: { imageGenFlowLog: [], compositeSheetProgress: true, kind: "single_page_knowledge_card" },
+  }).onConflictDoNothing({ target: jobs.id }).returning({ id: jobs.id });
+  // The inserted values are ours. Read cancellation inside the caller's protected execution.
+  if (inserted.length === 1) return { id, claimed: true };
+  const row = await getJobByIdStrict(id);
+  if (!row || row.userId !== args.userId || (row.input as { action?: string })?.action !== action) {
+    throw new Error("无法确认知识卡出图任务");
+  }
+  const input = row.input as { params?: unknown; cancelRequestedAt?: unknown };
+  if (!input.cancelRequestedAt && !isDeepStrictEqual(input.params, JSON.parse(JSON.stringify(args.params)))) {
+    throw new Error("该请求编号已绑定另一张知识卡，请重新提交");
+  }
+  return { id, claimed: false };
+}
+
+/** Cooperative boundary: do not interrupt an already purchased image or discard its result. */
+export async function checkKnowledgeCardImageMaySubmit(id: string): Promise<void> {
+  const row = await getJobByIdStrict(id);
+  if (!row || row.status !== "running" || (row.input as { cancelRequestedAt?: unknown })?.cancelRequestedAt) {
+    const error = new Error("页面已刷新或关闭，已停止知识卡后续出图");
+    Object.assign(error, { kind: "cancelled" });
+    throw error;
+  }
 }

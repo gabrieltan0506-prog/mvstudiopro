@@ -1,8 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({ rows: new Map<string, any>(), inserts: [] as any[], cancelCalls: [] as any[] }));
-vi.mock("../db", () => ({ getDb: async () => ({ insert: () => ({ values: (row: any) => ({ onConflictDoNothing: async () => {
+vi.mock("../db", () => ({ getDb: async () => ({ insert: () => ({ values: (row: any) => ({ onConflictDoNothing: () => {
   state.inserts.push(row);
-  if (!state.rows.has(row.id)) state.rows.set(row.id, JSON.parse(JSON.stringify(row)));
+  const inserted = !state.rows.has(row.id);
+  if (inserted) state.rows.set(row.id, JSON.parse(JSON.stringify(row)));
+  const result = Promise.resolve();
+  return Object.assign(result, { returning: async () => inserted ? [{ id: row.id }] : [] });
 } }) }) }) }));
 vi.mock("./repository", () => ({
   getJobByIdStrict: async (id: string) => state.rows.get(id) || null,
@@ -17,7 +20,7 @@ vi.mock("./repository", () => ({
     return row;
   },
 }));
-import { cancelKnowledgeCardPageRequest, createKnowledgeCardPageJob, knowledgeCardPageJobId } from "./knowledgeCardPageTask";
+import { cancelKnowledgeCardPageRequest, createKnowledgeCardPageJob, knowledgeCardPageJobId, reserveKnowledgeCardImageJob, checkKnowledgeCardImageMaySubmit } from "./knowledgeCardPageTask";
 const request = { userId: "1", action: "knowledge_card_distill" as const, requestId: "13304dee-9292-4a81-923d-2f6a5c6b1a3d" };
 beforeEach(() => { state.rows.clear(); state.inserts = []; state.cancelCalls = []; });
 describe("刷新与知识卡建单竞争", () => {
@@ -66,5 +69,35 @@ describe("刷新与知识卡建单竞争", () => {
     expect(new Set([a,b,c]).size).toBe(3);
     await expect(cancelKnowledgeCardPageRequest({ ...request, requestId: "other-job-id" })).rejects.toThrow();
     expect(state.rows.size).toBe(0);
+  });
+});
+
+describe("知识卡图片提交边界", () => {
+  const image = { userId: "1", requestId: request.requestId, params: { kind: "single_page_knowledge_card", title: "卡片" } };
+  it("刷新先到：不取得执行权，不扣费也不出图", async () => {
+    await cancelKnowledgeCardPageRequest({ ...request, action: "platform_composite_sheet_progress" });
+    const claimed = await reserveKnowledgeCardImageJob(image);
+    expect(claimed.claimed).toBe(false);
+    await expect(checkKnowledgeCardImageMaySubmit(claimed.id)).rejects.toMatchObject({ kind: "cancelled" });
+  });
+  it("并发重复提交仅一笔取得执行权，运行占位不进入队列", async () => {
+    const claims = await Promise.all([reserveKnowledgeCardImageJob(image), reserveKnowledgeCardImageJob(image)]);
+    expect(claims.filter(c => c.claimed)).toHaveLength(1);
+    expect(state.rows.get(claims[0].id).status).toBe("running");
+    await expect(checkKnowledgeCardImageMaySubmit(claims[0].id)).resolves.toBeUndefined();
+  });
+  it("运行后刷新阻止下一次提交，已购在途结果仍可完成，不抹除已完成图", async () => {
+    const { id } = await reserveKnowledgeCardImageJob(image);
+    await cancelKnowledgeCardPageRequest({ ...request, action: "platform_composite_sheet_progress" });
+    expect(state.rows.get(id).status).toBe("running");
+    await expect(checkKnowledgeCardImageMaySubmit(id)).rejects.toMatchObject({ kind: "cancelled" });
+    const row = state.rows.get(id); row.status = "succeeded"; row.output = { compositeImageUrl: "https://test.invalid/done.png" };
+    await cancelKnowledgeCardPageRequest({ ...request, action: "platform_composite_sheet_progress" });
+    expect(row.output.compositeImageUrl).toBe("https://test.invalid/done.png");
+    expect(row.status).toBe("succeeded");
+  });
+  it("同一个图片请求不能更换内容", async () => {
+    await reserveKnowledgeCardImageJob(image);
+    await expect(reserveKnowledgeCardImageJob({ ...image, params: { title: "另一份" } })).rejects.toThrow("另一张");
   });
 });

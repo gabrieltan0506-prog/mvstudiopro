@@ -4,9 +4,9 @@
 
 | ID | 嚴重度／狀態 | 可重現問題、修復與證據 |
 |---|---|---|
-| F1 | P1 · OPEN（範圍待確認） | 刷新取消只覆蓋讀檔、提煉、派生；圖片由 `generatePlatformCompositeSheet` 背景閉包執行，已提交頁仍可生成，既有 `posterResume` 仍恢復結果。新增 `assertLive` 與頁離開旗標只能停後續頁。已向用戶明確詢問是否包含出圖，尚未取得排除授權；不能聲稱所有卡片任務刷新即完全終止。外部已建單的費用不能保證撤回。 |
+| F1 | P1 · CLOSED_LOCAL，子代理已複核 | 用戶確認包含出圖，並明確接受已提交供應商的圖片完成；要求停止後續提交。已接圖片UUID/running唯一占位：取消先到與重複請求不取得執行權，扣費前及每次供應商、OpenAI換鑰、參考圖下載後POST、整鏈重試前檢查取消。成功結果照常保存結算；unknown原樣對帳、不因取消改寫。子代理發現初次插入後讀回失敗的孤兒路徑，已改新插入直接返回、受保護執行內讀取消。舊單條posterResume不能恢復全部並發頁，本輪不擴張恢復模型，已移除全套恢復承諾。服務端35項與真瀏覽器6項通過；未线上验收。 |
 | F2 | P2 · CLOSED_LOCAL，子代理已複核 | `callNovelStage` 把 HTTP200 SSE `{error:{code:401}}` 當斷流，轉 DeepSeek。子代理隔離反例實際呼叫2次；日誌 `/tmp/pr1656-review-stream.log`。修復：SSE reader 新增可選結構化錯誤回調，小說鏈以結構化 status 分類；401/403/安全/未知錯誤停止，429等明確暫時錯誤可fallback。原共享reader無回調時行為不變。子代理已靜態複核；小說13項（另含非SSE錯誤體）與共享讀流38項回歸通過（`/tmp/pr1656-novel-final-tests.log`、`/tmp/pr1656-stream-regression.log`）。 |
 
 其餘已靜態追查：DOC/DOCX/PDF/OCR/EPUB 匯入與 worker 資源、模板→小說→劇情、原稿保存與局部改寫、漫劇畫布篩選、字幕參數。第一輪未發現其他有充分證據的阻斷；不把未付費驗證、未上線或文學品質未實測寫成無錯。
 
-驗證口徑：初次類型檢查有 MapIterator/ES5 錯已修；共享 node_modules 的 tsbuildinfo 寫入受限，改用 `/tmp/knowledge-refresh.tsbuildinfo` 後檢查exit0。初次沙箱瀏覽器未完成已中止；獲准本機隔離瀏覽器跑15項通過，新刷新模組再定向5項通過。未合併、未部署，沒有新增付費上游生成。F1 尚開放，因此不是「整張 PR 無阻斷／可合併」結論。
+驗證口徑：初次類型檢查有 MapIterator/ES5 錯已修；共享 node_modules 的 tsbuildinfo 寫入受限，改用 `/tmp/knowledge-refresh.tsbuildinfo` 後檢查exit0。初次沙箱瀏覽器未完成已中止；獲准本機隔離瀏覽器跑15項通過，新刷新模組再定向5項通過。未合併、未部署，沒有新增付費上游生成。F1/F2 均在本地修復並經子代理複核；這不代表全部線上、付費或文學品質驗收已完成。最終合併由用戶本人決定。
