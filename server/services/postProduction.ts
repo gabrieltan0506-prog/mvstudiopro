@@ -1,4 +1,5 @@
 import { compileBgmNarrativeMix } from "../../shared/manhuaBgmNarrativeMix";
+import { normalizeDialogueSubtitleSrt } from "../../shared/dialogueSubtitleSrt.js";
 /**
  * 媒体工坊核心:拼接 / BGM 贴装 / 音频裁段与秒锁试听 / 响度验收 / 字幕烧录。
  * 纯 ffmpeg + 规则引擎,零大模型 token;配方来自《雷击》《天雷劫》实弹工艺:
@@ -651,6 +652,7 @@ export async function burnSubtitle(
 ): Promise<{ gcsUri: string; url: string; bytes: number; durationSec: number; cueCount: number }> {
   const signal = options?.signal ?? NEVER_ABORT;
   const normalized = burnSubtitleParamsSchema.parse(input);
+  normalized.subtitleSrt = normalizeDialogueSubtitleSrt(normalized.subtitleSrt);
   // 共享层空轨已拦;服务层再验一道时间码,别为一份空 SRT 白烧一整轮转码
   const cueCount = (normalized.subtitleSrt.match(/\d{2}:\d{2}:\d{2},\d{3} --> /g) || []).length;
   if (!cueCount) throw new Error("字幕内容不含可用时间码,无法烧字");
@@ -661,9 +663,10 @@ export async function burnSubtitle(
     // 随机文件名 + wx 独占创建:临时目录内也不给同名覆盖留缝
     const srtPath = path.join(tmpDir, `sub-${randomBytes(8).toString("hex")}.srt`);
     await fetchPostProdSourceToFile(normalized.videoUri, vPath, { signal });
-    await writeFile(srtPath, normalized.subtitleSrt, { encoding: "utf8", flag: "wx" });
     // 先探测确认素材是可用视频,坏素材在转码前失败,错误信息也更准
-    await probe(vPath, signal);
+    const sourceMeta = await probe(vPath, signal);
+    const subtitleSrt = normalizeDialogueSubtitleSrt(normalized.subtitleSrt, sourceMeta.durationSec);
+    await writeFile(srtPath, subtitleSrt, { encoding: "utf8", flag: "wx" });
 
     const outPath = path.join(tmpDir, "out.mp4");
     await runMediaTool(
