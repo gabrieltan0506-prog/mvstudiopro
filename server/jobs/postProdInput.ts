@@ -7,6 +7,7 @@ import { autoRigRequestSchema } from "../../shared/manhuaAutoRig";
 import { z } from "zod";
 import { bgmNarrativeMixSchema } from "../../shared/manhuaBgmNarrativeMix";
 import { manhuaPrevisRequestSchema } from "../../shared/manhuaPrevis";
+import { SUBTITLE_EFFECT_IDS } from "../../shared/subtitleEffects";
 
 const mediaSourceSchema = z.string().trim().min(1).max(2048);
 
@@ -112,6 +113,8 @@ export const burnSubtitleParamsSchema = z
     /** SRT 全文由共享层 buildManhuaSubtitleBurnSrt 生成(已清洗防注入) */
     subtitleSrt: z.string().min(1).max(200_000),
     styleOverride: burnSubtitleStyleOverrideSchema.optional(),
+    /** Omitted on existing jobs: preserve static subtitles. */
+    effect: z.enum(SUBTITLE_EFFECT_IDS).optional(),
   })
   .strict();
 

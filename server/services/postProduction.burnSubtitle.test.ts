@@ -79,7 +79,9 @@ describe("burn_subtitle 滤镜串构造", () => {
   it("路径带滤镜保留字符直接拒绝,不转义硬扛", () => {
     for (const bad of ["/tmp/a'b.srt", "/tmp/a:b.srt", "/tmp/a,b.srt", "/tmp/a;b.srt", "/tmp/a[0].srt"]) {
       expect(() => buildBurnSubtitleFilter(bad)).toThrow("滤镜保留字符");
+      expect(() => buildBurnSubtitleFilter("/tmp/sub.ass", undefined, bad)).toThrow("滤镜保留字符");
     }
+    expect(buildBurnSubtitleFilter("/tmp/sub.ass", undefined, "/tmp/fonts")).toContain(":fontsdir='/tmp/fonts'");
   });
 });
 

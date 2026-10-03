@@ -10,13 +10,16 @@ it("字幕字号选择只改变烧录样式，默认两倍字号，保持原素�
   await page.select('[aria-label="字幕成片"]','https://test.invalid/original.mp4');
   await page.$eval('[aria-label="对白字幕 SRT"]',e=>{Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')!.set!.call(e,'1\n00:00:01,000 --> 00:00:03,000\n已确认对白\n');e.dispatchEvent(new Event('input',{bubbles:true}));});
   expect(await page.$eval('[aria-label="字幕字号"]',e=>(e as HTMLSelectElement).value)).toBe('16');
+  expect(await page.$eval('[aria-label="字幕特效"]',e=>(e as HTMLSelectElement).value)).toBe('none');
   for(const [i,size] of Array.from([12,16,8].entries())){
    await page.select('[aria-label="字幕字号"]',String(size));
+   await page.select('[aria-label="字幕特效"]',['none','fade','pop'][i]);
    await page.evaluate(()=>{const b=Array.from(document.querySelectorAll('button')).find(b=>b.textContent?.includes('添加字幕'))!;b.click();});
    await page.waitForFunction(n=>(window as any).sent.length===n,{},i+1);
   }
   const sent=await page.evaluate(()=>(window as any).sent);
   expect(sent.map((p:any)=>p.styleOverride.fontSize)).toEqual([12,16,8]);
+  expect(sent.map((p:any)=>p.effect)).toEqual(['none','fade','pop']);
   expect(new Set(sent.map((p:any)=>p.videoUri))).toEqual(new Set(['https://test.invalid/original.mp4']));
   expect(new Set(sent.map((p:any)=>p.subtitleSrt)).size).toBe(1);expect(sent[0].subtitleSrt).toContain('00:00:01,000 --> 00:00:03,000');expect(sent[0].subtitleSrt).toContain('已确认对白');
  }finally{await browser.close()}

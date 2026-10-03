@@ -13,9 +13,11 @@ const mountBgm = vi.fn(async (..._args: unknown[]) => ({ kind: "bgm" }));
 const loudnessCheck = vi.fn(async (..._args: unknown[]) => ({ kind: "loudness" }));
 const trimAudio = vi.fn(async (..._args: unknown[]) => ({ kind: "audio_trim" }));
 const renderAudioTimeline = vi.fn(async (..._args: unknown[]) => ({ kind: "audio_timeline" }));
+const burnSubtitle = vi.fn(async (..._args: unknown[]) => ({ kind: "burn_subtitle" }));
 const resolvePostProdInputSources = vi.fn(async ({ input }: { input: unknown }) => input);
 
 vi.mock("../services/postProduction", () => ({
+  burnSubtitle: (a: unknown, b: unknown, c: unknown) => burnSubtitle(a, b, c),
   trimAudio: (a: unknown, b: unknown, c: unknown) => trimAudio(a, b, c),
   renderAudioTimeline: (a: unknown, b: unknown, c: unknown) => renderAudioTimeline(a, b, c),
   concatClips: (a: unknown, b: unknown, c: unknown) => concatClips(a, b, c),
@@ -32,6 +34,15 @@ vi.mock("../services/manhuaAutoRigRender",()=>({renderManhuaAutoRig:(...args:unk
 import { processPostProdJob, runWithTaskLimit } from "./postProdJob";
 
 describe("processPostProdJob 强 Schema 分派", () => {
+  it("字幕特效穿过队列解析与素材归属解析，完整到达烧录器", async () => {
+    const signal = new AbortController().signal;
+    const params = { videoUri: "gs://test/original.mp4", subtitleSrt: "1\n00:00:01,000 --> 00:00:03,000\n已确认对白\n", effect: "pop", styleOverride: { fontSize: 16, outline: 0.35, marginV: 12 } };
+    const result = await processPostProdJob({ action: "burn_subtitle", scopeKey: "project-7", params }, "7", { signal });
+    expect(burnSubtitle).toHaveBeenCalledTimes(1);
+    expect(burnSubtitle).toHaveBeenCalledWith(params, "7", { signal });
+    expect(resolvePostProdInputSources).toHaveBeenCalledWith(expect.objectContaining({ userId: "7", input: expect.objectContaining({ params }) }));
+    expect(result).toMatchObject({ provider: "ffmpeg-post-prod", output: { kind: "burn_subtitle" } });
+  });
   it("音频单段与秒锁分派保留用户、区间及终止信号", async () => {
     const signal = new AbortController().signal;
     const clip = { audioUri: "gs://b/a.wav", sourceStartSec: 1, sourceEndSec: 3 };

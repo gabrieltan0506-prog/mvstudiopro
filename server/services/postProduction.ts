@@ -1,5 +1,6 @@
 import { compileBgmNarrativeMix } from "../../shared/manhuaBgmNarrativeMix";
 import { normalizeDialogueSubtitleSrt } from "../../shared/dialogueSubtitleSrt.js";
+import { buildSubtitleEffectAss } from "./subtitleEffects.js";
 /**
  * 媒体工坊核心:拼接 / BGM 贴装 / 音频裁段与秒锁试听 / 响度验收 / 字幕烧录。
  * 纯 ffmpeg + 规则引擎,零大模型 token;配方来自《雷击》《天雷劫》实弹工艺:
@@ -18,7 +19,7 @@ import { normalizeDialogueSubtitleSrt } from "../../shared/dialogueSubtitleSrt.j
 import { mediaRuntime, boundMediaThreads } from "./postProdResources";
 import { randomBytes } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
@@ -612,8 +613,9 @@ const SAFE_FILTER_PATH_RE = /^[0-9A-Za-z/_.-]+$/;
 export function buildBurnSubtitleFilter(
   srtPath: string,
   styleOverride?: BurnSubtitleStyleOverride,
+  fontsDir?: string,
 ): string {
-  if (!SAFE_FILTER_PATH_RE.test(srtPath)) {
+  if (!SAFE_FILTER_PATH_RE.test(srtPath) || (fontsDir != null && !SAFE_FILTER_PATH_RE.test(fontsDir))) {
     throw new Error("字幕临时文件路径包含滤镜保留字符");
   }
   const style = [
@@ -627,7 +629,7 @@ export function buildBurnSubtitleFilter(
     `MarginV=${styleOverride?.marginV ?? 35}`,
   ];
   if (styleOverride?.fontName) style.push(`FontName=${styleOverride.fontName}`);
-  return `subtitles=filename='${srtPath}':force_style='${style.join(",")}'`;
+  return `subtitles=filename='${srtPath}'${fontsDir ? `:fontsdir='${fontsDir}'` : ""}:force_style='${style.join(",")}'`;
 }
 
 /**
@@ -635,13 +637,13 @@ export function buildBurnSubtitleFilter(
  * 画面重编码(字幕已画进像素,躲不开),音轨原样 copy 不动。
  */
 export function buildBurnSubtitleArgs(
-  paths: { videoPath: string; srtPath: string; outPath: string },
+  paths: { videoPath: string; srtPath: string; outPath: string; fontsDir?: string },
   styleOverride?: BurnSubtitleStyleOverride,
 ): string[] {
   return [
     "-y",
     "-i", paths.videoPath,
-    "-vf", buildBurnSubtitleFilter(paths.srtPath, styleOverride),
+    "-vf", buildBurnSubtitleFilter(paths.srtPath, styleOverride, paths.fontsDir),
     "-c:v", "libx264", "-preset", "medium", "-crf", "18",
     "-c:a", "copy",
     paths.outPath,
@@ -664,17 +666,32 @@ export async function burnSubtitle(
   try {
     const vPath = path.join(tmpDir, "video.mp4");
     // 随机文件名 + wx 独占创建:临时目录内也不给同名覆盖留缝
-    const srtPath = path.join(tmpDir, `sub-${randomBytes(8).toString("hex")}.srt`);
+    const hasEffect = normalized.effect != null && normalized.effect !== "none";
+    const srtPath = path.join(tmpDir, `sub-${randomBytes(8).toString("hex")}.${hasEffect ? "ass" : "srt"}`);
     await fetchPostProdSourceToFile(normalized.videoUri, vPath, { signal });
     // 先探测确认素材是可用视频,坏素材在转码前失败,错误信息也更准
     const sourceMeta = await probe(vPath, signal);
     const subtitleSrt = normalizeDialogueSubtitleSrt(normalized.subtitleSrt, sourceMeta.durationSec);
-    await writeFile(srtPath, subtitleSrt, { encoding: "utf8", flag: "wx" });
+    const subtitleFile = hasEffect ? buildSubtitleEffectAss({
+      subtitleSrt,
+      effect: normalized.effect as "fade" | "pop",
+      width: sourceMeta.width ?? 0,
+      height: sourceMeta.height ?? 0,
+      styleOverride: normalized.styleOverride,
+    }) : subtitleSrt;
+    await writeFile(srtPath, subtitleFile, { encoding: "utf8", flag: "wx" });
+    let fontsDir: string | undefined;
+    if (hasEffect) {
+      // Explicitly load the bundled CJK font; do not depend on host font discovery.
+      fontsDir = path.join(tmpDir, "fonts");
+      await mkdir(fontsDir);
+      await copyFile(path.resolve("assets/fonts/NotoSansCJKsc-Regular.otf"), path.join(fontsDir, "NotoSansCJKsc-Regular.otf"));
+    }
 
     const outPath = path.join(tmpDir, "out.mp4");
     await runMediaTool(
       "ffmpeg",
-      buildBurnSubtitleArgs({ videoPath: vPath, srtPath, outPath }, normalized.styleOverride),
+      buildBurnSubtitleArgs({ videoPath: vPath, srtPath, outPath, fontsDir }, normalized.styleOverride),
       signal,
     );
     const outMeta = await probe(outPath, signal);
