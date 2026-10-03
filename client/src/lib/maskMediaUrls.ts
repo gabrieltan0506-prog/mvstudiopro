@@ -14,7 +14,7 @@ export function maskedUrlEditorValue(text: string): { value: string; restore: (e
   const replacements: Array<{ source: string; token: string }> = [];
   const value = text.replace(URL_PATTERN, source => {
     // 保持字符位置，避免 @ 资产选择器的光标偏移影响原提示词。
-    const token = `[链接${replacements.length + 1}隐藏]`.padEnd(source.length, "·");
+    const token = `[链${replacements.length + 1}]`.padEnd(source.length, "·");
     replacements.push({ source, token });
     return token;
   });
@@ -34,7 +34,7 @@ export function maskedUrlEditorValue(text: string): { value: string; restore: (e
           continue;
         }
         if (count !== 1) return null;
-        edited = edited.replace(token, source);
+        edited = edited.replace(token, () => source);
       }
       return edited;
     },
