@@ -33,7 +33,7 @@ export function findAdvisorPromptContradictions(prompt: string) {
 /** 最终答复携带程序核对范围，防止模型漏报已定位候选或把存稿当作最终素材。 */
 export function composeAdvisorPromptReviewAnswer(answer: string, context: ManhuaCreativeAdvisorContext): string {
   const review = context.videoPromptReview;
-  if (!review || context.bgmMix || context.studio3d || context.previsEdit || context.worldTarget) return answer;
+  if (!review || context.subtitleReview || context.bgmMix || context.studio3d || context.previsEdit || context.worldTarget) return answer;
   const findings = findAdvisorPromptContradictions(review.prompt);
   return [
     `**本次核对范围：第${review.segmentIndex}段保存文本与节点设置。** 工厂自动生成并适配提示词，无需从零手填。最终图片/视频/音频数组、引用数量与顺序、文件和画面尚未核验；存稿编号不能证明数量合规或没有音视频参考。系统现有门禁仍有效，是否需要更新静帧须核具体版本和画面证据，下面都是可选建议，不自动改稿或生成。`,

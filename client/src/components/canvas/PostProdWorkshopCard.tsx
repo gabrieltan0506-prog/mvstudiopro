@@ -1,4 +1,5 @@
 import { UrlMaskedTextarea } from "@/components/UrlMaskedTextarea";
+import { PostProdSubtitleCard } from "./PostProdSubtitleCard";
 import { maskMediaUrls, maskMediaProviderDetails } from "@/lib/maskMediaUrls";
 import { BgmCreativeAdvisor } from "./BgmCreativeAdvisor";
 import type { ManhuaCreativeAdvisorContext } from "@shared/manhuaCreativeAdvisor";
@@ -766,6 +767,10 @@ export default function PostProdWorkshopCard({
             };
           }
 
+        | {
+            action: "burn_subtitle";
+            params: { videoUri: string; subtitleSrt: string; styleOverride?: { fontSize: number; outline: number; marginV: number; fontName: string } };
+          }
         | {
             action: "loudness_check";
             params: { videoUri: string; windows: [] };
@@ -1701,6 +1706,8 @@ export default function PostProdWorkshopCard({
             ))}
           </div>
         </div>
+
+        <PostProdSubtitleCard key={projectScopeKey} context={advisorContext} storageKey={`${storageKey}:${projectScopeKey}:subtitle`} clips={clipOptions} busy={busy || scopedJobs.some(job => job.action === "burn_subtitle" && (job.status === "queued" || job.status === "running"))} onSubmit={params => submit({ action: "burn_subtitle", params }, "对白字幕成片")} />
 
         {/* BGM 贴装 */}
         <div className="rounded-xl border border-white/10 bg-black/25 p-3">
