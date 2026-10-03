@@ -278,7 +278,7 @@ describe("PublicManhuaViralTemplateCard 匿名化边界（2026-08-15 审查必�
       expect(wire).not.toContain(leak);
     }
     expect(Object.keys(pub!).sort()).toEqual(
-      ["beatCount", "classificationTagsZh", "densityLevel", "featureZh", "introZh", "laneZh", "nameZh", "publicId"].sort(),
+      ["beatCount", "classificationTagsZh", "craft", "densityLevel", "featureZh", "introZh", "laneZh", "nameZh", "publicId"].sort(),
     );
   });
 

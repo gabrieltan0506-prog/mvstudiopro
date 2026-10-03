@@ -100,6 +100,20 @@ const scene = z
 export const novelScriptSchema = z
   .object({
     title: text.max(200),
+    // Optional only for reading pre-existing saved scripts; new generations are validated below.
+    applications: z
+      .array(
+        z
+          .object({
+            publicId: text.max(40),
+            method: text.max(300),
+            adaptation: text.max(1200),
+            sceneKeys: z.array(text.max(30)).min(1).max(24),
+          })
+          .strict()
+      )
+      .max(15)
+      .optional(),
     episodes: z
       .array(
         z
@@ -162,5 +176,25 @@ export function validateNovelStageOutput(
       if (new Set(ep.scenes.map(s => s.key)).size !== ep.scenes.length)
         throw new Error("场次编号重复");
     }
+  if ("title" in result) {
+    const selected = new Set(input.templates.map(t => t.publicId));
+    const keys = new Set(
+      result.episodes.flatMap(ep => ep.scenes.map(scene => scene.key))
+    );
+    const applications = result.applications || [];
+    if (
+      selected.size &&
+      (!applications.length ||
+        applications.some(
+          a =>
+            !selected.has(a.publicId) || a.sceneKeys.some(key => !keys.has(key))
+        ) ||
+        Array.from(selected).some(
+          id => !applications.some(a => a.publicId === id)
+        ))
+    ) {
+      throw new Error("模板运用说明缺失，或引用了未选择的模板/不存在的场次");
+    }
+  }
   return result;
 }

@@ -666,7 +666,7 @@ export async function listGcsManhuaViralProposals(): Promise<ManhuaViralTemplate
 }
 
 export async function listGcsManhuaViralApproved(): Promise<ManhuaViralTemplateCard[]> {
-  const cards = await listCardsUnderPrefix(MANHUA_VIRAL_APPROVED_PREFIX);
+  const cards = await listCardsUnderPrefixStrict(MANHUA_VIRAL_APPROVED_PREFIX);
   return cards.filter((c) => c.status === "approved");
 }
 

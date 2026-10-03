@@ -186,7 +186,7 @@ beforeEach(() => {
 });
 
 describe("listApprovedPublic：普通用户只拿匿名功能卡", () => {
-  it("八字段白名单 + 序列化零泄漏（含未来私密字段）", async () => {
+  it("字段白名单与手法索引白名单 + 序列化零泄漏（含未来私密字段）", async () => {
     const caller = (await loadRouter()).createCaller(makeCtx("user"));
     const out = await caller.listApprovedPublic();
     expect(out.groups).toHaveLength(1);
@@ -195,7 +195,7 @@ describe("listApprovedPublic：普通用户只拿匿名功能卡", () => {
     expect(items).toHaveLength(1);
     const card = items[0]!;
     expect(Object.keys(card).sort()).toEqual(
-      ["beatCount", "classificationTagsZh", "densityLevel", "featureZh", "introZh", "laneZh", "nameZh", "publicId"].sort(),
+      ["beatCount", "classificationTagsZh", "craft", "densityLevel", "featureZh", "introZh", "laneZh", "nameZh", "publicId"].sort(),
     );
     const wire = JSON.stringify(out);
     for (const leak of [

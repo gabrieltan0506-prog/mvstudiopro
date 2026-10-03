@@ -1,3 +1,4 @@
+import { buildTemplateCraftProfile, formatTemplateCraftApplication, type TemplateCraftProfile } from "./manhuaTemplateCraft";
 import { isNativeStructuredCardObjectName } from "./manhuaNativeStructuredCard.js";
 /**
  * 漫剧节奏模板库（产品只消费 status=approved）。
@@ -726,6 +727,7 @@ export type ManhuaTemplateStoryPreview = {
 };
 
 export type PublicManhuaViralTemplateCard = {
+  craft?: TemplateCraftProfile;
   /** 稳定公开句柄：`mt_${publicCode 小写}`；扩写入参可直接用它选模板 */
   publicId: string;
   /** 匿名展示名：`${laneZh}·爆款节奏 ${publicCode}` */
@@ -774,6 +776,7 @@ export function toPublicManhuaViralTemplateCard(
   const primary = classificationTagsZh[0]!;
   return {
     publicId: makePublicTemplateId(code),
+    craft: buildTemplateCraftProfile(card),
     nameZh: `${primary}·创作模板 ${code}`,
     laneZh: card.laneZh,
     classificationTagsZh,
@@ -1146,7 +1149,7 @@ export function recommendPublicManhuaViralTemplate(
   return cards
     .map((card) => ({
       card,
-      score: Array.from(new Set([...card.classificationTagsZh, card.storyPreview?.storyTypeZh || "", ...(card.storyPreview?.presentationTagsZh || [])])).filter(Boolean).reduce((sum, tag) => sum + (text.includes(tag) ? 1 : 0), 0),
+      score: Array.from(new Set([...card.classificationTagsZh, ...(card.craft?.features.map(f => f.label) || []), card.storyPreview?.storyTypeZh || "", ...(card.storyPreview?.presentationTagsZh || [])])).filter(Boolean).reduce((sum, tag) => sum + (text.includes(tag) ? 1 : 0), 0),
     }))
     .sort((a, b) => b.score - a.score)
     .find((row) => row.score > 0)?.card || null;
@@ -1303,6 +1306,7 @@ export function formatManhuaViralTemplateWriterSkillFromCard(
 ): string {
   if (!tpl || tpl.status !== "approved") return "";
   return [
+    formatTemplateCraftApplication(tpl),
     tpl.classification ? `多维特征：${flattenManhuaTemplateClassification(tpl.classification).join("、")}` : "",
     `能力简介：${tpl.summaryZh}`,
     tpl.storyStructure?.corePromiseZh

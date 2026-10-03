@@ -508,7 +508,7 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
               自己挑选或采用顾问推荐，最多5个；可单独生成，也可指定分工组合。
             </p>
             {templates.isError && (
-              <p role="alert">模板加载失败，请刷新后再选择。</p>
+              <div role="alert" className="mt-3 text-sm text-amber-200">模板加载失败，已有选择保留。<button className="ml-2 underline" onClick={() => void templates.refetch()}>重试读取</button></div>
             )}
             <ManhuaTemplatePicker
               cards={cards}

@@ -42,6 +42,20 @@ export function NovelTemplateComparison({ runs }: { runs: NovelRun[] }) {
   );
   return (
     <section aria-label="模板比较">
+      <details className="mb-4 rounded-xl border border-white/15 p-3" open>
+        <summary className="cursor-pointer text-sm font-semibold">模板方法如何用进剧本</summary>
+        <p className="mt-2 text-xs text-slate-400">这是生成时的运用说明，请结合下方场次核对实际效果。</p>
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          {variants.map(v => <div key={v.result.requestId} className="min-w-0 rounded-lg bg-white/5 p-3 text-sm">
+            <p className="font-medium">{v.input.templates.map(t => t.publicId.replace(/^mt_/, "").toUpperCase()).join(" + ")}</p>
+            {v.script.applications?.length ? v.script.applications.map((a, i) => <div key={i} className="mt-3 border-t border-white/10 pt-2">
+              <p className="text-amber-200">{a.publicId.replace(/^mt_/, "").toUpperCase()} · {a.method}</p>
+              <p className="mt-1 leading-6 text-slate-200">{a.adaptation}</p>
+              <p className="mt-1 text-xs text-slate-400">对应场次：{a.sceneKeys.join("、")}</p>
+            </div>) : <p className="mt-2 text-xs text-slate-400">这份已保存的剧本未记录方法运用说明。</p>}
+          </div>)}
+        </div>
+      </details>
       <style>{`@keyframes novel-difference{0%,100%{outline-color:transparent}50%{outline-color:currentColor}}.novel-difference{outline:2px solid transparent;animation:novel-difference 1.4s ease-in-out 2}@media(prefers-reduced-motion:reduce){.novel-difference{animation:none}}`}</style>
       <label>
         比较批次

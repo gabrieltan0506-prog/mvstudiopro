@@ -11801,6 +11801,7 @@ export default function OmniCanvas() {
                     适合这个题材：{recommendedViralTemplate.storyPreview?.teaserTitleZh || recommendedViralTemplate.nameZh || "剧情增强方案"}
                   </button>
                 ) : null}
+                {manhuaViralTemplatesQuery.isError && <p role="alert" className="mt-2 text-xs text-amber-100">模板目录读取失败，已有选择保留。<button type="button" className="ml-2 underline" onClick={() => void manhuaViralTemplatesQuery.refetch()}>重试读取</button></p>}
                 <ManhuaTemplatePicker
                   cards={approvedViralTemplateCards}
                   value={publicTemplateId}
