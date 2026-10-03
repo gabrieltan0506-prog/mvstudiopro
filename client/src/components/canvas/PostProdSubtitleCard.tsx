@@ -6,6 +6,7 @@ import { UrlMaskedTextarea } from "@/components/UrlMaskedTextarea";
 import { maskMediaProviderDetails } from "@/lib/maskMediaUrls";
 import { importWorkflowVideoSource } from "@/lib/videoUpscaleApi";
 import { normalizeDialogueSubtitleSrt } from "@shared/dialogueSubtitleSrt";
+import { SUBTITLE_EFFECT_OPTIONS, type SubtitleEffect } from "@shared/subtitleEffects";
 
 /** 成片字幕使用创作者确认的对白及时间码，不调用语音识别或改写对白。 */
 export function PostProdSubtitleCard({ clips, busy, onSubmit, context, storageKey }: {
@@ -13,11 +14,12 @@ export function PostProdSubtitleCard({ clips, busy, onSubmit, context, storageKe
   busy: boolean;
   context?: ManhuaCreativeAdvisorContext;
   storageKey: string;
-  onSubmit: (params: { videoUri: string; subtitleSrt: string; styleOverride: { fontSize: number; outline: number; marginV: number; fontName: string } }) => Promise<void>;
+  onSubmit: (params: { videoUri: string; subtitleSrt: string; effect: SubtitleEffect; styleOverride: { fontSize: number; outline: number; marginV: number; fontName: string } }) => Promise<void>;
 }) {
   const [source, setSource] = useState("");
   const [srt, setSrt] = useState("");
   const [fontSize, setFontSize] = useState(16);
+  const [effect, setEffect] = useState<SubtitleEffect>("none");
   const [submitting, setSubmitting] = useState(false);
   const gate = useRef(false);
   const advisor = trpc.mvAnalysis.askPlatformSkillQa.useMutation({ retry: false });
@@ -70,7 +72,7 @@ export function PostProdSubtitleCard({ clips, busy, onSubmit, context, storageKe
         ? await importWorkflowVideoSource(source) : source;
       setSource(videoUri);
       // 参考影片截图：白字、细黑边、无底框、底部居中；字号按竖屏适配。
-      await onSubmit({ videoUri, subtitleSrt, styleOverride: { fontSize, outline: 0.35, marginV: 12, fontName: "Noto Sans CJK SC" } });
+      await onSubmit({ videoUri, subtitleSrt, effect, styleOverride: { fontSize, outline: 0.35, marginV: 12, fontName: "Noto Sans CJK SC" } });
     } catch (error) {
       toast.error(maskMediaProviderDetails(error instanceof Error ? error.message : "字幕提交失败"));
     } finally {
@@ -105,11 +107,17 @@ export function PostProdSubtitleCard({ clips, busy, onSubmit, context, storageKe
         <option value={8}>小（原字号）</option><option value={12}>标准（放大50%）</option><option value={16}>大（原字号两倍）</option>
       </select>
     </label>
+    <label className="mt-3 flex items-center gap-2 text-xs">字幕特效
+      <select aria-label="字幕特效" value={effect} disabled={locked} onChange={event => setEffect(event.target.value as SubtitleEffect)} className="rounded border bg-transparent p-2">
+        {SUBTITLE_EFFECT_OPTIONS.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
+      </select>
+    </label>
+    <p className="mt-1 text-xs text-white/60">{SUBTITLE_EFFECT_OPTIONS.find(option => option.id === effect)?.description}</p>
     <div aria-label="字幕字号示意" className="mt-2 rounded-lg bg-neutral-800 p-4 text-center text-white">
       <span style={{ fontSize: fontSize * 2, fontFamily: '"Noto Sans CJK SC", sans-serif', textShadow: "0 1px 2px black" }}>先送娘去治病</span>
       <p className="mt-2 text-[10px] text-white/60">字号示意，非成片截图；实际效果随画幅和播放器显示尺寸变化。</p>
     </div>
-    <p className="mt-2 text-xs text-white/60">字幕样式：白字细黑边、无底框、底部居中；长句按对白停顿分条。</p>
+    <p className="mt-2 text-xs text-white/60">白字细黑边、底部居中。特效沿用每句时间码，长句自动换行；原片保留。</p>
     <button type="button" disabled={!source || !srt.trim() || locked} onClick={() => void submit()} className="mt-2 rounded-lg border border-cyan-300/30 px-3 py-2 text-xs disabled:opacity-40">{submitting ? "正在提交字幕…" : "添加字幕 · 0积分"}</button>
   </section>;
 }

@@ -23,6 +23,17 @@ beforeEach(() => {
 });
 
 describe("真实 queuePostProd 路由契约", () => {
+  it("字幕特效随真实路由输入持久化，旧任务仍可省略", async () => {
+    const base = { action: "burn_subtitle" as const, scopeKey: "project-7", params: { videoUri: "gs://test/post-prod/7/original.mp4", subtitleSrt: "1\n00:00:01,000 --> 00:00:03,000\n已确认对白\n" } };
+    for (const effect of [undefined, "fade", "pop"] as const) {
+      const request = { ...base, params: { ...base.params, ...(effect ? { effect } : {}) } };
+      await caller().mvAnalysis.queuePostProd(request);
+      const persisted = createJob.mock.calls.at(-1)![0];
+      expect(persisted.input).toEqual(request);
+      expect(postProdJobInputSchema.parse(JSON.parse(JSON.stringify(persisted.input)))).toEqual(request);
+    }
+    expect(createJob).toHaveBeenCalledTimes(3);
+  });
   it("项目拼接通过路由，来源核对后完整持久化为 worker 可复读格式", async () => {
     const result = await caller().mvAnalysis.queuePostProd(input);
     expect(result.status).toBe("queued");
