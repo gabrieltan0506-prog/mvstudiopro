@@ -191,6 +191,12 @@ export type CanvasVideoTaskRecord = {
   /** wavespeed-upscale 专用：要放大的源视频（必须是真实成片 URL）与目标档 */
   upscaleSourceUrl?: string;
   upscaleTarget?: WavespeedUpscaleTarget;
+  frameTargetFps?: 30 | 60;
+  framePasses?: number;
+  enhancePhase?: "upscale" | "interpolate";
+  frameStageUrl?: string;
+  enhanceOriginalSource?: string;
+  enhanceScopeKey?: string;
   wavespeedPredictionId?: string;
   /** 超分发送前落盘，崩溃后无句柄只能对账，禁止重投。 */
   upscaleSubmissionStartedAt?: string;
@@ -1105,16 +1111,32 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
   if (task.engine === "wavespeed-upscale") {
     const source = String(task.upscaleSourceUrl || "").trim();
     if (!source) throw new Error("缺少要放大的视频地址");
-    if (!task.upscaleTarget) throw new Error("缺少高清放大目标档");
+    if (!task.upscaleTarget && !task.frameTargetFps) throw new Error("缺少高清放大或补帧目标");
+    if (task.frameTargetFps && task.enhancePhase === "interpolate") {
+      // 本地进程由Fly任务执行；未调用付费上游。产物落盘后再进入超分，崩溃可重跑计算。
+      task.status = "running";
+      await writeTask(task);
+      const { interpolateVideo } = await import("./videoEnhanceOutput.js");
+      // 长时间4K插值持续心跳，避免运行时被账本误判失联退款。
+      const pulse = setInterval(() => { void heartbeatActiveJob(task.taskId, TASK_TYPE).catch(() => {}); }, 30_000);
+      let stage;
+      try { stage = await interpolateVideo({ videoUri: source, targetFps: task.frameTargetFps }, String(task.userId)); }
+      finally { clearInterval(pulse); }
+      task.frameStageUrl = task.upscaleTarget ? stage.gcsUri || stage.url : stage.url;
+      task.enhancePhase = "upscale";
+      await writeTask(task);
+      if (!task.upscaleTarget) { await succeedTask(task, stage.url, "ffmpeg-minterpolate", "ffmpeg"); return; }
+    }
+    if (!task.upscaleTarget && task.frameStageUrl) { await succeedTask(task, task.frameStageUrl, "ffmpeg-minterpolate", "ffmpeg"); return; }
     task.upscaleSubmissionStartedAt = new Date().toISOString();
     try { await writeTask(task); } catch { throw new SubmitRejectedError("提交前保存失败，未发送超分请求"); }
     const submitted = await submitWavespeedVideoUpscale({
       taskId: task.taskId,
-      videoUrl: source,
+      videoUrl: task.frameStageUrl || source,
       target: task.upscaleTarget,
     });
     task.wavespeedPredictionId = submitted.predictionId;
-    task.model = task.model || "bytedance-video-upscaler";
+    task.model = "bytedance-video-upscaler";
     task.provider = "wavespeed";
     task.status = "running";
     task.startedAt = task.startedAt || new Date().toISOString();
@@ -1166,8 +1188,12 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
       return task;
     }
 
+    if (task.engine === "wavespeed-upscale" && task.enhancePhase === "interpolate" && !task.wavespeedPredictionId) {
+      // Fly重启后允许重算未落盘的插值，不重投已发送的付费任务。
+      task.status = "queued";
+    }
     const createdMs = Date.parse(task.createdAt) || Date.now();
-    const deadlineMs = maxPollMs(task.engine);
+    const deadlineMs = maxPollMs(task.engine) + (task.engine === "wavespeed-upscale" && task.frameTargetFps ? 6 * 60 * 60 * 1000 : 0);
     if (Date.now() - createdMs > deadlineMs) {
       if (!hasProviderTask(task)) {
         // 从未提交到上游：上游没在烧钱，按失败退分是安全的
@@ -1440,8 +1466,12 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
           return current;
         }
         if (snap.state === "failed") return failTask(current, snap.error);
-        // 上游直链是短期的，镜像到 GCS 再交付；结果写 videoUrl，原片 URL 在 upscaleSourceUrl 里不动
-        const videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(snap.sourceUrl);
+        const { finalizeEnhancedVideo } = await import("./videoEnhanceOutput.js");
+        const videoUrl = current.enhanceOriginalSource ? await finalizeEnhancedVideo({
+          source: current.enhanceOriginalSource, enhanced: snap.sourceUrl,
+          userId: current.userId, target: current.upscaleTarget,
+          targetFps: current.frameTargetFps,
+        }).then(result => result.url) : await mirrorSeedanceMp4ToGcsSignedUrl(snap.sourceUrl);
         return succeedTask(
           current,
           videoUrl,
@@ -1515,6 +1545,8 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
       // 当终态会「假失败真退分」（上游不可取消、照跑照收钱）。记瞬态、等下一轮；
       // 真正的终态失败只认各 pollOnce 返回的 state:"failed"（2xx 明确终态）。
       // 长期起不来的由超时线 → 对账态 → 人工兜底，不会永远滚下去。
+      const { VideoEnhanceOutputMismatch } = await import("./videoEnhanceOutput.js");
+      if (error instanceof VideoEnhanceOutputMismatch) return failTask(current, error.message);
       current.lastTransientError = (
         error instanceof Error ? error.message : String(error)
       ).slice(0, 280);
@@ -1582,6 +1614,12 @@ export async function createCanvasVideoTask(input: {
   /** wavespeed-upscale 专用 */
   upscaleSourceUrl?: string;
   upscaleTarget?: WavespeedUpscaleTarget;
+  frameTargetFps?: 30 | 60;
+  framePasses?: number;
+  enhancePhase?: "upscale" | "interpolate";
+  frameStageUrl?: string;
+  enhanceOriginalSource?: string;
+  enhanceScopeKey?: string;
   /** wan30:随机种子(0..2147483647),持久化供复现 */
   seed?: number;
 }): Promise<CanvasVideoTaskRecord> {
@@ -1655,6 +1693,11 @@ export async function createCanvasVideoTask(input: {
     deduct: input.deduct,
     upscaleSourceUrl: input.upscaleSourceUrl,
     upscaleTarget: input.upscaleTarget,
+    frameTargetFps: input.frameTargetFps,
+    framePasses: input.framePasses,
+    enhancePhase: input.frameTargetFps && (input.framePasses || 0) > 0 ? "interpolate" : "upscale",
+    enhanceOriginalSource: input.enhanceOriginalSource,
+    enhanceScopeKey: input.enhanceScopeKey,
     createdAt: now,
     updatedAt: now,
   };
@@ -1770,4 +1813,22 @@ export async function resumeCanvasVideoTasksOnStartup(): Promise<void> {
       console.warn("[canvasVideoTask] startup resume failed", id, error);
     });
   }
+}
+
+/** 本人当前项目的增强任务恢复；不读取其他用户或无scope旧单。 */
+export async function listVideoEnhanceTasks(userId: number, scopeKey: string) {
+  if (!scopeKey || scopeKey.length > 160) return [];
+  const dir = await getTaskDir();
+  const tasks: CanvasVideoTaskRecord[] = [];
+  for (const name of await fs.readdir(dir)) {
+    if (!name.startsWith("cv_") || !name.endsWith(".json")) continue;
+    const task = await readTask(name.slice(0, -5));
+    if (task?.userId === userId && task.engine === "wavespeed-upscale" && task.enhanceScopeKey === scopeKey) tasks.push(task);
+  }
+  return tasks.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 12).map(task => ({
+    taskId: task.taskId, scopeKey, sourceUrl: task.enhanceOriginalSource || task.upscaleSourceUrl,
+    sourceLabel: task.label, target: task.frameTargetFps ? `${task.upscaleTarget ? task.upscaleTarget + "-" : ""}${task.frameTargetFps}fps` : task.upscaleTarget,
+    status: task.status, createdAt: Date.parse(task.createdAt), creditsUsed: task.creditsCharged,
+    videoUrl: task.videoUrl, error: task.error,
+  }));
 }

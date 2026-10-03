@@ -38,7 +38,7 @@ export function isManhuaDeliveryUpscaleTarget(
   return value === "2k" || value === "4k";
 }
 
-/** BGM 已经贴进最终音轨后，不再允许把这条混音成片送去超分。 */
+/** 已混音的成片也允许超分，服务端保留原音轨。 */
 export function canUpscaleNow(input: DeliverySourceState & {
   bgmMounted: boolean;
   target: unknown;
@@ -51,8 +51,8 @@ export function canUpscaleNow(input: DeliverySourceState & {
   }
   if (input.bgmMounted) {
     return {
-      ok: false,
-      reasonZh: "这条已经贴过 BGM。正确顺序是视频→2K/4K 超分→贴 BGM；请改用贴装前母片",
+      ok: true,
+      warnZh: "将保留这条成片的原声与BGM，不重新混音",
     };
   }
   return { ok: true };

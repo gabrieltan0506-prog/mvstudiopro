@@ -74,20 +74,21 @@ export const CANVAS_VIDEO_CREDITS_CLIP_2K = 388;
 export const CANVAS_VIDEO_CREDITS_CLIP_4K = 688;
 
 /**
- * 视频超分（WaveSpeed · ByteDance Video Upscaler）零售：**按秒**，不按条。
+ * 视频超分（WaveSpeed · ByteDance Video Upscaler）零售：按每开始30秒计费。
  *
  * 为什么不能按条：真实用法是**整集合成后跑一次**（2.5 一集 4×30 ≈ 120 秒），
  * 没人愿意每 30 秒一条分别提交。上游本身也是纯按秒收，不分条：
- * 2K $0.0144/秒、4K $0.0288/秒，最低按 5 秒计、单任务最多计 600 秒。
+ * 2K $0.0144/秒、4K $0.0288/秒；用户新单按每开始30秒计费，单任务最多600秒。
  *
  * 上游成本折积分（$1≈¥7.2，1 积分≈¥0.65）：2K 约 0.16 积分/秒、4K 约 0.32 积分/秒。
- * 下面两个费率按约 12.6 倍定，一集 120 秒因此是 2K 240 / 4K 480 积分。
+ * 本轮用户指定每开始30秒：2K100积分、4K180积分；120秒分别400与720积分。
  * **改这两个常量即可调价**，无需动逻辑。
  */
-export const CANVAS_VIDEO_UPSCALE_CREDITS_PER_SEC_2K = 2;
-export const CANVAS_VIDEO_UPSCALE_CREDITS_PER_SEC_4K = 4;
-/** 与上游一致：不足 5 秒按 5 秒计，超过 600 秒按 600 秒封顶 */
-export const CANVAS_VIDEO_UPSCALE_MIN_BILLED_SEC = 5;
+export const CANVAS_VIDEO_UPSCALE_CREDITS_PER_SEC_2K = 100 / 30;
+export const CANVAS_VIDEO_UPSCALE_CREDITS_PER_SEC_4K = 180 / 30;
+/** 用户计费：每开始30秒一个单位；上游仍按秒结算，旧单不补扣 */
+export const CANVAS_VIDEO_UPSCALE_MIN_BILLED_SEC = 30;
+export const CANVAS_VIDEO_UPSCALE_BILLING_UNIT_SEC = 30;
 export const CANVAS_VIDEO_UPSCALE_MAX_BILLED_SEC = 600;
 
 /**
@@ -114,25 +115,20 @@ export function canvasTtsCreditsForDuration(durationSec: number): number {
  */
 export const CANVAS_BGM_CREDITS_PER_RUN = 20;
 
-export function canvasVideoUpscaleCredits(
-  target: "2k" | "4k",
-  durationSec: number,
-  opts?: { freeform?: boolean },
-): number {
-  const raw = Number(durationSec);
-  const sec = Math.min(
-    CANVAS_VIDEO_UPSCALE_MAX_BILLED_SEC,
-    Math.max(
-      CANVAS_VIDEO_UPSCALE_MIN_BILLED_SEC,
-      Number.isFinite(raw) && raw > 0 ? Math.ceil(raw) : 0,
-    ),
-  );
-  const rate =
-    target === "4k"
-      ? CANVAS_VIDEO_UPSCALE_CREDITS_PER_SEC_4K
-      : CANVAS_VIDEO_UPSCALE_CREDITS_PER_SEC_2K;
-  const base = sec * rate;
-  return opts?.freeform ? Math.ceil(base * CANVAS_FREEFORM_RETAIL_MULTIPLIER) : base;
+/** 本轮用户指定固定零售价，首页与工作流一致，不叠加散客倍率。 */
+export function canvasVideoEnhanceBillingUnits(durationSec: number): number {
+  if (!Number.isFinite(durationSec) || durationSec <= 0 || durationSec > 600) throw new Error("增强视频时长必须为0至600秒");
+  return Math.ceil(durationSec / 30);
+}
+export function canvasVideoUpscaleCredits(target: "2k" | "4k", durationSec: number, _opts?: { freeform?: boolean }): number {
+  if (target !== "2k" && target !== "4k") throw new Error("超分目标只支持2K或4K");
+  return canvasVideoEnhanceBillingUnits(durationSec) * (target === "4k" ? 180 : 100);
+}
+export function canvasVideoEnhanceQuote(target: "2k" | "4k", targetFps: 30 | 60, durationSec: number) {
+  const units = canvasVideoEnhanceBillingUnits(durationSec);
+  const upscaleCredits = canvasVideoUpscaleCredits(target, durationSec);
+  const frameCredits = canvasVideoFrameCredits(durationSec, targetFps);
+  return { units, billedSeconds: units * 30, upscaleCredits, frameCredits, totalCredits: upscaleCredits + frameCredits };
 }
 
 /** 画布成片可选画质：默认 720p */
@@ -377,4 +373,10 @@ export function describeCanvasVideoClipPrice(
     return `${credits} 积分/段（整集 ${episodeTotal}）`;
   }
   return `${credits} 积分/段`;
+}
+
+/** FFmpeg补帧按目标帧率及每开始30秒计价。 */
+export function canvasVideoFrameCredits(durationSec: number, targetFps: 30 | 60, _opts?: { freeform?: boolean }): number {
+  if (targetFps !== 30 && targetFps !== 60) throw new Error("补帧目标只支持30或60帧");
+  return canvasVideoEnhanceBillingUnits(durationSec) * (targetFps === 60 ? 49 : 19);
 }

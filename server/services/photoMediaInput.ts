@@ -114,7 +114,9 @@ export function parsePhotoVideoMetadata(raw: string) {
   );
   const width = Number(video?.width),
     height = Number(video?.height);
-  const duration = Number(data.format?.duration);
+  const duration = Number(video?.duration) || Number(data.format?.duration);
+  const [fpsN, fpsD = 1] = String(video?.avg_frame_rate || video?.r_frame_rate || "0").split("/").map(Number);
+  const fps = fpsD > 0 ? fpsN / fpsD : 0;
   if (
     ![width, height, duration].every(n => Number.isFinite(n) && n > 0) ||
     duration > 600
@@ -136,7 +138,10 @@ export function parsePhotoVideoMetadata(raw: string) {
   return {
     width,
     height,
-    durationSec: Math.max(1, Math.round(duration)),
+    durationSec: Math.max(1, Math.ceil(duration)),
+    durationExactSec: duration,
+    fps: Number.isFinite(fps) && fps > 0 ? fps : null,
+    hasAudio: Boolean(data.streams?.some((s: { codec_type?: string }) => s.codec_type === "audio")),
     sourceResolution,
   };
 }

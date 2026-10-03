@@ -91,7 +91,7 @@ it.each([[854,480,"480p"],[480,854,"480p"],[1280,720,"720p"],[720,1280,"720p"],[
  const video={videoWidth:width,videoHeight:height,duration:12.4,onloadedmetadata:null as null|(()=>void),onerror:null,src:"",preload:"",crossOrigin:"",removeAttribute:vi.fn(),load:vi.fn()};
  vi.stubGlobal("document",{createElement:()=>video});
  const promise=probeVideoUpscaleSource("https://example.com/measured.mp4");video.onloadedmetadata?.();
- const result=await promise;expect(result).toMatchObject({width,height,sourceResolution:resolution,sourceUrl:"https://example.com/measured.mp4",durationSec:12});
+ const result=await promise;expect(result).toMatchObject({width,height,sourceResolution:resolution,sourceUrl:"https://example.com/measured.mp4",durationSec:13});
  expect(result?.sourceResolution).toBe(parsePhotoVideoMetadata(JSON.stringify({streams:[{codec_type:"video",width,height}],format:{duration:12.4}})).sourceResolution);
  expect(video.removeAttribute).toHaveBeenCalledWith("src");
 });
@@ -103,4 +103,15 @@ it("尺寸缺失/媒体超时不能默认720p，缺省请求也不伪造sourceRe
  const fetcher=vi.fn(async()=>({ok:true,json:async()=>({ok:true,taskId:"test",status:"queued",creditsUsed:1})}));vi.stubGlobal("fetch",fetcher);
  await startVideoUpscale({videoUrl:"https://example.com/a.mp4",target:"2k",durationSec:10});
  expect(JSON.parse((fetcher.mock.calls[0] as unknown as [string,{body:string}])[1].body)).not.toHaveProperty("sourceResolution");
+});
+
+it("已有4K只补60帧走纯FFmpeg入口，不发送超分目标", async () => {
+  const fetcher = vi.fn(async (_url: string, _init?: RequestInit) => ({ ok: true, json: async () => ({ ok:true, taskId:"ffmpeg-only", status:"queued", creditsUsed:196 }) }));
+  vi.stubGlobal("fetch", fetcher);
+  const result = await startVideoUpscale({ videoUrl:"gs://test-only/post-prod/7/import.mp4", targetFps:60, combine:false, frameInterpolationProvider:"ffmpeg", scopeKey:"episode-one", durationSec:107 });
+  expect(fetcher.mock.calls[0]?.[0]).toBe("/api/jobs?op=videoInterpolate");
+  const body = JSON.parse((fetcher.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+  expect(body.target).toBeUndefined();
+  expect(body).toMatchObject({ targetFps:60, frameInterpolationProvider:"ffmpeg", durationSec:107 });
+  expect(result.creditsUsed).toBe(196);
 });

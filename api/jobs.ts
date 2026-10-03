@@ -4407,7 +4407,35 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
      * 2.5 更是只到 720p —— 用最贵的模型反而卡在最低画质。超分把 720p 补到 2K/4K，
      * 成本只占总花费的 12.7%（4K 超分 $0.0288/秒 vs 原生 4K 生成 $1.0126/秒）。
      */
-    if (op === "videoUpscale") {
+    if (op === "videoEnhanceImport") {
+      if (req.method !== "POST") return res.status(405).json({ ok: false });
+      const viewer = await resolveJobUser(req);
+      if (!viewer) return res.status(401).json({ ok: false, error: "请先登录" });
+      try {
+        const { importVideoEnhanceSource } = await import("../server/services/videoEnhanceSource.js");
+        return res.status(200).json({ ok: true, source: await importVideoEnhanceSource(viewer.userId, s(b.videoUrl).trim()) });
+      } catch (error) { return res.status(400).json({ ok: false, error: error instanceof Error ? error.message : "成品导入失败" }); }
+    }
+
+    if (op === "videoEnhanceProbe" || op === "videoEnhanceList") {
+      const viewer = await resolveJobUser(req);
+      if (!viewer) return res.status(401).json({ ok: false, error: "请先登录" });
+      if (op === "videoEnhanceList") {
+        const { listVideoEnhanceTasks } = await import("../server/services/canvasVideoTask.js");
+        return res.status(200).json({ ok: true, tasks: await listVideoEnhanceTasks(viewer.userId, s(q.scopeKey).trim()) });
+      }
+      if (req.method !== "POST") return res.status(405).json({ ok: false });
+      try {
+        const { probeVideoEnhanceSource } = await import("../server/services/videoEnhanceSource.js");
+        const measured = await probeVideoEnhanceSource(viewer.userId, s(b.videoUrl).trim(), true);
+        const { verifiedSourceUrl, canonicalSource, ...metadata } = measured;
+        return res.status(200).json({ ok: true, metadata: { ...metadata, sourceUrl: s(b.videoUrl).trim() } });
+      } catch {
+        return res.status(400).json({ ok: false, error: "无法读取本人已登记的成片，请重新选择可播放的当前版本" });
+      }
+    }
+
+    if (op === "videoUpscale" || op === "videoInterpolate") {
       if (req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
       }
@@ -4419,16 +4447,22 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       const { isWavespeedUpscaleConfigured } = await import(
         "../server/services/wavespeedVideoUpscale.js"
       );
-      if (!isWavespeedUpscaleConfigured()) {
+      if (op === "videoUpscale" && !isWavespeedUpscaleConfigured()) {
         return res.status(503).json({ ok: false, error: "高清放大暂不可用，请稍后重试" });
       }
 
       const videoUrl = s(b.videoUrl || b.url || q.videoUrl || "").trim();
-      if (!/^https?:\/\//i.test(videoUrl)) {
+      if (!/^(?:https?:\/\/|gs:\/\/)/i.test(videoUrl)) {
         return res.status(400).json({ ok: false, error: "请提供一条可访问的视频地址" });
       }
-      const target = normalizeWavespeedUpscaleTarget(b.target ?? b.resolution ?? q.target);
-      if (!target || target === "1080p") {
+      if (b.frameInterpolationProvider !== undefined && b.frameInterpolationProvider !== "ffmpeg") return res.status(400).json({ ok: false, error: "AI补帧已停用，请使用FFmpeg补帧" });
+      const frameTargetFps = b.targetFps === undefined ? undefined : Number(b.targetFps);
+      const normalizedTarget = normalizeWavespeedUpscaleTarget(b.target ?? b.resolution ?? q.target);
+      const target = op === "videoInterpolate" || normalizedTarget === "1080p" ? undefined : normalizedTarget ?? undefined;
+      if ((op === "videoInterpolate" || frameTargetFps !== undefined) && frameTargetFps !== 30 && frameTargetFps !== 60) {
+        return res.status(400).json({ ok: false, error: "补帧目标只支持30或60帧" });
+      }
+      if (op === "videoUpscale" && !target) {
         return res.status(400).json({ ok: false, error: "高清放大目标只支持 2K 或 4K" });
       }
       const viewer = await resolveJobUser(req);
@@ -4437,25 +4471,25 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       if (!Number.isFinite(declaredDuration) || declaredDuration <= 0 || declaredDuration > 600) {
         return res.status(400).json({ ok: false, error: "请提供1至600秒的有效视频时长" });
       }
-      const { probePhotoVideoInput } = await import("../server/services/photoMediaInput.js");
+      const { probeVideoEnhanceSource } = await import("../server/services/videoEnhanceSource.js");
       let measured;
-      try { measured = await probePhotoVideoInput(videoUrl); }
+      try { measured = await probeVideoEnhanceSource(viewer.userId, videoUrl, Boolean(b.scopeKey) || op === "videoInterpolate"); }
       catch { return res.status(400).json({ ok: false, error: "无法核验视频，请重新上传可播放且不超过600秒的视频" }); }
       const { durationSec, sourceResolution } = measured;
-      if (durationSec !== Math.round(declaredDuration)) {
+      if (durationSec !== Math.ceil(declaredDuration)) {
         return res.status(409).json({ ok: false, error: "视频实际时长与报价不同，请重新选择原片确认费用" });
       }
-      if (!canWavespeedUpscale(sourceResolution, target)) {
+      if (op === "videoUpscale" && !canWavespeedUpscale(sourceResolution, target)) {
         return res.status(400).json({ ok: false, error: "原片已达到目标档位，或不支持继续放大" });
       }
 
-      /**
-       * 按秒计费：整集合成后跑一次是主流用法，不能按条收。
-       * 无 episodeIndex 即视作自由画布散客，按 1.1 倍零售价——批发价与零售价不同价。
-       */
-      const isFreeform = !(Number(b.episodeIndex) > 0);
-      const credits = canvasVideoUpscaleCredits(target, durationSec, { freeform: isFreeform });
-      const label = `高清放大·${target.toUpperCase()}（${durationSec}s）`;
+      // 增强按每开始30秒统一定价；纯补帧不重复扣超分积分。
+      const { canvasVideoFrameCredits } = await import("../shared/canvasGenerationPricing.js");
+      if (frameTargetFps && (!measured.fps || measured.fps <= 0)) return res.status(400).json({ ok: false, error: "补帧需要有效的原片帧率" });
+      const framePasses = frameTargetFps && measured.fps! < frameTargetFps - 0.01 ? 1 : 0;
+      if (op === "videoInterpolate" && !framePasses) return res.status(400).json({ ok: false, error: "原片已达到目标帧率，或无法核验有效帧率" });
+      const credits = frameTargetFps ? canvasVideoFrameCredits(durationSec, frameTargetFps as 30 | 60) + (target ? canvasVideoUpscaleCredits(target, durationSec) : 0) : canvasVideoUpscaleCredits(target!, durationSec);
+      const label = frameTargetFps ? `${target ? target.toUpperCase() + "超分·" : "云端补帧·"}${frameTargetFps}帧（${durationSec}s）` : `高清放大·${target!.toUpperCase()}（${durationSec}s）`;
 
 
       /**
@@ -4464,7 +4498,9 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
        * POST 重试/断线重发都只有一笔扣费一个任务。既有任务 failed（已退分）时放行重开。
        */
       const idemKey =
-        s(b.idempotencyKey || "").trim() || `upscale:${videoUrl}:${target}`;
+        s(b.idempotencyKey || "").trim() || (frameTargetFps
+          ? `enhance:${measured.canonicalSource}:${target || "source"}:${frameTargetFps}:ffmpeg`
+          : `upscale:${measured.canonicalSource}:${target}`);
       // D（0915）：意图裁决先于扣费；扣费 marker 与建单键都跟 intentId 走（缺省即旧 idemKey）
       const intentId = s(b.intentId || q.intentId || "").trim() || idemKey;
       const taskInput = {
@@ -4472,14 +4508,18 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         label,
         prompt: "",
         duration: durationSec,
-        resolution: target,
-        upscaleSourceUrl: measured.verifiedSourceUrl,
+        resolution: target || sourceResolution,
+        upscaleSourceUrl: measured.canonicalSource,
         upscaleTarget: target,
+        frameTargetFps: frameTargetFps as 30 | 60 | undefined,
+        framePasses: frameTargetFps ? framePasses : undefined,
+        enhanceOriginalSource: measured.canonicalSource,
+        enhanceScopeKey: s(b.scopeKey).trim() || undefined,
       };
       const intentGate = await gateCanvasIntentBeforeCharge({
         userId: viewer.userId,
         intentId,
-        operation: "videoUpscale",
+        operation: op,
         taskInput,
       });
       const intentReply = await canvasIntentStepReply(intentGate.step, viewer.userId);
@@ -4557,9 +4597,10 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           taskId: task.taskId,
           status: task.status,
           target,
+          targetFps: frameTargetFps,
           durationSec,
           creditsUsed: task.creditsCharged || charged,
-          provider: "wavespeed",
+          provider: target ? "wavespeed" : "ffmpeg",
           videoUrl: task.videoUrl || undefined,
         });
       } catch (error: unknown) {
@@ -6280,6 +6321,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           // 超分任务：原片地址与目标档（结果在 videoUrl，原片不被覆盖）
           upscaleSourceUrl: task.upscaleSourceUrl || undefined,
           upscaleTarget: task.upscaleTarget || undefined,
+          frameTargetFps: task.frameTargetFps || undefined,
           // 超时对账诊断：UI 把 timed_out_pending_reconcile 显示为「超时对账中，不会白扣」
           timedOutAt: task.timedOutAt || undefined,
           lastTransientError: task.lastTransientError || undefined,
