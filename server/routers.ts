@@ -1,3 +1,5 @@
+import { createKnowledgeCardPageJob, reserveKnowledgeCardImageJob, checkKnowledgeCardImageMaySubmit } from "./jobs/knowledgeCardPageTask";
+import { novelExcerptSchema } from "../shared/manhuaNovelSource.js";
 import { canvasMusicMvRouter } from "./routers/canvasMusicMv";
 import { canvasMusicMvAssembleRouter } from "./routers/canvasMusicMvAssemble";
 import { buildManhuaDirectionCanonFromSelection } from "../shared/manhuaDirectionCanonLibrary.js";
@@ -4458,6 +4460,7 @@ export const appRouter = router({
     enqueueKnowledgeCardLevelDerive: protectedProcedure
       .input(
         z.object({
+          pageRequestId: z.string().uuid().optional(),
           // 页数不设上限（0910 拍板）：只挡明显不是稿子的体积（约 2000 页书的完整版也在 100 万字内）
           fullMarkdown: z.string().min(200, "完整版稿子太短").max(5_000_000, "完整版稿子超过 500 万字，请分册提炼"),
           distillModel: z.string().max(64).optional(),
@@ -4475,19 +4478,14 @@ export const appRouter = router({
         if (!receiptModel) {
           throw new TRPCError({ code: "PRECONDITION_FAILED", message: "找不到这份完整版的提炼记录，无法派生精华版；请重新提炼后再切档" });
         }
-        const jobId = nanoid(16);
-        await createJobRecord({
-          id: jobId,
+        const jobId = await createKnowledgeCardPageJob({
           userId: String(ctx.user.id),
-          type: "platform",
-          provider: "evolink",
-          input: {
-            action: "knowledge_card_derive_level",
-            params: {
-              fullMarkdown: input.fullMarkdown,
-              distillModel: input.distillModel || "",
-              targetSections: input.targetSections ?? null,
-            },
+          requestId: input.pageRequestId,
+          action: "knowledge_card_derive_level",
+          params: {
+            fullMarkdown: input.fullMarkdown,
+            distillModel: input.distillModel || "",
+            targetSections: input.targetSections ?? null,
           },
         });
         return { success: true as const, progressJobId: jobId };
@@ -8234,6 +8232,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
     prepareKnowledgeCardCopy: protectedProcedure
       .input(
         z.object({
+          pageRequestId: z.string().uuid().optional(),
           sourceText: z.string().max(400_000).optional(),
           forceDistill: z.boolean().optional(),
           /**
@@ -8298,21 +8297,16 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             .map((f) => ({ gcsUri: String(f.gcsUri || "").trim(), mimeType: f.mimeType, fileName: f.fileName }))
             .filter((f) => f.gcsUri);
           if (!stored.length) throw new Error("上传文件为空，请重新选择文件");
-          const jobId = nanoid(16);
-          await createJobRecord({
-            id: jobId,
+          const jobId = await createKnowledgeCardPageJob({
             userId: String(userId),
-            type: "platform",
-            provider: "evolink",
-            input: {
-              action: "knowledge_card_distill",
-              params: {
-                sourceText: pasted.length <= 3200 ? pasted : "",
-                distillModel: modelName,
-                detailLevel,
-                files: stored,
-                chargeDistillFee: false,
-              },
+            requestId: input.pageRequestId,
+            action: "knowledge_card_distill",
+            params: {
+              sourceText: pasted.length <= 3200 ? pasted : "",
+              distillModel: modelName,
+              detailLevel,
+              files: stored,
+              chargeDistillFee: false,
             },
           });
           return {
@@ -8333,25 +8327,20 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
 
         const mergedRaw = pasted;
-        if (shouldRunKnowledgeCardDistillAsync(mergedRaw.length)) {
+        if (input.pageRequestId || shouldRunKnowledgeCardDistillAsync(mergedRaw.length)) {
           const userId = ctx.user?.id;
           if (!userId) throw new Error("请先登录后再上传长文档");
-          const jobId = nanoid(16);
-          await createJobRecord({
-            id: jobId,
+          const jobId = await createKnowledgeCardPageJob({
             userId: String(userId),
-            type: "platform",
-            provider: "evolink",
-            input: {
-              action: "knowledge_card_distill",
-              params: {
-                sourceText: mergedRaw,
-                distillModel: modelName,
-                detailLevel,
-                imageDataUrls: [] as string[],
-                extractionMethods: [] as string[],
-                chargeDistillFee: input.chargeDistillFee === true,
-              },
+            requestId: input.pageRequestId,
+            action: "knowledge_card_distill",
+            params: {
+              sourceText: mergedRaw,
+              distillModel: modelName,
+              detailLevel,
+              imageDataUrls: [] as string[],
+              extractionMethods: [] as string[],
+              chargeDistillFee: input.chargeDistillFee === true,
             },
           });
           return {
@@ -8487,6 +8476,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             gridVariant: z.enum(["2x4", "3x4"]).optional(),
             /** 可選：客戶端生成並輪詢 GET /api/jobs/:id，實時顯示 imageGenFlowLog */
             progressJobId: z.string().min(8).max(64).optional(),
+            pageRequestId: z.string().uuid().optional(),
             executionDetails: z.string().max(4000).optional(),
             /** 上传素材拍摄手法摘要（景别/布光/走位），并入 2×4 中文脚本 */
             shootingTechniqueBrief: z.string().max(4000).optional(),
@@ -8517,6 +8507,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               .optional(),
           })
           .superRefine((data, ctx) => {
+            if (data.pageRequestId && data.kind !== "single_page_knowledge_card") {
+              ctx.addIssue({ code: z.ZodIssueCode.custom, message: "页面请求编号仅用于知识卡", path: ["pageRequestId"] });
+            }
             const pack = data.bulkCompositePack;
             if (!pack) return;
             const { packSceneIds, sequentialSlot } = pack;
@@ -8545,6 +8538,17 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       )
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
+        const imageReservation = input.pageRequestId
+          ? await reserveKnowledgeCardImageJob({ userId: String(userId), requestId: input.pageRequestId, params: { ...input } })
+          : null;
+        if (imageReservation && !imageReservation.claimed) {
+          return { success: true as const, imageUrl: null, totalCost: 0, kind: input.kind,
+            imageGenFlowLog: [], isAsync: true, progressJobId: imageReservation.id };
+        }
+        const beforeImageSubmit = imageReservation
+          ? () => checkKnowledgeCardImageMaySubmit(imageReservation.id) : undefined;
+        try {
+        await beforeImageSubmit?.();
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
         const supervisorOpsAllowed = resolvePlatformSupervisorOpsAllowed(ctx.user, ctx.supervisorSession);
         const enableCompositeDeepResearchProAdmin =
@@ -8611,6 +8615,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           const bulkTag = compositePack
             ? ` · 编导分镜套装（九折）第${compositePack.sequentialSlot + 1}/${compositePack.packSceneIds.length}笔`
             : "";
+          await beforeImageSubmit?.();
           compositeChargeReceipt = await deductCreditsAmount(
             userId,
             cost,
@@ -8645,7 +8650,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
 
         const progressJobIdRaw = String(input.progressJobId ?? "").trim();
-        const progressJobId = progressJobIdRaw.length >= 8 ? progressJobIdRaw : null;
+        const progressJobId = imageReservation?.id ?? (progressJobIdRaw.length >= 8 ? progressJobIdRaw : null);
 
         /**
          * 审查必须修（P0·8/9）：扣费 receipt 只活在请求闭包里——进程在
@@ -8824,7 +8829,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
         if (progressJobId) {
           try {
-            await insertRunningCompositeSheetProgressJob({
+            if (!imageReservation) await insertRunningCompositeSheetProgressJob({
               id: progressJobId,
               userId: String(userId),
               sceneId: input.sceneId,
@@ -8852,6 +8857,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             const stopHeartbeat = startCompositeHeartbeat();
             let imageUrl: string | null = null;
             try {
+              await beforeImageSubmit?.();
               // 动态加载与进度挂接也在 try 内：任何一步抛错都走统一退款+终态
               const { attachCompositeSheetFlowLogLiveSync } = await import("./jobs/compositeSheetLiveProgress.js");
               detachLiveProgress = attachCompositeSheetFlowLogLiveSync(imageGenFlowLog, progressJobId);
@@ -8864,6 +8870,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               const isTrial = !isAdminUser && (await resolveWatermark(userId, isAdminUser));
               appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);
               imageUrl = await generateSheet({
+                beforeImageSubmit,
                 kind: input.kind,
                 title: input.title,
                 scriptContext: enrichedCompositeScriptContext,
@@ -9098,6 +9105,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           kind: input.kind,
           imageGenFlowLog,
         };
+        } catch (error) {
+          // Before the background worker starts, all errors still need a terminal progress row.
+          if (imageReservation) await markJobFailed(imageReservation.id, error instanceof Error ? error.message : String(error));
+          throw error;
+        }
       }),
 
     /**
@@ -9995,6 +10007,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         z.object({
           topic: z.string().max(500).optional(),
           brief: z.string().max(2000).optional(),
+          sourceExcerpt: novelExcerptSchema.optional(),
           episodeCount: z.number().int().min(2).max(6).optional(),
           /** 引擎档位：前台只展示中文档名，不显示供应商或模型名。 */
           tier: z.enum(["excellent", "superb", "top", "transcendent"]).optional(),
@@ -10028,6 +10041,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }),
       )
       .mutation(async ({ ctx, input }) => {
+        if (input.sourceExcerpt && input.templateTrialFingerprint) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "小说改编请使用正常扩写入口；题材试写未读取小说原文，不能直接套用" });
+        }
         const userId = ctx.user.id;
         const topic = String(input.topic || "").trim();
         const brief = String(input.brief || "").trim();
@@ -10121,6 +10137,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           // 商业机密边界：完整卡只喂模型；浏览器响应一律匿名句柄（监管在监管面板看全量）
           appliedTemplate = resolved.appliedTemplate;
         }
+        if(input.sourceExcerpt && !viralTemplateAddon.trim()) {
+          throw new TRPCError({code:"BAD_REQUEST",message:"底本改编请先选择故事模板"});
+        }
         if (input.templateTrialFingerprint && !requestedTemplateId) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "请先选择与试写一致的剧情增强方案" });
         }
@@ -10137,7 +10156,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const quota = resolveManhuaWriterExpandQuota({
           usedEver: 0,
           usedToday: 0,
-          tier: input.tier ?? "excellent",
+          tier: input.sourceExcerpt ? "excellent" : input.tier ?? "excellent",
           episodeCount: billableEpisodes,
         });
         const cost = quota.nextCredits;
@@ -10154,6 +10173,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const prompt = buildManhuaWriterExpandPrompt({
           topic,
           brief,
+          sourceExcerpt: input.sourceExcerpt,
           episodeCount,
           lengthTierId: input.lengthTierId || layout.lengthTierId,
           videoModel: layout.videoModel,
@@ -10172,8 +10192,22 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           .update(`${userId}:${input.requestId}:${quota.runTier}:${prompt}`)
           .digest("hex")}`;
         let markdown = "";
+        let novelAdaptation: import("../shared/manhuaNovelAdaptation").ManhuaNovelAdaptation | undefined;
         try {
-          markdown = await runManhuaWriterExpand({
+          if(input.sourceExcerpt){
+            const {runManhuaNovelAdaptation}=await import("./services/manhuaNovelAdaptationRun");
+            const result=await runManhuaNovelAdaptation({
+              source:input.sourceExcerpt,topic,brief,template:viralTemplateAddon,episodeCount,requestId:`${userId}:${input.requestId}`,
+              scriptPrompt: novel => buildManhuaWriterExpandPrompt({
+                topic,brief,sourceExcerpt:{label:`改编小说：${novel.title}`,text:novel.text},episodeCount,
+                lengthTierId:input.lengthTierId||layout.lengthTierId,videoModel:layout.videoModel,
+                fromEpisode:input.fromEpisode,fromSegment:input.fromSegment,lockedEpisodeBody:input.lockedEpisodeBody,
+                viralTemplateId:appliedInternalTemplateId,viralTemplateAddon,
+                directionCanon:buildManhuaDirectionCanonFromSelection(input.directionSelection),
+              })+"\n【底本改编记录】\n"+JSON.stringify({source:input.sourceExcerpt,adaptationNotes:novel.adaptationNotes})+"\n原文对照须分别注明底本事实、小说新增与模板方法，不将新增桥段冒充底本。",
+            });
+            markdown=result.markdown;novelAdaptation=result.novel;
+          } else markdown = await runManhuaWriterExpand({
             prompt,
             tier: quota.runTier,
             episodeCount,
@@ -10198,6 +10232,14 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             code: "INTERNAL_SERVER_ERROR",
             message: "扩写结果缺少完整分集正文或片尾钩子，原稿未替换，本次未扣点",
           });
+        }
+
+        if (input.sourceExcerpt) {
+          if (pack.episodes.some(episode => !episode.sourceNotes?.trim())) {
+            throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "改编结果缺少逐集原文对照，旧稿保留，本次未扣点" });
+          }
+          const sourceSha256 = createHash("sha256").update(input.sourceExcerpt.text).digest("hex");
+          pack.episodes = pack.episodes.map(episode => ({ ...episode, sourceExcerpt: input.sourceExcerpt, sourceSha256, ...(novelAdaptation ? {novelAdaptation} : {}) }));
         }
 
         // 先出稿再原子扣点：上游失败不扣；相同 requestId + 相同请求的网络重试不双扣。

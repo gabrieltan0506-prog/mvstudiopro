@@ -1,3 +1,4 @@
+import { novelAdaptationPrompt, type ManhuaNovelExcerpt } from "./manhuaNovelSource.js";
 import { formatManhuaShotCoreCatalog } from "./manhuaShotCoreBank.js";
 import { formatManhuaEntranceAtmosphereCatalog } from "./manhuaEntranceAtmosphereBank.js";
 import { MANHUA_DIALOGUE_CRAFT_ZH } from "./manhuaDialogueCraft.js";
@@ -73,6 +74,11 @@ export type ManhuaWriterEpisode = {
   body: string;
   /** 片尾钩子（必填） */
   endHook: string;
+  /** Frozen source used for this episode; kept episodes retain their own source on partial rewrite. */
+  sourceExcerpt?: ManhuaNovelExcerpt;
+  sourceSha256?: string;
+  sourceNotes?: string;
+  novelAdaptation?: import("./manhuaNovelAdaptation").ManhuaNovelAdaptation;
 };
 
 export type ManhuaWriterPack = {
@@ -106,6 +112,7 @@ export const CANVAS_DIRECTOR_CRAFT_PROMPT_BLOCK = `【编导手法约束】
 
 /** 编剧室扩写 system/user 一体 prompt（给文本生成用） */
 export function buildManhuaWriterExpandPrompt(opts: {
+  sourceExcerpt?: ManhuaNovelExcerpt;
   topic: string;
   brief: string;
   episodeCount: number;
@@ -212,7 +219,11 @@ export function buildManhuaWriterExpandPrompt(opts: {
     `【成片铺排】${layout.labelZh}｜${layout.layoutHintZh}`,
     `【用户题材】${topic || "（未填，请基于补充条件合理拟定）"}`,
     brief ? `【补充条件】\n${brief}` : "【补充条件】（无，请在合理范围内自行补全并保持克制）",
+    novelAdaptationPrompt(opts.sourceExcerpt),
     viralTemplateBlock,
+    opts.sourceExcerpt && viralTemplateAddon
+      ? "【原著与所选模板的分工】原著提供人物、事件与因果；所选模板提供分集节奏、冲突递进、情绪起伏、对白表演和片尾钩子的组织方式。模板来源可以是真人剧或漫剧，均可借用叙事与视听方法；最终人物造型、场景与画风遵循本项目设定，不照搬模板原作角色、背景或情节。逐集原文对照须说明采用的模板方法及必要的情节调整，事实冲突时保留原著并说明取舍。"
+      : "",
     propDemo,
     ancientBlock,
     purpose ? formatPlotPurposeCameraBlock(purpose) : "",
@@ -331,12 +342,14 @@ export function parseManhuaWriterPack(
       block.match(new RegExp(`###\\s*${epTitleAlias}\\n+([^\\n#]+)`))?.[1] ||
       "";
     const title = cleanWriterTitleLine(titleRaw) || `第${i}集`;
-    const body =
+    const bodyRaw =
       block.match(/###\s*本集剧情\n+([\s\S]*?)(?=\n###\s*片尾钩子|$)/)?.[1]?.trim() ||
       block.trim();
+    const body = bodyRaw.replace(/(?:^|\n)###\s*原文对照\n+[\s\S]*?(?=\n###|\n##|$)/, "").trim();
     const endHook =
       block.match(/###\s*片尾钩子\n+([\s\S]*?)(?=\n###|\n##|$)/)?.[1]?.trim() || "";
-    episodes.push({ index: i, title, body, endHook });
+    const sourceNotes = block.match(/###\s*原文对照\n+([\s\S]*?)(?=\n###|\n##|$)/)?.[1]?.trim();
+    episodes.push({ index: i, title, body, endHook, ...(sourceNotes ? { sourceNotes } : {}) });
   }
 
   return {

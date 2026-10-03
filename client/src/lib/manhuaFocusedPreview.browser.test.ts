@@ -82,8 +82,14 @@ it("分镜默认显示当前镜，选镜不打开高级画布且不借旧片旧�
     await page.click('[data-manhua-action="open-canvas-dock"]');
     await page.waitForFunction(()=>document.querySelector('#freeform-canvas-zone')?.getAttribute('aria-hidden')==='false');
     expect(await page.$$('[data-test-canvas]')).toHaveLength(1);
+    expect(await page.$eval('[data-manhua-storyboard-workspace]', e => (e as HTMLElement).style.display)).toBe('flex');
+    expect(await page.$eval('[data-manhua-column="script"]', e => getComputedStyle(e).display)).toBe('none');
+    expect(await page.$eval('[data-manhua-column="params"]', e => getComputedStyle(e).display)).toBe('none');
+    const canvasState = await page.evaluate(() => JSON.stringify((window as any).fixture.blocks));
     await page.click('[data-manhua-action="close-canvas-dock"]');
     await page.waitForFunction(()=>document.querySelector('#freeform-canvas-zone')?.getAttribute('aria-hidden')==='true');
+    expect(await page.evaluate(() => JSON.stringify((window as any).fixture.blocks))).toBe(canvasState);
+    expect(await page.$eval('[data-manhua-column="script"]', e => (e as HTMLElement).style.display)).toBe('');
     expect(await page.$$('[data-test-canvas]')).toHaveLength(1);
     expect(await page.evaluate(()=>(window as any).fixture.calls)).toEqual([]);
     await page.click('[data-manhua-shot="1"] > button');
@@ -97,6 +103,11 @@ it("分镜默认显示当前镜，选镜不打开高级画布且不借旧片旧�
     await page.evaluate(()=>{const f=(window as any).fixture;f.setBlocks([...f.blocks,{...f.blocks[0],kind:'video',id:'clip-e01-g01-preview',episodeIndex:1,videoModel:'seedance-2.5',prompt:'【第1段·10s】第一段',manhuaAutoSegment:f.currentBinding(f.blocks),outputUrl:'https://test.invalid/segment-1.mp4'}]);});
     await page.waitForFunction(()=>document.querySelector('[data-manhua-column="preview"]')?.getAttribute('data-manhua-preview-url')==='https://test.invalid/segment-1.mp4',{timeout:5000});
     await page.evaluate(()=>(window as any).fixture.setPhase('outline'));
+    await page.waitForSelector('[data-manhua-outline-surface]');
+    await page.click('[data-manhua-action="outline-open-canvas"]');
+    await page.waitForFunction(() => document.querySelector('[data-manhua-storyboard-workspace]')?.getAttribute('data-manhua-canvas-expanded') === 'true');
+    expect(await page.evaluate(() => (window as any).fixture.calls)).toEqual([]);
+    await page.evaluate(() => (window as any).fixture.setPhase('outline'));
     await page.waitForSelector('[data-manhua-outline-surface]');
     const cssDir=process.env.MANHUA_LAYOUT_CSS_DIR;
     if(cssDir){
@@ -195,4 +206,37 @@ it("设定总图默认收起，缺图也只在标题提示，展开收起不触�
     await page.waitForFunction(()=>document.querySelector('[data-manhua-episode-sheets] > button')?.textContent?.includes('0 张'));
     expect(await page.$eval('[data-manhua-episode-sheets]',e=>e.querySelector('button')?.getAttribute('aria-expanded')==='true')).toBe(false);
   } catch(error) {console.error("总图诊断",await page.evaluate(()=>({body:document.body.innerText.slice(0,1300),details:document.querySelector("[data-manhua-episode-sheets]")?.outerHTML.slice(0,900),blocks:(window as any).fixture?.blocks})));throw error;} finally { await page.close(); }
+}, 30000);
+
+it("分镜搜索过滤保留原镜映射，键盘定位不生成且切集清空查询", async () => {
+  const page = await browser.newPage();
+  page.setDefaultTimeout(5000);
+  await page.setRequestInterception(true);
+  page.on("request", r => { if(r.isNavigationRequest()) void r.respond({status:200,contentType:"text/html",body:'<div id="root"></div>'}); else void r.abort(); });
+  try {
+    await page.goto("http://localhost:41813");
+    await page.addScriptTag({content:bundle});
+    await page.waitForSelector('[aria-label="搜索本集分镜"]');
+    const initialShotCount = await page.$$eval("[data-manhua-shot]", rows => rows.length);
+    const before = await page.evaluate(() => JSON.stringify((window as any).fixture.blocks));
+    await page.type('[aria-label="搜索本集分镜"]', '2');
+    await page.waitForFunction(() => document.querySelectorAll('[data-manhua-shot]').length === 1);
+    expect(await page.$eval('[data-manhua-shot]', e => e.getAttribute('data-manhua-shot'))).toBe('2');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => document.querySelector('[data-manhua-shot="2"]')?.getAttribute('data-manhua-active') === 'true');
+    expect(await page.evaluate(() => (window as any).fixture.focus.at(-1))).toBe('keyart-e01-s02-preview');
+    expect(await page.evaluate(() => JSON.stringify((window as any).fixture.blocks))).toBe(before);
+    expect(await page.evaluate(() => (window as any).fixture.calls)).toEqual([]);
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(count => document.querySelectorAll('[data-manhua-shot]').length === count, {}, initialShotCount);
+    await page.type('[aria-label="搜索本集分镜"]', '不存在');
+    await page.waitForFunction(() => document.querySelectorAll('[data-manhua-shot]').length === 0);
+    await page.evaluate(() => (window as any).fixture.setPhase('outline'));
+    await page.waitForSelector('[data-manhua-episode-card="13"]');
+    await page.click('[data-manhua-episode-card="13"]');
+    await page.evaluate(() => (window as any).fixture.setPhase('storyboard'));
+    await page.waitForSelector('[aria-label="搜索本集分镜"]');
+    expect(await page.$eval('[aria-label="搜索本集分镜"]', e => (e as HTMLInputElement).value)).toBe('');
+    expect(await page.evaluate(() => (window as any).fixture.calls)).toEqual([]);
+  } finally { await page.close(); }
 }, 30000);

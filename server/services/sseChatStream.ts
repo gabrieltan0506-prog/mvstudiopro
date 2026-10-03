@@ -38,6 +38,8 @@ export async function readWithIdleTimeout<T>(
 export type SseReadOptions = {
   /** 断流一律判失败（抛错→网关层换下一跳），不把半截正文当成功 */
   strictCompletion?: boolean;
+  /** Optional route-specific classification of a structured upstream error before generic incomplete-stream handling. */
+  onErrorFrame?: (error: Record<string, unknown>) => void;
   /** 仅正文增量；推理内容不向用户展示。 */
   onContentDelta?: (delta: string) => void;
 };
@@ -153,6 +155,7 @@ export async function readGlmSseStream(
     // 不抛出去就变成「空正文」，四条链各报自己的模糊错误、看不到真实原因
     if (strict && chunk.error && typeof chunk.error === "object") {
       sawErrorFrame = true;
+      options.onErrorFrame?.(chunk.error as Record<string, unknown>);
       throw incomplete("上游流中途返回错误帧", JSON.stringify(chunk.error));
     }
     const delta = chunk.choices?.[0]?.delta?.content;

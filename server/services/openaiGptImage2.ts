@@ -152,6 +152,7 @@ async function postEdits(
   maskUrl: string | undefined,
   model: string,
   flowLog?: string[],
+  beforeImageSubmit?: () => Promise<void>,
 ): Promise<Buffer> {
   const rawBuffers = await Promise.all(imageUrls.slice(0, 16).map((u) => downloadUrl(u)));
   const { padImageBufferToSize } = await import("./manhuaKeyartPadReference.js");
@@ -208,6 +209,7 @@ async function postEdits(
   }
   parts.push(Buffer.from(`--${boundary}--${crlf}`));
 
+  await beforeImageSubmit?.();
   const res = await fetch(`${OPENAI_BASE}/v1/images/edits`, {
     method: "POST",
     headers: {
@@ -233,6 +235,7 @@ export async function postOpenAiGptImage2AndUpload(
   prompt: string,
   gcsSubdir: string,
   opts: {
+    beforeImageSubmit?: () => Promise<void>;
     aspectRatio?: "9:16" | "16:9";
     size?: string;
     quality?: string;
@@ -282,10 +285,11 @@ export async function postOpenAiGptImage2AndUpload(
 
   let lastMessage = "";
   for (let i = 0; i < keyChain.length; i++) {
+    await opts.beforeImageSubmit?.();
     const slot = keyChain[i]!;
     try {
       const buffer = refs.length
-        ? await postEdits(slot.key, promptTrimmed, size, quality, refs, maskUrl, model, L)
+        ? await postEdits(slot.key, promptTrimmed, size, quality, refs, maskUrl, model, L, opts.beforeImageSubmit)
         : await postGenerations(slot.key, promptTrimmed, size, quality, model);
       const publicUrl = await uploadBufferToPlatformStorage(buffer, gcsSubdir, L);
       appendImageFlowLog(
@@ -298,6 +302,7 @@ export async function postOpenAiGptImage2AndUpload(
       );
       return publicUrl;
     } catch (e: unknown) {
+      if ((e as { kind?: string })?.kind === "cancelled") throw e;
       lastMessage = e instanceof Error ? e.message : String(e);
       appendImageFlowLog(L, `[GPT-IMAGE-2·OpenAI] 异常 · 钥=${slot.slot} · ${lastMessage}`);
       console.warn("[openaiGptImage2]", slot.slot, lastMessage);

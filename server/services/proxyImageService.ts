@@ -1136,6 +1136,7 @@ function appendStoryboardProtagonistAnchorToScript(scriptContext: string, coverP
  * 传 `referenceImageUrls` 时走 edit；Canvas `generalImageEdit` 不注入封面换脸指令。
  */
 export async function generateGptImage2FromRawEnglishPrompt(options: {
+  beforeImageSubmit?: () => Promise<void>;
   englishPrompt: string;
   aspectRatio: "9:16" | "16:9";
   gcsSubdir: string;
@@ -1308,6 +1309,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   const primaryTimeoutMs = getGptImage2PrimaryTimeoutMs();
 
   for (let i = 0; i < providersInOrder.length; i++) {
+    await options.beforeImageSubmit?.();
     const provider = providersInOrder[i]!;
     const isPrimary = i === 0;
     const isLast = i === providersInOrder.length - 1 && !tryOpenRouter;
@@ -1338,6 +1340,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
             lane: options.imageLane ?? null,
             variant: options.openaiImageVariant ?? null,
             inputFidelity: options.openaiInputFidelity ?? null,
+            beforeImageSubmit: options.beforeImageSubmit,
           })
         : provider === "wavespeed"
           ? postWavespeedGptImage2AndUpload(finalPrompt, options.gcsSubdir, {
@@ -1384,6 +1387,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
       }
       appendImageFlowLog(L, `[单帧·${tag}] 失败 · ${String(err.message || "empty").slice(0, 160)}`);
     } catch (e) {
+      if ((e as { kind?: string })?.kind === "cancelled") throw e;
       const msg = e instanceof Error ? e.message : String(e);
       if (options.captureError) {
         if (provider === "openai") options.captureError.openaiError = msg;
@@ -1399,6 +1403,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   }
 
   if (tryOpenRouter) {
+    await options.beforeImageSubmit?.();
     appendImageFlowLog(
       L,
       `[单帧·OpenRouter] GPT-IMAGE-2${hasRef ? " edit" : ""} · ${options.aspectRatio} · quality=${qualityForCall}${hasRef ? ` · 参考=${refImageUrls.length}张` : ""} · 末位备胎/强制`,
@@ -1542,6 +1547,7 @@ async function generatePlatformCompositeSheetViaNanoBanana2Primary(options: {
  * - **无** Nano Banana 2 / EvoLink 降级
  */
 export async function generatePlatformCompositeSheetImage(options: {
+  beforeImageSubmit?: () => Promise<void>;
   kind: PlatformCompositeSheetKind;
   title: string;
   scriptContext: string;
@@ -1621,6 +1627,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   });
 
   const execute = async (): Promise<string | null> => {
+  await options.beforeImageSubmit?.();
   const L = options.flowLog;
   const k = normalizeCompositeSheetKind(options.kind);
   const isStoryboard = k === "storyboard_sheet_landscape";
@@ -1787,6 +1794,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   let moderationBlocked = false;
 
   for (let attempt = 1; attempt <= compositeMaxAttempts; attempt++) {
+    await options.beforeImageSubmit?.();
     appendImageFlowLog(
       L,
       `[2×4·整链] ═══ 第 ${attempt}/${compositeMaxAttempts} 次尝试开始 ═══`,
@@ -1975,6 +1983,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         // 0908 用户：官方也出 3840x2160，与 EvoLink 同尺寸，PDF 合成不用补边
         openaiSize: isKnowledgeCard ? KNOWLEDGE_CARD_OPENAI_SIZE : undefined,
         captureError: gptCapture,
+        beforeImageSubmit: options.beforeImageSubmit,
       });
 
       // 良性人像误杀：与旧 EvoLink 路径一致，附澄清语境再试一次
@@ -1999,6 +2008,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
           evolinkResolution: isKnowledgeCard ? "4K" : undefined,
           openaiSize: isKnowledgeCard ? KNOWLEDGE_CARD_OPENAI_SIZE : undefined,
           captureError: retryCapture,
+          beforeImageSubmit: options.beforeImageSubmit,
         });
         if (!fromGpt && (retryCapture.moderationBlocked || isEvolinkModerationFailure(retryCapture.message))) {
           moderationBlocked = true;
@@ -2050,6 +2060,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
             }`,
       );
     } catch (e: unknown) {
+      if ((e as { kind?: string })?.kind === "cancelled") throw e;
       lastFailure = e;
       const msg = e instanceof Error ? e.message : String(e);
       appendImageFlowLog(

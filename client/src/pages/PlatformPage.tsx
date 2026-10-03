@@ -1,3 +1,4 @@
+import { KnowledgeCardPageTasks } from "@/lib/knowledgeCardPageTask";
 import { gcsTransferUrl } from "@/lib/gcsTransfer";
 import { cachePhotoTemporaryMedia, triggerTemporaryDownload } from "@/lib/photoTemporaryMedia";
 import { mergeNativeProposalListAndDetail } from "@/lib/manhuaLearnResultUi";
@@ -3098,6 +3099,11 @@ export default function PlatformPage() {
    * 已出的页留着、已扣的不退——页费本就是逐页成功才扣，停下只是不再发新页。
    */
   const customNoteStopRenderRef = useRef(false);
+  const knowledgeCardPageTasks = useMemo(() => new KnowledgeCardPageTasks(String(user?.id ?? "current")), [user?.id]);
+  useEffect(() => knowledgeCardPageTasks.attach(
+    () => { customNoteStopRenderRef.current = true; },
+    (message) => toast.error(message),
+  ), [knowledgeCardPageTasks]);
   const [customNoteRendering, setCustomNoteRendering] = useState(false);
   /**
    * 出图前确认弹窗（0911 用户令）：把版式、成稿档、模板类型摆出来核一遍再出图。
@@ -8340,11 +8346,13 @@ export default function PlatformPage() {
     const cached = customNoteCompactMarkdownRef.current;
     if (cached) return cached;
     // 本次派生绑定的稿件版本；回写前比对，旧响应一律作废
+    const pageRequestId = knowledgeCardPageTasks.begin("knowledge_card_derive_level");
     const revision = customNoteRevisionRef.current;
     setCustomNoteLevelSwitching(true);
     setCustomNoteProgress({ status: "running", percent: 1, label: "派生精华版…" });
     try {
       const queued = await enqueueKnowledgeCardLevelDeriveMutation.mutateAsync({
+        pageRequestId,
         fullMarkdown: full,
         distillModel: customNoteDistillModel,
       });
@@ -8368,6 +8376,8 @@ export default function PlatformPage() {
           });
         },
       });
+      knowledgeCardPageTasks.finish(pageRequestId);
+      knowledgeCardPageTasks.assertLive();
       if (job.status === "failed") throw new Error(job.error || "精华版派生失败，请稍后重试");
       const out = (job.output || {}) as { distilledMarkdown?: string };
       const compact = String(out.distilledMarkdown || "").trim();
@@ -8488,7 +8498,9 @@ export default function PlatformPage() {
     setCustomNoteCompactMarkdown(null);
     // 新一轮提炼：上一本 EPUB 的 PDF 按钮不再挂着（本轮转档成功会重新出现）
     setKnowledgeCardEpubPdfs([]);
+    const pageRequestId = knowledgeCardPageTasks.begin("knowledge_card_distill");
     const queued = await prepareKnowledgeCardCopyMutation.mutateAsync({
+      pageRequestId,
       sourceText: args.sourceText,
       files: args.files?.length ? args.files : undefined,
       forceDistill: true,
@@ -8499,6 +8511,8 @@ export default function PlatformPage() {
     });
 
     if (!queued.isAsync || !queued.progressJobId) {
+      knowledgeCardPageTasks.finish(pageRequestId);
+      knowledgeCardPageTasks.assertLive();
       setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromDistill(98), label: "提炼完成" });
       return String(queued.distilledMarkdown || "").trim();
     }
@@ -8553,6 +8567,8 @@ export default function PlatformPage() {
         });
       },
     });
+    knowledgeCardPageTasks.finish(pageRequestId);
+    knowledgeCardPageTasks.assertLive();
     if (job.status === "failed") throw new Error(job.error || "提炼失败，请稍后重试");
     setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromDistill(98), label: "提炼完成" });
     const out = (job.output || {}) as { distilledMarkdown?: string; epubPdfs?: Array<{ fileName: string; url: string }> };
@@ -8622,6 +8638,9 @@ export default function PlatformPage() {
       infographicTemplateId: string | null;
     },
   ): Promise<string> => {
+    knowledgeCardPageTasks.assertLive();
+    const pageRequestId = kind === "single_page_knowledge_card"
+      ? knowledgeCardPageTasks.begin("platform_composite_sheet_progress") : undefined;
     const sceneId = `custom-note-${notePage?.index ?? notePart ?? "single"}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const progressJobId = newPlatformCompositeProgressJobId();
     const title = extractInfographicSubjectFromUserCopy(trimmed);
@@ -8635,6 +8654,7 @@ export default function PlatformPage() {
     const scriptContext = trimmed;
     const res = await generateCustomNoteMutation.mutateAsync({
       sceneId,
+      pageRequestId,
       title,
       scriptContext,
       kind,
@@ -8662,6 +8682,8 @@ export default function PlatformPage() {
       allowBloggerTitle,
     });
     if (res.imageUrl) {
+      if (pageRequestId) knowledgeCardPageTasks.finish(pageRequestId);
+      knowledgeCardPageTasks.assertLive();
       return res.imageUrl;
     }
     if ((res as { isAsync?: boolean }).isAsync && (res as { progressJobId?: string }).progressJobId) {
@@ -8676,6 +8698,8 @@ export default function PlatformPage() {
           adaptiveBackoffAfterAttempts: 20,
           maxIntervalMs: 5000,
         });
+        if (pageRequestId) knowledgeCardPageTasks.finish(pageRequestId);
+        knowledgeCardPageTasks.assertLive();
         if (j.status === "failed") throw new Error(j.error || "生成失敗，請重試");
         const out = j.output as { compositeImageUrl?: string; imageUrl?: string } | null;
         const url = out?.compositeImageUrl || out?.imageUrl || "";
@@ -16035,6 +16059,7 @@ export default function PlatformPage() {
                     onCancel={customNoteDistillJobId || customNoteRendering ? cancelCustomNoteDistill : undefined}
                     cancelBusy={customNoteCancelBusy}
                   />
+                  <p className="text-xs text-muted-foreground">刷新或关闭页面会停止读档、提炼、派生及后续出图；已提交供应商的图片仍会完成。</p>
                 </div>
               ) : null}
               {customNoteKind === "optimize_custom_copy" ? (

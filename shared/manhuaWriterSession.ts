@@ -1,3 +1,5 @@
+import {novelAdaptationSchema} from "./manhuaNovelAdaptation";
+import { parseNovelDraft, novelExcerptSchema, type ManhuaNovelDraft } from "./manhuaNovelSource.js";
 import { normalizeManhuaEditTransitions, type ManhuaEditTransition } from "./manhuaEditTransition.js";
 /**
  * 漫剧编剧室会话快照（本机 localStorage）。
@@ -57,6 +59,7 @@ export type ManhuaWriterSession = {
   format: typeof MANHUA_WRITER_SESSION_FORMAT;
   topic: string;
   brief: string;
+  novelDraft?: ManhuaNovelDraft | null;
   episodeCount: number;
   focusEpisode: number;
   writerPack: ManhuaWriterPack | null;
@@ -149,6 +152,8 @@ function normalizeWriterPack(raw: unknown): ManhuaWriterPack | null {
           title: String((ep as { title?: string }).title || "").trim(),
           body: String((ep as { body?: string }).body || "").trim(),
           endHook: String((ep as { endHook?: string }).endHook || "").trim(),
+          ...(novelAdaptationSchema.safeParse(ep.novelAdaptation).success ? {novelAdaptation:novelAdaptationSchema.parse(ep.novelAdaptation)} : {}),
+          ...(novelExcerptSchema.safeParse(ep.sourceExcerpt).success ? { sourceExcerpt: novelExcerptSchema.parse(ep.sourceExcerpt), sourceNotes: String(ep.sourceNotes || ""), sourceSha256: /^[a-f0-9]{64}$/.test(ep.sourceSha256 || "") ? ep.sourceSha256 : undefined } : {}),
         }))
         .filter((ep) => ep.title || ep.body || ep.endHook)
     : [];
@@ -206,6 +211,7 @@ export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): Man
     format: MANHUA_WRITER_SESSION_FORMAT,
     topic: String(input.topic || "").trim(),
     brief: String(input.brief || "").trim(),
+    novelDraft: parseNovelDraft(input.novelDraft),
     episodeCount: clampWriterEpisodeCount(input.episodeCount),
     focusEpisode: Math.max(1, Math.floor(Number(input.focusEpisode) || 1)),
     writerPack: normalizeWriterPack(input.writerPack),
