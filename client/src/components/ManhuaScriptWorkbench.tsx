@@ -2292,12 +2292,14 @@ export default function ManhuaScriptWorkbench({
   const annotateStillUrl = activeShotStillUrl || anyKeyartUrl;
   const previewStillUrl = activePhase === "storyboard" ? activeShotStillUrl : annotateStillUrl;
 
+  const enterCanvasAfterPhaseRef = useRef(false);
   // 切换集或阶段回到媒体预览；同阶段选镜不强制打开或关闭高级模式。
   useEffect(() => {
-    setCanvasDockOpen(false);
+    setCanvasDockOpen(enterCanvasAfterPhaseRef.current && activePhase === "storyboard");
+    enterCanvasAfterPhaseRef.current = false;
   }, [focusEpisode, activePhase]);
 
-  const openCanvasDock = () => setCanvasDockOpen(true);
+  const openCanvasDock = () => { setNarrowWorkbenchColumn("preview"); setCanvasDockOpen(true); };
   const closeCanvasDock = () => setCanvasDockOpen(false);
   // 阿硕 C2：首次进分镜且有静帧 → 自动铺段节点 + 写入垫图锁提示词
   const autoLaidClipLocksRef = useRef(false);
@@ -5883,6 +5885,17 @@ clipPromptReviewOpen ? (
               </p>
             ) : null}
             <div className="mt-5 flex flex-wrap items-center justify-end gap-3" data-manhua-phase-footer-action="outline">
+              {outlineComplete && dockCanvas ? (
+                <button type="button" data-manhua-action="outline-open-canvas"
+                  onClick={() => {
+                    enterCanvasAfterPhaseRef.current = true;
+                    setNarrowWorkbenchColumn("preview");
+                    setActivePhase("storyboard");
+                  }}
+                  className="inline-flex min-h-12 items-center gap-2 rounded-xl border border-cyan-400/35 px-5 text-sm font-semibold text-cyan-900">
+                  <LayoutGrid className="h-4 w-4" /> 进入漫剧画布
+                </button>
+              ) : null}
               {!outlineConfirmed && onRestoreOutlineConfirmation ? (
                 <button
                   type="button"
@@ -9149,7 +9162,7 @@ clipPromptReviewOpen ? (
             </span>
           </header>
         ) : null}
-        <nav aria-label="分镜工作区视图" className="flex shrink-0 gap-2 border-b border-white/10 p-2 md:hidden">
+        <nav aria-label="分镜工作区视图" className={`${showCanvasDock ? "hidden" : "flex"} shrink-0 gap-2 border-b border-white/10 p-2 md:hidden`}>
           {([['script', '镜头'], ['preview', '主预览'], ['assets', '参数与资产']] as const).map(([column, label]) => (
             <button key={column} type="button" data-manhua-narrow-column={column}
               aria-pressed={narrowWorkbenchColumn === column}
@@ -9168,26 +9181,24 @@ clipPromptReviewOpen ? (
         >
           <div
             data-manhua-storyboard-workspace
+            data-manhua-canvas-expanded={showCanvasDock ? "true" : "false"}
+            style={showCanvasDock ? { display: "flex", width: "100%", minWidth: 0 } : undefined}
             className={
-              "max-md:!grid max-md:!w-full max-md:!min-w-0 max-md:!grid-cols-1 " + (immersive
-                ? showCanvasDock
-                  ? // 常规桌面先让三栏在当前视口内弹性收缩；极窄窗口才由外层横向滚动兜底。
-                    // 分镜阶段按对照图 01 固定为「左镜头清单 · 中主预览 · 右当前镜参数」：
-                    // DOM 顺序与视觉顺序一致；三列宽度只决定空间分配。
-                    storyboardThreeColumn
-                      ? "grid h-full min-h-0 min-w-[840px] grid-cols-[minmax(200px,0.65fr)_minmax(360px,1.2fr)_minmax(260px,0.8fr)] xl:min-w-0 xl:grid-cols-[minmax(220px,0.65fr)_minmax(400px,1.2fr)_minmax(280px,0.8fr)]"
-                      : "grid h-full min-h-0 min-w-[840px] grid-cols-[minmax(128px,0.34fr)_minmax(300px,0.78fr)_minmax(400px,1.28fr)] xl:min-w-0 xl:grid-cols-[152px_minmax(400px,0.58fr)_minmax(560px,1.08fr)]"
-                  : storyboardThreeColumn
+              showCanvasDock
+                ? "flex h-full min-h-0 w-full overflow-hidden"
+                : "max-md:!grid max-md:!w-full max-md:!min-w-0 max-md:!grid-cols-1 " + (immersive
+                  ? storyboardThreeColumn
                     ? "grid h-full min-h-0 min-w-[760px] grid-cols-[minmax(180px,0.65fr)_minmax(320px,1.2fr)_minmax(240px,0.8fr)] xl:min-w-0 xl:grid-cols-[minmax(220px,0.65fr)_minmax(400px,1.2fr)_minmax(280px,0.8fr)]"
                     : "grid h-full min-h-0 min-w-[760px] grid-cols-[minmax(128px,0.38fr)_minmax(280px,0.8fr)_minmax(350px,1.15fr)] xl:min-w-0 xl:grid-cols-[168px_minmax(300px,0.72fr)_minmax(420px,1.08fr)]"
-                : storyboardThreeColumn
-                  ? "grid h-full min-h-0 w-full grid-cols-[minmax(180px,0.65fr)_minmax(280px,1.2fr)_minmax(240px,0.8fr)] overflow-x-auto"
-                  : "flex h-full min-h-0 w-full overflow-hidden")
+                  : storyboardThreeColumn
+                    ? "grid h-full min-h-0 w-full grid-cols-[minmax(180px,0.65fr)_minmax(280px,1.2fr)_minmax(240px,0.8fr)] overflow-x-auto"
+                    : "flex h-full min-h-0 w-full overflow-hidden")
             }
           >
         {/* 左：镜头清单与当前镜 */}
         <section
           data-manhua-column="script"
+          style={showCanvasDock ? { display: "none" } : undefined}
           className={
             `max-md:!w-full max-md:min-w-0 ${narrowWorkbenchColumn !== "script" ? "max-md:!hidden" : ""} ` + (storyboardThreeColumn
               ? "flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-r border-white/10 p-2 md:p-2.5"
@@ -9667,6 +9678,7 @@ clipPromptReviewOpen ? (
         {/* 中：当前镜主预览与画布 */}
         <aside
           data-manhua-column="preview"
+          style={showCanvasDock ? { width: "100%", flex: "1 1 100%", minWidth: 0 } : undefined}
           data-manhua-preview-kind={
             showCanvasDock
               ? "canvas"
@@ -9679,7 +9691,7 @@ clipPromptReviewOpen ? (
           data-manhua-preview-url={previewFinalVideoUrl || previewUrl || ""}
           data-manhua-preview-reference={previewIsReference ? "true" : "false"}
           className={
-            `max-md:!w-full max-md:min-w-0 ${narrowWorkbenchColumn !== "preview" ? "max-md:!hidden" : ""} ` + (storyboardThreeColumn
+            `max-md:!w-full max-md:min-w-0 ${!showCanvasDock && narrowWorkbenchColumn !== "preview" ? "max-md:!hidden" : ""} ` + (storyboardThreeColumn
               ? "flex h-full min-h-0 min-w-0 flex-col p-2 md:p-2.5"
               : immersive
               ? "flex h-full min-h-0 flex-col p-1.5 md:p-2"
@@ -9690,7 +9702,7 @@ clipPromptReviewOpen ? (
         >
           <div className="mb-1.5 flex shrink-0 flex-wrap items-center justify-between gap-2">
             <div className="text-[12px] font-semibold text-white/90">
-              {showCanvasDock ? "高级节点画布" : activePhase === "storyboard" ? (previewIsVideo ? `第 ${activeSegNo} 段成片 · 包含当前镜` : `${previewIsReference ? "垫图参考" : "当前镜预览"} · ${String(activeShotNo).padStart(2, "0")}`) : previewIsVideo || previewFinalVideoUrl ? "视频结果" : "预览"}
+              {showCanvasDock ? "漫剧画布" : activePhase === "storyboard" ? (previewIsVideo ? `第 ${activeSegNo} 段成片 · 包含当前镜` : `${previewIsReference ? "垫图参考" : "当前镜预览"} · ${String(activeShotNo).padStart(2, "0")}`) : previewIsVideo || previewFinalVideoUrl ? "视频结果" : "预览"}
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
               {activePhase === "storyboard" && !showCanvasDock && keyartOutputUrl(activeKeyart) && clipOutputUrl(activeClip) ? (
@@ -9753,7 +9765,7 @@ clipPromptReviewOpen ? (
                       title="收起画布，腾出空间检查成片"
                     >
                       <X className="h-3 w-3" />
-                      返回主预览
+                      返回分镜
                     </button>
                 ) : (
                   <button
@@ -9764,7 +9776,7 @@ clipPromptReviewOpen ? (
                     title="打开本集画布（多镜节点）"
                   >
                     <LayoutGrid className="h-3 w-3" />
-                    高级节点画布
+                    漫剧画布
                   </button>
                 )
               ) : null}
@@ -9880,7 +9892,7 @@ clipPromptReviewOpen ? (
                       : activePhase === "storyboard"
                         ? `镜 ${String(activeShotNo).padStart(2, "0")} 尚无可预览产物，请先生成本镜静帧`
                         : dockCanvas
-                        ? "可打开高级节点画布，或生成片段后检查成片"
+                        ? "可打开漫剧画布，或生成片段后检查成片"
                         : "生成关键静帧后，静帧 / 成片在此预览"}
                   </div>
                 )}
@@ -10068,6 +10080,7 @@ clipPromptReviewOpen ? (
         {/* 右：当前镜参数与本段资产 */}
         <aside
           data-manhua-column={storyboardThreeColumn ? "params" : "assets"}
+          style={showCanvasDock ? { display: "none" } : undefined}
           data-manhua-shot-mount={shotMount.mode}
           data-manhua-shot-mount-cast={String(mountedCastCount)}
           className={

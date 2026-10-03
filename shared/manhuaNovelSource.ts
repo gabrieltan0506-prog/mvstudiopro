@@ -7,7 +7,14 @@ export const novelExcerptSchema = z.object({
   text: z.string().min(80).max(NOVEL_EXCERPT_MAX_CHARS),
 }).strict();
 export type ManhuaNovelExcerpt = z.infer<typeof novelExcerptSchema>;
-export type ManhuaNovelDraft = { name: string; text: string; from: number; to: number; enabled: boolean; chapters?: NovelChapter[]; epubImageCount?: number };
+export const novelImportInfoSchema = z.object({
+  format: z.enum(["pdf", "docx", "doc"]),
+  pageCount: z.number().int().min(1).max(10000).optional(),
+  ocrPages: z.array(z.number().int().min(1).max(10000)).max(10000),
+  warnings: z.array(z.string().max(100000)).max(20),
+}).strict();
+export type NovelImportInfo = z.infer<typeof novelImportInfoSchema>;
+export type ManhuaNovelDraft = { name: string; text: string; from: number; to: number; enabled: boolean; chapters?: NovelChapter[]; epubImageCount?: number; importInfo?: NovelImportInfo };
 export type NovelChapter = { title: string; start: number; end: number; line: number };
 
 /** Exact offsets into the original source: neither line endings nor preambles are discarded. */
@@ -33,6 +40,8 @@ export function parseNovelDraft(raw: unknown): ManhuaNovelDraft | null {
   if (!raw || typeof raw !== "object") return null;
   const p = raw as Partial<ManhuaNovelDraft>;
   if (typeof p.text !== "string" || p.text.length > NOVEL_SOURCE_MAX_CHARS || typeof p.name !== "string" || p.name.length > 120) return null;
+  const importInfo = p.importInfo === undefined ? undefined : novelImportInfoSchema.safeParse(p.importInfo);
+  if (importInfo && !importInfo.success) return null;
   if (p.epubImageCount !== undefined && (!Number.isSafeInteger(p.epubImageCount) || p.epubImageCount < 0 || !p.chapters)) return null;
   if (p.chapters !== undefined) {
     if (!Array.isArray(p.chapters) || !p.chapters.length || p.chapters.length > 10000) return null;
@@ -46,7 +55,7 @@ export function parseNovelDraft(raw: unknown): ManhuaNovelDraft | null {
   }
   const chapters = novelDraftChapters({ text: p.text, chapters: p.chapters });
   if (!Number.isInteger(p.from) || !Number.isInteger(p.to) || p.from! < 0 || p.to! < p.from! || (chapters.length && p.to! >= chapters.length)) return null;
-  return { name: p.name, text: p.text, from: p.from!, to: p.to!, enabled: p.enabled === true, ...(p.epubImageCount !== undefined ? { epubImageCount: p.epubImageCount } : {}), ...(p.chapters ? { chapters: p.chapters.map(c => ({ title: c.title, start: c.start, end: c.end, line: c.line })) } : {}) };
+  return { name: p.name, text: p.text, from: p.from!, to: p.to!, enabled: p.enabled === true, ...(importInfo?.success ? { importInfo: importInfo.data } : {}), ...(p.epubImageCount !== undefined ? { epubImageCount: p.epubImageCount } : {}), ...(p.chapters ? { chapters: p.chapters.map(c => ({ title: c.title, start: c.start, end: c.end, line: c.line })) } : {}) };
 }
 
 export function prepareNovelExcerpt(draft: ManhuaNovelDraft): ManhuaNovelExcerpt | undefined {

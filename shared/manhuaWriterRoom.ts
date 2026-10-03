@@ -78,6 +78,7 @@ export type ManhuaWriterEpisode = {
   sourceExcerpt?: ManhuaNovelExcerpt;
   sourceSha256?: string;
   sourceNotes?: string;
+  novelAdaptation?: import("./manhuaNovelAdaptation").ManhuaNovelAdaptation;
 };
 
 export type ManhuaWriterPack = {

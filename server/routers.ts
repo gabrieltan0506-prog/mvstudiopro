@@ -10126,6 +10126,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           // 商业机密边界：完整卡只喂模型；浏览器响应一律匿名句柄（监管在监管面板看全量）
           appliedTemplate = resolved.appliedTemplate;
         }
+        if(input.sourceExcerpt && !viralTemplateAddon.trim()) {
+          throw new TRPCError({code:"BAD_REQUEST",message:"底本改编请先选择故事模板"});
+        }
         if (input.templateTrialFingerprint && !requestedTemplateId) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "请先选择与试写一致的剧情增强方案" });
         }
@@ -10142,7 +10145,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const quota = resolveManhuaWriterExpandQuota({
           usedEver: 0,
           usedToday: 0,
-          tier: input.tier ?? "excellent",
+          tier: input.sourceExcerpt ? "excellent" : input.tier ?? "excellent",
           episodeCount: billableEpisodes,
         });
         const cost = quota.nextCredits;
@@ -10178,8 +10181,22 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           .update(`${userId}:${input.requestId}:${quota.runTier}:${prompt}`)
           .digest("hex")}`;
         let markdown = "";
+        let novelAdaptation: import("../shared/manhuaNovelAdaptation").ManhuaNovelAdaptation | undefined;
         try {
-          markdown = await runManhuaWriterExpand({
+          if(input.sourceExcerpt){
+            const {runManhuaNovelAdaptation}=await import("./services/manhuaNovelAdaptationRun");
+            const result=await runManhuaNovelAdaptation({
+              source:input.sourceExcerpt,topic,brief,template:viralTemplateAddon,episodeCount,requestId:`${userId}:${input.requestId}`,
+              scriptPrompt: novel => buildManhuaWriterExpandPrompt({
+                topic,brief,sourceExcerpt:{label:`改编小说：${novel.title}`,text:novel.text},episodeCount,
+                lengthTierId:input.lengthTierId||layout.lengthTierId,videoModel:layout.videoModel,
+                fromEpisode:input.fromEpisode,fromSegment:input.fromSegment,lockedEpisodeBody:input.lockedEpisodeBody,
+                viralTemplateId:appliedInternalTemplateId,viralTemplateAddon,
+                directionCanon:buildManhuaDirectionCanonFromSelection(input.directionSelection),
+              })+"\n【底本改编记录】\n"+JSON.stringify({source:input.sourceExcerpt,adaptationNotes:novel.adaptationNotes})+"\n原文对照须分别注明底本事实、小说新增与模板方法，不将新增桥段冒充底本。",
+            });
+            markdown=result.markdown;novelAdaptation=result.novel;
+          } else markdown = await runManhuaWriterExpand({
             prompt,
             tier: quota.runTier,
             episodeCount,
@@ -10211,7 +10228,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "改编结果缺少逐集原文对照，旧稿保留，本次未扣点" });
           }
           const sourceSha256 = createHash("sha256").update(input.sourceExcerpt.text).digest("hex");
-          pack.episodes = pack.episodes.map(episode => ({ ...episode, sourceExcerpt: input.sourceExcerpt, sourceSha256 }));
+          pack.episodes = pack.episodes.map(episode => ({ ...episode, sourceExcerpt: input.sourceExcerpt, sourceSha256, ...(novelAdaptation ? {novelAdaptation} : {}) }));
         }
 
         // 先出稿再原子扣点：上游失败不扣；相同 requestId + 相同请求的网络重试不双扣。

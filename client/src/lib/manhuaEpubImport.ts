@@ -1,32 +1,9 @@
+import { readDocumentZipText as readText } from "./documentZipText";
 import JSZip from "jszip";
 import { epubAttribute, readEpubPackage } from "@shared/epubPackage";
 import { NOVEL_SOURCE_MAX_CHARS, type ManhuaNovelDraft, type NovelChapter } from "@shared/manhuaNovelSource";
 
 const MAX_FILE_BYTES = 64 * 1024 * 1024;
-/** Read bounded entries only; illustrations never get inflated or sent to a model. */
-async function readText(file: JSZip.JSZipObject | null, maxBytes = 2 * 1024 * 1024): Promise<string> {
-  if (!file) throw new Error("EPUB 缺少章节文件，未导入；当前原文保留。");
-  return new Promise((resolve, reject) => {
-    const chunks: Uint8Array[] = []; let bytes = 0; let failed = false;
-    // JSZip implements this in zipObject.js; its shipped declarations only expose the generator variant.
-    const stream = (file as JSZip.JSZipObject & { internalStream(type: "uint8array"): JSZip.JSZipStreamHelper<Uint8Array> }).internalStream("uint8array");
-    stream.on("data", chunk => {
-      bytes += chunk.length;
-      if (bytes > maxBytes) { failed = true; stream.pause(); reject(new Error("EPUB 单个章节过大，请分卷导入；当前原文保留。")); return; }
-      chunks.push(chunk);
-    });
-    stream.on("error", reject);
-    stream.on("end", () => {
-      if (failed) return;
-      const joined = new Uint8Array(bytes); let offset = 0;
-      for (const chunk of chunks) { joined.set(chunk, offset); offset += chunk.length; }
-      try { resolve(new TextDecoder("utf-8", { fatal: true }).decode(joined)); }
-      catch { reject(new Error("EPUB 文字编码无法完整读取，请转换为 UTF-8 后导入。")); }
-    });
-    stream.resume();
-  });
-}
-
 /** XML is inert: no HTML insertion, scripts, resource loading, PDF rasterization or distillation. */
 function chapterText(raw: string) {
   const doc = new DOMParser().parseFromString(raw, "application/xhtml+xml");

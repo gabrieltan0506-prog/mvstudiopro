@@ -344,7 +344,7 @@ type FreeformCanvasProps = {
    * media：只渲染图片/视频节点（隐藏文本生成等），突出媒体与 prompt。
    * full：全部节点（自由画布 / 专家排错）。
    */
-  presentation?: "full" | "media";
+  presentation?: "full" | "media" | "image" | "video";
   /** 仅显示该集工厂节点；不传则不过滤 */
   focusEpisode?: number | null;
   /** 限制「添加节点」菜单；默认 SPAWN_KIND_OPTIONS 全量 */
@@ -1008,8 +1008,11 @@ export default function FreeformCanvas({
     if (mediaOnly) {
       list = list.filter((b) => b.kind === "image" || b.kind === "video");
     }
+    if (presentation === "image" || presentation === "video") {
+      list = list.filter((b) => b.kind === presentation);
+    }
     return list;
-  }, [blocks, focusEpisode, mediaOnly]);
+  }, [blocks, focusEpisode, mediaOnly, presentation]);
 
   const visibleIdSet = useMemo(() => new Set(visibleBlocks.map((b) => b.id)), [visibleBlocks]);
 

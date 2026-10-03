@@ -1,3 +1,4 @@
+import {novelAdaptationSchema} from "./manhuaNovelAdaptation";
 import { parseNovelDraft, novelExcerptSchema, type ManhuaNovelDraft } from "./manhuaNovelSource.js";
 import { normalizeManhuaEditTransitions, type ManhuaEditTransition } from "./manhuaEditTransition.js";
 /**
@@ -151,6 +152,7 @@ function normalizeWriterPack(raw: unknown): ManhuaWriterPack | null {
           title: String((ep as { title?: string }).title || "").trim(),
           body: String((ep as { body?: string }).body || "").trim(),
           endHook: String((ep as { endHook?: string }).endHook || "").trim(),
+          ...(novelAdaptationSchema.safeParse(ep.novelAdaptation).success ? {novelAdaptation:novelAdaptationSchema.parse(ep.novelAdaptation)} : {}),
           ...(novelExcerptSchema.safeParse(ep.sourceExcerpt).success ? { sourceExcerpt: novelExcerptSchema.parse(ep.sourceExcerpt), sourceNotes: String(ep.sourceNotes || ""), sourceSha256: /^[a-f0-9]{64}$/.test(ep.sourceSha256 || "") ? ep.sourceSha256 : undefined } : {}),
         }))
         .filter((ep) => ep.title || ep.body || ep.endHook)

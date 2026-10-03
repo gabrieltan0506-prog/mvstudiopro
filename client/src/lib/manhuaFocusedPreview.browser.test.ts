@@ -82,8 +82,14 @@ it("分镜默认显示当前镜，选镜不打开高级画布且不借旧片旧�
     await page.click('[data-manhua-action="open-canvas-dock"]');
     await page.waitForFunction(()=>document.querySelector('#freeform-canvas-zone')?.getAttribute('aria-hidden')==='false');
     expect(await page.$$('[data-test-canvas]')).toHaveLength(1);
+    expect(await page.$eval('[data-manhua-storyboard-workspace]', e => (e as HTMLElement).style.display)).toBe('flex');
+    expect(await page.$eval('[data-manhua-column="script"]', e => getComputedStyle(e).display)).toBe('none');
+    expect(await page.$eval('[data-manhua-column="params"]', e => getComputedStyle(e).display)).toBe('none');
+    const canvasState = await page.evaluate(() => JSON.stringify((window as any).fixture.blocks));
     await page.click('[data-manhua-action="close-canvas-dock"]');
     await page.waitForFunction(()=>document.querySelector('#freeform-canvas-zone')?.getAttribute('aria-hidden')==='true');
+    expect(await page.evaluate(() => JSON.stringify((window as any).fixture.blocks))).toBe(canvasState);
+    expect(await page.$eval('[data-manhua-column="script"]', e => (e as HTMLElement).style.display)).toBe('');
     expect(await page.$$('[data-test-canvas]')).toHaveLength(1);
     expect(await page.evaluate(()=>(window as any).fixture.calls)).toEqual([]);
     await page.click('[data-manhua-shot="1"] > button');
@@ -97,6 +103,11 @@ it("分镜默认显示当前镜，选镜不打开高级画布且不借旧片旧�
     await page.evaluate(()=>{const f=(window as any).fixture;f.setBlocks([...f.blocks,{...f.blocks[0],kind:'video',id:'clip-e01-g01-preview',episodeIndex:1,videoModel:'seedance-2.5',prompt:'【第1段·10s】第一段',manhuaAutoSegment:f.currentBinding(f.blocks),outputUrl:'https://test.invalid/segment-1.mp4'}]);});
     await page.waitForFunction(()=>document.querySelector('[data-manhua-column="preview"]')?.getAttribute('data-manhua-preview-url')==='https://test.invalid/segment-1.mp4',{timeout:5000});
     await page.evaluate(()=>(window as any).fixture.setPhase('outline'));
+    await page.waitForSelector('[data-manhua-outline-surface]');
+    await page.click('[data-manhua-action="outline-open-canvas"]');
+    await page.waitForFunction(() => document.querySelector('[data-manhua-storyboard-workspace]')?.getAttribute('data-manhua-canvas-expanded') === 'true');
+    expect(await page.evaluate(() => (window as any).fixture.calls)).toEqual([]);
+    await page.evaluate(() => (window as any).fixture.setPhase('outline'));
     await page.waitForSelector('[data-manhua-outline-surface]');
     const cssDir=process.env.MANHUA_LAYOUT_CSS_DIR;
     if(cssDir){

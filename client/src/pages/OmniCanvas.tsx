@@ -1065,7 +1065,8 @@ export default function OmniCanvas() {
     clampWriterEpisodeCount(initialWriterSession?.episodeCount ?? MANHUA_WRITER_EPISODE_DEFAULT),
   );
   /** 扩写引擎档位：四档，默认优秀；前台只显示档名，不出现模型名 */
-  const [writerExpandTier, setWriterExpandTier] = useState<ManhuaWriterExpandTierId>("excellent");
+  const [writerExpandTierChoice, setWriterExpandTier] = useState<ManhuaWriterExpandTierId>("excellent");
+  const writerExpandTier = novelDraft?.enabled ? "excellent" : writerExpandTierChoice;
   /** 失败/丢响应后同参数重试复用请求键；成功后清空，下一次主动扩写重新计费。 */
   const writerExpandRetryRef = useRef<{ signature: string; requestId: string } | null>(null);
   /** 单集时长档位：段长恒定 15s，切档只改一集几段（2.5 时由成片引擎覆盖） */
@@ -1466,7 +1467,7 @@ export default function OmniCanvas() {
   const [dockSelectedIds, setDockSelectedIds] = useState<Set<string>>(() => new Set());
   const [focusBlockId, setFocusBlockId] = useState<string | null>(null);
   /** 漫剧工厂画布：默认只看本集静帧/成片，避免文本节点墙 */
-  const [manhuaCanvasPresentation, setManhuaCanvasPresentation] = useState<"media" | "all">(
+  const [manhuaCanvasPresentation, setManhuaCanvasPresentation] = useState<"media" | "image" | "video" | "all">(
     "media",
   );
   const [shotContinuity, setShotContinuity] = useState<ManhuaShotContinuityPrefs>(() =>
@@ -5753,6 +5754,7 @@ export default function OmniCanvas() {
     let sourceExcerpt;
     try { sourceExcerpt = novelDraft ? prepareNovelExcerpt(novelDraft) : undefined; }
     catch (error) { toast.error(error instanceof Error ? error.message : "小说选段无效"); return; }
+    if(sourceExcerpt && !publicTemplateId) { toast.error("底本改编请先选择故事模板"); return; }
     const designInject = [
       buildNarrativeLightingInjectBlock(selectedNarrativeLightingIds),
       buildMaleHairstyleInjectBlock(selectedMaleHairstyleIds),
@@ -5867,8 +5869,7 @@ export default function OmniCanvas() {
         : crypto.randomUUID();
     writerExpandRetryRef.current = { signature: expandSignature, requestId: expandRequestId };
     try {
-      const res = await Promise.race([
-        expandWriterMutation.mutateAsync({
+      const request = expandWriterMutation.mutateAsync({
           topic,
           brief: mergedBrief || undefined,
           sourceExcerpt,
@@ -5889,13 +5890,12 @@ export default function OmniCanvas() {
           directionSelection: directionSelection
             ? manhuaDirectionSelectionForRequest(directionSelection)
             : undefined,
-        }),
-        new Promise<never>((_, reject) => {
-          window.setTimeout(() => {
-            reject(new Error("剧情扩写超时，请稍后重试（旧稿未改动）"));
-          }, EXPAND_CLIENT_TIMEOUT_MS);
-        }),
-      ]);
+        });
+      // Bottom-text generation has two streamed stages; the server enforces idle timeouts.
+      // Do not cut an active pipeline off with the old single-stage wall-clock timeout.
+      const res = sourceExcerpt ? await request : await Promise.race([request,new Promise<never>((_,reject)=>{
+        window.setTimeout(()=>reject(new Error("剧情扩写超时，请稍后重试（旧稿未改动）")),EXPAND_CLIENT_TIMEOUT_MS);
+      })]);
       writerExpandRetryRef.current = null;
       if (!res.ready || !res.pack?.episodes?.every((episode) => String(episode.body || "").trim().length >= 20)) {
         throw new Error("扩写结果不完整，旧稿和试写对照均已保留；请核对扣点记录后重试");
@@ -7601,55 +7601,7 @@ export default function OmniCanvas() {
     setCustomAssetRefs((prev) => prev.filter((r) => r.id !== id));
   }, []);
 
-  /**
-   * 四柱布局一次性迁移：布局只在点「对齐画布竖排」时执行，老存档的旧坐标
-   * 会一直躺着——用户升级后看画布「根本没变」（2026-08-11 实反馈）。
-   * 进入漫剧画布且有漫剧节点时自动重排一次，打标记不再打扰手动摆放；
-   * 「对齐画布竖排」按钮随时可再排。
-   */
-  const fourLaneMigratedRef = useRef(false);
-  useEffect(() => {
-    if (fourLaneMigratedRef.current || canvasMode !== "manhua") return;
-    try {
-      if (window.localStorage.getItem("mv_manhua_layout_seglane_v1") === "1") {
-        fourLaneMigratedRef.current = true;
-        return;
-      }
-    } catch {
-      /* 无痕模式：本次会话内仍只迁移一次 */
-    }
-    const hasManhuaNodes = blocks.some(
-      (b) =>
-        b.id.startsWith("charsheet-") ||
-        b.id.startsWith("keyart-") ||
-        b.id.startsWith("clip-"),
-    );
-    if (!hasManhuaNodes) return;
-    fourLaneMigratedRef.current = true;
-    try {
-      window.localStorage.setItem("mv_manhua_layout_seglane_v1", "1");
-    } catch {
-      /* 忽略 */
-    }
-    setBlocks((prev) => {
-      const next = layoutManhuaEpisodeReadableChain(prev, writerFocusEpisode, {
-        assetCanon: projectBible?.assetCanon,
-        characterSheetUrlById: collectManhuaCharacterSheetUrlById(
-          prev,
-          projectBible?.assetCanon,
-        ),
-        customRefs: customAssetRefs,
-      });
-      setEdges((eds) => {
-        saveCanvasState(next, eds);
-        return eds;
-      });
-      return next;
-    });
-    toast.message("画布已切换为段列排布", {
-      description: "资产柱｜每段一列（导演板+静帧）｜成片柱｜整集；点「对齐画布竖排」可随时重排",
-    });
-  }, [blocks, canvasMode, writerFocusEpisode, projectBible?.assetCanon, customAssetRefs]);
+  // 已保存坐标由用户掌握；进入漫剧画布不再自动迁移布局。
 
   /**
    * 段列头卡生产者：导演板真源（段级 store + 集级兜底）→ 画布 board 节点投影。
@@ -9917,42 +9869,7 @@ export default function OmniCanvas() {
     return () => observer.disconnect();
   }, [immersiveWorkbench, immersiveWorkspaceView]);
 
-  /** 进工作台时若静帧仍是默认大卡，自动缩略竖排一次，右栏才能一眼看全 */
-  const immersiveAutoCompactKeyRef = useRef("");
-  useEffect(() => {
-    if (!immersiveWorkbench) return;
-    const key = `${writerFocusEpisode}`;
-    const oversized = blocksRef.current.some((b) => {
-      if ((getBlockEpisodeIndex(b) ?? 1) !== writerFocusEpisode) return false;
-      const id = String(b.id || "");
-      if (
-        !id.startsWith("keyart-") &&
-        !id.startsWith("clip-") &&
-        !id.startsWith("charsheet-") &&
-        !id.startsWith("sceneplate-")
-      ) {
-        return false;
-      }
-      return b.width > 220 || b.height > 280;
-    });
-    if (!oversized) return;
-    if (immersiveAutoCompactKeyRef.current === key) return;
-    immersiveAutoCompactKeyRef.current = key;
-    setBlocks((prev) => {
-      const sheetUrls = collectManhuaCharacterSheetUrlById(prev, projectBible?.assetCanon);
-      return layoutManhuaEpisodeReadableChain(prev, writerFocusEpisode, {
-        assetCanon: projectBible?.assetCanon,
-        characterSheetUrlById: sheetUrls,
-        propImageUrlById: collectManhuaPropImageUrlById(customAssetRefs, projectBible?.assetCanon),
-        customRefs: customAssetRefs,
-      });
-    });
-  }, [
-    immersiveWorkbench,
-    writerFocusEpisode,
-    projectBible?.assetCanon,
-    customAssetRefs,
-  ]);
+  // 画布通过展开视口与显示筛选减少拥挤，布局仍只由显式对齐操作修改。
 
   function applyTemplateRewriteCandidate(input: AdvisorRewriteCandidate): boolean {
     let plan: ReturnType<typeof prepareAdvisorRewriteAdoption>;
@@ -10985,11 +10902,13 @@ export default function OmniCanvas() {
                       <select
                         value={manhuaCanvasPresentation}
                         onChange={(e) =>
-                          setManhuaCanvasPresentation(e.target.value as "media" | "all")
+                          setManhuaCanvasPresentation(e.target.value as "media" | "image" | "video" | "all")
                         }
                         className="rounded-md border border-white/12 bg-black/40 px-1.5 py-0.5 text-[10px] text-white/85"
                       >
-                        <option value="media">图视频</option>
+                        <option value="media">静帧与成片</option>
+                        <option value="image">静帧与资产</option>
+                        <option value="video">成片</option>
                         <option value="all">全部节点</option>
                       </select>
                     </label>
@@ -11014,10 +10933,10 @@ export default function OmniCanvas() {
                         runDeps={runDeps}
                         focusBlockId={focusBlockId}
                         onFocusBlockConsumed={() => setFocusBlockId(null)}
-                        presentation={manhuaCanvasPresentation === "media" ? "media" : "full"}
+                        presentation={manhuaCanvasPresentation === "all" ? "full" : manhuaCanvasPresentation}
                         focusEpisode={writerFocusEpisode}
                         spawnKinds={
-                          manhuaCanvasPresentation === "media" ? ["image", "video"] : undefined
+                          manhuaCanvasPresentation !== "all" ? ["image", "video"] : undefined
                         }
                         characterVoiceLocks={characterVoiceLocks}
                         onReplaceCharacterVoiceAudio={handleReplaceCharacterVoiceAudio}
@@ -12086,14 +12005,14 @@ export default function OmniCanvas() {
                 </div>
                 <div className="flex flex-col gap-1">
                   <div className="flex flex-wrap gap-1">
-                    {MANHUA_WRITER_EXPAND_TIERS.map((t) => {
+                    {(novelDraft?.enabled ? MANHUA_WRITER_EXPAND_TIERS.filter(t=>t.id==="excellent") : MANHUA_WRITER_EXPAND_TIERS).map((t) => {
                       const on = writerExpandTier === t.id;
                       return (
                         <button
                           key={t.id}
                           type="button"
                           disabled={writerBusy || factoryBusy}
-                          title={t.blurb}
+                          title={novelDraft?.enabled ? "底本与所选模板自动改编" : t.blurb}
                           onClick={() => setWriterExpandTier(t.id)}
                           className={`rounded-md border px-2 py-1 text-[10px] font-semibold disabled:opacity-50 ${
                             on
@@ -12101,7 +12020,7 @@ export default function OmniCanvas() {
                               : "border-white/12 bg-white/[0.03] text-white/60 hover:bg-white/[0.06]"
                           }`}
                         >
-                          {t.label}
+                          {novelDraft?.enabled ? "模板改编" : t.label}
                         </button>
                       );
                     })}
@@ -12583,11 +12502,13 @@ export default function OmniCanvas() {
                         <select
                           value={manhuaCanvasPresentation}
                           onChange={(e) =>
-                            setManhuaCanvasPresentation(e.target.value as "media" | "all")
+                            setManhuaCanvasPresentation(e.target.value as "media" | "image" | "video" | "all")
                           }
                           className="ml-1.5 rounded-md border border-white/12 bg-black/40 px-2 py-1 text-[11px] text-white/85"
                         >
-                          <option value="media">仅图片与视频 + 提示词</option>
+                          <option value="media">静帧与成片</option>
+                          <option value="image">静帧与资产</option>
+                          <option value="video">成片</option>
                           <option value="all">全部节点（含文本链）</option>
                         </select>
                       </label>
@@ -12613,10 +12534,10 @@ export default function OmniCanvas() {
                         runDeps={runDeps}
                         focusBlockId={focusBlockId}
                         onFocusBlockConsumed={() => setFocusBlockId(null)}
-                        presentation={manhuaCanvasPresentation === "media" ? "media" : "full"}
+                        presentation={manhuaCanvasPresentation === "all" ? "full" : manhuaCanvasPresentation}
                         focusEpisode={writerFocusEpisode}
                         spawnKinds={
-                          manhuaCanvasPresentation === "media" ? ["image", "video"] : undefined
+                          manhuaCanvasPresentation !== "all" ? ["image", "video"] : undefined
                         }
                         characterVoiceLocks={characterVoiceLocks}
                         onReplaceCharacterVoiceAudio={handleReplaceCharacterVoiceAudio}

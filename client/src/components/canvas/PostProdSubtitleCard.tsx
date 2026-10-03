@@ -17,7 +17,7 @@ export function PostProdSubtitleCard({ clips, busy, onSubmit, context, storageKe
 }) {
   const [source, setSource] = useState("");
   const [srt, setSrt] = useState("");
-  const [fontSize, setFontSize] = useState(12);
+  const [fontSize, setFontSize] = useState(16);
   const [submitting, setSubmitting] = useState(false);
   const gate = useRef(false);
   const advisor = trpc.mvAnalysis.askPlatformSkillQa.useMutation({ retry: false });

@@ -357,3 +357,18 @@ describe("healManhuaWriterSessionCanonDrift · 云草稿旧 bible 回灌自愈",
     expect(healManhuaWriterSessionCanonDrift(null)).toEqual({ session: null, healed: false });
   });
 });
+
+it("底本、改编小说与模板指纹按集恢复，局部重写不改前集来源",async()=>{
+ const {spliceManhuaWriterPackFromEpisode}=await import('./manhuaWriterRoom');
+ const novel={title:'补天前夜',text:'她把烧红的石头拨到墙边，门外的人仍不肯离去。'.repeat(30),adaptationNotes:'底本事件保留，新增母女之间的选择；所选模板用于安排试探与代价。',model:'z-ai/glm-5.3-flashx',sourceSha256:'a'.repeat(64),templateSha256:'b'.repeat(64)};
+ const sourceExcerpt={label:'底本第一节',text:'女娲补天的底本。'.repeat(20)};
+ const episode={index:1,title:'前夜',body:'母女走向炉火，门外的人拦住了去路。'.repeat(3),endHook:'门后的人是谁',sourceExcerpt,sourceSha256:novel.sourceSha256,sourceNotes:'采用底本因果，增加人物选择。',novelAdaptation:novel};
+ const pack={seriesTitle:'补天',logline:'母女的选择',charactersMd:'女娲',propsMd:'五色石',locationsMd:'炉边',episodes:[episode,{...episode,index:2}],rawMarkdown:'完整剧情'.repeat(40),episodeCount:2};
+ const rewritten={...pack,episodes:pack.episodes.map(ep=>({...ep,novelAdaptation:{...novel,title:'后续新小说',templateSha256:'c'.repeat(64)}}))};
+ const combined=spliceManhuaWriterPackFromEpisode(pack,rewritten,2);
+ const session=buildManhuaWriterSession({writerPack:combined});
+ const restored=parseManhuaWriterSession(serializeManhuaWriterSession(session))!;
+ expect(restored.writerPack!.episodes[0].novelAdaptation).toEqual(novel);
+ expect(restored.writerPack!.episodes[1].novelAdaptation!.templateSha256).toBe('c'.repeat(64));
+ expect(restored.writerPack!.episodes[0].sourceExcerpt).toEqual(sourceExcerpt);
+});
