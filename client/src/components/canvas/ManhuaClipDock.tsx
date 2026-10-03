@@ -1,3 +1,4 @@
+import { maskMediaProviderDetails } from "@/lib/maskMediaUrls";
 import { summarizeManhuaDeliverySegments } from "@/lib/manhuaDeliverySegmentSummary";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -172,7 +173,7 @@ export default function ManhuaClipDock({
     setFinalDownloadBusy(true);
     setFinalDownloadError("");
     try { await downloadManhuaFinalVideo(finalVideoUrl, seriesTitle || topic || "漫剧成片"); }
-    catch (error) { setFinalDownloadError(error instanceof Error ? error.message : "下载失败，请稍后重试"); }
+    catch (error) { setFinalDownloadError(error instanceof Error ? maskMediaProviderDetails(error.message) : "下载失败，请稍后重试"); }
     finally { finalDownloadLock.current = false; setFinalDownloadBusy(false); }
   };
   const [deliveryAudioFormat, setDeliveryAudioFormat] = useState<"m4a" | "wav">("m4a");
@@ -339,7 +340,7 @@ export default function ManhuaClipDock({
     try {
       deliveryEpisodeIndexes = resolveManhuaDeliveryEpisodeIndexes(deliveryScope, currentEpisodeIndex, deliverySelectedEpisodes);
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : "交付范围无效");
+      window.alert(error instanceof Error ? maskMediaProviderDetails(error.message) : "交付范围无效");
       return;
     }
     const finals = blocks
@@ -399,7 +400,7 @@ export default function ManhuaClipDock({
         }`,
       );
     } catch (e: unknown) {
-      window.alert(e instanceof Error ? e.message : "交付包导出失败");
+      window.alert(e instanceof Error ? maskMediaProviderDetails(e.message) : "交付包导出失败");
     } finally {
       setDeliveryBusy(null);
       setExportBusy(false);
@@ -434,7 +435,7 @@ export default function ManhuaClipDock({
         );
       }
     } catch (e: unknown) {
-      window.alert(e instanceof Error ? e.message : "导出失败");
+      window.alert(e instanceof Error ? maskMediaProviderDetails(e.message) : "导出失败");
     } finally {
       setExportBusy(false);
     }
@@ -475,7 +476,7 @@ export default function ManhuaClipDock({
         }）`,
       );
     } catch (e: unknown) {
-      window.alert(e instanceof Error ? e.message : "导出失败");
+      window.alert(e instanceof Error ? maskMediaProviderDetails(e.message) : "导出失败");
     } finally {
       setExportBusy(false);
     }

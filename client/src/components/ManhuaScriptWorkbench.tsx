@@ -1,5 +1,5 @@
 import { UrlMaskedTextarea } from "@/components/UrlMaskedTextarea";
-import { maskMediaUrls } from "@/lib/maskMediaUrls";
+import { maskMediaUrls, maskMediaProviderDetails } from "@/lib/maskMediaUrls";
 import { normalizeManhuaPromptSeconds } from "@shared/manhuaPromptSeconds";
 import { ManhuaSecondaryToolTabs } from "./canvas/ManhuaSecondaryToolTabs";
 import { createAdvisorPrevisStudio } from "@shared/manhuaAdvisorPrevisInitial";
@@ -995,7 +995,7 @@ export async function ingestManhuaDirectorBoardFileWithFeedback(input: {
     await input.onIngest(input.file, input.segmentIndex);
     return true;
   } catch (error) {
-    input.onError(error instanceof Error ? error.message : "导演板接入失败");
+    input.onError(error instanceof Error ? maskMediaProviderDetails(error.message) : "导演板接入失败");
     return false;
   }
 }
@@ -1481,7 +1481,7 @@ export default function ManhuaScriptWorkbench({
           [blockId]: {
             state: "error",
             messageZh:
-              error instanceof Error ? error.message : "无法取得实际出站内容",
+              error instanceof Error ? maskMediaProviderDetails(error.message) : "无法取得实际出站内容",
           },
         }));
       }
@@ -1773,7 +1773,7 @@ export default function ManhuaScriptWorkbench({
       // 无法证明选图有效时不能显示已锁定；保留原图，错误就地展示。
       return {
         blocks: current.map((block) => ({ ...block, manhuaKeyartLookState: { required: "invalid" } })),
-        error: error instanceof Error ? error.message : "本段造型参考无法核验，请重新确认选图。",
+        error: error instanceof Error ? maskMediaProviderDetails(error.message) : "本段造型参考无法核验，请重新确认选图。",
       };
     }
   }, [blocks, focusEpisode, episodeVideoModel, assetCanon, customAssetRefs, characterLookSets, segmentLookBindings]);
@@ -2161,7 +2161,7 @@ export default function ManhuaScriptWorkbench({
         description: labels[0] || `已更新 ${Object.keys(merged).length} 镜 · 合成将按此裁切`,
       });
     } catch (e) {
-      toast.message(e instanceof Error ? e.message : "切点分析失败");
+      toast.message(e instanceof Error ? maskMediaProviderDetails(e.message) : "切点分析失败");
     } finally {
       setSuggestAutoCutsBusy(false);
     }
@@ -3118,7 +3118,7 @@ export default function ManhuaScriptWorkbench({
       if (!advisorOpen || advisorPrevisActiveClipId !== activeClip.id) studio = { ...studio, audioEnabled: false };
       if (studio !== activeClip.previsStudio && onUpdateClipPrevisStudio(activeClip.id, studio) === false) throw new Error("本段白模设置未保存，请重试。原声音与配置保留。");
       onOpenAdvisorPrevis(activeClip.id, requestId);
-    } catch (error) { toast.error(error instanceof Error ? error.message : "本段人物读取失败"); }
+    } catch (error) { toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "本段人物读取失败"); }
   };
   const openSecondaryAdvisor = (tool: ManhuaSecondaryTool) => {
     if (tool === "previs" || tool === "actionTimeline") openPrevisAdvisor();
@@ -3710,7 +3710,7 @@ export default function ManhuaScriptWorkbench({
   let sevenCoreReadError = "";
   if (activeShot) {
     try { sevenCoreValues = extractManhuaShotSevenCore(activeClip?.prompt || "", activeShot.index); }
-    catch (error) { sevenCoreReadError = error instanceof Error ? error.message : "七核心内容暂时无法读取"; }
+    catch (error) { sevenCoreReadError = error instanceof Error ? maskMediaProviderDetails(error.message) : "七核心内容暂时无法读取"; }
   }
   const shotParamsPanel = activeShot ? (
 
@@ -4632,7 +4632,7 @@ clipPromptReviewOpen ? (
                                   state: "error",
                                   messageZh:
                                     error instanceof Error
-                                      ? error.message
+                                      ? maskMediaProviderDetails(error.message)
                                       : "确认失败",
                                 },
                               }));
@@ -4660,11 +4660,11 @@ clipPromptReviewOpen ? (
                       {preview.blocked ? (
                         <div className="rounded bg-red-500/25 px-1.5 py-1 text-[9px] font-semibold text-red-50">
                           出站校验未通过，这一段现在点生成会被拦下、不会扣费：
-                          {preview.issuesZh.join("；")}
+                          {maskMediaProviderDetails(preview.issuesZh.join("；"))}
                         </div>
                       ) : preview.issuesZh.length ? (
                         <div className="rounded bg-white/5 px-1.5 py-1 text-[9px] text-white/60">
-                          提示：{preview.issuesZh.join("；")}
+                          提示：{maskMediaProviderDetails(preview.issuesZh.join("；"))}
                         </div>
                       ) : null}
                       <div className="text-[9px] text-white/45">
@@ -5093,7 +5093,7 @@ clipPromptReviewOpen ? (
                   disabled={Boolean(factoryBusy || directorBoardBusy)}
                   onClick={() => {
                     void Promise.resolve(onCopyDirectorBoardPrompt()).catch((err: unknown) => {
-                      toast.error(err instanceof Error ? err.message : "复制提示词失败");
+                      toast.error(err instanceof Error ? maskMediaProviderDetails(err.message) : "复制提示词失败");
                     });
                   }}
                   className="rounded-lg border border-white/15 bg-white/[0.04] px-2 py-1.5 text-[10px] text-white/70 hover:bg-white/[0.08] disabled:opacity-45"
@@ -5121,7 +5121,7 @@ clipPromptReviewOpen ? (
                       e.target.value = "";
                       if (!file) return;
                       void Promise.resolve(onImportAssetZipFile(file)).catch((err: unknown) => {
-                        toast.error(err instanceof Error ? err.message : "ZIP 导入失败");
+                        toast.error(err instanceof Error ? maskMediaProviderDetails(err.message) : "ZIP 导入失败");
                       });
                     }}
                   />
@@ -6978,7 +6978,7 @@ clipPromptReviewOpen ? (
                                     </p>
                                   ) : currentModel3d?.errorZh ? (
                                     <p className="text-[9px] leading-3 text-rose-200/80">
-                                      {currentModel3d.errorZh}
+                                      {maskMediaProviderDetails(currentModel3d.errorZh)}
                                     </p>
                                   ) : null}
                                 </div>
@@ -7708,7 +7708,7 @@ clipPromptReviewOpen ? (
                         className="w-full resize-none rounded-lg border border-white/15 bg-black/45 px-2.5 py-1.5 text-[12px] text-white placeholder:text-white/30"
                       />
                       {imageEditDraft.errorZh ? (
-                        <div className="text-[11px] text-rose-300">{imageEditDraft.errorZh}</div>
+                        <div className="text-[11px] text-rose-300">{maskMediaProviderDetails(imageEditDraft.errorZh)}</div>
                       ) : null}
                       <div className="flex items-center gap-2">
                         <button
@@ -7729,7 +7729,7 @@ clipPromptReviewOpen ? (
                             } catch (limitErr) {
                               setImageEditDraft({
                                 ...draft,
-                                errorZh: limitErr instanceof Error ? limitErr.message : "提示词过长",
+                                errorZh: limitErr instanceof Error ? maskMediaProviderDetails(limitErr.message) : "提示词过长",
                               });
                               return;
                             }
@@ -7751,7 +7751,7 @@ clipPromptReviewOpen ? (
                                     ? {
                                         ...d,
                                         busy: false,
-                                        errorZh: err instanceof Error ? err.message : "改图失败，请重试",
+                                        errorZh: err instanceof Error ? maskMediaProviderDetails(err.message) : "改图失败，请重试",
                                       }
                                     : d,
                                 );
@@ -9805,7 +9805,7 @@ clipPromptReviewOpen ? (
                             toast.success(isVid ? "开始下载成片" : previewIsReference ? "开始下载垫图参考" : "开始下载静帧");
                           }
                         } catch (e) {
-                          toast.error(e instanceof Error ? e.message : "下载失败");
+                          toast.error(e instanceof Error ? maskMediaProviderDetails(e.message) : "下载失败");
                         } finally {
                           setDownloadBusy(false);
                         }

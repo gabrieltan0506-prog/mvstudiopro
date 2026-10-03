@@ -1,5 +1,5 @@
 import { UrlMaskedTextarea } from "@/components/UrlMaskedTextarea";
-import { maskMediaUrls } from "@/lib/maskMediaUrls";
+import { maskMediaUrls, maskMediaProviderDetails } from "@/lib/maskMediaUrls";
 import { gcsTransferUrl, isGcsTransferUrl } from "@/lib/gcsTransfer";
 import type { ComponentProps } from "react";
 import { findCanvasDialogueReuse, restoreCanvasDialogueCandidate } from "@/lib/canvasDialogueReuse";
@@ -158,7 +158,7 @@ function CanvasBgmSegmentEditor({ cue, index, durationSec, locked, sourceUrl, pr
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs">试听所选区间</span>
         <CanvasAudioPlayer aria-label={`${index + 1} 配乐选段试听`} controls preload="none" className="h-8 min-w-0 flex-1" src={sourceUrl} localSource={proxyAudio ? cue.source?.gcsUri : undefined} previewVolume={cue.volume} playbackRange={{ startSec: cue.sourceStartSec, endSec: cue.sourceEndSec }} onError={e => onRestore(e.currentTarget)}/>
-        <button type="button" className={buttonClass} disabled={locked} onClick={() => { try { onPatch({ endSec: fitCanvasBgmSegment(cue, durationSec) }); } catch (e) { onError(e instanceof Error ? e.message : "选段放不进当前片内位置。"); } }}>按选段长度设置片内结束</button>
+        <button type="button" className={buttonClass} disabled={locked} onClick={() => { try { onPatch({ endSec: fitCanvasBgmSegment(cue, durationSec) }); } catch (e) { onError(e instanceof Error ? maskMediaProviderDetails(e.message) : "选段放不进当前片内位置。"); } }}>按选段长度设置片内结束</button>
         <button type="button" className={`${buttonClass} border-cyan-300/40 text-cyan-100`} disabled={locked || cue.takes.length >= 100} onClick={onTrim}>裁切此选段 · 免费</button>
       </div>
     </>}
@@ -413,7 +413,7 @@ export function CanvasAudioStudioView({
   const savedPromptAudio = useMemo(() => {
     if (!block.manhuaPromptEdit) return { studio: undefined, issue: "" };
     try { return { studio: createManhuaAudioFromSavedPrompt(block.prompt, durationSec, characters), issue: "" }; }
-    catch (error) { return { studio: undefined, issue: error instanceof Error ? error.message : "保存全文对白读取失败" }; }
+    catch (error) { return { studio: undefined, issue: error instanceof Error ? maskMediaProviderDetails(error.message) : "保存全文对白读取失败" }; }
   }, [block.manhuaPromptEdit, block.prompt, durationSec, characters]);
   const { initialAudio, sourceIssue } = useMemo(() => {
     if (block.audioStudio) return { initialAudio: emptyCanvasAudioStudio(), sourceIssue: "" };
@@ -596,7 +596,7 @@ export function CanvasAudioStudioView({
         }),
       }));
     } catch (speedError) {
-      setError(speedError instanceof Error ? speedError.message : "变速未完成，原候选保留。");
+      setError(speedError instanceof Error ? maskMediaProviderDetails(speedError.message) : "变速未完成，原候选保留。");
     } finally {
       if (mounted.current) setSpeedBusyTakeId(null);
     }
@@ -924,7 +924,7 @@ export function CanvasAudioStudioView({
         setActiveCueId(parts[1].id);
         setError("");
       }
-    } catch (e) { setError(e instanceof Error ? e.message : "切段失败，原配乐保留。"); }
+    } catch (e) { setError(e instanceof Error ? maskMediaProviderDetails(e.message) : "切段失败，原配乐保留。"); }
   };
   const importExistingMusic = (file: File) =>
     action(async () => {
@@ -1530,7 +1530,7 @@ export function CanvasAudioStudioView({
               const saved = createManhuaAudioFromSavedPrompt(latest.block.prompt, latest.durationSec, characters);
               latest.onChange(syncUnproducedAudioToSavedPrompt(latest.state, saved));
               setError("");
-            } catch (error) { setError(error instanceof Error ? error.message : "同步失败，旧音轨保留"); }
+            } catch (error) { setError(error instanceof Error ? maskMediaProviderDetails(error.message) : "同步失败，旧音轨保留"); }
           }}>按保存全文更新未生成对白草稿</button>
       </section> : null}
       {modelDurationIssue ? <p role="alert" className="text-xs text-amber-200">{modelDurationIssue}</p> : null}
@@ -1731,7 +1731,7 @@ export function CanvasAudioStudioView({
               />
             </label>
             {cue.kind === "bgm" ? <><label className="block text-xs">剧情位置与音乐主题<input aria-label={`${index + 1} 剧情位置与音乐主题`} maxLength={200} className={fieldClass} disabled={locked} value={cue.labelZh} placeholder="例如：重逢 · 柔情；发现背叛 · 紧张" onChange={e => patchCue(cue.id, { labelZh: e.target.value })}/></label>
-              <button type="button" className={buttonClass} disabled={locked} onClick={() => { try { patchMusicDraft({ prompt: canvasBgmSegmentMusicPrompt(cue), brief: null }); setActiveCueId(cue.id); if (musicComposerRef.current) { musicComposerRef.current.open = true; musicComposerRef.current.scrollIntoView({ block: "nearest" }); } } catch (e) { setError(e instanceof Error ? e.message : "请先填写这段的音乐主题。"); } }}>为这一段准备原曲要求</button>
+              <button type="button" className={buttonClass} disabled={locked} onClick={() => { try { patchMusicDraft({ prompt: canvasBgmSegmentMusicPrompt(cue), brief: null }); setActiveCueId(cue.id); if (musicComposerRef.current) { musicComposerRef.current.open = true; musicComposerRef.current.scrollIntoView({ block: "nearest" }); } } catch (e) { setError(e instanceof Error ? maskMediaProviderDetails(e.message) : "请先填写这段的音乐主题。"); } }}>为这一段准备原曲要求</button>
               <p className="text-[11px] text-white/50">只填写下方原曲制作草稿，保留你选的生成时长。确认后才制作原曲；也可以直接选择已有音乐。</p>
             </> : null}
             <div className="grid grid-cols-2 gap-2">
@@ -2024,7 +2024,7 @@ export function CanvasAudioStudioView({
                         try {
                           const restored = restoreCanvasDialogueCandidate(current.current.block, latest, current.current.dialogueSources, candidate);
                           return { ...previous, previewTake: undefined, cues: previous.cues.map(item => item.id === cue.id ? restored : item) };
-                        } catch (error) { setError(error instanceof Error ? error.message : "找回失败，原声仍保留。"); return previous; }
+                        } catch (error) { setError(error instanceof Error ? maskMediaProviderDetails(error.message) : "找回失败，原声仍保留。"); return previous; }
                       });
                     }}>加入候选并使用此情绪与音色</button>
                   </div>
@@ -2273,7 +2273,7 @@ export function CanvasAudioStudioView({
       {sourceIssue && <p role="alert" className="text-amber-200">{sourceIssue}</p>}
       {error && (
         <p role="alert" className="text-xs text-amber-200">
-          {error}
+          {maskMediaProviderDetails(error)}
         </p>
       )}
       </div>

@@ -1,5 +1,5 @@
 import { UrlMaskedTextarea } from "@/components/UrlMaskedTextarea";
-import { maskMediaUrls } from "@/lib/maskMediaUrls";
+import { maskMediaUrls, maskMediaProviderDetails } from "@/lib/maskMediaUrls";
 import { BgmCreativeAdvisor } from "./BgmCreativeAdvisor";
 import type { ManhuaCreativeAdvisorContext } from "@shared/manhuaCreativeAdvisor";
 import { BgmNarrativeMixEditor } from "./BgmNarrativeMixEditor";
@@ -792,7 +792,7 @@ export default function PostProdWorkshopCard({
         toast.success(`已入队：${label}`, { description: `单号 ${res.jobId}` });
       } catch (e) {
         toast.error("入队失败", {
-          description: e instanceof Error ? e.message : "素材地址无法核对,请重新选择",
+          description: e instanceof Error ? maskMediaProviderDetails(e.message) : "素材地址无法核对,请重新选择",
         });
       }
     },
@@ -823,7 +823,7 @@ export default function PostProdWorkshopCard({
       setUpscaleProbedSource(measured);
     } catch (error) {
       setUpscaleProbedSource(null);
-      toast.error(error instanceof Error ? error.message : "读取视频时长失败");
+      toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "读取视频时长失败");
     } finally {
       setUpscaleProbeBusy(false);
     }
@@ -900,7 +900,7 @@ export default function PostProdWorkshopCard({
         `${target ? target.toUpperCase() + "／" : "原尺寸／"}${targetFps}帧已提交，已扣 ${started.creditsUsed} 积分（${quote.units}个30秒单位）`
       );
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "高清放大提交失败");
+      toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "高清放大提交失败");
     } finally {
       setUpscaleSubmitBusy(false);
     }
@@ -938,7 +938,7 @@ export default function PostProdWorkshopCard({
       toast.success("配乐 brief 已起草，可先修改再确认");
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "配乐 brief 起草失败"
+        error instanceof Error ? maskMediaProviderDetails(error.message) : "配乐 brief 起草失败"
       );
     }
   };
@@ -965,7 +965,7 @@ export default function PostProdWorkshopCard({
       );
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "配乐 brief 起草失败"
+        error instanceof Error ? maskMediaProviderDetails(error.message) : "配乐 brief 起草失败"
       );
     }
   };
@@ -1011,7 +1011,7 @@ export default function PostProdWorkshopCard({
       await bgmJobsQuery.refetch();
       toast.success("配乐已入队", { description: `单号 ${result.jobId}` });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "配乐任务未建立");
+      toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "配乐任务未建立");
     }
   };
 
@@ -1241,7 +1241,7 @@ export default function PostProdWorkshopCard({
           {!bgmPending && latestBgmFailure ? (
             <div className="mt-2 rounded-lg border border-red-300/25 bg-red-500/10 px-2 py-1.5 text-[10px] leading-4 text-red-100/90">
               上次配乐未完成 · {latestBgmFailure.jobId.slice(0, 12)}…
-              {latestBgmFailure.error ? ` · ${latestBgmFailure.error}` : ""}
+              {latestBgmFailure.error ? ` · ${maskMediaProviderDetails(latestBgmFailure.error)}` : ""}
             </div>
           ) : null}
 
@@ -1654,7 +1654,7 @@ export default function PostProdWorkshopCard({
                 setUpscaleVideoUrl(source);
                 setUpscaleProbedSource(await probeWorkflowVideoSource(source));
                 toast.success("云端成品已导入本人工作流，原视频保留");
-              }).catch(error => toast.error(error instanceof Error ? error.message : "导入失败")).finally(() => setUpscaleProbeBusy(false));
+              }).catch(error => toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "导入失败")).finally(() => setUpscaleProbeBusy(false));
             }}>导入云端成片（不扣积分）</button>
             <button type="button" disabled={!upscaleVideoUrl || upscaleProbeBusy} onClick={() => void probeUpscaleSource()} className={goCls}>
               {upscaleProbeBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}读取真实尺寸、时长与帧率
@@ -1921,8 +1921,8 @@ export default function PostProdWorkshopCard({
                 </span>
                 {renderJobOutput(job)}
                 {job.status === "failed" && job.error ? (
-                  <span className="max-w-[50%] truncate text-[10px] text-red-200/80" title={job.error}>
-                    {job.error}
+                  <span className="max-w-[50%] truncate text-[10px] text-red-200/80" title={maskMediaProviderDetails(job.error)}>
+                    {maskMediaProviderDetails(job.error)}
                   </span>
                 ) : null}
                 <button

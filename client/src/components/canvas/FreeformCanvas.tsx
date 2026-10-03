@@ -1,5 +1,5 @@
 import { UrlMaskedTextarea } from "@/components/UrlMaskedTextarea";
-import { maskMediaUrls } from "@/lib/maskMediaUrls";
+import { maskMediaUrls, maskMediaProviderDetails } from "@/lib/maskMediaUrls";
 import { hasPendingMusicMvPlan } from "@/lib/canvasMusicMvRecovery";
 import { finishEditedMusicMvShot } from "@/lib/canvasMusicMvGuards";
 import { rememberMusicMvOutput } from "@/lib/canvasMusicMvWorkflow";
@@ -631,7 +631,7 @@ function CanvasBlockPreviewPanel({
 
       {block.status === "error" && block.error ? (
         <div className="rounded-lg border border-red-400/30 bg-red-500/10 px-2 py-1.5 text-[10px] leading-4 text-red-100">
-          {block.error}
+          {maskMediaProviderDetails(block.error)}
         </div>
       ) : null}
 
@@ -804,7 +804,7 @@ function CanvasAssetVisualBody({
       </div>
       {block.status === "error" && block.error ? (
         <div className="rounded-lg border border-red-400/30 bg-red-500/10 px-2 py-1 text-[10px] text-red-100">
-          {block.error}
+          {maskMediaProviderDetails(block.error)}
         </div>
       ) : null}
     </div>
@@ -1434,7 +1434,7 @@ export default function FreeformCanvas({
         });
         toast.success("已清除左上角标");
       } catch (e: unknown) {
-        toast.error(e instanceof Error ? e.message : "清除角标失败");
+        toast.error(e instanceof Error ? maskMediaProviderDetails(e.message) : "清除角标失败");
       } finally {
         setEraseCornerBusyId(null);
       }
@@ -1508,7 +1508,7 @@ export default function FreeformCanvas({
         toast.success(
           `高清放大已提交（${target.toUpperCase()} · ${started.creditsUsed} 积分）`);
       } catch (e: unknown) {
-        toast.error(e instanceof Error ? e.message : "高清放大提交失败");
+        toast.error(e instanceof Error ? maskMediaProviderDetails(e.message) : "高清放大提交失败");
       } finally {
         setUpscaleBusyId(null);
       }
@@ -1758,7 +1758,7 @@ export default function FreeformCanvas({
             }
           }
         } catch (compileErr: unknown) {
-          const msg = compileErr instanceof Error ? compileErr.message : "重编译失败";
+          const msg = compileErr instanceof Error ? maskMediaProviderDetails(compileErr.message) : "重编译失败";
           toast.error(`重跑前重编译失败：${msg}`);
           return;
         }
@@ -2049,7 +2049,7 @@ export default function FreeformCanvas({
           toast.success(`已成功上传 ${uploaded.length} 个文件`);
         }
       } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : "上传失败";
+        const msg = e instanceof Error ? maskMediaProviderDetails(e.message) : "上传失败";
         patchUpload({
           uploadPhase: "error",
           uploadFailures: fileArr.map((f) => ({ fileName: f.name, error: msg })),
@@ -2079,7 +2079,7 @@ export default function FreeformCanvas({
         patchOne(blockId, { editMaskUrl: asset.url });
         toast.success("遮罩已保存 · 跑生成时只改涂抹区域");
       } catch (e: unknown) {
-        toast.error(e instanceof Error ? e.message : "遮罩上传失败");
+        toast.error(e instanceof Error ? maskMediaProviderDetails(e.message) : "遮罩上传失败");
       } finally {
         setMaskBusyId(null);
       }
@@ -3137,7 +3137,7 @@ export default function FreeformCanvas({
                                     toast.error("增强未完成", {
                                       description:
                                         err instanceof Error
-                                          ? err.message
+                                          ? maskMediaProviderDetails(err.message)
                                           : "请按任务状态重试,系统会根据任务记录处理积分",
                                     });
                                   });
@@ -3154,8 +3154,8 @@ export default function FreeformCanvas({
                               <label className="flex items-center gap-2 text-[11px] text-white/70">
                                 <span className="shrink-0 text-white/45">生成通道</span>
                                 <select aria-label="Seedance 2.5生成通道" value={block.seedance25Provider || "auto"} disabled={block.status === "running" || block.videoTaskStatus === "queued"} onChange={e => patchOne(block.id, { seedance25Provider: e.target.value as CanvasBlock["seedance25Provider"] })} className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white">
-                                  <option value="auto">自动（BytePlus拒单转EvoLink）</option>
-                                  <option value="evolink">EvoLink直发</option>
+                                  <option value="auto">自动选择可用通道</option>
+                                  <option value="evolink">备用通道</option>
                                 </select>
                               </label>
                               <label className="flex items-center gap-2 text-[11px] text-white/70">
@@ -3638,7 +3638,7 @@ export default function FreeformCanvas({
                           const next = toggleProjectVideoReference(current, ref);
                           patchOne(current.id, { refImageUrl: next.refImageUrl, editFusionUrls: next.editFusionUrls });
                         } catch (error) {
-                          toast.error(error instanceof Error ? error.message : "参考图选择失败");
+                          toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "参考图选择失败");
                         }
                       }}
                     />

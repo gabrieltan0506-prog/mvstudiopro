@@ -5,6 +5,11 @@ export function maskMediaUrls(text: string | null | undefined): string {
   return String(text || "").replace(URL_PATTERN, "[链接已隐藏]");
 }
 
+/** 用户提示保留故障内容，去掉供应商品牌及原始网址。 */
+export function maskMediaProviderDetails(text: string | null | undefined): string {
+  return maskMediaUrls(text).replace(/BytePlus|EvoLink|WaveSpeed(?:\s*AI)?|Volcengine|Replicate|fal\.ai|kie\.ai|OhMyGPT|TTAPI|OpenRouter/gi, "生成服务");
+}
+
 export function maskedUrlEditorValue(text: string): { value: string; restore: (edited: string) => string | null } {
   const replacements: Array<{ source: string; token: string }> = [];
   const value = text.replace(URL_PATTERN, source => {

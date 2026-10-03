@@ -1,3 +1,4 @@
+import { maskMediaProviderDetails } from "@/lib/maskMediaUrls";
 import { normalizeManhuaPromptSeconds } from "@shared/manhuaPromptSeconds";
 import ManhuaTemplatePicker from "@/components/canvas/ManhuaTemplatePicker";
 import { buildTemplateAdviceQuestion } from "@/lib/manhuaTemplateAdvice";
@@ -1569,7 +1570,7 @@ export default function OmniCanvas() {
       if (clip.previsStudio.pending) throw new Error("本段正在渲染，结束后再调整。");
       const direction = resolveManhuaDirectionCard(activeDirectionCanon, "storyboard", classifyManhuaDirectionSceneType(clip.prompt || ""), { episodeIndex: writerFocusEpisode, segmentIndex: resolveClipLocalSegmentIndex(clip.id, clip.prompt, writerFocusEpisode) });
       return { target: { ...makeAdvisorPrevisTarget(clip.id, clip.previsStudio, advisorPreviewSelection?.clipId === clip.id ? advisorPreviewSelection.requestId : undefined), ...(direction ? { directionCardId: direction.card.id, directionCardVersion: direction.card.version } : {}) } };
-    } catch (e) { return { issue: e instanceof Error ? e.message : "本段白模暂不能调整" }; }
+    } catch (e) { return { issue: e instanceof Error ? maskMediaProviderDetails(e.message) : "本段白模暂不能调整" }; }
   }, [blocks, advisorPrevisClipId, advisorPreviewSelection, activeDirectionCanon, writerFocusEpisode]);
   const advisorPrevisCurrentStudio = (studio: import("@shared/manhuaPrevis").ManhuaPrevisStudio) => ({
     ...studio,
@@ -1612,7 +1613,7 @@ export default function OmniCanvas() {
       setBlocks(next);
       toast.success("已按你的确认应用这版试看，原配置已保留；可回白模工作台继续审片。");
       return true;
-    } catch (e) { toast.error(e instanceof Error ? e.message : "未能应用建议"); return false; }
+    } catch (e) { toast.error(e instanceof Error ? maskMediaProviderDetails(e.message) : "未能应用建议"); return false; }
   };
   const advisorTopIssue = useMemo(() => pickManhuaAdvisorTopIssue(advisorProject.issues, workflowPhase), [advisorProject.issues, workflowPhase]);
   const advisorNeedsAttention = useMemo(() => new Set([
@@ -1740,13 +1741,13 @@ export default function OmniCanvas() {
             return;
           }
           if (task.status === "failed" || task.status === "reconcile_manual") {
-            toast.error(task.errorZh || "3D 参考未能完成，请查看人物卡状态");
+            toast.error(maskMediaProviderDetails(task.errorZh) || "3D 参考未能完成，请查看人物卡状态");
             return;
           }
         }
         toast.message("3D 参考仍在建立，可稍后回到人物卡继续查看");
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "3D 参考状态读取失败");
+        toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "3D 参考状态读取失败");
       } finally {
         manhua3dPollInFlightRef.current.delete(taskId);
       }
@@ -1813,10 +1814,10 @@ export default function OmniCanvas() {
         } else if (task.status === "succeeded") {
           toast.success("3D 参考已建立");
         } else {
-          toast.error(task.errorZh || "3D 参考任务未能启动");
+          toast.error(maskMediaProviderDetails(task.errorZh) || "3D 参考任务未能启动");
         }
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "3D 参考任务提交失败");
+        toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "3D 参考任务提交失败");
       } finally {
         manhua3dOperationGuard.current.end(assetRefId, operationToken);
         setAsset3dBusyIds(manhua3dOperationGuard.current.assetIds());
@@ -1881,7 +1882,7 @@ export default function OmniCanvas() {
         applyManhua3dTaskView(task, ref.model3d?.taskId || null);
         toast.success("已有 GLB 已绑定到当前人物，可旋转查看");
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "GLB 导入失败");
+        toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "GLB 导入失败");
       } finally {
         manhua3dOperationGuard.current.end(assetRefId, operationToken);
         setAsset3dBusyIds(manhua3dOperationGuard.current.assetIds());
@@ -2036,10 +2037,10 @@ export default function OmniCanvas() {
         } else if (task.status === "succeeded") {
           toast.success("多视角 3D 参考已建立");
         } else {
-          toast.error(task.errorZh || "多视角 3D 任务未能启动");
+          toast.error(maskMediaProviderDetails(task.errorZh) || "多视角 3D 任务未能启动");
         }
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "多视角 3D 任务提交失败");
+        toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "多视角 3D 任务提交失败");
       } finally {
         manhua3dOperationGuard.current.end(assetRefId, operationToken);
         setAsset3dBusyIds(manhua3dOperationGuard.current.assetIds());
@@ -2085,13 +2086,13 @@ export default function OmniCanvas() {
             return;
           }
           if (task.status === "failed" || task.status === "reconcile_manual") {
-            toast.error(task.errorZh || "3D 世界未能完成，请查看 3D 场景工作台");
+            toast.error(maskMediaProviderDetails(task.errorZh) || "3D 世界未能完成，请查看 3D 场景工作台");
             return;
           }
         }
         toast.message("已等待 40 分钟仍未完成；服务端会把超时任务转为人工核对，请回 3D 场景工作台查看最终状态");
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "3D 世界状态读取失败");
+        toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "3D 世界状态读取失败");
       } finally {
         manhuaWorldPollInFlightRef.current.delete(taskId);
       }
@@ -2147,10 +2148,10 @@ export default function OmniCanvas() {
         } else if (task.status === "succeeded") {
           toast.success("3D 世界已就绪");
         } else {
-          toast.error(task.errorZh || "3D 世界任务未能启动");
+          toast.error(maskMediaProviderDetails(task.errorZh) || "3D 世界任务未能启动");
         }
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "3D 世界任务提交失败");
+        toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "3D 世界任务提交失败");
         throw error;
       } finally {
         manhuaWorldOperationGuard.current.end(sceneRefId, token);
@@ -2176,7 +2177,7 @@ export default function OmniCanvas() {
         applyManhuaWorldTaskView(task, current.taskId);
         if (task.status === "queued" || task.status === "running") void pollManhuaWorldTask(task.taskId);
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "3D 世界重试失败");
+        toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "3D 世界重试失败");
       } finally {
         manhuaWorldOperationGuard.current.end(sceneRefId, token);
         setSceneWorldBusyIds(manhuaWorldOperationGuard.current.assetIds());
@@ -2198,7 +2199,7 @@ export default function OmniCanvas() {
         setCustomAssetRefs((prev) => normalizeManhuaCustomAssetRefs(prev.map((r) => (r.id === sceneRefId ? { ...r, world3d: undefined } : r))));
         toast.success("3D 场景已移除；已导出的图片仍保留");
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "3D 世界删除失败");
+        toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "3D 世界删除失败");
       } finally {
         manhuaWorldOperationGuard.current.end(sceneRefId, token);
         setSceneWorldBusyIds(manhuaWorldOperationGuard.current.assetIds());
@@ -2257,7 +2258,7 @@ export default function OmniCanvas() {
         });
         toast.success(`已把「${labelZh}」存为该场景的候选参考图（已绑定世界与 ${frame.actorIds.length} 个人物）`);
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "视角图上传失败");
+        toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "视角图上传失败");
       }
     },
     [customAssetRefs, uploadPngForManhuaWorld],
@@ -2316,10 +2317,10 @@ export default function OmniCanvas() {
         } else if (task.status === "succeeded") {
           toast.success("3D 世界已就绪");
         } else {
-          toast.error(task.errorZh || "3D 世界任务未能启动");
+          toast.error(maskMediaProviderDetails(task.errorZh) || "3D 世界任务未能启动");
         }
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "布局世界提交失败");
+        toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "布局世界提交失败");
       } finally {
         manhuaWorldOperationGuard.current.end(sceneRefId, token);
         setSceneWorldBusyIds(manhuaWorldOperationGuard.current.assetIds());
@@ -2718,7 +2719,7 @@ export default function OmniCanvas() {
   >(async () => {});
   const cloudDraftUpsert = trpc.manhuaCloudDraft.upsert.useMutation({
     onError: (err) => {
-      const raw = String(err.message || err);
+      const raw = String(maskMediaProviderDetails(err.message) || err);
       const now = Date.now();
       // HTML/非 JSON 时多为反代回了网页；勿刷屏
       if (now - cloudDraftFailAtRef.current < 60_000) return;
@@ -3507,7 +3508,7 @@ export default function OmniCanvas() {
         toast.success(`备份包已导出:节点 ${stats.nodes} 个、图片 ${manifest.length} 张随包；视频、音轨及 3D 文件请另行备份`);
       }
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "导出失败");
+      toast.error(e instanceof Error ? maskMediaProviderDetails(e.message) : "导出失败");
     } finally {
       backupOperationRef.current = null;
       setCloudBackupBusy(null);
@@ -3571,7 +3572,7 @@ export default function OmniCanvas() {
       applyCloudDraftToUi(draft as Parameters<typeof applyCloudDraftToUi>[0]);
       toast.success(restoredImages ? `已回填:${restoredImages} 张图从备份包本机回灌` : "已从备份文件回填");
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "备份文件解析失败");
+      toast.error(e instanceof Error ? maskMediaProviderDetails(e.message) : "备份文件解析失败");
     } finally {
       backupOperationRef.current = null;
       setCloudBackupBusy(null);
@@ -3602,7 +3603,7 @@ export default function OmniCanvas() {
         toast.message("备份已转入备用通道处理,完成前请勿视为已入云;稍后可再点一次确认");
       }
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "备份上传失败，请稍后重试");
+      toast.error(e instanceof Error ? maskMediaProviderDetails(e.message) : "备份上传失败，请稍后重试");
     } finally {
       backupOperationRef.current = null;
       setCloudBackupBusy(null);
@@ -3675,7 +3676,7 @@ export default function OmniCanvas() {
       applyCloudDraftToUi(draft);
       toast.success("已从云端备份回填");
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "回填失败，请稍后重试");
+      toast.error(e instanceof Error ? maskMediaProviderDetails(e.message) : "回填失败，请稍后重试");
     } finally {
       backupOperationRef.current = null;
       setCloudBackupBusy(null);
@@ -4452,7 +4453,7 @@ export default function OmniCanvas() {
           });
         }, 80);
       } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : "合成失败";
+        const msg = e instanceof Error ? maskMediaProviderDetails(e.message) : "合成失败";
         pushDebug("assemble:error", { level: "error", detail: msg });
         toast.error(msg);
       } finally {
@@ -4645,7 +4646,7 @@ export default function OmniCanvas() {
             return md;
           } catch (e: unknown) {
             lastErr = e;
-            const msg = e instanceof Error ? e.message : "optimizeCopy failed";
+            const msg = e instanceof Error ? maskMediaProviderDetails(e.message) : "optimizeCopy failed";
             const canRetry = attempt < maxAttempts && isTransientFactoryError(msg);
             if (debugMode) {
               pushDebug(canRetry ? "optimizeCopy:retry" : "optimizeCopy:error", {
@@ -6094,7 +6095,7 @@ export default function OmniCanvas() {
         });
       }
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "扩写失败";
+      const msg = e instanceof Error ? maskMediaProviderDetails(e.message) : "扩写失败";
       if (opts?.templateTrialFingerprint && msg.includes("剧情增强方案在试写后已更新")) {
         setStaleTrialFingerprint(opts.templateTrialFingerprint);
       }
@@ -6163,7 +6164,7 @@ export default function OmniCanvas() {
         episodeCount: writerEpisodeCount,
       });
       if (!res.ok) {
-        toast.error(res.error);
+        toast.error(maskMediaProviderDetails(res.error));
         pushDebug("importWriterPack:error", {
           level: "error",
           detail: res.error,
@@ -6422,7 +6423,7 @@ export default function OmniCanvas() {
       });
       toast.success(`已下载先前专案备份：${r.filename}（${r.okCount} 项）`);
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "备份失败");
+      toast.error(e instanceof Error ? maskMediaProviderDetails(e.message) : "备份失败");
     }
   }, [
     writerPack,
@@ -6475,7 +6476,7 @@ export default function OmniCanvas() {
         });
         toast.success(`已备份并清空：${r.filename}`);
       } catch (e: unknown) {
-        toast.error(e instanceof Error ? e.message : "备份失败，已中止清空");
+        toast.error(e instanceof Error ? maskMediaProviderDetails(e.message) : "备份失败，已中止清空");
         return;
       }
     }
@@ -7073,7 +7074,7 @@ export default function OmniCanvas() {
         }
       } catch (e: unknown) {
         toast.error("上传失败", {
-          description: e instanceof Error ? e.message : "请稍后重试",
+          description: e instanceof Error ? maskMediaProviderDetails(e.message) : "请稍后重试",
         });
       }
     },
@@ -7119,7 +7120,7 @@ export default function OmniCanvas() {
         });
       } catch (e: unknown) {
         toast.error("拼板拆分失败", {
-          description: e instanceof Error ? e.message : "请稍后重试",
+          description: e instanceof Error ? maskMediaProviderDetails(e.message) : "请稍后重试",
         });
       }
     },
@@ -7286,7 +7287,7 @@ export default function OmniCanvas() {
         toast.success(`去字完成 · 已扣 ${cost} 积分`, { description: "原图仍保留，可对比后删除旧图。" });
       } catch (error) {
         toast.error("去字失败", {
-          description: error instanceof Error ? error.message : "已进入失败退分流程",
+          description: error instanceof Error ? maskMediaProviderDetails(error.message) : "已进入失败退分流程",
         });
       } finally {
         assetActionLocked.current = false;
@@ -7369,7 +7370,7 @@ export default function OmniCanvas() {
         return true;
       } catch (error) {
         toast.error("图片编辑失败", {
-          description: error instanceof Error ? error.message : "已进入失败退分流程",
+          description: error instanceof Error ? maskMediaProviderDetails(error.message) : "已进入失败退分流程",
         });
         return false;
       } finally {
@@ -7483,7 +7484,7 @@ export default function OmniCanvas() {
         toast.success(`标准化完成 · 已扣 ${cost} 积分`, { description: "原图仍保留，新图已进入资产库。" });
       } catch (error) {
         toast.error("资产标准化失败", {
-          description: error instanceof Error ? error.message : "已进入失败退分流程",
+          description: error instanceof Error ? maskMediaProviderDetails(error.message) : "已进入失败退分流程",
         });
       } finally {
         assetActionLocked.current = false;
@@ -7850,7 +7851,7 @@ export default function OmniCanvas() {
         toast.message(`已生成新${roleZh}并勾选`, { description: doneDesc });
       } catch (e: unknown) {
         toast.error(`新${roleZh}生成失败`, {
-          description: e instanceof Error ? e.message : "请稍后重试",
+          description: e instanceof Error ? maskMediaProviderDetails(e.message) : "请稍后重试",
         });
       } finally {
         setFactoryBusy(false);
@@ -7992,7 +7993,7 @@ export default function OmniCanvas() {
         });
       } catch (e: unknown) {
         toast.error("换用库内资产失败", {
-          description: e instanceof Error ? e.message : "请稍后重试",
+          description: e instanceof Error ? maskMediaProviderDetails(e.message) : "请稍后重试",
         });
       }
     },
@@ -8460,7 +8461,7 @@ export default function OmniCanvas() {
             detail: `asked=${propNamesToLookup.length} · got=${Object.keys(propShapeHintsZh).length}`,
           });
         } catch (e: unknown) {
-          console.warn("[propShapeLookup]", e instanceof Error ? e.message : String(e));
+          console.warn("[propShapeLookup]", e instanceof Error ? maskMediaProviderDetails(e.message) : String(e));
         }
       }
       const plannedAll = planManhuaAssetImageSpawns(gateInput, {
@@ -8711,7 +8712,7 @@ export default function OmniCanvas() {
               });
             } catch (e: unknown) {
               toast.error("重出已完成，但扣费失败", {
-                description: e instanceof Error ? e.message : "请检查积分余额",
+                description: e instanceof Error ? maskMediaProviderDetails(e.message) : "请检查积分余额",
               });
             }
           }
@@ -8779,7 +8780,7 @@ export default function OmniCanvas() {
           });
         }
       } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : "资产图生成失败";
+        const msg = e instanceof Error ? maskMediaProviderDetails(e.message) : "资产图生成失败";
         toast.error("角色/场景图未完成", { description: msg });
         if (!isIncremental) setWorkflowPhase("assets");
         pushDebug("confirmAssetsFromScript:error", { level: "error", detail: msg });
@@ -9326,7 +9327,7 @@ export default function OmniCanvas() {
             if (result.errors.length) {
               lastError = result.errors[0]!;
               const rawDetail = result.errors
-                .map((e) => `${e.id}:${e.message}`)
+                .map((e) => `${e.id}:${maskMediaProviderDetails(e.message)}`)
                 .join(" · ");
               pushDebug("factoryRun:shotError", {
                 level: "warn",
@@ -9398,7 +9399,7 @@ export default function OmniCanvas() {
         }
         setFactoryProgress("");
       } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : "漫剧工厂失败";
+        const msg = e instanceof Error ? maskMediaProviderDetails(e.message) : "漫剧工厂失败";
         const userStopped = ac.signal.aborted || msg === "已取消";
         pushDebug(userStopped ? "factoryRun:aborted" : "factoryRun:exception", {
           level: userStopped ? "warn" : "error",
@@ -9755,7 +9756,7 @@ export default function OmniCanvas() {
           });
         }
       } catch (error) {
-        toast.error(`上传失败：${error instanceof Error ? error.message : String(error)}`);
+        toast.error(`上传失败：${error instanceof Error ? maskMediaProviderDetails(error.message) : String(error)}`);
       } finally {
         segmentReferenceUploadLocked.current = false;
         setSegmentRefProgress(null);
@@ -9943,7 +9944,7 @@ export default function OmniCanvas() {
       persistAdvisorRewriteAdoption({ plan, original: { writerPack: writerPack!, projectBible, blocks, edges, overlays: directorBoardMotionOverlayBySegment },
         userId: String(user?.id ?? "local"), backupId: crypto.randomUUID(), createdAt: new Date().toISOString() });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "改写未能安全保存，未采用。");
+      toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "改写未能安全保存，未采用。");
       return false;
     }
     const { candidate, writerPack: nextPack, canvas: cleaned, overlays } = plan;
@@ -10699,7 +10700,7 @@ export default function OmniCanvas() {
                       });
                     } catch (e) {
                       toast.message(
-                        e instanceof Error ? e.message : "声线提取失败",
+                        e instanceof Error ? maskMediaProviderDetails(e.message) : "声线提取失败",
                       );
                     }
                   }}
@@ -11188,7 +11189,7 @@ export default function OmniCanvas() {
                       });
                       return next;
                       } catch (error) {
-                        toast.error(error instanceof Error ? error.message : "造型参考检查失败，请检查本段选图");
+                        toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "造型参考检查失败，请检查本段选图");
                         return prev;
                       }
                     });
@@ -11264,7 +11265,7 @@ export default function OmniCanvas() {
                       return next;
                       } catch (error) {
                         compileFailed = true;
-                        toast.error(error instanceof Error ? error.message : "造型参考检查失败，请检查本段选图");
+                        toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "造型参考检查失败，请检查本段选图");
                         return prev;
                       }
                     });
@@ -11396,7 +11397,7 @@ export default function OmniCanvas() {
                       });
                       return next;
                       } catch (error) {
-                        toast.error(error instanceof Error ? error.message : "造型参考检查失败，请检查本段选图");
+                        toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "造型参考检查失败，请检查本段选图");
                         return prev;
                       }
                     });
@@ -11921,7 +11922,7 @@ export default function OmniCanvas() {
                               });
                             },
                             onError: (err) => {
-                              const message = err.message || "试写失败，请稍后重试";
+                              const message = maskMediaProviderDetails(err.message) || "试写失败，请稍后重试";
                               setTrialWriterError(message);
                               toast.error(message);
                               void trialWriterQuotaQuery.refetch();
