@@ -105,13 +105,13 @@ it("尺寸缺失/媒体超时不能默认720p，缺省请求也不伪造sourceRe
  expect(JSON.parse((fetcher.mock.calls[0] as unknown as [string,{body:string}])[1].body)).not.toHaveProperty("sourceResolution");
 });
 
-it("已有4K只补60帧走纯FFmpeg入口，不发送超分目标", async () => {
-  const fetcher = vi.fn(async (_url: string, _init?: RequestInit) => ({ ok: true, json: async () => ({ ok:true, taskId:"ffmpeg-only", status:"queued", creditsUsed:196 }) }));
+it("原片只做AI补帧走独立入口，不发送超分目标", async () => {
+  const fetcher = vi.fn(async (_url: string, _init?: RequestInit) => ({ ok: true, json: async () => ({ ok:true, taskId:"ai-fps-only", status:"queued", creditsUsed:196 }) }));
   vi.stubGlobal("fetch", fetcher);
-  const result = await startVideoUpscale({ videoUrl:"gs://test-only/post-prod/7/import.mp4", targetFps:60, combine:false, frameInterpolationProvider:"ffmpeg", scopeKey:"episode-one", durationSec:107 });
+  const result = await startVideoUpscale({ videoUrl:"gs://test-only/post-prod/7/import.mp4", targetFps:60, combine:false, frameInterpolationProvider:"wavespeed", scopeKey:"episode-one", durationSec:107 });
   expect(fetcher.mock.calls[0]?.[0]).toBe("/api/jobs?op=videoInterpolate");
   const body = JSON.parse((fetcher.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
   expect(body.target).toBeUndefined();
-  expect(body).toMatchObject({ targetFps:60, frameInterpolationProvider:"ffmpeg", durationSec:107 });
+  expect(body).toMatchObject({ targetFps:60, frameInterpolationProvider:"wavespeed", durationSec:107 });
   expect(result.creditsUsed).toBe(196);
 });
