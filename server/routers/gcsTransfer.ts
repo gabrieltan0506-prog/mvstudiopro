@@ -6,18 +6,34 @@ import { isGcsTransferUrl } from "../../shared/gcsTransfer";
 
 /** 必须在body parser前注册，直接流式转发，避免大文件驻内存。 */
 export function registerGcsTransfer(app: Express) {
-  app.all("/api/gcs-transfer", async (req, res) => {
+  app.all(["/api/gcs-transfer", "/api/manhua-media-download"], async (req, res) => {
     if (!["GET", "PUT", "HEAD"].includes(req.method))
       return void res.sendStatus(405);
+    let user;
     try {
-      await sdk.authenticateRequest(req);
+      user = await sdk.authenticateRequest(req);
     } catch {
       return void res.status(401).json({ error: "请先登录" });
     }
-    const source = typeof req.query.url === "string" ? req.query.url : "";
-    if (!isGcsTransferUrl(source))
+    let source = typeof req.query.url === "string" ? req.query.url : "";
+    if (req.path === "/api/manhua-media-download") {
+      if (req.method === "PUT") return void res.sendStatus(405);
+      try {
+        const { resolveRegisteredPostProdMediaSource } = await import("../services/postProdMediaSource.js");
+        const verified = await resolveRegisteredPostProdMediaSource({ userId: String(user.id), source });
+        if (verified.startsWith("gs://")) {
+          const { signGsUriV4ReadUrl } = await import("../services/gcs.js");
+          source = signGsUriV4ReadUrl(verified, 1800);
+        } else {
+          const parsed = new URL(verified);
+          if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port || !/^(?:[a-z0-9-]+\.cloudfront\.net|[a-z0-9-]+\.public\.blob\.vercel-storage\.com)$/i.test(parsed.hostname)) throw new Error("unsupported source");
+          source = verified;
+        }
+      } catch { return void res.status(403).json({ error: "无法下载此产物，请从本人成功任务重新选择" }); }
+    }
+    if (req.path === "/api/gcs-transfer" && !isGcsTransferUrl(source))
       return void res.status(400).json({ error: "GCS地址无效" });
-    // 只转发调用方持有的权限；不借服务端凭证读取或覆盖其他对象。
+    // GCS转发只使用原签名权限；其他成片入口已逐次核验本人产物，禁止任意外链。
     const headers = new Headers({ "accept-encoding": "identity" });
     for (const [key, value] of Object.entries(req.headers)) {
       if (

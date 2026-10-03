@@ -1,3 +1,4 @@
+import { maskMediaProviderDetails } from "@/lib/maskMediaUrls";
 import { summarizeManhuaDeliverySegments } from "@/lib/manhuaDeliverySegmentSummary";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -172,7 +173,7 @@ export default function ManhuaClipDock({
     setFinalDownloadBusy(true);
     setFinalDownloadError("");
     try { await downloadManhuaFinalVideo(finalVideoUrl, seriesTitle || topic || "漫剧成片"); }
-    catch (error) { setFinalDownloadError(error instanceof Error ? error.message : "下载失败，请稍后重试"); }
+    catch (error) { setFinalDownloadError(error instanceof Error ? maskMediaProviderDetails(error.message) : "下载失败，请稍后重试"); }
     finally { finalDownloadLock.current = false; setFinalDownloadBusy(false); }
   };
   const [deliveryAudioFormat, setDeliveryAudioFormat] = useState<"m4a" | "wav">("m4a");
@@ -339,7 +340,7 @@ export default function ManhuaClipDock({
     try {
       deliveryEpisodeIndexes = resolveManhuaDeliveryEpisodeIndexes(deliveryScope, currentEpisodeIndex, deliverySelectedEpisodes);
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : "交付范围无效");
+      window.alert(error instanceof Error ? maskMediaProviderDetails(error.message) : "交付范围无效");
       return;
     }
     const finals = blocks
@@ -399,7 +400,7 @@ export default function ManhuaClipDock({
         }`,
       );
     } catch (e: unknown) {
-      window.alert(e instanceof Error ? e.message : "交付包导出失败");
+      window.alert(e instanceof Error ? maskMediaProviderDetails(e.message) : "交付包导出失败");
     } finally {
       setDeliveryBusy(null);
       setExportBusy(false);
@@ -434,7 +435,7 @@ export default function ManhuaClipDock({
         );
       }
     } catch (e: unknown) {
-      window.alert(e instanceof Error ? e.message : "导出失败");
+      window.alert(e instanceof Error ? maskMediaProviderDetails(e.message) : "导出失败");
     } finally {
       setExportBusy(false);
     }
@@ -475,7 +476,7 @@ export default function ManhuaClipDock({
         }）`,
       );
     } catch (e: unknown) {
-      window.alert(e instanceof Error ? e.message : "导出失败");
+      window.alert(e instanceof Error ? maskMediaProviderDetails(e.message) : "导出失败");
     } finally {
       setExportBusy(false);
     }
@@ -627,7 +628,7 @@ export default function ManhuaClipDock({
           <details className="mt-2 text-xs text-cyan-100/80">
             <summary className="cursor-pointer">成片恢复记录（{assembleReceipts.length}）</summary>
             <div className="mt-2 max-h-40 space-y-1 overflow-auto">
-              {assembleReceipts.map(row => <a key={row.jobId} href={row.url} target="_blank" rel="noreferrer" className="block underline">{row.title} · {new Date(row.createdAt).toLocaleString()} · 查看原片</a>)}
+              {assembleReceipts.map(row => <div key={row.jobId}>{row.title} · {new Date(row.createdAt).toLocaleString()} · <button type="button" onClick={() => void downloadManhuaFinalVideo(row.url, row.title).catch(() => window.alert("下载失败，请稍后重试"))} className="underline">下载成片</button></div>)}
             </div>
           </details>
         ) : null}
@@ -668,7 +669,7 @@ export default function ManhuaClipDock({
             <div className="text-[11px] font-semibold text-cyan-100/90">长片预览</div>
             <button type="button" disabled={finalDownloadBusy} onClick={() => void handleDownloadFinal()} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-cyan-400/30 px-3 text-xs text-cyan-50 disabled:opacity-50">
               {finalDownloadBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-              {finalDownloadBusy ? "正在下载…" : "下载成片 MP4"}
+              {finalDownloadBusy ? "正在下载…" : "下载成片"}
             </button>
           </div>
           <div className="overflow-hidden rounded-xl border border-cyan-400/25 bg-black/60">
@@ -1004,7 +1005,7 @@ export default function ManhuaClipDock({
                                     disabled={busy || factoryBusy}
                                     title={
                                       entry
-                                        ? `${label}：${entry.fileName || entry.url}（点击换文件）`
+                                        ? `${label}：${entry.fileName || "已上传素材"}（点击换文件）`
                                         : slot === "previs"
                                           ? "上传本段白模站位视频（≤30 s）：出片时作 @视频1，只锁走位/景别/机位"
                                           : "上传本段预混母轨（对白+BGM 一条，≤30 s）：出片时作唯一音轨 @音频1"

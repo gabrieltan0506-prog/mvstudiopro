@@ -1,3 +1,5 @@
+import { UrlMaskedTextarea } from "@/components/UrlMaskedTextarea";
+import { maskMediaUrls, maskMediaProviderDetails } from "@/lib/maskMediaUrls";
 import { BgmCreativeAdvisor } from "./BgmCreativeAdvisor";
 import type { ManhuaCreativeAdvisorContext } from "@shared/manhuaCreativeAdvisor";
 import { BgmNarrativeMixEditor } from "./BgmNarrativeMixEditor";
@@ -22,6 +24,8 @@ import { Film, Layers, Loader2,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { copyText } from "@/lib/copyText";
+import { gcsTransferUrl } from "@/lib/gcsTransfer";
+import { downloadRemoteFile } from "@/lib/downloadRemoteFile";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import { getBlockEpisodeIndex, isManhuaFactoryArtifactBlock } from "@/lib/canvasDramaStudio";
 import {
@@ -227,7 +231,7 @@ export default function PostProdWorkshopCard({
           url: String(b.outputUrl).trim(),
           label:
             (Number(b.episodeIndex) > 0 ? `第${b.episodeIndex}集 · ` : "") +
-            (String(b.prompt || "")
+            (maskMediaUrls(b.prompt)
               .trim()
               .slice(0, 24) || b.id.slice(0, 12)),
         })),
@@ -467,7 +471,7 @@ export default function PostProdWorkshopCard({
   const upscaleProbedSec = upscaleSource?.durationSec ?? null;
   const [upscaleProbeBusy, setUpscaleProbeBusy] = useState(false);
   const [upscaleSubmitBusy, setUpscaleSubmitBusy] = useState(false);
-  const [enhanceChoice, setEnhanceChoice] = useState<{ target: "2k" | "4k"; fps: 30 | 60 }>({ target: "2k", fps: 30 });
+  const [enhanceChoice, setEnhanceChoice] = useState<{ target: "2k" | "4k"; fps: 30 }>({ target: "2k", fps: 30 });
   const [upscaleJobs, setUpscaleJobs] = useState<TrackedUpscale[]>(() =>
     loadTrackedUpscales(userId)
   );
@@ -540,7 +544,7 @@ export default function PostProdWorkshopCard({
               upscaleNotifiedRef.current.add(job.taskId);
               if (job.scopeKey === projectScopeKey) {
                 toast.error(videoUpscaleStatusLabel(snapshot.status), {
-                  description: snapshot.error || undefined,
+                  description: maskMediaProviderDetails(snapshot.error) || undefined,
                 });
               }
             }
@@ -674,7 +678,7 @@ export default function PostProdWorkshopCard({
                 toast.success(`后期任务完成：${job.label}`);
               } else {
                 toast.error(`后期任务未完成：${job.label}`, {
-                  description: res.error || undefined,
+                  description: maskMediaProviderDetails(res.error) || undefined,
                 });
               }
             }
@@ -788,7 +792,7 @@ export default function PostProdWorkshopCard({
         toast.success(`已入队：${label}`, { description: `单号 ${res.jobId}` });
       } catch (e) {
         toast.error("入队失败", {
-          description: e instanceof Error ? e.message : "素材地址无法核对,请重新选择",
+          description: e instanceof Error ? maskMediaProviderDetails(e.message) : "素材地址无法核对,请重新选择",
         });
       }
     },
@@ -819,13 +823,13 @@ export default function PostProdWorkshopCard({
       setUpscaleProbedSource(measured);
     } catch (error) {
       setUpscaleProbedSource(null);
-      toast.error(error instanceof Error ? error.message : "读取视频时长失败");
+      toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "读取视频时长失败");
     } finally {
       setUpscaleProbeBusy(false);
     }
   };
 
-  const submitUpscale = async (target: "2k" | "4k" | undefined, targetFps: 30 | 60) => {
+  const submitUpscale = async (target: "2k" | "4k" | undefined, targetFps: 30) => {
     if (!upscaleVideoUrl || !upscaleSource || !upscaleProbedSec || upscaleSubmitBusy) {
       toast.error("请先选择成片并读取真实尺寸与时长"); return;
     }
@@ -896,7 +900,7 @@ export default function PostProdWorkshopCard({
         `${target ? target.toUpperCase() + "／" : "原尺寸／"}${targetFps}帧已提交，已扣 ${started.creditsUsed} 积分（${quote.units}个30秒单位）`
       );
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "高清放大提交失败");
+      toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "高清放大提交失败");
     } finally {
       setUpscaleSubmitBusy(false);
     }
@@ -934,7 +938,7 @@ export default function PostProdWorkshopCard({
       toast.success("配乐 brief 已起草，可先修改再确认");
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "配乐 brief 起草失败"
+        error instanceof Error ? maskMediaProviderDetails(error.message) : "配乐 brief 起草失败"
       );
     }
   };
@@ -961,7 +965,7 @@ export default function PostProdWorkshopCard({
       );
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "配乐 brief 起草失败"
+        error instanceof Error ? maskMediaProviderDetails(error.message) : "配乐 brief 起草失败"
       );
     }
   };
@@ -1007,7 +1011,7 @@ export default function PostProdWorkshopCard({
       await bgmJobsQuery.refetch();
       toast.success("配乐已入队", { description: `单号 ${result.jobId}` });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "配乐任务未建立");
+      toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "配乐任务未建立");
     }
   };
 
@@ -1176,43 +1180,22 @@ export default function PostProdWorkshopCard({
       );
     }
     const url = String((job.output as { url?: unknown }).url || "");
-    const gcsUri = String((job.output as { gcsUri?: unknown }).gcsUri || "");
     if (!url) return null;
     if (isPostProdAudioAction(job.action)) {
       const duration = Number(job.output.durationSec);
       return (
         <span className="inline-flex flex-wrap items-center gap-2">
-          <audio controls preload="none" src={url} aria-label={ACTION_LABEL[job.action]} className="h-8 max-w-full" />
+          <audio controls preload="none" src={gcsTransferUrl(url)} aria-label={ACTION_LABEL[job.action]} className="h-8 max-w-full" />
           {Number.isFinite(duration) ? <span className="text-[11px] text-white/60">{duration.toFixed(3)} 秒</span> : null}
-          <a href={url} target="_blank" rel="noreferrer" className="text-[11px] text-cyan-200 underline">打开音频</a>
+          <button type="button" onClick={() => void downloadRemoteFile(url, "音轨").catch(() => toast.error("下载失败，请稍后重试"))} className="text-[11px] text-cyan-200 underline">下载音频</button>
         </span>
       );
     }
     return (
       <span className="inline-flex items-center gap-2">
-        <a
-          href={url}
-          target="_blank"
-          rel="noreferrer"
-          className="text-[11px] text-cyan-200 underline underline-offset-2"
-        >
-          打开成品
-        </a>
-        {gcsUri ? (
-          <button
-            type="button"
-            className="rounded border border-white/15 px-1.5 py-0.5 font-mono text-[10px] text-white/70 hover:bg-white/[0.08]"
-            onClick={() =>
-              void copyText(gcsUri).then(ok =>
-                ok
-                  ? toast.success("gs:// 地址已复制(可作下一道工序素材)")
-                  : toast.error("复制失败")
-              )
-            }
-          >
-            复制 gs://
-          </button>
-        ) : null}
+        <button type="button" onClick={() => void downloadRemoteFile(url, "成片").catch(() => toast.error("下载失败，请稍后重试"))} className="text-[11px] text-cyan-200 underline underline-offset-2">
+          下载成片
+        </button>
       </span>
     );
   };
@@ -1258,12 +1241,12 @@ export default function PostProdWorkshopCard({
           {!bgmPending && latestBgmFailure ? (
             <div className="mt-2 rounded-lg border border-red-300/25 bg-red-500/10 px-2 py-1.5 text-[10px] leading-4 text-red-100/90">
               上次配乐未完成 · {latestBgmFailure.jobId.slice(0, 12)}…
-              {latestBgmFailure.error ? ` · ${latestBgmFailure.error}` : ""}
+              {latestBgmFailure.error ? ` · ${maskMediaProviderDetails(latestBgmFailure.error)}` : ""}
             </div>
           ) : null}
 
           <div className="mt-2 grid gap-2 lg:grid-cols-[minmax(0,1fr)_9rem_auto]">
-            <textarea
+            <UrlMaskedTextarea
               value={scoreStoryZh}
               onChange={event =>
                 setScoreStoryDraft({ sourceKey: storyContextKey, text: event.target.value.slice(0, 1000) })
@@ -1371,7 +1354,7 @@ export default function PostProdWorkshopCard({
               </label>
               <label className="text-[10px] text-white/45 lg:col-span-2">
                 风格与编配
-                <textarea
+                <UrlMaskedTextarea
                   value={scoreBrief.style}
                   maxLength={1000}
                   rows={2}
@@ -1383,7 +1366,7 @@ export default function PostProdWorkshopCard({
               </label>
               <label className="text-[10px] text-white/45 lg:col-span-2">
                 结构标签
-                <textarea
+                <UrlMaskedTextarea
                   value={scoreBrief.prompt}
                   maxLength={5000}
                   rows={3}
@@ -1638,7 +1621,7 @@ export default function PostProdWorkshopCard({
             <Maximize2 className="h-3.5 w-3.5 text-sky-300" /> 超分与补帧
           </div>
           <p className="mt-1 text-[11px] leading-4 text-white/45">
-            选择2K或4K，搭配30或60帧。先保存原音轨，再用WaveSpeed AI补帧、FFmpeg贴回原音轨，最后超分；保留原声与BGM，原片保留，刷新恢复同一任务。
+            选择2K或4K，输出30帧。先保存原音轨，再进行AI补帧、恢复原音轨，最后高清增强；保留原声与BGM，原片保留，刷新恢复同一任务。
           </p>
           <div className="mt-2 space-y-1.5">
             <select
@@ -1656,7 +1639,9 @@ export default function PostProdWorkshopCard({
             </select>
             <input
               aria-label="云端成片链接"
-              placeholder="或粘贴本人云端成片链接（HTTPS / gs://）"
+              type="password"
+              autoComplete="off"
+              placeholder="粘贴云端成片链接（内容隐藏）"
               value={upscaleVideoUrl}
               onChange={event => setUpscaleVideoUrl(event.target.value.trim())}
               className={selectCls}
@@ -1669,20 +1654,21 @@ export default function PostProdWorkshopCard({
                 setUpscaleVideoUrl(source);
                 setUpscaleProbedSource(await probeWorkflowVideoSource(source));
                 toast.success("云端成品已导入本人工作流，原视频保留");
-              }).catch(error => toast.error(error instanceof Error ? error.message : "导入失败")).finally(() => setUpscaleProbeBusy(false));
-            }}>导入WaveSpeed云端成品（不扣积分）</button>
+              }).catch(error => toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "导入失败")).finally(() => setUpscaleProbeBusy(false));
+            }}>导入云端成片（不扣积分）</button>
             <button type="button" disabled={!upscaleVideoUrl || upscaleProbeBusy} onClick={() => void probeUpscaleSource()} className={goCls}>
               {upscaleProbeBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}读取真实尺寸、时长与帧率
             </button>
             {upscaleSource ? <p className="text-[11px] text-white/65">实测 {upscaleSource.width}×{upscaleSource.height} · {upscaleSource.durationExactSec?.toFixed(3) || upscaleProbedSec} 秒 · {upscaleSource.fps?.toFixed(2) || "未知"} 帧/秒</p> : <p className="text-[11px] text-white/50">先选择原片并读取真实参数，随后显示报价。</p>}
             <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="成片增强组合">
-              {(["2k", "4k"] as const).flatMap(target => ([30, 60] as const).map(fps => {
+              {(["2k", "4k"] as const).map(target => {
+                const fps = 30 as const;
                 const quote = upscaleProbedSec ? canvasVideoEnhanceQuote(target, fps, upscaleProbedSec) : null;
                 const selected = enhanceChoice.target === target && enhanceChoice.fps === fps;
                 return <button key={`${target}-${fps}`} type="button" role="radio" aria-checked={selected} disabled={upscaleSubmitBusy} onClick={() => setEnhanceChoice({ target, fps })} className={`rounded-lg border px-2 py-3 text-xs ${selected ? "border-sky-300 bg-sky-500/20 text-sky-50" : "border-white/15 text-white/65"}`}>
                   {target.toUpperCase()}／{fps}帧{quote ? ` · ${quote.totalCredits}积分` : ""}
                 </button>;
-              }))}
+              })}
             </div>
             {upscaleProbedSec ? (() => {
               const quote = canvasVideoEnhanceQuote(enhanceChoice.target, enhanceChoice.fps, upscaleProbedSec);
@@ -1691,11 +1677,8 @@ export default function PostProdWorkshopCard({
             <button type="button" disabled={!upscaleSource || upscaleSubmitBusy || busy || !upscaleSource.fps || !canWavespeedUpscale(upscaleSource.sourceResolution, enhanceChoice.target)} onClick={() => void submitUpscale(enhanceChoice.target, enhanceChoice.fps)} className={goCls}>
               {upscaleSubmitBusy ? "正在提交…" : `提交${enhanceChoice.target.toUpperCase()}／${enhanceChoice.fps}帧${upscaleProbedSec ? ` · 扣${canvasVideoEnhanceQuote(enhanceChoice.target, enhanceChoice.fps, upscaleProbedSec).totalCredits}积分` : ""}`}
             </button>
-            {upscaleSource && upscaleSource.fps && upscaleSource.fps < 59.9 && upscaleSource.sourceResolution !== "2k" && upscaleSource.sourceResolution !== "4k" ? <button type="button" className={goCls} disabled={upscaleSubmitBusy || upscaleProbeBusy || busy} onClick={() => void submitUpscale(undefined, 60)}>
-              {upscaleSubmitBusy ? "正在提交…" : `只补60帧·保留${upscaleSource.width}×${upscaleSource.height}·扣${canvasVideoFrameCredits(upscaleProbedSec!, 60)}积分`}
-            </button> : null}
             {upscaleSource && (upscaleSource.sourceResolution === "2k" || upscaleSource.sourceResolution === "4k") ? <p className="text-xs text-amber-200">补帧请选择未超分原视频；先AI补帧并恢复原音轨，最后再超分。</p> : null}
-            <p className="text-[10px] text-white/50">每30秒：2K超分100积分，4K超分180积分；30帧补帧19积分，60帧补帧49积分。不足30秒按30秒计，一次合计扣分。</p>
+            <p className="text-[10px] text-white/50">每30秒：2K超分100积分，4K超分180积分；30帧补帧19积分。不足30秒按30秒计，一次合计扣分。</p>
             {scopedUpscaleJobs.slice(0, 3).map(job => (
               <div
                 key={job.taskId}
@@ -1706,14 +1689,13 @@ export default function PostProdWorkshopCard({
                   {videoUpscaleStatusLabel(job.status)}
                 </span>
                 {job.videoUrl ? (
-                  <a
-                    href={job.videoUrl}
-                    target="_blank"
-                    rel="noreferrer"
+                  <button
+                    type="button"
+                    onClick={() => void downloadRemoteFile(job.videoUrl!, "高清成片").catch(() => toast.error("下载失败，请稍后重试"))}
                     className="ml-2 text-cyan-200 underline underline-offset-2"
                   >
-                    打开高清版
-                  </a>
+                    下载成片
+                  </button>
                 ) : null}
               </div>
             ))}
@@ -1937,8 +1919,8 @@ export default function PostProdWorkshopCard({
                 </span>
                 {renderJobOutput(job)}
                 {job.status === "failed" && job.error ? (
-                  <span className="max-w-[50%] truncate text-[10px] text-red-200/80" title={job.error}>
-                    {job.error}
+                  <span className="max-w-[50%] truncate text-[10px] text-red-200/80" title={maskMediaProviderDetails(job.error)}>
+                    {maskMediaProviderDetails(job.error)}
                   </span>
                 ) : null}
                 <button

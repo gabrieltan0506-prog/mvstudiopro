@@ -1,3 +1,4 @@
+import { maskMediaProviderDetails } from "@/lib/maskMediaUrls";
 /**
  * 3D 模型工作台（PR-4）：把散落在人物卡上的「建立 3D 参考 / 导入 GLB / 预览 / 绑骨」
  * 收成一张全员一览表，按 UX 四问重做：
@@ -210,7 +211,7 @@ export function Manhua3dModelStudio(props: Props) {
               {c.thumbUrl ? <img src={c.thumbUrl} alt={c.labelZh} className="h-8 w-8 rounded object-cover" /> : <span className="h-8 w-8 rounded bg-white/10" />}
               <span className="min-w-[4rem] font-medium">{c.labelZh}</span>
               <span className={`rounded px-1.5 py-0.5 ${STAGE_CLASS[stage]}`}>{busy ? "处理中…" : labelZh}</span>
-              {reasonZh ? <span className="text-amber-100">{reasonZh}</span> : null}
+              {reasonZh ? <span className="text-amber-100">{maskMediaProviderDetails(reasonZh)}</span> : null}
               <span className="ml-auto flex flex-wrap items-center gap-1">
                 {/* 主按钮只露一个：未建模「建模」、失败「重试建模」、建好「预览」；建模中/待核对/不能建模只看状态 */}
                 {canBuild ? (
@@ -317,7 +318,7 @@ export function Manhua3dModelStudio(props: Props) {
       </ul>
       {batchFailures.length ? (
         <p className="mt-2 text-[11px] text-amber-100" data-batch-failures>
-          上一批 {batchFailures.length} 人提交失败（其余已提交）：{batchFailures.map((f) => `${characters.find((c) => c.id === f.id)?.labelZh ?? f.id}：${f.messageZh}`).join("；")}
+          上一批 {batchFailures.length} 人提交失败（其余已提交）：{batchFailures.map((f) => `${characters.find((c) => c.id === f.id)?.labelZh ?? f.id}：${maskMediaProviderDetails(f.messageZh)}`).join("；")}
         </p>
       ) : null}
       {onGenerate && buildable.length ? (
@@ -411,7 +412,7 @@ export function ManhuaMultiviewPanel(props: {
           {rebuild ? "用四视角重建模型" : "提交多视角建模"}
         </button>
         {busy ? <span className="text-cyan-100">出图/提交进行中，逐张落稿，可稍后回来</span> : null}
-        {!readiness.ready ? <span className="text-amber-100">{readiness.reasonZh}</span> : null}
+        {!readiness.ready ? <span className="text-amber-100">{maskMediaProviderDetails(readiness.reasonZh)}</span> : null}
       </div>
     </div>
   );

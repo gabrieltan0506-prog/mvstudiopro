@@ -1,9 +1,9 @@
-import { gcsTransferUrl, isGcsTransferUrl } from "./gcsTransfer";
+import { flyDownloadUrl } from "./gcsTransfer";
 /** 远端产物下载：GCS经Fly转发，失败明确报错，不回退GCS直连。 */
 
 export type DownloadRemoteFileResult = {
   ok: boolean;
-  /** fallback=抓不到，已开新标签页让用户自己存 */
+  /** 保留旧返回契约；下载失败直接报错，不打开远端地址。 */
   via: "blob" | "fallback";
 };
 
@@ -37,7 +37,7 @@ export async function downloadRemoteFile(
   if (!/^https?:\/\//i.test(src)) throw new Error("下载地址无效");
   const filename = guessRemoteFileName(src, fileNameBase);
   try {
-    const resp = await fetch(gcsTransferUrl(src), { credentials: isGcsTransferUrl(src) ? "include" : "same-origin" });
+    const resp = await fetch(flyDownloadUrl(src), { credentials: "include" });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const blob = await resp.blob();
     const objectUrl = URL.createObjectURL(blob);
@@ -51,8 +51,6 @@ export async function downloadRemoteFile(
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
     return { ok: true, via: "blob" };
   } catch (error) {
-    if (isGcsTransferUrl(src)) throw error;
-    window.open(src, "_blank", "noopener,noreferrer");
-    return { ok: false, via: "fallback" };
+    throw error;
   }
 }

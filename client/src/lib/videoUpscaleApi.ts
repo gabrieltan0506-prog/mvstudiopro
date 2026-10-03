@@ -131,7 +131,7 @@ export class VideoUpscaleSubmitError extends Error {
 export async function startVideoUpscale(input: {
   videoUrl: string;
   target?: "2k" | "4k";
-  targetFps?: 30 | 60;
+  targetFps?: 30;
   combine?: boolean;
   frameInterpolationProvider?: "wavespeed";
   scopeKey?: string;

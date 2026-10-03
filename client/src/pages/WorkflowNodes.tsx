@@ -1503,7 +1503,7 @@ export default function WorkflowNodes() {
         <div className="grid gap-3 rounded-2xl border border-sky-500/20 bg-sky-500/[0.06] p-4 md:grid-cols-2">
           <div className="space-y-1 text-xs text-white/80">
             <span className="font-semibold text-white">视频引擎</span>
-            <div className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-2 text-sm text-white">Seedance 2.0（fal · image-to-video）</div>
+            <div className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-2 text-sm text-white">Seedance 2.0（图生视频）</div>
           </div>
           <label className="space-y-1 text-xs text-white/80">
             <span className="font-semibold text-white">画面比例</span>
@@ -1553,7 +1553,7 @@ export default function WorkflowNodes() {
               className="h-4 w-4 rounded border-white/30"
             />
             <span>
-              Seedance 生成同步对白/环境音（计费与关音频相同，见 fal 文档）
+              Seedance 生成同步对白/环境音（计费与关闭音频相同）
             </span>
           </label>
         </div>
@@ -1563,7 +1563,7 @@ export default function WorkflowNodes() {
             <div className="mt-1 text-white/70">
               约 {seedancePricingPreview.credits} cr / 场景 · 输出 {seedancePricingPreview.estimate.width}×{seedancePricingPreview.estimate.height}{" "}
               · tokens≈{Math.round(seedancePricingPreview.estimate.tokens)}（
-              {seedancePricingPreview.estimate.durationSec}s，pricing 按 auto 以 8s 估算）· fal 美元约 ${seedancePricingPreview.estimate.usdTotal.toFixed(3)}（秒 ${seedancePricingPreview.estimate.usdSecondsComponent.toFixed(3)} + token ${seedancePricingPreview.estimate.usdTokensComponent.toFixed(3)}）
+              {seedancePricingPreview.estimate.durationSec}s，pricing 按 auto 以 8s 估算）· 参考成本约 ${seedancePricingPreview.estimate.usdTotal.toFixed(3)}（秒 ${seedancePricingPreview.estimate.usdSecondsComponent.toFixed(3)} + token ${seedancePricingPreview.estimate.usdTokensComponent.toFixed(3)}）
             </div>
         </div>
 

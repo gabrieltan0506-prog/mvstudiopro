@@ -17073,7 +17073,7 @@ export default function PlatformPage() {
                     <div>
                       <div className="text-sm font-semibold text-white">封面 / 分镜 · 中文直送</div>
                       <p className="mt-1 text-xs leading-relaxed text-white/55">
-                        封面为中文直送 + OpenAI 官方 Image-2（不走 OpenRouter）；编导分镜同为中文直送像素链。
+                        封面为中文直送 + Image-2 高清生图；编导分镜同为中文直送像素链。
                       </p>
                     </div>
                     <div className="rounded-full border border-amber-400/50 bg-[rgba(251,191,36,0.12)] px-4 py-2 text-xs font-semibold text-amber-100">

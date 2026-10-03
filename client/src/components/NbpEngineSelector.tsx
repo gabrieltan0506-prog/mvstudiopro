@@ -59,8 +59,8 @@ export function NbpEngineSelector({
       id: "nbp_2k",
       label: "Google 2K",
       desc: isAdmin
-        ? "Vertex AI Flash，高清 2K，无浮水印"
-        : effectivePlan === "free" ? "需升级" : "Vertex AI · 无浮水印",
+        ? "快速生成，高清 2K，无水印"
+        : effectivePlan === "free" ? "需升级" : "高清生成，无水印",
       cost: "5 Cr/张",
       icon: MonitorPlay,
       color: "#4285F4",
@@ -76,7 +76,7 @@ export function NbpEngineSelector({
       id: "nbp_4k",
       label: "Google 4K",
       desc: isAdmin
-        ? "Vertex AI Pro，超高清 4K，无浮水印"
+        ? "精细生成，超高清 4K，无水印"
         : effectivePlan === "enterprise" ? "无浮水印" : "需升级",
       cost: "9 Cr/张",
       icon: Tv2,

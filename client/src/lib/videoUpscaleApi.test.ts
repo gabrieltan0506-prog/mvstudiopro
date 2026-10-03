@@ -106,12 +106,12 @@ it("尺寸缺失/媒体超时不能默认720p，缺省请求也不伪造sourceRe
 });
 
 it("原片只做AI补帧走独立入口，不发送超分目标", async () => {
-  const fetcher = vi.fn(async (_url: string, _init?: RequestInit) => ({ ok: true, json: async () => ({ ok:true, taskId:"ai-fps-only", status:"queued", creditsUsed:196 }) }));
+  const fetcher = vi.fn(async (_url: string, _init?: RequestInit) => ({ ok: true, json: async () => ({ ok:true, taskId:"ai-fps-only", status:"queued", creditsUsed:76 }) }));
   vi.stubGlobal("fetch", fetcher);
-  const result = await startVideoUpscale({ videoUrl:"gs://test-only/post-prod/7/import.mp4", targetFps:60, combine:false, frameInterpolationProvider:"wavespeed", scopeKey:"episode-one", durationSec:107 });
+  const result = await startVideoUpscale({ videoUrl:"gs://test-only/post-prod/7/import.mp4", targetFps:30, combine:false, frameInterpolationProvider:"wavespeed", scopeKey:"episode-one", durationSec:107 });
   expect(fetcher.mock.calls[0]?.[0]).toBe("/api/jobs?op=videoInterpolate");
   const body = JSON.parse((fetcher.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
   expect(body.target).toBeUndefined();
-  expect(body).toMatchObject({ targetFps:60, frameInterpolationProvider:"wavespeed", durationSec:107 });
-  expect(result.creditsUsed).toBe(196);
+  expect(body).toMatchObject({ targetFps:30, frameInterpolationProvider:"wavespeed", durationSec:107 });
+  expect(result.creditsUsed).toBe(76);
 });

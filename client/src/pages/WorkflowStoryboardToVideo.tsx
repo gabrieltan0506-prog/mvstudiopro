@@ -854,7 +854,7 @@ export default function WorkflowStoryboardToVideo() {
       <div style={sectionStyle()}>
         <h2 style={{ marginTop: 0 }}>D. Scene Editor</h2>
         <div style={{ marginBottom: 12, fontSize: 13, opacity: 0.85 }}>
-          Rule: each scene keeps one character image and one or two scene-only images. Scene video uses this exact bundle for FAL.
+          Rule: each scene keeps one character image and one or two scene-only images. Scene video uses this exact reference bundle.
         </div>
         <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
           <button type="button" onClick={() => void exportStoryboardDoc("docx").catch(() => undefined)}>Export DOCX</button>

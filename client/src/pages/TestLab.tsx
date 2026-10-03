@@ -792,11 +792,9 @@ export default function TestLab() {
 
       {tab === "translate" && (
         <div style={{ marginTop: 20, padding: 16, borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.20)" }}>
-          <div style={{ fontSize: 20, fontWeight: 900 }}>Vertex · 翻译（TestLab）</div>
+          <div style={{ fontSize: 20, fontWeight: 900 }}>AI 翻译（TestLab）</div>
           <div style={{ marginTop: 8, opacity: 0.8 }}>
-            模型 <code style={{ fontSize: 12 }}>gemini-3-flash-preview</code>，区域固定 <code style={{ fontSize: 12 }}>global</code>
-            （<code style={{ fontSize: 11 }}>locations/global</code>）；与「脚本」同属 Vertex IAM <code>/api/google</code> 闸道；本接口为 REST{" "}
-            <code>generateContent</code>（与 <code>@google-cloud/vertexai</code> SDK 并存，此处不强制改用 SDK）。
+            将原文翻译为所选目标语言。
           </div>
           <div style={{ marginTop: 12, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
             <div>
@@ -813,7 +811,7 @@ export default function TestLab() {
               disabled={translateBusy}
               style={{ padding: "10px 16px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 900 }}
             >
-              {translateBusy ? "翻译中…" : "翻译（Vertex）"}
+              {translateBusy ? "翻译中…" : "翻译"}
             </button>
           </div>
           <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>

@@ -1,7 +1,8 @@
+import { maskMediaUrls } from "./maskMediaUrls";
 /** 面向用户文案：过滤模型名、API、fallback 等内部实现细节 */
 
 const INTERNAL_ENGINE_PATTERN =
-  /EVOLINK|OPENAI|OpenRouter|openrouter|Cloudflare|VERTEX|GPT|Gemini|gemini|gpt-|Anthropic|ANTHROPIC|Claude|claude-|Nano Banana|GPT-IMAGE|GPT54|主模型|备用模型|备用路径|主路径|fallback|analyzeGrowthCamp|growth_analyze|Vertex|Evolink|OhMyGPT|套话快照|成长营套话|trendStore|trendstore|爬虫|爬蟲|crawler|GCS|gs:\/\/|growth-camp|Job not found|pollCount|platformAssetLite|deployment to match the model|request id:/i;
+  /BYTEPLUS|WAVESPEED|VOLCENGINE|REPLICATE|FAL\.AI|KIE\.AI|TTAPI|EVOLINK|OPENAI|OpenRouter|openrouter|Cloudflare|VERTEX|GPT|Gemini|gemini|gpt-|Anthropic|ANTHROPIC|Claude|claude-|Nano Banana|GPT-IMAGE|GPT54|主模型|备用模型|备用路径|主路径|fallback|analyzeGrowthCamp|growth_analyze|Vertex|Evolink|OhMyGPT|套话快照|成长营套话|trendStore|trendstore|爬虫|爬蟲|crawler|GCS|gs:\/\/|growth-camp|Job not found|pollCount|platformAssetLite|deployment to match the model|request id:/i;
 
 export function sanitizePlatformUserMessage(raw: string, fallback = "操作暂时不可用，请稍后重试"): string {
   const text = String(raw || "").trim();
@@ -9,9 +10,11 @@ export function sanitizePlatformUserMessage(raw: string, fallback = "操作暂�
   if (/\(401\)|Unauthorized|登录状态已失效|未登录|session.*失效/i.test(text)) {
     return "登录状态已失效，请刷新页面重新登录后再试（分析任务可能仍在后台运行）";
   }
-  // EvoLink 积分不足（402）——保留可读提示，便于用户充值
+  // 区分本站积分与上游额度故障，不引导用户去供应商充值。
   if (/积分不足|insufficient.?quota|dashboard\/billing/i.test(text)) {
-    return "上游模型账户积分不足，请充值后再试（https://evolink.ai/dashboard/billing）";
+    return /EvoLink|BytePlus|WaveSpeed|insufficient.?quota|dashboard\/billing/i.test(text)
+      ? "生成服务暂不可用，请稍后重试或联系客服"
+      : "积分不足，请在本站充值后再试";
   }
   // 模型 deployment / 上游 404 —— 明确告知非积分问题；全案文案主路径为 OpenAI 官方 gpt-5.6-sol，失败改走 Evolink
   if (/模型暂不可用|非积分问题|Could not find an existing deployment|Specified model not found/i.test(text)) {
@@ -39,17 +42,17 @@ export function sanitizePlatformUserMessage(raw: string, fallback = "操作暂�
   }
   // 已映射的学节奏登录态句：放行（勿被下方「爬虫」等内部词误杀）
   if (/抖音登录态|抖音成片需要有效登录态|学节奏与趋势采集共用/.test(text)) {
-    return text;
+    return maskMediaUrls(text);
   }
   if (INTERNAL_ENGINE_PATTERN.test(text)) return fallback;
-  return text;
+  return maskMediaUrls(text);
 }
 
 export function sanitizePlatformUserMessageOrNull(raw: string): string | null {
   const text = String(raw || "").trim();
   if (!text) return null;
   if (INTERNAL_ENGINE_PATTERN.test(text)) return null;
-  return text;
+  return maskMediaUrls(text);
 }
 
 /**
