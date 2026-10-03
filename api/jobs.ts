@@ -4487,6 +4487,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       const { canvasVideoFrameCredits } = await import("../shared/canvasGenerationPricing.js");
       if (frameTargetFps && (!measured.fps || measured.fps <= 0)) return res.status(400).json({ ok: false, error: "补帧需要有效的原片帧率" });
       const framePasses = frameTargetFps && measured.fps! < frameTargetFps - 0.1 ? Math.ceil(Math.log2((frameTargetFps - 0.1) / measured.fps!)) : 0;
+      if (framePasses && (sourceResolution === "2k" || sourceResolution === "4k")) return res.status(400).json({ ok: false, error: "请使用未超分原视频先做AI补帧，再选择2K或4K超分" });
       if (op === "videoInterpolate" && !framePasses) return res.status(400).json({ ok: false, error: "原片已达到目标帧率，或无法核验有效帧率" });
       const credits = frameTargetFps ? canvasVideoFrameCredits(durationSec, frameTargetFps as 30 | 60) + (target ? canvasVideoUpscaleCredits(target, durationSec) : 0) : canvasVideoUpscaleCredits(target!, durationSec);
       const label = frameTargetFps ? `${target ? target.toUpperCase() + "超分·" : "云端补帧·"}${frameTargetFps}帧（${durationSec}s）` : `高清放大·${target!.toUpperCase()}（${durationSec}s）`;
