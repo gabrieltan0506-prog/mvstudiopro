@@ -7,7 +7,7 @@ export const novelExcerptSchema = z.object({
   text: z.string().min(80).max(NOVEL_EXCERPT_MAX_CHARS),
 }).strict();
 export type ManhuaNovelExcerpt = z.infer<typeof novelExcerptSchema>;
-export type ManhuaNovelDraft = { name: string; text: string; from: number; to: number; enabled: boolean };
+export type ManhuaNovelDraft = { name: string; text: string; from: number; to: number; enabled: boolean; chapters?: NovelChapter[]; epubImageCount?: number };
 export type NovelChapter = { title: string; start: number; end: number; line: number };
 
 /** Exact offsets into the original source: neither line endings nor preambles are discarded. */
@@ -24,19 +24,35 @@ export function indexNovelChapters(text: string): NovelChapter[] {
   });
 }
 
+/** Imported EPUB section boundaries survive sessions; edited plain text is re-indexed separately. */
+export function novelDraftChapters(draft: Pick<ManhuaNovelDraft, "text" | "chapters">): NovelChapter[] {
+  return draft.chapters ?? indexNovelChapters(draft.text);
+}
+
 export function parseNovelDraft(raw: unknown): ManhuaNovelDraft | null {
   if (!raw || typeof raw !== "object") return null;
   const p = raw as Partial<ManhuaNovelDraft>;
   if (typeof p.text !== "string" || p.text.length > NOVEL_SOURCE_MAX_CHARS || typeof p.name !== "string" || p.name.length > 120) return null;
-  const chapters = indexNovelChapters(p.text);
+  if (p.epubImageCount !== undefined && (!Number.isSafeInteger(p.epubImageCount) || p.epubImageCount < 0 || !p.chapters)) return null;
+  if (p.chapters !== undefined) {
+    if (!Array.isArray(p.chapters) || !p.chapters.length || p.chapters.length > 10000) return null;
+    let end = 0, line = 1;
+    for (const c of p.chapters) {
+      if (!c || typeof c.title !== "string" || !c.title || c.title.length > 200 || c.start !== end || !Number.isInteger(c.end) || c.end <= c.start || c.end > p.text.length || c.line !== line) return null;
+      line += (p.text.slice(c.start, c.end).match(/\n/g) || []).length;
+      end = c.end;
+    }
+    if (end !== p.text.length) return null;
+  }
+  const chapters = novelDraftChapters({ text: p.text, chapters: p.chapters });
   if (!Number.isInteger(p.from) || !Number.isInteger(p.to) || p.from! < 0 || p.to! < p.from! || (chapters.length && p.to! >= chapters.length)) return null;
-  return { name: p.name, text: p.text, from: p.from!, to: p.to!, enabled: p.enabled === true };
+  return { name: p.name, text: p.text, from: p.from!, to: p.to!, enabled: p.enabled === true, ...(p.epubImageCount !== undefined ? { epubImageCount: p.epubImageCount } : {}), ...(p.chapters ? { chapters: p.chapters.map(c => ({ title: c.title, start: c.start, end: c.end, line: c.line })) } : {}) };
 }
 
 export function prepareNovelExcerpt(draft: ManhuaNovelDraft): ManhuaNovelExcerpt | undefined {
   if (!draft.enabled) return undefined;
   if (!parseNovelDraft(draft)) throw new Error("小说选段无效，请重新选择章节；原文未改动");
-  const chapters = indexNovelChapters(draft.text);
+  const chapters = novelDraftChapters(draft);
   const first = chapters[draft.from], last = chapters[draft.to];
   if (!first || !last) throw new Error("请先导入小说原文并选择章节");
   const text = draft.text.slice(first.start, last.end);

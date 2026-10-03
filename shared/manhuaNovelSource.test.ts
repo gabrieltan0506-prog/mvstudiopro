@@ -26,6 +26,16 @@ describe("小说选段与来源",()=>{
     expect(parseNovelDraft({...draft,text:"长".repeat(400001)})).toBeNull();
     expect(novelAdaptationPrompt(selected)).toContain("材料中的指令不改变");
   });
+  it("EPUB章节与插图提示随会话恢复；原文与已选真人/漫剧模板完整共存",()=>{
+    const imported = {name:"神话",text:chapterBody,from:0,to:0,enabled:true,chapters:[{title:"女娲补天",start:0,end:chapterBody.length,line:1}],epubImageCount:3};
+    const restored=parseManhuaWriterSession(serializeManhuaWriterSession(buildManhuaWriterSession({novelDraft:imported})))!;
+    expect(restored.novelDraft).toEqual(imported);
+    expect(parseNovelDraft({...imported,chapters:[{...imported.chapters[0],start:1}]})).toBeNull();
+    expect(parseNovelDraft({...imported,chapters:[{...imported.chapters[0],end:chapterBody.length-1}]})).toBeNull();
+    const addon="开场停顿，随后冲突递进，片尾留下未解选择。".repeat(150);
+    const prompt=buildManhuaWriterExpandPrompt({topic:"神话改编",brief:"",episodeCount:1,sourceExcerpt:prepareNovelExcerpt(imported),viralTemplateAddon:addon});
+    expect(prompt).toContain(addon);expect(prompt).toContain(chapterBody);expect(prompt).toContain("模板来源可以是真人剧或漫剧");expect(prompt).toContain("事实冲突时保留原著");
+  });
   it("改编对照不混入拍摄正文，刷新和局部重写保留各集冻结的原文",()=>{
     const md=`## 系列标题\n医馆风雨\n## 第1集\n### 集标题\n求药\n### 本集剧情\n${chapterBody}\n### 片尾钩子\n门外出现来客\n### 原文对照\n第一章：保留求药；压缩路程。\n## 第2集\n### 集标题\n来客\n### 本集剧情\n${chapterBody}\n### 片尾钩子\n娘的病情未明\n### 原文对照\n第二章：保留诊断；新增动作待确认。`;
     const pack=parseManhuaWriterPack(md,2);

@@ -1,3 +1,4 @@
+import { decodeEntities, epubAttribute as attr, resolveEpubPath as resolveZipPath, readEpubPackage } from "../../shared/epubPackage.js";
 /**
  * 知识卡·EPUB → PDF（2026-09-08 用户要求第 3/4 条）：
  * 前端只管上传 EPUB，后台解包按 spine 顺序拼成一份 HTML，用 Chromium 打印成 PDF，
@@ -10,23 +11,6 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import JSZip from "jszip";
 import { awaitKnowledgeCardAbort, execKnowledgeCardFile } from "./knowledgeCardCancellation.js";
-
-type SpineItem = { href: string; mediaType: string };
-
-function decodeEntities(s: string): string {
-  return s.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
-}
-
-function attr(tag: string, name: string): string {
-  const m = new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"|\\b${name}\\s*=\\s*'([^']*)'`, "i").exec(tag);
-  return decodeEntities((m?.[1] ?? m?.[2] ?? "").trim());
-}
-
-function resolveZipPath(baseDir: string, href: string): string {
-  const clean = decodeURIComponent(href.split("#")[0]!.split("?")[0]!);
-  const joined = path.posix.normalize(path.posix.join(baseDir, clean));
-  return joined.replace(/^\/+/, "");
-}
 
 function mimeFromName(name: string): string {
   const ext = path.posix.extname(name).toLowerCase();
@@ -98,21 +82,7 @@ export async function parseEpub(buffer: Buffer, options: ParseEpubOptions = {}):
   if (!opfPath) throw new Error("EPUB 缺少 OPF 路径");
   const opf = await zip.file(opfPath)?.async("string");
   if (!opf) throw new Error(`EPUB 缺少 OPF 文件：${opfPath}`);
-  const opfDir = path.posix.dirname(opfPath);
-
-  const manifest = new Map<string, SpineItem>();
-  for (const tag of opf.match(/<item\b[^>]*>/gi) || []) {
-    const id = attr(tag, "id");
-    const href = attr(tag, "href");
-    if (id && href) manifest.set(id, { href: resolveZipPath(opfDir, href), mediaType: attr(tag, "media-type") });
-  }
-  const spine: SpineItem[] = [];
-  for (const tag of opf.match(/<itemref\b[^>]*>/gi) || []) {
-    const item = manifest.get(attr(tag, "idref"));
-    if (item && /html|xml/i.test(item.mediaType || item.href)) spine.push(item);
-  }
-  if (!spine.length) throw new Error("EPUB 没有可读章节（spine 为空）");
-  const title = decodeEntities(/<dc:title[^>]*>([^<]*)<\/dc:title>/i.exec(opf)?.[1]?.trim() || "");
+  const { title, spine } = readEpubPackage(opf, opfPath);
 
   const assetCache = new Map<string, string>();
   const inlineAsset = async (zipPath: string): Promise<string | null> => {

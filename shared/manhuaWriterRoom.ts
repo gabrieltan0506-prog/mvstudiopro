@@ -220,6 +220,9 @@ export function buildManhuaWriterExpandPrompt(opts: {
     brief ? `【补充条件】\n${brief}` : "【补充条件】（无，请在合理范围内自行补全并保持克制）",
     novelAdaptationPrompt(opts.sourceExcerpt),
     viralTemplateBlock,
+    opts.sourceExcerpt && viralTemplateAddon
+      ? "【原著与所选模板的分工】原著提供人物、事件与因果；所选模板提供分集节奏、冲突递进、情绪起伏、对白表演和片尾钩子的组织方式。模板来源可以是真人剧或漫剧，均可借用叙事与视听方法；最终人物造型、场景与画风遵循本项目设定，不照搬模板原作角色、背景或情节。逐集原文对照须说明采用的模板方法及必要的情节调整，事实冲突时保留原著并说明取舍。"
+      : "",
     propDemo,
     ancientBlock,
     purpose ? formatPlotPurposeCameraBlock(purpose) : "",

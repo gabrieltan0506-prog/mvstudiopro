@@ -17,6 +17,7 @@ export function PostProdSubtitleCard({ clips, busy, onSubmit, context, storageKe
 }) {
   const [source, setSource] = useState("");
   const [srt, setSrt] = useState("");
+  const [fontSize, setFontSize] = useState(12);
   const [submitting, setSubmitting] = useState(false);
   const gate = useRef(false);
   const advisor = trpc.mvAnalysis.askPlatformSkillQa.useMutation({ retry: false });
@@ -69,7 +70,7 @@ export function PostProdSubtitleCard({ clips, busy, onSubmit, context, storageKe
         ? await importWorkflowVideoSource(source) : source;
       setSource(videoUri);
       // 参考影片截图：白字、细黑边、无底框、底部居中；字号按竖屏适配。
-      await onSubmit({ videoUri, subtitleSrt, styleOverride: { fontSize: 8, outline: 0.35, marginV: 12, fontName: "Noto Sans CJK SC" } });
+      await onSubmit({ videoUri, subtitleSrt, styleOverride: { fontSize, outline: 0.35, marginV: 12, fontName: "Noto Sans CJK SC" } });
     } catch (error) {
       toast.error(maskMediaProviderDetails(error instanceof Error ? error.message : "字幕提交失败"));
     } finally {
@@ -99,6 +100,15 @@ export function PostProdSubtitleCard({ clips, busy, onSubmit, context, storageKe
     {advisorError && <p role="alert" className="text-xs text-amber-200">{advisorError}（已有请求将沿原编号恢复，不重复创建）</p>}
     {report && <details className="mt-2 text-xs" open><summary>顾问核对报告（历史结果，以报告所选成片与对白为准）</summary><pre className="whitespace-pre-wrap">{maskMediaProviderDetails(report)}</pre></details>}
     <UrlMaskedTextarea aria-label="对白字幕 SRT" value={srt} onChange={event => setSrt(event.target.value)} disabled={submitting || busy} rows={8} placeholder={"1\n00:00:01,000 --> 00:00:03,000\n已确认的对白"} className="mt-2 w-full rounded border bg-transparent p-2 text-xs" />
+    <label className="mt-3 flex items-center gap-2 text-xs">字幕字号
+      <select aria-label="字幕字号" value={fontSize} disabled={locked} onChange={event => setFontSize(Number(event.target.value))} className="rounded border bg-transparent p-2">
+        <option value={8}>小（原字号）</option><option value={12}>标准（放大50%）</option><option value={16}>大（原字号两倍）</option>
+      </select>
+    </label>
+    <div aria-label="字幕字号示意" className="mt-2 rounded-lg bg-neutral-800 p-4 text-center text-white">
+      <span style={{ fontSize: fontSize * 2, fontFamily: '"Noto Sans CJK SC", sans-serif', textShadow: "0 1px 2px black" }}>先送娘去治病</span>
+      <p className="mt-2 text-[10px] text-white/60">字号示意，非成片截图；实际效果随画幅和播放器显示尺寸变化。</p>
+    </div>
     <p className="mt-2 text-xs text-white/60">字幕样式：白字细黑边、无底框、底部居中；长句按对白停顿分条。</p>
     <button type="button" disabled={!source || !srt.trim() || locked} onClick={() => void submit()} className="mt-2 rounded-lg border border-cyan-300/30 px-3 py-2 text-xs disabled:opacity-40">{submitting ? "正在提交字幕…" : "添加字幕 · 0积分"}</button>
   </section>;
