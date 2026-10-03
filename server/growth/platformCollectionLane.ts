@@ -125,9 +125,10 @@ async function delay(delayMs: number) {
 }
 
 async function runWithCrossProcessCollectionLease<T>(
-  platform: GrowthPlatform,
-  source: GrowthCollectionSource,
+  platform: GrowthPlatform | "post_prod",
+  source: GrowthCollectionSource | "foreground",
   work: () => Promise<T>,
+  foreground?: { signal: AbortSignal; onLeaseLost: (error: unknown) => void },
 ) {
   const files = getCrossProcessFiles();
   const token = `${process.pid}:${randomUUID()}`;
@@ -137,6 +138,7 @@ async function runWithCrossProcessCollectionLease<T>(
   await fs.mkdir(files.root, { recursive: true });
 
   while (true) {
+    foreground?.signal.throwIfAborted();
     try {
       const handle = await fs.open(files.lock, "wx");
       await handle.writeFile(JSON.stringify({
@@ -149,7 +151,11 @@ async function runWithCrossProcessCollectionLease<T>(
       await handle.close();
       heartbeat = setInterval(() => {
         const now = new Date();
-        void fs.utimes(files.lock, now, now).catch(() => {});
+        void (async () => {
+          const owner = JSON.parse(await fs.readFile(files.lock, "utf8"));
+          if (owner.token !== token) throw new Error("growth_lock_ownership_lost");
+          await fs.utimes(files.lock, now, now);
+        })().catch(error => foreground?.onLeaseLost(error));
       }, 30_000);
       break;
     } catch (error) {
@@ -159,7 +165,7 @@ async function runWithCrossProcessCollectionLease<T>(
         await fs.unlink(files.lock).catch(() => {});
         continue;
       }
-      if (Date.now() - startedWaitingAt >= CROSS_PROCESS_LOCK_WAIT_MS) {
+      if (!foreground && Date.now() - startedWaitingAt >= CROSS_PROCESS_LOCK_WAIT_MS) {
         throw new Error(`growth_platform_collection_lock_timeout:${platform}:${source}`);
       }
       await delay(500);
@@ -167,6 +173,10 @@ async function runWithCrossProcessCollectionLease<T>(
   }
 
   try {
+    if (foreground) {
+      foreground.signal.throwIfAborted();
+      return await work();
+    }
     let persisted: { lastFinishedAtMs?: number } = {};
     try {
       persisted = JSON.parse(await fs.readFile(files.state, "utf8")) as { lastFinishedAtMs?: number };
@@ -225,4 +235,11 @@ export function runInGrowthPlatformCollectionLane<T>(
     source,
     () => runWithCrossProcessCollectionLease(platform, source, work),
   );
+}
+
+/** 后期持有同一把锁，等待已开始的采集/冷备退出，并阻止其在编码中途重入。 */
+export function withGrowthCollectionExclusive<T>(
+  signal: AbortSignal, onLeaseLost: (error: unknown) => void, work: () => Promise<T>,
+): Promise<T> {
+  return runWithCrossProcessCollectionLease("post_prod", "foreground", work, { signal, onLeaseLost });
 }

@@ -163,7 +163,7 @@ function scheduleWeixinChannelsGrowthMerge() {
           observations: pending,
           candidateByTaskId: new Map(snapshot.candidates.map((item) => [item.taskId, item])),
         });
-        const mergedStore = await mergeTrendCollections({ weixin_channels: collection });
+        const mergedStore = await mergeTrendCollections({ weixin_channels: collection }, { loadOnlyChangedPlatforms: true });
         const mergeStats = mergedStore?.mergeStats?.weixin_channels;
         const currentScheduler = (await readTrendSchedulerState()).weixin_channels;
         const addedCount = mergeStats?.addedCount || 0;

@@ -274,15 +274,11 @@ import {
 import { summarizeManhuaVisualBriefForUi } from "@shared/manhuaScriptVisualBrief";
 import { evaluateManhuaAsset3dEligibility } from "@shared/manhuaAsset3d";
 import { MANHUA_DRAFT_RETENTION_HINT_ZH } from "@shared/manhuaCloudDraft";
-import ManhuaPathRecipePicker from "@/components/ManhuaPathRecipePicker";
-import { ManhuaDirectorBoardOverlay } from "@/components/ManhuaDirectorBoardOverlay";
 import {
-  confirmManhuaBoardOverlayReview,
   type ManhuaBoardAspectRatio,
   type ManhuaBoardMotionOverlay,
 } from "@shared/manhuaDirectorBoardOverlay";
 import {
-  compileManhuaSegmentDirectorBoardOverlay,
   resolveManhuaDirectorOverlayBaseUrl as resolveManhuaDirectorOverlayBaseUrlShared,
 } from "@shared/manhuaDirectorBoardOverlayCompile";
 import { downloadRemoteFile } from "@/lib/downloadRemoteFile";
@@ -1636,7 +1632,6 @@ export default function ManhuaScriptWorkbench({
   }, [customAssetRefs, assetCanon, compactUi, assetPreviewByGroup, openCustomRefRoles]);
 
   const [downloadBusy, setDownloadBusy] = useState(false);
-  const directorOverlayPanelRef = useRef<HTMLElement>(null);
   const [fullPromptDrafts, setFullPromptDrafts] = useState<Record<string, string>>({});
   /** 药丸缩略图：对照表只给 id，图得从已挂资产里配 */
   const chipThumbByAssetId = useMemo(() => {
@@ -1651,8 +1646,8 @@ export default function ManhuaScriptWorkbench({
   useEffect(() => {
     setClipPromptReviewOpen(false);
   }, [focusEpisode, topic, seriesTitle]);
-  /** 中栏：分镜 | 运镜画板 | 粗剪 */
-  const [scriptTab, setScriptTab] = useState<"shots" | "path" | "edit">("shots");
+  /** 中栏：分镜 | 粗剪；站位与运镜由白模工作台处理。 */
+  const [scriptTab, setScriptTab] = useState<"shots" | "edit">("shots");
   /** 每镜机位密码（可点选覆盖推荐） */
   const [shotAngleByIndex, setShotAngleByIndex] = useState<Record<number, ManhuaCameraAngleId>>(
     {},
@@ -2289,67 +2284,6 @@ export default function ManhuaScriptWorkbench({
   const activeShotStillUrl = keyartOutputUrl(activeKeyart);
   const annotateStillUrl = activeShotStillUrl || anyKeyartUrl;
   const previewStillUrl = activePhase === "storyboard" ? activeShotStillUrl : annotateStillUrl;
-  const directorOverlaySegment = segments.find((segment) => segment.index === activeSegNo);
-  const segmentFirstShotNo = directorOverlaySegment?.shots[0]?.index;
-  const segmentFirstShotKeyart = segmentFirstShotNo
-    ? episodeKeyarts.find(
-        (block) => resolveKeyartShotIndex(block.id, block.prompt) === segmentFirstShotNo,
-      ) || (segmentFirstShotNo === 1 ? keyart : undefined)
-    : undefined;
-  const activeBoardBaseUrl = resolveManhuaDirectorOverlayBaseUrl({
-    segmentIndex: activeSegNo,
-    segmentBoardUrls: directorBoardSegUrls,
-    segmentFirstShotStillUrl: keyartOutputUrl(segmentFirstShotKeyart),
-  });
-  const [activeBoardImageMeta, setActiveBoardImageMeta] = useState<{
-    url: string;
-    width: number;
-    height: number;
-  } | null>(null);
-  const activeBoardImageGeometry =
-    activeBoardImageMeta?.url === activeBoardBaseUrl
-      ? resolveManhuaDirectorBoardImageGeometry(activeBoardImageMeta)
-      : null;
-  const activeBoardImageMeasureFailed = Boolean(
-    activeBoardBaseUrl &&
-      activeBoardImageMeta?.url === activeBoardBaseUrl &&
-      !activeBoardImageGeometry,
-  );
-  const activeDirectorBoardMotionOverlay = useMemo(() => {
-    if (!activeBoardBaseUrl || !activeBoardImageGeometry) return null;
-    const segment = segments.find((entry) => entry.index === activeSegNo);
-    const beat = resolveManhuaSourcePlanBeat(shootablePlan, shots, segment);
-    return compileManhuaSegmentDirectorBoardOverlay({
-      episodeIndex: focusEpisode,
-      segmentIndex: activeSegNo,
-      baseAspectRatio: activeBoardImageGeometry.baseAspectRatio,
-      segmentBoardUrls: directorBoardSegUrls,
-      segmentFirstShotStillUrl: keyartOutputUrl(segmentFirstShotKeyart),
-      beat,
-      shots: segment?.shots,
-      assetCanon,
-      existingOverlay: directorBoardMotionOverlays?.[activeSegNo],
-    });
-  }, [
-    activeSegNo,
-    activeBoardBaseUrl,
-    activeBoardImageGeometry,
-    directorBoardMotionOverlays,
-    directorBoardSegUrls,
-    focusEpisode,
-    segmentFirstShotKeyart,
-    segments,
-    shots,
-    assetCanon,
-    shootablePlan.segments,
-  ]);
-  const activeMotionPanelStatus = resolveManhuaMotionPanelStatus({
-    hasBase: Boolean(activeBoardBaseUrl),
-    measureFailed: activeBoardImageMeasureFailed,
-    geometryReady: Boolean(activeBoardImageGeometry),
-    overlay: activeDirectorBoardMotionOverlay,
-    canChange: Boolean(onDirectorBoardMotionOverlayChange),
-  });
 
   // 切换集或阶段回到媒体预览；同阶段选镜不强制打开或关闭高级模式。
   useEffect(() => {
@@ -9266,7 +9200,7 @@ clipPromptReviewOpen ? (
             </div>
             <details data-manhua-shot-tools open={!compactUi} className="min-w-0 rounded-md border border-white/10 px-1.5 py-0.5">
               <summary className="cursor-pointer truncate text-[10px] font-medium text-white/60">
-                本段设置 · 造型 / 运镜 / 粗剪{episodeKeyartReview.error || staleLookStillCount ? " · 有静帧待处理" : ""}
+                本段设置 · 造型 / 粗剪{episodeKeyartReview.error || staleLookStillCount ? " · 有静帧待处理" : ""}
               </summary>
               <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
             {onSegmentLookBindingsChange && activeLookCharacterIds.length > 0 ? (
@@ -9336,7 +9270,6 @@ clipPromptReviewOpen ? (
               {(
                 [
                   ["shots", "分镜"],
-                  ["path", "运镜"],
                   ["edit", "粗剪"],
                 ] as const
               ).map(([id, label]) => (
@@ -9347,9 +9280,7 @@ clipPromptReviewOpen ? (
                   onClick={() => setScriptTab(id)}
                   className={`rounded-md px-2 py-1 text-[10px] font-semibold ${
                     scriptTab === id
-                      ? id === "path"
-                        ? "bg-sky-500/25 text-sky-50"
-                        : id === "edit"
+                      ? id === "edit"
                         ? "bg-violet-500/25 text-violet-50"
                         : "bg-white/12 text-white"
                       : "text-white/40 hover:text-white/70"
@@ -9698,7 +9629,7 @@ clipPromptReviewOpen ? (
                 确认简报 → 静帧锁脸服场 → 审阅段成片提示词 → 本段一轮成片吃多镜表演；改台词只重出本段，勿整集重烧。
               </p>
             </>
-          ) : scriptTab === "edit" ? (
+          ) : (
             <div className="mt-2 min-h-0 flex-1 overflow-y-auto pr-0.5">
               <ManhuaRoughEditTimeline
                 clips={roughClips}
@@ -9712,31 +9643,6 @@ clipPromptReviewOpen ? (
               <p className="mh-hint mt-2 text-[10px] leading-snug text-white/35">
                 粗剪排序；剪辑阶段可细剪、字幕、质检返工，并勾选进成片坞。
               </p>
-            </div>
-          ) : (
-            <div className="mt-2 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-0.5">
-              <p className="mh-hint text-[10px] leading-snug text-white/45">
-                预设运镜配方（文字描述，交模型解读；不再靠手绘轨迹）
-              </p>
-              {onPathRecipeIdChange ? (
-                <ManhuaPathRecipePicker
-                  compact
-                  pathRecipeId={pathRecipeId}
-                  actionRecipeId={actionRecipeId}
-                  disabled={!canRun || factoryBusy}
-                  onPathRecipeIdChange={onPathRecipeIdChange}
-                  onActionRecipeIdChange={onActionRecipeIdChange}
-                />
-              ) : (
-                <p className="mh-hint rounded-lg border border-white/10 bg-black/30 px-3 py-4 text-[11px] text-white/40">
-                  运镜配方未接线
-                </p>
-              )}
-              {!annotateStillUrl ? (
-                <p className="text-[10px] text-amber-100/70">
-                  尚无本片段静帧。请先点「生成关键静帧」；单镜成片缺图时只补本镜。
-                </p>
-              ) : null}
             </div>
           )}
         </section>
@@ -9900,141 +9806,6 @@ clipPromptReviewOpen ? (
               )}
             </div>
           </div>
-          <details open={scriptTab === "path" || undefined} className="mb-2 shrink-0" data-manhua-motion-details>
-            <summary className="cursor-pointer rounded-md border border-white/10 px-3 py-2 text-xs text-white/70">人物动作与运镜 · {activeMotionPanelStatus.labelZh}</summary>
-          <section
-            ref={directorOverlayPanelRef}
-            tabIndex={-1}
-            data-manhua-director-overlay-panel
-            data-state={activeMotionPanelStatus.state}
-            className="mb-2 shrink-0 overflow-hidden rounded-lg border border-cyan-300/20 bg-[#07121a] outline-none focus-visible:border-cyan-200/70 focus-visible:ring-2 focus-visible:ring-cyan-300/35"
-          >
-            <div className="flex items-center justify-between gap-2 border-b border-white/10 px-2 py-1.5">
-              <div>
-                <div className="text-[10px] font-semibold text-cyan-50">
-                  轨迹导演板 · 段{String(activeSegNo).padStart(2, "0")}
-                </div>
-                <div className="text-[9px] text-white/40">
-                  按分镜自动生成轨迹，拖动关键点微调后确认，无需手画。红色实线是人物／道具，青色虚线是摄影机；轨迹与底图分开保存。
-                </div>
-              </div>
-              {activeMotionPanelStatus.state === "needs-review" &&
-              activeDirectorBoardMotionOverlay &&
-              onDirectorBoardMotionOverlayChange ? (
-                <button
-                  type="button"
-                  data-manhua-action="confirm-director-overlay"
-                  onClick={() => {
-                    const confirmed = confirmManhuaBoardOverlayReview(
-                      activeDirectorBoardMotionOverlay,
-                    );
-                    if (confirmed) {
-                      onDirectorBoardMotionOverlayChange(activeSegNo, confirmed);
-                    }
-                  }}
-                  className="rounded-md border border-emerald-300/35 bg-emerald-500/12 px-2 py-1 text-[9px] font-semibold text-emerald-50 hover:bg-emerald-500/20"
-                >
-                  待确认 · 确认轨迹
-                </button>
-              ) : (
-                <span
-                  data-manhua-motion-status={activeMotionPanelStatus.state}
-                  className={`text-[9px] ${
-                    activeMotionPanelStatus.state === "confirmed"
-                      ? "text-emerald-200/75"
-                      : activeMotionPanelStatus.state === "invalid-base" ||
-                          activeMotionPanelStatus.state === "needs-review-readonly"
-                        ? "text-amber-200/80"
-                        : "text-white/45"
-                  }`}
-                >
-                  {activeMotionPanelStatus.labelZh}
-                </span>
-              )}
-            </div>
-            {activeBoardBaseUrl ? (
-              <div className="flex w-full justify-center overflow-hidden bg-black">
-                <div
-                  data-manhua-director-overlay-frame
-                  className="relative max-h-[28vh] overflow-hidden bg-black"
-                  style={{
-                    aspectRatio: activeBoardImageGeometry
-                      ? `${activeBoardImageGeometry.width} / ${activeBoardImageGeometry.height}`
-                      : "16 / 9",
-                    width: activeBoardImageGeometry
-                      ? `min(100%, ${Math.max(1, 28 * activeBoardImageGeometry.ratio)}vh)`
-                      : "100%",
-                  }}
-                >
-                  <ManhuaAssetImage
-                    src={activeBoardBaseUrl}
-                    alt={`第${activeSegNo}段导演板轨迹预览`}
-                    className="absolute inset-0 h-full w-full object-contain"
-                    onLoad={(event) => {
-                      setActiveBoardImageMeta({
-                        url: activeBoardBaseUrl,
-                        width: event.currentTarget.naturalWidth,
-                        height: event.currentTarget.naturalHeight,
-                      });
-                    }}
-                    onError={() => {
-                      setActiveBoardImageMeta({
-                        url: activeBoardBaseUrl,
-                        width: 0,
-                        height: 0,
-                      });
-                    }}
-                  />
-                  {activeDirectorBoardMotionOverlay ? (
-                    <ManhuaDirectorBoardOverlay
-                      overlay={activeDirectorBoardMotionOverlay}
-                      onChange={
-                        onDirectorBoardMotionOverlayChange
-                          ? (next) => onDirectorBoardMotionOverlayChange(activeSegNo, next)
-                          : undefined
-                      }
-                    />
-                  ) : (
-                    <div className="absolute inset-x-2 bottom-2 rounded bg-black/75 px-2 py-1 text-center text-[9px] text-amber-100">
-                      {activeBoardImageGeometry
-                        ? "当前分镜没有明确起点、落点或主运镜；不会猜造路线"
-                        : activeBoardImageMeasureFailed
-                          ? "底图尺寸读取失败；当前轨迹不可确认，请重新上传本段导演板"
-                          : "正在核对底图尺寸；确认比例前不会套用或确认轨迹"}
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className="flex min-h-16 items-center justify-between gap-3 px-3 py-2 text-[9px] text-white/45">
-                <span>先生成本段静帧，或上传本段导演板，轨迹会在这里直接显示。</span>
-                {onIngestDirectorBoardFile ? (
-                  <label className="shrink-0 cursor-pointer rounded-md border border-cyan-300/30 bg-cyan-500/10 px-2 py-1 font-semibold text-cyan-50 hover:bg-cyan-500/20">
-                    <input
-                      type="file"
-                      accept="image/png,image/jpeg,image/webp"
-                      className="sr-only"
-                      disabled={Boolean(factoryBusy || directorBoardBusy)}
-                      onChange={(event) => {
-                        const file = event.currentTarget.files?.[0];
-                        event.currentTarget.value = "";
-                        if (file) {
-                          void ingestManhuaDirectorBoardFileWithFeedback({
-                            file,
-                            segmentIndex: activeSegNo,
-                            onIngest: onIngestDirectorBoardFile,
-                            onError: (message) => toast.error(message),
-                          });
-                        }
-                      }}
-                    />
-                    上传本段导演板
-                  </label>
-                ) : null}
-              </div>
-            )}
-          </section>
-          </details>
           {dockCanvas ? (
             <div
               id="freeform-canvas-zone"
@@ -10520,12 +10291,6 @@ clipPromptReviewOpen ? (
           </>
           )}
 
-          <ManhuaMotionEntryButton
-            panelRef={directorOverlayPanelRef}
-            onOpenPathTab={() => setScriptTab("path")}
-            pathTrackLabelZh={pathTrackLabelZh}
-            narrativeLightingLabelZh={narrativeLightingLabelZh}
-          />
         </aside>
 
           </div>

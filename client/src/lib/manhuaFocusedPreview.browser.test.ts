@@ -71,6 +71,8 @@ it("分镜默认显示当前镜，选镜不打开高级画布且不借旧片旧�
     await page.goto("http://localhost:41813");
     await page.addScriptTag({content:bundle});
     await page.waitForSelector('[data-manhua-column="preview"]');
+    expect(await page.$$('[data-manhua-motion-details], [data-manhua-director-overlay-panel], [data-manhua-open-path-tab], [data-manhua-script-tab="path"]')).toHaveLength(0);
+    expect(await page.$eval('[data-manhua-action="open-secondary-tools"]', e => e.textContent)).toContain('白模');
     expect(await page.$eval('[data-manhua-column="preview"]',e=>e.getAttribute('data-manhua-preview-url'))).toBe('https://test.invalid/shot-1.png');
     expect(await page.$eval('#freeform-canvas-zone',e=>e.getAttribute('aria-hidden'))).toBe('true');
     await page.click('[data-manhua-shot="2"] > button');

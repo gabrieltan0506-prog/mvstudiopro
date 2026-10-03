@@ -235,6 +235,7 @@ async function runBackfillPlatformTasks(
         }
         const merged = await mergeTrendCollectionsWithOptions(collected.collections, {
           deferHistoryLedger: kind === "history",
+          loadOnlyChangedPlatforms: true,
         });
         if (merged.mergeStats?.[platform]) {
           mergedStats[platform] = merged.mergeStats[platform];

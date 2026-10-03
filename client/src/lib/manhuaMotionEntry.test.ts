@@ -10,7 +10,9 @@ describe("漫剧人物动作与运镜入口", () => {
     const order: string[] = [];
     const scrollIntoView = vi.fn(() => order.push("scroll"));
     const focus = vi.fn(() => order.push("focus"));
-    const panel = { scrollIntoView, focus } as unknown as HTMLElement;
+    const disclosure = { open: false };
+    const closest = vi.fn(() => disclosure);
+    const panel = { scrollIntoView, focus, closest } as unknown as HTMLElement;
     const onOpenPathTab = vi.fn(() => order.push("path"));
     const element = ManhuaMotionEntryButton({
       panelRef: { current: panel },
@@ -22,6 +24,8 @@ describe("漫剧人物动作与运镜入口", () => {
     element.props.onClick();
 
     expect(onOpenPathTab).toHaveBeenCalledOnce();
+    expect(closest).toHaveBeenCalledWith("details");
+    expect(disclosure.open).toBe(true);
     expect(scrollIntoView).toHaveBeenCalledWith({
       behavior: "instant",
       block: "center",

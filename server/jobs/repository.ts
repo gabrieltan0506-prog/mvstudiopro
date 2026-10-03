@@ -1589,3 +1589,37 @@ export async function recordPdfExportStep(
     console.warn("[JobsRepo] recordPdfExportStep failed:", error);
   }
 }
+
+/** Failure must not overwrite cancellation, completion, or a newer heartbeat. */
+export async function failPostProdJob(id: string, error: string, expectedUpdatedAt?: Date): Promise<boolean> {
+  const db = await getDb();
+  if (!db) throw new Error("后期状态数据库不可用");
+  const rows = await db.update(jobs).set({ status: "failed", error, updatedAt: new Date() })
+    .where(and(eq(jobs.id, id), eq(jobs.type, "post_prod"), eq(jobs.status, "running"),
+      expectedUpdatedAt ? eq(jobs.updatedAt, expectedUpdatedAt) : undefined))
+    .returning({ id: jobs.id });
+  return rows.length === 1;
+}
+
+/** 后期心跳原子合并，避免旧读快照覆盖产物或资源证据。 */
+export async function patchPostProdProgressStrict(id: string, patch: Record<string, unknown>): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("后期进度数据库不可用");
+  const rows = await db.update(jobs).set({
+    output: sql`coalesce(${jobs.output}::jsonb, '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb`,
+    updatedAt: new Date(),
+  }).where(and(eq(jobs.id, id), eq(jobs.type, "post_prod"), eq(jobs.status, "running")))
+    .returning({ id: jobs.id });
+  if (rows.length !== 1) throw new Error("后期任务不再运行，停止写入进度");
+}
+
+/** 仅结算当前后期任务，不能用迟到的成功覆盖用户终止或其他终态。 */
+export async function completePostProdJob(id: string, output: unknown, provider: string): Promise<boolean> {
+  const db = await getDb();
+  if (!db) throw new Error("后期结果数据库不可用");
+  const rows = await db.update(jobs).set({ status: "succeeded", output: output as any,
+    provider, error: null, updatedAt: new Date() })
+    .where(and(eq(jobs.id, id), eq(jobs.type, "post_prod"), eq(jobs.status, "running")))
+    .returning({ id: jobs.id });
+  return rows.length === 1;
+}

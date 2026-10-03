@@ -1,3 +1,5 @@
+import { readGrowthGzipJson, writeGrowthGzipJson, mapGrowthSequential } from "./growthJsonStream";
+import { observeRuntimeMemory } from "../services/runtimeMemory";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { gunzip as gunzipCb, gzip as gzipCb } from "node:zlib";
@@ -588,8 +590,7 @@ async function downloadColdStoreAsset(
 async function readLocalJsonOrGzip<T>(plainPath: string): Promise<T | null> {
   const gzPath = `${plainPath}.gz`;
   try {
-    const raw = await fs.readFile(gzPath);
-    return JSON.parse((await gunzipAsync(raw)).toString("utf8")) as T;
+    return await observeRuntimeMemory(`growth:read:${path.basename(plainPath)}`, () => readGrowthGzipJson<T>(gzPath));
   } catch {}
   try {
     return JSON.parse(await fs.readFile(plainPath, "utf8")) as T;
@@ -1533,8 +1534,8 @@ async function readPlatformCurrentTruthStoreFile(): Promise<TrendStoreFile | nul
     readGrowthDebugSummary(),
     readPlatformCurrentManifest(),
   ]);
-  const truthEntries = await Promise.all(
-    GROWTH_STORE_PLATFORM_VALUES.map(async (platform) => [platform, await readPlatformCurrentTruthFile(platform)] as const),
+  const truthEntries = await mapGrowthSequential(
+    GROWTH_STORE_PLATFORM_VALUES, async (platform) => [platform, await readPlatformCurrentTruthFile(platform)] as const,
   );
   const availableEntries = truthEntries.filter(([, entry]) => Boolean(entry)) as Array<
     [GrowthPlatform, PlatformCurrentTruthFile]
@@ -1576,8 +1577,8 @@ async function readDerivedStoreFile(): Promise<TrendStoreFile | null> {
     readHistorySummaryFile(),
     readGrowthDebugSummary(),
   ]);
-  const collectionsEntries = await Promise.all(
-    GROWTH_STORE_PLATFORM_VALUES.map(async (platform) => [platform, await readPlatformCollectionFile(platform)] as const),
+  const collectionsEntries = await mapGrowthSequential(
+    GROWTH_STORE_PLATFORM_VALUES, async (platform) => [platform, await readPlatformCollectionFile(platform)] as const,
   );
   const collections = Object.fromEntries(
     collectionsEntries.filter(([, collection]) => Boolean(collection?.items?.length)),
@@ -1820,18 +1821,22 @@ function hasAnyLiveCollectionItems(collections: Partial<Record<GrowthPlatform, P
   return GROWTH_STORE_PLATFORM_VALUES.some((platform) => (collections[platform]?.items?.length || 0) > 0);
 }
 
-function buildSlimTrendStore(store: TrendStoreFile): TrendStoreFile {
+function buildSlimTrendStore(store: TrendStoreFile, changedPlatforms?: GrowthPlatform[]): TrendStoreFile {
   const collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>> = {};
   for (const platform of GROWTH_STORE_PLATFORM_VALUES) {
     const collection = store.collections?.[platform];
     if (!collection) continue;
+    if (changedPlatforms && !changedPlatforms.includes(platform)) {
+      collections[platform] = collection;
+      continue;
+    }
     collections[platform] = {
       ...collection,
       items: [],
-      notes: [
+      notes: Array.from(new Set([
         ...(collection.notes || []),
         `items_externalized:platform-current/${platform}.current.json.gz`,
-      ],
+      ])),
     };
   }
   return {
@@ -1894,21 +1899,7 @@ async function writeBufferAtomic(filePath: string, payload: Buffer) {
 }
 
 async function writeJsonGzipAtomic(plainPath: string, value: unknown) {
-  const gzPath = `${plainPath}.gz`;
-  const tempPath = `${gzPath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.next`;
-  let payload: Buffer;
-  try {
-    payload = await gzipAsync(Buffer.from(JSON.stringify(value), "utf8"), { level: 6 });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (error instanceof RangeError || /Invalid string length/i.test(message)) {
-      throw new Error(`growth_store_json_too_large: ${path.basename(gzPath)} (${message})`);
-    }
-    throw error;
-  }
-  await fs.writeFile(tempPath, payload);
-  await fs.rename(tempPath, gzPath);
-  await fs.rm(plainPath, { force: true }).catch(() => {});
+  await observeRuntimeMemory(`growth:write:${path.basename(plainPath)}`, () => writeGrowthGzipJson(plainPath, value));
 }
 
 export async function readTrendStore(options?: { preferDerivedFiles?: boolean; preferFlyLive?: boolean }): Promise<TrendStoreFile> {
@@ -1985,8 +1976,8 @@ export async function readTrendStoreForPlatforms(
   const history = await readHistorySummaryFile();
 
   if (options?.preferFlyLive) {
-    const remoteEntries = await Promise.all(
-      uniquePlatforms.map(async (platform) => [platform, await readFlyPlatformCurrentTruthFile(platform)] as const),
+    const remoteEntries = await mapGrowthSequential(
+      uniquePlatforms, async (platform) => [platform, await readFlyPlatformCurrentTruthFile(platform)] as const,
     );
     const remoteCollections = Object.fromEntries(
       remoteEntries.filter(([, entry]) => Boolean(entry)).map(([platform, entry]) => [platform, entry!.collection]),
@@ -2008,8 +1999,8 @@ export async function readTrendStoreForPlatforms(
   }
 
   if (options?.preferDerivedFiles) {
-    const truthEntries = await Promise.all(
-      uniquePlatforms.map(async (platform) => [platform, await readPlatformCurrentTruthFile(platform)] as const),
+    const truthEntries = await mapGrowthSequential(
+      uniquePlatforms, async (platform) => [platform, await readPlatformCurrentTruthFile(platform)] as const,
     );
     const truthCollections = Object.fromEntries(
       truthEntries.filter(([, entry]) => Boolean(entry)).map(([platform, entry]) => [platform, entry!.collection]),
@@ -2033,8 +2024,8 @@ export async function readTrendStoreForPlatforms(
       };
     }
 
-    const derivedEntries = await Promise.all(
-      uniquePlatforms.map(async (platform) => [platform, await readPlatformCollectionFile(platform)] as const),
+    const derivedEntries = await mapGrowthSequential(
+      uniquePlatforms, async (platform) => [platform, await readPlatformCollectionFile(platform)] as const,
     );
     const derivedCollections = Object.fromEntries(
       derivedEntries.filter(([, collection]) => Boolean(collection)).map(([platform, collection]) => [platform, collection!]),
@@ -2197,6 +2188,7 @@ async function writeStoreUnlocked(
     allowLowerTotals?: boolean;
     /** 单平台 merge 只重写真实发生变化的平台大文件，避免四个平台重复 gzip 造成资源尖峰。 */
     changedPlatforms?: GrowthPlatform[];
+    preserveUnloadedPlatforms?: boolean;
   },
 ) {
   await ensureStoreDir();
@@ -2224,7 +2216,7 @@ async function writeStoreUnlocked(
       }
     }
   }
-  await writeJsonAtomic(STORE_FILE, buildSlimTrendStore(next), { compact: true });
+  await writeJsonAtomic(STORE_FILE, buildSlimTrendStore(next, options?.preserveUnloadedPlatforms ? options.changedPlatforms : undefined), { compact: true });
   await Promise.all([
     writeRuntimeSegment(
       RUNTIME_SCHEDULER_FILE,
@@ -2253,9 +2245,11 @@ async function writeStoreUnlocked(
     archiveIndex: next.archiveIndex || [],
   });
   await writeJsonAtomic(HISTORY_SUMMARY_FILE, next.history || createEmptyHistoryState());
-  await refreshTrendDebugSummary(next);
+  if (options?.preserveUnloadedPlatforms) {
+    await refreshPlatformUpdateSummary(next, options.changedPlatforms || []);
+  } else await refreshTrendDebugSummary(next);
   if (options?.writeLegacyMirror ?? SHOULD_WRITE_LEGACY_MIRROR) {
-    await writeJsonAtomic(LEGACY_STORE_FILE, buildSlimTrendStore(next), { compact: true });
+    await writeJsonAtomic(LEGACY_STORE_FILE, buildSlimTrendStore(next, options?.preserveUnloadedPlatforms ? options.changedPlatforms : undefined), { compact: true });
   }
   if (!(options?.writeDerivedPlatformFiles ?? SHOULD_WRITE_DERIVED_PLATFORM_FILES)) {
     return next;
@@ -2271,8 +2265,8 @@ async function writeStoreUnlocked(
     truthSource: "platform-current",
     platforms: { ...(existingManifest?.platforms || {}) },
   };
-  await Promise.all(
-    GROWTH_STORE_PLATFORM_VALUES.map(async (platform) => {
+  await mapGrowthSequential(
+    GROWTH_STORE_PLATFORM_VALUES, async (platform) => {
       const collection = next.collections?.[platform];
       const platformFile = path.join(PLATFORM_DIR, `${platform}.json`);
       const bucketDir = path.join(PLATFORM_DIR, platform);
@@ -2281,7 +2275,7 @@ async function writeStoreUnlocked(
       const shouldRewrite = !changedPlatformSet
         || changedPlatformSet.has(platform)
         || !existingManifest?.platforms?.[platform];
-      if (!shouldRewrite) return;
+      if (!shouldRewrite || (options?.preserveUnloadedPlatforms && !changedPlatformSet?.has(platform))) return;
       if (!collection || isRecoveredCollectionSource(collection.source)) {
         await fs.rm(platformFile, { force: true });
         await fs.rm(truthFile, { force: true });
@@ -2330,7 +2324,7 @@ async function writeStoreUnlocked(
           }),
         );
       }
-    }),
+    },
   );
   await writeJsonAtomic(PLATFORM_CURRENT_MANIFEST_FILE, platformManifest);
   return next;
@@ -2343,6 +2337,7 @@ async function writeStore(
     writeLegacyMirror?: boolean;
     allowLowerTotals?: boolean;
     changedPlatforms?: GrowthPlatform[];
+    preserveUnloadedPlatforms?: boolean;
   },
 ) {
   return withGrowthStoreMutationLock("write-store", () => writeStoreUnlocked(next, options));
@@ -2725,8 +2720,8 @@ export async function rebuildTrendDerivedFilesFromCurrentStore() {
   });
 }
 
-export async function mergeTrendCollections(collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>) {
-  return mergeTrendCollectionsWithOptions(collections);
+export async function mergeTrendCollections(collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>, options?: { loadOnlyChangedPlatforms?: boolean }) {
+  return mergeTrendCollectionsWithOptions(collections, options);
 }
 
 /**
@@ -3018,11 +3013,59 @@ export async function restoreTrendPlatformCurrentFromBaseline(
   });
 }
 
+/** 单平台更新只补齐目标 items；其余平台只携带 current.json 的轻量元数据。 */
+async function readStoreForPlatformUpdates(platforms: GrowthPlatform[]): Promise<TrendStoreFile> {
+  const shell = await readRawStoreFile(STORE_FILE) || await readRawStoreFile(LEGACY_STORE_FILE) || createEmptyStore();
+  const meta = await readRuntimeMeta();
+  const history = await readHistorySummaryFile() || shell.history || createEmptyHistoryState();
+  const collections = { ...shell.collections };
+  for (const platform of platforms) {
+    const truth = await readPlatformCurrentTruthFile(platform);
+    const current = truth?.collection || await readPlatformCollectionFile(platform) || collections[platform];
+    if (current) collections[platform] = current;
+    if (truth?.history) history.platforms[platform] = truth.history;
+  }
+  const archiveIndex = await readArchiveIndexFile();
+  return { ...shell, collections, history, archiveIndex: dedupeGrowthArchiveIndex([...archiveIndex, ...(shell.archiveIndex || [])]),
+    scheduler: meta.scheduler || shell.scheduler,
+    backfill: meta.backfill || shell.backfill, backfillLive: meta.backfillLive || shell.backfillLive,
+    backfillHistory: meta.backfillHistory || shell.backfillHistory, mailDigest: meta.mailDigest || shell.mailDigest };
+}
+
+async function refreshPlatformUpdateSummary(store: TrendStoreFile, changed: GrowthPlatform[]) {
+  const summary = buildGrowthDebugSummary(store);
+  const previous = await readGrowthDebugSummary();
+  const manifest = await readPlatformCurrentManifest();
+  for (const platform of activeGrowthPlatformValues) {
+    if (changed.includes(platform)) continue;
+    const entry = manifest?.platforms?.[platform];
+    const preserved = previous?.platforms?.[platform] || (entry ? {
+      platform, currentTotal: entry.currentTotal, archivedTotal: entry.archivedTotal,
+    } : undefined);
+    if (preserved) summary.platforms[platform] = preserved;
+    else {
+      // 旧布局尚无摘要时只用已有完整元数据中的计数，不读取其他平台大文件。
+      summary.platforms[platform] = { platform,
+        currentTotal: store.collections[platform]?.stats?.itemCount || 0,
+        archivedTotal: store.history?.platforms[platform]?.archivedItems || 0 };
+    }
+  }
+  summary.totals.currentItems = growthPlatformsForStatsAggregationList().reduce(
+    (sum, platform) => sum + (summary.platforms[platform]?.currentTotal || 0), 0);
+  summary.totals.archivedItems = growthPlatformsForStatsAggregationList().reduce(
+    (sum, platform) => sum + (summary.platforms[platform]?.archivedTotal || 0), 0);
+  await writeJsonAtomic(DEBUG_SUMMARY_FILE, summary);
+  await refreshGrowthStatusSnapshot(summary).catch(() => {});
+}
+
 async function mergeTrendCollectionsWithOptionsUnlocked(
   collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>,
-  options?: { deferHistoryLedger?: boolean; skipArchive?: boolean },
+  options?: { deferHistoryLedger?: boolean; skipArchive?: boolean; loadOnlyChangedPlatforms?: boolean },
 ) {
-  const current = await readTrendStore({ preferDerivedFiles: true });
+  const changedPlatforms = Object.keys(collections) as GrowthPlatform[];
+  const current = options?.loadOnlyChangedPlatforms
+    ? await readStoreForPlatformUpdates(changedPlatforms)
+    : await readTrendStore({ preferDerivedFiles: true });
   const next: TrendStoreFile = {
     updatedAt: nowShanghaiIso(),
     collections: { ...current.collections },
@@ -3078,17 +3121,22 @@ async function mergeTrendCollectionsWithOptionsUnlocked(
   // collectedAt 冻结，每轮还在 parse+重写 93MB 旧载荷。故 merge 路径显式放行。
   const written = await writeStoreUnlocked(next, {
     allowLowerTotals: true,
-    changedPlatforms: Object.keys(collections) as GrowthPlatform[],
+    changedPlatforms,
+    preserveUnloadedPlatforms: options?.loadOnlyChangedPlatforms,
   });
   return {
     ...written,
+    // 显式窄读调用仅返回本轮平台的完整数据，不把其他平台的空 items 元数据当成真值。
+    ...(options?.loadOnlyChangedPlatforms ? { collections: Object.fromEntries(
+      changedPlatforms.map(platform => [platform, written.collections[platform]]),
+    ) as Partial<Record<GrowthPlatform, PlatformTrendCollection>> } : {}),
     mergeStats,
   };
 }
 
 export async function mergeTrendCollectionsWithOptions(
   collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>,
-  options?: { deferHistoryLedger?: boolean; skipArchive?: boolean },
+  options?: { deferHistoryLedger?: boolean; skipArchive?: boolean; loadOnlyChangedPlatforms?: boolean },
 ) {
   return withGrowthStoreMutationLock(
     "merge-trend-collections",

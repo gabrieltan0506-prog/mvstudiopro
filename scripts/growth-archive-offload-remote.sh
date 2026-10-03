@@ -27,9 +27,12 @@ lock_acquired=false
 heartbeat_pid=""
 
 has_interactive_workload() {
-  mkdir -p "$INTERACTIVE_DIR"
-  find "$INTERACTIVE_DIR" -type f -mmin +2 -delete 2>/dev/null || true
-  test -n "$(find "$INTERACTIVE_DIR" -type f -mmin -2 -print -quit 2>/dev/null)"
+  for lease_dir in "$INTERACTIVE_DIR" "${GROWTH_INTERACTIVE_FALLBACK_DIR:-${TMPDIR:-/tmp}/mvstudiopro-growth-runtime-interactive-workloads}"; do
+    [ -d "$lease_dir" ] || continue
+    fresh=$(find "$lease_dir" -type f -mmin -2 -print -quit 2>/dev/null) || return 0
+    [ -z "$fresh" ] || return 0
+  done
+  return 1
 }
 
 release_collection_lease() {

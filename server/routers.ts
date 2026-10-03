@@ -11525,7 +11525,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               message: collectionError || `${platform} 本轮没有产生可提交数据。`,
             });
           }
-          const store = await mergeTrendCollections({ [platform]: collection });
+          const store = await mergeTrendCollections({ [platform]: collection }, { loadOnlyChangedPlatforms: true });
           const readBack = store.collections[platform];
           if (!readBack?.items.length) {
             throw new TRPCError({
