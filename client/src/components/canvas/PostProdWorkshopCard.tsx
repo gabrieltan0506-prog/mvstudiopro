@@ -22,6 +22,7 @@ import { Film, Layers, Loader2,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { copyText } from "@/lib/copyText";
+import { gcsTransferUrl } from "@/lib/gcsTransfer";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import { getBlockEpisodeIndex, isManhuaFactoryArtifactBlock } from "@/lib/canvasDramaStudio";
 import {
@@ -1182,16 +1183,16 @@ export default function PostProdWorkshopCard({
       const duration = Number(job.output.durationSec);
       return (
         <span className="inline-flex flex-wrap items-center gap-2">
-          <audio controls preload="none" src={url} aria-label={ACTION_LABEL[job.action]} className="h-8 max-w-full" />
+          <audio controls preload="none" src={gcsTransferUrl(url)} aria-label={ACTION_LABEL[job.action]} className="h-8 max-w-full" />
           {Number.isFinite(duration) ? <span className="text-[11px] text-white/60">{duration.toFixed(3)} 秒</span> : null}
-          <a href={url} target="_blank" rel="noreferrer" className="text-[11px] text-cyan-200 underline">打开音频</a>
+          <a href={gcsTransferUrl(url)} target="_blank" rel="noreferrer" className="text-[11px] text-cyan-200 underline">打开音频</a>
         </span>
       );
     }
     return (
       <span className="inline-flex items-center gap-2">
         <a
-          href={url}
+          href={gcsTransferUrl(url)}
           target="_blank"
           rel="noreferrer"
           className="text-[11px] text-cyan-200 underline underline-offset-2"
@@ -1707,7 +1708,7 @@ export default function PostProdWorkshopCard({
                 </span>
                 {job.videoUrl ? (
                   <a
-                    href={job.videoUrl}
+                    href={gcsTransferUrl(job.videoUrl)}
                     target="_blank"
                     rel="noreferrer"
                     className="ml-2 text-cyan-200 underline underline-offset-2"
