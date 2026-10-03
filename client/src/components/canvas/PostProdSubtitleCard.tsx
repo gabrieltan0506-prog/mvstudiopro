@@ -76,7 +76,7 @@ export function PostProdSubtitleCard({ clips, busy, onSubmit, context, storageKe
       setSubmitting(false);
     }
   };
-  return <section className="rounded-xl border border-white/10 p-3" aria-label="成片字幕">
+  return <section id="manhua-post-subtitle" className="rounded-xl border border-white/10 p-3" aria-label="成片字幕">
     <h3 className="text-sm font-medium">成片字幕</h3>
     <p className="mt-1 text-xs text-white/60">使用已确认的对白与 SRT 时间码，不自动识别或改写对白。保留成片尺寸、帧率及音轨，另存带字幕版本。</p>
     <select aria-label="字幕成片" value={source} onChange={event => setSource(event.target.value)} disabled={locked} className="mt-2 w-full rounded border bg-transparent p-2 text-xs">

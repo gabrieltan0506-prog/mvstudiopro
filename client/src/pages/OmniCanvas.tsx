@@ -13122,7 +13122,7 @@ export default function OmniCanvas() {
               }`}
             >
               <nav aria-label="成片与后期工具" className="mb-3 flex flex-wrap gap-2">
-                {[["manhua-post-concat", "拼接成片"], ["manhua-post-enhance", "2K／4K与30／60帧"], ["manhua-post-production", "混音与结果"], ["manhua-delivery-export", "成片与导出"]].map(([id, label]) => <button key={id} type="button" className="rounded-lg border border-cyan-300/30 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-50" onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" })}>{label}</button>)}
+                {[["manhua-post-concat", "拼接成片"], ["manhua-post-enhance", "2K／4K · 30帧"], ["manhua-post-subtitle", "对白字幕"], ["manhua-post-production", "混音与结果"], ["manhua-delivery-export", "成片与导出"]].map(([id, label]) => <button key={id} type="button" className="rounded-lg border border-cyan-300/30 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-50" onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" })}>{label}</button>)}
               </nav>
               {/* 后期工坊(蓝图二):三件套已上线,卡内只挂真实工序;按用户挂载防串单 */}
               {user?.id ? (
