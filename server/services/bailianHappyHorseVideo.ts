@@ -215,5 +215,5 @@ export async function pollBailianHappyHorseOnce(
       error: String(json.output?.message || json.output?.code || "HappyHorse 生成失败"),
     };
   }
-  return { state: "running", status: status.toLowerCase() || "pending" };
+  return { state: "running", status: status.toLowerCase() || "transient_empty_status" };
 }

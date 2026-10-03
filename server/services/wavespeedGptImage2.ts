@@ -1,3 +1,4 @@
+import { isTaskHeartbeatStatus } from "./taskHeartbeat.js";
 /**
  * WaveSpeed `openai/gpt-image-2`（0910 用户拍板：OpenAI 官方 → EvoLink 2.5 → WaveSpeed 兜底，本模块是第三顺位）。
  *
@@ -78,9 +79,9 @@ type PredictionJson = {
 
 async function pollWavespeedGptImage2(predictionId: string, flowLog?: string[]): Promise<string> {
   const apiKey = getWavespeedApiKey();
-  const started = Date.now();
+  let lastHeartbeatAt = Date.now();
   let lastStatus = "";
-  while (Date.now() - started < MAX_POLL_MS) {
+  while (Date.now() - lastHeartbeatAt < MAX_POLL_MS) {
     let res: Response | null = null;
     try {
       res = await fetch(`${apiBase()}/api/v3/predictions/${encodeURIComponent(predictionId)}/result`, {
@@ -97,6 +98,7 @@ async function pollWavespeedGptImage2(predictionId: string, flowLog?: string[]):
       const json = (await res.json().catch(() => ({}))) as PredictionJson;
       const d = json.data ?? json;
       const status = String(d?.status || "").trim().toLowerCase();
+      if (isTaskHeartbeatStatus(status)) lastHeartbeatAt = Date.now();
       if (status !== lastStatus) {
         lastStatus = status;
         appendImageFlowLog(flowLog, `[GPT-IMAGE-2·WaveSpeed] 任务 ${predictionId} · status=${status || "?"}`);

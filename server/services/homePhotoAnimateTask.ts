@@ -1,3 +1,4 @@
+import { isTaskHeartbeatStatus, taskHeartbeatTime } from "./taskHeartbeat.js";
 import { SubmitRejectedError } from "./submitOutcomeErrors.js";
 /**
  * 首页照片动画：异步任务（落盘 + 短轮询 + 部署后续跑）。
@@ -107,6 +108,8 @@ export type HomePhotoAnimateTaskRecord = {
   model?: string;
   videoUrl?: string;
   error?: string;
+  /** 最近一次成功持久化的有效上游心跳。 */
+  lastHeartbeatAt?: string;
   createdAt: string;
   updatedAt: string;
   startedAt?: string;
@@ -448,7 +451,7 @@ async function advanceTask(taskId: string): Promise<HomePhotoAnimateTaskRecord |
       return failTask(task, "视频服务未返回任务查询地址");
     }
 
-    const createdMs = Date.parse(task.createdAt) || Date.now();
+    const createdMs = taskHeartbeatTime(task);
     if (Date.now() - createdMs > OPENROUTER_VIDEO_MAX_POLL_MS) {
       /**
        * 六审第10条:已提交上游的任务超线不能 failTask 退款——上游不可取消、
@@ -477,6 +480,9 @@ async function advanceTask(taskId: string): Promise<HomePhotoAnimateTaskRecord |
         return task;
       }
       if (snap.state === "running") {
+        if (isTaskHeartbeatStatus(snap.status)) {
+          task.lastHeartbeatAt = new Date().toISOString();
+        }
         task.status = "running";
         await writeTask(task);
         return task;
@@ -500,6 +506,9 @@ async function advanceTask(taskId: string): Promise<HomePhotoAnimateTaskRecord |
     if (task.wavespeedPredictionId) {
       const snap = await pollWavespeedWanOnce(task.wavespeedPredictionId);
       if (snap.state === "running") {
+        if (isTaskHeartbeatStatus(snap.status)) {
+          task.lastHeartbeatAt = new Date().toISOString();
+        }
         task.status = "running";
         await writeTask(task);
         return task;
@@ -524,6 +533,9 @@ async function advanceTask(taskId: string): Promise<HomePhotoAnimateTaskRecord |
     if (task.bailianTaskId) {
       const snap = await pollBailianHappyHorseOnce(task.bailianTaskId);
       if (snap.state === "running") {
+        if (isTaskHeartbeatStatus(snap.status)) {
+          task.lastHeartbeatAt = new Date().toISOString();
+        }
         task.status = "running";
         await writeTask(task);
         return task;
@@ -565,6 +577,9 @@ async function advanceTask(taskId: string): Promise<HomePhotoAnimateTaskRecord |
     try {
       const snap = await pollOpenRouterVideoJobOnce(pollingUrl, apiKey);
       if (snap.state === "running") {
+        if (isTaskHeartbeatStatus(snap.status)) {
+          task.lastHeartbeatAt = new Date().toISOString();
+        }
         task.status = "running";
         await writeTask(task);
         return task;

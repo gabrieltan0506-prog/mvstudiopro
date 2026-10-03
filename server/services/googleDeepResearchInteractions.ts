@@ -1,3 +1,4 @@
+import { isTaskHeartbeatStatus } from "./taskHeartbeat.js";
 /**
  * Google Deep Research Agent · `@google/genai` `interactions`（背景任務 + 輪詢）
  *
@@ -140,10 +141,11 @@ export async function pollInteractionUntilDone(
 ): Promise<Record<string, unknown>> {
   const ai = getGoogleGenAI();
   const pollStart = Date.now();
+  let lastHeartbeatAt = pollStart;
   const maxSec = Math.round(opts.maxMs / 1000);
   const label = opts.logLabel ?? "deep-research";
 
-  while (Date.now() - pollStart < opts.maxMs) {
+  while (Date.now() - lastHeartbeatAt < opts.maxMs) {
     if (opts.abortSignal?.aborted) {
       throw new Error(`${label} 已中止（interactionId=${interactionId}）`);
     }
@@ -162,6 +164,7 @@ export async function pollInteractionUntilDone(
     }
 
     const status = String(row?.status ?? "unknown");
+    if (isTaskHeartbeatStatus(status)) lastHeartbeatAt = Date.now();
     if (opts.onTick) {
       try {
         await opts.onTick(elapsed, maxSec);

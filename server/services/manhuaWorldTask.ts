@@ -1,3 +1,4 @@
+import { isTaskHeartbeatStatus, taskHeartbeatTime } from "./taskHeartbeat.js";
 /**
  * 场景 3DGS 世界任务（PR-8）：场景参考图 → World Labs Marble → 产物落 Fly 桥（PR-9）→ 归档 GCS。
  *
@@ -81,6 +82,8 @@ export type ManhuaWorldTaskRecord = {
   errorZh?: string;
   lastTransientError?: string;
   deletedAt?: string;
+  /** 最近一次成功持久化的有效上游心跳。 */
+  lastHeartbeatAt?: string;
   createdAt: string;
   updatedAt: string;
   startedAt?: string;
@@ -398,13 +401,16 @@ export async function advanceManhuaWorldTask(taskId: string): Promise<ManhuaWorl
         }
       }
       if (!record.depthPanoRgbUrl) {
-        if (deps.now().getTime() - Date.parse(record.createdAt) > MAX_POLL_MS) {
+        if (deps.now().getTime() - taskHeartbeatTime(record) > MAX_POLL_MS) {
           return markReconcile(record, "深度全景上色长时间没有终态，已转人工对账");
         }
         const depth = await deps.pollDepth(record.depthOperationId!);
         if (depth.state === "reconcile") return markReconcile(record, depth.error);
         if (depth.state === "failed") return markFailed(record, "深度全景上色失败", depth.error);
         if (depth.state === "running") {
+          if (isTaskHeartbeatStatus(depth.status)) {
+            record.lastHeartbeatAt = deps.now().toISOString();
+          }
           record.status = "running";
           record.lastTransientError = `depth:${depth.status}`.slice(0, 280);
           await writeRecord(record);
@@ -465,7 +471,7 @@ export async function advanceManhuaWorldTask(taskId: string): Promise<ManhuaWorl
       }
     }
 
-    if (deps.now().getTime() - Date.parse(record.createdAt) > MAX_POLL_MS) {
+    if (deps.now().getTime() - taskHeartbeatTime(record) > MAX_POLL_MS) {
       return markReconcile(record, "3D 世界任务长时间没有终态，已转人工对账");
     }
 
@@ -473,6 +479,9 @@ export async function advanceManhuaWorldTask(taskId: string): Promise<ManhuaWorl
     if (snapshot.state === "reconcile") return markReconcile(record, snapshot.error);
     if (snapshot.state === "failed") return markFailed(record, "3D 世界生成失败", snapshot.error);
     if (snapshot.state === "running") {
+      if (isTaskHeartbeatStatus(snapshot.status)) {
+        record.lastHeartbeatAt = deps.now().toISOString();
+      }
       record.status = "running";
       if (snapshot.worldId) record.worldId = snapshot.worldId;
       record.lastTransientError = snapshot.status.slice(0, 280);

@@ -354,13 +354,14 @@ const HEARTBEAT_DB_FLUSH_MS = 60_000;
 export function touchJobHeartbeat(jobId: string | null | undefined): void {
   if (!jobId) return;
   const now = Date.now();
-  jobHeartbeats.set(jobId, now);
   const last = jobHeartbeatDbFlushed.get(jobId) ?? 0;
   if (now - last < HEARTBEAT_DB_FLUSH_MS) return;
   jobHeartbeatDbFlushed.set(jobId, now);
   // 审查 P0：统稿/派生阶段可能 >20 分钟没有进度写入，reaper 会把 running 行整行删掉。
   // 失败只记日志：心跳落盘失败不该打断任务，下一次 touch 会再试。
-  void touchJobRunningUpdatedAt(jobId).catch((err) => {
+  void touchJobRunningUpdatedAt(jobId).then((saved) => {
+    if (saved) jobHeartbeats.set(jobId, now);
+  }).catch((err) => {
     jobHeartbeatDbFlushed.set(jobId, last);
     console.warn(`[runner] heartbeat db touch failed job=${jobId}: ${err instanceof Error ? err.message : String(err)}`);
   });
@@ -371,6 +372,36 @@ function clearJobHeartbeat(jobId: string | null | undefined): void {
   jobHeartbeatDbFlushed.delete(jobId);
 }
 const STALL_CHECK_INTERVAL_MS = 15_000;
+
+/** 仅当前 worker 持有期间续租；数据库写入成功才算心跳，结束后停止续租。 */
+function startWorkerHeartbeat(jobId: string, stallMs: number): () => void {
+  let pending = false;
+  let stopped = false;
+  const beat = () => {
+    if (pending || stopped) return;
+    pending = true;
+    const sentAt = Date.now();
+    void touchJobRunningUpdatedAt(jobId).then((saved) => {
+      if (saved && !stopped) jobHeartbeats.set(jobId, sentAt);
+    }).catch(() => {}).finally(() => { pending = false; });
+  };
+  const timer = setInterval(beat, Math.max(1_000, Math.min(30_000, stallMs / 3)));
+  timer.unref?.();
+  return () => { stopped = true; clearInterval(timer); clearJobHeartbeat(jobId); };
+}
+
+/** 内层任务取消器与外层共用成功持久化的心跳，保留各自失联窗口。 */
+function abortOnJobSilence(controller: AbortController, jobId: string, stallMs: number): () => void {
+  const startedAt = Date.now();
+  const timer = setInterval(() => {
+    if (Date.now() - (jobHeartbeats.get(jobId) ?? startedAt) >= stallMs) {
+      controller.abort(new Error("任务连续无有效心跳，已中止当前处理"));
+    }
+  }, Math.max(1_000, Math.min(15_000, stallMs / 3)));
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+
 
 /** 连续多久没有进度算卡死；LLM 单次最长 8 分钟、目录页扫读 3 分钟，默认 20 分钟留足余量 */
 function resolveKnowledgeCardDistillStallMs(): number {
@@ -2100,12 +2131,7 @@ async function processManhuaBgmJob(params: {
       ? (job.output as Record<string, unknown>)
       : null;
   const controller = new AbortController();
-  const hardTimer = setTimeout(
-    () =>
-      controller.abort(new Error("配乐任务处理时间已到，保留原任务号等待恢复")),
-    Math.max(1_000, params.timeoutMs - 1_000)
-  );
-  hardTimer.unref?.();
+  const stopSilenceWatch = abortOnJobSilence(controller, params.jobId, params.timeoutMs);
 
   const persistTerminal = async (
     output: ManhuaBgmJobOutput
@@ -2291,7 +2317,7 @@ async function processManhuaBgmJob(params: {
       providerCost: { unit: "per_call", calls: 1 },
     });
   } finally {
-    clearTimeout(hardTimer);
+    stopSilenceWatch();
   }
 }
 
@@ -2457,7 +2483,7 @@ async function processPlatformJob(
       }
       const user = await resolveUserForJob(jobUserId);
       const controller = new AbortController();
-      const hardAbort = setTimeout(() => controller.abort(), 14 * 60_000);
+      const stopSilenceWatch = abortOnJobSilence(controller, platformJobId, 14 * 60_000);
       const caller = appRouter.createCaller({
         req: {} as any,
         res: {} as any,
@@ -2492,7 +2518,7 @@ async function processPlatformJob(
         };
       } finally {
         if (heartbeat) clearInterval(heartbeat);
-        clearTimeout(hardAbort);
+        stopSilenceWatch();
         controller.abort();
       }
     }
@@ -3718,6 +3744,7 @@ async function runClaimedJob(
   if (!job) return;
   let releaseInteractiveWorkload: (() => Promise<void>) | undefined;
   let paidImageHeartbeat: ReturnType<typeof setInterval> | undefined;
+  let stopWorkerHeartbeat: (() => void) | undefined;
   try {
     const jobType = job.type as JobType;
     const timeoutMs = resolveJobTimeoutMs(jobType, job.input);
@@ -3756,12 +3783,14 @@ async function runClaimedJob(
       isRecord(job.input) && (job.input.action === "knowledge_card_distill" || job.input.action === "knowledge_card_derive_level")
         ? { jobId: job.id, stallMs: resolveKnowledgeCardDistillStallMs() }
         : undefined;
+    if (!distillHeartbeat) stopWorkerHeartbeat = startWorkerHeartbeat(job.id, timeoutMs);
     const { output, provider } = await withTimeout(
       executeJob(jobType, job.input, timeoutMs, String(job.userId), job.id),
       timeoutMs,
       `${job.type} job timed out after ${timeoutMs}ms`,
       manhuaLearnJob
         ? {
+            heartbeat: { jobId: job.id, stallMs: timeoutMs },
             onTimeout: () => {
               abortRunningManhuaLearnJob(job.id);
             },
@@ -3769,7 +3798,7 @@ async function runClaimedJob(
           }
         : distillHeartbeat
           ? { heartbeat: distillHeartbeat }
-          : undefined
+          : { heartbeat: { jobId: job.id, stallMs: timeoutMs } }
     );
     const knowledgeCardJob = jobType === "platform" && isRecord(job.input)
       && (job.input.action === "knowledge_card_distill" || job.input.action === "knowledge_card_derive_level");
@@ -4176,6 +4205,7 @@ async function runClaimedJob(
       await markJobFailed(job.id, message);
     }
   } finally {
+    stopWorkerHeartbeat?.();
     if (paidImageHeartbeat) clearInterval(paidImageHeartbeat);
     await releaseInteractiveWorkload?.();
   }
@@ -4236,13 +4266,15 @@ async function processOnePdfExportJob(): Promise<boolean> {
   const job = await claimNextPdfExportJob();
   if (!job) return false;
 
+  const stopHeartbeat = startWorkerHeartbeat(job.id, JOB_TIMEOUT_MS[job.type as JobType]);
   try {
     const jobType = job.type as JobType;
     const timeoutMs = JOB_TIMEOUT_MS[jobType];
     const { output, provider } = await withTimeout(
       executeJob(jobType, job.input, timeoutMs, String(job.userId), job.id),
       timeoutMs,
-      `${job.type} job timed out after ${timeoutMs}ms`,
+      `${job.type} job 连续 ${timeoutMs}ms 无有效心跳`,
+      { heartbeat: { jobId: job.id, stallMs: timeoutMs } },
     );
     await markJobSucceeded(job.id, output, provider);
   } catch (error) {
@@ -4254,6 +4286,8 @@ async function processOnePdfExportJob(): Promise<boolean> {
     } else {
       await markJobFailed(job.id, message);
     }
+  } finally {
+    stopHeartbeat();
   }
 
   return true;
@@ -4278,15 +4312,20 @@ async function processOnePostProdJob(filter: PostProdClaimFilter = resolvePostPr
 
   // 心跳刷新 updatedAt:stale reaper 只清"最后活动过旧"的 running 行,
   // 心跳在=进程活着;进程崩溃后心跳停,租约到期由 reaper 清理,不自动重做。
+  let lastHeartbeatAt = Date.now();
+  let heartbeatPending = false;
   const heartbeat = setInterval(() => {
-    void patchJobRunningProgress(job.id, {
+    if (heartbeatPending) return;
+    heartbeatPending = true;
+    const sentAt = Date.now();
+    void patchJobRunningProgressStrict(job.id, {
       postProdHeartbeatAt: new Date().toISOString(),
-    }).catch(() => {});
+    }).then(() => { lastHeartbeatAt = sentAt; }).catch(() => {}).finally(() => { heartbeatPending = false; });
   }, 30_000);
   heartbeat.unref?.();
 
   const { runPostProdJobWithLimit, resolvePostProdJobTimeoutMs } = await import("./postProdJob.js");
-  // 绑骨绑定阶段真模 >10 分钟（0917 实测），按任务类型分辨墙钟；其余后期仍 10 分钟
+  // 复用任务各自的失联窗口，持续心跳不再受总运行时长限制。
   const timeoutMs = resolvePostProdJobTimeoutMs(job.input);
   try {
     // 时限贯通 AbortSignal:到点下载与 ffmpeg/ffprobe 子进程同步终止
@@ -4294,6 +4333,7 @@ async function processOnePostProdJob(filter: PostProdClaimFilter = resolvePostPr
       job.input,
       String(job.userId),
       timeoutMs,
+      () => lastHeartbeatAt,
     );
     // 只重试状态写入,不重新执行媒体处理;写不进去按失败留痕
     const saved = await markJobSucceededWithRetry(job.id, output, provider);
@@ -4305,7 +4345,7 @@ async function processOnePostProdJob(filter: PostProdClaimFilter = resolvePostPr
     // 后期任务确定性強、重跑同样贵:一律直接失败,不 requeue 重做整项媒体处理
     const message =
       error instanceof Error && error.name === "AbortError"
-        ? `后期任务超时(${timeoutMs}ms),已终止本次处理`
+        ? `后期任务连续${timeoutMs}ms无成功心跳,已终止本次处理`
         : getJobFailureMessage("post_prod" as JobType, error);
     await markJobFailed(job.id, message.slice(0, 800));
   } finally {

@@ -286,7 +286,7 @@ export async function resumeManhuaBgmTask(input: {
     1,
     input.pollTimeoutMs ?? MANHUA_BGM_POLL_TIMEOUT_MS
   );
-  const deadlineMs = Date.now() + pollTimeoutMs;
+  let deadlineMs = Date.now() + pollTimeoutMs;
 
   const isV6Task = Boolean(decodeTtapiSunoTaskId(taskId));
   let raw: unknown;
@@ -332,6 +332,7 @@ export async function resumeManhuaBgmTask(input: {
         throw new Error(`配乐任务 ${taskId} ${polled.task.status}`);
       }
     }
+    deadlineMs = Date.now() + pollTimeoutMs;
     await sleep(
       input.pollIntervalMs ?? MANHUA_BGM_POLL_INTERVAL_MS,
       input.abortSignal

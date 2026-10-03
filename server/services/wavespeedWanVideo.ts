@@ -181,5 +181,5 @@ export async function pollWavespeedWanOnce(
   ) {
     return { state: "failed", error: p.error || "Wan 3.0 生成失败" };
   }
-  return { state: "running", status: p.status || "processing" };
+  return { state: "running", status: p.status || "transient_empty_status" };
 }

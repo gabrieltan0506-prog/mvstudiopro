@@ -1,3 +1,4 @@
+import { isTaskHeartbeatStatus, taskHeartbeatTime } from "./taskHeartbeat.js";
 import { submitEvolinkH3, EVOLINK_H3_MODEL } from "./evolinkHailuoVideo.js";
 import { preflightH3ReferenceMedia } from "./hailuoReferencePreflight.js";
 import { SubmitRejectedError } from "./submitOutcomeErrors.js";
@@ -175,6 +176,8 @@ export type CanvasVideoTaskRecord = {
   provider?: string;
   videoUrl?: string;
   error?: string;
+  /** 最近一次成功持久化的有效上游心跳。 */
+  lastHeartbeatAt?: string;
   createdAt: string;
   updatedAt: string;
   startedAt?: string;
@@ -1223,7 +1226,7 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
       // 仅未提交的下一阶段可排队；提交前marker防止重启后重复付费。
       task.status = "queued";
     }
-    const createdMs = Date.parse(task.createdAt) || Date.now();
+    const createdMs = taskHeartbeatTime(task);
     const deadlineMs = maxPollMs(task.engine) + (task.engine === "wavespeed-upscale" && task.frameTargetFps ? 30 * 60 * 1000 * Math.max(1, task.framePasses || 0) : 0);
     if (Date.now() - createdMs > deadlineMs) {
       if (!hasProviderTask(task)) {
@@ -1325,6 +1328,11 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
           `Seedance ${current.seedanceVersion || "2.5"}`,
         );
         if (snap.state === "running") {
+          if (isTaskHeartbeatStatus(snap.status)) {
+            current.lastHeartbeatAt = new Date().toISOString();
+            current.status = "running";
+            current.timedOutAt = undefined;
+          }
           current.status = activePollStatus(current);
           current.lastTransientError = snap.status.startsWith("transient_") ? snap.status : undefined;
           await writeTask(current);
@@ -1377,6 +1385,11 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
           current.engine === "hailuo-evolink" ? "MiniMax H3" : `Seedance ${current.seedanceVersion || (isMini ? "2.0-mini" : "2.5")}`,
         );
         if (snap.state === "running") {
+          if (isTaskHeartbeatStatus(snap.status)) {
+            current.lastHeartbeatAt = new Date().toISOString();
+            current.status = "running";
+            current.timedOutAt = undefined;
+          }
           current.status = activePollStatus(current);
           current.lastTransientError = snap.status.startsWith("transient_") ? snap.status : undefined;
           await writeTask(current);
@@ -1406,6 +1419,11 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
         }
         const snap = await pollEvolinkVideoTaskOnce(current.evolinkTaskId, "HappyHorse");
         if (snap.state === "running") {
+          if (isTaskHeartbeatStatus(snap.status)) {
+            current.lastHeartbeatAt = new Date().toISOString();
+            current.status = "running";
+            current.timedOutAt = undefined;
+          }
           current.status = activePollStatus(current);
           current.lastTransientError = snap.status.startsWith("transient_") ? snap.status : undefined;
           await writeTask(current);
@@ -1422,6 +1440,11 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
         }
         const snap = await pollWavespeedWanOnce(current.wavespeedPredictionId);
         if (snap.state === "running") {
+          if (isTaskHeartbeatStatus(snap.status)) {
+            current.lastHeartbeatAt = new Date().toISOString();
+            current.status = "running";
+            current.timedOutAt = undefined;
+          }
           current.status = activePollStatus(current);
           current.lastTransientError = snap.status.startsWith("transient_") ? snap.status : undefined;
           await writeTask(current);
@@ -1449,6 +1472,11 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
         }
         const snap = await pollEvolinkVideoTaskOnce(current.evolinkTaskId, "Wan 3.0");
         if (snap.state === "running") {
+          if (isTaskHeartbeatStatus(snap.status)) {
+            current.lastHeartbeatAt = new Date().toISOString();
+            current.status = "running";
+            current.timedOutAt = undefined;
+          }
           current.status = activePollStatus(current);
           current.lastTransientError = snap.status.startsWith("transient_") ? snap.status : undefined;
           await writeTask(current);
@@ -1466,6 +1494,11 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
         }
         const snap = await pollWavespeedWanOnce(current.wavespeedPredictionId);
         if (snap.state === "running") {
+          if (isTaskHeartbeatStatus(snap.status)) {
+            current.lastHeartbeatAt = new Date().toISOString();
+            current.status = "running";
+            current.timedOutAt = undefined;
+          }
           if (snap.status === "transient_http_404") {
             current.wan404Count = (current.wan404Count || 0) + 1;
             // 创建后的最终一致性窗口给足 30 轮;仍 404 = 无效单,终态退分,不再白轮
@@ -1491,6 +1524,11 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
         }
         const snap = await pollWavespeedUpscaleOnce(current.wavespeedPredictionId);
         if (snap.state === "running") {
+          if (isTaskHeartbeatStatus(snap.status)) {
+            current.lastHeartbeatAt = new Date().toISOString();
+            current.status = "running";
+            current.timedOutAt = undefined;
+          }
           current.status = activePollStatus(current);
           current.lastTransientError = snap.status.startsWith("transient_") ? snap.status : undefined;
           await writeTask(current);
@@ -1535,6 +1573,11 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
       if (current.engine === "happyhorse-openrouter" && current.bailianTaskId) {
         const snap = await pollBailianHappyHorseOnce(current.bailianTaskId);
         if (snap.state === "running") {
+          if (isTaskHeartbeatStatus(snap.status)) {
+            current.lastHeartbeatAt = new Date().toISOString();
+            current.status = "running";
+            current.timedOutAt = undefined;
+          }
           current.status = activePollStatus(current);
           current.lastTransientError = snap.status.startsWith("transient_") ? snap.status : undefined;
           await writeTask(current);
@@ -1566,6 +1609,11 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
 
       const snap = await pollOpenRouterVideoJobOnce(current.pollingUrl, apiKey);
       if (snap.state === "running") {
+        if (isTaskHeartbeatStatus(snap.status)) {
+          current.lastHeartbeatAt = new Date().toISOString();
+          current.status = "running";
+          current.timedOutAt = undefined;
+        }
         current.status = activePollStatus(current);
         current.lastTransientError = snap.status.startsWith("transient_") ? snap.status : undefined;
         await writeTask(current);

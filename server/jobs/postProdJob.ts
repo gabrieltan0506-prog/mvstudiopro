@@ -70,15 +70,21 @@ export async function runWithTaskLimit<T>(
   timeoutMs: number,
   operation: (signal: AbortSignal) => Promise<T>,
   externalSignal?: AbortSignal,
+  lastHeartbeatAt?: () => number,
 ): Promise<T> {
   const timeoutController = new AbortController();
   const timeoutReason = new DOMException(
-    `post_prod job timed out after ${timeoutMs}ms`,
+    `post_prod job ${lastHeartbeatAt ? "heartbeat missing" : "timed out"} after ${timeoutMs}ms`,
     "AbortError",
   );
-  const timer = setTimeout(() => {
-    timeoutController.abort(timeoutReason);
-  }, timeoutMs);
+  // 有心跳时按最后一次成功心跳续期；旧调用没有心跳仍保留原时限。
+  let timer: ReturnType<typeof setTimeout>;
+  const checkDeadline = () => {
+    const remaining = lastHeartbeatAt ? timeoutMs - (Date.now() - lastHeartbeatAt()) : 0;
+    if (remaining > 0) timer = setTimeout(checkDeadline, remaining);
+    else timeoutController.abort(timeoutReason);
+  };
+  timer = setTimeout(checkDeadline, timeoutMs);
 
   const signal = externalSignal
     ? AbortSignal.any([timeoutController.signal, externalSignal])
@@ -109,7 +115,7 @@ export async function runWithTaskLimit<T>(
   }
 }
 
-/** 后期任务默认 10 分钟封顶（ffmpeg 拼接）。 */
+/** 后期任务默认允许连续 10 分钟没有成功心跳。 */
 export const POST_PROD_DEFAULT_TIMEOUT_MS = 10 * 60_000;
 /**
  * 0917 线上实测：阿菁 A-pose 真模（737,797 顶点）绑定阶段在 2 vCPU 上 >10 分钟被 600 秒硬超时杀掉
@@ -130,6 +136,7 @@ export async function runPostProdJobWithLimit(
   rawInput: unknown,
   userId: string,
   timeoutMs: number,
+  lastHeartbeatAt?: () => number,
 ): Promise<{ output: unknown; provider: string }> {
-  return runWithTaskLimit(timeoutMs, (signal) => processPostProdJob(rawInput, userId, { signal }));
+  return runWithTaskLimit(timeoutMs, (signal) => processPostProdJob(rawInput, userId, { signal }), undefined, lastHeartbeatAt);
 }
