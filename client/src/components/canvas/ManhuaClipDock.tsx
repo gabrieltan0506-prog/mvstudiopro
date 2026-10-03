@@ -627,7 +627,7 @@ export default function ManhuaClipDock({
           <details className="mt-2 text-xs text-cyan-100/80">
             <summary className="cursor-pointer">成片恢复记录（{assembleReceipts.length}）</summary>
             <div className="mt-2 max-h-40 space-y-1 overflow-auto">
-              {assembleReceipts.map(row => <a key={row.jobId} href={row.url} target="_blank" rel="noreferrer" className="block underline">{row.title} · {new Date(row.createdAt).toLocaleString()} · 查看原片</a>)}
+              {assembleReceipts.map(row => <div key={row.jobId}>{row.title} · {new Date(row.createdAt).toLocaleString()} · <button type="button" onClick={() => void downloadManhuaFinalVideo(row.url, row.title).catch(() => window.alert("下载失败，请稍后重试"))} className="underline">下载成片</button></div>)}
             </div>
           </details>
         ) : null}
