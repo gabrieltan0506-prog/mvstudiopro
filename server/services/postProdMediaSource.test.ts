@@ -351,3 +351,14 @@ it("白模新增音轨同样核对本人素材，旧无声请求兼容", async (
   audio.clips[0].audioUri = "gs://bucket-a/uploads/u7/a.wav";
   await expect(resolvePostProdInputSources({ userId: "7", input: { action: "manhua_previs", params: { ...params, audio } } }, deps())).resolves.toMatchObject({ params: { audio } });
 });
+
+it("带项目标识的拼接在素材规范化后保留范围，不能借范围跨用户取片", async () => {
+  const input = { action: "concat" as const, scopeKey: "project-7", params: {
+    clips: ["/api/canvas-media/post-prod/7/first.mp4", "/api/canvas-media/post-prod/7/second.mp4"],
+  } };
+  const parsed = await resolvePostProdInputSources({ userId: "7", input }, deps());
+  expect(parsed).toMatchObject({ scopeKey: "project-7", params: {
+    clips: ["gs://bucket-a/post-prod/7/first.mp4", "gs://bucket-a/post-prod/7/second.mp4"],
+  } });
+  await expect(resolvePostProdInputSources({ userId: "8", input }, deps())).rejects.toThrow("素材尚未登记");
+});

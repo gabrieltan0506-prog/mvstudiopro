@@ -70,3 +70,26 @@ describe("bgm_mount 输入契约", () => {
     })).toThrow();
   });
 });
+
+describe("后期项目元数据契约", () => {
+  const jobs = [
+    { action: "concat", params: { clips: ["gs://b/1.mp4", "gs://b/2.mp4"] } },
+    { action: "bgm_mount", params: { videoUri: "gs://b/1.mp4", bgmUri: "gs://b/1.wav" } },
+    { action: "loudness_check", params: { videoUri: "gs://b/1.mp4" } },
+    { action: "audio_extract", params: { videoUri: "gs://b/1.mp4" } },
+    { action: "burn_subtitle", params: { videoUri: "gs://b/1.mp4", subtitleSrt: "字幕" } },
+    { action: "audio_trim", params: { audioUri: "gs://b/1.wav", sourceStartSec: 0, sourceEndSec: 2 } },
+    { action: "audio_timeline", params: { durationSec: 2, clips: [{ audioUri: "gs://b/1.wav", sourceStartSec: 0, sourceEndSec: 2, startSec: 0 }] } },
+  ];
+  it.each(jobs)("$action 入队和持久记录复读保留 scopeKey，兼容旧任务", (job) => {
+    const parsed = postProdJobInputSchema.parse({ ...job, scopeKey: "project-1" });
+    expect(parsed.scopeKey).toBe("project-1");
+    expect(postProdJobInputSchema.parse(JSON.parse(JSON.stringify(parsed)))).toEqual(parsed);
+    expect(postProdJobInputSchema.parse(job).scopeKey).toBeUndefined();
+  });
+  it.each(jobs)("$action 仍拒绝额外字段、非字符串和超长项目标识", (job) => {
+    expect(postProdJobInputSchema.safeParse({ ...job, scopeKey: "p", extra: true }).success).toBe(false);
+    expect(postProdJobInputSchema.safeParse({ ...job, scopeKey: 1 }).success).toBe(false);
+    expect(postProdJobInputSchema.safeParse({ ...job, scopeKey: "x".repeat(129) }).success).toBe(false);
+  });
+});

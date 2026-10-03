@@ -56,6 +56,18 @@ describe("processPostProdJob 强 Schema 分派", () => {
     expect(resolvePostProdInputSources.mock.calls[0][0]).toMatchObject({ userId: "u1" });
   });
 
+  it("带 scopeKey 的持久拼接任务可执行，元数据不进入媒体参数", async () => {
+    const result = await processPostProdJob({ action: "concat", scopeKey: "project-7",
+      params: { clips: ["gs://b/a.mp4", "gs://b/b.mp4"] },
+    }, "7");
+    expect(resolvePostProdInputSources).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "7", input: expect.objectContaining({ scopeKey: "project-7" }),
+    }));
+    expect(concatClips).toHaveBeenCalledTimes(1);
+    expect(concatClips.mock.calls[0][0]).not.toHaveProperty("scopeKey");
+    expect(result.provider).toBe("ffmpeg-post-prod");
+  });
+
   it("concat:再解析旧任务数据并补默认值,signal 透传", async () => {
     const signal = new AbortController().signal;
     const res = await processPostProdJob(

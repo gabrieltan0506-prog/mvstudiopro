@@ -106,7 +106,7 @@ it("分层包每次按同一预演产物前缀现签，拒跨目录旧链接", (
 });
 
 it("返回任务持久化范围和全部拼接来源供冷缓存恢复", () => {
- const response=buildPostProdJobResponse({...baseJob,input:{action:"concat",scopeKey:"scope1",params:{clips:[{uri:"gs://b/a.mp4"},{uri:"gs://b/b.mp4"}]}}});
+ const response=buildPostProdJobResponse({...baseJob,input:{action:"concat",scopeKey:"scope1",params:{clips:["gs://b/a.mp4","gs://b/b.mp4"]}}});
  expect(response?.scopeKey).toBe("scope1");
  expect(response?.sourceVideoUris).toEqual(["gs://b/a.mp4","gs://b/b.mp4"]);
  expect(buildPostProdJobResponse({...baseJob,input:{action:"bgm_mount",params:{videoUri:"gs://b/a.mp4"}}})?.sourceVideoUris).toEqual(["gs://b/a.mp4"]);
