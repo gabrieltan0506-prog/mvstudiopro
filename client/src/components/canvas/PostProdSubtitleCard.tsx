@@ -13,7 +13,7 @@ export function PostProdSubtitleCard({ clips, busy, onSubmit, context, storageKe
   busy: boolean;
   context?: ManhuaCreativeAdvisorContext;
   storageKey: string;
-  onSubmit: (params: { videoUri: string; subtitleSrt: string }) => Promise<void>;
+  onSubmit: (params: { videoUri: string; subtitleSrt: string; styleOverride: { fontSize: number; outline: number; marginV: number; fontName: string } }) => Promise<void>;
 }) {
   const [source, setSource] = useState("");
   const [srt, setSrt] = useState("");
@@ -68,7 +68,8 @@ export function PostProdSubtitleCard({ clips, busy, onSubmit, context, storageKe
       const videoUri = source.startsWith("https://d2h7xmz5gqybh9.cloudfront.net/")
         ? await importWorkflowVideoSource(source) : source;
       setSource(videoUri);
-      await onSubmit({ videoUri, subtitleSrt });
+      // 参考影片截图：白字、细黑边、无底框、底部居中；字号按竖屏适配。
+      await onSubmit({ videoUri, subtitleSrt, styleOverride: { fontSize: 8, outline: 0.35, marginV: 12, fontName: "Noto Sans CJK SC" } });
     } catch (error) {
       toast.error(maskMediaProviderDetails(error instanceof Error ? error.message : "字幕提交失败"));
     } finally {
@@ -98,6 +99,7 @@ export function PostProdSubtitleCard({ clips, busy, onSubmit, context, storageKe
     {advisorError && <p role="alert" className="text-xs text-amber-200">{advisorError}（已有请求将沿原编号恢复，不重复创建）</p>}
     {report && <details className="mt-2 text-xs" open><summary>顾问核对报告（历史结果，以报告所选成片与对白为准）</summary><pre className="whitespace-pre-wrap">{maskMediaProviderDetails(report)}</pre></details>}
     <UrlMaskedTextarea aria-label="对白字幕 SRT" value={srt} onChange={event => setSrt(event.target.value)} disabled={submitting || busy} rows={8} placeholder={"1\n00:00:01,000 --> 00:00:03,000\n已确认的对白"} className="mt-2 w-full rounded border bg-transparent p-2 text-xs" />
+    <p className="mt-2 text-xs text-white/60">字幕样式：白字细黑边、无底框、底部居中；长句按对白停顿分条。</p>
     <button type="button" disabled={!source || !srt.trim() || locked} onClick={() => void submit()} className="mt-2 rounded-lg border border-cyan-300/30 px-3 py-2 text-xs disabled:opacity-40">{submitting ? "正在提交字幕…" : "添加字幕 · 0积分"}</button>
   </section>;
 }

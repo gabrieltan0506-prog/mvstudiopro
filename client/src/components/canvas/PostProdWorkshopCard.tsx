@@ -769,7 +769,7 @@ export default function PostProdWorkshopCard({
 
         | {
             action: "burn_subtitle";
-            params: { videoUri: string; subtitleSrt: string };
+            params: { videoUri: string; subtitleSrt: string; styleOverride?: { fontSize: number; outline: number; marginV: number; fontName: string } };
           }
         | {
             action: "loudness_check";
