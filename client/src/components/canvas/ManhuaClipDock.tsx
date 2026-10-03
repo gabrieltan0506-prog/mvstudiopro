@@ -668,7 +668,7 @@ export default function ManhuaClipDock({
             <div className="text-[11px] font-semibold text-cyan-100/90">长片预览</div>
             <button type="button" disabled={finalDownloadBusy} onClick={() => void handleDownloadFinal()} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-cyan-400/30 px-3 text-xs text-cyan-50 disabled:opacity-50">
               {finalDownloadBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-              {finalDownloadBusy ? "正在下载…" : "下载成片 MP4"}
+              {finalDownloadBusy ? "正在下载…" : "下载成片"}
             </button>
           </div>
           <div className="overflow-hidden rounded-xl border border-cyan-400/25 bg-black/60">

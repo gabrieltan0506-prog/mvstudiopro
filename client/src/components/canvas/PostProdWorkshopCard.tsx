@@ -23,6 +23,7 @@ import { Film, Layers, Loader2,
 import { trpc } from "@/lib/trpc";
 import { copyText } from "@/lib/copyText";
 import { gcsTransferUrl } from "@/lib/gcsTransfer";
+import { downloadRemoteFile } from "@/lib/downloadRemoteFile";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import { getBlockEpisodeIndex, isManhuaFactoryArtifactBlock } from "@/lib/canvasDramaStudio";
 import {
@@ -1177,7 +1178,6 @@ export default function PostProdWorkshopCard({
       );
     }
     const url = String((job.output as { url?: unknown }).url || "");
-    const gcsUri = String((job.output as { gcsUri?: unknown }).gcsUri || "");
     if (!url) return null;
     if (isPostProdAudioAction(job.action)) {
       const duration = Number(job.output.durationSec);
@@ -1185,35 +1185,15 @@ export default function PostProdWorkshopCard({
         <span className="inline-flex flex-wrap items-center gap-2">
           <audio controls preload="none" src={gcsTransferUrl(url)} aria-label={ACTION_LABEL[job.action]} className="h-8 max-w-full" />
           {Number.isFinite(duration) ? <span className="text-[11px] text-white/60">{duration.toFixed(3)} 秒</span> : null}
-          <a href={gcsTransferUrl(url)} target="_blank" rel="noreferrer" className="text-[11px] text-cyan-200 underline">打开音频</a>
+          <button type="button" onClick={() => void downloadRemoteFile(url, "音轨").catch(() => toast.error("下载失败，请稍后重试"))} className="text-[11px] text-cyan-200 underline">下载音频</button>
         </span>
       );
     }
     return (
       <span className="inline-flex items-center gap-2">
-        <a
-          href={gcsTransferUrl(url)}
-          target="_blank"
-          rel="noreferrer"
-          className="text-[11px] text-cyan-200 underline underline-offset-2"
-        >
-          打开成品
-        </a>
-        {gcsUri ? (
-          <button
-            type="button"
-            className="rounded border border-white/15 px-1.5 py-0.5 font-mono text-[10px] text-white/70 hover:bg-white/[0.08]"
-            onClick={() =>
-              void copyText(gcsUri).then(ok =>
-                ok
-                  ? toast.success("gs:// 地址已复制(可作下一道工序素材)")
-                  : toast.error("复制失败")
-              )
-            }
-          >
-            复制 gs://
-          </button>
-        ) : null}
+        <button type="button" onClick={() => void downloadRemoteFile(url, "成片").catch(() => toast.error("下载失败，请稍后重试"))} className="text-[11px] text-cyan-200 underline underline-offset-2">
+          下载成片
+        </button>
       </span>
     );
   };
@@ -1707,14 +1687,13 @@ export default function PostProdWorkshopCard({
                   {videoUpscaleStatusLabel(job.status)}
                 </span>
                 {job.videoUrl ? (
-                  <a
-                    href={gcsTransferUrl(job.videoUrl)}
-                    target="_blank"
-                    rel="noreferrer"
+                  <button
+                    type="button"
+                    onClick={() => void downloadRemoteFile(job.videoUrl!, "高清成片").catch(() => toast.error("下载失败，请稍后重试"))}
                     className="ml-2 text-cyan-200 underline underline-offset-2"
                   >
-                    打开高清版
-                  </a>
+                    下载成片
+                  </button>
                 ) : null}
               </div>
             ))}
