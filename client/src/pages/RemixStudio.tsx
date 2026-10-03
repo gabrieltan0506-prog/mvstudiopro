@@ -387,7 +387,7 @@ function KlingImagePanel(props: { onUseAsRef: (url: string) => void; onStateChan
     if (busy) return;
     setBusy(true);
     setImageUrl("");
-    setDebug({ ok: true, message: "vertex image: starting" });
+    setDebug({ ok: true, message: "图片生成已开始" });
 
     try {
       const resp = await fetch("/api/google?op=nanoImage", {
@@ -415,7 +415,7 @@ function KlingImagePanel(props: { onUseAsRef: (url: string) => void; onStateChan
           <div style={{ ...MUTED_TEXT, marginTop: 6 }}>先产出一张质量足够的参考图，再把它送入图生视频节点。</div>
         </div>
         <div style={HEADER_BADGE}>
-          Vertex AI Image
+          AI 参考图
         </div>
       </div>
 
@@ -436,7 +436,7 @@ function KlingImagePanel(props: { onUseAsRef: (url: string) => void; onStateChan
         </div>
       </div>
 
-      <ResultBanner stage={busy ? "running" : imageUrl ? "done" : debug?.ok === false ? "error" : "idle"} error={debug?.error} okText="参考图已生成，可直接设为图生视频输入。" runningText="正在通过 Vertex AI 生成图片，请稍候。" />
+      <ResultBanner stage={busy ? "running" : imageUrl ? "done" : debug?.ok === false ? "error" : "idle"} error={debug?.error} okText="参考图已生成，可直接设为图生视频输入。" runningText="正在生成参考图片，请稍候。" />
 
       {imageUrl ? (
         <div style={{ marginTop: 14, display: "grid", gap: 12 }}>

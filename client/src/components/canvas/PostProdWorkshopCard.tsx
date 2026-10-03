@@ -544,7 +544,7 @@ export default function PostProdWorkshopCard({
               upscaleNotifiedRef.current.add(job.taskId);
               if (job.scopeKey === projectScopeKey) {
                 toast.error(videoUpscaleStatusLabel(snapshot.status), {
-                  description: snapshot.error || undefined,
+                  description: maskMediaProviderDetails(snapshot.error) || undefined,
                 });
               }
             }
@@ -678,7 +678,7 @@ export default function PostProdWorkshopCard({
                 toast.success(`后期任务完成：${job.label}`);
               } else {
                 toast.error(`后期任务未完成：${job.label}`, {
-                  description: res.error || undefined,
+                  description: maskMediaProviderDetails(res.error) || undefined,
                 });
               }
             }
