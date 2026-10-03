@@ -1,3 +1,4 @@
+import { isTaskHeartbeatStatus } from "./taskHeartbeat.js";
 /**
  * OpenRouter MiniMax H3 / Hailuo 3（POST /api/v1/videos + poll）。
  * 不走 EvoLink；密钥：OPENROUTER_API_KEY。
@@ -133,7 +134,7 @@ export function buildOpenRouterHailuoSubmitBody(input: {
 }
 
 async function pollOpenRouterVideoJob(pollingUrl: string, apiKey: string): Promise<string> {
-  const started = Date.now();
+  let lastHeartbeatAt = Date.now();
   const headers = buildOpenRouterAuthHeaders(apiKey);
   const getHeaders: Record<string, string> = {
     Authorization: headers.Authorization!,
@@ -141,7 +142,7 @@ async function pollOpenRouterVideoJob(pollingUrl: string, apiKey: string): Promi
     "X-Title": headers["X-Title"] || "",
   };
 
-  while (Date.now() - started < MAX_POLL_MS) {
+  while (Date.now() - lastHeartbeatAt < MAX_POLL_MS) {
     const r = await fetch(pollingUrl, {
       method: "GET",
       headers: getHeaders,
@@ -152,6 +153,7 @@ async function pollOpenRouterVideoJob(pollingUrl: string, apiKey: string): Promi
       throw new Error(userFacingHailuoError(jobErrorMessage(json) || `查询失败 (${r.status})`));
     }
     const status = String(json.status || "").toLowerCase();
+    if (isTaskHeartbeatStatus(status)) lastHeartbeatAt = Date.now();
     if (status === "completed") {
       const url = (json.unsigned_urls || []).find((u) => typeof u === "string" && u.trim());
       if (!url) throw new Error("视频生成完成但未返回下载地址");

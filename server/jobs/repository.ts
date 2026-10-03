@@ -1448,10 +1448,13 @@ export async function markJobFailed(id: string, error: string): Promise<void> {
  * 只刷 running 行的 updatedAt（不动 output）：长任务在模型调用之间可能几十分钟没有进度写入，
  * 僵尸行清理器按 updatedAt 判死，心跳必须落到 DB，不能只在内存。
  */
-export async function touchJobRunningUpdatedAt(jobId: string): Promise<void> {
+export async function touchJobRunningUpdatedAt(jobId: string): Promise<boolean> {
   const db = await getDb();
-  if (!db) return;
-  await db.update(jobs).set({ updatedAt: new Date() }).where(and(eq(jobs.id, jobId), eq(jobs.status, "running")));
+  if (!db) throw new Error("任务心跳无法持久化：数据库不可用");
+  const rows = await db.update(jobs).set({ updatedAt: new Date() })
+    .where(and(eq(jobs.id, jobId), eq(jobs.status, "running")))
+    .returning({ id: jobs.id });
+  return rows.length > 0;
 }
 
 /** platform_topic_image 等長任務：running 時把部分 output 寫入 DB，供 GET /api/jobs 輪詢看到即時步驟 */

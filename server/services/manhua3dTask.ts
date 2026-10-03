@@ -1,3 +1,4 @@
+import { isTaskHeartbeatStatus, taskHeartbeatTime } from "./taskHeartbeat.js";
 import { previsProxySchema, type PrevisProxy } from "./manhuaPrevisProxy";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
@@ -90,6 +91,8 @@ export type Manhua3dTaskRecord = {
   previsProxy?: PrevisProxy;
   errorZh?: string;
   lastTransientError?: string;
+  /** 最近一次成功持久化的有效上游心跳。 */
+  lastHeartbeatAt?: string;
   createdAt: string;
   updatedAt: string;
   startedAt?: string;
@@ -683,7 +686,7 @@ export async function advanceManhua3dTask(
     }
 
     if (
-      dependencies.now().getTime() - Date.parse(record.createdAt) >
+      dependencies.now().getTime() - taskHeartbeatTime(record) >
       MAX_POLL_MS
     ) {
       return markReconcile(record, "三维资产任务长时间没有终态，已转人工对账");
@@ -697,6 +700,9 @@ export async function advanceManhua3dTask(
       return markFailed(record, "三维资产生成失败", snapshot.error);
     }
     if (snapshot.state === "running") {
+      if (isTaskHeartbeatStatus(snapshot.status)) {
+        record.lastHeartbeatAt = dependencies.now().toISOString();
+      }
       record.status = "running";
       record.lastTransientError = snapshot.status.slice(0, 280);
       await writeRecord(record);

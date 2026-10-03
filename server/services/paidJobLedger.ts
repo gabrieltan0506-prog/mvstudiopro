@@ -268,14 +268,14 @@ export async function resumeActiveJob(jobId: string, taskType: PaidTaskType): Pr
 }
 
 /** Worker 在跑期间定期调用，刷新 lastHeartbeatAt + pid。 */
-export async function heartbeatActiveJob(jobId: string, taskType: PaidTaskType): Promise<void> {
+export async function heartbeatActiveJob(jobId: string, taskType: PaidTaskType): Promise<boolean> {
   const dir = await getLedgerDir();
   const file = holdFilePath(dir, taskType, jobId);
   const hold = await readHoldFile(file);
-  if (!hold || hold.status !== "active") return;
+  if (!hold || hold.status !== "active") return false;
   hold.lastHeartbeatAt = new Date().toISOString();
   hold.pid = process.pid;
-  await writeHoldFile(file, hold).catch(() => {});
+  return writeHoldFile(file, hold).then(() => true, () => false);
 }
 
 /**
@@ -867,9 +867,9 @@ export async function reapStuckPaidJobs(opts?: {
 
   // 30 天硬上限：即便 holdPausedAt 一直挂着也不能无限压住，超期就强行退积分
   const PAUSE_HARD_CAP_MS = 30 * 24 * 60 * 60 * 1000;
-  // 可恢复任务（resumable）不吃 5 分钟心跳线，只兜 24 小时硬底：
-  // 任务级状态机（超时对账等）先负责；24 小时还没结清就当彻底死亡退分
-  const RESUMABLE_HARD_CAP_MS = 24 * 60 * 60 * 1000;
+  // 可恢复任务（resumable）不吃 5 分钟心跳线，只兜连续 24 小时无心跳：
+  // 任务级状态机（超时对账等）先负责；连续 24 小时无心跳才进入兜底退分
+  const RESUMABLE_STALL_MS = 24 * 60 * 60 * 1000;
   for (const hold of all) {
     try {
       const lastBeat = new Date(hold.lastHeartbeatAt).getTime();
@@ -951,14 +951,13 @@ export async function reapStuckPaidJobs(opts?: {
       }
 
       // 可恢复任务：SIGTERM forceAll 与心跳僵尸判定都不适用（进程重启后任务会被
-      // resume 继续跑，此时退分 = 用户既拿退分又拿成片）。只有超过 24h 硬底才退。
+      // resume 继续跑，此时退分 = 用户既拿退分又拿成片）。只有连续 24h 无心跳才退。
       if (hold.resumable) {
-        const chargedAtMs = new Date(hold.chargedAt).getTime();
-        if (Number.isFinite(chargedAtMs) && now - chargedAtMs > RESUMABLE_HARD_CAP_MS) {
+        if (Number.isFinite(lastBeat) && lag > RESUMABLE_STALL_MS) {
           const outcome = await refundHoldAndSyncJob(
             hold,
             "task_timeout",
-            `resumable hold over 24h hard cap · charged=${hold.chargedAt}`,
+            `resumable hold without heartbeat for 24h · lastBeat=${hold.lastHeartbeatAt}`,
           );
           if (outcome.refunded) refunded += 1;
         }

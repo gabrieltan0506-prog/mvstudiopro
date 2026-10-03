@@ -352,17 +352,28 @@ async function advanceTask(taskId: string): Promise<HomePhotoUpscaleTaskRecord |
     await writeTask(task);
     await heartbeatActiveJob(task.taskId, TASK_TYPE).catch(() => {});
 
+    const controller = new AbortController();
+    let lastHeartbeatAt = Date.now();
+    let heartbeatPending = false;
     const heartbeat = setInterval(() => {
-      void heartbeatActiveJob(task.taskId, TASK_TYPE).catch(() => {});
+      if (Date.now() - lastHeartbeatAt >= MAX_WALL_MS) {
+        controller.abort(new Error("高清放大连续无有效心跳，已停止处理"));
+        return;
+      }
+      if (heartbeatPending) return;
+      heartbeatPending = true;
+      const sentAt = Date.now();
+      void heartbeatActiveJob(task.taskId, TASK_TYPE).then((saved) => {
+        if (saved) lastHeartbeatAt = sentAt;
+      }).catch(() => {}).finally(() => { heartbeatPending = false; });
     }, HEARTBEAT_MS);
     heartbeat.unref?.();
 
     try {
-      const remainingWallMs = Math.max(1_000, MAX_WALL_MS - (Date.now() - createdMs));
       const result = await runImageUpscaleWithFallback({
         imageUrl: resolveImageUrlForServerFetch(task.imageUrl),
         upscaleFactor: task.upscaleFactor,
-        abortSignal: AbortSignal.timeout(remainingWallMs),
+        abortSignal: controller.signal,
       });
       let imageUrl = String(result.imageUrl || "").trim();
       if (!result.ok || !imageUrl) {

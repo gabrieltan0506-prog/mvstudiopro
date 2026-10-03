@@ -413,9 +413,9 @@ async function pollXyqVideoUrl(
   runId: string,
   accessKey: string,
 ): Promise<string> {
-  const started = Date.now();
+  let lastHeartbeatAt = Date.now();
   let lastNetErr = "";
-  while (Date.now() - started < MAX_POLL_MS) {
+  while (Date.now() - lastHeartbeatAt < MAX_POLL_MS) {
     try {
       const data = await xyqJson<XyqThreadData>(
         "/api/biz/v1/skill/get_thread",
@@ -423,6 +423,7 @@ async function pollXyqVideoUrl(
         accessKey,
       );
       lastNetErr = "";
+      if (data.thread?.run_list?.some(run => String(run.run_id || "") === runId)) lastHeartbeatAt = Date.now();
       const out = extractVideoDownloadUrl(data, runId);
       if (out.downloadUrl) return out.downloadUrl;
       if (out.failed) {

@@ -1,3 +1,4 @@
+import { isTaskHeartbeatStatus } from "./taskHeartbeat.js";
 import { randomUUID } from "node:crypto";
 import { deleteGcsObject, signGsUriV4ReadUrl, uploadBufferToGcs } from "./gcs.js";
 import { fetchSafeRemoteImage } from "./remoteImageFetch.js";
@@ -128,8 +129,8 @@ export async function runWavespeedGeminiImageUpscale(input: {
 
     const predictionId = created.id;
     const resultUrl = `${apiBase()}/predictions/${encodeURIComponent(predictionId)}/result`;
-    const startedAt = Date.now();
-    while (Date.now() - startedAt < MAX_POLL_MS) {
+    let lastHeartbeatAt = Date.now();
+    while (Date.now() - lastHeartbeatAt < MAX_POLL_MS) {
       await wait(POLL_INTERVAL_MS, input.abortSignal);
       let response: Response;
       try {
@@ -146,6 +147,7 @@ export async function runWavespeedGeminiImageUpscale(input: {
         throw new Error(`wavespeed_poll_ambiguous:${predictionId}:http_${response.status}`);
       }
       const snap = prediction((await response.json().catch(() => ({}))) as PredictionPayload);
+      if (isTaskHeartbeatStatus(snap.status)) lastHeartbeatAt = Date.now();
       if (snap.status === "completed") {
         const outputUrl = snap.outputs[0];
         if (!outputUrl) throw new Error("wavespeed_completed_without_output");

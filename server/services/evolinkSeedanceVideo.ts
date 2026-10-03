@@ -1,3 +1,4 @@
+import { isTaskHeartbeatStatus } from "./taskHeartbeat.js";
 import { formatEvolinkReferencePrompt } from "../../shared/evolinkReferencePrompt.js";
 import {
   SEEDANCE_25_COMING_SOON_LABEL_EN,
@@ -102,13 +103,14 @@ export async function pollEvolinkVideoTaskOnce(
       error: json.error?.message || `${label} 视频生成失败`,
     };
   }
-  return { state: "running", status: status || "processing" };
+  return { state: "running", status: status || "transient_empty_status" };
 }
 
 async function pollEvolinkVideoTask(taskId: string, label: string): Promise<string> {
-  const started = Date.now();
-  while (Date.now() - started < MAX_POLL_MS) {
+  let lastHeartbeatAt = Date.now();
+  while (Date.now() - lastHeartbeatAt < MAX_POLL_MS) {
     const snap = await pollEvolinkVideoTaskOnce(taskId, label);
+    if (snap.state === "running" && isTaskHeartbeatStatus(snap.status)) lastHeartbeatAt = Date.now();
     if (snap.state === "completed") return snap.sourceUrl;
     if (snap.state === "failed") throw new Error(snap.error);
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));

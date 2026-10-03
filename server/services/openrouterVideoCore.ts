@@ -1,3 +1,4 @@
+import { isTaskHeartbeatStatus } from "./taskHeartbeat.js";
 /** OpenRouter 异步视频任务共用提交、轮询、错误清洗与 GCS 镜像。 */
 
 import {
@@ -156,16 +157,17 @@ export async function pollOpenRouterVideoJobOnce(
       ),
     };
   }
-  return { state: "running", status: status || "processing" };
+  return { state: "running", status: status || "transient_empty_status" };
 }
 
 async function pollOpenRouterVideoJob(
   pollingUrl: string,
   apiKey: string
 ): Promise<string> {
-  const started = Date.now();
-  while (Date.now() - started < MAX_POLL_MS) {
+  let lastHeartbeatAt = Date.now();
+  while (Date.now() - lastHeartbeatAt < MAX_POLL_MS) {
     const snap = await pollOpenRouterVideoJobOnce(pollingUrl, apiKey);
+    if (snap.state === "running" && isTaskHeartbeatStatus(snap.status)) lastHeartbeatAt = Date.now();
     if (snap.state === "completed") return snap.sourceUrl;
     if (snap.state === "failed") throw new Error(snap.error);
     await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));

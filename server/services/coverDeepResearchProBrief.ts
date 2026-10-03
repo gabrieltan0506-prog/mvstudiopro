@@ -327,7 +327,6 @@ export async function runCoverDeepResearchInteractionsBrief(
 
   const input = buildCoverBriefInteractionInput(task, product);
   const ac = new AbortController();
-  const hardStop = setTimeout(() => ac.abort(), totalBudgetMs + 8000);
 
   try {
     let interactionId: string;
@@ -376,6 +375,6 @@ export async function runCoverDeepResearchInteractionsBrief(
     log(`異常 · ${msg.slice(0, 720)}`);
     return null;
   } finally {
-    clearTimeout(hardStop);
+    ac.abort();
   }
 }

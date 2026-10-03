@@ -200,5 +200,5 @@ export async function pollHomePhotoVideo(taskId: string, upstreamId: string) {
       throw new Error("成片下载地址尚未取得");
     return { state: "completed" as const, sourceUrl };
   }
-  return { state: "running" as const };
+  return { state: "running" as const, status };
 }

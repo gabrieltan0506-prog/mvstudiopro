@@ -1,3 +1,4 @@
+import { isTaskHeartbeatStatus } from "./taskHeartbeat.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID, createHash } from "node:crypto";
@@ -171,7 +172,7 @@ export async function pollWavespeedUpscaleOnce(
       error: snap.error || `超分${snap.status === "timeout" ? "超时" : "失败"}`,
     };
   }
-  return { state: "running", status: snap.status || "processing" };
+  return { state: "running", status: snap.status || "transient_empty_status" };
 }
 
 /** 同步跑完拿结果（提交 + 轮询 + 镜像）。异步任务框架请分别用 submit / pollOnce。 */
@@ -181,10 +182,11 @@ export async function runWavespeedVideoUpscale(input: {
 }): Promise<{ videoUrl: string; predictionId: string; provider: "wavespeed" }> {
   const { predictionId } = await submitWavespeedVideoUpscale(input);
 
-  const started = Date.now();
-  while (Date.now() - started < MAX_POLL_MS) {
+  let lastHeartbeatAt = Date.now();
+  while (Date.now() - lastHeartbeatAt < MAX_POLL_MS) {
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
     const snap = await pollWavespeedUpscaleOnce(predictionId);
+    if (snap.state === "running" && isTaskHeartbeatStatus(snap.status)) lastHeartbeatAt = Date.now();
     if (snap.state === "completed") {
       // 上游直链是短期的，镜像到 GCS 再交给前端，与成片同一口径
       const videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(snap.sourceUrl);

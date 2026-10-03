@@ -1,3 +1,4 @@
+import { isTaskHeartbeatStatus } from "./taskHeartbeat.js";
 import { resolvePlatformImageStorageDriver } from "../config/platformSwitches.js";
 import { uploadBufferToGcs, signGsUriV4ReadUrl } from "./gcs.js";
 import { enforceSimplifiedChineseImagePrompt } from "./simplifiedChinese.js";
@@ -157,10 +158,10 @@ async function pollEvolinkTask(
   abortSignal?: AbortSignal,
 ): Promise<string[]> {
   const apiKey = String(process.env.EVOLINK_API_KEY || "").trim();
-  const started = Date.now();
+  let lastHeartbeatAt = Date.now();
   let lastStatus = "";
 
-  while (Date.now() - started < MAX_POLL_MS) {
+  while (Date.now() - lastHeartbeatAt < MAX_POLL_MS) {
     const r = await fetch(`${EVOLINK_BASE}/v1/tasks/${encodeURIComponent(taskId)}`, {
       method: "GET",
       headers: { Authorization: `Bearer ${apiKey}` },
@@ -173,6 +174,7 @@ async function pollEvolinkTask(
     }
 
     const status = String(json.status || "").trim();
+    if (isTaskHeartbeatStatus(status)) lastHeartbeatAt = Date.now();
     if (status !== lastStatus) {
       lastStatus = status;
       appendImageFlowLog(

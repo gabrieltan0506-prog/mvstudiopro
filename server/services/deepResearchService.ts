@@ -1,3 +1,4 @@
+import { isTaskHeartbeatStatus } from "./taskHeartbeat.js";
 /**
  * 戰略智庫核心引擎 — AI 上帝視角
  * 支持三種產品類型：magazine_single / magazine_sub / personalized
@@ -579,8 +580,9 @@ async function pollInteraction(
 ): Promise<any[]> {
   const ai = getGoogleGenAI();
   const pollStart = Date.now();
+  let lastHeartbeatAt = pollStart;
   const maxSec = Math.round(maxMs / 1000);
-  while (Date.now() - pollStart < maxMs) {
+  while (Date.now() - lastHeartbeatAt < maxMs) {
     if (abortSignal?.aborted) {
       throw new Error(`Deep Research 已中止（interactionId=${interactionId}）`);
     }
@@ -596,6 +598,7 @@ async function pollInteraction(
     }
     const statusH = pollJson?.status ?? "unknown";
     const status = typeof statusH === "string" ? statusH : String(statusH);
+    if (isTaskHeartbeatStatus(status)) lastHeartbeatAt = Date.now();
     console.log(`[deepResearch] 🔍 PID=${process.pid} interactionId=${interactionId} status=${status} elapsed=${elapsed}s`);
     if (status === "failed" || status === "cancelled") {
       const errMsg = pollJson?.error?.message || JSON.stringify(pollJson?.error || {}).slice(0, 300);
@@ -747,7 +750,6 @@ ${feedback.trim()}`
   const apiHeaders: Record<string, string> = {};
   const executeMaxMs = resolveMaxExecutePollMs();
   const abortController = new AbortController();
-  const hardTimeout = setTimeout(() => abortController.abort(), executeMaxMs);
   try {
     const outputs = await pollInteraction(interactionId, apiHeaders, executeMaxMs, abortController.signal, onProgress);
     const textOut = [...outputs].reverse().find((o: any) => !o.type || o.type === "text");
@@ -773,7 +775,7 @@ ${feedback.trim()}`
     console.log(`[deepResearch] ✅ 执行完成 ${text.length}字 charts=${imageOutputs.length}`);
     return { text: text + chartMarkdown, sources: [] };
   } finally {
-    clearTimeout(hardTimeout);
+    abortController.abort();
   }
 }
 

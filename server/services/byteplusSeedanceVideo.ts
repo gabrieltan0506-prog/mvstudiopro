@@ -1,3 +1,4 @@
+import { isTaskHeartbeatStatus } from "./taskHeartbeat.js";
 /**
  * BytePlus ModelArk · Seedance 2.5 成片（画布主路径）。
  * 提交失败由 canvasVideoTask 回落 EvoLink。
@@ -261,7 +262,7 @@ export async function pollByteplusVideoTaskOnce(
       error: [json.error?.code, json.error?.message || json.message || `${label} 视频生成失败`].filter(Boolean).join(": "),
     };
   }
-  return { state: "running", status: status || "processing" };
+  return { state: "running", status: status || "transient_empty_status" };
 }
 
 /** 供应商明确拒绝允许转交；网络、5xx与缺少任务ID不能当成拒绝重投。 */
@@ -332,9 +333,10 @@ export async function runByteplusSeedance25Video(
   const submitted = await submitByteplusSeedance25Video(input);
   let sourceUrl = submitted.immediateSourceUrl;
   if (!sourceUrl) {
-    const started = Date.now();
-    while (Date.now() - started < MAX_POLL_MS) {
+    let lastHeartbeatAt = Date.now();
+    while (Date.now() - lastHeartbeatAt < MAX_POLL_MS) {
       const snap = await pollByteplusVideoTaskOnce(submitted.byteplusTaskId);
+      if (snap.state === "running" && isTaskHeartbeatStatus(snap.status)) lastHeartbeatAt = Date.now();
       if (snap.state === "completed") {
         sourceUrl = snap.sourceUrl;
         break;
