@@ -3,7 +3,11 @@ node_modules
 .git
 .github
 server
-scripts
+# Vite needs these three build-time document import entrypoints.
+scripts/*
+!scripts/vite-document-import-assets.ts
+!scripts/document-import-doc-worker.ts
+!scripts/document-import-globals.ts
 docs
 drizzle
 drizzle*
