@@ -133,7 +133,7 @@ export async function startVideoUpscale(input: {
   target?: "2k" | "4k";
   targetFps?: 30 | 60;
   combine?: boolean;
-  frameInterpolationProvider?: "ffmpeg";
+  frameInterpolationProvider?: "wavespeed";
   scopeKey?: string;
   durationSec: number;
   /** 漫剧集号用于项目归属；增强视频采用用户指定的统一价表 */

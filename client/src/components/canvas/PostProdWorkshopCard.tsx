@@ -869,7 +869,7 @@ export default function PostProdWorkshopCard({
         videoUrl: upscaleVideoUrl,
         target,
         combine: Boolean(target),
-        frameInterpolationProvider: "ffmpeg",
+        frameInterpolationProvider: "wavespeed",
         scopeKey: projectScopeKey,
         targetFps,
         durationSec: upscaleProbedSec,
@@ -1638,7 +1638,7 @@ export default function PostProdWorkshopCard({
             <Maximize2 className="h-3.5 w-3.5 text-sky-300" /> 超分与补帧
           </div>
           <p className="mt-1 text-[11px] leading-4 text-white/45">
-            选择2K或4K，搭配30或60帧。先保留原尺寸与音轨补帧，再超分，保留原声与BGM，原片保留，刷新恢复同一任务。
+            选择2K或4K，搭配30或60帧。先保存原音轨，再用WaveSpeed AI补帧、FFmpeg贴回原音轨，最后超分；保留原声与BGM，原片保留，刷新恢复同一任务。
           </p>
           <div className="mt-2 space-y-1.5">
             <select
@@ -1691,9 +1691,10 @@ export default function PostProdWorkshopCard({
             <button type="button" disabled={!upscaleSource || upscaleSubmitBusy || busy || !upscaleSource.fps || !canWavespeedUpscale(upscaleSource.sourceResolution, enhanceChoice.target)} onClick={() => void submitUpscale(enhanceChoice.target, enhanceChoice.fps)} className={goCls}>
               {upscaleSubmitBusy ? "正在提交…" : `提交${enhanceChoice.target.toUpperCase()}／${enhanceChoice.fps}帧${upscaleProbedSec ? ` · 扣${canvasVideoEnhanceQuote(enhanceChoice.target, enhanceChoice.fps, upscaleProbedSec).totalCredits}积分` : ""}`}
             </button>
-            {upscaleSource && upscaleSource.fps && upscaleSource.fps < 59.99 ? <button type="button" className={goCls} disabled={upscaleSubmitBusy || upscaleProbeBusy || busy} onClick={() => void submitUpscale(undefined, 60)}>
+            {upscaleSource && upscaleSource.fps && upscaleSource.fps < 59.9 && upscaleSource.sourceResolution !== "2k" && upscaleSource.sourceResolution !== "4k" ? <button type="button" className={goCls} disabled={upscaleSubmitBusy || upscaleProbeBusy || busy} onClick={() => void submitUpscale(undefined, 60)}>
               {upscaleSubmitBusy ? "正在提交…" : `只补60帧·保留${upscaleSource.width}×${upscaleSource.height}·扣${canvasVideoFrameCredits(upscaleProbedSec!, 60)}积分`}
             </button> : null}
+            {upscaleSource && (upscaleSource.sourceResolution === "2k" || upscaleSource.sourceResolution === "4k") ? <p className="text-xs text-amber-200">补帧请选择未超分原视频；先AI补帧并恢复原音轨，最后再超分。</p> : null}
             <p className="text-[10px] text-white/50">每30秒：2K超分100积分，4K超分180积分；30帧补帧19积分，60帧补帧49积分。不足30秒按30秒计，一次合计扣分。</p>
             {scopedUpscaleJobs.slice(0, 3).map(job => (
               <div
