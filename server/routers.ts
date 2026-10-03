@@ -1,3 +1,4 @@
+import { novelWorkspaceRouter } from "./routers/novelWorkspace";
 import { createKnowledgeCardPageJob, reserveKnowledgeCardImageJob, checkKnowledgeCardImageMaySubmit } from "./jobs/knowledgeCardPageTask";
 import { novelExcerptSchema } from "../shared/manhuaNovelSource.js";
 import { canvasMusicMvRouter } from "./routers/canvasMusicMv";
@@ -3009,6 +3010,7 @@ function buildManhuaBgmJobResponse(
 }
 
 export const appRouter = router({
+  novelWorkspace: novelWorkspaceRouter,
   canvasMusicMv: canvasMusicMvRouter,
   canvasMusicMvAssemble: canvasMusicMvAssembleRouter,
   // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly

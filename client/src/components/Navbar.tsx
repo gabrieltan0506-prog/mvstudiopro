@@ -30,6 +30,7 @@ const NAV_ITEMS: Array<{ label: string; href: string; beta?: boolean }> = [
   // 竞品调研内测中：一般用户只见标注不给链接，supervisor/admin 仍可进（见 competitorResearchBeta）
   { label: "竞品调研", href: "/research", beta: true },
   { label: "一战成片", href: "/canvas" },
+  { label: "小说改编", href: "/novel-adaptation" },
   { label: "套餐", href: "/pricing" },
 ];
 

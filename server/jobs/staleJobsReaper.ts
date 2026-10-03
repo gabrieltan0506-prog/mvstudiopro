@@ -129,13 +129,24 @@ export async function reapStaleJobsOnce(
 
     // 漫剧学习与配乐都有持久检查点/上游 taskId 恢复。创作顾问 running 行还承担
     // 成功结果与退款 CAS 证据，必须交给 paidJobLedger 的专用回收器，不能先删。
+    // 小说管理者测试只按最后持久化的真实流活动判失联；永久保留输入和模型证据。
+    await db.update(jobs).set({
+      status: "failed",
+      error: "小说改编测试已失联，原稿与回执保留；未自动重新生成",
+      updatedAt: new Date(),
+    }).where(and(eq(jobs.type, "platform"), eq(jobs.status, "running"),
+      sql`${jobs.input}::jsonb->>'action' = 'novel_workspace_test'`,
+      sql`${jobs.updatedAt} < ${runCutoff}`));
+
     // 知识卡两类上面已改判 failed（保留行供前端拿终态），这里不再 DELETE。
     const nonRecoverableRunningJob = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (
+      'novel_workspace_test',
       'manhua_template_learn', 'manhua_bgm_v55', 'manhua_advisor_qa', 'manhua_assemble_final', 'canvas_dialogue_line',
       'knowledge_card_distill', 'knowledge_card_derive_level'
     )`;
     // 尚未付费确认的顾问 queued 占位没有扣分；过期后仍按通用规则清理，避免永久堆积。
     const nonRecoverableQueuedJob = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (
+      'novel_workspace_test',
       'manhua_template_learn', 'manhua_bgm_v55', 'manhua_assemble_final',
       'knowledge_card_distill', 'knowledge_card_derive_level'
     )`;

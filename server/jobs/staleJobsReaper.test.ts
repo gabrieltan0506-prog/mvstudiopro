@@ -71,6 +71,10 @@ describe("reapStaleJobsOnce 与 post_prod 记录保留", () => {
     getDb.mockResolvedValue(fakeDb(calls));
 
     const r = await reapStaleJobsOnce({ bypassDisable: true });
+    const novel = calls.find(c => c.kind === "update" && String(c.payload?.error || "").includes("小说改编测试已失联"));
+    expect(novel?.payload?.status).toBe("failed");
+    expect(novel?.payload).not.toHaveProperty("output");
+    expect(sqlStringValues(novel?.condition).join(" ")).toContain("novel_workspace_test");
 
     expect(calls[0]).toMatchObject({
       kind: "update",
@@ -109,7 +113,7 @@ describe("reapStaleJobsOnce 与 post_prod 记录保留", () => {
     getDb.mockResolvedValue(fakeDb(calls, [{ id: "asm-7", userId: "7", status: "running", updatedAt: new Date(0) }]));
     ledger.readActiveJob.mockResolvedValue({ userId: 7, status: "active", lastHeartbeatAt: new Date(0).toISOString() } as never);
     await reapStaleJobsOnce({ bypassDisable: true });
-    const assembleUpdate = calls.filter(call => call.kind === "update" && !/知识卡/.test(sqlStringValues(call.payload?.error).join("\n")))[1];
+    const assembleUpdate = calls.filter(call => call.kind === "update" && !/知识卡|小说改编/.test(sqlStringValues(call.payload?.error).join("\n")))[1];
     expect(assembleUpdate.payload).toEqual({ status: "failed", error: expect.stringContaining("回执已保留"), updatedAt: expect.any(Date) });
     expect(assembleUpdate.payload).not.toHaveProperty("input"); expect(assembleUpdate.payload).not.toHaveProperty("output");
     expect(ledger.refundCreditsOnFailure).toHaveBeenCalledWith("asm-7", "manhuaFinalAssemble", "process_crashed", expect.any(String));
@@ -120,7 +124,7 @@ describe("reapStaleJobsOnce 与 post_prod 记录保留", () => {
     getDb.mockResolvedValue(fakeDb(calls, [{ id: "asm-7", userId: "7", status: "running", updatedAt: new Date(0) }]));
     ledger.readActiveJob.mockResolvedValue({ userId: 7, status: "active", lastHeartbeatAt: new Date().toISOString() } as never);
     await reapStaleJobsOnce({ bypassDisable: true });
-    expect(calls.filter(call => call.kind === "update" && !/知识卡/.test(sqlStringValues(call.payload?.error).join("\n")))).toHaveLength(1);
+    expect(calls.filter(call => call.kind === "update" && !/知识卡|小说改编/.test(sqlStringValues(call.payload?.error).join("\n")))).toHaveLength(1);
     expect(ledger.refundCreditsOnFailure).not.toHaveBeenCalled();
   });
 

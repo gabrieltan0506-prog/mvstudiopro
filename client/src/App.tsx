@@ -84,6 +84,8 @@ const EnterpriseAgentManager = lazy(() => import("./pages/EnterpriseAgentManager
 const EnterpriseAgentDetail = lazy(() => import("./pages/EnterpriseAgentDetail"));
 const EnterpriseAgentPlayground = lazy(() => import("./pages/EnterpriseAgentPlayground"));
 
+const NovelAdaptation = lazy(() => import("./pages/NovelAdaptation"));
+
 function PageLoader() {
   return (
     <div className="min-h-dvh bg-background flex items-center justify-center">
@@ -139,6 +141,7 @@ function Router() {
         <Route path={"/creative"} component={CreativePage} />
         <Route path={"/create"} component={CreativePage} />
         <Route path={"/canvas"} component={OmniCanvas} />
+        <Route path="/novel-adaptation" component={NovelAdaptation} />
         <Route path={"/supervisor"} component={SupervisorAccess} />
         <Route path={"/my-works"} component={MyWorks} />
         <Route path={"/my-works/:id"} component={AnalysisView} />

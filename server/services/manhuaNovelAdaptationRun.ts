@@ -34,14 +34,23 @@ import type { ManhuaNovelExcerpt } from "../../shared/manhuaNovelSource";
 export type NovelStageCall = (
   prompt: string,
   json: boolean,
-  requestId: string
+  requestId: string,
+  trace?: { onBytes?: (bytes:number)=>Promise<void>; onRaw?: (raw:string)=>Promise<void> }
 ) => Promise<{ text: string; model: string }>;
+
+async function persistNovelTrace(write: (() => Promise<void>) | undefined) {
+  if (!write) return;
+  try { await write(); } catch {
+    throw Object.assign(new Error("创作记录保存失败，停止本次生成"), { code: "NOVEL_EVIDENCE_WRITE_FAILED" });
+  }
+}
 
 /** Reuse the existing model IDs, keys, provider locks and SSE parser. No fixed total generation deadline. */
 export const callNovelStage: NovelStageCall = async (
   prompt,
   json,
-  requestId
+  requestId,
+  trace
 ) => {
   const openRouterKey = getOpenRouterApiKey(),
     evolinkKey = getEvolinkApiKey();
@@ -111,6 +120,7 @@ export const callNovelStage: NovelStageCall = async (
       }
       const raw = await readGlmSseStream(response.body, 2 * 1024 * 1024, {
         strictCompletion: true,
+        onBytes: trace?.onBytes ? bytes => persistNovelTrace(() => trace.onBytes!(bytes)) : undefined,
         onErrorFrame(error) {
           // HTTP 200 can carry a real 401/403/refusal in SSE. Only explicit transient statuses may change model.
           const code = Number(error.code ?? error.status);
@@ -119,6 +129,7 @@ export const callNovelStage: NovelStageCall = async (
           });
         },
       });
+      await persistNovelTrace(trace?.onRaw ? () => trace.onRaw!(raw) : undefined);
       const result = JSON.parse(raw) as InvokeResult;
       assertSseContentSafety(result.choices?.[0]?.finish_reason);
       if (result.choices?.[0]?.finish_reason !== "stop")
@@ -128,6 +139,7 @@ export const callNovelStage: NovelStageCall = async (
       return { text, model: target.modelName };
     } catch (error) {
       controller.abort();
+      if ((error as { code?: string }).code === "NOVEL_EVIDENCE_WRITE_FAILED") throw error;
       if (
         index === 0 &&
         (isRetryableOpenAiGatewayError(error) ||
