@@ -149,3 +149,10 @@ describe("复用模型路由", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 });
+
+it("证据写入失败不误作拥堵切换上游，避免重复花费", async () => {
+  const body='data: '+JSON.stringify({choices:[{delta:{content:'完整结果'},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n';
+  const fetch=vi.fn().mockImplementation(async()=>new Response(body,{headers:{'content-type':'text/event-stream'}}));vi.stubGlobal('fetch',fetch);
+  await expect(callNovelStage('提示',true,'r',{onBytes:async()=>{throw new Error('database timeout')}})).rejects.toThrow('记录保存失败');
+  expect(fetch).toHaveBeenCalledTimes(1);
+});

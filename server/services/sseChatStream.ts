@@ -36,6 +36,8 @@ export async function readWithIdleTimeout<T>(
  * 都会带着**半截正文**返回，下游看「有正文、JSON 能解析、节数够」就当成稿——这正是要堵的口子。
  */
 export type SseReadOptions = {
+  /** Durable activity hook, called only after bytes arrive. */
+  onBytes?: (bytes: number) => Promise<void>;
   /** 断流一律判失败（抛错→网关层换下一跳），不把半截正文当成功 */
   strictCompletion?: boolean;
   /** Optional route-specific classification of a structured upstream error before generic incomplete-stream handling. */
@@ -185,6 +187,7 @@ export async function readGlmSseStream(
       const { done, value } = await readWithIdleTimeout(reader);
       if (done) break;
       rawBytes += value.byteLength;
+      if (value.byteLength) await options.onBytes?.(value.byteLength);
       if (rawBytes > rawCap) throw new Error("GLM 链响应超过处理上限");
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split("\n");
