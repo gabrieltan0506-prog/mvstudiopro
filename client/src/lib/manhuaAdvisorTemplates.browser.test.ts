@@ -21,7 +21,7 @@ it("生产面板推荐→选择改写→对比→采用只在用户点击后执�
  const page=await browser.newPage();await page.setRequestInterception(true);page.on('request',r=>r.isNavigationRequest()?void r.respond({status:200,contentType:'text/html',body:'<div id="root"></div>'}):void r.abort());
  await page.goto('http://localhost:41827/');await page.addScriptTag({content:bundle});
  const click=async(text:string)=>page.evaluate(text=>{const b=Array.from(document.querySelectorAll('button')).find(b=>b.textContent===text);if(!b)throw Error(text);b.click();},text);
- await page.waitForSelector('[aria-label="剧本模板优化"]');await click('推荐3—4个剧本模板方案');
+ await page.waitForSelector('[aria-label="剧本模板优化"]');await click('推荐3—5个剧本模板方案');
  await page.waitForFunction(()=>document.body.textContent?.includes('选此方案，改写当前集'));
  await click('选此方案，改写当前集');await page.waitForSelector('[aria-label="改写原稿对比"]');
  expect(await page.$eval('[aria-label="逐句差异对比"]', e => e.textContent)).toContain('套用前 · 完整原稿');
@@ -44,7 +44,7 @@ it("生产面板推荐→选择改写→对比→采用只在用户点击后执�
  expect(await page.evaluate(()=> (globalThis as any).fixture.requests.length)).toBe(0);
  await page.evaluate(()=>localStorage.setItem('mvs:manhua-advisor:v2:1:version-test:rewrite','broken'));
  await page.reload();await page.addScriptTag({content:bundle});await page.waitForFunction(()=>document.body.textContent?.includes('原稿对比记录无法读取'));
- expect(await page.evaluate(()=>Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='推荐3—4个剧本模板方案')?.disabled)).toBe(true);
+ expect(await page.evaluate(()=>Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='推荐3—5个剧本模板方案')?.disabled)).toBe(true);
  expect(await page.evaluate(()=>localStorage.getItem('mvs:manhua-advisor:v2:1:version-test:rewrite'))).toBe('broken');
  await page.close();
 },20000);

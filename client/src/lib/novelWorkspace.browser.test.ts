@@ -4,14 +4,14 @@ import puppeteer from "puppeteer";
 import { createServer } from "node:http";
 import { readFileSync, readdirSync, mkdirSync } from "node:fs";
 const mock = `
-const cards=Array.from({length:5},(_,i)=>({publicId:'mt_000'+i,nameZh:'模板'+(i+1),featureZh:'人物冲突与对白',introZh:'有代价的抉择',classificationTagsZh:[]}));
+const cards=Array.from({length:5},(_,i)=>({publicId:'mt_000'+i,nameZh:'模板'+(i+1),featureZh:'人物冲突与对白',introZh:'有代价的抉择',classificationTagsZh:[],craft:{version:1,features:[i%2?{id:'verbal-tactics',dimension:'dialogue',label:'对白试探与攻防'}:{id:'music-turn',dimension:'sound',label:'音乐推动剧情转折'}]}}));
 globalThis.calls=[];globalThis.receipts={};
 const generate=async input=>{
  globalThis.calls.push(input);let value;
  if(input.stage==='advice')value={assessment:'先确定主角代价，前三集逐次兑现冲突。',recommendations:cards.filter(c=>!input.selectedTemplateIds.includes(c.publicId)).slice(0,3).map(c=>({publicId:c.publicId,reason:'强化角色抉择',tradeoff:'减少支线'}))};
  if(input.stage==='outline')value={premise:'补天需要代价',characters:'女娲与守火人',episodes:Array.from({length:input.episodeCount},(_,i)=>({index:i+1,title:'第'+(i+1)+'集',events:'主角作出选择',hook:'新的代价',payoff:'救下一城'}))};
  if(input.stage==='chapter')value={title:'第'+input.chapterIndex+'章',text:'女娲望着破裂的天空，决定留下来。'.repeat(40),notes:'测试生成，非真实模型结果'};
- if(input.stage==='script')value={title:'补天',episodes:Array.from({length:input.episodeCount},(_,i)=>({index:i+1,title:'补天',opening:'天裂',payoff:'救人',hook:'余烬',scenes:[{key:'E'+(i+1)+'-S1',场景:'共同场景。'+(input.templates[0].publicId==='mt_0000'?'雪落城头。':'雨落城头。'),人物:'女娲与守火人。',妆容:'灰衣。',灯光:'火光。',氛围:'紧张。',对白:'女娲说：“把孩子先带出去，我来守住这里。”'}]}))};
+ if(input.stage==='script')value={title:'补天',applications:input.templates.map(t=>({publicId:t.publicId,method:'选择带来代价',adaptation:'让守火人通过留下来承担救城的代价。',sceneKeys:['E1-S1']})),episodes:Array.from({length:input.episodeCount},(_,i)=>({index:i+1,title:'补天',opening:'天裂',payoff:'救人',hook:'余烬',scenes:[{key:'E'+(i+1)+'-S1',场景:'共同场景。'+(input.templates[0].publicId==='mt_0000'?'雪落城头。':'雨落城头。'),人物:'女娲与守火人。',妆容:'灰衣。',灯光:'火光。',氛围:'紧张。',对白:'女娲说：“把孩子先带出去，我来守住这里。”'}]}))};
  const result={requestId:input.requestId,stage:input.stage,text:JSON.stringify(value),templateIds:input.templates.map(t=>t.publicId),inputSha256:'a'.repeat(64),resultSha256:'b'.repeat(64)};globalThis.receipts[input.requestId]=result;return result;
 };
 export const trpc={manhuaViralTemplate:{listApprovedPublic:{useQuery:()=>({data:{groups:[{items:cards}]},isLoading:false,isError:false})}},novelWorkspace:{generate:{useMutation:()=>({mutateAsync:generate})}},useUtils:()=>({novelWorkspace:{receipt:{fetch:async({requestId})=>({status:'succeeded',result:globalThis.receipts[requestId]})}}})};
@@ -115,6 +115,13 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
         b.click();
       }, label);
     };
+    await page.select('[aria-label="创作环节"]', "sound");
+    expect(await page.$$eval('[aria-label="选择故事模板"] > div', els => els.length)).toBe(3);
+    await page.click('[aria-label="比较模板 0000"]');
+    await page.click('[aria-label="比较模板 0002"]');
+    expect(await page.$('[aria-label="模板手法对照"]')).toBeTruthy();
+    await page.select('[aria-label="创作环节"]', "");
+    expect(await page.$('[aria-label="表现形式"]')).toBeNull();
     await click("原创新方向");
     await page.type('[aria-label="作品名称"]', "女娲补天");
     await page.type('[aria-label="创作方向"]', "以守火人视角写牺牲与救赎。");

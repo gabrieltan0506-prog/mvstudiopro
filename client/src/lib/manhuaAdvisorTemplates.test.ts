@@ -12,7 +12,7 @@ describe("顾问模板结构化结果", () => {
     expect(parseAdvisorTemplatePlans("这里有一些建议", templates)).toEqual([]);
   });
   it("推荐提示词包含真实ID并拒绝不足3个候选", () => {
-    expect(buildTemplatePlanQuestion(templates)).toContain('"publicId":"a"');
+    expect(buildTemplatePlanQuestion(templates)).toContain("按创作手法推荐模板");
     expect(() => buildTemplatePlanQuestion(templates.slice(0, 2))).toThrow("不足3个");
   });
   it("改写保留请求时原稿及集数，拒绝截断JSON、空正文、原样正文和超长原稿", () => {

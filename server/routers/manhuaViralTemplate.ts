@@ -147,10 +147,10 @@ export const manhuaViralTemplateRouter = router({
       };
     } catch (e) {
       console.warn(
-        "[manhuaViralTemplate.listApprovedPublic] gcs failed, return empty:",
+        "[manhuaViralTemplate.listApprovedPublic] gcs read failed:",
         e instanceof Error ? e.message : e,
       );
-      return { groups: [] };
+      throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: "模板目录暂时读取失败，请重试；已有选择不会被清除。" });
     }
   }),
 
@@ -176,10 +176,10 @@ export const manhuaViralTemplateRouter = router({
         };
       } catch (e) {
         console.warn(
-          "[manhuaViralTemplate.listApprovedPrivate] gcs failed, return empty:",
+          "[manhuaViralTemplate.listApprovedPrivate] gcs read failed:",
           e instanceof Error ? e.message : e,
         );
-        return { groups: [] };
+        throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: "模板目录暂时读取失败，请重试；已有选择不会被清除。" });
       }
     }),
 

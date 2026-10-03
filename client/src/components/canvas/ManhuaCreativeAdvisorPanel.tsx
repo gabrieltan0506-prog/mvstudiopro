@@ -248,7 +248,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
         if (mounted.current) { setPrevisCandidate(candidate); setAutoPrevisStart(activePrevisTarget.current?.clipId === candidate.target.clipId && activePrevisTarget.current.specJson === candidate.target.specJson && (request.previsRenderRequested === true || requestsAdvisorPrevisRender(request.rawQuestion))); }
       }
       if (request.rawQuestion === TEMPLATE_PLAN_QUESTION && !parseAdvisorTemplatePlans(answer, templates).length && mounted.current) {
-        toast.error("本次回答未提供3—4个合法模板方案，不能自动选择；原回答已保留供查看。");
+        toast.error("本次回答未提供3—5个合法模板方案，不能自动选择；原回答已保留供查看。");
       }
       if (request.rawQuestion.startsWith("【模板改写建议】")) {
         try {
@@ -425,7 +425,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
         </section> : null}
         {!creationMode && <section ref={templateSectionRef} aria-label="剧本模板优化" className="rounded-lg border border-cyan-300/20 p-3 text-xs">
           <p className="text-white/65">根据当前故事推荐模板，再选择方案改写本集。推荐与改写沿用顾问问答额度，超额先确认。</p>
-          <button type="button" disabled={!userId || !project || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={recommendTemplates} className="mt-2 rounded border border-cyan-300/30 px-3 py-2 disabled:opacity-40">推荐3—4个剧本模板方案</button>
+          <button type="button" disabled={!userId || !project || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={recommendTemplates} className="mt-2 rounded border border-cyan-300/30 px-3 py-2 disabled:opacity-40">推荐3—5个剧本模板方案</button>
         </section>}
         {!creationMode && rewrite && <section aria-label="改写原稿对比" className="space-y-2 rounded-lg border border-emerald-300/30 p-3 text-xs">
           <h3 className="font-semibold">第 {rewrite.episodeIndex} 集 · 改写对比</h3>
@@ -443,7 +443,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
         </section>}
         {!turns.length && <p className="text-xs leading-5 text-white/60">结合当前剧本、参考图绑定和选中镜头给建议。只读取当前项目；未查看原图、原片时不会宣称质量通过。</p>}
         {turns.map((turn) => <div key={turn.id} className={turn.role === "user" ? "ml-8" : "mr-3"}>
-          <div className={`whitespace-pre-wrap break-words rounded-lg px-3 py-2.5 text-[13px] leading-6 ${turn.role === "user" ? "bg-cyan-500/15 text-cyan-50" : "border border-white/10 bg-white/[0.035] text-white/85"}`}>{turn.role === "advisor" && parseAdvisorTemplatePlans(turn.text, templates).length ? "已根据当前故事给出以下方案，请选择后查看改写对比。" : turn.role === "advisor" ? readableAdvice(turn.text) : turn.text === TEMPLATE_PLAN_QUESTION ? "根据当前故事推荐3—4个剧本模板方案。" : turn.text === TEMPLATE_REWRITE_QUESTION ? "按所选方案改写当前集，先查看对比再采用。" : turn.text}</div>
+          <div className={`whitespace-pre-wrap break-words rounded-lg px-3 py-2.5 text-[13px] leading-6 ${turn.role === "user" ? "bg-cyan-500/15 text-cyan-50" : "border border-white/10 bg-white/[0.035] text-white/85"}`}>{turn.role === "advisor" && parseAdvisorTemplatePlans(turn.text, templates).length ? "已根据当前故事给出以下方案，请选择后查看改写对比。" : turn.role === "advisor" ? readableAdvice(turn.text) : turn.text === TEMPLATE_PLAN_QUESTION ? "根据当前故事推荐3—5个剧本模板方案。" : turn.text === TEMPLATE_REWRITE_QUESTION ? "按所选方案改写当前集，先查看对比再采用。" : turn.text}</div>
           {turn.role === "advisor" && <button type="button" onClick={() => void copyAdvice(turn.text)} className="mt-1 min-h-8 rounded px-2 text-xs text-cyan-100 hover:bg-white/10">复制建议</button>}
           {turn.role === "advisor" && parseAdvisorTemplatePlans(turn.text, templates).map(plan => <section key={plan.publicId} className="mt-2 space-y-2 rounded border border-cyan-300/25 p-3 text-xs">
             <h3 className="font-semibold">{templates.find(t => t.publicId === plan.publicId)?.nameZh}</h3>

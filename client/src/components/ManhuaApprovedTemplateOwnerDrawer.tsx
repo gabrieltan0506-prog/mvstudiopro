@@ -1,3 +1,4 @@
+import { buildTemplateCraftReview, TEMPLATE_CRAFT_DIMENSIONS } from "@shared/manhuaTemplateCraft";
 import type {
   ManhuaViralTemplateCard,
   ManhuaViralTemplateChangeReason,
@@ -112,6 +113,7 @@ function TemplateColumn({
   original?: ManhuaViralTemplateCard;
   optimized: boolean;
 }) {
+  const craft = buildTemplateCraftReview(card);
   const changed = (field: ManhuaViralTemplateOptimizeField) =>
     Boolean(optimized && original && isManhuaTemplateFieldChanged(original, card, field));
   const changedBeatIndexes = original
@@ -123,18 +125,25 @@ function TemplateColumn({
         <div className="mb-1 text-[10px] text-white/40">模板名称</div>
         <TextValue value={card.nameZh} changed={changed("nameZh")} />
       </div>
+      <section className="rounded-lg border border-cyan-300/20 p-3" aria-label="模板特色与学习依据">
+        <h3 className="font-semibold text-cyan-100">创作手法与学习依据</h3>
+        <p className="mt-1 text-[11px] leading-5 text-white/55">展开手法可查看对应学习依据，原始内容完整保留。</p>
+        {TEMPLATE_CRAFT_DIMENSIONS.map(([key, label]) => <div key={key} className="mt-3">
+          <h4 className="text-xs text-cyan-100">{label}</h4>
+          {craft.features.filter(f => f.dimension === key).map(f => <details key={f.id} className="mt-1 rounded border border-white/10 p-2">
+            <summary className="cursor-pointer text-xs">{f.label} · {f.evidence.length} 处学习依据</summary>
+            {f.evidence.map(e => <div key={e.field} className="mt-2 text-[11px] leading-5"><p className="font-mono text-white/40">{e.field}</p><p className="whitespace-pre-wrap text-white/75">{e.text}</p></div>)}
+          </details>)}
+          {!craft.features.some(f => f.dimension === key) && <p className="mt-1 text-[11px] text-white/40">暂无对应检索线索；可继续查看下方原始学习内容。</p>}
+        </div>)}
+        <details className="mt-3"><summary className="cursor-pointer text-xs">尚未归入检索分类的学习内容（{craft.unindexed.length}）</summary>{craft.unindexed.map(e => <p key={e.field} className="mt-2 whitespace-pre-wrap text-[11px] leading-5 text-white/65">{e.field}：{e.text}</p>)}</details>
+      </section>
       <div>
-        <div className="mb-1 text-[10px] text-white/40">赛道分类</div>
-        <TextValue value={card.laneZh} changed={changed("laneZh")} />
-      </div>
-      <div>
-        <div className="mb-1 text-[10px] text-white/40">多维特征</div>
-        <TextValue
-          value={card.classification
-            ? Object.values(card.classification).flat().join("、")
-            : ""}
-          changed={changed("classification")}
-        />
+        <div className="mb-1 text-[10px] text-white/40">原始五维特征</div>
+        {Object.entries(card.classification || {}).map(([key, tags]) => <div key={key} className="mt-2">
+          <p className="text-[11px] text-white/45">{({ emotionTagsZh: "情绪", narrativeFeatureTagsZh: "叙事特色", performanceTagsZh: "表演", audiovisualTagsZh: "视听", audienceExperienceTagsZh: "观众体验" } as Record<string, string>)[key]}</p>
+          <TextValue value={tags.join("、")} changed={changed("classification")} />
+        </div>)}
       </div>
       <div>
         <div className="mb-1 text-[10px] text-white/40">故事骨架</div>

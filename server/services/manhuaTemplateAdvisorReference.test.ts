@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ManhuaViralTemplateCard } from "../../shared/manhuaViralTemplateBank";
 const { resolve, invoke } = vi.hoisted(() => ({ resolve: vi.fn(), invoke: vi.fn() }));
-vi.mock("./manhuaViralTemplateStore.js", () => ({ resolveViralTemplateForExpand: resolve }));
+vi.mock("./manhuaViralTemplateStore.js", () => ({ resolveViralTemplateForExpand: resolve, listMergedApprovedManhuaViralTemplates: async () => [card, { ...card, publicCode: "B456" }, { ...card, publicCode: "C789" }] }));
 vi.mock("../_core/llm.js", async (original) => {
   const real = await original<typeof import("../_core/llm.js")>();
   return { ...real, invokeLLM: invoke };
@@ -46,4 +46,11 @@ describe("模板编号顾问服务端链", () => {
     await expect(buildManhuaTemplateAdvisorReference("模板编号 A123")).rejects.toThrow("超过");
     resolve.mockClear(); await expect(buildManhuaTemplateAdvisorReference("模板A123 B456 C789 D012")).rejects.toThrow("最多"); expect(resolve).not.toHaveBeenCalled();
   });
+});
+
+it("手法推荐标记读取全部服务端方法，不依赖客户端六张列表", async () => {
+ const reference = await buildManhuaTemplateAdvisorReference("【按创作手法推荐模板】请推荐");
+ expect(reference).toContain("完整导演手法哨兵");
+ expect(reference).toContain("mt_c789");
+ expect(reference).not.toContain("来源真名");
 });

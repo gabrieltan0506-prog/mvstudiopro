@@ -32,7 +32,7 @@ vi.mock("../db", () => ({
 }));
 vi.mock("./manhuaViralTemplateStore", () => ({
   listMergedApprovedManhuaViralTemplatesGrouped: async () => [
-    { items: [{ publicCode: "0001" }] },
+    { items: [{ publicCode: "0001", status: "approved", reusableZh: "人物抉择推动关系转折", genPromptHintZh: "", classification: {} }] },
   ],
   resolveViralTemplateForExpand: async () => ({ card: {} }),
 }));

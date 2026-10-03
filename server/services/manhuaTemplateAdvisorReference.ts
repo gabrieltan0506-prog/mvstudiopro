@@ -1,3 +1,6 @@
+import { TEMPLATE_CATALOG_REQUEST_MARKER } from "../../shared/manhuaTemplateCraft";
+import { buildTemplateCraftCatalog, formatTemplateCraftCatalog } from "./manhuaTemplateCraftCatalog";
+import { listMergedApprovedManhuaViralTemplates } from "./manhuaViralTemplateStore";
 import { resolveViralTemplateForExpand } from "./manhuaViralTemplateStore.js";
 import { formatManhuaViralTemplateWriterSkillFromCard } from "../../shared/manhuaViralTemplateBank.js";
 
@@ -16,6 +19,11 @@ export function mentionedManhuaTemplateIds(question: string): string[] {
 
 /** 完整能力只进服务端LLM消息；不将私有卡、来源或能力全文返回公开目录。 */
 export async function buildManhuaTemplateAdvisorReference(question: string): Promise<string> {
+  if (question.includes(TEMPLATE_CATALOG_REQUEST_MARKER)) {
+    const { catalog } = buildTemplateCraftCatalog(await listMergedApprovedManhuaViralTemplates());
+    if (catalog.length < 3) throw new Error("可用模板不足3个，未调用顾问模型。");
+    return formatTemplateCraftCatalog(catalog);
+  }
   const ids = mentionedManhuaTemplateIds(question);
   if (ids.length > 3) throw new Error("一次最多评估3个模板编号，请缩小范围后重试。");
   const blocks: string[] = [];
