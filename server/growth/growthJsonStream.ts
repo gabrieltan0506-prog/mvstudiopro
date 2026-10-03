@@ -6,10 +6,14 @@ import { createGunzip, createGzip } from "node:zlib";
 
 /** Growth DTO 的大数组固定在 items 或 collection.items；其余元数据保持 JSON.stringify 语义。 */
 export function* growthJsonChunks(value: unknown): Generator<string> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) {
     const encoded = JSON.stringify(value);
     if (encoded === undefined) throw new Error("growth_json_value_undefined");
     yield encoded;
+    return;
+  }
+  if (typeof (value as { toJSON?: unknown }).toJSON === "function") {
+    yield JSON.stringify(value);
     return;
   }
   yield "{";
@@ -28,7 +32,8 @@ export function* growthJsonChunks(value: unknown): Generator<string> {
       if (chunk) yield chunk;
       yield "]";
     } else if (key === "collection" && item && typeof item === "object") {
-      yield* growthJsonChunks(item);
+      const nested = growthJsonChunks(item);
+      for (let next = nested.next(); !next.done; next = nested.next()) yield next.value;
     } else {
       yield JSON.stringify(item);
     }

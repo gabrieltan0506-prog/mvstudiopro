@@ -1,3 +1,4 @@
+import { resolvePostProdJobTimeoutMs } from "./postProdJob";
 import { and, eq, lt, ne, or, sql } from "drizzle-orm";
 import { jobs } from "../../drizzle/schema";
 import { getDb } from "../db";
@@ -71,22 +72,19 @@ export async function reapStaleJobsOnce(
   try {
     // post_prod 任务记录保留:停止更新的行改判 failed 而不是删除,
     // getPostProdJob 仍能返回任务状态,不会直接变成 404。
-    await db
-      .update(jobs)
-      .set({
-        status: "failed",
-        error: "后期任务已停止,请重新提交",
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(jobs.type, "post_prod"),
-          or(
-            and(eq(jobs.status, "running"), lt(jobs.updatedAt, runCutoff)),
-            and(eq(jobs.status, "queued"), lt(jobs.createdAt, qCutoff)),
-          ),
-        ),
-      );
+    const hasResult = sql`jsonb_typeof(${jobs.output}::jsonb->'postProdResult'->'output') = 'object'
+      and coalesce(${jobs.output}::jsonb->'postProdResult'->>'provider', '') <> ''`;
+    const bindTimeout = resolvePostProdJobTimeoutMs({ action: "manhua_auto_rig", params: { stage: "bind" } });
+    const heartbeatWindow = sql`case when ${jobs.input}::jsonb->>'action' = 'manhua_auto_rig'
+      and ${jobs.input}::jsonb->'params'->>'stage' = 'bind' then ${bindTimeout} else 600000 end`;
+    await db.update(jobs).set({
+      status: sql`case when ${hasResult} then 'succeeded' else 'failed' end`,
+      output: sql`case when ${hasResult} then ${jobs.output}::jsonb->'postProdResult'->'output' else ${jobs.output}::jsonb end`,
+      provider: sql`case when ${hasResult} then ${jobs.output}::jsonb->'postProdResult'->>'provider' else ${jobs.provider} end`,
+      error: sql`case when ${hasResult} then null else '后期执行进程已失联，原素材和任务回执保留；未自动重做，请先核对原任务' end`,
+      updatedAt: new Date(),
+    }).where(and(eq(jobs.type, "post_prod"), eq(jobs.status, "running"),
+      sql`${jobs.updatedAt} < NOW() - (${heartbeatWindow}) * INTERVAL '1 millisecond'`));
 
     // 知识卡提炼/派生：不设总时长（0910 拍板），但心跳每 60 s 刷 updatedAt，落后 cutoff 就是进程真死
     // （崩溃/部署重启）。改判 failed 保留行，前端轮询拿到终态与错误，可重提；不删、不豁免。

@@ -1055,8 +1055,8 @@ async function startServer() {
     // 漫剧学习逐集落盘；部署/崩溃会留下 running 行。先恢复为 queued 再启动 worker，
     // 让任务跳过已完成集并继续总分析，避免页面永久卡在“正在合成”。
     const recoverManhuaThenStartWorkers = async (attempt = 1): Promise<void> => {
-      const { recoverPostProdReceipts } = await import("../jobs/postProdRecovery");
-      await recoverPostProdReceipts();
+      const { startPostProdRecovery } = await import("../jobs/postProdRecovery");
+      startPostProdRecovery();
       // 0917：rig 进程组只跑 Blender 后期任务，启动期的学习/配乐恢复交给 app 做，避免两台机同时 requeue
       if (resolveJobWorkerRole() === "rig") {
         // 不起 stale reaper：reaper 判 manhua_assemble_final 活性要读 /data 上的 paidJobLedger，
@@ -1172,7 +1172,7 @@ async function startServer() {
   //   * 调用 reapStuckPaidJobs({ forceAll: true, reason: "process_killed" }) →
   //     幂等地把所有还活着的付费任务全部退分（用户不会被部署中断套钱）
   //   * 只挂一次（避免重复 listener 警告）
-  //   * 超时兜底 10s 后强制 process.exit(0)，防止挂死
+  //   * 等本机媒体清理与回执，最多 30s；保留强制退出兜底。
   let shuttingDown = false;
   const handleShutdown = (signal: string) => {
     if (shuttingDown) return;
@@ -1180,12 +1180,17 @@ async function startServer() {
     stopVercelPreviewScheduler();
     console.warn(`[server] 收到 ${signal} 信号，开始优雅退出 + 兜底退积分…`);
     const forceExitTimer = setTimeout(() => {
-      console.warn("[server] 兜底退积分超时（10s），强制退出 process");
+      console.warn("[server] 优雅退出超时（30s），强制退出 process");
       process.exit(0);
-    }, 10_000);
+    }, 30_000);
     forceExitTimer.unref?.();
     (async () => {
+      let draining: Promise<void> | undefined;
       try {
+        const { drainPostProdOnShutdown } = await import("../jobs/runner");
+        const { stopPostProdRecovery } = await import("../jobs/postProdRecovery");
+        stopPostProdRecovery();
+        draining = drainPostProdOnShutdown().catch(error => { console.error("[post-prod] shutdown cleanup", error); });
         const { reapStuckPaidJobs, writeAuditLog } = await import("../services/paidJobLedger");
         const result = await reapStuckPaidJobs({
           forceAll: true,
@@ -1210,6 +1215,7 @@ async function startServer() {
       } catch (e: any) {
         console.error("[server] shutdown reap 失败：", e?.message ?? e);
       } finally {
+        await draining;
         clearTimeout(forceExitTimer);
         try { server.close(() => process.exit(0)); } catch { process.exit(0); }
       }

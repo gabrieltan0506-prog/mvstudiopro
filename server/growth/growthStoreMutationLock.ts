@@ -39,7 +39,11 @@ export async function withGrowthStoreMutationLock<T>(
       await handle.close();
       heartbeat = setInterval(() => {
         const now = new Date();
-        void fs.utimes(lockPath, now, now).catch(error => options?.onLeaseLost?.(error));
+        void (async () => {
+          const owner = JSON.parse(await fs.readFile(lockPath, "utf8"));
+          if (owner.token !== token) throw new Error("growth_lock_ownership_lost");
+          await fs.utimes(lockPath, now, now);
+        })().catch(error => options?.onLeaseLost?.(error));
       }, Math.min(30_000, Math.max(1_000, Math.floor(staleAfterMs / 3))));
       break;
     } catch (error) {

@@ -16,7 +16,7 @@ export function runtimeMemorySnapshot(label: string) {
     rss: m.rss, heapUsed: m.heapUsed, heapTotal: m.heapTotal,
     external: m.external, arrayBuffers: m.arrayBuffers,
     heapLimit: getHeapStatistics().heap_size_limit,
-    active: [...active.values()].slice(-24) };
+    active: Array.from(active.values()).slice(-24) };
 }
 
 function record(label: string) {

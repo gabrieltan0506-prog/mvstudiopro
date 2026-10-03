@@ -74,8 +74,13 @@ describe("reapStaleJobsOnce 与 post_prod 记录保留", () => {
 
     expect(calls[0]).toMatchObject({
       kind: "update",
-      payload: { status: "failed", error: "后期任务已停止,请重新提交" },
+      payload: { updatedAt: expect.any(Date) },
     });
+    expect(sqlStringValues(calls[0].condition)).toContain("running");
+    expect(sqlStringValues(calls[0].condition)).not.toContain("queued");
+    expect(sqlStringValues(calls[0].condition).join(" ")).toContain("600000");
+    expect(sqlStringValues(calls[0].payload?.status).join(" ")).toContain("postProdResult");
+    expect(sqlStringValues(calls[0].payload?.output).join(" ")).toContain("postProdResult");
     // 知识卡提炼/派生：心跳落后即改判 failed 保留行（前端拿终态可重提），不删、不豁免
     const kc = calls.find((c) => c.kind === "update" && /知识卡任务进程已中断/.test(sqlStringValues(c.payload?.error).join("\n")));
     expect(kc).toBeTruthy();

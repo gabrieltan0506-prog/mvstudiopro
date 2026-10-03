@@ -14,7 +14,7 @@ import { normalizeDialogueSubtitleSrt } from "../../shared/dialogueSubtitleSrt.j
  *   每段音轨 apad+atrim 对齐该段画面时长;
  * - 临时目录一律 finally 清理。
  */
-import { execFile } from "node:child_process";
+
 import { mediaRuntime, boundMediaThreads } from "./postProdResources";
 import { randomBytes } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
@@ -23,7 +23,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { promisify } from "node:util";
+import { runChildUntilClosed } from "./runChildUntilClosed";
 import { z } from "zod";
 import { signGsUriV4ReadUrl, uploadStreamToGcs } from "./gcs.js";
 import {
@@ -46,7 +46,7 @@ import { AUDIO_SAMPLE_RATE, audioSamples, buildAudioTrimArgs, buildAudioTimeline
 // 契约已并轨到 jobs 层；这里保留再导出，测试与旧调用方免改路径
 export { burnSubtitleParamsSchema, burnSubtitleStyleOverrideSchema } from "../jobs/postProdInput";
 
-const execFileAsync = promisify(execFile);
+
 
 /** 拼接单次上限:超过说明该走多轮,防一条命令吃满机器 */
 export const MAX_CONCAT_CLIPS = 12;
@@ -69,10 +69,8 @@ export function runMediaTool(
 ): Promise<{ stdout: string; stderr: string }> {
   const state = mediaRuntime.getStore();
   if (state) state.phase = command;
-  const pending = execFileAsync(command, command === "ffmpeg" ? boundMediaThreads(args) : args,
-    { signal, maxBuffer: 16 * 1024 * 1024 });
-  if (state) state.childPid = pending.child.pid;
-  return pending.finally(() => { if (state) state.childPid = undefined; }) as Promise<{ stdout: string; stderr: string }>;
+  return runChildUntilClosed(command, command === "ffmpeg" ? boundMediaThreads(args) : args,
+    signal, pid => { if (state) state.childPid = pid; });
 }
 
 export type DownloadBudget = { remainingBytes: number };

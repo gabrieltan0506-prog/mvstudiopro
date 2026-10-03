@@ -1590,6 +1590,17 @@ export async function recordPdfExportStep(
   }
 }
 
+/** Failure must not overwrite cancellation, completion, or a newer heartbeat. */
+export async function failPostProdJob(id: string, error: string, expectedUpdatedAt?: Date): Promise<boolean> {
+  const db = await getDb();
+  if (!db) throw new Error("后期状态数据库不可用");
+  const rows = await db.update(jobs).set({ status: "failed", error, updatedAt: new Date() })
+    .where(and(eq(jobs.id, id), eq(jobs.type, "post_prod"), eq(jobs.status, "running"),
+      expectedUpdatedAt ? eq(jobs.updatedAt, expectedUpdatedAt) : undefined))
+    .returning({ id: jobs.id });
+  return rows.length === 1;
+}
+
 /** 后期心跳原子合并，避免旧读快照覆盖产物或资源证据。 */
 export async function patchPostProdProgressStrict(id: string, patch: Record<string, unknown>): Promise<void> {
   const db = await getDb();

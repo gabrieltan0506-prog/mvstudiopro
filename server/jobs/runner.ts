@@ -4305,14 +4305,30 @@ export async function processPdfJobsOnce() {
   }
 }
 
-async function processOnePostProdJob(filter: PostProdClaimFilter = resolvePostProdClaimFilter(), claimedJob?: Awaited<ReturnType<typeof claimNextPostProdJob>>): Promise<boolean> {
+const postProdShutdown = new AbortController();
+const activePostProdRuns = new Set<Promise<boolean>>();
+async function processOnePostProdJob(...args: Parameters<typeof processOnePostProdJobImpl>): Promise<boolean> {
+  if (postProdShutdown.signal.aborted) return false;
+  const run = processOnePostProdJobImpl(...args);
+  activePostProdRuns.add(run);
+  try { return await run; } finally { activePostProdRuns.delete(run); }
+}
+export async function drainPostProdOnShutdown() {
+  stopJobWorker();
+  postProdShutdown.abort(new Error("服务更新中，本任务已停止，原素材和回执保留；未自动重做"));
+  await Promise.allSettled(Array.from(activePostProdRuns));
+  const { waitForPostProdResources } = await import("../services/postProdResources");
+  await waitForPostProdResources();
+}
+
+async function processOnePostProdJobImpl(filter: PostProdClaimFilter = resolvePostProdClaimFilter(), claimedJob?: Awaited<ReturnType<typeof claimNextPostProdJob>>): Promise<boolean> {
   if (rigStopGate.requested) return false;
   const job = claimedJob ?? await claimNextPostProdJob(filter);
   if (!job) return false;
-  const { patchPostProdProgressStrict, completePostProdJob } = await import("./repository");
+  const { patchPostProdProgressStrict, completePostProdJob, failPostProdJob } = await import("./repository");
   const { processPostProdJob, runWithTaskLimit, resolvePostProdJobTimeoutMs } = await import("./postProdJob");
   const { withPostProdResources, readResourceSnapshot } = await import("../services/postProdResources");
-  const { postProdOwner, savePostProdReceipt, removePostProdReceipt } = await import("./postProdRecovery");
+  const { postProdOwner, savePostProdReceipt, removePostProdReceipt, rememberPostProdResult } = await import("./postProdRecovery");
   const state = { phase: "waiting_resources", childPid: undefined as number | undefined };
   const receipt = { version: 1 as const, jobId: job.id, userId: String(job.userId), owner: await postProdOwner() };
   let lastHeartbeatAt = Date.now();
@@ -4340,14 +4356,18 @@ async function processOnePostProdJob(filter: PostProdClaimFilter = resolvePostPr
     const result = await runWithTaskLimit(timeoutMs,
       signal => withPostProdResources(job.id, signal, state,
         resourceSignal => processPostProdJob(job.input, String(job.userId), { signal: resourceSignal })),
-      undefined, () => lastHeartbeatAt);
+      postProdShutdown.signal, () => lastHeartbeatAt);
     finished = true;
     clearInterval(heartbeat);
-    await heartbeatPending;
     // 成品在 GCS，先持久化回执。数据库短抖动/重启后只恢复结果，绝不重跑媒体。
-    await savePostProdReceipt({ ...receipt, result });
     resultPreserved = true;
-    await patchPostProdProgressStrict(job.id, { postProdResult: result, postProdResources: await readResourceSnapshot(state) });
+    rememberPostProdResult({ ...receipt, result });
+    // Either durable channel may temporarily fail; always attempt both and settlement.
+    await savePostProdReceipt({ ...receipt, result }).catch(() => {
+      console.error(`[post-prod] ${job.id} disk checkpoint failed; retaining result for recovery`);
+    });
+    await heartbeatPending;
+    await patchPostProdProgressStrict(job.id, { postProdResult: result, postProdResources: await readResourceSnapshot(state) }).catch(() => {});
     let saved = false;
     for (let attempt = 0; attempt < 4 && !saved; attempt++) {
       try { saved = await completePostProdJob(job.id, result.output, result.provider); }
@@ -4364,7 +4384,7 @@ async function processOnePostProdJob(filter: PostProdClaimFilter = resolvePostPr
       const message = error instanceof Error && error.name === "AbortError"
         ? `后期任务连续${timeoutMs}ms无成功心跳,已终止本次处理`
         : getJobFailureMessage("post_prod" as JobType, error);
-      await markJobFailed(job.id, message.slice(0, 800));
+      await failPostProdJob(job.id, message.slice(0, 800));
     }
   } finally {
     finished = true;
@@ -4386,7 +4406,7 @@ export async function processPostProdJobsOnce() {
       await Promise.all([
         (async () => { while (await processOnePostProdJob(filter === "non_blender" ? "non_blender_non_bgm" : "non_bgm")) { /* 其他后期单路 */ } })(),
         drainBgmQueue(
-          () => rigStopGate.requested ? Promise.resolve(null) : claimNextPostProdJob("bgm"),
+          () => rigStopGate.requested || postProdShutdown.signal.aborted ? Promise.resolve(null) : claimNextPostProdJob("bgm"),
           job => processOnePostProdJob("bgm", job),
         ),
       ]);

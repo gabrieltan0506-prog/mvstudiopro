@@ -27,13 +27,13 @@ vi.mock("./gcs.js", () => ({
   // 现签短链:把 gs://itest/<name> 折成可识别的 https 标记,由 fetch 桩供流
   signGsUriV4ReadUrl: (gsUri: string) =>
     `https://storage.googleapis.com/${String(gsUri).replace(/^gs:\/\//, "")}?signed=1`,
-  uploadBufferToGcs: async (params: {
+  uploadStreamToGcs: async (params: {
     objectName: string;
-    buffer: Buffer;
+    stream: ReadableStream<Uint8Array>;
     signal?: AbortSignal;
   }) => {
     params.signal?.throwIfAborted();
-    h.uploads.set(params.objectName, params.buffer);
+    h.uploads.set(params.objectName, Buffer.from(await new Response(params.stream).arrayBuffer()));
     h.uploadSignals.push(params.signal);
     return { bucket: "itest", objectName: params.objectName, gcsUri: `gs://itest/${params.objectName}` };
   },

@@ -151,7 +151,11 @@ async function runWithCrossProcessCollectionLease<T>(
       await handle.close();
       heartbeat = setInterval(() => {
         const now = new Date();
-        void fs.utimes(files.lock, now, now).catch(error => foreground?.onLeaseLost(error));
+        void (async () => {
+          const owner = JSON.parse(await fs.readFile(files.lock, "utf8"));
+          if (owner.token !== token) throw new Error("growth_lock_ownership_lost");
+          await fs.utimes(files.lock, now, now);
+        })().catch(error => foreground?.onLeaseLost(error));
       }, 30_000);
       break;
     } catch (error) {

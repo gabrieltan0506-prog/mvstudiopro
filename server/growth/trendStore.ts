@@ -1821,18 +1821,22 @@ function hasAnyLiveCollectionItems(collections: Partial<Record<GrowthPlatform, P
   return GROWTH_STORE_PLATFORM_VALUES.some((platform) => (collections[platform]?.items?.length || 0) > 0);
 }
 
-function buildSlimTrendStore(store: TrendStoreFile): TrendStoreFile {
+function buildSlimTrendStore(store: TrendStoreFile, changedPlatforms?: GrowthPlatform[]): TrendStoreFile {
   const collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>> = {};
   for (const platform of GROWTH_STORE_PLATFORM_VALUES) {
     const collection = store.collections?.[platform];
     if (!collection) continue;
+    if (changedPlatforms && !changedPlatforms.includes(platform)) {
+      collections[platform] = collection;
+      continue;
+    }
     collections[platform] = {
       ...collection,
       items: [],
-      notes: [...new Set([
+      notes: Array.from(new Set([
         ...(collection.notes || []),
         `items_externalized:platform-current/${platform}.current.json.gz`,
-      ])],
+      ])),
     };
   }
   return {
@@ -2212,7 +2216,7 @@ async function writeStoreUnlocked(
       }
     }
   }
-  await writeJsonAtomic(STORE_FILE, buildSlimTrendStore(next), { compact: true });
+  await writeJsonAtomic(STORE_FILE, buildSlimTrendStore(next, options?.preserveUnloadedPlatforms ? options.changedPlatforms : undefined), { compact: true });
   await Promise.all([
     writeRuntimeSegment(
       RUNTIME_SCHEDULER_FILE,
@@ -2245,7 +2249,7 @@ async function writeStoreUnlocked(
     await refreshPlatformUpdateSummary(next, options.changedPlatforms || []);
   } else await refreshTrendDebugSummary(next);
   if (options?.writeLegacyMirror ?? SHOULD_WRITE_LEGACY_MIRROR) {
-    await writeJsonAtomic(LEGACY_STORE_FILE, buildSlimTrendStore(next), { compact: true });
+    await writeJsonAtomic(LEGACY_STORE_FILE, buildSlimTrendStore(next, options?.preserveUnloadedPlatforms ? options.changedPlatforms : undefined), { compact: true });
   }
   if (!(options?.writeDerivedPlatformFiles ?? SHOULD_WRITE_DERIVED_PLATFORM_FILES)) {
     return next;
@@ -3011,9 +3015,9 @@ export async function restoreTrendPlatformCurrentFromBaseline(
 
 /** 单平台更新只补齐目标 items；其余平台只携带 current.json 的轻量元数据。 */
 async function readStoreForPlatformUpdates(platforms: GrowthPlatform[]): Promise<TrendStoreFile> {
-  const shell = await readRawStoreFile(STORE_FILE) || createEmptyStore();
+  const shell = await readRawStoreFile(STORE_FILE) || await readRawStoreFile(LEGACY_STORE_FILE) || createEmptyStore();
   const meta = await readRuntimeMeta();
-  const history = await readHistorySummaryFile() || shell.history;
+  const history = await readHistorySummaryFile() || shell.history || createEmptyHistoryState();
   const collections = { ...shell.collections };
   for (const platform of platforms) {
     const truth = await readPlatformCurrentTruthFile(platform);
@@ -3021,7 +3025,8 @@ async function readStoreForPlatformUpdates(platforms: GrowthPlatform[]): Promise
     if (current) collections[platform] = current;
     if (truth?.history) history.platforms[platform] = truth.history;
   }
-  return { ...shell, collections, history, archiveIndex: await readArchiveIndexFile(),
+  const archiveIndex = await readArchiveIndexFile();
+  return { ...shell, collections, history, archiveIndex: dedupeGrowthArchiveIndex([...archiveIndex, ...(shell.archiveIndex || [])]),
     scheduler: meta.scheduler || shell.scheduler,
     backfill: meta.backfill || shell.backfill, backfillLive: meta.backfillLive || shell.backfillLive,
     backfillHistory: meta.backfillHistory || shell.backfillHistory, mailDigest: meta.mailDigest || shell.mailDigest };
@@ -3042,7 +3047,7 @@ async function refreshPlatformUpdateSummary(store: TrendStoreFile, changed: Grow
       // 旧布局尚无摘要时只用已有完整元数据中的计数，不读取其他平台大文件。
       summary.platforms[platform] = { platform,
         currentTotal: store.collections[platform]?.stats?.itemCount || 0,
-        archivedTotal: store.history.platforms[platform]?.archivedItems || 0 };
+        archivedTotal: store.history?.platforms[platform]?.archivedItems || 0 };
     }
   }
   summary.totals.currentItems = growthPlatformsForStatsAggregationList().reduce(

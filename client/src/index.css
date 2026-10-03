@@ -1575,3 +1575,198 @@ body:has(#manhua-workbench-shell) [data-pwa-install-button] {
   font-size: 18px;
   line-height: 1.35;
 }
+
+/* 1003: focused storyboard editing, within the existing cream/teal system.
+   Scope excludes other production phases, task state and paid-action contracts. */
+#manhua-workbench-shell.mh-redesign[data-manhua-active-phase="storyboard"] {
+  --mh-story-muted: #68716f;
+  box-shadow: none !important;
+}
+#manhua-workbench-shell.mh-redesign[data-manhua-active-phase="storyboard"] [data-manhua-product-header] {
+  grid-template-columns: minmax(0, 1fr) minmax(110px, 180px) auto;
+  gap: 10px;
+  padding: 8px 16px !important;
+}
+#manhua-workbench-shell.mh-redesign[data-manhua-active-phase="storyboard"] [data-manhua-workflow-rail] [data-manhua-advisor-header] {
+  min-height: 32px;
+  margin-left: 4px;
+  padding: 5px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  border-radius: 8px;
+}
+#manhua-workbench-shell.mh-redesign[data-manhua-active-phase="storyboard"] [data-manhua-header-actions] > button,
+#manhua-workbench-shell.mh-redesign[data-manhua-active-phase="storyboard"] [data-manhua-header-actions] > details > summary {
+  min-height: 32px;
+  padding: 6px 10px !important;
+  font-size: 12px;
+  line-height: 18px;
+  border-radius: 8px;
+}
+#manhua-workbench-shell.mh-redesign[data-manhua-active-phase="storyboard"] [data-manhua-workspace-tools] { position: static; }
+#manhua-workbench-shell.mh-redesign[data-manhua-active-phase="storyboard"] [data-manhua-product-header] [data-manhua-toolbar-cluster] {
+  right: 12px;
+  width: min(48rem, calc(100% - 24px));
+  margin-inline: 0;
+}
+#manhua-workbench-shell.mh-redesign[data-manhua-active-phase="storyboard"] [data-manhua-project-identity] {
+  max-width: 100%;
+}
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] {
+  padding: 0 !important;
+  background: var(--mh-page) !important;
+}
+#manhua-workbench-shell.mh-redesign [data-manhua-storyboard-header] {
+  min-height: 44px;
+  padding: 10px 18px;
+  background: var(--mh-panel);
+}
+#manhua-workbench-shell.mh-redesign [data-manhua-storyboard-header] h1 { font-size: 14px; }
+#manhua-workbench-shell.mh-redesign [data-manhua-storyboard-header] > span { color: var(--mh-story-muted); font-size: 12px; }
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-storyboard-workspace] {
+  grid-template-columns: clamp(220px, 20vw, 280px) minmax(0, 1fr) clamp(280px, 25vw, 340px) !important;
+  gap: 14px;
+  padding: 14px;
+}
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-column] {
+  border-radius: 10px;
+  box-shadow: none;
+  scrollbar-width: thin;
+  scrollbar-color: #cdc7bc transparent;
+}
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-column="script"] {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+#manhua-workbench-shell.mh-redesign.mh-compact [data-manhua-column="script"] [data-manhua-shot] {
+  border-color: #ded8ce;
+  border-radius: 8px;
+  background: var(--mh-panel);
+  box-shadow: none;
+}
+#manhua-workbench-shell.mh-redesign.mh-compact [data-manhua-column="script"] [data-manhua-shot][data-manhua-active="true"] {
+  border-color: #13866f;
+  background: #e8f3ef;
+  box-shadow: inset 3px 0 0 #13866f;
+}
+#manhua-workbench-shell.mh-redesign.mh-compact [data-manhua-column="script"] [data-manhua-shot] > button {
+  grid-template-columns: 64px minmax(0, 1fr);
+  min-height: 72px;
+  padding: 4px;
+  gap: 4px;
+}
+#manhua-workbench-shell.mh-redesign.mh-compact [data-manhua-column="script"] [data-manhua-shot] > button > :first-child {
+  width: 64px !important;
+  height: 64px !important;
+  border-radius: 5px;
+}
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-column="preview"] {
+  padding: 12px;
+  border-color: #ded8ce;
+  background: var(--mh-panel) !important;
+}
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-column="preview"] [data-manhua-media-frame] {
+  width: 100% !important;
+  max-width: none;
+  height: 100%;
+  min-height: 180px;
+  max-height: none !important;
+  aspect-ratio: auto !important;
+  padding: 12px;
+  margin: 0 !important;
+  border-radius: 8px;
+  background: #171c1b !important;
+}
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-column="preview"] [aria-label="当前镜预览内容"] {
+  gap: 2px;
+  padding: 3px;
+  border-radius: 8px;
+  background: #eeebe4;
+}
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-column="preview"] [aria-label="当前镜预览内容"] button {
+  min-height: 30px;
+  border: 0;
+  background: transparent;
+  font-size: 12px;
+}
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-column="preview"] [aria-label="当前镜预览内容"] button[aria-pressed="true"] {
+  background: var(--mh-panel);
+  color: #087669;
+  box-shadow: 0 1px 3px rgb(42 48 44 / 10%);
+}
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-column="params"] {
+  padding: 16px;
+}
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-shot-params] {
+  border: 0 !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  background: transparent !important;
+}
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-shot-params] > label {
+  margin-top: 16px;
+  color: var(--mh-ink);
+  font-size: 12px;
+}
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-shot-params] textarea {
+  margin-top: 8px;
+  border-radius: 8px;
+  background: #fffefa !important;
+  font-size: 13px;
+  line-height: 1.7;
+}
+#manhua-workbench-shell.mh-redesign [data-manhua-shot-primary-action] {
+  padding-block: 14px;
+  border-bottom: 1px solid #e5dfd5;
+}
+#manhua-workbench-shell.mh-redesign [data-manhua-shot-primary-action] button:disabled {
+  opacity: 1;
+  background: #eeebe5 !important;
+  color: #6b726e !important;
+  border: 1px solid #ddd7cd;
+  box-shadow: none !important;
+  cursor: not-allowed;
+}
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-shot-field] {
+  padding: 8px 0;
+  border-bottom: 0;
+}
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-shot-field] dt { color: var(--mh-story-muted); font-size: 11px; }
+#manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-shot-field] dd { font-size: 13px; }
+@media (min-width: 768px) and (max-width: 1199px) {
+  #manhua-workbench-shell.mh-redesign[data-manhua-active-phase="storyboard"] [data-manhua-product-header] {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  #manhua-workbench-shell.mh-redesign[data-manhua-active-phase="storyboard"] [data-manhua-product-header] [data-manhua-workflow-rail] { grid-column: 1 / -1; }
+  #manhua-workbench-shell.mh-redesign[data-manhua-active-phase="storyboard"] [data-manhua-workspace-tools] { position: static; }
+#manhua-workbench-shell.mh-redesign[data-manhua-active-phase="storyboard"] [data-manhua-product-header] [data-manhua-toolbar-cluster] {
+  right: 12px;
+  width: min(48rem, calc(100% - 24px));
+  margin-inline: 0;
+}
+#manhua-workbench-shell.mh-redesign[data-manhua-active-phase="storyboard"] [data-manhua-project-identity] { display: flex; max-width: 100%; }
+  #manhua-workbench-shell.mh-redesign[data-manhua-active-phase="storyboard"] [data-manhua-project-name] ~ span { display: none; }
+  #manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-storyboard-workspace] {
+    grid-template-columns: 200px minmax(0, 1fr) 260px !important;
+    gap: 10px;
+    padding: 10px;
+  }
+}
+@media (max-width: 767px) {
+  #manhua-workbench-shell.mh-redesign[data-manhua-active-phase="storyboard"] [data-manhua-product-header] { grid-template-columns: minmax(0, 1fr); padding: 8px !important; }
+  #manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-storyboard-workspace] { grid-template-columns: minmax(0, 1fr) !important; padding: 8px; gap: 0; }
+  #manhua-workbench-shell.mh-redesign [data-manhua-storyboard-header] { padding: 10px; }
+  #manhua-workbench-shell.mh-redesign[data-manhua-active-phase="storyboard"] [data-manhua-header-actions] { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  #manhua-workbench-shell.mh-redesign[data-manhua-active-phase="storyboard"] [data-manhua-header-actions] > button,
+  #manhua-workbench-shell.mh-redesign[data-manhua-active-phase="storyboard"] [data-manhua-header-actions] > details > summary { width: 100%; min-height: 34px; white-space: nowrap; text-align: center; }
+  #manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-column="preview"] [data-manhua-media-frame] { min-height: 160px; }
+}
+
+/* Tablet uses the existing view switches rather than squeezing three editors. */
+@media (min-width: 768px) and (max-width: 1023px) {
+  #manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] > [aria-label="分镜工作区视图"] { display: flex !important; }
+  #manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-storyboard-workspace] { grid-template-columns: minmax(0, 1fr) !important; gap: 0; }
+  #manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-column][class~="max-md:!hidden"] { display: none !important; }
+  #manhua-workbench-shell.mh-redesign [data-manhua-phase-panel="storyboard"] [data-manhua-column] { width: 100% !important; }
+}

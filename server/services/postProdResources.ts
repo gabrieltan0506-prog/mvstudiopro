@@ -33,7 +33,10 @@ export async function readResourceSnapshot(state?: MediaRuntime) {
     // 容器内以更小的 cgroup 余额为准；Fly VM 没有限额时使用整机可用内存。
     const [used, max] = await Promise.all([
       readFile("/sys/fs/cgroup/memory.current", "utf8"), readFile("/sys/fs/cgroup/memory.max", "utf8"),
-    ]).catch(() => ["", "max"]);
+    ]).catch(() => Promise.all([
+      readFile("/sys/fs/cgroup/memory/memory.usage_in_bytes", "utf8"),
+      readFile("/sys/fs/cgroup/memory/memory.limit_in_bytes", "utf8"),
+    ]).catch(() => ["", "max"]));
     if (/^\d+$/.test(max.trim())) availableBytes = Math.min(availableBytes, Number(max) - Number(used));
   } catch (error) {
     if (process.platform === "linux") throw error; // Linux 无法读取预算时不可冒险开工。
@@ -52,6 +55,7 @@ export async function readResourceSnapshot(state?: MediaRuntime) {
 
 // 所有后期通道共用一条本机通道，避免视频编码与三条 BGM 渲染同时占满内存。
 let tail: Promise<void> = Promise.resolve();
+export async function waitForPostProdResources() { await tail; }
 export async function withPostProdResources<T>(
   jobId: string, signal: AbortSignal, state: MediaRuntime, work: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
@@ -73,6 +77,7 @@ export async function withPostProdResources<T>(
       while ((await readResourceSnapshot(state)).availableBytes < 3 * 1024 * MiB) {
         await delay(5_000, undefined, { signal: combined });
       }
+      combined.throwIfAborted();
       const disk = await statfs(tmpdir());
       if (Number(disk.bavail) * Number(disk.bsize) < 2560 * MiB) {
         throw new Error("后期临时盘可用空间不足 2.5GiB，未开始媒体处理，原素材保留");
@@ -97,7 +102,6 @@ export async function withPostProdResources<T>(
         onLeaseLost: () => controller.abort(new Error("后期存储互斥租约续期失败，已停止本任务")) }));
   } finally {
     if (monitor) clearInterval(monitor);
-    await releasePriority?.();
-    release();
+    try { await releasePriority?.(); } catch { console.warn("[post-prod] priority lease cleanup deferred"); } finally { release(); }
   }
 }

@@ -91,6 +91,28 @@ describe("growth store merge + hot-window prune", () => {
     if (tempRoot) await fs.rm(tempRoot, { recursive: true, force: true });
   });
 
+  it("narrow merge preserves untouched platform truth bytes and legacy inline items", async () => {
+    const m = await import("./trendStore");
+    const at = new Date().toISOString();
+    const xhs = { ...makeCollection([makeItem("xhs", at)], at), platform: "xiaohongshu" } as PlatformTrendCollection;
+    await fs.writeFile(path.join(tempRoot, "current.json"), JSON.stringify({ updatedAt: at, collections: { xiaohongshu: xhs }, scheduler: {}, archiveIndex: [] }));
+    await m.mergeTrendCollectionsWithOptions({ douyin: makeCollection([makeItem("douyin", at)], at) }, { loadOnlyChangedPlatforms: true, skipArchive: true, deferHistoryLedger: true });
+    const loaded = await m.readTrendStore();
+    expect(loaded.collections.xiaohongshu?.items.map(x => x.id)).toEqual(["xhs"]);
+    await m.writeTrendStore({ douyin: loaded.collections.douyin!, xiaohongshu: xhs });
+    const other = path.join(tempRoot, "platform-current", "xiaohongshu.current.json.gz");
+    const before = await fs.readFile(other);
+    const stream = await import("./growthJsonStream");
+    const readSpy = vi.spyOn(stream, "readGrowthGzipJson");
+    const updated = await m.mergeTrendCollectionsWithOptions({ douyin: makeCollection([makeItem("next", at)], at) }, { loadOnlyChangedPlatforms: true, skipArchive: true, deferHistoryLedger: true });
+    expect(readSpy.mock.calls.map(args => args[0]).filter(file => String(file).includes("xiaohongshu"))).toEqual([]);
+    readSpy.mockRestore();
+    expect(Object.keys(updated.collections)).toEqual(["douyin"]);
+    expect(updated.collections.douyin?.items.map(x => x.id).sort()).toEqual(["douyin", "next"]);
+    expect(await fs.readFile(other)).toEqual(before);
+    expect((await m.readTrendStore()).collections.xiaohongshu?.items.map(x => x.id)).toEqual(["xhs"]);
+  });
+
   it("merge 后热窗裁剪真正落盘：缩小不被防缩保护换回旧档", async () => {
     const { mergeTrendCollections, readTrendStore } = await import("./trendStore");
 
