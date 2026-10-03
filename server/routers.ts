@@ -1,3 +1,4 @@
+import { createKnowledgeCardPageJob } from "./jobs/knowledgeCardPageTask";
 import { novelExcerptSchema } from "../shared/manhuaNovelSource.js";
 import { canvasMusicMvRouter } from "./routers/canvasMusicMv";
 import { canvasMusicMvAssembleRouter } from "./routers/canvasMusicMvAssemble";
@@ -4459,6 +4460,7 @@ export const appRouter = router({
     enqueueKnowledgeCardLevelDerive: protectedProcedure
       .input(
         z.object({
+          pageRequestId: z.string().uuid().optional(),
           // 页数不设上限（0910 拍板）：只挡明显不是稿子的体积（约 2000 页书的完整版也在 100 万字内）
           fullMarkdown: z.string().min(200, "完整版稿子太短").max(5_000_000, "完整版稿子超过 500 万字，请分册提炼"),
           distillModel: z.string().max(64).optional(),
@@ -4476,19 +4478,14 @@ export const appRouter = router({
         if (!receiptModel) {
           throw new TRPCError({ code: "PRECONDITION_FAILED", message: "找不到这份完整版的提炼记录，无法派生精华版；请重新提炼后再切档" });
         }
-        const jobId = nanoid(16);
-        await createJobRecord({
-          id: jobId,
+        const jobId = await createKnowledgeCardPageJob({
           userId: String(ctx.user.id),
-          type: "platform",
-          provider: "evolink",
-          input: {
-            action: "knowledge_card_derive_level",
-            params: {
-              fullMarkdown: input.fullMarkdown,
-              distillModel: input.distillModel || "",
-              targetSections: input.targetSections ?? null,
-            },
+          requestId: input.pageRequestId,
+          action: "knowledge_card_derive_level",
+          params: {
+            fullMarkdown: input.fullMarkdown,
+            distillModel: input.distillModel || "",
+            targetSections: input.targetSections ?? null,
           },
         });
         return { success: true as const, progressJobId: jobId };
@@ -8235,6 +8232,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
     prepareKnowledgeCardCopy: protectedProcedure
       .input(
         z.object({
+          pageRequestId: z.string().uuid().optional(),
           sourceText: z.string().max(400_000).optional(),
           forceDistill: z.boolean().optional(),
           /**
@@ -8299,21 +8297,16 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             .map((f) => ({ gcsUri: String(f.gcsUri || "").trim(), mimeType: f.mimeType, fileName: f.fileName }))
             .filter((f) => f.gcsUri);
           if (!stored.length) throw new Error("上传文件为空，请重新选择文件");
-          const jobId = nanoid(16);
-          await createJobRecord({
-            id: jobId,
+          const jobId = await createKnowledgeCardPageJob({
             userId: String(userId),
-            type: "platform",
-            provider: "evolink",
-            input: {
-              action: "knowledge_card_distill",
-              params: {
-                sourceText: pasted.length <= 3200 ? pasted : "",
-                distillModel: modelName,
-                detailLevel,
-                files: stored,
-                chargeDistillFee: false,
-              },
+            requestId: input.pageRequestId,
+            action: "knowledge_card_distill",
+            params: {
+              sourceText: pasted.length <= 3200 ? pasted : "",
+              distillModel: modelName,
+              detailLevel,
+              files: stored,
+              chargeDistillFee: false,
             },
           });
           return {
@@ -8334,25 +8327,20 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
 
         const mergedRaw = pasted;
-        if (shouldRunKnowledgeCardDistillAsync(mergedRaw.length)) {
+        if (input.pageRequestId || shouldRunKnowledgeCardDistillAsync(mergedRaw.length)) {
           const userId = ctx.user?.id;
           if (!userId) throw new Error("请先登录后再上传长文档");
-          const jobId = nanoid(16);
-          await createJobRecord({
-            id: jobId,
+          const jobId = await createKnowledgeCardPageJob({
             userId: String(userId),
-            type: "platform",
-            provider: "evolink",
-            input: {
-              action: "knowledge_card_distill",
-              params: {
-                sourceText: mergedRaw,
-                distillModel: modelName,
-                detailLevel,
-                imageDataUrls: [] as string[],
-                extractionMethods: [] as string[],
-                chargeDistillFee: input.chargeDistillFee === true,
-              },
+            requestId: input.pageRequestId,
+            action: "knowledge_card_distill",
+            params: {
+              sourceText: mergedRaw,
+              distillModel: modelName,
+              detailLevel,
+              imageDataUrls: [] as string[],
+              extractionMethods: [] as string[],
+              chargeDistillFee: input.chargeDistillFee === true,
             },
           });
           return {

@@ -768,6 +768,29 @@ async function startServer() {
    * （读档本就按段回调）看到就 abort 在途请求并把任务判失败。
    * 计费点在提炼返回之后，所以中途停＝一分不扣，不存在退款。
    */
+  // A refresh can happen before enqueue returns an ID; cancel by the preallocated request identity.
+  app.post("/api/jobs/knowledge-card/request/:requestId/cancel", async (req, res) => {
+    try {
+      const origin = String(req.headers.origin || "");
+      if (origin && !isAllowedCorsOrigin(origin)) return res.status(403).json({ error: "无效的请求来源" });
+      const ctx = await createContext({ req: req as any, res: res as any } as any);
+      if (!ctx.user) return res.status(401).json({ error: "请先登录" });
+      const { KNOWLEDGE_CARD_REQUEST_ID, KNOWLEDGE_CARD_PAGE_ACTIONS } = await import("../../shared/knowledgeCardPageTask");
+      const requestId = String(req.params.requestId || "");
+      const action = String(req.query.action || "");
+      if (!KNOWLEDGE_CARD_REQUEST_ID.test(requestId) || !KNOWLEDGE_CARD_PAGE_ACTIONS.includes(action as any)) {
+        return res.status(400).json({ error: "无效的读档停止请求" });
+      }
+      const { cancelKnowledgeCardPageRequest } = await import("../jobs/knowledgeCardPageTask");
+      const job = await cancelKnowledgeCardPageRequest({ userId: String(ctx.user.id), requestId, action: action as typeof KNOWLEDGE_CARD_PAGE_ACTIONS[number] });
+      if (!job) return res.status(503).json({ error: "暂时无法确认停止状态" });
+      return res.status(200).json({ jobId: job.id, status: job.status, cancelled: Boolean((job.input as any)?.cancelRequestedAt) });
+    } catch (error) {
+      console.error("[Jobs] cancel knowledge card page request failed:", error);
+      return res.status(503).json({ error: "暂时无法确认停止状态，请稍后重试" });
+    }
+  });
+
   app.post("/api/jobs/knowledge-card/:id/cancel", async (req, res) => {
     try {
       const ctx = await createContext({ req: req as any, res: res as any } as any);

@@ -1,5 +1,7 @@
 # line-platform · /platform 内容创作线（动态层，每班收班更新）
 
+- **1003 PR1656知識卡刷新取消（待上線）**：讀檔/提煉/精華派生使用提交前UUID，刷新Beacon停止及重載補回執，取消與遲到入隊共用唯一jobs行；保留結算檢查點與完成結果。出圖另一條背景流程仍待用戶確認終止範圍，F1開放；小說SSE流內鑑權錯誤誤fallback已修並經子代理複核。詳見docs/knowledge-card-refresh-cancel-1003.md與docs/pr1656-review-ledger.md；不可稱整PR可合併。
+
 - **0911 趋势报告证据修正（待发布）**：日期由服务端上海窗口固定保存；无前窗不再按排名生成百分比，真实计数证据随任务返回，旧无证据统计降级。选题关键词和普通列表替代未证实的蓝海/算法/热度标签。用户指定独立PR，未做线上付费实跑；详见 docs/trend-report-evidence-0911.md。
 
 - **0911 Growth 冷备**：旧 Release 1000附件已满，批次/日归档分仓且旧仓兼容；禁靠删历史腾空间。85项回归与类型/构建通过，线上备份待下一班验收。生产与恢复路由见 shared/growthColdStoreRelease.mjs，完整边界见 docs/growth-release-capacity-0911.md。

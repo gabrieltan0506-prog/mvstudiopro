@@ -111,6 +111,32 @@ describe("复用模型路由", () => {
     expect(bodies[0].provider.order).toEqual(["Z.AI"]);
     expect(bodies[1].reasoning).toEqual({ enabled: false });
   });
+  it.each([401, 403, "content_filter", "safety_violation", "invalid_api_key"])("HTTP200流内%s错误不换模型", async (code) => {
+    const fetch = vi.fn().mockResolvedValueOnce(new Response(
+      `data: ${JSON.stringify({ error: { code, message: "provider error" } })}\n\n`,
+      { headers: { "content-type": "text/event-stream" } },
+    )).mockResolvedValueOnce(stream("不应调用备用模型"));
+    vi.stubGlobal("fetch", fetch);
+    await expect(callNovelStage("x", false, "r")).rejects.toThrow("旧稿保留");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it("HTTP200非SSE错误体不能当作塞车", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { code: 401 } }), {
+      headers: { "content-type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetch);
+    await expect(callNovelStage("x", false, "r")).rejects.toThrow("格式异常");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it("HTTP200流内429拥堵允许备用模型", async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(new Response(
+      `data: ${JSON.stringify({ error: { code: 429 } })}\n\n`,
+      { headers: { "content-type": "text/event-stream" } },
+    )).mockResolvedValueOnce(stream("完整结果"));
+    vi.stubGlobal("fetch", fetch);
+    expect((await callNovelStage("x", false, "r")).text).toBe("完整结果");
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
   it("鉴权失败与内容拦截不当作塞车换模型", async () => {
     const fetch = vi
       .fn()

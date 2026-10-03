@@ -106,12 +106,18 @@ export const callNovelStage: NovelStageCall = async (
         !response.headers.get("content-type")?.includes("text/event-stream")
       ) {
         await response.body?.cancel();
-        throw Object.assign(new Error("创作模型未返回完整流"), {
-          transient: true,
-        });
+        // An unexpected JSON/HTML body may contain an auth/refusal error; it is not evidence of congestion.
+        throw new Error("创作模型返回格式异常，旧稿保留");
       }
       const raw = await readGlmSseStream(response.body, 2 * 1024 * 1024, {
         strictCompletion: true,
+        onErrorFrame(error) {
+          // HTTP 200 can carry a real 401/403/refusal in SSE. Only explicit transient statuses may change model.
+          const code = Number(error.code ?? error.status);
+          throw Object.assign(new Error("创作模型流返回错误，旧稿保留"), {
+            status: Number.isInteger(code) && code >= 400 && code <= 599 ? code : 400,
+          });
+        },
       });
       const result = JSON.parse(raw) as InvokeResult;
       assertSseContentSafety(result.choices?.[0]?.finish_reason);
