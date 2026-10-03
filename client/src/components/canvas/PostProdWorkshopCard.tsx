@@ -869,7 +869,7 @@ export default function PostProdWorkshopCard({
         videoUrl: upscaleVideoUrl,
         target,
         combine: Boolean(target),
-        frameInterpolationProvider: "ffmpeg",
+        frameInterpolationProvider: "wavespeed",
         scopeKey: projectScopeKey,
         targetFps,
         durationSec: upscaleProbedSec,
@@ -1638,7 +1638,7 @@ export default function PostProdWorkshopCard({
             <Maximize2 className="h-3.5 w-3.5 text-sky-300" /> 超分与补帧
           </div>
           <p className="mt-1 text-[11px] leading-4 text-white/45">
-            选择2K或4K，搭配30或60帧。先保留原尺寸与音轨补帧，再超分，保留原声与BGM，原片保留，刷新恢复同一任务。
+            选择2K或4K，搭配30或60帧。先保存原音轨，再用WaveSpeed AI补帧、FFmpeg贴回原音轨，最后超分；保留原声与BGM，原片保留，刷新恢复同一任务。
           </p>
           <div className="mt-2 space-y-1.5">
             <select

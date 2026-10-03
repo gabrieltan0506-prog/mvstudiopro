@@ -4447,7 +4447,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       const { isWavespeedUpscaleConfigured } = await import(
         "../server/services/wavespeedVideoUpscale.js"
       );
-      if (op === "videoUpscale" && !isWavespeedUpscaleConfigured()) {
+      if (!isWavespeedUpscaleConfigured()) {
         return res.status(503).json({ ok: false, error: "高清放大暂不可用，请稍后重试" });
       }
 
@@ -4455,7 +4455,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       if (!/^(?:https?:\/\/|gs:\/\/)/i.test(videoUrl)) {
         return res.status(400).json({ ok: false, error: "请提供一条可访问的视频地址" });
       }
-      if (b.frameInterpolationProvider !== undefined && b.frameInterpolationProvider !== "ffmpeg") return res.status(400).json({ ok: false, error: "AI补帧已停用，请使用FFmpeg补帧" });
+      if (b.frameInterpolationProvider !== undefined && b.frameInterpolationProvider !== "wavespeed") return res.status(400).json({ ok: false, error: "补帧采用WaveSpeed AI，FFmpeg仅恢复原音轨" });
       const frameTargetFps = b.targetFps === undefined ? undefined : Number(b.targetFps);
       const normalizedTarget = normalizeWavespeedUpscaleTarget(b.target ?? b.resolution ?? q.target);
       const target = op === "videoInterpolate" || normalizedTarget === "1080p" ? undefined : normalizedTarget ?? undefined;
@@ -4486,7 +4486,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       // 增强按每开始30秒统一定价；纯补帧不重复扣超分积分。
       const { canvasVideoFrameCredits } = await import("../shared/canvasGenerationPricing.js");
       if (frameTargetFps && (!measured.fps || measured.fps <= 0)) return res.status(400).json({ ok: false, error: "补帧需要有效的原片帧率" });
-      const framePasses = frameTargetFps && measured.fps! < frameTargetFps - 0.01 ? 1 : 0;
+      const framePasses = frameTargetFps && measured.fps! < frameTargetFps - 0.1 ? Math.ceil(Math.log2((frameTargetFps - 0.1) / measured.fps!)) : 0;
       if (op === "videoInterpolate" && !framePasses) return res.status(400).json({ ok: false, error: "原片已达到目标帧率，或无法核验有效帧率" });
       const credits = frameTargetFps ? canvasVideoFrameCredits(durationSec, frameTargetFps as 30 | 60) + (target ? canvasVideoUpscaleCredits(target, durationSec) : 0) : canvasVideoUpscaleCredits(target!, durationSec);
       const label = frameTargetFps ? `${target ? target.toUpperCase() + "超分·" : "云端补帧·"}${frameTargetFps}帧（${durationSec}s）` : `高清放大·${target!.toUpperCase()}（${durationSec}s）`;
@@ -4499,7 +4499,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
        */
       const idemKey =
         s(b.idempotencyKey || "").trim() || (frameTargetFps
-          ? `enhance:${measured.canonicalSource}:${target || "source"}:${frameTargetFps}:ffmpeg`
+          ? `enhance:${measured.canonicalSource}:${target || "source"}:${frameTargetFps}:wavespeed-audio-v1`
           : `upscale:${measured.canonicalSource}:${target}`);
       // D（0915）：意图裁决先于扣费；扣费 marker 与建单键都跟 intentId 走（缺省即旧 idemKey）
       const intentId = s(b.intentId || q.intentId || "").trim() || idemKey;
@@ -4600,7 +4600,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           targetFps: frameTargetFps,
           durationSec,
           creditsUsed: task.creditsCharged || charged,
-          provider: target ? "wavespeed" : "ffmpeg",
+          provider: "wavespeed",
           videoUrl: task.videoUrl || undefined,
         });
       } catch (error: unknown) {

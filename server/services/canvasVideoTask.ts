@@ -55,6 +55,7 @@ import { mirrorSeedanceMp4ToGcsSignedUrl } from "./seedanceVideo.js";
 import {
   pollWavespeedUpscaleOnce,
   submitWavespeedVideoUpscale,
+  submitWavespeedVideoFrameIncrease,
   WAVESPEED_UPSCALE_MAX_POLL_MS,
 } from "./wavespeedVideoUpscale.js";
 import type { WavespeedUpscaleTarget } from "../../shared/wavespeedVideoUpscaleModels.js";
@@ -193,8 +194,13 @@ export type CanvasVideoTaskRecord = {
   upscaleTarget?: WavespeedUpscaleTarget;
   frameTargetFps?: 30 | 60;
   framePasses?: number;
+  framePassesCompleted?: number;
+  framePredictionIds?: string[];
   enhancePhase?: "upscale" | "interpolate";
   frameStageUrl?: string;
+  originalAudioSource?: string;
+  originalAudioPrepared?: boolean;
+  enhancePipelineVersion?: "wavespeed-original-audio-v1";
   enhanceOriginalSource?: string;
   enhanceScopeKey?: string;
   wavespeedPredictionId?: string;
@@ -799,6 +805,12 @@ export async function loadSucceededCanvasVideoOutputObjects(
   return objects;
 }
 
+/** 云端媒体搬运期间持续记心跳，避免账本把有效任务误判失联。 */
+async function withEnhancementHeartbeat<T>(taskId: string, work: () => Promise<T>): Promise<T> {
+  const pulse = setInterval(() => { void heartbeatActiveJob(taskId, TASK_TYPE).catch(() => {}); }, 30_000);
+  try { return await work(); } finally { clearInterval(pulse); }
+}
+
 async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
   if (task.engine === "seedance-openrouter") {
     const body = buildOpenRouterSeedanceSubmitBody({
@@ -1112,22 +1124,33 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
     const source = String(task.upscaleSourceUrl || "").trim();
     if (!source) throw new Error("缺少要放大的视频地址");
     if (!task.upscaleTarget && !task.frameTargetFps) throw new Error("缺少高清放大或补帧目标");
-    if (task.frameTargetFps && task.enhancePhase === "interpolate") {
-      // 本地进程由Fly任务执行；未调用付费上游。产物落盘后再进入超分，崩溃可重跑计算。
-      task.status = "running";
+    if (!task.originalAudioPrepared && (task.upscaleTarget || task.enhancePhase === "interpolate")) {
+      const { preserveOriginalVideoAudio } = await import("./videoEnhanceOutput.js");
+      task.originalAudioSource = await withEnhancementHeartbeat(task.taskId, () => preserveOriginalVideoAudio(task.enhanceOriginalSource || source, task.userId)) || undefined;
+      task.originalAudioPrepared = true;
       await writeTask(task);
-      const { interpolateVideo } = await import("./videoEnhanceOutput.js");
-      // 长时间4K插值持续心跳，避免运行时被账本误判失联退款。
-      const pulse = setInterval(() => { void heartbeatActiveJob(task.taskId, TASK_TYPE).catch(() => {}); }, 30_000);
-      let stage;
-      try { stage = await interpolateVideo({ videoUri: source, targetFps: task.frameTargetFps }, String(task.userId)); }
-      finally { clearInterval(pulse); }
-      task.frameStageUrl = task.upscaleTarget ? stage.gcsUri || stage.url : stage.url;
-      task.enhancePhase = "upscale";
-      await writeTask(task);
-      if (!task.upscaleTarget) { await succeedTask(task, stage.url, "ffmpeg-minterpolate", "ffmpeg"); return; }
     }
-    if (!task.upscaleTarget && task.frameStageUrl) { await succeedTask(task, task.frameStageUrl, "ffmpeg-minterpolate", "ffmpeg"); return; }
+    if (task.frameTargetFps && task.enhancePhase === "interpolate") {
+      task.upscaleSubmissionStartedAt = new Date().toISOString();
+      try { await writeTask(task); } catch { throw new SubmitRejectedError("补帧提交前保存失败，未发送请求"); }
+      const submitted = await submitWavespeedVideoFrameIncrease({
+        taskId: `${task.taskId}-fps-${task.framePassesCompleted || 0}`,
+        videoUrl: task.frameStageUrl || source,
+      });
+      task.wavespeedPredictionId = submitted.predictionId;
+      task.framePredictionIds = [...(task.framePredictionIds || []), submitted.predictionId];
+      task.model = "video-fps-increaser";
+      task.provider = "wavespeed";
+      task.status = "running";
+      task.startedAt = task.startedAt || new Date().toISOString();
+      await writeTask(task);
+      return;
+    }
+    if (!task.upscaleTarget && task.frameStageUrl) {
+      const { signGsUriV4ReadUrl } = await import("./gcs.js");
+      await succeedTask(task, task.frameStageUrl.startsWith("gs://") ? signGsUriV4ReadUrl(task.frameStageUrl, 604800) : task.frameStageUrl, "video-fps-increaser", "wavespeed");
+      return;
+    }
     task.upscaleSubmissionStartedAt = new Date().toISOString();
     try { await writeTask(task); } catch { throw new SubmitRejectedError("提交前保存失败，未发送超分请求"); }
     const submitted = await submitWavespeedVideoUpscale({
@@ -1164,6 +1187,14 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
 
     await heartbeatActiveJob(task.taskId, TASK_TYPE).catch(() => {});
 
+    if (task.engine === "wavespeed-upscale" && task.frameTargetFps && task.enhancePhase === "interpolate" && !task.enhancePipelineVersion) {
+      task.status = "reconcile_manual";
+      task.error = "旧补帧任务未自动切换至AI付费链路，请核对原任务";
+      await writeTask(task);
+      await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {});
+      return task;
+    }
+
     if (task.engine === "seedance-mini-byteplus" && task.miniByteplusSubmissionStartedAt && !task.byteplusTaskId) {
       task.status = "reconcile_manual";
       task.error = "BytePlus Mini创建回执待核对，已停止重复提交";
@@ -1189,11 +1220,11 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
     }
 
     if (task.engine === "wavespeed-upscale" && task.enhancePhase === "interpolate" && !task.wavespeedPredictionId) {
-      // Fly重启后允许重算未落盘的插值，不重投已发送的付费任务。
+      // 仅未提交的下一阶段可排队；提交前marker防止重启后重复付费。
       task.status = "queued";
     }
     const createdMs = Date.parse(task.createdAt) || Date.now();
-    const deadlineMs = maxPollMs(task.engine) + (task.engine === "wavespeed-upscale" && task.frameTargetFps ? 6 * 60 * 60 * 1000 : 0);
+    const deadlineMs = maxPollMs(task.engine) + (task.engine === "wavespeed-upscale" && task.frameTargetFps ? 30 * 60 * 1000 * Math.max(1, task.framePasses || 0) : 0);
     if (Date.now() - createdMs > deadlineMs) {
       if (!hasProviderTask(task)) {
         // 从未提交到上游：上游没在烧钱，按失败退分是安全的
@@ -1466,12 +1497,33 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
           return current;
         }
         if (snap.state === "failed") return failTask(current, snap.error);
+        if (current.enhancePhase === "interpolate") {
+          const completed = (current.framePassesCompleted || 0) + 1;
+          const lastPass = completed >= (current.framePasses || 1);
+          const { finalizeEnhancedVideo } = await import("./videoEnhanceOutput.js");
+          // 仅恢复原片音频；中间翻倍结果继续输入AI，最后一轮才规范目标帧率。
+          const stage = await withEnhancementHeartbeat(current.taskId, () => finalizeEnhancedVideo({
+            source: current.enhanceOriginalSource || current.upscaleSourceUrl!, enhanced: snap.sourceUrl,
+            userId: current.userId, targetFps: lastPass ? current.frameTargetFps : undefined,
+            interpolationIntermediate: !lastPass,
+            originalAudioSource: current.originalAudioSource,
+          }));
+          current.frameStageUrl = current.upscaleTarget || !lastPass ? stage.gcsUri || stage.url : stage.url;
+          current.framePassesCompleted = completed;
+          current.wavespeedPredictionId = undefined;
+          current.upscaleSubmissionStartedAt = undefined;
+          current.enhancePhase = lastPass ? "upscale" : "interpolate";
+          current.status = "queued";
+          await writeTask(current);
+          return current;
+        }
         const { finalizeEnhancedVideo } = await import("./videoEnhanceOutput.js");
-        const videoUrl = current.enhanceOriginalSource ? await finalizeEnhancedVideo({
-          source: current.enhanceOriginalSource, enhanced: snap.sourceUrl,
+        const videoUrl = current.enhanceOriginalSource ? await withEnhancementHeartbeat(current.taskId, () => finalizeEnhancedVideo({
+          source: current.enhanceOriginalSource!, enhanced: snap.sourceUrl,
           userId: current.userId, target: current.upscaleTarget,
           targetFps: current.frameTargetFps,
-        }).then(result => result.url) : await mirrorSeedanceMp4ToGcsSignedUrl(snap.sourceUrl);
+          originalAudioSource: current.originalAudioSource,
+        })).then(result => result.url) : await mirrorSeedanceMp4ToGcsSignedUrl(snap.sourceUrl);
         return succeedTask(
           current,
           videoUrl,
@@ -1616,6 +1668,8 @@ export async function createCanvasVideoTask(input: {
   upscaleTarget?: WavespeedUpscaleTarget;
   frameTargetFps?: 30 | 60;
   framePasses?: number;
+  framePassesCompleted?: number;
+  framePredictionIds?: string[];
   enhancePhase?: "upscale" | "interpolate";
   frameStageUrl?: string;
   enhanceOriginalSource?: string;
@@ -1695,6 +1749,7 @@ export async function createCanvasVideoTask(input: {
     upscaleTarget: input.upscaleTarget,
     frameTargetFps: input.frameTargetFps,
     framePasses: input.framePasses,
+    enhancePipelineVersion: input.frameTargetFps ? "wavespeed-original-audio-v1" : undefined,
     enhancePhase: input.frameTargetFps && (input.framePasses || 0) > 0 ? "interpolate" : "upscale",
     enhanceOriginalSource: input.enhanceOriginalSource,
     enhanceScopeKey: input.enhanceScopeKey,

@@ -85,6 +85,15 @@ export async function submitWavespeedVideoUpscale(input: {
   videoUrl: string;
   target?: WavespeedUpscaleTarget;
 }): Promise<{ predictionId: string }> {
+  return submitWavespeedEnhance(input, false);
+}
+
+/** 模型每次翻倍帧率；目标帧率及次数由任务状态机按真实原片计算。 */
+export async function submitWavespeedVideoFrameIncrease(input: { taskId: string; videoUrl: string }) {
+  return submitWavespeedEnhance(input, true);
+}
+
+async function submitWavespeedEnhance(input: { taskId?: string; videoUrl: string; target?: WavespeedUpscaleTarget }, frameIncrease: boolean): Promise<{ predictionId: string }> {
   const apiKey = getWavespeedApiKey();
   if (!apiKey) throw new SubmitRejectedError("视频高清放大暂不可用，请稍后重试");
 
@@ -94,14 +103,14 @@ export async function submitWavespeedVideoUpscale(input: {
     catch { throw new SubmitRejectedError("无法签名视频素材，未提交上游"); }
   }
   if (!/^https?:\/\//i.test(source)) throw new SubmitRejectedError("需要一条可公开访问的视频地址");
-  if (input.target !== "2k" && input.target !== "4k") throw new SubmitRejectedError("超分目标必须为2K或4K");
+  if (!frameIncrease && input.target !== "2k" && input.target !== "4k") throw new SubmitRejectedError("超分目标必须为2K或4K");
 
   const evidenceId = input.taskId || `ws_${randomUUID()}`;
-  const requestBody = JSON.stringify({ video: source, target_resolution: input.target });
+  const requestBody = JSON.stringify(frameIncrease ? { video: source } : { video: source, target_resolution: input.target });
   try { await saveUpscaleEvidence(evidenceId, "request", requestBody); }
   catch { throw new SubmitRejectedError("提交前证据保存失败，未发送超分请求"); }
   let createRes: Response;
-  try { createRes = await fetch(`${apiBase()}${WAVESPEED_VIDEO_UPSCALE_PATH}`, {
+  try { createRes = await fetch(`${apiBase()}${frameIncrease ? "/wavespeed-ai/video-fps-increaser" : WAVESPEED_VIDEO_UPSCALE_PATH}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
