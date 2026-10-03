@@ -1081,9 +1081,9 @@ export default function PostProdWorkshopCard({
     const deliveryDecision = canMountBgmNow({
       surface: "manhua_factory",
       hasDeliveryVideo: true,
-      wantsUpscale: Boolean(pendingUpscale),
+      wantsUpscale: Boolean(pendingUpscale && /^(2k|4k)(-|$)/.test(pendingUpscale.target)),
       upscaleCompleted: false,
-      upscaleTarget: pendingUpscale?.target,
+      upscaleTarget: pendingUpscale?.target.split("-")[0],
     });
     if (!deliveryDecision.ok) {
       toast.error(deliveryDecision.reasonZh);

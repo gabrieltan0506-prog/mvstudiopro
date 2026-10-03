@@ -4600,7 +4600,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           targetFps: frameTargetFps,
           durationSec,
           creditsUsed: task.creditsCharged || charged,
-          provider: "wavespeed",
+          provider: target ? "wavespeed" : "ffmpeg",
           videoUrl: task.videoUrl || undefined,
         });
       } catch (error: unknown) {
