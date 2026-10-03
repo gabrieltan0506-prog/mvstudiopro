@@ -471,7 +471,7 @@ export default function PostProdWorkshopCard({
   const upscaleProbedSec = upscaleSource?.durationSec ?? null;
   const [upscaleProbeBusy, setUpscaleProbeBusy] = useState(false);
   const [upscaleSubmitBusy, setUpscaleSubmitBusy] = useState(false);
-  const [enhanceChoice, setEnhanceChoice] = useState<{ target: "2k" | "4k"; fps: 30 | 60 }>({ target: "2k", fps: 30 });
+  const [enhanceChoice, setEnhanceChoice] = useState<{ target: "2k" | "4k"; fps: 30 }>({ target: "2k", fps: 30 });
   const [upscaleJobs, setUpscaleJobs] = useState<TrackedUpscale[]>(() =>
     loadTrackedUpscales(userId)
   );
@@ -829,7 +829,7 @@ export default function PostProdWorkshopCard({
     }
   };
 
-  const submitUpscale = async (target: "2k" | "4k" | undefined, targetFps: 30 | 60) => {
+  const submitUpscale = async (target: "2k" | "4k" | undefined, targetFps: 30) => {
     if (!upscaleVideoUrl || !upscaleSource || !upscaleProbedSec || upscaleSubmitBusy) {
       toast.error("请先选择成片并读取真实尺寸与时长"); return;
     }
@@ -1621,7 +1621,7 @@ export default function PostProdWorkshopCard({
             <Maximize2 className="h-3.5 w-3.5 text-sky-300" /> 超分与补帧
           </div>
           <p className="mt-1 text-[11px] leading-4 text-white/45">
-            选择2K或4K，搭配30或60帧。先保存原音轨，再进行AI补帧、恢复原音轨，最后高清增强；保留原声与BGM，原片保留，刷新恢复同一任务。
+            选择2K或4K，输出30帧。先保存原音轨，再进行AI补帧、恢复原音轨，最后高清增强；保留原声与BGM，原片保留，刷新恢复同一任务。
           </p>
           <div className="mt-2 space-y-1.5">
             <select
@@ -1661,13 +1661,14 @@ export default function PostProdWorkshopCard({
             </button>
             {upscaleSource ? <p className="text-[11px] text-white/65">实测 {upscaleSource.width}×{upscaleSource.height} · {upscaleSource.durationExactSec?.toFixed(3) || upscaleProbedSec} 秒 · {upscaleSource.fps?.toFixed(2) || "未知"} 帧/秒</p> : <p className="text-[11px] text-white/50">先选择原片并读取真实参数，随后显示报价。</p>}
             <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="成片增强组合">
-              {(["2k", "4k"] as const).flatMap(target => ([30, 60] as const).map(fps => {
+              {(["2k", "4k"] as const).map(target => {
+                const fps = 30 as const;
                 const quote = upscaleProbedSec ? canvasVideoEnhanceQuote(target, fps, upscaleProbedSec) : null;
                 const selected = enhanceChoice.target === target && enhanceChoice.fps === fps;
                 return <button key={`${target}-${fps}`} type="button" role="radio" aria-checked={selected} disabled={upscaleSubmitBusy} onClick={() => setEnhanceChoice({ target, fps })} className={`rounded-lg border px-2 py-3 text-xs ${selected ? "border-sky-300 bg-sky-500/20 text-sky-50" : "border-white/15 text-white/65"}`}>
                   {target.toUpperCase()}／{fps}帧{quote ? ` · ${quote.totalCredits}积分` : ""}
                 </button>;
-              }))}
+              })}
             </div>
             {upscaleProbedSec ? (() => {
               const quote = canvasVideoEnhanceQuote(enhanceChoice.target, enhanceChoice.fps, upscaleProbedSec);
@@ -1676,11 +1677,8 @@ export default function PostProdWorkshopCard({
             <button type="button" disabled={!upscaleSource || upscaleSubmitBusy || busy || !upscaleSource.fps || !canWavespeedUpscale(upscaleSource.sourceResolution, enhanceChoice.target)} onClick={() => void submitUpscale(enhanceChoice.target, enhanceChoice.fps)} className={goCls}>
               {upscaleSubmitBusy ? "正在提交…" : `提交${enhanceChoice.target.toUpperCase()}／${enhanceChoice.fps}帧${upscaleProbedSec ? ` · 扣${canvasVideoEnhanceQuote(enhanceChoice.target, enhanceChoice.fps, upscaleProbedSec).totalCredits}积分` : ""}`}
             </button>
-            {upscaleSource && upscaleSource.fps && upscaleSource.fps < 59.9 && upscaleSource.sourceResolution !== "2k" && upscaleSource.sourceResolution !== "4k" ? <button type="button" className={goCls} disabled={upscaleSubmitBusy || upscaleProbeBusy || busy} onClick={() => void submitUpscale(undefined, 60)}>
-              {upscaleSubmitBusy ? "正在提交…" : `只补60帧·保留${upscaleSource.width}×${upscaleSource.height}·扣${canvasVideoFrameCredits(upscaleProbedSec!, 60)}积分`}
-            </button> : null}
             {upscaleSource && (upscaleSource.sourceResolution === "2k" || upscaleSource.sourceResolution === "4k") ? <p className="text-xs text-amber-200">补帧请选择未超分原视频；先AI补帧并恢复原音轨，最后再超分。</p> : null}
-            <p className="text-[10px] text-white/50">每30秒：2K超分100积分，4K超分180积分；30帧补帧19积分，60帧补帧49积分。不足30秒按30秒计，一次合计扣分。</p>
+            <p className="text-[10px] text-white/50">每30秒：2K超分100积分，4K超分180积分；30帧补帧19积分。不足30秒按30秒计，一次合计扣分。</p>
             {scopedUpscaleJobs.slice(0, 3).map(job => (
               <div
                 key={job.taskId}

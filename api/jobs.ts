@@ -4455,12 +4455,12 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       if (!/^(?:https?:\/\/|gs:\/\/)/i.test(videoUrl)) {
         return res.status(400).json({ ok: false, error: "请提供一条可访问的视频地址" });
       }
-      if (b.frameInterpolationProvider !== undefined && b.frameInterpolationProvider !== "wavespeed") return res.status(400).json({ ok: false, error: "补帧采用WaveSpeed AI，FFmpeg仅恢复原音轨" });
+      if (b.frameInterpolationProvider !== undefined && b.frameInterpolationProvider !== "wavespeed") return res.status(400).json({ ok: false, error: "请选择当前可用的AI补帧方式" });
       const frameTargetFps = b.targetFps === undefined ? undefined : Number(b.targetFps);
       const normalizedTarget = normalizeWavespeedUpscaleTarget(b.target ?? b.resolution ?? q.target);
       const target = op === "videoInterpolate" || normalizedTarget === "1080p" ? undefined : normalizedTarget ?? undefined;
-      if ((op === "videoInterpolate" || frameTargetFps !== undefined) && frameTargetFps !== 30 && frameTargetFps !== 60) {
-        return res.status(400).json({ ok: false, error: "补帧目标只支持30或60帧" });
+      if ((op === "videoInterpolate" || frameTargetFps !== undefined) && frameTargetFps !== 30) {
+        return res.status(400).json({ ok: false, error: "当前只支持30帧，60帧功能已停用；未扣积分" });
       }
       if (op === "videoUpscale" && !target) {
         return res.status(400).json({ ok: false, error: "高清放大目标只支持 2K 或 4K" });
