@@ -21,7 +21,7 @@ function delay(delayMs: number) {
 export async function withGrowthStoreMutationLock<T>(
   operation: string,
   work: () => Promise<T>,
-  options?: { waitTimeoutMs?: number; staleAfterMs?: number },
+  options?: { waitTimeoutMs?: number; staleAfterMs?: number; signal?: AbortSignal; waitUntilReleased?: boolean; onLeaseLost?: (error: unknown) => void },
 ): Promise<T> {
   const lockPath = getGrowthStoreMutationLockPath();
   const waitTimeoutMs = Math.max(1_000, options?.waitTimeoutMs || DEFAULT_WAIT_TIMEOUT_MS);
@@ -32,13 +32,14 @@ export async function withGrowthStoreMutationLock<T>(
   await fs.mkdir(path.dirname(lockPath), { recursive: true });
 
   while (true) {
+    options?.signal?.throwIfAborted();
     try {
       const handle = await fs.open(lockPath, "wx");
       await handle.writeFile(JSON.stringify({ token, pid: process.pid, operation, acquiredAt: new Date().toISOString() }));
       await handle.close();
       heartbeat = setInterval(() => {
         const now = new Date();
-        void fs.utimes(lockPath, now, now).catch(() => {});
+        void fs.utimes(lockPath, now, now).catch(error => options?.onLeaseLost?.(error));
       }, Math.min(30_000, Math.max(1_000, Math.floor(staleAfterMs / 3))));
       break;
     } catch (error) {
@@ -48,7 +49,7 @@ export async function withGrowthStoreMutationLock<T>(
         await fs.unlink(lockPath).catch(() => {});
         continue;
       }
-      if (Date.now() - startedAt >= waitTimeoutMs) {
+      if (!options?.waitUntilReleased && Date.now() - startedAt >= waitTimeoutMs) {
         throw new Error(`growth_store_mutation_lock_timeout:${operation}:${waitTimeoutMs}`);
       }
       await delay(RETRY_INTERVAL_MS);

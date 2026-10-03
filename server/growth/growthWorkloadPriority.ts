@@ -42,7 +42,7 @@ export function isAuthenticatedRunningInteractiveJob(job: {
 }) {
   if (!/^[1-9]\d*$/.test(String(job.userId ?? "").trim())) return false;
   if (job.status !== "running") return false;
-  if (job.type === "platform") return true;
+  if (job.type === "platform" || job.type === "post_prod") return true;
   return job.type === "video"
     && isRecord(job.input)
     && job.input.action === "manhua_template_learn";

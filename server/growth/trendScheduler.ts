@@ -532,7 +532,7 @@ async function runPlatformTask(platform: GrowthPlatform) {
       `[growth.scheduler] ${platform}`,
       { abortWhen: hasActiveGrowthInteractiveWorkload },
     );
-    let mergedStore = await mergeTrendCollections({ [platform]: collection });
+    let mergedStore = await mergeTrendCollections({ [platform]: collection }, { loadOnlyChangedPlatforms: true });
     // 封面回填会再执行一次 merge；第二次通常 addedCount=0，不能覆盖真实抓取轮的新增量。
     const collectionMergeStat = mergedStore.mergeStats?.[platform];
     const mergedBeforeBackfill = mergedStore.collections[platform];
@@ -555,7 +555,7 @@ async function runPlatformTask(platform: GrowthPlatform) {
           // 的整库 gzip。这里仅更新 current，不重复写 archive/history。
           mergedStore = await mergeTrendCollectionsWithOptions(
             { [platform]: coverOutcome.value.collection },
-            { skipArchive: true, deferHistoryLedger: true },
+            { skipArchive: true, deferHistoryLedger: true, loadOnlyChangedPlatforms: true },
           );
         }
       } else if (coverOutcome.priorityAborted) {

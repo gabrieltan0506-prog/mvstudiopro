@@ -4309,53 +4309,72 @@ async function processOnePostProdJob(filter: PostProdClaimFilter = resolvePostPr
   if (rigStopGate.requested) return false;
   const job = claimedJob ?? await claimNextPostProdJob(filter);
   if (!job) return false;
-
-  // 心跳刷新 updatedAt:stale reaper 只清"最后活动过旧"的 running 行,
-  // 心跳在=进程活着;进程崩溃后心跳停,租约到期由 reaper 清理,不自动重做。
+  const { patchPostProdProgressStrict, completePostProdJob } = await import("./repository");
+  const { processPostProdJob, runWithTaskLimit, resolvePostProdJobTimeoutMs } = await import("./postProdJob");
+  const { withPostProdResources, readResourceSnapshot } = await import("../services/postProdResources");
+  const { postProdOwner, savePostProdReceipt, removePostProdReceipt } = await import("./postProdRecovery");
+  const state = { phase: "waiting_resources", childPid: undefined as number | undefined };
+  const receipt = { version: 1 as const, jobId: job.id, userId: String(job.userId), owner: await postProdOwner() };
   let lastHeartbeatAt = Date.now();
-  let heartbeatPending = false;
-  const heartbeat = setInterval(() => {
-    if (heartbeatPending) return;
-    heartbeatPending = true;
+  let heartbeatPending: Promise<void> | undefined;
+  let finished = false;
+  const persistHeartbeat = async () => {
     const sentAt = Date.now();
-    void patchJobRunningProgressStrict(job.id, {
-      postProdHeartbeatAt: new Date().toISOString(),
-    }).then(() => { lastHeartbeatAt = sentAt; }).catch(() => {}).finally(() => { heartbeatPending = false; });
+    const resources = await readResourceSnapshot(state);
+    if (finished) return;
+    await patchPostProdProgressStrict(job.id, { postProdHeartbeatAt: new Date(sentAt).toISOString(),
+      postProdOwner: receipt.owner, postProdResources: resources });
+    lastHeartbeatAt = sentAt;
+  };
+  const heartbeat = setInterval(() => {
+    if (heartbeatPending || finished) return;
+    heartbeatPending = persistHeartbeat().catch(() => {}).finally(() => { heartbeatPending = undefined; });
   }, 30_000);
   heartbeat.unref?.();
-
-  const { runPostProdJobWithLimit, resolvePostProdJobTimeoutMs } = await import("./postProdJob.js");
-  // 复用任务各自的失联窗口，持续心跳不再受总运行时长限制。
   const timeoutMs = resolvePostProdJobTimeoutMs(job.input);
+  let resultPreserved = false;
   try {
-    // 时限贯通 AbortSignal:到点下载与 ffmpeg/ffprobe 子进程同步终止
-    const { output, provider } = await runPostProdJobWithLimit(
-      job.input,
-      String(job.userId),
-      timeoutMs,
-      () => lastHeartbeatAt,
-    );
-    // 只重试状态写入,不重新执行媒体处理;写不进去按失败留痕
-    const saved = await markJobSucceededWithRetry(job.id, output, provider);
-    if (!saved) {
-      await markJobFailed(job.id, "后期结果状态保存未完成,请重新提交");
-      return true;
+    // 先留下归属和恢复回执，再开始任何下载/编码；不允许“媒体开始了但找不到执行者”。
+    await savePostProdReceipt(receipt);
+    await persistHeartbeat();
+    const result = await runWithTaskLimit(timeoutMs,
+      signal => withPostProdResources(job.id, signal, state,
+        resourceSignal => processPostProdJob(job.input, String(job.userId), { signal: resourceSignal })),
+      undefined, () => lastHeartbeatAt);
+    finished = true;
+    clearInterval(heartbeat);
+    await heartbeatPending;
+    // 成品在 GCS，先持久化回执。数据库短抖动/重启后只恢复结果，绝不重跑媒体。
+    await savePostProdReceipt({ ...receipt, result });
+    resultPreserved = true;
+    await patchPostProdProgressStrict(job.id, { postProdResult: result, postProdResources: await readResourceSnapshot(state) });
+    let saved = false;
+    for (let attempt = 0; attempt < 4 && !saved; attempt++) {
+      try { saved = await completePostProdJob(job.id, result.output, result.provider); }
+      catch { if (attempt === 3) throw new Error("后期成品已保留，结果状态尚未保存；请勿重新提交"); }
+      if (!saved && attempt < 3) await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
     }
+    if (saved) await removePostProdReceipt(job.id);
+    else throw new Error("后期成品已保留，任务终态发生变化；请先核对原任务");
   } catch (error) {
-    // 后期任务确定性強、重跑同样贵:一律直接失败,不 requeue 重做整项媒体处理
-    const message =
-      error instanceof Error && error.name === "AbortError"
+    if (resultPreserved) {
+      // 留 running/检查点供恢复器完成结算；禁止提示用户重新付费或覆盖已上传成品。
+      console.error(`[post-prod] ${job.id} 成品回执已保留，等待恢复状态`);
+    } else {
+      const message = error instanceof Error && error.name === "AbortError"
         ? `后期任务连续${timeoutMs}ms无成功心跳,已终止本次处理`
         : getJobFailureMessage("post_prod" as JobType, error);
-    await markJobFailed(job.id, message.slice(0, 800));
+      await markJobFailed(job.id, message.slice(0, 800));
+    }
   } finally {
+    finished = true;
     clearInterval(heartbeat);
+    await heartbeatPending;
   }
-
   return true;
 }
 
-/** BGM最多三路；其他后期保持单路，rig仍只领取Blender任务。 */
+/** 队列领取方式保留；实际媒体处理由资源通道互斥，rig仍只领取Blender任务。 */
 export async function processPostProdJobsOnce() {
   if (postProdProcessing || rigStopGate.requested) return;
   postProdProcessing = true;

@@ -15,6 +15,7 @@ import { normalizeDialogueSubtitleSrt } from "../../shared/dialogueSubtitleSrt.j
  * - 临时目录一律 finally 清理。
  */
 import { execFile } from "node:child_process";
+import { mediaRuntime, boundMediaThreads } from "./postProdResources";
 import { randomBytes } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -24,7 +25,7 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
 import { z } from "zod";
-import { signGsUriV4ReadUrl, uploadBufferToGcs, uploadStreamToGcs } from "./gcs.js";
+import { signGsUriV4ReadUrl, uploadStreamToGcs } from "./gcs.js";
 import {
   audioTrimParamsSchema,
   audioTimelineParamsSchema,
@@ -66,10 +67,12 @@ export function runMediaTool(
   args: string[],
   signal: AbortSignal,
 ): Promise<{ stdout: string; stderr: string }> {
-  return execFileAsync(command, args, { signal, maxBuffer: 16 * 1024 * 1024 }) as Promise<{
-    stdout: string;
-    stderr: string;
-  }>;
+  const state = mediaRuntime.getStore();
+  if (state) state.phase = command;
+  const pending = execFileAsync(command, command === "ffmpeg" ? boundMediaThreads(args) : args,
+    { signal, maxBuffer: 16 * 1024 * 1024 });
+  if (state) state.childPid = pending.child.pid;
+  return pending.finally(() => { if (state) state.childPid = undefined; }) as Promise<{ stdout: string; stderr: string }>;
 }
 
 export type DownloadBudget = { remainingBytes: number };
@@ -112,6 +115,8 @@ export async function fetchPostProdSourceToFile(
   },
 ): Promise<number> {
   opts.signal.throwIfAborted();
+  const state = mediaRuntime.getStore();
+  if (state) state.phase = "download";
 
   const source = String(uriOrUrl || "").trim();
   const maxBytes = Math.min(
@@ -161,6 +166,8 @@ export async function uploadResult(params: {
   maxBytes?: number;
 }): Promise<{ gcsUri: string; url: string; bytes: number }> {
   params.signal.throwIfAborted();
+  const state = mediaRuntime.getStore();
+  if (state) state.phase = "upload";
   const st = await stat(params.filePath);
   if (st.size > (params.maxBytes ?? MAX_RESULT_BYTES)) throw new Error("产物体积超过当前处理上限,请缩短素材或分批处理");
   params.signal.throwIfAborted();
@@ -169,12 +176,10 @@ export async function uploadResult(params: {
   const objectName = `post-prod/${safeUser}/${stamp}/${params.kind}-${Date.now()}-${Math.random()
     .toString(36)
     .slice(2, 8)}.${params.ext}`;
-  const uploaded = params.maxBytes && params.maxBytes > MAX_RESULT_BYTES
-    ? await uploadStreamToGcs({
-      objectName, stream: Readable.toWeb(createReadStream(params.filePath)) as ReadableStream<Uint8Array>,
-      contentLength: st.size, contentType: params.contentType, signal: params.signal,
-    })
-    : await uploadBufferToGcs({ objectName, buffer: await readFile(params.filePath, { signal: params.signal }), contentType: params.contentType, signal: params.signal });
+  const uploaded = await uploadStreamToGcs({
+    objectName, stream: Readable.toWeb(createReadStream(params.filePath)) as ReadableStream<Uint8Array>,
+    contentLength: st.size, contentType: params.contentType, signal: params.signal,
+  });
   params.signal.throwIfAborted();
   return {
     gcsUri: uploaded.gcsUri,

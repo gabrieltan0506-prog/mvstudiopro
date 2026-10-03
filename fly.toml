@@ -26,9 +26,8 @@ primary_region = 'sin'  # 新加坡 · 持久卷 growth_data 与运行中机器�
   # 只作存档，改它们必须走 `fly secrets set`。secret 值不可读回，只能看键名与运行时 env。
   GROWTH_STORE_DIR = '/data/growth'
   GROWTH_LEGACY_STORE_FILE = '/data/growth-trends.json'
-  # 10GB VM：V8 堆須單獨調大；僅升 Fly RAM 不改此值仍會在舊上限觸頂 OOM。
-  # 8GB 堆 + ~2GB 非堆（讀檔、Chromium、原生）；仍吃緊時宜縮快照或再升 VM。
-  NODE_OPTIONS = '--max-old-space-size=8192'  # secret 接管
+  # 8GB 整机给 V8 老生代最多 4GB，其余留给原生缓冲、FFmpeg 与系统。
+  NODE_OPTIONS = '--max-old-space-size=4096'  # secret 接管
   DOUYIN_CREATOR_CENTER_ENABLED = '1'  # secret 接管
   DOUYIN_CREATOR_INDEX_ENABLED = '1'  # secret 接管
   DISABLE_GROWTH_TREND_SCHEDULER = '0'  # secret 接管
@@ -136,7 +135,7 @@ kill_timeout = 300
 # rig 只领 Blender 任务、不跑 growth、不做启动恢复；不挂 http_service、不挂 /data 卷。
 # 首次部署会自动为 rig 建 1 台机（fly scale count rig=1 可调）；rig 掉线时 Blender 任务排队等待，不会被 app 误领。
 [processes]
-  app = "env MANHUA_RIG_WORKER_SPLIT=1 pnpm exec tsx server/_core/index.ts"
+  app = "env MANHUA_RIG_WORKER_SPLIT=1 node --max-old-space-size=4096 --import tsx server/_core/index.ts"
   rig = "env JOB_WORKER_ROLE=rig MANHUA_RIG_WORKER_SPLIT=1 DISABLE_GROWTH_TREND_SCHEDULER=1 NODE_OPTIONS=--max-old-space-size=4096 pnpm exec tsx server/_core/index.ts"
 
 [http_service]
