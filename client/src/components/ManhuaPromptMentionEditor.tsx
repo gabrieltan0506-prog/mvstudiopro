@@ -1,3 +1,4 @@
+import { UrlMaskedTextarea } from "@/components/UrlMaskedTextarea";
 import { ManhuaAssetImage } from "@/components/ManhuaAssetImage";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -186,7 +187,7 @@ export default function ManhuaPromptMentionEditor({
 
   return (
     <div className="relative">
-      <textarea
+      <UrlMaskedTextarea
         ref={ref}
         data-manhua-clip-prompt={segmentIndex}
         disabled={disabled}

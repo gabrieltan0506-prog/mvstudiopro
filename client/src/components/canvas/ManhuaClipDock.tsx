@@ -1004,7 +1004,7 @@ export default function ManhuaClipDock({
                                     disabled={busy || factoryBusy}
                                     title={
                                       entry
-                                        ? `${label}：${entry.fileName || entry.url}（点击换文件）`
+                                        ? `${label}：${entry.fileName || "已上传素材"}（点击换文件）`
                                         : slot === "previs"
                                           ? "上传本段白模站位视频（≤30 s）：出片时作 @视频1，只锁走位/景别/机位"
                                           : "上传本段预混母轨（对白+BGM 一条，≤30 s）：出片时作唯一音轨 @音频1"

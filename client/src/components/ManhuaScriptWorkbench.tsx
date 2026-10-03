@@ -1,3 +1,5 @@
+import { UrlMaskedTextarea } from "@/components/UrlMaskedTextarea";
+import { maskMediaUrls } from "@/lib/maskMediaUrls";
 import { normalizeManhuaPromptSeconds } from "@shared/manhuaPromptSeconds";
 import { ManhuaSecondaryToolTabs } from "./canvas/ManhuaSecondaryToolTabs";
 import { createAdvisorPrevisStudio } from "@shared/manhuaAdvisorPrevisInitial";
@@ -3727,7 +3729,7 @@ export default function ManhuaScriptWorkbench({
                 {onUpsertShotDialogues ? (
                   <label className="mt-2 block text-xs font-medium text-rose-100/85">
                     当前镜台词 · 可直接修改
-                    <textarea
+                    <UrlMaskedTextarea
                       data-manhua-current-shot-dialogue={activeShot.index}
                       aria-label={`第${activeShot.index}镜台词`}
                       value={activeShot.dialogueZh === MANHUA_DIALOGUE_SILENCE_TOKEN ? "" : activeShot.dialogueZh || ""}
@@ -4518,7 +4520,7 @@ clipPromptReviewOpen ? (
               <>
                 <p className="mb-1 text-[10px] text-white/60">完整提示词 · 可直接修改并保存本段</p>
                   <div className="space-y-2">
-                    <textarea aria-label={`第 ${row.segmentIndex} 段完整视频提示词`}
+                    <UrlMaskedTextarea aria-label={`第 ${row.segmentIndex} 段完整视频提示词`}
                       data-manhua-full-prompt-editor={row.segmentIndex}
                       disabled={!row.clip?.id || !onSaveFullClipPrompt || Boolean(factoryBusy)}
                       value={fullPromptDrafts[row.clip?.id || ""] ?? promptText}
@@ -4672,7 +4674,7 @@ clipPromptReviewOpen ? (
                         {preview.refs.audioUrls.length}（按实际发送顺序）
                       </div>
                       <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-black/40 p-1.5 text-[9px] leading-relaxed text-white/80">
-                        {preview.promptText}
+                        {maskMediaUrls(preview.promptText)}
                       </pre>
                       {preview.refs.imageUrls.length ||
                       preview.refs.videoUrls.length ||
@@ -4683,8 +4685,8 @@ clipPromptReviewOpen ? (
                             ...preview.refs.videoUrls.map((u, i) => [`@视频${i + 1}`, u] as const),
                             ...preview.refs.audioUrls.map((u, i) => [`@audio${i + 1}`, u] as const),
                           ].map(([tag, url]) => (
-                            <li key={`${tag}-${url}`} className="truncate" title={url}>
-                              {tag} · {url}
+                            <li key={`${tag}-${url}`} className="truncate" title="素材链接已隐藏">
+                              {tag} · 素材已关联
                             </li>
                           ))}
                         </ol>
@@ -7234,9 +7236,9 @@ clipPromptReviewOpen ? (
                         <label className="flex flex-col gap-0.5">
                           <span className="text-[9px] text-white/45">背景音乐参考（https 音频链接，可空）</span>
                           <input
-                            type="url"
+                            type="password" autoComplete="off"
                             inputMode="url"
-                            placeholder="https://…/bgm.mp3"
+                            placeholder="粘贴音频链接（内容隐藏）"
                             defaultValue={audioReferenceLock?.bgmUrl || ""}
                             className="rounded border border-white/12 bg-black/40 px-1.5 py-1 font-mono text-[10px] text-white/85 outline-none focus:border-sky-400/50"
                             onBlur={(e) =>
@@ -7267,9 +7269,9 @@ clipPromptReviewOpen ? (
                         <label className="flex flex-col gap-0.5">
                           <span className="text-[9px] text-white/45">对白口音基准（https 音频链接，可空）</span>
                           <input
-                            type="url"
+                            type="password" autoComplete="off"
                             inputMode="url"
-                            placeholder="https://…/accent.mp3"
+                            placeholder="粘贴音频链接（内容隐藏）"
                             defaultValue={audioReferenceLock?.accentUrl || ""}
                             className="rounded border border-white/12 bg-black/40 px-1.5 py-1 font-mono text-[10px] text-white/85 outline-none focus:border-sky-400/50"
                             onBlur={(e) =>
@@ -7695,7 +7697,7 @@ clipPromptReviewOpen ? (
                       <div className="text-[11px] font-semibold text-amber-100">
                         image-2 改图（以当前图为底，只写要改什么）
                       </div>
-                      <textarea
+                      <UrlMaskedTextarea
                         value={imageEditDraft.prompt}
                         disabled={imageEditDraft.busy}
                         onChange={(e) =>
@@ -7796,7 +7798,7 @@ clipPromptReviewOpen ? (
                       取消
                     </button>
                   </div>
-                  <textarea
+                  <UrlMaskedTextarea
                     data-manhua-regen-note
                     autoFocus
                     value={regenDraft.noteZh}

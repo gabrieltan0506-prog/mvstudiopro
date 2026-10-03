@@ -1,3 +1,5 @@
+import { UrlMaskedTextarea } from "@/components/UrlMaskedTextarea";
+import { maskMediaUrls } from "@/lib/maskMediaUrls";
 import { hasPendingMusicMvPlan } from "@/lib/canvasMusicMvRecovery";
 import { finishEditedMusicMvShot } from "@/lib/canvasMusicMvGuards";
 import { rememberMusicMvOutput } from "@/lib/canvasMusicMvWorkflow";
@@ -278,7 +280,7 @@ export function CanvasWanVideoReferencePicker({
 /** 左栏节点列表标题（学参考画布：可读名 + 类型，不泄供应商） */
 function freeformNodeListLabel(block: CanvasBlock): string {
   const id = String(block.id || "");
-  const promptHead = String(block.prompt || "")
+  const promptHead = maskMediaUrls(block.prompt)
     .split("\n")
     .map(l => l.trim())
     .find(l => l && !l.startsWith("【"))
@@ -664,7 +666,7 @@ function CanvasBlockPreviewPanel({
             <div className="space-y-1">
               <div
                 className="truncate text-[10px] text-white/55"
-                title={block.outputUrl}
+                title="成品素材"
               >
                 {fileNameFromUrl(block.outputUrl) || "成片已生成"}
               </div>
@@ -3199,7 +3201,7 @@ export default function FreeformCanvas({
                                 <div className="mb-1 text-[10px] text-white/45">
                                   秒级分镜（可选，一行一段：0-5 | 画面）
                                 </div>
-                                <textarea
+                                <UrlMaskedTextarea
                                   value={block.seedance25TimestampStoryboard || ""}
                                   onChange={(e) =>
                                     patchOne(block.id, {
@@ -3430,7 +3432,7 @@ export default function FreeformCanvas({
                                       type="button"
                                       onClick={() => void openUpscalePanel(block.id)}
                                       className="w-full rounded-lg border border-sky-300/35 bg-sky-500/10 px-2 py-1.5 text-[11px] text-sky-50/90 hover:bg-sky-500/15"
-                                      title="WaveSpeed 高清放大，按秒计费；结果单独存放不覆盖原片"
+                                      title="高清放大，按时长计费；结果单独存放不覆盖原片"
                                     >
                                       {block.upscaledVideoUrl
                                         ? "重新高清放大（2K / 4K）"
@@ -3551,7 +3553,7 @@ export default function FreeformCanvas({
                         onRequestGenerateAsset={manhuaMention.onRequestGenerateAsset}
                       />
                     ) : (
-                    <textarea
+                    <UrlMaskedTextarea
                       disabled={block.kind === "music" && hasPendingMusicMvPlan(block.musicMv)}
                       value={
                         block.id.startsWith("clip-")

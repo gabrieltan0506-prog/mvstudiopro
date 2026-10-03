@@ -27,7 +27,7 @@ export default function OpenAiImageVariantSwitch({ compact, hideModelNames = fal
   return (
     <div
       className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 p-0.5"
-      title={hideModelNames ? "快速出图、精细改图，或各生成一张作对比。双版本分别计费，旧图保留。" : "OpenAI 官方出图模型：Flare 快、Sunburst 改图精度高；双档=画布图片节点两档各出一张（扣两张费）；WaveSpeed / EvoLink 只在官方失败时兜底"}
+      title={hideModelNames ? "快速出图、精细改图，或各生成一张作对比。双版本分别计费，旧图保留。" : "OpenAI 官方出图模型：Flare 快、Sunburst 改图精度高；双档=画布图片节点两档各出一张（扣两张费）；官方失败时自动使用备用通道"}
       role="radiogroup"
       aria-label={hideModelNames ? "图片生成方式" : "出图模型档位"}
     >

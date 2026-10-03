@@ -1,3 +1,5 @@
+import { UrlMaskedTextarea } from "@/components/UrlMaskedTextarea";
+import { maskMediaUrls } from "@/lib/maskMediaUrls";
 import { gcsTransferUrl, isGcsTransferUrl } from "@/lib/gcsTransfer";
 import type { ComponentProps } from "react";
 import { findCanvasDialogueReuse, restoreCanvasDialogueCandidate } from "@/lib/canvasDialogueReuse";
@@ -1323,7 +1325,7 @@ export function CanvasAudioStudioView({
           </label>
           <label className="block text-xs">
             剧情与情绪推进
-            <textarea
+            <UrlMaskedTextarea
               className={fieldClass}
               aria-label="配乐剧情与情绪推进"
               rows={3}
@@ -1384,7 +1386,7 @@ export function CanvasAudioStudioView({
               ) : null}
               <label className="block text-xs">
                 配乐要求
-                <textarea
+                <UrlMaskedTextarea
                   className={fieldClass}
                   value={brief.prompt}
                   aria-label="配乐生成提示词"
@@ -1545,7 +1547,7 @@ export function CanvasAudioStudioView({
       <details className="rounded-lg border border-white/10 bg-black/15 p-2">
         <summary className="cursor-pointer text-xs text-sky-100">本段剧本与对白</summary>
         <pre className="mt-2 max-h-44 overflow-auto whitespace-pre-wrap text-xs leading-5 text-white/70">
-          {block.prompt ||
+          {maskMediaUrls(block.prompt) ||
             "先在视频节点填写剧本，再逐句添加对白或逐段添加音乐。"}
         </pre>
       </details>
@@ -1791,7 +1793,7 @@ export function CanvasAudioStudioView({
                 </div>}
                 <label className="block text-xs">
                   本句台词
-                  <textarea
+                  <UrlMaskedTextarea
                     ref={element => { dialogueInputs.current[cue.id] = element; }}
                     aria-label={`${index + 1} 本句台词`}
                     maxLength={4000}

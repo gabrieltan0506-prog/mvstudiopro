@@ -1,3 +1,5 @@
+import { UrlMaskedTextarea } from "@/components/UrlMaskedTextarea";
+import { maskMediaUrls } from "@/lib/maskMediaUrls";
 import { BgmCreativeAdvisor } from "./BgmCreativeAdvisor";
 import type { ManhuaCreativeAdvisorContext } from "@shared/manhuaCreativeAdvisor";
 import { BgmNarrativeMixEditor } from "./BgmNarrativeMixEditor";
@@ -229,7 +231,7 @@ export default function PostProdWorkshopCard({
           url: String(b.outputUrl).trim(),
           label:
             (Number(b.episodeIndex) > 0 ? `第${b.episodeIndex}集 · ` : "") +
-            (String(b.prompt || "")
+            (maskMediaUrls(b.prompt)
               .trim()
               .slice(0, 24) || b.id.slice(0, 12)),
         })),
@@ -1244,7 +1246,7 @@ export default function PostProdWorkshopCard({
           ) : null}
 
           <div className="mt-2 grid gap-2 lg:grid-cols-[minmax(0,1fr)_9rem_auto]">
-            <textarea
+            <UrlMaskedTextarea
               value={scoreStoryZh}
               onChange={event =>
                 setScoreStoryDraft({ sourceKey: storyContextKey, text: event.target.value.slice(0, 1000) })
@@ -1352,7 +1354,7 @@ export default function PostProdWorkshopCard({
               </label>
               <label className="text-[10px] text-white/45 lg:col-span-2">
                 风格与编配
-                <textarea
+                <UrlMaskedTextarea
                   value={scoreBrief.style}
                   maxLength={1000}
                   rows={2}
@@ -1364,7 +1366,7 @@ export default function PostProdWorkshopCard({
               </label>
               <label className="text-[10px] text-white/45 lg:col-span-2">
                 结构标签
-                <textarea
+                <UrlMaskedTextarea
                   value={scoreBrief.prompt}
                   maxLength={5000}
                   rows={3}
@@ -1619,7 +1621,7 @@ export default function PostProdWorkshopCard({
             <Maximize2 className="h-3.5 w-3.5 text-sky-300" /> 超分与补帧
           </div>
           <p className="mt-1 text-[11px] leading-4 text-white/45">
-            选择2K或4K，搭配30或60帧。先保存原音轨，再用WaveSpeed AI补帧、FFmpeg贴回原音轨，最后超分；保留原声与BGM，原片保留，刷新恢复同一任务。
+            选择2K或4K，搭配30或60帧。先保存原音轨，再进行AI补帧、恢复原音轨，最后高清增强；保留原声与BGM，原片保留，刷新恢复同一任务。
           </p>
           <div className="mt-2 space-y-1.5">
             <select
@@ -1637,7 +1639,9 @@ export default function PostProdWorkshopCard({
             </select>
             <input
               aria-label="云端成片链接"
-              placeholder="或粘贴本人云端成片链接（HTTPS / gs://）"
+              type="password"
+              autoComplete="off"
+              placeholder="粘贴云端成片链接（内容隐藏）"
               value={upscaleVideoUrl}
               onChange={event => setUpscaleVideoUrl(event.target.value.trim())}
               className={selectCls}
@@ -1651,7 +1655,7 @@ export default function PostProdWorkshopCard({
                 setUpscaleProbedSource(await probeWorkflowVideoSource(source));
                 toast.success("云端成品已导入本人工作流，原视频保留");
               }).catch(error => toast.error(error instanceof Error ? error.message : "导入失败")).finally(() => setUpscaleProbeBusy(false));
-            }}>导入WaveSpeed云端成品（不扣积分）</button>
+            }}>导入云端成片（不扣积分）</button>
             <button type="button" disabled={!upscaleVideoUrl || upscaleProbeBusy} onClick={() => void probeUpscaleSource()} className={goCls}>
               {upscaleProbeBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}读取真实尺寸、时长与帧率
             </button>
