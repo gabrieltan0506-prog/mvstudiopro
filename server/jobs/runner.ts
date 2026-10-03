@@ -4278,15 +4278,20 @@ async function processOnePostProdJob(filter: PostProdClaimFilter = resolvePostPr
 
   // 心跳刷新 updatedAt:stale reaper 只清"最后活动过旧"的 running 行,
   // 心跳在=进程活着;进程崩溃后心跳停,租约到期由 reaper 清理,不自动重做。
+  let lastHeartbeatAt = Date.now();
+  let heartbeatPending = false;
   const heartbeat = setInterval(() => {
-    void patchJobRunningProgress(job.id, {
+    if (heartbeatPending) return;
+    heartbeatPending = true;
+    const sentAt = Date.now();
+    void patchJobRunningProgressStrict(job.id, {
       postProdHeartbeatAt: new Date().toISOString(),
-    }).catch(() => {});
+    }).then(() => { lastHeartbeatAt = sentAt; }).catch(() => {}).finally(() => { heartbeatPending = false; });
   }, 30_000);
   heartbeat.unref?.();
 
   const { runPostProdJobWithLimit, resolvePostProdJobTimeoutMs } = await import("./postProdJob.js");
-  // 绑骨绑定阶段真模 >10 分钟（0917 实测），按任务类型分辨墙钟；其余后期仍 10 分钟
+  // 复用任务各自的失联窗口，持续心跳不再受总运行时长限制。
   const timeoutMs = resolvePostProdJobTimeoutMs(job.input);
   try {
     // 时限贯通 AbortSignal:到点下载与 ffmpeg/ffprobe 子进程同步终止
@@ -4294,6 +4299,7 @@ async function processOnePostProdJob(filter: PostProdClaimFilter = resolvePostPr
       job.input,
       String(job.userId),
       timeoutMs,
+      () => lastHeartbeatAt,
     );
     // 只重试状态写入,不重新执行媒体处理;写不进去按失败留痕
     const saved = await markJobSucceededWithRetry(job.id, output, provider);
@@ -4305,7 +4311,7 @@ async function processOnePostProdJob(filter: PostProdClaimFilter = resolvePostPr
     // 后期任务确定性強、重跑同样贵:一律直接失败,不 requeue 重做整项媒体处理
     const message =
       error instanceof Error && error.name === "AbortError"
-        ? `后期任务超时(${timeoutMs}ms),已终止本次处理`
+        ? `后期任务连续${timeoutMs}ms无成功心跳,已终止本次处理`
         : getJobFailureMessage("post_prod" as JobType, error);
     await markJobFailed(job.id, message.slice(0, 800));
   } finally {
