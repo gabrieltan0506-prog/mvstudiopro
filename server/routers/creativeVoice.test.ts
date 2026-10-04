@@ -57,3 +57,29 @@ it("1005媒体方案和完整影片审阅工具分别按原ID回送，不生成�
  }
  expect(upstream.send.mock.calls.filter(([m])=>m.toolResponse)).toHaveLength(2);client.close();await new Promise(resolve=>client.once('close',resolve));
 });
+
+it("小说正文工具按原ID回传；无效参数回送失败，不让模型无限等待",async()=>{
+ const upstream={send:vi.fn(),close:vi.fn()};let events!:(event:any)=>void;
+ mock.connect.mockImplementation(async input=>{events=input.onEvent;return upstream});await open();await new Promise(resolve=>client.on('open',resolve));
+ const received:any[]=[];client.on('message',(b:Buffer)=>received.push(JSON.parse(b.toString())));
+ client.send(JSON.stringify({type:'start',purpose:'script_review',context:'作品',projectKey:'p',confirmedCost:true}));await vi.waitFor(()=>expect(received.some(m=>m.ready)).toBe(true));
+ events({type:'novelEdit',id:'read-chapter',action:{action:'read',episode:1}});await vi.waitFor(()=>expect(received.some(m=>m.id==='read-chapter')).toBe(true));
+ client.send(JSON.stringify({type:'toolResult',id:'read-chapter',text:'完整正文和revision'}));await vi.waitFor(()=>expect(upstream.send).toHaveBeenCalledTimes(1));
+ expect(upstream.send.mock.calls[0][0].toolResponse.functionResponses[0]).toMatchObject({id:'read-chapter',name:'novelText'});
+ events({type:'toolRejected',id:'bad-args',name:'novelText',text:'参数不完整，未改正文'});events({type:'toolRejected',id:'bad-args',name:'novelText',text:'重复'});
+ expect(upstream.send).toHaveBeenCalledTimes(2);expect(upstream.send.mock.calls[1][0].toolResponse.functionResponses[0].response.error).toContain('未改正文');
+ client.close();await new Promise(resolve=>client.once('close',resolve));
+});
+
+it("production bridge serializes paid-capable commands and acknowledges each result once",async()=>{
+ const upstream={send:vi.fn(),close:vi.fn()};let events!:(event:any)=>void;
+ mock.connect.mockImplementation(async input=>{events=input.onEvent;return upstream});await open();await new Promise(resolve=>client.on('open',resolve));
+ const received:any[]=[];client.on('message',(b:Buffer)=>received.push(JSON.parse(b.toString())));
+ client.send(JSON.stringify({type:'start',purpose:'previs',context:'独立测试作品',projectKey:'isolated',confirmedCost:true}));await vi.waitFor(()=>expect(received.some(m=>m.ready)).toBe(true));
+ const event={type:'production',id:'model-test',action:{action:'model3d',assetId:'isolated-hero'}};events(event);events(event);
+ await vi.waitFor(()=>expect(received.filter(m=>m.id===event.id)).toHaveLength(1));events({type:'production',id:'other',action:{action:'image2d',anchorId:'other'}});
+ expect(upstream.send.mock.calls[0][0].toolResponse.functionResponses[0]).toMatchObject({name:'creativeProduction',response:{error:expect.stringContaining('正在处理')}});
+ client.send(JSON.stringify({type:'toolResult',id:event.id,text:'用户取消，未调用供应商'}));await vi.waitFor(()=>expect(upstream.send).toHaveBeenCalledTimes(2));
+ expect(upstream.send.mock.calls[1][0].toolResponse.functionResponses[0]).toMatchObject({name:'creativeProduction',response:expect.any(Object)});
+ client.send(JSON.stringify({type:'toolResult',id:event.id,text:'重复'}));client.send(JSON.stringify({type:'stop'}));await vi.waitFor(()=>expect(upstream.close).toHaveBeenCalled());expect(upstream.send).toHaveBeenCalledTimes(2);
+});

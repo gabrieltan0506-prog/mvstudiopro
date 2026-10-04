@@ -1,3 +1,4 @@
+import type { CreativeVoiceProductionAction } from "@shared/creativeVoiceProduction";
 import { ManhuaAdvisorFilmReview } from "./ManhuaAdvisorFilmReview";
 import { advisorFilmReviewSchema, type AdvisorFilmReviewTarget } from "@shared/manhuaAdvisorFilmReview";
 import { ManhuaAdvisorMediaEdit, type AdvisorMediaEditHandle, type AdvisorMediaWorkspace } from "./ManhuaAdvisorMediaEdit";
@@ -18,7 +19,7 @@ import { streamManhuaAdvisor } from "@/lib/manhuaAdvisorStream";
 import { advisorPrevisTrialSchema } from "@shared/manhuaAdvisorPrevisEdit";
 import { manhuaPrevisSpecSchema } from "@shared/manhuaPrevis";
 import { advisorPrevisCandidateSchema, parseAdvisorPrevisPatch, type AdvisorPrevisCandidate, type AdvisorPrevisTarget, type AdvisorPrevisTrial, type AdvisorPrevisReceipt, applyAdvisorPrevisPatch, advisorPrevisSpecJson } from "@shared/manhuaAdvisorPrevisEdit";
-import { ManhuaAdvisorPrevisComparison } from "./ManhuaAdvisorPrevisComparison";
+import { ManhuaAdvisorPrevisComparison, type AdvisorPrevisVoiceControl } from "./ManhuaAdvisorPrevisComparison";
 import { ManhuaRewriteComparison } from "./ManhuaRewriteComparison";
 /** 项目顾问：读取证据、提出模板改写建议；正式稿仅经显式对比采用。 */
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -51,7 +52,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
   previsTarget?: AdvisorPrevisTarget;
   worldTarget?: AdvisorWorldTarget;
   worldTaskState?: string;
-  onGenerateWorld?: (candidate: AdvisorWorldCandidate) => Promise<void>;
+  onGenerateWorld?: (candidate: AdvisorWorldCandidate) => Promise<void | string>;
   studio3d?: { directionCardId?: string; directionCardVersion?: string };
   previsIssue?: string;
   previsLaunchIssue?: string;
@@ -72,6 +73,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
   onLocate?: (issue: AdvisorIssue) => void;
   mediaWorkspace?: AdvisorMediaWorkspace;
   voiceTargets?: CreativeVoiceTarget[];
+  onVoiceProduction?: (action: Exclude<CreativeVoiceProductionAction, {action:"renderPrevis" | "applyEpisode" | "applyPrevis" | "retryPrevis" | "generateWorld" | "media"}>, signal: AbortSignal) => Promise<string>;
   onVoiceNavigate?: (target: CreativeVoiceTarget) => string;
   episodeWorkspace?: EpisodeOptimizationWorkspace;
   selectedTemplate?: PublicManhuaViralTemplateCard | null;
@@ -131,6 +133,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
       try { if (previsKey) localStorage.removeItem(`${previsKey}:video-source`); } catch { /* 本次显式选择优先于旧缓存。 */ }
     }
   }, [props.previsTarget?.previousPreviewRequestId, previsKey]);
+  const previsVoiceControl = useRef<AdvisorPrevisVoiceControl | null>(null);
   const [autoPrevisStart, setAutoPrevisStart] = useState(false);
   const [previsActionHost, setPrevisActionHost] = useState<HTMLDivElement | null>(null);
   const candidateMatches = Boolean(previsCandidate && props.previsTarget && previsCandidate.target.clipId === props.previsTarget.clipId && previsCandidate.target.specJson === props.previsTarget.specJson);
@@ -416,7 +419,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     const label = project ? `第 ${project.context.episodeIndex} 集 · ${MANHUA_ADVISOR_STAGE_LABELS[project.context.stage]} · ${promptScope || project.selectionLabel}` : stageZh || "创作咨询";
     const request: PendingQuestion = {
       requestId: crypto.randomUUID(),
-      ...((voiceReply || mediaRequest || filmReview) ? { voiceConsultOnly: true } : {}),
+      ...(((voiceReply && !renderRequested) || mediaRequest || filmReview) ? { voiceConsultOnly: true } : {}),
       ...(props.previsTarget && renderRequested ? { previsRenderRequested: true } : {}),
       rawQuestion: question,
       question: mediaRequest ? `根据用户要求整理素材修改指令，不声称看过没有收到的图片或视频。只返回JSON对象，不写Markdown：{"kind":"image或video","blockId":"真实素材编号","instruction":"完整的修改要求"}。只可选以下素材，图片指令最多2000字，视频240字。保留未要求改变的内容。不得生成或声称完成。\n素材：${JSON.stringify(props.mediaWorkspace!.sources.filter(source => question.includes(source.blockId)).map(({blockId,kind,label})=>({blockId,kind,label})))}\n用户：${question}` : wrappedQuestion || buildAdvisorQuestion({
@@ -596,7 +599,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
           {turn.role === "advisor" && !props.episodeWorkspace && !parseAdvisorTemplatePlans(turn.text, templates).length && !props.previsTarget && !props.worldTarget && findMentionedTemplates(turn.text, templates).map((template) => <button key={template.publicId} type="button" disabled={asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={() => send(buildTemplateAdviceQuestion(template))} className="mt-2 rounded border border-cyan-300/30 px-3 py-2 text-xs text-cyan-100 disabled:opacity-40">用「{template.storyPreview?.teaserTitleZh || template.nameZh}」生成本集优化稿</button>)}
         </div>)}
         {previsKey && (props.previsTarget || previsCandidate) && <details className="text-xs"><summary onClick={recoverPreviews} className="cursor-pointer py-2 text-cyan-100">找回本项目的独立试看</summary>{savedPreviews.map(({ key, trial }) => <button key={key} type="button" className="my-1 block rounded border border-white/20 px-2 py-2 text-left" onClick={() => { try { localStorage.setItem(`${previsKey}:trial`, trial.request.requestId); localStorage.setItem(previsKey, JSON.stringify(trial.candidate)); setAutoPrevisStart(false); setPrevisCandidate(trial.candidate); } catch { toast.error("试看恢复记录无法保存，未切换。"); } }}>{trial.candidate.patch.summaryZh} · {trial.request.spec.durationSec}秒</button>)}</details>}
-        {candidateMatches && previsCandidate && <ManhuaAdvisorPrevisComparison key={JSON.stringify(previsCandidate)} candidate={previsCandidate} previewHost={props.previewHost} actionHost={previsActionHost} onCheckReady={props.onCheckPrevisReady} storageKey={previsKey ? `${previsKey}:trial` : null} autoStart={autoPrevisStart} onPreviewReady={rememberPreviewVideo} onPrepare={props.onPreparePrevis} onRevise={() => { setDraft("保留这版其他安排，我想调整："); questionRef.current?.focus(); }} disabled={asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onApply={props.onApplyPrevis} />}
+        {candidateMatches && previsCandidate && <ManhuaAdvisorPrevisComparison voiceControl={previsVoiceControl} key={JSON.stringify(previsCandidate)} candidate={previsCandidate} previewHost={props.previewHost} actionHost={previsActionHost} onCheckReady={props.onCheckPrevisReady} storageKey={previsKey ? `${previsKey}:trial` : null} autoStart={autoPrevisStart} onPreviewReady={rememberPreviewVideo} onPrepare={props.onPreparePrevis} onRevise={() => { setDraft("保留这版其他安排，我想调整："); questionRef.current?.focus(); }} disabled={asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onApply={props.onApplyPrevis} />}
         {props.worldTarget && worldCandidate && <section aria-label="3DGS场景方案" className="space-y-2 rounded-lg border border-cyan-300/30 p-3 text-xs">
           <strong>{worldCandidate.target.labelZh} · 场景方案</strong>
           <p className="whitespace-pre-wrap">{worldCandidate.plan.summaryZh}</p>
@@ -630,7 +633,44 @@ export default function ManhuaCreativeAdvisorPanel(props: {
           const abort = () => reply("语音已结束，已提交的审阅继续在原顾问保存，不重提");
           signal.addEventListener("abort", abort, {once:true});
           if (!send(`【影片审阅】${question}`, undefined, false, undefined, reply, {videoUri:source.url,blockId:source.blockId,revision:source.revision,label:source.label})) reply();
-        })} mediaSources={props.mediaWorkspace?.sources} onProposeMediaEdit={proposal => { if (!mediaEditRef.current) throw new Error("素材编辑区尚未就绪"); return mediaEditRef.current.propose(proposal); }} disabled={!userId || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onUse={text => setDraft(text)} targets={props.voiceTargets || props.episodeWorkspace?.episodes.map(e => ({ episode: e.index, label: e.title })) || []} onNavigate={props.onVoiceNavigate} onAskAdvisor={(question, signal) => new Promise(resolve => {
+        })} mediaSources={props.mediaWorkspace?.sources} onProposeMediaEdit={proposal => { if (!mediaEditRef.current) throw new Error("素材编辑区尚未就绪"); return mediaEditRef.current.propose(proposal); }} onProductionAction={async (action, signal) => {
+          if (signal.aborted) throw new Error("语音已结束，未提交");
+          if (action.action === "media") {
+            if (!mediaEditRef.current) throw new Error("请打开当前作品的素材修改区。");
+            return mediaEditRef.current.execute(action.operation);
+          }
+          if (action.action === "retryPrevis") {
+            if (!previsVoiceControl.current) throw new Error("当前没有白模试看，请先打开原片段。");
+            return previsVoiceControl.current.retry();
+          }
+          if (action.action === "generateWorld") {
+            if (!worldCandidate || !worldMatches || !props.onGenerateWorld || worldLock.current || props.worldTaskState || props.worldTarget?.previousTaskId) throw new Error("当前没有可提交的3DGS方案，或已有任务；请检查原方案与任务，未重复生成。");
+            worldLock.current=true;setWorldGenerating(true);
+            try { const receipt = await props.onGenerateWorld(worldCandidate); return receipt || "未取得3DGS任务回执，请检查场景卡；不能声称已提交或完成，不自动重试。"; }
+            finally {worldLock.current=false;if(mounted.current)setWorldGenerating(false);}
+          }
+          if (action.action === "applyPrevis") return previsVoiceControl.current ? previsVoiceControl.current.apply() : "当前没有可应用的白模试看，请先生成并观看。";
+          if (action.action === "applyEpisode") {
+            if (!rewrite || rewrite.episodeIndex !== action.episode || rewriteEditError || !props.onApplyRewrite) throw new Error("当前没有这集的可应用优化稿，请先调用顾问准备整集修改候选。");
+            validateAdvisorRewriteBody(rewrite.originalBody, rewriteEdit);
+            if (!window.confirm(`将左侧优化稿应用到第${action.episode}集？旧稿会先备份。`)) return "用户取消，未改正文。";
+            return props.onApplyRewrite({...rewrite,rewrittenBody:rewriteEdit,...(rewrite.endHook ? {endHook:rewriteEditHook} : {})}) ? `第${action.episode}集优化稿已写回，旧稿已备份，请重新确认剧本。` : "应用被工作区阻止，原稿保留，请查看提示。";
+          }
+          if (action.action !== "renderPrevis") {
+            if (!props.onVoiceProduction) throw new Error("当前工作区没有制作入口");
+            const result = await props.onVoiceProduction(action, signal);
+            return action.action === "inspect" ? JSON.stringify({production:JSON.parse(result),previs:previsVoiceControl.current?.inspect() || null,rewrite:rewrite ? {episode:rewrite.episodeIndex,ready:!rewriteEditError} : null}) : result;
+          }
+          if (!props.previsTarget || props.previsIssue || props.previsLaunchIssue || props.previewHost?.dataset.clipId !== props.previsTarget.clipId || !props.onPreparePrevis) throw new Error(props.previsIssue || props.previsLaunchIssue || "请先打开指定片段的白模页面；未开始渲染。");
+          if (!window.confirm("按这段描述调用创作顾问并渲染独立白模试看？顾问沿用本作品次数，超额另行确认积分；Blender渲染使用服务器算力。原配置保留，满意后再应用。\n\n" + action.question)) return "用户取消，未咨询或渲染。";
+          return new Promise<string>(resolve => {
+            let done = false;
+            const reply = (answer?: string) => { if (done) return; done = true; signal.removeEventListener("abort", abort); for (const [id,cb] of Array.from(voiceReplies.current)) if (cb === reply) voiceReplies.current.delete(id); resolve(answer ? `${readableAdvice(answer)}\n方案已返回；有效方案交给本页Blender试看入口提交。视频是否完成以本页任务编号、状态和播放器为准，不能把方案当成已生成视频。` : "未取得可执行方案，请查看原顾问请求，不重试。"); };
+            const abort = () => reply("语音已结束，已提交任务请在原工作区查询，不重复提交。");
+            signal.addEventListener("abort", abort, {once:true});
+            if (!send(action.question, undefined, true, undefined, reply)) reply();
+          });
+        }} disabled={!userId || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onUse={text => setDraft(text)} targets={props.voiceTargets || props.episodeWorkspace?.episodes.map(e => ({ episode: e.index, label: e.title })) || []} onNavigate={props.onVoiceNavigate} onAskAdvisor={(question, signal) => new Promise(resolve => {
           if (signal.aborted) { resolve(undefined); return; }
           let done = false;
           const reply = (answer?: string) => { if (done) return; done = true; signal.removeEventListener("abort", abort); for (const [id, callback] of Array.from(voiceReplies.current)) if (callback === reply) voiceReplies.current.delete(id); resolve(answer); };

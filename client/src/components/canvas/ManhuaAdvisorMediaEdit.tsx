@@ -1,3 +1,4 @@
+import type { CreativeVoiceProductionAction } from "@shared/creativeVoiceProduction";
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { canvasImageCredits } from "@shared/canvasGenerationPricing";
 import { assertAdvisorMediaSource, prepareAdvisorMediaPlan, type AdvisorMediaPlan, type AdvisorMediaSource } from "@shared/manhuaAdvisorMediaEdit";
@@ -5,7 +6,8 @@ import { runAdvisorImageEdit } from "@/lib/advisorMediaImageJob";
 
 type Receipt = { variant: "flare" | "sunburst"; status: "submitting" | "pending" | "done" | "failed"; jobId?: string; url?: string };
 type Record = { id: string; plan: AdvisorMediaPlan; previews: Receipt[]; result?: Receipt };
-export type AdvisorMediaEditHandle = { propose: (value: unknown) => string };
+type MediaOperation = Extract<CreativeVoiceProductionAction, {action:"media"}>["operation"];
+export type AdvisorMediaEditHandle = { propose: (value: unknown) => string; execute: (operation: MediaOperation) => Promise<string> };
 export type AdvisorMediaWorkspace = {
   sources: AdvisorMediaSource[]; disabled?: boolean;
   validate: (plan: AdvisorMediaPlan) => void;
@@ -47,7 +49,36 @@ export const ManhuaAdvisorMediaEdit = forwardRef<AdvisorMediaEditHandle, {
     save({ id: crypto.randomUUID(), plan, previews: [] }); setInstruction(plan.instruction); setSelected(plan.blockId); setError("");
     return `${plan.source.label}修改方案已放入顾问的图片／视频编辑区，等待用户查看提示词并确认。尚未生成、未扣出图费用。图片必须先Flare预览，再由用户点击确认生成Sunburst；不得自动调用。`;
   }
-  useImperativeHandle(ref, () => ({ propose }));
+  async function execute(operation: MediaOperation): Promise<string> {
+    const r = recordRef.current;
+    if (!r) throw new Error("请先保存图片或视频修改方案，再执行。");
+    if (operation === "inspect") return JSON.stringify(r);
+    if (lock.current || blocked.current || !alive.current || current.current.workspace.disabled || current.current.consulting) throw new Error("工作区忙或记录未恢复，请保留原任务。");
+    if (instruction !== r.plan.instruction) throw new Error("修改要求已变，请先保存新方案。");
+    if (operation === "applyImage") {
+      if (r.plan.kind !== "image" || r.result?.status !== "done" || !r.result.url) throw new Error("尚无已完成的Sunburst图片可采用。");
+      current.current.workspace.validate(r.plan);
+      if (!window.confirm("采用这张Sunburst图片？原图保留在版本历史。")) return "用户取消，未采用图片。";
+      current.current.workspace.applyImage(r.plan,r.result.url);
+      return "已采用Sunburst图片，原图保留在版本历史。";
+    }
+    if (operation === "editVideo") {
+      if (r.plan.kind !== "video") throw new Error("当前不是视频修改方案。");
+      current.current.workspace.validate(r.plan);
+      return current.current.workspace.editVideo(r.plan);
+    }
+    if (r.plan.kind !== "image") throw new Error("当前不是图片修改方案。");
+    if (operation === "resumeMedia") {
+      const receipt = [...r.previews,...(r.result?[r.result]:[])].find(x=>x.status==="pending" || x.status==="submitting");
+      if (!receipt) return "没有在途图片任务；已失败可重新生成，已有成功结果无需重试。";
+      if (!receipt.jobId) throw new Error("提交结果未知且没有编号，须先对账，未重新下单。");
+      await generate(receipt.variant,true);
+    } else {
+      await generate(operation === "previewImage" ? "flare" : "sunburst");
+    }
+    return JSON.stringify({changed:recordRef.current !== r,record:recordRef.current,note:"只以回执status与jobId判断结果；取消或失败不算完成。"});
+  }
+  useImperativeHandle(ref, () => ({ propose, execute }));
   async function generate(variant: "flare" | "sunburst", resume = false) {
     const r = recordRef.current;
     if (!r || lock.current || blocked.current || !alive.current || current.current.workspace.disabled || current.current.consulting) return;
@@ -70,7 +101,7 @@ export const ManhuaAdvisorMediaEdit = forwardRef<AdvisorMediaEditHandle, {
         if (!window.confirm(`${variant === "flare" ? "生成Flare修改预览" : "我确认这版Flare修改效果，生成Sunburst图片"}\n${r.plan.source.label}\n${r.plan.instruction}\n${price}。继续？`)) return;
         current.current.workspace.validate(r.plan);
         receipt = { variant, status: "submitting" };
-        if (variant === "flare" && r.result) window.localStorage.setItem(`${key}:history:${r.id}:${crypto.randomUUID()}`, JSON.stringify(r));
+        if (r.previews.length || r.result) window.localStorage.setItem(`${key}:history:${r.id}:${crypto.randomUUID()}`, JSON.stringify(r));
         active = variant === "flare" ? { ...r, result: undefined, previews: [...r.previews, receipt] } : { ...r, result: receipt };
         save(active); // persist intent BEFORE submitting, so an uncertain receipt can never be retried silently
       }

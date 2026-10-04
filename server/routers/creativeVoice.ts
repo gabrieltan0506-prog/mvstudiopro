@@ -65,12 +65,16 @@ export function registerCreativeVoice(server: Server) {
               connect: (plan, signal) => connectVoiceTransport({ plan, signal, context: msg.context,
                 onEvent: event => {
                   lastActivity = Date.now();
-                  if (event.type === "tool" || event.type === "workflow" || event.type === "mediaEdit" || event.type === "filmReview") {
+                  if (event.type === "toolRejected") {
+                    if (toolIds.has(event.id)) return; toolIds.add(event.id);
+                    upstream?.send({toolResponse:{functionResponses:[{id:event.id,name:event.name,response:{error:event.text}}]}}); return;
+                  }
+                  if (event.type === "tool" || event.type === "workflow" || event.type === "mediaEdit" || event.type === "filmReview" || event.type === "novelEdit" || event.type === "production") {
                     if (toolIds.has(event.id)) return;
                     if (pendingTools.size) {
-                      upstream?.send({ toolResponse: { functionResponses: [{ id: event.id, name: event.type === "tool" ? "askCreativeAdvisor" : event.type === "mediaEdit" ? "proposeMediaEdit" : event.type === "filmReview" ? "reviewFilm" : "creativeWorkflow", response: { error: "已有顾问任务正在处理，请等待结果，不要重复提交。" } }] } }); return;
+                      upstream?.send({ toolResponse: { functionResponses: [{ id: event.id, name: event.type === "tool" ? "askCreativeAdvisor" : event.type === "mediaEdit" ? "proposeMediaEdit" : event.type === "filmReview" ? "reviewFilm" : event.type === "novelEdit" ? "novelText" : event.type === "production" ? "creativeProduction" : "creativeWorkflow", response: { error: "已有顾问任务正在处理，请等待结果，不要重复提交。" } }] } }); return;
                     }
-                    toolIds.add(event.id); pendingTools.set(event.id, event.type === "tool" ? "askCreativeAdvisor" : event.type === "mediaEdit" ? "proposeMediaEdit" : event.type === "filmReview" ? "reviewFilm" : "creativeWorkflow");
+                    toolIds.add(event.id); pendingTools.set(event.id, event.type === "tool" ? "askCreativeAdvisor" : event.type === "mediaEdit" ? "proposeMediaEdit" : event.type === "filmReview" ? "reviewFilm" : event.type === "novelEdit" ? "novelText" : event.type === "production" ? "creativeProduction" : "creativeWorkflow");
                   }
                   send(event);
                 }, onEnded: stop }),

@@ -1,4 +1,5 @@
-import { CreativeVoicePanel } from "@/components/canvas/CreativeVoicePanel";
+import { NovelVoiceRevision } from "@/components/canvas/NovelVoiceRevision";
+import { applyNovelVoiceCandidate } from "@/lib/novelVoiceEditing";
 import { useManhuaTemplateCatalogEvents } from "@/hooks/useManhuaTemplateCatalogEvents";
 import "./NovelAdaptation.css";
 import {
@@ -193,14 +194,15 @@ function NovelWorkspaceEditor({
   const writes = useRef(Promise.resolve(true));
   const saving = useRef(0);
   const queueActive = useRef(false);
-  const persist = (next: NovelWorkspace, archiveKey?: string) => {
+  const persist = (next: NovelWorkspace, archiveKey?: string, rollbackOnFailure = false) => {
+    const previous = latest.current;
     latest.current = next;
     setDraft(next);
     saving.current++;
     setSavePending(true);
     const operation = writes.current
       .then(async ok => {
-        if (!ok) return false;
+        if (!ok) { if (rollbackOnFailure && latest.current === next) { latest.current = previous; setDraft(previous); } return false; }
         try {
           raw.current = await saveNovelWorkspaceDb(
             userId,
@@ -211,6 +213,7 @@ function NovelWorkspaceEditor({
           setSaveError("");
           return true;
         } catch (e) {
+          if (rollbackOnFailure && latest.current === next) { latest.current = previous; setDraft(previous); }
           queueActive.current = false;
           setSaveError(
             e instanceof Error
@@ -1399,7 +1402,14 @@ function NovelWorkspaceEditor({
   );
   const advisorContent = (
     <>
-      <CreativeVoicePanel key={draft.roundId} scopeKey={`${userId}:${draft.roundId}`} context={JSON.stringify({ title: draft.topic, direction: draft.direction, outline: draft.outline, chapters: draft.chapters, templates: draft.templates })} disabled={disabled} onUse={text => { change({ advisorDraft: text }); setSideTab("advisor"); }} targets={draft.chapters.map((chapter, i) => ({ episode: i + 1, label: chapter ? `第${i + 1}集小说稿` : `第${i + 1}集尚无正文` }))} onNavigate={target => { if (disabled || !latest.current.chapters[target.episode - 1]) throw new Error("该集正文尚未生成或工作区忙，未切换。"); setActiveChapter(target.episode - 1); return `已打开第${target.episode}集小说稿，未改正文。`; }} onAskAdvisor={async question => await generate("advice", undefined, 1, question)} />
+      <NovelVoiceRevision key={draft.roundId} getWorkspace={() => latest.current} onApplyRevision={async (candidate, signal) => {
+        if (signal.aborted || disabled || saving.current > 0) throw new Error("工作区正在保存或处理任务，未修改正文。");
+        const before = latest.current;
+        const next = await applyNovelVoiceCandidate(before, candidate);
+        if (signal.aborted || !alive.current || latest.current !== before || running.current || saving.current > 0) throw new Error("正文或工作区在确认期间变化，未覆盖现稿。");
+        if (!await persist(next, `voice-${candidate.id}`, true)) throw new Error("正文保存失败，未确认套用成功；候选稿保留，请先处理保存错误。");
+        if (alive.current) { setActiveChapter(candidate.episode - 1); setWorkspaceTab("novel"); }
+      }} scopeKey={`${userId}:${draft.roundId}`} context={JSON.stringify({ activeEpisode: activeChapter + 1, title: draft.topic, direction: draft.direction, outline: draft.outline, currentChapter: draft.chapters[activeChapter], templates: draft.templates, chapterCount: draft.chapters.length })} disabled={disabled} onUse={text => { change({ advisorDraft: text }); setSideTab("advisor"); }} targets={draft.chapters.map((chapter, i) => ({ episode: i + 1, label: chapter ? `第${i + 1}集小说稿` : `第${i + 1}集尚无正文` }))} onNavigate={target => { if (disabled || !latest.current.chapters[target.episode - 1]) throw new Error("该集正文尚未生成或工作区忙，未切换。"); setActiveChapter(target.episode - 1); setWorkspaceTab("novel"); return JSON.stringify({ episode: target.episode, text: latest.current.chapters[target.episode - 1], next: "以本次返回正文为准；修改前调用novelText read获取revision。" }); }} onAskAdvisor={async question => await generate("advice", undefined, 1, question)} />
       {advice && (
         <div className="mt-5 space-y-3">
           <h3 className="font-semibold">与创作顾问讨论</h3>

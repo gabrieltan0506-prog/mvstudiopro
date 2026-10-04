@@ -1,15 +1,19 @@
+import type { CreativeVoiceProductionAction } from "@shared/creativeVoiceProduction";
+import type { CreativeVoiceNovelAction } from "@shared/creativeVoiceNovel";
 import type { AdvisorMediaProposal, AdvisorMediaSource } from "@shared/manhuaAdvisorMediaEdit";
 import { parseVoiceReviewNotes, resolveVoiceTarget, validateReviewSeek, type VoiceReviewNote } from "@/lib/creativeVoiceReview";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
 import { captureVoiceFrame, pcm16At16k, pcmFloat } from "@/lib/creativeVoiceMedia";
-import { CREATIVE_VOICE_PURPOSES, type CreativeVoiceEvent, type CreativeVoiceStart, type CreativeVoiceAction, type CreativeVoiceTarget } from "@shared/creativeVoice";
+import { formatVoiceToolResult, CREATIVE_VOICE_PURPOSES, type CreativeVoiceEvent, type CreativeVoiceStart, type CreativeVoiceAction, type CreativeVoiceTarget } from "@shared/creativeVoice";
 
 type CaptureVideo = HTMLVideoElement & { captureStream?: () => MediaStream };
 export function CreativeVoicePanel(props: {
   scopeKey: string; context: string; disabled?: boolean; onUse: (text: string) => void;
   onAskAdvisor: (question: string, signal: AbortSignal) => Promise<string | undefined>;
+  onProductionAction?: (action: CreativeVoiceProductionAction, signal: AbortSignal) => Promise<string>;
+  onNovelAction?: (action: CreativeVoiceNovelAction, signal: AbortSignal) => Promise<string>;
   onReviewFilm?: (blockId: string, question: string, signal: AbortSignal) => Promise<string | undefined>;
   mediaSources?: AdvisorMediaSource[]; onProposeMediaEdit?: (proposal: AdvisorMediaProposal) => string;
   targets?: CreativeVoiceTarget[]; onNavigate?: (target: CreativeVoiceTarget) => string;
@@ -39,7 +43,7 @@ export function CreativeVoicePanel(props: {
     notesRef.current += text; setNotes(notesRef.current);
     try { window.localStorage.setItem(notesKey, notesRef.current); } catch { setStatus("记录无法自动保存，请立即下载记录"); }
   };
-  const send = (message: object) => { if (ws.current?.readyState === WebSocket.OPEN && ws.current.bufferedAmount < 512000) ws.current.send(JSON.stringify(message)); };
+  const send = (message: object) => { if (ws.current?.readyState === WebSocket.OPEN && ws.current.bufferedAmount < 512000) ws.current.send(JSON.stringify("type" in message && message.type === "toolResult" && "text" in message && typeof message.text === "string" ? { ...message, text: formatVoiceToolResult(message.text) } : message)); };
   const silence = () => { for (const n of nodes.current) { try { n.stop(); } catch {} } nodes.current = []; nextPlay.current = 0; };
   function stopInput(key: string) {
     const item = inputs.current[key]; if (item) { item.source.disconnect(); item.stream.getTracks().forEach(t => t.stop()); delete inputs.current[key]; }
@@ -93,13 +97,30 @@ export function CreativeVoicePanel(props: {
           void callbacks.current.onAskAdvisor(data.question, voiceAbort.current.signal).then(answer => {
             if (seq !== generation.current) return;
             const text = answer || "本次未得到结果：可能需要确认、输入不完整、任务忙或服务失败。请查看原创作顾问提示；不要自动重试。";
-            append(`创作顾问结果：${text}\n`); send({ type: "toolResult", id: data.id, text: text.slice(0, 16000) });
+            append(`创作顾问结果：${text}\n`); send({ type: "toolResult", id: data.id, text });
           }).catch(() => { if (seq === generation.current) send({ type: "toolResult", id: data.id, text: "调用未完成，请查看原顾问的错误和恢复入口，不要重试或声称已完成。" }); });
+        }
+        if (data.type === "production") {
+          if (toolCalls.current.has(data.id)) return; toolCalls.current.add(data.id);
+          const task = callbacks.current.disabled ? Promise.reject(new Error("工作区忙，未提交制作")) : callbacks.current.onProductionAction?.(data.action, voiceAbort.current.signal) || Promise.resolve("请先将选定剧本接入漫剧工厂，再打开资产或白模制作。");
+          void task.then(result => { if (seq === generation.current) { append(`制作工具：${result}\n`); send({type:"toolResult",id:data.id,text:result}); } })
+            .catch(error => { if (seq === generation.current) send({type:"toolResult",id:data.id,text:error instanceof Error ? error.message : "制作状态未确认，请查看原任务，不要重复提交"}); });
+        }
+        if (data.type === "novelEdit") {
+          if (toolCalls.current.has(data.id)) return; toolCalls.current.add(data.id);
+          const task = callbacks.current.disabled ? Promise.reject(new Error("工作区忙，未修改正文")) : callbacks.current.onNovelAction?.(data.action, voiceAbort.current.signal) || Promise.resolve("当前页面没有小说正文工具，请打开小说改编工作区。");
+          void task.then(result => { if (seq !== generation.current) return;
+            append(`小说正文工具 · ${data.action.action}：${data.action.action === "read" ? "已读取指定集的当前正文" : result}\n`);
+            send({type:"toolResult",id:data.id,text:result});
+          }).catch(error => { if (seq === generation.current) {
+            const text = error instanceof Error ? error.message : "正文操作未完成，请查看页面提示";
+            append(`小说正文工具：${text}\n`); send({type:"toolResult",id:data.id,text});
+          }});
         }
         if (data.type === "filmReview") {
           if (toolCalls.current.has(data.id)) return; toolCalls.current.add(data.id);
           const task = callbacks.current.disabled ? Promise.resolve("工作区忙，请等待原任务") : callbacks.current.onReviewFilm?.(data.blockId, data.question, voiceAbort.current.signal) || Promise.resolve("请到漫剧工厂选择影片审阅");
-          void task.then(result => { if (seq === generation.current) { const text = result || "本次未完成审阅，不要自动重试"; append(`影片审阅：${text}\n`); send({ type: "toolResult", id: data.id, text: text.slice(0,16000) }); } }).catch(() => { if (seq === generation.current) send({type:"toolResult",id:data.id,text:"影片审阅未完成，请查看原任务，不要重试"}); });
+          void task.then(result => { if (seq === generation.current) { const text = result || "本次未完成审阅，不要自动重试"; append(`影片审阅：${text}\n`); send({ type: "toolResult", id: data.id, text }); } }).catch(() => { if (seq === generation.current) send({type:"toolResult",id:data.id,text:"影片审阅未完成，请查看原任务，不要重试"}); });
         }
         if (data.type === "mediaEdit") {
           if (toolCalls.current.has(data.id)) return; toolCalls.current.add(data.id);
@@ -108,13 +129,13 @@ export function CreativeVoicePanel(props: {
             if (callbacks.current.disabled || !callbacks.current.onProposeMediaEdit) throw new Error("当前工作区不能准备素材修改，请打开漫剧工厂。");
             result = callbacks.current.onProposeMediaEdit(data.proposal);
           } catch (e) { result = e instanceof Error ? e.message : "方案未准备好"; }
-          append(`素材修改：${result}\n`); send({ type: "toolResult", id: data.id, text: result.slice(0,16000) });
+          append(`素材修改：${result}\n`); send({ type: "toolResult", id: data.id, text: result });
         }
         if (data.type === "workflow") {
           if (toolCalls.current.has(data.id)) return; toolCalls.current.add(data.id);
           let result: string;
           try { result = workflowCallback.current(data.action); } catch (error) { result = error instanceof Error ? error.message : "操作没有完成"; }
-          append(`工作流：${result}\n`); send({ type: "toolResult", id: data.id, text: result.slice(0, 16000) });
+          append(`工作流：${result}\n`); send({ type: "toolResult", id: data.id, text: result });
         }
         if (data.type === "audio" && audio.current) {
           const ctx = audio.current, samples = pcmFloat(data.data); const rate = Number(/rate=(\d+)/.exec(data.mimeType)?.[1] || 24000);
@@ -203,7 +224,7 @@ export function CreativeVoicePanel(props: {
   }
   function runWorkflow(action: CreativeVoiceAction): string {
     const current = callbacks.current;
-    if (action.action === "inspect") return JSON.stringify({ mediaSources: current.mediaSources?.map(({blockId,kind,label})=>({blockId,kind,label})) || [], targets: current.targets || [], context: current.context.slice(0, 10000), notes: reviewsRef.current.slice(-10), playerTime: selectedVideo()?.currentTime, frameShared: !!sharedVideo.current, audioShared: !!inputs.current.video });
+    if (action.action === "inspect") return JSON.stringify({ novelEditing: Boolean(current.onNovelAction), production: Boolean(current.onProductionAction), mediaSources: current.mediaSources?.map(({blockId,kind,label})=>({blockId,kind,label})) || [], targets: current.targets || [], context: current.context.slice(0, 10000), notes: reviewsRef.current.slice(-10), playerTime: selectedVideo()?.currentTime, frameShared: !!sharedVideo.current, audioShared: !!inputs.current.video });
     if (current.disabled) throw new Error("当前顾问或工作区正在处理任务，请等待后再操作。");
     const target = action.episode ? resolveVoiceTarget(current.targets || [], action.episode, action.shot) : undefined;
     if (action.action === "navigate") {

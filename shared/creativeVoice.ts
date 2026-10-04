@@ -1,3 +1,5 @@
+import type { CreativeVoiceProductionAction } from "./creativeVoiceProduction";
+import type { CreativeVoiceNovelAction } from "./creativeVoiceNovel";
 import type { AdvisorMediaProposal } from "./manhuaAdvisorMediaEdit";
 import { z } from "zod";
 export const CREATIVE_VOICE_PURPOSES = {
@@ -41,6 +43,9 @@ export const creativeVoiceActionSchema = z.object({
 export type CreativeVoiceAction = z.infer<typeof creativeVoiceActionSchema>;
 export type CreativeVoiceTarget = { episode: number; shot?: number; label: string };
 export type CreativeVoiceEvent =
+  | { type: "toolRejected"; id: string; name: "novelText" | "creativeProduction" | "creativeWorkflow" | "askCreativeAdvisor" | "proposeMediaEdit" | "reviewFilm"; text: string }
+  | { type: "production"; id: string; action: CreativeVoiceProductionAction }
+  | { type: "novelEdit"; id: string; action: CreativeVoiceNovelAction }
   | { type: "filmReview"; id: string; blockId: string; question: string }
   | { type: "mediaEdit"; id: string; proposal: AdvisorMediaProposal }
   | { type: "workflow"; id: string; action: CreativeVoiceAction }
@@ -52,3 +57,15 @@ export type CreativeVoiceEvent =
   | { type: "interrupted" }
   | { type: "usage"; totalTokens: number }
   | { type: "error"; text: string };
+
+/** Transport limit applies to the envelope, never silently cut a JSON receipt. */
+export function formatVoiceToolResult(text: string): string {
+  if (text.length <= 16000) return text;
+  return JSON.stringify({
+    incomplete: true,
+    reason: "tool_result_exceeds_transport_limit",
+    originalCharacters: text.length,
+    instruction: "完整回执已保留在页面语音记录中。以下只是不完整摘要，不能据此判断未展示任务完成或失败，不要重复提交付费任务。请查看原任务，或按指定集、角色、片段缩小读取范围。",
+    excerpt: text.slice(0, 2000),
+  });
+}

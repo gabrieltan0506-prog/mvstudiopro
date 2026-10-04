@@ -486,6 +486,8 @@ type Props = {
   onOpenAdvisorTemplates?: () => void;
   onOpenAdvisorPrevis?: (clipId: string, requestId?: string) => void;
   advisorPrevisActiveClipId?: string | null;
+  advisorPrevisRequest?: {id:string;clipId:string;episode:number;segment:number} | null;
+  onAdvisorPrevisRequestHandled?: (id:string) => void;
   advisorAudioRequest?: { id: string; clipId: string; scopeId: string } | null;
   onAdvisorAudioRequestHandled?: (id: string) => void;
   onOpenAdvisor3d?: (clipId?: string, sceneRefId?: string, mode?: "model" | "world" | "general") => void;
@@ -1257,6 +1259,8 @@ export default function ManhuaScriptWorkbench({
   onOpenAdvisorTemplates,
   onOpenAdvisorPrevis,
   advisorPrevisActiveClipId,
+  advisorPrevisRequest,
+  onAdvisorPrevisRequestHandled,
   advisorAudioRequest,
   onAdvisorAudioRequestHandled,
   onOpenAdvisor3d,
@@ -3063,6 +3067,20 @@ export default function ManhuaScriptWorkbench({
       onOpenAdvisorPrevis(activeClip.id, requestId);
     } catch (error) { toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "本段人物读取失败"); }
   };
+  const handledVoicePrevis = useRef("");
+  useEffect(() => {
+    const request = advisorPrevisRequest;
+    if (!request || handledVoicePrevis.current === request.id || request.episode !== focusEpisode || factoryBusy) return;
+    if (activeSegNo !== request.segment) { setActiveSegmentOverride(request.segment); return; }
+    handledVoicePrevis.current = request.id;
+    if (activeClip?.id !== request.clipId) {
+      toast.error("目标片段已变化，未建立白模或提交任务。");
+    } else {
+      setActiveSecondaryTool("previs"); setPrevisStudioOpen(true);
+      openPrevisAdvisor();
+    }
+    onAdvisorPrevisRequestHandled?.(request.id);
+  }, [advisorPrevisRequest, focusEpisode, activeSegNo, activeClip?.id, factoryBusy, onAdvisorPrevisRequestHandled]);
   const openSecondaryAdvisor = (tool: ManhuaSecondaryTool) => {
     if (tool === "previs" || tool === "actionTimeline") openPrevisAdvisor();
     else onOpenAdvisor3d?.(activeClip?.id, undefined, tool === "world3d" ? "world" : tool === "model3d" ? "model" : "general");
