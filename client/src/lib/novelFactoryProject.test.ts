@@ -158,7 +158,7 @@ it("continuation appends 60 episodes to the same project without losing edited e
     next.input.episodeStart = start;
     next.input.episodeCount = count;
     next.result.requestId = next.input.requestId;
-    next.result.resultSha256 = String(start);
+    next.result.resultSha256 = String(start).padStart(64, "0");
     const script = JSON.parse(next.result.text);
     script.episodes = Array.from({ length: count }, (_, i) => ({
       ...script.episodes[0],

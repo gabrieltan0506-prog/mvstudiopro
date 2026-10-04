@@ -402,6 +402,7 @@ import type { ManhuaCloudDraftPayload } from "@shared/manhuaCloudDraft";
 import {
   MANHUA_CLOUD_DRAFT_SYNC_DEBOUNCE_MS,
   buildLocalCloudDraftSnapshot,
+  readLocalNovelOrigin,
   chooseManhuaDraftHydrate,
   cloudDraftBlocksToCanvas,
   mergeHydratedCanvasBlocks,
@@ -805,6 +806,8 @@ function OmniCanvasWorkspace() {
   const initialFactoryPrefs = useMemo(() => loadFactoryCharacterPrefs(), []);
   const initialWriterBoot = useMemo(() => bootWriterSession(), []);
   const initialWriterSession = initialWriterBoot.session;
+  const initialNovelOrigin = useMemo(() => initialWriterSession?.novelOrigin || readLocalNovelOrigin(), [initialWriterSession]);
+  const novelOriginRef = useRef(initialNovelOrigin);
 
   useEffect(() => {
     if (!initialWriterBoot.clearedLegacyPrivateTemplate) return;
@@ -3177,6 +3180,7 @@ function OmniCanvasWorkspace() {
         topic: factoryTopic,
         brief: writerBrief,
         novelDraft,
+        novelOrigin: novelOriginRef.current,
         episodeCount: writerEpisodeCount,
         focusEpisode: writerFocusEpisode,
         writerPack,
@@ -3231,6 +3235,7 @@ function OmniCanvasWorkspace() {
   ]);
 
   const applyCloudDraftToUi = useCallback((draft: ManhuaCloudDraftPayload) => {
+    novelOriginRef.current = draft.writerSession.novelOrigin;
     // 云草稿常把一周前的旧 bible 回灌，盖掉本地已换角的新剧本 → 换角漂移时弃用旧 bible。
     const healed = healManhuaWriterSessionCanonDrift(draft.writerSession);
     const session = healed.session ?? draft.writerSession;
@@ -3769,8 +3774,11 @@ function OmniCanvasWorkspace() {
       localCanvas: localParts.canvas,
       localPrefs: localParts.prefs,
       localClientUpdatedAt: localParts.clientUpdatedAt,
+      localReadFailed: localParts.readFailed,
     });
 
+    // The old render must not be uploaded while the chosen cloud state is applied.
+    latestDraftSnapshotRef.current = null;
     if (choice.source === "cloud" && projectScope) {
       // Opening an independently selected work loads that work's own saved content.
       applyCloudDraftToUi(choice.draft);
@@ -3842,6 +3850,7 @@ function OmniCanvasWorkspace() {
       topic: factoryTopic,
       brief: writerBrief,
       novelDraft,
+      novelOrigin: novelOriginRef.current,
       episodeCount: writerEpisodeCount,
       focusEpisode: writerFocusEpisode,
       writerPack,
@@ -6093,6 +6102,7 @@ function OmniCanvasWorkspace() {
         topic,
         brief,
         novelDraft,
+        novelOrigin: novelOriginRef.current,
         episodeCount: count,
         focusEpisode: 1,
         writerPack: pack,

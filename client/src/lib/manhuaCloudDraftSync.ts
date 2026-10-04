@@ -1,3 +1,4 @@
+import { parseManhuaNovelOrigin, MANHUA_NOVEL_ORIGIN_KEY } from "@shared/manhuaNovelOrigin";
 import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
 import { gcsTransferUrl, isGcsTransferUrl } from "@/lib/gcsTransfer";
 /**
@@ -95,11 +96,12 @@ export function tryLoadLocalCanvas(
 ): { blocks: CanvasBlock[]; edges: CanvasEdge[] } | null {
   try {
     const raw = storage.getItem(CANVAS_LS_KEY);
-    if (!raw) return { blocks: [], edges: [] };
+    if (!raw) return null;
     const parsed = JSON.parse(raw) as {
       blocks?: CanvasBlock[];
       edges?: CanvasEdge[];
     };
+    if (!parsed || !Array.isArray(parsed.blocks) || (parsed.edges !== undefined && !Array.isArray(parsed.edges))) return null;
     return {
       blocks: (parsed.blocks || []).map(b =>
         normalizeCanvasBlock(b as CanvasBlock)
@@ -338,11 +340,11 @@ export function tryLoadLocalFactoryPrefs(
 ): Record<string, unknown> | null {
   try {
     const raw = storage.getItem(FACTORY_PREFS_LS_KEY);
-    if (!raw) return {};
+    if (!raw) return null;
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object"
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>)
-      : {};
+      : null;
   } catch {
     return null;
   }
@@ -367,6 +369,7 @@ export function persistManhuaDraftLocally(input: {
   edges: CanvasEdge[];
   factoryPrefs?: Record<string, unknown> | null;
   clientUpdatedAt?: string;
+  replaceNovelOrigin?: boolean;
 }): ManhuaLocalPersistResult & { clientUpdatedAt: string } {
   const clientUpdatedAt = input.clientUpdatedAt || new Date().toISOString();
   let writerOk = false;
@@ -375,7 +378,7 @@ export function persistManhuaDraftLocally(input: {
     localStorage.setItem(
       MANHUA_WRITER_SESSION_LS_KEY,
       serializeManhuaWriterSession(
-        buildManhuaWriterSession(input.writerSession)
+        buildManhuaWriterSession({...input.writerSession, novelOrigin: input.replaceNovelOrigin || Object.prototype.hasOwnProperty.call(input.writerSession, "novelOrigin") ? parseManhuaNovelOrigin(input.writerSession.novelOrigin) : readLocalNovelOrigin()})
       )
     );
     writerOk = true;
@@ -539,7 +542,7 @@ export function buildLocalCloudDraftSnapshot(input: {
     : [];
   return buildManhuaCloudDraftPayload({
     clientUpdatedAt: input.clientUpdatedAt || new Date().toISOString(),
-    writerSession: input.writerSession,
+    writerSession: {...input.writerSession, novelOrigin: Object.prototype.hasOwnProperty.call(input.writerSession, "novelOrigin") ? parseManhuaNovelOrigin(input.writerSession.novelOrigin) : readLocalNovelOrigin()},
     blocks,
     edges: input.edges,
     factoryPrefs: input.factoryPrefs,
@@ -660,19 +663,23 @@ export function chooseManhuaDraftHydrate(input: {
   localCanvas: { blocks: CanvasBlock[]; edges: CanvasEdge[] } | null;
   localPrefs: Record<string, unknown> | null;
   localClientUpdatedAt: string | null;
+  localReadFailed?: boolean;
 }): ManhuaDraftHydrateChoice {
   const cloud = input.cloud || null;
   const localReadable =
     input.localWriter != null ||
     input.localCanvas != null ||
     input.localPrefs != null;
+  const validLocalTime = input.localClientUpdatedAt && Number.isFinite(Date.parse(input.localClientUpdatedAt));
+  // Unknown age must never become a freshly edited version during hydration.
+  if (cloud && (!validLocalTime || input.localReadFailed)) return {source:"cloud", draft:cloud};
   const localDraft = localReadable
     ? buildLocalCloudDraftSnapshot({
         writerSession: input.localWriter || {},
         blocks: input.localCanvas?.blocks || [],
         edges: input.localCanvas?.edges || [],
         factoryPrefs: input.localPrefs,
-        clientUpdatedAt: input.localClientUpdatedAt || undefined,
+        clientUpdatedAt: validLocalTime ? input.localClientUpdatedAt! : "1970-01-01T00:00:00.000Z",
       })
     : null;
 
@@ -696,12 +703,16 @@ export function repairLocalFromCloudDraft(
     videoModel: draft.writerSession?.videoModel,
   });
   scheduleCacheCanvasMediaToLocalStore(restoredBlocks);
+  const origin = parseManhuaNovelOrigin(draft.writerSession.novelOrigin);
+  // Replace metadata with the same selected snapshot; never retain another version's imports.
+  try { if(origin) localStorage.setItem(MANHUA_NOVEL_ORIGIN_KEY,JSON.stringify(origin)); else localStorage.removeItem(MANHUA_NOVEL_ORIGIN_KEY); } catch { /* writerSession below is the durable fallback */ }
   return persistManhuaDraftLocally({
     writerSession: draft.writerSession,
     blocks: restoredBlocks,
     edges: draft.canvas.edges,
     factoryPrefs: draft.factoryPrefs,
     clientUpdatedAt: draft.clientUpdatedAt,
+    replaceNovelOrigin: true,
   });
 }
 
@@ -710,6 +721,7 @@ export function readLocalDraftPartsForHydrate(): {
   canvas: { blocks: CanvasBlock[]; edges: CanvasEdge[] } | null;
   prefs: Record<string, unknown> | null;
   clientUpdatedAt: string | null;
+  readFailed: boolean;
 } {
   let writer: ManhuaWriterSession | null = null;
   try {
@@ -717,10 +729,11 @@ export function readLocalDraftPartsForHydrate(): {
   } catch {
     writer = null;
   }
+  const canvas=tryLoadLocalCanvas(), prefs=tryLoadLocalFactoryPrefs();
+  let readFailed=false;
+  try { readFailed=Boolean((localStorage.getItem(MANHUA_WRITER_SESSION_LS_KEY) && !writer) || (localStorage.getItem(CANVAS_LS_KEY) && !canvas) || (localStorage.getItem(FACTORY_PREFS_LS_KEY) && !prefs)); } catch {readFailed=true;}
   return {
-    writer,
-    canvas: tryLoadLocalCanvas(),
-    prefs: tryLoadLocalFactoryPrefs(),
+    writer, canvas, prefs, readFailed,
     clientUpdatedAt: tryLoadLocalClientUpdatedAt(),
   };
 }
@@ -729,4 +742,8 @@ export function writerSessionFromCloudDraft(
   draft: ManhuaCloudDraftPayload
 ): ManhuaWriterSession {
   return buildManhuaWriterSession(draft.writerSession);
+}
+
+export function readLocalNovelOrigin() {
+ try {return loadManhuaWriterSessionFromStorage(localStorage)?.novelOrigin || parseManhuaNovelOrigin(localStorage.getItem(MANHUA_NOVEL_ORIGIN_KEY));}catch{return undefined;}
 }

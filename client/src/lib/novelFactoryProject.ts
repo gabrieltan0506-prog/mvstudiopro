@@ -1,3 +1,7 @@
+import {
+  parseManhuaNovelOrigin,
+  MANHUA_NOVEL_ORIGIN_KEY,
+} from "@shared/manhuaNovelOrigin";
 import { NOVEL_FACETS, novelScriptSchema } from "@shared/novelWorkspace";
 import {
   buildManhuaWriterSession,
@@ -102,16 +106,16 @@ export function createNovelFactoryProject(
   const search = `?project=${encodeURIComponent(projectId)}&owner=${encodeURIComponent(userId)}`;
   const scope = parseManhuaProjectScope(search)!;
   const target = scopedManhuaStorage(storage, scope);
-  const originKey = "novel-origin-v1";
-  const existing = target.getItem(originKey);
+  const originKey = MANHUA_NOVEL_ORIGIN_KEY;
+  const storedSession = loadManhuaWriterSessionFromStorage(target);
+  const existing = storedSession?.novelOrigin || target.getItem(originKey);
   if (existing) {
-    const origin = JSON.parse(existing);
-    const imports: { requestId: string; sha: string }[] = origin.imports || [
-      {
-        requestId: origin.run.input.requestId,
-        sha: origin.run.result.resultSha256,
-      },
-    ];
+    const origin = parseManhuaNovelOrigin(existing);
+    if (!origin)
+      throw new Error("作品导入记录损坏，已保留原稿，请先恢复完整备份");
+    const imports = origin.imports;
+    if (!storedSession?.writerPack)
+      throw new Error("作品记录不完整，请先恢复作品云备份");
     const previous = imports.find(v => v.requestId === run.input.requestId);
     if (previous) {
       if (previous.sha !== run.result.resultSha256)
@@ -150,6 +154,12 @@ export function createNovelFactoryProject(
     const writer = buildManhuaWriterSession({
       ...session,
       writerPack: merged,
+      novelOrigin: {
+        imports: [
+          ...imports,
+          { requestId: run.input.requestId, sha: run.result.resultSha256 },
+        ],
+      },
       episodeCount: merged.episodeCount,
       focusEpisode: last + 1,
       writerConfirmed: false,
@@ -185,11 +195,20 @@ export function createNovelFactoryProject(
     return { href: `/canvas${search}`, created: false };
   }
   if ((run.input.episodeStart || 1) !== 1)
-    throw new Error("请先采用本季前面的剧本，再将续集接入同一作品");
+    throw new Error(
+      storedSession?.writerPack
+        ? "这份旧备份缺少小说导入记录，请在原设备补存完整云备份后恢复；现有剧本和资产已保留"
+        : "请先采用本季前面的剧本，再将续集接入同一作品"
+    );
   if (target.length)
     throw new Error("此作品已有未完成的创建记录，未覆盖现有内容");
   const pack = novelRunToWriterPack(run);
   const writer = buildManhuaWriterSession({
+    novelOrigin: {
+      imports: [
+        { requestId: run.input.requestId, sha: run.result.resultSha256 },
+      ],
+    },
     topic: pack.seriesTitle,
     brief: run.input.direction,
     writerPack: pack,

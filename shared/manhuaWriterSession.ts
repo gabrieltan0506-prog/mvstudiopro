@@ -1,3 +1,4 @@
+import { parseManhuaNovelOrigin, type ManhuaNovelOrigin } from "./manhuaNovelOrigin";
 import { manhuaProjectStorage as localStorage } from "./manhuaProjectScope";
 import {novelAdaptationSchema} from "./manhuaNovelAdaptation";
 import { parseNovelDraft, novelExcerptSchema, type ManhuaNovelDraft } from "./manhuaNovelSource.js";
@@ -57,6 +58,7 @@ export const MANHUA_WRITER_SESSION_LS_KEY = "mv-manhua-writer-session-v1";
 const CINE_VOCAB_LOCALES: ManhuaCineVocabLocale[] = ["zh", "en", "ja", "ko", "es", "ru"];
 
 export type ManhuaWriterSession = {
+  novelOrigin?: ManhuaNovelOrigin;
   format: typeof MANHUA_WRITER_SESSION_FORMAT;
   topic: string;
   brief: string;
@@ -213,6 +215,7 @@ export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): Man
     topic: String(input.topic || "").trim(),
     brief: String(input.brief || "").trim(),
     novelDraft: parseNovelDraft(input.novelDraft),
+    novelOrigin: parseManhuaNovelOrigin(input.novelOrigin),
     episodeCount: Math.max(clampWriterEpisodeCount(input.episodeCount), normalizeWriterPack(input.writerPack)?.episodes.length || 0),
     focusEpisode: Math.max(1, Math.floor(Number(input.focusEpisode) || 1)),
     writerPack: normalizeWriterPack(input.writerPack),
