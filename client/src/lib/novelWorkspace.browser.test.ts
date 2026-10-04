@@ -1,3 +1,8 @@
+import {
+  showNovelStep,
+  showNovelTools,
+  prepareNovelAction,
+} from "./novelWorkspace.browser.fixture";
 import { it, expect } from "vitest";
 import { build } from "esbuild";
 import puppeteer from "puppeteer";
@@ -14,6 +19,7 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
     },
     bundle: true,
     write: false,
+    outdir: "ui-browser",
     format: "iife",
     platform: "browser",
     jsx: "automatic",
@@ -52,13 +58,19 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
       .map(f => readFileSync(dir + "/" + f, "utf8"))
       .join("\n");
   } catch {}
+  css += built.outputFiles
+    .filter(f => f.path.endsWith(".css"))
+    .map(f => f.text)
+    .join("\n");
   const server = createServer((_, res) => {
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end(
       '<meta charset="utf-8"><style>' +
         css +
         '</style><div id="root"></div><script>' +
-        built.outputFiles[0].text.replace(/<\/script/g, "<\\/script") +
+        built.outputFiles
+          .find(f => f.path.endsWith(".js"))!
+          .text.replace(/<\/script/g, "<\\/script") +
         "</script>"
     );
   });
@@ -89,6 +101,7 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
       )
     );
     const click = async (label: string) => {
+      label = await prepareNovelAction(page, label);
       await page.waitForFunction(
         label =>
           Array.from(document.querySelectorAll("button")).some(
@@ -135,6 +148,7 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
     expect(
       await page.evaluate(async () => (globalThis as any).calls.length)
     ).toBe(0);
+    await showNovelStep(page, "templates");
     await page.select('[aria-label="创作环节"]', "sound");
     expect(
       await page.$$eval('[aria-label="选择故事模板"] > div', els => els.length)
@@ -144,6 +158,7 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
     expect(await page.$('[aria-label="模板手法对照"]')).toBeTruthy();
     await page.select('[aria-label="创作环节"]', "");
     expect(await page.$('[aria-label="表现形式"]')).toBeNull();
+    await showNovelStep(page, "prepare");
     await click("原创新方向");
     await page.type('[aria-label="作品名称"]', "女娲补天");
     await page.type('[aria-label="创作方向"]', "以守火人视角写牺牲与救赎。");
@@ -158,6 +173,7 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
       );
       buttons[0].click();
     });
+    await showNovelStep(page, "templates");
     await page.$eval('[aria-label="模板占比 mt_0000"]', el => {
       const input = el as HTMLInputElement;
       Object.getOwnPropertyDescriptor(
@@ -173,6 +189,7 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
     expect(
       await page.evaluate(async () => (globalThis as any).calls.length)
     ).toBe(1);
+    await showNovelStep(page, "templates");
     await page.$eval('[aria-label="模板占比 mt_0001"]', el => {
       const input = el as HTMLInputElement;
       Object.getOwnPropertyDescriptor(
@@ -196,6 +213,7 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
         e => (e as HTMLInputElement).value
       )
     ).toContain("局部火光");
+    await showNovelStep(page, "prepare");
     await page.select('[aria-label="创作模型"]', "deepseek");
     await page.type(
       '[aria-label="回复顾问"]',
@@ -276,6 +294,7 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
       (globalThis as any).deferChapter = true;
     });
     for (let i = 1; i <= 3; i++) {
+      await page.click(`[aria-label="编辑第${i}集"]`);
       await page.evaluate(i => {
         const heading = Array.from(document.querySelectorAll("h3")).find(
           e => e.textContent === "第" + i + "集"
@@ -288,18 +307,21 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
         await page.waitForFunction(
           () => typeof (globalThis as any).releaseChapter === "function"
         );
+        await page.click('[aria-label="编辑第1集"]');
         expect(
           await page.$eval(
             '[aria-label="第1集小说稿"]',
             el => (el as HTMLTextAreaElement).disabled
           )
         ).toBe(false);
+        await page.click('[aria-label="编辑第2集"]');
         expect(
           await page.$eval(
             '[aria-label="第2集小说稿"]',
             el => (el as HTMLTextAreaElement).disabled
           )
         ).toBe(false);
+        await page.click('[aria-label="编辑第1集"]');
         await page.$eval('[aria-label="第1集小说稿"]', el => {
           const field = el as HTMLTextAreaElement;
           Object.getOwnPropertyDescriptor(
@@ -309,9 +331,11 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
           field.dispatchEvent(new Event("input", { bubbles: true }));
         });
         await page.evaluate(async () => (globalThis as any).releaseChapter());
+        await page.click('[aria-label="编辑第2集"]');
         await page.waitForFunction(() =>
           document.body.textContent!.includes("前文在生成期间有修改")
         );
+        await page.click('[aria-label="编辑第1集"]');
         expect(
           await page.$eval(
             '[aria-label="第1集小说稿"]',
@@ -320,6 +344,7 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
         ).toContain("手动修改第一章动机");
       }
 
+      await page.click(`[aria-label="编辑第${i}集"]`);
       await page.waitForFunction(
         i =>
           (
@@ -335,20 +360,20 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
     await click("单独生成 · 模板1");
     await page.waitForFunction(
       async () =>
-        document.querySelectorAll('[aria-label="模板比较"] thead th').length ===
-        2
+        document.querySelectorAll('[aria-label="对照版本 A"] option').length ===
+        1
     );
     await click("单独生成 · 模板2");
     await page.waitForFunction(
       async () =>
-        document.querySelectorAll('[aria-label="模板比较"] thead th').length ===
-        3
+        document.querySelectorAll('[aria-label="对照版本 A"] option').length ===
+        2
     );
     await click("按分工组合生成");
     await page.waitForFunction(
       async () =>
-        document.querySelectorAll('[aria-label="模板比较"] thead th').length ===
-        4
+        document.querySelectorAll('[aria-label="对照版本 A"] option').length ===
+        3
     );
     const calls = await page.evaluate(async () => (window as any).calls);
     expect(
@@ -374,6 +399,9 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
     expect(
       await page.$eval('[aria-label="模板比较"]', e => e.textContent)
     ).toContain("共同场景。");
+    await page.$eval('.novel-comparison-controls input[type="checkbox"]', el =>
+      (el as HTMLInputElement).click()
+    );
     await page.emulateMediaFeatures([
       { name: "prefers-reduced-motion", value: "reduce" },
     ]);
@@ -389,7 +417,8 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
       fullPage: true,
     });
     await page.reload();
-    await page.waitForSelector('[aria-label="模板比较"] table');
+    await showNovelStep(page, "scripts");
+    await page.waitForSelector('[aria-label="候选剧本 A"]');
     expect(await page.evaluate(async () => (window as any).calls.length)).toBe(
       0
     );
@@ -415,6 +444,7 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
     expect(
       await page.evaluate(async () => (globalThis as any).templateRefreshes)
     ).toBe(1);
+    await showNovelStep(page, "prepare");
     await page.$eval('[aria-label="回复顾问"]', el => {
       Object.getOwnPropertyDescriptor(
         HTMLTextAreaElement.prototype,
@@ -522,6 +552,7 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
       return state.pending.requestId;
     });
     await page.reload();
+    await showNovelStep(page, "prepare");
     await page.waitForSelector("[data-advisor-feedback]");
     await page.evaluate(async id => {
       (globalThis as any).receipts[id] = {
@@ -591,6 +622,7 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
       await (globalThis as any).writeDraft(state);
     });
     await page.reload();
+    await showNovelStep(page, "templates");
     await page.waitForSelector('[aria-label="选择故事模板"]');
     await page.evaluate(async () => {
       const b = Array.from(

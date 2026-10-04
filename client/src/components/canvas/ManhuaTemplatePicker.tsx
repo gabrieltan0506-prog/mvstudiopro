@@ -75,6 +75,8 @@ export function CraftDetails({
   );
 }
 export default function ManhuaTemplatePicker(props: {
+  layout?: "workbench";
+  chosenIds?: string[];
   cards: PublicManhuaViralTemplateCard[];
   value: string;
   disabled: boolean;
@@ -112,7 +114,11 @@ export default function ManhuaTemplatePicker(props: {
     "min-w-0 rounded-lg border border-violet-200/20 bg-[#211b26] px-2 py-2 text-xs text-[#f4ede5] focus-visible:ring-2 focus-visible:ring-amber-200";
   return (
     <section
-      className="mt-2 min-w-0 overflow-hidden rounded-xl border border-violet-200/15 bg-[#15111e] p-3"
+      className={
+        props.layout === "workbench"
+          ? "novel-template-picker"
+          : "mt-2 min-w-0 overflow-hidden rounded-xl border border-violet-200/15 bg-[#15111e] p-3"
+      }
       data-manhua-template-picker
       aria-label="故事模板目录"
     >
@@ -187,12 +193,18 @@ export default function ManhuaTemplatePicker(props: {
         学习节奏、内容组织和创作方法，配合项目导演包使用。
       </p>
       <div
-        className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2"
+        className={
+          props.layout === "workbench"
+            ? "novel-template-rows"
+            : "mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2"
+        }
         role="group"
         aria-label="选择故事模板"
       >
         {visible.map(card => {
-          const chosen = props.value === card.publicId,
+          const chosen = props.chosenIds
+              ? props.chosenIds.includes(card.publicId)
+              : props.value === card.publicId,
             checked = compareIds.includes(card.publicId);
           const code = card.publicId.replace(/^mt_/i, "").toUpperCase();
           return (
@@ -309,7 +321,7 @@ export default function ManhuaTemplatePicker(props: {
           </div>
         </section>
       )}
-      {selected ? (
+      {selected && props.layout !== "workbench" ? (
         <section
           aria-label="所选模板呈现方法"
           className="mt-3 rounded-lg border border-[#dfba7c]/40 bg-[#211b26] p-3 text-xs leading-6 text-[#e8dfe9]"

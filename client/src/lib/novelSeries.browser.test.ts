@@ -1,3 +1,8 @@
+import {
+  showNovelStep,
+  showNovelTools,
+  prepareNovelAction,
+} from "./novelWorkspace.browser.fixture";
 import { it, expect } from "vitest";
 import { build } from "esbuild";
 import puppeteer from "puppeteer";
@@ -13,6 +18,7 @@ it("browser: one batch keeps episode 1, writes 2/3, reviews 10/20 batches throug
     },
     bundle: true,
     write: false,
+    outdir: "ui-browser",
     format: "iife",
     platform: "browser",
     jsx: "automatic",
@@ -43,10 +49,14 @@ it("browser: one batch keeps episode 1, writes 2/3, reviews 10/20 batches throug
       },
     ],
   });
+  const css = built.outputFiles
+    .filter(f => f.path.endsWith(".css"))
+    .map(f => f.text)
+    .join("\n");
   const server = createServer((_, res) => {
     res.setHeader("Content-Type", "text/html;charset=utf-8");
     res.end(
-      `<div id="root"></div><script>${built.outputFiles[0].text.replace(/<\/script/g, "<\\/script")}</script>`
+      `<meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style><div id="root"></div><script>${built.outputFiles.find(f => f.path.endsWith(".js"))!.text.replace(/<\/script/g, "<\\/script")}</script>`
     );
   });
   await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
@@ -61,6 +71,7 @@ it("browser: one batch keeps episode 1, writes 2/3, reviews 10/20 batches throug
     page.on("dialog", d => void d.accept());
     await page.goto(`http://127.0.0.1:${(server.address() as any).port}`);
     const click = async (label: string) => {
+      label = await prepareNovelAction(page, label);
       await page.waitForFunction(
         label =>
           Array.from(document.querySelectorAll("button")).some(
@@ -88,6 +99,7 @@ it("browser: one batch keeps episode 1, writes 2/3, reviews 10/20 batches throug
         value
       );
     };
+    await showNovelTools(page);
     await page.waitForSelector('[aria-label="全剧计划集数"]');
     const first = await page.$eval(
       '[aria-label="第1集小说稿"]',
@@ -114,7 +126,8 @@ it("browser: one batch keeps episode 1, writes 2/3, reviews 10/20 batches throug
     // Follow the actual candidate-adoption click in a separate page, then verify its project storage.
     await click("确认这版小说，生成剧本");
     await click("单独生成 · 模板1");
-    await page.waitForSelector('[aria-label="模板比较"] table');
+    await page.waitForSelector('[aria-label="候选剧本 A"]');
+    await click("编辑剧本");
     await page.waitForFunction(
       async () => !(await (globalThis as any).readDraft()).pending
     );
@@ -134,6 +147,17 @@ it("browser: one batch keeps episode 1, writes 2/3, reviews 10/20 batches throug
       ).includes("先把文书留下")
     );
     for (const episode of [2, 3]) {
+      await page.evaluate(
+        episode =>
+          (
+            Array.from(
+              document.querySelectorAll('[aria-label="剧本编辑集数"] button')
+            ).find(b =>
+              b.textContent?.startsWith(`第${episode}集`)
+            ) as HTMLButtonElement
+          ).click(),
+        episode
+      );
       await page.$eval(
         `[aria-label="第${episode}集 E${episode}-S1 对白"]`,
         (el, episode) => {
@@ -157,7 +181,13 @@ it("browser: one batch keeps episode 1, writes 2/3, reviews 10/20 batches throug
     const adoptedPage = await browser.newPage();
     adoptedPage.on("dialog", d => void d.accept());
     await adoptedPage.goto(page.url());
-    await adoptedPage.waitForSelector('[aria-label="模板比较"] table');
+    await showNovelStep(adoptedPage, "scripts");
+    await adoptedPage.evaluate(() =>
+      Array.from(document.querySelectorAll("button"))
+        .find(b => b.textContent?.trim() === "编辑剧本")!
+        .click()
+    );
+    await adoptedPage.waitForSelector('[aria-label="第1集 E1-S1 对白"]');
     expect(
       await adoptedPage.$eval(
         '[aria-label="第1集 E1-S1 对白"]',
@@ -189,6 +219,7 @@ it("browser: one batch keeps episode 1, writes 2/3, reviews 10/20 batches throug
       "EDITOR PROOF: all 3 episode dialogue edits persisted; original paid receipts unchanged; reopening preserved edits; actual adopt button imported edited text into isolated factory writer pack."
     );
     await adoptedPage.close();
+    await showNovelTools(page);
     await input("全剧计划集数", "70");
     await input("全剧计划集数", "60");
     for (const [count, end] of [
@@ -274,6 +305,8 @@ it("browser: one batch keeps episode 1, writes 2/3, reviews 10/20 batches throug
           `${expected.title}\n\n${expected.text}`
         );
         await page.reload();
+        await showNovelStep(page, "novel");
+        await page.click('[aria-label="编辑第8集"]');
         await page.waitForSelector('[aria-label="第8集小说稿"]');
         expect(
           (await page.evaluate(() => (globalThis as any).readDraft())).chapters
@@ -313,6 +346,8 @@ it("browser: one batch keeps episode 1, writes 2/3, reviews 10/20 batches throug
     await page.waitForFunction(() =>
       document.body.textContent?.includes("云端备份已保存")
     );
+    await showNovelStep(page, "novel");
+    await page.click('[aria-label="编辑第1集"]');
     await page.$eval('[aria-label="第1集小说稿"]', el => {
       Object.getOwnPropertyDescriptor(
         HTMLTextAreaElement.prototype,
@@ -339,6 +374,8 @@ it("browser: one batch keeps episode 1, writes 2/3, reviews 10/20 batches throug
       (await page.evaluate(() => (globalThis as any).readDraft())).chapters
     ).toHaveLength(60);
     await page.reload();
+    await showNovelStep(page, "novel");
+    await page.click('[aria-label="编辑第60集"]');
     await page.waitForSelector('[aria-label="第60集小说稿"]');
     expect(await page.evaluate(() => (globalThis as any).calls.length)).toBe(0);
     await click("开始下一季");
@@ -361,6 +398,7 @@ it("browser: one batch keeps episode 1, writes 2/3, reviews 10/20 batches throug
     );
     const other = await browser.newPage();
     await other.goto(page.url());
+    await showNovelStep(other, "prepare");
     await other.waitForSelector('[aria-label="作品名称"]');
     await other.$eval('[aria-label="作品名称"]', el => {
       Object.getOwnPropertyDescriptor(
@@ -373,6 +411,8 @@ it("browser: one batch keeps episode 1, writes 2/3, reviews 10/20 batches throug
       async () =>
         (await (globalThis as any).readDraft()).topic === "另一页面的最新作品名"
     );
+    await showNovelStep(page, "novel");
+    await page.click('[aria-label="编辑第1集"]');
     await page.$eval('[aria-label="第1集小说稿"]', el => {
       Object.getOwnPropertyDescriptor(
         HTMLTextAreaElement.prototype,

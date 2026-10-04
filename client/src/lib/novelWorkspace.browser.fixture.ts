@@ -17,3 +17,58 @@ const generate=async input=>{
 };
 export const trpc={manhuaViralTemplate:{listApprovedPublic:{useQuery:()=>({data:{groups:[{items:cards}]},isLoading:false,isError:false,refetch:async()=>{globalThis.templateRefreshes=(globalThis.templateRefreshes||0)+1;return{};}})}},novelWorkspace:{backup:{useMutation:()=>({mutateAsync:async({workspaceJson})=>{const d=JSON.parse(workspaceJson);const row={backupId:crypto.randomUUID(),roundId:d.roundId,title:d.topic,season:d.season||1,createdAt:new Date().toISOString(),bytes:workspaceJson.length,sha256:'mock',workspaceJson};globalThis.backups.push(row);return row}})},listBackups:{useQuery:()=>({data:globalThis.backups,refetch:async()=>({data:globalThis.backups})})},generate:{useMutation:()=>({mutateAsync:generate})},recoverSavedChapter:{useMutation:()=>({mutateAsync:async({requestId})=>{const row=globalThis.recoveryFixtures.find(r=>r.input.requestId===requestId);if(!row)throw new Error('missing');const result=row.raw?{...row.result,text:JSON.stringify(novelChapterSchema.parse(parseNovelModelJson(row.raw).value))}:row.result;globalThis.receipts[requestId]=result;return result}})},recoverableChapters:{useQuery:()=>({data:globalThis.recoveryFixtures.map(r=>r.input)})}},useUtils:()=>({manhuaCloudDraft:{get:{fetch:async()=>({draft:null,serverUpdatedAt:null})}},novelWorkspace:{savedRaw:{fetch:async({requestId})=>{const r=globalThis.recoveryFixtures.find(r=>r.input.requestId===requestId);return {requestId,text:r.raw||r.result.text,sha256:'mock'}}},readBackup:{fetch:async({backupId})=>{const row=globalThis.backups.find(r=>r.backupId===backupId);return {metadata:row,workspaceJson:row.workspaceJson}}},receipt:{fetch:async({requestId})=>globalThis.receipts[requestId]?.status?globalThis.receipts[requestId]:({status:globalThis.receipts[requestId]?'succeeded':'not_found',result:globalThis.receipts[requestId]})}}})};
 `;
+
+/** Page-object navigation for the stepped studio; does not generate or change data. */
+export async function showNovelStep(
+  page: import("puppeteer").Page,
+  step: "prepare" | "templates" | "novel" | "scripts"
+) {
+  await page.waitForSelector(`[data-novel-step="${step}"]`);
+  await page.$eval(`[data-novel-step="${step}"]`, el =>
+    (el as HTMLButtonElement).click()
+  );
+}
+export async function showNovelTools(page: import("puppeteer").Page) {
+  await page.waitForSelector("[data-novel-studio]");
+  if (!(await page.$('section[aria-label="备份与设置"]')))
+    await page.evaluate(() =>
+      Array.from(document.querySelectorAll("button"))
+        .find(b => b.textContent?.trim() === "备份与设置")!
+        .click()
+    );
+  await page.$$eval('section[aria-label="备份与设置"] details', els =>
+    els.forEach(el => ((el as HTMLDetailsElement).open = true))
+  );
+}
+export async function prepareNovelAction(
+  page: import("puppeteer").Page,
+  label: string
+) {
+  if (
+    /^(请创作顾问|发送给顾问|按新方向|生成3个故事|采用这条|生成本批续写|确认大纲|恢复此版本)/.test(
+      label
+    )
+  )
+    await showNovelStep(page, "prepare");
+  if (label === "刷新模板库") await showNovelStep(page, "templates");
+  if (/^(确认这版小说|生成本批未写|审阅通过)/.test(label))
+    await showNovelStep(page, "novel");
+  if (/^(单独生成|按分工组合生成)/.test(label)) {
+    await showNovelStep(page, "scripts");
+    await page.$eval(
+      ".novel-script-generation",
+      el => ((el as HTMLDetailsElement).open = true)
+    );
+  }
+  if (
+    /^(云端备份|回填备份|回填这一份|放弃本轮|开始下一季|切回此季)/.test(label)
+  )
+    await showNovelTools(page);
+  if (label.startsWith("单独生成 · 模板")) {
+    const index = Number(label.replace("单独生成 · 模板", "")) - 1;
+    return await page.$eval(`[data-script-template="mt_000${index}"]`, el =>
+      el.textContent!.trim()
+    );
+  }
+  return label;
+}

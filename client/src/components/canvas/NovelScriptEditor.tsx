@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { NovelQualityHints } from "./NovelQualityHints";
 import { NOVEL_FACETS, novelScriptSchema } from "@shared/novelWorkspace";
 import type { NovelRun } from "@/lib/novelWorkspace";
@@ -19,6 +20,7 @@ export function NovelScriptEditor({
   onAdopt: (run: NovelRun) => void;
   disabled: boolean;
 }) {
+  const [activeEpisode, setActiveEpisode] = useState(0);
   const script = editedNovelScript(run, edits),
     valid = novelScriptSchema.safeParse(script).success;
   const field = (
@@ -45,7 +47,7 @@ export function NovelScriptEditor({
   return (
     <article
       aria-label={`可编辑剧本 ${run.result.requestId}`}
-      className="my-5 rounded-xl border border-amber-200/30 p-4"
+      className="novel-script-editor"
     >
       <h3 className="text-lg font-semibold">
         {run.input.templates.length > 1 ? "组合剧本" : "单模板剧本"} ·{" "}
@@ -57,51 +59,65 @@ export function NovelScriptEditor({
         逐集修改后采用。修改自动保存到本机，纳入完整备份；原生成稿保留。不会重新调用模型。
       </p>
       {field("剧本名称", script.title, 200, ["title"], 1)}
-      {script.episodes.map(ep => (
-        <details
-          key={ep.index}
-          open={ep.index === script.episodes[0].index}
-          className="mt-4 rounded-lg border border-white/15 p-3"
-        >
-          <summary className="cursor-pointer font-semibold">
-            第{ep.index}集 · {ep.title} · 点击展开编辑
-          </summary>
-          <NovelQualityHints
-            text={[
-              ep.opening,
-              ep.payoff,
-              ep.hook,
-              ...ep.scenes.flatMap(scene => NOVEL_FACETS.map(f => scene[f])),
-            ].join("\n")}
-          />
-          {field(`第${ep.index}集标题`, ep.title, 120, [ep.index, "title"], 1)}
-          {(["opening", "payoff", "hook"] as const).map((k, i) =>
-            field(
-              `第${ep.index}集${["开场", "兑现与爽点", "结尾钩子"][i]}`,
-              ep[k],
-              1200,
-              [ep.index, k]
-            )
-          )}
-          {ep.scenes.map(scene => (
-            <section
-              key={scene.key}
-              className="mt-4 border-t border-white/10 pt-2"
-            >
-              <h4>场次 {scene.key}</h4>
-              {NOVEL_FACETS.map(f =>
-                field(
-                  `第${ep.index}集 ${scene.key} ${f}`,
-                  scene[f],
-                  f === "对白" ? 3500 : 1800,
-                  [ep.index, scene.key, f],
-                  f === "对白" ? 6 : 3
-                )
-              )}
-            </section>
-          ))}
-        </details>
-      ))}
+      <div className="novel-episode-tabs" aria-label="剧本编辑集数">
+        {script.episodes.map(ep => (
+          <button
+            key={ep.index}
+            aria-pressed={
+              ep.index === (activeEpisode || script.episodes[0].index)
+            }
+            onClick={() => setActiveEpisode(ep.index)}
+          >
+            第{ep.index}集 · {ep.title}
+          </button>
+        ))}
+      </div>
+      {script.episodes
+        .filter(ep => ep.index === (activeEpisode || script.episodes[0].index))
+        .map(ep => (
+          <details key={ep.index} open className="novel-script-episode">
+            <summary className="cursor-pointer font-semibold">
+              第{ep.index}集 · {ep.title} · 点击展开编辑
+            </summary>
+            <NovelQualityHints
+              text={[
+                ep.opening,
+                ep.payoff,
+                ep.hook,
+                ...ep.scenes.flatMap(scene => NOVEL_FACETS.map(f => scene[f])),
+              ].join("\n")}
+            />
+            {field(
+              `第${ep.index}集标题`,
+              ep.title,
+              120,
+              [ep.index, "title"],
+              1
+            )}
+            {(["opening", "payoff", "hook"] as const).map((k, i) =>
+              field(
+                `第${ep.index}集${["开场", "兑现与爽点", "结尾钩子"][i]}`,
+                ep[k],
+                1200,
+                [ep.index, k]
+              )
+            )}
+            {ep.scenes.map(scene => (
+              <section key={scene.key} className="novel-script-scene">
+                <h4>场次 {scene.key}</h4>
+                {NOVEL_FACETS.map(f =>
+                  field(
+                    `第${ep.index}集 ${scene.key} ${f}`,
+                    scene[f],
+                    f === "对白" ? 3500 : 1800,
+                    [ep.index, scene.key, f],
+                    f === "对白" ? 6 : 3
+                  )
+                )}
+              </section>
+            ))}
+          </details>
+        ))}
       {!valid && (
         <p role="alert" className="mt-3 text-amber-200">
           编辑草稿已保留，请补齐空白内容后再采用；无对白可写“无对白”。
@@ -109,7 +125,7 @@ export function NovelScriptEditor({
       )}
       <button
         disabled={disabled || !valid}
-        className="mt-4 rounded-lg bg-amber-200 px-4 py-2 text-slate-950 disabled:opacity-40"
+        className="novel-button novel-primary mt-4"
         onClick={() => onAdopt(run)}
       >
         采用这版剧本，进入漫剧工厂
