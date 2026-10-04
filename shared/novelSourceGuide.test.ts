@@ -1,0 +1,10 @@
+import { expect, it } from 'vitest';
+import { buildNovelSourceGuide } from './novelSourceGuide';
+import { parseNovelDraft, prepareNovelExcerpt, type ManhuaNovelDraft } from './manhuaNovelSource';
+const pageTexts=['目录\n第一章 初见\n第二章 分离\n第三章 重逢','第一章 初见\n'+ '他发现公文失踪，决定去找同僚。'.repeat(12),'他们为了找回公文，沿街询问商人。'.repeat(12),'第二章 分离\n'+'十年之后，她却决定离开故乡。'.repeat(12)];
+let cursor=0,line=1;
+const chapters=pageTexts.map((body,i)=>{const text=`［原文件第 ${i+1} 页］\n${body}\n`;const c={title:`第 ${i+1} 页`,start:cursor,end:cursor+text.length,line};cursor+=text.length;line+=(text.match(/\n/g)||[]).length;return c;});
+const draft:ManhuaNovelDraft={name:'测试底本',text:pageTexts.map((body,i)=>`［原文件第 ${i+1} 页］\n${body}\n`).join(''),chapters,from:0,to:0,enabled:true};
+it('正文标题分组且跳过目录；摘句来自原文',()=>{const blocks=buildNovelSourceGuide(draft);expect(blocks).toHaveLength(2);expect(blocks[0]).toMatchObject({title:'第一章 初见',from:1,to:2});expect(blocks[1].title).toBe('第二章 分离');expect(blocks[0].preview).toContain('公文');});
+it('跨章组合按用户顺序保存，并只发送所选原文',()=>{const selected={...draft,selections:[{from:3,to:3},{from:1,to:1}]};expect(parseNovelDraft(selected)?.selections).toEqual(selected.selections);const excerpt=prepareNovelExcerpt(selected)!;expect(excerpt.text.indexOf('十年之后')).toBeLessThan(excerpt.text.indexOf('公文失踪'));expect(excerpt.text).not.toContain('沿街询问');expect(excerpt.text).toContain('第 4 页');});
+it('拒绝越界和重叠选择，不截断超限原文',()=>{expect(parseNovelDraft({...draft,selections:[{from:1,to:2},{from:2,to:3}]})).toBeNull();expect(parseNovelDraft({...draft,selections:[{from:4,to:4}]})).toBeNull();});

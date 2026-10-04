@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { Link } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
@@ -63,6 +64,7 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [selected, setSelected] = useState("");
+  const sourceFileInput = useRef<HTMLInputElement>(null);
   const latest = useRef(draft),
     raw = useRef(initial.raw),
     running = useRef(false),
@@ -208,6 +210,8 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
     if (disabled || running.current) return;
     setError("");
     try {
+      if (!draft.topic.trim()) throw new Error("请先填写作品名称，就在创作方向上方。");
+      if (!draft.direction.trim()) throw new Error("请先填写创作方向，让顾问了解主角与故事目标。");
       const source =
         draft.mode === "source" && draft.source
           ? prepareNovelExcerpt(draft.source)
@@ -407,12 +411,26 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
                   <button
                     key={mode}
                     className={`${button} ${draft.mode === mode ? "bg-amber-200 text-slate-950" : ""}`}
-                    onClick={() => change({ mode })}
+                    onClick={() => {
+                      if (mode === "source") {
+                        flushSync(() => change({ mode }));
+                        sourceFileInput.current?.click();
+                      } else change({ mode });
+                    }}
                   >
                     {mode === "source" ? "上传底本改编" : "原创新方向"}
                   </button>
                 ))}
               </div>
+              {draft.mode === "source" && (
+                <ManhuaNovelSourcePanel
+                  inline
+                  fileInputRef={sourceFileInput}
+                  value={draft.source}
+                  onChange={source => change({ source })}
+                  disabled={disabled}
+                />
+              )}
               <label className="mt-4 block">
                 作品名称
                 <input
@@ -435,13 +453,6 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
                   placeholder="主角想得到什么？障碍是什么？希望观众期待什么？"
                 />
               </label>
-              {draft.mode === "source" && (
-                <ManhuaNovelSourcePanel
-                  value={draft.source}
-                  onChange={source => change({ source })}
-                  disabled={disabled}
-                />
-              )}
               <label className="mt-3 block">
                 试看集数
                 <select
@@ -460,8 +471,14 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
                 className={`${button} mt-4 bg-amber-200 text-slate-950`}
                 onClick={() => generate("advice")}
               >
-                请创作顾问建议方向与模板
+                {busy ? "创作服务处理中…" : "请创作顾问建议方向与模板"}
               </button>
+              <div aria-live="polite" className="mt-2 text-sm" data-advisor-feedback>
+                {error && <p role="alert" className="text-amber-200">{error}</p>}
+                {saveError && <p role="alert" className="text-amber-200">{saveError}</p>}
+                {draft.pending && <p role="status">{busy ? "请求已提交，请保持页面打开。" : "上次请求尚待核对，请先点击页面上方的“核对原请求”。"}</p>}
+                {!error && !saveError && !draft.pending && <p className="text-slate-400">填好作品名称、方向，并采用正文选段后提交；无需先选择模板。</p>}
+              </div>
             </fieldset>
             {advice && (
               <div className="mt-5 space-y-3">

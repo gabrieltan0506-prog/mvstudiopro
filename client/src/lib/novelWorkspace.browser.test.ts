@@ -115,6 +115,20 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
         b.click();
       }, label);
     };
+    // Both initial source mode and returning from original mode open the native chooser.
+    for (const fromOriginal of [false, true]) {
+      if (fromOriginal) await click("原创新方向");
+      const chooserPromise = page.waitForFileChooser();
+      await click("上传底本改编");
+      const chooser = await chooserPromise;
+      await chooser.cancel();
+      expect(await page.$eval('[data-manhua-novel-source]', el => el.tagName)).toBe("SECTION");
+      expect(await page.$eval('[data-manhua-novel-source]', el => el.getBoundingClientRect().top))
+        .toBeLessThan(await page.$eval('[aria-label="作品名称"]', el => el.getBoundingClientRect().top));
+    }
+    await click("请创作顾问建议方向与模板");
+    expect(await page.$eval('[data-advisor-feedback]', el=>el.textContent)).toContain("请先填写作品名称");
+    expect(await page.evaluate(()=>(globalThis as any).calls.length)).toBe(0);
     await page.select('[aria-label="创作环节"]', "sound");
     expect(await page.$$eval('[aria-label="选择故事模板"] > div', els => els.length)).toBe(3);
     await page.click('[aria-label="比较模板 0000"]');
