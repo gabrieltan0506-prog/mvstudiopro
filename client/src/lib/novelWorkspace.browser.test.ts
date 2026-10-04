@@ -12,7 +12,7 @@ const generate=async input=>{
  if(input.stage==='outline')value={premise:'补天需要代价',characters:'女娲与守火人',episodes:Array.from({length:input.episodeCount},(_,i)=>({index:i+1,title:'第'+(i+1)+'集',events:'主角作出选择',hook:'新的代价',payoff:'救下一城'}))};
  if(input.stage==='chapter')value={title:'第'+input.chapterIndex+'章',text:'女娲望着破裂的天空，决定留下来。'.repeat(40),notes:'测试生成，非真实模型结果'};
  if(input.stage==='script')value={title:'补天',applications:input.templates.map(t=>({publicId:t.publicId,method:'选择带来代价',adaptation:'让守火人通过留下来承担救城的代价。',sceneKeys:['E1-S1']})),episodes:Array.from({length:input.episodeCount},(_,i)=>({index:i+1,title:'补天',opening:'天裂',payoff:'救人',hook:'余烬',scenes:[{key:'E'+(i+1)+'-S1',场景:'共同场景。'+(input.templates[0].publicId==='mt_0000'?'雪落城头。':'雨落城头。'),人物:'女娲与守火人。',妆容:'灰衣。',灯光:'火光。',氛围:'紧张。',对白:'女娲说：“把孩子先带出去，我来守住这里。”'}]}))};
- const result={requestId:input.requestId,stage:input.stage,text:JSON.stringify(value),templateIds:input.templates.map(t=>t.publicId),inputSha256:'a'.repeat(64),resultSha256:'b'.repeat(64)};globalThis.receipts[input.requestId]=result;return result;
+ const result={model:input.modelPreference==='deepseek'?'deepseek/deepseek-v4.1-flash':'z-ai/glm-5.3-flashx',requestId:input.requestId,stage:input.stage,text:JSON.stringify(value),templateIds:input.templates.map(t=>t.publicId),inputSha256:'a'.repeat(64),resultSha256:'b'.repeat(64)};globalThis.receipts[input.requestId]=result;return result;
 };
 export const trpc={manhuaViralTemplate:{listApprovedPublic:{useQuery:()=>({data:{groups:[{items:cards}]},isLoading:false,isError:false})}},novelWorkspace:{generate:{useMutation:()=>({mutateAsync:generate})}},useUtils:()=>({novelWorkspace:{receipt:{fetch:async({requestId})=>globalThis.receipts[requestId]?.status?globalThis.receipts[requestId]:({status:globalThis.receipts[requestId]?'succeeded':'not_found',result:globalThis.receipts[requestId]})}}})};
 `;
@@ -165,6 +165,28 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
       );
       buttons[0].click();
     });
+    await page.$eval('[aria-label="模板占比 mt_0000"]', el => {
+      const input = el as HTMLInputElement;
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value"
+      )!.set!.call(input, "75");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click("请创作顾问建议方向与模板");
+    expect(
+      await page.$eval("[data-advisor-feedback]", el => el.textContent)
+    ).toContain("调整为100%");
+    expect(await page.evaluate(() => (globalThis as any).calls.length)).toBe(1);
+    await page.$eval('[aria-label="模板占比 mt_0001"]', el => {
+      const input = el as HTMLInputElement;
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value"
+      )!.set!.call(input, "25");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await page.select('[aria-label="创作模型"]', "deepseek");
     await page.type(
       '[aria-label="回复顾问"]',
       "保留未来武器，两个模板分别负责破局与对白，请解释怎么组合。"
@@ -186,7 +208,8 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
     expect(followup.advisorMessage).toContain("保留未来武器");
     expect(followup.advisorHistory).toHaveLength(1);
     expect(followup.advisorHistory[0].assistant).toContain("强化角色抉择");
-    expect(followup.templates).toHaveLength(2);
+    expect(followup.templates.map((t: any) => t.weight)).toEqual([75, 25]);
+    expect(followup.modelPreference).toBe("deepseek");
     expect(
       await page.$eval('[aria-label="顾问对话记录"]', e => e.textContent)
     ).toContain("保留未来武器");
@@ -203,6 +226,15 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
       await page.$eval('[aria-label="顾问对话记录"]', e => e.textContent)
     ).toContain("保留未来武器");
     expect(await page.evaluate(() => (globalThis as any).calls.length)).toBe(0);
+    expect(
+      await page.$eval(
+        '[aria-label="创作模型"]',
+        el => (el as HTMLSelectElement).value
+      )
+    ).toBe("deepseek");
+    expect(
+      await page.$eval('[aria-label="顾问对话记录"]', el => el.textContent)
+    ).toContain("DeepSeek V4.1 Flash");
     await click("生成改编提案");
     await page.waitForFunction(() =>
       (
@@ -268,6 +300,11 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
         .map((c: any) => c.templates.length)
     ).toEqual([1, 1, 2]);
     expect(
+      calls
+        .filter((c: any) => c.stage === "script" && c.templates.length === 1)
+        .every((c: any) => c.templates[0].weight === 100)
+    ).toBe(true);
+    expect(
       new Set(
         calls.filter((c: any) => c.stage === "script").map((c: any) => c.novel)
       ).size
@@ -307,6 +344,37 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
       path: "../backend-work/novel-workspace/mobile.png",
       fullPage: true,
     });
+    await page.select('[aria-label="创作模型"]', "glm");
+    await click("请创作顾问建议方向与模板");
+    await page.waitForFunction(
+      () =>
+        !(
+          document.querySelector('[aria-label="创作模型"]') as HTMLSelectElement
+        ).disabled
+    );
+    const comparisonInput = await page.evaluate(() =>
+      (globalThis as any).calls.at(-1)
+    );
+    expect(comparisonInput.modelPreference).toBe("glm");
+    expect(comparisonInput.advisorHistory).toBeUndefined();
+    expect(comparisonInput.outline).toBe("");
+    expect(comparisonInput.novel).toBe("");
+    expect(comparisonInput.templates.map((t: any) => t.weight)).toEqual([
+      75, 25,
+    ]);
+    await click("以这版继续讨论与创作");
+    await click("发送给顾问");
+    await page.waitForFunction(
+      () =>
+        !(
+          document.querySelector('[aria-label="创作模型"]') as HTMLSelectElement
+        ).disabled
+    );
+    expect(
+      await page.evaluate(
+        () => (globalThis as any).calls.at(-1).advisorHistory.length
+      )
+    ).toBe(1);
     // Refresh a pending request: poll the same receipt, show actual progress, never generate again.
     const pendingId = await page.evaluate(() => {
       const key = "mv-novel-lab-v2:1",

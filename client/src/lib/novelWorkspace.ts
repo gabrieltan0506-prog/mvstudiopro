@@ -5,12 +5,16 @@ import {
 } from "@shared/manhuaNovelSource";
 import {
   novelTestInputSchema,
+  novelModelSchema,
+  novelGenerationSettingsSchema,
   type NovelTestInput,
   type NovelTestResult,
 } from "@shared/novelWorkspace";
 const runSchema = z.object({
   input: novelTestInputSchema,
   result: z.object({
+    model: z.string().optional(),
+    settings: novelGenerationSettingsSchema.optional(),
     requestId: z.string(),
     stage: z.enum(["advice", "outline", "chapter", "script"]),
     text: z.string(),
@@ -24,9 +28,17 @@ const stateSchema = z.object({
   topic: z.string(),
   direction: z.string(),
   advisorDraft: z.string().max(2000).optional(),
+  modelPreference: novelModelSchema.optional(),
+  advisorAnchor: z.string().optional(),
   mode: z.enum(["source", "original"]),
   source: z.unknown(),
-  templates: z.array(z.object({ publicId: z.string(), role: z.string() })),
+  templates: z.array(
+    z.object({
+      publicId: z.string(),
+      role: z.string(),
+      weight: z.number().int().min(0).max(100).optional(),
+    })
+  ),
   episodeCount: z.union([z.literal(2), z.literal(3)]),
   outline: z.string(),
   outlineApproved: z.string(),

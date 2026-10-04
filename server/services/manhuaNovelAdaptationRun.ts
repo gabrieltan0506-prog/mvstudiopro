@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { NovelGenerationSettings } from "../../shared/novelWorkspace";
 import {
   extractFirstChoicePlainText,
   isRetryableOpenAiGatewayError,
@@ -35,8 +36,8 @@ export type NovelStageCall = (
   prompt: string,
   json: boolean,
   requestId: string,
-  trace?: { onBytes?: (bytes:number)=>Promise<void>; onRaw?: (raw:string)=>Promise<void> }
-) => Promise<{ text: string; model: string }>;
+  trace?: { modelPreference?: "auto" | "glm" | "deepseek"; onBytes?: (bytes:number)=>Promise<void>; onRaw?: (raw:string)=>Promise<void> }
+) => Promise<{ text: string; model: string; settings?: NovelGenerationSettings }>;
 
 async function persistNovelTrace(write: (() => Promise<void>) | undefined) {
   if (!write) return;
@@ -55,15 +56,17 @@ export const callNovelStage: NovelStageCall = async (
   const openRouterKey = getOpenRouterApiKey(),
     evolinkKey = getEvolinkApiKey();
   // Congestion switches model immediately; alternate gateway is used when that key is the available connection.
-  const targets = [
+  const availableTargets = [
     openRouterKey ? MANHUA_ADVISOR_HOPS[0] : MANHUA_ADVISOR_HOPS[1],
     openRouterKey ? MANHUA_ADVISOR_HOPS[2] : MANHUA_ADVISOR_HOPS[3],
   ];
+  const preference = trace?.modelPreference || "auto";
+  const targets = preference === "auto" ? availableTargets : [availableTargets[preference === "glm" ? 0 : 1]];
   if (!openRouterKey && !evolinkKey) throw new Error("创作模型尚未连接");
   for (let index = 0; index < targets.length; index++) {
     const target = targets[index],
       isOpenRouter = target.gateway === "auto",
-      glm = index === 0;
+      glm = target.modelName.includes("glm");
     const controller = new AbortController();
     // Only waits for headers; after headers, the shared reader renews its idle timer on actual bytes.
     const timer = setTimeout(
@@ -94,11 +97,11 @@ export const callNovelStage: NovelStageCall = async (
                   provider: glm
                     ? OPENROUTER_GLM_PROVIDER_LOCK
                     : OPENROUTER_DEEPSEEK_PROVIDER_LOCK,
-                  reasoning: glm ? { effort: "high" } : { enabled: false },
+                  reasoning: glm ? { effort: "high" } : { enabled: true, effort: "high" },
                 }
               : glm
                 ? { reasoning_effort: "high" }
-                : { thinking: { type: "disabled" } }),
+                : { thinking: { type: "enabled" } }),
             ...(json ? { response_format: { type: "json_object" } } : {}),
           }),
         }
@@ -120,6 +123,7 @@ export const callNovelStage: NovelStageCall = async (
       }
       const raw = await readGlmSseStream(response.body, 2 * 1024 * 1024, {
         strictCompletion: true,
+        onComplete: trace?.onRaw ? raw => persistNovelTrace(() => trace.onRaw!(raw)) : undefined,
         onBytes: trace?.onBytes ? bytes => persistNovelTrace(() => trace.onBytes!(bytes)) : undefined,
         onErrorFrame(error) {
           // HTTP 200 can carry a real 401/403/refusal in SSE. Only explicit transient statuses may change model.
@@ -129,19 +133,18 @@ export const callNovelStage: NovelStageCall = async (
           });
         },
       });
-      await persistNovelTrace(trace?.onRaw ? () => trace.onRaw!(raw) : undefined);
       const result = JSON.parse(raw) as InvokeResult;
       assertSseContentSafety(result.choices?.[0]?.finish_reason);
       if (result.choices?.[0]?.finish_reason !== "stop")
         throw new Error("创作结果未完整结束，旧稿保留");
       const text = extractFirstChoicePlainText(result).trim();
       if (!text) throw new Error("创作结果为空，旧稿保留");
-      return { text, model: target.modelName };
+      return { text, model: result.model || target.modelName, settings: { reasoning: isOpenRouter || glm ? "high" : "enabled", maxTokens: 32768 } };
     } catch (error) {
       controller.abort();
       if ((error as { code?: string }).code === "NOVEL_EVIDENCE_WRITE_FAILED") throw error;
       if (
-        index === 0 &&
+        preference === "auto" && index === 0 &&
         (isRetryableOpenAiGatewayError(error) ||
           isSseIncompleteStreamError(error) ||
           /无数据|超时/.test(String((error as Error).message)))

@@ -101,6 +101,8 @@ it("同操作重放读取已存结果而非重新调用，完整原始与解析�
   expect(memory.row.output.rawResponses).toEqual(["原始SSE汇总JSON"]);
   expect(memory.row.output.raw.text).toContain("recommendations");
   expect(memory.row.output.result).toEqual(a);
+  expect(a.model).toBe("mock");
+  expect((await readNovelWorkspaceReceipt(1, input.requestId)).result?.model).toBe("mock");
   expect(memory.writes.findIndex(w => w.output?.raw)).toBeLessThan(
     memory.writes.findIndex(w => w.status === "succeeded")
   );

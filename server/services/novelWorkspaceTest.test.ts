@@ -105,3 +105,21 @@ it("用户回复与完整历史进入顾问和提案，不把建议当成已采�
     })
   ).toThrow();
 });
+
+it("所有创作阶段收到实际配比，不只展示在页面", () => {
+  for (const stage of ["advice", "outline", "chapter", "script"] as const) {
+    const templates = [
+      { publicId: "mt_bf6e", role: "权谋线索", weight: 50 },
+      { publicId: "mt_4737", role: "对话交锋", weight: 25 },
+      { publicId: "mt_1b5b", role: "关系互动", weight: 20 },
+      { publicId: "mt_46f5", role: "武器亮相", weight: 5 },
+    ];
+    const prompt = buildNovelTestPrompt(
+      { ...input, stage, templates },
+      "完整手法",
+      []
+    );
+    expect(prompt).toContain(JSON.stringify(templates));
+    expect(prompt).toContain("不按字数或场次数机械切分");
+  }
+});

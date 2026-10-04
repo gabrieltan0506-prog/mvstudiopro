@@ -9,9 +9,29 @@ export const NOVEL_FACETS = [
   "氛围",
   "对白",
 ] as const;
+export const NOVEL_MODEL_OPTIONS = [
+  { value: "auto", label: "自动 · GLM优先，异常时DeepSeek接续" },
+  { value: "glm", label: "GLM 5.3 FlashX" },
+  { value: "deepseek", label: "DeepSeek V4.1 Flash" },
+] as const;
+export const novelModelSchema = z.enum(["auto", "glm", "deepseek"]);
+export function novelModelLabel(model?: string) {
+  if (!model) return "";
+  const names: Record<string, string> = {
+    "z-ai/glm-5.3-flashx": "GLM 5.3 FlashX",
+    "glm-5.3-flashx": "GLM 5.3 FlashX",
+    "deepseek/deepseek-v4.1-flash": "DeepSeek V4.1 Flash",
+    "deepseek-v4.1-flash": "DeepSeek V4.1 Flash",
+  };
+  return names[model] || model;
+}
 const text = z.string().trim().min(1);
 export const novelTemplateChoiceSchema = z
-  .object({ publicId: text.max(40), role: text.max(160) })
+  .object({
+    publicId: text.max(40),
+    role: text.max(160),
+    weight: z.number().int().min(0).max(100).optional(),
+  })
   .strict();
 export const novelTestInputSchema = z
   .object({
@@ -20,6 +40,7 @@ export const novelTestInputSchema = z
     stage: z.enum(["advice", "outline", "chapter", "script"]),
     topic: text.max(200),
     direction: text.max(2000),
+    modelPreference: novelModelSchema.optional(),
     source: novelExcerptSchema.optional(),
     advisorMessage: text.max(2000).optional(),
     advisorHistory: z
@@ -44,6 +65,15 @@ export const novelTestInputSchema = z
   .superRefine((v, c) => {
     if (new Set(v.templates.map(t => t.publicId)).size !== v.templates.length)
       c.addIssue({ code: "custom", message: "模板不可重复" });
+    if (
+      v.templates.some(t => t.weight !== undefined) &&
+      (v.templates.some(t => t.weight === undefined) ||
+        v.templates.reduce((sum, t) => sum + (t.weight || 0), 0) !== 100)
+    )
+      c.addIssue({
+        code: "custom",
+        message: "模板创作配比须全部填写，合计100%",
+      });
     if (v.stage !== "advice" && !v.templates.length)
       c.addIssue({ code: "custom", message: "请选择模板" });
     if (
@@ -145,7 +175,18 @@ export const novelScriptSchema = z
   .strict();
 export type NovelAdvice = z.infer<typeof novelAdviceSchema>;
 export type NovelScript = z.infer<typeof novelScriptSchema>;
+export const novelGenerationSettingsSchema = z.object({
+  reasoning: z.enum(["off", "enabled", "low", "high", "max"]),
+  maxTokens: z.number().int().positive(),
+  temperature: z.number().optional(),
+  topP: z.number().optional(),
+});
+export type NovelGenerationSettings = z.infer<
+  typeof novelGenerationSettingsSchema
+>;
 export type NovelTestResult = {
+  settings?: NovelGenerationSettings;
+  model?: string;
   requestId: string;
   stage: NovelTestInput["stage"];
   text: string;

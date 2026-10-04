@@ -183,3 +183,37 @@ it("继续讨论可以不换模板，但仍禁止编造推荐", () => {
     )
   ).toThrow();
 });
+
+it("创作配比接受50/25/20/5和零权重，拒绝超额、缺项、非整数；旧稿兼容", () => {
+  const templates = [50, 25, 20, 5, 0].map((weight, i) => ({
+    publicId: `mt_${i}`,
+    role: "分工",
+    weight,
+  }));
+  expect(
+    novelTestInputSchema
+      .parse({ ...input, templates })
+      .templates.map(t => t.weight)
+  ).toEqual([50, 25, 20, 5, 0]);
+  for (const weights of [
+    [50, 25, 20, 6],
+    [100, undefined],
+    [99.5, 0.5],
+    [-1, 101],
+  ]) {
+    expect(() =>
+      novelTestInputSchema.parse({
+        ...input,
+        templates: weights.map((weight, i) => ({
+          publicId: `mt_${i}`,
+          role: "分工",
+          weight,
+        })),
+      })
+    ).toThrow();
+  }
+  expect(novelTestInputSchema.parse(input).modelPreference).toBeUndefined();
+  expect(() =>
+    novelTestInputSchema.parse({ ...input, modelPreference: "unknown" })
+  ).toThrow();
+});

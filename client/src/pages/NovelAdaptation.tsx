@@ -9,6 +9,8 @@ import { NovelTemplateComparison } from "@/components/canvas/NovelTemplateCompar
 import { prepareNovelExcerpt } from "@shared/manhuaNovelSource";
 import {
   novelAdviceSchema,
+  novelModelLabel,
+  NOVEL_MODEL_OPTIONS,
   novelChapterSchema,
   novelOutlineSchema,
   novelTestInputSchema,
@@ -129,11 +131,27 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
       ...draft,
       templates: [
         ...draft.templates,
-        { publicId: id, role: "节奏、人物关系与对白" },
+        {
+          publicId: id,
+          role: "节奏、人物关系与对白",
+          ...(!draft.templates.length
+            ? { weight: 100 }
+            : draft.templates.some(t => t.weight !== undefined)
+              ? { weight: 0 }
+              : {}),
+        },
       ],
     });
   };
   const disabled = busy || !!saveError || !!draft.pending;
+  const weighted = draft.templates.some(t => t.weight !== undefined);
+  const weightTotal = draft.templates.reduce(
+    (sum, t) => sum + (t.weight || 0),
+    0
+  );
+  const weightValid =
+    !weighted ||
+    (weightTotal === 100 && draft.templates.every(t => t.weight !== undefined));
   const currentNovel = draft.chapters
     .map((text, i) => `第${i + 1}章\n${text}`)
     .join("\n\n");
@@ -160,13 +178,26 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
     if (conversation.current)
       conversation.current.scrollTop = conversation.current.scrollHeight;
   }, [adviceRuns.length, draft.pending?.requestId]);
-  const adviceRun = adviceRuns.at(-1);
+  const adviceRun =
+    adviceRuns.find(r => r.input.requestId === draft.advisorAnchor) ||
+    adviceRuns.at(-1);
+  const discussionHistory = adviceRun
+    ? [
+        ...(adviceRun.input.advisorHistory || []),
+        {
+          user:
+            adviceRun.input.advisorMessage ||
+            "请依据创作方向提出建议与模板推荐。",
+          assistant: adviceRun.result.text,
+        },
+      ]
+    : [];
   const advice = adviceRun
     ? novelAdviceSchema.parse(JSON.parse(adviceRun.result.text))
     : null;
-  const recommendationAdvice = [...adviceRuns]
+  const recommendationAdvice = [...discussionHistory]
     .reverse()
-    .map(r => novelAdviceSchema.parse(JSON.parse(r.result.text)))
+    .map(r => novelAdviceSchema.parse(JSON.parse(r.assistant)))
     .find(a => a.recommendations.length);
   const applyResult = (
     input: NovelTestInput,
@@ -216,6 +247,7 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
       next.novelApproved = "";
     }
     if (input.stage === "advice") {
+      next.advisorAnchor = input.requestId;
       if (input.advisorMessage === now.advisorDraft?.trim())
         next.advisorDraft = "";
       next.outlineApproved = "";
@@ -314,8 +346,14 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
       )
         throw new Error("请先确认当前小说。");
       const choices = single
-        ? draft.templates.filter(t => t.publicId === single)
+        ? draft.templates
+            .filter(t => t.publicId === single)
+            .map(t => ({ ...t, weight: 100 }))
         : draft.templates;
+      if (!single && !weightValid)
+        throw new Error(
+          `模板创作配比当前合计${weightTotal}%，请调整为100%再提交。`
+        );
       if (choices.some(t => !cards.some(c => c.publicId === t.publicId)))
         throw new Error("所选模板已不可用，请重新选择。");
       const input = novelTestInputSchema.parse({
@@ -324,25 +362,26 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
         stage,
         topic: draft.topic,
         direction: draft.direction,
+        ...(draft.modelPreference
+          ? { modelPreference: draft.modelPreference }
+          : {}),
         source,
         ...(advisorMessage ? { advisorMessage } : {}),
-        ...((stage === "advice" || stage === "outline") && adviceRuns.length
+        ...(((stage === "advice" && advisorMessage) || stage === "outline") &&
+        adviceRuns.length
           ? {
-              advisorHistory: adviceRuns.map(r => ({
-                user:
-                  r.input.advisorMessage ||
-                  "请依据创作方向提出建议与模板推荐。",
-                assistant: r.result.text,
-              })),
+              advisorHistory: discussionHistory,
             }
           : {}),
         templates: choices,
         episodeCount: draft.episodeCount,
-        outline: draft.outlineApproved,
+        outline: stage === "advice" ? "" : draft.outlineApproved,
         novel:
-          stage === "chapter"
-            ? draft.chapters.slice(0, chapterIndex - 1).join("\n\n")
-            : draft.novelApproved,
+          stage === "advice"
+            ? ""
+            : stage === "chapter"
+              ? draft.chapters.slice(0, chapterIndex - 1).join("\n\n")
+              : draft.novelApproved,
         chapterIndex,
         selectedTemplateIds: draft.templates.map(t => t.publicId),
       });
@@ -557,6 +596,31 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
                   <option value={3}>3集</option>
                 </select>
               </label>
+              <label className="mt-4 block text-sm">
+                创作模型
+                <select
+                  aria-label="创作模型"
+                  className={field}
+                  value={draft.modelPreference || "auto"}
+                  onChange={e =>
+                    change({
+                      modelPreference: e.target.value as
+                        | "auto"
+                        | "glm"
+                        | "deepseek",
+                    })
+                  }
+                >
+                  {NOVEL_MODEL_OPTIONS.map(option => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <span className="mt-2 block text-xs text-slate-400">
+                  用于接下来提交的顾问与创作任务。手动选择不会换模型；已生成内容保留。重新取建议只使用当前方向、底本和配比，不带旧回答；回复顾问才带对话。
+                </span>
+              </label>
               <button
                 className={`${button} mt-4 bg-amber-200 text-slate-950`}
                 onClick={() => generate("advice")}
@@ -598,6 +662,20 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
                 >
                   {adviceRuns.map(r => (
                     <div key={r.input.requestId}>
+                      <button
+                        className="mb-2 text-xs underline disabled:no-underline disabled:text-emerald-200"
+                        disabled={
+                          disabled ||
+                          adviceRun?.input.requestId === r.input.requestId
+                        }
+                        onClick={() =>
+                          change({ advisorAnchor: r.input.requestId })
+                        }
+                      >
+                        {adviceRun?.input.requestId === r.input.requestId
+                          ? "当前采用的讨论"
+                          : "以这版继续讨论与创作"}
+                      </button>
                       <p className="mb-2 whitespace-pre-wrap text-sm text-amber-200">
                         你：
                         {r.input.advisorMessage ||
@@ -610,6 +688,14 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
                             .assessment
                         }
                       </p>
+                      {r.result.model && (
+                        <p className="mt-2 text-xs text-slate-400">
+                          备注：{novelModelLabel(r.result.model)}
+                          {r.result.settings
+                            ? ` · 推理：${r.result.settings.reasoning === "off" ? "关闭" : r.result.settings.reasoning === "enabled" ? "已开启" : r.result.settings.reasoning} · 输出上限：${r.result.settings.maxTokens}`
+                            : ""}
+                        </p>
+                      )}
                     </div>
                   ))}
                   {draft.pending?.advisorMessage && (
@@ -705,6 +791,40 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
                 if (id) addTemplate(id);
               }}
             />
+            {!!draft.templates.length && (
+              <div
+                className="mt-4 rounded-xl border border-amber-200/20 p-3"
+                aria-label="模板创作配比"
+              >
+                <p className="font-medium">
+                  创作配比{weighted ? ` · 合计 ${weightTotal}%` : ""}
+                </p>
+                <p className="mt-2 text-xs text-slate-400">
+                  表示手法影响程度，不按字数分配。0%仅作情节参考；调整只影响下一次生成，已有稿保留。单独使用一个模板时按100%创作。
+                </p>
+                <button
+                  className={`${button} mt-2`}
+                  disabled={disabled}
+                  onClick={() =>
+                    change({
+                      templates: draft.templates.map((t, i) => ({
+                        ...t,
+                        weight:
+                          Math.floor(100 / draft.templates.length) +
+                          (i < 100 % draft.templates.length ? 1 : 0),
+                      })),
+                    })
+                  }
+                >
+                  {weighted ? "平均分配" : "设置百分比"}
+                </button>
+                {!weightValid && (
+                  <p role="alert" className="mt-2 text-sm text-amber-200">
+                    请将所有模板配比合计调整为100%，不会自动改动你的比例。
+                  </p>
+                )}
+              </div>
+            )}
             {draft.templates.map(t => (
               <div
                 key={t.publicId}
@@ -728,6 +848,39 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
                     移除
                   </button>
                 </div>
+                {weighted && (
+                  <label className="mt-2 block text-xs">
+                    创作占比（%）
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={1}
+                      aria-label={`模板占比 ${t.publicId}`}
+                      className={field}
+                      disabled={disabled}
+                      value={t.weight ?? ""}
+                      onChange={e => {
+                        const value =
+                          e.target.value === ""
+                            ? undefined
+                            : Number(e.target.value);
+                        if (
+                          value !== undefined &&
+                          (!Number.isInteger(value) || value < 0 || value > 100)
+                        )
+                          return;
+                        change({
+                          templates: draft.templates.map(x =>
+                            x.publicId === t.publicId
+                              ? { ...x, weight: value }
+                              : x
+                          ),
+                        });
+                      }}
+                    />
+                  </label>
+                )}
                 <label className="mt-2 block text-xs">
                   组合时负责什么
                   <input

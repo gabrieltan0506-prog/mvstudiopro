@@ -13,6 +13,7 @@ import {
 import { NATURAL_DIALOGUE_RULES } from "../../shared/manhuaNovelAdaptation";
 import {
   type NovelTestInput,
+  type NovelGenerationSettings,
   type NovelTestResult,
   validateNovelStageOutput,
 } from "../../shared/novelWorkspace";
@@ -53,6 +54,11 @@ export function buildNovelTestPrompt(
             ? `只写第 ${input.chapterIndex} 章，遵守已确认大纲。其余小说是已确认前文，不改写、不重复；人物身份与因果必须衔接。不得一次写完整部。`
             : `严格以用户已确认小说为事实和事件基准，生成 ${input.episodeCount} 集完整可拍剧本。模板可改变表现手法，不改小说人物身份、关键事件与因果。同一事件用稳定场次key（E1-S1等）便于对照，不虚构已确认事实。applications必须覆盖本次每个模板，具体说明方法怎样落到已生成场次；sceneKeys只能引用本次真实场次。`,
     "组合模板须按分工协作；冲突以已确认方向、提案、小说为准，不堆叠互斥设定。",
+    ...(input.templates.some(t => t.weight !== undefined)
+      ? [
+          "templateRoles.weight是用户明确选择的创作手法影响百分比，合计100。高权重主导节奏、信息释放与场面组织；低权重只用于对应分工的点睛段落，不按字数或场次数机械切分。0%模板只可借鉴合适情节，不主导节奏和风格。顾问须解释这套配比如何服务当前故事及其取舍，不擅自改比例；提案、小说、组合剧本均遵守配比，已确认的人物与事件不因配比改动。",
+        ]
+      : []),
     `仅返回JSON，字段格式：${format}`,
     JSON.stringify({
       topic: input.topic,
@@ -76,7 +82,7 @@ export async function executeNovelTest(
   templates: string,
   catalog: { publicId: string }[],
   call: NovelStageCall,
-  saveRaw: (r: { text: string; model: string }) => Promise<void>
+  saveRaw: (r: { text: string; model: string; settings?: NovelGenerationSettings }) => Promise<void>
 ) {
   const response = await call(
     buildNovelTestPrompt(input, templates, catalog),
@@ -145,6 +151,8 @@ export async function runNovelWorkspaceTest(
   }
   let evidence: Record<string, unknown> = { phase: "preparing" };
   let lastHeartbeat = 0;
+  let completedModel: string | undefined;
+  let completedSettings: NovelGenerationSettings | undefined;
   const rawResponses: string[] = [];
   try {
     const groups = await listMergedApprovedManhuaViralTemplatesGrouped();
@@ -190,6 +198,7 @@ export async function runNovelWorkspaceTest(
       catalog,
       (prompt, json, requestId) =>
         callNovelStage(prompt, json, requestId, {
+          modelPreference: input.modelPreference,
           onBytes: async () => {
             if (Date.now() - lastHeartbeat < 15000) return;
             evidence = { ...evidence, phase: "receiving" };
@@ -213,6 +222,8 @@ export async function runNovelWorkspaceTest(
           },
         }),
       async response => {
+        completedModel = response.model;
+        completedSettings = response.settings;
         evidence = {
           ...evidence,
           phase: "validating",
@@ -228,6 +239,8 @@ export async function runNovelWorkspaceTest(
     );
     const text = JSON.stringify(value, null, 2);
     const result: NovelTestResult = {
+      model: completedModel,
+      settings: completedSettings,
       requestId: input.requestId,
       stage: input.stage,
       text,
