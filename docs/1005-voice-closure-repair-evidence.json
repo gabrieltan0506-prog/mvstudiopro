@@ -204,5 +204,21 @@
     "Actual provider charges except world retry 1580 credits not settled",
     "Flare/Sunburst/Seedance full real user billing ledger not exercised this round",
     "New PR awaiting user authorization; PR1662 already merged"
-  ]
+  ],
+  "followup": {
+    "reviewedCommit": "63fef684c55a3e9efdd1fd4b769097f085061304",
+    "pr": "https://github.com/gabrieltan0506-prog/mvstudiopro/pull/1664",
+    "newTest": {
+      "path": "/Users/tangenjie/Documents/Codex/2026-10-03/task-2/creative-voice-1004/client/src/lib/voiceProductionHost.test.ts",
+      "bytes": 5288,
+      "sha256": "3f5620563e159001557c713a0a7f58b9a9fdc133532e305a3c440f6279b4ce12"
+    },
+    "result": {
+      "path": "/Users/tangenjie/Documents/Codex/2026-10-03/task-2/backend-work/1005-voice-production-host.log",
+      "bytes": 329,
+      "sha256": "28981e872c39dfa014d2e09bf88e17ff5bfb710abbcb68429487d61acda0124c"
+    },
+    "scope": "3 previously uncovered actual OmniCanvas host callback cases; no provider generation; earlier passing tests and build not repeated",
+    "machine": "891e455b424608 stopped after probes completed; not destroyed; gallery server retained"
+  }
 }
