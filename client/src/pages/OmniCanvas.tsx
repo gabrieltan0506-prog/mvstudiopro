@@ -13663,6 +13663,21 @@ function OmniCanvasWorkspace() {
         confirmedProjectVersion={projectBible?.confirmedAt}
         project={advisorProject}
         episodeWorkspace={writerPack?.episodes.length ? { episodes: writerPack.episodes, model: writerModel, comparisonHost: optimizationComparisonHost, onFocusEpisode: setWriterFocusEpisode, onApplyCandidates: applyTemplateRewriteCandidates } : undefined}
+        voiceTargets={(writerPack?.episodes || []).flatMap(e => [
+          { episode: e.index, label: e.title },
+          ...blocks.filter(b => !b.archivedFromPreviousScript && b.id.startsWith("keyart-") && (getBlockEpisodeIndex(b) ?? 1) === e.index)
+            .map(b => ({ episode: e.index, shot: resolveKeyartShotIndex(b.id, b.prompt), label: b.id })),
+        ])}
+        onVoiceNavigate={target => {
+          if (writerBusy || factoryBusy || cloudConflict) throw new Error("工作区正在处理任务或有云端冲突，未切换。");
+          if (!writerPack?.episodes.some(e => e.index === target.episode)) throw new Error("该集不存在，未切换。");
+          const block = target.shot ? blocks.find(b => !b.archivedFromPreviousScript && b.id.startsWith("keyart-") && (getBlockEpisodeIndex(b) ?? 1) === target.episode && resolveKeyartShotIndex(b.id, b.prompt) === target.shot) : undefined;
+          if (target.shot && !block) throw new Error("该镜头已变化，请重新查看。");
+          setWriterFocusEpisode(target.episode); setManhuaUiMode("workbench");
+          setWorkflowPhase(block ? "storyboard" : "outline"); setImmersiveWorkspaceView(block ? "workbench" : "topic");
+          if (block) { setCanvasSelectedBlockId(block.id); setFocusBlockId(block.id); }
+          return `已切换到第${target.episode}集${target.shot ? `第${target.shot}镜` : ""}；没有改动正文。`;
+        }}
         dockHost={advisorDockHost}
         previewHost={advisorPreviewHost}
         studio3d={advisor3dContext}

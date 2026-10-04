@@ -1,3 +1,5 @@
+import type { CreativeVoiceTarget } from "@shared/creativeVoice";
+import { CreativeVoicePanel } from "./CreativeVoicePanel";
 import ManhuaEpisodeOptimization, { type EpisodeOptimizationWorkspace } from "./ManhuaEpisodeOptimization";
 import { validateAdvisorRewriteBody, TEMPLATE_REWRITE_MARKER } from "@shared/manhuaAdvisorRewrite";
 import { buildTemplateAdviceQuestion } from "@/lib/manhuaTemplateAdvice";
@@ -62,6 +64,8 @@ export default function ManhuaCreativeAdvisorPanel(props: {
   confirmedProjectVersion?: string;
   project?: ReturnType<typeof buildManhuaAdvisorProject>;
   onLocate?: (issue: AdvisorIssue) => void;
+  voiceTargets?: CreativeVoiceTarget[];
+  onVoiceNavigate?: (target: CreativeVoiceTarget) => string;
   episodeWorkspace?: EpisodeOptimizationWorkspace;
   selectedTemplate?: PublicManhuaViralTemplateCard | null;
   templates: PublicManhuaViralTemplateCard[];
@@ -197,6 +201,8 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     const timer = window.setInterval(() => setElapsedSec(Math.floor((Date.now() - startedAt) / 1000)), 1000);
     return () => window.clearInterval(timer);
   }, [streamPending]);
+  const voiceReplies = useRef(new Map<string, (answer: string | undefined) => void>());
+  function finishVoiceReply(id: string, answer?: string) { const resolve = voiceReplies.current.get(id); voiceReplies.current.delete(id); resolve?.(answer); }
   const inFlight = useRef(false);
   const mounted = useRef(true);
   const questionRef = useRef<HTMLTextAreaElement | null>(null);
@@ -211,7 +217,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
 
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; };
+    return () => { mounted.current = false; for (const id of Array.from(voiceReplies.current.keys())) finishVoiceReply(id, "作品或页面已切换，语音请求结束；原顾问恢复记录保留。"); };
   }, []);
   useEffect(() => {
     if (!sessionKey || sessionStorageBlocked) return;
@@ -246,10 +252,11 @@ export default function ManhuaCreativeAdvisorPanel(props: {
   }, [open, props.questionSeed, asking, pendingPaid, unresolvedFailed, sessionStorageBlocked]);
 
   async function submit(request: PendingQuestion, confirmPaid: boolean, confirmedCredits?: number) {
-    if (inFlight.current || !userId || sessionStorageBlocked) return;
-    if (!request.manhuaContext) { toast.error("请先选择漫剧项目，再向创作顾问提问；本次未调用模型。"); return; }
+    let voiceWaitingForPayment = false; let voiceAnswer: string | undefined;
+    if (inFlight.current || !userId || sessionStorageBlocked) { finishVoiceReply(request.requestId); return; }
+    if (!request.manhuaContext) { toast.error("请先选择漫剧项目，再向创作顾问提问；本次未调用模型。"); finishVoiceReply(request.requestId); return; }
     const recovering = initialRecovery.value?.request.requestId === request.requestId || (failed?.newAttempt !== true && failed?.request.requestId === request.requestId);
-    if ((!quotaQuery.data || quotaQuery.isError) && !recovering) { toast.error("暂时无法核对本作品额度，本次未提交、未扣费。请刷新额度后重试。"); return; }
+    if ((!quotaQuery.data || quotaQuery.isError) && !recovering) { toast.error("暂时无法核对本作品额度，本次未提交、未扣费。请刷新额度后重试。"); finishVoiceReply(request.requestId); return; }
     const capturedSessionKey = sessionKey;
     const capturedRecoveryKey = recoveryKey;
     const capturedPrevisKey = previsKey;
@@ -260,7 +267,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
         confirmPaid: true,
         message: "先确认项目后再付费咨询，避免改稿或切页时丢失扣点回执。本次未发起扣点请求。",
       });
-      return;
+      finishVoiceReply(request.requestId); return;
     }
     inFlight.current = true;
     setStreamPending(true);
@@ -308,7 +315,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
           try { localStorage.setItem(capturedPrevisKey, JSON.stringify(candidate)); }
           catch { if (mounted.current) setStorageError("调度建议未能保存，关闭页面前请保留当前对话。"); }
         }
-        if (mounted.current) { setPrevisCandidate(candidate); setAutoPrevisStart(activePrevisTarget.current?.clipId === candidate.target.clipId && activePrevisTarget.current.specJson === candidate.target.specJson && (request.previsRenderRequested === true || requestsAdvisorPrevisRender(request.rawQuestion))); }
+        if (mounted.current) { setPrevisCandidate(candidate); setAutoPrevisStart(!request.voiceConsultOnly && activePrevisTarget.current?.clipId === candidate.target.clipId && activePrevisTarget.current.specJson === candidate.target.specJson && (request.previsRenderRequested === true || requestsAdvisorPrevisRender(request.rawQuestion))); }
       }
       if (request.rawQuestion === TEMPLATE_PLAN_QUESTION && !parseAdvisorTemplatePlans(answer, templates).length && mounted.current) {
         toast.error("本次回答未提供3—5个合法模板方案，不能自动选择；原回答已保留供查看。");
@@ -340,16 +347,18 @@ export default function ManhuaCreativeAdvisorPanel(props: {
       if (capturedRecoveryKey && recoveryWritten && persisted) {
         try { localStorage.removeItem(capturedRecoveryKey); } catch { /* 下次仍可用同一编号取回结果。 */ }
       }
+      voiceAnswer = answer; return answer;
     } catch (error) {
       const message = error instanceof Error ? error.message : "顾问暂时无法回答，请稍后重试。";
       if (!mounted.current) return;
       if (/已用完|PAYMENT_REQUIRED|扣除.*积分/.test(message) && !/不足/.test(message)) {
+        voiceWaitingForPayment = true;
         setPendingPaid({ request, credits: Number(message.match(/扣除\s*(\d+)\s*积分/)?.[1]) || undefined, hint: message.replace(/\b(?:Sol|Terra)\b/g, "").replace(/（成本\+60%）/g, "") });
       } else setFailed({ request, confirmPaid, confirmedCredits, message: formatManhuaAdvisorError(message), newAttempt: /ADVISOR_OPERATION_(?:FAILED|MISMATCH)/.test(message) });
-    } finally { inFlight.current = false; if (mounted.current) { setStreamPending(false); setStreamText(""); } }
+    } finally { if (!voiceWaitingForPayment) finishVoiceReply(request.requestId, voiceAnswer); inFlight.current = false; if (mounted.current) { setStreamPending(false); setStreamText(""); } }
   }
 
-  function send(rawQuestion: string, wrappedQuestion?: string, renderRequested = false, episode?: EpisodeOptimizationWorkspace["episodes"][number]) {
+  function send(rawQuestion: string, wrappedQuestion?: string, renderRequested = false, episode?: EpisodeOptimizationWorkspace["episodes"][number], voiceReply?: (answer: string | undefined) => void) {
     if (inFlight.current || pendingPaid || unresolvedFailed || !userId || sessionStorageBlocked) return;
     const question = rawQuestion.trim();
     if (question.length < 2 || question.length > 1200) { toast.error("请输入 2—1200 字的问题，内容不会被自动截断。"); return; }
@@ -377,6 +386,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     const label = project ? `第 ${project.context.episodeIndex} 集 · ${MANHUA_ADVISOR_STAGE_LABELS[project.context.stage]} · ${promptScope || project.selectionLabel}` : stageZh || "创作咨询";
     const request: PendingQuestion = {
       requestId: crypto.randomUUID(),
+      ...(voiceReply ? { voiceConsultOnly: true } : {}),
       ...(props.previsTarget && renderRequested ? { previsRenderRequested: true } : {}),
       rawQuestion: question,
       question: wrappedQuestion || buildAdvisorQuestion({
@@ -390,7 +400,8 @@ export default function ManhuaCreativeAdvisorPanel(props: {
       manhuaContext: result?.success ? result.data : undefined, label,
     };
     setDraft("");
-    void submit(request, false);
+    if (voiceReply) voiceReplies.current.set(request.requestId, voiceReply);
+    return submit(request, false);
   }
 
   function recommendTemplates() {
@@ -567,13 +578,21 @@ export default function ManhuaCreativeAdvisorPanel(props: {
         {pendingPaid && <div role="alert" className="rounded-lg border border-amber-300/30 bg-amber-400/10 p-3 text-xs leading-5 text-amber-100">
           <p>{pendingPaid.hint}</p><p className="mt-1">原问题：{pendingPaid.request.label}（按提问时快照继续）</p><p className="mt-1 whitespace-pre-wrap text-white/75">{pendingPaid.request.rawQuestion}</p>
           {!sessionKey && <p className="mt-2 font-semibold">先确认项目后再付费咨询，避免改稿丢回执。本次不会发起扣点请求。</p>}
-          <div className="mt-2 flex gap-3">{sessionKey && <button type="button" disabled={asking || sessionStorageBlocked || !pendingPaid.credits} onClick={() => void submit(pendingPaid.request, true, pendingPaid.credits)} className="rounded border border-amber-200/40 px-3 py-1">确认支付 {pendingPaid.credits ?? "待核对"} 积分并继续</button>}<button type="button" onClick={() => setPendingPaid(null)}>取消</button></div>
+          <div className="mt-2 flex gap-3">{sessionKey && <button type="button" disabled={asking || sessionStorageBlocked || !pendingPaid.credits} onClick={() => void submit(pendingPaid.request, true, pendingPaid.credits)} className="rounded border border-amber-200/40 px-3 py-1">确认支付 {pendingPaid.credits ?? "待核对"} 积分并继续</button>}<button type="button" onClick={() => { if (pendingPaid) finishVoiceReply(pendingPaid.request.requestId, "用户取消本次扣点咨询，未取得付费结果。"); setPendingPaid(null); }}>取消</button></div>
         </div>}
         {failed && <div role="alert" className="rounded-lg border border-rose-300/25 p-3 text-xs text-rose-100"><p>{failed.message}</p><p className="mt-1 text-white/70">原问题：{failed.request.label}</p><p className="mt-1 whitespace-pre-wrap text-white/70">{failed.request.rawQuestion}</p>{!failed.newAttempt && <p className="mt-2 text-amber-100">此请求仍未决，请先恢复原问题；草稿可以继续编辑，但不会覆盖恢复记录。</p>}<button type="button" disabled={asking || sessionStorageBlocked || (failed.confirmPaid && !sessionKey)} onClick={() => void submit(failed.newAttempt ? { ...failed.request, requestId: crypto.randomUUID() } : failed.request, failed.newAttempt ? false : failed.confirmPaid, failed.newAttempt ? undefined : failed.confirmedCredits)} className="mt-2 rounded border border-white/20 px-3 py-1">{failed.newAttempt ? "重新提问（新的一次，重新检查额度）" : "恢复原问题（沿用原请求编号）"}</button></div>}
       </div>
       <footer data-advisor-composer className="shrink-0 space-y-2 border-t border-white/10 p-3">
         <p className="text-xs text-white/65" aria-live="polite">{quotaQuery.data?.exempt ? "管理员测试 · 免扣积分" : quota ? `本作品免费剩余 ${quota.remaining}/5 次 · 超出后 ${quota.price} 积分/次` : "正在核对本作品额度…"}</p>
         {props.previsAudioControls}
+        <CreativeVoicePanel key={`${userId}:${props.projectId}:${confirmedProjectVersion || "draft"}`} scopeKey={`${userId}:${props.projectId || `legacy:${confirmedProjectVersion || "draft"}`}`} context={JSON.stringify({ stage: stageZh, project: project?.context, selectedTemplate })} disabled={!userId || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onUse={text => setDraft(text)} targets={props.voiceTargets || props.episodeWorkspace?.episodes.map(e => ({ episode: e.index, label: e.title })) || []} onNavigate={props.onVoiceNavigate} onAskAdvisor={(question, signal) => new Promise(resolve => {
+          if (signal.aborted) { resolve(undefined); return; }
+          let done = false;
+          const reply = (answer?: string) => { if (done) return; done = true; signal.removeEventListener("abort", abort); for (const [id, callback] of Array.from(voiceReplies.current)) if (callback === reply) voiceReplies.current.delete(id); resolve(answer); };
+          const abort = () => reply("语音讨论已结束；已提交的顾问请求仍可在原入口查询，不重复生成。");
+          signal.addEventListener("abort", abort, { once: true });
+          if (!send(question, undefined, false, undefined, reply)) reply();
+        })} />
         <div className="flex items-end gap-2">
           <textarea ref={questionRef} aria-label="向创作顾问提问" value={draft} onChange={(event) => setDraft(event.target.value)} rows={2} maxLength={1200} disabled={!userId || sessionStorageBlocked}
             onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send(draft); } }}

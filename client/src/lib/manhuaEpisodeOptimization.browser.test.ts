@@ -17,11 +17,11 @@ function App(){const[focus,setFocus]=useState(1),[plans,setPlans]=useState([]),[
 afterAll(async()=>{await browser?.close();});
 it('真实UI选集→三模板试写→特色组合→左侧编辑与套用→刷新取回临时编辑',async()=>{
  const page=await browser.newPage();await page.setRequestInterception(true);page.on('request',r=>r.isNavigationRequest()?void r.respond({status:200,contentType:'text/html',body:'<div id="root"></div>'}):void r.abort());await page.goto('http://localhost:41829/');await page.addScriptTag({content:bundle});
- const click=async(text:string)=>page.evaluate(text=>{const b=[...document.querySelectorAll('button')].find(b=>b.textContent===text);if(!b)throw Error(text);b.click();},text);
- const check=async(text:string)=>page.evaluate(text=>{const label=[...document.querySelectorAll('label')].find(l=>l.textContent?.includes(text));const c=label?.querySelector('input');if(!c)throw Error(text);c.click();},text);
+ const click=async(text:string)=>page.evaluate(text=>{const b=Array.from(document.querySelectorAll('button')).find(b=>b.textContent===text);if(!b)throw Error(text);b.click();},text);
+ const check=async(text:string)=>page.evaluate(text=>{const label=Array.from(document.querySelectorAll('label')).find(l=>l.textContent?.includes(text));const c=label?.querySelector('input');if(!c)throw Error(text);c.click();},text);
  await page.waitForFunction(()=>document.body.textContent?.includes('作品共 3 集'));await check('第2集 ·');await click('为所选剧集推荐3—5个模板');await page.waitForFunction(()=>document.body.textContent?.includes('灯影下的试探'));
  expect(await page.evaluate(()=>(globalThis as any).fixture.recommendations[0].map((e:any)=>e.index))).toEqual([1,2]);
- for(let n=0;n<3;n++){await page.evaluate(n=>{const buttons=[...document.querySelectorAll('button')].filter(b=>b.textContent==='试写一集 · 免费');buttons[n].click();},n);await page.waitForFunction(n=>(globalThis as any).fixture.calls.length===n+1,{},n);await page.waitForFunction(n=>document.body.textContent?.includes('今日剩余 '+(2-n)+' / 3'),{},n);}
+ for(let n=0;n<3;n++){await page.evaluate(n=>{const buttons=Array.from(document.querySelectorAll('button')).filter(b=>b.textContent==='试写一集 · 免费');buttons[n].click();},n);await page.waitForFunction(n=>(globalThis as any).fixture.calls.length===n+1,{},n);await page.waitForFunction(n=>document.body.textContent?.includes('今日剩余 '+(2-n)+' / 3'),{},n);}
  expect(await page.evaluate(()=>(globalThis as any).fixture.calls.every((c:any)=>c.episodes.length===1&&c.templates.length===1&&c.confirmedCredits===0))).toBe(true);
  await page.waitForSelector('#left [aria-label="整集模板试写对比"]');expect(await page.evaluate(()=>(globalThis as any).fixture.applied.length)).toBe(0);
  for(const text of ['冷暖光对照','环境声留白','日常物件推动关系'])await check(text);
@@ -30,7 +30,7 @@ it('真实UI选集→三模板试写→特色组合→左侧编辑与套用→�
  await page.$eval('[aria-label="组合优化整集正文"]',e=>{const t=e as HTMLTextAreaElement;Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')!.set!.call(t,t.value+'补上衣袖沾湿的细节。');t.dispatchEvent(new Event('input',{bubbles:true}));});await click('套用本批2集');
  expect(await page.evaluate(()=>(globalThis as any).fixture.applied[0].length)).toBe(2);expect(await page.evaluate(()=>(globalThis as any).fixture.applied[0][0].rewrittenBody)).toContain('补上衣袖沾湿的细节');
  await page.$eval('[aria-label="组合优化整集正文"]',e=>{Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')!.set!.call(e,'尚在编辑');e.dispatchEvent(new Event('input',{bubbles:true}));});
- await page.reload();await page.addScriptTag({content:bundle});await page.waitForFunction(()=>[...document.querySelectorAll('button')].some(b=>b.textContent?.startsWith('组合优化 · 第1集')));await page.evaluate(()=>{[...document.querySelectorAll('button')].find(b=>b.textContent?.startsWith('组合优化 · 第1集'))!.click();});
+ await page.reload();await page.addScriptTag({content:bundle});await page.waitForFunction(()=>Array.from(document.querySelectorAll('button')).some(b=>b.textContent?.startsWith('组合优化 · 第1集')));await page.evaluate(()=>{Array.from(document.querySelectorAll('button')).find(b=>b.textContent?.startsWith('组合优化 · 第1集'))!.click();});
  expect(await page.$eval('[aria-label="组合优化整集正文"]',e=>(e as HTMLTextAreaElement).value)).toBe('尚在编辑');expect(await page.evaluate(()=>(globalThis as any).fixture.calls.length)).toBe(0);
  await page.close();
 },20000);
@@ -40,13 +40,13 @@ it('刷新遇到原请求失败只取回状态，明确点击才继续原请求�
  await page.evaluate(p=>localStorage.setItem('mvs:episode-optimization:7:20000000-0000-4000-8000-000000000001',JSON.stringify({selected:[1,2],features:{},results:[],pending:p})),pending);await page.addScriptTag({content:bundle});await page.waitForSelector('[aria-label="选集与模板组合优化"]');
  await page.evaluate(p=>{const f=(globalThis as any).fixture;f.history=[{requestId:p.requestId,status:'failed',phase:'failed',error:'第二集连接中断',candidates:[],completedEpisodes:1,result:null}];f.listeners.forEach((l:any)=>l());},pending);
  await page.waitForFunction(()=>document.body.textContent?.includes('仅继续未完成集'));expect(await page.evaluate(()=>(globalThis as any).fixture.calls.length)).toBe(0);
- await page.evaluate(()=>{[...document.querySelectorAll('button')].find(b=>b.textContent==='仅继续未完成集')!.click();});await page.waitForSelector('[aria-label="组合优化整集正文"]');
+ await page.evaluate(()=>{Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='仅继续未完成集')!.click();});await page.waitForSelector('[aria-label="组合优化整集正文"]');
  expect(await page.evaluate(()=>(globalThis as any).fixture.calls)).toEqual([{...pending,resume:true}]);expect(await page.evaluate(()=>(globalThis as any).fixture.applied.length)).toBe(0);await page.close();
 },20000);
 it('UI换模型会发新试写而非冒用旧稿，刷新保留模型身份与共享次数',async()=>{
  const page=await browser.newPage();await page.setRequestInterception(true);page.on('request',r=>r.isNavigationRequest()?void r.respond({status:200,contentType:'text/html',body:'<div id="root"></div>'}):void r.abort());await page.goto('http://localhost:41831/');await page.addScriptTag({content:bundle});await page.waitForSelector('[aria-label="选集与模板组合优化"]');
- await page.evaluate(()=>{[...document.querySelectorAll('button')].find(b=>b.textContent==='为所选剧集推荐3—5个模板')!.click();});await page.waitForFunction(()=>document.body.textContent?.includes('灯影下的试探'));
- const trial=()=>page.evaluate(()=>{[...document.querySelectorAll('button')].find(b=>b.textContent==='试写一集 · 免费')!.click();});await trial();await page.waitForFunction(()=>document.body.textContent?.includes('今日剩余 2 / 3'));
+ await page.evaluate(()=>{Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='为所选剧集推荐3—5个模板')!.click();});await page.waitForFunction(()=>document.body.textContent?.includes('灯影下的试探'));
+ const trial=()=>page.evaluate(()=>{Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='试写一集 · 免费')!.click();});await trial();await page.waitForFunction(()=>document.body.textContent?.includes('今日剩余 2 / 3'));
  await page.evaluate(()=>(globalThis as any).fixture.setModel('deepseek'));await trial();await page.waitForFunction(()=>document.body.textContent?.includes('今日剩余 1 / 3'));
  expect(await page.evaluate(()=>(globalThis as any).fixture.calls.map((r:any)=>r.model))).toEqual(['glm','deepseek']);
  expect(await page.evaluate(()=>JSON.parse(localStorage.getItem('mvs:episode-optimization:7:20000000-0000-4000-8000-000000000001')!).results.map((r:any)=>r.model))).toEqual(['glm','deepseek']);
