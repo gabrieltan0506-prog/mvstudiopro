@@ -123,3 +123,26 @@ it("所有创作阶段收到实际配比，不只展示在页面", () => {
     expect(prompt).toContain("不按字数或场次数机械切分");
   }
 });
+
+it("新方向重荐以当前稿为上下文，从既有审核库提供有依据的替代方案", () => {
+  const prompt = buildNovelTestPrompt(
+    {
+      ...input,
+      advisorIntent: "recommend_templates",
+      advisorMessage: "减少朝堂，增加江湖追查",
+      outline: "原来的政变大纲",
+      novel: "已经写好的小吏故事",
+    },
+    "已审核手法",
+    []
+  );
+  for (const value of [
+    "减少朝堂，增加江湖追查",
+    "原来的政变大纲",
+    "已经写好的小吏故事",
+    "并非新训练",
+    "相对原组合改善什么",
+    "不直接重写正文",
+  ])
+    expect(prompt).toContain(value);
+});

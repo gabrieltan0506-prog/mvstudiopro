@@ -217,3 +217,38 @@ it("创作配比接受50/25/20/5和零权重，拒绝超额、缺项、非整数
     novelTestInputSchema.parse({ ...input, modelPreference: "unknown" })
   ).toThrow();
 });
+
+it("重新选模板需要新方向，推荐必须为其他库内模板且数量完整", () => {
+  expect(() =>
+    novelTestInputSchema.parse({
+      ...input,
+      advisorIntent: "recommend_templates",
+    })
+  ).toThrow();
+  const request = novelTestInputSchema.parse({
+    ...input,
+    advisorIntent: "recommend_templates",
+    advisorMessage: "减少朝堂斗争，转向江湖追查",
+    selectedTemplateIds: ["old"],
+  });
+  const rec = (publicId: string) => ({
+    publicId,
+    reason: "具体改法",
+    tradeoff: "取舍",
+  });
+  for (const ids of [[], ["a"], ["old", "a", "b"], ["fake", "a", "b"]])
+    expect(() =>
+      validateNovelStageOutput(
+        request,
+        { assessment: "调整建议", recommendations: ids.map(rec) },
+        ["old", "a", "b", "c"]
+      )
+    ).toThrow();
+  expect(
+    validateNovelStageOutput(
+      request,
+      { assessment: "调整建议", recommendations: ["a", "b", "c"].map(rec) },
+      ["old", "a", "b", "c"]
+    )
+  ).toBeTruthy();
+});

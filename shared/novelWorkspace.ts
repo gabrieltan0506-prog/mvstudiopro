@@ -43,6 +43,7 @@ export const novelTestInputSchema = z
     modelPreference: novelModelSchema.optional(),
     source: novelExcerptSchema.optional(),
     advisorMessage: text.max(2000).optional(),
+    advisorIntent: z.enum(["discussion", "recommend_templates"]).optional(),
     advisorHistory: z
       .array(
         z
@@ -63,6 +64,14 @@ export const novelTestInputSchema = z
   })
   .strict()
   .superRefine((v, c) => {
+    if (
+      v.advisorIntent === "recommend_templates" &&
+      (v.stage !== "advice" || !v.advisorMessage)
+    )
+      c.addIssue({
+        code: "custom",
+        message: "请描述新方向，再请顾问重新推荐模板",
+      });
     if (new Set(v.templates.map(t => t.publicId)).size !== v.templates.length)
       c.addIssue({ code: "custom", message: "模板不可重复" });
     if (
@@ -205,7 +214,10 @@ export function validateNovelStageOutput(
     const available = availableIds.filter(
       id => !input.selectedTemplateIds.includes(id)
     );
-    const expected = input.advisorMessage ? 0 : Math.min(3, available.length);
+    const expected =
+      input.advisorMessage && input.advisorIntent !== "recommend_templates"
+        ? 0
+        : Math.min(3, available.length);
     if (
       ids.length < expected ||
       new Set(ids).size !== ids.length ||

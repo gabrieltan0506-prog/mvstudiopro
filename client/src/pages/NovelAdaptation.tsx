@@ -311,7 +311,8 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
     stage: NovelTestInput["stage"],
     single?: string,
     chapterIndex = 1,
-    advisorMessage?: string
+    advisorMessage?: string,
+    advisorIntent?: NovelTestInput["advisorIntent"]
   ) => {
     if (disabled || running.current) return;
     setError("");
@@ -367,6 +368,7 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
           : {}),
         source,
         ...(advisorMessage ? { advisorMessage } : {}),
+        ...(advisorIntent ? { advisorIntent } : {}),
         ...(((stage === "advice" && advisorMessage) || stage === "outline") &&
         adviceRuns.length
           ? {
@@ -375,10 +377,17 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
           : {}),
         templates: choices,
         episodeCount: draft.episodeCount,
-        outline: stage === "advice" ? "" : draft.outlineApproved,
+        outline:
+          stage === "advice"
+            ? advisorIntent === "recommend_templates"
+              ? draft.outline
+              : ""
+            : draft.outlineApproved,
         novel:
           stage === "advice"
-            ? ""
+            ? advisorIntent === "recommend_templates"
+              ? currentNovel
+              : ""
             : stage === "chapter"
               ? draft.chapters.slice(0, chapterIndex - 1).join("\n\n")
               : draft.novelApproved,
@@ -726,8 +735,23 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
                 >
                   发送给顾问
                 </button>
+                <button
+                  className={`${button} ml-2`}
+                  disabled={disabled || !draft.advisorDraft?.trim()}
+                  onClick={() =>
+                    generate(
+                      "advice",
+                      undefined,
+                      1,
+                      draft.advisorDraft?.trim(),
+                      "recommend_templates"
+                    )
+                  }
+                >
+                  按新方向推荐模板
+                </button>
                 <p className="text-xs text-slate-400">
-                  回复会带上前文与当前模板分工。推荐不自动采用，选好后再生成提案。
+                  回复会带上前文与当前模板分工。故事线不满意时，写出新方向再点“按新方向推荐模板”；顾问会参考现有大纲与正文，推荐其他已审核模板，说明改变与取舍。原稿和配比保留，推荐不自动采用。
                 </p>
                 <h3 className="font-semibold">
                   可选模板 · 讨论不会自动更改选择
@@ -771,6 +795,13 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
             <p className="mt-3 text-sm text-slate-400">
               自己挑选或采用顾问推荐，最多5个；可单独生成，也可指定分工组合。
             </p>
+            <button
+              className={`${button} mt-3`}
+              disabled={disabled || templates.isFetching}
+              onClick={() => void templates.refetch()}
+            >
+              刷新模板库
+            </button>
             {templates.isError && (
               <div role="alert" className="mt-3 text-sm text-amber-200">
                 模板加载失败，已有选择保留。

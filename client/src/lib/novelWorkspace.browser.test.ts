@@ -14,7 +14,7 @@ const generate=async input=>{
  if(input.stage==='script')value={title:'补天',applications:input.templates.map(t=>({publicId:t.publicId,method:'选择带来代价',adaptation:'让守火人通过留下来承担救城的代价。',sceneKeys:['E1-S1']})),episodes:Array.from({length:input.episodeCount},(_,i)=>({index:i+1,title:'补天',opening:'天裂',payoff:'救人',hook:'余烬',scenes:[{key:'E'+(i+1)+'-S1',场景:'共同场景。'+(input.templates[0].publicId==='mt_0000'?'雪落城头。':'雨落城头。'),人物:'女娲与守火人。',妆容:'灰衣。',灯光:'火光。',氛围:'紧张。',对白:'女娲说：“把孩子先带出去，我来守住这里。”'}]}))};
  const result={model:input.modelPreference==='deepseek'?'deepseek/deepseek-v4.1-flash':'z-ai/glm-5.3-flashx',requestId:input.requestId,stage:input.stage,text:JSON.stringify(value),templateIds:input.templates.map(t=>t.publicId),inputSha256:'a'.repeat(64),resultSha256:'b'.repeat(64)};globalThis.receipts[input.requestId]=result;return result;
 };
-export const trpc={manhuaViralTemplate:{listApprovedPublic:{useQuery:()=>({data:{groups:[{items:cards}]},isLoading:false,isError:false})}},novelWorkspace:{generate:{useMutation:()=>({mutateAsync:generate})}},useUtils:()=>({novelWorkspace:{receipt:{fetch:async({requestId})=>globalThis.receipts[requestId]?.status?globalThis.receipts[requestId]:({status:globalThis.receipts[requestId]?'succeeded':'not_found',result:globalThis.receipts[requestId]})}}})};
+export const trpc={manhuaViralTemplate:{listApprovedPublic:{useQuery:()=>({data:{groups:[{items:cards}]},isLoading:false,isError:false,refetch:async()=>{globalThis.templateRefreshes=(globalThis.templateRefreshes||0)+1;return{};}})}},novelWorkspace:{generate:{useMutation:()=>({mutateAsync:generate})}},useUtils:()=>({novelWorkspace:{receipt:{fetch:async({requestId})=>globalThis.receipts[requestId]?.status?globalThis.receipts[requestId]:({status:globalThis.receipts[requestId]?'succeeded':'not_found',result:globalThis.receipts[requestId]})}}})};
 `;
 it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢复，墨菁传保持不变", async () => {
   const built = await build({
@@ -344,6 +344,21 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
       path: "../backend-work/novel-workspace/mobile.png",
       fullPage: true,
     });
+    const beforeReselect = await page.evaluate(() => JSON.parse(localStorage.getItem("mv-novel-lab-v2:1")!));
+    await click("刷新模板库");
+    expect(await page.evaluate(() => (globalThis as any).templateRefreshes)).toBe(1);
+    await page.$eval('[aria-label="回复顾问"]', el => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,"value")!.set!.call(el,"这条故事线不满意，减少朝堂，改为江湖追查。"); el.dispatchEvent(new Event("input",{bubbles:true})); });
+    await click("按新方向推荐模板");
+    await page.waitForFunction(() => !(document.querySelector('[aria-label="回复顾问"]') as HTMLTextAreaElement).disabled);
+    const reselect = await page.evaluate(() => (globalThis as any).calls.at(-1));
+    expect(reselect.advisorIntent).toBe("recommend_templates");
+    expect(reselect.advisorMessage).toContain("江湖追查");
+    expect(reselect.outline).toBe(beforeReselect.outline);
+    expect(reselect.novel).toContain(beforeReselect.chapters[0]);
+    const afterReselect = await page.evaluate(() => JSON.parse(localStorage.getItem("mv-novel-lab-v2:1")!));
+    expect(afterReselect.templates).toEqual(beforeReselect.templates);
+    expect(afterReselect.chapters).toEqual(beforeReselect.chapters);
+    expect(afterReselect.outline).toBe(beforeReselect.outline);
     await page.select('[aria-label="创作模型"]', "glm");
     await click("请创作顾问建议方向与模板");
     await page.waitForFunction(
@@ -363,6 +378,7 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
       75, 25,
     ]);
     await click("以这版继续讨论与创作");
+    await page.type('[aria-label="回复顾问"]', "沿用这版继续讨论");
     await click("发送给顾问");
     await page.waitForFunction(
       () =>

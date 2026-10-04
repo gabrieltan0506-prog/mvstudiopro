@@ -44,15 +44,17 @@ export function buildNovelTestPrompt(
           "顾问对话是用户与顾问的历史讨论。回应用户本轮问题，结合当前已选模板与分工解释具体用法、冲突和可替换方案；用户最新明确要求优先于顾问先前建议，顾问建议不等于用户已采用。保留用户明确指定的世界规则、人物能力和道具来源，不擅自替换成模板或底本的设定。assessment展示结论、创作依据、取舍和待用户决定的问题，不输出内部思维过程。生成提案时落实用户在对话中的明确修正；已确认大纲与小说仍为后续写作基准。",
         ]
       : []),
-    input.stage === "advice" && input.advisorMessage
-      ? "本轮是继续讨论。优先回答用户具体问题并说明已选模板的分工，不强行换掉已有推荐；不需要新增推荐时recommendations返回空数组，需要替换或补充时仅给出真实可用且尚未选的模板。"
-      : input.stage === "advice"
-        ? "从完整可用手法目录选择3–5个不同模板，排除用户已选；不足3个时如实推荐剩余全部，不能编造或用目录前几项敷衍。理由必须指出一种具体手法如何服务当前人物动机、在哪个转折使用以及取舍；不能只重复题材标签。给出改编提案建议，不自动采用。"
-        : input.stage === "outline"
-          ? `只生成 ${input.episodeCount} 集的可编辑提案，不生成小说或剧本。`
-          : input.stage === "chapter"
-            ? `只写第 ${input.chapterIndex} 章，遵守已确认大纲。其余小说是已确认前文，不改写、不重复；人物身份与因果必须衔接。不得一次写完整部。`
-            : `严格以用户已确认小说为事实和事件基准，生成 ${input.episodeCount} 集完整可拍剧本。模板可改变表现手法，不改小说人物身份、关键事件与因果。同一事件用稳定场次key（E1-S1等）便于对照，不虚构已确认事实。applications必须覆盖本次每个模板，具体说明方法怎样落到已生成场次；sceneKeys只能引用本次真实场次。`,
+    input.stage === "advice" && input.advisorIntent === "recommend_templates"
+      ? "用户对现有故事线不满意并提出新方向，请从全部已审核的可用模板中重新推荐3–5个替代方案，排除当前已选模板；新指本次换用，并非新训练或按入库日期挑选。目录不足3个时推荐全部真实剩余，不编造。先结合当前大纲/正文与用户意见指出不满意之处及调整后的因果走向；每个reason具体说明该模板哪种已核验手法可怎样改变当前故事、相对原组合改善什么，tradeoff说明可能损失的效果或冲突。不承诺必然更好，不机械套原模板情节。只给建议与替代方案，不直接重写正文、换掉已选模板或调整配比；未要求改变的人物与世界设定保留。"
+      : input.stage === "advice" && input.advisorMessage
+        ? "本轮是继续讨论。优先回答用户具体问题并说明已选模板的分工，不强行换掉已有推荐；不需要新增推荐时recommendations返回空数组，需要替换或补充时仅给出真实可用且尚未选的模板。"
+        : input.stage === "advice"
+          ? "从完整可用手法目录选择3–5个不同模板，排除用户已选；不足3个时如实推荐剩余全部，不能编造或用目录前几项敷衍。理由必须指出一种具体手法如何服务当前人物动机、在哪个转折使用以及取舍；不能只重复题材标签。给出改编提案建议，不自动采用。"
+          : input.stage === "outline"
+            ? `只生成 ${input.episodeCount} 集的可编辑提案，不生成小说或剧本。`
+            : input.stage === "chapter"
+              ? `只写第 ${input.chapterIndex} 章，遵守已确认大纲。其余小说是已确认前文，不改写、不重复；人物身份与因果必须衔接。不得一次写完整部。`
+              : `严格以用户已确认小说为事实和事件基准，生成 ${input.episodeCount} 集完整可拍剧本。模板可改变表现手法，不改小说人物身份、关键事件与因果。同一事件用稳定场次key（E1-S1等）便于对照，不虚构已确认事实。applications必须覆盖本次每个模板，具体说明方法怎样落到已生成场次；sceneKeys只能引用本次真实场次。`,
     "组合模板须按分工协作；冲突以已确认方向、提案、小说为准，不堆叠互斥设定。",
     ...(input.templates.some(t => t.weight !== undefined)
       ? [
@@ -82,7 +84,11 @@ export async function executeNovelTest(
   templates: string,
   catalog: { publicId: string }[],
   call: NovelStageCall,
-  saveRaw: (r: { text: string; model: string; settings?: NovelGenerationSettings }) => Promise<void>
+  saveRaw: (r: {
+    text: string;
+    model: string;
+    settings?: NovelGenerationSettings;
+  }) => Promise<void>
 ) {
   const response = await call(
     buildNovelTestPrompt(input, templates, catalog),
