@@ -1,199 +1,283 @@
 import { useState } from "react";
-import { NOVEL_FACETS, novelScriptSchema } from "@shared/novelWorkspace";
+import { PencilLine, ArrowRight } from "lucide-react";
+import {
+  NOVEL_FACETS,
+  novelScriptSchema,
+  novelModelLabel,
+} from "@shared/novelWorkspace";
 import { compareScriptSentences } from "@/lib/manhuaSentenceDiff";
 import { scriptBaseline, type NovelRun } from "@/lib/novelWorkspace";
 const colors = [
-  "text-cyan-200 bg-cyan-950/50",
-  "text-violet-200 bg-violet-950/50",
-  "text-pink-200 bg-pink-950/50",
-  "text-yellow-200 bg-yellow-950/50",
-  "text-emerald-200 bg-emerald-950/50",
-  "text-orange-200 bg-orange-950/50",
+  "novel-diff-scene",
+  "novel-diff-person",
+  "novel-diff-look",
+  "novel-diff-light",
+  "novel-diff-mood",
+  "novel-diff-dialogue",
 ];
-export function NovelTemplateComparison({ runs }: { runs: NovelRun[] }) {
-  const [selected, setSelected] = useState(0),
-    [pulse, setPulse] = useState(0);
-  const [flash, setFlash] = useState(true);
+export function NovelTemplateComparison({
+  runs,
+  onAdopt,
+  onEdit,
+  disabled,
+}: {
+  runs: NovelRun[];
+  onAdopt?: (run: NovelRun) => void;
+  onEdit?: (run: NovelRun) => void;
+  disabled?: boolean;
+}) {
+  const [groupIndex, setGroupIndex] = useState(0);
+  const [leftId, setLeftId] = useState("");
+  const [rightId, setRightId] = useState("");
+  const [episode, setEpisode] = useState(0);
+  const [flash, setFlash] = useState(false);
   const scripts = runs.filter(r => r.input.stage === "script");
   const groups = Array.from(new Set(scripts.map(r => scriptBaseline(r.input))));
-  const group = groups[Math.min(selected, Math.max(0, groups.length - 1))];
+  const group = groups[Math.min(groupIndex, Math.max(0, groups.length - 1))];
   const variants = scripts
     .filter(r => scriptBaseline(r.input) === group)
     .map(r => ({
       ...r,
       script: novelScriptSchema.parse(JSON.parse(r.result.text)),
     }));
-  const [facet, setFacet] = useState<(typeof NOVEL_FACETS)[number]>("场景");
-  const baseline = variants[0]?.script;
-  if (!baseline)
+  if (!variants.length)
     return (
-      <p className="text-sm text-slate-400">
-        确认小说后，分别生成模板候选，再按同一份小说对照。
+      <p className="novel-notice">
+        确认小说后生成候选剧本，再按同一份小说对照。
       </p>
     );
-  const keys = Array.from(
+  const left = variants.find(r => r.result.requestId === leftId) || variants[0];
+  const right =
+    variants.find(
+      r =>
+        r.result.requestId === rightId &&
+        r.result.requestId !== left.result.requestId
+    ) || variants.find(r => r.result.requestId !== left.result.requestId);
+  const shown = right ? [left, right] : [left];
+  const episodeIds = Array.from(
+    new Set(shown.flatMap(r => r.script.episodes.map(ep => ep.index)))
+  ).sort((a, b) => a - b);
+  const currentEpisode = episodeIds.includes(episode) ? episode : episodeIds[0];
+  const baseline = left.script.episodes.find(ep => ep.index === currentEpisode);
+  const scenes = Array.from(
     new Set(
-      variants.flatMap(v =>
-        v.script.episodes.flatMap(ep =>
-          ep.scenes.map(s => `${ep.index}|${s.key}`)
-        )
+      shown.flatMap(
+        r =>
+          r.script.episodes
+            .find(ep => ep.index === currentEpisode)
+            ?.scenes.map(s => s.key) || []
       )
     )
   );
+  const versionLabel = (r: NovelRun) =>
+    r.input.templates
+      .map(
+        t =>
+          `${t.publicId.replace(/^mt_/, "").toUpperCase()}${t.weight === undefined ? "" : ` ${t.weight}%`}`
+      )
+      .join(" / ");
   return (
-    <section aria-label="模板比较">
-      <details className="mb-4 rounded-xl border border-white/15 p-3" open>
-        <summary className="cursor-pointer text-sm font-semibold">模板方法如何用进剧本</summary>
-        <p className="mt-2 text-xs text-slate-400">这是生成时的运用说明，请结合下方场次核对实际效果。</p>
-        <div className="mt-3 grid gap-3 md:grid-cols-2">
-          {variants.map(v => <div key={v.result.requestId} className="min-w-0 rounded-lg bg-white/5 p-3 text-sm">
-            <p className="font-medium">{v.input.templates.map(t => t.publicId.replace(/^mt_/, "").toUpperCase()).join(" + ")}</p>
-            {v.script.applications?.length ? v.script.applications.map((a, i) => <div key={i} className="mt-3 border-t border-white/10 pt-2">
-              <p className="text-amber-200">{a.publicId.replace(/^mt_/, "").toUpperCase()} · {a.method}</p>
-              <p className="mt-1 leading-6 text-slate-200">{a.adaptation}</p>
-              <p className="mt-1 text-xs text-slate-400">对应场次：{a.sceneKeys.join("、")}</p>
-            </div>) : <p className="mt-2 text-xs text-slate-400">这份已保存的剧本未记录方法运用说明。</p>}
-          </div>)}
-        </div>
-      </details>
-      <style>{`@keyframes novel-difference{0%,100%{outline-color:transparent}50%{outline-color:currentColor}}.novel-difference{outline:2px solid transparent;animation:novel-difference 1.4s ease-in-out 2}@media(prefers-reduced-motion:reduce){.novel-difference{animation:none}}`}</style>
-      <label>
-        比较批次
-        <select
-          className="ml-2 bg-slate-900 p-2"
-          value={selected}
-          onChange={e => setSelected(Number(e.target.value))}
-        >
-          {groups.map((_, i) => (
-            <option key={i} value={i}>
-              小说版本 {i + 1}
-            </option>
+    <section aria-label="模板比较" className="novel-comparison">
+      <div className="novel-comparison-controls">
+        {groups.length > 1 && (
+          <label>
+            小说批次{" "}
+            <select
+              aria-label="比较批次"
+              value={Math.min(groupIndex, groups.length - 1)}
+              onChange={e => {
+                setGroupIndex(Number(e.target.value));
+                setEpisode(0);
+              }}
+            >
+              {groups.map((_, i) => (
+                <option key={i} value={i}>
+                  小说版本 {i + 1}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <div className="novel-episode-tabs" aria-label="比较集数">
+          {episodeIds.map(i => (
+            <button
+              key={i}
+              aria-pressed={currentEpisode === i}
+              onClick={() => setEpisode(i)}
+            >
+              第{i}集
+            </button>
           ))}
-        </select>
-      </label>
-      <p className="my-3 text-xs text-slate-400">
-        仅比较同轮次、同底本、同方向、同一份已确认小说。第一列为文字基准；高亮表示文字变化，不能代替语义或质量审查。不同场次编号另列，避免错位比较。
-      </p>
-      <div className="flex flex-wrap gap-2">
-        {NOVEL_FACETS.map((f, i) => (
-          <button
-            key={f}
-            aria-pressed={facet === f}
-            className={`rounded px-3 py-2 ${colors[i]}`}
-            onClick={() => {
-              setFacet(f);
-              setPulse(p => p + 1);
-            }}
-          >
-            {f}
-          </button>
-        ))}
-        <label className="p-2 text-xs">
+        </div>
+        <label className="novel-caption">
           <input
             type="checkbox"
             checked={flash}
             onChange={e => setFlash(e.target.checked)}
-          />
+          />{" "}
           差异短暂闪烁
         </label>
       </div>
-      <div className="mt-4 overflow-x-auto">
-        <table className="w-full border-collapse text-sm">
-          <thead>
-            <tr>
-              <th className="p-3">集次 / 场次</th>
-              {variants.map((v, i) => (
-                <th key={v.result.requestId} className="min-w-72 p-3 align-top">
-                  {i + 1}. {v.input.templates.map(t => t.publicId).join(" + ")}
-                  <p className="mt-1 text-xs font-normal">
-                    {v.input.templates.map(t => t.role).join(" / ")}
-                  </p>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {baseline.episodes.map(ep => (
-              <tr key={`hook${ep.index}`}>
-                <th className="p-3">第{ep.index}集 · 留人检查</th>
-                {variants.map(v => {
-                  const e = v.script.episodes.find(x => x.index === ep.index);
-                  return (
-                    <td
-                      key={v.result.requestId}
-                      className="border border-white/10 p-3 align-top"
-                    >
-                      开场：{e?.opening}
-                      <br />
-                      兑现：{e?.payoff}
-                      <br />
-                      追看：{e?.hook}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-            {keys.map(key => {
-              const [ep, keyId] = key.split("|");
-              const base =
-                baseline.episodes
-                  .find(e => e.index === Number(ep))
-                  ?.scenes.find(s => s.key === keyId)?.[facet] || "";
-              return (
-                <tr key={`${key}:${facet}`}>
-                  <th className="p-3">
-                    第{ep}集<br />
-                    {keyId}
-                    <br />
-                    {facet}
-                  </th>
-                  {variants.map((v, i) => {
-                    const value =
-                      v.script.episodes
-                        .find(e => e.index === Number(ep))
-                        ?.scenes.find(s => s.key === keyId)?.[facet] || "";
-                    return (
-                      <td
-                        key={v.result.requestId}
-                        className="whitespace-pre-wrap border border-white/10 p-3 align-top leading-7"
-                      >
-                        {i === 0 ? (
-                          <span className="text-slate-200">
-                            {value || "此版无该场次"}
+      <p className="novel-caption mb-4">
+        相同文字保持原色；变化按场景、人物、妆容、灯光、氛围、对白标注。高亮仅表示文字变化，不代表质量高低。
+      </p>
+      <div
+        className={`novel-compare-columns ${right ? "" : "novel-single-version"}`}
+      >
+        {shown.map((v, column) => {
+          const ep = v.script.episodes.find(e => e.index === currentEpisode);
+          return (
+            <article
+              className="novel-version"
+              key={v.result.requestId}
+              aria-label={`候选剧本 ${column === 0 ? "A" : "B"}`}
+            >
+              <header className="novel-version-header">
+                <div>
+                  <h3>版本 {column === 0 ? "A" : "B"}</h3>
+                  <select
+                    aria-label={`对照版本 ${column === 0 ? "A" : "B"}`}
+                    value={v.result.requestId}
+                    onChange={e =>
+                      column === 0
+                        ? setLeftId(e.target.value)
+                        : setRightId(e.target.value)
+                    }
+                  >
+                    {variants
+                      .filter(
+                        r =>
+                          column === 0 ||
+                          r.result.requestId !== left.result.requestId
+                      )
+                      .map(r => (
+                        <option
+                          key={r.result.requestId}
+                          value={r.result.requestId}
+                        >
+                          {versionLabel(r)} · 候选{variants.indexOf(r) + 1}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                {onEdit && (
+                  <button className="novel-button" onClick={() => onEdit(v)}>
+                    <PencilLine size={14} />
+                    编辑本版
+                  </button>
+                )}
+              </header>
+              <div className="novel-version-content">
+                <h4>
+                  第{currentEpisode}集 · {ep?.title || "此版未包含该集"}
+                </h4>
+                {ep && (
+                  <details className="novel-payoff">
+                    <summary>开场、兑现与追看点</summary>
+                    <p>开场：{ep.opening}</p>
+                    <p>兑现：{ep.payoff}</p>
+                    <p>追看：{ep.hook}</p>
+                  </details>
+                )}
+                {scenes.map(key => (
+                  <section className="novel-compare-scene" key={key}>
+                    <h5>场次 {key}</h5>
+                    {NOVEL_FACETS.map((facet, fi) => {
+                      const base =
+                        baseline?.scenes.find(s => s.key === key)?.[facet] ||
+                        "";
+                      const value =
+                        ep?.scenes.find(s => s.key === key)?.[facet] || "";
+                      const rows =
+                        column === 0 ? [] : compareScriptSentences(base, value);
+                      const changed =
+                        right !== undefined &&
+                        (column === 0
+                          ? base !==
+                            (right.script.episodes
+                              .find(e => e.index === currentEpisode)
+                              ?.scenes.find(s => s.key === key)?.[facet] || "")
+                          : value !== base);
+                      return (
+                        <div
+                          className={`novel-facet ${changed ? colors[fi] : ""}`}
+                          key={facet}
+                        >
+                          <span className="novel-facet-label">
+                            {facet}
+                            {changed ? " · 有差异" : ""}
                           </span>
-                        ) : (
-                          compareScriptSentences(base, value).map((row, j) =>
-                            row.kind === "removed" ? (
-                              <span
-                                key={j}
-                                className="text-rose-200 line-through"
-                                title="该版删去"
-                              >
-                                {row.before}
-                              </span>
-                            ) : (
-                              <span
-                                key={`${j}:${pulse}`}
-                                className={
-                                  row.kind === "same"
-                                    ? "text-slate-200"
-                                    : `${colors[NOVEL_FACETS.indexOf(facet)]} ${flash ? "novel-difference" : ""}`
-                                }
-                              >
-                                {row.after}
-                              </span>
-                            )
-                          )
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                          <p>
+                            {column === 0
+                              ? value || "此版无该场次"
+                              : rows.map((row, i) =>
+                                  row.kind === "removed" ? (
+                                    <del key={i} title="本版删去">
+                                      {row.before}
+                                    </del>
+                                  ) : (
+                                    <span
+                                      key={`${i}:${flash}`}
+                                      className={
+                                        row.kind === "same"
+                                          ? "novel-same"
+                                          : `novel-changed ${flash ? "novel-difference" : ""}`
+                                      }
+                                    >
+                                      {row.after}
+                                    </span>
+                                  )
+                                )}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </section>
+                ))}
+                <details className="novel-applications">
+                  <summary>模板运用依据</summary>
+                  <p className="novel-caption">
+                    这是生成时的运用说明；修改后请以当前正文为准。
+                  </p>
+                  {v.script.applications?.map((a, i) => (
+                    <div key={i}>
+                      <h5>
+                        {a.publicId.replace(/^mt_/, "").toUpperCase()} ·{" "}
+                        {a.method}
+                      </h5>
+                      <p>{a.adaptation}</p>
+                      <small>对应场次：{a.sceneKeys.join("、")}</small>
+                    </div>
+                  ))}
+                  {!v.script.applications?.length && (
+                    <p>这份剧本未记录方法运用说明。</p>
+                  )}
+                  {v.result.model && (
+                    <small>{novelModelLabel(v.result.model)}</small>
+                  )}
+                </details>
+              </div>
+              {onAdopt && (
+                <footer>
+                  <button
+                    className="novel-button novel-primary"
+                    disabled={disabled}
+                    onClick={() => onAdopt(v)}
+                  >
+                    采用此版，接入当前漫剧
+                    <ArrowRight size={16} />
+                  </button>
+                </footer>
+              )}
+            </article>
+          );
+        })}
       </div>
+      {!right && (
+        <p className="novel-notice">
+          当前只有一版。可直接编辑采用，也可调整模板后生成另一版比较。
+        </p>
+      )}
     </section>
   );
 }

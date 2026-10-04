@@ -12,6 +12,11 @@ import type { PublicManhuaViralTemplateCard } from "@shared/manhuaViralTemplateB
 const cards: PublicManhuaViralTemplateCard[] = ["反应与停顿", "声音牵引"].map(
   (style, index) => ({
     publicId: `mt_a12${index}`,
+    methodBrief: {
+      title: style,
+      highlights: [`${style}：火光与门外脚步共同制造逼近感。`],
+      useWhen: "适合受限空间里的对峙。",
+    },
     nameZh: `紧张·创作模板 A12${index}`,
     laneZh: "悬疑权谋",
     classificationTagsZh: ["紧张"],
@@ -51,7 +56,7 @@ describe("模板选择整理", () => {
     ).toEqual(["mt_a121"]);
     expect(templateChoiceLabel(cards[0]!)).toContain("反应与停顿");
   });
-  it("列表只展开当前选定大纲，另一份不被隐藏在DOM中", () => {
+  it("列表直接呈现具体视听方法，不再推销故事套路", () => {
     const html = renderToStaticMarkup(
       createElement(ManhuaTemplatePicker, {
         cards,
@@ -62,7 +67,8 @@ describe("模板选择整理", () => {
         onAskAdvisor: () => {},
       })
     );
-    expect(html).toContain("故事梗概0");
+    expect(html).not.toContain("故事梗概0");
+    expect(html).toContain("火光与门外脚步");
     expect(html).not.toContain("故事梗概1");
     expect(html).toContain("试写与正式应用");
     expect(html).not.toContain("200 拍");

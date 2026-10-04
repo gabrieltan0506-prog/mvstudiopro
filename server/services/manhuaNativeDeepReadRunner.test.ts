@@ -5349,6 +5349,8 @@ describe("0905 · 整形 JSON Schema（Qwen strict）", () => {
     expect(schema.properties.excludedAdRanges.type).toBe("array");
     expect(Object.keys(schema.properties.classificationProseZh)).toContain("properties");
     expect(schema.properties.templateTitleZh.type).toBe("string");
+    expect(schema.properties.methodBrief.type).toBe("object");
+    expect(schema.required).toContain("methodBrief");
     expect(schema.properties.shots.items?.properties).toHaveProperty("craftReadZh");
     expect(schema.required).toContain("shots");
     for (const key of ["reusableZh", "genPromptHintZh"]) {

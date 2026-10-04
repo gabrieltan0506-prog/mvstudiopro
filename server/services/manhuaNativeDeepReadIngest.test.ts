@@ -1,3 +1,5 @@
+import { buildManhuaTemplateMethodBrief } from "./manhuaTemplateMethodBrief";
+import { parseManhuaViralTemplateCard } from "../../shared/manhuaViralTemplateBank";
 import { describe, expect, it } from "vitest";
 import {
   NATIVE_DEEP_READ_MIN_SHOTS,
@@ -457,4 +459,15 @@ describe("0906 空摘要不可入库", () => {
       });
     }
   }
+});
+
+it("新增未在84份表中的模板，学习说明随入库往返并可更新，不沿用旧版本",()=>{
+ const brief={title:"声场与门外空间",highlights:["脚步由远及近，让看不见的人物逼近。","火光变弱配合侧脸反应，保留未说出的防备。"],useWhen:"等待与探查场面。"};
+ const card=buildNativeDeepReadProposalCard({...baseInput,result:makeResult({methodBrief:brief})})!;
+ const approved=parseManhuaViralTemplateCard({...card,status:"approved",publicCode:"NEW999"})!;
+ expect(buildManhuaTemplateMethodBrief(approved)).toEqual(brief);
+ expect(buildManhuaTemplateMethodBrief({...approved,reusableZh:"换了一份新证据"})).toBeUndefined();
+ const changed={...brief,title:"空间与光影变化"};
+ const updated=buildNativeDeepReadProposalCard({...baseInput,result:makeResult({methodBrief:changed,reusableZh:"换了一份新证据"})})!;
+ expect(buildManhuaTemplateMethodBrief({...updated,status:"approved",publicCode:"NEW999"})?.title).toBe(changed.title);
 });

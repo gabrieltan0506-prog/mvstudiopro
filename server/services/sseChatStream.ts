@@ -36,6 +36,8 @@ export async function readWithIdleTimeout<T>(
  * 都会带着**半截正文**返回，下游看「有正文、JSON 能解析、节数够」就当成稿——这正是要堵的口子。
  */
 export type SseReadOptions = {
+  /** Persist a completed stream aggregate before finish-reason validation (including exhausted budgets). */
+  onComplete?: (raw: string) => Promise<void>;
   /** Durable activity hook, called only after bytes arrive. */
   onBytes?: (bytes: number) => Promise<void>;
   /** 断流一律判失败（抛错→网关层换下一跳），不把半截正文当成功 */
@@ -203,6 +205,13 @@ export async function readGlmSseStream(
     // 超限抛错时若不释放，这条响应体永远读不完、连接不归池（审查 P1）。
     await reader.cancel().catch(() => undefined);
   }
+  const raw = JSON.stringify({
+    model: model || undefined,
+    provider: provider || undefined,
+    choices: [{ message: { content }, finish_reason: finishReason }],
+    usage,
+  });
+  await options.onComplete?.(raw);
   if (!content && parseFailures > 0) {
     throw new Error(`GLM 链流式响应无法解析（${parseFailures} 帧解析失败）`);
   }
@@ -226,12 +235,7 @@ export async function readGlmSseStream(
       throw incomplete("上游流非正常结束", `finish_reason=${finishReason}`);
     }
   }
-  return JSON.stringify({
-    model: model || undefined,
-    provider: provider || undefined,
-    choices: [{ message: { content }, finish_reason: finishReason }],
-    usage,
-  });
+  return raw;
 }
 
 /**

@@ -1,3 +1,5 @@
+import { TEMPLATE_METHOD_BRIEF_INSTRUCTION } from "../../shared/manhuaTemplateMethodBrief";
+import { attachLearnedMethodBrief } from "./manhuaTemplateMethodBrief";
 import crypto from "node:crypto";
 import { MANHUA_NATIVE_GLM_REASONING_EFFORT } from "../../shared/manhuaNativeDeepReadJob.js";
 import os from "node:os";
@@ -263,7 +265,8 @@ function buildAggregationPrompt(payloadJson: string): { system: string; user: st
 5. 证据不足就删掉，不得猜；每个文本字段用客观陈述句。
 6. 分集证据中 evidenceRole=non_story_ad 的镜头，以及任何与剧情无关的商业广告、贴片、带货、商品展示、品牌口播和商业推广/营销性内容（关注引导、点赞催更、解锁下集、平台导流、二维码等）：一律不得纳入聚合结果的任何字段（beatGrid、classification、storyStructure、reusableZh、genPromptHintZh、scenePoolHints 均不得引用）；发现输入卡残留广告内容时直接剔除，不得改写后保留。`,
     user: `请把以下同一剧目的全部分集快照重新聚合成一张系列模板。后续新增分集时会传入全部旧卡与新卡，必须基于全量重新计算，不得只追加最后一批。
-输出字段：
+${TEMPLATE_METHOD_BRIEF_INSTRUCTION}
+输出字段（另含methodBrief）：
 {
   "nameZh":"中性且有辨识度的模板名",
   "summaryZh":"这套结构适合解决什么故事问题",
@@ -671,7 +674,7 @@ function buildSeriesCard(input: {
   }
   if (!card.storyStructure) throw new Error("系列聚合结果缺少完整故事骨架");
   if (card.beatGrid.length < 6) throw new Error("系列聚合结果的通用节拍不足 6 拍");
-  return card;
+  return attachLearnedMethodBrief(card, raw.methodBrief);
 }
 
 /** 仅供契约测试验证系列卡不会在最后组装时静默丢分集来源。 */

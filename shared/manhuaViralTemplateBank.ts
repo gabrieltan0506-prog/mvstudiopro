@@ -1,3 +1,4 @@
+import { parseTemplateMethodBrief } from "./manhuaTemplateMethodBrief";
 import { buildTemplateCraftProfile, formatTemplateCraftApplication, type TemplateCraftProfile } from "./manhuaTemplateCraft";
 import { isNativeStructuredCardObjectName } from "./manhuaNativeStructuredCard.js";
 /**
@@ -273,6 +274,8 @@ export function isNativeVideoLearnedTemplate(
 }
 
 export type ManhuaViralTemplateCard = {
+  publicMethodBrief?: ManhuaTemplateMethodBrief;
+  methodBriefEvidenceSha256?: string;
   id: string;
   /** UI 短名（中性，不写竞品剧名） */
   nameZh: string;
@@ -549,6 +552,8 @@ export function parseManhuaViralTemplateCard(raw: unknown): ManhuaViralTemplateC
     nameZh: nameZh.slice(0, 32),
     laneZh,
     classification,
+    publicMethodBrief: parseTemplateMethodBrief(o.publicMethodBrief),
+    methodBriefEvidenceSha256: /^[a-f0-9]{64}$/.test(String(o.methodBriefEvidenceSha256 || "")) ? String(o.methodBriefEvidenceSha256) : undefined,
     storyStructure: parseManhuaTemplateStoryStructure(o.storyStructure),
     summaryZh: String(o.summaryZh || "").trim().slice(0, 120),
     hook3sZh: String(o.hook3sZh || "").trim().slice(0, 200),
@@ -726,7 +731,10 @@ export type ManhuaTemplateStoryPreview = {
   presentationTagsZh: string[];
 };
 
+export type ManhuaTemplateMethodBrief = { title: string; highlights: string[]; useWhen: string };
+
 export type PublicManhuaViralTemplateCard = {
+  methodBrief?: ManhuaTemplateMethodBrief;
   craft?: TemplateCraftProfile;
   /** 稳定公开句柄：`mt_${publicCode 小写}`；扩写入参可直接用它选模板 */
   publicId: string;
@@ -759,6 +767,7 @@ export function toPublicManhuaViralTemplateCard(
   card: ManhuaViralTemplateCard,
   copy?: { featureZh?: string; introZh?: string } | null,
   storyPreview?: ManhuaTemplateStoryPreview,
+  methodBrief?: ManhuaTemplateMethodBrief,
 ): PublicManhuaViralTemplateCard | null {
   const code = String(card.publicCode || "").trim();
   if (!/^[A-Z0-9]{4,16}$/.test(code)) return null;
@@ -775,9 +784,10 @@ export function toPublicManhuaViralTemplateCard(
     : [String(card.laneZh || "未分类").trim() || "未分类"];
   const primary = classificationTagsZh[0]!;
   return {
+    ...(methodBrief ? {methodBrief: {title: methodBrief.title.slice(0, 80), highlights: methodBrief.highlights.slice(0, 8).map(h => h.slice(0, 300)), useWhen: methodBrief.useWhen.slice(0, 200)}} : {}),
     publicId: makePublicTemplateId(code),
     craft: buildTemplateCraftProfile(card),
-    nameZh: `${primary}·创作模板 ${code}`,
+    nameZh: methodBrief ? `${methodBrief.title} ${code}` : `${primary}·创作模板 ${code}`,
     laneZh: card.laneZh,
     classificationTagsZh,
     beatCount: Array.isArray(card.beatGrid) ? card.beatGrid.length : 0,

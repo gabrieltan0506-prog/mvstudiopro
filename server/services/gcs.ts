@@ -232,7 +232,7 @@ export async function uploadBufferToGcs(params: {
    * 用于“读旧版 → 补字段 → 写回”流程，避免把并发产生的新版本覆盖掉。
    */
   ifGenerationMatch?: string;
-}): Promise<{ bucket: string; objectName: string; gcsUri: string }> {
+}): Promise<{ bucket: string; objectName: string; gcsUri: string; generation?: string }> {
   params.signal?.throwIfAborted();
   const bucket = params.bucket || getGcsBucketName();
   if (!bucket) {
@@ -273,6 +273,7 @@ export async function uploadBufferToGcs(params: {
     bucket,
     objectName,
     gcsUri: `gs://${bucket}/${objectName}`,
+    generation: json?.generation ? String(json.generation) : undefined,
   };
 }
 
@@ -634,6 +635,8 @@ const GCS_LIST_MAX_ATTEMPTS = 3;
 export async function listGcsObjectNamesByPrefix(params: {
   prefix: string;
   maxResults?: number;
+  /** Follow every page for account-owned project indices. */
+  allPages?: boolean;
   bucket?: string;
   /**
    * true 时按调用方给出的文件名前缀原样查询，不自动补目录分隔符。
@@ -649,7 +652,7 @@ export async function listGcsObjectNamesByPrefix(params: {
     : normalizeObjectName(requestedPrefix.replace(/\/?$/, "/")).replace(/\/?$/, "/");
   // 上限 1000：原来钳到 500，而原生精读的集号范围是 1–999，
   // 一个系列超过 500 张卡后列举会截断，后面的集被当成「没跑过」重复付费。
-  const maxResults = Math.max(1, Math.min(1000, Math.floor(Number(params.maxResults) || 100)));
+  const maxResults = params.allPages ? Number.POSITIVE_INFINITY : Math.max(1, Math.min(1000, Math.floor(Number(params.maxResults) || 100)));
   const accessToken = await getVertexAccessToken();
   const userProject = getGcsUserProject();
   const names: string[] = [];

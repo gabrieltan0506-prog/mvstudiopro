@@ -1,3 +1,4 @@
+import { composeNovelSourceSelection } from "./novelSourceGuide";
 import { z } from "zod";
 
 export const NOVEL_SOURCE_MAX_CHARS = 400_000;
@@ -14,7 +15,7 @@ export const novelImportInfoSchema = z.object({
   warnings: z.array(z.string().max(100000)).max(20),
 }).strict();
 export type NovelImportInfo = z.infer<typeof novelImportInfoSchema>;
-export type ManhuaNovelDraft = { name: string; text: string; from: number; to: number; enabled: boolean; chapters?: NovelChapter[]; epubImageCount?: number; importInfo?: NovelImportInfo };
+export type ManhuaNovelDraft = { name: string; text: string; from: number; to: number; enabled: boolean; selections?: { from: number; to: number }[]; chapters?: NovelChapter[]; epubImageCount?: number; importInfo?: NovelImportInfo };
 export type NovelChapter = { title: string; start: number; end: number; line: number };
 
 /** Exact offsets into the original source: neither line endings nor preambles are discarded. */
@@ -55,7 +56,15 @@ export function parseNovelDraft(raw: unknown): ManhuaNovelDraft | null {
   }
   const chapters = novelDraftChapters({ text: p.text, chapters: p.chapters });
   if (!Number.isInteger(p.from) || !Number.isInteger(p.to) || p.from! < 0 || p.to! < p.from! || (chapters.length && p.to! >= chapters.length)) return null;
-  return { name: p.name, text: p.text, from: p.from!, to: p.to!, enabled: p.enabled === true, ...(importInfo?.success ? { importInfo: importInfo.data } : {}), ...(p.epubImageCount !== undefined ? { epubImageCount: p.epubImageCount } : {}), ...(p.chapters ? { chapters: p.chapters.map(c => ({ title: c.title, start: c.start, end: c.end, line: c.line })) } : {}) };
+  if (p.selections !== undefined) {
+    if (!Array.isArray(p.selections) || p.selections.length > 50) return null;
+    const used = new Set<number>();
+    for (const r of p.selections) {
+      if (!r || !Number.isInteger(r.from) || !Number.isInteger(r.to) || r.from < 0 || r.to < r.from || r.to >= chapters.length) return null;
+      for (let i = r.from; i <= r.to; i++) { if (used.has(i)) return null; used.add(i); }
+    }
+  }
+  return { name: p.name, text: p.text, from: p.from!, to: p.to!, enabled: p.enabled === true, ...(p.selections ? { selections: p.selections.map(r=>({from:r.from,to:r.to})) } : {}), ...(importInfo?.success ? { importInfo: importInfo.data } : {}), ...(p.epubImageCount !== undefined ? { epubImageCount: p.epubImageCount } : {}), ...(p.chapters ? { chapters: p.chapters.map(c => ({ title: c.title, start: c.start, end: c.end, line: c.line })) } : {}) };
 }
 
 export function prepareNovelExcerpt(draft: ManhuaNovelDraft): ManhuaNovelExcerpt | undefined {
@@ -64,10 +73,10 @@ export function prepareNovelExcerpt(draft: ManhuaNovelDraft): ManhuaNovelExcerpt
   const chapters = novelDraftChapters(draft);
   const first = chapters[draft.from], last = chapters[draft.to];
   if (!first || !last) throw new Error("请先导入小说原文并选择章节");
-  const text = draft.text.slice(first.start, last.end);
+  const text = draft.selections?.length ? composeNovelSourceSelection(draft) : draft.text.slice(first.start, last.end);
   if (text.trim().length < 80) throw new Error("本次原文不足80字，请选择完整章节");
   if (text.length > NOVEL_EXCERPT_MAX_CHARS) throw new Error("本次选段超过2万字，请缩小章节范围；不会截断原文");
-  return novelExcerptSchema.parse({ label: `${draft.name || "小说原文"} · 原文第${first.line}行至第${(draft.text.slice(0, last.end).match(/\n/g) || []).length + 1}行`, text });
+  return novelExcerptSchema.parse({ label: draft.selections?.length ? `${draft.name || "小说原文"} · ${draft.selections.length}个组合板块（范围见正文）` : `${draft.name || "小说原文"} · 原文第${first.line}行至第${(draft.text.slice(0, last.end).match(/\n/g) || []).length + 1}行`, text });
 }
 
 export function novelAdaptationPrompt(source?: ManhuaNovelExcerpt): string {

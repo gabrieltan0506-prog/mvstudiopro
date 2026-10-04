@@ -1,3 +1,4 @@
+import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";

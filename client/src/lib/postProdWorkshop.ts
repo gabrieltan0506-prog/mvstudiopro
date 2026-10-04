@@ -1,3 +1,4 @@
+import { currentManhuaProjectScope } from "@shared/manhuaProjectScope";
 /**
  * 后期工坊卡的纯逻辑层(可单测,不碰 React/DOM):
  * - 任务记录以服务端 jobs 为主来源,localStorage 仅作用户级显示缓存(按 uid 分 key);
@@ -48,7 +49,8 @@ const STATUSES: readonly string[] = ["queued", "running", "succeeded", "failed"]
 
 export function manhuaPostProdScopeKey(seriesTitle: string, episodeIndex: number, episodeBody: string): string {
   if (!seriesTitle.trim() || !episodeBody.trim()) return "";
-  const source = JSON.stringify([seriesTitle.trim(), Math.max(1, Math.floor(episodeIndex)), episodeBody.trim()]);
+  const scope=currentManhuaProjectScope();
+  const source = JSON.stringify([seriesTitle.trim(), Math.max(1, Math.floor(episodeIndex)), episodeBody.trim(), ...(scope ? [scope.projectId] : [])]);
   let first = 0x811c9dc5;
   let second = 0x9747b28c;
   for (let i = 0; i < source.length; i++) {

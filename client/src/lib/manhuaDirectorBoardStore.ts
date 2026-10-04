@@ -1,3 +1,4 @@
+import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
 /**
  * 集级导演分镜板本机持久化：长期只认 gcsUri，展示/出片前现签 HTTPS。
  */
@@ -30,7 +31,7 @@ function isHttpUrl(u: string): boolean {
 export function loadManhuaDirectorBoardMainByEpisode(): ManhuaDirectorBoardMainByEpisode {
   if (typeof window === "undefined") return {};
   try {
-    const raw = window.localStorage.getItem(LS_KEY);
+    const raw = localStorage.getItem(LS_KEY);
     if (!raw) return migrateV1IfPresent();
     return normalizeDirectorBoardMainByEpisode(JSON.parse(raw));
   } catch {
@@ -40,7 +41,7 @@ export function loadManhuaDirectorBoardMainByEpisode(): ManhuaDirectorBoardMainB
 
 function migrateV1IfPresent(): ManhuaDirectorBoardMainByEpisode {
   try {
-    const legacy = window.localStorage.getItem("mv-manhua-director-board-main-v1");
+    const legacy = localStorage.getItem("mv-manhua-director-board-main-v1");
     if (!legacy) return {};
     const map = normalizeDirectorBoardMainByEpisode(JSON.parse(legacy));
     if (Object.keys(map).length) saveManhuaDirectorBoardMainByEpisode(map);
@@ -97,7 +98,7 @@ export function saveManhuaDirectorBoardMainByEpisode(
         ...(isHttpUrl(url) ? { url } : {}),
       };
     }
-    window.localStorage.setItem(LS_KEY, JSON.stringify(serializable));
+    localStorage.setItem(LS_KEY, JSON.stringify(serializable));
   } catch {
     /* quota */
   }
@@ -142,7 +143,7 @@ export function normalizeDirectorBoardBySegment(raw: unknown): ManhuaDirectorBoa
 export function loadManhuaDirectorBoardBySegment(): ManhuaDirectorBoardBySegment {
   if (typeof window === "undefined") return {};
   try {
-    const raw = window.localStorage.getItem(LS_SEG_KEY);
+    const raw = localStorage.getItem(LS_SEG_KEY);
     return raw ? normalizeDirectorBoardBySegment(JSON.parse(raw)) : {};
   } catch {
     return {};
@@ -152,7 +153,7 @@ export function loadManhuaDirectorBoardBySegment(): ManhuaDirectorBoardBySegment
 export function saveManhuaDirectorBoardBySegment(map: ManhuaDirectorBoardBySegment): void {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(LS_SEG_KEY, JSON.stringify(normalizeDirectorBoardBySegment(map)));
+    localStorage.setItem(LS_SEG_KEY, JSON.stringify(normalizeDirectorBoardBySegment(map)));
   } catch {
     /* quota */
   }
@@ -226,7 +227,7 @@ export function markManhuaDirectorBoardOverlaysForReview(
 export function loadManhuaDirectorBoardOverlayBySegment(): ManhuaDirectorBoardOverlayBySegment {
   if (typeof window === "undefined") return {};
   try {
-    const raw = window.localStorage.getItem(LS_OVERLAY_KEY);
+    const raw = localStorage.getItem(LS_OVERLAY_KEY);
     return raw ? normalizeDirectorBoardOverlayBySegment(JSON.parse(raw)) : {};
   } catch {
     return {};
@@ -238,7 +239,7 @@ export function saveManhuaDirectorBoardOverlayBySegment(
 ): void {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(
+    localStorage.setItem(
       LS_OVERLAY_KEY,
       JSON.stringify(normalizeDirectorBoardOverlayBySegment(map)),
     );

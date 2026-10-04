@@ -1,3 +1,4 @@
+import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
 import { formatManhuaWriterPackMarkdown, type ManhuaWriterPack } from "@shared/manhuaWriterRoom";
 import type { ManhuaProjectBible } from "@shared/manhuaProjectBible";
 import { buildManhuaWriterSession, MANHUA_WRITER_SESSION_LS_KEY, serializeManhuaWriterSession } from "@shared/manhuaWriterSession";

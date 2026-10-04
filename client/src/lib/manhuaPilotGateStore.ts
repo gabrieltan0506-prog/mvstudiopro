@@ -1,3 +1,4 @@
+import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
 import {
   normalizeManhuaPilotGateStore,
   type ManhuaPilotGateStore,

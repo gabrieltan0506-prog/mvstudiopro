@@ -1,3 +1,4 @@
+import { buildManhuaTemplateMethodBrief } from "../services/manhuaTemplateMethodBrief";
 import { NATIVE_REPORT_THEME_CHOICES } from "../../shared/manhuaNativeReportThemeChoice.js";
 import { MANHUA_VIRAL_TEMPLATE_OPTIMIZE_REQUEST_MODELS } from "@shared/manhuaViralTemplateBank";
 /**
@@ -134,6 +135,7 @@ export const manhuaViralTemplateRouter = router({
                       { ...c, publicCode },
                       MANHUA_VIRAL_TEMPLATE_COPY[c.id],
                       buildManhuaTemplateStoryPreview({ ...c, publicCode }),
+                      buildManhuaTemplateMethodBrief({ ...c, publicCode }),
                     )
                   : null;
                 if (!pub) {

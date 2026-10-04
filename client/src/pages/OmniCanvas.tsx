@@ -1,3 +1,7 @@
+import { ManhuaLocalRecovery } from "@/components/ManhuaLocalRecovery";
+import { clearDraftBaseGeneration, isCloudDraftConflict, readDraftBaseGeneration, saveDraftBaseGeneration } from "@/lib/manhuaDraftRecovery";
+import { currentManhuaProjectScope, parseManhuaProjectScope } from "@shared/manhuaProjectScope";
+import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
 import { ManhuaNovelSourcePanel } from "@/components/canvas/ManhuaNovelSourcePanel";
 import { prepareNovelExcerpt, type ManhuaNovelDraft } from "@shared/manhuaNovelSource";
 import { maskMediaProviderDetails } from "@/lib/maskMediaUrls";
@@ -400,6 +404,7 @@ import type { ManhuaCloudDraftPayload } from "@shared/manhuaCloudDraft";
 import {
   MANHUA_CLOUD_DRAFT_SYNC_DEBOUNCE_MS,
   buildLocalCloudDraftSnapshot,
+  readLocalNovelOrigin,
   chooseManhuaDraftHydrate,
   cloudDraftBlocksToCanvas,
   mergeHydratedCanvasBlocks,
@@ -572,7 +577,7 @@ function loadCanvasWorkspaceMode(): CanvasWorkspaceMode {
    * 0903 用户令：/canvas 一律先落双入口选择页，漫剧工厂/自由画布由用户自己点，
    * 不再按历史记录或本机存档直达（作废 2026-08-11 的直达旧规）。
    */
-  return "pick";
+  return currentManhuaProjectScope() ? "manhua" : "pick";
 }
 
 type FactoryCharacterPrefs = {
@@ -712,6 +717,36 @@ function toManhuaAsset3dRef(task: Manhua3dTaskViewLike): ManhuaAsset3dRef {
 }
 
 export default function OmniCanvas() {
+  const { user, loading } = useAuth({ redirectOnUnauthenticated: false });
+  let scope;
+  try { scope = parseManhuaProjectScope(window.location.search); } catch (error) {
+    return <main className="p-8">{String(error)} <a href="/novel-adaptation">返回小说改编</a></main>;
+  }
+  if (scope && loading) return <main className="p-8">正在读取作品账号…</main>;
+  if (scope && String(user?.id) !== scope.ownerId) return <main className="p-8">请使用创建此作品的账号登录。<a href="/login">登录</a></main>;
+  if (JSON.stringify(scope) !== JSON.stringify(currentManhuaProjectScope())) {
+    // A full navigation gives pending writes their old namespace and the new page its own.
+    window.location.replace(window.location.href);
+    return <main className="p-8">正在切换作品…</main>;
+  }
+  return <><div className="flex justify-end bg-[#0e171e] px-5 py-2 text-white"><a href="/manhua-projects">我的漫剧 · 切换作品</a></div>{scope ? <ManhuaProjectLock key={`${scope.ownerId}:${scope.projectId}`} name={`mv-manhua-project:${scope.ownerId}:${scope.projectId}`}><OmniCanvasWorkspace /></ManhuaProjectLock> : <OmniCanvasWorkspace />}</>;
+}
+function ManhuaProjectLock({name,children}:{name:string;children:React.ReactNode}) {
+  const [status,setStatus]=useState<"waiting"|"ready"|"blocked">("waiting");
+  useEffect(()=>{let stopped=false;let release:()=>void=()=>{};
+    if(!navigator.locks){setStatus("blocked");return;}
+    void navigator.locks.request(name,{ifAvailable:true},async lock=>{
+      if(stopped)return;if(!lock){setStatus("blocked");return;}
+      setStatus("ready");await new Promise<void>(resolve=>{release=resolve});
+    }).catch(()=>{if(!stopped)setStatus("blocked")});
+    return()=>{stopped=true;release()};
+  },[name]);
+  if(status!=="ready")return <main className="p-8">{status==="waiting"?"正在打开作品…":"此作品可能已在另一页面中编辑，或浏览器无法取得编辑锁。请先保存并关闭该作品的其他页面，再重新打开。"}</main>;
+  return children;
+}
+function OmniCanvasWorkspace() {
+  const projectScope = currentManhuaProjectScope();
+  const cloudProjectInput = projectScope ? { projectId: projectScope.projectId } : undefined;
   const { user } = useAuth({ redirectOnUnauthenticated: false });
   const [supervisorAccess] = useState(() => hasSupervisorAccess());
   const canShowCanvasDebug =
@@ -773,6 +808,8 @@ export default function OmniCanvas() {
   const initialFactoryPrefs = useMemo(() => loadFactoryCharacterPrefs(), []);
   const initialWriterBoot = useMemo(() => bootWriterSession(), []);
   const initialWriterSession = initialWriterBoot.session;
+  const initialNovelOrigin = useMemo(() => initialWriterSession?.novelOrigin || readLocalNovelOrigin(), [initialWriterSession]);
+  const novelOriginRef = useRef(initialNovelOrigin);
 
   useEffect(() => {
     if (!initialWriterBoot.clearedLegacyPrivateTemplate) return;
@@ -850,7 +887,7 @@ export default function OmniCanvas() {
     if (typeof window === "undefined") return 0;
     try {
       return parseManhuaAssetStash(
-        window.localStorage.getItem(MANHUA_ASSET_STASH_STORAGE_KEY),
+        localStorage.getItem(MANHUA_ASSET_STASH_STORAGE_KEY),
       ).length;
     } catch {
       return 0;
@@ -1062,7 +1099,7 @@ export default function OmniCanvas() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [writerEpisodeCount, setWriterEpisodeCount] = useState(() =>
-    clampWriterEpisodeCount(initialWriterSession?.episodeCount ?? MANHUA_WRITER_EPISODE_DEFAULT),
+    Math.max(initialWriterSession?.writerPack?.episodes.length || 0, clampWriterEpisodeCount(initialWriterSession?.episodeCount ?? MANHUA_WRITER_EPISODE_DEFAULT)),
   );
   /** 扩写引擎档位：四档，默认优秀；前台只显示档名，不出现模型名 */
   const [writerExpandTierChoice, setWriterExpandTier] = useState<ManhuaWriterExpandTierId>("excellent");
@@ -2646,7 +2683,22 @@ export default function OmniCanvas() {
   /** 登录后云端草稿：与本机双通路，互不放弃 */
   const [cloudSyncReady, setCloudSyncReady] = useState(false);
   const cloudHydrateDoneRef = useRef(false);
-  const cloudDraftQuery = trpc.manhuaCloudDraft.get.useQuery(undefined, {
+  const [localRecoveryViewed, setLocalRecoveryViewed] = useState(false);
+  const [allowViewedDraftReplacement, setAllowViewedDraftReplacement] = useState(false);
+  const cloudGenerationRef = useRef<string | undefined>(undefined);
+  const cloudConflictRef = useRef(false);
+  const [cloudConflict, setCloudConflict] = useState(false);
+  const pauseConflictedDraft = useCallback(() => {
+    cloudConflictRef.current = true;
+    setCloudConflict(true);
+  }, []);
+  const acceptCloudGeneration = useCallback((generation?: string, persist = true) => {
+    if (!projectScope) return;
+    if (!generation || !/^\d+$/.test(generation)) throw new Error("云端版本回执缺失，已保留本机内容，请重新读取");
+    cloudGenerationRef.current = generation;
+    if (persist) saveDraftBaseGeneration(generation);
+  }, []);
+  const cloudDraftQuery = trpc.manhuaCloudDraft.get.useQuery(cloudProjectInput, {
     enabled: Boolean(user?.id),
     staleTime: 60_000,
     refetchOnWindowFocus: false,
@@ -2741,6 +2793,8 @@ export default function OmniCanvas() {
   const cloudDraftPrepareMutateRef = useRef(cloudDraftPrepareUpload.mutateAsync);
   const cloudDraftCommitMutateRef = useRef(cloudDraftCommitUpload.mutateAsync);
   const cloudDraftUpsertMutateRef = useRef(cloudDraftUpsert.mutate);
+  const cloudDraftUpsertAsyncRef=useRef(cloudDraftUpsert.mutateAsync);
+  cloudDraftUpsertAsyncRef.current=cloudDraftUpsert.mutateAsync;
   const cloudDraftSyncInFlightRef = useRef(false);
   cloudDraftPrepareMutateRef.current = cloudDraftPrepareUpload.mutateAsync;
   cloudDraftCommitMutateRef.current = cloudDraftCommitUpload.mutateAsync;
@@ -2749,6 +2803,7 @@ export default function OmniCanvas() {
   const syncCloudDraftPayload = useCallback(
     async (payload: ManhuaCloudDraftPayload): Promise<boolean> => {
       if (!user?.id) return false;
+      if (projectScope && (cloudConflictRef.current || !cloudGenerationRef.current)) return false;
       if (cloudDraftSyncInFlightRef.current) {
         pushDebug("cloudDraft:skip-in-flight", { level: "warn", detail: "上一笔云草稿仍在传" });
         return false;
@@ -2759,24 +2814,32 @@ export default function OmniCanvas() {
         throw new Error("备份超过容量限制，尚未上传；请先导出工程备份，已有视频和版本不会被删减");
       }
       cloudDraftSyncInFlightRef.current = true;
+      const writeInput = projectScope ? { ...cloudProjectInput, expectedGeneration: cloudGenerationRef.current } : cloudProjectInput;
       try {
         const direct = await uploadManhuaCloudDraftViaGcsDirect({
           userId: user.id,
           payload,
-          prepare: () => cloudDraftPrepareMutateRef.current(),
-          commit: () => cloudDraftCommitMutateRef.current(),
+          prepare: () => cloudDraftPrepareMutateRef.current(writeInput),
+          commit: uploadId => cloudDraftCommitMutateRef.current({ ...writeInput, uploadId }),
         });
         if (direct.ok) {
+          acceptCloudGeneration(direct.generation);
           // 云上传成功不代表本机各键已保存，不能替本机推进修订时间。
           pushDebug("cloudDraft:gcs-direct-ok", { level: "ok" });
           return true;
         }
+        if (direct.conflict) { pauseConflictedDraft(); return false; }
         pushDebug("cloudDraft:gcs-direct-fail", {
           level: "warn",
           detail: direct.error.slice(0, 120),
         });
+        if (projectScope) {
+          const receipt = await cloudDraftUpsertAsyncRef.current({ payloadJson, ...writeInput });
+          acceptCloudGeneration(receipt.generation);
+          return true;
+        }
         cloudDraftUpsertMutateRef.current(
-          { payloadJson },
+          { payloadJson, ...cloudProjectInput },
           {
             onSuccess: () => {
               pushDebug("cloudDraft:upsert-fallback-ok", { level: "ok" });
@@ -2784,11 +2847,14 @@ export default function OmniCanvas() {
           },
         );
         return false;
+      } catch (error) {
+        if (isCloudDraftConflict(error)) { pauseConflictedDraft(); return false; }
+        throw error;
       } finally {
         cloudDraftSyncInFlightRef.current = false;
       }
     },
-    [user?.id, pushDebug],
+    [user?.id, pushDebug, acceptCloudGeneration, pauseConflictedDraft],
   );
 
   const selectCanvasMode = useCallback((mode: CanvasWorkspaceMode) => {
@@ -2998,6 +3064,8 @@ export default function OmniCanvas() {
   );
 
   useEffect(() => {
+    // 独立作品先判定恢复来源，避免默认值提前覆盖损坏记录、掩盖读取失败。
+    if (projectScope && !cloudSyncReady) return;
     saveFactoryCharacterPrefs({
       narrativeLightingId: factoryNarrativeLightingId,
       narrativeLightingManual,
@@ -3010,6 +3078,7 @@ export default function OmniCanvas() {
       artStyleManual,
     });
   }, [
+    cloudSyncReady,
     factoryTopic,
     factoryFemaleId,
     factoryMaleId,
@@ -3137,11 +3206,14 @@ export default function OmniCanvas() {
 
   /** 编剧包 / Bible / 确认态持久化：硬刷新后继续三集流程，无需重扩 */
   useEffect(() => {
+    // 与偏好保存共用恢复门禁，保留原始本机状态供云/本机版本判定。
+    if (projectScope && !cloudSyncReady) return;
     try {
       saveManhuaWriterSessionToStorage({
         topic: factoryTopic,
         brief: writerBrief,
         novelDraft,
+        novelOrigin: novelOriginRef.current,
         episodeCount: writerEpisodeCount,
         focusEpisode: writerFocusEpisode,
         writerPack,
@@ -3168,6 +3240,7 @@ export default function OmniCanvas() {
       /* 本机权限/配额失败：不阻断云端通路 */
     }
   }, [
+    cloudSyncReady,
     factoryTopic,
     writerBrief,
     novelDraft,
@@ -3196,6 +3269,7 @@ export default function OmniCanvas() {
   ]);
 
   const applyCloudDraftToUi = useCallback((draft: ManhuaCloudDraftPayload) => {
+    novelOriginRef.current = draft.writerSession.novelOrigin;
     // 云草稿常把一周前的旧 bible 回灌，盖掉本地已换角的新剧本 → 换角漂移时弃用旧 bible。
     const healed = healManhuaWriterSessionCanonDrift(draft.writerSession);
     const session = healed.session ?? draft.writerSession;
@@ -3221,7 +3295,7 @@ export default function OmniCanvas() {
     setFactoryTopic(session.topic || "");
     setWriterBrief(session.brief || "");
     setNovelDraft(session.novelDraft || null);
-    setWriterEpisodeCount(clampWriterEpisodeCount(session.episodeCount));
+    setWriterEpisodeCount(Math.max(session.writerPack?.episodes.length || 0,clampWriterEpisodeCount(session.episodeCount)));
     setWriterFocusEpisode(Math.max(1, Math.floor(Number(session.focusEpisode) || 1)));
     setWriterPack(session.writerPack);
     setWriterConfirmed(Boolean(session.writerConfirmed));
@@ -3395,7 +3469,7 @@ export default function OmniCanvas() {
           femaleLeadManual: false,
           maleLeadManual: false,
         };
-    repairLocalFromCloudDraft({
+    return repairLocalFromCloudDraft({
       ...draft,
       writerSession: repairedWriterSession,
       factoryPrefs: repairedFactoryPrefs,
@@ -3408,6 +3482,26 @@ export default function OmniCanvas() {
   const backupOperationRef = useRef<null | "upload" | "restore" | "export" | "import">(null);
   const [cloudBackupBusy, setCloudBackupBusy] = useState<typeof backupOperationRef.current>(null);
   const [backupExportProgress, setBackupExportProgress] = useState<string | null>(null);
+  const projectCloudTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const projectCloudLast = useRef("");
+  const projectCloudPending = useRef("");
+  useEffect(() => {
+    if (!projectScope || !cloudSyncReady || !user?.id) return;
+    const tick = () => {
+      const snap = latestDraftSnapshotRef.current;
+      if (!snap || cloudConflictRef.current || backupOperationRef.current || autoBackupInFlightRef.current || cloudDraftSyncInFlightRef.current) return;
+      const fingerprint = JSON.stringify({...snap, clientUpdatedAt:undefined});
+      if (fingerprint === projectCloudLast.current || fingerprint === projectCloudPending.current) return;
+      projectCloudPending.current = fingerprint;
+      void syncCloudDraftPayload(buildLocalCloudDraftSnapshot(snap)).then(ok => {
+        if (ok) projectCloudLast.current = fingerprint;
+      }).catch(() => { toast.error("作品尚未同步到云端，本机内容保留，将继续重试。"); }).finally(() => {projectCloudPending.current="";});
+    };
+    projectCloudTimer.current = setInterval(tick, 5000);
+    tick();
+    return () => {if(projectCloudTimer.current)clearInterval(projectCloudTimer.current);};
+  }, [cloudSyncReady, user?.id, syncCloudDraftPayload]);
+
   /** 自动备份去重标记：上次自动上云的快照序列化；手动上传后清空，让下个周期重新校准 */
   const lastAutoBackupSerializedRef = useRef("");
   const autoBackupInFlightRef = useRef(false);
@@ -3606,6 +3700,8 @@ export default function OmniCanvas() {
       const stats = countDraftPayloadStats(payload);
       if (confirmed) {
         toast.success(`备份完成:节点 ${stats.nodes} 个、图片 ${stats.images} 张已入云端`);
+      } else if (cloudConflictRef.current) {
+        toast.error("云端已有其他版本，已暂停上传。请先导出本机副本，再读取云端版本。");
       } else {
         // false = 走了兜底通道,成败未知——不许把"未知"谎报成"已入云端"(复审 P1-6)
         toast.message("备份已转入备用通道处理,完成前请勿视为已入云;稍后可再点一次确认");
@@ -3653,8 +3749,8 @@ export default function OmniCanvas() {
   }, [syncCloudDraftPayload]);
   const restoreCloudBackupNow = useCallback(async () => {
     if (backupOperationRef.current) return;
-    if (autoBackupInFlightRef.current) {
-      toast.message("自动备份正在进行，请稍后再试");
+    if (autoBackupInFlightRef.current || cloudDraftSyncInFlightRef.current) {
+      toast.message("备份正在进行，请稍后再读取云端版本");
       return;
     }
     backupOperationRef.current = "restore";
@@ -3662,6 +3758,7 @@ export default function OmniCanvas() {
     try {
       // 回填前强制取最新云备份，别用登录时的旧缓存
       const fresh = await cloudDraftQuery.refetch();
+      if (fresh.isError) throw new Error("云端读取失败，本机原稿保留");
       const draft = fresh.data?.draft;
       if (!draft) {
         toast.error("云端没有备份可回填");
@@ -3681,7 +3778,14 @@ export default function OmniCanvas() {
       ) {
         return;
       }
-      applyCloudDraftToUi(draft);
+      if (projectScope && !fresh.data?.generation) throw new Error("云端版本凭据缺失，请刷新后重试");
+      latestDraftSnapshotRef.current = null;
+      clearDraftBaseGeneration();
+      const saved = applyCloudDraftToUi(draft);
+      acceptCloudGeneration(fresh.data?.generation, saved.writerOk && saved.canvasOk && saved.prefsOk && saved.atOk);
+      cloudConflictRef.current = false;
+      setCloudConflict(false);
+      projectCloudLast.current = "";
       toast.success("已从云端备份回填");
     } catch (e: unknown) {
       toast.error(e instanceof Error ? maskMediaProviderDetails(e.message) : "回填失败，请稍后重试");
@@ -3689,7 +3793,7 @@ export default function OmniCanvas() {
       backupOperationRef.current = null;
       setCloudBackupBusy(null);
     }
-  }, [cloudDraftQuery, applyCloudDraftToUi, countDraftPayloadStats]);
+  }, [cloudDraftQuery, applyCloudDraftToUi, countDraftPayloadStats, acceptCloudGeneration]);
 
   /** 登录后：云端与本机比新，胜出方驱动 UI，并补写较弱一侧 */
   useEffect(() => {
@@ -3700,18 +3804,42 @@ export default function OmniCanvas() {
     }
     if (cloudHydrateDoneRef.current) return;
     if (cloudDraftQuery.isLoading || cloudDraftQuery.isFetching) return;
+    if (projectScope && cloudDraftQuery.isError) {
+      setCloudSyncReady(false);
+      toast.error("作品云端读取失败，已暂停云端保存；本机内容保留，请重试读取。");
+      return;
+    }
+    // 用户正在取回的本机稿保持只读原状，重试成功也须另行确认替换。
+    if (projectScope && localRecoveryViewed && !allowViewedDraftReplacement) return;
     cloudHydrateDoneRef.current = true;
 
     const localParts = readLocalDraftPartsForHydrate();
+    const remoteGeneration = cloudDraftQuery.data?.generation;
+    const hasLocal = Boolean(localParts.writer || localParts.canvas || localParts.prefs);
+    // 另一设备推进过云版本时，本机稿不能因时间戳较新就自动覆盖；旧客户端无凭据也先保留。
+    const openingConflict = Boolean(projectScope && hasLocal && !localParts.readFailed &&
+      cloudDraftQuery.data?.draft && readDraftBaseGeneration() !== remoteGeneration);
+    if (projectScope) {
+      if (openingConflict || !remoteGeneration) pauseConflictedDraft();
+      else acceptCloudGeneration(remoteGeneration, false);
+    }
     const choice = chooseManhuaDraftHydrate({
-      cloud: cloudDraftQuery.data?.draft ?? null,
+      cloud: openingConflict ? null : cloudDraftQuery.data?.draft ?? null,
       localWriter: localParts.writer,
       localCanvas: localParts.canvas,
       localPrefs: localParts.prefs,
       localClientUpdatedAt: localParts.clientUpdatedAt,
+      localReadFailed: localParts.readFailed,
     });
 
-    if (choice.source === "cloud") {
+    // The old render must not be uploaded while the chosen cloud state is applied.
+    latestDraftSnapshotRef.current = null;
+    if (choice.source === "cloud" && projectScope) {
+      // Opening an independently selected work loads that work's own saved content.
+      clearDraftBaseGeneration();
+      const saved = applyCloudDraftToUi(choice.draft);
+      if (saved.writerOk && saved.canvasOk && saved.prefsOk && saved.atOk && remoteGeneration) saveDraftBaseGeneration(remoteGeneration);
+    } else if (choice.source === "cloud") {
       // 备份手动化（用户 2026-08-10 拍板）：云端较新也**绝不自动覆盖本机**——
       // 用户正在生图/出片/精修时被静默回填，一切成果变泡影（实际发生过）。
       // 只提示有备份可回填，恢复动作交给顶栏「回填备份」按钮（带确认）。
@@ -3740,6 +3868,7 @@ export default function OmniCanvas() {
       });
     }
 
+    if (projectScope && !openingConflict && choice.source !== "cloud" && remoteGeneration) saveDraftBaseGeneration(remoteGeneration);
     setCloudSyncReady(true);
   }, [
     user?.id,
@@ -3747,6 +3876,11 @@ export default function OmniCanvas() {
     cloudDraftQuery.isFetching,
     cloudDraftQuery.isError,
     cloudDraftQuery.data?.draft,
+    cloudDraftQuery.data?.generation,
+    localRecoveryViewed,
+    allowViewedDraftReplacement,
+    acceptCloudGeneration,
+    pauseConflictedDraft,
     applyCloudDraftToUi,
     syncCloudDraftPayload,
     pushDebug,
@@ -3779,6 +3913,7 @@ export default function OmniCanvas() {
       topic: factoryTopic,
       brief: writerBrief,
       novelDraft,
+      novelOrigin: novelOriginRef.current,
       episodeCount: writerEpisodeCount,
       focusEpisode: writerFocusEpisode,
       writerPack,
@@ -4278,7 +4413,7 @@ export default function OmniCanvas() {
   const [assembleReceipts, setAssembleReceipts] = useState<ManhuaAssembleReceipt[]>([]);
   useEffect(() => {
     if (!user?.id) { setAssembleReceipts([]); return; }
-    try { setAssembleReceipts(readManhuaAssembleReceipts(window.localStorage, String(user.id))); }
+    try { setAssembleReceipts(readManhuaAssembleReceipts(localStorage, String(user.id))); }
     catch { toast.error("合成恢复记录暂不可读，原记录已保留"); }
   }, [user?.id]);
 
@@ -4408,7 +4543,7 @@ export default function OmniCanvas() {
           title: writerPack?.seriesTitle || projectBible?.seriesTitle || "整集成片", url: finalVideoUrl,
           createdAt: Date.now(), subtitleTimeline: normalizeManhuaRenderedSubtitle(out.subtitleTimeline) };
         setAssembleReceipts(previous => [receipt, ...previous.filter(row => row.jobId !== jobId)]);
-        try { saveManhuaAssembleReceipt(window.localStorage, receipt); }
+        try { saveManhuaAssembleReceipt(localStorage, receipt); }
         catch { toast.error("成片已返回，但本机恢复记录未保存，请及时从恢复记录打开下载"); }
         const mayApply = () => canApplyManhuaAssembleResult({ submittedProject: assembleProjectKey,
           currentProject: assembleContextRef.current.projectKey, blocks: assembleContextRef.current.blocks, clips: ready });
@@ -4750,7 +4885,7 @@ export default function OmniCanvas() {
   manhuaOutboundContextRef.current = {
     userId: user?.id != null ? String(user.id) : "",
     // 没有登录就没有工作区身份。留空，由闸口明确拒绝，不编一个假 id 糊过去。
-    workspaceId: user?.id != null ? `manhua-cloud-draft:${user.id}` : "",
+    workspaceId: user?.id != null ? `manhua-cloud-draft:${user.id}${projectScope ? `:${projectScope.projectId}` : ""}` : "",
     projectVersion: projectBible
       ? `${projectBible.seriesTitle}@${projectBible.confirmedAt}`
       : "unconfirmed",
@@ -6030,6 +6165,7 @@ export default function OmniCanvas() {
         topic,
         brief,
         novelDraft,
+        novelOrigin: novelOriginRef.current,
         episodeCount: count,
         focusEpisode: 1,
         writerPack: pack,
@@ -7886,10 +8022,10 @@ export default function OmniCanvas() {
       if (!incoming.length) return;
       try {
         const prev = parseManhuaAssetStash(
-          window.localStorage.getItem(MANHUA_ASSET_STASH_STORAGE_KEY),
+          localStorage.getItem(MANHUA_ASSET_STASH_STORAGE_KEY),
         );
         const merged = mergeManhuaAssetStash(prev, incoming);
-        window.localStorage.setItem(
+        localStorage.setItem(
           MANHUA_ASSET_STASH_STORAGE_KEY,
           JSON.stringify(merged),
         );
@@ -7984,7 +8120,7 @@ export default function OmniCanvas() {
   const restoreManhuaAssetsFromStash = useCallback(() => {
     if (typeof window === "undefined") return;
     const stash = parseManhuaAssetStash(
-      window.localStorage.getItem(MANHUA_ASSET_STASH_STORAGE_KEY),
+      localStorage.getItem(MANHUA_ASSET_STASH_STORAGE_KEY),
     );
     if (!stash.length) {
       toast.message("暂存区是空的");
@@ -8039,7 +8175,7 @@ export default function OmniCanvas() {
   const clearManhuaAssetStash = useCallback(() => {
     if (typeof window === "undefined") return;
     try {
-      window.localStorage.removeItem(MANHUA_ASSET_STASH_STORAGE_KEY);
+      localStorage.removeItem(MANHUA_ASSET_STASH_STORAGE_KEY);
     } catch {
       /* 忽略 */
     }
@@ -10107,6 +10243,29 @@ export default function OmniCanvas() {
             </div>
   );
 
+  // 恢复尚未确定时不开放编辑，避免产生无法保存的改动；读取失败可重试，原稿不动。
+  if (projectScope && !cloudSyncReady) {
+    const waitingForConfirmation = localRecoveryViewed && !allowViewedDraftReplacement && !cloudDraftQuery.isError && !cloudDraftQuery.isFetching && Boolean(cloudDraftQuery.data);
+    return (
+      <main className="flex min-h-dvh items-center justify-center p-6">
+        <section role="status" aria-live="polite" className="max-w-md space-y-4 rounded-2xl border bg-background p-6 text-foreground">
+          <h1 className="text-xl font-semibold">{waitingForConfirmation ? "云端已可读取，本机副本仍保留" : cloudDraftQuery.isError ? "作品恢复暂未完成" : "正在恢复作品"}</h1>
+          <p>{waitingForConfirmation ? "你正在查看的本机内容没有替换或上传。可先导出，再确认继续恢复。" : cloudDraftQuery.isError ? "暂时无法读取云端作品，本机原稿已保留。请重新读取后继续编辑。" : "正在核对本机与云端的保存版本，请稍候。"}</p>
+          {cloudDraftQuery.isError && (
+            <button type="button" data-testid="manhua-cloud-retry" className="rounded-lg bg-primary px-4 py-2 text-primary-foreground disabled:opacity-50" disabled={cloudDraftQuery.isFetching} onClick={() => void cloudDraftQuery.refetch()}>
+              {cloudDraftQuery.isFetching ? "正在重新读取…" : "重新读取作品"}
+            </button>
+          )}
+          {(cloudDraftQuery.isError || localRecoveryViewed) && <ManhuaLocalRecovery onView={() => setLocalRecoveryViewed(true)} />}
+          {waitingForConfirmation && <button type="button" data-testid="manhua-confirm-recovery" className="rounded border px-3 py-2" onClick={() => {
+            if (window.confirm("继续恢复可能替换当前查看的本机内容，请先导出需要保留的副本。确认继续？")) setAllowViewedDraftReplacement(true);
+          }}>确认继续恢复</button>}
+          <a href="/manhua-projects" className="block text-sm underline">返回我的漫剧</a>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <div
       data-manhua-theme={canvasMode === "manhua" ? "cream" : undefined}
@@ -10118,6 +10277,11 @@ export default function OmniCanvas() {
     >
       <Navbar compact={immersiveWorkbench} workspaceNavigation={immersiveWorkbench ? workspaceToolbar : undefined} />
       {assetConfirmationDialog}
+      {cloudConflict && <section role="alert" data-testid="manhua-cloud-conflict" className="z-50 mt-14 max-h-[50vh] shrink-0 overflow-auto border border-amber-500 bg-background p-4 text-foreground">
+        <p>云端作品已有其他版本或缺少版本凭据，自动同步已暂停，本机内容保留。先导出副本，再读取云端版本；不会自动合并或覆盖。</p>
+        <ManhuaLocalRecovery />
+        <button type="button" data-testid="manhua-conflict-restore" className="rounded border px-3 py-2" disabled={Boolean(cloudBackupBusy)} onClick={() => void restoreCloudBackupNow()}>读取云端版本（需确认替换本机）</button>
+      </section>}
       <main
         className={
           immersiveWorkbench

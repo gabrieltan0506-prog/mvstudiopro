@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
+const gatewayKeys = vi.hoisted(() => ({ openrouter: "test-key", evolink: "" }));
 vi.mock("./openrouterGptImage2", () => ({
-  getOpenRouterApiKey: () => "test-key",
+  getOpenRouterApiKey: () => gatewayKeys.openrouter,
 }));
 vi.mock("./gpt56CopywritingGateway", () => ({
-  getEvolinkApiKey: () => "",
+  getEvolinkApiKey: () => gatewayKeys.evolink,
   getOpenRouterChatHeaders: () => ({}),
   OPENROUTER_CHAT_COMPLETIONS_URL: "https://test.invalid/chat",
   EVOLINK_CHAT_COMPLETIONS_URL: "https://fallback.invalid/chat",
@@ -109,7 +110,7 @@ describe("复用模型路由", () => {
       "deepseek/deepseek-v4.1-flash",
     ]);
     expect(bodies[0].provider.order).toEqual(["Z.AI"]);
-    expect(bodies[1].reasoning).toEqual({ enabled: false });
+    expect(bodies[1].reasoning).toEqual({ enabled: true, effort: "high" });
   });
   it.each([401, 403, "content_filter", "safety_violation", "invalid_api_key"])("HTTP200流内%s错误不换模型", async (code) => {
     const fetch = vi.fn().mockResolvedValueOnce(new Response(
@@ -155,4 +156,50 @@ it("证据写入失败不误作拥堵切换上游，避免重复花费", async (
   const fetch=vi.fn().mockImplementation(async()=>new Response(body,{headers:{'content-type':'text/event-stream'}}));vi.stubGlobal('fetch',fetch);
   await expect(callNovelStage('提示',true,'r',{onBytes:async()=>{throw new Error('database timeout')}})).rejects.toThrow('记录保存失败');
   expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+it("手动选择DeepSeek直接调用该模型，并使用对应参数与模型回执", async () => {
+  const fetch = vi.fn().mockResolvedValue(stream("手动选择结果"));
+  vi.stubGlobal("fetch",fetch);
+  try {
+    const result=await callNovelStage("相同输入",true,"manual",{modelPreference:"deepseek"});
+    expect(result.model).toBe("deepseek/deepseek-v4.1-flash");
+    expect(result.settings).toEqual({reasoning:"high",maxTokens:32768});
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const body=JSON.parse(fetch.mock.calls[0][1].body);
+    expect(body.model).toBe(result.model);
+    expect(body.reasoning).toEqual({enabled:true,effort:"high"});
+    expect(body.provider.order).toEqual(["DeepSeek"]);
+  } finally { vi.unstubAllGlobals(); }
+});
+it.each(["glm","deepseek"] as const)("手动选择%s遇到拥堵不偷偷换模型",async modelPreference=>{
+  const fetch=vi.fn().mockResolvedValue(new Response("busy",{status:429}));vi.stubGlobal("fetch",fetch);
+  try { await expect(callNovelStage("x",true,"manual",{modelPreference})).rejects.toThrow("429"); expect(fetch).toHaveBeenCalledTimes(1); }
+  finally { vi.unstubAllGlobals(); }
+});
+
+it("EvoLink DeepSeek仅发送文档支持的thinking开关，不伪造high档", async () => {
+  gatewayKeys.openrouter="";gatewayKeys.evolink="test-evolink-key";
+  const fetch=vi.fn().mockResolvedValue(stream("启用推理的结果"));vi.stubGlobal("fetch",fetch);
+  try {
+    const result=await callNovelStage("相同方向",true,"evo",{modelPreference:"deepseek"});
+    const body=JSON.parse(fetch.mock.calls[0][1].body);
+    expect(body.model).toBe("deepseek-v4.1-flash");
+    expect(body.thinking).toEqual({type:"enabled"});
+    expect(body).not.toHaveProperty("reasoning_effort");
+    expect(body).not.toHaveProperty("reasoning");
+    expect(result.settings).toEqual({reasoning:"enabled",maxTokens:32768});
+  } finally { gatewayKeys.openrouter="test-key";gatewayKeys.evolink="";vi.unstubAllGlobals(); }
+});
+
+it("输出预算耗尽即停止并保留回执，不把空正文当成功或自动换模型再付费", async () => {
+  const fetch = vi.fn().mockResolvedValue(stream("", "length"));
+  const onRaw = vi.fn(async (_raw: string) => {});
+  vi.stubGlobal("fetch", fetch);
+  try {
+    await expect(callNovelStage("提示词", true, "budget", { onRaw })).rejects.toThrow("预算耗尽");
+    expect(onRaw).toHaveBeenCalledTimes(1);
+    expect(onRaw.mock.calls[0][0]).toContain('"finish_reason":"length"');
+    expect(fetch).toHaveBeenCalledTimes(1);
+  } finally { vi.unstubAllGlobals(); }
 });

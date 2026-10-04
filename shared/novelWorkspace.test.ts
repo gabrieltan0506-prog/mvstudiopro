@@ -15,7 +15,7 @@ const input = novelTestInputSchema.parse({
 describe("小说工作室合同", () => {
   it("原创无需底本，单模板和组合均接受", () => {
     expect(input.source).toBeUndefined();
-    for (const count of [1, 3, 5])
+    for (const count of [1, 3, 5, 6, 20, 84])
       expect(
         novelTestInputSchema.parse({
           ...input,
@@ -101,12 +101,221 @@ describe("小说工作室合同", () => {
 
 it("新剧本必须覆盖选定模板并引用真实场次，旧稿仍可读取", async () => {
   const { novelScriptSchema } = await import("./novelWorkspace");
-  const request = { ...input, stage: "script" as const, episodeCount: 2 as const, templates: [{ publicId: "mt_0001", role: "关系转折" }] };
-  const script = { title: "守城", episodes: [1, 2].map(index => ({ index, title: "守城", opening: "敌人进城", payoff: "救下同伴", hook: "代价", scenes: [{ key: `E${index}-S1`, 场景: "城门", 人物: "守门人", 妆容: "布衣", 灯光: "火光", 氛围: "紧张", 对白: "我留下，你先走。" }] })) };
+  const request = {
+    ...input,
+    stage: "script" as const,
+    episodeCount: 2 as const,
+    templates: [{ publicId: "mt_0001", role: "关系转折" }],
+  };
+  const script = {
+    title: "守城",
+    episodes: [1, 2].map(index => ({
+      index,
+      title: "守城",
+      opening: "敌人进城",
+      payoff: "救下同伴",
+      hook: "代价",
+      scenes: [
+        {
+          key: `E${index}-S1`,
+          场景: "城门",
+          人物: "守门人",
+          妆容: "布衣",
+          灯光: "火光",
+          氛围: "紧张",
+          对白: "我留下，你先走。",
+        },
+      ],
+    })),
+  };
   expect(novelScriptSchema.parse(script).applications).toBeUndefined();
-  expect(() => validateNovelStageOutput(request, script, [])).toThrow("运用说明");
-  const application = { publicId: "mt_0001", method: "选择带来代价", adaptation: "同伴获救使守门人必须独自承担后果", sceneKeys: ["E1-S1"] };
-  expect(validateNovelStageOutput(request, { ...script, applications: [application] }, [])).toMatchObject({ applications: [application] });
-  expect(() => validateNovelStageOutput(request, { ...script, applications: [{ ...application, sceneKeys: ["E9-S9"] }] }, [])).toThrow("运用说明");
-  expect(() => validateNovelStageOutput(request, { ...script, applications: [{ ...application, publicId: "mt_fake" }] }, [])).toThrow("运用说明");
+  expect(() => validateNovelStageOutput(request, script, [])).toThrow(
+    "运用说明"
+  );
+  const application = {
+    publicId: "mt_0001",
+    method: "选择带来代价",
+    adaptation: "同伴获救使守门人必须独自承担后果",
+    sceneKeys: ["E1-S1"],
+  };
+  expect(
+    validateNovelStageOutput(
+      request,
+      { ...script, applications: [application] },
+      []
+    )
+  ).toMatchObject({ applications: [application] });
+  expect(() =>
+    validateNovelStageOutput(
+      request,
+      { ...script, applications: [{ ...application, sceneKeys: ["E9-S9"] }] },
+      []
+    )
+  ).toThrow("运用说明");
+  expect(() =>
+    validateNovelStageOutput(
+      request,
+      { ...script, applications: [{ ...application, publicId: "mt_fake" }] },
+      []
+    )
+  ).toThrow("运用说明");
+});
+
+it("继续讨论可以不换模板，但仍禁止编造推荐", () => {
+  const followup = { ...input, advisorMessage: "我想先讨论人物动机" };
+  expect(
+    validateNovelStageOutput(
+      followup,
+      { assessment: "先明确他付出的代价", recommendations: [] },
+      ["a", "b", "c"]
+    )
+  ).toBeTruthy();
+  expect(() =>
+    validateNovelStageOutput(
+      followup,
+      {
+        assessment: "建议",
+        recommendations: [
+          { publicId: "fake", reason: "理由", tradeoff: "取舍" },
+        ],
+      },
+      ["a"]
+    )
+  ).toThrow();
+});
+
+it("创作配比接受50/25/20/5和零权重，拒绝超额、缺项、非整数；旧稿兼容", () => {
+  const templates = [50, 25, 20, 5, 0].map((weight, i) => ({
+    publicId: `mt_${i}`,
+    role: "分工",
+    weight,
+  }));
+  expect(
+    novelTestInputSchema
+      .parse({ ...input, templates })
+      .templates.map(t => t.weight)
+  ).toEqual([50, 25, 20, 5, 0]);
+  for (const weights of [
+    [50, 25, 20, 6],
+    [100, undefined],
+    [99.5, 0.5],
+    [-1, 101],
+  ]) {
+    expect(() =>
+      novelTestInputSchema.parse({
+        ...input,
+        templates: weights.map((weight, i) => ({
+          publicId: `mt_${i}`,
+          role: "分工",
+          weight,
+        })),
+      })
+    ).toThrow();
+  }
+  expect(novelTestInputSchema.parse(input).modelPreference).toBeUndefined();
+  expect(() =>
+    novelTestInputSchema.parse({ ...input, modelPreference: "unknown" })
+  ).toThrow();
+});
+
+it("重新选模板需要新方向，推荐必须为其他库内模板且数量完整", () => {
+  expect(() =>
+    novelTestInputSchema.parse({
+      ...input,
+      advisorIntent: "recommend_templates",
+    })
+  ).toThrow();
+  const request = novelTestInputSchema.parse({
+    ...input,
+    advisorIntent: "recommend_templates",
+    advisorMessage: "减少朝堂斗争，转向江湖追查",
+    selectedTemplateIds: ["old"],
+  });
+  const rec = (publicId: string) => ({
+    publicId,
+    reason: "具体改法",
+    tradeoff: "取舍",
+  });
+  for (const ids of [[], ["a"], ["old", "a", "b"], ["fake", "a", "b"]])
+    expect(() =>
+      validateNovelStageOutput(
+        request,
+        { assessment: "调整建议", recommendations: ids.map(rec) },
+        ["old", "a", "b", "c"]
+      )
+    ).toThrow();
+  expect(
+    validateNovelStageOutput(
+      request,
+      { assessment: "调整建议", recommendations: ["a", "b", "c"].map(rec) },
+      ["old", "a", "b", "c"]
+    )
+  ).toBeTruthy();
+});
+
+it("三个故事方案保留首次已选组合并验证真实模板、配比、分集", () => {
+  const choices = Array.from({ length: 6 }, (_, i) => ({
+    publicId: `mt_${i}`,
+    role: "分工",
+    weight: i === 0 ? 100 : 0,
+  }));
+  const request = novelTestInputSchema.parse({
+    ...input,
+    advisorIntent: "story_variants",
+    templates: choices,
+    selectedTemplateIds: choices.map(t => t.publicId),
+  });
+  const result = {
+    assessment: "比较",
+    recommendations: [],
+    variants: ["A", "B", "C"].map(id => ({
+      id,
+      title: id,
+      changeSummary: "变化",
+      tradeoff: "代价",
+      templates: choices,
+      outline: {
+        premise: `冲突${id}`,
+        characters: "主角",
+        episodes: [1, 2, 3].map(index => ({
+          index,
+          title: "集",
+          events: `选择${id}`,
+          payoff: "兑现",
+          hook: "悬念",
+        })),
+      },
+    })),
+  };
+  expect(validateNovelStageOutput(request, result, [])).toEqual(result);
+  for (const mutate of [
+    (v: typeof result) => {
+      v.variants.pop();
+    },
+    (v: typeof result) => {
+      v.variants[0].templates = [
+        { publicId: "fake", role: "分工", weight: 100 },
+      ];
+    },
+    (v: typeof result) => {
+      v.variants[0].templates[0].weight = 50;
+    },
+    (v: typeof result) => {
+      v.variants[0].outline.episodes.pop();
+    },
+    (v: typeof result) => {
+      v.variants[1].outline = v.variants[0].outline;
+    },
+  ]) {
+    const bad = structuredClone(result);
+    mutate(bad);
+    expect(() => validateNovelStageOutput(request, bad, [])).toThrow();
+  }
+  expect(() =>
+    validateNovelStageOutput(
+      request,
+      { assessment: "空", recommendations: [] },
+      []
+    )
+  ).toThrow();
 });

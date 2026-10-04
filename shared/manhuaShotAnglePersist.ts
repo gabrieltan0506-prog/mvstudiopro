@@ -1,3 +1,4 @@
+import { manhuaProjectStorage as localStorage } from "./manhuaProjectScope";
 /**
  * 工作台机位选定 / 粗剪序：持久化键 + 写回反推文本的「机位选定」表。
  */

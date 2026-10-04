@@ -1,3 +1,4 @@
+import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
 import { formatManhuaWriterPackMarkdown, type ManhuaWriterPack } from '@shared/manhuaWriterRoom';
 import { readManhuaTimedStoryboard } from '@shared/manhuaTimedStoryboard';
 import { retimeManhuaShot } from '@shared/manhuaShotTimingEdit';

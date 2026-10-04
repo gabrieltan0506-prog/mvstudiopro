@@ -4,36 +4,11 @@ import {
   type ManhuaNovelDraft,
 } from "@shared/manhuaNovelSource";
 import {
-  novelTestInputSchema,
+  novelChapterSchema,
   type NovelTestInput,
   type NovelTestResult,
 } from "@shared/novelWorkspace";
-const runSchema = z.object({
-  input: novelTestInputSchema,
-  result: z.object({
-    requestId: z.string(),
-    stage: z.enum(["advice", "outline", "chapter", "script"]),
-    text: z.string(),
-    templateIds: z.array(z.string()),
-    inputSha256: z.string(),
-    resultSha256: z.string(),
-  }),
-});
-const stateSchema = z.object({
-  roundId: z.string().uuid(),
-  topic: z.string(),
-  direction: z.string(),
-  mode: z.enum(["source", "original"]),
-  source: z.unknown(),
-  templates: z.array(z.object({ publicId: z.string(), role: z.string() })),
-  episodeCount: z.union([z.literal(2), z.literal(3)]),
-  outline: z.string(),
-  outlineApproved: z.string(),
-  chapters: z.array(z.string()),
-  novelApproved: z.string(),
-  runs: z.array(runSchema),
-  pending: novelTestInputSchema.optional(),
-});
+import { novelWorkspaceStateSchema as stateSchema } from "@shared/novelWorkspaceState";
 export type NovelWorkspace = Omit<z.infer<typeof stateSchema>, "source"> & {
   source: ManhuaNovelDraft | null;
 };
@@ -111,6 +86,7 @@ export function novelSourceIdentity(draft: NovelWorkspace) {
     draft.mode,
     draft.mode === "source" ? draft.source : null,
     draft.episodeCount,
+    draft.episodeStart,
   ]);
 }
 export function scriptBaseline(input: NovelTestInput) {
@@ -122,5 +98,63 @@ export function scriptBaseline(input: NovelTestInput) {
     input.outline,
     input.novel,
     input.episodeCount,
+    input.episodeStart,
+    input.scriptBatch?.baseline,
   ]);
+}
+
+/** A late completion may add a candidate, never overwrite concurrent manual edits. */
+export function applyNovelChapterCompletion(
+  now: NovelWorkspace,
+  input: NovelTestInput,
+  result: NovelTestResult
+): Partial<NovelWorkspace> {
+  const index = input.chapterIndex - 1;
+  const chapter = novelChapterSchema.parse(JSON.parse(result.text));
+  const chapters = [...now.chapters];
+  const chapterWarnings = { ...now.chapterWarnings };
+  const edited = (chapters[index] || "") !== (now.pendingChapterBase || "");
+  const earlierChanged =
+    chapters.slice(0, index).join("\n\n") !==
+    (now.pendingContextBase ?? input.novel);
+  const continuityEdited = (now.continuity || "") !== (input.continuity || "");
+  if (edited)
+    chapterWarnings[String(index)] =
+      "你在生成期间修改了本集，已保留手动修改；本次生成稿可在下方查看并选择采用。";
+  else {
+    chapters[index] = `${chapter.title}\n\n${chapter.text}`;
+    if (earlierChanged)
+      chapterWarnings[String(index)] =
+        "前文在生成期间有修改，本集使用的是修改前的内容，请核对衔接。";
+    else if (continuityEdited)
+      chapterWarnings[String(index)] =
+        "续写档案在生成期间有修改，已保留修改，请核对本集衔接。";
+    else delete chapterWarnings[String(index)];
+  }
+  return {
+    chapters,
+    chapterWarnings,
+    pendingChapterBase: undefined,
+    pendingContextBase: undefined,
+    ...(chapter.continuity && !edited && !earlierChanged && !continuityEdited
+      ? {
+          continuity: chapter.continuity,
+          continuityThrough: input.chapterIndex,
+          continuityBase: chapters.slice(0, input.chapterIndex).join("\n\n"),
+        }
+      : {}),
+    ...(now.chapters[index] && !edited
+      ? {
+          chapterVersions: [
+            ...(now.chapterVersions || []),
+            {
+              index,
+              text: now.chapters[index],
+              savedAt: new Date().toISOString(),
+            },
+          ],
+        }
+      : {}),
+    novelApproved: "",
+  };
 }

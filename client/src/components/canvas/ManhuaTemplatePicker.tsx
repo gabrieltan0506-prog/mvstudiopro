@@ -10,8 +10,7 @@ export function templateChoiceLabel(
     .slice(0, 2)
     .map(f => f.label)
     .join(" / ");
-  if (!card.storyPreview && !craft) return card.nameZh;
-  return `${card.storyPreview?.teaserTitleZh || craft || card.storyPreview?.storyTypeZh} · ${craft || card.storyPreview?.presentationTagsZh.join(" / ") || "开篇参考"} · ${code}`;
+  return `${card.methodBrief?.title || craft || "创作方法待核对"} · ${code}`;
 }
 
 /** IDs remain distinct. Old story-type argument is retained for existing callers. */
@@ -40,6 +39,9 @@ export function filterTemplateChoices(
     const text = [
       templateChoiceLabel(card),
       card.nameZh,
+      card.methodBrief?.title,
+      ...(card.methodBrief?.highlights || []),
+      card.methodBrief?.useWhen,
       card.featureZh,
       card.introZh,
       ...(card.classificationTagsZh || []),
@@ -51,24 +53,30 @@ export function filterTemplateChoices(
     return words.every(word => text.includes(word));
   });
 }
-function CraftDetails({ card }: { card: PublicManhuaViralTemplateCard }) {
-  return (
-    <dl className="space-y-2 text-xs leading-5">
-      {TEMPLATE_CRAFT_DIMENSIONS.map(([key, label]) => (
-        <div key={key}>
-          <dt className="text-[#dfba7c]">{label}</dt>
-          <dd className="text-[#e8dfe9]">
-            {card.craft?.features
-              .filter(f => f.dimension === key)
-              .map(f => f.label)
-              .join(" · ") || "—"}
-          </dd>
-        </div>
+export function CraftDetails({
+  card,
+}: {
+  card: PublicManhuaViralTemplateCard;
+}) {
+  return card.methodBrief ? (
+    <div className="space-y-2 text-sm leading-6">
+      {card.methodBrief.highlights.map(h => (
+        <p key={h}>{h}</p>
       ))}
-    </dl>
+      <p className="text-amber-200">{card.methodBrief.useWhen}</p>
+      <p className="text-xs text-slate-400">
+        借用方式需结合当前场面；不是指定故事情节，也不要求每场全部使用。
+      </p>
+    </div>
+  ) : (
+    <p className="text-sm">
+      这份模板的具体呈现方法需要核对，暂不自动建议分工。已有学习资料保留，可与创作顾问讨论。
+    </p>
   );
 }
 export default function ManhuaTemplatePicker(props: {
+  layout?: "workbench";
+  chosenIds?: string[];
   cards: PublicManhuaViralTemplateCard[];
   value: string;
   disabled: boolean;
@@ -106,7 +114,11 @@ export default function ManhuaTemplatePicker(props: {
     "min-w-0 rounded-lg border border-violet-200/20 bg-[#211b26] px-2 py-2 text-xs text-[#f4ede5] focus-visible:ring-2 focus-visible:ring-amber-200";
   return (
     <section
-      className="mt-2 min-w-0 overflow-hidden rounded-xl border border-violet-200/15 bg-[#15111e] p-3"
+      className={
+        props.layout === "workbench"
+          ? "novel-template-picker"
+          : "mt-2 min-w-0 overflow-hidden rounded-xl border border-violet-200/15 bg-[#15111e] p-3"
+      }
       data-manhua-template-picker
       aria-label="故事模板目录"
     >
@@ -181,12 +193,18 @@ export default function ManhuaTemplatePicker(props: {
         学习节奏、内容组织和创作方法，配合项目导演包使用。
       </p>
       <div
-        className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2"
+        className={
+          props.layout === "workbench"
+            ? "novel-template-rows"
+            : "mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2"
+        }
         role="group"
         aria-label="选择故事模板"
       >
         {visible.map(card => {
-          const chosen = props.value === card.publicId,
+          const chosen = props.chosenIds
+              ? props.chosenIds.includes(card.publicId)
+              : props.value === card.publicId,
             checked = compareIds.includes(card.publicId);
           const code = card.publicId.replace(/^mt_/i, "").toUpperCase();
           return (
@@ -209,18 +227,21 @@ export default function ManhuaTemplatePicker(props: {
                   </span>
                 </span>
                 <span className="mt-2 block text-[13px] font-semibold leading-5 text-[#f4ede5]">
-                  {card.storyPreview?.teaserTitleZh || card.nameZh}
+                  {card.methodBrief?.title || "创作方法待核对"}
                 </span>
                 <span className="mt-2 block text-[11px] leading-5 text-[#c4b6cc]">
-                  {card.craft?.features
-                    .slice(0, 3)
-                    .map(f => f.label)
-                    .join(" · ") ||
-                    card.storyPreview?.presentationTagsZh.join(" · ") ||
-                    "手法待归纳"}
-                  {(card.craft?.features.length || 0) > 3
-                    ? ` · 另有${card.craft!.features.length - 3}项`
-                    : ""}
+                  {card.methodBrief
+                    ? card.methodBrief.highlights.map(h => (
+                        <span key={h} className="mb-2 block">
+                          {h}
+                        </span>
+                      ))
+                    : "具体方法说明待核对"}
+                  {card.methodBrief && (
+                    <span className="block text-amber-200/90">
+                      {card.methodBrief.useWhen}
+                    </span>
+                  )}
                 </span>
               </button>
               <label className="flex items-center gap-2 border-t border-white/10 px-3 py-2 text-[11px] text-[#c4b6cc]">
@@ -292,7 +313,7 @@ export default function ManhuaTemplatePicker(props: {
               <div key={c.publicId} className="min-w-0">
                 <h4 className="mb-2 text-xs font-semibold text-[#f4ede5]">
                   {c.publicId.replace(/^mt_/, "").toUpperCase()} ·{" "}
-                  {c.storyPreview?.teaserTitleZh || c.nameZh}
+                  {c.methodBrief?.title || "创作方法待核对"}
                 </h4>
                 <CraftDetails card={c} />
               </div>
@@ -300,9 +321,9 @@ export default function ManhuaTemplatePicker(props: {
           </div>
         </section>
       )}
-      {selected ? (
+      {selected && props.layout !== "workbench" ? (
         <section
-          aria-label="所选模板开篇预览"
+          aria-label="所选模板呈现方法"
           className="mt-3 rounded-lg border border-[#dfba7c]/40 bg-[#211b26] p-3 text-xs leading-6 text-[#e8dfe9]"
         >
           <div className="flex items-start justify-between gap-2">
@@ -321,16 +342,6 @@ export default function ManhuaTemplatePicker(props: {
           <div className="mt-3">
             <CraftDetails card={selected} />
           </div>
-          {selected.storyPreview ? (
-            <details className="mt-3" open>
-              <summary>开篇参考</summary>
-              <p className="mt-2">{selected.storyPreview.premiseZh}</p>
-              <p>{selected.storyPreview.openingZh}</p>
-              <p>{selected.storyPreview.earlyProgressionZh}</p>
-            </details>
-          ) : (
-            <p className="mt-2">这份模板的开篇参考尚待整理。</p>
-          )}
           <p className="mt-2 text-[10px] leading-5 text-[#c4b6cc]">
             人物和事件由你的作品决定，学习手法在试写与正式应用时参与创作，不照搬来源剧情。
           </p>
