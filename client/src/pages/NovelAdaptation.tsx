@@ -64,7 +64,9 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [selected, setSelected] = useState("");
+  const [progress, setProgress] = useState("");
   const sourceFileInput = useRef<HTMLInputElement>(null);
+  const conversation = useRef<HTMLDivElement>(null);
   const latest = useRef(draft),
     raw = useRef(initial.raw),
     running = useRef(false),
@@ -135,9 +137,10 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
   const currentNovel = draft.chapters
     .map((text, i) => `第${i + 1}章\n${text}`)
     .join("\n\n");
-  const adviceRun = [...draft.runs].reverse().find(
+  const adviceRuns = draft.runs.filter(
     r =>
       r.input.stage === "advice" &&
+      r.input.roundId === draft.roundId &&
       r.input.topic === draft.topic &&
       r.input.direction === draft.direction &&
       JSON.stringify(r.input.source) ===
@@ -153,15 +156,28 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
             : undefined
         )
   );
+  useEffect(() => {
+    if (conversation.current)
+      conversation.current.scrollTop = conversation.current.scrollHeight;
+  }, [adviceRuns.length, draft.pending?.requestId]);
+  const adviceRun = adviceRuns.at(-1);
   const advice = adviceRun
     ? novelAdviceSchema.parse(JSON.parse(adviceRun.result.text))
     : null;
+  const recommendationAdvice = [...adviceRuns]
+    .reverse()
+    .map(r => novelAdviceSchema.parse(JSON.parse(r.result.text)))
+    .find(a => a.recommendations.length);
   const applyResult = (
     input: NovelTestInput,
     result: typeof mutation.data & {}
   ) => {
     const now = latest.current;
-    if (now.roundId !== input.roundId) return;
+    if (
+      now.roundId !== input.roundId ||
+      now.runs.some(r => r.result.requestId === result.requestId)
+    )
+      return;
     try {
       localStorage.setItem(
         `mv-novel-lab-snapshot:${userId}:${input.requestId}`,
@@ -173,7 +189,6 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
       );
       return;
     }
-    if (now.runs.some(r => r.result.requestId === result.requestId)) return;
     const next = {
       ...now,
       pending: undefined,
@@ -200,18 +215,83 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
         `${chapter.title}\n\n${chapter.text}`;
       next.novelApproved = "";
     }
+    if (input.stage === "advice") {
+      if (input.advisorMessage === now.advisorDraft?.trim())
+        next.advisorDraft = "";
+      next.outlineApproved = "";
+      next.novelApproved = "";
+    }
+    setError("");
     persist(next);
   };
+  // Poll only the original receipt. Never resubmit a generation on refresh or network failure.
+  useEffect(() => {
+    const pending = draft.pending;
+    if (!pending || saveError) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const check = async () => {
+      try {
+        const receipt = await utils.novelWorkspace.receipt.fetch({
+          requestId: pending.requestId,
+        });
+        if (stopped || latest.current.pending?.requestId !== pending.requestId)
+          return;
+        if (receipt.status === "succeeded" && receipt.result) {
+          applyResult(pending, receipt.result);
+          setProgress("已完成，建议已保存。");
+          return;
+        }
+        if (receipt.status === "failed") {
+          persist({ ...latest.current, pending: undefined });
+          setError("本次请求失败，原稿与已收到的记录保留；没有自动重试。");
+          setProgress("");
+          return;
+        }
+        const labels: Record<string, string> = {
+          preparing: "正在读取方向与模板",
+          waiting: "模板已就绪，等待创作服务回复",
+          receiving: "正在接收创作回复",
+          validating: "回复已收到，正在检查内容格式",
+        };
+        setProgress(
+          receipt.status === "not_found"
+            ? "已发出请求，等待服务端确认；不会重复提交。"
+            : (labels[receipt.phase || "preparing"] || "请求仍在处理") +
+                (receipt.updatedAt
+                  ? ` · 最近更新 ${new Date(receipt.updatedAt).toLocaleTimeString()}`
+                  : "")
+        );
+      } catch {
+        if (!stopped)
+          setProgress("暂时无法读取进度，原请求保留；正在重新查询状态。");
+      }
+      if (!stopped) timer = setTimeout(check, 3000);
+    };
+    void check();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+    // A receipt follows one immutable request; refs protect against stale results.
+  }, [draft.pending?.requestId, saveError]);
   const generate = async (
     stage: NovelTestInput["stage"],
     single?: string,
-    chapterIndex = 1
+    chapterIndex = 1,
+    advisorMessage?: string
   ) => {
     if (disabled || running.current) return;
     setError("");
     try {
-      if (!draft.topic.trim()) throw new Error("请先填写作品名称，就在创作方向上方。");
-      if (!draft.direction.trim()) throw new Error("请先填写创作方向，让顾问了解主角与故事目标。");
+      if (stage === "advice" && adviceRuns.length >= 20)
+        throw new Error(
+          "本轮已完成20次顾问讨论，请整理并确认提案后继续；历史对话完整保留。"
+        );
+      if (!draft.topic.trim())
+        throw new Error("请先填写作品名称，就在创作方向上方。");
+      if (!draft.direction.trim())
+        throw new Error("请先填写创作方向，让顾问了解主角与故事目标。");
       const source =
         draft.mode === "source" && draft.source
           ? prepareNovelExcerpt(draft.source)
@@ -245,6 +325,17 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
         topic: draft.topic,
         direction: draft.direction,
         source,
+        ...(advisorMessage ? { advisorMessage } : {}),
+        ...((stage === "advice" || stage === "outline") && adviceRuns.length
+          ? {
+              advisorHistory: adviceRuns.map(r => ({
+                user:
+                  r.input.advisorMessage ||
+                  "请依据创作方向提出建议与模板推荐。",
+                assistant: r.result.text,
+              })),
+            }
+          : {}),
         templates: choices,
         episodeCount: draft.episodeCount,
         outline: draft.outlineApproved,
@@ -264,6 +355,7 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
       if (!persist({ ...draft, pending: input })) return;
       running.current = true;
       setBusy(true);
+      setProgress("正在提交请求…");
       const result = await mutation.mutateAsync(input);
       if (alive.current) applyResult(input, result);
     } catch (e) {
@@ -271,7 +363,7 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
         setError(
           e instanceof Error && !("data" in e)
             ? "issues" in e
-              ? "请检查作品名称、方向、模板与小说长度是否完整（小说最多20,000字符）。"
+              ? "请检查作品名称、方向、模板与长度；顾问对话最多20轮，小说最多20,000字符。"
               : e.message
             : "本次提交未完成，请核对原请求记录；不会自动重试。"
         );
@@ -389,9 +481,7 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
         )}
         {draft.pending && (
           <div className="mb-4 rounded-xl border border-amber-200/30 p-3 text-sm">
-            {busy
-              ? "正在处理，保持页面打开。"
-              : "上次提交待核对；重新进入不会自动生成。"}
+            <span role="status">{progress || "正在核对原请求进度…"}</span>
             <button
               disabled={busy}
               className={`${button} ml-3`}
@@ -473,20 +563,90 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
               >
                 {busy ? "创作服务处理中…" : "请创作顾问建议方向与模板"}
               </button>
-              <div aria-live="polite" className="mt-2 text-sm" data-advisor-feedback>
-                {error && <p role="alert" className="text-amber-200">{error}</p>}
-                {saveError && <p role="alert" className="text-amber-200">{saveError}</p>}
-                {draft.pending && <p role="status">{busy ? "请求已提交，请保持页面打开。" : "上次请求尚待核对，请先点击页面上方的“核对原请求”。"}</p>}
-                {!error && !saveError && !draft.pending && <p className="text-slate-400">填好作品名称、方向，并采用正文选段后提交；无需先选择模板。</p>}
+              <div
+                aria-live="polite"
+                className="mt-2 text-sm"
+                data-advisor-feedback
+              >
+                {error && (
+                  <p role="alert" className="text-amber-200">
+                    {error}
+                  </p>
+                )}
+                {saveError && (
+                  <p role="alert" className="text-amber-200">
+                    {saveError}
+                  </p>
+                )}
+                {draft.pending && (
+                  <p role="status">{progress || "正在核对原请求进度…"}</p>
+                )}
+                {!error && !saveError && !draft.pending && (
+                  <p className="text-slate-400">
+                    填好作品名称、方向，并采用正文选段后提交；无需先选择模板。
+                  </p>
+                )}
               </div>
             </fieldset>
             {advice && (
               <div className="mt-5 space-y-3">
-                <h3 className="font-semibold">顾问建议</h3>
-                <p className="whitespace-pre-wrap text-sm leading-7">
-                  {advice.assessment}
+                <h3 className="font-semibold">与创作顾问讨论</h3>
+                <div
+                  ref={conversation}
+                  aria-label="顾问对话记录"
+                  className="max-h-80 space-y-3 overflow-y-auto rounded-xl bg-black/20 p-3"
+                >
+                  {adviceRuns.map(r => (
+                    <div key={r.input.requestId}>
+                      <p className="mb-2 whitespace-pre-wrap text-sm text-amber-200">
+                        你：
+                        {r.input.advisorMessage ||
+                          "请依据创作方向提出建议与模板推荐。"}
+                      </p>
+                      <p className="whitespace-pre-wrap text-sm leading-7">
+                        顾问：
+                        {
+                          novelAdviceSchema.parse(JSON.parse(r.result.text))
+                            .assessment
+                        }
+                      </p>
+                    </div>
+                  ))}
+                  {draft.pending?.advisorMessage && (
+                    <p className="whitespace-pre-wrap text-sm text-amber-200">
+                      你：{draft.pending.advisorMessage}
+                    </p>
+                  )}
+                </div>
+                <label className="block text-sm">
+                  回复顾问
+                  <textarea
+                    aria-label="回复顾问"
+                    className={field}
+                    rows={3}
+                    maxLength={2000}
+                    disabled={disabled}
+                    value={draft.advisorDraft || ""}
+                    onChange={e => change({ advisorDraft: e.target.value })}
+                    placeholder="例如：保留未来武器；这三个模板分别负责权谋、破局和对白，你建议怎么组合？"
+                  />
+                </label>
+                <button
+                  className={button}
+                  disabled={disabled || !draft.advisorDraft?.trim()}
+                  onClick={() =>
+                    generate("advice", undefined, 1, draft.advisorDraft?.trim())
+                  }
+                >
+                  发送给顾问
+                </button>
+                <p className="text-xs text-slate-400">
+                  回复会带上前文与当前模板分工。推荐不自动采用，选好后再生成提案。
                 </p>
-                {advice.recommendations.map(r => (
+                <h3 className="font-semibold">
+                  可选模板 · 讨论不会自动更改选择
+                </h3>
+                {recommendationAdvice?.recommendations.map(r => (
                   <article
                     key={r.publicId}
                     className="rounded-xl border border-emerald-200/20 p-3"
@@ -511,11 +671,12 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
                     </button>
                   </article>
                 ))}
-                {advice.recommendations.length < 3 && (
-                  <p className="text-xs text-amber-200">
-                    可推荐的库内模板不足3个，未编造补足。
-                  </p>
-                )}
+                {!adviceRun?.input.advisorMessage &&
+                  advice.recommendations.length < 3 && (
+                    <p className="text-xs text-amber-200">
+                      可推荐的库内模板不足3个，未编造补足。
+                    </p>
+                  )}
               </div>
             )}
           </section>
@@ -525,7 +686,15 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
               自己挑选或采用顾问推荐，最多5个；可单独生成，也可指定分工组合。
             </p>
             {templates.isError && (
-              <div role="alert" className="mt-3 text-sm text-amber-200">模板加载失败，已有选择保留。<button className="ml-2 underline" onClick={() => void templates.refetch()}>重试读取</button></div>
+              <div role="alert" className="mt-3 text-sm text-amber-200">
+                模板加载失败，已有选择保留。
+                <button
+                  className="ml-2 underline"
+                  onClick={() => void templates.refetch()}
+                >
+                  重试读取
+                </button>
+              </div>
             )}
             <ManhuaTemplatePicker
               cards={cards}

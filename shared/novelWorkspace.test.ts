@@ -101,12 +101,85 @@ describe("小说工作室合同", () => {
 
 it("新剧本必须覆盖选定模板并引用真实场次，旧稿仍可读取", async () => {
   const { novelScriptSchema } = await import("./novelWorkspace");
-  const request = { ...input, stage: "script" as const, episodeCount: 2 as const, templates: [{ publicId: "mt_0001", role: "关系转折" }] };
-  const script = { title: "守城", episodes: [1, 2].map(index => ({ index, title: "守城", opening: "敌人进城", payoff: "救下同伴", hook: "代价", scenes: [{ key: `E${index}-S1`, 场景: "城门", 人物: "守门人", 妆容: "布衣", 灯光: "火光", 氛围: "紧张", 对白: "我留下，你先走。" }] })) };
+  const request = {
+    ...input,
+    stage: "script" as const,
+    episodeCount: 2 as const,
+    templates: [{ publicId: "mt_0001", role: "关系转折" }],
+  };
+  const script = {
+    title: "守城",
+    episodes: [1, 2].map(index => ({
+      index,
+      title: "守城",
+      opening: "敌人进城",
+      payoff: "救下同伴",
+      hook: "代价",
+      scenes: [
+        {
+          key: `E${index}-S1`,
+          场景: "城门",
+          人物: "守门人",
+          妆容: "布衣",
+          灯光: "火光",
+          氛围: "紧张",
+          对白: "我留下，你先走。",
+        },
+      ],
+    })),
+  };
   expect(novelScriptSchema.parse(script).applications).toBeUndefined();
-  expect(() => validateNovelStageOutput(request, script, [])).toThrow("运用说明");
-  const application = { publicId: "mt_0001", method: "选择带来代价", adaptation: "同伴获救使守门人必须独自承担后果", sceneKeys: ["E1-S1"] };
-  expect(validateNovelStageOutput(request, { ...script, applications: [application] }, [])).toMatchObject({ applications: [application] });
-  expect(() => validateNovelStageOutput(request, { ...script, applications: [{ ...application, sceneKeys: ["E9-S9"] }] }, [])).toThrow("运用说明");
-  expect(() => validateNovelStageOutput(request, { ...script, applications: [{ ...application, publicId: "mt_fake" }] }, [])).toThrow("运用说明");
+  expect(() => validateNovelStageOutput(request, script, [])).toThrow(
+    "运用说明"
+  );
+  const application = {
+    publicId: "mt_0001",
+    method: "选择带来代价",
+    adaptation: "同伴获救使守门人必须独自承担后果",
+    sceneKeys: ["E1-S1"],
+  };
+  expect(
+    validateNovelStageOutput(
+      request,
+      { ...script, applications: [application] },
+      []
+    )
+  ).toMatchObject({ applications: [application] });
+  expect(() =>
+    validateNovelStageOutput(
+      request,
+      { ...script, applications: [{ ...application, sceneKeys: ["E9-S9"] }] },
+      []
+    )
+  ).toThrow("运用说明");
+  expect(() =>
+    validateNovelStageOutput(
+      request,
+      { ...script, applications: [{ ...application, publicId: "mt_fake" }] },
+      []
+    )
+  ).toThrow("运用说明");
+});
+
+it("继续讨论可以不换模板，但仍禁止编造推荐", () => {
+  const followup = { ...input, advisorMessage: "我想先讨论人物动机" };
+  expect(
+    validateNovelStageOutput(
+      followup,
+      { assessment: "先明确他付出的代价", recommendations: [] },
+      ["a", "b", "c"]
+    )
+  ).toBeTruthy();
+  expect(() =>
+    validateNovelStageOutput(
+      followup,
+      {
+        assessment: "建议",
+        recommendations: [
+          { publicId: "fake", reason: "理由", tradeoff: "取舍" },
+        ],
+      },
+      ["a"]
+    )
+  ).toThrow();
 });

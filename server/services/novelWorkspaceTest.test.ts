@@ -77,3 +77,31 @@ it("阶段提示保留用户方向、确认前文、组合分工，不一次写�
   ])
     expect(prompt).toContain(value);
 });
+
+it("用户回复与完整历史进入顾问和提案，不把建议当成已采用", () => {
+  const discussion = {
+    advisorMessage: "保留未来武器",
+    advisorHistory: [{ user: "如何选？", assistant: "建议先确定主角代价" }],
+  };
+  for (const stage of ["advice", "outline"] as const) {
+    const prompt = buildNovelTestPrompt(
+      { ...input, ...discussion, stage },
+      "",
+      []
+    );
+    for (const text of [
+      "保留未来武器",
+      "如何选？",
+      "建议先确定主角代价",
+      "顾问建议不等于用户已采用",
+    ])
+      expect(prompt).toContain(text);
+  }
+  expect(novelTestInputSchema.parse(input).advisorHistory).toBeUndefined();
+  expect(() =>
+    novelTestInputSchema.parse({
+      ...input,
+      advisorHistory: Array(21).fill(discussion.advisorHistory[0]),
+    })
+  ).toThrow();
+});

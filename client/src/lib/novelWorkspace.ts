@@ -23,6 +23,7 @@ const stateSchema = z.object({
   roundId: z.string().uuid(),
   topic: z.string(),
   direction: z.string(),
+  advisorDraft: z.string().max(2000).optional(),
   mode: z.enum(["source", "original"]),
   source: z.unknown(),
   templates: z.array(z.object({ publicId: z.string(), role: z.string() })),

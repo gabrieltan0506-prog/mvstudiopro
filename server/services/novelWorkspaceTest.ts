@@ -38,19 +38,30 @@ export function buildNovelTestPrompt(
     NATURAL_DIALOGUE_RULES,
     "若底本包含多个组合板块，先识别各板块的年代、人物与事件，说明可以连接的因果、时间跨度和冲突；排列顺序是用户的叙事意图，不等于历史先后。不得把不同时期人物硬写成同时在场。顾问assessment先浓缩各板块内容并提出衔接建议；以用户指定主角为中心，补齐目标、关系、眼前危机与代价，不替换用户设定。",
     TEMPLATE_CRAFT_APPLICATION_RULES,
-    input.stage === "advice"
-      ? "从完整可用手法目录选择3–5个不同模板，排除用户已选；不足3个时如实推荐剩余全部，不能编造或用目录前几项敷衍。理由必须指出一种具体手法如何服务当前人物动机、在哪个转折使用以及取舍；不能只重复题材标签。给出改编提案建议，不自动采用。"
-      : input.stage === "outline"
-        ? `只生成 ${input.episodeCount} 集的可编辑提案，不生成小说或剧本。`
-        : input.stage === "chapter"
-          ? `只写第 ${input.chapterIndex} 章，遵守已确认大纲。其余小说是已确认前文，不改写、不重复；人物身份与因果必须衔接。不得一次写完整部。`
-          : `严格以用户已确认小说为事实和事件基准，生成 ${input.episodeCount} 集完整可拍剧本。模板可改变表现手法，不改小说人物身份、关键事件与因果。同一事件用稳定场次key（E1-S1等）便于对照，不虚构已确认事实。applications必须覆盖本次每个模板，具体说明方法怎样落到已生成场次；sceneKeys只能引用本次真实场次。`,
+    ...(input.advisorHistory?.length || input.advisorMessage
+      ? [
+          "顾问对话是用户与顾问的历史讨论。回应用户本轮问题，结合当前已选模板与分工解释具体用法、冲突和可替换方案；用户最新明确要求优先于顾问先前建议，顾问建议不等于用户已采用。保留用户明确指定的世界规则、人物能力和道具来源，不擅自替换成模板或底本的设定。assessment展示结论、创作依据、取舍和待用户决定的问题，不输出内部思维过程。生成提案时落实用户在对话中的明确修正；已确认大纲与小说仍为后续写作基准。",
+        ]
+      : []),
+    input.stage === "advice" && input.advisorMessage
+      ? "本轮是继续讨论。优先回答用户具体问题并说明已选模板的分工，不强行换掉已有推荐；不需要新增推荐时recommendations返回空数组，需要替换或补充时仅给出真实可用且尚未选的模板。"
+      : input.stage === "advice"
+        ? "从完整可用手法目录选择3–5个不同模板，排除用户已选；不足3个时如实推荐剩余全部，不能编造或用目录前几项敷衍。理由必须指出一种具体手法如何服务当前人物动机、在哪个转折使用以及取舍；不能只重复题材标签。给出改编提案建议，不自动采用。"
+        : input.stage === "outline"
+          ? `只生成 ${input.episodeCount} 集的可编辑提案，不生成小说或剧本。`
+          : input.stage === "chapter"
+            ? `只写第 ${input.chapterIndex} 章，遵守已确认大纲。其余小说是已确认前文，不改写、不重复；人物身份与因果必须衔接。不得一次写完整部。`
+            : `严格以用户已确认小说为事实和事件基准，生成 ${input.episodeCount} 集完整可拍剧本。模板可改变表现手法，不改小说人物身份、关键事件与因果。同一事件用稳定场次key（E1-S1等）便于对照，不虚构已确认事实。applications必须覆盖本次每个模板，具体说明方法怎样落到已生成场次；sceneKeys只能引用本次真实场次。`,
     "组合模板须按分工协作；冲突以已确认方向、提案、小说为准，不堆叠互斥设定。",
     `仅返回JSON，字段格式：${format}`,
     JSON.stringify({
       topic: input.topic,
       direction: input.direction,
       source: input.source,
+      ...(input.advisorHistory?.length
+        ? { advisorHistory: input.advisorHistory }
+        : {}),
+      ...(input.advisorMessage ? { advisorMessage: input.advisorMessage } : {}),
       outline: input.outline,
       confirmedNovel: input.novel,
       templateRoles: input.templates,
@@ -132,7 +143,7 @@ export async function runNovelWorkspaceTest(
           : "原请求仍待核对，不重复提交。",
     });
   }
-  let evidence: Record<string, unknown> = {};
+  let evidence: Record<string, unknown> = { phase: "preparing" };
   let lastHeartbeat = 0;
   const rawResponses: string[] = [];
   try {
@@ -164,7 +175,15 @@ export async function runNovelWorkspaceTest(
         `${selected.publicId} / 分工：${selected.role}\n${formatManhuaViralTemplateWriterSkillFromCard(card)}`
       );
     }
-    evidence = { ...evidence, selectedTemplates: selectedEvidence };
+    evidence = {
+      ...evidence,
+      selectedTemplates: selectedEvidence,
+      phase: "waiting",
+    };
+    await db
+      .update(jobs)
+      .set({ output: evidence, updatedAt: new Date() })
+      .where(eq(jobs.id, id));
     const value = await executeNovelTest(
       input,
       full.join("\n\n"),
@@ -173,9 +192,10 @@ export async function runNovelWorkspaceTest(
         callNovelStage(prompt, json, requestId, {
           onBytes: async () => {
             if (Date.now() - lastHeartbeat < 15000) return;
+            evidence = { ...evidence, phase: "receiving" };
             await db
               .update(jobs)
-              .set({ updatedAt: new Date() })
+              .set({ output: evidence, updatedAt: new Date() })
               .where(eq(jobs.id, id));
             lastHeartbeat = Date.now();
           },
@@ -195,6 +215,7 @@ export async function runNovelWorkspaceTest(
       async response => {
         evidence = {
           ...evidence,
+          phase: "validating",
           raw: response,
           rawSha256: hash(JSON.stringify(response)),
           inputSha256: fingerprint,
@@ -248,15 +269,26 @@ export async function runNovelWorkspaceTest(
 export async function readNovelWorkspaceReceipt(
   userId: number,
   requestId: string
-): Promise<{ status: string; result?: NovelTestResult }> {
+): Promise<{
+  status: string;
+  phase?: string;
+  updatedAt?: string;
+  result?: NovelTestResult;
+}> {
   const db = await getDb();
   if (!db) throw new Error("测试记录暂不可用");
   const id = `novel_test_${hash(`${userId}:${requestId}`).slice(0, 40)}`;
   const [row] = await db.select().from(jobs).where(eq(jobs.id, id));
   if (!row || row.userId !== String(userId)) return { status: "not_found" };
-  const output = row.output as { result?: NovelTestResult };
+  const output = row.output as { phase?: string; result?: NovelTestResult };
   return {
     status: row.status,
+    phase: ["preparing", "waiting", "receiving", "validating"].includes(
+      output?.phase || ""
+    )
+      ? output.phase
+      : "preparing",
+    updatedAt: row.updatedAt?.toISOString(),
     ...(row.status === "succeeded" && output?.result
       ? { result: output.result }
       : {}),

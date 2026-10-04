@@ -32,7 +32,17 @@ vi.mock("../db", () => ({
 }));
 vi.mock("./manhuaViralTemplateStore", () => ({
   listMergedApprovedManhuaViralTemplatesGrouped: async () => [
-    { items: [{ publicCode: "0001", status: "approved", reusableZh: "人物抉择推动关系转折", genPromptHintZh: "", classification: {} }] },
+    {
+      items: [
+        {
+          publicCode: "0001",
+          status: "approved",
+          reusableZh: "人物抉择推动关系转折",
+          genPromptHintZh: "",
+          classification: {},
+        },
+      ],
+    },
   ],
   resolveViralTemplateForExpand: async () => ({ card: {} }),
 }));
@@ -108,4 +118,18 @@ it("相同编号不同输入、运行中、失败均不重复发起模型；不�
   expect(await readNovelWorkspaceReceipt(2, input.requestId)).toEqual({
     status: "not_found",
   });
+});
+
+it("进度来自持久化实际阶段，回执只公开状态和结果", async () => {
+  await runNovelWorkspaceTest(1, input);
+  const phases = memory.writes.map(w => w.output?.phase).filter(Boolean);
+  expect(phases).toContain("waiting");
+  expect(phases).toContain("receiving");
+  expect(phases).toContain("validating");
+  memory.row.status = "running";
+  const receipt = await readNovelWorkspaceReceipt(1, input.requestId);
+  expect(receipt.phase).toBe("validating");
+  expect(receipt.updatedAt).toBeTruthy();
+  expect(receipt).not.toHaveProperty("rawResponses");
+  expect(receipt).not.toHaveProperty("result");
 });

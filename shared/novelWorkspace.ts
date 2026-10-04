@@ -21,6 +21,18 @@ export const novelTestInputSchema = z
     topic: text.max(200),
     direction: text.max(2000),
     source: novelExcerptSchema.optional(),
+    advisorMessage: text.max(2000).optional(),
+    advisorHistory: z
+      .array(
+        z
+          .object({
+            user: text.max(2000),
+            assistant: text.max(14000),
+          })
+          .strict()
+      )
+      .max(20)
+      .optional(),
     templates: z.array(novelTemplateChoiceSchema).max(5),
     episodeCount: z.union([z.literal(2), z.literal(3)]),
     outline: z.string().max(14000).default(""),
@@ -152,7 +164,7 @@ export function validateNovelStageOutput(
     const available = availableIds.filter(
       id => !input.selectedTemplateIds.includes(id)
     );
-    const expected = Math.min(3, available.length);
+    const expected = input.advisorMessage ? 0 : Math.min(3, available.length);
     if (
       ids.length < expected ||
       new Set(ids).size !== ids.length ||

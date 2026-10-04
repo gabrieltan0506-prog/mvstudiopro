@@ -14,7 +14,7 @@ const generate=async input=>{
  if(input.stage==='script')value={title:'补天',applications:input.templates.map(t=>({publicId:t.publicId,method:'选择带来代价',adaptation:'让守火人通过留下来承担救城的代价。',sceneKeys:['E1-S1']})),episodes:Array.from({length:input.episodeCount},(_,i)=>({index:i+1,title:'补天',opening:'天裂',payoff:'救人',hook:'余烬',scenes:[{key:'E'+(i+1)+'-S1',场景:'共同场景。'+(input.templates[0].publicId==='mt_0000'?'雪落城头。':'雨落城头。'),人物:'女娲与守火人。',妆容:'灰衣。',灯光:'火光。',氛围:'紧张。',对白:'女娲说：“把孩子先带出去，我来守住这里。”'}]}))};
  const result={requestId:input.requestId,stage:input.stage,text:JSON.stringify(value),templateIds:input.templates.map(t=>t.publicId),inputSha256:'a'.repeat(64),resultSha256:'b'.repeat(64)};globalThis.receipts[input.requestId]=result;return result;
 };
-export const trpc={manhuaViralTemplate:{listApprovedPublic:{useQuery:()=>({data:{groups:[{items:cards}]},isLoading:false,isError:false})}},novelWorkspace:{generate:{useMutation:()=>({mutateAsync:generate})}},useUtils:()=>({novelWorkspace:{receipt:{fetch:async({requestId})=>({status:'succeeded',result:globalThis.receipts[requestId]})}}})};
+export const trpc={manhuaViralTemplate:{listApprovedPublic:{useQuery:()=>({data:{groups:[{items:cards}]},isLoading:false,isError:false})}},novelWorkspace:{generate:{useMutation:()=>({mutateAsync:generate})}},useUtils:()=>({novelWorkspace:{receipt:{fetch:async({requestId})=>globalThis.receipts[requestId]?.status?globalThis.receipts[requestId]:({status:globalThis.receipts[requestId]?'succeeded':'not_found',result:globalThis.receipts[requestId]})}}})};
 `;
 it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢复，墨菁传保持不变", async () => {
   const built = await build({
@@ -122,15 +122,30 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
       await click("上传底本改编");
       const chooser = await chooserPromise;
       await chooser.cancel();
-      expect(await page.$eval('[data-manhua-novel-source]', el => el.tagName)).toBe("SECTION");
-      expect(await page.$eval('[data-manhua-novel-source]', el => el.getBoundingClientRect().top))
-        .toBeLessThan(await page.$eval('[aria-label="作品名称"]', el => el.getBoundingClientRect().top));
+      expect(
+        await page.$eval("[data-manhua-novel-source]", el => el.tagName)
+      ).toBe("SECTION");
+      expect(
+        await page.$eval(
+          "[data-manhua-novel-source]",
+          el => el.getBoundingClientRect().top
+        )
+      ).toBeLessThan(
+        await page.$eval(
+          '[aria-label="作品名称"]',
+          el => el.getBoundingClientRect().top
+        )
+      );
     }
     await click("请创作顾问建议方向与模板");
-    expect(await page.$eval('[data-advisor-feedback]', el=>el.textContent)).toContain("请先填写作品名称");
-    expect(await page.evaluate(()=>(globalThis as any).calls.length)).toBe(0);
+    expect(
+      await page.$eval("[data-advisor-feedback]", el => el.textContent)
+    ).toContain("请先填写作品名称");
+    expect(await page.evaluate(() => (globalThis as any).calls.length)).toBe(0);
     await page.select('[aria-label="创作环节"]', "sound");
-    expect(await page.$$eval('[aria-label="选择故事模板"] > div', els => els.length)).toBe(3);
+    expect(
+      await page.$$eval('[aria-label="选择故事模板"] > div', els => els.length)
+    ).toBe(3);
     await page.click('[aria-label="比较模板 0000"]');
     await page.click('[aria-label="比较模板 0002"]');
     expect(await page.$('[aria-label="模板手法对照"]')).toBeTruthy();
@@ -150,6 +165,44 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
       );
       buttons[0].click();
     });
+    await page.type(
+      '[aria-label="回复顾问"]',
+      "保留未来武器，两个模板分别负责破局与对白，请解释怎么组合。"
+    );
+    await click("发送给顾问");
+    await page.waitForFunction(
+      () =>
+        (globalThis as any).calls.filter((c: any) => c.stage === "advice")
+          .length === 2 &&
+        !(
+          document.querySelector(
+            '[aria-label="回复顾问"]'
+          ) as HTMLTextAreaElement
+        ).disabled
+    );
+    const followup = await page.evaluate(() =>
+      (globalThis as any).calls.at(-1)
+    );
+    expect(followup.advisorMessage).toContain("保留未来武器");
+    expect(followup.advisorHistory).toHaveLength(1);
+    expect(followup.advisorHistory[0].assistant).toContain("强化角色抉择");
+    expect(followup.templates).toHaveLength(2);
+    expect(
+      await page.$eval('[aria-label="顾问对话记录"]', e => e.textContent)
+    ).toContain("保留未来武器");
+    await page.type('[aria-label="回复顾问"]', "尚未发送的想法");
+    await page.reload();
+    await page.waitForSelector('[aria-label="回复顾问"]');
+    expect(
+      await page.$eval(
+        '[aria-label="回复顾问"]',
+        e => (e as HTMLTextAreaElement).value
+      )
+    ).toBe("尚未发送的想法");
+    expect(
+      await page.$eval('[aria-label="顾问对话记录"]', e => e.textContent)
+    ).toContain("保留未来武器");
+    expect(await page.evaluate(() => (globalThis as any).calls.length)).toBe(0);
     await click("生成改编提案");
     await page.waitForFunction(() =>
       (
@@ -158,6 +211,11 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
         ) as HTMLTextAreaElement
       )?.value.includes("补天需要代价")
     );
+    expect(
+      await page.evaluate(
+        () => (globalThis as any).calls[0].advisorHistory.length
+      )
+    ).toBe(2);
     await click("确认大纲，开始分章");
     for (let i = 1; i <= 3; i++) {
       await page.evaluate(i => {
@@ -249,6 +307,63 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
       path: "../backend-work/novel-workspace/mobile.png",
       fullPage: true,
     });
+    // Refresh a pending request: poll the same receipt, show actual progress, never generate again.
+    const pendingId = await page.evaluate(() => {
+      const key = "mv-novel-lab-v2:1",
+        state = JSON.parse(localStorage.getItem(key)!);
+      state.pending = {
+        ...state.runs.find((r: any) => r.input.stage === "advice").input,
+        requestId: crypto.randomUUID(),
+        advisorMessage: "继续讨论人物动机",
+      };
+      localStorage.setItem(key, JSON.stringify(state));
+      return state.pending.requestId;
+    });
+    await page.reload();
+    await page.waitForSelector("[data-advisor-feedback]");
+    await page.evaluate(id => {
+      (globalThis as any).receipts[id] = {
+        status: "running",
+        phase: "receiving",
+        updatedAt: new Date().toISOString(),
+      };
+    }, pendingId);
+    await page.waitForFunction(() =>
+      document
+        .querySelector("[data-advisor-feedback]")
+        ?.textContent?.includes("正在接收创作回复")
+    );
+    await page.evaluate(id => {
+      const state = JSON.parse(localStorage.getItem("mv-novel-lab-v2:1")!);
+      (globalThis as any).receipts[id] = {
+        status: "succeeded",
+        result: {
+          ...state.runs[0].result,
+          requestId: id,
+          text: JSON.stringify({
+            assessment: "已恢复这次讨论",
+            recommendations: [],
+          }),
+        },
+      };
+    }, pendingId);
+    await page.waitForFunction(() =>
+      document
+        .querySelector('[aria-label="顾问对话记录"]')
+        ?.textContent?.includes("已恢复这次讨论")
+    );
+    expect(await page.evaluate(() => (globalThis as any).calls.length)).toBe(0);
+    expect(
+      await page.evaluate(
+        () => JSON.parse(localStorage.getItem("mv-novel-lab-v2:1")!).pending
+      )
+    ).toBeUndefined();
+    expect(
+      await page.$$eval(
+        '[aria-label="顾问对话记录"] p',
+        els => els.filter(e => e.textContent?.includes("已恢复这次讨论")).length
+      )
+    ).toBe(1);
     await click("放弃本轮，重新开始");
     await page.waitForFunction(
       () =>
