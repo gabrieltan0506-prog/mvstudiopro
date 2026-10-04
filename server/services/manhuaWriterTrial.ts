@@ -109,7 +109,7 @@ export async function logManhuaWriterTrialUse(params: {
 }
 
 export type SavedManhuaWriterTrialResult = {
-  input: { topic: string; brief: string; publicTemplateId: string };
+  input: { topic: string; brief: string; publicTemplateId: string; model?: "glm" | "deepseek" };
   withTemplate: ManhuaWriterTrialDraft;
   control: ManhuaWriterTrialDraft;
   appliedTemplate: { publicId: string; nameZh: string };

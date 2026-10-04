@@ -88,6 +88,7 @@ const TRPC_LONG_HTTP_LINK_PATHS = new Set([
   "mvAnalysis.generateDecisionIntelTopicExecutionCopy",
   "mvAnalysis.optimizeCustomCopy",
   "mvAnalysis.expandManhuaWriterPack",
+  "mvAnalysis.trialManhuaWriterTemplate",
   "mvAnalysis.generateHtmlPptOutline",
   "mvAnalysis.suggestHtmlPptThemes",
   "mvAnalysis.patchHtmlPptPage",

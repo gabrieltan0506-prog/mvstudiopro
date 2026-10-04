@@ -554,10 +554,12 @@ import {
 import { useAuth } from "@/_core/hooks/useAuth";
 import { hasSupervisorAccess } from "@/lib/supervisorAccess";
 import {
-  MANHUA_WRITER_EXPAND_CREDITS_PER_EPISODE,
-  MANHUA_WRITER_EXPAND_TIERS,
-  type ManhuaWriterExpandTierId,
-} from "@shared/manhuaWriterExpandPricing";
+  MANHUA_WRITER_MODELS,
+  MANHUA_WRITER_EPISODE_CREDITS,
+  manhuaWriterExpansionQuote,
+  manhuaWriterModelLabel,
+  type ManhuaWriterModel,
+} from "@shared/manhuaWriterModels";
 import {
   canvasVideoClipCredits,
 } from "@shared/canvasGenerationPricing";
@@ -1102,9 +1104,8 @@ function OmniCanvasWorkspace() {
   const [writerEpisodeCount, setWriterEpisodeCount] = useState(() =>
     Math.max(initialWriterSession?.writerPack?.episodes.length || 0, clampWriterEpisodeCount(initialWriterSession?.episodeCount ?? MANHUA_WRITER_EPISODE_DEFAULT)),
   );
-  /** 扩写引擎档位：四档，默认优秀；前台只显示档名，不出现模型名 */
-  const [writerExpandTierChoice, setWriterExpandTier] = useState<ManhuaWriterExpandTierId>("excellent");
-  const writerExpandTier = novelDraft?.enabled ? "excellent" : writerExpandTierChoice;
+  /** 扩写模型：GLM / DeepSeek，界面不展示版本。 */
+  const [writerModel, setWriterModel] = useState<ManhuaWriterModel>("glm");
   /** 失败/丢响应后同参数重试复用请求键；成功后清空，下一次主动扩写重新计费。 */
   const writerExpandRetryRef = useRef<{ signature: string; requestId: string } | null>(null);
   /** 单集时长档位：段长恒定 15s，切档只改一集几段（2.5 时由成片引擎覆盖） */
@@ -4323,24 +4324,25 @@ function OmniCanvasWorkspace() {
   });
   const [trialWriterResult, setTrialWriterResult] = useState<ManhuaWriterTrialResult | null>(null);
   const [trialWriterError, setTrialWriterError] = useState("");
-  const [trialWriterInput, setTrialWriterInput] = useState<{ topic: string; brief: string; publicTemplateId: string } | null>(null);
+  const [trialWriterInput, setTrialWriterInput] = useState<{ topic: string; brief: string; publicTemplateId: string; model?: ManhuaWriterModel } | null>(null);
   const [trialWriterDismissed, setTrialWriterDismissed] = useState(false);
   const [staleTrialFingerprint, setStaleTrialFingerprint] = useState("");
   useEffect(() => {
     const saved = trialWriterRecentQuery.data?.find((result) =>
       result.input.topic === factoryTopic.trim() &&
       result.input.brief === writerBrief.trim() &&
-      result.input.publicTemplateId === publicTemplateId,
+      result.input.publicTemplateId === publicTemplateId && (!result.input.model || result.input.model === writerModel),
     );
     if (!saved) return;
     const sameDisplayed = trialWriterInput?.topic === saved.input.topic &&
       trialWriterInput?.brief === saved.input.brief &&
-      trialWriterInput?.publicTemplateId === saved.input.publicTemplateId;
+      trialWriterInput?.publicTemplateId === saved.input.publicTemplateId && trialWriterInput?.model === saved.input.model;
     if (sameDisplayed && (trialWriterResult || trialWriterDismissed)) return;
     setTrialWriterResult(saved);
+    setTrialWriterError("");
     setTrialWriterInput(saved.input);
     setTrialWriterDismissed(false);
-  }, [trialWriterRecentQuery.data, trialWriterResult, trialWriterInput, trialWriterDismissed, factoryTopic, writerBrief, publicTemplateId]);
+  }, [trialWriterRecentQuery.data, trialWriterResult, trialWriterInput, trialWriterDismissed, factoryTopic, writerBrief, publicTemplateId, writerModel]);
   /** 编剧室全员走公开面：服务端只回匿名功能卡（内部 id/真名永不进本页） */
   const manhuaViralTemplatesQuery = trpc.manhuaViralTemplate.listApprovedPublic.useQuery(undefined, {
     staleTime: 60_000,
@@ -5960,20 +5962,9 @@ function OmniCanvasWorkspace() {
       });
       if (!allowed) return;
       clearSeriesAssetsAfterBackup = seriesSwitchRisk.needsBackup;
-    } else if (writerPack) {
-      const gateRepair = opts?.fromEpisodeOverride != null;
-      const rewriteCount = Math.max(
-        1,
-        (writerPack.episodes.length || fromEpisode) - fromEpisode + 1,
-      );
-      const perEp = MANHUA_WRITER_EXPAND_CREDITS_PER_EPISODE[writerExpandTier];
-      const ok = window.confirm(
-        gateRepair
-          ? `补密度：从第 ${fromEpisode} 集起重写 ${rewriteCount} 集，预计 ${perEp * rewriteCount} 积分。之前的集与已出片资产保留；失败不动原稿，成功后自动重检门禁。是否继续？`
-          : "局部改写将覆盖起点之后的剧情；起点之前的剧本与已出片资产会保留。是否继续？",
-      );
-      if (!ok) return;
     }
+    const expansionQuote = manhuaWriterExpansionQuote(writerEpisodeCount, fromEpisode);
+    if (!window.confirm(`${manhuaWriterModelLabel(writerModel)} · 扩写 ${expansionQuote.episodes} 集，每集 6 积分，共 ${expansionQuote.credits} 积分。成功后替换本次改写范围，其余集数与已出片资产保留；生成失败不替换原稿、不扣积分。是否继续？`)) return;
     setWriterBusy(true);
     // 补密度路径：过了 confirm 等全部早退才挂自动重检标，防悬挂被无关剧本变更误触发
     if (opts?.fromEpisodeOverride != null) gateRecheckPendingRef.current = true;
@@ -5984,14 +5975,12 @@ function OmniCanvasWorkspace() {
       detail: `topicLen=${topic.length} briefLen=${brief.length} episodes=${count} overwriteOld=1 publicTemplate=${publicTemplateId || "off"} videoModel=${selectedVideoModel}`,
       request: reqPreview,
     });
-    /** 服务端 300s；客户端略宽一点，超时必须解锁，避免旧稿挂着却一直「正在扩写」 */
-    const EXPAND_CLIENT_TIMEOUT_MS = 320_000;
     const expandSignature = JSON.stringify({
       topic,
       mergedBrief,
       sourceExcerpt,
       count,
-      writerExpandTier,
+      writerModel,
       publicTemplateId,
       templateTrialFingerprint: opts?.templateTrialFingerprint,
       writerLengthTierId,
@@ -6010,7 +5999,8 @@ function OmniCanvasWorkspace() {
           brief: mergedBrief || undefined,
           sourceExcerpt,
           episodeCount: count,
-          tier: writerExpandTier,
+          model: writerModel,
+          confirmedCredits: manhuaWriterExpansionQuote(count, fromEpisode).credits,
           requestId: expandRequestId,
           publicTemplateId: publicTemplateId || undefined,
           templateTrialFingerprint: opts?.templateTrialFingerprint,
@@ -6027,11 +6017,8 @@ function OmniCanvasWorkspace() {
             ? manhuaDirectionSelectionForRequest(directionSelection)
             : undefined,
         });
-      // Bottom-text generation has two streamed stages; the server enforces idle timeouts.
-      // Do not cut an active pipeline off with the old single-stage wall-clock timeout.
-      const res = sourceExcerpt ? await request : await Promise.race([request,new Promise<never>((_,reject)=>{
-        window.setTimeout(()=>reject(new Error("剧情扩写超时，请稍后重试（旧稿未改动）")),EXPAND_CLIENT_TIMEOUT_MS);
-      })]);
+      // 两个模型均按服务端实际流活动计算失联，不用旧固定320秒截断仍在生成的正文。
+      const res = await request;
       writerExpandRetryRef.current = null;
       if (!res.ready || !res.pack?.episodes?.every((episode) => String(episode.body || "").trim().length >= 20)) {
         throw new Error("扩写结果不完整，旧稿和试写对照均已保留；请核对扣点记录后重试");
@@ -6275,7 +6262,7 @@ function OmniCanvasWorkspace() {
     writerFromEpisode,
     writerFromSegment,
     publicTemplateId,
-    writerExpandTier,
+    writerModel,
     customAssetRefs,
     selectedCharacterIds,
     factorySceneId,
@@ -12012,6 +11999,7 @@ function OmniCanvasWorkspace() {
                         trialWriterMutation.mutate(
                           {
                             requestId: crypto.randomUUID(),
+                            model: writerModel,
                             publicTemplateId,
                             topic: topic || undefined,
                             brief: brief || undefined,
@@ -12019,7 +12007,7 @@ function OmniCanvasWorkspace() {
                           {
                             onSuccess: (res) => {
                               setTrialWriterResult(res);
-                              setTrialWriterInput({ topic, brief, publicTemplateId });
+                              setTrialWriterInput({ topic, brief, publicTemplateId, model: writerModel });
                               void trialWriterQuotaQuery.refetch();
                               void trialWriterRecentQuery.refetch();
                               window.requestAnimationFrame(() => {
@@ -12053,26 +12041,28 @@ function OmniCanvasWorkspace() {
                 ) : null}
                 {trialWriterError ? (
                   <p role="alert" className="mt-2 rounded-lg border border-rose-300/30 bg-rose-500/10 p-3 text-xs text-rose-100">
-                    {trialWriterError}。{trialWriterResult ? "已生成的对照仍保留，可核对额度后再试。" : "尚无可显示的对照稿；请核对今日剩余额度。"}
+                    {/Unexpected token|not valid JSON/.test(trialWriterError) ? "连接未返回有效结果，请先查看已保存的试写，不要重复生成" : trialWriterError}。{trialWriterResult ? "已生成的对照仍保留。" : "可先取回已保存的试写，不会重新生成。"}
+                    <button type="button" onClick={() => void trialWriterRecentQuery.refetch()} className="ml-2 underline">取回已保存试写</button>
                   </p>
                 ) : null}
                 {trialWriterResult && trialWriterInput && (
                   trialWriterInput.topic !== factoryTopic.trim() ||
                   trialWriterInput.brief !== writerBrief.trim() ||
                   trialWriterInput.publicTemplateId !== publicTemplateId ||
+                  Boolean(trialWriterInput.model && trialWriterInput.model !== writerModel) ||
                   trialWriterResult.appliedTemplate.publicId !== publicTemplateId
-                ) ? <p className="mt-2 text-xs text-amber-100" role="status">题材、补充条件或模板已改变，请重新试写后再套用全集。</p> : null}
+                ) ? <p className="mt-2 text-xs text-amber-100" role="status">题材、补充条件、模型或模板已改变，请核对后再套用全集。</p> : null}
                 {trialWriterResult && trialWriterInput && trialWriterDismissed &&
                   trialWriterInput.topic === factoryTopic.trim() &&
                   trialWriterInput.brief === writerBrief.trim() &&
-                  trialWriterInput.publicTemplateId === publicTemplateId ? (
+                  trialWriterInput.publicTemplateId === publicTemplateId && (!trialWriterInput.model || trialWriterInput.model === writerModel) ? (
                   <button type="button" className="mt-2 rounded-lg border border-cyan-300/30 px-3 py-1.5 text-xs text-cyan-100" onClick={() => setTrialWriterDismissed(false)}>重新打开已保存的试写对比</button>
                 ) : null}
                 {trialWriterResult && trialWriterInput &&
                   !trialWriterDismissed &&
                   trialWriterInput.topic === factoryTopic.trim() &&
                   trialWriterInput.brief === writerBrief.trim() &&
-                  trialWriterInput.publicTemplateId === publicTemplateId &&
+                  trialWriterInput.publicTemplateId === publicTemplateId && (!trialWriterInput.model || trialWriterInput.model === writerModel) &&
                   trialWriterResult.appliedTemplate.publicId === publicTemplateId ? (
                   <ManhuaTemplateTrialCompare
                     result={trialWriterResult}
@@ -12172,30 +12162,29 @@ function OmniCanvasWorkspace() {
                 </div>
                 <div className="flex flex-col gap-1">
                   <div className="flex flex-wrap gap-1">
-                    {(novelDraft?.enabled ? MANHUA_WRITER_EXPAND_TIERS.filter(t=>t.id==="excellent") : MANHUA_WRITER_EXPAND_TIERS).map((t) => {
-                      const on = writerExpandTier === t.id;
+                    {MANHUA_WRITER_MODELS.map((t) => {
+                      const on = writerModel === t.id;
                       return (
                         <button
                           key={t.id}
                           type="button"
                           disabled={writerBusy || factoryBusy}
-                          title={novelDraft?.enabled ? "底本与所选模板自动改编" : t.blurb}
-                          onClick={() => setWriterExpandTier(t.id)}
+                          title={`${t.label} · 每集 ${MANHUA_WRITER_EPISODE_CREDITS} 积分`}
+                          onClick={() => setWriterModel(t.id)}
                           className={`rounded-md border px-2 py-1 text-[10px] font-semibold disabled:opacity-50 ${
                             on
                               ? "border-cyan-300/45 bg-cyan-500/20 text-cyan-50"
                               : "border-white/12 bg-white/[0.03] text-white/60 hover:bg-white/[0.06]"
                           }`}
                         >
-                          {novelDraft?.enabled ? "模板改编" : t.label}
+                          {t.label}
                         </button>
                       );
                     })}
                   </div>
                   <p className="text-[10px] leading-snug text-white/40">
                     本次扣{" "}
-                    {MANHUA_WRITER_EXPAND_CREDITS_PER_EPISODE[writerExpandTier] *
-                      clampWriterEpisodeCount(writerEpisodeCount)}{" "}
+                    {manhuaWriterExpansionQuote(writerEpisodeCount, writerFromEpisode).credits}{" "}
                     积分
                   </p>
                   <button
@@ -12347,16 +12336,15 @@ function OmniCanvasWorkspace() {
                         writerPack.episodes.length - minFailing + 1,
                       );
                       const perEpisode =
-                        MANHUA_WRITER_EXPAND_CREDITS_PER_EPISODE[writerExpandTier];
+                        MANHUA_WRITER_EPISODE_CREDITS;
                       const tierLabel =
-                        MANHUA_WRITER_EXPAND_TIERS.find((t) => t.id === writerExpandTier)
-                          ?.label || writerExpandTier;
+                        manhuaWriterModelLabel(writerModel);
                       return (
                         <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-amber-400/20 pt-2">
                           <span className="text-[10px] text-amber-50/85">
                             不足的集（第 {writerGateFailEpisodes.join("、")} 集）可一键付费扩写补密度：
                             从第 {minFailing} 集起局部改写 {rewriteCount} 集 ·{" "}
-                            {tierLabel}档 {perEpisode} 分/集 · 预计 {perEpisode * rewriteCount} 积分。
+                            {tierLabel} · {perEpisode} 分/集 · 预计 {perEpisode * rewriteCount} 积分。
                             之前的集与已出片资产保留；扩写失败不动原稿，成功后自动重检门禁。
                           </span>
                           <button
@@ -12485,7 +12473,7 @@ function OmniCanvasWorkspace() {
                   </div>
                   {writerPack ? (
                     <p className="mt-1.5 text-[10px] leading-relaxed text-cyan-50/70">
-                      下方仍是旧稿，成功后才会覆盖；若超过约 5 分钟无结果会自动解锁，请再点「重新扩写」。
+                      下方仍是旧稿，完整结果返回后才会替换；模型按实际输出检查失联，请勿重复提交。
                     </p>
                   ) : null}
                   <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/10">
