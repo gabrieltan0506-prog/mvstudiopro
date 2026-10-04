@@ -54,12 +54,15 @@ export function NovelTemplateComparison({
   );
   return (
     <section aria-label="模板比较">
-      <details className="mb-4 rounded-xl border border-white/15 p-3" open>
+      <details
+        className="mb-4 rounded-xl border border-white/15 p-3"
+        open={variants.length > 1}
+      >
         <summary className="cursor-pointer text-sm font-semibold">
           模板方法如何用进剧本
         </summary>
         <p className="mt-2 text-xs text-slate-400">
-          这是生成时的运用说明，请结合下方场次核对实际效果。
+          这是生成时的运用说明，保留作参考；修改后的正文以上方编辑稿为准。
         </p>
         <div className="mt-3 grid gap-3 md:grid-cols-2">
           {variants.map(v => (
@@ -116,22 +119,26 @@ export function NovelTemplateComparison({
         </div>
       </details>
       <style>{`@keyframes novel-difference{0%,100%{outline-color:transparent}50%{outline-color:currentColor}}.novel-difference{outline:2px solid transparent;animation:novel-difference 1.4s ease-in-out 2}@media(prefers-reduced-motion:reduce){.novel-difference{animation:none}}`}</style>
-      <label>
-        比较批次
-        <select
-          className="ml-2 bg-slate-900 p-2"
-          value={selected}
-          onChange={e => setSelected(Number(e.target.value))}
-        >
-          {groups.map((_, i) => (
-            <option key={i} value={i}>
-              小说版本 {i + 1}
-            </option>
-          ))}
-        </select>
-      </label>
+      {groups.length > 1 && (
+        <label>
+          比较批次
+          <select
+            className="ml-2 bg-slate-900 p-2"
+            value={selected}
+            onChange={e => setSelected(Number(e.target.value))}
+          >
+            {groups.map((_, i) => (
+              <option key={i} value={i}>
+                小说版本 {i + 1}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <p className="my-3 text-xs text-slate-400">
-        仅比较同轮次、同底本、同方向、同一份已确认小说。第一列为文字基准；高亮表示文字变化，不能代替语义或质量审查。不同场次编号另列，避免错位比较。
+        {variants.length > 1
+          ? "同一份小说的候选剧本对照。高亮表示文字变化，不能代替质量审查。"
+          : "当前只有一份候选剧本，可在上方逐集修改；下方按项目汇总正文。"}
       </p>
       <div className="flex flex-wrap gap-2">
         {NOVEL_FACETS.map((f, i) => (

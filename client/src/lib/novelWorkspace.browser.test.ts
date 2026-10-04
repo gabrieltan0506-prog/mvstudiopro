@@ -329,7 +329,7 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
         i
       );
     }
-    await click("确认这版小说，进入模板比较");
+    await click("确认这版小说，生成剧本");
     await click("单独生成 · 模板1");
     await page.waitForFunction(
       async () =>

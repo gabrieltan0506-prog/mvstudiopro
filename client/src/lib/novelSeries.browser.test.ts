@@ -112,16 +112,58 @@ it("browser: one batch keeps episode 1, writes 2/3, reviews 10/20 batches throug
       )
     ).toBe(first);
     // Follow the actual candidate-adoption click in a separate page, then verify its project storage.
-    await click("确认这版小说，进入模板比较");
+    await click("确认这版小说，生成剧本");
     await click("单独生成 · 模板1");
     await page.waitForSelector('[aria-label="模板比较"] table');
     await page.waitForFunction(
       async () => !(await (globalThis as any).readDraft()).pending
     );
+    const paidBeforeEdit = await page.evaluate(() =>
+      (globalThis as any).readDraft()
+    );
+    await page.$eval('[aria-label="第1集 E1-S1 对白"]', el => {
+      Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value"
+      )!.set!.call(el, "沈昀：先把文书留下，我们再谈条件。");
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await page.waitForFunction(async () =>
+      JSON.stringify(
+        (await (globalThis as any).readDraft()).scriptEdits
+      ).includes("先把文书留下")
+    );
+    for (const episode of [2, 3]) {
+      await page.$eval(
+        `[aria-label="第${episode}集 E${episode}-S1 对白"]`,
+        (el, episode) => {
+          Object.getOwnPropertyDescriptor(
+            HTMLTextAreaElement.prototype,
+            "value"
+          )!.set!.call(el, `第${episode}集手动修改的对白，保留人物动机。`);
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+        },
+        episode
+      );
+    }
+    await page.waitForFunction(async () =>
+      JSON.stringify(
+        (await (globalThis as any).readDraft()).scriptEdits
+      ).includes("第3集手动修改")
+    );
+    expect(
+      (await page.evaluate(() => (globalThis as any).readDraft())).runs
+    ).toEqual(paidBeforeEdit.runs);
     const adoptedPage = await browser.newPage();
     adoptedPage.on("dialog", d => void d.accept());
     await adoptedPage.goto(page.url());
     await adoptedPage.waitForSelector('[aria-label="模板比较"] table');
+    expect(
+      await adoptedPage.$eval(
+        '[aria-label="第1集 E1-S1 对白"]',
+        el => (el as HTMLTextAreaElement).value
+      )
+    ).toBe("沈昀：先把文书留下，我们再谈条件。");
     await adoptedPage.evaluate(() =>
       Array.from(document.querySelectorAll("button"))
         .find(b => b.textContent?.includes("采用这版剧本，进入漫剧工厂"))!
@@ -138,6 +180,14 @@ it("browser: one batch keeps episode 1, writes 2/3, reviews 10/20 batches throug
     });
     expect(imported.writerPack.episodes).toHaveLength(3);
     expect(imported.writerConfirmed).toBe(false);
+    expect(JSON.stringify(imported.writerPack)).toContain(
+      "先把文书留下，我们再谈条件"
+    );
+    expect(JSON.stringify(imported.writerPack)).toContain("第2集手动修改");
+    expect(JSON.stringify(imported.writerPack)).toContain("第3集手动修改");
+    console.log(
+      "EDITOR PROOF: all 3 episode dialogue edits persisted; original paid receipts unchanged; reopening preserved edits; actual adopt button imported edited text into isolated factory writer pack."
+    );
     await adoptedPage.close();
     await input("全剧计划集数", "70");
     await input("全剧计划集数", "60");
@@ -147,7 +197,7 @@ it("browser: one batch keeps episode 1, writes 2/3, reviews 10/20 batches throug
       [20, 53],
       [20, 60],
     ]) {
-      await click("确认这版小说，进入模板比较");
+      await click("确认这版小说，生成剧本");
       await click(`审阅通过，准备续写${count}集`);
       await click("请创作顾问建议方向与模板");
       await page.waitForFunction(
@@ -257,6 +307,7 @@ it("browser: one batch keeps episode 1, writes 2/3, reviews 10/20 batches throug
     const full = await page.evaluate(() => (globalThis as any).readDraft());
     expect(full.chapters).toHaveLength(60);
     expect(full.chapters[0]).toBe(first);
+    expect(JSON.stringify(full.scriptEdits)).toContain("先把文书留下");
     // Backup restores the chosen exact snapshot and first preserves the edited current draft.
     await click("云端备份");
     await page.waitForFunction(() =>

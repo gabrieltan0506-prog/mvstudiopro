@@ -19,6 +19,9 @@ const runSchema = z.object({
   }),
 });
 export const novelWorkspaceStateSchema = z.object({
+  scriptEdits: z
+    .record(z.string(), z.record(z.string(), z.string().max(3500)))
+    .optional(),
   roundId: z.string().uuid(),
   topic: z.string(),
   direction: z.string(),

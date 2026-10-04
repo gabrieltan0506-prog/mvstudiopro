@@ -1,3 +1,6 @@
+import { NovelScriptEditor } from "@/components/canvas/NovelScriptEditor";
+import { editedNovelRun } from "@/lib/novelScriptEditing";
+import type { NovelRun } from "@/lib/novelWorkspace";
 import { TemplateRoleGuide } from "@/components/canvas/TemplateRoleGuide";
 import { suggestedTemplateRole } from "@shared/manhuaTemplateGuidance";
 import {
@@ -779,6 +782,80 @@ function NovelWorkspaceEditor({
     "mt-2 w-full rounded-xl border border-white/15 bg-black/20 p-3 text-sm";
   const button =
     "rounded-xl border border-white/20 px-4 py-2 text-sm disabled:opacity-40";
+  const adoptScript = async (run: NovelRun) => {
+    if (
+      !window.confirm(
+        `将「${JSON.parse(run.result.text).title}」第${run.input.episodeStart || 1}–${(run.input.episodeStart || 1) + run.input.episodeCount - 1}集接入本季漫剧作品。已有集数与素材保留；不会自动生成图片或视频。继续？`
+      )
+    )
+      return;
+    try {
+      run = editedNovelRun(
+        run,
+        latest.current.scriptEdits?.[run.result.requestId]
+      );
+      const editBaseline = JSON.stringify(
+        latest.current.scriptEdits?.[run.result.requestId] || {}
+      );
+      const roundId = latest.current.roundId;
+      run = {
+        ...run,
+        result: {
+          ...run.result,
+          resultSha256: await novelTextHash(run.result.text),
+          inputSha256: await novelTextHash(JSON.stringify(run.input)),
+        },
+      };
+      const cloud = await utils.manhuaCloudDraft.get.fetch({
+        projectId: draft.roundId,
+      });
+      const localAt = localStorage.getItem(
+        `mv-manhua-project:${userId}:${draft.roundId}:mv-manhua-cloud-draft-local-at-v1`
+      );
+      if (
+        cloud?.draft &&
+        (!localAt ||
+          Date.parse(cloud.draft.clientUpdatedAt || "") > Date.parse(localAt))
+      )
+        throw new Error(
+          "此作品云端有更新，请先在我的漫剧中打开恢复最新内容，再回来追加续集。"
+        );
+      if (!(await writes.current)) throw new Error("改编稿尚未保存，未跳转");
+      if (!navigator.locks)
+        throw new Error(
+          "当前浏览器无法取得作品编辑锁，请使用支持此功能的浏览器。"
+        );
+      const project = await navigator.locks.request(
+        `mv-manhua-project:${userId}:${draft.roundId}`,
+        { ifAvailable: true },
+        lock => {
+          if (!lock)
+            throw new Error(
+              "此作品正在另一页面中编辑，请先保存并关闭那个作品页面，再追加续集。"
+            );
+          if (
+            latest.current.roundId !== roundId ||
+            JSON.stringify(
+              latest.current.scriptEdits?.[run.result.requestId] || {}
+            ) !== editBaseline
+          )
+            throw new Error("剧本在准备期间有修改，请核对后重新采用。");
+          return createNovelFactoryProject(
+            localStorage,
+            userId,
+            run,
+            draft.roundId
+          );
+        }
+      );
+      window.location.assign(project.href);
+    } catch (error) {
+      setError(
+        error instanceof Error ? error.message : "创建作品失败，原稿保留"
+      );
+    }
+  };
+  const scriptRuns = completeScriptBatches(draft.runs);
   return (
     <main className="min-h-screen bg-[#111820] px-5 py-8 text-slate-100 md:px-10">
       <div className="mx-auto max-w-7xl">
@@ -789,7 +866,7 @@ function NovelWorkspaceEditor({
             </p>
             <h1 className="mt-2 text-3xl font-semibold">小说改编工作室</h1>
             <p className="mt-3 text-sm text-slate-400">
-              顾问提案 → 分集小说稿 → 剧本比较 → 漫剧制作
+              顾问提案 → 分集小说稿 → 剧本编辑与确认 → 漫剧制作
             </p>
           </div>
           <Link
@@ -2036,7 +2113,7 @@ function NovelWorkspaceEditor({
             className={`${button} mt-4 bg-amber-200 text-slate-950`}
             onClick={() => change({ novelApproved: currentNovel })}
           >
-            确认这版小说，进入模板比较
+            确认这版小说，生成剧本
           </button>
         </section>
         <section className="mt-6 rounded-xl border border-amber-200/20 p-4">
@@ -2062,7 +2139,7 @@ function NovelWorkspaceEditor({
           ))}
         </section>
         <section className="mt-6 rounded-2xl border border-white/10 p-5">
-          <h2 className="text-xl">04 / 本批剧本与模板比较</h2>
+          <h2 className="text-xl">04 / 剧本编辑与确认</h2>
           <div className="my-4 flex flex-wrap gap-2">
             {draft.templates.map(t => (
               <button
@@ -2093,79 +2170,37 @@ function NovelWorkspaceEditor({
               按分工组合生成
             </button>
           </div>
-          <NovelTemplateComparison
-            runs={completeScriptBatches(draft.runs)}
-            disabled={disabled}
-            onAdopt={async run => {
-              if (
-                !window.confirm(
-                  `将「${JSON.parse(run.result.text).title}」第${run.input.episodeStart || 1}–${(run.input.episodeStart || 1) + run.input.episodeCount - 1}集接入本季漫剧作品。已有集数与素材保留；不会自动生成图片或视频。继续？`
-                )
-              )
-                return;
-              try {
-                // The assembled view is derived from preserved per-episode receipts.
-                if (
-                  run.input.scriptBatch &&
-                  run.input.requestId === run.input.scriptBatch.id
-                ) {
-                  run = {
-                    ...run,
-                    result: {
-                      ...run.result,
-                      resultSha256: await novelTextHash(run.result.text),
-                      inputSha256: await novelTextHash(
-                        JSON.stringify(run.input)
-                      ),
-                    },
-                  };
-                }
-                const cloud = await utils.manhuaCloudDraft.get.fetch({
-                  projectId: draft.roundId,
-                });
-                const localAt = localStorage.getItem(
-                  `mv-manhua-project:${userId}:${draft.roundId}:mv-manhua-cloud-draft-local-at-v1`
-                );
-                if (
-                  cloud?.draft &&
-                  (!localAt ||
-                    Date.parse(cloud.draft.clientUpdatedAt || "") >
-                      Date.parse(localAt))
-                )
-                  throw new Error(
-                    "此作品云端有更新，请先在我的漫剧中打开恢复最新内容，再回来追加续集。"
-                  );
-                if (!(await writes.current))
-                  throw new Error("改编稿尚未保存，未跳转");
-                if (!navigator.locks)
-                  throw new Error(
-                    "当前浏览器无法取得作品编辑锁，请使用支持此功能的浏览器。"
-                  );
-                const project = await navigator.locks.request(
-                  `mv-manhua-project:${userId}:${draft.roundId}`,
-                  { ifAvailable: true },
-                  lock => {
-                    if (!lock)
-                      throw new Error(
-                        "此作品正在另一页面中编辑，请先保存并关闭那个作品页面，再追加续集。"
-                      );
-                    return createNovelFactoryProject(
-                      localStorage,
-                      userId,
-                      run,
-                      draft.roundId
-                    );
-                  }
-                );
-                window.location.assign(project.href);
-              } catch (error) {
-                setError(
-                  error instanceof Error
-                    ? error.message
-                    : "创建作品失败，原稿保留"
-                );
+          {scriptRuns.map(run => (
+            <NovelScriptEditor
+              key={run.result.requestId}
+              run={run}
+              edits={draft.scriptEdits?.[run.result.requestId]}
+              disabled={disabled}
+              onAdopt={adoptScript}
+              onChange={edits =>
+                change({
+                  scriptEdits: {
+                    ...latest.current.scriptEdits,
+                    [run.result.requestId]: edits,
+                  },
+                })
               }
-            }}
+            />
+          ))}
+          <NovelTemplateComparison
+            runs={scriptRuns.flatMap(run => {
+              try {
+                return [
+                  editedNovelRun(
+                    run,
+                    draft.scriptEdits?.[run.result.requestId]
+                  ),
+                ];
+              } catch {
+                return [];
+              }
+            })}
+            disabled={disabled}
           />
         </section>
         <details className="mt-6 rounded-xl border border-white/10 p-4">
