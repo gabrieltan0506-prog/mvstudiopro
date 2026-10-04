@@ -3036,6 +3036,8 @@ function OmniCanvasWorkspace() {
   );
 
   useEffect(() => {
+    // 独立作品先判定恢复来源，避免默认值提前覆盖损坏记录、掩盖读取失败。
+    if (projectScope && !cloudSyncReady) return;
     saveFactoryCharacterPrefs({
       narrativeLightingId: factoryNarrativeLightingId,
       narrativeLightingManual,
@@ -3048,6 +3050,7 @@ function OmniCanvasWorkspace() {
       artStyleManual,
     });
   }, [
+    cloudSyncReady,
     factoryTopic,
     factoryFemaleId,
     factoryMaleId,
@@ -3175,6 +3178,8 @@ function OmniCanvasWorkspace() {
 
   /** 编剧包 / Bible / 确认态持久化：硬刷新后继续三集流程，无需重扩 */
   useEffect(() => {
+    // 与偏好保存共用恢复门禁，保留原始本机状态供云/本机版本判定。
+    if (projectScope && !cloudSyncReady) return;
     try {
       saveManhuaWriterSessionToStorage({
         topic: factoryTopic,
@@ -3207,6 +3212,7 @@ function OmniCanvasWorkspace() {
       /* 本机权限/配额失败：不阻断云端通路 */
     }
   }, [
+    cloudSyncReady,
     factoryTopic,
     writerBrief,
     novelDraft,
@@ -10179,6 +10185,24 @@ function OmniCanvasWorkspace() {
               </details>
             </div>
   );
+
+  // 恢复尚未确定时不开放编辑，避免产生无法保存的改动；读取失败可重试，原稿不动。
+  if (projectScope && !cloudSyncReady) {
+    return (
+      <main className="flex min-h-dvh items-center justify-center p-6">
+        <section role="status" aria-live="polite" className="max-w-md space-y-4 rounded-2xl border bg-background p-6 text-foreground">
+          <h1 className="text-xl font-semibold">{cloudDraftQuery.isError ? "作品恢复暂未完成" : "正在恢复作品"}</h1>
+          <p>{cloudDraftQuery.isError ? "暂时无法读取云端作品，本机原稿已保留。请重新读取后继续编辑。" : "正在核对本机与云端的保存版本，请稍候。"}</p>
+          {cloudDraftQuery.isError && (
+            <button type="button" data-testid="manhua-cloud-retry" className="rounded-lg bg-primary px-4 py-2 text-primary-foreground disabled:opacity-50" disabled={cloudDraftQuery.isFetching} onClick={() => void cloudDraftQuery.refetch()}>
+              {cloudDraftQuery.isFetching ? "正在重新读取…" : "重新读取作品"}
+            </button>
+          )}
+          <a href="/manhua-projects" className="block text-sm underline">返回我的漫剧</a>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <div
