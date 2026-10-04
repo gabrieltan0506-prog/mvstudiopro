@@ -1,16 +1,25 @@
 import { it, expect, vi, beforeEach } from "vitest";
 const files = new Map<string, Buffer>();
+const generations = new Map<string, string>();
+let nextGeneration = 0;
 vi.mock("./gcs.js", () => ({
   uploadBufferToGcs: vi.fn(
-    async ({ objectName, buffer }: { objectName: string; buffer: Buffer }) => {
+    async ({ objectName, buffer, ifGenerationMatch }: { objectName: string; buffer: Buffer; ifGenerationMatch?: string }) => {
+      if (ifGenerationMatch !== undefined && (generations.get(objectName) || "0") !== ifGenerationMatch) throw new Error("gcs_upload_failed:412:test");
+      generations.set(objectName, String(++nextGeneration));
       files.set(objectName, buffer);
-      return { gcsUri: `gs://test/${objectName}` };
+      return { gcsUri: `gs://test/${objectName}`, generation: generations.get(objectName) };
     }
   ),
   downloadGcsObject: vi.fn(async ({ gcsUri }: { gcsUri: string }) => {
     const key = gcsUri.replace(/^gs:\/\/[^/]+\//, "");
     if (!files.has(key)) throw new Error("gcs_download_failed:404");
     return { buffer: files.get(key)! };
+  }),
+  downloadGcsObjectVersioned: vi.fn(async ({gcsUri}: {gcsUri: string}) => {
+    const key = gcsUri.replace(/^gs:\/\/[^/]+\//, "");
+    if (!files.has(key)) throw new Error("gcs_stat_failed:404");
+    return {buffer: files.get(key)!, generation: generations.get(key)};
   }),
   createGcsSignedUploadUrl: vi.fn(
     async ({ objectName }: { objectName: string }) => ({
@@ -31,7 +40,7 @@ import {
   listManhuaProjects,
 } from "./manhuaCloudDraftGcsStore";
 import { buildManhuaCloudDraftPayload } from "../../shared/manhuaCloudDraft";
-beforeEach(() => files.clear());
+beforeEach(() => { files.clear(); generations.clear(); nextGeneration=0; });
 it("旧对象路径不变，作品与账号各自写入、读取、签名和列举", async () => {
   const a = "11111111-1111-4111-8111-111111111111",
     b = "22222222-2222-4222-8222-222222222222";
@@ -52,6 +61,7 @@ it("旧对象路径不变，作品与账号各自写入、读取、签名和列�
     await writeManhuaCloudDraftToGcs({
       userId,
       projectId,
+      expectedGeneration: projectId ? "0" : undefined,
       payload: payload(title),
     });
   expect(
@@ -63,8 +73,8 @@ it("旧对象路径不变，作品与账号各自写入、读取、签名和列�
   expect(
     (await readManhuaCloudDraftFromGcs(2, a))?.payload.writerSession.topic
   ).toBe("另一个账号");
-  expect((await createManhuaCloudDraftSignedUpload(1, b)).objectName).toBe(
-    `manhua-cloud-drafts/user-1/projects/${b}.json`
+  expect((await createManhuaCloudDraftSignedUpload(1, b, "0")).objectName).toContain(
+    `manhua-cloud-drafts/user-1/projects/${b}.json.staging/`
   );
   expect(
     (await listManhuaProjects(1)).projects.map(p => p.title).sort()
@@ -84,7 +94,7 @@ it("100部以上云端作品索引全量列举，不套用草稿30天过期", as
       blocks: [],
       edges: [],
     });
-    await writeManhuaCloudDraftToGcs({ userId: 1, projectId: id, payload });
+    await writeManhuaCloudDraftToGcs({ userId: 1, projectId: id, expectedGeneration: "0", payload });
   }
   expect((await listManhuaProjects(1)).projects).toHaveLength(105);
   const key = manhuaCloudDraftObjectName(

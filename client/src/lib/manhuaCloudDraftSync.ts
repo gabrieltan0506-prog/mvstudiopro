@@ -1,3 +1,4 @@
+import { isCloudDraftConflict } from "./manhuaDraftRecovery";
 import { parseManhuaNovelOrigin, MANHUA_NOVEL_ORIGIN_KEY } from "@shared/manhuaNovelOrigin";
 import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
 import { gcsTransferUrl, isGcsTransferUrl } from "@/lib/gcsTransfer";
@@ -594,10 +595,11 @@ export async function uploadManhuaCloudDraftViaGcsDirect(opts: {
   payload: ManhuaCloudDraftPayload;
   prepare: () => Promise<{
     uploadUrl: string;
+    uploadId?: string;
     requiredHeaders?: Record<string, string>;
   }>;
-  commit: () => Promise<unknown>;
-}): Promise<{ ok: true } | { ok: false; error: string }> {
+  commit: (uploadId?: string) => Promise<{ generation?: string } | unknown>;
+}): Promise<{ ok: true; generation?: string } | { ok: false; error: string; conflict?: boolean }> {
   const body = buildManhuaCloudDraftGcsUploadBody({
     userId: opts.userId,
     payload: opts.payload,
@@ -605,12 +607,13 @@ export async function uploadManhuaCloudDraftViaGcsDirect(opts: {
   try {
     let prepared: {
       uploadUrl: string;
+      uploadId?: string;
       requiredHeaders?: Record<string, string>;
     };
     try {
       prepared = await opts.prepare();
     } catch (e) {
-      return { ok: false, error: formatCloudDraftDirectError(e) };
+      return { ok: false, error: formatCloudDraftDirectError(e), conflict: isCloudDraftConflict(e) };
     }
     const uploadUrl = String(prepared?.uploadUrl || "").trim();
     if (!/^https:\/\//i.test(uploadUrl)) {
@@ -635,11 +638,11 @@ export async function uploadManhuaCloudDraftViaGcsDirect(opts: {
       };
     }
     try {
-      await opts.commit();
+      const receipt = await opts.commit(prepared.uploadId) as { generation?: string } | undefined;
+      return { ok: true, generation: receipt?.generation };
     } catch (e) {
-      return { ok: false, error: formatCloudDraftDirectError(e) };
+      return { ok: false, error: formatCloudDraftDirectError(e), conflict: isCloudDraftConflict(e) };
     }
-    return { ok: true };
   } catch (e) {
     return {
       ok: false,

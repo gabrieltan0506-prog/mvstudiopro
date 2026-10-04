@@ -13,6 +13,7 @@ import {
   type ManhuaCloudDraftPayload,
 } from "../../shared/manhuaCloudDraft";
 import {
+  ManhuaCloudDraftConflictError,
   commitManhuaCloudDraftAfterDirectUpload,
   createManhuaCloudDraftSignedUpload,
   readManhuaCloudDraftFromGcs,
@@ -66,10 +67,11 @@ async function loadDraftForUser(
 ): Promise<{
   payload: ManhuaCloudDraftPayload;
   updatedAt: string;
+  generation?: string;
 } | null> {
   const fromGcs = await readManhuaCloudDraftFromGcs(userId, projectId);
   if (fromGcs) {
-    return { payload: fromGcs.payload, updatedAt: fromGcs.serverUpdatedAt };
+    return { payload: fromGcs.payload, updatedAt: fromGcs.serverUpdatedAt, generation: fromGcs.generation };
   }
   if (projectId) return null; // A new project must never fall back to the legacy current work.
   const legacy = await loadDraftFromNeonLegacy(userId);
@@ -90,6 +92,16 @@ const projectInput = z
   .object({ projectId: z.string().uuid().optional() })
   .optional();
 
+const projectWriteInput = z.object({
+  projectId: z.string().uuid().optional(),
+  expectedGeneration: z.string().regex(/^\d+$/).optional(),
+  uploadId: z.string().uuid().optional(),
+}).optional();
+function writeError(e: unknown): never {
+  throw new TRPCError({ code: e instanceof ManhuaCloudDraftConflictError ? "CONFLICT" : "SERVICE_UNAVAILABLE",
+    message: e instanceof Error ? e.message : "草稿服务暂不可用" });
+}
+
 export const manhuaCloudDraftRouter = router({
   listProjects: protectedProcedure.query(({ ctx }) =>
     listManhuaProjects(ctx.user.id)
@@ -101,6 +113,7 @@ export const manhuaCloudDraftRouter = router({
       return {
         draft: null as ManhuaCloudDraftPayload | null,
         serverUpdatedAt: null as string | null,
+        generation: input?.projectId ? "0" : undefined,
       };
     }
     // 0902 根治：快照里的签名图链最长 7 天、信封留 30 天——超一周回填图全裂。
@@ -111,43 +124,42 @@ export const manhuaCloudDraftRouter = router({
         `[manhuaCloudDraft] refreshed ${stats.refreshed} signed url(s) for user ${ctx.user.id}`
       );
     }
-    return { draft: payload, serverUpdatedAt: hit.updatedAt };
+    return { draft: payload, serverUpdatedAt: hit.updatedAt, generation: hit.generation };
   }),
 
   /**
    * 直传准备：浏览器把草稿 JSON PUT 到 GCS，避开大包经 API 超时（Failed to fetch）。
    */
   prepareDirectUpload: protectedProcedure
-    .input(projectInput)
+    .input(projectWriteInput)
     .mutation(async ({ ctx, input }) => {
       try {
         const signed = await createManhuaCloudDraftSignedUpload(
           ctx.user.id,
-          input?.projectId
+          input?.projectId, input?.expectedGeneration
         );
         return {
           uploadUrl: signed.uploadUrl,
           gcsUri: signed.gcsUri,
           objectName: signed.objectName,
+          uploadId: signed.uploadId,
           requiredHeaders: {
             "Content-Type": "application/json",
             ...(signed.requiredHeaders || {}),
           },
         };
       } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : "草稿上传通道不可用";
-        throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: msg });
+        writeError(e);
       }
     }),
 
   /** 直传完成后校验 GCS 对象 */
   commitDirectUpload: protectedProcedure
-    .input(projectInput)
+    .input(projectWriteInput)
     .mutation(async ({ ctx, input }) => {
       const hit = await commitManhuaCloudDraftAfterDirectUpload(
-        ctx.user.id,
-        input?.projectId
-      );
+        ctx.user.id, input?.projectId, input?.expectedGeneration, input?.uploadId
+      ).catch(writeError);
       if (!hit) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -158,6 +170,7 @@ export const manhuaCloudDraftRouter = router({
         ok: true as const,
         clientUpdatedAt: hit.payload.clientUpdatedAt,
         serverUpdatedAt: hit.serverUpdatedAt,
+        generation: hit.generation,
         blockCount: hit.payload.canvas.blocks.length,
         hasWriterPack: Boolean(hit.payload.writerSession.writerPack),
         storage: "gcs" as const,
@@ -172,6 +185,7 @@ export const manhuaCloudDraftRouter = router({
     .input(
       z.object({
         projectId: z.string().uuid().optional(),
+        expectedGeneration: z.string().regex(/^\d+$/).optional(),
         payloadJson: z.string().min(2).max(MANHUA_CLOUD_DRAFT_MAX_CHARS),
       })
     )
@@ -194,19 +208,20 @@ export const manhuaCloudDraftRouter = router({
         const written = await writeManhuaCloudDraftToGcs({
           userId: ctx.user.id,
           projectId: input.projectId,
+          expectedGeneration: input.expectedGeneration,
           payload,
         });
         return {
           ok: true as const,
           clientUpdatedAt: payload.clientUpdatedAt,
           serverUpdatedAt: written.serverUpdatedAt,
+          generation: written.generation,
           blockCount: payload.canvas.blocks.length,
           hasWriterPack: Boolean(payload.writerSession.writerPack),
           storage: "gcs" as const,
         };
       } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : "草稿服务暂不可用";
-        throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: msg });
+        writeError(e);
       }
     }),
 });

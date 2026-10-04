@@ -232,7 +232,7 @@ export async function uploadBufferToGcs(params: {
    * 用于“读旧版 → 补字段 → 写回”流程，避免把并发产生的新版本覆盖掉。
    */
   ifGenerationMatch?: string;
-}): Promise<{ bucket: string; objectName: string; gcsUri: string }> {
+}): Promise<{ bucket: string; objectName: string; gcsUri: string; generation?: string }> {
   params.signal?.throwIfAborted();
   const bucket = params.bucket || getGcsBucketName();
   if (!bucket) {
@@ -273,6 +273,7 @@ export async function uploadBufferToGcs(params: {
     bucket,
     objectName,
     gcsUri: `gs://${bucket}/${objectName}`,
+    generation: json?.generation ? String(json.generation) : undefined,
   };
 }
 
