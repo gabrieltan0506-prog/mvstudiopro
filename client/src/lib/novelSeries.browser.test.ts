@@ -37,6 +37,7 @@ it("browser: one batch keeps episode 1, writes 2/3, reviews 10/20 batches throug
                 ? novelMockTransport
                 : 'export const useAuth=()=>({user:{id:1,role:"admin"},loading:false})',
             loader: "js",
+            resolveDir: process.cwd(),
           }));
         },
       },
@@ -190,6 +191,14 @@ it("browser: one batch keeps episode 1, writes 2/3, reviews 10/20 batches throug
             el => (el as HTMLTextAreaElement).value
           )
         ).toContain("女娲");
+        const raw = await page.$eval(
+          '[aria-label="保留的模型原文"]',
+          el => (el as HTMLTextAreaElement).value
+        );
+        expect(() => JSON.parse(raw)).toThrow(); // Real malformed JSON, not merely a failed status.
+        const callsBeforeRecovery = await page.evaluate(
+          () => (globalThis as any).calls.length
+        );
         await click("恢复已收到的第8集（不重新生成）");
         await page.waitForFunction(async () => {
           const d = await (globalThis as any).readDraft();
@@ -203,6 +212,28 @@ it("browser: one batch keeps episode 1, writes 2/3, reviews 10/20 batches throug
               ).length
           )
         ).toBe(1);
+        const recovered = await page.evaluate(() =>
+          (globalThis as any).readDraft()
+        );
+        expect(recovered.chapters.slice(0, 7)).toEqual(stopped.chapters);
+        expect(
+          await page.evaluate(() => (globalThis as any).calls.length)
+        ).toBe(callsBeforeRecovery);
+        const expected = JSON.parse(raw.replace(/,}$/, "}"));
+        expect(recovered.chapters[7]).toBe(
+          `${expected.title}\n\n${expected.text}`
+        );
+        await page.reload();
+        await page.waitForSelector('[aria-label="第8集小说稿"]');
+        expect(
+          (await page.evaluate(() => (globalThis as any).readDraft())).chapters
+        ).toEqual(recovered.chapters);
+        expect(
+          await page.evaluate(() => (globalThis as any).calls.length)
+        ).toBe(0);
+        console.log(
+          "REPAIR PROOF: malformed raw rejected by JSON.parse; real repair parser restored exact episode 8; episodes 1–7 unchanged; extra model calls 0; refresh preserves all 8 episodes without resubmission."
+        );
         await click("继续本批");
       }
 

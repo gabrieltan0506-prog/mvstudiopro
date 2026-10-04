@@ -38,6 +38,7 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
                 ? mock
                 : 'export const useAuth=()=>({user:{id:1,role:"admin"},loading:false});',
             loader: "js",
+            resolveDir: process.cwd(),
           }));
         },
       },
