@@ -146,3 +146,28 @@ it("新方向重荐以当前稿为上下文，从既有审核库提供有依据�
   ])
     expect(prompt).toContain(value);
 });
+
+it("首次模板组合直接生成三版故事，带上原稿与明确配比", () => {
+  const prompt = buildNovelTestPrompt(
+    {
+      ...input,
+      advisorIntent: "story_variants",
+      templates: [{ publicId: "mt_a", role: "权谋", weight: 100 }],
+      outline: "原情节",
+      novel: "已写正文",
+    },
+    "模板方法",
+    []
+  );
+  for (const expected of [
+    "恰好三个故事线方案",
+    "首次无advisorMessage",
+    "原情节",
+    "已写正文",
+    "currentNovelDraft",
+    '"weight":100',
+    '"variants"',
+    "不生成小说",
+  ])
+    expect(prompt).toContain(expected);
+});

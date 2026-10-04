@@ -9,6 +9,7 @@ import { NovelTemplateComparison } from "@/components/canvas/NovelTemplateCompar
 import { prepareNovelExcerpt } from "@shared/manhuaNovelSource";
 import {
   novelAdviceSchema,
+  formatNovelOutline,
   novelModelLabel,
   NOVEL_MODEL_OPTIONS,
   novelChapterSchema,
@@ -123,10 +124,6 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
   };
   const addTemplate = (id: string) => {
     if (draft.templates.some(t => t.publicId === id)) return;
-    if (draft.templates.length >= 5) {
-      setError("本轮最多选择5个模板");
-      return;
-    }
     persist({
       ...draft,
       templates: [
@@ -227,14 +224,7 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
     };
     if (input.stage === "outline") {
       const plan = novelOutlineSchema.parse(JSON.parse(result.text));
-      next.outline = [
-        `核心冲突\n${plan.premise}`,
-        `人物关系\n${plan.characters}`,
-        ...plan.episodes.map(
-          ep =>
-            `第${ep.index}集：${ep.title}\n剧情：${ep.events}\n本集兑现：${ep.payoff}\n片尾钩子：${ep.hook}`
-        ),
-      ].join("\n\n");
+      next.outline = formatNovelOutline(plan);
       next.outlineApproved = "";
       next.chapters = [];
       next.novelApproved = "";
@@ -369,7 +359,9 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
         source,
         ...(advisorMessage ? { advisorMessage } : {}),
         ...(advisorIntent ? { advisorIntent } : {}),
-        ...(((stage === "advice" && advisorMessage) || stage === "outline") &&
+        ...(((stage === "advice" &&
+          (advisorMessage || advisorIntent === "story_variants")) ||
+          stage === "outline") &&
         adviceRuns.length
           ? {
               advisorHistory: discussionHistory,
@@ -379,13 +371,17 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
         episodeCount: draft.episodeCount,
         outline:
           stage === "advice"
-            ? advisorIntent === "recommend_templates"
+            ? advisorMessage ||
+              advisorIntent === "recommend_templates" ||
+              advisorIntent === "story_variants"
               ? draft.outline
               : ""
             : draft.outlineApproved,
         novel:
           stage === "advice"
-            ? advisorIntent === "recommend_templates"
+            ? advisorMessage ||
+              advisorIntent === "recommend_templates" ||
+              advisorIntent === "story_variants"
               ? currentNovel
               : ""
             : stage === "chapter"
@@ -396,7 +392,7 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
       });
       if (
         !window.confirm(
-          `本次提交管理者测试：${stage === "advice" ? "创作顾问与模板推荐" : stage === "outline" ? "改编提案" : stage === "chapter" ? `第${chapterIndex}章小说` : `${draft.episodeCount}集剧本候选`}。将调用创作服务并产生实际成本，是否继续？`
+          `本次提交管理者测试：${advisorIntent === "story_variants" ? "三个故事线方案" : stage === "advice" ? "创作顾问与模板推荐" : stage === "outline" ? "改编提案" : stage === "chapter" ? `第${chapterIndex}章小说` : `${draft.episodeCount}集剧本候选`}。将调用创作服务并产生实际成本，是否继续？`
         )
       )
         return;
@@ -744,14 +740,14 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
                       undefined,
                       1,
                       draft.advisorDraft?.trim(),
-                      "recommend_templates"
+                      "story_variants"
                     )
                   }
                 >
-                  按新方向推荐模板
+                  按新方向生成3个故事方案
                 </button>
                 <p className="text-xs text-slate-400">
-                  回复会带上前文与当前模板分工。故事线不满意时，写出新方向再点“按新方向推荐模板”；顾问会参考现有大纲与正文，推荐其他已审核模板，说明改变与取舍。原稿和配比保留，推荐不自动采用。
+                  回复会带上前文与当前模板分工。故事线不满意时，写出新方向再生成3个故事方案；顾问结合原有情节与库内模板，展示具体变化与取舍。原稿保留，方案不自动采用。
                 </p>
                 <h3 className="font-semibold">
                   可选模板 · 讨论不会自动更改选择
@@ -782,6 +778,7 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
                   </article>
                 ))}
                 {!adviceRun?.input.advisorMessage &&
+                  !advice.variants &&
                   advice.recommendations.length < 3 && (
                     <p className="text-xs text-amber-200">
                       可推荐的库内模板不足3个，未编造补足。
@@ -793,7 +790,7 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
           <section className="min-w-0 rounded-2xl border border-white/10 p-5">
             <h2 className="text-xl">02 / 模板与分工</h2>
             <p className="mt-3 text-sm text-slate-400">
-              自己挑选或采用顾问推荐，最多5个；可单独生成，也可指定分工组合。
+              自己挑选或采用顾问推荐；可单独生成，也可指定分工组合。
             </p>
             <button
               className={`${button} mt-3`}
@@ -934,12 +931,181 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
               </div>
             ))}
             <button
-              disabled={disabled || !advice || !draft.templates.length}
+              disabled={disabled || !draft.templates.length}
               className={`${button} mt-4`}
-              onClick={() => generate("outline")}
+              onClick={() =>
+                generate("advice", undefined, 1, undefined, "story_variants")
+              }
             >
-              生成改编提案
+              生成3个故事方案
             </button>
+            <p className="mt-2 text-sm text-slate-400">
+              选好模板即可比较三个故事走向。采用后可编辑大纲，再确认生成小说。
+            </p>
+            {[...adviceRuns]
+              .reverse()
+              .filter(r => r.input.advisorIntent === "story_variants")
+              .map(run => (
+                <section
+                  key={run.input.requestId}
+                  className="mt-5 space-y-3"
+                  aria-label="故事线方案"
+                >
+                  <h3 className="font-semibold">
+                    {run.input.advisorMessage
+                      ? `新方向：${run.input.advisorMessage}`
+                      : "所选模板 · 三个故事走向"}
+                  </h3>
+                  {novelAdviceSchema
+                    .parse(JSON.parse(run.result.text))
+                    .variants?.map(variant => (
+                      <article
+                        key={variant.id}
+                        className="rounded-xl border border-amber-200/20 p-4"
+                      >
+                        <h4 className="text-lg font-semibold">
+                          {variant.id} · {variant.title}
+                        </h4>
+                        <p className="mt-2 whitespace-pre-wrap">
+                          {variant.outline.premise}
+                        </p>
+                        <p className="mt-2 whitespace-pre-wrap text-sm">
+                          人物：{variant.outline.characters}
+                        </p>
+                        <p className="mt-2 text-sm text-amber-200">
+                          变化：{variant.changeSummary}
+                        </p>
+                        <p className="mt-2 text-sm text-slate-400">
+                          取舍：{variant.tradeoff}
+                        </p>
+                        {variant.outline.episodes.map(ep => (
+                          <div
+                            key={ep.index}
+                            className="mt-3 border-t border-white/10 pt-2 text-sm"
+                          >
+                            <h5 className="font-semibold">
+                              第{ep.index}集 · {ep.title}
+                            </h5>
+                            <p className="whitespace-pre-wrap">{ep.events}</p>
+                            <p className="mt-1">本集兑现：{ep.payoff}</p>
+                            <p>追看理由：{ep.hook}</p>
+                          </div>
+                        ))}
+                        <details className="mt-3 text-sm">
+                          <summary>模板分工与配比</summary>
+                          {variant.templates.map(t => (
+                            <p key={t.publicId}>
+                              {cards.find(c => c.publicId === t.publicId)
+                                ?.nameZh || t.publicId}{" "}
+                              · {t.weight}% · {t.role}
+                            </p>
+                          ))}
+                        </details>
+                        <button
+                          className={`${button} mt-3`}
+                          disabled={disabled}
+                          onClick={() => {
+                            if (
+                              variant.templates.some(
+                                t => !cards.some(c => c.publicId === t.publicId)
+                              )
+                            ) {
+                              setError(
+                                "方案内有已不可用模板，请刷新模板库后重新提案。"
+                              );
+                              return;
+                            }
+                            if (
+                              !window.confirm(
+                                "采用此故事线？当前大纲、小说与模板会保存到采用前版本；不会自动生成小说。"
+                              )
+                            )
+                              return;
+                            change({
+                              storyVersions: [
+                                ...(draft.storyVersions || []),
+                                {
+                                  label: `采用${variant.id} · ${variant.title}前 · ${new Date().toLocaleString()}`,
+                                  outline: draft.outline,
+                                  episodeCount: draft.episodeCount,
+                                  advisorAnchor: draft.advisorAnchor,
+                                  chapters: [...draft.chapters],
+                                  templates: draft.templates.map(t => ({
+                                    ...t,
+                                  })),
+                                },
+                              ],
+                              outline: formatNovelOutline(variant.outline),
+                              templates: variant.templates.map(t => ({ ...t })),
+                              episodeCount: run.input.episodeCount,
+                              chapters: [],
+                              outlineApproved: "",
+                              novelApproved: "",
+                              advisorAnchor: run.input.requestId,
+                            });
+                          }}
+                        >
+                          采用这条故事线
+                        </button>
+                      </article>
+                    ))}
+                </section>
+              ))}
+            {!!draft.storyVersions?.length && (
+              <details className="mt-4">
+                <summary>采用前版本（{draft.storyVersions.length}）</summary>
+                {draft.storyVersions.map((version, index) => (
+                  <article
+                    key={index}
+                    className="mt-3 rounded-xl border border-white/10 p-3"
+                  >
+                    <p>{version.label}</p>
+                    <details>
+                      <summary>查看原稿</summary>
+                      <pre className="whitespace-pre-wrap text-sm">
+                        {[version.outline, ...version.chapters].join("\n\n") ||
+                          "尚未生成正文"}
+                      </pre>
+                    </details>
+                    <button
+                      className={`${button} mt-2`}
+                      disabled={disabled}
+                      onClick={() => {
+                        if (
+                          !window.confirm(
+                            "恢复此版本？当前稿件也会保留，恢复后请重新确认大纲与小说。"
+                          )
+                        )
+                          return;
+                        change({
+                          storyVersions: [
+                            ...(draft.storyVersions || []),
+                            {
+                              label: `恢复前 · ${new Date().toLocaleString()}`,
+                              outline: draft.outline,
+                              episodeCount: draft.episodeCount,
+                              advisorAnchor: draft.advisorAnchor,
+                              chapters: [...draft.chapters],
+                              templates: draft.templates.map(t => ({ ...t })),
+                            },
+                          ],
+                          outline: version.outline,
+                          episodeCount:
+                            version.episodeCount || draft.episodeCount,
+                          advisorAnchor: version.advisorAnchor,
+                          chapters: [...version.chapters],
+                          templates: version.templates.map(t => ({ ...t })),
+                          outlineApproved: "",
+                          novelApproved: "",
+                        });
+                      }}
+                    >
+                      恢复此版本
+                    </button>
+                  </article>
+                ))}
+              </details>
+            )}
             <label className="mt-4 block">
               提案与大纲 · 可修改
               <textarea

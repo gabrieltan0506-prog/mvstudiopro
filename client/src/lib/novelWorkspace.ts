@@ -6,6 +6,7 @@ import {
 import {
   novelTestInputSchema,
   novelModelSchema,
+  novelTemplateChoiceSchema,
   novelGenerationSettingsSchema,
   type NovelTestInput,
   type NovelTestResult,
@@ -30,6 +31,18 @@ const stateSchema = z.object({
   advisorDraft: z.string().max(2000).optional(),
   modelPreference: novelModelSchema.optional(),
   advisorAnchor: z.string().optional(),
+  storyVersions: z
+    .array(
+      z.object({
+        label: z.string(),
+        episodeCount: z.union([z.literal(2), z.literal(3)]).optional(),
+        advisorAnchor: z.string().optional(),
+        outline: z.string(),
+        chapters: z.array(z.string()),
+        templates: z.array(novelTemplateChoiceSchema),
+      })
+    )
+    .optional(),
   mode: z.enum(["source", "original"]),
   source: z.unknown(),
   templates: z.array(

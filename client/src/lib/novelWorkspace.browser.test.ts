@@ -4,11 +4,12 @@ import puppeteer from "puppeteer";
 import { createServer } from "node:http";
 import { readFileSync, readdirSync, mkdirSync } from "node:fs";
 const mock = `
-const cards=Array.from({length:5},(_,i)=>({publicId:'mt_000'+i,nameZh:'模板'+(i+1),featureZh:'人物冲突与对白',introZh:'有代价的抉择',classificationTagsZh:[],craft:{version:1,features:[i%2?{id:'verbal-tactics',dimension:'dialogue',label:'对白试探与攻防'}:{id:'music-turn',dimension:'sound',label:'音乐推动剧情转折'}]}}));
+const cards=Array.from({length:6},(_,i)=>({publicId:'mt_000'+i,nameZh:'模板'+(i+1),featureZh:'人物冲突与对白',introZh:'有代价的抉择',classificationTagsZh:[],craft:{version:1,features:[i%2?{id:'verbal-tactics',dimension:'dialogue',label:'对白试探与攻防'}:{id:'music-turn',dimension:'sound',label:'音乐推动剧情转折'}]}}));
 globalThis.calls=[];globalThis.receipts={};
 const generate=async input=>{
  globalThis.calls.push(input);let value;
  if(input.stage==='advice')value={assessment:'先确定主角代价，前三集逐次兑现冲突。',recommendations:cards.filter(c=>!input.selectedTemplateIds.includes(c.publicId)).slice(0,3).map(c=>({publicId:c.publicId,reason:'强化角色抉择',tradeoff:'减少支线'}))};
+ if(input.advisorIntent==='story_variants')value={assessment:'三个不同因果走向',recommendations:[],variants:['A','B','C'].map(id=>({id,title:'故事'+id,changeSummary:'选择不同的救城方式'+id,tradeoff:'承担不同代价',templates:input.templates,outline:{premise:'补天需要代价'+id,characters:'女娲与守火人',episodes:Array.from({length:input.episodeCount},(_,i)=>({index:i+1,title:'第'+(i+1)+'集',events:'主角作出选择'+id,hook:'新的代价',payoff:'救下一城'}))}}))};
  if(input.stage==='outline')value={premise:'补天需要代价',characters:'女娲与守火人',episodes:Array.from({length:input.episodeCount},(_,i)=>({index:i+1,title:'第'+(i+1)+'集',events:'主角作出选择',hook:'新的代价',payoff:'救下一城'}))};
  if(input.stage==='chapter')value={title:'第'+input.chapterIndex+'章',text:'女娲望着破裂的天空，决定留下来。'.repeat(40),notes:'测试生成，非真实模型结果'};
  if(input.stage==='script')value={title:'补天',applications:input.templates.map(t=>({publicId:t.publicId,method:'选择带来代价',adaptation:'让守火人通过留下来承担救城的代价。',sceneKeys:['E1-S1']})),episodes:Array.from({length:input.episodeCount},(_,i)=>({index:i+1,title:'补天',opening:'天裂',payoff:'救人',hook:'余烬',scenes:[{key:'E'+(i+1)+'-S1',场景:'共同场景。'+(input.templates[0].publicId==='mt_0000'?'雪落城头。':'雨落城头。'),人物:'女娲与守火人。',妆容:'灰衣。',灯光:'火光。',氛围:'紧张。',对白:'女娲说：“把孩子先带出去，我来守住这里。”'}]}))};
@@ -235,7 +236,15 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
     expect(
       await page.$eval('[aria-label="顾问对话记录"]', el => el.textContent)
     ).toContain("DeepSeek V4.1 Flash");
-    await click("生成改编提案");
+    await click("生成3个故事方案");
+    await page.waitForSelector('[aria-label="故事线方案"]');
+    expect(
+      await page.$eval(
+        '[aria-label="提案与大纲"]',
+        el => (el as HTMLTextAreaElement).value
+      )
+    ).toBe("");
+    await click("采用这条故事线");
     await page.waitForFunction(() =>
       (
         document.querySelector(
@@ -344,21 +353,73 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
       path: "../backend-work/novel-workspace/mobile.png",
       fullPage: true,
     });
-    const beforeReselect = await page.evaluate(() => JSON.parse(localStorage.getItem("mv-novel-lab-v2:1")!));
+    const beforeReselect = await page.evaluate(() =>
+      JSON.parse(localStorage.getItem("mv-novel-lab-v2:1")!)
+    );
     await click("刷新模板库");
-    expect(await page.evaluate(() => (globalThis as any).templateRefreshes)).toBe(1);
-    await page.$eval('[aria-label="回复顾问"]', el => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,"value")!.set!.call(el,"这条故事线不满意，减少朝堂，改为江湖追查。"); el.dispatchEvent(new Event("input",{bubbles:true})); });
-    await click("按新方向推荐模板");
-    await page.waitForFunction(() => !(document.querySelector('[aria-label="回复顾问"]') as HTMLTextAreaElement).disabled);
-    const reselect = await page.evaluate(() => (globalThis as any).calls.at(-1));
-    expect(reselect.advisorIntent).toBe("recommend_templates");
+    expect(
+      await page.evaluate(() => (globalThis as any).templateRefreshes)
+    ).toBe(1);
+    await page.$eval('[aria-label="回复顾问"]', el => {
+      Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value"
+      )!.set!.call(el, "这条故事线不满意，减少朝堂，改为江湖追查。");
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click("按新方向生成3个故事方案");
+    await page.waitForFunction(
+      () =>
+        !(
+          document.querySelector(
+            '[aria-label="回复顾问"]'
+          ) as HTMLTextAreaElement
+        ).disabled
+    );
+    const reselect = await page.evaluate(() =>
+      (globalThis as any).calls.at(-1)
+    );
+    expect(reselect.advisorIntent).toBe("story_variants");
     expect(reselect.advisorMessage).toContain("江湖追查");
     expect(reselect.outline).toBe(beforeReselect.outline);
     expect(reselect.novel).toContain(beforeReselect.chapters[0]);
-    const afterReselect = await page.evaluate(() => JSON.parse(localStorage.getItem("mv-novel-lab-v2:1")!));
+    const afterReselect = await page.evaluate(() =>
+      JSON.parse(localStorage.getItem("mv-novel-lab-v2:1")!)
+    );
     expect(afterReselect.templates).toEqual(beforeReselect.templates);
     expect(afterReselect.chapters).toEqual(beforeReselect.chapters);
     expect(afterReselect.outline).toBe(beforeReselect.outline);
+    const callCountBeforeAdopt = await page.evaluate(
+      () => (globalThis as any).calls.length
+    );
+    await click("采用这条故事线");
+    const adopted = await page.evaluate(() =>
+      JSON.parse(localStorage.getItem("mv-novel-lab-v2:1")!)
+    );
+    expect(adopted.chapters).toEqual([]);
+    expect(adopted.outlineApproved).toBe("");
+    expect(adopted.storyVersions.at(-1).chapters).toEqual(
+      beforeReselect.chapters
+    );
+    expect(await page.evaluate(() => (globalThis as any).calls.length)).toBe(
+      callCountBeforeAdopt
+    );
+    // Restore the version with generated chapters, without another model call.
+    await page.evaluate(() => {
+      const articles = Array.from(document.querySelectorAll("article"));
+      const saved = articles.find(a =>
+        a.querySelector("pre")?.textContent?.includes("女娲望着破裂的天空")
+      );
+      const button = Array.from(saved!.querySelectorAll("button")).find(
+        b => b.textContent === "恢复此版本"
+      );
+      button!.click();
+    });
+    await page.waitForFunction(
+      () =>
+        JSON.parse(localStorage.getItem("mv-novel-lab-v2:1")!).chapters
+          .length === 3
+    );
     await page.select('[aria-label="创作模型"]', "glm");
     await click("请创作顾问建议方向与模板");
     await page.waitForFunction(
@@ -459,6 +520,44 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
         Object.keys(localStorage).some(k => k.includes(":archive:"))
       )
     ).toBe(true);
+    await page.evaluate(() => {
+      const key = "mv-novel-lab-v2:1",
+        state = JSON.parse(localStorage.getItem(key)!);
+      state.mode = "original";
+      state.topic = "六模板测试";
+      state.direction = "合并手法";
+      state.templates = Array.from({ length: 5 }, (_, i) => ({
+        publicId: "mt_000" + i,
+        role: "分工" + i,
+        weight: i === 0 ? 100 : 0,
+      }));
+      localStorage.setItem(key, JSON.stringify(state));
+    });
+    await page.reload();
+    await page.waitForSelector('[aria-label="选择故事模板"]');
+    await page.evaluate(() => {
+      const b = Array.from(
+        document.querySelectorAll<HTMLButtonElement>(
+          '[aria-label="选择故事模板"] button'
+        )
+      ).find(b => b.textContent?.includes("模板6"));
+      b!.click();
+    });
+    await page.waitForFunction(
+      () =>
+        JSON.parse(localStorage.getItem("mv-novel-lab-v2:1")!).templates
+          .length === 6
+    );
+    await click("生成3个故事方案");
+    await page.waitForSelector('[aria-label="故事线方案"]');
+    expect(
+      await page.evaluate(() => (globalThis as any).calls[0].templates.length)
+    ).toBe(6);
+    expect(
+      await page.evaluate(
+        () => (globalThis as any).calls[0].selectedTemplateIds.length
+      )
+    ).toBe(6);
     expect(errors).toEqual([]);
   } finally {
     await browser.close();

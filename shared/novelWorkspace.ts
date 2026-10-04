@@ -43,24 +43,26 @@ export const novelTestInputSchema = z
     modelPreference: novelModelSchema.optional(),
     source: novelExcerptSchema.optional(),
     advisorMessage: text.max(2000).optional(),
-    advisorIntent: z.enum(["discussion", "recommend_templates"]).optional(),
+    advisorIntent: z
+      .enum(["discussion", "recommend_templates", "story_variants"])
+      .optional(),
     advisorHistory: z
       .array(
         z
           .object({
             user: text.max(2000),
-            assistant: text.max(14000),
+            assistant: text.max(60000),
           })
           .strict()
       )
       .max(20)
       .optional(),
-    templates: z.array(novelTemplateChoiceSchema).max(5),
+    templates: z.array(novelTemplateChoiceSchema),
     episodeCount: z.union([z.literal(2), z.literal(3)]),
     outline: z.string().max(14000).default(""),
     novel: z.string().max(20000).default(""),
     chapterIndex: z.number().int().min(1).max(3).default(1),
-    selectedTemplateIds: z.array(z.string().max(40)).max(5).default([]),
+    selectedTemplateIds: z.array(z.string().max(40)).default([]),
   })
   .strict()
   .superRefine((v, c) => {
@@ -72,6 +74,11 @@ export const novelTestInputSchema = z
         code: "custom",
         message: "请描述新方向，再请顾问重新推荐模板",
       });
+    if (
+      v.advisorIntent === "story_variants" &&
+      (v.stage !== "advice" || !v.templates.length)
+    )
+      c.addIssue({ code: "custom", message: "请先选择模板，再生成故事线方案" });
     if (new Set(v.templates.map(t => t.publicId)).size !== v.templates.length)
       c.addIssue({ code: "custom", message: "模板不可重复" });
     if (
@@ -94,22 +101,6 @@ export const novelTestInputSchema = z
       c.addIssue({ code: "custom", message: "请先确认小说正文" });
   });
 export type NovelTestInput = z.infer<typeof novelTestInputSchema>;
-export const novelAdviceSchema = z
-  .object({
-    assessment: text.max(3000),
-    recommendations: z
-      .array(
-        z
-          .object({
-            publicId: text.max(40),
-            reason: text.max(800),
-            tradeoff: text.max(800),
-          })
-          .strict()
-      )
-      .max(5),
-  })
-  .strict();
 export const novelOutlineSchema = z
   .object({
     premise: text.max(3000),
@@ -128,6 +119,43 @@ export const novelOutlineSchema = z
       )
       .min(2)
       .max(3),
+  })
+  .strict();
+export const novelStoryVariantSchema = z
+  .object({
+    id: z.enum(["A", "B", "C"]),
+    title: text.max(120),
+    changeSummary: text.max(1000),
+    tradeoff: text.max(800),
+    templates: z.array(novelTemplateChoiceSchema).min(1),
+    outline: novelOutlineSchema,
+  })
+  .strict();
+export function formatNovelOutline(plan: z.infer<typeof novelOutlineSchema>) {
+  return [
+    `核心冲突\n${plan.premise}`,
+    `人物关系\n${plan.characters}`,
+    ...plan.episodes.map(
+      ep =>
+        `第${ep.index}集：${ep.title}\n剧情：${ep.events}\n本集兑现：${ep.payoff}\n片尾钩子：${ep.hook}`
+    ),
+  ].join("\n\n");
+}
+export const novelAdviceSchema = z
+  .object({
+    variants: z.array(novelStoryVariantSchema).length(3).optional(),
+    assessment: text.max(3000),
+    recommendations: z
+      .array(
+        z
+          .object({
+            publicId: text.max(40),
+            reason: text.max(800),
+            tradeoff: text.max(800),
+          })
+          .strict()
+      )
+      .max(5),
   })
   .strict();
 export const novelChapterSchema = z
@@ -163,7 +191,6 @@ export const novelScriptSchema = z
           })
           .strict()
       )
-      .max(15)
       .optional(),
     episodes: z
       .array(
@@ -210,12 +237,62 @@ export function validateNovelStageOutput(
 ) {
   if (input.stage === "advice") {
     const result = novelAdviceSchema.parse(value);
+    if (input.advisorIntent === "story_variants") {
+      if (
+        !result.variants ||
+        new Set(result.variants.map(v => v.id)).size !== 3
+      )
+        throw new Error("需要三个不同编号的故事线方案");
+      const eligible = new Set([
+        ...availableIds,
+        ...input.templates.map(t => t.publicId),
+      ]);
+      for (const variant of result.variants) {
+        if (
+          variant.outline.episodes.length !== input.episodeCount ||
+          variant.outline.episodes.some((e, i) => e.index !== i + 1)
+        )
+          throw new Error("故事线分集数量或次序不完整");
+        const choices = variant.templates;
+        if (
+          new Set(choices.map(t => t.publicId)).size !== choices.length ||
+          choices.some(
+            t => !eligible.has(t.publicId) || t.weight === undefined
+          ) ||
+          choices.reduce((n, t) => n + (t.weight || 0), 0) !== 100
+        )
+          throw new Error("故事线模板须来自可用库，配比合计100%");
+        // First selection uses precisely the chosen methods and any explicit weights.
+        if (
+          !input.advisorMessage &&
+          (choices.length !== input.templates.length ||
+            input.templates.some(
+              t =>
+                !choices.some(
+                  c =>
+                    c.publicId === t.publicId &&
+                    (t.weight === undefined || c.weight === t.weight)
+                )
+            ))
+        )
+          throw new Error("首次故事线须使用用户选定模板与配比");
+        if (formatNovelOutline(variant.outline).length > 14000)
+          throw new Error("故事线大纲超出可编辑长度");
+      }
+      if (
+        new Set(result.variants.map(v => JSON.stringify(v.outline))).size !== 3
+      )
+        throw new Error("故事线内容不可完全重复");
+      if (JSON.stringify(result, null, 2).length > 60000)
+        throw new Error("故事线结果过长");
+    } else if (result.variants) throw new Error("当前请求未要求故事线方案");
     const ids = result.recommendations.map(r => r.publicId);
     const available = availableIds.filter(
       id => !input.selectedTemplateIds.includes(id)
     );
     const expected =
-      input.advisorMessage && input.advisorIntent !== "recommend_templates"
+      input.advisorIntent === "story_variants" ||
+      (input.advisorMessage && input.advisorIntent !== "recommend_templates")
         ? 0
         : Math.min(3, available.length);
     if (

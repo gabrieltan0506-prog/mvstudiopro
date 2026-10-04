@@ -15,7 +15,7 @@ const input = novelTestInputSchema.parse({
 describe("小说工作室合同", () => {
   it("原创无需底本，单模板和组合均接受", () => {
     expect(input.source).toBeUndefined();
-    for (const count of [1, 3, 5])
+    for (const count of [1, 3, 5, 6, 20, 84])
       expect(
         novelTestInputSchema.parse({
           ...input,
@@ -251,4 +251,71 @@ it("重新选模板需要新方向，推荐必须为其他库内模板且数量�
       ["old", "a", "b", "c"]
     )
   ).toBeTruthy();
+});
+
+it("三个故事方案保留首次已选组合并验证真实模板、配比、分集", () => {
+  const choices = Array.from({ length: 6 }, (_, i) => ({
+    publicId: `mt_${i}`,
+    role: "分工",
+    weight: i === 0 ? 100 : 0,
+  }));
+  const request = novelTestInputSchema.parse({
+    ...input,
+    advisorIntent: "story_variants",
+    templates: choices,
+    selectedTemplateIds: choices.map(t => t.publicId),
+  });
+  const result = {
+    assessment: "比较",
+    recommendations: [],
+    variants: ["A", "B", "C"].map(id => ({
+      id,
+      title: id,
+      changeSummary: "变化",
+      tradeoff: "代价",
+      templates: choices,
+      outline: {
+        premise: `冲突${id}`,
+        characters: "主角",
+        episodes: [1, 2, 3].map(index => ({
+          index,
+          title: "集",
+          events: `选择${id}`,
+          payoff: "兑现",
+          hook: "悬念",
+        })),
+      },
+    })),
+  };
+  expect(validateNovelStageOutput(request, result, [])).toEqual(result);
+  for (const mutate of [
+    (v: typeof result) => {
+      v.variants.pop();
+    },
+    (v: typeof result) => {
+      v.variants[0].templates = [
+        { publicId: "fake", role: "分工", weight: 100 },
+      ];
+    },
+    (v: typeof result) => {
+      v.variants[0].templates[0].weight = 50;
+    },
+    (v: typeof result) => {
+      v.variants[0].outline.episodes.pop();
+    },
+    (v: typeof result) => {
+      v.variants[1].outline = v.variants[0].outline;
+    },
+  ]) {
+    const bad = structuredClone(result);
+    mutate(bad);
+    expect(() => validateNovelStageOutput(request, bad, [])).toThrow();
+  }
+  expect(() =>
+    validateNovelStageOutput(
+      request,
+      { assessment: "空", recommendations: [] },
+      []
+    )
+  ).toThrow();
 });
