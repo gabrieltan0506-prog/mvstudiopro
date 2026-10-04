@@ -1,3 +1,4 @@
+import { attachLearnedMethodBrief } from "./manhuaTemplateMethodBrief";
 import { isNativeStructuredCardObjectName } from "../../shared/manhuaNativeStructuredCard.js";
 import { isCompleteNativeEpisodeRelearn } from "../../shared/manhuaNativeEpisodeVersion.js";
 /**
@@ -484,7 +485,7 @@ export function buildNativeDeepReadProposalCard(
   // 过一次库里的解析器：入库形状与读取形状必须同源，否则写得进读不出。
   // 解析器会滤掉空镜头，故解析后再验一次镜头数——门禁看的是入参，这里看的是落库实物
   const parsed = parseManhuaViralTemplateCard(card);
-  return parsed && parsed.beatGrid.length >= NATIVE_DEEP_READ_MIN_SHOTS ? parsed : null;
+  return parsed && parsed.beatGrid.length >= NATIVE_DEEP_READ_MIN_SHOTS ? attachLearnedMethodBrief(parsed, r.methodBrief) : null;
 }
 
 /**

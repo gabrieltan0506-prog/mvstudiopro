@@ -1,3 +1,4 @@
+import { templateMethodBriefSchema, mergeTemplateMethodBriefs, type TemplateMethodBrief } from "./manhuaTemplateMethodBrief";
 /**
  * 原生视频精读产出 → 模板卡的适配器。
  *
@@ -158,6 +159,7 @@ export const nativeDeepReadSegmentSchema = z
     beatStructureZh: z.string().trim().default(""),
     /** 0902：GLM 整形起的卡名「主线·特色型」；旧卡缺省由入库层落罐头名兜底 */
     templateTitleZh: z.string().trim().optional(),
+    methodBrief: templateMethodBriefSchema.optional().catch(undefined),
     moodArcZh: z.string().trim().optional(),
     reusableZh: z.string().trim().optional(),
     genPromptHintZh: z.string().trim().optional(),
@@ -249,6 +251,7 @@ export type NativeDeepReadOutput = {
   beatStructureZh?: string;
   /** GLM 整形起的模板卡名（0902）；入库 nameZh 优先用它 */
   templateTitleZh?: string;
+  methodBrief?: TemplateMethodBrief;
   /**
    * 重点时刻（v12）：模型看片时自报的抓帧秒位表，五类＝切镜/情绪/灯光/剧情/音轨。
    * 抽帧链据此取帧，取代「按镜头区间取机械中点」——中点常落在转场、运动模糊或空镜上。
@@ -715,6 +718,7 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
     moodArcZh: joinField((s) => s.moodArcZh),
     beatStructureZh: joinField((s) => s.beatStructureZh),
     // 卡名取首个非空（整集卡只有一份；分段旧卡没有此字段）
+    methodBrief: mergeTemplateMethodBriefs(ok.map(({seg})=>seg.methodBrief)),
     templateTitleZh: ok.map(({ seg }) => String(seg.templateTitleZh || "").trim()).find(Boolean) || undefined,
     keyMoments: keyMoments.length ? keyMoments : undefined,
     segmentCount: ok.length,

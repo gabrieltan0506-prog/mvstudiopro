@@ -1,3 +1,4 @@
+import type { ManhuaTemplateMethodBrief } from "./manhuaViralTemplateBank";
 import {
   TEMPLATE_CRAFT_RULES,
   type TemplateCraftProfile,
@@ -41,7 +42,12 @@ export function templateGuidance(profile?: TemplateCraftProfile) {
     })
   );
 }
-export function suggestedTemplateRole(profile?: TemplateCraftProfile) {
+export function suggestedTemplateRole(
+  profile?: TemplateCraftProfile,
+  brief?: ManhuaTemplateMethodBrief
+) {
+  if (brief)
+    return `${brief.title}：${brief.highlights.join("；")}`.slice(0, 160);
   const methods = templateGuidance(profile);
   return methods.length
     ? `负责${methods

@@ -1,7 +1,7 @@
 export const novelMockTransport = `
 import { parseNovelModelJson } from "@shared/novelJson";
 import { novelChapterSchema } from "@shared/novelWorkspace";
-const cards=Array.from({length:6},(_,i)=>({publicId:'mt_000'+i,nameZh:'模板'+(i+1),featureZh:'人物冲突与对白',introZh:'有代价的抉择',classificationTagsZh:[],craft:{version:1,features:[i%2?{id:'verbal-tactics',dimension:'dialogue',label:'对白试探与攻防'}:{id:'music-turn',dimension:'sound',label:'音乐推动剧情转折'}]}}));
+const cards=Array.from({length:6},(_,i)=>({publicId:'mt_000'+i,nameZh:'模板'+(i+1),featureZh:'人物冲突与对白',introZh:'有代价的抉择',methodBrief:{title:'封闭空间里的声音变化',highlights:['局部火光与门外脚步制造逼近感。','低声回应后留白，使交换条件的分量被听见。'],useWhen:'适合受限空间中的对峙。'},classificationTagsZh:[],craft:{version:1,features:[i%2?{id:'verbal-tactics',dimension:'dialogue',label:'对白试探与攻防'}:{id:'music-turn',dimension:'sound',label:'音乐推动剧情转折'}]}}));
 globalThis.calls=[];globalThis.receipts={};globalThis.backups=[];globalThis.recoveryFixtures=[];
 globalThis.readDraft=async()=>new Promise((resolve,reject)=>{const r=indexedDB.open('mv-novel-workspaces',1);r.onsuccess=()=>{const db=r.result,tx=db.transaction('drafts','readonly'),q=tx.objectStore('drafts').get('mv-novel-lab-v2:1');tx.oncomplete=()=>{resolve(JSON.parse(q.result));db.close()};tx.onerror=()=>reject(tx.error)}});
 globalThis.writeDraft=async state=>new Promise((resolve,reject)=>{const r=indexedDB.open('mv-novel-workspaces',1);r.onsuccess=()=>{const db=r.result,tx=db.transaction('drafts','readwrite');tx.objectStore('drafts').put(JSON.stringify(state),'mv-novel-lab-v2:1');tx.oncomplete=()=>{resolve();db.close()};tx.onerror=()=>reject(tx.error)}});

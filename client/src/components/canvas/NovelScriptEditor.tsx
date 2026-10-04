@@ -1,3 +1,4 @@
+import { NovelQualityHints } from "./NovelQualityHints";
 import { NOVEL_FACETS, novelScriptSchema } from "@shared/novelWorkspace";
 import type { NovelRun } from "@/lib/novelWorkspace";
 import {
@@ -65,6 +66,14 @@ export function NovelScriptEditor({
           <summary className="cursor-pointer font-semibold">
             第{ep.index}集 · {ep.title} · 点击展开编辑
           </summary>
+          <NovelQualityHints
+            text={[
+              ep.opening,
+              ep.payoff,
+              ep.hook,
+              ...ep.scenes.flatMap(scene => NOVEL_FACETS.map(f => scene[f])),
+            ].join("\n")}
+          />
           {field(`第${ep.index}集标题`, ep.title, 120, [ep.index, "title"], 1)}
           {(["opening", "payoff", "hook"] as const).map((k, i) =>
             field(

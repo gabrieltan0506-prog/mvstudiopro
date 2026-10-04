@@ -1,3 +1,4 @@
+import { NovelQualityHints } from "@/components/canvas/NovelQualityHints";
 import { NovelScriptEditor } from "@/components/canvas/NovelScriptEditor";
 import { editedNovelRun } from "@/lib/novelScriptEditing";
 import type { NovelRun } from "@/lib/novelWorkspace";
@@ -136,7 +137,7 @@ function NovelWorkspaceEditor({
   }, []);
   const templates = trpc.manhuaViralTemplate.listApprovedPublic.useQuery(
     undefined,
-    { retry: 1, staleTime: 60000 }
+    { retry: 1, staleTime: 0, refetchInterval: 15000, refetchOnWindowFocus: true }
   );
   const cards = (templates.data?.groups || []).flatMap(g => g.items);
   const mutation = trpc.novelWorkspace.generate.useMutation();
@@ -220,9 +221,12 @@ function NovelWorkspaceEditor({
         ...draft.templates,
         {
           publicId: id,
-          role: suggestedTemplateRole(
-            cards.find(c => c.publicId === id)?.craft
-          ),
+          role: cards.find(c => c.publicId === id)?.methodBrief
+            ? suggestedTemplateRole(
+                cards.find(c => c.publicId === id)?.craft,
+                cards.find(c => c.publicId === id)?.methodBrief
+              )
+            : "",
           ...(!draft.templates.length
             ? { weight: 100 }
             : draft.templates.some(t => t.weight !== undefined)
@@ -2002,6 +2006,7 @@ function NovelWorkspaceEditor({
                     change({ chapters, chapterWarnings, novelApproved: "" });
                   }}
                 />
+                <NovelQualityHints text={draft.chapters[i] || ""} />
                 {draft.chapterWarnings?.[String(i)] && (
                   <div className="mt-2 text-sm text-amber-200" role="status">
                     {draft.chapterWarnings[String(i)]}

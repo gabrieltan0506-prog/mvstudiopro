@@ -1,3 +1,4 @@
+import { TEMPLATE_METHOD_BRIEF_INSTRUCTION, mergeTemplateMethodBriefs } from "../../shared/manhuaTemplateMethodBrief";
 import { buildManhuaLocalVideoSourceRef } from "../../shared/manhuaLocalVideoUpload.js";
 
 // 0920：梯度/上限/容差下沉到叶子模块，断开与 attemptSelection 的循环 import（见该文件注释）。
@@ -1456,8 +1457,9 @@ export function nativeDeepReadStructuringJsonSchema(): Record<string, unknown> {
     properties: Object.fromEntries(["emotionZh", "narrativeZh", "performanceZh", "audiovisualZh", "audienceZh"].map((k) => [k, { type: "STRING", maxLength: 200 }])),
   } as NativeResponseSchemaNode;
   base.properties!.templateTitleZh = { type: "STRING", maxLength: 60 };
+  base.properties!.methodBrief = {type:"OBJECT",properties:{title:{type:"STRING",maxLength:80},highlights:{type:"ARRAY",items:{type:"STRING",maxLength:300}},useWhen:{type:"STRING",maxLength:200}},required:["title","highlights","useWhen"]} as NativeResponseSchemaNode;
   const schema = geminiSchemaToJsonSchema(base);
-  schema.required = Array.from(new Set([...(schema.required as string[]), "moodArcZh", "reusableZh", "genPromptHintZh"]));
+  schema.required = Array.from(new Set([...(schema.required as string[]), "moodArcZh", "reusableZh", "genPromptHintZh", "methodBrief"]));
   for (const key of ["reusableZh", "genPromptHintZh"]) {
     const property = (schema.properties as Record<string, Record<string, unknown>>)[key]!;
     property.minLength = 2;
@@ -4353,7 +4355,8 @@ truncated / advisories / gateMarked / gateMarkedZh / attemptNumber 标注的都�
 · keyMoments：原样保留，同秒同类留一条取说明更具体的，不同秒或不同类全保留；atSec 只来自输入。
 · classification：五个数组显式输出，有证据就写，无证据写 []。
 · shots[].craftReadZh：可选新字段，**全集最多写 30 条，只挑手法价值最高的镜头**（剧情转折处的运镜、罕见的剪辑技巧、景别陡跳、站位改写、情绪极性翻转、昼夜跨场——按参考价值排序取前 30）。中选的镜写一句 6–20 字的「手法·用意与预期效果」解读（例「怼至大特写·情绪显微镜」「夜转日跨场·时间跳进」「合围站位·困局成型」）；判读只能以该镜与前镜**已记录的字段**为据，不许虚构画面；其余镜头一律写 "" 或省略该字段（0902 拍板：全量逐镜写解读把产出撑到 5.7 万 token、整形拖到 16 分钟，收紧到 30 条换回速度，未中选镜头由渲染端词典兜底）。同类手法反复出现时，按本次证据说明实际用意。
-· templateTitleZh：顶层新字段，给这张模板卡起 **10–20 字的卡名**，格式「主线一句话·特色型」（例「杂役捡宝炼丹逆袭·金手指验证型」「寒门修士步步登阶·隐忍蓄力型」）。必须点出**本集独有**的剧情主线与手法特色；🚫 禁止出现「多维标签」「原生」「第N集」「节奏」「模板」「系列」这类放之任何剧都成立的通用词。
+· templateTitleZh：用10–20字概括本集实际学到的呈现方法，不写原剧情主线、角色名或题材套路。
+${TEMPLATE_METHOD_BRIEF_INSTRUCTION}
 · classificationProseZh：顶层新对象，五键 emotionZh/narrativeZh/performanceZh/audiovisualZh/audienceZh，分别对应情绪/叙事特色/表演/视听/观众体验。把该维标签织成**一到两句连贯陈述**，点出这一集独有的组合与用意（例：「情绪线以紧张、愤怒打底，中段被角色牺牲翻入绝望，收在决绝的反击里」），不许罗列词条式排比、不许写放之任何剧都成立的空话；每句都要能在证据里找到出处，无证据的维度写空字符串 ""。
 · 秒位只进数字字段。描述里写时长（如「1.2 秒内推近」），钟表式（01:23）留给数字字段。
 
@@ -7350,6 +7353,7 @@ async function executeNativeDeepReadBatch(
         delete finalRaw.structuringFallback;
         // 0902 用户令字段从批次卡合并回来：标题取最长的非空一条，五维判词逐维取非空并拼接
         const batchCards = groupRows.map(unwrapNativeDeepReadStructuredAnswerEnvelope);
+        finalRaw.methodBrief = mergeTemplateMethodBriefs(batchCards.map(card=>card.methodBrief));
         const titles = batchCards.map((card) => String(card.templateTitleZh || "").trim()).filter(Boolean);
         if (titles.length) finalRaw.templateTitleZh = titles.sort((x, y) => y.length - x.length)[0];
         const proseByKey: Record<string, string[]> = {};
