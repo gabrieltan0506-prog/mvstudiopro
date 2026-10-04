@@ -35,3 +35,9 @@ it("保留真实连接错误，不伪称算力紧张或换到另一模型", asyn
   expect(stage).toHaveBeenCalledTimes(1);
   expect(upload.mock.calls.at(-1)?.[0].objectName).toMatch(/failure.json$/);
 });
+it("转发真实字节心跳，持久化失败不吞错", async()=>{
+ const onBytes=vi.fn().mockRejectedValue(new Error('heartbeat storage failed'));
+ stage.mockImplementationOnce(async(_p,_j,_r,trace)=>{await trace.onBytes(32);});
+ await expect(createManhuaWriterModelCall(7,'r','glm')('input',true,'s',{onBytes})).rejects.toThrow('heartbeat storage failed');
+ expect(onBytes).toHaveBeenCalledWith(32);
+});

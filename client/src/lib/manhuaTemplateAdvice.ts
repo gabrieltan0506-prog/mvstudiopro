@@ -1,7 +1,8 @@
 import type { PublicManhuaViralTemplateCard } from "@shared/manhuaViralTemplateBank";
+import { TEMPLATE_REWRITE_MARKER } from "@shared/manhuaAdvisorRewrite";
 
-/** 使用公开编号定位完整模板；实际剧本由现有顾问项目上下文提供。 */
+/** 公开编号由服务端解析到完整模板；本集正文沿项目上下文传入。 */
 export function buildTemplateAdviceQuestion(card: PublicManhuaViralTemplateCard): string {
   const code = card.publicId.replace(/^mt_/i, "").toUpperCase();
-  return `请根据当前集真实剧本，评估模板编号 ${code}（${card.storyPreview?.teaserTitleZh || card.nameZh}）是否适合。结合人物目标、冲突因果、情绪和现有镜头，给出保留、借鉴及不宜套用的具体建议；只给建议，不改稿、不生成媒体、不自动采用。当前剧本证据不足时，请明确缺口。`;
+  return `${TEMPLATE_REWRITE_MARKER}用模板编号 ${code} 优化当前集完整剧本。把适合本集的节奏、场景调度、人物表演、服化灯光、声音氛围与对白方法落实到正文，只借手法不搬来源故事；保留未改场次，给我原集与优化后整集对比，确认后才套用。`;
 }

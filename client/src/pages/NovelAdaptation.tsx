@@ -1,3 +1,4 @@
+import { useManhuaTemplateCatalogEvents } from "@/hooks/useManhuaTemplateCatalogEvents";
 import "./NovelAdaptation.css";
 import {
   BookOpen,
@@ -163,10 +164,10 @@ function NovelWorkspaceEditor({
     {
       retry: 1,
       staleTime: 0,
-      refetchInterval: 15000,
       refetchOnWindowFocus: true,
     }
   );
+  const templateCatalogConnected = useManhuaTemplateCatalogEvents(Boolean(userId), () => templates.refetch());
   const cards = (templates.data?.groups || []).flatMap(g => g.items);
   const mutation = trpc.novelWorkspace.generate.useMutation();
   const [savedRaw, setSavedRaw] = useState<{
@@ -1532,6 +1533,7 @@ function NovelWorkspaceEditor({
       >
         刷新模板库
       </button>
+      {templateCatalogConnected === false && <p role="status">模板即时更新正在重连，已有选择保留。<button type="button" onClick={() => void templates.refetch()}>读取最新模板</button></p>}
       {templates.isError && (
         <div role="alert" className="mt-3 text-sm text-amber-200">
           模板加载失败，已有选择保留。

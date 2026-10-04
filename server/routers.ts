@@ -1,3 +1,4 @@
+import { optimizationInputSchema } from "../shared/manhuaEpisodeOptimization";
 import { manhuaWriterExpansionQuote, manhuaWriterModelLabel } from "../shared/manhuaWriterModels";
 import { MANHUA_ADVISOR_PROJECT_FREE, MANHUA_ADVISOR_PAID_CREDITS } from "../shared/manhuaAdvisorPolicy";
 import { assertAdvisorProject, readAdvisorProjectQuota, reserveAdvisorProjectQuota, releaseAdvisorProjectQuota } from "./services/manhuaAdvisorProjectQuota";
@@ -9987,6 +9988,19 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
       }),
 
+    manhuaEpisodeOptimizationQuota: protectedProcedure.query(async({ctx})=>{
+      const {countManhuaWriterTrialToday}=await import("./services/manhuaWriterTrial");
+      return {trialsLeftToday:Math.max(0,3-await countManhuaWriterTrialToday(ctx.user.id))};
+    }),
+    optimizeManhuaEpisodes: protectedProcedure.input(optimizationInputSchema).mutation(async ({ctx,input}) => {
+      const {runEpisodeOptimization}=await import("./services/manhuaEpisodeOptimization");
+      return runEpisodeOptimization(ctx.user.id,input);
+    }),
+    manhuaEpisodeOptimizationHistory: protectedProcedure.input(z.object({projectId:z.string().uuid()})).query(async({ctx,input})=>{
+      const {getEpisodeOptimizationHistory}=await import("./services/manhuaEpisodeOptimization");
+      return getEpisodeOptimizationHistory(ctx.user.id,input.projectId);
+    }),
+
     /** 从当前集完整原稿生成一版付费模板候选；只返回候选，正式稿仍待用户采用。 */
     generateManhuaTemplateCandidate: protectedProcedure
       .input(z.object({
@@ -10014,7 +10028,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         return listManhuaTemplateCandidateHistory({ ...input, userId: ctx.user.id });
       }),
 
-    /** /canvas 编剧室连载扩写：四档自选，所有调用按集数计价。 */
+    /** /canvas 编剧室连载扩写：至少三集起写，GLM/DeepSeek均按实际改写集数计价。 */
     expandManhuaWriterPack: protectedProcedure
       .input(
         z.object({
@@ -10023,7 +10037,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           topic: z.string().max(500).optional(),
           brief: z.string().max(2000).optional(),
           sourceExcerpt: novelExcerptSchema.optional(),
-          episodeCount: z.number().int().min(2).max(6).optional(),
+          episodeCount: z.number().int().min(3).max(6).optional(),
           /** 兼容旧请求结构；旧页未提交 model/新报价时拒绝执行，档位不再决定模型或价格。 */
           tier: z.enum(["excellent", "superb", "top", "transcendent"]).optional(),
           /** 一次用户动作一个 UUID；网络重试复用，用于原子幂等扣费。 */

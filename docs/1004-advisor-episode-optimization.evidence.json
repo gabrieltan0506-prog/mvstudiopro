@@ -1,0 +1,389 @@
+{
+  "recordedAt": "2026-10-04T22:11:31+08:00",
+  "base": "2cff4ac4bf0f467be80d45598fefa6c0bfe7c42b",
+  "sources": [
+    {
+      "path": ".cursor/knowledge/PROGRESS.md",
+      "bytes": 163463,
+      "sha256": "2b0dac5e15a625615ca1afb84544145968a065b7d72abd960e8a9aed2ed8f144"
+    },
+    {
+      "path": "AGENTS.md",
+      "bytes": 26882,
+      "sha256": "5b848ae53dc67a23559e7b1d9b57beb93861737b4cfab06e92b2af3377e7dbc9"
+    },
+    {
+      "path": "client/src/components/canvas/BgmCreativeAdvisor.tsx",
+      "bytes": 6128,
+      "sha256": "601999a1c3bb38f0322c43beabf4fc340f10084d9d9e77822fd8e7e21f8f2e51"
+    },
+    {
+      "path": "client/src/components/canvas/ManhuaCreativeAdvisorPanel.tsx",
+      "bytes": 57453,
+      "sha256": "2cef510010a7961b884ae6dd912896475f7d4ca6857355f1d2f160dfd9e32920"
+    },
+    {
+      "path": "client/src/components/canvas/ManhuaEpisodeOptimization.tsx",
+      "bytes": 25515,
+      "sha256": "8ea94ea6383ba703356e276b3023eedd71f4c42ebe99bdca72a9323c958f6625"
+    },
+    {
+      "path": "client/src/components/canvas/ManhuaTemplatePicker.tsx",
+      "bytes": 13818,
+      "sha256": "7b454054a12c080cd02d370ccdcb1f954086bbf122f83cd0e7d319554ff748b6"
+    },
+    {
+      "path": "client/src/components/canvas/ManhuaTemplateTrialCompare.tsx",
+      "bytes": 6252,
+      "sha256": "c8b16edd400e45741ceef09f5320f78491f4a6f04ffa9ac5110355874ec1ba81"
+    },
+    {
+      "path": "client/src/components/canvas/PostProdSubtitleCard.tsx",
+      "bytes": 10209,
+      "sha256": "02967034d00f230c892e0d108cf987db88992ae0f6bb94fb31ce3bb4f67d91d0"
+    },
+    {
+      "path": "client/src/hooks/useManhuaAdvisorPreference.ts",
+      "bytes": 992,
+      "sha256": "d42160892794f68acdda946e4befabea3b80a125ce92e67ff089ecb8860ef7e8"
+    },
+    {
+      "path": "client/src/hooks/useManhuaTemplateCatalogEvents.ts",
+      "bytes": 593,
+      "sha256": "2189e2fdc2e90d6757eb9e46d21a28233f5b389b7823ac830332d1126b72c902"
+    },
+    {
+      "path": "client/src/index.css",
+      "bytes": 59476,
+      "sha256": "54202c78d6d6fb3637608441ac8614e8fbe1a830f9e076301d4fb4d244fec0a7"
+    },
+    {
+      "path": "client/src/lib/manhuaAdvisorAdoption.test.ts",
+      "bytes": 12529,
+      "sha256": "7e3c09852229bf7b30b23ffd1f4e2b987a9cd1a351fe3b502fd3514c6b1c050c"
+    },
+    {
+      "path": "client/src/lib/manhuaAdvisorAdoption.ts",
+      "bytes": 7517,
+      "sha256": "5ead5fb88b3a510ae32e2d49fa42f11bc4315bab23b076dd706f47265c3e1587"
+    },
+    {
+      "path": "client/src/lib/manhuaAdvisorAlwaysOn.browser.test.ts",
+      "bytes": 12065,
+      "sha256": "3b8dc41677ffdba23b82e458a903ecde932b0acfdd5f5adfcf92d74a4294e0ea"
+    },
+    {
+      "path": "client/src/lib/manhuaAdvisorBatchAdoption.test.ts",
+      "bytes": 2285,
+      "sha256": "7350295812cf1a48d04669af88187f5ec66191675f67aeb1024db6dcbfbf77a5"
+    },
+    {
+      "path": "client/src/lib/manhuaAdvisorIteration.browser.test.ts",
+      "bytes": 18819,
+      "sha256": "3739e57d2c74861b4b19781be292269a8ecf0a27f3d9b91e95211ae8461f4ebe"
+    },
+    {
+      "path": "client/src/lib/manhuaAdvisorObjectError.test.ts",
+      "bytes": 1147,
+      "sha256": "ecbb72235508a43240f184a48b01b6085bc126e62554bc84a1bd6c23fe645e40"
+    },
+    {
+      "path": "client/src/lib/manhuaAdvisorProject.ts",
+      "bytes": 25003,
+      "sha256": "3abed73454b9268b9654b97c6cf96293c355b4f399013ac001a738ea13f28584"
+    },
+    {
+      "path": "client/src/lib/manhuaAdvisorRewriteDelivery.browser.test.ts",
+      "bytes": 8133,
+      "sha256": "4438afb3bd2aa03d60e163ce018cee85ee11a6d892e27db60f01824492422b51"
+    },
+    {
+      "path": "client/src/lib/manhuaAdvisorStream.ts",
+      "bytes": 5179,
+      "sha256": "d62d74ca1fb413c20665592ad15a46d8ef60e895a0d7991ba7e780a04fcc6a01"
+    },
+    {
+      "path": "client/src/lib/manhuaAdvisorTemplates.browser.test.ts",
+      "bytes": 7116,
+      "sha256": "43de0c42294de5b8435a061d6f76668358ce5111f506cdf79daaadb4b0e4edde"
+    },
+    {
+      "path": "client/src/lib/manhuaAdvisorTemplates.ts",
+      "bytes": 3457,
+      "sha256": "6abb01fc941b15a9d617561ac794a16b47bccca255259590543f3e2e31f3c207"
+    },
+    {
+      "path": "client/src/lib/manhuaAdvisorWorld.browser.test.ts",
+      "bytes": 6710,
+      "sha256": "328b3aaf608caa9a1e37a26d3c4d565a683fdbbebd091a1de30ad67299155e3e"
+    },
+    {
+      "path": "client/src/lib/manhuaEpisodeOptimization.browser.test.ts",
+      "bytes": 11593,
+      "sha256": "d4c97c698025979df3839e331952ab6ff8ae0c29b212a526620c65639c80b591"
+    },
+    {
+      "path": "client/src/lib/manhuaTemplateAdvice.ts",
+      "bytes": 736,
+      "sha256": "ad41aaf77379505ef9d6388eb818a05604b269e1fa68959663bae2708b8d55f8"
+    },
+    {
+      "path": "client/src/lib/manhuaTemplateCatalogEvents.test.ts",
+      "bytes": 1294,
+      "sha256": "6f521938937613a401a87384ae2119abb90e13c68b80e4653d94d65da822e0ff"
+    },
+    {
+      "path": "client/src/lib/manhuaTemplateCatalogEvents.ts",
+      "bytes": 1227,
+      "sha256": "88b1ef04d39f7f25e6351df084d9e9d1df249423e3bd0cb617c7139103627984"
+    },
+    {
+      "path": "client/src/main.tsx",
+      "bytes": 7132,
+      "sha256": "59b6ff772c8c1c0f74b5c1d00061de425d0380c8091889c0c1d8f14140d37e32"
+    },
+    {
+      "path": "client/src/pages/NovelAdaptation.tsx",
+      "bytes": 96518,
+      "sha256": "26cb332d490ffd59f078793e012a5d2806f2dd1e685f340b01c01660e59b45dc"
+    },
+    {
+      "path": "client/src/pages/OmniCanvas.tsx",
+      "bytes": 660220,
+      "sha256": "abd0e0f13370c4208250eb74ab49341ebee5571882f91118290825caf70180b0"
+    },
+    {
+      "path": "docs/1004-advisor-episode-optimization.md",
+      "bytes": 7104,
+      "sha256": "0d491558f1b72e97aa124ef971db952d3bf8f8ca17d70de2f1681ad4af0f9175"
+    },
+    {
+      "path": "docs/1004-advisor-project-quota-evidence.json",
+      "bytes": 5508,
+      "sha256": "bf8649b40dd1f5e6177fdf2998cda5f229ee0958169159529a83c438791edc6b"
+    },
+    {
+      "path": "docs/1004-advisor-project-quota.md",
+      "bytes": 6165,
+      "sha256": "39f4a721df1972b0ef5a3d0fc61ca1fe7dade0afdfd00e50400357f07949c9a3"
+    },
+    {
+      "path": "docs/1004-writer-two-models.md",
+      "bytes": 4677,
+      "sha256": "da4ac8b0707f7a3872a572fe9b95210340f27ebc219953f05719ad0966008660"
+    },
+    {
+      "path": "server/_core/index.ts",
+      "bytes": 59450,
+      "sha256": "753950e62c5f966242ee1532da2b6ef3d72f3eea85433ee269915f1b87e99494"
+    },
+    {
+      "path": "server/jobs/staleJobsReaper.test.ts",
+      "bytes": 7745,
+      "sha256": "c3e2e457c7491b743b0e0b5de41e73d28b0d3a2f8209c81e192607026b1df8ed"
+    },
+    {
+      "path": "server/jobs/staleJobsReaper.ts",
+      "bytes": 10525,
+      "sha256": "1249ce655ae97e80be5976f0a78073d4f56feda142d6c6b7c7eb6e8deed948e1"
+    },
+    {
+      "path": "server/routers.manhuaAdvisorOperation.test.ts",
+      "bytes": 24048,
+      "sha256": "0019e92ce70579609d3637cddb732d7c7dc2015a85400998fc37328b89310042"
+    },
+    {
+      "path": "server/routers.manhuaWriterModels.test.ts",
+      "bytes": 5389,
+      "sha256": "40f79bedb6465bd32ce33ce376f49f2891114c816ef96b49f4883e9078f741bd"
+    },
+    {
+      "path": "server/routers.ts",
+      "bytes": 724623,
+      "sha256": "62cf5cbdee6fa17d52eba7575f41319a7dc02b243694a8fab7f9d041d87d71e1"
+    },
+    {
+      "path": "server/routers/manhuaTemplateCatalogStream.test.ts",
+      "bytes": 1541,
+      "sha256": "9b6bd55b45701b0603499919c909b8c0a7cafe90acbb3be741ede17e36866250"
+    },
+    {
+      "path": "server/routers/manhuaTemplateCatalogStream.ts",
+      "bytes": 1214,
+      "sha256": "660d8c81c9b6ef4870e288b87ea3aa4da97f7c5275f0175d53637a2a7af5fa03"
+    },
+    {
+      "path": "server/services/manhuaAdvisorProjectQuota.test.ts",
+      "bytes": 1187,
+      "sha256": "0606a70bf8ec85316ae2f9e7e6b8f0f2f7c9a1f3088712e0a9cd37dbdbed4b09"
+    },
+    {
+      "path": "server/services/manhuaAdvisorProjectQuota.ts",
+      "bytes": 4397,
+      "sha256": "77a1c733f297a605b9c10034428d1ce552963a6256a2e5b7d469a75a4b80c50f"
+    },
+    {
+      "path": "server/services/manhuaAdvisorRewriteDelivery.test.ts",
+      "bytes": 2950,
+      "sha256": "176b868ff3eeacac62fdb9255a5eb38cd0cc94a40ab6250b0e31dd9212a620c4"
+    },
+    {
+      "path": "server/services/manhuaEpisodeOptimization.test.ts",
+      "bytes": 7118,
+      "sha256": "ba6d427821474ac25bdba5bed7d47b1f9f6217e6a8f5cf57447ec4252330d6b0"
+    },
+    {
+      "path": "server/services/manhuaEpisodeOptimization.ts",
+      "bytes": 13901,
+      "sha256": "ff4f3e6a7d731e22fa2a3a4b44ee87fc9fe100fd89ef7ea501fbe52ce8f5f353"
+    },
+    {
+      "path": "server/services/manhuaTemplateCatalogEvents.ts",
+      "bytes": 616,
+      "sha256": "2aff30c9c0e1810cedac6c95005725174dba1ed2a67541d0032fbff75c312046"
+    },
+    {
+      "path": "server/services/manhuaViralTemplateStore.lifecycle.test.ts",
+      "bytes": 61855,
+      "sha256": "9283f4a0491ed5847ae4008d07653072331d34daf406886166a052519f3f3ed1"
+    },
+    {
+      "path": "server/services/manhuaViralTemplateStore.ts",
+      "bytes": 66724,
+      "sha256": "2cd80001b14e330b3c2213dc5292babbe65adcdb1833b1578042ba92ae615832"
+    },
+    {
+      "path": "server/services/manhuaWriterModelRun.test.ts",
+      "bytes": 2681,
+      "sha256": "6f143711416dd6d72833d55eb3c5996919430b308af2879b2539b409e3e2678b"
+    },
+    {
+      "path": "server/services/manhuaWriterModelRun.ts",
+      "bytes": 2113,
+      "sha256": "5c68d98ef1bf8d012e565635d2f2fffe24a45a04b1bcefb4d02e0b9ef5a5c87b"
+    },
+    {
+      "path": "server/services/manhuaWriterTrial.ts",
+      "bytes": 12291,
+      "sha256": "dbe8ef46f0f6d9716ebe4012083662342811477af6bec9df21366cc2e90a0c68"
+    },
+    {
+      "path": "server/services/platformSkillQa.ts",
+      "bytes": 54153,
+      "sha256": "bc7e5335f78b2d34d394037526f400fd7d7e5e51965efe3c84cbbe25af280501"
+    },
+    {
+      "path": "shared/manhuaAdvisorPolicy.test.ts",
+      "bytes": 1983,
+      "sha256": "e3943581f40dbfd72893d3fd34276a2813aa02430780a7689e1681b876ffc05f"
+    },
+    {
+      "path": "shared/manhuaAdvisorPolicy.ts",
+      "bytes": 2306,
+      "sha256": "8e21619177e02b8a899f51ace8f393d9cfe6341fd990567f6a30a4592beb77b9"
+    },
+    {
+      "path": "shared/manhuaAdvisorRewrite.ts",
+      "bytes": 3139,
+      "sha256": "075994975bed5dbc98b8a1d1fa825ecef4f31968191625e932f29cd9d18c2579"
+    },
+    {
+      "path": "shared/manhuaCreativeAdvisor.ts",
+      "bytes": 11284,
+      "sha256": "752c0168816b43663fdc6ae057532c37a57b544a4fd7fb966cf22380b699a6ed"
+    },
+    {
+      "path": "shared/manhuaEpisodeOptimization.ts",
+      "bytes": 2527,
+      "sha256": "30054ec6c2eb9007617785e9af23dac719c57709fd9b26a0c41af27d190fb481"
+    },
+    {
+      "path": "shared/manhuaWriterModels.test.ts",
+      "bytes": 935,
+      "sha256": "de72ae4afb124edd9e198ca31e62f38cbcc8545ed587d02063a929d3ca06f5f4"
+    },
+    {
+      "path": "shared/manhuaWriterModels.ts",
+      "bytes": 898,
+      "sha256": "a7056daf7a78774a1b5d5ae09091860b5f4baa5741845b74325d29a6e32e40fa"
+    }
+  ],
+  "validation": [
+    {
+      "path": "../backend-work/1004-advisor-rewrite-delivery-tests.log",
+      "bytes": 607,
+      "sha256": "af0d0ff37254a0bde472208aafea0fe80eacefa3b6881f1bb5aca765ff488be4"
+    },
+    {
+      "path": "../backend-work/1004-writer-min-three-tests.log",
+      "bytes": 656,
+      "sha256": "00212f06778e03971f94a2b7f01f13f6ddc70ff4315e3bb3aacf6067a26ceb74"
+    },
+    {
+      "path": "../backend-work/1004-episode-optimization-new-tests.log",
+      "bytes": 410,
+      "sha256": "26dddb4d1c7b8042e9f5ae687aecbbe8e6d817021d56c86835be14956941d37c"
+    },
+    {
+      "path": "../backend-work/1004-writer-heartbeat-test.log",
+      "bytes": 355,
+      "sha256": "361359b8120318c8a0085e730a45c5c241cf618a4944fc5fb295f651b2b0d2f7"
+    },
+    {
+      "path": "../backend-work/1004-episode-optimization-browser-fix.log",
+      "bytes": 459,
+      "sha256": "ab376bed04e54228e27f5f769e1c818393a1352d8b7226df1194301e3e6c96bd"
+    },
+    {
+      "path": "../backend-work/1004-episode-optimization-host-test.log",
+      "bytes": 358,
+      "sha256": "4a7adcd07c55fccea0eb597389f245acba2384b2bb4a59cc5d23b94fbcf76dfa"
+    },
+    {
+      "path": "../backend-work/1004-episode-optimization-replay-tests.log",
+      "bytes": 433,
+      "sha256": "75454610bfb79224b0679812c62060a81c11608b344356bcd4c43ab4c0cc3b11"
+    },
+    {
+      "path": "../backend-work/1004-episode-optimization-browser-recovery.log",
+      "bytes": 485,
+      "sha256": "7a6c4b756c76d2d3a96bd89e16d05afbefc1ddf66ef8a3638771ee4bbc241159"
+    },
+    {
+      "path": "../backend-work/1004-episode-model-quota-tests.log",
+      "bytes": 363,
+      "sha256": "5ca8b0d6f31fce06b0bd69ac82d283e55f8ee59605dc946dacb229fea9a6559d"
+    },
+    {
+      "path": "../backend-work/1004-episode-model-quota-browser.log",
+      "bytes": 472,
+      "sha256": "901089bc9eb7d2a7aacb38a184bdc7679e3e95053f4ddac4e28cf9c82682d625"
+    },
+    {
+      "path": "../backend-work/1004-template-events-tests.log",
+      "bytes": 408,
+      "sha256": "6235347992a12a50c4bbc3fc851f7581f4be62f495e226b0b16ae07463f9dd36"
+    },
+    {
+      "path": "../backend-work/1004-template-events-store-test.log",
+      "bytes": 374,
+      "sha256": "1a2ef9d364b3ec62f269cd3cac0fcdd276b066d29c56bdb007f27e40dbc8612a"
+    },
+    {
+      "path": "../backend-work/1004-template-events-model-final-types.log",
+      "bytes": 830,
+      "sha256": "18a5369128934b5c3166ba559bb8ce2844c6a613ae50b6117f200e18fabd6182"
+    },
+    {
+      "path": "../backend-work/1004-template-events-type-fixes.log",
+      "bytes": 47,
+      "sha256": "4b825fe85d8195a145d8b9eba16dbad777d717eaad55416fd13a0019e9a6be7d"
+    },
+    {
+      "path": "../backend-work/1004-advisor-final-build.log",
+      "bytes": 82587,
+      "sha256": "7ccdeebcf46e6a91b1900880a7770afa6c99eaecd90ba1db5c7f4e8431a2f547"
+    }
+  ],
+  "scope": "Local validation only; no production generation, merge or deployment."
+}

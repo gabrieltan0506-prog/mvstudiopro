@@ -102,6 +102,7 @@ export const manhuaCreativeAdvisorContextSchema = z
       MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.episodeTitleChars,
       "本集标题",
     ),
+    episodeEndHook: z.string().max(2000).optional(),
     stage: manhuaCreativeAdvisorStageSchema,
     videoModel: contextText(
       MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.videoModelChars,

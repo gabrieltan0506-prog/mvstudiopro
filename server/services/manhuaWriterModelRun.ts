@@ -5,7 +5,7 @@ import { manhuaWriterModelLabel, type ManhuaWriterModel } from "../../shared/man
 
 /** 复用小说模型的实际 SSE、推理参数和完整性检查；手动选择不暗换其他模型。 */
 export function createManhuaWriterModelCall(userId: number, requestId: string, model: ManhuaWriterModel): NovelStageCall {
-  return async (prompt, json, stageId) => {
+  return async (prompt, json, stageId, trace) => {
     const stageHash = createHash("sha256").update(stageId).digest("hex").slice(0, 20);
     const prefix = `manhua-writer-evidence/user-${userId}/${requestId}/${stageHash}/${randomUUID()}`;
     const write = async (name: string, text: string) => {
@@ -17,6 +17,7 @@ export function createManhuaWriterModelCall(userId: number, requestId: string, m
     try {
       const result = await callNovelStage(prompt, json, stageId, {
         modelPreference: model,
+        onBytes: trace?.onBytes,
         onRaw: async response => { raw = await write("raw", response); },
       });
       const parsed = await write("parsed", JSON.stringify(result));

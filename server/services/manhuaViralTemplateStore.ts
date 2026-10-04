@@ -1,3 +1,4 @@
+import { publishTemplateCatalogChanged } from "./manhuaTemplateCatalogEvents";
 import { isCompleteNativeEpisodeRelearn } from "../../shared/manhuaNativeEpisodeVersion.js";
 /**
  * 漫剧节奏模板动态库（GCS）。
@@ -25,16 +26,32 @@ import {
 import {
   downloadGcsObject,
   listGcsObjectNamesByPrefix,
-  uploadBufferToGcs,
-  deleteGcsObject,
+  uploadBufferToGcs as uploadGcs,
+  deleteGcsObject as deleteGcs,
   downloadGcsObjectVersioned,
-  uploadBufferToGcsIfAbsent,
+  uploadBufferToGcsIfAbsent as uploadGcsIfAbsent,
   getGcsBucketName,
 } from "./gcs.js";
 
 export const MANHUA_VIRAL_PROPOSALS_PREFIX = "manhua-template-learn/proposals/";
 export const MANHUA_VIRAL_APPROVED_PREFIX = "manhua-template-learn/approved/";
 export const MANHUA_VIRAL_ARCHIVE_PREFIX = "manhua-template-learn/archive/";
+
+// 正式库写入确认后才通知；待审/归档文件本身不会让产品目录刷新。
+function catalogObjectCommitted(objectName:string){
+  if(!objectName.startsWith(MANHUA_VIRAL_APPROVED_PREFIX))return;
+  approvedCardReadCache.clear();publishTemplateCatalogChanged();
+}
+async function uploadBufferToGcs(input:Parameters<typeof uploadGcs>[0]){
+  const result=await uploadGcs(input);catalogObjectCommitted(input.objectName);return result;
+}
+async function uploadBufferToGcsIfAbsent(input:Parameters<typeof uploadGcsIfAbsent>[0]){
+  const result=await uploadGcsIfAbsent(input);if(result.created)catalogObjectCommitted(input.objectName);return result;
+}
+async function deleteGcsObject(input:Parameters<typeof deleteGcs>[0]){
+  const result=await deleteGcs(input);catalogObjectCommitted(input.objectName);return result;
+}
+
 
 function isGcsGenerationConflict(error: unknown): boolean {
   return /gcs_upload_failed:412(?:\b|:)/.test(

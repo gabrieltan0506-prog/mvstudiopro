@@ -1,3 +1,6 @@
+import ManhuaEpisodeOptimization, { type EpisodeOptimizationWorkspace } from "./ManhuaEpisodeOptimization";
+import { validateAdvisorRewriteBody, TEMPLATE_REWRITE_MARKER } from "@shared/manhuaAdvisorRewrite";
+import { buildTemplateAdviceQuestion } from "@/lib/manhuaTemplateAdvice";
 import { Streamdown } from "streamdown";
 import { automaticAdvisorContext, automaticAdvisorRequestId, MANHUA_ADVISOR_AUTO_QUESTION, MANHUA_ADVISOR_PAID_CREDITS } from "@shared/manhuaAdvisorPolicy";
 import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
@@ -59,12 +62,13 @@ export default function ManhuaCreativeAdvisorPanel(props: {
   confirmedProjectVersion?: string;
   project?: ReturnType<typeof buildManhuaAdvisorProject>;
   onLocate?: (issue: AdvisorIssue) => void;
+  episodeWorkspace?: EpisodeOptimizationWorkspace;
   selectedTemplate?: PublicManhuaViralTemplateCard | null;
   templates: PublicManhuaViralTemplateCard[];
   onApplyRewrite?: (candidate: AdvisorRewriteCandidate) => boolean;
   onRequestTrial: (template: PublicManhuaViralTemplateCard) => void;
   focusSection?: "templates" | null;
-  questionSeed?: { id: string; question: string } | null;
+  questionSeed?: { id: string; question: string; submit?: boolean } | null;
   onQuestionSeedApplied?: () => void;
 }) {
   const { open, onClose, userId, confirmedProjectVersion, project, onLocate, stageZh, selectedTemplate, templates, onRequestTrial } = props;
@@ -127,6 +131,39 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     catch { return { candidate: null, error: "原稿对比记录无法读取。为保护旧稿，已停止新的咨询与改写；请恢复浏览器存储后刷新。" }; }
   });
   const [rewrite, setRewrite] = useState<AdvisorRewriteCandidate | null>(initialRewrite.candidate);
+  const [rewriteEdit, setRewriteEdit] = useState(initialRewrite.candidate?.rewrittenBody || "");
+  const [rewriteEditHook, setRewriteEditHook] = useState(initialRewrite.candidate?.endHook || "");
+  const [rewriteEditError, setRewriteEditError] = useState("");
+  const rewriteRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!rewrite) return;
+    let text = rewrite.rewrittenBody;
+    let endHook = rewrite.endHook || "";
+    try {
+      const saved = rewriteKey && localStorage.getItem(`${rewriteKey}:edit`);
+      const value = saved ? JSON.parse(saved) : null;
+      if (value?.originalBody === rewrite.originalBody && value?.episodeIndex === rewrite.episodeIndex && typeof value.text === "string" && value.generatedBody === rewrite.rewrittenBody) { text = value.text; if (typeof value.endHook === "string") endHook = value.endHook; }
+      setRewriteEditError("");
+    } catch { setRewriteEditError("编辑草稿无法读取，仍保留已生成版本，请先下载旧稿。"); }
+    setRewriteEdit(text);
+    setRewriteEditHook(endHook);
+    requestAnimationFrame(() => rewriteRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }));
+  }, [rewrite, rewriteKey]);
+  function editRewrite(text: string, endHook = rewriteEditHook) {
+    setRewriteEdit(text);
+    setRewriteEditHook(endHook);
+    try {
+      if (rewriteKey && rewrite) localStorage.setItem(`${rewriteKey}:edit`, JSON.stringify({ episodeIndex: rewrite.episodeIndex, originalBody: rewrite.originalBody, generatedBody: rewrite.rewrittenBody, text, endHook }));
+      setRewriteEditError("");
+    } catch { setRewriteEditError("修改尚未保存，请保留页面并复制正文，恢复存储后再套用。"); }
+  }
+  function applyRewrite() {
+    if (!rewrite || rewriteEditError) return;
+    try {
+      validateAdvisorRewriteBody(rewrite.originalBody, rewriteEdit);
+      if (props.onApplyRewrite?.({ ...rewrite, rewrittenBody: rewriteEdit, ...(rewrite.endHook ? { endHook: rewriteEditHook } : {}) })) toast.success(`已套用第 ${rewrite.episodeIndex} 集，旧稿已备份，请重新确认剧本。`);
+    } catch (error) { toast.error(error instanceof Error ? error.message : "整集优化稿尚未通过检查，原稿保留"); }
+  }
   const [backups, setBackups] = useState<AdvisorBackupEntry[]>([]);
   const [backupError, setBackupError] = useState("");
   const recoveryKey = sessionKey ? `${sessionKey}:pending` : null;
@@ -192,7 +229,13 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     const seed = props.questionSeed;
     if (!open || !seed || appliedQuestionSeed.current === seed.id || asking || pendingPaid || unresolvedFailed || sessionStorageBlocked) return;
     appliedQuestionSeed.current = seed.id;
-    // 用户从模板卡发起的新问题仅预填；保留正在编辑的提问，不自动发模型请求。
+    // 只有用户明确点击“用顾问优化本集”的种子才提交；其他入口仍预填。
+    if (seed.submit && !draft.trim()) {
+      send(seed.question);
+      props.onQuestionSeedApplied?.();
+      return;
+    }
+    // 正在编辑的问题保留，不被模板卡覆盖。
     if (draft.trim() && draft.length + seed.question.length + 2 > 1200) {
       toast.error("顾问输入区已有较长问题，请先发送或复制保存，再从模板卡提问。原问题已保留。");
     } else {
@@ -272,7 +315,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
       }
       if (request.rawQuestion.startsWith("【模板改写建议】")) {
         try {
-          const candidate = parseAdvisorRewrite(answer, request.manhuaContext!.episodeIndex, request.manhuaContext!.episodeBody);
+          const candidate = parseAdvisorRewrite(answer, request.manhuaContext!.episodeIndex, request.manhuaContext!.episodeBody, request.manhuaContext!.episodeEndHook);
           if (capturedSessionKey) localStorage.setItem(`${capturedSessionKey}:rewrite`, JSON.stringify(candidate));
           if (mounted.current) setRewrite(candidate);
         } catch {
@@ -306,16 +349,20 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     } finally { inFlight.current = false; if (mounted.current) { setStreamPending(false); setStreamText(""); } }
   }
 
-  function send(rawQuestion: string, wrappedQuestion?: string, renderRequested = false) {
+  function send(rawQuestion: string, wrappedQuestion?: string, renderRequested = false, episode?: EpisodeOptimizationWorkspace["episodes"][number]) {
     if (inFlight.current || pendingPaid || unresolvedFailed || !userId || sessionStorageBlocked) return;
     const question = rawQuestion.trim();
     if (question.length < 2 || question.length > 1200) { toast.error("请输入 2—1200 字的问题，内容不会被自动截断。"); return; }
+    if (question.startsWith(TEMPLATE_REWRITE_MARKER) && (!project?.context.episodeBody.trim() || project.context.episodeBody.length > 8000 || project.contextNotes.some(note => note.includes("本集正文")))) {
+      toast.error("当前集正文为空、已节选或超过8000字，不能生成完整优化稿，请先打开完整本集。"); return;
+    }
     if (props.previsIssue) { toast.error(props.previsIssue); return; }
     let previsEdit = props.previsTarget ? withAdvisorPrevisVideo(props.previsTarget, previewVideoSource) : undefined;
     if (previsEdit && !previsEdit.previousPreviewRequestId && previsCandidate?.target.clipId === previsEdit.clipId && previsCandidate.target.specJson === previsEdit.specJson) {
       try { previsEdit = { ...previsEdit, previousPreviewSpecJson: advisorPrevisSpecJson(applyAdvisorPrevisPatch(manhuaPrevisSpecSchema.parse(JSON.parse(previsEdit.specJson)), previsCandidate.patch)) }; } catch { /* 未支持要求不继承为已执行配置。 */ }
     }
     let questionContext = project?.context;
+    if (episode && questionContext) questionContext = {...questionContext,episodeIndex:episode.index,episodeTitle:episode.title,episodeBody:episode.body,episodeEndHook:episode.endHook||""};
     try {
       if (project && questionContext) questionContext = resolveAdvisorVideoPromptContext({ context: questionContext, question, drafts: project.videoPromptDrafts, selectedSegmentIndex: project.selectedSegmentIndex });
     } catch (error) { toast.error(error instanceof Error ? error.message : "无法读取本段提示词"); return; }
@@ -359,7 +406,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     }
     const question = buildTemplateRewriteQuestion(plan);
     if (question.length > 3900) { toast.error("方案过长，请先精简方案后再改写。"); return; }
-    send(TEMPLATE_REWRITE_QUESTION, question);
+    send(`${TEMPLATE_REWRITE_QUESTION} 模板编号 ${plan.publicId}`, question);
   }
 
   function refreshBackups() {
@@ -465,17 +512,23 @@ export default function ManhuaCreativeAdvisorPanel(props: {
           <h3 className="font-semibold">本次读取范围</h3>
           {project.contextNotes.map((note) => <p key={note}>{note}</p>)}
         </section> : null}
-        {!creationMode && <section ref={templateSectionRef} aria-label="剧本模板优化" className="rounded-lg border border-cyan-300/20 p-3 text-xs">
-          <p className="text-white/65">根据当前故事推荐模板，再选择方案改写本集。推荐与改写沿用顾问问答额度，超额先确认。</p>
+        {!creationMode && props.episodeWorkspace && <section ref={templateSectionRef}><ManhuaEpisodeOptimization key={`${userId}:${props.projectId}`} {...props.episodeWorkspace} userId={userId} projectId={props.projectId} focusEpisode={project?.context.episodeIndex||1} templates={templates} plans={[...turns].reverse().map(t=>t.role==="advisor"?parseAdvisorTemplatePlans(t.text,templates):[]).find(p=>p.length)||[]} asking={asking||Boolean(pendingPaid)||unresolvedFailed||sessionStorageBlocked} onRecommend={episodes=>send(TEMPLATE_PLAN_QUESTION,buildTemplatePlanQuestion(templates)+`\n本次计划优化第${episodes.map(e=>e.index).join("、")}集；先以第${episodes[0].index}集完整正文推荐，说明各模板能注入哪些具体特色。`,false,episodes[0])}/></section>}
+        {!creationMode && !props.episodeWorkspace && <section ref={templateSectionRef} aria-label="剧本模板优化" className="rounded-lg border border-cyan-300/20 p-3 text-xs">
+          <h3 className="font-semibold">用模板优化当前整集</h3>
+          <p className="mt-2 text-white/65">生成完整优化稿 → 对比并编辑 → 套用本集。沿用顾问额度，超额先确认；套用已生成稿不再收费。</p>
+          {selectedTemplate && <button type="button" disabled={!userId || !project || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={() => send(buildTemplateAdviceQuestion(selectedTemplate))} className="mt-2 rounded bg-emerald-500/20 px-3 py-2 font-semibold text-emerald-100 disabled:opacity-40">用「{selectedTemplate.storyPreview?.teaserTitleZh || selectedTemplate.nameZh}」优化本集</button>}
           <button type="button" disabled={!userId || !project || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={recommendTemplates} className="mt-2 rounded border border-cyan-300/30 px-3 py-2 disabled:opacity-40">推荐3—5个剧本模板方案</button>
         </section>}
-        {!creationMode && rewrite && <section aria-label="改写原稿对比" className="space-y-2 rounded-lg border border-emerald-300/30 p-3 text-xs">
-          <h3 className="font-semibold">第 {rewrite.episodeIndex} 集 · 改写对比</h3>
-          <ul>{rewrite.changes.map((change, i) => <li key={i}>• {change}</li>)}</ul>
-          <ManhuaRewriteComparison before={rewrite.originalBody} after={rewrite.rewrittenBody} />
-          <p className="text-amber-100">采用后本集及后续制作需重新确认，旧图/片归档保留；完整旧稿另存本机备份。</p>
-          <button type="button" disabled={!props.onApplyRewrite || asking || project?.context.episodeIndex !== rewrite.episodeIndex || project?.context.episodeBody !== rewrite.originalBody} onClick={() => { if (props.onApplyRewrite?.(rewrite)) toast.success("改写已采用，请重新检查并确认剧本。"); }} className="rounded border border-emerald-300/40 px-3 py-2 disabled:opacity-40">采用这版改写</button>
-          {(project?.context.episodeIndex !== rewrite.episodeIndex || project?.context.episodeBody !== rewrite.originalBody) && <p>当前剧本与原快照不同，已停止覆盖。原稿与建议仍保留供复制。</p>}
+        {!creationMode && rewrite && <section ref={rewriteRef} aria-label="改写原稿对比" className="space-y-3 rounded-lg border border-emerald-300/30 p-3 text-xs">
+          <h3 className="font-semibold">第 {rewrite.episodeIndex} 集 · 原集 / 优化后整集</h3>
+          <details><summary className="cursor-pointer">查看本次具体改动</summary><ul>{rewrite.changes.map((change, i) => <li key={i}>• {change}</li>)}</ul></details>
+          <ManhuaRewriteComparison before={rewrite.originalBody} after={rewriteEdit} />
+          <label className="block">优化后整集 · 可直接修改<textarea aria-label="优化后整集正文" value={rewriteEdit} onChange={e => editRewrite(e.target.value)} maxLength={9000} rows={12} className="mt-2 w-full rounded border border-white/20 bg-black/20 p-3 text-sm leading-7" /></label>
+          {rewrite.endHook && <label className="block">片尾钩子 · 与正文一起套用<textarea aria-label="优化后片尾钩子" value={rewriteEditHook} onChange={e => editRewrite(rewriteEdit, e.target.value)} maxLength={2000} rows={3} className="mt-2 w-full rounded border border-white/20 bg-black/20 p-3 leading-6" /></label>}
+          <p className="text-white/60">套用只替换本集正文与片尾钩子，其他集正文保留。旧稿先备份；本集及后续制作需重新确认，旧图与成片归档保留。</p>
+          <button type="button" disabled={!props.onApplyRewrite || asking || Boolean(rewriteEditError) || project?.context.episodeIndex !== rewrite.episodeIndex || project?.context.episodeBody !== rewrite.originalBody} onClick={applyRewrite} className="rounded bg-emerald-500/20 px-4 py-2 font-semibold text-emerald-100 disabled:opacity-40">套用本集</button>
+          {rewriteEditError && <p role="alert">{rewriteEditError}</p>}
+          {(project?.context.episodeIndex !== rewrite.episodeIndex || project?.context.episodeBody !== rewrite.originalBody) && <p>当前剧本与原快照不同，已停止覆盖。原稿与优化稿仍保留。</p>}
         </section>}
         {!creationMode && <section aria-label="旧稿备份" className="space-y-2 border-t border-white/10 pt-3 text-xs">
           <button type="button" disabled={!userId || !project} onClick={refreshBackups} className="rounded border border-white/20 px-3 py-2 disabled:opacity-40">查找当前项目旧稿备份</button>
@@ -486,14 +539,14 @@ export default function ManhuaCreativeAdvisorPanel(props: {
         {!turns.length && <p className="text-xs leading-5 text-white/60">结合当前剧本、参考图绑定和选中镜头给建议。只读取当前项目；未查看原图、原片时不会宣称质量通过。</p>}
         {turns.map((turn) => <div key={turn.id} className={turn.role === "user" ? "ml-8" : "mr-3"}>
           <div className={`whitespace-pre-wrap break-words rounded-lg px-3 py-2.5 text-[15px] leading-7 ${turn.role === "user" ? "bg-cyan-500/15 text-cyan-50" : "border border-white/10 bg-white/[0.035] text-white/85"}`}>{turn.role === "advisor" && parseAdvisorTemplatePlans(turn.text, templates).length ? "已根据当前故事给出以下方案，请选择后查看改写对比。" : turn.role === "advisor" ? <Streamdown>{readableAdvice(turn.text)}</Streamdown> : turn.text.includes(MANHUA_ADVISOR_AUTO_QUESTION) ? `${turn.text.split("\n")[0]}：检查本步骤的剧情、空间与制作建议。` : turn.text === TEMPLATE_PLAN_QUESTION ? "根据当前故事推荐3—5个剧本模板方案。" : turn.text === TEMPLATE_REWRITE_QUESTION ? "按所选方案改写当前集，先查看对比再采用。" : turn.text}</div>
-          {turn.role === "advisor" && <button type="button" onClick={() => void copyAdvice(turn.text)} className="mt-1 min-h-8 rounded px-2 text-xs text-cyan-100 hover:bg-white/10">复制建议</button>}
-          {turn.role === "advisor" && parseAdvisorTemplatePlans(turn.text, templates).map(plan => <section key={plan.publicId} className="mt-2 space-y-2 rounded border border-cyan-300/25 p-3 text-xs">
+          {turn.role === "advisor" && (creationMode || props.previsTarget || props.worldTarget) && <button type="button" onClick={() => void copyAdvice(turn.text)} className="mt-1 min-h-8 rounded px-2 text-xs text-cyan-100 hover:bg-white/10">复制建议</button>}
+          {turn.role === "advisor" && !props.episodeWorkspace && parseAdvisorTemplatePlans(turn.text, templates).map(plan => <section key={plan.publicId} className="mt-2 space-y-2 rounded border border-cyan-300/25 p-3 text-xs">
             <h3 className="font-semibold">{templates.find(t => t.publicId === plan.publicId)?.nameZh}</h3>
             <p>{plan.reason}</p><ul>{plan.changes.map((change, i) => <li key={i}>• {change}</li>)}</ul><p>保留：{plan.preserve}</p>
-            <button type="button" disabled={asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={() => requestRewrite(plan)} className="rounded border border-cyan-300/40 px-2 py-1 disabled:opacity-40">选此方案，改写当前集</button>
+            <button type="button" disabled={asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={() => requestRewrite(plan)} className="rounded border border-cyan-300/40 px-2 py-1 disabled:opacity-40">生成本集完整优化稿</button>
             <button type="button" onClick={() => onRequestTrial(templates.find(t => t.publicId === plan.publicId)!)} className="ml-2 text-cyan-100">免费试写大纲对比</button>
           </section>)}
-          {turn.role === "advisor" && findMentionedTemplates(turn.text, templates).map((template) => <button key={template.publicId} type="button" onClick={() => onRequestTrial(template)} className="mt-2 rounded border border-cyan-300/30 px-2 py-1 text-xs text-cyan-100">查看「{template.nameZh}」试写入口 →</button>)}
+          {turn.role === "advisor" && !props.episodeWorkspace && !parseAdvisorTemplatePlans(turn.text, templates).length && !props.previsTarget && !props.worldTarget && findMentionedTemplates(turn.text, templates).map((template) => <button key={template.publicId} type="button" disabled={asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={() => send(buildTemplateAdviceQuestion(template))} className="mt-2 rounded border border-cyan-300/30 px-3 py-2 text-xs text-cyan-100 disabled:opacity-40">用「{template.storyPreview?.teaserTitleZh || template.nameZh}」生成本集优化稿</button>)}
         </div>)}
         {previsKey && (props.previsTarget || previsCandidate) && <details className="text-xs"><summary onClick={recoverPreviews} className="cursor-pointer py-2 text-cyan-100">找回本项目的独立试看</summary>{savedPreviews.map(({ key, trial }) => <button key={key} type="button" className="my-1 block rounded border border-white/20 px-2 py-2 text-left" onClick={() => { try { localStorage.setItem(`${previsKey}:trial`, trial.request.requestId); localStorage.setItem(previsKey, JSON.stringify(trial.candidate)); setAutoPrevisStart(false); setPrevisCandidate(trial.candidate); } catch { toast.error("试看恢复记录无法保存，未切换。"); } }}>{trial.candidate.patch.summaryZh} · {trial.request.spec.durationSec}秒</button>)}</details>}
         {candidateMatches && previsCandidate && <ManhuaAdvisorPrevisComparison key={JSON.stringify(previsCandidate)} candidate={previsCandidate} previewHost={props.previewHost} actionHost={previsActionHost} onCheckReady={props.onCheckPrevisReady} storageKey={previsKey ? `${previsKey}:trial` : null} autoStart={autoPrevisStart} onPreviewReady={rememberPreviewVideo} onPrepare={props.onPreparePrevis} onRevise={() => { setDraft("保留这版其他安排，我想调整："); questionRef.current?.focus(); }} disabled={asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onApply={props.onApplyPrevis} />}

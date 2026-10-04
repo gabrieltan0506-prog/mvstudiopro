@@ -398,6 +398,7 @@ export function buildManhuaAdvisorProject(input: {
       seriesTitle: excerptEvidence(input.pack?.seriesTitle || input.bible?.seriesTitle || "未命名项目", LIMITS.seriesTitleChars, "剧名", contextNotes),
       episodeIndex: input.episodeIndex,
       episodeTitle: excerptEvidence(episode?.title || "", LIMITS.episodeTitleChars, "本集标题", contextNotes),
+      ...(episode?.endHook ? { episodeEndHook: episode.endHook } : {}),
       stage: input.phase,
       videoModel: engine.videoModel || "未选择",
       writerConfirmed: input.writerConfirmed,

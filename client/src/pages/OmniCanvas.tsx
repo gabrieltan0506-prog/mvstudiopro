@@ -1,3 +1,4 @@
+import { useManhuaTemplateCatalogEvents } from "@/hooks/useManhuaTemplateCatalogEvents";
 import { useManhuaAdvisorPreference } from "@/hooks/useManhuaAdvisorPreference";
 import { ManhuaLocalRecovery } from "@/components/ManhuaLocalRecovery";
 import { clearDraftBaseGeneration, isCloudDraftConflict, readDraftBaseGeneration, saveDraftBaseGeneration } from "@/lib/manhuaDraftRecovery";
@@ -42,7 +43,7 @@ import { ManhuaPrevisAudioControls } from "@/components/canvas/ManhuaPrevisAudio
 import { checkManhuaAdvisorPrevisLaunch } from "@/lib/manhuaAdvisorPrevisLaunch";
 import ManhuaOutlineTemplateRewrite from "@/components/canvas/ManhuaOutlineTemplateRewrite";
 import { advisorReconfirmationFromEpisode } from "@/lib/manhuaAdvisorBackups";
-import { prepareAdvisorRewriteAdoption, persistAdvisorRewriteAdoption } from "@/lib/manhuaAdvisorAdoption";
+import { prepareAdvisorRewriteAdoption, prepareAdvisorRewriteBatchAdoption, persistAdvisorRewriteAdoption } from "@/lib/manhuaAdvisorAdoption";
 import type { AdvisorRewriteCandidate } from "@/lib/manhuaAdvisorTemplates";
 import { manhuaAdvisorMountKey } from "@/lib/manhuaAdvisorSession";
 import {
@@ -527,7 +528,6 @@ import type { VideoReverseOutputMode } from "@shared/videoReversePrompt";
 import {
   MANHUA_WRITER_EPISODE_DEFAULT,
   MANHUA_WRITER_EPISODE_MAX,
-  MANHUA_WRITER_EPISODE_MIN,
   clampWriterEpisodeCount,
   composeWriterPackFactoryContext,
   deriveSeriesTitleFromTopic,
@@ -555,6 +555,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { hasSupervisorAccess } from "@/lib/supervisorAccess";
 import {
   MANHUA_WRITER_MODELS,
+  MANHUA_WRITER_GENERATION_MIN,
   MANHUA_WRITER_EPISODE_CREDITS,
   manhuaWriterExpansionQuote,
   manhuaWriterModelLabel,
@@ -1102,7 +1103,7 @@ function OmniCanvasWorkspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [writerEpisodeCount, setWriterEpisodeCount] = useState(() =>
-    Math.max(initialWriterSession?.writerPack?.episodes.length || 0, clampWriterEpisodeCount(initialWriterSession?.episodeCount ?? MANHUA_WRITER_EPISODE_DEFAULT)),
+    Math.max(MANHUA_WRITER_GENERATION_MIN, initialWriterSession?.writerPack?.episodes.length || 0, clampWriterEpisodeCount(initialWriterSession?.episodeCount ?? MANHUA_WRITER_EPISODE_DEFAULT)),
   );
   /** 扩写模型：GLM / DeepSeek，界面不展示版本。 */
   const [writerModel, setWriterModel] = useState<ManhuaWriterModel>("glm");
@@ -1478,7 +1479,8 @@ function OmniCanvasWorkspace() {
   const [advisorAudioRequest, setAdvisorAudioRequest] = useState<{ id: string; clipId: string; scopeId: string } | null>(null);
   const [advisorPreviewSelection, setAdvisorPreviewSelection] = useState<{ clipId: string; requestId?: string } | null>(null);
   const [advisorFocusSection, setAdvisorFocusSection] = useState<"templates" | null>(null);
-  const [advisorQuestionSeed, setAdvisorQuestionSeed] = useState<{ id: string; question: string; projectKey: string } | null>(null);
+  const [optimizationComparisonHost, setOptimizationComparisonHost] = useState<HTMLDivElement | null>(null);
+  const [advisorQuestionSeed, setAdvisorQuestionSeed] = useState<{ id: string; question: string; projectKey: string; submit?: boolean } | null>(null);
   const [advisorSelection, setAdvisorSelection] = useState<AdvisorSelection | null>(null);
   /** 工作台上报的缺口／关键帧／3D 状态；工作台未挂载时为 null，顾问按未知处理 */
   const [advisorSignals, setAdvisorSignals] = useState<ManhuaWorkbenchAdvisorSignals | null>(null);
@@ -3297,7 +3299,7 @@ function OmniCanvasWorkspace() {
     setFactoryTopic(session.topic || "");
     setWriterBrief(session.brief || "");
     setNovelDraft(session.novelDraft || null);
-    setWriterEpisodeCount(Math.max(session.writerPack?.episodes.length || 0,clampWriterEpisodeCount(session.episodeCount)));
+    setWriterEpisodeCount(Math.max(MANHUA_WRITER_GENERATION_MIN, session.writerPack?.episodes.length || 0,clampWriterEpisodeCount(session.episodeCount)));
     setWriterFocusEpisode(Math.max(1, Math.floor(Number(session.focusEpisode) || 1)));
     setWriterPack(session.writerPack);
     setWriterConfirmed(Boolean(session.writerConfirmed));
@@ -4346,8 +4348,10 @@ function OmniCanvasWorkspace() {
   /** 编剧室全员走公开面：服务端只回匿名功能卡（内部 id/真名永不进本页） */
   const manhuaViralTemplatesQuery = trpc.manhuaViralTemplate.listApprovedPublic.useQuery(undefined, {
     staleTime: 60_000,
+    refetchOnWindowFocus: true,
     retry: 1,
   });
+  const templateCatalogConnected = useManhuaTemplateCatalogEvents(Boolean(user?.id), () => manhuaViralTemplatesQuery.refetch());
   const approvedViralTemplateCards = useMemo(
     () => (manhuaViralTemplatesQuery.data?.groups || []).flatMap((group) => group.items),
     [manhuaViralTemplatesQuery.data?.groups],
@@ -5969,7 +5973,7 @@ function OmniCanvasWorkspace() {
     // 补密度路径：过了 confirm 等全部早退才挂自动重检标，防悬挂被无关剧本变更误触发
     if (opts?.fromEpisodeOverride != null) gateRecheckPendingRef.current = true;
     const t0 = Date.now();
-    const count = clampWriterEpisodeCount(writerEpisodeCount);
+    const count = Math.max(MANHUA_WRITER_GENERATION_MIN, clampWriterEpisodeCount(writerEpisodeCount));
     const reqPreview = `topic=${topic}\nepisodes=${count}\nbrief:\n${mergedBrief.slice(0, 4000)}\npublicTemplate=${publicTemplateId || "off"}\nvideoModel=${selectedVideoModel}`;
     pushDebug("expandWriterPack:start", {
       detail: `topicLen=${topic.length} briefLen=${brief.length} episodes=${count} overwriteOld=1 publicTemplate=${publicTemplateId || "off"} videoModel=${selectedVideoModel}`,
@@ -6458,7 +6462,7 @@ function OmniCanvasWorkspace() {
       }
       materializedBoardIdsRef.current.clear();
       setWriterFocusEpisode(1);
-      setWriterEpisodeCount(res.pack.episodeCount);
+      setWriterEpisodeCount(Math.max(MANHUA_WRITER_GENERATION_MIN, res.pack.episodeCount));
       setWriterImportDraft(text);
       setWriterConfirmBlockers([]);
       if (!factoryTopic.trim()) {
@@ -9995,10 +9999,11 @@ function OmniCanvasWorkspace() {
 
   // 画布通过展开视口与显示筛选减少拥挤，布局仍只由显式对齐操作修改。
 
-  function applyTemplateRewriteCandidate(input: AdvisorRewriteCandidate): boolean {
+  function applyTemplateRewriteCandidate(input: AdvisorRewriteCandidate): boolean { return applyTemplateRewriteCandidates([input]); }
+  function applyTemplateRewriteCandidates(inputs: AdvisorRewriteCandidate[]): boolean {
     let plan: ReturnType<typeof prepareAdvisorRewriteAdoption>;
     try {
-      plan = prepareAdvisorRewriteAdoption({ candidate: input, writerPack, projectBible, blocks, edges,
+      plan = prepareAdvisorRewriteBatchAdoption({ candidates: inputs, writerPack, projectBible, blocks, edges,
         overlays: directorBoardMotionOverlayBySegment,
         busy: writerBusy || factoryBusy || assembleBusy || burnSubtitleBusy || Boolean(segmentRefBusyId) || Boolean(assetStandardizeBusyId) || asset3dBusyIds.length > 0 || sceneWorldBusyIds.length > 0 });
       persistAdvisorRewriteAdoption({ plan, original: { writerPack: writerPack!, projectBible, blocks, edges, overlays: directorBoardMotionOverlayBySegment },
@@ -10021,7 +10026,7 @@ function OmniCanvasWorkspace() {
     setWriterFocusEpisode(candidate.episodeIndex);
     setWriterConfirmBlockers([]);
     setAdvisorFocusSection(null);
-    setAdvisorOpen(false);
+    // 套用不是关闭顾问；继续显示结果与备份入口。
     return true;
   }
 
@@ -11954,6 +11959,7 @@ function OmniCanvasWorkspace() {
                     适合这个题材：{recommendedViralTemplate.storyPreview?.teaserTitleZh || recommendedViralTemplate.nameZh || "剧情增强方案"}
                   </button>
                 ) : null}
+                {templateCatalogConnected === false && <p className="mt-2 text-xs text-amber-100">模板即时更新连接中断，正在重连；已有模板保留。<button type="button" className="ml-2 underline" onClick={() => void manhuaViralTemplatesQuery.refetch()}>读取最新模板</button></p>}
                 {manhuaViralTemplatesQuery.isError && <p role="alert" className="mt-2 text-xs text-amber-100">模板目录读取失败，已有选择保留。<button type="button" className="ml-2 underline" onClick={() => void manhuaViralTemplatesQuery.refetch()}>重试读取</button></p>}
                 <ManhuaTemplatePicker
                   cards={approvedViralTemplateCards}
@@ -11972,7 +11978,8 @@ function OmniCanvasWorkspace() {
                     setAdvisor3dContext(undefined);
                     setAdvisorPrevisClipId(null);
                     setAdvisorFocusSection(null);
-                    setAdvisorQuestionSeed({ id: crypto.randomUUID(), question: buildTemplateAdviceQuestion(card), projectKey: manhuaAdvisorMountKey(user?.id != null ? String(user.id) : undefined, projectBible?.confirmedAt, writerPack) });
+                    setPublicTemplateId(card.publicId);
+                    setAdvisorFocusSection("templates");
                     chooseAdvisorVisibility(true);
                   }}
                 />
@@ -11980,8 +11987,9 @@ function OmniCanvasWorkspace() {
                   <p className="mt-1.5 text-[10px] text-white/35">暂无可用的剧情增强方案；待审和已拒绝内容不会显示。</p>
                 ) : null}
                 {novelDraft?.enabled ? <p className="mt-2 text-xs text-white/55">本次按所选小说原文改编，请使用下方扩写；题材模板试写不读取小说原文。</p> : null}
-                {/* 免费试写：选了模板才出现；先看单集差异，满意再走付费全集扩写 */}
-                {selectedViralTemplate ? (
+                <div ref={setOptimizationComparisonHost} data-episode-optimization-comparison />
+                {/* 尚无整集原稿时保留题材大纲试写；已有剧本统一走顾问的整集对比。 */}
+                {selectedViralTemplate && !writerPack?.episodes.length ? (
                   <div className="mt-2 flex flex-wrap items-center gap-2">
                     <button
                       type="button"
@@ -12039,9 +12047,10 @@ function OmniCanvasWorkspace() {
                     ) : null}
                   </div>
                 ) : null}
+                {!writerPack?.episodes.length && <>
                 {trialWriterError ? (
                   <p role="alert" className="mt-2 rounded-lg border border-rose-300/30 bg-rose-500/10 p-3 text-xs text-rose-100">
-                    {/Unexpected token|not valid JSON/.test(trialWriterError) ? "连接未返回有效结果，请先查看已保存的试写，不要重复生成" : trialWriterError}。{trialWriterResult ? "已生成的对照仍保留。" : "可先取回已保存的试写，不会重新生成。"}
+                    {/Unexpected token|not valid JSON|\[object Object\]|object_object/i.test(trialWriterError) ? "连接未返回有效结果，请先查看已保存的试写，不要重复生成" : trialWriterError}。{trialWriterResult ? "已生成的对照仍保留。" : "可先取回已保存的试写，不会重新生成。"}
                     <button type="button" onClick={() => void trialWriterRecentQuery.refetch()} className="ml-2 underline">取回已保存试写</button>
                   </p>
                 ) : null}
@@ -12076,19 +12085,20 @@ function OmniCanvasWorkspace() {
                     onClose={() => setTrialWriterDismissed(true)}
                   />
                 ) : null}
+                </>}
               </div>
               <div className="mt-3 flex flex-wrap items-end gap-2.5">
                 <div>
-                  <label className="block text-[11px] text-white/45">集数</label>
+                  <label className="block text-[11px] text-white/45">批次集数 · 至少3集</label>
                   <select
                     value={writerEpisodeCount}
-                    onChange={(e) => setWriterEpisodeCount(clampWriterEpisodeCount(e.target.value))}
+                    onChange={(e) => setWriterEpisodeCount(Math.max(MANHUA_WRITER_GENERATION_MIN, clampWriterEpisodeCount(e.target.value)))}
                     disabled={writerBusy || factoryBusy}
                     className="mt-1 rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
                   >
                     {Array.from(
-                      { length: MANHUA_WRITER_EPISODE_MAX - MANHUA_WRITER_EPISODE_MIN + 1 },
-                      (_, i) => MANHUA_WRITER_EPISODE_MIN + i,
+                      { length: MANHUA_WRITER_EPISODE_MAX - MANHUA_WRITER_GENERATION_MIN + 1 },
+                      (_, i) => MANHUA_WRITER_GENERATION_MIN + i,
                     ).map((n) => (
                       <option key={n} value={n}>
                         {n} 集{n === MANHUA_WRITER_EPISODE_DEFAULT ? "（默认）" : ""}
@@ -13652,6 +13662,7 @@ function OmniCanvasWorkspace() {
         automaticMonitoring={canvasMode === "manhua" && advisorEnabled && !writerBusy && !factoryBusy && !cloudConflict}
         confirmedProjectVersion={projectBible?.confirmedAt}
         project={advisorProject}
+        episodeWorkspace={writerPack?.episodes.length ? { episodes: writerPack.episodes, model: writerModel, comparisonHost: optimizationComparisonHost, onFocusEpisode: setWriterFocusEpisode, onApplyCandidates: applyTemplateRewriteCandidates } : undefined}
         dockHost={advisorDockHost}
         previewHost={advisorPreviewHost}
         studio3d={advisor3dContext}

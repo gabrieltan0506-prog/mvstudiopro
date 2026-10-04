@@ -7,3 +7,8 @@ it("两模型名称不含版本，三集均报价18，局部扩写只收实际�
   expect(manhuaWriterExpansionQuote(6, 6)).toEqual({ episodes: 1, credits: 6 });
   expect(manhuaWriterExpansionQuote(3, 12)).toEqual({ episodes: 1, credits: 6 });
 });
+it("新扩写报价至少三集且可增加；旧两集稿不修改", () => {
+  expect(manhuaWriterExpansionQuote(2)).toEqual({episodes:3,credits:18});
+  expect(manhuaWriterExpansionQuote(4)).toEqual({episodes:4,credits:24});
+  expect(manhuaWriterExpansionQuote(6)).toEqual({episodes:6,credits:36});
+});

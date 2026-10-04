@@ -1356,3 +1356,10 @@ describe("归档规模：不丢第 201 个（终审第六组 4）", () => {
     );
   });
 });
+it('正式库写入成功才广播目录事件，审计副本不重复广播，失败不广播',async()=>{
+ const {subscribeTemplateCatalog}=await import('./manhuaTemplateCatalogEvents');const changed=vi.fn(),stop=subscribeTemplateCatalog(changed);
+ gcs.list.mockResolvedValue([]);gcs.download.mockResolvedValue({buffer:Buffer.from(JSON.stringify(cardOf({publicCode:'EF56'})))});
+ try{gcs.createIfAbsent.mockRejectedValueOnce(new Error('storage unavailable'));await expect(restoreArchivedManhuaViralTemplate({id:ID,generation:'77'})).rejects.toThrow('storage unavailable');expect(changed).not.toHaveBeenCalled();
+ gcs.createIfAbsent.mockResolvedValue({created:true});await restoreArchivedManhuaViralTemplate({id:ID,generation:'77'});expect(changed).toHaveBeenCalledTimes(1);
+ }finally{stop();}
+});

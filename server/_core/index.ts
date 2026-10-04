@@ -1,3 +1,4 @@
+import { registerManhuaTemplateCatalogStream } from "../routers/manhuaTemplateCatalogStream";
 import { startRuntimeMemorySampling } from "../services/runtimeMemory";
 import "dotenv/config";
 import { resolveJobWorkerRole } from "../jobs/workerRole.js";
@@ -260,6 +261,7 @@ async function startServer() {
   app.use(uploadRouter);
   registerAuthApiRoutes(app);
   registerManhuaAdvisorStream(app);
+  registerManhuaTemplateCatalogStream(app);
   registerPhotoTemporaryMedia(app);
   registerSmsAuthRoutes(app);
   registerSpeechApiRoutes(app);

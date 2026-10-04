@@ -63,3 +63,8 @@ it("免费两稿试写沿用所选DeepSeek并保存模型标识，不收正式�
   expect(saveTrial).toHaveBeenCalledWith(expect.objectContaining({ result: expect.objectContaining({ input: expect.objectContaining({ model: "deepseek" }) }) }));
   expect(charge).not.toHaveBeenCalled();
 });
+
+it("批次最少三集，旧两集请求在模型与扣款前拒绝", async () => {
+  await expect(caller().mvAnalysis.expandManhuaWriterPack({ ...input, episodeCount: 2, confirmedCredits: 12 })).rejects.toThrow();
+  expect(modelCall).not.toHaveBeenCalled(); expect(charge).not.toHaveBeenCalled();
+});
