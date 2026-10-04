@@ -29,10 +29,10 @@ import {
 } from "./manhuaNativeDeepReadIngest.js";
 import {
   GlmGatewayError,
-  EVOLINK_GLM_MODEL,
+  EVOLINK_GLM_FLASHX_MODEL,
   GLM_MODEL_GATEWAYS,
   type GlmGatewayName,
-  OPENROUTER_GLM_MODEL,
+  OPENROUTER_GLM_FLASHX_MODEL,
   invokeGlmJsonChatWithGatewayFallback,
   type GlmGatewayUsage,
 } from "./bailianChat.js";
@@ -43,7 +43,7 @@ import { nativeProviderReceiptFromError } from "./manhuaNativeProviderReceipt.js
  * 与整形链同口径：两档都是 GLM-5.3，不换模型。
  */
 export const MANHUA_NATIVE_SERIES_AGGREGATION_MODEL =
-  `${EVOLINK_GLM_MODEL}→${OPENROUTER_GLM_MODEL}`;
+  `${EVOLINK_GLM_FLASHX_MODEL}→${OPENROUTER_GLM_FLASHX_MODEL}`;
 export const MANHUA_NATIVE_SERIES_AGGREGATION_ROUTE = "openrouter_text" as const;
 export const MANHUA_NATIVE_SERIES_AGGREGATION_SCHEMA_VERSION = "native-series-v2" as const;
 
@@ -313,6 +313,7 @@ export async function invokeNativeSeriesAggregationModel(
   let raw: unknown = undefined;
   try {
     const response = await invokeGlmJsonChatWithGatewayFallback({
+      glmVariant: "flashx",
       system: prompt.system,
       user: prompt.user,
       maxTokens: 131_072,

@@ -65,12 +65,12 @@ export function registerCreativeVoice(server: Server) {
               connect: (plan, signal) => connectVoiceTransport({ plan, signal, context: msg.context,
                 onEvent: event => {
                   lastActivity = Date.now();
-                  if (event.type === "tool" || event.type === "workflow") {
+                  if (event.type === "tool" || event.type === "workflow" || event.type === "mediaEdit" || event.type === "filmReview") {
                     if (toolIds.has(event.id)) return;
                     if (pendingTools.size) {
-                      upstream?.send({ toolResponse: { functionResponses: [{ id: event.id, name: event.type === "tool" ? "askCreativeAdvisor" : "creativeWorkflow", response: { error: "已有顾问任务正在处理，请等待结果，不要重复提交。" } }] } }); return;
+                      upstream?.send({ toolResponse: { functionResponses: [{ id: event.id, name: event.type === "tool" ? "askCreativeAdvisor" : event.type === "mediaEdit" ? "proposeMediaEdit" : event.type === "filmReview" ? "reviewFilm" : "creativeWorkflow", response: { error: "已有顾问任务正在处理，请等待结果，不要重复提交。" } }] } }); return;
                     }
-                    toolIds.add(event.id); pendingTools.set(event.id, event.type === "tool" ? "askCreativeAdvisor" : "creativeWorkflow");
+                    toolIds.add(event.id); pendingTools.set(event.id, event.type === "tool" ? "askCreativeAdvisor" : event.type === "mediaEdit" ? "proposeMediaEdit" : event.type === "filmReview" ? "reviewFilm" : "creativeWorkflow");
                   }
                   send(event);
                 }, onEnded: stop }),

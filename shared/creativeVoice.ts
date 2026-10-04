@@ -1,3 +1,4 @@
+import type { AdvisorMediaProposal } from "./manhuaAdvisorMediaEdit";
 import { z } from "zod";
 export const CREATIVE_VOICE_PURPOSES = {
   discussion: "口述构思与对话", script_review: "推敲剧情与时间线", template_compare: "比较创作方法",
@@ -40,6 +41,8 @@ export const creativeVoiceActionSchema = z.object({
 export type CreativeVoiceAction = z.infer<typeof creativeVoiceActionSchema>;
 export type CreativeVoiceTarget = { episode: number; shot?: number; label: string };
 export type CreativeVoiceEvent =
+  | { type: "filmReview"; id: string; blockId: string; question: string }
+  | { type: "mediaEdit"; id: string; proposal: AdvisorMediaProposal }
   | { type: "workflow"; id: string; action: CreativeVoiceAction }
   | { type: "tool"; id: string; question: string }
   | { type: "route"; route: string; model: string; fallback: boolean }

@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { invokeLLMMock, resolvePlatformSkillsPromptMock, getDbMock, resolveVideoMock, bgmAdvisorMock } = vi.hoisted(() => ({
+const { invokeLLMMock, resolvePlatformSkillsPromptMock, getDbMock, resolveVideoMock, bgmAdvisorMock, filmAdvisorMock } = vi.hoisted(() => ({
   invokeLLMMock: vi.fn(),
   bgmAdvisorMock:vi.fn(),
+  filmAdvisorMock:vi.fn(),
   resolveVideoMock: vi.fn(),
   getDbMock: vi.fn(),
   resolvePlatformSkillsPromptMock: vi.fn(),
@@ -16,6 +17,8 @@ vi.mock("../_core/llm.js", async (importOriginal) => ({
     choices?: Array<{ message?: { content?: unknown } }>;
   }) => String(response.choices?.[0]?.message?.content || ""),
 }));
+
+vi.mock("./manhuaAdvisorFilmReview",()=>({askManhuaFilmReview:filmAdvisorMock}));
 
 vi.mock("./manhuaAdvisorBgmMix",()=>({askManhuaBgmMix:bgmAdvisorMock,MANHUA_BGM_ADVISOR_MODEL:"gemini-3.8-flash"}));
 
@@ -587,4 +590,17 @@ describe("BGM专用Gemini路由",()=>{
     expect(bgmAdvisorMock).toHaveBeenCalledOnce();
     expect(invokeLLMMock).not.toHaveBeenCalled();
   });
+});
+
+
+it("1005媒体方案保持结构JSON，不被通用顾问后处理打散",async()=>{
+ const candidate={kind:"image",blockId:"keyart-1",instruction:"保留人物，背景改为月夜"};invokeLLMMock.mockResolvedValue(llmJson(candidate));
+ const result=await askPlatformSkillQa({userId:7,isAdmin:true,question:"目标keyart-1，请输出媒体修改方案",rawQuestion:"【素材修改】背景改为月夜",manhuaContext:manhuaContext()});
+ expect(JSON.parse(result.answer)).toEqual(candidate);expect(result.imageOffer).toBeNull();expect(invokeLLMMock.mock.calls[0][0].messages[0].content).toContain("不执行生成");
+});
+it("1005影片审阅走专用Vertex服务，不走GLM；错误不自动重送",async()=>{
+ const target={videoUri:"gs://test/post-prod/7/video.mp4",blockId:"clip-1",revision:"v1",label:"第一段"};
+ const report={kind:"film_review_v1",summary:"灯光层次清晰",findings:[],limitations:"抽样"};filmAdvisorMock.mockResolvedValue(JSON.stringify({answer:report}));
+ const result=await askPlatformSkillQa({userId:7,isAdmin:true,question:"审阅影片",manhuaContext:manhuaContext({filmReview:target})});expect(JSON.parse(result.answer)).toEqual(report);expect(result.modelName).toBe("gemini-3.8-flash");expect(invokeLLMMock).not.toHaveBeenCalled();
+ filmAdvisorMock.mockClear();filmAdvisorMock.mockRejectedValue(Error("Vertex busy"));await expect(askPlatformSkillQa({userId:7,isAdmin:true,question:"审阅影片",manhuaContext:manhuaContext({filmReview:target})})).rejects.toThrow();expect(filmAdvisorMock).toHaveBeenCalledTimes(1);expect(invokeLLMMock).not.toHaveBeenCalled();
 });

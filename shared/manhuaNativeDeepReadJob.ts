@@ -43,12 +43,12 @@ export function parseNativeDeepReadModel(value: unknown): ManhuaNativeDeepReadMo
   throw new Error("读片模型只允许 Gemini 3.1 Pro 或 Gemini 3.8 Flash");
 }
 
-/** 0916 用户拍板：整形只允许 GLM-5.3，Qwen 从该产品链下架。 */
+/** Legacy wire selector retained for saved jobs. Actual structuring and aggregation use FlashX since 2026-10-05. */
 export const MANHUA_NATIVE_STRUCTURING_MODEL_OPTIONS = ["glm-5.3"] as const;
 export type ManhuaNativeStructuringModelId = "glm-5.3";
 export const MANHUA_NATIVE_STRUCTURING_MODEL = "glm-5.3" as const;
 export const MANHUA_NATIVE_STRUCTURING_MODEL_LABELS: Record<(typeof MANHUA_NATIVE_STRUCTURING_MODEL_OPTIONS)[number], string> = {
-  "glm-5.3": "GLM-5.3（并发处理）",
+  "glm-5.3": "GLM-5.3 FlashX（并发处理）",
 };
 export function parseNativeStructuringModel(value: unknown): ManhuaNativeStructuringModelId {
   if (value === undefined || value === null || value === "") return MANHUA_NATIVE_STRUCTURING_MODEL;

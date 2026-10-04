@@ -1,0 +1,240 @@
+{
+  "base": "cc5f4f9e6cbee636cefad58efed9c97648458f9a",
+  "typecheckExit": 0,
+  "buildExit": 0,
+  "independentPassingTests": 19,
+  "paidProbe": {
+    "model": "glm-5.3-flashx",
+    "route": "EvoLink",
+    "attempts": 1,
+    "httpStatus": 200,
+    "seconds": 5
+  },
+  "files": [
+    {
+      "path": "../backend-work/1005-advisor-final-incremental-tests.log",
+      "bytes": 2318,
+      "sha256": "af9fcc5bbca5ec2bf9ac4d1ddde75087a7543f419781b66ba35a802e17f354da"
+    },
+    {
+      "path": "../backend-work/1005-advisor-media-browser-flashx.log",
+      "bytes": 945,
+      "sha256": "6bbc4c55f1f4d5ed38f6d692c073d115c33042c4c1a4c2432f75d95d89029f89"
+    },
+    {
+      "path": "../backend-work/1005-advisor-media-consult-handoff.log",
+      "bytes": 451,
+      "sha256": "a7bde71019bbd7fe33f88852a89d63d59ea3e05643b4f3aaf7bbcaf9781d49c3"
+    },
+    {
+      "path": "../backend-work/1005-advisor-media-film-tests.log",
+      "bytes": 399,
+      "sha256": "1860c077eb905475f3bea70a405e54efd57326cc854e731c352396df1b9c0ccd"
+    },
+    {
+      "path": "../backend-work/1005-advisor-media-final-guards.log",
+      "bytes": 589,
+      "sha256": "4e4a6d5408c93ec285fc8dbf734c56db1bbfcc8adc9f59c8e3a97b0e50a4754b"
+    },
+    {
+      "path": "../backend-work/1005-advisor-media-handoff-build.log",
+      "bytes": 82569,
+      "sha256": "b49e38bab5e54b82945dc2bdba8369019ecb3200f9d38f334dde3114c51e337b"
+    },
+    {
+      "path": "../backend-work/1005-advisor-media-handoff-types.log",
+      "bytes": 119,
+      "sha256": "a821e3b08dfb9ab6d51b18bd2fd4e3843675b85c91301f8b2c8dbda1d8dca0b8"
+    },
+    {
+      "path": "../backend-work/1005-advisor-media-qa-integration-fix.log",
+      "bytes": 1635,
+      "sha256": "c4e5fc103e20f3647160f808f8debabf465e5dc0789e491e334e1d84c15d6b61"
+    },
+    {
+      "path": "../backend-work/1005-advisor-media-qa-integration.log",
+      "bytes": 2342,
+      "sha256": "508c9a3ea357d4076fc84c9297842ebdfbf63925899433d47d0480b1f46c1890"
+    },
+    {
+      "path": "../backend-work/1005-advisor-model-receipt-label.log",
+      "bytes": 370,
+      "sha256": "be2e42144f1ebb8a038c751e82196dc322dbec3365bedee64bdba23f9cd0a580"
+    },
+    {
+      "path": "../backend-work/1005-flashx-video-probe.log",
+      "bytes": 1772,
+      "sha256": "fb63889636267c51d6822a58947e603b71ff234033bb9aa809aae12802f4fa2d"
+    },
+    {
+      "path": "client/src/components/ManhuaRestructureControl.tsx",
+      "bytes": 1653,
+      "sha256": "3d91186c8b3e2a5ed809ccdc9525f2fd4b4705a92b99e23a20d2aa5af5e84a63"
+    },
+    {
+      "path": "client/src/components/canvas/CreativeVoicePanel.tsx",
+      "bytes": 28083,
+      "sha256": "ce30546ebe428fdaad21c4821273c38da97eec38b6cd7e3d9331428e8f9d877a"
+    },
+    {
+      "path": "client/src/components/canvas/ManhuaAdvisorFilmReview.tsx",
+      "bytes": 1556,
+      "sha256": "82b8490bb6927d454e18cc0f052dc1564d605ae6ed37f569a932beb86f2f2b52"
+    },
+    {
+      "path": "client/src/components/canvas/ManhuaAdvisorMediaEdit.tsx",
+      "bytes": 12883,
+      "sha256": "5ce17d4eaf5e72d441b849b181f5d772919d6109a20e898530aed40ef2c8189b"
+    },
+    {
+      "path": "client/src/components/canvas/ManhuaCreativeAdvisorPanel.tsx",
+      "bytes": 66755,
+      "sha256": "76b042b1588c73e1ef695931b6650d7b4b828bd25861ff40e3225335435b4590"
+    },
+    {
+      "path": "client/src/lib/advisorMediaEdit.browser.test.ts",
+      "bytes": 7368,
+      "sha256": "7c361a6fcdb664b1b06c6254a1e0b1e9806846284b9f343cc4b5536771b9bb80"
+    },
+    {
+      "path": "client/src/lib/advisorMediaImageJob.test.ts",
+      "bytes": 2723,
+      "sha256": "faa35eafa8d6eda18154fa8a9d9819c4e2191c5172dde02752c9aa99985bd132"
+    },
+    {
+      "path": "client/src/lib/advisorMediaImageJob.ts",
+      "bytes": 1983,
+      "sha256": "3d93ca56389902c0ce6c23cf02cb005a29176f7b7d53604f8b64e70e52a5e023"
+    },
+    {
+      "path": "client/src/lib/creativeVoiceReview.test.ts",
+      "bytes": 3294,
+      "sha256": "ecd43939bb9e55d9cbc95ae4335223bc9747ec5755abbb19cbc039b729ce1e2a"
+    },
+    {
+      "path": "client/src/pages/OmniCanvas.tsx",
+      "bytes": 664533,
+      "sha256": "1802534646e57f25cf34ac0c81a2563195dc8f2f490a5c7f3aca97298f5cf21f"
+    },
+    {
+      "path": "docs/1004-creative-voice-guide.md",
+      "bytes": 10354,
+      "sha256": "70a9425be35068bcfd2450cbf3f4b36d47449c7787ca7e6a12f35a7cc313dab3"
+    },
+    {
+      "path": "docs/1005-advisor-media-delivery.md",
+      "bytes": 5245,
+      "sha256": "dc79fb6bddd871ec174f06ca9226b2ccf29ef2d496699764f6b978e45764d12b"
+    },
+    {
+      "path": "server/jobs/runner.ts",
+      "bytes": 210033,
+      "sha256": "4f567cbbe2c21ce870f180634060a19dacfc0ef7629637f3ca60097fe6a7c41e"
+    },
+    {
+      "path": "server/routers/creativeVoice.test.ts",
+      "bytes": 4467,
+      "sha256": "72903e4939068cbc4b5dc47117e90a059b66612d5448be99930fcecdee8353a6"
+    },
+    {
+      "path": "server/routers/creativeVoice.ts",
+      "bytes": 7209,
+      "sha256": "2270f64bd728a0dd01589a6681c1080834927680a2b1bd4f3799103020c9f889"
+    },
+    {
+      "path": "server/services/bailianChat.test.ts",
+      "bytes": 41732,
+      "sha256": "274a903455d2be918694e910bbb6fada80cb65587763fc169cd8af8c5d245766"
+    },
+    {
+      "path": "server/services/bailianChat.ts",
+      "bytes": 50200,
+      "sha256": "4c578463f3b17372165c28f3fea7a5eca3ec4e08451f1be129d970dd5afb0197"
+    },
+    {
+      "path": "server/services/creativeVoiceTransport.ts",
+      "bytes": 10399,
+      "sha256": "21502df07611758522dbd6819ede368ec48a4884748d8cce3037862d08248080"
+    },
+    {
+      "path": "server/services/knowledgeCardImageCancel.test.ts",
+      "bytes": 4637,
+      "sha256": "4d01d2bfcb642522b43ab85c61de8d711521aa477559462fc9cf836b17c4ccc5"
+    },
+    {
+      "path": "server/services/manhuaAdvisorFilmReview.test.ts",
+      "bytes": 2254,
+      "sha256": "a472f68aeebf376742eef278b56aa7ad334032a4fcdadb445a33b98972898a00"
+    },
+    {
+      "path": "server/services/manhuaAdvisorFilmReview.ts",
+      "bytes": 3493,
+      "sha256": "013190c2112e2a72bb23d2d2adebc39a69ac2e8dcdcb51612ce861700a6ceb9b"
+    },
+    {
+      "path": "server/services/manhuaNativeDeepReadRunner.test.ts",
+      "bytes": 325639,
+      "sha256": "09b1538954ad2720675723fac82d7742a92152047d0e733604bf86ea4326cf20"
+    },
+    {
+      "path": "server/services/manhuaNativeDeepReadRunner.ts",
+      "bytes": 427111,
+      "sha256": "27493fa9b3b25be6267bcd8b90d80693184d550b1ac12f6b518fcb247f986e05"
+    },
+    {
+      "path": "server/services/manhuaNativeSeriesAggregation.test.ts",
+      "bytes": 23626,
+      "sha256": "e4925490a49a5448650ea84a5ae8d185d98c97fd3fb5cb7edeff7861a4844da9"
+    },
+    {
+      "path": "server/services/manhuaNativeSeriesAggregation.ts",
+      "bytes": 37554,
+      "sha256": "a8b8ff7a8eb4f79c0e2e990fe229a70d180018903c25a50453802557d05e1988"
+    },
+    {
+      "path": "server/services/platformSkillQa.test.ts",
+      "bytes": 36098,
+      "sha256": "8ed9df81b243e774b94d408f6c07240f29de8ad1b159c905ef5a8b28f5f226c3"
+    },
+    {
+      "path": "server/services/platformSkillQa.ts",
+      "bytes": 55629,
+      "sha256": "8d818b408cdb0b5cefb4321a58c61c10c117749cd1368a9e63688db617569cd8"
+    },
+    {
+      "path": "server/services/proxyImageService.ts",
+      "bytes": 121217,
+      "sha256": "f62859632694584141fa8cdf139981a302957667ed98845ecebbc840d212407b"
+    },
+    {
+      "path": "shared/canvasGptImage2JobInput.ts",
+      "bytes": 4446,
+      "sha256": "d721a202559f92331b07407caaed02b15f140f8aa4aebf1bdecd8eedd9ee9a79"
+    },
+    {
+      "path": "shared/creativeVoice.ts",
+      "bytes": 3621,
+      "sha256": "b25f213bcc7ffb15fe6a55ae18c3687bcf38004ee0d01e38dbb0e362ab673afe"
+    },
+    {
+      "path": "shared/manhuaAdvisorFilmReview.ts",
+      "bytes": 999,
+      "sha256": "6f3038b00bc8240af0193e72e079b82853cbc3d5a2eb805e3909fe033b299e88"
+    },
+    {
+      "path": "shared/manhuaAdvisorMediaEdit.ts",
+      "bytes": 2299,
+      "sha256": "3a2697ce67b493d3a4ecc8f0d986282dde33cb6532ff50abe2c2963605c892e1"
+    },
+    {
+      "path": "shared/manhuaCreativeAdvisor.ts",
+      "bytes": 11793,
+      "sha256": "9c4980c9c7b7797f614679363b2d9177d03d82a87837485e870ea6f21ce142dd"
+    },
+    {
+      "path": "shared/manhuaNativeDeepReadJob.ts",
+      "bytes": 13359,
+      "sha256": "9e14aeb8d8a3201b9f8976ab654d5a34fd14ffbe8ba4b7dbaef2fe73b8af6746"
+    }
+  ]
+}

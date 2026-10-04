@@ -1,3 +1,4 @@
+import { assertAdvisorMediaSource, type AdvisorMediaPlan, type AdvisorMediaSource } from "@shared/manhuaAdvisorMediaEdit";
 import { useManhuaTemplateCatalogEvents } from "@/hooks/useManhuaTemplateCatalogEvents";
 import { useManhuaAdvisorPreference } from "@/hooks/useManhuaAdvisorPreference";
 import { ManhuaLocalRecovery } from "@/components/ManhuaLocalRecovery";
@@ -9650,26 +9651,26 @@ function OmniCanvasWorkspace() {
     (clipBlockId: string, instructionZh: string) => {
       if (factoryBusy) {
         toast.message("请等待当前生成结束");
-        return;
+        return "未提交，请查看工作区提示。";
       }
-      const hit = blocks.find((block) => block.id === clipBlockId);
+      const hit = blocksRef.current.find((block) => block.id === clipBlockId);
       const sourceUrl = String(hit?.outputUrl || hit?.outputUrls?.[0] || "").trim();
       const instruction = String(instructionZh || "").replace(/\s+/g, " ").trim().slice(0, 240);
       if (!canUseSeedance25) {
         toast.error("当前账号未开放高级视频编辑");
-        return;
+        return "未提交，请查看工作区提示。";
       }
       if (!hit || !/^https?:\/\//i.test(sourceUrl)) {
         toast.error("没有可编辑的原片");
-        return;
+        return "未提交，请查看工作区提示。";
       }
-      if (hit.manhuaGenerationHold) { toast.message("本段保留，不编辑原片"); return; }
+      if (hit.manhuaGenerationHold) { toast.message("本段保留，不编辑原片"); return "本段保留，未提交。"; }
       if (!instruction) {
         toast.message("请先写清要改的画面");
-        return;
+        return "未提交，请查看工作区提示。";
       }
       if (!window.confirm("将生成一个局部编辑版；原片会保留，可随时切回。继续？")) {
-        return;
+        return "未提交，请查看工作区提示。";
       }
       const episodeIndex = getBlockEpisodeIndex(hit) ?? writerFocusEpisode;
       const localFrag = resolveClipLocalSegmentIndex(hit.id, hit.prompt, episodeIndex);
@@ -9711,6 +9712,7 @@ function OmniCanvasWorkspace() {
         preparedTargetBlocks: [preparedBlock],
         bypassPilotGate: true,
       });
+      return "已进入视频编辑预检；请完成发送内容与费用确认。任务进度请查看原成片节点，尚未生成完成。";
     },
     [
       factoryBusy,
@@ -9720,6 +9722,21 @@ function OmniCanvasWorkspace() {
       canUseSeedance25,
     ],
   );
+
+  const advisorMediaSourceList = (): AdvisorMediaSource[] => blocksRef.current.flatMap(b => {
+    const url = String(b.outputUrl || b.outputUrls?.[0] || (b.kind === "image" ? b.refImageUrl : "") || "");
+    if (b.archivedFromPreviousScript || !["image", "video"].includes(b.kind) || !/^https?:\/\//i.test(url)) return [];
+    return [{ blockId: b.id, kind: b.kind as "image" | "video", url,
+      label: `第${getBlockEpisodeIndex(b) ?? writerFocusEpisode}集 · ${b.kind === "image" ? "图片" : "视频"} · ${b.id}`,
+      revision: JSON.stringify({ scope: manhuaOutboundScope(b.id), prompt: b.prompt, aspectRatio: b.aspectRatio }),
+      aspectRatio: b.aspectRatio === "16:9" ? "16:9" : "9:16" }];
+  });
+  const validateAdvisorMediaEdit = (plan: AdvisorMediaPlan) => {
+    if (!user?.id || factoryBusy || writerBusy || cloudConflict) throw new Error("工作区忙或有云端冲突，请稍后处理素材修改");
+    assertAdvisorMediaSource(plan, advisorMediaSourceList());
+    const b = blocksRef.current.find(b => b.id === plan.blockId);
+    if (!b || b.status === "running" || b.videoTaskStatus === "queued" || b.manhuaGenerationHold) throw new Error("素材正在处理或已锁定，未提交修改");
+  };
 
   // ── 段级参考（白模站位 / 预混母轨）与外部成片登记：0908 自由画布验证过的工艺接进工厂 ──
   const [segmentRefBusyId, setSegmentRefBusyId] = useState<string | null>(null);
@@ -13663,6 +13680,18 @@ function OmniCanvasWorkspace() {
         confirmedProjectVersion={projectBible?.confirmedAt}
         project={advisorProject}
         episodeWorkspace={writerPack?.episodes.length ? { episodes: writerPack.episodes, model: writerModel, comparisonHost: optimizationComparisonHost, onFocusEpisode: setWriterFocusEpisode, onApplyCandidates: applyTemplateRewriteCandidates } : undefined}
+        mediaWorkspace={{ sources: advisorMediaSourceList(), disabled: Boolean(factoryBusy || writerBusy || cloudConflict),
+          validate: validateAdvisorMediaEdit,
+          applyImage: (plan, url) => {
+            validateAdvisorMediaEdit(plan);
+            if (plan.kind !== "image" || !/^https?:\/\//i.test(url)) throw new Error("图片结果无效");
+            const previous = blocksRef.current;
+            const next = previous.map(b => b.id === plan.blockId ? { ...b, outputUrl: url, outputUrls: capManhuaMediaHistory([url, plan.source.url, ...(b.outputUrls || [])], url), status: "done" as const, error: undefined } : b);
+            // Persist before mutating active canvas; a failed save cannot replace the original.
+            if (!saveCanvasState(next, edges)) throw new Error("画布保存失败，未采用图片；结果仍保留在顾问区"); blocksRef.current = next; setBlocks(next);
+          },
+          editVideo: plan => { validateAdvisorMediaEdit(plan); if (plan.kind !== "video") throw new Error("请选择视频"); return handleVideoEditClip(plan.blockId, plan.instruction) || "未提交"; },
+        }}
         voiceTargets={(writerPack?.episodes || []).flatMap(e => [
           { episode: e.index, label: e.title },
           ...blocks.filter(b => !b.archivedFromPreviousScript && b.id.startsWith("keyart-") && (getBlockEpisodeIndex(b) ?? 1) === e.index)

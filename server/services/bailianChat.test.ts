@@ -818,3 +818,13 @@ describe("0907 · 单档期限有心跳只延长一次 15 分钟", () => {
     }
   });
 });
+
+it("1005整形FlashX显式选择双网关；默认Flash调用方不变", async () => {
+ vi.stubEnv("EVOLINK_API_KEY", "test-evo");vi.stubEnv("OPENROUTER_API_KEY", "test-or");
+ try {
+  const calls=stubFetchSeq([()=>({ok:false,status:503,body:"busy"}),()=>({ok:true,status:200,body:okBody(GOOD,"z-ai/glm-5.3-flashx")})]);
+  const result=await invokeGlmJsonChatWithGatewayFallback({system:"s",user:"u",glmVariant:"flashx",gatewayPolicy:"glm_only",reasoningEffort:"high"});
+  expect(calls.map(c=>JSON.parse(c.init.body).model)).toEqual(["glm-5.3-flashx","z-ai/glm-5.3-flashx"]);
+  expect(JSON.parse(calls[0].init.body).reasoning_effort).toBe("high");expect(result.model).toBe("z-ai/glm-5.3-flashx");
+ } finally {vi.unstubAllEnvs();vi.unstubAllGlobals();}
+});

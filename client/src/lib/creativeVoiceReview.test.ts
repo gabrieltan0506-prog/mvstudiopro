@@ -34,3 +34,8 @@ it("语音咨询禁止自动渲染标记在恢复后保留", () => {
   const value = { format: "manhua-advisor-pending-v1", request: { requestId: "6f9619ff-8b86-4d01-b42d-00cf4fc964ff", question: "请生成白模视频", rawQuestion: "请生成白模视频", label: "语音讨论", voiceConsultOnly: true }, confirmPaid: false };
   expect(parseAdvisorPendingRecovery(JSON.stringify(value))?.request.voiceConsultOnly).toBe(true);
 });
+
+it("1005媒体工具只接收待确认方案，拒绝模型携带批准或越权生成",()=>{
+ const calls=[{id:"m1",name:"proposeMediaEdit",args:{kind:"image",blockId:"keyart-1",instruction:"保留人物改背景"}},{id:"m2",name:"proposeMediaEdit",args:{kind:"image",blockId:"keyart-1",instruction:"修改",approved:true}},{id:"m3",name:"generateSunburst",args:{}}];
+ expect(normalizeVoiceMessage(false,{toolCall:{functionCalls:calls}})).toEqual([{type:"mediaEdit",id:"m1",proposal:{kind:"image",blockId:"keyart-1",instruction:"保留人物改背景"}}]);
+});

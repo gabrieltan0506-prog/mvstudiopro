@@ -45,3 +45,15 @@ describe("语音代理新增鉴权与工具回传", () => {
     expect(upstream.send.mock.calls[0][0].toolResponse.functionResponses[0].name).toBe("creativeWorkflow");
   });
 });
+
+it("1005媒体方案和完整影片审阅工具分别按原ID回送，不生成额外任务",async()=>{
+ const upstream={send:vi.fn(),close:vi.fn()};let events!:(event:any)=>void;
+ mock.connect.mockImplementation(async input=>{events=input.onEvent;return upstream});await open();await new Promise(resolve=>client.on('open',resolve));
+ const received:any[]=[];client.on('message',(b:Buffer)=>received.push(JSON.parse(b.toString())));client.send(JSON.stringify({type:'start',purpose:'video_review',context:'作品',projectKey:'p',confirmedCost:true}));await vi.waitFor(()=>expect(received.some(m=>m.ready)).toBe(true));
+ for(const [type,name] of [['mediaEdit','proposeMediaEdit'],['filmReview','reviewFilm']]){
+  events(type==='mediaEdit'?{type,id:type,proposal:{kind:'image',blockId:'a',instruction:'改背景'}}:{type,id:type,blockId:'v',question:'检查灯光'});
+  await vi.waitFor(()=>expect(received.some(m=>m.id===type)).toBe(true));client.send(JSON.stringify({type:'toolResult',id:type,text:'等待用户确认，未提交'}));
+  await vi.waitFor(()=>expect(upstream.send.mock.calls.some(([m])=>m.toolResponse?.functionResponses?.[0]?.name===name)).toBe(true));
+ }
+ expect(upstream.send.mock.calls.filter(([m])=>m.toolResponse)).toHaveLength(2);client.close();await new Promise(resolve=>client.once('close',resolve));
+});

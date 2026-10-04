@@ -45,3 +45,9 @@ describe("刷新只阻止之后的付费提交", () => {
     expect(providers.openai).toHaveBeenCalledTimes(1); expect(providers.evo).toHaveBeenCalledTimes(1);
   });
 });
+
+it("1005显式Flare/Sunburst编辑只沿支持该模型的两家，不能静默改成image-2",async()=>{
+ expect(await generateGptImage2FromRawEnglishPrompt({...base,openaiImageVariant:"sunburst",requireImageVariant:true})).toBeNull();
+ expect(providers.openai).toHaveBeenCalledTimes(1);expect(providers.evo).toHaveBeenCalledTimes(1);expect(providers.wave).not.toHaveBeenCalled();expect(providers.router).not.toHaveBeenCalled();
+ expect(providers.openai.mock.calls[0][2].variant).toBe("sunburst");expect(providers.evo.mock.calls[0][2].variant).toBe("sunburst");
+});

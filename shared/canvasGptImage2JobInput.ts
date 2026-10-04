@@ -22,6 +22,7 @@ export type CanvasGptImage2JobParams = {
   imageLane?: OpenAiImageLane;
   /** OpenAI 官方模型档位（flare 默认 / sunburst），由前台开关带来 */
   openaiImageVariant?: OpenAiImageVariant;
+  requireImageVariant?: boolean;
   /**
    * @deprecated 六审第3条:收费一律由 worker 服务端按 job 幂等键决定,
    * 本字段完全被忽略,仅为旧客户端载荷兼容保留。
@@ -45,6 +46,7 @@ export function buildCanvasGptImage2JobInput(params: {
   gcsSubdir?: string;
   imageLane?: OpenAiImageLane | string;
   openaiImageVariant?: OpenAiImageVariant | string | null;
+  requireImageVariant?: boolean;
   chargeOnServer?: boolean;
   batchIndex?: number;
   assetStandardizeQuality?: ManhuaAssetStandardizeQuality;
@@ -91,6 +93,7 @@ export function buildCanvasGptImage2JobInput(params: {
       ...(providerOverride ? { providerOverride } : {}),
       ...(imageLane ? { imageLane } : {}),
       ...(openaiImageVariant ? { openaiImageVariant } : {}),
+      ...(params.requireImageVariant === true ? { requireImageVariant: true } : {}),
       ...(params.chargeOnServer ? { chargeOnServer: true } : {}),
       ...(Number(params.batchIndex) > 0 ? { batchIndex: Math.floor(Number(params.batchIndex)) } : {}),
       ...(assetStandardizeQuality ? { assetStandardizeQuality } : {}),

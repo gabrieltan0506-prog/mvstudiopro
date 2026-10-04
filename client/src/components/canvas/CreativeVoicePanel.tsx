@@ -1,3 +1,4 @@
+import type { AdvisorMediaProposal, AdvisorMediaSource } from "@shared/manhuaAdvisorMediaEdit";
 import { parseVoiceReviewNotes, resolveVoiceTarget, validateReviewSeek, type VoiceReviewNote } from "@/lib/creativeVoiceReview";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -9,6 +10,8 @@ type CaptureVideo = HTMLVideoElement & { captureStream?: () => MediaStream };
 export function CreativeVoicePanel(props: {
   scopeKey: string; context: string; disabled?: boolean; onUse: (text: string) => void;
   onAskAdvisor: (question: string, signal: AbortSignal) => Promise<string | undefined>;
+  onReviewFilm?: (blockId: string, question: string, signal: AbortSignal) => Promise<string | undefined>;
+  mediaSources?: AdvisorMediaSource[]; onProposeMediaEdit?: (proposal: AdvisorMediaProposal) => string;
   targets?: CreativeVoiceTarget[]; onNavigate?: (target: CreativeVoiceTarget) => string;
 }) {
   const { user } = useAuth();
@@ -92,6 +95,20 @@ export function CreativeVoicePanel(props: {
             const text = answer || "本次未得到结果：可能需要确认、输入不完整、任务忙或服务失败。请查看原创作顾问提示；不要自动重试。";
             append(`创作顾问结果：${text}\n`); send({ type: "toolResult", id: data.id, text: text.slice(0, 16000) });
           }).catch(() => { if (seq === generation.current) send({ type: "toolResult", id: data.id, text: "调用未完成，请查看原顾问的错误和恢复入口，不要重试或声称已完成。" }); });
+        }
+        if (data.type === "filmReview") {
+          if (toolCalls.current.has(data.id)) return; toolCalls.current.add(data.id);
+          const task = callbacks.current.disabled ? Promise.resolve("工作区忙，请等待原任务") : callbacks.current.onReviewFilm?.(data.blockId, data.question, voiceAbort.current.signal) || Promise.resolve("请到漫剧工厂选择影片审阅");
+          void task.then(result => { if (seq === generation.current) { const text = result || "本次未完成审阅，不要自动重试"; append(`影片审阅：${text}\n`); send({ type: "toolResult", id: data.id, text: text.slice(0,16000) }); } }).catch(() => { if (seq === generation.current) send({type:"toolResult",id:data.id,text:"影片审阅未完成，请查看原任务，不要重试"}); });
+        }
+        if (data.type === "mediaEdit") {
+          if (toolCalls.current.has(data.id)) return; toolCalls.current.add(data.id);
+          let result: string;
+          try {
+            if (callbacks.current.disabled || !callbacks.current.onProposeMediaEdit) throw new Error("当前工作区不能准备素材修改，请打开漫剧工厂。");
+            result = callbacks.current.onProposeMediaEdit(data.proposal);
+          } catch (e) { result = e instanceof Error ? e.message : "方案未准备好"; }
+          append(`素材修改：${result}\n`); send({ type: "toolResult", id: data.id, text: result.slice(0,16000) });
         }
         if (data.type === "workflow") {
           if (toolCalls.current.has(data.id)) return; toolCalls.current.add(data.id);
@@ -186,7 +203,7 @@ export function CreativeVoicePanel(props: {
   }
   function runWorkflow(action: CreativeVoiceAction): string {
     const current = callbacks.current;
-    if (action.action === "inspect") return JSON.stringify({ targets: current.targets || [], context: current.context.slice(0, 10000), notes: reviewsRef.current.slice(-10), playerTime: selectedVideo()?.currentTime, frameShared: !!sharedVideo.current, audioShared: !!inputs.current.video });
+    if (action.action === "inspect") return JSON.stringify({ mediaSources: current.mediaSources?.map(({blockId,kind,label})=>({blockId,kind,label})) || [], targets: current.targets || [], context: current.context.slice(0, 10000), notes: reviewsRef.current.slice(-10), playerTime: selectedVideo()?.currentTime, frameShared: !!sharedVideo.current, audioShared: !!inputs.current.video });
     if (current.disabled) throw new Error("当前顾问或工作区正在处理任务，请等待后再操作。");
     const target = action.episode ? resolveVoiceTarget(current.targets || [], action.episode, action.shot) : undefined;
     if (action.action === "navigate") {
