@@ -1,6 +1,7 @@
 import { it, expect } from "vitest";
 import {
   archiveNovelRound,
+  applyNovelChapterCompletion,
   emptyNovelWorkspace,
   readNovelWorkspace,
   saveNovelWorkspace,
@@ -77,4 +78,44 @@ it("比较基准包含小说、大纲、底本与轮次，但不包含模板", (
     expect(scriptBaseline(input)).not.toBe(
       scriptBaseline({ ...input, [field]: "other" })
     );
+});
+
+it("生成期间可改前章或本章，晚回结果不盖掉手动稿", () => {
+  const state = emptyNovelWorkspace();
+  state.chapters = ["修改后的第一章", "手写第二章"];
+  state.pendingChapterBase = "旧第二章";
+  const input = {
+    requestId: crypto.randomUUID(),
+    roundId: state.roundId,
+    stage: "chapter" as const,
+    topic: "故事",
+    direction: "方向",
+    templates: [],
+    episodeCount: 3 as const,
+    chapterIndex: 2,
+    outline: "纲",
+    novel: "原第一章",
+    selectedTemplateIds: [],
+  };
+  const result = {
+    requestId: input.requestId,
+    stage: "chapter" as const,
+    text: JSON.stringify({
+      title: "第二章",
+      text: "新正文".repeat(200),
+      notes: "接续",
+    }),
+    templateIds: [],
+    inputSha256: "a",
+    resultSha256: "b",
+  };
+  const edited = applyNovelChapterCompletion(state, input, result);
+  expect(edited.chapters).toEqual(state.chapters);
+  const storage=makeStorage();saveNovelWorkspace(storage,"1",null,{...state,...edited});expect(readNovelWorkspace(storage,"1").value.chapterWarnings).toEqual(edited.chapterWarnings);
+  expect(edited.chapterWarnings?.["1"]).toContain("保留手动修改");
+  state.chapters[1] = "旧第二章";
+  const accepted = applyNovelChapterCompletion(state, input, result);
+  expect(accepted.chapters?.[0]).toBe("修改后的第一章");
+  expect(accepted.chapters?.[1]).toContain("新正文");
+  expect(accepted.chapterWarnings?.["1"]).toContain("前文在生成期间有修改");
 });

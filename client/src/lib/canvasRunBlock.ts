@@ -1,3 +1,4 @@
+import { manhuaProjectStorage } from "@shared/manhuaProjectScope";
 import { tryCompileManhuaVideoPromptForOutbound, type ManhuaOutboundPromptCompileInput, type ManhuaOutboundPromptCompileResult } from "@shared/manhuaOutboundPrompt";
 export { tryCompileManhuaVideoPromptForOutbound, type ManhuaOutboundPromptCompileInput, type ManhuaOutboundPromptCompileResult } from "@shared/manhuaOutboundPrompt";
 import { formatManhuaShotCoreCatalog } from "@shared/manhuaShotCoreBank";
@@ -2188,7 +2189,7 @@ type CanvasIntentRun = {
 
 function defaultCanvasIntentStorage(): CanvasIntentStorageLike | null {
   try {
-    const ls = (globalThis as { localStorage?: CanvasIntentStorageLike }).localStorage;
+    const ls = typeof globalThis.localStorage === "undefined" ? null : manhuaProjectStorage;
     return ls && typeof ls.getItem === "function" ? ls : null;
   } catch {
     return null;

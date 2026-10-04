@@ -1,3 +1,4 @@
+import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
 import { gcsTransferUrl, isGcsTransferUrl } from "@/lib/gcsTransfer";
 /**
  * 漫剧草稿双通路同步：本机 localStorage + 登录云端。

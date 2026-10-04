@@ -31,6 +31,7 @@ const NAV_ITEMS: Array<{ label: string; href: string; beta?: boolean }> = [
   { label: "竞品调研", href: "/research", beta: true },
   { label: "一战成片", href: "/canvas" },
   { label: "小说改编", href: "/novel-adaptation" },
+  { label: "我的漫剧", href: "/manhua-projects" },
   { label: "套餐", href: "/pricing" },
 ];
 

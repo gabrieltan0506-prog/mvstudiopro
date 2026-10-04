@@ -1,3 +1,4 @@
+import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
 import { createPortal } from "react-dom";
 import { trpc } from "@/lib/trpc";
 import { manhuaPrevisMediaUrl } from "@/lib/manhuaPrevisMediaUrl";

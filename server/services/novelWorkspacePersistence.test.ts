@@ -77,6 +77,8 @@ vi.mock("./manhuaNovelAdaptationRun", () => ({
 import {
   runNovelWorkspaceTest,
   readNovelWorkspaceReceipt,
+  readSavedNovelRaw,
+  recoverSavedNovelChapter,
 } from "./novelWorkspaceTest";
 import { novelTestInputSchema } from "../../shared/novelWorkspace";
 const input = novelTestInputSchema.parse({
@@ -102,7 +104,9 @@ it("同操作重放读取已存结果而非重新调用，完整原始与解析�
   expect(memory.row.output.raw.text).toContain("recommendations");
   expect(memory.row.output.result).toEqual(a);
   expect(a.model).toBe("mock");
-  expect((await readNovelWorkspaceReceipt(1, input.requestId)).result?.model).toBe("mock");
+  expect(
+    (await readNovelWorkspaceReceipt(1, input.requestId)).result?.model
+  ).toBe("mock");
   expect(memory.writes.findIndex(w => w.output?.raw)).toBeLessThan(
     memory.writes.findIndex(w => w.status === "succeeded")
   );
@@ -134,4 +138,67 @@ it("进度来自持久化实际阶段，回执只公开状态和结果", async (
   expect(receipt.updatedAt).toBeTruthy();
   expect(receipt).not.toHaveProperty("rawResponses");
   expect(receipt).not.toHaveProperty("result");
+});
+
+it("已付费第二集末尾逗号可显式恢复，原始证据保留且模型调用为0", async () => {
+  const raw = JSON.stringify({
+    title: "第二集",
+    text: "原始完整正文".repeat(120),
+    notes: "保留衔接",
+  }).replace(/}$/, ",\n}");
+  memory.row = {
+    userId: "1",
+    status: "failed",
+    error: "原解析错误",
+    input: {
+      request: {
+        ...input,
+        stage: "chapter",
+        chapterIndex: 2,
+        outline: "已确认",
+        novel: "第一集",
+      },
+    },
+    output: { raw: { text: raw, model: "glm" }, rawResponses: ["原供应商SSE"] },
+  };
+  const recovered = await recoverSavedNovelChapter(1, input.requestId);
+  expect(JSON.parse(recovered.text).text).toBe("原始完整正文".repeat(120));
+  expect(memory.calls).toBe(0);
+  expect(memory.row.output.raw.text).toBe(raw);
+  expect(memory.row.output.rawResponses).toEqual(["原供应商SSE"]);
+  expect(memory.row.output.recovery.originalError).toBe("原解析错误");
+  expect(await recoverSavedNovelChapter(1, input.requestId)).toEqual(recovered);
+  expect(memory.writes).toHaveLength(1);
+  await expect(recoverSavedNovelChapter(2, input.requestId)).rejects.toThrow(
+    "不存在"
+  );
+});
+it("截断原稿不能伪修复，失败任务不改成成功", async () => {
+  memory.row = {
+    userId: "1",
+    status: "failed",
+    input: { request: { ...input, stage: "chapter" } },
+    output: { raw: { text: '{"text":"没写完' } },
+  };
+  await expect(recoverSavedNovelChapter(1, input.requestId)).rejects.toThrow();
+  expect(memory.row.status).toBe("failed");
+  expect(memory.writes).toHaveLength(0);
+  expect(memory.calls).toBe(0);
+});
+
+it("无法修复的付费原文可自行查看下载，隔离账户且不改状态不调用模型", async () => {
+  const text = '{"title":"第八集","text":"保留已收到的内容';
+  memory.row = {
+    userId: "1",
+    status: "failed",
+    input: { request: { ...input, stage: "chapter" } },
+    output: { raw: { text, model: "glm" } },
+  };
+  const raw = await readSavedNovelRaw(1, input.requestId);
+  expect(raw.text).toBe(text);
+  expect(raw.sha256).toMatch(/^[a-f0-9]{64}$/);
+  await expect(readSavedNovelRaw(2, input.requestId)).rejects.toThrow("不存在");
+  expect(memory.writes).toHaveLength(0);
+  expect(memory.calls).toBe(0);
+  expect(memory.row.status).toBe("failed");
 });

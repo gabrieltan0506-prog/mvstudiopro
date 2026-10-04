@@ -1,3 +1,4 @@
+import { manhuaProjectSessionStorage as sessionStorage } from "@shared/manhuaProjectScope";
 /**
  * 提示词语义增强·待恢复请求编号的会话持久层。
  * 结果未知(网络中断/超时/刷新)时编号必须活过组件内存:同 block 再点增强

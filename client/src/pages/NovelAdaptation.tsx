@@ -1,3 +1,17 @@
+import {
+  readNovelWorkspaceDb,
+  saveNovelWorkspaceDb,
+} from "@/lib/novelWorkspaceDb";
+import {
+  batchStart,
+  batchEnd,
+  batchNovel,
+  continuationContext,
+  nextNovelBatch,
+  completeScriptBatches,
+  novelTextHash,
+} from "@/lib/novelSeries";
+import { createNovelFactoryProject } from "@/lib/novelFactoryProject";
 import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { Link } from "wouter";
@@ -18,12 +32,11 @@ import {
   type NovelTestInput,
 } from "@shared/novelWorkspace";
 import {
-  archiveNovelRound,
+  applyNovelChapterCompletion,
   downloadNovelText,
   emptyNovelWorkspace,
   novelSourceIdentity,
   readNovelWorkspace,
-  saveNovelWorkspace,
   type NovelWorkspace,
 } from "@/lib/novelWorkspace";
 
@@ -51,23 +64,59 @@ export default function NovelAdaptation() {
   );
 }
 export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
-  const [initial] = useState(() => {
-    try {
-      return { ...readNovelWorkspace(localStorage, userId), error: "" };
-    } catch {
-      return {
-        raw: null,
-        value: emptyNovelWorkspace(),
-        error: "本机草稿无法读取，已停止写入；请保留浏览器数据。",
-      };
-    }
-  });
+  const [loaded, setLoaded] = useState<Awaited<
+    ReturnType<typeof readNovelWorkspaceDb>
+  > | null>(null);
+  const [loadError, setLoadError] = useState("");
+  useEffect(() => {
+    let active = true;
+    readNovelWorkspaceDb(userId)
+      .then(v => {
+        if (active) setLoaded(v);
+      })
+      .catch(() => {
+        if (active)
+          setLoadError(
+            "本机草稿读取失败，原稿保留，未开始写入。请重试或保留浏览器数据。"
+          );
+      });
+    return () => {
+      active = false;
+    };
+  }, [userId]);
+  if (loadError)
+    return (
+      <main role="alert" className="p-8">
+        {loadError}
+      </main>
+    );
+  if (!loaded) return <main className="p-8">正在读取小说草稿…</main>;
+  return (
+    <NovelWorkspaceEditor userId={userId} initial={{ ...loaded, error: "" }} />
+  );
+}
+function NovelWorkspaceEditor({
+  userId,
+  initial,
+}: {
+  userId: string;
+  initial: Awaited<ReturnType<typeof readNovelWorkspaceDb>> & { error: string };
+}) {
   const [draft, setDraft] = useState(initial.value),
     [saveError, setSaveError] = useState(initial.error),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [selected, setSelected] = useState("");
   const [progress, setProgress] = useState("");
+  const [backupOpen, setBackupOpen] = useState(false),
+    [backupBusy, setBackupBusy] = useState(false),
+    [backupMessage, setBackupMessage] = useState("");
+  const backupMutation = trpc.novelWorkspace.backup.useMutation();
+  const backupList = trpc.novelWorkspace.listBackups.useQuery(undefined, {
+    enabled: backupOpen,
+    retry: 1,
+  });
+  const queueSubmitting = useRef(false);
   const sourceFileInput = useRef<HTMLInputElement>(null);
   const conversation = useRef<HTMLDivElement>(null);
   const latest = useRef(draft),
@@ -86,27 +135,63 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
   );
   const cards = (templates.data?.groups || []).flatMap(g => g.items);
   const mutation = trpc.novelWorkspace.generate.useMutation();
+  const [savedRaw, setSavedRaw] = useState<{
+    requestId: string;
+    text: string;
+    sha256: string;
+  } | null>(null);
+  const recoveryMutation =
+    trpc.novelWorkspace.recoverSavedChapter.useMutation();
+  const activeRequestId = useRef<string | undefined>(undefined);
+  const recoveringRequestId = useRef<string | undefined>(undefined);
   const utils = trpc.useUtils();
-  const persist = (next: NovelWorkspace) => {
+  const recoverable = trpc.novelWorkspace.recoverableChapters.useQuery(
+    { roundId: draft.roundId },
+    { retry: 1, staleTime: 30000 }
+  );
+  const failedChapter =
+    draft.failedRequest ||
+    recoverable.data?.find(
+      input => !draft.chapters[input.chapterIndex - 1]?.trim()
+    );
+  const writes = useRef(Promise.resolve(true));
+  const saving = useRef(0);
+  const queueActive = useRef(false);
+  const persist = (next: NovelWorkspace, archiveKey?: string) => {
     latest.current = next;
     setDraft(next);
-    if (initial.error) return false;
-    try {
-      raw.current = saveNovelWorkspace(localStorage, userId, raw.current, next);
-      setSaveError("");
-      return true;
-    } catch (e) {
-      setSaveError(
-        e instanceof Error && e.message.includes("另一页面")
-          ? e.message
-          : "本机保存失败，请下载完整备份再离开。"
-      );
-      return false;
-    }
+    saving.current++;
+    const operation = writes.current
+      .then(async ok => {
+        if (!ok) return false;
+        try {
+          raw.current = await saveNovelWorkspaceDb(
+            userId,
+            raw.current,
+            next,
+            archiveKey
+          );
+          setSaveError("");
+          return true;
+        } catch (e) {
+          queueActive.current = false;
+          setSaveError(
+            e instanceof Error
+              ? e.message
+              : "本机保存失败，请下载完整备份再离开。"
+          );
+          return false;
+        }
+      })
+      .finally(() => {
+        saving.current--;
+      });
+    writes.current = operation;
+    return operation;
   };
   useEffect(() => {
     const guard = (e: BeforeUnloadEvent) => {
-      if (running.current || saveError) {
+      if (running.current || saving.current > 0 || saveError) {
         e.preventDefault();
         e.returnValue = "";
       }
@@ -115,7 +200,7 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
     return () => window.removeEventListener("beforeunload", guard);
   }, [saveError]);
   const change = (patch: Partial<NovelWorkspace>) => {
-    const next = { ...draft, ...patch };
+    const next = { ...latest.current, ...patch };
     if (novelSourceIdentity(next) !== novelSourceIdentity(draft)) {
       next.outlineApproved = "";
       next.novelApproved = "";
@@ -140,7 +225,8 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
       ],
     });
   };
-  const disabled = busy || !!saveError || !!draft.pending;
+  const disabled =
+    busy || !!saveError || !!draft.pending || queueActive.current;
   const weighted = draft.templates.some(t => t.weight !== undefined);
   const weightTotal = draft.templates.reduce(
     (sum, t) => sum + (t.weight || 0),
@@ -149,15 +235,14 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
   const weightValid =
     !weighted ||
     (weightTotal === 100 && draft.templates.every(t => t.weight !== undefined));
-  const currentNovel = draft.chapters
-    .map((text, i) => `第${i + 1}章\n${text}`)
-    .join("\n\n");
+  const currentNovel = batchNovel(draft);
   const adviceRuns = draft.runs.filter(
     r =>
       r.input.stage === "advice" &&
       r.input.roundId === draft.roundId &&
       r.input.topic === draft.topic &&
       r.input.direction === draft.direction &&
+      (r.input.episodeStart || 1) === batchStart(draft) &&
       JSON.stringify(r.input.source) ===
         JSON.stringify(
           draft.mode === "source" && draft.source?.enabled
@@ -203,38 +288,43 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
     const now = latest.current;
     if (
       now.roundId !== input.roundId ||
+      now.pending?.requestId !== input.requestId ||
       now.runs.some(r => r.result.requestId === result.requestId)
     )
       return;
-    try {
-      localStorage.setItem(
-        `mv-novel-lab-snapshot:${userId}:${input.requestId}`,
-        JSON.stringify(now)
-      );
-    } catch {
-      setSaveError(
-        "生成结果已有服务端记录，但本机版本保存失败，请下载备份后核对原请求。"
-      );
-      return;
-    }
     const next = {
       ...now,
       pending: undefined,
+      failedRequest:
+        now.failedRequest?.requestId === input.requestId ||
+        (input.stage === "chapter" &&
+          now.failedRequest?.chapterIndex === input.chapterIndex)
+          ? undefined
+          : now.failedRequest,
       runs: [...now.runs, { input, result }],
     };
     if (input.stage === "outline") {
       const plan = novelOutlineSchema.parse(JSON.parse(result.text));
       next.outline = formatNovelOutline(plan);
       next.outlineApproved = "";
-      next.chapters = [];
+      next.storyVersions = [
+        ...(now.storyVersions || []),
+        {
+          label: `生成提案前 · ${new Date().toLocaleString()}`,
+          outline: now.outline,
+          episodeCount: now.episodeCount,
+          episodeStart: batchStart(now),
+          advisorAnchor: now.advisorAnchor,
+          chapters: [...now.chapters],
+          templates: now.templates.map(t => ({ ...t })),
+        },
+      ];
+      // Replanning never removes written episodes; explicit edits remain available.
+      next.chapters = [...now.chapters];
       next.novelApproved = "";
     }
     if (input.stage === "chapter") {
-      const chapter = novelChapterSchema.parse(JSON.parse(result.text));
-      next.chapters = [...now.chapters];
-      next.chapters[input.chapterIndex - 1] =
-        `${chapter.title}\n\n${chapter.text}`;
-      next.novelApproved = "";
+      Object.assign(next, applyNovelChapterCompletion(now, input, result));
     }
     if (input.stage === "advice") {
       next.advisorAnchor = input.requestId;
@@ -243,8 +333,35 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
       next.outlineApproved = "";
       next.novelApproved = "";
     }
+    if (
+      now.generationQueue &&
+      (input.stage === "chapter" || input.stage === "script")
+    ) {
+      const index =
+        input.stage === "chapter"
+          ? input.chapterIndex
+          : input.episodeStart || 1;
+      if (index === now.generationQueue.next) {
+        const nextIndex =
+          input.stage === "chapter"
+            ? Array.from(
+                { length: Math.max(0, now.generationQueue.end - index) },
+                (_, i) => index + i + 1
+              ).find(i => !next.chapters[i - 1]?.trim())
+            : index + 1;
+        next.generationQueue =
+          nextIndex !== undefined && nextIndex <= now.generationQueue.end
+            ? { ...now.generationQueue, next: nextIndex }
+            : undefined;
+      }
+      if (
+        !next.generationQueue ||
+        (input.stage === "chapter" && next.chapterWarnings?.[String(index - 1)])
+      )
+        queueActive.current = false;
+    }
     setError("");
-    persist(next);
+    return persist(next);
   };
   // Poll only the original receipt. Never resubmit a generation on refresh or network failure.
   useEffect(() => {
@@ -253,6 +370,10 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     const check = async () => {
+      if (recoveringRequestId.current === pending.requestId) {
+        timer = setTimeout(check, 500);
+        return;
+      }
       try {
         const receipt = await utils.novelWorkspace.receipt.fetch({
           requestId: pending.requestId,
@@ -260,12 +381,34 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
         if (stopped || latest.current.pending?.requestId !== pending.requestId)
           return;
         if (receipt.status === "succeeded" && receipt.result) {
-          applyResult(pending, receipt.result);
+          await applyResult(pending, receipt.result);
+          if (activeRequestId.current === pending.requestId) {
+            activeRequestId.current = undefined;
+            running.current = false;
+            setBusy(false);
+          }
           setProgress("已完成，建议已保存。");
           return;
         }
+        if (
+          receipt.status === "failed" &&
+          recoveringRequestId.current === pending.requestId
+        ) {
+          timer = setTimeout(check, 500);
+          return;
+        }
         if (receipt.status === "failed") {
-          persist({ ...latest.current, pending: undefined });
+          queueActive.current = false;
+          persist({
+            ...latest.current,
+            pending: undefined,
+            failedRequest: pending,
+          });
+          if (activeRequestId.current === pending.requestId) {
+            activeRequestId.current = undefined;
+            running.current = false;
+            setBusy(false);
+          }
           setError("本次请求失败，原稿与已收到的记录保留；没有自动重试。");
           setProgress("");
           return;
@@ -302,14 +445,41 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
     single?: string,
     chapterIndex = 1,
     advisorMessage?: string,
-    advisorIntent?: NovelTestInput["advisorIntent"]
+    advisorIntent?: NovelTestInput["advisorIntent"],
+    fromQueue = false
   ) => {
-    if (disabled || running.current) return;
+    if (
+      (disabled && !fromQueue) ||
+      running.current ||
+      latest.current.pending ||
+      saveError
+    )
+      return;
+    const draft = latest.current;
+    const currentNovel = batchNovel(draft);
     setError("");
+    let submittedId: string | undefined;
     try {
       if (stage === "advice" && adviceRuns.length >= 20)
         throw new Error(
           "本轮已完成20次顾问讨论，请整理并确认提案后继续；历史对话完整保留。"
+        );
+      if (
+        fromQueue &&
+        draft.generationQueue?.configuration &&
+        draft.generationQueue.configuration !== queueConfiguration(draft)
+      )
+        throw new Error(
+          "本批的方向、模板或大纲已改变；请结束原批次并重新确认生成范围，已有稿保留。"
+        );
+      if (
+        fromQueue &&
+        stage === "script" &&
+        (await novelTextHash(batchNovel(draft))) !==
+          draft.generationQueue?.scriptBatch?.baseline
+      )
+        throw new Error(
+          "本批小说已修改，请结束原剧本批次，重新审阅后再生成。已有候选保留。"
         );
       if (!draft.topic.trim())
         throw new Error("请先填写作品名称，就在创作方向上方。");
@@ -330,7 +500,7 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
         chapterIndex > 1 &&
         !draft.chapters[chapterIndex - 2]?.trim()
       )
-        throw new Error("请先完成前一章。");
+        throw new Error("请先完成前一集。");
       if (
         stage === "script" &&
         (!draft.novelApproved || draft.novelApproved !== currentNovel)
@@ -368,7 +538,16 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
             }
           : {}),
         templates: choices,
-        episodeCount: draft.episodeCount,
+        episodeCount: stage === "script" ? 1 : draft.episodeCount,
+        episodeStart: stage === "script" ? chapterIndex : batchStart(draft),
+        targetEpisodeCount: Math.max(
+          draft.targetEpisodeCount || batchEnd(draft),
+          batchEnd(draft)
+        ),
+        continuity: draft.continuity || "",
+        ...(stage === "script" && draft.generationQueue?.scriptBatch
+          ? { scriptBatch: draft.generationQueue.scriptBatch }
+          : {}),
         outline:
           stage === "advice"
             ? advisorMessage ||
@@ -382,40 +561,173 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
             ? advisorMessage ||
               advisorIntent === "recommend_templates" ||
               advisorIntent === "story_variants"
-              ? currentNovel
+              ? continuationContext(
+                  draft,
+                  Math.min(draft.chapters.length, batchEnd(draft))
+                )
               : ""
             : stage === "chapter"
-              ? draft.chapters.slice(0, chapterIndex - 1).join("\n\n")
-              : draft.novelApproved,
+              ? continuationContext(draft, chapterIndex - 1)
+              : stage === "script"
+                ? draft.chapters[chapterIndex - 1]
+                : "",
         chapterIndex,
         selectedTemplateIds: draft.templates.map(t => t.publicId),
       });
       if (
+        !fromQueue &&
         !window.confirm(
-          `本次提交管理者测试：${advisorIntent === "story_variants" ? "三个故事线方案" : stage === "advice" ? "创作顾问与模板推荐" : stage === "outline" ? "改编提案" : stage === "chapter" ? `第${chapterIndex}章小说` : `${draft.episodeCount}集剧本候选`}。将调用创作服务并产生实际成本，是否继续？`
+          `本次提交管理者测试：${advisorIntent === "story_variants" ? "三个故事线方案" : stage === "advice" ? "创作顾问与模板推荐" : stage === "outline" ? "改编提案" : stage === "chapter" ? `第${chapterIndex}集小说稿` : `第${chapterIndex}集剧本候选`}。将调用创作服务并产生实际成本，是否继续？`
         )
       )
         return;
-      if (!persist({ ...draft, pending: input })) return;
+      if (
+        !(await persist({
+          ...draft,
+          pending: input,
+          pendingContextBase:
+            stage === "chapter"
+              ? draft.chapters.slice(0, chapterIndex - 1).join("\n\n")
+              : undefined,
+          pendingChapterBase:
+            stage === "chapter"
+              ? draft.chapters[chapterIndex - 1] || ""
+              : undefined,
+        }))
+      )
+        return;
+      submittedId = input.requestId;
+      activeRequestId.current = input.requestId;
       running.current = true;
       setBusy(true);
       setProgress("正在提交请求…");
       const result = await mutation.mutateAsync(input);
-      if (alive.current) applyResult(input, result);
+      if (alive.current) await applyResult(input, result);
     } catch (e) {
+      queueActive.current = false;
       if (alive.current)
         setError(
           e instanceof Error && !("data" in e)
             ? "issues" in e
-              ? "请检查作品名称、方向、模板与长度；顾问对话最多20轮，小说最多20,000字符。"
+              ? "请检查作品名称、方向、模板与长度；顾问对话最多20轮，每次按集提交，前情档案最多8,000字符。"
               : e.message
             : "本次提交未完成，请核对原请求记录；不会自动重试。"
         );
     } finally {
-      running.current = false;
-      if (alive.current) setBusy(false);
+      if (!submittedId || activeRequestId.current === submittedId) {
+        running.current = false;
+        activeRequestId.current = undefined;
+        if (alive.current) setBusy(false);
+      }
     }
   };
+  const queueConfiguration = (d: NovelWorkspace) =>
+    JSON.stringify([
+      d.topic,
+      d.direction,
+      d.templates,
+      d.modelPreference,
+      d.outline,
+      d.source,
+      d.episodeStart,
+      d.episodeCount,
+    ]);
+  const startBatch = async (stage: "chapter" | "script", single?: string) => {
+    if (disabled || queueSubmitting.current) return;
+    const d = latest.current,
+      start = batchStart(d),
+      end = Math.min(batchEnd(d), d.targetEpisodeCount || batchEnd(d));
+    const next =
+      stage === "chapter"
+        ? Array.from(
+            { length: Math.max(0, end - start + 1) },
+            (_, i) => start + i
+          ).find(i => !d.chapters[i - 1]?.trim())
+        : start;
+    if (next === undefined || next > end) {
+      setError("本批已写完；要修改可逐集重写，已有稿不自动覆盖。");
+      return;
+    }
+    if (
+      stage === "chapter" &&
+      (!d.outline.trim() || d.outlineApproved !== d.outline)
+    ) {
+      setError("请先生成并确认本批大纲。");
+      return;
+    }
+    if (stage === "script" && d.novelApproved !== batchNovel(d)) {
+      setError("请先审阅并确认本批小说稿。");
+      return;
+    }
+    if (
+      !window.confirm(
+        `依次生成第${next}–${end}集${stage === "chapter" ? "小说稿" : "剧本"}，每集单独调用模型并产生实际成本；失败即停，不自动重试，批末停下审阅。继续？`
+      )
+    )
+      return;
+    queueSubmitting.current = true;
+    const scriptBatch =
+      stage === "script"
+        ? {
+            id: crypto.randomUUID(),
+            start,
+            count: end - start + 1,
+            baseline: await novelTextHash(batchNovel(d)),
+          }
+        : undefined;
+    if (
+      await persist({
+        ...d,
+        generationQueue: {
+          stage,
+          next,
+          end,
+          single,
+          scriptBatch,
+          configuration: queueConfiguration(d),
+        },
+      })
+    ) {
+      queueActive.current = true;
+      setBusy(false);
+      setProgress("本批已确认，正在逐集生成…");
+    }
+    queueSubmitting.current = false;
+  };
+  useEffect(() => {
+    if (
+      !queueActive.current ||
+      busy ||
+      draft.pending ||
+      saveError ||
+      !draft.generationQueue
+    )
+      return;
+    const q = draft.generationQueue;
+    if (q.stage === "chapter" && draft.chapters[q.next - 1]?.trim()) {
+      const next = Array.from(
+        { length: Math.max(0, q.end - q.next) },
+        (_, i) => q.next + i + 1
+      ).find(i => !draft.chapters[i - 1]?.trim());
+      if (next === undefined) queueActive.current = false;
+      void persist({
+        ...latest.current,
+        generationQueue: next === undefined ? undefined : { ...q, next },
+      });
+      return;
+    }
+    if (q.next > (draft.targetEpisodeCount || q.end)) {
+      queueActive.current = false;
+      setProgress("全剧计划已缩短，后续请求已暂停；已有稿保留。");
+      return;
+    }
+    const timer = setTimeout(
+      () =>
+        void generate(q.stage, q.single, q.next, undefined, undefined, true),
+      50
+    );
+    return () => clearTimeout(timer);
+  }, [draft.generationQueue, draft.pending, busy, saveError, progress]);
   const recover = async () => {
     if (!draft.pending || running.current) return;
     try {
@@ -425,7 +737,12 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
       if (receipt.status === "succeeded" && receipt.result)
         applyResult(draft.pending, receipt.result);
       else if (receipt.status === "failed") {
-        persist({ ...draft, pending: undefined });
+        queueActive.current = false;
+        persist({
+          ...latest.current,
+          pending: undefined,
+          failedRequest: draft.pending,
+        });
         setError("原请求失败，证据保留；如需重做，请手动提交新的测试。");
       } else
         setError(
@@ -437,7 +754,7 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
       setError("暂时无法核对原请求，请保留当前页面。");
     }
   };
-  const reset = () => {
+  const reset = async () => {
     if (busy) return;
     if (
       !window.confirm(
@@ -446,10 +763,8 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
     )
       return;
     try {
-      const next = archiveNovelRound(localStorage, userId, raw.current, draft);
-      raw.current = next.raw;
-      latest.current = next.value;
-      setDraft(next.value);
+      queueActive.current = false;
+      if (!(await persist(emptyNovelWorkspace(), draft.roundId))) return;
       setError("");
       setSaveError("");
     } catch {
@@ -470,7 +785,7 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
             </p>
             <h1 className="mt-2 text-3xl font-semibold">小说改编工作室</h1>
             <p className="mt-3 text-sm text-slate-400">
-              顾问提案 → 分章小说 → 前三集模板比较
+              顾问提案 → 分集小说稿 → 剧本比较 → 漫剧制作
             </p>
           </div>
           <Link
@@ -489,6 +804,9 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
             返回漫剧工厂
           </Link>
         </header>
+        <a href="/manhua-projects" className="mb-4 inline-block underline">
+          我的漫剧 · 切换作品
+        </a>
         <div className="mb-5 flex flex-wrap items-center gap-3">
           <span className="text-xs text-slate-400">
             独立本机草稿，不覆盖当前漫剧。正式计价待定。
@@ -513,6 +831,120 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
             放弃本轮，重新开始
           </button>
         </div>
+        <div className="mb-5 flex flex-wrap gap-3">
+          <button
+            className={button}
+            disabled={backupBusy}
+            onClick={async () => {
+              setBackupBusy(true);
+              setBackupMessage("");
+              try {
+                await writes.current; // Cloud backup also rescues an in-memory draft after a local write failure.
+                const receipt = await backupMutation.mutateAsync({
+                  workspaceJson: JSON.stringify(latest.current),
+                });
+                setBackupMessage(
+                  `云端备份已保存 · ${new Date(receipt.createdAt).toLocaleString()}`
+                );
+                void backupList.refetch();
+              } catch {
+                setBackupMessage(
+                  "云端备份失败，本机稿件保留，请重试或下载完整备份。"
+                );
+              } finally {
+                setBackupBusy(false);
+              }
+            }}
+          >
+            {backupBusy ? "备份处理中…" : "云端备份"}
+          </button>
+          <button className={button} onClick={() => setBackupOpen(v => !v)}>
+            回填备份
+          </button>
+          {backupMessage && <span role="status">{backupMessage}</span>}
+        </div>
+        {backupOpen && (
+          <section className="mb-5 rounded-xl border border-white/15 p-4">
+            <h2>选择云端备份</h2>
+            <p className="my-2 text-sm">
+              回填前先将当前稿存为云端备份，并保留本机版本。生成中的任务请先核对完成，避免错接回执。
+            </p>
+            {backupList.isLoading && <p>正在读取备份…</p>}
+            {backupList.isError && (
+              <button onClick={() => void backupList.refetch()}>
+                读取失败，重试
+              </button>
+            )}
+            {backupList.data?.length === 0 && (
+              <p>暂无云端备份，请先点击云端备份。</p>
+            )}
+            {backupList.data?.map(item => (
+              <div
+                key={item.backupId}
+                className="my-2 flex flex-wrap items-center gap-3"
+              >
+                <span>
+                  {item.title} · 第{item.season}季 ·{" "}
+                  {new Date(item.createdAt).toLocaleString()} ·{" "}
+                  {(item.bytes / 1024).toFixed(1)} KB
+                </span>
+                <button
+                  className={button}
+                  disabled={disabled || backupBusy}
+                  onClick={async () => {
+                    if (
+                      !window.confirm(
+                        `回填「${item.title}」第${item.season}季的这份备份？当前版本先保留，不会重新提交生成。`
+                      )
+                    )
+                      return;
+                    setBackupBusy(true);
+                    queueActive.current = false;
+                    try {
+                      if (!(await writes.current))
+                        throw new Error("本机保存失败");
+                      const before = latest.current;
+                      await backupMutation.mutateAsync({
+                        workspaceJson: JSON.stringify(before),
+                      });
+                      const restored =
+                        await utils.novelWorkspace.readBackup.fetch({
+                          backupId: item.backupId,
+                        });
+                      if (latest.current !== before)
+                        throw new Error(
+                          "回填期间你修改了当前稿件，已保留新修改；请重新选择回填。"
+                        );
+                      const value = readNovelWorkspace(
+                        { getItem: () => restored.workspaceJson },
+                        userId
+                      ).value;
+                      if (
+                        !(await persist(
+                          value,
+                          `${before.roundId}:${crypto.randomUUID()}`
+                        ))
+                      )
+                        throw new Error("本机回填失败");
+                      setBackupMessage(
+                        "回填成功，生成批次已暂停；在途请求仅核对原回执，不重提。"
+                      );
+                      setBackupOpen(false);
+                    } catch (e) {
+                      setBackupMessage(
+                        `未完成回填，当前版本保留：${e instanceof Error ? e.message : "请重试"}`
+                      );
+                    } finally {
+                      setBackupBusy(false);
+                    }
+                  }}
+                >
+                  回填这一份
+                </button>
+              </div>
+            ))}
+          </section>
+        )}
         {saveError && (
           <p role="alert" className="mb-4 text-amber-200">
             {saveError}
@@ -522,6 +954,94 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
           <p role="alert" className="mb-4 text-amber-200">
             {error}
           </p>
+        )}
+        {failedChapter?.stage === "chapter" && (
+          <div className="mb-4 rounded-xl border border-amber-200/30 p-3">
+            <p>
+              第{failedChapter.chapterIndex}
+              集未完成。可尝试恢复已收到的原稿，不重新调用模型。
+            </p>
+            <button
+              className={button}
+              disabled={busy || !!draft.pending || !!saveError}
+              onClick={async () => {
+                const input = failedChapter!;
+                recoveringRequestId.current = input.requestId;
+                setBusy(true);
+                try {
+                  if (
+                    !(await persist({
+                      ...latest.current,
+                      pending: input,
+                      pendingChapterBase: "",
+                      pendingContextBase: latest.current.chapters
+                        .slice(0, input.chapterIndex - 1)
+                        .join("\n\n"),
+                    }))
+                  )
+                    return;
+                  setBusy(true);
+                  const result = await recoveryMutation.mutateAsync({
+                    requestId: input.requestId,
+                  });
+                  await applyResult(input, result);
+                  setProgress("已恢复原稿，没有重新调用模型。");
+                } catch {
+                  await persist({ ...latest.current, pending: undefined });
+                  setError(
+                    "原稿仍无法通过完整校验，已保留证据；没有重新调用模型。"
+                  );
+                } finally {
+                  recoveringRequestId.current = undefined;
+                  setBusy(false);
+                }
+              }}
+            >
+              恢复已收到的第{failedChapter.chapterIndex}集（不重新生成）
+            </button>
+            <button
+              className={`${button} ml-2`}
+              onClick={async () => {
+                try {
+                  const raw = await utils.novelWorkspace.savedRaw.fetch({
+                    requestId: failedChapter.requestId,
+                  });
+                  setSavedRaw(raw);
+                } catch {
+                  setError("原稿读取失败，请重试；现有稿件保留。");
+                }
+              }}
+            >
+              查看保留原文
+            </button>
+            {savedRaw?.requestId === failedChapter.requestId && (
+              <div className="mt-3">
+                <p>
+                  这是模型返回的原文，可能含格式错误或未写完的内容。可复制正文到对应集编辑，核对后再续写；不会自动视为完整稿。
+                </p>
+                <textarea
+                  aria-label="保留的模型原文"
+                  readOnly
+                  className={field}
+                  rows={10}
+                  value={savedRaw.text}
+                />
+                <button
+                  className={button}
+                  onClick={() =>
+                    downloadNovelText(
+                      `第${failedChapter.chapterIndex}集-保留原文.txt`,
+                      savedRaw.text,
+                      "text/plain"
+                    )
+                  }
+                >
+                  下载保留原文
+                </button>
+                <p className="break-all text-xs">原文校验：{savedRaw.sha256}</p>
+              </div>
+            )}
+          </div>
         )}
         {draft.pending && (
           <div className="mb-4 rounded-xl border border-amber-200/30 p-3 text-sm">
@@ -536,6 +1056,131 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
             <p className="mt-2 text-xs">请求编号：{draft.pending.requestId}</p>
           </div>
         )}
+        <section className="mb-5 rounded-xl border border-white/15 p-4">
+          <label>
+            全剧计划集数{" "}
+            <input
+              aria-label="全剧计划集数"
+              type="number"
+              min={1}
+              step={1}
+              className={field}
+              value={draft.targetEpisodeCount || batchEnd(draft)}
+              onChange={e => {
+                const n = Number(e.target.value);
+                if (Number.isSafeInteger(n) && n > 0)
+                  change({ targetEpisodeCount: n });
+              }}
+            />
+          </label>
+          <p className="mt-2 text-sm">
+            第{draft.season || 1}季 · 当前批次：第{batchStart(draft)}–
+            {batchEnd(draft)}
+            集。小说稿与剧本使用同一集号。总集数随时可改，缩短计划不会删除任何已写内容。
+          </p>
+          {(draft.targetEpisodeCount || batchEnd(draft)) < batchEnd(draft) && (
+            <button
+              className={button}
+              disabled={disabled}
+              onClick={() => {
+                const n =
+                  (draft.targetEpisodeCount || 1) - batchStart(draft) + 1;
+                if (n < 1) {
+                  setError(
+                    "本批已超出新计划；请保留原稿并开始下一季，或调整全剧计划。"
+                  );
+                  return;
+                }
+                change({
+                  episodeCount: n,
+                  outlineApproved: "",
+                  novelApproved: "",
+                });
+              }}
+            >
+              将本批范围缩到计划末集（稿件保留）
+            </button>
+          )}
+          <button
+            className={`${button} mt-2`}
+            disabled={disabled}
+            onClick={() => {
+              if (
+                !window.confirm(
+                  "开始下一季？本季全部稿件、模板和回执保留；新季从第1集开始，承接当前人物与伏笔，可继续修改方向。"
+                )
+              )
+                return;
+              const saved = JSON.stringify({ ...draft, seasons: undefined });
+              change({
+                ...emptyNovelWorkspace(),
+                topic: draft.topic,
+                direction: draft.direction,
+                source: draft.source,
+                mode: draft.mode,
+                templates: draft.templates,
+                modelPreference: draft.modelPreference,
+                targetEpisodeCount: draft.targetEpisodeCount,
+                season: (draft.season || 1) + 1,
+                continuity: draft.continuity,
+                seasons: [
+                  ...(draft.seasons || []),
+                  { season: draft.season || 1, workspace: saved },
+                ],
+              });
+            }}
+          >
+            开始下一季
+          </button>
+          {!!draft.seasons?.length && (
+            <details>
+              <summary>保留的季稿（{draft.seasons.length}）</summary>
+              {draft.seasons.map((v, i) => (
+                <div key={i}>
+                  第{v.season}季{" "}
+                  <button
+                    className="underline"
+                    onClick={() =>
+                      downloadNovelText(
+                        `第${v.season}季.json`,
+                        v.workspace,
+                        "application/json"
+                      )
+                    }
+                  >
+                    下载完整稿件
+                  </button>
+                  <button
+                    disabled={disabled}
+                    className="ml-3 underline"
+                    onClick={() => {
+                      if (!window.confirm("切回此季？当前季也完整保留。"))
+                        return;
+                      const previous = JSON.parse(
+                        v.workspace
+                      ) as NovelWorkspace;
+                      change({
+                        ...previous,
+                        seasons: [
+                          ...draft.seasons!.filter((_, n) => n !== i),
+                          {
+                            season: draft.season || 1,
+                            workspace: JSON.stringify({
+                              ...draft,
+                              seasons: undefined,
+                            }),
+                          },
+                        ],
+                      });
+                    }}
+                  >
+                    切回此季
+                  </button>
+                </div>
+              ))}
+            </details>
+          )}
+        </section>
         <div className="grid gap-6 lg:grid-cols-2">
           <section className="min-w-0 rounded-2xl border border-white/10 p-5">
             <h2 className="text-xl">01 / 创作方向与顾问</h2>
@@ -586,20 +1231,6 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
                   onChange={e => change({ direction: e.target.value })}
                   placeholder="主角想得到什么？障碍是什么？希望观众期待什么？"
                 />
-              </label>
-              <label className="mt-3 block">
-                试看集数
-                <select
-                  aria-label="试看集数"
-                  className={field}
-                  value={draft.episodeCount}
-                  onChange={e =>
-                    change({ episodeCount: Number(e.target.value) as 2 | 3 })
-                  }
-                >
-                  <option value={2}>2集</option>
-                  <option value={3}>3集</option>
-                </select>
               </label>
               <label className="mt-4 block text-sm">
                 创作模型
@@ -1003,7 +1634,10 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
                         </details>
                         <button
                           className={`${button} mt-3`}
-                          disabled={disabled}
+                          disabled={
+                            disabled ||
+                            (run.input.episodeStart || 1) !== batchStart(draft)
+                          }
                           onClick={() => {
                             if (
                               variant.templates.some(
@@ -1028,6 +1662,7 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
                                   label: `采用${variant.id} · ${variant.title}前 · ${new Date().toLocaleString()}`,
                                   outline: draft.outline,
                                   episodeCount: draft.episodeCount,
+                                  episodeStart: batchStart(draft),
                                   advisorAnchor: draft.advisorAnchor,
                                   chapters: [...draft.chapters],
                                   templates: draft.templates.map(t => ({
@@ -1038,7 +1673,8 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
                               outline: formatNovelOutline(variant.outline),
                               templates: variant.templates.map(t => ({ ...t })),
                               episodeCount: run.input.episodeCount,
-                              chapters: [],
+                              chapters: [...draft.chapters],
+                              episodeStart: run.input.episodeStart || 1,
                               outlineApproved: "",
                               novelApproved: "",
                               advisorAnchor: run.input.requestId,
@@ -1084,6 +1720,7 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
                               label: `恢复前 · ${new Date().toLocaleString()}`,
                               outline: draft.outline,
                               episodeCount: draft.episodeCount,
+                              episodeStart: batchStart(draft),
                               advisorAnchor: draft.advisorAnchor,
                               chapters: [...draft.chapters],
                               templates: draft.templates.map(t => ({ ...t })),
@@ -1092,6 +1729,7 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
                           outline: version.outline,
                           episodeCount:
                             version.episodeCount || draft.episodeCount,
+                          episodeStart: version.episodeStart || 1,
                           advisorAnchor: version.advisorAnchor,
                           chapters: [...version.chapters],
                           templates: version.templates.map(t => ({ ...t })),
@@ -1106,6 +1744,13 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
                 ))}
               </details>
             )}
+            <button
+              className={`${button} mt-4`}
+              disabled={disabled || !advice || !draft.templates.length}
+              onClick={() => void generate("outline")}
+            >
+              生成本批续写提案
+            </button>
             <label className="mt-4 block">
               提案与大纲 · 可修改
               <textarea
@@ -1131,53 +1776,246 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
                 change({ outlineApproved: draft.outline, novelApproved: "" })
               }
             >
-              确认大纲，开始分章
+              确认大纲，开始分集写作
             </button>
           </section>
         </div>
         <section className="mt-6 rounded-2xl border border-white/10 p-5">
-          <h2 className="text-xl">03 / 分章小说 · 审阅后再转剧本</h2>
+          <h2 className="text-xl">03 / 分集小说稿 · 审阅后再转剧本</h2>
           <p className="mt-2 text-sm text-slate-400">
-            每章分别生成与修改。确认下一章前先审阅前文；历史生成稿保留在记录中。
+            生成时仍可修改任何一集；正在生成的内容不会实时读取你的新修改，返回后会提示核对衔接。
           </p>
-          {Array.from({ length: draft.episodeCount }, (_, i) => (
-            <div key={i} className="mt-4">
-              <div className="flex items-center gap-3">
-                <h3>第{i + 1}章</h3>
+          <div className="my-3 flex flex-wrap gap-2">
+            <button
+              className={`${button} bg-amber-200 text-slate-950`}
+              disabled={disabled || !!draft.generationQueue}
+              onClick={() => void startBatch("chapter")}
+            >
+              生成本批未写集数（逐集保存）
+            </button>
+            {draft.generationQueue && (
+              <>
+                <span role="status">
+                  本批下一集：{draft.generationQueue.next} /{" "}
+                  {draft.generationQueue.end} ·{" "}
+                  {queueActive.current ? "运行中" : "已暂停"}
+                </span>
                 <button
                   className={button}
-                  disabled={
-                    disabled ||
-                    !draft.outlineApproved ||
-                    draft.outlineApproved !== draft.outline ||
-                    (i > 0 && !draft.chapters[i - 1])
-                  }
-                  onClick={() => generate("chapter", undefined, i + 1)}
+                  onClick={() => {
+                    queueActive.current = false;
+                    setProgress("已暂停后续请求；当前请求仍会保存，不重提。");
+                  }}
                 >
-                  {draft.chapters[i] ? "重新生成本章" : "生成本章"}
+                  暂停后续生成
                 </button>
+                <button
+                  className={button}
+                  disabled={busy || !!draft.pending || !!saveError}
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        "从下一集继续已确认批次？每集会调用模型，失败即停。"
+                      )
+                    ) {
+                      queueActive.current = true;
+                      setProgress("正在继续本批…");
+                    }
+                  }}
+                >
+                  继续本批
+                </button>
+                <button
+                  className={button}
+                  disabled={busy || !!draft.pending}
+                  onClick={() => {
+                    queueActive.current = false;
+                    change({ generationQueue: undefined });
+                  }}
+                >
+                  结束本批生成，保留已有稿
+                </button>
+              </>
+            )}
+          </div>
+          <details className="my-3 rounded-xl border border-white/15 p-3">
+            <summary>续写档案 · 人物、前情与未解伏笔</summary>
+            <p className="text-xs">
+              长篇续写使用累计档案与最近两集全文；全部原文仍保留。修改早期情节后，请同步核对档案再续写。新季沿用上一季档案。
+            </p>
+            <textarea
+              aria-label="续写档案"
+              className={field}
+              rows={6}
+              maxLength={8000}
+              value={draft.continuity || ""}
+              onChange={e =>
+                change({
+                  continuity: e.target.value,
+                  continuityBase: undefined,
+                })
+              }
+            />
+            <button
+              className={button}
+              disabled={busy || !!draft.pending || !draft.continuity?.trim()}
+              onClick={() => {
+                let through = 0;
+                while (draft.chapters[through]?.trim()) through++;
+                change({
+                  continuityThrough: through,
+                  continuityBase: draft.chapters.slice(0, through).join("\n\n"),
+                });
+              }}
+            >
+              已核对档案与当前原文
+            </button>
+          </details>
+          {Array.from(
+            { length: Math.max(batchEnd(draft), draft.chapters.length) },
+            (_, i) => (
+              <div key={i} className="mt-4">
+                <div className="flex items-center gap-3">
+                  <h3>第{i + 1}集</h3>
+                  <button
+                    className={button}
+                    disabled={
+                      disabled ||
+                      i + 1 < batchStart(draft) ||
+                      i + 1 > batchEnd(draft) ||
+                      !draft.outlineApproved ||
+                      draft.outlineApproved !== draft.outline ||
+                      (i > 0 && !draft.chapters[i - 1])
+                    }
+                    onClick={() => generate("chapter", undefined, i + 1)}
+                  >
+                    {draft.chapters[i] ? "重新生成本集" : "生成本集"}
+                  </button>
+                </div>
+                <textarea
+                  aria-label={`第${i + 1}集小说稿`}
+                  disabled={Boolean(initial.error)}
+                  className={field}
+                  rows={8}
+                  maxLength={6600}
+                  value={draft.chapters[i] || ""}
+                  onChange={e => {
+                    const chapters = [...draft.chapters];
+                    chapters[i] = e.target.value;
+                    const chapterWarnings = { ...draft.chapterWarnings };
+                    for (let j = i + 1; j < draft.chapters.length; j++)
+                      if (chapters[j])
+                        chapterWarnings[String(j)] =
+                          "前文已修改，请核对本集衔接。";
+                    change({ chapters, chapterWarnings, novelApproved: "" });
+                  }}
+                />
+                {draft.chapterWarnings?.[String(i)] && (
+                  <div className="mt-2 text-sm text-amber-200" role="status">
+                    {draft.chapterWarnings[String(i)]}
+                    <button
+                      className="ml-2 underline"
+                      onClick={() => {
+                        const warnings = { ...draft.chapterWarnings };
+                        delete warnings[String(i)];
+                        change({ chapterWarnings: warnings });
+                      }}
+                    >
+                      已核对本集
+                    </button>
+                  </div>
+                )}
+                {draft.runs.filter(
+                  r =>
+                    r.input.stage === "chapter" &&
+                    r.input.chapterIndex === i + 1
+                ).length > 0 && (
+                  <details className="mt-2 text-sm">
+                    <summary>本集生成稿与保留版本</summary>
+                    {draft.runs
+                      .filter(
+                        r =>
+                          r.input.stage === "chapter" &&
+                          r.input.chapterIndex === i + 1
+                      )
+                      .map(r => {
+                        const chapter = novelChapterSchema.parse(
+                          JSON.parse(r.result.text)
+                        );
+                        const text = `${chapter.title}\n\n${chapter.text}`;
+                        return (
+                          <article key={r.input.requestId} className="mt-2">
+                            <pre className="max-h-64 overflow-auto whitespace-pre-wrap">
+                              {text}
+                            </pre>
+                            <button
+                              disabled={Boolean(initial.error)}
+                              className="underline"
+                              onClick={() => {
+                                if (
+                                  !window.confirm(
+                                    "采用这份生成稿？当前手动修改会保留为本集历史版本。"
+                                  )
+                                )
+                                  return;
+                                const chapters = [...draft.chapters];
+                                chapters[i] = text;
+                                const warnings = {
+                                  ...draft.chapterWarnings,
+                                  [String(i)]:
+                                    "已采用历史生成稿，请结合当前前文核对衔接。",
+                                };
+                                for (
+                                  let j = i + 1;
+                                  j < draft.chapters.length;
+                                  j++
+                                )
+                                  if (chapters[j])
+                                    warnings[String(j)] =
+                                      "前文已修改，请核对本集衔接。";
+                                change({
+                                  chapters,
+                                  chapterWarnings: warnings,
+                                  chapterVersions: [
+                                    ...(draft.chapterVersions || []),
+                                    {
+                                      index: i,
+                                      text: draft.chapters[i] || "",
+                                      savedAt: new Date().toISOString(),
+                                    },
+                                  ],
+                                  novelApproved: "",
+                                });
+                              }}
+                            >
+                              采用这份生成稿
+                            </button>
+                          </article>
+                        );
+                      })}
+                    {draft.chapterVersions
+                      ?.filter(v => v.index === i)
+                      .map((v, n) => (
+                        <details key={n}>
+                          <summary>
+                            手动稿 · {new Date(v.savedAt).toLocaleString()}
+                          </summary>
+                          <pre className="whitespace-pre-wrap">{v.text}</pre>
+                        </details>
+                      ))}
+                  </details>
+                )}
               </div>
-              <textarea
-                aria-label={`第${i + 1}章小说`}
-                disabled={disabled}
-                className={field}
-                rows={8}
-                maxLength={6600}
-                value={draft.chapters[i] || ""}
-                onChange={e => {
-                  const chapters = [...draft.chapters];
-                  chapters[i] = e.target.value;
-                  change({ chapters, novelApproved: "" });
-                }}
-              />
-            </div>
-          ))}
+            )
+          )}
           <button
             disabled={
               disabled ||
               !draft.outlineApproved ||
               draft.outlineApproved !== draft.outline ||
-              draft.chapters.filter(c => c.trim().length >= 500).length !==
+              draft.chapters
+                .slice(batchStart(draft) - 1, batchEnd(draft))
+                .filter(c => c.trim().length >= 500).length !==
                 draft.episodeCount
             }
             className={`${button} mt-4 bg-amber-200 text-slate-950`}
@@ -1186,8 +2024,30 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
             确认这版小说，进入模板比较
           </button>
         </section>
+        <section className="mt-6 rounded-xl border border-amber-200/20 p-4">
+          <h2>审阅后续写</h2>
+          <p className="my-2 text-sm">
+            确认本批小说后，选择下一批范围，再修改方向、模板配比并生成新提案。每批结束都停下审阅，不自动写完整部。
+          </p>
+          {[10, 20].map(count => (
+            <button
+              key={count}
+              className={`${button} mr-2`}
+              disabled={disabled || !!draft.generationQueue}
+              onClick={() => {
+                try {
+                  change(nextNovelBatch(draft, count));
+                } catch (e) {
+                  setError((e as Error).message);
+                }
+              }}
+            >
+              审阅通过，准备续写{count}集
+            </button>
+          ))}
+        </section>
         <section className="mt-6 rounded-2xl border border-white/10 p-5">
-          <h2 className="text-xl">04 / 模板候选与前三集比较</h2>
+          <h2 className="text-xl">04 / 本批剧本与模板比较</h2>
           <div className="my-4 flex flex-wrap gap-2">
             {draft.templates.map(t => (
               <button
@@ -1198,7 +2058,7 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
                   !draft.novelApproved ||
                   draft.novelApproved !== currentNovel
                 }
-                onClick={() => generate("script", t.publicId)}
+                onClick={() => void startBatch("script", t.publicId)}
               >
                 单独生成 ·{" "}
                 {cards.find(c => c.publicId === t.publicId)?.nameZh ||
@@ -1213,12 +2073,85 @@ export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
                 !draft.novelApproved ||
                 draft.novelApproved !== currentNovel
               }
-              onClick={() => generate("script")}
+              onClick={() => void startBatch("script")}
             >
               按分工组合生成
             </button>
           </div>
-          <NovelTemplateComparison runs={draft.runs} />
+          <NovelTemplateComparison
+            runs={completeScriptBatches(draft.runs)}
+            disabled={disabled}
+            onAdopt={async run => {
+              if (
+                !window.confirm(
+                  `将「${JSON.parse(run.result.text).title}」第${run.input.episodeStart || 1}–${(run.input.episodeStart || 1) + run.input.episodeCount - 1}集接入本季漫剧作品。已有集数与素材保留；不会自动生成图片或视频。继续？`
+                )
+              )
+                return;
+              try {
+                // The assembled view is derived from preserved per-episode receipts.
+                if (
+                  run.input.scriptBatch &&
+                  run.input.requestId === run.input.scriptBatch.id
+                ) {
+                  run = {
+                    ...run,
+                    result: {
+                      ...run.result,
+                      resultSha256: await novelTextHash(run.result.text),
+                      inputSha256: await novelTextHash(
+                        JSON.stringify(run.input)
+                      ),
+                    },
+                  };
+                }
+                const cloud = await utils.manhuaCloudDraft.get.fetch({
+                  projectId: draft.roundId,
+                });
+                const localAt = localStorage.getItem(
+                  `mv-manhua-project:${userId}:${draft.roundId}:mv-manhua-cloud-draft-local-at-v1`
+                );
+                if (
+                  cloud?.draft &&
+                  (!localAt ||
+                    Date.parse(cloud.draft.clientUpdatedAt || "") >
+                      Date.parse(localAt))
+                )
+                  throw new Error(
+                    "此作品云端有更新，请先在我的漫剧中打开恢复最新内容，再回来追加续集。"
+                  );
+                if (!(await writes.current))
+                  throw new Error("改编稿尚未保存，未跳转");
+                if (!navigator.locks)
+                  throw new Error(
+                    "当前浏览器无法取得作品编辑锁，请使用支持此功能的浏览器。"
+                  );
+                const project = await navigator.locks.request(
+                  `mv-manhua-project:${userId}:${draft.roundId}`,
+                  { ifAvailable: true },
+                  lock => {
+                    if (!lock)
+                      throw new Error(
+                        "此作品正在另一页面中编辑，请先保存并关闭那个作品页面，再追加续集。"
+                      );
+                    return createNovelFactoryProject(
+                      localStorage,
+                      userId,
+                      run,
+                      draft.roundId
+                    );
+                  }
+                );
+                window.location.assign(project.href);
+              } catch (error) {
+                setError(
+                  error instanceof Error
+                    ? error.message
+                    : "创建作品失败，原稿保留"
+                );
+              }
+            }}
+          />
         </section>
         <details className="mt-6 rounded-xl border border-white/10 p-4">
           <summary>本轮版本与完整记录（{draft.runs.length}）</summary>

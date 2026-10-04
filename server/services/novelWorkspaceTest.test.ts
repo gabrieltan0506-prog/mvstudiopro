@@ -67,7 +67,7 @@ it("阶段提示保留用户方向、确认前文、组合分工，不一次写�
     []
   );
   for (const value of [
-    "只写第 2 章",
+    "只写第 2 集小说稿",
     "已确认大纲",
     "已经写好第一章",
     "完整模板",
@@ -170,4 +170,43 @@ it("首次模板组合直接生成三版故事，带上原稿与明确配比", (
     "不生成小说",
   ])
     expect(prompt).toContain(expected);
+});
+
+it("完整章节尾逗号自动修复，先保存原文再校验且仅调用一次", async () => {
+  const body = "已收到的完整小说正文".repeat(100);
+  const response = {
+    text: JSON.stringify({ title: "第八集", text: body, notes: "" }).replace(
+      /}$/,
+      ",}"
+    ),
+    model: "mock",
+  };
+  const events: string[] = [];
+  const call = vi.fn(async () => response);
+  const result = await executeNovelTest(
+    {
+      ...input,
+      stage: "chapter",
+      chapterIndex: 8,
+      episodeStart: 4,
+      episodeCount: 10,
+      outline: "已确认提案",
+      novel: "第七集",
+    },
+    "",
+    [],
+    call,
+    async r => {
+      expect(r).toEqual(response);
+      events.push("raw");
+    },
+    async (_, normalized, repaired) => {
+      expect(repaired).toBe(true);
+      expect(JSON.parse(normalized).text).toBe(body);
+      events.push("parsed");
+    }
+  );
+  expect((result as any).text).toBe(body);
+  expect(events).toEqual(["raw", "parsed"]);
+  expect(call).toHaveBeenCalledTimes(1);
 });

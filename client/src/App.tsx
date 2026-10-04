@@ -84,6 +84,7 @@ const EnterpriseAgentManager = lazy(() => import("./pages/EnterpriseAgentManager
 const EnterpriseAgentDetail = lazy(() => import("./pages/EnterpriseAgentDetail"));
 const EnterpriseAgentPlayground = lazy(() => import("./pages/EnterpriseAgentPlayground"));
 
+const ManhuaProjects = lazy(() => import("./pages/ManhuaProjects"));
 const NovelAdaptation = lazy(() => import("./pages/NovelAdaptation"));
 
 function PageLoader() {
@@ -141,6 +142,7 @@ function Router() {
         <Route path={"/creative"} component={CreativePage} />
         <Route path={"/create"} component={CreativePage} />
         <Route path={"/canvas"} component={OmniCanvas} />
+        <Route path="/manhua-projects" component={ManhuaProjects} />
         <Route path="/novel-adaptation" component={NovelAdaptation} />
         <Route path={"/supervisor"} component={SupervisorAccess} />
         <Route path={"/my-works"} component={MyWorks} />

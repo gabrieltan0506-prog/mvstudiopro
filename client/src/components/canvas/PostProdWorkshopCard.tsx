@@ -1,3 +1,4 @@
+import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
 import { UrlMaskedTextarea } from "@/components/UrlMaskedTextarea";
 import { PostProdSubtitleCard } from "./PostProdSubtitleCard";
 import { SUBTITLE_EFFECT_OPTIONS, type SubtitleEffect } from "@shared/subtitleEffects";

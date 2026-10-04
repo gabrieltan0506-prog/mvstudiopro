@@ -1,3 +1,4 @@
+import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
 import { maskMediaProviderDetails } from "@/lib/maskMediaUrls";
 import { summarizeManhuaDeliverySegments } from "@/lib/manhuaDeliverySegmentSummary";
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -180,14 +181,14 @@ export default function ManhuaClipDock({
   // 「含历史版本」默认关；用户打开过就记在本机（只影响 zip 内容，不影响合成）
   const [includeHistory, setIncludeHistory] = useState<boolean>(() => {
     try {
-      return window.localStorage.getItem(MANHUA_DOCK_EXPORT_HISTORY_STORAGE_KEY) === "1";
+      return localStorage.getItem(MANHUA_DOCK_EXPORT_HISTORY_STORAGE_KEY) === "1";
     } catch {
       return false;
     }
   });
   useEffect(() => {
     try {
-      window.localStorage.setItem(MANHUA_DOCK_EXPORT_HISTORY_STORAGE_KEY, includeHistory ? "1" : "0");
+      localStorage.setItem(MANHUA_DOCK_EXPORT_HISTORY_STORAGE_KEY, includeHistory ? "1" : "0");
     } catch {
       /* 隐私模式等无本机存储时忽略 */
     }

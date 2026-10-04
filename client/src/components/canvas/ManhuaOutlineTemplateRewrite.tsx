@@ -1,3 +1,4 @@
+import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PublicManhuaViralTemplateCard } from "@shared/manhuaViralTemplateBank";
 import type { buildManhuaAdvisorProject } from "@/lib/manhuaAdvisorProject";

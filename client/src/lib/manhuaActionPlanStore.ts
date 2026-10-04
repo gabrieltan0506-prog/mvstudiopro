@@ -1,3 +1,4 @@
+import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
 /**
  * 动作计划本机存储（PR-2）：与导演板 overlay 同款——OmniCanvas 是唯一状态源，
  * 这里只负责 localStorage 往返与规范化；云草稿走 shared/manhuaCloudDraft 顶层 manhuaActionPlans。
@@ -24,7 +25,7 @@ export function normalizeManhuaActionPlans(raw: unknown): ManhuaActionPlanLoadRe
 export function loadManhuaActionPlans(): ManhuaActionPlanLoadResult {
   try {
     if (typeof window === "undefined") return { plans: {}, warnings: [] };
-    const raw = window.localStorage.getItem(LS_KEY);
+    const raw = localStorage.getItem(LS_KEY);
     if (!raw) return { plans: {}, warnings: [] };
     return normalizeManhuaActionPlans(JSON.parse(raw));
   } catch {
@@ -36,10 +37,10 @@ export function saveManhuaActionPlans(plans: ManhuaActionPlansByEpisode): boolea
   try {
     if (typeof window === "undefined") return false;
     if (!Object.keys(plans).length) {
-      window.localStorage.removeItem(LS_KEY);
+      localStorage.removeItem(LS_KEY);
       return true;
     }
-    window.localStorage.setItem(LS_KEY, JSON.stringify(plans));
+    localStorage.setItem(LS_KEY, JSON.stringify(plans));
     return true;
   } catch {
     return false;

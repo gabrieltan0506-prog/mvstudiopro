@@ -1,3 +1,4 @@
+import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
 /** 原片只通过同源接口上传到服务器私有存储；这里不申请或使用 GCS 上传地址。 */
 import {
   MANHUA_LOCAL_VIDEO_CHUNK_BYTES,

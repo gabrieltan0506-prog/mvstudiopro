@@ -1,3 +1,4 @@
+import { manhuaProjectStorage as localStorage } from "./manhuaProjectScope";
 /**
  * 同集镜间接力：上一镜静帧 → 下一镜静帧（A）；上一镜成片末帧 → 下一镜成片（B）。
  * 用户可分别开关；默认均开启。

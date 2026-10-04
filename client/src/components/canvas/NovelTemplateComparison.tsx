@@ -14,7 +14,15 @@ const colors = [
   "text-emerald-200 bg-emerald-950/50",
   "text-orange-200 bg-orange-950/50",
 ];
-export function NovelTemplateComparison({ runs }: { runs: NovelRun[] }) {
+export function NovelTemplateComparison({
+  runs,
+  onAdopt,
+  disabled,
+}: {
+  runs: NovelRun[];
+  onAdopt?: (run: NovelRun) => void;
+  disabled?: boolean;
+}) {
   const [selected, setSelected] = useState(0),
     [pulse, setPulse] = useState(0);
   const [flash, setFlash] = useState(true);
@@ -59,6 +67,16 @@ export function NovelTemplateComparison({ runs }: { runs: NovelRun[] }) {
               key={v.result.requestId}
               className="min-w-0 rounded-lg bg-white/5 p-3 text-sm"
             >
+              {onAdopt && (
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onAdopt(v)}
+                  className="mb-3 rounded-lg border border-amber-200/40 px-3 py-2 text-amber-100 disabled:opacity-50"
+                >
+                  采用这版剧本，进入漫剧工厂
+                </button>
+              )}
               {v.result.model && (
                 <p className="text-xs text-cyan-200">
                   {novelModelLabel(v.result.model)}

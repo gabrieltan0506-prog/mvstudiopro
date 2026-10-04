@@ -17,6 +17,7 @@ import {
   createManhuaCloudDraftSignedUpload,
   readManhuaCloudDraftFromGcs,
   writeManhuaCloudDraftToGcs,
+  listManhuaProjects,
 } from "../services/manhuaCloudDraftGcsStore";
 import { refreshManhuaDraftSignedUrls } from "../services/manhuaDraftUrlRefresh";
 
@@ -39,7 +40,9 @@ async function loadDraftFromNeonLegacy(userId: number): Promise<{
       row.updatedAt instanceof Date ? row.updatedAt : new Date(row.updatedAt);
     if (isManhuaCloudDraftExpired(updatedAt)) {
       try {
-        await db.delete(manhuaCloudDrafts).where(eq(manhuaCloudDrafts.userId, userId));
+        await db
+          .delete(manhuaCloudDrafts)
+          .where(eq(manhuaCloudDrafts.userId, userId));
       } catch {
         /* ignore */
       }
@@ -51,20 +54,24 @@ async function loadDraftFromNeonLegacy(userId: number): Promise<{
   } catch (e) {
     console.warn(
       "[manhuaCloudDraft] neon legacy read failed:",
-      e instanceof Error ? e.message : e,
+      e instanceof Error ? e.message : e
     );
     return null;
   }
 }
 
-async function loadDraftForUser(userId: number): Promise<{
+async function loadDraftForUser(
+  userId: number,
+  projectId?: string
+): Promise<{
   payload: ManhuaCloudDraftPayload;
   updatedAt: string;
 } | null> {
-  const fromGcs = await readManhuaCloudDraftFromGcs(userId);
+  const fromGcs = await readManhuaCloudDraftFromGcs(userId, projectId);
   if (fromGcs) {
     return { payload: fromGcs.payload, updatedAt: fromGcs.serverUpdatedAt };
   }
+  if (projectId) return null; // A new project must never fall back to the legacy current work.
   const legacy = await loadDraftFromNeonLegacy(userId);
   if (!legacy) return null;
   // 读到旧 Neon 时写穿到 GCS，后续不再依赖库内大 JSON
@@ -73,25 +80,35 @@ async function loadDraftForUser(userId: number): Promise<{
   } catch (e) {
     console.warn(
       "[manhuaCloudDraft] neon→gcs write-through failed:",
-      e instanceof Error ? e.message : e,
+      e instanceof Error ? e.message : e
     );
   }
   return legacy;
 }
 
+const projectInput = z
+  .object({ projectId: z.string().uuid().optional() })
+  .optional();
+
 export const manhuaCloudDraftRouter = router({
+  listProjects: protectedProcedure.query(({ ctx }) =>
+    listManhuaProjects(ctx.user.id)
+  ),
   /** 拉取当前用户云端草稿（GCS 优先；Neon 仅迁移回读） */
-  get: protectedProcedure.query(async ({ ctx }) => {
-    const hit = await loadDraftForUser(ctx.user.id);
+  get: protectedProcedure.input(projectInput).query(async ({ ctx, input }) => {
+    const hit = await loadDraftForUser(ctx.user.id, input?.projectId);
     if (!hit) {
-      return { draft: null as ManhuaCloudDraftPayload | null, serverUpdatedAt: null as string | null };
+      return {
+        draft: null as ManhuaCloudDraftPayload | null,
+        serverUpdatedAt: null as string | null,
+      };
     }
     // 0902 根治：快照里的签名图链最长 7 天、信封留 30 天——超一周回填图全裂。
     // 返回前按对象路径整包重签（本地运算），老备份的图就地复活。
     const { payload, stats } = refreshManhuaDraftSignedUrls(hit.payload);
     if (stats.refreshed > 0) {
       console.log(
-        `[manhuaCloudDraft] refreshed ${stats.refreshed} signed url(s) for user ${ctx.user.id}`,
+        `[manhuaCloudDraft] refreshed ${stats.refreshed} signed url(s) for user ${ctx.user.id}`
       );
     }
     return { draft: payload, serverUpdatedAt: hit.updatedAt };
@@ -100,42 +117,52 @@ export const manhuaCloudDraftRouter = router({
   /**
    * 直传准备：浏览器把草稿 JSON PUT 到 GCS，避开大包经 API 超时（Failed to fetch）。
    */
-  prepareDirectUpload: protectedProcedure.mutation(async ({ ctx }) => {
-    try {
-      const signed = await createManhuaCloudDraftSignedUpload(ctx.user.id);
-      return {
-        uploadUrl: signed.uploadUrl,
-        gcsUri: signed.gcsUri,
-        objectName: signed.objectName,
-        requiredHeaders: {
-          "Content-Type": "application/json",
-          ...(signed.requiredHeaders || {}),
-        },
-      };
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "草稿上传通道不可用";
-      throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: msg });
-    }
-  }),
+  prepareDirectUpload: protectedProcedure
+    .input(projectInput)
+    .mutation(async ({ ctx, input }) => {
+      try {
+        const signed = await createManhuaCloudDraftSignedUpload(
+          ctx.user.id,
+          input?.projectId
+        );
+        return {
+          uploadUrl: signed.uploadUrl,
+          gcsUri: signed.gcsUri,
+          objectName: signed.objectName,
+          requiredHeaders: {
+            "Content-Type": "application/json",
+            ...(signed.requiredHeaders || {}),
+          },
+        };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "草稿上传通道不可用";
+        throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: msg });
+      }
+    }),
 
   /** 直传完成后校验 GCS 对象 */
-  commitDirectUpload: protectedProcedure.mutation(async ({ ctx }) => {
-    const hit = await commitManhuaCloudDraftAfterDirectUpload(ctx.user.id);
-    if (!hit) {
-      throw new TRPCError({
-        code: "BAD_REQUEST",
-        message: "未读到云端草稿，请重试上传",
-      });
-    }
-    return {
-      ok: true as const,
-      clientUpdatedAt: hit.payload.clientUpdatedAt,
-      serverUpdatedAt: hit.serverUpdatedAt,
-      blockCount: hit.payload.canvas.blocks.length,
-      hasWriterPack: Boolean(hit.payload.writerSession.writerPack),
-      storage: "gcs" as const,
-    };
-  }),
+  commitDirectUpload: protectedProcedure
+    .input(projectInput)
+    .mutation(async ({ ctx, input }) => {
+      const hit = await commitManhuaCloudDraftAfterDirectUpload(
+        ctx.user.id,
+        input?.projectId
+      );
+      if (!hit) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "未读到云端草稿，请重试上传",
+        });
+      }
+      return {
+        ok: true as const,
+        clientUpdatedAt: hit.payload.clientUpdatedAt,
+        serverUpdatedAt: hit.serverUpdatedAt,
+        blockCount: hit.payload.canvas.blocks.length,
+        hasWriterPack: Boolean(hit.payload.writerSession.writerPack),
+        storage: "gcs" as const,
+      };
+    }),
 
   /**
    * 兼容旧客户端：仍收 payloadJson，但写入 GCS（不再写 Neon）。
@@ -144,13 +171,17 @@ export const manhuaCloudDraftRouter = router({
   upsert: protectedProcedure
     .input(
       z.object({
+        projectId: z.string().uuid().optional(),
         payloadJson: z.string().min(2).max(MANHUA_CLOUD_DRAFT_MAX_CHARS),
-      }),
+      })
     )
     .mutation(async ({ ctx, input }) => {
       const payload = parseManhuaCloudDraftPayload(input.payloadJson);
       if (!payload) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "草稿格式无效，请刷新后重试" });
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "草稿格式无效，请刷新后重试",
+        });
       }
       const serialized = serializeManhuaCloudDraftPayload(payload);
       if (!manhuaCloudDraftPayloadSizeOk(serialized)) {
@@ -162,6 +193,7 @@ export const manhuaCloudDraftRouter = router({
       try {
         const written = await writeManhuaCloudDraftToGcs({
           userId: ctx.user.id,
+          projectId: input.projectId,
           payload,
         });
         return {

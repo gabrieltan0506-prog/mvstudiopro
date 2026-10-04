@@ -1,3 +1,4 @@
+import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
 /**
  * 成片出完强制自动下载到本机「下载」文件夹。
  * 云端/草稿不保留成片；页面预览只是临时链，以本机文件为准。

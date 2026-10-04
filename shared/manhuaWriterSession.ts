@@ -1,3 +1,4 @@
+import { manhuaProjectStorage as localStorage } from "./manhuaProjectScope";
 import {novelAdaptationSchema} from "./manhuaNovelAdaptation";
 import { parseNovelDraft, novelExcerptSchema, type ManhuaNovelDraft } from "./manhuaNovelSource.js";
 import { normalizeManhuaEditTransitions, type ManhuaEditTransition } from "./manhuaEditTransition.js";
@@ -212,7 +213,7 @@ export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): Man
     topic: String(input.topic || "").trim(),
     brief: String(input.brief || "").trim(),
     novelDraft: parseNovelDraft(input.novelDraft),
-    episodeCount: clampWriterEpisodeCount(input.episodeCount),
+    episodeCount: Math.max(clampWriterEpisodeCount(input.episodeCount), normalizeWriterPack(input.writerPack)?.episodes.length || 0),
     focusEpisode: Math.max(1, Math.floor(Number(input.focusEpisode) || 1)),
     writerPack: normalizeWriterPack(input.writerPack),
     writerConfirmed,

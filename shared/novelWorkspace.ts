@@ -58,10 +58,23 @@ export const novelTestInputSchema = z
       .max(20)
       .optional(),
     templates: z.array(novelTemplateChoiceSchema),
-    episodeCount: z.union([z.literal(2), z.literal(3)]),
+    // Count for this request, not the length of the entire series.
+    episodeCount: z.number().int().min(1).max(20),
+    episodeStart: z.number().int().positive().optional(),
+    targetEpisodeCount: z.number().int().positive().optional(),
+    continuity: z.string().max(8000).optional(),
+    scriptBatch: z
+      .object({
+        id: z.string().uuid(),
+        start: z.number().int().positive(),
+        count: z.number().int().min(1).max(20),
+        baseline: z.string().max(128),
+      })
+      .strict()
+      .optional(),
     outline: z.string().max(14000).default(""),
     novel: z.string().max(20000).default(""),
-    chapterIndex: z.number().int().min(1).max(3).default(1),
+    chapterIndex: z.number().int().positive().default(1),
     selectedTemplateIds: z.array(z.string().max(40)).default([]),
   })
   .strict()
@@ -94,9 +107,24 @@ export const novelTestInputSchema = z
       c.addIssue({ code: "custom", message: "请选择模板" });
     if (
       v.stage === "chapter" &&
-      (!v.outline.trim() || v.chapterIndex > v.episodeCount)
+      (!v.outline.trim() ||
+        v.chapterIndex < (v.episodeStart || 1) ||
+        v.chapterIndex >= (v.episodeStart || 1) + v.episodeCount)
     )
       c.addIssue({ code: "custom", message: "请先确认大纲与章节" });
+    if (
+      v.targetEpisodeCount &&
+      (v.episodeStart || 1) + v.episodeCount - 1 > v.targetEpisodeCount
+    )
+      c.addIssue({ code: "custom", message: "本批集数超出全剧计划" });
+    if (
+      v.scriptBatch &&
+      (v.stage !== "script" ||
+        v.episodeCount !== 1 ||
+        (v.episodeStart || 1) < v.scriptBatch.start ||
+        (v.episodeStart || 1) >= v.scriptBatch.start + v.scriptBatch.count)
+    )
+      c.addIssue({ code: "custom", message: "剧本分批范围无效" });
     if (v.stage === "script" && v.novel.trim().length < 500)
       c.addIssue({ code: "custom", message: "请先确认小说正文" });
   });
@@ -109,7 +137,7 @@ export const novelOutlineSchema = z
       .array(
         z
           .object({
-            index: z.number().int().min(1).max(3),
+            index: z.number().int().positive(),
             title: text.max(120),
             events: text.max(1500),
             hook: text.max(500),
@@ -117,8 +145,8 @@ export const novelOutlineSchema = z
           })
           .strict()
       )
-      .min(2)
-      .max(3),
+      .min(1)
+      .max(20),
   })
   .strict();
 export const novelStoryVariantSchema = z
@@ -162,7 +190,9 @@ export const novelChapterSchema = z
   .object({
     title: text.max(120),
     text: text.min(500).max(6500),
-    notes: text.max(2000),
+    // Ancillary notes may be empty; never reject an otherwise complete paid chapter.
+    notes: z.string().trim().max(2000).default(""),
+    continuity: z.string().trim().max(8000).optional(),
   })
   .strict();
 const scene = z
@@ -196,7 +226,7 @@ export const novelScriptSchema = z
       .array(
         z
           .object({
-            index: z.number().int().min(1).max(3),
+            index: z.number().int().positive(),
             title: text.max(120),
             opening: text.max(1200),
             payoff: text.max(1200),
@@ -205,8 +235,8 @@ export const novelScriptSchema = z
           })
           .strict()
       )
-      .min(2)
-      .max(3),
+      .min(1)
+      .max(20),
   })
   .strict();
 export type NovelAdvice = z.infer<typeof novelAdviceSchema>;
@@ -250,7 +280,9 @@ export function validateNovelStageOutput(
       for (const variant of result.variants) {
         if (
           variant.outline.episodes.length !== input.episodeCount ||
-          variant.outline.episodes.some((e, i) => e.index !== i + 1)
+          variant.outline.episodes.some(
+            (e, i) => e.index !== i + (input.episodeStart || 1)
+          )
         )
           throw new Error("故事线分集数量或次序不完整");
         const choices = variant.templates;
@@ -303,16 +335,23 @@ export function validateNovelStageOutput(
       throw new Error("推荐模板不在可用库中或数量不足");
     return result;
   }
-  if (input.stage === "chapter") return novelChapterSchema.parse(value);
+  if (input.stage === "chapter") {
+    const chapter = novelChapterSchema.parse(value);
+    // A missing optional continuity note must not discard a complete paid chapter.
+    // The client asks for a reviewed continuity record before distant continuation.
+    return chapter;
+  }
   const result =
     input.stage === "outline"
       ? novelOutlineSchema.parse(value)
       : novelScriptSchema.parse(value);
   if (
     result.episodes.length !== input.episodeCount ||
-    result.episodes.some((e, i) => e.index !== i + 1)
+    result.episodes.some((e, i) => e.index !== i + (input.episodeStart || 1))
   )
     throw new Error("分集数量或次序不完整");
+  if (!("title" in result) && formatNovelOutline(result).length > 14000)
+    throw new Error("本批大纲超出可编辑长度，原始结果保留");
   if ("title" in result)
     for (const ep of result.episodes) {
       if (new Set(ep.scenes.map(s => s.key)).size !== ep.scenes.length)
