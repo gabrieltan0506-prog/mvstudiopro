@@ -1,0 +1,22 @@
+{
+  "voiceHead": "b651320da0c1c9080ae346afa9adcc0532b2a08e",
+  "integratedMain": "20592a73",
+  "files": [
+    {
+      "path": "server/services/manhuaViralTemplateStore.ts",
+      "sha256": "560568217435423e7fcfffd89beacaf4f6881226514ece71305048713805e921"
+    },
+    {
+      "path": "server/services/manhuaViralTemplateStore.lifecycle.test.ts",
+      "sha256": "8eac840024aa9d0cb41898af08302beee7d5eefd1d5cca08e6a483bf1993f5e9"
+    },
+    {
+      "path": "shared/manhuaNativeEpisodeVersion.ts",
+      "sha256": "4c7fbb6ce22d8d1c5ba56e1f278d0a42d67160a280a4ee5eeed437a88091676b"
+    },
+    {
+      "path": "../backend-work/1005-pr1662-1663-integration.log",
+      "sha256": "604d17ec2c892cb73c5d3cf16add24d740f28f5f0291d893c4004d6e5b05b9b5"
+    }
+  ]
+}

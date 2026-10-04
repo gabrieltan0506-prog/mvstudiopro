@@ -752,7 +752,8 @@ export async function ingestNativeDeepReadEpisode(
       return { card: existing, gcsUri, objectName, created: false };
     }
     if (
-      previous.sourceDigest
+      !completeRelearn
+      && previous.sourceDigest
       && next.sourceDigest
       && previous.sourceDigest !== next.sourceDigest
     ) {

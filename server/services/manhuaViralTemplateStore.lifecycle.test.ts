@@ -1275,6 +1275,63 @@ describe("原生分集部分卡的滚动批准", () => {
     expect(result.provenance?.nativeVideoDeepRead?.batchRequestId).toBe("22222222-2222-4222-8222-222222222222");
   });
 
+  it.each(["完整镜站重学", "同源分批重学", "重试", "重试正文不同", "不同集", "不同剧", "未知镜站", "同地址摘要变化", "缺证据", "错误证据来源", "不完整", "旧批次", "时间轴缺口"])("9→8分片分批整形批准：%s", async (kind) => {
+    const { approveManhuaViralTemplate } = await import("./manhuaViralTemplateStore");
+    const old = partialEpisodeCard({ status: "approved", successSegments: 4, publicCode: "EPKEEP", snapshot: "b".repeat(64) }) as unknown as ManhuaViralTemplateCard;
+    const next = partialEpisodeCard({ status: "proposed", successSegments: 4, snapshot: "c".repeat(64) }) as unknown as ManhuaViralTemplateCard;
+    old.sourceRefs[0]!.url = "https://www.gzcrkt8888.com/vod/play/146259/sid/1309097";
+    next.sourceRefs[0]!.url = "https://0996zp.com/vod/play/146259/sid/1309097";
+    for (const [card, count, digest, batch] of [[old, 9, sourceDigest, "11111111-1111-4111-8111-111111111111"], [next, 8, "e".repeat(64), "22222222-2222-4222-8222-222222222222"]] as const) {
+      Object.assign(card.provenance!.nativeVideoDeepRead!, {
+        attemptedSegments: count, successSegments: count, sourceDigest: digest, batchRequestId: batch,
+        completedSegmentIndexes: Array.from({ length: count }, (_, i) => i), sourceDurationSec: 2573,
+        segmentSpans: Array.from({ length: count }, (_, i) => ({ startSec: i * 2573 / count, endSec: (i + 1) * 2573 / count })),
+        segmentEvidenceObjectNames: Array.from({ length: count }, (_, i) => `manhua-template-learn/segment-evidence/${nativeEpisodeId}/${digest}/seg${i}-${"d".repeat(64)}-${"f".repeat(64)}.json`),
+      });
+    }
+    next.updatedAt = "2026-10-04T14:57:06Z";
+    old.beatGrid = [{ atSec: 0, conflictZh: "旧版独有", visualZh: "旧镜头" }];
+    next.beatGrid = [{ atSec: 0, conflictZh: "新完整批次", visualZh: "新镜头" }];
+    if (kind === "同源分批重学") {
+      old.sourceRefs = structuredClone(next.sourceRefs);
+      old.provenance!.nativeVideoDeepRead!.sourceDigest = next.provenance!.nativeVideoDeepRead!.sourceDigest;
+    }
+    if (kind.startsWith("重试")) {
+      Object.assign(old, structuredClone(next), { status: "approved", publicCode: "EPKEEP" });
+      if (kind === "重试正文不同") next.beatGrid[0]!.visualZh = "同批次有编辑，不应当作已提交";
+    }
+    if (kind === "不同集") next.sourceRefs[0]!.url = next.sourceRefs[0]!.url.replace("1309097", "1309098");
+    if (kind === "不同剧") next.sourceRefs[0]!.url = next.sourceRefs[0]!.url.replace("146259", "146260");
+    if (kind === "未知镜站") next.sourceRefs[0]!.url = next.sourceRefs[0]!.url.replace("0996zp.com", "unknown.example");
+    if (kind === "同地址摘要变化") next.sourceRefs = structuredClone(old.sourceRefs);
+    if (kind === "缺证据") next.provenance!.nativeVideoDeepRead!.segmentEvidenceObjectNames!.pop();
+    if (kind === "错误证据来源") next.provenance!.nativeVideoDeepRead!.segmentEvidenceObjectNames![0] = next.provenance!.nativeVideoDeepRead!.segmentEvidenceObjectNames![0]!.replace("e".repeat(64), "a".repeat(64));
+    if (kind === "不完整") next.provenance!.nativeVideoDeepRead!.assemblyComplete = false;
+    if (kind === "旧批次") next.updatedAt = "2020-01-01T00:00:00Z";
+    if (kind === "时间轴缺口") next.provenance!.nativeVideoDeepRead!.segmentSpans![1]!.startSec += 2;
+    seedRollingEpisodeApprove(old as unknown as Record<string, unknown>, next as unknown as Record<string, unknown>);
+    if (!["完整镜站重学", "同源分批重学", "重试"].includes(kind)) {
+      await expect(approveManhuaViralTemplate({ id: nativeEpisodeId })).rejects.toThrow("严格进度升级");
+      expect(gcs.upload).not.toHaveBeenCalled();
+      return;
+    }
+    const { subscribeTemplateCatalog } = await import("./manhuaTemplateCatalogEvents");
+    const changed = vi.fn(); const stop = subscribeTemplateCatalog(changed);
+    let result: Awaited<ReturnType<typeof approveManhuaViralTemplate>>;
+    try { result = await approveManhuaViralTemplate({ id: nativeEpisodeId }); }
+    finally { stop(); }
+    if (kind !== "重试") expect(changed).toHaveBeenCalledTimes(1);
+    expect(result.publicCode).toBe("EPKEEP");
+    expect(result.beatGrid).toEqual(next.beatGrid);
+    if (kind === "重试") expect(gcs.upload.mock.calls.every(([p]) => p.objectName.includes("/proposals/"))).toBe(true);
+    else {
+      const archive = gcs.upload.mock.calls[0]![0];
+      expect(archive.objectName).toContain("/archive/");
+      expect(JSON.parse(archive.buffer.toString()).beatGrid).toEqual(old.beatGrid);
+      expect(result.provenance!.nativeVideoDeepRead!.successSegments).toBe(8);
+    }
+  });
+
   it("正式卡已有 2/4 时拒绝批准 1/4 倒退提案", async () => {
     const { approveManhuaViralTemplate } = await import("./manhuaViralTemplateStore");
     seedRollingEpisodeApprove(

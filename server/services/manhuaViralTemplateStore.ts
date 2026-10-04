@@ -1,5 +1,5 @@
 import { publishTemplateCatalogChanged } from "./manhuaTemplateCatalogEvents";
-import { isCompleteNativeEpisodeRelearn } from "../../shared/manhuaNativeEpisodeVersion.js";
+import { isCompleteNativeEpisodeRelearn, isSameBatchedNativeEpisodeOutput } from "../../shared/manhuaNativeEpisodeVersion.js";
 /**
  * 漫剧节奏模板动态库（GCS）。
  * proposals/ = 待审；approved/ = 人审通过。产品列表 = GCS approved
@@ -1359,7 +1359,10 @@ async function approveManhuaViralTemplateLocked(input: {
     if (previous?.batchRequestId && previous.batchRequestId === next?.batchRequestId
       && previous.structuredCardObjectName === next.structuredCardObjectName
       && ((previous.structuredCardObjectName && previous.structuredCardObjectName === next.structuredCardObjectName)
-        || (previous.glmParsedObjectName && previous.glmParsedObjectName === next.glmParsedObjectName))
+        || (previous.glmParsedObjectName && previous.glmParsedObjectName === next.glmParsedObjectName)
+        || (!previous.glmParsedObjectName && !next.glmParsedObjectName
+          && !previous.structuredCardObjectName && !next.structuredCardObjectName
+          && isSameBatchedNativeEpisodeOutput(existingApproved, card)))
       && previous.snapshotSha256 === next.snapshotSha256
       && previous.sourceDigest === next.sourceDigest
       && JSON.stringify(previous.segmentEvidenceObjectNames) === JSON.stringify(next.segmentEvidenceObjectNames)) {
@@ -1381,7 +1384,7 @@ async function approveManhuaViralTemplateLocked(input: {
       !previous
       || !next
       || !previous.sourceDigest
-      || previous.sourceDigest !== next.sourceDigest
+      || (!isCompleteRelearn && previous.sourceDigest !== next.sourceDigest)
       || (!isCompleteRelearn && (nextIndexes.length <= previousIndexes.length
         || !previousIndexes.every((index) => nextSet.has(index))))
     ) {
