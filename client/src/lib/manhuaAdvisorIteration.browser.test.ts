@@ -8,7 +8,7 @@ let browser: Browser;
 let bundle: string;
 let productionCss: string;
 beforeAll(async () => {
-  const result = await build({ stdin: { resolveDir: process.cwd(), loader: "tsx", contents: `
+  const result = await build({ loader: { ".css": "empty" }, stdin: { resolveDir: process.cwd(), loader: "tsx", contents: `
 import React,{useState} from 'react';import{createRoot}from'react-dom/client';
 import Panel from './client/src/components/canvas/ManhuaCreativeAdvisorPanel';
 import {ManhuaPrevisAudioControls} from './client/src/components/canvas/ManhuaPrevisAudioControls';
@@ -41,7 +41,7 @@ it("先提案不自动渲染，追问继承上版，用户选定后才渲染，�
   await page.waitForSelector('textarea[aria-label="向创作顾问提问"]');
   expect(await page.$eval('[data-manhua-creative-advisor]', e => Boolean(e.closest('[role=region][aria-label="本段动作白模"]')))).toBe(true);
   expect(await page.$('[data-scene-view]')).not.toBeNull();
-  expect(await page.$eval('[aria-label="今日咨询额度"]', e => e.textContent)).toContain("今日咨询免费剩余 5/5 次");
+  expect(await page.$eval('[aria-label="本作品咨询额度"]', e => e.textContent)).toContain("本作品免费剩余 5/5 次");
   await page.type('textarea', '曹三逼近时加强压迫感'); await page.keyboard.press('Enter');
   await page.waitForFunction(() => document.body.textContent?.includes('先缓推强化威胁'));
   expect(await page.$('[data-scene-view]')).not.toBeNull();

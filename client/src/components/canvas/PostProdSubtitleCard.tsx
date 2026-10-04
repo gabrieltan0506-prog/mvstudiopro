@@ -24,7 +24,7 @@ export function PostProdSubtitleCard({ clips, busy, onSubmit, context, storageKe
   const [submitting, setSubmitting] = useState(false);
   const gate = useRef(false);
   const advisor = trpc.mvAnalysis.askPlatformSkillQa.useMutation({ retry: false });
-  const quota = trpc.mvAnalysis.getManhuaAdvisorQuota.useQuery(undefined, { enabled: Boolean(context), retry: false });
+  const quota = trpc.mvAnalysis.getManhuaAdvisorQuota.useQuery(context?.projectId ? { projectId: context.projectId } : undefined, { enabled: Boolean(context), retry: false });
   const [dialogue, setDialogue] = useState(() => [context?.episodeBody, context?.shotSummary].filter(Boolean).join("\n\n"));
   const [report, setReport] = useState(() => { try { return localStorage.getItem(`${storageKey}:report`) || ""; } catch { return ""; } });
   const [advisorError, setAdvisorError] = useState("");

@@ -1,3 +1,5 @@
+import { MANHUA_ADVISOR_PROJECT_FREE, MANHUA_ADVISOR_PAID_CREDITS } from "../shared/manhuaAdvisorPolicy";
+import { assertAdvisorProject, readAdvisorProjectQuota, reserveAdvisorProjectQuota, releaseAdvisorProjectQuota } from "./services/manhuaAdvisorProjectQuota";
 import { novelWorkspaceRouter } from "./routers/novelWorkspace";
 import { createKnowledgeCardPageJob, reserveKnowledgeCardImageJob, checkKnowledgeCardImageMaySubmit } from "./jobs/knowledgeCardPageTask";
 import { novelExcerptSchema } from "../shared/manhuaNovelSource.js";
@@ -6747,12 +6749,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
      * 若检测到生图意图，返回 imageOffer（须用户再点确认才扣费生图）。
      */
     /** 进入顾问即展示额度；未知额度不得当作免费，也不触发模型或扣费。 */
-    getManhuaAdvisorQuota: protectedProcedure.query(async ({ ctx }) => {
+    getManhuaAdvisorQuota: protectedProcedure.input(z.object({ projectId: z.string().uuid().optional() }).optional()).query(async ({ ctx, input }) => {
+      await assertAdvisorProject(ctx.user.id, input?.projectId);
       const exempt = ctx.user.role === "admin" || ctx.user.role === "supervisor";
-      const { countPlatformSkillQaToday } = await import("./services/platformSkillQa.js");
-      const { resolvePlatformSkillQaPaidCredits } = await import("./config/platformSwitches.js");
-      const used = exempt ? 0 : await countPlatformSkillQaToday(ctx.user.id, "terra", true);
-      return { dailyLimit: 5, remaining: Math.max(0, 5 - used), price: resolvePlatformSkillQaPaidCredits("terra"), exempt, resetsAt: new Date((Math.floor((Date.now() + 8 * 3600_000) / 86400_000) + 1) * 86400_000 - 8 * 3600_000).toISOString() };
+      const quota = exempt ? { used: 0, remaining: MANHUA_ADVISOR_PROJECT_FREE } : await readAdvisorProjectQuota(ctx.user.id, input?.projectId);
+      return { dailyLimit: MANHUA_ADVISOR_PROJECT_FREE, remaining: quota.remaining, price: MANHUA_ADVISOR_PAID_CREDITS, exempt, scope: "project" as const };
     }),
 
     askPlatformSkillQa: protectedProcedure
@@ -6814,9 +6815,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const { platformSkillQaDailyFreeLimit } = await import("../shared/plans.js");
         const qaMode = resolveSkillQaBillingMode(input.qaModel);
         const qaModel = input.qaModel || "gpt-5.6-terra";
-        const advisorTierLabel = qaMode === "sol" ? "深度顾问" : "标准顾问";
-        const dailyLimit = platformSkillQaDailyFreeLimit(qaMode);
-        const paidUnit = resolvePlatformSkillQaPaidCredits(qaMode);
+        const dailyLimit = input.manhuaContext ? MANHUA_ADVISOR_PROJECT_FREE : platformSkillQaDailyFreeLimit(qaMode);
+        const paidUnit = input.manhuaContext ? MANHUA_ADVISOR_PAID_CREDITS : resolvePlatformSkillQaPaidCredits(qaMode);
 
         let advisorOperationInput:
           | {
@@ -6877,16 +6877,18 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           }
         }
 
+        // 已有回执先按账户/请求指纹回放；云存储临时不可用不应阻止取回已付费结果。
+        if (input.manhuaContext) await assertAdvisorProject(ctx.user.id, input.manhuaContext.projectId);
         const usedToday = isAdminUser
           ? 0
-          : await countPlatformSkillQaToday(ctx.user.id, qaMode, Boolean(input.manhuaContext));
+          : input.manhuaContext ? (await readAdvisorProjectQuota(ctx.user.id, input.manhuaContext.projectId)).used : await countPlatformSkillQaToday(ctx.user.id, qaMode, false);
         let needPay = !isAdminUser && usedToday >= dailyLimit;
 
         if (needPay && (!input.confirmPaid || (advisorOperationInput && input.confirmedCredits !== paidUnit))) {
           throw new TRPCError({
             code: "PAYMENT_REQUIRED",
             message: advisorOperationInput
-              ? `今日${advisorTierLabel}免费 ${dailyLimit} 次已用完。继续将扣除 ${paidUnit} 积分/次，请确认后重试。`
+              ? `本作品免费 ${dailyLimit} 次已用完。继续将扣除 ${paidUnit} 积分/次，请确认后重试。`
               : `今日${qaMode === "sol" ? " Sol" : " Terra"}免费 ${dailyLimit} 次已用完。继续将扣除 ${paidUnit} 积分/次（成本+60%）。请确认后重试。`,
           });
         }
@@ -6938,22 +6940,29 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           }
 
           const jobId = operation.jobId;
-          let freeQuotaDay: string | undefined;
+          let projectFreeReserved = false;
+          let projectQuotaUsed = usedToday;
           if (!isAdminUser) {
-            const { reserveAdvisorDailyQuota } = await import("./services/manhuaAdvisorDailyQuota.js");
-            const quota = await reserveAdvisorDailyQuota(ctx.user.id, "consult", input.requestId!);
+            let quota: Awaited<ReturnType<typeof reserveAdvisorProjectQuota>>;
+            try { quota = await reserveAdvisorProjectQuota(ctx.user.id, input.manhuaContext?.projectId, input.requestId!); }
+            catch (error) {
+              // 尚未扣费/调用模型，保留同编号恢复；数据库回执不明也不能重领一个请求。
+              const { awaitManhuaAdvisorPaymentConfirmation } = await import("./services/manhuaAdvisorOperation.js");
+              await awaitManhuaAdvisorPaymentConfirmation(jobId);
+              throw error;
+            }
+            projectQuotaUsed = quota.used;
             needPay = !quota.reserved;
-            if (quota.reserved) freeQuotaDay = quota.day;
+            projectFreeReserved = quota.reserved;
             if (needPay && (!input.confirmPaid || input.confirmedCredits !== paidUnit)) {
               const { awaitManhuaAdvisorPaymentConfirmation } = await import("./services/manhuaAdvisorOperation.js");
               if (!await awaitManhuaAdvisorPaymentConfirmation(jobId)) throw new TRPCError({ code: "CONFLICT", message: "原请求状态正在变化，请查询原请求" });
-              throw new TRPCError({ code: "PAYMENT_REQUIRED", message: `今日咨询免费 ${dailyLimit} 次已用完。继续将扣除 ${paidUnit} 积分/次，请确认后重试。` });
+              throw new TRPCError({ code: "PAYMENT_REQUIRED", message: `本作品免费 ${dailyLimit} 次已用完。继续将扣除 ${paidUnit} 积分/次，请确认后重试。` });
             }
           }
           const restoreFreeQuota = async () => {
-            if (!freeQuotaDay) return;
-            const { releaseAdvisorDailyQuota } = await import("./services/manhuaAdvisorDailyQuota.js");
-            await releaseAdvisorDailyQuota(ctx.user.id, "consult", input.requestId!, freeQuotaDay);
+            if (!projectFreeReserved) return;
+            await releaseAdvisorProjectQuota(ctx.user.id, input.manhuaContext?.projectId, input.requestId!);
           };
           const taskType = MANHUA_ADVISOR_TASK_TYPE;
           const chargeKey = `${taskType}/${jobId}`.slice(0, 120);
@@ -7101,7 +7110,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 qaModel,
                 manhuaContext: input.manhuaContext,
                 paidCreditsAlreadyCharged: deducted.cost,
-                freeQuotaReserved: Boolean(freeQuotaDay),
+                freeQuotaReserved: projectFreeReserved,
+                projectQuotaUsed,
                 onStream: ctx.advisorStream,
               });
               const completed = { success: true as const, ...result };

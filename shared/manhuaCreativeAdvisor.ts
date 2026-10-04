@@ -90,6 +90,8 @@ export const manhuaCreativeAdvisorHistoryMessageSchema = z
 
 export const manhuaCreativeAdvisorContextSchema = z
   .object({
+    /** Stable cloud project identity for account-scoped billing; absent = legacy workspace. */
+    projectId: z.string().uuid().optional(),
     seriesTitle: contextText(
       MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.seriesTitleChars,
       "剧名",

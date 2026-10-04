@@ -1,3 +1,4 @@
+import { useManhuaAdvisorPreference } from "@/hooks/useManhuaAdvisorPreference";
 import { ManhuaLocalRecovery } from "@/components/ManhuaLocalRecovery";
 import { clearDraftBaseGeneration, isCloudDraftConflict, readDraftBaseGeneration, saveDraftBaseGeneration } from "@/lib/manhuaDraftRecovery";
 import { currentManhuaProjectScope, parseManhuaProjectScope } from "@shared/manhuaProjectScope";
@@ -1467,8 +1468,7 @@ function OmniCanvasWorkspace() {
       Boolean(initialWriterSession?.writerConfirmed),
     ),
   );
-  /** 创作顾问面板开合：会话内不持久化——顾问是随手问，不是常驻工序 */
-  const [advisorOpen, setAdvisorOpen] = useState(false);
+  const { open: advisorOpen, setOpen: setAdvisorOpen, enabled: advisorEnabled, choose: chooseAdvisorVisibility } = useManhuaAdvisorPreference(user?.id != null ? String(user.id) : undefined);
   const advisor3dOpenVersion = useRef(0);
   const [advisor3dContext, setAdvisor3dContext] = useState<{ directionCardId?: string; directionCardVersion?: string; worldTarget?: AdvisorWorldTarget } | undefined>();
   const [advisorPreviewHost, setAdvisorPreviewHost] = useState<HTMLDivElement | null>(null);
@@ -1581,6 +1581,7 @@ function OmniCanvasWorkspace() {
     };
   }, [writerPack, writerLayoutProfile, writerFocusEpisode, projectBible?.assetCanon?.characters]);
   const advisorProject = useMemo(() => buildManhuaAdvisorProject({
+    projectId: projectScope?.projectId,
     pack: writerPack,
     bible: projectBible,
     episodeIndex: writerFocusEpisode,
@@ -1603,7 +1604,7 @@ function OmniCanvasWorkspace() {
     writerBusy,
     factoryBusy,
     assembleBusy,
-  }), [writerPack, projectBible, writerFocusEpisode, workflowPhase, explicitWriterVideoModel, writerConfirmed, customAssetRefs, blocks, advisorSelection, advisorGate, advisorSignals, assembleBusy, factoryBusy, writerBusy]);
+  }), [projectScope?.projectId, writerPack, projectBible, writerFocusEpisode, workflowPhase, explicitWriterVideoModel, writerConfirmed, customAssetRefs, blocks, advisorSelection, advisorGate, advisorSignals, assembleBusy, factoryBusy, writerBusy]);
   const advisorPrevisEditing = useMemo(() => {
     if (!advisorPrevisClipId) return {};
     const clip = blocks.find(b => b.id === advisorPrevisClipId && !b.archivedFromPreviousScript);
@@ -10046,7 +10047,7 @@ function OmniCanvasWorkspace() {
       aria-expanded={advisorOpen}
       aria-label={`创作顾问${advisorNeedsAttention ? `，${advisorNeedsAttention} 项需处理` : ""}`}
       className="shrink-0 whitespace-nowrap rounded-lg border border-cyan-300/35 bg-cyan-400/10 px-3 py-2 text-[18px] font-bold text-cyan-100 hover:bg-cyan-400/20"
-      onClick={() => { setAdvisorPrevisClipId(null); advisor3dOpenVersion.current += 1; setAdvisor3dContext(undefined); setAdvisorFocusSection(null); setAdvisorOpen(true); setAdvisorNudge(null); }}
+      onClick={() => { setAdvisorPrevisClipId(null); advisor3dOpenVersion.current += 1; setAdvisor3dContext(undefined); setAdvisorFocusSection(null); chooseAdvisorVisibility(true); setAdvisorNudge(null); }}
     >
       创作顾问<span aria-live="polite">{advisorNeedsAttention ? ` (${advisorNeedsAttention})` : ""}</span>
     </button>
@@ -10269,6 +10270,7 @@ function OmniCanvasWorkspace() {
   return (
     <div
       data-manhua-theme={canvasMode === "manhua" ? "cream" : undefined}
+      data-advisor-sidebar={canvasMode === "manhua" && advisorOpen && !advisorDockHost ? "open" : undefined}
       className={
         immersiveWorkbench
           ? "flex h-dvh flex-col overflow-hidden bg-transparent text-white"
@@ -10503,7 +10505,7 @@ function OmniCanvasWorkspace() {
                       : advisorTopIssue;
                     if (picked) locateAdvisorIssue(picked);
                     setAdvisorFocusSection(null);
-                    setAdvisorOpen(true);
+                    chooseAdvisorVisibility(true);
                   }}
                   onOpenAdvisor3d={canUseManhua3d ? async (clipId, sceneRefId, mode = "world") => {
                     const openVersion = ++advisor3dOpenVersion.current;
@@ -10516,7 +10518,7 @@ function OmniCanvasWorkspace() {
                     if (openVersion !== advisor3dOpenVersion.current || (scene && evaluateManhuaWorld3dEligibility(latestCustomAssetRefs.current.find(ref => ref.id === scene.id) || {}).sourceVersion !== eligibility?.sourceVersion)) return;
                     setAdvisorPrevisClipId(null);
                     setAdvisor3dContext({ ...(direction ? { directionCardId: direction.card.id, directionCardVersion: direction.card.version } : {}), ...(worldTarget ? { worldTarget } : {}) });
-                    setAdvisorFocusSection(null); setAdvisorOpen(true);
+                    setAdvisorFocusSection(null); chooseAdvisorVisibility(true);
                   } : undefined}
                   advisorOpen={advisorOpen}
                   advisorPrevisActiveClipId={advisorPrevisClipId}
@@ -10524,11 +10526,11 @@ function OmniCanvasWorkspace() {
                   onAdvisorAudioRequestHandled={id => setAdvisorAudioRequest(current => current?.id === id ? null : current)}
                   onAdvisorDockChange={setAdvisorDockHost}
                   onAdvisorPreviewHostChange={setAdvisorPreviewHost}
-                  onOpenAdvisorPrevis={canUseManhua3d ? (clipId, requestId) => { setAdvisorSelection({ episodeIndex: writerFocusEpisode, shot: null, segmentIndex: resolveClipLocalSegmentIndex(clipId, blocksRef.current.find(b => b.id === clipId)?.prompt, writerFocusEpisode) }); setAdvisorPreviewSelection({ clipId, requestId }); advisor3dOpenVersion.current += 1; setAdvisor3dContext(undefined); setAdvisorPrevisClipId(clipId); setAdvisorFocusSection(null); setAdvisorOpen(true); } : undefined}
+                  onOpenAdvisorPrevis={canUseManhua3d ? (clipId, requestId) => { setAdvisorSelection({ episodeIndex: writerFocusEpisode, shot: null, segmentIndex: resolveClipLocalSegmentIndex(clipId, blocksRef.current.find(b => b.id === clipId)?.prompt, writerFocusEpisode) }); setAdvisorPreviewSelection({ clipId, requestId }); advisor3dOpenVersion.current += 1; setAdvisor3dContext(undefined); setAdvisorPrevisClipId(clipId); setAdvisorFocusSection(null); chooseAdvisorVisibility(true); } : undefined}
                   onOpenAdvisorTemplates={() => {
                     setAdvisorPrevisClipId(null); advisor3dOpenVersion.current += 1; setAdvisor3dContext(undefined);
                     setAdvisorFocusSection("templates");
-                    setAdvisorOpen(true);
+                    chooseAdvisorVisibility(true);
                   }}
                   rewriteWorkspace={<ManhuaOutlineTemplateRewrite
                     key={manhuaAdvisorMountKey(user?.id != null ? String(user.id) : undefined, projectBible?.confirmedAt, writerPack)}
@@ -11984,7 +11986,7 @@ function OmniCanvasWorkspace() {
                     setAdvisorPrevisClipId(null);
                     setAdvisorFocusSection(null);
                     setAdvisorQuestionSeed({ id: crypto.randomUUID(), question: buildTemplateAdviceQuestion(card), projectKey: manhuaAdvisorMountKey(user?.id != null ? String(user.id) : undefined, projectBible?.confirmedAt, writerPack) });
-                    setAdvisorOpen(true);
+                    chooseAdvisorVisibility(true);
                   }}
                 />
                 {manhuaViralTemplatesQuery.isSuccess && approvedViralTemplateCards.length === 0 ? (
@@ -13644,7 +13646,7 @@ function OmniCanvasWorkspace() {
                 onClick={() => {
                   if (advisorTopIssue) locateAdvisorIssue(advisorTopIssue);
                   setAdvisorFocusSection(null);
-                  setAdvisorOpen(true);
+                  chooseAdvisorVisibility(true);
                   setAdvisorNudge(null);
                 }}
               >
@@ -13658,6 +13660,8 @@ function OmniCanvasWorkspace() {
       <ManhuaCreativeAdvisorPanel
         key={manhuaAdvisorMountKey(user?.id != null ? String(user.id) : undefined, projectBible?.confirmedAt, writerPack)}
         userId={user?.id != null ? String(user.id) : undefined}
+        projectId={projectScope?.projectId}
+        automaticMonitoring={canvasMode === "manhua" && advisorEnabled && !writerBusy && !factoryBusy && !cloudConflict}
         confirmedProjectVersion={projectBible?.confirmedAt}
         project={advisorProject}
         dockHost={advisorDockHost}
@@ -13697,7 +13701,7 @@ function OmniCanvasWorkspace() {
           locateAdvisorIssue(issue);
         }}
         open={canvasMode === "manhua" && advisorOpen}
-        onClose={() => { advisor3dOpenVersion.current += 1; setAdvisorOpen(false); setAdvisorFocusSection(null); }}
+        onClose={() => { advisor3dOpenVersion.current += 1; chooseAdvisorVisibility(false); setAdvisorFocusSection(null); }}
         stageZh={MANHUA_ADVISOR_STAGE_LABELS[workflowPhase]}
         selectedTemplate={selectedViralTemplate}
         templates={approvedViralTemplateCards}

@@ -1,3 +1,4 @@
+import { MANHUA_ADVISOR_PROJECT_FREE, MANHUA_ADVISOR_PAID_CREDITS } from "../../shared/manhuaAdvisorPolicy";
 import { askManhuaBgmMix, MANHUA_BGM_ADVISOR_MODEL } from "./manhuaAdvisorBgmMix";
 import { askManhuaSubtitleReview } from "./manhuaAdvisorSubtitle";
 import { parseAdvisorBgmMixPlan } from "../../shared/manhuaAdvisorBgmMix";
@@ -672,6 +673,8 @@ export async function askPlatformSkillQa(params: {
   paidCreditsAlreadyCharged?: number;
   /** 服务端已原子占用本次免费咨询，不能由客户端传入。 */
   freeQuotaReserved?: boolean;
+  /** Server-only project ledger receipt; never accepted from the browser. */
+  projectQuotaUsed?: number;
 }): Promise<PlatformSkillQaAskResult> {
   const question = String(params.question || "").trim();
   if (question.length < 2) throw new Error("请先输入问题");
@@ -705,10 +708,10 @@ export async function askPlatformSkillQa(params: {
   }
 
   const qaMode = resolveSkillQaBillingMode(params.qaModel);
-  const dailyLimit = platformSkillQaDailyFreeLimit(qaMode);
-  const paidUnit = resolvePlatformSkillQaPaidCredits(qaMode);
-  const usedToday = params.isAdmin ? 0 : await countPlatformSkillQaToday(params.userId, qaMode, Boolean(manhuaContext));
-  const withinFree = params.isAdmin || params.freeQuotaReserved || usedToday < dailyLimit;
+  const dailyLimit = manhuaContext ? MANHUA_ADVISOR_PROJECT_FREE : platformSkillQaDailyFreeLimit(qaMode);
+  const paidUnit = manhuaContext ? MANHUA_ADVISOR_PAID_CREDITS : resolvePlatformSkillQaPaidCredits(qaMode);
+  const usedToday = params.isAdmin ? 0 : manhuaContext ? (params.projectQuotaUsed ?? dailyLimit) : await countPlatformSkillQaToday(params.userId, qaMode, false);
+  const withinFree = params.isAdmin || (manhuaContext ? params.freeQuotaReserved === true : usedToday < dailyLimit);
   const prepaidCredits = Math.max(
     0,
     Math.floor(Number(params.paidCreditsAlreadyCharged) || 0),

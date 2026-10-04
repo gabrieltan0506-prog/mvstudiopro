@@ -11,7 +11,7 @@ export function BgmCreativeAdvisor({context,target,storageKey,onApply}: {
   storageKey:string; onApply:(plan:AdvisorBgmMixPlan)=>void;
 }) {
   const mutation=trpc.mvAnalysis.askPlatformSkillQa.useMutation({retry:false});
-  const quota=trpc.mvAnalysis.getManhuaAdvisorQuota.useQuery(undefined,{enabled:Boolean(target&&context),retry:false});
+  const quota=trpc.mvAnalysis.getManhuaAdvisorQuota.useQuery(context?.projectId ? { projectId: context.projectId } : undefined,{enabled:Boolean(target&&context),retry:false});
   const [candidate,setCandidate]=useState<AdvisorBgmMixPlan|null>(null);
   const [question,setQuestion]=useState("结合本段真实画面、对白和已采用BGM，判断音乐如何配合剧情张力、眼神与表演，给出强弱与留白安排。音乐可以补充对白，不要统一压低。");
   const [error,setError]=useState("");

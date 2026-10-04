@@ -1,3 +1,5 @@
+import { Streamdown } from "streamdown";
+import { automaticAdvisorContext, automaticAdvisorRequestId, MANHUA_ADVISOR_AUTO_QUESTION, MANHUA_ADVISOR_PAID_CREDITS } from "@shared/manhuaAdvisorPolicy";
 import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
 import { advisorWorldCandidateSchema, parseAdvisorWorldPlan, type AdvisorWorldTarget, type AdvisorWorldCandidate } from "@shared/manhuaAdvisorWorld";
 import { advisorPrevisVideoSourceSchema, withAdvisorPrevisVideo, type AdvisorPrevisVideoSource } from "@shared/manhuaAdvisorPrevisEdit";
@@ -52,6 +54,8 @@ export default function ManhuaCreativeAdvisorPanel(props: {
   onClose: () => void;
   stageZh?: string;
   userId?: string;
+  projectId?: string;
+  automaticMonitoring?: boolean;
   confirmedProjectVersion?: string;
   project?: ReturnType<typeof buildManhuaAdvisorProject>;
   onLocate?: (issue: AdvisorIssue) => void;
@@ -64,7 +68,21 @@ export default function ManhuaCreativeAdvisorPanel(props: {
   onQuestionSeedApplied?: () => void;
 }) {
   const { open, onClose, userId, confirmedProjectVersion, project, onLocate, stageZh, selectedTemplate, templates, onRequestTrial } = props;
-  const sessionKey = userId && confirmedProjectVersion ? manhuaAdvisorSessionKey(userId, confirmedProjectVersion) : null;
+  const draftSessionKey = userId ? manhuaAdvisorSessionKey(userId, props.projectId ? `draft:${props.projectId}` : "legacy-draft") : null;
+  // 保留已上线的已确认稿键；新建作品未确认时也能保存恢复编号。
+  const sessionKey = userId && confirmedProjectVersion ? manhuaAdvisorSessionKey(userId, confirmedProjectVersion) : draftSessionKey;
+  function inheritDraftConversation(key: string, suffix = "") {
+    if (!sessionKey || !draftSessionKey || sessionKey === draftSessionKey || localStorage.getItem(`${key}:draft-inherited`) === draftSessionKey) return;
+    const sourceKey = draftSessionKey + suffix;
+    const draft = localStorage.getItem(sourceKey);
+    // 同一草稿请求也不能在下一次确认稿时重新继承；来源全文保留供恢复。
+    if (suffix === ":pending" && draft !== null && localStorage.getItem(`${sourceKey}:inherited-record`) === draft) return;
+    if (draft !== null && localStorage.getItem(key) === null) {
+      localStorage.setItem(key, draft);
+      if (suffix === ":pending") localStorage.setItem(`${sourceKey}:inherited-record`, draft);
+    }
+    if (draft !== null) localStorage.setItem(`${key}:draft-inherited`, draftSessionKey); // 完整保留来源；已结束的 pending 不在重开时复活。
+  }
   const previsKey = sessionKey ? `${sessionKey}:previs-edit` : null;
   const worldKey = sessionKey ? `${sessionKey}:world-plan` : null;
   const [worldCandidate, setWorldCandidate] = useState<AdvisorWorldCandidate | null>(() => {
@@ -114,12 +132,12 @@ export default function ManhuaCreativeAdvisorPanel(props: {
   const recoveryKey = sessionKey ? `${sessionKey}:pending` : null;
   // 宿主用用户/已确认项目版本 key 重建面板，旧项目的在途答复不得写入新项目。
   const [initial] = useState<AdvisorMessagesLoadResult>(() => {
-    try { return sessionKey ? loadAdvisorMessages(localStorage, sessionKey) : { turns: [], error: "", writable: true }; }
+    try { if (sessionKey) inheritDraftConversation(sessionKey); return sessionKey ? loadAdvisorMessages(localStorage, sessionKey) : { turns: [], error: "", writable: true }; }
     catch { return { turns: [], error: "本机历史无法读取。为保护原记录，已停止新的问答与扣点；请检查浏览器存储后刷新。", writable: false }; }
   });
   const [turns, setTurns] = useState<AdvisorMessage[]>(initial.turns);
   const [initialRecovery] = useState<AdvisorRecoveryLoadResult>(() => {
-    try { return recoveryKey ? loadAdvisorPendingRecovery(localStorage, recoveryKey) : { value: null, error: "" }; }
+    try { if (recoveryKey) inheritDraftConversation(recoveryKey, ":pending"); return recoveryKey ? loadAdvisorPendingRecovery(localStorage, recoveryKey) : { value: null, error: "" }; }
     catch { return { value: null, error: "上次问答的恢复记录无法读取，原记录未覆盖。" }; }
   });
   const [storageError, setStorageError] = useState(initial.error);
@@ -148,7 +166,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
   const listRef = useRef<HTMLDivElement | null>(null);
   const templateSectionRef = useRef<HTMLElement | null>(null);
   const asking = streamPending;
-  const quotaQuery = trpc.mvAnalysis.getManhuaAdvisorQuota.useQuery(undefined, { enabled: open && Boolean(userId), staleTime: 0, retry: false, refetchOnWindowFocus: true });
+  const quotaQuery = trpc.mvAnalysis.getManhuaAdvisorQuota.useQuery(props.projectId ? { projectId: props.projectId } : undefined, { enabled: (open || Boolean(props.automaticMonitoring)) && Boolean(userId), staleTime: 0, retry: false, refetchOnWindowFocus: true });
   useEffect(() => { if (quotaQuery.data) setQuota({ remaining: quotaQuery.data.remaining, price: quotaQuery.data.price }); }, [quotaQuery.data?.remaining, quotaQuery.data?.price]);
   const sessionStorageBlocked = Boolean((sessionKey && !initial.writable) || initialRewrite.error);
   // 唯一 pending 槽仍属于这个非终态请求；先恢复，不能被新问题覆盖。
@@ -187,7 +205,8 @@ export default function ManhuaCreativeAdvisorPanel(props: {
   async function submit(request: PendingQuestion, confirmPaid: boolean, confirmedCredits?: number) {
     if (inFlight.current || !userId || sessionStorageBlocked) return;
     if (!request.manhuaContext) { toast.error("请先选择漫剧项目，再向创作顾问提问；本次未调用模型。"); return; }
-    if (!quotaQuery.data || quotaQuery.isError) { toast.error("暂时无法核对今日额度，本次未提交、未扣费。请刷新额度后重试。"); return; }
+    const recovering = initialRecovery.value?.request.requestId === request.requestId || (failed?.newAttempt !== true && failed?.request.requestId === request.requestId);
+    if ((!quotaQuery.data || quotaQuery.isError) && !recovering) { toast.error("暂时无法核对本作品额度，本次未提交、未扣费。请刷新额度后重试。"); return; }
     const capturedSessionKey = sessionKey;
     const capturedRecoveryKey = recoveryKey;
     const capturedPrevisKey = previsKey;
@@ -272,6 +291,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
       if (mounted.current) {
         setTurns((prev) => mergeAdvisorCompletedExchange(prev, request, answer));
         setQuota({ remaining: res.remainingFreeToday, price: res.paidUnitCredits });
+        void quotaQuery.refetch();
         if (res.paidThisTurn && res.creditsCharged > 0) toast.message(`问答扣点回执：${res.creditsCharged} 积分；恢复回执不代表再次扣点`);
       }
       if (capturedRecoveryKey && recoveryWritten && persisted) {
@@ -299,7 +319,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     try {
       if (project && questionContext) questionContext = resolveAdvisorVideoPromptContext({ context: questionContext, question, drafts: project.videoPromptDrafts, selectedSegmentIndex: project.selectedSegmentIndex });
     } catch (error) { toast.error(error instanceof Error ? error.message : "无法读取本段提示词"); return; }
-    const result = questionContext ? manhuaCreativeAdvisorContextSchema.safeParse({ ...questionContext, history: advisorRecentHistory(turns), ...(previsEdit ? { previsEdit } : {}), ...(props.studio3d ? { studio3d: { directionCardId: props.studio3d.directionCardId, directionCardVersion: props.studio3d.directionCardVersion } } : {}), ...(props.worldTarget ? { worldTarget: props.worldTarget } : {}) }) : null;
+    const result = questionContext ? manhuaCreativeAdvisorContextSchema.safeParse({ ...questionContext, ...(props.projectId ? { projectId: props.projectId } : {}), history: advisorRecentHistory(turns), ...(previsEdit ? { previsEdit } : {}), ...(props.studio3d ? { studio3d: { directionCardId: props.studio3d.directionCardId, directionCardVersion: props.studio3d.directionCardVersion } } : {}), ...(props.worldTarget ? { worldTarget: props.worldTarget } : {}) }) : null;
     if (result && !result.success) {
       toast.error("当前上下文超出读取范围或包含不适合发送的内容", {
         description: result.error.issues.map(formatManhuaAdvisorContextIssue).join("；"),
@@ -360,6 +380,27 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     });
   }
 
+  const automaticSeen = useRef(new Set<string>());
+  const autoSnapshot = project && project.context.episodeBody.trim()
+    ? JSON.stringify(automaticAdvisorContext({ ...project.context, ...(props.projectId ? { projectId: props.projectId } : {}) })) : "";
+  useEffect(() => {
+    if (!props.automaticMonitoring || !userId || !autoSnapshot || draft.trim() || creationMode || asking || pendingPaid || failed || sessionStorageBlocked || !quotaQuery.data || quotaQuery.isError) return;
+    const quotaSnapshot = quotaQuery.data;
+    let cancelled = false;
+    const timer = window.setTimeout(() => { void (async () => {
+      const context = manhuaCreativeAdvisorContextSchema.parse(JSON.parse(autoSnapshot));
+      const requestId = await automaticAdvisorRequestId(userId, context);
+      if (cancelled || inFlight.current || automaticSeen.current.has(requestId) || turns.some(t => t.id === `${requestId}:answer`)) return;
+      automaticSeen.current.add(requestId);
+      const request: PendingQuestion = { requestId, question: MANHUA_ADVISOR_AUTO_QUESTION, rawQuestion: MANHUA_ADVISOR_AUTO_QUESTION,
+        manhuaContext: context, label: `自动检查 · 第 ${context.episodeIndex} 集 · ${MANHUA_ADVISOR_STAGE_LABELS[context.stage]} · ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}` };
+      if (!quotaSnapshot.exempt && quotaSnapshot.remaining === 0) {
+        setPendingPaid({ request, credits: MANHUA_ADVISOR_PAID_CREDITS, hint: `本作品 5 次免费建议已用完。自动检查本步骤需要 ${MANHUA_ADVISOR_PAID_CREDITS} 积分，确认后才会提交。` });
+      } else { await submit(request, false); }
+    })().catch(error => { if (!cancelled) toast.error(error instanceof Error ? error.message : "自动检查未能开始"); }); }, 8000);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [autoSnapshot, props.automaticMonitoring, userId, draft, creationMode, asking, pendingPaid, failed, sessionStorageBlocked, quotaQuery.data, quotaQuery.isError, turns]);
+
   if (!open && !(previsCandidate && props.previewHost)) return null;
   const currentStage = project ? MANHUA_ADVISOR_STAGE_LABELS[project.context.stage] : stageZh || "创作咨询";
   function recoverPreviews() {
@@ -405,16 +446,16 @@ export default function ManhuaCreativeAdvisorPanel(props: {
         <details className="rounded-lg border border-white/10 p-2 text-xs"><summary className="cursor-pointer text-white/65">咨询额度与快捷提问</summary>
         <button type="button" disabled={!userId || !project || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={() => { setDraft("请结合当前剧情、导演包与镜头规格，优化运镜、灯光、场景氛围和演员表演。逐镜写明一位小数秒窗、摄影机起终位置、移动方向、FOV/景别、焦点与光源变化；说明氛围随事件怎样变化，以及各角色的意图、喜怒哀乐、眼神/微表情、身体和听者反应。区分白模已表达和正式影片还需补充的技巧。保留人物、动作和已确认音轨，只给建议，不生成、重渲染或自动采用。"); questionRef.current?.focus(); }} className="mb-2 rounded-md border border-cyan-300/30 px-3 py-2 text-xs text-cyan-100 hover:bg-cyan-500/10 disabled:opacity-40">优化摄影、氛围与表演</button>
         {!creationMode && <div className="mb-2 flex flex-wrap gap-2">{quick.map(([label, question]) => <button key={label} type="button" disabled={!userId || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={() => send(question!)} className="rounded-md border border-white/15 px-2 py-1.5 text-xs text-white/75 hover:border-cyan-300/60 disabled:opacity-40">{label}</button>)}</div>}
-        <p className="mt-2 text-[11px] leading-4 text-white/45">{props.previsTarget ? "说“生成试看”会直接渲染到本页；可以多轮修改，满意后点击应用。" : "顾问意见仅供参考，由你选择是否采纳；不会自动修改项目或生成素材。工厂会生成提示词，无需从零手填。"}{sessionKey ? "历史按已确认项目版本保存在本机。" : "未确认稿仅保留本次页面会话，改稿后重新咨询。"}追问携带最近 8 条，长答复标记为节选。</p>
-        <section aria-label="今日咨询额度" className="mt-2 rounded-lg border border-cyan-300/25 bg-cyan-400/5 p-3 text-xs leading-5" aria-live="polite">
-          {quotaQuery.isError ? <p role="alert">额度暂时无法读取；未提交、未扣费。<button type="button" onClick={() => void quotaQuery.refetch()} className="ml-2 underline">刷新额度</button></p> : !quota ? <p>正在读取今日免费额度…</p> : quotaQuery.data?.exempt ? <p>管理员测试：咨询免扣积分。</p> : <><p className="font-semibold">今日咨询免费剩余 {quota.remaining}/5 次</p><p>{quota.remaining ? "本次咨询免费。" : `免费次数已用完，继续咨询需 ${quota.price} 积分/次；提交前请确认。`}每天北京时间 00:00 更新。</p></>}
+        <p className="mt-2 text-[11px] leading-4 text-white/45">{props.previsTarget ? "说“生成试看”会直接渲染到本页；可以多轮修改，满意后点击应用。" : "顾问意见仅供参考，由你选择是否采纳；不会自动修改项目或生成素材。工厂会生成提示词，无需从零手填。"}{sessionKey ? "对话与恢复记录保存在本机，按作品和稿件版本区分。" : "登录后可保存对话与恢复记录。"}追问携带最近 8 条，长答复标记为节选。</p>
+        <section aria-label="本作品咨询额度" className="mt-2 rounded-lg border border-cyan-300/25 bg-cyan-400/5 p-3 text-xs leading-5" aria-live="polite">
+          {quotaQuery.isError ? <p role="alert">额度暂时无法读取；未提交、未扣费。<button type="button" onClick={() => void quotaQuery.refetch()} className="ml-2 underline">刷新额度</button></p> : !quota ? <p>正在读取本作品免费额度…</p> : quotaQuery.data?.exempt ? <p>管理员测试：咨询免扣积分。</p> : <><p className="font-semibold">本作品免费剩余 {quota.remaining}/5 次</p><p>{quota.remaining ? "本次咨询免费。" : `免费次数已用完，继续咨询需 ${quota.price} 积分/次；提交前请确认。`}每部作品共 5 次，手动提问与自动建议共用，不按天重置。</p></>}
           <p className="text-white/65">查看已有建议、播放已有试看和应用方案不收费。新增咨询或生成将分别显示本次费用；未经确认不扣积分。</p>
         </section>
         </details>
         {!userId && <p className="text-sm text-amber-100">登录后可以咨询当前项目。<a href="/login" className="ml-2 underline">去登录</a></p>}
         {project?.generationSteps && <ManhuaAdvisorGenerationMonitor steps={project.generationSteps} onLocate={onLocate ? phase => onLocate({ id: "generation-step", phase, blocking: false, text: "查看生成步骤" }) : undefined} />}
         {project && <section aria-label="当前项目检查" className="border-l-2 border-cyan-400/65 pl-3">
-          <h3 className="text-xs font-semibold text-white/85">当前项目检查 · 不消耗问答次数</h3>
+          <h3 className="text-xs font-semibold text-white/85">本机状态检查 · 不调用顾问</h3>
           {project.issues.length ? project.issues.map((issue) => <div key={issue.id} className="mt-2 flex items-start gap-2 text-xs leading-5">
             <div className="flex-1 text-white/75"><p>{issue.blocking ? "未通过" : "建议"}：{issue.text}</p><p className="text-white/55">处理办法：{manhuaIssueResolutionZh(issue)}</p></div>
             {onLocate && <button type="button" onClick={() => onLocate(issue)} className="shrink-0 rounded border border-white/15 px-2 text-cyan-100 hover:bg-cyan-500/15">去处理</button>}
@@ -444,7 +485,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
         </section>}
         {!turns.length && <p className="text-xs leading-5 text-white/60">结合当前剧本、参考图绑定和选中镜头给建议。只读取当前项目；未查看原图、原片时不会宣称质量通过。</p>}
         {turns.map((turn) => <div key={turn.id} className={turn.role === "user" ? "ml-8" : "mr-3"}>
-          <div className={`whitespace-pre-wrap break-words rounded-lg px-3 py-2.5 text-[13px] leading-6 ${turn.role === "user" ? "bg-cyan-500/15 text-cyan-50" : "border border-white/10 bg-white/[0.035] text-white/85"}`}>{turn.role === "advisor" && parseAdvisorTemplatePlans(turn.text, templates).length ? "已根据当前故事给出以下方案，请选择后查看改写对比。" : turn.role === "advisor" ? readableAdvice(turn.text) : turn.text === TEMPLATE_PLAN_QUESTION ? "根据当前故事推荐3—5个剧本模板方案。" : turn.text === TEMPLATE_REWRITE_QUESTION ? "按所选方案改写当前集，先查看对比再采用。" : turn.text}</div>
+          <div className={`whitespace-pre-wrap break-words rounded-lg px-3 py-2.5 text-[15px] leading-7 ${turn.role === "user" ? "bg-cyan-500/15 text-cyan-50" : "border border-white/10 bg-white/[0.035] text-white/85"}`}>{turn.role === "advisor" && parseAdvisorTemplatePlans(turn.text, templates).length ? "已根据当前故事给出以下方案，请选择后查看改写对比。" : turn.role === "advisor" ? <Streamdown>{readableAdvice(turn.text)}</Streamdown> : turn.text.includes(MANHUA_ADVISOR_AUTO_QUESTION) ? `${turn.text.split("\n")[0]}：检查本步骤的剧情、空间与制作建议。` : turn.text === TEMPLATE_PLAN_QUESTION ? "根据当前故事推荐3—5个剧本模板方案。" : turn.text === TEMPLATE_REWRITE_QUESTION ? "按所选方案改写当前集，先查看对比再采用。" : turn.text}</div>
           {turn.role === "advisor" && <button type="button" onClick={() => void copyAdvice(turn.text)} className="mt-1 min-h-8 rounded px-2 text-xs text-cyan-100 hover:bg-white/10">复制建议</button>}
           {turn.role === "advisor" && parseAdvisorTemplatePlans(turn.text, templates).map(plan => <section key={plan.publicId} className="mt-2 space-y-2 rounded border border-cyan-300/25 p-3 text-xs">
             <h3 className="font-semibold">{templates.find(t => t.publicId === plan.publicId)?.nameZh}</h3>
@@ -478,6 +519,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
         {failed && <div role="alert" className="rounded-lg border border-rose-300/25 p-3 text-xs text-rose-100"><p>{failed.message}</p><p className="mt-1 text-white/70">原问题：{failed.request.label}</p><p className="mt-1 whitespace-pre-wrap text-white/70">{failed.request.rawQuestion}</p>{!failed.newAttempt && <p className="mt-2 text-amber-100">此请求仍未决，请先恢复原问题；草稿可以继续编辑，但不会覆盖恢复记录。</p>}<button type="button" disabled={asking || sessionStorageBlocked || (failed.confirmPaid && !sessionKey)} onClick={() => void submit(failed.newAttempt ? { ...failed.request, requestId: crypto.randomUUID() } : failed.request, failed.newAttempt ? false : failed.confirmPaid, failed.newAttempt ? undefined : failed.confirmedCredits)} className="mt-2 rounded border border-white/20 px-3 py-1">{failed.newAttempt ? "重新提问（新的一次，重新检查额度）" : "恢复原问题（沿用原请求编号）"}</button></div>}
       </div>
       <footer data-advisor-composer className="shrink-0 space-y-2 border-t border-white/10 p-3">
+        <p className="text-xs text-white/65" aria-live="polite">{quotaQuery.data?.exempt ? "管理员测试 · 免扣积分" : quota ? `本作品免费剩余 ${quota.remaining}/5 次 · 超出后 ${quota.price} 积分/次` : "正在核对本作品额度…"}</p>
         {props.previsAudioControls}
         <div className="flex items-end gap-2">
           <textarea ref={questionRef} aria-label="向创作顾问提问" value={draft} onChange={(event) => setDraft(event.target.value)} rows={2} maxLength={1200} disabled={!userId || sessionStorageBlocked}
