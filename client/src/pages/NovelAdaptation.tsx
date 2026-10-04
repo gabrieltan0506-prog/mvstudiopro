@@ -1,3 +1,5 @@
+import { TemplateRoleGuide } from "@/components/canvas/TemplateRoleGuide";
+import { suggestedTemplateRole } from "@shared/manhuaTemplateGuidance";
 import {
   readNovelWorkspaceDb,
   saveNovelWorkspaceDb,
@@ -215,7 +217,9 @@ function NovelWorkspaceEditor({
         ...draft.templates,
         {
           publicId: id,
-          role: "节奏、人物关系与对白",
+          role: suggestedTemplateRole(
+            cards.find(c => c.publicId === id)?.craft
+          ),
           ...(!draft.templates.length
             ? { weight: 100 }
             : draft.templates.some(t => t.weight !== undefined)
@@ -1507,6 +1511,17 @@ function NovelWorkspaceEditor({
                     移除
                   </button>
                 </div>
+                <TemplateRoleGuide
+                  card={cards.find(c => c.publicId === t.publicId)}
+                  disabled={disabled}
+                  onApply={role =>
+                    change({
+                      templates: draft.templates.map(x =>
+                        x.publicId === t.publicId ? { ...x, role } : x
+                      ),
+                    })
+                  }
+                />
                 {weighted && (
                   <label className="mt-2 block text-xs">
                     创作占比（%）

@@ -181,6 +181,19 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
       )!.set!.call(input, "25");
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
+    expect(
+      await page.$eval(
+        '[aria-label="模板方法与分工 mt_0001"]',
+        e => e.textContent
+      )
+    ).toContain("交换条件");
+    await click("用「对白试探与攻防」作分工");
+    expect(
+      await page.$eval(
+        '[aria-label="模板分工 mt_0001"]',
+        e => (e as HTMLInputElement).value
+      )
+    ).toContain("交换条件");
     await page.select('[aria-label="创作模型"]', "deepseek");
     await page.type(
       '[aria-label="回复顾问"]',
@@ -200,6 +213,9 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
     const followup = await page.evaluate(async () =>
       (globalThis as any).calls.at(-1)
     );
+    expect(
+      followup.templates.find((t: any) => t.publicId === "mt_0001").role
+    ).toContain("交换条件");
     expect(followup.advisorMessage).toContain("保留未来武器");
     expect(followup.advisorHistory).toHaveLength(1);
     expect(followup.advisorHistory[0].assistant).toContain("强化角色抉择");

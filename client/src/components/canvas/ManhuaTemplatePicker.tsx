@@ -1,3 +1,4 @@
+import { templateGuidance } from "@shared/manhuaTemplateGuidance";
 import React, { useMemo, useState } from "react";
 import type { PublicManhuaViralTemplateCard } from "@shared/manhuaViralTemplateBank";
 import { TEMPLATE_CRAFT_DIMENSIONS } from "@shared/manhuaTemplateCraft";
@@ -60,8 +61,13 @@ function CraftDetails({ card }: { card: PublicManhuaViralTemplateCard }) {
           <dd className="text-[#e8dfe9]">
             {card.craft?.features
               .filter(f => f.dimension === key)
-              .map(f => f.label)
-              .join(" · ") || "—"}
+              .map(f => {
+                const method = templateGuidance(card.craft).find(
+                  m => m.id === f.id
+                );
+                return `${f.label}${method ? `：${method.usage}` : ""}`;
+              })
+              .join("；") || "—"}
           </dd>
         </div>
       ))}
