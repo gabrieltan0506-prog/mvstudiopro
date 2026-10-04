@@ -476,6 +476,24 @@ describe("大系列断点：列举上限不能截断（重复付费风险）", (
 });
 
 describe("完整重新学习的待审写入", () => {
+  it("完整镜站分批重学没有整集GLM文件仍通过CAS写入", async () => {
+    const input = makeInput({ sourceUrl: "https://www.gzcrkt8888.com/vod/play/146259/sid/1309097" });
+    input.result.batchRequestId = "11111111-1111-4111-8111-111111111111";
+    const existing = buildNativeDeepReadProposalCard(input)!;
+    existing.updatedAt = "2026-08-01T00:00:00Z";
+    input.sourceUrl = "https://0996zp.com/vod/play/146259/sid/1309097";
+    input.result.sourceDigest = "c".repeat(64);
+    input.result.batchRequestId = "22222222-2222-4222-8222-222222222222";
+    input.result.segmentEvidenceObjectNames = [0, 1].map(i => `manhua-template-learn/segment-evidence/${existing.id}/${input.result.sourceDigest}/seg${i}-${"d".repeat(64)}.json`);
+    gcs.create.mockResolvedValue({ created: false });
+    gcs.downloadVersioned.mockResolvedValue({ buffer: Buffer.from(JSON.stringify(existing)), generation: "15" });
+    gcs.upload.mockResolvedValue({});
+    const result = await ingestNativeDeepReadEpisode(input);
+    expect(result.card.sourceRefs[0]!.url).toBe(input.sourceUrl);
+    expect(result.card.provenance!.nativeVideoDeepRead!.batchRequestId).toBe(input.result.batchRequestId);
+    expect(gcs.upload).toHaveBeenCalledWith(expect.objectContaining({ ifGenerationMatch: "15" }));
+  });
+
   it.each([[true, 2], [false, 2], [true, 4]] as const)("保留旧提案直接写入新完整批次，同请求快照=%s、旧分片数=%s", async (sameSnapshot, previousSegments) => {
     const input = makeInput();
     const names = [0, 1].map(i => `manhua-template-learn/segment-evidence/tpl_native_abc123_ep001/${"a".repeat(64)}/seg${i}-${"d".repeat(64)}.json`);
