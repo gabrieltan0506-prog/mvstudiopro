@@ -91,6 +91,8 @@ import {
 import { sweepOneSegmentBeforeStructuring } from "./manhuaNativeSweepScan.js";
 import {
   EVOLINK_GLM_MODEL,
+  EVOLINK_GLM_FLASHX_MODEL,
+  OPENROUTER_GLM_FLASHX_MODEL,
   EVOLINK_GLM_LEGACY_MODEL_BEFORE_0920,
   GLM_MODEL_GATEWAYS,
   GlmGatewayError,
@@ -1832,7 +1834,7 @@ export async function postNativeDeepReadGenerateContent(input: {
   }
 }
 
-async function postVertexNativeDeepRead(
+export async function postVertexNativeDeepRead(
   body: unknown,
   abortSignal?: AbortSignal,
   _context?: NativeDeepReadSegmentContext,
@@ -4196,22 +4198,22 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE = "openrouter_glm_structurin
  * 0829 改线后主档是 EvoLink `glm-5.3`，兜底才是 OpenRouter `z-ai/glm-5.3`——
  * completed/failed 回执一律记 `structured.model` 真值，不用本常量。
  */
-export const NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL = `${EVOLINK_GLM_MODEL}→${OPENROUTER_GLM_MODEL}`;
+export const NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL = `${EVOLINK_GLM_FLASHX_MODEL}→${OPENROUTER_GLM_FLASHX_MODEL}`;
 /** 开始/失败回执的人话链路标签（0905：用户看了几百次「z-ai/glm-5.3」以为一直走 OpenRouter）。 */
 /**
  * 0920 只换模型名，**双路分流一字不动**（用户否决过「OpenRouter 转主档」那个外推：
  * 「我說用open router我從沒說過要放棄evolink」）。两批首发不同是 0907 拍板的并发分流，
  * 文案必须照实写，否则面板显示的链路与真实发起顺序不符。
  */
-export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 Flash · 第1批 OpenRouter（Z.AI）→EvoLink · 第2批 EvoLink→OpenRouter，不切 Qwen（单档 20 分钟，有心跳即延长）";
+export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 FlashX · 第1批 OpenRouter（Z.AI）→EvoLink · 第2批 EvoLink→OpenRouter，不切 Qwen（单档 20 分钟，有心跳即延长）";
 export const NATIVE_DEEP_READ_QWEN_STRUCTURING_STARTED_LABEL = "Qwen3.8-Max 严格 schema · 第1批 北京→EvoLink→OpenRouter · 第2批 新加坡→OpenRouter→EvoLink（Qwen 单档 25 分钟 · GLM 20 分钟）";
 /** 0916：该产品链只允许 GLM；旧 Qwen 值在进入路由前明确拒绝。 */
 export function nativeDeepReadStructuringPolicyForModel(
   model: unknown,
 ): "structuring_chain" {
   // 0920 用户令换档 GLM-5.3 Flash；旧值 "glm-5.3" 继续接受（存量调用方与历史任务参数）。
-  if (model !== undefined && model !== EVOLINK_GLM_MODEL && model !== EVOLINK_GLM_LEGACY_MODEL_BEFORE_0920) {
-    throw new Error(`整形模型只允许 ${EVOLINK_GLM_MODEL}`);
+  if (model !== undefined && model !== EVOLINK_GLM_FLASHX_MODEL && model !== EVOLINK_GLM_MODEL && model !== EVOLINK_GLM_LEGACY_MODEL_BEFORE_0920) {
+    throw new Error(`整形模型只允许 ${EVOLINK_GLM_FLASHX_MODEL}`);
   }
   return "structuring_chain";
 }
@@ -4225,11 +4227,12 @@ export const STRUCTURING_GATEWAYS: ReadonlySet<string> = new Set<string>([
   // 🔒 停用 ≠ 撤销识别：0920 撤档的 Qwen 三档写过的整形证据必须继续认，否则整段重新付费。
   ...STRUCTURING_LEGACY_RECOGNIZED_GATEWAYS,
 ]);
-export function glmGatewayDisplayLabel(gateway: string): string {
+export function glmGatewayDisplayLabel(gateway: string, model?: string): string {
+  const glmLabel = !model || model.includes("flashx") ? "GLM-5.3 FlashX" : model.includes("flash") ? "GLM-5.3 Flash" : "GLM-5.3";
   switch (gateway) {
     // 0905 用户令「整形哪个模型面板就显示哪个模型」：模型名在前，网关在后
-    case "evolink_glm": return "GLM-5.3 Flash · EvoLink";
-    case "openrouter": return "GLM-5.3 Flash · OpenRouter";
+    case "evolink_glm": return `${glmLabel} · EvoLink`;
+    case "openrouter": return `${glmLabel} · OpenRouter`;
     case "plan_bj_qwen": return "Qwen3.8-Max · 北京套餐";
     case "plan_sg_qwen": return "Qwen3.8-Max · 新加坡套餐";
     case "openrouter_qwen": return "Qwen3.8-Max · OpenRouter";
@@ -4694,7 +4697,9 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
     model: input.model ?? NATIVE_DEEP_READ_MODEL,
     glmRepairModel: input.legacyBefore0920 === true
       ? `${EVOLINK_GLM_LEGACY_MODEL_BEFORE_0920}→${OPENROUTER_GLM_LEGACY_MODEL_BEFORE_0920}`
-      : NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL,
+      // This fingerprint identifies paid Gemini reading, not subsequent GLM structuring.
+      // Preserve the Flash-era identity so switching the text model never rereads paid video segments.
+      : `${EVOLINK_GLM_MODEL}→${OPENROUTER_GLM_MODEL}`,
     responseSchema,
     generationConfig: NATIVE_DEEP_READ_GENERATION_CONFIG,
     retryGenerationConfig: NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG,
@@ -4886,6 +4891,7 @@ export async function invokeNativeDeepReadGlmStructuring(
   deps?: { invoke?: typeof invokeGlmJsonChatWithGatewayFallback; evidence?: NativeDeepReadGlmEvidenceDeps },
 ): Promise<NativeDeepReadGlmStructuringResult> {
   const requestWithoutPreferredGateway = {
+    glmVariant: "flashx" as const,
     system: prompt.system,
     user: prompt.user,
     ...NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG,
@@ -6864,7 +6870,7 @@ async function executeNativeDeepReadBatch(
           episodeCost += structuringCostCny;
           await emitVisualModelReceipt({
             callId,
-            model: `${glmGatewayDisplayLabel(structured.gateway)}（${structured.model}）`,
+            model: `${glmGatewayDisplayLabel(structured.gateway, structured.model)}（${structured.model}）`,
             route: NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
             stage: "visual_parse",
             status: "completed",
@@ -7082,7 +7088,7 @@ async function executeNativeDeepReadBatch(
             const keyFix = repairNativeDeepReadStructuredKeyMoments(result.raw, input.rows);
             if (keyFix.raw !== result.raw) {
               const keyFixZh = describeNativeDeepReadKeyMomentFix(keyFix);
-              console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集${input.labelZh}：${glmGatewayDisplayLabel(result.gateway)} ${keyFixZh}`);
+              console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集${input.labelZh}：${glmGatewayDisplayLabel(result.gateway, result.model)} ${keyFixZh}`);
               result.raw = keyFix.raw;
               await emitVisualModelReceipt({
                 callId: `${episodeRequestId}:structuring-keymoments-backfilled:${input.segmentIndexes.join("-")}:${attempt + 1}`,

@@ -1,0 +1,125 @@
+{
+  "base": "2cff4ac4bf0f467be80d45598fefa6c0bfe7c42b",
+  "recordedAt": "2026-10-04T21:10:00+08:00",
+  "sources": {
+    "client/src/components/canvas/BgmCreativeAdvisor.tsx": {
+      "bytes": 6128,
+      "sha256": "601999a1c3bb38f0322c43beabf4fc340f10084d9d9e77822fd8e7e21f8f2e51"
+    },
+    "client/src/components/canvas/ManhuaCreativeAdvisorPanel.tsx": {
+      "bytes": 51473,
+      "sha256": "955d3612f279fc3e24784c0b61e344518a66232831a408350d969ddc75d759cd"
+    },
+    "client/src/components/canvas/PostProdSubtitleCard.tsx": {
+      "bytes": 10209,
+      "sha256": "02967034d00f230c892e0d108cf987db88992ae0f6bb94fb31ce3bb4f67d91d0"
+    },
+    "client/src/hooks/useManhuaAdvisorPreference.ts": {
+      "bytes": 992,
+      "sha256": "d42160892794f68acdda946e4befabea3b80a125ce92e67ff089ecb8860ef7e8"
+    },
+    "client/src/index.css": {
+      "bytes": 59476,
+      "sha256": "54202c78d6d6fb3637608441ac8614e8fbe1a830f9e076301d4fb4d244fec0a7"
+    },
+    "client/src/lib/manhuaAdvisorAlwaysOn.browser.test.ts": {
+      "bytes": 12065,
+      "sha256": "3b8dc41677ffdba23b82e458a903ecde932b0acfdd5f5adfcf92d74a4294e0ea"
+    },
+    "client/src/lib/manhuaAdvisorIteration.browser.test.ts": {
+      "bytes": 18819,
+      "sha256": "3739e57d2c74861b4b19781be292269a8ecf0a27f3d9b91e95211ae8461f4ebe"
+    },
+    "client/src/lib/manhuaAdvisorProject.ts": {
+      "bytes": 24931,
+      "sha256": "b3c806ea1c9a0c9571656f16ee6a45176c41597e0a4e486a69501e5a460d1427"
+    },
+    "client/src/lib/manhuaAdvisorTemplates.browser.test.ts": {
+      "bytes": 7116,
+      "sha256": "43de0c42294de5b8435a061d6f76668358ce5111f506cdf79daaadb4b0e4edde"
+    },
+    "client/src/lib/manhuaAdvisorWorld.browser.test.ts": {
+      "bytes": 6710,
+      "sha256": "328b3aaf608caa9a1e37a26d3c4d565a683fdbbebd091a1de30ad67299155e3e"
+    },
+    "client/src/pages/OmniCanvas.tsx": {
+      "bytes": 659142,
+      "sha256": "75faeb749ce4bd6a1f3957c863042581f82eb83a410b5f1051c2ef74ab40d5ee"
+    },
+    "server/routers.manhuaAdvisorOperation.test.ts": {
+      "bytes": 24048,
+      "sha256": "0019e92ce70579609d3637cddb732d7c7dc2015a85400998fc37328b89310042"
+    },
+    "server/routers.ts": {
+      "bytes": 723073,
+      "sha256": "0634c5c2193cef6ffb38ac3f51ee3141595959765bd7b1cc8c7427e5f40626a5"
+    },
+    "server/services/manhuaAdvisorProjectQuota.test.ts": {
+      "bytes": 1187,
+      "sha256": "0606a70bf8ec85316ae2f9e7e6b8f0f2f7c9a1f3088712e0a9cd37dbdbed4b09"
+    },
+    "server/services/manhuaAdvisorProjectQuota.ts": {
+      "bytes": 4397,
+      "sha256": "77a1c733f297a605b9c10034428d1ce552963a6256a2e5b7d469a75a4b80c50f"
+    },
+    "server/services/platformSkillQa.ts": {
+      "bytes": 51491,
+      "sha256": "c15d312b07b2236f7b9d71e46960fba43f6c85c42a417c24d9fe3b0a3cfa1883"
+    },
+    "shared/manhuaAdvisorPolicy.test.ts": {
+      "bytes": 1983,
+      "sha256": "e3943581f40dbfd72893d3fd34276a2813aa02430780a7689e1681b876ffc05f"
+    },
+    "shared/manhuaAdvisorPolicy.ts": {
+      "bytes": 2306,
+      "sha256": "8e21619177e02b8a899f51ace8f393d9cfe6341fd990567f6a30a4592beb77b9"
+    },
+    "shared/manhuaCreativeAdvisor.ts": {
+      "bytes": 11231,
+      "sha256": "a8bb66f7d4dcf04aa669c893a3b00f6c0bea71906233892f8e7db3ae26762e6b"
+    }
+  },
+  "logs": {
+    "/Users/tangenjie/Documents/Codex/2026-10-03/task-2/backend-work/advisor-project-1004-tests.log": {
+      "bytes": 14169,
+      "sha256": "af5d3093a7a87f069030d0b3a631329af69f089ea6fd01647d43f209b2835364"
+    },
+    "/Users/tangenjie/Documents/Codex/2026-10-03/task-2/backend-work/advisor-project-1004-replay-fix.log": {
+      "bytes": 604,
+      "sha256": "481a79ed50984b4bce05c535762a70c7ffc2a32dea1a0132c348ceef7bd09274"
+    },
+    "/Users/tangenjie/Documents/Codex/2026-10-03/task-2/backend-work/advisor-project-1004-browser-final.log": {
+      "bytes": 561,
+      "sha256": "4d80d7b2fa348ef1f4f47b49576f5b71dc1c7191e4117b30d6bacf2e0c5e5638"
+    },
+    "/Users/tangenjie/Documents/Codex/2026-10-03/task-2/backend-work/advisor-project-1004-draft-migration.log": {
+      "bytes": 464,
+      "sha256": "8c50dd3c5c3f72aa02d938700a960de618fc1cc64ddb3627f131f75e72a90a9c"
+    },
+    "/Users/tangenjie/Documents/Codex/2026-10-03/task-2/backend-work/advisor-project-1004-release-types.log": {
+      "bytes": 47,
+      "sha256": "7705fc76d744d99b05870af111c224cf5f88a3af49702170e248b6b56a24c8d7"
+    },
+    "/Users/tangenjie/Documents/Codex/2026-10-03/task-2/backend-work/advisor-project-1004-release-build.log": {
+      "bytes": 82587,
+      "sha256": "a708467d74fe56b91e9ee41c4ba27d680b925e0d3baf3e39f526d34fa771abcb"
+    },
+    "/Users/tangenjie/Documents/Codex/2026-10-03/task-2/backend-work/advisor-project-1004-next-version-migration.log": {
+      "bytes": 464,
+      "sha256": "1d3d00058e497faf59cc81b3e587a5de53db06f3459f8e774abe38993501664e"
+    },
+    "/Users/tangenjie/Documents/Codex/2026-10-03/task-2/backend-work/advisor-project-1004-next-version-types.log": {
+      "bytes": 47,
+      "sha256": "4b825fe85d8195a145d8b9eba16dbad777d717eaad55416fd13a0019e9a6be7d"
+    },
+    "/Users/tangenjie/Documents/Codex/2026-10-03/task-2/backend-work/advisor-project-1004-next-version-build.log": {
+      "bytes": 82587,
+      "sha256": "dd9dfcbc7d9eee89ba2c8c535ee7af30972c4dcf741c2c2ba1b4f7c6f348a499"
+    }
+  },
+  "limits": [
+    "Offline browser uses real components, mocked quota/model API",
+    "No live PostgreSQL concurrency/GCS/production credit mutation verification",
+    "Final build after final source changes; original suites were not rerun unnecessarily"
+  ]
+}

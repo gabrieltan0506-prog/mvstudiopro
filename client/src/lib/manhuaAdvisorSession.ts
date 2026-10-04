@@ -9,6 +9,8 @@ const pendingRequestSchema = z.object({
   rawQuestion: z.string().min(2).max(1200),
   /** 用户显式点击生成按钮的意图，恢复原请求时保留；不由模型授予。 */
   previsRenderRequested: z.boolean().optional(),
+  /** Live工具可咨询，不能借生成意图自动渲染；恢复后同样有效。 */
+  voiceConsultOnly: z.boolean().optional(),
   label: z.string().max(1000),
   manhuaContext: manhuaCreativeAdvisorContextSchema.optional(),
 }).strict();

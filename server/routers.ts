@@ -1,3 +1,7 @@
+import { optimizationInputSchema } from "../shared/manhuaEpisodeOptimization";
+import { manhuaWriterExpansionQuote, manhuaWriterModelLabel } from "../shared/manhuaWriterModels";
+import { MANHUA_ADVISOR_PROJECT_FREE, MANHUA_ADVISOR_PAID_CREDITS } from "../shared/manhuaAdvisorPolicy";
+import { assertAdvisorProject, readAdvisorProjectQuota, reserveAdvisorProjectQuota, releaseAdvisorProjectQuota } from "./services/manhuaAdvisorProjectQuota";
 import { novelWorkspaceRouter } from "./routers/novelWorkspace";
 import { createKnowledgeCardPageJob, reserveKnowledgeCardImageJob, checkKnowledgeCardImageMaySubmit } from "./jobs/knowledgeCardPageTask";
 import { novelExcerptSchema } from "../shared/manhuaNovelSource.js";
@@ -6747,12 +6751,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
      * 若检测到生图意图，返回 imageOffer（须用户再点确认才扣费生图）。
      */
     /** 进入顾问即展示额度；未知额度不得当作免费，也不触发模型或扣费。 */
-    getManhuaAdvisorQuota: protectedProcedure.query(async ({ ctx }) => {
+    getManhuaAdvisorQuota: protectedProcedure.input(z.object({ projectId: z.string().uuid().optional() }).optional()).query(async ({ ctx, input }) => {
+      await assertAdvisorProject(ctx.user.id, input?.projectId);
       const exempt = ctx.user.role === "admin" || ctx.user.role === "supervisor";
-      const { countPlatformSkillQaToday } = await import("./services/platformSkillQa.js");
-      const { resolvePlatformSkillQaPaidCredits } = await import("./config/platformSwitches.js");
-      const used = exempt ? 0 : await countPlatformSkillQaToday(ctx.user.id, "terra", true);
-      return { dailyLimit: 5, remaining: Math.max(0, 5 - used), price: resolvePlatformSkillQaPaidCredits("terra"), exempt, resetsAt: new Date((Math.floor((Date.now() + 8 * 3600_000) / 86400_000) + 1) * 86400_000 - 8 * 3600_000).toISOString() };
+      const quota = exempt ? { used: 0, remaining: MANHUA_ADVISOR_PROJECT_FREE } : await readAdvisorProjectQuota(ctx.user.id, input?.projectId);
+      return { dailyLimit: MANHUA_ADVISOR_PROJECT_FREE, remaining: quota.remaining, price: MANHUA_ADVISOR_PAID_CREDITS, exempt, scope: "project" as const };
     }),
 
     askPlatformSkillQa: protectedProcedure
@@ -6814,9 +6817,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const { platformSkillQaDailyFreeLimit } = await import("../shared/plans.js");
         const qaMode = resolveSkillQaBillingMode(input.qaModel);
         const qaModel = input.qaModel || "gpt-5.6-terra";
-        const advisorTierLabel = qaMode === "sol" ? "深度顾问" : "标准顾问";
-        const dailyLimit = platformSkillQaDailyFreeLimit(qaMode);
-        const paidUnit = resolvePlatformSkillQaPaidCredits(qaMode);
+        const dailyLimit = input.manhuaContext ? MANHUA_ADVISOR_PROJECT_FREE : platformSkillQaDailyFreeLimit(qaMode);
+        const paidUnit = input.manhuaContext ? MANHUA_ADVISOR_PAID_CREDITS : resolvePlatformSkillQaPaidCredits(qaMode);
 
         let advisorOperationInput:
           | {
@@ -6877,16 +6879,18 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           }
         }
 
+        // 已有回执先按账户/请求指纹回放；云存储临时不可用不应阻止取回已付费结果。
+        if (input.manhuaContext) await assertAdvisorProject(ctx.user.id, input.manhuaContext.projectId);
         const usedToday = isAdminUser
           ? 0
-          : await countPlatformSkillQaToday(ctx.user.id, qaMode, Boolean(input.manhuaContext));
+          : input.manhuaContext ? (await readAdvisorProjectQuota(ctx.user.id, input.manhuaContext.projectId)).used : await countPlatformSkillQaToday(ctx.user.id, qaMode, false);
         let needPay = !isAdminUser && usedToday >= dailyLimit;
 
         if (needPay && (!input.confirmPaid || (advisorOperationInput && input.confirmedCredits !== paidUnit))) {
           throw new TRPCError({
             code: "PAYMENT_REQUIRED",
             message: advisorOperationInput
-              ? `今日${advisorTierLabel}免费 ${dailyLimit} 次已用完。继续将扣除 ${paidUnit} 积分/次，请确认后重试。`
+              ? `本作品免费 ${dailyLimit} 次已用完。继续将扣除 ${paidUnit} 积分/次，请确认后重试。`
               : `今日${qaMode === "sol" ? " Sol" : " Terra"}免费 ${dailyLimit} 次已用完。继续将扣除 ${paidUnit} 积分/次（成本+60%）。请确认后重试。`,
           });
         }
@@ -6938,22 +6942,29 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           }
 
           const jobId = operation.jobId;
-          let freeQuotaDay: string | undefined;
+          let projectFreeReserved = false;
+          let projectQuotaUsed = usedToday;
           if (!isAdminUser) {
-            const { reserveAdvisorDailyQuota } = await import("./services/manhuaAdvisorDailyQuota.js");
-            const quota = await reserveAdvisorDailyQuota(ctx.user.id, "consult", input.requestId!);
+            let quota: Awaited<ReturnType<typeof reserveAdvisorProjectQuota>>;
+            try { quota = await reserveAdvisorProjectQuota(ctx.user.id, input.manhuaContext?.projectId, input.requestId!); }
+            catch (error) {
+              // 尚未扣费/调用模型，保留同编号恢复；数据库回执不明也不能重领一个请求。
+              const { awaitManhuaAdvisorPaymentConfirmation } = await import("./services/manhuaAdvisorOperation.js");
+              await awaitManhuaAdvisorPaymentConfirmation(jobId);
+              throw error;
+            }
+            projectQuotaUsed = quota.used;
             needPay = !quota.reserved;
-            if (quota.reserved) freeQuotaDay = quota.day;
+            projectFreeReserved = quota.reserved;
             if (needPay && (!input.confirmPaid || input.confirmedCredits !== paidUnit)) {
               const { awaitManhuaAdvisorPaymentConfirmation } = await import("./services/manhuaAdvisorOperation.js");
               if (!await awaitManhuaAdvisorPaymentConfirmation(jobId)) throw new TRPCError({ code: "CONFLICT", message: "原请求状态正在变化，请查询原请求" });
-              throw new TRPCError({ code: "PAYMENT_REQUIRED", message: `今日咨询免费 ${dailyLimit} 次已用完。继续将扣除 ${paidUnit} 积分/次，请确认后重试。` });
+              throw new TRPCError({ code: "PAYMENT_REQUIRED", message: `本作品免费 ${dailyLimit} 次已用完。继续将扣除 ${paidUnit} 积分/次，请确认后重试。` });
             }
           }
           const restoreFreeQuota = async () => {
-            if (!freeQuotaDay) return;
-            const { releaseAdvisorDailyQuota } = await import("./services/manhuaAdvisorDailyQuota.js");
-            await releaseAdvisorDailyQuota(ctx.user.id, "consult", input.requestId!, freeQuotaDay);
+            if (!projectFreeReserved) return;
+            await releaseAdvisorProjectQuota(ctx.user.id, input.manhuaContext?.projectId, input.requestId!);
           };
           const taskType = MANHUA_ADVISOR_TASK_TYPE;
           const chargeKey = `${taskType}/${jobId}`.slice(0, 120);
@@ -7101,7 +7112,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 qaModel,
                 manhuaContext: input.manhuaContext,
                 paidCreditsAlreadyCharged: deducted.cost,
-                freeQuotaReserved: Boolean(freeQuotaDay),
+                freeQuotaReserved: projectFreeReserved,
+                projectQuotaUsed,
                 onStream: ctx.advisorStream,
               });
               const completed = { success: true as const, ...result };
@@ -9976,6 +9988,19 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
       }),
 
+    manhuaEpisodeOptimizationQuota: protectedProcedure.query(async({ctx})=>{
+      const {countManhuaWriterTrialToday}=await import("./services/manhuaWriterTrial");
+      return {trialsLeftToday:Math.max(0,3-await countManhuaWriterTrialToday(ctx.user.id))};
+    }),
+    optimizeManhuaEpisodes: protectedProcedure.input(optimizationInputSchema).mutation(async ({ctx,input}) => {
+      const {runEpisodeOptimization}=await import("./services/manhuaEpisodeOptimization");
+      return runEpisodeOptimization(ctx.user.id,input);
+    }),
+    manhuaEpisodeOptimizationHistory: protectedProcedure.input(z.object({projectId:z.string().uuid()})).query(async({ctx,input})=>{
+      const {getEpisodeOptimizationHistory}=await import("./services/manhuaEpisodeOptimization");
+      return getEpisodeOptimizationHistory(ctx.user.id,input.projectId);
+    }),
+
     /** 从当前集完整原稿生成一版付费模板候选；只返回候选，正式稿仍待用户采用。 */
     generateManhuaTemplateCandidate: protectedProcedure
       .input(z.object({
@@ -10003,15 +10028,17 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         return listManhuaTemplateCandidateHistory({ ...input, userId: ctx.user.id });
       }),
 
-    /** /canvas 编剧室连载扩写：四档自选，所有调用按集数计价。 */
+    /** /canvas 编剧室连载扩写：至少三集起写，GLM/DeepSeek均按实际改写集数计价。 */
     expandManhuaWriterPack: protectedProcedure
       .input(
         z.object({
+          model: z.enum(["glm", "deepseek"]).optional(),
+          confirmedCredits: z.number().int().nonnegative().optional(),
           topic: z.string().max(500).optional(),
           brief: z.string().max(2000).optional(),
           sourceExcerpt: novelExcerptSchema.optional(),
-          episodeCount: z.number().int().min(2).max(6).optional(),
-          /** 引擎档位：前台只展示中文档名，不显示供应商或模型名。 */
+          episodeCount: z.number().int().min(3).max(6).optional(),
+          /** 兼容旧请求结构；旧页未提交 model/新报价时拒绝执行，档位不再决定模型或价格。 */
           tier: z.enum(["excellent", "superb", "top", "transcendent"]).optional(),
           /** 一次用户动作一个 UUID；网络重试复用，用于原子幂等扣费。 */
           requestId: z.string().uuid(),
@@ -10043,6 +10070,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }),
       )
       .mutation(async ({ ctx, input }) => {
+        if (!input.model) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "扩写选项已更新，请刷新后选择 GLM 或 DeepSeek；本次未提交、未扣点" });
+        const writerModel = input.model;
         if (input.sourceExcerpt && input.templateTrialFingerprint) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "小说改编请使用正常扩写入口；题材试写未读取小说原文，不能直接套用" });
         }
@@ -10065,13 +10094,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const { resolveManhuaSeedanceLayoutProfile } = await import(
           "../shared/manhuaSeedanceLayout.js"
         );
-        const { manhuaWriterExpandTierLabel, resolveManhuaWriterExpandQuota } = await import(
-          "../shared/manhuaWriterExpandPricing.js"
-        );
         const { MANHUA_WRITER_EXPAND_ACTION } = await import(
           "./services/manhuaWriterExpandBilling.js"
         );
-        const { runManhuaWriterExpand } = await import("./services/manhuaWriterExpandRun.js");
+        const { createManhuaWriterModelCall } = await import("./services/manhuaWriterModelRun");
+        const modelCall = createManhuaWriterModelCall(userId, input.requestId, writerModel);
         const { resolveManhuaDirectorStrategyContract } = await import(
           "../shared/manhuaDirectorStrategy.js"
         );
@@ -10155,13 +10182,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const billableEpisodes =
           fromEpisodeReq > 0 ? Math.max(1, episodeCount - fromEpisodeReq + 1) : episodeCount;
 
-        const quota = resolveManhuaWriterExpandQuota({
-          usedEver: 0,
-          usedToday: 0,
-          tier: input.sourceExcerpt ? "excellent" : input.tier ?? "excellent",
-          episodeCount: billableEpisodes,
-        });
-        const cost = quota.nextCredits;
+        const cost = manhuaWriterExpansionQuote(episodeCount, fromEpisodeReq).credits;
+        if (input.confirmedCredits !== cost) throw new TRPCError({ code: "PRECONDITION_FAILED", message: `扩写报价已更新：每集 6 积分，本次 ${cost} 积分，请重新确认；本次未提交、未扣点` });
         if (cost > 0) {
           const creditsInfo = await getCredits(userId);
           if (creditsInfo.totalAvailable < cost) {
@@ -10191,7 +10213,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const directorStrategyContract = resolveManhuaDirectorStrategyContract({ topic, brief });
         const { createHash } = await import("node:crypto");
         const chargeKey = `mwe_${createHash("sha256")
-          .update(`${userId}:${input.requestId}:${quota.runTier}:${prompt}`)
+          .update(`${userId}:${input.requestId}:${writerModel}:${cost}:${prompt}`)
           .digest("hex")}`;
         let markdown = "";
         let novelAdaptation: import("../shared/manhuaNovelAdaptation").ManhuaNovelAdaptation | undefined;
@@ -10207,13 +10229,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 viralTemplateId:appliedInternalTemplateId,viralTemplateAddon,
                 directionCanon:buildManhuaDirectionCanonFromSelection(input.directionSelection),
               })+"\n【底本改编记录】\n"+JSON.stringify({source:input.sourceExcerpt,adaptationNotes:novel.adaptationNotes})+"\n原文对照须分别注明底本事实、小说新增与模板方法，不将新增桥段冒充底本。",
-            });
+            }, modelCall);
             markdown=result.markdown;novelAdaptation=result.novel;
-          } else markdown = await runManhuaWriterExpand({
-            prompt,
-            tier: quota.runTier,
-            episodeCount,
-          });
+          } else markdown = (await modelCall(prompt, false, `${userId}:${input.requestId}:script`)).text;
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           throw new TRPCError({
@@ -10245,20 +10263,20 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
 
         // 先出稿再原子扣点：上游失败不扣；相同 requestId + 相同请求的网络重试不双扣。
-        await deductCreditsAmount(
+        const charged = await deductCreditsAmount(
           userId,
           cost,
           MANHUA_WRITER_EXPAND_ACTION,
-          `编剧室连载扩写（${manhuaWriterExpandTierLabel(quota.runTier)}）· ${billableEpisodes} 集${fromEpisodeReq > 0 ? `（第 ${fromEpisodeReq} 集起局部改写）` : ""}`,
+          `编剧室连载扩写（${manhuaWriterModelLabel(writerModel)}）· ${billableEpisodes} 集${fromEpisodeReq > 0 ? `（第 ${fromEpisodeReq} 集起局部改写）` : ""}`,
           { chargeKey },
         );
         return {
           markdown,
           pack,
           ready: writerPackLooksReady(pack),
-          tier: quota.runTier,
-          creditsCost: cost,
-          isFreeQuota: quota.nextFree,
+          model: writerModel,
+          creditsCost: charged.cost,
+          isFreeQuota: false,
           videoModel: layout.videoModel,
           layout: {
             segmentCount: layout.segmentCount,
@@ -10306,6 +10324,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         z.object({
           /** 一次用户动作一个 UUID；同 requestId 重放直接拒绝（零扣费无需回放结果） */
           requestId: z.string().uuid(),
+          model: z.enum(["glm", "deepseek"]).default("glm"),
           /** 试写必须选模板（对照版由服务端自动跑，无需第二个入参） */
           publicTemplateId: z.string().regex(/^mt_[a-z0-9]{4,16}$/i),
           /** 创作前提：与 expand 的 topic/brief 同构裁剪；集数/档位试写不收 */
@@ -10420,8 +10439,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
 
         // 先写无模板底稿，再以该稿做模板限定改写；两稿差异才可归因于本次模板操作。
-        // 仍是原有两次最低档调用，恒 1 集；失败退还免费额度。
-        const { runManhuaWriterExpand } = await import("./services/manhuaWriterExpandRun.js");
+        // 两稿使用用户选定的同一模型，恒 1 集；失败退还免费额度。
+        const { createManhuaWriterModelCall } = await import("./services/manhuaWriterModelRun");
+        const modelCall = createManhuaWriterModelCall(userId, input.requestId, input.model);
         const promptControl = buildManhuaWriterTrialPrompt({
           topic: trialInput.topic,
           brief: trialInput.brief,
@@ -10430,7 +10450,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         let withDraft;
         let controlDraft;
         try {
-          const controlRaw = await runManhuaWriterExpand({ prompt: promptControl, tier: "excellent", episodeCount: 1 });
+          const controlRaw = (await modelCall(promptControl, false, `${userId}:${input.requestId}:control`)).text;
           controlDraft = parseManhuaWriterTrialDraft(controlRaw);
           if (!controlDraft) throw new Error("对照稿结构不完整");
           const promptWith = buildManhuaWriterTrialPrompt({
@@ -10439,7 +10459,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             templateAddon,
             controlDraft,
           });
-          const withRaw = await runManhuaWriterExpand({ prompt: promptWith, tier: "excellent", episodeCount: 1 });
+          const withRaw = (await modelCall(promptWith, false, `${userId}:${input.requestId}:template`)).text;
           withDraft = parseManhuaWriterTrialDraft(withRaw);
           if (!withDraft || withDraft.beats.length !== controlDraft.beats.length) {
             throw new Error("模板改写结构不完整");
@@ -10454,7 +10474,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
         // 完整商业卡零下发；两版精简稿先与免费额度流水同存，响应丢失时可恢复。
         const result = {
-          input: { topic: trialInput.topic, brief: trialInput.brief, publicTemplateId: input.publicTemplateId },
+          input: { topic: trialInput.topic, brief: trialInput.brief, publicTemplateId: input.publicTemplateId, model: input.model },
           withTemplate: withDraft,
           control: controlDraft,
           appliedTemplate: resolved.appliedTemplate,

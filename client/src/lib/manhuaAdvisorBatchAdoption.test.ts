@@ -1,0 +1,9 @@
+import {expect,it} from 'vitest';
+import {prepareAdvisorRewriteBatchAdoption,persistAdvisorRewriteAdoption} from './manhuaAdvisorAdoption';
+import type {ManhuaWriterPack} from '@shared/manhuaWriterRoom';
+const body='沈昀把信件压在账册下，借灯光核对来人的腰牌。他没有抢答，先询问封门的缘由，再把名单递到桌沿，让对方自己看见。';
+const pack:ManhuaWriterPack={seriesTitle:'长安',logline:'密信',charactersMd:'沈昀',propsMd:'密信',locationsMd:'文书库',rawMarkdown:'原稿',episodeCount:3,episodes:[1,2,3].map(index=>({index,title:`集${index}`,body:body+index,endHook:'明晚相见，后日追责。'}))};
+const candidates=pack.episodes.slice(0,2).map(ep=>({episodeIndex:ep.index,originalBody:ep.body,rewrittenBody:ep.body+'窗外灯影随雨摇晃。',originalEndHook:ep.endHook,endHook:'明晚相见，后日追责。门外有人敲门。',changes:['增加氛围']}));
+const fixture=()=>({writerPack:structuredClone(pack),projectBible:null,blocks:[],edges:[],overlays:{},busy:false,candidates:structuredClone(candidates)});
+it('两集正文与钩子一次套用，第三集不变，完整原稿先备份',()=>{const f=fixture(),plan=prepareAdvisorRewriteBatchAdoption(f);expect(plan.writerPack.episodes.map(ep=>ep.body)).toEqual([candidates[0].rewrittenBody,candidates[1].rewrittenBody,pack.episodes[2].body]);expect(plan.writerPack.episodes[1].endHook).toBe(candidates[1].endHook);const writes:[string,string][]=[];const values=new Map<string,string>();const key=persistAdvisorRewriteAdoption({plan,original:f,userId:'7',backupId:'batch',createdAt:'2026-10-04'}, {getItem:k=>values.get(k)||null,setItem:(k,v)=>{writes.push([k,v]);values.set(k,v);},removeItem:k=>{values.delete(k);}});expect(writes[0][0]).toBe(key);expect(JSON.parse(values.get(key)!).writerPack).toEqual(pack);expect(JSON.parse(values.get(key)!).adoptedWriterPack).toEqual(plan.writerPack);});
+it('批次任一集正文或钩子已变，整批拒绝，原工程不被部分修改',()=>{for(const field of ['body','endHook'] as const){const f=fixture();f.writerPack.episodes[1][field]+='用户修改';const before=structuredClone(f.writerPack);expect(()=>prepareAdvisorRewriteBatchAdoption(f)).toThrow(/已改变/);expect(f.writerPack).toEqual(before);}});

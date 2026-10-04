@@ -1,0 +1,87 @@
+{
+  "recordedAt": "2026-10-04T21:32:17+08:00",
+  "files": [
+    {
+      "path": "client/src/main.tsx",
+      "bytes": 7093,
+      "sha256": "10b991f6912ad3e3143ad292f34770cfdd94e5ba17b9fc012f1d74bedf7ac92a"
+    },
+    {
+      "path": "client/src/pages/OmniCanvas.tsx",
+      "bytes": 658735,
+      "sha256": "cfa10763287d033e4e90ee95bbaab62d27403635f4b1b4bc24336a575650bd0f"
+    },
+    {
+      "path": "server/routers.ts",
+      "bytes": 723678,
+      "sha256": "7223dc99da5e6ac86da91bc4dde6d21cd8912d38ebec9bb2dc63b9ac22d5c7fc"
+    },
+    {
+      "path": "server/services/manhuaWriterTrial.ts",
+      "bytes": 12291,
+      "sha256": "dbe8ef46f0f6d9716ebe4012083662342811477af6bec9df21366cc2e90a0c68"
+    },
+    {
+      "path": "server/services/manhuaWriterModelRun.ts",
+      "bytes": 2073,
+      "sha256": "5a1b02ac2e44c1f98d085e441a456f15f9dfe00210d4a4e5e99b5aaec3c7d157"
+    },
+    {
+      "path": "server/services/manhuaWriterModelRun.test.ts",
+      "bytes": 2273,
+      "sha256": "c7cafbc867089254a77a2d7c29af0cb8f066603373739e510f413a7c2ebd2d9a"
+    },
+    {
+      "path": "server/routers.manhuaWriterModels.test.ts",
+      "bytes": 5086,
+      "sha256": "94e6e1d77fab4a6ae83a11c86fff9f2ee03197412ce340872b07e0be14ad3bb2"
+    },
+    {
+      "path": "shared/manhuaWriterModels.ts",
+      "bytes": 824,
+      "sha256": "565e78103e062be85069bd595d64f65a5f8d099a728a22825f1f8ce3a7eaf5dc"
+    },
+    {
+      "path": "shared/manhuaWriterModels.test.ts",
+      "bytes": 631,
+      "sha256": "efbed350e31cf3a44d1367f4b8694c09bd1d757080d08065329f8d4f76fbb780"
+    },
+    {
+      "path": "server/services/manhuaNovelAdaptationRun.ts",
+      "bytes": 9228,
+      "sha256": "8cb570a522b436b69835d6a3ec92a304a424d7dcbe95c80f29bbe021c2791bc0"
+    }
+  ],
+  "logs": [
+    {
+      "path": "../backend-work/1004-writer-two-model-tests.log",
+      "bytes": 686,
+      "sha256": "a922ecb376cba329c229c0d5acf018c7f676bbcb424b15c56a100f28d1043b19"
+    },
+    {
+      "path": "../backend-work/1004-writer-trial-model-test.log",
+      "bytes": 589,
+      "sha256": "8bc90dbeb5fe2687cd2760322d5855bb1886f5f6872dd18700fd3df1ab732571"
+    },
+    {
+      "path": "../backend-work/1004-writer-two-model-types.log",
+      "bytes": 47,
+      "sha256": "5b30b9ff5913cb9d82ccf725d451e437b9057e5cebadf74a0041573724dd07d4"
+    },
+    {
+      "path": "../backend-work/1004-writer-two-model-final-types.log",
+      "bytes": 47,
+      "sha256": "4b825fe85d8195a145d8b9eba16dbad777d717eaad55416fd13a0019e9a6be7d"
+    },
+    {
+      "path": "../backend-work/1004-writer-two-model-build.log",
+      "bytes": 82587,
+      "sha256": "cc25c0067f5ef7f03e657fc2404d3dbe73382e17532a57ccc579d4da17a979fe"
+    },
+    {
+      "path": "../backend-work/novel-reasoning-final-tests.log",
+      "bytes": 464,
+      "sha256": "0f66d19fb12622222690713cc11b8bb8be8c0cf9184940fac5df558d0c38dd42"
+    }
+  ]
+}

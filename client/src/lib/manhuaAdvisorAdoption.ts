@@ -2,7 +2,7 @@ import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope
 import { formatManhuaWriterPackMarkdown, type ManhuaWriterPack } from "@shared/manhuaWriterRoom";
 import type { ManhuaProjectBible } from "@shared/manhuaProjectBible";
 import { buildManhuaWriterSession, MANHUA_WRITER_SESSION_LS_KEY, serializeManhuaWriterSession } from "@shared/manhuaWriterSession";
-import { advisorRewriteCandidateSchema } from "./manhuaAdvisorTemplates";
+import { advisorRewriteCandidateSchema, validateAdvisorRewriteBody } from "@shared/manhuaAdvisorRewrite";
 import { stripManhuaFactoryCanvasArtifacts } from "./canvasDramaStudio";
 import { markManhuaDirectorBoardOverlaysForReview, type ManhuaDirectorBoardOverlayBySegment } from "./manhuaDirectorBoardStore";
 import type { CanvasBlock, CanvasEdge } from "./canvasTypes";
@@ -30,8 +30,11 @@ export function prepareAdvisorRewriteAdoption(input: {
   if (!checked.success || !input.writerPack) throw new Error("改写内容不完整，未采用。");
   if (input.busy || advisorRewriteHasActiveWork(input.blocks)) throw new Error("仍有运行或待核实任务，请先等待原任务回执，未采用改写。");
   const candidate = checked.data;
+  validateAdvisorRewriteBody(candidate.originalBody, candidate.rewrittenBody);
   if (input.writerPack.episodes.find(ep => ep.index === candidate.episodeIndex)?.body !== candidate.originalBody) throw new Error("原稿已改变，请根据最新正文重新改写。");
-  const writerPack = { ...input.writerPack, episodes: input.writerPack.episodes.map(ep => ep.index === candidate.episodeIndex ? { ...ep, body: candidate.rewrittenBody } : ep) };
+  const originalEpisode = input.writerPack.episodes.find(ep => ep.index === candidate.episodeIndex)!;
+  if (candidate.endHook && (originalEpisode.endHook || "") !== candidate.originalEndHook) throw new Error("片尾钩子已改变，请根据最新原稿重新优化。");
+  const writerPack = { ...input.writerPack, episodes: input.writerPack.episodes.map(ep => ep.index === candidate.episodeIndex ? { ...ep, body: candidate.rewrittenBody, ...(candidate.endHook ? { endHook: candidate.endHook } : {}) } : ep) };
   writerPack.rawMarkdown = formatManhuaWriterPackMarkdown({ ...writerPack, rawMarkdown: "" });
   const canvas = stripManhuaFactoryCanvasArtifacts(input.blocks, input.edges, { fromEpisode: candidate.episodeIndex });
   const affected = Object.fromEntries(Object.entries(input.overlays).filter(([ep]) => Number(ep) >= candidate.episodeIndex));
@@ -71,4 +74,16 @@ export function persistAdvisorRewriteAdoption(input: {
     throw new Error(restored ? "改写保存失败，已保留原工程与旧稿备份，未采用。" : "改写保存失败且存储回退未完成，请勿刷新；旧稿完整备份已保存，可下载恢复。");
   }
   return backupKey;
+}
+
+/** 批次先验证每一集，再一次备份和写入整稿，避免循环setState覆盖前一集。 */
+export function prepareAdvisorRewriteBatchAdoption(input: Omit<Parameters<typeof prepareAdvisorRewriteAdoption>[0], "candidate"> & { candidates: unknown[] }) {
+  if (!input.candidates.length) throw new Error("没有可套用的优化稿");
+  const checked = input.candidates.map(candidate => prepareAdvisorRewriteAdoption({ ...input, candidate }));
+  if (new Set(checked.map(p=>p.candidate.episodeIndex)).size !== checked.length) throw new Error("同一集出现多份候选，请只选一版");
+  const first = checked.reduce((a,b)=>a.candidate.episodeIndex<b.candidate.episodeIndex?a:b);
+  const replacements = new Map(checked.map(p=>[p.candidate.episodeIndex,p.writerPack.episodes.find(e=>e.index===p.candidate.episodeIndex)!]));
+  const writerPack={...first.writerPack,episodes:input.writerPack!.episodes.map(ep=>replacements.get(ep.index)||ep)};
+  writerPack.rawMarkdown=formatManhuaWriterPackMarkdown({...writerPack,rawMarkdown:""});
+  return {...first,writerPack};
 }

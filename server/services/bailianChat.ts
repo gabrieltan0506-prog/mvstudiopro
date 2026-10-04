@@ -68,6 +68,8 @@ export const OPENROUTER_GLM_PROVIDER_SLUG = "z-ai/fp8";
  * `glm-5.3` 与 `glm-5.3-flash`——0825 记的「EvoLink 只有 glm-5.2，5.3 永久 404」已过期。
  */
 export const EVOLINK_GLM_MODEL = "glm-5.3-flash";
+export const EVOLINK_GLM_FLASHX_MODEL = "glm-5.3-flashx";
+export const OPENROUTER_GLM_FLASHX_MODEL = "z-ai/glm-5.3-flashx";
 /** 0920 换档前的 EvoLink 档 id；**只进历史指纹复原与识别，永不发请求**。 */
 export const EVOLINK_GLM_LEGACY_MODEL_BEFORE_0920 = "glm-5.3";
 /**
@@ -236,6 +238,8 @@ export type GlmRawResponseEvidence = {
 };
 
 export type GlmParams = {
+  /** Template structuring uses FlashX; other callers retain their configured model. */
+  glmVariant?: "flash" | "flashx";
   system: string;
   user: string;
   /**
@@ -447,7 +451,7 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
       // ⚠️ 0920「open router 打折趁机用上」只改**整形链**首发(见 nativeDeepReadStructuringGatewayOrder),
       // 不动这条通用链——用户没交代通用链改序,不自行外推。
       name: "evolink_glm",
-      model: EVOLINK_GLM_MODEL,
+      model: params.glmVariant === "flashx" ? EVOLINK_GLM_FLASHX_MODEL : EVOLINK_GLM_MODEL,
       ready: Boolean(String(process.env.EVOLINK_API_KEY || "").trim()),
       url: "https://api.evolink.ai/v1/chat/completions",
       key: String(process.env.EVOLINK_API_KEY || "").trim(),
@@ -455,7 +459,7 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
     {
       // 兜底一(同模型):EvoLink 不通才走 OpenRouter,仍是 GLM-5.3 Flash,产出口径不变,provider 钉 Z.AI 自营
       name: "openrouter",
-      model: OPENROUTER_GLM_MODEL,
+      model: params.glmVariant === "flashx" ? OPENROUTER_GLM_FLASHX_MODEL : OPENROUTER_GLM_MODEL,
       ready: Boolean(String(process.env.OPENROUTER_API_KEY || "").trim()),
       url: "https://openrouter.ai/api/v1/chat/completions",
       key: String(process.env.OPENROUTER_API_KEY || "").trim(),

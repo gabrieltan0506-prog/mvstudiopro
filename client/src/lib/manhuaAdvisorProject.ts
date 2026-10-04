@@ -263,6 +263,7 @@ function excerptEvidence(value: string, max: number, label: string, notes: strin
 
 /** 只读取现有状态。没有人物真源、没有镜头产物时明确为空，不推测或造默认镜头。 */
 export function buildManhuaAdvisorProject(input: {
+  projectId?: string;
   pack: ManhuaWriterPack | null;
   bible: ManhuaProjectBible | null;
   episodeIndex: number;
@@ -393,9 +394,11 @@ export function buildManhuaAdvisorProject(input: {
   const generationSteps = buildManhuaAdvisorGenerationMonitor({ ...input, issues, hasScript: Boolean(episode?.body.trim()) });
   return {
     context: {
+      ...(input.projectId ? { projectId: input.projectId } : {}),
       seriesTitle: excerptEvidence(input.pack?.seriesTitle || input.bible?.seriesTitle || "未命名项目", LIMITS.seriesTitleChars, "剧名", contextNotes),
       episodeIndex: input.episodeIndex,
       episodeTitle: excerptEvidence(episode?.title || "", LIMITS.episodeTitleChars, "本集标题", contextNotes),
+      ...(episode?.endHook ? { episodeEndHook: episode.endHook } : {}),
       stage: input.phase,
       videoModel: engine.videoModel || "未选择",
       writerConfirmed: input.writerConfirmed,

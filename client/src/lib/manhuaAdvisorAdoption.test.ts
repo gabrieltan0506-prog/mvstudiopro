@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
-import { prepareAdvisorRewriteAdoption, persistAdvisorRewriteAdoption, advisorRewriteHasActiveWork } from "./manhuaAdvisorAdoption";
+import { prepareAdvisorRewriteAdoption, prepareAdvisorRewriteBatchAdoption, persistAdvisorRewriteAdoption, advisorRewriteHasActiveWork } from "./manhuaAdvisorAdoption";
 import { defaultCanvasBlock, type CanvasBlock } from "./canvasTypes";
 import { buildManhuaWriterSession, serializeManhuaWriterSession, loadManhuaWriterSessionFromStorage, MANHUA_WRITER_SESSION_LS_KEY } from "@shared/manhuaWriterSession";
 import { MANHUA_BOARD_MOTION_OVERLAY_FORMAT } from "@shared/manhuaDirectorBoardOverlay";
@@ -59,14 +59,14 @@ describe("顾问采用真实归档与持久化",()=>{
 
 // 提取并执行真实宿主JSX回调：生产helper/归档/会话序列化保留，只有React setter作为观察边界。
 const source=readFileSync(new URL("../pages/OmniCanvas.tsx",import.meta.url),"utf8");
-const tree=ts.createSourceFile("OmniCanvas.tsx",source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);let callback="";
-function visit(n:ts.Node){if(ts.isJsxAttribute(n)&&n.name.getText(tree)==="onApplyRewrite"&&n.initializer&&ts.isJsxExpression(n.initializer))callback=n.initializer.expression!.getText(tree);ts.forEachChild(n,visit);}visit(tree);
-const callbackJs=ts.transpileModule(`(${callback})`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+const tree=ts.createSourceFile("OmniCanvas.tsx",source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);let callback="";const hostHelpers:string[]=[];
+function visit(n:ts.Node){if(ts.isFunctionDeclaration(n)&&n.name&&["applyTemplateRewriteCandidate","applyTemplateRewriteCandidates"].includes(n.name.text))hostHelpers.push(n.getText(tree));if(ts.isJsxAttribute(n)&&n.name.getText(tree)==="onApplyRewrite"&&n.initializer&&ts.isJsxExpression(n.initializer))callback=n.initializer.expression!.getText(tree);ts.forEachChild(n,visit);}visit(tree);
+const callbackJs=ts.transpileModule(`${hostHelpers.join("\n")}\n(${callback})`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
 it("生产OmniCanvas回调只有持久化成功后才改状态，失败不清理当前工程",()=>{
  for(const failAt of [0,1,3]){
   const f=fixture(),s=storage(failAt),setters:Record<string,ReturnType<typeof vi.fn>>={};
-  for(const name of ["setBlocks","setEdges","bumpManhuaOutboundEpoch","setDirectorBoardMotionOverlayBySegment","setWriterPackDiff","setWriterPack","setWriterConfirmed","setDirectorUnlocked","setWorkflowPhase","setWriterFocusEpisode","setWriterConfirmBlockers","setAdvisorOpen"])setters[name]=vi.fn(()=>{expect(s.writes.length).toBeGreaterThanOrEqual(4);});
-  const fn=runInNewContext(callbackJs,{...setters,...f,writerBusy:false,factoryBusy:false,assembleBusy:false,burnSubtitleBusy:false,segmentRefBusyId:null,assetStandardizeBusyId:null,asset3dBusyIds:[],sceneWorldBusyIds:[],directorBoardMotionOverlayBySegment:{},user:{id:1},crypto:{randomUUID:()=>"test-id"},toast:{error:vi.fn()},materializedBoardIdsRef:{current:{clear:vi.fn()}},prepareAdvisorRewriteAdoption,persistAdvisorRewriteAdoption:(input:Parameters<typeof persistAdvisorRewriteAdoption>[0])=>persistAdvisorRewriteAdoption(input,s),diffManhuaWriterPacks});
+  for(const name of ["setBlocks","setEdges","bumpManhuaOutboundEpoch","setDirectorBoardMotionOverlayBySegment","setWriterPackDiff","setWriterPack","setWriterConfirmed","setDirectorUnlocked","setWorkflowPhase","setWriterFocusEpisode","setWriterConfirmBlockers","setAdvisorOpen","setAdvisorFocusSection"])setters[name]=vi.fn(()=>{expect(s.writes.length).toBeGreaterThanOrEqual(4);});
+  const fn=runInNewContext(callbackJs,{...setters,...f,writerBusy:false,factoryBusy:false,assembleBusy:false,burnSubtitleBusy:false,segmentRefBusyId:null,assetStandardizeBusyId:null,asset3dBusyIds:[],sceneWorldBusyIds:[],directorBoardMotionOverlayBySegment:{},user:{id:1},crypto:{randomUUID:()=>"test-id"},toast:{error:vi.fn()},materializedBoardIdsRef:{current:{clear:vi.fn()}},prepareAdvisorRewriteAdoption,prepareAdvisorRewriteBatchAdoption,maskMediaProviderDetails:(x:string)=>x,persistAdvisorRewriteAdoption:(input:Parameters<typeof persistAdvisorRewriteAdoption>[0])=>persistAdvisorRewriteAdoption(input,s),diffManhuaWriterPacks});
   expect(fn(candidate)).toBe(failAt===0);
   if(failAt){for(const setter of Object.values(setters))expect(setter).not.toHaveBeenCalled();}
   else{expect(setters.setWriterConfirmed).toHaveBeenCalledWith(false);expect(setters.setDirectorUnlocked).toHaveBeenCalledWith(false);expect(setters.setWriterPack.mock.calls[0][0].episodes[1].body).toBe(candidate.rewrittenBody);}

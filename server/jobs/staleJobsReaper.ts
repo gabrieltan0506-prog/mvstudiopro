@@ -140,13 +140,13 @@ export async function reapStaleJobsOnce(
 
     // 知识卡两类上面已改判 failed（保留行供前端拿终态），这里不再 DELETE。
     const nonRecoverableRunningJob = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (
-      'novel_workspace_test',
+      'novel_workspace_test', 'manhua_episode_optimization_v1',
       'manhua_template_learn', 'manhua_bgm_v55', 'manhua_advisor_qa', 'manhua_assemble_final', 'canvas_dialogue_line',
       'knowledge_card_distill', 'knowledge_card_derive_level'
     )`;
     // 尚未付费确认的顾问 queued 占位没有扣分；过期后仍按通用规则清理，避免永久堆积。
     const nonRecoverableQueuedJob = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (
-      'novel_workspace_test',
+      'novel_workspace_test', 'manhua_episode_optimization_v1',
       'manhua_template_learn', 'manhua_bgm_v55', 'manhua_assemble_final',
       'knowledge_card_distill', 'knowledge_card_derive_level'
     )`;

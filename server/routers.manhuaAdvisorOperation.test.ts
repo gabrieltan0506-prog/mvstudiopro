@@ -15,6 +15,7 @@ vi.mock("./services/platformSkillQa.js", () => ({
 }));
 
 const reserveManhuaAdvisorOperation = vi.fn();
+const awaitManhuaAdvisorPaymentConfirmation = vi.fn();
 const claimManhuaAdvisorFailed = vi.fn();
 const claimManhuaAdvisorRefundPending = vi.fn();
 const markManhuaAdvisorRefundReconciled = vi.fn();
@@ -24,6 +25,7 @@ const withManhuaAdvisorHeartbeat = vi.fn(
 );
 vi.mock("./services/manhuaAdvisorOperation.js", () => ({
   MANHUA_ADVISOR_TASK_TYPE: "manhuaAdvisor",
+  awaitManhuaAdvisorPaymentConfirmation: (...args: unknown[]) => awaitManhuaAdvisorPaymentConfirmation(...args),
   reserveManhuaAdvisorOperation: (...args: unknown[]) =>
     reserveManhuaAdvisorOperation(...args),
   claimManhuaAdvisorFailed: (...args: unknown[]) => claimManhuaAdvisorFailed(...args),
@@ -72,9 +74,15 @@ vi.mock("./services/paidJobLedger.js", () => ({
   markSettlementPending: (...args: unknown[]) => markSettlementPending(...args),
 }));
 
-vi.mock("./services/manhuaAdvisorDailyQuota.js",()=>({
-  reserveAdvisorDailyQuota:async()=>({reserved:false,day:"2026-10-02",used:99,limit:5}),
-  releaseAdvisorDailyQuota:async()=>{},
+const assertAdvisorProject = vi.fn();
+const readAdvisorProjectQuota = vi.fn();
+const reserveAdvisorProjectQuota = vi.fn();
+const releaseAdvisorProjectQuota = vi.fn();
+vi.mock("./services/manhuaAdvisorProjectQuota",()=>({
+  assertAdvisorProject:(...args:unknown[])=>assertAdvisorProject(...args),
+  readAdvisorProjectQuota:(...args:unknown[])=>readAdvisorProjectQuota(...args),
+  reserveAdvisorProjectQuota:(...args:unknown[])=>reserveAdvisorProjectQuota(...args),
+  releaseAdvisorProjectQuota:(...args:unknown[])=>releaseAdvisorProjectQuota(...args),
 }));
 
 import { appRouter } from "./routers";
@@ -98,11 +106,11 @@ const RESULT = {
   answer: "先把反应镜提前一拍。",
   remainingFreeToday: 0,
   usedToday: 4,
-  dailyLimit: 3,
+  dailyLimit: 5,
   qaMode: "terra" as const,
-  creditsCharged: 8,
+  creditsCharged: 12,
   paidThisTurn: true,
-  paidUnitCredits: 8,
+  paidUnitCredits: 12,
   imageOffer: null,
 };
 const INPUT = {
@@ -119,10 +127,15 @@ const caller = () =>
 beforeEach(() => {
   vi.resetAllMocks();
   countPlatformSkillQaToday.mockResolvedValue(99);
+  assertAdvisorProject.mockResolvedValue(undefined);
+  awaitManhuaAdvisorPaymentConfirmation.mockResolvedValue(true);
+  readAdvisorProjectQuota.mockResolvedValue({ used: 5, remaining: 0, limit: 5 });
+  reserveAdvisorProjectQuota.mockResolvedValue({ reserved: false, used: 5, remaining: 0 });
+  releaseAdvisorProjectQuota.mockResolvedValue(undefined);
   getCredits.mockResolvedValue({ totalAvailable: 100 });
   deductCreditsAmount.mockResolvedValue({
     success: true,
-    cost: 8,
+    cost: 12,
     remainingBalance: 92,
     source: "team",
     teamId: 12,
@@ -137,10 +150,10 @@ beforeEach(() => {
   unregisterActiveJob.mockResolvedValue({ ok: true });
   refundCreditsOnFailure.mockResolvedValue({
     refunded: true,
-    creditsRefunded: 8,
+    creditsRefunded: 12,
     status: "refunded",
   });
-  refundChargeByKey.mockResolvedValue({ refunded: 8 });
+  refundChargeByKey.mockResolvedValue({ refunded: 12 });
   refundCreditsForDeductAmount.mockResolvedValue(undefined);
   markSettlementPending.mockResolvedValue(true);
   withManhuaAdvisorHeartbeat.mockImplementation(
@@ -168,6 +181,7 @@ describe("askPlatformSkillQa · 漫剧顾问操作账本", () => {
     const result = await caller().mvAnalysis.askPlatformSkillQa(INPUT);
     expect(result).toMatchObject({ success: true, answer: RESULT.answer, replayed: true });
     expect(countPlatformSkillQaToday).not.toHaveBeenCalled();
+    expect(assertAdvisorProject).not.toHaveBeenCalled();
     expect(getCredits).not.toHaveBeenCalled();
     expect(deductCreditsAmount).not.toHaveBeenCalled();
     expect(askPlatformSkillQa).not.toHaveBeenCalled();
@@ -183,8 +197,8 @@ describe("askPlatformSkillQa · 漫剧顾问操作账本", () => {
       .mvAnalysis.askPlatformSkillQa(INPUT)
       .catch((error: unknown) => error);
     expect(paymentError).toMatchObject({ code: "PAYMENT_REQUIRED" });
-    expect((paymentError as Error).message).toContain("今日标准顾问免费");
-    expect((paymentError as Error).message).toContain("8 积分/次");
+    expect((paymentError as Error).message).toContain("本作品免费");
+    expect((paymentError as Error).message).toContain("12 积分/次");
     expect((paymentError as Error).message).not.toMatch(/Sol|Terra|成本\+60%/);
     expect(reserveManhuaAdvisorOperation).toHaveBeenCalledTimes(1);
     expect(reserveManhuaAdvisorOperation).toHaveBeenCalledWith(
@@ -206,7 +220,7 @@ describe("askPlatformSkillQa · 漫剧顾问操作账本", () => {
       });
     const confirmed = await caller().mvAnalysis.askPlatformSkillQa({
       ...INPUT,
-      confirmPaid: true, confirmedCredits: 8,
+      confirmPaid: true, confirmedCredits: 12,
     });
     expect(confirmed).toMatchObject({ success: true, answer: RESULT.answer });
     expect(reserveManhuaAdvisorOperation).toHaveBeenLastCalledWith(
@@ -244,12 +258,12 @@ describe("askPlatformSkillQa · 漫剧顾问操作账本", () => {
 
     const result = await caller().mvAnalysis.askPlatformSkillQa({
       ...INPUT,
-      confirmPaid: true, confirmedCredits: 8,
+      confirmPaid: true, confirmedCredits: 12,
     });
     expect(result).toMatchObject({ success: true, answer: RESULT.answer });
     expect(deductCreditsAmount).toHaveBeenCalledWith(
       7,
-      8,
+      12,
       "platformSkillQaTerra",
       expect.stringContaining("创作顾问问答"),
       { chargeKey: `manhuaAdvisor/${JOB_ID}` },
@@ -258,7 +272,7 @@ describe("askPlatformSkillQa · 漫剧顾问操作账本", () => {
       expect.objectContaining({
         jobId: JOB_ID,
         taskType: "manhuaAdvisor",
-        creditsBilled: 8,
+        creditsBilled: 12,
         deduct: expect.objectContaining({
           source: "team",
           teamId: 12,
@@ -271,7 +285,7 @@ describe("askPlatformSkillQa · 漫剧顾问操作账本", () => {
       expect.objectContaining({
         rawQuestion: INPUT.rawQuestion,
         manhuaContext: CONTEXT,
-        paidCreditsAlreadyCharged: 8,
+        paidCreditsAlreadyCharged: 12,
       }),
     );
     expect(markManhuaAdvisorSucceededWithRetry).toHaveBeenCalledWith(
@@ -324,7 +338,7 @@ describe("askPlatformSkillQa · 漫剧顾问操作账本", () => {
     askPlatformSkillQa.mockRejectedValueOnce(new Error("上游暂时不可用"));
     refundCreditsOnFailure.mockRejectedValueOnce(new Error("退款账本暂时不可用"));
     const error = await caller()
-      .mvAnalysis.askPlatformSkillQa({ ...INPUT, confirmPaid: true, confirmedCredits: 8 })
+      .mvAnalysis.askPlatformSkillQa({ ...INPUT, confirmPaid: true, confirmedCredits: 12 })
       .catch((caught: unknown) => caught);
     expect((error as Error).message).toContain("ADVISOR_OPERATION_REFUND_PENDING");
     expect((error as Error).message).not.toContain("上游暂时不可用");
@@ -355,9 +369,9 @@ describe("askPlatformSkillQa · 漫剧顾问操作账本", () => {
         requestFingerprint: FINGERPRINT,
       });
     deductCreditsAmount.mockRejectedValueOnce(new Error("扣分回执丢失"));
-    refundChargeByKey.mockResolvedValueOnce({ refunded: 8 });
+    refundChargeByKey.mockResolvedValueOnce({ refunded: 12 });
     const error = await caller()
-      .mvAnalysis.askPlatformSkillQa({ ...INPUT, confirmPaid: true, confirmedCredits: 8 })
+      .mvAnalysis.askPlatformSkillQa({ ...INPUT, confirmPaid: true, confirmedCredits: 12 })
       .catch((caught: unknown) => caught);
     expect((error as Error).message).toBe(
       "ADVISOR_OPERATION_FAILED：本次扣点未完成，请重新提问",
@@ -370,7 +384,7 @@ describe("askPlatformSkillQa · 漫剧顾问操作账本", () => {
         refundKey: `refund:[refundKey:manhuaAdvisor/${JOB_ID}]`,
       }),
     );
-    expect(markManhuaAdvisorRefundReconciled).toHaveBeenCalledWith(JOB_ID, 8);
+    expect(markManhuaAdvisorRefundReconciled).toHaveBeenCalledWith(JOB_ID, 12);
     expect(registerActiveJob).not.toHaveBeenCalled();
     expect(askPlatformSkillQa).not.toHaveBeenCalled();
   });
@@ -391,7 +405,7 @@ describe("askPlatformSkillQa · 漫剧顾问操作账本", () => {
       new Error("duplicate key value violates jobs_pkey"),
     );
     const error = await caller()
-      .mvAnalysis.askPlatformSkillQa({ ...INPUT, confirmPaid: true, confirmedCredits: 8 })
+      .mvAnalysis.askPlatformSkillQa({ ...INPUT, confirmPaid: true, confirmedCredits: 12 })
       .catch((caught: unknown) => caught);
     expect((error as Error).message).toBe(
       "ADVISOR_OPERATION_FAILED：本次问答未能开始，积分已原路退回，请重新提问",
@@ -419,7 +433,7 @@ describe("askPlatformSkillQa · 漫剧顾问操作账本", () => {
       });
     markManhuaAdvisorSucceededWithRetry.mockResolvedValueOnce(false);
     const error = await caller()
-      .mvAnalysis.askPlatformSkillQa({ ...INPUT, confirmPaid: true, confirmedCredits: 8 })
+      .mvAnalysis.askPlatformSkillQa({ ...INPUT, confirmPaid: true, confirmedCredits: 12 })
       .catch((caught: unknown) => caught);
     expect((error as Error).message).toBe(
       "ADVISOR_OPERATION_FAILED：本次问答未完成；积分已原路退回，请重新提问",
@@ -455,7 +469,7 @@ describe("askPlatformSkillQa · 漫剧顾问操作账本", () => {
     claimManhuaAdvisorRefundPending.mockResolvedValueOnce("succeeded");
     const result = await caller().mvAnalysis.askPlatformSkillQa({
       ...INPUT,
-      confirmPaid: true, confirmedCredits: 8,
+      confirmPaid: true, confirmedCredits: 12,
     });
     expect(result).toMatchObject({ success: true, replayed: true, answer: RESULT.answer });
     expect(refundCreditsOnFailure).not.toHaveBeenCalled();
@@ -477,7 +491,7 @@ describe("askPlatformSkillQa · 漫剧顾问操作账本", () => {
       });
     askPlatformSkillQa.mockRejectedValueOnce(new Error("模型未返回合法 JSON"));
     const error = await caller()
-      .mvAnalysis.askPlatformSkillQa({ ...INPUT, confirmPaid: true, confirmedCredits: 8 })
+      .mvAnalysis.askPlatformSkillQa({ ...INPUT, confirmPaid: true, confirmedCredits: 12 })
       .catch((caught: unknown) => caught);
     expect((error as Error).message).toBe(
       "ADVISOR_OPERATION_FAILED：本次问答未完成；积分已原路退回，请重新提问",
@@ -490,6 +504,56 @@ describe("askPlatformSkillQa · 漫剧顾问操作账本", () => {
       "顾问回答未完成",
     );
     expect(refundChargeByKey).not.toHaveBeenCalled();
-    expect(markManhuaAdvisorRefundReconciled).toHaveBeenCalledWith(JOB_ID, 8);
+    expect(markManhuaAdvisorRefundReconciled).toHaveBeenCalledWith(JOB_ID, 12);
+  });
+});
+
+
+describe("每作品5次/12积分新增路径", () => {
+  const projectId = "7f9619ff-8b86-4d01-b42d-00cf4fc964ff";
+  const input = { ...INPUT, manhuaContext: { ...CONTEXT, projectId } };
+  const executable = () => reserveManhuaAdvisorOperation.mockResolvedValueOnce({ kind: "awaiting_confirmation", jobId: JOB_ID, requestFingerprint: FINGERPRINT }).mockResolvedValueOnce({ kind: "execute", jobId: JOB_ID, requestFingerprint: FINGERPRINT });
+  it("额度按登录账户和作品读取，单价不沿用平台8分", async () => {
+    readAdvisorProjectQuota.mockResolvedValueOnce({ used: 2, remaining: 3, limit: 5 });
+    expect(await caller().mvAnalysis.getManhuaAdvisorQuota({ projectId })).toMatchObject({ remaining: 3, price: 12, scope: "project" });
+    expect(readAdvisorProjectQuota).toHaveBeenCalledWith(7, projectId);
+    expect(countPlatformSkillQaToday).not.toHaveBeenCalled();
+  });
+  it("最后一次免费领取后把服务端账本回执传给模型服务，不读平台余额", async () => {
+    readAdvisorProjectQuota.mockResolvedValueOnce({ used: 4, remaining: 1, limit: 5 });
+    reserveAdvisorProjectQuota.mockResolvedValueOnce({ reserved: true, used: 5, remaining: 0 });
+    askPlatformSkillQa.mockResolvedValueOnce({ ...RESULT, creditsCharged: 0, paidThisTurn: false });
+    executable();
+    await caller().mvAnalysis.askPlatformSkillQa(input);
+    expect(reserveAdvisorProjectQuota).toHaveBeenCalledWith(7, projectId, REQUEST_ID);
+    expect(askPlatformSkillQa).toHaveBeenCalledWith(expect.objectContaining({ freeQuotaReserved: true, projectQuotaUsed: 5, paidCreditsAlreadyCharged: 0 }));
+    expect(getCredits).not.toHaveBeenCalled();
+    expect(deductCreditsAmount).not.toHaveBeenCalled();
+  });
+  it("另一窗口抢走最后名额时回到确认，不静默扣12分", async () => {
+    readAdvisorProjectQuota.mockResolvedValueOnce({ used: 4, remaining: 1, limit: 5 });
+    executable();
+    await expect(caller().mvAnalysis.askPlatformSkillQa(input)).rejects.toMatchObject({ code: "PAYMENT_REQUIRED" });
+    expect(awaitManhuaAdvisorPaymentConfirmation).toHaveBeenCalledWith(JOB_ID);
+    expect(deductCreditsAmount).not.toHaveBeenCalled();
+    expect(askPlatformSkillQa).not.toHaveBeenCalled();
+  });
+  it("旧8分确认不能作为12分同意，作品校验失败也不调用模型", async () => {
+    reserveManhuaAdvisorOperation.mockResolvedValueOnce({ kind: "awaiting_confirmation", jobId: JOB_ID, requestFingerprint: FINGERPRINT });
+    await expect(caller().mvAnalysis.askPlatformSkillQa({ ...input, confirmPaid: true, confirmedCredits: 8 })).rejects.toMatchObject({ code: "PAYMENT_REQUIRED" });
+    reserveManhuaAdvisorOperation.mockResolvedValueOnce({ kind: "awaiting_confirmation", jobId: JOB_ID, requestFingerprint: FINGERPRINT });
+    assertAdvisorProject.mockRejectedValueOnce(new Error("作品归属无法确认"));
+    await expect(caller().mvAnalysis.askPlatformSkillQa(input)).rejects.toThrow("作品归属");
+    expect(deductCreditsAmount).not.toHaveBeenCalled();
+    expect(askPlatformSkillQa).not.toHaveBeenCalled();
+  });
+  it("免费调用失败释放原作品原编号，不赠送其他作品名额", async () => {
+    readAdvisorProjectQuota.mockResolvedValueOnce({ used: 4, remaining: 1, limit: 5 });
+    reserveAdvisorProjectQuota.mockResolvedValueOnce({ reserved: true, used: 5, remaining: 0 });
+    askPlatformSkillQa.mockRejectedValueOnce(new Error("测试模型失败"));
+    executable();
+    await expect(caller().mvAnalysis.askPlatformSkillQa(input)).rejects.toThrow();
+    expect(releaseAdvisorProjectQuota).toHaveBeenCalledWith(7, projectId, REQUEST_ID);
+    expect(deductCreditsAmount).not.toHaveBeenCalled();
   });
 });

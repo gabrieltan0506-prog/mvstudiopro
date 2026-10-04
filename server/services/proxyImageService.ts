@@ -1183,6 +1183,8 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   imageLane?: OpenAiImageLane | null;
   /** OpenAI 官方模型档位：flare（默认）/ sunburst；只影响官方通道 */
   openaiImageVariant?: OpenAiImageVariant | null;
+  /** Explicit advisor Flare/Sunburst comparison must not silently downgrade to image-2. */
+  requireImageVariant?: boolean;
   /** 覆盖默认 quality；xhigh/max 只对 OpenAI gpt-image-2.5 生效，其余家折回 high */
   qualityOverride?: GptImage2ApiQuality | "xhigh" | "max";
   /** OpenAI 改图对原图忠实度（有参考图才有意义）；默认 high */
@@ -1249,18 +1251,19 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
    */
   const openrouterFallbackAllowed =
     String(process.env.GPT_IMAGE2_ALLOW_OPENROUTER_FALLBACK || "").trim() === "1";
-  const tryOpenRouter =
+  const tryOpenRouter = !options.requireImageVariant && (
     providerMode === "openrouter"
       ? openrouterReady
       : providerMode !== "openai" &&
         providerMode !== "evolink" &&
         providerMode !== "wavespeed" &&
         openrouterReady &&
-        openrouterFallbackAllowed;
+        openrouterFallbackAllowed);
 
   /** 0910 拍板：OpenAI 官方 → EvoLink → WaveSpeed 兜底；显式 providerOverride 只换主路径。 */
   const priceOrder = resolveGptImage2ProviderOrder(providerMode);
   const providersInOrder = priceOrder.filter((p) => {
+    if (options.requireImageVariant && p === "wavespeed") return false;
     if (providerMode === "openrouter") return false;
     if (p === "openai") return openaiReady;
     if (p === "wavespeed") return wavespeedReady;

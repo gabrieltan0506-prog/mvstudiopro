@@ -1,3 +1,5 @@
+import { registerCreativeVoice } from "../routers/creativeVoice";
+import { registerManhuaTemplateCatalogStream } from "../routers/manhuaTemplateCatalogStream";
 import { startRuntimeMemorySampling } from "../services/runtimeMemory";
 import "dotenv/config";
 import { resolveJobWorkerRole } from "../jobs/workerRole.js";
@@ -224,6 +226,7 @@ async function startServer() {
   // Fly / Vercel 反代在最前層；開啟後 req.hostname 才會跟使用者的公開域名一致（登入 Set-Cookie 的 Domain 才推斷得對）
   app.set("trust proxy", 1);
   const server = createServer(app);
+  registerCreativeVoice(server);
   // PDF：Deep Research Max 全链路可逼近 1h；须略大于 routers PDF_PROXY_FETCH_TIMEOUT_MS。
   server.setTimeout(3_450_000);
   server.keepAliveTimeout = 3_455_000;
@@ -260,6 +263,7 @@ async function startServer() {
   app.use(uploadRouter);
   registerAuthApiRoutes(app);
   registerManhuaAdvisorStream(app);
+  registerManhuaTemplateCatalogStream(app);
   registerPhotoTemporaryMedia(app);
   registerSmsAuthRoutes(app);
   registerSpeechApiRoutes(app);

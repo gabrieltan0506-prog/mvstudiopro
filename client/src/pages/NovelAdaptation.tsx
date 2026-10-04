@@ -1,3 +1,5 @@
+import { CreativeVoicePanel } from "@/components/canvas/CreativeVoicePanel";
+import { useManhuaTemplateCatalogEvents } from "@/hooks/useManhuaTemplateCatalogEvents";
 import "./NovelAdaptation.css";
 import {
   BookOpen,
@@ -163,10 +165,10 @@ function NovelWorkspaceEditor({
     {
       retry: 1,
       staleTime: 0,
-      refetchInterval: 15000,
       refetchOnWindowFocus: true,
     }
   );
+  const templateCatalogConnected = useManhuaTemplateCatalogEvents(Boolean(userId), () => templates.refetch());
   const cards = (templates.data?.groups || []).flatMap(g => g.items);
   const mutation = trpc.novelWorkspace.generate.useMutation();
   const [savedRaw, setSavedRaw] = useState<{
@@ -644,6 +646,7 @@ function NovelWorkspaceEditor({
       setProgress("正在提交请求…");
       const result = await mutation.mutateAsync(input);
       if (alive.current) await applyResult(input, result);
+      return result.text;
     } catch (e) {
       queueActive.current = false;
       if (alive.current)
@@ -1396,6 +1399,7 @@ function NovelWorkspaceEditor({
   );
   const advisorContent = (
     <>
+      <CreativeVoicePanel key={draft.roundId} scopeKey={`${userId}:${draft.roundId}`} context={JSON.stringify({ title: draft.topic, direction: draft.direction, outline: draft.outline, chapters: draft.chapters, templates: draft.templates })} disabled={disabled} onUse={text => { change({ advisorDraft: text }); setSideTab("advisor"); }} targets={draft.chapters.map((chapter, i) => ({ episode: i + 1, label: chapter ? `第${i + 1}集小说稿` : `第${i + 1}集尚无正文` }))} onNavigate={target => { if (disabled || !latest.current.chapters[target.episode - 1]) throw new Error("该集正文尚未生成或工作区忙，未切换。"); setActiveChapter(target.episode - 1); return `已打开第${target.episode}集小说稿，未改正文。`; }} onAskAdvisor={async question => await generate("advice", undefined, 1, question)} />
       {advice && (
         <div className="mt-5 space-y-3">
           <h3 className="font-semibold">与创作顾问讨论</h3>
@@ -1532,6 +1536,7 @@ function NovelWorkspaceEditor({
       >
         刷新模板库
       </button>
+      {templateCatalogConnected === false && <p role="status">模板即时更新正在重连，已有选择保留。<button type="button" onClick={() => void templates.refetch()}>读取最新模板</button></p>}
       {templates.isError && (
         <div role="alert" className="mt-3 text-sm text-amber-200">
           模板加载失败，已有选择保留。

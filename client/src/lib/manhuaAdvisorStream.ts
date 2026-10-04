@@ -38,6 +38,16 @@ export function readableAdvisorStream(raw: string, previs: boolean): string {
   return partialJsonString(objectStart ? raw.slice(objectStart.index + objectStart[0].length) : directCandidate ? raw : answer, "summaryZh");
 }
 
+/** 上游错误可能是嵌套对象，不交给Error构造器隐式转成[object Object]。 */
+export function advisorStreamErrorMessage(value: unknown, fallback: string): string {
+  if (typeof value === "string" && value.trim() && !/^\[object Object\]$|^object_object$/i.test(value.trim())) return value.slice(0, 500);
+  if (value && typeof value === "object") {
+    const message = (value as { message?: unknown }).message;
+    if (typeof message === "string") return advisorStreamErrorMessage(message, fallback);
+  }
+  return fallback;
+}
+
 export async function streamManhuaAdvisor(input: Input, onText: (text: string) => void, onModel?: (label: string) => void): Promise<Result> {
   const url = withLongJobsFlyDirect("/api/manhua-advisor/stream");
   const response = await withFlyHealthGate(flyHealthProbeOriginForUrl(url), () => fetch(url, {
@@ -45,7 +55,7 @@ export async function streamManhuaAdvisor(input: Input, onText: (text: string) =
   }));
   if (!response.ok) {
     const body = await response.json().catch(() => null);
-    throw new Error(body?.message || `顾问连接失败（${response.status}），请恢复原问题`);
+    throw new Error(advisorStreamErrorMessage(body?.message, `顾问连接失败（${response.status}），请恢复原问题`));
   }
   if (!response.body || !response.headers.get("content-type")?.includes("text/event-stream")) throw new Error("顾问流式连接未建立，请恢复原问题");
   const reader = response.body.getReader();
@@ -58,11 +68,11 @@ export async function streamManhuaAdvisor(input: Input, onText: (text: string) =
     const payload = lines.filter(line => line.startsWith("data:")).map(line => line.slice(5).trimStart()).join("\n");
     if (!payload) return;
     const data = JSON.parse(payload);
-    if (event === "error") throw new Error(data.message || "顾问返回失败，请恢复原问题");
+    if (event === "error") throw new Error(advisorStreamErrorMessage(data.message, "顾问返回失败，请恢复原问题"));
     if (event === "reset") { raw = ""; onText(""); if (typeof data.text === "string" && data.text) onModel?.(data.text); }
     if (event === "delta") { raw += String(data.text || ""); if (raw.length > 4 * 1024 * 1024) throw new Error("顾问输出超过处理范围，请恢复原问题"); onText(readableAdvisorStream(raw, Boolean(input.manhuaContext?.previsEdit))); }
     if (event === "result") {
-      if (typeof data.answer !== "string" || !data.answer.trim() || typeof data.remainingFreeToday !== "number") throw new Error("顾问回执不完整，请恢复原问题");
+      if (typeof data.answer !== "string" || !data.answer.trim() || /^\[object Object\]$|^object_object$/i.test(data.answer.trim()) || typeof data.remainingFreeToday !== "number") throw new Error("顾问回执不完整，请恢复原问题");
       result = data;
     }
   };

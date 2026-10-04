@@ -107,11 +107,11 @@ export default function ManhuaTemplateTrialCompare(props: {
             disabled={props.applying || !hasChanges || props.stale}
             className="rounded-xl border border-emerald-300/35 bg-emerald-500/15 px-3.5 py-2 text-xs font-semibold text-emerald-100 hover:bg-emerald-500/25 disabled:opacity-50"
           >
-            {props.applying ? "正在套用…" : "满意，套用到全集 →"}
+            {props.applying ? "正在套用…" : "按此模板扩写剧集 →"}
           </button>
         </div>
         <p className="mt-2 text-right text-[10px] text-white/35">
-          套用到全集会按现有扩写档位与集数计费；试写本身免费。
+          此处是大纲试写；扩写另按每集6积分确认。要优化现有单集，请点「用顾问优化本集」。
         </p>
     </section>
   );

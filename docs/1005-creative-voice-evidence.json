@@ -1,0 +1,166 @@
+{
+  "base": "2ed3ed0267c28558cad8ae43e8ffb5feb276c90c",
+  "recordedAt": "2026-10-05T00:41:09.015482+08:00",
+  "files": [
+    {
+      "path": "client/src/components/canvas/CreativeVoicePanel.tsx",
+      "bytes": 26245,
+      "sha256": "8dfb708014e0085455d5732dda4caea2993f94cb9adedc17c10e48f2a6ab2242"
+    },
+    {
+      "path": "client/src/components/canvas/ManhuaCreativeAdvisorPanel.tsx",
+      "bytes": 60100,
+      "sha256": "ac3fcd14bb76094f21c334c81c24afc6235cffef3bf4bc239e993b6b9ac6ab9d"
+    },
+    {
+      "path": "client/src/lib/creativeVoice.browser.test.ts",
+      "bytes": 9755,
+      "sha256": "630a50d5891168ba7eec2dd611af44ae7006e6a26ecf972c7868f552112a15ab"
+    },
+    {
+      "path": "client/src/lib/creativeVoiceMedia.test.ts",
+      "bytes": 638,
+      "sha256": "0585e7558fe18d349a48049d11fff31409af850dc6649fdc8cd9856c48b113dd"
+    },
+    {
+      "path": "client/src/lib/creativeVoiceMedia.ts",
+      "bytes": 1751,
+      "sha256": "e84b163dbd77b9524ee2a7c5373a02c1e8c4b33955915f6c55667c7ecf07e7f2"
+    },
+    {
+      "path": "client/src/lib/creativeVoiceReview.test.ts",
+      "bytes": 2731,
+      "sha256": "3b4327a975fc021749e5228c7784f1db48a8595de20f9dd7f83bd0f98de25488"
+    },
+    {
+      "path": "client/src/lib/creativeVoiceReview.ts",
+      "bytes": 1475,
+      "sha256": "d3ab24928cf19afead03e97d7f6f9bf29a5a522fb9a061981e1fac8fff608b38"
+    },
+    {
+      "path": "client/src/lib/manhuaAdvisorSession.ts",
+      "bytes": 7550,
+      "sha256": "c82e0322c3a4b102084c769203272cfe03b8f1c8bf237dc578e6146b954400ad"
+    },
+    {
+      "path": "client/src/lib/manhuaEpisodeOptimization.browser.test.ts",
+      "bytes": 11649,
+      "sha256": "5ec1f352283f01d1459d9683a6cf0055e32472aea28897fdf708e9f75c06b541"
+    },
+    {
+      "path": "client/src/lib/manhuaTemplateCatalogEvents.test.ts",
+      "bytes": 1345,
+      "sha256": "95299cdf0d8d1e594808d31644c78c2aeeda61faebf7b35037c06324abcabf31"
+    },
+    {
+      "path": "client/src/pages/NovelAdaptation.tsx",
+      "bytes": 97456,
+      "sha256": "0c2dfb226b0d925f1f9ba3ef708ab6ca9f5501b7e2ee57742685b63726ebc765"
+    },
+    {
+      "path": "client/src/pages/OmniCanvas.tsx",
+      "bytes": 661652,
+      "sha256": "84705ff0ca4e849add0399eef8361def7f4e8b28c3b164e9b14ee9a5214cb838"
+    },
+    {
+      "path": "docs/1004-creative-voice-guide.md",
+      "bytes": 6684,
+      "sha256": "72c9755c34817274154073e1b8e30fec8832fb0e50156b1e271dd2857ea35daa"
+    },
+    {
+      "path": "docs/1005-creative-voice-delivery.md",
+      "bytes": 4075,
+      "sha256": "76888e84c0aed8516d45c6c07127f5d382b27e129199f76a8dfc9be1dfe62bfe"
+    },
+    {
+      "path": "server/_core/index.ts",
+      "bytes": 59549,
+      "sha256": "ebd394a942e031338fd39a2ccebe6811b577b07cc1fbb5137b627f3b1b1a8c0b"
+    },
+    {
+      "path": "server/routers/creativeVoice.test.ts",
+      "bytes": 3138,
+      "sha256": "4b6a84075dbde1bee78b3c26f99f154db903475dd17aa5c9ddfdcbc0210c8875"
+    },
+    {
+      "path": "server/routers/creativeVoice.ts",
+      "bytes": 6958,
+      "sha256": "0cd5da01a6379c0fc09c315e27be44f5ee893ab3133308c26b0e87978c3a97cd"
+    },
+    {
+      "path": "server/services/creativeVoiceFallback.test.ts",
+      "bytes": 3040,
+      "sha256": "1e78a6ed87a4d8cb297d5ff409091451f0fd9724e57b305210474ce7db5d5e5c"
+    },
+    {
+      "path": "server/services/creativeVoiceFallback.ts",
+      "bytes": 2837,
+      "sha256": "2bd6a98876b8d9f13673e9ad09f2d827d1d98c2e25bf1fb3fce3f3712e91d5ae"
+    },
+    {
+      "path": "server/services/creativeVoiceSocket.ts",
+      "bytes": 1246,
+      "sha256": "fe038a546afdbd5731d42376c454bc3134698397694ab17d7f2aaa39b2d0d565"
+    },
+    {
+      "path": "server/services/creativeVoiceTransport.test.ts",
+      "bytes": 5544,
+      "sha256": "6f0b8879ab2c025c5388eeb28fd0429819dcca504c2bdff9689e55f8ce766220"
+    },
+    {
+      "path": "server/services/creativeVoiceTransport.ts",
+      "bytes": 8266,
+      "sha256": "a44237573a7a67e2da34b956c3df2db2ee90882cd79e6d0f0fed78d4302bc823"
+    },
+    {
+      "path": "server/services/manhuaEpisodeOptimization.test.ts",
+      "bytes": 7149,
+      "sha256": "16338c1022619cfa258b1ef89e407caaaf083944d65cf08f8dfb160ade7ab799"
+    },
+    {
+      "path": "shared/creativeVoice.ts",
+      "bytes": 3407,
+      "sha256": "ef20430ed6a5e60330dad3f2e4ff54071b2cec4cf82bd1c8c0d279a4099be232"
+    },
+    {
+      "path": "../backend-work/1004-creative-voice-fallback-tests.log",
+      "bytes": 330,
+      "sha256": "bccbb8daf2da2b610ee51a09165cae4167faff570f58cab56950ef37e5f90e43"
+    },
+    {
+      "path": "../backend-work/1005-creative-voice-tests.log",
+      "bytes": 399,
+      "sha256": "a5774d9a67b62585b7189a7b4d38c9c3ca9018b1aac0d3efaaee4338ae75062e"
+    },
+    {
+      "path": "../backend-work/1005-creative-voice-workflow-tests.log",
+      "bytes": 3006,
+      "sha256": "5d6301f2fb8d76642afdd0b3a677a998c6fe723340392966fe9fc38a8e7d3e2f"
+    },
+    {
+      "path": "../backend-work/1005-creative-voice-browser-route-tests-2.log",
+      "bytes": 752,
+      "sha256": "7e8ef1683a603613fe0f5960cca61473f532c9867a976464b7c82faa8a5457cc"
+    },
+    {
+      "path": "../backend-work/1005-creative-voice-consult-recovery.log",
+      "bytes": 353,
+      "sha256": "c0ac04085e9b3975fb88742ae3cc250bc708b1c24ad43e63c066921b3bb805c1"
+    },
+    {
+      "path": "../backend-work/1005-creative-voice-types-final.log",
+      "bytes": 119,
+      "sha256": "a821e3b08dfb9ab6d51b18bd2fd4e3843675b85c91301f8b2c8dbda1d8dca0b8"
+    },
+    {
+      "path": "../backend-work/1005-creative-voice-build.log",
+      "bytes": 82569,
+      "sha256": "5971ffea932f54d8cedca0885ca7ed218fa6292d1110639c9cfbec8a226c3ed9"
+    },
+    {
+      "path": "../backend-work/1005-creative-voice-media-browser.log",
+      "bytes": 488,
+      "sha256": "ef34c942ad0d450438d3040d79be79af972a91d27149ed2619072730a70fb2c5"
+    }
+  ]
+}

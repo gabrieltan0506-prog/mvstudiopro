@@ -1872,6 +1872,7 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
         providerOverride,
         imageLane,
         openaiImageVariant,
+        requireImageVariant: params.requireImageVariant === true,
         qualityOverride: assetStandardizeQuality || undefined,
         captureError,
       });

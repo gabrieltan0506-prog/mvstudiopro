@@ -5,7 +5,7 @@ import path from "node:path";
 let browser: Browser;
 let bundle: string;
 beforeAll(async () => {
- const result = await build({stdin:{resolveDir:process.cwd(),loader:"tsx",contents:`
+ const result = await build({ loader: { ".css": "empty" },stdin:{resolveDir:process.cwd(),loader:"tsx",contents:`
  import React,{useState} from 'react';import{createRoot}from'react-dom/client';
  import Panel from './client/src/components/canvas/ManhuaCreativeAdvisorPanel';
  const f=globalThis.fixture={requests:[],applied:[],answer:''};

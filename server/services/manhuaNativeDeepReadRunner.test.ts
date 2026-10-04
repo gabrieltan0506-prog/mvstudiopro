@@ -4540,7 +4540,7 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     expect(result.episodes[0]!.result.degradedFpsSegmentIndexes).toEqual([0]);
     expect(receipts.find((row) => row.route === "segment_cache_hit")).toBeUndefined();
     // 0905：完成回执的 model 带模型名 + 网关；0920 换档后模型名是「GLM-5.3 Flash」
-    expect(receipts.some((row) => String(row.model).startsWith("GLM-5.3 Flash · OpenRouter（z-ai/glm-5.3）") && row.status === "completed")).toBe(true);
+    expect(receipts.some((row) => String(row.model).startsWith("GLM-5.3 · OpenRouter（z-ai/glm-5.3）") && row.status === "completed")).toBe(true);
   });
 
   it("历史尾片无条件放行标记不再有效，好片复用且只重跑坏尾片", async () => {
@@ -5537,7 +5537,7 @@ describe("0905 · 整形按批次序号分流链", () => {
 
   it("整形模型只允许 GLM；旧 Qwen 值明确拒绝", async () => {
     const m = await import("./manhuaNativeDeepReadRunner");
-    expect(() => m.nativeDeepReadStructuringPolicyForModel("qwen3.8-max")).toThrow("只允许 glm-5.3-flash");
+    expect(() => m.nativeDeepReadStructuringPolicyForModel("qwen3.8-max")).toThrow("只允许 glm-5.3-flashx");
     expect(m.nativeDeepReadStructuringPolicyForModel(undefined)).toBe("structuring_chain");
     expect(m.nativeDeepReadStructuringPolicyForModel("glm-5.3")).toBe("structuring_chain");
     expect(m.nativeDeepReadStructuringStartedLabel("structuring_chain")).not.toMatch(/^Qwen3\.8-Max/);
@@ -5911,4 +5911,13 @@ describe("0920 读片升级档：单片五发不过 → 不报错 → 升级 Gem
     expect([...NATIVE_DEEP_READ_ESCALATION_TEMPERATURES]).toEqual([0.7, 0.65, 0.6]);
     expect(NATIVE_DEEP_READ_ESCALATION_TEMPERATURES).toHaveLength(3);
   });
+});
+
+
+it("FlashX completion labels preserve the actual historical model identity", async () => {
+  const { glmGatewayDisplayLabel } = await import("./manhuaNativeDeepReadRunner");
+  expect(glmGatewayDisplayLabel("evolink_glm")).toBe("GLM-5.3 FlashX · EvoLink");
+  expect(glmGatewayDisplayLabel("openrouter", "z-ai/glm-5.3-flashx")).toBe("GLM-5.3 FlashX · OpenRouter");
+  expect(glmGatewayDisplayLabel("openrouter", "z-ai/glm-5.3-flash")).toBe("GLM-5.3 Flash · OpenRouter");
+  expect(glmGatewayDisplayLabel("openrouter", "z-ai/glm-5.3")).toBe("GLM-5.3 · OpenRouter");
 });

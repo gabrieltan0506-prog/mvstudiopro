@@ -144,3 +144,9 @@ describe("reapStaleJobsOnce 与 post_prod 记录保留", () => {
     });
   });
 });
+it('整集优化的原请求与逐集检查点不进入通用删除名单',async()=>{
+ const calls:Call[]=[];getDb.mockResolvedValue(fakeDb(calls));
+ await reapStaleJobsOnce({bypassDisable:true});
+ const deletes=calls.filter(c=>c.kind==='delete');expect(deletes).toHaveLength(2);
+ for(const d of deletes)expect(sqlStringValues(d.condition).join(' ')).toMatch(/not in[\s\S]*manhua_episode_optimization_v1/);
+});

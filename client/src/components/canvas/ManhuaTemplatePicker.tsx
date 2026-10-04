@@ -363,7 +363,7 @@ export default function ManhuaTemplatePicker(props: {
                 onClick={() => props.onAskAdvisor?.(selected)}
                 className="rounded-lg border border-violet-200/30 px-3 py-2"
               >
-                把编号交给创作顾问
+                用顾问优化本集
               </button>
             )}
           </div>
