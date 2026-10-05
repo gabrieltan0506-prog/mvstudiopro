@@ -1,10 +1,10 @@
-import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 
-const execFileAsync = promisify(execFile);
+import { execHeavyMedia } from "../services/heavyMediaProcess";
+import { heavyMediaSignal } from "../jobs/heavyMediaContext";
+const execFileAsync = execHeavyMedia;
 
 export function parseDurationSeconds(value: string | number | undefined, fallback = 8) {
   const raw = String(value || "").trim().toLowerCase();
@@ -32,7 +32,7 @@ export function resolutionToSize(value: string | undefined) {
 }
 
 export async function runFfmpeg(args: string[]) {
-  return execFileAsync("ffmpeg", args);
+  return execFileAsync("ffmpeg", args, { signal: heavyMediaSignal.getStore() });
 }
 
 /** ffprobe 真实时长（秒）；探不到回 null，让调用方退回声明值而不是炸。 */
@@ -40,7 +40,7 @@ export async function probeMediaDurationSec(filePath: string): Promise<number | 
   try {
     const { stdout } = await execFileAsync("ffprobe", [
       "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", filePath,
-    ]);
+    ], { signal: heavyMediaSignal.getStore() });
     const info = JSON.parse(String(stdout || "{}")) as {
       format?: { duration?: string };
       streams?: Array<{ codec_type?: string; duration?: string }>;
@@ -86,6 +86,7 @@ export async function makeTempDir(prefix = "mvsp-render-") {
 }
 
 export async function downloadFileToPath(url: string, outPath: string, signal?: AbortSignal) {
+  signal = heavyMediaSignal.getStore() ?? signal;
   const resp = await fetch(url, { headers: { "User-Agent": "mvstudiopro-render" }, signal });
   if (!resp.ok) throw new Error(`download_failed:${resp.status}:${url}`);
   const buf = Buffer.from(await resp.arrayBuffer());

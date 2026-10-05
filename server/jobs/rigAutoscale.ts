@@ -59,6 +59,8 @@ export type RigAutoscaleDeps = {
   onStopDecided?(): void;
   /** 停机失败时复位上面的闸。 */
   onStopAborted?(): void;
+  /** Ambiguous stop outcome keeps claims closed until reconciliation. */
+  preserveGateOnStopError?: boolean;
   /**
    * 没有 rig 机可唤醒 / 启动全失败时，把排队中的 Blender 任务打回失败（带原因带做法）。
    * 只有确实查过 Machines API 才调；「机器存在但 stopped」不算没有，那要去 start 它。
@@ -183,6 +185,10 @@ export async function ensureRigStartedForPending(
       // rig 若在这期间恢复，这批任务直接跑掉而不是先被杀。
       state.unavailableSince = deps.now();
       return { action: "no_machine" };
+    }
+    if (deps.preserveGateOnStopError && machines.some(m => !needsStart(m.state))) {
+      state.unavailableSince = undefined;
+      return { action: "already_running" };
     }
     const targets = machines.filter((m) => needsStart(m.state));
     // 冷却只为「真的发了启动命令」计时：没机器可启、正在 starting/stopping 的轮次不烧冷却，
@@ -315,13 +321,21 @@ export async function maybeStopIdleRig(
     return { action: "busy" };
   }
   try {
+    if (await deps.pendingBlenderJobs() > 0 || isBusy()) {
+      deps.onStopAborted?.(); state.lastBusyAt = deps.now(); return { action: "busy" };
+    }
+  } catch (error) {
+    deps.onStopAborted?.(); state.lastBusyAt = deps.now();
+    return { action: "error", message: `final queue check failed: ${String(error)}` };
+  }
+  try {
     deps.log(`[rig-autoscale] rig 空闲 ${Math.round(idleMs / 1000)} 秒，停机 ${deps.selfMachineId}（下次有 Blender 任务时由 app 机唤醒）`);
     await deps.stopMachine(deps.selfMachineId);
     state.lastBusyAt = deps.now();
     return { action: "stopped", machineId: deps.selfMachineId };
   } catch (error) {
-    // 停不掉就把闸打开，机器继续干活，别变成一台活着却不领单的空转机器。
-    deps.onStopAborted?.();
+    // New heavy mode reconciles ambiguous stop responses before reopening claims.
+    if (!deps.preserveGateOnStopError) deps.onStopAborted?.();
     state.lastBusyAt = deps.now();
     return { action: "error", message: `停机失败：${String(error)}` };
   }
@@ -343,6 +357,9 @@ export function resolveRigAutoscaleDeps(
   if (!rigAutoscaleEnabled(env)) return null;
   const cfg = resolveFlyMachinesConfig(env);
   if (!cfg) return null;
+  const heavy = String(env.MANHUA_HEAVY_WORKER_SPLIT || "") === "1";
+  const target = String(env.MANHUA_HEAVY_MACHINE_ID || "");
+  if (heavy && !target) return null; // explicit existing machine only; never create/repurpose
   return {
     now: () => Date.now(),
     queuedBlenderJobs: counters.queuedBlenderJobs,
@@ -351,7 +368,8 @@ export function resolveRigAutoscaleDeps(
     onStopAborted: hooks.onStopAborted,
     failQueuedBlenderJobs: hooks.failQueuedBlenderJobs,
     appName: cfg.appName,
-    listRig: () => listRigMachines(cfg),
+    preserveGateOnStopError: heavy,
+    listRig: async () => (await listRigMachines(cfg)).filter(row => !heavy || row.id === target),
     listAllMachines: () => listFlyMachines(cfg),
     startMachine: (id) => startFlyMachine(cfg, id),
     stopMachine: (id) => stopFlyMachine(cfg, id),

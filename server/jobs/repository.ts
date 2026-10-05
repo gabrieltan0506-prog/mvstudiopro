@@ -931,7 +931,7 @@ export async function claimNextQueuedJobExcluding(excludeTypes: string[]): Promi
 
   let rows: Job[] = [];
   try {
-    const actionCondition = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (
+    const actionCondition = sql`${jobs.type} <> 'media_work' and coalesce(${jobs.input}::jsonb->>'action', '') not in (
       'growth_analyze_video', 'growth_analyze_images', 'manhua_template_learn',
       'manhua_advisor_qa'
     )`;
@@ -1005,10 +1005,11 @@ export async function listManhuaBgmJobsForUser(
 }
 
 /** 独立通道任务类型:主队列不领取,各自专用领取函数串行消化 */
-export const MAIN_QUEUE_EXCLUDED_TYPES = ["pdf_export", "post_prod"] as const;
+export const MAIN_QUEUE_EXCLUDED_TYPES = ["pdf_export", "post_prod", "media_work"] as const;
 
 /** 专用 post_prod 队列:后期 ffmpeg 耗时长,单并发消化,不挤占普通媒体任务 */
 export async function claimNextPostProdJob(filter?: PostProdClaimFilter): Promise<NormalizedJob | null> {
+  if (filter === "none") return null;
   const db = await getDb();
   if (!db) return null;
 
@@ -1053,7 +1054,7 @@ export async function countPendingBlenderPostProdJobs(
   options: { includeRunning?: boolean } = {},
 ): Promise<number> {
   const db = await getDb();
-  if (!db) return 0;
+  if (!db) throw new Error("Cannot inspect worker queue: database unavailable");
   // 唤醒侧只数 queued：running 的那单已经有机器在跑，再数它会把另外几台 rig 全拉起来空转。
   // 停机侧要数 queued+running：绑定跑 12 分钟期间队列为空，只看 queued 会把机器停在任务头上。
   const includeRunning = options.includeRunning !== false;
@@ -1072,7 +1073,7 @@ export async function countPendingBlenderPostProdJobs(
     return rows.length;
   } catch (error) {
     console.error("[JobsRepo] countPendingBlenderPostProdJobs failed:", error);
-    return 0;
+    throw error;
   }
 }
 
@@ -1143,7 +1144,7 @@ export async function claimNextQueuedJob(): Promise<NormalizedJob | null> {
   const excludeTypes = [...MAIN_QUEUE_EXCLUDED_TYPES];
   let rows: Job[] = [];
   try {
-    const actionCondition = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (
+    const actionCondition = sql`${jobs.type} <> 'media_work' and coalesce(${jobs.input}::jsonb->>'action', '') not in (
       'growth_analyze_video', 'growth_analyze_images', 'manhua_template_learn',
       'manhua_advisor_qa'
     )`;

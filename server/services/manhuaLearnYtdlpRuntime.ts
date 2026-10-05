@@ -37,6 +37,9 @@ export function ytdlpCookieCandidateCount(): number {
 }
 
 export async function openYtdlpCookieSession(candidateIndex = 0): Promise<YtdlpCookieSession> {
+  if ((await import("./heavyLearnMedia")).shouldDispatchHeavyMedia()) {
+    return { args: ["--mvstudio-cookie-candidate", String(candidateIndex)], cleanup: async () => {}, hasCookies: hasManhuaLearnYtdlpCookieSource() };
+  }
   const file = manhuaLearnYtdlpCookiesFileFromEnv();
   if (file) {
     try {
@@ -102,7 +105,12 @@ export async function runYtdlp(args: string[]): Promise<{ code: number; stderr: 
 }
 
 export async function execYtdlpJson(args: string[]): Promise<unknown> {
+  const { shouldDispatchHeavyMedia, dispatchLearnCommand } = await import("./heavyLearnMedia");
   try {
+    if (shouldDispatchHeavyMedia()) {
+      const result = await dispatchLearnCommand("yt-dlp", args, { maxBuffer: 32 * 1024 * 1024 });
+      return JSON.parse(result.stdout);
+    }
     const { stdout } = await execFileAsync(ytDlpBin(), args, {
       maxBuffer: 32 * 1024 * 1024,
     });

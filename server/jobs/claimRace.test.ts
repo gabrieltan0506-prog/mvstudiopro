@@ -413,13 +413,13 @@ describe("post_prod 独立任务通道", () => {
     expect(values).not.toContain("manhua_assemble_final");
   });
 
-  it("数据库不可用时返回 0，不会误启机器", async () => {
+  it("数据库不可用时拒绝启停判断，不把失联当空队列", async () => {
     getDb.mockResolvedValue(null);
-    expect(await countPendingBlenderPostProdJobs()).toBe(0);
+    await expect(countPendingBlenderPostProdJobs()).rejects.toThrow();
     getDb.mockResolvedValue({
       select: () => ({ from: () => ({ where: () => ({ limit: async () => { throw new Error("db down"); } }) }) }),
     });
-    expect(await countPendingBlenderPostProdJobs()).toBe(0);
+    await expect(countPendingBlenderPostProdJobs()).rejects.toThrow();
   });
 });
 

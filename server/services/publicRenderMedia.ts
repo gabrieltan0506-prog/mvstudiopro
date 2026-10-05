@@ -1,3 +1,4 @@
+import { heavyMediaSignal } from "../jobs/heavyMediaContext";
 import { randomUUID } from "node:crypto";
 import { createReadStream, promises as fs } from "node:fs";
 import { Readable } from "node:stream";
@@ -34,7 +35,7 @@ export async function uploadFileToPublicRenderMedia(filePath: string, fileName: 
     contentLength: stat.size,
     contentType: fileName === "rendered-video.mp4" ? "video/mp4" : "audio/mpeg",
     // 与公开媒体上传共用120秒边界，鉴权或网络停滞时让调用方退出并清理临时文件。
-    signal: AbortSignal.timeout(120_000),
+    signal: heavyMediaSignal.getStore() ?? AbortSignal.timeout(120_000),
   });
   return stableUrl;
 }
