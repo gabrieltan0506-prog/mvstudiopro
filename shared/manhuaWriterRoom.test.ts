@@ -4,6 +4,7 @@ import {
   clampWriterEpisodeCount,
   composeWriterPackFactoryContext,
   deriveSeriesTitleFromTopic,
+  applyManhuaWriterSeriesTitle,
   importManhuaWriterPackFromText,
   isPlaceholderSeriesTitle,
   parseManhuaWriterPack,
@@ -11,6 +12,17 @@ import {
   writerPackLooksReady,
   spliceManhuaWriterPackFromEpisode,
 } from "./manhuaWriterRoom";
+
+it("改剧名只同步标题，完整正文、模板参考及资产行不变", () => {
+ for(const rawMarkdown of ["## 系列标题\n旧名\n\n## 人物表\n- 甲｜青衣\n正文提到旧名，应原样保留。", "## 剧名：旧名\n完整正文", "# 旧名\n完整正文"]) {
+  const pack = {seriesTitle:"旧名",logline:"原梗概",episodeCount:1,charactersMd:"完整人物",propsMd:"原道具",locationsMd:"原场景",episodes:[{index:1,title:"第一集",body:"原剧情与对白",endHook:"原钩子"}],rawMarkdown};
+  const updated=applyManhuaWriterSeriesTitle(pack,"用户改过的新名");
+  expect(updated.seriesTitle).toBe("用户改过的新名");
+  expect(updated.rawMarkdown).toBe(rawMarkdown.replace("旧名","用户改过的新名"));
+  expect(updated.episodes).toBe(pack.episodes);expect(updated.charactersMd).toBe(pack.charactersMd);
+  expect(pack.seriesTitle).toBe("旧名");expect(pack.rawMarkdown).toBe(rawMarkdown);
+ }
+});
 
 const SAMPLE = `## 系列标题
 深宫棋子

@@ -37,17 +37,18 @@ describe("manhuaCreativeAdvisorContextSchema", () => {
     expect(parsed.episodeBody).toContain("令牌");
   });
 
-  it("本集正文超过 24000 字符时显式拒绝，不静默截断", () => {
-    const result = manhuaCreativeAdvisorContextSchema.safeParse({
+  it("本集正文超过旧 24000 字符限制仍完整保留，包括中段与空白", () => {
+    const episodeBody = `  开头\n${"剧".repeat(24_001)}【中段关键因果】${"情".repeat(24_001)}\n结尾  `;
+    const result = manhuaCreativeAdvisorContextSchema.parse({
       ...validContext(),
-      episodeBody: "剧".repeat(
-        MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.episodeBodyChars + 1,
-      ),
+      episodeBody,
     });
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.issues[0]?.message).toContain("24000");
-    }
+    expect(result.episodeBody).toBe(episodeBody);
+  });
+
+  it("片尾钩子超过旧 2000 字符限制仍完整传递", () => {
+    const episodeEndHook = "门后的脚步逐渐靠近。".repeat(300);
+    expect(manhuaCreativeAdvisorContextSchema.parse({ ...validContext(), episodeEndHook }).episodeEndHook).toBe(episodeEndHook);
   });
 
   it("strict 拒绝 owner/user 字段，文本只拒绝真实 URL 或凭证形状", () => {

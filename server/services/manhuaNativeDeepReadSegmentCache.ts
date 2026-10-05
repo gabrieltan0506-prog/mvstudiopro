@@ -44,6 +44,7 @@ export type NativeDeepReadSegmentCacheVisualRoute =
   | "gemini_api_files_video";
 
 export type NativeDeepReadSegmentCacheEntry = {
+  relearnRequestId?: string;
   schemaVersion: typeof NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION;
   /** 当前模型、generationConfig、真实段提示词、fps 与来源摘要的契约指纹。 */
   fingerprint: string;
@@ -75,6 +76,7 @@ export type NativeDeepReadSegmentCacheEntry = {
 };
 
 export type NativeDeepReadRawAttemptEvidenceInput = {
+  relearnRequestId?: string;
   seriesKey: string;
   episodeIndex: number;
   segmentIndex: number;
@@ -120,6 +122,7 @@ export type NativeDeepReadRawAttemptEvidenceReadInput = Pick<
   | "requestFingerprint"
   | "attemptNumber"
   | "temperature"
+  | "relearnRequestId"
   | "visualRoute"
 >;
 
@@ -220,6 +223,7 @@ export function nativeDeepReadRawAttemptEvidenceObjectName(
   > & {
     batchRequestId?: string;
     repeatableDiagnostic?: boolean;
+    relearnRequestId?: string;
   },
 ): string {
   if (!/^[0-9a-f]{64}$/.test(input.sourceDigest)) {
@@ -234,13 +238,16 @@ export function nativeDeepReadRawAttemptEvidenceObjectName(
   if (!/^[0-9a-f]{64}$/.test(input.requestFingerprint)) {
     throw new Error("原始段证据 requestFingerprint 非法");
   }
+  if (input.relearnRequestId !== undefined && (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.relearnRequestId)
+    || input.repeatableDiagnostic)) throw new Error("原始段重学证据标识非法");
+  const relearnScope = input.relearnRequestId ? `relearn/${input.relearnRequestId}/` : "";
   const diagnosticScope = input.repeatableDiagnostic
     ? `diagnostic/${String(input.batchRequestId || "").trim()}/`
     : "";
   if (input.repeatableDiagnostic && !/^[0-9a-f-]{16,64}$/i.test(String(input.batchRequestId || "").trim())) {
     throw new Error("原始段诊断证据 batchRequestId 非法");
   }
-  return `${NATIVE_DEEP_READ_RAW_ATTEMPT_EVIDENCE_PREFIX}${diagnosticScope}${nativeDeepReadProposalId(
+  return `${NATIVE_DEEP_READ_RAW_ATTEMPT_EVIDENCE_PREFIX}${relearnScope}${diagnosticScope}${nativeDeepReadProposalId(
     input.seriesKey,
     input.episodeIndex,
   )}/${input.sourceDigest}/${input.requestFingerprint}/seg${input.segmentIndex}-attempt${
@@ -285,6 +292,7 @@ export async function writeNativeDeepReadRawAttemptEvidence(
     schemaVersion: 1,
     sourceDigest: input.sourceDigest,
     requestFingerprint: input.requestFingerprint,
+    relearnRequestId: input.relearnRequestId,
     seriesKey: input.seriesKey,
     episodeIndex: input.episodeIndex,
     segmentIndex: input.segmentIndex,
@@ -365,6 +373,7 @@ function parseNativeDeepReadRawAttemptEvidence(
     || row.segmentCount !== expected.segmentCount
     || row.sourceDigest !== expected.sourceDigest
     || row.requestFingerprint !== expected.requestFingerprint
+    || row.relearnRequestId !== expected.relearnRequestId
     || row.attemptNumber !== expected.attemptNumber
     || row.temperature !== expected.temperature
     // 0904：证据身份不含路由（对象名与指纹都没有它）。换道续跑（Vertex↔Gemini API）
@@ -481,6 +490,7 @@ export async function writeNativeDeepReadParsedAttemptEvidence(
     schemaVersion: 1,
     sourceDigest: input.sourceDigest,
     requestFingerprint: input.requestFingerprint,
+    relearnRequestId: input.relearnRequestId,
     seriesKey: input.seriesKey,
     episodeIndex: input.episodeIndex,
     segmentIndex: input.segmentIndex,

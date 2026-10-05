@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import type { NovelGenerationSettings } from "../../shared/novelWorkspace";
 import {
   extractFirstChoicePlainText,
-  isRetryableOpenAiGatewayError,
   type InvokeResult,
 } from "../_core/llm";
 import {
@@ -20,7 +19,6 @@ import {
 import {
   readGlmSseStream,
   assertSseContentSafety,
-  isSseIncompleteStreamError,
   GLM_STREAM_IDLE_TIMEOUT_MS,
 } from "./sseChatStream";
 import {
@@ -32,12 +30,24 @@ import {
 } from "../../shared/manhuaNovelAdaptation";
 import type { ManhuaNovelExcerpt } from "../../shared/manhuaNovelSource";
 
+export type NovelRouteAttempt = {
+  attempt: number;
+  requestId: string;
+  model: string;
+  gateway: "openrouter" | "evolink";
+};
+export type NovelRouteEvent =
+  | { phase: "input"; route: NovelRouteAttempt; request: Record<string, unknown> }
+  | { phase: "response"; route: NovelRouteAttempt; status: number; contentType: string; raw: string; receivedBytes: number }
+  | { phase: "failure"; route: NovelRouteAttempt; message: string; status?: number; receivedBytes: number; willFallback: boolean }
+  | { phase: "selected"; route: NovelRouteAttempt };
+
 export type NovelStageCall = (
   prompt: string,
   json: boolean,
   requestId: string,
-  trace?: { modelPreference?: "auto" | "glm" | "deepseek"; onBytes?: (bytes:number)=>Promise<void>; onRaw?: (raw:string)=>Promise<void> }
-) => Promise<{ text: string; model: string; settings?: NovelGenerationSettings }>;
+  trace?: { modelPreference?: "auto" | "glm" | "deepseek"; onBytes?: (bytes:number)=>Promise<void>; onRaw?: (raw:string)=>Promise<void>; onRouteEvent?: (event: NovelRouteEvent) => Promise<void> }
+) => Promise<{ text: string; model: string; settings?: NovelGenerationSettings; route?: NovelRouteAttempt }>;
 
 async function persistNovelTrace(write: (() => Promise<void>) | undefined) {
   if (!write) return;
@@ -46,7 +56,28 @@ async function persistNovelTrace(write: (() => Promise<void>) | undefined) {
   }
 }
 
-/** Reuse the existing model IDs, keys, provider locks and SSE parser. No fixed total generation deadline. */
+/** 拒绝帧前已有正文、推理或工具输出时，不能把中途错误当成未生成。 */
+function streamHasOutput(raw: string): boolean {
+  return raw.split(/\r?\n/).some(line => {
+    if (!line.trim().startsWith("data:")) return false;
+    const data = line.trim().slice(5).trim();
+    if (!data || data === "[DONE]") return false;
+    try {
+      const frame = JSON.parse(data);
+      return (frame.choices || []).some((choice: { delta?: Record<string, unknown>; message?: Record<string, unknown> }) =>
+        [choice.delta, choice.message].some(value => value &&
+          ["content", "reasoning", "reasoning_content", "reasoning_details", "tool_calls", "refusal"].some(key => {
+            const output = value[key];
+            return typeof output === "string" ? output.length > 0 : Array.isArray(output) ? output.length > 0 : Boolean(output);
+          })));
+    } catch {
+      // 无法核对的数据帧属于未决响应，不能据此重复调用。
+      return true;
+    }
+  });
+}
+
+/** 复用原模型、参数、供应商锁和 SSE；同模型先试完可用通道，不以未决超时重投。 */
 export const callNovelStage: NovelStageCall = async (
   prompt,
   json,
@@ -55,25 +86,47 @@ export const callNovelStage: NovelStageCall = async (
 ) => {
   const openRouterKey = getOpenRouterApiKey(),
     evolinkKey = getEvolinkApiKey();
-  // Congestion switches model immediately; alternate gateway is used when that key is the available connection.
-  const availableTargets = [
-    openRouterKey ? MANHUA_ADVISOR_HOPS[0] : MANHUA_ADVISOR_HOPS[1],
-    openRouterKey ? MANHUA_ADVISOR_HOPS[2] : MANHUA_ADVISOR_HOPS[3],
-  ];
   const preference = trace?.modelPreference || "auto";
-  const targets = preference === "auto" ? availableTargets : [availableTargets[preference === "glm" ? 0 : 1]];
+  const modelTargets = preference === "auto" ? MANHUA_ADVISOR_HOPS
+    : preference === "glm" ? MANHUA_ADVISOR_HOPS.slice(0, 2) : MANHUA_ADVISOR_HOPS.slice(2);
+  const targets = modelTargets.filter(target => target.gateway === "auto" ? Boolean(openRouterKey) : Boolean(evolinkKey));
   if (!openRouterKey && !evolinkKey) throw new Error("创作模型尚未连接");
   for (let index = 0; index < targets.length; index++) {
     const target = targets[index],
       isOpenRouter = target.gateway === "auto",
       glm = target.modelName.includes("glm");
     const controller = new AbortController();
-    // Only waits for headers; after headers, the shared reader renews its idle timer on actual bytes.
-    const timer = setTimeout(
-      () => controller.abort(new Error("模型连接超时")),
-      GLM_STREAM_IDLE_TIMEOUT_MS
-    );
+    const route: NovelRouteAttempt = { attempt: index + 1, requestId: `${requestId}:${index}`, model: target.modelName, gateway: isOpenRouter ? "openrouter" : "evolink" };
+    const request = {
+      model: target.modelName,
+      messages: [{ role: "user", content: prompt }],
+      stream: true,
+      max_tokens: 32768,
+      ...(isOpenRouter
+        ? { provider: glm ? OPENROUTER_GLM_PROVIDER_LOCK : OPENROUTER_DEEPSEEK_PROVIDER_LOCK,
+          reasoning: glm ? { effort: "high" } : { enabled: true, effort: "high" } }
+        : glm ? { reasoning_effort: "high" } : { thinking: { type: "enabled" } }),
+      ...(json ? { response_format: { type: "json_object" } } : {}),
+    };
+    const emit = (event: NovelRouteEvent) => persistNovelTrace(trace?.onRouteEvent ? () => trace.onRouteEvent!(event) : undefined);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let responseStatus: number | undefined;
+    let contentType = "";
+    let receivedBytes = 0;
+    let explicitRejection = false;
+    let rawBody = "";
+    const rawChunks: Buffer[] = [];
+    let responseRecorded = false;
+    const recordResponse = async () => {
+      if (responseRecorded || responseStatus == null) return;
+      responseRecorded = true;
+      await emit({ phase: "response", route, status: responseStatus, contentType,
+        raw: rawBody || Buffer.concat(rawChunks).toString("utf8"), receivedBytes });
+    };
     try {
+      await emit({ phase: "input", route, request });
+      // 只限制等响应头；成功流由原 reader 按真实字节续期。
+      timer = setTimeout(() => controller.abort(new Error("模型连接超时")), GLM_STREAM_IDLE_TIMEOUT_MS);
       const response = await fetch(
         isOpenRouter
           ? OPENROUTER_CHAT_COMPLETIONS_URL
@@ -85,48 +138,44 @@ export const callNovelStage: NovelStageCall = async (
             "Content-Type": "application/json",
             Authorization: `Bearer ${isOpenRouter ? openRouterKey : evolinkKey}`,
             ...(isOpenRouter ? getOpenRouterChatHeaders() : {}),
-            "x-request-id": `${requestId}:${index}`,
+            "x-request-id": route.requestId,
           },
-          body: JSON.stringify({
-            model: target.modelName,
-            messages: [{ role: "user", content: prompt }],
-            stream: true,
-            max_tokens: 32768,
-            ...(isOpenRouter
-              ? {
-                  provider: glm
-                    ? OPENROUTER_GLM_PROVIDER_LOCK
-                    : OPENROUTER_DEEPSEEK_PROVIDER_LOCK,
-                  reasoning: glm ? { effort: "high" } : { enabled: true, effort: "high" },
-                }
-              : glm
-                ? { reasoning_effort: "high" }
-                : { thinking: { type: "enabled" } }),
-            ...(json ? { response_format: { type: "json_object" } } : {}),
-          }),
+          body: JSON.stringify(request),
         }
       );
-      clearTimeout(timer);
+      responseStatus = response.status;
+      contentType = response.headers.get("content-type") || "";
       if (!response.ok) {
-        await response.body?.cancel();
+        rawBody = await response.text();
+        receivedBytes = Buffer.byteLength(rawBody);
+        explicitRejection = true;
         throw Object.assign(new Error(`创作模型HTTP ${response.status}`), {
           status: response.status,
         });
       }
       if (
         !response.body ||
-        !response.headers.get("content-type")?.includes("text/event-stream")
+        !contentType.includes("text/event-stream")
       ) {
-        await response.body?.cancel();
-        // An unexpected JSON/HTML body may contain an auth/refusal error; it is not evidence of congestion.
+        rawBody = await response.text();
+        receivedBytes = Buffer.byteLength(rawBody);
+        // 非 SSE 响应可能是认证或内容拒绝，不能推断为拥塞。
         throw new Error("创作模型返回格式异常，旧稿保留");
       }
-      const raw = await readGlmSseStream(response.body, 2 * 1024 * 1024, {
+      clearTimeout(timer);
+      const body = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, output) {
+          rawChunks.push(Buffer.from(chunk));
+          receivedBytes += chunk.byteLength;
+          output.enqueue(chunk);
+        },
+      }));
+      const raw = await readGlmSseStream(body, 2 * 1024 * 1024, {
         strictCompletion: true,
         onComplete: trace?.onRaw ? raw => persistNovelTrace(() => trace.onRaw!(raw)) : undefined,
         onBytes: trace?.onBytes ? bytes => persistNovelTrace(() => trace.onBytes!(bytes)) : undefined,
         onErrorFrame(error) {
-          // HTTP 200 can carry a real 401/403/refusal in SSE. Only explicit transient statuses may change model.
+          explicitRejection = true;
           const code = Number(error.code ?? error.status);
           throw Object.assign(new Error("创作模型流返回错误，旧稿保留"), {
             status: Number.isInteger(code) && code >= 400 && code <= 599 ? code : 400,
@@ -139,17 +188,19 @@ export const callNovelStage: NovelStageCall = async (
         throw new Error("创作结果未完整结束，旧稿保留");
       const text = extractFirstChoicePlainText(result).trim();
       if (!text) throw new Error("创作结果为空，旧稿保留");
-      return { text, model: result.model || target.modelName, settings: { reasoning: isOpenRouter || glm ? "high" : "enabled", maxTokens: 32768 } };
+      await recordResponse();
+      await emit({ phase: "selected", route });
+      return { text, model: result.model || target.modelName, settings: { reasoning: isOpenRouter || glm ? "high" : "enabled", maxTokens: 32768 }, route };
     } catch (error) {
       controller.abort();
-      if ((error as { code?: string }).code === "NOVEL_EVIDENCE_WRITE_FAILED") throw error;
-      if (
-        preference === "auto" && index === 0 &&
-        (isRetryableOpenAiGatewayError(error) ||
-          isSseIncompleteStreamError(error) ||
-          /无数据|超时/.test(String((error as Error).message)))
-      )
-        continue;
+      await recordResponse();
+      const failure = error as { code?: string; status?: number; message?: string };
+      // 408/504、网络断开、缺结束帧没有未执行证明；只认明确的拥塞/可重试拒绝。
+      const willFallback = failure.code !== "NOVEL_EVIDENCE_WRITE_FAILED" && explicitRejection &&
+        [409, 425, 429, 500, 502, 503, 529].includes(Number(failure.status)) &&
+        !streamHasOutput(rawBody || Buffer.concat(rawChunks).toString("utf8")) && index + 1 < targets.length;
+      await emit({ phase: "failure", route, message: failure.message || "创作模型调用失败", status: failure.status, receivedBytes, willFallback });
+      if (willFallback) continue;
       throw error;
     } finally {
       clearTimeout(timer);

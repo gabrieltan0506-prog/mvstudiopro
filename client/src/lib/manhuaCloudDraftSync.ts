@@ -301,7 +301,7 @@ export function trySaveLocalCanvas(
     storage.setItem(CANVAS_LS_KEY, JSON.stringify({ blocks: slim, edges }));
     return true;
   } catch {
-    // 配额仍满：可裁长文本，但付费视频引用和质检不能被降级写成空壳。
+    // 配额仍满：沿用媒体精简，生成文字必须完整保留；仍超额就返回失败。
     try {
       const shell = slim.map(b => {
         const isKeyart = String(b.id || "").startsWith("keyart-");
@@ -309,7 +309,6 @@ export function trySaveLocalCanvas(
         if (isKeyart || isVideo || b.kind === "music") {
           return {
             ...b,
-            outputText: undefined,
             uploadedAssets: [],
             // 保留关键静帧及全部视频版本；若仍超额，下层 catch 明确返回 false。
           };
@@ -320,12 +319,6 @@ export function trySaveLocalCanvas(
           outputUrls: [] as string[],
           refImageUrl: undefined,
           editFusionUrls: [] as string[],
-          outputText:
-            b.kind === "text" ||
-            b.kind === "copy_organize" ||
-            b.kind === "video_reverse"
-              ? String(b.outputText || "").slice(0, 4_000) || undefined
-              : undefined,
         };
       });
       storage.setItem(CANVAS_LS_KEY, JSON.stringify({ blocks: shell, edges }));

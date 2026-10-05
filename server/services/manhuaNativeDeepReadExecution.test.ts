@@ -1029,6 +1029,25 @@ describe("批量发车", () => {
     expect(deps.ingest).toHaveBeenCalledTimes(1);
   });
 
+  it("确认重学已入库集，保留旧卡直到完整结果，仍持有任务锁与心跳", async () => {
+    const relearnRequestId = "11111111-1111-4111-8111-111111111111";
+    deps.listIngested = vi.fn(async () => new Set([1]));
+    const run = deps.runBatch;
+    deps.runBatch = vi.fn(async (...args: Parameters<typeof run>) => {
+      await args[0].onSegmentSnapshotCommitted?.({} as never);
+      expect(deps.ingest).not.toHaveBeenCalled();
+      return run(...args);
+    });
+    const result = await runNativeDeepReadBatch({ seriesKey: "s", episodes: [{ ...three[0]!, relearnRequestId, recoverMisplacedSourceCache: true }] }, deps);
+    expect(result.skippedCount).toBe(0);
+    expect(result.ingestedCount).toBe(1);
+    expect(deps.runBatch).toHaveBeenCalledWith(expect.objectContaining({ relearnRequestId }));
+    expect(deps.acquireClaim).toHaveBeenCalledTimes(1);
+    expect((await vi.mocked(deps.acquireClaim).mock.results[0]!.value)?.heartbeat).toHaveBeenCalledTimes(1);
+    expect(deps.migrateSegmentCaches).not.toHaveBeenCalled();
+    expect(deps.ingest).toHaveBeenCalledTimes(1);
+  });
+
   it("已入库的集直接跳过，不调 runner —— 重跑不重烧", async () => {
     deps.listIngested = vi.fn(async () => new Set([1, 2]));
     const r = await runNativeDeepReadBatch({ seriesKey: "s", episodes: three }, deps);

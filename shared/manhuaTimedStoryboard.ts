@@ -43,7 +43,7 @@ function splitTimedTableCells(line: string): string[] {
 }
 
 /** 只拆明确带说话人和引号的对白；不把未标明的混合说明猜成台词。 */
-function splitReverseAudio(value: string): { dialogueZh: string; soundZh: string; error?: string } {
+function splitReverseAudio(value: string): { dialogueZh: string; soundZh: string; performanceZh?: string; error?: string } {
   const raw = value.trim();
   const soundLabel = /^(?:音效|环境声|配乐|音乐|BGM)[:：]/i;
   const quotedSpeech = /[^:：「」“”『』"＋+]{1,80}[:：]\s*(?:「[^」]+」|“[^”]+”|『[^』]+』|"[^"]+")/;
@@ -56,20 +56,28 @@ function splitReverseAudio(value: string): { dialogueZh: string; soundZh: string
     return { dialogueZh: "无", soundZh: raw, ...(quotedSpeech.test(raw.replace(soundLabel, "")) ? { error: "音频标签与引用对白混用，请明确分开" } : {}) };
 
   const dialogue: string[] = [];
+  const performance: string[] = [];
+  const result = (soundZh: string) => ({ dialogueZh: dialogue.join("\n"), soundZh, ...(performance.length ? { performanceZh: performance.join("；") } : {}) });
   let rest = raw;
   while (rest) {
     const match = rest.match(spoken);
     if (!match) break;
     dialogue.push(match[1].trim());
     rest = rest.slice(match[0].length).trim();
-    if (!rest) return { dialogueZh: dialogue.join("\n"), soundZh: "" };
+    // 引号外的明确表演括注保留为动作说明，不能丢弃或交给 TTS 朗读。
+    const direction = rest.match(/^(?:（([^（）():：「」“”『』"\r\n]+)）|\(([^（）():：「」“”『』"\r\n]+)\))/);
+    if (direction) {
+      performance.push(`${match[1].split(/[:：]/, 1)[0].trim()}：${direction[1] ?? direction[2]}`);
+      rest = rest.slice(direction[0].length).trim();
+    }
+    if (!rest) return result("");
     if (spoken.test(rest)) continue;
     if (!/^[＋+]/.test(rest)) break;
     rest = rest.slice(1).trim();
     if (!rest) return { dialogueZh: dialogue.join("\n"), soundZh: "", error: "音频分隔符后缺少内容" };
     if (!spoken.test(rest)) {
       if (/[「」“”『』"]/.test(rest) || /[:：]/.test(rest) && !/^(?:音效|环境声|配乐|音乐|BGM)[:：]/i.test(rest)) break;
-      return { dialogueZh: dialogue.join("\n"), soundZh: rest };
+      return result(rest);
     }
   }
   return { dialogueZh: "", soundZh: raw, error: "音频列含未明确的对白/音效，请标明说话人及引号，或标注无对白/音效" };
@@ -138,18 +146,20 @@ function readTimedRows(text: string): {
     const match = (cells[columns.time] || "").match(
       /^(\d+(?:\.\d+)?)\s*(?:-|–|—|~|～|至)\s*(\d+(?:\.\d+)?)\s*(?:s|秒)?$/i
     );
-    const clock = columns.startClock ? (cells[columns.time] || "").match(/^(\d+):([0-5]\d(?:\.\d+)?)$/) : null;
+    const clock = columns.startClock ? (cells[columns.time] || "").match(/^(\d+):([0-5]\d(?:\.\d+)?)(?:\s*(?:-|–|—|~|～|至)\s*(\d+):([0-5]\d(?:\.\d+)?))?$/) : null;
     const duration = columns.startClock ? (cells[columns.duration] || "").match(/^(\d+(?:\.\d+)?)\s*(?:s|秒)$/i) : null;
     const startSec = columns.startClock ? (clock ? Number(clock[1]) * 60 + Number(clock[2]) : NaN) : (match ? Number(match[1]) : NaN);
+    const explicitEndSec = clock?.[3] !== undefined ? Number(clock[3]) * 60 + Number(clock[4]) : undefined;
     const audio = columns.startClock ? splitReverseAudio(cells[columns.dialogue] || "") : null;
     const row: ManhuaTimedStoryboardRow = {
       index,
       startSec,
-      endSec: columns.startClock ? (duration ? startSec + Number(duration[1]) : NaN) : (match ? Number(match[2]) : NaN),
+      endSec: columns.startClock ? (explicitEndSec ?? (duration ? startSec + Number(duration[1]) : NaN)) : (match ? Number(match[2]) : NaN),
       cameraZh: columns.camera.map(column => cells[column] || "").filter(cell => cell && !/^[-—–]+$/.test(cell)).join("；"),
       actionZh: [
         (cells[columns.action] || "").replace(/^【新段】\s*/, ""),
         ...columns.visual.map(item => cells[item.index] && !/^[-—–]+$/.test(cells[item.index]!) ? `${item.label}：${cells[item.index]}` : ""),
+        ...(audio?.performanceZh ? [`对白表演：${audio.performanceZh}`] : []),
       ].filter(Boolean).join("；"),
       ...(/^【新段】/.test(cells[columns.action] || "") ? { segmentBreakBefore: true } : {}),
       dialogueZh: audio?.dialogueZh ?? cells[columns.dialogue] ?? "",
@@ -158,6 +168,8 @@ function readTimedRows(text: string): {
     const label = `镜${indexText || rows.length + 1}`;
     if (columns.startClock && (!duration || Number(duration[1]) <= 0))
       errors.push(`${label} 无精确时长，时长建议须为单个正数秒；不能使用范围或默认秒数`);
+    if (explicitEndSec !== undefined && duration && Math.abs(explicitEndSec - startSec - Number(duration[1])) > 0.001)
+      errors.push(`${label} 起止时码与时长建议不一致`);
     if (audio?.error) errors.push(`${label} ${audio.error}`);
     if (!Number.isSafeInteger(index) || index !== rows.length + 1)
       errors.push(`${label} 镜号重复、缺失或不连续`);

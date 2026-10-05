@@ -297,3 +297,12 @@ it("宿主上传开始后切机位仍保持忙碌，旧回执不能放开新请�
     await browser.close();
   }
 }, 30_000);
+
+it("空场景初始建立机位使用真实世界原点，载入后预设与初始配置一致",()=>{
+ const world={spz500kUrl:"https://x/world.spz",metricScaleFactor:1.1236397,groundPlaneOffset:1.3698997};
+ const rig=stageCameraRigs([],undefined,world).establish;
+ expect(rig.position).toEqual([0,0,world.groundPlaneOffset]);expect(rig.target).toEqual([0,5*world.metricScaleFactor,world.groundPlaneOffset]);
+ expect(buildStageSceneConfig(world,[],rig)?.initialCamera).toEqual(rig);
+ expect(stageCameraRigs(actors,undefined,world)).toEqual(stageCameraRigs(actors));
+ expect(stageCameraRigs([],undefined,{})).toEqual(stageCameraRigs([]));
+});

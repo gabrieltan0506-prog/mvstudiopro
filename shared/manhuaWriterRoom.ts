@@ -79,6 +79,10 @@ export type ManhuaWriterEpisode = {
   sourceSha256?: string;
   sourceNotes?: string;
   novelAdaptation?: import("./manhuaNovelAdaptation").ManhuaNovelAdaptation;
+  /** 正文改写后旧分镜未复审，禁止作为本次生成的时序来源。 */
+  storyboardNeedsReview?: boolean;
+  /** 本集顾问从真实模板库提取的3–5份特色与落实建议；正式分镜逐份消费。 */
+  templateReferences?: Array<import("zod").infer<typeof import("./manhuaAdvisorRewrite").advisorTemplatePlanSchema>>;
 };
 
 export type ManhuaWriterPack = {
@@ -301,6 +305,20 @@ export function deriveSeriesTitleFromTopic(topic: string): string {
   const candidate =
     afterColon && afterColon.length >= 4 && afterColon.length <= 36 ? afterColon : t;
   return candidate.slice(0, 36);
+}
+
+/** 用户改名后同步结构与原始稿标题；不重排、截断或改写正文。 */
+export function applyManhuaWriterSeriesTitle(pack: ManhuaWriterPack, title: string): ManhuaWriterPack {
+  const nextTitle = title.trim();
+  if (!nextTitle || nextTitle === pack.seriesTitle) return pack;
+  let raw = pack.rawMarkdown;
+  const inline = new RegExp(`(^|\\n)(##[ \\t]*(?:${WRITER_SERIES_TITLE_HEADING_RE})[ \\t]*[:：][ \\t]*)[^\\n]*`);
+  const section = new RegExp(`(^|\\n)(##[ \\t]*(?:${WRITER_SERIES_TITLE_HEADING_RE})[ \\t]*\\n(?:[ \\t]*\\n)*)([^\\n#]+)`);
+  if (inline.test(raw)) raw = raw.replace(inline, (_match, start, heading) => `${start}${heading}${nextTitle}`);
+  else if (section.test(raw)) raw = raw.replace(section, (_match, start, heading) => `${start}${heading}${nextTitle}`);
+  else if (/^#[ \t]+[^\n]+/.test(raw)) raw = raw.replace(/^#[ \t]+[^\n]+/, () => `# ${nextTitle}`);
+  else raw = `## 系列标题\n${nextTitle}\n\n${raw}`;
+  return {...pack, seriesTitle: nextTitle, rawMarkdown: raw};
 }
 
 function extractMarkdownSectionLine(md: string, headingAliasRe: string): string {

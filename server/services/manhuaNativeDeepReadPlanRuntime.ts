@@ -32,6 +32,8 @@ import {
 import { isManhua0996SourceUrl } from "../../shared/manhuaLearn0996Source.js";
 
 export type NativeDeepReadPlanRuntimeInput = {
+  inspectSourceOnly?: boolean;
+  relearn?: import("../../shared/manhuaNativeRelearn.js").NativeDeepReadRelearn;
   url: string;
   localVideoUploadId?: string;
   userId?: string;

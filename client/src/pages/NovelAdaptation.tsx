@@ -166,7 +166,7 @@ function NovelWorkspaceEditor({
     {
       retry: 1,
       staleTime: 0,
-      refetchOnWindowFocus: true,
+      refetchOnWindowFocus: "always",
     }
   );
   const templateCatalogConnected = useManhuaTemplateCatalogEvents(Boolean(userId), () => templates.refetch());

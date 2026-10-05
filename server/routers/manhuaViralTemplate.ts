@@ -82,6 +82,24 @@ function assertSiteOwner(user: { openId?: string | null }) {
 }
 
 export const manhuaViralTemplateRouter = router({
+  inspectLearnSource: protectedProcedure
+    .input(z.object({ params: z.record(z.string(), z.unknown()) }))
+    .query(async ({ ctx, input }) => {
+      assertSiteOwner(ctx.user);
+      const { parseNativeDeepReadJobConfirmation } = await import("../../shared/manhuaNativeDeepReadJob.js");
+      const { readManhuaLearnExtraSourceHosts } = await import("../services/manhuaLearn0996Source.js");
+      const { buildNativeDeepReadPlanPreviewFromServices } = await import("../services/manhuaNativeDeepReadPlanRuntime.js");
+      const confirmed = parseNativeDeepReadJobConfirmation(input.params, { extraSourceHosts: readManhuaLearnExtraSourceHosts() });
+      const plan = await buildNativeDeepReadPlanPreviewFromServices({
+        url: confirmed.url, localVideoUploadId: confirmed.localVideoUploadId,
+        userId: String(ctx.user.id), limit: confirmed.planLimit,
+        segmentSeconds: confirmed.segmentSeconds, videoFps: confirmed.videoFps,
+        readModel: confirmed.readModel, treatAsStandalone: confirmed.standaloneSource,
+        learnLlm: confirmed.learnLlm, inspectSourceOnly: true,
+      });
+      return { seriesKey: plan.seriesKey, episodeIndex: plan.sourceEpisodeIndex,
+        alreadyLearned: plan.sourceEpisodeIndex != null && plan.alreadyIngestedEpisodeIndexes.includes(plan.sourceEpisodeIndex) };
+    }),
   /** 仅返回能力布尔值；不向非 owner 暴露模型清单或任何模板正文。 */
   getOwnerOptimizeCapabilities: protectedProcedure
     // cacheScope 只用于让客户端查询键随登录身份变化；授权仍且只信 ctx.user。

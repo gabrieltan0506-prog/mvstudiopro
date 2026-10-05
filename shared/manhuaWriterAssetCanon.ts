@@ -119,8 +119,14 @@ export function stripMarkdownTableHeaderLines(lines: string[]): string[] {
   );
 }
 
+/** 表格中“无”表示没有别名，不能用于把多个资产匹配成同一身份。 */
+export function normalizeWriterAssetAlias(value: string | undefined): string | undefined {
+  const alias = value?.trim();
+  return alias && !/^(?:无|無|无别名|無別名|暂无|暫無|未设定|未設定|none|null|n\/a|[-—–]+)$/i.test(alias) ? alias : undefined;
+}
+
 /** 拆一行「- 名/别名｜字段｜字段」 */
-export function parseWriterTableLine(rawLine: string): {
+export function parseWriterTableLine(rawLine: string, options: { preserveFullSpecs?: boolean } = {}): {
   nameZh: string;
   aliasZh?: string;
   fields: string[];
@@ -134,15 +140,17 @@ export function parseWriterTableLine(rawLine: string): {
   if (!parts.length) return null;
   const head = parts[0]!;
   const nameBits = head.split(/[\/／]/).map((s) => s.trim()).filter(Boolean);
-  const nameZh = (nameBits[0] || head).slice(0, 32);
+  const nameZh = options.preserveFullSpecs ? (nameBits[0] || head) : (nameBits[0] || head).slice(0, 32);
   if (!nameZh) return null;
-  const aliasZh = nameBits[1]?.slice(0, 24);
-  return { nameZh, aliasZh, fields: parts.slice(1).map((s) => s.slice(0, 200)) };
+  const rawAlias = normalizeWriterAssetAlias(nameBits[1]);
+  const aliasZh = options.preserveFullSpecs ? rawAlias : rawAlias?.slice(0, 24);
+  return { nameZh, aliasZh, fields: options.preserveFullSpecs ? parts.slice(1) : parts.slice(1).map((s) => s.slice(0, 200)) };
 }
 
 function parseTableMd(
   md: string,
   role: ManhuaWriterAssetRole,
+  options: { preserveFullSpecs?: boolean; previousAnchors?: ManhuaWriterAssetAnchor[] } = {},
 ): ManhuaWriterAssetAnchor[] {
   const lines = stripMarkdownTableHeaderLines(
     String(md || "")
@@ -153,9 +161,19 @@ function parseTableMd(
   const out: ManhuaWriterAssetAnchor[] = [];
   const seen = new Set<string>();
   for (const line of lines) {
-    const parsed = parseWriterTableLine(line);
+    const parsed = parseWriterTableLine(line, options);
     if (!parsed) continue;
-    const id = makeAnchorId(role, parsed.nameZh);
+    const rowNames = new Set([normName(parsed.nameZh), normName(parsed.aliasZh || "")].filter(Boolean));
+    const previousMatches = (options.previousAnchors || []).filter(anchor =>
+      [normName(anchor.nameZh), normName(normalizeWriterAssetAlias(anchor.aliasZh) || "")].some(name => name && rowNames.has(name)),
+    );
+    if (previousMatches.length > 1) throw new Error("资产姓名或别名对应多个旧身份，不能重建资产");
+    const previous = previousMatches[0];
+    if (previous) {
+      parsed.nameZh = previous.nameZh;
+      parsed.aliasZh = normalizeWriterAssetAlias(previous.aliasZh);
+    }
+    const id = previous?.id || makeAnchorId(role, parsed.nameZh);
     if (seen.has(id)) continue;
     seen.add(id);
     const f = parsed.fields;
@@ -205,16 +223,16 @@ function parseTableMd(
             ]
               .filter(Boolean)
               .join("。");
-    const statesZh = role === "character" ? parseManhuaCharacterStates(f) : [];
+    const statesZh = role === "character" ? parseManhuaCharacterStates(f, options) : [];
     out.push({
       id,
       role,
       nameZh: parsed.nameZh,
       aliasZh: parsed.aliasZh,
-      lookZh: lookZh.slice(0, 240),
-      motiveZh: motiveZh.slice(0, 160) || undefined,
-      noteZh: noteZh.slice(0, 200) || undefined,
-      promptZh: promptZh.slice(0, 900),
+      lookZh: options.preserveFullSpecs ? lookZh : lookZh.slice(0, 240),
+      motiveZh: (options.preserveFullSpecs ? motiveZh : motiveZh.slice(0, 160)) || undefined,
+      noteZh: (options.preserveFullSpecs ? noteZh : noteZh.slice(0, 200)) || undefined,
+      promptZh: options.preserveFullSpecs ? promptZh : promptZh.slice(0, 900),
       ...(statesZh.length ? { statesZh } : {}),
     });
   }
@@ -255,15 +273,25 @@ export function pickEpisodeMainSceneId(
   return bestId;
 }
 
+export type ManhuaWriterAssetCompileOptions = {
+  /** 已接受资产规格完整保留，兼容旧入口的默认裁剪行为。 */
+  preserveFullSpecs?: boolean;
+  /** 重新确认时按姓名/别名续用旧身份和ID，不因顺序或别名改称重建人物。 */
+  previousCanon?: ManhuaWriterAssetCanon;
+};
+
 export function buildManhuaWriterAssetCanon(input: {
   charactersMd?: string | null;
   propsMd?: string | null;
   locationsMd?: string | null;
   episodes?: Array<{ index: number; body?: string }>;
-}): ManhuaWriterAssetCanon {
-  const characters = parseTableMd(String(input.charactersMd || ""), "character").slice(0, 12);
-  const props = parseTableMd(String(input.propsMd || ""), "prop").slice(0, 16);
-  const locations = parseTableMd(String(input.locationsMd || ""), "scene").slice(0, 16);
+} & ManhuaWriterAssetCompileOptions): ManhuaWriterAssetCanon {
+  const fullCharacters = parseTableMd(String(input.charactersMd || ""), "character", { preserveFullSpecs: input.preserveFullSpecs, previousAnchors: input.previousCanon?.characters });
+  const fullProps = parseTableMd(String(input.propsMd || ""), "prop", { preserveFullSpecs: input.preserveFullSpecs, previousAnchors: input.previousCanon?.props });
+  const fullLocations = parseTableMd(String(input.locationsMd || ""), "scene", { preserveFullSpecs: input.preserveFullSpecs, previousAnchors: input.previousCanon?.locations });
+  const characters = input.preserveFullSpecs ? fullCharacters : fullCharacters.slice(0, 12);
+  const props = input.preserveFullSpecs ? fullProps : fullProps.slice(0, 16);
+  const locations = input.preserveFullSpecs ? fullLocations : fullLocations.slice(0, 16);
   const episodeMainSceneId: Record<number, string> = {};
   for (const ep of input.episodes || []) {
     const idx = Math.max(1, Math.floor(ep.index));
@@ -454,7 +482,7 @@ export function evaluateWriterEpisodeDensity(input: {
    */
   segmentCount?: number;
   durationSecPerSegment?: number;
-}): WriterDensityGateResult {
+} & ManhuaWriterAssetCompileOptions): WriterDensityGateResult {
   const target = input.targetSec ?? MANHUA_EPISODE_SEGMENT_TARGET_SEC;
   const { minBody, minLoc } = manhuaEpisodeDensityFloors(target, {
     segmentCount: input.segmentCount,
@@ -463,6 +491,8 @@ export function evaluateWriterEpisodeDensity(input: {
   const canon = buildManhuaWriterAssetCanon({
     locationsMd: input.locationsMd,
     episodes: input.episodes,
+    preserveFullSpecs: input.preserveFullSpecs,
+    previousCanon: input.previousCanon,
   });
   const locNames = canon.locations.flatMap((l) =>
     [l.nameZh, l.aliasZh].filter(Boolean),
@@ -703,7 +733,7 @@ export function evaluateWriterPackAssetAndDensity(input: {
   /** 仅 layout 模式使用新写作的段数目标。 */
   segmentMin?: number;
   segmentMax?: number;
-}): WriterDensityGateResult & {
+} & ManhuaWriterAssetCompileOptions): WriterDensityGateResult & {
   canon: ManhuaWriterAssetCanon;
   /** 人物表一条都没解析出来：UI 应给「从剧本提取资产表」而不是死路 */
   assetTablesEmpty: boolean;
@@ -715,6 +745,8 @@ export function evaluateWriterPackAssetAndDensity(input: {
     targetSec: input.targetSec,
     segmentCount: input.segmentCount,
     durationSecPerSegment: input.durationSecPerSegment,
+    preserveFullSpecs: input.preserveFullSpecs,
+    previousCanon: input.previousCanon,
   });
   const errors = [...density.errors];
   // 资产表门槛按剧本实际实体计：空表/单主角/无道具的戏不该卡死在资产页

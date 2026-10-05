@@ -7,6 +7,7 @@ import { findCanvasSegmentAudioSources, restoreCanvasSegmentAudio } from "@/lib/
 import { createManhuaAudioFromSavedPrompt, savedPromptAudioDiffers, syncUnproducedAudioToSavedPrompt } from "@shared/manhuaAudioSavedPrompt";
 import { createManhuaAudioFromShots } from "@shared/manhuaAudioFromShots";
 import { manhuaBgmArcFromShots } from "@shared/manhuaBgmArcFromShots";
+import { canvasBgmVoicePrompt, type CanvasAudioVoiceControl, type CanvasAudioVoiceControlRegistration, type CanvasAudioVoiceResult } from "@/lib/canvasAudioVoiceControl";
 import { planCanvasDialogueTiming, planCanvasDialoguePrecision } from "@shared/canvasDialogueTimingPlan";
 import { CANVAS_DIALOGUE_SPEED_MAX, CANVAS_DIALOGUE_SPEED_MIN, CANVAS_DIALOGUE_SPEED_WARN, suggestCanvasDialogueSpeed } from "@shared/canvasDialogueSpeed";
 import type { ManhuaWorkbenchShot } from "@shared/manhuaScriptWorkbench";
@@ -282,6 +283,7 @@ type Props = {
   characters?: readonly { id: string; nameZh: string; aliasZh?: string; referenceAssetIds?: readonly string[] }[];
   disabled?: boolean;
   onChange: (next: CanvasAudioStudioState) => boolean | void;
+  onVoiceControl?: CanvasAudioVoiceControlRegistration;
   /**
    * 一键预混母轨出好后回调：对白原音量 + BGM 压 12 dB 带淡入淡出，合成一条 ≤30 s 单轨，
    * 由上层挂到本段 manhuaSegmentRefs.master（出片时作唯一 @音频1）。不传则不显示按钮。
@@ -367,6 +369,7 @@ export function CanvasAudioStudioView({
   characters = [],
   disabled = false,
   onChange,
+  onVoiceControl,
   onMasterTrackReady,
   bgmModels,
   proxyAudio = false,
@@ -446,8 +449,8 @@ export function CanvasAudioStudioView({
   });
   const durationAudit = auditCanvasAudioDuration(state.cues, durationSec);
   const dialogueTiming = planCanvasDialoguePrecision(state.cues, durationSec);
-  const current = useRef({ state, onChange, services, block, onMasterTrackReady, durationSec, dialogueSources, sourceShots });
-  current.current = { state, onChange, services, block, onMasterTrackReady, durationSec, dialogueSources, sourceShots };
+  const current = useRef({ state, onChange, services, block, onMasterTrackReady, durationSec, dialogueSources, sourceShots, disabled });
+  current.current = { state, onChange, services, block, onMasterTrackReady, durationSec, dialogueSources, sourceShots, disabled };
   const mounted = useRef(true);
   const busyRef = useRef(false);
   const [busy, setBusy] = useState(false);
@@ -567,13 +570,11 @@ export function CanvasAudioStudioView({
     return true;
   };
   const patchMusicDraft = (patch: Partial<CanvasMusicDraft>) => {
-    if (!mounted.current || current.current.block.id !== block.id) return;
+    if (!mounted.current || current.current.block.id !== block.id) return false;
     setConfirmation(null);
-    update(previous => {
-      const parsed = canvasMusicDraftSchema.safeParse({ ...musicDraft, ...previous.musicDraft, ...patch });
-      if (!parsed.success) { setError("配乐草稿超出字段范围，已保留原稿。"); return previous; }
-      return { ...previous, musicDraft: parsed.data };
-    });
+    const parsed = canvasMusicDraftSchema.safeParse({ ...musicDraft, ...current.current.state.musicDraft, ...patch });
+    if (!parsed.success) { setError("配乐草稿超出字段范围，已保留原稿。"); return false; }
+    return update(previous => ({ ...previous, musicDraft: parsed.data }));
   };
   const setBrief = (next: MusicBrief | null) => patchMusicDraft({ brief: next });
   /** 0929：原始对白候选按倍速派生新候选；台词与音色不变沿用原 inputKey，仍须试听后确认。 */
@@ -715,9 +716,10 @@ export function CanvasAudioStudioView({
       recent: () => current.current.services.listMusic(),
       get: id => current.current.services.getMusic({ jobId: id }),
     });
-    if (!mounted.current || current.current.block.id !== block.id) return;
+    if (!mounted.current || current.current.block.id !== block.id) return result;
     setMusicJobs(previous => Array.from(new Map([...previous, ...result.rows].map(row => [row.jobId, row])).values()));
     if (result.failed) setError("部分配乐暂时无法读取，原任务仍保留，请稍后刷新素材。");
+    return result;
   };
   useEffect(() => {
     mounted.current = true;
@@ -863,8 +865,11 @@ export function CanvasAudioStudioView({
     };
   }, [block.id]);
 
-  const action = async (run: () => Promise<void>) => {
-    if (busyRef.current || disabled) return;
+  const action = async (run: () => Promise<void>, rethrow = false) => {
+    if (busyRef.current || current.current.disabled) {
+      if (rethrow) throw new Error("当前片段忙碌，配乐操作未执行。请先查询原任务。");
+      return;
+    }
     busyRef.current = true;
     setBusy(true);
     setError("");
@@ -877,6 +882,7 @@ export function CanvasAudioStudioView({
             ? caught.message
             : "处理暂未完成，请核对任务状态。"
         );
+      if (rethrow) throw caught;
     } finally {
       busyRef.current = false;
       if (mounted.current) setBusy(false);
@@ -1296,6 +1302,89 @@ export function CanvasAudioStudioView({
       ),
     });
   };
+  const prepareMusic = async (options: { fromVoice?: boolean; question?: string; signal?: AbortSignal } = {}) => {
+    options.signal?.throwIfAborted();
+    const started = current.current;
+    const draft = started.state.musicDraft ?? musicDraft;
+    const sourceKey = JSON.stringify([started.state.musicDraft, started.sourceShots, started.durationSec]);
+    const prompt = options.fromVoice
+      ? canvasBgmVoicePrompt(manhuaBgmArcFromShots(started.sourceShots || [], started.durationSec), draft.prompt, options.question)
+      : draft.prompt;
+    if (!prompt.trim()) throw new Error("先填写剧情与情绪推进。");
+    if (!Number.isInteger(draft.durationSec) || draft.durationSec < 10 || draft.durationSec > 360)
+      throw new Error("原曲目标时长须为10–360整数秒。");
+    const result = await started.services.draftMusic({
+      laneZh: "本段剧情配乐",
+      durationSec: draft.durationSec,
+      moods: ["蓄力", "冲突", "反转", "收束"],
+      moodArcZh: prompt,
+      titleZh: "剧情配乐",
+      model: isBgmV6Model(draft.model) ? draft.model : "suno-v6",
+    });
+    options.signal?.throwIfAborted();
+    if (!mounted.current || current.current.block.id !== started.block.id || current.current.disabled ||
+      JSON.stringify([current.current.state.musicDraft, current.current.sourceShots, current.current.durationSec]) !== sourceKey)
+      throw new Error("片段、剧情或配乐草稿已变化，本次起草未覆盖当前内容，请核对后重新整理。");
+    if (!patchMusicDraft({ prompt, brief: { ...result.brief, duration: draft.durationSec } }))
+      throw new Error("配乐要求未能保存，未提交生成。原草稿和候选保留。");
+  };
+  const openMusicConfirmation = () => {
+    const latest = current.current.state;
+    const draft = latest.musicDraft;
+    if (!draft?.brief || !isBgmV6Model(draft.brief.model)) throw new Error("请先整理当前片段的配乐要求。");
+    if (latest.pendingOperations.some(row => row.kind === "bgm")) throw new Error("原配乐任务尚未结束，请查询原任务，不重复生成。");
+    if (latest.musicJobIds.length >= 100 || latest.pendingOperations.length >= 100)
+      throw new Error("配乐记录或待处理任务已达 100 条上限，原数据保留，本次不提交。");
+    if (!Number.isInteger(draft.durationSec) || draft.durationSec < 10 || draft.durationSec > 360)
+      throw new Error("原曲目标时长须为10–360整数秒。");
+    setConfirmation({ kind: "bgm", brief: { ...draft.brief, duration: draft.durationSec } });
+  };
+  const audioVoiceControl = useRef<CanvasAudioVoiceControl | null>(null);
+  audioVoiceControl.current = async (request, signal) => {
+    signal?.throwIfAborted();
+    if (!mounted.current || request.clipId !== current.current.block.id) throw new Error("目标片段已变化，配乐操作未执行。");
+    if (request.operation !== "prepare" && request.question?.trim()) throw new Error("新增配乐要求须先整理，再确认生成。");
+    let rows = musicJobs;
+    let historyReadFailed = false;
+    if (request.operation === "inspect") {
+      const history = await refreshMusic();
+      signal?.throwIfAborted();
+      if (!mounted.current || request.clipId !== current.current.block.id) throw new Error("目标片段已变化，请重新查看配乐。");
+      rows = history.rows;
+      historyReadFailed = Boolean(history.failed);
+    } else {
+      await action(async () => {
+        signal?.throwIfAborted();
+        if (request.operation === "prepare") await prepareMusic({ fromVoice: true, question: request.question, signal });
+        else openMusicConfirmation();
+        setEditorOpen(true);
+        setJumpToGroup("bgm");
+      }, true);
+    }
+    const latest = current.current.state;
+    return {
+      status: request.operation === "inspect" ? "inspected" : request.operation === "prepare" ? "prepared" : "awaiting_user_confirmation",
+      clipId: request.clipId,
+      draft: latest.musicDraft ?? null,
+      musicJobIds: [...latest.musicJobIds],
+      pendingOperations: latest.pendingOperations.map(({ id, kind }) => ({ id, kind })),
+      jobs: rows.filter(row => latest.musicJobIds.includes(row.jobId)).map(row => ({
+        jobId: row.jobId, status: row.status, titleZh: row.titleZh,
+        variants: row.variants.map(variant => ({ index: variant.index, available: ["succeeded", "completed"].includes(row.status) && variant.gcsUri.startsWith("gs://") && variant.previewUrl.startsWith("https://") })),
+      })),
+      historyReadFailed,
+    } satisfies CanvasAudioVoiceResult;
+  };
+  useEffect(() => {
+    onVoiceControl?.(block.id, (request, signal) => {
+      if (!audioVoiceControl.current) return Promise.reject(new Error("本段音轨入口尚未就绪。"));
+      return audioVoiceControl.current(request, signal);
+    });
+    return () => onVoiceControl?.(block.id, null);
+  }, [block.id, onVoiceControl]);
+  useEffect(() => {
+    if (jumpToGroup === "bgm" && editorOpen && musicComposerRef.current) musicComposerRef.current.open = true;
+  }, [editorOpen, jumpToGroup]);
   const musicLibraryPanel = <>
       {musicJobs.filter(job => Number.isSafeInteger(job.missingVariants) && Number(job.missingVariants) > 0).map(job => (
         <p key={job.jobId} role="status" className="text-xs text-amber-200">
@@ -1360,20 +1449,7 @@ export function CanvasAudioStudioView({
           <button
             className={buttonClass}
             disabled={disabled || busy || !musicPrompt.trim() || !Number.isInteger(musicDuration) || musicDuration < 10 || musicDuration > 360}
-            onClick={() =>
-              void action(async () => {
-                if (!Number.isInteger(musicDuration) || musicDuration < 10 || musicDuration > 360) throw new Error("原曲目标时长须为10–360整数秒。");
-                const result = await services.draftMusic({
-                  laneZh: "本段剧情配乐",
-                  durationSec: musicDuration,
-                  moods: ["蓄力", "冲突", "反转", "收束"],
-                  moodArcZh: musicPrompt,
-                  titleZh: "剧情配乐",
-                  model: bgmModel,
-                });
-                setBrief({ ...result.brief, duration: musicDuration });
-              })
-            }
+            onClick={() => void action(() => prepareMusic())}
           >
             整理配乐要求 · 免费
           </button>
@@ -1418,22 +1494,7 @@ export function CanvasAudioStudioView({
                   busy ||
                   state.pendingOperations.some(row => row.kind === "bgm")
                 }
-                onClick={() => {
-                  if (
-                    current.current.state.musicJobIds.length >= 100 ||
-                    current.current.state.pendingOperations.length >= 100
-                  ) {
-                    setError(
-                      "配乐记录或待处理任务已达 100 条上限，原数据保留，本次不提交。"
-                    );
-                    return;
-                  }
-                  if (!Number.isInteger(musicDuration) || musicDuration < 10 || musicDuration > 360) {
-                    setError("原曲目标时长须为10–360整数秒。");
-                    return;
-                  }
-                  setConfirmation({ kind: "bgm", brief: { ...brief, duration: musicDuration } });
-                }}
+                onClick={() => void action(async () => openMusicConfirmation())}
               >
                 生成这版配乐 · {CANVAS_BGM_CREDITS_PER_RUN} 积分
               </button>
@@ -2239,7 +2300,7 @@ export function CanvasAudioStudioView({
           className={buttonClass}
           disabled={disabled || busy}
           onClick={() =>
-            void action(refreshMusic)
+            void action(async () => { await refreshMusic(); })
           }
         >
           刷新配乐素材

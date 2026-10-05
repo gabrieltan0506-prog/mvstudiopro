@@ -1,3 +1,4 @@
+import { parseNativeDeepReadRelearn, type NativeDeepReadRelearn } from "../../shared/manhuaNativeRelearn.js";
 import { buildManhuaLocalVideoSourceRef, parseManhuaLocalVideoSourceRef } from "../../shared/manhuaLocalVideoUpload.js";
 /**
  * 原生精读**发车计划预览**：抖音链接 → 这次要跑几集、几次模型请求、多少分钟。
@@ -99,6 +100,7 @@ export type NativeDeepReadLocalVideoSource = NativeDeepReadLocalVideoUpload & {
 };
 
 export type NativeDeepReadPlanEpisode = {
+  relearnRequestId?: string;
   localVideoUpload?: NativeDeepReadLocalVideoUpload;
   episodeIndex: number;
   sourceUrl: string;
@@ -116,6 +118,8 @@ export type NativeDeepReadPlanEpisode = {
 };
 
 export type NativeDeepReadPlanPreview = {
+  inspectSourceOnly?: boolean;
+  sourceEpisodeIndex?: number;
   planHash: string;
   /** 当前计划使用的分片长度；旧计划缺省时按 300 秒恢复。 */
   segmentSeconds?: number;
@@ -149,6 +153,7 @@ export type NativeDeepReadPlanPreview = {
 };
 
 export type NativeDeepReadPlanConfirmation = {
+  relearn?: NativeDeepReadRelearn;
   planHash?: string;
   maxCalls: number;
   seriesKey?: string;
@@ -161,6 +166,14 @@ export function assertNativeDeepReadPlanConfirmation(
   confirmed: NativeDeepReadPlanConfirmation,
   current: NativeDeepReadPlanPreview,
 ): void {
+  if (current.inspectSourceOnly) throw new Error("来源检查不能用于执行学习");
+  const relearn = parseNativeDeepReadRelearn(confirmed.relearn);
+  if (relearn && (current.seriesKey !== relearn.seriesKey || current.episodes.length !== 1
+    || current.episodes[0]?.episodeIndex !== relearn.episodeIndex
+    || current.episodes[0]?.relearnRequestId !== relearn.requestId)
+    || current.episodes.some(episode => episode.relearnRequestId && episode.relearnRequestId !== relearn?.requestId)) {
+    throw new Error("重学来源与本次确认不一致，未发出模型请求");
+  }
   if (!current.executionEnabled) throw new Error("原生精读能力未开启，未发出模型请求");
   if (parseNativeDeepReadVideoFps(confirmed.videoFps)
     !== parseNativeDeepReadVideoFps(current.videoFps)) {
@@ -194,8 +207,7 @@ export function assertNativeDeepReadPlanConfirmation(
     // 用户干等以为链路卡死。已入库导致的空计划必须直说原因和下一步。
     if (!current.episodes.length && current.alreadyIngestedEpisodeIndexes.length) {
       throw new Error(
-        `第${current.alreadyIngestedEpisodeIndexes.join("、")}集已学完入库（同一视频不重复学习、不重复付费）；` +
-          "学习卡可在模板库查看，想学新内容请换未学过的视频链接",
+        `第${current.sourceEpisodeIndex || current.alreadyIngestedEpisodeIndexes.join("、")}集已学完入库；请在学习入口确认重学，不会自动跳到下一集`,
       );
     }
     throw new Error("当前没有可执行的新集，未发出模型请求");
@@ -592,6 +604,8 @@ export type NativeDeepReadPlanDeps = {
 export async function buildNativeDeepReadPlanPreview(
   input: {
     url: string;
+    inspectSourceOnly?: boolean;
+    relearn?: NativeDeepReadRelearn;
     localVideoUpload?: NativeDeepReadLocalVideoSource;
     limit: number;
     structuringEpisodeIndex?: number;
@@ -831,19 +845,25 @@ export async function buildNativeDeepReadPlanPreview(
     if (free.length === 1) sourceEpisodeIndex = free[0]!.index;
   }
 
-  // ── 4. 逐集探时长（零模型调用）
+  const relearn = parseNativeDeepReadRelearn(input.relearn);
+  if (relearn && (input.structuringEpisodeIndex || limit !== 1 || !isSingleEpisodeEntry
+    || relearn.seriesKey !== seriesKey || relearn.episodeIndex !== sourceEpisodeIndex)) {
+    throw new Error("重学来源与本次确认不一致，未发出模型请求");
+  }
+
+  // ── 4. 单集只处理链接指定集；合集才选择接下来 N 集。
   // “学 N 集”指接下来新增 N 集，不是永远只看合集前 N 集。
   // 残留 claim 必须继续隔离，但不能占掉用户要求的名额：先排除已入库与 claim，再取 N 集。
   // 每个真正执行的集仍会在模型调用前原子抢 claim；这里没有放松并发保护。
   const sourceScopedFree = sourceEpisodeIndex
-    ? free.filter((episode) => episode.index >= sourceEpisodeIndex)
+    ? free.filter((episode) => episode.index === sourceEpisodeIndex)
     : free;
   if (sourceEpisodeIndex && !sourceScopedFree.some((episode) => episode.index === sourceEpisodeIndex)) {
     throw new Error(`解析到第${sourceEpisodeIndex}集，但该集不在可学习免费段内，已停止`);
   }
   const notIngested = input.structuringEpisodeIndex
     ? free.filter((episode) => episode.index === input.structuringEpisodeIndex)
-    : sourceScopedFree.filter((e) => !ingested.has(e.index));
+    : sourceScopedFree.filter((e) => !ingested.has(e.index) || relearn?.episodeIndex === e.index);
   if (input.structuringEpisodeIndex && notIngested.length !== 1) throw new Error("指定整形集不在同源可用列表，未调用模型");
   /**
    * 0826 用户拍板「失败占位不许永远挡路」：带失败病历的占位自动让位、
@@ -852,7 +872,7 @@ export async function buildNativeDeepReadPlanPreview(
    */
   const reclaimSet = new Set<number>();
   const blockedSet = new Set<number>();
-  for (const e of notIngested) {
+  for (const e of input.inspectSourceOnly ? [] : notIngested) {
     const state = claimStates.get(e.index);
     if (!state) continue;
     if (isNativeDeepReadClaimReclaimable(state)) reclaimSet.add(e.index);
@@ -863,8 +883,7 @@ export async function buildNativeDeepReadPlanPreview(
     .filter((i) => blockedSet.has(i));
   let executable: DouyinListedEpisode[];
   if (sourceEpisodeIndex) {
-    // 单集入口按解析集号向后连续取 N 集；区间内若有健康占位就明确阻塞，
-    // 不能静默跳过它再把后集冒充成本次目标。
+    // 单集入口固定在指定集；仍在处理时明确阻塞，不跳号。
     const intended = notIngested.slice(0, limit);
     const blockedIntended = intended.filter((episode) => blockedSet.has(episode.index));
     if (blockedIntended.length) {
@@ -881,7 +900,7 @@ export async function buildNativeDeepReadPlanPreview(
   }
   if (input.structuringEpisodeIndex && executable.length !== 1) throw new Error("指定整形集仍有运行占位，请等待旧任务停止");
   const episodes: NativeDeepReadPlanEpisode[] = [];
-  for (const e of executable) {
+  for (const e of input.inspectSourceOnly ? [] : executable) {
     throwIfNativePlanAborted(input.abortSignal);
     const probedDurationSec = localSource?.durationSec ?? await probeEpisodeDurationWithCandidateFailover(
       e,
@@ -889,7 +908,7 @@ export async function buildNativeDeepReadPlanPreview(
       input.abortSignal,
     );
     const sameEpisodeRecord = ingestedState.records.find((record) =>
-      record.episodeIndex === e.index && !record.complete);
+      record.episodeIndex === e.index && !record.complete && !relearn);
     if (
       sameEpisodeRecord
       && !sameManhuaLearnEpisodeSource(sameEpisodeRecord.sourceUrl, e.url)
@@ -914,6 +933,7 @@ export async function buildNativeDeepReadPlanPreview(
       ...(localSource ? { localVideoUpload: {
         userId: localSource.userId, uploadId: localSource.uploadId, sha256: localSource.sha256,
       } } : {}),
+      ...(relearn ? { relearnRequestId: relearn.requestId } : {}),
       episodeIndex: e.index,
       sourceUrl: e.url,
       durationSec,
@@ -921,7 +941,7 @@ export async function buildNativeDeepReadPlanPreview(
       videoFps: restored?.videoFps ?? videoFps,
       segments: restored?.segments ?? splitNativeDeepReadSegments(durationSec, segmentSeconds),
       ...(reclaimSet.has(e.index) ? { reclaimFailedClaim: true } : {}),
-      ...(sourceEpisodeIndex === e.index ? { recoverMisplacedSourceCache: true } : {}),
+      ...(sourceEpisodeIndex === e.index && !relearn ? { recoverMisplacedSourceCache: true } : {}),
       ...(restored ? { resumeStoredSegmentPlan: true } : {}),
     });
   }
@@ -935,6 +955,8 @@ export async function buildNativeDeepReadPlanPreview(
     : null;
 
   return {
+    ...(input.inspectSourceOnly ? { inspectSourceOnly: true } : {}),
+    sourceEpisodeIndex,
     planHash: plan?.planHash || computeNativeDeepReadPlanHash(seriesKey, episodes),
     segmentSeconds,
     videoFps,

@@ -88,3 +88,11 @@ it("影片声音保留非语音输入，不让VAD抛弃环境声和音乐", () =
     }
   }
 });
+it("语音文字分镜工具声明与事件解析一致，采用不能携带隐式付费授权",()=>{
+ const prepare=normalizeVoiceMessage(false,{toolCall:{functionCalls:[{id:"storyboard-test",name:"creativeProduction",args:{action:"prepareStoryboard",episode:1,question:"完整拆分本集镜头"}}]}});
+ expect(prepare).toContainEqual({type:"production",id:"storyboard-test",action:{action:"prepareStoryboard",episode:1,question:"完整拆分本集镜头"}});
+ const apply=normalizeVoiceMessage(false,{toolCall:{functionCalls:[{id:"adopt-test",name:"creativeProduction",args:{action:"applyStoryboard",episode:1}}]}});
+ expect(apply).toContainEqual({type:"production",id:"adopt-test",action:{action:"applyStoryboard",episode:1}});
+ const invalid=normalizeVoiceMessage(false,{toolCall:{functionCalls:[{id:"bypass-test",name:"creativeProduction",args:{action:"applyStoryboard",episode:1,confirmed:true}}]}});
+ expect(invalid[0]?.type).toBe("toolRejected");
+});

@@ -875,3 +875,33 @@ export function resolvePdfExportBucketName(): string {
     process.env.GCS_PDF_EXPORT_BUCKET || process.env.GCS_BUCKET_NAME || getGcsBucketName(),
   ).trim() || getGcsBucketName();
 }
+
+/** 只读对象名与版本号，避免为目录变更检查下载模板正文。分页失败不得返回部分版本。 */
+export async function readGcsPrefixRevision(prefix: string): Promise<string> {
+  const accessToken = await getVertexAccessToken();
+  const userProject = getGcsUserProject();
+  const entries: string[] = [];
+  let pageToken = "";
+  for (let page = 0; page < 100; page += 1) {
+    const url = new URL(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(getGcsBucketName())}/o`);
+    url.searchParams.set("prefix", normalizeObjectName(prefix));
+    url.searchParams.set("fields", "items(name,generation),nextPageToken");
+    url.searchParams.set("maxResults", "1000");
+    if (userProject) url.searchParams.set("userProject", userProject);
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new Error(`gcs_catalog_revision_failed:${response.status}`);
+    const data = await response.json() as { items?: { name?: string; generation?: string }[]; nextPageToken?: string };
+    for (const item of data.items || []) {
+      if (!item.name?.endsWith(".json")) continue;
+      if (!item.name.startsWith(prefix) || !/^\d+$/.test(item.generation || "")) throw new Error("gcs_catalog_revision_invalid");
+      entries.push(`${item.name}:${item.generation}`);
+    }
+    pageToken = data.nextPageToken || "";
+    if (!pageToken) return crypto.createHash("sha256").update(entries.sort().join("\n")).digest("hex");
+  }
+  throw new Error("gcs_catalog_revision_page_limit");
+}

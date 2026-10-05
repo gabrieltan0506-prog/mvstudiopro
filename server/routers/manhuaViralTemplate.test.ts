@@ -804,3 +804,24 @@ describe("renderEpisodeReport：canonical 寻址（禁列目录猜证据）", ()
       .rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });
+
+const learnSourcePlan = vi.hoisted(() => vi.fn());
+vi.mock("../services/manhuaNativeDeepReadPlanRuntime.js", () => ({ buildNativeDeepReadPlanPreviewFromServices: learnSourcePlan }));
+describe("学习来源只读检查", () => {
+  const params = { url: "https://www.douyin.com/video/10016", batchSize: 1, nativePlanLimit: 1,
+    nativeMaxCalls: 200, nativeDeepReadConfirmed: true, nativeReadModel: "gemini-3.8-flash" };
+  it("非拥有者不得检查来源", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    learnSourcePlan.mockClear();
+    const caller = (await loadRouter()).createCaller(makeCtx("user"));
+    await expect(caller.inspectLearnSource({ params })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(learnSourcePlan).not.toHaveBeenCalled();
+  });
+  it("拥有者仅取得指定集与是否已学，执行计划和私有来源不下发", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    learnSourcePlan.mockResolvedValue({ seriesKey: "series_real", sourceEpisodeIndex: 16, alreadyIngestedEpisodeIndexes: [16], episodes: [{ sourceUrl: "PRIVATE_URL" }] });
+    const caller = (await loadRouter()).createCaller(makeCtx("user", undefined, "owner-open-id"));
+    expect(await caller.inspectLearnSource({ params })).toEqual({ seriesKey: "series_real", episodeIndex: 16, alreadyLearned: true });
+    expect(learnSourcePlan).toHaveBeenLastCalledWith(expect.objectContaining({ inspectSourceOnly: true, readModel: "gemini-3.8-flash", userId: "7" }));
+  });
+});

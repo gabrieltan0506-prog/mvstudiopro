@@ -723,3 +723,28 @@ describe("待整形选择信封恢复", () => {
     await expect(readNativeDeepReadSegmentCacheEntry(entry)).rejects.toThrow("不一致");
   });
 });
+
+
+describe("重学永久证据隔离", () => {
+  const relearnRequestId = "11111111-1111-4111-8111-111111111111";
+  it("同请求不同重学使用不同对象，普通恢复对象名保持不变", () => {
+    const old = nativeDeepReadRawAttemptEvidenceObjectName(rawInputOf());
+    const next = nativeDeepReadRawAttemptEvidenceObjectName(rawInputOf({ relearnRequestId }));
+    expect(next).not.toBe(old);
+    expect(next).toContain(`/relearn/${relearnRequestId}/`);
+    expect(old).not.toContain("/relearn/");
+    expect(nativeDeepReadRawAttemptEvidenceObjectName(rawInputOf({ relearnRequestId: "22222222-2222-4222-8222-222222222222" }))).not.toBe(next);
+    expect(() => nativeDeepReadRawAttemptEvidenceObjectName(rawInputOf({ relearnRequestId: "../bad" }))).toThrow("重学");
+  });
+  it("重学原始证据可按同次身份恢复，串入旧证据时拒绝", async () => {
+    const input = rawInputOf({ relearnRequestId });
+    await writeNativeDeepReadRawAttemptEvidence(input);
+    const payload = gcs.createIfAbsent.mock.calls[0]![0].buffer;
+    gcs.downloadVersioned.mockResolvedValue({ buffer: payload, generation: "1" });
+    await expect(readNativeDeepReadRawAttemptEvidence(input)).resolves.toMatchObject({ responseText: input.responseText });
+    const corrupted = JSON.parse(payload.toString());
+    delete corrupted.relearnRequestId;
+    gcs.downloadVersioned.mockResolvedValue({ buffer: Buffer.from(JSON.stringify(corrupted)), generation: "2" });
+    await expect(readNativeDeepReadRawAttemptEvidence(input)).rejects.toThrow();
+  });
+});

@@ -46,6 +46,8 @@ import type { ManhuaCreativeAdvisorContext } from "../../shared/manhuaCreativeAd
 import { MANHUA_DIRECTOR_STRATEGY_APPROVED_MANIFEST_VERSION } from "../../shared/manhuaDirectorStrategy";
 import { createManhuaPrevisStudio } from "../../shared/manhuaPrevis";
 import { makeAdvisorPrevisTarget, parseAdvisorPrevisPatch } from "../../shared/manhuaAdvisorPrevisEdit";
+import { TEMPLATE_REWRITE_MARKER } from "../../shared/manhuaAdvisorRewrite";
+import { TEMPLATE_CATALOG_REQUEST_MARKER } from "../../shared/manhuaTemplateCraft";
 
 function manhuaContext(
   overrides: Partial<ManhuaCreativeAdvisorContext> = {},
@@ -97,6 +99,37 @@ beforeEach(() => {
   invokeLLMMock.mockResolvedValue(llmJson());
   resolvePlatformSkillsPromptMock.mockReset();
   resolvePlatformSkillsPromptMock.mockResolvedValue("");
+});
+
+describe("整集改稿完整文本合同", () => {
+  const rewrite = { kind: "template-rewrite", body: "人物停步，回头看向门外。".repeat(2000), changes: ["让人物动作承接剧情"] };
+  it.each([rewrite, { answer: rewrite }, { answer: JSON.stringify(rewrite) }])("长改稿在直接对象及两种answer包装中完整返回：%#", value => {
+    const result = parseAskJson(JSON.stringify(value));
+    expect(JSON.parse(result.answer)).toEqual(rewrite);
+    expect(result.answer.length).toBeGreaterThan(12_000);
+  });
+  it("结构化模板方案不被12k截断，普通咨询仍遵守原规则", () => {
+    const plans = { kind: "template-plans", plans: [1, 2, 3].map(id => ({
+      publicId: `mt_test${id}`, reason: "依据".repeat(350),
+      changes: Array.from({ length: 4 }, () => "改法".repeat(350)), preserve: "保留".repeat(350),
+    })) };
+    expect(JSON.stringify(plans).length).toBeGreaterThan(12_000);
+    expect(JSON.parse(parseAskJson(JSON.stringify({ answer: JSON.stringify(plans) })).answer)).toEqual(plans);
+    const ordinary = "普通咨询答复。".repeat(2000);
+    expect(parseAskJson(JSON.stringify({ answer: ordinary })).answer).toBe(ordinary.slice(0, 12_000));
+  });
+  it.each([TEMPLATE_REWRITE_MARKER, TEMPLATE_CATALOG_REQUEST_MARKER])("改稿及模板推荐仅向模型传剧情，原请求正文不变：%s", marker => {
+    const story = "剧情开头。" + "人物做出决定。".repeat(4000) + "剧情结尾。";
+    const technical = "## 可拍表\n| 镜号 | 秒位 | 动作 |\n| 1 | 0-4s | TECHNICAL_KEEP |";
+    const context = manhuaContext({ episodeBody: `${story}\n\n${technical}` });
+    const originalBody = context.episodeBody;
+    const messages = buildManhuaCreativeAdvisorLlmMessages({ question: `${marker}修改剧情`, context });
+    expect(messages.map(message => message.content).join("\n")).toContain(story);
+    expect(messages.map(message => message.content).join("\n")).not.toContain("TECHNICAL_KEEP");
+    expect(context.episodeBody).toBe(originalBody);
+    const monitor = buildManhuaCreativeAdvisorLlmMessages({ question: "检查当前项目状态", context });
+    expect(monitor.map(message => message.content).join("\n")).toContain("TECHNICAL_KEEP");
+  });
 });
 
 describe("classifyPlatformSkillQaKind", () => {

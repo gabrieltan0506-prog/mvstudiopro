@@ -31,6 +31,37 @@ describe("manhuaWriterSession", () => {
     episodeCount: 3,
   };
 
+  it.each([true, false])("旧分镜复审标记%s保存恢复后保留，不影响其他集", storyboardNeedsReview => {
+    const writerPack = { ...pack, episodes: pack.episodes.map((episode, i) => i === 1 ? { ...episode, storyboardNeedsReview } : episode) };
+    const restored = parseManhuaWriterSession(serializeManhuaWriterSession(buildManhuaWriterSession({ writerPack, writerConfirmed: true })));
+    expect(restored?.writerPack?.episodes[1].storyboardNeedsReview).toBe(storyboardNeedsReview);
+    expect(restored?.writerPack?.episodes[0].storyboardNeedsReview).toBeUndefined();
+    expect(restored?.writerPack?.episodes[0].body).toBe(pack.episodes[0].body);
+  });
+
+  it.each([3,5])("本集%s份模板参考在会话保存和刷新归一化后完整保留", count => {
+    const templateReferences = Array.from({length: count}, (_,i) => ({ publicId: `mt_a00${i}`, reason: `本集特色${i}`,
+      changes: [`本集动作${i}`, `本集节奏${i}`], preserve: "原人物关系与关键因果" }));
+    const writerPack = { ...pack, episodes: pack.episodes.map((episode, i) => i === 1 ? { ...episode, templateReferences } : episode) };
+    const session = buildManhuaWriterSession({ writerPack, writerConfirmed: true });
+    const restored = parseManhuaWriterSession(serializeManhuaWriterSession(session));
+    expect(restored?.writerPack?.episodes[1].templateReferences).toEqual(templateReferences);
+    expect(restored?.writerPack?.episodes[0].templateReferences).toBeUndefined();
+    expect(restored?.writerPack?.episodes[0].body).toBe(pack.episodes[0].body);
+    expect(restored?.writerConfirmed).toBe(true);
+  });
+
+  it("不把不足、超数或重复模板参考截成可用集合，旧正文与确认状态保留", () => {
+    const plan = { publicId: "mt_a123", reason: "本集特色", changes: ["动作试探", "声音留白"], preserve: "原关键因果" };
+    for (const templateReferences of [[plan, {...plan,publicId:"mt_b456"}], Array.from({length:6},(_,i)=>({...plan,publicId:`mt_a00${i}`})), [plan,{...plan,publicId:"mt_b456"},{...plan,publicId:"MT_A123"}]]) {
+      const writerPack = { ...pack, episodes: [{ ...pack.episodes[0], templateReferences }, ...pack.episodes.slice(1)] };
+      const restored = parseManhuaWriterSession(serializeManhuaWriterSession(buildManhuaWriterSession({ writerPack, writerConfirmed: true })));
+      expect(restored?.writerPack?.episodes[0].templateReferences).toBeUndefined();
+      expect(restored?.writerPack?.episodes[0].body).toBe(pack.episodes[0].body);
+      expect(restored?.writerConfirmed).toBe(true);
+    }
+  });
+
   it("round-trips writer pack + bible", () => {
     const directorStrategyContract = resolveManhuaDirectorStrategyContract({
       topic: "江湖刀光打斗交锋的短剧",

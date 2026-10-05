@@ -3,6 +3,45 @@ import { buildTemplateCraftCatalog, formatTemplateCraftCatalog } from "./manhuaT
 import { listMergedApprovedManhuaViralTemplates } from "./manhuaViralTemplateStore";
 import { resolveViralTemplateForExpand } from "./manhuaViralTemplateStore.js";
 import { formatManhuaViralTemplateWriterSkillFromCard } from "../../shared/manhuaViralTemplateBank.js";
+import { advisorTemplatePlansSchema } from "../../shared/manhuaAdvisorRewrite";
+import { createHash } from "node:crypto";
+
+/** 正式分镜逐份消费本集顾问方案；全部校验完才允许进入原扣费和模型入口。 */
+export async function buildManhuaStoryboardTemplateReference(raw: unknown) {
+  const parsed = advisorTemplatePlansSchema.shape.plans.safeParse(raw);
+  if (!parsed.success) throw new Error("正式分镜需要本集顾问给出的3–5份完整模板参考，请先完成模板分析；未提交分镜。");
+  const plans = parsed.data;
+  if (new Set(plans.map(plan => plan.publicId.trim().toLowerCase())).size !== plans.length) {
+    throw new Error("本集模板参考包含重复编号，需要3–5份不同的真实模板；未提交分镜。");
+  }
+  const resolvedPlans = [];
+  const seen = new Set<string>();
+  for (const plan of plans) {
+    const resolved = await resolveViralTemplateForExpand(plan.publicId);
+    if ("error" in resolved) throw new Error("本集参考模板不可用，请重新核对顾问模板方案；未提交分镜。");
+    const publicId = resolved.appliedTemplate.publicId;
+    if (seen.has(publicId.toLowerCase())) throw new Error("本集模板参考实际指向同一模板，需要3–5份不同模板；未提交分镜。");
+    seen.add(publicId.toLowerCase());
+    const capability = formatManhuaViralTemplateWriterSkillFromCard(resolved.card);
+    if (!capability.trim()) throw new Error("本集参考模板缺少可用创作能力；未提交分镜。");
+    resolvedPlans.push({ plan: { ...plan, ...resolved.appliedTemplate }, capability,
+      capabilitySha256: createHash("sha256").update(capability).digest("hex") });
+  }
+  return {
+    appliedTemplates: resolvedPlans.map(({ plan, capabilitySha256 }) => ({ ...plan, capabilitySha256 })),
+    text: [
+      "【本集顾问已提取的模板特色与真实能力】",
+      "逐份核对下列特色与本集剧情的关系，只采用适合当前场次的做法；保留本集人物、因果和已确认正文，不照搬模板来源剧情。",
+      ...resolvedPlans.map(({ plan, capability, capabilitySha256 }) => [
+        `【参考模板 ${plan.publicId} · 能力版本 ${capabilitySha256}】`,
+        `顾问提取的亮点与适配理由：${plan.reason}`,
+        `本集具体落实建议：\n${plan.changes.map((change, i) => `${i + 1}. ${change}`).join("\n")}`,
+        `本集必须保留：${plan.preserve}`,
+        `真实模板能力：\n${capability}`,
+      ].join("\n")),
+    ].join("\n\n"),
+  };
+}
 
 /** 只从本轮原始问题取明确编号，不从历史或推荐列表自动装入其它模板。 */
 export function mentionedManhuaTemplateIds(question: string): string[] {
@@ -25,7 +64,7 @@ export async function buildManhuaTemplateAdvisorReference(question: string): Pro
     return formatTemplateCraftCatalog(catalog);
   }
   const ids = mentionedManhuaTemplateIds(question);
-  if (ids.length > 3) throw new Error("一次最多评估3个模板编号，请缩小范围后重试。");
+  if (ids.length > 5) throw new Error("一次最多评估5个模板编号，请缩小范围后重试。");
   const blocks: string[] = [];
   for (const id of ids) {
     const resolved = await resolveViralTemplateForExpand(id);

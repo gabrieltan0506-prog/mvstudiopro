@@ -2,13 +2,14 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
-import { prepareAdvisorRewriteAdoption, prepareAdvisorRewriteBatchAdoption, persistAdvisorRewriteAdoption, advisorRewriteHasActiveWork } from "./manhuaAdvisorAdoption";
+import { prepareAdvisorRewriteAdoption, prepareAdvisorRewriteBatchAdoption, prepareManualEpisodeEditAdoption, persistAdvisorRewriteAdoption, advisorRewriteHasActiveWork } from "./manhuaAdvisorAdoption";
 import { defaultCanvasBlock, type CanvasBlock } from "./canvasTypes";
 import { buildManhuaWriterSession, serializeManhuaWriterSession, loadManhuaWriterSessionFromStorage, MANHUA_WRITER_SESSION_LS_KEY } from "@shared/manhuaWriterSession";
 import { MANHUA_BOARD_MOTION_OVERLAY_FORMAT } from "@shared/manhuaDirectorBoardOverlay";
 import { type ManhuaDirectorBoardOverlayBySegment } from "./manhuaDirectorBoardStore";
 import { diffManhuaWriterPacks } from "@shared/manhuaWriterPackDiff";
 import type { ManhuaWriterPack } from "@shared/manhuaWriterRoom";
+import { manhuaAdvisorMountKey } from "./manhuaAdvisorSession";
 
 const pack:ManhuaWriterPack={seriesTitle:"船战",logline:"寻信物",charactersMd:"甲、乙",propsMd:"剑",locationsMd:"船",rawMarkdown:"旧正文".repeat(40),episodeCount:3,episodes:[1,2,3].map(index=>({index,title:`第${index}集`,body:`原稿${index}`,endHook:"待续"}))};
 const candidate={episodeIndex:2,originalBody:"原稿2",rewrittenBody:"她踏上甲板，看见来人手中熟悉的信物。她稳住脚步询问来意，来人却指向船舱，船舱里传来清晰的脚步声。",changes:["前置身份悬念"]};
@@ -22,19 +23,19 @@ function storage(failAt=0){const values=new Map<string,string>([[MANHUA_WRITER_S
 function persist(plan:ReturnType<typeof prepareAdvisorRewriteAdoption>,f:ReturnType<typeof fixture>,s:ReturnType<typeof storage>){return persistAdvisorRewriteAdoption({plan,original:{writerPack:f.writerPack,projectBible:f.projectBible,blocks:f.blocks,edges:f.edges,overlays:f.overlays},userId:"1",backupId:"test-id",createdAt:"2026-09-20T05:40:00.000Z"},s);}
 
 describe("顾问采用真实归档与持久化",()=>{
- it("只改目标集，当前及后续产物归档，前集/共享资产/自由节点不改，空节点及边清理",()=>{
+ it("只改目标集并归档其产物，其他集/共享资产/自由节点不改，空节点及边清理",()=>{
   const f=fixture(),before=structuredClone(f),plan=prepareAdvisorRewriteAdoption(f);
   expect(plan.writerPack.episodes[0]).toEqual(pack.episodes[0]);expect(plan.writerPack.episodes[2]).toEqual(pack.episodes[2]);expect(plan.writerPack.episodes[1].body).toBe(candidate.rewrittenBody);
   expect(plan.writerPack.rawMarkdown).toContain(candidate.rewrittenBody);expect(plan.writerPack.rawMarkdown).not.toContain("旧正文");
-  for(const id of ["clip-e01-g01","charsheet-shared","free-image"])expect(plan.canvas.blocks.find(b=>b.id===id)).toEqual(f.blocks.find(b=>b.id===id));
-  for(const id of ["keyart-e02-g01","clip-e02-g01","final-e03-archived"])expect(plan.canvas.blocks.find(b=>b.id===id)?.archivedFromPreviousScript).toBe(true);
+  for(const id of ["clip-e01-g01","charsheet-shared","free-image","final-e03"])expect(plan.canvas.blocks.find(b=>b.id===id)).toEqual(f.blocks.find(b=>b.id===id));
+  for(const id of ["keyart-e02-g01","clip-e02-g01"])expect(plan.canvas.blocks.find(b=>b.id===id)?.archivedFromPreviousScript).toBe(true);
   expect(plan.canvas.blocks.find(b=>b.id==="clip-e02-g02")).toBeUndefined();expect(plan.canvas.edges).toEqual([{fromId:"keyart-e02-g01",toId:"clip-e02-g01"}]);
   expect(f).toEqual(before);expect(plan).toMatchObject({writerConfirmed:false,directorUnlocked:false,workflowPhase:"outline",focusEpisode:2});
  });
- it("只使当前及后续导演板待审，较早集手调坐标保留",()=>{
+ it("只使目标集导演板待审，其他集手调坐标保留",()=>{
   const overlay=(episodeIndex:number)=>({format:MANHUA_BOARD_MOTION_OVERLAY_FORMAT,episodeIndex,segmentIndex:1,shotIndex:1,imageSpace:"normalized" as const,sourceRevision:"rev1",baseAspectRatio:"16:9" as const,actorRoutes:[],cameraPath:null,axis:{subjectAnchors:[{entityId:"甲",at:{x:.4,y:.6}}]},landingPoints:[],userAdjusted:true,needsReview:false});
   const overlays:ManhuaDirectorBoardOverlayBySegment={1:{1:overlay(1)},2:{1:overlay(2)},3:{1:overlay(3)}};
-  const plan=prepareAdvisorRewriteAdoption({...fixture(),overlays});expect(plan.overlays[1]).toBe(overlays[1]);expect(plan.overlays[2][1].needsReview).toBe(true);expect(plan.overlays[3][1].needsReview).toBe(true);expect(overlays[2][1].needsReview).toBe(false);
+  const plan=prepareAdvisorRewriteAdoption({...fixture(),overlays});expect(plan.overlays[1]).toBe(overlays[1]);expect(plan.overlays[2][1].needsReview).toBe(true);expect(plan.overlays[3]).toBe(overlays[3]);expect(overlays[2][1].needsReview).toBe(false);
  });
  it("真实归档器保留仅存超分、历史版本、后期及母轨引用的节点",()=>{
   const patches:Partial<CanvasBlock>[]=[{upscaledVideoUrl:"https://test.invalid/upscaled.mp4"},{manhuaFinalVersions:[{origin:"assemble",url:"",gcsUri:"gs://test/history.mp4",createdAt:1}]},{manhuaFinalPostProd:{action:"burn_subtitle",jobId:"old",sourceUrl:"",status:"succeeded",updatedAt:1,resultGcsUri:"gs://test/burned.mp4"}},{manhuaSegmentRefs:{master:{url:"https://test.invalid/master.wav",updatedAt:"now"}}},{manhuaSegmentRefs:{registered:{url:"https://test.invalid/registered.mp4",updatedAt:"now"}}}];
@@ -51,10 +52,35 @@ describe("顾问采用真实归档与持久化",()=>{
  });
  it("原稿冲突与所有已知未决任务拒绝，终态任务不误挡",()=>{
   expect(()=>prepareAdvisorRewriteAdoption({...fixture(),candidate:{...candidate,originalBody:"过期"}})).toThrow("原稿已改变");expect(()=>prepareAdvisorRewriteAdoption({...fixture(),busy:true})).toThrow("任务");
+  expect(()=>prepareAdvisorRewriteAdoption({...fixture(),candidate:{...candidate,endHook:"新的片尾"}})).toThrow("片尾钩子");
   const active:Partial<CanvasBlock>[]=[{videoTaskId:"unknown"},{upscaleTaskId:"unknown"},{status:"running"},{videoTaskStatus:"running"},{videoTaskStatus:"timed_out_pending_reconcile"},{videoIntentStatus:"unverified"},{upscaleStatus:"queued"},{audioStudio:{schemaVersion:1,cues:[],musicJobIds:[],pendingOperations:[{id:"pending",kind:"bgm",inputKey:"input"}]}},{manhuaFinalPostProd:{action:"burn_subtitle",jobId:"pending",sourceUrl:"old",status:"running",updatedAt:1}}];
   for(const patch of active){const f=fixture();f.blocks[0]={...f.blocks[0],...patch};expect(()=>prepareAdvisorRewriteAdoption(f)).toThrow("任务");}
   expect(advisorRewriteHasActiveWork([{...fixture().blocks[0],videoTaskStatus:"succeeded",upscaleStatus:"failed",videoIntentStatus:"settled"}])).toBe(false);
  });
+});
+
+it("人工可缩写删场清空钩子，仍保留原技术材料、备份和待复核标记",()=>{
+ const f=fixture(),technical="### 五至六段可拍表\n#### 段01\n意图：逼问\n对白：甲：你是谁？";
+ f.writerPack.episodes[1].body="### 场次 E2-S1\n她没有回答。\n\n"+technical;
+ const edit={episodeIndex:2,originalBody:f.writerPack.episodes[1].body,originalEndHook:"待续",body:"她离开。",endHook:""};
+ const plan=prepareManualEpisodeEditAdoption({...f,edit}),s=storage();
+ expect(plan.writerPack.episodes[1]).toMatchObject({body:"她离开。\n\n"+technical,endHook:"",storyboardNeedsReview:true});
+ expect(plan.writerPack.episodes[2]).toEqual(f.writerPack.episodes[2]);
+ expect(plan).toMatchObject({changedEpisodeIndexes:[2],assetsNeedReview:true,technicalPlanNeedsReview:true});
+ const key=persist(plan,f,s);
+ expect(JSON.parse(s.getItem(key)!)).toMatchObject({changedEpisodeIndexes:[2],writerPack:f.writerPack});
+ expect(loadManhuaWriterSessionFromStorage(s)?.writerPack?.episodes[1]).toMatchObject({body:"她离开。\n\n"+technical,storyboardNeedsReview:true});
+ expect(()=>prepareManualEpisodeEditAdoption({...f,edit:{...edit,originalEndHook:"过期"}})).toThrow("片尾钩子");
+ expect(()=>prepareManualEpisodeEditAdoption({...f,edit,busy:true})).toThrow("任务");
+});
+
+it("不连续批次仅清理目标集，夹在中间的已完成集保持活动",()=>{
+ const f=fixture(),candidates=[1,3].map(episodeIndex=>({...candidate,episodeIndex,originalBody:`原稿${episodeIndex}`,rewrittenBody:`新剧情${episodeIndex}`}));
+ const plan=prepareAdvisorRewriteBatchAdoption({...f,candidates});
+ expect(plan.changedEpisodeIndexes).toEqual([1,3]);
+ expect(plan.writerPack.episodes[1]).toEqual(f.writerPack.episodes[1]);
+ expect(plan.canvas.blocks.find(block=>block.id==="clip-e02-g01")).toEqual(f.blocks.find(block=>block.id==="clip-e02-g01"));
+ expect(plan.canvas.blocks.find(block=>block.id==="final-e03-archived")?.archivedFromPreviousScript).toBe(true);
 });
 
 // 提取并执行真实宿主JSX回调：生产helper/归档/会话序列化保留，只有React setter作为观察边界。
@@ -66,30 +92,38 @@ it("生产OmniCanvas回调只有持久化成功后才改状态，失败不清理
  for(const failAt of [0,1,3]){
   const f=fixture(),s=storage(failAt),setters:Record<string,ReturnType<typeof vi.fn>>={};
   for(const name of ["setBlocks","setEdges","bumpManhuaOutboundEpoch","setDirectorBoardMotionOverlayBySegment","setWriterPackDiff","setWriterPack","setWriterConfirmed","setDirectorUnlocked","setWorkflowPhase","setWriterFocusEpisode","setWriterConfirmBlockers","setAdvisorOpen","setAdvisorFocusSection"])setters[name]=vi.fn(()=>{expect(s.writes.length).toBeGreaterThanOrEqual(4);});
-  const fn=runInNewContext(callbackJs,{...setters,...f,writerBusy:false,factoryBusy:false,assembleBusy:false,burnSubtitleBusy:false,segmentRefBusyId:null,assetStandardizeBusyId:null,asset3dBusyIds:[],sceneWorldBusyIds:[],directorBoardMotionOverlayBySegment:{},user:{id:1},crypto:{randomUUID:()=>"test-id"},toast:{error:vi.fn()},materializedBoardIdsRef:{current:{clear:vi.fn()}},prepareAdvisorRewriteAdoption,prepareAdvisorRewriteBatchAdoption,maskMediaProviderDetails:(x:string)=>x,persistAdvisorRewriteAdoption:(input:Parameters<typeof persistAdvisorRewriteAdoption>[0])=>persistAdvisorRewriteAdoption(input,s),diffManhuaWriterPacks});
+  const latestDraftSnapshotRef={current:{writerSession:buildManhuaWriterSession({writerPack:f.writerPack}),blocks:f.blocks,edges:f.edges}};
+  const refreshStoryAssetsAfterAdoption=vi.fn(async(plan:ReturnType<typeof prepareAdvisorRewriteAdoption>)=>{
+    expect(s.writes.length).toBeGreaterThanOrEqual(4);
+    expect(latestDraftSnapshotRef.current.writerSession.writerPack).toEqual(plan.writerPack);
+  });
+  const fn=runInNewContext(callbackJs,{...setters,...f,storyAssetRefreshLock:{current:false},latestDraftSnapshotRef,blocksRef:{current:f.blocks},buildManhuaWriterSession,refreshStoryAssetsAfterAdoption,advisorMountContinuation:{current:null},advisorComponentKey:"mounted",manhuaAdvisorMountKey,writerBusy:false,factoryBusy:false,assembleBusy:false,burnSubtitleBusy:false,segmentRefBusyId:null,assetStandardizeBusyId:null,asset3dBusyIds:[],sceneWorldBusyIds:[],directorBoardMotionOverlayBySegment:{},user:{id:1},crypto:{randomUUID:()=>"test-id"},toast:{error:vi.fn()},materializedBoardIdsRef:{current:{clear:vi.fn()}},prepareAdvisorRewriteAdoption,prepareAdvisorRewriteBatchAdoption,maskMediaProviderDetails:(x:string)=>x,persistAdvisorRewriteAdoption:(input:Parameters<typeof persistAdvisorRewriteAdoption>[0])=>persistAdvisorRewriteAdoption(input,s),diffManhuaWriterPacks});
   expect(fn(candidate)).toBe(failAt===0);
-  if(failAt){for(const setter of Object.values(setters))expect(setter).not.toHaveBeenCalled();}
-  else{expect(setters.setWriterConfirmed).toHaveBeenCalledWith(false);expect(setters.setDirectorUnlocked).toHaveBeenCalledWith(false);expect(setters.setWriterPack.mock.calls[0][0].episodes[1].body).toBe(candidate.rewrittenBody);}
+  if(failAt){for(const setter of Object.values(setters))expect(setter).not.toHaveBeenCalled();expect(refreshStoryAssetsAfterAdoption).not.toHaveBeenCalled();}
+  else{expect(setters.setWriterConfirmed).toHaveBeenCalledWith(false);expect(setters.setDirectorUnlocked).toHaveBeenCalledWith(false);expect(setters.setWriterPack.mock.calls[0][0].episodes[1].body).toBe(candidate.rewrittenBody);expect(refreshStoryAssetsAfterAdoption).toHaveBeenCalledOnce();}
  }
 });
 
 it("真实采用备份指导再次确认：前集活动成果保留，新剧或改动过的整稿不复用范围", async()=>{
- const {advisorReconfirmationFromEpisode}=await import("./manhuaAdvisorBackups");
+ const {advisorReconfirmationEpisodeIndexes,advisorReconfirmationFromEpisode}=await import("./manhuaAdvisorBackups");
  const {stripManhuaFactoryCanvasArtifacts}=await import("./canvasDramaStudio");
  const f=fixture(),s=storage(),plan=prepareAdvisorRewriteAdoption(f);persist(plan,f,s);
  const readable={get length(){return s.values.size},key:(i:number)=>Array.from(s.values.keys())[i]??null,getItem:s.getItem};
  const fromEpisode=advisorReconfirmationFromEpisode(readable,"1",plan.writerPack);
  expect(fromEpisode).toBe(2);
- const confirmed=stripManhuaFactoryCanvasArtifacts(plan.canvas.blocks,plan.canvas.edges,{fromEpisode});
+ const changedEpisodes=advisorReconfirmationEpisodeIndexes(readable,"1",plan.writerPack);
+ expect(changedEpisodes).toEqual([2]);
+ const confirmed=stripManhuaFactoryCanvasArtifacts(plan.canvas.blocks,plan.canvas.edges,{onlyEpisodes:changedEpisodes});
  expect(confirmed.blocks.find(b=>b.id==="clip-e01-g01")).toEqual(f.blocks[0]);
  expect(confirmed.blocks.find(b=>b.id==="clip-e02-g01")?.archivedFromPreviousScript).toBe(true);
+ expect(confirmed.blocks.find(b=>b.id==="final-e03")).toEqual(f.blocks.find(b=>b.id==="final-e03"));
  expect(advisorReconfirmationFromEpisode(readable,"2",plan.writerPack)).toBeUndefined();
  expect(advisorReconfirmationFromEpisode(readable,"1",{...plan.writerPack,charactersMd:"另一批人物"})).toBeUndefined();
  expect(advisorReconfirmationFromEpisode(readable,"1",plan.writerPack,"other-project")).toBeUndefined();
  const confirmSource=source.slice(source.indexOf("const confirmWriterToDirector ="),source.indexOf("const confirmWriterToDirector =")+13000);
- expect(confirmSource).toContain("advisorReconfirmationFromEpisode(localStorage, String(user.id), writerPack, projectBible?.confirmedAt)");
- expect(confirmSource).toContain("stripManhuaFactoryCanvasArtifacts(blocks, edges, { fromEpisode })");
- expect(confirmSource).toContain("resolveManhuaEpisodeSpawnContinuity(writerPack.episodes, fromEpisode ?? writerFocusEpisode)");
+ expect(confirmSource).toContain("advisorReconfirmationEpisodeIndexes(localStorage, String(user.id), writerPack, projectBible?.confirmedAt)");
+ expect(confirmSource).toContain("stripManhuaFactoryCanvasArtifacts(blocks, edges, changedEpisodes ? { onlyEpisodes: changedEpisodes } : undefined)");
+ expect(confirmSource).toContain("resolveManhuaEpisodeSpawnContinuity(writerPack.episodes, changedEpisodes?.[0] ?? writerFocusEpisode)");
 });
 
 it('顾问改前备份同时保存制作偏好供原导入入口恢复',()=>{

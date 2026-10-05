@@ -84,6 +84,7 @@ import {
 } from "./manhuaNativeSeriesAggregation.js";
 
 export type NativeDeepReadEpisodeExecution = {
+  relearnRequestId?: string;
   localVideoUpload?: NativeDeepReadLocalVideoUpload;
   seriesKey: string;
   episodeIndex: number;
@@ -774,6 +775,7 @@ export function validateNativeDeepReadBatchPlan(
     // 剧集顺序必须保留：执行器按输入顺序运行且失败即停，换序就是另一份付费计划。
     episodes: episodes.map((episode) => ({
         episodeIndex: episode.episodeIndex,
+        ...(episode.relearnRequestId ? { relearnRequestId: episode.relearnRequestId } : {}),
         sourceUrl: episode.sourceUrl,
         durationSec: episode.durationSec,
         ...(opts.segmentSeconds != null || episode.segmentSeconds != null
@@ -894,7 +896,7 @@ export async function runNativeDeepReadBatch(input: {
   };
   const pending: NativeDeepReadBatchEpisode[] = [];
   for (const episode of input.episodes) {
-    if (!input.structuringOnly && alreadyIngested.has(episode.episodeIndex)) {
+    if (!input.structuringOnly && !episode.relearnRequestId && alreadyIngested.has(episode.episodeIndex)) {
       const skipped: NativeDeepReadBatchOutcome = {
         episodeIndex: episode.episodeIndex,
         status: "skipped",
@@ -991,7 +993,7 @@ export async function runNativeDeepReadBatch(input: {
         sourceRef: String(episode.provenanceSourceRef || episode.sourceUrl),
         statSourceVersion: deps.statSourceVersion,
       });
-      if (episode.recoverMisplacedSourceCache) {
+      if (episode.recoverMisplacedSourceCache && !episode.relearnRequestId) {
         const migration = await deps.migrateSegmentCaches({
           seriesKey: input.seriesKey,
           episodeIndex: episode.episodeIndex,
@@ -1021,6 +1023,7 @@ export async function runNativeDeepReadBatch(input: {
           cacheSourceDigest,
         }],
         segmentCacheSeriesKey: input.seriesKey,
+        relearnRequestId: episode.relearnRequestId,
         readModel: input.readModel,
         structuringModel: input.structuringModel,
         structuringOnly: input.structuringOnly,
@@ -1039,6 +1042,8 @@ export async function runNativeDeepReadBatch(input: {
               heartbeatError instanceof Error ? heartbeatError.message : heartbeatError,
             );
           }
+          // 重学中的片段仍保存永久 JSON 和恢复缓存；完整候选过门禁前不替换原卡。
+          if (episode.relearnRequestId) return;
           const completedSegments = snapshot.completedSegmentIndexes.map(
             (index) => episode.segments[index]!,
           );

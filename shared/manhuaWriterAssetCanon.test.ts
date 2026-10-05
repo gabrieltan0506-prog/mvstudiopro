@@ -60,6 +60,56 @@ const denseBody = (sceneA: string, sceneB: string) =>
   ].join("");
 
 describe("manhuaWriterAssetCanon", () => {
+  it("无别名标记不是资产身份，真正别名仍保留", () => {
+    for (const alias of ["无", "無", "无别名", "暂无", "none", "—"]) {
+      expect(parseWriterTableLine(`- 铜钥匙／${alias}｜开门｜铜质`)?.aliasZh).toBeUndefined();
+    }
+    expect(parseWriterTableLine("- 铜钥匙／旧钥｜开门｜铜质")?.aliasZh).toBe("旧钥");
+    expect(parseWriterTableLine("- 影客／无名者｜黑衣｜守门")?.aliasZh).toBe("无名者");
+  });
+
+  it("preserveFullSpecs完整保留各表行数、长字段与全部状态，旧入口保持默认", () => {
+    const longLook = "衣料纹样".repeat(300);
+    const longMotive = "守护来历".repeat(100);
+    const longRelation = "旧事关联".repeat(100);
+    const longState = "袖口磨损细节".repeat(50);
+    const states = Array.from({ length: 10 }, (_, i) => `状态${i}=${longState}`).join("；");
+    const charactersMd = Array.from({ length: 14 }, (_, i) => `- 人物${i}｜${longLook}｜${longMotive}｜${longRelation}｜不伤无辜｜状态：${states}`).join("\n");
+    const propsMd = Array.from({ length: 18 }, (_, i) => `- 道具${i}｜${longMotive}｜${longLook}`).join("\n");
+    const locationsMd = Array.from({ length: 18 }, (_, i) => `- 场景${i}｜${longMotive}｜${longLook}`).join("\n");
+    const full = buildManhuaWriterAssetCanon({ charactersMd, propsMd, locationsMd, preserveFullSpecs: true });
+    expect(full.characters).toHaveLength(14);
+    expect(full.props).toHaveLength(18);
+    expect(full.locations).toHaveLength(18);
+    expect(full.characters[0].lookZh).toBe(longLook);
+    expect(full.characters[0].motiveZh).toBe(longMotive);
+    expect(full.characters[0].noteZh).toContain(longRelation);
+    expect(full.characters[0].promptZh).toContain(longLook);
+    expect(full.characters[0].statesZh).toHaveLength(10);
+    expect(full.characters[0].statesZh?.[9].deltaZh).toBe(longState);
+    expect(full.props[17].lookZh).toBe(longLook);
+    expect(full.locations[17].motiveZh).toBe(longMotive);
+    const legacy = buildManhuaWriterAssetCanon({ charactersMd, propsMd, locationsMd });
+    expect(legacy.characters).toHaveLength(12);
+    expect(legacy.props).toHaveLength(16);
+    expect(legacy.locations).toHaveLength(16);
+    expect(legacy.characters[0].lookZh.length).toBeLessThan(longLook.length);
+  });
+
+  it("preserveFullSpecs在重新确认门禁中透传，别名互换与排序保留旧身份ID", () => {
+    const look = "衣料细节".repeat(100);
+    const charactersMd = `- 沈砚舟/沈少主｜${look}｜守旧约｜与云疏冷相识｜不滥杀\n- 云疏冷｜银发白衣｜寻故人｜与沈砚舟相识｜不背信`;
+    const previousCanon = buildManhuaWriterAssetCanon({ charactersMd, propsMd: PROPS_MD, locationsMd: LOCATIONS_MD, preserveFullSpecs: true });
+    previousCanon.characters[0].id = "preserved-character-id";
+    const swapped = charactersMd.split("\n").reverse().join("\n").replace("沈砚舟/沈少主", "沈少主/沈砚舟");
+    const result = evaluateWriterPackAssetAndDensity({ charactersMd: swapped, propsMd: PROPS_MD, locationsMd: LOCATIONS_MD,
+      episodes: [{ index: 1, body: "沈砚舟在山神破庙见到云疏冷。", endHook: "门外有人" }], preserveFullSpecs: true, previousCanon });
+    const retained = result.canon.characters.find(character => character.id === "preserved-character-id");
+    expect(retained?.nameZh).toBe("沈砚舟");
+    expect(retained?.aliasZh).toBe("沈少主");
+    expect(retained?.lookZh).toBe(look);
+  });
+
   it("parses ｜ table lines with alias", () => {
     const row = parseWriterTableLine("- 沈砚舟/沈少主｜外形｜动机｜关系｜底线");
     expect(row?.nameZh).toBe("沈砚舟");

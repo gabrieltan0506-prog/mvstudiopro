@@ -20,7 +20,6 @@ export const MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS = {
   episodeTitleChars: 240,
   videoModelChars: 80,
   directorStrategyRevisionChars: 120,
-  episodeBodyChars: 24_000,
   assetSummaryChars: 6_000,
   shotSummaryChars: 6_000,
   previsSummaryChars: 6_000,
@@ -65,8 +64,10 @@ const FORBIDDEN_CONTEXT_VALUE_PATTERNS = [
   },
 ] as const;
 
-function contextText(maxChars: number, label: string, requireContent = false) {
-  const base = z.string().trim().max(maxChars, `${label}超过 ${maxChars} 字符上限`);
+function contextText(maxChars: number | null, label: string, requireContent = false) {
+  const base = maxChars === null
+    ? z.string()
+    : z.string().trim().max(maxChars, `${label}超过 ${maxChars} 字符上限`);
   const schema = requireContent ? base.min(1, `${label}不能为空`) : base;
   return schema.superRefine((value, ctx) => {
     for (const entry of FORBIDDEN_CONTEXT_VALUE_PATTERNS) {
@@ -104,7 +105,7 @@ export const manhuaCreativeAdvisorContextSchema = z
       MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.episodeTitleChars,
       "本集标题",
     ),
-    episodeEndHook: z.string().max(2000).optional(),
+    episodeEndHook: z.string().optional(),
     stage: manhuaCreativeAdvisorStageSchema,
     videoModel: contextText(
       MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.videoModelChars,
@@ -112,10 +113,8 @@ export const manhuaCreativeAdvisorContextSchema = z
       true,
     ),
     writerConfirmed: z.boolean(),
-    episodeBody: contextText(
-      MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.episodeBodyChars,
-      "本集正文",
-    ),
+    // 正文完整传递，容量与模型上下文限制由原请求链明确报错，不按创作字数节选。
+    episodeBody: contextText(null, "本集正文"),
     assetSummary: contextText(
       MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.assetSummaryChars,
       "资产摘要",

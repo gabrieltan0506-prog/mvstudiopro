@@ -229,3 +229,25 @@ describe("nativeDeepReadSeriesKeyForModel", () => {
     expect(nativeDeepReadSeriesKeyForModel("abc123-g38f", "gemini-3.8-flash")).toBe("abc123-g38f");
   });
 });
+
+
+describe("单集重学确认", () => {
+  const params = { url: "https://www.douyin.com/video/12345", batchSize: 1,
+    nativeDeepReadConfirmed: true, nativeMaxCalls: 200, nativePlanLimit: 1 };
+  const nativeRelearn = { seriesKey: "series_real", episodeIndex: 16, requestId: "11111111-1111-4111-8111-111111111111" };
+  it("新旧提交不能互相接管；同次重学恢复保留身份", () => {
+    const old = parseNativeDeepReadJobConfirmation(params);
+    const current = parseNativeDeepReadJobConfirmation({ ...params, nativeRelearn });
+    expect(hasNativeDeepReadJobFields({ nativeRelearn })).toBe(true);
+    expect(sameNativeDeepReadJobConfirmation(old, current)).toBe(false);
+    expect(sameNativeDeepReadJobConfirmation(current, parseNativeDeepReadJobConfirmation({ ...params, nativeRelearn }))).toBe(true);
+    expect(sameNativeDeepReadJobConfirmation(current, { ...current, relearn: { ...nativeRelearn, episodeIndex: 17 } })).toBe(false);
+    expect(sameNativeDeepReadJobConfirmation(current, { ...current, relearn: { ...nativeRelearn, requestId: "22222222-2222-4222-8222-222222222222" } })).toBe(false);
+  });
+  it.each([null, true, {}, { ...nativeRelearn, requestId: "../old" }, { ...nativeRelearn, episodeIndex: "16" }])("拒绝无效重学身份 %j", value => {
+    expect(() => parseNativeDeepReadJobConfirmation({ ...params, nativeRelearn: value })).toThrow("重学");
+  });
+  it("重学不能扩成批量", () => {
+    expect(() => parseNativeDeepReadJobConfirmation({ ...params, batchSize: 2, nativePlanLimit: 2, nativeRelearn })).toThrow("单集");
+  });
+});

@@ -25,3 +25,12 @@ describe("只重新整形参数", () => {
     expect(() => buildManhuaRestructureParams(job({ ...original, url: undefined }), 1, "glm-5.3")).toThrow("原生学习参数");
   });
 });
+
+it("重学任务只重新整形时清除重新读片身份，仍绑定原任务", () => {
+  const result = buildManhuaRestructureParams({ jobId: "relearn-job", input: { params: { ...original,
+    nativeRelearn: { seriesKey: "series_real", episodeIndex: 16, requestId: "11111111-1111-4111-8111-111111111111" },
+  } } } as never, 16, "glm-5.3");
+  expect(result.nativeRelearn).toBeUndefined();
+  expect(result.nativeStructuringPreviousJobId).toBe("relearn-job");
+  expect(result.nativeStructuringOnly).toBe(true);
+});

@@ -5219,6 +5219,7 @@ function routeLabelZh(route: NativeDeepReadVisualRoute, readModel: ManhuaNativeD
  * 用户中止、证据保存失败和其他传输错误立即终止。
  */
 export type NativeDeepReadBatchRunParams = {
+  relearnRequestId?: string;
   structuringOnly?: boolean;
   episodes: readonly NativeDeepReadBatchRunEpisode[];
   abortSignal?: AbortSignal;
@@ -5273,6 +5274,10 @@ async function executeNativeDeepReadBatch(
   deps: NativeDeepReadBatchRunnerDeps,
   diagnosticSelection?: readonly number[],
 ): Promise<NativeDeepReadBatchExecutionResult> {
+  if (params.relearnRequestId && (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(params.relearnRequestId)
+    || params.episodes.length !== 1 || params.structuringOnly || diagnosticSelection || !params.segmentCacheSeriesKey)) {
+    throw new Error("重学执行身份无效，未发出模型请求");
+  }
   const readModel = parseNativeDeepReadModel(params.readModel);
   if (params.structuringOnly && (!params.segmentCacheSeriesKey || params.episodes.length !== 1 || diagnosticSelection)) throw new Error("仅重新整形必须绑定单集完整证据");
   if (!params.episodes.length) throw new Error("多视频精读批次为空");
@@ -5342,6 +5347,7 @@ async function executeNativeDeepReadBatch(
           }
           if (!cached) continue;
           const entry = cached.entry;
+          if (!params.structuringOnly && entry.relearnRequestId !== params.relearnRequestId) continue;
           const fingerprintInput = {
             sourceDigest: episode.cacheSourceDigest!,
             episodeIndex: episode.episodeIndex,
@@ -5797,6 +5803,7 @@ async function executeNativeDeepReadBatch(
           if (!selectedSegmentIndexes && params.segmentCacheSeriesKey && episode.cacheSourceDigest && requestFingerprint) {
             const recovered = await deps.readRawAttemptEvidence({
               seriesKey: params.segmentCacheSeriesKey,
+              relearnRequestId: params.relearnRequestId,
               episodeIndex: episode.episodeIndex,
               segmentIndex: input.segmentIndex,
               segmentCount,
@@ -5868,6 +5875,7 @@ async function executeNativeDeepReadBatch(
             try {
               const evidence = await deps.writeRawAttemptEvidence({
                 seriesKey: params.segmentCacheSeriesKey,
+              relearnRequestId: params.relearnRequestId,
                 episodeIndex: episode.episodeIndex,
                 segmentIndex: input.segmentIndex,
                 segmentCount,
@@ -5992,6 +6000,7 @@ async function executeNativeDeepReadBatch(
               if (!rawAttemptEvidence || !requestFingerprint) throw new Error("缺少已保存原始响应的身份回执");
               const evidence = await deps.writeParsedAttemptEvidence({
                 seriesKey: params.segmentCacheSeriesKey,
+              relearnRequestId: params.relearnRequestId,
                 episodeIndex: episode.episodeIndex,
                 segmentIndex: input.segmentIndex,
                 segmentCount,
@@ -6612,6 +6621,7 @@ async function executeNativeDeepReadBatch(
             }),
             sourceDigest,
             seriesKey: params.segmentCacheSeriesKey,
+            relearnRequestId: params.relearnRequestId,
             episodeIndex: episode.episodeIndex,
             segmentIndex,
             startSec: segment.startSec,

@@ -4,6 +4,7 @@ export const ADVISOR_BACKUP_PREFIX = "manhua-advisor-rewrite-backup:";
 const backupSchema = z.object({
   createdAt: z.string().datetime(),
   episodeIndex: z.number().int().positive(),
+  changedEpisodeIndexes: z.array(z.number().int().positive()).min(1).optional(),
   changes: z.array(z.string()),
   writerPack: z.object({
     seriesTitle: z.string(),
@@ -28,7 +29,7 @@ export function listAdvisorBackups(storage: Pick<Storage, "length" | "key" | "ge
       const json = storage.getItem(key);
       if (!json) continue;
       const backup = backupSchema.parse(JSON.parse(json));
-      const adoptedBodyMatches = backup.episodeIndex === scope.episodeIndex && backup.adoptedWriterPack?.seriesTitle === scope.seriesTitle && backup.adoptedWriterPack.episodes.some(ep => ep.index === scope.episodeIndex && Boolean(scope.body) && ep.body === scope.body);
+      const adoptedBodyMatches = (backup.changedEpisodeIndexes || [backup.episodeIndex]).includes(scope.episodeIndex) && backup.adoptedWriterPack?.seriesTitle === scope.seriesTitle && backup.adoptedWriterPack.episodes.some(ep => ep.index === scope.episodeIndex && Boolean(scope.body) && ep.body === scope.body);
       const sameProject = adoptedBodyMatches || (scope.confirmedProjectVersion
         ? backup.projectBible?.confirmedAt === scope.confirmedProjectVersion
         : !backup.projectBible && backup.writerPack.seriesTitle === scope.seriesTitle && backup.writerPack.episodes.some(ep =>
@@ -69,4 +70,21 @@ export function advisorReconfirmationFromEpisode(storage: Pick<Storage, "length"
     } catch { /* 损坏旧记录不作为限定清理范围的依据。 */ }
   }
   return earliest;
+}
+
+/** 再次确认只使真正采用的集失效，旧备份降级单集，不能扩成该集之后整部剧。 */
+export function advisorReconfirmationEpisodeIndexes(storage: Pick<Storage, "length" | "key" | "getItem">, userId: string, writerPack: unknown, confirmedProjectVersion?: string): number[] | undefined {
+  const episodes = new Set<number>();
+  for (let i = 0; i < storage.length; i++) {
+    const key = storage.key(i);
+    if (!key?.startsWith(`${ADVISOR_BACKUP_PREFIX}${userId}:`)) continue;
+    const json = storage.getItem(key);
+    try {
+      const backup = backupSchema.parse(JSON.parse(json || ""));
+      if ((backup.projectBible?.confirmedAt || undefined) !== confirmedProjectVersion || !backup.adoptedWriterPack) continue;
+      if (JSON.stringify(backup.adoptedWriterPack) !== JSON.stringify(backupSchema.shape.adoptedWriterPack.parse(writerPack))) continue;
+      for (const episode of backup.changedEpisodeIndexes || [backup.episodeIndex]) episodes.add(episode);
+    } catch { /* 损坏或不匹配的记录不能扩大失效范围。 */ }
+  }
+  return episodes.size ? Array.from(episodes).sort((a, b) => a - b) : undefined;
 }

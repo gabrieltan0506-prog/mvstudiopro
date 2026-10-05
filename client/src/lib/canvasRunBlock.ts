@@ -182,7 +182,14 @@ export type CanvasRunDeps = {
   onManhuaPilotChanged?: () => void;
   /** 长排队任务创建即回写节点(taskId 持久化,刷新可恢复;审查 P1);缺省不回写 */
   onVideoTaskCreated?: (blockId: string, info: { taskId: string; engine: string }) => void;
+  /** 原图片队列回执；已入队后先保存任务编号，失败不得重新创建任务。 */
+  onImageTaskCreated?: (blockId: string, jobId: string) => void | Promise<void>;
+  /** 语音分镜候选只允许一次文本供应商尝试，未决结果不切换通道重提。 */
+  singleTextAttempt?: boolean;
   optimizeCopy: (input: {
+    storyboardCandidate?: boolean;
+    storyboardEpisodeIndex?: number;
+    factoryTextStage?: "story" | "assets" | "beats";
     sourceText: string;
     optimizationBrief?: string;
     /** 画布文本模型：gpt-5.6-sol / gpt-5.6-terra / gpt-5.5 / gpt-5.4 */
@@ -433,6 +440,7 @@ export async function runGptImage2(
     batchIndex?: number;
     /** 官方模型档位；不传按开关（「双档」在单张入口按 flare） */
     openaiImageVariant?: OpenAiImageVariant;
+    onTaskCreated?: (jobId: string) => void | Promise<void>;
   },
 ): Promise<string> {
   const refImageUrl = String(opts?.refImageUrl || "").trim();
@@ -462,6 +470,10 @@ export async function runGptImage2(
     }),
   });
 
+  if (opts?.onTaskCreated) {
+    try { await opts.onTaskCreated(jobId); }
+    catch { throw new Error(`图片任务 ${jobId} 已提交，但恢复记录未保存；请查询原任务，禁止重复生成。`); }
+  }
   let job: Awaited<ReturnType<typeof pollJobUntilTerminal>>;
   try {
     job = await pollJobUntilTerminal(jobId, {
@@ -497,6 +509,7 @@ async function runGptImage2Batch(
     openaiOnly?: boolean;
     userId?: string;
     imageLane?: OpenAiImageLane;
+    onTaskCreated?: (jobId: string) => void | Promise<void>;
   },
   count: number,
 ): Promise<string[]> {
@@ -603,6 +616,8 @@ async function runVideoReversePrompt(
   videoUrl: string | undefined,
   fallbackImages: CanvasVisionImage[],
   outputMode: VideoReverseOutputMode = "zh",
+  manhuaStoryboard = false,
+  episodeIndex = 1,
 ): Promise<string> {
   let images: Array<{ url: string; mimeType?: string }> = [];
   const mode = parseVideoReverseOutputMode(outputMode);
@@ -634,7 +649,16 @@ async function runVideoReversePrompt(
     }),
   ].join("\n");
 
-  // 无片/无帧：Terra 文本优先 → Gemini
+  // 漫剧文字分镜沿既有编译合同，使用编剧所选模型；失败保留原稿，不暗换供应商。
+  if (manhuaStoryboard) {
+    // 图片只提供视觉证据；最终剧情分镜始终由本集所选编剧模型生成。
+    const visualEvidence = images.length ? await runCanvasVisionMarkdown(deps,
+      "只提取参考画面的真实人物外观、空间、道具和可见动作；无法确认写明。不要编写剧情、对白或分镜。\n" + userHint, images) : "";
+    const md = await deps.optimizeCopy({ sourceText: [noFramePrompt, visualEvidence && `【参考画面证据】\n${visualEvidence}`].filter(Boolean).join("\n\n"), storyboardCandidate: true, storyboardEpisodeIndex: episodeIndex });
+    if (!String(md || "").trim()) throw new Error("分镜返回为空，原稿保留");
+    return String(md).trim();
+  }
+  // 自由画布原有无片反推策略保持。
   if (!images.length) {
     try {
       const md = await deps.optimizeCopy({
@@ -644,9 +668,11 @@ async function runVideoReversePrompt(
         modelName: CANVAS_TERRA_PRIMARY_MODEL,
       });
       if (String(md || "").trim()) return String(md).trim();
-    } catch {
-      // fall through
+    } catch (error) {
+      if (deps.singleTextAttempt) throw error;
+      // 旧入口保留原有回退。
     }
+    if (deps.singleTextAttempt) throw new Error("分镜返回为空，未切换通道重试");
     const md = await runGeminiScript(noFramePrompt, CANVAS_GEMINI_FALLBACK_MODEL);
     if (!md.trim()) throw new Error("无片反推返回为空");
     return md.trim();
@@ -663,9 +689,11 @@ async function runVideoReversePrompt(
         }),
       ).trim();
       if (md) return md;
-    } catch {
-      // Terra 失败 → Gemini
+    } catch (error) {
+      if (deps.singleTextAttempt) throw error;
+      // 旧入口保留原有回退。
     }
+    if (deps.singleTextAttempt) throw new Error("分镜返回为空，未切换通道重试");
   }
   return runVideoReversePromptGemini(userHint, images, mode);
 }
@@ -2520,6 +2548,8 @@ async function runCanvasBlockInner(
       uploadedVideoUrl,
       visionImages,
       parseVideoReverseOutputMode(block.videoReverseOutputMode),
+      block.id.startsWith("reverse-"),
+      block.episodeIndex || Number(block.id.match(/-e(\d+)(?:-|$)/i)?.[1]) || 1,
     );
     return { outputText: text };
   }
@@ -2555,6 +2585,17 @@ async function runCanvasBlockInner(
   );
 
   if (block.kind === "text" || block.kind === "copy_organize") {
+    if (/^(?:story|bible|beats)-/.test(block.id)) {
+      const evidence = visionImages.length ? await runCanvasVisionMarkdown(deps,
+        "只提取图片中可核实的人物、空间、道具和动作作为参考，不改编剧情、不生成分镜。", visionImages) : "";
+      const text = await deps.optimizeCopy({
+        sourceText: [mergedPrompt, evidence && `【视觉证据】\n${evidence}`].filter(Boolean).join("\n\n"),
+        factoryTextStage: block.id.startsWith("bible-") ? "assets" : block.id.startsWith("beats-") ? "beats" : "story",
+        storyboardEpisodeIndex: block.episodeIndex || Number(block.id.match(/-e(\d+)(?:-|$)/i)?.[1]) || 1,
+      });
+      if (!text.trim()) throw new Error("本集文字返回为空，原稿保留");
+      return { outputText: text };
+    }
     if (visionImages.length > 0) {
       const visionPrompt =
         block.kind === "copy_organize"
@@ -2748,7 +2789,7 @@ async function runCanvasBlockInner(
       : { openaiOnly: false as const, userId: gptUserId, imageLane };
     let urls: string[] = [];
     try {
-      urls = await runGptImage2Batch(imagePrompt, ar, gptImageOpts, count);
+      urls = await runGptImage2Batch(imagePrompt, ar, {...gptImageOpts,onTaskCreated:deps.onImageTaskCreated ? jobId=>deps.onImageTaskCreated!(block.id,jobId) : undefined}, count);
       if (isAssetSheet || isKeyart) {
         console.info(`[canvasRunBlock] image · id=${block.id} · engine=gpt-image-2`);
       }
