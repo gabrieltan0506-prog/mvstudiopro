@@ -182,6 +182,8 @@ export type CanvasRunDeps = {
   onManhuaPilotChanged?: () => void;
   /** 长排队任务创建即回写节点(taskId 持久化,刷新可恢复;审查 P1);缺省不回写 */
   onVideoTaskCreated?: (blockId: string, info: { taskId: string; engine: string }) => void;
+  /** 语音分镜候选只允许一次文本供应商尝试，未决结果不切换通道重提。 */
+  singleTextAttempt?: boolean;
   optimizeCopy: (input: {
     sourceText: string;
     optimizationBrief?: string;
@@ -644,9 +646,11 @@ async function runVideoReversePrompt(
         modelName: CANVAS_TERRA_PRIMARY_MODEL,
       });
       if (String(md || "").trim()) return String(md).trim();
-    } catch {
-      // fall through
+    } catch (error) {
+      if (deps.singleTextAttempt) throw error;
+      // 旧入口保留原有回退。
     }
+    if (deps.singleTextAttempt) throw new Error("分镜返回为空，未切换通道重试");
     const md = await runGeminiScript(noFramePrompt, CANVAS_GEMINI_FALLBACK_MODEL);
     if (!md.trim()) throw new Error("无片反推返回为空");
     return md.trim();
@@ -663,9 +667,11 @@ async function runVideoReversePrompt(
         }),
       ).trim();
       if (md) return md;
-    } catch {
-      // Terra 失败 → Gemini
+    } catch (error) {
+      if (deps.singleTextAttempt) throw error;
+      // 旧入口保留原有回退。
     }
+    if (deps.singleTextAttempt) throw new Error("分镜返回为空，未切换通道重试");
   }
   return runVideoReversePromptGemini(userHint, images, mode);
 }

@@ -1,3 +1,4 @@
+import { generateVoiceStoryboardGraph, saveVoiceStoryboard, requireVoiceStoryboardCandidate, voiceStoryboardSource, type VoiceStoryboardCandidate } from "@/lib/creativeVoiceStoryboard";
 import { resolveAdvisorMediaReferenceUrl } from "@/lib/advisorMediaImageJob";
 import { CANVAS_IMAGE_CREDITS_PER_SHOT, CANVAS_IMAGE_CREDITS_BATCH } from "@shared/canvasGenerationPricing";
 import { isAdvisorMediaSourceUrl, assertAdvisorMediaSource, type AdvisorMediaPlan, type AdvisorMediaSource } from "@shared/manhuaAdvisorMediaEdit";
@@ -5735,11 +5736,11 @@ function OmniCanvasWorkspace() {
   );
 
   const ensureStudioSpawned = useCallback(
-    (topic?: string) => {
-      const focusEp = Math.max(1, Math.floor(writerFocusEpisode));
+    (topic?: string, previewEpisode?: number) => {
+      const focusEp = Math.max(1, Math.floor(previewEpisode ?? writerFocusEpisode));
       if (manhuaEpisodeHasFactoryChain(blocks, focusEp)) {
-        const nextBlocks = topic ? applyTopicToFactoryStory(blocks, topic) : blocks;
-        if (topic) {
+        const nextBlocks = topic && previewEpisode == null ? applyTopicToFactoryStory(blocks, topic) : blocks;
+        if (topic && previewEpisode == null) {
           setBlocks(nextBlocks);
           saveCanvasState(nextBlocks, edges);
         }
@@ -5826,7 +5827,7 @@ function OmniCanvasWorkspace() {
       });
       spawned = {
         ...spawned,
-        blocks: layoutManhuaEpisodeReadableChain(spawned.blocks, writerFocusEpisode, {
+        blocks: layoutManhuaEpisodeReadableChain(spawned.blocks, focusEp, {
           assetCanon: projectBible?.assetCanon,
           characterSheetUrlById: collectManhuaCharacterSheetUrlById(
             spawned.blocks,
@@ -5835,13 +5836,13 @@ function OmniCanvasWorkspace() {
           propImageUrlById: collectManhuaPropImageUrlById(customAssetRefs, projectBible?.assetCanon),
         }),
       };
-      if (spawned.genreInferred && spawned.resolvedGenreId && !factoryGenreId) {
+      if (previewEpisode == null && spawned.genreInferred && spawned.resolvedGenreId && !factoryGenreId) {
         setFactoryGenreId(spawned.resolvedGenreId);
         toast.message(
           `已按题材自动套用剧种「${MANHUA_SCENE_GENRE_LABEL_ZH[spawned.resolvedGenreId as keyof typeof MANHUA_SCENE_GENRE_LABEL_ZH] || spawned.resolvedGenreId}」`,
         );
       }
-      if (spawned.resolvedSceneId && !factorySceneId) {
+      if (previewEpisode == null && spawned.resolvedSceneId && !factorySceneId) {
         setFactorySceneId(spawned.resolvedSceneId);
       }
 
@@ -5850,6 +5851,7 @@ function OmniCanvasWorkspace() {
         return ep != null && ep !== continuity.episodeIndex;
       });
       const next = replaceManhuaEpisodeChain(blocks, edges, spawned, continuity.episodeIndex);
+      if (previewEpisode != null) return next;
       setBlocks(next.blocks);
       setEdges(next.edges);
       // 画布被整份换掉：旧的生成前确认一律作废，在途的预览／确认也一并失效。
@@ -10039,11 +10041,91 @@ function OmniCanvasWorkspace() {
 
   // 画布通过展开视口与显示筛选减少拥挤，布局仍只由显式对齐操作修改。
 
-  function backupVoiceProduction() {
+  const voiceStoryboardScope = user?.id && writerPack ? `${user.id}:${projectScope?.projectId || projectBible?.confirmedAt || writerPack.seriesTitle}` : "";
+  const voiceStoryboardKey = `mvs:voice-storyboard:v1:${voiceStoryboardScope}`;
+  const [voiceStoryboard, setVoiceStoryboard] = useState<VoiceStoryboardCandidate | null>(null);
+  const [voiceStoryboardVisible, setVoiceStoryboardVisible] = useState(false);
+  const voiceStoryboardLock = useRef(false);
+  const currentVoiceStoryboardScope = useRef(voiceStoryboardScope);
+  currentVoiceStoryboardScope.current = voiceStoryboardScope;
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(voiceStoryboardKey);
+      const candidate = raw ? JSON.parse(raw) as VoiceStoryboardCandidate : null;
+      setVoiceStoryboard(candidate?.scope === voiceStoryboardScope ? candidate : null);
+    } catch { setVoiceStoryboard(null); }
+    setVoiceStoryboardVisible(false);
+  }, [voiceStoryboardKey, voiceStoryboardScope]);
+
+  function applyVoiceStoryboard(episode: number): string {
+    if (writerBusy || factoryBusy || cloudConflict || advisorRewriteHasActiveWork(blocksRef.current)) throw new Error("仍有任务或云端冲突，未采用分镜。");
+    const body = writerPack?.episodes.find(e => e.index === episode)?.body || "";
+    const candidate = requireVoiceStoryboardCandidate(voiceStoryboard, voiceStoryboardScope, episode, voiceStoryboardSource(blocksRef.current, edges, JSON.stringify({body,projectBible,customAssetRefs,explicitWriterVideoModel,characterLookSets,segmentLookBindings})));
+    if (!window.confirm(`采用第${episode}集完整文字分镜？旧画布会先备份，已有图片和视频保留；不会提交图片或视频生成。`)) return "用户取消，原分镜保留。";
+    backupVoiceProduction(episode);
+    if (!saveCanvasState(candidate.blocks, candidate.edges)) throw new Error("分镜写回保存失败，原稿及候选保留。");
+    blocksRef.current = candidate.blocks;
+    setBlocks(candidate.blocks); setEdges(candidate.edges); bumpManhuaOutboundEpoch();
+    setWriterFocusEpisode(episode); setWorkflowPhase("storyboard"); setManhuaUiMode("workbench"); setImmersiveWorkspaceView("workbench");
+    setVoiceStoryboardVisible(false);
+    return `第${episode}集文字分镜已采用并保存，旧稿已备份；图片和视频没有生成。`;
+  }
+
+  async function prepareVoiceStoryboard(episode: number, question: string, signal: AbortSignal): Promise<string> {
+    if (!voiceStoryboardScope || !writerConfirmed || !writerPack?.episodes.some(e => e.index === episode)) throw new Error("请先确认当前作品本集剧本，未生成分镜。");
+    if (voiceStoryboardLock.current || abortRef.current || advisorRewriteHasActiveWork(blocksRef.current)) throw new Error("仍有制作任务，未重复提交。");
+    const previousRaw = localStorage.getItem(voiceStoryboardKey);
+    const previous = previousRaw ? JSON.parse(previousRaw) as VoiceStoryboardCandidate : null;
+    if (previous?.status === "pending") throw new Error("上次分镜请求尚未取得确定结果，不能重复提交；请保留原页并核对原请求。");
+    if (previous?.status === "ready" && previous.scope === voiceStoryboardScope) {
+      setVoiceStoryboard(previous); setVoiceStoryboardVisible(true);
+      return "已有完整分镜候选，已重新展示，请先审阅或关闭并明确舍弃候选，不重复生成。";
+    }
+    if (!window.confirm(`按第${episode}集已确认正文生成完整文字分镜候选？沿用现有文字生成入口及费用规则，原稿保留，不自动重试。\n\n${question}`)) return "用户取消，未提交。";
+    if (signal.aborted) return "语音已结束，未提交。";
+    const body = writerPack.episodes.find(e => e.index === episode)!.body;
+    const source = voiceStoryboardSource(blocksRef.current, edges, JSON.stringify({body,projectBible,customAssetRefs,explicitWriterVideoModel,characterLookSets,segmentLookBindings}));
+    const scope = voiceStoryboardScope, key = voiceStoryboardKey;
+    const candidate: VoiceStoryboardCandidate = {id:crypto.randomUUID(), scope, episode, source, status:"pending"};
+    saveVoiceStoryboard(localStorage, key, candidate);
+    voiceStoryboardLock.current = true; setFactoryBusy(true); setVoiceStoryboard(candidate); setVoiceStoryboardVisible(true);
+    const ac = new AbortController(); abortRef.current = ac;
+    let completedCandidate: VoiceStoryboardCandidate | undefined;
+    try {
+      // 预铺只返回副本；所有模型输出先保留在候选，不触碰当前画布。
+      const graph = ensureStudioSpawned(factoryTopic, episode);
+      const ensureOptions = {
+        storyEmotionLineByEpisodeSegment, directionCanon:activeDirectionCanon, assetCanon:projectBible?.assetCanon,
+        characterSheetUrlById:collectManhuaCharacterSheetUrlById(graph.blocks,projectBible?.assetCanon),
+        propImageUrlById:collectManhuaPropImageUrlById(customAssetRefs,projectBible?.assetCanon), customRefs:consumableCustomAssetRefs,
+        characterLookSets, lookRefs:customAssetRefs, segmentLookBindings, directorBoardUrlByEpisode, directorBoardUrlByEpisodeSegment,
+        directorBoardMotionOverlayByEpisodeSegment:directorBoardMotionOverlayBySegment, videoModel:explicitWriterVideoModel || undefined,
+        segmentCapacityMode:getManhuaSegmentCapacityMode(segmentCapacityModeByEpisode,episode), lengthTierId:writerLengthTierId,
+      };
+      const result = await generateVoiceStoryboardGraph({graph,episode,body,question,deps:{...runDeps,singleTextAttempt:true,
+        optimizeCopy:async input => (await optimizeCopyMutation.mutateAsync(input)).result.optimizedMarkdown,
+      },ensureOptions,signal:ac.signal});
+      const ready: VoiceStoryboardCandidate = {...candidate,status:"ready",...result};
+      completedCandidate = ready;
+      saveVoiceStoryboard(localStorage,key,ready);
+      if (currentVoiceStoryboardScope.current === scope) setVoiceStoryboard(ready);
+      return JSON.stringify({status:"candidate_ready",episode,note:"完整文字分镜候选已保存并展示；当前作品未改，用户确认后applyStoryboard。未生成图片或视频。"});
+    } catch (error) {
+      const failed: VoiceStoryboardCandidate = {...(completedCandidate || candidate),status:"pending",error:completedCandidate
+        ? "完整结果已返回，但本机保存失败。请先复制下方完整分镜，勿刷新或重复生成；原画布未改。"
+        : `未确认完整结果：${error instanceof Error ? error.message : "请求中断"}。保留原请求记录，不重复提交。`};
+      if (currentVoiceStoryboardScope.current === scope) setVoiceStoryboard(failed);
+      // 容量不足时保留屏幕上的完整结果；不能用第二次存储错误抹掉已付费产物。
+      try { saveVoiceStoryboard(localStorage,key,failed); } catch { /* 原 pending 记录仍保留，禁止自动重提。 */ }
+      throw error;
+    } finally { voiceStoryboardLock.current=false; if(abortRef.current===ac)abortRef.current=null;setFactoryBusy(false); }
+  }
+
+  function backupVoiceProduction(episodeIndex = writerFocusEpisode) {
     if (!writerPack || !user?.id || !latestDraftSnapshotRef.current) throw new Error("缺少当前作品或账户，无法先备份，未执行制作。");
     const key = `manhua-advisor-rewrite-backup:${user.id}:${crypto.randomUUID()}`;
     const restorableDraft = buildLocalCloudDraftSnapshot(latestDraftSnapshotRef.current);
-    const json = JSON.stringify({createdAt:new Date().toISOString(),episodeIndex:writerFocusEpisode,changes:["语音制作或还原前备份"],writerPack,projectBible:projectBible||null,restorableDraft});
+    const json = JSON.stringify({createdAt:new Date().toISOString(),episodeIndex,changes:["语音制作或还原前备份"],writerPack,projectBible:projectBible||null,restorableDraft});
     localStorage.setItem(key,json);
     if(localStorage.getItem(key)!==json) throw new Error("改前备份未完整保存，未执行制作。");
     return key;
@@ -13730,6 +13812,15 @@ function OmniCanvasWorkspace() {
           ) : null}
         </div>
       ) : null}
+      {voiceStoryboard?.scope === voiceStoryboardScope && <>
+        {!voiceStoryboardVisible && <button type="button" className="fixed bottom-4 left-4 z-40 rounded bg-cyan-800 px-4 py-2 text-white" onClick={()=>setVoiceStoryboardVisible(true)}>查看分镜候选</button>}
+        {voiceStoryboardVisible && <div role="dialog" aria-modal="true" aria-label="文字分镜候选" className="fixed inset-8 z-[100] flex flex-col rounded-xl border border-cyan-300/40 bg-slate-950 p-5 text-white shadow-xl">
+          <div className="flex justify-between"><strong>第{voiceStoryboard.episode}集 · 文字分镜候选</strong><button type="button" onClick={()=>setVoiceStoryboardVisible(false)}>收起</button></div>
+          <p className="my-2 text-sm">{voiceStoryboard.status === "pending" ? voiceStoryboard.error || "正在生成，原稿保留；请勿重复提交。" : voiceStoryboard.status === "failed" ? voiceStoryboard.error : "完整候选已保存。确认采用后才写回，旧画布可从顾问改前备份还原。"}</p>
+          <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap text-sm">{voiceStoryboard.text || ""}</pre>
+          {voiceStoryboard.status === "ready" && <div className="mt-3 flex gap-4"><button type="button" disabled={factoryBusy || writerBusy || Boolean(cloudConflict)} onClick={()=>{try{toast.success(applyVoiceStoryboard(voiceStoryboard.episode));}catch(error){toast.error(error instanceof Error?error.message:"未采用");}}}>确认采用完整分镜</button><button type="button" onClick={()=>{if(window.confirm("舍弃这份未采用的候选？当前画布保持不变。")){localStorage.removeItem(voiceStoryboardKey);setVoiceStoryboard(null);}}}>舍弃候选</button></div>}
+        </div>}
+      </>}
       <ManhuaCreativeAdvisorPanel
         key={advisorComponentKey}
         userId={user?.id != null ? String(user.id) : undefined}
@@ -13775,11 +13866,14 @@ function OmniCanvasWorkspace() {
         ])}
         onVoiceProduction={async (action, signal) => {
           if (signal.aborted || writerBusy || factoryBusy || cloudConflict) throw new Error("工作区忙、语音已结束或云稿冲突，未提交制作。");
+          if (action.action === "prepareStoryboard") return prepareVoiceStoryboard(action.episode, action.question, signal);
+          if (action.action === "applyStoryboard") return applyVoiceStoryboard(action.episode);
           const assets = latestCustomAssetRefs.current;
           const canon = projectBible?.assetCanon;
           const anchors = [...(canon?.characters || []), ...(canon?.locations || []), ...(canon?.props || [])];
           if (action.action === "inspect") return JSON.stringify({
             episode: writerFocusEpisode,
+            storyboard: voiceStoryboard?.scope === voiceStoryboardScope ? {episode:voiceStoryboard.episode,status:voiceStoryboard.status,error:voiceStoryboard.error} : null,
             anchors: anchors.map(a => ({id:a.id,name:a.nameZh})),
             assets: assets.map(a => ({id:a.id,name:a.labelZh,role:a.role,has2d:Boolean(a.url),model3d:a.model3d?.status,modelTaskId:a.model3d?.taskId,world3d:a.world3d?.status,worldTaskId:a.world3d?.taskId})),
             clips: blocksRef.current.filter(b => !b.archivedFromPreviousScript && isManhuaClipBlockId(b.id)).map(b=>({id:b.id,episode:getBlockEpisodeIndex(b) ?? 1,hasPrevis:Boolean(b.previsStudio),previsEligible:queuedManhuaClipBlocks(blocksRef.current,getBlockEpisodeIndex(b) ?? 1,activePilotVideoModel).some(current=>current.id===b.id)})),
