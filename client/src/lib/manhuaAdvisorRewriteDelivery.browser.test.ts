@@ -24,8 +24,8 @@ it("本集优化交付：选模板→完整改稿→编辑→套用→冲突保�
  await page.waitForSelector('[aria-label="剧本模板优化"]');await click('推荐3—5个剧本模板方案');
  await page.waitForFunction(()=>document.body.textContent?.includes('生成本集完整优化稿'));
  await click('生成本集完整优化稿');await page.waitForSelector('[aria-label="改写原稿对比"]');
- expect(await page.$eval('[aria-label="逐句差异对比"]', e => e.textContent)).toContain('套用前 · 完整原稿');
- expect(await page.$eval('[aria-label="逐句差异对比"]', e => e.textContent)).toContain('套用后 · 完整改写');
+ expect(await page.$eval('[aria-label="逐句差异对比"]', e => e.textContent)).toContain('套用前 · 剧情与对白');
+ expect(await page.$eval('[aria-label="逐句差异对比"]', e => e.textContent)).toContain('套用后 · 剧情与对白');
  expect(await page.$$eval('[data-diff-text="before"]', els => els.map(e=>e.textContent).join(''))).toBe('原稿：主角登船寻找信物。');
  expect(await page.$('[data-diff-kind="changed"]')).not.toBeNull();
 

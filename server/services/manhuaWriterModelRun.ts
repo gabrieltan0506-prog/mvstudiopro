@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { callNovelStage, type NovelStageCall } from "./manhuaNovelAdaptationRun";
+import { callNovelStage, type NovelStageCall, type NovelRouteEvent } from "./manhuaNovelAdaptationRun";
 import { uploadBufferToGcs } from "./gcs";
 import { manhuaWriterModelLabel, type ManhuaWriterModel } from "../../shared/manhuaWriterModels";
 
@@ -14,20 +14,26 @@ export function createManhuaWriterModelCall(userId: number, requestId: string, m
     };
     const input = await write("input", JSON.stringify({ userId, requestId, stageId, model, prompt, json, createdAt: new Date().toISOString() }));
     let raw: Awaited<ReturnType<typeof write>> | undefined;
+    const routeEvents: Array<{ phase: NovelRouteEvent["phase"]; route: NovelRouteEvent["route"]; evidence: Awaited<ReturnType<typeof write>> }> = [];
     try {
       const result = await callNovelStage(prompt, json, stageId, {
         modelPreference: model,
         onBytes: trace?.onBytes,
         onRaw: async response => { raw = await write("raw", response); },
+        onRouteEvent: async event => {
+          const evidence = await write(`route-${event.route.attempt}-${event.phase}`, JSON.stringify({ requestId, stageId, ...event }));
+          routeEvents.push({ phase: event.phase, route: event.route, evidence });
+          await trace?.onRouteEvent?.(event);
+        },
       });
       const parsed = await write("parsed", JSON.stringify(result));
-      await write("manifest", JSON.stringify({ input, raw, parsed }));
+      await write("manifest", JSON.stringify({ input, raw, parsed, routeEvents, selectedRoute: result.route }));
       return result;
     } catch (error) {
       // 记录不含密钥或上游响应正文的状态；已保存的原始模型结果不删除。
       const message = error instanceof Error ? error.message : "模型未返回完整结果";
-      await write("failure", JSON.stringify({ input, raw, model, message, at: new Date().toISOString() }));
-      throw new Error(`${manhuaWriterModelLabel(model)}：${message}`);
+      await write("failure", JSON.stringify({ input, raw, model, routeEvents, message, at: new Date().toISOString() }));
+      throw Object.assign(new Error(`${manhuaWriterModelLabel(model)}：${message}`), { code: (error as { code?: string }).code });
     }
   };
 }

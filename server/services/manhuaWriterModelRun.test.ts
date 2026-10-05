@@ -41,3 +41,37 @@ it("转发真实字节心跳，持久化失败不吞错", async()=>{
  await expect(createManhuaWriterModelCall(7,'r','glm')('input',true,'s',{onBytes})).rejects.toThrow('heartbeat storage failed');
  expect(onBytes).toHaveBeenCalledWith(32);
 });
+
+it("逐通道输入、原始响应、失败与采用路由进入同一GCS证据清单", async () => {
+  stage.mockImplementationOnce(async (_prompt, _json, _stageId, trace) => {
+    const first = { attempt: 1, requestId: "s:0", model: "z-ai/glm-5.3-flashx", gateway: "openrouter" };
+    const second = { attempt: 2, requestId: "s:1", model: "glm-5.3-flashx", gateway: "evolink" };
+    await trace.onRouteEvent({ phase: "input", route: first, request: { model: first.model, messages: [{ role: "user", content: "正文" }] } });
+    await trace.onRouteEvent({ phase: "response", route: first, status: 503, contentType: "text/plain", raw: "busy", receivedBytes: 4 });
+    await trace.onRouteEvent({ phase: "failure", route: first, status: 503, message: "创作模型HTTP 503", receivedBytes: 4, willFallback: true });
+    await trace.onRouteEvent({ phase: "input", route: second, request: { model: second.model, messages: [{ role: "user", content: "正文" }] } });
+    await trace.onRaw('{"choices":[{"message":{"content":"完整剧本"}}]}');
+    await trace.onRouteEvent({ phase: "response", route: second, status: 200, contentType: "text/event-stream", raw: "data: 完整结果", receivedBytes: 18 });
+    await trace.onRouteEvent({ phase: "selected", route: second });
+    return { text: "完整剧本", model: second.model, route: second };
+  });
+  await createManhuaWriterModelCall(7, "parent-request", "glm")("正文", false, "s");
+  const writes = upload.mock.calls.map(([args]) => ({ name: args.objectName.split("/").pop(), value: JSON.parse(args.buffer.toString()) }));
+  const manifest = writes.find(write => write.name === "manifest.json")!.value;
+  expect(manifest.selectedRoute).toMatchObject({ gateway: "evolink", model: "glm-5.3-flashx", attempt: 2 });
+  expect(manifest.routeEvents.map((event: any) => event.phase)).toEqual(["input", "response", "failure", "input", "response", "selected"]);
+  expect(manifest.routeEvents.every((event: any) => /^[a-f0-9]{64}$/.test(event.evidence.sha256) && event.evidence.bytes > 0)).toBe(true);
+  expect(writes.find(write => write.name === "route-1-response.json")!.value).toMatchObject({ requestId: "parent-request", stageId: "s", raw: "busy" });
+  expect(writes.find(write => write.name === "route-2-input.json")!.value).toMatchObject({ requestId: "parent-request", request: { model: "glm-5.3-flashx" } });
+});
+
+it("失败清单保留已写入的逐路证据和证据失败分类", async () => {
+  stage.mockImplementationOnce(async (_prompt, _json, _stageId, trace) => {
+    await trace.onRouteEvent({ phase: "input", route: { attempt: 1, requestId: "s:0", model: "z-ai/glm-5.3-flashx", gateway: "openrouter" }, request: { model: "z-ai/glm-5.3-flashx" } });
+    throw Object.assign(new Error("创作记录保存失败，停止本次生成"), { code: "NOVEL_EVIDENCE_WRITE_FAILED" });
+  });
+  await expect(createManhuaWriterModelCall(7, "parent-request", "glm")("正文", false, "s")).rejects.toMatchObject({ code: "NOVEL_EVIDENCE_WRITE_FAILED" });
+  const failure = JSON.parse(upload.mock.calls.at(-1)![0].buffer.toString());
+  expect(failure.routeEvents).toHaveLength(1);
+  expect(failure.routeEvents[0].phase).toBe("input");
+});

@@ -173,18 +173,17 @@ describe("创作顾问的真实项目生产者", () => {
     expect(result.context.assetSummary).toContain("未分类「候选」");
   });
 
-  it("长剧本和多段产物明确节选仍可提问，不改原稿，也不冒充全片已读", () => {
-    const body = `正文开头${"场景动作".repeat(8000)}正文结尾`;
+  it("长剧本完整送入顾问，其他多段产物仍明确节选且不改原稿", () => {
+    const body = `  正文开头${"场景动作".repeat(4000)}【中段关键因果不可丢失】${"场景动作".repeat(4000)}正文结尾\n`;
     const outputText = `分镜开头${"角色动作".repeat(2000)}分镜结尾`;
     const longPack = { ...pack, episodes: [{ ...pack.episodes[0]!, body }] };
     const block = { ...defaultCanvasBlock("text", 0, 0), id: "beats-e01-a", episodeIndex: 1, outputText };
     const result = buildManhuaAdvisorProject({ ...base, pack: longPack, blocks: [block] });
-    expect(manhuaCreativeAdvisorContextSchema.safeParse(result.context).success).toBe(true);
-    expect(result.context.episodeBody).toContain("【已节选：本集正文");
-    expect(result.context.episodeBody).toContain("正文开头");
-    expect(result.context.episodeBody).toContain("正文结尾");
+    expect(manhuaCreativeAdvisorContextSchema.parse(result.context).episodeBody).toBe(body);
+    expect(result.context.episodeBody).toBe(body);
     expect(result.context.shotSummary).toContain("未提供部分不可判定");
-    expect(result.contextNotes).toHaveLength(2);
+    expect(result.contextNotes).toHaveLength(1);
+    expect(result.contextNotes.join("\n")).not.toContain("本集正文已节选");
     expect(longPack.episodes[0]!.body).toBe(body);
     expect(block.outputText).toBe(outputText);
     const selected = buildManhuaAdvisorProject({ ...base, blocks: [block], selection: { episodeIndex: 1, segmentIndex: 1, shot: { index: 1, durationSec: 3, actionZh: "真实选中动作", cameraZh: "固定" } } });

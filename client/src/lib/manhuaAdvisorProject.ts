@@ -402,7 +402,7 @@ export function buildManhuaAdvisorProject(input: {
       stage: input.phase,
       videoModel: engine.videoModel || "未选择",
       writerConfirmed: input.writerConfirmed,
-      episodeBody: excerptEvidence(episode?.body || "", LIMITS.episodeBodyChars, "本集正文", contextNotes),
+      episodeBody: episode?.body || "",
       assetSummary: excerptEvidence(assetSummary, LIMITS.assetSummaryChars, "资产摘要", contextNotes),
       shotSummary: excerptEvidence(shotSummary, LIMITS.shotSummaryChars, shot ? "选中镜头" : "本集分镜与成片提示词", contextNotes),
       previsSummary: excerptEvidence([advisorGenerationContextZh(generationSteps), buildAdvisorPrevisSummary(scoped)].filter(Boolean).join("\n\n"), LIMITS.previsSummaryChars, "本集生成步骤与白模规格", contextNotes),

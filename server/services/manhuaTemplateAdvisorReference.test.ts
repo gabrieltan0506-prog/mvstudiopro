@@ -7,7 +7,7 @@ vi.mock("../_core/llm.js", async (original) => {
   return { ...real, invokeLLM: invoke };
 });
 vi.mock("../db.js", () => ({ getDb: async () => null }));
-import { buildManhuaTemplateAdvisorReference, mentionedManhuaTemplateIds } from "./manhuaTemplateAdvisorReference";
+import { buildManhuaStoryboardTemplateReference, buildManhuaTemplateAdvisorReference, mentionedManhuaTemplateIds } from "./manhuaTemplateAdvisorReference";
 import { buildManhuaCreativeAdvisorLlmMessages, askPlatformSkillQa } from "./platformSkillQa";
 import { manhuaCreativeAdvisorContextSchema } from "../../shared/manhuaCreativeAdvisor";
 const card = { id: "tpl_private", nameZh: "来源真名", publicCode: "A123", status: "approved", summaryZh: "完整能力哨兵", reusableZh: "完整导演手法哨兵", storyStructure: { episodeProgressionZh: ["跨集推进哨兵"], variationRulesZh: ["变体规则哨兵"] } } as ManhuaViralTemplateCard;
@@ -44,7 +44,43 @@ describe("模板编号顾问服务端链", () => {
     await expect(buildManhuaTemplateAdvisorReference("模板编号 A123")).rejects.toThrow("当前不可用");
     resolve.mockResolvedValue({ card: { ...card, summaryZh: "x".repeat(48001) }, appliedTemplate: { publicId: "mt_a123" } });
     await expect(buildManhuaTemplateAdvisorReference("模板编号 A123")).rejects.toThrow("超过");
-    resolve.mockClear(); await expect(buildManhuaTemplateAdvisorReference("模板A123 B456 C789 D012")).rejects.toThrow("最多"); expect(resolve).not.toHaveBeenCalled();
+    resolve.mockClear(); await expect(buildManhuaTemplateAdvisorReference("模板A123 B456 C789 D012 E345 F678")).rejects.toThrow("最多"); expect(resolve).not.toHaveBeenCalled();
+  });
+});
+
+it("顾问可一次读取5份明确指定的真实模板能力", async () => {
+  resolve.mockImplementation(async id => ({ card: { ...card, summaryZh: `${id}真实特色` }, appliedTemplate: { publicId: id, nameZh: "匿名模板" } }));
+  const reference = await buildManhuaTemplateAdvisorReference("模板A123 B456 C789 D012 E345");
+  expect(resolve.mock.calls.map(([id]) => id)).toEqual(["mt_a123", "mt_b456", "mt_c789", "mt_d012", "mt_e345"]);
+  expect(reference).toContain("mt_e345真实特色");
+});
+
+describe("正式分镜3–5份真实模板参考", () => {
+  const plans = ["mt_a123", "mt_b456", "mt_c789", "mt_d012", "mt_e345"].map(publicId => ({ publicId,
+    reason: `${publicId}本集亮点`, changes: ["本集动作试探", "本集声音留白"], preserve: "保留原人物因果" }));
+  it.each([3,5])("%s份顾问方案逐卡解析，特色与完整能力共同注入", async count => {
+    resolve.mockImplementation(async id => ({ card: { ...card, summaryZh: `${id}能力全文`, reusableZh: `${id}真实手法` }, appliedTemplate: { publicId: id, nameZh: "匿名模板" } }));
+    const result = await buildManhuaStoryboardTemplateReference(plans.slice(0,count));
+    expect(result.appliedTemplates).toHaveLength(count);
+    for (const plan of plans.slice(0,count)) {
+      expect(result.text).toContain(plan.reason);
+      expect(result.text).toContain(`${plan.publicId}能力全文`);
+      expect(result.text).toContain(`${plan.publicId}真实手法`);
+      expect(result.text).toContain(plan.changes[0]);
+      expect(result.text).toContain(plan.preserve);
+    }
+    expect(result.appliedTemplates.every(plan => /^[a-f0-9]{64}$/.test(plan.capabilitySha256))).toBe(true);
+    expect(result.text).not.toContain("来源真名");
+    expect(result.text).not.toContain("tpl_private");
+    expect(JSON.stringify(result.appliedTemplates)).not.toContain("能力全文");
+  });
+  it("重复别名解析成同一卡时拒绝，不伪装成3份", async () => {
+    await expect(buildManhuaStoryboardTemplateReference(plans.slice(0,3))).rejects.toThrow("同一模板");
+  });
+  it("模板下架失败，不跳过坏卡拼成可执行输入", async () => {
+    resolve.mockImplementation(async id => id === "mt_b456" ? { error: "not_found" } : { card, appliedTemplate: { publicId: id, nameZh: "匿名模板" } });
+    await expect(buildManhuaStoryboardTemplateReference(plans.slice(0,3))).rejects.toThrow("不可用");
+    expect(resolve).toHaveBeenCalledTimes(2);
   });
 });
 

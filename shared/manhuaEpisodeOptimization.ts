@@ -13,8 +13,8 @@ export const optimizationEpisodeSchema = z
   .object({
     index: z.number().int().positive(),
     title: z.string().max(240),
-    body: z.string().min(40).max(8000),
-    endHook: z.string().max(2000).default(""),
+    body: z.string().refine(value => Boolean(value.trim()), "本集正文不能为空"),
+    endHook: z.string().default(""),
   })
   .strict();
 export const optimizationInputSchema = z

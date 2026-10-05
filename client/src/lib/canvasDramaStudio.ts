@@ -700,7 +700,7 @@ export function stripManhuaSeriesAssetsForNewProject(
 export function stripManhuaFactoryCanvasArtifacts(
   blocks: CanvasBlock[],
   edges: CanvasEdge[],
-  opts?: { fromEpisode?: number | null; fromSegment?: number | null },
+  opts?: { fromEpisode?: number | null; fromSegment?: number | null; onlyEpisodes?: number[] },
 ): {
   blocks: CanvasBlock[];
   edges: CanvasEdge[];
@@ -715,6 +715,7 @@ export function stripManhuaFactoryCanvasArtifacts(
     // 人物/场景/道具资产是整部剧共用的，不随换剧本清掉
     if (isManhuaSeriesAssetBlockId(b.id)) return false;
     const ep = getBlockEpisodeIndex(b);
+    if (opts?.onlyEpisodes && (ep == null || !opts.onlyEpisodes.includes(ep))) { keptCount += 1; return false; }
     if (typeof ep === "number" && ep < fromEpisode) {
       keptCount += 1;
       return false;
@@ -4950,9 +4951,9 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       ),
     );
 
-    // 角色卡 / 故事大纲易遇网关抖动（含浏览器 Failed to fetch）：多给两次退避
-    const maxRetries = isManhuaVideoEditBlock(block)
-      ? 0 // 编辑 POST 结果未知时不能自动创建另一单；原片与任务记录仍保留。
+    // 工厂文字与编辑POST结果未知时不在客户端重投；服务端只对明确拒绝按所选模型换路。
+    const maxRetries = isManhuaVideoEditBlock(block) || /^(?:story|bible|beats|reverse)-/.test(block.id)
+      ? 0
       : stage === "bible" || stage === "story"
         ? Math.min(5, defaultMaxRetries + 2)
         : defaultMaxRetries;
@@ -5311,4 +5312,34 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   }
 
   return { blocks: forDisplay(working), completedIds, skippedIds, errors, awaitingConfirmationIds, pausedDownstreamIds };
+}
+
+/** 仅运行本集文字反推；模型结果通过原分镜校验后，才产生可采用的图数据。 */
+export async function runManhuaEpisodeStoryboard(input: {
+  graph: {blocks: CanvasBlock[]; edges: CanvasEdge[]}; episode: number; body: string; question: string;
+  deps: Parameters<typeof runManhuaDramaFactoryPipeline>[0]["deps"];
+  ensureOptions: Parameters<typeof runManhuaDramaFactoryPipeline>[0]["ensureOptions"];
+  signal: AbortSignal;
+}): Promise<{text: string; blocks: CanvasBlock[]; edges: CanvasEdge[]}> {
+  const {graph, episode, body, question, deps, ensureOptions, signal} = input;
+  const reverse = graph.blocks.find(b => !b.archivedFromPreviousScript && b.id.startsWith("reverse-") && (getBlockEpisodeIndex(b) ?? 1) === episode);
+  if (!reverse) throw new Error("本集分镜生产节点未就绪，未提交。");
+  const prepared = graph.blocks.map(b => b.id === reverse.id ? {...b, prompt:`${b.prompt}\n\n【本次用户分镜要求】\n${question}\n【本集已确认正文】\n${body}\n以本集已确认正文为准，输出完整分镜，不只给建议。每镜音频列必须内嵌完整对白，格式为角色：“台词”；无对白写无 + 音效：具体声音。不得只写对白或把对白放到表外。对白按自然语速给足秒数。`, outputText:undefined, status:"idle" as const, error:undefined} : b);
+  const result = await runManhuaDramaFactoryPipeline({deps,blocks:prepared,edges:graph.edges,untilStage:"reverse",episodeIndex:episode,targetBlockIds:[reverse.id],forceFromStage:"reverse",skipDone:false,maxRetries:0,stopOnError:true,ensureOptions,signal});
+  const produced = result.blocks.find(b => b.id === reverse.id);
+  const text = produced?.outputText?.trim();
+  if (result.errors.length || !result.completedIds.includes(reverse.id) || !text || !produced) throw new Error(result.errors.map(e=>e.message).join("；") || "未取得完整分镜，原稿保留。");
+  const parsed = resolveShotsForEpisodeKeyartsResult([produced], episode);
+  if (parsed.isFallback || parsed.sourceErrors.length || !parsed.shots.length) throw new Error("本次分镜输出不完整或秒位无效，原稿保留。");
+  // 消费者优先读 beats；新反推与节拍必须指向同一份已验证输出。
+  const coherent = result.blocks.map(b => b.id.startsWith("beats-") && (getBlockEpisodeIndex(b) ?? 1) === episode ? {...b,outputText:text,status:"done" as const,error:undefined} : b);
+  const expanded = expandManhuaShotKeyartsAfterReverse(coherent, graph.edges, reverse.id, ensureOptions);
+  // 旧流水线末尾会布局整张画布；本集分镜执行不能改动其他集的位置或内容。
+  const belongs = (b: CanvasBlock) => (getBlockEpisodeIndex(b) ?? 1) === episode;
+  const original = new Map(graph.blocks.map(b => [b.id,b]));
+  const blocks = expanded.blocks.filter(b => original.has(b.id) || belongs(b)).map(b => belongs(b) ? b : original.get(b.id)!);
+  const selectedIds = new Set(blocks.filter(belongs).map(b=>b.id));
+  const touches = (e: CanvasEdge) => selectedIds.has(e.fromId) || selectedIds.has(e.toId);
+  const edges = [...graph.edges.filter(e=>!touches(e)),...expanded.edges.filter(touches)];
+  return {blocks,edges,text};
 }

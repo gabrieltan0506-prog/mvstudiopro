@@ -12,6 +12,7 @@ import {
 } from "@shared/manhuaEpisodeOptimization";
 import {
   validateAdvisorRewriteBody,
+  splitManhuaEpisodeStoryText,
   type AdvisorRewriteCandidate,
 } from "@shared/manhuaAdvisorRewrite";
 import type { ManhuaWriterEpisode } from "@shared/manhuaWriterRoom";
@@ -158,7 +159,7 @@ export default function ManhuaEpisodeOptimization(
     const first = result.candidates[0];
     if (first) {
       setActive(`${result.requestId}:${first.episodeIndex}`);
-      setEdit(first);
+      setEdit({ ...first, rewrittenBody: splitManhuaEpisodeStoryText(first.rewrittenBody).story });
       props.onFocusEpisode(first.episodeIndex);
     }
   }
@@ -329,7 +330,7 @@ export default function ManhuaEpisodeOptimization(
       setError("编辑草稿无法恢复，已保留最近完整版本");
     }
     setActive(id);
-    setEdit(restored);
+    setEdit({ ...restored, rewrittenBody: splitManhuaEpisodeStoryText(restored.rewrittenBody).story });
     props.onFocusEpisode(candidate.episodeIndex);
   }
   function saveEdit(candidate: AdvisorRewriteCandidate) {
@@ -353,7 +354,7 @@ export default function ManhuaEpisodeOptimization(
       setStorageError("编辑草稿未保存，请保留页面");
     }
     if (
-      candidate.rewrittenBody.trim().length >= 40 &&
+      candidate.rewrittenBody.trim().length > 0 &&
       (candidate.endHook === undefined || candidate.endHook.trim().length > 0)
     ) {
       setResults(next);
@@ -395,6 +396,7 @@ export default function ManhuaEpisodeOptimization(
       <ManhuaRewriteComparison
         before={edit.originalBody}
         after={edit.rewrittenBody}
+        afterLabel="模板应用后"
       />
       <details>
         <summary>查看具体改动</summary>
@@ -405,7 +407,7 @@ export default function ManhuaEpisodeOptimization(
       {activeResult.mode === "optimize" ? (
         <>
           <label className="block">
-            优化后整集 · 可修改
+            优化后剧情与对白 · 可修改
             <textarea
               aria-label="组合优化整集正文"
               disabled={Boolean(pending)}

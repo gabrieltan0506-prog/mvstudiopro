@@ -138,14 +138,17 @@ function clearStageCamera(rig: StageCameraRig, characters: readonly ManhuaStageC
 }
 
 /** 过肩者可选；被拍主体为名单中另一人，没人则以原点为主体。 */
-export function stageCameraRigs(characters: readonly ManhuaStageCharacter[], shoulderActorId?: string): Record<StageCameraKind, StageCameraRig> {
+export function stageCameraRigs(characters: readonly ManhuaStageCharacter[], shoulderActorId?: string, world?: ManhuaWorld3dAssets): Record<StageCameraKind, StageCameraRig> {
   const over = characters.find((actor) => actor.id === shoulderActorId) ?? characters[1];
   const subject = characters.find((actor) => actor.id !== over?.id) ?? characters[0];
   const subjectStage = [subject?.stagePoint[0] ?? 0, subject?.stagePoint[1] ?? 0, 0] as const;
   const overStage = over ? ([over.stagePoint[0], over.stagePoint[1], 0] as const) : undefined;
   const facingRad = ((subject?.yawDeg ?? 0) * Math.PI) / 180;
   return {
-    establish: threeCameraRigForKeyframe({ subjectStage, kind: "establish" }),
+    // 空场景没有角色中心，向后退七米可能进入墙后；从已知原始采集原点沿 +Z 前方查看。
+    establish: !characters.length && Number.isFinite(world?.groundPlaneOffset) && Number(world?.metricScaleFactor) > 0
+      ? { kind: "establish", position: marbleToStageTransform(world).toStage([0,0,0]), target: marbleToStageTransform(world).toStage([0,0,5]), lens: 28, labelZh: "建立·场景原点" }
+      : threeCameraRigForKeyframe({ subjectStage, kind: "establish" }),
     ots: clearStageCamera(threeCameraRigForKeyframe({ subjectStage, kind: "ots", overStage }), characters, 1.2),
     single: clearStageCamera(threeCameraRigForKeyframe({ subjectStage, kind: "single", facingStage: [Math.sin(facingRad), -Math.cos(facingRad)] }), characters, 1.2),
   };
@@ -415,9 +418,9 @@ export function ManhuaWorldStagePreview(props: Props) {
   // 签名覆盖场景、人物和机位的实际输入；仅引用变化不应重载高斯和 iframe。
   const scene = useMemo(() => {
     revisionCounter.current += 1;
-    return buildStageSceneConfig(world, characters, stageCameraRigs(characters).establish, `r${revisionCounter.current}`);
+    return buildStageSceneConfig(world, characters, stageCameraRigs(characters, undefined, world).establish, `r${revisionCounter.current}`);
   }, [sceneSignature, reloadNonce]);
-  const rigs = useMemo(() => stageCameraRigs(characters, shoulderActorId), [sceneSignature, shoulderActorId]);
+  const rigs = useMemo(() => stageCameraRigs(characters, shoulderActorId, world), [sceneSignature, shoulderActorId]);
   const config = scene;
   const revision = config?.revision ?? "";
   const liveState = useRef({ revision, cameraKind });

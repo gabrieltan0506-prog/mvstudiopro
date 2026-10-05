@@ -1,6 +1,7 @@
 import { parseManhuaNovelOrigin, type ManhuaNovelOrigin } from "./manhuaNovelOrigin";
 import { manhuaProjectStorage as localStorage } from "./manhuaProjectScope";
 import {novelAdaptationSchema} from "./manhuaNovelAdaptation";
+import { advisorTemplatePlansSchema } from "./manhuaAdvisorRewrite";
 import { parseNovelDraft, novelExcerptSchema, type ManhuaNovelDraft } from "./manhuaNovelSource.js";
 import { normalizeManhuaEditTransitions, type ManhuaEditTransition } from "./manhuaEditTransition.js";
 /**
@@ -144,6 +145,12 @@ export function migrateManhuaWriterTemplateId(
   };
 }
 
+function normalizeEpisodeTemplateReferences(raw: unknown): ManhuaWriterPack["episodes"][number]["templateReferences"] {
+  const parsed = advisorTemplatePlansSchema.shape.plans.safeParse(raw);
+  if (!parsed.success || new Set(parsed.data.map(plan => plan.publicId.trim().toLowerCase())).size !== parsed.data.length) return undefined;
+  return parsed.data;
+}
+
 function normalizeWriterPack(raw: unknown): ManhuaWriterPack | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Partial<ManhuaWriterPack>;
@@ -156,6 +163,8 @@ function normalizeWriterPack(raw: unknown): ManhuaWriterPack | null {
           body: String((ep as { body?: string }).body || "").trim(),
           endHook: String((ep as { endHook?: string }).endHook || "").trim(),
           ...(novelAdaptationSchema.safeParse(ep.novelAdaptation).success ? {novelAdaptation:novelAdaptationSchema.parse(ep.novelAdaptation)} : {}),
+          ...(normalizeEpisodeTemplateReferences(ep.templateReferences) ? { templateReferences: normalizeEpisodeTemplateReferences(ep.templateReferences) } : {}),
+          ...(typeof ep.storyboardNeedsReview === "boolean" ? { storyboardNeedsReview: ep.storyboardNeedsReview } : {}),
           ...(novelExcerptSchema.safeParse(ep.sourceExcerpt).success ? { sourceExcerpt: novelExcerptSchema.parse(ep.sourceExcerpt), sourceNotes: String(ep.sourceNotes || ""), sourceSha256: /^[a-f0-9]{64}$/.test(ep.sourceSha256 || "") ? ep.sourceSha256 : undefined } : {}),
         }))
         .filter((ep) => ep.title || ep.body || ep.endHook)

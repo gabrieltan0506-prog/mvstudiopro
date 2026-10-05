@@ -60,6 +60,7 @@ import {
 } from "lucide-react";
 import { type CanvasBlock } from "@/lib/canvasTypes";
 import { CanvasAudioStudio } from "@/components/canvas/CanvasAudioStudio";
+import type { CanvasAudioVoiceControlRegistration } from "@/lib/canvasAudioVoiceControl";
 import { ManhuaPrevisStudio } from "@/components/canvas/ManhuaPrevisStudio";
 import { ManhuaActionTimeline } from "@/components/canvas/ManhuaActionTimeline";
 import { Manhua3dModelStudio, manhua3dModelCounts, manhua3dRigLookupCharacters } from "@/components/canvas/Manhua3dModelStudio";
@@ -400,6 +401,8 @@ type Props = {
   bgmModels?: Array<{ model: BgmBriefModel; labelZh: string }>;
   /** 大纲页分集卡：保留编剧原文与片尾悬念。 */
   outlineEpisodes?: Array<{ index: number; title: string; body?: string; endHook?: string }>;
+  /** 当前集剧情编辑，宿主共用顾问采用的备份与写回事务。 */
+  episodeEditor?: ReactNode;
   episodeCount: number;
   focusEpisode: number;
   onFocusEpisode: (ep: number) => void;
@@ -756,6 +759,8 @@ type Props = {
   onSaveFullClipPrompt?: (clipId: string, text: string | null) => boolean;
   /** 在工厂内按当前段保存声音，不跳转到自由画布。 */
   onUpdateClipAudioStudio?: (clipId: string, studio: NonNullable<CanvasBlock["audioStudio"]>) => boolean | void;
+  audioVoiceClipId?: string;
+  onAudioVoiceControl?: CanvasAudioVoiceControlRegistration;
   onUpdateClipPrevisStudio?: (clipId:string,studio:NonNullable<CanvasBlock["previsStudio"]>,reference?:ManhuaSegmentReferenceEntry)=>void|boolean;
   /** 0915 动作节奏（PR-2）：本集动作计划；OmniCanvas 是唯一状态源，这里只展示与回传 */
   manhuaActionPlan?: ManhuaActionPlan | null;
@@ -1208,6 +1213,7 @@ export default function ManhuaScriptWorkbench({
   logline,
   bgmModels,
   outlineEpisodes = [],
+  episodeEditor,
   episodeCount,
   focusEpisode,
   onFocusEpisode,
@@ -1392,6 +1398,8 @@ export default function ManhuaScriptWorkbench({
   onUseOnlyBoundPrevis,
   onSaveFullClipPrompt,
   onUpdateClipAudioStudio,
+  audioVoiceClipId,
+  onAudioVoiceControl,
   onUpdateClipPrevisStudio,
   manhuaActionPlan,
   manhuaActionPlanBindingContext,
@@ -2267,6 +2275,21 @@ export default function ManhuaScriptWorkbench({
     episodeClips.find(
       (b) => resolveClipLocalSegmentIndex(b.id, b.prompt, focusEpisode) === activeSegNo,
     );
+  const handledAudioVoiceClip = useRef("");
+  useEffect(() => {
+    if (!audioVoiceClipId) { handledAudioVoiceClip.current = ""; return; }
+    if (handledAudioVoiceClip.current === audioVoiceClipId || !onUpdateClipAudioStudio) return;
+    const target = episodeClips.find(row => row.id === audioVoiceClipId);
+    if (!target) return;
+    const targetSegment = resolveClipLocalSegmentIndex(target.id, target.prompt, focusEpisode);
+    if (!segments.some(segment => segment.index === targetSegment)) return;
+    if (activeSegNo !== targetSegment) { setActiveSegmentOverride(targetSegment); return; }
+    if (activeClip?.id !== target.id) return;
+    handledAudioVoiceClip.current = audioVoiceClipId;
+    setActiveSecondaryTool("audio");
+    setAudioStudioOpen(true);
+    setAudioStudioPhase(activePhase);
+  }, [audioVoiceClipId, episodeClips, focusEpisode, segments, activeSegNo, activeClip?.id, activePhase, onUpdateClipAudioStudio]);
   const clip = activeClip;
   const clipQuality = clip?.manhuaClipQuality;
   // unverified + 用户已放行 → unverified_waived（持久化只存放行标记，展示层派生）
@@ -5467,6 +5490,7 @@ clipPromptReviewOpen ? (
                 characters={assetCanon ? resolveSavedPromptAudioCharacters(assetCanon.characters, consumableCustomAssetRefs) : undefined}
                 disabled={Boolean(factoryBusy) || activeClip.status === "running" || activeClip.videoTaskStatus === "queued"}
                 onChange={studio => onUpdateClipAudioStudio(activeClip.id, studio)}
+                onVoiceControl={onAudioVoiceControl}
                 onMasterTrackReady={onSetClipSegmentReference ? (entry) => onSetClipSegmentReference(activeClip.id, "master", entry) : undefined}
                 bgmModels={bgmModels} /> : (
                 <p className="text-xs text-amber-100">当前段尚未建立成片节点。请先确认分段剧本；本入口不生成视频、不扣费，也不切换工作区。</p>
@@ -5878,9 +5902,10 @@ clipPromptReviewOpen ? (
                 ))}
               </div>
             ) : null}
+            {episodeEditor ? <div className="mt-4" data-manhua-episode-editor>{episodeEditor}</div> : null}
             <details className="mt-4 rounded-xl border border-white/10 bg-white/[0.02] p-3" data-manhua-outline-details>
               <summary className="cursor-pointer text-xs font-medium text-white/70">当前集详情与修复工具</summary>
-              {outlineEpisodes.find((ep) => ep.index === focusEpisode)?.body ? (
+              {!episodeEditor && outlineEpisodes.find((ep) => ep.index === focusEpisode)?.body ? (
                 <div className="mt-3" data-manhua-episode-story>
                   <p className="whitespace-pre-wrap text-sm leading-6 text-white/70">{outlineEpisodes.find((ep) => ep.index === focusEpisode)?.body}</p>
                   {outlineEpisodes.find((ep) => ep.index === focusEpisode)?.endHook ? <p className="mt-3 text-xs text-amber-100/80">片尾悬念：{outlineEpisodes.find((ep) => ep.index === focusEpisode)?.endHook}</p> : null}

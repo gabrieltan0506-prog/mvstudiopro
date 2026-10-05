@@ -1,5 +1,6 @@
 import { optimizationInputSchema } from "../shared/manhuaEpisodeOptimization";
 import { manhuaWriterExpansionQuote, manhuaWriterModelLabel } from "../shared/manhuaWriterModels";
+import { advisorTemplatePlansSchema } from "../shared/manhuaAdvisorRewrite";
 import { MANHUA_ADVISOR_PROJECT_FREE, MANHUA_ADVISOR_PAID_CREDITS } from "../shared/manhuaAdvisorPolicy";
 import { assertAdvisorProject, readAdvisorProjectQuota, reserveAdvisorProjectQuota, releaseAdvisorProjectQuota } from "./services/manhuaAdvisorProjectQuota";
 import { novelWorkspaceRouter } from "./routers/novelWorkspace";
@@ -10772,8 +10773,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
     optimizeCustomCopy: protectedProcedure
       .input(
         z.object({
-          /** 单次请求上限；漫剧 bible/beats 超长由客户端按 ~16k 自动拆成 N 次，不截断原文 */
-          sourceText: z.string().min(10).max(32000),
+          /** 工厂创作保留完整上下文，通用平台文案仍使用原容量限制。 */
+          sourceText: z.string().min(10),
           optimizationBrief: z.string().max(8000).optional(),
           visionContext: z.string().max(8000).optional(),
           includeLiveTrends: z.boolean().optional(),
@@ -10782,86 +10783,33 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           modelName: z.string().min(3).max(80).optional(),
           enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
           allowBloggerTitle: z.boolean().optional(),
+          storyboardCandidate: z.boolean().optional(),
+          factoryTextStage: z.enum(["story", "assets", "beats"]).optional(),
+          writerModel: z.enum(["glm", "deepseek"]).optional(),
+          publicTemplateId: z.string().max(80).optional(),
+          templateReferences: advisorTemplatePlansSchema.shape.plans.optional(),
+        }).superRefine((input, ctx) => {
+          if (!input.storyboardCandidate && !input.factoryTextStage && input.sourceText.length > 32000) {
+            ctx.addIssue({ code: "custom", path: ["sourceText"], message: "平台文案单次最多32000字" });
+          }
         }),
       )
       .mutation(async ({ input, ctx }) => {
-        const userId = ctx.user.id;
-        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
-        const cost = CREDIT_COSTS.platformOptimizeCustomCopy;
-        let creditsCharged = false;
-
-        if (!isAdminUser) {
-          const creditsInfo = await getCredits(userId);
-          if (creditsInfo.totalAvailable < cost) {
-            throw new TRPCError({
-              code: "PAYMENT_REQUIRED",
-              message: `Credits 不足，深度优化文案需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
-            });
-          }
-          await deductCredits(
-            userId,
-            "platformOptimizeCustomCopy",
-            "自定义文案 · 深度优化",
-          );
-          creditsCharged = true;
-        }
-
-        try {
-          const platformSkillsPrompt = await (async () => {
-            try {
-              const { resolvePlatformSkillsPrompt } = await import("./services/platformSkillsService.js");
-              return await resolvePlatformSkillsPrompt({
-                userId,
-                enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
-                allowBloggerTitle: Boolean(input.allowBloggerTitle),
-                routeContext: `${input.optimizationBrief || ""}\n${String(input.sourceText || "").slice(0, 2500)}`,
-                sheetKind: "unknown",
-              });
-            } catch {
-              return "";
-            }
-          })();
-
-          const { optimizeCustomCopy } = await import("./services/platformOptimizeCustomCopy");
-          const result = await optimizeCustomCopy({
-            sourceText: input.sourceText,
-            optimizationBrief: input.optimizationBrief,
-            visionContext: input.visionContext,
-            includeLiveTrends: input.includeLiveTrends,
-            liveTrendWindowDays: input.liveTrendWindowDays,
-            platformSkillsPrompt: platformSkillsPrompt || undefined,
-            modelName: input.modelName,
-          });
-
-          return {
-            success: true as const,
-            cost: isAdminUser ? 0 : cost,
-            result,
-          };
-        } catch (error) {
-          if (creditsCharged) {
-            const { refundCredits } = await import("./credits.js");
-            await refundCredits(userId, cost, "platformOptimizeCustomCopy 深度优化失败退还").catch(
-              (refundErr: unknown) => {
-                console.error("[optimizeCustomCopy] refund failed:", refundErr);
-              },
-            );
-          }
-          const { OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE } = await import(
-            "./services/platformOptimizeCustomCopy.js"
-          );
-          const rawMessage = error instanceof Error ? error.message : String(error);
-          const isCapacity = rawMessage === OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE;
-          throw new TRPCError({
-            code: isCapacity ? "SERVICE_UNAVAILABLE" : "INTERNAL_SERVER_ERROR",
-            message: isCapacity
-              ? `${OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE}${creditsCharged ? "（积分已退回）" : ""}`
-              : rawMessage.includes("is not valid JSON")
-                ? `${OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE}${creditsCharged ? "（积分已退回）" : ""}`
-                : rawMessage || `文案优化失败${creditsCharged ? "，积分已退回" : ""}，请稍后重试`,
-          });
-        }
+        const { runOptimizeCustomCopyForUser } = await import("./services/optimizeCopyRouteRun");
+        return runOptimizeCustomCopyForUser(input, ctx.user);
       }),
+
+    startStoryboardCopy: protectedProcedure.input(z.object({
+      requestId:z.string().uuid(), sourceText:z.string().min(10).max(32000), optimizationBrief:z.string().max(8000).optional(),
+      writerModel:z.enum(["glm","deepseek"]), publicTemplateId:z.string().min(1).max(80),
+      visionContext:z.string().max(8000).optional(), modelName:z.string().min(3).max(80).optional(),
+    }).strict()).mutation(async()=>{
+      throw new TRPCError({ code: "BAD_REQUEST", message: "旧分镜专用提交入口已停用，请从工厂原入口生成；已有任务可继续查询原编号。" });
+    }),
+    storyboardCopyStatus: protectedProcedure.input(z.object({requestId:z.string().uuid()}).strict()).query(async({input,ctx})=>{
+      const { readStoryboardCopyTask } = await import("./services/storyboardCopyTask");
+      return readStoryboardCopyTask(input.requestId,ctx.user.id);
+    }),
 
     /** Canvas 多图视觉：Terra official_only；客户端失败再回退 Gemini */
     canvasTerraVisionMarkdown: protectedProcedure

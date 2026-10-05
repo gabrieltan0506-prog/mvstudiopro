@@ -38,7 +38,7 @@ export function makeManhuaCharacterStateId(nameZh: string): string {
  * 从人物表行的字段里解析「状态：…」（任意位置；多个状态用 ；/、 分开；名=差异 或 名：差异）。
  * 「常态」保留字不算状态。
  */
-export function parseManhuaCharacterStates(fields: readonly string[]): ManhuaCharacterState[] {
+export function parseManhuaCharacterStates(fields: readonly string[], options: { preserveFullSpecs?: boolean } = {}): ManhuaCharacterState[] {
   const out: ManhuaCharacterState[] = [];
   const seen = new Set<string>();
   for (const f of fields) {
@@ -46,14 +46,16 @@ export function parseManhuaCharacterStates(fields: readonly string[]): ManhuaCha
     if (!m) continue;
     for (const part of m[1]!.split(/[；;]/)) {
       const kv = part.split(/[=＝:：]/);
-      const nameZh = String(kv[0] || "").trim().slice(0, 16);
-      const deltaZh = kv.slice(1).join("：").trim().slice(0, 160);
+      const fullName = String(kv[0] || "").trim();
+      const fullDelta = kv.slice(1).join("：").trim();
+      const nameZh = options.preserveFullSpecs ? fullName : fullName.slice(0, 16);
+      const deltaZh = options.preserveFullSpecs ? fullDelta : fullDelta.slice(0, 160);
       if (!nameZh || nameZh === "常态" || seen.has(nameZh)) continue;
       seen.add(nameZh);
       out.push({ id: makeManhuaCharacterStateId(nameZh), nameZh, deltaZh });
     }
   }
-  return out.slice(0, 8);
+  return options.preserveFullSpecs ? out : out.slice(0, 8);
 }
 
 export type ManhuaCastStateRequest = { nameZh: string; stateZh: string | null };

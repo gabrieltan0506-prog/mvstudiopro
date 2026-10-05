@@ -6,7 +6,7 @@ import { parseAdvisorMediaProposal, assertAdvisorMediaSource } from "@shared/man
 import type { CreativeVoiceTarget } from "@shared/creativeVoice";
 import { CreativeVoicePanel } from "./CreativeVoicePanel";
 import ManhuaEpisodeOptimization, { type EpisodeOptimizationWorkspace } from "./ManhuaEpisodeOptimization";
-import { validateAdvisorRewriteBody, TEMPLATE_REWRITE_MARKER } from "@shared/manhuaAdvisorRewrite";
+import { validateAdvisorRewriteBody, splitManhuaEpisodeStoryText, TEMPLATE_REWRITE_MARKER } from "@shared/manhuaAdvisorRewrite";
 import { buildTemplateAdviceQuestion } from "@/lib/manhuaTemplateAdvice";
 import { Streamdown } from "streamdown";
 import { automaticAdvisorContext, automaticAdvisorRequestId, MANHUA_ADVISOR_AUTO_QUESTION, MANHUA_ADVISOR_PAID_CREDITS } from "@shared/manhuaAdvisorPolicy";
@@ -79,6 +79,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
   selectedTemplate?: PublicManhuaViralTemplateCard | null;
   templates: PublicManhuaViralTemplateCard[];
   onApplyRewrite?: (candidate: AdvisorRewriteCandidate) => boolean;
+  onTemplateReferences?: (episodeIndex: number, originalBody: string, plans: AdvisorTemplatePlan[]) => boolean;
   onRestoreAdvisorBackup?: (backup: AdvisorBackupEntry) => Promise<void>;
   onRequestTrial: (template: PublicManhuaViralTemplateCard) => void;
   focusSection?: "templates" | null;
@@ -362,8 +363,13 @@ export default function ManhuaCreativeAdvisorPanel(props: {
         }
         if (mounted.current) { setPrevisCandidate(candidate); setAutoPrevisStart(!request.voiceConsultOnly && activePrevisTarget.current?.clipId === candidate.target.clipId && activePrevisTarget.current.specJson === candidate.target.specJson && (request.previsRenderRequested === true || requestsAdvisorPrevisRender(request.rawQuestion))); }
       }
-      if (request.rawQuestion === TEMPLATE_PLAN_QUESTION && !parseAdvisorTemplatePlans(answer, templates).length && mounted.current) {
-        toast.error("本次回答未提供3—5个合法模板方案，不能自动选择；原回答已保留供查看。");
+      if (request.rawQuestion === TEMPLATE_PLAN_QUESTION) {
+        const plans = parseAdvisorTemplatePlans(answer, templates);
+        if (!plans.length) {
+          if (mounted.current) toast.error("本次回答未提供3—5个合法模板方案；原回答已保留供查看。");
+        } else if (props.onTemplateReferences && !props.onTemplateReferences(request.manhuaContext.episodeIndex, request.manhuaContext.episodeBody, plans)) {
+          throw new Error("模板方案已返回，但本集参考记录未能保存；原回答和操作编号保留。");
+        }
       }
       if (request.rawQuestion.startsWith("【模板改写建议】")) {
         try {
@@ -410,8 +416,8 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     if (question.length < 2 || question.length > 1200) { toast.error("请输入 2—1200 字的问题，内容不会被自动截断。"); return; }
     const rewriting = question.startsWith(TEMPLATE_REWRITE_MARKER);
     const rewriteBody = episode?.body ?? project?.context.episodeBody;
-    if (rewriting && (!rewriteBody?.trim() || rewriteBody.length > 8000 || (!episode && project?.contextNotes.some(note => note.includes("本集正文"))))) {
-      toast.error("当前集正文为空、已节选或超过8000字，不能生成完整优化稿，请先打开完整本集。"); return;
+    if (rewriting && (!rewriteBody?.trim() || (!episode && project?.contextNotes.some(note => note.includes("本集正文"))))) {
+      toast.error("当前集正文为空或已节选，不能生成完整优化稿，请先打开完整本集。"); return;
     }
     const mediaRequest = Boolean(props.mediaWorkspace && question.startsWith("【素材修改】"));
     const mediaEditTarget = mediaRequest ? props.mediaWorkspace?.sources.find(s => question.includes(s.blockId)) : undefined;
@@ -463,8 +469,8 @@ export default function ManhuaCreativeAdvisorPanel(props: {
 
   function requestRewrite(plan: AdvisorTemplatePlan) {
     const body = project?.context.episodeBody || "";
-    if (!body.trim() || body.length > 8000 || project?.contextNotes.some(note => note.includes("本集正文"))) {
-      toast.error("当前集正文为空、已节选或超过8000字，不能安全改写完整正文。请先拆分当前集。"); return;
+    if (!body.trim() || project?.contextNotes.some(note => note.includes("本集正文"))) {
+      toast.error("当前集正文为空或已节选，不能安全改写完整正文。请先拆分当前集。"); return;
     }
     const question = buildTemplateRewriteQuestion(plan);
     if (question.length > 3900) { toast.error("方案过长，请先精简方案后再改写。"); return; }
@@ -574,7 +580,12 @@ export default function ManhuaCreativeAdvisorPanel(props: {
           <h3 className="font-semibold">本次读取范围</h3>
           {project.contextNotes.map((note) => <p key={note}>{note}</p>)}
         </section> : null}
-        {!creationMode && props.episodeWorkspace && <section ref={templateSectionRef}><ManhuaEpisodeOptimization key={`${userId}:${props.projectId}`} {...props.episodeWorkspace} userId={userId} projectId={props.projectId} focusEpisode={project?.context.episodeIndex||1} templates={templates} plans={[...turns].reverse().map(t=>t.role==="advisor"?parseAdvisorTemplatePlans(t.text,templates):[]).find(p=>p.length)||[]} asking={asking||Boolean(pendingPaid)||unresolvedFailed||sessionStorageBlocked} onRecommend={episodes=>send(TEMPLATE_PLAN_QUESTION,buildTemplatePlanQuestion(templates)+`\n本次计划优化第${episodes.map(e=>e.index).join("、")}集；先以第${episodes[0].index}集完整正文推荐，说明各模板能注入哪些具体特色。`,false,episodes[0])}/></section>}
+        {!creationMode && props.episodeWorkspace && <section ref={templateSectionRef}><ManhuaEpisodeOptimization key={`${userId}:${props.projectId}`} {...props.episodeWorkspace} userId={userId} projectId={props.projectId} focusEpisode={project?.context.episodeIndex||1} templates={templates} plans={props.episodeWorkspace.episodes.find(ep=>ep.index===(project?.context.episodeIndex||1))?.templateReferences || []} asking={asking||Boolean(pendingPaid)||unresolvedFailed||sessionStorageBlocked} onRecommend={async episodes=>{
+          for (const episode of episodes) {
+            const answer = await send(TEMPLATE_PLAN_QUESTION,buildTemplatePlanQuestion(templates)+`\n只根据第${episode.index}集完整剧情与对白，推荐3—5个真实模板并提取适合本集的亮点与特色；不改稿、不重列分段技术表。`,false,episode);
+            if (!answer || !parseAdvisorTemplatePlans(answer,templates).length) break;
+          }
+        }}/></section>}
         {!creationMode && !props.episodeWorkspace && <section ref={templateSectionRef} aria-label="剧本模板优化" className="rounded-lg border border-cyan-300/20 p-3 text-xs">
           <h3 className="font-semibold">用模板优化当前整集</h3>
           <p className="mt-2 text-white/65">生成完整优化稿 → 对比并编辑 → 套用本集。沿用顾问额度，超额先确认；套用已生成稿不再收费。</p>
@@ -584,11 +595,11 @@ export default function ManhuaCreativeAdvisorPanel(props: {
         {rewrite && <section ref={rewriteRef} aria-label="改写原稿对比" className="space-y-3 rounded-lg border border-emerald-300/30 p-3 text-xs">
           <h3 className="font-semibold">第 {rewrite.episodeIndex} 集 · 顾问修改稿</h3>
           <p className="text-white/65">先看旧稿和新稿。只有你确认填入才修改正文；说错或不满意可以找回改前版本。</p>
-          <article aria-label="旧稿完整对话卡" className="rounded-xl border border-white/20 bg-white/5 p-3"><h4 className="font-semibold">旧稿 · 第 {rewrite.episodeIndex} 集</h4><div tabIndex={0} className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap text-sm leading-7">{rewrite.originalBody}</div></article>
+          <article aria-label="旧稿完整对话卡" className="rounded-xl border border-white/20 bg-white/5 p-3"><h4 className="font-semibold">旧稿 · 第 {rewrite.episodeIndex} 集</h4><div tabIndex={0} className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap text-sm leading-7">{splitManhuaEpisodeStoryText(rewrite.originalBody).story}</div></article>
           <details><summary className="cursor-pointer">查看本次具体改动</summary><ul>{rewrite.changes.map((change, i) => <li key={i}>• {change}</li>)}</ul></details>
-          <details><summary className="cursor-pointer">逐句查看差异</summary><ManhuaRewriteComparison before={rewrite.originalBody} after={rewriteEdit} /></details>
-          <label className="block rounded-xl border border-emerald-300/30 bg-emerald-500/5 p-3">新稿 · 待你确认，可继续修改<textarea aria-label="优化后整集正文" value={rewriteEdit} onChange={e => editRewrite(e.target.value)} maxLength={9000} rows={12} className="mt-2 w-full rounded border border-white/20 bg-black/20 p-3 text-sm leading-7" /></label>
-          {rewrite.endHook && <label className="block">片尾钩子 · 与正文一起套用<textarea aria-label="优化后片尾钩子" value={rewriteEditHook} onChange={e => editRewrite(rewriteEdit, e.target.value)} maxLength={2000} rows={3} className="mt-2 w-full rounded border border-white/20 bg-black/20 p-3 leading-6" /></label>}
+          <ManhuaRewriteComparison before={rewrite.originalBody} after={rewriteEdit} />
+          <label className="block rounded-xl border border-emerald-300/30 bg-emerald-500/5 p-3">新稿 · 待你确认，可继续修改<textarea aria-label="优化后整集正文" value={rewriteEdit} onChange={e => editRewrite(e.target.value)} rows={12} className="mt-2 w-full rounded border border-white/20 bg-black/20 p-3 text-sm leading-7" /></label>
+          {rewrite.endHook && <label className="block">片尾钩子 · 与正文一起套用<textarea aria-label="优化后片尾钩子" value={rewriteEditHook} onChange={e => editRewrite(rewriteEdit, e.target.value)} rows={3} className="mt-2 w-full rounded border border-white/20 bg-black/20 p-3 leading-6" /></label>}
           <p className="text-white/60">套用只替换本集正文与片尾钩子，其他集正文保留。旧稿先备份；本集及后续制作需重新确认，旧图与成片归档保留。</p>
           <button type="button" disabled={!props.onApplyRewrite || asking || Boolean(rewriteEditError) || project?.context.episodeIndex !== rewrite.episodeIndex || project?.context.episodeBody !== rewrite.originalBody} onClick={applyRewrite} className="rounded bg-emerald-500/20 px-4 py-2 font-semibold text-emerald-100 disabled:opacity-40">可以，填入本集</button>
           {rewriteEditError && <p role="alert">{rewriteEditError}</p>}

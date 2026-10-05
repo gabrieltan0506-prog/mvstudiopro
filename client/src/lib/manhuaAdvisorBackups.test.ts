@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { advisorReconfirmationFromEpisode, listAdvisorBackups } from "./manhuaAdvisorBackups";
+import { advisorReconfirmationEpisodeIndexes, advisorReconfirmationFromEpisode, listAdvisorBackups } from "./manhuaAdvisorBackups";
 function storage(rows: Record<string,string>) { const keys=Object.keys(rows); return {length:keys.length,key:(i:number)=>keys[i]||null,getItem:(k:string)=>rows[k]||null}; }
 const backup=(version:string|null,body="原稿")=>JSON.stringify({createdAt:"2026-09-20T05:22:00.000Z",episodeIndex:1,changes:["变化"],writerPack:{seriesTitle:"船战",episodes:[{index:1,body}]},projectBible:version?{confirmedAt:version}:null});
 describe("顾问旧稿备份读取",()=>{
@@ -28,4 +28,17 @@ it("重新确认产生新Bible时间后，凭实际采用正文找回旧稿；�
 
 it("重新确认读取备份受阻时显式拒绝，不当作没有改写证据",()=>{
  expect(()=>advisorReconfirmationFromEpisode({length:1,key:()=>"manhua-advisor-rewrite-backup:1:a",getItem:()=>{throw Error("storage denied")}},"1",{})).toThrow("storage denied");
+});
+
+it("重新确认按真实批次集号恢复，旧记录仅失效单集，不扩大后续剧集",()=>{
+ const writerPack={seriesTitle:"船战",episodes:[{index:1,body:"新稿1"},{index:2,body:"保留2"},{index:3,body:"新稿3"}]};
+ const row={...JSON.parse(backup("v1")),adoptedWriterPack:writerPack,changedEpisodeIndexes:[3,1]};
+ const store=storage({"manhua-advisor-rewrite-backup:1:a":JSON.stringify(row)});
+ expect(advisorReconfirmationEpisodeIndexes(store,"1",writerPack,"v1")).toEqual([1,3]);
+ expect(advisorReconfirmationEpisodeIndexes(store,"2",writerPack,"v1")).toBeUndefined();
+ expect(advisorReconfirmationEpisodeIndexes(store,"1",writerPack,"v2")).toBeUndefined();
+ expect(advisorReconfirmationEpisodeIndexes(store,"1",{...writerPack,seriesTitle:"别剧"},"v1")).toBeUndefined();
+ const old={...row,changedEpisodeIndexes:undefined};
+ expect(advisorReconfirmationEpisodeIndexes(storage({"manhua-advisor-rewrite-backup:1:a":JSON.stringify(old)}),"1",writerPack,"v1")).toEqual([1]);
+ expect(listAdvisorBackups(store,{userId:"1",confirmedProjectVersion:"v2",seriesTitle:"船战",episodeIndex:3,body:"新稿3"}).entries).toHaveLength(1);
 });

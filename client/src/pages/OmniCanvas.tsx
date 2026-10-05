@@ -1,4 +1,11 @@
-import { generateVoiceStoryboardGraph, saveVoiceStoryboard, requireVoiceStoryboardCandidate, voiceStoryboardSource, type VoiceStoryboardCandidate } from "@/lib/creativeVoiceStoryboard";
+import type { CanvasAudioVoiceControl } from "@/lib/canvasAudioVoiceControl";
+import { buildManhuaStoryAssetRefreshPrompt, parseManhuaStoryAssetRefresh } from "@/lib/manhuaStoryAssetRefresh";
+import { runManhuaStoryAssetRefresh, readManhuaStoryAssetRefreshRun, ManhuaStoryAssetRefreshRunError, type ManhuaStoryAssetRefreshRunRecord } from "@/lib/manhuaStoryAssetRefreshRun";
+import { formatManhuaWriterPackMarkdown } from "@shared/manhuaWriterRoom";
+import { getJob } from "@/lib/jobs";
+import ManhuaEpisodeTextEditor from "@/components/canvas/ManhuaEpisodeTextEditor";
+import { splitManhuaEpisodeStoryText } from "@shared/manhuaAdvisorRewrite";
+import { archiveFailedVoiceStoryboard, normalizeVoiceStoryboardSource, saveVoiceStoryboard, requireVoiceStoryboardCandidate, voiceStoryboardSource, type VoiceStoryboardCandidate } from "@/lib/creativeVoiceStoryboard";
 import { resolveAdvisorMediaReferenceUrl } from "@/lib/advisorMediaImageJob";
 import { CANVAS_IMAGE_CREDITS_PER_SHOT, CANVAS_IMAGE_CREDITS_BATCH } from "@shared/canvasGenerationPricing";
 import { isAdvisorMediaSourceUrl, assertAdvisorMediaSource, type AdvisorMediaPlan, type AdvisorMediaSource } from "@shared/manhuaAdvisorMediaEdit";
@@ -46,9 +53,9 @@ import ManhuaCreativeAdvisorPanel from "@/components/canvas/ManhuaCreativeAdviso
 import { ManhuaPrevisAudioControls } from "@/components/canvas/ManhuaPrevisAudioControls";
 import { checkManhuaAdvisorPrevisLaunch } from "@/lib/manhuaAdvisorPrevisLaunch";
 import ManhuaOutlineTemplateRewrite from "@/components/canvas/ManhuaOutlineTemplateRewrite";
-import { advisorReconfirmationFromEpisode, type AdvisorBackupEntry } from "@/lib/manhuaAdvisorBackups";
-import { advisorRewriteHasActiveWork, prepareAdvisorRewriteAdoption, prepareAdvisorRewriteBatchAdoption, persistAdvisorRewriteAdoption } from "@/lib/manhuaAdvisorAdoption";
-import type { AdvisorRewriteCandidate } from "@/lib/manhuaAdvisorTemplates";
+import { advisorReconfirmationEpisodeIndexes, advisorReconfirmationFromEpisode, type AdvisorBackupEntry } from "@/lib/manhuaAdvisorBackups";
+import { advisorRewriteHasActiveWork, prepareAdvisorRewriteAdoption, prepareAdvisorRewriteBatchAdoption, prepareManualEpisodeEditAdoption, type ManualEpisodeEdit, persistAdvisorRewriteAdoption } from "@/lib/manhuaAdvisorAdoption";
+import type { AdvisorRewriteCandidate, AdvisorTemplatePlan } from "@/lib/manhuaAdvisorTemplates";
 import { manhuaAdvisorMountKey, type AdvisorMountContinuation } from "@/lib/manhuaAdvisorSession";
 import {
   buildManhuaAdvisorProject,
@@ -258,6 +265,7 @@ import {
   resolveManhuaEpisodeClipVideoModel,
   resolveManhuaClipRelatedAssetNodeIds,
   runManhuaDramaFactoryPipeline,
+  runManhuaEpisodeStoryboard,
   prepareManhuaKeyartShotTarget,
   sanitizeManhuaClipBlocksPrompts,
   sanitizeManhuaRecapUpstreamLinks,
@@ -368,6 +376,9 @@ import {
   toManhuaSubtitlePublicError,
 } from "@/lib/manhuaSubtitleTaskGate";
 import {
+  buildManhuaWriterSession,
+  serializeManhuaWriterSession,
+  MANHUA_WRITER_SESSION_LS_KEY,
   healManhuaWriterSessionCanonDrift,
   loadManhuaWriterSessionFromStorage,
   migrateManhuaWriterTemplateId,
@@ -536,6 +547,7 @@ import {
   clampWriterEpisodeCount,
   composeWriterPackFactoryContext,
   deriveSeriesTitleFromTopic,
+  applyManhuaWriterSeriesTitle,
   importManhuaWriterPackFromText,
   isPlaceholderSeriesTitle,
   spliceManhuaWriterPackFromEpisode,
@@ -1572,6 +1584,7 @@ function OmniCanvasWorkspace() {
   const advisorGate = useMemo(() => {
     if (!writerPack) return { errors: [] as string[], segments: [] as Array<{ intentZh: string; dialogueZh: string; castZh: string }> };
     const density = evaluateWriterPackAssetAndDensity({
+      preserveFullSpecs: true, previousCanon: projectBible?.assetCanon,
       charactersMd: writerPack.charactersMd,
       propsMd: writerPack.propsMd,
       locationsMd: writerPack.locationsMd,
@@ -4780,7 +4793,10 @@ function OmniCanvasWorkspace() {
       manhuaWriterVideoModel: explicitWriterVideoModel || undefined,
       getManhuaEpisodeSegmentPromptsForVoiceGate: (episodeIndex) =>
         collectManhuaEpisodeSegmentPromptsForVoiceGate(blocksRef.current, episodeIndex),
-      optimizeCopy: async ({ sourceText, optimizationBrief, modelName }) => {
+      optimizeCopy: async ({ sourceText, optimizationBrief, modelName, storyboardCandidate, storyboardEpisodeIndex, factoryTextStage }) => {
+        const templateReferences = writerPack?.episodes.find(episode => episode.index === storyboardEpisodeIndex)?.templateReferences;
+        if (storyboardCandidate && !writerConfirmed) throw new Error("请先确认本集剧本，未生成分镜。");
+        if (storyboardCandidate && (!templateReferences || templateReferences.length < 3 || templateReferences.length > 5)) throw new Error("请先让创作顾问为本集推荐3—5个模板并提取亮点，再生成正式分镜。");
         const t0 = Date.now();
         const reqPreview = [
           `model=${modelName || "default"}`,
@@ -4789,7 +4805,7 @@ function OmniCanvasWorkspace() {
         ]
           .filter(Boolean)
           .join("\n\n");
-        const maxAttempts = 3;
+        const maxAttempts = storyboardCandidate || factoryTextStage ? 1 : 3;
         let lastErr: unknown;
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
           try {
@@ -4797,6 +4813,7 @@ function OmniCanvasWorkspace() {
               sourceText,
               optimizationBrief,
               modelName,
+              ...(storyboardCandidate || factoryTextStage ? { storyboardCandidate, factoryTextStage, writerModel, publicTemplateId, templateReferences } : {}),
             });
             const md = res.result.optimizedMarkdown;
             if (debugMode) {
@@ -4861,6 +4878,7 @@ function OmniCanvasWorkspace() {
     }),
     [
       optimizeCopyMutation,
+      writerModel, publicTemplateId, writerConfirmed, writerPack,
       canvasTerraVisionMutation,
       canvasTerraVideoReverseMutation,
       getSignedUrlMutation,
@@ -5905,6 +5923,7 @@ function OmniCanvasWorkspace() {
   const expandWriterRoom = useCallback(async (opts?: { fromEpisodeOverride?: number; templateTrialFingerprint?: string }) => {
     const topic = factoryTopic.trim();
     const brief = writerBrief.trim();
+    const requestedSeriesTitle = writerPack && topic && topic !== writerPack.seriesTitle ? topic : undefined;
     if (novelDraft?.enabled && opts?.templateTrialFingerprint) { toast.error("小说改编请使用下方扩写入口，题材试写未读取小说原文"); return; }
     let sourceExcerpt;
     try { sourceExcerpt = novelDraft ? prepareNovelExcerpt(novelDraft) : undefined; }
@@ -5915,7 +5934,7 @@ function OmniCanvasWorkspace() {
       buildMaleHairstyleInjectBlock(selectedMaleHairstyleIds),
       buildMaleMicroExpressionInjectBlock(selectedMaleMicroIds),
     ].filter(Boolean).join("\n\n");
-    const mergedBrief = [brief, designInject].filter(Boolean).join("\n\n");
+    const mergedBrief = [brief, designInject, requestedSeriesTitle ? `用户已将本剧改名为《${requestedSeriesTitle}》，输出沿用此剧名，不另拟标题。` : ""].filter(Boolean).join("\n\n");
     if (mergedBrief.length > 2000) {
       toast.error("补充条件与已选手法超过2000字，请精简补充条件后再扩写；原稿保留，本次未提交");
       return;
@@ -5933,53 +5952,7 @@ function OmniCanvasWorkspace() {
     /** 门禁「补密度」带 override：从首个不足集起局部改写，整集重写（段起点=1） */
     const fromEpisode = Math.max(0, Math.floor(opts?.fromEpisodeOverride ?? writerFromEpisode));
     const fromSegment = opts?.fromEpisodeOverride != null ? 1 : writerFromSegment;
-    /** 从第 1 集重写不等于换剧；只有题材框明确换成另一剧名时才清空系列资产。 */
-    const fullSeriesRequest = !(fromEpisode > 0);
-    const seriesSwitchRisk = inspectManhuaSeriesSwitchRisk({
-      writerPack,
-      blocks,
-      customAssetRefs,
-      directorBoardMainByEpisode,
-      directorBoardBySegment,
-      directorBoardMotionOverlayBySegment,
-    });
-    const fullSeriesSwitch =
-      fullSeriesRequest &&
-      classifyManhuaScriptImportTransition({
-        currentSeriesTitle: writerPack?.seriesTitle,
-        incomingSeriesTitle: topic,
-        hasExistingProject: seriesSwitchRisk.needsBackup,
-      }) === "new_series";
-    let clearSeriesAssetsAfterBackup = false;
-    if (fullSeriesSwitch) {
-      const allowed = await confirmManhuaSeriesSwitchWithBackup({
-        risk: seriesSwitchRisk,
-        download: () =>
-          downloadManhuaSeriesSwitchBackup({
-            writerPack,
-            topic,
-            // 备份只用先前剧名；题材框若已改成新剧，不得盖掉备份名
-            previousSeriesTitle: writerPack?.seriesTitle || undefined,
-            incomingSeriesTitle: topic && topic !== writerPack?.seriesTitle ? topic : undefined,
-            blocks,
-            customAssetRefs,
-            directorBoardMainByEpisode,
-            directorBoardBySegment,
-            directorBoardMotionOverlayBySegment,
-            characterIds: selectedCharacterIds,
-            artStyleId: factoryArtStyleId,
-            sceneId: factorySceneId || undefined,
-          }),
-        onBackupOk: (r) => {
-          toast.success(`先前专案备份已下载：${r.filename}`);
-        },
-        onBackupFail: (msg) => {
-          toast.error(`备份失败，已中止换剧：${msg}`);
-        },
-      });
-      if (!allowed) return;
-      clearSeriesAssetsAfterBackup = seriesSwitchRisk.needsBackup;
-    }
+    // 改名沿用当前作品身份；不强制下载备份，不因标题不同清空已付费资产。
     const expansionQuote = manhuaWriterExpansionQuote(writerEpisodeCount, fromEpisode);
     if (!window.confirm(`${manhuaWriterModelLabel(writerModel)} · 扩写 ${expansionQuote.episodes} 集，每集 6 积分，共 ${expansionQuote.credits} 积分。成功后替换本次改写范围，其余集数与已出片资产保留；生成失败不替换原稿、不扣积分。是否继续？`)) return;
     setWriterBusy(true);
@@ -6041,15 +6014,17 @@ function OmniCanvasWorkspace() {
         throw new Error("扩写结果不完整，旧稿和试写对照均已保留；请核对扣点记录后重试");
       }
       // 局部改写：保留集沿用旧正文，资产表按名取并集，新角色照样进表
-      const pack = spliceManhuaWriterPackFromEpisode(
+      let pack = spliceManhuaWriterPackFromEpisode(
         writerPack,
         res.pack,
         fromEpisode,
       );
+      if (requestedSeriesTitle) pack = applyManhuaWriterSeriesTitle(pack, requestedSeriesTitle);
       const previousCanon =
         projectBible?.assetCanon ||
         (writerPack
           ? evaluateWriterPackAssetAndDensity({
+      preserveFullSpecs: true, previousCanon: projectBible?.assetCanon,
               charactersMd: writerPack.charactersMd,
               propsMd: writerPack.propsMd,
               locationsMd: writerPack.locationsMd,
@@ -6062,6 +6037,7 @@ function OmniCanvasWorkspace() {
             }).canon
           : null);
       const nextCanon = evaluateWriterPackAssetAndDensity({
+      preserveFullSpecs: true, previousCanon: projectBible?.assetCanon,
         charactersMd: pack.charactersMd,
         propsMd: pack.propsMd,
         locationsMd: pack.locationsMd,
@@ -6072,9 +6048,7 @@ function OmniCanvasWorkspace() {
         segmentMin: writerLayoutProfile.segmentMin,
         segmentMax: writerLayoutProfile.segmentMax,
       }).canon;
-      const assetReview = clearSeriesAssetsAfterBackup
-        ? { refs: [] as typeof customAssetRefs, changedAnchorIds: [], markedRefCount: 0 }
-        : markManhuaCustomAssetRefsForCanonChanges({
+      const assetReview = markManhuaCustomAssetRefsForCanonChanges({
             refs: customAssetRefs,
             previousCanon,
             nextCanon,
@@ -6094,22 +6068,7 @@ function OmniCanvasWorkspace() {
         fromEpisode: fromEpisode || undefined,
         fromSegment: fromEpisode > 0 ? fromSegment : undefined,
       });
-      if (clearSeriesAssetsAfterBackup) {
-        const seriesCleared = stripManhuaSeriesAssetsForNewProject(
-          cleaned.blocks,
-          cleaned.edges,
-        );
-        cleaned = {
-          ...cleaned,
-          blocks: seriesCleared.blocks,
-          edges: seriesCleared.edges,
-          removedCount: cleaned.removedCount + seriesCleared.removedCount,
-        };
-      }
-      const cleanedTouched =
-        cleaned.removedCount > 0 ||
-        cleaned.archivedCount > 0 ||
-        clearSeriesAssetsAfterBackup;
+      const cleanedTouched = cleaned.removedCount > 0 || cleaned.archivedCount > 0;
       const nextBlocks = cleanedTouched ? cleaned.blocks : blocks;
       const nextEdges = cleanedTouched ? cleaned.edges : edges;
       if (cleanedTouched) {
@@ -6129,23 +6088,9 @@ function OmniCanvasWorkspace() {
       setWorkflowPhase("outline");
       setProjectBible(null);
       setCustomAssetRefs(nextCustomAssetRefs);
-      if (clearSeriesAssetsAfterBackup) {
-        setDirectorBoardMainByEpisode({});
-        saveManhuaDirectorBoardMainByEpisode({});
-        setDirectorBoardBySegment({});
-        saveManhuaDirectorBoardBySegment({});
-        setDirectorBoardMotionOverlayBySegment({});
-        saveManhuaDirectorBoardOverlayBySegment({});
-        // 1466 R1：动作计划引用旧剧的集/段/镜与导演板落点，换剧或清空时随导演板一并清
-        setManhuaActionPlans({});
-        saveManhuaActionPlans({});
-      } else {
-        const overlaysForReview = markManhuaDirectorBoardOverlaysForReview(
-          directorBoardMotionOverlayBySegment,
-        );
-        setDirectorBoardMotionOverlayBySegment(overlaysForReview);
-        saveManhuaDirectorBoardOverlayBySegment(overlaysForReview);
-      }
+      const overlaysForReview = markManhuaDirectorBoardOverlaysForReview(directorBoardMotionOverlayBySegment);
+      setDirectorBoardMotionOverlayBySegment(overlaysForReview);
+      saveManhuaDirectorBoardOverlayBySegment(overlaysForReview);
       materializedBoardIdsRef.current.clear();
       setWriterConfirmBlockers([]);
       setWriterPack(pack);
@@ -6200,17 +6145,9 @@ function OmniCanvasWorkspace() {
         artStyleManual,
         customAssetRefs: nextCustomAssetRefs,
         shareAssetToLibrary,
-        directorBoardMainByEpisode: clearSeriesAssetsAfterBackup
-          ? ({} as ManhuaDirectorBoardMainByEpisode)
-          : directorBoardMainByEpisode,
-        directorBoardBySegment: clearSeriesAssetsAfterBackup
-          ? ({} as ManhuaDirectorBoardBySegment)
-          : directorBoardBySegment,
-        directorBoardMotionOverlayBySegment: clearSeriesAssetsAfterBackup
-          ? ({} as ManhuaDirectorBoardOverlayBySegment)
-          : markManhuaDirectorBoardOverlaysForReview(
-              directorBoardMotionOverlayBySegment,
-            ),
+        directorBoardMainByEpisode,
+        directorBoardBySegment,
+        directorBoardMotionOverlayBySegment: overlaysForReview,
       };
       persistManhuaDraftLocally({
         writerSession,
@@ -6349,6 +6286,7 @@ function OmniCanvasWorkspace() {
         projectBible?.assetCanon ||
         (writerPack
           ? evaluateWriterPackAssetAndDensity({
+      preserveFullSpecs: true, previousCanon: projectBible?.assetCanon,
               charactersMd: writerPack.charactersMd,
               propsMd: writerPack.propsMd,
               locationsMd: writerPack.locationsMd,
@@ -6361,6 +6299,7 @@ function OmniCanvasWorkspace() {
             }).canon
           : null);
       const incomingCanon = evaluateWriterPackAssetAndDensity({
+      preserveFullSpecs: true, previousCanon: projectBible?.assetCanon,
         charactersMd: res.pack.charactersMd,
         propsMd: res.pack.propsMd,
         locationsMd: res.pack.locationsMd,
@@ -6737,6 +6676,7 @@ function OmniCanvasWorkspace() {
       return false;
     }
     const densityGate = evaluateWriterPackAssetAndDensity({
+      preserveFullSpecs: true, previousCanon: projectBible?.assetCanon,
       charactersMd: writerPack.charactersMd,
       propsMd: writerPack.propsMd,
       locationsMd: writerPack.locationsMd,
@@ -6767,10 +6707,10 @@ function OmniCanvasWorkspace() {
       });
       return false;
     }
-    let fromEpisode: number | undefined;
+    let changedEpisodes: number[] | undefined;
     try {
-      fromEpisode = user?.id != null
-        ? advisorReconfirmationFromEpisode(localStorage, String(user.id), writerPack, projectBible?.confirmedAt)
+      changedEpisodes = user?.id != null
+        ? advisorReconfirmationEpisodeIndexes(localStorage, String(user.id), writerPack, projectBible?.confirmedAt)
         : undefined;
     } catch {
       toast.error("无法读取改写备份，未重新确认；请先检查本机存储。");
@@ -6789,8 +6729,8 @@ function OmniCanvasWorkspace() {
       topicOverride: topicForSpawn,
       charactersMd: writerPack.charactersMd,
     });
-    const continuity = resolveManhuaEpisodeSpawnContinuity(writerPack.episodes, fromEpisode ?? writerFocusEpisode);
-    if (fromEpisode != null) setWriterFocusEpisode(continuity.episodeIndex);
+    const continuity = resolveManhuaEpisodeSpawnContinuity(writerPack.episodes, changedEpisodes?.[0] ?? writerFocusEpisode);
+    if (changedEpisodes?.length) setWriterFocusEpisode(continuity.episodeIndex);
     const mainSceneId =
       canon.episodeMainSceneId[continuity.episodeIndex] || canon.locations[0]?.id || "";
     const identityFromCanon = formatWriterAssetCanonIdentityLock(canon, {
@@ -6879,7 +6819,7 @@ function OmniCanvasWorkspace() {
       setFactorySceneId(spawned.resolvedSceneId);
     }
     // 顾问改写的再次确认保留此前集；普通新剧确认仍清理整条旧链。
-    const cleaned = stripManhuaFactoryCanvasArtifacts(blocks, edges, { fromEpisode });
+    const cleaned = stripManhuaFactoryCanvasArtifacts(blocks, edges, changedEpisodes ? { onlyEpisodes: changedEpisodes } : undefined);
     const next = {
       blocks: [...cleaned.blocks, ...spawned.blocks],
       edges: [...cleaned.edges, ...spawned.edges],
@@ -6980,6 +6920,7 @@ function OmniCanvasWorkspace() {
     }
     const selectedVideoModel: ManhuaSeedanceLayoutVideoModel = writerVideoModel;
     const densityGate = evaluateWriterPackAssetAndDensity({
+      preserveFullSpecs: true, previousCanon: projectBible?.assetCanon,
       charactersMd: writerPack.charactersMd,
       propsMd: writerPack.propsMd,
       locationsMd: writerPack.locationsMd,
@@ -8280,6 +8221,13 @@ function OmniCanvasWorkspace() {
       assetCanonOverride?: NonNullable<typeof projectBible>["assetCanon"];
       episodeIndexOverride?: number;
       topicOverride?: string;
+      /** 剧情写回事务已取得的新画布；不读取上一次渲染的旧闭包。 */
+      graphOverride?: {blocks:CanvasBlock[];edges:CanvasEdge[]};
+      preserveCharacterFaceIds?: string[];
+      onImageTaskCreated?: (blockId:string,jobId:string)=>void|Promise<void>;
+      assertCurrent?: () => void;
+      isCurrent?: () => boolean;
+      episodesOverride?: NonNullable<typeof writerPack>["episodes"];
       /** 清掉旧生成设定图并强制按现稿重出（重扩写/用户点「按剧本重出」） */
       forceRegenerate?: boolean;
       /**
@@ -8303,6 +8251,7 @@ function OmniCanvasWorkspace() {
       /** 用户在重出弹框写的「哪里要改进」；只压到重出那几张的提示词尾部 */
       regenerateNoteZh?: string;
     }) => {
+      opts?.assertCurrent?.();
       const assetCanon = opts?.assetCanonOverride ?? projectBible?.assetCanon;
       const episodeIndex = opts?.episodeIndexOverride ?? writerFocusEpisode;
       const topic = String(opts?.topicOverride || factoryTopic || "").trim();
@@ -8323,10 +8272,10 @@ function OmniCanvasWorkspace() {
         new Set(onlyAnchorIdList.concat(onlyAnchorId ? [onlyAnchorId] : []).concat(regenerateAnchorIds)),
       );
       const anchorIdMatch = (planId: string) =>
-        scopedAnchorIds.length > 0 ? scopedAnchorIds.some((a) => planId.includes(a)) : true;
+        scopedAnchorIds.length > 0 ? scopedAnchorIds.some((a) => seedIdFromManhuaSheetBlockId(planId) === a) : true;
       /** 这张是否属于「已有图也要重出」 */
       const isRegenPlan = (planId: string) =>
-        regenerateAnchorIds.some((a) => planId.includes(a));
+        regenerateAnchorIds.some((a) => seedIdFromManhuaSheetBlockId(planId) === a);
       const writerMainSceneId =
         assetCanon?.episodeMainSceneId[episodeIndex] || assetCanon?.locations[0]?.id || "";
       // 按剧本出资产：主场景跟编剧表；清掉未列入场景表的库示范场景（如 scene_06 皇宫大殿）
@@ -8335,8 +8284,8 @@ function OmniCanvasWorkspace() {
       }
 
       let workingRefs = customAssetRefs;
-      let canvasBlocks = blocks;
-      let canvasEdges = edges;
+      let canvasBlocks = opts?.graphOverride?.blocks ?? blocks;
+      let canvasEdges = opts?.graphOverride?.edges ?? edges;
       const align = evaluateManhuaAssetScriptAlignment({
         assetCanon,
         customRefs: workingRefs,
@@ -8409,6 +8358,7 @@ function OmniCanvasWorkspace() {
         },
         url: string | null | undefined,
       ) => {
+        opts?.assertCurrent?.();
         const u = String(url || "").trim();
         if (!/^https:\/\//i.test(u)) return;
         const seedLibraryId = seedIdFromManhuaSheetBlockId(plan.id);
@@ -8442,10 +8392,11 @@ function OmniCanvasWorkspace() {
          * 同步既有节点时拿不到 layout，改看有没有同源大头照——有就说明
          * 这张是配套的全身照，否则是配角的单张定妆（仍算锁脸）。
          */
+        opts?.assertCurrent?.();
         const charDuty: "identity" | "look" = plan.id.startsWith("charsheet-face-")
           ? "identity"
           : plan.layout === "heroLook" ||
-              blocks.some((b) => b.id === manhuaHeroFaceSheetId(seedLibraryId))
+              canvasBlocks.some((b) => b.id === manhuaHeroFaceSheetId(seedLibraryId))
             ? "look"
             : "identity";
         const upsertInput = {
@@ -8499,6 +8450,7 @@ function OmniCanvasWorkspace() {
       };
       // 先认领再判对齐：refs 缺人会让下面的门禁与「已齐」判断都基于残缺名单
       await syncExistingSheetsToMyLibrary();
+      opts?.assertCurrent?.();
 
       const gateInput = {
         characterIds: selectedCharacterIds,
@@ -8509,7 +8461,7 @@ function OmniCanvasWorkspace() {
         customRefs: workingRefs,
         assetCanon,
         episodeIndex,
-        episodes: writerPack?.episodes?.map((ep) => ({
+        episodes: (opts?.episodesOverride ?? writerPack?.episodes)?.map((ep) => ({
           index: ep.index,
           body: ep.body,
           title: ep.title,
@@ -8578,6 +8530,7 @@ function OmniCanvasWorkspace() {
           console.warn("[propShapeLookup]", e instanceof Error ? maskMediaProviderDetails(e.message) : String(e));
         }
       }
+      opts?.assertCurrent?.();
       const plannedAll = planManhuaAssetImageSpawns(gateInput, {
         // 单补/补齐时 gate 可能已 ready（其他资产齐），必须强制按剧本表出卡才拿得到这几张
         forceEpisodeSheets: forceRegenerate || !hasEpisodeSheetMedia || isIncremental,
@@ -8587,7 +8540,7 @@ function OmniCanvasWorkspace() {
       });
       const plans = (isIncremental
         ? plannedAll.filter((p) => anchorIdMatch(p.id))
-        : plannedAll).map(plan => ({ ...plan, prompt: applyManhuaAssetDirection(plan.prompt, activeDirectionCanon) }));
+        : plannedAll).filter(plan => !(plan.id.startsWith("charsheet-face-") && opts?.preserveCharacterFaceIds?.includes(seedIdFromManhuaSheetBlockId(plan.id)))).map(plan => ({ ...plan, prompt: applyManhuaAssetDirection(plan.prompt, activeDirectionCanon) }));
       /**
        * 重出档位按**真实张数**算，不按锚点数：主角一个人就有全身 + 脸特写两张，
        * 按锚点算会少收（2 张收成 15）。
@@ -8619,6 +8572,7 @@ function OmniCanvasWorkspace() {
       });
       /** 重出但没出图的：结算时要排除（已把旧图放回，不能收钱） */
       const regenFailedIds = new Set<string>();
+      const completedPlanIds = new Set<string>();
       try {
         let working = [...canvasBlocks];
         /**
@@ -8626,13 +8580,14 @@ function OmniCanvasWorkspace() {
          * 静帧+导演版、成片提示词、出片。旧版只认角色和场景、各挤成一行，
          * 道具没人排，留在生成时的原始坐标上，画面就是一团乱。
          */
-        working = layoutManhuaEpisodeReadableChain(working, writerFocusEpisode, {
-          assetCanon: projectBible?.assetCanon,
+        opts?.assertCurrent?.();
+        working = layoutManhuaEpisodeReadableChain(working, episodeIndex, {
+          assetCanon,
           characterSheetUrlById: collectManhuaCharacterSheetUrlById(
             working,
-            projectBible?.assetCanon,
+            assetCanon,
           ),
-          propImageUrlById: collectManhuaPropImageUrlById(customAssetRefs, projectBible?.assetCanon),
+          propImageUrlById: collectManhuaPropImageUrlById(workingRefs, assetCanon),
         });
         setBlocks(working);
         saveCanvasState(working, canvasEdges);
@@ -8645,6 +8600,7 @@ function OmniCanvasWorkspace() {
           if (focusAssetId) openManhuaFactoryCanvas(focusAssetId);
         }
         for (let i = 0; i < plans.length; i++) {
+          opts?.assertCurrent?.();
           const plan = plans[i]!;
           if (ac.signal.aborted) break;
           /**
@@ -8653,6 +8609,7 @@ function OmniCanvasWorkspace() {
            * 底图没出就跳过这张，绝不退回独立重画。
            */
           /** 重出前先抓住旧图：等下要当垫图，免得重画时身份漂走 */
+          const previousBlock = working.find((b) => b.id === plan.id);
           const prevSheetUrl = String(
             working.find((b) => b.id === plan.id)?.outputUrl ||
               working.find((b) => b.id === plan.id)?.outputUrls?.[0] ||
@@ -8681,8 +8638,8 @@ function OmniCanvasWorkspace() {
             block.refImageUrl = deriveRefUrl || undefined;
             block.width = 360;
             block.height = 400;
-            working = layoutManhuaEpisodeReadableChain([...working, block], writerFocusEpisode, {
-              assetCanon: projectBible?.assetCanon,
+            working = layoutManhuaEpisodeReadableChain([...working, block], episodeIndex, {
+              assetCanon,
             });
             block = working.find((b) => b.id === plan.id)!;
           } else if (!(block.outputUrl || block.outputUrls?.[0]) || isRegenPlan(plan.id)) {
@@ -8702,6 +8659,7 @@ function OmniCanvasWorkspace() {
             working = working.map((b) => (b.id === plan.id ? block! : b));
           } else {
             await ingestSheetToMyLibrary(plan, block.outputUrl || block.outputUrls?.[0]);
+            completedPlanIds.add(plan.id);
             continue;
           }
           setBlocks(working);
@@ -8723,13 +8681,27 @@ function OmniCanvasWorkspace() {
            * 重出也走画布这条「入队 + 轮询」长任务：同步接口打 GPT-Image-2 会撞网关 120s
            * 上限（实测 502），图没出还把旧图清了。旧图当垫图，避免重画时身份漂走。
            */
-          const out = await runCanvasBlock(
-            runDeps,
-            isRegenPlan(plan.id) && !deriveRefUrl && prevSheetUrl
-              ? { ...block, imageMode: "edit" as const, refImageUrl: prevSheetUrl }
-              : block,
-            { visionImages: [], texts: [] },
-          );
+          let out: Partial<CanvasBlock>;
+          try {
+            opts?.assertCurrent?.();
+            out = await runCanvasBlock(
+              {...runDeps,onImageTaskCreated:opts?.onImageTaskCreated ?? runDeps.onImageTaskCreated},
+              isRegenPlan(plan.id) && !deriveRefUrl && prevSheetUrl
+                ? { ...block, imageMode: "edit" as const, refImageUrl: prevSheetUrl }
+                : block,
+              { visionImages: [], texts: [] },
+            );
+            opts?.assertCurrent?.();
+          } catch (error) {
+            // 已提交任务保留原编号；失败恢复原图，不把旧图当作新生成成功。
+            if ((!opts?.isCurrent || opts.isCurrent()) && previousBlock) {
+              working = working.map(b => b.id === plan.id ? previousBlock : b);
+              saveCanvasState(working, canvasEdges);
+              blocksRef.current = working;
+              setBlocks(working);
+            }
+            throw error;
+          }
           const regenFailed =
             isRegenPlan(plan.id) && !(out.outputUrl || out.outputUrls?.[0]) && Boolean(prevSheetUrl);
           working = working.map((b) =>
@@ -8763,6 +8735,7 @@ function OmniCanvasWorkspace() {
           const outUrl = out.outputUrl || out.outputUrls?.[0];
           await ingestSheetToMyLibrary(plan, outUrl);
           if (outUrl) {
+            completedPlanIds.add(plan.id);
             pushDebug("confirmAssetsFromScript:engine", {
               level: "ok",
               detail: `${plan.kind}:${plan.labelZh} · ${out.imageModel || "gpt-image-2"}`,
@@ -8836,13 +8809,14 @@ function OmniCanvasWorkspace() {
          * 旧三柱大卡 layoutManhuaCanvasBlocks 退役——双版式互相覆盖正是
          * 「画布根本没变/一团乱」的根源（2026-08-11 段列化收敛）。
          */
-        working = layoutManhuaEpisodeReadableChain(working, writerFocusEpisode, {
-          assetCanon: projectBible?.assetCanon,
+        opts?.assertCurrent?.();
+        working = layoutManhuaEpisodeReadableChain(working, episodeIndex, {
+          assetCanon,
           characterSheetUrlById: collectManhuaCharacterSheetUrlById(
             working,
-            projectBible?.assetCanon,
+            assetCanon,
           ),
-          propImageUrlById: collectManhuaPropImageUrlById(customAssetRefs, projectBible?.assetCanon),
+          propImageUrlById: collectManhuaPropImageUrlById(workingRefs, assetCanon),
         });
         setBlocks(working);
         saveCanvasState(working, canvasEdges);
@@ -8854,7 +8828,8 @@ function OmniCanvasWorkspace() {
             working.find((b) => b.id.startsWith("sceneplate-"))?.id;
           if (focusAssetId) openManhuaFactoryCanvas(focusAssetId);
         }
-        opts?.onReceipt?.({planned:plans.length,completed:plans.filter(p=>Boolean(working.find(b=>b.id===p.id)?.outputUrl || working.find(b=>b.id===p.id)?.outputUrls?.[0])).length,assets:workingRefs.map(r=>({id:r.id,role:r.role,name:r.labelZh||"",has2d:Boolean(r.url)}))});
+        blocksRef.current = working;
+        opts?.onReceipt?.({planned:plans.length,completed:completedPlanIds.size,assets:workingRefs.map(r=>({id:r.id,role:r.role,name:r.labelZh||"",has2d:Boolean(r.url)}))});
         const nextGate = evaluateManhuaAssetImageGate({
           ...gateInput,
           customRefs: workingRefs,
@@ -8864,12 +8839,7 @@ function OmniCanvasWorkspace() {
         });
         if (isIncremental) {
           // 增量补不改阶段：用户只是回填缺图，不该被推进/推回
-          const doneCount = plans.filter((p) =>
-            Boolean(
-              working.find((b) => b.id === p.id)?.outputUrl ||
-                working.find((b) => b.id === p.id)?.outputUrls?.[0],
-            ),
-          ).length;
+          const doneCount = completedPlanIds.size;
           toast.message(
             doneCount >= plans.length
               ? `已补齐 ${plans.length} 张`
@@ -8900,9 +8870,11 @@ function OmniCanvasWorkspace() {
         if (!isIncremental) setWorkflowPhase("assets");
         pushDebug("confirmAssetsFromScript:error", { level: "error", detail: msg });
       } finally {
-        setFactoryBusy(false);
-        setFactoryProgress("");
-        abortRef.current = null;
+        if (!opts?.isCurrent || opts.isCurrent()) {
+          setFactoryBusy(false);
+          setFactoryProgress("");
+          abortRef.current = null;
+        }
       }
     },
     [
@@ -9199,7 +9171,7 @@ function OmniCanvasWorkspace() {
                 projectBible?.assetCanon,
               ),
               customRefs: consumableCustomAssetRefs,
-              segmentPlan: episodeSegmentPlan.segments.length
+              segmentPlan: !writerPack?.episodes.find(e=>e.index===episodeIndex)?.storyboardNeedsReview && episodeSegmentPlan.segments.length
                 ? episodeSegmentPlan
                 : null,
               characterLookSets,
@@ -9295,6 +9267,17 @@ function OmniCanvasWorkspace() {
                 text: formatManhuaKeyartProgressZh(counts, episodeIndex),
               };
             };
+            if (untilStage === "reverse") {
+              const next = await runManhuaEpisodeStoryboard({
+                graph: { blocks: workingBlocks, edges: workingEdges }, episode: episodeIndex,
+                body: splitManhuaEpisodeStoryText(episodeBody).story, question: "按本集已确认剧情和对白生成完整分镜，保留原文含义与台词。",
+                deps: runDeps, ensureOptions, signal: ac.signal,
+              });
+              if (!saveCanvasState(next.blocks, next.edges)) throw new Error("完整分镜保存失败，未采用新分镜");
+              workingBlocks = next.blocks; workingEdges = next.edges;
+              setBlocks(workingBlocks); setEdges(workingEdges); completed += 1;
+              continue;
+            }
             const result = await runManhuaDramaFactoryPipeline({
               deps: runDeps,
               blocks: workingBlocks,
@@ -10060,7 +10043,7 @@ function OmniCanvasWorkspace() {
   function applyVoiceStoryboard(episode: number): string {
     if (writerBusy || factoryBusy || cloudConflict || advisorRewriteHasActiveWork(blocksRef.current)) throw new Error("仍有任务或云端冲突，未采用分镜。");
     const body = writerPack?.episodes.find(e => e.index === episode)?.body || "";
-    const candidate = requireVoiceStoryboardCandidate(voiceStoryboard, voiceStoryboardScope, episode, voiceStoryboardSource(blocksRef.current, edges, JSON.stringify({body,projectBible,customAssetRefs,explicitWriterVideoModel,characterLookSets,segmentLookBindings})));
+    const candidate = requireVoiceStoryboardCandidate(voiceStoryboard, voiceStoryboardScope, episode, voiceStoryboardSource(blocksRef.current, edges, JSON.stringify({body,templateReferences:writerPack?.episodes.find(ep=>ep.index===episode)?.templateReferences,projectBible,publicTemplateId,writerModel,customAssetRefs,explicitWriterVideoModel,characterLookSets,segmentLookBindings,segmentCapacityMode:getManhuaSegmentCapacityMode(segmentCapacityModeByEpisode,episode),writerLengthTierId})));
     if (!window.confirm(`采用第${episode}集完整文字分镜？旧画布会先备份，已有图片和视频保留；不会提交图片或视频生成。`)) return "用户取消，原分镜保留。";
     backupVoiceProduction(episode);
     if (!saveCanvasState(candidate.blocks, candidate.edges)) throw new Error("分镜写回保存失败，原稿及候选保留。");
@@ -10071,39 +10054,76 @@ function OmniCanvasWorkspace() {
     return `第${episode}集文字分镜已采用并保存，旧稿已备份；图片和视频没有生成。`;
   }
 
-  async function prepareVoiceStoryboard(episode: number, question: string, signal: AbortSignal): Promise<string> {
+  async function prepareVoiceStoryboard(episode: number, question: string, signal: AbortSignal, resume = false, reconcile = false): Promise<string> {
     if (!voiceStoryboardScope || !writerConfirmed || !writerPack?.episodes.some(e => e.index === episode)) throw new Error("请先确认当前作品本集剧本，未生成分镜。");
     if (voiceStoryboardLock.current || abortRef.current || advisorRewriteHasActiveWork(blocksRef.current)) throw new Error("仍有制作任务，未重复提交。");
     const previousRaw = localStorage.getItem(voiceStoryboardKey);
     const previous = previousRaw ? JSON.parse(previousRaw) as VoiceStoryboardCandidate : null;
-    if (previous?.status === "pending") throw new Error("上次分镜请求尚未取得确定结果，不能重复提交；请保留原页并核对原请求。");
+    if (previous?.status === "pending" && !resume) throw new Error("上次分镜请求尚未取得确定结果，不能重复提交；请保留原页并核对原请求。");
     if (previous?.status === "ready" && previous.scope === voiceStoryboardScope) {
       setVoiceStoryboard(previous); setVoiceStoryboardVisible(true);
       return "已有完整分镜候选，已重新展示，请先审阅或关闭并明确舍弃候选，不重复生成。";
     }
-    if (!window.confirm(`按第${episode}集已确认正文生成完整文字分镜候选？沿用现有文字生成入口及费用规则，原稿保留，不自动重试。\n\n${question}`)) return "用户取消，未提交。";
+    const references = writerPack.episodes.find(e => e.index === episode)?.templateReferences;
+    if (!resume && (!references || references.length < 3 || references.length > 5)) throw new Error("请先让创作顾问为本集推荐3—5个模板并提取亮点，未生成分镜。");
+    if (!resume && !window.confirm(`按第${episode}集已确认正文生成完整文字分镜候选？沿用现有文字生成入口及费用规则，原稿保留，不自动重试。\n\n${question}`)) return "用户取消，未提交。";
     if (signal.aborted) return "语音已结束，未提交。";
     const body = writerPack.episodes.find(e => e.index === episode)!.body;
-    const source = voiceStoryboardSource(blocksRef.current, edges, JSON.stringify({body,projectBible,customAssetRefs,explicitWriterVideoModel,characterLookSets,segmentLookBindings}));
+    const source = voiceStoryboardSource(blocksRef.current, edges, JSON.stringify({body,templateReferences:writerPack?.episodes.find(ep=>ep.index===episode)?.templateReferences,projectBible,publicTemplateId,writerModel,customAssetRefs,explicitWriterVideoModel,characterLookSets,segmentLookBindings,segmentCapacityMode:getManhuaSegmentCapacityMode(segmentCapacityModeByEpisode,episode),writerLengthTierId}));
     const scope = voiceStoryboardScope, key = voiceStoryboardKey;
-    const candidate: VoiceStoryboardCandidate = {id:crypto.randomUUID(), scope, episode, source, status:"pending"};
+    if(resume && (!previous?.upstreamTaskId || previous.scope !== scope || previous.episode !== episode)) throw new Error("原任务不属于当前作品本集，未覆盖、未重提。");
+    const sourceChanged = resume && normalizeVoiceStoryboardSource(previous!.source) !== normalizeVoiceStoryboardSource(source);
+    if (reconcile) {
+      if (!previous?.text || previous.upstreamStatus !== "succeeded") throw new Error("请先取回原任务完整结果。");
+      if (!window.confirm("按当前画布核对这份已返回的分镜？只重建候选，不调用模型、不扣费；请核对候选仍符合当前正文，确认采用前不会写回。")) return "取消核对，原结果保留。";
+      saveVoiceStoryboard(localStorage,`${key}:history:${previous.id}:before-reconcile:${crypto.randomUUID()}`,previous);
+    }
+    const requestId=resume ? previous!.id : crypto.randomUUID();
+    const candidate: VoiceStoryboardCandidate = resume ? {...previous!,source:reconcile?source:previous!.source,error:undefined} : {id:requestId, scope, episode, source, question, status:"pending"};
     saveVoiceStoryboard(localStorage, key, candidate);
     voiceStoryboardLock.current = true; setFactoryBusy(true); setVoiceStoryboard(candidate); setVoiceStoryboardVisible(true);
     const ac = new AbortController(); abortRef.current = ac;
     let completedCandidate: VoiceStoryboardCandidate | undefined;
     try {
+      // 原稿变化只阻止采用，不能阻止读回已付费结果。
+      if (sourceChanged && !reconcile) {
+        const task = await trpcUtils.client.mvAnalysis.storyboardCopyStatus.query({requestId});
+        candidate.upstreamStatus = task.status;
+        candidate.text = task.result?.result.optimizedMarkdown || candidate.text;
+        candidate.error = task.status === "succeeded" ? "原结果已取回；原稿或画布已变化，请先核对后再采用。不会重新生成。" : task.error || "原任务仍在执行，可继续查询同一编号。";
+        completedCandidate = candidate.text ? candidate : undefined;
+        saveVoiceStoryboard(localStorage,key,candidate);
+        if(currentVoiceStoryboardScope.current===scope)setVoiceStoryboard(candidate);
+        return candidate.error;
+      }
       // 预铺只返回副本；所有模型输出先保留在候选，不触碰当前画布。
       const graph = ensureStudioSpawned(factoryTopic, episode);
       const ensureOptions = {
         storyEmotionLineByEpisodeSegment, directionCanon:activeDirectionCanon, assetCanon:projectBible?.assetCanon,
         characterSheetUrlById:collectManhuaCharacterSheetUrlById(graph.blocks,projectBible?.assetCanon),
         propImageUrlById:collectManhuaPropImageUrlById(customAssetRefs,projectBible?.assetCanon), customRefs:consumableCustomAssetRefs,
+        segmentPlan: writerPack.episodes.find(e=>e.index===episode)?.storyboardNeedsReview ? null : parseManhuaEpisodeSegmentPlanFromMarkdown(body),
         characterLookSets, lookRefs:customAssetRefs, segmentLookBindings, directorBoardUrlByEpisode, directorBoardUrlByEpisodeSegment,
         directorBoardMotionOverlayByEpisodeSegment:directorBoardMotionOverlayBySegment, videoModel:explicitWriterVideoModel || undefined,
         segmentCapacityMode:getManhuaSegmentCapacityMode(segmentCapacityModeByEpisode,episode), lengthTierId:writerLengthTierId,
       };
-      const result = await generateVoiceStoryboardGraph({graph,episode,body,question,deps:{...runDeps,singleTextAttempt:true,
-        optimizeCopy:async input => (await optimizeCopyMutation.mutateAsync(input)).result.optimizedMarkdown,
+      const result = await runManhuaEpisodeStoryboard({graph,episode,body:splitManhuaEpisodeStoryText(body).story,question,deps:{...runDeps,singleTextAttempt:true,
+        optimizeCopy:async input => {
+          if(reconcile && previous?.text && previous.upstreamStatus === "succeeded")return previous.text;
+          if (!resume) return runDeps.optimizeCopy(input);
+          // 历史后台请求只续查原编号；新提交复用工厂原文案入口。
+          let task = await trpcUtils.client.mvAnalysis.storyboardCopyStatus.query({requestId});
+          candidate.upstreamStatus=task.status;
+          while(task.status === "running") {
+            if(ac.signal.aborted)throw new Error("已停止本页等待；原服务端任务保留，可续查结果");
+            if(task.error)throw new Error(task.error);
+            await new Promise(resolve=>setTimeout(resolve,3000));
+            task=await trpcUtils.client.mvAnalysis.storyboardCopyStatus.query({requestId});
+            candidate.upstreamStatus=task.status;
+          }
+          if(task.status!=="succeeded"||!task.result)throw new Error(task.error||"原分镜任务未成功");
+          return task.result.result.optimizedMarkdown;
+        },
       },ensureOptions,signal:ac.signal});
       const ready: VoiceStoryboardCandidate = {...candidate,status:"ready",...result};
       completedCandidate = ready;
@@ -10145,13 +10165,128 @@ function OmniCanvasWorkspace() {
     await importBackupFile(new File([backup.json], "顾问改前版本.json", {type:"application/json"}));
   }
 
+  function saveEpisodeTemplateReferences(episodeIndex: number, originalBody: string, plans: AdvisorTemplatePlan[]): boolean {
+    const snapshot = latestDraftSnapshotRef.current;
+    const currentPack = snapshot?.writerSession.writerPack;
+    if (!snapshot || !currentPack || currentVoiceStoryboardScope.current !== voiceStoryboardScope || currentPack.episodes.find(ep=>ep.index===episodeIndex)?.body !== originalBody) {
+      toast.error("当前作品或本集正文已变化，模板方案保留在原对话，未覆盖新稿。"); return false;
+    }
+    const nextPack = {...currentPack, episodes:currentPack.episodes.map(ep=>ep.index===episodeIndex?{...ep,templateReferences:plans}:ep)};
+    const nextSession = buildManhuaWriterSession({...snapshot.writerSession,writerPack:nextPack});
+    const saved = serializeManhuaWriterSession(nextSession);
+    const before = localStorage.getItem(MANHUA_WRITER_SESSION_LS_KEY);
+    try {
+      localStorage.setItem(MANHUA_WRITER_SESSION_LS_KEY,saved);
+      if (localStorage.getItem(MANHUA_WRITER_SESSION_LS_KEY)!==saved) throw new Error("模板参考未完整保存");
+    } catch {
+      try { if (before!==null) localStorage.setItem(MANHUA_WRITER_SESSION_LS_KEY,before); } catch { /* 原回执保留在顾问恢复记录。 */ }
+      toast.error("本集模板参考保存失败，请保留当前对话。"); return false;
+    }
+    advisorMountContinuation.current = { draftKey:manhuaAdvisorMountKey(user?.id!=null?String(user.id):undefined,projectBible?.confirmedAt,nextPack),mountedKey:advisorComponentKey };
+    latestDraftSnapshotRef.current={...snapshot,writerSession:nextSession};
+    setWriterPack(nextPack);
+    return true;
+  }
+
+  const [audioVoiceClipId, setAudioVoiceClipId] = useState<string>();
+  const audioVoiceControls = useRef(new Map<string,CanvasAudioVoiceControl>());
+  const registerAudioVoiceControl = useCallback((clipId:string,control:CanvasAudioVoiceControl|null) => {
+    if (control) audioVoiceControls.current.set(clipId,control); else audioVoiceControls.current.delete(clipId);
+  },[]);
+  const storyAssetRefreshKey = `manhua-story-asset-refresh:${user?.id ?? "local"}`;
+  const [storyAssetRefresh, setStoryAssetRefresh] = useState<ManhuaStoryAssetRefreshRunRecord | null>(null);
+  const [storyAssetTaskResults, setStoryAssetTaskResults] = useState<Array<{jobId:string;status:string;url?:string}>>([]);
+  const storyAssetRefreshLock = useRef(false);
+  useEffect(() => {
+    try { setStoryAssetRefresh(readManhuaStoryAssetRefreshRun(localStorage, storyAssetRefreshKey)); }
+    catch (error) { toast.error(error instanceof Error ? error.message : "资产更新记录无法读取"); }
+    setStoryAssetTaskResults([]);
+  }, [storyAssetRefreshKey, voiceStoryboardScope]);
+
+  async function refreshStoryAssetsAfterAdoption(plan: ReturnType<typeof prepareAdvisorRewriteAdoption>) {
+    const scope = voiceStoryboardScope;
+    const storyFingerprint = (pack: ManhuaWriterPack | null | undefined) => JSON.stringify(pack?.episodes.map(ep=>({index:ep.index,body:ep.body,endHook:ep.endHook})) ?? null);
+    const sourceFingerprint = storyFingerprint(plan.writerPack);
+    const assetTablesFingerprint = (pack: ManhuaWriterPack | null | undefined) => JSON.stringify([pack?.charactersMd,pack?.propsMd,pack?.locationsMd]);
+    const oldTables = assetTablesFingerprint(plan.writerPack);
+    const oldCanon = JSON.stringify(projectBible?.assetCanon ?? null);
+    const isCurrent = () => currentVoiceStoryboardScope.current === scope && storyFingerprint(latestDraftSnapshotRef.current?.writerSession.writerPack) === sourceFingerprint;
+    if (storyAssetRefreshLock.current) { toast.error("原资产更新仍在执行，请查询原任务。"); return; }
+    storyAssetRefreshLock.current = true;
+    setWriterBusy(true);
+    setFactoryProgress("按已确认修改更新道具、服装与场景设定…");
+    try {
+      const record = await runManhuaStoryAssetRefresh({
+        storage: localStorage, key: storyAssetRefreshKey, operationId: crypto.randomUUID(), scopeKey: scope, sourceFingerprint, isCurrent,
+        generateSettings: async () => {
+          const result = await optimizeCopyMutation.mutateAsync({
+            sourceText: buildManhuaStoryAssetRefreshPrompt({pack:plan.writerPack,changedEpisodeIndexes:plan.changedEpisodeIndexes}),
+            optimizationBrief: "只更新受已接受剧情影响的资产设定，严格保留其余集、原人物身份及旧资产，不输出剧情或分镜。",
+            factoryTextStage: "assets", writerModel,
+          });
+          return result.result.optimizedMarkdown;
+        },
+        applySettingsAndGenerateImages: async (rawMarkdown, controls) => {
+          controls.assertCurrent();
+          const beforeSettings = latestDraftSnapshotRef.current?.writerSession;
+          if (assetTablesFingerprint(beforeSettings?.writerPack)!==oldTables || JSON.stringify(beforeSettings?.projectBible?.assetCanon ?? null)!==oldCanon) throw new Error("生成期间资产设定已改变，完整模型原文保留，未覆盖新设定或继续出图。");
+          const refresh = parseManhuaStoryAssetRefresh({rawMarkdown,pack:plan.writerPack,changedEpisodeIndexes:plan.changedEpisodeIndexes,previousCanon:projectBible?.assetCanon});
+          const nextPack = {...plan.writerPack,...refresh.tables};
+          nextPack.rawMarkdown = formatManhuaWriterPackMarkdown({...nextPack,rawMarkdown:""});
+          const snapshot = latestDraftSnapshotRef.current;
+          if (!snapshot) throw new Error("当前作品快照不可用，资产原文已保留，未出图。");
+          const nextBible = snapshot.writerSession.projectBible ? {...snapshot.writerSession.projectBible,assetCanon:refresh.assetCanon} : null;
+          const nextSession = buildManhuaWriterSession({...snapshot.writerSession,writerPack:nextPack,projectBible:nextBible,writerConfirmed:false,directorUnlocked:false});
+          const before = localStorage.getItem(MANHUA_WRITER_SESSION_LS_KEY);
+          const json = serializeManhuaWriterSession(nextSession);
+          controls.assertCurrent();
+          try {
+            localStorage.setItem(MANHUA_WRITER_SESSION_LS_KEY,json);
+            if (localStorage.getItem(MANHUA_WRITER_SESSION_LS_KEY)!==json) throw new Error("资产设定保存不完整，原文已保留，未出图。");
+          } catch (error) {
+            if (before!==null) { try { localStorage.setItem(MANHUA_WRITER_SESSION_LS_KEY,before); } catch { /* 原采用备份和模型原文仍保留。 */ } }
+            throw error;
+          }
+          latestDraftSnapshotRef.current={...snapshot,writerSession:nextSession};
+          setWriterPack(nextPack); setProjectBible(nextBible);
+          const affected = new Set([...refresh.addedAnchorIds,...refresh.changedAnchorIds]);
+          if (!affected.size) return {planned:0,completed:0};
+          // 原采用事务已保留完整画布；另存旧设定图到原暂存区便于逐图找回。
+          stashManhuaAssetBlocksBeforePurge(plan.canvas.blocks.filter(block=>affected.has(seedIdFromManhuaSheetBlockId(block.id))),projectBible?.assetCanon);
+          let receipt: {planned:number;completed:number} | undefined;
+          await confirmAssetsAndPrepareImages({
+            assetCanonOverride:refresh.assetCanon,episodesOverride:nextPack.episodes,episodeIndexOverride:plan.focusEpisode,
+            graphOverride:plan.canvas,onlyAnchorIds:refresh.addedAnchorIds,regenerateAnchorIds:refresh.changedAnchorIds,
+            preserveCharacterFaceIds:refresh.characterIds,assertCurrent:controls.assertCurrent,isCurrent,onImageTaskCreated:controls.onImageTaskCreated,
+            onReceipt:value=>{receipt={planned:value.planned,completed:value.completed};},
+          });
+          if (!receipt) throw new Error("资产图片未取得完整回执，请查看原任务记录；已保存的剧情、设定和旧图保留，不自动重提。");
+          return receipt;
+        },
+      });
+      if (currentVoiceStoryboardScope.current===scope) {
+        setStoryAssetRefresh(record);
+        toast.success(record.result?.planned ? "本次剧情涉及的资产设定与图片已更新，请核对新图。" : "资产设定已核对，本次没有需要重出的图片。");
+      }
+    } catch (error) {
+      if (currentVoiceStoryboardScope.current===scope) {
+        if (error instanceof ManhuaStoryAssetRefreshRunError && error.record) setStoryAssetRefresh(error.record);
+        toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "资产更新未完成，原任务保留。");
+      }
+    } finally {
+      storyAssetRefreshLock.current = false;
+      if (currentVoiceStoryboardScope.current===scope) { setWriterBusy(false); setFactoryProgress(""); }
+    }
+  }
+
   function applyTemplateRewriteCandidate(input: AdvisorRewriteCandidate): boolean { return applyTemplateRewriteCandidates([input]); }
-  function applyTemplateRewriteCandidates(inputs: AdvisorRewriteCandidate[]): boolean {
+  function applyTemplateRewriteCandidates(inputs: AdvisorRewriteCandidate[], manualEdit?: ManualEpisodeEdit): boolean {
     let plan: ReturnType<typeof prepareAdvisorRewriteAdoption>;
     try {
-      plan = prepareAdvisorRewriteBatchAdoption({ candidates: inputs, writerPack, projectBible, blocks, edges,
+      const input = { writerPack, projectBible, blocks, edges,
         overlays: directorBoardMotionOverlayBySegment,
-        busy: writerBusy || factoryBusy || assembleBusy || burnSubtitleBusy || Boolean(segmentRefBusyId) || Boolean(assetStandardizeBusyId) || asset3dBusyIds.length > 0 || sceneWorldBusyIds.length > 0 });
+        busy: storyAssetRefreshLock.current || writerBusy || factoryBusy || assembleBusy || burnSubtitleBusy || Boolean(segmentRefBusyId) || Boolean(assetStandardizeBusyId) || asset3dBusyIds.length > 0 || sceneWorldBusyIds.length > 0 };
+      plan = manualEdit ? prepareManualEpisodeEditAdoption({...input,edit:manualEdit}) : prepareAdvisorRewriteBatchAdoption({...input,candidates:inputs});
       persistAdvisorRewriteAdoption({ plan, original: { writerPack: writerPack!, projectBible, blocks, edges, overlays: directorBoardMotionOverlayBySegment },
         userId: String(user?.id ?? "local"), backupId: crypto.randomUUID(), createdAt: new Date().toISOString() });
     } catch (error) {
@@ -10178,8 +10313,21 @@ function OmniCanvasWorkspace() {
     setWriterFocusEpisode(candidate.episodeIndex);
     setWriterConfirmBlockers([]);
     setAdvisorFocusSection(null);
+    // 先同步本轮已落盘快照，自动更新读取这份已接受正文，不读上一渲染的旧稿。
+    if (latestDraftSnapshotRef.current) latestDraftSnapshotRef.current = {
+      ...latestDraftSnapshotRef.current, blocks:cleaned.blocks, edges:cleaned.edges,
+      writerSession:buildManhuaWriterSession({...latestDraftSnapshotRef.current.writerSession,writerPack:nextPack,writerConfirmed:false,directorUnlocked:false,workflowPhase:"outline"}),
+    };
+    blocksRef.current = cleaned.blocks;
+    void refreshStoryAssetsAfterAdoption(plan);
     // 套用不是关闭顾问；继续显示结果与备份入口。
     return true;
+  }
+
+  function renderEpisodeTextEditor(episode: NonNullable<typeof writerPack>["episodes"][number]) {
+    return <ManhuaEpisodeTextEditor key={`${voiceStoryboardScope}:${episode.index}`} scopeKey={voiceStoryboardScope}
+      episode={episode} busyReason={writerBusy || factoryBusy || advisorRewriteHasActiveWork(blocks) ? "制作任务仍在执行，可继续编辑草稿，待回执后再确认写回。" : undefined}
+      onApplyEdit={edit=>applyTemplateRewriteCandidates([],edit)} />;
   }
 
   const advisorInWorkflowRail = manhuaUiMode === "workbench" && !(immersiveWorkbench && immersiveExtrasOpen);
@@ -10627,7 +10775,10 @@ function OmniCanvasWorkspace() {
                 }
               >
                 <ManhuaScriptWorkbench
+                  audioVoiceClipId={audioVoiceClipId}
+                  onAudioVoiceControl={registerAudioVoiceControl}
                   advisorAction={canvasMode === "manhua" ? creativeAdvisorAction : undefined}
+                  episodeEditor={writerPack?.episodes.find(ep=>ep.index===writerFocusEpisode) ? renderEpisodeTextEditor(writerPack.episodes.find(ep=>ep.index===writerFocusEpisode)!) : undefined}
                   onPreviewClipOutbound={previewClipOutbound}
                   onConfirmClipOutbound={confirmClipOutbound}
                   outboundConfirmedAtByBlock={outboundConfirmedAtByBlock}
@@ -11932,7 +12083,7 @@ function OmniCanvasWorkspace() {
                   )}
                 </summary>
                 <div className={writerConfirmed ? "mt-3" : "mt-1"}>
-              <label className="block text-[11px] text-white/45">题材</label>
+              <label className="block text-[11px] text-white/45">剧名 / 题材</label>
               <input
                 value={factoryTopic}
                 onChange={(e) => {
@@ -11948,11 +12099,10 @@ function OmniCanvasWorkspace() {
                 data-manhua-series-switch-gate
               >
                 <div className="text-[11px] font-semibold text-amber-50">
-                  换新剧前请先备份「先前专案」
+                  项目备份与清空（可选）
                 </div>
                 <p className="mt-1 text-[10px] leading-relaxed text-amber-50/75">
-                  旧剧本与人物/场景/造型多为付费生成。备份文件请用先前剧名命名，不要用正要开的新剧名。
-                  正确顺序：先下载备份 → 再清空 → 最后才导入或扩写新剧。
+                  改写自动读取上方最新剧名，不要求先下载备份。改名沿用当前作品；需要另建作品或清空时再使用对应入口。
                 </p>
                 <button
                   type="button"
@@ -11960,7 +12110,7 @@ function OmniCanvasWorkspace() {
                   onClick={() => void backupCurrentSeriesProject()}
                   className="mt-2 inline-flex items-center rounded-lg border border-amber-300/40 bg-amber-500/20 px-2.5 py-1.5 text-[11px] font-medium text-amber-50 hover:bg-amber-500/30 disabled:opacity-50"
                 >
-                  立即下载先前专案备份
+                  下载当前作品备份
                 </button>
                 <button
                   type="button"
@@ -12703,7 +12853,7 @@ function OmniCanvasWorkspace() {
                         <div className="font-medium text-white/90">
                           第{ep.index}集 · {ep.title}
                         </div>
-                        <div className="max-h-40 overflow-y-auto whitespace-pre-wrap">{ep.body}</div>
+                        {renderEpisodeTextEditor(ep)}
                         <div className="rounded-lg border border-amber-400/25 bg-amber-500/10 px-2.5 py-2 text-amber-50/90">
                           <span className="font-semibold">片尾钩子 · </span>
                           {ep.endHook || "（未解析到，请重新扩写）"}
@@ -13812,12 +13962,33 @@ function OmniCanvasWorkspace() {
           ) : null}
         </div>
       ) : null}
+      {storyAssetRefresh?.scopeKey === voiceStoryboardScope && storyAssetRefresh.status !== "done" && <details className="fixed bottom-4 left-4 z-40 max-w-lg rounded border border-amber-300/40 bg-slate-950 p-3 text-sm text-white">
+        <summary>剧情修改后的资产更新 · {storyAssetRefresh.status === "failed" ? "需要核对原任务" : "处理中"}</summary>
+        <p>{storyAssetRefresh.error || "设定与图片沿原流程更新；请勿重复提交。"}</p>
+        <p>已保留 {storyAssetRefresh.imageTasks.length} 个图片任务编号。</p>
+        {storyAssetRefresh.imageTasks.length > 0 && <button type="button" onClick={()=>{
+          const scope=voiceStoryboardScope;
+          void Promise.all(storyAssetRefresh.imageTasks.map(async task=>{
+            try { const job=await getJob(task.jobId);const output=job.output as {imageUrl?:string;imageUrls?:string[]}|undefined;
+              return {jobId:task.jobId,status:job.status,url:output?.imageUrl||output?.imageUrls?.[0]};
+            } catch { return {jobId:task.jobId,status:"暂未查到，原编号保留"}; }
+          })).then(rows=>{if(currentVoiceStoryboardScope.current===scope)setStoryAssetTaskResults(rows);});
+        }}>查询原图片任务（不重新生成）</button>}
+        {storyAssetTaskResults.map(row=><p key={row.jobId}>{row.jobId} · {row.status}{row.url && <a className="ml-2 underline" href={row.url} target="_blank" rel="noreferrer">查看已生成图片</a>}</p>)}
+        {storyAssetRefresh.settingsText && <details><summary>查看已保存资产设定</summary><pre className="max-h-64 overflow-auto whitespace-pre-wrap">{storyAssetRefresh.settingsText}</pre></details>}
+      </details>}
       {voiceStoryboard?.scope === voiceStoryboardScope && <>
         {!voiceStoryboardVisible && <button type="button" className="fixed bottom-4 left-4 z-40 rounded bg-cyan-800 px-4 py-2 text-white" onClick={()=>setVoiceStoryboardVisible(true)}>查看分镜候选</button>}
         {voiceStoryboardVisible && <div role="dialog" aria-modal="true" aria-label="文字分镜候选" className="fixed inset-8 z-[100] flex flex-col rounded-xl border border-cyan-300/40 bg-slate-950 p-5 text-white shadow-xl">
           <div className="flex justify-between"><strong>第{voiceStoryboard.episode}集 · 文字分镜候选</strong><button type="button" onClick={()=>setVoiceStoryboardVisible(false)}>收起</button></div>
           <p className="my-2 text-sm">{voiceStoryboard.status === "pending" ? voiceStoryboard.error || "正在生成，原稿保留；请勿重复提交。" : voiceStoryboard.status === "failed" ? voiceStoryboard.error : "完整候选已保存。确认采用后才写回，旧画布可从顾问改前备份还原。"}</p>
           <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap text-sm">{voiceStoryboard.text || ""}</pre>
+          {voiceStoryboard.status === "pending" && voiceStoryboard.upstreamTaskId && <button type="button" disabled={factoryBusy || writerBusy} onClick={()=>{void prepareVoiceStoryboard(voiceStoryboard.episode,voiceStoryboard.question||"恢复原分镜结果",new AbortController().signal,true).catch(error=>toast.error(error instanceof Error?error.message:"续查失败"));}}>续查原分镜任务（不重新生成）</button>}
+          {voiceStoryboard.status === "pending" && voiceStoryboard.text && voiceStoryboard.upstreamStatus === "succeeded" && <button type="button" disabled={factoryBusy || writerBusy} onClick={()=>{void prepareVoiceStoryboard(voiceStoryboard.episode,voiceStoryboard.question||"核对原分镜结果",new AbortController().signal,true,true).catch(error=>toast.error(error instanceof Error?error.message:"核对失败"));}}>按当前画布核对原结果（不生成、不扣费）</button>}
+          {voiceStoryboard.status === "pending" && voiceStoryboard.error && !voiceStoryboard.text && voiceStoryboard.upstreamStatus === "failed" && <button type="button" disabled={factoryBusy || voiceStoryboardLock.current} onClick={()=>{try{
+            if(!window.confirm("原任务已明确失败。保留失败记录并允许新请求？重新生成会再次确认并可能再次计费，不会自动提交。"))return;
+            archiveFailedVoiceStoryboard(localStorage,voiceStoryboardKey,voiceStoryboard.id);setVoiceStoryboard(null);setVoiceStoryboardVisible(false);toast.message("原请求已保留，请重新发出分镜生成要求。");
+          }catch(error){toast.error(error instanceof Error?error.message:"原记录未保存，不能重试");}}}>保留失败记录，允许重新生成</button>}
           {voiceStoryboard.status === "ready" && <div className="mt-3 flex gap-4"><button type="button" disabled={factoryBusy || writerBusy || Boolean(cloudConflict)} onClick={()=>{try{toast.success(applyVoiceStoryboard(voiceStoryboard.episode));}catch(error){toast.error(error instanceof Error?error.message:"未采用");}}}>确认采用完整分镜</button><button type="button" onClick={()=>{if(window.confirm("舍弃这份未采用的候选？当前画布保持不变。")){localStorage.removeItem(voiceStoryboardKey);setVoiceStoryboard(null);}}}>舍弃候选</button></div>}
         </div>}
       </>}
@@ -13828,6 +13999,7 @@ function OmniCanvasWorkspace() {
         automaticMonitoring={canvasMode === "manhua" && advisorEnabled && !writerBusy && !factoryBusy && !cloudConflict}
         confirmedProjectVersion={projectBible?.confirmedAt}
         project={advisorProject}
+        onTemplateReferences={saveEpisodeTemplateReferences}
         episodeWorkspace={writerPack?.episodes.length ? { episodes: writerPack.episodes, model: writerModel, comparisonHost: optimizationComparisonHost, onFocusEpisode: setWriterFocusEpisode, onApplyCandidates: applyTemplateRewriteCandidates } : undefined}
         mediaWorkspace={{ sources: advisorMediaSourceList(), disabled: Boolean(factoryBusy || writerBusy || cloudConflict),
           validate: validateAdvisorMediaEdit,
@@ -13866,6 +14038,24 @@ function OmniCanvasWorkspace() {
         ])}
         onVoiceProduction={async (action, signal) => {
           if (signal.aborted || writerBusy || factoryBusy || cloudConflict) throw new Error("工作区忙、语音已结束或云稿冲突，未提交制作。");
+          if (action.action === "bgm") {
+            const clip = blocksRef.current.find(b=>b.id===action.clipId && !b.archivedFromPreviousScript && isManhuaClipBlockId(b.id));
+            if (!clip) throw new Error("当前作品不存在这个片段，请先读取真实片段清单。");
+            const scope=voiceStoryboardScope;
+            setWriterFocusEpisode(getBlockEpisodeIndex(clip) ?? 1);
+            setManhuaUiMode("workbench"); setImmersiveWorkspaceView("workbench");
+            setAudioVoiceClipId(clip.id);
+            try {
+              let control=audioVoiceControls.current.get(clip.id);
+              for(let attempt=0;!control && attempt<25;attempt++) {
+                if(signal.aborted || currentVoiceStoryboardScope.current!==scope) throw new Error("语音已结束或作品已切换，未操作配乐。");
+                await new Promise(resolve=>setTimeout(resolve,200));
+                control=audioVoiceControls.current.get(clip.id);
+              }
+              if(!control) throw new Error("本片段音轨区未就绪，请打开原片段音轨后继续，未提交生成。");
+              return JSON.stringify(await control(action,signal));
+            } finally { if(currentVoiceStoryboardScope.current===scope)setAudioVoiceClipId(undefined); }
+          }
           if (action.action === "prepareStoryboard") return prepareVoiceStoryboard(action.episode, action.question, signal);
           if (action.action === "applyStoryboard") return applyVoiceStoryboard(action.episode);
           const assets = latestCustomAssetRefs.current;
@@ -13873,7 +14063,7 @@ function OmniCanvasWorkspace() {
           const anchors = [...(canon?.characters || []), ...(canon?.locations || []), ...(canon?.props || [])];
           if (action.action === "inspect") return JSON.stringify({
             episode: writerFocusEpisode,
-            storyboard: voiceStoryboard?.scope === voiceStoryboardScope ? {episode:voiceStoryboard.episode,status:voiceStoryboard.status,error:voiceStoryboard.error} : null,
+            storyboard: voiceStoryboard?.scope === voiceStoryboardScope ? {episode:voiceStoryboard.episode,status:voiceStoryboard.status,error:voiceStoryboard.error,taskId:voiceStoryboard.upstreamTaskId} : null,
             anchors: anchors.map(a => ({id:a.id,name:a.nameZh})),
             assets: assets.map(a => ({id:a.id,name:a.labelZh,role:a.role,has2d:Boolean(a.url),model3d:a.model3d?.status,modelTaskId:a.model3d?.taskId,world3d:a.world3d?.status,worldTaskId:a.world3d?.taskId})),
             clips: blocksRef.current.filter(b => !b.archivedFromPreviousScript && isManhuaClipBlockId(b.id)).map(b=>({id:b.id,episode:getBlockEpisodeIndex(b) ?? 1,hasPrevis:Boolean(b.previsStudio),previsEligible:queuedManhuaClipBlocks(blocksRef.current,getBlockEpisodeIndex(b) ?? 1,activePilotVideoModel).some(current=>current.id===b.id)})),

@@ -5,6 +5,7 @@ export const creativeVoiceProductionSchema = z.discriminatedUnion("action", [
   z.object({action:z.literal("applyStoryboard"),episode:z.number().int().positive()}).strict(),
   z.object({action:z.literal("restoreBackup")}).strict(),
   z.object({action:z.literal("media"),operation:z.enum(["inspect","previewImage","finishImage","resumeMedia","applyImage","editVideo","applyVideo"])}).strict(),
+  z.object({action:z.literal("bgm"),operation:z.enum(["inspect","prepare","generate"]),clipId:z.string().min(1).max(200),question:z.string().trim().min(1).max(1200).optional()}).strict(),
   z.object({action:z.literal("applyEpisode"),episode:z.number().int().positive()}).strict(),
   z.object({action:z.literal("prepareEpisode"),episode:z.number().int().positive(),question:z.string().trim().min(2).max(1100)}).strict(),
   z.object({action:z.literal("applyPrevis")}).strict(),

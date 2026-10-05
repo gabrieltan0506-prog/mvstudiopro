@@ -2,7 +2,7 @@ import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope
 import { formatManhuaWriterPackMarkdown, type ManhuaWriterPack } from "@shared/manhuaWriterRoom";
 import type { ManhuaProjectBible } from "@shared/manhuaProjectBible";
 import { buildManhuaWriterSession, MANHUA_WRITER_SESSION_LS_KEY, serializeManhuaWriterSession } from "@shared/manhuaWriterSession";
-import { advisorRewriteCandidateSchema, validateAdvisorRewriteBody } from "@shared/manhuaAdvisorRewrite";
+import { advisorRewriteCandidateSchema, replaceManhuaEpisodeStoryText, splitManhuaEpisodeStoryText, validateAdvisorRewriteBody, type AdvisorRewriteCandidate } from "@shared/manhuaAdvisorRewrite";
 import { stripManhuaFactoryCanvasArtifacts } from "./canvasDramaStudio";
 import { markManhuaDirectorBoardOverlaysForReview, type ManhuaDirectorBoardOverlayBySegment } from "./manhuaDirectorBoardStore";
 import type { CanvasBlock, CanvasEdge } from "./canvasTypes";
@@ -22,24 +22,59 @@ export function advisorRewriteHasActiveWork(blocks: CanvasBlock[]): boolean {
     || ["music_running", "planning", "rendering", "assembling"].includes(b.musicMv?.status || ""));
 }
 
-export function prepareAdvisorRewriteAdoption(input: {
-  candidate: unknown; writerPack: ManhuaWriterPack | null; projectBible: ManhuaProjectBible | null;
+type AdoptionInput = {
+  writerPack: ManhuaWriterPack | null; projectBible: ManhuaProjectBible | null;
   blocks: CanvasBlock[]; edges: CanvasEdge[]; overlays: ManhuaDirectorBoardOverlayBySegment; busy: boolean;
-}) {
+};
+
+export type ManualEpisodeEdit = {
+  episodeIndex: number;
+  originalBody: string;
+  originalEndHook: string;
+  body: string;
+  endHook: string;
+};
+
+function assertAdoptionReady(input: AdoptionInput, episodeIndex: number, originalBody: string, originalEndHook?: string) {
+  if (!input.writerPack) throw new Error("改写内容不完整，未采用。");
+  if (input.busy || advisorRewriteHasActiveWork(input.blocks)) throw new Error("仍有运行或待核实任务，请先等待原任务回执，未采用改写。");
+  const episode = input.writerPack.episodes.find(ep => ep.index === episodeIndex);
+  if (!episode || episode.body !== originalBody) throw new Error("原稿已改变，请根据最新正文重新改写。");
+  if (originalEndHook !== undefined && (episode.endHook || "") !== originalEndHook) throw new Error("片尾钩子已改变，请根据最新原稿重新优化。");
+}
+
+function prepareAdoptionPlan(input: AdoptionInput, candidate: AdvisorRewriteCandidate, endHook?: string) {
+  const rewrittenBody = replaceManhuaEpisodeStoryText(candidate.originalBody, candidate.rewrittenBody);
+  const writerPack = { ...input.writerPack!, episodes: input.writerPack!.episodes.map(ep => ep.index === candidate.episodeIndex ? { ...ep, body: rewrittenBody, storyboardNeedsReview: true, ...(endHook !== undefined ? { endHook } : {}) } : ep) };
+  writerPack.rawMarkdown = formatManhuaWriterPackMarkdown({ ...writerPack, rawMarkdown: "" });
+  const changedEpisodeIndexes = [candidate.episodeIndex];
+  const canvas = stripManhuaFactoryCanvasArtifacts(input.blocks, input.edges, { onlyEpisodes: changedEpisodeIndexes });
+  const affected = Object.fromEntries(Object.entries(input.overlays).filter(([ep]) => changedEpisodeIndexes.includes(Number(ep))));
+  const overlays = { ...input.overlays, ...markManhuaDirectorBoardOverlaysForReview(affected) };
+  return { candidate, writerPack, canvas, overlays, changedEpisodeIndexes, assetsNeedReview: true as const,
+    technicalPlanNeedsReview: splitManhuaEpisodeStoryText(candidate.originalBody).technicalSections.length > 0,
+    writerConfirmed: false as const, directorUnlocked: false as const, workflowPhase: "outline" as const, focusEpisode: candidate.episodeIndex };
+}
+
+export function prepareAdvisorRewriteAdoption(input: AdoptionInput & { candidate: unknown }) {
   const checked = advisorRewriteCandidateSchema.safeParse(input.candidate);
   if (!checked.success || !input.writerPack) throw new Error("改写内容不完整，未采用。");
-  if (input.busy || advisorRewriteHasActiveWork(input.blocks)) throw new Error("仍有运行或待核实任务，请先等待原任务回执，未采用改写。");
   const candidate = checked.data;
+  assertAdoptionReady(input, candidate.episodeIndex, candidate.originalBody,
+    candidate.endHook !== undefined ? candidate.originalEndHook ?? "" : candidate.originalEndHook);
   validateAdvisorRewriteBody(candidate.originalBody, candidate.rewrittenBody, candidate.endHook);
-  if (input.writerPack.episodes.find(ep => ep.index === candidate.episodeIndex)?.body !== candidate.originalBody) throw new Error("原稿已改变，请根据最新正文重新改写。");
-  const originalEpisode = input.writerPack.episodes.find(ep => ep.index === candidate.episodeIndex)!;
-  if (candidate.endHook && (originalEpisode.endHook || "") !== candidate.originalEndHook) throw new Error("片尾钩子已改变，请根据最新原稿重新优化。");
-  const writerPack = { ...input.writerPack, episodes: input.writerPack.episodes.map(ep => ep.index === candidate.episodeIndex ? { ...ep, body: candidate.rewrittenBody, ...(candidate.endHook ? { endHook: candidate.endHook } : {}) } : ep) };
-  writerPack.rawMarkdown = formatManhuaWriterPackMarkdown({ ...writerPack, rawMarkdown: "" });
-  const canvas = stripManhuaFactoryCanvasArtifacts(input.blocks, input.edges, { fromEpisode: candidate.episodeIndex });
-  const affected = Object.fromEntries(Object.entries(input.overlays).filter(([ep]) => Number(ep) >= candidate.episodeIndex));
-  const overlays = { ...input.overlays, ...markManhuaDirectorBoardOverlaysForReview(affected) };
-  return { candidate, writerPack, canvas, overlays, writerConfirmed: false as const, directorUnlocked: false as const, workflowPhase: "outline" as const, focusEpisode: candidate.episodeIndex };
+  return prepareAdoptionPlan(input, candidate, candidate.endHook);
+}
+
+/** 人工可删场、缩写和清空钩子；仍共用原稿冲突、任务与备份事务门禁。 */
+export function prepareManualEpisodeEditAdoption(input: AdoptionInput & { edit: ManualEpisodeEdit }) {
+  const { edit } = input;
+  if (!Number.isSafeInteger(edit.episodeIndex) || edit.episodeIndex < 1 || !edit.body.trim()) throw new Error("本集剧情正文不能为空，未保存修改。");
+  assertAdoptionReady(input, edit.episodeIndex, edit.originalBody, edit.originalEndHook);
+  if (splitManhuaEpisodeStoryText(edit.originalBody).story === edit.body.trim() && edit.originalEndHook === edit.endHook) throw new Error("本集内容没有变化。");
+  return prepareAdoptionPlan(input, { episodeIndex: edit.episodeIndex, originalBody: edit.originalBody,
+    originalEndHook: edit.originalEndHook, rewrittenBody: edit.body, endHook: edit.endHook,
+    changes: ["用户确认编辑本集剧情与对白"] }, edit.endHook);
 }
 
 /** 旧稿先落盘，再保存新稿/画布/复核态；任一失败回滚已写键，宿主尚不改内存。 */
@@ -59,7 +94,8 @@ export function persistAdvisorRewriteAdoption(input: {
   const values = [serializeManhuaWriterSession(session), JSON.stringify({ blocks: plan.canvas.blocks, edges: plan.canvas.edges }), JSON.stringify(plan.overlays)];
   try {
     storage.setItem(backupKey, JSON.stringify({ createdAt: input.createdAt, writerPack: original.writerPack, projectBible: original.projectBible,
-      episodeIndex: plan.candidate.episodeIndex, changes: plan.candidate.changes, adoptedWriterPack: plan.writerPack,
+      episodeIndex: plan.candidate.episodeIndex, changedEpisodeIndexes: plan.changedEpisodeIndexes, technicalPlanNeedsReview: plan.technicalPlanNeedsReview,
+      changes: plan.candidate.changes, adoptedWriterPack: plan.writerPack,
       canvas: { blocks: original.blocks, edges: original.edges }, directorBoardOverlays: original.overlays, previousWriterSession: before[0], previousFactoryPrefs: storage.getItem("mv-manhua-factory-character-prefs-v1") }));
   } catch { throw new Error("旧稿备份保存失败，未采用改写。请先导出备份并释放本机存储。"); }
   let written = 0;
@@ -85,5 +121,9 @@ export function prepareAdvisorRewriteBatchAdoption(input: Omit<Parameters<typeof
   const replacements = new Map(checked.map(p=>[p.candidate.episodeIndex,p.writerPack.episodes.find(e=>e.index===p.candidate.episodeIndex)!]));
   const writerPack={...first.writerPack,episodes:input.writerPack!.episodes.map(ep=>replacements.get(ep.index)||ep)};
   writerPack.rawMarkdown=formatManhuaWriterPackMarkdown({...writerPack,rawMarkdown:""});
-  return {...first,writerPack};
+  const changedEpisodeIndexes = checked.map(plan => plan.candidate.episodeIndex).sort((a, b) => a - b);
+  const canvas = stripManhuaFactoryCanvasArtifacts(input.blocks, input.edges, { onlyEpisodes: changedEpisodeIndexes });
+  const affected = Object.fromEntries(Object.entries(input.overlays).filter(([ep]) => changedEpisodeIndexes.includes(Number(ep))));
+  const overlays = { ...input.overlays, ...markManhuaDirectorBoardOverlaysForReview(affected) };
+  return {...first,writerPack,canvas,overlays,changedEpisodeIndexes,technicalPlanNeedsReview:checked.some(plan => plan.technicalPlanNeedsReview)};
 }

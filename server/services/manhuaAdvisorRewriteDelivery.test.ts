@@ -13,8 +13,8 @@ it.each([candidate, { answer: candidate }, { answer: JSON.stringify(candidate) }
 it.each([{ answer: { unknown: "不可采用" } }, { answer: [candidate] }, { answer: "[object Object]" }, { answer: "object_object" }])("拒绝任意对象与错误占位：%j", value => {
   expect(() => parseAskJson(JSON.stringify(value))).toThrow();
 });
-it("拒绝缩水正文或丢失场次；合格整集可交付", () => {
-  expect(() => validateAdvisorRewriteBody(body.repeat(8), body)).toThrow("完整单集");
+it("正文不按长度比例拒收，仍验证原场次与非空内容", () => {
+  expect(() => validateAdvisorRewriteBody(body.repeat(8), body)).not.toThrow();
   expect(() => validateAdvisorRewriteBody(body, body.replace('E1-S1', 'E1-S2'))).toThrow("场次");
   expect(() => validateAdvisorRewriteBody(body, body + "门外的脚步忽然停住。")).not.toThrow();
 });
