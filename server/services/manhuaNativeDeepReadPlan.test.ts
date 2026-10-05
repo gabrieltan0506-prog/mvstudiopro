@@ -1049,3 +1049,51 @@ describe("整支即全集（0901 treatAsStandalone）", () => {
     )).rejects.toThrow("整支即全集");
   });
 });
+
+
+describe("单集16重学不跳17", () => {
+  const url = "https://www.douyin.com/video/10016";
+  const relearn = { seriesKey: "series_real", episodeIndex: 16, requestId: "11111111-1111-4111-8111-111111111111" };
+  const sourceDeps = () => deps({
+    fetchAwemeDetail: vi.fn(async () => ({ mixId: "123456", episodeIndex: 16 })),
+    listMixEpisodes: vi.fn(async () => ({ episodes: [episode(16), episode(17)], complete: true })),
+    listIngestedEpisodes: vi.fn(async () => new Set([16])),
+  });
+  it("已学单集未确认时无执行计划，不探媒体，也不选择17", async () => {
+    const d = sourceDeps();
+    const plan = await buildNativeDeepReadPlanPreview({ url, limit: 8 }, d);
+    expect(plan.sourceEpisodeIndex).toBe(16);
+    expect(plan.episodes).toEqual([]);
+    expect(d.probeDurationSec).not.toHaveBeenCalled();
+    expect(() => assertNativeDeepReadPlanConfirmation({ maxCalls: 200 }, plan)).toThrow("确认重学");
+  });
+  it("只读来源检查不探媒体，即使原集有任务也能显示已学信息，且不能当执行计划", async () => {
+    const d = sourceDeps();
+    const plan = await buildNativeDeepReadPlanPreview({ url, limit: 1, inspectSourceOnly: true }, d);
+    expect(plan.alreadyIngestedEpisodeIndexes).toContain(16);
+    expect(d.probeDurationSec).not.toHaveBeenCalled();
+    expect(() => assertNativeDeepReadPlanConfirmation({ maxCalls: 200 }, plan)).toThrow("来源检查");
+  });
+  it("确认后只重学16；缺少确认或换集、换剧、换提交时拒绝", async () => {
+    const plan = await buildNativeDeepReadPlanPreview({ url, limit: 1, relearn }, sourceDeps());
+    expect(plan.episodes.map(row => row.episodeIndex)).toEqual([16]);
+    expect(plan.episodes[0]).toMatchObject({ relearnRequestId: relearn.requestId });
+    expect(plan.episodes[0].recoverMisplacedSourceCache).toBeUndefined();
+    expect(() => assertNativeDeepReadPlanConfirmation({ maxCalls: 200, relearn }, plan)).not.toThrow();
+    expect(() => assertNativeDeepReadPlanConfirmation({ maxCalls: 200 }, plan)).toThrow("重学来源");
+    for (const changed of [{ ...relearn, episodeIndex: 17 }, { ...relearn, seriesKey: "another" }]) {
+      await expect(buildNativeDeepReadPlanPreview({ url, limit: 1, relearn: changed }, sourceDeps())).rejects.toThrow("重学来源");
+    }
+    expect(() => assertNativeDeepReadPlanConfirmation({ maxCalls: 200, relearn: { ...relearn, requestId: "22222222-2222-4222-8222-222222222222" } }, plan)).toThrow("重学来源");
+  });
+  it("确认重学也不能抢仍在运行的集", async () => {
+    const d = sourceDeps();
+    d.listClaimStates = vi.fn(async () => new Map([[16, { createdAtIso: new Date().toISOString(), lastFailedAtIso: null }]]));
+    await expect(buildNativeDeepReadPlanPreview({ url, limit: 1, relearn }, d)).rejects.toThrow("不会跳号");
+    expect(d.probeDurationSec).not.toHaveBeenCalled();
+  });
+  it("合集入口仍选择下一未学集", async () => {
+    const plan = await buildNativeDeepReadPlanPreview({ url: "https://www.douyin.com/collection/123456", limit: 1 }, sourceDeps());
+    expect(plan.episodes.map(row => row.episodeIndex)).toEqual([17]);
+  });
+});

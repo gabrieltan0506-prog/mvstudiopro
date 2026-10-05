@@ -952,6 +952,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
           localVideoUploadId: confirmation.localVideoUploadId,
           userId: String(userId || ""),
           limit: confirmation.planLimit,
+          relearn: confirmation.relearn,
           structuringEpisodeIndex: confirmation.structuringEpisodeIndex,
           segmentSeconds: confirmation.segmentSeconds,
           videoFps: confirmation.videoFps,
@@ -966,7 +967,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         );
         // 「已隔离占位」是内部术语；对用户说清楚：这几集有没结清的历史账单，本次不动它们
         const quarantinedClaims = nativePlanPreview.pendingClaimEpisodeIndexes.length
-          ? ` · 第 ${nativePlanPreview.pendingClaimEpisodeIndexes.join("、")} 集疑似仍在处理，本次隔离（可在面板「占位管理」查看）`
+          ? ` · 第 ${nativePlanPreview.pendingClaimEpisodeIndexes.join("、")} 集疑似仍在处理，本次等待（可在学习任务中查看）`
           : "";
         const reclaimZh = nativePlanPreview.reclaimEpisodeIndexes.length
           ? ` · 第 ${nativePlanPreview.reclaimEpisodeIndexes.join("、")} 集为失败重跑（占位自动让位，已成段走缓存零费）`

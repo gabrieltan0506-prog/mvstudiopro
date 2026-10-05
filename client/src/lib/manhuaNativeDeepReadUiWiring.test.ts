@@ -10,12 +10,14 @@ const END = PAGE.indexOf("/**\n   * 刷新/断线恢复", START);
 const LEARN_FLOW = PAGE.slice(START, END);
 
 describe("原生精读页面接线", () => {
-  it("点击后直接建立持久任务，不先调用预演接口或二次确认", () => {
+  it("只读来源检查和重学确认在建立持久任务之前，取消不入队", () => {
     const createAt = LEARN_FLOW.indexOf("createJob");
     expect(START).toBeGreaterThan(0);
     expect(createAt).toBeGreaterThan(0);
     expect(LEARN_FLOW).not.toContain("previewNativeDeepReadPlanMutation");
-    expect(LEARN_FLOW).not.toContain("window.confirm");
+    expect(LEARN_FLOW.indexOf("inspectLearnSource.fetch")).toBeLessThan(createAt);
+    expect(LEARN_FLOW.indexOf("confirmManhuaLearnSource(sourceCheck")).toBeLessThan(createAt);
+    expect(LEARN_FLOW.indexOf("if (!confirmed) return;")).toBeLessThan(createAt);
     expect(LEARN_FLOW.match(/createJob\(/g)).toHaveLength(1);
     expect(LEARN_FLOW).not.toContain("pollJobUntilTerminal");
     expect(LEARN_FLOW).not.toContain("95 * 60_000");
@@ -128,7 +130,7 @@ describe("原生精读页面接线", () => {
     expect(PAGE).toContain("manhuaLearnResult.nativeUsage");
     expect(PAGE).toContain("nativeLearnTerminalProposalRefreshSignature");
     expect(PAGE).toContain("await manhuaViralProposalsRefetchRef.current()");
-    expect(PAGE).toContain("await manhuaClaimsRefetchRef.current()");
+    expect(PAGE).not.toContain("manhuaClaimsRefetchRef");
     expect(PAGE).toContain("if (!terminalRefreshFailed)");
   });
 
@@ -182,7 +184,7 @@ describe("原生精读页面接线", () => {
   it("一次服务端轮询同时更新任务面板、导入篮与待审卡，不依赖整页刷新", () => {
     expect(PAGE).toContain("reuseManhuaLearnServerJobsIfUnchanged(prev, listed.items)");
     expect(PAGE).toContain("manhuaViralProposalsRefetchRef.current = manhuaViralProposalsQuery.refetch");
-    expect(PAGE).toContain("manhuaClaimsRefetchRef.current = manhuaClaimsQuery.refetch");
+    expect(PAGE).not.toContain("listNativeDeepReadClaims.useQuery");
     const refreshAt = PAGE.indexOf("const refreshManhuaLearnServerJobs = useCallback");
     const stopAt = PAGE.indexOf("const stopFocusedManhuaLearnJob", refreshAt);
     const refreshBlock = PAGE.slice(refreshAt, stopAt);

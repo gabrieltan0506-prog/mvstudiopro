@@ -4325,6 +4325,25 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     };
   }
 
+  it.each([false, true])("重学只恢复同次缓存，旧缓存必须重新读片（同次=%s）", async sameRun => {
+    const relearnRequestId = "11111111-1111-4111-8111-111111111111";
+    const episode = makeEpisode([{ startSec: 0, endSec: 60 }]);
+    const entry = { ...makeCacheEntry({ episode, segmentIndex: 0 }), relearnRequestId: sameRun ? relearnRequestId : undefined };
+    const deps = makeRunnerDeps({ postVertex: makeSuccessfulEpisodePostVertex(episode.segments) as never, readSegmentCache: vi.fn(async () => ({ entry, generation: "1" })) as never });
+    await runManhuaNativeDeepReadBatch({ episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey, relearnRequestId }, deps);
+    if (sameRun) {
+      expect(deps.prepareVideos).not.toHaveBeenCalled();
+      expect(deps.postVertex).not.toHaveBeenCalled();
+      expect(deps.readRawAttemptEvidence).not.toHaveBeenCalled();
+    } else {
+      expect(deps.postVertex).toHaveBeenCalledTimes(1);
+      expect(deps.readRawAttemptEvidence).toHaveBeenCalledWith(expect.objectContaining({ relearnRequestId }));
+      expect(deps.writeRawAttemptEvidence).toHaveBeenCalledWith(expect.objectContaining({ relearnRequestId }));
+      expect(deps.writeParsedAttemptEvidence).toHaveBeenCalledWith(expect.objectContaining({ relearnRequestId }));
+      expect(deps.writeSegmentCache).toHaveBeenCalledWith(expect.objectContaining({ relearnRequestId }));
+    }
+  });
+
   it("仅重新整形使用完整永久JSON进入GLM，原生模型与视频准备均为零", async () => {
     const structuringModel = "glm-5.3" as const;
     const episode = makeEpisode([{ startSec: 0, endSec: 60 }]);

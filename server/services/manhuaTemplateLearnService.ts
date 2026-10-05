@@ -1779,6 +1779,7 @@ export async function buildNativeDeepReadEpisodeExecution(
       userId: localSource.userId, uploadId: localSource.uploadId, sha256: localSource.sha256,
     } } : {}),
     seriesKey: input.seriesKey,
+    relearnRequestId: input.confirmedPlanEpisode?.relearnRequestId,
     episodeIndex: input.ep.index,
     sourceUrl: input.ep.url,
     // 卡片里存永久引用；GCS 导入的 7 天签名短链不进永久卡

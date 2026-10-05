@@ -1,3 +1,4 @@
+import { parseNativeDeepReadRelearn, type NativeDeepReadRelearn } from "./manhuaNativeRelearn.js";
 import { parseManhuaLocalVideoSourceRef } from "./manhuaLocalVideoUpload.js";
 /** 原生精读单任务墙钟与调用数契约；客户端、入队端和 worker 共用。 */
 import { isManhua0996SourceUrl } from "./manhuaLearn0996Source.js";
@@ -119,6 +120,7 @@ export function parseNativeDeepReadSegmentSeconds(value: unknown): number {
 
 export const NATIVE_DEEP_READ_JOB_FIELDS = [
   "nativeDeepReadConfirmed",
+  "nativeRelearn",
   "localVideoUploadId",
   "nativePlanHash",
   "nativeMaxCalls",
@@ -135,6 +137,7 @@ export const NATIVE_DEEP_READ_JOB_FIELDS = [
 ] as const;
 
 export type NativeDeepReadJobConfirmation = {
+  relearn?: NativeDeepReadRelearn;
   url: string;
   localVideoUploadId?: string;
   /** 旧任务的精确计划指纹；新面板直接入队时为空，由 worker 在任务内生成执行计划。 */
@@ -165,7 +168,10 @@ export function sameNativeDeepReadJobConfirmation(
   left: NativeDeepReadJobConfirmation,
   right: NativeDeepReadJobConfirmation,
 ): boolean {
-  return left.url === right.url
+  return left.relearn?.seriesKey === right.relearn?.seriesKey
+    && left.relearn?.episodeIndex === right.relearn?.episodeIndex
+    && left.relearn?.requestId === right.relearn?.requestId
+    && left.url === right.url
     && left.localVideoUploadId === right.localVideoUploadId
     && left.planHash === right.planHash
     && left.maxCalls === right.maxCalls
@@ -223,6 +229,8 @@ export function parseNativeDeepReadJobConfirmation(
     || (!structuringOnly && (params.nativeStructuringEpisodeIndex !== undefined || params.nativeStructuringPreviousJobId !== undefined))) {
     throw new Error("仅重新整形必须指定原任务和唯一集号，并明确选择整形模型");
   }
+  const relearn = parseNativeDeepReadRelearn(params.nativeRelearn);
+  if (relearn && (structuringOnly || planLimit !== 1)) throw new Error("重学仅允许本次确认的单集");
   const hasLegacyPlanConfirmation = Boolean(planHash || seriesKey);
   let parsedUrl: URL;
   try {
@@ -257,6 +265,7 @@ export function parseNativeDeepReadJobConfirmation(
   }
   return {
     url,
+    ...(relearn ? { relearn } : {}),
     ...(localVideoUploadId ? { localVideoUploadId } : {}),
     planHash: planHash || undefined,
     maxCalls,

@@ -12,6 +12,7 @@ export function buildManhuaRestructureParams(job: ManhuaLearnServerJob, episodeI
     nativeStructuringPreviousJobId: job.jobId, nativeStructuringModel: model,
     nativePlanLimit: 1, batchSize: 1, refreshPreviewFrames: false, retrySkippedEpisodes: false };
   // 旧计划哈希绑定旧批次，新单集计划由服务端依据原任务重新验证。
+  delete (params as Record<string, unknown>).nativeRelearn;
   delete (params as Record<string, unknown>).nativePlanHash;
   delete (params as Record<string, unknown>).nativePlanSeriesKey;
   return params;

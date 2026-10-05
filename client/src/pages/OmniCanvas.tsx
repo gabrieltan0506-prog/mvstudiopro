@@ -4372,8 +4372,8 @@ function OmniCanvasWorkspace() {
   }, [trialWriterRecentQuery.data, trialWriterResult, trialWriterInput, trialWriterDismissed, factoryTopic, writerBrief, publicTemplateId, writerModel]);
   /** 编剧室全员走公开面：服务端只回匿名功能卡（内部 id/真名永不进本页） */
   const manhuaViralTemplatesQuery = trpc.manhuaViralTemplate.listApprovedPublic.useQuery(undefined, {
-    staleTime: 60_000,
-    refetchOnWindowFocus: true,
+    staleTime: 0,
+    refetchOnWindowFocus: "always",
     retry: 1,
   });
   const templateCatalogConnected = useManhuaTemplateCatalogEvents(Boolean(user?.id), () => manhuaViralTemplatesQuery.refetch());
