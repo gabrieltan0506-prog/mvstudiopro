@@ -137,9 +137,9 @@ export const ManhuaAdvisorMediaEdit = forwardRef<AdvisorMediaEditHandle, {
       <p className="font-medium">当前方案 · {record.plan.source.label}</p><p className="whitespace-pre-wrap">{record.plan.instruction}</p>
       {instruction !== record.plan.instruction && <p className="text-amber-200">修改要求已变，请先保存新方案；旧预览不会用于新要求。</p>}
       <div className="grid grid-cols-2 gap-2">
-        <figure>{record.plan.kind === "image" ? <img src={record.plan.source.url} alt="原图" className="max-h-64 w-full object-contain" /> : <video src={record.plan.source.url} controls className="max-h-64 w-full" />}<figcaption>原素材</figcaption></figure>
+        <figure>{record.plan.kind === "image" ? <img src={record.plan.source.url} alt="原图" className="max-h-64 w-full object-contain" /> : <video src={record.plan.source.url} controls className="max-h-64 w-full" />}<figcaption>原素材 · 保留</figcaption></figure>
         {preview?.url && <figure><img src={preview.url} alt="Flare修改预览" className="max-h-64 w-full object-contain"/><figcaption>Flare预览</figcaption></figure>}
-        {record.result?.url && <figure><img src={record.result.url} alt="Sunburst修改结果" className="max-h-64 w-full object-contain"/><figcaption>Sunburst结果</figcaption><a href={record.result.url} target="_blank" rel="noreferrer">打开图片</a></figure>}
+        {record.result?.url && <figure><img src={record.result.url} alt="Sunburst修改结果" className="max-h-64 w-full object-contain"/><figcaption>新图 · 确认后填入作品</figcaption><a href={record.result.url} target="_blank" rel="noreferrer">打开图片</a></figure>}
       </div>
       {record.plan.kind === "image" ? <div className="flex flex-wrap gap-2">
         <button className={button} disabled={disabled || unresolved || instruction !== record.plan.instruction} onClick={() => void generate("flare")}>生成Flare预览</button>

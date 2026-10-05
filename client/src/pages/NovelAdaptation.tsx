@@ -2086,9 +2086,7 @@ function NovelWorkspaceEditor({
               </button>
             </div>
           )}
-          {draft.runs.filter(
-            r => r.input.stage === "chapter" && r.input.chapterIndex === i + 1
-          ).length > 0 && (
+          {(draft.runs.some(r => r.input.stage === "chapter" && r.input.chapterIndex === i + 1) || draft.chapterVersions?.some(v => v.index === i)) && (
             <details className="mt-2 text-sm">
               <summary>本集生成稿与保留版本</summary>
               {draft.runs
@@ -2156,6 +2154,13 @@ function NovelWorkspaceEditor({
                       手动稿 · {new Date(v.savedAt).toLocaleString()}
                     </summary>
                     <pre className="whitespace-pre-wrap">{v.text}</pre>
+                    <button type="button" disabled={Boolean(initial.error) || draft.chapters[i] === v.text} className="underline" onClick={() => {
+                      if (!window.confirm(`将第${i + 1}集还原为这个版本？当前正文会另存为历史版本，其他集正文不变。`)) return;
+                      const chapters = [...draft.chapters]; chapters[i] = v.text;
+                      const chapterWarnings = {...draft.chapterWarnings, [String(i)]: "已还原历史版本，请核对内容与衔接。"};
+                      for (let j = i + 1; j < chapters.length; j++) if (chapters[j]) chapterWarnings[String(j)] = "前文已还原，请核对本集衔接。";
+                      change({chapters, chapterWarnings, novelApproved: "", chapterVersions: [...(draft.chapterVersions || []), {index:i, text:draft.chapters[i] || "", savedAt:new Date().toISOString()}]});
+                    }}>还原这个版本</button>
                   </details>
                 ))}
             </details>

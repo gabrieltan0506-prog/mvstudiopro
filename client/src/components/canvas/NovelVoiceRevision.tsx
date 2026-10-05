@@ -61,7 +61,7 @@ export function NovelVoiceRevision(props: ComponentProps<typeof CreativeVoicePan
     <section aria-label="语音小说修改稿" className="space-y-3 rounded-xl border border-white/20 p-3">
       <p>可以说“读取第二集，按刚才讨论修改正文”，看过修改稿后说“套用这版”，确认后会写入正文并保留旧稿。</p>
       {candidate && <><h3>第{candidate.episode}集 · {candidate.applied ? "已应用" : "待确认修改稿"}</h3><p>{candidate.summary}</p>
-        <div className="grid gap-3 lg:grid-cols-2"><details open><summary>原文</summary><pre className="max-h-72 overflow-auto whitespace-pre-wrap">{candidate.before}</pre></details><details open><summary>修改稿</summary><pre className="max-h-72 overflow-auto whitespace-pre-wrap">{candidate.text}</pre></details></div>
+        <div className="grid gap-3"><details open><summary>旧稿 · 完整内容</summary><pre className="max-h-72 overflow-auto whitespace-pre-wrap">{candidate.before}</pre></details><details open><summary>新稿 · 待你确认</summary><pre className="max-h-72 overflow-auto whitespace-pre-wrap">{candidate.text}</pre></details></div>
         <button type="button" disabled={props.disabled || candidate.applied} onClick={()=>void action({action:"apply",candidateId:candidate.id},lifecycle.current.signal).then(setMessage).catch(e=>setMessage(e instanceof Error?e.message:"保存未完成"))}>确认应用到正文</button>
       </>}
       {(candidate || blocked.current) && <button type="button" onClick={download}>下载语音修改稿</button>}

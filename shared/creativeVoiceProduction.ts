@@ -1,8 +1,10 @@
 import { z } from "zod";
 export const creativeVoiceProductionSchema = z.discriminatedUnion("action", [
   z.object({action:z.literal("inspect")}).strict(),
+  z.object({action:z.literal("restoreBackup")}).strict(),
   z.object({action:z.literal("media"),operation:z.enum(["inspect","previewImage","finishImage","resumeMedia","applyImage","editVideo"])}).strict(),
   z.object({action:z.literal("applyEpisode"),episode:z.number().int().positive()}).strict(),
+  z.object({action:z.literal("prepareEpisode"),episode:z.number().int().positive(),question:z.string().trim().min(2).max(1100)}).strict(),
   z.object({action:z.literal("applyPrevis")}).strict(),
   z.object({action:z.literal("retryPrevis")}).strict(),
   z.object({action:z.literal("world"),assetId:z.string().min(1).max(200)}).strict(),

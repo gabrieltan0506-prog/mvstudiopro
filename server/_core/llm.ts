@@ -1384,7 +1384,14 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
 
   const payload: Record<string, unknown> = {
     model: target.modelName,
-    messages: params.messages.map(normalizeMessage),
+    messages: params.messages.map(message => {
+      const normalized = normalizeMessage(message);
+      // EvoLink GLM/DeepSeek accept system, not the OpenAI developer role.
+      // Preserve the instruction hierarchy instead of demoting it to user text.
+      return evolinkFlash && normalized.role === "developer"
+        ? { ...normalized, role: "system" }
+        : normalized;
+    }),
   };
   // DeepSeek 的 none 使用供应商明确的关闭开关；不把 none 静默提升为 high。
   if (isDeepSeekV41Flash && params.reasoningEffort === "none") {

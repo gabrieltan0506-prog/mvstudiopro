@@ -30,7 +30,7 @@ export function prepareAdvisorRewriteAdoption(input: {
   if (!checked.success || !input.writerPack) throw new Error("改写内容不完整，未采用。");
   if (input.busy || advisorRewriteHasActiveWork(input.blocks)) throw new Error("仍有运行或待核实任务，请先等待原任务回执，未采用改写。");
   const candidate = checked.data;
-  validateAdvisorRewriteBody(candidate.originalBody, candidate.rewrittenBody);
+  validateAdvisorRewriteBody(candidate.originalBody, candidate.rewrittenBody, candidate.endHook);
   if (input.writerPack.episodes.find(ep => ep.index === candidate.episodeIndex)?.body !== candidate.originalBody) throw new Error("原稿已改变，请根据最新正文重新改写。");
   const originalEpisode = input.writerPack.episodes.find(ep => ep.index === candidate.episodeIndex)!;
   if (candidate.endHook && (originalEpisode.endHook || "") !== candidate.originalEndHook) throw new Error("片尾钩子已改变，请根据最新原稿重新优化。");
@@ -60,7 +60,7 @@ export function persistAdvisorRewriteAdoption(input: {
   try {
     storage.setItem(backupKey, JSON.stringify({ createdAt: input.createdAt, writerPack: original.writerPack, projectBible: original.projectBible,
       episodeIndex: plan.candidate.episodeIndex, changes: plan.candidate.changes, adoptedWriterPack: plan.writerPack,
-      canvas: { blocks: original.blocks, edges: original.edges }, directorBoardOverlays: original.overlays, previousWriterSession: before[0] }));
+      canvas: { blocks: original.blocks, edges: original.edges }, directorBoardOverlays: original.overlays, previousWriterSession: before[0], previousFactoryPrefs: storage.getItem("mv-manhua-factory-character-prefs-v1") }));
   } catch { throw new Error("旧稿备份保存失败，未采用改写。请先导出备份并释放本机存储。"); }
   let written = 0;
   try {

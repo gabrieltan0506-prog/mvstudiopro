@@ -91,3 +91,10 @@ it("真实采用备份指导再次确认：前集活动成果保留，新剧或�
  expect(confirmSource).toContain("stripManhuaFactoryCanvasArtifacts(blocks, edges, { fromEpisode })");
  expect(confirmSource).toContain("resolveManhuaEpisodeSpawnContinuity(writerPack.episodes, fromEpisode ?? writerFocusEpisode)");
 });
+
+it('顾问改前备份同时保存制作偏好供原导入入口恢复',()=>{
+ const f=fixture(),s=storage(),prefs=JSON.stringify({narrativeLightingId:'before-light',directorBoardMainByEpisode:{}});s.setItem('mv-manhua-factory-character-prefs-v1',prefs);
+ const plan=prepareAdvisorRewriteAdoption(f);const key=persist(plan,f,s);
+ expect(JSON.parse(s.getItem(key)!).previousFactoryPrefs).toBe(prefs);
+ expect(s.getItem('mv-manhua-factory-character-prefs-v1')).toBe(prefs);
+});

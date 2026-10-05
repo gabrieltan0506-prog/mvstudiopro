@@ -44,10 +44,10 @@ import ManhuaCreativeAdvisorPanel from "@/components/canvas/ManhuaCreativeAdviso
 import { ManhuaPrevisAudioControls } from "@/components/canvas/ManhuaPrevisAudioControls";
 import { checkManhuaAdvisorPrevisLaunch } from "@/lib/manhuaAdvisorPrevisLaunch";
 import ManhuaOutlineTemplateRewrite from "@/components/canvas/ManhuaOutlineTemplateRewrite";
-import { advisorReconfirmationFromEpisode } from "@/lib/manhuaAdvisorBackups";
-import { prepareAdvisorRewriteAdoption, prepareAdvisorRewriteBatchAdoption, persistAdvisorRewriteAdoption } from "@/lib/manhuaAdvisorAdoption";
+import { advisorReconfirmationFromEpisode, type AdvisorBackupEntry } from "@/lib/manhuaAdvisorBackups";
+import { advisorRewriteHasActiveWork, prepareAdvisorRewriteAdoption, prepareAdvisorRewriteBatchAdoption, persistAdvisorRewriteAdoption } from "@/lib/manhuaAdvisorAdoption";
 import type { AdvisorRewriteCandidate } from "@/lib/manhuaAdvisorTemplates";
-import { manhuaAdvisorMountKey } from "@/lib/manhuaAdvisorSession";
+import { manhuaAdvisorMountKey, type AdvisorMountContinuation } from "@/lib/manhuaAdvisorSession";
 import {
   buildManhuaAdvisorProject,
   claimManhuaAdvisorNudgeOnce,
@@ -1185,6 +1185,8 @@ function OmniCanvasWorkspace() {
     () => initialWriterSession?.writerPack ?? null,
   );
   /** 0902：扩写前后逐行对比（高亮）——「全部扩写也没列出对比」用户拍板 */
+  const advisorMountContinuation = useRef<AdvisorMountContinuation | null>(null);
+  const advisorComponentKey = manhuaAdvisorMountKey(user?.id != null ? String(user.id) : undefined, projectBible?.confirmedAt, writerPack, advisorMountContinuation.current);
   const [writerPackDiff, setWriterPackDiff] = useState<WriterPackDiffResult | null>(null);
   /**
    * 剧本版本标识：拿当集正文算，换稿即变 → 旧分析自动标失效。
@@ -10025,11 +10027,27 @@ function OmniCanvasWorkspace() {
   // 画布通过展开视口与显示筛选减少拥挤，布局仍只由显式对齐操作修改。
 
   function backupVoiceProduction() {
-    if (!writerPack || !user?.id) throw new Error("缺少当前作品或账户，无法先备份，未执行制作。");
+    if (!writerPack || !user?.id || !latestDraftSnapshotRef.current) throw new Error("缺少当前作品或账户，无法先备份，未执行制作。");
     const key = `manhua-advisor-rewrite-backup:${user.id}:${crypto.randomUUID()}`;
-    const json = JSON.stringify({createdAt:new Date().toISOString(),episodeIndex:writerFocusEpisode,changes:["语音制作前备份"],writerPack,projectBible:projectBible||null,customAssetRefs:latestCustomAssetRefs.current,blocks:blocksRef.current,edges,directorBoardMainByEpisode,directorBoardBySegment,directorBoardMotionOverlayBySegment});
+    const restorableDraft = buildLocalCloudDraftSnapshot(latestDraftSnapshotRef.current);
+    const json = JSON.stringify({createdAt:new Date().toISOString(),episodeIndex:writerFocusEpisode,changes:["语音制作或还原前备份"],writerPack,projectBible:projectBible||null,restorableDraft});
     localStorage.setItem(key,json);
     if(localStorage.getItem(key)!==json) throw new Error("改前备份未完整保存，未执行制作。");
+    return key;
+  }
+  async function restoreAdvisorBackup(backup: AdvisorBackupEntry) {
+    if (!user?.id || !backup.key.startsWith(`manhua-advisor-rewrite-backup:${user.id}:`) || localStorage.getItem(backup.key) !== backup.json) throw new Error("备份归属或内容已变化，未还原。");
+    if (writerBusy || factoryBusy || assembleBusy || burnSubtitleBusy || cloudConflict || backupOperationRef.current || autoBackupInFlightRef.current || asset3dBusyIds.length || sceneWorldBusyIds.length || advisorRewriteHasActiveWork(blocksRef.current)) throw new Error("仍有任务或云端冲突，先处理原任务，未还原。");
+    // Preflight first, then preserve the present version before the existing
+    // confirmed import path. A model's request alone never authorizes restore.
+    const target = prepareManhuaBackupRestore(JSON.parse(backup.json));
+    const undoKey = backupVoiceProduction();
+    const undo = JSON.parse(localStorage.getItem(undoKey)!);
+    undo.adoptedWriterPack = target.writerSession.writerPack;
+    const savedUndo = JSON.stringify(undo);
+    localStorage.setItem(undoKey, savedUndo);
+    if (localStorage.getItem(undoKey) !== savedUndo) throw new Error("当前版本备份不完整，未还原。");
+    await importBackupFile(new File([backup.json], "顾问改前版本.json", {type:"application/json"}));
   }
 
   function applyTemplateRewriteCandidate(input: AdvisorRewriteCandidate): boolean { return applyTemplateRewriteCandidates([input]); }
@@ -10046,6 +10064,12 @@ function OmniCanvasWorkspace() {
       return false;
     }
     const { candidate, writerPack: nextPack, canvas: cleaned, overlays } = plan;
+    // Save succeeded and stale-candidate validation passed. Preserve this exact
+    // adoption's voice session; imports/manual edits still invalidate the key.
+    advisorMountContinuation.current = {
+      draftKey: manhuaAdvisorMountKey(user?.id != null ? String(user.id) : undefined, projectBible?.confirmedAt, nextPack),
+      mountedKey: advisorComponentKey,
+    };
     setBlocks(cleaned.blocks);
     setEdges(cleaned.edges);
     bumpManhuaOutboundEpoch();
@@ -10560,7 +10584,7 @@ function OmniCanvasWorkspace() {
                     chooseAdvisorVisibility(true);
                   }}
                   rewriteWorkspace={<ManhuaOutlineTemplateRewrite
-                    key={manhuaAdvisorMountKey(user?.id != null ? String(user.id) : undefined, projectBible?.confirmedAt, writerPack)}
+                    key={advisorComponentKey}
                     userId={user?.id != null ? String(user.id) : undefined}
                     confirmedProjectVersion={projectBible?.confirmedAt}
                     project={advisorProject}
@@ -13691,7 +13715,7 @@ function OmniCanvasWorkspace() {
         </div>
       ) : null}
       <ManhuaCreativeAdvisorPanel
-        key={manhuaAdvisorMountKey(user?.id != null ? String(user.id) : undefined, projectBible?.confirmedAt, writerPack)}
+        key={advisorComponentKey}
         userId={user?.id != null ? String(user.id) : undefined}
         projectId={projectScope?.projectId}
         automaticMonitoring={canvasMode === "manhua" && advisorEnabled && !writerBusy && !factoryBusy && !cloudConflict}
@@ -13820,9 +13844,10 @@ function OmniCanvasWorkspace() {
         onPreparePrevis={prepareAdvisorPrevis}
         onApplyPrevis={applyAdvisorPrevis}
         focusSection={advisorFocusSection}
-        questionSeed={advisorQuestionSeed?.projectKey === manhuaAdvisorMountKey(user?.id != null ? String(user.id) : undefined, projectBible?.confirmedAt, writerPack) ? advisorQuestionSeed : null}
+        questionSeed={advisorQuestionSeed?.projectKey === advisorComponentKey ? advisorQuestionSeed : null}
         onQuestionSeedApplied={() => setAdvisorQuestionSeed(null)}
         onApplyRewrite={applyTemplateRewriteCandidate}
+        onRestoreAdvisorBackup={restoreAdvisorBackup}
         onLocate={(issue) => {
           setAdvisorFocusSection(null);
           setAdvisorOpen(false);

@@ -291,7 +291,7 @@ export async function runEpisodeOptimization(
       const value = advisorRewriteResponseSchema.parse(
         typeof answerValue === "string" ? JSON.parse(answerValue) : answerValue
       );
-      validateAdvisorRewriteBody(episode.body, value.body);
+      validateAdvisorRewriteBody(episode.body, value.body, value.endHook);
       if (episode.endHook && !value.endHook)
         throw new Error("优化稿缺少片尾钩子，已保留原稿");
       candidates.push({

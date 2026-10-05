@@ -256,8 +256,19 @@ export async function deductCredits(
 
 /** 唯一约束撞击 = 同 chargeKey 已扣过（并发/重试的另一腿先落库） */
 function isChargeKeyUniqueViolation(e: unknown): boolean {
-  const msg = e instanceof Error ? e.message : String(e);
-  return /stripe_usage_logs_charge_key_uniq|duplicate key value/i.test(msg);
+  // Drizzle wraps the PostgreSQL error in cause; its outer message only contains
+  // SQL/parameters. Only this specific unique index proves a replay, not every
+  // duplicate-key error (which could be an unrelated failed write).
+  const seen = new Set<unknown>();
+  let current = e;
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    const error = current as { code?: string; constraint?: string; message?: string; cause?: unknown };
+    if (error.constraint === "stripe_usage_logs_charge_key_uniq" && error.code === "23505") return true;
+    if (/duplicate key value/i.test(error.message || "") && /stripe_usage_logs_charge_key_uniq/.test(error.message || "")) return true;
+    current = error.cause;
+  }
+  return false;
 }
 
 /** 按 chargeKey 读已落库的那笔扣费（含来源快照），供撞唯一约束后复原返回值 */

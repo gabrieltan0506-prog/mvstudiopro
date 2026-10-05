@@ -402,26 +402,35 @@ async function ensurePlatformOfficialCampaignsTable(db: NonNullable<Awaited<Retu
   }
 }
 
-// Lazily create the drizzle instance so local tooling can run without a DB.
+// Every cold-start caller waits for the same schema/index initialization. Publishing
+// _db before the awaits lets concurrent billing race CREATE INDEX and fail closed.
+let databaseInitialization: Promise<void> | null = null;
 export async function getDb() {
-  if (!_db && process.env.DATABASE_URL) {
-    try {
-      const sql_conn = neon(process.env.DATABASE_URL);
-      _db = drizzle(sql_conn);
-      await ensureUsersEnterpriseTrialPaidColumn(_db);
-      await ensureStripeUsageLogsChargeKey(_db);
-      await ensureKnowledgeCardDistillReceiptsTable(_db);
-      await ensurePlatformStrategicBlueprintSnapshotsTable(_db);
-      await ensurePlatformDrSecondaryStagingTable(_db);
-      await ensurePaidTrafficReviewsTable(_db);
-      await ensurePlatformOfficialCampaignsTable(_db);
-      await ensureManhuaCloudDraftsTable(_db);
-      await ensureManhuaCommunityAssetsTable(_db);
-      await ensureCanvasGenerationIntentsTable(_db);
-    } catch (error) {
-      console.warn("[Database] Failed to connect:", error);
-      _db = null;
-    }
+  if (!databaseInitialization && !_db && process.env.DATABASE_URL) {
+    databaseInitialization = (async () => {
+      try {
+        const db = drizzle(neon(process.env.DATABASE_URL!));
+        await ensureUsersEnterpriseTrialPaidColumn(db);
+        await ensureStripeUsageLogsChargeKey(db);
+        await ensureKnowledgeCardDistillReceiptsTable(db);
+        await ensurePlatformStrategicBlueprintSnapshotsTable(db);
+        await ensurePlatformDrSecondaryStagingTable(db);
+        await ensurePaidTrafficReviewsTable(db);
+        await ensurePlatformOfficialCampaignsTable(db);
+        await ensureManhuaCloudDraftsTable(db);
+        await ensureManhuaCommunityAssetsTable(db);
+        await ensureCanvasGenerationIntentsTable(db);
+        _db = db;
+      } catch (error) {
+        console.warn("[Database] Failed to connect:", error);
+        _db = null;
+      }
+    })();
+  }
+  if (databaseInitialization) {
+    const pending = databaseInitialization;
+    await pending;
+    if (databaseInitialization === pending) databaseInitialization = null;
   }
   return _db;
 }
