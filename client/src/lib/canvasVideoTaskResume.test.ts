@@ -441,3 +441,16 @@ it("EvoLink 直发选择在云草稿恢复后保留，并区分原通道任务",
   expect(cloudDraftBlocksToCanvas(parsed!.canvas.blocks)[0].seedance25Provider).toBe("evolink");
   expect(canvasVideoTaskInputFingerprint(original)).not.toBe(canvasVideoTaskInputFingerprint({ ...original, seedance25Provider: "auto" }));
 });
+
+it("视频编辑刷新恢复仍只增加候选，不自动采用或改原片质检", () => {
+  const old = block({ videoModel:"seedance-2.5", seedance25WorkMode:"video_edit", outputUrl:"https://test.invalid/old.mp4", lastFrameUrl:"https://test.invalid/old.jpg", manhuaClipQuality:quality() });
+  const snapshot = captureCanvasVideoTaskResumeSnapshot(old)!;
+  const result = resolveCanvasVideoTaskResume(old, snapshot, {transportOk:true,payloadOk:true,status:"succeeded",videoUrl:"https://test.invalid/new.mp4"}, NOW)!;
+  expect(result.selectedNewOutput).toBe(false);
+  const next = {...old,...result.patch};
+  expect(next.outputUrl).toBe(old.outputUrl);
+  expect(next.outputUrls).toContain("https://test.invalid/new.mp4");
+  expect(next.lastFrameUrl).toBe(old.lastFrameUrl);
+  expect(next.manhuaClipQuality).toEqual(old.manhuaClipQuality);
+  expect(next.error).toContain("选择采用");
+});

@@ -1,18 +1,20 @@
 import type { CreativeVoiceProductionAction } from "@shared/creativeVoiceProduction";
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { canvasImageCredits } from "@shared/canvasGenerationPricing";
-import { assertAdvisorMediaSource, prepareAdvisorMediaPlan, type AdvisorMediaPlan, type AdvisorMediaSource } from "@shared/manhuaAdvisorMediaEdit";
+import { assertAdvisorMediaSource, prepareAdvisorMediaPlan, selectAdvisorVideoCandidate, type AdvisorMediaPlan, type AdvisorMediaSource } from "@shared/manhuaAdvisorMediaEdit";
 import { runAdvisorImageEdit } from "@/lib/advisorMediaImageJob";
 
 type Receipt = { variant: "flare" | "sunburst"; status: "submitting" | "pending" | "done" | "failed"; jobId?: string; url?: string };
 type Record = { id: string; plan: AdvisorMediaPlan; previews: Receipt[]; result?: Receipt };
 type MediaOperation = Extract<CreativeVoiceProductionAction, {action:"media"}>["operation"];
-export type AdvisorMediaEditHandle = { propose: (value: unknown) => string; execute: (operation: MediaOperation) => Promise<string> };
+export type AdvisorMediaEditHandle = { inspect: () => unknown; propose: (value: unknown) => string; execute: (operation: MediaOperation) => Promise<string> };
 export type AdvisorMediaWorkspace = {
   sources: AdvisorMediaSource[]; disabled?: boolean;
   validate: (plan: AdvisorMediaPlan) => void;
   applyImage: (plan: AdvisorMediaPlan, url: string) => void;
-  editVideo: (plan: AdvisorMediaPlan) => string;
+  editVideo: (plan: AdvisorMediaPlan) => string | Promise<string>;
+  videoVersions?: (blockId: string) => {url:string;current:boolean;taskId?:string}[];
+  applyVideo?: (blockId:string,url:string,taskId?:string) => void;
 };
 export const ManhuaAdvisorMediaEdit = forwardRef<AdvisorMediaEditHandle, {
   scopeKey: string; userId: string; onAsk?: (text: string) => void; onReview?: (source: AdvisorMediaSource) => void; workspace: AdvisorMediaWorkspace; exempt?: boolean; consulting?: boolean;
@@ -47,7 +49,8 @@ export const ManhuaAdvisorMediaEdit = forwardRef<AdvisorMediaEditHandle, {
     const old = recordRef.current;
     if (old) window.localStorage.setItem(`${key}:history:${old.id}`, JSON.stringify(old));
     save({ id: crypto.randomUUID(), plan, previews: [] }); setInstruction(plan.instruction); setSelected(plan.blockId); setError("");
-    return `${plan.source.label}修改方案已放入顾问的图片／视频编辑区，等待用户查看提示词并确认。尚未生成、未扣出图费用。图片必须先Flare预览，再由用户点击确认生成Sunburst；不得自动调用。`;
+    if (plan.kind === "video") return `${plan.source.label}视频修改方案已保存，尚未提交或扣生成费。用户明确要求执行后调用creativeProduction(action=media, operation=editVideo)，页面继续确认发送内容与费用；生成后先保留原片，用户查看候选再选择采用。`;
+    return `${plan.source.label}修改方案已放入顾问的图片／视频编辑区，等待用户查看提示词并确认。尚未生成、未扣出图费用。下一步：用户明确要求生成预览时调用creativeProduction(action=media, operation=previewImage)，页面仍会确认费用。用户看过Flare并明确要求Sunburst后才调用finishImage；明确要求采用后才调用applyImage。不要重复准备相同方案，不要将方案说成已出图。`;
   }
   async function execute(operation: MediaOperation): Promise<string> {
     const r = recordRef.current;
@@ -61,6 +64,13 @@ export const ManhuaAdvisorMediaEdit = forwardRef<AdvisorMediaEditHandle, {
       if (!window.confirm("采用这张Sunburst图片？原图保留在版本历史。")) return "用户取消，未采用图片。";
       current.current.workspace.applyImage(r.plan,r.result.url);
       return "已采用Sunburst图片，原图保留在版本历史。";
+    }
+    if (operation === "applyVideo") {
+      if (r.plan.kind !== "video" || !current.current.workspace.applyVideo) throw new Error("当前没有可采用的视频方案。");
+      const candidate = selectAdvisorVideoCandidate(r.plan.source.url, current.current.workspace.videoVersions?.(r.plan.blockId) || []);
+      if (!window.confirm("采用这版视频？会先备份当前作品，原片和其他版本保留，可还原。")) return "用户取消，未采用视频。";
+      current.current.workspace.applyVideo(r.plan.blockId,candidate.url,candidate.taskId);
+      return "已采用视频候选，原片及改前备份保留；请核对本版质量。";
     }
     if (operation === "editVideo") {
       if (r.plan.kind !== "video") throw new Error("当前不是视频修改方案。");
@@ -78,7 +88,14 @@ export const ManhuaAdvisorMediaEdit = forwardRef<AdvisorMediaEditHandle, {
     }
     return JSON.stringify({changed:recordRef.current !== r,record:recordRef.current,note:"只以回执status与jobId判断结果；取消或失败不算完成。"});
   }
-  useImperativeHandle(ref, () => ({ propose, execute }));
+  useImperativeHandle(ref, () => ({ propose, execute, inspect: () => {
+    const r = recordRef.current;
+    return r ? { plan: { blockId: r.plan.blockId, kind: r.plan.kind, instruction: r.plan.instruction },
+      previews: r.previews.map(({variant,status,jobId}) => ({variant,status,jobId})),
+      result: r.result ? {status:r.result.status,jobId:r.result.jobId} : null,
+      videoVersions: r.plan.kind === "video" ? current.current.workspace.videoVersions?.(r.plan.blockId).map(({current,taskId},index)=>({index,current,taskId})) : undefined,
+      instruction: "已有修改方案。用户仅要求生成或采用时，使用creativeProduction media操作此方案，不要重新propose、删减或猜测原修改要求。" } : null;
+  } }));
   async function generate(variant: "flare" | "sunburst", resume = false) {
     const r = recordRef.current;
     if (!r || lock.current || blocked.current || !alive.current || current.current.workspace.disabled || current.current.consulting) return;
@@ -140,13 +157,21 @@ export const ManhuaAdvisorMediaEdit = forwardRef<AdvisorMediaEditHandle, {
         <figure>{record.plan.kind === "image" ? <img src={record.plan.source.url} alt="原图" className="max-h-64 w-full object-contain" /> : <video src={record.plan.source.url} controls className="max-h-64 w-full" />}<figcaption>原素材 · 保留</figcaption></figure>
         {preview?.url && <figure><img src={preview.url} alt="Flare修改预览" className="max-h-64 w-full object-contain"/><figcaption>Flare预览</figcaption></figure>}
         {record.result?.url && <figure><img src={record.result.url} alt="Sunburst修改结果" className="max-h-64 w-full object-contain"/><figcaption>新图 · 确认后填入作品</figcaption><a href={record.result.url} target="_blank" rel="noreferrer">打开图片</a></figure>}
+        {record.plan.kind === "video" && props.workspace.videoVersions?.(record.plan.blockId).map((version, index) => <figure key={version.url}>
+          <video src={version.url} controls preload="metadata" className="max-h-64 w-full" />
+          <figcaption>{version.current ? "当前采用版" : `视频候选 ${index + 1} · 尚未采用`}</figcaption>
+          {!version.current && props.workspace.applyVideo && <button className={button} disabled={disabled} onClick={() => { try {
+            if (!window.confirm("采用这版视频？会先备份当前作品，原片和其他版本保留，可还原。")) return;
+            props.workspace.applyVideo!(record.plan.blockId,version.url,version.taskId);setError("已采用此版本，原片和改前备份保留；请核对本版质量。");
+          } catch(e) { setError((e as Error).message); } }}>采用此视频版本</button>}
+        </figure>)}
       </div>
       {record.plan.kind === "image" ? <div className="flex flex-wrap gap-2">
         <button className={button} disabled={disabled || unresolved || instruction !== record.plan.instruction} onClick={() => void generate("flare")}>生成Flare预览</button>
         <button className={button} disabled={disabled || unresolved || !preview?.url || preview.status !== "done" || record.result?.status === "done" || instruction !== record.plan.instruction} onClick={() => void generate("sunburst")}>我确认，生成Sunburst</button>
         {[preview, record.result].filter((r): r is Receipt => Boolean(r && (r.status === "pending" || r.status === "submitting"))).map(r => <button key={r.variant} className={button} disabled={disabled || !r.jobId} onClick={() => void generate(r.variant, true)}>查询{r.variant}原任务（不重提）</button>)}
         {record.result?.url && <button className={button} disabled={disabled || instruction !== record.plan.instruction} onClick={() => { try { if (!window.confirm("采用这张Sunburst图片？原图保留在版本历史。")) return; props.workspace.applyImage(record.plan, record.result!.url!); setError("已采用，原图保留在版本历史。"); } catch (e) { setError((e as Error).message); } }}>采用Sunburst图片</button>}
-      </div> : <button className={button} disabled={disabled || instruction !== record.plan.instruction} onClick={() => { if (lock.current) return; lock.current = true; try { setError(props.workspace.editVideo(record.plan)); } catch(e) { setError((e as Error).message); } finally { lock.current = false; } }}>提交Seedance视频编辑（先确认）</button>}
+      </div> : <button className={button} disabled={disabled || instruction !== record.plan.instruction} onClick={async () => { if (lock.current) return; lock.current = true; setBusy(true); try { setError(await props.workspace.editVideo(record.plan)); } catch(e) { setError((e as Error).message); } finally { lock.current = false; if (alive.current) setBusy(false); } }}>提交Seedance视频编辑（先确认）</button>}
       {unresolved && <p className="text-xs text-amber-200">任务正在处理或回执未决。刷新后查询原编号；没有编号时请核查任务记录，不要重新生成。</p>}
       <button className={button} onClick={download}>下载修改记录</button>
     </>}

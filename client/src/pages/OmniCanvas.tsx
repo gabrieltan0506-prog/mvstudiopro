@@ -1,5 +1,6 @@
+import { resolveAdvisorMediaReferenceUrl } from "@/lib/advisorMediaImageJob";
 import { CANVAS_IMAGE_CREDITS_PER_SHOT, CANVAS_IMAGE_CREDITS_BATCH } from "@shared/canvasGenerationPricing";
-import { assertAdvisorMediaSource, type AdvisorMediaPlan, type AdvisorMediaSource } from "@shared/manhuaAdvisorMediaEdit";
+import { isAdvisorMediaSourceUrl, assertAdvisorMediaSource, type AdvisorMediaPlan, type AdvisorMediaSource } from "@shared/manhuaAdvisorMediaEdit";
 import { useManhuaTemplateCatalogEvents } from "@/hooks/useManhuaTemplateCatalogEvents";
 import { useManhuaAdvisorPreference } from "@/hooks/useManhuaAdvisorPreference";
 import { ManhuaLocalRecovery } from "@/components/ManhuaLocalRecovery";
@@ -428,6 +429,7 @@ import {
   importLocalMediaRecords,
   rehydrateBlocksFromLocalMedia,
   resolveUrlForLocalPersist,
+  resolveUrlForCloudSync,
   scheduleCacheCanvasMediaToLocalStore,
 } from "@/lib/manhuaLocalMediaStore";
 import {
@@ -8948,6 +8950,7 @@ function OmniCanvasWorkspace() {
         preservePreparedTargetBlocks?: boolean;
         /** 避免 setState 与立即运行之间竞态：本次执行直接采用这些完整节点。 */
         preparedTargetBlocks?: CanvasBlock[];
+        deferVideoEditAdoption?: boolean;
         /** 质检试片要求一次提交时使用。 */
         maxRetries?: number;
         stopOnError?: boolean;
@@ -9305,6 +9308,7 @@ function OmniCanvasWorkspace() {
               preservePreparedTargetBlocks:
                 opts?.pilotRun || opts?.preservePreparedTargetBlocks === true,
               ensureOptions,
+              deferVideoEditAdoption: opts?.deferVideoEditAdoption,
               maxRetries: opts?.pilotRun ? 0 : opts?.maxRetries,
               stopOnError: opts?.pilotRun ? true : opts?.stopOnError,
               pilotRun: opts?.pilotRun === true,
@@ -9657,19 +9661,20 @@ function OmniCanvasWorkspace() {
   );
 
   const handleVideoEditClip = useCallback(
-    (clipBlockId: string, instructionZh: string) => {
+    async (clipBlockId: string, instructionZh: string) => {
       if (factoryBusy) {
         toast.message("请等待当前生成结束");
         return "未提交，请查看工作区提示。";
       }
       const hit = blocksRef.current.find((block) => block.id === clipBlockId);
-      const sourceUrl = String(hit?.outputUrl || hit?.outputUrls?.[0] || "").trim();
+      const displayUrl = String(hit?.outputUrl || hit?.outputUrls?.[0] || "").trim();
+      let sourceUrl = resolveUrlForCloudSync(displayUrl) || displayUrl;
       const instruction = String(instructionZh || "").replace(/\s+/g, " ").trim().slice(0, 240);
       if (!canUseSeedance25) {
         toast.error("当前账号未开放高级视频编辑");
         return "未提交，请查看工作区提示。";
       }
-      if (!hit || !/^https?:\/\//i.test(sourceUrl)) {
+      if (!hit || !isAdvisorMediaSourceUrl(sourceUrl)) {
         toast.error("没有可编辑的原片");
         return "未提交，请查看工作区提示。";
       }
@@ -9685,6 +9690,10 @@ function OmniCanvasWorkspace() {
       if (!window.confirm("将生成一个局部编辑版；原片会保留，可随时切回。继续？")) {
         return "未提交，请查看工作区提示。";
       }
+      try { sourceUrl = await resolveAdvisorMediaReferenceUrl(sourceUrl); }
+      catch (error) { toast.error(error instanceof Error ? error.message : "原片读取失败，未提交"); return "原片读取失败，未提交视频编辑。"; }
+      const latest = blocksRef.current.find(block => block.id === clipBlockId);
+      if (latest !== hit) return "原片已变化，请重新检查后再编辑，未提交。";
       const episodeIndex = getBlockEpisodeIndex(hit) ?? writerFocusEpisode;
       const localFrag = resolveClipLocalSegmentIndex(hit.id, hit.prompt, episodeIndex);
       const preparedBlock: CanvasBlock = {
@@ -9720,6 +9729,7 @@ function OmniCanvasWorkspace() {
         targetBlockIds: [clipBlockId],
         preservePreparedTargetBlocks: true,
         preparedTargetBlocks: [preparedBlock],
+        deferVideoEditAdoption: true,
         bypassPilotGate: true,
       });
       return "已进入视频编辑预检；请完成发送内容与费用确认。任务进度请查看原成片节点，尚未生成完成。";
@@ -9734,8 +9744,9 @@ function OmniCanvasWorkspace() {
   );
 
   const advisorMediaSourceList = (): AdvisorMediaSource[] => blocksRef.current.flatMap(b => {
-    const url = String(b.outputUrl || b.outputUrls?.[0] || (b.kind === "image" ? b.refImageUrl : "") || "");
-    if (b.archivedFromPreviousScript || !["image", "video"].includes(b.kind) || !/^https?:\/\//i.test(url)) return [];
+    const displayUrl = String(b.outputUrl || b.outputUrls?.[0] || (b.kind === "image" ? b.refImageUrl : "") || "");
+    const url = resolveUrlForCloudSync(displayUrl) || displayUrl;
+    if (b.archivedFromPreviousScript || !["image", "video"].includes(b.kind) || !isAdvisorMediaSourceUrl(url)) return [];
     return [{ blockId: b.id, kind: b.kind as "image" | "video", url,
       label: `第${getBlockEpisodeIndex(b) ?? writerFocusEpisode}集 · ${b.kind === "image" ? "图片" : "视频"} · ${b.id}`,
       revision: JSON.stringify({ scope: manhuaOutboundScope(b.id), prompt: b.prompt, aspectRatio: b.aspectRatio }),
@@ -13733,7 +13744,24 @@ function OmniCanvasWorkspace() {
             // Persist before mutating active canvas; a failed save cannot replace the original.
             if (!saveCanvasState(next, edges)) throw new Error("画布保存失败，未采用图片；结果仍保留在顾问区"); blocksRef.current = next; setBlocks(next);
           },
-          editVideo: plan => { validateAdvisorMediaEdit(plan); if (plan.kind !== "video") throw new Error("请选择视频"); backupVoiceProduction(); return handleVideoEditClip(plan.blockId, plan.instruction) || "未提交"; },
+          videoVersions: blockId => {
+            const b = blocksRef.current.find(x=>x.id===blockId && x.kind==="video" && !x.archivedFromPreviousScript);
+            if (!b) return [];
+            const url = (v:string) => resolveUrlForCloudSync(v) || v;
+            return Array.from(new Set([b.outputUrl,...(b.outputUrls||[])].filter((v):v is string=>Boolean(v)).map(url)))
+              .map(v=>({url:v,current:v===url(b.outputUrl||""),taskId:b.videoTaskId}));
+          },
+          applyVideo: (blockId,url,taskId) => {
+            const b = blocksRef.current.find(x=>x.id===blockId && x.kind==="video" && !x.archivedFromPreviousScript);
+            if (factoryBusy || writerBusy || cloudConflict || !b || b.manhuaGenerationHold || b.status==="running" || b.videoTaskStatus==="queued" || b.videoTaskStatus==="running" || b.videoTaskId!==taskId) throw new Error("素材或任务已变化，请重新核对版本，未采用。");
+            const selected = [b.outputUrl,...(b.outputUrls||[])].find(v=>v && (resolveUrlForCloudSync(v)||v)===url);
+            if (!selected) throw new Error("该候选不属于当前片段，未采用。");
+            backupVoiceProduction();
+            const next = blocksRef.current.map(x=>x.id===blockId ? {...x,outputUrl:selected,outputUrls:Array.from(new Set([selected,x.outputUrl,...(x.outputUrls||[])].filter((v):v is string=>Boolean(v)))),manhuaClipQuality:undefined,lastFrameUrl:undefined,error:undefined,status:"done" as const} : x);
+            if (!saveCanvasState(next,edges)) throw new Error("保存失败，未采用视频，候选与备份保留。");
+            blocksRef.current=next;setBlocks(next);
+          },
+          editVideo: async plan => { validateAdvisorMediaEdit(plan); if (plan.kind !== "video") throw new Error("请选择视频"); backupVoiceProduction(); return await handleVideoEditClip(plan.blockId, plan.instruction) || "未提交"; },
         }}
         voiceTargets={(writerPack?.episodes || []).flatMap(e => [
           { episode: e.index, label: e.title },

@@ -640,7 +640,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
           const abort = () => reply("语音已结束，已提交的审阅继续在原顾问保存，不重提");
           signal.addEventListener("abort", abort, {once:true});
           if (!send(`【影片审阅】${question}`, undefined, false, undefined, reply, {videoUri:source.url,blockId:source.blockId,revision:source.revision,label:source.label})) reply();
-        })} mediaSources={props.mediaWorkspace?.sources} onProposeMediaEdit={proposal => { if (!mediaEditRef.current) throw new Error("素材编辑区尚未就绪"); return mediaEditRef.current.propose(proposal); }} onProductionAction={async (action, signal) => {
+        })} onInspectMedia={() => mediaEditRef.current?.inspect() || null} mediaSources={props.mediaWorkspace?.sources} onProposeMediaEdit={proposal => { if (!mediaEditRef.current) throw new Error("素材编辑区尚未就绪"); return mediaEditRef.current.propose(proposal); }} onProductionAction={async (action, signal) => {
           if (signal.aborted) throw new Error("语音已结束，未提交");
           if (action.action === "media") {
             if (!mediaEditRef.current) throw new Error("请打开当前作品的素材修改区。");

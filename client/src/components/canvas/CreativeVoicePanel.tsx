@@ -15,7 +15,7 @@ export function CreativeVoicePanel(props: {
   onProductionAction?: (action: CreativeVoiceProductionAction, signal: AbortSignal) => Promise<string>;
   onNovelAction?: (action: CreativeVoiceNovelAction, signal: AbortSignal) => Promise<string>;
   onReviewFilm?: (blockId: string, question: string, signal: AbortSignal) => Promise<string | undefined>;
-  mediaSources?: AdvisorMediaSource[]; onProposeMediaEdit?: (proposal: AdvisorMediaProposal) => string;
+  onInspectMedia?: () => unknown; mediaSources?: AdvisorMediaSource[]; onProposeMediaEdit?: (proposal: AdvisorMediaProposal) => string;
   targets?: CreativeVoiceTarget[]; onNavigate?: (target: CreativeVoiceTarget) => string;
 }) {
   const { user } = useAuth();
@@ -224,7 +224,7 @@ export function CreativeVoicePanel(props: {
   }
   function runWorkflow(action: CreativeVoiceAction): string {
     const current = callbacks.current;
-    if (action.action === "inspect") return JSON.stringify({ novelEditing: Boolean(current.onNovelAction), production: Boolean(current.onProductionAction), mediaSources: current.mediaSources?.map(({blockId,kind,label})=>({blockId,kind,label})) || [], targets: current.targets || [], context: current.context.slice(0, 10000), notes: reviewsRef.current.slice(-10), playerTime: selectedVideo()?.currentTime, frameShared: !!sharedVideo.current, audioShared: !!inputs.current.video });
+    if (action.action === "inspect") return JSON.stringify({ novelEditing: Boolean(current.onNovelAction), production: Boolean(current.onProductionAction), media: current.onInspectMedia?.() || null, mediaSources: current.mediaSources?.map(({blockId,kind,label})=>({blockId,kind,label})) || [], targets: current.targets || [], context: current.context.slice(0, 10000), notes: reviewsRef.current.slice(-10), playerTime: selectedVideo()?.currentTime, frameShared: !!sharedVideo.current, audioShared: !!inputs.current.video });
     if (current.disabled) throw new Error("当前顾问或工作区正在处理任务，请等待后再操作。");
     const target = action.episode ? resolveVoiceTarget(current.targets || [], action.episode, action.shot) : undefined;
     if (action.action === "navigate") {

@@ -297,3 +297,28 @@ describe("已有原片编辑不重新制作资产", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
+
+it("顾问视频编辑候选不自动采用，发布与返回均保留原片质检和尾帧",async()=>{
+ const target=preparedEdit();const snapshots:CanvasBlock[][]=[];
+ vi.spyOn(canvasRunBlock,"runCanvasBlock").mockResolvedValue({outputUrl:"https://test.invalid/candidate.mp4",lastFrameUrl:"https://test.invalid/new-tail.jpg"});
+ const result=await runManhuaDramaFactoryPipeline({deps:{optimizeCopy:async()=>""},blocks:[target],edges:[],episodeIndex:1,untilStage:"clip",forceFromStage:"clip",fragmentShotIndex:2,targetBlockIds:[target.id],preservePreparedTargetBlocks:true,deferVideoEditAdoption:true,onBlocksChange:b=>snapshots.push(b)});
+ expect(result.completedIds).toEqual([target.id]);
+ for(const snapshot of [...snapshots,result.blocks]){const block=snapshot.find(b=>b.id===target.id)!;expect(block.outputUrl).toBe(target.outputUrl);expect(block.lastFrameUrl).toBe(target.lastFrameUrl);expect(block.manhuaClipQuality).toEqual(target.manhuaClipQuality)}
+ expect(result.blocks[0].outputUrls).toContain("https://test.invalid/candidate.mp4");expect(result.blocks[0].error).toContain("原片仍在使用");
+});
+
+it("工厂编辑发送前的意图与任务编号都进入持久化副本", async () => {
+  const target = preparedEdit(); const published: CanvasBlock[][] = [];
+  const callback = vi.fn();
+  const intent = {intentId:"gi-edit-pending",status:"submitted"} as never;
+  vi.spyOn(canvasRunBlock,"runCanvasBlock").mockImplementation(async (deps, b) => {
+    deps.onCanvasIntentChanged?.(b.id,intent);
+    expect(published.at(-1)?.find(x=>x.id===b.id)?.videoIntentId).toBe("gi-edit-pending");
+    deps.onVideoTaskCreated?.(b.id,{taskId:"edit-running",engine:"seedance-2.5"});
+    throw new TypeError("Failed to fetch");
+  });
+  const result = await runManhuaDramaFactoryPipeline({deps:{optimizeCopy:async()=>"",onCanvasIntentChanged:callback},blocks:[target],edges:[],episodeIndex:1,untilStage:"clip",forceFromStage:"clip",targetBlockIds:[target.id],preservePreparedTargetBlocks:true,onBlocksChange:b=>published.push(b)});
+  const [restored] = cloudDraftBlocksToCanvas(buildLocalCloudDraftSnapshot({writerSession:{},blocks:result.blocks,edges:[]}).canvas.blocks);
+  expect(restored).toMatchObject({videoIntentId:"gi-edit-pending",videoIntentStatus:"submitted",videoTaskId:"edit-running",outputUrl:target.outputUrl});
+  expect(callback).toHaveBeenCalledWith(target.id,intent);
+});

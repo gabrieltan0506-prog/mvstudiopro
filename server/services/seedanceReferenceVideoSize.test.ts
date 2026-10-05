@@ -60,3 +60,11 @@ describe("WaveSpeed原单恢复与生成阻断", () => {
     expect(deps.submit).not.toHaveBeenCalled(); expect(deps.poll).toHaveBeenCalledTimes(1);
   });
 });
+
+it("白模放大使用真实视频路径与所有权校验，不能用mock掩盖mp4登记失败",async()=>{
+ const {registerCanvasMediaOwner,verifyCanvasMediaOwnership,__resetCanvasMediaOwnershipCacheForTests}=await import("./canvasMediaOwnership.js");__resetCanvasMediaOwnershipCacheForTests();const owners=new Map();const store={get:async(p:string)=>owners.get(p)||null,createIfAbsent:async(p:string,record:any)=>{if(owners.has(p))return "exists" as const;owners.set(p,record);return "created" as const}};
+ const record:ReferenceVideoUpscaleRecord={width:480,height:270,duration:23,predictionId:"existing-upscale"};const deps=dependencies();deps.poll.mockResolvedValue({state:"completed",sourceUrl:"https://example.test/done.mp4"} as never);deps.probe.mockResolvedValue({width:1920,height:1080,duration:23});const object="growth-camp/videos/1791165600000-seedance-i2v.mp4";deps.mirror.mockResolvedValue(`https://storage.googleapis.com/${getGcsBucketName()}/${object}?signed=fixture`);
+ const real={...deps,register:(x:any)=>registerCanvasMediaOwner({...x,store}),verify:(uid:number,p:string)=>verifyCanvasMediaOwnership(uid,p,{store,skipCache:true})};
+ await normalizeSeedanceReferenceVideo("https://example.test/original.mp4",91003,record,async()=>{},"isolated",real);expect(record.outputObject).toBe(object);expect(await verifyCanvasMediaOwnership(91004,object,{store,skipCache:true})).toBe(false);expect(await registerCanvasMediaOwner({objectPath:object,ownerUserId:91004,store})).toBe("conflict");await normalizeSeedanceReferenceVideo("https://example.test/original.mp4",91003,record,async()=>{},"isolated",real);expect(deps.submit).not.toHaveBeenCalled();expect(deps.poll).toHaveBeenCalledTimes(1);
+ expect(await registerCanvasMediaOwner({objectPath:"growth-camp/videos/../private.mp4",ownerUserId:91003,store})).toBe("invalid");
+});

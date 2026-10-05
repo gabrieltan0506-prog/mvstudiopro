@@ -66,3 +66,9 @@ describe("Live真实连接器协议（离线）", () => {
     expect(creativeVoiceInputSchema.safeParse({ type: "start", purpose: "discussion", context: "", projectKey: "p" }).success).toBe(false);
   });
 });
+it("视频候选采用工具只传操作，不接受模型跳过确认或自填结果URL", () => {
+ const valid=normalizeVoiceMessage(false,{toolCall:{functionCalls:[{id:"video-apply",name:"creativeProduction",args:{action:"media",operation:"applyVideo"}}]}});
+ expect(valid).toContainEqual({type:"production",id:"video-apply",action:{action:"media",operation:"applyVideo"}});
+ const invalid=normalizeVoiceMessage(false,{toolCall:{functionCalls:[{id:"video-invalid",name:"creativeProduction",args:{action:"media",operation:"applyVideo",confirmed:true,url:"https://foreign/video.mp4"}}]}});
+ expect(invalid.some(x=>x.type==="toolRejected")).toBe(true);
+});

@@ -617,6 +617,8 @@ async function startServer() {
       const { signGcsObjectPathV4ReadUrl, getGcsBucketName } = await import("../services/gcs");
       const url = signGcsObjectPathV4ReadUrl(getGcsBucketName(), objectPath, 3600);
       res.setHeader("Cache-Control", "private, max-age=0");
+      // Authenticated JSON read URL avoids credentialed cross-origin fetch redirects.
+      if (req.query.format === "json") return res.json({ url });
       return res.redirect(302, url);
     } catch (error) {
       console.error("[CanvasMedia] sign failed:", error);

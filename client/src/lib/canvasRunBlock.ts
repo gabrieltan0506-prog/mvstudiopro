@@ -675,6 +675,8 @@ type SeedanceProductVideoResult = {
   workMode?: SeedanceEvolinkMode;
 };
 
+class ConfirmedCanvasVideoFailure extends Error {}
+
 /** 画布成片异步任务：短轮询 status，避免单条 HTTP 长等被部署掐断。 */
 async function pollCanvasVideoTask(
   taskId: string,
@@ -717,7 +719,7 @@ async function pollCanvasVideoTask(
       };
     }
     if (statusJson.status === "failed") {
-      throw new Error(statusJson.error || "成片生成失败，积分已自动退回");
+      throw new ConfirmedCanvasVideoFailure(statusJson.error || "成片生成失败，请查看退款记录");
     }
   }
   throw new Error("成片仍在生成中，请稍后在作品页查看，或稍后再试");
@@ -2270,7 +2272,8 @@ function resolveCanvasIntentForBlockRun(
     settled: () => mark({ status: "settled" }),
     failed: (error) => {
       // 没发出去就失败（确认不符 / 编译不过 / 健康门）：这次意图作废，下次同输入照常新建
-      if (!sent) {
+      if (!sent || (block.seedance25WorkMode === "video_edit" && error instanceof ConfirmedCanvasVideoFailure)) {
+        // 视频编辑不自动重试；明确终态失败后，下一次用户确认才能新建意图。
         mark({ status: "settled" });
         return;
       }
@@ -2810,6 +2813,7 @@ async function runCanvasBlockInner(
       );
       const edited = await runSeedanceProductVideo(editPrompt, undefined, ar, {
         ...editOpts,
+        onTaskId: taskId => deps.onVideoTaskCreated?.(block.id, { taskId, engine: "seedance-2.5" }),
         beforeSubmit: editGuard, preparedBody: editPrepared.body,
       });
       return {
