@@ -486,3 +486,11 @@ describe("manhuaCustomAssetRefs", () => {
     expect(refs.find(r => r.id === "t3")?.labelZh).toBe("傅临渊");
   });
 });
+
+it("生成回执与React回填共用一次分配的资产ID，重入不换已有ID",()=>{
+ const input={newAssetId:"generated-one",url:"https://example.com/zhou.png",role:"character" as const,seedLibraryId:"zhou",refDuty:"look" as const};
+ const receipt=upsertGeneratedManhuaCustomAssetRef([],input);
+ const state=upsertGeneratedManhuaCustomAssetRef([],input);
+ expect(receipt[0].id).toBe("generated-one");expect(state[0].id).toBe(receipt[0].id);
+ expect(upsertGeneratedManhuaCustomAssetRef(state,{...input,newAssetId:"unused"})[0].id).toBe("generated-one");
+});

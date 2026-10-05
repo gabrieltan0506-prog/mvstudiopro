@@ -8447,6 +8447,7 @@ function OmniCanvasWorkspace() {
             ? "look"
             : "identity";
         const upsertInput = {
+          newAssetId: makeManhuaCustomAssetId(),
           url: refUrl,
           role:
             plan.kind === "charsheet"
