@@ -19,8 +19,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10.4.1
+        # Resolve the version once, from the existing packageManager integrity pin.
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
