@@ -1091,7 +1091,16 @@ async function startServer() {
         // 不起 stale reaper：reaper 判 manhua_assemble_final 活性要读 /data 上的 paidJobLedger，
         // rig 没挂卷会读到空账本，把 app 上仍在心跳的合成任务误判失活且退不了款；app 的 reaper
         // 只看 updatedAt，足以清理 rig 崩掉留下的 post_prod running 行。
-        console.warn("[boot] JOB_WORKER_ROLE=rig：跳过学习/配乐启动恢复与 stale reaper，只起 Blender 后期 worker");
+        console.warn("[boot] JOB_WORKER_ROLE=rig：跳过学习/配乐启动恢复与 stale reaper，启动已配置的 rig 媒体 worker");
+        const { heavyWorkerSplitEnabled } = await import("../jobs/workerRole");
+        if (heavyWorkerSplitEnabled()) {
+          try { await (await import("../jobs/heavyMediaWorker")).assertHeavyWorkerReady(); }
+          catch {
+            console.error("[heavy-worker] not ready; no jobs claimed");
+            setTimeout(() => { void recoverManhuaThenStartWorkers(); }, 30_000).unref();
+            return;
+          }
+        }
         startJobWorker();
         return;
       }
@@ -1208,10 +1217,13 @@ async function startServer() {
     shuttingDown = true;
     stopVercelPreviewScheduler();
     console.warn(`[server] 收到 ${signal} 信号，开始优雅退出 + 兜底退积分…`);
+    // Heavy rig must be allowed to close children and persist results within Fly's 300s window.
+    // This is explicit shutdown cleanup, never the long-task/heartbeat deadline.
+    const shutdownGraceMs = resolveJobWorkerRole() === "rig" && process.env.MANHUA_HEAVY_WORKER_SPLIT === "1" ? 250_000 : 30_000;
     const forceExitTimer = setTimeout(() => {
-      console.warn("[server] 优雅退出超时（30s），强制退出 process");
+      console.warn(`[server] 优雅退出超过 ${shutdownGraceMs / 1000}s，强制退出 process`);
       process.exit(0);
-    }, 30_000);
+    }, shutdownGraceMs);
     forceExitTimer.unref?.();
     (async () => {
       let draining: Promise<void> | undefined;
@@ -1220,6 +1232,8 @@ async function startServer() {
         const { stopPostProdRecovery } = await import("../jobs/postProdRecovery");
         stopPostProdRecovery();
         draining = drainPostProdOnShutdown().catch(error => { console.error("[post-prod] shutdown cleanup", error); });
+        // Only app owns /data and paid holds. Rig shutdown must never inspect/refund another machine's ledger.
+        if (resolveJobWorkerRole() === "rig") return;
         const { reapStuckPaidJobs, writeAuditLog } = await import("../services/paidJobLedger");
         const result = await reapStuckPaidJobs({
           forceAll: true,

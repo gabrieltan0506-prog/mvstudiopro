@@ -73,6 +73,11 @@ async function runRemoteFfmpeg(
   timeoutMs = 300_000,
 ): Promise<void> {
   try {
+    const { shouldDispatchHeavyMedia, dispatchLearnCommand } = await import("./heavyLearnMedia");
+    if (args[args.length - 1] === "-" && shouldDispatchHeavyMedia()) {
+      await dispatchLearnCommand("ffmpeg", ["-nostdin", "-hide_banner", "-loglevel", "error", "-y", ...args], { timeout: timeoutMs });
+      return;
+    }
     await execFileAsync("ffmpeg", ["-nostdin", "-hide_banner", "-loglevel", "error", "-y", ...args], {
       // 单核/双核机上的 10 分钟远程媒体解码会明显慢于本地文件。
       timeout: timeoutMs,

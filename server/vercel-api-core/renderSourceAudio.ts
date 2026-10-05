@@ -1,5 +1,3 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { RenderWorkflowInput } from "./renderTypes.js";
@@ -8,7 +6,9 @@ import { buildRenderedSubtitleTimeline, manhuaRenderOverlap, normalizeManhuaSubt
   subtitleCuesForRenderedSource } from "../../shared/manhuaRenderedSubtitle.js";
 import type { ManhuaSubtitleCue } from "../../shared/manhuaEditSubtitle.js";
 
-const execFileAsync = promisify(execFile);
+import { execHeavyMedia } from "../services/heavyMediaProcess";
+import { heavyMediaSignal } from "../jobs/heavyMediaContext";
+const execFileAsync = execHeavyMedia;
 const SAMPLE_RATE = 48_000;
 const FRAME_RATE = 30;
 
@@ -59,7 +59,8 @@ export function resolveSourceTrim(
 
 async function mediaTool(command: "ffmpeg" | "ffprobe", args: string[]) {
   return execFileAsync(command, args, {
-    timeout: 15 * 60_000,
+    timeout: heavyMediaSignal.getStore() ? undefined : 15 * 60_000,
+    signal: heavyMediaSignal.getStore(),
     maxBuffer: 4 * 1024 * 1024,
   });
 }

@@ -5,6 +5,7 @@ export function runChildUntilClosed(
   command: string, args: string[], signal: AbortSignal,
   onPid: (pid: number | undefined) => void = () => {},
   killGraceMs = 5_000,
+  options: { maxBuffer?: number } = {},
 ): Promise<{ stdout: string; stderr: string }> {
   signal.throwIfAborted();
   return new Promise((resolve, reject) => {
@@ -12,7 +13,7 @@ export function runChildUntilClosed(
     let output = { stdout: "", stderr: "" };
     let killTimer: ReturnType<typeof setTimeout> | undefined;
     // Node's signal option rejects on abort, before close. Manage the signal ourselves.
-    const child = execFile(command, args, { maxBuffer: 16 * 1024 * 1024, encoding: "utf8" },
+    const child = execFile(command, args, { maxBuffer: options.maxBuffer ?? 16 * 1024 * 1024, encoding: "utf8" },
       (error, stdout, stderr) => { failure = error; output = { stdout, stderr }; });
     onPid(child.pid);
     const abort = () => {
@@ -27,7 +28,7 @@ export function runChildUntilClosed(
       if (killTimer) clearTimeout(killTimer);
       onPid(undefined);
       if (signal.aborted) reject(signal.reason ?? new Error("media task cancelled"));
-      else if (failure) reject(failure);
+      else if (failure) reject(Object.assign(failure, output));
       else resolve(output);
     });
     if (signal.aborted) abort();

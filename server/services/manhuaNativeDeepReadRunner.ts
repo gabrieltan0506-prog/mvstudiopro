@@ -38,6 +38,7 @@ export { NATIVE_DEEP_READ_TIMELINE_TOLERANCE_SEC, type NativeDeepReadExcludedAdR
 import { assertNativeRequiredSummary, restoreNativeRequiredSummary } from "../../shared/manhuaNativeRequiredSummary.js";
 import crypto from "node:crypto";
 import { execFile } from "node:child_process";
+import { shouldDispatchHeavyMedia, dispatchLearnCommand } from "./heavyLearnMedia";
 import { readFile, stat, statfs, unlink } from "node:fs/promises";
 import { Agent, fetch as undiciFetch, type Dispatcher } from "undici";
 import {
@@ -940,16 +941,10 @@ function run(
   timeoutMs = 600_000,
   abortSignal?: AbortSignal,
 ): Promise<string> {
-  return new Promise((resolve, reject) =>
-    // signal 直通：取消时 ffmpeg 会被杀掉，否则一段 18 分钟的切片要跑完才停
-    execFile(
-      cmd,
-      args,
-      { maxBuffer: 1 << 28, timeout: timeoutMs, signal: abortSignal },
-      (err, stdout, stderr) =>
-        err ? reject(new Error(String(stderr || err).slice(0, 300))) : resolve(stdout),
-    ),
-  );
+  if (shouldDispatchHeavyMedia()) return dispatchLearnCommand(cmd, args, { timeout: timeoutMs, maxBuffer: 1 << 28, signal: abortSignal }).then(result => result.stdout);
+  return import("./heavyMediaProcess").then(({ execHeavyMedia }) => execHeavyMedia(cmd, args,
+    { maxBuffer: 1 << 28, timeout: timeoutMs, signal: abortSignal })).then(result => result.stdout);
+
 }
 
 /** 官方单视频 2000 帧上限内留 10% 余量，避免取整后越界。 */
@@ -2117,7 +2112,7 @@ export type NativeDeepReadMediaPreparationDeps = {
   sleepMs?: (ms: number) => Promise<void>;
 };
 
-const defaultMediaPreparationDeps: NativeDeepReadMediaPreparationDeps = {
+export const defaultMediaPreparationDeps: NativeDeepReadMediaPreparationDeps = {
   resolveLocalUpload: async (input) => {
     const { resolveOwnedManhuaLocalVideoUpload } = await import("./manhuaLocalVideoUploadService.js");
     return resolveOwnedManhuaLocalVideoUpload(input);
@@ -2230,6 +2225,47 @@ export async function prepareEpisodeVideos(
     ) => void | Promise<void>;
   },
 ): Promise<PreparedNativeVideo[]> {
+  if (deps === defaultMediaPreparationDeps) {
+    const { shouldDispatchHeavyMedia, requireHeavyMediaContext } = await import("../jobs/heavyMediaContext");
+    if (shouldDispatchHeavyMedia()) {
+      const { dispatchHeavyMedia } = await import("../jobs/heavyMediaQueue");
+      const { stageHeavyMediaFile } = await import("./heavyLearnMedia");
+      const { resolveNodes, localVideoUpload, ...serializable } = episode;
+      let stagedSource: string | undefined;
+      if (localVideoUpload) {
+        if (localVideoUpload.userId !== requireHeavyMediaContext().userId) throw new Error("学习媒体归属不一致");
+        const source = await deps.resolveLocalUpload!(localVideoUpload);
+        if (source.sha256 !== localVideoUpload.sha256 || Math.abs(source.durationSec - episode.sourceDurationSec) > 1) {
+          throw new Error("本地上传原片已变化，未发出模型请求");
+        }
+        stagedSource = await stageHeavyMediaFile(source.localPath, abortSignal);
+      }
+      const nodes: NativeDeepReadMediaNode[] = []; // resolveNodes remains on the original owner, requested per native attempt
+      let resolvedSequence = 0;
+      let consumedGroups = 0;
+      let lastMessage: string | undefined;
+      return dispatchHeavyMedia<PreparedNativeVideo[]>({ kind: "learn_prepare", episode: { ...serializable, localVideoUpload }, nodes, stagedSource,
+        limits: { cutConcurrency: limits?.cutConcurrency, uploadConcurrency: limits?.uploadConcurrency, preparedGroupSize: limits?.preparedGroupSize } }, {
+        signal: abortSignal,
+        onProgress: async (progress, reply) => {
+          consumedGroups = Math.max(consumedGroups, progress.acknowledgedGroups ?? 0);
+          resolvedSequence = Math.max(resolvedSequence, progress.resolvedNodeRequest ?? 0);
+          if (progress.nodeRequest && progress.nodeRequest > resolvedSequence) {
+            const freshNodes = await resolveNodes();
+            await reply({ nodeResponse: { sequence: progress.nodeRequest, nodes: freshNodes } });
+            resolvedSequence = progress.nodeRequest;
+          }
+          if (progress.message && progress.message !== lastMessage) {
+            await limits?.onSourceFetchProgress?.(progress.message); lastMessage = progress.message;
+          }
+          for (; consumedGroups < (progress.groups?.length ?? 0); consumedGroups++) {
+            await limits?.onPreparedGroup?.(progress.groups![consumedGroups]);
+            await reply({ consumedGroups: consumedGroups + 1 });
+          }
+        },
+      });
+    }
+  }
   const segments = validateNativeDeepReadSegments(episode.segments);
   // 播报是旁路：写不进去不影响备料
   const reportMedia = async (zh: string) => {
