@@ -29,3 +29,16 @@ export function createAdvisorPrevisStudio(input: {
   studio.spec = manhuaPrevisSpecSchema.parse(studio.spec);
   return studio;
 }
+
+/** One actor per confirmed identity; face and full-body references are not two people.
+ * Ambiguous same-duty references stay separate so the existing identity check can block them.
+ */
+export function selectPrevisCharacterSlots<T extends {id:string;seedLibraryId?:string|null;duty?:"identity"|"look"|null}>(slots:readonly T[]):T[] {
+  const groups=new Map<string,T[]>();
+  for(const slot of slots){const key=slot.seedLibraryId || `ref:${slot.id}`;const group=groups.get(key)||[];if(!group.some(s=>s.id===slot.id))group.push(slot);groups.set(key,group);}
+  return Array.from(groups.values()).flatMap(group=>{
+    const rank=(s:T)=>s.duty==="look"?2:s.duty==="identity"?0:1;
+    const best=Math.max(...group.map(rank));
+    return group.filter(s=>rank(s)===best);
+  });
+}

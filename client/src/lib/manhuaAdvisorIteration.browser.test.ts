@@ -22,6 +22,8 @@ const f=globalThis.fixture={asks:[],renders:[],writes:[]};const studio=createMan
 function App(){const[open,setOpen]=useState(true);const[host,setHost]=useState(null);const[previewHost,setPreviewHost]=useState(null);f.setOpen=setOpen;const[live,setLive]=useState({id:'clip-1',previsStudio:studio});f.live=live;f.bindAudio=()=>{const bgm={...createCanvasAudioCue('bgm','bgm-test'),endSec:5,approved:true,selectedTakeId:'chosen',shotZh:'人物对视'};bgm.takes=[{id:'chosen',gcsUri:'gs://test/selected.wav',previewUrl:'https://example.test/selected.wav',durationSec:5,createdAt:'test',inputKey:canvasAudioCueInputKey(bgm)}];setLive(b=>({...b,audioStudio:{...emptyCanvasAudioStudio(),cues:[bgm]}}))};return <><Surface immersive clipId='clip-1' title='本段动作白模' advisorOpen={open} onAdvisorDockChange={setHost} onPreviewHostChange={setPreviewHost} onOpenAdvisor={()=>setOpen(true)} onClose={()=>{}}><div data-scene-view>原有3D场景与白模预览</div></Surface><Panel dockHost={host} previewHost={previewHost} open={open} userId='1' confirmedProjectVersion='iteration-test' onClose={()=>setOpen(false)} templates={[]} onRequestTrial={()=>{}} previsTarget={makeAdvisorPrevisTarget('clip-1',live.previsStudio)} previsLabel='第1集 · 第1段 · 5秒' previsLaunchIssue={checkManhuaAdvisorPrevisLaunch(live)} onCheckPrevisReady={c=>checkManhuaAdvisorPrevisLaunch(live,c)} previsAudioControls={<ManhuaPrevisAudioControls compact block={live} onChange={previsStudio=>setLive(b=>({...b,previsStudio}))}/>} onPreparePrevis={c=>{const t=prepareAdvisorPrevisTrial('clip-1',live.previsStudio,c);if(live.previsStudio.audioEnabled===true)t.request.audio=buildManhuaPrevisAudio(live.audioStudio,t.request.spec);return t;}} onApplyPrevis={t=>{f.writes.push(t);return true;}} project={{context:{seriesTitle:'墨菁传',episodeIndex:1,episodeTitle:'入市',stage:'storyboard',videoModel:'未选择',writerConfirmed:true,episodeBody:'曹三逼近，阿菁挡在马前。',assetSummary:'',shotSummary:'',blockers:[]},issues:[],contextNotes:[],selectionLabel:'第1段'}}/></>}
 createRoot(document.getElementById('root')).render(<App/>);
 ` }, bundle: true, write: false, platform: "browser", format: "iife", jsx: "automatic", alias: { "@": path.resolve("client/src"), "@shared": path.resolve("shared") }, plugins: [{ name: "多轮顾问离线边界", setup(b) {
+    b.onResolve({filter:/\.\/CreativeVoicePanel$/},()=>({path:"voice",namespace:"voice-test"}));
+    b.onLoad({filter:/.*/,namespace:"voice-test"},()=>({loader:"tsx",resolveDir:process.cwd(),contents:`export function CreativeVoicePanel(props){globalThis.fixture.production=props.onProductionAction;globalThis.fixture.voiceAsk=props.onAskAdvisor;return <div>语音制作工具夹具</div>}` }));
     b.onResolve({ filter: /^@\/lib\/manhuaAdvisorStream$/ }, () => ({ path: "stream", namespace: "stream-test" }));
     b.onLoad({ filter: /.*/, namespace: "stream-test" }, () => ({ loader: "js", contents: `import {trpc} from '@/lib/trpc';export async function streamManhuaAdvisor(input,onText,onModel){onModel?.('DeepSeek V4.1 Flash · OpenRouter');onText('正在逐步输出调度建议');await new Promise(r=>setTimeout(r,30));return trpc.mvAnalysis.askPlatformSkillQa.useMutation().mutateAsync(input);}` }));
     b.onResolve({ filter: /^@\/lib\/trpc$/ }, () => ({ path: "trpc", namespace: "offline" }));
@@ -167,3 +169,21 @@ it("付费提示必须先展示明确积分，用户确认才带同额授权，�
   expect(await page.evaluate(() => (globalThis as any).fixture.renders)).toHaveLength(0);
   await page.close();
 }, 20000);
+
+it("明确语音渲染才提交Blender；普通语音讨论不渲染，取消也不消耗顾问",async()=>{
+ const context=await browser.createBrowserContext();const page=await context.newPage();page.setDefaultTimeout(6000);await page.setRequestInterception(true);
+ page.on('request',r=>r.isNavigationRequest()?void r.respond({status:200,contentType:'text/html',body:'<div id="root"></div>'}):void r.abort());
+ await page.goto('http://localhost:41829/');await page.addScriptTag({content:bundle});await page.waitForFunction(()=>!!(globalThis as any).fixture.production);
+ await page.evaluate(()=>{window.confirm=()=>false});
+ expect(await page.evaluate(()=>(globalThis as any).fixture.production({action:'renderPrevis',question:'推进镜头并渲染白模'},new AbortController().signal))).toContain('取消');
+ expect(await page.evaluate(()=>(globalThis as any).fixture.asks.length)).toBe(0);
+ await page.evaluate(()=>(globalThis as any).fixture.voiceAsk('只讨论运镜，不生成',new AbortController().signal));
+ expect(await page.evaluate(()=>(globalThis as any).fixture.renders.length)).toBe(0);
+ await page.evaluate(()=>{window.confirm=()=>true});
+ await page.evaluate(()=>(globalThis as any).fixture.production({action:'renderPrevis',question:'保留人物，镜头推进并生成白模试看'},new AbortController().signal));
+ await page.waitForFunction(()=>(globalThis as any).fixture.renders.length===1);
+ expect(await page.evaluate(()=>(globalThis as any).fixture.asks.length)).toBe(2);
+ expect(await page.evaluate(()=>(globalThis as any).fixture.renders[0].spec.cameras[0].endLens)).toBe(50);
+ expect(await page.evaluate(()=>(globalThis as any).fixture.writes.length)).toBe(0);
+ await context.close();
+},20000);

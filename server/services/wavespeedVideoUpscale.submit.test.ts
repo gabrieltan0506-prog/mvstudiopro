@@ -20,3 +20,16 @@ it("提交前证据不可写不发送付费请求", async () => {
   await expect(submitWavespeedVideoUpscale({ taskId: "test", videoUrl: "https://example.com/a.mp4", target: "2k" })).rejects.toMatchObject({ kind: "rejected" });
   expect(fetch).not.toHaveBeenCalled();
 });
+
+it("1080p参考视频规范化提交保留实际档位与证据", async () => {
+  const fetch = vi.fn(async (_url: unknown, _init?: RequestInit) => new Response(JSON.stringify({ data: { id: "reference-1080p" } }), { status: 200 }));
+  vi.stubGlobal("fetch", fetch);
+  await expect(submitWavespeedVideoUpscale({ taskId: "reference-1080p", videoUrl: "https://example.com/reference.mp4", target: "1080p" })).resolves.toEqual({ predictionId: "reference-1080p" });
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({ video: "https://example.com/reference.mp4", target_resolution: "1080p" });
+  const [evidenceDir] = await fs.readdir(dir);
+  const files = await fs.readdir(path.join(dir, evidenceDir));
+  const request = files.find(name => name.startsWith("request-") && name.endsWith("-raw.json"));
+  expect(request).toBeTruthy();
+  expect(JSON.parse(await fs.readFile(path.join(dir, evidenceDir, request!), "utf8"))).toMatchObject({ target_resolution: "1080p" });
+});

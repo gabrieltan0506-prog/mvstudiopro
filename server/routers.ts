@@ -3222,6 +3222,13 @@ export const appRouter = router({
 
   // Video PK Rating - upload video frame and get AI analysis
   mvAnalysis: router({
+    listKnowledgeCardRecovery: protectedProcedure
+      .input(z.object({ cursor: z.object({ at: z.string().datetime(), id: z.string().min(1).max(100) }).optional() }))
+      .query(async ({ctx,input}) => (await import("./services/knowledgeCardRecovery")).listKnowledgeCardRecovery(String(ctx.user.id),input.cursor)),
+    getKnowledgeCardRecovery: protectedProcedure
+      .input(z.object({ jobId:z.string().min(1).max(100) }))
+      .query(async ({ctx,input}) => (await import("./services/knowledgeCardRecovery")).getKnowledgeCardRecovery(String(ctx.user.id),input.jobId)),
+
     getWeixinChannelsCollectorStatus: adminProcedure.query(async () => {
       const store = await import("./growth/weixinChannelsMinerStore.js");
       const state = await store.getWeixinChannelsMinerState();
@@ -7180,7 +7187,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             }
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: `ADVISOR_OPERATION_FAILED：本次问答未完成${deducted.cost > 0 ? "；积分已原路退回" : ""}，请重新提问`,
+              message: `ADVISOR_OPERATION_FAILED：${operationError instanceof Error && operationError.message === "素材尚未登记,请从画布/成片里重新选择站内素材" ? "素材尚未登记，本次未发送影片" : "本次问答未完成"}${deducted.cost > 0 ? "；积分已原路退回" : ""}，请重新提问`,
             });
           }
 

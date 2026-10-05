@@ -172,3 +172,24 @@ describe("备份恢复真实消费者纯预检", () => {
     expect(result.writerSession.customAssetRefs).toHaveLength(25);
   });
 });
+
+it('顾问下载的旧稿可回填：正文、偏好、画布与导演板沿原恢复消费者校验',()=>{
+ const pack={seriesTitle:'隔离副本',episodes:[{index:1,title:'原集',body:'完整原稿'}]};
+ const raw={createdAt:'2026-10-05T00:00:00.000Z',writerPack:pack,projectBible:null,previousWriterSession:JSON.stringify({topic:'隔离副本',writerPack:pack,writerConfirmed:false}),previousFactoryPrefs:JSON.stringify({narrativeLightingId:'original-light',customAssetRefs:[]}),canvas:{blocks:[],edges:[]},directorBoardOverlays:{}};
+ const before=JSON.stringify(raw);const restored=prepareManhuaBackupRestore(raw);
+ expect(restored.writerSession.writerPack).toEqual(pack);
+ expect(restored.factoryPrefs).toMatchObject({narrativeLightingId:'original-light',directorBoardMotionOverlayBySegment:{}});
+ expect(restored.canvas).toEqual(raw.canvas);expect(JSON.stringify(raw)).toBe(before);
+ expect(()=>prepareManhuaBackupRestore({...raw,previousWriterSession:'{broken'})).toThrow(blockedMessage);
+ expect(()=>prepareManhuaBackupRestore({...raw,previousFactoryPrefs:'[]'})).toThrow(blockedMessage);
+});
+
+
+it('语音误判撤销包保留完整现状，并沿既有恢复预检拒绝坏快照', () => {
+ const snapshot = {format:'mv-manhua-cloud-draft-v1',writerSession:{writerPack:{seriesTitle:'隔离作品',episodes:[{index:1,body:'当前稿'}]}},canvas:{blocks:[],edges:[]},factoryPrefs:{narrativeLightingId:'保留灯光'}};
+ const envelope = {restorableDraft:snapshot,changes:['还原前保留']};
+ const original = JSON.stringify(envelope);
+ expect(prepareManhuaBackupRestore(envelope)).toBe(snapshot);
+ expect(JSON.stringify(envelope)).toBe(original);
+ expect(()=>prepareManhuaBackupRestore({restorableDraft:{...snapshot,canvas:{blocks:'broken'}}})).toThrow();
+});

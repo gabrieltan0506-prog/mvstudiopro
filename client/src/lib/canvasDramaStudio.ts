@@ -4379,6 +4379,8 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   keyartOnlyFromConfirmedShots?: boolean;
   /** 真实段编译上下文；所有单段/整集/续跑路径必须与工作台审阅使用同一份。 */
   ensureOptions?: ManhuaFragmentClipEnsureOptions;
+  /** 编辑结果先作为候选，用户采用前保留原片与原片质检。 */
+  deferVideoEditAdoption?: boolean;
 }): Promise<ManhuaFactoryPipelineResult> {
   if (opts.keyartOnlyFromConfirmedShots &&
     (opts.untilStage !== "keyart" || opts.episodeIndex == null || opts.keyartShotIndex != null ||
@@ -4614,9 +4616,20 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   const pausedDownstreamIds: string[] = [];
   const pausedIds = new Set<string>();
 
+  const forDisplay = (next: CanvasBlock[]): CanvasBlock[] => {
+    if (!opts.deferVideoEditAdoption || !preparedVideoEdit) return next;
+    return next.map(block => {
+      const original = requestedTargets.find(target => target.id === block.id);
+      if (!original?.outputUrl || !block.outputUrl || block.outputUrl === original.outputUrl) return block;
+      return { ...block, outputUrl: original.outputUrl,
+        outputUrls: mergeManhuaMediaVersions([block.outputUrl, ...(block.outputUrls || [])], [original.outputUrl]),
+        lastFrameUrl: original.lastFrameUrl, manhuaClipQuality: original.manhuaClipQuality,
+        error: "视频编辑候选已生成；原片仍在使用，请查看对照后选择采用。" };
+    });
+  };
   const publish = (next: CanvasBlock[]) => {
     working = next;
-    opts.onBlocksChange?.(next);
+    opts.onBlocksChange?.(forDisplay(next));
   };
 
   const sleep = (ms: number) =>
@@ -4975,6 +4988,13 @@ export async function runManhuaDramaFactoryPipeline(opts: {
         const out = await runCanvasBlock(
           {
             ...opts.deps,
+            onCanvasIntentChanged: (changedBlockId, intent) => {
+              if (changedBlockId !== blockId) return;
+              publish(working.map(b => b.id === blockId ? { ...b,
+                videoIntentId: intent.intentId, videoIntentStatus: intent.status,
+              } : b));
+              opts.deps.onCanvasIntentChanged?.(changedBlockId, intent);
+            },
             onVideoTaskCreated: (createdBlockId, info) => {
               // 任务号必须先进入编排器的真实工作副本；只写 React 会被后续整批 publish 冲掉。
               if (createdBlockId !== blockId) return;
@@ -5119,7 +5139,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       if (!alreadyLogged) {
         errors.push({ id: blockId, message: lastMessage });
       }
-      if (invalidShotSource) return { blocks: working, completedIds, skippedIds, errors, awaitingConfirmationIds, pausedDownstreamIds };
+      if (invalidShotSource) return { blocks: forDisplay(working), completedIds, skippedIds, errors, awaitingConfirmationIds, pausedDownstreamIds };
       if (lastMessage === "已取消" || opts.signal?.aborted) break;
       if (awaitingConfirmation) {
         // 本段没提交没扣费，等用户重新确认。它的下游依赖段一并暂停（上游产物都没定，
@@ -5290,5 +5310,5 @@ export async function runManhuaDramaFactoryPipeline(opts: {
     }
   }
 
-  return { blocks: working, completedIds, skippedIds, errors, awaitingConfirmationIds, pausedDownstreamIds };
+  return { blocks: forDisplay(working), completedIds, skippedIds, errors, awaitingConfirmationIds, pausedDownstreamIds };
 }

@@ -144,8 +144,9 @@ export function resolveCanvasVideoTaskResume(
     const currentOutputUrl = cleanUrl(current.outputUrl);
     const userChangedSelection =
       currentOutputUrl !== snapshot.selectedOutputUrl;
+    const editCandidate = current.id.startsWith("clip-") && current.seedance25WorkMode === "video_edit";
     const keepUserSelection =
-      userChangedSelection &&
+      (userChangedSelection || editCandidate) &&
       Boolean(currentOutputUrl) &&
       currentOutputUrl !== videoUrl;
     const selectedOutputUrl = keepUserSelection ? currentOutputUrl : videoUrl;
@@ -169,7 +170,7 @@ export function resolveCanvasVideoTaskResume(
         outputUrl: selectedOutputUrl,
         outputUrls,
         status: "done",
-        error: undefined,
+        error: editCandidate && keepUserSelection ? "视频编辑候选已恢复；原片仍在使用，请查看对照后选择采用。" : undefined,
         ...(selectedNewOutput ? { lastFrameUrl: undefined } : {}),
         ...(selectedNewOutput && current.id.startsWith("clip-")
           ? {

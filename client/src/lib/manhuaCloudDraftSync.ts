@@ -483,6 +483,8 @@ export function cloudDraftBlocksToCanvas(
       pathCameraRecipeId: raw.pathCameraRecipeId,
       // 长排队任务字段随云草稿往返:换机/刷新也能接管轮询(审查 P1)
       videoTaskId: (raw as { videoTaskId?: string }).videoTaskId,
+      videoIntentId: raw.videoIntentId,
+      videoIntentStatus: raw.videoIntentStatus,
       videoTaskEngine: (raw as { videoTaskEngine?: string }).videoTaskEngine,
       videoTaskStatus: (
         raw as { videoTaskStatus?: CanvasBlock["videoTaskStatus"] }

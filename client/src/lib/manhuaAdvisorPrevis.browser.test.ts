@@ -14,9 +14,9 @@ const f=globalThis.fixture={submits:[],queries:[],writes:[],ready:false};
 const studio=createManhuaPrevisStudio(5,'11111111-1111-4111-8111-111111111111');
 studio.spec.actors.push({...structuredClone(studio.spec.actors[0]),id:'mother',nameZh:'娘',start:[-1,.65],end:[-1,.65]});
 const candidate={target:makeAdvisorPrevisTarget('clip-1',studio),patch:{kind:'previs_edit_v1',summaryZh:'缓推到人物近景',unsupportedZh:[],interactions:[{id:'support',kind:'support_walk',actorId:'actor-1',targetActorId:'mother',startSec:0,contactSec:1,endSec:5}],cameras:studio.spec.cameras.map(c=>({...c,endLens:60}))}};
-f.studio=studio;f.original=JSON.stringify(studio);f.videoSources=[];
-f.response=request=>({jobId:'previs-test-job',status:f.ready?'succeeded':'queued',params:request,output:f.ready?{requestId:request.requestId,clipId:request.clipId,gcsUri:'gs://test/preview.mp4',url:'/api/manhua-previs-media/test/preview',durationSec:5}:null});
-createRoot(document.getElementById('root')).render(<ManhuaAdvisorPrevisComparison candidate={candidate} onPreviewReady={source=>f.videoSources.push(source)} storageKey='test:trial' previewHost={document.getElementById('preview')} autoStart onPrepare={c=>prepareAdvisorPrevisTrial('clip-1',f.studio,c)} onApply={(trial,res)=>{f.studio=adoptAdvisorPrevisTrial('clip-1',f.studio,trial,res);f.writes.push(trial.request.requestId);return true;}}/>);
+f.voice={current:null};f.allow=true;window.confirm=()=>f.allow;f.studio=studio;f.original=JSON.stringify(studio);f.videoSources=[];
+f.response=request=>({jobId:'previs-test-job',status:f.failed?'failed':f.ready?'succeeded':'queued',params:request,output:f.ready?{requestId:request.requestId,clipId:request.clipId,gcsUri:'gs://test/preview.mp4',url:'/api/manhua-previs-media/test/preview',durationSec:5}:null});
+createRoot(document.getElementById('root')).render(<ManhuaAdvisorPrevisComparison voiceControl={f.voice} candidate={candidate} onPreviewReady={source=>f.videoSources.push(source)} storageKey='test:trial' previewHost={document.getElementById('preview')} autoStart onPrepare={c=>prepareAdvisorPrevisTrial('clip-1',f.studio,c)} onApply={(trial,res)=>{f.studio=adoptAdvisorPrevisTrial('clip-1',f.studio,trial,res);f.writes.push(trial.request.requestId);return true;}}/>);
 ` }, bundle: true, write: false, platform: "browser", format: "iife", jsx: "automatic", alias: { "@": path.resolve("client/src"), "@shared": path.resolve("shared") }, plugins: [{ name: "离线白模确认门", setup(b) {
     b.onResolve({ filter: /^@\/lib\/trpc$/ }, () => ({ path: "trpc", namespace: "offline" }));
     b.onLoad({ filter: /.*/, namespace: "offline" }, () => ({ loader: "js", contents: `export const trpc={manhuaPrevis:{submit:{useMutation:()=>({isPending:false,mutateAsync:async r=>{const f=globalThis.fixture;f.submits.push(r);return f.response(r);}})}},useUtils:()=>({manhuaPrevis:{get:{fetch:async({requestId})=>{const f=globalThis.fixture;f.queries.push(requestId);const r=JSON.parse(localStorage.getItem('test:trial:'+requestId)).request;return f.response(r);}}}})};` }));
@@ -58,3 +58,33 @@ it("独立渲染和刷新不写原场景；观看并确认后才允许应用真�
   expect(await page.evaluate(() => (globalThis as any).fixture.studio.specHistory[0].reasonZh)).toContain(id);
   await page.close();
 }, 20000);
+
+it("语音采用白模使用真实回执和观看确认，取消不写，重复采用不重写", async()=>{
+ const context=await browser.createBrowserContext();const page=await context.newPage();await page.setRequestInterception(true);
+ page.on('request',r=>r.isNavigationRequest()?void r.respond({status:200,contentType:'text/html',body:'<main id="preview" data-clip-id="clip-1"></main><div id="root"></div>'}):void r.abort());
+ await page.goto('http://localhost:41828/');await page.addScriptTag({content:bundle});await page.waitForFunction(()=>(globalThis as any).fixture.submits.length===1);
+ expect(await page.evaluate(()=>(globalThis as any).fixture.voice.current.apply())).toContain('先在本页观看');
+ await page.evaluate(()=>{(globalThis as any).fixture.ready=true;Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='查询／恢复这次白模试看')?.click()});await page.waitForSelector('video');
+ await page.$eval('video',e=>e.dispatchEvent(new Event('play',{bubbles:true})));await page.waitForFunction(()=>(globalThis as any).fixture.voice.current.inspect().watched);
+ await page.evaluate(()=>(globalThis as any).fixture.allow=false);expect(await page.evaluate(()=>(globalThis as any).fixture.voice.current.apply())).toContain('取消');expect(await page.evaluate(()=>(globalThis as any).fixture.writes.length)).toBe(0);
+ await page.evaluate(()=>(globalThis as any).fixture.allow=true);expect(await page.evaluate(()=>(globalThis as any).fixture.voice.current.apply())).toContain('已应用');await page.waitForFunction(()=>(globalThis as any).fixture.voice.current.inspect().applied);
+ expect(await page.evaluate(()=>(globalThis as any).fixture.voice.current.apply())).toContain('不重复');expect(await page.evaluate(()=>(globalThis as any).fixture.writes.length)).toBe(1);expect(await page.evaluate(()=>(globalThis as any).fixture.studio.specHistory.length)).toBeGreaterThan(0);
+ await context.close();
+},20000);
+
+it("明确失败的白模可确认重试，原任务保留，取消和运行中不重提",async()=>{
+ const context=await browser.createBrowserContext();const page=await context.newPage();await page.setRequestInterception(true);
+ page.on('request',r=>r.isNavigationRequest()?void r.respond({status:200,contentType:'text/html',body:'<main id="preview" data-clip-id="clip-1"></main><div id="root"></div>'}):void r.abort());
+ try{await page.goto('http://localhost:41828/');await page.addScriptTag({content:bundle});await page.waitForFunction(()=>(globalThis as any).fixture.submits.length===1);
+ expect(await page.evaluate(()=>(globalThis as any).fixture.voice.current.retry())).toContain('只有已明确失败');
+ await page.evaluate(()=>{const f=(globalThis as any).fixture;f.failed=true;Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='查询／恢复这次白模试看')?.click()});
+ await page.waitForFunction(()=>(globalThis as any).fixture.voice.current.inspect().failed);
+ const before=await page.evaluate(()=>(globalThis as any).fixture.submits.map((r:any)=>r.requestId));
+ await page.evaluate(()=>(globalThis as any).fixture.allow=false);expect(await page.evaluate(()=>(globalThis as any).fixture.voice.current.retry())).toContain('取消');
+ expect(await page.evaluate(()=>(globalThis as any).fixture.submits.length)).toBe(before.length);
+ await page.evaluate(()=>{const f=(globalThis as any).fixture;f.allow=true;const original=f.response;f.response=(r:any)=>({...original(r),status:r.requestId===f.submits[0].requestId?'failed':'queued'})});
+ await page.evaluate(()=>(globalThis as any).fixture.voice.current.retry());await page.waitForFunction(()=>(globalThis as any).fixture.voice.current.inspect().failed===false);
+ const after=await page.evaluate(()=>(globalThis as any).fixture.submits.map((r:any)=>r.requestId));expect(after.length).toBe(before.length+1);expect(after.at(-1)).not.toBe(before[0]);
+ expect(await page.evaluate((id)=>Boolean(localStorage.getItem('test:trial:'+id)),before[0])).toBe(true);expect(await page.evaluate(()=>(globalThis as any).fixture.writes)).toEqual([]);
+ }finally{await context.close()}
+},20000);

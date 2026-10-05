@@ -604,3 +604,25 @@ it("1005影片审阅走专用Vertex服务，不走GLM；错误不自动重送",a
  const result=await askPlatformSkillQa({userId:7,isAdmin:true,question:"审阅影片",manhuaContext:manhuaContext({filmReview:target})});expect(JSON.parse(result.answer)).toEqual(report);expect(result.modelName).toBe("gemini-3.8-flash");expect(invokeLLMMock).not.toHaveBeenCalled();
  filmAdvisorMock.mockClear();filmAdvisorMock.mockRejectedValue(Error("Vertex busy"));await expect(askPlatformSkillQa({userId:7,isAdmin:true,question:"审阅影片",manhuaContext:manhuaContext({filmReview:target})})).rejects.toThrow();expect(filmAdvisorMock).toHaveBeenCalledTimes(1);expect(invokeLLMMock).not.toHaveBeenCalled();
 });
+
+it('原话时序失败会反馈到下一路并保留讨论；不返回错误候选',async()=>{
+ const original='场次 E1-S1：沈昀夜返文书库，裴昭从案后现身，要求独自前来。';
+ const bad='场次 E1-S1：沈昀夜返文书库，裴昭从案后现身。裴昭：明晚酉时，城东曲巷。就你一个人来——敢带第二个人，明早浮尸曲江。';
+ const corrected=bad.replace('明早浮尸','后天一早浮尸');
+ const candidate=(body:string)=>({kind:'template-rewrite',body,changes:['统一会面与违约后果的日期']});
+ invokeLLMMock.mockResolvedValueOnce(llmJson(candidate(bad))).mockResolvedValueOnce(llmJson(candidate(corrected)));
+ const result=await askPlatformSkillQa({userId:7,isAdmin:true,question:'【模板改写建议】让他直接修改第一集',manhuaContext:manhuaContext({episodeBody:original,history:[{role:'user',content:'还有，让它对白像真人对话，不要像都是 AI 回话的感觉。'}]})});
+ expect(JSON.parse(result.answer).body).toBe(corrected);
+ expect(invokeLLMMock).toHaveBeenCalledTimes(2);
+ const messages=invokeLLMMock.mock.calls[1][0].messages;
+ expect(messages.map((m:{role:string})=>m.role)).toEqual(['system','user']);
+ expect(JSON.stringify(messages)).toContain('时序矛盾');
+ expect(JSON.stringify(messages)).toContain('对白像真人对话');
+});
+
+// New risk: full observer evidence exceeds the legacy text answer cap. No model call.
+it("完整observer报告超过旧文本上限仍保留完整JSON", async () => {
+ const {parseAskJson}=await import("./platformSkillQa");
+ const answer=JSON.stringify({kind:"film_review_v1",observerEvidence:{audioSegments:[{descriptionZh:"声音证据".repeat(4000)}]}});
+ expect(parseAskJson(JSON.stringify({answer}),true,true).answer).toBe(answer);
+});

@@ -28,6 +28,11 @@ export function registerCreativeVoice(server: Server) {
       }
       try { wss.handleUpgrade(req, socket, head, client => {
         activeUsers.add(user.id);
+        let latestTypedRequest = "";
+        let realtimeMediaReceived = false;
+        const readTools = new Set<string>();
+        const operationKeys = new Map<string,string>();
+        const repeatedReads = new Map<string, { text: string; count: number }>();
         let starting = false, upstream: CreativeVoiceSession | undefined, stopped = false;
         let lastActivity = Date.now(), lastFrame = 0, windowStart = Date.now(), bytesInWindow = 0;
         const cancel = new AbortController();
@@ -65,12 +70,20 @@ export function registerCreativeVoice(server: Server) {
               connect: (plan, signal) => connectVoiceTransport({ plan, signal, context: msg.context,
                 onEvent: event => {
                   lastActivity = Date.now();
-                  if (event.type === "tool" || event.type === "workflow" || event.type === "mediaEdit" || event.type === "filmReview") {
+                  if (event.type === "text" && event.role === "user") repeatedReads.clear();
+                  if (event.type === "toolRejected") {
+                    if (toolIds.has(event.id)) return; toolIds.add(event.id);
+                    upstream?.send({toolResponse:{functionResponses:[{id:event.id,name:event.name,response:{error:event.text}}]}}); return;
+                  }
+                  if (event.type === "tool" || event.type === "workflow" || event.type === "mediaEdit" || event.type === "filmReview" || event.type === "novelEdit" || event.type === "production") {
                     if (toolIds.has(event.id)) return;
                     if (pendingTools.size) {
-                      upstream?.send({ toolResponse: { functionResponses: [{ id: event.id, name: event.type === "tool" ? "askCreativeAdvisor" : event.type === "mediaEdit" ? "proposeMediaEdit" : event.type === "filmReview" ? "reviewFilm" : "creativeWorkflow", response: { error: "已有顾问任务正在处理，请等待结果，不要重复提交。" } }] } }); return;
+                      upstream?.send({ toolResponse: { functionResponses: [{ id: event.id, name: event.type === "tool" ? "askCreativeAdvisor" : event.type === "mediaEdit" ? "proposeMediaEdit" : event.type === "filmReview" ? "reviewFilm" : event.type === "novelEdit" ? "novelText" : event.type === "production" ? "creativeProduction" : "creativeWorkflow", response: { error: "已有顾问任务正在处理，请等待结果，不要重复提交。" } }] } }); return;
                     }
-                    toolIds.add(event.id); pendingTools.set(event.id, event.type === "tool" ? "askCreativeAdvisor" : event.type === "mediaEdit" ? "proposeMediaEdit" : event.type === "filmReview" ? "reviewFilm" : "creativeWorkflow");
+                    const reading = (event.type === "workflow" || event.type === "production") && event.action.action === "inspect";
+                    if (reading) readTools.add(event.id);
+                    if (event.type === "production") operationKeys.set(event.id, JSON.stringify(event.action));
+                    toolIds.add(event.id); pendingTools.set(event.id, event.type === "tool" ? "askCreativeAdvisor" : event.type === "mediaEdit" ? "proposeMediaEdit" : event.type === "filmReview" ? "reviewFilm" : event.type === "novelEdit" ? "novelText" : event.type === "production" ? "creativeProduction" : "creativeWorkflow");
                   }
                   send(event);
                 }, onEnded: stop }),
@@ -83,16 +96,50 @@ export function registerCreativeVoice(server: Server) {
           if (!upstream) { send({ type: "error", text: "请等待语音连接完成" }); return; }
           if (msg.type === "toolResult") {
             const name = pendingTools.get(msg.id); if (!name) return; pendingTools.delete(msg.id);
-            upstream.send({ toolResponse: { functionResponses: [{ id: msg.id, name, response: { result: msg.text } }] } });
+            let resultText: unknown = msg.text;
+            const operationKey = operationKeys.get(msg.id); operationKeys.delete(msg.id);
+            const reading = readTools.delete(msg.id);
+            if (!reading && operationKey) {
+              const key = `operation:${operationKey}`;
+              const old = repeatedReads.get(key);
+              const count = old?.text === msg.text ? old.count + 1 : 1;
+              repeatedReads.set(key, {text:msg.text,count});
+              if (count >= 3) { send({type:"error",text:"语音顾问重复操作且结果没有变化，已停止连接避免空耗；已有任务继续，不会自动重送。"}); stop(); return; }
+            }
+            if (reading) {
+              const old = repeatedReads.get(name);
+              const count = old?.text === msg.text ? old.count + 1 : 1;
+              repeatedReads.set(name, { text: msg.text, count });
+              if (count >= 3) { send({type:"error",text:"语音顾问重复读取相同状态，已停止本次连接以避免空耗；未自动重送生成任务，已有结果保留。"}); stop(); return; }
+              if (count === 2) resultText = "页面状态与刚才相同，已读取完整资料。请执行本轮明确要求或说明阻断，不要再次inspect；需要用户确认时打开既有确认流程。";
+              else {
+                // Return structured tool data rather than repeatedly escaped JSON strings.
+                try {
+                  const value = JSON.parse(msg.text);
+                  if (value && typeof value === "object" && !Array.isArray(value)) {
+                    if (typeof value.context === "string") { try { value.context = JSON.parse(value.context); } catch { /* Plain context stays text. */ } }
+                    resultText = value;
+                  }
+                } catch { /* Plain tool receipts stay text. */ }
+              }
+            }
+            upstream.send({ toolResponse: { functionResponses: [{ id: msg.id, name, response: { result: resultText, ...(latestTypedRequest ? { currentUserRequest: latestTypedRequest } : {}) } }] } });
           }
-          if (msg.type === "text") upstream.send({ realtimeInput: { text: msg.text } });
-          if (msg.type === "audio") upstream.send({ realtimeInput: { audio: { data: msg.data, mimeType: "audio/pcm;rate=16000" } } });
+          // Typed requests are complete conversation turns, not an unordered realtime stream.
+          if (msg.type === "text") {
+            latestTypedRequest = msg.text; repeatedReads.clear();
+            // Keep questions in the same realtime stream after sharing media; mixing
+            // clientContent with realtimeInput has no ordering/context guarantee.
+            if (realtimeMediaReceived) upstream.send({ realtimeInput: { text: msg.text } });
+            else upstream.send({ clientContent: { turns: [{ role: "user", parts: [{ text: msg.text }] }], turnComplete: true } });
+          }
+          if (msg.type === "audio") { realtimeMediaReceived = true; latestTypedRequest = ""; upstream.send({ realtimeInput: { audio: { data: msg.data, mimeType: "audio/pcm;rate=16000" } } }); }
           if (msg.type === "audioEnd") upstream.send({ realtimeInput: { audioStreamEnd: true } });
           if (msg.type === "frame") {
             if (now - lastFrame < 1000) return;
             const data = Buffer.from(msg.data, "base64");
             if (data.length < 4 || data[0] !== 0xff || data[1] !== 0xd8) { stop(); return; }
-            lastFrame = now;
+            lastFrame = now; realtimeMediaReceived = true;
             upstream.send({ realtimeInput: { text: msg.still ? `用户分享静态分镜或资产「${msg.source}」，不是影片时间点。` : `用户分享播放器「${msg.source}」当前时间 ${msg.atSec.toFixed(2)} 秒，随后发送本时点画面。` } });
             upstream.send({ realtimeInput: { video: { data: msg.data, mimeType: "image/jpeg" } } });
           }

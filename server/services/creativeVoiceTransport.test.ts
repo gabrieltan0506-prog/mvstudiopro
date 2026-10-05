@@ -66,3 +66,25 @@ describe("Live真实连接器协议（离线）", () => {
     expect(creativeVoiceInputSchema.safeParse({ type: "start", purpose: "discussion", context: "", projectKey: "p" }).success).toBe(false);
   });
 });
+it("视频候选采用工具只传操作，不接受模型跳过确认或自填结果URL", () => {
+ const valid=normalizeVoiceMessage(false,{toolCall:{functionCalls:[{id:"video-apply",name:"creativeProduction",args:{action:"media",operation:"applyVideo"}}]}});
+ expect(valid).toContainEqual({type:"production",id:"video-apply",action:{action:"media",operation:"applyVideo"}});
+ const invalid=normalizeVoiceMessage(false,{toolCall:{functionCalls:[{id:"video-invalid",name:"creativeProduction",args:{action:"media",operation:"applyVideo",confirmed:true,url:"https://foreign/video.mp4"}}]}});
+ expect(invalid.some(x=>x.type==="toolRejected")).toBe(true);
+});
+
+it("场景工具携带描述形成方案，但不能附带绕过费用确认",()=>{
+ const args={action:"world",assetId:"scene-42",question:"保留木廊，月夜冷光，窗内暖灯，先给方案。"};
+ const event=normalizeVoiceMessage(false,{toolCall:{functionCalls:[{id:"world-plan",name:"creativeProduction",args}]}});
+ expect(event).toContainEqual({type:"production",id:"world-plan",action:args});
+ const invalid=normalizeVoiceMessage(false,{toolCall:{functionCalls:[{id:"world-bypass",name:"creativeProduction",args:{...args,confirmed:true}}]}});
+ expect(invalid.some(e=>e.type==="toolRejected")).toBe(true);
+});
+
+it("影片声音保留非语音输入，不让VAD抛弃环境声和音乐", () => {
+  for (const extended of [false, true]) {
+    for (const plan of creativeVoiceConnectionPlans(extended)) {
+      expect(voiceSetup(plan, "", "p").setup.realtimeInputConfig.turnCoverage).toBe("TURN_INCLUDES_ALL_INPUT");
+    }
+  }
+});

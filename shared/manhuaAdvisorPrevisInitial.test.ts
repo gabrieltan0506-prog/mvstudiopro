@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createAdvisorPrevisStudio } from "./manhuaAdvisorPrevisInitial";
+import { createAdvisorPrevisStudio, selectPrevisCharacterSlots } from "./manhuaAdvisorPrevisInitial";
 import { makeAdvisorPrevisTarget } from "./manhuaAdvisorPrevisEdit";
 const characters = [{ id: "jing", label: "阿菁" }, { id: "mo", label: "墨屠", shape: "horse" as const }, { id: "unrelated", label: "曹三" }];
 describe("真实本段人物基线", () => {
@@ -29,4 +29,14 @@ it("明确出场名单优先，不把姑娘误识别为娘", () => {
 it("明确名单中的单字称呼也保留，不遗漏娘", () => {
   const studio = createAdvisorPrevisStudio({ durationSec: 10, castZh: "阿菁、娘", characters: [...characters, { id: "mother", label: "娘" }], shots: [{ index: 1, durationSec: 10, actionZh: "阿菁扶起娘。" }] });
   expect(studio.spec.actors.map(a => a.nameZh)).toEqual(["阿菁", "娘"]);
+});
+
+it("同一确认人物的脸部图和全身图只建立一名白模演员，未知身份不合并",()=>{
+ const refs=[{id:"face",seedLibraryId:"zhou",duty:"identity" as const},{id:"body",seedLibraryId:"zhou",duty:"look" as const},{id:"shen",seedLibraryId:"shen"}];
+ const slots=selectPrevisCharacterSlots(refs);
+ expect(slots.map(s=>s.id)).toEqual(["body","shen"]);
+ const studio=createAdvisorPrevisStudio({durationSec:3,castZh:"周慎、沈昀",shots:[],characters:slots.map(s=>({id:s.id,label:s.seedLibraryId==="zhou"?"周慎":"沈昀"}))});
+ expect(studio.spec.actors).toHaveLength(2);
+ expect(selectPrevisCharacterSlots([{id:"u1"},{id:"u2"}])).toHaveLength(2);
+ expect(selectPrevisCharacterSlots([...refs,{id:"another-look",seedLibraryId:"zhou",duty:"look"}]).filter(s=>s.seedLibraryId==="zhou")).toHaveLength(2);
 });

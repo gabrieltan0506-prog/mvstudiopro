@@ -22,7 +22,7 @@ beforeAll(async () => {
       import {buildManhuaAutoSegmentBinding} from '@shared/manhuaAutoSegment';
       const f=globalThis.fixture={updates:[],focus:[],review:0,calls:[],advisor:0};
       f.currentBinding=blocks=>buildManhuaAutoSegmentBinding(1,groupShotsIntoSegments(resolveShotsForEpisodeKeyarts(blocks,1),{videoModel:'seedance-2.5'})[0],'seedance-2.5');
-      function App(){const [canRun,setCanRun]=useState(true);f.setCanRun=setCanRun;const [phase,setPhase]=useState("storyboard");const [ep,setEp]=useState(1);f.setPhase=setPhase;f.episode=ep;const [blocks,setBlocks]=useState([1,2].map(n=>({...defaultCanvasBlock('image',0,0),id:'keyart-e01-s0'+n+'-preview',episodeIndex:1,outputUrl:n===1?'https://test.invalid/shot-1.png':undefined,prompt:'第'+n+'镜，医馆对话'})).concat([{...defaultCanvasBlock('video',0,0),id:'clip-e01-g01-audio',episodeIndex:1,videoModel:'seedance-2.5',prompt:'【第1段·15s】墨屠守护阿菁'}]));f.blocks=blocks;f.setBlocks=setBlocks;return <TooltipProvider><ManhuaScriptWorkbench canRun={canRun} blocks={blocks} videoModel='seedance-2.5' topic='墨屠守护阿菁' episodeCount={13} focusEpisode={ep} onFocusEpisode={setEp} outlineEpisodes={Array.from({length:13},(_,i)=>({index:i+1,title:'集卡'+(i+1),body:'原文剧情'+(i+1),endHook:'片尾悬念'+(i+1)}))} characterIds={[]} propIds={[]} outlineConfirmed={true} workflowPhase={phase} onWorkflowPhaseChange={setPhase} onGenerateAllEpisodeKeyarts={()=>f.calls.push("generate-keyarts")} onOpenAdvisorTemplates={()=>f.advisor++} rewriteWorkspace={<div data-test-rewrite-workspace>剧本页独立模板工作区</div>} compactUi={true} previewCanvas={<div data-test-canvas>原节点画布</div>} finalVideoUrl='https://test.invalid/old-final.mp4' onFocusBlock={id=>f.focus.push(id)} onReviewClipPromptsOnCanvas={()=>f.review++} onGenerateAsset3d={()=>f.calls.push("model")} onGenerateSceneWorld={()=>f.calls.push("world")} onChangeManhuaActionPlan={()=>f.calls.push("plan")} onUpdateClipPrevisStudio={()=>f.calls.push("previs")} onUpdateClipAudioStudio={(id,studio)=>{f.updates.push(id);setBlocks(rows=>rows.map(b=>b.id===id?{...b,audioStudio:studio}:b));}} /></TooltipProvider>;}
+      function App(){const [voiceRequest,setVoiceRequest]=useState(null);f.setVoiceRequest=setVoiceRequest;const [refs,setRefs]=useState([]);f.setRefs=setRefs;const [canRun,setCanRun]=useState(true);f.setCanRun=setCanRun;const [phase,setPhase]=useState("storyboard");const [ep,setEp]=useState(1);f.setPhase=setPhase;f.episode=ep;const [blocks,setBlocks]=useState([1,2].map(n=>({...defaultCanvasBlock('image',0,0),id:'keyart-e01-s0'+n+'-preview',episodeIndex:1,outputUrl:n===1?'https://test.invalid/shot-1.png':undefined,prompt:'第'+n+'镜，医馆对话'})).concat([{...defaultCanvasBlock('video',0,0),id:'clip-e01-g01-audio',episodeIndex:1,videoModel:'seedance-2.5',prompt:'【第1段·15s】墨屠守护阿菁'}]));f.blocks=blocks;f.setBlocks=setBlocks;return <TooltipProvider><ManhuaScriptWorkbench canRun={canRun} blocks={blocks} videoModel='seedance-2.5' topic='墨屠守护阿菁' episodeCount={13} focusEpisode={ep} onFocusEpisode={setEp} outlineEpisodes={Array.from({length:13},(_,i)=>({index:i+1,title:'集卡'+(i+1),body:'原文剧情'+(i+1),endHook:'片尾悬念'+(i+1)}))} characterIds={[]} propIds={[]} customAssetRefs={refs} advisorPrevisRequest={voiceRequest} onAdvisorPrevisRequestHandled={()=>setVoiceRequest(null)} onOpenAdvisorPrevis={id=>f.calls.push({openedPrevis:id})} outlineConfirmed={true} workflowPhase={phase} onWorkflowPhaseChange={setPhase} onGenerateAllEpisodeKeyarts={()=>f.calls.push("generate-keyarts")} onOpenAdvisorTemplates={()=>f.advisor++} rewriteWorkspace={<div data-test-rewrite-workspace>剧本页独立模板工作区</div>} compactUi={true} previewCanvas={<div data-test-canvas>原节点画布</div>} finalVideoUrl='https://test.invalid/old-final.mp4' onFocusBlock={id=>f.focus.push(id)} onReviewClipPromptsOnCanvas={()=>f.review++} onGenerateAsset3d={()=>f.calls.push("model")} onGenerateSceneWorld={()=>f.calls.push("world")} onChangeManhuaActionPlan={()=>f.calls.push("plan")} onUpdateClipPrevisStudio={(id,studio)=>{f.calls.push({savedPrevis:id,studio});setBlocks(rows=>rows.map(b=>b.id===id?{...b,previsStudio:studio}:b));return true;}} onUpdateClipAudioStudio={(id,studio)=>{f.updates.push(id);setBlocks(rows=>rows.map(b=>b.id===id?{...b,audioStudio:studio}:b));}} /></TooltipProvider>;}
       createRoot(document.getElementById('root')).render(<App/>);
     `,
     },
@@ -149,5 +149,33 @@ it("真实声音面板在桌面和窄屏都留在标签内容区，不遮挡收�
       await page.waitForFunction(() => !document.querySelector('[data-manhua-secondary-studio]'));
     }
     expect(await page.evaluate(() => (window as any).fixture.calls)).toEqual([]);
+  } finally { await page.close(); }
+}, 30000);
+
+
+it("语音首次打开白模复用真实人物初始化，失效目标不写入也不生成", async () => {
+  const page = await browser.newPage();
+  await page.setRequestInterception(true);
+  page.on("request", r => r.isNavigationRequest() ? void r.respond({status:200,contentType:"text/html",body:'<div id="root"></div>'}) : void r.abort());
+  try {
+    await page.goto("http://localhost:41833"); await page.addScriptTag({content:bundle});
+    await page.waitForSelector('[data-manhua-action="open-secondary-tools"]');
+    await page.evaluate(() => { const f=(window as any).fixture;
+      f.setRefs([{id:"hero-ajing",role:"character",source:"generated",labelZh:"阿菁",url:"https://test.invalid/ajing.png"}]);
+      f.setBlocks([...f.blocks, {id:"reverse-e01-real",kind:"text",episodeIndex:1,status:"done",outputText:"## 分镜表\n| 镜号 | 秒位 | 景别/运镜 | 画面 | 对白 |\n|---|---|---|---|---|\n| 1 | 0–5秒 | 近景 | 阿菁推开医馆木门，停步观察药柜 | 无 |\n| 2 | 5–10秒 | 近景 | 阿菁走向药柜查看纸条 | 无 |"}]);
+    });
+    await page.evaluate(()=>(window as any).fixture.setVoiceRequest({id:"voice-open-1",clipId:"clip-e01-g01-audio",episode:1,segment:1}));
+    await page.waitForFunction(()=>(window as any).fixture.calls.some((c:any)=>c.openedPrevis), {timeout:5000}).catch(async error=>{ console.log(await page.evaluate(()=>({calls:(window as any).fixture.calls,blocks:(window as any).fixture.blocks,text:document.body.innerText}))); throw error; });
+    const calls=await page.evaluate(()=>(window as any).fixture.calls);
+    expect(calls).toHaveLength(2);
+    expect(calls[0].savedPrevis).toBe("clip-e01-g01-audio");
+    expect(calls[0].studio.spec.actors.map((a:any)=>a.nameZh)).toEqual(["阿菁"]);
+    expect(calls[0].studio.spec.actors[0].assetRef).toBe("hero-ajing");
+    expect(calls[1].openedPrevis).toBe("clip-e01-g01-audio");
+    await page.waitForSelector('#manhua-tool-panel-previs', {visible:true});
+    await page.evaluate(()=>(window as any).fixture.setVoiceRequest({id:"voice-wrong-target",clipId:"missing-clip",episode:1,segment:1}));
+    await page.waitForFunction(()=>(window as any).fixture.calls.length===2);
+    await new Promise(r=>setTimeout(r,100));
+    expect(await page.evaluate(()=>(window as any).fixture.calls.length)).toBe(2);
   } finally { await page.close(); }
 }, 30000);

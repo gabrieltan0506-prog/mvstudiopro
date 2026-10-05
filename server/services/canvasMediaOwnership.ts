@@ -20,7 +20,7 @@ import {
 } from "./gcs.js";
 
 export const CANVAS_MEDIA_OBJECT_RE =
-  /^(?:generated\/[A-Za-z0-9_\/-]+\/[A-Za-z0-9_.-]+\.(png|jpg|jpeg|webp)|manhua-(?:scene|sheet)-tiles\/[A-Za-z0-9_\/-]+\/[0-9]+-(?:topLeft|topRight|bottomLeft|bottomRight)\.png)$/;
+  /^(?:generated\/[A-Za-z0-9_\/-]+\/[A-Za-z0-9_.-]+\.(png|jpg|jpeg|webp)|growth-camp\/videos\/[0-9]+-[A-Za-z0-9_.-]+\.mp4|manhua-(?:scene|sheet)-tiles\/[A-Za-z0-9_\/-]+\/[0-9]+-(?:topLeft|topRight|bottomLeft|bottomRight)\.png)$/;
 
 const OWNER_PREFIX = "media-owners/";
 

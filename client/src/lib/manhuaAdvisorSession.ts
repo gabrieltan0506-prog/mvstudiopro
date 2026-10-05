@@ -86,9 +86,13 @@ export function manhuaAdvisorSessionKey(userId: string, confirmedProjectVersion:
 }
 
 /** 未确认稿只使用内存会话；原稿改变后不沿用上一份未确认稿的在途答复。 */
-export function manhuaAdvisorMountKey(userId: string | undefined, confirmedProjectVersion: string | undefined, draft: unknown): string {
-  return JSON.stringify([userId || "guest", confirmedProjectVersion || null,
+export type AdvisorMountContinuation = { draftKey: string; mountedKey: string };
+export function manhuaAdvisorMountKey(userId: string | undefined, confirmedProjectVersion: string | undefined, draft: unknown, continuation?: AdvisorMountContinuation | null): string {
+  const key = JSON.stringify([userId || "guest", confirmedProjectVersion || null,
     confirmedProjectVersion ? null : draft]);
+  // Only an already validated, persisted adoption may keep the current voice
+  // session mounted. Every unrelated edit/account/version still changes the key.
+  return continuation?.draftKey === key ? continuation.mountedKey : key;
 }
 
 export function parseAdvisorMessages(raw: string | null): AdvisorMessage[] {

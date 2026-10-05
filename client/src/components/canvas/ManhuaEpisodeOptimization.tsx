@@ -369,7 +369,7 @@ export default function ManhuaEpisodeOptimization(
       : [edit];
     try {
       candidates.forEach(c =>
-        validateAdvisorRewriteBody(c.originalBody, c.rewrittenBody)
+        validateAdvisorRewriteBody(c.originalBody, c.rewrittenBody, c.endHook)
       );
       if (props.onApplyCandidates(candidates))
         toast.success("优化稿已套用，旧稿已备份");

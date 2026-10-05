@@ -6,9 +6,17 @@ export function ManhuaAdvisorFilmReview(props: { report: AdvisorFilmReview; targ
     <h3 className="font-semibold">{props.target.label} · Gemini Flash审阅</h3>
     <video ref={video} src={props.target.videoUri} controls preload="metadata" className="max-h-72 w-full" />
     <p>{props.report.summary}</p>
+    {props.report.nativeEvidence && <details className="rounded border border-white/15 p-2"><summary>完整音画审阅记录</summary>
+      <p>沿用模板学习的逐镜与音轨校验；判读仍需你核对。</p>
+      <button className="underline" onClick={()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(props.report.nativeEvidence,null,2)],{type:"application/json"}));const a=document.createElement("a");a.href=url;a.download="完整音画审阅记录.json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}}>下载完整记录</button>
+    </details>}
+    {props.report.observerEvidence && <details className="rounded border border-white/15 p-2"><summary>查看音画证据与覆盖范围</summary>
+      <p>画面区间 {(props.report.observerEvidence.validation.visualIntervalCoverage.ratio*100).toFixed(1)}%；声音区间 {(props.report.observerEvidence.validation.audioIntervalCoverage.ratio*100).toFixed(1)}%。区间覆盖不代表感知准确。</p>
+      {(["shots","audioSegments"] as const).map(key=><div key={key}><h4>{key==="shots"?"画面":"声音"}</h4>{props.report.observerEvidence!.analysis[key].map((row,i)=><p key={i}><button className="underline" onClick={()=>{if(video.current)video.current.currentTime=row.startSec;}}>{row.startSec.toFixed(1)}–{row.endSec.toFixed(1)}秒</button> {row.descriptionZh}</p>)}</div>)}
+    </details>}
     {props.report.findings.map((f,i) => <div key={i} className="space-y-2 border-t border-white/15 pt-2">
       <button className="text-cyan-200 underline" onClick={() => { if (video.current) video.current.currentTime = f.atSec; }}>{f.atSec.toFixed(1)}–{f.endSec.toFixed(1)}秒 · {f.category}</button>
-      <p>{f.observation}</p><p>建议：{f.suggestion}</p><p className="text-xs opacity-70">{f.confidence}</p>
+      <p>{f.kind ? `${f.kind}：` : ""}{f.observation}</p><p>建议：{f.suggestion}</p><p className="text-xs opacity-70">{f.confidence}</p>
       <button disabled={props.disabled} className="rounded border border-cyan-300/40 px-3 py-2 disabled:opacity-40" onClick={() => props.onEdit(`只修改${f.atSec.toFixed(1)}–${f.endSec.toFixed(1)}秒，其余保持原样。${f.suggestion}`)}>让顾问准备视频修改方案</button>
     </div>)}
     <p className="text-xs opacity-70">{props.report.limitations} · 分析建议待你核对；不会自动修改或生成。</p>

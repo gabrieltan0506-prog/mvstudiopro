@@ -115,3 +115,9 @@ it("FlashX真实传输规范化保留video_url和Z.AI锁", async () => {
  expect(body.provider).toMatchObject({ order: ["Z.AI"], allow_fallbacks: false });
  expect(fetchMock).toHaveBeenCalledTimes(1);
 });
+it.each(['glm-5.3-flashx','deepseek-v4.1-flash'])('隔离实测1214回归：EvoLink %s保留system角色，不发developer',async modelName=>{
+ vi.stubEnv('EVOLINK_API_KEY','isolated-test-not-real');
+ const fetchMock=vi.fn().mockResolvedValue(new Response('data: {"choices":[{"delta":{"content":"{}"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',{headers:{'content-type':'text/event-stream'}}));vi.stubGlobal('fetch',fetchMock);
+ await invokeLLM({provider:'openai',modelName,openAiGateway:'evolink_flash_only',messages:[{role:'system',content:'保留原稿'},{role:'user',content:'修改第一集灯光'}]});
+ expect(JSON.parse(fetchMock.mock.calls[0][1].body).messages).toEqual([{role:'system',content:'保留原稿'},{role:'user',content:'修改第一集灯光'}]);
+});

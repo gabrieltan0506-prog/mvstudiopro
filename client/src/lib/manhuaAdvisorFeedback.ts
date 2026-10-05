@@ -19,6 +19,10 @@ export function formatManhuaAdvisorContextIssue(issue: { path: PropertyKey[]; me
 
 /** 失败类型保留，原始供应商错误不进入公共顾问面板。 */
 export function formatManhuaAdvisorError(raw: string): string {
+  if (/Vertex影片审阅返回400/.test(raw)) return "审片请求参数错误，原素材与错误回执已保留；不会自动重投。请修正请求后再处理。";
+  if (/Vertex影片审阅返回\d+/.test(raw)) return "影片已送审，但审片服务拒绝或未完成本次请求；这不代表缺少成片或音轨。原素材保留，请检查原任务，不自动重复提交。";
+  if (/影片音轨准备失败/.test(raw)) return "影片音轨准备失败，本次未调用审片模型。原片仍保留，请检查原任务后重试。";
+  if (/素材尚未登记/.test(raw)) return "素材尚未登记，本次未发送影片。请重新选择本人已生成或上传的素材。";
   if (/ADVISOR_OPERATION_RUNNING/.test(raw)) return "原问题仍在处理，请稍后用同一编号恢复；不会自动创建新问答。";
   if (/ADVISOR_OPERATION_REFUND_PENDING/.test(raw)) return "原问答失败，退款正在对账，尚不能确认到账。请稍后恢复原请求查看。";
   if (/ADVISOR_OPERATION_FAILED/.test(raw)) return "原问答已失败。再次提问会作为新的一次，重新检查免费额度并在需要扣点时询问。";

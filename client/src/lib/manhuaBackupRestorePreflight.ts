@@ -20,6 +20,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function prepareManhuaBackupRestore(
   raw: unknown
 ): ManhuaCloudDraftPayload {
+  if (isRecord(raw) && isRecord(raw.restorableDraft)) raw = raw.restorableDraft;
+  // Advisor downloads preserve their original envelope. Adapt that envelope to
+  // the existing confirmed restore path instead of requiring manual JSON edits.
+  if (isRecord(raw) && !raw.writerSession && typeof raw.previousWriterSession === "string") {
+    try {
+      const session: unknown = JSON.parse(raw.previousWriterSession);
+      const prefs: unknown = typeof raw.previousFactoryPrefs === "string" ? JSON.parse(raw.previousFactoryPrefs) : {};
+      if (!isRecord(session) || !isRecord(prefs) || !isRecord(raw.writerPack) || !isRecord(raw.canvas)) throw new Error();
+      raw = { format: "mv-manhua-cloud-draft-v1", clientUpdatedAt: raw.createdAt,
+        writerSession: { ...session, writerPack: raw.writerPack, projectBible: raw.projectBible },
+        canvas: raw.canvas,
+        factoryPrefs: { ...prefs, directorBoardMotionOverlayBySegment: raw.directorBoardOverlays || {} },
+      };
+    } catch { throw new Error(INVALID_BACKUP_ZH); }
+  }
   if (isRecord(raw)) {
     for (const container of [raw.writerSession, raw.factoryPrefs]) {
       if (

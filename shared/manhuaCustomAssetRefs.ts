@@ -724,6 +724,8 @@ export function summarizeCustomAssetRefsZh(
 export function upsertGeneratedManhuaCustomAssetRef(
   prev: ManhuaCustomAssetRef[] | null | undefined,
   input: {
+    /** Allocate once when synchronizing working state and React state. Existing identities remain unchanged. */
+    newAssetId?: string;
     url: string;
     role: ManhuaCustomAssetRole;
     labelZh?: string;
@@ -764,7 +766,7 @@ export function upsertGeneratedManhuaCustomAssetRef(
     return false;
   });
   const next: ManhuaCustomAssetRef = {
-    id: matchIdx >= 0 ? base[matchIdx]!.id : makeManhuaCustomAssetId(),
+    id: matchIdx >= 0 ? base[matchIdx]!.id : (input.newAssetId?.trim() || makeManhuaCustomAssetId()),
     url,
     role,
     labelZh: labelZh || (matchIdx >= 0 ? base[matchIdx]!.labelZh : undefined),

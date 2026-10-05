@@ -1,21 +1,26 @@
+import { inspectCreativeVoiceWorkspace } from "@/lib/creativeVoiceWorkspaceInspect";
+import type { CreativeVoiceProductionAction } from "@shared/creativeVoiceProduction";
+import type { CreativeVoiceNovelAction } from "@shared/creativeVoiceNovel";
 import type { AdvisorMediaProposal, AdvisorMediaSource } from "@shared/manhuaAdvisorMediaEdit";
 import { parseVoiceReviewNotes, resolveVoiceTarget, validateReviewSeek, type VoiceReviewNote } from "@/lib/creativeVoiceReview";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
-import { captureVoiceFrame, pcm16At16k, pcmFloat } from "@/lib/creativeVoiceMedia";
-import { CREATIVE_VOICE_PURPOSES, type CreativeVoiceEvent, type CreativeVoiceStart, type CreativeVoiceAction, type CreativeVoiceTarget } from "@shared/creativeVoice";
+import { pcm16At16k, pcmFloat } from "@/lib/creativeVoiceMedia";
+import { formatVoiceToolResult, CREATIVE_VOICE_PURPOSES, type CreativeVoiceEvent, type CreativeVoiceStart, type CreativeVoiceAction, type CreativeVoiceTarget } from "@shared/creativeVoice";
 
-type CaptureVideo = HTMLVideoElement & { captureStream?: () => MediaStream };
 export function CreativeVoicePanel(props: {
-  scopeKey: string; context: string; disabled?: boolean; onUse: (text: string) => void;
+  scopeKey: string; context: string; disabled?: boolean; onSessionActiveChange?: (active:boolean)=>void; onUse: (text: string) => void;
   onAskAdvisor: (question: string, signal: AbortSignal) => Promise<string | undefined>;
+  onProductionAction?: (action: CreativeVoiceProductionAction, signal: AbortSignal) => Promise<string>;
+  onNovelAction?: (action: CreativeVoiceNovelAction, signal: AbortSignal) => Promise<string>;
   onReviewFilm?: (blockId: string, question: string, signal: AbortSignal) => Promise<string | undefined>;
-  mediaSources?: AdvisorMediaSource[]; onProposeMediaEdit?: (proposal: AdvisorMediaProposal) => string;
+  onInspectMedia?: () => unknown; mediaSources?: AdvisorMediaSource[]; onProposeMediaEdit?: (proposal: AdvisorMediaProposal) => string;
   targets?: CreativeVoiceTarget[]; onNavigate?: (target: CreativeVoiceTarget) => string;
 }) {
   const { user } = useAuth();
   const [expanded, setExpanded] = useState(false), [active, setActive] = useState(false), [ready, setReady] = useState(false);
+  useEffect(() => { props.onSessionActiveChange?.(active); return () => props.onSessionActiveChange?.(false); }, [active, props.onSessionActiveChange]);
   const [purpose, setPurpose] = useState<CreativeVoiceStart["purpose"]>("discussion");
   const [status, setStatus] = useState("尚未连接"), [route, setRoute] = useState(""), [usage, setUsage] = useState(0);
   const [notes, setNotes] = useState(""), [adopt, setAdopt] = useState(""), [question, setQuestion] = useState("");
@@ -39,7 +44,7 @@ export function CreativeVoicePanel(props: {
     notesRef.current += text; setNotes(notesRef.current);
     try { window.localStorage.setItem(notesKey, notesRef.current); } catch { setStatus("记录无法自动保存，请立即下载记录"); }
   };
-  const send = (message: object) => { if (ws.current?.readyState === WebSocket.OPEN && ws.current.bufferedAmount < 512000) ws.current.send(JSON.stringify(message)); };
+  const send = (message: object) => { if (ws.current?.readyState === WebSocket.OPEN && ws.current.bufferedAmount < 512000) ws.current.send(JSON.stringify("type" in message && message.type === "toolResult" && "text" in message && typeof message.text === "string" ? { ...message, text: formatVoiceToolResult(message.text) } : message)); };
   const silence = () => { for (const n of nodes.current) { try { n.stop(); } catch {} } nodes.current = []; nextPlay.current = 0; };
   function stopInput(key: string) {
     const item = inputs.current[key]; if (item) { item.source.disconnect(); item.stream.getTracks().forEach(t => t.stop()); delete inputs.current[key]; }
@@ -93,13 +98,30 @@ export function CreativeVoicePanel(props: {
           void callbacks.current.onAskAdvisor(data.question, voiceAbort.current.signal).then(answer => {
             if (seq !== generation.current) return;
             const text = answer || "本次未得到结果：可能需要确认、输入不完整、任务忙或服务失败。请查看原创作顾问提示；不要自动重试。";
-            append(`创作顾问结果：${text}\n`); send({ type: "toolResult", id: data.id, text: text.slice(0, 16000) });
+            append(`创作顾问结果：${text}\n`); send({ type: "toolResult", id: data.id, text });
           }).catch(() => { if (seq === generation.current) send({ type: "toolResult", id: data.id, text: "调用未完成，请查看原顾问的错误和恢复入口，不要重试或声称已完成。" }); });
+        }
+        if (data.type === "production") {
+          if (toolCalls.current.has(data.id)) return; toolCalls.current.add(data.id);
+          const task = callbacks.current.disabled ? Promise.reject(new Error("工作区忙，未提交制作")) : callbacks.current.onProductionAction?.(data.action, voiceAbort.current.signal) || Promise.resolve("请先将选定剧本接入漫剧工厂，再打开资产或白模制作。");
+          void task.then(result => { if (seq === generation.current) { append(`制作工具：${result}\n`); send({type:"toolResult",id:data.id,text:result}); } })
+            .catch(error => { if (seq === generation.current) send({type:"toolResult",id:data.id,text:error instanceof Error ? error.message : "制作状态未确认，请查看原任务，不要重复提交"}); });
+        }
+        if (data.type === "novelEdit") {
+          if (toolCalls.current.has(data.id)) return; toolCalls.current.add(data.id);
+          const task = callbacks.current.disabled ? Promise.reject(new Error("工作区忙，未修改正文")) : callbacks.current.onNovelAction?.(data.action, voiceAbort.current.signal) || Promise.resolve("当前页面没有小说正文工具，请打开小说改编工作区。");
+          void task.then(result => { if (seq !== generation.current) return;
+            append(`小说正文工具 · ${data.action.action}：${data.action.action === "read" ? "已读取指定集的当前正文" : result}\n`);
+            send({type:"toolResult",id:data.id,text:result});
+          }).catch(error => { if (seq === generation.current) {
+            const text = error instanceof Error ? error.message : "正文操作未完成，请查看页面提示";
+            append(`小说正文工具：${text}\n`); send({type:"toolResult",id:data.id,text});
+          }});
         }
         if (data.type === "filmReview") {
           if (toolCalls.current.has(data.id)) return; toolCalls.current.add(data.id);
           const task = callbacks.current.disabled ? Promise.resolve("工作区忙，请等待原任务") : callbacks.current.onReviewFilm?.(data.blockId, data.question, voiceAbort.current.signal) || Promise.resolve("请到漫剧工厂选择影片审阅");
-          void task.then(result => { if (seq === generation.current) { const text = result || "本次未完成审阅，不要自动重试"; append(`影片审阅：${text}\n`); send({ type: "toolResult", id: data.id, text: text.slice(0,16000) }); } }).catch(() => { if (seq === generation.current) send({type:"toolResult",id:data.id,text:"影片审阅未完成，请查看原任务，不要重试"}); });
+          void task.then(result => { if (seq === generation.current) { const text = result || "本次未完成审阅，不要自动重试"; append(`影片审阅：${text}\n`); send({ type: "toolResult", id: data.id, text }); } }).catch(() => { if (seq === generation.current) send({type:"toolResult",id:data.id,text:"影片审阅未完成，请查看原任务，不要重试"}); });
         }
         if (data.type === "mediaEdit") {
           if (toolCalls.current.has(data.id)) return; toolCalls.current.add(data.id);
@@ -108,13 +130,19 @@ export function CreativeVoicePanel(props: {
             if (callbacks.current.disabled || !callbacks.current.onProposeMediaEdit) throw new Error("当前工作区不能准备素材修改，请打开漫剧工厂。");
             result = callbacks.current.onProposeMediaEdit(data.proposal);
           } catch (e) { result = e instanceof Error ? e.message : "方案未准备好"; }
-          append(`素材修改：${result}\n`); send({ type: "toolResult", id: data.id, text: result.slice(0,16000) });
+          append(`素材修改：${result}\n`); send({ type: "toolResult", id: data.id, text: result });
         }
         if (data.type === "workflow") {
           if (toolCalls.current.has(data.id)) return; toolCalls.current.add(data.id);
           let result: string;
           try { result = workflowCallback.current(data.action); } catch (error) { result = error instanceof Error ? error.message : "操作没有完成"; }
-          append(`工作流：${result}\n`); send({ type: "toolResult", id: data.id, text: result.slice(0, 16000) });
+          if (data.action.action === "inspect") {
+            const current = callbacks.current;
+            void inspectCreativeVoiceWorkspace(result, current.onProductionAction ? () => current.onProductionAction!({action:"inspect"}, voiceAbort.current.signal) : undefined).then(text => {
+              if (seq !== generation.current) return;
+              append(`工作流：${text}\n`); send({type:"toolResult",id:data.id,text});
+            });
+          } else { append(`工作流：${result}\n`); send({ type: "toolResult", id: data.id, text: result }); }
         }
         if (data.type === "audio" && audio.current) {
           const ctx = audio.current, samples = pcmFloat(data.data); const rate = Number(/rate=(\d+)/.exec(data.mimeType)?.[1] || 24000);
@@ -139,6 +167,8 @@ export function CreativeVoicePanel(props: {
       let talking = false, quiet = 0;
       processor.onaudioprocess = event => {
         const samples = event.inputBuffer.getChannelData(0);
+        // Preserve the film soundscape, including quiet passages. Mic-only input keeps VAD.
+        if (inputs.current.video) { send({ type: "audio", data: pcm16At16k(samples, ctx.sampleRate) }); return; }
         const loud = samples.some(n => Math.abs(n) > 0.008);
         if (loud) { quiet = 0; talking = true; }
         else quiet += samples.length / ctx.sampleRate;
@@ -159,17 +189,6 @@ export function CreativeVoicePanel(props: {
     catch { setStatus("无法开启麦克风，请检查权限；仍可打字提问"); } finally { inputPending.current = false; }
   }
   const selectedVideo = () => file ? localVideo.current : videos[selected];
-  function shareFrame() {
-    const video = sharedVideo.current; if (!video || !video.isConnected) { stopSharing(); return; }
-    try { const data = captureVoiceFrame(video); if (data) send({ type: "frame", data, atSec: video.currentTime, source: file?.name.slice(0, 160) || `页面播放器${selected + 1}` }); }
-    catch { stopSharing(); setStatus("此播放器不允许读取跨域画面，请选择本机影片；没有传送空白画面"); }
-  }
-  function toggleSharing() {
-    if (sharing) { stopSharing(); return; }
-    const video = selectedVideo(); if (!video) { setStatus("请先选择本机影片或页面播放器"); return; }
-    sharedVideo.current = video; setSharing(true); shareFrame();
-    if (sharedVideo.current) frameTimer.current = setInterval(() => { if (!video.paused && !video.ended) shareFrame(); }, 1100);
-  }
   async function shareStill(file: File) {
     if (!ready) return;
     if (file.size > 20 * 1024 * 1024) { setStatus("图片超过20MB，请先缩小后分享。"); return; }
@@ -186,16 +205,6 @@ export function CreativeVoicePanel(props: {
       append(`已提交静态参考图：${file.name}（不是成片）\n`); setStatus("已提交静态参考图，可讨论构图、灯光和空间安排");
     } catch { setStatus("图片未能读取，没有发送；请选JPEG或PNG图片。"); } finally { URL.revokeObjectURL(url); }
   }
-  async function toggleVideoAudio() {
-    if (videoAudio) { stopInput("video"); return; }
-    const video = selectedVideo() as CaptureVideo | null; const seq = generation.current;
-    try {
-      if (!video?.captureStream) throw new Error();
-      const captured = video.captureStream(); captured.getVideoTracks().forEach(t => t.stop());
-      if (!captured.getAudioTracks().length) { captured.getTracks().forEach(t => t.stop()); throw new Error(); }
-      await attachAudio("video", captured, seq); if (seq === generation.current) setVideoAudio(true);
-    } catch { setStatus("未能取得影片音轨，请先播放影片并检查浏览器支持；顾问目前不能听到影片声音"); }
-  }
   const videoSource = () => file?.identity || selectedVideo()?.currentSrc || undefined;
   function persistReviews(next: VoiceReviewNote[]) {
     if (reviewBlocked.current) throw new Error("旧修改清单无法读取，未覆盖。请先下载原始备份。");
@@ -203,7 +212,7 @@ export function CreativeVoicePanel(props: {
   }
   function runWorkflow(action: CreativeVoiceAction): string {
     const current = callbacks.current;
-    if (action.action === "inspect") return JSON.stringify({ mediaSources: current.mediaSources?.map(({blockId,kind,label})=>({blockId,kind,label})) || [], targets: current.targets || [], context: current.context.slice(0, 10000), notes: reviewsRef.current.slice(-10), playerTime: selectedVideo()?.currentTime, frameShared: !!sharedVideo.current, audioShared: !!inputs.current.video });
+    if (action.action === "inspect") return JSON.stringify({ novelEditing: Boolean(current.onNovelAction), production: Boolean(current.onProductionAction), media: current.onInspectMedia?.() || null, mediaSources: current.mediaSources?.map(({blockId,kind,label})=>({blockId,kind,label})) || [], targets: current.targets || [], context: current.context.slice(0, 10000), notes: reviewsRef.current.slice(-10), playerTime: selectedVideo()?.currentTime, frameShared: !!sharedVideo.current, audioShared: !!inputs.current.video });
     if (current.disabled) throw new Error("当前顾问或工作区正在处理任务，请等待后再操作。");
     const target = action.episode ? resolveVoiceTarget(current.targets || [], action.episode, action.shot) : undefined;
     if (action.action === "navigate") {
@@ -242,12 +251,11 @@ export function CreativeVoicePanel(props: {
       <div className="flex flex-wrap gap-2"><button type="button" className={button} disabled={active || props.disabled} onClick={() => void start().catch(() => { stop(); setStatus("无法启动音讯，请重试浏览器权限"); })}>开始讨论</button><button type="button" className={button} disabled={!active} onClick={() => { stop(); setStatus("已结束，停止传送音讯与画面"); }}>结束语音</button><button type="button" className={button} disabled={!ready} onClick={() => void toggleMic()}>{mic ? "关闭麦克风" : "开启麦克风"}</button><button type="button" className={button} onClick={silence}>停止播放回复</button></div>
       <p role="status">{status}</p><p className="text-xs opacity-70">{route}{usage > 0 ? ` · 最近用量回执 ${usage} tokens（非累计账单）` : ""}</p>
       <label className="block">分享分镜／资产参考图 <input aria-label="分享分镜参考图" type="file" accept="image/jpeg,image/png,image/webp" disabled={!ready || sharing} onChange={e => { const file = e.target.files?.[0]; if (file) void shareStill(file); e.target.value = ""; }} /></label>
-      <fieldset className="space-y-2 rounded-lg border border-current/20 p-2"><legend>影片输入 · 最高每秒1张画面</legend>
+      <fieldset className="space-y-2 rounded-lg border border-current/20 p-2"><legend>影片播放与意见定位</legend>
         <label>本机影片 <input type="file" accept="video/*" disabled={sharing || videoAudio} onChange={e => { const picked = e.target.files?.[0]; if (picked) setFile({ url: URL.createObjectURL(picked), name: picked.name, identity: `file:${picked.name}:${picked.size}:${picked.lastModified}` }); }} /></label>
         {file && <><video ref={localVideo} src={file.url} controls playsInline className="max-h-64 w-full bg-black" /><button type="button" className={button} disabled={sharing || videoAudio} onClick={() => setFile(null)}>改用页面播放器</button></>}
-        {!file && <><button type="button" className={button} disabled={sharing || videoAudio} onClick={() => setVideos(Array.from(document.querySelectorAll("video")).filter(v => v !== localVideo.current))}>读取本页播放器</button><select aria-label="分享的播放器" value={selected} disabled={sharing || videoAudio} className="max-w-full bg-slate-900 p-2 text-white" onChange={e => setSelected(Number(e.target.value))}>{videos.map((v, i) => <option value={i} key={i}>播放器{i + 1} · {Number.isFinite(v.duration) ? Math.round(v.duration) : "?"}秒</option>)}</select></>}
-        <div className="flex flex-wrap gap-2"><button type="button" className={button} disabled={!ready} onClick={toggleSharing}>{sharing ? "停止分享画面" : "分享画面"}</button><button type="button" className={button} disabled={!ready || !sharing} onClick={shareFrame}>分享当前暂停画面</button><button type="button" className={button} disabled={!ready} onClick={() => void toggleVideoAudio()}>{videoAudio ? "停止影片声音" : "分享影片声音"}</button></div>
-        <p>画面：{sharing ? "分享中，暂停播放后不连续发送" : "未分享"} · 影片声音：{videoAudio ? "分享中" : "未分享"}。快速动作和口型仍需精细审片。</p>
+        {!file && <><button type="button" className={button} disabled={sharing || videoAudio} onClick={() => setVideos(Array.from(document.querySelectorAll("video")).filter(v => v !== localVideo.current))}>读取本页播放器</button><select aria-label="定位的播放器" value={selected} disabled={sharing || videoAudio} className="max-w-full bg-slate-900 p-2 text-white" onChange={e => setSelected(Number(e.target.value))}>{videos.map((v, i) => <option value={i} key={i}>播放器{i + 1} · {Number.isFinite(v.duration) ? Math.round(v.duration) : "?"}秒</option>)}</select></>}
+        <p>此处仅播放影片、定位和记录意见，不向 Live 传送影片画面或音轨。影片与音轨审阅请使用创作顾问的「审阅所选影片 · Gemini Flash」，也可用语音要求审阅当前影片。</p>
       </fieldset>
       <div className="flex gap-2"><input aria-label="向语音顾问打字提问" value={question} maxLength={4000} onChange={e => setQuestion(e.target.value)} className="min-w-0 flex-1 rounded border bg-transparent p-2" /><button type="button" className={button} disabled={!ready || !question.trim()} onClick={() => { send({ type: "text", text: question }); append(`你：${question}\n`); setQuestion(""); }}>发送</button></div>
       <details open><summary>讨论记录 · 保存在本机</summary><pre className="max-h-52 overflow-auto whitespace-pre-wrap">{notes || "尚无记录"}</pre><button type="button" className={button} disabled={!notes} onClick={download}>下载记录</button></details>

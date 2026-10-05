@@ -28,7 +28,7 @@ export function formatAdvisorRewriteAnswer(answer: string): string {
 }
 export function parseAdvisorRewrite(answer: string, episodeIndex: number, originalBody: string, originalEndHook?: string): AdvisorRewriteCandidate {
   const result = rewriteSchema.parse(parseJson(answer));
-  validateAdvisorRewriteBody(originalBody, result.body);
+  validateAdvisorRewriteBody(originalBody, result.body, result.endHook);
   return advisorRewriteCandidateSchema.parse({ episodeIndex, originalBody, rewrittenBody: result.body, changes: result.changes, ...(result.endHook ? { endHook: result.endHook, originalEndHook: originalEndHook || "" } : {}) });
 }
 export const TEMPLATE_PLAN_QUESTION = TEMPLATE_CATALOG_REQUEST_MARKER + '请根据当前故事推荐3—5个不同的库内剧本模板方案，说明适配依据、具体改动与保留内容。仅在answer字段内返回JSON文本，不加说明或代码围栏：{"kind":"template-plans","plans":[{"publicId":"库内ID","reason":"依据当前故事的理由","changes":["改动1","改动2"],"preserve":"保留的人物、动机与因果"}]}。plans为3—5个不同模板，不得编造ID。';

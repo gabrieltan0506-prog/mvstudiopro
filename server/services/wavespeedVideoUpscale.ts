@@ -104,7 +104,7 @@ async function submitWavespeedEnhance(input: { taskId?: string; videoUrl: string
     catch { throw new SubmitRejectedError("无法签名视频素材，未提交上游"); }
   }
   if (!/^https?:\/\//i.test(source)) throw new SubmitRejectedError("需要一条可公开访问的视频地址");
-  if (!frameIncrease && input.target !== "2k" && input.target !== "4k") throw new SubmitRejectedError("超分目标必须为2K或4K");
+  if (!frameIncrease && input.target !== "1080p" && input.target !== "2k" && input.target !== "4k") throw new SubmitRejectedError("超分目标必须为1080p、2K或4K");
 
   const evidenceId = input.taskId || `ws_${randomUUID()}`;
   const requestBody = JSON.stringify(frameIncrease ? { video: source } : { video: source, target_resolution: input.target });

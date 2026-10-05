@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { trpc } from "@/lib/trpc";
 import { manhuaPrevisMediaUrl } from "@/lib/manhuaPrevisMediaUrl";
 import type { PrevisResponse } from "./ManhuaPrevisStudio";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, type MutableRefObject } from "react";
 import { advisorPrevisCandidateSchema, applyAdvisorPrevisPatch, validateAdvisorPrevisReceipt, advisorPrevisTrialSchema, type AdvisorPrevisTrial, type AdvisorPrevisReceipt, type AdvisorPrevisCandidate, type AdvisorPrevisVideoSource, advisorPrevisSpecJson } from "@shared/manhuaAdvisorPrevisEdit";
 import { manhuaPrevisSpecSchema, PREVIS_ACTION_LABELS, type ManhuaPrevisSpec } from "@shared/manhuaPrevis";
 
@@ -23,7 +23,9 @@ function Configuration({ spec }: { spec: ManhuaPrevisSpec }) {
     </section>)}
   </div>;
 }
-export function ManhuaAdvisorPrevisComparison({ candidate, storageKey, autoStart, previewHost, actionHost, disabled, onCheckReady, onPrepare, onApply, onRevise, onPreviewReady }: {
+export type AdvisorPrevisVoiceControl = { inspect: () => object; apply: () => Promise<string>; retry: () => Promise<string> };
+export function ManhuaAdvisorPrevisComparison({ voiceControl, candidate, storageKey, autoStart, previewHost, actionHost, disabled, onCheckReady, onPrepare, onApply, onRevise, onPreviewReady }: {
+  voiceControl?: MutableRefObject<AdvisorPrevisVoiceControl | null>;
   previewHost?: HTMLElement | null;
   actionHost?: HTMLElement | null;
   onCheckReady?: (candidate: AdvisorPrevisCandidate) => string;
@@ -47,6 +49,8 @@ export function ManhuaAdvisorPrevisComparison({ candidate, storageKey, autoStart
   const [receipt, setReceipt] = useState<AdvisorPrevisReceipt | null>(null);
   const [status, setStatus] = useState(initial.trial ? "正在恢复原试看任务" : "调度提案已准备好，可以继续修改或生成试看");
   const [error, setError] = useState(initial.issue);
+  const [failed, setFailed] = useState(false);
+  const retryLock = useRef(false);
   const [watched, setWatched] = useState(false);
   const [reviewed, setReviewed] = useState(false);
   const [applied, setApplied] = useState(false);
@@ -62,11 +66,12 @@ export function ManhuaAdvisorPrevisComparison({ candidate, storageKey, autoStart
     if (!alive.current) return;
     if (!value) { setStatus("暂未查到原请求，请确认原请求；不会自动新建。"); return; }
     if (value.status === "succeeded") {
+      setFailed(false);
       const verified = validateAdvisorPrevisReceipt(active.request, value);
       onPreviewReady?.({ target: active.candidate.target, requestId: active.request.requestId, specJson: advisorPrevisSpecJson(active.request.spec) });
       setReceipt(verified); setStatus("试看已生成，工作流尚未修改"); setError("");
-    } else if (value.status === "failed") { setStatus("试看失败，工作流未修改"); setError(value.error || "请调整需求后重新咨询"); }
-    else { setStatus(value.status === "queued" ? "独立试看排队中，工作流未修改" : "独立试看渲染中，工作流未修改"); setError(""); }
+    } else if (value.status === "failed") { setFailed(true); setStatus("试看失败，工作流未修改"); setError(value.error || "请调整需求后重新咨询"); }
+    else { setFailed(false); setStatus(value.status === "queued" ? "独立试看排队中，工作流未修改" : "独立试看渲染中，工作流未修改"); setError(""); }
   }
   async function start(existing?: AdvisorPrevisTrial) {
     if (busy.current || disabled || issue || initial.issue || (!existing && currentReadiness)) return;
@@ -75,7 +80,7 @@ export function ManhuaAdvisorPrevisComparison({ candidate, storageKey, autoStart
     busy.current = true;
     try {
       const next = existing || onPrepare(candidate);
-      if (!existing) { setReceipt(null); setWatched(false); setReviewed(false); setApplied(false); }
+      if (!existing) { setFailed(false); setReceipt(null); setWatched(false); setReviewed(false); setApplied(false); }
       // 只保存顾问试看恢复记录；不调用工作流写回或采用。
       localStorage.setItem(`${storageKey}:${next.request.requestId}`, JSON.stringify(next));
       localStorage.setItem(storageKey, next.request.requestId);
@@ -98,15 +103,39 @@ export function ManhuaAdvisorPrevisComparison({ candidate, storageKey, autoStart
     };
     void poll(); return () => { cancelled = true; clearTimeout(timer); };
   }, [trial?.request.requestId, Boolean(receipt)]);
-  async function apply() {
-    if (!trial || !receipt || !watched || !reviewed || busy.current || disabled) return;
+  async function apply(voiceConfirmed = false): Promise<string> {
+    if (!trial || !receipt || !watched || (!reviewed && !voiceConfirmed) || busy.current || disabled) return "请先观看已完成的试看，确认后才能应用；原配置未修改。";
     busy.current = true;
     try {
       const latest = validateAdvisorPrevisReceipt(trial.request, await utils.manhuaPrevis.get.fetch({ requestId: trial.request.requestId }));
-      if (onApply?.(trial, latest)) { setApplied(true); setError(""); }
-    } catch (e) { setError(e instanceof Error ? e.message : "原试看回执无法核验，未应用"); }
+      if (onApply?.(trial, latest)) { setApplied(true); setError(""); return "已应用本段白模配置与真实试看版本，原配置保留。"; }
+      return "应用未完成，请查看工作区阻断提示；原配置保留。";
+    } catch (e) { setError(e instanceof Error ? e.message : "原试看回执无法核验，未应用"); return "原试看回执无法核验，未应用。"; }
     finally { busy.current = false; }
   }
+  async function retryFailed(): Promise<string> {
+    if (!trial || !failed || busy.current || retryLock.current || disabled) return "只有已明确失败的试看可重试，运行中或结果未知请查询原任务。";
+    retryLock.current = true;
+    try {
+      const original = await utils.manhuaPrevis.get.fetch({requestId:trial.request.requestId});
+      if (original?.status !== "failed") { consume(original,trial); return "原任务并非已确认失败，未新建渲染。"; }
+      if (!window.confirm("重新渲染这版白模？将产生新的渲染开销，保留原失败记录与当前作品。")) return "用户取消，未重试。";
+      await start();
+      return "已尝试提交新的白模试看，请inspect查看新任务回执；原失败记录保留，尚未采用。";
+    } catch (e) { const text=e instanceof Error?e.message:"原任务查询失败，未重新下单";setError(text);return text; }
+    finally { retryLock.current=false; }
+  }
+  if (voiceControl) voiceControl.current = {
+    inspect: () => ({status,error,requestId:trial?.request.requestId,ready:Boolean(receipt),failed,watched,applied}),
+    retry: retryFailed,
+    apply: async () => {
+      if (applied) return "这版已应用，不重复写入。";
+      if (!watched || !receipt) return "请先在本页观看已完成的白模试看，再确认采用。";
+      if (!window.confirm("将已观看的白模试看应用到当前片段？原配置保留，可恢复。")) return "用户取消，未应用。";
+      return apply(true);
+    },
+  };
+  useEffect(() => () => { if (voiceControl) voiceControl.current = null; }, [voiceControl]);
   const action = <div data-advisor-previs-launch className="space-y-1">
     {(issue || initial.issue || readinessIssue || !currentHost) && <p role="alert" className="max-h-14 overflow-y-auto text-xs text-amber-100">{issue || initial.issue || readinessIssue || "请打开当前片段的动作白模，试看将在同页显示。"}</p>}
     {!receipt && <button type="button" disabled={disabled || submit.isPending || Boolean(issue || initial.issue || readinessIssue) || !currentHost || !storageKey || !onPrepare} onClick={() => void start(trial || undefined)} className="min-h-10 w-full rounded-lg bg-cyan-400 px-3 py-2 text-sm font-semibold text-slate-950 disabled:opacity-40">{submit.isPending ? "正在提交原试看…" : trial ? "查询／恢复这次白模试看" : "生成白模视频试看"}</button>}
@@ -117,6 +146,7 @@ export function ManhuaAdvisorPrevisComparison({ candidate, storageKey, autoStart
   </div>;
   return <section aria-label="白模调度修改对比" className="space-y-3 rounded-xl border border-cyan-300/35 bg-cyan-400/5 p-3">
     {actionHost ? createPortal(action, actionHost) : action}
+    {failed && <button type="button" disabled={disabled || submit.isPending} onClick={()=>void retryFailed()} className="min-h-10 rounded border border-amber-300/40 px-3">重试失败的白模试看</button>}
     <h3 className="font-semibold text-cyan-100">调度提案与试看 · 可反复修改</h3>
     <p className="whitespace-pre-wrap text-sm leading-6">{candidate.patch.summaryZh}</p>
     <p role="status" className="text-sm text-cyan-100">{status}</p>

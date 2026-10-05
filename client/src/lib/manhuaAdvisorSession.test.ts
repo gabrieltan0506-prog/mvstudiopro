@@ -125,3 +125,15 @@ describe("顾问会话隔离与追问", () => {
     expect(values.has("another-session")).toBe(false);
   });
 });
+
+it('已保存的明确采用维持语音；手动改稿、换账号或版本仍重建',()=>{
+ const first={seriesTitle:'隔离副本',episodes:[{body:'第一稿'}]};
+ const second={...first,episodes:[{body:'顾问确认后的第二稿'}]};
+ const mountedKey=manhuaAdvisorMountKey('91003',undefined,first);
+ const draftKey=manhuaAdvisorMountKey('91003',undefined,second);
+ const continuation={mountedKey,draftKey};
+ expect(manhuaAdvisorMountKey('91003',undefined,second,continuation)).toBe(mountedKey);
+ expect(manhuaAdvisorMountKey('91003',undefined,{...second,episodes:[{body:'其他手动修改'}]},continuation)).not.toBe(mountedKey);
+ expect(manhuaAdvisorMountKey('91004',undefined,second,continuation)).not.toBe(mountedKey);
+ expect(manhuaAdvisorMountKey('91003','new-version',second,continuation)).not.toBe(mountedKey);
+});

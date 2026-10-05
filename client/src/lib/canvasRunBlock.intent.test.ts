@@ -307,3 +307,22 @@ describe("服务端 202 creating：按意图恢复，不当失败也不重发", 
     expect(calls.filter((c) => c.init?.method === "POST")).toHaveLength(1);
   });
 });
+
+it("视频编辑明确失败结清旧意图，下一次用户执行新建；未知结果不冒充失败", async () => {
+  const block = makeBlock({ prompt: "【第1段·5s】旧片\n\n【视频编辑指令】改为冷月夜", seedance25WorkMode: "video_edit", refVideoUrl: "https://test.invalid/old.mp4", seedance25RefVideoUrls: ["https://test.invalid/old.mp4"] });
+  const gate = await confirmedGate(block);
+  const storage = memoryStorage();
+  const onVideoTaskCreated = vi.fn();
+  const deps = { onVideoTaskCreated, optimizeCopy: async () => "", userRole: "admin", canvasIntentStorage: storage };
+  const opts = { enforceOutboundConfirmation: true, resolveOutboundGate: () => gate };
+  const first = stubFetch(c => c.init?.method === "POST" ? ok({ok:true,async:true,taskId:"failed-edit"}) : ok({ok:true,status:"failed",error:"reference rejected"}));
+  await expect(runCanvasBlock(deps, block, undefined, opts)).rejects.toThrow("reference rejected");
+  expect(onVideoTaskCreated).toHaveBeenCalledWith(block.id, {taskId:"failed-edit",engine:"seedance-2.5"});
+  expect(intentsOf(storage, block.id)[0].status).toBe("settled");
+  expect(first.filter(c => c.init?.method === "POST")).toHaveLength(1);
+  const firstId = first.find(c => c.body?.intentId)?.body?.intentId;
+  const second = stubFetch(() => { throw new TypeError("Failed to fetch"); });
+  await expect(runCanvasBlock(deps, block, undefined, opts)).rejects.toThrow();
+  expect(second[0].body?.intentId).not.toBe(firstId);
+  expect(intentsOf(storage, block.id).find(x => x.intentId === second[0].body?.intentId)?.status).toBe("unverified");
+}, 15000);
