@@ -1,7 +1,7 @@
 import { rememberLocalMediaDisplay } from "./manhuaLocalMediaStore";
 import { describe, it, expect } from "vitest";
 import { creativeVoiceProductionSchema } from "@shared/creativeVoiceProduction";
-import { archiveFailedVoiceStoryboard, saveVoiceStoryboard, requireVoiceStoryboardCandidate, voiceStoryboardSource, type VoiceStoryboardCandidate } from "./creativeVoiceStoryboard";
+import { archiveVoiceStoryboard, saveVoiceStoryboard, requireVoiceStoryboardCandidate, voiceStoryboardSource, type VoiceStoryboardCandidate } from "./creativeVoiceStoryboard";
 import { defaultCanvasBlock } from "./canvasTypes";
 
 describe("语音分镜候选保存与采用边界", () => {
@@ -29,11 +29,21 @@ describe("语音分镜候选保存与采用边界", () => {
   });
 });
 
-it("失败记录先完整归档才能解除阻断，在途和已返回完整稿不允许丢弃重下",()=>{
+it("已知终态先完整归档才解除；原文和历史不丢，未知或跨作品不得重投",()=>{
  const map=new Map<string,string>(),storage={getItem:(k:string)=>map.get(k)??null,setItem:(k:string,v:string)=>{map.set(k,v)},removeItem:(k:string)=>{map.delete(k)}};
  const c={id:"old",scope:"test",episode:1,source:"test",status:"pending" as const,error:"任务明确失败",upstreamStatus:"failed" as const};
- saveVoiceStoryboard(storage,"key",c);archiveFailedVoiceStoryboard(storage,"key","old");expect(map.has("key")).toBe(false);expect(JSON.parse(map.get("key:history:old")!)).toEqual(c);
- for(const invalid of [{...c,upstreamStatus:undefined},{...c,error:undefined},{...c,text:"已返回的完整付费产物"},{...c,upstreamTaskId:"task",upstreamStatus:"running" as const},{...c,upstreamTaskId:"task",upstreamStatus:"succeeded" as const}]){saveVoiceStoryboard(storage,"key",invalid);expect(()=>archiveFailedVoiceStoryboard(storage,"key","old")).toThrow();expect(map.has("key")).toBe(true);}
+ for(const terminal of [c,{...c,text:"已返回的完整付费产物",upstreamStatus:undefined},{...c,resultState:"returned" as const,upstreamStatus:undefined}]) {
+   saveVoiceStoryboard(storage,"key",terminal);archiveVoiceStoryboard(storage,"key","old","test");
+   expect(map.has("key")).toBe(false);
+   expect(Array.from(map.entries()).some(([k,v])=>k.startsWith("key:history:old:archived:") && v===JSON.stringify(terminal))).toBe(true);
+ }
+ expect(map.size).toBe(3);
+ for(const invalid of [{...c,upstreamStatus:undefined},{...c,upstreamTaskId:"task",upstreamStatus:"running" as const}]) {
+   saveVoiceStoryboard(storage,"key",invalid);expect(()=>archiveVoiceStoryboard(storage,"key","old","test")).toThrow();expect(map.has("key")).toBe(true);
+ }
+ saveVoiceStoryboard(storage,"key",c);expect(()=>archiveVoiceStoryboard(storage,"key","old","other")).toThrow();
+ const quotaStorage={...storage,setItem:()=>{throw new Error("quota")}};
+ expect(()=>archiveVoiceStoryboard(quotaStorage,"key","old","test")).toThrow("quota");expect(storage.getItem("key")).toBe(JSON.stringify(c));
 });
 
 

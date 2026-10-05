@@ -2,9 +2,9 @@ import fs from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { expect, it, vi } from "vitest";
-import { saveVoiceStoryboard, voiceStoryboardSource } from "./creativeVoiceStoryboard";
+import { saveVoiceStoryboard, voiceStoryboardSource, voiceStoryboardResultState, normalizeVoiceStoryboardSource } from "./creativeVoiceStoryboard";
 
-it("真实宿主在严格分镜校验失败前保存完整原文，下一次操作不重复付费", async () => {
+it("离线提取宿主函数：严格分镜校验失败前保存完整原文，下一次操作不重复付费", async () => {
   const source = fs.readFileSync(new URL("../pages/OmniCanvas.tsx", import.meta.url), "utf8");
   const begin = source.indexOf("  async function prepareVoiceStoryboard(");
   const end = source.indexOf("\n  function backupVoiceProduction", begin);
@@ -21,7 +21,8 @@ it("真实宿主在严格分镜校验失败前保存完整原文，下一次操�
   const noop = () => {};
   const context = {
     Error, AbortController, crypto: { randomUUID: () => "test-receipt-id" }, window: { confirm: () => true },
-    localStorage: storage, saveVoiceStoryboard, voiceStoryboardSource,
+    localStorage: storage, saveVoiceStoryboard, voiceStoryboardSource, voiceStoryboardResultState, normalizeVoiceStoryboardSource,
+    voiceStoryboard: null, writerBusy: false, factoryBusy: false, cloudConflict: null,
     voiceStoryboardScope: "1:project", currentVoiceStoryboardScope: { current: "1:project" }, voiceStoryboardKey: "candidate",
     writerConfirmed: true, writerPack: { episodes: [{ index: 1, body: "原剧情", templateReferences: [{}, {}, {}] }] },
     voiceStoryboardLock: { current: false }, abortRef: { current: null }, blocksRef: { current: graph.blocks }, edges: graph.edges,

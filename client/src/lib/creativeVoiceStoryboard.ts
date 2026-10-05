@@ -12,6 +12,10 @@ export type VoiceStoryboardCandidate = {
   edges?: CanvasEdge[];
   error?: string;
   question?: string;
+  /** 原始提交关系不随候选重建改变。 */
+  requestSource?: string;
+  requestInput?: unknown;
+  resultState?: "returned" | "failed" | "unknown";
   upstreamTaskId?: string;
   upstreamStatus?: "running" | "succeeded" | "failed";
 };
@@ -53,12 +57,20 @@ export function requireVoiceStoryboardCandidate(candidate: VoiceStoryboardCandid
   return candidate as VoiceStoryboardCandidate & { text: string; blocks: CanvasBlock[]; edges: CanvasEdge[] };
 }
 
-/** 仅失败回执允许主动另开尝试；原请求完整归档后才解除本机阻断。 */
-export function archiveFailedVoiceStoryboard(storage: Pick<Storage,"setItem"|"getItem"|"removeItem">, key: string, id: string): void {
+/** 旧同步候选只有完整 text；不能继续依赖旧异步 taskId 才允许恢复。 */
+export function voiceStoryboardResultState(candidate: VoiceStoryboardCandidate): "returned" | "failed" | "unknown" {
+  if (candidate.text?.trim() || candidate.resultState === "returned" || candidate.upstreamStatus === "succeeded") return "returned";
+  if (candidate.resultState === "failed" || candidate.upstreamStatus === "failed") return "failed";
+  return "unknown";
+}
+
+/** 已知终态先完整归档才能解除阻断；未知/在途请求不能借此重复收费。 */
+export function archiveVoiceStoryboard(storage: Pick<Storage,"setItem"|"getItem"|"removeItem">, key: string, id: string, scope: string): void {
   const raw = storage.getItem(key);
   const candidate: VoiceStoryboardCandidate | null = raw ? JSON.parse(raw) : null;
-  if (!candidate || candidate.id !== id || candidate.status !== "pending" || !candidate.error || candidate.text || candidate.upstreamStatus !== "failed") throw new Error("原请求未失败或已有待保全结果，不能重新生成。");
-  saveVoiceStoryboard(storage, `${key}:history:${candidate.id}`, candidate);
+  if (!candidate || candidate.id !== id || candidate.scope !== scope || voiceStoryboardResultState(candidate) === "unknown") throw new Error("原请求归属不符或结果未知，不能解除后重新生成。");
+  saveVoiceStoryboard(storage, `${key}:history:${candidate.id}:archived:${crypto.randomUUID()}`, candidate);
+  if (storage.getItem(key) !== raw) throw new Error("原请求已变化，归档保留但未解除当前请求。");
   storage.removeItem(key);
   if (storage.getItem(key) !== null) throw new Error("原请求记录未解除，不能重新生成。");
 }

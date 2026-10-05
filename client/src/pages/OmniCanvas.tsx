@@ -5,7 +5,7 @@ import { formatManhuaWriterPackMarkdown } from "@shared/manhuaWriterRoom";
 import { getJob } from "@/lib/jobs";
 import ManhuaEpisodeTextEditor from "@/components/canvas/ManhuaEpisodeTextEditor";
 import { splitManhuaEpisodeStoryText } from "@shared/manhuaAdvisorRewrite";
-import { archiveFailedVoiceStoryboard, normalizeVoiceStoryboardSource, saveVoiceStoryboard, requireVoiceStoryboardCandidate, voiceStoryboardSource, type VoiceStoryboardCandidate } from "@/lib/creativeVoiceStoryboard";
+import { archiveVoiceStoryboard, voiceStoryboardResultState, normalizeVoiceStoryboardSource, saveVoiceStoryboard, requireVoiceStoryboardCandidate, voiceStoryboardSource, type VoiceStoryboardCandidate } from "@/lib/creativeVoiceStoryboard";
 import { resolveAdvisorMediaReferenceUrl } from "@/lib/advisorMediaImageJob";
 import { CANVAS_IMAGE_CREDITS_PER_SHOT, CANVAS_IMAGE_CREDITS_BATCH } from "@shared/canvasGenerationPricing";
 import { isAdvisorMediaSourceUrl, assertAdvisorMediaSource, type AdvisorMediaPlan, type AdvisorMediaSource } from "@shared/manhuaAdvisorMediaEdit";
@@ -10056,11 +10056,17 @@ function OmniCanvasWorkspace() {
 
   async function prepareVoiceStoryboard(episode: number, question: string, signal: AbortSignal, resume = false, reconcile = false): Promise<string> {
     if (!voiceStoryboardScope || !writerConfirmed || !writerPack?.episodes.some(e => e.index === episode)) throw new Error("请先确认当前作品本集剧本，未生成分镜。");
-    if (voiceStoryboardLock.current || abortRef.current || advisorRewriteHasActiveWork(blocksRef.current)) throw new Error("仍有制作任务，未重复提交。");
+    if (voiceStoryboardLock.current || abortRef.current || writerBusy || factoryBusy || cloudConflict || advisorRewriteHasActiveWork(blocksRef.current)) throw new Error("仍有制作任务或云端冲突，未重复提交。");
     const previousRaw = localStorage.getItem(voiceStoryboardKey);
-    const previous = previousRaw ? JSON.parse(previousRaw) as VoiceStoryboardCandidate : null;
-    if (previous?.status === "pending" && !resume) throw new Error("上次分镜请求尚未取得确定结果，不能重复提交；请保留原页并核对原请求。");
-    if (previous?.status === "ready" && previous.scope === voiceStoryboardScope) {
+    const persisted = previousRaw ? JSON.parse(previousRaw) as VoiceStoryboardCandidate : null;
+    // 存储容量不足时屏幕上的原文可能比磁盘记录完整；只恢复同一请求，不覆盖另一请求。
+    const previous = reconcile && voiceStoryboard?.id === persisted?.id && voiceStoryboard?.scope === voiceStoryboardScope && voiceStoryboard?.text?.trim() ? voiceStoryboard : persisted;
+    if (previous && previous.scope !== voiceStoryboardScope) throw new Error("原任务不属于当前作品，未覆盖、未重提。");
+    if (previous && previous.status !== "ready" && !resume) {
+      setVoiceStoryboard(previous); setVoiceStoryboardVisible(true);
+      throw new Error(voiceStoryboardResultState(previous) === "unknown" ? "上次分镜请求结果未知，不能重复提交；请核对原请求。" : "上次分镜结果已保留，不能重复提交；请先重建候选或保留记录后归档。");
+    }
+    if (previous?.status === "ready" && !reconcile) {
       setVoiceStoryboard(previous); setVoiceStoryboardVisible(true);
       return "已有完整分镜候选，已重新展示，请先审阅或关闭并明确舍弃候选，不重复生成。";
     }
@@ -10071,26 +10077,28 @@ function OmniCanvasWorkspace() {
     const body = writerPack.episodes.find(e => e.index === episode)!.body;
     const source = voiceStoryboardSource(blocksRef.current, edges, JSON.stringify({body,templateReferences:writerPack?.episodes.find(ep=>ep.index===episode)?.templateReferences,projectBible,publicTemplateId,writerModel,customAssetRefs,explicitWriterVideoModel,characterLookSets,segmentLookBindings,segmentCapacityMode:getManhuaSegmentCapacityMode(segmentCapacityModeByEpisode,episode),writerLengthTierId}));
     const scope = voiceStoryboardScope, key = voiceStoryboardKey;
-    if(resume && (!previous?.upstreamTaskId || previous.scope !== scope || previous.episode !== episode)) throw new Error("原任务不属于当前作品本集，未覆盖、未重提。");
+    if (resume && (!previous || previous.scope !== scope || previous.episode !== episode)) throw new Error("原任务不属于当前作品本集，未覆盖、未重提。");
+    if (resume && !reconcile && !previous?.upstreamTaskId) throw new Error("原请求没有可续查的任务编号；已有原文请使用免费重建，未知结果不得重投。");
     const sourceChanged = resume && normalizeVoiceStoryboardSource(previous!.source) !== normalizeVoiceStoryboardSource(source);
     if (reconcile) {
-      if (!previous?.text || previous.upstreamStatus !== "succeeded") throw new Error("请先取回原任务完整结果。");
-      if (!window.confirm("按当前画布核对这份已返回的分镜？只重建候选，不调用模型、不扣费；请核对候选仍符合当前正文，确认采用前不会写回。")) return "取消核对，原结果保留。";
+      if (!resume || !previous?.text?.trim() || voiceStoryboardResultState(previous) !== "returned") throw new Error("请先取回原任务完整结果。");
+      if (!window.confirm(`${sourceChanged ? "当前正文或画布已变化。" : ""}按当前画布核对这份已返回的分镜？只重建候选，不调用模型、不扣费；请逐项核对候选仍符合当前正文，确认采用前不会写回。`)) return "取消核对，原结果保留。";
       saveVoiceStoryboard(localStorage,`${key}:history:${previous.id}:before-reconcile:${crypto.randomUUID()}`,previous);
     }
     const requestId=resume ? previous!.id : crypto.randomUUID();
-    const candidate: VoiceStoryboardCandidate = resume ? {...previous!,source:reconcile?source:previous!.source,error:undefined} : {id:requestId, scope, episode, source, question, status:"pending"};
+    const candidate: VoiceStoryboardCandidate = resume ? {...previous!,status:"pending",requestSource:previous!.requestSource || previous!.source,source:reconcile?source:previous!.source,error:undefined} : {id:requestId, scope, episode, source, requestSource:source, question, status:"pending",resultState:"unknown"};
     saveVoiceStoryboard(localStorage, key, candidate);
     voiceStoryboardLock.current = true; setFactoryBusy(true); setVoiceStoryboard(candidate); setVoiceStoryboardVisible(true);
     const ac = new AbortController(); abortRef.current = ac;
-    let completedCandidate: VoiceStoryboardCandidate | undefined;
+    let completedCandidate: VoiceStoryboardCandidate | undefined = candidate.text?.trim() ? candidate : undefined;
     try {
       // 原稿变化只阻止采用，不能阻止读回已付费结果。
       if (sourceChanged && !reconcile) {
         const task = await trpcUtils.client.mvAnalysis.storyboardCopyStatus.query({requestId});
         candidate.upstreamStatus = task.status;
+        candidate.resultState = task.status === "succeeded" ? "returned" : task.status === "failed" ? "failed" : "unknown";
         candidate.text = task.result?.result.optimizedMarkdown || candidate.text;
-        candidate.error = task.status === "succeeded" ? "原结果已取回；原稿或画布已变化，请先核对后再采用。不会重新生成。" : task.error || "原任务仍在执行，可继续查询同一编号。";
+        candidate.error = task.status === "succeeded" ? "原结果已取回；原稿或画布已变化，请先核对后再采用。不会重新生成。" : task.error || (task.status === "failed" ? "原任务已明确失败，可保留记录后归档，不会自动重新生成。" : "原任务仍在执行，可继续查询同一编号。");
         completedCandidate = candidate.text ? candidate : undefined;
         saveVoiceStoryboard(localStorage,key,candidate);
         if(currentVoiceStoryboardScope.current===scope)setVoiceStoryboard(candidate);
@@ -10109,11 +10117,14 @@ function OmniCanvasWorkspace() {
       };
       const result = await runManhuaEpisodeStoryboard({graph,episode,body:splitManhuaEpisodeStoryText(body).story,question,deps:{...runDeps,singleTextAttempt:true,
         optimizeCopy:async input => {
-          if(reconcile && previous?.text && previous.upstreamStatus === "succeeded")return previous.text;
+          if (reconcile) return previous!.text!;
           if (!resume) {
+            candidate.requestInput = input;
+            saveVoiceStoryboard(localStorage,key,candidate);
             const text = await runDeps.optimizeCopy(input);
             // 先保存已付费取得的原文，后续结构校验失败也能查看，不靠重生成找回。
             candidate.text = text;
+            candidate.resultState = "returned";
             completedCandidate = candidate;
             saveVoiceStoryboard(localStorage,key,candidate);
             if (currentVoiceStoryboardScope.current === scope) setVoiceStoryboard({...candidate});
@@ -10129,24 +10140,45 @@ function OmniCanvasWorkspace() {
             task=await trpcUtils.client.mvAnalysis.storyboardCopyStatus.query({requestId});
             candidate.upstreamStatus=task.status;
           }
+          candidate.resultState = task.status === "succeeded" ? "returned" : task.status === "failed" ? "failed" : "unknown";
           if(task.status!=="succeeded"||!task.result)throw new Error(task.error||"原分镜任务未成功");
-          return task.result.result.optimizedMarkdown;
+          candidate.text = task.result.result.optimizedMarkdown;
+          completedCandidate = candidate;
+          saveVoiceStoryboard(localStorage,key,candidate);
+          return candidate.text;
         },
       },ensureOptions,signal:ac.signal});
-      const ready: VoiceStoryboardCandidate = {...candidate,status:"ready",...result};
+      const ready: VoiceStoryboardCandidate = {...candidate,status:"ready",...result,text:candidate.text ?? result.text};
       completedCandidate = ready;
       saveVoiceStoryboard(localStorage,key,ready);
       if (currentVoiceStoryboardScope.current === scope) setVoiceStoryboard(ready);
       return JSON.stringify({status:"candidate_ready",episode,note:"完整文字分镜候选已保存并展示；当前作品未改，用户确认后applyStoryboard。未生成图片或视频。"});
     } catch (error) {
-      const failed: VoiceStoryboardCandidate = {...(completedCandidate || candidate),status:"pending",error:completedCandidate
-        ? `完整原文已返回，但校验或保存未通过：${error instanceof Error ? error.message : "结果尚不可采用"}。请先复制下方原文；原画布未改，不重复生成。`
+      const failed: VoiceStoryboardCandidate = {...(completedCandidate || candidate),status:"pending",error:(completedCandidate || candidate).text?.trim()
+        ? `完整原文已返回，但校验或保存未通过：${error instanceof Error ? error.message : "结果尚不可采用"}。可免费重建或保留原文后归档；若本机保存失败，请在刷新前复制下方原文。原画布未改，不重复生成。`
+        : voiceStoryboardResultState(candidate) === "returned" ? `原请求已返回，但没有可重建的完整原文：${error instanceof Error ? error.message : "结果为空"}。可保留记录后归档，不会自动重新生成。`
+        : voiceStoryboardResultState(candidate) === "failed" ? `原任务已明确失败：${error instanceof Error ? error.message : "生成失败"}。可保留记录后归档，不会自动重新生成。`
         : `未确认完整结果：${error instanceof Error ? error.message : "请求中断"}。保留原请求记录，不重复提交。`};
       if (currentVoiceStoryboardScope.current === scope) setVoiceStoryboard(failed);
       // 容量不足时保留屏幕上的完整结果；不能用第二次存储错误抹掉已付费产物。
       try { saveVoiceStoryboard(localStorage,key,failed); } catch { /* 原 pending 记录仍保留，禁止自动重提。 */ }
       throw error;
     } finally { voiceStoryboardLock.current=false; if(abortRef.current===ac)abortRef.current=null;setFactoryBusy(false); }
+  }
+
+  function archiveVoiceStoryboardCandidate(): void {
+    if (!voiceStoryboard || voiceStoryboard.scope !== voiceStoryboardScope || currentVoiceStoryboardScope.current !== voiceStoryboardScope) throw new Error("候选不属于当前作品，未归档。");
+    if (factoryBusy || writerBusy || voiceStoryboardLock.current || abortRef.current || cloudConflict || advisorRewriteHasActiveWork(blocksRef.current)) throw new Error("仍有任务或冲突，未归档。");
+    if (voiceStoryboardResultState(voiceStoryboard) === "unknown") throw new Error("原请求结果未知，不能解除后重新生成。");
+    if (!window.confirm("保留原文、原请求与历史版本后归档这份候选？当前画布不变。再次生成必须重新确认并可能计费，不会自动提交。")) return;
+    const persisted = JSON.parse(localStorage.getItem(voiceStoryboardKey) || "null") as VoiceStoryboardCandidate | null;
+    if (!persisted || persisted.id !== voiceStoryboard.id || persisted.scope !== voiceStoryboardScope) throw new Error("当前请求已变化，未归档。");
+    if (JSON.stringify(persisted) !== JSON.stringify(voiceStoryboard)) saveVoiceStoryboard(localStorage,`${voiceStoryboardKey}:history:${persisted.id}:before-archive:${crypto.randomUUID()}`,persisted);
+    // 若先前保存失败，必须先保全屏幕上的完整结果，不能只归档旧 pending 空壳。
+    saveVoiceStoryboard(localStorage,voiceStoryboardKey,voiceStoryboard);
+    archiveVoiceStoryboard(localStorage,voiceStoryboardKey,voiceStoryboard.id,voiceStoryboardScope);
+    setVoiceStoryboard(null); setVoiceStoryboardVisible(false);
+    toast.message("原请求与结果已归档；如需生成，请重新发出要求并确认。");
   }
 
   function backupVoiceProduction(episodeIndex = writerFocusEpisode) {
@@ -13992,12 +14024,9 @@ function OmniCanvasWorkspace() {
           <p className="my-2 text-sm">{voiceStoryboard.status === "pending" ? voiceStoryboard.error || "正在生成，原稿保留；请勿重复提交。" : voiceStoryboard.status === "failed" ? voiceStoryboard.error : "完整候选已保存。确认采用后才写回，旧画布可从顾问改前备份还原。"}</p>
           <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap text-sm">{voiceStoryboard.text || ""}</pre>
           {voiceStoryboard.status === "pending" && voiceStoryboard.upstreamTaskId && <button type="button" disabled={factoryBusy || writerBusy} onClick={()=>{void prepareVoiceStoryboard(voiceStoryboard.episode,voiceStoryboard.question||"恢复原分镜结果",new AbortController().signal,true).catch(error=>toast.error(error instanceof Error?error.message:"续查失败"));}}>续查原分镜任务（不重新生成）</button>}
-          {voiceStoryboard.status === "pending" && voiceStoryboard.text && voiceStoryboard.upstreamStatus === "succeeded" && <button type="button" disabled={factoryBusy || writerBusy} onClick={()=>{void prepareVoiceStoryboard(voiceStoryboard.episode,voiceStoryboard.question||"核对原分镜结果",new AbortController().signal,true,true).catch(error=>toast.error(error instanceof Error?error.message:"核对失败"));}}>按当前画布核对原结果（不生成、不扣费）</button>}
-          {voiceStoryboard.status === "pending" && voiceStoryboard.error && !voiceStoryboard.text && voiceStoryboard.upstreamStatus === "failed" && <button type="button" disabled={factoryBusy || voiceStoryboardLock.current} onClick={()=>{try{
-            if(!window.confirm("原任务已明确失败。保留失败记录并允许新请求？重新生成会再次确认并可能再次计费，不会自动提交。"))return;
-            archiveFailedVoiceStoryboard(localStorage,voiceStoryboardKey,voiceStoryboard.id);setVoiceStoryboard(null);setVoiceStoryboardVisible(false);toast.message("原请求已保留，请重新发出分镜生成要求。");
-          }catch(error){toast.error(error instanceof Error?error.message:"原记录未保存，不能重试");}}}>保留失败记录，允许重新生成</button>}
-          {voiceStoryboard.status === "ready" && <div className="mt-3 flex gap-4"><button type="button" disabled={factoryBusy || writerBusy || Boolean(cloudConflict)} onClick={()=>{try{toast.success(applyVoiceStoryboard(voiceStoryboard.episode));}catch(error){toast.error(error instanceof Error?error.message:"未采用");}}}>确认采用完整分镜</button><button type="button" onClick={()=>{if(window.confirm("舍弃这份未采用的候选？当前画布保持不变。")){localStorage.removeItem(voiceStoryboardKey);setVoiceStoryboard(null);}}}>舍弃候选</button></div>}
+          {voiceStoryboard.text?.trim() && voiceStoryboardResultState(voiceStoryboard) === "returned" && <button type="button" disabled={factoryBusy || writerBusy || Boolean(cloudConflict)} onClick={()=>{void prepareVoiceStoryboard(voiceStoryboard.episode,voiceStoryboard.question||"核对原分镜结果",new AbortController().signal,true,true).catch(error=>toast.error(error instanceof Error?error.message:"核对失败"));}}>按当前画布核对原结果（不生成、不扣费）</button>}
+          {voiceStoryboardResultState(voiceStoryboard) !== "unknown" && <button type="button" disabled={factoryBusy || writerBusy || voiceStoryboardLock.current || Boolean(cloudConflict)} onClick={()=>{try{archiveVoiceStoryboardCandidate();}catch(error){toast.error(error instanceof Error?error.message:"原记录未保存，不能归档");}}}>保留记录并归档候选</button>}
+          {voiceStoryboard.status === "ready" && <div className="mt-3 flex gap-4"><button type="button" disabled={factoryBusy || writerBusy || Boolean(cloudConflict)} onClick={()=>{try{toast.success(applyVoiceStoryboard(voiceStoryboard.episode));}catch(error){toast.error(error instanceof Error?error.message:"未采用");}}}>确认采用完整分镜</button></div>}
         </div>}
       </>}
       <ManhuaCreativeAdvisorPanel
