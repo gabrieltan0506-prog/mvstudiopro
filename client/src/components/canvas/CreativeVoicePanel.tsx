@@ -168,6 +168,8 @@ export function CreativeVoicePanel(props: {
       let talking = false, quiet = 0;
       processor.onaudioprocess = event => {
         const samples = event.inputBuffer.getChannelData(0);
+        // Preserve the film soundscape, including quiet passages. Mic-only input keeps VAD.
+        if (inputs.current.video) { send({ type: "audio", data: pcm16At16k(samples, ctx.sampleRate) }); return; }
         const loud = samples.some(n => Math.abs(n) > 0.008);
         if (loud) { quiet = 0; talking = true; }
         else quiet += samples.length / ctx.sampleRate;

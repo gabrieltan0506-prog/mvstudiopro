@@ -1,19 +1,20 @@
 import { expect, it, vi } from "vitest";
 import { askManhuaFilmReview, resolveAdvisorFilmSource } from "./manhuaAdvisorFilmReview";
 const target = { videoUri: "https://storage.googleapis.com/test/film.mp4", blockId: "clip-1", revision: "v1", label: "第1段" };
-const report = { kind: "film_review_v1", summary: "前景遮挡制造压迫", findings: [{ atSec: 2, endSec: 3, category: "灯光", observation: "面部落在暗部", suggestion: "增加左侧柔光", confidence: "明确" }], limitations: "抽样审阅，未逐帧核验" };
-function fixture() { return { resolve: vi.fn().mockResolvedValue("gs://test/film.mp4"), post: vi.fn().mockResolvedValue({ status: 200, text: JSON.stringify({ candidates: [{content:{parts:[{thought:true,text:"internal"},{text:JSON.stringify(report)}]}}] }) }), save: vi.fn().mockResolvedValue("saved") }; }
-it("授权后完整影片URI进入模板学习Vertex通道；保留原始和解析证据，HIGH不使用MAX", async()=>{
- const deps=fixture();const result=JSON.parse(await askManhuaFilmReview(7,target,"看灯光",deps as any));expect(JSON.parse(result.answer)).toEqual(report);
- expect(deps.resolve).toHaveBeenCalledWith({userId:"7",source:target.videoUri});
- const body=deps.post.mock.calls[0][0];expect(body.contents[0].parts[0]).toEqual({fileData:{fileUri:"gs://test/film.mp4",mimeType:"video/mp4"},videoMetadata:{fps:4}});
- expect(body.generationConfig.thinkingConfig.thinkingLevel).toBe("HIGH");expect(deps.save).toHaveBeenCalledTimes(2);
+const analysis={summaryZh:"前景遮挡制造压迫",shots:[{startSec:0,endSec:5,descriptionZh:"前景遮挡人物"}],audioSegments:[{startSec:0,endSec:5,descriptionZh:"轻音乐"}],subtitles:[],findings:[{atSec:2,modality:"visual",status:"interpretation",issueZh:"暗部",evidenceZh:"面部落在暗部",suggestionZh:"增加左侧柔光"}]};
+function fixture(){return {resolve:vi.fn().mockResolvedValue("gs://test/film.mp4"),inspect:vi.fn().mockResolvedValue({generation:"1"}),probe:vi.fn().mockResolvedValue({durationSec:5,audioStreams:[{}]}),count:vi.fn().mockResolvedValue({totalTokens:100}),post:vi.fn().mockResolvedValue({status:200,text:JSON.stringify({modelVersion:"gemini-3.8-flash",usageMetadata:{promptTokensDetails:[{modality:"AUDIO",tokenCount:119}]},candidates:[{finishReason:"STOP",content:{parts:[{text:JSON.stringify(analysis)}]}}]})}),save:vi.fn().mockResolvedValue("saved")};}
+it("observer合同一次送原片，保留音画证据、版本、usage；不另拆轨",async()=>{
+ const d=fixture();const result=JSON.parse(JSON.parse(await askManhuaFilmReview(7,target,"灯光",d as any)).answer);
+ expect(result.observerEvidence.analysis).toEqual(analysis);expect(result.observerEvidence.audioTokens).toBe(119);
+ const body=d.post.mock.calls[0][0];expect(body.contents[0].parts[0]).toEqual({fileData:{fileUri:"gs://test/film.mp4",mimeType:"video/mp4"},videoMetadata:{fps:12}});
+ expect(body.generationConfig).toMatchObject({temperature:0.2,maxOutputTokens:16000,responseMimeType:"application/json"});expect(body.generationConfig.responseSchema.required).toContain("audioSegments");expect(body.generationConfig.thinkingConfig).toBeUndefined();expect(d.post).toHaveBeenCalledTimes(1);expect(d.inspect).toHaveBeenCalledTimes(2);
 });
-it("无权访问不打模型；上游失败和格式错误不重复计费、不文字降级",async()=>{
- const deps=fixture();deps.resolve.mockRejectedValueOnce(Error("无权访问"));await expect(askManhuaFilmReview(7,target,"x",deps as any)).rejects.toThrow("无权访问");expect(deps.post).not.toHaveBeenCalled();
- deps.post.mockResolvedValueOnce({status:503,text:"busy"});await expect(askManhuaFilmReview(7,target,"x",deps as any)).rejects.toThrow("503");expect(deps.post).toHaveBeenCalledTimes(1);expect(deps.save).toHaveBeenCalledTimes(1);
- deps.post.mockResolvedValueOnce({status:200,text:'{"candidates":[]}'});await expect(askManhuaFilmReview(7,target,"x",deps as any)).rejects.toThrow();expect(deps.post).toHaveBeenCalledTimes(2);expect(deps.save).toHaveBeenCalledTimes(2);
+it("observer版本变化拒绝生成；供应商错误或截断保留回执且不重试",async()=>{
+ const d=fixture();d.inspect.mockResolvedValueOnce({generation:"1"}).mockResolvedValueOnce({generation:"2"});await expect(askManhuaFilmReview(7,target,"x",d as any)).rejects.toThrow("版本");expect(d.post).not.toHaveBeenCalled();
+ d.post.mockResolvedValueOnce({status:400,text:"invalid"});await expect(askManhuaFilmReview(7,target,"x",d as any)).rejects.toThrow("400");expect(d.post).toHaveBeenCalledTimes(1);
+ d.post.mockResolvedValueOnce({status:200,text:JSON.stringify({candidates:[{finishReason:"MAX_TOKENS"}]})});await expect(askManhuaFilmReview(7,target,"x",d as any)).rejects.toThrow("未完整");expect(d.post).toHaveBeenCalledTimes(2);
 });
+it("observer拒绝越界声音证据，不重投",async()=>{const d=fixture();d.probe.mockResolvedValue({durationSec:1,audioStreams:[{}]});await expect(askManhuaFilmReview(7,target,"x",d as any)).rejects.toThrow("outside");expect(d.post).toHaveBeenCalledTimes(1);});
 
 it("画布独立任务审片只放行本人成功产物，拒绝其他对象且不掩盖数据库故障", async()=>{
  const originalError = new Error("素材尚未登记,请从画布/成片里重新选择站内素材");

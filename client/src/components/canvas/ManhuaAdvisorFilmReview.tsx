@@ -6,6 +6,10 @@ export function ManhuaAdvisorFilmReview(props: { report: AdvisorFilmReview; targ
     <h3 className="font-semibold">{props.target.label} · Gemini Flash审阅</h3>
     <video ref={video} src={props.target.videoUri} controls preload="metadata" className="max-h-72 w-full" />
     <p>{props.report.summary}</p>
+    {props.report.observerEvidence && <details className="rounded border border-white/15 p-2"><summary>查看音画证据与覆盖范围</summary>
+      <p>画面区间 {(props.report.observerEvidence.validation.visualIntervalCoverage.ratio*100).toFixed(1)}%；声音区间 {(props.report.observerEvidence.validation.audioIntervalCoverage.ratio*100).toFixed(1)}%。区间覆盖不代表感知准确。</p>
+      {(["shots","audioSegments"] as const).map(key=><div key={key}><h4>{key==="shots"?"画面":"声音"}</h4>{props.report.observerEvidence!.analysis[key].map((row,i)=><p key={i}><button className="underline" onClick={()=>{if(video.current)video.current.currentTime=row.startSec;}}>{row.startSec.toFixed(1)}–{row.endSec.toFixed(1)}秒</button> {row.descriptionZh}</p>)}</div>)}
+    </details>}
     {props.report.findings.map((f,i) => <div key={i} className="space-y-2 border-t border-white/15 pt-2">
       <button className="text-cyan-200 underline" onClick={() => { if (video.current) video.current.currentTime = f.atSec; }}>{f.atSec.toFixed(1)}–{f.endSec.toFixed(1)}秒 · {f.category}</button>
       <p>{f.observation}</p><p>建议：{f.suggestion}</p><p className="text-xs opacity-70">{f.confidence}</p>

@@ -29,6 +29,7 @@ export function registerCreativeVoice(server: Server) {
       try { wss.handleUpgrade(req, socket, head, client => {
         activeUsers.add(user.id);
         let latestTypedRequest = "";
+        let realtimeMediaReceived = false;
         const readTools = new Set<string>();
         const operationKeys = new Map<string,string>();
         const repeatedReads = new Map<string, { text: string; count: number }>();
@@ -127,15 +128,18 @@ export function registerCreativeVoice(server: Server) {
           // Typed requests are complete conversation turns, not an unordered realtime stream.
           if (msg.type === "text") {
             latestTypedRequest = msg.text; repeatedReads.clear();
-            upstream.send({ clientContent: { turns: [{ role: "user", parts: [{ text: msg.text }] }], turnComplete: true } });
+            // Keep questions in the same realtime stream after sharing media; mixing
+            // clientContent with realtimeInput has no ordering/context guarantee.
+            if (realtimeMediaReceived) upstream.send({ realtimeInput: { text: msg.text } });
+            else upstream.send({ clientContent: { turns: [{ role: "user", parts: [{ text: msg.text }] }], turnComplete: true } });
           }
-          if (msg.type === "audio") { latestTypedRequest = ""; upstream.send({ realtimeInput: { audio: { data: msg.data, mimeType: "audio/pcm;rate=16000" } } }); }
+          if (msg.type === "audio") { realtimeMediaReceived = true; latestTypedRequest = ""; upstream.send({ realtimeInput: { audio: { data: msg.data, mimeType: "audio/pcm;rate=16000" } } }); }
           if (msg.type === "audioEnd") upstream.send({ realtimeInput: { audioStreamEnd: true } });
           if (msg.type === "frame") {
             if (now - lastFrame < 1000) return;
             const data = Buffer.from(msg.data, "base64");
             if (data.length < 4 || data[0] !== 0xff || data[1] !== 0xd8) { stop(); return; }
-            lastFrame = now;
+            lastFrame = now; realtimeMediaReceived = true;
             upstream.send({ realtimeInput: { text: msg.still ? `用户分享静态分镜或资产「${msg.source}」，不是影片时间点。` : `用户分享播放器「${msg.source}」当前时间 ${msg.atSec.toFixed(2)} 秒，随后发送本时点画面。` } });
             upstream.send({ realtimeInput: { video: { data: msg.data, mimeType: "image/jpeg" } } });
           }

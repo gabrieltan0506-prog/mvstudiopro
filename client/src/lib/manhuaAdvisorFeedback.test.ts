@@ -23,3 +23,8 @@ describe("顾问公共错误提示", () => {
     }
   });
 });
+
+it("审片服务失败不能误报没有成片或没有音轨",()=>{
+ expect(formatManhuaAdvisorError("Vertex影片审阅返回400，未重试")).toContain("请求参数错误");
+ expect(formatManhuaAdvisorError("影片音轨准备失败，本次未调用审片模型")).toContain("本次未调用审片模型");
+});

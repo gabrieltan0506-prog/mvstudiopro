@@ -10,6 +10,10 @@ export const advisorFilmReviewSchema = z.object({
     observation: z.string().min(1).max(700), suggestion: z.string().min(1).max(700),
     confidence: z.enum(["明确", "需人工核对"]),
   }).refine(v => v.endSec >= v.atSec, "结束时间不能早于开始时间")).max(30),
+  observerEvidence: z.object({
+    analysis: z.object({summaryZh:z.string(),shots:z.array(z.object({startSec:z.number(),endSec:z.number(),descriptionZh:z.string()})),audioSegments:z.array(z.object({startSec:z.number(),endSec:z.number(),descriptionZh:z.string()})),subtitles:z.array(z.object({atSec:z.number(),textZh:z.string()})),findings:z.array(z.object({atSec:z.number(),modality:z.string(),status:z.string(),issueZh:z.string(),evidenceZh:z.string(),suggestionZh:z.string()}))}),
+    validation:z.object({audioIntervalCoverage:z.object({ratio:z.number()}),visualIntervalCoverage:z.object({ratio:z.number()}),warnings:z.array(z.string())}),sourceGeneration:z.string(),audioTokens:z.number().nullable(),
+  }).optional(),
   limitations: z.string().min(1).max(1500),
 });
 export type AdvisorFilmReview = z.infer<typeof advisorFilmReviewSchema>;

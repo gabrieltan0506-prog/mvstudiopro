@@ -3222,6 +3222,13 @@ export const appRouter = router({
 
   // Video PK Rating - upload video frame and get AI analysis
   mvAnalysis: router({
+    listKnowledgeCardRecovery: protectedProcedure
+      .input(z.object({ cursor: z.object({ at: z.string().datetime(), id: z.string().min(1).max(100) }).optional() }))
+      .query(async ({ctx,input}) => (await import("./services/knowledgeCardRecovery")).listKnowledgeCardRecovery(String(ctx.user.id),input.cursor)),
+    getKnowledgeCardRecovery: protectedProcedure
+      .input(z.object({ jobId:z.string().min(1).max(100) }))
+      .query(async ({ctx,input}) => (await import("./services/knowledgeCardRecovery")).getKnowledgeCardRecovery(String(ctx.user.id),input.jobId)),
+
     getWeixinChannelsCollectorStatus: adminProcedure.query(async () => {
       const store = await import("./growth/weixinChannelsMinerStore.js");
       const state = await store.getWeixinChannelsMinerState();

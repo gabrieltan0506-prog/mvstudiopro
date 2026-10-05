@@ -122,3 +122,11 @@ it("白模失败与inspect交替不会绕过无进展保护",async()=>{
  }
  await vi.waitFor(()=>expect(upstream.close).toHaveBeenCalled());expect(received.some(m=>m.type==='error'&&m.text.includes('重复操作'))).toBe(true);expect(upstream.send).toHaveBeenCalledTimes(4);
 });
+
+it("分享音画后文字追问保留在同一realtime流，不混用clientContent",async()=>{
+ const upstream={send:vi.fn(),close:vi.fn()};mock.connect.mockImplementation(async()=>upstream);await open();await new Promise(resolve=>client.on('open',resolve));const received:any[]=[];client.on('message',(b:Buffer)=>received.push(JSON.parse(b.toString())));
+ client.send(JSON.stringify({type:'start',purpose:'discussion',context:'独立音讯测试',projectKey:'p',confirmedCost:true}));await vi.waitFor(()=>expect(received.some(m=>m.ready)).toBe(true));
+ client.send(JSON.stringify({type:'audio',data:'AAAA'}));client.send(JSON.stringify({type:'audioEnd'}));client.send(JSON.stringify({type:'text',text:'刚才听到什么声音？'}));
+ await vi.waitFor(()=>expect(upstream.send).toHaveBeenCalledTimes(3));expect(upstream.send.mock.calls[2][0]).toEqual({realtimeInput:{text:'刚才听到什么声音？'}});expect(upstream.send.mock.calls.some(c=>'clientContent' in c[0])).toBe(false);
+ client.close();await new Promise(resolve=>client.once('close',resolve));
+});

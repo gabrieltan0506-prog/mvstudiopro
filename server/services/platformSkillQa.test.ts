@@ -619,3 +619,10 @@ it('原话时序失败会反馈到下一路并保留讨论；不返回错误候�
  expect(JSON.stringify(messages)).toContain('时序矛盾');
  expect(JSON.stringify(messages)).toContain('对白像真人对话');
 });
+
+// New risk: full observer evidence exceeds the legacy text answer cap. No model call.
+it("完整observer报告超过旧文本上限仍保留完整JSON", async () => {
+ const {parseAskJson}=await import("./platformSkillQa");
+ const answer=JSON.stringify({kind:"film_review_v1",observerEvidence:{audioSegments:[{descriptionZh:"声音证据".repeat(4000)}]}});
+ expect(parseAskJson(JSON.stringify({answer}),true,true).answer).toBe(answer);
+});

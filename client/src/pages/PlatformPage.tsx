@@ -1,3 +1,4 @@
+import { KnowledgeCardRecovery, type RecoveredKnowledgeCard } from "@/components/platform/KnowledgeCardRecovery";
 import { KnowledgeCardPageTasks } from "@/lib/knowledgeCardPageTask";
 import { gcsTransferUrl } from "@/lib/gcsTransfer";
 import { cachePhotoTemporaryMedia, triggerTemporaryDownload } from "@/lib/photoTemporaryMedia";
@@ -8234,6 +8235,28 @@ export default function PlatformPage() {
   const renderedDraftRef = useRef<string>("");
   /** customNoteImages 的同步镜像：计数用，不在 state updater 里做副作用 */
   const customNoteImagesRef = useRef<string[]>([]);
+  const recoveryBlocked = customNoteBusy || knowledgeCardPdfBusy || customNoteUploadBusy || customNoteLevelSwitching || Boolean(customNoteDistillJobId) || Boolean(customNotePreflight);
+  const applyKnowledgeCardRecovery = (backup: RecoveredKnowledgeCard): boolean => {
+    if (recoveryBlocked || customNotePendingConfirmRef.current) { toast.info("请先结束当前任务或出图确认，再恢复备份"); return false; }
+    if ((customNoteText.trim() || customNoteImages.some(Boolean) || customNotePendingFilesRef.current.length) && !window.confirm("恢复会替换当前知识卡正文与图片。确定恢复所选云端备份吗？")) return false;
+    customNoteRevisionRef.current += 1;
+    renderRunIdRef.current += 1;
+    customNotePendingFilesRef.current = []; setCustomNotePendingMeta([]); setCustomNoteUploadStatus(null);
+    setCustomNoteText(backup.markdown); setCustomNoteFullMarkdown(backup.fullMarkdown);
+    setCustomNoteCompactMarkdown(backup.detailLevel === "concise" ? backup.markdown : null);
+    setCustomNoteDetailLevel(backup.detailLevel); setCustomNoteDistillPhase("ready");
+    setCustomNoteDistillModel(resolveKnowledgeCardDistillModel(backup.distillModel));
+    setCustomNoteSubjectPosition(backup.subjectPosition); setCustomNoteInfographicTemplateId(backup.infographicTemplateId); setCustomNoteInfographicLabelZh(null);
+    const images = Array.from({length:backup.total},()=>"");
+    for (const image of backup.images) images[image.page-1]=image.url;
+    renderedDraftRef.current=backup.total?backup.markdown:""; customNoteImagesRef.current=images;
+    setCustomNoteImages(images); setCustomNoteImageUpper(images[0]||null); setCustomNoteImageLower(images[1]||null);
+    setKnowledgeCardInflight([]); setKnowledgeCardPdfUrl(null); setKnowledgeCardEpubPdfs([]);
+    setCustomNoteKind("single_page_knowledge_card"); setOutputType("single_page");
+    setCustomNoteError(null); setCustomOptimizeResult(null); setCustomOptimizeSummary(null); setCustomNotePageProgress(null);
+    setCustomNoteProgress(backup.total ? {status:backup.images.length===backup.total?"succeeded":"stopped",percent:Math.round(backup.images.length/backup.total*100),label:`云端恢复 ${backup.images.length}/${backup.total} 页`} : {status:"idle",percent:0});
+    toast.success(`已恢复正文与 ${backup.images.length} 张图片，未重新生成`); return true;
+  };
   const markInflight = (runId: number, idx: number, on: boolean) => {
     if (runId !== renderRunIdRef.current) return;
     setKnowledgeCardInflight((cur) => (on ? (cur.includes(idx) ? cur : [...cur, idx]) : cur.filter((i) => i !== idx)));
@@ -15717,7 +15740,7 @@ export default function PlatformPage() {
                     }`}
                   >
                     <Image className="h-3.5 w-3.5 shrink-0" />
-                    单页图文卡片
+                    图文精华浓缩知识卡片
                   </button>
                   <button
                     type="button"
@@ -15747,6 +15770,8 @@ export default function PlatformPage() {
                   </button>
                 </div>
               </div>
+
+              <KnowledgeCardRecovery disabled={recoveryBlocked} onApply={applyKnowledgeCardRecovery} />
 
               <div className="mb-3 space-y-3">
                 <PlatformOutputTypePicker

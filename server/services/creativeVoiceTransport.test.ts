@@ -80,3 +80,11 @@ it("场景工具携带描述形成方案，但不能附带绕过费用确认",()
  const invalid=normalizeVoiceMessage(false,{toolCall:{functionCalls:[{id:"world-bypass",name:"creativeProduction",args:{...args,confirmed:true}}]}});
  expect(invalid.some(e=>e.type==="toolRejected")).toBe(true);
 });
+
+it("影片声音保留非语音输入，不让VAD抛弃环境声和音乐", () => {
+  for (const extended of [false, true]) {
+    for (const plan of creativeVoiceConnectionPlans(extended)) {
+      expect(voiceSetup(plan, "", "p").setup.realtimeInputConfig.turnCoverage).toBe("TURN_INCLUDES_ALL_INPUT");
+    }
+  }
+});

@@ -483,7 +483,7 @@ function looksLikeUpstreamGarbage(text: string): boolean {
   return false;
 }
 
-export function parseAskJson(raw: string, previsMode = false): {
+export function parseAskJson(raw: string, previsMode = false, filmMode = false): {
   answer: string;
   imageIntent: boolean;
   creationRelated: boolean;
@@ -524,7 +524,7 @@ export function parseAskJson(raw: string, previsMode = false): {
   else throw new Error("顾问返回格式不符合要求，缺少有效回答");
   if (/^\[object Object\]$|^object_object$/i.test(answer)) throw new Error("顾问返回格式异常，原稿保留");
   if (/template-rewrite|template-plans/.test(answer) && answer.length > 12_000) throw new Error("完整优化稿超过处理范围，原稿保留");
-  if (previsMode && answer.length > 12_000) throw new Error("方案超过完整处理范围，请精简后重新生成");
+  if (previsMode && !filmMode && answer.length > 12_000) throw new Error("方案超过完整处理范围，请精简后重新生成");
   if (!answer || looksLikeUpstreamGarbage(answer)) {
     throw new Error("顾问返回格式不符合要求，缺少有效回答");
   }
@@ -536,7 +536,7 @@ export function parseAskJson(raw: string, previsMode = false): {
     throw new Error("回答偏离用户问题（策略看板腔），请重试");
   }
   return {
-    answer: answer.slice(0, 12_000),
+    answer: filmMode ? answer : answer.slice(0, 12_000),
     imageIntent: Boolean(parsed.imageIntent),
     creationRelated: Boolean(parsed.creationRelated),
     suggestedImagePrompt: String(parsed.suggestedImagePrompt || "").trim().slice(0, 2000),
@@ -871,7 +871,7 @@ export async function askPlatformSkillQa(params: {
       if (hop) params.onStream?.("reset", hop.label);
       if (manhuaContext?.filmReview) {
         params.onStream?.("reset", "Gemini Flash · 影片审阅");
-        parsed = parseAskJson(await askManhuaFilmReview(params.userId, manhuaContext.filmReview, params.rawQuestion || question), true);
+        parsed = parseAskJson(await askManhuaFilmReview(params.userId, manhuaContext.filmReview, params.rawQuestion || question), true, true);
         usedModel = "gemini-3.8-flash"; lastErr = ""; break;
       }
       if (manhuaContext?.subtitleReview) {
