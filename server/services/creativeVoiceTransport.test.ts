@@ -72,3 +72,11 @@ it("视频候选采用工具只传操作，不接受模型跳过确认或自填�
  const invalid=normalizeVoiceMessage(false,{toolCall:{functionCalls:[{id:"video-invalid",name:"creativeProduction",args:{action:"media",operation:"applyVideo",confirmed:true,url:"https://foreign/video.mp4"}}]}});
  expect(invalid.some(x=>x.type==="toolRejected")).toBe(true);
 });
+
+it("场景工具携带描述形成方案，但不能附带绕过费用确认",()=>{
+ const args={action:"world",assetId:"scene-42",question:"保留木廊，月夜冷光，窗内暖灯，先给方案。"};
+ const event=normalizeVoiceMessage(false,{toolCall:{functionCalls:[{id:"world-plan",name:"creativeProduction",args}]}});
+ expect(event).toContainEqual({type:"production",id:"world-plan",action:args});
+ const invalid=normalizeVoiceMessage(false,{toolCall:{functionCalls:[{id:"world-bypass",name:"creativeProduction",args:{...args,confirmed:true}}]}});
+ expect(invalid.some(e=>e.type==="toolRejected")).toBe(true);
+});

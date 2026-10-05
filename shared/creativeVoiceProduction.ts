@@ -7,7 +7,7 @@ export const creativeVoiceProductionSchema = z.discriminatedUnion("action", [
   z.object({action:z.literal("prepareEpisode"),episode:z.number().int().positive(),question:z.string().trim().min(2).max(1100)}).strict(),
   z.object({action:z.literal("applyPrevis")}).strict(),
   z.object({action:z.literal("retryPrevis")}).strict(),
-  z.object({action:z.literal("world"),assetId:z.string().min(1).max(200)}).strict(),
+  z.object({action:z.literal("world"),assetId:z.string().min(1).max(200),question:z.string().trim().min(2).max(1200).optional()}).strict(),
   z.object({action:z.literal("generateWorld")}).strict(),
   z.object({action:z.literal("retryWorld"),assetId:z.string().min(1).max(200)}).strict(),
   z.object({action:z.literal("assets")}).strict(),

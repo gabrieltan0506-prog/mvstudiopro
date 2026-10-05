@@ -1,3 +1,4 @@
+import { inspectCreativeVoiceWorkspace } from "@/lib/creativeVoiceWorkspaceInspect";
 import type { CreativeVoiceProductionAction } from "@shared/creativeVoiceProduction";
 import type { CreativeVoiceNovelAction } from "@shared/creativeVoiceNovel";
 import type { AdvisorMediaProposal, AdvisorMediaSource } from "@shared/manhuaAdvisorMediaEdit";
@@ -10,7 +11,7 @@ import { formatVoiceToolResult, CREATIVE_VOICE_PURPOSES, type CreativeVoiceEvent
 
 type CaptureVideo = HTMLVideoElement & { captureStream?: () => MediaStream };
 export function CreativeVoicePanel(props: {
-  scopeKey: string; context: string; disabled?: boolean; onUse: (text: string) => void;
+  scopeKey: string; context: string; disabled?: boolean; onSessionActiveChange?: (active:boolean)=>void; onUse: (text: string) => void;
   onAskAdvisor: (question: string, signal: AbortSignal) => Promise<string | undefined>;
   onProductionAction?: (action: CreativeVoiceProductionAction, signal: AbortSignal) => Promise<string>;
   onNovelAction?: (action: CreativeVoiceNovelAction, signal: AbortSignal) => Promise<string>;
@@ -20,6 +21,7 @@ export function CreativeVoicePanel(props: {
 }) {
   const { user } = useAuth();
   const [expanded, setExpanded] = useState(false), [active, setActive] = useState(false), [ready, setReady] = useState(false);
+  useEffect(() => { props.onSessionActiveChange?.(active); return () => props.onSessionActiveChange?.(false); }, [active, props.onSessionActiveChange]);
   const [purpose, setPurpose] = useState<CreativeVoiceStart["purpose"]>("discussion");
   const [status, setStatus] = useState("尚未连接"), [route, setRoute] = useState(""), [usage, setUsage] = useState(0);
   const [notes, setNotes] = useState(""), [adopt, setAdopt] = useState(""), [question, setQuestion] = useState("");
@@ -135,7 +137,13 @@ export function CreativeVoicePanel(props: {
           if (toolCalls.current.has(data.id)) return; toolCalls.current.add(data.id);
           let result: string;
           try { result = workflowCallback.current(data.action); } catch (error) { result = error instanceof Error ? error.message : "操作没有完成"; }
-          append(`工作流：${result}\n`); send({ type: "toolResult", id: data.id, text: result });
+          if (data.action.action === "inspect") {
+            const current = callbacks.current;
+            void inspectCreativeVoiceWorkspace(result, current.onProductionAction ? () => current.onProductionAction!({action:"inspect"}, voiceAbort.current.signal) : undefined).then(text => {
+              if (seq !== generation.current) return;
+              append(`工作流：${text}\n`); send({type:"toolResult",id:data.id,text});
+            });
+          } else { append(`工作流：${result}\n`); send({ type: "toolResult", id: data.id, text: result }); }
         }
         if (data.type === "audio" && audio.current) {
           const ctx = audio.current, samples = pcmFloat(data.data); const rate = Number(/rate=(\d+)/.exec(data.mimeType)?.[1] || 24000);

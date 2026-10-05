@@ -1483,6 +1483,7 @@ function OmniCanvasWorkspace() {
   const [advisorDockHost, setAdvisorDockHost] = useState<HTMLDivElement | null>(null);
   const [advisorPrevisClipId, setAdvisorPrevisClipId] = useState<string | null>(null);
   const [advisorPrevisRequest,setAdvisorPrevisRequest] = useState<{id:string;clipId:string;episode:number;segment:number}|null>(null);
+  const voicePrevisReceipt = useRef<{id:string;finish:(opened:boolean,reason?:string)=>void}|null>(null);
   const [advisorAudioRequest, setAdvisorAudioRequest] = useState<{ id: string; clipId: string; scopeId: string } | null>(null);
   const [advisorPreviewSelection, setAdvisorPreviewSelection] = useState<{ clipId: string; requestId?: string } | null>(null);
   const [advisorFocusSection, setAdvisorFocusSection] = useState<"templates" | null>(null);
@@ -10583,7 +10584,10 @@ function OmniCanvasWorkspace() {
                   advisorOpen={advisorOpen}
                   advisorPrevisActiveClipId={advisorPrevisClipId}
                   advisorPrevisRequest={advisorPrevisRequest}
-                  onAdvisorPrevisRequestHandled={id=>setAdvisorPrevisRequest(r=>r?.id===id?null:r)}
+                  onAdvisorPrevisRequestHandled={(id,opened,reason)=>{
+                    if(voicePrevisReceipt.current?.id===id) voicePrevisReceipt.current.finish(opened,reason);
+                    setAdvisorPrevisRequest(r=>r?.id===id?null:r);
+                  }}
                   advisorAudioRequest={advisorAudioRequest}
                   onAdvisorAudioRequestHandled={id => setAdvisorAudioRequest(current => current?.id === id ? null : current)}
                   onAdvisorDockChange={setAdvisorDockHost}
@@ -13777,7 +13781,7 @@ function OmniCanvasWorkspace() {
             episode: writerFocusEpisode,
             anchors: anchors.map(a => ({id:a.id,name:a.nameZh})),
             assets: assets.map(a => ({id:a.id,name:a.labelZh,role:a.role,has2d:Boolean(a.url),model3d:a.model3d?.status,modelTaskId:a.model3d?.taskId,world3d:a.world3d?.status,worldTaskId:a.world3d?.taskId})),
-            clips: blocksRef.current.filter(b => !b.archivedFromPreviousScript && isManhuaClipBlockId(b.id)).map(b=>({id:b.id,episode:getBlockEpisodeIndex(b) ?? 1,hasPrevis:Boolean(b.previsStudio)})),
+            clips: blocksRef.current.filter(b => !b.archivedFromPreviousScript && isManhuaClipBlockId(b.id)).map(b=>({id:b.id,episode:getBlockEpisodeIndex(b) ?? 1,hasPrevis:Boolean(b.previsStudio),previsEligible:queuedManhuaClipBlocks(blocksRef.current,getBlockEpisodeIndex(b) ?? 1,activePilotVideoModel).some(current=>current.id===b.id)})),
             prerequisite:"人物建模前先生成或选择2D参考图；白模按已有片段配置渲染。",
           });
           if (action.action === "assets" || action.action === "image2d") {
@@ -13793,10 +13797,12 @@ function OmniCanvasWorkspace() {
           if (action.action === "model3d") {
             if (!canUseManhua3d) throw new Error("当前账户未开放3D生成入口，未提交任务。");
             const ref = assets.find(a=>a.id===action.assetId);
-            if (!ref || !evaluateManhuaAsset3dEligibility(ref).eligible) {
+            if (!ref) throw new Error("资产ID不存在，请重新inspect读取assets里的真实id；人物名称不能代替id，尚未提交。");
+            if (!evaluateManhuaAsset3dEligibility(ref).eligible) {
               setWorkflowPhase("assets"); setImmersiveWorkspaceView("workbench");
               throw new Error("当前人物缺少可用2D参考图，已打开资产设定；先生成或选择2D人物图，再建立3D。");
             }
+            setWorkflowPhase("assets"); setManhuaUiMode("workbench"); setImmersiveWorkspaceView("workbench");
             backupVoiceProduction();
             let receipt: {taskId:string;status:string} | undefined;
             await generateManhua3dAsset(ref.id, value=>{receipt=value});
@@ -13817,19 +13823,38 @@ function OmniCanvasWorkspace() {
             if (!ref || !eligibility?.eligible) { setWorkflowPhase("assets"); setImmersiveWorkspaceView("workbench"); throw new Error("本场景缺少可用于3DGS的2D参考图，已打开资产设定，请先准备场景图。"); }
             const sourceRevision=await advisorWorldSourceRevision(eligibility.sourceVersion);
             if(signal.aborted || evaluateManhuaWorld3dEligibility(latestCustomAssetRefs.current.find(a=>a.id===ref.id)||{}).sourceVersion!==eligibility.sourceVersion) throw new Error("场景在核对期间已变化，未采用旧参考图。");
-            setAdvisorPrevisClipId(null);setAdvisor3dContext({worldTarget:{sceneRefId:ref.id,labelZh:ref.labelZh||"场景",sourceRevision,hintZh:ref.labelZh||"",...(eligibility.currentWorld3d?{previousTaskId:eligibility.currentWorld3d.taskId}:{})}});setAdvisorFocusSection(null);
-            return "已读取并选择本场景2D参考图，可调用创作顾问讨论布局、灯光与氛围；方案确认后调用generateWorld，尚未生成或收费。";
+            const worldTarget = {sceneRefId:ref.id,labelZh:ref.labelZh||"场景",sourceRevision,hintZh:ref.labelZh||"",...(eligibility.currentWorld3d?{previousTaskId:eligibility.currentWorld3d.taskId}:{})};
+            setWorkflowPhase("assets"); setManhuaUiMode("workbench"); setImmersiveWorkspaceView("workbench");
+            setAdvisorPrevisClipId(null);setAdvisor3dContext({worldTarget});setAdvisorFocusSection(null);
+            return JSON.stringify({worldTarget,candidateReady:false,note:"仅已选择2D场景参考图，尚无可执行场景方案。需顾问生成方案再由用户确认，尚未生成3DGS。"});
           }
           const clip = blocksRef.current.find(b=>b.id===action.clipId && !b.archivedFromPreviousScript);
           if (!clip || !isManhuaClipBlockId(clip.id)) throw new Error("目标成片片段不存在，请重新读取片段清单。");
           if (!canUseManhua3d || clip.status === "running" || clip.videoTaskStatus === "queued") throw new Error("目标片段正在制作或当前账户未开放白模，未修改配置。");
-          backupVoiceProduction();
           const episode = getBlockEpisodeIndex(clip) ?? writerFocusEpisode;
+          if (!queuedManhuaClipBlocks(blocksRef.current,episode,activePilotVideoModel).some(current=>current.id===clip.id)) throw new Error("这个旧片段未绑定当前分段计划，不能打开本轮白模；请读取previsEligible为true的当前片段。未建立配置或提交任务。");
+          if (voicePrevisReceipt.current) throw new Error("白模入口正在处理，请等待实际回执。");
+          backupVoiceProduction();
           setWriterFocusEpisode(episode); setManhuaUiMode("workbench"); setImmersiveWorkspaceView("workbench"); setWorkflowPhase("storyboard");
           setAdvisorSelection({episodeIndex:episode,shot:null,segmentIndex:resolveClipLocalSegmentIndex(clip.id,clip.prompt,episode)});
-          setAdvisorPrevisRequest({id:crypto.randomUUID(),clipId:clip.id,episode,segment:resolveClipLocalSegmentIndex(clip.id,clip.prompt,episode)});
           setAdvisor3dContext(undefined); setAdvisorFocusSection(null);
-          return "正在打开本段白模，并按本段剧本人物建立或恢复配置。请先inspect确认目标与预览区就绪，再描述运镜并调用renderPrevis；本次未提交渲染。";
+          return await new Promise<string>((resolve,reject)=>{
+            const id=crypto.randomUUID();
+            const finish=(opened:boolean,reason?:string)=>{
+              clearTimeout(timer); signal.removeEventListener("abort",abort);
+              if(voicePrevisReceipt.current?.id!==id) return;
+              voicePrevisReceipt.current=null;
+              setAdvisorPrevisRequest(r=>r?.id===id?null:r);
+              if(opened) resolve(JSON.stringify({clipId:clip.id,opened:true,configurationSaved:true,renderSubmitted:false,note:"白模配置已保存并打开；尚未提交渲染。"}));
+              else reject(new Error(reason || "白模配置未能打开，未提交渲染；请检查当前分段计划或页面错误，不重复开同一片段。"));
+            };
+            const abort=()=>finish(false);
+            const timer=setTimeout(()=>finish(false),20000);
+            voicePrevisReceipt.current={id,finish};
+            signal.addEventListener("abort",abort,{once:true});
+            if(signal.aborted) {finish(false);return;}
+            setAdvisorPrevisRequest({id,clipId:clip.id,episode,segment:resolveClipLocalSegmentIndex(clip.id,clip.prompt,episode)});
+          });
         }}
         onVoiceNavigate={target => {
           if (writerBusy || factoryBusy || cloudConflict) throw new Error("工作区正在处理任务或有云端冲突，未切换。");

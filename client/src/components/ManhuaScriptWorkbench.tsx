@@ -5,7 +5,7 @@ import { UrlMaskedTextarea } from "@/components/UrlMaskedTextarea";
 import { maskMediaUrls, maskMediaProviderDetails } from "@/lib/maskMediaUrls";
 import { normalizeManhuaPromptSeconds } from "@shared/manhuaPromptSeconds";
 import { ManhuaSecondaryToolTabs } from "./canvas/ManhuaSecondaryToolTabs";
-import { createAdvisorPrevisStudio } from "@shared/manhuaAdvisorPrevisInitial";
+import { createAdvisorPrevisStudio, selectPrevisCharacterSlots } from "@shared/manhuaAdvisorPrevisInitial";
 import { previsInitialDurationSec } from "@shared/manhuaPrevisScript";
 import { ManhuaPrevisAudioControls } from "./canvas/ManhuaPrevisAudioControls";
 import { summarizeManhuaFinalSegmentEvidence } from "@/lib/manhuaFinalSegmentEvidence";
@@ -487,7 +487,7 @@ type Props = {
   onOpenAdvisorPrevis?: (clipId: string, requestId?: string) => void;
   advisorPrevisActiveClipId?: string | null;
   advisorPrevisRequest?: {id:string;clipId:string;episode:number;segment:number} | null;
-  onAdvisorPrevisRequestHandled?: (id:string) => void;
+  onAdvisorPrevisRequestHandled?: (id:string, opened:boolean, reason?:string) => void;
   advisorAudioRequest?: { id: string; clipId: string; scopeId: string } | null;
   onAdvisorAudioRequestHandled?: (id: string) => void;
   onOpenAdvisor3d?: (clipId?: string, sceneRefId?: string, mode?: "model" | "world" | "general") => void;
@@ -3044,7 +3044,7 @@ export default function ManhuaScriptWorkbench({
       ? `已有 ${activeClip.previsStudio.history.length} 条候选，尚未采用` : "",
   ].filter(Boolean);
   const previsStatusZh = previsStatusParts.join("；") || "尚未渲染或采用";
-  const previsStudioCharacters = assetLockRegistry.byRole.character.map(a => {
+  const previsStudioCharacters = selectPrevisCharacterSlots(assetLockRegistry.byRole.character).map(a => {
     const ref = customAssetRefs.find(ref => ref.id === a.id);
     const source = resolveManhuaRigSource(ref, customAssetRefs).source;
     const anchor = assetCanon?.characters.find(c => c.id === (a.seedLibraryId || a.id));
@@ -3053,7 +3053,7 @@ export default function ManhuaScriptWorkbench({
       model: source ? { taskId: source.model.taskId, assetRef: source.refId } : undefined };
   });
   const openPrevisAdvisor = (requestId?: string, preparedStudio?: NonNullable<CanvasBlock["previsStudio"]>) => {
-    if (!activeClip || !onOpenAdvisorPrevis || !onUpdateClipPrevisStudio || factoryBusy || activeClip.status === "running" || activeClip.videoTaskStatus === "queued") return;
+    if (!activeClip || !onOpenAdvisorPrevis || !onUpdateClipPrevisStudio || factoryBusy || activeClip.status === "running" || activeClip.videoTaskStatus === "queued") return {opened:false,reason:"当前片段未就绪、正在制作或白模入口不可用。"};
     try {
       let studio = preparedStudio || activeClip.previsStudio;
       if (!studio) {
@@ -3065,7 +3065,8 @@ export default function ManhuaScriptWorkbench({
       if (!advisorOpen || advisorPrevisActiveClipId !== activeClip.id) studio = { ...studio, audioEnabled: false };
       if (studio !== activeClip.previsStudio && onUpdateClipPrevisStudio(activeClip.id, studio) === false) throw new Error("本段白模设置未保存，请重试。原声音与配置保留。");
       onOpenAdvisorPrevis(activeClip.id, requestId);
-    } catch (error) { toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "本段人物读取失败"); }
+      return {opened:true};
+    } catch (error) { const reason = error instanceof Error ? maskMediaProviderDetails(error.message) : "本段人物读取失败"; toast.error(reason); return {opened:false,reason}; }
   };
   const handledVoicePrevis = useRef("");
   useEffect(() => {
@@ -3073,13 +3074,14 @@ export default function ManhuaScriptWorkbench({
     if (!request || handledVoicePrevis.current === request.id || request.episode !== focusEpisode || factoryBusy) return;
     if (activeSegNo !== request.segment) { setActiveSegmentOverride(request.segment); return; }
     handledVoicePrevis.current = request.id;
+    let result: {opened:boolean;reason?:string} = {opened:false,reason:"目标片段已变化，未建立白模或提交任务。"};
     if (activeClip?.id !== request.clipId) {
       toast.error("目标片段已变化，未建立白模或提交任务。");
     } else {
       setActiveSecondaryTool("previs"); setPrevisStudioOpen(true);
-      openPrevisAdvisor();
+      result = openPrevisAdvisor();
     }
-    onAdvisorPrevisRequestHandled?.(request.id);
+    onAdvisorPrevisRequestHandled?.(request.id, result.opened, result.reason);
   }, [advisorPrevisRequest, focusEpisode, activeSegNo, activeClip?.id, factoryBusy, onAdvisorPrevisRequestHandled]);
   const openSecondaryAdvisor = (tool: ManhuaSecondaryTool) => {
     if (tool === "previs" || tool === "actionTimeline") openPrevisAdvisor();

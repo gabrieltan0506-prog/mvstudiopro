@@ -109,3 +109,16 @@ it("新用户要求重置重复读取保护，不限制正常多轮讨论",async
  for(let n=0;n<4;n++){client.send(JSON.stringify({type:'text',text:`第${n+1}次请读取当前作品`}));await vi.waitFor(()=>expect(upstream.send).toHaveBeenCalledTimes(n*2+1));events({type:'workflow',id:`fresh-${n}`,action:{action:'inspect'}});await vi.waitFor(()=>expect(received.some(m=>m.id===`fresh-${n}`)).toBe(true));client.send(JSON.stringify({type:'toolResult',id:`fresh-${n}`,text:'相同但本轮需要重新读取的页面'}));await vi.waitFor(()=>expect(upstream.send).toHaveBeenCalledTimes(n*2+2));}
  expect(upstream.close).not.toHaveBeenCalled();client.close();await new Promise(resolve=>client.once('close',resolve));
 });
+
+it("白模失败与inspect交替不会绕过无进展保护",async()=>{
+ const upstream={send:vi.fn(),close:vi.fn()};let events!:(event:any)=>void;mock.connect.mockImplementation(async input=>{events=input.onEvent;return upstream});await open();await new Promise(resolve=>client.on('open',resolve));const received:any[]=[];client.on('message',(b:Buffer)=>received.push(JSON.parse(b.toString())));client.send(JSON.stringify({type:'start',purpose:'discussion',context:'作品',projectKey:'p',confirmedCost:true}));await vi.waitFor(()=>expect(received.some(m=>m.ready)).toBe(true));
+ let sent=0;
+ for(let n=1;n<=3;n++){
+  events({type:'production',id:`previs-${n}`,action:{action:'previs',clipId:'clip-e01-g01'}});await vi.waitFor(()=>expect(received.some(m=>m.id===`previs-${n}`)).toBe(true));client.send(JSON.stringify({type:'toolResult',id:`previs-${n}`,text:'目标不在当前分段计划，未打开'}));
+  if(n===3)break;
+  const beforeRead=++sent;await vi.waitFor(()=>expect(upstream.send).toHaveBeenCalledTimes(beforeRead));
+  events({type:'workflow',id:`between-${n}`,action:{action:'inspect'}});await vi.waitFor(()=>expect(received.some(m=>m.id===`between-${n}`)).toBe(true));client.send(JSON.stringify({type:'toolResult',id:`between-${n}`,text:`状态${n}`}));
+  const expected=++sent;await vi.waitFor(()=>expect(upstream.send).toHaveBeenCalledTimes(expected));
+ }
+ await vi.waitFor(()=>expect(upstream.close).toHaveBeenCalled());expect(received.some(m=>m.type==='error'&&m.text.includes('重复操作'))).toBe(true);expect(upstream.send).toHaveBeenCalledTimes(4);
+});

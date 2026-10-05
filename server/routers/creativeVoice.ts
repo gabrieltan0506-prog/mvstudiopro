@@ -30,6 +30,7 @@ export function registerCreativeVoice(server: Server) {
         activeUsers.add(user.id);
         let latestTypedRequest = "";
         const readTools = new Set<string>();
+        const operationKeys = new Map<string,string>();
         const repeatedReads = new Map<string, { text: string; count: number }>();
         let starting = false, upstream: CreativeVoiceSession | undefined, stopped = false;
         let lastActivity = Date.now(), lastFrame = 0, windowStart = Date.now(), bytesInWindow = 0;
@@ -79,7 +80,8 @@ export function registerCreativeVoice(server: Server) {
                       upstream?.send({ toolResponse: { functionResponses: [{ id: event.id, name: event.type === "tool" ? "askCreativeAdvisor" : event.type === "mediaEdit" ? "proposeMediaEdit" : event.type === "filmReview" ? "reviewFilm" : event.type === "novelEdit" ? "novelText" : event.type === "production" ? "creativeProduction" : "creativeWorkflow", response: { error: "已有顾问任务正在处理，请等待结果，不要重复提交。" } }] } }); return;
                     }
                     const reading = (event.type === "workflow" || event.type === "production") && event.action.action === "inspect";
-                    if (reading) readTools.add(event.id); else repeatedReads.clear();
+                    if (reading) readTools.add(event.id);
+                    if (event.type === "production") operationKeys.set(event.id, JSON.stringify(event.action));
                     toolIds.add(event.id); pendingTools.set(event.id, event.type === "tool" ? "askCreativeAdvisor" : event.type === "mediaEdit" ? "proposeMediaEdit" : event.type === "filmReview" ? "reviewFilm" : event.type === "novelEdit" ? "novelText" : event.type === "production" ? "creativeProduction" : "creativeWorkflow");
                   }
                   send(event);
@@ -94,7 +96,16 @@ export function registerCreativeVoice(server: Server) {
           if (msg.type === "toolResult") {
             const name = pendingTools.get(msg.id); if (!name) return; pendingTools.delete(msg.id);
             let resultText: unknown = msg.text;
-            if (readTools.delete(msg.id)) {
+            const operationKey = operationKeys.get(msg.id); operationKeys.delete(msg.id);
+            const reading = readTools.delete(msg.id);
+            if (!reading && operationKey) {
+              const key = `operation:${operationKey}`;
+              const old = repeatedReads.get(key);
+              const count = old?.text === msg.text ? old.count + 1 : 1;
+              repeatedReads.set(key, {text:msg.text,count});
+              if (count >= 3) { send({type:"error",text:"语音顾问重复操作且结果没有变化，已停止连接避免空耗；已有任务继续，不会自动重送。"}); stop(); return; }
+            }
+            if (reading) {
               const old = repeatedReads.get(name);
               const count = old?.text === msg.text ? old.count + 1 : 1;
               repeatedReads.set(name, { text: msg.text, count });

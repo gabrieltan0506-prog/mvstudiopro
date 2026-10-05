@@ -100,3 +100,36 @@ Seedance视频编辑cv_muun5l7l_8308a8d269c0真实成功，成品3,070,140字节
 
 真实Live采用已完成，1005-video-live-adopt-result.json核实同一视频任务cv_muun5l7l_8308a8d269c0、2个版本、新片当前采用、10份本机备份。还原脚本停在浏览器控制，后续CDP Network.enable超时，不能记为还原通过。原隔离机11:16:39因启动命令sleep 7200正常退出（exit0，非OOM，非requested_stop），这是测试环境配置失误。r12稳定快照178文件已保留，之后最终任务JSON/成品/采用状态本机保留；最后一段远端原始WS/SQL未完整下载，不冒称证据完整。已修隔离机命令sleep infinity并重建相同隔离本地SQL/服务，不触及生产数据、不重复生成已成功媒体。
 审查发现重复applyVideo可能把原片当唯一候选，新增排除原片身份（兼容签名轮换）及多候选拒绝；采用历史保留私有与local-media地址。新增/受影响3项定向测试通过（1005-video-repeat-adoption-tests.log），类型检查退出0，构建1m6s通过；首次构建日志相对路径错未启动构建，修正后仅运行一次。普通用户完整消费、3D/3DGS/白模前端、专门审片及正式站验收仍未闭环。PR1664实时OPEN、52c0bab8、无自动合并，严禁放行。
+
+
+## 2026-10-05T11:35:50.129459+08:00 主代理｜推送保留未合并；人物3D实调成功，继续修场景方案接线
+
+2bc59ad9已推PR1664，OPEN且无自动合并，PR描述明确未验缺口。r14实际页面恢复原视频、保留新片备份与版本、刷新持久化通过（1005-r14-video-restore-result.json）；第一次脚本趁自动顾问忙时点禁用按钮，等待超时，修脚本等按钮可用后通过，无重生成。旧控制浏览器Network.enable超时，保留原标签，使用另一个隔离测试浏览器通过原备份导入相同已付费结果，不动用户Chrome。
+Live人物建模初次把显示名当assetId，实际拒绝且误报缺2D；修首次workflow inspect汇入productionState真实ID，缺ID与缺图分开报错。新单测及类型/构建通过。随后真实Live读取isolated-hero→费用确认→manhua3d提交m3d_d00b4738a36c651f08be3900，prediction cfcbb246413348789882b58831acfbe3，11:33:44成功，原2D保留。尚待预览/刷新消费核对，不称完整3D验收。
+3DGS自然语句初次走普通只读顾问，追问后只绑定场景却被Live称方案就绪，记录为真实未通过；正将world(assetId,question)绑定与方案生成合成一次工具，不能只选图冒称方案完成。实际组件新增1测试通过，无供应商生成；该新改动类型/构建进行中，尚未推送。已成功3D任务不重复购买。
+r14原始HTTP/SQL快照7文件102200字节逐SHA无不符；新Live原始WS捕获未装上，原因SFTP对存在文件拒绝覆盖但整体退出0，原日志已核对，此处不能称完整原始证据。归一化浏览器WS保留。待任务终态后用独立临时文件替换捕获文件，后续证据不覆盖。r15起HTTP按启动时间独立目录、解析前await写入。3DGS、白模、完整消费/费用与正式站仍阻断，不合并。
+
+## 2026-10-05 12:08 — Still blocked; do not merge
+
+User reiterated that gaps must be accepted before merge. PR remains OPEN with no auto-merge (`backend-work/1005-r20-pr-state.json`).
+
+New repairs under isolated verification:
+- Workflow inspect includes actual production asset/clip IDs. World selection plus question waits for a real structured scene proposal instead of claiming a plan exists after selection alone.
+- Previs rejects historical clips outside the current segment plan, waits for the workbench open/save receipt, and returns the specific binding failure. No render is implied by opening.
+- Stable advisor portal target preserves the Live component while docking changes. Automatic advisory calls defer while Live is active and resume afterward.
+- Repeated identical production receipts cannot evade the no-progress guard by alternating with inspect. New user input resets the guard.
+- One confirmed character's identity and look references select the look reference for the whitebox actor; ambiguous same-duty references remain blocked rather than silently merged.
+
+Targeted evidence (absolute root `/Users/tangenjie/Documents/Codex/2026-10-03/task-2/backend-work/`):
+- `1005-r17-loop-tests.log`: 3 affected tests passed, 7 unrelated skipped.
+- `1005-r18-dock-test-r2.log`: actual component moved through three docks and back, one mount/no unmount. Initial harness lacked a React resolveDir and did not run; retained failed log.
+- `1005-r20-auto-defer-test-r2.log`: defer during Live/resume afterward passed. First fixture incorrectly enabled creation mode, which independently disables automatic consultation; retained failed log.
+- `1005-r20-character-identity-test.log`: canonical face/body reference selection passed; 6 unchanged tests skipped.
+- `1005-r20-character-build.log`: build passed. Earlier builds correspond to earlier failed-path repairs, not repetitions of unchanged passing code.
+- Actual Live image2d request `call_280932` completed 2/2 Zhou Shen images (`UMpF-Mc8Ygm4yFMM`, `NtZreLeh-80gf9Am`); original hero and scene retained. Admin platform debit is zero, not zero provider cost.
+- 3D model `m3d_d00b4738a36c651f08be3900` succeeded and rendered in model-viewer (`1005-r16-model-preview-visible.png`). Not rigged-animation acceptance.
+- World `mw_3ae99c0ebd86294d37249165` succeeded, provider response 1580 credits. Isolated OAUTH URL produced unusable bridge URLs; original task/evidence preserved, isolated address rebased to local TLS bridge. This is test infrastructure repair, not a production deployment or a second generation.
+- `1005-r17-evidence-verified.json`: 498 files, zero hash mismatches; archive SHA256 `9cdfcb03eea6a118e8d904be1835cacd8c23816770a4021cfdb7351e873dbac4`.
+
+Still not accepted: final whitebox render/playback/apply/restore, world preview/export/adoption, specialized film review, full applicable charging/cost reconciliation and production acceptance. World preview attempt r19 was interrupted by another harness UI click and is not valid visual evidence; r20 failed to load and is being diagnosed. Do not convert these into passes. No merge or deployment authorized by this ledger.
+- Final type check initially rejected spreading a Map iterator under the repository TS target (`1005-r20-types.log`). Changed to `Array.from(groups.values())`, preserving selection semantics; targeted failed compilation recheck is `1005-r20-types-r2.log`. No repeated paid generation or unrelated test suite.
