@@ -6,10 +6,9 @@ import { parseVoiceReviewNotes, resolveVoiceTarget, validateReviewSeek, type Voi
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
-import { captureVoiceFrame, pcm16At16k, pcmFloat } from "@/lib/creativeVoiceMedia";
+import { pcm16At16k, pcmFloat } from "@/lib/creativeVoiceMedia";
 import { formatVoiceToolResult, CREATIVE_VOICE_PURPOSES, type CreativeVoiceEvent, type CreativeVoiceStart, type CreativeVoiceAction, type CreativeVoiceTarget } from "@shared/creativeVoice";
 
-type CaptureVideo = HTMLVideoElement & { captureStream?: () => MediaStream };
 export function CreativeVoicePanel(props: {
   scopeKey: string; context: string; disabled?: boolean; onSessionActiveChange?: (active:boolean)=>void; onUse: (text: string) => void;
   onAskAdvisor: (question: string, signal: AbortSignal) => Promise<string | undefined>;
@@ -190,17 +189,6 @@ export function CreativeVoicePanel(props: {
     catch { setStatus("无法开启麦克风，请检查权限；仍可打字提问"); } finally { inputPending.current = false; }
   }
   const selectedVideo = () => file ? localVideo.current : videos[selected];
-  function shareFrame() {
-    const video = sharedVideo.current; if (!video || !video.isConnected) { stopSharing(); return; }
-    try { const data = captureVoiceFrame(video); if (data) send({ type: "frame", data, atSec: video.currentTime, source: file?.name.slice(0, 160) || `页面播放器${selected + 1}` }); }
-    catch { stopSharing(); setStatus("此播放器不允许读取跨域画面，请选择本机影片；没有传送空白画面"); }
-  }
-  function toggleSharing() {
-    if (sharing) { stopSharing(); return; }
-    const video = selectedVideo(); if (!video) { setStatus("请先选择本机影片或页面播放器"); return; }
-    sharedVideo.current = video; setSharing(true); shareFrame();
-    if (sharedVideo.current) frameTimer.current = setInterval(() => { if (!video.paused && !video.ended) shareFrame(); }, 1100);
-  }
   async function shareStill(file: File) {
     if (!ready) return;
     if (file.size > 20 * 1024 * 1024) { setStatus("图片超过20MB，请先缩小后分享。"); return; }
@@ -216,16 +204,6 @@ export function CreativeVoicePanel(props: {
       send({ type: "frame", data, atSec: 0, source: file.name.slice(0, 160), still: true });
       append(`已提交静态参考图：${file.name}（不是成片）\n`); setStatus("已提交静态参考图，可讨论构图、灯光和空间安排");
     } catch { setStatus("图片未能读取，没有发送；请选JPEG或PNG图片。"); } finally { URL.revokeObjectURL(url); }
-  }
-  async function toggleVideoAudio() {
-    if (videoAudio) { stopInput("video"); return; }
-    const video = selectedVideo() as CaptureVideo | null; const seq = generation.current;
-    try {
-      if (!video?.captureStream) throw new Error();
-      const captured = video.captureStream(); captured.getVideoTracks().forEach(t => t.stop());
-      if (!captured.getAudioTracks().length) { captured.getTracks().forEach(t => t.stop()); throw new Error(); }
-      await attachAudio("video", captured, seq); if (seq === generation.current) setVideoAudio(true);
-    } catch { setStatus("未能取得影片音轨，请先播放影片并检查浏览器支持；顾问目前不能听到影片声音"); }
   }
   const videoSource = () => file?.identity || selectedVideo()?.currentSrc || undefined;
   function persistReviews(next: VoiceReviewNote[]) {
@@ -273,12 +251,11 @@ export function CreativeVoicePanel(props: {
       <div className="flex flex-wrap gap-2"><button type="button" className={button} disabled={active || props.disabled} onClick={() => void start().catch(() => { stop(); setStatus("无法启动音讯，请重试浏览器权限"); })}>开始讨论</button><button type="button" className={button} disabled={!active} onClick={() => { stop(); setStatus("已结束，停止传送音讯与画面"); }}>结束语音</button><button type="button" className={button} disabled={!ready} onClick={() => void toggleMic()}>{mic ? "关闭麦克风" : "开启麦克风"}</button><button type="button" className={button} onClick={silence}>停止播放回复</button></div>
       <p role="status">{status}</p><p className="text-xs opacity-70">{route}{usage > 0 ? ` · 最近用量回执 ${usage} tokens（非累计账单）` : ""}</p>
       <label className="block">分享分镜／资产参考图 <input aria-label="分享分镜参考图" type="file" accept="image/jpeg,image/png,image/webp" disabled={!ready || sharing} onChange={e => { const file = e.target.files?.[0]; if (file) void shareStill(file); e.target.value = ""; }} /></label>
-      <fieldset className="space-y-2 rounded-lg border border-current/20 p-2"><legend>影片输入 · 最高每秒1张画面</legend>
+      <fieldset className="space-y-2 rounded-lg border border-current/20 p-2"><legend>影片播放与意见定位</legend>
         <label>本机影片 <input type="file" accept="video/*" disabled={sharing || videoAudio} onChange={e => { const picked = e.target.files?.[0]; if (picked) setFile({ url: URL.createObjectURL(picked), name: picked.name, identity: `file:${picked.name}:${picked.size}:${picked.lastModified}` }); }} /></label>
         {file && <><video ref={localVideo} src={file.url} controls playsInline className="max-h-64 w-full bg-black" /><button type="button" className={button} disabled={sharing || videoAudio} onClick={() => setFile(null)}>改用页面播放器</button></>}
-        {!file && <><button type="button" className={button} disabled={sharing || videoAudio} onClick={() => setVideos(Array.from(document.querySelectorAll("video")).filter(v => v !== localVideo.current))}>读取本页播放器</button><select aria-label="分享的播放器" value={selected} disabled={sharing || videoAudio} className="max-w-full bg-slate-900 p-2 text-white" onChange={e => setSelected(Number(e.target.value))}>{videos.map((v, i) => <option value={i} key={i}>播放器{i + 1} · {Number.isFinite(v.duration) ? Math.round(v.duration) : "?"}秒</option>)}</select></>}
-        <div className="flex flex-wrap gap-2"><button type="button" className={button} disabled={!ready} onClick={toggleSharing}>{sharing ? "停止分享画面" : "分享画面"}</button><button type="button" className={button} disabled={!ready || !sharing} onClick={shareFrame}>分享当前暂停画面</button><button type="button" className={button} disabled={!ready} onClick={() => void toggleVideoAudio()}>{videoAudio ? "停止影片声音" : "分享影片声音"}</button></div>
-        <p>画面：{sharing ? "分享中，暂停播放后不连续发送" : "未分享"} · 影片声音：{videoAudio ? "分享中" : "未分享"}。快速动作和口型仍需精细审片。</p>
+        {!file && <><button type="button" className={button} disabled={sharing || videoAudio} onClick={() => setVideos(Array.from(document.querySelectorAll("video")).filter(v => v !== localVideo.current))}>读取本页播放器</button><select aria-label="定位的播放器" value={selected} disabled={sharing || videoAudio} className="max-w-full bg-slate-900 p-2 text-white" onChange={e => setSelected(Number(e.target.value))}>{videos.map((v, i) => <option value={i} key={i}>播放器{i + 1} · {Number.isFinite(v.duration) ? Math.round(v.duration) : "?"}秒</option>)}</select></>}
+        <p>此处仅播放影片、定位和记录意见，不向 Live 传送影片画面或音轨。影片与音轨审阅请使用创作顾问的「审阅所选影片 · Gemini Flash」，也可用语音要求审阅当前影片。</p>
       </fieldset>
       <div className="flex gap-2"><input aria-label="向语音顾问打字提问" value={question} maxLength={4000} onChange={e => setQuestion(e.target.value)} className="min-w-0 flex-1 rounded border bg-transparent p-2" /><button type="button" className={button} disabled={!ready || !question.trim()} onClick={() => { send({ type: "text", text: question }); append(`你：${question}\n`); setQuestion(""); }}>发送</button></div>
       <details open><summary>讨论记录 · 保存在本机</summary><pre className="max-h-52 overflow-auto whitespace-pre-wrap">{notes || "尚无记录"}</pre><button type="button" className={button} disabled={!notes} onClick={download}>下载记录</button></details>

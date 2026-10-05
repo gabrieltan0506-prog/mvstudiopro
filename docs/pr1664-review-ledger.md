@@ -172,3 +172,10 @@ Still not accepted: final whitebox render/playback/apply/restore, world preview/
 - server/services/creativeVoiceTransport.ts只补系统指令：音频重点不限制影片格式、不要求抽轨、不因补听自行重复reviewFilm；此次实际调用发生于该提示词修改前，不声称改后已线上通过。diff --check通过；纯提示词不重跑既有通过测试/构建。
 - r49确认普通隔离账户100→88/lifetimeSpent12，原审片任务succeeded；有两条usage记录但尚未确认其统计含义，不可说扣了24，也不可预先声称统计无问题。隔离角色已恢复原身份，原余额/额度fixture备份保留。
 - 未验边界继续保留：实时音乐感知、3DGS当前人物匹配采用/还原、usage重复统计及总成本；PR未合并部署，不能宣称全部完成。
+
+
+### 2026-10-05 18:03 用户终止Live看片，改由Flash统一审片
+- 最新要求：Gemini3.8Flash读取影片及内含音轨；不用Live看片，停止Live媒体试验。
+- CreativeVoicePanel移除实时影片画面/音轨发送按钮和对应发送函数；本机/页面播放器保留播放、定位、记意见，不向Live发送影片。静态分镜参考图与麦克风语音讨论保留。
+- creativeVoiceTransport系统指令改为影片/声音审阅调用既有reviewFilm，Live只讨论和解释真实Flash结果；不要求用户传影片音轨/抽帧给Live。manhuaAdvisorFilmReview固定MODEL=gemini-3.8-flash，未改成熟读片合同。
+- 本轮仅两文件esbuild语法转换通过、git diff --check通过。复用r48/r49完整原片Flash请求成功与扣12积分证据；未重跑已通过测试，未新增付费调用。没有做修改后正式线上验收，未合并部署。
