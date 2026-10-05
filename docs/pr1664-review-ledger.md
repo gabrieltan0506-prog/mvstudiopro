@@ -179,3 +179,18 @@ Still not accepted: final whitebox render/playback/apply/restore, world preview/
 - CreativeVoicePanel移除实时影片画面/音轨发送按钮和对应发送函数；本机/页面播放器保留播放、定位、记意见，不向Live发送影片。静态分镜参考图与麦克风语音讨论保留。
 - creativeVoiceTransport系统指令改为影片/声音审阅调用既有reviewFilm，Live只讨论和解释真实Flash结果；不要求用户传影片音轨/抽帧给Live。manhuaAdvisorFilmReview固定MODEL=gemini-3.8-flash，未改成熟读片合同。
 - 本轮仅两文件esbuild语法转换通过、git diff --check通过。复用r48/r49完整原片Flash请求成功与扣12积分证据；未重跑已通过测试，未新增付费调用。没有做修改后正式线上验收，未合并部署。
+
+
+### 2026-10-05 18:40 原生學習鏈路審片r55：一次付費實測通過原門禁
+- 完整106.176秒同GCS原片，實際requested/reported Gemini3.8Flash，原生0.7/MEDIUM/audioTimestamp/65536，原schema完整保留僅追加filmReview。無Live、無抽音軌、無重傳影片、無重試。
+- 原生門禁advisories=[]、retry=false；28條鏡頭最晚106秒、29條字幕最晚104秒，4條審片建議最晚106秒。此前143秒分鐘誤轉未再出現。本輪通過不代表所有影片保證正確，藝術/音訊感知仍需用戶核對。
+- 回覆2亮點（覺醒光效/構圖、馬被拧耳朵的反差表演）、2不足（59–63秒形態轉換、102.3–106秒收尾節奏）。
+- 實際用量input95428、output16668、total112096、AUDIO2655，未核實金額。這次輸出16668，是不同原生完整schema的回覆；不反推此前4290左右輸出被截斷。
+- 原始request/raw/analysis/validation/receipt已永久保存，交付Downloads/2026Oct05/墨菁傳第一集-原學習鏈路審片-r55/。
+- 真實回覆經主站adapter零網路回放成功：4 findings、28 shots、29 subtitles、fullEvidenceUnchanged=true。證據backend-work/1005-native-review-real-replay.log。不把回放說成另一次供應商實測。
+- 類型檢查首次發現contents回傳型別及zod4 record舊簽名問題，均已修正，只重做失敗檢查；修正後typecheck仍在跑。未合併/未部署/尚未正式線上驗收。
+
+
+### 2026-10-05 18:40 用户明确验收
+- 用户原话：「驗收通過，寫得很好」。验收对象是r55原生学习链路对墨菁传第一集的实际审片报告。
+- 内容验收已通过；不扩张为生产部署、所有项目/长视频或其他未完成工作流的全面验收，不新增合并授权。当前完成代码检查与同PR推送收尾。

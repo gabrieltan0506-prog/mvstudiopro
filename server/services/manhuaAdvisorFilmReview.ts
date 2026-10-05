@@ -4,7 +4,8 @@ import { resolveRegisteredPostProdMediaSource } from "./postProdMediaSource";
 import { uploadBufferToGcs, statGcsObjectVersion, signGsUriV4ReadUrl } from "./gcs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { buildRequest, validateAnalysis, type Analysis } from "./videoObserver/contract.mjs";
+import { buildFilmReviewNativeRequest } from "./manhuaFilmReviewNativeContract";
+import { assertNativeDeepReadRequiredSegmentEvidence, evaluateNativeDeepReadSegmentAcceptance, parseJsonObject } from "./manhuaNativeDeepReadRunner";
 const MODEL = "gemini-3.8-flash";
 export async function resolveAdvisorFilmSource(input: { userId: string; source: string }, deps = {
   resolve: resolveRegisteredPostProdMediaSource,
@@ -45,21 +46,19 @@ const defaults = {
     const result=await response.json();if(!Number.isFinite(result.totalTokens)||result.totalTokens<=0) throw new Error("审片预检token数量无效");return result;
   },
 };
-/** Observer contract adapted to owned media and existing advisor jobs; no learning-library writes. */
+/** Reuse the native learning contract for owned-media review; no learning-library writes. */
 export async function askManhuaFilmReview(userId: number, target: AdvisorFilmReviewTarget, question: string, deps = defaults) {
   const uri=await deps.resolve({userId:String(userId),source:target.videoUri});
   if(!uri.startsWith("gs://")) throw new Error("请先将影片登记到作品云素材；本次未发送影片或降级成文字审片");
   const evidence=`manhua-film-review/${userId}/${randomUUID()}`;
   const save=(name:string,value:unknown)=>deps.save({objectName:`${evidence}/${name}.json`,buffer:Buffer.from(JSON.stringify(value)),contentType:"application/json"});
-  const receipt:Record<string,unknown>={status:"preparing",requestedModel:MODEL,route:"vertex_existing_gcs_video",uploaded:false,retries:0,generationAttempted:false,actualSamplingFps:null,requestedSamplingFps:12,cloudCostUsd:null,cost:{status:"pricing_not_verified",meaning:"Token usage is not an invoice; administrator credits are not provider cost."}};
+  const receipt:Record<string,unknown>={status:"preparing",contract:"native_learning_plus_film_review",requestedModel:MODEL,route:"vertex_existing_gcs_video",uploaded:false,retries:0,generationAttempted:false,actualSamplingFps:null,requestedSamplingFps:12,cloudCostUsd:null,cost:{status:"pricing_not_verified",meaning:"Token usage is not an invoice; administrator credits are not provider cost."}};
   try {
     const source=await deps.inspect(uri); const media=await deps.probe(uri);
-    const plan={media,requestedSamplingFps:12,maxOutputTokens:16000,context:question};
-    const request=buildRequest(plan,uri);
-    // Role guidance augments the observer evidence contract, never replaces it.
-    Object.assign(request,{systemInstruction:{parts:[{text:"你是影片监制。结合实际音画评估构图、灯光氛围、妆造、人物关系与表演、对白逻辑、音效混音、节奏和视觉冲击力。保留亮点，给出最小可执行修改。遵循音画证据结构；无法辨认不等于无音轨，不用用户描述代替观察。"}]}});
+    const request=buildFilmReviewNativeRequest({uri,durationSec:media.durationSec,hasAudio:media.audioStreams.length>0,question});
     receipt.sourceGeneration=source.generation;
-    await save("plan",{source:{uri,generation:source.generation},media,requestedSamplingFps:12,maxOutputTokens:16000});
+    await save("plan",{source:{uri,generation:source.generation},media,requestedSamplingFps:12,maxOutputTokens:65536});
+    await save("request",request);
     receipt.countTokenReceipt=await deps.count(request.contents);
     const current=await deps.inspect(uri);
     if(current.generation!==source.generation) throw new Error("影片版本已变化；未提交模型，请重新选择影片");
@@ -74,11 +73,17 @@ export async function askManhuaFilmReview(userId: number, target: AdvisorFilmRev
     receipt.status="response_received";await save("receipt",receipt);
     if(envelope.modelVersion&&!envelope.modelVersion.startsWith(MODEL)) throw new Error("审片返回模型不符；原始结果已保留");
     const candidate=envelope.candidates?.[0];if(candidate?.finishReason!=="STOP") throw new Error("审片回答未完整结束；原始结果已保留，不自动重投");
-    const analysis:Analysis=JSON.parse(candidate.content.parts.filter((p:{thought?:boolean;text?:string})=>!p.thought&&typeof p.text==="string").map((p:{text:string})=>p.text).join(""));
-    const validation=validateAnalysis(analysis,media);
-    await save("analysis",{analysis,validation});
-    // Existing UI projection only; the complete observer evidence remains saved above.
-    const report=advisorFilmReviewSchema.parse({kind:"film_review_v1",summary:analysis.summaryZh,findings:analysis.findings.map(f=>({atSec:f.atSec,endSec:f.atSec,category:f.modality==="audio"?"声音":"场景",observation:`${f.issueZh}：${f.evidenceZh}`,suggestion:f.suggestionZh,confidence:f.status==="observed"?"明确":"需人工核对"})),limitations:`请求12fps，实际采样率未获供应商确认。音画区间覆盖仅是结构校验，不代表感知准确。${validation.warnings.join("；")} AUDIO tokens：${receipt.providerReportedAudioInputTokens??"未回报"}。`,observerEvidence:{analysis,validation,sourceGeneration:source.generation,audioTokens:receipt.providerReportedAudioInputTokens}});
+    const analysis=parseJsonObject(candidate.content.parts.filter((p:{thought?:boolean;text?:string})=>!p.thought&&typeof p.text==="string").map((p:{text:string})=>p.text).join(""));
+    await save("analysis",{analysis});
+    const gateInput={episodeIndex:0,segmentIndex:0,startSec:0,endSec:media.durationSec,hasAudio:media.audioStreams.length>0,raw:structuredClone(analysis),requireShotObservations:true,requireShotDetailLevels:true};
+    assertNativeDeepReadRequiredSegmentEvidence(gateInput);
+    const validation=evaluateNativeDeepReadSegmentAcceptance(gateInput);
+    await save("validation",validation);
+    if(validation.retry) throw new Error("原生学习链路审片校验未通过；完整结果已保留，未自动重投");
+    const review=analysis.filmReview;
+    if(!review||typeof review!=="object"||Array.isArray(review))throw new Error("缺少审片结果；原始证据已保留");
+    const report=advisorFilmReviewSchema.parse({...review,kind:"film_review_v1",nativeEvidence:{analysis,sourceGeneration:source.generation,audioTokens:receipt.providerReportedAudioInputTokens}});
+    if(report.findings.some(f=>f.endSec>media.durationSec))throw new Error("审片建议时间超出原片；原始证据已保留");
     await save("report",{model:MODEL,target,report});receipt.status="completed";await save("receipt",receipt);
     const answer=JSON.stringify(report);
     return JSON.stringify({answer,imageIntent:false,creationRelated:false,suggestedImagePrompt:"",guideMessage:""});
