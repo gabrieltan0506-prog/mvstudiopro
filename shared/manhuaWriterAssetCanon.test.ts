@@ -60,6 +60,14 @@ const denseBody = (sceneA: string, sceneB: string) =>
   ].join("");
 
 describe("manhuaWriterAssetCanon", () => {
+  it("无别名标记不是资产身份，真正别名仍保留", () => {
+    for (const alias of ["无", "無", "无别名", "暂无", "none", "—"]) {
+      expect(parseWriterTableLine(`- 铜钥匙／${alias}｜开门｜铜质`)?.aliasZh).toBeUndefined();
+    }
+    expect(parseWriterTableLine("- 铜钥匙／旧钥｜开门｜铜质")?.aliasZh).toBe("旧钥");
+    expect(parseWriterTableLine("- 影客／无名者｜黑衣｜守门")?.aliasZh).toBe("无名者");
+  });
+
   it("preserveFullSpecs完整保留各表行数、长字段与全部状态，旧入口保持默认", () => {
     const longLook = "衣料纹样".repeat(300);
     const longMotive = "守护来历".repeat(100);

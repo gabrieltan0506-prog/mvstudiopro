@@ -119,6 +119,12 @@ export function stripMarkdownTableHeaderLines(lines: string[]): string[] {
   );
 }
 
+/** 表格中“无”表示没有别名，不能用于把多个资产匹配成同一身份。 */
+export function normalizeWriterAssetAlias(value: string | undefined): string | undefined {
+  const alias = value?.trim();
+  return alias && !/^(?:无|無|无别名|無別名|暂无|暫無|未设定|未設定|none|null|n\/a|[-—–]+)$/i.test(alias) ? alias : undefined;
+}
+
 /** 拆一行「- 名/别名｜字段｜字段」 */
 export function parseWriterTableLine(rawLine: string, options: { preserveFullSpecs?: boolean } = {}): {
   nameZh: string;
@@ -136,7 +142,8 @@ export function parseWriterTableLine(rawLine: string, options: { preserveFullSpe
   const nameBits = head.split(/[\/／]/).map((s) => s.trim()).filter(Boolean);
   const nameZh = options.preserveFullSpecs ? (nameBits[0] || head) : (nameBits[0] || head).slice(0, 32);
   if (!nameZh) return null;
-  const aliasZh = options.preserveFullSpecs ? nameBits[1] : nameBits[1]?.slice(0, 24);
+  const rawAlias = normalizeWriterAssetAlias(nameBits[1]);
+  const aliasZh = options.preserveFullSpecs ? rawAlias : rawAlias?.slice(0, 24);
   return { nameZh, aliasZh, fields: options.preserveFullSpecs ? parts.slice(1) : parts.slice(1).map((s) => s.slice(0, 200)) };
 }
 
@@ -158,13 +165,13 @@ function parseTableMd(
     if (!parsed) continue;
     const rowNames = new Set([normName(parsed.nameZh), normName(parsed.aliasZh || "")].filter(Boolean));
     const previousMatches = (options.previousAnchors || []).filter(anchor =>
-      [normName(anchor.nameZh), normName(anchor.aliasZh || "")].some(name => name && rowNames.has(name)),
+      [normName(anchor.nameZh), normName(normalizeWriterAssetAlias(anchor.aliasZh) || "")].some(name => name && rowNames.has(name)),
     );
     if (previousMatches.length > 1) throw new Error("资产姓名或别名对应多个旧身份，不能重建资产");
     const previous = previousMatches[0];
     if (previous) {
       parsed.nameZh = previous.nameZh;
-      parsed.aliasZh = previous.aliasZh;
+      parsed.aliasZh = normalizeWriterAssetAlias(previous.aliasZh);
     }
     const id = previous?.id || makeAnchorId(role, parsed.nameZh);
     if (seen.has(id)) continue;

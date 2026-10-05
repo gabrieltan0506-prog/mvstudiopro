@@ -1,6 +1,7 @@
 import { parseManhuaWriterPack, type ManhuaWriterPack } from "@shared/manhuaWriterRoom";
 import {
   buildManhuaWriterAssetCanon,
+  normalizeWriterAssetAlias,
   parseWriterTableLine,
   stripMarkdownTableHeaderLines,
   type ManhuaWriterAssetAnchor,
@@ -46,7 +47,7 @@ function nameKey(name: string | undefined): string {
 }
 
 function names(anchor: Pick<ManhuaWriterAssetAnchor, "nameZh" | "aliasZh">): Set<string> {
-  return new Set([nameKey(anchor.nameZh), nameKey(anchor.aliasZh)].filter(Boolean));
+  return new Set([nameKey(anchor.nameZh), nameKey(normalizeWriterAssetAlias(anchor.aliasZh))].filter(Boolean));
 }
 
 function canonicalizeTable(md: string, previous: ManhuaWriterAssetAnchor[], title: string): string {
@@ -67,7 +68,8 @@ function canonicalizeTable(md: string, previous: ManhuaWriterAssetAnchor[], titl
     while (parts[parts.length - 1] === "") parts.pop();
     if (parts.length < (title === "人物表" ? 5 : 3)) throw new Error(`${title}的设定字段不完整，原设定保留`);
     if (parts.slice(1).some(part => !part)) throw new Error(`${title}存在空规格，原设定保留`);
-    const head = old ? `${old.nameZh}${old.aliasZh ? `/${old.aliasZh}` : ""}` : parts[0];
+    const alias = normalizeWriterAssetAlias(old?.aliasZh);
+    const head = old ? `${old.nameZh}${alias ? `/${alias}` : ""}` : parts[0];
     return `- ${head}｜${parts.slice(1).join("｜")}`;
   });
   if (consumed.size !== previous.length) throw new Error(`${title}遗漏旧资产，不能删除其他集仍在使用的设定`);

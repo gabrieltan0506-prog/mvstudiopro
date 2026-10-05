@@ -10110,7 +10110,15 @@ function OmniCanvasWorkspace() {
       const result = await runManhuaEpisodeStoryboard({graph,episode,body:splitManhuaEpisodeStoryText(body).story,question,deps:{...runDeps,singleTextAttempt:true,
         optimizeCopy:async input => {
           if(reconcile && previous?.text && previous.upstreamStatus === "succeeded")return previous.text;
-          if (!resume) return runDeps.optimizeCopy(input);
+          if (!resume) {
+            const text = await runDeps.optimizeCopy(input);
+            // 先保存已付费取得的原文，后续结构校验失败也能查看，不靠重生成找回。
+            candidate.text = text;
+            completedCandidate = candidate;
+            saveVoiceStoryboard(localStorage,key,candidate);
+            if (currentVoiceStoryboardScope.current === scope) setVoiceStoryboard({...candidate});
+            return text;
+          }
           // 历史后台请求只续查原编号；新提交复用工厂原文案入口。
           let task = await trpcUtils.client.mvAnalysis.storyboardCopyStatus.query({requestId});
           candidate.upstreamStatus=task.status;
@@ -10132,7 +10140,7 @@ function OmniCanvasWorkspace() {
       return JSON.stringify({status:"candidate_ready",episode,note:"完整文字分镜候选已保存并展示；当前作品未改，用户确认后applyStoryboard。未生成图片或视频。"});
     } catch (error) {
       const failed: VoiceStoryboardCandidate = {...(completedCandidate || candidate),status:"pending",error:completedCandidate
-        ? "完整结果已返回，但本机保存失败。请先复制下方完整分镜，勿刷新或重复生成；原画布未改。"
+        ? `完整原文已返回，但校验或保存未通过：${error instanceof Error ? error.message : "结果尚不可采用"}。请先复制下方原文；原画布未改，不重复生成。`
         : `未确认完整结果：${error instanceof Error ? error.message : "请求中断"}。保留原请求记录，不重复提交。`};
       if (currentVoiceStoryboardScope.current === scope) setVoiceStoryboard(failed);
       // 容量不足时保留屏幕上的完整结果；不能用第二次存储错误抹掉已付费产物。

@@ -17,6 +17,19 @@ const source = { pack, changedEpisodeIndexes: [1] };
 const markdown = (tables: Partial<ManhuaWriterPack> = {}) => `## 人物表\n${tables.charactersMd || pack.charactersMd}\n\n## 道具表\n${tables.propsMd || pack.propsMd}\n\n## 场景表\n${tables.locationsMd || pack.locationsMd}`;
 
 describe("剧情改后资产更新纯合同", () => {
+  it("实际模型的全角斜线加无别名不合并道具，并兼容旧canon无别名记录", () => {
+    const propsMd = "- 纸灯／无｜夜间照明｜纸质灯罩\n- 铜钥匙／无｜开门｜铜质带齿";
+    const currentPack = { ...pack, propsMd };
+    const previousCanon = buildManhuaWriterAssetCanon({ ...currentPack, preserveFullSpecs: true });
+    previousCanon.props.forEach((prop, index) => { prop.id = `existing-prop-${index}`; prop.aliasZh = "无"; });
+    const result = parseManhuaStoryAssetRefresh({ pack: currentPack, changedEpisodeIndexes: [1], previousCanon, rawMarkdown: markdown({ propsMd }) });
+    expect(result.assetCanon.props.map(prop => [prop.id, prop.nameZh, prop.aliasZh])).toEqual([
+      ["existing-prop-0", "纸灯", undefined], ["existing-prop-1", "铜钥匙", undefined],
+    ]);
+    expect(result.changedAnchorIds).toEqual([]);
+    expect(result.addedAnchorIds).toEqual([]);
+  });
+
   it("prompt包含完整正文和旧三表，仅授权变更集资产，长正文不截断", () => {
     const body = `${"原剧情细节".repeat(10000)}末尾关键线索`;
     const prompt = buildManhuaStoryAssetRefreshPrompt({ ...source, pack: { ...pack, episodes: [{ ...pack.episodes[0], body }, pack.episodes[1]] } });

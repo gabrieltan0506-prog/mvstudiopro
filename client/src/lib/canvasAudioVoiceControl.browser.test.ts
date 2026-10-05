@@ -75,7 +75,7 @@ it("语音沿真实音轨视图起草，原确认才提交，切段及保存失�
     await page.evaluate(() => { (globalThis as any).fixture.persist = false; });
     expect((await run("prepare", "clip-e02-g01", "用鼓点")).error).toContain("未能保存");
     expect(await page.evaluate(() => (globalThis as any).fixture.rows[1].audioStudio.musicDraft.brief)).toBeNull();
-    await page.evaluate(() => { const f = (globalThis as any).fixture; f.persist = true; f.defer = true; f.controls["clip-e02-g01"]({ action: "bgm", operation: "prepare", clipId: "clip-e02-g01", question: "再留白" }).then(() => f.late = "错误落稿", error => f.late = String(error)); });
+    await page.evaluate(() => { const f = (globalThis as any).fixture; f.persist = true; f.defer = true; f.controls["clip-e02-g01"]({ action: "bgm", operation: "prepare", clipId: "clip-e02-g01", question: "再留白" }).then(() => f.late = "错误落稿", (error: unknown) => f.late = String(error)); });
     await page.waitForFunction(() => Boolean((globalThis as any).fixture.release));
     await page.evaluate(() => (globalThis as any).fixture.switch(0));
     await page.waitForFunction(() => Boolean((globalThis as any).fixture.controls["clip-e01-g01"]));
