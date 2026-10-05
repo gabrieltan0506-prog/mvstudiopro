@@ -105,6 +105,9 @@ import { processPdfExportJob } from "./pdfExportJob";
 import { drainBgmQueue } from "./bgmQueue.js";
 import { resolveJobWorkerRole, resolvePostProdClaimFilter, type PostProdClaimFilter } from "./workerRole.js";
 // 只导入类型：rigAutoscale 仍走动态 import（app 机不该为这条链加载 Fly 客户端），类型在编译期就被擦掉。
+import { withHeavyMediaContext } from "./heavyMediaContext";
+import { heavyWorkerSplitEnabled } from "./workerRole";
+import { heavyWorkerState, processHeavyMediaOnce } from "./heavyMediaWorker";
 import type { RigStartState } from "./rigAutoscale.js";
 import {
   invokePlatformAnalysisChat,
@@ -3787,7 +3790,8 @@ async function runClaimedJob(
         : undefined;
     if (!distillHeartbeat) stopWorkerHeartbeat = startWorkerHeartbeat(job.id, timeoutMs);
     const { output, provider } = await withTimeout(
-      executeJob(jobType, job.input, timeoutMs, String(job.userId), job.id),
+      withHeavyMediaContext({ userId: String(job.userId), executionId: job.id, parentJobId: job.id },
+        () => executeJob(jobType, job.input, timeoutMs, String(job.userId), job.id)),
       timeoutMs,
       `${job.type} job timed out after ${timeoutMs}ms`,
       manhuaLearnJob
@@ -4273,7 +4277,8 @@ async function processOnePdfExportJob(): Promise<boolean> {
     const jobType = job.type as JobType;
     const timeoutMs = JOB_TIMEOUT_MS[jobType];
     const { output, provider } = await withTimeout(
-      executeJob(jobType, job.input, timeoutMs, String(job.userId), job.id),
+      withHeavyMediaContext({ userId: String(job.userId), executionId: job.id, parentJobId: job.id },
+        () => executeJob(jobType, job.input, timeoutMs, String(job.userId), job.id)),
       timeoutMs,
       `${job.type} job 连续 ${timeoutMs}ms 无有效心跳`,
       { heartbeat: { jobId: job.id, stallMs: timeoutMs } },
@@ -4318,6 +4323,7 @@ async function processOnePostProdJob(...args: Parameters<typeof processOnePostPr
 export async function drainPostProdOnShutdown() {
   stopJobWorker();
   postProdShutdown.abort(new Error("服务更新中，本任务已停止，原素材和回执保留；未自动重做"));
+  await (await import("./heavyMediaWorker")).drainHeavyMediaOnShutdown();
   await Promise.allSettled(Array.from(activePostProdRuns));
   const { waitForPostProdResources } = await import("../services/postProdResources");
   await waitForPostProdResources();
@@ -4364,6 +4370,9 @@ async function processOnePostProdJobImpl(filter: PostProdClaimFilter = resolvePo
     // 成品在 GCS，先持久化回执。数据库短抖动/重启后只恢复结果，绝不重跑媒体。
     resultPreserved = true;
     rememberPostProdResult({ ...receipt, result });
+    if (heavyWorkerSplitEnabled()) {
+      await (await import("../services/heavyMediaEvidence")).saveHeavyMediaResult(job.id, String(job.userId), result);
+    }
     // Either durable channel may temporarily fail; always attempt both and settlement.
     await savePostProdReceipt({ ...receipt, result }).catch(() => {
       console.error(`[post-prod] ${job.id} disk checkpoint failed; retaining result for recovery`);
@@ -4396,13 +4405,16 @@ async function processOnePostProdJobImpl(filter: PostProdClaimFilter = resolvePo
   return true;
 }
 
-/** 队列领取方式保留；实际媒体处理由资源通道互斥，rig仍只领取Blender任务。 */
+/** 队列领取方式保留；实际媒体处理由资源通道互斥，rig按分流配置领取任务。 */
 export async function processPostProdJobsOnce() {
-  if (postProdProcessing || rigStopGate.requested) return;
+  if (heavyWorkerSplitEnabled() && resolveJobWorkerRole() === "rig" && !heavyWorkerState.ready) return;
+  if (postProdProcessing || heavyWorkerState.active || rigStopGate.requested || resolvePostProdClaimFilter() === "none") return;
   postProdProcessing = true;
   try {
     const filter = resolvePostProdClaimFilter();
-    if (filter === "blender") {
+    if (heavyWorkerSplitEnabled() && resolveJobWorkerRole() === "rig") {
+      await processOnePostProdJob(filter); // single media lane shared with internal preparation/render jobs
+    } else if (filter === "blender") {
       while (await processOnePostProdJob(filter)) { /* rig保持单路 */ }
     } else {
       await Promise.all([
@@ -4441,10 +4453,11 @@ async function rigAutoscaleDeps(
 ) {
   const { resolveRigAutoscaleDeps } = await import("./rigAutoscale.js");
   const { countPendingBlenderPostProdJobs } = await import("./repository.js");
+  const { countHeavyWorkerJobs } = await import("./heavyMediaRepository");
   return resolveRigAutoscaleDeps(
     {
-      queuedBlenderJobs: () => countPendingBlenderPostProdJobs({ includeRunning: false }),
-      pendingBlenderJobs: () => countPendingBlenderPostProdJobs(),
+      queuedBlenderJobs: () => heavyWorkerSplitEnabled() ? countHeavyWorkerJobs(false) : countPendingBlenderPostProdJobs({ includeRunning: false }),
+      pendingBlenderJobs: () => heavyWorkerSplitEnabled() ? countHeavyWorkerJobs() : countPendingBlenderPostProdJobs(),
     },
     hooks,
   );
@@ -4479,11 +4492,11 @@ async function rigWakeTick() {
   // app 自己还在领 Blender 任务时（MANHUA_RIG_WORKER_SPLIT 未设的降级部署）不许唤醒 rig：
   // 那等于两台机器抢同一单，而 app 机 8 GB 跑 Blender 正是 0917 OOM 那次的死法。
   const { rigWorkerSplitEnabled } = await import("./workerRole.js");
-  if (!rigWorkerSplitEnabled()) return;
+  if (!rigWorkerSplitEnabled() && !heavyWorkerSplitEnabled()) return;
   const { failQueuedBlenderPostProdJobs } = await import("./repository.js");
   // 行为变更（0917 用户拍板）：没有 rig 机可唤醒时，排队中的 Blender 任务即时失败并带做法。
   // 绑骨/白模都是免费任务，打回不涉及退积分；以后若有付费 post_prod 走这条路，退款先行。
-  const deps = await rigAutoscaleDeps({ failQueuedBlenderJobs: failQueuedBlenderPostProdJobs });
+  const deps = await rigAutoscaleDeps(heavyWorkerSplitEnabled() ? {} : { failQueuedBlenderJobs: failQueuedBlenderPostProdJobs });
   if (!deps) return;
   const { ensureRigStartedForPending } = await import("./rigAutoscale.js");
   const outcome = await ensureRigStartedForPending(deps, rigStartState);
@@ -4493,6 +4506,14 @@ async function rigWakeTick() {
 /** rig 机：空闲够久停自己。本进程在跑任务、或队列里还有 Blender 任务，一律不停。 */
 async function rigIdleTick() {
   // 自愈：停机命令发出去了、这个进程却还活着，说明机器没真停。再不复位就是一台空转机。
+  if (heavyWorkerSplitEnabled() && rigStopGate.requested) {
+    if (Date.now() - rigStopGate.requestedAt <= RIG_STOP_GATE_MAX_MS) return;
+    const deps = await rigAutoscaleDeps();
+    if (!deps) return;
+    // An ambiguous stop response must not reopen claims while the machine is stopping.
+    const self = (await deps.listRig()).find(row => row.id === deps.selfMachineId);
+    if (self?.state !== "started") return;
+  }
   if (releaseStaleRigStopGateIfNeeded()) return;
   if (rigStopGate.requested) return; // 停机在途，不再重复判定
   const deps = await rigAutoscaleDeps({
@@ -4508,13 +4529,21 @@ async function rigIdleTick() {
   if (!deps) return;
   const { maybeStopIdleRig } = await import("./rigAutoscale.js");
   // 传函数而不是快照：停机判定要跨两次网络往返，期间 1 秒一轮的 post_prod 通道可能刚领到一单。
-  const outcome = await maybeStopIdleRig(deps, rigIdleState, () => postProdProcessing);
+  const { postProdResourcesBusy } = await import("../services/postProdResources");
+  const { hasPendingPostProdResults } = await import("./postProdRecovery");
+  const { heavyMediaChildrenBusy } = await import("../services/heavyMediaProcess");
+  const outcome = await maybeStopIdleRig(deps, rigIdleState, () => heavyMediaChildrenBusy() || postProdProcessing || heavyWorkerState.active
+    || activePostProdRuns.size > 0 || postProdResourcesBusy() || hasPendingPostProdResults());
   if (outcome.action === "error") console.warn("[rig-autoscale] 停机判定异常：", outcome.message);
 }
 
 /** 定时器里不能漏掉 rejection：动态 import 失败会变成 unhandled rejection 把进程打掉。 */
+let autoscaleTickActive = false;
 function guarded(tick: () => Promise<unknown>): void {
-  void tick().catch((error) => console.warn("[rig-autoscale] tick 异常：", error));
+  if (autoscaleTickActive) return;
+  autoscaleTickActive = true;
+  void tick().catch((error) => console.warn("[rig-autoscale] tick 异常：", error))
+    .finally(() => { autoscaleTickActive = false; });
 }
 
 export function startJobWorker() {
@@ -4523,10 +4552,16 @@ export function startJobWorker() {
 
   // 0917：rig 进程组只消化 Blender 后期任务，其他队列一律不碰（避免与 app 双领）
   if (resolveJobWorkerRole() === "rig") {
-    console.warn("[runner] JOB_WORKER_ROLE=rig：只领 Blender 后期任务（manhua_auto_rig / manhua_previs）");
-    void processPostProdJobsOnce();
+    console.warn("[runner] JOB_WORKER_ROLE=rig：按分流配置消费后期/内部媒体任务");
+    const work = async () => {
+      if (heavyWorkerSplitEnabled()) {
+        await processHeavyMediaOnce(() => postProdProcessing || rigStopGate.requested || postProdShutdown.signal.aborted);
+      }
+      await processPostProdJobsOnce();
+    };
+    void work().catch(error => console.warn("[heavy-worker] work deferred", error));
     postProdTimer = setInterval(() => {
-      void processPostProdJobsOnce();
+      void work().catch(error => console.warn("[heavy-worker] work deferred", error));
     }, 1_000);
     rigIdleState.lastBusyAt = Date.now();
     void logRigAutoscaleBoot("rig").catch(() => {});

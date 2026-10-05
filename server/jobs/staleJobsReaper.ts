@@ -70,6 +70,9 @@ export async function reapStaleJobsOnce(
   const qCutoff = wallCutoffSql(qMin);
 
   try {
+    if (process.env.MANHUA_HEAVY_WORKER_SPLIT === "1") {
+      await (await import("./heavyMediaRepository")).recoverStaleHeavyMediaJobs();
+    }
     // post_prod 任务记录保留:停止更新的行改判 failed 而不是删除,
     // getPostProdJob 仍能返回任务状态,不会直接变成 404。
     const hasResult = sql`jsonb_typeof(${jobs.output}::jsonb->'postProdResult'->'output') = 'object'
@@ -157,6 +160,7 @@ export async function reapStaleJobsOnce(
           eq(jobs.status, "running"),
           nonRecoverableRunningJob,
           ne(jobs.type, "post_prod"),
+          ne(jobs.type, "media_work"),
           lt(jobs.updatedAt, runCutoff),
         ),
       )
@@ -169,6 +173,7 @@ export async function reapStaleJobsOnce(
           eq(jobs.status, "queued"),
           nonRecoverableQueuedJob,
           ne(jobs.type, "post_prod"),
+          ne(jobs.type, "media_work"),
           lt(jobs.createdAt, qCutoff),
         ),
       )

@@ -1,4 +1,7 @@
 import path from "node:path";
+import { shouldDispatchHeavyMedia } from "../jobs/heavyMediaContext";
+import { dispatchHeavyMedia } from "../jobs/heavyMediaQueue";
+import type { ManhuaRenderedSubtitle } from "../../shared/manhuaRenderedSubtitle";
 import { promises as fs } from "node:fs";
 import { uploadFileToPublicRenderMedia } from "../services/publicRenderMedia.js";
 import type { RenderWorkflowInput } from "./renderTypes.js";
@@ -13,7 +16,13 @@ import {
   resolveSceneClipDurationSec,
 } from "./renderUtils.js";
 
-export async function renderWorkflowFinalVideo(input: RenderWorkflowInput) {
+export async function renderWorkflowFinalVideo(input: RenderWorkflowInput): Promise<string> {
+  if (shouldDispatchHeavyMedia()) {
+    const { onSubtitleTimeline, ...serializable } = input;
+    const result = await dispatchHeavyMedia<{ url: string; subtitleTimeline?: ManhuaRenderedSubtitle }>({ kind: "final_render", input: serializable });
+    if (result.subtitleTimeline) onSubtitleTimeline?.(result.subtitleTimeline);
+    return result.url;
+  }
   const tmpDir = await makeTempDir();
   const transition = String(input.transition || "cut").trim().toLowerCase();
   const size = resolutionToSize(input.resolution);

@@ -2,8 +2,8 @@ import { constants } from "node:fs";
 import { mkdir, open, lstat, rename, statfs } from "node:fs/promises";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { execHeavyMedia } from "./heavyMediaProcess";
+import { heavyMediaSignal } from "../jobs/heavyMediaContext";
 import { z } from "zod";
 import {
   MANHUA_LOCAL_VIDEO_CHUNK_BYTES,
@@ -12,7 +12,7 @@ import {
   buildManhuaLocalVideoSourceRef,
 } from "../../shared/manhuaLocalVideoUpload";
 
-const exec = promisify(execFile);
+const exec = execHeavyMedia;
 const ROOT = "/data/manhua-local-video-uploads";
 const RESERVE = 128 * 1024 * 1024;
 const manifestSchema = z
@@ -131,7 +131,9 @@ async function shaFile(file: string, expected: number) {
     await handle.close();
   }
 }
-async function probeVideo(file: string): Promise<number> {
+export async function probeVideo(file: string): Promise<number> {
+  const { shouldDispatchHeavyMedia, dispatchLocalVideoProbe } = await import("./heavyLearnMedia");
+  if (shouldDispatchHeavyMedia()) return dispatchLocalVideoProbe(file);
   try {
     const { stdout } = await exec(
       "ffprobe",
@@ -152,7 +154,7 @@ async function probeVideo(file: string): Promise<number> {
         "json",
         file,
       ],
-      { timeout: 30_000, maxBuffer: 128 * 1024 }
+      { timeout: 30_000, maxBuffer: 128 * 1024, signal: heavyMediaSignal.getStore() }
     );
     const data = JSON.parse(stdout);
     const duration = Number(data.format?.duration);
@@ -410,7 +412,9 @@ export function createManhuaLocalVideoUploadService(
         if (m.offset !== m.bytes)
           fail(409, "NOT_COMPLETED", "视频尚未上传完成");
         const sha256 = await shaFile(file, m.bytes);
-        const durationSec = await (options.probe ?? probeVideo)(file);
+        const { withHeavyMediaContext } = await import("../jobs/heavyMediaContext");
+        const durationSec = await withHeavyMediaContext({ userId: m.userId, executionId: `upload/${m.uploadId}/${sha256}` },
+          () => (options.probe ?? probeVideo)(file));
         if (!Number.isFinite(durationSec) || durationSec <= 0)
           fail(422, "INVALID_VIDEO", "视频时长无效");
         const finished: Manifest = {

@@ -1,7 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "git": {
-    "deploymentEnabled": true
+    "deploymentEnabled": {
+      "feat/fly-dual-machine-1005": false
+    }
   },
   "github": {
     "enabled": true

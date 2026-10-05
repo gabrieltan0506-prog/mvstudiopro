@@ -58,7 +58,11 @@ import {
   MANHUA_NATIVE_SERIES_AGGREGATION_SCHEMA_VERSION,
 } from "./manhuaNativeSeriesAggregation.js";
 
-const execFileAsync = promisify(execFile);
+const localExecFile = promisify(execFile);
+const execFileAsync: NativeDeepReadProbeExecutor = async (command, args, options) => {
+  const { shouldDispatchHeavyMedia, dispatchLearnCommand } = await import("./heavyLearnMedia");
+  return shouldDispatchHeavyMedia() ? dispatchLearnCommand(command, args, options) : localExecFile(command, args, options);
+};
 
 type NativeDeepReadProbeExecutor = (
   command: string,

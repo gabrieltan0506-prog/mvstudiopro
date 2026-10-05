@@ -55,10 +55,13 @@ export async function readResourceSnapshot(state?: MediaRuntime) {
 
 // 所有后期通道共用一条本机通道，避免视频编码与三条 BGM 渲染同时占满内存。
 let tail: Promise<void> = Promise.resolve();
+let activeResources = 0;
+export function postProdResourcesBusy() { return activeResources > 0; }
 export async function waitForPostProdResources() { await tail; }
 export async function withPostProdResources<T>(
   jobId: string, signal: AbortSignal, state: MediaRuntime, work: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
+  activeResources++;
   const previous = tail;
   let release!: () => void;
   tail = new Promise<void>(resolve => { release = resolve; });
@@ -102,6 +105,6 @@ export async function withPostProdResources<T>(
         onLeaseLost: () => controller.abort(new Error("后期存储互斥租约续期失败，已停止本任务")) }));
   } finally {
     if (monitor) clearInterval(monitor);
-    try { await releasePriority?.(); } catch { console.warn("[post-prod] priority lease cleanup deferred"); } finally { release(); }
+    try { await releasePriority?.(); } catch { console.warn("[post-prod] priority lease cleanup deferred"); } finally { activeResources--; release(); }
   }
 }

@@ -6,7 +6,7 @@ import { completePostProdJob, getJobByIdStrict, failPostProdJob } from "./reposi
 
 type Owner = { machineId: string; bootId: string; pid: number; startTicks: string };
 type Receipt = { version: 1; jobId: string; userId: string; owner: Owner; result?: { output: unknown; provider: string } };
-const root = () => process.env.POST_PROD_RECOVERY_DIR || (process.env.FLY_MACHINE_ID
+const root = () => process.env.POST_PROD_RECOVERY_DIR || (process.env.JOB_WORKER_ROLE === "rig" ? "/tmp/post-prod-recovery" : process.env.FLY_MACHINE_ID
   ? "/data/post-prod-recovery" : path.join(process.cwd(), ".cache", "post-prod-recovery"));
 const file = (id: string) => {
   if (!/^[a-zA-Z0-9_-]+$/.test(id)) throw new Error("后期任务ID格式错误");
@@ -22,6 +22,9 @@ export async function postProdOwner(): Promise<Owner> {
     startTicks: await startTicks(process.pid).catch(() => "") };
 }
 export async function savePostProdReceipt(receipt: Receipt) {
+  if (receipt.result && process.env.MANHUA_HEAVY_WORKER_SPLIT === "1") {
+    await (await import("../services/heavyMediaEvidence")).saveHeavyMediaResult(receipt.jobId, receipt.userId, receipt.result);
+  }
   await mkdir(root(), { recursive: true });
   const target = file(receipt.jobId);
   const next = `${target}.${process.pid}.${randomUUID()}.next`;
@@ -36,6 +39,7 @@ export async function removePostProdReceipt(id: string) {
   pendingResults.delete(id);
 }
 const pendingResults = new Map<string, Receipt>();
+export function hasPendingPostProdResults() { return pendingResults.size > 0; }
 export function rememberPostProdResult(receipt: Receipt) { pendingResults.set(receipt.jobId, receipt); }
 let recovering = false;
 let recoveryTimer: ReturnType<typeof setInterval> | undefined;
@@ -64,7 +68,8 @@ export async function recoverPostProdReceipts(): Promise<{ recovered: number; in
   const current = await postProdOwner();
   // A full disk must not lose an uploaded result while this process is alive.
   for (const receipt of Array.from(pendingResults.values())) {
-    await savePostProdReceipt(receipt).catch(() => {});
+    if (process.env.MANHUA_HEAVY_WORKER_SPLIT === "1") await savePostProdReceipt(receipt);
+    else await savePostProdReceipt(receipt).catch(() => {});
     try {
       if (await completePostProdJob(receipt.jobId, receipt.result!.output, receipt.result!.provider)) {
         await removePostProdReceipt(receipt.jobId);

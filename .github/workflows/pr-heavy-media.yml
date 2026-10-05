@@ -1,0 +1,45 @@
+name: PR Heavy Media Offline
+on:
+  pull_request:
+    paths:
+      - "server/jobs/**"
+      - "server/services/heavy*"
+      - "server/services/manhuaNativeDeepReadRunner.ts"
+      - "server/vercel-api-core/render*"
+      - "ops/prepare-fly-dual-config*"
+      - ".github/workflows/pr-heavy-media.yml"
+permissions:
+  contents: read
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: pnpm/action-setup@v4
+        # Resolve the version once, from the existing packageManager integrity pin.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Exact HEAD, types and client build
+        run: |
+          mkdir -p artifacts/heavy-media
+          git rev-parse HEAD > artifacts/heavy-media/tested-sha.txt
+          pnpm exec tsc --noEmit --incremental false
+          pnpm exec vite build
+      - name: Offline SQL, lifecycle, callbacks, real FFmpeg fixture
+        env:
+          HEAVY_FIXTURE_EVIDENCE_DIR: artifacts/heavy-media
+        run: |
+          node --test ops/prepare-fly-dual-config.test.mjs
+          pnpm exec vitest run server/jobs/heavyMediaQueue.test.ts server/jobs/heavyMediaRepository.test.ts server/jobs/heavyWorkerLifecycle.test.ts server/jobs/heavyNativeCallback.test.ts server/services/heavyMediaProcess.test.ts server/services/heavyMediaRender.fixture.test.ts server/services/heavyMediaEvidence.test.ts server/jobs/heavyWorkerReadiness.test.ts server/services/heavyMediaTransfer.test.ts --maxWorkers=1 --minWorkers=1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: heavy-media-${{ github.event.pull_request.head.sha }}
+          path: artifacts/heavy-media

@@ -154,7 +154,13 @@ import {
   ytdlpCookieCandidateCount,
 } from "./manhuaLearnYtdlpRuntime.js";
 
-const execFileAsync = promisify(execFile);
+const localExecFile = promisify(execFile);
+async function execFileAsync(command: string, args: string[], options: import("node:child_process").ExecFileOptions = {}): Promise<{ stdout: string; stderr: string }> {
+  const { shouldDispatchHeavyMedia, dispatchLearnCommand } = await import("./heavyLearnMedia");
+  if (command === "ffprobe" && shouldDispatchHeavyMedia()) return dispatchLearnCommand(command, args, options);
+  const result = await localExecFile(command, args, { ...options, encoding: "utf8" });
+  return { stdout: String(result.stdout), stderr: String(result.stderr) };
+}
 
 export type ManhuaTemplateLearnInput = {
   url?: string;
