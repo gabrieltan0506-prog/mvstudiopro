@@ -7180,7 +7180,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             }
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: `ADVISOR_OPERATION_FAILED：本次问答未完成${deducted.cost > 0 ? "；积分已原路退回" : ""}，请重新提问`,
+              message: `ADVISOR_OPERATION_FAILED：${operationError instanceof Error && operationError.message === "素材尚未登记,请从画布/成片里重新选择站内素材" ? "素材尚未登记，本次未发送影片" : "本次问答未完成"}${deducted.cost > 0 ? "；积分已原路退回" : ""}，请重新提问`,
             });
           }
 

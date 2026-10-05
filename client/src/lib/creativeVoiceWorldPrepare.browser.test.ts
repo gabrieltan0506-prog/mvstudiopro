@@ -15,7 +15,7 @@ createRoot(document.getElementById('root')).render(<App/>);
     b.onResolve({filter:/\/CreativeVoicePanel$/},()=>({path:'voice',namespace:'offline'}));
     b.onLoad({filter:/^voice$/,namespace:'offline'},()=>({resolveDir:process.cwd(),loader:'js',contents:`import {useEffect} from 'react';export function CreativeVoicePanel(p){useEffect(()=>{globalThis.fixture.mounts=(globalThis.fixture.mounts||0)+1;return()=>{globalThis.fixture.unmounts=(globalThis.fixture.unmounts||0)+1}},[]);globalThis.fixture.setLive=p.onSessionActiveChange;globalThis.fixture.execute=a=>p.onProductionAction(a,new AbortController().signal);return null}` }));
     b.onResolve({ filter: /^@\/lib\/manhuaAdvisorStream$/ }, () => ({ path: "stream", namespace: "offline" }));
-    b.onLoad({ filter: /^stream$/, namespace: "offline" }, () => ({ loader: "js", contents: `export async function streamManhuaAdvisor(input){globalThis.fixture.asks.push(input);if(!input.manhuaContext.worldTarget)return {answer:'自动检查完成',remainingFreeToday:4,paidUnitCredits:8};return {answer:JSON.stringify({kind:'world_plan_v1',sceneRefId:input.manhuaContext.worldTarget.sceneRefId,summaryZh:'诊台放在树下，留出入口通路',textPrompt:'露天药庐前的木制诊台位于大树阴影下，清晨光线从东侧照入，诊台与入口之间留出通路。'}),remainingFreeToday:4,paidUnitCredits:8};}` }));
+    b.onLoad({ filter: /^stream$/, namespace: "offline" }, () => ({ loader: "js", contents: `export async function streamManhuaAdvisor(input){globalThis.fixture.asks.push(input);if(globalThis.fixture.error)throw new Error(globalThis.fixture.error);if(!input.manhuaContext.worldTarget)return {answer:'自动检查完成',remainingFreeToday:4,paidUnitCredits:8};return {answer:JSON.stringify({kind:'world_plan_v1',sceneRefId:input.manhuaContext.worldTarget.sceneRefId,summaryZh:'诊台放在树下，留出入口通路',textPrompt:'露天药庐前的木制诊台位于大树阴影下，清晨光线从东侧照入，诊台与入口之间留出通路。'}),remainingFreeToday:4,paidUnitCredits:8};}` }));
     b.onResolve({ filter: /^@\/lib\/trpc$/ }, () => ({ path: "trpc", namespace: "offline" }));
     b.onLoad({ filter: /^trpc$/, namespace: "offline" }, () => ({ loader: "js", contents: `export const trpc={mvAnalysis:{getManhuaAdvisorQuota:{useQuery:()=>({data:{remaining:5,price:8,exempt:false},refetch:async()=>({})})}}};` }));
   } }], define: { "process.env.NODE_ENV": '"test"', "import.meta.env": "{}" } });
@@ -64,3 +64,13 @@ it("语音操作期间暂缓自动咨询，结束后恢复检查而非抢占制�
  await p.waitForFunction(()=>(globalThis as any).fixture.asks.length===1,{timeout:11000});
  }finally{await p.close()}
 },25000);
+
+it("顾问失败时语音收到实际错误，不能把素材登记失败说成缺音轨",async()=>{
+ const p=await open();try{
+ await p.waitForFunction(()=>typeof (globalThis as any).fixture.execute==="function");
+ await p.evaluate(()=>(globalThis as any).fixture.error="素材尚未登记,请从画布/成片里重新选择站内素材");
+ const reply=await p.evaluate(()=>(globalThis as any).fixture.execute({action:"world",assetId:"clinic",question:"月夜庭院"}));
+ expect(reply).toContain("素材尚未登记");expect(reply).toContain("不要自动重试");expect(reply).not.toContain("缺音轨");
+ expect(await p.evaluate(()=>(globalThis as any).fixture.asks.length)).toBe(1);
+ }finally{await p.close()}
+},20000);

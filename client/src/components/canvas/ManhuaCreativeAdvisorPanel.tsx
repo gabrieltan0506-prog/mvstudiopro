@@ -395,6 +395,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
       voiceAnswer = answer; return answer;
     } catch (error) {
       const message = error instanceof Error ? error.message : "顾问暂时无法回答，请稍后重试。";
+      voiceAnswer = `本次未完成。实际错误：${formatManhuaAdvisorError(message)}。不得猜测其他失败原因，不要自动重试。`;
       if (!mounted.current) return;
       if (/已用完|PAYMENT_REQUIRED|扣除.*积分/.test(message) && !/不足/.test(message)) {
         voiceWaitingForPayment = true;

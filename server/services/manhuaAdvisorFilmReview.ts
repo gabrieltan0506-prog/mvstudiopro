@@ -3,8 +3,23 @@ import { advisorFilmReviewSchema, type AdvisorFilmReviewTarget } from "../../sha
 import { resolveRegisteredPostProdMediaSource } from "./postProdMediaSource";
 import { uploadBufferToGcs } from "./gcs";
 const MODEL = "gemini-3.8-flash";
-const defaults = {
+export async function resolveAdvisorFilmSource(input: { userId: string; source: string }, deps = {
   resolve: resolveRegisteredPostProdMediaSource,
+  loadCanvas: async (userId: number) => (await import("./canvasVideoTask")).loadSucceededCanvasVideoOutputObjects(userId),
+}) {
+  try { return await deps.resolve(input); }
+  catch (error) {
+    if (!(error instanceof Error) || error.message !== "素材尚未登记,请从画布/成片里重新选择站内素材") throw error;
+    // Canvas video tasks have their own server-owned store, separate from jobs.
+    // Match only this user's succeeded output; never trust client block URLs alone.
+    const userId = Number(input.userId);
+    if (!Number.isSafeInteger(userId) || userId <= 0) throw error;
+    const objects = await deps.loadCanvas(userId);
+    return deps.resolve(input, undefined, { jobObjects: objects });
+  }
+}
+const defaults = {
+  resolve: resolveAdvisorFilmSource,
   post: async (body: unknown) => {
     const { postVertexNativeDeepRead } = await import("./manhuaNativeDeepReadRunner");
     return postVertexNativeDeepRead(body, undefined, undefined, MODEL);
