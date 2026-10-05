@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readManhuaTimedStoryboard } from "./manhuaTimedStoryboard";
 import { parseWorkbenchShotsFromText } from "./manhuaScriptWorkbench";
 import { evaluateWriterPackAssetAndDensity } from "./manhuaWriterAssetCanon";
+import { createManhuaAudioFromShots } from "./manhuaAudioFromShots";
 const header =
   "|镜号|约时码|景别|角度|运镜|灯光|构图|主体动作|音频|转场/卡点|时长建议|\n|---|---|---|---|---|---|---|---|---|---|---|";
 const row = (
@@ -121,4 +122,26 @@ it("明确无对白后的引号拟声归入音效，不虚构说话人", () => {
   expect(parsed.errors).toEqual([]);
   expect(parsed.rows[0].dialogueZh).toBe("无");
   expect(parsed.rows[0].soundZh).toBe("「咯」一声、众声俱寂");
+});
+
+it("真实模型起止时码与对白括注进入原镜，表演说明不进入 TTS", () => {
+  const raw = sample.replace("|01|0:00|", "|01|0:00–0:04|").replace("|02|0:04|", "|02|0:04–0:07|")
+    .replace("娘：「慢点。」＋咳喘", "娘：「慢点。」（约2秒，气声偏低）＋音效：咳喘");
+  const parsed = readManhuaTimedStoryboard(raw);
+  expect(parsed.errors).toEqual([]);
+  expect(parsed.rows.map(r => [r.startSec, r.endSec])).toEqual([[0, 4], [4, 7]]);
+  expect(parsed.rows[0]).toMatchObject({dialogueZh:"娘：「慢点。」",soundZh:"音效：咳喘"});
+  expect(parsed.rows[0].actionZh).toContain("对白表演：娘：约2秒，气声偏低");
+  const audio = createManhuaAudioFromShots(parseWorkbenchShotsFromText(raw), 7);
+  expect(audio.cues.filter(c => c.kind === "dialogue").map(c => c.textZh)).toEqual(["慢点。"]);
+});
+
+it.each([
+  [sample.replace("0:00", "0:00–0:05"), "不一致"],
+  [sample.replace("0:00", "0:00–0:64"), "秒位无效"],
+  [sample.replace("娘：「慢点。」＋咳喘", "娘：「慢点。」（甲：快走）＋咳喘"), "音频"],
+  [sample.replace("娘：「慢点。」＋咳喘", "娘：「慢点。」（她说“快走”）＋咳喘"), "音频"],
+  [sample.replace("娘：「慢点。」＋咳喘", "娘：「慢点。」（气声)＋咳喘"), "音频"],
+])("矛盾时码及不明确括注仍拒绝：%s", (raw, error) => {
+  expect(readManhuaTimedStoryboard(raw).errors.join("；")).toContain(error);
 });
