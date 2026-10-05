@@ -162,3 +162,13 @@ Still not accepted: final whitebox render/playback/apply/restore, world preview/
 - NOT accepted: final integrated voice→owned original film→provider→billing→UI/recovery under this adapter, realtime music understanding, usable 3DGS adoption, ordinary-user financial reconciliation and production/user approval. Existing isolated passes do not authorize merge/deployment or establish artistic quality.
 
 - Final close checks:1005-final-close-types.log exit0;1005-final-close-build.log exit0,3m35s. Build retains existing chunk-size warnings. No new provider calls, paid probes or unchanged knowledge-card reruns. Full live acceptance remains open.
+
+
+### 2026-10-05 17:21 PR1664 r50：影片输入、仅聚焦音频；实际补听未通过
+- 用户澄清：只读音频是提示词中的审阅范围，允许直接分享完整影片；不得改成必须另传音频或再抽音轨。本轮沿既有CreativeVoicePanel，选现有Extended通道，分享原4.736秒影片画面与声音，没有新入口/提取文件/重生成媒体。
+- 实际Gemini API gemini-3.8-live-extended-thinking连接接受输入，无格式拒单；但回复“没有实际听到…任何音频”，音乐理解验收失败。已结束语音，不重复付费呼叫。最近回执14786 tokens只是最近一次，非累计费用。
+- 零付费传输核对：52个audio包，77272个16k样本=4.8295秒；峰值9408/RMS1098（非零）；4个frame。原视频volumedetect均值-29.2dB/峰值-10.7dB（只分析，未生成音频文件）。这只能证明浏览器发出非零音频，不能证明供应商正确感知；上游处理/轮次分割仍需排查。
+- 证据：task-2/backend-work/1005-r50-response.txt、1005-r50-transport-summary.json、1005-r50-share-video.log；完整WS原证据继续保留。测试前客户端仍缓存普通身份导致入口等待超时，刷新身份后成功进入；这次超时没有模型请求。
+- server/services/creativeVoiceTransport.ts只补系统指令：音频重点不限制影片格式、不要求抽轨、不因补听自行重复reviewFilm；此次实际调用发生于该提示词修改前，不声称改后已线上通过。diff --check通过；纯提示词不重跑既有通过测试/构建。
+- r49确认普通隔离账户100→88/lifetimeSpent12，原审片任务succeeded；有两条usage记录但尚未确认其统计含义，不可说扣了24，也不可预先声称统计无问题。隔离角色已恢复原身份，原余额/额度fixture备份保留。
+- 未验边界继续保留：实时音乐感知、3DGS当前人物匹配采用/还原、usage重复统计及总成本；PR未合并部署，不能宣称全部完成。
