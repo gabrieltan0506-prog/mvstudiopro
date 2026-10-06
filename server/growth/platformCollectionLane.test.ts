@@ -148,3 +148,16 @@ describe("growth platform collection lane", () => {
     }
   });
 });
+
+
+it("burst 使用三分钟间隔，不被旧四分钟配置覆盖", async () => {
+  expect(resolveGrowthPlatformCollectionGapMs("240000", "burst")).toBe(180_000);
+  let clock = 1_000;
+  const waits: number[] = [];
+  const lane = createGrowthPlatformCollectionLane({ gapMs: 240_000, now: () => clock,
+    sleep: async ms => { waits.push(ms); clock += ms; } });
+  await lane("douyin", "burst", async () => { clock += 10_000; });
+  await lane("xiaohongshu", "burst", async () => {});
+  await lane("bilibili", "burst", async () => {});
+  expect(waits).toEqual([180_000, 180_000]);
+});

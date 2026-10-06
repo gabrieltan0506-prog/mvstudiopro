@@ -92,10 +92,10 @@ RUN NODE_OPTIONS=--max-old-space-size=4096 pnpm build \
 EXPOSE 3000
 
 # Fly / 容器內必須監聽 0.0.0.0；PORT 與 fly.toml internal_port / 健康檢查一致
-# 对齐 8GB 整机预算，给媒体子进程及原生缓冲保留空间。
+# 网站 Node 堆上限 6GB；8GB 整机剩余空间供原生缓冲与系统使用。
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=3000
-ENV NODE_OPTIONS=--max-old-space-size=4096
+ENV NODE_OPTIONS=--max-old-space-size=6144
 
-CMD ["node","--max-old-space-size=4096","--import","tsx","server/_core/index.ts"]
+CMD ["node","--max-old-space-size=6144","--import","tsx","server/_core/index.ts"]
