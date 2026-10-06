@@ -36,3 +36,22 @@ it("world bridge accepts scene selection and confirmed generation routes but rej
 it("world retry is an explicit action and never accepts model supplied payment approval",()=>{for(const extended of [false,true]){const event=(args:unknown)=>normalizeVoiceMessage(extended,{toolCall:{functionCalls:[{id:"retry",name:"creativeProduction",args}]}} as any);expect(event({action:"retryWorld",assetId:"scene"})).toMatchObject([{type:"production",action:{action:"retryWorld",assetId:"scene"}}]);expect(event({action:"retryWorld",assetId:"scene",confirmPaid:true})).toMatchObject([{type:"toolRejected"}]);}});
 
 it("media execution reaches both model routes with strict operation validation",()=>{for(const extended of [false,true])for(const operation of ["inspect","previewImage","finishImage","resumeMedia","applyImage","editVideo"]){const event=(args:unknown)=>normalizeVoiceMessage(extended,{toolCall:{functionCalls:[{id:"media",name:"creativeProduction",args}]}} as any);expect(event({action:"media",operation})).toMatchObject([{type:"production",action:{action:"media",operation}}]);expect(event({action:"media",operation,approved:true})).toMatchObject([{type:"toolRejected"}]);}});
+
+it("七组新动作在两条实时语音路由解析为同一生产事件，拒绝伪造费用确认", () => {
+ const actions = [
+  {action:"writer",operation:"configure",topic:"宫廷悬疑"},
+  {action:"asset",operation:"primary",assetId:"ref-1",anchorId:"actor-1",duty:"identity"},
+  {action:"modelControl",operation:"multiviewSubmit",assetId:"ref-1"},
+  {action:"worldControl",operation:"exportFrame",assetId:"world-1",clipId:"clip-1"},
+  {action:"generate",operation:"clip",episode:1,blockId:"clip-1"},
+  {action:"audio",operation:"configureCue",clipId:"clip-1",cueId:"cue-1",patch:{volume:0.5}},
+  {action:"scoring",operation:"configure",clipId:"clip-1",musicId:"adopted-1"},
+  {action:"edit",operation:"trim",episode:1,shotIndex:1,inSec:0.5,outSec:2},
+  {action:"deliver",operation:"assemble",episode:1},
+ ];
+ for (const extended of [false,true]) for (const action of actions) {
+  const event = (args:unknown) => normalizeVoiceMessage(extended,{toolCall:{functionCalls:[{id:"workflow",name:"creativeProduction",args}]}} as any);
+  expect(event(action)).toMatchObject([{type:"production",action}]);
+  expect(event({...action,confirmPaid:true})).toMatchObject([{type:"toolRejected"}]);
+ }
+});

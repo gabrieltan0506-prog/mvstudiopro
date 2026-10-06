@@ -659,3 +659,38 @@ it("完整observer报告超过旧文本上限仍保留完整JSON", async () => {
  const answer=JSON.stringify({kind:"film_review_v1",observerEvidence:{audioSegments:[{descriptionZh:"声音证据".repeat(4000)}]}});
  expect(parseAskJson(JSON.stringify({answer}),true,true).answer).toBe(answer);
 });
+
+
+describe("工作流操作方案复用原顾问服务",()=>{
+  const candidate={kind:"workflow_operation_v1",summaryZh:"读取正式混音素材",action:{action:"scoring",operation:"inspect"}};
+  it.each(["object","string","direct"])("%s 回答沿原外壳解析并严格验证动作",async format=>{
+    invokeLLMMock.mockResolvedValue(format==="direct" ? {choices:[{message:{content:JSON.stringify(candidate)}}]} : llmJson(format==="string"?JSON.stringify(candidate):candidate));
+    const question="【工作流操作】给第一段安排BGM";
+    const result=await askPlatformSkillQa({userId:7,question,rawQuestion:question,isAdmin:true,manhuaContext:manhuaContext({workflowOperation:{workspace:JSON.stringify({clips:[{id:"clip-1"}]}),revision:"version-1"}})});
+    expect(JSON.parse(result.answer)).toEqual(candidate);
+    expect(invokeLLMMock).toHaveBeenCalledTimes(1);
+    const messages=invokeLLMMock.mock.calls[0][0].messages;
+    expect(messages[0].content).toContain("单步候选");
+    expect(messages[1].content).toContain("clip-1");
+    expect(result.imageOffer).toBeNull();
+  });
+  it("工作区清单可独立大于4000字，原问题仍在原请求容量内",async()=>{
+    invokeLLMMock.mockResolvedValue(llmJson(candidate));
+    const workspace=JSON.stringify({state:"实际状态".repeat(1300)});
+    expect(workspace.length).toBeGreaterThan(4000);
+    await askPlatformSkillQa({userId:7,question:"【工作流操作】检查当前工作区",rawQuestion:"【工作流操作】检查当前工作区",isAdmin:true,manhuaContext:manhuaContext({workflowOperation:{workspace,revision:"v1"}})});
+    expect(invokeLLMMock.mock.calls[0][0].messages[1].content).toContain(workspace);
+  });
+  it("拒绝方案中批量动作、费用豁免和无目标生成",()=>{
+    expect(()=>parseAskJson(JSON.stringify({...candidate,actions:[candidate.action]}))).toThrow();
+    expect(()=>parseAskJson(JSON.stringify({...candidate,action:{action:"generate",operation:"clip",episode:1}}))).toThrow();
+    expect(()=>parseAskJson(JSON.stringify({...candidate,action:{action:"scoring",operation:"submit",confirmPaid:true}}))).toThrow();
+  });
+  it("不能将一次工作流操作包装成音画分析，超容量和URL不进入原模型",async()=>{
+    const mixed=manhuaContext({workflowOperation:{workspace:"当前清单",revision:"v1"},studio3d:{}});
+    await expect(askPlatformSkillQa({userId:7,question:"检查",isAdmin:true,manhuaContext:mixed})).rejects.toThrow();
+    await expect(askPlatformSkillQa({userId:7,question:"检查",isAdmin:true,manhuaContext:manhuaContext({workflowOperation:{workspace:"X".repeat(30001),revision:"v1"}})})).rejects.toThrow();
+    await expect(askPlatformSkillQa({userId:7,question:"检查",isAdmin:true,manhuaContext:manhuaContext({workflowOperation:{workspace:"https://foreign.test/private",revision:"v1"}})})).rejects.toThrow();
+    expect(invokeLLMMock).not.toHaveBeenCalled();
+  });
+});

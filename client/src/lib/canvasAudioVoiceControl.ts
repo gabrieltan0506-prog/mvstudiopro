@@ -1,14 +1,19 @@
 import type { CanvasMusicDraft } from "@shared/canvasAudioStudio";
 import type { CreativeVoiceProductionAction } from "@shared/creativeVoiceProduction";
 
-export type CanvasAudioVoiceAction = Extract<CreativeVoiceProductionAction, { action: "bgm" }>;
+export type CanvasAudioVoiceAction = Extract<CreativeVoiceProductionAction, { action: "bgm" | "audio" }>;
 export type CanvasAudioVoiceResult = {
-  status: "inspected" | "prepared" | "awaiting_user_confirmation";
+  status: "inspected" | "prepared" | "awaiting_user_confirmation" | "updated" | "handled";
+  characters?:Array<{id:string;nameZh:string}>;
+  cues?: Array<{ id:string; kind:string; labelZh:string; shotZh:string; textZh:string; speakerId?:string; speakerZh:string; voice:string; emotion:string; startSec:number; endSec:number; sourceStartSec:number; sourceEndSec:number; volume:number; fadeInSec:number; fadeOutSec:number; approved:boolean; selectedTakeId?:string; takes:Array<{id:string;durationSec:number;matches:boolean}> }>;
+  sources?: Array<{id:string;label:string;durationSec?:number}>;
+  resumableIds?: string[];
+  voices?: Array<{id:string;label:string}>;
   clipId: string;
   draft: CanvasMusicDraft | null;
   musicJobIds: string[];
   pendingOperations: Array<{ id: string; kind: string }>;
-  jobs: Array<{ jobId: string; status: string; titleZh: string; variants: Array<{ index: number; available: boolean }> }>;
+  jobs: Array<{ jobId: string; status: string; titleZh: string; variants: Array<{ index: number; available: boolean; durationSec?: number }> }>;
   historyReadFailed: boolean;
 };
 export type CanvasAudioVoiceControl = (action: CanvasAudioVoiceAction, signal?: AbortSignal) => Promise<CanvasAudioVoiceResult>;

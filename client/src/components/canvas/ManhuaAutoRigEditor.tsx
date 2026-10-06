@@ -1,3 +1,4 @@
+import type { AdvisorModelControl, AdvisorModelRegistration } from "@/lib/manhuaAdvisorWorkflowControl";
 import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
 import { useEffect, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
@@ -36,6 +37,7 @@ type Props = {
     expectedTaskId: string
   ) => boolean | Promise<boolean>;
   onClose: () => void;
+  onAdvisorControl?: AdvisorModelRegistration;
 };
 const field =
   "w-full rounded border border-input bg-background px-2 py-1.5 text-sm";
@@ -282,6 +284,7 @@ export function ManhuaAutoRigEditorView({
   disabled,
   onApply,
   onClose,
+  onAdvisorControl,
   services,
 }: Props & { services: AutoRigServices }) {
   const key = `manhua-auto-rig:${assetRef}:${sourceVersion}`;
@@ -521,13 +524,12 @@ export function ManhuaAutoRigEditorView({
       terminal(taskRef.current)
     );
   }
-  async function submit(request: AutoRigRequest) {
+  async function submit(request: AutoRigRequest, rethrow=false) {
     if (
       lock.current ||
       disabled ||
       (pendingRef.current && pendingRef.current.requestId !== request.requestId)
-    )
-      return;
+    ) {if(rethrow)throw new Error("原绑骨操作仍运行或前置门禁未通过");return false;}
     const epoch = ++activity.current;
     lock.current = true;
     setBusy(true);
@@ -562,19 +564,19 @@ export function ManhuaAutoRigEditorView({
           e instanceof Error ? e.message : "提交结果未确认，请查询原编号"
         );
       }
+      if(rethrow)throw e;
     } finally {
       lock.current = false;
       if (mounted.current) setBusy(false);
     }
   }
-  async function useResult(restore = false) {
+  async function useResult(restore = false, rethrow=false) {
     if (
       lock.current ||
       active ||
       task?.output?.stage !== "bind" ||
       (!restore && !quality)
-    )
-      return;
+    ) {if(rethrow)throw new Error("原绑骨操作仍运行或前置门禁未通过");return false;}
     lock.current = true;
     setBusy(true);
     setError("");
@@ -586,7 +588,7 @@ export function ManhuaAutoRigEditorView({
           ? latest.current.services.restore
           : latest.current.services.adopt
       )(task.params.requestId, task.output.sha256);
-      if (!mounted.current) return;
+      if (!mounted.current) throw new Error("原模型编辑器已离开，采用回执仍待核对");
       if (!(await latest.current.onApply(model, expected)))
         throw Error("当前人物或模型已变化，结果已保留，请重新核对后采用");
       setNotice(
@@ -594,9 +596,11 @@ export function ManhuaAutoRigEditorView({
           ? "已恢复原模型；带骨候选仍保留在历史。"
           : "已另存并采用带骨模型；原模型可随时恢复。请在动作预演中选择新模型检查。"
       );
+      return true;
     } catch (e) {
       if (mounted.current)
         setError(e instanceof Error ? e.message : "采用未确认，候选仍保留");
+      if(rethrow)throw e;
     } finally {
       lock.current = false;
       if (mounted.current) setBusy(false);
@@ -609,6 +613,42 @@ export function ManhuaAutoRigEditorView({
     inspectionImages.length === 2 &&
     inspectionImages.every(url => loaded.has(url));
   const bindReady = images.length === 5 && images.every(url => loaded.has(url));
+  const advisorControl = useRef<AdvisorModelControl | null>(null);
+  advisorControl.current = async (action, signal) => {
+    signal.throwIfAborted();
+    if(action.assetId!==assetRef || disabled || lock.current)throw new Error("模型目标已变化或原操作仍在处理，未提交。");
+    if(action.requestId && taskRef.current?.params.requestId!==action.requestId) {
+      const original=await latest.current.services.get(action.requestId);signal.throwIfAborted();
+      if(!original || original.params.assetRef!==assetRef || original.params.sourceJobId!==latest.current.sourceJobId)throw new Error("原绑骨任务不属于当前模型，未采用。");
+      consume(original,activity.current,action.requestId);
+      return JSON.stringify({requestId:original.params.requestId,status:original.status,stage:original.output?.stage,note:"已载入原任务，请在页面核对关节或变形后再执行。"});
+    }
+    if(action.operation==="rigInspect") {
+      if(pendingRef.current) await query();
+      else if(!inspectionTask) {
+        if(!window.confirm("检查当前真实模型并取得关节点候选？不会直接绑骨或采用。"))return "用户取消模型检查。";
+        await submit({stage:"inspect",requestId:crypto.randomUUID(),assetRef,sourceJobId,settings},true);
+      }
+    } else if(action.operation==="rigSubmit") {
+      if(active || !inspection || !inspectionTask || !joints || !confirmed || !imagesReady)throw new Error("须在原绑骨面板核对单人姿态、正侧面关节点并确认后才能绑定，未提交。");
+      if(!window.confirm("按页面已人工核对的关节点生成带骨候选？原模型保留。"))return "用户取消绑骨。";
+      await submit({stage:"bind",requestId:crypto.randomUUID(),assetRef,sourceJobId:inspectionTask.params.sourceJobId,settings:inspectionTask.params.settings,inspectionRequestId:inspectionTask.params.requestId,sourceDigest:inspection.sourceDigest,joints,singleHuman:true,landmarksManuallyConfirmed:true},true);
+    } else {
+      if(active || task?.output?.stage!=="bind" || !bindReady || (action.operation==="rigAdopt" && !quality))throw new Error("须先在原面板查看带骨变形结果并确认质量，未采用或还原。");
+      if(!window.confirm(action.operation==="rigRestore"?"恢复本次绑骨前的原模型？候选保留。":"采用已确认质量的带骨候选？原模型保留可还原。"))return "用户取消模型采用/还原。";
+      await useResult(action.operation==="rigRestore",true);
+      return JSON.stringify({status:action.operation==="rigRestore"?"restored":"adopted",requestId:task.params.requestId,note:"原采用回调已返回；工作流恢复与动作质量另行验收。"});
+    }
+    const value=taskRef.current;
+    return JSON.stringify({requestId:pendingRef.current?.requestId||value?.params.requestId,status:value?.status,stage:value?.output?.stage,note:"原绑骨面板回执；无成功回执不能声称生成或采用完成。"});
+  };
+  useEffect(()=>{
+    onAdvisorControl?.(assetRef,(action,signal)=>{
+      if(!advisorControl.current)throw new Error("原绑骨编辑器尚未就绪。");
+      return advisorControl.current(action,signal);
+    });
+    return ()=>onAdvisorControl?.(assetRef,null);
+  },[assetRef,sourceVersion,onAdvisorControl]);
   return (
     <section
       className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-2xl border border-border bg-card p-5 text-foreground shadow-xl"
