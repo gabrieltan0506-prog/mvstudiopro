@@ -1,3 +1,4 @@
+import type { AdvisorWorldControl } from "@/lib/manhuaAdvisorWorkflowControl";
 /**
  * 角色进场景预览（PR-10）：SparkJS（three.js 高斯渲染）+ three.js 在 iframe 里跑——
  * 仓库没装 three/@sparkjsdev/spark 且本 PR 不加依赖，所以和 ModelViewer 一样走 srcdoc + importmap（jsdelivr）动态加载；
@@ -65,6 +66,7 @@ type Props = {
   characters: readonly ManhuaStageCharacter[];
   height?: number | string;
   /** 导出当前视角 PNG（供关键帧参考）；不传则不显示导出按钮 */
+  onAdvisorControl?: (control: AdvisorWorldControl | null) => void;
   onExportStageFrame?: (blob: Blob, frame: ManhuaStageFrameExport) => void | Promise<void>;
 };
 
@@ -426,7 +428,7 @@ export function ManhuaWorldStagePreview(props: Props) {
   const liveState = useRef({ revision, cameraKind });
   liveState.current = { revision, cameraKind };
   const exportCounter = useRef(0);
-  const pendingExport = useRef<{ requestId: number; revision: string; cameraKind: StageCameraKind; frame: ManhuaStageFrameExport; deliver: Props["onExportStageFrame"]; phase: "capturing" | "decoding" | "saving" } | null>(null);
+  const pendingExport = useRef<{ requestId: number; revision: string; cameraKind: StageCameraKind; frame: ManhuaStageFrameExport; deliver: Props["onExportStageFrame"]; phase: "capturing" | "decoding" | "saving"; complete?: (error?: Error) => void } | null>(null);
   const srcDoc = useMemo(() => (config ? buildSrcDoc(config) : ""), [config]);
   const expectedActorIds = useMemo(() => (config?.characters ?? []).map((c) => c.id), [config]);
 
@@ -437,6 +439,7 @@ export function ManhuaWorldStagePreview(props: Props) {
     setFailures([]);
     if (pendingExport.current?.phase !== "saving") {
       setExporting(false);
+      pendingExport.current?.complete?.(new Error("视角导出状态已变化，请核对原候选，未自动重试。"));
       pendingExport.current = null;
     }
   }, [revision]);
@@ -471,6 +474,7 @@ export function ManhuaWorldStagePreview(props: Props) {
         }
       } else if (m.type === "error") {
         if (pendingExport.current?.phase !== "saving") {
+          pendingExport.current?.complete?.(new Error("视角导出状态已变化，请核对原候选，未自动重试。"));
           pendingExport.current = null;
           setExporting(false);
         }
@@ -479,6 +483,7 @@ export function ManhuaWorldStagePreview(props: Props) {
         setNoteZh(m.message || "3D 场景暂时无法打开");
       } else if (m.type === "export_error") {
         if (m.requestId !== pendingExport.current?.requestId || pendingExport.current?.phase !== "capturing") return;
+        pendingExport.current?.complete?.(new Error("视角导出状态已变化，请核对原候选，未自动重试。"));
         pendingExport.current = null;
         setExporting(false);
         setNoteZh("视角图导出失败，请重试");
@@ -488,6 +493,7 @@ export function ManhuaWorldStagePreview(props: Props) {
         const pending = pendingExport.current;
         if (!pending || pending.phase !== "capturing" || m.requestId !== pending.requestId || pending.revision !== revision) return;
         if (m.cameraKind !== pending.cameraKind || pending.cameraKind !== cameraKind) {
+          pendingExport.current?.complete?.(new Error("视角导出状态已变化，请核对原候选，未自动重试。"));
           pendingExport.current = null;
           setExporting(false);
           setNoteZh("导出期间切换了机位，这帧已作废，请重新导出");
@@ -497,6 +503,7 @@ export function ManhuaWorldStagePreview(props: Props) {
         if (!rig || !Array.isArray(rig.position) || !Array.isArray(rig.target)
           || rig.position.length !== 3 || rig.target.length !== 3
           || ![...rig.position, ...rig.target, rig.lens].every((value) => typeof value === "number" && Number.isFinite(value))) {
+          pendingExport.current?.complete?.(new Error("视角导出状态已变化，请核对原候选，未自动重试。"));
           pendingExport.current = null;
           setExporting(false);
           setNoteZh("视角数据不完整，请重新导出");
@@ -509,11 +516,14 @@ export function ManhuaWorldStagePreview(props: Props) {
             if (pendingExport.current !== pending || liveState.current.revision !== pending.revision || liveState.current.cameraKind !== pending.cameraKind) return;
             pending.phase = "saving";
             await pending.deliver?.(blob, { ...pending.frame, camera: rig });
+            pending.complete?.();
             if (pendingExport.current === pending) setNoteZh("保存请求已返回；请在下方核对新候选图，再选择要采用的镜头。未采用的图不会进入视频输入。");
-          } catch {
+          } catch (error) {
+            pending.complete?.(error instanceof Error ? error : new Error("视角保存未确认"));
             if (pendingExport.current === pending) setNoteZh("视角图保存失败，请重新导出");
           } finally {
             if (pendingExport.current === pending) {
+              pendingExport.current?.complete?.(new Error("视角导出状态已变化，请核对原候选，未自动重试。"));
               pendingExport.current = null;
               setExporting(false);
             }
@@ -553,11 +563,39 @@ export function ManhuaWorldStagePreview(props: Props) {
     return () => window.removeEventListener("keydown", onEscape);
   }, [expanded]);
 
+  function exportCurrentFrame(camera?: {position:[number,number,number];target:[number,number,number];fov:number}): Promise<string> {
+    if(status!=="ready" || pendingExport.current || !onExportStageFrame)throw new Error("场景或人物未完整载入，或原视角仍在保存，不能导出。");
+    const rig=camera ? {...rigs[cameraKind],position:camera.position,target:camera.target,lens:12/Math.tan(camera.fov*Math.PI/360)} : rigs[cameraKind];
+    if(camera)send({type:"camera",rig,cameraKind});
+    const requestId=++exportCounter.current;
+    const frame: ManhuaStageFrameExport={viewLabelZh:STAGE_CAMERA_LABEL_ZH[cameraKind],cameraKind,actorIds:expectedActorIds,revision,camera:structuredClone(rig),actors:structuredClone([...characters]),timeSec:0};
+    return new Promise((resolve,reject)=>{
+      let timer:ReturnType<typeof setTimeout>;
+      let settled=false;
+      const complete=(error?:Error)=>{if(settled)return;settled=true;clearTimeout(timer);error?reject(error):resolve(JSON.stringify({status:"export_delivered",revision,cameraKind,actorIds:expectedActorIds,note:"保存请求已返回，须核对候选并采用到具体镜头。"}));};
+      timer=setTimeout(()=>complete(new Error("原视角保存回执尚未确认，请核对原候选，不重复上传。")),60000);
+      pendingExport.current={requestId,revision,cameraKind,frame,deliver:onExportStageFrame,phase:"capturing",complete};
+      setExporting(true);send({type:"export",requestId,viewLabelZh:frame.viewLabelZh,cameraKind});
+    });
+  }
+  const advisorControl=useRef<AdvisorWorldControl|null>(null);
+  advisorControl.current=async(action,signal)=>{
+    signal.throwIfAborted();
+    if(action.operation==="inspect")return JSON.stringify({status,revision,cameraKind,actors:expectedActorIds,exporting});
+    if(action.operation!=="exportFrame")throw new Error("此控件只负责视角导出；镜头采用沿原工作台入口。");
+    return exportCurrentFrame(action.camera);
+  };
+  useEffect(()=>{
+    props.onAdvisorControl?.((action,signal)=>{if(!advisorControl.current)throw new Error("原视角控件未就绪");return advisorControl.current(action,signal);});
+    return ()=>props.onAdvisorControl?.(null);
+  },[props.onAdvisorControl]);
+
   if (!config) {
     return <p className="text-[11px] text-amber-100">这个场景还不能预览，请稍后重试。</p>;
   }
   const btn = "rounded border border-cyan-300/30 px-2 py-0.5 text-[11px] text-cyan-50 disabled:opacity-40";
   const btnOn = "rounded border border-cyan-300/70 bg-cyan-500/25 px-2 py-0.5 text-[11px] text-cyan-50";
+
   return (
     <div className={`flex w-full flex-col gap-1 ${expanded ? "fixed inset-2 z-[100] overflow-y-auto rounded-lg border border-cyan-300/40 bg-[#0b1018] p-3 shadow-2xl md:inset-4" : ""}`} data-manhua-world-stage data-stage-status={status} data-stage-revision={revision} data-stage-expanded={expanded}>
       <div className="flex flex-wrap gap-1 text-[11px]" data-stage-load-summary>
@@ -574,6 +612,7 @@ export function ManhuaWorldStagePreview(props: Props) {
           <button key={k} type="button" className={cameraKind === k ? btnOn : btn} disabled={!loaded} onClick={() => {
             // 已开始上传的视角图无法取消；换机位也要等本次保存结束，避免并发提交。
             if (pendingExport.current?.phase !== "saving") {
+              pendingExport.current?.complete?.(new Error("视角导出状态已变化，请核对原候选，未自动重试。"));
               pendingExport.current = null;
               setExporting(false);
             }
@@ -587,6 +626,7 @@ export function ManhuaWorldStagePreview(props: Props) {
           <label className="flex items-center gap-1 text-white/70">
             从谁肩后拍
             <select aria-label="从谁肩后拍" className="rounded border border-cyan-300/30 bg-[#101822] px-1 py-0.5 text-white" value={characters.some((actor) => actor.id === shoulderActorId) ? shoulderActorId : characters[1]?.id} disabled={!loaded || pendingExport.current?.phase === "saving"} onChange={(event) => {
+              pendingExport.current?.complete?.(new Error("视角导出状态已变化，请核对原候选，未自动重试。"));
               pendingExport.current = null;
               setExporting(false);
               setShoulderActorId(event.target.value);
@@ -613,17 +653,7 @@ export function ManhuaWorldStagePreview(props: Props) {
             className={`ml-auto ${btn}`}
             disabled={status !== "ready" || exporting}
             title={status === "partial" ? "有人物/资产没加载成功，不能导出" : status === "loading" ? "机位切换后等待场景载入完成" : exporting ? "正在保存当前视角图" : undefined}
-            onClick={() => {
-              if (pendingExport.current) return;
-              const requestId = ++exportCounter.current;
-              const frame: ManhuaStageFrameExport = {
-                viewLabelZh: STAGE_CAMERA_LABEL_ZH[cameraKind], cameraKind, actorIds: expectedActorIds,
-                revision, camera: structuredClone(rigs[cameraKind]), actors: structuredClone([...characters]), timeSec: 0,
-              };
-              pendingExport.current = { requestId, revision, cameraKind, frame, deliver: onExportStageFrame, phase: "capturing" };
-              setExporting(true);
-              send({ type: "export", requestId, viewLabelZh: frame.viewLabelZh, cameraKind });
-            }}
+            onClick={() => { void exportCurrentFrame().catch(error=>setNoteZh(error instanceof Error?error.message:"视角保存未确认")); }}
           >
             {exporting ? "保存中…" : "保存当前视角图"}
           </button>

@@ -1,3 +1,4 @@
+import type { AdvisorEditControl, AdvisorEditRegistration, AdvisorModelRegistration, AdvisorWorldControl, AdvisorWorldRegistration } from "@/lib/manhuaAdvisorWorkflowControl";
 import { ManhuaShotSearch } from "./ManhuaShotSearch";
 import { filterManhuaShots } from "@/lib/manhuaShotSearch";
 import { ManhuaToolBoundary } from "./canvas/ManhuaToolBoundary";
@@ -67,7 +68,7 @@ import { Manhua3dModelStudio, manhua3dModelCounts, manhua3dRigLookupCharacters }
 import { resolveManhuaRigSource } from "@shared/manhuaRigSource";
 import { ManhuaWorldStudio, manhuaWorldCounts, type ManhuaStageFrameBindingDraft, type ManhuaWorldGenerateOptions, type ManhuaWorldLayoutActor, type ManhuaWorldLayoutSubmitOptions } from "@/components/canvas/ManhuaWorldStudio";
 import { ManhuaStageFrameAdoptPanel } from "@/components/canvas/ManhuaStageFrameAdoptPanel";
-import { evaluateManhuaStageFrameAdoption } from "@shared/manhuaStageFrameAdoption";
+import { evaluateManhuaStageFrameAdoption, MANHUA_STAGE_FRAME_ADOPTION_MAX } from "@shared/manhuaStageFrameAdoption";
 import { manhuaActionPlanShotId } from "@/lib/manhuaActionPlanEditor";
 import type { ManhuaStageCharacter } from "@/components/canvas/ManhuaWorldStagePreview";
 import { resolveManhuaStageActorModel } from "@/lib/manhuaStageActorModel";
@@ -381,6 +382,11 @@ export function ManhuaShotSourceLabel({ isFallback }: { isFallback: boolean }) {
 }
 
 type Props = {
+  advisorRigRequest?: { id:string; assetId:string };
+  onAdvisorRigControl?: AdvisorModelRegistration;
+  advisorWorldRequest?: { id:string; assetId:string; clipId?:string };
+  onAdvisorWorldControl?: AdvisorWorldRegistration;
+  onAdvisorEditControl?: AdvisorEditRegistration;
   blocks: CanvasBlock[];
   /** 顶部当前真选的成片引擎；优先于尚未重铺的旧 clip 盖章。 */
   videoModel?: string | null;
@@ -435,7 +441,7 @@ type Props = {
   onGenerateCurrentVersion?: (episodeIndex: number) => void;
   currentVersionCredits?: number;
   editTransitionByEpisode?: Record<string, ManhuaEditTransition>;
-  onEditTransitionChange?: (episode: number, next: ManhuaEditTransition) => void;
+  onEditTransitionChange?: (episode: number, next: ManhuaEditTransition) => void | boolean;
   /**
    * 终审那条长片是不是旧料合的（判据在 shared/manhuaFinalCutSource.ts）。
    * `finalCutStale` 为真时阶段条不许显示「终审已完成」—— 产物在，但不是当前这批镜头的。
@@ -782,7 +788,7 @@ type Props = {
   onApplyClipEditTrims?: (updates: Array<{
     clipBlockId: string;
     trim: NonNullable<CanvasBlock["manhuaEditTrim"]>;
-  }>) => void;
+  }>) => void | boolean;
   /** 成片坞勾选集（剪辑阶段可改） */
   dockSelectedIds?: Set<string>;
   onDockSelectedIdsChange?: (next: Set<string>) => void;
@@ -1200,6 +1206,7 @@ export function resolveManhuaAdvisorShotsFromBlocks(input: {
 }
 
 export default function ManhuaScriptWorkbench({
+  advisorRigRequest, onAdvisorRigControl, advisorWorldRequest, onAdvisorWorldControl, onAdvisorEditControl,
   blocks,
   videoModel,
   directorStrategyContract,
@@ -2083,8 +2090,7 @@ export default function ManhuaScriptWorkbench({
           updatedAt: Date.now(),
         } };
       });
-      onApplyClipEditTrims(updates);
-      return true;
+      return onApplyClipEditTrims(updates) !== false;
     },
     [
       editShotMedia, editClipBlocks, focusEpisode, onApplyClipEditTrims,
@@ -2094,13 +2100,47 @@ export default function ManhuaScriptWorkbench({
 
   const handleFineCutChange = useCallback((shotIndex: number, trim: ManhuaFineCutTrim) => {
     const next = { ...fineCutByShot, [shotIndex]: trim };
-    if (persistClipEdits(next, undefined, shotIndex)) setFineCutByShot(next);
+    if (!persistClipEdits(next, undefined, shotIndex)) return false;
+    setFineCutByShot(next);
+    return true;
   }, [fineCutByShot, persistClipEdits]);
 
   const handleRoughShotReorder = useCallback((requested: number[]) => {
     const order = normalizeManhuaRoughShotOrder(shots.map((shot) => shot.index), requested);
-    if (persistClipEdits(fineCutByShot, order)) setRoughShotOrder(order);
+    if (!persistClipEdits(fineCutByShot, order)) return false;
+    setRoughShotOrder(order);
+    return true;
   }, [shots, fineCutByShot, persistClipEdits]);
+
+  const advisorEditControl = useRef<AdvisorEditControl | null>(null);
+  advisorEditControl.current = async (action, signal) => {
+    signal.throwIfAborted();
+    if (action.episode !== focusEpisode) throw new Error("请先切换到目标集再读取剪辑清单");
+    if (action.operation === "inspect") return JSON.stringify({ episode: focusEpisode, shots: roughClips.map(row => ({ shotIndex: row.shotIndex, durationSec: row.durationSec, trim: fineCutByShot[row.shotIndex] })), order: roughShotOrder, transition: manhuaEditTransitionOf(editTransitionByEpisode, focusEpisode), busy: factoryBusy || suggestAutoCutsBusy });
+    if (factoryBusy || suggestAutoCutsBusy) throw new Error("剪辑正在处理任务，未改动");
+    if (!window.confirm("确认将本次剪辑建议保存到当前集？原片保留。")) throw new Error("用户未确认剪辑改动");
+    signal.throwIfAborted();
+    if (action.operation === "reorder") {
+      const ids = shots.map(shot => shot.index);
+      if (!action.order || action.order.length !== ids.length || new Set(action.order).size !== ids.length || action.order.some(id => !ids.includes(id))) throw new Error("顺序必须包含本集全部镜头且不得重复");
+      if (!handleRoughShotReorder(action.order)) throw new Error("镜头顺序未保存");
+    } else if (action.operation === "trim") {
+      const row = roughClips.find(row => row.shotIndex === action.shotIndex);
+      if (!row || action.inSec == null || action.outSec == null || action.inSec % 0.5 || action.outSec % 0.5 || action.outSec - action.inSec < 0.5 || action.outSec > row.durationSec) throw new Error("进出点须在本镜头时长内，步进0.5秒，至少保留0.5秒");
+      if (!handleFineCutChange(row.shotIndex, { inSec: action.inSec, outSec: action.outSec })) throw new Error("镜头进出点未保存");
+    } else {
+      if (!onEditTransitionChange || !action.transition) throw new Error("转场保存入口不可用");
+      if (onEditTransitionChange(focusEpisode, action.transition) === false) throw new Error("转场未保存");
+    }
+    return JSON.stringify({ status: "saved", episode: focusEpisode, operation: action.operation });
+  };
+  useEffect(() => {
+    onAdvisorEditControl?.((action, signal) => {
+      if (!advisorEditControl.current) throw new Error("剪辑台尚未就绪");
+      return advisorEditControl.current(action, signal);
+    });
+    return () => onAdvisorEditControl?.(null);
+  }, [onAdvisorEditControl]);
 
   const handleSuggestAutoCuts = useCallback(async () => {
     if (suggestAutoCutsBusy || factoryBusy || !onApplyClipEditTrims) return;
@@ -4699,6 +4739,59 @@ clipPromptReviewOpen ? (
   ) : null
   );
 
+  const advisorWorldPreview=useRef<{assetId:string;control:AdvisorWorldControl}|null>(null);
+  const registerAdvisorWorldPreview=useCallback((control:AdvisorWorldControl|null,assetId:string)=>{
+    if(control)advisorWorldPreview.current={assetId,control};
+    else if(advisorWorldPreview.current?.assetId===assetId)advisorWorldPreview.current=null;
+  },[]);
+  const advisorWorldControl=useRef<AdvisorWorldControl|null>(null);
+  advisorWorldControl.current=async(action,signal)=>{
+    signal.throwIfAborted();
+    if(factoryBusy && action.operation!=="inspect")throw new Error("原工作流忙碌，未操作场景。");
+    if(action.clipId && activeClip?.id!==action.clipId)throw new Error("当前场景不属于目标片段，请先切到正确片段。");
+    if(action.operation==="inspect") {
+      const inventory={clipId:activeClip?.id,shots:stageFrameShotOptions,frames:customAssetRefs.filter(r=>r.stageFrame).map(r=>({id:r.id,label:r.labelZh,stageFrame:r.stageFrame,adoptions:r.stageFrameAdoptions})),scenes:worldStudioScenes.map(row=>({id:row.id,label:row.labelZh,status:row.eligibility.currentWorld3d?.status}))};
+      if(!action.assetId)return JSON.stringify(inventory);
+      for(let attempt=0;attempt<25;attempt++) {
+        signal.throwIfAborted();
+        const preview=advisorWorldPreview.current;
+        if(preview?.assetId===action.assetId)return JSON.stringify({...inventory,assetId:action.assetId,view:JSON.parse(await preview.control(action,signal))});
+        await new Promise(resolve=>setTimeout(resolve,200));
+      }
+      throw new Error("所选场景的原3D预览尚未就绪，未读取其他场景或提交生成。");
+    }
+    if(action.operation==="exportFrame") {
+      if(!advisorWorldPreview.current || advisorWorldPreview.current.assetId!==action.assetId)throw new Error("请先在原3DGS面板载入所选场景和人物，未导出。");
+      return advisorWorldPreview.current.control(action,signal);
+    }
+    const frame=customAssetRefs.find(r=>r.id===action.frameId && r.stageFrame);
+    const shot=stageFrameShotOptions.find(row=>row.shotId===action.shotId);
+    if(!frame || !shot || !onToggleStageFrameAdoption)throw new Error("须明确当前段的真实frameId和shotId，未采用。");
+    const adopted=Boolean(frame.stageFrameAdoptions?.some(a=>a.shotId===shot.shotId));
+    if(action.operation==="adoptFrame" && !adopted) {
+      if((frame.stageFrameAdoptions||[]).length>=MANHUA_STAGE_FRAME_ADOPTION_MAX)throw new Error("本视角图采用记录已达上限，原记录保留");
+      const proposed={...frame,stageFrameAdoptions:[...(frame.stageFrameAdoptions||[]),{shotId:shot.shotId,adoptedAt:Date.now()}]};
+      const state=evaluateManhuaStageFrameAdoption(proposed,{...stageFrameAdoptContext,shotId:shot.shotId});
+      if(!state.usable)throw new Error(state.reasonZh||"视角来源与当前段不一致，未采用。");
+    }
+    if(action.operation==="adoptFrame" ? !adopted : adopted) {
+      if(!window.confirm(action.operation==="adoptFrame"?"将已核对视角图采用到这个镜头？":"取消这个镜头的视角采用？候选图仍保留。"))return "用户取消视角采用变更。";
+      onToggleStageFrameAdoption(frame.id,shot.shotId);
+    }
+    return JSON.stringify({status:"handled",frameId:frame.id,shotId:shot.shotId,note:"原视角采用入口已处理；保存刷新与最终输入另行验收。"});
+  };
+  useEffect(()=>{
+    onAdvisorWorldControl?.((action,signal)=>{if(!advisorWorldControl.current)throw new Error("场景工作台尚未就绪");return advisorWorldControl.current(action,signal);});
+    return ()=>onAdvisorWorldControl?.(null);
+  },[onAdvisorWorldControl]);
+  useEffect(()=>{if(advisorRigRequest)setAutoRigAssetId(advisorRigRequest.assetId);},[advisorRigRequest]);
+  useEffect(()=>{
+    if(!advisorWorldRequest)return;
+    const clip=blocks.find(b=>b.id===advisorWorldRequest.clipId);
+    if(clip){const target=resolveClipLocalSegmentIndex(clip.id,clip.prompt,focusEpisode);if(activeSegNo!==target){setActiveSegmentOverride(target);return;}}
+    setWorldStudioOpen(true);setActiveSecondaryTool("world3d");
+  },[advisorWorldRequest,activeSegNo,blocks,focusEpisode]);
+
   return (
     <div
       id="manhua-workbench-shell"
@@ -5415,6 +5508,8 @@ clipPromptReviewOpen ? (
             } : undefined}/></ManhuaToolBoundary></section> : null}
 
           {worldStudioOpen && (worldStudioScenes.length > 0 || onGenerateSceneWorld) ? <section role="tabpanel" id="manhua-tool-panel-world3d" aria-labelledby="manhua-tool-tab-world3d" hidden={activeSecondaryTool !== "world3d"}><ManhuaToolBoundary title="3DGS 场景"><ManhuaWorldStudio
+            advisorSceneRequest={advisorWorldRequest}
+            onAdvisorViewControl={registerAdvisorWorldPreview}
             onOpenAdvisor={onOpenAdvisor3d ? (sceneRefId) => onOpenAdvisor3d(activeClip?.id, sceneRefId, "world") : undefined}
             scenes={worldStudioScenes}
             busyIds={sceneWorldBusyIds}
@@ -5775,6 +5870,7 @@ clipPromptReviewOpen ? (
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 p-4">
           <ManhuaAutoRigEditor
             key={`${autoRigAsset.id}:${autoRigEligibility.sourceVersion}`}
+            onAdvisorControl={onAdvisorRigControl}
             assetRef={autoRigAsset.id}
             label={autoRigAsset.labelZh || "当前人物"}
             sourceJobId={autoRigEligibility.currentModel3d.taskId}

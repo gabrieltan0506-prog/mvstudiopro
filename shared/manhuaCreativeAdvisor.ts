@@ -135,6 +135,7 @@ export const manhuaCreativeAdvisorContextSchema = z
     /** 当前白模编辑规格摘要；不含媒体位置，不是实际视频审片。 */
     previsEdit: advisorPrevisTargetSchema.optional(),
     worldTarget: advisorWorldTargetSchema.optional(),
+    workflowOperation: z.object({workspace:contextText(30000,"工作流操作状态",true),revision:contextText(200,"工作流操作版本",true)}).strict().optional(),
     bgmMix: advisorBgmMixTargetSchema.optional(),
     filmReview: advisorFilmReviewTargetSchema.optional(),
     mediaEditTarget: advisorMediaSourceSchema.optional(),
@@ -182,6 +183,7 @@ export const manhuaCreativeAdvisorContextSchema = z
     creditsZh: contextText(MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.signalChars, "积分状态").optional(),
   })
   .strict().superRefine((context, ctx) => {
+    if(context.workflowOperation && (context.bgmMix||context.filmReview||context.subtitleReview||context.previsEdit||context.worldTarget||context.studio3d||context.mediaEditTarget))ctx.addIssue({code:"custom",path:["workflowOperation"],message:"工作流操作方案不能与媒体分析或其他生产候选混用"});
     if (context.filmReview && (context.bgmMix || context.previsEdit || context.worldTarget || context.subtitleReview || context.studio3d)) ctx.addIssue({code:"custom",path:["filmReview"],message:"影片审阅不能同时执行其他咨询工序"});
     if (context.bgmMix && (context.previsEdit || context.worldTarget)) ctx.addIssue({code:"custom",path:["bgmMix"],message:"配乐咨询不能同时修改白模或场景"});
     if (context.subtitleReview && (context.bgmMix || context.previsEdit || context.worldTarget || context.studio3d)) ctx.addIssue({code:"custom",path:["subtitleReview"],message:"字幕核对不能同时执行其他咨询工序"});

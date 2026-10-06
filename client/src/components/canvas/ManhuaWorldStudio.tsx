@@ -1,3 +1,5 @@
+import type { AdvisorWorldControl } from "@/lib/manhuaAdvisorWorkflowControl";
+import { useEffect } from "react";
 /**
  * 场景 3D 世界工作台（PR-8）：每个已锁场景一行——生成 Marble 3DGS 世界 → 预览（全景/缩略图）→ 产物链接（Fly 桥稳定地址）。
  * 场景方案由顾问编写，确认后沿用原生成入口；预览和视角图留在同页。
@@ -32,6 +34,8 @@ export type ManhuaWorldLayoutSubmitOptions = { model: ManhuaWorld3dModel; textPr
 export type ManhuaWorldLayoutActor = { id: string; nameZh?: string; start: readonly [number, number]; shape?: "human" | "horse" };
 
 type Props = {
+  advisorSceneRequest?: { id: string; assetId: string };
+  onAdvisorViewControl?: (control: AdvisorWorldControl | null, assetId: string) => void;
   scenes: ManhuaWorldStudioScene[];
   onOpenAdvisor?: (sceneRefId: string) => void;
   busyIds: readonly string[];
@@ -103,6 +107,7 @@ export function ManhuaWorldStudio(props: Props) {
   const [openPreviewId, setOpenPreviewId] = useState<string | null>(null);
   const rows = useMemo(() => scenes.map(s => ({ s, ...manhuaWorldStageOf(s) })), [scenes]);
   const counts = useMemo(() => manhuaWorldCounts(scenes), [scenes]);
+  useEffect(()=>{if(props.advisorSceneRequest)setOpenPreviewId(props.advisorSceneRequest.assetId);},[props.advisorSceneRequest]);
   return (
     <section className="w-full rounded-xl border border-cyan-300/25 bg-[#0c121d] p-3 text-white" data-manhua-world-studio>
       <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
@@ -151,6 +156,7 @@ export function ManhuaWorldStudio(props: Props) {
                 <div className="mt-1 w-full rounded border border-cyan-300/20 bg-black/30 p-2" data-manhua-world-preview>
                   <div>
                     <ManhuaWorldStagePreview
+                      onAdvisorControl={control=>props.onAdvisorViewControl?.(control ? (action,signal)=>{if(action.assetId && action.assetId!==s.id)throw new Error("载入的3D世界尚不是目标场景，未导出");return control(action,signal);} : null,s.id)}
                       sceneLabelZh={s.labelZh}
                       world={assets}
                       characters={stageCharacters}

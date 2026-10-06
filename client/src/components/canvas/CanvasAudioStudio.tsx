@@ -605,17 +605,17 @@ export function CanvasAudioStudioView({
   const patchCue = (id: string, patch: Partial<CanvasAudioCue>) => {
     setConfirmation(null);
     const previousCue = current.current.state.cues.find(cue => cue.id === id);
-    if (!previousCue) return;
+    if (!previousCue) return false;
     const nextSpeaker = (patch.speakerZh ?? previousCue.speakerZh).trim();
     const nextId = patch.speakerId ?? (nextSpeaker === previousCue.speakerZh.trim() ? previousCue.speakerId : resolveCharacterId(nextSpeaker));
     if (previousCue.voiceLock && (nextSpeaker !== previousCue.voiceLock.speakerZh || (previousCue.voiceLock.speakerId && nextId !== previousCue.voiceLock.speakerId))) {
       setError("此句已锁定角色声线；更改角色须先核对该角色已采用的全部对白。");
-      return;
+      return false;
     }
     const lock = speakerVoiceLocks.get(lockKey({ speakerId: nextId, speakerZh: nextSpeaker })) || speakerVoiceLocks.get(nextSpeaker);
     if (previousCue.kind === "dialogue" && lock && (lock.conflict || (patch.voice !== undefined && patch.voice !== lock.voice))) {
       setError(lock.conflict ? `${nextSpeaker}已有不同的已采用音色，请先核对冲突音轨。` : `${nextSpeaker}的声音已锁定，同集对白须沿用该音色。`);
-      return;
+      return false;
     }
     const volumeOnly = Object.keys(patch).length === 1 && patch.volume !== undefined;
     const selectedTake = getSelectedAudioTake(previousCue);
@@ -629,9 +629,9 @@ export function CanvasAudioStudioView({
       setError(
         "修改超出允许范围，已保留原值。音量须为 0–1，秒数不可为负，文字不可超过字段上限。"
       );
-      return;
+      return false;
     }
-    update(previous => ({
+    return update(previous => ({
       ...previous,
       cues: previous.cues.map(cue => (cue.id === id ? parsed.data : cue)),
     }));
@@ -899,23 +899,23 @@ export function CanvasAudioStudioView({
     setReferenceVoices(await services.listReferenceVoices());
     if (result.status !== "ready") setError(result.message || "参考音色建立待核对，未提交任何TTS对白");
   });
-  const addCue = (kind: CanvasAudioCue["kind"]) => {
-    if (current.current.state.cues.length >= 100) {
-      setError("本段已达 100 条音轨草稿上限，原片段全部保留，未添加新片段。");
-      return;
+  const addCue = (kind: CanvasAudioCue["kind"], patch: Partial<CanvasAudioCue> = {}, rethrow=false) => {
+    try {
+      if (current.current.state.cues.length >= 100)throw new Error("本段已达100条音轨草稿上限，原片段保留");
+      const cue=createCanvasAudioCue(kind,crypto.randomUUID(),durationSec);
+      const configured=canvasAudioCueSchema.parse({...cue,voice:VOICES[0]?.id||"",...patch});
+      if(configured.endSec<=configured.startSec || configured.endSec>durationSec)throw new Error("音轨秒窗超出本段，未添加");
+      if(configured.mix?.silenceWindows.some(w=>w.endSec<=w.startSec || w.startSec<configured.startSec || w.endSec>configured.endSec))throw new Error("留白须位于本条音轨秒窗内");
+      if(patch.voice!==undefined && !VOICES.some(v=>v.id===configured.voice) && !referenceVoices.some(v=>v.voiceId===configured.voice))throw new Error("音色不在当前真实清单，未添加");
+      if(!update(previous=>({...previous,cues:[...previous.cues,configured]})))throw new Error("音轨草稿未保存");
+      setActiveCueId(configured.id);setVoiceCriteria({});setConfirmation(null);
+      return configured.id;
+    } catch(caught) {
+      setError(caught instanceof Error?caught.message:"音轨草稿未保存");
+      if(rethrow)throw caught;
     }
-    const cue = createCanvasAudioCue(kind, crypto.randomUUID());
-    const timedCue = kind === "bgm"
-      ? { ...cue, startSec: 0, endSec: durationSec, sourceEndSec: durationSec }
-      : cue;
-    update(previous => ({
-      ...previous,
-      cues: [...previous.cues, { ...timedCue, voice: VOICES[0]?.id || "" }],
-    }));
-    setActiveCueId(cue.id);
-    setVoiceCriteria({});
-    setConfirmation(null);
   };
+
   const splitBgm = (id: string, atSec: number) => {
     if (disabled || busyRef.current) return;
     const previous = current.current.state;
@@ -969,7 +969,7 @@ export function CanvasAudioStudioView({
     let roleId = cue.speakerId || resolveCharacterId(cue.speakerZh);
     if (!roleId && characters.length) {
       setError(`角色「${cue.speakerZh || "未填"}」未绑定人物资产 ID，请先在本句选择对应角色。`);
-      return;
+      return false;
     }
     if (!roleId) {
       roleId = [block, ...dialogueSources].flatMap(source => source.audioStudio?.cues || [])
@@ -978,7 +978,7 @@ export function CanvasAudioStudioView({
     const lock = speakerVoiceLocks.get(lockKey({ ...cue, speakerId: roleId })) || speakerVoiceLocks.get(cue.speakerZh.trim());
     if (lock?.conflict || (lock && cue.voice !== lock.voice)) {
       setError(lock?.conflict ? `${cue.speakerZh}已有冲突的角色音色，先核对已采用音轨。` : `${cue.speakerZh}已锁定其他音色；先应用锁定音色再生成。`);
-      return;
+      return false;
     }
     try {
       checkWindow(cue);
@@ -997,7 +997,7 @@ export function CanvasAudioStudioView({
       )
         throw new Error("先填写说话角色、台词并选择音色。");
       if (cue.speakerId !== roleId || cue.emotion !== suggestedEmotion) {
-        if (!update(previous => ({ ...previous, cues: previous.cues.map(row => row.id === cue.id ? { ...row, speakerId: roleId, emotion: suggestedEmotion } : row) }))) return;
+        if (!update(previous => ({ ...previous, cues: previous.cues.map(row => row.id === cue.id ? { ...row, speakerId: roleId, emotion: suggestedEmotion } : row) }))) return false;
         cue = { ...cue, speakerId: roleId, emotion: suggestedEmotion };
       }
       setError("");
@@ -1006,8 +1006,10 @@ export function CanvasAudioStudioView({
         cueId: cue.id,
         inputKey: canvasAudioCueInputKey(cue),
       });
+      return true;
     } catch (caught) {
       setError((caught as Error).message);
+      return false;
     }
   };
   const sourceFor = (cue: CanvasAudioCue) => cue.source;
@@ -1134,7 +1136,7 @@ export function CanvasAudioStudioView({
         });
       }
     });
-  const trim = (cue: CanvasAudioCue) =>
+  const trim = (cue: CanvasAudioCue, rethrow = false) =>
     action(async () => {
       if (
         cue.takes.length >= 100 ||
@@ -1174,7 +1176,7 @@ export function CanvasAudioStudioView({
           { id: result.jobId, kind: "post_prod", cueId: cue.id, inputKey },
         ],
       }));
-    });
+    }, rethrow);
   const selectedSource = canvasAudioMixSource(state.cues, durationSec);
   const [selectedKey, setSelectedKey] = useState("");
   useEffect(() => {
@@ -1184,7 +1186,7 @@ export function CanvasAudioStudioView({
       .catch(() => { if (!stopped) setError("音轨签名暂时不可用，未提交合听，请稍后重试。"); });
     return () => { stopped = true; };
   }, [selectedSource]);
-  const createPreview = () =>
+  const createPreview = (rethrow = false) =>
     action(async () => {
       if (current.current.state.pendingOperations.length >= 100)
         throw new Error("待处理任务已达 100 条，请先处理原任务。");
@@ -1229,7 +1231,7 @@ export function CanvasAudioStudioView({
           { id: result.jobId, kind: "post_prod", inputKey: previewKey },
         ],
       }));
-    });
+    }, rethrow);
   const prepareSeparateReferences = (referenceMode: "separate" | "dialogue" = "separate") => action(async () => {
     const snapshot = current.current.state;
     const cues = snapshot.cues.filter(cue => cue.enabled && (referenceMode !== "dialogue" || cue.kind !== "bgm"));
@@ -1259,7 +1261,7 @@ export function CanvasAudioStudioView({
    * 一键预混母轨：已确认的对白与配乐按各自保存的音量和淡入淡出落位，
    * 合成一条本段时长的单轨。走同一个 audio_timeline 后期任务（免费），结果不进合听预览，直接挂 master。
    */
-  const createPremix = () =>
+  const createPremix = (rethrow = false) =>
     action(async () => {
       if (current.current.state.pendingOperations.length >= 100)
         throw new Error("待处理任务已达 100 条，请先处理原任务。");
@@ -1286,9 +1288,9 @@ export function CanvasAudioStudioView({
           { id: result.jobId, kind: "post_prod", inputKey: premixKey },
         ],
       }));
-    });
+    }, rethrow);
   const selectSource = (cue: CanvasAudioCue, take: CanvasAudioTake, labelZh?: string) => {
-    patchCue(cue.id, {
+    return patchCue(cue.id, {
       source: {
         gcsUri: take.gcsUri,
         previewUrl: take.previewUrl,
@@ -1339,10 +1341,80 @@ export function CanvasAudioStudioView({
       throw new Error("原曲目标时长须为10–360整数秒。");
     setConfirmation({ kind: "bgm", brief: { ...draft.brief, duration: draft.durationSec } });
   };
+  const audioInventory = (): CanvasAudioVoiceResult => {
+    const latest=current.current.state;
+    return {status:"inspected",clipId:current.current.block.id,draft:latest.musicDraft||null,musicJobIds:[...latest.musicJobIds],pendingOperations:latest.pendingOperations.map(({id,kind})=>({id,kind})),historyReadFailed:false,
+      jobs:musicJobs.filter(row=>latest.musicJobIds.includes(row.jobId)).map(row=>({jobId:row.jobId,status:row.status,titleZh:row.titleZh,variants:row.variants.map(v=>({index:v.index,available:["succeeded","completed"].includes(row.status),durationSec:loadedSources[`${row.jobId}:${v.index}`]}))})),
+      cues:latest.cues.map(c=>({id:c.id,kind:c.kind,labelZh:c.labelZh,shotZh:c.shotZh,textZh:c.textZh,speakerId:c.speakerId,speakerZh:c.speakerZh,voice:c.voice,emotion:c.emotion,startSec:c.startSec,endSec:c.endSec,sourceStartSec:c.sourceStartSec,sourceEndSec:c.sourceEndSec,volume:c.volume,fadeInSec:c.fadeInSec,fadeOutSec:c.fadeOutSec,approved:c.approved,selectedTakeId:c.selectedTakeId,takes:c.takes.map(t=>({id:t.id,durationSec:t.durationSec,matches:t.inputKey===canvasAudioCueInputKey(c)}))})),
+      sources:(block.uploadedAssets||[]).filter(a=>a.kind==="audio"&&a.gcsUri).map(a=>({id:a.id,label:a.fileName,durationSec:loadedSources[a.id]})),resumableIds:Object.keys(resumable),voices:[...VOICES.map(v=>({id:v.id,label:v.label})),...referenceVoices.filter(v=>v.voiceId).map(v=>({id:v.voiceId!,label:v.labelZh}))],characters:characters.map(c=>({id:c.id,nameZh:c.nameZh})),
+    };
+  };
   const audioVoiceControl = useRef<CanvasAudioVoiceControl | null>(null);
   audioVoiceControl.current = async (request, signal) => {
     signal?.throwIfAborted();
     if (!mounted.current || request.clipId !== current.current.block.id) throw new Error("目标片段已变化，配乐操作未执行。");
+    if (request.action === "audio") {
+      if (request.operation!=="inspect" && (busyRef.current || current.current.disabled)) throw new Error("音轨仍在处理，未执行新操作。");
+      const latest = current.current.state;
+      const cue = latest.cues.find(row=>row.id===request.cueId);
+      let status: CanvasAudioVoiceResult["status"] = "updated";
+      if(request.operation === "inspect") status="inspected";
+      else if(request.operation === "addCue") {
+        if(!request.kind)throw new Error("须明确音轨种类");
+        addCue(request.kind,request.patch||{},true);
+      } else if(request.operation === "premix" || request.operation === "previewMix") {
+        if(latest.pendingOperations.some(row=>row.kind==="post_prod"))throw new Error("原音轨处理任务仍在途，请查原编号，不重复混音。");
+        if(!window.confirm(request.operation==="premix"?"用已试听采用的音轨制作本段预混母轨？不会生成新配音或配乐。":"用已采用音轨制作本段合听？不会生成新配音或配乐。"))return {...audioInventory(),status:"handled"};
+        if(request.operation==="premix")await createPremix(true);else await createPreview(true);
+        if(!current.current.state.pendingOperations.some(row=>!latest.pendingOperations.some(old=>old.id===row.id)))throw new Error("未取得新的音轨混合任务编号，原入口可能未保存，不自动重试");
+        status="handled";
+      } else if(request.operation === "resume") {
+        const response=request.jobId?resumable[request.jobId]:undefined;
+        if(!request.jobId || !response || !latest.pendingOperations.some(row=>row.id===request.jobId))throw new Error("原任务暂无可恢复结算回执，请继续查询原任务，不重下单。");
+        setConfirmation({kind:"resume",id:request.jobId,response});status="awaiting_user_confirmation";
+      } else {
+        if(!cue)throw new Error("请先读取本段真实cueId，音轨未改。");
+        if(latest.pendingOperations.some(row=>row.cueId===cue.id))throw new Error("这条音轨仍在处理，请查原任务。");
+        if(request.operation === "configureCue") {
+          if(!request.patch || !Object.keys(request.patch).length)throw new Error("没有明确的音轨修改字段。");
+          const configured=canvasAudioCueSchema.parse({...cue,...request.patch,approved:false,...(request.patch.emotion!==undefined?{autoEmotion:false}:{})});
+          if(configured.endSec<=configured.startSec || configured.endSec>durationSec)throw new Error("音轨秒窗超出本段，未修改。");
+          if(configured.mix?.silenceWindows.some(w=>w.endSec<=w.startSec || w.startSec<configured.startSec || w.endSec>configured.endSec))throw new Error("留白须位于本条音轨秒窗内。");
+          if(request.patch.voice!==undefined && !VOICES.some(v=>v.id===configured.voice) && !referenceVoices.some(v=>v.voiceId===configured.voice))throw new Error("所选音色不在当前真实清单，未修改。");
+          if(!patchCue(cue.id,{...request.patch,approved:false,...(request.patch.emotion!==undefined?{autoEmotion:false}:{})}))throw new Error("音轨修改未保存或角色声线门禁阻断，请查看原提示。");
+          setConfirmation(null);
+        } else if(request.operation === "generateDialogue") {
+          if(cue.kind!=="dialogue")throw new Error("只有对白音轨可生成配音。");
+          if(!prepareDialogue(cue))throw new Error("配音前置检查未通过，请查看本句提示；尚未生成。");
+          status="awaiting_user_confirmation";
+        } else if(request.operation === "adoptTake") {
+          const take=cue.takes.find(row=>row.id===request.takeId);
+          if(!take || take.inputKey!==canvasAudioCueInputKey(cue))throw new Error("候选不属于当前音轨版本，未采用。");
+          const voiceLock=speakerVoiceLocks.get(lockKey(cue))||speakerVoiceLocks.get(cue.speakerZh.trim());
+          if(cue.kind==="dialogue" && voiceLock && (voiceLock.conflict || voiceLock.voice!==cue.voice))throw new Error("角色声线与现有采用版本冲突，未覆盖。");
+          if(!window.confirm("已试听这条候选并确认采用到本段？其他候选保留。"))return {...audioInventory(),status:"handled"};
+          if(!update(previous=>({...previous,cues:previous.cues.map(row=>row.id===cue.id?{...row,selectedTakeId:take.id,approved:true,voiceLock:row.kind==="dialogue"?{speakerZh:row.speakerZh.trim(),speakerId:row.speakerId,voice:row.voice}:row.voiceLock}:row)})))throw new Error("候选采用未保存。");
+        } else if(request.operation === "trim") {
+          await trim(cue,true);if(!current.current.state.pendingOperations.some(row=>row.cueId===cue.id && !latest.pendingOperations.some(old=>old.id===row.id)))throw new Error("未取得裁切任务编号，请查原回执");status="handled";
+        } else if(request.operation === "selectSource") {
+          const asset=block.uploadedAssets?.find(row=>row.id===request.sourceId && row.kind==="audio" && row.gcsUri);
+          const length=asset?loadedSources[asset.id]:undefined;
+          if(!asset?.gcsUri || !length)throw new Error("来源音频须为本段已上传且已加载真实时长的素材，先试听后选择。");
+          if(!selectSource(cue,{id:asset.id,gcsUri:asset.gcsUri,previewUrl:asset.previewUrl||asset.url,durationSec:length,inputKey:"source",createdAt:new Date().toISOString()},asset.fileName))throw new Error("来源音频选择未保存");
+        } else if(request.operation === "selectMusic") {
+          const history=await refreshMusic();signal?.throwIfAborted();
+          const job=history.rows.find(row=>row.jobId===request.jobId && latest.musicJobIds.includes(row.jobId) && ["succeeded","completed"].includes(row.status));
+          const variant=job?.variants.find(row=>row.index===request.variantIndex);
+          const sourceId=job && variant ? `${job.jobId}:${variant.index}` : "";
+          const length=loadedSources[sourceId];
+          if(!job || !variant || !length)throw new Error("须从原配乐任务选择已试听且加载真实时长的版本，未选原曲。");
+          if(current.current.block.id!==request.clipId)throw new Error("片段已变化，未选择原曲。");
+          if(!selectSource(cue,{id:sourceId,gcsUri:variant.gcsUri,previewUrl:variant.previewUrl,durationSec:length,bytes:variant.bytes,inputKey:"source",createdAt:new Date().toISOString()},`${job.titleZh} · 版本${variant.index+1}`))throw new Error("配乐原曲选择未保存");
+        }
+      }
+      setEditorOpen(true);
+      return {...audioInventory(),status};
+    }
     if (request.operation !== "prepare" && request.question?.trim()) throw new Error("新增配乐要求须先整理，再确认生成。");
     let rows = musicJobs;
     let historyReadFailed = false;

@@ -1,3 +1,5 @@
+import { MANHUA_ADVISOR_OPERATION_REQUEST } from "@shared/manhuaAdvisorWorkflow";
+import { advisorWorkflowRevision, advisorWorkflowReceiptContext, parseAdvisorWorkflowPlan, type AdvisorWorkflowPlan } from "@/lib/manhuaAdvisorWorkflowPlan";
 import type { CreativeVoiceProductionAction } from "@shared/creativeVoiceProduction";
 import { ManhuaAdvisorFilmReview } from "./ManhuaAdvisorFilmReview";
 import { advisorFilmReviewSchema, type AdvisorFilmReviewTarget } from "@shared/manhuaAdvisorFilmReview";
@@ -69,6 +71,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
   projectId?: string;
   automaticMonitoring?: boolean;
   confirmedProjectVersion?: string;
+  workflowRevision?: string;
   project?: ReturnType<typeof buildManhuaAdvisorProject>;
   onLocate?: (issue: AdvisorIssue) => void;
   mediaWorkspace?: AdvisorMediaWorkspace;
@@ -283,12 +286,70 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     requestAnimationFrame(() => questionRef.current?.focus());
   }, [open, props.questionSeed, asking, pendingPaid, unresolvedFailed, sessionStorageBlocked]);
 
+  const operationKey = sessionKey ? `${sessionKey}:operation` : null;
+  const operationSource = advisorWorkflowRevision({ project: props.project?.context, version: confirmedProjectVersion, workflowRevision:props.workflowRevision, userId, projectId: props.projectId });
+  const [operationPlan, setOperationPlan] = useState<{ plan: AdvisorWorkflowPlan; source: string; result?: string; executionId?:string; startedAt?:string } | null>(null);
+  const activeOperationKey=useRef(operationKey);activeOperationKey.current=operationKey;
+  const activeOperationSource=useRef(operationSource);activeOperationSource.current=operationSource;
+  const productionLock=useRef(false);
+  const [operationBusy, setOperationBusy] = useState(false);
+  const operationLock = useRef(false);
+  useEffect(() => {
+    setOperationPlan(null);
+    if (!operationKey) return;
+    try {
+      const raw = localStorage.getItem(operationKey);
+      if (raw) { const entry = JSON.parse(raw); if(entry.executionId && !entry.result)entry.result="上次已开始执行但回执未保存；请读取原任务与原面板，不再次提交同一步。"; setOperationPlan({ ...entry, plan: parseAdvisorWorkflowPlan(JSON.stringify(entry.plan)) }); }
+    } catch { toast.error("原操作方案无法读取，未覆盖记录。"); }
+  }, [operationKey]);
+  async function requestWorkflowOperation() {
+    if (operationLock.current || asking || pendingPaid || unresolvedFailed || !operationKey) return;
+    operationLock.current = true; setOperationBusy(true);
+    try {
+      const capturedSource=operationSource;
+      const question = draft.trim();
+      if (question.length < 2) throw new Error("请先说明要操作哪个流程。");
+      const inventory = await executeProductionAction({ action: "inspect" }, new AbortController().signal);
+      const workspace = JSON.stringify({ currentInventory: JSON.parse(inventory), ...(operationPlan?.result ? { previousOperation: { action: operationPlan.plan.action, result: advisorWorkflowReceiptContext(operationPlan.result), matchesCurrentSource: operationPlan.source === capturedSource, note: "历史回执仅供识别原任务；目标、版本和在途状态须按当前清单与原入口核对" } } : {}) });
+      if(capturedSource!==activeOperationSource.current)throw new Error("作品已变化，未提交旧工作区的操作方案");
+      if (!send(`${MANHUA_ADVISOR_OPERATION_REQUEST}${question}`, undefined, false, undefined, undefined, undefined, undefined, {workspace,revision:props.workflowRevision || "legacy-workspace"})) throw new Error("顾问请求未提交，请查看当前任务或提示。");
+    } catch (error) { toast.error(error instanceof Error ? error.message : "未准备操作"); }
+    finally { operationLock.current = false; setOperationBusy(false); }
+  }
+  async function applyWorkflowOperation() {
+    if (!operationPlan || operationPlan.result || operationPlan.executionId || !operationKey || operationLock.current || asking || pendingPaid || unresolvedFailed) return;
+    if (operationPlan.source !== operationSource) { toast.error("作品或正文已变化，请重新准备操作方案，未执行旧方案。"); return; }
+    if (!window.confirm(`执行这一步工作流操作？\n${operationPlan.plan.summaryZh}\n付费生成仍会按原入口确认费用。`)) return;
+    operationLock.current = true; setOperationBusy(true);
+    const capturedKey=operationKey;
+    const started={...operationPlan,executionId:crypto.randomUUID(),startedAt:new Date().toISOString()};
+    try {
+      const saved=JSON.stringify(started);localStorage.setItem(capturedKey,saved);
+      localStorage.setItem(`${capturedKey}:execution:${started.executionId}`,saved);
+      if(localStorage.getItem(capturedKey)!==saved)throw new Error("操作开始记录未可靠保存，未执行");
+      setOperationPlan(started);
+      const result = await executeProductionAction(started.plan.action, new AbortController().signal);
+      const next = { ...started, result };
+      localStorage.setItem(capturedKey, JSON.stringify(next));
+      localStorage.setItem(`${capturedKey}:execution:${started.executionId}`,JSON.stringify(next));
+      if(activeOperationKey.current===capturedKey)setOperationPlan(next);
+    } catch (error) {
+      const message=error instanceof Error ? error.message : "操作回执未确认，请查看原任务。";
+      try {const failed=JSON.stringify({...started,result:message});localStorage.setItem(capturedKey,failed);localStorage.setItem(`${capturedKey}:execution:${started.executionId}`,failed);}catch{}
+      if(activeOperationKey.current===capturedKey)setOperationPlan({...started,result:message});
+      toast.error(message);
+    }
+    finally { operationLock.current = false; setOperationBusy(false); }
+  }
+
   async function submit(request: PendingQuestion, confirmPaid: boolean, confirmedCredits?: number) {
     let voiceWaitingForPayment = false; let voiceAnswer: string | undefined;
     if (inFlight.current || !userId || sessionStorageBlocked) { finishVoiceReply(request.requestId); return; }
     if (!request.manhuaContext) { toast.error("请先选择漫剧项目，再向创作顾问提问；本次未调用模型。"); finishVoiceReply(request.requestId); return; }
     const recovering = initialRecovery.value?.request.requestId === request.requestId || (failed?.newAttempt !== true && failed?.request.requestId === request.requestId);
     if ((!quotaQuery.data || quotaQuery.isError) && !recovering) { toast.error("暂时无法核对本作品额度，本次未提交、未扣费。请刷新额度后重试。"); finishVoiceReply(request.requestId); return; }
+    const capturedOperationKey = operationKey;
+    const capturedOperationSource = operationSource;
     const capturedSessionKey = sessionKey;
     const capturedRecoveryKey = recoveryKey;
     const capturedPrevisKey = previsKey;
@@ -336,6 +397,15 @@ export default function ManhuaCreativeAdvisorPanel(props: {
       const res = await streamManhuaAdvisor(input, text => { if (mounted.current) setStreamText(text); }, () => { if (mounted.current) setRetrying(++responseAttempt > 1); });
       const answer = String(res.answer || "").trim();
       if (!answer) throw new Error("本次没有收到有效回答，请重试原问题。");
+      if (request.rawQuestion.startsWith(MANHUA_ADVISOR_OPERATION_REQUEST)) {
+        try {
+          const entry = { plan: parseAdvisorWorkflowPlan(answer), source: request.manhuaContext?.workflowOperation?.revision === props.workflowRevision ? capturedOperationSource : `stale:${request.manhuaContext?.workflowOperation?.revision || "unknown"}` };
+          if (!capturedOperationKey) throw new Error("当前作品没有操作方案保存位置，未执行。");
+          const json = JSON.stringify(entry); localStorage.setItem(capturedOperationKey, json);
+          if (localStorage.getItem(capturedOperationKey) !== json) throw new Error("操作方案未完整保存，未执行。");
+          if (mounted.current && activeOperationKey.current===capturedOperationKey && activeOperationSource.current===capturedOperationSource) setOperationPlan(entry);
+        } catch (error) { if (mounted.current) toast.message(error instanceof Error ? error.message : "操作方案未通过检查，作品未改。"); }
+      }
       if (request.manhuaContext?.filmReview) {
         const value = { target: request.manhuaContext.filmReview, report: advisorFilmReviewSchema.parse(JSON.parse(answer)) };
         if (filmReviewKey) localStorage.setItem(filmReviewKey, JSON.stringify(value));
@@ -410,7 +480,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     } finally { if (!voiceWaitingForPayment) finishVoiceReply(request.requestId, voiceAnswer); inFlight.current = false; if (mounted.current) { setStreamPending(false); setStreamText(""); } }
   }
 
-  function send(rawQuestion: string, wrappedQuestion?: string, renderRequested = false, episode?: EpisodeOptimizationWorkspace["episodes"][number], voiceReply?: (answer: string | undefined) => void, filmReview?: AdvisorFilmReviewTarget, worldOverride?: AdvisorWorldTarget) {
+  function send(rawQuestion: string, wrappedQuestion?: string, renderRequested = false, episode?: EpisodeOptimizationWorkspace["episodes"][number], voiceReply?: (answer: string | undefined) => void, filmReview?: AdvisorFilmReviewTarget, worldOverride?: AdvisorWorldTarget, workflowOperation?: {workspace:string;revision:string}) {
     if (inFlight.current || pendingPaid || unresolvedFailed || !userId || sessionStorageBlocked) return;
     const question = rawQuestion.trim();
     if (question.length < 2 || question.length > 1200) { toast.error("请输入 2—1200 字的问题，内容不会被自动截断。"); return; }
@@ -419,11 +489,12 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     if (rewriting && (!rewriteBody?.trim() || (!episode && project?.contextNotes.some(note => note.includes("本集正文"))))) {
       toast.error("当前集正文为空或已节选，不能生成完整优化稿，请先打开完整本集。"); return;
     }
+    const operationRequest = question.startsWith(MANHUA_ADVISOR_OPERATION_REQUEST);
     const mediaRequest = Boolean(props.mediaWorkspace && question.startsWith("【素材修改】"));
     const mediaEditTarget = mediaRequest ? props.mediaWorkspace?.sources.find(s => question.includes(s.blockId)) : undefined;
     if (mediaRequest && (!mediaEditTarget || !project)) { toast.error("请先选择本作品的素材，未提交咨询"); return; }
-    if (props.previsIssue && !rewriting && !mediaRequest && !filmReview && !worldOverride) { toast.error(props.previsIssue); return; }
-    let previsEdit = props.previsTarget && !rewriting && !mediaRequest && !filmReview && !worldOverride ? withAdvisorPrevisVideo(props.previsTarget, previewVideoSource) : undefined;
+    if (props.previsIssue && !rewriting && !mediaRequest && !filmReview && !worldOverride && !operationRequest) { toast.error(props.previsIssue); return; }
+    let previsEdit = props.previsTarget && !rewriting && !mediaRequest && !filmReview && !worldOverride && !operationRequest ? withAdvisorPrevisVideo(props.previsTarget, previewVideoSource) : undefined;
     if (previsEdit && !previsEdit.previousPreviewRequestId && previsCandidate?.target.clipId === previsEdit.clipId && previsCandidate.target.specJson === previsEdit.specJson) {
       try { previsEdit = { ...previsEdit, previousPreviewSpecJson: advisorPrevisSpecJson(applyAdvisorPrevisPatch(manhuaPrevisSpecSchema.parse(JSON.parse(previsEdit.specJson)), previsCandidate.patch)) }; } catch { /* 未支持要求不继承为已执行配置。 */ }
     }
@@ -432,7 +503,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     try {
       if (project && questionContext) questionContext = resolveAdvisorVideoPromptContext({ context: questionContext, question, drafts: project.videoPromptDrafts, selectedSegmentIndex: project.selectedSegmentIndex });
     } catch (error) { toast.error(error instanceof Error ? error.message : "无法读取本段提示词"); return; }
-    const result = questionContext ? manhuaCreativeAdvisorContextSchema.safeParse({ ...questionContext, ...(props.projectId ? { projectId: props.projectId } : {}), history: advisorRecentHistory(turns), ...(previsEdit ? { previsEdit } : {}), ...(!filmReview && !mediaRequest && props.studio3d ? { studio3d: { directionCardId: props.studio3d.directionCardId, directionCardVersion: props.studio3d.directionCardVersion } } : {}), ...(!rewriting && !filmReview && !mediaRequest && (worldOverride || props.worldTarget) ? { worldTarget: worldOverride || props.worldTarget } : {}), ...(filmReview ? { filmReview } : {}), ...(mediaEditTarget ? { mediaEditTarget } : {}) }) : null;
+    const result = questionContext ? manhuaCreativeAdvisorContextSchema.safeParse({ ...questionContext, ...(props.projectId ? { projectId: props.projectId } : {}), history: advisorRecentHistory(turns), ...(workflowOperation?{workflowOperation}:{}), ...(previsEdit ? { previsEdit } : {}), ...(!operationRequest && !filmReview && !mediaRequest && props.studio3d ? { studio3d: { directionCardId: props.studio3d.directionCardId, directionCardVersion: props.studio3d.directionCardVersion } } : {}), ...(!operationRequest && !rewriting && !filmReview && !mediaRequest && (worldOverride || props.worldTarget) ? { worldTarget: worldOverride || props.worldTarget } : {}), ...(filmReview ? { filmReview } : {}), ...(mediaEditTarget ? { mediaEditTarget } : {}) }) : null;
     if (result && !result.success) {
       toast.error("当前上下文超出读取范围或包含不适合发送的内容", {
         description: result.error.issues.map(formatManhuaAdvisorContextIssue).join("；"),
@@ -443,10 +514,10 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     const label = project ? `第 ${project.context.episodeIndex} 集 · ${MANHUA_ADVISOR_STAGE_LABELS[project.context.stage]} · ${promptScope || project.selectionLabel}` : stageZh || "创作咨询";
     const request: PendingQuestion = {
       requestId: crypto.randomUUID(),
-      ...(((voiceReply && !renderRequested) || mediaRequest || filmReview) ? { voiceConsultOnly: true } : {}),
+      ...(((voiceReply && !renderRequested) || operationRequest || mediaRequest || filmReview) ? { voiceConsultOnly: true } : {}),
       ...(props.previsTarget && renderRequested ? { previsRenderRequested: true } : {}),
       rawQuestion: question,
-      question: mediaRequest ? `根据用户要求整理素材修改指令，不声称看过没有收到的图片或视频。只返回JSON对象，不写Markdown：{"kind":"image或video","blockId":"真实素材编号","instruction":"完整的修改要求"}。只可选以下素材，图片指令最多2000字，视频240字。保留未要求改变的内容。不得生成或声称完成。\n素材：${JSON.stringify(props.mediaWorkspace!.sources.filter(source => question.includes(source.blockId)).map(({blockId,kind,label})=>({blockId,kind,label})))}\n用户：${question}` : wrappedQuestion || buildAdvisorQuestion({
+      question: operationRequest ? question : mediaRequest ? `根据用户要求整理素材修改指令，不声称看过没有收到的图片或视频。只返回JSON对象，不写Markdown：{"kind":"image或video","blockId":"真实素材编号","instruction":"完整的修改要求"}。只可选以下素材，图片指令最多2000字，视频240字。保留未要求改变的内容。不得生成或声称完成。\n素材：${JSON.stringify(props.mediaWorkspace!.sources.filter(source => question.includes(source.blockId)).map(({blockId,kind,label})=>({blockId,kind,label})))}\n用户：${question}` : wrappedQuestion || buildAdvisorQuestion({
         question, stageZh, selectedTemplate, templates, hasProjectEvidence: Boolean(project),
         projectSignals: project ? {
           gateZh: project.context.gateZh, assetGapZh: project.context.assetGapZh, keyframeBlockZh: project.context.keyframeBlockZh,
@@ -487,6 +558,102 @@ export default function ManhuaCreativeAdvisorPanel(props: {
       setBackupError(result.errors ? `${result.errors}条本账户备份无法解析，原记录未改动。` : result.entries.length ? "" : "没有找到与当前项目版本或原稿匹配的备份。");
     } catch { setBackupError("本机备份暂无法读取，原记录未改动。"); }
   }
+
+  const executeProductionActionInternal = async (action: CreativeVoiceProductionAction, signal: AbortSignal) => {
+          if (signal.aborted) throw new Error("语音已结束，未提交");
+          if (action.action === "media") {
+            if (!mediaEditRef.current) throw new Error("请打开当前作品的素材修改区。");
+            return mediaEditRef.current.execute(action.operation);
+          }
+          if (action.action === "retryPrevis") {
+            if (!previsVoiceControl.current) throw new Error("当前没有白模试看，请先打开原片段。");
+            return previsVoiceControl.current.retry();
+          }
+          if (action.action === "generateWorld") {
+            if (!worldCandidate || !worldMatches || !props.onGenerateWorld || worldLock.current || props.worldTaskState || props.worldTarget?.previousTaskId) throw new Error("当前没有可提交的3DGS方案，或已有任务；请检查原方案与任务，未重复生成。");
+            worldLock.current=true;setWorldGenerating(true);
+            try { const receipt = await props.onGenerateWorld(worldCandidate); return receipt || "未取得3DGS任务回执，请检查场景卡；不能声称已提交或完成，不自动重试。"; }
+            finally {worldLock.current=false;if(mounted.current)setWorldGenerating(false);}
+          }
+          if (action.action === "applyPrevis") return previsVoiceControl.current ? previsVoiceControl.current.apply() : "当前没有可应用的白模试看，请先生成并观看。";
+          if (action.action === "prepareEpisode") {
+            const episode = props.episodeWorkspace?.episodes.find(e => e.index === action.episode);
+            if (!episode || !props.onApplyRewrite) throw new Error("当前作品没有这集的完整正文或套用入口，未提交改稿。");
+            if (inFlight.current || pendingPaid || unresolvedFailed || sessionStorageBlocked) throw new Error("原顾问任务尚未结束，请查询原任务，不重复改稿。");
+            props.episodeWorkspace?.onFocusEpisode(action.episode);
+            return new Promise<string>(resolve => {
+              let done = false;
+              const reply = (answer?: string) => {
+                if (done) return; done = true; signal.removeEventListener("abort", abort);
+                for (const [id, cb] of Array.from(voiceReplies.current)) if (cb === reply) voiceReplies.current.delete(id);
+                try {
+                  if (!answer) throw new Error("没有收到完整优化稿，请查看原顾问任务，不重复提交。");
+                  const candidate = parseAdvisorRewrite(answer, episode.index, episode.body, episode.endHook || "");
+                  // The submit path must have persisted this exact candidate before reporting it usable.
+                  const saved = sessionKey ? localStorage.getItem(`${sessionKey}:rewrite`) : null;
+                  if (!saved || JSON.stringify(JSON.parse(saved)) !== JSON.stringify(candidate)) throw new Error("优化稿尚未可靠保存，请查看顾问恢复入口；不能套用或声称已修改。");
+                  resolve(JSON.stringify({episode:episode.index,status:"candidate_ready",changes:candidate.changes,instruction:"完整候选已展示，正文未修改。用户确认后调用applyEpisode；成功回执前不得声称已保存正文。"}));
+                } catch (error) { resolve(error instanceof Error ? error.message : "候选未通过检查，原稿保留。"); }
+              };
+              const abort = () => reply("语音已结束，已提交任务在原顾问保留，请查询原任务。");
+              signal.addEventListener("abort", abort, {once:true});
+              if (!send(`${TEMPLATE_REWRITE_MARKER}${action.question}`, undefined, false, episode, reply)) reply();
+            });
+          }
+          if (action.action === "restoreBackup") {
+            if (!userId || !project) throw new Error("没有当前作品，未还原。");
+            const result = listAdvisorBackups(localStorage, {userId, confirmedProjectVersion, seriesTitle: project.context.seriesTitle, episodeIndex: project.context.episodeIndex, body: project.context.episodeBody, originalBody: rewrite?.originalBody});
+            setBackups(result.entries); setBackupPreview(result.entries[0] || null);
+            if (!result.entries.length) return "未找到当前作品可核实的改前版本，未还原。";
+            return "已展示改前版本完整内容。请用户核对并点击确认还原；当前正文尚未修改，还原前会备份现状。";
+          }
+          if (action.action === "applyEpisode") {
+            if (!rewrite || rewrite.episodeIndex !== action.episode || rewriteEditError || !props.onApplyRewrite) throw new Error("当前没有这集的可应用优化稿，请先调用顾问准备整集修改候选。");
+            validateAdvisorRewriteBody(rewrite.originalBody, rewriteEdit, rewriteEditHook);
+            if (!window.confirm(`将左侧优化稿应用到第${action.episode}集？旧稿会先备份。`)) return "用户取消，未改正文。";
+            return props.onApplyRewrite({...rewrite,rewrittenBody:rewriteEdit,...(rewrite.endHook ? {endHook:rewriteEditHook} : {})}) ? `第${action.episode}集优化稿已写回，旧稿已备份，请重新确认剧本。` : "应用被工作区阻止，原稿保留，请查看提示。";
+          }
+          if (action.action === "world" && action.question) {
+            const worldQuestion = action.question;
+            if (!props.onVoiceProduction || signal.aborted) throw new Error("当前不能准备场景方案");
+            const selection = JSON.parse(await props.onVoiceProduction(action, signal));
+            const target = advisorWorldTargetSchema.parse(selection.worldTarget);
+            if (target.sceneRefId !== action.assetId || signal.aborted) throw new Error("场景已变化，未咨询或生成");
+            return new Promise<string>(resolve => {
+              let done=false;
+              const reply=(answer?:string)=>{if(done)return;done=true;signal.removeEventListener("abort",abort);for(const [id,cb] of Array.from(voiceReplies.current))if(cb===reply)voiceReplies.current.delete(id);
+                resolve(answer ? answer+"\n只有通过结构检查的方案才显示在3DGS场景方案卡。尚未生成世界，用户确认后才能generateWorld。" : "未取得可执行场景方案，请查看原请求；尚未生成世界。");};
+              const abort=()=>reply();signal.addEventListener("abort",abort,{once:true});
+              if(!send(worldQuestion,undefined,false,undefined,reply,undefined,target))reply();
+            });
+          }
+          if (action.action !== "renderPrevis") {
+            if (!props.onVoiceProduction) throw new Error("当前工作区没有制作入口");
+            const result = await props.onVoiceProduction(action, signal);
+            return action.action === "inspect" ? JSON.stringify({production:JSON.parse(result),previs:previsVoiceControl.current?.inspect() || null,rewrite:rewrite ? {episode:rewrite.episodeIndex,ready:!rewriteEditError} : null}) : result;
+          }
+          if (!props.previsTarget || props.previsIssue || props.previsLaunchIssue || props.previewHost?.dataset.clipId !== props.previsTarget.clipId || !props.onPreparePrevis) throw new Error(props.previsIssue || props.previsLaunchIssue || "请先打开指定片段的白模页面；未开始渲染。");
+          if (!window.confirm("按这段描述调用创作顾问并渲染独立白模试看？顾问沿用本作品次数，超额另行确认积分；Blender渲染使用服务器算力。原配置保留，满意后再应用。\n\n" + action.question)) return "用户取消，未咨询或渲染。";
+          return new Promise<string>(resolve => {
+            let done = false;
+            const reply = (answer?: string) => { if (done) return; done = true; signal.removeEventListener("abort", abort); for (const [id,cb] of Array.from(voiceReplies.current)) if (cb === reply) voiceReplies.current.delete(id); resolve(answer ? `${readableAdvice(answer)}\n方案已返回；有效方案交给本页Blender试看入口提交。视频是否完成以本页任务编号、状态和播放器为准，不能把方案当成已生成视频。` : "未取得可执行方案，请查看原顾问请求，不重试。"); };
+            const abort = () => reply("语音已结束，已提交任务请在原工作区查询，不重复提交。");
+            signal.addEventListener("abort", abort, {once:true});
+            if (!send(action.question, undefined, true, undefined, reply)) reply();
+          });
+        };
+
+  const executeProductionAction=async(action:CreativeVoiceProductionAction,signal:AbortSignal):Promise<string>=>{
+    const readOnly=action.action==="inspect" || ("operation" in action && action.operation==="inspect");
+    if(!readOnly && productionLock.current)throw new Error("顾问上一项操作尚未返回，请查原回执");
+    const capturedSource=activeOperationSource.current;
+    signal.throwIfAborted();
+    if(!readOnly)productionLock.current=true;
+    try {
+      if(capturedSource!==activeOperationSource.current)throw new Error("工作区已变化，未操作");
+      return await executeProductionActionInternal(action,signal);
+    } finally {if(!readOnly)productionLock.current=false;}
+  };
 
   async function copyAdvice(text: string) {
     await copyTextWithToast(text, {
@@ -665,89 +832,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
           const abort = () => reply("语音已结束，已提交的审阅继续在原顾问保存，不重提");
           signal.addEventListener("abort", abort, {once:true});
           if (!send(`【影片审阅】${question}`, undefined, false, undefined, reply, {videoUri:source.url,blockId:source.blockId,revision:source.revision,label:source.label})) reply();
-        })} onInspectMedia={() => mediaEditRef.current?.inspect() || null} mediaSources={props.mediaWorkspace?.sources} onProposeMediaEdit={proposal => { if (!mediaEditRef.current) throw new Error("素材编辑区尚未就绪"); return mediaEditRef.current.propose(proposal); }} onProductionAction={async (action, signal) => {
-          if (signal.aborted) throw new Error("语音已结束，未提交");
-          if (action.action === "media") {
-            if (!mediaEditRef.current) throw new Error("请打开当前作品的素材修改区。");
-            return mediaEditRef.current.execute(action.operation);
-          }
-          if (action.action === "retryPrevis") {
-            if (!previsVoiceControl.current) throw new Error("当前没有白模试看，请先打开原片段。");
-            return previsVoiceControl.current.retry();
-          }
-          if (action.action === "generateWorld") {
-            if (!worldCandidate || !worldMatches || !props.onGenerateWorld || worldLock.current || props.worldTaskState || props.worldTarget?.previousTaskId) throw new Error("当前没有可提交的3DGS方案，或已有任务；请检查原方案与任务，未重复生成。");
-            worldLock.current=true;setWorldGenerating(true);
-            try { const receipt = await props.onGenerateWorld(worldCandidate); return receipt || "未取得3DGS任务回执，请检查场景卡；不能声称已提交或完成，不自动重试。"; }
-            finally {worldLock.current=false;if(mounted.current)setWorldGenerating(false);}
-          }
-          if (action.action === "applyPrevis") return previsVoiceControl.current ? previsVoiceControl.current.apply() : "当前没有可应用的白模试看，请先生成并观看。";
-          if (action.action === "prepareEpisode") {
-            const episode = props.episodeWorkspace?.episodes.find(e => e.index === action.episode);
-            if (!episode || !props.onApplyRewrite) throw new Error("当前作品没有这集的完整正文或套用入口，未提交改稿。");
-            if (inFlight.current || pendingPaid || unresolvedFailed || sessionStorageBlocked) throw new Error("原顾问任务尚未结束，请查询原任务，不重复改稿。");
-            props.episodeWorkspace?.onFocusEpisode(action.episode);
-            return new Promise<string>(resolve => {
-              let done = false;
-              const reply = (answer?: string) => {
-                if (done) return; done = true; signal.removeEventListener("abort", abort);
-                for (const [id, cb] of Array.from(voiceReplies.current)) if (cb === reply) voiceReplies.current.delete(id);
-                try {
-                  if (!answer) throw new Error("没有收到完整优化稿，请查看原顾问任务，不重复提交。");
-                  const candidate = parseAdvisorRewrite(answer, episode.index, episode.body, episode.endHook || "");
-                  // The submit path must have persisted this exact candidate before reporting it usable.
-                  const saved = sessionKey ? localStorage.getItem(`${sessionKey}:rewrite`) : null;
-                  if (!saved || JSON.stringify(JSON.parse(saved)) !== JSON.stringify(candidate)) throw new Error("优化稿尚未可靠保存，请查看顾问恢复入口；不能套用或声称已修改。");
-                  resolve(JSON.stringify({episode:episode.index,status:"candidate_ready",changes:candidate.changes,instruction:"完整候选已展示，正文未修改。用户确认后调用applyEpisode；成功回执前不得声称已保存正文。"}));
-                } catch (error) { resolve(error instanceof Error ? error.message : "候选未通过检查，原稿保留。"); }
-              };
-              const abort = () => reply("语音已结束，已提交任务在原顾问保留，请查询原任务。");
-              signal.addEventListener("abort", abort, {once:true});
-              if (!send(`${TEMPLATE_REWRITE_MARKER}${action.question}`, undefined, false, episode, reply)) reply();
-            });
-          }
-          if (action.action === "restoreBackup") {
-            if (!userId || !project) throw new Error("没有当前作品，未还原。");
-            const result = listAdvisorBackups(localStorage, {userId, confirmedProjectVersion, seriesTitle: project.context.seriesTitle, episodeIndex: project.context.episodeIndex, body: project.context.episodeBody, originalBody: rewrite?.originalBody});
-            setBackups(result.entries); setBackupPreview(result.entries[0] || null);
-            if (!result.entries.length) return "未找到当前作品可核实的改前版本，未还原。";
-            return "已展示改前版本完整内容。请用户核对并点击确认还原；当前正文尚未修改，还原前会备份现状。";
-          }
-          if (action.action === "applyEpisode") {
-            if (!rewrite || rewrite.episodeIndex !== action.episode || rewriteEditError || !props.onApplyRewrite) throw new Error("当前没有这集的可应用优化稿，请先调用顾问准备整集修改候选。");
-            validateAdvisorRewriteBody(rewrite.originalBody, rewriteEdit, rewriteEditHook);
-            if (!window.confirm(`将左侧优化稿应用到第${action.episode}集？旧稿会先备份。`)) return "用户取消，未改正文。";
-            return props.onApplyRewrite({...rewrite,rewrittenBody:rewriteEdit,...(rewrite.endHook ? {endHook:rewriteEditHook} : {})}) ? `第${action.episode}集优化稿已写回，旧稿已备份，请重新确认剧本。` : "应用被工作区阻止，原稿保留，请查看提示。";
-          }
-          if (action.action === "world" && action.question) {
-            const worldQuestion = action.question;
-            if (!props.onVoiceProduction || signal.aborted) throw new Error("当前不能准备场景方案");
-            const selection = JSON.parse(await props.onVoiceProduction(action, signal));
-            const target = advisorWorldTargetSchema.parse(selection.worldTarget);
-            if (target.sceneRefId !== action.assetId || signal.aborted) throw new Error("场景已变化，未咨询或生成");
-            return new Promise<string>(resolve => {
-              let done=false;
-              const reply=(answer?:string)=>{if(done)return;done=true;signal.removeEventListener("abort",abort);for(const [id,cb] of Array.from(voiceReplies.current))if(cb===reply)voiceReplies.current.delete(id);
-                resolve(answer ? answer+"\n只有通过结构检查的方案才显示在3DGS场景方案卡。尚未生成世界，用户确认后才能generateWorld。" : "未取得可执行场景方案，请查看原请求；尚未生成世界。");};
-              const abort=()=>reply();signal.addEventListener("abort",abort,{once:true});
-              if(!send(worldQuestion,undefined,false,undefined,reply,undefined,target))reply();
-            });
-          }
-          if (action.action !== "renderPrevis") {
-            if (!props.onVoiceProduction) throw new Error("当前工作区没有制作入口");
-            const result = await props.onVoiceProduction(action, signal);
-            return action.action === "inspect" ? JSON.stringify({production:JSON.parse(result),previs:previsVoiceControl.current?.inspect() || null,rewrite:rewrite ? {episode:rewrite.episodeIndex,ready:!rewriteEditError} : null}) : result;
-          }
-          if (!props.previsTarget || props.previsIssue || props.previsLaunchIssue || props.previewHost?.dataset.clipId !== props.previsTarget.clipId || !props.onPreparePrevis) throw new Error(props.previsIssue || props.previsLaunchIssue || "请先打开指定片段的白模页面；未开始渲染。");
-          if (!window.confirm("按这段描述调用创作顾问并渲染独立白模试看？顾问沿用本作品次数，超额另行确认积分；Blender渲染使用服务器算力。原配置保留，满意后再应用。\n\n" + action.question)) return "用户取消，未咨询或渲染。";
-          return new Promise<string>(resolve => {
-            let done = false;
-            const reply = (answer?: string) => { if (done) return; done = true; signal.removeEventListener("abort", abort); for (const [id,cb] of Array.from(voiceReplies.current)) if (cb === reply) voiceReplies.current.delete(id); resolve(answer ? `${readableAdvice(answer)}\n方案已返回；有效方案交给本页Blender试看入口提交。视频是否完成以本页任务编号、状态和播放器为准，不能把方案当成已生成视频。` : "未取得可执行方案，请查看原顾问请求，不重试。"); };
-            const abort = () => reply("语音已结束，已提交任务请在原工作区查询，不重复提交。");
-            signal.addEventListener("abort", abort, {once:true});
-            if (!send(action.question, undefined, true, undefined, reply)) reply();
-          });
-        }} disabled={!userId || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onUse={text => setDraft(text)} targets={props.voiceTargets || props.episodeWorkspace?.episodes.map(e => ({ episode: e.index, label: e.title })) || []} onNavigate={props.onVoiceNavigate} onAskAdvisor={(question, signal) => new Promise(resolve => {
+        })} onInspectMedia={() => mediaEditRef.current?.inspect() || null} mediaSources={props.mediaWorkspace?.sources} onProposeMediaEdit={proposal => { if (!mediaEditRef.current) throw new Error("素材编辑区尚未就绪"); return mediaEditRef.current.propose(proposal); }} onProductionAction={executeProductionAction} disabled={!userId || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onUse={text => setDraft(text)} targets={props.voiceTargets || props.episodeWorkspace?.episodes.map(e => ({ episode: e.index, label: e.title })) || []} onNavigate={props.onVoiceNavigate} onAskAdvisor={(question, signal) => new Promise(resolve => {
           if (signal.aborted) { resolve(undefined); return; }
           let done = false;
           const reply = (answer?: string) => { if (done) return; done = true; signal.removeEventListener("abort", abort); for (const [id, callback] of Array.from(voiceReplies.current)) if (callback === reply) voiceReplies.current.delete(id); resolve(answer); };
@@ -755,7 +840,13 @@ export default function ManhuaCreativeAdvisorPanel(props: {
           signal.addEventListener("abort", abort, { once: true });
           if (!send(question, undefined, false, undefined, reply)) reply();
         })} />
+          {operationPlan && <section aria-label="工作流操作方案" className="rounded border border-cyan-300/30 p-3 text-sm">
+            <p className="whitespace-pre-wrap">{operationPlan.plan.summaryZh}</p>
+            <p className="mt-1 text-xs text-white/60">{operationPlan.result ? "原操作回执" : "方案已准备，尚未执行"}</p>
+            {operationPlan.result ? <pre className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap break-words text-xs">{operationPlan.result}</pre> : <button type="button" disabled={operationBusy || asking || Boolean(pendingPaid) || unresolvedFailed || operationPlan.source !== operationSource} onClick={() => void applyWorkflowOperation()} className="mt-2 rounded border px-3 py-2">确认执行这一步</button>}
+          </section>}
         <div className="flex items-end gap-2">
+          <button type="button" disabled={!operationKey || operationBusy || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked || draft.trim().length < 2} onClick={() => void requestWorkflowOperation()} className="rounded border border-cyan-300/40 px-3 py-2">{operationBusy ? "正在核对操作…" : "让顾问操作工作流"}</button>
           <textarea ref={questionRef} aria-label="向创作顾问提问" value={draft} onChange={(event) => setDraft(event.target.value)} rows={2} maxLength={1200} disabled={!userId || sessionStorageBlocked}
             onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send(draft); } }}
             placeholder={props.worldTarget ? "描述场景布局、时间和氛围；顾问会给出可确认的3DGS方案。" : props.previsTarget ? "描述人物走位、动作和镜头；下方点击生成白模视频试看。" : "问当前剧本、人物或镜头…"} className="min-w-0 flex-1 resize-none rounded-lg border border-white/20 bg-black/20 px-3 py-2 text-sm outline-none focus:border-cyan-300" />

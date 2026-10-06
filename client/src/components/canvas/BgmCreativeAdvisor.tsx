@@ -1,3 +1,4 @@
+import type { AdvisorBgmControl } from "@/lib/manhuaAdvisorWorkflowControl";
 import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -6,8 +7,9 @@ import type { ManhuaCreativeAdvisorContext } from "@shared/manhuaCreativeAdvisor
 import { advisorBgmMixPlanSchema, parseAdvisorBgmMixPlan, type AdvisorBgmMixPlan, type AdvisorBgmMixTarget } from "@shared/manhuaAdvisorBgmMix";
 
 /** 配乐咨询复用现有创作顾问的鉴权、额度、操作编号和退款事务。 */
-export function BgmCreativeAdvisor({context,target,storageKey,onApply}: {
+export function BgmCreativeAdvisor({context,target,storageKey,onApply,onAdvisorControl}: {
   context?: ManhuaCreativeAdvisorContext; target?: AdvisorBgmMixTarget;
+  onAdvisorControl?:(control:AdvisorBgmControl|null)=>void;
   storageKey:string; onApply:(plan:AdvisorBgmMixPlan)=>void;
 }) {
   const mutation=trpc.mvAnalysis.askPlatformSkillQa.useMutation({retry:false});
@@ -33,11 +35,12 @@ export function BgmCreativeAdvisor({context,target,storageKey,onApply}: {
       setPaid(false);
     } catch {setStorageBlocked(true);setError("配乐咨询恢复记录无法读取，停止新咨询以保护原记录");pending.current=null;}
   },[candidateKey,pendingKey]);
-  const ask=async(confirmPaid=false)=>{
-    if (!target||!context||lock.current||storageBlocked) return;
+  const ask=async(confirmPaid=false, requestedQuestion?:string)=>{
+    if (!target||!context||lock.current||storageBlocked) throw new Error("配乐顾问目标未就绪、恢复记录受阻或咨询仍运行");
     lock.current=true;setError("");
     try {
-      const request=pending.current??{requestId:crypto.randomUUID(),question,rawQuestion:question,manhuaContext:{...context,bgmMix:target}};
+      const requested=requestedQuestion||question;
+      const request=pending.current??{requestId:crypto.randomUUID(),question:requested,rawQuestion:requested,manhuaContext:{...context,bgmMix:target}};
       if (JSON.stringify(request.manhuaContext?.bgmMix)!==JSON.stringify(target)) throw new Error("恢复中的咨询属于另一素材版本，请返回原版本核对回执");
       localStorage.setItem(pendingKey,JSON.stringify(request));pending.current=request;
       const result=await mutation.mutateAsync({...request, ...(confirmPaid?{confirmPaid:true,confirmedCredits:quota.data?.price}:{})});
@@ -45,20 +48,36 @@ export function BgmCreativeAdvisor({context,target,storageKey,onApply}: {
       localStorage.setItem(candidateKey,JSON.stringify(plan));
       localStorage.removeItem(pendingKey);pending.current=null;
       if (active.current?.sourceKey===target.sourceKey) {setCandidate(plan);setPaid(false);}
+      return JSON.stringify({status:"candidate",summaryZh:plan.summaryZh,sourceKey:plan.sourceKey});
     } catch(err) {
       const message=err instanceof Error?err.message:"配乐顾问未返回建议";
       setError(message);
-      if (/PAYMENT_REQUIRED|免费.*用完|请确认后重试/.test(message)) setPaid(true);
+      if (/PAYMENT_REQUIRED|免费.*用完|请确认后重试/.test(message)) {setPaid(true);return "请在原配乐顾问卡确认费用后继续；保留原咨询编号，未自动扣费。";}
+      throw err;
     } finally {lock.current=false;}
   };
   const matches=Boolean(candidate&&target&&candidate.sourceKey===target.sourceKey);
+  const controlRef=useRef<AdvisorBgmControl>(async()=>"");
+  controlRef.current=async(operation,signal,requestedQuestion)=>{
+    signal.throwIfAborted();
+    if(operation==="inspect")return JSON.stringify({hasTarget:Boolean(target),candidateSummary:candidate?.summaryZh,matches,pending:Boolean(pending.current),busy:mutation.isPending,paidConfirmation:paid,error});
+    if(operation==="analyze") {
+      if(paid) return "请先在原卡确认咨询费用，未发起新的咨询。";
+      return await ask(false,requestedQuestion) || "原咨询尚未取得建议。";
+    }
+    if(!candidate||!matches||mutation.isPending)throw new Error("没有属于当前音画版本的可采用建议");
+    if(!window.confirm("采用此配乐建议到混音时间表？尚不提交混音。"))return "用户取消采用配乐建议。";
+    onApply(candidate);return "已将当前配乐建议采用到原混音时间表，尚未提交混音。";
+  };
+  useEffect(()=>{onAdvisorControl?.((...args)=>controlRef.current(...args));return()=>onAdvisorControl?.(null);},[onAdvisorControl]);
+  const runAsk=(confirmPaid=false)=>{void ask(confirmPaid).catch(()=>{});};
   return <section aria-label="创作顾问配乐判断" className="space-y-2 rounded border border-cyan-300/30 p-2 text-xs">
     <strong>创作顾问 · 配乐判断</strong>
     <p className="text-white/65">顾问读取所选成片的画面与原声，以及已采用配乐；建议强弱、留白与表演呼应。建议不会自动混音或替换原曲。</p>
     <textarea aria-label="配乐顾问要求" value={question} maxLength={2000} onChange={event=>setQuestion(event.target.value)} className="w-full rounded bg-black/30 p-2" />
-    <button type="button" disabled={!target||!context||mutation.isPending||paid||storageBlocked} onClick={()=>void ask()} className="rounded border border-cyan-300/40 p-2 disabled:opacity-40">{mutation.isPending?"正在分析音画…":"让创作顾问判断配乐"}</button>
+    <button type="button" disabled={!target||!context||mutation.isPending||paid||storageBlocked} onClick={()=>runAsk()} className="rounded border border-cyan-300/40 p-2 disabled:opacity-40">{mutation.isPending?"正在分析音画…":"让创作顾问判断配乐"}</button>
     {!target&&<p>先选择真实成片及已采用的BGM，再咨询；不会用文字冒充音画分析。</p>}
-    {paid&&<button type="button" disabled={!quota.data||mutation.isPending} onClick={()=>void ask(true)} className="ml-2 rounded border p-2">确认本次咨询扣除 {quota.data?.price??"待核"} 积分</button>}
+    {paid&&<button type="button" disabled={!quota.data||mutation.isPending} onClick={()=>runAsk(true)} className="ml-2 rounded border p-2">确认本次咨询扣除 {quota.data?.price??"待核"} 积分</button>}
     {error&&<p role="alert" className="text-amber-200">{error}</p>}
     {/ADVISOR_OPERATION_FAILED/.test(error)&&<button type="button" disabled={mutation.isPending} onClick={()=>{
       try {
