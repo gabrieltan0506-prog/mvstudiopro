@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-/** Offline only: emit a reviewable config; never invokes Fly or overwrites fly.toml. */
+/** 仅输出待审配置，不调用 Fly，也不覆盖 fly.toml。 */
 export function dualMachineConfig(source, stage, machineId) {
   if (!["worker", "shared"].includes(stage))
     throw new Error("stage must be worker or shared");
@@ -9,10 +9,15 @@ export function dualMachineConfig(source, stage, machineId) {
     throw new Error(
       "Only the verified existing sin rig is permitted; re-inventory before changing this guard"
     );
-  if (source.includes("MANHUA_HEAVY_WORKER_SPLIT"))
-    throw new Error("Source already contains heavy-worker configuration");
+  // 允许当前已配置的正式文件作为输入；目标不一致时拒绝静默改绑。
+  for (const match of source.matchAll(/MANHUA_HEAVY_MACHINE_ID=([^\s"]+)/g)) {
+    if (match[1] !== machineId) throw new Error("Source targets a different heavy machine");
+  }
+  const cleanSource = source
+    .replace(/MANHUA_HEAVY_WORKER_SPLIT=[^\s"]+\s*/g, "")
+    .replace(/MANHUA_HEAVY_MACHINE_ID=[^\s"]+\s*/g, "");
   let processes = 0;
-  let result = source.replace(/^(  (?:app|rig) = "env )/gm, prefix => {
+  let result = cleanSource.replace(/^(  (?:app|rig) = "env )/gm, prefix => {
     processes++;
     return `${prefix}MANHUA_HEAVY_WORKER_SPLIT=1 MANHUA_HEAVY_MACHINE_ID=${machineId} `;
   });
@@ -22,13 +27,15 @@ export function dualMachineConfig(source, stage, machineId) {
       throw new Error("Expected 8GB retained");
     vms++;
     if (/processes = \['rig'\]/.test(block))
-      return block.replace(/cpus = \d+/, "cpus = 2");
+      return block.replace(/cpu_kind = '[^']+'/, "cpu_kind = 'performance'").replace(/cpus = \d+/, "cpus = 2");
     if (/processes = \['app'\]/.test(block))
       return stage === "shared"
         ? block
             .replace(/cpu_kind = 'performance'/, "cpu_kind = 'shared'")
             .replace(/cpus = \d+/, "cpus = 4")
-        : block;
+        : block
+            .replace(/cpu_kind = '[^']+'/, "cpu_kind = 'performance'")
+            .replace(/cpus = \d+/, "cpus = 2");
     throw new Error("Unexpected process VM");
   });
   if (processes !== 2 || vms !== 2)

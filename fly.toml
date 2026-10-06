@@ -131,12 +131,12 @@ kill_timeout = 300
   strategy = "rolling"
   wait_timeout = "15m"
 
-# 0917：Blender（绑骨/白模渲染）独立进程组。app 开 MANHUA_RIG_WORKER_SPLIT=1 后不再领 Blender 任务；
-# rig 只领 Blender 任务、不跑 growth、不做启动恢复；不挂 http_service、不挂 /data 卷。
-# 首次部署会自动为 rig 建 1 台机（fly scale count rig=1 可调）；rig 掉线时 Blender 任务排队等待，不会被 app 误领。
+# 2026-10-06：网站负责请求与模型编排，既有 sin rig 负责后期、合成及原生学习媒体前处理。
+# 两端绑定同一既有工作机；rig 不跑 growth、不挂 http_service 或 /data，空闲停机沿用既有机制。
+# 部署前核对既有机器及在途任务，不通过增加副本或新建机器替代绑定目标。
 [processes]
-  app = "env MANHUA_RIG_WORKER_SPLIT=1 node --max-old-space-size=4096 --import tsx server/_core/index.ts"
-  rig = "env JOB_WORKER_ROLE=rig MANHUA_RIG_WORKER_SPLIT=1 DISABLE_GROWTH_TREND_SCHEDULER=1 NODE_OPTIONS=--max-old-space-size=4096 pnpm exec tsx server/_core/index.ts"
+  app = "env MANHUA_HEAVY_WORKER_SPLIT=1 MANHUA_HEAVY_MACHINE_ID=7812595b294778 MANHUA_RIG_WORKER_SPLIT=1 node --max-old-space-size=4096 --import tsx server/_core/index.ts"
+  rig = "env MANHUA_HEAVY_WORKER_SPLIT=1 MANHUA_HEAVY_MACHINE_ID=7812595b294778 JOB_WORKER_ROLE=rig MANHUA_RIG_WORKER_SPLIT=1 DISABLE_GROWTH_TREND_SCHEDULER=1 NODE_OPTIONS=--max-old-space-size=4096 pnpm exec tsx server/_core/index.ts"
 
 [http_service]
   internal_port = 3000
@@ -160,19 +160,19 @@ kill_timeout = 300
     path = "/api/health"
 
 [[vm]]
-  # 对齐线上真值（已 scale 到 performance-2x / 8GB）；勿写回 4x 免得下次 Deploy 顶回去
+  # 2026-10-06 用户指定的网站目标规格；配置修改不代表已部署或通过负载验收
   processes = ['app']
   memory = '8gb'
-  cpu_kind = 'performance'
-  cpus = 2
+  cpu_kind = 'shared'
+  cpus = 4
   memory_mb = 8192
 
-# rig：绑定阶段实测 RSS 2.4 GB、CPU 130%（0917）；4 核 8 GB 让真模绑定从 >30 分钟缩短
+# 工作机目标：performance 2 核／8GB；实际跨机性能与工作流验收须在部署后完成。
 [[vm]]
   processes = ['rig']
   memory = '8gb'
   cpu_kind = 'performance'
-  cpus = 4
+  cpus = 2
   memory_mb = 8192
 
 [[mounts]]
