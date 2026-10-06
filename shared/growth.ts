@@ -1,9 +1,5 @@
 import { z } from "zod";
 
-/** 平台实时采集的 burst 间隔；历史回填使用独立节奏。 */
-export const GROWTH_BURST_INTERVAL_MINUTES = 30;
-export const GROWTH_BURST_STAGGER_MINUTES = 3;
-
 export const growthPlatformValues = [
   "douyin",
   "weixin_channels",

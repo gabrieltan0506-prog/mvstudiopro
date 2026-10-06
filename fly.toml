@@ -26,8 +26,8 @@ primary_region = 'sin'  # 新加坡 · 持久卷 growth_data 与运行中机器�
   # 只作存档，改它们必须走 `fly secrets set`。secret 值不可读回，只能看键名与运行时 env。
   GROWTH_STORE_DIR = '/data/growth'
   GROWTH_LEGACY_STORE_FILE = '/data/growth-trends.json'
-  # 网站 8GB 整机给 V8 老生代最多 6GB，其余留给原生缓冲与系统。
-  NODE_OPTIONS = '--max-old-space-size=6144'  # secret 接管
+  # 8GB 整机给 V8 老生代最多 4GB，其余留给原生缓冲、FFmpeg 与系统。
+  NODE_OPTIONS = '--max-old-space-size=4096'  # secret 接管
   DOUYIN_CREATOR_CENTER_ENABLED = '1'  # secret 接管
   DOUYIN_CREATOR_INDEX_ENABLED = '1'  # secret 接管
   DISABLE_GROWTH_TREND_SCHEDULER = '0'  # secret 接管
@@ -57,7 +57,7 @@ primary_region = 'sin'  # 新加坡 · 持久卷 growth_data 与运行中机器�
   # 期间用户的上传会被 Fly 代理判为实例不健康而掐断连接（凌晨实测：连续五次
   # prepareKnowledgeCardCopy 都断在读请求体阶段，模型一次都没被调用）。
   # 取舍很明确：抓不到就下一轮再来，不许占着主线程干等。
-  GROWTH_BURST_INTERVAL_MINUTES = '30'  # 平台 burst：每 30 分钟调度一次
+  GROWTH_BURST_INTERVAL_MINUTES = '15'  # 用户手动 burst：每 15 分钟调度一次
   GROWTH_PLATFORM_COLLECTION_GAP_MS = '240000'
   # 串行通道 + 可中止信号保留；30/60 秒已在线上连续截断三平台的正常请求。
   GROWTH_PLATFORM_RUN_TIMEOUT_MS = '120000'
@@ -135,7 +135,7 @@ kill_timeout = 300
 # 两端绑定同一既有工作机；rig 不跑 growth、不挂 http_service 或 /data，空闲停机沿用既有机制。
 # 部署前核对既有机器及在途任务，不通过增加副本或新建机器替代绑定目标。
 [processes]
-  app = "env MANHUA_HEAVY_WORKER_SPLIT=1 MANHUA_HEAVY_MACHINE_ID=7812595b294778 MANHUA_RIG_WORKER_SPLIT=1 node --max-old-space-size=6144 --import tsx server/_core/index.ts"
+  app = "env MANHUA_HEAVY_WORKER_SPLIT=1 MANHUA_HEAVY_MACHINE_ID=7812595b294778 MANHUA_RIG_WORKER_SPLIT=1 node --max-old-space-size=4096 --import tsx server/_core/index.ts"
   rig = "env MANHUA_HEAVY_WORKER_SPLIT=1 MANHUA_HEAVY_MACHINE_ID=7812595b294778 JOB_WORKER_ROLE=rig MANHUA_RIG_WORKER_SPLIT=1 DISABLE_GROWTH_TREND_SCHEDULER=1 NODE_OPTIONS=--max-old-space-size=4096 pnpm exec tsx server/_core/index.ts"
 
 [http_service]

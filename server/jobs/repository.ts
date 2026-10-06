@@ -10,9 +10,6 @@ import {
   type ManhuaNativeModelReceipt,
 } from "../../shared/manhuaNativeModelReceipt.js";
 
-/** 学习任务累计领取上限（含首次）；只控制崩溃/重启恢复，不扩增模型请求重试。 */
-export const MANHUA_LEARN_MAX_ATTEMPTS = 8;
-
 export type JobType = "video" | "image" | "audio" | "platform" | "pdf_export" | "post_prod";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed";
 
@@ -143,8 +140,8 @@ export async function claimNextManhuaTemplateLearnJob(): Promise<NormalizedJob |
           eq(jobs.type, "video"),
           sql`(${jobs.input}::jsonb->>'action') = 'manhua_template_learn'`,
           sql`coalesce(${jobs.input}::jsonb->>'hiddenAt', '') = ''`,
-          // attempts 在领取时 +1；已达到领取上限的旧 queued 行不能再被部署/轮询复活。
-          sql`coalesce(${jobs.attempts}, 0) < ${MANHUA_LEARN_MAX_ATTEMPTS}`,
+          // attempts 在领取时 +1；已跑满两次的旧 queued 行不能再被部署/轮询复活。
+          sql`coalesce(${jobs.attempts}, 0) < 2`,
         ),
       )
       .orderBy(asc(jobs.createdAt))
@@ -181,7 +178,7 @@ export async function recoverInterruptedManhuaTemplateLearnJobsOnStartup(): Prom
         when coalesce(${jobs.output}::jsonb->>'analysisStage', '') = 'manhua_learn_done'
           then 'succeeded'
         when coalesce(${jobs.input}::jsonb->>'cancelRequestedAt', '') <> '' then 'failed'
-        when coalesce(${jobs.attempts}, 0) >= ${MANHUA_LEARN_MAX_ATTEMPTS} then 'failed'
+        when coalesce(${jobs.attempts}, 0) >= 2 then 'failed'
         else 'queued'
       end`,
       error: sql<string | null>`case
@@ -189,7 +186,7 @@ export async function recoverInterruptedManhuaTemplateLearnJobsOnStartup(): Prom
           then null
         when coalesce(${jobs.input}::jsonb->>'cancelRequestedAt', '') <> ''
           then '用户已停止学习；已落盘内容保留'
-        when coalesce(${jobs.attempts}, 0) >= ${MANHUA_LEARN_MAX_ATTEMPTS}
+        when coalesce(${jobs.attempts}, 0) >= 2
           then '任务在服务重启前已达重试上限；已落盘内容保留，可手动续学'
         else '服务重启，已自动恢复排队'
       end`,
@@ -197,7 +194,7 @@ export async function recoverInterruptedManhuaTemplateLearnJobsOnStartup(): Prom
     })
     .where(
       and(
-        sql`(${jobs.status} = 'running' or (${jobs.status} = 'queued' and coalesce(${jobs.attempts}, 0) >= ${MANHUA_LEARN_MAX_ATTEMPTS}))`,
+        sql`(${jobs.status} = 'running' or (${jobs.status} = 'queued' and coalesce(${jobs.attempts}, 0) >= 2))`,
         eq(jobs.type, "video"),
         sql`(${jobs.input}::jsonb->>'action') = 'manhua_template_learn'`,
       ),
