@@ -44,3 +44,25 @@
 - 新增场景字段合同测试 1 项通过（原 43 项未变而跳过），最终全仓 tsc exit0，正式 Vite 构建 exit0、29.67 秒。未重复原已通过的 99 项。
 
 探针早期夹具存在试写记录类型、进入漫剧模式、沙箱注入及第二场景来源版本不一致问题，已修正测试材料；失败回执保留，没有把这些轮次宣称全通过。世界预览的外部模型和 3D 资源被拦截，加载状态回执通过不代表实际世界画面质量。真实供应商、麦克风、付费/退款、云稿保存恢复、媒体输出及正式线上工作流仍未验证。
+
+## 2026-10-06 独立审查定向修复（改前证据）
+
+审查基线 ad8c17f0 / base d3050250，独立审查报告的来源指纹与本PR一致；不混入PR1669的UI施工。
+
+|ID|真实入口与断点|修复范围/验收|边界|
+|---|---|---|---|
+|WF03-STALE-SCORING · P1|文字候选/Live scoring submit→原混音卡；本地成片、曲目、秒窗/强弱参数未绑定候选|inspect给出当前素材与全部实际混音参数的版本，submit必须回传同版本；A→B或改参数拒绝旧方案，同版本可到原入队入口|保留原确认/计费/任务；原手动混音按当前选择提交，无付费实跑|
+|WF08 · P2|原添加对白/音效按钮与顾问addCue共用固定5秒默认，被3/4秒上限拒绝|仅传入片段时长的新增入口使用合法默认；短于默认起点时回到0；显式非法patch仍拒绝|不修改旧音轨、已采用音频或其他未传时长的调用者|
+
+两项均已确认成立，状态OPEN；将复验实际组件控制器/原按钮与同一严格schema，再追加结果。已有99项和隔离探针不重复运行；正式线上和麦克风等部署后验收不算本次新增阻断。
+
+### 定向修复结果
+
+- WF03-STALE-SCORING：本机定向验证通过。`manhuaAdvisorScoringSource` 按项目、素材、采用参数及实际入队参数生成不暴露素材地址的临时版本；原卡 inspect 返回 sourceKey，严格文字/Live submit 必须携带，并在确认前与入队前复核。更改后再切回、组件重建与旧无版本候选均不能复用旧许可。普通 inspect 同时返回原配乐控制器清单。
+- WF08：本机定向验证通过。新增音轨按本段时长生成合法默认，再应用用户显式 patch 并校验；未传时长的旧调用保持原行为。
+- `pnpm exec vitest run client/src/lib/manhuaAdvisorScoringSource.test.ts shared/canvasAudioCueDefaults.test.ts client/src/lib/manhuaAdvisorWorkflowPlan.test.ts server/services/creativeVoiceProduction.test.ts`：4 文件、85 项通过（19+14+44+8）；最终 `tsc --noEmit --incremental false` exit0；Vite 构建 exit0、23.95 秒；diff-check 通过。
+- CUA 操作真实 CanvasAudioStudio/PostProdWorkshopCard 开发组件：3/4秒手动与顾问新增对白/音效合法，1秒对白为0–1；4秒片段显式endSec6拒绝且不新增。A候选换B及同素材改音量均在入队前拒绝，请求记录为空；重新准备同来源B后仅一次到达测试 queuePostProd，成片B/配乐B/音量0.7，回执test-only-1。
+- 证据：`/Users/tangenjie/Downloads/2026Oct06/PR1668定向复验/` 三张实际组件截图；测试日志 `/private/tmp/1668-review-fix-tests.log`、类型与构建同前缀日志。
+- 双向追链：inspect版本→严格schema→原控制器→两次版本核对→原队列参数；反向由测试队列的B素材及0.7音量回溯到同一快照。短片段由原按钮/顾问共用addCue→时长默认→显式patch→严格校验→原草稿展示；越界失败保持原草稿。
+
+这是本机组件及入队边界验证；网络为明确测试stub，无真实供应商、付费或生产API。先前隔离机结果对应旧HEAD，不能作为本次修改文件的隔离运行证据；本次未重跑隔离机。正式线上、麦克风、实际混音媒体、费用退款与云恢复仍未验，整体保留“尚未线上验收”。

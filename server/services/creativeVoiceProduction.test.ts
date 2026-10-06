@@ -55,3 +55,17 @@ it("七组新动作在两条实时语音路由解析为同一生产事件，拒�
   expect(event({...action,confirmPaid:true})).toMatchObject([{type:"toolRejected"}]);
  }
 });
+
+it("混音提交在两路Live都必须携带原inspect版本，工具说明同步暴露sourceKey", () => {
+  for (const extended of [false, true]) {
+    const event = (args: unknown) => normalizeVoiceMessage(extended, { toolCall: { functionCalls: [{ id: "scoring-source", name: "creativeProduction", args }] } } as any);
+    const action = { action: "scoring", operation: "submit", sourceKey: "scoring:test-current" };
+    expect(event(action)).toMatchObject([{ type: "production", action }]);
+    expect(event({ action: "scoring", operation: "submit" })).toMatchObject([{ type: "toolRejected" }]);
+    for (const plan of creativeVoiceConnectionPlans(extended)) {
+      const tool = voiceSetup(plan, "test", "test-scope").setup.tools[0].functionDeclarations.find(row => row.name === "creativeProduction")!;
+      expect(tool.parameters.properties.sourceKey).toBeDefined();
+      expect(tool.description).toContain("submit必须原样携带本次scoring inspect的sourceKey");
+    }
+  }
+});

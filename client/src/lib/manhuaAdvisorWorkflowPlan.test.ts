@@ -55,7 +55,7 @@ describe("顾问统一工作流契约", () => {
       clipId: "clip-1",
       musicId: "adopted-1",
     },
-    { action: "scoring", operation: "submit" },
+    { action: "scoring", operation: "submit", sourceKey: "scoring:test-current" },
     {
       action: "asset",
       operation: "configure",

@@ -10906,6 +10906,9 @@ async function runAdvisorWriterTrial() {
             busy:writerBusy||factoryBusy,cloudConflict:Boolean(cloudConflict),
             writer:{topic:factoryTopic,brief:writerBrief,templateId:publicTemplateId,episodeCount:writerEpisodeCount,confirmed:writerConfirmed,templates:approvedViralTemplateCards.map(t=>({id:t.publicId,label:t.nameZh})),trialReady:Boolean(trialWriterResult)},
             operations:["writer","asset","modelControl","worldControl","generate","audio","scoring","edit","deliver","storyboardRecovery"],
+            scoring: advisorScoringControls.current.get(postProdScopeKey)
+              ? JSON.parse(await advisorScoringControls.current.get(postProdScopeKey)!({action:"scoring",operation:"inspect"},signal))
+              : {status:"unavailable",note:"原混音卡尚未就绪，先打开后读取scoring inspect；不能准备提交方案"},
             storyboard: voiceStoryboard?.scope === voiceStoryboardScope ? {episode:voiceStoryboard.episode,status:voiceStoryboard.status,error:voiceStoryboard.error,taskId:voiceStoryboard.upstreamTaskId} : null,
             anchors: anchors.map(a => ({id:a.id,name:a.nameZh})),
             assets: assets.map(a => ({id:a.id,name:a.labelZh,role:a.role,has2d:Boolean(a.url),model3d:a.model3d?.status,modelTaskId:a.model3d?.taskId,world3d:a.world3d?.status,worldTaskId:a.world3d?.taskId})),

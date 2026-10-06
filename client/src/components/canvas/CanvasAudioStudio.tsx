@@ -902,8 +902,8 @@ export function CanvasAudioStudioView({
   const addCue = (kind: CanvasAudioCue["kind"], patch: Partial<CanvasAudioCue> = {}, rethrow=false) => {
     try {
       if (current.current.state.cues.length >= 100)throw new Error("本段已达100条音轨草稿上限，原片段保留");
-      const cue=createCanvasAudioCue(kind,crypto.randomUUID());
-      const configured=canvasAudioCueSchema.parse({...cue,...(kind==="bgm"?{startSec:0,endSec:durationSec,sourceEndSec:durationSec}:{}),voice:VOICES[0]?.id||"",...patch});
+      const cue=createCanvasAudioCue(kind,crypto.randomUUID(),durationSec);
+      const configured=canvasAudioCueSchema.parse({...cue,voice:VOICES[0]?.id||"",...patch});
       if(configured.endSec<=configured.startSec || configured.endSec>durationSec)throw new Error("音轨秒窗超出本段，未添加");
       if(configured.mix?.silenceWindows.some(w=>w.endSec<=w.startSec || w.startSec<configured.startSec || w.endSec>configured.endSec))throw new Error("留白须位于本条音轨秒窗内");
       if(patch.voice!==undefined && !VOICES.some(v=>v.id===configured.voice) && !referenceVoices.some(v=>v.voiceId===configured.voice))throw new Error("音色不在当前真实清单，未添加");
