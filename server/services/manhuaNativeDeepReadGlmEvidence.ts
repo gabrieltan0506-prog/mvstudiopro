@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { backupManhuaGlmEvidence, classifyManhuaGlmStorageError } from "./manhuaGlmEvidenceBackup.js";
 import {
   downloadGcsObjectVersioned,
   getGcsBucketName,
@@ -74,9 +75,11 @@ export type NativeDeepReadGlmEvidenceDeps = {
   upload: typeof uploadBufferToGcsIfAbsent;
   getBucket: typeof getGcsBucketName;
   download?: typeof downloadGcsObjectVersioned;
+  backup?: typeof backupManhuaGlmEvidence;
 };
 const defaultDeps: NativeDeepReadGlmEvidenceDeps = {
   upload: uploadBufferToGcsIfAbsent,
+  backup: backupManhuaGlmEvidence,
   getBucket: getGcsBucketName,
 };
 
@@ -306,12 +309,35 @@ export function createNativeDeepReadGlmEvidenceStore(
   const persist = async (file: string, payload: Record<string, unknown>): Promise<NativeDeepReadGlmEvidenceReceipt> => {
     const objectName = `${prefix}/${file}.json`;
     const buffer = Buffer.from(JSON.stringify({ ...identity, ...payload }), "utf8");
+    let backupSaved = false;
+    // 付费回覆先留持久卷副本，GCS故障时不随任务退出丢失；解析结果亦永久保留。
+    if (file !== "request" && deps.backup) {
+      try { await deps.backup(objectName, buffer); backupSaved = true; }
+      catch (error) {
+        console.error("[nativeDeepReadGlmEvidence] backup failed", JSON.stringify({ objectName, category: classifyManhuaGlmStorageError(error) }));
+      }
+    }
     let saved: Awaited<ReturnType<typeof uploadBufferToGcsIfAbsent>>;
     try {
       saved = await deps.upload({ bucket, objectName, buffer, contentType: "application/json" });
-    } catch {
-      // 上游错误可能带URL/鉴权上下文；不把原始错误或cause写入回执。
-      throw new Error(`整集GLM ${file}证据保存失败，停止消费且不得重发模型请求`);
+    } catch (error) {
+      const category = classifyManhuaGlmStorageError(error);
+      // 上传可能已提交而ACK丢失；只回读同一对象逐字节核对，不重新调用模型。
+      // request保持抢占语义，不能把别的执行者已写请求视为本轮调用许可。
+      const download = deps.download || (deps === defaultDeps ? downloadGcsObjectVersioned : undefined);
+      let confirmed: { generation: string } | undefined;
+      if (file !== "request" && download) {
+        try {
+          const existing = await download({ gcsUri: `gs://${bucket}/${objectName}` });
+          if (existing.buffer.equals(buffer)) confirmed = { generation: existing.generation };
+        } catch { /* 读不到不是保存成功；保留关闭式失败。 */ }
+      }
+      if (confirmed) saved = { created: true, generation: confirmed.generation };
+      else {
+        console.error("[nativeDeepReadGlmEvidence] upload failed", JSON.stringify({ objectName, bytes: buffer.byteLength,
+          sha256: createHash("sha256").update(buffer).digest("hex"), category, backupSaved }));
+        throw new Error(`整集GLM ${file}证据保存失败，停止消费且不得重发模型请求`);
+      }
     }
     if (!saved.created) throw new Error(`整集GLM ${file}证据已存在，禁止覆盖`);
     const receipt = { objectName, bytes: buffer.byteLength, sha256: createHash("sha256").update(buffer).digest("hex"),
