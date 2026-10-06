@@ -37,6 +37,7 @@ type Props = {
   advisorSceneRequest?: { id: string; assetId: string };
   onAdvisorViewControl?: (control: AdvisorWorldControl | null, assetId: string) => void;
   scenes: ManhuaWorldStudioScene[];
+  onSelectionChange?: (id: string | null) => void;
   onOpenAdvisor?: (sceneRefId: string) => void;
   busyIds: readonly string[];
   disabled?: boolean;
@@ -104,10 +105,13 @@ const STAGE_CLASS: Record<Stage, string> = {
 
 export function ManhuaWorldStudio(props: Props) {
   const { scenes, busyIds, disabled, onOpenAdvisor, onGenerate, onRetry, onRemove, stageCharacters = [], onExportStageFrame, onSubmitLayoutWorld, previsStatusZh, onOpenPrevis, savedFrameCount = 0, adoptedFrameCount = 0 } = props;
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const activeSceneId = scenes.some(scene => scene.id === activeId) ? activeId : scenes[0]?.id || null;
+  useEffect(() => { props.onSelectionChange?.(activeSceneId); }, [activeSceneId, props.onSelectionChange]);
   const [openPreviewId, setOpenPreviewId] = useState<string | null>(null);
   const rows = useMemo(() => scenes.map(s => ({ s, ...manhuaWorldStageOf(s) })), [scenes]);
   const counts = useMemo(() => manhuaWorldCounts(scenes), [scenes]);
-  useEffect(()=>{if(props.advisorSceneRequest)setOpenPreviewId(props.advisorSceneRequest.assetId);},[props.advisorSceneRequest]);
+  useEffect(()=>{if(props.advisorSceneRequest){setActiveId(props.advisorSceneRequest.assetId);setOpenPreviewId(props.advisorSceneRequest.assetId);}},[props.advisorSceneRequest]);
   return (
     <section className="w-full rounded-xl border border-cyan-300/25 bg-[#0c121d] p-3 text-white" data-manhua-world-studio>
       <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
@@ -129,15 +133,21 @@ export function ManhuaWorldStudio(props: Props) {
       <p className="mb-2 text-[11px] text-white/50">场景只提供空间与机位参考；人物动作、对白和成片仍在后续步骤制作。还没有世界的场景，点击该场景的顾问入口描述生成要求。</p>
       <p className="mb-2 text-[11px] text-white/60" data-world-frame-progress>本段视角图：已保存候选 {savedFrameCount} 张，已采用到镜头 {adoptedFrameCount} 处。保存只建立候选，须在下方逐镜采用后才可进入视频输入。</p>
       {!scenes.length ? <p className="text-[11px] text-amber-100">本剧还没有锁定的场景资产，先在资产区出场景空镜并确认。</p> : null}
-      <ul className="flex flex-col gap-1" data-world-main-list>
-        {rows.map(({ s, stage, labelZh, reasonZh }) => {
+      <div className="grid min-w-0 gap-4 lg:grid-cols-[200px_minmax(0,1fr)]" data-world-workspace>
+      <nav aria-label="选择当前3D场景" className="max-h-[65vh] space-y-2 overflow-y-auto rounded-xl border border-white/10 p-2">
+        {rows.map(({s,labelZh}) => <button key={s.id} type="button" aria-pressed={activeSceneId === s.id} className={`block w-full rounded-lg border p-2 text-left ${activeSceneId === s.id ? "border-cyan-300/60 bg-cyan-500/10" : "border-white/10"}`} onClick={() => {setActiveId(s.id);setOpenPreviewId(null);}}>
+          {s.thumbUrl && <img src={s.thumbUrl} alt="" className="mb-2 aspect-video w-full rounded object-cover" />}<strong className="block break-words text-sm">{s.labelZh}</strong><span className="mt-1 block text-xs text-white/60">{busyIds.includes(s.id) ? "处理中…" : labelZh}</span>
+        </button>)}
+      </nav>
+      <ul className="min-w-0" data-world-main-list>
+        {rows.filter(row => row.s.id === activeSceneId).map(({ s, stage, labelZh, reasonZh }) => {
           const busy = busyIds.includes(s.id);
           const world = s.eligibility.currentWorld3d;
           const assets = world?.assets;
           const canView = stage === "ready" && Boolean(assets);
           return (
-            <li key={s.id} className={`flex flex-wrap items-center gap-2 rounded px-2 py-1 text-[11px] ${canView ? "bg-white/5" : "bg-white/[0.02] text-white/55"}`} data-scene-id={s.id} data-stage={stage}>
-              {s.thumbUrl ? <img src={s.thumbUrl} alt={s.labelZh} className="h-8 w-12 rounded object-cover" /> : <span className="h-8 w-12 rounded bg-white/10" />}
+            <li key={s.id} className={`flex min-w-0 flex-wrap items-center gap-3 rounded-xl p-3 text-xs ${canView ? "bg-white/5" : "bg-white/[0.02] text-white/55"}`} data-scene-id={s.id} data-stage={stage}>
+              {s.thumbUrl ? <img src={s.thumbUrl} alt={s.labelZh} className="h-12 w-20 rounded object-cover" /> : <span className="h-8 w-12 rounded bg-white/10" />}
               <span className="min-w-[4rem] font-medium">{s.labelZh}</span>
               <span className={`rounded px-1.5 py-0.5 ${STAGE_CLASS[stage]}`}>{busy ? "处理中…" : labelZh}</span>
               {reasonZh ? <span className="text-amber-100">{reasonZh}</span> : null}
@@ -152,6 +162,7 @@ export function ManhuaWorldStudio(props: Props) {
                   </button>
                 ) : null}
               </span>
+              {openPreviewId !== s.id || !canView ? <div className="flex min-h-80 w-full flex-col items-center justify-center rounded-xl border border-white/10 bg-black/30 p-3" data-world-reference-preview>{s.thumbUrl ? <img src={s.thumbUrl} alt={`${s.labelZh}场景参考图`} className="max-h-[55vh] max-w-full object-contain" /> : <p>尚无场景参考图</p>}<p className="mt-3 text-xs text-white/55">当前为场景参考图{canView ? "，点击查看场景载入真实3D空间。" : "；世界就绪后可检查空间与保存机位。"}</p></div> : null}
               {openPreviewId === s.id && canView && assets ? (
                 <div className="mt-1 w-full rounded border border-cyan-300/20 bg-black/30 p-2" data-manhua-world-preview>
                   <div>
@@ -173,6 +184,7 @@ export function ManhuaWorldStudio(props: Props) {
           );
         })}
       </ul>
+      </div>
       {scenes.length && (onGenerate || onRemove || onSubmitLayoutWorld) ? (
         <p className="rounded border border-cyan-300/20 p-3 text-xs text-white/70">选定场景后，向创作顾问描述空间关系、时间与氛围；确认方案后生成3DGS。已有场景和视角图保留在本页，人物动作请切换到动作白模标签。</p>
       ) : null}

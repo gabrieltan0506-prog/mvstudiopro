@@ -1,3 +1,4 @@
+import { manhuaAdvisorStudioContextSchema } from "./manhuaAdvisorStudioContext";
 import { advisorMediaSourceSchema } from "./manhuaAdvisorMediaEdit";
 import { advisorFilmReviewTargetSchema } from "./manhuaAdvisorFilmReview";
 import { advisorBgmMixTargetSchema } from "./manhuaAdvisorBgmMix";
@@ -107,6 +108,7 @@ export const manhuaCreativeAdvisorContextSchema = z
     ),
     episodeEndHook: z.string().optional(),
     stage: manhuaCreativeAdvisorStageSchema,
+    activeStudio: manhuaAdvisorStudioContextSchema.optional(),
     videoModel: contextText(
       MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.videoModelChars,
       "成片引擎",

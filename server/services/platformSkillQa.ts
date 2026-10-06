@@ -432,6 +432,7 @@ export function buildManhuaCreativeAdvisorLlmMessages(input: {
     `剧名：${input.context.seriesTitle}`,
     `当前集：第 ${input.context.episodeIndex} 集${input.context.episodeTitle ? `《${input.context.episodeTitle}》` : ""}`,
     `当前阶段：${ADVISOR_STAGE_LABEL_ZH[input.context.stage]}`,
+    input.context.activeStudio ? `当前打开的工作区与目标（不代表已生成或已采用）：${JSON.stringify(input.context.activeStudio)}` : "",
     `编剧确认：${input.context.writerConfirmed ? "已确认" : "未确认"}`,
     "",
     engineFactsBlock,

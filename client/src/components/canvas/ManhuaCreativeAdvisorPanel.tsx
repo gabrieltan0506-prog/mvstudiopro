@@ -1,3 +1,4 @@
+import { MANHUA_ADVISOR_STUDIO_LABELS } from "@shared/manhuaAdvisorStudioContext";
 import { MANHUA_ADVISOR_OPERATION_REQUEST } from "@shared/manhuaAdvisorWorkflow";
 import { advisorWorkflowRevision, advisorWorkflowReceiptContext, parseAdvisorWorkflowPlan, type AdvisorWorkflowPlan } from "@/lib/manhuaAdvisorWorkflowPlan";
 import type { CreativeVoiceProductionAction } from "@shared/creativeVoiceProduction";
@@ -310,7 +311,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
       const question = draft.trim();
       if (question.length < 2) throw new Error("请先说明要操作哪个流程。");
       const inventory = await executeProductionAction({ action: "inspect" }, new AbortController().signal);
-      const workspace = JSON.stringify({ currentInventory: JSON.parse(inventory), ...(operationPlan?.result ? { previousOperation: { action: operationPlan.plan.action, result: advisorWorkflowReceiptContext(operationPlan.result), matchesCurrentSource: operationPlan.source === capturedSource, note: "历史回执仅供识别原任务；目标、版本和在途状态须按当前清单与原入口核对" } } : {}) });
+      const workspace = JSON.stringify({ activeStudio: project?.context.activeStudio, currentInventory: JSON.parse(inventory), ...(operationPlan?.result ? { previousOperation: { action: operationPlan.plan.action, result: advisorWorkflowReceiptContext(operationPlan.result), matchesCurrentSource: operationPlan.source === capturedSource, note: "历史回执仅供识别原任务；目标、版本和在途状态须按当前清单与原入口核对" } } : {}) });
       if(capturedSource!==activeOperationSource.current)throw new Error("作品已变化，未提交旧工作区的操作方案");
       if (!send(`${MANHUA_ADVISOR_OPERATION_REQUEST}${question}`, undefined, false, undefined, undefined, undefined, undefined, {workspace,revision:props.workflowRevision || "legacy-workspace"})) throw new Error("顾问请求未提交，请查看当前任务或提示。");
     } catch (error) { toast.error(error instanceof Error ? error.message : "未准备操作"); }
@@ -499,7 +500,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
       try { previsEdit = { ...previsEdit, previousPreviewSpecJson: advisorPrevisSpecJson(applyAdvisorPrevisPatch(manhuaPrevisSpecSchema.parse(JSON.parse(previsEdit.specJson)), previsCandidate.patch)) }; } catch { /* 未支持要求不继承为已执行配置。 */ }
     }
     let questionContext = project?.context;
-    if (episode && questionContext) questionContext = {...questionContext,episodeIndex:episode.index,episodeTitle:episode.title,episodeBody:episode.body,episodeEndHook:episode.endHook||""};
+    if (episode && questionContext) questionContext = {...questionContext,episodeIndex:episode.index,episodeTitle:episode.title,episodeBody:episode.body,episodeEndHook:episode.endHook||"",activeStudio:questionContext.activeStudio?.episodeIndex===episode.index?questionContext.activeStudio:undefined};
     try {
       if (project && questionContext) questionContext = resolveAdvisorVideoPromptContext({ context: questionContext, question, drafts: project.videoPromptDrafts, selectedSegmentIndex: project.selectedSegmentIndex });
     } catch (error) { toast.error(error instanceof Error ? error.message : "无法读取本段提示词"); return; }
@@ -684,7 +685,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
   }, [autoSnapshot, props.automaticMonitoring, liveSessionActive, userId, draft, creationMode, asking, pendingPaid, failed, sessionStorageBlocked, quotaQuery.data, quotaQuery.isError, turns]);
 
   if (!open && !(previsCandidate && props.previewHost)) return null;
-  const currentStage = project ? MANHUA_ADVISOR_STAGE_LABELS[project.context.stage] : stageZh || "创作咨询";
+  const currentStage = project?.context.activeStudio ? MANHUA_ADVISOR_STUDIO_LABELS[project.context.activeStudio.tool] : project ? MANHUA_ADVISOR_STAGE_LABELS[project.context.stage] : stageZh || "创作咨询";
   function recoverPreviews() {
     if (!previsKey) return;
     try {
@@ -716,7 +717,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
           <h2 className="text-base font-semibold text-cyan-100">创作顾问 <span className="text-xs font-normal text-white/60">· {currentStage}</span></h2>
           <p className="mt-1 truncate text-[11px] text-white/65">{project?.context.seriesTitle || "未命名项目"} · {props.previsLabel || (project ? `第${project.context.episodeIndex}集 · ${project.selectionLabel}` : "当前没有项目上下文")}</p>
         </div>
-        <button type="button" onClick={onClose} className="min-h-10 rounded-md px-3 text-xs text-white/70 hover:bg-white/10 focus-visible:outline-cyan-300">收起</button>
+        <button type="button" onClick={onClose} className="min-h-10 shrink-0 whitespace-nowrap rounded-md px-3 text-xs text-white/70 hover:bg-white/10 focus-visible:outline-cyan-300">收起</button>
       </header>
       <div ref={listRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-3">
         {(props.previsTarget || props.previsIssue) && <section aria-label="白模生成步骤" className="space-y-2 rounded-lg border border-cyan-300/25 p-3 text-xs text-cyan-100">
@@ -823,7 +824,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
       <footer data-advisor-composer className="shrink-0 space-y-2 border-t border-white/10 p-3">
         <p className="text-xs text-white/65" aria-live="polite">{quotaQuery.data?.exempt ? "管理员测试 · 免扣积分" : quota ? `本作品免费剩余 ${quota.remaining}/5 次 · 超出后 ${quota.price} 积分/次` : "正在核对本作品额度…"}</p>
         {props.previsAudioControls}
-        <CreativeVoicePanel onSessionActiveChange={setLiveSessionActive} key={`${userId}:${props.projectId}:${confirmedProjectVersion || "draft"}`} scopeKey={`${userId}:${props.projectId || `legacy:${confirmedProjectVersion || "draft"}`}`} context={JSON.stringify({ stage: stageZh, project: project?.context, selectedTemplate })} onReviewFilm={(blockId, question, signal) => new Promise(resolve => {
+        <CreativeVoicePanel onSessionActiveChange={setLiveSessionActive} key={`${userId}:${props.projectId}:${confirmedProjectVersion || "draft"}`} scopeKey={`${userId}:${props.projectId || `legacy:${confirmedProjectVersion || "draft"}`}`} context={JSON.stringify({ activeStudio: project?.context.activeStudio, stage: currentStage, project: project?.context, selectedTemplate })} onReviewFilm={(blockId, question, signal) => new Promise(resolve => {
           const source = props.mediaWorkspace?.sources.find(s => s.blockId === blockId && s.kind === "video");
           if (signal.aborted || !source || props.mediaWorkspace?.disabled) { resolve("当前影片不可审阅，请重新选择"); return; }
           if (!window.confirm(`把${source.label}交给Gemini Flash审阅？计入本作品顾问次数；超出免费次数会另行确认扣点。`)) { resolve("用户取消影片审阅"); return; }

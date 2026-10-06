@@ -1,3 +1,4 @@
+import type { ManhuaAdvisorStudioContext } from "@shared/manhuaAdvisorStudioContext";
 import type { AdvisorEditControl, AdvisorEditRegistration, AdvisorModelRegistration, AdvisorWorldControl, AdvisorWorldRegistration } from "@/lib/manhuaAdvisorWorkflowControl";
 import { ManhuaShotSearch } from "./ManhuaShotSearch";
 import { filterManhuaShots } from "@/lib/manhuaShotSearch";
@@ -476,6 +477,7 @@ type Props = {
   /** 打开可粘贴/导入完整人物表的编剧入口；缺 canon 时禁止只给不可操作的认领提示。 */
   onOpenWriterEditor?: () => void;
   /** 把内部真实选中镜只读上报给同页顾问；无镜头时上报 null。 */
+  onAdvisorStudioChange?: (context: ManhuaAdvisorStudioContext | null) => void;
   onAdvisorSelectionChange?: (
     selection: {
       episodeIndex: number;
@@ -1266,6 +1268,7 @@ export default function ManhuaScriptWorkbench({
   onConfirmOutline,
   onRestoreOutlineConfirmation,
   onOpenWriterEditor,
+  onAdvisorStudioChange,
   onAdvisorSelectionChange,
   onAdvisorSignalsChange,
   advisorTopIssue = null,
@@ -1515,6 +1518,8 @@ export default function ManhuaScriptWorkbench({
   const [actionTimelineOpen, setActionTimelineOpen] = useState(false);
   const [modelStudioOpen, setModelStudioOpen] = useState(false);
   const [worldStudioOpen, setWorldStudioOpen] = useState(false);
+  const [advisorModelAssetId, setAdvisorModelAssetId] = useState<string | null>(null);
+  const [advisorWorldAssetId, setAdvisorWorldAssetId] = useState<string | null>(null);
   const [activeSecondaryTool, setActiveSecondaryTool] = useState<ManhuaSecondaryTool | null>(null);
   const toggleSecondaryTool = (tool: ManhuaSecondaryTool) => {
     setClipPromptReviewOpen(false);
@@ -2330,6 +2335,16 @@ export default function ManhuaScriptWorkbench({
     setAudioStudioOpen(true);
     setAudioStudioPhase(activePhase);
   }, [audioVoiceClipId, episodeClips, focusEpisode, segments, activeSegNo, activeClip?.id, activePhase, onUpdateClipAudioStudio]);
+  useEffect(() => {
+    const tool = activeSecondaryTool || (activePhase === "edit" ? "edit" : null);
+    const assetId = tool === "model3d" ? advisorModelAssetId : tool === "world3d" ? advisorWorldAssetId : null;
+    onAdvisorStudioChange?.(tool ? { tool, episodeIndex: focusEpisode,
+      ...(assetId ? { assetId } : {}),
+      ...(activeSegment ? { segmentIndex: activeSegNo } : {}),
+      ...(activeClip ? { clipId: activeClip.id } : {}),
+    } : null);
+  }, [advisorModelAssetId, advisorWorldAssetId, activeSecondaryTool, activePhase, focusEpisode, Boolean(activeSegment), activeSegNo, activeClip?.id, onAdvisorStudioChange]);
+  useEffect(() => () => onAdvisorStudioChange?.(null), [onAdvisorStudioChange]);
   const clip = activeClip;
   const clipQuality = clip?.manhuaClipQuality;
   // unverified + 用户已放行 → unverified_waived（持久化只存放行标记，展示层派生）
@@ -3148,7 +3163,7 @@ export default function ManhuaScriptWorkbench({
   }, [advisorPrevisRequest, focusEpisode, activeSegNo, activeClip?.id, factoryBusy, onAdvisorPrevisRequestHandled]);
   const openSecondaryAdvisor = (tool: ManhuaSecondaryTool) => {
     if (tool === "previs" || tool === "actionTimeline") openPrevisAdvisor();
-    else onOpenAdvisor3d?.(activeClip?.id, undefined, tool === "world3d" ? "world" : tool === "model3d" ? "model" : "general");
+    else onOpenAdvisor3d?.(activeClip?.id, tool === "world3d" ? advisorWorldAssetId || undefined : undefined, tool === "world3d" ? "world" : tool === "model3d" ? "model" : "general");
   };
   const selectSecondaryTool = (tool: ManhuaSecondaryTool) => {
     toggleSecondaryTool(tool);
@@ -5492,6 +5507,7 @@ clipPromptReviewOpen ? (
             <ManhuaSecondaryToolTabs active={activeSecondaryTool} tools={(["model3d", "world3d", "previs", "actionTimeline", "audio"] as const).filter(tool => tool === "model3d" ? Boolean(onGenerateAsset3d || onImportAsset3d) : tool === "world3d" ? Boolean(worldStudioScenes.length || onGenerateSceneWorld) : tool === "previs" ? Boolean(onUpdateClipPrevisStudio) : tool === "actionTimeline" ? Boolean(onChangeManhuaActionPlan) : Boolean(onUpdateClipAudioStudio))} onSelect={selectSecondaryTool} />
 
           {modelStudioOpen ? <section role="tabpanel" id="manhua-tool-panel-model3d" aria-labelledby="manhua-tool-tab-model3d" hidden={activeSecondaryTool !== "model3d"}><ManhuaToolBoundary title="人物与道具建模"><Manhua3dModelStudio
+                    onSelectionChange={setAdvisorModelAssetId}
             characters={modelStudioCharacters}
             busyIds={asset3dBusyIds}
             disabled={Boolean(factoryBusy)}
@@ -5508,6 +5524,7 @@ clipPromptReviewOpen ? (
             } : undefined}/></ManhuaToolBoundary></section> : null}
 
           {worldStudioOpen && (worldStudioScenes.length > 0 || onGenerateSceneWorld) ? <section role="tabpanel" id="manhua-tool-panel-world3d" aria-labelledby="manhua-tool-tab-world3d" hidden={activeSecondaryTool !== "world3d"}><ManhuaToolBoundary title="3DGS 场景"><ManhuaWorldStudio
+                    onSelectionChange={setAdvisorWorldAssetId}
             advisorSceneRequest={advisorWorldRequest}
             onAdvisorViewControl={registerAdvisorWorldPreview}
             onOpenAdvisor={onOpenAdvisor3d ? (sceneRefId) => onOpenAdvisor3d(activeClip?.id, sceneRefId, "world") : undefined}

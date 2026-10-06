@@ -1,15 +1,15 @@
 import { maskMediaProviderDetails } from "@/lib/maskMediaUrls";
 /**
  * 3D 模型工作台（PR-4）：把散落在人物卡上的「建立 3D 参考 / 导入 GLB / 预览 / 绑骨」
- * 收成一张全员一览表，按 UX 四问重做：
- *   零位移——不用逐张展开人物卡找按钮；一步达——每人一行、动作固定顺序；
+ * 收成左侧人物列表、当前模型预览与操作栏：
+ *   零位移——不用逐张展开人物卡找按钮；一步达——选择人物后操作固定位置；
  *   可批量——勾选后一键为多人建模；可撤销——建模不覆盖原图，失败可重试，采用前先预览。
  *
  * 不新造后端：全部走既有 onGenerateAsset3d / onImportAsset3d / 预览 / 绑骨回调。
  * 建模走 WaveSpeed Tripo（扣积分）：批量前先显示人数并确认。
  * 0929 简化：每行只露一个按状态的主按钮（建模 / 重试建模 / 预览），上传 GLB、四视角建模、绑骨收进「更多」；只搬位置与文案，回调与扣费不变。
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import ModelViewer from "@/components/ModelViewer";
 import type { ManhuaAsset3dEligibility } from "@shared/manhuaAsset3d";
 import {
@@ -37,6 +37,7 @@ export type Manhua3dModelStudioCharacter = {
 
 type Props = {
   characters: Manhua3dModelStudioCharacter[];
+  onSelectionChange?: (id: string | null) => void;
   busyIds: readonly string[];
   disabled?: boolean;
   onGenerate?: (id: string) => void | Promise<void>;
@@ -141,6 +142,9 @@ export function Manhua3dModelStudio(props: Props) {
   const { characters, busyIds, disabled, onGenerate, onImport, onRig, onGenerateMultiview, onSubmitMultiview } = props;
   const riggedIds = props.riggedIds ?? [];
   const multiviewDrafts = props.multiviewDrafts ?? {};
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const activeCharacterId = characters.some(c => c.id === activeId) ? activeId : characters[0]?.id || null;
+  useEffect(() => { props.onSelectionChange?.(activeCharacterId); }, [activeCharacterId, props.onSelectionChange]);
   const [multiviewOpenId, setMultiviewOpenId] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ id: string; url: string; labelZh: string } | null>(null);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -173,14 +177,24 @@ export function Manhua3dModelStudio(props: Props) {
   return (
     <section className="w-full rounded-xl border border-cyan-300/25 bg-[#0c121d] p-3 text-white" data-manhua-3d-model-studio>
       <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
-        <span className="text-cyan-100">3D 模型 · 全员一览</span>
+        <span className="text-cyan-100">3D 模型 · 当前人物</span>
         <span className="rounded bg-white/10 px-1.5 py-0.5">模型可预览或已绑骨 {counts.ready}/{counts.total}</span>
         <span className="rounded bg-white/10 px-1.5 py-0.5">已绑骨 {counts.rigged}/{counts.total}</span>
         <span className="text-white/50" data-model-studio-hint>建模请选含头到脚、双脚完整可见的全身人物图；半身图可能只生成半身模型。建模扣积分，预览可在这里旋转核对；上传 GLB、四视角建模、绑骨在「更多」里。</span>
       </div>
       {!characters.length ? <p className="text-[11px] text-amber-100">本剧还没有锁定的人物资产，先在资产区锁角色。</p> : null}
-      <ul className="flex flex-col gap-1">
-        {rows.map(({ c, stage, labelZh, reasonZh }) => {
+      <div className="grid min-w-0 gap-4 lg:grid-cols-[200px_minmax(0,1fr)]" data-model-workspace>
+      <nav aria-label="选择当前3D人物" className="max-h-[65vh] space-y-2 overflow-y-auto rounded-xl border border-white/10 p-2">
+        {rows.map(({ c, stage, labelZh }) => <div key={c.id} className={`rounded-lg border p-2 ${activeCharacterId === c.id ? "border-cyan-300/60 bg-cyan-500/10" : "border-white/10"}`}>
+          <button type="button" aria-pressed={activeCharacterId === c.id} className="flex w-full items-center gap-2 text-left" onClick={() => { setActiveId(c.id); setPreview(null); }}>
+            {c.thumbUrl ? <img src={c.thumbUrl} alt="" className="h-16 w-12 rounded object-cover" /> : <span className="h-16 w-12 shrink-0 rounded bg-white/10" />}
+            <span className="min-w-0"><strong className="block break-words text-sm">{c.labelZh}</strong><span className="mt-1 block text-[11px] text-white/60">{busyIds.includes(c.id) ? "处理中…" : labelZh}</span></span>
+          </button>
+          <label className="mt-2 flex items-center gap-2 text-[11px] text-white/65"><input type="checkbox" aria-label={`选择 ${c.labelZh} 批量建模`} disabled={disabled || !onGenerate || busyIds.includes(c.id) || !["none", "failed"].includes(stage)} checked={selected.has(c.id)} onChange={event => setSelected(prev => { const next = new Set(prev); event.target.checked ? next.add(c.id) : next.delete(c.id); return next; })} />批量选择</label>
+        </div>)}
+      </nav>
+      <ul className="min-w-0">
+        {rows.filter(row => row.c.id === activeCharacterId).map(({ c, stage, labelZh, reasonZh }) => {
           const busy = busyIds.includes(c.id);
           const model = c.eligibility.currentModel3d;
           const rigSource = c.rigSource;
@@ -193,26 +207,12 @@ export function Manhua3dModelStudio(props: Props) {
           const canRig = Boolean(rigSource && onRig);
           const hasMore = canImport || canMultiview || canRig;
           return (
-            <li key={c.id} className="flex flex-wrap items-center gap-2 rounded bg-white/5 px-2 py-1 text-[11px]" data-character-id={c.id} data-stage={stage}>
-              <input
-                type="checkbox"
-                aria-label={`选择 ${c.labelZh} 批量建模`}
-                disabled={disabled || !canBuild}
-                checked={selected.has(c.id)}
-                onChange={(e) =>
-                  setSelected((prev) => {
-                    const next = new Set(prev);
-                    if (e.target.checked) next.add(c.id);
-                    else next.delete(c.id);
-                    return next;
-                  })
-                }
-              />
-              {c.thumbUrl ? <img src={c.thumbUrl} alt={c.labelZh} className="h-8 w-8 rounded object-cover" /> : <span className="h-8 w-8 rounded bg-white/10" />}
-              <span className="min-w-[4rem] font-medium">{c.labelZh}</span>
-              <span className={`rounded px-1.5 py-0.5 ${STAGE_CLASS[stage]}`}>{busy ? "处理中…" : labelZh}</span>
-              {reasonZh ? <span className="text-amber-100">{maskMediaProviderDetails(reasonZh)}</span> : null}
-              <span className="ml-auto flex flex-wrap items-center gap-1">
+            <li key={c.id} className="grid min-w-0 grid-cols-1 gap-3 rounded-xl bg-white/5 p-3 text-xs xl:grid-cols-[minmax(0,1fr)_230px]" data-character-id={c.id} data-stage={stage}>
+              <div className="flex flex-wrap items-center gap-2 xl:col-span-2"><strong className="text-base">{c.labelZh}</strong><span className={`rounded px-2 py-1 ${STAGE_CLASS[stage]}`}>{busy ? "处理中…" : labelZh}</span>{reasonZh && <p className="w-full text-amber-100">{maskMediaProviderDetails(reasonZh)}</p>}</div>
+              <div className="min-w-0 rounded-xl border border-white/10 bg-black/30 p-3" data-model-primary-preview>
+                {preview?.id === c.id && preview.url === previewModel?.glbUrl ? <><p className="mb-2 text-xs text-white/60">{c.labelZh} · 拖动旋转，核对头脚及身体完整性</p><ModelViewer glbUrl={preview.url} height={440} /><button type="button" className={btn} onClick={() => setPreview(null)}>返回人物参考图</button></> : <><div className="flex min-h-80 items-center justify-center">{c.thumbUrl ? <img src={c.thumbUrl} alt={`${c.labelZh}当前参考图`} className="max-h-[55vh] max-w-full object-contain" /> : <p className="text-white/55">当前人物尚无参考图</p>}</div><p className="mt-2 text-xs text-white/50">当前显示人物参考图{canPreview ? "，点击预览检查真实模型。" : "；建模或导入后可在此检查真实模型。"}</p></>}
+              </div>
+              <aside aria-label={`${c.labelZh}模型操作`} className="flex min-w-0 flex-col items-start gap-3 rounded-xl border border-white/10 p-3"><strong>模型与动作准备</strong><p className="text-white/65">{stage === "rigged" ? "已有绑骨配置，动作质量仍须在白模预演中检查。" : "先检查模型，再进入绑骨；参考图和旧模型保留。"}</p>
                 {/* 主按钮只露一个：未建模「建模」、失败「重试建模」、建好「预览」；建模中/待核对/不能建模只看状态 */}
                 {canBuild ? (
                   <button type="button" className={btnPrimary} disabled={disabled} data-model-primary="build" onClick={() => void onGenerate?.(c.id)}>
@@ -289,18 +289,9 @@ export function Manhua3dModelStudio(props: Props) {
                     </span>
                   </details>
                 ) : null}
-              </span>
-              {preview?.id === c.id && preview.url === previewModel?.glbUrl ? (
-                <div className="mt-1 w-full rounded border border-cyan-300/30 bg-black/40 p-2" data-model-inline-preview>
-                  <div className="mb-1 flex items-center justify-between gap-2 text-[11px]">
-                    <span>{preview.labelZh} · 拖动旋转，核对是否从头到脚完整</span>
-                    <button type="button" className={btn} onClick={() => setPreview(null)}>收起预览</button>
-                  </div>
-                  <ModelViewer glbUrl={preview.url} height={360} />
-                </div>
-              ) : null}
+              </aside>
               {multiviewOpenId === c.id && onGenerateMultiview && onSubmitMultiview ? (
-                <ManhuaMultiviewPanel
+                <div className="min-w-0 xl:col-span-2"><ManhuaMultiviewPanel
                   labelZh={c.labelZh}
                   draft={multiviewDrafts[c.id]}
                   sourceVersion={c.eligibility.sourceVersion}
@@ -310,12 +301,13 @@ export function Manhua3dModelStudio(props: Props) {
                   rebuild={stage === "ready" || stage === "rigged"}
                   onGenerate={(views) => void onGenerateMultiview(c.id, views)}
                   onSubmit={() => void onSubmitMultiview(c.id)}
-                />
+                /></div>
               ) : null}
             </li>
           );
         })}
       </ul>
+      </div>
       {batchFailures.length ? (
         <p className="mt-2 text-[11px] text-amber-100" data-batch-failures>
           上一批 {batchFailures.length} 人提交失败（其余已提交）：{batchFailures.map((f) => `${characters.find((c) => c.id === f.id)?.labelZh ?? f.id}：${maskMediaProviderDetails(f.messageZh)}`).join("；")}

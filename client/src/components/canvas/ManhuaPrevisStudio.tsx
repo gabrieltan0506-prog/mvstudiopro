@@ -639,6 +639,8 @@ export function ManhuaPrevisStudioView({
         <button type="button" className={button} disabled={disabled || Boolean(pendingId) || busy} onClick={() => onOpenAdvisor(preview?.requestId)}>让创作顾问调整</button>
       </div>}
       <p className="text-xs text-cyan-100" data-previs-source-scope>{manhuaPrevisSourceLabel(studio.spec)}</p>
+      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(280px,1fr)]" data-previs-workspace>
+      <div className="min-w-0 self-start xl:sticky xl:top-4">
       {!preview && (
         <section data-previs-player-empty className="rounded border border-cyan-300/30 bg-black/25 p-5 text-sm text-white/75">
           <strong className="block text-cyan-50">白模渲染预览</strong>
@@ -754,6 +756,8 @@ export function ManhuaPrevisStudioView({
           </details>
         </section>
       )}
+      </div>
+      <aside aria-label="本段白模方案与渲染版本" className="min-w-0 space-y-3 rounded-xl border border-white/10 p-3">
       {actionPlanDrafts.length > 0 && <section aria-label="已保存动作节奏" className="space-y-2 rounded border border-white/15 p-3 text-xs">
         <strong>已保存动作节奏</strong>
         {actionPlanDrafts.map(draft => <div key={draft.executableShotId} className="space-y-1 border-t border-white/10 pt-2"><p>{draft.summaryZh.join("；")}</p><p className="text-amber-100">{draft.issuesZh.join("；")}</p><button type="button" className={button} disabled={disabled || busy || Boolean(pendingId) || !draft.spec || !onOpenAdvisor} onClick={() => {
@@ -931,6 +935,8 @@ export function ManhuaPrevisStudioView({
           恢复旧参考 {i + 1}
         </button>
       ))}
+      </aside>
+      </div>
     </section>
   );
 }
