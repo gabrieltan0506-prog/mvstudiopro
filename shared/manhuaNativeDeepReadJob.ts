@@ -18,6 +18,8 @@ export const MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS = [
   "gemini-3.1-pro-preview",
   "gemini-3.8-flash",
 ] as const;
+/** 1007：新读片唯一模型；历史模型表保留用于已付费证据和任务恢复，不改其指纹。 */
+export const MANHUA_NATIVE_CURRENT_READ_MODEL = "gemini-3.8-flash" as const;
 export type ManhuaNativeDeepReadModelId = (typeof MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS)[number];
 export const MANHUA_NATIVE_DEEP_READ_MODEL_LABELS: Record<ManhuaNativeDeepReadModelId, string> = {
   "gemini-3.1-pro-preview": "Gemini 3.1 Pro",
@@ -282,6 +284,19 @@ export function parseNativeDeepReadJobConfirmation(
         ? params.learnLlm
         : "gpt",
   };
+}
+
+/** 只在新任务入口使用；worker 仍按已保存模型身份恢复，不重标历史 Pro 任务。 */
+export function parseNewNativeDeepReadJobConfirmation(
+  params: Record<string, unknown>,
+  options: { extraSourceHosts?: readonly string[] } = {},
+): NativeDeepReadJobConfirmation {
+  if (params.nativeStructuringOnly === true) return parseNativeDeepReadJobConfirmation(params, options);
+  const model = params.nativeReadModel;
+  if (model !== undefined && model !== null && model !== "" && model !== MANHUA_NATIVE_CURRENT_READ_MODEL) {
+    throw new Error("新读片仅支持 Gemini 3.8 Flash");
+  }
+  return parseNativeDeepReadJobConfirmation({ ...params, nativeReadModel: MANHUA_NATIVE_CURRENT_READ_MODEL }, options);
 }
 
 export function resolveNativeDeepReadJobTimeoutMs(modelCalls: number): number {

@@ -86,10 +86,10 @@ export const manhuaViralTemplateRouter = router({
     .input(z.object({ params: z.record(z.string(), z.unknown()) }))
     .query(async ({ ctx, input }) => {
       assertSiteOwner(ctx.user);
-      const { parseNativeDeepReadJobConfirmation } = await import("../../shared/manhuaNativeDeepReadJob.js");
+      const { parseNewNativeDeepReadJobConfirmation } = await import("../../shared/manhuaNativeDeepReadJob.js");
       const { readManhuaLearnExtraSourceHosts } = await import("../services/manhuaLearn0996Source.js");
       const { buildNativeDeepReadPlanPreviewFromServices } = await import("../services/manhuaNativeDeepReadPlanRuntime.js");
-      const confirmed = parseNativeDeepReadJobConfirmation(input.params, { extraSourceHosts: readManhuaLearnExtraSourceHosts() });
+      const confirmed = parseNewNativeDeepReadJobConfirmation(input.params, { extraSourceHosts: readManhuaLearnExtraSourceHosts() });
       const plan = await buildNativeDeepReadPlanPreviewFromServices({
         url: confirmed.url, localVideoUploadId: confirmed.localVideoUploadId,
         userId: String(ctx.user.id), limit: confirmed.planLimit,

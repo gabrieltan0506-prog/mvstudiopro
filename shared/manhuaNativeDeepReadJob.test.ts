@@ -6,6 +6,7 @@ import {
   parseNativeDeepReadSegmentSeconds,
   parseNativeDeepReadVideoFps,
   parseNativeDeepReadJobConfirmation,
+  parseNewNativeDeepReadJobConfirmation,
   nativeDeepReadSeriesKeyForModel,
   resolveNativeDeepReadJobTimeoutMs,
   sameNativeDeepReadJobConfirmation,
@@ -249,5 +250,24 @@ describe("单集重学确认", () => {
   });
   it("重学不能扩成批量", () => {
     expect(() => parseNativeDeepReadJobConfirmation({ ...params, batchSize: 2, nativePlanLimit: 2, nativeRelearn })).toThrow("单集");
+  });
+});
+
+
+describe("新读片唯一Flash入口", () => {
+  const params = { url: "https://www.douyin.com/video/12345", batchSize: 1,
+    nativeDeepReadConfirmed: true, nativeMaxCalls: 200, nativePlanLimit: 1 };
+  it("未选模型的新任务明确使用Flash且保持旧任务身份", () => {
+    const current = parseNewNativeDeepReadJobConfirmation(params);
+    expect(current.readModel).toBe("gemini-3.8-flash");
+    expect(nativeDeepReadSeriesKeyForModel("abc123", current.readModel)).toBe("abc123-g38f");
+    expect(parseNativeDeepReadJobConfirmation(params).readModel).toBe("gemini-3.1-pro-preview");
+    expect(parseNewNativeDeepReadJobConfirmation({ ...params, nativeReadModel: "gemini-3.8-flash" })).toEqual(current);
+  });
+  it("新请求拒绝旧Pro，而历史Pro只整形仍保留证据身份", () => {
+    expect(() => parseNewNativeDeepReadJobConfirmation({ ...params, nativeReadModel: "gemini-3.1-pro-preview" })).toThrow("仅支持");
+    const old = { ...params, nativeStructuringModel: "glm-5.3", nativeReadModel: "gemini-3.1-pro-preview",
+      nativeStructuringOnly: true, nativeStructuringEpisodeIndex: 1, nativeStructuringPreviousJobId: "old-job-12345" };
+    expect(parseNewNativeDeepReadJobConfirmation(old)).toEqual(parseNativeDeepReadJobConfirmation(old));
   });
 });
