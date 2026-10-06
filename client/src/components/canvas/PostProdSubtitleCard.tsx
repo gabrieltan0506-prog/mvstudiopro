@@ -1,5 +1,5 @@
 import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import type { ManhuaCreativeAdvisorContext } from "@shared/manhuaCreativeAdvisor";
 import { toast } from "sonner";
@@ -10,7 +10,8 @@ import { normalizeDialogueSubtitleSrt } from "@shared/dialogueSubtitleSrt";
 import { SUBTITLE_EFFECT_OPTIONS, type SubtitleEffect } from "@shared/subtitleEffects";
 
 /** 成片字幕使用创作者确认的对白及时间码，不调用语音识别或改写对白。 */
-export function PostProdSubtitleCard({ clips, busy, onSubmit, context, storageKey }: {
+export function PostProdSubtitleCard({ clips, busy, onSubmit, context, storageKey, onSourceChange }:  {
+  onSourceChange?: (source: string) => void;
   clips: Array<{ id: string; url: string; label: string }>;
   busy: boolean;
   context?: ManhuaCreativeAdvisorContext;
@@ -18,6 +19,7 @@ export function PostProdSubtitleCard({ clips, busy, onSubmit, context, storageKe
   onSubmit: (params: { videoUri: string; subtitleSrt: string; effect: SubtitleEffect; styleOverride: { fontSize: number; outline: number; marginV: number; fontName: string } }) => Promise<void>;
 }) {
   const [source, setSource] = useState("");
+  useEffect(() => { onSourceChange?.(source); }, [source, onSourceChange]);
   const [srt, setSrt] = useState("");
   const [fontSize, setFontSize] = useState(16);
   const [effect, setEffect] = useState<SubtitleEffect>("none");

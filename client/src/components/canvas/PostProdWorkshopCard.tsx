@@ -1,3 +1,4 @@
+import type { ManhuaAdvisorStudioContext } from "@shared/manhuaAdvisorStudioContext";
 import { createAdvisorScoringSourceGuard } from "@/lib/manhuaAdvisorScoringSource";
 import type { AdvisorScoringControl, AdvisorScoringRegistration, AdvisorBgmControl } from "@/lib/manhuaAdvisorWorkflowControl";
 import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
@@ -151,7 +152,12 @@ function loadTrackedUpscales(userId: string): TrackedUpscale[] {
   }
 }
 
+const POSTPROD_TOOLS = { concat: "拼接成片", enhance: "超分与补帧", subtitle: "对白字幕", bgm: "BGM混音", loudness: "响度验收" } as const;
+type PostProdTool = keyof typeof POSTPROD_TOOLS;
+
 type PostProdWorkshopCardProps = {
+  onStudioFocus?: (context: ManhuaAdvisorStudioContext) => void;
+  onOpenAdvisor?: () => void;
   blocks: CanvasBlock[];
   onAdvisorControl?: AdvisorScoringRegistration;
   advisorContext?: ManhuaCreativeAdvisorContext;
@@ -204,6 +210,8 @@ function statusBadge(status: PostProdJobStatus): { text: string; cls: string } {
 }
 
 export default function PostProdWorkshopCard({
+  onStudioFocus,
+  onOpenAdvisor,
   blocks,
   advisorContext,
   onAdvisorControl,
@@ -216,6 +224,10 @@ export default function PostProdWorkshopCard({
   sceneSpaceRefs = [],
   spatialContexts = [],
 }: PostProdWorkshopCardProps) {
+  const studioHasFocus = useRef(false);
+  const [activeTool, setActiveTool] = useState<PostProdTool>("bgm");
+  const [subtitleSource, setSubtitleSource] = useState("");
+  const [previewResult, setPreviewResult] = useState<{url:string;label:string} | null>(null);
   const queueMutation = trpc.mvAnalysis.queuePostProd.useMutation();
   const draftBgmMutation = trpc.mvAnalysis.draftManhuaBgmBrief.useMutation();
   const queueBgmMutation = trpc.mvAnalysis.queueManhuaBgm.useMutation();
@@ -1219,7 +1231,7 @@ export default function PostProdWorkshopCard({
         const music=scoringAudioOptions.find(m=>m.id===action.musicId&&m.settings);
         if(!clip||!music)throw new Error("必须选择当前清单中的成片和已采用配乐，未改素材");
         if(!window.confirm("将这段成片与已采用BGM选入原混音卡？仅更新选择，尚不咨询或混音。"))return "用户取消混音素材选择。";
-        setBgmVideoUrl(clip.url);selectScoringMusic(music.id);
+        setActiveTool("bgm");setPreviewResult(null);setBgmVideoUrl(clip.url);selectScoringMusic(music.id);
         return "已更新混音素材与采用参数；请重新读取当前选择再分析，尚未混音。";
       }
       if(action.operation==="analyze"||action.operation==="applyAdvice") {
@@ -1247,6 +1259,10 @@ export default function PostProdWorkshopCard({
   const goCls =
     "inline-flex items-center gap-1.5 rounded-lg border border-cyan-300/45 bg-cyan-500/15 px-3 py-1.5 text-[12px] font-semibold text-cyan-50 hover:bg-cyan-500/25 disabled:opacity-45";
 
+  const sourcePreview = activeTool === "bgm" ? bgmVideoUrl : activeTool === "enhance" ? upscaleVideoUrl : activeTool === "loudness" ? loudVideoUrl : activeTool === "subtitle" ? subtitleSource : clipOptions.find(clip => clip.id === concatSel[0])?.url || "";
+  const sourceForTool = (tool: PostProdTool) => tool === "bgm" ? bgmVideoUrl : tool === "enhance" ? upscaleVideoUrl : tool === "loudness" ? loudVideoUrl : tool === "subtitle" ? subtitleSource : clipOptions.find(clip => clip.id === concatSel[0])?.url || "";
+  const focusStudio = (tool = activeTool) => { const clipId = clipOptions.find(clip => clip.url === sourceForTool(tool))?.id; if (focusEpisode) onStudioFocus?.({tool:"postprod",task:tool,episodeIndex:focusEpisode,...(clipId ? {clipId} : {})}); };
+  useEffect(() => { if (studioHasFocus.current) focusStudio(); }, [activeTool, sourcePreview, focusEpisode]);
   const renderJobOutput = (job: TrackedJob) => {
     if (job.status !== "succeeded" || !job.output) return null;
     if (job.action === "loudness_check") {
@@ -1277,6 +1293,7 @@ export default function PostProdWorkshopCard({
     }
     return (
       <span className="inline-flex items-center gap-2">
+        <button type="button" className="text-xs text-cyan-200 underline" onClick={() => setPreviewResult({url,label:ACTION_LABEL[job.action]})}>预览结果</button>
         <button type="button" onClick={() => void downloadRemoteFile(url, "成片").catch(() => toast.error("下载失败，请稍后重试"))} className="text-[11px] text-cyan-200 underline underline-offset-2">
           下载成片
         </button>
@@ -1288,6 +1305,8 @@ export default function PostProdWorkshopCard({
     <div
       id="manhua-post-production"
       data-postprod-workshop
+      onFocusCapture={() => {studioHasFocus.current = true;focusStudio();}}
+      onBlurCapture={event => {if (!event.currentTarget.contains(event.relatedTarget as Node | null)) studioHasFocus.current = false;}}
       className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4"
     >
       <div className="flex flex-wrap items-center gap-2">
@@ -1637,9 +1656,20 @@ export default function PostProdWorkshopCard({
         </details>
       ) : null}
 
-      <div className="mt-3 grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-4 grid min-w-0 gap-4 xl:grid-cols-[140px_minmax(0,1.4fr)_minmax(280px,1fr)]" data-postprod-workspace>
+        <nav aria-label="后期任务" className="flex flex-wrap content-start gap-2 xl:flex-col">
+          {(Object.entries(POSTPROD_TOOLS) as [PostProdTool,string][]).map(([tool,label]) => <button type="button" key={tool} aria-pressed={activeTool===tool} className={`rounded-lg border px-3 py-3 text-left text-sm ${activeTool===tool ? "border-cyan-300/50 bg-cyan-500/15 text-cyan-50" : "border-white/15 text-white/65"}`} onClick={() => {setActiveTool(tool);setPreviewResult(null);focusStudio(tool);}}>{label}</button>)}
+          {onOpenAdvisor && <button type="button" className="rounded-lg border border-white/20 px-3 py-3 text-left text-xs text-cyan-100" onClick={() => {focusStudio();onOpenAdvisor();}}>与顾问讨论／语音</button>}
+        </nav>
+        <section aria-label="后期当前预览" className="min-w-0 self-start rounded-xl border border-white/15 bg-black/30 p-3 xl:sticky xl:top-4">
+          <h3 className="mb-3 text-sm font-semibold text-white">{previewResult ? `${previewResult.label} · 结果预览` : `${POSTPROD_TOOLS[activeTool]} · 原片预览`}</h3>
+          {previewResult?.url || sourcePreview ? <video key={previewResult?.url || sourcePreview} controls playsInline preload="metadata" src={gcsTransferUrl(previewResult?.url || sourcePreview)} className="aspect-video max-h-[60vh] w-full bg-black object-contain" aria-label={previewResult ? "后期结果视频" : "后期原片视频"} /> : <p className="flex min-h-64 items-center justify-center p-4 text-center text-sm text-white/55">先在右侧选择原片{activeTool === "concat" ? "；此处预览拼接清单的第一段" : ""}。</p>}
+          <p className="mt-3 text-xs text-white/55">{previewResult ? "正在查看已有任务结果，尚未替换原片。" : "正在查看本工具选中的原片；参数修改不会直接改动影片。"}</p>
+          {previewResult && <button type="button" className="mt-3 rounded border px-3 py-2 text-xs text-white" onClick={() => setPreviewResult(null)}>返回原片</button>}
+        </section>
+        <div className="min-w-0 space-y-3" aria-label="当前后期参数">
         {/* 拼接 */}
-        <div id="manhua-post-concat" className="scroll-mt-24 rounded-xl border border-white/10 bg-black/25 p-3">
+        <div hidden={activeTool !== "concat"} id="manhua-post-concat" className="scroll-mt-24 rounded-xl border border-white/10 bg-black/25 p-3">
           <div className="flex items-center gap-1.5 text-[13px] font-semibold text-white">
             <Layers className="h-3.5 w-3.5 text-cyan-300" /> 拼接成片
           </div>
@@ -1700,7 +1730,7 @@ export default function PostProdWorkshopCard({
         </div>
 
         {/* 高清放大：与自由画布共用同一后端任务、计费、退款与恢复链。 */}
-        <div id="manhua-post-enhance" className="scroll-mt-24 rounded-xl border border-white/10 bg-black/25 p-3">
+        <div hidden={activeTool !== "enhance"} id="manhua-post-enhance" className="scroll-mt-24 rounded-xl border border-white/10 bg-black/25 p-3">
           <div className="flex items-center gap-1.5 text-[13px] font-semibold text-white">
             <Maximize2 className="h-3.5 w-3.5 text-sky-300" /> 超分与补帧
           </div>
@@ -1786,10 +1816,10 @@ export default function PostProdWorkshopCard({
           </div>
         </div>
 
-        <PostProdSubtitleCard key={projectScopeKey} context={advisorContext} storageKey={`${storageKey}:${projectScopeKey}:subtitle`} clips={clipOptions} busy={busy || scopedJobs.some(job => job.action === "burn_subtitle" && (job.status === "queued" || job.status === "running"))} onSubmit={async params => { await submit({ action: "burn_subtitle", params }, params.effect === "none" ? "对白字幕成片" : `对白字幕成片 · ${SUBTITLE_EFFECT_OPTIONS.find(option => option.id === params.effect)?.label ?? "字幕特效"}`,true); }} />
+        <div hidden={activeTool !== "subtitle"}><PostProdSubtitleCard onSourceChange={setSubtitleSource} key={projectScopeKey} context={advisorContext} storageKey={`${storageKey}:${projectScopeKey}:subtitle`} clips={clipOptions} busy={busy || scopedJobs.some(job => job.action === "burn_subtitle" && (job.status === "queued" || job.status === "running"))} onSubmit={async params => { await submit({ action: "burn_subtitle", params }, params.effect === "none" ? "对白字幕成片" : `对白字幕成片 · ${SUBTITLE_EFFECT_OPTIONS.find(option => option.id === params.effect)?.label ?? "字幕特效"}`,true); }} /></div>
 
         {/* BGM 贴装 */}
-        <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+        <div hidden={activeTool !== "bgm"} className="rounded-xl border border-white/10 bg-black/25 p-3">
           <div className="flex items-center gap-1.5 text-[13px] font-semibold text-white">
             <Music4 className="h-3.5 w-3.5 text-cyan-300" /> BGM 贴装
           </div>
@@ -1917,7 +1947,7 @@ export default function PostProdWorkshopCard({
         </div>
 
         {/* 响度验收 + 未接工序 */}
-        <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+        <div hidden={activeTool !== "loudness"} className="rounded-xl border border-white/10 bg-black/25 p-3">
           <div className="flex items-center gap-1.5 text-[13px] font-semibold text-white">
             <Volume2 className="h-3.5 w-3.5 text-cyan-300" /> 响度验收
           </div>
@@ -1969,6 +1999,7 @@ export default function PostProdWorkshopCard({
         </div>
       </div>
 
+      </div>
       {/* 任务列表(服务端为主来源;此处为本人任务展示) */}
       {scopedJobs.length > 0 ? (
         <div className="mt-3 space-y-1">

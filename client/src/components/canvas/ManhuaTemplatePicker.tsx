@@ -231,7 +231,7 @@ export default function ManhuaTemplatePicker(props: {
                 </span>
                 <span className="mt-2 block text-[11px] leading-5 text-[#c4b6cc]">
                   {card.methodBrief
-                    ? card.methodBrief.highlights.map(h => (
+                    ? (props.layout === "workbench" ? card.methodBrief.highlights.slice(0, 2) : card.methodBrief.highlights).map(h => (
                         <span key={h} className="mb-2 block">
                           {h}
                         </span>
@@ -244,6 +244,7 @@ export default function ManhuaTemplatePicker(props: {
                   )}
                 </span>
               </button>
+              {props.layout === "workbench" && card.methodBrief && <details className="border-t border-white/10 px-4 py-2 text-xs text-white/70"><summary className="cursor-pointer">查看全部{card.methodBrief.highlights.length}条手法与适用场景</summary><div className="pt-3"><CraftDetails card={card} /></div></details>}
               <label className="flex items-center gap-2 border-t border-white/10 px-3 py-2 text-[11px] text-[#c4b6cc]">
                 <input
                   type="checkbox"

@@ -385,12 +385,14 @@
   align-items: start;
 }
 .novel-template-library > .novel-button:first-child {
-  float: right;
-  margin: 0 0 12px 12px;
+  position: absolute;
+  right: 0;
+  top: 0;
+  margin: 0;
+  z-index: 1;
 }
-.novel-template-picker {
-  clear: both;
-}
+.novel-template-library { position: relative; min-width: 0; }
+.novel-template-picker > div:first-child { padding-right: 136px; min-height: 44px; }
 .novel-template-picker > div:first-child p:first-child {
   font-size: 17px;
 }
@@ -423,7 +425,7 @@
   overflow: hidden;
 }
 .novel-template-rows > div > button {
-  padding: 20px 24px;
+  padding: 16px 20px;
 }
 .novel-template-rows > div > button > span:first-child {
   font-size: 12px;

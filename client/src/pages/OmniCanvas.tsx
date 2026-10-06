@@ -1,3 +1,4 @@
+import type { ManhuaAdvisorStudioContext } from "@shared/manhuaAdvisorStudioContext";
 import { customAssetRefClaimsAnchor } from "@shared/manhuaAssetScriptSync";
 import { advisorWorkflowRevision } from "@/lib/manhuaAdvisorWorkflowPlan";
 import type { AdvisorEditControl, AdvisorModelControl, AdvisorModelRegistration, AdvisorWorldControl, AdvisorScoringControl, AdvisorScoringRegistration } from "@/lib/manhuaAdvisorWorkflowControl";
@@ -1505,7 +1506,30 @@ function OmniCanvasWorkspace() {
   const [advisorFocusSection, setAdvisorFocusSection] = useState<"templates" | null>(null);
   const [optimizationComparisonHost, setOptimizationComparisonHost] = useState<HTMLDivElement | null>(null);
   const [advisorQuestionSeed, setAdvisorQuestionSeed] = useState<{ id: string; question: string; projectKey: string; submit?: boolean } | null>(null);
+  const [canvasMode, setCanvasMode] = useState<CanvasWorkspaceMode>(() => loadCanvasWorkspaceMode());
+  const [workbenchAdvisorStudio, setWorkbenchAdvisorStudio] = useState<ManhuaAdvisorStudioContext | null>(null);
+  const [postprodAdvisorStudio, setPostprodAdvisorStudio] = useState<ManhuaAdvisorStudioContext | null>(null);
+  const [lastAdvisorSurface, setLastAdvisorSurface] = useState<"workbench" | "postprod">("workbench");
+  const reportWorkbenchStudio = useCallback((context: ManhuaAdvisorStudioContext | null) => {
+    setWorkbenchAdvisorStudio(context); setLastAdvisorSurface("workbench");
+  }, []);
+  const reportPostprodStudio = useCallback((context: ManhuaAdvisorStudioContext) => {
+    setPostprodAdvisorStudio(context); setLastAdvisorSurface("postprod");
+  }, []);
+  const advisorStudio = canvasMode === "manhua" && manhuaUiMode === "workbench"
+    ? immersiveWorkspaceView === "topic" ? null : immersiveWorkspaceView === "clip_dock"
+      ? postprodAdvisorStudio || { tool: "postprod" as const, task: "bgm" as const, episodeIndex: writerFocusEpisode }
+      : workbenchAdvisorStudio
+    : lastAdvisorSurface === "postprod" ? postprodAdvisorStudio : workbenchAdvisorStudio;
   const [advisorSelection, setAdvisorSelection] = useState<AdvisorSelection | null>(null);
+  useEffect(() => {
+    if (advisorStudio?.tool !== "previs" && advisorStudio?.tool !== "actionTimeline") setAdvisorPrevisClipId(null);
+    setAdvisor3dContext(current => {
+      if (advisorStudio?.tool === "world3d") return current?.worldTarget && current.worldTarget.sceneRefId !== advisorStudio.assetId ? undefined : current;
+      if (advisorStudio?.tool === "model3d") return current?.worldTarget ? undefined : current;
+      return undefined;
+    });
+  }, [advisorStudio?.tool, advisorStudio?.assetId]);
   /** 工作台上报的缺口／关键帧／3D 状态；工作台未挂载时为 null，顾问按未知处理 */
   const [advisorSignals, setAdvisorSignals] = useState<ManhuaWorkbenchAdvisorSignals | null>(null);
   /** 进阶段主动一条建议；关掉即消失，同阶段本机只弹一次 */
@@ -1577,7 +1601,6 @@ function OmniCanvasWorkspace() {
     },
     [blocks],
   );
-  const [canvasMode, setCanvasMode] = useState<CanvasWorkspaceMode>(() => loadCanvasWorkspaceMode());
   useEffect(() => {
     publishManhuaAdvisorScope(canvasMode === "manhua");
     return () => publishManhuaAdvisorScope(false);
@@ -1619,6 +1642,7 @@ function OmniCanvasWorkspace() {
     refs: customAssetRefs,
     blocks,
     selection: advisorSelection,
+    activeStudio: advisorStudio,
     gate: advisorGate.errors,
     segments: advisorGate.segments,
     workbenchPlan: advisorSignals ? { episodeIndex: advisorSignals.episodeIndex, segments: advisorSignals.plannedSegments } : undefined,
@@ -1632,7 +1656,7 @@ function OmniCanvasWorkspace() {
     writerBusy,
     factoryBusy,
     assembleBusy,
-  }), [projectScope?.projectId, writerPack, projectBible, writerFocusEpisode, workflowPhase, explicitWriterVideoModel, writerConfirmed, customAssetRefs, blocks, advisorSelection, advisorGate, advisorSignals, assembleBusy, factoryBusy, writerBusy]);
+  }), [projectScope?.projectId, writerPack, projectBible, writerFocusEpisode, workflowPhase, explicitWriterVideoModel, writerConfirmed, customAssetRefs, blocks, advisorSelection, advisorStudio, advisorGate, advisorSignals, assembleBusy, factoryBusy, writerBusy]);
   const advisorPrevisEditing = useMemo(() => {
     if (!advisorPrevisClipId) return {};
     const clip = blocks.find(b => b.id === advisorPrevisClipId && !b.archivedFromPreviousScript);
@@ -11219,6 +11243,7 @@ async function runAdvisorWriterTrial() {
                   outboundConfirmedAtByBlock={outboundConfirmedAtByBlock}
                   outboundConfirmedSnapshotByBlock={Object.fromEntries(Object.entries(outboundConfirmationsRef.current).map(([id, confirmation]) => [id, confirmation.fingerprint]))}
                   immersive={immersiveWorkbench}
+                  onAdvisorStudioChange={reportWorkbenchStudio}
                   onAdvisorSelectionChange={setAdvisorSelection}
                   onAdvisorSignalsChange={setAdvisorSignals}
                   advisorTopIssue={advisorTopIssue}
@@ -13915,16 +13940,19 @@ async function runAdvisorWriterTrial() {
 
             <div
               id="manhua-clip-dock-zone"
-              className={`mt-4 max-w-4xl scroll-mt-44 ${
+              className={`mt-4 w-full scroll-mt-44 ${
                 immersiveWorkbench && immersiveWorkspaceView !== "clip_dock" ? "hidden" : ""
               }`}
             >
               <nav aria-label="成片与后期工具" className="mb-3 flex flex-wrap gap-2">
-                {[["manhua-post-concat", "拼接成片"], ["manhua-post-enhance", "2K／4K · 30帧"], ["manhua-post-subtitle", "对白字幕"], ["manhua-post-production", "混音与结果"], ["manhua-delivery-export", "成片与导出"]].map(([id, label]) => <button key={id} type="button" className="rounded-lg border border-cyan-300/30 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-50" onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" })}>{label}</button>)}
+                <button type="button" className="rounded-lg border border-cyan-300/30 px-3 py-2 text-sm text-cyan-50" onClick={() => document.getElementById("manhua-post-production")?.scrollIntoView({block:"start"})}>后期任务与预览</button>
+                <button type="button" className="rounded-lg border border-cyan-300/30 px-3 py-2 text-sm text-cyan-50" onClick={() => document.getElementById("manhua-delivery-export")?.scrollIntoView({block:"start"})}>成片与导出</button>
               </nav>
               {/* 后期工坊(蓝图二):三件套已上线,卡内只挂真实工序;按用户挂载防串单 */}
               {user?.id ? (
                 <PostProdWorkshopCard
+                  onStudioFocus={reportPostprodStudio}
+                  onOpenAdvisor={() => {setAdvisorDockHost(null);chooseAdvisorVisibility(true);}}
                   onAdvisorControl={registerAdvisorScoringControl}
                   key={`${user.id}:${postProdScopeKey}`}
                   blocks={blocks}

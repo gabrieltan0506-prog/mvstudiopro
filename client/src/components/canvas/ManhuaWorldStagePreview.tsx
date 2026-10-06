@@ -597,13 +597,13 @@ export function ManhuaWorldStagePreview(props: Props) {
   const btnOn = "rounded border border-cyan-300/70 bg-cyan-500/25 px-2 py-0.5 text-[11px] text-cyan-50";
 
   return (
-    <div className={`flex w-full flex-col gap-1 ${expanded ? "fixed inset-2 z-[100] overflow-y-auto rounded-lg border border-cyan-300/40 bg-[#0b1018] p-3 shadow-2xl md:inset-4" : ""}`} data-manhua-world-stage data-stage-status={status} data-stage-revision={revision} data-stage-expanded={expanded}>
-      <div className="flex flex-wrap gap-1 text-[11px]" data-stage-load-summary>
+    <div className={`grid min-w-0 w-full grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_220px] ${expanded ? "fixed inset-2 z-[100] overflow-y-auto rounded-lg border border-cyan-300/40 bg-[#0b1018] p-3 shadow-2xl md:inset-4" : ""}`} data-manhua-world-stage data-stage-status={status} data-stage-revision={revision} data-stage-expanded={expanded}>
+      <div className="flex flex-wrap gap-1 text-xs xl:col-span-2" data-stage-load-summary>
         <span className={`rounded px-2 py-0.5 ${loaded ? "bg-emerald-500/20 text-emerald-100" : "bg-white/10 text-white/70"}`} data-world-load-state={loaded ? "loaded" : status}>世界画面：{loaded ? "已载入" : status === "error" ? "载入失败" : "载入中"}</span>
         <span className={`rounded px-2 py-0.5 ${loadedActorCount === expectedActorIds.length && loaded ? "bg-emerald-500/20 text-emerald-100" : "bg-amber-500/15 text-amber-100"}`} data-actor-load-count={`${loadedActorCount}/${expectedActorIds.length}`}>人物模型：{expectedActorIds.length ? `${loadedActorCount}/${expectedActorIds.length} 已载入` : "本段未摆人物"}</span>
         <span className="text-white/50">世界与全部预期人物均载入后，才能保存视角图。</span>
       </div>
-      <div className="flex flex-wrap items-center gap-1 text-[11px]">
+      <div aria-label="场景机位与保存" className="flex flex-wrap items-start gap-2 rounded-xl border border-white/10 p-3 text-xs xl:col-start-2 xl:row-start-2 xl:flex-col">
         <button type="button" className={btn} aria-label={expanded ? "退出放大场景" : "放大场景"} onClick={() => setExpanded((value) => !value)}>
           {expanded ? "退出放大" : "放大场景"}
         </button>
@@ -659,7 +659,7 @@ export function ManhuaWorldStagePreview(props: Props) {
           </button>
         ) : null}
       </div>
-      <p className="text-[10px] text-white/45">
+      <p className="text-xs text-white/55 xl:col-span-2">
         在画面中拖动可旋转视角，滚轮可推近或推远；切换机位会回到该机位的初始角度。
         {characters.length ? `本段有 ${characters.length} 个人物；` : "本段暂未摆入人物；"}
         {rigs.ots.kind === "single" && cameraKind === "ots" ? " 缺过肩对象，过肩退为单人正面。" : ""}
@@ -667,7 +667,7 @@ export function ManhuaWorldStagePreview(props: Props) {
         {status === "partial" ? " 有人物或资产未载入，暂不能保存视角图。" : ""}
         {exporting ? " 视角图正在保存，请稍候。" : ""}
       </p>
-      <div className="relative w-full overflow-hidden rounded border border-cyan-300/20 bg-black" style={{ height: expanded ? "max(340px, calc(100dvh - 180px))" : height }} data-stage-viewer>
+      <div className="relative min-w-0 w-full overflow-hidden rounded-xl border border-cyan-300/20 bg-black xl:col-start-1 xl:row-start-2" style={{ height: expanded ? "max(340px, calc(100dvh - 180px))" : height }} data-stage-viewer>
         <iframe key={revision} ref={iframeRef} title={`${sceneLabelZh} 3D 世界预览`} srcDoc={srcDoc} sandbox="allow-scripts" className="h-full w-full" style={{ border: 0 }} />
         {status === "error" ? (
           <div className="absolute inset-0 flex items-center justify-center bg-black/70 p-3 text-center text-[11px] text-amber-100" data-stage-placeholder>
@@ -676,12 +676,12 @@ export function ManhuaWorldStagePreview(props: Props) {
         ) : null}
       </div>
       {status !== "error" && noteZh ? (
-        <p className="text-[10px] text-amber-100" data-stage-note>
+        <p className="text-xs text-amber-100 xl:col-span-2" data-stage-note>
           {noteZh}
         </p>
       ) : null}
       {actorReasons.length || colliderFailed ? (
-        <ul className="flex flex-col gap-0.5 text-[10px] text-amber-100/90" data-stage-failures>
+        <ul className="flex flex-col gap-1 text-xs text-amber-100/90 xl:col-span-2" data-stage-failures>
           {actorReasons.map((r) => (
             <li key={`actor:${r.id}`} data-actor-id={r.id} data-actor-issue={r.code}>
               <b className="font-medium text-amber-50">{r.labelZh}</b>：{r.titleZh}。{r.fixZh}
