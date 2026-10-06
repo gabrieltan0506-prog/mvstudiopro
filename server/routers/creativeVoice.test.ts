@@ -34,7 +34,8 @@ describe("语音代理新增鉴权与工具回传", () => {
     for(let i=0;i<4;i++) {
       events({type:"workflow",id:`note-${i}`,action:{action:"inspect"}});
       await vi.waitFor(()=>expect(messages.some(m=>m.id===`note-${i}`)).toBe(true));
-      client.send(JSON.stringify({type:"toolResult",id:`note-${i}`,text:"本机保存成功"}));
+      // 本例验证不同结果的连续回传；相同 inspect 的空耗熔断由后续专门用例验证。
+      client.send(JSON.stringify({type:"toolResult",id:`note-${i}`,text:`本机保存结果 ${i}`}));
       await vi.waitFor(()=>expect(upstream.send).toHaveBeenCalledTimes(i+1));
     }
     client.send(JSON.stringify({type:"toolResult",id:"note-3",text:"重复结果"}));

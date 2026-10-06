@@ -55,12 +55,26 @@ export function creativeVoiceProductionToolParameters() {
     const result:Record<string,any>={};
     for(const [key,item] of Object.entries(value)) {
       if(["$schema","additionalProperties"].includes(key))continue;
+      // Live 的 Schema 不接受 JSON Schema 的开区间字段；执行时仍由原 Zod 契约严格校验。
+      if(key==="exclusiveMinimum" || key==="exclusiveMaximum")continue;
       if(key==="prefixItems"){const items=item as any[];result.items=convert(items[0]);result.minItems=items.length;result.maxItems=items.length;continue;}
       if(key==="items" && item===false)continue;
       if(key==="const"){result.enum=[item];continue;}
       if(key==="type"){result.type=String(item).toUpperCase();continue;}
       result[key]=convert(item);
     }
+    const hints:string[]=[];
+    if(typeof value.exclusiveMinimum === "number") {
+      const bound=value.type === "integer" ? Math.floor(value.exclusiveMinimum)+1 : value.exclusiveMinimum;
+      result.minimum=Math.max(result.minimum ?? -Infinity,bound);
+      if(value.type !== "integer")hints.push(`值必须大于 ${value.exclusiveMinimum}（不含边界）`);
+    }
+    if(typeof value.exclusiveMaximum === "number") {
+      const bound=value.type === "integer" ? Math.ceil(value.exclusiveMaximum)-1 : value.exclusiveMaximum;
+      result.maximum=Math.min(result.maximum ?? Infinity,bound);
+      if(value.type !== "integer")hints.push(`值必须小于 ${value.exclusiveMaximum}（不含边界）`);
+    }
+    if(hints.length)result.description=[result.description,...hints].filter(Boolean).join("；");
     return result;
   };
   for(const variant of creativeVoiceProductionSchema.options) {

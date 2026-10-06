@@ -69,3 +69,36 @@ it("混音提交在两路Live都必须携带原inspect版本，工具说明同�
     }
   }
 });
+
+it("所有Live路由的完整工具声明只包含Google Schema字段，正数边界仍有提示", () => {
+ const allowed=new Set(["type","format","title","description","nullable","default","items","minItems","maxItems","enum","properties","propertyOrdering","required","minProperties","maxProperties","minimum","maximum","minLength","maxLength","pattern","example","anyOf"]);
+ const inspect=(schema:any)=>{
+  for(const key of Object.keys(schema))expect(allowed.has(key),`不支持的Schema字段: ${key}`).toBe(true);
+  for(const child of Object.values(schema.properties||{}))inspect(child);
+  if(schema.items)inspect(schema.items);
+  for(const child of schema.anyOf||[])inspect(child);
+ };
+ for(const extended of [false,true])for(const plan of creativeVoiceConnectionPlans(extended)){
+  const tools=voiceSetup(plan,"test","test-project").setup.tools[0].functionDeclarations;
+  for(const tool of tools)inspect(tool.parameters);
+  const p=tools.find(t=>t.name==="creativeProduction")!.parameters.properties as any;
+  expect(p.episode.minimum).toBe(1);
+  expect(p.shotIndex.minimum).toBe(1);
+  expect(p.order.items.minimum).toBe(1);
+  for(const node of [p.outSec,p.patch.properties.endSec,p.patch.properties.sourceEndSec]){
+   expect(node.minimum).toBe(0);expect(node.description).toContain("不含边界");
+  }
+ }
+});
+
+it("Live声明转换不放宽工具执行的正数、整数和音轨边界",()=>{
+ for(const extended of [false,true]){
+  const event=(args:unknown)=>normalizeVoiceMessage(extended,{toolCall:{functionCalls:[{id:"boundary",name:"creativeProduction",args}]}} as any);
+  for(const episode of [0,-1,1.5])expect(event({action:"applyEpisode",episode})).toMatchObject([{type:"toolRejected"}]);
+  for(const key of ["endSec","sourceEndSec"])for(const value of [0,-0.1])expect(event({action:"audio",operation:"configureCue",clipId:"clip",cueId:"cue",patch:{[key]:value}})).toMatchObject([{type:"toolRejected"}]);
+  expect(event({action:"edit",operation:"trim",episode:1,shotIndex:0,inSec:0,outSec:1})).toMatchObject([{type:"toolRejected"}]);
+  expect(event({action:"edit",operation:"reorder",episode:1,order:[0,1]})).toMatchObject([{type:"toolRejected"}]);
+  expect(event({action:"edit",operation:"trim",episode:1,shotIndex:1,inSec:0,outSec:0})).toMatchObject([{type:"toolRejected"}]);
+  expect(event({action:"audio",operation:"configureCue",clipId:"clip",cueId:"cue",patch:{endSec:0.1}})).toMatchObject([{type:"production"}]);
+ }
+});
