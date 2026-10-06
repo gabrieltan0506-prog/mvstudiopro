@@ -4093,10 +4093,11 @@ async function runClaimedJob(
           ? partialOutput.nativeModelReceipts
           : []),
       ]);
-      const receiptPatch =
-        failureReceipts.length > 0
-          ? { nativeModelReceipts: failureReceipts }
-          : {};
+      const nativePlanMismatch = (error as { nativePlanMismatch?: unknown })?.nativePlanMismatch;
+      const receiptPatch = {
+        ...(failureReceipts.length > 0 ? { nativeModelReceipts: failureReceipts } : {}),
+        ...(isRecord(nativePlanMismatch) ? { nativePlanMismatch } : {}),
+      };
       const failureOutputPatch = partialOutput
         ? {
             ...partialOutput,

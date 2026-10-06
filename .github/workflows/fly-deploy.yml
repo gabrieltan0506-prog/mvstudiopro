@@ -51,13 +51,10 @@ jobs:
       - uses: docker/setup-buildx-action@v3
       - name: Fetch pre-deploy growth status
         run: |
-          for attempt in 1 2 3 4 5; do
-            if npm run growth:fetch-status -- "$APP_URL" /tmp/growth-before.json; then
-              exit 0
-            fi
-            sleep 10
-          done
-          echo "Warning: failed to fetch pre-deploy growth status, continuing deploy"
+          # 旧版本的状态接口可能仍加载全库；失败后不叠加请求，允许修复版本部署。
+          if ! npm run growth:fetch-status -- "$APP_URL" /tmp/growth-before.json; then
+            echo "::warning::Pre-deploy Growth snapshot unavailable; final verification will remain incomplete"
+          fi
       - uses: superfly/flyctl-actions/setup-flyctl@v1
       - name: Build image once into runner Docker
         # 构建不消耗 Registry 认证有效期；只构建一次，失败时不执行上传或部署。
@@ -102,11 +99,10 @@ jobs:
         run: |
           echo "Waiting 30s for Fly.dev cold-start..."
           sleep 30
-          # 大型 platform-current 会在启动后分段挂回真值。HTTP 已可用不代表 59 万条
-          # 小红书 current 已完成读取；#1249 正是首个 200 快照过早只有 2 万条而误报。
-          # 最多等待 15 分钟，只做只读快照与单调校验，不在部署流程自动改生产数据。
-          for attempt in $(seq 1 30); do
-            echo "Attempt $attempt/30..."
+          # HTTP 可用不代表持久化摘要已就绪；仍核对既有平台计数的单调性。
+          # 新接口只读轻量摘要。最多5次；失败不能当作验收通过。
+          for attempt in $(seq 1 5); do
+            echo "Attempt $attempt/5..."
             if npm run growth:fetch-status -- "$APP_URL" /tmp/growth-after.json; then
               if [ ! -f /tmp/growth-before.json ]; then
                 exit 0
@@ -119,13 +115,15 @@ jobs:
             fi
             sleep 30
           done
-          echo "Warning: post-deploy growth truth did not become monotonic within 15 minutes; final guard will report the regression"
+          echo "::error::Post-deploy Growth verification failed; image may be deployed but acceptance is incomplete"
+          exit 1
       - name: Verify monotonic growth
         run: |
           if [ -f /tmp/growth-before.json ] && [ -f /tmp/growth-after.json ]; then
             npm run growth:verify-monotonic -- ops/growth-monotonic-baseline.json /tmp/growth-before.json /tmp/growth-after.json
           else
-            echo "Skipping monotonic verification because pre/post status snapshots are incomplete"
+            echo "::error::Growth verification incomplete: pre/post snapshots missing"
+            exit 1
           fi
 
   # 前台发版看门狗（原独立 workflow Frontend Deploy Check，2026-08-06 并进来）。

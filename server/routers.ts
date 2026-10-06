@@ -11083,7 +11083,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
      */
     getGrowthSystemStatus: publicProcedure
       .query(async () => {
-        const store = await readTrendStore({ preferDerivedFiles: true }).catch(() => null);
         const smtp = getSmtpStatus();
         const snapshot = await readGrowthStatusSnapshot();
         const runtimeMeta = snapshot?.runtimeMeta || await readTrendRuntimeMeta();
@@ -11172,7 +11171,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const scheduler = activeGrowthPlatformValues
           .map((platform) => {
             const item = runtimeMeta.scheduler?.[platform];
-            const collection = store?.collections?.[platform];
+            const collection = debugSummary?.platforms?.[platform];
             if (!item && !collection) return null;
             const isLocalWeixinChannels = platform === "weixin_channels";
             const migratedCollectionBaseline = isLocalWeixinChannels && !item
@@ -11190,7 +11189,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               lastFailureAt: item?.lastFailureAt,
               burstMode: item?.burstMode ?? false,
               burstTriggeredAt: item?.burstTriggeredAt,
-              lastCollectedCount: item?.lastCollectedCount ?? collection?.items.length ?? 0,
+              lastCollectedCount: item?.lastCollectedCount ?? collection?.currentTotal ?? 0,
               lastAddedCount: item?.lastAddedCount ?? 0,
               // 旧 runtime 状态没有该字段；视频号首次上线健康状态前以现有 collection 建迁移基线。
               lastNewDataAt: item?.lastNewDataAt
@@ -11218,6 +11217,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             message: `Fly /data 剩餘 ${storage.freeMb} MB，低於 300 MB 門檻。`,
           });
         }
+        if (!debugSummary) anomalies.push({ level: "warning", title: "状态摘要尚未就绪", message: "等待采集结果写入状态摘要；不代表仓库为空。" });
         // 平台抓取超时是单平台运行事件，不再升级为全局异常；
         // 前端仅依据 lastFailureAt 在对应平台卡片显示 30 秒，并长期保留累计失败次数。
         const failedBackfills = [backfillLive, backfillHistory].filter((item) => item?.active && item?.status === "failed");
@@ -11249,16 +11249,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const currentSupportActivities = activeGrowthPlatformValues
           .map((platform) => {
             const platformLabel = getGrowthPlatformMeta(platform).label;
-            const collection = store?.collections?.[platform];
-            const topItem = (collection?.items || [])
-              .filter((item) => item.title)
-              .sort((left, right) => ((right.likes || 0) + (right.comments || 0) * 3 + (right.shares || 0) * 5 + Math.round((right.views || 0) / 1000))
-                - ((left.likes || 0) + (left.comments || 0) * 3 + (left.shares || 0) * 5 + Math.round((left.views || 0) / 1000)))[0];
+            const collection = debugSummary?.platforms?.[platform];
             return {
               platform,
               platformLabel,
               summary: getGrowthPlatformMeta(platform).description,
-              hotTopic: topItem?.title || "",
+              hotTopic: collection?.hotTopic || "",
               supportActivities: buildPlatformSupportActivities(platform),
             };
           })
@@ -11269,25 +11265,25 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           targetEmail,
           smtp,
           truthStore: {
+            ready: debugSummary != null,
+            countsAsOf: debugSummary?.updatedAt || null,
             source: debugSummary?.truthSource || "current-json",
             updatedAt: debugSummary?.updatedAt || runtimeMeta.updatedAt || null,
             currentItems: debugSummary?.totals.currentItems || 0,
             archivedItems: debugSummary?.totals.archivedItems || 0,
             platforms: activeGrowthPlatformValues
               .map((platform) => {
-                const items = store?.collections?.[platform]?.items || [];
-                const w15 = summarizeTrendWindowCounts(items, 15);
-                const w30 = summarizeTrendWindowCounts(items, 30);
+                const counts = debugSummary?.platforms?.[platform];
                 const sched = runtimeMeta.scheduler?.[platform];
                 return {
                   platform,
                   platformLabel: getGrowthPlatformMeta(platform).label,
                   platformDescription: getGrowthPlatformMeta(platform).description,
-                  currentItems: Number(debugSummary?.platforms?.[platform]?.currentTotal || w30.warehouseTotal || 0),
+                  currentItems: Number(counts?.currentTotal ?? 0),
                   archivedItems: Number(debugSummary?.platforms?.[platform]?.archivedTotal || 0),
-                  warehouseTotal: w30.warehouseTotal,
-                  windowItems15d: w15.windowFiltered,
-                  windowItems30d: w30.windowFiltered,
+                  warehouseTotal: counts?.currentTotal,
+                  windowItems15d: counts?.windowItems15d,
+                  windowItems30d: counts?.windowItems30d,
                   lastPipeline: sched
                     ? {
                         rawFetched: sched.lastRawFetchedCount,

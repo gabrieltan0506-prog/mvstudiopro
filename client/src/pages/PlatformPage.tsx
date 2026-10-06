@@ -172,6 +172,7 @@ import {
   isManhuaLearnEmptyBatchFailure,
   manhuaLearnResultFromFailure,
   manhuaLearnResultFromJobOutput,
+  manhuaLearnResultFromServerJob,
   manhuaLearnResultFromLocalFallback,
   manhuaLearnResultFromSnapshot,
   manhuaLearnResultFromStart,
@@ -2883,7 +2884,7 @@ export default function PlatformPage() {
     const byJobId =
       manhuaLearnServerJobs.find((job) => job.jobId === focusedManhuaLearnBasketItem?.jobId)
       || null;
-    if (byJobId && (byJobId.status === "queued" || byJobId.status === "running")) return byJobId;
+    if (byJobId) return byJobId;
     const focusKey = String(manhuaLearnFocusSeriesKey || "").trim();
     const focusSource = String(
       focusedManhuaLearnBasketItem?.continuation.row.gcsUri
@@ -2958,7 +2959,10 @@ export default function PlatformPage() {
       return;
     }
     setManhuaLearnBasket((prev) => {
+      const current = prev.find(item => item.seriesKey === manhuaLearnResult.seriesKey
+        || (item.continuation.row.gcsUri || item.continuation.row.url) === (continuation.row.gcsUri || continuation.row.url));
       const next = upsertManhuaLearnBasketItem(prev, {
+        ...current,
         seriesKey: manhuaLearnResult.seriesKey,
         continuation: {
           ...continuation,
@@ -3705,6 +3709,30 @@ export default function PlatformPage() {
     setManhuaLearnServerJobs((prev) =>
       reuseManhuaLearnServerJobsIfUnchanged(prev, listed.items));
     setManhuaLearnServerJobsHydrated(true);
+    // 列表轮询就是实际轮询：debug计数和终态也必须同步，不能永久停在入队的0次。
+    setManhuaLearnJobPollTrace(prev => {
+      if (!prev) return prev;
+      const job = listed.items.find(item => item.jobId === prev.jobId);
+      if (!job) return prev;
+      const currentStep = String((job.status === "failed" ? job.error : undefined) || job.output?.analysisStageLabel || job.status).slice(0, 200);
+      return { ...prev, pollCount: prev.pollCount + 1, currentStep,
+        terminalStatus: job.status === "failed" || job.status === "succeeded" ? job.status : undefined,
+        lines: appendPollDebugLine(prev.lines, `${new Date().toISOString()} ${job.status} · ${currentStep}`) };
+    });
+    // 已完成/失败任务可能从待学篮子移除；仍按当前焦点来源接收真实回执。
+    const focusKeyNow = manhuaLearnFocusSeriesKeyRef.current;
+    const focusSourceNow = manhuaLearnContinueRef.current?.row.gcsUri || manhuaLearnContinueRef.current?.row.url;
+    const focusedReceipt = listed.items.find(job => {
+      const params = job.input?.params;
+      if (params?.nativeDeepReadConfirmed !== true) return false;
+      return focusSourceNow ? String(params.dedupeKey || params.gcsUri || params.url || "") === focusSourceNow
+        : Boolean(focusKeyNow && (params.seriesKey === focusKeyNow || job.output?.seriesKey === focusKeyNow));
+    });
+    if (focusedReceipt) setManhuaLearnResult(prev => {
+      if (!prev || prev.seriesKey !== focusKeyNow) return prev;
+      return reuseManhuaLearnResultIfUnchanged(prev, manhuaLearnResultFromServerJob(focusedReceipt, prev));
+    });
+
     // 0903 显示迟到打点：进度行落库时刻 vs 本次轮询收到时刻，>10s 即在控制台留证
     const runningJob = listed.items.find((job) => job.status === "running" || job.status === "queued");
     const progressLog = Array.isArray((runningJob?.output as Record<string, unknown> | undefined)?.learnProgressLog)

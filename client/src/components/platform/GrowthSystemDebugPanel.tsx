@@ -97,8 +97,8 @@ export function GrowthSystemDebugPanel({
           <div className="mt-3 grid gap-2 text-sm text-white/75 md:grid-cols-2">
             <div>真值口径：{formatTruthSource(data.truthStore?.source)}</div>
             <div>真值更新时间：{formatShanghaiDateTime(String(data.truthStore?.updatedAt || ""))}</div>
-            <div>真值当前总量：{String(data.truthStore?.currentItems ?? "-")}</div>
-            <div>真值历史总量：{String(data.truthStore?.archivedItems ?? "-")}</div>
+            <div>真值当前总量：{data.truthStore?.ready === false ? "-" : String(data.truthStore?.currentItems ?? "-")}</div>
+            <div>真值历史总量：{data.truthStore?.ready === false ? "-" : String(data.truthStore?.archivedItems ?? "-")}</div>
             <div className={data.storage?.lowSpace ? "font-semibold text-red-300 animate-pulse" : ""}>
               剩余空间：{data.storage ? `${String(data.storage.freeMb)} MB` : "-"}
             </div>
@@ -210,6 +210,7 @@ export function GrowthSystemDebugPanel({
           {data.truthStore?.platforms?.length ? (
             <div className="mt-4 space-y-2 rounded-2xl border border-sky-200/15 bg-black/15 p-4 text-xs text-white/72">
               <div className="font-semibold text-sky-100">各平台真值拆分（同口径库存）</div>
+              <div>{data.truthStore.ready === false ? "状态摘要尚未就绪，以下计数暂不可用" : `统计快照：${formatShanghaiDateTime(data.truthStore.countsAsOf || undefined)}`}</div>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[640px] border-collapse text-left">
                   <thead>
@@ -232,10 +233,10 @@ export function GrowthSystemDebugPanel({
                           <td className="py-2 pr-3 font-medium text-white/85">
                             {String(item.platformLabel || getPlatformLabel(item.platform))}
                           </td>
-                          <td className="py-2 pr-3">{String((item as { warehouseTotal?: number }).warehouseTotal ?? item.currentItems ?? 0)}</td>
+                          <td className="py-2 pr-3">{data.truthStore.ready === false ? "-" : String((item as { warehouseTotal?: number }).warehouseTotal ?? item.currentItems ?? 0)}</td>
                           <td className="py-2 pr-3">{String((item as { windowItems15d?: number }).windowItems15d ?? "-")}</td>
                           <td className="py-2 pr-3">{String((item as { windowItems30d?: number }).windowItems30d ?? "-")}</td>
-                          <td className="py-2 pr-3">{String(item.archivedItems || 0)}</td>
+                          <td className="py-2 pr-3">{data.truthStore.ready === false ? "-" : String(item.archivedItems || 0)}</td>
                           <td className="py-2 font-mono text-[10px] leading-5 text-white/60">
                             {pipeline
                               ? `raw=${String(pipeline.rawFetched ?? "-")} dedup=${String(pipeline.afterDedup ?? "-")} win=${String(pipeline.afterWindowFilter ?? "-")} add=${String(pipeline.mergedAdded ?? "-")}`
