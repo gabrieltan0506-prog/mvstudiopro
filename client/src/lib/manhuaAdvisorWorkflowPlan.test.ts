@@ -11,6 +11,14 @@ import {
 } from "./manhuaAdvisorWorkflowPlan";
 
 describe("顾问统一工作流契约", () => {
+  it("场景检查允许先读清单，再按真实场景ID读取视角状态", () => {
+    for (const action of [
+      { action: "worldControl", operation: "inspect" },
+      { action: "worldControl", operation: "inspect", assetId: "scene-1" },
+      { action: "worldControl", operation: "inspect", assetId: "scene-1", clipId: "clip-1" },
+    ]) expect(creativeVoiceProductionSchema.parse(action)).toEqual(action);
+    expect(() => creativeVoiceProductionSchema.parse({ action: "worldControl", operation: "inspect", assetId: "scene-1", camera: { position: [1, 2, 3], target: [0, 0, 0], fov: 50 } })).toThrow();
+  });
   it.each([
     { action: "writer", operation: "configure", topic: "宫廷悬疑" },
     {

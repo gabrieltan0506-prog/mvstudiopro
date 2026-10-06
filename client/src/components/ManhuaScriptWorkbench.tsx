@@ -4739,17 +4739,30 @@ clipPromptReviewOpen ? (
   ) : null
   );
 
-  const advisorWorldPreview=useRef<AdvisorWorldControl|null>(null);
-  const registerAdvisorWorldPreview=useCallback((control:AdvisorWorldControl|null)=>{advisorWorldPreview.current=control;},[]);
+  const advisorWorldPreview=useRef<{assetId:string;control:AdvisorWorldControl}|null>(null);
+  const registerAdvisorWorldPreview=useCallback((control:AdvisorWorldControl|null,assetId:string)=>{
+    if(control)advisorWorldPreview.current={assetId,control};
+    else if(advisorWorldPreview.current?.assetId===assetId)advisorWorldPreview.current=null;
+  },[]);
   const advisorWorldControl=useRef<AdvisorWorldControl|null>(null);
   advisorWorldControl.current=async(action,signal)=>{
     signal.throwIfAborted();
     if(factoryBusy && action.operation!=="inspect")throw new Error("原工作流忙碌，未操作场景。");
     if(action.clipId && activeClip?.id!==action.clipId)throw new Error("当前场景不属于目标片段，请先切到正确片段。");
-    if(action.operation==="inspect")return JSON.stringify({clipId:activeClip?.id,shots:stageFrameShotOptions,frames:customAssetRefs.filter(r=>r.stageFrame).map(r=>({id:r.id,label:r.labelZh,stageFrame:r.stageFrame,adoptions:r.stageFrameAdoptions})),scenes:worldStudioScenes.map(row=>({id:row.id,label:row.labelZh,status:row.eligibility.currentWorld3d?.status}))});
+    if(action.operation==="inspect") {
+      const inventory={clipId:activeClip?.id,shots:stageFrameShotOptions,frames:customAssetRefs.filter(r=>r.stageFrame).map(r=>({id:r.id,label:r.labelZh,stageFrame:r.stageFrame,adoptions:r.stageFrameAdoptions})),scenes:worldStudioScenes.map(row=>({id:row.id,label:row.labelZh,status:row.eligibility.currentWorld3d?.status}))};
+      if(!action.assetId)return JSON.stringify(inventory);
+      for(let attempt=0;attempt<25;attempt++) {
+        signal.throwIfAborted();
+        const preview=advisorWorldPreview.current;
+        if(preview?.assetId===action.assetId)return JSON.stringify({...inventory,assetId:action.assetId,view:JSON.parse(await preview.control(action,signal))});
+        await new Promise(resolve=>setTimeout(resolve,200));
+      }
+      throw new Error("所选场景的原3D预览尚未就绪，未读取其他场景或提交生成。");
+    }
     if(action.operation==="exportFrame") {
-      if(!advisorWorldPreview.current)throw new Error("请先在原3DGS面板载入所选场景和人物，未导出。");
-      return advisorWorldPreview.current(action,signal);
+      if(!advisorWorldPreview.current || advisorWorldPreview.current.assetId!==action.assetId)throw new Error("请先在原3DGS面板载入所选场景和人物，未导出。");
+      return advisorWorldPreview.current.control(action,signal);
     }
     const frame=customAssetRefs.find(r=>r.id===action.frameId && r.stageFrame);
     const shot=stageFrameShotOptions.find(row=>row.shotId===action.shotId);

@@ -35,7 +35,7 @@ export type ManhuaWorldLayoutActor = { id: string; nameZh?: string; start: reado
 
 type Props = {
   advisorSceneRequest?: { id: string; assetId: string };
-  onAdvisorViewControl?: (control: AdvisorWorldControl | null) => void;
+  onAdvisorViewControl?: (control: AdvisorWorldControl | null, assetId: string) => void;
   scenes: ManhuaWorldStudioScene[];
   onOpenAdvisor?: (sceneRefId: string) => void;
   busyIds: readonly string[];
@@ -156,7 +156,7 @@ export function ManhuaWorldStudio(props: Props) {
                 <div className="mt-1 w-full rounded border border-cyan-300/20 bg-black/30 p-2" data-manhua-world-preview>
                   <div>
                     <ManhuaWorldStagePreview
-                      onAdvisorControl={control=>props.onAdvisorViewControl?.(control ? (action,signal)=>{if(action.assetId && action.assetId!==s.id)throw new Error("载入的3D世界尚不是目标场景，未导出");return control(action,signal);} : null)}
+                      onAdvisorControl={control=>props.onAdvisorViewControl?.(control ? (action,signal)=>{if(action.assetId && action.assetId!==s.id)throw new Error("载入的3D世界尚不是目标场景，未导出");return control(action,signal);} : null,s.id)}
                       sceneLabelZh={s.labelZh}
                       world={assets}
                       characters={stageCharacters}

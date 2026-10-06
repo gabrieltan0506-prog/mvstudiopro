@@ -10806,6 +10806,13 @@ async function runAdvisorWriterTrial() {
           }
           if(action.action === "worldControl") {
             if(!canUseManhua3d)throw new Error("当前账户未开放3D场景操作。");
+            if (action.operation === "inspect" && !action.assetId) {
+              return JSON.stringify({ worlds: latestCustomAssetRefs.current.filter(ref => ref.role === "scene").map(ref => {
+                const world = evaluateManhuaWorld3dEligibility(ref).currentWorld3d;
+                return { assetId: ref.id, labelZh: ref.labelZh, status: world?.status || "not_generated", taskId: world?.taskId, hasPreview: Boolean(world?.assets?.spz500kUrl) };
+              }), note: "指定当前清单中的assetId后读取该世界的视角状态；未打开或关闭预览，未提交生成。" });
+            }
+            if (action.operation === "inspect" && !latestCustomAssetRefs.current.some(ref => ref.id === action.assetId && evaluateManhuaWorld3dEligibility(ref).currentWorld3d?.status === "succeeded")) throw new Error("当前场景没有成功世界可检查，请先读取世界清单；未提交生成。");
             if(action.operation==="exportFrame" && !latestCustomAssetRefs.current.some(r=>r.id===action.assetId && evaluateManhuaWorld3dEligibility(r).currentWorld3d?.status==="succeeded"))throw new Error("所选世界没有成功产物，未导出。");
             if(action.clipId && !blocksRef.current.some(b=>b.id===action.clipId && (getBlockEpisodeIndex(b)??1)===writerFocusEpisode && !b.archivedFromPreviousScript))throw new Error("片段不属于当前集，请先切集。");
             setManhuaUiMode("workbench");setImmersiveWorkspaceView("workbench");setWorkflowPhase("storyboard");
