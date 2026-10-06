@@ -1038,7 +1038,8 @@ export function readManhuaLearnBasket(userKey: string): ManhuaLearnBasketItem[] 
           && item.result
           && item.result.pipelineMode === "native_deep_read"
           && (
-            typeof item.result.pendingCount !== "number"
+            ["queued", "running", "failed"].includes(item.jobStatus || "")
+            || typeof item.result.pendingCount !== "number"
             || item.result.pendingCount > 0
             || (item.result.missingEpisodeCount || 0) > 0
           ),
@@ -1068,7 +1069,8 @@ export function writeManhuaLearnBasket(userKey: string, items: ManhuaLearnBasket
           || isManhuaLocalVideoSource(item.continuation.row, userKey))
           && item.result.pipelineMode === "native_deep_read"
           && (
-            typeof item.result.pendingCount !== "number"
+            ["queued", "running", "failed"].includes(item.jobStatus || "")
+            || typeof item.result.pendingCount !== "number"
             || item.result.pendingCount > 0
             || (item.result.missingEpisodeCount || 0) > 0
           ),
@@ -1131,7 +1133,8 @@ export function upsertManhuaLearnBasketItem(
   const existingIndex = currentItems.findIndex(matchesItem);
   const kept = currentItems.filter((current) => !matchesItem(current));
   if (
-    typeof item.result.pendingCount === "number"
+    !["queued", "running", "failed"].includes(item.jobStatus || "")
+    && typeof item.result.pendingCount === "number"
     && item.result.pendingCount <= 0
     && (item.result.missingEpisodeCount || 0) <= 0
   ) {
@@ -1272,6 +1275,43 @@ export function nativeLearnTerminalProposalRefreshSignature(
     .join("|");
 }
 
+/** 同一服务端回执同时驱动列表与焦点面板，终态不依赖待学篮子是否仍保留。 */
+export function manhuaLearnResultFromServerJob(job: ManhuaLearnServerJobSnapshot, base: ManhuaLearnResultUi): ManhuaLearnResultUi {
+  const url = String(job.input?.params?.url || "");
+  const title = String(job.input?.params?.title || "");
+  let result: ManhuaLearnResultUi;
+  if (job.status === "succeeded") {
+    const out = job.output || {};
+    result = isManhuaLearnEmptyBatchFailure(out)
+      ? manhuaLearnResultFromFailure({
+          errorZh: String(out.messageZh || "本轮未能成功采下新集"),
+          url,
+          title,
+          prev: base,
+        })
+      : manhuaLearnResultFromJobOutput(out);
+  } else if (job.status === "failed") {
+    // 失败任务仍可能已经完成若干次模型调用并落下逐集卡；先合并服务端
+    // output，再叠失败态，否则费用回执、原生模式与最后进度都会被静默丢弃。
+    const failedBase = mergeManhuaLearnLiveProgress(base, {
+      status: "failed",
+      output: job.output,
+    });
+    result = manhuaLearnResultFromFailure({
+      errorZh: String(job.error || "云端学习失败"),
+      url,
+      title,
+      prev: failedBase,
+    });
+  } else {
+    result = mergeManhuaLearnLiveProgress(base, {
+      status: job.status,
+      output: job.output,
+    });
+  }
+  return result;
+}
+
 /** 服务端 jobs 是并发/关页恢复真源；按来源把各 Job 合并回对应剧集，而不是覆盖当前选中剧。 */
 export function mergeManhuaLearnServerJobsIntoBasket(
   items: ManhuaLearnBasketItem[],
@@ -1305,36 +1345,7 @@ export function mergeManhuaLearnServerJobsIntoBasket(
         ? "native_deep_read"
         : "audio_dense_frames",
     });
-    let result: ManhuaLearnResultUi;
-    if (job.status === "succeeded") {
-      const out = job.output || {};
-      result = isManhuaLearnEmptyBatchFailure(out)
-        ? manhuaLearnResultFromFailure({
-            errorZh: String(out.messageZh || "本轮未能成功采下新集"),
-            url,
-            title,
-            prev: base,
-          })
-        : manhuaLearnResultFromJobOutput(out);
-    } else if (job.status === "failed") {
-      // 失败任务仍可能已经完成若干次模型调用并落下逐集卡；先合并服务端
-      // output，再叠失败态，否则费用回执、原生模式与最后进度都会被静默丢弃。
-      const failedBase = mergeManhuaLearnLiveProgress(base, {
-        status: "failed",
-        output: job.output,
-      });
-      result = manhuaLearnResultFromFailure({
-        errorZh: String(job.error || "云端学习失败"),
-        url,
-        title,
-        prev: failedBase,
-      });
-    } else {
-      result = mergeManhuaLearnLiveProgress(base, {
-        status: job.status,
-        output: job.output,
-      });
-    }
+    const result = manhuaLearnResultFromServerJob(job, base);
     const seriesKey = String(result.seriesKey || requestedSeriesKey || base.seriesKey).trim();
     const continuation: ManhuaLearnActiveJobRecord["continuation"] = {
       row: {
@@ -1769,4 +1780,23 @@ export function mergeNativeProposalListAndDetail<Row extends { id: string }, Det
   detail: Detail | null | undefined,
 ): Row & Partial<Detail> {
   return detail?.id === row.id ? { ...detail, ...row } : { ...row } as Row & Partial<Detail>;
+}
+
+
+/** 从真正收到的服务端任务恢复debug，不要求刷新后再次付费提交。 */
+export function manhuaLearnPollTraceFromServerJob(
+  prev: { jobId: string; label: string; lines: string[]; pollCount: number; terminalStatus?: string; currentStep?: string } | null,
+  job: ManhuaLearnServerJobSnapshot,
+  receivedAt = new Date().toISOString(),
+) {
+  const sameJob = prev?.jobId === job.jobId;
+  const currentStep = String((job.status === "failed" ? job.error : undefined) || job.output?.analysisStageLabel || job.status).slice(0, 200);
+  return {
+    jobId: job.jobId,
+    label: sameJob ? prev.label : `学节奏 · ${String(job.input?.params?.title || "云端任务").slice(0, 24)}`,
+    pollCount: (sameJob ? prev.pollCount : 0) + 1,
+    currentStep,
+    terminalStatus: job.status === "failed" || job.status === "succeeded" ? job.status : undefined,
+    lines: [...(sameJob ? prev.lines : []), `${receivedAt} ${job.status} · ${currentStep}`].slice(-80),
+  };
 }

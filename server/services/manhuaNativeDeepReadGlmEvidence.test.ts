@@ -214,3 +214,69 @@ describe("整集GLM永久原始与解析证据", () => {
     })).rejects.toThrow("解析证据缺失");
   });
 });
+
+
+describe("保存回执丢失与永久副本", () => {
+  it("原文先留永久副本；上传ACK丢失只回读逐字节确认，不重发模型", async () => {
+    const order: string[] = [];
+    let stored = Buffer.alloc(0);
+    const backup = vi.fn(async (_name: string, buffer: Buffer) => { order.push("backup"); stored = Buffer.from(buffer); });
+    const upload = vi.fn(async (input: { buffer: Buffer; objectName: string }) => {
+      if (input.objectName.endsWith("request.json")) return { created: true, generation: "1" };
+      order.push("upload"); throw new Error("fetch failed");
+    });
+    const download = vi.fn(async () => { order.push("readback"); return { buffer: stored, generation: "2", bucket: "test", objectName: "test" }; });
+    const store = createNativeDeepReadGlmEvidenceStore({ callId: "ack-test" }, { upload, backup, download, getBucket: () => "mv-studio-pro-vertex-video-temp" });
+    await store.writeRequest(request);
+    const receipt = await store.writeRawResponse(rawEvent());
+    expect(receipt.generation).toBe("2");
+    expect(order).toEqual(["backup", "upload", "readback"]);
+    expect(upload).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(stored.toString()).response.bodyText).toBe(rawEvent().bodyText);
+    expect(() => store.assertRawResponseSaved()).not.toThrow();
+  });
+
+  it("只有本地副本或云端内容不同仍停止消费，错误分类不泄漏详情", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    const backup = vi.fn(async () => {});
+    const upload = vi.fn(async (input: { objectName: string }) => {
+      if (input.objectName.endsWith("request.json")) return { created: true };
+      throw new Error("gcs_conditional_upload_failed:403:private?token=secret");
+    });
+    const download = vi.fn(async () => ({ buffer: Buffer.from("different"), generation: "2", bucket: "test", objectName: "test" }));
+    try {
+      const store = createNativeDeepReadGlmEvidenceStore({ callId: "mismatch-test" }, { upload, backup, download, getBucket: () => "mv-studio-pro-vertex-video-temp" });
+      await store.writeRequest(request);
+      await expect(store.writeRawResponse(rawEvent())).rejects.toThrow("保存失败");
+      expect(backup).toHaveBeenCalledTimes(1);
+      expect(() => store.assertRawResponseSaved()).toThrow("完整原始响应");
+      expect(JSON.stringify(errorLog.mock.calls)).toContain("http_403");
+      expect(JSON.stringify(errorLog.mock.calls)).not.toContain("token=secret");
+    } finally { errorLog.mockRestore(); }
+  });
+
+  it("请求上传不明不回读冒充创建许可，不启动后续调用", async () => {
+    const download = vi.fn();
+    const upload = vi.fn(async () => { throw new Error("fetch failed"); });
+    const store = createNativeDeepReadGlmEvidenceStore({ callId: "request-failed" }, { upload, download, getBucket: () => "mv-studio-pro-vertex-video-temp" });
+    await expect(store.writeRequest(request)).rejects.toThrow("保存失败");
+    expect(download).not.toHaveBeenCalled();
+    await expect(store.writeRawResponse(rawEvent())).rejects.toThrow("请求证据");
+    expect(upload).toHaveBeenCalledTimes(1);
+  });
+});
+
+it("本地副本失败但GCS成功时保留真实云端回执，不误报丢失", async () => {
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const store = createNativeDeepReadGlmEvidenceStore({ callId: "cloud-confirmed" }, {
+      getBucket: () => "mv-studio-pro-vertex-video-temp",
+      upload: async () => ({ created: true, generation: "7" }),
+      backup: async () => { throw Object.assign(new Error("disk"), { code: "ENOSPC" }); },
+    });
+    await store.writeRequest(request);
+    expect((await store.writeRawResponse(rawEvent())).generation).toBe("7");
+    expect(() => store.assertRawResponseSaved()).not.toThrow();
+    expect(JSON.stringify(log.mock.calls)).toContain("ENOSPC");
+  } finally { log.mockRestore(); }
+});

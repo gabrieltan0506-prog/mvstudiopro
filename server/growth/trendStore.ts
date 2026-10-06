@@ -1,3 +1,4 @@
+import { buildGrowthStatusProjection, type GrowthStatusProjection } from "./growthStatusProjection";
 import { readGrowthGzipJson, writeGrowthGzipJson, mapGrowthSequential } from "./growthJsonStream";
 import { observeRuntimeMemory } from "../services/runtimeMemory";
 import fs from "node:fs/promises";
@@ -205,7 +206,7 @@ type TrendStoreRuntimeMeta = {
   mailDigest?: TrendMailDigestState;
 };
 
-export type GrowthDebugSummaryPlatform = {
+export type GrowthDebugSummaryPlatform = Partial<GrowthStatusProjection> & {
   platform: GrowthPlatform;
   currentTotal: number;
   archivedTotal: number;
@@ -712,6 +713,7 @@ function buildGrowthDebugSummary(store: TrendStoreFile): GrowthDebugSummary {
       platform,
       {
         platform,
+        ...(!isRecoveredCollection(store.collections?.[platform]) && store.collections?.[platform] ? buildGrowthStatusProjection(store.collections[platform]!) : {}),
         currentTotal: isRecoveredCollection(store.collections?.[platform]) ? 0 : (store.collections?.[platform]?.items?.length || 0),
         archivedTotal: store.history?.platforms?.[platform]?.archivedItems || 0,
       },
@@ -2840,6 +2842,7 @@ async function writeSinglePlatformCurrent(
   }
   summaryPlatforms[platform] = {
     platform,
+    ...buildGrowthStatusProjection(collection),
     currentTotal: collection.items.length,
     archivedTotal: history?.archivedItems || summaryPlatforms[platform]?.archivedTotal || 0,
   };

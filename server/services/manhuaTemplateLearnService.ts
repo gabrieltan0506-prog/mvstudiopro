@@ -1776,7 +1776,20 @@ export async function buildNativeDeepReadEpisodeExecution(
       || JSON.stringify(expected.segments) !== JSON.stringify(segments)
       || parseNativeDeepReadVideoFps(expected.videoFps) !== videoFps
     ) {
-      throw new Error(`第 ${input.ep.index} 集时长或分段与确认计划不一致，未发出模型请求`);
+      // 只记录安全字段差异；不落播放直链、签名参数、Cookie或供应商凭证。
+      const mismatch = {
+        episodeIndex: { expected: expected.episodeIndex, actual: input.ep.index },
+        sourceMatches: expected.sourceUrl === input.ep.url,
+        durationSec: { expected: expected.durationSec, actual: durationSec, normalizedActual: total },
+        segmentSeconds: { expected: expected.segmentSeconds, actual: segmentSeconds },
+        videoFps: { expected: expected.videoFps, actual: videoFps },
+        segmentsMatch: JSON.stringify(expected.segments) === JSON.stringify(segments),
+        firstDifferentSegment: expected.segments.findIndex((segment, index) => JSON.stringify(segment) !== JSON.stringify(segments[index])),
+        segmentCount: { expected: expected.segments.length, actual: segments.length },
+        resumeStoredSegmentPlan,
+      };
+      console.warn("[manhuaTemplateLearn] confirmed plan mismatch", JSON.stringify(mismatch));
+      throw Object.assign(new Error(`第 ${input.ep.index} 集时长或分段与确认计划不一致，未发出模型请求；已保留校验详情，请重新检查来源预览`), { nativePlanMismatch: mismatch });
     }
   }
 
