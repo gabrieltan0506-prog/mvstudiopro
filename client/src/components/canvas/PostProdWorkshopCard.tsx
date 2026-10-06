@@ -1,3 +1,4 @@
+import { createAdvisorScoringSourceGuard } from "@/lib/manhuaAdvisorScoringSource";
 import type { AdvisorScoringControl, AdvisorScoringRegistration, AdvisorBgmControl } from "@/lib/manhuaAdvisorWorkflowControl";
 import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
 import { UrlMaskedTextarea } from "@/components/UrlMaskedTextarea";
@@ -1094,7 +1095,31 @@ export default function PostProdWorkshopCard({
                 setBgmVolumeExpr(settings?.volumeExpr);
                 setBeatPreview([]);
   };
-  const submitBgm = async (rethrow = false) => {
+  const bgmMountParams = {
+    videoUri: bgmVideoUrl,
+    bgmUri: bgmAudioUrl,
+    bgmVolume,
+    ...(bgmNarrativeMix.length ? { narrativeMix: bgmNarrativeMix } : {}),
+    ...(bgmDurationSec != null ? { bgmDurationSec } : {}),
+    duckUnderDialogue: bgmDuckUnderDialogue,
+    entrySec: bgmEntrySec,
+    bgmSeekSec,
+    ...(bgmVolumeExpr ? { volumeExpr: bgmVolumeExpr } : {}),
+    fadeInSec: bgmFadeIn,
+    fadeOutSec: bgmFadeOut,
+  };
+  const scoringSourceGuard = useRef<ReturnType<typeof createAdvisorScoringSourceGuard> | null>(null);
+  if (!scoringSourceGuard.current) scoringSourceGuard.current = createAdvisorScoringSourceGuard();
+  const scoringSourceKey = scoringSourceGuard.current.update({
+    scope: projectScopeKey,
+    clipId: clipOptions.find(clip => clip.url === bgmVideoUrl)?.id,
+    musicId: bgmAudioOptionId,
+    adoptedSettings: scoringAudioOptions.find(music => music.id === bgmAudioOptionId)?.settings,
+    sourceSettingsKey: bgmSourceSettingsKey,
+    params: bgmMountParams,
+  });
+  const submitBgm = async (rethrow = false, expectedSourceKey?: string) => {
+    if (expectedSourceKey !== undefined) scoringSourceGuard.current!.assert(expectedSourceKey);
     const fail=(message:string)=>{toast.error(message);if(rethrow)throw new Error(message);};
     if (!bgmVideoUrl || !bgmAudioUrl) {
       fail("BGM 贴装需要选一段成片和一条音频");
@@ -1141,21 +1166,14 @@ export default function PostProdWorkshopCard({
       fail("音乐强弱段超出所选配乐进出窗口");
       return;
     }
+    // 确认弹窗返回后再比对，拒绝等待期间变更或已恢复到旧内容的候选。
+    if (expectedSourceKey !== undefined) scoringSourceGuard.current!.assert(expectedSourceKey);
     return await submit(
       {
         action: "bgm_mount",
         params: {
-          videoUri: bgmVideoUrl,
-          bgmUri: bgmAudioUrl,
-          bgmVolume,
-          ...(narrative.data.length ? {narrativeMix:narrative.data} : {}),
-          ...(bgmDurationSec != null ? { bgmDurationSec } : {}),
-          duckUnderDialogue: bgmDuckUnderDialogue,
-          entrySec: bgmEntrySec,
-          bgmSeekSec,
-          ...(bgmVolumeExpr ? { volumeExpr: bgmVolumeExpr } : {}),
-          fadeInSec: bgmFadeIn,
-          fadeOutSec: bgmFadeOut,
+          ...bgmMountParams,
+          ...(narrative.data.length ? { narrativeMix: narrative.data } : {}),
         },
       },
       "BGM 贴装", rethrow
@@ -1192,7 +1210,7 @@ export default function PostProdWorkshopCard({
   const scoringRef=useRef<AdvisorScoringControl>(async()=>"");
   scoringRef.current=async(action,signal)=>{
     signal.throwIfAborted();
-    if(action.operation==="inspect")return JSON.stringify({scope:projectScopeKey,clips:clipOptions.map(({id,label})=>({id,label})),music:scoringAudioOptions.map(({id,label,settings})=>({id,label,adopted:Boolean(settings)})),selectedClipId:clipOptions.find(c=>c.url===bgmVideoUrl)?.id,selectedMusicId:bgmAudioOptionId,entrySec:bgmEntrySec,durationSec:bgmDurationSec,volume:bgmVolume,narrativeMix:bgmNarrativeMix,busy:queueMutation.isPending,jobs:scopedJobs.map(job=>({jobId:job.jobId,action:job.action,status:job.status,hasOutput:Boolean(job.output?.gcsUri||job.output?.url)}))});
+    if(action.operation==="inspect")return JSON.stringify({sourceKey:scoringSourceKey,scope:projectScopeKey,clips:clipOptions.map(({id,label})=>({id,label})),music:scoringAudioOptions.map(({id,label,settings})=>({id,label,adopted:Boolean(settings)})),selectedClipId:clipOptions.find(c=>c.url===bgmVideoUrl)?.id,selectedMusicId:bgmAudioOptionId,entrySec:bgmEntrySec,durationSec:bgmDurationSec,volume:bgmVolume,narrativeMix:bgmNarrativeMix,busy:queueMutation.isPending,jobs:scopedJobs.map(job=>({jobId:job.jobId,action:job.action,status:job.status,hasOutput:Boolean(job.output?.gcsUri||job.output?.url)}))});
     if(scoringLock.current||queueMutation.isPending)throw new Error("原混音提交仍运行，请查原编号");
     scoringLock.current=true;
     try {
@@ -1208,10 +1226,12 @@ export default function PostProdWorkshopCard({
         if(!bgmControl.current)throw new Error("原配乐咨询卡尚未就绪");
         return bgmControl.current(action.operation,signal,action.question);
       }
+      scoringSourceGuard.current!.assert(action.sourceKey);
       if(!scoringAudioOptions.some(m=>m.id===bgmAudioOptionId&&m.settings))throw new Error("当前BGM尚未采用，未提交正式混音");
       if(scopedJobs.some(job=>job.action==="bgm_mount"&&["queued","running"].includes(job.status)))throw new Error("本作品已有在途混音，请先续查原任务");
       if(!window.confirm("以原混音卡当前成片、配乐和强弱时间表提交正式视频混音？保留原片，不自动重试。"))return "用户取消正式混音。";
-      const jobId=await submitBgm(true);
+      signal.throwIfAborted();
+      const jobId=await submitBgm(true,action.sourceKey);
       if(!jobId)throw new Error("原混音门禁未通过或用户取消，未取得任务编号");
       return JSON.stringify({status:"queued",jobId,note:"原正式视频混音任务，尚未验收输出质量。"});
     } finally {scoringLock.current=false;}

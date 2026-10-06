@@ -105,11 +105,17 @@ export type CanvasAudioStudio = z.infer<typeof canvasAudioStudioSchema>;
 export function emptyCanvasAudioStudio(): CanvasAudioStudio {
   return { schemaVersion: 1, cues: [], musicJobIds: [], pendingOperations: [] };
 }
-export function createCanvasAudioCue(kind: CanvasAudioCue["kind"], id: string): CanvasAudioCue {
+/** 新增入口传入本段时长时，先产生合法默认；已有调用未传时长仍保持原默认。 */
+export function createCanvasAudioCue(kind: CanvasAudioCue["kind"], id: string, durationSec?: number): CanvasAudioCue {
+  if (durationSec !== undefined && (!Number.isFinite(durationSec) || durationSec <= 0 || durationSec > 3600)) {
+    throw new Error("本段时长无效，未新增音轨");
+  }
+  const endSec = durationSec === undefined ? 5 : kind === "bgm" ? durationSec : Math.min(5, durationSec);
+  const startSec = kind === "dialogue" && endSec > 1.5 ? 1.5 : 0;
   return {
-    id, kind, labelZh: "", shotZh: "", startSec: kind === "dialogue" ? 1.5 : 0,
-    endSec: 5, speakerZh: "", voiceStateZh: "", textZh: "", emotion: "", voice: "",
-    sourceStartSec: 0, sourceEndSec: 5, volume: kind === "bgm" ? 0.25 : 1, fadeInSec: 0, fadeOutSec: 0,
+    id, kind, labelZh: "", shotZh: "", startSec,
+    endSec, speakerZh: "", voiceStateZh: "", textZh: "", emotion: "", voice: "",
+    sourceStartSec: 0, sourceEndSec: endSec, volume: kind === "bgm" ? 0.25 : 1, fadeInSec: 0, fadeOutSec: 0,
     takes: [], approved: false, enabled: true,
   };
 }
