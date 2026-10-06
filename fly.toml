@@ -167,12 +167,12 @@ kill_timeout = 300
   cpus = 4
   memory_mb = 8192
 
-# 工作机目标：performance 2 核／8GB；实际跨机性能与工作流验收须在部署后完成。
+# 2026-10-06 用户指定工作机升为 performance 4 核／8GB；实际性能须以新任务验收。
 [[vm]]
   processes = ['rig']
   memory = '8gb'
   cpu_kind = 'performance'
-  cpus = 2
+  cpus = 4
   memory_mb = 8192
 
 [[mounts]]

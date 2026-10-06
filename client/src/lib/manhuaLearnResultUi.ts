@@ -23,13 +23,12 @@ import {
   type ManhuaNativeProviderErrorReceipt,
 } from "@shared/manhuaNativeModelReceipt";
 import {
-  MANHUA_NATIVE_DEEP_READ_MODEL,
+  MANHUA_NATIVE_CURRENT_READ_MODEL,
   MANHUA_NATIVE_STRUCTURING_MODEL,
   parseNativeStructuringModel,
   type ManhuaNativeStructuringModelId,
   NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS,
   NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS,
-  parseNativeDeepReadModel,
   parseNativeDeepReadSegmentSeconds,
   parseNativeDeepReadVideoFps,
   type ManhuaNativeDeepReadModelId,
@@ -166,27 +165,15 @@ export function writeManhuaLearnVideoFps(userKey: string, value: number): void {
   }
 }
 
-/**
- * 读片模型下拉持久化（0905 用户实测：选了 3.8 Flash，刷新后 useState 默认值悄悄回到 3.1 Pro，
- * 下一单就按 Pro 建单——建单参数没丢，是面板忘了）。坏值/未存回默认。
- */
-export function readManhuaLearnReadModel(userKey: string): ManhuaNativeDeepReadModelId {
-  const key = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_READ_MODEL, userKey);
-  try {
-    return parseNativeDeepReadModel(key ? JSON.parse(localStorage.getItem(key) || "null") : undefined);
-  } catch {
-    return MANHUA_NATIVE_DEEP_READ_MODEL;
-  }
+/** 1007：旧浏览器偏好也统一回到当前唯一读片模型，不改历史任务记录。 */
+export function readManhuaLearnReadModel(_userKey: string): ManhuaNativeDeepReadModelId {
+  return MANHUA_NATIVE_CURRENT_READ_MODEL;
 }
 
-export function writeManhuaLearnReadModel(userKey: string, value: ManhuaNativeDeepReadModelId): void {
+export function writeManhuaLearnReadModel(userKey: string, _value: ManhuaNativeDeepReadModelId): void {
   const key = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_READ_MODEL, userKey);
   if (!key) return;
-  try {
-    localStorage.setItem(key, JSON.stringify(parseNativeDeepReadModel(value)));
-  } catch {
-    // 本地存储不可用时仍用当前选择，真实参数随任务提交
-  }
+  try { localStorage.setItem(key, JSON.stringify(MANHUA_NATIVE_CURRENT_READ_MODEL)); } catch { /* 偏好不影响提交 */ }
 }
 
 /** 0916 面板只使用 GLM-5.3；本地旧值读取时迁回 GLM。 */

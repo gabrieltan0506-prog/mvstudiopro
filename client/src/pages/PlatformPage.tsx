@@ -129,8 +129,7 @@ import {
 import {
   NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS,
   NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS,
-  MANHUA_NATIVE_DEEP_READ_MODEL,
-  MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS,
+  MANHUA_NATIVE_CURRENT_READ_MODEL,
   MANHUA_NATIVE_STRUCTURING_MODEL,
   MANHUA_NATIVE_STRUCTURING_MODEL_LABELS,
   MANHUA_NATIVE_STRUCTURING_MODEL_OPTIONS,
@@ -193,7 +192,6 @@ import {
   readManhuaLearnResult,
   readManhuaLearnSegmentSeconds,
   readManhuaLearnReadModel,
-  writeManhuaLearnReadModel,
   readManhuaLearnStructuringModel,
   writeManhuaLearnStructuringModel,
   hasStoredManhuaLearnSegmentSeconds,
@@ -2637,8 +2635,8 @@ export default function PlatformPage() {
     const timer = window.setTimeout(() => setManhuaPasteTitleDebounced(trimmed), 600);
     return () => window.clearTimeout(timer);
   }, [manhuaPasteTitle]);
-  /** 0903 双模型：读片主模型面板可选；默认 3.1 Pro 质量基线，3.8 Flash 为低成本对照档。 */
-  const [manhuaLearnReadModel, setManhuaLearnReadModel] = useState<ManhuaNativeDeepReadModelId>(MANHUA_NATIVE_DEEP_READ_MODEL);
+  /** 1007：新读片仅使用 Gemini 3.8 Flash，旧偏好不得恢复 Pro。 */
+  const [manhuaLearnReadModel, setManhuaLearnReadModel] = useState<ManhuaNativeDeepReadModelId>(MANHUA_NATIVE_CURRENT_READ_MODEL);
   /** 0916 用户拍板：整形固定 GLM-5.3。 */
   const [manhuaLearnStructuringModel, setManhuaLearnStructuringModel] = useState<ManhuaNativeStructuringModelId>(MANHUA_NATIVE_STRUCTURING_MODEL);
   const [manhuaRestructureBusy, setManhuaRestructureBusy] = useState(false);
@@ -13798,32 +13796,14 @@ export default function PlatformPage() {
                             ) : null}
                           </>
                         ) : null}
-                        <label htmlFor="manhua-learn-read-model" className="text-[11px] font-semibold text-[#c9c0e6]/90">
-                          读片模型
-                        </label>
-                        <select
-                          id="manhua-learn-read-model"
-                          value={manhuaLearnReadModel}
-                          disabled={Boolean(manhuaLearnBusyKey)}
-                          onChange={(event) => {
-                            const next = event.target.value as ManhuaNativeDeepReadModelId;
-                            setManhuaLearnReadModel(next);
-                            writeManhuaLearnReadModel(manhuaLearnUserKey, next);
-                          }}
-                          className="rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] text-white disabled:opacity-45"
-                        >
-                          {MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS.map((model) => (
-                            <option key={model} value={model}>
-                              {MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[model]}{model === MANHUA_NATIVE_DEEP_READ_MODEL ? "（质量基线）" : "（低成本对照）"}
-                            </option>
-                          ))}
-                        </select>
+                        <span id="manhua-learn-read-model" className="rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] text-white">
+                          读片模型：Gemini 3.8 Flash
+                        </span>
                         <span className="rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] text-white">
                           整形模型：{MANHUA_NATIVE_STRUCTURING_MODEL_LABELS["glm-5.3"]}
                         </span>
                         <span className="rounded-md border border-[#8cefff]/20 bg-black/25 px-2 py-1 text-[10px] font-semibold text-[#8cefff]">
                           学习模型：{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[manhuaLearnReadModel]} · 原生视频精读
-                          {manhuaLearnReadModel !== MANHUA_NATIVE_DEEP_READ_MODEL ? " · 对照版单独成剧，两版各审后留一版入库" : ""}
                         </span>
                       </div>
 

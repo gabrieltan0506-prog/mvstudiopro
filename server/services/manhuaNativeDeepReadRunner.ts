@@ -1489,20 +1489,28 @@ export function nativeDeepReadStructuringGatewayOrder(
   return odd ? ["evolink_glm", "openrouter"] : ["openrouter", "evolink_glm"];
 }
 
-/** 整形分组合同：四片为 2+2；其余按原顺序每五片一批。 */
+/** 每十片为一组双路负载，不足十片均分；每路最多五片，保留原片顺序。 */
 export function nativeDeepReadStructuringGroups(segmentCount: number): number[][] {
   if (!Number.isInteger(segmentCount) || segmentCount <= 0) {
     throw new Error(`整形分片数必须是正整数，收到 ${segmentCount}`);
   }
-  if (segmentCount === 4) return [[0, 1], [2, 3]];
   const groups: number[][] = [];
-  for (let start = 0; start < segmentCount; start += 5) {
-    groups.push(Array.from(
-      { length: Math.min(5, segmentCount - start) },
-      (_, offset) => start + offset,
-    ));
+  for (let start = 0; start < segmentCount; start += 10) {
+    const remaining = Math.min(10, segmentCount - start);
+    const firstSize = Math.ceil(remaining / 2);
+    groups.push(Array.from({ length: firstSize }, (_, offset) => start + offset));
+    if (remaining > firstSize) {
+      groups.push(Array.from({ length: remaining - firstSize }, (_, offset) => start + firstSize + offset));
+    }
   }
   return groups;
+}
+
+/** 只用于寻找已付费的历史缓存；新任务不再按五片加尾片分配。 */
+function legacyNativeDeepReadStructuringGroups(segmentCount: number): number[][] {
+  if (segmentCount === 4) return [[0, 1], [2, 3]];
+  return Array.from({ length: Math.ceil(segmentCount / 5) }, (_, group) =>
+    Array.from({ length: Math.min(5, segmentCount - group * 5) }, (_, offset) => group * 5 + offset));
 }
 
 /** 实际出站Schema：重点、简写、广告各自必填；时间与内容有效性仍由程序验收。 */
@@ -7172,10 +7180,10 @@ async function executeNativeDeepReadBatch(
           return restoreNativeRequiredSummary(result.raw, input.rows);
         }
       };
-      const withStructuringDispatchRetry = async (
+      const withStructuringDispatchRetry = async <T>(
         input: Pick<Parameters<typeof structureBatchWithLockRetry>[0], "segmentIndexes" | "videoCount" | "labelZh">,
-        operation: (dispatchRetry: number) => Promise<Record<string, unknown>>,
-      ): Promise<Record<string, unknown>> => {
+        operation: (dispatchRetry: number) => Promise<T>,
+      ): Promise<T> => {
         for (let dispatchRetry = 0; ; dispatchRetry += 1) {
           try {
             return await operation(dispatchRetry);
@@ -7300,10 +7308,28 @@ async function executeNativeDeepReadBatch(
         });
       };
       const structuredEpisodeRaw = async (): Promise<Record<string, unknown>> => {
-        // 0916 用户复核：四片 2+2、九片 5+4；超过九片仍每批最多五片。
+        // 1007 用户指定：不足十片双路均分，每路最多五片；超过十片的尾组同样均分。
         // 两个固定 worker 分别由 OpenRouter / EvoLink 首发，谁先返回谁立即领取下一批，不等另一边。
         const allSegmentIndexes = episode.segments.map((_, index) => index);
-        const groups = nativeDeepReadStructuringGroups(segmentCount);
+        let groups = nativeDeepReadStructuringGroups(segmentCount);
+        const legacyGroups = legacyNativeDeepReadStructuringGroups(segmentCount);
+        const recoveredLegacy = new Map<string, Record<string, unknown>>();
+        if (canCacheStructuring) {
+          const currentKeys = new Set(groups.map((indexes) => indexes.join("-")));
+          for (const segmentIndexes of legacyGroups) {
+            const key = segmentIndexes.join("-");
+            if (currentKeys.has(key)) continue;
+            const rows = segmentIndexes.map((index) => glmStructuringInputs[index]!);
+            const labelZh = `历史整形批次 ${segmentIndexes.map((index) => index + 1).join("、")}`;
+            const cached = await withStructuringDispatchRetry(
+              { segmentIndexes, videoCount: segmentIndexes.length, labelZh },
+              () => readCachedStructuring(segmentIndexes, rows, labelZh),
+            );
+            if (cached) recoveredLegacy.set(key, cached);
+          }
+          // 已有旧批次付费结果时沿旧分组续跑，不能为均分丢弃成果并重买同一片。
+          if (recoveredLegacy.size > 0) groups = legacyGroups;
+        }
         if (groups.length === 1) {
           const batchInput: Parameters<typeof structureBatchWithLockRetry>[0] = {
             prompt: buildNativeDeepReadGlmStructuringPrompt({
@@ -7323,7 +7349,8 @@ async function executeNativeDeepReadBatch(
             labelZh: `第${episode.episodeIndex}集整集整形（一次）`,
           };
           return withStructuringDispatchRetry(batchInput, async (dispatchRetry) => {
-            const cached = await readCachedStructuring(allSegmentIndexes, glmStructuringInputs, "最终整形");
+            const cached = recoveredLegacy.get(allSegmentIndexes.join("-"))
+              ?? await readCachedStructuring(allSegmentIndexes, glmStructuringInputs, "最终整形");
             if (cached) return unwrapNativeDeepReadStructuredAnswerEnvelope(cached);
             return structureBatchWithLockRetry({
               ...batchInput,
@@ -7370,7 +7397,7 @@ async function executeNativeDeepReadBatch(
             };
             try {
               groupRows[groupIndex] = await withStructuringDispatchRetry(batchInput, async (dispatchRetry) => {
-                const cached = await readCachedStructuring(
+                const cached = recoveredLegacy.get(segmentIndexes.join("-")) ?? await readCachedStructuring(
                   segmentIndexes,
                   groupInputs,
                   `整形批次 ${segmentIndexes.join(",")} `,

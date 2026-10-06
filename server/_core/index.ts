@@ -384,7 +384,7 @@ async function startServer() {
         const importedGcsUri = String(learnParams.gcsUri || "").trim();
         const {
           hasNativeDeepReadJobFields,
-          parseNativeDeepReadJobConfirmation,
+          parseNewNativeDeepReadJobConfirmation,
         } = await import("../../shared/manhuaNativeDeepReadJob.js");
         const hasNativeFields = hasNativeDeepReadJobFields(learnParams);
         if (hasNativeFields) {
@@ -395,9 +395,10 @@ async function startServer() {
             const { readManhuaLearnExtraSourceHosts } = await import(
               "../services/manhuaLearn0996Source.js"
             );
-            const confirmation = parseNativeDeepReadJobConfirmation(learnParams, {
+            const confirmation = parseNewNativeDeepReadJobConfirmation(learnParams, {
               extraSourceHosts: readManhuaLearnExtraSourceHosts(),
             });
+            learnParams.nativeReadModel = confirmation.readModel;
             if (learnParams.localVideoUploadId !== undefined) {
               const { parseManhuaLocalVideoSourceRef } = await import("../../shared/manhuaLocalVideoUpload.js");
               const source = parseManhuaLocalVideoSourceRef(confirmation.url);
