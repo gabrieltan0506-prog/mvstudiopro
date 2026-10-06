@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { GrowthPlatform } from "@shared/growth";
+import { GROWTH_BURST_INTERVAL_MINUTES, GROWTH_BURST_STAGGER_MINUTES, type GrowthPlatform } from "@shared/growth";
 import { collectPlatformTrends } from "./trendCollector";
 import {
   bootstrapGrowthTrendBackfillWorker,
@@ -12,6 +12,7 @@ import {
   bootstrapTrendHistoryFromColdStore,
   ensureGrowthStoreSplitGzipLayout,
   readTrendSchedulerState,
+  type TrendSchedulerState,
   mergeTrendCollections,
   mergeTrendCollectionsWithOptions,
   readGrowthRuntimeControl,
@@ -48,7 +49,7 @@ const JITTER_MAX_MS = Math.max(
   Number(process.env.GROWTH_SCHEDULER_JITTER_MAX_MS || 0) || 0,
 );
 const SCHEDULER_INTERVAL_MINUTES = Math.max(5, Number(process.env.GROWTH_SCHEDULER_INTERVAL_MINUTES || 30) || 30);
-const BURST_INTERVAL_MINUTES = 15;
+const BURST_INTERVAL_MINUTES = GROWTH_BURST_INTERVAL_MINUTES;
 const BURST_TRIGGER_MIN_COUNT = Math.max(6, Number(process.env.GROWTH_BURST_TRIGGER_MIN_COUNT || 10) || 10);
 const BURST_TRIGGER_GROWTH_RATIO = Math.max(0.1, Number(process.env.GROWTH_BURST_TRIGGER_GROWTH_RATIO || 0.2) || 0.2);
 const BURST_EXIT_DROP_RATIO = Math.max(0.05, Number(process.env.GROWTH_BURST_EXIT_DROP_RATIO || 0.3) || 0.3);
@@ -91,10 +92,6 @@ const DOUYIN_MIN_RUN_TIMEOUT_MS = 180 * 1000;
 const COVER_BACKFILL_RUN_TIMEOUT_MS = Math.max(
   30 * 1000,
   Number(process.env.GROWTH_COVER_BACKFILL_RUN_TIMEOUT_MS || 90 * 1000) || 90 * 1000,
-);
-const STALE_SCHEDULER_FORCE_RUN_MS = Math.max(
-  5 * 60 * 1000,
-  Number(process.env.GROWTH_SCHEDULER_STALE_FORCE_RUN_MS || 20 * 60 * 1000) || 20 * 60 * 1000,
 );
 const SCHEDULER_BOOT_GRACE_MS = Math.max(
   15 * 1000,
@@ -142,7 +139,7 @@ function readPlatformMinutesEnv(platform: GrowthPlatform, suffix: string, fallba
 }
 
 function getPlatformBurstIntervalMinutes(_platform: GrowthPlatform) {
-  // burst 是正式 15 分钟节奏；不再允许遗留平台级 secret 把某个平台改回旧频率。
+  // burst 是正式 30 分钟节奏；不再允许遗留平台级 secret 把某个平台改回旧频率。
   return BURST_INTERVAL_MINUTES;
 }
 
@@ -389,7 +386,7 @@ export function resolveNextRunPlan(params: {
       : params.burstLowYieldRuns + 1;
     return {
       burstMode: true,
-      // burst 的正式节奏固定为 15 分钟；低产出只保留诊断计数，不再偷偷切成 2 分钟。
+      // burst 的正式节奏固定为 30 分钟；低产出只保留诊断计数，不再偷偷切成 2 分钟。
       nextRunAt: nextRunIso(getPlatformBurstIntervalMs(params.platform)),
       frequencyLabel: getBurstFrequencyLabel(params.platform),
       burstStableRuns: params.currentCount >= params.previousCount ? params.burstStableRuns + 1 : 0,
@@ -712,6 +709,39 @@ async function runPlatform(platform: GrowthPlatform) {
   return runInGrowthPlatformCollectionLane(platform, source, () => runPlatformTask(platform));
 }
 
+/** 旧排程按上一轮时间补足 burst 间隔；失败冷却沿用独立策略。 */
+export function resolveBurstScheduleFloor(state: Partial<TrendSchedulerState> | undefined, forcedBurst: boolean): number | null {
+  if (!state || !(state.burstMode || forcedBurst) || state.lastError || (state.failureCount || 0) > 0) return null;
+  const last = Math.max(...[state.lastRunAt, state.lastSuccessAt]
+    .map(value => value ? Date.parse(value) : 0).filter(Number.isFinite));
+  if (!(last > 0)) return null;
+  return last + BURST_INTERVAL_MINUTES * 60_000;
+}
+
+/** 按已持久化的启动时间错峰；按到期顺序排队，避免固定平台优先级饿死后续平台。 */
+export function planBurstStagger(
+  scheduler: Partial<Record<GrowthPlatform, Partial<TrendSchedulerState>>>,
+  forcedPlatforms: ReadonlySet<GrowthPlatform>,
+  now = Date.now(),
+): Array<{ platform: GrowthPlatform; nextRunAt: string }> {
+  const gap = GROWTH_BURST_STAGGER_MINUTES * 60_000;
+  const lastStart = Math.max(0, ...PRIORITY_PLATFORMS.map(platform => {
+    const timestamp = Date.parse(scheduler[platform]?.lastRunAt || "");
+    return Number.isFinite(timestamp) ? timestamp : 0;
+  }));
+  let cursor = Math.max(now, lastStart > 0 ? lastStart + gap : 0);
+  const candidates = PRIORITY_PLATFORMS.filter(platform => scheduler[platform]?.burstMode || forcedPlatforms.has(platform))
+    .map(platform => {
+      const timestamp = Date.parse(scheduler[platform]?.nextRunAt || "");
+      return { platform, next: Number.isFinite(timestamp) ? timestamp : now };
+    }).sort((a, b) => a.next - b.next);
+  return candidates.map(({ platform, next }) => {
+    const planned = Math.max(next, cursor);
+    cursor = planned + gap;
+    return { platform, nextRunAt: nowShanghaiIso(planned) };
+  });
+}
+
 async function runDuePlatforms() {
   if (runInFlight) return;
   if (!isLiveWindow()) return;
@@ -743,12 +773,23 @@ async function runDuePlatforms() {
     if (normalizedLegacyCooldown) {
       scheduler = await readTrendSchedulerState();
     }
+    // 发布前保存的 15 分钟 nextRunAt 也迁移，避免第一轮仍沿用旧节奏。
+    for (const platform of PRIORITY_PLATFORMS) {
+      const state = scheduler[platform];
+      const forced = isForceBurstActive(platform);
+      const floor = resolveBurstScheduleFloor(state, forced);
+      const next = state?.nextRunAt ? Date.parse(state.nextRunAt) : 0;
+      if (floor === null || (Number.isFinite(next) && next >= floor)) continue;
+      const patch = { nextRunAt: nowShanghaiIso(floor), lastFrequencyLabel: forced ? getForceBurstLabel(platform) : getBurstFrequencyLabel(platform) };
+      await updateTrendSchedulerState(platform, patch);
+      scheduler[platform] = { ...state!, ...patch };
+    }
     if (runtimeModeOverride === "live") {
       let touched = false;
       for (const platform of PRIORITY_PLATFORMS) {
         const state = scheduler[platform];
-        // 超时冷却期内禁止 live 模式清零强制重跑
-        if (isInTimeoutCooldown(state)) continue;
+        // burst 的半小时间隔与错峰不能被 live 过期兜底清零。
+        if (isInTimeoutCooldown(state) || state?.burstMode || isForceBurstActive(platform)) continue;
         const nextRunAtMs = state?.nextRunAt ? new Date(state.nextRunAt).getTime() : 0;
         const overdueMs = nextRunAtMs > 0 ? Date.now() - nextRunAtMs : 0;
         if (overdueMs < 5 * 60 * 1000) continue;
@@ -768,19 +809,19 @@ async function runDuePlatforms() {
         scheduler = await readTrendSchedulerState();
       }
     }
+    const forcedPlatforms = new Set(PRIORITY_PLATFORMS.filter(isForceBurstActive));
+    for (const plan of planBurstStagger(scheduler, forcedPlatforms)) {
+      const current = scheduler[plan.platform];
+      if (current?.nextRunAt && Date.parse(current.nextRunAt) === Date.parse(plan.nextRunAt)) continue;
+      await updateTrendSchedulerState(plan.platform, { nextRunAt: plan.nextRunAt });
+      scheduler[plan.platform] = { ...current!, nextRunAt: plan.nextRunAt };
+    }
     const queue = PRIORITY_PLATFORMS.filter((platform) => {
       const state = scheduler[platform];
       // 冷却中：硬退出，本轮不进队列
       if (isInTimeoutCooldown(state)) return false;
       const nextRunAt = state?.nextRunAt;
-      const lastRunAt = state?.lastRunAt;
-      const staleSinceLastRun = lastRunAt
-        ? Date.now() - new Date(lastRunAt).getTime() >= STALE_SCHEDULER_FORCE_RUN_MS
-        : false;
-      // 超时冷却优先于 force-burst 强制重跑
-      if (isForceBurstActive(platform) && staleSinceLastRun && !isInTimeoutCooldown(state)) {
-        return true;
-      }
+      // 强制 burst 同样服从已持久化的半小时间隔与三分钟错峰。
       if (!nextRunAt) return true;
       return new Date(nextRunAt).getTime() <= Date.now();
     });

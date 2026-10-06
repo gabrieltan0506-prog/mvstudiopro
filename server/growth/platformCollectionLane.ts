@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { GrowthPlatform } from "@shared/growth";
+import { GROWTH_BURST_STAGGER_MINUTES, type GrowthPlatform } from "@shared/growth";
 import {
   GROWTH_BACKGROUND_DEFERRED_BEFORE_COLLECTION_START,
   hasActiveGrowthInteractiveWorkload,
@@ -14,7 +14,9 @@ const DEFAULT_COLLECTION_GAP_MS = 4 * 60 * 1000;
 
 export type GrowthCollectionSource = "scheduler" | "burst" | "live" | "backfill";
 
-export function resolveGrowthPlatformCollectionGapMs(raw = process.env.GROWTH_PLATFORM_COLLECTION_GAP_MS) {
+export function resolveGrowthPlatformCollectionGapMs(raw = process.env.GROWTH_PLATFORM_COLLECTION_GAP_MS, source?: GrowthCollectionSource) {
+  // burst 按用户指定三分钟，旧四分钟配置不得覆盖本次节奏。
+  if (source === "burst") return GROWTH_BURST_STAGGER_MINUTES * 60_000;
   const configured = Number(raw || DEFAULT_COLLECTION_GAP_MS);
   if (!Number.isFinite(configured)) return DEFAULT_COLLECTION_GAP_MS;
   return Math.max(MIN_COLLECTION_GAP_MS, Math.min(MAX_COLLECTION_GAP_MS, configured));
@@ -81,7 +83,8 @@ export function createGrowthPlatformCollectionLane(options: LaneOptions = {}) {
     let shouldRecordFinishedAt = true;
     try {
       if (lastFinishedAtMs > 0) {
-        const remainingMs = Math.max(0, gapMs - (now() - lastFinishedAtMs));
+        const effectiveGapMs = source === "burst" ? resolveGrowthPlatformCollectionGapMs(undefined, source) : gapMs;
+        const remainingMs = Math.max(0, effectiveGapMs - (now() - lastFinishedAtMs));
         if (remainingMs > 0) {
           console.info(
             `[growth.collection-lane] ${platform}/${source} 等待 ${Math.ceil(remainingMs / 1000)} 秒；三平台全模式串行。`,
@@ -189,7 +192,7 @@ async function runWithCrossProcessCollectionLease<T>(
         );
       }
     }
-    const gapMs = resolveGrowthPlatformCollectionGapMs();
+    const gapMs = resolveGrowthPlatformCollectionGapMs(undefined, source === "burst" ? "burst" : undefined);
     const remainingMs = Math.max(0, gapMs - (Date.now() - Number(persisted.lastFinishedAtMs || 0)));
     if (remainingMs > 0) {
       console.info(

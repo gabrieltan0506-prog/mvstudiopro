@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  planBurstStagger,
+  resolveBurstScheduleFloor,
   resolveLastNewDataAt,
   resolveNextRunPlan,
   resolveNewDataMonitoringStartedAt,
@@ -100,7 +102,7 @@ describe("trendScheduler burst runtime", () => {
       burstMode: false,
       burstStableRuns: 0,
       burstLowYieldRuns: 0,
-    })).toMatchObject({ burstMode: true, burstEvent: "enter", frequencyLabel: "15 分钟一次" });
+    })).toMatchObject({ burstMode: true, burstEvent: "enter", frequencyLabel: "30 分钟一次" });
   });
 
   it("连续失败时固定无新增监测起点，不随每轮尝试后移", () => {
@@ -143,5 +145,58 @@ describe("trendScheduler burst runtime", () => {
       shouldNormalize: true,
       normalizedUntilMs: failedAtMs + 10 * 60 * 1000,
     });
+  });
+});
+
+
+describe("平台 burst 半小时间隔", () => {
+  afterEach(() => vi.useRealTimers());
+  it.each(["douyin", "xiaohongshu", "bilibili"] as const)("%s 自动进入和持续 burst 都安排30分钟后", platform => {
+    vi.useFakeTimers();
+    const now = Date.parse("2026-10-06T12:00:00Z");
+    vi.setSystemTime(now);
+    for (const burstMode of [false, true]) {
+      const plan = resolveNextRunPlan({ platform, currentCount: 125, previousCount: 100,
+        burstMode, burstStableRuns: 0, burstLowYieldRuns: 0 });
+      expect(plan.frequencyLabel).toBe("30 分钟一次");
+      expect(Date.parse(plan.nextRunAt)).toBe(now + 30 * 60_000);
+    }
+  });
+  it("旧15分钟排程以较新的上轮完成时间为下限，手动强制同样生效", () => {
+    const state = { lastRunAt: "2026-10-06T12:00:00Z", lastSuccessAt: "2026-10-06T12:02:00Z", nextRunAt: "2026-10-06T12:17:00Z", burstMode: true };
+    expect(resolveBurstScheduleFloor(state, false)).toBe(Date.parse("2026-10-06T12:32:00Z"));
+    expect(resolveBurstScheduleFloor({ ...state, burstMode: false }, true)).toBe(Date.parse("2026-10-06T12:32:00Z"));
+    expect(resolveBurstScheduleFloor({ ...state, burstMode: false }, false)).toBeNull();
+    expect(resolveBurstScheduleFloor({ ...state, lastError: "timeout", failureCount: 1 }, true)).toBeNull();
+    expect(resolveBurstScheduleFloor(undefined, true)).toBeNull();
+  });
+});
+
+
+describe("burst 平台三分钟错峰", () => {
+  const now = Date.parse("2026-10-06T12:00:00Z");
+  const due = { burstMode: true, nextRunAt: new Date(now).toISOString() };
+  it("三平台同刻到期依次排为0/3/6分钟；重启仍以持久化lastRunAt计算", () => {
+    const state = { douyin: due, xiaohongshu: due, bilibili: due };
+    const plan = planBurstStagger(state, new Set(), now);
+    expect(plan.map(item => Date.parse(item.nextRunAt) - now)).toEqual([0, 180_000, 360_000]);
+    const resumed = planBurstStagger({ ...state, douyin: { ...due, lastRunAt: new Date(now - 60_000).toISOString() } }, new Set(), now);
+    expect(resumed.map(item => Date.parse(item.nextRunAt) - now)).toEqual([120_000, 300_000, 480_000]);
+  });
+  it("先运行的平台移到下一轮后，不把仍等待的平台一直推迟", () => {
+    const state = {
+      douyin: { ...due, lastRunAt: new Date(now).toISOString(), nextRunAt: new Date(now + 1_800_000).toISOString() },
+      xiaohongshu: { ...due, nextRunAt: new Date(now + 180_000).toISOString() },
+      bilibili: { ...due, nextRunAt: new Date(now + 360_000).toISOString() },
+    };
+    const plan = planBurstStagger(state, new Set(), now + 60_000);
+    expect(plan.map(item => [item.platform, Date.parse(item.nextRunAt) - now])).toEqual([
+      ["xiaohongshu", 180_000], ["bilibili", 360_000], ["douyin", 1_800_000],
+    ]);
+  });
+  it("手动强制burst也错峰；普通平台排程不修改", () => {
+    const plan = planBurstStagger({ douyin: { burstMode: false }, bilibili: { burstMode: false } }, new Set(["douyin", "xiaohongshu"] as const), now);
+    expect(plan.map(item => item.platform)).toEqual(["douyin", "xiaohongshu"]);
+    expect(plan.map(item => Date.parse(item.nextRunAt) - now)).toEqual([0, 180_000]);
   });
 });

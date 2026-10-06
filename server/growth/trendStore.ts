@@ -12,6 +12,7 @@ const gzipAsync = promisify(gzipCb);
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import {
+  GROWTH_BURST_INTERVAL_MINUTES,
   growthPlatformsForStatsAggregationList,
   isGrowthPlatformInStatsAggregate,
   activeGrowthPlatformValues,
@@ -3453,7 +3454,7 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
         { label: "17:00-22:00", intervalHours: 2 },
         { label: "22:00-06:00", intervalHours: 3 },
         { label: "06:00-17:00", intervalHours: 4 },
-        { label: "高波动 burst", intervalHours: 0.33 },
+        { label: "高波动 burst", intervalHours: GROWTH_BURST_INTERVAL_MINUTES / 60 },
         { label: "历史回填 burst", intervalHours: 0.0083 },
       ],
       lookbackWindows: LOOKBACK_WINDOWS,
