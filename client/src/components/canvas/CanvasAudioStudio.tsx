@@ -1609,9 +1609,16 @@ export function CanvasAudioStudioView({
           <button key={kind} type="button" className={buttonClass}
             onClick={() => { setEditorOpen(true); setJumpToGroup(kind); }}>{label}</button>)}
       </nav>
-      <div data-manhua-sound-summary data-manhua-sound-multitrack={soundSummary.hasRealMultitrack ? "1" : "0"} className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)]">
+      <div className={`grid min-w-0 gap-4 ${compact ? "" : "xl:grid-cols-[minmax(0,1fr)_minmax(340px,1fr)]"}`} data-audio-workspace>
+        <aside aria-label="当前片段试听与画面" className="min-w-0 self-start rounded-xl border border-white/15 bg-black/25 p-3 xl:sticky xl:top-4">
+          <h4 className="mb-3 text-sm font-semibold">第{soundSummary.segmentIndex}段 · 当前画面</h4>
+          {block.outputUrl ? <video aria-label="当前片段画面" src={block.outputUrl} controls playsInline preload="metadata" className="max-h-[55vh] aspect-video w-full rounded-lg bg-black object-contain"/> : <div className="flex min-h-64 w-full items-center justify-center rounded-lg border border-dashed border-white/15 bg-black/20 p-3 text-center text-xs text-white/45">本段尚无成片画面，可先制作并试听声音。</div>}
+          <p className="mt-2 text-xs text-white/55">画面来自当前采用的视频版本；下方声音选段独立试听，修改音轨后须执行正式混音才会进入成片。</p>
+          <nav aria-label="选择声音编辑区域" className="mt-3 flex flex-wrap gap-2">{(["dialogue", "bgm", "sfx"] as const).map(kind => <button type="button" key={kind} className={buttonClass} onClick={() => {setEditorOpen(true);setJumpToGroup(kind);}}>{{dialogue:"逐句对白",bgm:"BGM选段",sfx:"事件音效"}[kind]}</button>)}</nav>
+        </aside>
+        <div className="min-w-0 space-y-3">
+      <div data-manhua-sound-summary data-manhua-sound-multitrack={soundSummary.hasRealMultitrack ? "1" : "0"} className="grid min-w-0 gap-3 sm:grid-cols-2">
         <section aria-label="当前片段声音预览" className="flex min-w-0 items-start gap-3 rounded-xl border border-sky-200/20 bg-sky-500/[0.06] p-3">
-          {block.outputUrl ? <video aria-label="当前片段画面" src={block.outputUrl} controls playsInline preload="metadata" className="aspect-[4/3] w-28 shrink-0 rounded-lg bg-black object-contain"/> : <div className="flex min-h-20 w-28 shrink-0 items-center justify-center rounded-lg border border-dashed border-white/15 bg-black/20 p-3 text-center text-xs text-white/45">本段尚无成片画面，可先制作并试听声音。</div>}
           <div className="min-w-0 flex-1"><div className="flex flex-wrap items-baseline justify-between gap-2"><h4 className="text-sm font-semibold text-sky-50">第{soundSummary.segmentIndex}段</h4><span className="text-xs text-white/60">{durationSec} 秒</span></div>
           <p className="mt-1 text-[11px] text-white/50">声音时间从本段 0 秒开始</p>
           {state.pendingOperations.length > 0 && <p role="status" className="mt-2 text-xs text-sky-100">{state.pendingOperations.length} 项原任务处理中</p>}
@@ -2411,6 +2418,8 @@ export function CanvasAudioStudioView({
       )}
       </div>
       </details>
+        </div>
+      </div>
     </section>
   );
 }

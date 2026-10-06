@@ -1409,7 +1409,7 @@ function NovelWorkspaceEditor({
         if (signal.aborted || !alive.current || latest.current !== before || running.current || saving.current > 0) throw new Error("正文或工作区在确认期间变化，未覆盖现稿。");
         if (!await persist(next, `voice-${candidate.id}`, true)) throw new Error("正文保存失败，未确认套用成功；候选稿保留，请先处理保存错误。");
         if (alive.current) { setActiveChapter(candidate.episode - 1); setWorkspaceTab("novel"); }
-      }} scopeKey={`${userId}:${draft.roundId}`} context={JSON.stringify({ activeEpisode: activeChapter + 1, title: draft.topic, direction: draft.direction, outline: draft.outline, currentChapter: draft.chapters[activeChapter], templates: draft.templates, chapterCount: draft.chapters.length })} disabled={disabled} onUse={text => { change({ advisorDraft: text }); setSideTab("advisor"); }} targets={draft.chapters.map((chapter, i) => ({ episode: i + 1, label: chapter ? `第${i + 1}集小说稿` : `第${i + 1}集尚无正文` }))} onNavigate={target => { if (disabled || !latest.current.chapters[target.episode - 1]) throw new Error("该集正文尚未生成或工作区忙，未切换。"); setActiveChapter(target.episode - 1); setWorkspaceTab("novel"); return JSON.stringify({ episode: target.episode, text: latest.current.chapters[target.episode - 1], next: "以本次返回正文为准；修改前调用novelText read获取revision。" }); }} onAskAdvisor={async question => await generate("advice", undefined, 1, question)} />
+      }} scopeKey={`${userId}:${draft.roundId}`} context={JSON.stringify({ workspace: workspaceTab, activeEpisode: activeChapter + 1, title: draft.topic, direction: draft.direction, outline: draft.outline, currentChapter: draft.chapters[activeChapter], templates: draft.templates, chapterCount: draft.chapters.length })} disabled={disabled} onUse={text => { change({ advisorDraft: text }); setSideTab("advisor"); }} targets={draft.chapters.map((chapter, i) => ({ episode: i + 1, label: chapter ? `第${i + 1}集小说稿` : `第${i + 1}集尚无正文` }))} onNavigate={target => { if (disabled || !latest.current.chapters[target.episode - 1]) throw new Error("该集正文尚未生成或工作区忙，未切换。"); setActiveChapter(target.episode - 1); setWorkspaceTab("novel"); return JSON.stringify({ episode: target.episode, text: latest.current.chapters[target.episode - 1], next: "以本次返回正文为准；修改前调用novelText read获取revision。" }); }} onAskAdvisor={async question => await generate("advice", undefined, 1, question)} />
       {advice && (
         <div className="mt-5 space-y-3">
           <h3 className="font-semibold">与创作顾问讨论</h3>
@@ -2354,15 +2354,15 @@ function NovelWorkspaceEditor({
             {!advice && (
               <div className="novel-empty">
                 <MessageSquare size={24} />
-                <h3>先和顾问确定故事方向</h3>
+                <h3>{draft.topic.trim() && draft.direction.trim() ? "创作方向已填写" : "先和顾问确定故事方向"}</h3>
                 <p>
-                  填写作品名称与创作方向，顾问会讨论人物、冲突和呈现方法，并推荐库内模板。
+                  {draft.topic.trim() && draft.direction.trim() ? "当前尚无文字顾问建议。可查看已有方向后请顾问分析，小说与剧本保留。" : "填写作品名称与创作方向，顾问会讨论人物、冲突和呈现方法，并推荐库内模板。"}
                 </p>
                 <button
                   className={button}
                   onClick={() => setWorkspaceTab("prepare")}
                 >
-                  填写创作方向
+                  {draft.topic.trim() && draft.direction.trim() ? "查看创作方向" : "填写创作方向"}
                 </button>
               </div>
             )}

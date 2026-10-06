@@ -1,3 +1,4 @@
+import { currentAdvisorStudioContext, type ManhuaAdvisorStudioContext } from "@shared/manhuaAdvisorStudioContext";
 import { MANHUA_KEYART_VERSION_ADVICE_PREFIX } from "@shared/manhuaKeyartLookState";
 import { MANHUA_PERFORMANCE_REVIEW_ZH } from "@shared/manhuaPerformanceCraft";
 import { resolveDirectorStyleBlocks, classifyManhuaDirectionSceneType } from "@shared/manhuaDirectionCanon";
@@ -268,6 +269,7 @@ export function buildManhuaAdvisorProject(input: {
   bible: ManhuaProjectBible | null;
   episodeIndex: number;
   phase: ManhuaCreativeAdvisorContext["stage"];
+  activeStudio?: ManhuaAdvisorStudioContext | null;
   videoModel: string;
   writerConfirmed: boolean;
   refs: ManhuaCustomAssetRef[];
@@ -400,6 +402,7 @@ export function buildManhuaAdvisorProject(input: {
       episodeTitle: excerptEvidence(episode?.title || "", LIMITS.episodeTitleChars, "本集标题", contextNotes),
       ...(episode?.endHook ? { episodeEndHook: episode.endHook } : {}),
       stage: input.phase,
+      activeStudio: currentAdvisorStudioContext(input.activeStudio, input.episodeIndex),
       videoModel: engine.videoModel || "未选择",
       writerConfirmed: input.writerConfirmed,
       episodeBody: episode?.body || "",
