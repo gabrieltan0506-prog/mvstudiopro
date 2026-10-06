@@ -1781,3 +1781,22 @@ export function mergeNativeProposalListAndDetail<Row extends { id: string }, Det
 ): Row & Partial<Detail> {
   return detail?.id === row.id ? { ...detail, ...row } : { ...row } as Row & Partial<Detail>;
 }
+
+
+/** 从真正收到的服务端任务恢复debug，不要求刷新后再次付费提交。 */
+export function manhuaLearnPollTraceFromServerJob(
+  prev: { jobId: string; label: string; lines: string[]; pollCount: number; terminalStatus?: string; currentStep?: string } | null,
+  job: ManhuaLearnServerJobSnapshot,
+  receivedAt = new Date().toISOString(),
+) {
+  const sameJob = prev?.jobId === job.jobId;
+  const currentStep = String((job.status === "failed" ? job.error : undefined) || job.output?.analysisStageLabel || job.status).slice(0, 200);
+  return {
+    jobId: job.jobId,
+    label: sameJob ? prev.label : `学节奏 · ${String(job.input?.params?.title || "云端任务").slice(0, 24)}`,
+    pollCount: (sameJob ? prev.pollCount : 0) + 1,
+    currentStep,
+    terminalStatus: job.status === "failed" || job.status === "succeeded" ? job.status : undefined,
+    lines: [...(sameJob ? prev.lines : []), `${receivedAt} ${job.status} · ${currentStep}`].slice(-80),
+  };
+}

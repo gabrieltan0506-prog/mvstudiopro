@@ -1,5 +1,5 @@
 import {expect,it} from 'vitest';
-import {manhuaLearnResultFromStart,manhuaLearnResultFromServerJob,mergeManhuaLearnServerJobsIntoBasket, type ManhuaLearnServerJobSnapshot} from './manhuaLearnResultUi';
+import {manhuaLearnPollTraceFromServerJob,manhuaLearnResultFromStart,manhuaLearnResultFromServerJob,mergeManhuaLearnServerJobsIntoBasket, type ManhuaLearnServerJobSnapshot} from './manhuaLearnResultUi';
 const input={params:{url:'https://douyin.com/video/test-only',seriesKey:'s1',nativeDeepReadConfirmed:true}};
 it('仍运行的缓存任务即使待学数为0也保留焦点与真实进度',()=>{
  const result=manhuaLearnResultFromStart({channel:'cloud',seriesKey:'s1'});
@@ -14,4 +14,14 @@ it('任务完成后即使不在待学篮子，焦点可从同一服务端回执�
  const base=manhuaLearnResultFromStart({channel:'cloud',seriesKey:'s1'});
  const result=manhuaLearnResultFromServerJob({jobId:'j1',status:'succeeded',input,output:{seriesKey:'s1',pipelineMode:'native_deep_read',batchLearned:1,learnedCount:1,listedEpisodeCount:1,pendingCount:0}},base);
  expect(result.liveStatus).toBe('succeeded');expect(result.pendingCount).toBe(0);
+});
+
+it('刷新可由云端回执建立debug，切换今日任务时不沿用昨日日志和计数',()=>{
+ const yesterday={jobId:'old',label:'昨天',pollCount:42,lines:['昨天的日志'],terminalStatus:'succeeded'};
+ const today:ManhuaLearnServerJobSnapshot={jobId:'today',status:'running',input,output:{analysisStageLabel:'第6—10片整形'}};
+ expect(manhuaLearnPollTraceFromServerJob(null,today,'today-time')).toMatchObject({jobId:'today',pollCount:1,currentStep:'第6—10片整形'});
+ const resumed=manhuaLearnPollTraceFromServerJob(yesterday,today,'today-time');
+ expect(resumed.lines).toEqual(['today-time running · 第6—10片整形']);expect(resumed.pollCount).toBe(1);expect(resumed.terminalStatus).toBeUndefined();
+ const failed=manhuaLearnPollTraceFromServerJob(resumed,{...today,status:'failed',error:'保存失败'},'later');
+ expect(failed).toMatchObject({pollCount:2,currentStep:'保存失败',terminalStatus:'failed'});
 });

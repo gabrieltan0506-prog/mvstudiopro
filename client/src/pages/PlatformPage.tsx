@@ -173,6 +173,7 @@ import {
   manhuaLearnResultFromFailure,
   manhuaLearnResultFromJobOutput,
   manhuaLearnResultFromServerJob,
+  manhuaLearnPollTraceFromServerJob,
   manhuaLearnResultFromLocalFallback,
   manhuaLearnResultFromSnapshot,
   manhuaLearnResultFromStart,
@@ -3002,8 +3003,10 @@ export default function PlatformPage() {
   const [compositeJobPollTrace, setCompositeJobPollTrace] = useState<ClientJobPollTrace | null>(null);
   /** Debug：AI 漫剧「学节奏」云端 Job 轮询（阶段日志 + 终态错误） */
   const [manhuaLearnJobPollTrace, setManhuaLearnJobPollTrace] = useState<ClientJobPollTrace | null>(null);
+  const [manhuaLearnSyncError, setManhuaLearnSyncError] = useState<string | null>(null);
   useEffect(() => {
     setManhuaLearnJobPollTrace(null);
+    setManhuaLearnSyncError(null);
   }, [manhuaLearnUserKey]);
   /** Stage 2：有 platformContent 物件但选题与变现皆 0 条 — 假成功，须与真完成区分 */
   const stage2EmptyPayload = useMemo(() => {
@@ -3709,23 +3712,13 @@ export default function PlatformPage() {
     setManhuaLearnServerJobs((prev) =>
       reuseManhuaLearnServerJobsIfUnchanged(prev, listed.items));
     setManhuaLearnServerJobsHydrated(true);
-    // 列表轮询就是实际轮询：debug计数和终态也必须同步，不能永久停在入队的0次。
-    setManhuaLearnJobPollTrace(prev => {
-      if (!prev) return prev;
-      const job = listed.items.find(item => item.jobId === prev.jobId);
-      if (!job) return prev;
-      const currentStep = String((job.status === "failed" ? job.error : undefined) || job.output?.analysisStageLabel || job.status).slice(0, 200);
-      return { ...prev, pollCount: prev.pollCount + 1, currentStep,
-        terminalStatus: job.status === "failed" || job.status === "succeeded" ? job.status : undefined,
-        lines: appendPollDebugLine(prev.lines, `${new Date().toISOString()} ${job.status} · ${currentStep}`) };
-    });
     // 已完成/失败任务可能从待学篮子移除；仍按当前焦点来源接收真实回执。
     const focusKeyNow = manhuaLearnFocusSeriesKeyRef.current;
     const focusSourceNow = manhuaLearnContinueRef.current?.row.gcsUri || manhuaLearnContinueRef.current?.row.url;
     const focusedReceipt = listed.items.find(job => {
       const params = job.input?.params;
       if (params?.nativeDeepReadConfirmed !== true) return false;
-      return focusSourceNow ? String(params.dedupeKey || params.gcsUri || params.url || "") === focusSourceNow
+      return focusSourceNow ? [params.dedupeKey, params.gcsUri, params.url].some(source => source === focusSourceNow)
         : Boolean(focusKeyNow && (params.seriesKey === focusKeyNow || job.output?.seriesKey === focusKeyNow));
     });
     if (focusedReceipt) setManhuaLearnResult(prev => {
@@ -3761,6 +3754,8 @@ export default function PlatformPage() {
         focusSource: manhuaLearnContinueRef.current?.row.gcsUri || manhuaLearnContinueRef.current?.row.url,
         jobs: listed.items,
       });
+      const traceJob = listed.items.find(job => job.jobId === focused?.jobId) || focusedReceipt;
+      if (traceJob) setManhuaLearnJobPollTrace(prev => manhuaLearnPollTraceFromServerJob(prev, traceJob));
       if (focused && focused.seriesKey !== focusKey) {
         manhuaLearnFocusSeriesKeyRef.current = focused.seriesKey;
         setManhuaLearnFocusSeriesKey(focused.seriesKey);
@@ -3919,6 +3914,7 @@ export default function PlatformPage() {
       let changed = false;
       try {
         const listed = await refreshManhuaLearnServerJobs();
+        if (!disposed) setManhuaLearnSyncError(null);
         hasActive = listed.items.some((job) => job.status === "queued" || job.status === "running");
         const signature = listed.items
           .map((job) => `${job.jobId}:${job.status}:${job.updatedAt ?? ""}`)
@@ -3927,7 +3923,10 @@ export default function PlatformPage() {
         lastSignature = signature;
         ok = true;
       } catch (error) {
-        if (!disposed) console.warn("[manhua-learn] refresh server jobs failed", error);
+        if (!disposed) {
+          setManhuaLearnSyncError("云端任务状态读取失败，当前显示上次收到的记录；尚不能确认最新进度，请勿重复提交。");
+          console.warn("[manhua-learn] refresh server jobs failed", error);
+        }
       } finally {
         inFlight = false;
         if (!disposed) {
@@ -13161,12 +13160,13 @@ export default function PlatformPage() {
             )}
           </div>
         ) : null}
-        {canShowPlatformDebug && debugMode && (manhuaLearnJobPollTrace || manhuaLearnResult) ? (
+        {canShowPlatformDebug && debugMode && (manhuaLearnJobPollTrace || manhuaLearnResult || manhuaLearnSyncError) ? (
           <div className="mb-6 rounded-[24px] border border-amber-300/25 bg-amber-500/5 p-5">
             <div className="text-sm font-semibold text-amber-100">AI 漫剧 · 学节奏 Debug</div>
             <p className="mt-1 text-[11px] leading-relaxed text-amber-50/70">
               云端 Job 阶段与错误（下片失败不再静默）。可复制 jobId 对照服务端日志。
             </p>
+            {manhuaLearnSyncError ? <p role="status" className="mt-2 text-xs text-rose-200">{manhuaLearnSyncError}</p> : null}
             {manhuaLearnJobPollTrace ? (
               <div className="mt-3 space-y-2 rounded-2xl border border-amber-300/20 bg-black/25 p-3 text-[11px] text-amber-50/85">
                 <div>
@@ -13198,7 +13198,7 @@ export default function PlatformPage() {
               </div>
             ) : (
               <div className="mt-3 text-[11px] text-amber-50/60">
-                面板有学习结果，但本会话尚未记录 Job 轮询（刷新后需再点一次学节奏才会写入）。
+                正在从云端任务恢复本会话进度，无需再次提交学习。
                 {manhuaLearnResult?.errorZh ? (
                   <div className="mt-2 rounded-lg border border-rose-300/30 bg-rose-500/10 px-2 py-1.5 text-rose-100">
                     错误：{manhuaLearnResult.errorZh}
