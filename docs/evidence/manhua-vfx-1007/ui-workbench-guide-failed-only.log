@@ -1,0 +1,11 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-effects-1007
+
+ ✓ client/src/lib/manhuaVfxWorkbenchGuide.browser.test.ts (2 tests | 1 skipped) 3689ms
+   ✓ shows actual trajectory, records interpolated position, expands and opens the real advisor callback 3688ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 1 skipped (2)
+   Start at  17:07:58
+   Duration  7.73s (transform 1.86s, setup 0ms, collect 3.14s, tests 3.69s, environment 0ms, prepare 209ms)
+

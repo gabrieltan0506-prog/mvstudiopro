@@ -78,3 +78,15 @@
 正式站的登录项目、真实按钮扣费/队列/候选/采用/刷新恢复以及Live顾问，均尚未线上验收。两张设计图内的电影感、缩图、保存时间、顶栏与部分完整工作台布局不是已部署结果；目前基础叠效与图像美术目标仍有质量差距。没有自动人物追踪、遮挡或场景受光。新增比较可从头同时播放，不承诺浏览器两个视频逐帧锁相。
 
 本地HTML：`task-5/deliverables/漫劇特效-設計與實作對照.html`，图片内嵌、可放大；用户要求Chrome后已使用系统open交给Google Chrome打开，未声称浏览器自动化视觉验收。当前工具集缺少官方浏览器控制所需js入口，侧边打开未完成。
+
+## 工作台预览继续完善（bf281ce2 后同 PR）
+
+用户明确要求继续完善实际UI和可用按钮，新增浏览器原生展开/收起、手动轨迹线与关键秒位、随原片时间变化的位置参考、直接打开既有创作顾问。真实特效仍须渲染候选，不把挂点/路径或图像样张冒充即时特效。
+
+新增纯位置函数对照原Python renderer的7个时间点通过，不改变渲染合同。新React交互通过：轨迹显示、插值位置记录进保存、真实headless Chrome fullscreen进入/退出、原顾问callback调用且无生成。初次仅测试夹具evaluate漏传text导致失败，修夹具后只复验该失败场景；已通过Python对照跳过。见ui-workbench-guide*.log和guide-source-fingerprints.json。未控制用户Chrome进行正式站验收；用户请求展示HTML时只是系统open打开本地文件。
+
+用户电影参考：Inception / The Matrix / The Matrix Reloaded / The Matrix Revolutions。用户正在自己通过“学习节奏”处理Inception；尚未取得模板，不代替用户重复学习、不动工作机、不宣称已分析电影。
+
+补验关闭：展开后原父层候选播放器会被 fullscreen 顶层遮挡，现预览前先退出 fullscreen；保存/采用回执同时写入工作台内的可读状态。新增第三场景通过（ui-fullscreen-preview-r2.log）；首轮夹具遗漏真实样式而不可滚动，补用实际 Tailwind theme 与三个生产组件的 class 生成 CSS 后仅复验该失败项。三个新增场景分次全部通过，未重跑前提未变项。最终增量 TypeScript 检查 exit 0（ui-workbench-guide-typecheck-complete.log）；本次最终源码 SHA 见 guide-source-fingerprints.json。以上均为开发证据，非正式站验收。
+
+最新用户明确授权本次无问题后由代理合并 PR1675，覆盖此前仅本人合并的限制；用户同时说明 Inception 学习约两小时。在途任务/部署安全门禁未撤销，当前仅提交推送，必须实时确认任务收尾、持久化与部署空闲后再合并，不启用可能抢先部署的自动合并。

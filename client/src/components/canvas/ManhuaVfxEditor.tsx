@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Loader2, Trash2, Sparkles, Film, SlidersHorizontal, Layers } from "lucide-react";
+import { Loader2, Trash2, Sparkles, Film, SlidersHorizontal, Layers, Maximize2, Minimize2, MessageSquare } from "lucide-react";
 import { ManhuaVfxTimeline } from "./ManhuaVfxTimeline";
 import { ManhuaVfxComparison } from "./ManhuaVfxComparison";
 import { MANHUA_VFX_PRESET_LABELS, manhuaVfxCompositionSchema, type ManhuaVfxComposition, type ManhuaVfxEffect, type ManhuaVfxState } from "@shared/manhuaVfx";
 import { gcsTransferUrl } from "@/lib/gcsTransfer";
 import { maskMediaProviderDetails } from "@/lib/maskMediaUrls";
-import { canAdoptManhuaVfxRequest, manhuaVfxContainedVideoRect, manhuaVfxPositionFromPointer, upsertManhuaVfxTrajectoryPoint, type ManhuaVfxVideoRect, makeManhuaVfxEffect, manhuaVfxSourceKey, manhuaVfxMediaIdentity, parseManhuaVfxTrajectory, validateManhuaVfxDuration } from "@/lib/manhuaVfxWorkflow";
+import { canAdoptManhuaVfxRequest, manhuaVfxPositionAtTime, manhuaVfxContainedVideoRect, manhuaVfxPositionFromPointer, upsertManhuaVfxTrajectoryPoint, type ManhuaVfxVideoRect, makeManhuaVfxEffect, manhuaVfxSourceKey, manhuaVfxMediaIdentity, parseManhuaVfxTrajectory, validateManhuaVfxDuration } from "@/lib/manhuaVfxWorkflow";
 import type { ClipOption, TrackedJob } from "@/lib/postProdWorkshop";
 import type { AdvisorEffectsControl, AdvisorEffectsRegistration } from "@shared/manhuaAdvisorEffects";
 import { advisorWorkflowRevision } from "@/lib/manhuaAdvisorWorkflowPlan";
@@ -22,12 +22,13 @@ const LABELS = MANHUA_VFX_PRESET_LABELS;
 const controlClass = "w-full rounded border border-white/15 bg-black/30 px-2 py-1.5 text-xs text-white";
 const buttonClass = "rounded border border-cyan-300/35 px-3 py-2 text-xs text-cyan-100 disabled:opacity-40";
 
-export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], jobs, busy, onStateChange, onSubmit, onSourceChange, onPreview, onAdvisorEffectsControl }: {
+export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], jobs, busy, onStateChange, onSubmit, onSourceChange, onPreview, onAdvisorEffectsControl, onOpenAdvisor }: {
   scopeKey: string;
   state?: ManhuaVfxState;
   clips: ClipOption[];
   imageOptions?: ClipOption[];
   onAdvisorEffectsControl?: AdvisorEffectsRegistration;
+  onOpenAdvisor?: () => void;
   jobs: TrackedJob[];
   busy: boolean;
   onStateChange?: (state: ManhuaVfxState) => Promise<ManhuaVfxState | void>;
@@ -42,6 +43,8 @@ export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], job
   const [draft, setDraft] = useState<Draft | undefined>(local.draft);
   const draftRef = useRef(draft); draftRef.current = draft;
   const videoRef = useRef<HTMLVideoElement>(null);
+  const sectionRef = useRef<HTMLElement>(null);
+  const [expanded, setExpanded] = useState(false);
   const [durationSec, setDurationSec] = useState(0);
   const [playbackSec, setPlaybackSec] = useState(0);
   const [positioning, setPositioning] = useState(false);
@@ -52,6 +55,7 @@ export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], job
   const [trajectoryText, setTrajectoryText] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const gate = useRef(false);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -65,6 +69,17 @@ export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], job
   const currentSource = Boolean(source && draft && manhuaVfxSourceKey(source) === draft.sourceKey);
   const sourceUrl = currentSource ? source!.url : "";
   const selectedEffect = draft?.composition.effects.find(effect => effect.id === selectedEffectId) || draft?.composition.effects[0];
+  let selectedTrajectory = selectedEffect?.anchor.trajectory || [];
+  try { if (selectedEffect && Object.prototype.hasOwnProperty.call(trajectoryText, selectedEffect.id)) selectedTrajectory = parseManhuaVfxTrajectory(trajectoryText[selectedEffect.id]) || []; }
+  catch { selectedTrajectory = []; }
+  const trajectoryValid = selectedTrajectory.every((point, index) => [point.timeSec, point.x, point.y].every(Number.isFinite) && point.timeSec >= 0 && point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1 && (!index || point.timeSec > selectedTrajectory[index - 1].timeSec));
+  if (!trajectoryValid) selectedTrajectory = [];
+  const markerPosition = selectedEffect ? positioning ? selectedEffect.anchor.position : manhuaVfxPositionAtTime({ ...selectedEffect, anchor: { ...selectedEffect.anchor, trajectory: selectedTrajectory } }, playbackSec) : undefined;
+  useEffect(() => {
+    const changed = () => setExpanded(document.fullscreenElement === sectionRef.current);
+    document.addEventListener("fullscreenchange", changed);
+    return () => document.removeEventListener("fullscreenchange", changed);
+  }, []);
   const measureVideo = () => {
     const video = videoRef.current;
     if (!video) return;
@@ -113,6 +128,7 @@ export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], job
       const nextDraft = resolveDraft();
       await persist({ ...latest.current, draft: nextDraft });
       setDraft(nextDraft); setTrajectoryText({});
+      if (mounted.current) setNotice("方案已保存到当前作品；修改参数后请再次保存。");
       toast.success("特效方案已保存到当前作品");
     } catch (caught) { showError(caught); }
     finally { gate.current = false; if (mounted.current) setSaving(false); }
@@ -189,6 +205,7 @@ export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], job
       if (!canAdoptManhuaVfxRequest(next, requestId, clips)) throw new Error("此候选与当前来源或方案不一致，请先恢复对应方案并核对原片");
       await persist({ ...next, adoptedRequestId: requestId });
       setDraft(nextDraft); setTrajectoryText({});
+      if (mounted.current) setNotice("候选已采用并保存，可在后续工序中选择；原片保留。");
       toast.success("已采用特效候选并保存，可在后续工序中选择");
       return { requestId, status: "adopted" };
     } catch (caught) { showError(caught); if (advisor) throw caught; }
@@ -201,7 +218,7 @@ export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], job
       const points = Object.prototype.hasOwnProperty.call(trajectoryText, selectedEffect.id)
         ? parseManhuaVfxTrajectory(trajectoryText[selectedEffect.id]) || [] : selectedEffect.anchor.trajectory || [];
       if (video.currentTime > durationSec) throw new Error("播放时刻超出原片，请重新定位");
-      const [x, y] = selectedEffect.anchor.position;
+      const [x, y] = positioning ? selectedEffect.anchor.position : manhuaVfxPositionAtTime({ ...selectedEffect, anchor: { ...selectedEffect.anchor, trajectory: points } }, video.currentTime);
       const trajectory = upsertManhuaVfxTrajectoryPoint(points, { timeSec: video.currentTime, x, y });
       updateEffect(selectedEffect.id, { anchor: { ...selectedEffect.anchor, trajectory } });
       setTrajectoryText(previous => { const next = { ...previous }; delete next[selectedEffect.id]; return next; });
@@ -265,8 +282,10 @@ export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], job
     assertCurrent(); const receipt = await submit(undefined, { signal }); if (!receipt) throw new Error("尚未取得特效任务回执"); return JSON.stringify(receipt);
   };
   useEffect(() => { onAdvisorEffectsControl?.(scopeKey, "vfx", (...args) => advisorControl.current(...args)); return () => onAdvisorEffectsControl?.(scopeKey, "vfx", null); }, [scopeKey, onAdvisorEffectsControl]);
-  return <section className="space-y-4 rounded-2xl border border-cyan-300/20 bg-slate-950/70 p-4" aria-label="漫剧特效工作台">
-    <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><Sparkles className="h-5 w-5 text-cyan-200" /><div><h4 className="text-sm font-semibold text-white">漫剧特效工作台</h4><p className="text-[11px] text-white/45">原片保留 · 参数入稿 · 真实渲染候选</p></div></div><span className="rounded-full border border-white/15 px-3 py-1 text-[11px] text-white/60">{draft?.composition.effects.length || 0} / 12 层效果</span></div>
+  return <section ref={sectionRef} className={`space-y-4 rounded-2xl border border-cyan-300/20 p-4 ${expanded ? "h-screen w-screen overflow-y-auto bg-slate-950 sm:p-8" : "bg-slate-950/70"}`} aria-label="漫剧特效工作台">
+    <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><Sparkles className="h-5 w-5 text-cyan-200" /><div><h4 className="text-sm font-semibold text-white">漫剧特效工作台</h4><p className="text-[11px] text-white/45">原片保留 · 参数入稿 · 真实渲染候选</p></div></div><div className="flex flex-wrap items-center gap-2"><span className="rounded-full border border-white/15 px-3 py-1 text-[11px] text-white/60">{draft?.composition.effects.length || 0} / 12 层效果</span>
+      {onOpenAdvisor ? <button type="button" className={buttonClass} onClick={async () => { try { if (document.fullscreenElement === sectionRef.current) await document.exitFullscreen(); onOpenAdvisor(); } catch (caught) { showError(caught); } }}><MessageSquare className="mr-1 inline h-3.5 w-3.5" />创作顾问</button> : null}
+      <button type="button" className={buttonClass} onClick={async () => { try { if (document.fullscreenElement === sectionRef.current) await document.exitFullscreen(); else if (sectionRef.current?.requestFullscreen) await sectionRef.current.requestFullscreen(); else throw new Error("当前浏览器不支持展开，请使用浏览器全屏查看；配置仍保留"); } catch (caught) { showError(caught); } }}>{expanded ? <Minimize2 className="mr-1 inline h-3.5 w-3.5" /> : <Maximize2 className="mr-1 inline h-3.5 w-3.5" />}{expanded ? "收起工作台" : "展开工作台"}</button></div></div>
     <p className="text-xs leading-relaxed text-white/60">在原片上叠加特效，保留原声。支持最长30秒、最长边1920像素及1080p以内素材。高帧率大画幅素材提交时还会核对处理上限。按画面位置与手动轨迹放置，目前不自动跟踪人物或计算前后遮挡。尚未线上验收。</p>
     <label className="block text-xs text-white/70">原片<select className={`${controlClass} mt-1`} value={draft?.sourceId || ""} disabled={locked} onChange={event => {
       const clip = clips.find(item => item.id === event.target.value);
@@ -286,7 +305,8 @@ export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], job
           setDurationSec(video.duration); setPlaybackSec(video.currentTime); measureVideo();
           setSourceError(video.duration > 30 || Math.max(video.videoWidth, video.videoHeight) > 1920 || video.videoWidth * video.videoHeight > 1920 * 1080 ? "原片超出本次支持的时长或画幅，请先在现有工作流裁切或选择合适版本" : "");
         }} onTimeUpdate={event => setPlaybackSec(event.currentTarget.currentTime)} onSeeked={event => setPlaybackSec(event.currentTarget.currentTime)} onError={() => setSourceError("原片暂不可播放，请重新核对素材")} />
-        {selectedEffect && videoRect ? <span data-vfx-anchor-marker aria-hidden className="pointer-events-none absolute z-10 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-cyan-200 bg-cyan-500/35 shadow" style={{ left: videoRect.left + selectedEffect.anchor.position[0] * videoRect.width, top: videoRect.top + selectedEffect.anchor.position[1] * videoRect.height }} /> : null}
+        {videoRect && selectedTrajectory.length > 1 ? <svg aria-label="手动轨迹位置参考" className="pointer-events-none absolute z-10 overflow-visible" style={{ left: videoRect.left, top: videoRect.top, width: videoRect.width, height: videoRect.height }} viewBox="0 0 1 1" preserveAspectRatio="none"><polyline data-vfx-trajectory-path points={selectedTrajectory.map(point => `${point.x},${point.y}`).join(" ")} fill="none" stroke="#67e8f9" strokeWidth="2" vectorEffect="non-scaling-stroke" /></svg> : null}
+        {markerPosition && videoRect ? <span data-vfx-anchor-marker aria-hidden className="pointer-events-none absolute z-10 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-cyan-200 bg-cyan-500/35 shadow" style={{ left: videoRect.left + markerPosition[0] * videoRect.width, top: videoRect.top + markerPosition[1] * videoRect.height }} /> : null}
         {positioning ? <button type="button" aria-label="在原片上定位特效" disabled={locked || !selectedEffect} className="absolute inset-0 z-20 cursor-crosshair" onClick={event => {
           const video = videoRef.current;
           if (!video || !selectedEffect) return;
@@ -304,6 +324,7 @@ export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], job
         </div>
         <label className="flex items-center gap-2 text-[11px] text-white/65">播放时刻 <input aria-label="特效原片播放秒位" type="range" min={0} max={durationSec || 0} step={0.01} value={playbackSec} disabled={locked || !durationSec} className="min-w-0 flex-1" onChange={event => { const time = Number(event.target.value); if (videoRef.current) { videoRef.current.pause(); videoRef.current.currentTime = time; } setPlaybackSec(time); }} /><span className="w-14 text-right">{playbackSec.toFixed(2)} 秒</span></label>
         <button type="button" className={buttonClass} disabled={locked || !selectedEffect || !durationSec} onClick={addTrajectoryPoint}>用当前秒位添加轨迹点</button>
+        {selectedEffect && selectedTrajectory.length ? <div className="flex flex-wrap gap-1.5" aria-label="轨迹关键时刻">{selectedTrajectory.map((point, index) => <button type="button" key={point.timeSec} className="rounded border border-cyan-300/20 px-2 py-1 text-[11px] text-cyan-100 disabled:opacity-40" disabled={locked || !durationSec} onClick={() => { seek(point.timeSec); updateEffect(selectedEffect.id, { anchor: { ...selectedEffect.anchor, position: [point.x, point.y] } }); }}>{index + 1} · {point.timeSec.toFixed(2)} 秒</button>)}</div> : null}
         <p className="text-[11px] text-white/45">暂停并定位挂点，再按当前秒位记录；移动播放时刻后可继续加点。同一时刻再次记录会更新位置。轨迹至少需要两个时刻，仍可在下方精确修改。</p>
       </div>
     </div> : null}
@@ -342,7 +363,7 @@ export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], job
       <div className="flex flex-wrap gap-2"><button type="button" className={buttonClass} disabled={locked || !onStateChange} onClick={() => void saveDraft()}>保存方案</button><button type="button" className={buttonClass} disabled={locked || pending || !onStateChange || !currentSource || Boolean(sourceError) || !durationSec} onClick={() => void submit()}>{saving ? <Loader2 className="mr-1 inline h-3 w-3 animate-spin" /> : null}渲染特效候选</button></div>
     </> : <p className="text-xs leading-relaxed text-white/45">选定原片后可添加效果、设置时间与位置，再生成候选。</p>}
     </div></div>
-    {error ? <p role="alert" className="text-xs text-amber-200">{error}</p> : null}
+    {error ? <p role="alert" className="text-xs text-amber-200">{error}</p> : notice ? <p role="status" className="text-xs text-emerald-200">{notice}</p> : null}
     <h5 className="flex items-center gap-2 text-xs font-semibold text-white/80"><Layers className="h-4 w-4" />任务与候选 · 采用后进入后续工序</h5>
     {!Object.keys(local.requests).length ? <p className="rounded-lg border border-dashed border-white/15 p-4 text-xs text-white/45">还没有特效候选。保存当前方案并渲染后，任务进度与真实结果会出现在这里。</p> : null}
     <div className="space-y-2" aria-label="特效任务与候选">{Object.values(local.requests).sort((a, b) => b.createdAt - a.createdAt).map(request => {
@@ -350,7 +371,7 @@ export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], job
       const eligible = draft && canAdoptManhuaVfxRequest({ ...local, draft }, request.requestId, clips);
       const status = { submitting: "提交回执待确认", unknown: "回执待确认", queued: "排队中", running: "渲染中", succeeded: "候选已完成", failed: "任务失败" }[request.status];
       return <div key={request.requestId} className="rounded border border-white/15 bg-black/15 p-2 text-xs text-white/70"><div className="flex flex-wrap items-center gap-2"><span>{status} · {new Date(request.createdAt).toLocaleString()}</span>{local.adoptedRequestId === request.requestId ? <span className="text-emerald-200">已采用</span> : null}</div><div className="mt-2 flex flex-wrap gap-2">
-        {outputUrl ? <button type="button" className={buttonClass} onClick={() => onPreview(outputUrl, "特效候选")}>预览候选</button> : null}
+        {outputUrl ? <button type="button" className={buttonClass} onClick={async () => { try { if (document.fullscreenElement === sectionRef.current) await document.exitFullscreen(); if (mounted.current) onPreview(outputUrl, "特效候选"); } catch (caught) { showError(caught); } }}>预览候选</button> : null}
         {comparable.some(item => item.requestId === request.requestId) ? <button type="button" className={buttonClass} aria-pressed={comparisonId === request.requestId} onClick={() => { videoRef.current?.pause(); setComparisonId(request.requestId); }}>与原片比较</button> : null}
         {request.status === "succeeded" ? <><button type="button" className={buttonClass} disabled={locked} onClick={() => { setDraft({ sourceId: request.sourceId, sourceKey: request.sourceKey, videoUri: request.videoUri, composition: request.composition }); setTrajectoryText({}); setError(""); }}>恢复此方案</button><button type="button" className={buttonClass} disabled={locked || !eligible || Object.keys(trajectoryText).length > 0} onClick={() => void adopt(request.requestId)}>采用此候选</button></> : null}
         {request.status === "submitting" || request.status === "unknown" ? <button type="button" className={buttonClass} disabled={locked} onClick={() => void submit(request)}>查询原请求</button> : null}

@@ -51,3 +51,11 @@
 - 新增完整React交互场景通过，覆盖参数入保存与提交、比较音轨切换、配方失配禁采用、恢复后采用、切来源清空比较。模拟存储和play，只是开发证据。
 - 增量类型检查最后exit0；新增夹具隐式any修正不改变运行逻辑，已过交互不重跑。
 - 无新增模型、计费、队列、冻结读片参数改动。正式站实际按钮/恢复待用户合并部署后验收。
+
+## 新增预览交互：实际链路核对
+
+展开只改变同一section的原生fullscreen，不卸载编辑器或更改草稿；打开顾问先退出fullscreen，再沿PostProdWorkshopCard.focusStudio/onOpenAdvisor原链。轨迹位置与Python固定renderer按7时刻对照；记录点使用当前插值位置，避免看到的位置与保存位置不一致。关键秒位按钮修改实际video.currentTime与挂点。新增路径2项通过（其中1个夹具问题定向修复），旧工作台提交/采用及卸载通过结果复用。无生产队列、计费、模型与机器变更。
+
+补验关闭：展开后原父层候选播放器会被 fullscreen 顶层遮挡，现预览前先退出 fullscreen；保存/采用回执同时写入工作台内的可读状态。新增第三场景通过（ui-fullscreen-preview-r2.log）；首轮夹具遗漏真实样式而不可滚动，补用实际 Tailwind theme 与三个生产组件的 class 生成 CSS 后仅复验该失败项。三个新增场景分次全部通过，未重跑前提未变项。最终增量 TypeScript 检查 exit 0（ui-workbench-guide-typecheck-complete.log）；本次最终源码 SHA 见 guide-source-fingerprints.json。以上均为开发证据，非正式站验收。
+
+最新用户明确授权本次无问题后由代理合并 PR1675，覆盖此前仅本人合并的限制；用户同时说明 Inception 学习约两小时。在途任务/部署安全门禁未撤销，当前仅提交推送，必须实时确认任务收尾、持久化与部署空闲后再合并，不启用可能抢先部署的自动合并。

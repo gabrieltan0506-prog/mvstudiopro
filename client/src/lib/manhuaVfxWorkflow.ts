@@ -124,3 +124,19 @@ export function upsertManhuaVfxTrajectoryPoint(points: Array<{ timeSec: number; 
   if (next.length >= 120) throw new Error("轨迹已有120个时刻，请先调整已有点");
   return [...next, { ...point, timeSec }].sort((a, b) => a.timeSec - b.timeSec);
 }
+
+/** Same linear screen interpolation as the fixed Blender renderer, for the position guide only. */
+export function manhuaVfxPositionAtTime(effect: ManhuaVfxEffect, timeSec: number): [number, number] {
+  const points = effect.anchor.trajectory;
+  if (!points?.length || !Number.isFinite(timeSec) || points.some((point, index) =>
+    ![point.timeSec, point.x, point.y].every(Number.isFinite) || point.timeSec < 0 || point.x < 0 || point.x > 1 || point.y < 0 || point.y > 1 || (index > 0 && point.timeSec <= points[index - 1].timeSec))) return effect.anchor.position;
+  if (timeSec <= points[0].timeSec) return [points[0].x, points[0].y];
+  for (let index = 1; index < points.length; index++) {
+    const left = points[index - 1], right = points[index];
+    if (timeSec <= right.timeSec) {
+      const ratio = (timeSec - left.timeSec) / (right.timeSec - left.timeSec);
+      return [left.x * (1 - ratio) + right.x * ratio, left.y * (1 - ratio) + right.y * ratio];
+    }
+  }
+  return [points[points.length - 1].x, points[points.length - 1].y];
+}
