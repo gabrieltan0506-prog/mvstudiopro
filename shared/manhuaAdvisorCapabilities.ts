@@ -3,7 +3,7 @@ import { PREVIS_SCENE_EFFECT_LABELS } from "./manhuaPrevisSceneEffects";
 import { MANHUA_ADVISOR_WORKFLOW_HELP } from "./manhuaAdvisorWorkflow";
 /** Executable contracts, not provider marketing names. Change revision with supported operations. */
 export const MANHUA_ADVISOR_CAPABILITIES = {
- revision:"2026-10-07-effects-knowledge-v1",
+ revision:"2026-10-07-effects-knowledge-v2",
  workflowHelp:MANHUA_ADVISOR_WORKFLOW_HELP,
  effects:{
   screen:MANHUA_VFX_KINDS.map(id=>({id,label:MANHUA_VFX_PRESET_LABELS[id]})),

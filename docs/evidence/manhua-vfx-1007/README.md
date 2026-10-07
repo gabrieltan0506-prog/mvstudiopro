@@ -90,3 +90,9 @@
 补验关闭：展开后原父层候选播放器会被 fullscreen 顶层遮挡，现预览前先退出 fullscreen；保存/采用回执同时写入工作台内的可读状态。新增第三场景通过（ui-fullscreen-preview-r2.log）；首轮夹具遗漏真实样式而不可滚动，补用实际 Tailwind theme 与三个生产组件的 class 生成 CSS 后仅复验该失败项。三个新增场景分次全部通过，未重跑前提未变项。最终增量 TypeScript 检查 exit 0（ui-workbench-guide-typecheck-complete.log）；本次最终源码 SHA 见 guide-source-fingerprints.json。以上均为开发证据，非正式站验收。
 
 最新用户明确授权本次无问题后由代理合并 PR1675，覆盖此前仅本人合并的限制；用户同时说明 Inception 学习约两小时。在途任务/部署安全门禁未撤销，当前仅提交推送，必须实时确认任务收尾、持久化与部署空闲后再合并，不启用可能抢先部署的自动合并。
+
+## 用户追加：顾问真实语义与首页成片
+
+顾问三次真实文字模型调用发现并关闭预览/采用含义与多层渲染说明缺口，共US$0.01866415；不是三轮全通过，逐次失败与定向修正见[advisor-understanding/README.md](advisor-understanding/README.md)。正式站工作流仍未验。
+
+用户另指定2026Oct03的墨菁傳第一集替换首页第一支水果茶示范；保留完整106.176009秒、3185帧与原AAC，1080x1920网页副本47,636,778字节，原4K不动；证据见[首页媒体核对](../home-episode-1007/README.md)。战船及原博客资源保留。

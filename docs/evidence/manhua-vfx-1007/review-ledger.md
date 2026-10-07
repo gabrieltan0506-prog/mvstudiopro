@@ -59,3 +59,7 @@
 补验关闭：展开后原父层候选播放器会被 fullscreen 顶层遮挡，现预览前先退出 fullscreen；保存/采用回执同时写入工作台内的可读状态。新增第三场景通过（ui-fullscreen-preview-r2.log）；首轮夹具遗漏真实样式而不可滚动，补用实际 Tailwind theme 与三个生产组件的 class 生成 CSS 后仅复验该失败项。三个新增场景分次全部通过，未重跑前提未变项。最终增量 TypeScript 检查 exit 0（ui-workbench-guide-typecheck-complete.log）；本次最终源码 SHA 见 guide-source-fingerprints.json。以上均为开发证据，非正式站验收。
 
 最新用户明确授权本次无问题后由代理合并 PR1675，覆盖此前仅本人合并的限制；用户同时说明 Inception 学习约两小时。在途任务/部署安全门禁未撤销，当前仅提交推送，必须实时确认任务收尾、持久化与部署空闲后再合并，不启用可能抢先部署的自动合并。
+
+## 1675-ADVISOR-PREVIEW-SEMANTICS · P2 · FIXED
+
+真实首选顾问baseline回答不知展开/比较，混淆位置参考与实际候选并建议采用后验真；fixed补验关闭这些项但发现多层分开渲染误导，layers定向补验关闭。共享HELP被普通问答、文字操作及Live工具引用，最多12层同一次render，来源/费用/操作Schema与参数不变。三次原生模型原始/解析JSON永久GCS读回SHA，完整失败和修复回答见advisor-understanding。无实际作品执行，正式站Live语音与用户操作仍待部署后验收。

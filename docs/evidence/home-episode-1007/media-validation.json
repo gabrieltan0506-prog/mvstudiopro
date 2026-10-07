@@ -1,0 +1,69 @@
+{
+  "source": "/Users/tangenjie/Downloads/2026Oct03/墨菁傳第一集.mp4",
+  "sourceSha256": "e5941dbd74dafc8381f1d58cb1054acec9515bea1d65a5e13fcafd8fa5e4a44f",
+  "sourceProbe": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "index": 0,
+        "codec_name": "h264",
+        "codec_type": "video",
+        "width": 2160,
+        "height": 3840,
+        "duration": "106.166667",
+        "nb_frames": "3185"
+      },
+      {
+        "index": 1,
+        "codec_name": "aac",
+        "codec_type": "audio",
+        "duration": "106.176009",
+        "nb_frames": "4575"
+      }
+    ],
+    "format": {
+      "duration": "106.176009",
+      "size": "289028312"
+    }
+  },
+  "webAsset": "client/public/home-assets/mojing-episode-01-20261007.mp4",
+  "webSha256": "42a8cf91decd94f0d1b4c6069bc38b7997adab921bbfb41c453cf8d62e691966",
+  "webProbe": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "index": 0,
+        "codec_name": "h264",
+        "codec_type": "video",
+        "width": 1080,
+        "height": 1920,
+        "duration": "106.166667",
+        "nb_frames": "3185"
+      },
+      {
+        "index": 1,
+        "codec_name": "aac",
+        "codec_type": "audio",
+        "duration": "106.176009",
+        "nb_frames": "4575"
+      }
+    ],
+    "format": {
+      "duration": "106.176009",
+      "size": "47636778"
+    }
+  },
+  "audioPacketSha256": "SHA256=d441939bc1f4e66bfc1a3f12f4c9bbcc6c9c094ad41041be24cdac92cef063f7",
+  "audioIdentical": true,
+  "frameCountIdentical": true,
+  "mp4Boxes": [
+    "ftyp",
+    "moov",
+    "free",
+    "mdat"
+  ],
+  "posterAtSec": 5,
+  "boundary": "Full episode web copy, original 4K retained; no formal deployed homepage playback acceptance"
+}
