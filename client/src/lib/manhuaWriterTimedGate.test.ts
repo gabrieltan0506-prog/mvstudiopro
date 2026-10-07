@@ -145,6 +145,10 @@ function confirmHarness(name: string, allowBatch = true, directionSelection: Man
     buildManhuaDirectionCanonFromSelection,
     directionSelection,
     activeDirectionCanon: buildManhuaDirectionCanonFromSelection(directionSelection),
+    user: { id: 1 },
+    writerConfirmationBusyRef: { current: false },
+    readWriterReconfirmation: vi.fn(async (): Promise<number[] | undefined> => undefined),
+    maskMediaProviderDetails: (value: string) => value,
     ...studio,
     ...writer,
     ...assetCanon,
@@ -215,14 +219,14 @@ function confirmHarness(name: string, allowBatch = true, directionSelection: Man
 describe("原稿导入至确认门禁", () => {
   it.each(["confirmWriterToDirector", "confirmWriterSeriesSpawn"])(
     "真实%s使用非空当前导演选择并在本机/云草稿恢复后保持",
-    name => {
+    async name => {
       const cards = listManhuaDirectionCards();
       expect(cards.length).toBeGreaterThan(0);
       const selection = { mainCardId: cards[0]!.id };
       const canon = buildManhuaDirectionCanonFromSelection(selection);
       expect(canon?.cards.length).toBeGreaterThan(0);
       const h = confirmHarness(name, true, selection);
-      h.run();
+      await h.run();
       expect(h.context.toast.error).not.toHaveBeenCalled();
       const project = h.state.projectBible as bible.ManhuaProjectBible;
       expect(project.directionCanon).toEqual(canon);
@@ -240,9 +244,9 @@ describe("原稿导入至确认门禁", () => {
   );
   it.each(["confirmWriterToDirector", "confirmWriterSeriesSpawn"])(
     "真实%s成功确认使用当前资产与完整原稿，保留旧付费片并经云恢复",
-    name => {
+    async name => {
       const h = confirmHarness(name);
-      h.run();
+      await h.run();
       expect(h.context.toast.error).not.toHaveBeenCalled();
       expect(h.state.writerConfirmed).toBe(true);
       expect(h.state.directorUnlocked).toBe(true);
@@ -299,6 +303,40 @@ describe("原稿导入至确认门禁", () => {
     expect(h.saved).not.toHaveBeenCalled();
     expect(h.state.writerConfirmed).toBeUndefined();
     expect(h.state.directorUnlocked).toBeUndefined();
+  });
+  it.each([{indexes:[2]}, {indexes:undefined}])("第二集再次确认保留第一集活动成片，范围为$indexes", async ({indexes}) => {
+    const h = confirmHarness("confirmWriterToDirector");
+    h.context.writerFocusEpisode = 2;
+    h.context.projectBible = { confirmedAt: "before-adoption" } as never;
+    h.context.readWriterReconfirmation.mockResolvedValue(indexes);
+    expect(await h.run()).toBe(true);
+    const first = (h.state.blocks as CanvasBlock[]).find(block => block.id === h.previousId);
+    expect(first?.archivedFromPreviousScript).not.toBe(true);
+    expect(first?.outputUrl).toBe("https://test.example/paid-before.mp4");
+    expect((h.state.blocks as CanvasBlock[]).some(block => block.id.startsWith("clip-e02-") && !block.archivedFromPreviousScript)).toBe(true);
+  });
+  it("读取采用快照失败时不确认、不铺板且释放确认锁", async () => {
+    const h = confirmHarness("confirmWriterToDirector");
+    h.context.readWriterReconfirmation.mockRejectedValue(new Error("快照读取失败"));
+    expect(await h.run()).toBe(false);
+    expect(h.saved).not.toHaveBeenCalled();
+    expect(h.state.writerConfirmed).toBeUndefined();
+    expect(h.context.writerConfirmationBusyRef.current).toBe(false);
+  });
+  it("读取快照期间阻止重复确认与批量入口，完成后只铺一次", async () => {
+    const h = confirmHarness("confirmWriterToDirector");
+    let release!: (value: number[] | undefined) => void;
+    h.context.readWriterReconfirmation.mockImplementation(() => new Promise(resolve => { release = resolve; }));
+    const pending = h.run();
+    expect(await h.run()).toBe(false);
+    expect(h.saved).not.toHaveBeenCalled();
+    const batch = runInNewContext(ts.transpileModule(`(${readConfirmCallback("confirmWriterSeriesSpawn")})`, {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText, h.context);
+    batch();
+    expect(h.saved).not.toHaveBeenCalled();
+    release(undefined);
+    expect(await pending).toBe(true);
+    expect(h.saved).toHaveBeenCalledOnce();
+    expect(h.context.writerConfirmationBusyRef.current).toBe(false);
   });
   it("确认不能读取分镜区块外的秒位表而让工作台使用另一份旧表", () => {
     const original = pack();
@@ -499,7 +537,7 @@ describe("原稿导入至确认门禁", () => {
 
   it.each(["confirmWriterToDirector", "confirmWriterSeriesSpawn"])(
     "真实%s回调不再误报缺段，但缺资产仍拒绝且不写状态",
-    name => {
+    async name => {
       const source = readFileSync(
         new URL("../pages/OmniCanvas.tsx", import.meta.url),
         "utf8"
@@ -532,6 +570,8 @@ describe("原稿导入至确认门禁", () => {
           compilerOptions: { target: ts.ScriptTarget.ES2022 },
         }).outputText,
         {
+          writerConfirmationBusyRef: { current: false },
+          projectBible: null,
           writerPack: pack(false),
           activeDirectionCanon: buildManhuaDirectionCanonFromSelection(null),
           writerPackLooksReady,
@@ -548,7 +588,7 @@ describe("原稿导入至确认门禁", () => {
           window: { setTimeout: vi.fn() },
         }
       );
-      action();
+      await action();
       // 0909：门槛按剧本实际实体计——空表只报「人物表为空」并给提取出路；场景/道具没列就不要求
       expect(blockers.mock.calls[0][0]).toEqual([
         "人物表为空：至少需要 1 名在本集出场的角色。点「从剧本提取资产表」可按对白说话人／场景行自动补表，再确认",

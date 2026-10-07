@@ -121,7 +121,8 @@ it("真实采用备份指导再次确认：前集活动成果保留，新剧或�
  expect(advisorReconfirmationFromEpisode(readable,"1",{...plan.writerPack,charactersMd:"另一批人物"})).toBeUndefined();
  expect(advisorReconfirmationFromEpisode(readable,"1",plan.writerPack,"other-project")).toBeUndefined();
  const confirmSource=source.slice(source.indexOf("const confirmWriterToDirector ="),source.indexOf("const confirmWriterToDirector =")+13000);
- expect(confirmSource).toContain("advisorReconfirmationEpisodeIndexes(localStorage, String(user.id), writerPack, projectBible?.confirmedAt)");
+ expect(confirmSource).toContain("await readWriterReconfirmation()");
+ expect(source).toContain("await loadAdvisorReconfirmationEpisodeIndexes(localStorage, String(user.id), writerPack, projectBible?.confirmedAt)");
  expect(confirmSource).toContain("stripManhuaFactoryCanvasArtifacts(blocks, edges, changedEpisodes ? { onlyEpisodes: changedEpisodes } : undefined)");
  expect(confirmSource).toContain("resolveManhuaEpisodeSpawnContinuity(writerPack.episodes, changedEpisodes?.[0] ?? writerFocusEpisode)");
 });
