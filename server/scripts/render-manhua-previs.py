@@ -892,6 +892,12 @@ if any(row['contactError']>.005 for row in report.get('interactions',[])):
     raise ValueError('双人互动实际接触误差未过验收')
 if any(actor['stanceDrift']>.005 for actor in report['actors']):
     raise ValueError('支撑脚漂移未过验收')
+# Explicit export identity excludes hidden source substitutes and the whitebox ground.
+if spec.get('exportAnimation'):
+    for meshes in display_meshes.values():
+        for obj in meshes: obj['previs_animation_object']=True
+    for handle in effect_handles:
+        for obj in handle.get('objects',[]): obj['previs_animation_object']=True
 frames=out/'frames';frames.mkdir(exist_ok=True)
 scene.render.filepath=str(frames/'frame-')
 bpy.ops.wm.save_as_mainfile(filepath=str(out/'scene.blend'))

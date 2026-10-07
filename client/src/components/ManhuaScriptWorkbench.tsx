@@ -1,3 +1,4 @@
+import type {ArtMotionSpec} from "@shared/artMotion";
 import type { AdvisorEffectsRegistration } from "@shared/manhuaAdvisorEffects";
 import type { ManhuaAdvisorStudioContext } from "@shared/manhuaAdvisorStudioContext";
 import type { AdvisorEditControl, AdvisorEditRegistration, AdvisorModelRegistration, AdvisorWorldControl, AdvisorWorldRegistration } from "@/lib/manhuaAdvisorWorkflowControl";
@@ -772,6 +773,7 @@ type Props = {
   onUpdateClipAudioStudio?: (clipId: string, studio: NonNullable<CanvasBlock["audioStudio"]>) => boolean | void;
   audioVoiceClipId?: string;
   onAudioVoiceControl?: CanvasAudioVoiceControlRegistration;
+  onRenderStageAnimation?: (spec:ArtMotionSpec)=>Promise<void>;
   onUpdateClipPrevisStudio?: (clipId:string,studio:NonNullable<CanvasBlock["previsStudio"]>,reference?:ManhuaSegmentReferenceEntry)=>void|boolean;
   /** 0915 动作节奏（PR-2）：本集动作计划；OmniCanvas 是唯一状态源，这里只展示与回传 */
   manhuaActionPlan?: ManhuaActionPlan | null;
@@ -1416,6 +1418,7 @@ export default function ManhuaScriptWorkbench({
   audioVoiceClipId,
   onAudioVoiceControl,
   onUpdateClipPrevisStudio,
+  onRenderStageAnimation,
   manhuaActionPlan,
   manhuaActionPlanBindingContext,
   onChangeManhuaActionPlan,
@@ -5546,7 +5549,20 @@ clipPromptReviewOpen ? (
             onRetry={onRetrySceneWorld}
             onRemove={onRemoveSceneWorld}
             stageCharacters={worldStageCharacters}
+            onRenderStageAnimation={onRenderStageAnimation}
+            previsAnimationSource={(() => {
+              const studio=activeClip?.previsStudio;
+              const take=studio?.history.find(row=>row.jobId===studio.selectedJobId);
+              return take?.animation && activeClip && JSON.stringify(take.spec)===JSON.stringify(studio?.spec)
+                ? {previsJobId:take.jobId,scopeId:studio!.scopeId,clipId:activeClip.id,duration:take.durationSec,aspect:take.spec.aspect} : undefined;
+            })()}
             previsStatusZh={previsStatusZh}
+            stageAnimation={(() => {
+              const studio=activeClip?.previsStudio;
+              const take=studio?.history.find(row=>row.jobId===studio.selectedJobId);
+              return take?.animation && JSON.stringify(take.spec)===JSON.stringify(studio?.spec)
+                ? {jobId:take.jobId,requestId:take.requestId,...take.animation} : undefined;
+            })()}
             onOpenPrevis={onUpdateClipPrevisStudio ? () => selectSecondaryTool("previs") : undefined}
             savedFrameCount={stageFrameProgress.saved}
             adoptedFrameCount={stageFrameProgress.adopted}
@@ -5895,7 +5911,7 @@ clipPromptReviewOpen ? (
 
       {/* 0917 线上实测：3D 模型面板的「绑骨」在任何阶段都可点，弹层却只在资产阶段挂载 → 分镜阶段点了静默无反应。挪到阶段分支外，与阶段无关。 */}
       {autoRigAsset && autoRigEligibility?.eligible && autoRigEligibility.currentModel3d?.status === "succeeded" && onApplyRiggedModel ? (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 p-4">
+        <div data-manhua-model-overlay className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 p-4">
           <ManhuaAutoRigEditor
             key={`${autoRigAsset.id}:${autoRigEligibility.sourceVersion}`}
             onAdvisorControl={onAdvisorRigControl}
@@ -5912,6 +5928,7 @@ clipPromptReviewOpen ? (
       {/* 同上：3D 模型面板「预览」在任何阶段可点，弹层只在资产阶段挂载 → 一并挪出阶段分支 */}
       {model3dPreview ? (
         <div
+          data-manhua-model-overlay
           className="fixed inset-0 z-[110] flex items-center justify-center bg-black/85 px-4 py-6"
           onClick={() => setModel3dPreview(null)}
         >

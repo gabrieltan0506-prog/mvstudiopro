@@ -19,14 +19,14 @@ export function buildAdvisorWorkflowEvidence(refs: ManhuaCustomAssetRef[], block
       rows.push(JSON.stringify({ ...scope, tool: "previs", selectedJobId: studio.selectedJobId || null,
         pendingRequestId: studio.pending?.requestId,
         currentActors: studio.spec.actors.map(a => ({ id: a.id, name: a.nameZh, assetId: a.assetRef, shape: a.shape, modelTaskId: a.riggedModel?.sourceJobId, rigKind: a.riggedModel?.rigKind || (a.riggedModel ? "human" : undefined) })) }));
-      for (const take of studio.history) rows.push(JSON.stringify({ ...scope, tool: "previs_saved_take", jobId: take.jobId, requestId: take.requestId, selected: studio.selectedJobId === take.jobId,
+      for (const take of studio.history) rows.push(JSON.stringify({ ...scope, tool: "previs_saved_take", jobId: take.jobId, requestId: take.requestId, selected: studio.selectedJobId === take.jobId, sceneAnimationAvailable:Boolean(take.animation),
         actors: take.spec.actors.map(a => ({ name: a.nameZh, assetId: a.assetRef, shape: a.shape, modelTaskId: a.riggedModel?.sourceJobId, rigKind: a.riggedModel?.rigKind || (a.riggedModel ? "human" : undefined) })) }));
     }
     if (block.audioStudio) rows.push(JSON.stringify({ ...scope, tool: "audio", adoptedCues: block.audioStudio.cues.filter(c => c.enabled && c.approved).map(c => ({ id: c.id, selectedTakeId: c.selectedTakeId })) }));
     if (block.artMotion) {
       const state = block.artMotion;
       rows.push(JSON.stringify({ ...scope, tool: "art_motion", requestId: state.request?.id, jobId: state.request?.jobId, status: state.request?.status,
-        savedOutput: Boolean(state.request?.gcsUri), adopted: "未提供采用记录",
+        stageAnimation:state.request?.spec.stageAnimation, savedOutput: Boolean(state.request?.gcsUri), adopted: Boolean(state.request?.gcsUri && block.uploadedAssets.some(a=>a.id===`art-output-${state.request!.id}` && a.gcsUri===state.request!.gcsUri)),
         history: state.history.map(r => ({ requestId: r.id, jobId: r.jobId, status: r.status, savedOutput: Boolean(r.gcsUri) })) }));
     }
   }

@@ -146,6 +146,11 @@ function present(
       ...(typeof output.sceneGcsUri === "string" && typeof output.sceneSha256 === "string"
         ? { sceneUrl: `/api/manhua-previs-media/${encodeURIComponent(row.id)}/scene` }
         : {}),
+      ...(output.animation && typeof output.animation === "object" ? {animation:{
+        ...output.animation as Record<string,unknown>,
+        glbUrl:`/api/manhua-previs-media/${encodeURIComponent(row.id)}/animation`,
+        framesUrl:`/api/manhua-previs-media/${encodeURIComponent(row.id)}/animation-frames`,
+      }} : {}),
       ...(layerBundle
         ? { layerBundle: {
             ...layerBundle,

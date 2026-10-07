@@ -1,0 +1,40 @@
+import {it,expect} from 'vitest';
+import {readFileSync} from 'node:fs';
+import {validatePrevisAnimation} from './manhuaPrevisAnimation';
+import {createManhuaPrevisStudio,manhuaPrevisStudioSchema} from '../../shared/manhuaPrevis';
+import {previsAnimationReceipt} from '../../shared/manhuaPrevisAnimation';
+import {resolveManhuaPrevisMedia} from './manhuaPrevisMedia';
+const spec={...createManhuaPrevisStudio(2).spec,aspect:'9:16' as const,exportAnimation:true as const};
+const raw=()=>JSON.parse(readFileSync('docs/evidence/ep2-animation-export-1007/animation.raw.json','utf8'));
+const glb=()=>readFileSync('docs/evidence/ep2-animation-export-1007/animation.glb');
+it('new evaluated exporter preserves full skin animation, camera cut and per-frame visibility without resampling',()=>{
+ const result=validatePrevisAnimation(raw(),glb(),spec);
+ expect(result.frames).toHaveLength(48);
+ expect(result.frames[23].camera.position[0]).toBe(0);
+ expect(result.frames[24].camera.position[0]).toBe(2);
+ expect(result.frames[23].visibleObjectIds).toContain('fixture-mesh');
+ expect(result.frames[24].visibleObjectIds).not.toContain('fixture-mesh');
+ expect(result.frames[23].camera.vfovRad).toBeGreaterThan(result.frames[24].camera.vfovRad);
+ const bytes=glb(),data=JSON.parse(bytes.toString('utf8',20,20+bytes.readUInt32LE(12)));
+ expect(data.skins[0].joints.length).toBeGreaterThan(0);
+ const samplers=data.animations.flatMap((a:any)=>a.samplers);
+ expect(samplers.some((s:any)=>data.accessors[s.input].count===48)).toBe(true);
+});
+it('rejects lost frames, foreign mesh identity and invalid camera quaternion instead of normalizing evidence',()=>{
+ const lost=raw();lost.frames.pop();expect(()=>validatePrevisAnimation(lost,glb(),spec)).toThrow();
+ const wrong=raw();wrong.frames[47].visibleObjectIds.push('foreign-object');expect(()=>validatePrevisAnimation(wrong,glb(),spec)).toThrow('不对应');
+ const rotation=raw();rotation.frames[47].camera.quaternionXYZW=[0,0,0,0];expect(()=>validatePrevisAnimation(rotation,glb(),spec)).toThrow('不完整');
+});
+it('animation media binds user, same task prefix and digest; receipt survives strict saved history without cloud extras',()=>{
+ const id=`prv_${'a'.repeat(48)}`,prefix='gs://bucket/post-prod/7/previs/req/';
+ const animation={glbGcsUri:prefix+'animation.glb',framesGcsUri:prefix+'animation.frames.json',sha256:'a'.repeat(64),framesSha256:'b'.repeat(64)};
+ const job={id,userId:'7',type:'post_prod',provider:'blender-previs',status:'succeeded',input:{action:'manhua_previs'},output:{gcsUri:prefix+'preview.mp4',animation}};
+ expect(resolveManhuaPrevisMedia(job,7,'animation')?.gcsUri).toBe(animation.glbGcsUri);
+ expect(resolveManhuaPrevisMedia(job,8,'animation')).toBeNull();
+ expect(resolveManhuaPrevisMedia({...job,output:{...job.output,animation:{...animation,framesGcsUri:'gs://bucket/private/raw.json'}}},7,'animation-frames')).toBeNull();
+ const receipt=previsAnimationReceipt({...animation,glbUrl:`/api/manhua-previs-media/${id}/animation`,framesUrl:`/api/manhua-previs-media/${id}/animation-frames`},id)!;
+ expect(receipt).not.toHaveProperty('glbGcsUri');
+ const studio=createManhuaPrevisStudio(2);studio.history.push({jobId:id,requestId:crypto.randomUUID(),gcsUri:prefix+'preview.mp4',url:`/api/manhua-previs-media/${id}/preview`,durationSec:2,createdAt:new Date().toISOString(),spec,animation:receipt});
+ expect(manhuaPrevisStudioSchema.parse(studio).history[0].animation).toEqual(receipt);
+ expect(previsAnimationReceipt({...receipt,glbUrl:receipt.glbUrl.replace(id,`prv_${'b'.repeat(48)}`)},id)).toBeNull();
+});

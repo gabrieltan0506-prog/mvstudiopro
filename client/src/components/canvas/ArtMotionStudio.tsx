@@ -166,6 +166,7 @@ export function ArtMotionStudio({ scopeKey, blocks, onCreate, onSave }: Props) {
     toast.success("动画方案已保存");
   };
   const preview = async () => {
+    if(draft.stageAnimation)throw new Error("请在原3D场景播放动作与运镜；这里查看实际渲染视频候选");
     if (!target) return;
     const scope = scopeKey,
       id = target.id;
@@ -205,7 +206,9 @@ export function ArtMotionStudio({ scopeKey, blocks, onCreate, onSave }: Props) {
     )
       throw new Error("任务不属于当前动画方案");
     const status = normalizeArtMotionJobStatus(job.status);
-    const output = job.output as { url?: unknown; gcsUri?: unknown } | null;
+    const output = job.output as { url?: unknown; gcsUri?: unknown; stageAnimation?: unknown } | null;
+    if (status === "succeeded" && request.spec.stageAnimation && (!output?.stageAnimation || typeof output.stageAnimation!=="object" || Object.entries(request.spec.stageAnimation).some(([key,value])=>(output.stageAnimation as Record<string,unknown>)[key]!==value)))
+      throw new Error("场景动画回执来源不一致，未采用候选");
     const uri = typeof output?.gcsUri === "string" ? output.gcsUri : undefined;
     await onSave(
       id,
@@ -352,6 +355,7 @@ export function ArtMotionStudio({ scopeKey, blocks, onCreate, onSave }: Props) {
                   画幅
                   <select
                     className={field + " block w-full"}
+                    disabled={Boolean(draft.stageAnimation)}
                     value={`${draft.width}x${draft.height}`}
                     onChange={e => {
                       const [width, height] = e.target.value
@@ -376,6 +380,7 @@ export function ArtMotionStudio({ scopeKey, blocks, onCreate, onSave }: Props) {
                   类型
                   <select
                     className={field + " ml-2"}
+                    disabled={Boolean(draft.stageAnimation)}
                     value={draft.mode}
                     onChange={e =>
                       patch({
@@ -403,12 +408,12 @@ export function ArtMotionStudio({ scopeKey, blocks, onCreate, onSave }: Props) {
                     min={1}
                     max={180}
                     value={draft.duration}
-                    disabled={draft.mode === "art"}
+                    disabled={draft.mode === "art" || Boolean(draft.stageAnimation)}
                     onChange={e => patch({ duration: Number(e.target.value) })}
                   />
                 </label>
               </div>
-              {draft.mode === "animation" ? (
+              {draft.stageAnimation ? (<p className="rounded-xl border border-stone-300 bg-white p-3 text-sm">动作、运镜、片长与画幅沿用本段已采用的动画工程。请在原3D场景播放预览；这里选择配乐、生成影片并查看实际候选。</p>) : draft.mode === "animation" ? (
                 <>
                   <label>
                     动画样式
@@ -678,6 +683,7 @@ export function ArtMotionStudio({ scopeKey, blocks, onCreate, onSave }: Props) {
                   <label className="ml-4">
                     <input
                       type="checkbox"
+                      disabled={Boolean(draft.stageAnimation)}
                       checked={draft.alpha}
                       onChange={e => patch({ alpha: e.target.checked })}
                     />{" "}
@@ -826,13 +832,13 @@ export function ArtMotionStudio({ scopeKey, blocks, onCreate, onSave }: Props) {
                 >
                   保存方案
                 </button>
-                <button
+                {!draft.stageAnimation && <button
                   className={button}
                   disabled={busy}
                   onClick={() => void run(preview)}
                 >
                   预览动画
-                </button>
+                </button>}
                 <button
                   className={button}
                   disabled={busy}

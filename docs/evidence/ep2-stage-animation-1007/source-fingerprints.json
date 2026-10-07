@@ -1,0 +1,212 @@
+[
+  {
+    "file": "client/src/lib/manhuaStageAnimation.ts",
+    "bytes": 1957,
+    "sha256": "f3ae43312a7436264e6e9f2b853e23455309adbb1dd7b5081fbd4d9fd5e0a249"
+  },
+  {
+    "file": "client/src/lib/manhuaStageAnimationBinding.test.ts",
+    "bytes": 1956,
+    "sha256": "364371c8ee9aae614f02af65192fa5146b8d9bfab32a33d89891b2e6fe21c69f"
+  },
+  {
+    "file": "client/src/lib/manhuaStageAnimationBinding.ts",
+    "bytes": 1236,
+    "sha256": "86221b8c3d1ff8b88c6857f27d96524868c0a2cc8f5841a9e4e981b3f55c6428"
+  },
+  {
+    "file": "docs/evidence/ep2-animation-export-1007/animation.glb",
+    "bytes": 4892,
+    "sha256": "5c323cf92bc7c341027b18f80f71315739b4713b2a5b89e88151330d7d7b310a"
+  },
+  {
+    "file": "docs/evidence/ep2-animation-export-1007/animation.raw.json",
+    "bytes": 11334,
+    "sha256": "da232a43627c563ca072ed97c0136e2203a6a51f67834993491086c3bbe51ca0"
+  },
+  {
+    "file": "docs/evidence/ep2-stage-animation-1007/README.md",
+    "bytes": 2646,
+    "sha256": "e0a90ed0d592239693109422677c76ccd62f4f199a24215a701b13be4a92e04e"
+  },
+  {
+    "file": "docs/evidence/ep2-stage-animation-1007/ep2-blender45-index.html",
+    "bytes": 22128,
+    "sha256": "8cf7e94577cc781c1437260b7240d02255c380042603adee84f326f82f6ff807"
+  },
+  {
+    "file": "docs/evidence/ep2-stage-animation-1007/ep2-blender45-sha256.txt",
+    "bytes": 880,
+    "sha256": "f1aed1e7db457995d7b0348dc2639fddb6595b06ee911d409a33a13c6e160c1f"
+  },
+  {
+    "file": "docs/evidence/ep2-stage-animation-1007/frames.raw.json",
+    "bytes": 5524,
+    "sha256": "e04b26062fc2ce1f3b36a7287fd4acdf862ddb4023b28db300c7c2cbdfdcd061"
+  },
+  {
+    "file": "server/scripts/export_previs_animation.py",
+    "bytes": 3687,
+    "sha256": "a58bd9031ecf63e576668fe333e631c4b965ede0315c5277b04378df96ab0581"
+  },
+  {
+    "file": "server/scripts/test_previs_animation_export.py",
+    "bytes": 1602,
+    "sha256": "a55b329ae4ff69ac44ec2cdc40133aebc05908d336fcc6cf4311a3e4b5ff335b"
+  },
+  {
+    "file": "server/services/manhuaPrevisAnimation.test.ts",
+    "bytes": 3571,
+    "sha256": "5ab04d9f6daa34c3a66c97b04b9568ac4b98fdce00779043c0eb52f19a28b5b8"
+  },
+  {
+    "file": "server/services/manhuaPrevisAnimation.ts",
+    "bytes": 1649,
+    "sha256": "cffc70d46a7701b0a7a226b9a4b1d4aec2dc3652899b1a240ca02afe2a2d8105"
+  },
+  {
+    "file": "server/services/manhuaStageAnimationRender.ts",
+    "bytes": 11557,
+    "sha256": "911b46c4aaa4824d27ba66e39f37c73665d15f89c6d38929f05f47b025ab23aa"
+  },
+  {
+    "file": "server/services/manhuaStageAnimationSource.test.ts",
+    "bytes": 2940,
+    "sha256": "42e984f4c22883687114062a9790bb74fd56b18dc1802a4ebd0b4154e590e66e"
+  },
+  {
+    "file": "server/services/manhuaStageAnimationSource.ts",
+    "bytes": 1716,
+    "sha256": "c55d34da7982db5bfdd67b21c537377903a96b122dffda791cc9ace9c57e2b89"
+  },
+  {
+    "file": "server/services/manhuaStageWorldBridge.ts",
+    "bytes": 3341,
+    "sha256": "b9cff3c65b1c46be344ae53ddf1a45a4685607d5054ba82e06a8d003de3ada07"
+  },
+  {
+    "file": "server/services/workerMediaProcesses.ts",
+    "bytes": 672,
+    "sha256": "2dcdb1a58ccbe63c7913c9553cb477125a3ede583136febd54c1eb912ad24451"
+  },
+  {
+    "file": "shared/manhuaPrevisAnimation.ts",
+    "bytes": 1548,
+    "sha256": "3a925355deeff402a0a9dc555489c7f45fa7c1a577a5ba44b0ac8a92b3043f01"
+  },
+  {
+    "file": "shared/manhuaStageRuntime.ts",
+    "bytes": 18215,
+    "sha256": "9915011579385c573bf966b818fe148370730cbb64be5422d703848512e2be46"
+  },
+  {
+    "file": "Dockerfile",
+    "bytes": 5577,
+    "sha256": "ba97cf09aef67f04a8b4bd6981b465b4b26a1a7b8d19b9ddde9118a0d359f7e2"
+  },
+  {
+    "file": "client/src/components/ManhuaScriptWorkbench.tsx",
+    "bytes": 589884,
+    "sha256": "795970dff9f204975ab9f18c7f3e50a7ff6405e240045387c3031902c093c5be"
+  },
+  {
+    "file": "client/src/components/canvas/ArtMotionStudio.tsx",
+    "bytes": 39934,
+    "sha256": "4aa72de2121cdc8aee3e024a4b779f405e19aa9f16786a1852e444b76448614f"
+  },
+  {
+    "file": "client/src/components/canvas/ManhuaPrevisStudio.tsx",
+    "bytes": 54989,
+    "sha256": "357b445f507cc68707ab31835dde4b4106e19295667254b1a9ecc92b0f76339c"
+  },
+  {
+    "file": "client/src/components/canvas/ManhuaWorldStagePreview.tsx",
+    "bytes": 30163,
+    "sha256": "86a6d1d71bb28313cd0af14e777fb0b1a4768f0f5540fe5ffcc655bff3f64478"
+  },
+  {
+    "file": "client/src/components/canvas/ManhuaWorldStudio.tsx",
+    "bytes": 15787,
+    "sha256": "387cf925c4c693331aafd646bec0ae7d4b43d9e3d228e7353c6b1cb7d7346bbe"
+  },
+  {
+    "file": "client/src/index.css",
+    "bytes": 59542,
+    "sha256": "0549932a6fff79f682677b603fd2ed95e43721523eaac509c51fb2984a8555a3"
+  },
+  {
+    "file": "client/src/lib/manhuaAdvisorWorkflowEvidence.ts",
+    "bytes": 3646,
+    "sha256": "3354ac1144545965e3b7e2b2e3d4b67e1675c6bd8d7b70826b3020a2f6f3cf9b"
+  },
+  {
+    "file": "client/src/pages/OmniCanvas.tsx",
+    "bytes": 769589,
+    "sha256": "0808f11c808852b66ab16b47d7bbcfa88d0e07f9bd22cd6dbf03c86385c118e1"
+  },
+  {
+    "file": "package.json",
+    "bytes": 8336,
+    "sha256": "d603b21431019f7a1d0f5786cc1241c3266f25b23c3184176c05c44105ba5936"
+  },
+  {
+    "file": "pnpm-lock.yaml",
+    "bytes": 497421,
+    "sha256": "6fdb4a4bc4c92e182e39a6705543f7a07eb5f882c29a496c8bf1f50b0341ae89"
+  },
+  {
+    "file": "server/_core/index.ts",
+    "bytes": 61027,
+    "sha256": "a2a416198bc17732ad1c659a3251f1e1c47bd70c65126c7bddb4a9a62cf02500"
+  },
+  {
+    "file": "server/jobs/heavyWorkerLifecycle.test.ts",
+    "bytes": 5757,
+    "sha256": "8811374fb4beec93c99fffa195bf08cc188db1565bc8c9a53d6cea54cde4d3af"
+  },
+  {
+    "file": "server/jobs/rigAutoscale.ts",
+    "bytes": 20809,
+    "sha256": "70a7d134cc4fa42cb15c4aea66cb71975bb1a0f1f1bf25bf49316e38d8288575"
+  },
+  {
+    "file": "server/scripts/render-manhua-previs.py",
+    "bytes": 56348,
+    "sha256": "d70101956772b0df3d1ad9437b332f4de939599e9fdf1e3a84316f610eaed720"
+  },
+  {
+    "file": "server/services/artMotionRender.ts",
+    "bytes": 12933,
+    "sha256": "9fb4b1d3aa7e8a2352791ef7db70e09cb6c22d1758404885c3f19c34a9ef64c2"
+  },
+  {
+    "file": "server/services/artMotionTask.ts",
+    "bytes": 2153,
+    "sha256": "b8d8426f6365fcd22110fc8b37dc733dc5734271b6058adca1613608ab3584ec"
+  },
+  {
+    "file": "server/services/manhuaPrevisMedia.ts",
+    "bytes": 3303,
+    "sha256": "57c42811866758e7c361250ed391028d6b3e93939541117422aadb688cf4b48a"
+  },
+  {
+    "file": "server/services/manhuaPrevisRender.ts",
+    "bytes": 26404,
+    "sha256": "4a5d81a783d288b3ffa5b31287f471ac52eeea601f3cf681fc311cf200c8ef6a"
+  },
+  {
+    "file": "server/services/manhuaPrevisTask.ts",
+    "bytes": 10233,
+    "sha256": "1c0d05e45ccc199069b181e888aa12980dc941b930eff4d2d004395c99d80405"
+  },
+  {
+    "file": "shared/artMotion.ts",
+    "bytes": 10060,
+    "sha256": "53308b70bd2a40cd151adb7aff0392809dce78d7c418838b1fe43669b904be31"
+  },
+  {
+    "file": "shared/manhuaPrevis.ts",
+    "bytes": 54727,
+    "sha256": "29482ab2ae7f05a4e359d177de1e5d95cde93be2190ddfb17e028c626b917340"
+  }
+]

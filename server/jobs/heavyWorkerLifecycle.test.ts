@@ -146,3 +146,13 @@ describe("two-machine routing and idle lifecycle", () => {
     expect(d.startMachine).not.toHaveBeenCalled();
   });
 });
+it('external isolated media children prevent stop; a child appearing during the stop gate aborts the decision',async()=>{
+ const seen=vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+ const d=deps({externalMediaBusy:seen});
+ expect((await maybeStopIdleRig(d,{lastBusyAt:0},false)).action).toBe('busy');
+ expect(d.stopMachine).not.toHaveBeenCalled();expect(d.onStopAborted).toHaveBeenCalled();
+ const busy=deps({externalMediaBusy:async()=>true});
+ expect((await maybeStopIdleRig(busy,{lastBusyAt:0},false)).action).toBe('busy');expect(busy.onStopDecided).not.toHaveBeenCalled();
+ const unknown=deps({externalMediaBusy:async()=>{throw new Error('proc unreadable');}});
+ expect((await maybeStopIdleRig(unknown,{lastBusyAt:0},false)).action).toBe('error');expect(unknown.stopMachine).not.toHaveBeenCalled();
+});

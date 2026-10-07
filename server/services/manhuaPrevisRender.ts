@@ -1,3 +1,4 @@
+import { validatePrevisAnimation } from "./manhuaPrevisAnimation";
 import { preparePrevisAudio } from "./manhuaPrevisAudio";
 /** 白模确定性渲染：受控 JSON → 固定脚本 → 实际帧 → MP4 → 本人持久产物。 */
 import { spawn } from "node:child_process";
@@ -313,6 +314,34 @@ export async function renderManhuaPrevis(
       contentType: "application/octet-stream",
       signal: options.signal,
     });
+    let animation: {glbGcsUri:string; framesGcsUri:string; sha256:string; framesSha256:string} | undefined;
+    if (input.spec.exportAnimation) {
+      const launch = blenderLaunchCommand(d, ["--background", "--disable-autoexec", path.join(dir,"scene.blend"),
+        "--threads","2","--python",path.resolve("server/scripts/export_previs_animation.py"),"--",dir]);
+      try { await d.run(launch.command,launch.args,options.signal); }
+      finally {
+        // Export failure must still retain the complete evaluated camera/visibility JSON.
+        const rawPath=path.join(dir,"animation.raw.json");
+        if (await stat(rawPath).catch(()=>null)) {
+          const rawBytes=await readBoundedArtifact(rawPath,2,16*1024*1024,"动画原始证据体积不正确");
+          const rawObject=await d.upload({objectName:`${prefix}/animation.raw.json`,buffer:rawBytes,
+            contentType:"application/json",signal:AbortSignal.timeout(30_000)});
+          await d.upload({objectName:`${prefix}/animation.raw-evidence.json`,buffer:Buffer.from(JSON.stringify({
+            requestId:input.requestId,clipId:input.clipId,raw:{gcsUri:rawObject.gcsUri,bytes:rawBytes.length,sha256:sha(rawBytes)}})),
+            contentType:"application/json",signal:AbortSignal.timeout(30_000)});
+        }
+      }
+      const rawAnimation=JSON.parse((await readFile(path.join(dir,"animation.raw.json"))).toString());
+      const framesBytes=Buffer.from(JSON.stringify(rawAnimation));
+      const framesObject=await d.upload({objectName:`${prefix}/animation.frames.json`,buffer:framesBytes,contentType:"application/json",signal:AbortSignal.timeout(30_000)});
+      const animationBytes=await readBoundedArtifact(path.join(dir,"animation.glb"),20,64*1024*1024,"场景动画体积不正确");
+      validatePrevisAnimation(rawAnimation,animationBytes,input.spec);
+      const glbObject=await d.upload({objectName:`${prefix}/animation.glb`,buffer:animationBytes,contentType:"model/gltf-binary",signal:options.signal});
+      animation={glbGcsUri:glbObject.gcsUri,framesGcsUri:framesObject.gcsUri,sha256:sha(animationBytes),framesSha256:sha(framesBytes)};
+      await d.upload({objectName:`${prefix}/animation.evidence.json`,buffer:Buffer.from(JSON.stringify({requestId:input.requestId,
+        clipId:input.clipId,animation,glbBytes:animationBytes.length,framesBytes:framesBytes.length,frameCount:rawAnimation.frames.length})),
+        contentType:"application/json",signal:AbortSignal.timeout(30_000)});
+    }
     // 只加载本次固定脚本生成的场景。长时渲染前，报告和场景已永久存储。
     const renderProfile = previsRenderProfile(input.spec, input.quality);
     const renderArgs = [
@@ -608,6 +637,7 @@ export async function renderManhuaPrevis(
       ...(input.audio ? { audio: input.audio } : {}),
       ...(input.quality ? { quality: input.quality } : {}),
       ...(layerBundle ? { layerBundle } : {}),
+      ...(animation ? { animation } : {}),
     };
     // 先把完整回执存证，再交给 worker 落库；数据库暂时失败不应丢掉已生成产物。
     const resultBytes = Buffer.from(JSON.stringify(result));

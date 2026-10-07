@@ -91,6 +91,11 @@ export const artMotionSpecSchema = z
       )
       .max(35)
       .default([]),
+    stageAnimation: z.object({
+      previsJobId:z.string().regex(/^prv_[a-f0-9]{48}$/),
+      scopeId:z.string().uuid(),clipId:z.string().min(1).max(160),
+      worldTaskId:z.string().min(1).max(200),sceneRef:z.string().min(1).max(200),worldSourceVersion:z.string().min(1).max(200),
+    }).strict().optional(),
     audioUri: z
       .string()
       .regex(/^gs:\/\//)
@@ -128,7 +133,9 @@ export const artMotionSpecSchema = z
       fail("艺术段落总时长必须等于片长");
     if (v.mode === "art" && v.alpha)
       fail("艺术场景使用完整背景，透明输出仅用于解说动画");
-    if (v.mode === "animation" && !v.cues.length && !Object.keys(v.data).length)
+    if(v.stageAnimation && (v.mode!=="animation" || v.alpha || v.fps!==24 || v.duration>30 || v.cues.length || Object.keys(v.data).length || v.scenes.length))
+      fail("3D场景动画只消费原白模动作：常速24帧、最多30秒，不叠加解说动画数据");
+    if (v.mode === "animation" && !v.stageAnimation && !v.cues.length && !Object.keys(v.data).length)
       fail("请填写动画内容");
     if (v.mode === "animation") {
       const allowed = ART_MOTION_CUE_KINDS[v.grammar] || [];

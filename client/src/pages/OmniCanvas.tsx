@@ -1,3 +1,4 @@
+import {requireCurrentStageAnimation} from "@/lib/manhuaStageAnimationBinding";
 import { saveSceneProductionBackup } from "@/lib/manhuaSceneProductionBackups";
 import {creativeStudioAudioAssets} from "@/lib/creativeStudioAudio";
 import type { AdvisorEffectsControl, AdvisorEffectsRegistration } from "@shared/manhuaAdvisorEffects";
@@ -59,7 +60,7 @@ import { ImageWorldStudio, type ImageWorldBlockUpdate } from "@/components/canva
 import { creativeStudioRevision } from "@shared/creativeStudio";
 import { imageWorldStateSchema } from "@shared/imageWorld";
 import { ArtMotionStudio } from "@/components/canvas/ArtMotionStudio";
-import { artMotionStateSchema, defaultArtMotionSpec, type ArtMotionState } from "@shared/artMotion";
+import { artMotionStateSchema, artMotionSpecSchema, defaultArtMotionSpec, normalizeArtMotionJobStatus, type ArtMotionSpec, type ArtMotionState } from "@shared/artMotion";
 import { manhuaPostProdScopeKey } from "@/lib/postProdWorkshop";
 import { buildManhuaPrevisAudio } from "@shared/manhuaPrevisAudio";
 import { ManhuaAdvisorKnowledgePanel } from "@/components/canvas/ManhuaAdvisorKnowledgePanel";
@@ -3623,7 +3624,10 @@ function OmniCanvasWorkspace() {
     check();const parsed=artMotionStateSchema.parse(state),current=blocksRef.current;
     const old=current.find(b=>b.id===id);
     if(expected===null?!!old:!old||JSON.stringify(old.artMotion)!==JSON.stringify(expected))throw new Error("动画记录已变化，未覆盖较新的方案");
-    const block=old??{...defaultCanvasBlock("video",80,80),id};
+    const source=parsed.spec.stageAnimation;
+    const sourceClip=source ? current.find(b=>b.id===source.clipId) : undefined;
+    if(source && (adopt || parsed.request?.status==="submitting"))requireCurrentStageAnimation(current,latestCustomAssetRefs.current,source);
+    const block=old??{...defaultCanvasBlock("video",80,80),id,...(sourceClip && getBlockEpisodeIndex(sourceClip) ? {episodeIndex:getBlockEpisodeIndex(sourceClip)!} : {})};
     const updated:CanvasBlock={...block,artMotion:parsed,prompt:parsed.spec.title||"艺术动画",...(adopt?{
       outputUrl:adopt.url,outputUrls:[adopt.url],status:"done" as const,
       uploadedAssets:[...block.uploadedAssets.filter(a=>a.id!==`art-output-${parsed.request?.id}`),{id:`art-output-${parsed.request?.id}`,url:adopt.url,previewUrl:adopt.url,gcsUri:adopt.gcsUri,fileName:parsed.spec.title||"艺术动画",kind:"video" as const,mimeType:parsed.request?.spec.alpha?"video/quicktime":"video/mp4"}],
@@ -3637,6 +3641,19 @@ function OmniCanvasWorkspace() {
     if(!await syncCloudDraftPayload(buildLocalCloudDraftSnapshot(draft)))throw new Error("云端尚未确认动画方案，原请求编号已保留，请续查");
     check();
   },[vfxPersistenceScope,vfxPersistenceEpoch,user?.id,cloudSyncReady,syncCloudDraftPayload]);
+  const renderStageAnimation=useCallback(async (raw:ArtMotionSpec)=>{
+    const spec=artMotionSpecSchema.parse(raw),source=spec.stageAnimation;
+    if(!source)throw new Error("缺少场景动画原工程");
+    requireCurrentStageAnimation(blocksRef.current,latestCustomAssetRefs.current,source);
+    const prior=blocksRef.current.find(b=>b.artMotion?.request && ["submitting","queued","running"].includes(b.artMotion.request.status)
+      && JSON.stringify(b.artMotion.request.spec.stageAnimation)===JSON.stringify(source));
+    const id=prior?.id??`art-motion-${crypto.randomUUID()}`;
+    const state:ArtMotionState=prior?.artMotion??{version:1,spec,history:[],request:{id:crypto.randomUUID(),spec,status:"submitting"}};
+    if(!prior)await persistArtMotionBlock(id,state,null);
+    const receipt=await queueBurnSubtitleMutation.mutateAsync({action:"art_motion",scopeKey:artMotionScopeKey,requestId:state.request!.id,params:state.request!.spec});
+    await persistArtMotionBlock(id,{...state,request:{...state.request!,jobId:receipt.jobId,status:normalizeArtMotionJobStatus(receipt.status)}},state);
+    window.dispatchEvent(new CustomEvent("art-motion-open",{detail:{blockId:id}}));
+  },[persistArtMotionBlock,artMotionScopeKey,queueBurnSubtitleMutation]);
   const createArtMotionBlock=useCallback(async()=>{
     const id=`art-motion-${crypto.randomUUID()}`;
     await persistArtMotionBlock(id,{version:1,spec:defaultArtMotionSpec(),history:[]},null);
@@ -12438,6 +12455,7 @@ async function runAdvisorWriterTrial() {
                   }}
                   onUpdateClipAudioStudio={persistClipAudioStudio}
                   onUpdateClipPrevisStudio={canUseManhua3d ? persistClipPrevisStudio : undefined}
+                  onRenderStageAnimation={canUseManhua3d ? renderStageAnimation : undefined}
                   onLayoutReadableChain={() => {
                     setBlocks((prev) => {
                       try {

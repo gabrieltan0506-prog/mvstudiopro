@@ -1,3 +1,4 @@
+import {workerMediaProcessesBusy} from "../services/workerMediaProcesses";
 /**
  * 0917 PR-B：rig 进程组按需启停（策略层，纯函数 + 注入 IO，可单测）。
  *
@@ -55,6 +56,7 @@ export type RigAutoscaleDeps = {
   queuedBlenderJobs(): Promise<number>;
   /** queued + running：判「这台能不能停」。绑定跑 12 分钟期间队列为空但机器不能停。 */
   pendingBlenderJobs(): Promise<number>;
+  externalMediaBusy?():Promise<boolean>;
   /** 停机命令发出前的回调：runner 用它把本进程的领单闸关掉，避免停机窗口内又领一单。 */
   onStopDecided?(): void;
   /** 停机失败时复位上面的闸。 */
@@ -284,6 +286,7 @@ export async function maybeStopIdleRig(
   }
   let pending = 0;
   try {
+    if(await deps.externalMediaBusy?.()){state.lastBusyAt=deps.now();return {action:"busy"};}
     pending = await deps.pendingBlenderJobs();
   } catch (error) {
     // 查不到就当忙，宁可多开一会儿机器，也不能把有任务在队的机器停掉
@@ -321,7 +324,7 @@ export async function maybeStopIdleRig(
     return { action: "busy" };
   }
   try {
-    if (await deps.pendingBlenderJobs() > 0 || isBusy()) {
+    if (await deps.externalMediaBusy?.() || await deps.pendingBlenderJobs() > 0 || isBusy()) {
       deps.onStopAborted?.(); state.lastBusyAt = deps.now(); return { action: "busy" };
     }
   } catch (error) {
@@ -364,6 +367,7 @@ export function resolveRigAutoscaleDeps(
     now: () => Date.now(),
     queuedBlenderJobs: counters.queuedBlenderJobs,
     pendingBlenderJobs: counters.pendingBlenderJobs,
+    externalMediaBusy: workerMediaProcessesBusy,
     onStopDecided: hooks.onStopDecided,
     onStopAborted: hooks.onStopAborted,
     failQueuedBlenderJobs: hooks.failQueuedBlenderJobs,
