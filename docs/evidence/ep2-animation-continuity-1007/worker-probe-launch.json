@@ -1,0 +1,9 @@
+{
+  "machineId": "7812595b294778",
+  "event": "machine stopped before SSH launch",
+  "probeExecuted": false,
+  "paidProviderCalls": 0,
+  "existingMachineReuse": true,
+  "originalSshError": "--machine=7812595b294778 not found/started",
+  "recordedAt": "2026-10-07T15:47:19+00:00"
+}

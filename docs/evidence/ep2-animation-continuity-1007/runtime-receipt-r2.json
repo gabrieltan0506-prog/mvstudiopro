@@ -1,0 +1,29 @@
+{
+  "at": "2026-10-07T15:48:18.656Z",
+  "exitCode": 1,
+  "prefix": "post-prod/1/isolated-probes/ep2-horse-retarget-1007-1791388084844",
+  "receipts": [
+    {
+      "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/1/isolated-probes/ep2-horse-retarget-1007-1791388084844/blender.log",
+      "bytes": 576,
+      "sha256": "870c06b39cb739641d7ade54b7b11fe6aced15d3e057ae55e0e63245d2ac52a4",
+      "generation": "1791388093491250"
+    },
+    {
+      "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/1/isolated-probes/ep2-horse-retarget-1007-1791388084844/raw/manifest.json",
+      "bytes": 192,
+      "sha256": "f160262e8c1efe3dded3bef71faf491fc7317b909c184302731eed914722a18f",
+      "generation": "1791388095343701"
+    },
+    {
+      "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/1/isolated-probes/ep2-horse-retarget-1007-1791388084844/raw/spec.json",
+      "bytes": 472,
+      "sha256": "28a01107c0f7bedc425882fd1f4d54042f93697b58ca19fd28f55a53aa9f57f5",
+      "generation": "1791388097154071"
+    }
+  ],
+  "activeAfter": [],
+  "maxDeltaMeters": null,
+  "productionReady": false,
+  "qualityAccepted": false
+}

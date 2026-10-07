@@ -22,7 +22,7 @@ PR1678 原推送 HEAD d2efa5d6；此批追加，不合併、不部署。
 ## 尚未驗證與不可冒稱完成
 
 - 新增代碼尚未正式部署，顧問／跨集審片未線上複問或用真片驗收。
-- 合成馬蒙皮探針不代表真Tripo馬完成；四足轉移完整動畫尚欠實際runtime探針／審片，蹄底接地、受傷倒地及人馬接觸未驗，原拒收保護保留。
+- 合成馬蒙皮探針不代表真Tripo馬完成；四足48幀既有合成GLB轉移runtime已通過，真馬與常速審片仍未驗，蹄底接地、受傷倒地及人馬接觸未驗，原拒收保護保留。
 - 先生A/+X原生檢查40,500頂點已完成，但全部關節未人工校正、未提交蒙皮。
 - 場景四個世界成功但未採用；完整GS角色動畫合成、動作運鏡、BGM採用混音、正式白模及第二集成片仍未完成。
 - 前集成片本次未讀；僅可比較已提供正文與保存身份，不能宣稱跨集音畫矛盾已全面覆蓋。
@@ -31,3 +31,9 @@ PR1678 原推送 HEAD d2efa5d6；此批追加，不合併、不部署。
 ## 雲端已有證據
 
 合成馬14件永久產物前綴：post-prod/1/isolated-probes/ep2-quadruped-1007-1791384616134/，archive-receipt.recovered.json，逐件SHA/bytes已對帳。GLB352156bytes，SHAabfb7f0a22fedbedb5e42e9d6be95fa783584fafac60559cf6791be5d0bb5c05。
+
+## 補充：實際horse驅動runtime（非正式驗收）
+
+原工作機自動停止使首發SSH未執行。啟動原工作機前再次查全部任務空佇列；第一次runtime因原/tmp合成GLB不存在而在讀檔前失敗，原始失敗log永久保存。從既有永久雲端恢復同SHA/bytes的GLB；第二次因測試manifest漏sourceJobId在完整服務端身份檢查拒收，未改業務門禁。補齊fixture身份後僅复验该runtime路径通過，未重跑蒙皮、未調模型或渲染。
+
+使用實際render-manhua-previs.py構建horse驅動與previs_rigged_model.py重定向48幀。四腿根座標空間實際蒙皮網格最大變形0.244195–0.244790米，完整48幀原始14523bytes與解析10108bytes分存雲端、逐件readback SHA核對。永久前綴post-prod/1/isolated-probes/ep2-horse-retarget-1007-1791388207971/，archive-receipt.json。runtime-receipt-r3.json列實際回執；執行後queued/running仍空。尚未測真Tripo馬蹄底接地／跌倒／接觸或正式影片。

@@ -31,5 +31,6 @@
   "client/src/lib/manhuaAdvisorWorkflowEvidence.ts": "a41331ea534e6d9edd6a82480eade53367f32958f2e8426986b90a0d8c628728",
   "client/src/lib/manhuaQuadrupedRig.test.ts": "27eccc8dedb5d26b36d6f0183832571b4995a75e20f6f3347a7b4890dbec23ca",
   "server/scripts/previs_quadruped.py": "3a1b5a3afb668f8b668d3e13fe9a3f3c8743ca6957b3bb1328d8f80bcfcac252",
-  "server/scripts/test_auto_rig_quadruped.py": "a97f3d071404f1cb4c019d206e5712d8e158f4b0de9e758538649999c58ad616"
+  "server/scripts/test_auto_rig_quadruped.py": "a97f3d071404f1cb4c019d206e5712d8e158f4b0de9e758538649999c58ad616",
+  "server/scripts/test_previs_quadruped_retarget.py": "9bef5fa819cd5fe805910da092080a2e347daf573f78fddeff1173c9d66393e0"
 }
