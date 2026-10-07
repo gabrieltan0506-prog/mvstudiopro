@@ -7499,6 +7499,8 @@ function OmniCanvasWorkspace() {
           details: `参考图：${ref.labelZh || "资产"}`,
         }))) return;
         setAssetStandardizeBusyId(id);
+        // Legacy scene tiles must be verified against their owned source sheet before queueing.
+        await runDeps.repairSceneTileOwnership?.([ref.url]);
         const source = await prepareAssetImageEdit(ref);
         const { jobId } = await createJobSameOrigin({
           type: "image",
@@ -7551,7 +7553,7 @@ function OmniCanvasWorkspace() {
         setAssetStandardizeBusyId(null);
       }
     },
-    [assetStandardizeBusyId, customAssetRefs, user?.id, confirmAssetAction],
+    [assetStandardizeBusyId, customAssetRefs, user?.id, confirmAssetAction, runDeps],
   );
 
   /**
@@ -7577,6 +7579,8 @@ function OmniCanvasWorkspace() {
           details: `参考图：${ref.labelZh || "资产"}\n修改要求：${instructionZh.trim()}`,
         }))) return false;
         setAssetStandardizeBusyId(id);
+        // Legacy scene tiles must be verified against their owned source sheet before queueing.
+        await runDeps.repairSceneTileOwnership?.([ref.url]);
         const source = await prepareAssetImageEdit(ref);
         const { jobId } = await createJobSameOrigin({
           type: "image",
@@ -7635,7 +7639,7 @@ function OmniCanvasWorkspace() {
         setAssetStandardizeBusyId(null);
       }
     },
-    [assetStandardizeBusyId, customAssetRefs, user?.id, confirmAssetAction],
+    [assetStandardizeBusyId, customAssetRefs, user?.id, confirmAssetAction, runDeps],
   );
 
   /** 免费裁字：客户端裁剪后作为新参考图入库（零调用零扣费），旧图保留待删 */
@@ -7686,6 +7690,8 @@ function OmniCanvasWorkspace() {
           details: `参考图：${ref.labelZh || "资产"}`,
         }))) return;
         setAssetStandardizeBusyId(id);
+        // Legacy scene tiles must be verified against their owned source sheet before queueing.
+        await runDeps.repairSceneTileOwnership?.([ref.url]);
         const source = await prepareAssetImageEdit(ref);
         const claimedNames = (ref.claimedAnchorNamesZh || []).filter(Boolean).slice(0, 8);
         const multiPropSheet = ref.role === "prop" && claimedNames.length > 1;
@@ -7748,7 +7754,7 @@ function OmniCanvasWorkspace() {
         setAssetStandardizeBusyId(null);
       }
     },
-    [assetStandardizeBusyId, customAssetRefs, user?.id, confirmAssetAction],
+    [assetStandardizeBusyId, customAssetRefs, user?.id, confirmAssetAction, runDeps],
   );
 
   const handleSegmentIntentChange = useCallback(
