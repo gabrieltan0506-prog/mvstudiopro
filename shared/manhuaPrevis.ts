@@ -10,6 +10,7 @@ import {
   validatePrevisEffects,
 } from "./manhuaPrevisEffects";
 import { previsRiggedModelSchema } from "./manhuaPrevisRig";
+import { previsSceneEffectsSchema, validatePrevisSceneEffects, formatPrevisSceneEffectsGuide } from "./manhuaPrevisSceneEffects";
 
 import { previsPiggybackSchema, previsPiggybackIssues } from "./manhuaPrevisPiggyback";
 
@@ -243,6 +244,7 @@ const manhuaPrevisSpecBaseSchema = z
     scriptSource: previsScriptSourceSchema.optional(),
     waterEmergence: previsWaterEmergenceSchema.optional(),
     effects: previsEffectsSchema.optional(),
+    sceneEffects: previsSceneEffectsSchema.optional(),
     exportLayers: z.literal(true).optional(),
     cameras: z
       .array(
@@ -446,6 +448,7 @@ export function previsCapacityIssueZh(
 export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
   (spec, ctx) => {
     validatePrevisEffects(spec, ctx);
+    validatePrevisSceneEffects(spec, ctx);
     for (const message of previsPiggybackIssues(spec))
       ctx.addIssue({ code: "custom", path: ["piggyback"], message });
     if (spec.timeMap) {
@@ -1061,6 +1064,7 @@ export function formatPrevisMotionGuide(spec: ManhuaPrevisSpec): string {
   if (spec.timeMap) return "白模已按统一时间表变速；以下秒位均为成片呈现时间，直接跟随参考，不重复变速。\n" + formatPrevisMotionGuide(previsPresentationGuideSpec(spec));
   return [
     "参考中的关节姿态、落脚、蓄力—出手—回收及保护反应按对应秒位读取；不继承白模外形。",
+    ...formatPrevisSceneEffectsGuide(spec.sceneEffects, spec.actors),
     ...spec.cameras.filter(c => c.orbitDeg).map(c => `${c.startSec}—${c.endSec}秒围绕（${c.target.join("，")}）水平环绕${c.orbitDeg}度，${c.orbitRise ? `保持半径，同时${c.orbitRise > 0 ? "升高" : "降低"}${Math.abs(c.orbitRise)}米` : "保持半径和高度"}；${c.motionWindow ? `只在${c.motionWindow.startSec}—${c.motionWindow.endSec}秒环绕，其前后停住；` : ""}人物速度不由环绕改变。`),
     ...spec.cameras.filter(c => c.endLens !== undefined && c.endLens !== c.lens).map(c => `${c.startSec}—${c.endSec}秒焦距从${c.lens}毫米连续${c.endLens! > c.lens ? "推到" : "拉到"}${c.endLens}毫米，${c.lensWindow ? `在${c.lensWindow.startSec}—${c.lensWindow.endSec}秒变焦，其前后停住` : "按整镜平滑起停"}。`),
     ...spec.cameras.filter(c => c.endPosition || c.endTarget).map(c =>

@@ -1,0 +1,11 @@
+No machine specified, using 7812595b294778 in region sin
+Connecting to fdaa:50:6acf:a7b:86e:ee9e:7601:2...
+Restored vfx/result.json
+Restored cloth/result.json
+Restored explode/result.json
+Restored label/failure.json
+Restored label-r2/result.json
+Restored transition/result.json
+{"missing":"knowledge/result.json"}
+{"missing":"knowledge/failure.json"}
+{"event":"passed","phase":"knowledge-r2","gcsUri":"gs://mv-studio-pro-vertex-video-temp/post-prod/isolated-pr1675/probe-evidence/20261007T081759-9692764c/knowledge-r2/result.json","status":"passed","templateCount":89,"directorCount":6,"coldDownloads":89,"warmDownloads":0,"selectedResolution":{"publicId":"mt_0009","resolution":"indexed"},"modelCalls":0,"receipts":[{"name":"preflight.json","gcsUri":"gs://mv-studio-pro-vertex-video-temp/post-prod/isolated-pr1675/probe-evidence/20261007T081759-9692764c/knowledge-r2/preflight.json","bytes":22665,"sha256":"b0d0ae191ed1ff7a307140a553824f7acfc6959406bfea792efaca7921e20ad7","readBackVerified":true},{"name":"knowledge-cold.json","gcsUri":"gs://mv-studio-pro-vertex-video-temp/post-prod/isolated-pr1675/probe-evidence/20261007T081759-9692764c/knowledge-r2/knowledge-cold.json","bytes":36796,"sha256":"aa9c001db0d37f0991f7635748f9a6c2d5823ed330595392d42a2194560b35b3","readBackVerified":true},{"name":"knowledge-warm.json","gcsUri":"gs://mv-studio-pro-vertex-video-temp/post-prod/isolated-pr1675/probe-evidence/20261007T081759-9692764c/knowledge-r2/knowledge-warm.json","bytes":35907,"sha256":"6991c9e177d9c9af051eace95cf30e88f51100edaacb031aaab53a6b6c32d1e0","readBackVerified":true},{"name":"result.json","gcsUri":"gs://mv-studio-pro-vertex-video-temp/post-prod/isolated-pr1675/probe-evidence/20261007T081759-9692764c/knowledge-r2/result.json","bytes":1054,"sha256":"e792621cad8c3d1b1497f9d5da19819cc0aba5cf304c9267de11962fbd564d00","readBackVerified":true}]}

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { advisorEffectsActionSchema, MANHUA_ADVISOR_EFFECTS_HELP } from "./manhuaAdvisorEffects";
 
 const id = z.string().trim().min(1).max(200);
 const episode = z.number().int().positive();
@@ -10,6 +11,8 @@ const point = z.tuple([
 
 /** 文字顾问与语音共用；不接受模型传入费用豁免、自动重试或外部素材地址。 */
 export const manhuaAdvisorWorkflowVariants = [
+  advisorEffectsActionSchema,
+  z.object({ action: z.literal("knowledge"), operation: z.enum(["inspect", "refresh"]) }).strict(),
   z
     .object({
       action: z.literal("writer"),
@@ -228,4 +231,5 @@ export const manhuaAdvisorWorkflowVariants = [
 ] as const;
 
 export const MANHUA_ADVISOR_OPERATION_REQUEST = "【工作流操作】";
-export const MANHUA_ADVISOR_WORKFLOW_HELP = `工作流动作：writer(inspect/configure/trial/expand/confirm，topic/brief/templateId/episodeCount)；asset(inspect/regenerate/select/adopt/configure/claim/primary/acceptReview，anchorId/assetId/libraryId/question/anchorIds/duty/metadata)；modelControl(inspect/multiview/multiviewSubmit/rigInspect/rigSubmit/rigAdopt/rigRestore，assetId/requestId)；worldControl(inspect/exportFrame/adoptFrame/clearFrame，assetId/clipId/shotId/frameId/camera)；generate(keyart/clip/retake/selectVersion，episode/blockId/versionIndex/question)；audio(inspect/addCue/configureCue/generateDialogue/adoptTake/selectMusic/selectSource/trim/premix/previewMix/resume，clipId/cueId/takeId/jobId/variantIndex/patch)；scoring(inspect/configure/analyze/applyAdvice/submit，clipId/musicId/question/sourceKey，submit必须原样携带本次scoring inspect的sourceKey；改素材或参数后重新inspect和准备方案，使用已采用配乐与原正式视频混音入口)；edit(inspect/reorder/trim/transition，episode/order/shotIndex/inSec/outSec/transition，沿原剪辑台保存)；deliver(inspect/assemble/subtitle/selectVersion/export，episode/clipIds/versionIndex)；storyboardRecovery(inspect/recover/archive，episode)。ID及候选编号只能从当前工作区实际清单取得，不接受外部素材URL。执行生成仍须原页面确认；inspect不改作品。缺少目标或参数时说明缺少什么，不猜测、不开任务。`;
+export const MANHUA_ADVISOR_WORKFLOW_HELP = MANHUA_ADVISOR_EFFECTS_HELP + "\n" + `知识目录：knowledge(inspect/refresh)，inspect读最近快照，refresh明确更新已批准模板、导演包与工作流能力；不调用生成模型、不修改项目冻结导演包。刷新后以真实revision和scannedAt说明读取时点，不能声称永久最新。
+工作流动作：writer(inspect/configure/trial/expand/confirm，topic/brief/templateId/episodeCount)；asset(inspect/regenerate/select/adopt/configure/claim/primary/acceptReview，anchorId/assetId/libraryId/question/anchorIds/duty/metadata)；modelControl(inspect/multiview/multiviewSubmit/rigInspect/rigSubmit/rigAdopt/rigRestore，assetId/requestId)；worldControl(inspect/exportFrame/adoptFrame/clearFrame，assetId/clipId/shotId/frameId/camera)；generate(keyart/clip/retake/selectVersion，episode/blockId/versionIndex/question)；audio(inspect/addCue/configureCue/generateDialogue/adoptTake/selectMusic/selectSource/trim/premix/previewMix/resume，clipId/cueId/takeId/jobId/variantIndex/patch)；scoring(inspect/configure/analyze/applyAdvice/submit，clipId/musicId/question/sourceKey，submit必须原样携带本次scoring inspect的sourceKey；改素材或参数后重新inspect和准备方案，使用已采用配乐与原正式视频混音入口)；edit(inspect/reorder/trim/transition，episode/order/shotIndex/inSec/outSec/transition，沿原剪辑台保存)；deliver(inspect/assemble/subtitle/selectVersion/export，episode/clipIds/versionIndex)；storyboardRecovery(inspect/recover/archive，episode)。ID及候选编号只能从当前工作区实际清单取得，不接受外部素材URL。执行生成仍须原页面确认；inspect不改作品。缺少目标或参数时说明缺少什么，不猜测、不开任务。`;

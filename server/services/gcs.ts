@@ -876,11 +876,14 @@ export function resolvePdfExportBucketName(): string {
   ).trim() || getGcsBucketName();
 }
 
-/** 只读对象名与版本号，避免为目录变更检查下载模板正文。分页失败不得返回部分版本。 */
-export async function readGcsPrefixRevision(prefix: string): Promise<string> {
+export type GcsObjectVersion = { name: string; generation: string };
+
+/** Metadata only; complete pagination or failure, never a partial catalog. */
+export async function listGcsObjectVersions(prefix: string): Promise<GcsObjectVersion[]> {
   const accessToken = await getVertexAccessToken();
   const userProject = getGcsUserProject();
-  const entries: string[] = [];
+  const entries: GcsObjectVersion[] = [];
+  const seen = new Set<string>();
   let pageToken = "";
   for (let page = 0; page < 100; page += 1) {
     const url = new URL(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(getGcsBucketName())}/o`);
@@ -898,10 +901,18 @@ export async function readGcsPrefixRevision(prefix: string): Promise<string> {
     for (const item of data.items || []) {
       if (!item.name?.endsWith(".json")) continue;
       if (!item.name.startsWith(prefix) || !/^\d+$/.test(item.generation || "")) throw new Error("gcs_catalog_revision_invalid");
-      entries.push(`${item.name}:${item.generation}`);
+      if (seen.has(item.name)) throw new Error("gcs_catalog_revision_duplicate");
+      seen.add(item.name);
+      entries.push({ name: item.name, generation: item.generation! });
     }
     pageToken = data.nextPageToken || "";
-    if (!pageToken) return crypto.createHash("sha256").update(entries.sort().join("\n")).digest("hex");
+    if (!pageToken) return entries.sort((a, b) => a.name.localeCompare(b.name));
   }
   throw new Error("gcs_catalog_revision_page_limit");
+}
+
+/** 只读对象名与版本号，避免为目录变更检查下载模板正文。 */
+export async function readGcsPrefixRevision(prefix: string): Promise<string> {
+  const entries = await listGcsObjectVersions(prefix);
+  return crypto.createHash("sha256").update(entries.map(item => `${item.name}:${item.generation}`).sort().join("\n")).digest("hex");
 }

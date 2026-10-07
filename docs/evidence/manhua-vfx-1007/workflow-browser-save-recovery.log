@@ -1,0 +1,11 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-effects-1007
+
+ ✓ client/src/lib/manhuaVfxEditor.browser.test.ts (1 test) 2010ms
+   ✓ 保存失败不提交且保留原号，重复点击与刷新恢复后显式采用才保存结果 2009ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  15:15:42
+   Duration  2.93s (transform 49ms, setup 0ms, collect 196ms, tests 2.01s, environment 0ms, prepare 180ms)
+

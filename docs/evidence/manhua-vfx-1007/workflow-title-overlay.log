@@ -1,0 +1,14 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-effects-1007
+
+ ✓ client/src/lib/manhuaTitleOverlay.browser.test.ts (1 test) 3844ms
+   ✓ 标题取得原片时长后传入烧字参数，待回执防双点，换源清空草案 3842ms
+ ✓ client/src/lib/manhuaImageOverlay.browser.test.ts (1 test) 4209ms
+   ✓ 叠图选择规范化持久图片，沿原方案保存，图片移出本项目时不提交 4207ms
+ ✓ client/src/lib/manhuaTitleOverlay.test.ts (3 tests) 9ms
+
+ Test Files  3 passed (3)
+      Tests  5 passed (5)
+   Start at  15:31:51
+   Duration  5.98s (transform 3.34s, setup 0ms, collect 6.39s, tests 8.06s, environment 1ms, prepare 442ms)
+

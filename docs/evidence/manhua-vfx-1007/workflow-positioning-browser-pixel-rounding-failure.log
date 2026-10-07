@@ -1,0 +1,30 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-effects-1007
+
+ ❯ client/src/lib/manhuaVfxPositioning.browser.test.ts (1 test | 1 failed) 1850ms
+   × 视频画面定位排除黑边并按播放秒位记录手动轨迹 1849ms
+     → expected '1 0.25 0.24796' to be '1 0.25 0.25' // Object.is equality
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  client/src/lib/manhuaVfxPositioning.browser.test.ts > 视频画面定位排除黑边并按播放秒位记录手动轨迹
+AssertionError: expected '1 0.25 0.24796' to be '1 0.25 0.25' // Object.is equality
+
+Expected: "1 0.25 0.25"
+Received: "1 0.25 0.24796"
+
+ ❯ client/src/lib/manhuaVfxPositioning.browser.test.ts:45:111
+     43|     await page.mouse.click(box.x + 75, box.y + 107.8125);
+     44|     await click("用当前秒位添加轨迹点");
+     45|     expect(await page.$eval('textarea[aria-label="第1个特效轨迹"]', in…
+       |                                                                                                               ^
+     46|     await page.$eval("video", video => { video.currentTime = 2; video.…
+     47|     await page.mouse.click(box.x + 225, box.y + 192.1875);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  15:14:51
+   Duration  2.72s (transform 52ms, setup 0ms, collect 267ms, tests 1.85s, environment 0ms, prepare 137ms)
+

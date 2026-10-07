@@ -1,0 +1,175 @@
+{
+  "base": "89b8bac548139ab8c4e553e9ecac923710452475",
+  "recordedAt": "2026-10-07T08:03:19.763858+00:00",
+  "typecheck": {
+    "pnpm_check_exit": 0,
+    "isolated_delivery_exit": 0,
+    "affected_incremental_exit": 0,
+    "note": "最终增量覆盖随后新增导演阶段与场景候选测试；未重复全量测试或渲染。"
+  },
+  "fingerprintsSha256": "86173b046d27b1db51a626ca88ec27d56b4ddc8d3472706cdb19d06865f115ef",
+  "logs": {
+    "advisor-context-targeted.log": {
+      "bytes": 51554,
+      "sha256": "6f0c13dba09d34d4da04b1e4b7d60fee9a891d1665c08c64efe219851b1a935c"
+    },
+    "advisor-director-stage-r2.log": {
+      "bytes": 360,
+      "sha256": "eed7db3fbf4c97d2ea7673a8f4b4e115a3c365563007a14836a4d815b340755a"
+    },
+    "advisor-director-stage.log": {
+      "bytes": 1592,
+      "sha256": "149160ff30c3173c6023addaf3154077f34d8a369a3f9e2563fe263d7eaa0c5d"
+    },
+    "advisor-failed-only-r2.log": {
+      "bytes": 411,
+      "sha256": "48e08b8de27212d6e60ba565ef143d4094175b564c09673e49c1567038c7dda0"
+    },
+    "advisor-new-contracts.log": {
+      "bytes": 1499,
+      "sha256": "96515e27f22c7eeee797662b288725fbdd88ab398547a6fbedcf1d4ecd444ccb"
+    },
+    "advisor-previs-patch-r2.log": {
+      "bytes": 351,
+      "sha256": "fbd4df17bd25dadccf5728e0a282c298069a7be0aa765cfa0b77a1303b94f1c9"
+    },
+    "advisor-previs-patch.log": {
+      "bytes": 890,
+      "sha256": "dca55fe6693deb36db02e3f5441733d3f575bba4f38a0da198c89470413ea585"
+    },
+    "core-unit.log": {
+      "bytes": 372,
+      "sha256": "36ecbe7770886c8162b316bdf6dabe0016f5d2e441a21454b11aa7442c877a5b"
+    },
+    "evidence-rejection.log": {
+      "bytes": 2050,
+      "sha256": "2f51797196ff6fa3a2304ae49e6cbd5303596869ad4de781842f1e43ac8798c3"
+    },
+    "knowledge-ui-r2.log": {
+      "bytes": 458,
+      "sha256": "e34f4053598d205b09e1815eb897819ab8bc27944bd0352fa7aad0effeabeb95"
+    },
+    "knowledge-ui.log": {
+      "bytes": 2811,
+      "sha256": "db3f41d74e1c5060efb6186563fc3c53629ec4a362299e89dc9343835cb154e9"
+    },
+    "overlay-source-routing.log": {
+      "bytes": 329,
+      "sha256": "835df296a23bfffc48cb0ca3fbc15f723bc22f98c66ff77df00d0f0c22b88fb6"
+    },
+    "real-renderer-report-gates.log": {
+      "bytes": 266,
+      "sha256": "f26ed775ba2ec1b2e78193d2eef0994115a423046cca629d793d2fececbedf38"
+    },
+    "recovery-manifest.log": {
+      "bytes": 441,
+      "sha256": "8b3e01d0df221eb285de68087658c9e2dbe9cf5f9bc8a21b36ebe3f946738343"
+    },
+    "render-pipeline.log": {
+      "bytes": 464,
+      "sha256": "1c1c255492d9daac56610c855bed78559abfcfadf663197550ebcbc63850a8a6"
+    },
+    "scene-contract.log": {
+      "bytes": 402,
+      "sha256": "f624356ee0214c6050b84577436ceec805ce4a5d2b4cc88baab373377933f90e"
+    },
+    "transitions.log": {
+      "bytes": 452,
+      "sha256": "249cb62a876d539e00e775a17e3f8c40961adf5902666969665d65b651e99f5c"
+    },
+    "typecheck-advisor-final.log": {
+      "bytes": 119,
+      "sha256": "b13224f3a61b7332af18c10499942693d23821f465e79f19c9cac7c95a7ae788"
+    },
+    "typecheck-delivery-incremental.log": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "typecheck-delivery.log": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "typecheck-final-candidate.log": {
+      "bytes": 119,
+      "sha256": "b13224f3a61b7332af18c10499942693d23821f465e79f19c9cac7c95a7ae788"
+    },
+    "typecheck-first.log": {
+      "bytes": 613,
+      "sha256": "b40f15faa607f51f99196a2b6437086890e6eb276666250def27ce1551fa6a15"
+    },
+    "typecheck-stage3.log": {
+      "bytes": 392,
+      "sha256": "bb725d7af8879a139a6c66f3d989c23d76c9eec3114147b5ee2b56420557244f"
+    },
+    "workflow-advisor-candidate.log": {
+      "bytes": 474,
+      "sha256": "562e2438c8c1ea50bfeab047647d77f4b8f1264b52fbf768f3bdedca9cf000db"
+    },
+    "workflow-advisor-controls.log": {
+      "bytes": 478,
+      "sha256": "1ea41df5da935120e788285078db75f3ff4dc241ec7a69ab1ed993cf9d9327cf"
+    },
+    "workflow-advisor-navigation-browser.log": {
+      "bytes": 660,
+      "sha256": "970516a0f136ca22761b524bf183a648928191eb00892ce9a341fe5f14356b48"
+    },
+    "workflow-advisor-navigation-scene-initial-fixture-failure.log": {
+      "bytes": 1993,
+      "sha256": "f3841c30c9dc15694fbe8e87d9f3ee6c2b004be2c324b94735fadc87d55db26b"
+    },
+    "workflow-advisor-navigation-scene.log": {
+      "bytes": 1993,
+      "sha256": "f3841c30c9dc15694fbe8e87d9f3ee6c2b004be2c324b94735fadc87d55db26b"
+    },
+    "workflow-browser-save-recovery.log": {
+      "bytes": 448,
+      "sha256": "02d715ad78594562c46accac44443be9bfd1457921db20559b5d55f09565e7c5"
+    },
+    "workflow-browser.log": {
+      "bytes": 451,
+      "sha256": "0068d2e99bf10d25331e4d9a8958d7c60b90c955f719c47fee8a1c6d7abd129f"
+    },
+    "workflow-generative-label.log": {
+      "bytes": 715,
+      "sha256": "a284adcc8120595ae8db2de421f9f87c55c2db676d61fbfdbfde0a13415d1934"
+    },
+    "workflow-positioning-browser-initial-fixture-failure.log": {
+      "bytes": 2019,
+      "sha256": "d85c11a9a729aad349c59624117210fca77e77a4a708931d8ff9d89500023106"
+    },
+    "workflow-positioning-browser-pixel-rounding-failure.log": {
+      "bytes": 1470,
+      "sha256": "98bb921d63161d4491feacb37cc7080961328ca4baf01e8eef216ecc6f2d1b65"
+    },
+    "workflow-positioning-browser.log": {
+      "bytes": 423,
+      "sha256": "6154c00c5b70f84dabd3879c5348f9466f0b6ab28935646976312ec48af5c78e"
+    },
+    "workflow-positioning-unit.log": {
+      "bytes": 354,
+      "sha256": "57ade3f2ea9a29c3206fd6490d983362732426e01fe318591179381fe13dada9"
+    },
+    "workflow-previs-scene-editor.log": {
+      "bytes": 467,
+      "sha256": "1a7338e8e900f7a31eaa7858e26414e3250761534b82cca6f5a8b4b7b44d6392"
+    },
+    "workflow-project-scope.log": {
+      "bytes": 351,
+      "sha256": "ab3f980a8842c20868e7ee203277ab7dfa5482a5e7da9fe288198ddc96381435"
+    },
+    "workflow-title-overlay.log": {
+      "bytes": 680,
+      "sha256": "7e9088dd89f6c4d5d2b883ec00c7796ee62da1df73f81883a07e11d8138d8b3a"
+    },
+    "workflow-unit.log": {
+      "bytes": 330,
+      "sha256": "eb056637a5964f997d3002c798a5c2ce42ea49fdc0614c3f26b5fd4b71bfaffe"
+    }
+  },
+  "boundaries": [
+    "local synthetic development only",
+    "no paid model call",
+    "no merge or deployment",
+    "Linux and real workflow acceptance pending"
+  ]
+}

@@ -4417,10 +4417,23 @@ export const appRouter = router({
      * 路由与 worker 共用 postProdJobInputSchema;素材来源在创建任务前统一核对
      * 存储范围与登记记录(未登记=普通输入提示,不创建任务)。
      */
+    inspectAdvisorKnowledge: protectedProcedure.query(async () => {
+      const { inspectManhuaAdvisorKnowledge } = await import("./services/manhuaAdvisorKnowledge");
+      return inspectManhuaAdvisorKnowledge();
+    }),
+    refreshAdvisorKnowledge: protectedProcedure.mutation(async () => {
+      const { refreshManhuaAdvisorKnowledge } = await import("./services/manhuaAdvisorKnowledge");
+      return refreshManhuaAdvisorKnowledge();
+    }),
     queuePostProd: protectedProcedure
       .input(postProdJobInputSchema)
       .mutation(async ({ ctx, input }) => {
         if(input.action === "manhua_previs" || input.action === "manhua_auto_rig") throw new TRPCError({code:"FORBIDDEN",message:input.action === "manhua_auto_rig" ? "请从人物模型绑骨入口提交" : "请从本段动作白模入口提交"});
+        if (input.action === "manhua_vfx") {
+          const { findManhuaVfxReceipt } = await import("./services/manhuaVfxTask");
+          const receipt = await findManhuaVfxReceipt(String(ctx.user.id), input);
+          if (receipt) return receipt;
+        }
         let normalizedInput;
         try {
           normalizedInput = await resolvePostProdInputSources({
@@ -4432,6 +4445,10 @@ export const appRouter = router({
             code: "BAD_REQUEST",
             message: error instanceof Error ? error.message : "素材地址无法核对,请重新选择",
           });
+        }
+        if (normalizedInput.action === "manhua_vfx") {
+          const { queueManhuaVfx } = await import("./services/manhuaVfxTask");
+          return queueManhuaVfx(String(ctx.user.id), normalizedInput);
         }
         const jobId = nanoid(16);
         await createJobRecord({

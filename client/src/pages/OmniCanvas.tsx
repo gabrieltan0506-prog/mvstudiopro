@@ -1,3 +1,4 @@
+import type { AdvisorEffectsControl, AdvisorEffectsRegistration } from "@shared/manhuaAdvisorEffects";
 import type { ManhuaAdvisorStudioContext } from "@shared/manhuaAdvisorStudioContext";
 import { customAssetRefClaimsAnchor } from "@shared/manhuaAssetScriptSync";
 import { advisorWorkflowRevision } from "@/lib/manhuaAdvisorWorkflowPlan";
@@ -53,6 +54,7 @@ import ManhuaTemplateTrialCompare, {
 import PostProdWorkshopCard from "@/components/canvas/PostProdWorkshopCard";
 import { manhuaPostProdScopeKey } from "@/lib/postProdWorkshop";
 import { buildManhuaPrevisAudio } from "@shared/manhuaPrevisAudio";
+import { ManhuaAdvisorKnowledgePanel } from "@/components/canvas/ManhuaAdvisorKnowledgePanel";
 import ManhuaCreativeAdvisorPanel from "@/components/canvas/ManhuaCreativeAdvisorPanel";
 import { ManhuaPrevisAudioControls } from "@/components/canvas/ManhuaPrevisAudioControls";
 import { checkManhuaAdvisorPrevisLaunch } from "@/lib/manhuaAdvisorPrevisLaunch";
@@ -422,6 +424,7 @@ import {
   compileManhuaPilotPrompt,
 } from "@shared/manhuaPilotGate";
 import type { ManhuaCloudDraftPayload } from "@shared/manhuaCloudDraft";
+import { manhuaVfxStateSchema, mergeManhuaVfxState, type ManhuaVfxState } from "@shared/manhuaVfx";
 import {
   MANHUA_CLOUD_DRAFT_SYNC_DEBOUNCE_MS,
   buildLocalCloudDraftSnapshot,
@@ -606,6 +609,7 @@ function loadCanvasWorkspaceMode(): CanvasWorkspaceMode {
 }
 
 type FactoryCharacterPrefs = {
+  manhuaVfxByScope?: Record<string, ManhuaVfxState>;
   narrativeLightingId?: string;
   narrativeLightingManual?: boolean;
   topic?: string;
@@ -831,6 +835,9 @@ function OmniCanvasWorkspace() {
 
   const initial = useMemo(() => loadCanvasState(), []);
   const initialFactoryPrefs = useMemo(() => loadFactoryCharacterPrefs(), []);
+  const [manhuaVfxByScope, setManhuaVfxByScope] = useState<Record<string, ManhuaVfxState>>(() => initialFactoryPrefs.manhuaVfxByScope || {});
+  const manhuaVfxByScopeRef = useRef(manhuaVfxByScope);
+  manhuaVfxByScopeRef.current = manhuaVfxByScope;
   const initialWriterBoot = useMemo(() => bootWriterSession(), []);
   const initialWriterSession = initialWriterBoot.session;
   const initialNovelOrigin = useMemo(() => initialWriterSession?.novelOrigin || readLocalNovelOrigin(), [initialWriterSession]);
@@ -884,7 +891,9 @@ function OmniCanvasWorkspace() {
     manhuaOutboundEpochRef.current += 1;
     // 世代变了，旧确认一律作废：宁可让用户重看一次，也不能放旧确认过去。
     outboundConfirmationsRef.current = {};
-    setOutboundConfirmedAtByBlock((prev) => (Object.keys(prev).length ? {} : prev));
+    // Also refresh callbacks bound to this epoch when there were no confirmations.
+    // The project-identity effect can bump the epoch just after a render.
+    setOutboundConfirmedAtByBlock({});
   }, []);
   const [edges, setEdges] = useState<CanvasEdge[]>(initial.edges);
   const [factoryBusy, setFactoryBusy] = useState(false);
@@ -1273,6 +1282,12 @@ function OmniCanvasWorkspace() {
     writerFocusEpisode,
     writerPack?.episodes.find(episode => episode.index === writerFocusEpisode)?.body || "",
   ) : "", [writerPack, writerFocusEpisode, writerConfirmed]);
+  const vfxScopeKey = postProdScopeKey
+    ? manhuaPostProdScopeKey(projectScope?.projectId || "legacy-workspace", writerFocusEpisode, postProdScopeKey) : "";
+  const currentVfxScopeRef = useRef("");
+  currentVfxScopeRef.current = `${user?.id || ""}:${projectScope?.projectId || ""}:${vfxScopeKey}`;
+  const parsedVfxState = manhuaVfxStateSchema.safeParse(manhuaVfxByScope[vfxScopeKey]);
+  const currentVfxState = parsedVfxState.success ? parsedVfxState.data : undefined;
   /**
    * 动作计划绑定上下文：只从本集导演板 overlay 解析（屏幕点如实给 screen；相机路径无秒数 → 未解析）。
    * previs 相机与 ShotIR 相机的登记待接（PR-2 断点，见知识库）。
@@ -1499,7 +1514,7 @@ function OmniCanvasWorkspace() {
   const [advisorPreviewHost, setAdvisorPreviewHost] = useState<HTMLDivElement | null>(null);
   const [advisorDockHost, setAdvisorDockHost] = useState<HTMLDivElement | null>(null);
   const [advisorPrevisClipId, setAdvisorPrevisClipId] = useState<string | null>(null);
-  const [advisorPrevisRequest,setAdvisorPrevisRequest] = useState<{id:string;clipId:string;episode:number;segment:number}|null>(null);
+  const [advisorPrevisRequest,setAdvisorPrevisRequest] = useState<{id:string;clipId:string;episode:number;segment:number;tool?:"scene"|"generative"}|null>(null);
   const voicePrevisReceipt = useRef<{id:string;finish:(opened:boolean,reason?:string)=>void}|null>(null);
   const [advisorAudioRequest, setAdvisorAudioRequest] = useState<{ id: string; clipId: string; scopeId: string } | null>(null);
   const [advisorPreviewSelection, setAdvisorPreviewSelection] = useState<{ clipId: string; requestId?: string } | null>(null);
@@ -1800,6 +1815,7 @@ function OmniCanvasWorkspace() {
   );
   const chargeWorkflowStepMutation = trpc.workflow.chargeStep.useMutation();
   /** 0902 烧字总装：剪辑台字幕轨 → queuePostProd burn_subtitle → 轮询取新片 */
+  const refreshAdvisorKnowledgeMutation = trpc.mvAnalysis.refreshAdvisorKnowledge.useMutation();
   const queueBurnSubtitleMutation = trpc.mvAnalysis.queuePostProd.useMutation();
   const trpcUtils = trpc.useUtils();
   const burnSubtitleTaskGateRef = useRef(createManhuaSubtitleTaskGate());
@@ -3125,6 +3141,7 @@ function OmniCanvasWorkspace() {
     // 独立作品先判定恢复来源，避免默认值提前覆盖损坏记录、掩盖读取失败。
     if (projectScope && !cloudSyncReady) return;
     saveFactoryCharacterPrefs({
+      manhuaVfxByScope,
       narrativeLightingId: factoryNarrativeLightingId,
       narrativeLightingManual,
       topic: factoryTopic,
@@ -3136,6 +3153,7 @@ function OmniCanvasWorkspace() {
       artStyleManual,
     });
   }, [
+    manhuaVfxByScope,
     cloudSyncReady,
     factoryTopic,
     factoryFemaleId,
@@ -3425,6 +3443,10 @@ function OmniCanvasWorkspace() {
     setWorkflowPhase(restoredPhase);
     setImmersiveWorkspaceView(restoredPhase === "final" && manhuaUiMode === "workbench" ? "workbench" : workspaceViewForRestoredManhuaPhase(restoredPhase, Boolean(session.writerConfirmed)));
     const prefs = draft.factoryPrefs || {};
+    const restoredVfx = prefs.manhuaVfxByScope && typeof prefs.manhuaVfxByScope === "object" && !Array.isArray(prefs.manhuaVfxByScope)
+      ? prefs.manhuaVfxByScope as Record<string, ManhuaVfxState> : {};
+    manhuaVfxByScopeRef.current = restoredVfx;
+    setManhuaVfxByScope(restoredVfx);
     setFactoryNarrativeLightingId(getNarrativeLightingById(String(prefs.narrativeLightingId || ""))?.id || "");
     setNarrativeLightingManual(prefs.narrativeLightingManual === true);
     const restoredScope = String(prefs.assetSelectionScopeKey || "").trim();
@@ -3537,6 +3559,41 @@ function OmniCanvasWorkspace() {
 
   /** 手动备份（用户拍板：只有用户点上传才存云） */
   const latestDraftSnapshotRef = useRef<Parameters<typeof buildLocalCloudDraftSnapshot>[0] | null>(null);
+  // Bind each save callback to its render's account/project/restore generation.
+  // A late render receipt must not adopt the current project's identity on entry.
+  const vfxPersistenceScope = currentVfxScopeRef.current;
+  const vfxPersistenceEpoch = manhuaOutboundEpochRef.current;
+  const currentVfxSaveReady = useRef(false);
+  currentVfxSaveReady.current = Boolean(user?.id && vfxScopeKey && cloudSyncReady && !factoryBusy && !writerBusy);
+  const persistManhuaVfxState = useCallback(async (raw: ManhuaVfxState) => {
+    const scope = vfxPersistenceScope;
+    const epoch = vfxPersistenceEpoch;
+    if (currentVfxScopeRef.current !== scope || manhuaOutboundEpochRef.current !== epoch)
+      throw new Error("作品或备份状态已变化，未将旧特效回执写入当前作品；请回到原作品查询原任务");
+    if (!currentVfxSaveReady.current || raw.scopeKey !== vfxScopeKey || backupOperationRef.current || cloudConflictRef.current)
+      throw new Error("当前作品未就绪或正在制作，请稍后保存特效配置");
+    const previous = manhuaVfxByScopeRef.current[vfxScopeKey];
+    if (previous && !manhuaVfxStateSchema.safeParse(previous).success)
+      throw new Error("已保存的特效记录需要恢复，未覆盖原记录，请先导出备份");
+    const next = mergeManhuaVfxState(previous, raw);
+    const snapshot = latestDraftSnapshotRef.current;
+    if (!snapshot) throw new Error("当前作品快照尚未就绪，请稍后重试");
+    const states = { ...manhuaVfxByScopeRef.current, [vfxScopeKey]: next };
+    const updated = { ...snapshot, blocks: blocksRef.current, factoryPrefs: { ...snapshot.factoryPrefs, manhuaVfxByScope: states }, clientUpdatedAt: new Date().toISOString() };
+    const local = persistManhuaDraftLocally({ ...updated, blocks: blocksRef.current as CanvasBlock[], edges: snapshot.edges as CanvasEdge[] });
+    if (!local.writerOk || !local.canvasOk || !local.prefsOk || !local.atOk)
+      throw new Error("特效配置尚未完整保存，未提交渲染，请保留页面重试");
+    // Retain the exact request intent locally even when the subsequent cloud write is uncertain.
+    manhuaVfxByScopeRef.current = states;
+    setManhuaVfxByScope(states);
+    latestDraftSnapshotRef.current = updated;
+    const saved = await syncCloudDraftPayload(buildLocalCloudDraftSnapshot(updated));
+    if (!saved) throw new Error("云端尚未确认特效配置，未提交新渲染，请保留原请求记录重试");
+    if (currentVfxScopeRef.current !== scope || manhuaOutboundEpochRef.current !== epoch || backupOperationRef.current || cloudConflictRef.current)
+      throw new Error("作品或备份状态已变化，原配置已保存，未继续提交渲染");
+    return next;
+  }, [vfxScopeKey, vfxPersistenceScope, vfxPersistenceEpoch, syncCloudDraftPayload]);
+
   const backupOperationRef = useRef<null | "upload" | "restore" | "export" | "import">(null);
   const [cloudBackupBusy, setCloudBackupBusy] = useState<typeof backupOperationRef.current>(null);
   const [backupExportProgress, setBackupExportProgress] = useState<string | null>(null);
@@ -3951,6 +4008,7 @@ function OmniCanvasWorkspace() {
     if (factoryBusy || writerBusy) return;
     const clientUpdatedAt = new Date().toISOString();
     const factoryPrefs = {
+      manhuaVfxByScope,
       narrativeLightingId: factoryNarrativeLightingId,
       narrativeLightingManual,
       topic: factoryTopic,
@@ -4016,6 +4074,7 @@ function OmniCanvasWorkspace() {
     // 点「上传备份」时发生。本机 persistManhuaDraftLocally 双写保留（防刷新丢失，
     // 那是本地工作区不是云备份）。
   }, [
+    manhuaVfxByScope,
     user?.id,
     cloudSyncReady,
     factoryBusy,
@@ -10259,7 +10318,7 @@ function OmniCanvasWorkspace() {
   }
 
   const [audioVoiceClipId, setAudioVoiceClipId] = useState<string>();
-  const advisorActionRevision=useMemo(()=>advisorWorkflowRevision([writerFocusEpisode,writerConfirmed,factoryTopic,writerBrief,publicTemplateId,writerEpisodeCount,blocks,customAssetRefs,editTransitionByEpisode]),[writerFocusEpisode,writerConfirmed,factoryTopic,writerBrief,publicTemplateId,writerEpisodeCount,blocks,customAssetRefs,editTransitionByEpisode]);
+  const advisorActionRevision=useMemo(()=>advisorWorkflowRevision([writerFocusEpisode,writerConfirmed,factoryTopic,writerBrief,publicTemplateId,writerEpisodeCount,blocks,customAssetRefs,editTransitionByEpisode,manhuaVfxByScope]),[writerFocusEpisode,writerConfirmed,factoryTopic,writerBrief,publicTemplateId,writerEpisodeCount,blocks,customAssetRefs,editTransitionByEpisode,manhuaVfxByScope]);
   const [advisorRigRequest,setAdvisorRigRequest]=useState<{id:string;assetId:string}|undefined>();
   const [advisorWorldRequest,setAdvisorWorldRequest]=useState<{id:string;assetId:string;clipId?:string}|undefined>();
   const advisorModelControls=useRef(new Map<string,AdvisorModelControl>());
@@ -10268,6 +10327,8 @@ function OmniCanvasWorkspace() {
   const registerAdvisorEditControl=useCallback((control:AdvisorEditControl|null)=>{advisorEditControl.current=control;},[]);
   const advisorWorldControl=useRef<AdvisorWorldControl|null>(null);
   const registerAdvisorWorldControl=useCallback((control:AdvisorWorldControl|null)=>{advisorWorldControl.current=control;},[]);
+  const advisorEffectsControls=useRef(new Map<string,AdvisorEffectsControl>());
+  const registerAdvisorEffectsControl=useCallback<AdvisorEffectsRegistration>((scope,tool,control)=>{const key=`${scope}:${tool}`;if(control)advisorEffectsControls.current.set(key,control);else advisorEffectsControls.current.delete(key);},[]);
   const advisorScoringControls=useRef(new Map<string,AdvisorScoringControl>());
   const registerAdvisorScoringControl=useCallback<AdvisorScoringRegistration>((scope,control)=>{if(control)advisorScoringControls.current.set(scope,control);else advisorScoringControls.current.delete(scope);},[]);
   const audioVoiceControls = useRef(new Map<string,CanvasAudioVoiceControl>());
@@ -10666,6 +10727,15 @@ async function runAdvisorWriterTrial() {
   }
 
   const executeAdvisorWorkspaceAction = async (action: Parameters<NonNullable<React.ComponentProps<typeof ManhuaCreativeAdvisorPanel>["onVoiceProduction"]>>[0], signal: AbortSignal) => {
+    if (action.action === "knowledge") {
+      if (signal.aborted) throw new Error("请求已结束，未扫描");
+      const state = action.operation === "refresh"
+        ? await refreshAdvisorKnowledgeMutation.mutateAsync()
+        : await trpcUtils.mvAnalysis.inspectAdvisorKnowledge.fetch();
+      trpcUtils.mvAnalysis.inspectAdvisorKnowledge.setData(undefined, state);
+      if (signal.aborted) throw new Error("请求已结束；目录读取结果保留，未修改作品");
+      return JSON.stringify(state);
+    }
           signal.throwIfAborted();
           const readOnly=action.action==="inspect" || ("operation" in action && action.operation==="inspect");
           if(!readOnly && (writerBusy || factoryBusy || cloudConflict))throw new Error("工作区忙或云稿冲突，未提交制作。");
@@ -10864,6 +10934,30 @@ async function runAdvisorWriterTrial() {
             }
             throw new Error("原剪辑台尚未就绪，未保存剪辑");
           }
+          if(action.action === "effects") {
+            if(!vfxScopeKey)throw new Error("当前作品尚未就绪，未操作特效");
+            const scope=voiceStoryboardScope;
+            const effectsScope=currentVfxScopeRef.current;
+            const epoch=manhuaOutboundEpochRef.current;
+            if(action.tool === "scene" || action.tool === "generative") {
+              const clips=blocksRef.current.filter(b=>!b.archivedFromPreviousScript&&isManhuaClipBlockId(b.id)&&(getBlockEpisodeIndex(b)??1)===writerFocusEpisode);
+              if(!action.clipId&&action.operation==="inspect")return JSON.stringify({tool:action.tool,clips:clips.map(b=>({clipId:b.id,hasPrevis:Boolean(b.previsStudio),hasVideo:Boolean(b.outputUrl),...(action.tool==="scene"?{sceneEffects:b.previsStudio?.spec.sceneEffects||[]}:{})})),note:"指定clipId后读取该片段的sourceKey；不会建立新配置或提交任务"});
+              const clip=clips.find(b=>b.id===action.clipId);
+              if(!clip)throw new Error("当前集不存在目标片段，请重新读取清单");
+              if(action.tool === "scene") {
+                if(!clip.previsStudio)throw new Error("此片段尚无白模配置，请先从previs原入口打开");
+                if(!canUseManhua3d)throw new Error("当前账户未开放白模操作");
+              } else if(!clip.outputUrl)throw new Error("目标片段尚无原片，未打开生成式修改");
+              setWorkflowPhase(action.tool==="scene"?"storyboard":"edit");
+              setAdvisorPrevisRequest({id:crypto.randomUUID(),clipId:clip.id,episode:writerFocusEpisode,segment:resolveClipLocalSegmentIndex(clip.id,clip.prompt,writerFocusEpisode),tool:action.tool});
+            } else setWorkflowPhase("final");
+            setManhuaUiMode("workbench");setImmersiveWorkspaceView("workbench");
+            const {executeAdvisorEffectsWhenReady}=await import("@/lib/manhuaAdvisorEffectsNavigation");
+            return executeAdvisorEffectsWhenReady({action,signal,
+              getControl:()=>advisorEffectsControls.current.get(`${vfxScopeKey}:${action.tool}`),
+              isCurrent:()=>currentVoiceStoryboardScope.current===scope&&currentVfxScopeRef.current===effectsScope&&manhuaOutboundEpochRef.current===epoch,
+              beforeMutation:backupVoiceProduction});
+          }
           if(action.action === "scoring") {
             if(!postProdScopeKey)throw new Error("当前剧本尚未确认，未操作混音");
             const scope=voiceStoryboardScope;
@@ -10905,7 +10999,8 @@ async function runAdvisorWriterTrial() {
             episode: writerFocusEpisode,
             busy:writerBusy||factoryBusy,cloudConflict:Boolean(cloudConflict),
             writer:{topic:factoryTopic,brief:writerBrief,templateId:publicTemplateId,episodeCount:writerEpisodeCount,confirmed:writerConfirmed,templates:approvedViralTemplateCards.map(t=>({id:t.publicId,label:t.nameZh})),trialReady:Boolean(trialWriterResult)},
-            operations:["writer","asset","modelControl","worldControl","generate","audio","scoring","edit","deliver","storyboardRecovery"],
+            operations:["writer","asset","modelControl","worldControl","generate","audio","scoring","edit","deliver","storyboardRecovery","effects","knowledge"],
+            effects:{tools:["vfx","scene","title","transition","generative"],note:"用effects inspect读取当前素材、参数、sourceKey和候选；按原工作台提交、计费与采用"},
             scoring: advisorScoringControls.current.get(postProdScopeKey)
               ? JSON.parse(await advisorScoringControls.current.get(postProdScopeKey)!({action:"scoring",operation:"inspect"},signal))
               : {status:"unavailable",note:"原混音卡尚未就绪，先打开后读取scoring inspect；不能准备提交方案"},
@@ -12318,6 +12413,8 @@ async function runAdvisorWriterTrial() {
                       file,
                     );
                   }}
+                  effectsScopeKey={vfxScopeKey}
+                  onAdvisorEffectsControl={registerAdvisorEffectsControl}
                   onVideoEditClip={handleVideoEditClip}
                   onSelectClipVersion={handleSelectClipVersion}
                   onResumeFromFailure={() => {
@@ -13954,11 +14051,15 @@ async function runAdvisorWriterTrial() {
                   onStudioFocus={reportPostprodStudio}
                   onOpenAdvisor={() => {setAdvisorDockHost(null);chooseAdvisorVisibility(true);}}
                   onAdvisorControl={registerAdvisorScoringControl}
+                  onAdvisorEffectsControl={registerAdvisorEffectsControl}
                   key={`${user.id}:${postProdScopeKey}`}
                   blocks={blocks}
                   advisorContext={advisorProject?.context}
                   userId={String(user.id)}
                   projectScopeKey={postProdScopeKey}
+                  vfxScopeKey={vfxScopeKey}
+                  vfxState={currentVfxState}
+                  onVfxStateChange={persistManhuaVfxState}
                   userRole={userRole}
                   bgmSeedNoteZh={audioReferenceLock?.bgmNoteZh || ""}
                   storyEmotion={storyEmotionForDownstream}
@@ -14403,6 +14504,7 @@ async function runAdvisorWriterTrial() {
         </div>}
       </>}
       <ManhuaCreativeAdvisorPanel
+        knowledgePanel={<ManhuaAdvisorKnowledgePanel enabled={Boolean(user?.id)} />}
         key={advisorComponentKey}
         userId={user?.id != null ? String(user.id) : undefined}
         projectId={projectScope?.projectId}

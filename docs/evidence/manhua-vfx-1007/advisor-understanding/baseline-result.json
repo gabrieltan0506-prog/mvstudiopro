@@ -1,0 +1,78 @@
+{
+  "runId": "pr1675-advisor-9cc05d6e-baseline",
+  "calls": 1,
+  "answer": {
+    "answer": "## 结论\n你可以在特效工作台为当前 5 秒原片添加剑气（sword_trail）与护盾（shield）两类屏幕特效，且预览/候选阶段不产生采用，符合你“先看再定”的要求。但有两个能力边界必须先讲清楚。\n\n## 依据（来自生产编译器事实、特效知识目录与资产摘要）\n\n**1. 预览时能否调整时间与走位？**\n- 依据：特效知识目录明确“屏幕特效与叠图按手工轨迹，未实现实拍自动追踪或人物遮挡”。\n- 结论：剑气时间窗（你定的第 1–3 秒，在原片 5 秒范围内合法）与“左下→右上”的走位都是手工轨迹参数，可在 configure 阶段填写/调整，每次修改后重新 inspect 再看新候选。调整本身不改原片。\n\n**2. 能否展开看、与原片比较？**\n- 依据：工作流说明为 inspect（只读取素材 ID、表单、候选、sourceKey）→ configure（填参）→ submit（提交候选）→ adopt（采用）。inspect 与候选查看均只读、不改作品。\n- 结论：可以查看候选；但“展开看、与原片逐帧对比”的具体界面形态（是否提供并排比对视图）目录未说明，我不能确认，请以工作台实际界面为准。\n\n**3. 预览能看到完整特效吗？**\n- 依据：候选成功不等于已采用或验收；正式生成结果需审片。\n- 结论：预览候选只代表大致效果与轨迹位置，不能承诺与最终成片逐帧一致。是否遮挡正确、拖尾形状是否理想，须在采用后于成片中验真。\n\n**4. 能自动跟踪人物、正确遮挡吗？**\n- 结论：不能。目录明确未实现实拍自动追踪或人物遮挡。你的剑气“左下→右上”需要手工对轨迹；若剑气路径应与主角挥剑动作对齐，当前只能在预览中手动校准，无法自动贴合人物，遮挡关系也不会自动处理。\n\n**5. 刷新后方案与候选怎样保留？**\n- 依据：每次修改后须重新 inspect，submit/adopt/resume 必须原样携带本次 sourceKey，adopt/resume 用原 requestId；inspect 读最近快照，refresh 只更新模板/导演包/工作流能力知识，不调用生成模型、不改项目。\n- 结论：知识刷新不影响你的方案与候选；但若你修改了素材或参数，须重新 inspect 并携带新的 sourceKey，旧 sourceKey 不能沿用。未知回执只续查原任务号，不重交。\n\n## 建议（不写回项目，供你选择）\n- 时间窗建议：第 1–3 秒剑气 + 后续护盾（分镜摘要为“挥剑后举起护盾”），可考虑护盾设在第 3 秒附近起，与“挥剑后”的因果衔接；具体秒点以你预览后手调。\n- 轨迹建议：因无自动追踪，剑气轨迹点建议在预览中对照主角挥剑起止位置手工微调；我未读取视频画面，无法替你判断原片中挥剑的实际方向是否为左下→右上，请以画面验真。\n- 流程建议：inspect → configure（剑气时间 1–3 秒 + 走位，护盾参数）→ submit 候选 → 预览满意后再自行 adopt；所有提交须在原页面确认，我不会替你执行。\n\n## 明确未知项\n- 未读取原片画面，无法确认主角站位、挥剑方向与特效遮挡的视觉合理性。\n- 未提供白模规格与逐帧信息，秒窗内动作细节未知。\n- 预览界面的对比/展开形态、渲染费用与分辨率归一结果，须以实际页面确认为准，我不猜测。",
+    "imageIntent": false,
+    "creationRelated": false,
+    "suggestedImagePrompt": "",
+    "guideMessage": ""
+  },
+  "usage": {
+    "prompt_tokens": 13919,
+    "completion_tokens": 932,
+    "total_tokens": 14851,
+    "cost": 0.00631503,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.00631503,
+      "upstream_inference_prompt_cost": 0.00515003,
+      "upstream_inference_completions_cost": 0.001165
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  },
+  "receipts": [
+    {
+      "name": "intent.json",
+      "bytes": 59864,
+      "sha256": "7d931c2d62a0e8117b366c027cd891163d8d5913d6c04a8ce20e38228c17e87c",
+      "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/isolated-pr1675/advisor-understanding/pr1675-advisor-9cc05d6e-baseline/intent.json"
+    },
+    {
+      "name": "provider-request.json",
+      "bytes": 58782,
+      "sha256": "da61f3c498dcddecd7641fb2efd70d5a1a71510b6edd9630ea0687fd98ec70cd",
+      "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/isolated-pr1675/advisor-understanding/pr1675-advisor-9cc05d6e-baseline/provider-request.json"
+    },
+    {
+      "name": "provider-response.raw.txt",
+      "bytes": 252190,
+      "sha256": "101427454de7f0562d555bb41b6538ab1cade3d2cc0564a67b5f23176179722e",
+      "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/isolated-pr1675/advisor-understanding/pr1675-advisor-9cc05d6e-baseline/provider-response.raw.txt"
+    },
+    {
+      "name": "provider-route.json",
+      "bytes": 105,
+      "sha256": "7ab686306aae5439bf6a8facf79d4a2af617940a9ee3b6dc4ecac950e7bcca28",
+      "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/isolated-pr1675/advisor-understanding/pr1675-advisor-9cc05d6e-baseline/provider-route.json"
+    },
+    {
+      "name": "response.parsed.json",
+      "bytes": 4210,
+      "sha256": "6f69e766f2d03849e5f47f4fae6bd99416993b60105bc57e646191057c7e990a",
+      "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/isolated-pr1675/advisor-understanding/pr1675-advisor-9cc05d6e-baseline/response.parsed.json"
+    },
+    {
+      "name": "answer.normalized.json",
+      "bytes": 3578,
+      "sha256": "a3543b808cb8d1e3db24a3dcc256bc8309c4f943e69b62f4e56fd728159bf605",
+      "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/isolated-pr1675/advisor-understanding/pr1675-advisor-9cc05d6e-baseline/answer.normalized.json"
+    },
+    {
+      "name": "receipts.json",
+      "bytes": 1692,
+      "sha256": "7b670831aa6809e1b564a56fed96691a330497b915e9f9941cc688e47e8e0f6c",
+      "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/isolated-pr1675/advisor-understanding/pr1675-advisor-9cc05d6e-baseline/receipts.json"
+    }
+  ]
+}

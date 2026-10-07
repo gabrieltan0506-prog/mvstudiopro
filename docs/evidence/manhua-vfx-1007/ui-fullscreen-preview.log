@@ -1,0 +1,26 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-effects-1007
+
+ ❯ client/src/lib/manhuaVfxWorkbenchGuide.browser.test.ts (3 tests | 1 failed | 2 skipped) 2720ms
+   × leaves fullscreen before opening the existing candidate viewer and shows save receipts inside the workbench 2719ms
+     → Node is either not clickable or not an Element
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  client/src/lib/manhuaVfxWorkbenchGuide.browser.test.ts > leaves fullscreen before opening the existing candidate viewer and shows save receipts inside the workbench
+Error: Node is either not clickable or not an Element
+ ❯ CdpElementHandle.clickablePoint ../../task-3/template-entry-fix/node_modules/.pnpm/puppeteer-core@24.42.0/node_modules/puppeteer-core/src/api/ElementHandle.ts:734:13
+ ❯ CdpElementHandle.<anonymous> ../../task-3/template-entry-fix/node_modules/.pnpm/puppeteer-core@24.42.0/node_modules/puppeteer-core/src/api/ElementHandle.ts:139:14
+ ❯ CdpElementHandle.click ../../task-3/template-entry-fix/node_modules/.pnpm/puppeteer-core@24.42.0/node_modules/puppeteer-core/src/api/ElementHandle.ts:773:20
+ ❯ CdpElementHandle.<anonymous> ../../task-3/template-entry-fix/node_modules/.pnpm/puppeteer-core@24.42.0/node_modules/puppeteer-core/src/api/ElementHandle.ts:149:20
+ ❯ click client/src/lib/manhuaVfxWorkbenchGuide.browser.test.ts:41:136
+
+ ❯ client/src/lib/manhuaVfxWorkbenchGuide.browser.test.ts:42:91
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 2 skipped (3)
+   Start at  17:11:08
+   Duration  5.74s (transform 1.53s, setup 0ms, collect 2.41s, tests 2.72s, environment 0ms, prepare 151ms)
+

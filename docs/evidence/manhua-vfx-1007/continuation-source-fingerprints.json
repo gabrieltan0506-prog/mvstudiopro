@@ -1,0 +1,13 @@
+{
+  "client/src/pages/OmniCanvas.tsx": "31b99aa4caa3f206b3a0dedc279f088c03cce9035300aeb23433ecfbd1762b8f",
+  "client/src/components/canvas/ManhuaVfxEditor.tsx": "ca71090feaab1aeb818436f68302750f0f941fe813ee831d27e22fae6ff402fc",
+  "client/src/components/canvas/ManhuaVfxTimeline.tsx": "552a49a9383e8aac03615bf8820f5d7715c078c2531d964042b08bd41b527747",
+  "client/src/components/canvas/ManhuaVfxComparison.tsx": "f94985cc1f05616e13b2829fa6edbbf9267acc623c68aadd09117aa0b71db20e",
+  "client/src/lib/manhuaVfxPersistenceScope.test.ts": "1488f5dada970342ad5bbf7adf71670e3db7f021674133f072c60961616afef1",
+  "client/src/lib/manhuaVfxUnmount.browser.test.ts": "d7e55747c3e127a1d94f6cb1e9467fbc85312722459067b896c30753ece21ed2",
+  "client/src/lib/manhuaVfxWorkbench.browser.test.ts": "e86dba3dd9eec47bbb39e274869d9762f13d078f73d14559701886bf5d15b984",
+  "server/services/manhuaTransitions.ts": "9ee14af32792ae14da5cb6a6a8f3fca4f6a43961357350d142229651a3f5347b",
+  "server/services/manhuaTransitionsEvidence.test.ts": "2609d3cc78dcba97b2f9dc4da2c1bfc6e17932919108cd5e48b08e6a0f9f4b8b",
+  "server/scripts/previs_scene_effects.py": "1e93470c9713370bd8d2c1920dc29a93344ccb4d72769f76aaaa93d2124c0bbb",
+  "scripts/probe-manhua-effects-worker-1007.mts": "e0cdcbe40d9e4bf9dd65621c44122cccf74232640087b8d5adf0d56fee90b86b"
+}

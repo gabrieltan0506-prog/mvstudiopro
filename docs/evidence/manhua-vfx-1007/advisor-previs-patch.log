@@ -1,0 +1,21 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-effects-1007
+
+ ❯ shared/manhuaAdvisorPrevisEdit.test.ts (8 tests | 1 failed | 7 skipped) 10ms
+   × 1007场景特效候选保留身份与时长，支持显式清空且拒绝未知演员 9ms
+     → applyAdvisorPrevisPatch is not defined
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  shared/manhuaAdvisorPrevisEdit.test.ts > 1007场景特效候选保留身份与时长，支持显式清空且拒绝未知演员
+ReferenceError: applyAdvisorPrevisPatch is not defined
+ ❯ shared/manhuaAdvisorPrevisEdit.test.ts:84:13
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 7 skipped (8)
+   Start at  16:00:46
+   Duration  1.08s (transform 198ms, setup 0ms, collect 304ms, tests 10ms, environment 0ms, prepare 165ms)
+

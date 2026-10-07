@@ -11,7 +11,7 @@ import type { CanvasBlock } from "./canvasTypes";
 import { getBlockEpisodeIndex, isManhuaFinalVideoBlockId, stageKeyFromBlockId } from "./canvasDramaStudio";
 import { manhuaClipQualityAllowsAssemble } from "@shared/manhuaClipQuality";
 
-export type PostProdAction = "concat" | "bgm_mount" | "burn_subtitle" | "loudness_check" | "audio_trim" | "audio_timeline" | "audio_extract";
+export type PostProdAction = "manhua_vfx" | "concat" | "bgm_mount" | "burn_subtitle" | "loudness_check" | "audio_trim" | "audio_timeline" | "audio_extract";
 export type PostProdJobStatus = "queued" | "running" | "succeeded" | "failed";
 
 export type TrackedJob = {
@@ -27,6 +27,7 @@ export type TrackedJob = {
 };
 
 export const ACTION_LABEL: Record<PostProdAction, string> = {
+  manhua_vfx: "漫剧特效",
   audio_trim: "音频单段裁切",
   audio_timeline: "秒锁音频试听",
   audio_extract: "成片抽音轨",
@@ -37,6 +38,7 @@ export const ACTION_LABEL: Record<PostProdAction, string> = {
 };
 
 const ACTIONS: readonly string[] = [
+  "manhua_vfx",
   "audio_trim",
   "audio_timeline",
   "audio_extract",

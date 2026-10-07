@@ -36,6 +36,7 @@ export function previsPresentationGuideSpec(spec: ManhuaPrevisSpec): ManhuaPrevi
     cameras:spec.cameras.map(c=>({...c,startSec:t(c.startSec),endSec:t(c.endSec)})),
     ...(spec.interactions?{interactions:spec.interactions.map(e=>({...e,startSec:t(e.startSec),contactSec:t(e.contactSec),endSec:t(e.endSec)}))}:{}),
     ...(spec.effects?{effects:spec.effects.map(e=>({...e,startSec:t(e.startSec),durationSec:t(e.startSec+e.durationSec)-t(e.startSec)}))}:{}),
+    ...(spec.sceneEffects?{sceneEffects:spec.sceneEffects.map(e=>e.kind === 'explode' ? {...e,startSec:t(e.startSec),durationSec:t(e.startSec+e.durationSec)-t(e.startSec)} : e)}:{}),
     ...(spec.waterEmergence?{waterEmergence:{...spec.waterEmergence,events:spec.waterEmergence.events.map(e=>({...e,crossSec:t(e.crossSec),riseSec:t(e.crossSec+e.riseSec)-t(e.crossSec),waveDurationSec:t(e.crossSec+e.waveDurationSec)-t(e.crossSec)}))}}:{}),
   };
 }

@@ -1,3 +1,5 @@
+import { buildAdvisorComparisonRequest, comparisonEpisodeIndex, requestsAdvisorComparison } from "@/lib/manhuaAdvisorComparisonRequest";
+import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose } from "@/components/ui/dialog";
 import { MANHUA_ADVISOR_STUDIO_LABELS } from "@shared/manhuaAdvisorStudioContext";
 import { MANHUA_ADVISOR_OPERATION_REQUEST } from "@shared/manhuaAdvisorWorkflow";
 import { advisorWorkflowRevision, advisorWorkflowReceiptContext, parseAdvisorWorkflowPlan, type AdvisorWorkflowPlan } from "@/lib/manhuaAdvisorWorkflowPlan";
@@ -9,7 +11,7 @@ import { parseAdvisorMediaProposal, assertAdvisorMediaSource } from "@shared/man
 import type { CreativeVoiceTarget } from "@shared/creativeVoice";
 import { CreativeVoicePanel } from "./CreativeVoicePanel";
 import ManhuaEpisodeOptimization, { type EpisodeOptimizationWorkspace } from "./ManhuaEpisodeOptimization";
-import { validateAdvisorRewriteBody, splitManhuaEpisodeStoryText, TEMPLATE_REWRITE_MARKER } from "@shared/manhuaAdvisorRewrite";
+import { validateAdvisorRewriteBody, TEMPLATE_REWRITE_MARKER } from "@shared/manhuaAdvisorRewrite";
 import { buildTemplateAdviceQuestion } from "@/lib/manhuaTemplateAdvice";
 import { Streamdown } from "streamdown";
 import { automaticAdvisorContext, automaticAdvisorRequestId, MANHUA_ADVISOR_AUTO_QUESTION, MANHUA_ADVISOR_PAID_CREDITS } from "@shared/manhuaAdvisorPolicy";
@@ -50,6 +52,7 @@ function readableAdvice(text: string) {
 }
 
 export default function ManhuaCreativeAdvisorPanel(props: {
+  knowledgePanel?: ReactNode;
   dockHost?: HTMLElement | null;
   previewHost?: HTMLElement | null;
   previsTarget?: AdvisorPrevisTarget;
@@ -167,7 +170,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
   const [rewriteEdit, setRewriteEdit] = useState(initialRewrite.candidate?.rewrittenBody || "");
   const [rewriteEditHook, setRewriteEditHook] = useState(initialRewrite.candidate?.endHook || "");
   const [rewriteEditError, setRewriteEditError] = useState("");
-  const rewriteRef = useRef<HTMLElement | null>(null);
+  const [comparisonOpen, setComparisonOpen] = useState(Boolean(initialRewrite.candidate));
   useEffect(() => {
     if (!rewrite) return;
     let text = rewrite.rewrittenBody;
@@ -180,7 +183,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     } catch { setRewriteEditError("编辑草稿无法读取，仍保留已生成版本，请先下载旧稿。"); }
     setRewriteEdit(text);
     setRewriteEditHook(endHook);
-    requestAnimationFrame(() => rewriteRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }));
+    setComparisonOpen(true);
   }, [rewrite, rewriteKey]);
   function editRewrite(text: string, endHook = rewriteEditHook) {
     setRewriteEdit(text);
@@ -194,7 +197,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     if (!rewrite || rewriteEditError) return;
     try {
       validateAdvisorRewriteBody(rewrite.originalBody, rewriteEdit, rewriteEditHook);
-      if (props.onApplyRewrite?.({ ...rewrite, rewrittenBody: rewriteEdit, ...(rewrite.endHook ? { endHook: rewriteEditHook } : {}) })) toast.success(`已套用第 ${rewrite.episodeIndex} 集，旧稿已备份，请重新确认剧本。`);
+      if (props.onApplyRewrite?.({ ...rewrite, rewrittenBody: rewriteEdit, ...(rewrite.endHook ? { endHook: rewriteEditHook } : {}) })) { setComparisonOpen(false); toast.success(`已套用第 ${rewrite.episodeIndex} 集，旧稿已备份，请重新确认剧本。`); }
     } catch (error) { toast.error(error instanceof Error ? error.message : "整集优化稿尚未通过检查，原稿保留"); }
   }
   const [backups, setBackups] = useState<AdvisorBackupEntry[]>([]);
@@ -483,7 +486,16 @@ export default function ManhuaCreativeAdvisorPanel(props: {
 
   function send(rawQuestion: string, wrappedQuestion?: string, renderRequested = false, episode?: EpisodeOptimizationWorkspace["episodes"][number], voiceReply?: (answer: string | undefined) => void, filmReview?: AdvisorFilmReviewTarget, worldOverride?: AdvisorWorldTarget, workflowOperation?: {workspace:string;revision:string}) {
     if (inFlight.current || pendingPaid || unresolvedFailed || !userId || sessionStorageBlocked) return;
-    const question = rawQuestion.trim();
+    let question = rawQuestion.trim();
+    if (!/^【/.test(question) && !renderRequested && !filmReview && !worldOverride && !workflowOperation && requestsAdvisorComparison(question)) {
+      try {
+        const index = comparisonEpisodeIndex(question, project?.context.episodeIndex || 0);
+        episode = props.episodeWorkspace?.episodes.find(e => e.index === index);
+        if (!episode && index !== project?.context.episodeIndex) throw new Error("目标集完整正文未打开，未提交比较稿。");
+        question = buildAdvisorComparisonRequest(question, templates, selectedTemplate);
+        if (episode) props.episodeWorkspace?.onFocusEpisode(index);
+      } catch (error) { toast.error(error instanceof Error ? error.message : "无法准备比较稿"); return; }
+    }
     if (question.length < 2 || question.length > 1200) { toast.error("请输入 2—1200 字的问题，内容不会被自动截断。"); return; }
     const rewriting = question.startsWith(TEMPLATE_REWRITE_MARKER);
     const rewriteBody = episode?.body ?? project?.context.episodeBody;
@@ -504,7 +516,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     try {
       if (project && questionContext) questionContext = resolveAdvisorVideoPromptContext({ context: questionContext, question, drafts: project.videoPromptDrafts, selectedSegmentIndex: project.selectedSegmentIndex });
     } catch (error) { toast.error(error instanceof Error ? error.message : "无法读取本段提示词"); return; }
-    const result = questionContext ? manhuaCreativeAdvisorContextSchema.safeParse({ ...questionContext, ...(props.projectId ? { projectId: props.projectId } : {}), history: advisorRecentHistory(turns), ...(workflowOperation?{workflowOperation}:{}), ...(previsEdit ? { previsEdit } : {}), ...(!operationRequest && !filmReview && !mediaRequest && props.studio3d ? { studio3d: { directionCardId: props.studio3d.directionCardId, directionCardVersion: props.studio3d.directionCardVersion } } : {}), ...(!operationRequest && !rewriting && !filmReview && !mediaRequest && (worldOverride || props.worldTarget) ? { worldTarget: worldOverride || props.worldTarget } : {}), ...(filmReview ? { filmReview } : {}), ...(mediaEditTarget ? { mediaEditTarget } : {}) }) : null;
+    const result = questionContext ? manhuaCreativeAdvisorContextSchema.safeParse({ ...questionContext, ...(props.projectId ? { projectId: props.projectId } : {}), history: advisorRecentHistory(turns), ...(workflowOperation?{workflowOperation}:{}), ...(previsEdit ? { previsEdit } : {}), ...(!operationRequest && !rewriting && !filmReview && !mediaRequest && props.studio3d ? { studio3d: { directionCardId: props.studio3d.directionCardId, directionCardVersion: props.studio3d.directionCardVersion } } : {}), ...(!operationRequest && !rewriting && !filmReview && !mediaRequest && (worldOverride || props.worldTarget) ? { worldTarget: worldOverride || props.worldTarget } : {}), ...(filmReview ? { filmReview } : {}), ...(mediaEditTarget ? { mediaEditTarget } : {}) }) : null;
     if (result && !result.success) {
       toast.error("当前上下文超出读取范围或包含不适合发送的内容", {
         description: result.error.issues.map(formatManhuaAdvisorContextIssue).join("；"),
@@ -578,7 +590,8 @@ export default function ManhuaCreativeAdvisorPanel(props: {
           }
           if (action.action === "applyPrevis") return previsVoiceControl.current ? previsVoiceControl.current.apply() : "当前没有可应用的白模试看，请先生成并观看。";
           if (action.action === "prepareEpisode") {
-            const episode = props.episodeWorkspace?.episodes.find(e => e.index === action.episode);
+            const episode = props.episodeWorkspace?.episodes.find(e => e.index === action.episode)
+              || (project?.context.episodeIndex === action.episode ? {index:action.episode,title:project.context.episodeTitle,body:project.context.episodeBody,endHook:project.context.episodeEndHook || ""} : undefined);
             if (!episode || !props.onApplyRewrite) throw new Error("当前作品没有这集的完整正文或套用入口，未提交改稿。");
             if (inFlight.current || pendingPaid || unresolvedFailed || sessionStorageBlocked) throw new Error("原顾问任务尚未结束，请查询原任务，不重复改稿。");
             props.episodeWorkspace?.onFocusEpisode(action.episode);
@@ -593,12 +606,15 @@ export default function ManhuaCreativeAdvisorPanel(props: {
                   // The submit path must have persisted this exact candidate before reporting it usable.
                   const saved = sessionKey ? localStorage.getItem(`${sessionKey}:rewrite`) : null;
                   if (!saved || JSON.stringify(JSON.parse(saved)) !== JSON.stringify(candidate)) throw new Error("优化稿尚未可靠保存，请查看顾问恢复入口；不能套用或声称已修改。");
-                  resolve(JSON.stringify({episode:episode.index,status:"candidate_ready",changes:candidate.changes,instruction:"完整候选已展示，正文未修改。用户确认后调用applyEpisode；成功回执前不得声称已保存正文。"}));
+                  resolve(JSON.stringify({episode:episode.index,status:"candidate_ready",changes:candidate.changes,instruction:"完整候选已保存在原稿/新稿对照浮窗，差异已高亮，正文未修改。请用户先审阅，确认后调用applyEpisode；成功回执前不得声称已保存正文。"}));
                 } catch (error) { resolve(error instanceof Error ? error.message : "候选未通过检查，原稿保留。"); }
               };
               const abort = () => reply("语音已结束，已提交任务在原顾问保留，请查询原任务。");
               signal.addEventListener("abort", abort, {once:true});
-              if (!send(`${TEMPLATE_REWRITE_MARKER}${action.question}`, undefined, false, episode, reply)) reply();
+              try {
+                const question = buildAdvisorComparisonRequest(action.question, templates, selectedTemplate);
+                if (!send(question, undefined, false, episode, reply)) reply();
+              } catch (error) { reply(error instanceof Error ? error.message : "比较稿准备失败，未提交。"); }
             });
           }
           if (action.action === "restoreBackup") {
@@ -611,7 +627,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
           if (action.action === "applyEpisode") {
             if (!rewrite || rewrite.episodeIndex !== action.episode || rewriteEditError || !props.onApplyRewrite) throw new Error("当前没有这集的可应用优化稿，请先调用顾问准备整集修改候选。");
             validateAdvisorRewriteBody(rewrite.originalBody, rewriteEdit, rewriteEditHook);
-            if (!window.confirm(`将左侧优化稿应用到第${action.episode}集？旧稿会先备份。`)) return "用户取消，未改正文。";
+            if (!window.confirm(`将对照浮窗中的优化稿应用到第${action.episode}集？旧稿会先备份。`)) return "用户取消，未改正文。";
             return props.onApplyRewrite({...rewrite,rewrittenBody:rewriteEdit,...(rewrite.endHook ? {endHook:rewriteEditHook} : {})}) ? `第${action.episode}集优化稿已写回，旧稿已备份，请重新确认剧本。` : "应用被工作区阻止，原稿保留，请查看提示。";
           }
           if (action.action === "world" && action.question) {
@@ -726,8 +742,9 @@ export default function ManhuaCreativeAdvisorPanel(props: {
           {(props.previsIssue || props.previsLaunchIssue) && <p role="status" className="text-amber-100">{props.previsIssue || props.previsLaunchIssue}</p>}
           <button type="button" className="underline" onClick={props.onLeavePrevis}>返回普通咨询</button>
         </section>}
+        {props.knowledgePanel}
         <details className="rounded-lg border border-white/10 p-2 text-xs"><summary className="cursor-pointer text-white/65">咨询额度与快捷提问</summary>
-        <button type="button" disabled={!userId || !project || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={() => { setDraft("请结合当前剧情、导演包与镜头规格，优化运镜、灯光、场景氛围和演员表演。逐镜写明一位小数秒窗、摄影机起终位置、移动方向、FOV/景别、焦点与光源变化；说明氛围随事件怎样变化，以及各角色的意图、喜怒哀乐、眼神/微表情、身体和听者反应。区分白模已表达和正式影片还需补充的技巧。保留人物、动作和已确认音轨，只给建议，不生成、重渲染或自动采用。"); questionRef.current?.focus(); }} className="mb-2 rounded-md border border-cyan-300/30 px-3 py-2 text-xs text-cyan-100 hover:bg-cyan-500/10 disabled:opacity-40">优化摄影、氛围与表演</button>
+        <button type="button" disabled={!userId || !project || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={() => { setDraft("请结合当前剧情、已更新模板库、导演包与镜头规格，提出剧情、美术与特效整合方案：角色欲望、阻力、代价和反转形成因果，设计独特且服务剧情的视觉记忆点；明确妆发服装材质、场景尺度与空间层次、真实光源和气氛变化；特效分清生成主体与后期增强，不能以叠光冒充法相或电影级场景。逐镜写明一位小数秒窗、摄影机起终位置、移动方向、FOV/景别、焦点与光源变化；说明氛围随事件怎样变化，以及各角色的意图、喜怒哀乐、眼神/微表情、身体和听者反应。区分白模已表达和正式影片还需补充的技巧。保留人物、动作和已确认音轨，只给建议，不生成、重渲染或自动采用。"); questionRef.current?.focus(); }} className="mb-2 rounded-md border border-cyan-300/30 px-3 py-2 text-xs text-cyan-100 hover:bg-cyan-500/10 disabled:opacity-40">优化摄影、氛围与表演</button>
         {!creationMode && <div className="mb-2 flex flex-wrap gap-2">{quick.map(([label, question]) => <button key={label} type="button" disabled={!userId || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={() => send(question!)} className="rounded-md border border-white/15 px-2 py-1.5 text-xs text-white/75 hover:border-cyan-300/60 disabled:opacity-40">{label}</button>)}</div>}
         <p className="mt-2 text-[11px] leading-4 text-white/45">{props.previsTarget ? "说“生成试看”会直接渲染到本页；可以多轮修改，满意后点击应用。" : "顾问意见仅供参考，由你选择是否采纳；不会自动修改项目或生成素材。工厂会生成提示词，无需从零手填。"}{sessionKey ? "对话与恢复记录保存在本机，按作品和稿件版本区分。" : "登录后可保存对话与恢复记录。"}追问携带最近 8 条，长答复标记为节选。</p>
         <section aria-label="本作品咨询额度" className="mt-2 rounded-lg border border-cyan-300/25 bg-cyan-400/5 p-3 text-xs leading-5" aria-live="polite">
@@ -760,18 +777,33 @@ export default function ManhuaCreativeAdvisorPanel(props: {
           {selectedTemplate && <button type="button" disabled={!userId || !project || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={() => send(buildTemplateAdviceQuestion(selectedTemplate))} className="mt-2 rounded bg-emerald-500/20 px-3 py-2 font-semibold text-emerald-100 disabled:opacity-40">用「{selectedTemplate.storyPreview?.teaserTitleZh || selectedTemplate.nameZh}」优化本集</button>}
           <button type="button" disabled={!userId || !project || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={recommendTemplates} className="mt-2 rounded border border-cyan-300/30 px-3 py-2 disabled:opacity-40">推荐3—5个剧本模板方案</button>
         </section>}
-        {rewrite && <section ref={rewriteRef} aria-label="改写原稿对比" className="space-y-3 rounded-lg border border-emerald-300/30 p-3 text-xs">
-          <h3 className="font-semibold">第 {rewrite.episodeIndex} 集 · 顾问修改稿</h3>
-          <p className="text-white/65">先看旧稿和新稿。只有你确认填入才修改正文；说错或不满意可以找回改前版本。</p>
-          <article aria-label="旧稿完整对话卡" className="rounded-xl border border-white/20 bg-white/5 p-3"><h4 className="font-semibold">旧稿 · 第 {rewrite.episodeIndex} 集</h4><div tabIndex={0} className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap text-sm leading-7">{splitManhuaEpisodeStoryText(rewrite.originalBody).story}</div></article>
-          <details><summary className="cursor-pointer">查看本次具体改动</summary><ul>{rewrite.changes.map((change, i) => <li key={i}>• {change}</li>)}</ul></details>
-          <ManhuaRewriteComparison before={rewrite.originalBody} after={rewriteEdit} />
-          <label className="block rounded-xl border border-emerald-300/30 bg-emerald-500/5 p-3">新稿 · 待你确认，可继续修改<textarea aria-label="优化后整集正文" value={rewriteEdit} onChange={e => editRewrite(e.target.value)} rows={12} className="mt-2 w-full rounded border border-white/20 bg-black/20 p-3 text-sm leading-7" /></label>
-          {rewrite.endHook && <label className="block">片尾钩子 · 与正文一起套用<textarea aria-label="优化后片尾钩子" value={rewriteEditHook} onChange={e => editRewrite(rewriteEdit, e.target.value)} rows={3} className="mt-2 w-full rounded border border-white/20 bg-black/20 p-3 leading-6" /></label>}
-          <p className="text-white/60">套用只替换本集正文与片尾钩子，其他集正文保留。旧稿先备份；本集及后续制作需重新确认，旧图与成片归档保留。</p>
-          <button type="button" disabled={!props.onApplyRewrite || asking || Boolean(rewriteEditError) || project?.context.episodeIndex !== rewrite.episodeIndex || project?.context.episodeBody !== rewrite.originalBody} onClick={applyRewrite} className="rounded bg-emerald-500/20 px-4 py-2 font-semibold text-emerald-100 disabled:opacity-40">可以，填入本集</button>
-          {rewriteEditError && <p role="alert">{rewriteEditError}</p>}
-          {(project?.context.episodeIndex !== rewrite.episodeIndex || project?.context.episodeBody !== rewrite.originalBody) && <p>当前剧本与原快照不同，已停止覆盖。原稿与优化稿仍保留。</p>}
+        {rewrite && <section aria-label="比较稿入口" className="space-y-2 rounded-lg border border-emerald-300/30 p-3 text-xs">
+          <h3 className="font-semibold">第 {rewrite.episodeIndex} 集 · 比较稿已保留</h3>
+          <p className="text-white/65">原稿与新稿独立保存，打开浮窗查看差异并继续编辑。</p>
+          <button type="button" onClick={() => setComparisonOpen(true)} className="rounded bg-emerald-500/20 px-3 py-2 text-emerald-100">打开原稿 / 新稿对照</button>
+          <Dialog open={comparisonOpen && open} onOpenChange={setComparisonOpen}>
+            <DialogContent aria-label="改写原稿对比" showCloseButton={false} overlayClassName="z-[110]" className="z-[111] flex max-h-[92dvh] w-[96vw] max-w-[1440px] flex-col gap-3 border-white/20 bg-slate-950 p-4 text-white sm:max-w-[1440px] sm:p-6">
+              <div className="flex shrink-0 items-start justify-between gap-4">
+                <div><DialogTitle>第 {rewrite.episodeIndex} 集 · 原稿 / 新稿对照</DialogTitle><DialogDescription className="mt-2 text-white/65">红色显示原稿删改，绿色显示新稿新增。新稿仅作比较，确认填入才修改本集。</DialogDescription></div>
+                <DialogClose className="shrink-0 rounded border border-white/25 px-3 py-2 text-sm">关闭对照</DialogClose>
+              </div>
+              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
+                <ManhuaRewriteComparison before={rewrite.originalBody} after={rewriteEdit} afterLabel="新稿" />
+                {rewrite.endHook && <section aria-label="片尾钩子差异"><h4 className="mb-2 text-sm font-semibold">片尾钩子</h4><ManhuaRewriteComparison before={rewrite.originalEndHook || ""} after={rewriteEditHook} afterLabel="新钩子" /></section>}
+                <details><summary className="cursor-pointer text-sm">本次具体改动 · {rewrite.changes.length} 项</summary><ul className="mt-2 space-y-1 text-sm text-white/75">{rewrite.changes.map((change, i) => <li key={i}>• {change}</li>)}</ul></details>
+                <details><summary className="cursor-pointer text-sm">继续编辑新稿</summary>
+                  <label className="mt-3 block text-sm">新稿 · 待你确认<textarea aria-label="优化后整集正文" value={rewriteEdit} onChange={e => editRewrite(e.target.value)} rows={12} className="mt-2 w-full rounded border border-white/20 bg-black/20 p-3 text-sm leading-7" /></label>
+                  {rewrite.endHook && <label className="mt-3 block text-sm">片尾钩子<textarea aria-label="优化后片尾钩子" value={rewriteEditHook} onChange={e => editRewrite(rewriteEdit, e.target.value)} rows={3} className="mt-2 w-full rounded border border-white/20 bg-black/20 p-3 leading-6" /></label>}
+                </details>
+              </div>
+              <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-white/15 pt-3">
+                <p className="max-w-3xl text-xs text-white/65">仅替换本集正文与片尾钩子，旧稿先备份。本集及后续制作需重新确认，旧图与成片归档保留。</p>
+                <button type="button" disabled={!props.onApplyRewrite || asking || Boolean(rewriteEditError) || project?.context.episodeIndex !== rewrite.episodeIndex || project?.context.episodeBody !== rewrite.originalBody} onClick={applyRewrite} className="rounded bg-emerald-400 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-40">可以，填入本集</button>
+              </div>
+              {rewriteEditError && <p role="alert" className="text-sm text-amber-100">{rewriteEditError}</p>}
+              {(project?.context.episodeIndex !== rewrite.episodeIndex || project?.context.episodeBody !== rewrite.originalBody) && <p role="status" className="text-sm text-amber-100">当前剧本与原快照不同，已停止覆盖。原稿与优化稿仍保留。</p>}
+            </DialogContent>
+          </Dialog>
         </section>}
         {!creationMode && <section aria-label="旧稿备份" className="space-y-2 border-t border-white/10 pt-3 text-xs">
           <button type="button" disabled={!userId || !project} onClick={refreshBackups} className="rounded border border-white/20 px-3 py-2 disabled:opacity-40">查找当前项目旧稿备份</button>
@@ -833,14 +865,19 @@ export default function ManhuaCreativeAdvisorPanel(props: {
           const abort = () => reply("语音已结束，已提交的审阅继续在原顾问保存，不重提");
           signal.addEventListener("abort", abort, {once:true});
           if (!send(`【影片审阅】${question}`, undefined, false, undefined, reply, {videoUri:source.url,blockId:source.blockId,revision:source.revision,label:source.label})) reply();
-        })} onInspectMedia={() => mediaEditRef.current?.inspect() || null} mediaSources={props.mediaWorkspace?.sources} onProposeMediaEdit={proposal => { if (!mediaEditRef.current) throw new Error("素材编辑区尚未就绪"); return mediaEditRef.current.propose(proposal); }} onProductionAction={executeProductionAction} disabled={!userId || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onUse={text => setDraft(text)} targets={props.voiceTargets || props.episodeWorkspace?.episodes.map(e => ({ episode: e.index, label: e.title })) || []} onNavigate={props.onVoiceNavigate} onAskAdvisor={(question, signal) => new Promise(resolve => {
+        })} onInspectMedia={() => mediaEditRef.current?.inspect() || null} mediaSources={props.mediaWorkspace?.sources} onProposeMediaEdit={proposal => { if (!mediaEditRef.current) throw new Error("素材编辑区尚未就绪"); return mediaEditRef.current.propose(proposal); }} onProductionAction={executeProductionAction} disabled={!userId || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onUse={text => setDraft(text)} targets={props.voiceTargets || props.episodeWorkspace?.episodes.map(e => ({ episode: e.index, label: e.title })) || []} onNavigate={props.onVoiceNavigate} onAskAdvisor={(question, signal) => {
+          if (requestsAdvisorComparison(question)) {
+            try { return executeProductionAction({action:"prepareEpisode",episode:comparisonEpisodeIndex(question, project?.context.episodeIndex || 0),question}, signal); }
+            catch (error) { return Promise.resolve(error instanceof Error ? error.message : "无法确定比较稿目标集"); }
+          }
+          return new Promise(resolve => {
           if (signal.aborted) { resolve(undefined); return; }
           let done = false;
           const reply = (answer?: string) => { if (done) return; done = true; signal.removeEventListener("abort", abort); for (const [id, callback] of Array.from(voiceReplies.current)) if (callback === reply) voiceReplies.current.delete(id); resolve(answer); };
           const abort = () => reply("语音讨论已结束；已提交的顾问请求仍可在原入口查询，不重复生成。");
           signal.addEventListener("abort", abort, { once: true });
           if (!send(question, undefined, false, undefined, reply)) reply();
-        })} />
+        }); }} />
           {operationPlan && <section aria-label="工作流操作方案" className="rounded border border-cyan-300/30 p-3 text-sm">
             <p className="whitespace-pre-wrap">{operationPlan.plan.summaryZh}</p>
             <p className="mt-1 text-xs text-white/60">{operationPlan.result ? "原操作回执" : "方案已准备，尚未执行"}</p>

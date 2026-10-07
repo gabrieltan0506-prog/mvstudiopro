@@ -94,7 +94,7 @@ export function buildSubtitleEffectAss(input: {
     "[Script Info]", "ScriptType: v4.00+", `PlayResX: ${playResX}`, `PlayResY: ${playResY}`,
     "ScaledBorderAndShadow: yes", "WrapStyle: 2", "", "[V4+ Styles]",
     "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-    `Style: Default,${style.fontName ?? "Noto Sans CJK SC"},${fontSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,${outline},0,2,${marginH},${marginH},${marginV},1`,
+    `Style: Default,${style.fontName ?? "Noto Sans CJK SC"},${fontSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,${outline},0,${style.alignment ?? 2},${marginH},${marginH},${marginV},1`,
     "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ...events, "",
   ].join("\n");

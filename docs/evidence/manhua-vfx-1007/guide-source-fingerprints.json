@@ -1,0 +1,6 @@
+{
+  "client/src/components/canvas/ManhuaVfxEditor.tsx": "204155131f25574f27bbc4533c1c7f1bb03825e54527e2fda596818ced115659",
+  "client/src/components/canvas/PostProdWorkshopCard.tsx": "8d817cbdd0e715c8b111847d93abe35f42e3eb148f8658772a923e63a170a33f",
+  "client/src/lib/manhuaVfxWorkflow.ts": "d4d6d0eafb3cd50a9bfa05119835f7fe456a9c1be58464eecd0646675fb45761",
+  "client/src/lib/manhuaVfxWorkbenchGuide.browser.test.ts": "937e5db28d589d20b52d822381fcf9259703f4b8ead11b663d54571f20516490"
+}

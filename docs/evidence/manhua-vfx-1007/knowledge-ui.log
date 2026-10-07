@@ -1,0 +1,37 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-effects-1007
+
+ ❯ client/src/lib/manhuaAdvisorKnowledge.browser.test.ts (1 test | 1 failed) 31915ms
+   × 知识更新按钮只显式刷新目录，显示数量与失败保留状态，不自动调用模型 31914ms
+     → Waiting for selector `[aria-label="顾问知识目录"]` failed
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  client/src/lib/manhuaAdvisorKnowledge.browser.test.ts > 知识更新按钮只显式刷新目录，显示数量与失败保留状态，不自动调用模型
+TimeoutError: Waiting for selector `[aria-label="顾问知识目录"]` failed
+ ❯ CSSQueryHandler.waitFor ../../task-3/template-entry-fix/node_modules/.pnpm/puppeteer-core@24.42.0/node_modules/puppeteer-core/src/common/QueryHandler.ts:213:36
+ ❯ CdpFrame.waitForSelector ../../task-3/template-entry-fix/node_modules/.pnpm/puppeteer-core@24.42.0/node_modules/puppeteer-core/src/api/Frame.ts:741:13
+ ❯ CdpPage.waitForSelector ../../task-3/template-entry-fix/node_modules/.pnpm/puppeteer-core@24.42.0/node_modules/puppeteer-core/src/api/Page.ts:3109:12
+ ❯ client/src/lib/manhuaAdvisorKnowledge.browser.test.ts:11:3
+      9|  const browser=await puppeteer.launch({headless:true,args:["--no-sandb…
+     10|  try{const page=await browser.newPage();await page.setContent('<div id…
+     11|   await page.waitForSelector('[aria-label="顾问知识目录"]');expect(awa…
+       |   ^
+     12|   await page.click('button');await page.waitForFunction(()=>document.b…
+     13|   await page.evaluate(()=>{(globalThis as any).fail=true;});await page…
+
+Caused by: TimeoutError: Waiting failed: 30000ms exceeded
+ ❯ new WaitTask ../../task-3/template-entry-fix/node_modules/.pnpm/puppeteer-core@24.42.0/node_modules/puppeteer-core/src/common/WaitTask.ts:77:28
+ ❯ IsolatedWorld.waitForFunction ../../task-3/template-entry-fix/node_modules/.pnpm/puppeteer-core@24.42.0/node_modules/puppeteer-core/src/api/Realm.ts:170:22
+ ❯ CSSQueryHandler.waitFor ../../task-3/template-entry-fix/node_modules/.pnpm/puppeteer-core@24.42.0/node_modules/puppeteer-core/src/common/QueryHandler.ts:171:50
+ ❯ CdpFrame.waitForSelector ../../task-3/template-entry-fix/node_modules/.pnpm/puppeteer-core@24.42.0/node_modules/puppeteer-core/src/api/Frame.ts:741:13
+ ❯ CdpPage.waitForSelector ../../task-3/template-entry-fix/node_modules/.pnpm/puppeteer-core@24.42.0/node_modules/puppeteer-core/src/api/Page.ts:3109:12
+ ❯ client/src/lib/manhuaAdvisorKnowledge.browser.test.ts:11:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  15:57:12
+   Duration  32.62s (transform 30ms, setup 0ms, collect 224ms, tests 31.91s, environment 0ms, prepare 86ms)
+

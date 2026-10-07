@@ -8,11 +8,11 @@ const FLAGSHIP: { href: string; label: string; desc: string }[] = [
 ];
 
 /**
- * 片单使用用户指定的水果茶与战船完整样片（用户 2026-08-12：视频只留片名，文字别糊脸；
+ * 片单使用用户指定的《墨菁傳》第一集与战船完整样片（2026-10-07替换原水果茶；视频只留片名，文字别糊脸；
  * 「从洞察到成片」的话 /blog 已经讲过，这里不重复）。海洋女神/太空站观景台旧片下架。
  */
 const slides = [
-  { title: "水果茶", videoUrl: "/blog-assets/manhua-video-model-review/01-seedance-25-tea-r2v-11s.mp4", poster: "/blog-assets/manhua-video-model-review/00-cover-seedance-25-pour.jpg" },
+  { title: "墨菁傳 · 第一集", videoUrl: "/home-assets/mojing-episode-01-20261007.mp4", poster: "/home-assets/mojing-episode-01-20261007-poster.jpg" },
   { title: "战船", videoUrl: "/home-assets/warship-2k-1.2x.mp4", poster: "/home-assets/warship-2k-poster.jpg" },
 ];
 

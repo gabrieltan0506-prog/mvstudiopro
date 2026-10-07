@@ -1,0 +1,12 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-effects-1007
+
+ ✓ client/src/lib/manhuaVfxUnmount.browser.test.ts (2 tests) 4622ms
+   ✓ does not save a late receipt through an unmounted project's editor 2255ms
+   ✓ does not save a late error through an unmounted project's editor 2367ms
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  16:20:01
+   Duration  5.49s (transform 47ms, setup 0ms, collect 243ms, tests 4.62s, environment 0ms, prepare 118ms)
+

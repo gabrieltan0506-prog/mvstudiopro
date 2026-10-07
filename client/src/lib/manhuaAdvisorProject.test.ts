@@ -357,3 +357,26 @@ it("当前导演包七核心检查进入真实顾问摘要", () => {
  expect(result.context.shotSummary).toContain("黑奇护住阿菁");
  expect(manhuaCreativeAdvisorContextSchema.safeParse(result.context).success).toBe(true);
 });
+
+
+it("1007普通顾问携带实际冻结导演包，不切换为studio3d且不擅自升级版本", () => {
+ const bible = buildManhuaProjectBible({ topic: "墨菁传", pack, cast: { lane: "ancient", characterIds: [], ancientArchetypeIds: [], artStyleId: "cg", propIds: [], wardrobePropContinuityIds: [] } });
+ bible.directionCanon = buildManhuaDirectionCanonFromSelection({ mainCardId: "parallel_action_editing" })!;
+ bible.directionCanon.cards.find(c=>c.id===bible.directionCanon!.mainCardId)!.version="project-frozen-old";
+ const result = buildManhuaAdvisorProject({ ...base, bible });
+ expect(result.context.directionPackage).toEqual({ directionCardId:"parallel_action_editing",directionCardVersion:"project-frozen-old" });
+ expect(result.context.studio3d).toBeUndefined();
+ expect(manhuaCreativeAdvisorContextSchema.safeParse(result.context).success).toBe(true);
+ expect(buildManhuaAdvisorProject(base).context.directionPackage).toBeUndefined();
+});
+
+it("1007导演包身份按当前工作流阶段解析，资产覆盖不误套分镜覆盖", () => {
+ const bible = buildManhuaProjectBible({ topic: "墨菁传", pack, cast: { lane: "ancient", characterIds: [], ancientArchetypeIds: [], artStyleId: "cg", propIds: [], wardrobePropContinuityIds: [] } });
+ bible.directionCanon = buildManhuaDirectionCanonFromSelection({ mainCardId: "parallel_action_editing" })!;
+ const original=bible.directionCanon.cards.find(c=>c.id===bible.directionCanon!.mainCardId)!;
+ const override={...original,id:"asset_stage_frozen",version:"assets-v1",rules:original.rules.map(rule=>({...rule,stages:[...rule.stages,"assets" as const]}))};
+ bible.directionCanon.cards.push(override);bible.directionCanon.authorizedCardIds.push(override.id);
+ bible.directionCanon.scopedOverrides=[{scope:"episode",episodeIndex:1,cardId:override.id,reasonZh:"当前集资产设计",stages:["assets"],status:"approved"}];
+ expect(buildManhuaAdvisorProject({...base,bible,phase:"assets"}).context.directionPackage).toEqual({directionCardId:override.id,directionCardVersion:override.version});
+ expect(buildManhuaAdvisorProject({...base,bible,phase:"storyboard"}).context.directionPackage?.directionCardId).toBe(original.id);
+});

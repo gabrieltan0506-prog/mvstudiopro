@@ -27,7 +27,7 @@ export function buildPostProdJobResponse(
 
   const input =
     job.input && typeof job.input === "object" && !Array.isArray(job.input)
-      ? (job.input as { action?: unknown; scopeKey?: unknown; params?: unknown })
+      ? (job.input as { action?: unknown; scopeKey?: unknown; params?: unknown; requestId?: unknown })
       : {};
 
   const originalOutput =
@@ -81,6 +81,7 @@ export function buildPostProdJobResponse(
         : clip && typeof clip === "object" && typeof clip.uri === "string" ? [clip.uri] : []) : [];
 
   return {
+    ...(input.action === "manhua_vfx" ? { requestId: input.requestId, params: input.params } : {}),
     scopeKey: typeof input.scopeKey === "string" ? input.scopeKey : undefined,
     sourceVideoUris,
     jobId: job.id,

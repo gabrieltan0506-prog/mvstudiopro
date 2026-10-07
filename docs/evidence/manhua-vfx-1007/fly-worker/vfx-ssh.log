@@ -1,0 +1,3 @@
+Connecting to fdaa:50:6acf:a7b:86e:ee9e:7601:2...
+{"event":"started","phase":"vfx","machine":"7812595b294778","runId":"20261007T081759-9692764c"}
+{"event":"passed","phase":"vfx","elapsedMs":57350,"gcsUri":"gs://mv-studio-pro-vertex-video-temp/post-prod/isolated-pr1675/probe-evidence/20261007T081759-9692764c/vfx/result.json"}

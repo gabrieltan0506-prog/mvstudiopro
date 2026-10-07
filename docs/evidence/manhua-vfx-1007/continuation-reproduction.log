@@ -1,0 +1,91 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-effects-1007
+
+ ❯ client/src/lib/manhuaVfxPersistenceScope.test.ts (5 tests | 4 failed) 251ms
+   × rejects a stale project callback before any local or cloud write 205ms
+     → promise resolved "{ version: 1, …(2) }" instead of rejecting
+   × rejects a stale account callback before any local or cloud write 10ms
+     → promise resolved "{ version: 1, …(2) }" instead of rejecting
+   × rejects a stale restore callback before any local or cloud write 9ms
+     → promise resolved "{ version: 1, …(2) }" instead of rejecting
+   × preserves the latest canvas edges instead of the submitting render's stale edges 15ms
+     → expected { factoryPrefs: { …(1) }, …(3) } to match object { blocks: [ 'latest-block' ], …(1) }
+(3 matching properties omitted from actual)
+ ❯ server/services/manhuaTransitionsEvidence.test.ts (2 tests | 2 failed) 17ms
+   × archives every probe field before rotation rejection 13ms
+     → "undefined" is not valid JSON
+   × archives every probe field before missing-video rejection 3ms
+     → "undefined" is not valid JSON
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/services/manhuaTransitionsEvidence.test.ts > archives every probe field before rotation rejection
+ FAIL  server/services/manhuaTransitionsEvidence.test.ts > archives every probe field before missing-video rejection
+SyntaxError: "undefined" is not valid JSON
+ ❯ server/services/manhuaTransitionsEvidence.test.ts:24:15
+     22|   expect(renders).toBe(0); expect(outputs).toBe(0);
+     23|   expect(JSON.parse(archived.get("source-0.raw.json")!)).toEqual(probe…
+     24|   expect(JSON.parse(archived.get("source-0.parsed.json")!)).toEqual(pr…
+       |               ^
+     25|   expect([...archived.keys()].indexOf("source-0.raw.json")).toBeLessTh…
+     26| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+ FAIL  client/src/lib/manhuaVfxPersistenceScope.test.ts > rejects a stale project callback before any local or cloud write
+ FAIL  client/src/lib/manhuaVfxPersistenceScope.test.ts > rejects a stale account callback before any local or cloud write
+ FAIL  client/src/lib/manhuaVfxPersistenceScope.test.ts > rejects a stale restore callback before any local or cloud write
+AssertionError: promise resolved "{ version: 1, …(2) }" instead of rejecting
+
+- Expected
++ Received
+
+- [Error: rejected promise]
++ Object {
++   "requests": Object {},
++   "scopeKey": "scope-a",
++   "version": 1,
++ }
+
+ ❯ client/src/lib/manhuaVfxPersistenceScope.test.ts:39:30
+     37|   if (change === "account") env.currentVfxScopeRef.current = "8:projec…
+     38|   if (change === "restore") env.manhuaOutboundEpochRef.current++;
+     39|   await expect(persist(state)).rejects.toThrow();
+       |                              ^
+     40|   expect(env.persistManhuaDraftLocally).not.toHaveBeenCalled();
+     41|   expect(env.syncCloudDraftPayload).not.toHaveBeenCalled();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯
+
+ FAIL  client/src/lib/manhuaVfxPersistenceScope.test.ts > preserves the latest canvas edges instead of the submitting render's stale edges
+AssertionError: expected { factoryPrefs: { …(1) }, …(3) } to match object { blocks: [ 'latest-block' ], …(1) }
+(3 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  Object {
+    "blocks": Array [
+      "latest-block",
+    ],
+    "edges": Array [
+-     "latest-edge",
++     "obsolete-edge",
+    ],
+  }
+
+ ❯ client/src/lib/manhuaVfxPersistenceScope.test.ts:48:54
+     46|   const { env, persist, state } = setup();
+     47|   await persist(state);
+     48|   expect(env.syncCloudDraftPayload.mock.calls[0][0]).toMatchObject({ b…
+       |                                                      ^
+     49| });
+     50| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/6]⎯
+
+ Test Files  2 failed (2)
+      Tests  6 failed | 1 passed (7)
+   Start at  16:11:17
+   Duration  2.81s (transform 840ms, setup 0ms, collect 2.28s, tests 268ms, environment 1ms, prepare 302ms)
+

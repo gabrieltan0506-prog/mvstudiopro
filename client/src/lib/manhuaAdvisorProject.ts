@@ -1,7 +1,7 @@
 import { currentAdvisorStudioContext, type ManhuaAdvisorStudioContext } from "@shared/manhuaAdvisorStudioContext";
 import { MANHUA_KEYART_VERSION_ADVICE_PREFIX } from "@shared/manhuaKeyartLookState";
 import { MANHUA_PERFORMANCE_REVIEW_ZH } from "@shared/manhuaPerformanceCraft";
-import { resolveDirectorStyleBlocks, classifyManhuaDirectionSceneType } from "@shared/manhuaDirectionCanon";
+import { resolveManhuaDirectionCard, resolveDirectorStyleBlocks, classifyManhuaDirectionSceneType } from "@shared/manhuaDirectionCanon";
 import { MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS as LIMITS, MANHUA_CREATIVE_ADVISOR_STRATEGY_IDS, type ManhuaCreativeAdvisorContext } from "@shared/manhuaCreativeAdvisor";
 import type { ManhuaWriterPack } from "@shared/manhuaWriterRoom";
 import type { ManhuaProjectBible } from "@shared/manhuaProjectBible";
@@ -385,6 +385,10 @@ export function buildManhuaAdvisorProject(input: {
     ? `${selectionLabel}\n${JSON.stringify(shot)}`
     : scoped.filter((b) => /^(beats|reverse)-/.test(b.id) && b.outputText?.trim())
         .map((b) => `已生成${b.id.startsWith("beats-") ? "分镜" : "成片提示词"}：\n${b.outputText}`).join("\n") || "本集没有可读取的已生成分镜；未选中具体镜头。";
+  const directionStage = ({ outline: "story", assets: "assets", storyboard: "storyboard", edit: "clip", final: "review" } as const)[input.phase];
+  const frozenDirection = resolveManhuaDirectionCard(input.bible?.directionCanon, directionStage,
+    classifyManhuaDirectionSceneType(shot ? JSON.stringify(shot) : episode?.body || ""),
+    { episodeIndex: input.episodeIndex, segmentIndex: selected?.segmentIndex, shotIndex: shot?.index });
   const directionReview = resolveDirectorStyleBlocks(input.bible?.directionCanon,
     classifyManhuaDirectionSceneType(shot ? JSON.stringify(shot) : episode?.body || ""),
     { episodeIndex: input.episodeIndex, segmentIndex: selected?.segmentIndex, shotIndex: shot?.index }).review;
@@ -410,6 +414,7 @@ export function buildManhuaAdvisorProject(input: {
       shotSummary: excerptEvidence(shotSummary, LIMITS.shotSummaryChars, shot ? "选中镜头" : "本集分镜与成片提示词", contextNotes),
       previsSummary: excerptEvidence([advisorGenerationContextZh(generationSteps), buildAdvisorPrevisSummary(scoped)].filter(Boolean).join("\n\n"), LIMITS.previsSummaryChars, "本集生成步骤与白模规格", contextNotes),
       blockers: issues.map((issue) => issue.text),
+      ...(frozenDirection ? { directionPackage: { directionCardId: frozenDirection.card.id, directionCardVersion: frozenDirection.card.version } } : {}),
       ...(strategyId ? { directorStrategyId: strategyId } : {}),
       ...(strategyId && strategyRevision ? { directorStrategyRevision: strategyRevision } : {}),
       ...(gateZh.length ? { gateZh } : {}),

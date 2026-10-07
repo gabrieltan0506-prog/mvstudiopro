@@ -1,0 +1,36 @@
+[
+  {
+    "id": "7812595b294778",
+    "state": "stopped",
+    "region": "sin",
+    "process": "rig",
+    "guest": {
+      "cpu_kind": "performance",
+      "cpus": 4,
+      "memory_mb": 8192
+    },
+    "mounts": null,
+    "image": "registry.fly.io/mvstudiopro:sha-36a04e3de92ae16a9523372b7f3c3ce3a4f00089"
+  },
+  {
+    "id": "d892541f602228",
+    "state": "started",
+    "region": "sin",
+    "process": "app",
+    "guest": {
+      "cpu_kind": "shared",
+      "cpus": 4,
+      "memory_mb": 8192
+    },
+    "mounts": [
+      {
+        "encrypted": true,
+        "path": "/data",
+        "size_gb": 11,
+        "volume": "vol_re11dko8l5g79z34",
+        "name": "growth_data"
+      }
+    ],
+    "image": "registry.fly.io/mvstudiopro:sha-36a04e3de92ae16a9523372b7f3c3ce3a4f00089"
+  }
+]

@@ -1,0 +1,229 @@
+{
+  "boundary": "Synthetic media; only GCS fetch/upload transports replaced; actual production Blender launcher, fixed Python, full manifest gate and FFmpeg. Not online workflow acceptance; Linux untested.",
+  "blenderRuns": 1,
+  "result": {
+    "gcsUri": "gs://synthetic-only/result.mp4",
+    "url": "https://example.invalid/result.mp4",
+    "bytes": 12379,
+    "durationSec": 1,
+    "width": 160,
+    "height": 120,
+    "fps": 12,
+    "hasAudio": true,
+    "sha256": "1895888ba504083a798b4b4c580e32f3a70b18a41a1ee3b63aee9552585da92f",
+    "sourceIdentity": {
+      "videoUri": "gs://synthetic-only/source.mp4",
+      "bytes": 11855,
+      "sha256": "77f82e865ac2d0b6b2e3b1575dcc755563c07e2e83e0dba83b3efa632efafbef"
+    },
+    "sourceKey": "synthetic-source-v1",
+    "composition": {
+      "version": 1,
+      "seed": 7,
+      "effects": [
+        {
+          "id": "image",
+          "kind": "image_overlay",
+          "startSec": 0.25,
+          "durationSec": 0.5,
+          "color": "#FFFFFF",
+          "imageUri": "gs://synthetic-only/image.png",
+          "scale": 0.3,
+          "intensity": 1,
+          "anchor": {
+            "space": "screen",
+            "position": [
+              0.5,
+              0.5
+            ]
+          }
+        }
+      ]
+    },
+    "requestId": "a1234567-1234-4234-8234-123456789abc",
+    "coordinateSpace": "screen",
+    "boundaryZh": "按设定轨迹叠加，不含自动跟踪或人物遮挡",
+    "evidence": [
+      {
+        "name": "request.raw.json",
+        "gcsUri": "gs://synthetic-only/post-prod/7/vfx-evidence/9d0f313b-8a5a-415b-9450-b9a587ac70c1/request.raw.json",
+        "bytes": 460,
+        "sha256": "158425ade73a3d469706b0687d56e9eab661d13ccad2746d7fb63d9433897dc9"
+      },
+      {
+        "name": "request.normalized.json",
+        "gcsUri": "gs://synthetic-only/post-prod/7/vfx-evidence/9d0f313b-8a5a-415b-9450-b9a587ac70c1/request.normalized.json",
+        "bytes": 460,
+        "sha256": "daaad4aecc781839a09e1206bcb41a4c46f31b53b473f9fb596e01f42419b559"
+      },
+      {
+        "name": "source-probe.raw.json",
+        "gcsUri": "gs://synthetic-only/post-prod/7/vfx-evidence/9d0f313b-8a5a-415b-9450-b9a587ac70c1/source-probe.raw.json",
+        "bytes": 4382,
+        "sha256": "fe9cfab5e05f81b7539029f98e01748c4989b29dd17a260bf3d6be9e4a4a0e94"
+      },
+      {
+        "name": "images.json",
+        "gcsUri": "gs://synthetic-only/post-prod/7/vfx-evidence/9d0f313b-8a5a-415b-9450-b9a587ac70c1/images.json",
+        "bytes": 278,
+        "sha256": "2cc0a6f494eb0e3aafb0c136c0afa23f12ebcd85404fc68c39480a6a4ff55080"
+      },
+      {
+        "name": "spec.normalized.json",
+        "gcsUri": "gs://synthetic-only/post-prod/7/vfx-evidence/9d0f313b-8a5a-415b-9450-b9a587ac70c1/spec.normalized.json",
+        "bytes": 390,
+        "sha256": "d1c97a19ae39e31243206dd735e48769ce845ea2deb883b195f671fde6653db5"
+      },
+      {
+        "name": "renderer-input.raw.json",
+        "gcsUri": "gs://synthetic-only/post-prod/7/vfx-evidence/9d0f313b-8a5a-415b-9450-b9a587ac70c1/renderer-input.raw.json",
+        "bytes": 390,
+        "sha256": "d1c97a19ae39e31243206dd735e48769ce845ea2deb883b195f671fde6653db5"
+      },
+      {
+        "name": "renderer-spec.normalized.json",
+        "gcsUri": "gs://synthetic-only/post-prod/7/vfx-evidence/9d0f313b-8a5a-415b-9450-b9a587ac70c1/renderer-spec.normalized.json",
+        "bytes": 390,
+        "sha256": "d1c97a19ae39e31243206dd735e48769ce845ea2deb883b195f671fde6653db5"
+      },
+      {
+        "name": "renderer-manifest.json",
+        "gcsUri": "gs://synthetic-only/post-prod/7/vfx-evidence/9d0f313b-8a5a-415b-9450-b9a587ac70c1/renderer-manifest.json",
+        "bytes": 4858,
+        "sha256": "5b46004eaa2af220996ac50dd213a4a4510708f4c5982c7b3680ea689b420d9e"
+      },
+      {
+        "name": "renderer-manifest.parsed.json",
+        "gcsUri": "gs://synthetic-only/post-prod/7/vfx-evidence/9d0f313b-8a5a-415b-9450-b9a587ac70c1/renderer-manifest.parsed.json",
+        "bytes": 4830,
+        "sha256": "f4295da0793bb64d06ffdea8e35ed78a5705b8dedfc7274a989ef4e0c3f9a596"
+      },
+      {
+        "name": "result-probe.raw.json",
+        "gcsUri": "gs://synthetic-only/post-prod/7/vfx-evidence/9d0f313b-8a5a-415b-9450-b9a587ac70c1/result-probe.raw.json",
+        "bytes": 4383,
+        "sha256": "91af274cfb5599c7ad1ed6d96facabfe47531a4c8d4762f98884ff63a24583c2"
+      }
+    ],
+    "resultEvidence": {
+      "name": "result.json",
+      "gcsUri": "gs://synthetic-only/post-prod/7/vfx-evidence/9d0f313b-8a5a-415b-9450-b9a587ac70c1/result.json",
+      "bytes": 3224,
+      "sha256": "e9b7f886d57e84bf3ccfce48c553acec9d7eb0f64dfa6be608dcd080930e32ab"
+    }
+  },
+  "frameCount": 12,
+  "activeFrames": [
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
+  ],
+  "audio": {
+    "sourcePackets": "SHA256=66490035941fc5cc91b96d2d562dec90aaa3052a46983ae3300683a1a86f48fd",
+    "outputPackets": "SHA256=66490035941fc5cc91b96d2d562dec90aaa3052a46983ae3300683a1a86f48fd",
+    "sourcePcm": "SHA256=a89d29c74f52b76b9f7fb3839360e86f300cd94d04148393d03829cb2f15491f",
+    "outputPcm": "SHA256=a89d29c74f52b76b9f7fb3839360e86f300cd94d04148393d03829cb2f15491f"
+  },
+  "pixelReceipts": [
+    {
+      "frame": 1,
+      "center": [
+        0,
+        0,
+        255
+      ],
+      "outside": [
+        0,
+        0,
+        255
+      ]
+    },
+    {
+      "frame": 7,
+      "center": [
+        127,
+        0,
+        127
+      ],
+      "outside": [
+        0,
+        0,
+        255
+      ]
+    },
+    {
+      "frame": 12,
+      "center": [
+        0,
+        0,
+        255
+      ],
+      "outside": [
+        0,
+        0,
+        255
+      ]
+    }
+  ],
+  "archived": [
+    {
+      "name": "request.raw.json",
+      "bytes": 460,
+      "sha256": "158425ade73a3d469706b0687d56e9eab661d13ccad2746d7fb63d9433897dc9"
+    },
+    {
+      "name": "request.normalized.json",
+      "bytes": 460,
+      "sha256": "daaad4aecc781839a09e1206bcb41a4c46f31b53b473f9fb596e01f42419b559"
+    },
+    {
+      "name": "source-probe.raw.json",
+      "bytes": 4382,
+      "sha256": "fe9cfab5e05f81b7539029f98e01748c4989b29dd17a260bf3d6be9e4a4a0e94"
+    },
+    {
+      "name": "images.json",
+      "bytes": 278,
+      "sha256": "2cc0a6f494eb0e3aafb0c136c0afa23f12ebcd85404fc68c39480a6a4ff55080"
+    },
+    {
+      "name": "spec.normalized.json",
+      "bytes": 390,
+      "sha256": "d1c97a19ae39e31243206dd735e48769ce845ea2deb883b195f671fde6653db5"
+    },
+    {
+      "name": "renderer-input.raw.json",
+      "bytes": 390,
+      "sha256": "d1c97a19ae39e31243206dd735e48769ce845ea2deb883b195f671fde6653db5"
+    },
+    {
+      "name": "renderer-spec.normalized.json",
+      "bytes": 390,
+      "sha256": "d1c97a19ae39e31243206dd735e48769ce845ea2deb883b195f671fde6653db5"
+    },
+    {
+      "name": "renderer-manifest.json",
+      "bytes": 4858,
+      "sha256": "5b46004eaa2af220996ac50dd213a4a4510708f4c5982c7b3680ea689b420d9e"
+    },
+    {
+      "name": "renderer-manifest.parsed.json",
+      "bytes": 4830,
+      "sha256": "f4295da0793bb64d06ffdea8e35ed78a5705b8dedfc7274a989ef4e0c3f9a596"
+    },
+    {
+      "name": "result-probe.raw.json",
+      "bytes": 4383,
+      "sha256": "91af274cfb5599c7ad1ed6d96facabfe47531a4c8d4762f98884ff63a24583c2"
+    },
+    {
+      "name": "result.json",
+      "bytes": 3224,
+      "sha256": "e9b7f886d57e84bf3ccfce48c553acec9d7eb0f64dfa6be608dcd080930e32ab"
+    }
+  ],
+  "evidenceDirectory": "/Users/tangenjie/Documents/Codex/2026-10-06/task-5/review-evidence/manhua-vfx-renderer-1007/real-blender-service"
+}

@@ -1,0 +1,11 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-effects-1007
+
+ ✓ server/services/manhuaTransitions.test.ts (2 tests) 670ms
+   ✓ renders real crossfade pixels and correct overlapping duration while preserving raw probes before parsing 659ms
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  15:30:29
+   Duration  2.87s (transform 651ms, setup 0ms, collect 1.60s, tests 670ms, environment 0ms, prepare 195ms)
+

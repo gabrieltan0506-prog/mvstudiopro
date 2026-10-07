@@ -1,0 +1,11 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-effects-1007
+
+ ✓ client/src/lib/manhuaVfxWorkbenchGuide.browser.test.ts (3 tests | 2 skipped) 15367ms
+   ✓ leaves fullscreen before opening the existing candidate viewer and shows save receipts inside the workbench 15364ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 2 skipped (3)
+   Start at  17:12:31
+   Duration  23.57s (transform 4.64s, setup 0ms, collect 7.19s, tests 15.37s, environment 0ms, prepare 176ms)
+

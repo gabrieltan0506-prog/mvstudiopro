@@ -1,0 +1,11 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-effects-1007
+
+ ✓ server/services/manhuaVfxRender.test.ts (2 tests) 570ms
+   ✓ VFX render/composite boundary > archives raw output before parsing, composites real pixels, and copies the source audio 566ms
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  15:18:24
+   Duration  3.11s (transform 798ms, setup 0ms, collect 2.01s, tests 570ms, environment 0ms, prepare 141ms)
+

@@ -1,0 +1,13 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-effects-1007
+
+ ✓ client/src/lib/manhuaAdvisorSceneControl.browser.test.ts (1 test) 3509ms
+   ✓ 场景顾问读取不改音轨，拒绝旧指纹/错误回执/迟到跨项目，采用与提交错误不假报成功 3508ms
+ ✓ client/src/lib/manhuaAdvisorTargetNavigation.browser.test.ts (1 test) 3703ms
+   ✓ 剪辑台从旧片段切到指定clip后才交顾问修改，打开对应特效抽屉 3702ms
+
+ Test Files  2 passed (2)
+      Tests  2 passed (2)
+   Start at  15:52:29
+   Duration  4.29s (transform 72ms, setup 0ms, collect 443ms, tests 7.21s, environment 0ms, prepare 172ms)
+

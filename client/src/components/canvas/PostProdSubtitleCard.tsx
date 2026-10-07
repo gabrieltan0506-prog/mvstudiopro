@@ -1,5 +1,9 @@
 import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { AdvisorEffectsAction, AdvisorEffectsControl, AdvisorEffectsRegistration } from "@shared/manhuaAdvisorEffects";
+import { advisorWorkflowRevision } from "@/lib/manhuaAdvisorWorkflowPlan";
+import { manhuaVfxMediaIdentity } from "@/lib/manhuaVfxWorkflow";
+import { compileManhuaTitle } from "@/lib/manhuaTitleOverlay";
 import { trpc } from "@/lib/trpc";
 import type { ManhuaCreativeAdvisorContext } from "@shared/manhuaCreativeAdvisor";
 import { toast } from "sonner";
@@ -8,15 +12,18 @@ import { maskMediaProviderDetails } from "@/lib/maskMediaUrls";
 import { importWorkflowVideoSource } from "@/lib/videoUpscaleApi";
 import { normalizeDialogueSubtitleSrt } from "@shared/dialogueSubtitleSrt";
 import { SUBTITLE_EFFECT_OPTIONS, type SubtitleEffect } from "@shared/subtitleEffects";
+import { ManhuaTitleOverlayEditor } from "./ManhuaTitleOverlayEditor";
 
 /** 成片字幕使用创作者确认的对白及时间码，不调用语音识别或改写对白。 */
-export function PostProdSubtitleCard({ clips, busy, onSubmit, context, storageKey, onSourceChange }:  {
+export function PostProdSubtitleCard({ clips, busy, onSubmit, context, storageKey, onSourceChange, effectsScopeKey = "", onAdvisorEffectsControl }:  {
   onSourceChange?: (source: string) => void;
   clips: Array<{ id: string; url: string; label: string }>;
   busy: boolean;
   context?: ManhuaCreativeAdvisorContext;
   storageKey: string;
-  onSubmit: (params: { videoUri: string; subtitleSrt: string; effect: SubtitleEffect; styleOverride: { fontSize: number; outline: number; marginV: number; fontName: string } }) => Promise<void>;
+  effectsScopeKey?: string;
+  onAdvisorEffectsControl?: AdvisorEffectsRegistration;
+  onSubmit: (params: { videoUri: string; subtitleSrt: string; effect: SubtitleEffect; styleOverride: { fontSize: number; outline: number; marginV: number; fontName: string; alignment?: 2 | 5 | 8 } }, label?: string) => Promise<string | void>;
 }) {
   const [source, setSource] = useState("");
   useEffect(() => { onSourceChange?.(source); }, [source, onSourceChange]);
@@ -64,6 +71,31 @@ export function PostProdSubtitleCard({ clips, busy, onSubmit, context, storageKe
     } finally { gate.current = false; setAsking(false); }
   };
   const locked = submitting || busy || asking;
+  const [titleInitial, setTitleInitial] = useState<{ source: string; settings: AdvisorEffectsAction["titleSettings"] }>();
+  const titleControl = useRef<AdvisorEffectsControl | null>(null);
+  const registerTitleControl = useCallback<AdvisorEffectsRegistration>((_scope, _tool, control) => { titleControl.current = control; }, []);
+  const titleOuterControl = useRef<AdvisorEffectsControl>(async () => "");
+  titleOuterControl.current = async (action, signal) => {
+    signal.throwIfAborted();
+    if (!titleControl.current) throw new Error("原标题控件尚未就绪");
+    const inner = JSON.parse(await titleControl.current({ action: "effects", tool: "title", operation: "inspect" }, signal));
+    const sourceKey = advisorWorkflowRevision([effectsScopeKey, clips.map(clip => [clip.id, manhuaVfxMediaIdentity(clip.url)]), manhuaVfxMediaIdentity(source), inner.sourceKey]);
+    if (action.operation === "inspect") return JSON.stringify({ ...inner, sourceKey, sources: clips.map(({ id, label }) => ({ id, label })), selectedSourceId: clips.find(clip => clip.url === source)?.id });
+    if (!action.sourceKey || action.sourceKey !== sourceKey) throw new Error("标题原片或表单已变化，请重新inspect");
+    if (locked || gate.current) throw new Error("字幕或标题正在操作，请稍后再试");
+    if (action.operation === "configure") {
+      const clip = clips.find(item => item.id === action.sourceIds?.[0]);
+      if (!clip || action.sourceIds?.length !== 1 || !action.titleSettings) throw new Error("请从本集清单选择一段原片并提供标题设置");
+      if (source !== clip.url) {
+        compileManhuaTitle(action.titleSettings, action.titleSettings.endSec);
+        if (!window.confirm("将顾问选择的原片和标题设置填入原字幕卡？此步不合成。")) return "用户取消标题设置。";
+        signal.throwIfAborted(); setTitleInitial({ source: clip.url, settings: action.titleSettings }); setSource(clip.url);
+        return "标题与原片已选入原卡，请等待读取原片时长，重新inspect后提交。";
+      }
+    }
+    return titleControl.current({ ...action, sourceKey: inner.sourceKey }, signal);
+  };
+  useEffect(() => { onAdvisorEffectsControl?.(effectsScopeKey, "title", (...args) => titleOuterControl.current(...args)); return () => onAdvisorEffectsControl?.(effectsScopeKey, "title", null); }, [effectsScopeKey, onAdvisorEffectsControl]);
   const submit = async () => {
     if (gate.current) return;
     gate.current = true;
@@ -84,7 +116,7 @@ export function PostProdSubtitleCard({ clips, busy, onSubmit, context, storageKe
     }
   };
   return <section id="manhua-post-subtitle" className="rounded-xl border border-white/10 p-3" aria-label="成片字幕">
-    <h3 className="text-sm font-medium">成片字幕</h3>
+    <h3 className="text-sm font-medium">成片字幕与标题</h3>
     <p className="mt-1 text-xs text-white/60">使用已确认的对白与 SRT 时间码，不自动识别或改写对白。保留成片尺寸、帧率及音轨，另存带字幕版本。</p>
     <select aria-label="字幕成片" value={source} onChange={event => setSource(event.target.value)} disabled={locked} className="mt-2 w-full rounded border bg-transparent p-2 text-xs">
       <option value="">选择成片，或粘贴云端成片链接</option>
@@ -122,5 +154,13 @@ export function PostProdSubtitleCard({ clips, busy, onSubmit, context, storageKe
     </div>
     <p className="mt-2 text-xs text-white/60">白字细黑边、底部居中。特效沿用每句时间码，长句自动换行；原片保留。</p>
     <button type="button" disabled={!source || !srt.trim() || locked} onClick={() => void submit()} className="mt-2 rounded-lg border border-cyan-300/30 px-3 py-2 text-xs disabled:opacity-40">{submitting ? "正在提交字幕…" : "添加字幕 · 0积分"}</button>
+    <ManhuaTitleOverlayEditor key={source} source={source} busy={locked} scopeKey={effectsScopeKey} initialSettings={titleInitial?.source === source ? titleInitial.settings : undefined} onAdvisorEffectsControl={registerTitleControl} onSubmit={async title => {
+      if (gate.current) throw new Error("已有字幕或标题任务正在提交");
+      gate.current = true; setSubmitting(true);
+      try {
+        const videoUri = source.startsWith("https://d2h7xmz5gqybh9.cloudfront.net/") ? await importWorkflowVideoSource(source) : source;
+        return await onSubmit({ videoUri, ...title }, "片内标题成片");
+      } finally { gate.current = false; setSubmitting(false); }
+    }} />
   </section>;
 }
