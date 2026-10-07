@@ -1,0 +1,3 @@
+pnpm exec tsc --noEmit --incremental --tsBuildInfoFile /tmp/pr1676-ep2-scene-tsc.tsbuildinfo
+Final session 74351: exit code 0, no diagnostics.
+Only the backup-center descriptive text was changed afterward; no TS shape or behavior changed.

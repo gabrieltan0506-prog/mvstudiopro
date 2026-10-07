@@ -68,7 +68,7 @@ import { ManhuaPrevisAudioControls } from "@/components/canvas/ManhuaPrevisAudio
 import { checkManhuaAdvisorPrevisLaunch } from "@/lib/manhuaAdvisorPrevisLaunch";
 import ManhuaOutlineTemplateRewrite from "@/components/canvas/ManhuaOutlineTemplateRewrite";
 import { advisorReconfirmationEpisodeIndexes, advisorReconfirmationFromEpisode, type AdvisorBackupEntry } from "@/lib/manhuaAdvisorBackups";
-import { advisorRewriteHasActiveWork, prepareAdvisorRewriteAdoption, prepareAdvisorRewriteBatchAdoption, prepareManualEpisodeEditAdoption, type ManualEpisodeEdit, persistAdvisorRewriteAdoption } from "@/lib/manhuaAdvisorAdoption";
+import { advisorRewriteHasActiveWork, prepareAdvisorRewriteAdoption, prepareAdvisorRewriteBatchAdoption, prepareManualEpisodeEditAdoption, type ManualEpisodeEdit, persistAdvisorRewriteAdoptionWithSnapshot } from "@/lib/manhuaAdvisorAdoption";
 import type { AdvisorRewriteCandidate, AdvisorTemplatePlan } from "@/lib/manhuaAdvisorTemplates";
 import { manhuaAdvisorMountKey, type AdvisorMountContinuation } from "@/lib/manhuaAdvisorSession";
 import {
@@ -10515,49 +10515,58 @@ function OmniCanvasWorkspace() {
     }
   }
 
-  function applyTemplateRewriteCandidate(input: AdvisorRewriteCandidate): boolean { return applyTemplateRewriteCandidates([input]); }
-  function applyTemplateRewriteCandidates(inputs: AdvisorRewriteCandidate[], manualEdit?: ManualEpisodeEdit): boolean {
-    let plan: ReturnType<typeof prepareAdvisorRewriteAdoption>;
+  const advisorRewriteAdoptionBusyRef = useRef(false);
+  const advisorRewriteRuntimeBusyRef = useRef(false);
+  advisorRewriteRuntimeBusyRef.current = storyAssetRefreshLock.current || writerBusy || factoryBusy || assembleBusy || burnSubtitleBusy || Boolean(segmentRefBusyId) || Boolean(assetStandardizeBusyId) || asset3dBusyIds.length > 0 || sceneWorldBusyIds.length > 0;
+  function applyTemplateRewriteCandidate(input: AdvisorRewriteCandidate): Promise<boolean> { return applyTemplateRewriteCandidates([input]); }
+  async function applyTemplateRewriteCandidates(inputs: AdvisorRewriteCandidate[], manualEdit?: ManualEpisodeEdit): Promise<boolean> {
+    if (advisorRewriteAdoptionBusyRef.current) { toast.message("正文正在安全保存，请勿重复采用。"); return false; }
+    advisorRewriteAdoptionBusyRef.current = true;
     try {
-      const input = { writerPack, projectBible, blocks, edges,
-        overlays: directorBoardMotionOverlayBySegment,
-        busy: storyAssetRefreshLock.current || writerBusy || factoryBusy || assembleBusy || burnSubtitleBusy || Boolean(segmentRefBusyId) || Boolean(assetStandardizeBusyId) || asset3dBusyIds.length > 0 || sceneWorldBusyIds.length > 0 };
-      plan = manualEdit ? prepareManualEpisodeEditAdoption({...input,edit:manualEdit}) : prepareAdvisorRewriteBatchAdoption({...input,candidates:inputs});
-      persistAdvisorRewriteAdoption({ plan, original: { writerPack: writerPack!, projectBible, blocks, edges, overlays: directorBoardMotionOverlayBySegment },
-        userId: String(user?.id ?? "local"), backupId: crypto.randomUUID(), createdAt: new Date().toISOString() });
-    } catch (error) {
-      toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "改写未能安全保存，未采用。");
-      return false;
-    }
-    const { candidate, writerPack: nextPack, canvas: cleaned, overlays } = plan;
-    // Save succeeded and stale-candidate validation passed. Preserve this exact
-    // adoption's voice session; imports/manual edits still invalidate the key.
-    advisorMountContinuation.current = {
-      draftKey: manhuaAdvisorMountKey(user?.id != null ? String(user.id) : undefined, projectBible?.confirmedAt, nextPack),
-      mountedKey: advisorComponentKey,
-    };
-    setBlocks(cleaned.blocks);
-    setEdges(cleaned.edges);
-    bumpManhuaOutboundEpoch();
-    setDirectorBoardMotionOverlayBySegment(overlays);
-    materializedBoardIdsRef.current.clear();
-    setWriterPackDiff(diffManhuaWriterPacks(writerPack, nextPack));
-    setWriterPack(nextPack);
-    setWriterConfirmed(false);
-    setDirectorUnlocked(false);
-    setWorkflowPhase("outline");
-    setWriterFocusEpisode(candidate.episodeIndex);
-    setWriterConfirmBlockers([]);
-    setAdvisorFocusSection(null);
-    // 先同步本轮已落盘快照，自动更新读取这份已接受正文，不读上一渲染的旧稿。
-    if (latestDraftSnapshotRef.current) latestDraftSnapshotRef.current = {
-      ...latestDraftSnapshotRef.current, blocks:cleaned.blocks, edges:cleaned.edges,
-      writerSession:buildManhuaWriterSession({...latestDraftSnapshotRef.current.writerSession,writerPack:nextPack,writerConfirmed:false,directorUnlocked:false,workflowPhase:"outline"}),
-    };
-    blocksRef.current = cleaned.blocks;
-    void refreshStoryAssetsAfterAdoption(plan);
-    // 套用不是关闭顾问；继续显示结果与备份入口。
-    return true;
+      let plan: ReturnType<typeof prepareAdvisorRewriteAdoption>;
+      try {
+        const input = { writerPack, projectBible, blocks, edges,
+          overlays: directorBoardMotionOverlayBySegment,
+          busy: storyAssetRefreshLock.current || writerBusy || factoryBusy || assembleBusy || burnSubtitleBusy || Boolean(segmentRefBusyId) || Boolean(assetStandardizeBusyId) || asset3dBusyIds.length > 0 || sceneWorldBusyIds.length > 0 };
+        plan = manualEdit ? prepareManualEpisodeEditAdoption({...input,edit:manualEdit}) : prepareAdvisorRewriteBatchAdoption({...input,candidates:inputs});
+        await persistAdvisorRewriteAdoptionWithSnapshot({ plan, beforeCommit: () => {
+          if (advisorRewriteRuntimeBusyRef.current || storyAssetRefreshLock.current || advisorRewriteHasActiveWork(blocksRef.current)) throw new Error("备份期间已提交其他制作任务，旧稿保留，未采用改写。");
+        }, original: { writerPack: writerPack!, projectBible, blocks, edges, overlays: directorBoardMotionOverlayBySegment },
+          userId: String(user?.id ?? "local"), backupId: crypto.randomUUID(), createdAt: new Date().toISOString() });
+      } catch (error) {
+        toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "改写未能安全保存，未采用。");
+        return false;
+      }
+      const { candidate, writerPack: nextPack, canvas: cleaned, overlays } = plan;
+      // Save succeeded and stale-candidate validation passed. Preserve this exact
+      // adoption's voice session; imports/manual edits still invalidate the key.
+      advisorMountContinuation.current = {
+        draftKey: manhuaAdvisorMountKey(user?.id != null ? String(user.id) : undefined, projectBible?.confirmedAt, nextPack),
+        mountedKey: advisorComponentKey,
+      };
+      setBlocks(cleaned.blocks);
+      setEdges(cleaned.edges);
+      bumpManhuaOutboundEpoch();
+      setDirectorBoardMotionOverlayBySegment(overlays);
+      materializedBoardIdsRef.current.clear();
+      setWriterPackDiff(diffManhuaWriterPacks(writerPack, nextPack));
+      setWriterPack(nextPack);
+      setWriterConfirmed(false);
+      setDirectorUnlocked(false);
+      setWorkflowPhase("outline");
+      setWriterFocusEpisode(candidate.episodeIndex);
+      setWriterConfirmBlockers([]);
+      setAdvisorFocusSection(null);
+      // 先同步本轮已落盘快照，自动更新读取这份已接受正文，不读上一渲染的旧稿。
+      if (latestDraftSnapshotRef.current) latestDraftSnapshotRef.current = {
+        ...latestDraftSnapshotRef.current, blocks:cleaned.blocks, edges:cleaned.edges,
+        writerSession:buildManhuaWriterSession({...latestDraftSnapshotRef.current.writerSession,writerPack:nextPack,writerConfirmed:false,directorUnlocked:false,workflowPhase:"outline"}),
+      };
+      blocksRef.current = cleaned.blocks;
+      void refreshStoryAssetsAfterAdoption(plan);
+      // 套用不是关闭顾问；继续显示结果与备份入口。
+      return true;
+    } finally { advisorRewriteAdoptionBusyRef.current = false; }
   }
 
   function renderEpisodeTextEditor(episode: NonNullable<typeof writerPack>["episodes"][number]) {

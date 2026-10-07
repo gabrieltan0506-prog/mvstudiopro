@@ -23,7 +23,7 @@ export type ManhuaOutlineTemplateRewriteProps = {
   confirmedProjectVersion?: string;
   project?: ReturnType<typeof buildManhuaAdvisorProject>;
   templates: PublicManhuaViralTemplateCard[];
-  onApplyRewrite?: (candidate: AdvisorRewriteCandidate) => boolean;
+  onApplyRewrite?: (candidate: AdvisorRewriteCandidate) => boolean | Promise<boolean>;
   onOpenFreePreview?: (publicId: string) => void;
 };
 
@@ -250,7 +250,7 @@ function Session(props: ManhuaOutlineTemplateRewriteProps & { storageKey: string
         latest.current.project?.context.episodeBody !== currentBody) {
         setError("当前正文已改变，候选仅保留供比较；未采用。"); return;
       }
-      if (!props.onApplyRewrite(active.candidate)) setError("采用前的项目保护检查未通过，正式稿未改动。");
+      if (!(await props.onApplyRewrite(active.candidate))) setError("采用前的项目保护检查未通过，正式稿未改动。");
     } catch { setError("无法核对当前原稿，正式稿未改动。"); }
     finally { adopting.current = false; }
   }
