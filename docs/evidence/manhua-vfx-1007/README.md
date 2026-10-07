@@ -13,7 +13,7 @@
 
 ## 验证与复用
 
-全部为开发辅助证据。云端传输/用户项目/供应商没有在本轮实际执行；Puppeteer为独立离线夹具，不是用户正式Chrome标签。
+首批下表为开发辅助证据，首批未执行真实云端传输。后续用户授权的真实Fly/GCS探针见文末续工记录；用户正式项目/供应商仍未验。Puppeteer为独立离线夹具，不是用户正式Chrome标签。
 
 | 路径 | 证据 | 结论/边界 |
 |---|---|---|
@@ -34,7 +34,7 @@
 
 ## 尚未验证与能力界限
 
-- Linux/Fly镜像渲染未验（本机无Docker）；正式站真实项目的顾问文字/Live麦克风、提交、候选采用、刷新恢复需用户合并部署后验收。
+- Linux/Fly定向渲染已补验，范围及原始失败见下表；正式站真实项目的顾问文字/Live麦克风、提交、候选采用、刷新恢复仍需用户合并部署后验收。
 - 新生成式预设的真实供应商输出质量未验；未改模型参数或凍結读片合同，未发生本轮模型付费。
 - 屏幕效果没有自动追踪、真实遮挡、体积光或场景重照明。法相/巨禽/巨剑主体和电影级妆造场景需要对应资产与生成镜头，不是屏幕叠加已完成。
 - 3D分件仅已有部件，不生成内部结构；白模效果不保证最终视频采纳。Cloth碰撞及效果出画面需原逐帧/常速审片，不靠报告宣告质量通过。
@@ -43,3 +43,38 @@
 ## 回退
 
 用户尚未合并时可保留PR。合并后如需回退，由用户通过revert PR恢复本次提交；不得删除已取得的任务/原始及解析JSON。旧未配置新字段的项目沿原流程。不得直接推main、合并、部署或取消在途任务。
+
+## 2026-10-07 续工：真实工作机与实际工作台
+
+本轮以已推HEAD `9692764cae8aa7b4147b7ac0d56c679d36277494` 为基线，追加原PR1675。用户明确授权现有空闲worker做隔离探针。只在机器 `7812595b294778`、临时隔离目录运行；正式镜像/main仍 `36a04e3d`。无部署、无用户任务写入、无项目视频/读片模型调用。用户另要求的两张ImageGen图片是设计资料，不作功能或质量验收。
+
+### 修正
+
+- VFX迟到保存进入时绑定原项目/账号/备份世代，保留最新画布连线；面板卸载不再调用旧保存。
+- 转场原始probe、完整parsed、normalized分别保存，业务拒收前已有完整JSON。
+- Linux Blender3.4隐藏骨骼标签矩阵冻结：临时静音可见性曲线、同帧重评、finally恢复。原失败0.191614m，修复48帧最大误差0。
+- 实际ManhuaVfxEditor新增双栏、参数时间轴和真实文件候选比较。时间轴修改的是同一保存/提交配方；比较不生成，采用仍核对来源/配方，选择另一原片立即隐藏旧比较。没有将概念画面充当真实视频或加入空壳生成按钮。
+
+### 本轮证据
+
+| 项目 | 真实结果 | 原始证据 |
+|---|---|---|
+| 迟到保存/转场拒收 | 改码前6失败1通过；只复验6失败全部通过 | continuation-reproduction.log / continuation-failed-only-fixed.log |
+| 编辑器卸载 | 迟到成功/失败2场景通过 | continuation-unmount.log |
+| 新工作台 | 时间范围入保存与提交、两路实际URL比较、单路音频、配方不符禁采用、恢复后采用、切来源移除旧比较 | ui-workbench-browser.log；真实React，存储与媒体播放为离线注入 |
+| VFX | 12帧/144效果样本；活动帧20860像素变化、首尾0；AAC包与PCM SHA均不变 | fly-worker/receipts/vfx/result.json |
+| Cloth/材质 | Blender3.4.1，425顶点48帧，挂点4.80548e-7m、重开误差0、144报告项 | fly-worker/receipts/cloth/result.json |
+| 分件 | 3独立实际armature部件24帧，最大偏移误差1.54505e-7m | fly-worker/receipts/explode/result.json |
+| 标注 | 原失败保留，label-r2 48帧误差0、字体打包/字形/隐藏保持通过 | fly-worker/receipts/label/failure.json、label-r2/result.json |
+| 转场 | 2片段；理论1.75秒，实际1.833333秒，处于既有12fps一帧容差；不是精确1.75秒 | fly-worker/receipts/transition/result.json |
+| 知识目录 | 89模板/6导演包，cold下载89、warm下载0，mt_0009 indexed，0模型调用 | fly-worker/knowledge-r2-ssh.log、knowledge-console-result.json |
+
+云端永久前缀 `gs://mv-studio-pro-vertex-video-temp/post-prod/isolated-pr1675/probe-evidence/20261007T081759-9692764c/`。所有probe保存后读回校验SHA。知识首次进程被既有闲置停机中断，云端result/failure不存在，经核对后新进程knowledge-r2通过；通过项未重跑。SFTP/SSH连接失败仅重试传输，不重新生成媒体。机器停止清空/tmp，因此以后恢复以云端原证据为准。最终全Machines盘点worker stopped、网站started，镜像/规格/卷未改，无遗留新增机器。
+
+完整可复现探针源码 `scripts/probe-manhua-effects-worker-1007.mts`；原始Linux源包指纹 `fly-worker/source-manifest-r4.json`；续工UI与修复源指纹 `continuation-source-fingerprints.json`。已有首批通过且路径前提未变的结果复用，不全量重测。类型检查只对本轮新增/修改补验；新UI夹具曾有一个隐式any，仅加类型后增量复验，运行逻辑未改，不重跑已绿交互。
+
+### 真实未验边界
+
+正式站的登录项目、真实按钮扣费/队列/候选/采用/刷新恢复以及Live顾问，均尚未线上验收。两张设计图内的电影感、缩图、保存时间、顶栏与部分完整工作台布局不是已部署结果；目前基础叠效与图像美术目标仍有质量差距。没有自动人物追踪、遮挡或场景受光。新增比较可从头同时播放，不承诺浏览器两个视频逐帧锁相。
+
+本地HTML：`task-5/deliverables/漫劇特效-設計與實作對照.html`，图片内嵌、可放大；用户要求Chrome后已使用系统open交给Google Chrome打开，未声称浏览器自动化视觉验收。当前工具集缺少官方浏览器控制所需js入口，侧边打开未完成。

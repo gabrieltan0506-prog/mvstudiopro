@@ -1,0 +1,82 @@
+[
+  {
+    "id": "7812595b294778",
+    "state": "stopped",
+    "region": "sin",
+    "guest": {
+      "cpu_kind": "performance",
+      "cpus": 4,
+      "memory_mb": 8192
+    },
+    "process": "rig",
+    "mounts": null,
+    "image": "registry.fly.io/mvstudiopro:sha-36a04e3de92ae16a9523372b7f3c3ce3a4f00089",
+    "events": [
+      {
+        "type": "exit",
+        "status": "stopped",
+        "timestamp": 1791362506146,
+        "exit": 130
+      },
+      {
+        "type": "stop",
+        "status": "stopping",
+        "timestamp": 1791362497729,
+        "exit": null
+      },
+      {
+        "type": "start",
+        "status": "started",
+        "timestamp": 1791361850665,
+        "exit": null
+      },
+      {
+        "type": "start",
+        "status": "starting",
+        "timestamp": 1791361843747,
+        "exit": null
+      }
+    ]
+  },
+  {
+    "id": "d892541f602228",
+    "state": "started",
+    "region": "sin",
+    "guest": {
+      "cpu_kind": "shared",
+      "cpus": 4,
+      "memory_mb": 8192
+    },
+    "process": "app",
+    "mounts": [
+      {
+        "encrypted": true,
+        "path": "/data",
+        "size_gb": 11,
+        "volume": "vol_re11dko8l5g79z34",
+        "name": "growth_data"
+      }
+    ],
+    "image": "registry.fly.io/mvstudiopro:sha-36a04e3de92ae16a9523372b7f3c3ce3a4f00089",
+    "events": [
+      {
+        "type": "start",
+        "status": "started",
+        "timestamp": 1791304423240,
+        "exit": null
+      },
+      {
+        "type": "launch",
+        "status": "created",
+        "timestamp": 1791304317473,
+        "exit": null
+      },
+      {
+        "type": "launch",
+        "status": "pending",
+        "timestamp": 1791304317419,
+        "exit": null
+      }
+    ]
+  }
+]

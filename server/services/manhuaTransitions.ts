@@ -50,8 +50,9 @@ export async function renderManhuaTransitions(input: ConcatParams, userId: strin
   const probe = async (file: string, name: string) => {
     const raw = await deps.run("ffprobe",["-v","error","-show_format","-show_streams","-of","json",file],signal);
     await save(`${name}.raw.json`,Buffer.from(raw.stdout));
+    await save(`${name}.parsed.json`,Buffer.from(JSON.stringify(JSON.parse(raw.stdout))));
     const meta=parseVfxVideoProbe(raw.stdout);
-    await save(`${name}.parsed.json`,Buffer.from(JSON.stringify(meta)));return meta;
+    await save(`${name}.normalized.json`,Buffer.from(JSON.stringify(meta)));return meta;
   };
   try {
     await save("request.json",Buffer.from(JSON.stringify(input)));

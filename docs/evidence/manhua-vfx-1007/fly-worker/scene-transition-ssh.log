@@ -1,0 +1,11 @@
+Connecting to fdaa:50:6acf:a7b:86e:ee9e:7601:2...
+b62d293cf5e3363ea0c258d865f7931611a0934d11c21c473977df0e6b351bd3  probe-r2.mjs
+{"event":"started","phase":"cloth","machine":"7812595b294778","runId":"20261007T081759-9692764c"}
+{"event":"passed","phase":"cloth","elapsedMs":59822,"gcsUri":"gs://mv-studio-pro-vertex-video-temp/post-prod/isolated-pr1675/probe-evidence/20261007T081759-9692764c/cloth/result.json"}
+{"event":"started","phase":"explode","machine":"7812595b294778","runId":"20261007T081759-9692764c"}
+{"event":"passed","phase":"explode","elapsedMs":18349,"gcsUri":"gs://mv-studio-pro-vertex-video-temp/post-prod/isolated-pr1675/probe-evidence/20261007T081759-9692764c/explode/result.json"}
+{"event":"started","phase":"label","machine":"7812595b294778","runId":"20261007T081759-9692764c"}
+[manhua-previs] blender exit 1 
+{"event":"failed","phase":"label","elapsedMs":8543,"message":"Evidence retained; no automatic retry"}
+Error: ssh shell: Process exited with status 1
+Warning: Metrics send issue: failed to send metrics: Post "https://flyctl-metrics.fly.dev/metrics_post": net/http: request canceled

@@ -1,0 +1,11 @@
+No machine specified, using 7812595b294778 in region sin
+Connecting to fdaa:50:6acf:a7b:86e:ee9e:7601:2...
+RESTORED_ISOLATED_SOURCE
+{"restored":"vfx/result.json","bytes":6564}
+{"restored":"vfx/composite-6.png","bytes":71406}
+{"restored":"cloth/result.json","bytes":3368}
+{"restored":"explode/result.json","bytes":2349}
+{"restored":"label/failure.json","bytes":973}
+{"restored":"label/scene-report.json","bytes":40314}
+{"event":"started","phase":"label-r2","machine":"7812595b294778","runId":"20261007T081759-9692764c"}
+{"event":"passed","phase":"label-r2","elapsedMs":39166,"gcsUri":"gs://mv-studio-pro-vertex-video-temp/post-prod/isolated-pr1675/probe-evidence/20261007T081759-9692764c/label-r2/result.json"}

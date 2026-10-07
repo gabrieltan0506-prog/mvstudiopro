@@ -1,0 +1,6 @@
+client/src/pages/OmniCanvas.tsx(3583,45): error TS2345: Argument of type '{ blocks: CanvasBlock[]; factoryPrefs: { manhuaVfxByScope: { [x: string]: ManhuaVfxState; }; }; clientUpdatedAt: string; writerSession: ManhuaWriterSessionPartial; edges: unknown[]; manhuaActionPlans?: Record<string, import("/Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-effects-1007/shared/manhuaActionPl...' is not assignable to parameter of type '{ writerSession: ManhuaWriterSessionPartial; blocks: CanvasBlock[]; edges: CanvasEdge[]; factoryPrefs?: Record<string, unknown> | null | undefined; clientUpdatedAt?: string | undefined; replaceNovelOrigin?: boolean | undefined; }'.
+  Types of property 'edges' are incompatible.
+    Type 'unknown[]' is not assignable to type 'CanvasEdge[]'.
+      Type 'unknown' is not assignable to type 'CanvasEdge'.
+server/services/manhuaTransitionsEvidence.test.ts(25,14): error TS2802: Type 'MapIterator<string>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/services/manhuaTransitionsEvidence.test.ts(25,78): error TS2802: Type 'MapIterator<string>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.

@@ -1,0 +1,11 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-effects-1007
+
+ ✓ client/src/lib/manhuaVfxPersistenceScope.test.ts (5 tests | 1 skipped) 96ms
+ ✓ server/services/manhuaTransitionsEvidence.test.ts (2 tests) 14ms
+
+ Test Files  2 passed (2)
+      Tests  6 passed | 1 skipped (7)
+   Start at  16:12:15
+   Duration  2.10s (transform 603ms, setup 0ms, collect 1.55s, tests 111ms, environment 0ms, prepare 255ms)
+

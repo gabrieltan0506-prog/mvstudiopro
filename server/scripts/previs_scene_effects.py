@@ -71,9 +71,21 @@ def _world_vertices(obj,depsgraph):
     # temporarily evaluates it without changing render visibility or its saved animation.
     hidden=obj.hide_viewport
     evaluated=None
+    visibility_curves=[]
+    scene=bpy.context.scene
     try:
         if hidden:
+            # Blender 3.4 skips transform evaluation for viewport-disabled objects.
+            # Unhiding alone leaves matrix_world at the last visible frame. Mute only
+            # this visibility channel while evaluating the same animation frame;
+            # restore it below, including its original mute state and visibility.
+            action=obj.animation_data.action if obj.animation_data else None
+            if action:
+                for curve in _curves(action):
+                    if curve.data_path=='hide_viewport':
+                        visibility_curves.append((curve,curve.mute));curve.mute=True
             obj.hide_viewport=False
+            scene.frame_set(scene.frame_current,subframe=scene.frame_subframe)
             bpy.context.view_layer.update()
             depsgraph=bpy.context.evaluated_depsgraph_get()
         evaluated=obj.evaluated_get(depsgraph)
@@ -83,7 +95,9 @@ def _world_vertices(obj,depsgraph):
     finally:
         if evaluated is not None:evaluated.to_mesh_clear()
         if hidden:
+            for curve,muted in visibility_curves:curve.mute=muted
             obj.hide_viewport=True
+            scene.frame_set(scene.frame_current,subframe=scene.frame_subframe)
             bpy.context.view_layer.update()
 
 

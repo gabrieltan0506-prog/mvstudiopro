@@ -891,7 +891,9 @@ function OmniCanvasWorkspace() {
     manhuaOutboundEpochRef.current += 1;
     // 世代变了，旧确认一律作废：宁可让用户重看一次，也不能放旧确认过去。
     outboundConfirmationsRef.current = {};
-    setOutboundConfirmedAtByBlock((prev) => (Object.keys(prev).length ? {} : prev));
+    // Also refresh callbacks bound to this epoch when there were no confirmations.
+    // The project-identity effect can bump the epoch just after a render.
+    setOutboundConfirmedAtByBlock({});
   }, []);
   const [edges, setEdges] = useState<CanvasEdge[]>(initial.edges);
   const [factoryBusy, setFactoryBusy] = useState(false);
@@ -3557,10 +3559,18 @@ function OmniCanvasWorkspace() {
 
   /** 手动备份（用户拍板：只有用户点上传才存云） */
   const latestDraftSnapshotRef = useRef<Parameters<typeof buildLocalCloudDraftSnapshot>[0] | null>(null);
+  // Bind each save callback to its render's account/project/restore generation.
+  // A late render receipt must not adopt the current project's identity on entry.
+  const vfxPersistenceScope = currentVfxScopeRef.current;
+  const vfxPersistenceEpoch = manhuaOutboundEpochRef.current;
+  const currentVfxSaveReady = useRef(false);
+  currentVfxSaveReady.current = Boolean(user?.id && vfxScopeKey && cloudSyncReady && !factoryBusy && !writerBusy);
   const persistManhuaVfxState = useCallback(async (raw: ManhuaVfxState) => {
-    const scope = currentVfxScopeRef.current;
-    const epoch = manhuaOutboundEpochRef.current;
-    if (!user?.id || !vfxScopeKey || raw.scopeKey !== vfxScopeKey || !cloudSyncReady || factoryBusy || writerBusy || backupOperationRef.current || cloudConflictRef.current)
+    const scope = vfxPersistenceScope;
+    const epoch = vfxPersistenceEpoch;
+    if (currentVfxScopeRef.current !== scope || manhuaOutboundEpochRef.current !== epoch)
+      throw new Error("作品或备份状态已变化，未将旧特效回执写入当前作品；请回到原作品查询原任务");
+    if (!currentVfxSaveReady.current || raw.scopeKey !== vfxScopeKey || backupOperationRef.current || cloudConflictRef.current)
       throw new Error("当前作品未就绪或正在制作，请稍后保存特效配置");
     const previous = manhuaVfxByScopeRef.current[vfxScopeKey];
     if (previous && !manhuaVfxStateSchema.safeParse(previous).success)
@@ -3569,8 +3579,8 @@ function OmniCanvasWorkspace() {
     const snapshot = latestDraftSnapshotRef.current;
     if (!snapshot) throw new Error("当前作品快照尚未就绪，请稍后重试");
     const states = { ...manhuaVfxByScopeRef.current, [vfxScopeKey]: next };
-    const updated = { ...snapshot, blocks: blocksRef.current, edges, factoryPrefs: { ...snapshot.factoryPrefs, manhuaVfxByScope: states }, clientUpdatedAt: new Date().toISOString() };
-    const local = persistManhuaDraftLocally({ ...updated, blocks: blocksRef.current as CanvasBlock[], edges });
+    const updated = { ...snapshot, blocks: blocksRef.current, factoryPrefs: { ...snapshot.factoryPrefs, manhuaVfxByScope: states }, clientUpdatedAt: new Date().toISOString() };
+    const local = persistManhuaDraftLocally({ ...updated, blocks: blocksRef.current as CanvasBlock[], edges: snapshot.edges as CanvasEdge[] });
     if (!local.writerOk || !local.canvasOk || !local.prefsOk || !local.atOk)
       throw new Error("特效配置尚未完整保存，未提交渲染，请保留页面重试");
     // Retain the exact request intent locally even when the subsequent cloud write is uncertain.
@@ -3582,7 +3592,7 @@ function OmniCanvasWorkspace() {
     if (currentVfxScopeRef.current !== scope || manhuaOutboundEpochRef.current !== epoch || backupOperationRef.current || cloudConflictRef.current)
       throw new Error("作品或备份状态已变化，原配置已保存，未继续提交渲染");
     return next;
-  }, [user?.id, vfxScopeKey, cloudSyncReady, factoryBusy, writerBusy, edges, syncCloudDraftPayload]);
+  }, [vfxScopeKey, vfxPersistenceScope, vfxPersistenceEpoch, syncCloudDraftPayload]);
 
   const backupOperationRef = useRef<null | "upload" | "restore" | "export" | "import">(null);
   const [cloudBackupBusy, setCloudBackupBusy] = useState<typeof backupOperationRef.current>(null);
