@@ -1,0 +1,127 @@
+{
+  "at": "2026-10-07T18:50:43.748Z",
+  "prefix": "post-prod/1/isolated-probes/ep2-stage-animation-r6-1008-1791398782643",
+  "receipts": [
+    {
+      "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/1/isolated-probes/ep2-stage-animation-r6-1008-1791398782643/backup/request.raw.json",
+      "bytes": 609,
+      "sha256": "2f4b93f20f7b6d3d33beb580843f68a578f0e7c658df4665f77e92b71e81816a",
+      "generation": "1791398788118017"
+    },
+    {
+      "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/1/isolated-probes/ep2-stage-animation-r6-1008-1791398782643/backup/request.normalized.json",
+      "bytes": 669,
+      "sha256": "ec732d897f07452425fb6b37530fc8dbcdadb7edf2bf0ed256bc42a3f0b42f28",
+      "generation": "1791398790063696"
+    },
+    {
+      "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/1/isolated-probes/ep2-stage-animation-r6-1008-1791398782643/backup/frames.json",
+      "bytes": 5492,
+      "sha256": "2b4ce988c1a4ea1bfc14a46159a1729e9ab319143503d73b3e783cd35aa2add0",
+      "generation": "1791399034415630"
+    },
+    {
+      "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/1/isolated-probes/ep2-stage-animation-r6-1008-1791398782643/backup/probe.raw.json",
+      "bytes": 2600,
+      "sha256": "e9a5f9b4a98f4f728b4ed2e0304c4a2632a11025d41877c89fc4e0f6c653a366",
+      "generation": "1791399037295988"
+    },
+    {
+      "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/1/isolated-probes/ep2-stage-animation-r6-1008-1791398782643/backup/probe.parsed.json",
+      "bytes": 1475,
+      "sha256": "b59f20e0f8258c75d0b82ade533e35606bacb773e05b67ac359b3fba44ec885a",
+      "generation": "1791399039342722"
+    }
+  ],
+  "blenderExitCode": 0,
+  "activeAfter": [],
+  "result": {
+    "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/1/20261007/manhua-stage-animation-1791399040493-sczhmr.mp4",
+    "bytes": 315950,
+    "requestId": "6db36968-0cf6-444e-b5f0-5000363827ba",
+    "durationSec": 2,
+    "width": 720,
+    "height": 1280,
+    "fps": 24,
+    "frameCount": 48,
+    "alpha": false,
+    "stageAnimation": {
+      "previsJobId": "prv_cccccccccccccccccccccccccccccccccccccccccccccccc",
+      "scopeId": "73a43972-df70-4ef6-8bb9-cbdda0934b5a",
+      "clipId": "isolated-fixture",
+      "worldTaskId": "mw_f9d9cb54c444d3d0259ff3a0",
+      "sceneRef": "cust_muy27684_wyx04",
+      "worldSourceVersion": "gs://mv-studio-pro-vertex-video-temp/generated/manhua-asset-edited/1791374616118_d8ik5x.png"
+    },
+    "evidence": [
+      {
+        "name": "request.raw.json",
+        "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/1/art-motion-evidence/6db36968-0cf6-444e-b5f0-5000363827ba/request.raw.json",
+        "bytes": 609,
+        "sha256": "2f4b93f20f7b6d3d33beb580843f68a578f0e7c658df4665f77e92b71e81816a"
+      },
+      {
+        "name": "request.normalized.json",
+        "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/1/art-motion-evidence/6db36968-0cf6-444e-b5f0-5000363827ba/request.normalized.json",
+        "bytes": 669,
+        "sha256": "ec732d897f07452425fb6b37530fc8dbcdadb7edf2bf0ed256bc42a3f0b42f28"
+      },
+      {
+        "name": "source.json",
+        "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/1/art-motion-evidence/6db36968-0cf6-444e-b5f0-5000363827ba/source.json",
+        "bytes": 648,
+        "sha256": "b78a605b860d24f233e5dd845a635414ca2a15a08c6bae11cd906600fac0efea"
+      },
+      {
+        "name": "animation.frames.raw.json",
+        "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/1/art-motion-evidence/6db36968-0cf6-444e-b5f0-5000363827ba/animation.frames.raw.json",
+        "bytes": 11358,
+        "sha256": "891e1c978ec9bb693f775c52df2a456b485995f529e7c86d89d726cb2a27353e"
+      },
+      {
+        "name": "animation.frames.parsed.json",
+        "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/1/art-motion-evidence/6db36968-0cf6-444e-b5f0-5000363827ba/animation.frames.parsed.json",
+        "bytes": 10094,
+        "sha256": "e2c07aea16e2fefe55ea6b0e250172243d42fe3e5880cf950eef1c74e1e9f6e6"
+      },
+      {
+        "name": "frames.json",
+        "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/1/art-motion-evidence/6db36968-0cf6-444e-b5f0-5000363827ba/frames.json",
+        "bytes": 5492,
+        "sha256": "2b4ce988c1a4ea1bfc14a46159a1729e9ab319143503d73b3e783cd35aa2add0"
+      },
+      {
+        "name": "probe.raw.json",
+        "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/1/art-motion-evidence/6db36968-0cf6-444e-b5f0-5000363827ba/probe.raw.json",
+        "bytes": 2600,
+        "sha256": "e9a5f9b4a98f4f728b4ed2e0304c4a2632a11025d41877c89fc4e0f6c653a366"
+      },
+      {
+        "name": "probe.parsed.json",
+        "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/1/art-motion-evidence/6db36968-0cf6-444e-b5f0-5000363827ba/probe.parsed.json",
+        "bytes": 1475,
+        "sha256": "b59f20e0f8258c75d0b82ade533e35606bacb773e05b67ac359b3fba44ec885a"
+      },
+      {
+        "name": "result.json",
+        "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/1/art-motion-evidence/6db36968-0cf6-444e-b5f0-5000363827ba/result.json",
+        "bytes": 3575,
+        "sha256": "38140d2c5e033536bbfb5374885da41d0bb7aa70b4cb909c959376bd8bfd6561"
+      },
+      {
+        "name": "execution.raw.json",
+        "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/1/art-motion-evidence/6db36968-0cf6-444e-b5f0-5000363827ba/execution.raw.json",
+        "bytes": 49,
+        "sha256": "9839f83689ad7746e7e897b45ae608e753393973e331feba1571ee40cb6df492"
+      }
+    ]
+  },
+  "formalWorkflowAccepted": false,
+  "syntheticActor": true,
+  "actualOwnedGs": true,
+  "frameSummary": {
+    "count": 48,
+    "errors": [],
+    "uniqueFrames": 24
+  }
+}

@@ -10537,7 +10537,7 @@ function OmniCanvasWorkspace() {
   const advisorRewriteRuntimeBusyRef = useRef(false);
   advisorRewriteRuntimeBusyRef.current = storyAssetRefreshLock.current || writerBusy || factoryBusy || assembleBusy || burnSubtitleBusy || Boolean(segmentRefBusyId) || Boolean(assetStandardizeBusyId) || asset3dBusyIds.length > 0 || sceneWorldBusyIds.length > 0;
   function applyTemplateRewriteCandidate(input: AdvisorRewriteCandidate): Promise<boolean> { return applyTemplateRewriteCandidates([input]); }
-  async function applyTemplateRewriteCandidates(inputs: AdvisorRewriteCandidate[], manualEdit?: ManualEpisodeEdit): Promise<boolean> {
+  async function applyTemplateRewriteCandidates(inputs: AdvisorRewriteCandidate[], manualEdit?: ManualEpisodeEdit, options: { refreshAssets: boolean } = { refreshAssets: true }): Promise<boolean> {
     if (advisorRewriteAdoptionBusyRef.current) { toast.message("正文正在安全保存，请勿重复采用。"); return false; }
     advisorRewriteAdoptionBusyRef.current = true;
     try {
@@ -10581,7 +10581,7 @@ function OmniCanvasWorkspace() {
         writerSession:buildManhuaWriterSession({...latestDraftSnapshotRef.current.writerSession,writerPack:nextPack,writerConfirmed:false,directorUnlocked:false,workflowPhase:"outline"}),
       };
       blocksRef.current = cleaned.blocks;
-      void refreshStoryAssetsAfterAdoption(plan);
+      if (options.refreshAssets) void refreshStoryAssetsAfterAdoption(plan);
       // 套用不是关闭顾问；继续显示结果与备份入口。
       return true;
     } finally { advisorRewriteAdoptionBusyRef.current = false; }
@@ -10590,7 +10590,7 @@ function OmniCanvasWorkspace() {
   function renderEpisodeTextEditor(episode: NonNullable<typeof writerPack>["episodes"][number]) {
     return <ManhuaEpisodeTextEditor key={`${voiceStoryboardScope}:${episode.index}`} scopeKey={voiceStoryboardScope}
       episode={episode} busyReason={writerBusy || factoryBusy || advisorRewriteHasActiveWork(blocks) ? "制作任务仍在执行，可继续编辑草稿，待回执后再确认写回。" : undefined}
-      onApplyEdit={edit=>applyTemplateRewriteCandidates([],edit)} />;
+      onApplyEdit={(edit,options)=>applyTemplateRewriteCandidates([],edit,options)} />;
   }
 
   const advisorInWorkflowRail = manhuaUiMode === "workbench" && !(immersiveWorkbench && immersiveExtrasOpen);
