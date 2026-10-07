@@ -1,5 +1,5 @@
 import {requireCurrentStageAnimation} from "@/lib/manhuaStageAnimationBinding";
-import { saveSceneProductionBackup } from "@/lib/manhuaSceneProductionBackups";
+import { loadAdvisorReconfirmationEpisodeIndexes, saveSceneProductionBackup } from "@/lib/manhuaSceneProductionBackups";
 import {creativeStudioAudioAssets} from "@/lib/creativeStudioAudio";
 import type { AdvisorEffectsControl, AdvisorEffectsRegistration } from "@shared/manhuaAdvisorEffects";
 import type { ManhuaAdvisorStudioContext } from "@shared/manhuaAdvisorStudioContext";
@@ -68,7 +68,7 @@ import ManhuaCreativeAdvisorPanel from "@/components/canvas/ManhuaCreativeAdviso
 import { ManhuaPrevisAudioControls } from "@/components/canvas/ManhuaPrevisAudioControls";
 import { checkManhuaAdvisorPrevisLaunch } from "@/lib/manhuaAdvisorPrevisLaunch";
 import ManhuaOutlineTemplateRewrite from "@/components/canvas/ManhuaOutlineTemplateRewrite";
-import { advisorReconfirmationEpisodeIndexes, advisorReconfirmationFromEpisode, type AdvisorBackupEntry } from "@/lib/manhuaAdvisorBackups";
+import { type AdvisorBackupEntry } from "@/lib/manhuaAdvisorBackups";
 import { advisorRewriteHasActiveWork, prepareAdvisorRewriteAdoption, prepareAdvisorRewriteBatchAdoption, prepareManualEpisodeEditAdoption, type ManualEpisodeEdit, persistAdvisorRewriteAdoptionWithSnapshot } from "@/lib/manhuaAdvisorAdoption";
 import type { AdvisorRewriteCandidate, AdvisorTemplatePlan } from "@/lib/manhuaAdvisorTemplates";
 import { manhuaAdvisorMountKey, type AdvisorMountContinuation } from "@/lib/manhuaAdvisorSession";
@@ -1193,6 +1193,7 @@ function OmniCanvasWorkspace() {
   const [writerFromEpisode, setWriterFromEpisode] = useState(0);
   const [writerFromSegment, setWriterFromSegment] = useState(1);
   const [writerBusy, setWriterBusy] = useState(false);
+  const writerConfirmationBusyRef = useRef(false);
   /** 确认编剧失败时的门禁原因（页面常驻，不只 toast） */
   const [writerConfirmBlockers, setWriterConfirmBlockers] = useState<string[]>([]);
   /** 门禁失败且人物表为空：横幅给「从剧本提取资产表」而不是死路 */
@@ -6822,18 +6823,31 @@ function OmniCanvasWorkspace() {
       && isManhuaFactoryArtifactBlock(b) && manhuaBlockHasPaidOutput(b)),
     [blocks, writerFocusEpisode],
   );
-  /**
-   * 0929：旧版改镜头时长会把剧本退回「未确认」，而重新确认会归档整集链条重铺。
-   * 只改了时长/切点时，用这里恢复确认：不重铺、不归档，已有静帧、音轨、白模与成片原地保留。
-   */
-  const restoreWriterConfirmation = useCallback(() => {
+  /** 从当前快照读取采用范围；异步读取期间发生的项目或任务变化一律中止确认。 */
+  const readWriterReconfirmation = useCallback(async () => {
+    if (user?.id == null) return undefined;
+    const snapshot = latestDraftSnapshotRef.current;
+    const scope = currentVoiceStoryboardScope.current;
+    if (!snapshot || snapshot.writerSession.writerPack !== writerPack || snapshot.blocks !== blocks)
+      throw new Error("当前剧本快照尚未同步，请稍后重新确认。");
+    const indexes = await loadAdvisorReconfirmationEpisodeIndexes(localStorage, String(user.id), writerPack, projectBible?.confirmedAt);
+    if (scope !== currentVoiceStoryboardScope.current || snapshot !== latestDraftSnapshotRef.current || blocks !== blocksRef.current)
+      throw new Error("读取备份期间剧本、画布或作品已改变，未重新确认。");
+    if (advisorRewriteRuntimeBusyRef.current || advisorRewriteHasActiveWork(blocksRef.current))
+      throw new Error("仍有运行或待核实任务，未重新确认剧本。");
+    return indexes;
+  }, [user?.id, writerPack, projectBible?.confirmedAt, blocks]);
+
+  /** 只改时长/切点可恢复确认；改过剧情必须先重新确认对应集。 */
+  const restoreWriterConfirmation = useCallback(async () => {
+    if (writerConfirmationBusyRef.current) return;
+    writerConfirmationBusyRef.current = true;
+    try {
     let advisorReconfirmFromEpisode: number | undefined;
     try {
-      advisorReconfirmFromEpisode = user?.id != null
-        ? advisorReconfirmationFromEpisode(localStorage, String(user.id), writerPack, projectBible?.confirmedAt)
-        : undefined;
-    } catch {
-      toast.error("无法读取改写备份，未恢复确认；请先检查本机存储。");
+      advisorReconfirmFromEpisode = (await readWriterReconfirmation())?.[0];
+    } catch (error) {
+      toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "无法读取改写备份，未恢复确认；请先检查本机存储。");
       return;
     }
     const blocker = manhuaRestoreConfirmationBlocker({ blocks, writerPack, episodeIndex: writerFocusEpisode, advisorReconfirmFromEpisode });
@@ -6847,8 +6861,12 @@ function OmniCanvasWorkspace() {
     setWriterConfirmed(true);
     setDirectorUnlocked(true);
     toast.success("已恢复剧本确认，本集链条未改动。");
-  }, [blocks, writerPack, writerFocusEpisode, user?.id, projectBible?.confirmedAt]);
-  const confirmWriterToDirector = useCallback((): boolean => {
+    } finally { writerConfirmationBusyRef.current = false; }
+  }, [blocks, writerPack, writerFocusEpisode, readWriterReconfirmation]);
+  const confirmWriterToDirector = useCallback(async (): Promise<boolean> => {
+    if (writerConfirmationBusyRef.current) return false;
+    writerConfirmationBusyRef.current = true;
+    try {
     // 审查 P1：确认这一下用同一份法典快照——冻结进 Bible 的和初铺进节点的必须是同一张卡
     const confirmedDirectionCanon = activeDirectionCanon;
     if (!writerPack || !writerPackLooksReady(writerPack)) {
@@ -6893,11 +6911,11 @@ function OmniCanvasWorkspace() {
     }
     let changedEpisodes: number[] | undefined;
     try {
-      changedEpisodes = user?.id != null
-        ? advisorReconfirmationEpisodeIndexes(localStorage, String(user.id), writerPack, projectBible?.confirmedAt)
-        : undefined;
-    } catch {
-      toast.error("无法读取改写备份，未重新确认；请先检查本机存储。");
+      changedEpisodes = await readWriterReconfirmation();
+      // 已有作品的单集确认即使没有匹配改写记录，也不能清理其他集。
+      if (!changedEpisodes && projectBible) changedEpisodes = [writerFocusEpisode];
+    } catch (error) {
+      toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "无法读取改写备份，未重新确认；请先检查本机存储。");
       return false;
     }
     setWriterConfirmBlockers([]);
@@ -7040,7 +7058,9 @@ function OmniCanvasWorkspace() {
       `已确认剧情并锁定编剧表（${tips.join("·")}）。既有图片与编辑版本仍保留为候选；只会把已认领到当前人物表的图片用于出片。`,
     );
     return true;
+    } finally { writerConfirmationBusyRef.current = false; }
   }, [
+    readWriterReconfirmation,
     user?.id,
     projectBible?.confirmedAt,
     projectBible?.storyEmotion,
@@ -7087,13 +7107,14 @@ function OmniCanvasWorkspace() {
     gateRecheckPendingRef.current = false;
     const timer = window.setTimeout(() => {
       // 通过与否 confirmWriterToDirector 自己会 toast/滚红字，这里不再叠加
-      confirmWriterToDirector();
+      void confirmWriterToDirector();
     }, 120);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [writerPack, writerBusy]);
 
   const confirmWriterSeriesSpawn = useCallback(() => {
+    if (writerConfirmationBusyRef.current) return;
     if (!writerPack || !writerPackLooksReady(writerPack)) {
       toast.error("请先扩写并检查剧情包是否完整");
       return;
@@ -10885,7 +10906,7 @@ async function runAdvisorWriterTrial() {
             }
             if (!window.confirm("确认当前剧本并按原流程更新导演与资产设定？原入口仍执行完整门禁。")) return "用户取消剧本确认。";
             backupVoiceProduction();
-            return confirmWriterToDirector() ? "剧本已通过原入口确认，已进入后续工作流。" : "剧本未通过原门禁，原稿保留，请查看阻断项。";
+            return await confirmWriterToDirector() ? "剧本已通过原入口确认，已进入后续工作流。" : "剧本未通过原门禁，原稿保留，请查看阻断项。";
           }
           if (action.action === "asset") {
             const anchor = [...(projectBible?.assetCanon?.characters||[]),...(projectBible?.assetCanon?.locations||[]),...(projectBible?.assetCanon?.props||[])].find(a=>a.id===action.anchorId);
@@ -11393,11 +11414,11 @@ async function runAdvisorWriterTrial() {
                     setManhuaUiMode("workbench");
                   }
                 }}
-                onNextActionClick={(stepId) => {
+                onNextActionClick={async (stepId) => {
                   // 剧情包已出未确认：下一步直接确认并滚到工作台（少一次找按钮）
                   if (stepId === "writer" && writerPack && !writerConfirmed) {
                     // 失败时函数已切开 extras 展示门禁红字——这里绝不能再关（会盖回 display:none）
-                    if (!confirmWriterToDirector()) return;
+                    if (!await confirmWriterToDirector()) return;
                     // 成功路径函数内部已切 workbench + 关 extras；这里只负责滚动
                     window.setTimeout(() => {
                       document.querySelector("#manhua-workbench-shell")?.scrollIntoView({
@@ -11647,7 +11668,7 @@ async function runAdvisorWriterTrial() {
                   outlineConfirmed={writerConfirmed}
                   writerPackReady={Boolean(writerPack && writerPackLooksReady(writerPack))}
                   onConfirmOutline={() => {
-                    confirmWriterToDirector();
+                    void confirmWriterToDirector();
                   }}
                   onRestoreOutlineConfirmation={!writerConfirmed && focusEpisodeHasPaidChain ? restoreWriterConfirmation : undefined}
                   onOpenWriterEditor={() => {
@@ -13208,9 +13229,9 @@ async function runAdvisorWriterTrial() {
                 <button
                   type="button"
                   disabled={writerBusy || factoryBusy || !writerPack}
-                  onClick={() => {
+                  onClick={async () => {
                     // 失败时函数已切开 extras 展示门禁红字——这里绝不能再关
-                    if (!confirmWriterToDirector()) return;
+                    if (!await confirmWriterToDirector()) return;
                     // 成功路径函数内部已切 workbench + 关 extras；这里只负责滚动
                     window.setTimeout(() => {
                       document.querySelector("#manhua-workbench-zone")?.scrollIntoView({

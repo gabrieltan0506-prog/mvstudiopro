@@ -1,5 +1,5 @@
 import { currentManhuaProjectScope } from "../../../shared/manhuaProjectScope";
-import { listAdvisorBackups, type AdvisorBackupEntry } from "./manhuaAdvisorBackups";
+import { advisorReconfirmationEpisodeIndexes, listAdvisorBackups, type AdvisorBackupEntry } from "./manhuaAdvisorBackups";
 
 const DATABASE = "mv-manhua-scene-production-backups-v1";
 const STORE = "backups";
@@ -37,20 +37,40 @@ export async function saveSceneProductionBackup(userId: string, key: string, jso
     });
   } finally { db.close(); }
 }
-export async function listSceneProductionBackups(scope: Parameters<typeof listAdvisorBackups>[1]): Promise<AdvisorBackupEntry[]> {
-  const storageNamespace = namespace(scope.userId);
+async function readSceneProductionBackupRows(userId: string): Promise<Array<{ key: string; json: string }>> {
+  const storageNamespace = namespace(userId);
   const db = await openDatabase();
   try {
-    const rows = await new Promise<Array<{key: string; json: string}>>((resolve, reject) => {
+    return await new Promise<Array<{key: string; json: string}>>((resolve, reject) => {
       const tx = db.transaction(STORE, "readonly"), store = tx.objectStore(STORE);
-      const prefix = `${storageNamespace}manhua-advisor-rewrite-backup:${scope.userId}:`;
+      const prefix = `${storageNamespace}manhua-advisor-rewrite-backup:${userId}:`;
       const request = store.openCursor(IDBKeyRange.bound(prefix, `${prefix}\uffff`));
       const rows: Array<{key: string; json: string}> = [];
       request.onsuccess = () => { const cursor = request.result; if (cursor) { rows.push({key: String(cursor.key).slice(storageNamespace.length),json: String(cursor.value)}); cursor.continue(); } };
       tx.oncomplete = () => resolve(rows);
       tx.onabort = () => reject(tx.error || new Error("场景备份暂无法读取。"));
     });
-    const result = listAdvisorBackups({length: rows.length, key: i => rows[i]?.key ?? null, getItem: key => rows.find(row => row.key === key)?.json ?? null}, scope);
-    return result.entries.map(entry => ({...entry, downloadOnly: true}));
   } finally { db.close(); }
+}
+
+export async function listSceneProductionBackups(scope: Parameters<typeof listAdvisorBackups>[1]): Promise<AdvisorBackupEntry[]> {
+  const rows = await readSceneProductionBackupRows(scope.userId);
+  const result = listAdvisorBackups({length: rows.length, key: i => rows[i]?.key ?? null, getItem: key => rows.find(row => row.key === key)?.json ?? null}, scope);
+  return result.entries.map(entry => ({...entry, downloadOnly: true}));
+}
+
+/** 再次确认与采用共用完整快照；读取失败必须上抛，不能当成没有改写而重铺全剧。 */
+export async function loadAdvisorReconfirmationEpisodeIndexes(
+  storage: Parameters<typeof advisorReconfirmationEpisodeIndexes>[0],
+  userId: string,
+  writerPack: unknown,
+  confirmedProjectVersion?: string,
+): Promise<number[] | undefined> {
+  const scope = JSON.stringify(currentManhuaProjectScope());
+  const rows = await readSceneProductionBackupRows(userId);
+  if (scope !== JSON.stringify(currentManhuaProjectScope())) throw new Error("读取备份期间作品已切换，未重新确认。");
+  const legacy = advisorReconfirmationEpisodeIndexes(storage, userId, writerPack, confirmedProjectVersion) || [];
+  const saved = advisorReconfirmationEpisodeIndexes({length: rows.length, key: i => rows[i]?.key ?? null, getItem: key => rows.find(row => row.key === key)?.json ?? null}, userId, writerPack, confirmedProjectVersion) || [];
+  const episodes = Array.from(new Set([...legacy, ...saved])).sort((a, b) => a - b);
+  return episodes.length ? episodes : undefined;
 }

@@ -9,6 +9,9 @@ beforeAll(async () => {
   const built = await build({ stdin: { resolveDir: process.cwd(), loader: "ts", contents: `
 import {prepareManualEpisodeEditAdoption,persistAdvisorRewriteAdoptionWithSnapshot} from './client/src/lib/manhuaAdvisorAdoption';
 import {defaultCanvasBlock} from './client/src/lib/canvasTypes';
+import {loadAdvisorReconfirmationEpisodeIndexes} from './client/src/lib/manhuaSceneProductionBackups';
+import {advisorReconfirmationEpisodeIndexes} from './client/src/lib/manhuaAdvisorBackups';
+import {stripManhuaFactoryCanvasArtifacts} from './client/src/lib/canvasDramaStudio';
 import {slimBlocksForLocalPersist} from './client/src/lib/manhuaCloudDraftSync';
 import {importLocalMediaRecords,rehydrateBlocksFromLocalMedia} from './client/src/lib/manhuaLocalMediaStore';
 import {buildManhuaWriterSession,serializeManhuaWriterSession,loadManhuaWriterSessionFromStorage,MANHUA_WRITER_SESSION_LS_KEY} from './shared/manhuaWriterSession';
@@ -35,6 +38,20 @@ globalThis.quotaProbe={
     const backupKey=await persistAdvisorRewriteAdoptionWithSnapshot({plan,original,userId:'1',backupId:'native-quota',createdAt:new Date().toISOString()});
     return {rawRejected,backupKey,historyChars:localStorage.getItem('retained-test-history').length,canvasChars:localStorage.getItem(canvasKey).length};
   },
+  async reconfirmation(){
+    const session=loadManhuaWriterSessionFromStorage();
+    const canvas=JSON.parse(localStorage.getItem(canvasKey));
+    const legacyRange=advisorReconfirmationEpisodeIndexes(localStorage,'1',session.writerPack);
+    const indexes=await loadAdvisorReconfirmationEpisodeIndexes(localStorage,'1',session.writerPack);
+    const before=stripManhuaFactoryCanvasArtifacts(canvas.blocks,canvas.edges,undefined);
+    const after=stripManhuaFactoryCanvasArtifacts(canvas.blocks,canvas.edges,{onlyEpisodes:indexes});
+    const wrongUser=await loadAdvisorReconfirmationEpisodeIndexes(localStorage,'2',session.writerPack);
+    const wrongVersion=await loadAdvisorReconfirmationEpisodeIndexes(localStorage,'1',session.writerPack,'other-project');
+    const wrongPack=await loadAdvisorReconfirmationEpisodeIndexes(localStorage,'1',{...session.writerPack,seriesTitle:'其他作品'});
+    const open=indexedDB.open;let readFailureRejected=false;
+    try{indexedDB.open=()=>{throw new Error('fixture-storage-unavailable')};await loadAdvisorReconfirmationEpisodeIndexes(localStorage,'1',session.writerPack);}catch{readFailureRejected=true}finally{indexedDB.open=open}
+    return {legacyMissing:legacyRange===undefined,indexes,oldPathArchivedFirst:Boolean(before.blocks.find(b=>b.id==='clip-e01-g01')?.archivedFromPreviousScript),firstStillActive:after.blocks.find(b=>b.id==='clip-e01-g01')?.archivedFromPreviousScript!==true,firstUrl:after.blocks.find(b=>b.id==='clip-e01-g01')?.outputUrl,wrongUserMissing:wrongUser===undefined,wrongVersionMissing:wrongVersion===undefined,wrongPackMissing:wrongPack===undefined,readFailureRejected};
+  },
   async restored(){
     const canvas=JSON.parse(localStorage.getItem(canvasKey));
     const hydrated=await rehydrateBlocksFromLocalMedia(canvas.blocks);
@@ -48,7 +65,7 @@ globalThis.quotaProbe={
 }, 30000);
 afterAll(async () => { await browser?.close(); });
 
-it("真实浏览器近配额仍可采用，并在刷新后恢复图片字节、正文和第一集引用", async () => {
+it("真实浏览器近配额采用后刷新恢复，并从完整快照限定再次确认范围", async () => {
   const context = await browser.createBrowserContext();
   try {
     const page = await context.newPage();
@@ -63,5 +80,7 @@ it("真实浏览器近配额仍可采用，并在刷新后恢复图片字节、�
     await page.addScriptTag({ content: bundle });
     const restored = await page.evaluate(() => (globalThis as any).quotaProbe.restored());
     expect(restored).toEqual({body:"新剧情：先生取血救娘。",pointer:true,bytes:"retained-image-bytes",textChars:24000,firstEpisode:"https://test.invalid/ep1.mp4",historyChars:saved.historyChars});
+    const reconfirmed = await page.evaluate(() => (globalThis as any).quotaProbe.reconfirmation());
+    expect(reconfirmed).toEqual({legacyMissing:true,indexes:[2],oldPathArchivedFirst:true,firstStillActive:true,firstUrl:"https://test.invalid/ep1.mp4",wrongUserMissing:true,wrongVersionMissing:true,wrongPackMissing:true,readFailureRejected:true});
   } finally { await context.close(); }
 }, 30000);
