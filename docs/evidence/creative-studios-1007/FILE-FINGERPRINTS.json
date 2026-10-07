@@ -1,0 +1,819 @@
+{
+  "at": "2026-10-07T19:14:23.101373+08:00",
+  "base": "ca7a3c9957229f022146a217cc53dde970259c2b",
+  "branch": "feat/image-world-art-motion-1007",
+  "excludedParentCdnFiles": [
+    "server/services/manhuaLearn0996Source.test.ts",
+    "server/services/manhuaNativeDeepReadPlan.test.ts",
+    "server/services/manhuaNativeDeepReadPlan.ts",
+    "shared/manhuaLearn0996Source.test.ts",
+    "shared/manhuaLearn0996Source.ts"
+  ],
+  "files": [
+    {
+      "path": "client/public/art-motion/engine/LICENSE",
+      "bytes": 1086,
+      "sha256": "6d6a2a9caf2e6d2b76974050427053b2892d8aa4c33fd168ce63a537fcee9d96"
+    },
+    {
+      "path": "client/public/art-motion/engine/UPSTREAM.json",
+      "bytes": 18363,
+      "sha256": "0c7fca891d292332891b7702e02f81a3bd43c04a89690a0b90ba66bd7d00f51d"
+    },
+    {
+      "path": "client/public/art-motion/engine/clip.js",
+      "bytes": 7304,
+      "sha256": "2b98a80d74dce2b7b0696aaad2974b8582bc72c531430682813723d237fdae0f"
+    },
+    {
+      "path": "client/public/art-motion/engine/clips/t1_3b1b.js",
+      "bytes": 18053,
+      "sha256": "6e819bb9be76db0d8a7220e8aa5fedd83879b24ce6084579d7ac2641d85deaa2"
+    },
+    {
+      "path": "client/public/art-motion/engine/clips/t2_keynote_ui.js",
+      "bytes": 24591,
+      "sha256": "bd96d0b6d4c55e86bf7b16852f90373b443f3eff8f6fd86ebdeec02f9d5f658a"
+    },
+    {
+      "path": "client/public/art-motion/engine/clips/t3_finance_chart.js",
+      "bytes": 17901,
+      "sha256": "db7e1b44993964add4125917e7a651adc4a143259570aa4e65d85a72aae0d44b"
+    },
+    {
+      "path": "client/public/art-motion/engine/clips/y1_kurzgesagt.js",
+      "bytes": 13897,
+      "sha256": "99c8656ac04dba5a218199ea272a71ad8ee34ad69125f906b22d6d1946745029"
+    },
+    {
+      "path": "client/public/art-motion/engine/clips/y2_vox.js",
+      "bytes": 13175,
+      "sha256": "250d7f793ad3c331bd351e43d70565144f73bbe5ae65e8588428811dfe45cf4d"
+    },
+    {
+      "path": "client/public/art-motion/engine/clips/y3_whiteboard.js",
+      "bytes": 21303,
+      "sha256": "23ff417331708353de03289860bec28206aea12acfc45e40bc53b81c5a0e340c"
+    },
+    {
+      "path": "client/public/art-motion/engine/clips/y4_storytime.js",
+      "bytes": 18020,
+      "sha256": "88faca8e84364dcbf46cf28dcedc3cd488909d2d439c88d12ffdca26114a2ba8"
+    },
+    {
+      "path": "client/public/art-motion/engine/clips/y5_kinetic_type.js",
+      "bytes": 11842,
+      "sha256": "dac5d0f8da6ed8b0947235c2c2ad51234454cbc42a7da29c27826ee616716ded"
+    },
+    {
+      "path": "client/public/art-motion/engine/engine.js",
+      "bytes": 15982,
+      "sha256": "2ecd3659912e5e2fed75cc62c8eab974c99dabf1bb773699967b822d2ac05259"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/brush.js",
+      "bytes": 11850,
+      "sha256": "6e548a35b25ead20ac6e81042e8b841166d06f53cb0560326444fc125203ba64"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/camera.js",
+      "bytes": 5391,
+      "sha256": "cfacc134a963015cc1354621503e5821e971d709b714e0534f518a37a06d8d5a"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/chart.js",
+      "bytes": 11231,
+      "sha256": "cc30e0aa4c9049ee03040f7e819e299069517010fff21130cb312dec5fdc8068"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/collage.js",
+      "bytes": 8972,
+      "sha256": "4dcd3d15f8895dc6e3d4f2e4d82766782a4e77876fb863ded9480320b8959d93"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/diagram.js",
+      "bytes": 20080,
+      "sha256": "98b15ba5f883dd95eca2ff52ba1d768c10a5bea7862bd13aee6d84b875e2b8c5"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts.js",
+      "bytes": 4442,
+      "sha256": "8d5ac65f41bd6df79a0f913adf7f425d46c847cc5d8ed831eccdc80b1c29531d"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/AlfaSlabOne-400.woff",
+      "bytes": 41728,
+      "sha256": "2f8b04d3eada32d7047255260a0e81ab74938fada1aad154f5653850a68aebe8"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/Anton-400.woff",
+      "bytes": 61460,
+      "sha256": "791375bdbed00de4a3aad4811291220ead0e1405d6f8b5bdbf109798c8359ac5"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/ArchivoBlack-400.woff",
+      "bytes": 38316,
+      "sha256": "c029965cfbc3cbb79431babf56d0fee6bc185f366c4fc2a0957817137d374c95"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/Bangers-400.woff",
+      "bytes": 43808,
+      "sha256": "62f0a30b1d48cc21bb35b084ae5d17ad22135df5dc4c18f3f591fc5443eddf39"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/Caveat-600.woff",
+      "bytes": 132264,
+      "sha256": "7a101c766f28866c5aa36ebbce5cfedcea2601f2439d3b16694b9c8eee75e9dc"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/Cinzel-400.woff",
+      "bytes": 22812,
+      "sha256": "39c4e70ca598e2c0d78d355cd5fbe37017353a5de3008787a03e0d30a2d715ad"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/Cinzel-700.woff",
+      "bytes": 24288,
+      "sha256": "1bb7ec5b84ee97a9eae36528d5bae3bfeddf035c19842fc1740ce44c09fac4ad"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/CormorantGaramond-500.woff",
+      "bytes": 90464,
+      "sha256": "f25b87d41579955733df25af8319b168d704b5333d8ac53e991fac442e7a9844"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/CormorantGaramond-500i.woff",
+      "bytes": 93400,
+      "sha256": "0ab1e72da6037d218386d9a6e148d7f5b0357e1965abf743aef30d641a5e2874"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/CormorantGaramond-700.woff",
+      "bytes": 87248,
+      "sha256": "6417fd78440278f109d84cf00283fbf9b91b6d639fc5afd208a121ae7c636e61"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/EBGaramond-400.woff",
+      "bytes": 162740,
+      "sha256": "61ea4fa656e4ec2c6103483625f0d6a2e1571c2be57015063b73f23392b3ff98"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/EBGaramond-400i.woff",
+      "bytes": 151904,
+      "sha256": "413c5879fa73e5e168dcb59e8e692b24049756c5b961fcd8adee3db2e1624ef4"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/EBGaramond-600.woff",
+      "bytes": 179028,
+      "sha256": "d0ecbbe1d933b68d32ef2629e9a46673ae5eff5ce9c04cd7f4c012504da33a11"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/Exo2-800i.woff",
+      "bytes": 60124,
+      "sha256": "8296afc88a371a81345e07d852a06e45ae401d5793866fd9a7f351daf523740a"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/GochiHand-400.woff",
+      "bytes": 23640,
+      "sha256": "152552ee5c95ec30b75edf3ba42f3406925462ea1a52d4c049d22f550f10167a"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/IMFellEnglish-400.woff",
+      "bytes": 108052,
+      "sha256": "b915ee6c7034491df57eed8153ec2a5c3ee1ba55788a96737465d4c3239bd2a0"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/IMFellEnglish-400i.woff",
+      "bytes": 111628,
+      "sha256": "7c6064b4e7ca80d131a01b9133ddaf11978d43bc954eb0d1c1dd1391371c56d6"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/Inter-var.woff",
+      "bytes": 126688,
+      "sha256": "a54bc9f6ba847df43752bfb35f63aa1599ccc113b58c23bfa07c4dc88976647b"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/JosefinSans-700.woff",
+      "bytes": 26564,
+      "sha256": "1e9f0aab2caa768ead521a88be3ea118d47c29a3ae052f9b5d0c2af0d6a8eb8d"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/Kalam-700.woff",
+      "bytes": 186044,
+      "sha256": "53b9c2a4260ba9a1320d2a92c6dbd532fa509bdeda0897580611a9f16f1a2bda"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/LICENSES.md",
+      "bytes": 4498,
+      "sha256": "00b5f86c4d5162e6fee6d600b527c052933eb2884a61a5fab0f89fa4d4656ecd"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/LXGWWenKai-500.woff",
+      "bytes": 2098296,
+      "sha256": "734bd187392579417ac83effe31d37b9de43c7b290bcb400800456511ed79e8f"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/LibreBaskerville-400.woff",
+      "bytes": 46628,
+      "sha256": "e5134e031d30b4dcc76f3806701cafe92ff4ed5b8b6271d06d63ca3ee7af9bc4"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/LibreBaskerville-700.woff",
+      "bytes": 47524,
+      "sha256": "57b9986d47ab6d7ea1964d5693c56b5e5e97c889e31ba9546815de365d356dab"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/LilitaOne-400.woff",
+      "bytes": 14372,
+      "sha256": "8f4283865fad7cbb92e3b9e8ec6e48ab1225f7fb2eaa9c75741ff46d4f230456"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/Marcellus-400.woff",
+      "bytes": 22320,
+      "sha256": "9893ac05a03ff1e80ecf97f73853bff1378edfdec633b6c3a67ae7c33d7018e7"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/NotoSansSC-500.woff",
+      "bytes": 1416188,
+      "sha256": "928d841b1ec663ebce82593568cbc19749fe652f88b8ec960723b7d87b551512"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/NotoSansSC-700.woff",
+      "bytes": 1425340,
+      "sha256": "dd0d39a9780eb995c499af0c20cca93b1dfdda865da70871a20890b3e406b968"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/NotoSansSC-800.woff",
+      "bytes": 1426988,
+      "sha256": "b57f9c645b1a4967a3c8914ed41f24d109394a8175e36af08f93e40803e84664"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/NotoSansSC-900.woff",
+      "bytes": 1394104,
+      "sha256": "d2d8a42438b18b65b6577434df4e41bb08c6b5051281757849af00ab743bb58f"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/NotoSansSC-sub.woff",
+      "bytes": 331188,
+      "sha256": "f29be895b3e7002432e6d94756a163936e9586843864740b1fc172b1859e462d"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/NotoSerifJP-600.woff",
+      "bytes": 4415000,
+      "sha256": "dce02fcc08d8629226ef017472eef25b5bc152d1c32a742075fcda8f351f87d0"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/NotoSerifSC-sub.woff",
+      "bytes": 435560,
+      "sha256": "be59f4f630f0fac191dbc6e8d6945da681e5613df7602b2cef8ca7049fa19b66"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/OFL.txt",
+      "bytes": 4430,
+      "sha256": "67c5d5206b96f8340b95fabd02ae60701e0b20ce2594d976216f1065e5aa3822"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/PlayfairDisplay-400i.woff",
+      "bytes": 50928,
+      "sha256": "30cbe57e84bc719727dc54814f708eb9fa2d05a06f04d8c196b1466ecacb74d8"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/PlayfairDisplay-700.woff",
+      "bytes": 55652,
+      "sha256": "2644f0e3c7c8f79e9d0c56ad22d246294c7c2b21ea884a7a2b1a10261cb95469"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/PlayfairDisplay-700i.woff",
+      "bytes": 53612,
+      "sha256": "f263323db61a414618d9cafe489d0e18adf6682cd36baa45239ed804fe26fcf1"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/Poppins-600.woff",
+      "bytes": 66232,
+      "sha256": "952d2591178ef0c2dea37fb2c14f01e18433c8d59db10f6365c9e1ca9e8efe2a"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/Poppins-700.woff",
+      "bytes": 65616,
+      "sha256": "282b1ac42689074c38c62378b1412544f5ab11b91ba145ce56c54802496b7d86"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/Poppins-800.woff",
+      "bytes": 65344,
+      "sha256": "4c2bd05974d03c8058b14a452b2d0d869420b1671a22c35d52da4d58864e46a6"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/PressStart2P-400.woff",
+      "bytes": 36184,
+      "sha256": "f831461d0239882019837f2b1cfea598743768f89c0b052102a1fd55050f5ca1"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/Righteous-400.woff",
+      "bytes": 21028,
+      "sha256": "374317573c47429a8d87b5c862abc96572e90eef1a445439cc329d2768022121"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/RobotoCondensed-var.woff",
+      "bytes": 94036,
+      "sha256": "d149ef1478076ad3f201676de2f58d11de18257590d9faeee2318fa3bc4b90e6"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/Rye-400.woff",
+      "bytes": 62848,
+      "sha256": "2b6ae29cb40d75d69b547e7544f4ad540c5a641e7268df578a9bbc062376070e"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/UnifrakturMaguntia-400.woff",
+      "bytes": 39076,
+      "sha256": "af995e1259780861fd6b8bb3dada5cb1272fc2fd24dbb2ba5b7cc4411ffde566"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/cmunrm.woff",
+      "bytes": 123340,
+      "sha256": "32115abbbfb231586813333bfa5a234f4dc7f28b27df7260f42f81146ccd9097"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/cmunti.woff",
+      "bytes": 158668,
+      "sha256": "d9a02b7b67874c62f47f9c9a0914c115972ab77d43e82a163baf0888eb5d4a2d"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/fonts/index.json",
+      "bytes": 1972,
+      "sha256": "a0870057845b502a11037acef99b6e9cbc3994fdb5149caf3aac036140dbfbb1"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/kit.js",
+      "bytes": 6542,
+      "sha256": "77821ce0ae8278c462b5669449bca473659c95317c3b62fc8b008e2bdf87209f"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/motion.js",
+      "bytes": 7891,
+      "sha256": "7e70b8ef328c7497fe1403d37700fcdfbb2cc9d2175f16ea46ae3e69b49dbe15"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/paint.js",
+      "bytes": 15339,
+      "sha256": "aa61a2cb14b0bbd96e072865fb8b24bdd118b4f62aca3ff2c320ca17593aca25"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/post.js",
+      "bytes": 9939,
+      "sha256": "c57ba51a2242e9505a1b35dbb2645c1e3541465069c99de704c3fba9066914a3"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/render.js",
+      "bytes": 17315,
+      "sha256": "5bcde2a2711759c934722d91a456f13eecb5cd6679f9b3b601df728e18c08432"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/rig.js",
+      "bytes": 34157,
+      "sha256": "88c4df6dc105cafdc7249a5f31c79928db6c05b372f04e2e0f14059e8620f17f"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/rig_huashu.js",
+      "bytes": 13708,
+      "sha256": "6419306bb314f89848b0adf842db0c305c2f6bc931df34388eb5389f29c1d392"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/toon.js",
+      "bytes": 13188,
+      "sha256": "83a83f6562578646ea0430c25e4a83a98dad77f32d631c869a49bb34a4e0225e"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/typo.js",
+      "bytes": 9998,
+      "sha256": "30db0cc68145dca22532e487da01aeb3ec97155e8b2c3a0747a009ce6638be8f"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/ui.js",
+      "bytes": 10548,
+      "sha256": "2608da0a38bfd429a9fe41c1a93a5d080d54c5fcccea80e7fea764e6ca3a97bf"
+    },
+    {
+      "path": "client/public/art-motion/engine/lib/util.js",
+      "bytes": 6416,
+      "sha256": "86045b05656183cd7017e43fb891aa65d1a1e76477885c4dbee81635ee8b7a1d"
+    },
+    {
+      "path": "client/public/art-motion/engine/product-bridge.js",
+      "bytes": 4592,
+      "sha256": "cbb0b5f74abbba6d1629f2c7e43bcb6b171ba0134db6a1ffc545185ce6ac38c4"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/01_cave.js",
+      "bytes": 31417,
+      "sha256": "06ff3360279ecf778d78ef5e56fa6d5cd6354a18033079eed32cba6af48dd781"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/02_egypt.js",
+      "bytes": 50018,
+      "sha256": "ce4acdce7f65f41686f7e5f04336fdf150bfd53a560a20f2a83a3db495a86353"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/03_greek.js",
+      "bytes": 40744,
+      "sha256": "58e259062257ebf15d2fb141e10441119df0691e0cc2bd212922a8cffb3be184"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/04_roman.js",
+      "bytes": 47611,
+      "sha256": "a5678635c8199b61700785915de9308fcb20abbff34f98a143b50ef740faeaf8"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/05_gothic.js",
+      "bytes": 40426,
+      "sha256": "a5b24f49d1dc01cc5d5eebba9404f6c6ebd6d6de1a61ef6c2eae36c1f591b327"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/06_renaissance.js",
+      "bytes": 31437,
+      "sha256": "ab7dca1e5f6f5911a55cb132eeea405ab3d0001f2f6ceed01cc624bacbf9279e"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/08_impressionism.js",
+      "bytes": 20908,
+      "sha256": "6d5e4ee5f4329d7551ef84edc7f15d4396effd7b80e7091074c20920dabc7d24"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/09_postimp.js",
+      "bytes": 16299,
+      "sha256": "a1806dd4dfbfe32ed9a18e70174750c0e932a2a2beca832be8dc25708c76277e"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/10_nouveau.js",
+      "bytes": 30381,
+      "sha256": "4a390aa2d70b4a6afe0b35862e502ef78f42c36ff960f3ef49482be67320ca39"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/11_cubism.js",
+      "bytes": 27428,
+      "sha256": "dbdd5cba2eb07ecd75445c534d04b40d6206bbb252c28e31ecefeb08a83ee249"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/12_bauhaus.js",
+      "bytes": 17535,
+      "sha256": "647e3d52272eda0630150d04ed3f299da095c4e8e564e3fa7c84330c2993efad"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/13_pop.js",
+      "bytes": 24647,
+      "sha256": "80a893a23dc2d0a6350323b0b63a0cf4929e48908391f796422c402aa272935c"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/14_8bit.js",
+      "bytes": 17139,
+      "sha256": "3351f505bd0f272a623061a8f49993b877339c619dceb2f5e08c05933397b71e"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/15_raytrace.js",
+      "bytes": 25794,
+      "sha256": "b77169305a158c5161c6a4f30ed8f00adf0128cbfe837b0c4f37ebbc120213b4"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/16_2026.js",
+      "bytes": 50054,
+      "sha256": "915ab9a19ee937027ec1f449b8c3d358422df29d21986d237ac7c73169a5e710"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/17_ink.js",
+      "bytes": 22782,
+      "sha256": "0d3360a701f23f6b5978686645b80d4ce69c15bec2be09f017c14e4646f05760"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/18_klimt.js",
+      "bytes": 20835,
+      "sha256": "dc03848dc98d567f15561f6af4fb709050bac729e61269297c910fc312604244"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/19_munch.js",
+      "bytes": 13393,
+      "sha256": "b415408930826beea0cd512bc5d1002f70478314b3f0357e7f88a40c01bcf0c0"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/20_dunhuang.js",
+      "bytes": 21588,
+      "sha256": "33ec1c2c6a062feac415893ba232d227c715107746fd16653a573ad63c7f8780"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/21_kusama.js",
+      "bytes": 11935,
+      "sha256": "1ae771a76fd4b8c128a667f3c87227c243a43c0673d1bf68b1f7a3eba7d6e56d"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/22_constructivism.js",
+      "bytes": 16305,
+      "sha256": "79e64e9e664886b4c6e70094d161b48e8346be318ab9c84c4859beff98a83ab5"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/23_dali.js",
+      "bytes": 20846,
+      "sha256": "5ff7dd1631b654aa0adc2d7bd27e8efffcbbd4d6f330e6002c60eb89e747fdfa"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/24_hopper.js",
+      "bytes": 13619,
+      "sha256": "672605310edebdc93c35e819bd1a2e97dba874e64b025952d24e9b81809000ed"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/25_ghibli.js",
+      "bytes": 22700,
+      "sha256": "bd0f6b22b6c8cd1ff4e18f207587f4995bc2ea949196b9a85296030c7dc5efd8"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/26_vaporwave.js",
+      "bytes": 17070,
+      "sha256": "f34aa1cc5ceb0b7cf60ac03adcf804ea7e39c7641446b88db9fb89b179daf02e"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/27_kirby.js",
+      "bytes": 21894,
+      "sha256": "d82e039d7d4ba45ca01114f9330b1dcad3ddd516efa8bda7d190e85606487028"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/28_monet.js",
+      "bytes": 17322,
+      "sha256": "1ea1f0a1c77f7ea14c153b46a62daaf5fe84d3c02e73b5cb2a4a7838c7e14930"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/29_seurat.js",
+      "bytes": 11060,
+      "sha256": "a026713b9205c6a00c805dece5068722b15071f9bbb691203697c9cd0a33be23"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/30_matisse.js",
+      "bytes": 13787,
+      "sha256": "09d97003c451d9dbe723a942ea3146213943b75cac3a92ab1648e58279358aa8"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/31_haring.js",
+      "bytes": 10315,
+      "sha256": "5113c0318ed36db84acc7eac6855ec0f0a44511f6cedd3f326b78ba4e921f1ca"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/32_rembrandt.js",
+      "bytes": 20786,
+      "sha256": "47883474a7ed9aa7c5bfe39b953748da5003c601c3dcf48e3a2e6e18fd03bf4a"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/33_rubberhose.js",
+      "bytes": 18226,
+      "sha256": "08a1340dd35de98830b81abd7026be6e2361f325215793e55369f5cd1fb50ad8"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/34_shadowpuppet.js",
+      "bytes": 18052,
+      "sha256": "08186a1764be2bdc2c27806850dea2fd86761936aeba1299e8ece9bf31f381a8"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/35_shinkai.js",
+      "bytes": 22142,
+      "sha256": "8e7f5753a0ce49291ae35bc4f471b5ca62448eb9532403459395d88bc524a736"
+    },
+    {
+      "path": "client/public/art-motion/engine/scenes/36_picasso_blue.js",
+      "bytes": 11565,
+      "sha256": "10023147e1e31afc162e1cfe51356867ef83595b41bbd5cc824d55532297ce09"
+    },
+    {
+      "path": "client/public/art-motion/engine/studio.html",
+      "bytes": 1098,
+      "sha256": "29b0192f2c0f3e2be922bd4054364b54802f5c17660878e25a85ed896f4212ba"
+    },
+    {
+      "path": "client/public/art-motion/engine/transitions.js",
+      "bytes": 69064,
+      "sha256": "22dface64bccee924faf56a49bfa380c65c65258b462acd800fc59ca654e2c8d"
+    },
+    {
+      "path": "client/src/components/canvas/ArtMotionStudio.tsx",
+      "bytes": 38929,
+      "sha256": "1b5d764af8e27ed086730c03d3e8e1358af3901aaa345f58fb89895a8b4300bf"
+    },
+    {
+      "path": "client/src/components/canvas/CreativeStudioCanvasLayout.tsx",
+      "bytes": 701,
+      "sha256": "2b50e5bea798231ee415ec3c9130af78a5da9bb574bac0de0d2243cdc9b93fab"
+    },
+    {
+      "path": "client/src/components/canvas/FreeformCanvas.tsx",
+      "bytes": 189767,
+      "sha256": "7f539b992620b0b2b13becd454586b799928fbb8c77fd6544f9e74eb2c7b1db4"
+    },
+    {
+      "path": "client/src/components/canvas/ImageWorldStudio.tsx",
+      "bytes": 37325,
+      "sha256": "6512393e7fc84ebddd66c50d060603fd84e1b432c035d7253e20bf600df4b0dd"
+    },
+    {
+      "path": "client/src/lib/artMotionRuntime.browser.test.ts",
+      "bytes": 5859,
+      "sha256": "c9419e03c27824f192df2d591d1f71e34f941894afad3c0febf99f6ffc0c28a4"
+    },
+    {
+      "path": "client/src/lib/canvasRunBlock.ts",
+      "bytes": 169737,
+      "sha256": "c2a6932e6e31f3352a15682ae884e20fb061010f0cd7dcfb1f736381d7078c23"
+    },
+    {
+      "path": "client/src/lib/canvasTypes.ts",
+      "bytes": 38050,
+      "sha256": "13371c5fd767d23c08af5623ab7005f44b8a37bb59630f43683a95e6e2236041"
+    },
+    {
+      "path": "client/src/lib/creativeStudioAudio.test.ts",
+      "bytes": 1611,
+      "sha256": "c089b561aa3dea61d07808996999106f12dc56e0cc30ac086718bc24d49e597a"
+    },
+    {
+      "path": "client/src/lib/creativeStudioAudio.ts",
+      "bytes": 1050,
+      "sha256": "f7902ddde8cbdba53f7e3a1c4f93c0f5b1a42a88bcbb36acd46d0767c963d0de"
+    },
+    {
+      "path": "client/src/lib/creativeStudioPersistence.test.ts",
+      "bytes": 2870,
+      "sha256": "b4f40f0a4d72b39a7a161c68673db7f6aeb594812eacc1041415d4f2c2c1c5f2"
+    },
+    {
+      "path": "client/src/lib/creativeStudioSubmission.test.ts",
+      "bytes": 2786,
+      "sha256": "29c37a56bdcbad2ac63a25e1fcc48ea46d3d51ef483700fbf304181291524c35"
+    },
+    {
+      "path": "client/src/lib/creativeStudios.browser.test.ts",
+      "bytes": 15490,
+      "sha256": "f538a36f269b1d379d8344a4ab20d26891a90f4b7f38e9a1f413da351f3c93f1"
+    },
+    {
+      "path": "client/src/lib/manhuaCloudDraftSync.ts",
+      "bytes": 28869,
+      "sha256": "40a55aca67e3cb6e8e21562dd2f7b8fc954a5462b169b55ea03d30d10cb12eca"
+    },
+    {
+      "path": "client/src/pages/OmniCanvas.tsx",
+      "bytes": 763835,
+      "sha256": "9e250f6386951389670c4edb759da71193a50477b07d985ca2c8da54a567ad11"
+    },
+    {
+      "path": "docs/evidence/creative-studios-1007/README.md",
+      "bytes": 8345,
+      "sha256": "bcc96b89ffb5b5be63fd416dd60193ef7851fdf71d57f30f8e6accbf5d876da9"
+    },
+    {
+      "path": "docs/evidence/creative-studios-1007/parent-real-css.png",
+      "bytes": 37651,
+      "sha256": "3c2f5b5c031c420eb54b0f092473dc0357e8e1ef8e48fc343cfc7c90246f3608"
+    },
+    {
+      "path": "server/_core/index.ts",
+      "bytes": 60827,
+      "sha256": "9ec3b33783ed6e7a34839b7f521c5361065ba3cf4f61413953d200fb0e70935c"
+    },
+    {
+      "path": "server/_core/llm.auditedSingleAttempt.test.ts",
+      "bytes": 1553,
+      "sha256": "afaf0b4d24c1caaaa4f0da87be5a365d8f79bc0cafc55d675c2c1c046c247da0"
+    },
+    {
+      "path": "server/_core/llm.ts",
+      "bytes": 65920,
+      "sha256": "b50705a1022394e8b266ccb66e3fc7940476920c6bcb93eff67780b254aac88f"
+    },
+    {
+      "path": "server/jobs/postProdInput.ts",
+      "bytes": 9466,
+      "sha256": "6fd82bfb5edfece2a3ebaef1cf8097a0933785952239aec3bcc7838cc70e6595"
+    },
+    {
+      "path": "server/jobs/postProdJob.ts",
+      "bytes": 6829,
+      "sha256": "c4faf3d7fb0fdf19900fe5c96a3f4fa936ff766e28a69b811fc48dec88f447ec"
+    },
+    {
+      "path": "server/jobs/workerRole.ts",
+      "bytes": 2017,
+      "sha256": "81d0c2f79b01c7e754523afd321ebb6e17454dc434648aa0aaf09514621577a9"
+    },
+    {
+      "path": "server/routers.ts",
+      "bytes": 724521,
+      "sha256": "c3ec187f8a90779ce065b211348bb16922247ebefa4941f79b257555b41e9cc3"
+    },
+    {
+      "path": "server/routers/imageWorld.test.ts",
+      "bytes": 1749,
+      "sha256": "3293a8006edb64521b350af8c7c8cb5f9c141d75642366f025677ba1f59ccfa8"
+    },
+    {
+      "path": "server/routers/imageWorld.ts",
+      "bytes": 4076,
+      "sha256": "1444c441cf4a326abe5cee3b8ccce924625446d47541c75a8c1b2ca8ce1b1d11"
+    },
+    {
+      "path": "server/services/artMotionEvidence.route.test.ts",
+      "bytes": 2955,
+      "sha256": "a199884c366c2c05cc1fd09f4c937ca0f5b5e5be4f18556db848a99d5a207389"
+    },
+    {
+      "path": "server/services/artMotionEvidence.test.ts",
+      "bytes": 2635,
+      "sha256": "72f577aa2ddd79c10e3994a7af7f1ab56e12733e83c1a5615c8a568557446b38"
+    },
+    {
+      "path": "server/services/artMotionEvidence.ts",
+      "bytes": 6923,
+      "sha256": "dd7b118a4ca3a6ece953fbecc70dd280fab05863d35b9f071fd271d7846ac6fe"
+    },
+    {
+      "path": "server/services/artMotionRender.test.ts",
+      "bytes": 6096,
+      "sha256": "ad193c6f47c001746d5663250b9a07c5f47c0871a65f724bee01724c434d490d"
+    },
+    {
+      "path": "server/services/artMotionRender.ts",
+      "bytes": 12714,
+      "sha256": "1d82c828ec932fb1dc8cf13f92301f0022c8eaca2c004d1305180a3d2fbb6a5e"
+    },
+    {
+      "path": "server/services/artMotionTask.test.ts",
+      "bytes": 1646,
+      "sha256": "27df9184d92cca600c8c9592223f4c149ab5e090af0269e9c18fa8980f42c596"
+    },
+    {
+      "path": "server/services/artMotionTask.ts",
+      "bytes": 1951,
+      "sha256": "3ee0a4ab43f4310eca5c77e51333c2d57703a50852fa75f56fa0bb6e25d7d20e"
+    },
+    {
+      "path": "server/services/canvasTerraMultimodal.test.ts",
+      "bytes": 2767,
+      "sha256": "5c14b15769b31c3d9ec5e356d70d2271b1f4ae5621ca9e094e2c156cd04270ae"
+    },
+    {
+      "path": "server/services/canvasTerraMultimodal.ts",
+      "bytes": 4925,
+      "sha256": "85d72b5c30e72bce05859208d2329c7c090a21dc50085f05ec7b7e2ee515cd9c"
+    },
+    {
+      "path": "server/services/imageWorldAnalysis.test.ts",
+      "bytes": 6543,
+      "sha256": "166e971ec10db859e314ccb912e7c5efb34954e368ca845b3be1aa9f81914a62"
+    },
+    {
+      "path": "server/services/imageWorldAnalysis.ts",
+      "bytes": 6962,
+      "sha256": "b18d029ea0e3bb343c3f28fd3eb05daabd716467a9f454d2d562e9c732abdf72"
+    },
+    {
+      "path": "server/services/postProdJobResponse.ts",
+      "bytes": 3294,
+      "sha256": "35ed45f26fae67369ce2149cf8c1c2777d392ab40a2d675ccbf52ad983f98340"
+    },
+    {
+      "path": "server/services/postProdMediaSource.ts",
+      "bytes": 15825,
+      "sha256": "cb144a573454ffadf9bfe736c6186c67427fc074e9344bd7afe1cad6f983669b"
+    },
+    {
+      "path": "shared/artMotion.test.ts",
+      "bytes": 4564,
+      "sha256": "8193f9f842e16153b43195475edbaa8e3e750917271a8931dd25e62b804b26ab"
+    },
+    {
+      "path": "shared/artMotion.ts",
+      "bytes": 9456,
+      "sha256": "4608e983328111f66ec9dbc58365e32eb88b843ce7dad6a67cfe2bba63432d86"
+    },
+    {
+      "path": "shared/artMotionCatalog.ts",
+      "bytes": 2642,
+      "sha256": "afbadf679ad7a08e69ef16ae1236ab240e3c6c0a5ed0ed695ea53e2ede90ddb0"
+    },
+    {
+      "path": "shared/creativeStudio.ts",
+      "bytes": 2030,
+      "sha256": "c6973804274d2f2f7cd56fcf2b0066be474206ea7c342e1e830883a218a46c80"
+    },
+    {
+      "path": "shared/imageWorld.ts",
+      "bytes": 4963,
+      "sha256": "20dc6a3b153b8421045d871bf4384ee91ae7baa03ca8af4aec82901ed480861e"
+    },
+    {
+      "path": "shared/manhuaAdvisorCapabilities.ts",
+      "bytes": 1685,
+      "sha256": "e6a7132aff17458bc408ecb1affebf641eaf404446e3153c8adbdef8de6774e3"
+    },
+    {
+      "path": "shared/manhuaAdvisorWorkflow.ts",
+      "bytes": 8640,
+      "sha256": "b97ad72aa48c3e005033f63467177bcc0cbe17a01227c8ac59185737358343a6"
+    },
+    {
+      "path": "shared/manhuaCloudDraft.ts",
+      "bytes": 28603,
+      "sha256": "ae00287a982a21d8b648161dd5e607ffe10801ee4063f7af4ac888e2c373239e"
+    }
+  ]
+}

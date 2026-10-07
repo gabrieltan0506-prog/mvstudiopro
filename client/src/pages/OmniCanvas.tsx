@@ -1,3 +1,5 @@
+import { saveSceneProductionBackup } from "@/lib/manhuaSceneProductionBackups";
+import {creativeStudioAudioAssets} from "@/lib/creativeStudioAudio";
 import type { AdvisorEffectsControl, AdvisorEffectsRegistration } from "@shared/manhuaAdvisorEffects";
 import type { ManhuaAdvisorStudioContext } from "@shared/manhuaAdvisorStudioContext";
 import { customAssetRefClaimsAnchor } from "@shared/manhuaAssetScriptSync";
@@ -46,12 +48,18 @@ import OpenAiImageVariantSwitch from "@/components/OpenAiImageVariantSwitch";
 import { flushSync } from "react-dom";
 import Navbar from "@/components/Navbar";
 import { useManhuaAssetConfirmation } from "@/components/useManhuaAssetConfirmation";
+import { CreativeStudioCanvasLayout } from "@/components/canvas/CreativeStudioCanvasLayout";
 import FreeformCanvas from "@/components/canvas/FreeformCanvas";
 import ManhuaClipDock from "@/components/canvas/ManhuaClipDock";
 import ManhuaTemplateTrialCompare, {
   type ManhuaWriterTrialResult,
 } from "@/components/canvas/ManhuaTemplateTrialCompare";
 import PostProdWorkshopCard from "@/components/canvas/PostProdWorkshopCard";
+import { ImageWorldStudio, type ImageWorldBlockUpdate } from "@/components/canvas/ImageWorldStudio";
+import { creativeStudioRevision } from "@shared/creativeStudio";
+import { imageWorldStateSchema } from "@shared/imageWorld";
+import { ArtMotionStudio } from "@/components/canvas/ArtMotionStudio";
+import { artMotionStateSchema, defaultArtMotionSpec, type ArtMotionState } from "@shared/artMotion";
 import { manhuaPostProdScopeKey } from "@/lib/postProdWorkshop";
 import { buildManhuaPrevisAudio } from "@shared/manhuaPrevisAudio";
 import { ManhuaAdvisorKnowledgePanel } from "@/components/canvas/ManhuaAdvisorKnowledgePanel";
@@ -3594,6 +3602,54 @@ function OmniCanvasWorkspace() {
     return next;
   }, [vfxScopeKey, vfxPersistenceScope, vfxPersistenceEpoch, syncCloudDraftPayload]);
 
+  const artMotionScopeKey = `art:${user?.id || ""}:${projectScope?.projectId || "legacy-workspace"}`;
+  const persistArtMotionBlock = useCallback(async (id: string, state: ArtMotionState, expected: ArtMotionState | null, adopt?: {url:string;gcsUri:string}) => {
+    const scope=vfxPersistenceScope,epoch=vfxPersistenceEpoch;
+    const check=()=>{
+      if(currentVfxScopeRef.current!==scope||manhuaOutboundEpochRef.current!==epoch||backupOperationRef.current||cloudConflictRef.current||!user?.id||!cloudSyncReady)
+        throw new Error("作品或备份状态已变化，请回到原作品继续动画任务");
+    };
+    check();const parsed=artMotionStateSchema.parse(state),current=blocksRef.current;
+    const old=current.find(b=>b.id===id);
+    if(expected===null?!!old:!old||JSON.stringify(old.artMotion)!==JSON.stringify(expected))throw new Error("动画记录已变化，未覆盖较新的方案");
+    const block=old??{...defaultCanvasBlock("video",80,80),id};
+    const updated:CanvasBlock={...block,artMotion:parsed,prompt:parsed.spec.title||"艺术动画",...(adopt?{
+      outputUrl:adopt.url,outputUrls:[adopt.url],status:"done" as const,
+      uploadedAssets:[...block.uploadedAssets.filter(a=>a.id!==`art-output-${parsed.request?.id}`),{id:`art-output-${parsed.request?.id}`,url:adopt.url,previewUrl:adopt.url,gcsUri:adopt.gcsUri,fileName:parsed.spec.title||"艺术动画",kind:"video" as const,mimeType:parsed.request?.spec.alpha?"video/quicktime":"video/mp4"}],
+    }:{})};
+    const next=old?current.map(b=>b.id===id?updated:b):[...current,updated];
+    const snap=latestDraftSnapshotRef.current;if(!snap)throw new Error("作品快照尚未就绪，请稍后保存");
+    const draft={...snap,blocks:next,clientUpdatedAt:new Date().toISOString()};
+    const local=persistManhuaDraftLocally({...draft,blocks:next,edges:snap.edges as CanvasEdge[]});
+    if(!local.canvasOk||!local.writerOk||!local.prefsOk||!local.atOk)throw new Error("动画尚未完整保存，未提交新任务");
+    blocksRef.current=next;setBlocks(next);latestDraftSnapshotRef.current=draft;
+    if(!await syncCloudDraftPayload(buildLocalCloudDraftSnapshot(draft)))throw new Error("云端尚未确认动画方案，原请求编号已保留，请续查");
+    check();
+  },[vfxPersistenceScope,vfxPersistenceEpoch,user?.id,cloudSyncReady,syncCloudDraftPayload]);
+  const createArtMotionBlock=useCallback(async()=>{
+    const id=`art-motion-${crypto.randomUUID()}`;
+    await persistArtMotionBlock(id,{version:1,spec:defaultArtMotionSpec(),history:[]},null);
+    return id;
+  },[persistArtMotionBlock]);
+
+  const persistImageWorldBlocks = useCallback(async (updates: ImageWorldBlockUpdate[], asset?: ManhuaCustomAssetRef) => {
+    const scope=vfxPersistenceScope, epoch=vfxPersistenceEpoch;
+    const check=()=>{if(currentVfxScopeRef.current!==scope||manhuaOutboundEpochRef.current!==epoch||backupOperationRef.current||cloudConflictRef.current||!user?.id||!cloudSyncReady)throw new Error("作品或备份状态已变化，未写入旧拆景回执");};
+    check();const current=blocksRef.current;
+    for(const u of updates){const old=current.find(b=>b.id===u.next.id);if(u.expected===null?!!old:!old||JSON.stringify(old)!==JSON.stringify(u.expected))throw new Error("节点已有较新的内容，未覆盖原记录");if(u.next.imageWorld)imageWorldStateSchema.parse(u.next.imageWorld);}
+    const map=new Map(updates.map(u=>[u.next.id,u.next]));
+    const next=[...current.map(b=>map.get(b.id)||b),...updates.filter(u=>u.expected===null).map(u=>u.next)];
+    const snapshot=latestDraftSnapshotRef.current;if(!snapshot)throw new Error("作品快照尚未就绪");
+    const refs=asset?normalizeManhuaCustomAssetRefs([...latestCustomAssetRefs.current.filter(r=>r.id!==asset.id),asset]):latestCustomAssetRefs.current;
+    if(asset&&!refs.some(r=>r.id===asset.id))throw new Error("素材库未接受此候选，原记录保留");
+    const draft={...snapshot,blocks:next,writerSession:{...snapshot.writerSession,customAssetRefs:refs},factoryPrefs:{...snapshot.factoryPrefs,customAssetRefs:refs},clientUpdatedAt:new Date().toISOString()};
+    const local=persistManhuaDraftLocally({...draft,blocks:next,edges:snapshot.edges as CanvasEdge[]});
+    if(!local.canvasOk||!local.writerOk||!local.prefsOk||!local.atOk)throw new Error("拆景记录尚未完整保存，未继续提交");
+    blocksRef.current=next;setBlocks(next);latestDraftSnapshotRef.current=draft;if(asset){latestCustomAssetRefs.current=refs;setCustomAssetRefs(refs);}
+    if(!await syncCloudDraftPayload(buildLocalCloudDraftSnapshot(draft)))throw new Error("云端尚未确认保存，原请求记录已保留，请勿重复生成");
+    check();
+  },[vfxPersistenceScope,vfxPersistenceEpoch,user?.id,cloudSyncReady,syncCloudDraftPayload]);
+
   const backupOperationRef = useRef<null | "upload" | "restore" | "export" | "import">(null);
   const [cloudBackupBusy, setCloudBackupBusy] = useState<typeof backupOperationRef.current>(null);
   const [backupExportProgress, setBackupExportProgress] = useState<string | null>(null);
@@ -5002,6 +5058,18 @@ function OmniCanvasWorkspace() {
    * 所以工作区身份就是「该用户的那一份草稿」。剧名@确认时刻只是**版本**线索，
    * 单独拿它当空间身份是错的，因此分成 workspaceId 与 projectVersion 两项。
    */
+  const runImageWorldBlock = useCallback(async (block:CanvasBlock, sourceUrl:string, onTaskCreated:(jobId:string)=>Promise<void>, assertCurrent:()=>void, variants?:("flare"|"sunburst")[]) => {
+    const scope=vfxPersistenceScope,epoch=vfxPersistenceEpoch;
+    const guard=()=>{assertCurrent();if(currentVfxScopeRef.current!==scope||manhuaOutboundEpochRef.current!==epoch||backupOperationRef.current||cloudConflictRef.current)throw new Error("作品状态已变化，未继续提交拆景请求");};
+    guard();
+    if(block.kind==="text"){
+      const result=await trpcUtils.client.imageWorld.analyze.mutate({sourceUri:sourceUrl,requestId:block.id});guard();return {outputText:result.text};
+    }
+    const material=await trpcUtils.imageWorld.source.fetch({sourceUri:sourceUrl});guard();
+    const result=await runCanvasBlock({...runDeps,singleTextAttempt:true,assertCurrentSource:guard,imageVariants:variants,onImageTaskCreated:async (_id,jobId)=>onTaskCreated(jobId)},{...block,refImageUrl:material.url},{visionImages:[{url:material.url,mimeType:"image/png"}],texts:[]});
+    guard();return result;
+  },[runDeps,vfxPersistenceScope,vfxPersistenceEpoch,trpcUtils]);
+
   const manhuaOutboundContextRef = useRef({
     userId: "",
     workspaceId: "",
@@ -7431,6 +7499,8 @@ function OmniCanvasWorkspace() {
           details: `参考图：${ref.labelZh || "资产"}`,
         }))) return;
         setAssetStandardizeBusyId(id);
+        // Legacy scene tiles must be verified against their owned source sheet before queueing.
+        await runDeps.repairSceneTileOwnership?.([ref.url]);
         const source = await prepareAssetImageEdit(ref);
         const { jobId } = await createJobSameOrigin({
           type: "image",
@@ -7483,7 +7553,7 @@ function OmniCanvasWorkspace() {
         setAssetStandardizeBusyId(null);
       }
     },
-    [assetStandardizeBusyId, customAssetRefs, user?.id, confirmAssetAction],
+    [assetStandardizeBusyId, customAssetRefs, user?.id, confirmAssetAction, runDeps],
   );
 
   /**
@@ -7509,6 +7579,8 @@ function OmniCanvasWorkspace() {
           details: `参考图：${ref.labelZh || "资产"}\n修改要求：${instructionZh.trim()}`,
         }))) return false;
         setAssetStandardizeBusyId(id);
+        // Legacy scene tiles must be verified against their owned source sheet before queueing.
+        await runDeps.repairSceneTileOwnership?.([ref.url]);
         const source = await prepareAssetImageEdit(ref);
         const { jobId } = await createJobSameOrigin({
           type: "image",
@@ -7567,7 +7639,7 @@ function OmniCanvasWorkspace() {
         setAssetStandardizeBusyId(null);
       }
     },
-    [assetStandardizeBusyId, customAssetRefs, user?.id, confirmAssetAction],
+    [assetStandardizeBusyId, customAssetRefs, user?.id, confirmAssetAction, runDeps],
   );
 
   /** 免费裁字：客户端裁剪后作为新参考图入库（零调用零扣费），旧图保留待删 */
@@ -7618,6 +7690,8 @@ function OmniCanvasWorkspace() {
           details: `参考图：${ref.labelZh || "资产"}`,
         }))) return;
         setAssetStandardizeBusyId(id);
+        // Legacy scene tiles must be verified against their owned source sheet before queueing.
+        await runDeps.repairSceneTileOwnership?.([ref.url]);
         const source = await prepareAssetImageEdit(ref);
         const claimedNames = (ref.claimedAnchorNamesZh || []).filter(Boolean).slice(0, 8);
         const multiPropSheet = ref.role === "prop" && claimedNames.length > 1;
@@ -7680,7 +7754,7 @@ function OmniCanvasWorkspace() {
         setAssetStandardizeBusyId(null);
       }
     },
-    [assetStandardizeBusyId, customAssetRefs, user?.id, confirmAssetAction],
+    [assetStandardizeBusyId, customAssetRefs, user?.id, confirmAssetAction, runDeps],
   );
 
   const handleSegmentIntentChange = useCallback(
@@ -10279,6 +10353,16 @@ function OmniCanvasWorkspace() {
     if(localStorage.getItem(key)!==json) throw new Error("改前备份未完整保存，未执行制作。");
     return key;
   }
+  async function backupSceneProduction(signal?: AbortSignal) {
+    if (!writerPack || !user?.id || !latestDraftSnapshotRef.current) throw new Error("缺少当前作品或账户，未提交生成。");
+    const scope = currentVoiceStoryboardScope.current;
+    const key = `manhua-advisor-rewrite-backup:${user.id}:${crypto.randomUUID()}`;
+    const json = JSON.stringify({createdAt:new Date().toISOString(),episodeIndex:writerFocusEpisode,changes:["3D制作前完整备份"],writerPack,projectBible:projectBible||null,restorableDraft:buildLocalCloudDraftSnapshot(latestDraftSnapshotRef.current)});
+    await saveSceneProductionBackup(String(user.id), key, json);
+    signal?.throwIfAborted();
+    if (currentVoiceStoryboardScope.current !== scope) throw new Error("备份期间作品已切换，未提交生成；旧备份保留。");
+    return key;
+  }
   async function restoreAdvisorBackup(backup: AdvisorBackupEntry) {
     if (!user?.id || !backup.key.startsWith(`manhua-advisor-rewrite-backup:${user.id}:`) || localStorage.getItem(backup.key) !== backup.json) throw new Error("备份归属或内容已变化，未还原。");
     if (writerBusy || factoryBusy || assembleBusy || burnSubtitleBusy || cloudConflict || backupOperationRef.current || autoBackupInFlightRef.current || asset3dBusyIds.length || sceneWorldBusyIds.length || advisorRewriteHasActiveWork(blocksRef.current)) throw new Error("仍有任务或云端冲突，先处理原任务，未还原。");
@@ -10878,12 +10962,12 @@ async function runAdvisorWriterTrial() {
             if(!canUseManhua3d || !ref || !eligibility?.eligible)throw new Error("当前人物没有可操作的3D参考，未提交。");
             if(action.operation==="inspect")return JSON.stringify({assetId:ref.id,modelTaskId:eligibility.currentModel3d?.taskId,modelStatus:eligibility.currentModel3d?.status,multiview:ref.multiviewDraft?.views.map(v=>({view:v.view,available:Boolean(v.url)}))});
             if(action.operation==="multiviewSubmit") {
-              backupVoiceProduction();let receipt:{taskId:string;status:string}|undefined;
+              await backupSceneProduction(signal);let receipt:{taskId:string;status:string}|undefined;
               await submitManhua3dMultiview(ref.id,value=>{receipt=value});
               return receipt?JSON.stringify(receipt):"未取得多视图建模提交回执，请检查原资产卡，不重复提交。";
             }
             if(action.operation==="multiview") {
-              backupVoiceProduction();await generateManhua3dMultiviewViews(ref.id);
+              await backupSceneProduction(signal);await generateManhua3dMultiviewViews(ref.id);
               return "原多视图入口已处理，请看人物资产卡回执；未自动建模。";
             }
             if(eligibility.currentModel3d?.status!=="succeeded")throw new Error("当前人物模型尚未成功，不能绑骨。");
@@ -10893,7 +10977,7 @@ async function runAdvisorWriterTrial() {
             for(let attempt=0;attempt<25;attempt++) {
               signal.throwIfAborted();if(currentVoiceStoryboardScope.current!==scope)throw new Error("作品已切换，未操作模型。");
               const control=advisorModelControls.current.get(ref.id);
-              if(control){if(action.operation!=="rigInspect")backupVoiceProduction();return control(action,signal);}
+              if(control){if(action.operation!=="rigInspect")await backupSceneProduction(signal);return control(action,signal);}
               await new Promise(resolve=>setTimeout(resolve,200));
             }
             throw new Error("原绑骨面板尚未就绪，未提交任务。");
@@ -10914,7 +10998,7 @@ async function runAdvisorWriterTrial() {
             const scope=voiceStoryboardScope;
             for(let attempt=0;attempt<25;attempt++) {
               signal.throwIfAborted();if(currentVoiceStoryboardScope.current!==scope)throw new Error("作品已切换，未操作场景。");
-              if(advisorWorldControl.current){if(action.operation!=="inspect")backupVoiceProduction();return advisorWorldControl.current(action,signal);}
+              if(advisorWorldControl.current){if(action.operation!=="inspect")await backupSceneProduction(signal);return advisorWorldControl.current(action,signal);}
               await new Promise(resolve=>setTimeout(resolve,200));
             }
             throw new Error("原场景工作台尚未就绪，未导出或采用。");
@@ -10933,6 +11017,37 @@ async function runAdvisorWriterTrial() {
               await new Promise(resolve => setTimeout(resolve, 200));
             }
             throw new Error("原剪辑台尚未就绪，未保存剪辑");
+          }
+          if(action.action === "creativeStudio") {
+            const current=blocksRef.current;
+            const choices=current.filter(b=>action.tool==="artMotion"?b.artMotion:b.imageWorld);
+            const selected=choices.find(b=>b.id===action.blockId);
+            if(action.operation==="inspect")return JSON.stringify({tool:action.tool,plans:(selected?[selected]:choices).map(b=>({blockId:b.id,revision:creativeStudioRevision(action.tool==="artMotion"?b.artMotion:b.imageWorld),state:action.tool==="artMotion"?b.artMotion:b.imageWorld})),assets:current.flatMap(b=>b.uploadedAssets).filter(a=>a.gcsUri).map(a=>({id:a.id,name:a.fileName,kind:a.kind,gcsUri:a.gcsUri})),note:"只读方案，生成与采用在工作台明确确认。"});
+            if(!selected)throw new Error("当前作品不存在这个方案，请先读取真实清单");
+            const savedState=action.tool==="artMotion"?selected.artMotion:selected.imageWorld;
+            if(action.operation==="configure"){
+              if(action.revision!==creativeStudioRevision(savedState))throw new Error("方案已有新修改，请重新读取后再配置");
+              signal.throwIfAborted();backupVoiceProduction();
+              if(action.tool==="artMotion"){
+                if(!action.spec||action.plan||!selected.artMotion)throw new Error("艺术动画需要完整动画方案");
+                const own=new Set([...[...current.flatMap(b=>b.uploadedAssets),...creativeStudioAudioAssets(current)].map(a=>a.gcsUri),...(selected.artMotion.media??[]).map(a=>a.gcsUri)].filter(Boolean));
+                if([action.spec.audioUri,...action.spec.cues.map(c=>c.imageUri)].filter(Boolean).some(uri=>!own.has(uri!)))throw new Error("动画引用须来自当前作品素材");
+                const selectedUris=new Set([action.spec.audioUri,...action.spec.cues.map(c=>c.imageUri)]);
+                const media=selected.artMotion.media??[];
+                const additions=[...current.flatMap(b=>b.uploadedAssets),...creativeStudioAudioAssets(current)].filter(a=>a.gcsUri&&selectedUris.has(a.gcsUri)&&!media.some(m=>m.gcsUri===a.gcsUri)&&(a.kind==="image"||a.kind==="audio")).map(a=>({id:a.id,name:a.fileName,kind:a.kind as "image"|"audio",gcsUri:a.gcsUri!}));
+                await persistArtMotionBlock(selected.id,{...selected.artMotion,spec:action.spec,media:[...media,...additions]},selected.artMotion);
+              }else{
+                if(!action.plan||action.spec||!selected.imageWorld)throw new Error("图片拆景需要完整拆景方案");
+                await persistImageWorldBlocks([{expected:selected,next:{...selected,imageWorld:{...selected.imageWorld,plan:action.plan}}}]);
+              }
+              return "方案已保存，尚未生成、扣费或采用。请从工作台预览并确认下一步。";
+            }
+            if(canvasMode!=="freeform"){setManhuaUiMode("workbench");setImmersiveWorkspaceView("workbench");setWorkflowPhase("final");}
+            const scope=voiceStoryboardScope;
+            await new Promise(resolve=>setTimeout(resolve,100));signal.throwIfAborted();
+            if(currentVoiceStoryboardScope.current!==scope)throw new Error("作品已切换，未打开旧方案");
+            window.dispatchEvent(new CustomEvent(action.tool==="artMotion"?"art-motion-open":"image-world-open",{detail:{blockId:selected.id}}));
+            return "已请求打开方案工作台；未生成或采用。";
           }
           if(action.action === "effects") {
             if(!vfxScopeKey)throw new Error("当前作品尚未就绪，未操作特效");
@@ -11935,8 +12050,11 @@ async function runAdvisorWriterTrial() {
                     </label>
                   }
                   previewCanvas={
-                    <div className="absolute inset-0 overflow-hidden">
-                      <FreeformCanvas
+                    <CreativeStudioCanvasLayout tools={<>
+                      {user?.id && <ImageWorldStudio key={`image-world:${artMotionScopeKey}`} scopeKey={artMotionScopeKey} blocks={blocks} enabled={canUseManhua3d} onSave={persistImageWorldBlocks} onRun={runImageWorldBlock} onAudioChange={persistClipAudioStudio} />}
+                      {user?.id && <ArtMotionStudio key={artMotionScopeKey} scopeKey={artMotionScopeKey} blocks={blocks} onCreate={createArtMotionBlock} onSave={persistArtMotionBlock} />}
+</>}>
+          <FreeformCanvas
                         onSelectedBlockIdChange={setCanvasSelectedBlockId}
                         resolveManhuaOutboundGate={(blockId) => ({
                           currentScope: manhuaOutboundScope(blockId),
@@ -11964,7 +12082,7 @@ async function runAdvisorWriterTrial() {
                         manhuaMention={manhuaCanvasMention}
                         compileManhuaRerun={compileManhuaRerun}
                       />
-                    </div>
+                    </CreativeStudioCanvasLayout>
                   }
                   onSpawnAndRunClip={() => {
                     setFactoryRunScope("focus");
@@ -13495,7 +13613,9 @@ async function runAdvisorWriterTrial() {
                       </span>
                     </div>
                     <div className="min-h-[360px] md:min-h-[480px]">
-                      <FreeformCanvas
+                      {user?.id && <ImageWorldStudio key={`image-world:${artMotionScopeKey}`} scopeKey={artMotionScopeKey} blocks={blocks} enabled={canUseManhua3d} onSave={persistImageWorldBlocks} onRun={runImageWorldBlock} onAudioChange={persistClipAudioStudio} />}
+          {user?.id && <ArtMotionStudio key={artMotionScopeKey} scopeKey={artMotionScopeKey} blocks={blocks} onCreate={createArtMotionBlock} onSave={persistArtMotionBlock} />}
+          <FreeformCanvas
                         onSelectedBlockIdChange={setCanvasSelectedBlockId}
                         resolveManhuaOutboundGate={(blockId) => ({
                           currentScope: manhuaOutboundScope(blockId),
@@ -14045,6 +14165,8 @@ async function runAdvisorWriterTrial() {
                 <button type="button" className="rounded-lg border border-cyan-300/30 px-3 py-2 text-sm text-cyan-50" onClick={() => document.getElementById("manhua-post-production")?.scrollIntoView({block:"start"})}>后期任务与预览</button>
                 <button type="button" className="rounded-lg border border-cyan-300/30 px-3 py-2 text-sm text-cyan-50" onClick={() => document.getElementById("manhua-delivery-export")?.scrollIntoView({block:"start"})}>成片与导出</button>
               </nav>
+              {user?.id && <ImageWorldStudio key={`image-world:${artMotionScopeKey}`} scopeKey={artMotionScopeKey} blocks={blocks} enabled={canUseManhua3d} onSave={persistImageWorldBlocks} onRun={runImageWorldBlock} onAudioChange={persistClipAudioStudio} />}
+                      {user?.id && <ArtMotionStudio key={artMotionScopeKey} scopeKey={artMotionScopeKey} blocks={blocks} onCreate={createArtMotionBlock} onSave={persistArtMotionBlock} />}
               {/* 后期工坊(蓝图二):三件套已上线,卡内只挂真实工序;按用户挂载防串单 */}
               {user?.id ? (
                 <PostProdWorkshopCard
@@ -14576,7 +14698,10 @@ async function runAdvisorWriterTrial() {
           if (!latestEligibility?.eligible || latestEligibility.sourceVersion !== eligibility.sourceVersion || latestEligibility.currentWorld3d?.taskId !== candidate.target.previousTaskId) throw new Error("核对期间场景已变化，未生成。");
           if (eligibility.currentWorld3d && eligibility.currentWorld3d.status !== "failed") throw new Error("当前场景已有任务或产物，请保留原结果；不会重复付费生成。");
           if (candidate.plan.sceneRefId !== ref.id) throw new Error("方案目标不一致，未生成。");
-          backupVoiceProduction();
+          await backupSceneProduction();
+          const afterBackup = latestCustomAssetRefs.current.find(row => row.id === ref.id && row.role === "scene");
+          const checkedAfterBackup = afterBackup ? evaluateManhuaWorld3dEligibility(afterBackup) : undefined;
+          if (!checkedAfterBackup?.eligible || checkedAfterBackup.sourceVersion !== eligibility.sourceVersion || checkedAfterBackup.currentWorld3d?.taskId !== candidate.target.previousTaskId) throw new Error("备份期间场景已变化，未生成；原方案与备份保留。");
           let receipt: {taskId:string;status:string} | undefined;
           await generateSceneWorld(ref.id, { model: "marble-1.1", textPrompt: candidate.plan.textPrompt }, value=>{receipt=value});
           return receipt ? JSON.stringify({type:"world",...receipt}) : "未取得3DGS提交回执：可能取消或未提交，请查看场景卡，不自动重试。";

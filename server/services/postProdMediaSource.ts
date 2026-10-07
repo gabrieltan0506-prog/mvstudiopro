@@ -334,6 +334,11 @@ export async function resolvePostProdInputSources(
     resolveRegisteredPostProdMediaSource({ userId, source }, deps, context);
 
   const job = input.input;
+  if (job.action === "art_motion") {
+    for (const cue of job.params.cues ?? []) if (cue.imageUri && await resolve(cue.imageUri) !== cue.imageUri) throw new Error("动画图片来源身份不一致");
+    if (job.params.audioUri && await resolve(job.params.audioUri) !== job.params.audioUri) throw new Error("动画音轨来源身份不一致");
+    return postProdJobInputSchema.parse(job);
+  }
   if (job.action === "manhua_previs") {
     if (job.params.audio) {
       // 白模长期身份只允许gs，校验不改写快照，避免幂等参数漂移。

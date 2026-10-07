@@ -1,0 +1,47 @@
+{
+  "head": "031bbc6937b2ff5783146281202682c6369205c1",
+  "machineId": "7812595b294778",
+  "elapsedMs": 227243,
+  "durationSec": 12,
+  "width": 1280,
+  "height": 720,
+  "fps": 30,
+  "frameCount": 360,
+  "bytes": 3600477,
+  "sha256": "1834e37d1f989962f65e4d2f6e682f98fd0b4a8f3796c97412b43ca970a3ca18",
+  "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/isolated-demo-1007/20261007/art-motion-1791373117988-2hmb11.mp4",
+  "evidence": [
+    {
+      "name": "request.raw.json",
+      "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/isolated-demo-1007/art-motion-evidence/c2cc98b9-2ced-49e9-808c-50b1f3e8e96c/request.raw.json",
+      "bytes": 502,
+      "sha256": "f58c76897412ff5f991a217c73bbcf87dd216ae4e7215eba4ef4120c1def2a0e"
+    },
+    {
+      "name": "request.normalized.json",
+      "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/isolated-demo-1007/art-motion-evidence/c2cc98b9-2ced-49e9-808c-50b1f3e8e96c/request.normalized.json",
+      "bytes": 502,
+      "sha256": "f58c76897412ff5f991a217c73bbcf87dd216ae4e7215eba4ef4120c1def2a0e"
+    },
+    {
+      "name": "frames.json",
+      "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/isolated-demo-1007/art-motion-evidence/c2cc98b9-2ced-49e9-808c-50b1f3e8e96c/frames.json",
+      "bytes": 39775,
+      "sha256": "2be71e5ebbf265c150d085ce25fe114576583eb32ad33af98ea5fdff97c76e05"
+    },
+    {
+      "name": "probe.raw.json",
+      "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/isolated-demo-1007/art-motion-evidence/c2cc98b9-2ced-49e9-808c-50b1f3e8e96c/probe.raw.json",
+      "bytes": 2605,
+      "sha256": "04a05956f14c866b7bb55fcd919e4b6a7d1d5d068ee2633d63d3615cc41a212c"
+    },
+    {
+      "name": "probe.parsed.json",
+      "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/isolated-demo-1007/art-motion-evidence/c2cc98b9-2ced-49e9-808c-50b1f3e8e96c/probe.parsed.json",
+      "bytes": 1480,
+      "sha256": "8edb6e3702e5ec8336d7f4c51174a47dd78059b1fd5afd450cf6b118504c732b"
+    }
+  ],
+  "modelCalls": 0,
+  "formalWorkflowAcceptance": false
+}

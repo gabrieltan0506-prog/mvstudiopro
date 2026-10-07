@@ -41,6 +41,7 @@ import {
   parseNativeDeepReadVideoFps,
 } from "../../shared/manhuaNativeDeepReadJob.js";
 import { isManhua0996SourceUrl } from "../../shared/manhuaLearn0996Source.js";
+import { describeManhuaSourceFetchFailure } from "./manhuaLearn0996Source.js";
 import {
   placeSingleSourceInExistingSeries,
   sameManhuaLearnEpisodeSource,
@@ -530,10 +531,12 @@ async function probeEpisodeDurationWithCandidateFailover(
       const source = await deps.refreshSourcePlayback(episode.url, abortSignal);
       refreshed = source.playbackUrls;
       refreshedReferer = source.referer;
-    } catch {
+    } catch (error) {
+      throwIfNativePlanAborted(abortSignal);
       console.warn(
         "[manhuaNativeDeepReadPlan] external playback refresh failed:",
         `episode=${episode.index}`,
+        describeManhuaSourceFetchFailure(error),
       );
     }
   }

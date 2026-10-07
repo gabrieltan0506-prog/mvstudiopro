@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { Agent, fetch as undiciFetch } from "undici";
+import { discoverSourceMedia } from "./manhuaSourceMediaDiscovery.js";
 import {
   MANHUA_0996_SOURCE_HOSTS,
   isTrustedManhua0996MediaUrl,
@@ -375,7 +376,9 @@ export async function fetchManhua0996EpisodePlayback(
    * 0903 用户令：凭证由 fetchTrustedApiResponse 每一发直接带（双钥匙直发，只发可信域）。
    * 这里只读「有没有配凭证」，用来决定**解析层要不要接受 needLogin:true 的高清档**。
    */
-  const hasAuth = Object.keys(readManhuaMirrorSourceAuthHeaders({}) || {}).length > 0;
+  const authHeaders = readManhuaMirrorSourceAuthHeaders({});
+  const hasAuth = Object.keys(authHeaders).length > 0;
+  const canDiscoverMedia = Boolean(authHeaders.cookie && authHeaders.authorization);
   return runWithManhua0996HostFallback(source, signal, async (candidate) => {
     const request = buildManhua0996EpisodeApiRequest(candidate, Date.now());
     await assertPublicManhuaSourceHost(candidate.host);
@@ -390,7 +393,7 @@ export async function fetchManhua0996EpisodePlayback(
     } catch {
       throw new Error("第三方媒体接口返回了无效 JSON，已停止");
     }
-    return finishManhua0996Playback(payload, candidate, hasAuth);
+    return finishManhua0996Playback(payload, candidate, hasAuth, canDiscoverMedia, signal);
   });
 }
 
@@ -398,10 +401,14 @@ async function finishManhua0996Playback(
   payload: unknown,
   source: Manhua0996SourceRef,
   hasAuth: boolean,
+  canDiscoverMedia: boolean,
+  signal?: AbortSignal,
 ): Promise<Manhua0996Playback> {
-  const parsed = parseManhua0996PlaybackResponse(payload, `https://${source.host}/`, hasAuth);
+  const referer = `https://${source.host}/`;
+  const discovered = await discoverSourceMedia(payload, {authenticated:canDiscoverMedia,referer,signal});
+  const parsed = parseManhua0996PlaybackResponse(discovered.payload, referer, hasAuth, discovered.verifiedHosts);
   for (const mediaUrl of parsed.playbackUrls) {
-    if (!isTrustedManhua0996MediaUrl(mediaUrl)) {
+    if (!isTrustedManhua0996MediaUrl(mediaUrl, discovered.verifiedHosts)) {
       throw new Error("第三方媒体接口返回非可信媒体域，已停止");
     }
     await assertPublicManhuaSourceHost(new URL(mediaUrl).hostname);

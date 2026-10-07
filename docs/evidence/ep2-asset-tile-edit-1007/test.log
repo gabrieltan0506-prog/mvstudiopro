@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-cdn-1007
+
+ ✓ client/src/lib/manhuaAssetEditSubmit.test.ts (28 tests | 25 skipped) 200ms
+
+ Test Files  1 passed (1)
+      Tests  3 passed | 25 skipped (28)
+   Start at  20:17:43
+   Duration  1.64s (transform 346ms, setup 0ms, collect 1.06s, tests 200ms, environment 0ms, prepare 90ms)
+

@@ -1,3 +1,4 @@
+import { maskMediaProviderDetails } from "./maskMediaUrls";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -124,6 +125,7 @@ function setup(failure = false) {
   const busy = vi.fn();
   const deps = {
     readOpenAiImageVariantPref,
+    maskMediaProviderDetails,
     assetStandardizeBusyId: null,
     assetActionLocked: { current: false },
     confirmAssetAction: vi.fn(
@@ -138,6 +140,7 @@ function setup(failure = false) {
     buildManhuaAssetImageEditPrompt,
     buildCanvasGptImage2JobInput,
     prepareAssetImageEdit,
+    runDeps: { repairSceneTileOwnership: vi.fn(async (_urls: string[]) => {}) },
     assetImageGcsUri,
     manhuaAssetStandardizeCredits,
     window: {
@@ -159,6 +162,24 @@ function setup(failure = false) {
 }
 
 describe("真实资产按钮到队列与新图回写", () => {
+  it.each(["editCustomAsset", "detextCustomAsset", "standardizeCustomAsset"])(
+    "%s 登记原切图后才建单，登记失败零付费任务且保留原图",
+    async name => {
+      const ok = setup();
+      await callback(name, ok.deps)("original", name === "standardizeCustomAsset" ? "medium" : "修改场景");
+      const repair = ok.deps.runDeps.repairSceneTileOwnership;
+      expect(repair).toHaveBeenCalledWith([ok.original.url]);
+      expect(repair.mock.invocationCallOrder[0]).toBeLessThan(ok.queue.mock.invocationCallOrder[0]!);
+      const failed = setup();
+      failed.deps.runDeps.repairSceneTileOwnership.mockRejectedValueOnce(new Error("sheet_tile_source_mismatch"));
+      await callback(name, failed.deps)("original", name === "standardizeCustomAsset" ? "medium" : "修改场景");
+      expect(failed.queue).not.toHaveBeenCalled();
+      expect(failed.poll).not.toHaveBeenCalled();
+      expect(failed.getRefs()).toEqual([failed.original]);
+      expect(failed.deps.assetActionLocked.current).toBe(false);
+    }
+  );
+
   it.each(["editCustomAsset", "detextCustomAsset", "standardizeCustomAsset"])(
     "%s 消费三档实际偏好，双档选择仍只提交一张且不重复建单",
     async name => {

@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   isTrustedManhua0996MediaUrl,
+  isTrustedManhua0996SiteUrl,
   parseManhua0996PlaybackResponse,
   parseManhua0996SeriesPage,
   parseManhua0996SourceUrl,
@@ -14,6 +15,21 @@ const fixture = (name: string) => readFileSync(
 );
 
 describe("第三方播放页纯解析", () => {
+  it("1007 已鉴权新CDN保留720优先、匿名限制与精确主机边界", () => {
+    const payload = { code: 200, data: { list: [1080, 720, 480].map((resolution) => ({ resolution, needLogin: resolution !== 480, flag: resolution === 480, url: `https://ppvod021.zyxsuntech.com/${resolution}.m3u8` })) } };
+    expect(parseManhua0996PlaybackResponse(payload, "https://0996zp.com/", true).playbackUrls).toEqual([720, 1080, 480].map(n => `https://ppvod021.zyxsuntech.com/${n}.m3u8`));
+    expect(parseManhua0996PlaybackResponse(payload).playbackUrls).toEqual(["https://ppvod021.zyxsuntech.com/480.m3u8"]);
+    for (const host of ["zyxsuntech.com", "other.zyxsuntech.com", "ppvod021.zyxsuntech.com.evil.test"]) expect(isTrustedManhua0996MediaUrl(`https://${host}/a.m3u8`)).toBe(false);
+    expect(isTrustedManhua0996MediaUrl("http://ppvod021.zyxsuntech.com/a.m3u8")).toBe(false);
+    expect(isTrustedManhua0996MediaUrl("https://user:pass@ppvod021.zyxsuntech.com/a.m3u8")).toBe(false);
+  });
+  it.each(["0996zp.com", "9zhoukj.com", "fntcome.com", "sizhengxt.com", "pumeiduolehuo.com"])("1007 用户指定镜像精确放行且不扩大媒体域：%s", (host) => {
+    expect(parseManhua0996SourceUrl(`https://${host}/vod/play/113224/sid/751903`)).toMatchObject({ host });
+    expect(isTrustedManhua0996SiteUrl(`https://${host}/api/play`)).toBe(true);
+    expect(isTrustedManhua0996SiteUrl(`https://${host}.evil.test/api/play`)).toBe(false);
+    expect(isTrustedManhua0996SiteUrl(`https://${host}:443/api/play`)).toBe(false);
+    expect(isTrustedManhua0996MediaUrl(`https://${host}/film.m3u8`)).toBe(false);
+  });
   it.each([
     ["https://0996zp.com/vod/play/146259/sid/1311527", "0996zp.com"],
     ["https://www.gzcrkt8888.com/vod/play/144970/1/1290958", "www.gzcrkt8888.com"],

@@ -7,11 +7,17 @@
 export const MANHUA_0996_SOURCE_HOSTS = [
   "0996zp.com",
   "www.0996zp.com",
+  "9zhoukj.com",
+  "fntcome.com",
+  "sizhengxt.com",
+  "pumeiduolehuo.com",
   "gzcrkt8888.com",
   "www.gzcrkt8888.com",
 ] as const;
 
 const MANHUA_0996_MEDIA_HOST_SUFFIXES = ["kqgfbs.com"] as const;
+// 1007：已鉴权的播放接口实际返回的新 CDN；只放行已核对主机，不扩大整域。
+const MANHUA_0996_MEDIA_EXACT_HOSTS = ["ppvod021.zyxsuntech.com"] as const;
 
 export type Manhua0996SourceRef = {
   host: string;
@@ -111,12 +117,14 @@ export function isTrustedManhua0996SiteUrl(
   }
 }
 
-export function isTrustedManhua0996MediaUrl(raw: string): boolean {
+export function isTrustedManhua0996MediaUrl(raw: string, verifiedHosts: readonly string[] = []): boolean {
   try {
     const url = new URL(raw);
     if (url.protocol !== "https:" || url.username || url.password || url.port) return false;
     const host = url.hostname.toLowerCase();
-    return MANHUA_0996_MEDIA_HOST_SUFFIXES.some(
+    return verifiedHosts.includes(host)
+      || MANHUA_0996_MEDIA_EXACT_HOSTS.some((allowed) => host === allowed)
+      || MANHUA_0996_MEDIA_HOST_SUFFIXES.some(
       (suffix) => host === suffix || host.endsWith(`.${suffix}`),
     );
   } catch {
@@ -231,6 +239,7 @@ export function parseManhua0996PlaybackResponse(
    * 只有站点主人自己把凭证配进 Fly secrets，才等于授权用自己的账号取高清。
    */
   allowLoginRequired = false,
+  verifiedMediaHosts: readonly string[] = [],
 ): Manhua0996Playback {
   const root = asRecord(payload);
   const data = asRecord(root?.data);
@@ -239,7 +248,7 @@ export function parseManhua0996PlaybackResponse(
   const candidates = rows.flatMap((raw, order) => {
     const row = asRecord(raw);
     const url = String(row?.url ?? row?.playUrl ?? "").trim();
-    if (!row || !isTrustedManhua0996MediaUrl(url)) return [];
+    if (!row || !isTrustedManhua0996MediaUrl(url, verifiedMediaHosts)) return [];
     // needLogin：无凭证时只收 false（原行为）；有凭证时两种都收。
     if (row.needLogin !== false && !allowLoginRequired) return [];
     // flag：仅在无凭证路径上沿用旧的严格判定，避免改动波及既有片源。

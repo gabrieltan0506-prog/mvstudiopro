@@ -1706,6 +1706,9 @@ export default function FreeformCanvas({
       if (referencePreparationRef.current.has(blockId)) return;
       const block = blocks.find((b) => b.id === blockId);
       if (!block) return;
+      const imageWorldOwner=blocks.find(b=>b.imageWorld&&(b.id===blockId||b.imageWorld.analysisBlockId===blockId||b.imageWorld.plateBlockId===blockId||b.imageWorld.audioBlockId===blockId||Object.values(b.imageWorld.objectBlockIds).includes(blockId)));
+      if(imageWorldOwner){window.dispatchEvent(new CustomEvent("image-world-open",{detail:{blockId:imageWorldOwner.id}}));return;}
+      if (block.artMotion) { window.dispatchEvent(new CustomEvent("art-motion-open", {detail:{blockId}})); return; }
       if (block.manhuaGenerationHold) { toast.message("本段保留，不生成；原片与音轨保持"); return; }
       // 与工厂管线对齐：切断 recap→story 误连，避免手点节点吃到前情提要图
       const { blocks: safeBlocks, edges: safeEdges } = sanitizeManhuaRecapUpstreamLinks(blocks, edges);

@@ -1,4 +1,5 @@
 import { optimizationInputSchema } from "../shared/manhuaEpisodeOptimization";
+import { imageWorldRouter } from "./routers/imageWorld";
 import { manhuaWriterExpansionQuote, manhuaWriterModelLabel } from "../shared/manhuaWriterModels";
 import { advisorTemplatePlansSchema } from "../shared/manhuaAdvisorRewrite";
 import { MANHUA_ADVISOR_PROJECT_FREE, MANHUA_ADVISOR_PAID_CREDITS } from "../shared/manhuaAdvisorPolicy";
@@ -3054,6 +3055,7 @@ export const appRouter = router({
   manhua3d: manhua3dRouter,
   manhua3dAsset: manhua3dAssetRouter,
   manhuaWorld: manhuaWorldRouter,
+  imageWorld: imageWorldRouter,
   videoParser: router({
     parse: protectedProcedure
       .input(z.object({ url: z.string().url() }))
@@ -4445,6 +4447,10 @@ export const appRouter = router({
             code: "BAD_REQUEST",
             message: error instanceof Error ? error.message : "素材地址无法核对,请重新选择",
           });
+        }
+        if (normalizedInput.action === "art_motion") {
+          const { queueArtMotion } = await import("./services/artMotionTask");
+          return queueArtMotion(String(ctx.user.id), normalizedInput);
         }
         if (normalizedInput.action === "manhua_vfx") {
           const { queueManhuaVfx } = await import("./services/manhuaVfxTask");

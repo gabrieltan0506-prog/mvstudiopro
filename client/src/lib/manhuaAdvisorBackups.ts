@@ -13,7 +13,7 @@ const backupSchema = z.object({
   adoptedWriterPack: z.object({ seriesTitle: z.string(), episodes: z.array(z.object({ index: z.number(), body: z.string() }).passthrough()) }).passthrough().optional(),
   projectBible: z.object({ confirmedAt: z.string() }).passthrough().nullable(),
 }).passthrough();
-export type AdvisorBackupEntry = { key: string; createdAt: string; episodeIndex: number; seriesTitle: string; json: string };
+export type AdvisorBackupEntry = { key: string; createdAt: string; episodeIndex: number; seriesTitle: string; json: string; downloadOnly?: boolean };
 
 /** 只读取当前账户及当前项目证据匹配的备份；保留原始JSON，下载不改写工程。 */
 export function listAdvisorBackups(storage: Pick<Storage, "length" | "key" | "getItem">, scope: {

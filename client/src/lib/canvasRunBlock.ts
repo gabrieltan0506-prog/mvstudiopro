@@ -174,6 +174,9 @@ function resolveCanvasTextPrimaryModel(textModel: string | undefined): string {
 const CANVAS_GPT_IMAGE2_POLL_MAX_MS = 13 * 60_000;
 
 export type CanvasRunDeps = {
+  /** Narrow caller guard rechecked immediately before paid text/image submission. */
+  assertCurrentSource?: () => void;
+  imageVariants?: OpenAiImageVariant[];
   repairSceneTileOwnership?: (imageUrls: string[]) => Promise<void>;
   /** 所有工厂/画布 clip 共用的服务端审核预检；返回元数据仍由服务端再次验证。 */
   authorizeManhuaClip?: (request: {
@@ -512,11 +515,12 @@ async function runGptImage2Batch(
     onTaskCreated?: (jobId: string) => void | Promise<void>;
   },
   count: number,
+  frozenVariants?: OpenAiImageVariant[],
 ): Promise<string[]> {
   // 批次号随请求带上，让服务端把第 2 张起算批量价
   // 开关「双档各一张」：每张各出 flare 与 sunburst 两个版本（扣两张费），顺序 flare 在前便于对比
   const variants: OpenAiImageVariant[] =
-    readOpenAiImageVariantMode() === "both" ? ["flare", "sunburst"] : [readOpenAiImageVariantPref()];
+    frozenVariants ?? (readOpenAiImageVariantMode() === "both" ? ["flare", "sunburst"] : [readOpenAiImageVariantPref()]);
   // 双档的两张各按本张的批次号计费（都算「第 i 张」），不让 sunburst 那张滑到批量价
   const tasks = Array.from({ length: count }, (_unused, i) =>
     variants.map((openaiImageVariant) =>
@@ -563,6 +567,7 @@ async function runCanvasVisionMarkdown(
   prompt: string,
   images: CanvasVisionImage[],
 ): Promise<string> {
+  deps.assertCurrentSource?.();
   const payload = images
     .map((i) => ({
       url: String(i.url || "").trim(),
@@ -575,10 +580,12 @@ async function runCanvasVisionMarkdown(
         await deps.canvasTerraVisionMarkdown({ prompt, images: payload }),
       ).trim();
       if (md) return md;
-    } catch {
-      // Terra 失败 → Gemini
+    } catch (error) {
+      if(deps.singleTextAttempt) throw error;
     }
+    if(deps.singleTextAttempt) throw new Error("图片分析未返回内容，未自动重试");
   }
+  deps.assertCurrentSource?.();
   return runCanvasVisionMarkdownGemini(prompt, images);
 }
 
@@ -2321,6 +2328,7 @@ export async function runCanvasBlock(
   upstream: CanvasUpstreamContext = { visionImages: [], texts: [] },
   runOptions?: Parameters<typeof runCanvasBlockInner>[3],
 ): Promise<Awaited<ReturnType<typeof runCanvasBlockInner>>> {
+  if (block.artMotion) throw new Error("请在艺术动画工作台预览和生成此影片；此节点不调用视频模型");
   if (block.kind === "video" && block.manhuaGenerationHold && !runOptions?.previewOnly) {
     throw new Error("本段已设为保留，不生成；原片与音轨保持。请先明确取消保留再重跑。");
   }
@@ -2789,7 +2797,8 @@ async function runCanvasBlockInner(
       : { openaiOnly: false as const, userId: gptUserId, imageLane };
     let urls: string[] = [];
     try {
-      urls = await runGptImage2Batch(imagePrompt, ar, {...gptImageOpts,onTaskCreated:deps.onImageTaskCreated ? jobId=>deps.onImageTaskCreated!(block.id,jobId) : undefined}, count);
+      deps.assertCurrentSource?.();
+      urls = await runGptImage2Batch(imagePrompt, ar, {...gptImageOpts,onTaskCreated:deps.onImageTaskCreated ? jobId=>deps.onImageTaskCreated!(block.id,jobId) : undefined}, count, deps.imageVariants);
       if (isAssetSheet || isKeyart) {
         console.info(`[canvasRunBlock] image · id=${block.id} · engine=gpt-image-2`);
       }
