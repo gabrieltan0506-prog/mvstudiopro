@@ -1,3 +1,5 @@
+import {artMotionSpecSchema,type ArtMotionSpec} from "@shared/artMotion";
+import type { PrevisStageAnimation } from "@shared/manhuaPrevisAnimation";
 import type { AdvisorWorldControl } from "@/lib/manhuaAdvisorWorkflowControl";
 import { useEffect } from "react";
 /**
@@ -5,7 +7,7 @@ import { useEffect } from "react";
  * 场景方案由顾问编写，确认后沿用原生成入口；预览和视角图留在同页。
  * 付费动作只发回调；确认在页面统一做。
  */
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef } from "react";
 import {
   type ManhuaWorld3dEligibility,
   type ManhuaWorld3dModel,
@@ -53,6 +55,9 @@ type Props = {
   onSubmitLayoutWorld?: (sceneRefId: string, options: ManhuaWorldLayoutSubmitOptions) => void | Promise<void>;
   /** 本段白模采用状态与返回入口；3D 场景只使用演员起点站位，不播放白模动作。 */
   previsStatusZh?: string;
+  stageAnimation?: PrevisStageAnimation;
+  previsAnimationSource?: {previsJobId:string;scopeId:string;clipId:string;duration:number;aspect:"9:16"|"16:9"};
+  onRenderStageAnimation?: (spec:ArtMotionSpec)=>Promise<void>;
   onOpenPrevis?: () => void;
   savedFrameCount?: number;
   adoptedFrameCount?: number;
@@ -104,6 +109,8 @@ const STAGE_CLASS: Record<Stage, string> = {
 };
 
 export function ManhuaWorldStudio(props: Props) {
+  const [animationBusy,setAnimationBusy]=useState(false),[animationError,setAnimationError]=useState("");
+  const animationLock=useRef(false);
   const { scenes, busyIds, disabled, onOpenAdvisor, onGenerate, onRetry, onRemove, stageCharacters = [], onExportStageFrame, onSubmitLayoutWorld, previsStatusZh, onOpenPrevis, savedFrameCount = 0, adoptedFrameCount = 0 } = props;
   const [activeId, setActiveId] = useState<string | null>(null);
   const activeSceneId = scenes.some(scene => scene.id === activeId) ? activeId : scenes[0]?.id || null;
@@ -163,6 +170,22 @@ export function ManhuaWorldStudio(props: Props) {
                 ) : null}
               </span>
               {openPreviewId !== s.id || !canView ? <div className="flex min-h-80 w-full flex-col items-center justify-center rounded-xl border border-white/10 bg-black/30 p-3" data-world-reference-preview>{s.thumbUrl ? <img src={s.thumbUrl} alt={`${s.labelZh}场景参考图`} className="max-h-[55vh] max-w-full object-contain" /> : <p>尚无场景参考图</p>}<p className="mt-3 text-xs text-white/55">当前为场景参考图{canView ? "，点击查看场景载入真实3D空间。" : "；世界就绪后可检查空间与保存机位。"}</p></div> : null}
+              {canView && props.onRenderStageAnimation ? <div className="w-full rounded border border-cyan-300/30 p-3">
+                <button type="button" className={btnPrimary} disabled={disabled||animationBusy||!props.previsAnimationSource} onClick={async()=>{
+                  if(animationLock.current||!props.previsAnimationSource||!world)return;
+                  animationLock.current=true;setAnimationBusy(true);setAnimationError("");
+                  try{
+                    const source=props.previsAnimationSource;
+                    const spec=artMotionSpecSchema.parse({version:1,mode:"animation",grammar:"y5_kinetic_type",duration:source.duration,
+                      width:source.aspect==="9:16"?720:1280,height:source.aspect==="9:16"?1280:720,fps:24,title:s.labelZh+" · 本段场景动画",cues:[],data:{},scenes:[],
+                      stageAnimation:{previsJobId:source.previsJobId,scopeId:source.scopeId,clipId:source.clipId,worldTaskId:world.taskId,sceneRef:s.id,worldSourceVersion:world.sourceVersion}});
+                    await props.onRenderStageAnimation!(spec);
+                  }catch(error){setAnimationError(error instanceof Error?error.message:"场景动画提交未确认，请续查原任务");}
+                  finally{animationLock.current=false;setAnimationBusy(false);}
+                }}>{animationBusy?"保存原请求并提交…":"输出本段场景动画视频"}</button>
+                <p className="mt-2 text-xs text-white/70">先在白模勾选导出场景动画并采用当前候选；输出沿用原动作与相机，720p／24fps，不调用视频模型。配乐可在动画任务里选择已有音轨；不会自动采用成片。</p>
+                {animationError?<p role="alert">{animationError}</p>:null}
+              </div>:null}
               {openPreviewId === s.id && canView && assets ? (
                 <div className="mt-1 w-full rounded border border-cyan-300/20 bg-black/30 p-2" data-manhua-world-preview>
                   <div>
@@ -171,6 +194,7 @@ export function ManhuaWorldStudio(props: Props) {
                       sceneLabelZh={s.labelZh}
                       world={assets}
                       characters={stageCharacters}
+                      animation={props.stageAnimation}
                       onExportStageFrame={
                         onExportStageFrame && world
                           ? (blob, frame) => onExportStageFrame(s.id, blob, { ...frame, worldTaskId: world.taskId, ...(world.worldId ? { worldId: world.worldId } : {}), worldSourceVersion: world.sourceVersion })

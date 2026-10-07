@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-cdn-1007
+
+ ✓ server/services/manhuaAdvisorFilmReview.test.ts (6 tests | 4 skipped) 17ms
+
+ Test Files  1 passed (1)
+      Tests  2 passed | 4 skipped (6)
+   Start at  23:40:24
+   Duration  1.40s (transform 486ms, setup 0ms, collect 1.06s, tests 17ms, environment 0ms, prepare 67ms)
+

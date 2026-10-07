@@ -49,6 +49,17 @@ export const AUTO_RIG_LABELS: Record<AutoRigJoint, string> = {
   ankleR: "右踝",
   toeR: "右脚尖",
 };
+/** Four-legged skeleton uses the same serialized slots, with front/hind limb semantics. */
+export const AUTO_RIG_QUADRUPED_LABELS: Record<AutoRigJoint, string> = {
+  pelvis:"后躯中点", waist:"躯干中点", chest:"前躯中点", neck:"颈根上端", headTop:"鼻尖",
+  shoulderL:"左前肩", elbowL:"左前膝", wristL:"左前踝", handTipL:"左前蹄尖",
+  shoulderR:"右前肩", elbowR:"右前膝", wristR:"右前踝", handTipR:"右前蹄尖",
+  hipL:"左后髋", kneeL:"左后膝", ankleL:"左后踝", toeL:"左后蹄尖",
+  hipR:"右后髋", kneeR:"右后膝", ankleR:"右后踝", toeR:"右后蹄尖",
+};
+export function autoRigJointLabel(joint:AutoRigJoint, pose:AutoRigSettings["pose"]) {
+  return (pose === "quadruped" ? AUTO_RIG_QUADRUPED_LABELS : AUTO_RIG_LABELS)[joint];
+}
 export const AUTO_RIG_BONES = {
   pelvis: ["pelvis", "waist"],
   spine: ["waist", "chest"],
@@ -82,7 +93,7 @@ export const autoRigJointsSchema = z
 export type AutoRigJoints = z.infer<typeof autoRigJointsSchema>;
 export const autoRigSettingsSchema = z
   .object({
-    pose: z.enum(["A", "T"]),
+    pose: z.enum(["A", "T", "quadruped"]),
     forwardAxis: z.enum(["+X", "-X", "+Y", "-Y"]),
     targetHeight: z.number().finite().min(0.5).max(3),
   })
@@ -103,10 +114,16 @@ export const autoRigRequestSchema = z.discriminatedUnion("stage", [
       inspectionRequestId: z.string().uuid(),
       sourceDigest: z.string().regex(/^[a-f0-9]{64}$/),
       joints: autoRigJointsSchema,
-      singleHuman: z.literal(true),
+      singleHuman: z.boolean(),
+      singleQuadruped: z.literal(true).optional(),
       landmarksManuallyConfirmed: z.literal(true),
     })
-    .strict(),
+    .strict()
+    .superRefine((value, ctx) => {
+      const quadruped = value.settings.pose === "quadruped";
+      if (quadruped ? value.singleHuman || !value.singleQuadruped : !value.singleHuman || value.singleQuadruped !== undefined)
+        ctx.addIssue({code:"custom", message:"须确认与检查一致的单个人体或四足模型",path:["singleHuman"]});
+    }),
 ]);
 export type AutoRigRequest = z.infer<typeof autoRigRequestSchema>;
 export const autoRigProxyInfoSchema = z

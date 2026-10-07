@@ -18,6 +18,14 @@ export const PREVIS_BODY_BONES = [
   "lower_leg1",
   "foot1",
 ] as const;
+/** 既有马白模的0/1/2/3腿序列：后右/前左/后左/前右。 */
+export const PREVIS_QUADRUPED_SOURCE_BONES: Record<(typeof PREVIS_BODY_BONES)[number], string> = {
+  pelvis: "body", spine: "body", neck: "neck", head: "head",
+  "upper_arm-1": "upper_leg3", "forearm-1": "lower_leg3", "hand-1": "foot3",
+  upper_arm1: "upper_leg1", forearm1: "lower_leg1", hand1: "foot1",
+  "upper_leg-1": "upper_leg0", "lower_leg-1": "lower_leg0", "foot-1": "foot0",
+  upper_leg1: "upper_leg2", lower_leg1: "lower_leg2", foot1: "foot2",
+};
 const name = z.string().trim().min(1).max(128);
 const expression = z
   .record(name, z.number().finite().min(0).max(1))
@@ -58,6 +66,7 @@ export const previsPerformanceCueSchema = z
   .strict();
 export const previsRiggedModelSchema = z
   .object({
+    rigKind: z.enum(["human", "quadruped"]).optional(),
     sourceJobId: z.string().regex(/^m3d_[a-zA-Z0-9_.-]{1,150}$/),
     /** 0917：模型所在的项目 ref（A-pose 候选图）；缺省＝actor.assetRef（锁脸图自己的模型） */
     sourceAssetRef: z.string().trim().min(1).max(160).optional(),

@@ -246,6 +246,8 @@ const manhuaPrevisSpecBaseSchema = z
     effects: previsEffectsSchema.optional(),
     sceneEffects: previsSceneEffectsSchema.optional(),
     exportLayers: z.literal(true).optional(),
+    /** Same native scene bones plus complete frame camera/visibility, for GS animation preview. */
+    exportAnimation: z.literal(true).optional(),
     cameras: z
       .array(
         z
@@ -458,6 +460,7 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
       if (duration<2 || duration>30) ctx.addIssue({code:"custom",path:["timeMap"],message:"变速后的白模须在2—30秒内"});
       if (spec.exportLayers) ctx.addIssue({code:"custom",path:["timeMap"],message:"变速视频与源时间分层不能一起导出，请关闭分层或恢复常速"});
     }
+    if (spec.exportAnimation && spec.timeMap) ctx.addIssue({code:"custom",path:["exportAnimation"],message:"场景动画暂只支持常速，请保留原变速白模或恢复常速后导出"});
     if (spec.exportLayers && (spec.durationSec > 8 || spec.actors.length > 3))
       ctx.addIssue({ code: "custom", message: "分层输出限3人8秒以内" });
     // 能力边界先判：超预算的作业会在 600 秒生产时限里烧满十分钟还交不出视频（0911 实测）
@@ -509,12 +512,14 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
           path: ["actors", i, "creature"],
         });
       }
-      if (actor.riggedModel && (actor.shape !== "human" || !actor.assetRef))
+      if (actor.riggedModel && (!actor.assetRef || (actor.shape === "horse") !== (actor.riggedModel.rigKind === "quadruped")))
         ctx.addIssue({
           code: "custom",
-          message: "带骨角色须绑定项目人物并使用人体动作",
+          message: "带骨角色须绑定项目资产，人体/四足骨架必须与角色形态一致",
           path: ["actors", i, "riggedModel"],
         });
+      if (actor.riggedModel?.rigKind === "quadruped" && actor.riggedModel.performance)
+        ctx.addIssue({code:"custom",message:"四足模型不能复用人体眼骨与表情控制器",path:["actors",i,"riggedModel","performance"]});
       const cues = actor.riggedModel?.performance?.cues ?? [];
       cues.forEach((cue, j) => {
         if (
@@ -1008,6 +1013,7 @@ export const manhuaPrevisStudioSchema = z
           spec: manhuaPrevisSpecSchema,
           audio: manhuaPrevisAudioSchema.optional(),
           quality: z.enum(["draft", "standard"]).optional(),
+          animation: z.object({glbUrl:z.string().max(8192), framesUrl:z.string().max(8192), sha256:z.string().regex(/^[a-f0-9]{64}$/), framesSha256:z.string().regex(/^[a-f0-9]{64}$/)}).strict().optional(),
         })
         .strict()
     ),

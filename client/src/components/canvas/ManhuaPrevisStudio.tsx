@@ -1,3 +1,4 @@
+import { previsAnimationReceipt } from "@shared/manhuaPrevisAnimation";
 import type { AdvisorEffectsControl, AdvisorEffectsRegistration } from "@shared/manhuaAdvisorEffects";
 import { advisorWorkflowRevision } from "@shared/manhuaAdvisorWorkflowPlan";
 import { ManhuaPrevisSceneEffectsEditor } from "./ManhuaPrevisSceneEffectsEditor";
@@ -44,6 +45,8 @@ import {
 type Result = {
   gcsUri: string;
   url: string;
+  sceneUrl?: string;
+  animation?: {glbUrl:string;framesUrl:string;sha256:string;framesSha256:string};
   durationSec: number;
   clipId: string;
   requestId: string;
@@ -271,6 +274,9 @@ export function ManhuaPrevisStudioView({
         setError("产物回执不完整，请查询原任务");
         return false;
       }
+      if(response.params.spec.exportAnimation && !previsAnimationReceipt(result.animation,response.jobId)) {
+        setError("场景动画回执不完整，请查询原任务"); return false;
+      }
       if (
         response.params.spec.exportLayers &&
         (!result.layerBundle ||
@@ -300,6 +306,7 @@ export function ManhuaPrevisStudioView({
         spec: response.params.spec,
         ...(response.params.audio ? { audio: response.params.audio } : {}),
         ...(response.params.quality ? { quality: response.params.quality } : {}),
+        ...(previsAnimationReceipt(result.animation,response.jobId) ? {animation:previsAnimationReceipt(result.animation,response.jobId)!} : {}),
       };
       return publish({
         ...current.studio,
@@ -497,6 +504,7 @@ export function ManhuaPrevisStudioView({
             result.requestId !== response.params.requestId ||
             result.clipId !== block.id ||
             JSON.stringify(result.audio) !== JSON.stringify(response.params.audio) || result.quality !== response.params.quality ||
+            (response.params.spec.exportAnimation && !previsAnimationReceipt(result.animation,response.jobId)) ||
             (response.params.spec.exportLayers &&
               (!result.layerBundle ||
                 !isPrevisMediaUrl(result.layerBundle.url) ||
@@ -513,6 +521,7 @@ export function ManhuaPrevisStudioView({
             spec: response.params.spec,
         ...(response.params.audio ? { audio: response.params.audio } : {}),
         ...(response.params.quality ? { quality: response.params.quality } : {}),
+        ...(previsAnimationReceipt(result.animation,response.jobId) ? {animation:previsAnimationReceipt(result.animation,response.jobId)!} : {}),
           };
           const index = history.findIndex(t => t.jobId === take.jobId);
           if (index < 0) history.push(take);
@@ -889,6 +898,12 @@ export function ManhuaPrevisStudioView({
           恢复上一份动作配置（不改已采用参考）
         </button>
       ) : null}
+      <label className="flex gap-2 text-xs text-white/80">
+        <input type="checkbox" checked={Boolean(studio.spec.exportAnimation)} disabled={disabled || busy || Boolean(pendingId)} onChange={event => {
+          const {exportAnimation:_old,...spec}=latest.current.studio.spec;
+          publish({...latest.current.studio,spec:{...spec,...(event.target.checked?{exportAnimation:true as const}:{})}});
+        }} />同时导出场景动画（骨骼动作与逐帧运镜；常速，不调用视频模型）
+      </label>
       <p className="text-sm font-medium text-cyan-50" data-previs-step-render>生成与审片</p>
       <p className="text-[11px] text-white/60">生成后逐帧看人数、背负、接触和穿模，再从头按正常速度播放一遍；没问题再点「采用为本段参考」。</p>
       <div className="flex flex-wrap gap-2">
@@ -977,6 +992,12 @@ export function ManhuaPrevisStudioView({
           >
             采用为本段参考
           </button>
+          {preview?.requestId === take.requestId && preview.sceneUrl
+            && /^\/api\/manhua-previs-media\/prv_[a-f0-9]{48}\/scene$/.test(preview.sceneUrl) && (
+              <a className={button} href={manhuaPrevisMediaUrl(preview.sceneUrl)} download="白模动画工程.blend" target="_blank" rel="noreferrer">
+                下载动作与镜头工程
+              </a>
+            )}
           {preview?.requestId === take.requestId &&
             preview.layerBundle &&
             isPrevisMediaUrl(preview.layerBundle.url) && (

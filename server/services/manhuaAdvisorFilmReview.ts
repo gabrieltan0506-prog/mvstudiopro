@@ -4,7 +4,7 @@ import { resolveRegisteredPostProdMediaSource } from "./postProdMediaSource";
 import { uploadBufferToGcs, statGcsObjectVersion, signGsUriV4ReadUrl } from "./gcs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { buildFilmReviewNativeRequest } from "./manhuaFilmReviewNativeContract";
+import { buildFilmReviewNativeRequest, type FilmReviewContinuityContext } from "./manhuaFilmReviewNativeContract";
 import { assertNativeDeepReadRequiredSegmentEvidence, evaluateNativeDeepReadSegmentAcceptance, parseJsonObject } from "./manhuaNativeDeepReadRunner";
 const MODEL = "gemini-3.8-flash";
 export async function resolveAdvisorFilmSource(input: { userId: string; source: string }, deps = {
@@ -47,7 +47,7 @@ const defaults = {
   },
 };
 /** Reuse the native learning contract for owned-media review; no learning-library writes. */
-export async function askManhuaFilmReview(userId: number, target: AdvisorFilmReviewTarget, question: string, deps = defaults) {
+export async function askManhuaFilmReview(userId: number, target: AdvisorFilmReviewTarget, question: string, deps = defaults, continuity?: FilmReviewContinuityContext) {
   const uri=await deps.resolve({userId:String(userId),source:target.videoUri});
   if(!uri.startsWith("gs://")) throw new Error("请先将影片登记到作品云素材；本次未发送影片或降级成文字审片");
   const evidence=`manhua-film-review/${userId}/${randomUUID()}`;
@@ -55,7 +55,7 @@ export async function askManhuaFilmReview(userId: number, target: AdvisorFilmRev
   const receipt:Record<string,unknown>={status:"preparing",contract:"native_learning_plus_film_review",requestedModel:MODEL,route:"vertex_existing_gcs_video",uploaded:false,retries:0,generationAttempted:false,actualSamplingFps:null,requestedSamplingFps:12,cloudCostUsd:null,cost:{status:"pricing_not_verified",meaning:"Token usage is not an invoice; administrator credits are not provider cost."}};
   try {
     const source=await deps.inspect(uri); const media=await deps.probe(uri);
-    const request=buildFilmReviewNativeRequest({uri,durationSec:media.durationSec,hasAudio:media.audioStreams.length>0,question});
+    const request=buildFilmReviewNativeRequest({uri,durationSec:media.durationSec,hasAudio:media.audioStreams.length>0,question,continuity});
     receipt.sourceGeneration=source.generation;
     await save("plan",{source:{uri,generation:source.generation},media,requestedSamplingFps:12,maxOutputTokens:65536});
     await save("request",request);
@@ -82,7 +82,11 @@ export async function askManhuaFilmReview(userId: number, target: AdvisorFilmRev
     if(validation.retry) throw new Error("原生学习链路审片校验未通过；完整结果已保留，未自动重投");
     const review=analysis.filmReview;
     if(!review||typeof review!=="object"||Array.isArray(review))throw new Error("缺少审片结果；原始证据已保留");
-    const report=advisorFilmReviewSchema.parse({...review,kind:"film_review_v1",nativeEvidence:{analysis,sourceGeneration:source.generation,audioTokens:receipt.providerReportedAudioInputTokens}});
+    const continuityLimit = "跨集核对范围：本次只读取当前影片；其他集如有提供，仅为保存正文与任务/采用身份，未读取其成片音画，不能据此确认前集实际表现。";
+    const limitations = (review as Record<string, unknown>).limitations;
+    if (typeof limitations !== "string" || !limitations.length || limitations.length > 1500)
+      throw new Error("审片限制说明无效；原始证据已保留，未自动重投");
+    const report=advisorFilmReviewSchema.parse({...review,limitations: limitations + "\n" + continuityLimit,kind:"film_review_v1",nativeEvidence:{analysis,sourceGeneration:source.generation,audioTokens:receipt.providerReportedAudioInputTokens}});
     if(report.findings.some(f=>f.endSec>media.durationSec))throw new Error("审片建议时间超出原片；原始证据已保留");
     await save("report",{model:MODEL,target,report});receipt.status="completed";await save("receipt",receipt);
     const answer=JSON.stringify(report);

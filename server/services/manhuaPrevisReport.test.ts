@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createManhuaPrevisStudio } from "../../shared/manhuaPrevis";
-import { PREVIS_BODY_BONES } from "../../shared/manhuaPrevisRig";
+import { PREVIS_BODY_BONES, PREVIS_QUADRUPED_SOURCE_BONES } from "../../shared/manhuaPrevisRig";
 import { expectedPiggybackMotion } from "../../shared/manhuaPrevisPiggyback";
 import { validatePrevisReport } from "./manhuaPrevisReport";
 
@@ -237,6 +237,24 @@ function modelFixture() {
   return { spec: f.spec, report, sources: [source] };
 }
 describe("带骨模型报告与侧载存证", () => {
+  it("四足报告保存真实前后肢映射，缺失或把后腿当前腿时拒收", () => {
+    const f = modelFixture();
+    f.spec.actors[0].shape = "horse";
+    f.spec.actors[0].riggedModel!.rigKind = "quadruped";
+    const report = structuredClone(f.report);
+    Object.assign(report.models[0], { sourceBoneMap: { ...PREVIS_QUADRUPED_SOURCE_BONES } });
+    expect(validatePrevisReport(report, f.spec, f.sources).models?.[0].sourceBoneMap).toEqual(PREVIS_QUADRUPED_SOURCE_BONES);
+    Reflect.deleteProperty(report.models[0], "sourceBoneMap");
+    expect(() => validatePrevisReport(report, f.spec, f.sources)).toThrow("驱动映射");
+    Object.assign(report.models[0], { sourceBoneMap: { ...PREVIS_QUADRUPED_SOURCE_BONES, forearm1: "lower_leg2" } });
+    expect(() => validatePrevisReport(report, f.spec, f.sources)).toThrow("驱动映射");
+  });
+  it("人体新版驱动回执仍接受自身骨序，旧报告无新增字段仍兼容", () => {
+    const f = modelFixture();
+    expect(validatePrevisReport(f.report, f.spec, f.sources).models).toHaveLength(1);
+    Object.assign(f.report.models[0], { sourceBoneMap: Object.fromEntries(PREVIS_BODY_BONES.map(name => [name, name])) });
+    expect(validatePrevisReport(f.report, f.spec, f.sources).models).toHaveLength(1);
+  });
   it.each([
     ["meshVertices", 250001],
     ["accessorComponents", 8000001],

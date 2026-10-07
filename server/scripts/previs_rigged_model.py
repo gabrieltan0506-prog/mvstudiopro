@@ -776,7 +776,7 @@ def apply_cough_contact(model, actions, frame_start, frame_end, fps=24):
     return rows
 
 
-def retarget_from_source(source_rig, model, frame_start, frame_end):
+def retarget_from_source(source_rig, model, frame_start, frame_end, source_bone_map=None):
     """逐帧烘焙旋转到真实骨架，保目标骨长和层级；不是逐点复制拉断关节。
 
     源/目标都已规范到+X前向。不同身材只保证旋转/路径跟随，不承诺足底接触或双人接触位置。
@@ -786,12 +786,13 @@ def retarget_from_source(source_rig, model, frame_start, frame_end):
     bpy = _bpy()
     if type(frame_start) is not int or type(frame_end) is not int or not 1 <= frame_start <= frame_end <= 720:
         raise ValueError("角色重定向帧范围须为1至720")
-    if any(name not in source_rig.pose.bones for name in SEMANTIC_BONES):
+    source_bone_map = source_bone_map or {name:name for name in SEMANTIC_BONES}
+    if set(source_bone_map) != set(SEMANTIC_BONES) or any(source_bone_map[name] not in source_rig.pose.bones for name in SEMANTIC_BONES):
         raise ValueError("源预演骨架缺少16骨语义")
     rig, mapping = model["rig"], model["boneMap"]
     inverse_map = {target: semantic for semantic, target in mapping.items()}
     ordered = sorted(rig.pose.bones, key=lambda bone: len(bone.parent_recursive))
-    source_rest = {name: source_rig.data.bones[name].matrix_local.copy() for name in SEMANTIC_BONES}
+    source_rest = {name: source_rig.data.bones[source_bone_map[name]].matrix_local.copy() for name in SEMANTIC_BONES}
     target_rest = model["restMatrices"]
     source_pelvis = source_rest["pelvis"].translation
     target_pelvis = target_rest[mapping["pelvis"]].translation
@@ -810,7 +811,7 @@ def retarget_from_source(source_rig, model, frame_start, frame_end):
             base = solved[bone.parent.name] @ target_rest[bone.parent.name].inverted() @ rest if bone.parent else rest.copy()
             semantic = inverse_map.get(bone.name)
             if semantic:
-                source = source_rig.pose.bones[semantic].matrix.copy()
+                source = source_rig.pose.bones[source_bone_map[semantic]].matrix.copy()
                 rotation = source.to_quaternion() @ source_rest[semantic].to_quaternion().inverted() @ rest.to_quaternion()
                 location = base.translation.copy()
                 if semantic == "pelvis":
@@ -826,7 +827,7 @@ def retarget_from_source(source_rig, model, frame_start, frame_end):
         bpy.context.view_layer.update()
     model["report"].update({"retargetFrames": frame_end - frame_start + 1,
                             "retargetMode": "rest-corrected-rotation-preserve-target-lengths",
-                            "contactValidated": False})
+                            "contactValidated": False, "sourceBoneMap": dict(source_bone_map)})
     return model["report"]
 
 

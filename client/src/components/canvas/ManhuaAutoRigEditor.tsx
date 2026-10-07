@@ -5,7 +5,7 @@ import { trpc } from "@/lib/trpc";
 import {
   AUTO_RIG_BONES,
   AUTO_RIG_JOINTS,
-  AUTO_RIG_LABELS,
+  autoRigJointLabel,
   autoRigRequestSchema,
   type AutoRigAdoptedModel,
   type AutoRigInspection,
@@ -207,7 +207,7 @@ function JointView({
                     strokeWidth={2}
                     role="button"
                     tabIndex={disabled ? -1 : 0}
-                    aria-label={`${view === "front" ? "正面" : "侧面"}${AUTO_RIG_LABELS[key]}`}
+                    aria-label={`${view === "front" ? "正面" : "侧面"}${autoRigJointLabel(key, inspection.settings.pose)}`}
                     aria-disabled={disabled}
                     onPointerDown={event => {
                       if (disabled) return;
@@ -263,7 +263,7 @@ function JointView({
                       fontSize={18}
                       pointerEvents="none"
                     >
-                      {AUTO_RIG_LABELS[key]}
+                      {autoRigJointLabel(key, inspection.settings.pose)}
                     </text>
                   ) : null}
                 </g>
@@ -632,7 +632,7 @@ export function ManhuaAutoRigEditorView({
     } else if(action.operation==="rigSubmit") {
       if(active || !inspection || !inspectionTask || !joints || !confirmed || !imagesReady)throw new Error("须在原绑骨面板核对单人姿态、正侧面关节点并确认后才能绑定，未提交。");
       if(!window.confirm("按页面已人工核对的关节点生成带骨候选？原模型保留。"))return "用户取消绑骨。";
-      await submit({stage:"bind",requestId:crypto.randomUUID(),assetRef,sourceJobId:inspectionTask.params.sourceJobId,settings:inspectionTask.params.settings,inspectionRequestId:inspectionTask.params.requestId,sourceDigest:inspection.sourceDigest,joints,singleHuman:true,landmarksManuallyConfirmed:true},true);
+      await submit({stage:"bind",requestId:crypto.randomUUID(),assetRef,sourceJobId:inspectionTask.params.sourceJobId,settings:inspectionTask.params.settings,inspectionRequestId:inspectionTask.params.requestId,sourceDigest:inspection.sourceDigest,joints,singleHuman:inspectionTask.params.settings.pose !== "quadruped",...(inspectionTask.params.settings.pose === "quadruped" ? {singleQuadruped:true as const} : {}),landmarksManuallyConfirmed:true},true);
     } else {
       if(active || task?.output?.stage!=="bind" || !bindReady || (action.operation==="rigAdopt" && !quality))throw new Error("须先在原面板查看带骨变形结果并确认质量，未采用或还原。");
       if(!window.confirm(action.operation==="rigRestore"?"恢复本次绑骨前的原模型？候选保留。":"采用已确认质量的带骨候选？原模型保留可还原。"))return "用户取消模型采用/还原。";
@@ -652,11 +652,11 @@ export function ManhuaAutoRigEditorView({
   return (
     <section
       className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-2xl border border-border bg-card p-5 text-foreground shadow-xl"
-      aria-label="人体模型绑骨"
+      aria-label="角色模型绑骨"
     >
       <header className="mb-4 flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold">{label} · 人体绑骨</h2>
+          <h2 className="text-lg font-semibold">{label} · 角色绑骨</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             检查模型 → 校正关节 → 检查变形 → 另存采用
           </p>
@@ -666,8 +666,7 @@ export function ManhuaAutoRigEditorView({
         </button>
       </header>
       <p className="mb-3 text-sm text-muted-foreground">
-        仅支持单人、直立 A / T
-        姿态、封闭连通的无骨人体。不会生成眼骨或表情，也不会删除原模型。关闭后，已提交任务仍在后台运行。
+        支持单人 A / T 姿态或单个四足站姿的封闭连通无骨模型。不会生成眼骨或表情，也不会删除原模型。关闭后，已提交任务仍在后台运行。
       </p>
       <fieldset disabled={active} className="grid gap-3 sm:grid-cols-3">
         <label>
@@ -677,7 +676,7 @@ export function ManhuaAutoRigEditorView({
             className={field}
             value={settings.pose}
             onChange={e => {
-              setSettings(s => ({ ...s, pose: e.target.value as "A" | "T" }));
+              setSettings(s => ({ ...s, pose: e.target.value as AutoRigSettings["pose"] }));
               setInspectionTask(null);
               setJoints(null);
               setConfirmed(false);
@@ -685,6 +684,7 @@ export function ManhuaAutoRigEditorView({
           >
             <option value="T">T形 · 双臂平举</option>
             <option value="A">A形 · 双臂斜向下展开</option>
+            <option value="quadruped">四足 · 四蹄着地站姿</option>
           </select>
         </label>
         <label>
@@ -791,7 +791,7 @@ export function ManhuaAutoRigEditorView({
             >
               {AUTO_RIG_JOINTS.map(key => (
                 <option key={key} value={key}>
-                  {AUTO_RIG_LABELS[key]}
+                  {autoRigJointLabel(key, inspection.settings.pose)}
                 </option>
               ))}
             </select>
@@ -841,8 +841,7 @@ export function ManhuaAutoRigEditorView({
               disabled={active || !imagesReady}
               onChange={e => setConfirmed(e.target.checked)}
             />
-            我已确认这是单人直立 {settings.pose}{" "}
-            姿态，并核对正面、侧面全部关节点
+            我已确认{settings.pose === "quadruped" ? "这是单个四足站姿模型" : `这是单人直立 ${settings.pose} 姿态`}，并核对正面、侧面全部关节点
           </label>
           <button
             className={button}
@@ -857,7 +856,8 @@ export function ManhuaAutoRigEditorView({
                 inspectionRequestId: inspectionTask.params.requestId,
                 sourceDigest: inspection.sourceDigest,
                 joints,
-                singleHuman: true,
+                singleHuman: inspectionTask.params.settings.pose !== "quadruped",
+                ...(inspectionTask.params.settings.pose === "quadruped" ? {singleQuadruped:true as const} : {}),
                 landmarksManuallyConfirmed: true,
               })
             }

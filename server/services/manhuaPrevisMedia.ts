@@ -8,7 +8,7 @@ type PrevisMediaJob = {
   output: unknown;
 };
 
-export type ManhuaPrevisMediaAsset = "preview" | "layers";
+export type ManhuaPrevisMediaAsset = "preview" | "layers" | "scene" | "animation" | "animation-frames";
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -36,6 +36,27 @@ export function resolveManhuaPrevisMedia(
   if (input?.action !== "manhua_previs") return null;
   const output = record(job.output);
   if (!output) return null;
+  if (asset === "animation" || asset === "animation-frames") {
+    const animation=record(output.animation);
+    const preview=typeof output.gcsUri === "string" ? output.gcsUri : "";
+    const match=/^gs:\/\/[^/]+\/post-prod\/([1-9]\d*)\/previs\/[^/]+\/preview\.mp4$/.exec(preview);
+    const isFrames=asset === "animation-frames";
+    const uri=animation?.[isFrames ? "framesGcsUri" : "glbGcsUri"];
+    const digest=animation?.[isFrames ? "framesSha256" : "sha256"];
+    const file=isFrames ? "animation.frames.json" : "animation.glb";
+    if (!match || match[1]!==String(userId) || uri!==preview.replace(/preview\.mp4$/,file)
+      || typeof digest!=="string" || !/^[a-f0-9]{64}$/.test(digest)) return null;
+    return {gcsUri:uri as string,contentType:isFrames?"application/json":"model/gltf-binary",fileName:file};
+  }
+  if (asset === "scene") {
+    const preview = typeof output.gcsUri === "string" ? output.gcsUri : "";
+    const scene = typeof output.sceneGcsUri === "string" ? output.sceneGcsUri : "";
+    const match = /^gs:\/\/[^/]+\/post-prod\/([1-9]\d*)\/previs\/[^/]+\/preview\.mp4$/.exec(preview);
+    if (!match || match[1] !== String(userId)
+      || scene !== preview.replace(/preview\.mp4$/, "scene.blend")
+      || typeof output.sceneSha256 !== "string" || !/^[a-f0-9]{64}$/.test(output.sceneSha256)) return null;
+    return { gcsUri: scene, contentType: "application/octet-stream", fileName: `白模动画工程-${job.id}.blend` };
+  }
   if (asset === "preview") {
     const gcsUri = typeof output.gcsUri === "string" ? output.gcsUri : "";
     if (!/^gs:\/\/[^/]+\/post-prod\/\d+\/previs\/[^/]+\/preview\.mp4$/.test(gcsUri)) return null;

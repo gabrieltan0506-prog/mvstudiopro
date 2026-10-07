@@ -534,8 +534,8 @@ if any(actor.get('riggedModel') for actor in spec['actors']):
     for actor,source_rig,_contacts,_stance,_error in rigs:
         config=actor.get('riggedModel')
         if not config: continue
-        if actor['shape']!='human' or not actor.get('assetRef'):
-            raise ValueError('带骨角色须绑定项目人体角色')
+        if actor['shape'] not in ('human','horse') or not actor.get('assetRef') or (actor['shape']=='horse') != (config.get('rigKind')=='quadruped'):
+            raise ValueError('带骨角色须绑定项目人体或对应四足马模型')
         if any(actor['id'] in (e['actorId'],e['targetActorId']) for e in events):
             raise ValueError('带骨角色尚未经过双人接触校正，不得冒用源白模接触报告')
         row=next(item for item in manifests if item['actorId']==actor['id'])
@@ -548,7 +548,11 @@ if any(actor.get('riggedModel') for actor in spec['actors']):
         if model['report']['weightedVertices']>model['inspection']['vertices']:
             raise ValueError('角色导入后实际顶点数超过预检，未开始动画与渲染')
         appearance=prepare_workbench_appearance(model)
-        retarget_from_source(source_rig,model,scene.frame_start,scene.frame_end)
+        source_bone_map = None
+        if actor['shape'] == 'horse':
+            from previs_quadruped import SOURCE_BONE_MAP
+            source_bone_map = SOURCE_BONE_MAP
+        retarget_from_source(source_rig,model,scene.frame_start,scene.frame_end,source_bone_map)
         if config.get('performance'):
             apply_performance(model,config['performance']['controller'],config['performance']['cues'],
                 scene.frame_start,scene.frame_end,24)
@@ -561,6 +565,8 @@ if any(actor.get('riggedModel') for actor in spec['actors']):
             '实测（test_previs_drama_rigged.py，1.0 倍与 1.5 倍棍人身高两具夹具）行礼/指向/看向按身高等比转移，'
             '落座深度比等比值浅 3.4%；坐下因棍人静止姿态屈膝、真模静止姿态直腿，脚会穿地 21—32 厘米，已在提交与渲染两处拒绝；'
             '走位抬脚残差 ≤2.0 厘米；看向只转头骨，肩线偏转是位置量、重定向不转移；'+appearance['boundaryZh']})
+        if actor['shape'] == 'horse':
+            model['report']['boundaryZh'] = '真实四足蒙皮按当前horse驱动映射前后四腿、躯干、颈与头，保持目标骨长；尚未验真实蹄底接地、受伤倒地或人与马接触，不能用白模报告冒充质量验收；'+appearance['boundaryZh']
         models.append(model)
     # 只有真实模型进入基础色预演；无贴图的白模/地面继续使用原材质色。
     scene.display.shading.color_type='TEXTURE'
@@ -886,6 +892,12 @@ if any(row['contactError']>.005 for row in report.get('interactions',[])):
     raise ValueError('双人互动实际接触误差未过验收')
 if any(actor['stanceDrift']>.005 for actor in report['actors']):
     raise ValueError('支撑脚漂移未过验收')
+# Explicit export identity excludes hidden source substitutes and the whitebox ground.
+if spec.get('exportAnimation'):
+    for meshes in display_meshes.values():
+        for obj in meshes: obj['previs_animation_object']=True
+    for handle in effect_handles:
+        for obj in handle.get('objects',[]): obj['previs_animation_object']=True
 frames=out/'frames';frames.mkdir(exist_ok=True)
 scene.render.filepath=str(frames/'frame-')
 bpy.ops.wm.save_as_mainfile(filepath=str(out/'scene.blend'))

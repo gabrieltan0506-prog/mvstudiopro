@@ -326,3 +326,12 @@ PR1444保留草稿；两批代码dd7a18ad/be0beec1已推。固定全仓5732过/2
 ## 每日Vercel Preview清理修复 2026-09-13T13:42:50
 
 用户明确要求补好自动清理。隔离worktree /private/tmp/mvs-vercel-preview-daily-0913，分支fix/vercel-preview-daily-0913，基于main cda8f95c。Fly实际凭证已加载；服务端Vercel项目查询HTTP200，真实ID和team固定。已接入index启动/停机入口，每日北京时间10:40，正常Preview7天/失败1天，状态持久到/data/vercel-prune-audit/daily-YYYY-MM-DD.json，零DELETE在途部署延期15分钟，完成或未知结果不当日重放。新运行器固定项目/团队，每删前查询BUILDING/QUEUED/INITIALIZING，三状态在Fly真实v6查询均HTTP200/count0。独立审查发现锁恢复竞态并已修复为独占recovery.guard，9项锁测试通过。当前清理18项+锁9项、Vitest三文件27项均通过；非增量类型检查进行中。未提交/推送/部署，未假称生产定时已生效。残余：外部promote极短竞态；恢复guard持有中崩溃可能需人工核实。
+
+## 2026-10-07T23:58:26+08:00 · 第二集與跨集顧問集中交接（部分完成）
+
+- PR1678，分支fix/ep2-animation-chain-1007；業務commit3d154153、runtime證據commitaa3aee4d。同工程各集全文、模型/世界/白模/音樂/動畫/來源匹配特效身份完整進顧問，審片特殊分支補實際原生builder接線。MEDIUM/0.7/65536/原採樣契約不變；前集正文與采用身份不冒稱前集實際音畫。
+- 四足站姿16骨兼容槽、原熱權重與重導入保護、既有horse前後腿映射與嚴格報告驗證；人體舊回執兼容。新增本人永久scene.blend鑑權下載，保留動作/鏡頭原工程。最後增量tsc退出0，定向證據與完整來源SHA見docs/evidence/ep2-animation-continuity-1007。
+- 原合成馬蒙皮探針復用，不重生成；實際horse驅動對既有GLB48幀runtime通過，排除root位移四腿mesh最大變形0.244195–0.244790米，raw/parsed分存永久GCS、readbackSHA對帳。failed setup receipts亦永久保留，沒有改業務門禁讓fixture通過。此非真Tripo馬/接地/倒地/接觸/正式影片驗收。
+- 先生A/+X正側面原UI42個關節投影校正，衣袍遮住髖膝屬估計；只提交一次nativebind request cd680b98-20ea-4096-8307-d7f2c1096b8a、job rig_3a2d83355dccc907f6e31498dd9e4a69b4a49bc84c54f219。15:56:54UTC查running、heartbeat15:56:25、errornull，不重提交、不停worker。
+- 原worker7812595b294778 performance4x/8GB、webd892541f602228 shared4x/8GB。worker自動停止後因已授權probe、最新全隊列空核對才復用啟動；沒有新機。現有nativebind在途不得停機/合併部署。
+- 用户本人合并。剩真墨屠綁骨、候選變形品質與采用、場景機位/動畫GS合成、白模與動畫預覽、BGM采用混音及正式工作流驗收；完整第二集沒有交付，不稱30分鐘全完工。新圖/模型/3DGS/BGM无需重購，不調視頻生成模型。

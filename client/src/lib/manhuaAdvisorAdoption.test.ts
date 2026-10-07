@@ -88,7 +88,7 @@ const source=readFileSync(new URL("../pages/OmniCanvas.tsx",import.meta.url),"ut
 const tree=ts.createSourceFile("OmniCanvas.tsx",source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);let callback="";const hostHelpers:string[]=[];
 function visit(n:ts.Node){if(ts.isFunctionDeclaration(n)&&n.name&&["applyTemplateRewriteCandidate","applyTemplateRewriteCandidates"].includes(n.name.text))hostHelpers.push(n.getText(tree));if(ts.isJsxAttribute(n)&&n.name.getText(tree)==="onApplyRewrite"&&n.initializer&&ts.isJsxExpression(n.initializer))callback=n.initializer.expression!.getText(tree);ts.forEachChild(n,visit);}visit(tree);
 const callbackJs=ts.transpileModule(`${hostHelpers.join("\n")}\n(${callback})`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
-it("生产OmniCanvas回调只有持久化成功后才改状态，失败不清理当前工程",()=>{
+it("生产OmniCanvas回调只有持久化成功后才改状态，失败不清理当前工程",async()=>{
  for(const failAt of [0,1,3]){
   const f=fixture(),s=storage(failAt),setters:Record<string,ReturnType<typeof vi.fn>>={};
   for(const name of ["setBlocks","setEdges","bumpManhuaOutboundEpoch","setDirectorBoardMotionOverlayBySegment","setWriterPackDiff","setWriterPack","setWriterConfirmed","setDirectorUnlocked","setWorkflowPhase","setWriterFocusEpisode","setWriterConfirmBlockers","setAdvisorOpen","setAdvisorFocusSection"])setters[name]=vi.fn(()=>{expect(s.writes.length).toBeGreaterThanOrEqual(4);});
@@ -97,8 +97,8 @@ it("生产OmniCanvas回调只有持久化成功后才改状态，失败不清理
     expect(s.writes.length).toBeGreaterThanOrEqual(4);
     expect(latestDraftSnapshotRef.current.writerSession.writerPack).toEqual(plan.writerPack);
   });
-  const fn=runInNewContext(callbackJs,{...setters,...f,storyAssetRefreshLock:{current:false},latestDraftSnapshotRef,blocksRef:{current:f.blocks},buildManhuaWriterSession,refreshStoryAssetsAfterAdoption,advisorMountContinuation:{current:null},advisorComponentKey:"mounted",manhuaAdvisorMountKey,writerBusy:false,factoryBusy:false,assembleBusy:false,burnSubtitleBusy:false,segmentRefBusyId:null,assetStandardizeBusyId:null,asset3dBusyIds:[],sceneWorldBusyIds:[],directorBoardMotionOverlayBySegment:{},user:{id:1},crypto:{randomUUID:()=>"test-id"},toast:{error:vi.fn()},materializedBoardIdsRef:{current:{clear:vi.fn()}},prepareAdvisorRewriteAdoption,prepareAdvisorRewriteBatchAdoption,maskMediaProviderDetails:(x:string)=>x,persistAdvisorRewriteAdoption:(input:Parameters<typeof persistAdvisorRewriteAdoption>[0])=>persistAdvisorRewriteAdoption(input,s),diffManhuaWriterPacks});
-  expect(fn(candidate)).toBe(failAt===0);
+  const fn=runInNewContext(callbackJs,{...setters,...f,storyAssetRefreshLock:{current:false},advisorRewriteAdoptionBusyRef:{current:false},advisorRewriteRuntimeBusyRef:{current:false},advisorRewriteHasActiveWork,latestDraftSnapshotRef,blocksRef:{current:f.blocks},buildManhuaWriterSession,refreshStoryAssetsAfterAdoption,advisorMountContinuation:{current:null},advisorComponentKey:"mounted",manhuaAdvisorMountKey,writerBusy:false,factoryBusy:false,assembleBusy:false,burnSubtitleBusy:false,segmentRefBusyId:null,assetStandardizeBusyId:null,asset3dBusyIds:[],sceneWorldBusyIds:[],directorBoardMotionOverlayBySegment:{},user:{id:1},crypto:{randomUUID:()=>"test-id"},toast:{error:vi.fn()},materializedBoardIdsRef:{current:{clear:vi.fn()}},prepareAdvisorRewriteAdoption,prepareAdvisorRewriteBatchAdoption,maskMediaProviderDetails:(x:string)=>x,persistAdvisorRewriteAdoptionWithSnapshot:async(input:Parameters<typeof persistAdvisorRewriteAdoption>[0]&{beforeCommit?:()=>void})=>{input.beforeCommit?.();return persistAdvisorRewriteAdoption(input,s)},diffManhuaWriterPacks});
+  expect(await fn(candidate)).toBe(failAt===0);
   if(failAt){for(const setter of Object.values(setters))expect(setter).not.toHaveBeenCalled();expect(refreshStoryAssetsAfterAdoption).not.toHaveBeenCalled();}
   else{expect(setters.setWriterConfirmed).toHaveBeenCalledWith(false);expect(setters.setDirectorUnlocked).toHaveBeenCalledWith(false);expect(setters.setWriterPack.mock.calls[0][0].episodes[1].body).toBe(candidate.rewrittenBody);expect(refreshStoryAssetsAfterAdoption).toHaveBeenCalledOnce();}
  }
@@ -131,4 +131,10 @@ it('顾问改前备份同时保存制作偏好供原导入入口恢复',()=>{
  const plan=prepareAdvisorRewriteAdoption(f);const key=persist(plan,f,s);
  expect(JSON.parse(s.getItem(key)!).previousFactoryPrefs).toBe(prefs);
  expect(s.getItem('mv-manhua-factory-character-prefs-v1')).toBe(prefs);
+});
+
+it("生产OmniCanvas等待备份期间启动任务时阻止写回",async()=>{
+ const f=fixture(),busyRef={current:false},commit=vi.fn(),toastError=vi.fn();
+ const fn=runInNewContext(callbackJs,{...f,storyAssetRefreshLock:{current:false},advisorRewriteAdoptionBusyRef:{current:false},advisorRewriteRuntimeBusyRef:busyRef,advisorRewriteHasActiveWork,blocksRef:{current:f.blocks},writerBusy:false,factoryBusy:false,assembleBusy:false,burnSubtitleBusy:false,segmentRefBusyId:null,assetStandardizeBusyId:null,asset3dBusyIds:[],sceneWorldBusyIds:[],directorBoardMotionOverlayBySegment:{},user:{id:1},crypto:{randomUUID:()=>"test-id"},toast:{error:toastError},prepareAdvisorRewriteBatchAdoption,maskMediaProviderDetails:(x:string)=>x,persistAdvisorRewriteAdoptionWithSnapshot:async(input:{beforeCommit?:()=>void})=>{busyRef.current=true;input.beforeCommit?.();commit();}});
+ expect(await fn(candidate)).toBe(false);expect(commit).not.toHaveBeenCalled();expect(toastError).toHaveBeenCalledOnce();
 });

@@ -9,8 +9,10 @@ import type { ManhuaCustomAssetRef } from "@shared/manhuaCustomAssetRefs";
 import { parseManhuaClipTargetDurationSec, resolveClipLocalSegmentIndex, type ManhuaWorkbenchShot } from "@shared/manhuaScriptWorkbench";
 import { customAssetRefClaimsAnchor } from "@shared/manhuaAssetScriptSync";
 import { normalizeCompilerEngineId } from "@shared/manhuaShotIR";
+import type { ManhuaVfxState } from "@shared/manhuaVfx";
 import type { CanvasBlock } from "./canvasTypes";
 import { buildAdvisorPrevisSummary } from "./manhuaAdvisorPrevis";
+import { buildAdvisorWorkflowEvidence } from "./manhuaAdvisorWorkflowEvidence";
 import { getBlockEpisodeIndex } from "./canvasDramaStudio";
 import { buildManhuaAdvisorGenerationMonitor, advisorGenerationContextZh, type AdvisorGenerationStep } from "./manhuaAdvisorGenerationMonitor";
 
@@ -275,6 +277,7 @@ export function buildManhuaAdvisorProject(input: {
   refs: ManhuaCustomAssetRef[];
   blocks: CanvasBlock[];
   selection?: AdvisorSelection | null;
+  vfx?: { scopeKey: string; episodeIndex: number; state: ManhuaVfxState };
 } & AdvisorProjectSignals): {
   context: ManhuaCreativeAdvisorContext;
   issues: AdvisorIssue[];
@@ -358,7 +361,7 @@ export function buildManhuaAdvisorProject(input: {
   if (modelReady > 0 && rigged === 0) {
     issues.push({
       id: "rig",
-      text: `已有 ${modelReady} 个 3D 模型未绑骨：不挡静帧与成片，但白模里这些角色只能站着。`,
+      text: `已有 ${modelReady} 个 3D 模型，当前白模尚无带骨模型配置；这不证明模型文件无骨或其他集未绑骨。需核对实际模型与采用记录；无骨网格只能整物移动，几何白模仍能预演动作。`,
       phase: "storyboard",
       blocking: false,
     });
@@ -410,7 +413,9 @@ export function buildManhuaAdvisorProject(input: {
       videoModel: engine.videoModel || "未选择",
       writerConfirmed: input.writerConfirmed,
       episodeBody: episode?.body || "",
+      continuityEpisodes: input.pack?.episodes.map(ep => ({ episodeIndex: ep.index, title: ep.title || "", body: ep.body || "", ...(ep.endHook ? { endHook: ep.endHook } : {}) })),
       assetSummary: excerptEvidence(assetSummary, LIMITS.assetSummaryChars, "资产摘要", contextNotes),
+      workflowEvidenceZh: buildAdvisorWorkflowEvidence(input.refs, input.blocks, input.vfx),
       shotSummary: excerptEvidence(shotSummary, LIMITS.shotSummaryChars, shot ? "选中镜头" : "本集分镜与成片提示词", contextNotes),
       previsSummary: excerptEvidence([advisorGenerationContextZh(generationSteps), buildAdvisorPrevisSummary(scoped)].filter(Boolean).join("\n\n"), LIMITS.previsSummaryChars, "本集生成步骤与白模规格", contextNotes),
       blockers: issues.map((issue) => issue.text),

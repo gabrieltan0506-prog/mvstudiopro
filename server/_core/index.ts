@@ -1,3 +1,4 @@
+import {registerManhuaStageWorldBridge} from "../services/manhuaStageWorldBridge";
 import { registerCreativeVoice } from "../routers/creativeVoice";
 import { registerManhuaTemplateCatalogStream } from "../routers/manhuaTemplateCatalogStream";
 import { startRuntimeMemorySampling } from "../services/runtimeMemory";
@@ -256,6 +257,7 @@ async function startServer() {
   });
   registerGcsTransfer(app);
   registerArtMotionEvidence(app);
+  registerManhuaStageWorldBridge(app);
   app.use(express.json({ limit: "650mb" }));
   app.use(express.urlencoded({ limit: "650mb", extended: true }));
 
@@ -636,7 +638,7 @@ async function startServer() {
       res.setHeader("Cache-Control", "private, no-store, max-age=0");
       const jobId = String(req.params.jobId || "");
       const asset = String(req.params.asset || "");
-      if (!/^prv_[a-f0-9]{48}$/.test(jobId) || (asset !== "preview" && asset !== "layers")) {
+      if (!/^prv_[a-f0-9]{48}$/.test(jobId) || (asset !== "preview" && asset !== "layers" && asset !== "scene" && asset !== "animation" && asset !== "animation-frames")) {
         return res.status(404).json({ error: "not found" });
       }
       const ctx = await createContext({ req: req as any, res: res as any } as any);

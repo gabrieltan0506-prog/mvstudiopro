@@ -1,0 +1,17 @@
+{
+  "at": "2026-10-07T15:47:18.533Z",
+  "exitCode": 1,
+  "prefix": "post-prod/1/isolated-probes/ep2-horse-retarget-1007-1791388031876",
+  "receipts": [
+    {
+      "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/1/isolated-probes/ep2-horse-retarget-1007-1791388031876/blender.log",
+      "bytes": 812,
+      "sha256": "4760c9cf7306771ff91c62b4473d6996a701e646c024d85df0b2ed77c9d6528a",
+      "generation": "1791388037119786"
+    }
+  ],
+  "activeAfter": [],
+  "maxDeltaMeters": null,
+  "productionReady": false,
+  "qualityAccepted": false
+}

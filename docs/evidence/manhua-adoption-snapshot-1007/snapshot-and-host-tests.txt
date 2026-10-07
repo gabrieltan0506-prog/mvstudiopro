@@ -1,0 +1,11 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-cdn-1007
+
+ ✓ client/src/lib/manhuaAdvisorSnapshotAdoption.test.ts (5 tests) 29ms
+ ✓ client/src/lib/manhuaAdvisorAdoption.test.ts (11 tests | 10 skipped) 32ms
+
+ Test Files  2 passed (2)
+      Tests  6 passed | 10 skipped (16)
+   Start at  22:22:54
+   Duration  5.76s (transform 3.24s, setup 0ms, collect 9.54s, tests 61ms, environment 0ms, prepare 256ms)
+

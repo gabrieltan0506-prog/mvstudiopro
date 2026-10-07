@@ -88,8 +88,8 @@ export function applyRigForm(
   }
 ): PrevisRiggedModel | undefined {
   if (!form.enabled) return undefined;
-  if (context.shape !== "human" || context.hasCreature)
-    throw new Error("带骨角色仅支持普通人形，不能与四足或魔化预设同时应用");
+  if (context.hasCreature)
+    throw new Error("带骨角色不能与魔化预设同时应用");
   if (!context.taskId || form.sourceJobId !== context.taskId)
     throw new Error("当前角色没有匹配版本的已成功3D模型，请重新选择当前模型");
   const boneMap = Object.fromEntries(
@@ -98,11 +98,13 @@ export function applyRigForm(
       .filter(([, value]) => value)
   );
   const data: Record<string, unknown> = {
+    ...(context.shape === "horse" ? {rigKind:"quadruped"} : {}),
     sourceJobId: form.sourceJobId,
     forwardAxis: form.forwardAxis,
     targetHeight: numeric(form.targetHeight, "模型高度"),
     ...(Object.keys(boneMap).length ? { boneMap } : {}),
   };
+  if (form.performanceEnabled && context.shape === "horse") throw new Error("四足模型不能复用人体眼骨与表情控制器");
   if (form.performanceEnabled) {
     const expressions = Object.fromEntries(
       Object.keys(RIG_EXPRESSIONS).map(key => {

@@ -7,6 +7,8 @@ import { stripManhuaFactoryCanvasArtifacts } from "./canvasDramaStudio";
 import { markManhuaDirectorBoardOverlaysForReview, type ManhuaDirectorBoardOverlayBySegment } from "./manhuaDirectorBoardStore";
 import type { CanvasBlock, CanvasEdge } from "./canvasTypes";
 import { ADVISOR_BACKUP_PREFIX } from "./manhuaAdvisorBackups";
+import { currentManhuaProjectScope } from "@shared/manhuaProjectScope";
+import { saveSceneProductionBackup } from "./manhuaSceneProductionBackups";
 
 const CANVAS_KEY = "mv-freeform-canvas-v1";
 const OVERLAY_KEY = "mv-manhua-director-board-overlay-v1";
@@ -110,6 +112,39 @@ export function persistAdvisorRewriteAdoption(input: {
     throw new Error(restored ? "改写保存失败，已保留原工程与旧稿备份，未采用。" : "改写保存失败且存储回退未完成，请勿刷新；旧稿完整备份已保存，可下载恢复。");
   }
   return backupKey;
+}
+
+/** Use the existing immutable snapshot store before committing any new draft. */
+export async function persistAdvisorRewriteAdoptionWithSnapshot(
+  input: Parameters<typeof persistAdvisorRewriteAdoption>[0] & { beforeCommit?: () => void },
+  storage: Parameters<typeof persistAdvisorRewriteAdoption>[1] = localStorage,
+  saveSnapshot = saveSceneProductionBackup,
+): Promise<string> {
+  const scope = JSON.stringify(currentManhuaProjectScope());
+  const keys = [MANHUA_WRITER_SESSION_LS_KEY, CANVAS_KEY, OVERLAY_KEY, "mv-manhua-factory-character-prefs-v1"];
+  const before = keys.map(key => storage.getItem(key));
+  let snapshot = "";
+  // Prepare using the same transaction serializer, without changing stored state.
+  const key = persistAdvisorRewriteAdoption(input, {
+    getItem: k => storage.getItem(k),
+    setItem: (k, value) => { if (k.startsWith(ADVISOR_BACKUP_PREFIX)) snapshot = value; },
+    removeItem: () => { throw new Error("备份准备过程异常，未采用改写。"); },
+  });
+  if (!snapshot) throw new Error("旧稿快照不完整，未采用改写。");
+  await saveSnapshot(input.userId, key, snapshot);
+  if (scope !== JSON.stringify(currentManhuaProjectScope()) || keys.some((k, i) => storage.getItem(k) !== before[i]))
+    throw new Error("备份期间作品或资产已改变，旧稿已保留，未采用改写。");
+  input.beforeCommit?.();
+  // Keep the original write/rollback contract; the verified snapshot is already saved.
+  return persistAdvisorRewriteAdoption(input, {
+    getItem: k => storage.getItem(k),
+    setItem: (k, value) => {
+      if (k === key) {
+        if (value !== snapshot) throw new Error("旧稿快照已变化，未采用改写。");
+      } else storage.setItem(k, value);
+    },
+    removeItem: k => storage.removeItem(k),
+  });
 }
 
 /** 批次先验证每一集，再一次备份和写入整稿，避免循环setState覆盖前一集。 */

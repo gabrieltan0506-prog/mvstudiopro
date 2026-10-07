@@ -25,7 +25,7 @@ export type EpisodeOptimizationWorkspace = {
   model: ManhuaWriterModel;
   comparisonHost: HTMLElement | null;
   onFocusEpisode: (index: number) => void;
-  onApplyCandidates: (candidates: AdvisorRewriteCandidate[]) => boolean;
+  onApplyCandidates: (candidates: AdvisorRewriteCandidate[]) => boolean | Promise<boolean>;
 };
 type Saved = {
   selected: number[];
@@ -361,7 +361,7 @@ export default function ManhuaEpisodeOptimization(
       persist({ results: next });
     }
   }
-  function adopt(all: boolean) {
+  async function adopt(all: boolean) {
     if (!activeResult || activeResult.mode !== "optimize" || !edit) return;
     const candidates = all
       ? activeResult.candidates.map(c =>
@@ -372,7 +372,7 @@ export default function ManhuaEpisodeOptimization(
       candidates.forEach(c =>
         validateAdvisorRewriteBody(c.originalBody, c.rewrittenBody, c.endHook)
       );
-      if (props.onApplyCandidates(candidates))
+      if (await props.onApplyCandidates(candidates))
         toast.success("优化稿已套用，旧稿已备份");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "优化稿尚未通过检查");

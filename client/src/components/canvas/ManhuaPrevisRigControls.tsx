@@ -90,7 +90,7 @@ export function ManhuaPrevisRigControls({
     setError("");
     setNotice("");
   }, [actor.id, appliedKey, model?.taskId]);
-  const incompatible = actor.shape !== "human" || !!actor.creature;
+  const incompatible = !!actor.creature;
   const updateCue = (index: number, patch: Partial<RigCueForm>) =>
     setForm(f => ({
       ...f,
@@ -477,7 +477,7 @@ export function ManhuaPrevisRigControls({
           角色制作人员在这里完成一次准备。本项目其他段可复用同一模型的配置；换模型后需要重新核对。
         </p>
         <p className="mb-2 text-amber-200/80">
-          只支持已带骨、已蒙皮的人形模型。模型原始姿态和接地仍需检查；暂不兼容双人接触。复杂材质可能无法预演。
+          支持已带骨、已蒙皮的人物与四足马模型，须选择对应骨架类型。模型原始姿态和接地仍需检查；暂不兼容双人接触。复杂材质可能无法预演。
         </p>
         <fieldset disabled={disabled} className="space-y-3 disabled:opacity-50">
           <label className="flex items-center gap-2">
@@ -498,7 +498,7 @@ export function ManhuaPrevisRigControls({
           </p>
           {incompatible && (
             <p className="text-amber-200">
-              四足或魔化预设不能同时使用人形带骨模型。
+              魔化预设不能同时使用带骨模型。
             </p>
           )}
           {form.enabled && (

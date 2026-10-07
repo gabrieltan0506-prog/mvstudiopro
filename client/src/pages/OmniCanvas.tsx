@@ -1,3 +1,4 @@
+import {requireCurrentStageAnimation} from "@/lib/manhuaStageAnimationBinding";
 import { saveSceneProductionBackup } from "@/lib/manhuaSceneProductionBackups";
 import {creativeStudioAudioAssets} from "@/lib/creativeStudioAudio";
 import type { AdvisorEffectsControl, AdvisorEffectsRegistration } from "@shared/manhuaAdvisorEffects";
@@ -59,7 +60,7 @@ import { ImageWorldStudio, type ImageWorldBlockUpdate } from "@/components/canva
 import { creativeStudioRevision } from "@shared/creativeStudio";
 import { imageWorldStateSchema } from "@shared/imageWorld";
 import { ArtMotionStudio } from "@/components/canvas/ArtMotionStudio";
-import { artMotionStateSchema, defaultArtMotionSpec, type ArtMotionState } from "@shared/artMotion";
+import { artMotionStateSchema, artMotionSpecSchema, defaultArtMotionSpec, normalizeArtMotionJobStatus, type ArtMotionSpec, type ArtMotionState } from "@shared/artMotion";
 import { manhuaPostProdScopeKey } from "@/lib/postProdWorkshop";
 import { buildManhuaPrevisAudio } from "@shared/manhuaPrevisAudio";
 import { ManhuaAdvisorKnowledgePanel } from "@/components/canvas/ManhuaAdvisorKnowledgePanel";
@@ -68,7 +69,7 @@ import { ManhuaPrevisAudioControls } from "@/components/canvas/ManhuaPrevisAudio
 import { checkManhuaAdvisorPrevisLaunch } from "@/lib/manhuaAdvisorPrevisLaunch";
 import ManhuaOutlineTemplateRewrite from "@/components/canvas/ManhuaOutlineTemplateRewrite";
 import { advisorReconfirmationEpisodeIndexes, advisorReconfirmationFromEpisode, type AdvisorBackupEntry } from "@/lib/manhuaAdvisorBackups";
-import { advisorRewriteHasActiveWork, prepareAdvisorRewriteAdoption, prepareAdvisorRewriteBatchAdoption, prepareManualEpisodeEditAdoption, type ManualEpisodeEdit, persistAdvisorRewriteAdoption } from "@/lib/manhuaAdvisorAdoption";
+import { advisorRewriteHasActiveWork, prepareAdvisorRewriteAdoption, prepareAdvisorRewriteBatchAdoption, prepareManualEpisodeEditAdoption, type ManualEpisodeEdit, persistAdvisorRewriteAdoptionWithSnapshot } from "@/lib/manhuaAdvisorAdoption";
 import type { AdvisorRewriteCandidate, AdvisorTemplatePlan } from "@/lib/manhuaAdvisorTemplates";
 import { manhuaAdvisorMountKey, type AdvisorMountContinuation } from "@/lib/manhuaAdvisorSession";
 import {
@@ -1665,6 +1666,7 @@ function OmniCanvasWorkspace() {
     refs: customAssetRefs,
     blocks,
     selection: advisorSelection,
+    vfx: currentVfxState ? { scopeKey: vfxScopeKey, episodeIndex: writerFocusEpisode, state: currentVfxState } : undefined,
     activeStudio: advisorStudio,
     gate: advisorGate.errors,
     segments: advisorGate.segments,
@@ -1679,7 +1681,7 @@ function OmniCanvasWorkspace() {
     writerBusy,
     factoryBusy,
     assembleBusy,
-  }), [projectScope?.projectId, writerPack, projectBible, writerFocusEpisode, workflowPhase, explicitWriterVideoModel, writerConfirmed, customAssetRefs, blocks, advisorSelection, advisorStudio, advisorGate, advisorSignals, assembleBusy, factoryBusy, writerBusy]);
+  }), [projectScope?.projectId, writerPack, projectBible, writerFocusEpisode, workflowPhase, explicitWriterVideoModel, writerConfirmed, customAssetRefs, blocks, manhuaVfxByScope, vfxScopeKey, advisorSelection, advisorStudio, advisorGate, advisorSignals, assembleBusy, factoryBusy, writerBusy]);
   const advisorPrevisEditing = useMemo(() => {
     if (!advisorPrevisClipId) return {};
     const clip = blocks.find(b => b.id === advisorPrevisClipId && !b.archivedFromPreviousScript);
@@ -3622,7 +3624,10 @@ function OmniCanvasWorkspace() {
     check();const parsed=artMotionStateSchema.parse(state),current=blocksRef.current;
     const old=current.find(b=>b.id===id);
     if(expected===null?!!old:!old||JSON.stringify(old.artMotion)!==JSON.stringify(expected))throw new Error("动画记录已变化，未覆盖较新的方案");
-    const block=old??{...defaultCanvasBlock("video",80,80),id};
+    const source=parsed.spec.stageAnimation;
+    const sourceClip=source ? current.find(b=>b.id===source.clipId) : undefined;
+    if(source && (adopt || parsed.request?.status==="submitting"))requireCurrentStageAnimation(current,latestCustomAssetRefs.current,source);
+    const block=old??{...defaultCanvasBlock("video",80,80),id,...(sourceClip && getBlockEpisodeIndex(sourceClip) ? {episodeIndex:getBlockEpisodeIndex(sourceClip)!} : {})};
     const updated:CanvasBlock={...block,artMotion:parsed,prompt:parsed.spec.title||"艺术动画",...(adopt?{
       outputUrl:adopt.url,outputUrls:[adopt.url],status:"done" as const,
       uploadedAssets:[...block.uploadedAssets.filter(a=>a.id!==`art-output-${parsed.request?.id}`),{id:`art-output-${parsed.request?.id}`,url:adopt.url,previewUrl:adopt.url,gcsUri:adopt.gcsUri,fileName:parsed.spec.title||"艺术动画",kind:"video" as const,mimeType:parsed.request?.spec.alpha?"video/quicktime":"video/mp4"}],
@@ -3636,6 +3641,19 @@ function OmniCanvasWorkspace() {
     if(!await syncCloudDraftPayload(buildLocalCloudDraftSnapshot(draft)))throw new Error("云端尚未确认动画方案，原请求编号已保留，请续查");
     check();
   },[vfxPersistenceScope,vfxPersistenceEpoch,user?.id,cloudSyncReady,syncCloudDraftPayload]);
+  const renderStageAnimation=useCallback(async (raw:ArtMotionSpec)=>{
+    const spec=artMotionSpecSchema.parse(raw),source=spec.stageAnimation;
+    if(!source)throw new Error("缺少场景动画原工程");
+    requireCurrentStageAnimation(blocksRef.current,latestCustomAssetRefs.current,source);
+    const prior=blocksRef.current.find(b=>b.artMotion?.request && ["submitting","queued","running"].includes(b.artMotion.request.status)
+      && JSON.stringify(b.artMotion.request.spec.stageAnimation)===JSON.stringify(source));
+    const id=prior?.id??`art-motion-${crypto.randomUUID()}`;
+    const state:ArtMotionState=prior?.artMotion??{version:1,spec,history:[],request:{id:crypto.randomUUID(),spec,status:"submitting"}};
+    if(!prior)await persistArtMotionBlock(id,state,null);
+    const receipt=await queueBurnSubtitleMutation.mutateAsync({action:"art_motion",scopeKey:artMotionScopeKey,requestId:state.request!.id,params:state.request!.spec});
+    await persistArtMotionBlock(id,{...state,request:{...state.request!,jobId:receipt.jobId,status:normalizeArtMotionJobStatus(receipt.status)}},state);
+    window.dispatchEvent(new CustomEvent("art-motion-open",{detail:{blockId:id}}));
+  },[persistArtMotionBlock,artMotionScopeKey,queueBurnSubtitleMutation]);
   const createArtMotionBlock=useCallback(async()=>{
     const id=`art-motion-${crypto.randomUUID()}`;
     await persistArtMotionBlock(id,{version:1,spec:defaultArtMotionSpec(),history:[]},null);
@@ -10515,49 +10533,58 @@ function OmniCanvasWorkspace() {
     }
   }
 
-  function applyTemplateRewriteCandidate(input: AdvisorRewriteCandidate): boolean { return applyTemplateRewriteCandidates([input]); }
-  function applyTemplateRewriteCandidates(inputs: AdvisorRewriteCandidate[], manualEdit?: ManualEpisodeEdit): boolean {
-    let plan: ReturnType<typeof prepareAdvisorRewriteAdoption>;
+  const advisorRewriteAdoptionBusyRef = useRef(false);
+  const advisorRewriteRuntimeBusyRef = useRef(false);
+  advisorRewriteRuntimeBusyRef.current = storyAssetRefreshLock.current || writerBusy || factoryBusy || assembleBusy || burnSubtitleBusy || Boolean(segmentRefBusyId) || Boolean(assetStandardizeBusyId) || asset3dBusyIds.length > 0 || sceneWorldBusyIds.length > 0;
+  function applyTemplateRewriteCandidate(input: AdvisorRewriteCandidate): Promise<boolean> { return applyTemplateRewriteCandidates([input]); }
+  async function applyTemplateRewriteCandidates(inputs: AdvisorRewriteCandidate[], manualEdit?: ManualEpisodeEdit): Promise<boolean> {
+    if (advisorRewriteAdoptionBusyRef.current) { toast.message("正文正在安全保存，请勿重复采用。"); return false; }
+    advisorRewriteAdoptionBusyRef.current = true;
     try {
-      const input = { writerPack, projectBible, blocks, edges,
-        overlays: directorBoardMotionOverlayBySegment,
-        busy: storyAssetRefreshLock.current || writerBusy || factoryBusy || assembleBusy || burnSubtitleBusy || Boolean(segmentRefBusyId) || Boolean(assetStandardizeBusyId) || asset3dBusyIds.length > 0 || sceneWorldBusyIds.length > 0 };
-      plan = manualEdit ? prepareManualEpisodeEditAdoption({...input,edit:manualEdit}) : prepareAdvisorRewriteBatchAdoption({...input,candidates:inputs});
-      persistAdvisorRewriteAdoption({ plan, original: { writerPack: writerPack!, projectBible, blocks, edges, overlays: directorBoardMotionOverlayBySegment },
-        userId: String(user?.id ?? "local"), backupId: crypto.randomUUID(), createdAt: new Date().toISOString() });
-    } catch (error) {
-      toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "改写未能安全保存，未采用。");
-      return false;
-    }
-    const { candidate, writerPack: nextPack, canvas: cleaned, overlays } = plan;
-    // Save succeeded and stale-candidate validation passed. Preserve this exact
-    // adoption's voice session; imports/manual edits still invalidate the key.
-    advisorMountContinuation.current = {
-      draftKey: manhuaAdvisorMountKey(user?.id != null ? String(user.id) : undefined, projectBible?.confirmedAt, nextPack),
-      mountedKey: advisorComponentKey,
-    };
-    setBlocks(cleaned.blocks);
-    setEdges(cleaned.edges);
-    bumpManhuaOutboundEpoch();
-    setDirectorBoardMotionOverlayBySegment(overlays);
-    materializedBoardIdsRef.current.clear();
-    setWriterPackDiff(diffManhuaWriterPacks(writerPack, nextPack));
-    setWriterPack(nextPack);
-    setWriterConfirmed(false);
-    setDirectorUnlocked(false);
-    setWorkflowPhase("outline");
-    setWriterFocusEpisode(candidate.episodeIndex);
-    setWriterConfirmBlockers([]);
-    setAdvisorFocusSection(null);
-    // 先同步本轮已落盘快照，自动更新读取这份已接受正文，不读上一渲染的旧稿。
-    if (latestDraftSnapshotRef.current) latestDraftSnapshotRef.current = {
-      ...latestDraftSnapshotRef.current, blocks:cleaned.blocks, edges:cleaned.edges,
-      writerSession:buildManhuaWriterSession({...latestDraftSnapshotRef.current.writerSession,writerPack:nextPack,writerConfirmed:false,directorUnlocked:false,workflowPhase:"outline"}),
-    };
-    blocksRef.current = cleaned.blocks;
-    void refreshStoryAssetsAfterAdoption(plan);
-    // 套用不是关闭顾问；继续显示结果与备份入口。
-    return true;
+      let plan: ReturnType<typeof prepareAdvisorRewriteAdoption>;
+      try {
+        const input = { writerPack, projectBible, blocks, edges,
+          overlays: directorBoardMotionOverlayBySegment,
+          busy: storyAssetRefreshLock.current || writerBusy || factoryBusy || assembleBusy || burnSubtitleBusy || Boolean(segmentRefBusyId) || Boolean(assetStandardizeBusyId) || asset3dBusyIds.length > 0 || sceneWorldBusyIds.length > 0 };
+        plan = manualEdit ? prepareManualEpisodeEditAdoption({...input,edit:manualEdit}) : prepareAdvisorRewriteBatchAdoption({...input,candidates:inputs});
+        await persistAdvisorRewriteAdoptionWithSnapshot({ plan, beforeCommit: () => {
+          if (advisorRewriteRuntimeBusyRef.current || storyAssetRefreshLock.current || advisorRewriteHasActiveWork(blocksRef.current)) throw new Error("备份期间已提交其他制作任务，旧稿保留，未采用改写。");
+        }, original: { writerPack: writerPack!, projectBible, blocks, edges, overlays: directorBoardMotionOverlayBySegment },
+          userId: String(user?.id ?? "local"), backupId: crypto.randomUUID(), createdAt: new Date().toISOString() });
+      } catch (error) {
+        toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "改写未能安全保存，未采用。");
+        return false;
+      }
+      const { candidate, writerPack: nextPack, canvas: cleaned, overlays } = plan;
+      // Save succeeded and stale-candidate validation passed. Preserve this exact
+      // adoption's voice session; imports/manual edits still invalidate the key.
+      advisorMountContinuation.current = {
+        draftKey: manhuaAdvisorMountKey(user?.id != null ? String(user.id) : undefined, projectBible?.confirmedAt, nextPack),
+        mountedKey: advisorComponentKey,
+      };
+      setBlocks(cleaned.blocks);
+      setEdges(cleaned.edges);
+      bumpManhuaOutboundEpoch();
+      setDirectorBoardMotionOverlayBySegment(overlays);
+      materializedBoardIdsRef.current.clear();
+      setWriterPackDiff(diffManhuaWriterPacks(writerPack, nextPack));
+      setWriterPack(nextPack);
+      setWriterConfirmed(false);
+      setDirectorUnlocked(false);
+      setWorkflowPhase("outline");
+      setWriterFocusEpisode(candidate.episodeIndex);
+      setWriterConfirmBlockers([]);
+      setAdvisorFocusSection(null);
+      // 先同步本轮已落盘快照，自动更新读取这份已接受正文，不读上一渲染的旧稿。
+      if (latestDraftSnapshotRef.current) latestDraftSnapshotRef.current = {
+        ...latestDraftSnapshotRef.current, blocks:cleaned.blocks, edges:cleaned.edges,
+        writerSession:buildManhuaWriterSession({...latestDraftSnapshotRef.current.writerSession,writerPack:nextPack,writerConfirmed:false,directorUnlocked:false,workflowPhase:"outline"}),
+      };
+      blocksRef.current = cleaned.blocks;
+      void refreshStoryAssetsAfterAdoption(plan);
+      // 套用不是关闭顾问；继续显示结果与备份入口。
+      return true;
+    } finally { advisorRewriteAdoptionBusyRef.current = false; }
   }
 
   function renderEpisodeTextEditor(episode: NonNullable<typeof writerPack>["episodes"][number]) {
@@ -12428,6 +12455,7 @@ async function runAdvisorWriterTrial() {
                   }}
                   onUpdateClipAudioStudio={persistClipAudioStudio}
                   onUpdateClipPrevisStudio={canUseManhua3d ? persistClipPrevisStudio : undefined}
+                  onRenderStageAnimation={canUseManhua3d ? renderStageAnimation : undefined}
                   onLayoutReadableChain={() => {
                     setBlocks((prev) => {
                       try {

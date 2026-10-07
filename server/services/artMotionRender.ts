@@ -24,6 +24,8 @@ export async function renderArtMotion(
   signal: AbortSignal
 ) {
   signal.throwIfAborted();
+  const parsed=artMotionJobSchema.parse(raw);
+  if(parsed.params.stageAnimation){const {renderManhuaStageAnimation}=await import("./manhuaStageAnimationRender");return renderManhuaStageAnimation(parsed,userId,signal);}
   const root = await mkdtemp(path.join(tmpdir(), "art-motion-"));
   const engine = path.resolve("client/public/art-motion/engine");
   const prefix = `post-prod/${userId.replace(/[^0-9A-Za-z_-]/g, "")}/art-motion-evidence/${randomUUID()}`;

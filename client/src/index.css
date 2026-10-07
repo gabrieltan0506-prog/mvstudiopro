@@ -635,11 +635,11 @@
 }
 
 /* 二级工具占用同页内容区；原制作页保留挂载，收起后恢复原状态。 */
-#manhua-workbench-shell.mh-redesign[data-manhua-secondary-active="true"] > :not([data-manhua-product-header]):not([data-manhua-secondary-studio]) {
+#manhua-workbench-shell.mh-redesign[data-manhua-secondary-active="true"] > :not([data-manhua-product-header]):not([data-manhua-secondary-studio]):not([data-manhua-model-overlay]) {
   display: none !important;
 }
 /* 提示词是常驻入口打开的独立审阅区，不埋在镜头清单或画布节点下面。 */
-#manhua-workbench-shell.mh-redesign[data-manhua-prompt-active="true"] > :not([data-manhua-product-header]):not([data-manhua-clip-prompt-review]) {
+#manhua-workbench-shell.mh-redesign[data-manhua-prompt-active="true"] > :not([data-manhua-product-header]):not([data-manhua-clip-prompt-review]):not([data-manhua-model-overlay]) {
   display: none !important;
 }
 #manhua-workbench-shell.mh-redesign > [data-manhua-secondary-studio] {

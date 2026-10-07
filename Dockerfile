@@ -6,8 +6,8 @@ WORKDIR /app
 RUN apt-get update \
  && apt-get install --no-install-recommends -y \
     ffmpeg python3 python3-pip python3-numpy curl \
-    blender xvfb xauth libgl1-mesa-dri \
-    unzip binutils poppler-utils \
+    xvfb xauth libgl1-mesa-dri libxxf86vm1 libsm6 libice6 libxkbcommon0 libegl1 libgl1 \
+    unzip xz-utils binutils poppler-utils \
     chromium \
     fonts-noto-cjk \
     fonts-noto-color-emoji \
@@ -28,10 +28,22 @@ RUN apt-get update \
  && pip3 install --break-system-packages yt-dlp \
  && rm -rf /var/lib/apt/lists/*
 
+# Official LTS binary pinned to the reviewed Linux x64 release and SHA-256.
+# The same image supplies website and heavy worker; no mutable apt Blender version.
+ARG BLENDER_VERSION=4.5.14
+ARG BLENDER_SHA256=9ba871ff2ecd36526b77432745980b7e6664ecd0c7ca11c48849073dcfe06da3
+RUN test "$(dpkg --print-architecture)" = "amd64" \
+ && curl --fail --location --retry 3 "https://download.blender.org/release/Blender4.5/blender-${BLENDER_VERSION}-linux-x64.tar.xz" -o /tmp/blender.tar.xz \
+ && echo "${BLENDER_SHA256}  /tmp/blender.tar.xz" | sha256sum --check --strict \
+ && mkdir -p /opt/blender \
+ && tar -xJf /tmp/blender.tar.xz --strip-components=1 -C /opt/blender \
+ && rm /tmp/blender.tar.xz
+ENV PATH="/opt/blender:${PATH}"
+
 # 白模由确定性脚本在无显示服务器上渲染；使用软件 GL，不要求生产 GPU。
 RUN blender --background --factory-startup --version \
  && blender --background --factory-startup --python-exit-code 1 \
-    --python-expr "import numpy; import io_scene_gltf2.blender.imp.gltf2_blender_mesh; print('GLTF_DEPENDENCIES_IMPORTED', numpy.__version__)" \
+    --python-expr "import numpy; import io_scene_gltf2; print('GLTF_DEPENDENCIES_IMPORTED', numpy.__version__)" \
  && command -v xvfb-run && command -v nice
 ENV LIBGL_ALWAYS_SOFTWARE=1
 

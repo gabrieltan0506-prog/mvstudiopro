@@ -1,0 +1,9 @@
+{
+  "client/src/lib/manhuaAdvisorAdoption.ts": "58953bdd6986684ae3e57a160b3a0e9e08395f47592a28377561b52b111c64df",
+  "client/src/pages/OmniCanvas.tsx": "fcd0c381f7760c7b57e38833b4648ab0bb9322202fe6265d91c37f717ed146d7",
+  "client/src/components/canvas/ManhuaCreativeAdvisorPanel.tsx": "a4a99f5151eafd19239510a34307a8a7b273969860e4dc562f271321c88520bf",
+  "client/src/components/canvas/ManhuaEpisodeOptimization.tsx": "ccd4bf248752fecfbb7c4971cd8af2d08842e0c3a13c5b8e4f1fb8a254ac32b4",
+  "client/src/components/canvas/ManhuaOutlineTemplateRewrite.tsx": "3eb9a1d62f7b199a52d03e05b8c144444655d5069547ca54eaea1320842805b5",
+  "client/src/lib/manhuaAdvisorAdoption.test.ts": "12cba91226ff18a5730111317b181db04dc8a5a0842509710cf82c5a8dc34476",
+  "client/src/lib/manhuaAdvisorSnapshotAdoption.test.ts": "bdc5cb075d4f07387ca5060a030aa515192ba0ebe5bf74ab9ee006fc8118d12c"
+}

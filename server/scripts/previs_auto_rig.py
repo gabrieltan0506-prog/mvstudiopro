@@ -133,11 +133,14 @@ def rig_confirmed_mesh(source, landmarks, confirmation, output_path, *, checkpoi
     from mathutils import Matrix, Vector
     contract = _contract()
     path = Path(output_path)
-    if not isinstance(confirmation, dict) or set(confirmation) != {
-            "singleHuman", "pose", "landmarksManuallyConfirmed", "sourceDigest"}:
-        raise ValueError("请先确认单人A/T姿态和当前模型的关节点")
-    if confirmation.get("singleHuman") is not True or confirmation.get("landmarksManuallyConfirmed") is not True or confirmation.get("pose") not in ("A", "T"):
-        raise ValueError("只接受已人工确认关节的单人 A/T 网格")
+    quadruped = isinstance(confirmation, dict) and confirmation.get("pose") == "quadruped"
+    required = {"singleHuman", "pose", "landmarksManuallyConfirmed", "sourceDigest"}
+    if quadruped:
+        required.add("singleQuadruped")
+    if not isinstance(confirmation, dict) or set(confirmation) != required:
+        raise ValueError("请先确认单个模型姿态和当前模型的关节点")
+    if confirmation.get("landmarksManuallyConfirmed") is not True or (quadruped and (confirmation.get("singleHuman") is not False or confirmation.get("singleQuadruped") is not True)) or (not quadruped and (confirmation.get("singleHuman") is not True or confirmation.get("pose") not in ("A", "T"))):
+        raise ValueError("只接受已人工确认关节的单人 A/T 或单个四足站姿网格")
     if source.type != "MESH" or source.mode != "OBJECT":
         raise ValueError("请使用物体模式下的独立无骨网格")
     original_digest = source_digest(source)
@@ -166,20 +169,24 @@ def rig_confirmed_mesh(source, landmarks, confirmation, output_path, *, checkpoi
         if not .02 <= (tail - head).length <= 1:
             raise ValueError("人工骨长不在原型支持范围")
         points[name] = (head, tail)
-    for side in (-1, 1):
-        suffix = str(side)
-        upper, forearm, hand = (points[key + suffix] for key in ("upper_arm", "forearm", "hand"))
-        if any((a[1] - b[0]).length > .005 for a, b in ((upper, forearm), (forearm, hand))):
-            raise ValueError("人工手臂关节必须连续")
-        arm = hand[1] - upper[0]
-        if arm.y * side < .25 or abs(arm.x) > .15 or arm.z > .05 or arm.z < -.7:
-            raise ValueError("人工关节点不符合 +X 朝向的 A/T 展臂范围")
-        if confirmation["pose"] == "T" and abs(arm.z) > .08:
-            raise ValueError("T 型手臂必须接近水平")
-        for key in ("upper_leg", "lower_leg"):
-            head, tail = points[key + suffix]
-            if tail.z >= head.z:
-                raise ValueError("腿部关节点必须符合直立姿态")
+    if quadruped:
+        from previs_quadruped import validate_landmarks
+        validate_landmarks(points)
+    else:
+        for side in (-1, 1):
+            suffix = str(side)
+            upper, forearm, hand = (points[key + suffix] for key in ("upper_arm", "forearm", "hand"))
+            if any((a[1] - b[0]).length > .005 for a, b in ((upper, forearm), (forearm, hand))):
+                raise ValueError("人工手臂关节必须连续")
+            arm = hand[1] - upper[0]
+            if arm.y * side < .25 or abs(arm.x) > .15 or arm.z > .05 or arm.z < -.7:
+                raise ValueError("人工关节点不符合 +X 朝向的 A/T 展臂范围")
+            if confirmation["pose"] == "T" and abs(arm.z) > .08:
+                raise ValueError("T 型手臂必须接近水平")
+            for key in ("upper_leg", "lower_leg"):
+                head, tail = points[key + suffix]
+                if tail.z >= head.z:
+                    raise ValueError("腿部关节点必须符合直立姿态")
     bm = bmesh.new()
     try:
         bm.from_mesh(source.data)
@@ -202,11 +209,12 @@ def rig_confirmed_mesh(source, landmarks, confirmation, output_path, *, checkpoi
         for first, second in (("upper_leg", "lower_leg"), ("lower_leg", "foot")):
             if (points[first + suffix][1] - points[second + suffix][0]).length > .005:
                 raise ValueError("人工腿部关节必须连续")
-    for first, second in (("pelvis", "spine"), ("spine", "neck"), ("neck", "head")):
-        if (points[first][1] - points[second][0]).length > .005:
-            raise ValueError("人工躯干关节必须连续")
-        if points[first][1].z <= points[first][0].z:
-            raise ValueError("躯干关节点必须符合直立姿态")
+    if not quadruped:
+        for first, second in (("pelvis", "spine"), ("spine", "neck"), ("neck", "head")):
+            if (points[first][1] - points[second][0]).length > .005:
+                raise ValueError("人工躯干关节必须连续")
+            if points[first][1].z <= points[first][0].z:
+                raise ValueError("躯干关节点必须符合直立姿态")
     # 在独立目录产出、验证后排他链接到目标；检查存在与真正发布之间不能覆盖他人文件。
     path.parent.mkdir(parents=True, exist_ok=True)
     audit_dir = Path(tempfile.mkdtemp(prefix="semi-rig-", dir=path.parent))
