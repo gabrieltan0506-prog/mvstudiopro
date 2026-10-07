@@ -44,6 +44,7 @@ import {
 type Result = {
   gcsUri: string;
   url: string;
+  sceneUrl?: string;
   durationSec: number;
   clipId: string;
   requestId: string;
@@ -977,6 +978,12 @@ export function ManhuaPrevisStudioView({
           >
             采用为本段参考
           </button>
+          {preview?.requestId === take.requestId && preview.sceneUrl
+            && /^\/api\/manhua-previs-media\/prv_[a-f0-9]{48}\/scene$/.test(preview.sceneUrl) && (
+              <a className={button} href={manhuaPrevisMediaUrl(preview.sceneUrl)} download="白模动画工程.blend" target="_blank" rel="noreferrer">
+                下载动作与镜头工程
+              </a>
+            )}
           {preview?.requestId === take.requestId &&
             preview.layerBundle &&
             isPrevisMediaUrl(preview.layerBundle.url) && (

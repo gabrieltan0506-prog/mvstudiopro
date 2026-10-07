@@ -117,6 +117,13 @@ export const manhuaCreativeAdvisorContextSchema = z
     writerConfirmed: z.boolean(),
     // 正文完整传递，容量与模型上下文限制由原请求链明确报错，不按创作字数节选。
     episodeBody: contextText(null, "本集正文"),
+    // 同一已加载工程的各集全文；不得把计划正文冒充已经读过的成片。
+    continuityEpisodes: z.array(z.object({
+      episodeIndex: z.number().int().positive(),
+      title: contextText(null, "跨集标题"),
+      body: contextText(null, "跨集正文"),
+      endHook: contextText(null, "跨集结尾").optional(),
+    }).strict()).optional(),
     assetSummary: contextText(
       MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.assetSummaryChars,
       "资产摘要",
@@ -153,6 +160,7 @@ export const manhuaCreativeAdvisorContextSchema = z
       directionCardVersion: contextText(100, "导演包版本").optional(),
     }).strict().optional(),
     previsSummary: contextText(MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.previsSummaryChars, "白模规格摘要").optional(),
+    workflowEvidenceZh: contextText(null, "已加载作品任务记录").optional(),
     blockers: z
       .array(
         contextText(

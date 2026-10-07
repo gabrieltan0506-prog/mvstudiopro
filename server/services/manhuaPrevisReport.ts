@@ -19,7 +19,7 @@ import {
   previsActorVisibleAtFrame,
   type ManhuaPrevisRequest,
 } from "../../shared/manhuaPrevis";
-import { PREVIS_BODY_BONES } from "../../shared/manhuaPrevisRig";
+import { PREVIS_BODY_BONES, PREVIS_QUADRUPED_SOURCE_BONES } from "../../shared/manhuaPrevisRig";
 import { expectedPiggybackMotion, previsPiggybackSlipCatchSchema, previsPiggybackSetDownSchema } from "../../shared/manhuaPrevisPiggyback";
 
 const point = z.tuple([
@@ -101,6 +101,7 @@ export const previsReportSchema = z
               "rest-corrected-rotation-preserve-target-lengths"
             ),
             contactValidated: z.literal(false),
+            sourceBoneMap: z.record(z.enum(PREVIS_BODY_BONES), z.string().min(1).max(128)).optional(),
             boundaryZh: z.string().min(1),
             offscreenFrames: z.array(z.number().int().min(1).max(720)).max(720),
             performance: z
@@ -331,7 +332,8 @@ export function validatePrevisReport(
       config = actor.riggedModel!;
     if (
       !model ||
-      actor.shape !== "human" ||
+      (actor.shape !== "human" && actor.shape !== "horse") ||
+      (actor.shape === "horse") !== (config.rigKind === "quadruped") ||
       model.sourceJobId !== config.sourceJobId ||
       model.forwardAxis !== config.forwardAxis ||
       model.targetHeight !== config.targetHeight ||
@@ -340,6 +342,10 @@ export function validatePrevisReport(
       new Set(model.offscreenFrames).size !== model.offscreenFrames.length
     )
       throw new Error("带骨角色报告与配置不一致");
+    if ((config.rigKind === "quadruped" && !model.sourceBoneMap)
+      || (model.sourceBoneMap && PREVIS_BODY_BONES.some(name =>
+        model.sourceBoneMap![name] !== (config.rigKind === "quadruped" ? PREVIS_QUADRUPED_SOURCE_BONES[name] : name))))
+      throw new Error("带骨角色前后肢驱动映射缺失或与骨架类型不一致");
     const mapped = Object.values(model.boneMap);
     if (
       new Set(mapped).size !== PREVIS_BODY_BONES.length ||

@@ -509,12 +509,14 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
           path: ["actors", i, "creature"],
         });
       }
-      if (actor.riggedModel && (actor.shape !== "human" || !actor.assetRef))
+      if (actor.riggedModel && (!actor.assetRef || (actor.shape === "horse") !== (actor.riggedModel.rigKind === "quadruped")))
         ctx.addIssue({
           code: "custom",
-          message: "带骨角色须绑定项目人物并使用人体动作",
+          message: "带骨角色须绑定项目资产，人体/四足骨架必须与角色形态一致",
           path: ["actors", i, "riggedModel"],
         });
+      if (actor.riggedModel?.rigKind === "quadruped" && actor.riggedModel.performance)
+        ctx.addIssue({code:"custom",message:"四足模型不能复用人体眼骨与表情控制器",path:["actors",i,"riggedModel","performance"]});
       const cues = actor.riggedModel?.performance?.cues ?? [];
       cues.forEach((cue, j) => {
         if (

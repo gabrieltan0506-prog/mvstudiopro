@@ -48,6 +48,7 @@ export function collectPreparedRigProfiles(
           continue;
         const rig = parsed.data;
         const riggedModel: PreparedRigModel = {
+          ...(rig.rigKind ? {rigKind:rig.rigKind} : {}),
           sourceJobId: rig.sourceJobId,
           forwardAxis: rig.forwardAxis,
           targetHeight: rig.targetHeight,

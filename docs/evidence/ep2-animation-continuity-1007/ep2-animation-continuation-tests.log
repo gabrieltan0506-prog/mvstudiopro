@@ -1,0 +1,12 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-cdn-1007
+
+ ✓ server/services/manhuaPrevisMedia.test.ts (3 tests | 2 skipped) 7ms
+ ✓ server/services/manhuaPrevisReport.test.ts (61 tests | 59 skipped) 8ms
+ ✓ server/services/manhuaPrevisTask.test.ts (6 tests | 5 skipped) 6ms
+
+ Test Files  3 passed (3)
+      Tests  4 passed | 66 skipped (70)
+   Start at  23:21:01
+   Duration  1.57s (transform 466ms, setup 0ms, collect 1.61s, tests 21ms, environment 0ms, prepare 264ms)
+

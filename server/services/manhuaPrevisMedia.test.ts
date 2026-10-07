@@ -18,6 +18,14 @@ const job = {
 };
 
 describe("白模 Fly 媒体代理授权", () => {
+  it("动画工程保留同次任务身份，拒绝跨用户、跨请求和缺失摘要", () => {
+    const output = { ...job.output, sceneGcsUri: job.output.gcsUri.replace("preview.mp4", "scene.blend"), sceneSha256: "a".repeat(64) };
+    expect(resolveManhuaPrevisMedia({ ...job, output }, 7, "scene")).toMatchObject({ gcsUri: output.sceneGcsUri, contentType: "application/octet-stream" });
+    expect(resolveManhuaPrevisMedia({ ...job, output }, 8, "scene")).toBeNull();
+    expect(resolveManhuaPrevisMedia({ ...job, output: { ...output, sceneGcsUri: output.sceneGcsUri.replace("/request/", "/other/") } }, 7, "scene")).toBeNull();
+    expect(resolveManhuaPrevisMedia({ ...job, output: { ...output, sceneSha256: undefined } }, 7, "scene")).toBeNull();
+    expect(resolveManhuaPrevisMedia({ ...job, output: { ...output, gcsUri: output.gcsUri.replace("/7/", "/8/"), sceneGcsUri: output.sceneGcsUri.replace("/7/", "/8/") } }, 7, "scene")).toBeNull();
+  });
   it("只解析本人已成功任务的固定预览与分层对象", () => {
     expect(resolveManhuaPrevisMedia(job, 7, "preview")).toMatchObject({
       gcsUri: job.output.gcsUri,

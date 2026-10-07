@@ -6,6 +6,8 @@ import math
 from pathlib import Path
 import sys
 
+sys.path.insert(0, str(Path(__file__).parent))
+
 
 def module(name):
     spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(name + ".py"))
@@ -574,12 +576,20 @@ def run(request_file, source_file, output_dir):
                   "limitations": ["初始点是比例建议，必须对照模型人工校正", "仅封闭连通A/T人体，不含眼骨和表情", "本次合并%d个数值重合接缝点，原云模型保持不变" % merged]}
         result["limitations"].append("骨架在无材质的独立求解副本上求解（%d→%d 顶点），权重转回原模；原模字节、材质、UV、贴图不动" % (proxy_info["originalVertices"], proxy_info["proxyVertices"]))
         result["weightTransfer"] = proxy_info
-        result["orientationCheck"] = orientation_check(source)
+        if settings["pose"] == "quadruped":
+            result["limitations"][1] = "仅单个四足站姿无骨网格，不含嘴部/眼骨/表情；比例关节必须人工校正"
+            result["orientationCheck"] = {"suspect":False,"feetForwardMeters":0.,"depthMeters":result["bounds"][1][0]-result["bounds"][0][0],"widthMeters":result["bounds"][1][1]-result["bounds"][0][1],"reasons":[],"notes":["四足不适用人体展臂/脚尖朝向检测，请对照前侧视图确认马头朝+X与四腿位置"]}
+        else:
+            result["orientationCheck"] = orientation_check(source)
         if result["orientationCheck"]["suspect"]:
             result["limitations"].append("疑似前向轴不符：" + "；".join(result["orientationCheck"]["reasons"]) + "。请核对正面预览，必要时改 forwardAxis 重新检查")
         # 噪声线内不判朝向，但要把「为什么没判」说给用户听，避免以为自检没跑
         result["limitations"].extend(result["orientationCheck"].get("notes", []))
-        result["joints"] = suggestions(result["bounds"], settings["pose"])
+        if settings["pose"] == "quadruped":
+            from previs_quadruped import suggest_joints
+            result["joints"] = suggest_joints(result["bounds"])
+        else:
+            result["joints"] = suggestions(result["bounds"], settings["pose"])
         write_json(out / "report.json", result)
         bpy.ops.object.select_all(action="DESELECT")
         source.select_set(True)
@@ -597,7 +607,7 @@ def run(request_file, source_file, output_dir):
     # #1488 首次部署构建期在此处把契约摘要传了进去 → 「模型已变化」→ 构建失败。
     receipt = core.rig_confirmed_mesh(source, points, {
         "sourceDigest": core.source_digest(source), "pose": settings["pose"], "singleHuman": request["singleHuman"],
-        "landmarksManuallyConfirmed": request["landmarksManuallyConfirmed"]}, out / "model-proxy.glb", compact_proxy=True)
+        "landmarksManuallyConfirmed": request["landmarksManuallyConfirmed"], **({"singleQuadruped":request["singleQuadruped"]} if settings["pose"] == "quadruped" else {})}, out / "model-proxy.glb", compact_proxy=True)
     proxy_sha = receipt["outputSha256"]
     # 回执对外的 sourceDigest 必须是契约摘要：TS validateAutoRigBindReport 拿 request.sourceDigest（=检查回执的契约摘要）硬比；
     # core 写进回执的是几何摘要，不改写线上绑定仍会被拒「绑骨回执」。几何自证另存一键，不丢证据。

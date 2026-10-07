@@ -211,7 +211,7 @@ it("0917：同编号已有任务时再确认不再核回执；无任务时业务
   await expect(submitPrevisTask(7, input, io)).rejects.not.toBeInstanceOf(PrevisRejectedError);
 });
 
-it("白模成功回执把预览和分层地址固定为本人鉴权的 Fly 中转", async () => {
+it("白模成功回执把预览、动画工程和分层地址固定为本人鉴权的 Fly 中转", async () => {
   const s = createManhuaPrevisStudio(2, "11111111-1111-4111-8111-111111111111");
   const input = {
     requestId: "44444444-4444-4444-8444-444444444444",
@@ -229,6 +229,7 @@ it("白模成功回执把预览和分层地址固定为本人鉴权的 Fly 中�
       output: {
         requestId: input.requestId, clipId: input.clipId, durationSec: input.spec.durationSec,
         gcsUri,
+        sceneGcsUri: gcsUri.replace("preview.mp4", "scene.blend"), sceneSha256: "a".repeat(64),
         layerBundle: {
           gcsUri: gcsUri.replace("preview.mp4", "layer-bundle.zip"),
           format: "previs-layers-v1", bytes: 123, sha256: "a".repeat(64),
@@ -241,5 +242,6 @@ it("白模成功回执把预览和分层地址固定为本人鉴权的 Fly 中�
   const response = await getPrevisTask(7, input.requestId, d);
   const output = response!.output as any;
   expect(output.url).toBe(`/api/manhua-previs-media/${id}/preview`);
+  expect(output.sceneUrl).toBe(`/api/manhua-previs-media/${id}/scene`);
   expect(output.layerBundle.url).toBe(`/api/manhua-previs-media/${id}/layers`);
 });

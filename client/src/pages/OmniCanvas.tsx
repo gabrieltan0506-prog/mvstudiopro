@@ -1665,6 +1665,7 @@ function OmniCanvasWorkspace() {
     refs: customAssetRefs,
     blocks,
     selection: advisorSelection,
+    vfx: currentVfxState ? { scopeKey: vfxScopeKey, episodeIndex: writerFocusEpisode, state: currentVfxState } : undefined,
     activeStudio: advisorStudio,
     gate: advisorGate.errors,
     segments: advisorGate.segments,
@@ -1679,7 +1680,7 @@ function OmniCanvasWorkspace() {
     writerBusy,
     factoryBusy,
     assembleBusy,
-  }), [projectScope?.projectId, writerPack, projectBible, writerFocusEpisode, workflowPhase, explicitWriterVideoModel, writerConfirmed, customAssetRefs, blocks, advisorSelection, advisorStudio, advisorGate, advisorSignals, assembleBusy, factoryBusy, writerBusy]);
+  }), [projectScope?.projectId, writerPack, projectBible, writerFocusEpisode, workflowPhase, explicitWriterVideoModel, writerConfirmed, customAssetRefs, blocks, manhuaVfxByScope, vfxScopeKey, advisorSelection, advisorStudio, advisorGate, advisorSignals, assembleBusy, factoryBusy, writerBusy]);
   const advisorPrevisEditing = useMemo(() => {
     if (!advisorPrevisClipId) return {};
     const clip = blocks.find(b => b.id === advisorPrevisClipId && !b.archivedFromPreviousScript);

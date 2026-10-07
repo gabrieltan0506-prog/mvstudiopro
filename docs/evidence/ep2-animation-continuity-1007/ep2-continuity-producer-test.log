@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-cdn-1007
+
+ ✓ client/src/lib/manhuaAdvisorWorkflowEvidence.test.ts (3 tests | 2 skipped) 11ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 2 skipped (3)
+   Start at  23:37:55
+   Duration  3.81s (transform 1.82s, setup 0ms, collect 3.40s, tests 11ms, environment 0ms, prepare 98ms)
+

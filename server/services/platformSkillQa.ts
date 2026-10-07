@@ -443,6 +443,9 @@ export function buildManhuaCreativeAdvisorLlmMessages(input: {
     "【本集正文·以实际提供范围为准】",
     episodeBody || "（当前尚无正文）",
     "",
+    "【同一工程各集保存正文·创作事实，不是成片观察】",
+    JSON.stringify(input.context.continuityEpisodes || []),
+    "未提供的集数无法核实。区分剧本连续性、采用身份差异和实际音画矛盾；后者必须有读片证据。",
     "【实际资产摘要】",
     input.context.assetSummary || "（当前尚无资产摘要）",
     "",
@@ -451,6 +454,9 @@ export function buildManhuaCreativeAdvisorLlmMessages(input: {
     "",
     "【生成步骤监看与白模编辑规格·只读状态，未读取视频】",
     input.context.previsSummary || "（未提供白模规格，不能推测角色站位或动作）",
+    "【当前作品已加载的任务与采用身份·只读记录，不等于媒体质量验收】",
+    input.context.workflowEvidenceZh || "（未提供作品任务身份，不能查询或推断其他集绑骨历史）",
+    "仅按明确集数、模型任务、候选与采用身份回答。带骨配置计数不是GLB骨架检测结果；当前集没有配置不代表其他集未完成。不要将无法读取解释成未做，不编造任务或宣称检查过文件。",
     "",
     input.context.directionPackage ? `【项目提交的冻结导演包身份·需以下服务端核对】${JSON.stringify(input.context.directionPackage)}` : "",
     buildAdvisorPrevisCraftBlock(input.context.studio3d || input.context.directionPackage || {}, "general"),
@@ -892,7 +898,7 @@ export async function askPlatformSkillQa(params: {
       if (hop) params.onStream?.("reset", hop.label);
       if (manhuaContext?.filmReview) {
         params.onStream?.("reset", "Gemini Flash · 影片审阅");
-        parsed = parseAskJson(await askManhuaFilmReview(params.userId, manhuaContext.filmReview, params.rawQuestion || question), true, true);
+        parsed = parseAskJson(await askManhuaFilmReview(params.userId, manhuaContext.filmReview, params.rawQuestion || question, undefined, { episodeIndex: manhuaContext.episodeIndex, episodeBody: manhuaContext.episodeBody, episodes: manhuaContext.continuityEpisodes || [], workflowEvidenceZh: manhuaContext.workflowEvidenceZh || "" }), true, true);
         usedModel = "gemini-3.8-flash"; lastErr = ""; break;
       }
       if (manhuaContext?.subtitleReview) {

@@ -143,6 +143,9 @@ function present(
     response.output = {
       ...output,
       url: `/api/manhua-previs-media/${encodeURIComponent(row.id)}/preview`,
+      ...(typeof output.sceneGcsUri === "string" && typeof output.sceneSha256 === "string"
+        ? { sceneUrl: `/api/manhua-previs-media/${encodeURIComponent(row.id)}/scene` }
+        : {}),
       ...(layerBundle
         ? { layerBundle: {
             ...layerBundle,

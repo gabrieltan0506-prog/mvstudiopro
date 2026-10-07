@@ -1,0 +1,51 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-cdn-1007
+
+ ❯ client/src/lib/manhuaAdvisorWorkflowEvidence.test.ts (4 tests | 1 failed | 3 skipped) 6ms
+   × 跨集任务证据不截断尾部，特效只读取匹配当前来源的保存记录 5ms
+     → [
+  {
+    "code": "invalid_value",
+    "values": [
+      "outline",
+      "assets",
+      "storyboard",
+      "edit",
+      "final"
+    ],
+    "path": [
+      "stage"
+    ],
+    "message": "Invalid option: expected one of \"outline\"|\"assets\"|\"storyboard\"|\"edit\"|\"final\""
+  }
+]
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  client/src/lib/manhuaAdvisorWorkflowEvidence.test.ts > 跨集任务证据不截断尾部，特效只读取匹配当前来源的保存记录
+ZodError: [
+  {
+    "code": "invalid_value",
+    "values": [
+      "outline",
+      "assets",
+      "storyboard",
+      "edit",
+      "final"
+    ],
+    "path": [
+      "stage"
+    ],
+    "message": "Invalid option: expected one of \"outline\"|\"assets\"|\"storyboard\"|\"edit\"|\"final\""
+  }
+]
+ ❯ client/src/lib/manhuaAdvisorWorkflowEvidence.test.ts:49:51
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 3 skipped (4)
+   Start at  23:39:09
+   Duration  3.18s (transform 1.58s, setup 0ms, collect 2.90s, tests 6ms, environment 0ms, prepare 63ms)
+

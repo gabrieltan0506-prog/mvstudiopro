@@ -43,19 +43,16 @@ describe("角色表单显式应用边界", () => {
     f.boneMap = { head: " RealHead " };
     expect(applyRigForm(f, context)?.boneMap).toEqual({ head: "RealHead" });
   });
-  it("没有当前成功任务、旧版本、非人和魔化不允许应用", () => {
+  it("没有当前成功任务、旧版本和魔化不允许应用", () => {
     expect(() =>
       applyRigForm(basic(), { ...context, taskId: undefined })
     ).toThrow("匹配版本");
     expect(() =>
       applyRigForm(basic(), { ...context, taskId: "m3d_new" })
     ).toThrow("匹配版本");
-    expect(() => applyRigForm(basic(), { ...context, shape: "horse" })).toThrow(
-      "普通人形"
-    );
     expect(() =>
       applyRigForm(basic(), { ...context, hasCreature: true })
-    ).toThrow("普通人形");
+    ).toThrow("魔化");
   });
   it("停用可清除过期配置，不受缺失资产阻塞", () =>
     expect(
