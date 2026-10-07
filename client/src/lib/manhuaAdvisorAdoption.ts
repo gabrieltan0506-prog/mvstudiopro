@@ -9,6 +9,7 @@ import type { CanvasBlock, CanvasEdge } from "./canvasTypes";
 import { ADVISOR_BACKUP_PREFIX } from "./manhuaAdvisorBackups";
 import { currentManhuaProjectScope } from "@shared/manhuaProjectScope";
 import { saveSceneProductionBackup } from "./manhuaSceneProductionBackups";
+import { slimBlocksForLocalPersist } from "./manhuaCloudDraftSync";
 
 const CANVAS_KEY = "mv-freeform-canvas-v1";
 const OVERLAY_KEY = "mv-manhua-director-board-overlay-v1";
@@ -93,7 +94,9 @@ export function persistAdvisorRewriteAdoption(input: {
   if (!priorSession || typeof priorSession !== "object" || Array.isArray(priorSession)) throw new Error("现有剧本存档不可读取，未采用改写。");
   const session = buildManhuaWriterSession({ ...priorSession, writerPack: plan.writerPack, projectBible: original.projectBible,
     writerConfirmed: false, directorUnlocked: false, workflowPhase: "outline", focusEpisode: plan.focusEpisode });
-  const values = [serializeManhuaWriterSession(session), JSON.stringify({ blocks: plan.canvas.blocks, edges: plan.canvas.edges }), JSON.stringify(plan.overlays)];
+  // 与日常画布保存共用媒体引用规则，避免把已缓存的长链接重新塞回小配额存档。
+  // 完整旧稿仍写入独立快照，不改变内存中的素材或清除历史文件。
+  const values = [serializeManhuaWriterSession(session), JSON.stringify({ blocks: slimBlocksForLocalPersist(plan.canvas.blocks), edges: plan.canvas.edges }), JSON.stringify(plan.overlays)];
   try {
     storage.setItem(backupKey, JSON.stringify({ createdAt: input.createdAt, writerPack: original.writerPack, projectBible: original.projectBible,
       episodeIndex: plan.candidate.episodeIndex, changedEpisodeIndexes: plan.changedEpisodeIndexes, technicalPlanNeedsReview: plan.technicalPlanNeedsReview,
@@ -103,13 +106,15 @@ export function persistAdvisorRewriteAdoption(input: {
   let written = 0;
   try {
     for (let i = 0; i < keys.length; i++) { storage.setItem(keys[i]!, values[i]!); written++; }
-  } catch {
+  } catch (error) {
     let restored = true;
     for (let i = written - 1; i >= 0; i--) {
       try { if (before[i] === null) storage.removeItem(keys[i]!); else storage.setItem(keys[i]!, before[i]!); }
       catch { restored = false; }
     }
-    throw new Error(restored ? "改写保存失败，已保留原工程与旧稿备份，未采用。" : "改写保存失败且存储回退未完成，请勿刷新；旧稿完整备份已保存，可下载恢复。");
+    const stage = ["剧本存档", "画布存档", "导演板存档"][written] || "工程存档";
+    const reason = error instanceof Error && error.name === "QuotaExceededError" ? "，浏览器存储空间不足" : "";
+    throw new Error(restored ? `改写保存失败（${stage}${reason}），已保留原工程与旧稿备份，未采用。` : `改写保存失败（${stage}${reason}）且存储回退未完成，请勿刷新；旧稿完整备份已保存，可下载恢复。`);
   }
   return backupKey;
 }

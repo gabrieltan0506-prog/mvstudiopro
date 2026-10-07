@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { prepareManualEpisodeEditAdoption, persistAdvisorRewriteAdoptionWithSnapshot } from "./manhuaAdvisorAdoption";
 import type { ManhuaWriterPack } from "@shared/manhuaWriterRoom";
 import { MANHUA_WRITER_SESSION_LS_KEY, buildManhuaWriterSession, serializeManhuaWriterSession } from "@shared/manhuaWriterSession";
+import { defaultCanvasBlock } from "./canvasTypes";
+import { makeLocalMediaPointer, rememberLocalMediaDisplay } from "./manhuaLocalMediaStore";
 
 function fixture(failWrite = 0) {
   const pack: ManhuaWriterPack = { seriesTitle: "墨菁传", logline: "取血", charactersMd: "先生", propsMd: "碗", locationsMd: "医馆", rawMarkdown: "旧稿", episodeCount: 2, episodes: [1,2].map(index => ({ index, title: `第${index}集`, body: `原稿${index}`, endHook: "悬念" })) };
@@ -15,6 +17,27 @@ function fixture(failWrite = 0) {
   return {input,storage,values,before,writes};
 }
 describe("immutable snapshot before real draft adoption (offline)",()=>{
+  it("近配额采用沿用已缓存图片的短引用，完整旧快照与其他集成片引用仍保留",async()=>{
+    const h=fixture();
+    const source="https://test.invalid/retained-reference.png?padding="+"x".repeat(300000);
+    const pointer=makeLocalMediaPointer("adoption-retained-image");
+    rememberLocalMediaDisplay({displayUrl:source,sourceUrl:source,pointer});
+    const block={...defaultCanvasBlock("image",0,0),id:"retained-character",outputUrl:source,outputUrls:[source],editFusionUrls:[source],outputText:"原文字".repeat(12000)};
+    const clip={...defaultCanvasBlock("video",0,0),id:"clip-e01-g01",episodeIndex:1,outputUrl:"https://test.invalid/ep1.mp4",outputUrls:["https://test.invalid/ep1.mp4"],refVideoUrl:"https://test.invalid/original.mp4"};
+    const original={...h.input.original,blocks:[block,clip]};
+    const plan=prepareManualEpisodeEditAdoption({...original,busy:false,edit:{episodeIndex:2,originalBody:"原稿2",originalEndHook:"悬念",body:"新剧情：先生取血救娘。",endHook:"红光"}});
+    let snapshot="";
+    const storage={...h.storage,setItem:(key:string,value:string)=>{if(key==="mv-freeform-canvas-v1"&&value.length>100000)throw new DOMException("quota","QuotaExceededError");h.storage.setItem(key,value);}};
+    await persistAdvisorRewriteAdoptionWithSnapshot({...h.input,original,plan},storage,async(_user,_key,value)=>{snapshot=value;});
+    const saved=JSON.parse(h.values.get("mv-freeform-canvas-v1")!);
+    expect(saved.blocks[0].editFusionUrls).toEqual([pointer]);
+    expect(saved.blocks[0].outputText).toBe(block.outputText);
+    expect(saved.blocks[1].outputUrls).toEqual(clip.outputUrls);
+    expect(saved.blocks[1].refVideoUrl).toBe(clip.refVideoUrl);
+    expect(JSON.parse(snapshot).canvas.blocks[0].editFusionUrls).toEqual([source]);
+    expect(original.blocks[0].editFusionUrls).toEqual([source]);
+    expect(JSON.parse(h.values.get(MANHUA_WRITER_SESSION_LS_KEY)!).writerPack.episodes[1].body).toContain("先生取血救娘");
+  });
   it("waits for the full snapshot outside localStorage, then adopts the new draft",async()=>{
     const h=fixture(); let release!:()=>void; let saved="";
     const save=vi.fn(async(_user:string,_key:string,json:string)=>{saved=json;expect(h.values).toEqual(h.before);await new Promise<void>(resolve=>{release=resolve;});});
