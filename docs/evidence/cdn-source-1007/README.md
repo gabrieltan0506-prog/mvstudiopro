@@ -24,3 +24,15 @@ Base: ca7a3c9957229f022146a217cc53dde970259c2b
 正式站仍需此 PR 部署後從使用者入口驗收；以上是 Fly 原生函式輔助探測，不是正式工作流驗收。不代用戶合併或部署。
 
 獨立急修樹 `pnpm exec tsc --noEmit --incremental --tsBuildInfoFile /tmp/cdn-1007.tsbuildinfo` exit 0，日志 `/tmp/cdn-1007-tsc.log`。5 個源碼/測試文件 SHA 與前述通過用例所在樹逐一一致；未重跑用例。
+
+## 使用者追加：新 CDN 自動適配
+
+可信來源站雙鑑權成功回覆 code=200 時，對其中新媒體網址逐次驗證 HTTPS、公網 DNS 與轉址；預檢連線固定至本次驗證 IP，最多4次轉址，沒有 Cookie/Authorization/sign。核驗得到的精確主機僅傳給本次回覆解析，不寫全域白名單、不變更來源鑑權域。保留來源原始 payload 不修改；解析使用轉址後的候選。HEAD 拒絕不等同影片不可播，最終仍沿原影片候選探測。
+
+新增16個定向離線測試分次通過：12個發現/匿名/不擴域/公網DNS固定/私網轉址/取消；2個原生來源函式雙鑑權接線；2個 HEAD403/405不誤殺候選。原8個已通過且前提不變的用例未重跑。
+
+Fly 新預檢 helper 對原回覆的720影片地址實際成功（2026-10-07T11:05:54.740Z），原/最終主機均ppvod021.zyxsuntech.com、0模型呼叫、沒有送来源鑑權。證據 `/data/diagnostics/cdn-119048-20261007/automatic-cdn-preflight.json`，開發bundle SHA 7a9e123d5284628c52345d81581b1edaaea79d1e5c7f8e37389adb6a2482ab62。後續僅放寬 HEAD 非2xx的候選保留與修正Set→Array.from，不影響本次2xx預檢證據，未重打已過探針。
+
+限制：自動適配的是可信來源 API 回傳的影片CDN；可攜帶來源Cookie/Token的站點網域仍须用户明确确认，防止任意站點取得帳號憑證。公網預檢不代表影片內容質量或整片學習通過。
+
+自動適配版增量 TypeScript 檢查通過（exit 0，/tmp/cdn-discovery-1007-tsc-r2.log）；首輪Set迭代相容錯誤已修，未改專案編譯目標。
