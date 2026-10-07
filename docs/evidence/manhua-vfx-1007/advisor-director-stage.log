@@ -1,0 +1,37 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-effects-1007
+
+ ❯ client/src/lib/manhuaAdvisorProject.test.ts (21 tests | 1 failed | 20 skipped) 25ms
+   × 1007导演包身份按当前工作流阶段解析，资产覆盖不误套分镜覆盖 24ms
+     → expected { …(2) } to deeply equal { …(2) }
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  client/src/lib/manhuaAdvisorProject.test.ts > 1007导演包身份按当前工作流阶段解析，资产覆盖不误套分镜覆盖
+AssertionError: expected { …(2) } to deeply equal { …(2) }
+
+- Expected
++ Received
+
+  Object {
+-   "directionCardId": "asset-stage-frozen",
+-   "directionCardVersion": "assets-v1",
++   "directionCardId": "parallel_action_editing",
++   "directionCardVersion": "standard-1",
+  }
+
+ ❯ client/src/lib/manhuaAdvisorProject.test.ts:380:93
+    378|  bible.directionCanon.cards.push(override);bible.directionCanon.author…
+    379|  bible.directionCanon.scopedOverrides=[{scope:"episode",episodeIndex:1…
+    380|  expect(buildManhuaAdvisorProject({...base,bible,phase:"assets"}).cont…
+       |                                                                                             ^
+    381|  expect(buildManhuaAdvisorProject({...base,bible,phase:"storyboard"}).…
+    382| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 20 skipped (21)
+   Start at  15:59:25
+   Duration  3.80s (transform 1.99s, setup 0ms, collect 3.03s, tests 25ms, environment 0ms, prepare 183ms)
+

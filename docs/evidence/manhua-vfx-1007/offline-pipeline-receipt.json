@@ -1,0 +1,166 @@
+{
+  "boundary": "synthetic source; injected renderer; real ffmpeg; no cloud or workflow acceptance",
+  "dir": "/var/folders/vl/bg8584qs3qz228dh8k68pwn00000gn/T/vfx-pipeline-evidence-AoM8Yi",
+  "result": {
+    "gcsUri": "gs://offline-only/output.mp4",
+    "url": "https://example.invalid/output.mp4",
+    "bytes": 11829,
+    "durationSec": 1,
+    "width": 64,
+    "height": 64,
+    "fps": 12,
+    "hasAudio": true,
+    "sha256": "b398df1290d3a54457ce57805c92cc040468a1889a192be3804d90ba36926685",
+    "sourceIdentity": {
+      "videoUri": "gs://offline-only/source.mp4",
+      "bytes": 11826,
+      "sha256": "1611fb578387bcd71d5a17bf646122404022b98ec03e4146c5abf22423e5d3ab"
+    },
+    "sourceKey": "offline-source-v1",
+    "composition": {
+      "version": 1,
+      "seed": 1,
+      "effects": [
+        {
+          "id": "shield",
+          "kind": "shield",
+          "startSec": 0,
+          "durationSec": 1,
+          "color": "#FF0000",
+          "scale": 0.2,
+          "intensity": 1,
+          "anchor": {
+            "space": "screen",
+            "position": [
+              0.5,
+              0.5
+            ]
+          }
+        }
+      ]
+    },
+    "requestId": "12345678-1234-4234-8234-123456789abc",
+    "coordinateSpace": "screen",
+    "boundaryZh": "按设定轨迹叠加，不含自动跟踪或人物遮挡",
+    "evidence": [
+      {
+        "name": "request.raw.json",
+        "gcsUri": "gs://offline-only/post-prod/7/vfx-evidence/ca606b42-3cfd-4ba6-95a6-03532b425cf3/request.raw.json",
+        "bytes": 389,
+        "sha256": "42abcc7833c5f464ae7cf8614afaae98cf90d8e44e3358f3530408c5f49c1234"
+      },
+      {
+        "name": "request.normalized.json",
+        "gcsUri": "gs://offline-only/post-prod/7/vfx-evidence/ca606b42-3cfd-4ba6-95a6-03532b425cf3/request.normalized.json",
+        "bytes": 389,
+        "sha256": "b05419f8983e178d2e47c883164f6af255b5c7dee7a88e200ca12142e862c081"
+      },
+      {
+        "name": "source-probe.raw.json",
+        "gcsUri": "gs://offline-only/post-prod/7/vfx-evidence/ca606b42-3cfd-4ba6-95a6-03532b425cf3/source-probe.raw.json",
+        "bytes": 4378,
+        "sha256": "3aea6c6ecf19311e1fb53267e45bf351850798c24f58d2cd18dd11b8e43e023f"
+      },
+      {
+        "name": "spec.normalized.json",
+        "gcsUri": "gs://offline-only/post-prod/7/vfx-evidence/ca606b42-3cfd-4ba6-95a6-03532b425cf3/spec.normalized.json",
+        "bytes": 236,
+        "sha256": "fa6648cb3f96c3ef6f507868643da716ebcece6e056494a36c937d598dbedefb"
+      },
+      {
+        "name": "renderer-input.raw.json",
+        "gcsUri": "gs://offline-only/post-prod/7/vfx-evidence/ca606b42-3cfd-4ba6-95a6-03532b425cf3/renderer-input.raw.json",
+        "bytes": 236,
+        "sha256": "fa6648cb3f96c3ef6f507868643da716ebcece6e056494a36c937d598dbedefb"
+      },
+      {
+        "name": "renderer-spec.normalized.json",
+        "gcsUri": "gs://offline-only/post-prod/7/vfx-evidence/ca606b42-3cfd-4ba6-95a6-03532b425cf3/renderer-spec.normalized.json",
+        "bytes": 236,
+        "sha256": "fa6648cb3f96c3ef6f507868643da716ebcece6e056494a36c937d598dbedefb"
+      },
+      {
+        "name": "renderer-manifest.json",
+        "gcsUri": "gs://offline-only/post-prod/7/vfx-evidence/ca606b42-3cfd-4ba6-95a6-03532b425cf3/renderer-manifest.json",
+        "bytes": 1787,
+        "sha256": "2fca687f2337061329e8900977a28fdf0daedd1a6dc00d21aaaa16e2aa1346d3"
+      },
+      {
+        "name": "renderer-manifest.parsed.json",
+        "gcsUri": "gs://offline-only/post-prod/7/vfx-evidence/ca606b42-3cfd-4ba6-95a6-03532b425cf3/renderer-manifest.parsed.json",
+        "bytes": 1787,
+        "sha256": "673c7e034132ce2d4645186d83d5b24014ad5531da03527b45c6e3dc6235f225"
+      },
+      {
+        "name": "result-probe.raw.json",
+        "gcsUri": "gs://offline-only/post-prod/7/vfx-evidence/ca606b42-3cfd-4ba6-95a6-03532b425cf3/result-probe.raw.json",
+        "bytes": 4378,
+        "sha256": "245d3d22ecc3ec75d46b594c93dc5a0866c2813d4147d8d8ab492b56043bf7a5"
+      }
+    ],
+    "resultEvidence": {
+      "name": "result.json",
+      "gcsUri": "gs://offline-only/post-prod/7/vfx-evidence/ca606b42-3cfd-4ba6-95a6-03532b425cf3/result.json",
+      "bytes": 2928,
+      "sha256": "41ac7694e0684aa43eab70412fd7478474aadfeeb3688088ca5097e6a75eab4a"
+    }
+  },
+  "audioHash": "SHA256=a89d29c74f52b76b9f7fb3839360e86f300cd94d04148393d03829cb2f15491f",
+  "pixel": [
+    127,
+    0,
+    127
+  ],
+  "archived": [
+    {
+      "name": "request.raw.json",
+      "bytes": 389,
+      "sha256": "42abcc7833c5f464ae7cf8614afaae98cf90d8e44e3358f3530408c5f49c1234"
+    },
+    {
+      "name": "request.normalized.json",
+      "bytes": 389,
+      "sha256": "b05419f8983e178d2e47c883164f6af255b5c7dee7a88e200ca12142e862c081"
+    },
+    {
+      "name": "source-probe.raw.json",
+      "bytes": 4378,
+      "sha256": "3aea6c6ecf19311e1fb53267e45bf351850798c24f58d2cd18dd11b8e43e023f"
+    },
+    {
+      "name": "spec.normalized.json",
+      "bytes": 236,
+      "sha256": "fa6648cb3f96c3ef6f507868643da716ebcece6e056494a36c937d598dbedefb"
+    },
+    {
+      "name": "renderer-input.raw.json",
+      "bytes": 236,
+      "sha256": "fa6648cb3f96c3ef6f507868643da716ebcece6e056494a36c937d598dbedefb"
+    },
+    {
+      "name": "renderer-spec.normalized.json",
+      "bytes": 236,
+      "sha256": "fa6648cb3f96c3ef6f507868643da716ebcece6e056494a36c937d598dbedefb"
+    },
+    {
+      "name": "renderer-manifest.json",
+      "bytes": 1787,
+      "sha256": "2fca687f2337061329e8900977a28fdf0daedd1a6dc00d21aaaa16e2aa1346d3"
+    },
+    {
+      "name": "renderer-manifest.parsed.json",
+      "bytes": 1787,
+      "sha256": "673c7e034132ce2d4645186d83d5b24014ad5531da03527b45c6e3dc6235f225"
+    },
+    {
+      "name": "result-probe.raw.json",
+      "bytes": 4378,
+      "sha256": "245d3d22ecc3ec75d46b594c93dc5a0866c2813d4147d8d8ab492b56043bf7a5"
+    },
+    {
+      "name": "result.json",
+      "bytes": 2928,
+      "sha256": "41ac7694e0684aa43eab70412fd7478474aadfeeb3688088ca5097e6a75eab4a"
+    }
+  ]
+}

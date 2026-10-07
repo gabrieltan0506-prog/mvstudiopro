@@ -1,0 +1,87 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-effects-1007
+
+stderr | server/services/manhuaVfxEvidenceFailure.test.ts > rotation拒收前原始与完整解析JSON都永久归档，不提交结果
+[manhua-vfx] render failed 请先将原片转正后再添加特效，避免位置错位
+
+stderr | server/services/manhuaVfxEvidenceFailure.test.ts > manifest拒收前原始与完整解析JSON都永久归档，不提交结果
+[manhua-vfx] render failed [
+  {
+    "code": "invalid_value",
+    "values": [
+      true
+    ],
+    "path": [
+      "complete"
+    ],
+    "message": "Invalid input: expected true"
+  },
+  {
+    "expected": "number",
+    "code": "invalid_type",
+    "path": [
+      "width"
+    ],
+    "message": "Invalid input: expected number, received undefined"
+  },
+  {
+    "expected": "number",
+    "code": "invalid_type",
+    "path": [
+      "height"
+    ],
+    "message": "Invalid input: expected number, received undefined"
+  },
+  {
+    "expected": "number",
+    "code": "invalid_type",
+    "path": [
+      "fps"
+    ],
+    "message": "Invalid input: expected number, received undefined"
+  },
+  {
+    "expected": "number",
+    "code": "invalid_type",
+    "path": [
+      "frameCount"
+    ],
+    "message": "Invalid input: expected number, received undefined"
+  },
+  {
+    "expected": "array",
+    "code": "invalid_type",
+    "path": [
+      "frames"
+    ],
+    "message": "Invalid input: expected array, received undefined"
+  },
+  {
+    "code": "invalid_value",
+    "values": [
+      "straight"
+    ],
+    "path": [
+      "alpha"
+    ],
+    "message": "Invalid input: expected \"straight\""
+  },
+  {
+    "code": "invalid_value",
+    "values": [
+      "sRGB"
+    ],
+    "path": [
+      "colorSpace"
+    ],
+    "message": "Invalid input: expected \"sRGB\""
+  }
+]
+
+ ✓ server/services/manhuaVfxEvidenceFailure.test.ts (2 tests) 38ms
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  15:56:46
+   Duration  2.18s (transform 600ms, setup 0ms, collect 1.68s, tests 38ms, environment 0ms, prepare 133ms)
+

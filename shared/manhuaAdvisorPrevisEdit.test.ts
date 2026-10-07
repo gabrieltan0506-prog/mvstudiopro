@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createManhuaPrevisStudio, manhuaPrevisStudioSchema } from "./manhuaPrevis";
-import { advisorPrevisPatchSchema, advisorPrevisSpecJson, advisorPrevisTargetSchema, adoptAdvisorPrevisTrial, applyAdvisorPrevisCandidate, makeAdvisorPrevisTarget, parseAdvisorPrevisPatch, prepareAdvisorPrevisTrial, validateAdvisorPrevisReceipt, type AdvisorPrevisTrial } from "./manhuaAdvisorPrevisEdit";
+import { applyAdvisorPrevisPatch, advisorPrevisPatchSchema, advisorPrevisSpecJson, advisorPrevisTargetSchema, adoptAdvisorPrevisTrial, applyAdvisorPrevisCandidate, makeAdvisorPrevisTarget, parseAdvisorPrevisPatch, prepareAdvisorPrevisTrial, validateAdvisorPrevisReceipt, type AdvisorPrevisTrial } from "./manhuaAdvisorPrevisEdit";
 
 function setup() {
   const studio = createManhuaPrevisStudio(5);
@@ -76,4 +76,14 @@ describe("顾问独立试看与确认写回边界", () => {
     for (const cameras of [[{ ...studio.spec.cameras[0], endSec: 4 }], [{ ...studio.spec.cameras[0], lens: 100 }]])
       expect(() => prepareAdvisorPrevisTrial("clip-1", studio, { ...candidate, patch: { ...candidate.patch, cameras } })).toThrow();
   });
+});
+
+it("1007场景特效候选保留身份与时长，支持显式清空且拒绝未知演员",()=>{
+ const studio=createManhuaPrevisStudio(5);const spec=studio.spec;
+ const patch=advisorPrevisPatchSchema.parse({kind:"previs_edit_v1",summaryZh:"仅加灵体材质",unsupportedZh:[],sceneEffects:[{id:"fx",kind:"hologram",actorId:spec.actors[0]!.id,color:"#66CCFF",intensity:1}]});
+ const next=applyAdvisorPrevisPatch(spec,patch);
+ expect(next.actors).toEqual(spec.actors);expect(next.durationSec).toBe(spec.durationSec);expect(next.cameras).toEqual(spec.cameras);
+ expect(next.sceneEffects).toHaveLength(1);
+ expect(applyAdvisorPrevisPatch(next,{...patch,sceneEffects:[]}).sceneEffects).toEqual([]);
+ expect(()=>applyAdvisorPrevisPatch(spec,{...patch,sceneEffects:[{...patch.sceneEffects![0],actorId:"foreign-actor"}]})).toThrow();
 });

@@ -694,3 +694,17 @@ describe("工作流操作方案复用原顾问服务",()=>{
     expect(invokeLLMMock).not.toHaveBeenCalled();
   });
 });
+
+
+it("1007普通顾问同读冻结导演包、指定模板和真实功能边界，知识refresh沿严格工具契约", () => {
+ const messages=buildManhuaCreativeAdvisorLlmMessages({question:"让剧情丰满，千手法相惊艳，妆造场景有电影感",context:manhuaContext({directionPackage:{directionCardId:"parallel_action_editing",directionCardVersion:"project-frozen-old"}}),templateReference:"本轮实际读取的模板能力证据"});
+ expect(messages[1].content).toContain("本轮实际读取的模板能力证据");
+ expect(messages[1].content).toContain("project-frozen-old");
+ expect(messages[1].content).toContain("尚未扫描");
+ expect(messages[1].content).toContain("image_overlay");
+ expect(messages[0].content).toContain("不能以屏幕叠光冒充完整实现");
+ expect(messages[0].content).toContain("角色/道具起终位置");
+ const plan={kind:"workflow_operation_v1",summaryZh:"更新知识目录，不改作品",action:{action:"knowledge",operation:"refresh"}};
+ expect(parseAskJson(JSON.stringify(plan)).answer).toContain('"refresh"');
+ expect(()=>parseAskJson(JSON.stringify({...plan,action:{...plan.action,confirmPaid:true}}))).toThrow();
+});

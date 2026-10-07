@@ -629,6 +629,30 @@ for shot in spec['cameras']:
         for prop in ('location','rotation_euler'):camera.keyframe_insert(prop,frame=f)
         camera.data.keyframe_insert('lens',frame=f)
 
+scene_effect_handles=[]
+if spec.get('sceneEffects'):
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from previs_scene_effects import build_scene_effects, measure_scene_effects
+    scene_bindings=[]
+    for actor,source_rig,_contacts,_stance,_error in rigs:
+        model=next((item for item in models if item['actorId']==actor['id']),None)
+        scene_bindings.append({'actorId':actor['id'],'rig':model['rig'] if model else source_rig,
+            'meshes':model['meshes'] if model else [obj for obj in source_rig.children if obj.type=='MESH'],
+            'boneMap':model['boneMap'] if model else {name:name for name in source_rig.pose.bones.keys()}})
+    scene_effect_handles=build_scene_effects(spec['sceneEffects'],scene,scene_bindings,evidence_dir=out)
+    # New attached objects follow the same actor visibility contract as the original meshes.
+    for handle in scene_effect_handles:
+        actor=next(item for item in spec['actors'] if item['id']==handle['event']['actorId'])
+        for obj in handle['objects']:
+            if obj in display_meshes[actor['id']]: continue
+            display_meshes[actor['id']].append(obj)
+            if actor.get('visibleRanges'):
+                for frame in range(1,scene.frame_end+1):
+                    visible=actor_visible(actor,frame)
+                    obj.hide_render=not visible;obj.hide_viewport=not visible
+                    obj.keyframe_insert('hide_render',frame=frame);obj.keyframe_insert('hide_viewport',frame=frame)
+    scene.frame_set(1)
+
 effect_handles=[]
 if spec.get('effects'):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -827,6 +851,9 @@ if creatures or models:
 if effect_handles:
     report['effects']=measure_effects(effect_handles,scene)
     report['warnings'].extend(sorted(set(row['boundaryZh'] for row in report['effects'])))
+if scene_effect_handles:
+    report['sceneEffects']=measure_scene_effects(scene_effect_handles,scene)
+    report['warnings'].extend(sorted(set(row['boundaryZh'] for row in report['sceneEffects'])))
 if has_routes:
     report['motionRoutes']=measure_routes(spec,rigs,scene)
 if water_handles:

@@ -1,0 +1,126 @@
+import { manhuaVfxCompositionSchema, type ManhuaVfxComposition, type ManhuaVfxEffect, type ManhuaVfxState } from "@shared/manhuaVfx";
+import type { ClipOption, TrackedJob } from "./postProdWorkshop";
+import type { CanvasBlock } from "./canvasTypes";
+import { getBlockEpisodeIndex, isManhuaFactoryArtifactBlock } from "./canvasDramaStudio";
+
+/** Only current episode/project factory outputs and attached, persisted image assets. */
+export function manhuaVfxImageOptions(blocks: CanvasBlock[], episodeIndex: number): ClipOption[] {
+  const options: ClipOption[] = [];
+  const seen = new Set<string>();
+  const add = (id: string, raw: string | undefined, label: string) => {
+    const url = manhuaVfxMediaIdentity((raw || "").trim());
+    if (!/^gs:\/\/[^/]+\/.+/.test(url) || seen.has(url)) return;
+    seen.add(url); options.push({ id, url, label });
+  };
+  for (const block of blocks) {
+    if (block.archivedFromPreviousScript || !isManhuaFactoryArtifactBlock(block)) continue;
+    const episode = getBlockEpisodeIndex(block);
+    if (episode != null && episode !== episodeIndex) continue;
+    if (block.kind === "image") add(block.id, block.outputUrl, `当前图片 · ${block.id}`);
+    for (const asset of block.uploadedAssets || []) {
+      if (asset.kind === "image") add(`${block.id}:${asset.id}`, asset.gcsUri || asset.url, asset.fileName || "已上传图片");
+    }
+  }
+  return options;
+}
+
+/** Signed GCS read links identify the same immutable object; arbitrary URL queries may identify different media. */
+export function manhuaVfxMediaIdentity(raw: string): string {
+  if (raw.startsWith("gs://")) return raw;
+  try {
+    const url = new URL(raw);
+    if (url.hostname === "storage.googleapis.com") return `gs://${decodeURIComponent(url.pathname.slice(1))}`;
+    if (url.hostname.endsWith(".storage.googleapis.com")) return `gs://${url.hostname.slice(0, -".storage.googleapis.com".length)}${decodeURIComponent(url.pathname)}`;
+  } catch { /* Invalid sources are rejected by the submit boundary. */ }
+  return raw;
+}
+
+export function manhuaVfxSourceKey(clip: Pick<ClipOption, "id" | "url">): string {
+  return JSON.stringify([clip.id, manhuaVfxMediaIdentity(clip.url)]);
+}
+
+export function sameManhuaVfxComposition(a: unknown, b: unknown): boolean {
+  const left = manhuaVfxCompositionSchema.safeParse(a);
+  const right = manhuaVfxCompositionSchema.safeParse(b);
+  return left.success && right.success && JSON.stringify(left.data) === JSON.stringify(right.data);
+}
+
+export function makeManhuaVfxEffect(kind: ManhuaVfxEffect["kind"], id: string): ManhuaVfxEffect {
+  return {
+    id, kind, startSec: 0, durationSec: 1,
+    color: kind === "impact_burst" ? "#FFB35C" : "#67E8F9", scale: kind === "shield" ? 0.4 : 0.25, intensity: 1,
+    anchor: { space: "screen", position: [0.5, 0.5] },
+  };
+}
+
+export function parseManhuaVfxTrajectory(text: string): Array<{ timeSec: number; x: number; y: number }> | undefined {
+  if (!text.trim()) return undefined;
+  return text.trim().split(/\n/).map((line, index) => {
+    const cells = line.trim().split(/[,，\s]+/).filter(Boolean);
+    const [timeSec, x, y] = cells.map(Number);
+    if (cells.length !== 3 || ![timeSec, x, y].every(Number.isFinite)) throw new Error(`轨迹第 ${index + 1} 行须填写：秒数、横向位置、纵向位置`);
+    return { timeSec, x, y };
+  });
+}
+
+export function validateManhuaVfxDuration(composition: ManhuaVfxComposition, durationSec: number): string | undefined {
+  if (!(Number.isFinite(durationSec) && durationSec > 0)) return "请先等待原片读取时长";
+  const outside = composition.effects.find(effect => effect.startSec + effect.durationSec > durationSec + 1e-9 || effect.anchor.trajectory?.some(point => point.timeSec > durationSec + 1e-9));
+  return outside ? "特效结束时间超过原片时长，请调整时间区间" : undefined;
+}
+
+export function canAdoptManhuaVfxRequest(state: ManhuaVfxState, requestId: string, clips: ClipOption[]): boolean {
+  const request = state.requests[requestId];
+  const draft = state.draft;
+  const source = draft && clips.find(clip => clip.id === draft.sourceId);
+  return Boolean(request && draft && source && request.status === "succeeded" && request.output?.gcsUri &&
+    request.output.requestId === requestId && request.output.sourceKey === request.sourceKey &&
+    request.sourceId === draft.sourceId && request.sourceKey === draft.sourceKey &&
+    manhuaVfxSourceKey(source) === request.sourceKey &&
+    sameManhuaVfxComposition(request.composition, request.output.composition) &&
+    sameManhuaVfxComposition(request.composition, draft.composition));
+}
+
+/** Effects enter downstream tools only after explicit adoption; source replacement invalidates adoption. */
+export function adoptedManhuaVfxClipOptions(state: ManhuaVfxState | undefined, scopeKey: string, clips: ClipOption[]): ClipOption[] {
+  if (!state || state.scopeKey !== scopeKey || !state.adoptedRequestId) return [];
+  const request = state.requests[state.adoptedRequestId];
+  const source = request && clips.find(clip => clip.id === request.sourceId);
+  if (!request || !source || request.status !== "succeeded" || !request.output?.gcsUri ||
+      request.output.sourceKey !== request.sourceKey || request.output.requestId !== request.requestId ||
+      manhuaVfxSourceKey(source) !== request.sourceKey || !sameManhuaVfxComposition(request.output.composition, request.composition)) return [];
+  return [{ id: `post-prod:${request.jobId || request.requestId}`, url: request.output.gcsUri, label: `已采用特效 · ${source.label}` }];
+}
+
+/** Restore saved pending tasks independently of the server's latest-job display window. */
+export function pendingManhuaVfxTrackedJobs(state: ManhuaVfxState | undefined, scopeKey: string, knownJobs: TrackedJob[]): TrackedJob[] {
+  if (!state || state.scopeKey !== scopeKey) return [];
+  return Object.values(state.requests).flatMap(request => request.jobId &&
+    ["queued", "running"].includes(request.status) && !knownJobs.some(job => job.jobId === request.jobId)
+    ? [{ jobId: request.jobId, action: "manhua_vfx", label: "漫剧特效候选", scopeKey,
+        status: request.status as "queued" | "running", createdAt: request.createdAt }]
+    : []);
+}
+
+export type ManhuaVfxVideoRect = { left: number; top: number; width: number; height: number };
+/** object-fit:contain places pixels inside the element; letterboxing is not part of source coordinates. */
+export function manhuaVfxContainedVideoRect(box: { width: number; height: number }, video: { width: number; height: number }): ManhuaVfxVideoRect | undefined {
+  if (![box.width, box.height, video.width, video.height].every(value => Number.isFinite(value) && value > 0)) return undefined;
+  const ratio = Math.min(box.width / video.width, box.height / video.height);
+  const width = video.width * ratio;
+  const height = video.height * ratio;
+  return { left: (box.width - width) / 2, top: (box.height - height) / 2, width, height };
+}
+
+export function manhuaVfxPositionFromPointer(rect: ManhuaVfxVideoRect | undefined, pointer: { x: number; y: number }): [number, number] | undefined {
+  if (!rect || !Number.isFinite(pointer.x) || !Number.isFinite(pointer.y) || pointer.x < rect.left || pointer.y < rect.top || pointer.x > rect.left + rect.width || pointer.y > rect.top + rect.height) return undefined;
+  return [Number(((pointer.x - rect.left) / rect.width).toFixed(5)), Number(((pointer.y - rect.top) / rect.height).toFixed(5))];
+}
+
+export function upsertManhuaVfxTrajectoryPoint(points: Array<{ timeSec: number; x: number; y: number }>, point: { timeSec: number; x: number; y: number }): Array<{ timeSec: number; x: number; y: number }> {
+  if (!Number.isFinite(point.timeSec) || point.timeSec < 0 || point.timeSec > 30 || ![point.x, point.y].every(value => Number.isFinite(value) && value >= 0 && value <= 1)) throw new Error("轨迹点须位于原片秒窗和画面内");
+  const timeSec = Number(point.timeSec.toFixed(3));
+  const next = points.filter(existing => existing.timeSec !== timeSec);
+  if (next.length >= 120) throw new Error("轨迹已有120个时刻，请先调整已有点");
+  return [...next, { ...point, timeSec }].sort((a, b) => a.timeSec - b.timeSec);
+}

@@ -1,0 +1,6 @@
+
+> mvstudiopro@1.1.0-rc.1 check /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-effects-1007
+> tsc --noEmit
+
+server/services/manhuaVfxRender.test.ts(68,285): error TS2802: Type 'Map<string, Buffer<ArrayBufferLike>>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+ ELIFECYCLE  Command failed with exit code 2.

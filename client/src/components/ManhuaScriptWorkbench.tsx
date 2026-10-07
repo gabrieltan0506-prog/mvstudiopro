@@ -1,3 +1,4 @@
+import type { AdvisorEffectsRegistration } from "@shared/manhuaAdvisorEffects";
 import type { ManhuaAdvisorStudioContext } from "@shared/manhuaAdvisorStudioContext";
 import type { AdvisorEditControl, AdvisorEditRegistration, AdvisorModelRegistration, AdvisorWorldControl, AdvisorWorldRegistration } from "@/lib/manhuaAdvisorWorkflowControl";
 import { ManhuaShotSearch } from "./ManhuaShotSearch";
@@ -497,7 +498,7 @@ type Props = {
   onOpenAdvisorTemplates?: () => void;
   onOpenAdvisorPrevis?: (clipId: string, requestId?: string) => void;
   advisorPrevisActiveClipId?: string | null;
-  advisorPrevisRequest?: {id:string;clipId:string;episode:number;segment:number} | null;
+  advisorPrevisRequest?: {id:string;clipId:string;episode:number;segment:number;tool?:"scene"|"generative"} | null;
   onAdvisorPrevisRequestHandled?: (id:string, opened:boolean, reason?:string) => void;
   advisorAudioRequest?: { id: string; clipId: string; scopeId: string } | null;
   onAdvisorAudioRequestHandled?: (id: string) => void;
@@ -642,6 +643,8 @@ type Props = {
   cineVocabLocale?: ManhuaCineVocabLocale;
   onCineVocabLocaleChange?: (locale: ManhuaCineVocabLocale) => void;
   onRetakeClip?: (clipBlockId: string, variable: ManhuaRetakeVariable) => void;
+  effectsScopeKey?: string;
+  onAdvisorEffectsControl?: AdvisorEffectsRegistration;
   onVideoEditClip?: (clipBlockId: string, instructionZh: string) => void;
   onSelectClipVersion?: (clipBlockId: string, url: string) => void;
   /** 可拍表点名的角色在资产库找不到；非空则拦住出片并在左栏红条提示 */
@@ -1361,6 +1364,8 @@ export default function ManhuaScriptWorkbench({
   onCineVocabLocaleChange,
   onRetakeClip,
   onVideoEditClip,
+  effectsScopeKey,
+  onAdvisorEffectsControl,
   onSelectClipVersion,
   segmentCastMismatchHintZh = null,
   segmentNoFaceLockHintZh = null,
@@ -3155,12 +3160,18 @@ export default function ManhuaScriptWorkbench({
     let result: {opened:boolean;reason?:string} = {opened:false,reason:"目标片段已变化，未建立白模或提交任务。"};
     if (activeClip?.id !== request.clipId) {
       toast.error("目标片段已变化，未建立白模或提交任务。");
+    } else if (request.tool === "generative") {
+      const targetShot = editShotMedia.find(row => row.clipBlockId === request.clipId)?.shotIndex;
+      const targetIndex = shots.findIndex(shot => shot.index === targetShot);
+      if (targetIndex < 0) result = { opened: false, reason: "目标片段尚未映射到剪辑镜头，未操作旧片段" };
+      else { setShotIndex(targetIndex); setActiveSecondaryTool(null); result = { opened: true }; }
     } else {
       setActiveSecondaryTool("previs"); setPrevisStudioOpen(true);
-      result = openPrevisAdvisor();
+      // effects inspect only navigates: the legacy advisor opener also changes audioEnabled.
+      result = request.tool === "scene" ? { opened: Boolean(activeClip.previsStudio), reason: activeClip.previsStudio ? undefined : "目标片段尚无白模配置" } : openPrevisAdvisor();
     }
     onAdvisorPrevisRequestHandled?.(request.id, result.opened, result.reason);
-  }, [advisorPrevisRequest, focusEpisode, activeSegNo, activeClip?.id, factoryBusy, onAdvisorPrevisRequestHandled]);
+  }, [advisorPrevisRequest, focusEpisode, activeSegNo, activeClip?.id, factoryBusy, onAdvisorPrevisRequestHandled, editShotMedia, shots]);
   const openSecondaryAdvisor = (tool: ManhuaSecondaryTool) => {
     if (tool === "previs" || tool === "actionTimeline") openPrevisAdvisor();
     else onOpenAdvisor3d?.(activeClip?.id, tool === "world3d" ? advisorWorldAssetId || undefined : undefined, tool === "world3d" ? "world" : tool === "model3d" ? "model" : "general");
@@ -5560,7 +5571,7 @@ clipPromptReviewOpen ? (
             </div>
             {activeClip && onUpdateClipAudioStudio ? <div className="mb-3 text-xs text-white/70"><button type="button" className="min-h-10 rounded border border-white/20 px-3" onClick={() => selectSecondaryTool("audio")}>查看与调整本段对白、BGM</button></div> : null}
             {activeClip && onUpdateClipPrevisStudio ? <ManhuaPrevisAudioControls block={activeClip} disabled={Boolean(factoryBusy) || activeClip.status === "running" || activeClip.videoTaskStatus === "queued"} onChange={studio => onUpdateClipPrevisStudio(activeClip.id, studio)} /> : null}
-            {activeClip?<ManhuaPrevisStudio key={`${activeClip.id}:${activeClip.previsStudio?.scopeId??"new"}`} block={activeClip}
+            {activeClip?<ManhuaPrevisStudio effectsScopeKey={effectsScopeKey} onAdvisorEffectsControl={onAdvisorEffectsControl} key={`${activeClip.id}:${activeClip.previsStudio?.scopeId??"new"}`} block={activeClip}
               characters={previsStudioCharacters}
               profiles={collectPreparedRigProfiles(blocks, assetLockRegistry.byRole.character.map(a => {
                 const ref = customAssetRefs.find(ref => ref.id === a.id);
@@ -9161,6 +9172,7 @@ clipPromptReviewOpen ? (
             {fineCutInCanvas ? <button type="button" onClick={onReturnFineCutReview} className="rounded border px-3 py-1">返回工厂终审</button> : <button type="button" onClick={onOpenFineCutCanvas} className="rounded border px-3 py-1">到自由画布精剪</button>}
           </div> : null}
           <ManhuaEditMultitrackPanel
+            effectsScopeKey={effectsScopeKey} onAdvisorEffectsControl={onAdvisorEffectsControl}
             compactLayout={immersive}
             onRegisterSegmentClip={onRegisterSegmentClip}
             registerClipBusy={segmentReferenceBusy}

@@ -20,6 +20,11 @@ export async function processPostProdJob(
   const input = await resolvePostProdInputSources({ userId, input: parsed });
   const runOptions = { signal: options?.signal };
   switch (input.action) {
+    case "manhua_vfx": {
+      const { renderManhuaVfx } = await import("../services/manhuaVfxRender");
+      const output = await renderManhuaVfx(input, userId, options?.signal ?? AbortSignal.timeout(POST_PROD_DEFAULT_TIMEOUT_MS));
+      return { output, provider: "blender-vfx" };
+    }
     case "manhua_auto_rig": {
       const {renderManhuaAutoRig}=await import("../services/manhuaAutoRigRender");
       const output=await renderManhuaAutoRig(input.params,userId,{signal:options?.signal??AbortSignal.timeout(resolvePostProdJobTimeoutMs(input))});

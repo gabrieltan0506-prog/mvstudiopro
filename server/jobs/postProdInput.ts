@@ -8,6 +8,7 @@ import { z } from "zod";
 import { bgmNarrativeMixSchema } from "../../shared/manhuaBgmNarrativeMix";
 import { manhuaPrevisRequestSchema } from "../../shared/manhuaPrevis";
 import { SUBTITLE_EFFECT_IDS } from "../../shared/subtitleEffects";
+import { manhuaVfxJobSchema } from "../../shared/manhuaVfx";
 
 const mediaSourceSchema = z.string().trim().min(1).max(2048);
 
@@ -38,6 +39,7 @@ function evenDimension(min: number, max: number) {
 export const concatParamsSchema = z
   .object({
     clips: z.array(mediaSourceSchema).min(2).max(12),
+    transition: z.object({ kind: z.enum(["fade", "dissolve", "wipeleft"]), durationSec: z.number().finite().min(0.1).max(2) }).strict().optional(),
     width: evenDimension(320, 3840).default(1280),
     height: evenDimension(240, 2160).default(720),
     fps: z.number().int().min(12).max(60).default(30),
@@ -96,6 +98,7 @@ export const burnSubtitleStyleOverrideSchema = z
     outline: z.number().min(0).max(8).optional(),
     /** 底边距,同为 PlayResY 像素;默认 35 ≈ 底部 12% */
     marginV: z.number().int().min(0).max(200).optional(),
+    alignment: z.union([z.literal(2), z.literal(5), z.literal(8)]).optional(),
     /** 默认跟随渲染机 fontconfig；白名单字符防 force_style 夹带 */
     fontName: z
       .string()
@@ -171,6 +174,7 @@ export type RawAudioExtractParams = z.input<typeof audioExtractParamsSchema>;
 const postProdMetadataShape = { scopeKey: z.string().max(128).optional() };
 
 export const postProdJobInputSchema = z.discriminatedUnion("action", [
+  manhuaVfxJobSchema,
   z.object({ ...postProdMetadataShape, action: z.literal("manhua_auto_rig"), params: autoRigRequestSchema }).strict(),
   z.object({ ...postProdMetadataShape, action: z.literal("manhua_previs"), params: manhuaPrevisRequestSchema }).strict(),
   z.object({ ...postProdMetadataShape, action: z.literal("audio_extract"), params: audioExtractParamsSchema }).strict(),

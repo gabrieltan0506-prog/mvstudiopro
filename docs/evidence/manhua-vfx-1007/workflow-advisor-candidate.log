@@ -1,0 +1,11 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-effects-1007
+
+ ✓ client/src/lib/manhuaAdvisorEffectsControls.browser.test.ts (2 tests | 1 skipped) 2484ms
+   ✓ 顾问旧候选可读回原方案并保存后采用，成功任务续查不再提交 2482ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 1 skipped (2)
+   Start at  15:44:18
+   Duration  3.30s (transform 76ms, setup 0ms, collect 247ms, tests 2.48s, environment 0ms, prepare 206ms)
+

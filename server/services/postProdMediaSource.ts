@@ -355,6 +355,12 @@ export async function resolvePostProdInputSources(
       }))) },
     });
   }
+  if (job.action === "manhua_vfx") {
+    for (const effect of job.params.composition.effects) {
+      if (effect.imageUri && await resolve(effect.imageUri) !== effect.imageUri) throw new Error("叠图素材身份不一致");
+    }
+    return postProdJobInputSchema.parse({ ...job, params: { ...job.params, videoUri: await resolve(job.params.videoUri) } });
+  }
   if (job.action === "concat") {
     return postProdJobInputSchema.parse({
       ...job,

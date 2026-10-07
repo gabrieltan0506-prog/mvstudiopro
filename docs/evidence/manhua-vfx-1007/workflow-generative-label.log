@@ -1,0 +1,14 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-effects-1007
+
+ ✓ client/src/lib/manhuaGenerativeEffects.test.ts (3 tests) 9ms
+ ✓ client/src/lib/manhuaPrevisSceneLabelEditor.browser.test.ts (1 test) 3256ms
+   ✓ 骨骼跟随标注保存中文文字、跟随部位和偏移，空文字不落盘 3255ms
+ ✓ client/src/lib/manhuaGenerativeEffects.browser.test.ts (1 test) 3303ms
+   ✓ 生成式预设走当前片段原编辑回调，等待回执防双点，取消保留文字，换源清空草案 3301ms
+
+ Test Files  3 passed (3)
+      Tests  5 passed (5)
+   Start at  15:26:44
+   Duration  4.22s (transform 155ms, setup 0ms, collect 785ms, tests 6.57s, environment 1ms, prepare 427ms)
+

@@ -1,5 +1,6 @@
 /** 渲染与恢复共用的真实报告门禁，不能以存证哈希代替动作验收。 */
 import { z } from "zod";
+import { previsSceneEffectsReportSchema, validatePrevisSceneEffectsReport } from "./manhuaPrevisSceneEffectsReport";
 import {cameraTimingReportSchema,validateCameraTimingReport} from "./manhuaPrevisCameraReport";
 import {
   effectsReportSchema,
@@ -157,6 +158,7 @@ export const previsReportSchema = z
     motionRoutes: routeReportSchema.optional(),
     cameraTiming: cameraTimingReportSchema.optional(),
     effects: effectsReportSchema.optional(),
+    sceneEffects: previsSceneEffectsReportSchema.optional(),
     weapons: z
       .array(
         z
@@ -500,5 +502,6 @@ export function validatePrevisReport(
   validateRouteReport(report.motionRoutes, spec);
   validateCameraTimingReport(report.cameraTiming, spec);
   validateEffectsReport(report.effects, spec);
+  validatePrevisSceneEffectsReport(report.sceneEffects, spec);
   return report;
 }

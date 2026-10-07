@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-effects-1007
+
+ ✓ client/src/lib/manhuaAdvisorProject.test.ts (21 tests | 20 skipped) 12ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 20 skipped (21)
+   Start at  16:00:12
+   Duration  2.98s (transform 1.62s, setup 0ms, collect 2.36s, tests 12ms, environment 0ms, prepare 88ms)
+

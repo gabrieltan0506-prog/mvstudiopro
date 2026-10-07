@@ -5,6 +5,7 @@ import { resolveViralTemplateForExpand } from "./manhuaViralTemplateStore.js";
 import { formatManhuaViralTemplateWriterSkillFromCard } from "../../shared/manhuaViralTemplateBank.js";
 import { advisorTemplatePlansSchema } from "../../shared/manhuaAdvisorRewrite";
 import { createHash } from "node:crypto";
+import { resolveManhuaAdvisorKnowledgeTemplate } from "./manhuaAdvisorKnowledge";
 
 /** 正式分镜逐份消费本集顾问方案；全部校验完才允许进入原扣费和模型入口。 */
 export async function buildManhuaStoryboardTemplateReference(raw: unknown) {
@@ -67,7 +68,8 @@ export async function buildManhuaTemplateAdvisorReference(question: string): Pro
   if (ids.length > 5) throw new Error("一次最多评估5个模板编号，请缩小范围后重试。");
   const blocks: string[] = [];
   for (const id of ids) {
-    const resolved = await resolveViralTemplateForExpand(id);
+    const resolved = await resolveManhuaAdvisorKnowledgeTemplate(id);
+    if ("error" in resolved && resolved.error === "refresh_required") throw new Error("所选模板版本已变化，请先刷新知识目录后重新选择；未调用顾问模型。");
     if ("error" in resolved) throw new Error(`模板编号 ${id.slice(3).toUpperCase()} 当前不可用，请重新选择；未调用顾问模型。`);
     const reference = formatManhuaViralTemplateWriterSkillFromCard(resolved.card);
     if (!reference.trim()) throw new Error("所选模板缺少可用创作能力，本次未调用顾问模型。");

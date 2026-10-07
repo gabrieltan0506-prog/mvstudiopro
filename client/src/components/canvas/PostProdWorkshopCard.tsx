@@ -1,3 +1,8 @@
+import type { ManhuaVfxState } from "@shared/manhuaVfx";
+import type { AdvisorEffectsControl, AdvisorEffectsRegistration } from "@shared/manhuaAdvisorEffects";
+import { advisorWorkflowRevision } from "@/lib/manhuaAdvisorWorkflowPlan";
+import { ManhuaVfxEditor, type ManhuaVfxSubmitInput } from "./ManhuaVfxEditor";
+import { adoptedManhuaVfxClipOptions, pendingManhuaVfxTrackedJobs, manhuaVfxImageOptions } from "@/lib/manhuaVfxWorkflow";
 import type { ManhuaAdvisorStudioContext } from "@shared/manhuaAdvisorStudioContext";
 import { createAdvisorScoringSourceGuard } from "@/lib/manhuaAdvisorScoringSource";
 import type { AdvisorScoringControl, AdvisorScoringRegistration, AdvisorBgmControl } from "@/lib/manhuaAdvisorWorkflowControl";
@@ -152,10 +157,14 @@ function loadTrackedUpscales(userId: string): TrackedUpscale[] {
   }
 }
 
-const POSTPROD_TOOLS = { concat: "拼接成片", enhance: "超分与补帧", subtitle: "对白字幕", bgm: "BGM混音", loudness: "响度验收" } as const;
+const POSTPROD_TOOLS = { vfx: "漫剧特效", concat: "拼接成片", enhance: "超分与补帧", subtitle: "字幕与标题", bgm: "BGM混音", loudness: "响度验收" } as const;
 type PostProdTool = keyof typeof POSTPROD_TOOLS;
 
 type PostProdWorkshopCardProps = {
+  vfxScopeKey: string;
+  vfxState?: ManhuaVfxState;
+  onVfxStateChange?: (state: ManhuaVfxState) => Promise<ManhuaVfxState | void>;
+  onAdvisorEffectsControl?: AdvisorEffectsRegistration;
   onStudioFocus?: (context: ManhuaAdvisorStudioContext) => void;
   onOpenAdvisor?: () => void;
   blocks: CanvasBlock[];
@@ -210,6 +219,10 @@ function statusBadge(status: PostProdJobStatus): { text: string; cls: string } {
 }
 
 export default function PostProdWorkshopCard({
+  vfxScopeKey,
+  vfxState,
+  onVfxStateChange,
+  onAdvisorEffectsControl,
   onStudioFocus,
   onOpenAdvisor,
   blocks,
@@ -226,8 +239,10 @@ export default function PostProdWorkshopCard({
 }: PostProdWorkshopCardProps) {
   const studioHasFocus = useRef(false);
   const [activeTool, setActiveTool] = useState<PostProdTool>("bgm");
+  const [vfxSource, setVfxSource] = useState("");
   const [subtitleSource, setSubtitleSource] = useState("");
   const [previewResult, setPreviewResult] = useState<{url:string;label:string} | null>(null);
+  const onVfxSourceChange = useCallback((source: string) => { setVfxSource(source); setPreviewResult(null); }, []);
   const queueMutation = trpc.mvAnalysis.queuePostProd.useMutation();
   const draftBgmMutation = trpc.mvAnalysis.draftManhuaBgmBrief.useMutation();
   const queueBgmMutation = trpc.mvAnalysis.queueManhuaBgm.useMutation();
@@ -256,6 +271,8 @@ export default function PostProdWorkshopCard({
         })),
     [currentClipBlocks, focusEpisode]
   );
+
+  const vfxImageOptions = useMemo(() => !vfxScopeKey || focusEpisode == null ? [] : manhuaVfxImageOptions(blocks, focusEpisode), [blocks, focusEpisode, vfxScopeKey]);
 
   /** 当前集上传件及音轨工作台的已采用配乐。 */
   const audioOptions = useMemo(() => {
@@ -470,6 +487,8 @@ export default function PostProdWorkshopCard({
 
   // ---- 工序表单状态 ----
   const [concatSel, setConcatSel] = useState<string[]>([]);
+  const [concatTransition, setConcatTransition] = useState<"none" | "fade" | "dissolve" | "wipeleft">("none");
+  const [concatTransitionSec, setConcatTransitionSec] = useState(0.5);
   const [concatRes, setConcatRes] = useState<"720p" | "1080p">("720p");
   const [concatAspect, setConcatAspect] = useState<"9:16" | "16:9">("9:16");
   const [bgmVideoUrl, setBgmVideoUrl] = useState("");
@@ -607,6 +626,7 @@ export default function PostProdWorkshopCard({
     loadStoredJobs(jobsStorageKey(userId), localStorage)
   );
   const scopedJobs = useMemo(() => jobs.filter(job => postProdJobMatchesScope(job, projectScopeKey)), [jobs, projectScopeKey]);
+  const vfxJobs = useMemo(() => jobs.filter(job => job.action === "manhua_vfx" && postProdJobMatchesScope(job, vfxScopeKey)), [jobs, vfxScopeKey]);
   const scopedUpscaleJobs = useMemo(() => upscaleJobs.filter(job => job.scopeKey === projectScopeKey), [upscaleJobs, projectScopeKey]);
   const jobsRef = useRef(jobs);
   jobsRef.current = jobs;
@@ -621,6 +641,12 @@ export default function PostProdWorkshopCard({
     },
     [storageKey]
   );
+
+  // Cloud-restored VFX intents remain pollable even when newer unrelated jobs fill the server's latest-30 list.
+  useEffect(() => {
+    const missing = pendingManhuaVfxTrackedJobs(vfxState, vfxScopeKey, jobsRef.current);
+    if (missing.length) updateJobs(previous => [...missing, ...previous]);
+  }, [vfxState, vfxScopeKey, updateJobs]);
 
   /** 服务端为主来源:挂载/回焦拉取本人任务列表,缓存清空后由此恢复 */
   const jobsQuery = trpc.mvAnalysis.listPostProdJobs.useQuery(
@@ -747,7 +773,7 @@ export default function PostProdWorkshopCard({
         })),
     [scopedUpscaleJobs]
   );
-  const clipOptions = useMemo(
+  const vfxSourceClips = useMemo(
     () =>
       mergeClipOptions(
         [...upscaleClipOptions, ...postProdClipOptions],
@@ -756,9 +782,13 @@ export default function PostProdWorkshopCard({
     [upscaleClipOptions, postProdClipOptions, blockClipOptions]
   );
 
+  const adoptedVfxClips = useMemo(() => adoptedManhuaVfxClipOptions(vfxState, vfxScopeKey, vfxSourceClips), [vfxState, vfxScopeKey, vfxSourceClips]);
+  const clipOptions = useMemo(() => mergeClipOptions(adoptedVfxClips, vfxSourceClips), [adoptedVfxClips, vfxSourceClips]);
+
   const submit = useCallback(
     async (
       input:
+        | ManhuaVfxSubmitInput
         | {
             action: "concat";
             params: {
@@ -766,6 +796,7 @@ export default function PostProdWorkshopCard({
               width: number;
               height: number;
               fps: number;
+              transition?: { kind: "fade" | "dissolve" | "wipeleft"; durationSec: number };
             };
           }
         | {
@@ -787,7 +818,7 @@ export default function PostProdWorkshopCard({
 
         | {
             action: "burn_subtitle";
-            params: { videoUri: string; subtitleSrt: string; effect?: SubtitleEffect; styleOverride?: { fontSize: number; outline: number; marginV: number; fontName: string } };
+            params: { videoUri: string; subtitleSrt: string; effect?: SubtitleEffect; styleOverride?: { fontSize: number; outline: number; marginV: number; fontName: string; alignment?: 2 | 5 | 8 } };
           }
         | {
             action: "loudness_check";
@@ -796,24 +827,26 @@ export default function PostProdWorkshopCard({
       label: string,
       rethrow = false
     ) => {
-      if (!projectScopeKey) {
+      const submissionScope = input.action === "manhua_vfx" ? vfxScopeKey : projectScopeKey;
+      if (!submissionScope) {
         toast.error("请先确认当前剧本，再从本集成片选择素材");
         if(rethrow)throw new Error("请先确认当前剧本");
         return;
       }
       try {
-        const res = await queueMutation.mutateAsync({ ...input, scopeKey: projectScopeKey });
+        const res = await queueMutation.mutateAsync({ ...input, scopeKey: submissionScope });
         updateJobs(prev => [
           {
             jobId: res.jobId,
             action: input.action,
             label,
-            scopeKey: projectScopeKey,
+            scopeKey: submissionScope,
             status: "queued",
             createdAt: Date.now(),
           },
-          ...prev,
+          ...prev.filter(job => job.jobId !== res.jobId),
         ]);
+        void utils.mvAnalysis.listPostProdJobs.invalidate();
         toast.success(`已入队：${label}`, { description: `单号 ${res.jobId}` });
         return res.jobId;
       } catch (e) {
@@ -823,21 +856,22 @@ export default function PostProdWorkshopCard({
         });
       }
     },
-    [queueMutation, updateJobs, projectScopeKey],
+    [queueMutation, updateJobs, projectScopeKey, vfxScopeKey, utils],
   );
 
-  const submitConcat = () => {
+  const submitConcat = async (rethrow = false) => {
     const urls = concatSel
       .map((id) => clipOptions.find((c) => c.id === id)?.url)
       .filter((u): u is string => Boolean(u));
     if (urls.length < 2) {
       toast.error("拼接至少选 2 段成片(按点选顺序拼)");
+      if (rethrow) throw new Error("拼接至少需要两段当前成片");
       return;
     }
     const [width, height] = postProdConcatDimensions(concatRes, concatAspect);
-    void submit(
-      { action: "concat", params: { clips: urls, width, height, fps: 30 } },
-      `拼接 ${urls.length} 段(${concatAspect} · ${concatRes})`
+    return await submit(
+      { action: "concat", params: { clips: urls, width, height, fps: 30, ...(concatTransition !== "none" ? { transition: { kind: concatTransition, durationSec: concatTransitionSec } } : {}) } },
+      `拼接 ${urls.length} 段(${concatAspect} · ${concatRes})`, rethrow
     );
   };
 
@@ -1251,6 +1285,34 @@ export default function PostProdWorkshopCard({
   useEffect(()=>{onAdvisorControl?.(projectScopeKey,(...args)=>scoringRef.current(...args));return()=>onAdvisorControl?.(projectScopeKey,null);},[onAdvisorControl,projectScopeKey]);
 
   const busy = queueMutation.isPending;
+  const transitionKey = advisorWorkflowRevision([vfxScopeKey, clipOptions, concatSel, concatTransition, concatTransitionSec, concatRes, concatAspect]);
+  const transitionKeyRef = useRef(transitionKey); transitionKeyRef.current = transitionKey;
+  const transitionControl = useRef<AdvisorEffectsControl>(async () => "");
+  const transitionLock = useRef(false);
+  transitionControl.current = async (action, signal) => {
+    signal.throwIfAborted();
+    if (action.tool !== "transition") throw new Error("此控制器只处理转场拼接");
+    if (action.operation === "inspect") return JSON.stringify({ sourceKey: transitionKey, scopeKey: vfxScopeKey, sources: clipOptions.map(({ id, label }) => ({ id, label })), sourceIds: concatSel,
+      transitionSettings: { kind: concatTransition, durationSec: concatTransitionSec, resolution: concatRes, aspect: concatAspect }, jobs: scopedJobs.filter(job => job.action === "concat").map(job => ({ jobId: job.jobId, status: job.status })), busy });
+    const assertCurrent = () => { signal.throwIfAborted(); if (!action.sourceKey || action.sourceKey !== transitionKeyRef.current) throw new Error("拼接素材或转场参数已变化，请重新inspect"); };
+    assertCurrent();
+    if (busy || transitionLock.current) throw new Error("原后期入口仍在提交，请查看原任务");
+    if (action.operation === "configure") {
+      const ids = action.sourceIds, settings = action.transitionSettings;
+      if (!ids || ids.length < 2 || new Set(ids).size !== ids.length || ids.some(id => !clipOptions.some(clip => clip.id === id)) || !settings) throw new Error("请按顺序选择至少两段当前成片及转场设置");
+      if (!window.confirm("将顾问的片段顺序与转场设置填入原拼接卡？此步不合成。")) return "用户取消转场设置。";
+      assertCurrent(); setConcatSel(ids); setConcatTransition(settings.kind); setConcatTransitionSec(settings.durationSec); setConcatRes(settings.resolution); setConcatAspect(settings.aspect); setActiveTool("concat");
+      return "转场设置已填入原拼接卡，尚未合成；请重新inspect后提交。";
+    }
+    if (action.operation !== "submit") throw new Error("转场沿原拼接任务查询结果，仅支持读取、填参和提交");
+    if (scopedJobs.some(job => job.action === "concat" && ["queued", "running"].includes(job.status))) throw new Error("本作品已有拼接任务，请等待原任务收口");
+    if (concatSel.some(id => !clipOptions.some(clip => clip.id === id))) throw new Error("所选片段已不在本集，请重新选择");
+    if (!window.confirm("按当前片段顺序和转场设置提交合成？重叠转场会缩短成片，原片保留。")) return "用户取消转场合成。";
+    assertCurrent(); transitionLock.current = true;
+    try { const jobId = await submitConcat(true); if (!jobId) throw new Error("尚未取得拼接任务编号，请查看原任务"); return JSON.stringify({ jobId, status: "queued", note: "尚未验收转场成片" }); }
+    finally { transitionLock.current = false; }
+  };
+  useEffect(() => { onAdvisorEffectsControl?.(vfxScopeKey, "transition", (...args) => transitionControl.current(...args)); return () => onAdvisorEffectsControl?.(vfxScopeKey, "transition", null); }, [vfxScopeKey, onAdvisorEffectsControl]);
 
   const selectCls =
     "w-full rounded-lg border border-white/12 bg-black/40 px-2 py-1.5 text-[12px] text-white";
@@ -1259,8 +1321,8 @@ export default function PostProdWorkshopCard({
   const goCls =
     "inline-flex items-center gap-1.5 rounded-lg border border-cyan-300/45 bg-cyan-500/15 px-3 py-1.5 text-[12px] font-semibold text-cyan-50 hover:bg-cyan-500/25 disabled:opacity-45";
 
-  const sourcePreview = activeTool === "bgm" ? bgmVideoUrl : activeTool === "enhance" ? upscaleVideoUrl : activeTool === "loudness" ? loudVideoUrl : activeTool === "subtitle" ? subtitleSource : clipOptions.find(clip => clip.id === concatSel[0])?.url || "";
-  const sourceForTool = (tool: PostProdTool) => tool === "bgm" ? bgmVideoUrl : tool === "enhance" ? upscaleVideoUrl : tool === "loudness" ? loudVideoUrl : tool === "subtitle" ? subtitleSource : clipOptions.find(clip => clip.id === concatSel[0])?.url || "";
+  const sourcePreview = activeTool === "vfx" ? vfxSource : activeTool === "bgm" ? bgmVideoUrl : activeTool === "enhance" ? upscaleVideoUrl : activeTool === "loudness" ? loudVideoUrl : activeTool === "subtitle" ? subtitleSource : clipOptions.find(clip => clip.id === concatSel[0])?.url || "";
+  const sourceForTool = (tool: PostProdTool) => tool === "vfx" ? vfxSource : tool === "bgm" ? bgmVideoUrl : tool === "enhance" ? upscaleVideoUrl : tool === "loudness" ? loudVideoUrl : tool === "subtitle" ? subtitleSource : clipOptions.find(clip => clip.id === concatSel[0])?.url || "";
   const focusStudio = (tool = activeTool) => { const clipId = clipOptions.find(clip => clip.url === sourceForTool(tool))?.id; if (focusEpisode) onStudioFocus?.({tool:"postprod",task:tool,episodeIndex:focusEpisode,...(clipId ? {clipId} : {})}); };
   useEffect(() => { if (studioHasFocus.current) focusStudio(); }, [activeTool, sourcePreview, focusEpisode]);
   const renderJobOutput = (job: TrackedJob) => {
@@ -1708,6 +1770,10 @@ export default function PostProdWorkshopCard({
               })
             )}
           </div>
+          <div className="mt-2 space-y-2">
+            <label className="block text-xs text-white/65">镜头转场<select aria-label="拼接转场" className={selectCls} value={concatTransition} onChange={e => setConcatTransition(e.target.value as typeof concatTransition)}><option value="none">直接切换</option><option value="fade">交叉淡化</option><option value="dissolve">溶解</option><option value="wipeleft">向左擦除</option></select></label>
+            {concatTransition !== "none" && <><label className="text-xs text-white/65">重叠秒数 <input aria-label="转场重叠秒数" className={numCls} type="number" min={0.1} max={2} step={0.1} value={concatTransitionSec} onChange={e => setConcatTransitionSec(Number(e.target.value))} /></label><p className="text-xs text-white/50">支持2–6段、两分钟以内；每个转场重叠画面并交叉淡化声音，成片会缩短相应秒数。</p></>}
+          </div>
           <div className="mt-2 flex items-center gap-2">
             <select
               aria-label="拼接分辨率"
@@ -1722,7 +1788,7 @@ export default function PostProdWorkshopCard({
               <option value="9:16">9:16 竖屏</option>
               <option value="16:9">16:9 横屏</option>
             </select>
-            <button type="button" disabled={busy} onClick={submitConcat} className={goCls}>
+            <button type="button" disabled={busy} onClick={() => void submitConcat()} className={goCls}>
               {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Scissors className="h-3.5 w-3.5" />}
               拼接 {concatSel.length > 0 ? `${concatSel.length} 段` : ""}
             </button>
@@ -1816,7 +1882,8 @@ export default function PostProdWorkshopCard({
           </div>
         </div>
 
-        <div hidden={activeTool !== "subtitle"}><PostProdSubtitleCard onSourceChange={setSubtitleSource} key={projectScopeKey} context={advisorContext} storageKey={`${storageKey}:${projectScopeKey}:subtitle`} clips={clipOptions} busy={busy || scopedJobs.some(job => job.action === "burn_subtitle" && (job.status === "queued" || job.status === "running"))} onSubmit={async params => { await submit({ action: "burn_subtitle", params }, params.effect === "none" ? "对白字幕成片" : `对白字幕成片 · ${SUBTITLE_EFFECT_OPTIONS.find(option => option.id === params.effect)?.label ?? "字幕特效"}`,true); }} /></div>
+        <div hidden={activeTool !== "vfx"}><ManhuaVfxEditor key={vfxScopeKey} scopeKey={vfxScopeKey} onAdvisorEffectsControl={onAdvisorEffectsControl} state={vfxState} onStateChange={onVfxStateChange} clips={vfxSourceClips} imageOptions={vfxImageOptions} jobs={vfxJobs} busy={busy} onSourceChange={onVfxSourceChange} onPreview={(url, label) => setPreviewResult({ url, label })} onSubmit={input => submit(input, "漫剧特效候选", true)} /></div>
+        <div hidden={activeTool !== "subtitle"}><PostProdSubtitleCard effectsScopeKey={vfxScopeKey} onAdvisorEffectsControl={onAdvisorEffectsControl} onSourceChange={setSubtitleSource} key={projectScopeKey} context={advisorContext} storageKey={`${storageKey}:${projectScopeKey}:subtitle`} clips={clipOptions} busy={busy || scopedJobs.some(job => job.action === "burn_subtitle" && (job.status === "queued" || job.status === "running"))} onSubmit={async (params, label) => { return await submit({ action: "burn_subtitle", params }, label || (params.effect === "none" ? "对白字幕成片" : `对白字幕成片 · ${SUBTITLE_EFFECT_OPTIONS.find(option => option.id === params.effect)?.label ?? "字幕特效"}`),true); }} /></div>
 
         {/* BGM 贴装 */}
         <div hidden={activeTool !== "bgm"} className="rounded-xl border border-white/10 bg-black/25 p-3">

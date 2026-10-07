@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { validateAdvisorEffectsAction } from "./manhuaAdvisorEffects";
 import { manhuaAdvisorWorkflowVariants } from "./manhuaAdvisorWorkflow";
 export const creativeVoiceProductionSchema = z.discriminatedUnion("action", [
   ...manhuaAdvisorWorkflowVariants,
@@ -21,6 +22,7 @@ export const creativeVoiceProductionSchema = z.discriminatedUnion("action", [
   z.object({action:z.literal("previs"),clipId:z.string().min(1).max(200)}).strict(),
   z.object({action:z.literal("renderPrevis"),question:z.string().trim().min(2).max(1200)}).strict(),
 ]).superRefine((value,ctx)=>{
+  if(value.action === "effects") { validateAdvisorEffectsAction(value,ctx); return; }
   const rules: Record<string, Record<string, {required?:string[];allowed?:string[]}>> = {
     writer:{inspect:{},configure:{allowed:["topic","brief","templateId","episodeCount"]},trial:{},expand:{},confirm:{}},
     asset:{inspect:{},regenerate:{required:["anchorId","question"]},select:{required:["anchorId","libraryId"]},adopt:{},configure:{required:["assetId","metadata"]},claim:{required:["assetId","anchorIds"]},primary:{required:["assetId","anchorId","duty"]},acceptReview:{required:["assetId"]}},

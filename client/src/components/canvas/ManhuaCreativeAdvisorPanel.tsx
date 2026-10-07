@@ -52,6 +52,7 @@ function readableAdvice(text: string) {
 }
 
 export default function ManhuaCreativeAdvisorPanel(props: {
+  knowledgePanel?: ReactNode;
   dockHost?: HTMLElement | null;
   previewHost?: HTMLElement | null;
   previsTarget?: AdvisorPrevisTarget;
@@ -741,8 +742,9 @@ export default function ManhuaCreativeAdvisorPanel(props: {
           {(props.previsIssue || props.previsLaunchIssue) && <p role="status" className="text-amber-100">{props.previsIssue || props.previsLaunchIssue}</p>}
           <button type="button" className="underline" onClick={props.onLeavePrevis}>返回普通咨询</button>
         </section>}
+        {props.knowledgePanel}
         <details className="rounded-lg border border-white/10 p-2 text-xs"><summary className="cursor-pointer text-white/65">咨询额度与快捷提问</summary>
-        <button type="button" disabled={!userId || !project || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={() => { setDraft("请结合当前剧情、导演包与镜头规格，优化运镜、灯光、场景氛围和演员表演。逐镜写明一位小数秒窗、摄影机起终位置、移动方向、FOV/景别、焦点与光源变化；说明氛围随事件怎样变化，以及各角色的意图、喜怒哀乐、眼神/微表情、身体和听者反应。区分白模已表达和正式影片还需补充的技巧。保留人物、动作和已确认音轨，只给建议，不生成、重渲染或自动采用。"); questionRef.current?.focus(); }} className="mb-2 rounded-md border border-cyan-300/30 px-3 py-2 text-xs text-cyan-100 hover:bg-cyan-500/10 disabled:opacity-40">优化摄影、氛围与表演</button>
+        <button type="button" disabled={!userId || !project || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={() => { setDraft("请结合当前剧情、已更新模板库、导演包与镜头规格，提出剧情、美术与特效整合方案：角色欲望、阻力、代价和反转形成因果，设计独特且服务剧情的视觉记忆点；明确妆发服装材质、场景尺度与空间层次、真实光源和气氛变化；特效分清生成主体与后期增强，不能以叠光冒充法相或电影级场景。逐镜写明一位小数秒窗、摄影机起终位置、移动方向、FOV/景别、焦点与光源变化；说明氛围随事件怎样变化，以及各角色的意图、喜怒哀乐、眼神/微表情、身体和听者反应。区分白模已表达和正式影片还需补充的技巧。保留人物、动作和已确认音轨，只给建议，不生成、重渲染或自动采用。"); questionRef.current?.focus(); }} className="mb-2 rounded-md border border-cyan-300/30 px-3 py-2 text-xs text-cyan-100 hover:bg-cyan-500/10 disabled:opacity-40">优化摄影、氛围与表演</button>
         {!creationMode && <div className="mb-2 flex flex-wrap gap-2">{quick.map(([label, question]) => <button key={label} type="button" disabled={!userId || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={() => send(question!)} className="rounded-md border border-white/15 px-2 py-1.5 text-xs text-white/75 hover:border-cyan-300/60 disabled:opacity-40">{label}</button>)}</div>}
         <p className="mt-2 text-[11px] leading-4 text-white/45">{props.previsTarget ? "说“生成试看”会直接渲染到本页；可以多轮修改，满意后点击应用。" : "顾问意见仅供参考，由你选择是否采纳；不会自动修改项目或生成素材。工厂会生成提示词，无需从零手填。"}{sessionKey ? "对话与恢复记录保存在本机，按作品和稿件版本区分。" : "登录后可保存对话与恢复记录。"}追问携带最近 8 条，长答复标记为节选。</p>
         <section aria-label="本作品咨询额度" className="mt-2 rounded-lg border border-cyan-300/25 bg-cyan-400/5 p-3 text-xs leading-5" aria-live="polite">

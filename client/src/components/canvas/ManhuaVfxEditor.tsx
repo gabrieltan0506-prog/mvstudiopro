@@ -1,0 +1,336 @@
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+import { Loader2, Trash2 } from "lucide-react";
+import { MANHUA_VFX_PRESET_LABELS, manhuaVfxCompositionSchema, type ManhuaVfxComposition, type ManhuaVfxEffect, type ManhuaVfxState } from "@shared/manhuaVfx";
+import { gcsTransferUrl } from "@/lib/gcsTransfer";
+import { maskMediaProviderDetails } from "@/lib/maskMediaUrls";
+import { canAdoptManhuaVfxRequest, manhuaVfxContainedVideoRect, manhuaVfxPositionFromPointer, upsertManhuaVfxTrajectoryPoint, type ManhuaVfxVideoRect, makeManhuaVfxEffect, manhuaVfxSourceKey, manhuaVfxMediaIdentity, parseManhuaVfxTrajectory, validateManhuaVfxDuration } from "@/lib/manhuaVfxWorkflow";
+import type { ClipOption, TrackedJob } from "@/lib/postProdWorkshop";
+import type { AdvisorEffectsControl, AdvisorEffectsRegistration } from "@shared/manhuaAdvisorEffects";
+import { advisorWorkflowRevision } from "@/lib/manhuaAdvisorWorkflowPlan";
+
+type Draft = NonNullable<ManhuaVfxState["draft"]>;
+type Request = ManhuaVfxState["requests"][string];
+export type ManhuaVfxSubmitInput = {
+  action: "manhua_vfx";
+  requestId: string;
+  params: { videoUri: string; sourceKey: string; composition: ManhuaVfxComposition };
+};
+const LABELS = MANHUA_VFX_PRESET_LABELS;
+const controlClass = "w-full rounded border border-white/15 bg-black/30 px-2 py-1.5 text-xs text-white";
+const buttonClass = "rounded border border-cyan-300/35 px-3 py-2 text-xs text-cyan-100 disabled:opacity-40";
+
+export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], jobs, busy, onStateChange, onSubmit, onSourceChange, onPreview, onAdvisorEffectsControl }: {
+  scopeKey: string;
+  state?: ManhuaVfxState;
+  clips: ClipOption[];
+  imageOptions?: ClipOption[];
+  onAdvisorEffectsControl?: AdvisorEffectsRegistration;
+  jobs: TrackedJob[];
+  busy: boolean;
+  onStateChange?: (state: ManhuaVfxState) => Promise<ManhuaVfxState | void>;
+  onSubmit: (input: ManhuaVfxSubmitInput) => Promise<string | undefined>;
+  onSourceChange: (uri: string) => void;
+  onPreview: (url: string, label: string) => void;
+}) {
+  const empty = (): ManhuaVfxState => ({ version: 1, scopeKey, requests: {} });
+  const [local, setLocal] = useState<ManhuaVfxState>(() => state?.scopeKey === scopeKey ? state : empty());
+  const latest = useRef(local);
+  latest.current = local;
+  const [draft, setDraft] = useState<Draft | undefined>(local.draft);
+  const draftRef = useRef(draft); draftRef.current = draft;
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [durationSec, setDurationSec] = useState(0);
+  const [playbackSec, setPlaybackSec] = useState(0);
+  const [positioning, setPositioning] = useState(false);
+  const [videoRect, setVideoRect] = useState<ManhuaVfxVideoRect>();
+  const [sourceError, setSourceError] = useState("");
+  const [selectedEffectId, setSelectedEffectId] = useState(draft?.composition.effects[0]?.id || "");
+  const [trajectoryText, setTrajectoryText] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const gate = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => {
+    if (!state || state.scopeKey !== scopeKey || gate.current || state === latest.current) return;
+    const draftIsUnedited = JSON.stringify(draftRef.current) === JSON.stringify(latest.current.draft);
+    latest.current = state; setLocal(state);
+    if (draftIsUnedited) { setDraft(state.draft); setTrajectoryText({}); }
+  }, [state, scopeKey]);
+  const source = draft && clips.find(clip => clip.id === draft.sourceId);
+  const currentSource = Boolean(source && draft && manhuaVfxSourceKey(source) === draft.sourceKey);
+  const sourceUrl = currentSource ? source!.url : "";
+  const selectedEffect = draft?.composition.effects.find(effect => effect.id === selectedEffectId) || draft?.composition.effects[0];
+  const measureVideo = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    const box = video.getBoundingClientRect();
+    setVideoRect(manhuaVfxContainedVideoRect(box, { width: video.videoWidth, height: video.videoHeight }));
+  };
+  useEffect(() => { setDurationSec(0); setPlaybackSec(0); setPositioning(false); setVideoRect(undefined); setSourceError(""); onSourceChange(sourceUrl); }, [sourceUrl, onSourceChange]);
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const observer = new ResizeObserver(measureVideo);
+    observer.observe(video);
+    return () => observer.disconnect();
+  }, [sourceUrl]);
+
+  const persist = async (next: ManhuaVfxState) => {
+    if (!onStateChange) throw new Error("当前项目尚未接通特效保存，请稍后再试");
+    const saved = await onStateChange(next);
+    if (!mounted.current) return;
+    latest.current = saved || next;
+    setLocal(saved || next);
+  };
+  const showError = (caught: unknown) => {
+    const text = maskMediaProviderDetails(caught instanceof Error ? caught.message : "保存或提交暂未完成，请保留原请求继续查询");
+    if (mounted.current) setError(text);
+  };
+  const updateEffect = (id: string, update: Partial<ManhuaVfxEffect>) => setDraft(previous => previous && ({
+    ...previous, composition: { ...previous.composition, effects: previous.composition.effects.map(effect => effect.id === id ? { ...effect, ...update } : effect) },
+  }));
+  const resolveDraft = (): Draft => {
+    if (!draft || !source || !currentSource) throw new Error("原片已变化或不在当前项目，请重新选择素材");
+    const effects = draft.composition.effects.map(effect => Object.prototype.hasOwnProperty.call(trajectoryText, effect.id)
+      ? { ...effect, anchor: { ...effect.anchor, trajectory: parseManhuaVfxTrajectory(trajectoryText[effect.id]) } } : effect);
+    if (effects.some(effect => effect.kind === "image_overlay" && (!effect.imageUri || !imageOptions.some(image => manhuaVfxMediaIdentity(image.url) === effect.imageUri)))) throw new Error("叠加图片已变化或不在当前作品，请重新选择已保存的图片");
+    const parsed = manhuaVfxCompositionSchema.safeParse({ ...draft.composition, effects });
+    if (!parsed.success) throw new Error(parsed.error.issues[0]?.message || "请核对特效参数");
+    const durationError = validateManhuaVfxDuration(parsed.data, durationSec);
+    if (sourceError || durationError) throw new Error(sourceError || durationError);
+    return { ...draft, videoUri: source.url, composition: parsed.data };
+  };
+  const saveDraft = async () => {
+    if (gate.current) return;
+    gate.current = true; setSaving(true); setError("");
+    try {
+      const nextDraft = resolveDraft();
+      await persist({ ...latest.current, draft: nextDraft });
+      setDraft(nextDraft); setTrajectoryText({});
+      toast.success("特效方案已保存到当前作品");
+    } catch (caught) { showError(caught); }
+    finally { gate.current = false; if (mounted.current) setSaving(false); }
+  };
+  const submit = async (existing?: Request, advisor?: { signal: AbortSignal }) => {
+    if (gate.current || busy) return;
+    advisor?.signal.throwIfAborted();
+    gate.current = true; setSaving(true); setError("");
+    let request: Request | undefined;
+    try {
+      if (existing) {
+        request = existing;
+        await persist({ ...latest.current, requests: { ...latest.current.requests, [existing.requestId]: existing } });
+      } else {
+        const nextDraft = resolveDraft();
+        const unresolved = Object.values(latest.current.requests).find(item => ["submitting", "unknown", "queued", "running"].includes(item.status));
+        if (unresolved) throw new Error("当前仍有未收口的特效任务，请先查询原任务");
+        request = { ...nextDraft, requestId: crypto.randomUUID(), createdAt: Date.now(), status: "submitting" };
+        // Retain the immutable intent in this view even when persistence has an unknown outcome.
+        const intent = { ...latest.current, draft: nextDraft, requests: { ...latest.current.requests, [request.requestId]: request } };
+        latest.current = intent; setLocal(intent);
+        // A confirmed cloud save is the precondition for creating a render task.
+        await persist(intent);
+        setDraft(nextDraft); setTrajectoryText({});
+      }
+      if (!mounted.current) return;
+      advisor?.signal.throwIfAborted();
+      const jobId = await onSubmit({ action: "manhua_vfx", requestId: request.requestId,
+        params: { videoUri: request.videoUri, sourceKey: request.sourceKey, composition: request.composition } });
+      if (!jobId) throw new Error("任务回执暂未取得，请继续查询原请求");
+      request = { ...request, jobId, status: "queued", error: undefined };
+      await persist({ ...latest.current, requests: { ...latest.current.requests, [request.requestId]: request } });
+      return { requestId: request.requestId, jobId, status: latest.current.requests[request.requestId]?.status || request.status };
+    } catch (caught) {
+      // Keep the original immutable request in the saved draft even when enqueue or the receipt save is unknown.
+      if (request && latest.current.requests[request.requestId]) {
+        const code = (caught as { data?: { code?: string } })?.data?.code;
+        const rejected = ["BAD_REQUEST", "UNAUTHORIZED", "FORBIDDEN", "PRECONDITION_FAILED"].includes(code || "");
+        const next = { ...latest.current, requests: { ...latest.current.requests, [request.requestId]: { ...request, status: rejected ? "failed" as const : "unknown" as const,
+          error: rejected ? "提交未获接受，请核对素材与参数" : undefined } } };
+        latest.current = next; if (mounted.current) setLocal(next);
+        try { await persist(next); } catch { /* Previously saved submitting intent remains recoverable. */ }
+      }
+      showError(caught);
+      if (advisor) throw caught;
+    } finally { gate.current = false; if (mounted.current) setSaving(false); }
+  };
+
+  // Common workshop polling owns server receipts. Persist complete candidates into the project for refresh/backup restore.
+  useEffect(() => {
+    if (gate.current || !onStateChange) return;
+    const next = { ...latest.current, requests: { ...latest.current.requests } };
+    let changed = false;
+    for (const request of Object.values(latest.current.requests)) {
+      const job = jobs.find(item => item.jobId === request.jobId && item.scopeKey === scopeKey && item.action === "manhua_vfx");
+      if (!job || (job.status === request.status && (job.status !== "succeeded" || request.output))) continue;
+      const output = job.output as Request["output"];
+      if (job.status === "succeeded" && (!output || output.requestId !== request.requestId || output.sourceKey !== request.sourceKey)) continue;
+      next.requests[request.requestId] = { ...request, status: job.status, error: job.error || undefined, ...(job.status === "succeeded" ? { output } : {}) };
+      changed = true;
+    }
+    if (!changed) return;
+    gate.current = true;
+    void persist(next).catch(showError).finally(() => { gate.current = false; });
+  }, [jobs, scopeKey, saving, onStateChange]);
+
+  const adopt = async (requestId: string, advisor?: { signal: AbortSignal }) => {
+    if (gate.current) return;
+    advisor?.signal.throwIfAborted();
+    gate.current = true; setSaving(true); setError("");
+    try {
+      const nextDraft = resolveDraft();
+      const next = { ...latest.current, draft: nextDraft };
+      if (!canAdoptManhuaVfxRequest(next, requestId, clips)) throw new Error("此候选与当前来源或方案不一致，请先恢复对应方案并核对原片");
+      await persist({ ...next, adoptedRequestId: requestId });
+      setDraft(nextDraft); setTrajectoryText({});
+      toast.success("已采用特效候选并保存，可在后续工序中选择");
+      return { requestId, status: "adopted" };
+    } catch (caught) { showError(caught); if (advisor) throw caught; }
+    finally { gate.current = false; if (mounted.current) setSaving(false); }
+  };
+  const addTrajectoryPoint = () => {
+    const video = videoRef.current;
+    if (!video || !selectedEffect || !draft || gate.current) return;
+    try {
+      const points = Object.prototype.hasOwnProperty.call(trajectoryText, selectedEffect.id)
+        ? parseManhuaVfxTrajectory(trajectoryText[selectedEffect.id]) || [] : selectedEffect.anchor.trajectory || [];
+      if (video.currentTime > durationSec) throw new Error("播放时刻超出原片，请重新定位");
+      const [x, y] = selectedEffect.anchor.position;
+      const trajectory = upsertManhuaVfxTrajectoryPoint(points, { timeSec: video.currentTime, x, y });
+      updateEffect(selectedEffect.id, { anchor: { ...selectedEffect.anchor, trajectory } });
+      setTrajectoryText(previous => { const next = { ...previous }; delete next[selectedEffect.id]; return next; });
+      setError("");
+    } catch (caught) { showError(caught); }
+  };
+  const locked = busy || saving;
+  const pending = Object.values(local.requests).some(request => ["submitting", "unknown", "queued", "running"].includes(request.status));
+  const advisorSourceKey = advisorWorkflowRevision([scopeKey, clips.map(clip => [clip.id, manhuaVfxMediaIdentity(clip.url)]), imageOptions.map(image => [image.id, manhuaVfxMediaIdentity(image.url)]), draft, trajectoryText, local.requests, local.adoptedRequestId]);
+  const advisorSourceRef = useRef(advisorSourceKey); advisorSourceRef.current = advisorSourceKey;
+  const advisorRecipe = (composition: ManhuaVfxComposition) => ({ ...composition, effects: composition.effects.map(({ imageUri, ...effect }) => ({ ...effect, ...(imageUri ? { imageId: imageOptions.find(image => manhuaVfxMediaIdentity(image.url) === imageUri)?.id || "图片已失效" } : {}) })) });
+  const advisorControl = useRef<AdvisorEffectsControl>(async () => "");
+  advisorControl.current = async (action, signal) => {
+    signal.throwIfAborted();
+    if (action.tool !== "vfx") throw new Error("此控制器只处理屏幕特效");
+    if (action.operation === "inspect") return JSON.stringify({ sourceKey: advisorSourceKey, scopeKey, tool: "vfx", kinds: LABELS,
+      clips: clips.map(({ id, label }) => ({ id, label })), images: imageOptions.map(({ id, label }) => ({ id, label })), selectedSourceId: draft?.sourceId,
+      vfxRecipe: draft ? advisorRecipe(draft.composition) : undefined,
+      requests: Object.values(local.requests).map(request => ({ requestId: request.requestId, sourceId: request.sourceId, vfxRecipe: advisorRecipe(request.composition), status: request.status, canAdopt: canAdoptManhuaVfxRequest({ ...local, draft }, request.requestId, clips), adopted: local.adoptedRequestId === request.requestId })), busy: locked });
+    const assertCurrent = () => { signal.throwIfAborted(); if (!mounted.current || !action.sourceKey || action.sourceKey !== advisorSourceRef.current) throw new Error("特效来源或方案已变化，请重新inspect；未执行旧方案"); };
+    assertCurrent();
+    if (locked || gate.current) throw new Error("特效正在保存或提交，请先查询原任务");
+    if (action.operation === "configure") {
+      const clip = clips.find(item => item.id === action.sourceIds?.[0]);
+      if (!clip || action.sourceIds?.length !== 1 || !action.vfxRecipe) throw new Error("请使用当前清单的一段原片和完整特效方案");
+      const composition = manhuaVfxCompositionSchema.parse({ ...action.vfxRecipe, effects: action.vfxRecipe.effects.map(({ imageId, ...effect }) => {
+        if (effect.kind !== "image_overlay") { if (imageId) throw new Error("此特效不接收图片编号"); return effect; }
+        const image = imageOptions.find(item => item.id === imageId);
+        if (!image) throw new Error("叠加图片不在当前作品清单");
+        return { ...effect, imageUri: manhuaVfxMediaIdentity(image.url) };
+      }) });
+      if (!window.confirm("将顾问特效方案保存到当前作品？此步只保存草案，不渲染；原片和旧候选保留。")) return "用户取消保存特效草案。";
+      assertCurrent(); gate.current = true; setSaving(true);
+      try {
+        const nextDraft = { sourceId: clip.id, sourceKey: manhuaVfxSourceKey(clip), videoUri: clip.url, composition };
+        await persist({ ...latest.current, draft: nextDraft });
+        if (mounted.current) { setDraft(nextDraft); setTrajectoryText({}); setError(""); }
+        return "特效草案已保存；未渲染。请重新inspect并核对原片时长后提交。";
+      } finally { gate.current = false; if (mounted.current) setSaving(false); }
+    }
+    const request = action.requestId ? latest.current.requests[action.requestId] : undefined;
+    if (action.operation === "resume") {
+      if (!request) throw new Error("当前作品没有这个原请求");
+      if (!["submitting", "unknown"].includes(request.status)) return JSON.stringify({ requestId: request.requestId, status: request.status, jobId: request.jobId, note: "沿原任务自动查询，不创建新任务" });
+      const receipt = await submit(request, { signal }); if (!receipt) throw new Error("原请求尚未取得回执"); return JSON.stringify(receipt);
+    }
+    if (action.operation === "adopt") {
+      if (!request) throw new Error("当前作品没有这个候选");
+      if (!window.confirm("采用此特效候选并保存到当前作品？原片与旧候选保留。")) return "用户取消采用特效候选。";
+      assertCurrent(); const receipt = await adopt(request.requestId, { signal }); if (!receipt) throw new Error("候选未采用"); return JSON.stringify(receipt);
+    }
+    if (action.operation !== "submit") throw new Error("不支持此特效操作");
+    if (!window.confirm("按当前已保存特效方案提交渲染候选？原片保留，不自动重试。")) return "用户取消特效渲染。";
+    assertCurrent(); const receipt = await submit(undefined, { signal }); if (!receipt) throw new Error("尚未取得特效任务回执"); return JSON.stringify(receipt);
+  };
+  useEffect(() => { onAdvisorEffectsControl?.(scopeKey, "vfx", (...args) => advisorControl.current(...args)); return () => onAdvisorEffectsControl?.(scopeKey, "vfx", null); }, [scopeKey, onAdvisorEffectsControl]);
+  return <section className="space-y-3 rounded-xl border border-cyan-300/20 bg-black/15 p-3" aria-label="漫剧特效工作台">
+    <h4 className="text-sm font-semibold text-white">漫剧特效</h4>
+    <p className="text-xs leading-relaxed text-white/60">在原片上叠加特效，保留原声。支持最长30秒、最长边1920像素及1080p以内素材。高帧率大画幅素材提交时还会核对处理上限。按画面位置与手动轨迹放置，目前不自动跟踪人物或计算前后遮挡。尚未线上验收。</p>
+    <label className="block text-xs text-white/70">原片<select className={`${controlClass} mt-1`} value={draft?.sourceId || ""} disabled={locked} onChange={event => {
+      const clip = clips.find(item => item.id === event.target.value);
+      if (!clip) return;
+      setDraft({ sourceId: clip.id, sourceKey: manhuaVfxSourceKey(clip), videoUri: clip.url,
+        composition: draft?.composition || { version: 1, seed: 1, effects: [makeManhuaVfxEffect("sword_trail", crypto.randomUUID())] } });
+      setTrajectoryText({}); setError("");
+    }}><option value="">选择当前作品原片</option>{clips.map(clip => <option key={clip.id} value={clip.id}>{clip.label}</option>)}</select></label>
+    {draft && !currentSource ? <p className="text-xs text-amber-200">此方案的来源已变化，请重新选择原片。旧任务与候选仍保留。</p> : null}
+    {sourceUrl ? <div className="max-w-lg overflow-hidden rounded bg-black">
+      <div className="relative" data-vfx-position-frame>
+        <video ref={videoRef} key={sourceUrl} controls={!positioning} playsInline preload="metadata" src={gcsTransferUrl(sourceUrl)} className="max-h-72 w-full object-contain" onLoadedMetadata={event => {
+          const video = event.currentTarget;
+          setDurationSec(video.duration); setPlaybackSec(video.currentTime); measureVideo();
+          setSourceError(video.duration > 30 || Math.max(video.videoWidth, video.videoHeight) > 1920 || video.videoWidth * video.videoHeight > 1920 * 1080 ? "原片超出本次支持的时长或画幅，请先在现有工作流裁切或选择合适版本" : "");
+        }} onTimeUpdate={event => setPlaybackSec(event.currentTarget.currentTime)} onSeeked={event => setPlaybackSec(event.currentTarget.currentTime)} onError={() => setSourceError("原片暂不可播放，请重新核对素材")} />
+        {selectedEffect && videoRect ? <span data-vfx-anchor-marker aria-hidden className="pointer-events-none absolute z-10 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-cyan-200 bg-cyan-500/35 shadow" style={{ left: videoRect.left + selectedEffect.anchor.position[0] * videoRect.width, top: videoRect.top + selectedEffect.anchor.position[1] * videoRect.height }} /> : null}
+        {positioning ? <button type="button" aria-label="在原片上定位特效" disabled={locked || !selectedEffect} className="absolute inset-0 z-20 cursor-crosshair" onClick={event => {
+          const video = videoRef.current;
+          if (!video || !selectedEffect) return;
+          const box = video.getBoundingClientRect();
+          const position = manhuaVfxPositionFromPointer(manhuaVfxContainedVideoRect(box, { width: video.videoWidth, height: video.videoHeight }), { x: event.clientX - box.left, y: event.clientY - box.top });
+          if (!position) { setError("留黑区域不属于原片，请在画面内定位"); return; }
+          updateEffect(selectedEffect.id, { anchor: { ...selectedEffect.anchor, position } }); setError("");
+        }} /> : null}
+      </div>
+      <div className="space-y-2 p-2">
+        <p className="text-[11px] text-white/50">原片定位参考 · 圆点仅标记挂点，特效以渲染候选为准{durationSec > 0 ? ` · ${durationSec.toFixed(2)} 秒` : ""}</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <select aria-label="画面定位的特效" className={`${controlClass} w-auto`} value={selectedEffect?.id || ""} disabled={locked} onChange={event => setSelectedEffectId(event.target.value)}>{draft?.composition.effects.map((effect, index) => <option key={effect.id} value={effect.id}>{index + 1}. {LABELS[effect.kind]}</option>)}</select>
+          <button type="button" className={buttonClass} aria-pressed={positioning} disabled={locked || !selectedEffect || !durationSec} onClick={() => { videoRef.current?.pause(); setPositioning(value => !value); }}>{positioning ? "结束画面定位" : "点击画面定位"}</button>
+        </div>
+        <label className="flex items-center gap-2 text-[11px] text-white/65">播放时刻 <input aria-label="特效原片播放秒位" type="range" min={0} max={durationSec || 0} step={0.01} value={playbackSec} disabled={locked || !durationSec} className="min-w-0 flex-1" onChange={event => { const time = Number(event.target.value); if (videoRef.current) { videoRef.current.pause(); videoRef.current.currentTime = time; } setPlaybackSec(time); }} /><span className="w-14 text-right">{playbackSec.toFixed(2)} 秒</span></label>
+        <button type="button" className={buttonClass} disabled={locked || !selectedEffect || !durationSec} onClick={addTrajectoryPoint}>用当前秒位添加轨迹点</button>
+        <p className="text-[11px] text-white/45">暂停并定位挂点，再按当前秒位记录；移动播放时刻后可继续加点。同一时刻再次记录会更新位置。轨迹至少需要两个时刻，仍可在下方精确修改。</p>
+      </div>
+    </div> : null}
+    {sourceError ? <p className="text-xs text-amber-200">{sourceError}</p> : null}
+    {draft ? <>
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="text-xs text-white/60">图案编号 <input type="number" min={0} max={2147483647} className={`${controlClass} inline-block w-28`} value={draft.composition.seed} disabled={locked} onChange={event => setDraft({ ...draft, composition: { ...draft.composition, seed: Number(event.target.value) } })} /></label>
+        <select aria-label="添加特效" className={`${controlClass} w-auto`} disabled={locked || draft.composition.effects.length >= 12} value="" onChange={event => {
+          const effect = makeManhuaVfxEffect(event.target.value as ManhuaVfxEffect["kind"], crypto.randomUUID());
+          setDraft({ ...draft, composition: { ...draft.composition, effects: [...draft.composition.effects, effect] } }); setSelectedEffectId(effect.id);
+        }}><option value="">＋ 添加特效</option>{Object.entries(LABELS).map(([kind, label]) => <option key={kind} value={kind}>{label}</option>)}</select>
+      </div>
+      <div className="space-y-2">{draft.composition.effects.map((effect, index) => <fieldset key={effect.id} disabled={locked} className={`space-y-2 rounded border p-3 ${selectedEffect?.id === effect.id ? "border-cyan-300/40" : "border-white/15"}`} onFocus={() => setSelectedEffectId(effect.id)}>
+        <div className="flex items-center justify-between"><span className="text-xs font-semibold text-white">{index + 1}. {LABELS[effect.kind]}</span><button type="button" aria-label={`删除第${index + 1}个特效`} className="text-white/40" onClick={() => setDraft({ ...draft, composition: { ...draft.composition, effects: draft.composition.effects.filter(item => item.id !== effect.id) } })}><Trash2 className="h-3.5 w-3.5" /></button></div>
+        {effect.kind === "image_overlay" ? <div>
+          <label className="block text-xs text-white/65">叠加图片<select aria-label={`第${index + 1}个特效叠加图片`} className={`${controlClass} mt-1`} value={effect.imageUri || ""} onChange={event => updateEffect(effect.id, { imageUri: event.target.value || undefined })}><option value="">选择当前作品已保存的图片</option>{effect.imageUri && !imageOptions.some(image => manhuaVfxMediaIdentity(image.url) === effect.imageUri) ? <option value={effect.imageUri}>原图片已不在当前素材列表</option> : null}{imageOptions.map(image => <option key={image.id} value={manhuaVfxMediaIdentity(image.url)}>{image.label}</option>)}</select></label>
+          {imageOptions.length === 0 ? <p className="mt-1 text-xs text-amber-200">当前没有可用图片，请先在本集素材中上传或生成图片并保存。外部链接须先保存到素材库。</p> : null}
+          {effect.imageUri ? <img alt="所选叠加图片" src={gcsTransferUrl(effect.imageUri)} className="mt-2 h-20 max-w-40 object-contain" /> : null}
+          <p className="mt-1 text-[11px] text-white/50">使用图片原色与透明区域；挂点是图片中心，大小按画面高度，强度控制透明度（1为原图，最高按不透明处理）。支持手动轨迹，不自动跟踪。</p>
+        </div> : null}
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {([{ key: "startSec", label: "开始秒", min: 0, max: 30, step: 0.05 }, { key: "durationSec", label: "持续秒", min: 0.05, max: 30, step: 0.05 }, { key: "scale", label: "大小（画面高比例）", min: 0.02, max: 2, step: 0.01 }, { key: "intensity", label: "强度", min: 0, max: 2, step: 0.05 }] as const).map(field => <label key={field.key} className="text-[11px] text-white/60">{field.label}<input className={`${controlClass} mt-1`} type="number" {...{ min: field.min, max: field.max, step: field.step }} value={effect[field.key]} onChange={event => updateEffect(effect.id, { [field.key]: Number(event.target.value) })} /></label>)}
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          {effect.kind !== "image_overlay" ? <label className="text-[11px] text-white/60">颜色<input className={`${controlClass} mt-1 h-8`} type="color" value={effect.color} onChange={event => updateEffect(effect.id, { color: event.target.value })} /></label> : null}
+          {([0, 1] as const).map(axis => <label key={axis} className="text-[11px] text-white/60">{axis === 0 ? "横向位置（左0 → 右1）" : "纵向位置（上0 → 下1）"}<input type="number" min={0} max={1} step={0.01} className={`${controlClass} mt-1`} value={effect.anchor.position[axis]} onChange={event => { const position: [number, number] = [...effect.anchor.position]; position[axis] = Number(event.target.value); updateEffect(effect.id, { anchor: { ...effect.anchor, position } }); }} /></label>)}
+        </div>
+        <details><summary className="cursor-pointer text-[11px] text-cyan-200">手动运动轨迹（可选）</summary><p className="my-1 text-[11px] text-white/50">每行填写「整片秒数 横向位置 纵向位置」，至少两行且时间递增；位置取0至1。不填写时固定在上方位置。</p><textarea aria-label={`第${index + 1}个特效轨迹`} rows={3} className={controlClass} placeholder="0 0.2 0.5&#10;1 0.8 0.5" value={trajectoryText[effect.id] ?? effect.anchor.trajectory?.map(point => `${point.timeSec} ${point.x} ${point.y}`).join("\n") ?? ""} onChange={event => setTrajectoryText({ ...trajectoryText, [effect.id]: event.target.value })} /></details>
+      </fieldset>)}</div>
+      <div className="flex flex-wrap gap-2"><button type="button" className={buttonClass} disabled={locked || !onStateChange} onClick={() => void saveDraft()}>保存方案</button><button type="button" className={buttonClass} disabled={locked || pending || !onStateChange || !currentSource || Boolean(sourceError) || !durationSec} onClick={() => void submit()}>{saving ? <Loader2 className="mr-1 inline h-3 w-3 animate-spin" /> : null}渲染特效候选</button></div>
+    </> : null}
+    {error ? <p role="alert" className="text-xs text-amber-200">{error}</p> : null}
+    <div className="space-y-2" aria-label="特效任务与候选">{Object.values(local.requests).sort((a, b) => b.createdAt - a.createdAt).map(request => {
+      const outputUrl = request.output?.gcsUri || request.output?.url;
+      const eligible = draft && canAdoptManhuaVfxRequest({ ...local, draft }, request.requestId, clips);
+      const status = { submitting: "提交回执待确认", unknown: "回执待确认", queued: "排队中", running: "渲染中", succeeded: "候选已完成", failed: "任务失败" }[request.status];
+      return <div key={request.requestId} className="rounded border border-white/15 bg-black/15 p-2 text-xs text-white/70"><div className="flex flex-wrap items-center gap-2"><span>{status} · {new Date(request.createdAt).toLocaleString()}</span>{local.adoptedRequestId === request.requestId ? <span className="text-emerald-200">已采用</span> : null}</div><div className="mt-2 flex flex-wrap gap-2">
+        {outputUrl ? <button type="button" className={buttonClass} onClick={() => onPreview(outputUrl, "特效候选")}>预览候选</button> : null}
+        {request.status === "succeeded" ? <><button type="button" className={buttonClass} disabled={locked} onClick={() => { setDraft({ sourceId: request.sourceId, sourceKey: request.sourceKey, videoUri: request.videoUri, composition: request.composition }); setTrajectoryText({}); setError(""); }}>恢复此方案</button><button type="button" className={buttonClass} disabled={locked || !eligible || Object.keys(trajectoryText).length > 0} onClick={() => void adopt(request.requestId)}>采用此候选</button></> : null}
+        {request.status === "submitting" || request.status === "unknown" ? <button type="button" className={buttonClass} disabled={locked} onClick={() => void submit(request)}>查询原请求</button> : null}
+      </div>{request.error ? <p className="mt-1 text-amber-200">{maskMediaProviderDetails(request.error)}</p> : null}<p className="mt-1 select-all text-[10px] text-white/35">任务：{request.jobId || request.requestId}</p>{request.status === "succeeded" && !eligible ? <p className="mt-1 text-[11px] text-white/45">采用前需恢复对应方案，且原片仍是相同版本。</p> : null}</div>;
+    })}</div>
+  </section>;
+}

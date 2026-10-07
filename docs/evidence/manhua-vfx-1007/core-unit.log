@@ -1,0 +1,11 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-effects-1007
+
+ ✓ shared/manhuaVfx.test.ts (3 tests) 19ms
+ ✓ server/services/manhuaVfxTask.test.ts (3 tests) 11ms
+
+ Test Files  2 passed (2)
+      Tests  6 passed (6)
+   Start at  15:09:24
+   Duration  2.17s (transform 379ms, setup 0ms, collect 1.37s, tests 30ms, environment 1ms, prepare 411ms)
+

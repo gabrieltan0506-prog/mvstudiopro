@@ -9,6 +9,8 @@ BOUNDARY = '可见几何二值遮罩与相机Z通道；保留场景遮挡，不�
 
 
 def object_layer(obj, actor_ids):
+    if obj.get('manhua_scene_effect_actor') in actor_ids and obj.type in ('MESH','FONT','CURVE'):
+        return 'actors'
     if obj.type != 'MESH':
         return None
     actor_rigs = set(actor_ids) | {a+'_角色骨架' for a in actor_ids}

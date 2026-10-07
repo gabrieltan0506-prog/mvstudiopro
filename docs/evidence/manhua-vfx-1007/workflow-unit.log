@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-effects-1007
+
+ ✓ client/src/lib/manhuaVfxWorkflow.test.ts (7 tests) 11ms
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  15:05:32
+   Duration  2.32s (transform 1.29s, setup 0ms, collect 1.86s, tests 11ms, environment 0ms, prepare 101ms)
+

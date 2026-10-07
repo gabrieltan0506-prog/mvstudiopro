@@ -1,7 +1,10 @@
+import { ManhuaGenerativeEffectsEditor } from "./canvas/ManhuaGenerativeEffectsEditor";
+import type { AdvisorEffectsRegistration } from "@shared/manhuaAdvisorEffects";
+import { manhuaVfxMediaIdentity } from "@/lib/manhuaVfxWorkflow";
 /**
  * 剪辑阶段 · 多轨：细剪 / 字幕 / 包装 / 质检返工 / 导出勾选。
  */
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { copyText } from "@/lib/copyText";
 import {
@@ -95,6 +98,8 @@ type Props = {
   onRetakeClip?: (clipBlockId: string, variable: ManhuaRetakeVariable) => void;
   /** Seedance 2.5 局部视频编辑；原片必须保留为可回退版本。 */
   onVideoEditClip?: (clipBlockId: string, instructionZh: string) => void;
+  effectsScopeKey?: string;
+  onAdvisorEffectsControl?: AdvisorEffectsRegistration;
   clipVersionsByBlockId?: Record<string, { activeUrl?: string; urls: string[] }>;
   onSelectClipVersion?: (clipBlockId: string, url: string) => void;
   onOpenClipDock?: () => void;
@@ -194,6 +199,8 @@ export default function ManhuaEditMultitrackPanel({
   onAcceptDespiteQc,
   onRetakeClip,
   onVideoEditClip,
+  effectsScopeKey,
+  onAdvisorEffectsControl,
   clipVersionsByBlockId,
   onSelectClipVersion,
   onOpenClipDock,
@@ -234,7 +241,7 @@ export default function ManhuaEditMultitrackPanel({
   const burnConsentKey = JSON.stringify([finalVideoVersions?.activeUrl, finalSubtitleTimeline]);
   const [burnConfirmedKey, setBurnConfirmedKey] = useState<string | null>(null);
   const burnArmed = burnConfirmedKey === burnConsentKey;
-  const [videoEditInstruction, setVideoEditInstruction] = useState("");
+  const [videoEditMetadata, setVideoEditMetadata] = useState<{ sourceKey: string; durationSec: number }>();
   const [activeDrawer, setActiveDrawer] = useState<string | null>(null);
   const submitBurn = () => {
     if (!onBurnSubtitle || burnSubtitleBusy) return;
@@ -256,8 +263,17 @@ export default function ManhuaEditMultitrackPanel({
   const activeVersions = activeQc?.clipBlockId
     ? clipVersionsByBlockId?.[activeQc.clipBlockId]
     : undefined;
-  const adoptedVersionUrl = activeVersions?.activeUrl || activeVersions?.urls[0];
+  const adoptedVersionUrl = activeVersions?.activeUrl || activeVersions?.urls[0] || activeQc?.outputUrl || undefined;
+  const videoEditSourceKey = JSON.stringify([activeQc?.clipBlockId, manhuaVfxMediaIdentity(adoptedVersionUrl || "")]);
   const alternateVersionUrl = activeVersions?.urls.find((url) => url !== adoptedVersionUrl);
+  const registerGenerativeControl = useCallback<AdvisorEffectsRegistration>((scope, tool, control) => {
+    onAdvisorEffectsControl?.(scope, tool, control ? async (action, signal) => {
+      signal.throwIfAborted();
+      if (action.clipId && action.clipId !== activeQc?.clipBlockId) throw new Error("目标片段仍在切换，未操作旧片段");
+      setActiveDrawer("effects");
+      return control(action, signal);
+    } : null);
+  }, [onAdvisorEffectsControl, activeQc?.clipBlockId]);
 
   const activeClip = roughClips.find((c) => c.shotIndex === activeShotIndex);
   const sourceSegmentByShot = new Map<number, number>();
@@ -799,12 +815,12 @@ export default function ManhuaEditMultitrackPanel({
       <div id="manhua-edit-drawer-effects" data-manhua-edit-drawer="effects" hidden={activeDrawer !== "effects"} className="shrink-0 rounded-xl border border-white/15 bg-black/25 p-3">
         <h3 className="text-sm font-semibold text-white/90">特效与滤镜</h3>
         <div className="space-y-3 pt-2">
-          <p className="text-sm text-white/55">选中片段后可局部修改画面；编辑结果回来后，在这里并排看当前采用版与另一版本，再决定采用哪版。独立滤镜和调色参数尚未接通。</p>
+          <p className="text-sm text-white/55">选中已有片段后，可用变身、材质、环境重构或风格化草案编辑原片。结果回来后在这里对比当前采用版与另一版本，再决定采用哪版。</p>
           {adoptedVersionUrl ? (
             <div data-manhua-effect-preview className="grid min-w-0 gap-2 lg:grid-cols-2">
               <div className="min-w-0 rounded-lg border border-emerald-300/25 bg-emerald-500/[0.06] p-2">
                 <p className="mb-1 text-sm font-semibold text-emerald-100">当前采用版</p>
-                <video controls preload="metadata" src={adoptedVersionUrl} className="aspect-video max-h-56 w-full rounded bg-black object-contain" />
+                <video key={videoEditSourceKey} controls preload="metadata" src={adoptedVersionUrl} onLoadedMetadata={event => { if (Number.isFinite(event.currentTarget.duration) && event.currentTarget.duration > 0) setVideoEditMetadata({ sourceKey: videoEditSourceKey, durationSec: event.currentTarget.duration }); }} className="aspect-video max-h-56 w-full rounded bg-black object-contain" />
               </div>
               {alternateVersionUrl ? (
                 <div className="min-w-0 rounded-lg border border-white/15 bg-white/[0.03] p-2">
@@ -818,35 +834,10 @@ export default function ManhuaEditMultitrackPanel({
             </div>
           ) : null}
             {activeQc?.clipBlockId && activeQc.gate !== "missing" && onVideoEditClip ? (
-              <div className="mt-2 rounded-md border border-cyan-400/20 bg-cyan-500/[0.06] p-2">
-                <label className="block text-sm font-semibold text-cyan-50/85">
-                  局部改画面 · 原片保留可切回
-                </label>
-                <div className="mt-1 flex gap-1.5">
-                  <input
-                    value={videoEditInstruction}
-                    maxLength={240}
-                    onChange={(e) => setVideoEditInstruction(e.target.value)}
-                    placeholder="例如：移除背景路人，主体动作、构图与时长不变"
-                    className="min-w-0 flex-1 rounded border border-white/12 bg-black/45 px-2 py-1 text-sm text-white/85 outline-none focus:border-cyan-400/45"
-                  />
-                  <button
-                    type="button"
-                    disabled={factoryBusy || !videoEditInstruction.trim()}
-                    data-manhua-action="video-edit-clip"
-                    onClick={() => {
-                      onVideoEditClip(activeQc.clipBlockId!, videoEditInstruction);
-                      setVideoEditInstruction("");
-                    }}
-                    className="rounded border border-cyan-400/35 bg-cyan-500/15 px-2 py-1 text-sm font-semibold text-cyan-50 disabled:opacity-40"
-                  >
-                    提交编辑
-                  </button>
-                </div>
-                <p className="mt-1 text-sm leading-snug text-white/35">
-                  位于单镜质检之后、最终拼接之前；编辑版需重新质检。
-                </p>
-              </div>
+              <ManhuaGenerativeEffectsEditor key={videoEditSourceKey} clipBlockId={activeQc.clipBlockId}
+                effectsScopeKey={effectsScopeKey} sourceIdentity={videoEditSourceKey} onAdvisorEffectsControl={registerGenerativeControl}
+                sourceDurationSec={videoEditMetadata?.sourceKey === videoEditSourceKey ? videoEditMetadata.durationSec : undefined}
+                busy={factoryBusy} onSubmit={onVideoEditClip} />
             ) : null}
 
       {!activeQc?.clipBlockId || activeQc.gate === "missing" || !onVideoEditClip ? <p className="text-sm text-amber-100/70">请先选中已有成片，才可编辑画面。</p> : null}

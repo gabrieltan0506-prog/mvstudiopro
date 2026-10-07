@@ -6,7 +6,7 @@ export const MANHUA_ADVISOR_STUDIO_LABELS = {
 } as const;
 export const manhuaAdvisorStudioContextSchema = z.object({
   tool: z.enum(["model3d", "world3d", "previs", "actionTimeline", "audio", "edit", "postprod"]),
-  task: z.enum(["concat", "enhance", "subtitle", "bgm", "loudness"]).optional(),
+  task: z.enum(["concat", "enhance", "subtitle", "bgm", "loudness", "vfx"]).optional(),
   episodeIndex: z.number().int().positive(),
   segmentIndex: z.number().int().positive().optional(),
   clipId: z.string().min(1).max(180).optional(),

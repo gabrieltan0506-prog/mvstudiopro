@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-effects-1007
+
+ ✓ shared/manhuaAdvisorPrevisEdit.test.ts (8 tests | 7 skipped) 15ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 7 skipped (8)
+   Start at  16:01:25
+   Duration  1.03s (transform 196ms, setup 0ms, collect 305ms, tests 15ms, environment 0ms, prepare 91ms)
+

@@ -142,6 +142,11 @@ export const manhuaCreativeAdvisorContextSchema = z
     filmReview: advisorFilmReviewTargetSchema.optional(),
     mediaEditTarget: advisorMediaSourceSchema.optional(),
     subtitleReview: z.object({ videoUri: z.string().min(1).max(2048), dialogue: z.string().min(1).max(40000) }).strict().optional(),
+    /** 普通咨询的项目冻结导演包身份；与3D咨询入口独立，不能关闭模板读取。 */
+    directionPackage: z.object({
+      directionCardId: contextText(100, "导演包ID", true),
+      directionCardVersion: contextText(100, "导演包版本", true),
+    }).strict().optional(),
     /** 3D 场景咨询不依赖已创建白模；只传导演卡身份，由服务端查真实手法库。 */
     studio3d: z.object({
       directionCardId: contextText(100, "导演包ID").optional(),

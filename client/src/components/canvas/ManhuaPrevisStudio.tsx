@@ -1,3 +1,6 @@
+import type { AdvisorEffectsControl, AdvisorEffectsRegistration } from "@shared/manhuaAdvisorEffects";
+import { advisorWorkflowRevision } from "@shared/manhuaAdvisorWorkflowPlan";
+import { ManhuaPrevisSceneEffectsEditor } from "./ManhuaPrevisSceneEffectsEditor";
 import { usePreparedRig } from "@/lib/manhuaPrevisCreator";
 import { createRigForm, applyRigForm } from "@/lib/manhuaPrevisRigForm";
 import { buildManhuaPrevisAudio, type ManhuaPrevisAudio } from "@shared/manhuaPrevisAudio";
@@ -77,6 +80,8 @@ export type PrevisServices = {
 };
 type Props = {
   block: CanvasBlock;
+  effectsScopeKey?: string;
+  onAdvisorEffectsControl?: AdvisorEffectsRegistration;
   disabled?: boolean;
   /** 0915 PR-4：从动作节奏时间轴生成的白模草案（每可执行镜一条）；有它就不必手填数字表 */
   actionPlanDrafts?: ManhuaPrevisDraftFromPlan[];
@@ -142,6 +147,8 @@ export function ManhuaPrevisStudio(props: Props) {
 
 export function ManhuaPrevisStudioView({
   block,
+  effectsScopeKey,
+  onAdvisorEffectsControl,
   disabled,
   characters,
   onChange,
@@ -227,7 +234,7 @@ export function ManhuaPrevisStudioView({
     latest.current.studio.scopeId === scopeId &&
     latest.current.block.id === clipId;
   function consume(response: PrevisResponse) {
-    if (!mounted.current) return;
+    if (!mounted.current) return false;
     const current = latest.current;
     const adoptedTrial = current.studio.history.some(t =>
       t.jobId === response.jobId && t.requestId === response.params.requestId &&
@@ -239,7 +246,7 @@ export function ManhuaPrevisStudioView({
       (response.params.scopeId !== current.studio.scopeId && !adoptedTrial) ||
       response.params.clipId !== current.block.id
     )
-      return;
+      return false;
     setStatus(
       response.status === "queued"
         ? "排队中"
@@ -262,7 +269,7 @@ export function ManhuaPrevisStudioView({
         JSON.stringify(result.audio) !== JSON.stringify(response.params.audio) || result.quality !== response.params.quality
       ) {
         setError("产物回执不完整，请查询原任务");
-        return;
+        return false;
       }
       if (
         response.params.spec.exportLayers &&
@@ -271,7 +278,7 @@ export function ManhuaPrevisStudioView({
           result.layerBundle.format !== "previs-layers-v1")
       ) {
         setError("遮罩与深度层包回执未确认，请查询原任务；不要重复生成");
-        return;
+        return false;
       }
       previewRequestVersion.current += 1;
       setPreviewLoading(false);
@@ -294,7 +301,7 @@ export function ManhuaPrevisStudioView({
         ...(response.params.audio ? { audio: response.params.audio } : {}),
         ...(response.params.quality ? { quality: response.params.quality } : {}),
       };
-      publish({
+      return publish({
         ...current.studio,
         pending: matching ? undefined : current.studio.pending,
         history: old
@@ -303,8 +310,9 @@ export function ManhuaPrevisStudioView({
       });
     } else if (response.status === "failed") {
       setError(`渲染任务失败：${response.error || "请检查配置；旧参考保留"}`);
-      if (matching) publish({ ...current.studio, pending: undefined });
+      if (matching) return publish({ ...current.studio, pending: undefined });
     }
+    return true;
   }
   useEffect(() => {
     if (!pendingId) {
@@ -414,14 +422,16 @@ export function ManhuaPrevisStudioView({
       if (mounted.current) setBusy(false);
     }
   }
-  async function generate() {
-    if (disabled || lock.current) return;
+  async function generate(advisor?: { signal: AbortSignal; assertTarget: () => void }) {
+    advisor?.assertTarget();
+    if (disabled || lock.current) { if (advisor) throw new Error("白模当前不可提交"); return; }
     // 带骨模型可能挂在同一人物的候选图上：提交时按当前人物表补上模型所在 ref，服务端按它核回执。
     const parsed = manhuaPrevisSpecSchema.safeParse(
       withRiggedModelSourceAssetRefs(studio.spec, characters)
     );
     if (!parsed.success) {
       setError(parsed.error.issues.map(i => i.message).join("；"));
+      if (advisor) throw new Error("当前白模方案未通过校验");
       return;
     }
     lock.current = true;
@@ -436,13 +446,17 @@ export function ManhuaPrevisStudioView({
       quality: "draft",
       ...(studio.audioEnabled === true ? { audio: buildManhuaPrevisAudio(block.audioStudio, parsed.data, studio.audioStartSec ?? 0, studio.loopBgm ?? false) } : {}),
     }; } catch (error) {
-      setError(error instanceof Error ? error.message : "请检查音轨"); lock.current = false; setBusy(false); return;
+      setError(error instanceof Error ? error.message : "请检查音轨"); lock.current = false; setBusy(false); if (advisor) throw error; return;
     }
     try {
       // 同一段状态先保留请求，再入队。响应只入候选，不自动替换本段参考。
-      if (!publish({ ...studio, pending: input })) return;
-      consume(await services.submit(input));
+      if (!publish({ ...studio, pending: input })) { if (advisor) throw new Error("原白模请求未保存，未提交渲染"); return; }
+      advisor?.assertTarget();
+      const response = await services.submit(input);
+      advisor?.assertTarget();
+      if (!consume(response) && advisor) throw new Error("白模回执未通过校验或未保存，请查询原编号");
     } catch (error) {
+      if (advisor) advisor.assertTarget();
       if (!mounted.current) return;
       if (isDefiniteRejection(error)) {
         // 服务端明确拒绝＝没建任务；放弃该编号，下次点击重新生成，不再卡在「确认原请求」。
@@ -452,6 +466,7 @@ export function ManhuaPrevisStudioView({
         setError(
           "提交结果尚未确认。保留原编号；请查询或确认原请求，不要新建任务。"
         );
+      if (advisor) throw error;
     } finally {
       lock.current = false;
       if (mounted.current) setBusy(false);
@@ -565,7 +580,7 @@ export function ManhuaPrevisStudioView({
     }
   }
   function adopt(take: Studio["history"][number]) {
-    if (disabled || pendingId || busy) return;
+    if (disabled || pendingId || busy) return false;
     if (
       take.spec.exportLayers &&
       (preview?.requestId !== take.requestId ||
@@ -576,7 +591,7 @@ export function ManhuaPrevisStudioView({
       setError(
         "请先预览查询这条原任务，确认遮罩与深度层包后再采用；不要重复生成"
       );
-      return;
+      return false;
     }
     if (
       preview?.requestId !== take.requestId ||
@@ -587,12 +602,12 @@ export function ManhuaPrevisStudioView({
       !normalSpeedConfirmed
     ) {
       setError("请先预览这条白模，逐帧检查并按正常速度复核后，再采用为本段参考。未审候选和旧参考均保留。");
-      return;
+      return false;
     }
     try {
       const currentAudio = studio.audioEnabled === true ? buildManhuaPrevisAudio(block.audioStudio, take.spec, studio.audioStartSec ?? 0, studio.loopBgm ?? false) : undefined;
       if (JSON.stringify(currentAudio) !== JSON.stringify(take.audio)) throw new Error("当前音轨与此白模版本不同，请重新试看并审片后采用；旧视频保留。");
-    } catch (error) { setError(error instanceof Error ? error.message : "音轨无法核对"); return; }
+    } catch (error) { setError(error instanceof Error ? error.message : "音轨无法核对"); return false; }
     const old = block.manhuaSegmentRefs?.previs;
     const reference: ManhuaSegmentReferenceEntry = {
       url: take.url,
@@ -621,11 +636,72 @@ export function ManhuaPrevisStudioView({
         reference
       )
     )
-      return;
+      return false;
     setError("");
     setAdoptedJobId(take.jobId);
     setStatus("已采用为本段白模参考，旧参考保留；尚未验证最终生成片跟随质量");
+    return true;
   }
+  const effectsScopeRef = useRef(effectsScopeKey); effectsScopeRef.current = effectsScopeKey;
+  const effectsReviewRef = useRef({ reviewedRequestId, reviewedFrames, frameReviewConfirmed, normalSpeedPlayed, normalSpeedConfirmed });
+  effectsReviewRef.current = { reviewedRequestId, reviewedFrames, frameReviewConfirmed, normalSpeedPlayed, normalSpeedConfirmed };
+  const currentEffectsKey = () => advisorWorkflowRevision([effectsScopeRef.current, latest.current.block.id, latest.current.studio, effectsReviewRef.current]);
+  const sceneControl = useRef<AdvisorEffectsControl>(async () => "");
+  const sceneControlLock = useRef(false);
+  sceneControl.current = async (action, signal) => {
+    signal.throwIfAborted();
+    const scopeId = studio.scopeId, clipId = block.id, projectScope = effectsScopeKey;
+    const assertTarget = () => { signal.throwIfAborted(); if (!isCurrent(scopeId, clipId) || effectsScopeRef.current !== projectScope) throw new Error("片段或作品已变化，未应用旧场景操作"); };
+    const assertSource = () => { assertTarget(); if (!action.sourceKey || action.sourceKey !== currentEffectsKey()) throw new Error("白模或审片状态已变化，请重新读取当前配置"); };
+    assertTarget();
+    if (action.tool !== "scene" || (action.clipId && action.clipId !== clipId)) throw new Error("请先打开目标片段的白模工作台");
+    if (action.operation === "inspect") return JSON.stringify({tool:"scene",sourceKey:currentEffectsKey(),clipId,spec:JSON.parse(JSON.stringify(latest.current.studio.spec, (key,value)=>["assetRef","riggedModel","scriptSource"].includes(key)?undefined:value)),pendingRequestId:latest.current.studio.pending?.requestId,candidates:latest.current.studio.history.map(row=>({requestId:row.requestId,jobId:row.jobId,selected:row.jobId===latest.current.studio.selectedJobId})),reviewedRequestId,frameReviewConfirmed,normalSpeedConfirmed});
+    assertSource();
+    if (disabled || busy || lock.current || sceneControlLock.current) throw new Error("白模原操作尚未结束，请查询原任务");
+    sceneControlLock.current = true;
+    try {
+      if (action.operation === "configure") {
+        if (studio.pending) throw new Error("本段仍有原任务，先查询原编号");
+        if (!action.sceneEffects) throw new Error("缺少场景特效设置");
+        const spec = manhuaPrevisSpecSchema.parse({...studio.spec,sceneEffects:action.sceneEffects});
+        if (!publish({...studio,spec,specHistory:[...(studio.specHistory||[]),{spec:studio.spec,createdAt:new Date().toISOString(),reasonZh:"创作顾问调整场景特效前"}]})) throw new Error("场景特效配置未保存");
+        return JSON.stringify({status:"configured",clipId,note:"已保存到原白模配置，尚未渲染或采用；请重新inspect"});
+      }
+      if (action.operation === "submit") {
+        if (studio.pending) throw new Error("已有原请求，不能重复提交，请resume原编号");
+        if (!window.confirm("按当前白模配置渲染场景特效候选？保留旧参考，需审片后采用。")) return "用户取消，未提交";
+        assertSource();
+        const before = new Set(studio.history.map(row=>row.requestId));
+        await generate({ signal, assertTarget });
+        assertTarget();
+        const current = latest.current.studio;
+        const requestId = current.pending?.requestId || current.history.find(row=>!before.has(row.requestId))?.requestId;
+        if (!requestId) throw new Error("未取得白模请求回执，请看原工作台错误；未自动重试");
+        return JSON.stringify({requestId,status:current.pending?"pending_or_unknown":"candidate_ready",note:"仅原请求回执；未自动采用"});
+      }
+      if (!action.requestId) throw new Error("请指定当前原请求编号");
+      if (action.operation === "resume") {
+        if (studio.pending?.requestId !== action.requestId && !studio.history.some(row=>row.requestId===action.requestId)) throw new Error("当前片段没有这个原请求，未查询其他片段");
+        const response = await services.get(action.requestId);
+        assertSource();
+        if (!response || response.params.requestId !== action.requestId || response.params.clipId !== clipId || response.params.scopeId !== scopeId) throw new Error("原请求尚未找到或回执身份不一致，未重做");
+        if (!consume(response)) throw new Error("原任务回执未通过校验或未保存，请保留原编号");
+        return JSON.stringify({requestId:action.requestId,jobId:response.jobId,status:response.status});
+      }
+      if (action.operation !== "adopt") throw new Error("不支持此场景操作");
+      const take = studio.history.find(row=>row.requestId===action.requestId);
+      if (!take) throw new Error("当前白模候选不存在，请先读取原任务");
+      if (!window.confirm("采用已在原白模面板完成审片的此候选？旧参考会保留。")) return "用户取消，未采用";
+      assertSource();
+      if (!adopt(take) || latest.current.studio.selectedJobId !== take.jobId) throw new Error("尚未通过原白模审片或保存门禁，未采用");
+      return JSON.stringify({status:"adopted",requestId:take.requestId,jobId:take.jobId});
+    } finally { sceneControlLock.current = false; }
+  };
+  useEffect(()=>{
+    if(!effectsScopeKey)return;
+    onAdvisorEffectsControl?.(effectsScopeKey,"scene",(action,signal)=>sceneControl.current(action,signal));
+    return ()=>onAdvisorEffectsControl?.(effectsScopeKey,"scene",null);
+  },[effectsScopeKey,onAdvisorEffectsControl]);
   return (
     <section
       data-manhua-previs-studio
@@ -783,6 +859,15 @@ export function ManhuaPrevisStudioView({
         })}
         <p className="text-xs text-white/65">人物、动作与运镜请向创作顾问描述；原配置和已采用参考保留。</p>
       </section>}
+      <ManhuaPrevisSceneEffectsEditor key={`${studio.scopeId}:${block.id}`} spec={studio.spec} disabled={disabled || busy || Boolean(pendingId)} onApply={spec => {
+        if (disabled || busy || pendingId || lock.current) return false;
+        const current = latest.current.studio;
+        if (previsSpecKey(current.spec) !== previsSpecKey(studio.spec)) { setError("白模方案已更新，请重新载入当前配置再保存特效。"); return false; }
+        const next = { ...current, spec, specHistory: [...(current.specHistory || []), { spec: current.spec, createdAt: new Date().toISOString(), reasonZh: "调整场景特效前的白模配置" }] };
+        if (!publish(next)) return false;
+        setStatus("场景特效配置已保存；原配置与已采用白模保留，请从下方渲染新候选。");
+        return true;
+      }} />
       {studio.specHistory?.length ? (
         <button
           className={button}

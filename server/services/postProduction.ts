@@ -342,6 +342,7 @@ export async function concatClips(
   options?: PostProdRunOptions,
 ): Promise<{ gcsUri: string; url: string; bytes: number; durationSec: number; clipCount: number }> {
   const signal = options?.signal ?? NEVER_ABORT;
+  if (input.transition) return (await import("./manhuaTransitions")).renderManhuaTransitions(input, userId, options);
   const { clips, width, height, fps } = input;
   if (clips.length < 2) throw new Error("拼接至少需要 2 段素材");
   if (clips.length > MAX_CONCAT_CLIPS) throw new Error(`拼接单次最多 ${MAX_CONCAT_CLIPS} 段`);
@@ -625,7 +626,7 @@ export function buildBurnSubtitleFilter(
     "BorderStyle=1",
     `Outline=${styleOverride?.outline ?? 2}`,
     "Shadow=0",
-    "Alignment=2",
+    `Alignment=${styleOverride?.alignment ?? 2}`,
     `MarginV=${styleOverride?.marginV ?? 35}`,
   ];
   if (styleOverride?.fontName) style.push(`FontName=${styleOverride.fontName}`);
