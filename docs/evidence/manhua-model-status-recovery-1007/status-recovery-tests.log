@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-cdn-1007
+
+ ✓ client/src/lib/manhua3dStatusRecovery.test.ts (4 tests) 35ms
+
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+   Start at  22:03:42
+   Duration  2.54s (transform 93ms, setup 0ms, collect 1.66s, tests 35ms, environment 0ms, prepare 135ms)
+

@@ -1,0 +1,8 @@
+{
+  "taskId": "m3d_48bf5fec772136f60455b248",
+  "status": "succeeded",
+  "assetRef": "cust_muy68plo_5jq0a",
+  "sourceVersion": "gs://mv-studio-pro-vertex-video-temp/generated/manhua-asset-edited/1791381407996_h59rgn.png",
+  "glbGcsUri": "gs://mv-studio-pro-vertex-video-temp/manhua-3d/u1/cust_muy68plo_5jq0a/485dd0c6b37057f5/model.glb",
+  "predictionId": "3659c541399e4d46876b24b770b90b19"
+}

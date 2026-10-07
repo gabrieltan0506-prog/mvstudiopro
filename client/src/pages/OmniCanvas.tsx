@@ -1902,7 +1902,16 @@ function OmniCanvasWorkspace() {
         return;
       }
       if (currentModel3d?.status === "reconcile_manual") {
-        toast.message("任务结果仍待核对，为避免重复计费不会再次提交");
+        // Reconcile can be the persisted pre-POST guard. Read the original task;
+        // never retry creation just because the draft still contains that guard.
+        try {
+          const task = await trpcUtils.manhua3d.getStatus.fetch({ taskId: currentModel3d.taskId });
+          applyManhua3dTaskView(task); onReceipt?.(task);
+          if (task.status === "queued" || task.status === "running") void pollManhua3dTask(task.taskId);
+          else if (task.status === "reconcile_manual") toast.message("任务结果仍待核对，为避免重复计费不会再次提交");
+        } catch {
+          toast.error("3D 状态读取失败，原任务保留，不会重新建模");
+        }
         return;
       }
       const isRetry = currentModel3d?.status === "failed";
@@ -2466,10 +2475,11 @@ function OmniCanvasWorkspace() {
       if (model3d?.status === "queued" || model3d?.status === "running") {
         void pollManhua3dTask(model3d.taskId);
       } else if (
-        model3d?.status === "succeeded" &&
+        (model3d?.status === "succeeded" || model3d?.status === "reconcile_manual") &&
         !manhua3dReadyRefreshRef.current.has(model3d.taskId)
       ) {
-        // 草稿保存的是长期 gs:// 身份；页面恢复时查询一次，让服务端刷新过期签名 URL。
+        // Restore signed previews and stale pre-submission guards by reading once.
+        // A confirmed unknown submission remains manual; no creation is retried.
         manhua3dReadyRefreshRef.current.add(model3d.taskId);
         void trpcUtils.manhua3d.getStatus
           .fetch({ taskId: model3d.taskId })

@@ -1,0 +1,15 @@
+{
+  "fixed": {
+    "reads": 1,
+    "applied": 1,
+    "paid": 0,
+    "passesRecovery": true
+  },
+  "baseline": {
+    "reads": 0,
+    "applied": 0,
+    "paid": 0,
+    "passesRecovery": false
+  },
+  "baselineFailsExpectedRecovery": true
+}

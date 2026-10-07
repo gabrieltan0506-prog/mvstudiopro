@@ -7025,8 +7025,7 @@ clipPromptReviewOpen ? (
                                       disabled={
                                         asset3dBusyIds.includes(ref.id) ||
                                         currentModel3d?.status === "queued" ||
-                                        currentModel3d?.status === "running" ||
-                                        currentModel3d?.status === "reconcile_manual"
+                                        currentModel3d?.status === "running"
                                       }
                                       onClick={() => {
                                         if (
@@ -7058,7 +7057,7 @@ clipPromptReviewOpen ? (
                                           : currentModel3d?.status === "failed"
                                             ? "重试建立 3D 参考"
                                             : currentModel3d?.status === "reconcile_manual"
-                                              ? "3D 结果待核对"
+                                              ? "刷新 3D 状态（不重新建模）"
                                               : "建立 3D 参考（可选）"}
                                     </button>
                                   ) : null}
