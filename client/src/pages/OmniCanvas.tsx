@@ -1,3 +1,4 @@
+import { saveSceneProductionBackup } from "@/lib/manhuaSceneProductionBackups";
 import {creativeStudioAudioAssets} from "@/lib/creativeStudioAudio";
 import type { AdvisorEffectsControl, AdvisorEffectsRegistration } from "@shared/manhuaAdvisorEffects";
 import type { ManhuaAdvisorStudioContext } from "@shared/manhuaAdvisorStudioContext";
@@ -10346,6 +10347,16 @@ function OmniCanvasWorkspace() {
     if(localStorage.getItem(key)!==json) throw new Error("改前备份未完整保存，未执行制作。");
     return key;
   }
+  async function backupSceneProduction(signal?: AbortSignal) {
+    if (!writerPack || !user?.id || !latestDraftSnapshotRef.current) throw new Error("缺少当前作品或账户，未提交生成。");
+    const scope = currentVoiceStoryboardScope.current;
+    const key = `manhua-advisor-rewrite-backup:${user.id}:${crypto.randomUUID()}`;
+    const json = JSON.stringify({createdAt:new Date().toISOString(),episodeIndex:writerFocusEpisode,changes:["3D制作前完整备份"],writerPack,projectBible:projectBible||null,restorableDraft:buildLocalCloudDraftSnapshot(latestDraftSnapshotRef.current)});
+    await saveSceneProductionBackup(String(user.id), key, json);
+    signal?.throwIfAborted();
+    if (currentVoiceStoryboardScope.current !== scope) throw new Error("备份期间作品已切换，未提交生成；旧备份保留。");
+    return key;
+  }
   async function restoreAdvisorBackup(backup: AdvisorBackupEntry) {
     if (!user?.id || !backup.key.startsWith(`manhua-advisor-rewrite-backup:${user.id}:`) || localStorage.getItem(backup.key) !== backup.json) throw new Error("备份归属或内容已变化，未还原。");
     if (writerBusy || factoryBusy || assembleBusy || burnSubtitleBusy || cloudConflict || backupOperationRef.current || autoBackupInFlightRef.current || asset3dBusyIds.length || sceneWorldBusyIds.length || advisorRewriteHasActiveWork(blocksRef.current)) throw new Error("仍有任务或云端冲突，先处理原任务，未还原。");
@@ -10945,12 +10956,12 @@ async function runAdvisorWriterTrial() {
             if(!canUseManhua3d || !ref || !eligibility?.eligible)throw new Error("当前人物没有可操作的3D参考，未提交。");
             if(action.operation==="inspect")return JSON.stringify({assetId:ref.id,modelTaskId:eligibility.currentModel3d?.taskId,modelStatus:eligibility.currentModel3d?.status,multiview:ref.multiviewDraft?.views.map(v=>({view:v.view,available:Boolean(v.url)}))});
             if(action.operation==="multiviewSubmit") {
-              backupVoiceProduction();let receipt:{taskId:string;status:string}|undefined;
+              await backupSceneProduction(signal);let receipt:{taskId:string;status:string}|undefined;
               await submitManhua3dMultiview(ref.id,value=>{receipt=value});
               return receipt?JSON.stringify(receipt):"未取得多视图建模提交回执，请检查原资产卡，不重复提交。";
             }
             if(action.operation==="multiview") {
-              backupVoiceProduction();await generateManhua3dMultiviewViews(ref.id);
+              await backupSceneProduction(signal);await generateManhua3dMultiviewViews(ref.id);
               return "原多视图入口已处理，请看人物资产卡回执；未自动建模。";
             }
             if(eligibility.currentModel3d?.status!=="succeeded")throw new Error("当前人物模型尚未成功，不能绑骨。");
@@ -10960,7 +10971,7 @@ async function runAdvisorWriterTrial() {
             for(let attempt=0;attempt<25;attempt++) {
               signal.throwIfAborted();if(currentVoiceStoryboardScope.current!==scope)throw new Error("作品已切换，未操作模型。");
               const control=advisorModelControls.current.get(ref.id);
-              if(control){if(action.operation!=="rigInspect")backupVoiceProduction();return control(action,signal);}
+              if(control){if(action.operation!=="rigInspect")await backupSceneProduction(signal);return control(action,signal);}
               await new Promise(resolve=>setTimeout(resolve,200));
             }
             throw new Error("原绑骨面板尚未就绪，未提交任务。");
@@ -10981,7 +10992,7 @@ async function runAdvisorWriterTrial() {
             const scope=voiceStoryboardScope;
             for(let attempt=0;attempt<25;attempt++) {
               signal.throwIfAborted();if(currentVoiceStoryboardScope.current!==scope)throw new Error("作品已切换，未操作场景。");
-              if(advisorWorldControl.current){if(action.operation!=="inspect")backupVoiceProduction();return advisorWorldControl.current(action,signal);}
+              if(advisorWorldControl.current){if(action.operation!=="inspect")await backupSceneProduction(signal);return advisorWorldControl.current(action,signal);}
               await new Promise(resolve=>setTimeout(resolve,200));
             }
             throw new Error("原场景工作台尚未就绪，未导出或采用。");
@@ -14681,7 +14692,10 @@ async function runAdvisorWriterTrial() {
           if (!latestEligibility?.eligible || latestEligibility.sourceVersion !== eligibility.sourceVersion || latestEligibility.currentWorld3d?.taskId !== candidate.target.previousTaskId) throw new Error("核对期间场景已变化，未生成。");
           if (eligibility.currentWorld3d && eligibility.currentWorld3d.status !== "failed") throw new Error("当前场景已有任务或产物，请保留原结果；不会重复付费生成。");
           if (candidate.plan.sceneRefId !== ref.id) throw new Error("方案目标不一致，未生成。");
-          backupVoiceProduction();
+          await backupSceneProduction();
+          const afterBackup = latestCustomAssetRefs.current.find(row => row.id === ref.id && row.role === "scene");
+          const checkedAfterBackup = afterBackup ? evaluateManhuaWorld3dEligibility(afterBackup) : undefined;
+          if (!checkedAfterBackup?.eligible || checkedAfterBackup.sourceVersion !== eligibility.sourceVersion || checkedAfterBackup.currentWorld3d?.taskId !== candidate.target.previousTaskId) throw new Error("备份期间场景已变化，未生成；原方案与备份保留。");
           let receipt: {taskId:string;status:string} | undefined;
           await generateSceneWorld(ref.id, { model: "marble-1.1", textPrompt: candidate.plan.textPrompt }, value=>{receipt=value});
           return receipt ? JSON.stringify({type:"world",...receipt}) : "未取得3DGS提交回执：可能取消或未提交，请查看场景卡，不自动重试。";

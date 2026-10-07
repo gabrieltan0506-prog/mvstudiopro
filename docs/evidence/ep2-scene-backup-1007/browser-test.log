@@ -1,0 +1,11 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-cdn-1007
+
+ ✓ client/src/lib/manhuaSceneProductionBackups.browser.test.ts (1 test) 3847ms
+   ✓ scene backups retain full bytes across reload, immutable writes and account/project filtering 3844ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  19:58:36
+   Duration  6.76s (transform 198ms, setup 0ms, collect 848ms, tests 3.85s, environment 1ms, prepare 796ms)
+

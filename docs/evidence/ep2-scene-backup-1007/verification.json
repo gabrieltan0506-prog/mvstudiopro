@@ -1,0 +1,19 @@
+{
+  "check": "pnpm exec tsc --noEmit --incremental --tsBuildInfoFile /tmp/pr1676-ep2-scene-tsc.tsbuildinfo",
+  "exitCode": 0,
+  "browser": "pnpm exec vitest run client/src/lib/manhuaSceneProductionBackups.browser.test.ts",
+  "passed": 1,
+  "origin": "offline Chromium; not formal workflow acceptance",
+  "evidence": [
+    {
+      "file": "browser-test.log",
+      "bytes": 455,
+      "sha256": "cd0171a129d64ee39f83b14e11083210cd53098bd5212832a605db1436b18206"
+    },
+    {
+      "file": "tsc.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

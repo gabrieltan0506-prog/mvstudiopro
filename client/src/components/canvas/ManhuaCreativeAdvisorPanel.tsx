@@ -1,3 +1,4 @@
+import { listSceneProductionBackups } from "@/lib/manhuaSceneProductionBackups";
 import { buildAdvisorComparisonRequest, comparisonEpisodeIndex, requestsAdvisorComparison } from "@/lib/manhuaAdvisorComparisonRequest";
 import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose } from "@/components/ui/dialog";
 import { MANHUA_ADVISOR_STUDIO_LABELS } from "@shared/manhuaAdvisorStudioContext";
@@ -561,15 +562,23 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     send(`${TEMPLATE_REWRITE_QUESTION} 模板编号 ${plan.publicId}`, question);
   }
 
-  function refreshBackups() {
+  const backupReadScope = JSON.stringify({userId, confirmedProjectVersion, context: project?.context});
+  const latestBackupReadScope = useRef(backupReadScope); latestBackupReadScope.current = backupReadScope;
+  async function refreshBackups() {
     if (!userId || !project) return;
+    const scopeKey = backupReadScope;
     try {
-      const result = listAdvisorBackups(localStorage, { userId, confirmedProjectVersion,
-        seriesTitle: project.context.seriesTitle, episodeIndex: project.context.episodeIndex,
-        body: project.context.episodeBody, originalBody: rewrite?.episodeIndex === project.context.episodeIndex ? rewrite.originalBody : undefined });
-      setBackups(result.entries);
-      setBackupError(result.errors ? `${result.errors}条本账户备份无法解析，原记录未改动。` : result.entries.length ? "" : "没有找到与当前项目版本或原稿匹配的备份。");
-    } catch { setBackupError("本机备份暂无法读取，原记录未改动。"); }
+      const scope = {userId, confirmedProjectVersion, seriesTitle: project.context.seriesTitle,
+        episodeIndex: project.context.episodeIndex, body: project.context.episodeBody,
+        originalBody: rewrite?.episodeIndex === project.context.episodeIndex ? rewrite.originalBody : undefined};
+      const result = listAdvisorBackups(localStorage, scope);
+      let sceneEntries: AdvisorBackupEntry[] = [], sceneError = false;
+      try { sceneEntries = await listSceneProductionBackups(scope); } catch { sceneError = true; }
+      if (!mounted.current || latestBackupReadScope.current !== scopeKey) return;
+      const entries = [...result.entries, ...sceneEntries].sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+      setBackups(entries);
+      setBackupError(sceneError ? "场景制作备份暂无法读取；旧稿备份仍保留。" : result.errors ? `${result.errors}条本账户备份无法解析，原记录未改动。` : entries.length ? "" : "没有找到与当前项目版本或原稿匹配的备份。");
+    } catch { if (mounted.current && latestBackupReadScope.current === scopeKey) setBackupError("本机备份暂无法读取，原记录未改动。"); }
   }
 
   const executeProductionActionInternal = async (action: CreativeVoiceProductionAction, signal: AbortSignal) => {
@@ -808,7 +817,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
         {!creationMode && <section aria-label="旧稿备份" className="space-y-2 border-t border-white/10 pt-3 text-xs">
           <button type="button" disabled={!userId || !project} onClick={refreshBackups} className="rounded border border-white/20 px-3 py-2 disabled:opacity-40">查找当前项目旧稿备份</button>
           <p className="text-white/50">说错或顾问理解错，都可先查看旧版再还原。还原前也保留当前版本；已经支付的生成费用不会撤销。</p>
-          {backups.map(backup => <div key={backup.key} className="flex items-center justify-between gap-2"><span>第{backup.episodeIndex}集 · {new Date(backup.createdAt).toLocaleString("zh-CN")}</span><button type="button" onClick={() => setBackupPreview(backup)}>查看并还原</button><button type="button" onClick={() => { try { downloadAdvisorBackup(backup); } catch { toast.error("备份下载失败，原记录未改动。"); } }} className="shrink-0 text-cyan-100">下载旧稿JSON</button></div>)}
+          {backups.map(backup => <div key={backup.key} className="flex items-center justify-between gap-2"><span>第{backup.episodeIndex}集 · {new Date(backup.createdAt).toLocaleString("zh-CN")}</span>{backup.downloadOnly ? <span className="text-white/60">3D制作前完整备份 · 下载后可从导入备份恢复</span> : <button type="button" onClick={() => setBackupPreview(backup)}>查看并还原</button>}<button type="button" onClick={() => { try { downloadAdvisorBackup(backup); } catch { toast.error("备份下载失败，原记录未改动。"); } }} className="shrink-0 text-cyan-100">下载旧稿JSON</button></div>)}
           {backupPreview && <article aria-label="还原前版本预览" className="space-y-2 rounded-xl border border-amber-300/40 p-3"><h4>还原到 {new Date(backupPreview.createdAt).toLocaleString("zh-CN")}</h4><p>此备份会还原作品及当时的素材配置。请核对，后续修改也会先保存为另一个备份。</p><div tabIndex={0} className="max-h-80 overflow-auto whitespace-pre-wrap">{JSON.parse(backupPreview.json).writerPack.episodes.map((ep: {index:number;body:string}) => `第${ep.index}集\n${ep.body}`).join("\n\n")}</div><button type="button" disabled={!props.onRestoreAdvisorBackup || asking} onClick={() => void props.onRestoreAdvisorBackup?.(backupPreview).catch(error => toast.error(error instanceof Error ? error.message : "还原未完成"))}>确认还原这个版本</button><button type="button" onClick={() => setBackupPreview(null)}>保留现状</button></article>}
           {backupError && <p role="status" className="text-amber-100">{backupError}</p>}
         </section>}
