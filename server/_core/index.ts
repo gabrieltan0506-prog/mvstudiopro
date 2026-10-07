@@ -6,6 +6,7 @@ import { resolveJobWorkerRole } from "../jobs/workerRole.js";
 // 必须在任何图像处理模块之前载入：全局限制 sharp/libvips 内存（0911 OOM 事故）
 import "./sharpLimits.js";
 import { registerGcsTransfer } from "../routers/gcsTransfer";
+import { registerArtMotionEvidence } from "../services/artMotionEvidence";
 import express from "express";
 import { registerPhotoTemporaryMedia } from "../routers/photoTemporaryMedia";
 import { createServer } from "http";
@@ -254,6 +255,7 @@ async function startServer() {
     next();
   });
   registerGcsTransfer(app);
+  registerArtMotionEvidence(app);
   app.use(express.json({ limit: "650mb" }));
   app.use(express.urlencoded({ limit: "650mb", extended: true }));
 

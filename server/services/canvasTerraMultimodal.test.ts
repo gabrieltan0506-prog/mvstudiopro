@@ -15,6 +15,7 @@ vi.mock("./gpt56CopywritingGateway.js", () => ({
 import { invokeLLM } from "../_core/llm";
 import {
   runCanvasTerraVisionMarkdown,
+  runCanvasTerraVisionJson,
   runCanvasTerraVideoReverse,
 } from "./canvasTerraMultimodal";
 
@@ -53,4 +54,12 @@ describe("canvasTerraMultimodal", () => {
     expect(out.markdown).toContain("客栈对峙");
     expect(out.frameCount).toBe(1);
   });
+});
+
+it("new JSON analysis keeps native vision parameters and opts into one-shot evidence hooks",async()=>{
+ vi.mocked(invokeLLM).mockResolvedValue({choices:[{message:{content:'{"scene":"room","objects":[]}'}}]} as never);
+ const raw=vi.fn(),request=vi.fn();
+ await runCanvasTerraVisionJson({prompt:"拆景JSON",images:[{url:"https://offline.invalid/image.png"}]},{singleAttempt:true,onRawCompletion:raw,onPreparedRequest:request,requestId:"one-shot"});
+ expect(invokeLLM).toHaveBeenLastCalledWith(expect.objectContaining({provider:"openai",modelName:"gpt-5.6-terra",openAiGateway:"official_only",max_tokens:16384,temperature:.4,singleAttempt:true,onRawCompletion:raw,onPreparedRequest:request}));
+ const params=vi.mocked(invokeLLM).mock.calls.at(-1)![0];expect(params.messages[0].content).toContain("JSON");expect(params.messages[1].content).toEqual([{type:"text",text:"拆景JSON"},{type:"image_url",image_url:{url:"https://offline.invalid/image.png",detail:"high"}}]);
 });

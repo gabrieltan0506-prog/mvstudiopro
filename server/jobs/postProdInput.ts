@@ -9,6 +9,7 @@ import { bgmNarrativeMixSchema } from "../../shared/manhuaBgmNarrativeMix";
 import { manhuaPrevisRequestSchema } from "../../shared/manhuaPrevis";
 import { SUBTITLE_EFFECT_IDS } from "../../shared/subtitleEffects";
 import { manhuaVfxJobSchema } from "../../shared/manhuaVfx";
+import { artMotionJobSchema } from "../../shared/artMotion";
 
 const mediaSourceSchema = z.string().trim().min(1).max(2048);
 
@@ -174,6 +175,7 @@ export type RawAudioExtractParams = z.input<typeof audioExtractParamsSchema>;
 const postProdMetadataShape = { scopeKey: z.string().max(128).optional() };
 
 export const postProdJobInputSchema = z.discriminatedUnion("action", [
+  artMotionJobSchema,
   manhuaVfxJobSchema,
   z.object({ ...postProdMetadataShape, action: z.literal("manhua_auto_rig"), params: autoRigRequestSchema }).strict(),
   z.object({ ...postProdMetadataShape, action: z.literal("manhua_previs"), params: manhuaPrevisRequestSchema }).strict(),

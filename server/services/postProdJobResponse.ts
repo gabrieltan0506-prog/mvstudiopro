@@ -81,7 +81,7 @@ export function buildPostProdJobResponse(
         : clip && typeof clip === "object" && typeof clip.uri === "string" ? [clip.uri] : []) : [];
 
   return {
-    ...(input.action === "manhua_vfx" ? { requestId: input.requestId, params: input.params } : {}),
+    ...(["manhua_vfx", "art_motion"].includes(String(input.action)) ? { requestId: input.requestId, params: input.params } : {}),
     scopeKey: typeof input.scopeKey === "string" ? input.scopeKey : undefined,
     sourceVideoUris,
     jobId: job.id,

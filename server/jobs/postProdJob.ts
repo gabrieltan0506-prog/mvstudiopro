@@ -20,6 +20,10 @@ export async function processPostProdJob(
   const input = await resolvePostProdInputSources({ userId, input: parsed });
   const runOptions = { signal: options?.signal };
   switch (input.action) {
+    case "art_motion": {
+      const { renderArtMotion } = await import("../services/artMotionRender");
+      return { output: await renderArtMotion(input, userId, options?.signal ?? AbortSignal.timeout(POST_PROD_DEFAULT_TIMEOUT_MS)), provider: "canvas-art-motion" };
+    }
     case "manhua_vfx": {
       const { renderManhuaVfx } = await import("../services/manhuaVfxRender");
       const output = await renderManhuaVfx(input, userId, options?.signal ?? AbortSignal.timeout(POST_PROD_DEFAULT_TIMEOUT_MS));

@@ -6,6 +6,7 @@ import {
   extractFirstChoicePlainText,
   invokeLLM,
   type MessageContent,
+  type InvokeParams,
 } from "../_core/llm";
 import { EVOLINK_CHAT_MODEL_GPT56_TERRA } from "./evolinkChatModel.js";
 import { getOfficialOpenAiApiKey } from "./gpt56CopywritingGateway.js";
@@ -50,6 +51,7 @@ async function invokeTerraMarkdown(params: {
   userText: string;
   images: CanvasTerraImageInput[];
   maxImages: number;
+  audit?: Pick<InvokeParams,"singleAttempt"|"onPreparedRequest"|"onRawCompletion"|"requestId">;
 }): Promise<string> {
   assertOfficialKey();
   const imageParts = toImageParts(params.images, params.maxImages);
@@ -57,6 +59,7 @@ async function invokeTerraMarkdown(params: {
     throw new Error("缺少参考图");
   }
   const response = await invokeLLM({
+    ...params.audit,
     provider: "openai",
     modelName: EVOLINK_CHAT_MODEL_GPT56_TERRA,
     openAiGateway: "official_only",
@@ -139,4 +142,9 @@ export async function runCanvasTerraVideoReverse(input: {
     frameCount: Math.min(images.length, 24),
     model: EVOLINK_CHAT_MODEL_GPT56_TERRA,
   };
+}
+
+/** Same image input builder and model parameters; only the requested output contract differs. */
+export async function runCanvasTerraVisionJson(input:{prompt:string;images:CanvasTerraImageInput[]},audit:NonNullable<Parameters<typeof invokeTerraMarkdown>[0]["audit"]>) {
+ return invokeTerraMarkdown({system:"你是创作视觉分析助手。严格按用户给定结构输出完整JSON，不添加围栏或额外说明，不猜测不可见内容。",userText:input.prompt,images:input.images,maxImages:16,audit});
 }

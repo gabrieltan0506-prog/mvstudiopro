@@ -106,6 +106,10 @@ export type ToolChoice =
   | ToolChoiceExplicit;
 
 export type InvokeParams = {
+  /** Opt-in audited one-shot calls: never hedge/fallback after an uncertain response. */
+  singleAttempt?: boolean;
+  onPreparedRequest?: (body: Record<string, unknown>, route: string) => Promise<void>;
+  onRawCompletion?: (raw: {text:string;status:number;contentType:string;route:string}) => Promise<void>;
   /** 顾问正文实时输出；完整性与最终 JSON 校验仍由服务端执行。 */
   onContentDelta?: (delta: string) => void;
   messages: Message[];
@@ -1471,6 +1475,7 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     if (label === "OpenRouter" || isOpenRouterChatEndpoint(apiUrl)) {
       Object.assign(headers, getOpenRouterChatHeaders());
     }
+    if(params.onPreparedRequest)await params.onPreparedRequest(body,label);
     const response = await fetch(apiUrl, {
       method: "POST",
       headers,
@@ -1480,6 +1485,7 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
 
     if (!response.ok) {
       const errorText = await response.text();
+      if(params.onRawCompletion)await params.onRawCompletion({text:errorText,status:response.status,contentType:response.headers.get("content-type")||"",route:label});
       console.warn(`[${label}] ${formatEvolinkChatApiError(response.status, response.statusText, errorText)}`);
       const err = new Error(toOpenAiCompatibleChatUserMessage(response.status, errorText, label)) as Error & {
         status?: number;
@@ -1495,6 +1501,8 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     // Guard against Cloudflare / proxy returning an HTML error page with status 200
     // (e.g. 524 timeout pages that arrive with 200 OK from intermediate CDN layers).
     const contentType = response.headers.get("content-type") ?? "";
+    const preservedRaw=params.onRawCompletion?await response.text():undefined;
+    if(params.onRawCompletion)await params.onRawCompletion({text:preservedRaw!,status:response.status,contentType,route:label});
     if (contentType.includes("text/html")) {
       throw new Error(
         `${label} returned HTML instead of JSON (status ${response.status}) — possible 524 timeout or Cloudflare error page`,
@@ -1510,7 +1518,7 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
       );
     }
 
-    const rawText = isFlashStream && contentType.includes("text/event-stream") && response.body
+    const rawText = preservedRaw !== undefined ? preservedRaw : isFlashStream && contentType.includes("text/event-stream") && response.body
       ? await readGlmSseStream(response.body, undefined, { strictCompletion: true, onContentDelta: params.onContentDelta })
       : await response.text();
     const parsed = parseChatCompletionBody(rawText, label, response.status);
@@ -1547,11 +1555,12 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
       label,
     );
     // GPT-5.6 官方主路径：短超时，卡住就切 EvoLink（体验优先）
-    if (isOfficialEndpoint && isGpt56Family) {
+    if (isOfficialEndpoint && isGpt56Family && !params.singleAttempt) {
       return await racePrimaryTimeout(primary, getGpt56PrimaryTimeoutMs(), "OpenAI GPT-5.6");
     }
     return await primary;
   } catch (primaryErr) {
+    if(params.singleAttempt)throw primaryErr;
     if (
       params.openAiGateway === "evolink_primary"
       && isEvolinkEndpoint

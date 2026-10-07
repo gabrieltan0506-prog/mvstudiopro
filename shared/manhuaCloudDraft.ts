@@ -1,3 +1,5 @@
+import { artMotionStateSchema, type ArtMotionState } from "./artMotion";
+import { imageWorldStateSchema, type ImageWorldState } from "./imageWorld";
 import { normalizeManhuaClipPromptEdit } from "./manhuaClipPromptEdit";
 /**
  * 漫剧云端草稿：剧本、静帧与已有视频的恢复元数据；不存视频字节。
@@ -131,6 +133,8 @@ export type ManhuaCloudDraftCanvasBlock = {
   seedance25RefVideoUrls?: string[];
   seedance25RefAudioUrls?: string[];
   manhuaSegmentRefs?: import("./manhuaSegmentReference").ManhuaSegmentReferences;
+  artMotion?: ArtMotionState;
+  imageWorld?: ImageWorldState;
   previsStudio?: ManhuaPrevisStudio;
   audioStudio?: import("./canvasAudioStudio").CanvasAudioStudio;
   seedance25TimestampStoryboard?: string;
@@ -399,6 +403,8 @@ export function sanitizeManhuaCloudDraftBlock(
   const base: ManhuaCloudDraftCanvasBlock = {
     id,
     kind,
+    artMotion:b.artMotion==null?undefined:artMotionStateSchema.parse(b.artMotion),
+    imageWorld:b.imageWorld==null?undefined:imageWorldStateSchema.parse(b.imageWorld),
     musicMv: b.musicMv == null ? undefined : normalizeCanvasMusicMvState(b.musicMv),
     musicMvShot: b.musicMvShot == null ? undefined : canvasMusicMvShotBindingSchema.parse(b.musicMvShot),
     x: Math.round(Number(b.x) || 0),

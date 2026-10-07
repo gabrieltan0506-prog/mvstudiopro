@@ -6,7 +6,7 @@
  *   rig —— 只领 Blender 后期任务（manhua_auto_rig / manhua_previs），不跑 growth、不做学习任务恢复
  */
 export type JobWorkerRole = "app" | "rig";
-export const BLENDER_POST_PROD_ACTIONS = ["manhua_auto_rig", "manhua_previs", "manhua_vfx"] as const;
+export const BLENDER_POST_PROD_ACTIONS = ["manhua_auto_rig", "manhua_previs", "manhua_vfx", "art_motion"] as const;
 export type PostProdClaimFilter = "blender" | "non_blender" | "bgm" | "non_bgm" | "non_blender_non_bgm" | "none" | undefined;
 
 export function resolveJobWorkerRole(env: NodeJS.ProcessEnv = process.env): JobWorkerRole {
