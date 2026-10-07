@@ -1,0 +1,34 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-06/task-5/manhua-cdn-1007
+
+ ✓ client/src/lib/manhua3dWiring.test.ts (4 tests) 12ms
+ ✓ client/src/lib/manhua3dModelStage.test.ts (7 tests) 15ms
+ ❯ client/src/lib/manhua3dStatusRecovery.test.ts (4 tests | 3 failed) 20ms
+   × stale manual 3D status recovery (offline production callback) > reads the same task and handles running without another paid submission 12ms
+     → Invalid Chai property: toHaveBeenCalledExactlyOnceWith
+   × stale manual 3D status recovery (offline production callback) > reads the same task and handles succeeded without another paid submission 2ms
+     → Invalid Chai property: toHaveBeenCalledExactlyOnceWith
+   × stale manual 3D status recovery (offline production callback) > reads the same task and handles reconcile_manual without another paid submission 2ms
+     → Invalid Chai property: toHaveBeenCalledExactlyOnceWith
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  client/src/lib/manhua3dStatusRecovery.test.ts > stale manual 3D status recovery (offline production callback) > reads the same task and handles running without another paid submission
+ FAIL  client/src/lib/manhua3dStatusRecovery.test.ts > stale manual 3D status recovery (offline production callback) > reads the same task and handles succeeded without another paid submission
+ FAIL  client/src/lib/manhua3dStatusRecovery.test.ts > stale manual 3D status recovery (offline production callback) > reads the same task and handles reconcile_manual without another paid submission
+Error: Invalid Chai property: toHaveBeenCalledExactlyOnceWith
+ ❯ client/src/lib/manhua3dStatusRecovery.test.ts:44:23
+     42|     const h = setup(status);
+     43|     await h.run("doctor", h.receipt);
+     44|     expect(h.getStatus).toHaveBeenCalledExactlyOnceWith({ taskId: "exi…
+       |                       ^
+     45|     expect(h.apply).toHaveBeenCalledExactlyOnceWith(h.task);
+     46|     expect(h.receipt).toHaveBeenCalledExactlyOnceWith(h.task);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  3 failed | 12 passed (15)
+   Start at  22:03:11
+   Duration  2.48s (transform 323ms, setup 0ms, collect 2.56s, tests 47ms, environment 1ms, prepare 662ms)
+

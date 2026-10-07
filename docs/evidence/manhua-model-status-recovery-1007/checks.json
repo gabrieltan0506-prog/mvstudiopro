@@ -1,0 +1,23 @@
+{
+  "recordedAt": "2026-10-07T14:06:57.052164+00:00",
+  "typecheck": {
+    "command": "pnpm exec tsc --noEmit --incremental --tsBuildInfoFile /tmp/pr1676-ep2-scene-tsc.tsbuildinfo",
+    "session": 52247,
+    "exitCode": 0,
+    "log": "incremental-tsc.log"
+  },
+  "tests": {
+    "productionCallbackRecovery": 4,
+    "modelStage": 7,
+    "wiring": 4,
+    "passed": 15,
+    "note": "related files passed first run; only corrected assertion compatibility failures rerun"
+  },
+  "sourceSha256": {
+    "client/src/pages/OmniCanvas.tsx": "fe7d0ef19b857eb3bf026b354085394d9c5e5a2f18c12ffe8bea3b42acd085a1",
+    "client/src/components/ManhuaScriptWorkbench.tsx": "c2231e613f61b824ff3119674eca82ce90645b39bc88287e4bf50db4d2bee482",
+    "client/src/components/canvas/Manhua3dModelStudio.tsx": "9f53c96985c0fff413a0b145a9328b58c6cb4851d33767f939cc585f89fcdab8",
+    "client/src/lib/manhua3dStatusRecovery.test.ts": "aaf12ccbf5e6614a5ecbadc07ac99141586b8881265eea4cac30313c3f30a036"
+  },
+  "deployedValidation": false
+}

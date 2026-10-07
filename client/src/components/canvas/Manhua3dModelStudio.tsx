@@ -214,6 +214,11 @@ export function Manhua3dModelStudio(props: Props) {
               </div>
               <aside aria-label={`${c.labelZh}模型操作`} className="flex min-w-0 flex-col items-start gap-3 rounded-xl border border-white/10 p-3"><strong>模型与动作准备</strong><p className="text-white/65">{stage === "rigged" ? "已有绑骨配置，动作质量仍须在白模预演中检查。" : "先检查模型，再进入绑骨；参考图和旧模型保留。"}</p>
                 {/* 主按钮只露一个：未建模「建模」、失败「重试建模」、建好「预览」；建模中/待核对/不能建模只看状态 */}
+                {model?.status === "reconcile_manual" && onGenerate ? (
+                  <button type="button" className={btnPrimary} disabled={disabled || busy} onClick={() => void onGenerate(c.id)}>
+                    刷新状态（不重新建模）
+                  </button>
+                ) : null}
                 {canBuild ? (
                   <button type="button" className={btnPrimary} disabled={disabled} data-model-primary="build" onClick={() => void onGenerate?.(c.id)}>
                     {stage === "failed" ? "重试建模" : "建模"}
