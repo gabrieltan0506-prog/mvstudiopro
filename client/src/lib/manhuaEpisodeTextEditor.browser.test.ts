@@ -9,8 +9,8 @@ beforeAll(async () => {
 import React,{useState} from 'react';import{createRoot}from'react-dom/client';
 import Editor from './client/src/components/canvas/ManhuaEpisodeTextEditor';
 import{replaceManhuaEpisodeStoryText}from './shared/manhuaAdvisorRewrite';
-const f=globalThis.fixture={applied:[],accept:true};window.confirm=()=>true;
-function App(){const[episodes,setEpisodes]=useState([{index:1,title:'江边',body:'甲：别怕。\\n\\n### 五至六段可拍表\\n#### 段01\\n意图：揭示身份\\n对白：甲：别怕。',endHook:'有人来访。'},{index:2,title:'船上',body:'乙登船。',endHook:'船离岸。'}]);const[index,setIndex]=useState(1),[scope,setScope]=useState('7:project-a'),[busy,setBusy]=useState('');f.setIndex=setIndex;f.setScope=setScope;f.setBusy=setBusy;f.replaceSource=body=>setEpisodes(es=>es.map(e=>e.index===1?{...e,body}:e));return <Editor scopeKey={scope} episode={episodes.find(e=>e.index===index)} busyReason={busy} onApplyEdit={async edit=>{f.applied.push(edit);if(!f.accept)return false;setEpisodes(es=>es.map(e=>e.index===edit.episodeIndex?{...e,body:replaceManhuaEpisodeStoryText(e.body,edit.body),endHook:edit.endHook}:e));return true;}}/>};createRoot(document.getElementById('root')).render(<App/>);` }, bundle: true, write: false, platform: "browser", format: "iife", jsx: "automatic", alias: { "@": path.resolve("client/src"), "@shared": path.resolve("shared") }, define: { "process.env.NODE_ENV": '"development"', "import.meta.env": "{}" } });
+const f=globalThis.fixture={applied:[],options:[],accept:true};window.confirm=()=>true;
+function App(){const[episodes,setEpisodes]=useState([{index:1,title:'江边',body:'甲：别怕。\\n\\n### 五至六段可拍表\\n#### 段01\\n意图：揭示身份\\n对白：甲：别怕。',endHook:'有人来访。'},{index:2,title:'船上',body:'乙登船。',endHook:'船离岸。'}]);const[index,setIndex]=useState(1),[scope,setScope]=useState('7:project-a'),[busy,setBusy]=useState('');f.setIndex=setIndex;f.setScope=setScope;f.setBusy=setBusy;f.replaceSource=body=>setEpisodes(es=>es.map(e=>e.index===1?{...e,body}:e));return <Editor scopeKey={scope} episode={episodes.find(e=>e.index===index)} busyReason={busy} onApplyEdit={async (edit,options)=>{f.applied.push(edit);f.options.push(options);if(!f.accept)return false;setEpisodes(es=>es.map(e=>e.index===edit.episodeIndex?{...e,body:replaceManhuaEpisodeStoryText(e.body,edit.body),endHook:edit.endHook}:e));return true;}}/>};createRoot(document.getElementById('root')).render(<App/>);` }, bundle: true, write: false, platform: "browser", format: "iife", jsx: "automatic", alias: { "@": path.resolve("client/src"), "@shared": path.resolve("shared") }, define: { "process.env.NODE_ENV": '"development"', "import.meta.env": "{}" } });
   bundle = built.outputFiles[0]!.text;
   browser = await puppeteer.launch({ headless: true });
 }, 30000);
@@ -80,5 +80,20 @@ it("确认前不写真源，写回保留技术材料；拒绝采用保留草稿�
     expect(await page.evaluate(() => Array.from(document.querySelectorAll("button")).find(node => node.textContent?.includes("确认写回"))?.disabled)).toBe(true);
     await page.evaluate(() => Array.from(document.querySelectorAll("button")).find(node => node.textContent === "以当前已保存稿重新编辑")?.click());
     await page.waitForFunction(() => document.querySelector("textarea")?.value === "顾问刚采用的新稿。");
+  } finally { await context.close(); }
+});
+
+
+it("只采用正文和付费更新资产传递不同选择，均保留采用事务", async () => {
+  const { page, context, edit } = await pageFixture();
+  try {
+    await edit("复用现有人物和场景的新正文。");
+    await page.evaluate(() => Array.from(document.querySelectorAll("button")).find(node => node.textContent === "仅写回本集，复用现有资产")?.click());
+    await page.waitForFunction(() => (globalThis as any).fixture.applied.length === 1);
+    expect(await page.evaluate(() => (globalThis as any).fixture.options[0])).toEqual({refreshAssets:false});
+    await edit("需要新场景的正文。");
+    await page.evaluate(() => Array.from(document.querySelectorAll("button")).find(node => node.textContent === "确认写回本集并更新相关资产")?.click());
+    await page.waitForFunction(() => (globalThis as any).fixture.applied.length === 2);
+    expect(await page.evaluate(() => (globalThis as any).fixture.options[1])).toEqual({refreshAssets:true});
   } finally { await context.close(); }
 });

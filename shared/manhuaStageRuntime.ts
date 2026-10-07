@@ -47,7 +47,9 @@ if (THREE && SplatMesh) {
     document.body.appendChild(renderer.domElement);
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0b1018);
-    const sparkRenderer = new SparkRenderer({renderer,autoUpdate:!CAPTURE_ONLY,view:{autoUpdate:!CAPTURE_ONLY}});
+    const sparkRenderer = new SparkRenderer({renderer,autoUpdate:!CAPTURE_ONLY});
+    // Spark 0.1.10 构造器强制注册自动排序，须通过方法注销，直接改属性不会移除注册。
+    if(CAPTURE_ONLY)sparkRenderer.defaultView.setAutoUpdate(false);
     scene.add(sparkRenderer);
     const camera = new THREE.PerspectiveCamera(50, window.innerWidth / Math.max(1, window.innerHeight), 0.05, 500);
     camera.up.set(0, 0, 1);
@@ -302,4 +304,3 @@ if (THREE && SplatMesh) {
 }
 <\/script></body></html>`;
 }
-

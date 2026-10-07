@@ -8,7 +8,7 @@ export type ManhuaEpisodeTextEditorProps = {
   scopeKey: string;
   episode: Episode;
   busyReason?: string;
-  onApplyEdit: (edit: ManualEpisodeEdit) => boolean | Promise<boolean>;
+  onApplyEdit: (edit: ManualEpisodeEdit, options: { refreshAssets: boolean }) => boolean | Promise<boolean>;
 };
 type Draft = ManualEpisodeEdit & { version: 1 };
 const DRAFT_EVENT = "manhua-episode-text-draft";
@@ -75,16 +75,16 @@ function EpisodeTextEditor({ scopeKey, episode, busyReason, onApplyEdit }: Manhu
     }
   }, [episode.body, episode.endHook, stale, dirty, draft.body, draft.endHook, key]);
 
-  async function apply() {
+  async function apply(refreshAssets: boolean) {
     if (!dirty || stale || busyReason || saving || !draft.body.trim()) return;
     const snapshot = draft;
     setSaving(true);
     setStatus("");
     try {
       const accepted = await onApplyEdit({ episodeIndex: snapshot.episodeIndex, originalBody: snapshot.originalBody,
-        originalEndHook: snapshot.originalEndHook, body: snapshot.body, endHook: snapshot.endHook });
+        originalEndHook: snapshot.originalEndHook, body: snapshot.body, endHook: snapshot.endHook }, { refreshAssets });
       if (accepted) {
-        setStatus("本集修改已写回，旧稿和旧资产已保留。");
+        setStatus(refreshAssets ? "本集修改已写回，旧稿和旧资产已保留。" : "本集修改已写回，复用现有资产；请在分镜中核对新剧情与资产的对应关系。");
         // 宿主更新真源后统一清理，不能提前丢掉仍未进入真源的草稿。
       }
     } catch (cause) { setError(cause instanceof Error ? cause.message : "写回失败，草稿已保留。"); }
@@ -118,9 +118,11 @@ function EpisodeTextEditor({ scopeKey, episode, busyReason, onApplyEdit }: Manhu
     {error ? <p role="alert" className="text-xs text-red-200">{error}</p> : null}
     {status ? <p role="status" className="text-xs text-emerald-200">{status}</p> : null}
     <div className="flex flex-wrap items-center gap-3">
-      <button type="button" disabled={!dirty || stale || Boolean(busyReason) || saving || !draft.body.trim()} onClick={() => void apply()}
+      <button type="button" disabled={!dirty || stale || Boolean(busyReason) || saving || !draft.body.trim()} onClick={() => void apply(false)}
+        className="rounded-lg border border-cyan-300/40 px-3 py-2 text-xs font-medium text-cyan-100 disabled:cursor-not-allowed disabled:opacity-40">{saving ? "正在写回…" : "仅写回本集，复用现有资产"}</button>
+      <button type="button" disabled={!dirty || stale || Boolean(busyReason) || saving || !draft.body.trim()} onClick={() => void apply(true)}
         className="rounded-lg bg-cyan-300 px-3 py-2 text-xs font-medium text-slate-950 disabled:cursor-not-allowed disabled:opacity-40">{saving ? "正在写回…" : "确认写回本集并更新相关资产"}</button>
-      <p className="text-[11px] text-white/50">确认后更新相关道具、服装和场景设定并生成新版本，按原资产流程计费；保留旧稿和旧资产。</p>
+      <p className="text-[11px] text-white/50">仅写回不调用生成模型；选择更新相关资产时，按原资产流程计费并生成新版本。两种方式均保留旧稿和旧资产。</p>
     </div>
   </section>;
 }
