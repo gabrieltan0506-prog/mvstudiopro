@@ -46,8 +46,8 @@ it('真实顾问组件：付费确认前语音Promise不结束；原ID确认一�
  await click(page,'确认支付 12 积分并继续');await page.waitForFunction(()=>(globalThis as any).fixture.results.length===1);
  const f=await page.evaluate(()=>(globalThis as any).fixture);expect(f.results).toEqual(['灯光与人物站位优化完成']);expect(f.calls).toHaveLength(2);expect(f.calls[0].requestId).toBe(f.calls[1].requestId);expect(f.calls[1]).toMatchObject({confirmPaid:true,confirmedCredits:12});
  await page.close();
-});
-it('新增图片与影片输入：静态图片单独标记，暂停画面带真实播放器时间，关闭停止发送',async()=>{
+},20000);
+it('静态参考图单独标记；影片播放器仅定位，不向Live发送影片画面或音轨',async()=>{
  const page=await pageWith(voiceBundle);await click(page,'打开');await click(page,'开始讨论');await page.waitForFunction(()=>document.body.textContent?.includes('ready'));
  await page.evaluate(async()=>{
   const canvas=document.createElement('canvas');canvas.width=160;canvas.height=90;canvas.getContext('2d')!.fillRect(0,0,160,90);
@@ -61,9 +61,12 @@ it('新增图片与影片输入：静态图片单独标记，暂停画面带真�
   const canvas=document.createElement('canvas');canvas.width=160;canvas.height=90;canvas.getContext('2d')!.fillRect(0,0,160,90);
   const video=document.createElement('video');video.muted=true;video.srcObject=canvas.captureStream(1);document.body.append(video);await video.play();(globalThis as any).fixture.video=video;
  });
- await click(page,'读取本页播放器');await click(page,'分享画面');await page.waitForFunction(()=>(globalThis as any).fixture.messages.some((m:any)=>m.type==='frame'&&!m.still));
- expect(await page.evaluate(()=>(globalThis as any).fixture.messages.find((m:any)=>m.type==='frame'&&!m.still).source)).toBe('页面播放器1');
+ await click(page,'读取本页播放器');
+ expect(await page.$eval('[aria-label="定位的播放器"]',e=>e.textContent)).toContain('播放器1');
+ expect(await page.evaluate(()=>Array.from(document.querySelectorAll('button')).some(b=>b.textContent==='分享画面'))).toBe(false);
+ expect(await page.evaluate(()=>document.body.textContent)).toContain('不向 Live 传送影片画面或音轨');
+ expect(await page.evaluate(()=>(globalThis as any).fixture.messages.filter((m:any)=>(m.type==='frame'&&!m.still)||m.type==='videoAudio'))).toEqual([]);
  await click(page,'结束语音');const before=await page.evaluate(()=>(globalThis as any).fixture.messages.length);
  await new Promise(r=>setTimeout(r,1200));expect(await page.evaluate(()=>(globalThis as any).fixture.messages.length)).toBe(before);
  await page.close();
-});
+},20000);
