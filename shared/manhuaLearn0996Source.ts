@@ -7,11 +7,17 @@
 export const MANHUA_0996_SOURCE_HOSTS = [
   "0996zp.com",
   "www.0996zp.com",
+  "9zhoukj.com",
+  "fntcome.com",
+  "sizhengxt.com",
+  "pumeiduolehuo.com",
   "gzcrkt8888.com",
   "www.gzcrkt8888.com",
 ] as const;
 
 const MANHUA_0996_MEDIA_HOST_SUFFIXES = ["kqgfbs.com"] as const;
+// 1007：已鉴权的播放接口实际返回的新 CDN；只放行已核对主机，不扩大整域。
+const MANHUA_0996_MEDIA_EXACT_HOSTS = ["ppvod021.zyxsuntech.com"] as const;
 
 export type Manhua0996SourceRef = {
   host: string;
@@ -116,7 +122,8 @@ export function isTrustedManhua0996MediaUrl(raw: string): boolean {
     const url = new URL(raw);
     if (url.protocol !== "https:" || url.username || url.password || url.port) return false;
     const host = url.hostname.toLowerCase();
-    return MANHUA_0996_MEDIA_HOST_SUFFIXES.some(
+    return MANHUA_0996_MEDIA_EXACT_HOSTS.some((allowed) => host === allowed)
+      || MANHUA_0996_MEDIA_HOST_SUFFIXES.some(
       (suffix) => host === suffix || host.endsWith(`.${suffix}`),
     );
   } catch {

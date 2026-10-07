@@ -48,6 +48,22 @@ function deps(overrides: Partial<NativeDeepReadPlanDeps> = {}): NativeDeepReadPl
 }
 
 describe("原生精读计划", () => {
+  it("1007 外部来源失败保留脱敏诊断且不把签名送入面板", async () => {
+    const url = "https://0996zp.com/vod/play/113224/sid/751903";
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const d = deps({
+        isExternalSource: () => true,
+        resolveExternalSeries: async () => ({ sourceIdentity: url, seriesId: "0996:113224", titleZh: "测试影片", currentEpisodeIndex: 1, episodes: [{ index: 1, access: "free", title: "HD", url }] }),
+        refreshSourcePlayback: async () => { throw Object.assign(new Error("fetch failed https://0996zp.com/api?token=secret-value"), { cause: { code: "ECONNRESET" } }); },
+      });
+      await expect(buildNativeDeepReadPlanPreview({ url, limit: 1 }, d)).rejects.toThrow("所有媒体节点暂不可读");
+      const logged = JSON.stringify(warning.mock.calls);
+      expect(logged).toContain("ECONNRESET");
+      expect(logged).not.toContain("secret-value");
+      expect(d.probeDurationSec).not.toHaveBeenCalled();
+    } finally { warning.mockRestore(); }
+  });
   it("仅重新整形精确选中已入库目标集，不跳到下一集", async () => {
     const plan = await buildNativeDeepReadPlanPreview({ url: "https://www.douyin.com/collection/123456", limit: 1, structuringEpisodeIndex: 2 }, deps({ listIngestedEpisodes: vi.fn(async () => new Set([1, 2])) }));
     expect(plan.episodes.map(row => row.episodeIndex)).toEqual([2]);
