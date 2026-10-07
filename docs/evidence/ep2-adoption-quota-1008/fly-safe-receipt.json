@@ -1,0 +1,20 @@
+{
+  "at": "2026-10-07T19:27:34.867Z",
+  "status": "passed",
+  "saved": {
+    "rawRejected": true,
+    "backupKey": "manhua-advisor-rewrite-backup:1:native-quota",
+    "historyChars": 4942397,
+    "canvasChars": 25132
+  },
+  "restored": {
+    "body": "新剧情：先生取血救娘。",
+    "pointer": true,
+    "bytes": "retained-image-bytes",
+    "textChars": 24000,
+    "firstEpisode": "https://test.invalid/ep1.mp4",
+    "historyChars": 4942397
+  },
+  "formalWorkflowAccepted": false,
+  "paidProviderCalls": 0
+}
