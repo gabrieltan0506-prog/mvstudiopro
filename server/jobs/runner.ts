@@ -1,3 +1,4 @@
+import { startFileConversionWorker, stopFileConversionWorker, drainFileConversions, fileConversionsBusy } from "./fileConversionWorker";
 import {
   buildI2VRequest,
   buildImageRequest,
@@ -4362,6 +4363,7 @@ export async function drainPostProdOnShutdown() {
   stopJobWorker();
   postProdShutdown.abort(new Error("服务更新中，本任务已停止，原素材和回执保留；未自动重做"));
   await (await import("./heavyMediaWorker")).drainHeavyMediaOnShutdown();
+  await drainFileConversions();
   await Promise.allSettled([...Array.from(activePostProdRuns), ...Array.from(activeManhuaLearnRuns)]);
   const { waitForPostProdResources } = await import("../services/postProdResources");
   await waitForPostProdResources();
@@ -4492,10 +4494,11 @@ async function rigAutoscaleDeps(
   const { resolveRigAutoscaleDeps } = await import("./rigAutoscale.js");
   const { countPendingBlenderPostProdJobs, countPendingManhuaLearnJobs } = await import("./repository.js");
   const { countHeavyWorkerJobs } = await import("./heavyMediaRepository");
+  const { countPaidConversions } = await import("./fileConversionRepository");
   return resolveRigAutoscaleDeps(
     {
-      queuedBlenderJobs: async () => heavyWorkerSplitEnabled() ? (await countHeavyWorkerJobs(false)) + (await countPendingManhuaLearnJobs(false)) : countPendingBlenderPostProdJobs({ includeRunning: false }),
-      pendingBlenderJobs: async () => heavyWorkerSplitEnabled() ? (await countHeavyWorkerJobs()) + (await countPendingManhuaLearnJobs()) : countPendingBlenderPostProdJobs(),
+      queuedBlenderJobs: async () => heavyWorkerSplitEnabled() ? (await countHeavyWorkerJobs(false)) + (await countPaidConversions(false)) + (await countPendingManhuaLearnJobs(false)) : countPendingBlenderPostProdJobs({ includeRunning: false }),
+      pendingBlenderJobs: async () => heavyWorkerSplitEnabled() ? (await countHeavyWorkerJobs()) + (await countPaidConversions()) + (await countPendingManhuaLearnJobs()) : countPendingBlenderPostProdJobs(),
     },
     hooks,
   );
@@ -4570,7 +4573,7 @@ async function rigIdleTick() {
   const { postProdResourcesBusy } = await import("../services/postProdResources");
   const { hasPendingPostProdResults } = await import("./postProdRecovery");
   const { heavyMediaChildrenBusy } = await import("../services/heavyMediaProcess");
-  const outcome = await maybeStopIdleRig(deps, rigIdleState, () => heavyMediaChildrenBusy() || postProdProcessing || heavyWorkerState.active
+  const outcome = await maybeStopIdleRig(deps, rigIdleState, () => fileConversionsBusy() || heavyMediaChildrenBusy() || postProdProcessing || heavyWorkerState.active
     || activePostProdRuns.size > 0 || manhuaLearnJobsActive > 0 || manhuaLearnClaiming || activeManhuaLearnRuns.size > 0 || postProdResourcesBusy() || hasPendingPostProdResults());
   if (outcome.action === "error") console.warn("[rig-autoscale] 停机判定异常：", outcome.message);
 }
@@ -4587,6 +4590,7 @@ function guarded(tick: () => Promise<unknown>): void {
 export function startJobWorker() {
   if (workerStarted) return;
   workerStarted = true;
+  startFileConversionWorker({ canClaim: () => !rigStopGate.requested });
 
   // 分机时 rig 同时领取完整学习父任务；网站不领取学习，其他业务队列仍仅在 app。
   if (resolveJobWorkerRole() === "rig") {
@@ -4656,6 +4660,7 @@ export function startJobWorker() {
 }
 
 export function stopJobWorker() {
+  stopFileConversionWorker();
   if (timer) clearInterval(timer);
   timer = null;
   if (growthAnalyzeTimer) clearInterval(growthAnalyzeTimer);

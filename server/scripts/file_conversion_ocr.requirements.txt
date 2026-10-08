@@ -1,0 +1,14 @@
+# 文件转换专用离线OCR；安装到独立 /opt/file-conversion-ocr，不改系统Python包。
+flatbuffers==25.12.19
+numpy==2.5.3
+onnxruntime==1.30.0
+opencv-python==5.0.0.93
+packaging==26.3
+pillow==12.3.0
+protobuf==7.36.2
+pyclipper==1.4.0
+pyyaml==6.0.3
+rapidocr-onnxruntime==1.4.4
+shapely==2.2.0
+six==1.17.0
+tqdm==4.70.1

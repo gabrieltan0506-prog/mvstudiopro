@@ -37,6 +37,14 @@ afterEach(() => {
 });
 
 describe("downloadGcsObjectVersioned / deleteGcsObject 条件删除", () => {
+  it("对象实字节来自服务端metadata，旧metadata缺size仍兼容", async () => {
+    stubFetch(() => ({ status: 200, body: { generation: "77", size: "3000001" } }));
+    const { statGcsObjectVersion } = await import("./gcs");
+    expect(await statGcsObjectVersion({ gcsUri: "gs://b/a" })).toMatchObject({ generation: "77", byteLength: 3_000_001 });
+    stubFetch(() => ({ status: 200, body: { generation: "78" } }));
+    expect((await statGcsObjectVersion({ gcsUri: "gs://b/a" })).byteLength).toBeUndefined();
+  });
+
   it("uploadBufferToGcs 条件覆写必须把 ifGenerationMatch 发出去", async () => {
     stubFetch(() => ({ status: 200, body: { name: "x" } }));
     const { uploadBufferToGcs } = await import("./gcs");

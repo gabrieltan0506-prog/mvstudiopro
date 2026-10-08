@@ -760,7 +760,7 @@ export async function deleteGcsObject(params: {
 export async function statGcsObjectVersion(params: {
   gcsUri: string;
   signal?: AbortSignal;
-}): Promise<{ bucket: string; objectName: string; generation: string; etag?: string }> {
+}): Promise<{ bucket: string; objectName: string; generation: string; etag?: string; byteLength?: number }> {
   const { bucket, objectName } = parseGsUri(params.gcsUri);
   const accessToken = await awaitWithAbortSignal(
     getVertexAccessToken(),
@@ -777,7 +777,7 @@ export async function statGcsObjectVersion(params: {
     signal: params.signal,
   });
   if (!metaRes.ok) throw new Error(`gcs_stat_failed:${metaRes.status}`);
-  const meta = (await metaRes.json()) as { generation?: string; etag?: string };
+  const meta = (await metaRes.json()) as { generation?: string; etag?: string; size?: string };
   const generation = String(meta.generation || "").trim();
   if (!generation) throw new Error("gcs_stat_no_generation");
   return {
@@ -785,6 +785,7 @@ export async function statGcsObjectVersion(params: {
     objectName,
     generation,
     etag: String(meta.etag || "").trim() || undefined,
+    byteLength: /^\d+$/.test(String(meta.size || "")) ? Number(meta.size) : undefined,
   };
 }
 
