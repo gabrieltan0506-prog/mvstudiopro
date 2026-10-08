@@ -17,7 +17,7 @@ const id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",objectName=`file-conversion/u7/s
 const nativeFetch=globalThis.fetch;
 async function request(route:string,method:string,body?:Buffer,headers:Record<string,string>={}) {
  const app=express();app.use("/api",apiCorsMiddleware);registerFileConversionTransfer(app);const server=createServer(app).listen(0,"127.0.0.1");await once(server,"listening");
- try {const r=await nativeFetch(`http://127.0.0.1:${(server.address() as any).port}${route}`,{method,headers,body:body?new Uint8Array(body):undefined});return{status:r.status,body:await r.text(),...(method==="OPTIONS"?{cors:r.headers.get("access-control-allow-methods"),origin:r.headers.get("access-control-allow-origin")}: {})};}
+ try {const r=await nativeFetch(`http://127.0.0.1:${(server.address() as any).port}${route}`,{method,headers,body:body?new Uint8Array(body):undefined});return{status:r.status,body:await r.text(),...(headers.Origin?{cors:r.headers.get("access-control-allow-methods"),origin:r.headers.get("access-control-allow-origin"),credentials:r.headers.get("access-control-allow-credentials")}: {})};}
  finally{server.closeAllConnections();await new Promise<void>(done=>server.close(()=>done()));}
 }
 beforeEach(()=>{vi.clearAllMocks();m.user=7;m.finish.mockResolvedValue(undefined);m.claim.mockResolvedValue({id,userId:"7",objectName,bytes:4,lane:"free",fileName:"test.txt"});m.save.mockResolvedValue({storage:"gcs",generation:"123"});
@@ -70,4 +70,8 @@ it("F5：生产全局CORS先于转换处理器，正式域PUT预检允许且其�
  expect(await request(`/api/file-conversion/upload/${id}`,"OPTIONS",undefined,{...headers,Origin:"https://untrusted.example"})).toMatchObject({status:204,cors:null,origin:null});
  expect(await request("/api/unrelated","OPTIONS",undefined,headers)).toMatchObject({cors:"GET,POST,OPTIONS"});
  expect(m.claim).not.toHaveBeenCalled();
+ const uploaded=await request(`/api/file-conversion/upload/${id}`,"PUT",data,{Origin:headers.Origin});
+ expect(uploaded).toMatchObject({status:200,cors:"PUT,OPTIONS",origin:headers.Origin,credentials:"true"});
+ expect(m.save).toHaveBeenCalledTimes(1);
+ expect(m.finish).toHaveBeenCalledWith(expect.objectContaining({id}),expect.objectContaining({objectName,sha256:conversionSha(data)}));
 });

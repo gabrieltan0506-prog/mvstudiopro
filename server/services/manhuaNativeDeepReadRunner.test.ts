@@ -4969,8 +4969,16 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     const deps=makeRunnerDeps({prepareVideos:vi.fn(async(row:{segments:Array<{startSec:number;endSec:number}>})=>row.segments.map(segment=>({gsUri:`gs://test-bucket/seg-${segment.startSec/60}.mp4`,...segment,temporaryGcs:{bucket:"test-bucket",objectName:`seg-${segment.startSec/60}.mp4`},bytes:100,hasAudio:true}))) as never,postVertex:makeSuccessfulEpisodePostVertex(episode.segments) as never,
       readSegmentCache:vi.fn(async({segmentIndex})=>segmentIndex===4?{entry,generation:"1"}:null) as never});
     try{
+      // 首次运行真实落下第5片部分卡后中断，第二次续读必须兼容持久层已有[4]。
+      await expect(runManhuaNativeDeepReadBatch({episodes:[episode],segmentCacheSeriesKey:cacheSeriesKey,segmentModelConcurrency:1,
+        onSegmentSnapshotCommitted:async snapshot=>{await ingest(snapshot);throw new Error("test-only interruption after persisted partial");}},deps))
+        .rejects.toThrow("test-only interruption after persisted partial");
+      expect(snapshots).toEqual([[4]]);expect(stored).toBeDefined();expect(deps.postVertex).not.toHaveBeenCalled();
+      const persistedBeforeResume=Buffer.from(stored!);
+      snapshots.length=0;
       const result=await runManhuaNativeDeepReadBatch({episodes:[episode],segmentCacheSeriesKey:cacheSeriesKey,segmentModelConcurrency:1,
         onSegmentSnapshotCommitted:async snapshot=>{await ingest(snapshot);}},deps);
+      expect(persistedBeforeResume.length).toBeGreaterThan(0);
       expect(snapshots[0]).toEqual([4]);expect(snapshots[1]).toEqual([0,4]);
       expect(snapshots.every(row=>row.includes(4))).toBe(true);
       expect(deps.postVertex).toHaveBeenCalledTimes(5);expect(generation).toBeGreaterThan(1);
