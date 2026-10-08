@@ -137,12 +137,7 @@ for _actor in spec['actors']:
     # 是「有轨迹就走轨迹」静默丢掉转身——白模不转，报告也不说，等于撒谎。这里硬失败。
     if _actor.get('motionRoute') and any(a['kind']=='turn' for a in _actor['actions']):
         raise ValueError('转身动作与分段运动轨迹不能同时给，朝向请写进轨迹节点')
-    # 合成夹具的落脚校正已通过；真实人物网格和常速质量尚未验收。
-    # schema 与渲染层保留同一门禁，旧存稿也不能绕过。
-    if _actor.get('riggedModel') and any(a['kind']=='cough' for a in _actor['actions']):
-        raise ValueError('带骨角色咳嗽暂未通过掩口和收手位置验收，请使用基础白模预演')
-    if _actor.get('riggedModel') and any(a['kind']=='sit' for a in _actor['actions']):
-        raise ValueError('带骨角色暂不支持坐下：真实人物的坐姿网格接触与常速质量尚未通过正式验收；合成夹具测试不等于真实人物验收。可使用基础白模或站立类动作，现有模型保留')
+    # 带骨坐下/掩口在实际模型导入后运行接触与蒙皮检查；失败停止输出。
 
 def turn_facing(actor, t):
     """0917 PR-E：转身动作按时间插值出朝向。动作已按 schema 排序且不重叠。
@@ -187,7 +182,7 @@ def action_amounts(actor, t):
               'walk':0.,'sit':0.,'bow':0.,'gesture_point':0.,'look':0.,'cough':0.,'cough_hold':0.}
     values['lookAt']=None
     for action in actor['actions']:
-        if not action['startSec'] <= t <= action['endSec']: continue
+        if not action['startSec'] <= t < action['endSec']: continue
         u = (t-action['startSec'])/(action['endSec']-action['startSec'])
         if action['kind'] == 'strike':
             values['wind'] = smooth(u/.30)*(1-smooth((u-.30)/.12))
@@ -198,6 +193,8 @@ def action_amounts(actor, t):
             # 起 20% 进姿势、末 25% 回中位，中间保持——坐下/行礼/指向都要「停得住」
             values[action['kind']] = smooth(u/.20)*(1-smooth((u-.75)/.25))
         elif action['kind'] == 'cough':
+            sampled_end = (math.ceil(action['endSec']*24)-1)/24
+            u = (t-action['startSec'])/max(1/24,sampled_end-action['startSec'])
             # 掩口先于咳嗽，两次短收缩后留缓气；不移动支撑脚。
             hold = smooth(u/.22)*(1-smooth((u-.76)/.24))
             pulse = sum(smooth((u-start)/.06)*(1-smooth((u-start-.06)/.12))
@@ -466,8 +463,8 @@ for actor_id in actor_color_ids:
 for index,actor in enumerate(spec['actors']):
     validate_human_posture(actor,spec)
     contacts,stance=plan_contacts(actor)
-    # hold首帧已侧卧，静止骨仍须中立，否则retarget把侧卧误当零增量。
-    neutral_actor={key:value for key,value in actor.items() if key!='quadrupedFall'}
+    # 首帧已坐卧或侧卧时，静止骨仍须中立，否则重定向会把姿态误当零增量。
+    neutral_actor={key:value for key,value in actor.items() if key not in ('quadrupedFall','humanPosture')}
     rest=points(neutral_actor,1,contacts[1])
     if actor['id'] in water_events:
         water_head_heights[actor['id']]=float(rest['head'][1].z)
@@ -480,7 +477,7 @@ for index,actor in enumerate(spec['actors']):
     bpy.ops.object.mode_set(mode='EDIT')
     for name,(a,b) in rest.items():
         bone=data.edit_bones.new(name);bone.head=a;bone.tail=b
-        if actor.get('riggedModel') or actor.get('quadrupedFall'):
+        if actor.get('riggedModel') or actor.get('quadrupedFall') or actor.get('humanPosture'):
             # 带骨来源的静止轴与下方动画轴一致，避免默认roll被当作动作传给真实蒙皮。
             # 只依据rest端点建轴，不拿已烘焙的首帧归零；旧白模、互动和尾翼路径保持原样。
             bone.matrix=Matrix.Translation(a) @ (b-a).to_track_quat('Y','Z').to_matrix().to_4x4()
@@ -585,6 +582,7 @@ if any(actor.get('riggedModel') for actor in spec['actors']):
         if model['inspection']['bytes']!=row['bytes']: raise ValueError('角色字节数与侧载回执不同')
         if model['report']['weightedVertices']>model['inspection']['vertices']:
             raise ValueError('角色导入后实际顶点数超过预检，未开始动画与渲染')
+        model['report'].update({'actorId':actor['id'],'sourceJobId':row['sourceJobId']})
         appearance=prepare_workbench_appearance(model)
         source_bone_map = None
         if actor['shape'] == 'horse':
@@ -595,6 +593,9 @@ if any(actor.get('riggedModel') for actor in spec['actors']):
             apply_performance(model,config['performance']['controller'],config['performance']['cues'],
                 scene.frame_start,scene.frame_end,24)
         if actor['shape'] == 'human':
+            if actor.get('humanPosture'):
+                from previs_rigged_posture import apply_rigged_posture
+                model['report']['postureContact']=apply_rigged_posture(model,actor,scene)
             apply_grounded_sit_contact(model,actor['actions'],scene.frame_start,scene.frame_end,24)
             apply_cough_contact(model,actor['actions'],scene.frame_start,scene.frame_end,24)
         # 原白模仅作驱动证据；显示真实导入网格，不在画面中叠加替身。
@@ -604,7 +605,7 @@ if any(actor.get('riggedModel') for actor in spec['actors']):
         model['report'].update({'actorId':actor['id'],'sourceJobId':row['sourceJobId'],
             'boundaryZh':'真实带骨网格旋转与路径重定向，保留模型原始静止姿态，不自动生成自然站姿；源白模脚底误差不代表角色网格接地，尚未验证双人接触；文戏动作只烘「相对各自静止姿态的旋转增量」、骨盆位移按骨骼跨度比例缩放：'
             '实测（test_previs_drama_rigged.py，1.0 倍与 1.5 倍棍人身高两具夹具）行礼/指向/看向按身高等比转移，'
-            '落座深度比等比值浅 3.4%；旧诊断曾穿地21—32厘米，现有真实腿长坐姿校正尚待正式人物网格与常速审片，提交与渲染仍保留门禁；'
+            '落座深度比等比值浅 3.4%；旧诊断曾穿地21—32厘米，本次坐姿和掩口按实际腿长/手部蒙皮与脚底逐帧检查，真实人物衣物和常速画面仍待审片；'
             '走位抬脚残差 ≤2.0 厘米；看向只转头骨，肩线偏转是位置量、重定向不转移；'+appearance['boundaryZh']})
         if actor['shape'] == 'horse':
             model['report']['boundaryZh'] = '真实四足蒙皮按当前horse驱动映射前后四腿、躯干、颈与头，保持目标骨长；尚未验真实蹄底接地、受伤倒地或人与马接触，不能用白模报告冒充质量验收；'+appearance['boundaryZh']
@@ -628,11 +629,18 @@ for actor,source_rig,_contacts,_stance,_error in rigs:
         measured=ground_and_measure_fall(actor,source_rig,[obj for obj in source_rig.children if obj.type=='MESH'],scene)
     quadruped_falls.append(measured)
 
+from previs_rigged_piggyback import apply_rigged_piggyback, apply_rigged_piggyback_block, measure_rigged_piggyback
+rigged_piggyback=apply_rigged_piggyback(piggyback,models,scene)
+
 from previs_hand_contacts import apply_hand_contacts
 hand_contact_rows=apply_hand_contacts(spec,rigs,scene,actor_visible,models)
 from previs_story_props import build_story_props
 story_prop_handles=build_story_props(spec,rigs,scene,actor_visible,models)
-piggyback_block_samples=apply_piggyback_block(piggyback,rigs,story_prop_handles,scene)
+piggyback_block_samples=[]
+if rigged_piggyback:
+    apply_rigged_piggyback_block(piggyback,rigged_piggyback,story_prop_handles,scene)
+else:
+    piggyback_block_samples=apply_piggyback_block(piggyback,rigs,story_prop_handles,scene)
 
 # 在场窗口真正控制画面网格。模型替身原本恒隐藏；尾翼另有显形曲线，合成时保留其原有可见条件。
 primary_meshes={}
@@ -873,7 +881,10 @@ for actor,rig,contacts,stance,error in rigs:
     if limp_samples: report['actors'][-1]['limpSamples']=limp_samples
     if hit_samples: report['actors'][-1]['hitReaction']={**actor['hitReaction'],'samples':hit_samples}
     if offscreen:report['warnings'].append(actor['nameZh']+'存在头或脚出画，请人工审查镜头覆盖')
-if piggyback:
+if rigged_piggyback:
+    report['riggedPiggyback']=measure_rigged_piggyback(piggyback,rigged_piggyback,scene)
+    report['warnings'].append(report['riggedPiggyback']['boundaryZh'])
+elif piggyback:
     report['piggyback']=measure_piggyback(piggyback,rigs,scene,bpy.context.view_layer.update,piggyback_block_samples)
     report['warnings'].append(report['piggyback']['boundaryZh'])
 if events:
@@ -923,9 +934,9 @@ if story_prop_handles:
     report['storyProps']=[{'id':h['spec']['id'],'kind':h['spec']['kind'],'samples':h['samples']} for h in story_prop_handles]
 if hand_contact_rows:
     report['handContacts']=hand_contact_rows
-if any(actor.get('humanPosture') for actor in spec['actors']):
+if any(actor.get('humanPosture') and not actor.get('riggedModel') for actor in spec['actors']):
     from previs_human_posture_report import measure_human_posture
-    report['humanPostures']=[measure_human_posture(actor,rig,scene,bpy.context.view_layer.update) for actor,rig,*_ in rigs if actor.get('humanPosture')]
+    report['humanPostures']=[measure_human_posture(actor,rig,scene,bpy.context.view_layer.update) for actor,rig,*_ in rigs if actor.get('humanPosture') and not actor.get('riggedModel')]
 if quadruped_falls:
     report['quadrupedFalls']=quadruped_falls
 if has_routes:
@@ -938,11 +949,11 @@ if water_handles and (report['waterEmergence']['overlaps'] or report['waterEmerg
     raise ValueError('独立浪花存在重叠或出画，请调整站位和机位')
 if any(max(s['gripError'],s['handEndError'])>.005 for w in report.get('weapons',[]) for s in w['samples']):
     raise ValueError('持剑绑定误差未过验收')
-if piggyback and not piggyback.get('setDown') and any(abs(row['supportError']-row['expectedSupportGap'])>.005 or
+if piggyback and not rigged_piggyback and not piggyback.get('setDown') and any(abs(row['supportError']-row['expectedSupportGap'])>.005 or
                      abs(row['actualDropMeters']-piggyback_motion(piggyback,row['frame'])[0])>.005 or
                      row['gripError']>.005 or row['passengerFootHeight']<.1 for row in report['piggyback']['samples']):
     raise ValueError('背负托腿、抱肩或悬空脚未达到接触要求')
-if piggyback and piggyback.get('setDown'):
+if piggyback and not rigged_piggyback and piggyback.get('setDown'):
     down=piggyback['setDown']; root=None
     for row in report['piggyback']['samples']:
         t=(row['frame']-1)/24

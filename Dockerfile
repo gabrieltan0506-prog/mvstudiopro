@@ -60,32 +60,47 @@ COPY . .
 RUN blender --background --factory-startup --disable-autoexec --python-exit-code 1 \
     --python server/scripts/test_previs_animation_materials.py
 
+# 接触检查读取实际求值网格；纯内存，不渲染、不导出。
+RUN blender --background --factory-startup --disable-autoexec --python-exit-code 1 \
+    --python server/scripts/test_previs_rigged_contact_mesh.py
+RUN blender --background --factory-startup --disable-autoexec --python-exit-code 1 \
+    --python server/scripts/test_previs_sit_runtime.py
+RUN blender --background --factory-startup --disable-autoexec --python-exit-code 1 \
+    --python server/scripts/test_previs_cough_runtime.py
+RUN blender --background --factory-startup --disable-autoexec --python-exit-code 1 \
+    --python server/scripts/test_previs_rigged_piggyback.py -- /tmp/previs-rigged-piggyback-memory --block
+RUN blender --background --factory-startup --disable-autoexec --python-exit-code 1 \
+    --python server/scripts/test_previs_rigged_posture.py -- /tmp/previs-rigged-posture-memory
+
+# 生成媒体的旧夹具仅在展示内容并确认后显式开启。
+ARG RUN_MEDIA_SMOKE=0
 # 依赖导入成功不代表旧版 glTF 插件能运行；必须真实导出并经生产入口重新导入带骨/表情 GLB。
 # 离线自造夹具，不联网、不渲染视频；同时验证拒绝路径、蒙皮、动作与表演数据。
-RUN blender --background --factory-startup --python-exit-code 1 \
-    --python server/scripts/test_previs_rigged_model.py -- /tmp/previs-gltf-build-smoke
+RUN if [ "$RUN_MEDIA_SMOKE" = "1" ]; then blender --background --factory-startup --python-exit-code 1 \
+    --python server/scripts/test_previs_rigged_model.py -- /tmp/previs-gltf-build-smoke; else echo "媒体夹具未获本次确认，跳过生成；无媒体检查另行运行"; fi
 
 # 在实际软件渲染环境验证基础色、UV采样、旧无材质夹具及异常回滚；只渲染自造静帧。
-RUN xvfb-run -a blender --background --factory-startup --disable-autoexec --threads 1 --python-exit-code 1 \
+RUN if [ "$RUN_MEDIA_SMOKE" = "1" ]; then xvfb-run -a blender --background --factory-startup --disable-autoexec --threads 1 --python-exit-code 1 \
     --python server/scripts/test_previs_workbench_appearance.py -- /tmp/previs-appearance-build-smoke \
-    --legacy-fixture /tmp/previs-gltf-build-smoke/TEST_ONLY-rigged-with-morph.glb
+    --legacy-fixture /tmp/previs-gltf-build-smoke/TEST_ONLY-rigged-with-morph.glb; else echo "媒体夹具未获本次确认，跳过生成；无媒体检查另行运行"; fi
 
 # 0916 低模绑骨→权重转移→原模导出：在镜像自带的 Blender 上真实跑一遍（合成 >5 万顶点人体，不用用户资产）。
 # 含预览渲染，沿用虚拟显示；异常即构建失败。只证明本容器里合成模型链路通过，不证明真模/材质/内存/形变质量。
-RUN blender --background --factory-startup --version | head -n 1 \
+RUN if [ "$RUN_MEDIA_SMOKE" = "1" ]; then blender --background --factory-startup --version | head -n 1 \
  && xvfb-run -a blender --background --factory-startup --disable-autoexec --threads 1 --python-exit-code 1 \
     --python server/scripts/test_auto_rig_proxy.py -- /tmp/auto-rig-build-smoke \
     | tee /tmp/auto-rig-build-smoke.log \
- && grep -q "^TEST_OK" /tmp/auto-rig-build-smoke.log
+ && grep -q "^TEST_OK" /tmp/auto-rig-build-smoke.log; else echo "媒体夹具未获本次确认，跳过生成；无媒体检查另行运行"; fi
 
 # 跨进程摘要稳定性：线上「检查」与「绑定」是两次独立 Blender 进程，摘要不稳绑定必被拒。
 # 同一脚本跑两遍再比对——同进程跑两次抓不到这个（2026-09-16 线上首跑真的因此失败）。
-RUN xvfb-run -a blender --background --factory-startup --disable-autoexec --threads 1 --python-exit-code 1 \
+RUN if [ "$RUN_MEDIA_SMOKE" = "1" ]; then xvfb-run -a blender --background --factory-startup --disable-autoexec --threads 1 --python-exit-code 1 \
     --python server/scripts/test_auto_rig_digest.py -- /tmp/auto-rig-digest-1 \
  && xvfb-run -a blender --background --factory-startup --disable-autoexec --threads 1 --python-exit-code 1 \
     --python server/scripts/test_auto_rig_digest.py -- /tmp/auto-rig-digest-2 \
  && diff /tmp/auto-rig-digest-1/digest.json /tmp/auto-rig-digest-2/digest.json \
- && cat /tmp/auto-rig-digest-1/digest.json
+ && cat /tmp/auto-rig-digest-1/digest.json; else echo "媒体夹具未获本次确认，跳过生成；无媒体检查另行运行"; fi
+
 
 # 跳过 postinstall 脚本（youtube-dl-exec 不再自行下载二进制）
 # 并告知 youtube-dl-exec 使用系统 yt-dlp

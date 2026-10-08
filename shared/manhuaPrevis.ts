@@ -624,16 +624,7 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
               "走位动作必须落在角色实际位移区间内；原地不动请改用其它动作或先设好起止站位",
             path: ["actors", i, "actions", j],
           });
-        // 合成夹具校正通过不代表真实人物网格和常速质量验收；保留完整人物门禁。
-        if (action.kind === "cough" && actor.riggedModel)
-          ctx.addIssue({ code: "custom", message: "咳嗽目前仅支持基础白模人物；完整人物的掩口和收手位置尚未通过真实模型验收，请先使用基础白模预演。", path: ["actors", i, "actions", j] });
-        if (action.kind === "sit" && actor.riggedModel)
-          ctx.addIssue({
-            code: "custom",
-            message:
-              "带骨角色暂不支持坐下：真实人物的坐姿网格接触与常速质量尚未通过正式验收；合成夹具测试不等于真实人物验收。可使用基础白模或站立类动作，现有模型保留",
-            path: ["actors", i, "actions", j],
-          });
+        // 真实坐下/掩口由worker按实际骨长与求值蒙皮校验，失败不输出替身。
         // 转身与运动轨迹是两套朝向真源，同时给会互相覆盖，先拒绝。
         if (action.kind === "turn" && actor.motionRoute?.length)
           ctx.addIssue({

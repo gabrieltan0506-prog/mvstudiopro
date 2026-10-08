@@ -134,7 +134,7 @@ export function ArtMotionStudio({ scopeKey, blocks, onCreate, onSave }: Props) {
     identity.current.blockId === id;
   const rememberMedia = (spec: ArtMotionSpec) => {
     const selected = new Set(
-      [spec.audioUri, ...spec.cues.map(c => c.imageUri)].filter(Boolean)
+      [spec.audioUri, ...(spec.audioTimeline?.clips.map(c=>c.audioUri)??[]), ...spec.cues.map(c => c.imageUri)].filter(Boolean)
     );
     const old = target?.artMotion?.media ?? [];
     return [
@@ -206,7 +206,8 @@ export function ArtMotionStudio({ scopeKey, blocks, onCreate, onSave }: Props) {
     )
       throw new Error("任务不属于当前动画方案");
     const status = normalizeArtMotionJobStatus(job.status);
-    const output = job.output as { url?: unknown; gcsUri?: unknown; stageAnimation?: unknown } | null;
+    const output = job.output as { url?: unknown; gcsUri?: unknown; stageAnimation?: unknown; audioTimeline?: unknown } | null;
+    if(status === "succeeded" && request.spec.audioTimeline && JSON.stringify(output?.audioTimeline)!==JSON.stringify(request.spec.audioTimeline))throw Error("动画配乐回执与提交时序不一致，未采用");
     if (status === "succeeded" && request.spec.stageAnimation && (!output?.stageAnimation || typeof output.stageAnimation!=="object" || Object.entries(request.spec.stageAnimation).some(([key,value])=>(output.stageAnimation as Record<string,unknown>)[key]!==value)))
       throw new Error("场景动画回执来源不一致，未采用候选");
     const uri = typeof output?.gcsUri === "string" ? output.gcsUri : undefined;
@@ -807,7 +808,7 @@ export function ArtMotionStudio({ scopeKey, blocks, onCreate, onSave }: Props) {
                   </button>
                 </>
               )}
-              <label className="block">
+              {draft.audioTimeline ? <div className="rounded-xl border p-3 text-sm">已采用配乐：{draft.audioTimeline.bgmCount}条，保留选段、音量、留白和淡入淡出。{draft.audioTimeline.clips.map((c,i)=><p key={i}>BGM {i+1}：源{c.sourceStartSec}–{c.sourceEndSec}秒 → 影片{c.startSec}秒，音量{c.volume}，淡入{c.fadeInSec}秒／淡出{c.fadeOutSec}秒</p>)}</div> : <label className="block">
                 配音或音乐
                 <select
                   className={field + " ml-2"}
@@ -823,7 +824,7 @@ export function ArtMotionStudio({ scopeKey, blocks, onCreate, onSave }: Props) {
                     </option>
                   ))}
                 </select>
-              </label>
+              </label>}
               <div className="flex flex-wrap gap-2">
                 <button
                   className={button}

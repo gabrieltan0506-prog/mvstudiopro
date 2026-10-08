@@ -84,8 +84,9 @@ export function previsPiggybackIssues(spec: {
   const issues: string[] = [];
   if ([carrier, passenger].some(a => a.shape !== "human" || a.creature || a.weapon))
     issues.push("背负双方须为未持械的人形角色");
-  if ([carrier, passenger].some(a => a.riggedModel))
-    issues.push("现有带衣人物的背负网格接触尚未验收，暂不能提交此组合");
+  const riggedCount = [carrier, passenger].filter(a => a.riggedModel).length;
+  if (riggedCount === 1) issues.push("真实背负须双方均绑定本人模型，不能混用源人偶");
+  if (riggedCount && (pair.setDown || pair.slipCatch)) issues.push("真实人物背负暂不支持放下或滑落接住组合");
   if (spec.waterEmergence || spec.interactions?.some(e =>
     [e.actorId, e.targetActorId].some(id => id === carrier.id || id === passenger.id)))
     issues.push("背负暂不能与出水或同一人物的其他双人接触叠加");

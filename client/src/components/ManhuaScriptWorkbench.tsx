@@ -5568,6 +5568,8 @@ clipPromptReviewOpen ? (
             stageCharacters={worldStageCharacters}
             onRenderStageAnimation={onRenderStageAnimation}
             previsAnimationSource={manhuaPrevisAnimationSource(activeClip?.previsStudio, activeClip?.id)}
+            previsStudio={activeClip?.previsStudio}
+            stageAudioStudio={activeClip?.audioStudio}
             previsStatusZh={previsStatusZh}
             stageAnimation={(() => {
               const studio=activeClip?.previsStudio;

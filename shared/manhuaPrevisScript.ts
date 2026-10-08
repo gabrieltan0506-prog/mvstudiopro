@@ -367,12 +367,6 @@ export function compilePrevisScriptDraft(input: {
       reject("四足角色不能套人体动作");
       continue;
     }
-    // 与提交门禁同一条边界：真实人物坐姿未完成网格接触与常速验收，草案就不要排出来
-    // 让用户到提交时才被拒。判据在 manhuaPrevisSpecSchema，这里只是提前退回未映射。
-    if (kind === "sit" && actor.riggedModel) {
-      reject("带骨角色暂不支持坐下：真实人物的坐姿网格接触与常速质量尚未通过正式验收；合成夹具测试不等于真实人物验收。可使用基础白模或站立类动作，现有模型保留");
-      continue;
-    }
     const targetText = whole[1] ?? "";
     // 0917 审查：只有「看向」能把目标真的落进 spec。走位/指向的目标白模表达不了
     // （走位不改站位、指向只按角色自身朝向抬手），映射了等于把原文的调度信息吞掉，

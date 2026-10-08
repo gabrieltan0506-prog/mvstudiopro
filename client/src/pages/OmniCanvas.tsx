@@ -1,5 +1,5 @@
 import { buildAdvisorPrevisShotSource } from "@shared/manhuaAdvisorPrevisShotSource";
-import { adoptStageAnimationAsClip } from "@/lib/manhuaStageAnimationAdoption";
+import { adoptStageAnimationAsClip, assertCurrentStageAnimationAudio } from "@/lib/manhuaStageAnimationAdoption";
 import { resolveShotsForEpisodeKeyartsResult } from "@/lib/canvasDramaStudio";
 import {requireCurrentStageAnimation} from "@/lib/manhuaStageAnimationBinding";
 import { loadAdvisorReconfirmationEpisodeIndexes, saveSceneProductionBackup } from "@/lib/manhuaSceneProductionBackups";
@@ -3652,6 +3652,7 @@ function OmniCanvasWorkspace() {
     const source=parsed.spec.stageAnimation;
     const sourceClip=source ? current.find(b=>b.id===source.clipId) : undefined;
     if(source && (adopt || parsed.request?.status==="submitting"))requireCurrentStageAnimation(current,latestCustomAssetRefs.current,source);
+    if(sourceClip && (adopt || parsed.request?.status==="submitting"))assertCurrentStageAnimationAudio(sourceClip,parsed.spec);
     const block=old??{...defaultCanvasBlock("video",80,80),id,...(sourceClip && getBlockEpisodeIndex(sourceClip) ? {episodeIndex:getBlockEpisodeIndex(sourceClip)!} : {})};
     const updated:CanvasBlock={...block,artMotion:parsed,prompt:parsed.spec.title||"艺术动画",...(adopt?{
       outputUrl:adopt.url,outputUrls:[adopt.url],status:"done" as const,
@@ -3680,6 +3681,7 @@ function OmniCanvasWorkspace() {
     requireCurrentStageAnimation(blocksRef.current,latestCustomAssetRefs.current,source);
     const prior=blocksRef.current.find(b=>b.artMotion?.request && ["submitting","queued","running"].includes(b.artMotion.request.status)
       && JSON.stringify(b.artMotion.request.spec.stageAnimation)===JSON.stringify(source));
+    if(prior?.artMotion && JSON.stringify(prior.artMotion.spec)!==JSON.stringify(spec))throw Error("本段已有不同配乐或配置的在途动画，请先续查原任务");
     const id=prior?.id??`art-motion-${crypto.randomUUID()}`;
     const state:ArtMotionState=prior?.artMotion??{version:1,spec,history:[],request:{id:crypto.randomUUID(),spec,status:"submitting"}};
     if(!prior)await persistArtMotionBlock(id,state,null);

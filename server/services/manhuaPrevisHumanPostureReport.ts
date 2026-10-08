@@ -3,10 +3,10 @@ import { z } from "zod";
 import { PREVIS_MAX_ACTORS } from "../../shared/manhuaPrevisLimits";
 const finite=z.number().finite();
 export const humanPostureReportsSchema=z.array(z.object({actorId:z.string().min(1).max(100),frames:z.number().int().min(48).max(720),mode:z.enum(["hold","rise_to_sit"]),meshValidated:z.literal(false),normalSpeedValidated:z.literal(false),boundaryZh:z.string().max(1200),samples:z.array(z.object({frame:z.number().int().min(1).max(720),supportGap:finite,spineLeanRad:finite,maxBoneLengthError:finite,minFootZ:finite,maxFootZ:finite}).strict()).min(48).max(720)}).strict()).max(PREVIS_MAX_ACTORS);
-type Actor = {id:string;humanPosture?:PrevisHumanPosture};
+type Actor = {id:string;riggedModel?:unknown;humanPosture?:PrevisHumanPosture};
 /** 坐卧回执必须来自每帧骨骼，不能用配置中的姿态名称充作测量。 */
 export function validateHumanPostureReports(raw:unknown,actors:Actor[],durationSec:number) {
-  const expected=actors.filter(a=>a.humanPosture);
+  const expected=actors.filter(a=>a.humanPosture&&!a.riggedModel);
   if(!expected.length){ if(raw!==undefined && (!Array.isArray(raw)||raw.length)) throw new Error("未请求坐卧却返回坐卧报告"); return []; }
   if(!Array.isArray(raw)||raw.length!==expected.length) throw new Error("坐卧报告角色不完整");
   const seen=new Set<string>();

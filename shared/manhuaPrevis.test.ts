@@ -456,7 +456,7 @@ describe("文戏动作库（0917 PR-E）", () => {
     expect(withAction({ kind: "look", startSec: 0, endSec: 2, lookAtId: PREVIS_LOOK_AT_CAMERA }).success).toBe(true);
   });
 
-  it("真实带骨坐姿未验收时保留提交门禁，不把历史穿地数值当当前结论", () => {
+  it("真实带骨坐下可进入运行时网格门禁，基础动作合同不降级", () => {
     const rigged = base();
     rigged.actors[0].riggedModel = {
       sourceJobId: "m3d_test_only",
@@ -466,11 +466,7 @@ describe("文戏动作库（0917 PR-E）", () => {
     rigged.actors[0].assetRef = "qing";
     rigged.actors[0].actions = [{ kind: "sit", startSec: 0, endSec: 2 }];
     const result = manhuaPrevisSpecSchema.safeParse(rigged);
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.message).toContain("尚未通过正式验收");
-      expect(result.error.message).not.toContain("21 厘米");
-    }
+    expect(result.success).toBe(true);
     // 反例对照①：同一个带骨角色换成行礼/指向/看向照常放行，不是把带骨角色整体禁掉
     for (const action of [
       { kind: "bow", startSec: 0, endSec: 2 },
@@ -480,7 +476,7 @@ describe("文戏动作库（0917 PR-E）", () => {
       rigged.actors[0].actions = [action];
       expect(manhuaPrevisSpecSchema.safeParse(rigged).success).toBe(true);
     }
-    // 反例对照②：去掉 riggedModel 之后同一个坐下必须通过，证明红的是带骨这一条
+    // 基础人体仍可使用相同动作，不受真实模型报告字段影响
     delete rigged.actors[0].riggedModel;
     rigged.actors[0].actions = [{ kind: "sit", startSec: 0, endSec: 2 }];
     expect(manhuaPrevisSpecSchema.safeParse(rigged).success).toBe(true);

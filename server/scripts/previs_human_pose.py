@@ -85,13 +85,13 @@ def validate_human_posture(actor, spec):
     for key,low,high in [('supportHeight',.25,.65),('reclineDeg',25,70)]:
         if type(p[key]) not in (float,int) or not math.isfinite(p[key]) or not low<=p[key]<=high:
             raise ValueError('坐卧支撑高度或后仰角无效')
-    if (actor['shape']!='human' or any(actor.get(k) is not None for k in ('riggedModel','creature','motionRoute','visibleRanges'))
+    if (actor['shape']!='human' or any(actor.get(k) is not None for k in ('creature','motionRoute','visibleRanges'))
         or any(a['kind']!='idle' for a in actor['actions']) or any(abs(a-b)>1e-6 for a,b in zip(actor['start'],actor['end']))
         or any(c.get('actorId')==actor['id'] for c in spec.get('handContacts',[]))
         or any(prop.get('grip',{}).get('actorId')==actor['id'] for prop in spec.get('storyProps',[]))
         or spec.get('waterEmergence') or (spec.get('piggyback') and actor['id'] in (spec['piggyback']['carrierId'],spec['piggyback']['passengerId']))
         or any(actor['id'] in (e['actorId'],e['targetActorId']) for e in spec.get('interactions',[]))):
-        raise ValueError('坐卧支撑仅限原地整段基础人体idle，不支持真模、位移、出水或双人接触叠加')
+        raise ValueError('坐卧支撑仅限原地整段人体idle，不支持位移、出水或双人接触叠加')
     if p['mode']=='rise_to_sit':
         times=[p['startSec'],p['endSec']]
         if (any(type(t) not in (float,int) or not math.isfinite(t) or t<0 or abs(t*24-round(t*24))>1e-6 for t in times)

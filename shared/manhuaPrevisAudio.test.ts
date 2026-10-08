@@ -50,3 +50,17 @@ it("已渲染音轨、起始秒与画质经云草稿恢复不丢失", async () =
   const result = sanitizeManhuaCloudDraftBlock({ id: "clip-e01-g01", kind: "video", previsStudio: studio } as never);
   expect(result?.previsStudio).toEqual(studio);
 });
+
+it("场景动画保留采用BGM的留白与淡变且不依赖未生成对白", async()=>{
+ const {buildManhuaStageBgmAudio}=await import('./manhuaPrevisAudio');
+ const bgm=cue('bgm',0,12,12),dialogue=cue('dialogue',0,3,3);dialogue.takes=[];
+ bgm.mix={duckUnderDialogue:false,duckVolume:.2,silenceWindows:[{startSec:4,endSec:6}]};
+ const studio={...emptyCanvasAudioStudio(),cues:[dialogue,bgm]};
+ const result=buildManhuaStageBgmAudio(studio,12)!;
+ expect(result.dialogueCount).toBe(0);expect(result.bgmCount).toBe(1);
+ expect(result.clips.every(c=>c.audioUri==='gs://test/bgm.wav')).toBe(true);
+ expect(result.clips.some(c=>c.sourceStartSec===6)).toBe(true);
+ expect(buildManhuaStageBgmAudio({...studio,cues:[]},12)).toBeUndefined();
+ expect(buildManhuaStageBgmAudio(undefined,12)).toBeUndefined();
+ bgm.approved=false;expect(()=>buildManhuaStageBgmAudio(studio,12)).toThrow('尚未采用');
+});

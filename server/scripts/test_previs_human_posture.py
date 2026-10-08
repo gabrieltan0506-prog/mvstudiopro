@@ -49,7 +49,8 @@ class HumanPostureTest(unittest.TestCase):
         actor={'id':'mother','shape':'human','start':[0,0],'end':[0,0],'actions':[{'kind':'idle'}],
                'humanPosture':{'mode':'hold','posture':'recline','supportHeight':.45,'reclineDeg':55}}
         validate_human_posture(actor,{'durationSec':4})
-        for key,value in [('riggedModel',{}),('visibleRanges',[]),('motionRoute',{}),('shape','horse')]:
+        validate_human_posture({**actor,'riggedModel':{}},{'durationSec':4})
+        for key,value in [('visibleRanges',[]),('motionRoute',{}),('shape','horse')]:
             with self.assertRaises(ValueError): validate_human_posture({**actor,key:value},{'durationSec':4})
         for extra in [{'piggyback':{'carrierId':'son','passengerId':'mother'}}, {'handContacts':[{'actorId':'mother'}]}, {'storyProps':[{'grip':{'actorId':'mother'}}]}]:
             with self.assertRaises(ValueError): validate_human_posture(actor,{'durationSec':4,**extra})

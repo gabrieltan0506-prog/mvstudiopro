@@ -121,8 +121,11 @@ def validate_piggyback(spec):
     if aid == bid or aid not in actors or bid not in actors:
         raise ValueError('背负需要两名不同的在场人物')
     a, b = actors[aid], actors[bid]
-    if any(p['shape'] != 'human' or p.get('creature') or p.get('weapon') or p.get('riggedModel') for p in (a, b)):
-        raise ValueError('背负当前只允许已验基础人形骨架，完整网格尚待验收')
+    if any(p['shape'] != 'human' or p.get('creature') or p.get('weapon') for p in (a, b)):
+        raise ValueError('背负须使用未持械的人形角色')
+    real_count=sum(bool(p.get('riggedModel')) for p in (a,b))
+    if real_count==1 or real_count and (pair.get('slipCatch') or pair.get('setDown')):
+        raise ValueError('真实背负须双方模型齐全，暂不支持滑落或放下组合')
     if spec.get('waterEmergence') or any(aid in (e['actorId'], e['targetActorId']) or bid in (e['actorId'], e['targetActorId']) for e in spec.get('interactions', [])):
         raise ValueError('背负与出水或同人物其他接触冲突')
     if any(e['kind'] not in ('walk', 'idle') and (not pair.get('setDown') or e['startSec'] < pair['setDown']['endSec']) for e in a['actions']) or any(e['kind'] != 'idle' for e in b['actions']):
