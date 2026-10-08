@@ -5070,7 +5070,18 @@ export type NativeDeepReadBatchRunnerDeps = {
 };
 
 const defaultBatchRunnerDeps: NativeDeepReadBatchRunnerDeps = {
-  prepareVideos: prepareEpisodeVideos,
+  prepareVideos: async (episode, signal, preparationDeps, limits) => {
+    // 缺片才备料；本地上传跨机恢复与普通学习共用归属核验。
+    const { heavyWorkerSplitEnabled, resolveJobWorkerRole } = await import("../jobs/workerRole.js");
+    if (episode.localVideoUpload && heavyWorkerSplitEnabled() && resolveJobWorkerRole() === "rig") {
+      const { withPortableManhuaLocalVideoSource } = await import("./manhuaLocalVideoUploadService.js");
+      return withPortableManhuaLocalVideoSource(episode.localVideoUpload.userId,
+        { params: { localVideoUploadId: episode.localVideoUpload.uploadId,
+          url: buildManhuaLocalVideoSourceRef(episode.localVideoUpload) } },
+        () => prepareEpisodeVideos(episode, signal, preparationDeps, limits));
+    }
+    return prepareEpisodeVideos(episode, signal, preparationDeps, limits);
+  },
   remove: deleteGcsObject,
   postVertex: postVertexNativeDeepRead,
   postEvolink: postEvolinkNativeDeepRead,
@@ -5462,13 +5473,11 @@ async function executeNativeDeepReadBatch(
         for (const { segmentIndex } of rows) readyOf(segmentIndex).resolve();
         firstGroupResolve();
       };
-      const prepareSegmentIndexes = (indexes: readonly number[]): Promise<void> => {
+      const prepareSegmentIndexes = async (indexes: readonly number[]): Promise<void> => {
         if (!indexes.length) { firstGroupResolve(); return Promise.resolve(); }
         if (params.structuringOnly) {
-          const error = new Error(`第${episode.episodeIndex}集原始JSON不齐或契约不匹配，禁止重新读视频；缺少第${indexes.map(index => index + 1).join("、")}段`);
-          firstGroupReject(error);
-          for (const index of indexes) readyOf(index).reject(error);
-          return Promise.reject(error);
+          try { await params.onMediaProgressZh?.(`第${episode.episodeIndex}集 · 已保存片段直接复用，只补读第${indexes.map(index => index + 1).join("、")}片；补齐后继续整形`); }
+          catch { /* 进度旁路失败不改变缓存与补读计划。 */ }
         }
         const selectedSegments = indexes.map((index) => episode.segments[index]!);
         return deps.prepareVideos(
@@ -5612,11 +5621,11 @@ async function executeNativeDeepReadBatch(
       };
 
       const buildCommittedSnapshot = (mappedOverride?: ReturnType<typeof mapNativeDeepReadSegments>): NativeDeepReadSegmentSnapshot => {
-        const sortedIndexes = [...committedIndexes].sort((a, b) => a - b);
-        // 当前执行严格按段号推进；出现空洞说明缓存或调用顺序已损坏，不能拿它装部分卡。
-        if (sortedIndexes.some((value, index) => value !== index)) {
-          throw new Error(`第${episode.episodeIndex}集已成段不是连续前缀，拒绝生成部分提案`);
-        }
+        // 通过的片段独立保存；部分提案只含已过门禁的真实片号，允许空洞。
+        // 待整形候选仍保留恢复缓存，整集门禁通过后才随最终产物装卡。
+        const sortedIndexes = [...committedIndexes].sort((a, b) => a - b).filter((index) => mappedOverride
+          || (!hasNativeAttemptSelection(committedEntries.get(index)!)
+            && readCurrentQwenAttemptSelection(committedEntries.get(index)!.raw)?.selectedPassedGate !== false));
         const requiresWholeEpisodeStructuring = sortedIndexes.some((index) => {
           const entry = committedEntries.get(index)!;
           return hasNativeAttemptSelection(entry) || readCurrentQwenAttemptSelection(entry.raw)?.selectedPassedGate === false;
@@ -5714,30 +5723,21 @@ async function executeNativeDeepReadBatch(
         // committedEntries 必须保持原样：证据对象名由原始 raw 的指纹算出（0905 实锤：拿过滤后的
         // raw 算名字，provenance 指向不存在的对象，导出 404）。
         const entry = committedEntry;
-        await params.onSegmentRead?.({ episodeIndex: episode.episodeIndex, segmentIndex,
-          raw: entry.raw, sourceDigest: entry.sourceDigest,
-          preparedVideos: videosBySegment.has(segmentIndex) ? [videosBySegment.get(segmentIndex)!] : [],
-        });
         committedEntries.set(segmentIndex, entry);
         proposalCommitChain = proposalCommitChain.then(async () => {
-          while (committedIndexes.length < segmentCount) {
-            const nextIndex = committedIndexes.length;
-            const nextEntry = committedEntries.get(nextIndex);
-            if (!nextEntry) break;
-            rawSegments[nextIndex] = filterNativeDeepReadSubtitlesToKeyMoments(nextEntry.raw);
-            committedIndexes.push(nextIndex);
+          if (!committedIndexes.includes(segmentIndex)) {
+            rawSegments[segmentIndex] = filterNativeDeepReadSubtitlesToKeyMoments(entry.raw);
+            committedIndexes.push(segmentIndex);
             // 末片由后面的整集门禁写入；这里只生成中间快照。
             // 三档失败选出的原稿只是待整形证据，
             // 必须等全部分片齐备后交整集 GLM 处理，不能让部分入库门禁提前终止其他分片。
-            const hasPendingStructuringCandidate = committedIndexes.some((index) => {
-              const marker = readCurrentQwenAttemptSelection(committedEntries.get(index)!.raw);
-              return hasNativeAttemptSelection(committedEntries.get(index)!) || marker?.selectedPassedGate === false;
-            });
+            const passedGate = !hasNativeAttemptSelection(entry)
+              && readCurrentQwenAttemptSelection(entry.raw)?.selectedPassedGate !== false;
             if (
               params.onSegmentSnapshotCommitted
               && committedIndexes.length < segmentCount
               && !proposalCommitFailure
-              && !hasPendingStructuringCandidate
+              && passedGate
             ) {
               try {
                 await params.onSegmentSnapshotCommitted(buildCommittedSnapshot());
@@ -5750,6 +5750,11 @@ async function executeNativeDeepReadBatch(
           }
         });
         await proposalCommitChain;
+        // 部分提案不携带截图；先保存已通过的内容，再完成本片截图取证。
+        await params.onSegmentRead?.({ episodeIndex: episode.episodeIndex, segmentIndex,
+          raw: entry.raw, sourceDigest: entry.sourceDigest,
+          preparedVideos: videosBySegment.has(segmentIndex) ? [videosBySegment.get(segmentIndex)!] : [],
+        });
       };
 
       /** 单次通道尝试：发请求→解 envelope→段门禁；用量在门禁之前入账（钱已花）。 */
@@ -6053,11 +6058,6 @@ async function executeNativeDeepReadBatch(
               throw failure;
             }
           }
-          if (!selectedSegmentIndexes) await params.onSegmentRead?.({
-            episodeIndex: episode.episodeIndex, segmentIndex: input.segmentIndex,
-            raw, sourceDigest: episode.cacheSourceDigest,
-            preparedVideos: videosBySegment.has(input.segmentIndex) ? [videosBySegment.get(input.segmentIndex)!] : [],
-          });
           let gated: ReturnType<typeof assertNativeDeepReadSegmentDensity>;
           try {
             const decision = evaluateNativeDeepReadSegmentAcceptance({
@@ -6132,6 +6132,11 @@ async function executeNativeDeepReadBatch(
               throw gateError(accountedReasonZh || modelReasonZh || "证据未通过当前判据", modelReasonZh);
             }
           } catch (gateFailure) {
+            if (!selectedSegmentIndexes) await params.onSegmentRead?.({
+              episodeIndex: episode.episodeIndex, segmentIndex: input.segmentIndex,
+              raw, sourceDigest: episode.cacheSourceDigest,
+              preparedVideos: videosBySegment.has(input.segmentIndex) ? [videosBySegment.get(input.segmentIndex)!] : [],
+            });
             if (gateFailure instanceof NativeDeepReadRequiredEvidenceError) {
               const feedback = buildNativeDeepReadPrimaryRepairFeedback({ raw, startSec: segment.startSec, endSec: segment.endSec, hasAudio, segmentIndex: input.segmentIndex });
               if (feedback) (gateFailure as NativeDeepReadGateError).modelReasonZh = feedback;
@@ -6673,6 +6678,11 @@ async function executeNativeDeepReadBatch(
           return;
         }
         rawSegments[segmentIndex] = result.raw;
+        if (!selectedSegmentIndexes) await params.onSegmentRead?.({
+          episodeIndex: episode.episodeIndex, segmentIndex, raw: result.raw,
+          sourceDigest: episode.cacheSourceDigest,
+          preparedVideos: videosBySegment.has(segmentIndex) ? [videosBySegment.get(segmentIndex)!] : [],
+        });
       };
 
       const segmentFailures: Array<{ segmentIndex: number; error: unknown }> = [];
@@ -6748,8 +6758,13 @@ async function executeNativeDeepReadBatch(
         segmentIndex: number; scanned: boolean; added: number;
         droppedCount: number; skippedReasonZh?: string;
       }> = [];
+      const reportPreparation = async (zh: string) => {
+        try { await params.onMediaProgressZh?.(zh); } catch { /* 进度旁路不打断已保存片段。 */ }
+      };
+      await reportPreparation(`第${episode.episodeIndex}集 · ${segmentCount}/${segmentCount}片已齐，进入整形准备`);
       if (process.env.MANHUA_NATIVE_SWEEP_BEFORE_STRUCTURING !== "0") {
         for (let segmentIndex = 0; segmentIndex < completeRawSegments.length; segmentIndex += 1) {
+          await reportPreparation(`第${episode.episodeIndex}集 · 整形前补扫 ${segmentIndex + 1}/${segmentCount}片`);
           const raw = completeRawSegments[segmentIndex]!;
           const video = videosBySegment.get(segmentIndex);
           const shots = Array.isArray(raw.shots) ? raw.shots as Array<Record<string, unknown>> : [];
@@ -6803,6 +6818,7 @@ async function executeNativeDeepReadBatch(
             droppedCount: result.merge.dropped.length,
             ...(result.skippedReasonZh ? { skippedReasonZh: result.skippedReasonZh } : {}),
           });
+          await reportPreparation(`第${episode.episodeIndex}集 · 整形前补扫 ${segmentIndex + 1}/${segmentCount}片${result.scanned ? `完成，补入${result.merge.addedCount}条重点时刻` : "未补入新内容，保留原稿"}`);
           console.info(
             `[nativeDeepRead] 第${episode.episodeIndex}集第${segmentIndex + 1}段整形前补扫：`
             + `${result.scanned ? `补进 ${result.merge.addedCount} 条、拦下 ${result.merge.dropped.length} 条` : `跳过（${result.skippedReasonZh || "未扫"}）`}`,

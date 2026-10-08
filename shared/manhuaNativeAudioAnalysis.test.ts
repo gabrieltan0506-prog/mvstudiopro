@@ -277,3 +277,19 @@ describe("0906 · 原始音轨覆盖容差", () => {
     expect(() => repairTrackCoverage([{ fromSec: 0, toSec: 101 }], 0, 100)).toThrow("边界");
   });
 });
+
+
+it("稀疏音轨只覆盖已读片，完整卡解析不能借部分区间绕过覆盖门禁", () => {
+  const merged = mergeManhuaNativeDirectAudioChunks({ durationSec: 180, route: "vertex_gcs_video",
+    coveredChunks: [{ index: 2, startSec: 120, endSec: 180 }], chunks: [{
+      audioTrack: [{ ...track(120), toSec: 180, cues: [] }],
+      audioBeatStructureZh: "情绪递进", mixNotesZh: "人声居中", reusableAudioZh: "推进冲突", genAudioHintZh: "压迫氛围",
+    }], usage: { inputTokens: 0, audioInputTokens: 100, outputTokens: 0, costCny: 0, receiptComplete: true,
+      geminiInputTokens: 1000, geminiAudioInputTokens: 100, geminiOutputTokens: 100, geminiCostCny: 1, geminiCalls: 1 } });
+  expect(parseManhuaNativeAudioAnalysis(merged)).toBeUndefined();
+  const partial = parseManhuaNativeAudioAnalysis(merged, { allowPartial: true });
+  expect(partial?.audioTrack[0]).toMatchObject({ fromSec: 120, toSec: 180 });
+  expect(partial?.coveredChunks).toEqual([{ index: 2, startSec: 120, endSec: 180 }]);
+  expect(parseManhuaNativeAudioAnalysis({ ...merged, audioTrack: [{ ...track(120), toSec: 140 }] }, { allowPartial: true })).toBeUndefined();
+  expect(parseManhuaNativeAudioAnalysis({ ...merged, coveredChunks: [{ index: 2, startSec: 60, endSec: 120 }] }, { allowPartial: true })).toBeUndefined();
+});

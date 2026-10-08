@@ -1188,7 +1188,12 @@ export function nativeLearnLiveProposalState(job: ManhuaLearnServerJobSnapshot |
   const totalSegments = Math.max(0, Number(currentCheckpoint?.totalSegments) || episode?.segments?.length || 0);
   const completedSegments = Math.min(totalSegments, Math.max(0, Number(currentCheckpoint?.completedSegments) || 0));
   // 通过门禁的分片各自已持久化回执；乱序成功不等待连续部分卡，不将HTTP返回当成功。
-  const passedIndexes = new Set<number>(Array.from({ length: completedSegments }, (_, index) => index));
+  const checkpointIndexes = currentCheckpoint?.completedSegmentIndexes;
+  const knownIndexes = Array.isArray(checkpointIndexes) && checkpointIndexes.length === completedSegments
+    && new Set(checkpointIndexes).size === completedSegments
+    && checkpointIndexes.every(index => typeof index === "number" && Number.isInteger(index) && index >= 0 && index < totalSegments)
+      ? checkpointIndexes as number[] : Array.from({ length: completedSegments }, (_, index) => index);
+  const passedIndexes = new Set<number>(knownIndexes);
   if (Array.isArray(output.nativeModelReceipts)) {
     for (const raw of output.nativeModelReceipts) {
       if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;

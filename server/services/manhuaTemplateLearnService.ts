@@ -1283,6 +1283,18 @@ const defaultNativeDeepReadSourceDeps: NativeDeepReadEpisodeSourceDeps = {
   mediaSource: currentEpisodeMediaSource,
 };
 
+/** 续整形只在确实缺片时解析原来源；不改动已持久化的分片计划。 */
+export async function resolveNativeDeepReadStoredSourceNodes(input: {
+  episodeIndex: number; sourceUrl: string; durationSec: number;
+}, deps: NativeDeepReadEpisodeSourceDeps = defaultNativeDeepReadSourceDeps) {
+  const ep: ListedEpisode = { index: input.episodeIndex, url: input.sourceUrl, title: "" };
+  const fresh: EpisodeSourceState = {};
+  const duration = await deps.probeDuration(ep, fresh);
+  if (!Number.isFinite(duration) || Math.abs(duration - input.durationSec) > 1) throw new Error("补读原片时长与原计划不符，未发出模型请求");
+  const media = deps.mediaSource(ep, fresh);
+  return [{ url: media.url, referer: media.referer }];
+}
+
 export async function buildNativeDeepReadEpisodeExecution(
   input: {
     seriesKey: string;
@@ -1459,7 +1471,7 @@ export async function runManhuaTemplateLearn(
     const { loadNativeStructuringOnlyEpisode } = await import("./manhuaNativeStructuringOnly.js");
     const source = input.nativeStructuringSource;
     const episode = await loadNativeStructuringOnlyEpisode(source);
-    await input.onProgress?.(MANHUA_LEARN_STAGE.vision, "正在复用已保存JSON重新整形，不读取源视频…");
+    await input.onProgress?.(MANHUA_LEARN_STAGE.vision, "正在恢复已保存片段，缺片补读后继续整形…");
     let nativeUsage: ManhuaNativeDeepReadUsageReceipt | undefined;
     const batch = await runNativeDeepReadBatch({ seriesKey: source.seriesKey, structuringOnly: true,
       readModel: input.nativeReadModel, structuringModel: input.nativeStructuringModel, structuringGateway: input.nativeStructuringGateway,
@@ -1478,7 +1490,7 @@ export async function runManhuaTemplateLearn(
     return buildNativeDeepReadLearnResult({ seriesKey: source.seriesKey, workId: `reshape-${source.episodeIndex}`,
       nativeCardCount: (await listIngestedNativeDeepReadEpisodeRecords(source.seriesKey)).length,
       batchLearned: 1, batchIndexes: [source.episodeIndex], listedEpisodeCount: 1, paywallFields: {}, nativeUsage,
-      skippedHintZh: "仅重新整形，原始JSON与原帧保留；新结果需批准后才替换正式模板。" });
+      skippedHintZh: "续读与整形保留原始JSON和原帧；新结果需批准后才替换正式模板。" });
   }
   if (input.nativePlanPreview?.episodes.length) {
     assertManhuaNewLearningVideoDuration(input.nativePlanPreview.episodes.reduce((total, episode) => total + episode.durationSec, 0));
@@ -1837,7 +1849,7 @@ export async function runManhuaTemplateLearn(
     }
     await progress(
       MANHUA_LEARN_STAGE.vision,
-      input.nativeStructuringOnly ? "正在复用已保存JSON重新整形，不重新读片…" : `正在逐段精读 ${executionPlans.length} 集（共 ${executionPlans.reduce((sum, plan) => sum + plan.segments.length, 0)} 个视频分片，每段一次调用，音轨同调直出）…`,
+      input.nativeStructuringOnly ? "正在恢复已保存片段，缺片补读后继续整形…" : `正在逐段精读 ${executionPlans.length} 集（共 ${executionPlans.reduce((sum, plan) => sum + plan.segments.length, 0)} 个视频分片，每段一次调用，音轨同调直出）…`,
     );
     const batchResult = await runNativeDeepReadBatch({
       seriesKey,
@@ -2007,7 +2019,7 @@ export async function runManhuaTemplateLearn(
         } else if (outcome.status === "partial") {
           await progress(
             MANHUA_LEARN_STAGE.persist,
-            `第 ${outcome.episodeIndex} 集已通过并缓存 ${outcome.completedSegments || 0}/${outcome.totalSegments || 0} 片 · 剩余分片将从断点继续`,
+            `第 ${outcome.episodeIndex} 集已通过并缓存 ${outcome.completedSegments || 0}/${outcome.totalSegments || 0} 片${outcome.completedSegmentIndexes?.length ? ` · 已保存片号 ${outcome.completedSegmentIndexes.map(index => index + 1).join("、")}` : ""} · 剩余分片将从断点继续`,
           );
         } else if (outcome.status === "failed") {
           // 拒因必须随进度行持久化：0826 实弹第9集重试后仍未过门禁，

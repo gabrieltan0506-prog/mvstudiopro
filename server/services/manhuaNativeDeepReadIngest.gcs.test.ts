@@ -537,7 +537,7 @@ describe("仅重新整形原计划回读", () => {
     expect(episode.segments).toEqual([{ startSec: 0, endSec: 60 }]);
     expect(episode.sourceUrl).toBe("https://example.com/unavailable");
     expect(readCache).not.toHaveBeenCalled();
-    await expect(episode.resolveNodes()).rejects.toThrow("禁止读取源视频");
+    expect(episode.resolveNodes).toBeTypeOf("function");
   });
 
   it("旧卡计划不能覆盖新任务计划，且异源旧帧不得复用", async () => {
@@ -550,7 +550,7 @@ describe("仅重新整形原计划回读", () => {
     expect(episode.segments).toEqual([{ startSec: 0, endSec: 120 }]);
     expect(episode.sourceUrl).toBe("https://example.com/new-ep1");
     expect(episode.retainedEvidenceFrames).toBeUndefined();
-    await expect(episode.resolveNodes()).rejects.toThrow("禁止读取源视频");
+    expect(episode.resolveNodes).toBeTypeOf("function");
     await expect(loadNativeStructuringOnlyEpisode({ seriesKey: "abc123", episodeIndex: 1, segmentSeconds: 120, videoFps: 12,
       storedPlan: { seriesKey: "other", episodes: [] } }, { download, getBucket: () => "bucket-a" })).rejects.toThrow("持久计划身份");
   });
@@ -577,7 +577,7 @@ describe("仅重新整形原计划回读", () => {
     expect(episode.durationSec).toBe(120);
     expect(episode.segments).toEqual([{ startSec: 0, endSec: 60 }, { startSec: 60, endSec: 120 }]);
     expect(download.mock.calls).toHaveLength(2);
-    await expect(episode.resolveNodes()).rejects.toThrow("禁止读取源视频");
+    expect(episode.resolveNodes).toBeTypeOf("function");
   });
   it("没有完整原计划即拒绝，不能重新探视频补齐", async () => {
     const { loadNativeStructuringOnlyEpisode } = await import("./manhuaNativeStructuringOnly.js");
@@ -586,4 +586,37 @@ describe("仅重新整形原计划回读", () => {
     const download = vi.fn(async () => ({ buffer: Buffer.from(JSON.stringify(card)), generation: "7", bucket: "bucket-a", objectName: "card.json" }));
     await expect(loadNativeStructuringOnlyEpisode({ seriesKey: "abc123", episodeIndex: 1, segmentSeconds: 60, videoFps: 12 }, { download, getBucket: () => "bucket-a" })).rejects.toThrow("未读取视频");
   });
+});
+
+
+it("乱序保存：稀疏集合按真超集CAS补全，旧子集重放不覆盖或倒退", async()=>{
+ const spans=Array.from({length:3},(_,index)=>({startSec:index*60,endSec:(index+1)*60}));
+ const input=(indexes:number[])=>makeInput({durationSec:180,segmentSpans:spans,result:{...makeInput().result,
+  attemptedSegments:3,segmentCount:indexes.length,failedSegmentCount:3-indexes.length,
+  completedSegmentIndexes:indexes,assemblyComplete:false,segmentSnapshotSha256:String(indexes.length).repeat(64)}});
+ gcs.create.mockResolvedValue({created:true});let stored=await ingestNativeDeepReadEpisode(input([2]));
+ expect(stored.card.provenance?.nativeVideoDeepRead?.completedSegmentIndexes).toEqual([2]);
+ gcs.create.mockResolvedValue({created:false});gcs.downloadVersioned.mockImplementation(async()=>({buffer:Buffer.from(JSON.stringify(stored.card)),generation:"10"}));
+ stored=await ingestNativeDeepReadEpisode(input([0,2]));
+ expect(stored.card.provenance?.nativeVideoDeepRead?.completedSegmentIndexes).toEqual([0,2]);expect(gcs.upload).toHaveBeenCalledTimes(1);
+ const replay=await ingestNativeDeepReadEpisode(input([2]));expect(replay.card.provenance?.nativeVideoDeepRead?.completedSegmentIndexes).toEqual([0,2]);
+ expect(gcs.upload).toHaveBeenCalledTimes(1);
+ gcs.list.mockResolvedValue([stored.objectName]);gcs.download.mockResolvedValue({buffer:Buffer.from(JSON.stringify(stored.card))});
+ const recovered=await listIngestedNativeDeepReadEpisodeRecords("abc123");
+ expect(recovered[0]?.completedSegmentIndexes).toEqual([0,2]);expect(recovered[0]?.complete).toBe(false);
+});
+
+
+it("续整形恢复计划不访问原片，缺片才惰性解析同一来源", async () => {
+  const { loadNativeStructuringOnlyEpisode } = await import("./manhuaNativeStructuringOnly.js");
+  const download = vi.fn(async () => { throw new Error("gcs_download_failed:404"); });
+  const resolveNodes = vi.fn(async () => [{ url: "https://cdn.example.test/source.mp4" }]);
+  const sourceUrl = "https://example.com/episode1";
+  const episode = await loadNativeStructuringOnlyEpisode({ seriesKey: "abc123", episodeIndex: 1, segmentSeconds: 60,
+    videoFps: 12, storedPlan: { seriesKey: "abc123", episodes: [{ episodeIndex: 1, sourceUrl, durationSec: 120,
+      videoFps: 12, segments: [{ startSec: 0, endSec: 60 }, { startSec: 60, endSec: 120 }] }] } },
+    { download, getBucket: () => "bucket-a", resolveNodes });
+  expect(resolveNodes).not.toHaveBeenCalled();
+  expect(await episode.resolveNodes()).toEqual([{ url: "https://cdn.example.test/source.mp4" }]);
+  expect(resolveNodes).toHaveBeenCalledWith({ episodeIndex: 1, sourceUrl, durationSec: 120 });
 });

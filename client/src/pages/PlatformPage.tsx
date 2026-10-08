@@ -3829,7 +3829,7 @@ export default function PlatformPage() {
   const restructureManhuaEpisode = useCallback(async (job: ManhuaLearnServerJob, episodeIndex: number, model: ManhuaNativeStructuringModelId) => {
     if (manhuaRestructureBusyRef.current || !ownerTemplateOptimizeAllowed || !user?.id) return;
     const label = "GLM 5.3";
-    if (!window.confirm(`使用 ${label} 重新整形第 ${episodeIndex} 集？先停止原任务，只复用已保存的读片 JSON；缺片会停止，不重新读视频。新整形单独计费，旧调用可能已有费用，结果仍需批准入库。`)) return;
+    if (!window.confirm(`使用 ${label} 重新整形第 ${episodeIndex} 集？先停止原任务，复用已保存的读片 JSON；缺哪片只补读哪片，再继续整形。补读与新整形按实际调用计费，旧调用可能已有费用，结果仍需批准入库。`)) return;
     const ownerKey = manhuaLearnUserKey;
     manhuaRestructureBusyRef.current = true;
     setManhuaRestructureBusy(true);
@@ -3845,7 +3845,7 @@ export default function PlatformPage() {
       writeManhuaLearnPageJobId(ownerKey, reshaped.jobId);
       setManhuaLearnStructuringModel(model);
       writeManhuaLearnStructuringModel(ownerKey, model);
-      toast.success(`第 ${episodeIndex} 集仅重新整形已入队`, { description: "只使用已保存的 JSON，进度在学习面板中查看。" });
+      toast.success(`第 ${episodeIndex} 集续读与整形已入队`, { description: "已保存片段直接复用，只补缺片；进度自动更新。" });
       try {
         await refreshManhuaLearnServerJobs();
       } catch (error) {

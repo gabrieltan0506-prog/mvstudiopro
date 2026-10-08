@@ -820,10 +820,16 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
       // 检查点从未写入 → 待审卡分段进度不实时。两种句式都认，旧日志不作废。
       const partialMatch =
         /第\s*(\d+)\s*集已(?:生成|通过并缓存)\s*(\d+)\/(\d+)\s*(?:段待审卡|片)/.exec(label);
+      const savedIndexes = /已保存片号\s*([0-9]+(?:、[0-9]+)*)/.exec(label)?.[1]
+        .split("、").map(value => Number(value) - 1);
+      const validSavedIndexes = partialMatch && savedIndexes
+        && savedIndexes.length === Number(partialMatch[2]) && new Set(savedIndexes).size === savedIndexes.length
+        && savedIndexes.every(index => Number.isInteger(index) && index >= 0 && index < Number(partialMatch[3]));
       const nativePartialProposalCheckpoint = partialMatch
         ? {
             episodeIndex: Number(partialMatch[1]),
             completedSegments: Number(partialMatch[2]),
+            ...(validSavedIndexes ? { completedSegmentIndexes: savedIndexes } : {}),
             totalSegments: Number(partialMatch[3]),
             updatedAt: new Date().toISOString(),
           }
@@ -1003,7 +1009,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         const segmentPlanZh = describeNativeDeepReadSegmentPlanZh(nativePlanPreview);
         await reportLearnProgress(
           MANHUA_LEARN_STAGE.list,
-          confirmation.structuringOnly ? `仅重新整形第${confirmation.structuringEpisodeIndex}集：复用已保存完整JSON，缺失即停止，不重新读片；新结果生成待审卡。` : `执行计划复核通过：${plannedEpisodesZh}${segmentPlanZh} · 共 ${nativePlanPreview.executableEpisodeCount} 集 · ${nativePlanPreview.totalModelCalls} 次模型请求（画面 ${nativePlanPreview.totalSegments} 个视频分片每段一次调用共 ${nativePlanPreview.totalVisualCalls} 次、音轨随调直出 + 整形） · 确认码 ${nativePlanPreview.planHash}${reclaimZh}${quarantinedClaims}`,
+          confirmation.structuringOnly ? `仅重新整形第${confirmation.structuringEpisodeIndex}集：复用已保存JSON，缺片只补读对应片段后继续整形；新结果生成待审卡。` : `执行计划复核通过：${plannedEpisodesZh}${segmentPlanZh} · 共 ${nativePlanPreview.executableEpisodeCount} 集 · ${nativePlanPreview.totalModelCalls} 次模型请求（画面 ${nativePlanPreview.totalSegments} 个视频分片每段一次调用共 ${nativePlanPreview.totalVisualCalls} 次、音轨随调直出 + 整形） · 确认码 ${nativePlanPreview.planHash}${reclaimZh}${quarantinedClaims}`,
         );
         }
       } else if (hasNativeDeepReadJobFields(params)) {

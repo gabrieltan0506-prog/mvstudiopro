@@ -4549,16 +4549,31 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     expect(deps.postVertex).not.toHaveBeenCalled();
   });
 
-  it.each([false, true])("仅重新整形遇到缺失或错指纹JSON立即失败，不补读（错指纹=%s）", async mismatch => {
-    const episode = makeEpisode([{ startSec: 0, endSec: 60 }]);
-    const entry = makeCacheEntry({ episode, segmentIndex: 0 });
-    entry.fingerprint = "f".repeat(64);
-    const deps = makeRunnerDeps({ readSegmentCache: vi.fn(async () => mismatch ? { entry, generation: "1" } : null) as never });
-    await expect(runManhuaNativeDeepReadBatch({ episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey, structuringOnly: true }, deps)).rejects.toThrow("禁止重新读视频");
-    expect(deps.prepareVideos).not.toHaveBeenCalled();
-    expect(deps.postVertex).not.toHaveBeenCalled();
-    expect(deps.postEvolink).not.toHaveBeenCalled();
-    expect(deps.invokeGlmStructuring).not.toHaveBeenCalled();
+  it.each([false, true])("续整形缺一片只补该片，已通过的前后片不重复读（错指纹=%s）", async mismatch => {
+    const episode = makeEpisode([{ startSec: 0, endSec: 60 }, { startSec: 60, endSec: 120 }, { startSec: 120, endSec: 180 }]);
+    const entries = episode.segments.map((_, segmentIndex) => makeCacheEntry({ episode, segmentIndex }));
+    if (mismatch) entries[1]!.fingerprint = "f".repeat(64);
+    const success = makeSuccessfulEpisodePostVertex(episode.segments);
+    const progress: string[] = [];
+    const deps = makeRunnerDeps({
+      readSegmentCache: vi.fn(async input => input.segmentIndex === 1 && !mismatch ? null : { entry: entries[input.segmentIndex]!, generation: "1" }) as never,
+      prepareVideos: vi.fn(async (row: { segments: Array<{ startSec: number; endSec: number }> }) => row.segments.map(segment => ({
+        ...segment, gsUri: `gs://test-bucket/seg-${segment.startSec / 60}.mp4`, hasAudio: true, bytes: 100,
+        temporaryGcs: { bucket: "test-bucket", objectName: `seg-${segment.startSec / 60}.mp4` },
+      }))) as never,
+      postVertex: success as never,
+    });
+    const result = await runManhuaNativeDeepReadBatch({ episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey,
+      structuringOnly: true, onMediaProgressZh: zh => { progress.push(zh); } }, deps);
+    expect(deps.prepareVideos).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(deps.prepareVideos).mock.calls[0]![0].segments).toEqual([episode.segments[1]]);
+    expect(success).toHaveBeenCalledTimes(1);
+    expect((success.mock.calls[0]![0] as any).contents[0].parts[0].fileData.fileUri).toBe("gs://test-bucket/seg-1.mp4");
+    expect(result.episodes[0]!.result.completedSegmentIndexes).toEqual([0, 1, 2]);
+    expect(result.usage.inputTokens).toBe(100_000);
+    expect(deps.invokeGlmStructuring).toHaveBeenCalled();
+    expect(progress.some(zh => zh.includes("只补读第2片"))).toBe(true);
+    expect(progress.some(zh => zh.includes("3/3片已齐，进入整形准备"))).toBe(true);
   });
 
   it("固定旧指纹的双缓存恢复缺栏，不重读、不重整形、不重复计费", async () => {
@@ -4796,6 +4811,55 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     expect(writeFailureDeps.postEvolink).not.toHaveBeenCalled();
   });
 
+  it("乱序保存：首片未返回，后片先缓存并保存部分提案，不等待截图或片号", async () => {
+    const episode = makeEpisode([{startSec:0,endSec:60},{startSec:60,endSec:120},{startSec:120,endSec:180}]);
+    const first = deferred(), frames = deferred(), snapshots: number[][] = [];
+    const success = makeSuccessfulEpisodePostVertex(episode.segments);
+    const cache = new Map<number, NativeDeepReadSegmentCacheEntry>();
+    const deps = makeRunnerDeps({ prepareVideos: vi.fn(async(row:{segments:Array<{startSec:number;endSec:number}>})=>row.segments.map(segment=>({gsUri:`gs://test-bucket/seg-${segment.startSec/60}.mp4`,...segment,temporaryGcs:{bucket:"test-bucket",objectName:`seg-${segment.startSec/60}.mp4`},bytes:100,hasAudio:true}))) as never, postVertex: vi.fn(async (body: unknown) => {
+      const uri = (body as any).contents[0].parts[0].fileData.fileUri;
+      if (uri.endsWith("seg-0.mp4")) await first.promise;
+      return success(body);
+    }) as never, writeSegmentCache: vi.fn(async (entry: NativeDeepReadSegmentCacheEntry) => {
+      cache.set(entry.segmentIndex, entry); return writeResultOf(entry);
+    }) as never });
+    const task = runManhuaNativeDeepReadBatch({ episodes:[episode],segmentCacheSeriesKey:cacheSeriesKey,
+      onSegmentSnapshotCommitted:snapshot=>{snapshots.push([...snapshot.completedSegmentIndexes]);},
+      onSegmentRead: async row => { if(row.segmentIndex===1) await frames.promise; },
+    },deps);
+    await vi.waitFor(()=>expect(snapshots.some(row=>JSON.stringify(row)==="[1,2]")).toBe(true));
+    expect(Array.from(cache.keys()).sort()).toEqual([1,2]);
+    expect(snapshots.every(row=>!row.includes(0))).toBe(true);
+    frames.resolve();first.resolve();
+    const result=await task;expect(result.episodes[0]?.result.completedSegmentIndexes).toEqual([0,1,2]);
+    expect(deps.postVertex).toHaveBeenCalledTimes(3);
+  });
+
+  it("乱序保存：后片已成功、首片失败，续跑复用后片缓存只读失败片", async () => {
+    const episode=makeEpisode([{startSec:0,endSec:60},{startSec:60,endSec:120}]);
+    const first=deferred(),cache=new Map<number,NativeDeepReadSegmentCacheEntry>(),snapshots:number[][]=[];
+    let failFirst=true;
+    const success=makeSuccessfulEpisodePostVertex(episode.segments);
+    const postVertex=vi.fn(async(body:unknown)=>{
+      const uri=(body as any).contents[0].parts[0].fileData.fileUri;
+      if(uri.endsWith("seg-0.mp4")&&failFirst){await first.promise;return {status:200,text:JSON.stringify({candidates:[{finishReason:"STOP",content:{parts:[{text:"{bad-json"}]}}]}),requestId:"test-invalid"};}
+      return success(body);
+    });
+    const deps=makeRunnerDeps({postVertex:postVertex as never,
+      readSegmentCache:vi.fn(async({segmentIndex}:{segmentIndex:number})=>cache.has(segmentIndex)?{entry:cache.get(segmentIndex)!,generation:"1"}:null) as never,
+      writeSegmentCache:vi.fn(async(entry:NativeDeepReadSegmentCacheEntry)=>{cache.set(entry.segmentIndex,entry);return writeResultOf(entry);}) as never});
+    const task=runManhuaNativeDeepReadBatch({episodes:[episode],segmentCacheSeriesKey:cacheSeriesKey,
+      onSegmentSnapshotCommitted:snapshot=>{snapshots.push([...snapshot.completedSegmentIndexes]);}},deps);
+    const observed=task.catch(error=>error);
+    await vi.waitFor(()=>expect(snapshots).toEqual([[1]]));first.resolve();
+    expect(await observed).toBeInstanceOf(Error);expect(cache.has(1)).toBe(true);expect(cache.has(0)).toBe(false);
+    const before=postVertex.mock.calls.length;failFirst=false;
+    const result=await runManhuaNativeDeepReadBatch({episodes:[episode],segmentCacheSeriesKey:cacheSeriesKey},deps);
+    expect(postVertex.mock.calls.length-before).toBe(1);
+    expect(result.usage.inputTokens).toBe(100_000);
+    expect(result.episodes[0]?.result.completedSegmentIndexes).toEqual([0,1]);
+  });
+
   it("部分提案回调失败时等待已在途兄弟段，后续不再触发部分快照", async () => {
     const episode = makeEpisode([{ startSec: 0, endSec: 60 }, { startSec: 60, endSec: 120 }]);
     const postVertex = makeSuccessfulEpisodePostVertex(episode.segments);
@@ -5024,7 +5088,7 @@ describe("门禁前解析稿持久化接线", () => {
     expect((vi.mocked(deps.writeSegmentCache).mock.calls[0]![0].raw.audioResolution as Array<{ chunkIndex: number }>)[0]!.chunkIndex).toBe(99);
   });
 
-  it("多批整形使用真实最终产物落盘，候选期间不发空中间快照", async () => {
+  it("多批整形使用真实最终产物落盘，候选不入中间快照而通过片独立保存", async () => {
     const segments = Array.from({ length: 6 }, (_, i) => ({ startSec: i * 60, endSec: (i + 1) * 60 }));
     const snapshot = vi.fn();
     const deps = makeRunnerDeps({ postVertex: vi.fn(async (body) => {
@@ -5038,7 +5102,10 @@ describe("门禁前解析稿持久化接线", () => {
     // 第 0 片覆盖只到 20 秒 → 五档全不合格（5 发），其余 5 片各一发过门禁 ⇒ 10 发
     expect(deps.postVertex).toHaveBeenCalledTimes(10);
     expect(deps.invokeGlmStructuring).toHaveBeenCalledTimes(2);
-    expect(snapshot).not.toHaveBeenCalled();
+    for (const [partial] of snapshot.mock.calls as unknown as Array<[{completedSegmentIndexes:number[]}]>) {
+      expect(partial.completedSegmentIndexes.length).toBeGreaterThan(0);
+      expect(partial.completedSegmentIndexes).not.toContain(0);
+    }
     expect(result.episodes[0]!.result.glmEvidence).toBeUndefined();
     const final = vi.mocked(deps.writeStructuredCard!).mock.calls[0]![0];
     expect(final.segmentEvidenceObjectNames).toHaveLength(6);
@@ -6143,4 +6210,22 @@ it("历史页面路由值不能限制并发分流或移除fallback，显示实�
   }
   const first = m.nextNativeDeepReadGlmPreferredGateway();
   expect(m.nextNativeDeepReadGlmPreferredGateway()).not.toBe(first);
+});
+
+
+it("整形准备进度按原片号上报，旁路进度失败不阻断整形", async () => {
+  const segments = [{ startSec: 0, endSec: 60 }, { startSec: 60, endSec: 120 }];
+  const messages: string[] = [];
+  const glm = makeGlmStructuringStub();
+  const deps = makeRunnerDeps({ postVertex: makeSuccessfulEpisodePostVertex(segments) as never,
+    invokeGlmStructuring: vi.fn(async (...args: Parameters<typeof glm>) => {
+      expect(messages.some(zh => zh.includes("2/2片已齐，进入整形准备"))).toBe(true);
+      expect(messages.filter(zh => /整形前补扫 [12]\/2片$/.test(zh))).toEqual([
+        "第1集 · 整形前补扫 1/2片", "第1集 · 整形前补扫 2/2片",
+      ]);
+      return glm(...args);
+    }) as never });
+  await runManhuaNativeDeepReadBatch({ episodes: [{ episodeIndex: 1, segments, sourceDurationSec: 120,
+    resolveNodes: async () => [] }], onMediaProgressZh: zh => { messages.push(zh); throw new Error("test-only-progress-write-failed"); } }, deps);
+  expect(deps.invokeGlmStructuring).toHaveBeenCalled();
 });
