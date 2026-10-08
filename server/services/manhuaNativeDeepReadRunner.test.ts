@@ -6056,3 +6056,52 @@ it("FlashX completion labels preserve the actual historical model identity", asy
   expect(glmGatewayDisplayLabel("openrouter", "z-ai/glm-5.3-flash")).toBe("GLM-5.3 Flash · OpenRouter");
   expect(glmGatewayDisplayLabel("openrouter", "z-ai/glm-5.3")).toBe("GLM-5.3 · OpenRouter");
 });
+
+
+describe("截图与GCS分片清理生命周期", () => {
+  it("先等待截图消费与保存，再清理同一批分片", async () => {
+    const segments = [{ startSec: 0, endSec: 60 }];
+    const order: string[] = [];
+    const deps = makeRunnerDeps({ postVertex: makeSuccessfulEpisodePostVertex(segments) as never,
+      remove: vi.fn(async () => { order.push("cleanup"); }) });
+    await runManhuaNativeDeepReadBatch({ episodes: [{ episodeIndex: 1, resolveNodes: async () => [],
+      segments, sourceDurationSec: 60 }], onSegmentRead: async ({ raw, preparedVideos }) => {
+      expect(raw).toHaveProperty("keyMoments");
+      expect(preparedVideos).toHaveLength(1);
+      expect(preparedVideos[0]!.gsUri).toBe("gs://test-bucket/seg-0.mp4");
+      expect(deps.remove).not.toHaveBeenCalled();
+      await Promise.resolve();
+      order.push("frames-persisted");
+    } }, deps);
+    expect(order).toEqual(["frames-persisted", "cleanup"]);
+    expect(deps.postVertex).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+it("GCS截图时序契约：同次模型响应截图，再整形，最后清理分片", async () => {
+  const segments = [{ startSec: 0, endSec: 60 }, { startSec: 60, endSec: 120 }];
+  const events: string[] = [];
+  const glm = makeGlmStructuringStub();
+  const deps = makeRunnerDeps({
+    postVertex: makeSuccessfulEpisodePostVertex(segments) as never,
+    invokeGlmStructuring: vi.fn(async (...args: Parameters<typeof glm>) => {
+      expect(events.filter(event => event.startsWith("frame-"))).toHaveLength(2);
+      const result = await glm(...args);
+      events.push("structured");
+      return result;
+    }) as never,
+    remove: vi.fn(async () => { events.push("cleanup"); }),
+  });
+  await runManhuaNativeDeepReadBatch({ episodes: [{ episodeIndex: 1, resolveNodes: async () => [],
+    segments, sourceDurationSec: 120 }], onSegmentRead: async ({ segmentIndex, preparedVideos }) => {
+      expect(deps.remove).not.toHaveBeenCalled();
+      expect(deps.invokeGlmStructuring).not.toHaveBeenCalled();
+      expect(preparedVideos[0]?.gsUri).toBe(`gs://test-bucket/seg-${segmentIndex}.mp4`);
+      events.push(`frame-${segmentIndex}`);
+    } }, deps);
+  expect(deps.postVertex).toHaveBeenCalledTimes(2);
+  expect(deps.postEvolink).not.toHaveBeenCalled();
+  expect(events).toContain("structured");
+  expect(events.indexOf("cleanup")).toBeGreaterThan(events.lastIndexOf("structured"));
+});

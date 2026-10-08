@@ -5231,6 +5231,14 @@ export type NativeDeepReadBatchRunParams = {
   structuringOnly?: boolean;
   episodes: readonly NativeDeepReadBatchRunEpisode[];
   abortSignal?: AbortSignal;
+  /** 同一发读片响应解析出 keyMoments 即消费该片，不增加模型调用。 */
+  onSegmentRead?: (input: {
+    episodeIndex: number;
+    segmentIndex: number;
+    raw: Record<string, unknown>;
+    sourceDigest?: string;
+    preparedVideos: readonly PreparedNativeVideo[];
+  }) => void | Promise<void>;
   onModelReceipt?: (receipt: NativeDeepReadVisualModelReceipt) => void | Promise<void>;
   /** 传入即启用段级恢复与永久证据；生产 execution 和单集入口都必须传稳定 seriesKey。 */
   segmentCacheSeriesKey?: string;
@@ -5712,6 +5720,10 @@ async function executeNativeDeepReadBatch(
         // committedEntries 必须保持原样：证据对象名由原始 raw 的指纹算出（0905 实锤：拿过滤后的
         // raw 算名字，provenance 指向不存在的对象，导出 404）。
         const entry = committedEntry;
+        await params.onSegmentRead?.({ episodeIndex: episode.episodeIndex, segmentIndex,
+          raw: entry.raw, sourceDigest: entry.sourceDigest,
+          preparedVideos: videosBySegment.has(segmentIndex) ? [videosBySegment.get(segmentIndex)!] : [],
+        });
         committedEntries.set(segmentIndex, entry);
         proposalCommitChain = proposalCommitChain.then(async () => {
           while (committedIndexes.length < segmentCount) {
@@ -6002,6 +6014,11 @@ async function executeNativeDeepReadBatch(
             );
             throw enriched;
           }
+          if (!selectedSegmentIndexes) await params.onSegmentRead?.({
+            episodeIndex: episode.episodeIndex, segmentIndex: input.segmentIndex,
+            raw, sourceDigest: episode.cacheSourceDigest,
+            preparedVideos: videosBySegment.has(input.segmentIndex) ? [videosBySegment.get(input.segmentIndex)!] : [],
+          });
           // 解析原稿先永久落盘，再跑schema/覆盖/长镜门禁或添加标记；拒收不是删除付费证据的理由。
           if (params.segmentCacheSeriesKey && episode.cacheSourceDigest) {
             try {
@@ -7822,6 +7839,7 @@ export async function runManhuaNativeDeepRead(params: {
    * 逐段/整集模型回执。**必须转发给 batch**——此前单集入口没声明也没转发，
    * 走这条路的调用方（含验收探针）一条回执都拿不到，只能去翻 result 里的私有字段。
    */
+  onSegmentRead?: NativeDeepReadBatchRunParams["onSegmentRead"];
   onModelReceipt?: (receipt: NativeDeepReadVisualModelReceipt) => void | Promise<void>;
 }, deps: NativeDeepReadBatchRunnerDeps = defaultBatchRunnerDeps): Promise<NativeDeepReadRunResult> {
   const duration = Number(params.sourceDurationSec);
@@ -7843,6 +7861,7 @@ export async function runManhuaNativeDeepRead(params: {
     segmentCacheSeriesKey: params.seriesKey,
     preservePreparedVideos: params.preservePreparedVideos,
     onModelReceipt: params.onModelReceipt,
+    onSegmentRead: params.onSegmentRead,
     // 并发上限必须一路转发——单集入口不转发＝探针设了也不生效（空壳参数）。
     mediaCutConcurrency: params.mediaCutConcurrency,
     mediaUploadConcurrency: params.mediaUploadConcurrency,

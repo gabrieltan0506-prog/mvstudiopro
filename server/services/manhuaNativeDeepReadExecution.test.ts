@@ -776,10 +776,12 @@ describe("单集执行", () => {
   });
 
   it("跑成功后必经门禁并入库一次", async () => {
-    deps.run = vi.fn(async () => makeResult({
-      keyMoments: [{ atSec: 12, kindZh: "剧情", noteZh: "关键转折" }],
-      sourceDigest: "a".repeat(64),
-    }) as never);
+    deps.run = vi.fn(async input => {
+      const result = makeResult({ keyMoments: [{ atSec: 12, kindZh: "剧情", noteZh: "关键转折" }], sourceDigest: "a".repeat(64) });
+      await input.onSegmentRead?.({ episodeIndex: 1, segmentIndex: 0, raw: { keyMoments: result.keyMoments }, sourceDigest: "a".repeat(64),
+        preparedVideos: [{ gsUri: "gs://b/seg0.mp4", startSec: 0, endSec: 300, temporaryGcs: { bucket: "b", objectName: "seg0.mp4" }, bytes: 100, hasAudio: false }] });
+      return result as never;
+    });
     const frame = {
       atSec: 12,
       kindZh: "剧情",
@@ -1211,9 +1213,120 @@ describe("本地原片执行与证据消费者", () => {
       sourceUrl: sourceRef, provenanceSourceRef: sourceRef, localVideoUpload, resolveNodes }] }, deps);
     expect(result.ingestedCount).toBe(1);
     expect(deps.runBatch).toHaveBeenCalledWith(expect.objectContaining({ episodes: [expect.objectContaining({ localVideoUpload })] }));
-    expect(deps.extractKeyMomentFrames).toHaveBeenCalledWith(expect.objectContaining({ localVideoUpload, mediaNodes: [] }));
+    // 旧runner夹具不回传GCS分片：明确缺图，不能因此重新读取原片。
+    expect(deps.extractKeyMomentFrames).not.toHaveBeenCalled();
     expect(resolveNodes).not.toHaveBeenCalled();
     expect(deps.ingest).toHaveBeenCalledWith(expect.objectContaining({ sourceUrl: sourceRef }));
     expect(JSON.stringify(result)).not.toContain("localPath");
   });
+});
+
+
+describe("GCS截图接入正式入库", () => {
+  it("单集在runner返回前抽帧，不再解析源站且只抽一次", async () => {
+    const result = makeResult({ keyMoments: [{ atSec: 305, kindZh: "剧情", noteZh: "长片后段" }] }) as never;
+    const preparedVideos = [{ gsUri: "gs://b/seg1.mp4", startSec: 300, endSec: 600,
+      temporaryGcs: { bucket: "b", objectName: "seg1.mp4" }, bytes: 100, hasAudio: true }];
+    const resolveNodes = vi.fn(async () => { throw new Error("原站已不可用"); });
+    deps.run = vi.fn(async (input) => {
+      await input.onSegmentRead?.({ episodeIndex: 1, segmentIndex: 1, raw: { keyMoments: [{ atSec: 305, kindZh: "剧情", noteZh: "长片后段" }] }, sourceDigest: "a".repeat(64), preparedVideos });
+      return result;
+    });
+    await executeAndIngestNativeDeepReadEpisode({ ...episode, seriesKey: "s", resolveNodes }, deps);
+    expect(resolveNodes).not.toHaveBeenCalled();
+    expect(deps.extractKeyMomentFrames).toHaveBeenCalledTimes(1);
+    expect(deps.extractKeyMomentFrames).toHaveBeenCalledWith(expect.objectContaining({ preparedSegments: preparedVideos, mediaNodes: [] }));
+    expect(deps.ingest).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe("分片截图持久化与不重复读片", () => {
+  const moment = { atSec: 12, kindZh: "剧情", noteZh: "转折" };
+  const frame = { ...moment, objectName: "manhua-template-learn/native-frames/s/12.jpg", mimeType: "image/jpeg" as const, bytes: 10, sha256: "b".repeat(64) };
+  const event = { episodeIndex: 1, segmentIndex: 0, raw: { keyMoments: [moment] }, sourceDigest: "a".repeat(64),
+    preparedVideos: [{ gsUri: "gs://b/seg0.mp4", startSec: 0, endSec: 300, temporaryGcs: { bucket: "b", objectName: "seg0.mp4" }, bytes: 100, hasAudio: false }] };
+
+  it("同一响应及段缓存提交只截一次，先保存索引再返回runner，模型不二次调用", async () => {
+    deps.extractKeyMomentFrames = vi.fn(async () => [frame]);
+    deps.writeFrameManifest = vi.fn(async () => {});
+    deps.readFrameManifest = vi.fn(async () => undefined);
+    deps.run = vi.fn(async input => {
+      await input.onSegmentRead?.(event);
+      expect(deps.writeFrameManifest).toHaveBeenCalledTimes(1);
+      await input.onSegmentRead?.(event);
+      return makeResult({ keyMoments: [moment] }) as never;
+    });
+    await executeAndIngestNativeDeepReadEpisode({ ...episode, seriesKey: "s" }, deps);
+    expect(deps.run).toHaveBeenCalledTimes(1);
+    expect(deps.extractKeyMomentFrames).toHaveBeenCalledTimes(1);
+    expect(deps.readFrameManifest).toHaveBeenCalledTimes(1);
+    expect(deps.ingest).toHaveBeenCalledWith(expect.objectContaining({ evidenceFrames: [frame] }));
+  });
+
+  it("恢复已存截图不解析源站，不执行ffmpeg，不增加模型调用", async () => {
+    deps.readFrameManifest = vi.fn(async () => [frame]);
+    const resolveNodes = vi.fn(async () => { throw new Error("不应重新解析源站"); });
+    deps.run = vi.fn(async input => {
+      await input.onSegmentRead?.({ ...event, preparedVideos: [] });
+      return makeResult({ keyMoments: [moment] }) as never;
+    });
+    await executeAndIngestNativeDeepReadEpisode({ ...episode, seriesKey: "s", resolveNodes }, deps);
+    expect(resolveNodes).not.toHaveBeenCalled();
+    expect(deps.extractKeyMomentFrames).not.toHaveBeenCalled();
+    expect(deps.run).toHaveBeenCalledTimes(1);
+    expect(deps.ingest).toHaveBeenCalledWith(expect.objectContaining({ evidenceFrames: [frame] }));
+  });
+
+  it("截图失败保留已付费分析，不调用runner重读，也不在整集结束后补抽", async () => {
+    deps.extractKeyMomentFrames = vi.fn(async () => { throw new Error("抽帧失败"); });
+    deps.run = vi.fn(async input => {
+      await input.onSegmentRead?.(event);
+      await input.onSegmentRead?.(event);
+      return makeResult({ keyMoments: [moment] }) as never;
+    });
+    const output = await executeAndIngestNativeDeepReadEpisode({ ...episode, seriesKey: "s" }, deps);
+    expect(deps.run).toHaveBeenCalledTimes(1);
+    expect(deps.extractKeyMomentFrames).toHaveBeenCalledTimes(1);
+    expect(deps.ingest).toHaveBeenCalledWith(expect.objectContaining({ evidenceFrames: [] }));
+    expect(output.costCny).toBe(0.5);
+  });
+});
+
+
+it("GCS分片及截图索引均缺失时禁止回源探测或再次读模型", async () => {
+  const moment = { atSec: 12, kindZh: "剧情", noteZh: "关键转折" };
+  const resolveNodes = vi.fn(async () => { throw new Error("截图不许回源"); });
+  deps.readFrameManifest = vi.fn(async () => undefined);
+  deps.run = vi.fn(async input => {
+    await input.onSegmentRead?.({ episodeIndex: 1, segmentIndex: 0, raw: { keyMoments: [moment] }, sourceDigest: "a".repeat(64), preparedVideos: [] });
+    return makeResult({ keyMoments: [moment] }) as never;
+  });
+  await executeAndIngestNativeDeepReadEpisode({ ...episode, seriesKey: "s", resolveNodes }, deps);
+  expect(resolveNodes).not.toHaveBeenCalled();
+  expect(deps.run).toHaveBeenCalledTimes(1);
+  expect(deps.extractKeyMomentFrames).not.toHaveBeenCalled();
+  expect(deps.ingest).toHaveBeenCalledWith(expect.objectContaining({ evidenceFrames: [] }));
+});
+
+
+it("批次入口按分片响应立即保存，乱序到达仍按最终秒位汇总且不回源", async () => {
+  const moments = [12, 312].map(atSec => ({ atSec, kindZh: "剧情", noteZh: `转折${atSec}` }));
+  const frames = moments.map(moment => ({ ...moment, objectName: `manhua-template-learn/native-frames/s/${moment.atSec}.jpg`, mimeType: "image/jpeg" as const, bytes: 10, sha256: "b".repeat(64) }));
+  const resolveNodes = vi.fn(async () => { throw new Error("禁止回源"); });
+  deps.extractKeyMomentFrames = vi.fn(async (input: Parameters<NativeDeepReadExecutionDeps["extractKeyMomentFrames"]>[0]) => frames.filter(frame => input.keyMoments?.some(moment => moment.atSec === frame.atSec)));
+  deps.writeFrameManifest = vi.fn(async () => {});
+  deps.runBatch = vi.fn(async input => {
+    for (const segmentIndex of [1, 0]) {
+      await input.onSegmentRead?.({ episodeIndex: 1, segmentIndex, raw: { keyMoments: [moments[segmentIndex]] }, sourceDigest: "a".repeat(64),
+        preparedVideos: [{ gsUri: `gs://b/seg${segmentIndex}.mp4`, ...episode.segments[segmentIndex], temporaryGcs: { bucket: "b", objectName: `seg${segmentIndex}.mp4` }, bytes: 100, hasAudio: false }] });
+    }
+    expect(deps.writeFrameManifest).toHaveBeenCalledTimes(2);
+    return { episodes: [{ episodeIndex: 1, result: makeResult({ keyMoments: moments }) }], usage: { inputTokens: 100, outputTokens: 20, costCny: 0.5 }, model: "gemini-3.1-pro-preview", usingPlanQuota: false, batchRequestId: "11111111-1111-4111-8111-111111111111" } as never;
+  });
+  const result = await runNativeDeepReadBatch({ seriesKey: "s", episodes: [{ ...episode, resolveNodes }] }, deps);
+  expect(result.ingestedCount).toBe(1);
+  expect(deps.runBatch).toHaveBeenCalledTimes(1);
+  expect(resolveNodes).not.toHaveBeenCalled();
+  expect(deps.ingest).toHaveBeenCalledWith(expect.objectContaining({ evidenceFrames: frames }));
 });

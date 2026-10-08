@@ -568,6 +568,8 @@ describe("帧包始终可选", () => {
     expect(result.frames).toBe(0);
     expect(result.frameSource).toContain("未抽帧");
     expect(state.uploads[0]!.html).toContain("精选画面 0 张");
+    expect(state.uploads[0]!.html).toContain("截图缺失");
+    expect(state.uploads[0]!.html).toContain("无需重新付费读片");
   });
 });
 
