@@ -1,0 +1,10 @@
+{
+  "id": "7812595b294778",
+  "state": "stopped",
+  "guest": {
+    "cpu_kind": "performance",
+    "cpus": 4,
+    "memory_mb": 8192
+  },
+  "deleted": false
+}
