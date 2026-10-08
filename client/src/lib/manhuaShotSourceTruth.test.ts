@@ -183,7 +183,10 @@ describe("来源事实从真实选源到工作台标签保持一致", () => {
         )
       );
       expect(shots).toHaveLength(18);
-      expect(shots[0]?.dialogueZh).toBe("把玉珏交出来——第1次。");
+      // 建立镜保持静默，段表对白交给发话镜；不能让建立镜冒充发话。
+      expect(shots[0]?.dialogueZh).toBeUndefined();
+      expect(shots[0]?.dialogueSuppressed).toBe(true);
+      expect(shots.slice(0, 3).some(shot => shot.dialogueZh === "……拿去，别碰她。")).toBe(true);
     }
   );
 

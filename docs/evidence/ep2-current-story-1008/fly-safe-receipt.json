@@ -1,0 +1,16 @@
+{
+  "status": "passed",
+  "checks": [
+    "当前正文投影",
+    "旧技术存档保留",
+    "保存恢复",
+    "无真实分镜明确拒绝",
+    "新分镜可消费",
+    "批量集隔离",
+    "原稿不变"
+  ],
+  "freshShotCount": 2,
+  "paidProviderCalls": 0,
+  "formalWorkflowAccepted": false,
+  "at": "2026-10-08T00:18:03.176Z"
+}

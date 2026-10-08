@@ -1646,7 +1646,8 @@ function OmniCanvasWorkspace() {
       segmentMin: writerLayoutProfile.segmentMin,
       segmentMax: writerLayoutProfile.segmentMax,
     });
-    const body = writerPack.episodes.find((ep) => ep.index === writerFocusEpisode)?.body || "";
+    const episode = writerPack.episodes.find((ep) => ep.index === writerFocusEpisode);
+    const body = episode?.storyboardNeedsReview ? "" : episode?.body || "";
     const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(body);
     const quality = plan.segments.length ? evaluateManhuaEpisodeSegmentPlanQuality(plan, { mode: "actual" }) : null;
     // 0916 状态变体连续性：受伤后回常态没写恢复 / 请求了人物表没定义的状态 → 进顾问门禁
@@ -12897,7 +12898,7 @@ async function runAdvisorWriterTrial() {
                       {
                         const toProfile = resolveManhuaSeedanceLayoutProfile(next, writerLengthTierId);
                         const ep = writerPack?.episodes.find((e) => e.index === writerFocusEpisode);
-                        const plan = ep ? parseManhuaEpisodeSegmentPlanFromMarkdown(ep.body || "") : null;
+                        const plan = ep && !ep.storyboardNeedsReview ? parseManhuaEpisodeSegmentPlanFromMarkdown(ep.body || "") : null;
                         if (plan && plan.segments.length && toProfile.durationSecPerSegment !== writerLayoutProfile.durationSecPerSegment) {
                           const relayout = relayoutManhuaSegmentPlanForEngine(plan, {
                             fromDurationSec: writerLayoutProfile.durationSecPerSegment,

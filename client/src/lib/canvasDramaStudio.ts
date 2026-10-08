@@ -9,6 +9,7 @@ import { compileManhuaSceneSpace, resolveManhuaSpatialActorIds } from "@shared/m
 
 import { classifyManhuaDirectionSceneType, resolveManhuaDirectionCard, resolveDirectorStyleBlocks, type ManhuaDirectionCanon } from "@shared/manhuaDirectionCanon";
 import { formatManhuaCastStateNoteZh, resolveManhuaStateExcludedRefIds } from "@shared/manhuaCharacterStates";
+import { MANHUA_STORYBOARD_REVIEW_MARKER } from "@shared/manhuaWriterRoom";
 import {
   formatManhuaDirectionSelectionMarker,
   readManhuaDirectionCanonFromBlocks,
@@ -1946,6 +1947,10 @@ export function resolveShotsForEpisodeKeyartsResult(
     String(story?.outputText || "").trim(),
   ].filter(Boolean).map(text => ({ text, timed: readManhuaTimedStoryboard(text), result: parseSource(text) }))
     .filter(source => source.timed.recognized || !source.result.isFallback);
+  // 新正文尚未形成真实分镜时，不把提示词里的示例镜头当成生产结果。
+  if (!generated.length && [story?.prompt, beats?.prompt, reverse?.prompt].some(text => text?.includes(MANHUA_STORYBOARD_REVIEW_MARKER))) {
+    return { shots: [], isFallback: true, sourceErrors: ["本集剧情已修改，尚未完成当前正文的分镜；请在分镜步骤重新编排，旧技术材料仍保留供对照。"] };
+  }
   // 坏秒位表同样保留为真源供后续校验；不得换成另一份稿掩盖坏行。
   // 后续反推必须覆盖同一镜数；旧反推不能因有秒数就覆盖新增或删减过的节拍。
   const timedSource = generated.find(source => source.result.shots.length === generated[0]?.result.shots.length &&

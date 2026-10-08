@@ -310,3 +310,81 @@ it("采用将白模代理证据传入持久化导入器", async () => {
   await adoptAutoRigTask(7, request.requestId, f.candidateSha, false, f.d);
   expect(f.calls[0]).toMatchObject({previsProxy: proxy});
 });
+
+function fullAdoption() {
+  const f = adoption();
+  const full = {
+    gcsUri: `gs://test/uploads/u7/auto-rig/${request.requestId}/model-full.glb`,
+    sha256: "f".repeat(64),
+    bytes: 57_000_000,
+  };
+  const proxy = {
+    gcsUri: `gs://test/uploads/u7/auto-rig/${request.requestId}/model-proxy.glb`,
+    sha256: "e".repeat(64), bytes: 100, vertices: 40_497,
+  };
+  Object.assign(f.task.output, { fullGlb: full, proxyGlb: proxy });
+  const inspected: string[] = [];
+  f.d.inspect = async input => {
+    inspected.push(input.gcsUri);
+    return input.gcsUri.endsWith("/model-full.glb")
+      ? { sha256: full.sha256, byteLength: full.bytes } as any
+      : { sha256: f.candidateSha, byteLength: f.task.output.bytes } as any;
+  };
+  return { ...f, full, proxy, inspected };
+}
+
+it("采用已有带骨全模保留外观，白模仍传原低模代理且确认仍绑定中模摘要", async () => {
+  const f = fullAdoption();
+  await adoptAutoRigTask(7, request.requestId, f.candidateSha, false, f.d);
+  expect(f.inspected).toEqual([f.task.output.gcsUri, f.full.gcsUri]);
+  expect(f.calls).toHaveLength(1);
+  expect(f.calls[0]).toMatchObject({ glbGcsUri: f.full.gcsUri, previsProxy: f.proxy,
+    sourceVersion: f.original.sourceVersion, assetRef: request.assetRef });
+});
+
+it.each(["用户", "请求", "文件名"])("带骨全模%s不符时拒绝，不回退采用无材质白模", async field => {
+  const f = fullAdoption();
+  if (field === "用户") f.full.gcsUri = f.full.gcsUri.replace("/u7/", "/u8/");
+  if (field === "请求") f.full.gcsUri = f.full.gcsUri.replace(request.requestId, "other-request");
+  if (field === "文件名") f.full.gcsUri = f.full.gcsUri.replace("model-full.glb", "model.glb");
+  await expect(adoptAutoRigTask(7, request.requestId, f.candidateSha, false, f.d)).rejects.toThrow("全模来源不一致");
+  expect(f.calls).toEqual([]);
+  expect(f.inspected).toEqual([f.task.output.gcsUri]);
+});
+
+it.each(["摘要", "体积"])("带骨全模真实%s不匹配时拒绝，不导入旧中模", async field => {
+  const f = fullAdoption(), inspect = f.d.inspect;
+  f.d.inspect = async input => {
+    const result = await inspect(input);
+    return input.gcsUri === f.full.gcsUri
+      ? { ...result, ...(field === "摘要" ? { sha256: "0".repeat(64) } : { byteLength: f.full.bytes - 1 }) }
+      : result;
+  };
+  await expect(adoptAutoRigTask(7, request.requestId, f.candidateSha, false, f.d)).rejects.toThrow("全模字节已变化");
+  expect(f.calls).toEqual([]);
+});
+
+it.each([19, 250 * 1024 * 1024 + 1, 1.5])("全模体积%s超出已有导入契约，下载前拒绝", async bytes => {
+  const f = fullAdoption(); f.full.bytes = bytes;
+  await expect(adoptAutoRigTask(7, request.requestId, f.candidateSha, false, f.d)).rejects.toThrow("全模体积");
+  expect(f.calls).toEqual([]);
+  expect(f.inspected).toEqual([f.task.output.gcsUri]);
+});
+
+it("全模存储读取失败不降级、不重建，也不修改原模型", async () => {
+  const f = fullAdoption(), inspect = f.d.inspect;
+  f.d.inspect = async input => {
+    if (input.gcsUri === f.full.gcsUri) throw Error("test-full-object-missing");
+    return inspect(input);
+  };
+  await expect(adoptAutoRigTask(7, request.requestId, f.candidateSha, false, f.d)).rejects.toThrow("test-full-object-missing");
+  expect(f.calls).toEqual([]);
+  expect(f.original.taskId).toBe(request.sourceJobId);
+});
+
+it("有全模的历史候选仍可恢复原模型，不读取候选文件或重复导入", async () => {
+  const f = fullAdoption();
+  expect(await adoptAutoRigTask(7, request.requestId, f.candidateSha, true, f.d)).toEqual(f.original);
+  expect(f.inspected).toEqual([]);
+  expect(f.calls).toEqual([]);
+});

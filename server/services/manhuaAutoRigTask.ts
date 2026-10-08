@@ -439,12 +439,32 @@ export async function adoptAutoRigTask(
     inspected.byteLength !== task.output.bytes
   )
     throw Error("绑骨候选字节已变化，禁止采用");
+  // 中模为白模预算主动去掉了材质和 UV；人物主模型应采用已检查的带骨全模。
+  // 原确认仍绑定中模摘要，全模另验同任务的固定路径和完整字节；不重建、不静默降级。
+  let primaryGcsUri = expected;
+  if (task.output.fullGlb) {
+    const full = task.output.fullGlb;
+    const fullExpected = `gs://${d.bucket()}/uploads/u${userId}/auto-rig/${requestId}/model-full.glb`;
+    const fullMaxBytes = 250 * 1024 * 1024; // 与现有 GLB 导入器的上限一致。
+    if (full.gcsUri !== fullExpected)
+      throw Error("带骨全模来源不一致，禁止采用");
+    if (!Number.isSafeInteger(full.bytes) || full.bytes < 20 || full.bytes > fullMaxBytes)
+      throw Error("带骨全模体积超出已有导入范围，禁止采用");
+    const fullInspection = await d.inspect({
+      gcsUri: fullExpected,
+      maxBytes: fullMaxBytes,
+      timeoutMs: 120_000,
+    });
+    if (fullInspection.sha256 !== full.sha256 || fullInspection.byteLength !== full.bytes)
+      throw Error("带骨全模字节已变化，禁止采用");
+    primaryGcsUri = fullExpected;
+  }
   return d.importModel({
     userId,
     assetRef: input.assetRef,
     sourceVersion: original.sourceVersion,
     sourceImageUrl: original.sourceImageUrl,
-    glbGcsUri: expected,
+    glbGcsUri: primaryGcsUri,
     previsProxy: task.output.proxyGlb,
   });
 }

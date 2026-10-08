@@ -795,7 +795,7 @@ describe("0917 回执镜像到 GCS（rig 进程组无 /data 卷）", () => {
     expect(source).toMatchObject({ taskId: "m3d_x1", sha256: "a".repeat(64), bytes: 1234 });
     expect(JSON.parse(await fs.readFile(path.join(dir, "m3d_x1.json"), "utf8")).taskId).toBe("m3d_x1");
   });
-  it("代理镜像跨进程恢复且仅白模选择代理，默认仍取中模", async () => {
+  it("代理镜像跨进程恢复且仅白模选择代理，默认仍取人物主模型", async () => {
     const proxy = {gcsUri: "gs://test-bucket/uploads/u7/auto-rig/r1/model-proxy.glb", sha256: "b".repeat(64), bytes: 321, vertices: 44394};
     mirror.set("manhua-3d/task-records/m3d_proxy.json", Buffer.from(JSON.stringify({...record("m3d_proxy"), previsProxy: proxy})));
     expect(await getCompletedManhua3dSource("m3d_proxy", 7, "cust_a", {prefer: "previs"})).toMatchObject(proxy);
@@ -831,6 +831,38 @@ describe("0917 回执镜像到 GCS（rig 进程组无 /data 卷）", () => {
     const mirrored = mirror.get(`manhua-3d/task-records/${view.taskId}.json`);
     expect(mirrored, "创建即镜像").toBeTruthy();
     expect(JSON.parse(mirrored!.toString()).status).toBe("succeeded");
+  });
+  it("带骨全模导入并恢复后主模型与低模代理保持独立，正常预演仍取低模", async () => {
+    const fullUri = "gs://test-bucket/uploads/u7/auto-rig/r-full/model-full.glb";
+    const immutableUri = "gs://test-bucket/manhua-3d/u7/imported-full.glb";
+    const proxy = { gcsUri: "gs://test-bucket/uploads/u7/auto-rig/r-full/model-proxy.glb",
+      sha256: "b".repeat(64), bytes: 321, vertices: 40_497 };
+    const submit = vi.fn(() => { throw Error("禁止模型生成"); });
+    const rewriteUploadedGlb = vi.fn(async () => ({ gcsUri: immutableUri }));
+    setManhua3dTaskDependenciesForTests({
+      submit, getBucketName: () => "test-bucket",
+      mirrorRecord: async (name, buffer) => { mirror.set(name, Buffer.from(buffer)); },
+      readMirroredRecord: async name => mirror.get(name) ?? null,
+      inspectUploadedGlb: async uri => ({
+        ...inspectedGlb(validGlb(Buffer.from("existing-full-model"))),
+        ...(uri === proxy.gcsUri ? { sha256: proxy.sha256, byteLength: proxy.bytes } : {}),
+      }),
+      rewriteUploadedGlb,
+      signGlb: uri => `https://signed.test/${encodeURIComponent(uri)}`,
+    });
+    const view = await importExistingManhua3dAsset({
+      userId: 7, assetRef: "cust_a", sourceVersion: "v1", sourceImageUrl: "https://example.com/a.png",
+      glbGcsUri: fullUri, previsProxy: proxy,
+    });
+    expect(rewriteUploadedGlb).toHaveBeenCalledWith(expect.objectContaining({ sourceGcsUri: fullUri }));
+    const mirrored = JSON.parse(mirror.get(`manhua-3d/task-records/${view.taskId}.json`)!.toString());
+    expect(mirrored).toMatchObject({ glbGcsUri: immutableUri, previsProxy: proxy });
+    await fs.unlink(path.join(dir, `${view.taskId}.json`));
+    const restored = await getManhua3dTask(view.taskId, 7);
+    expect(restored?.glbGcsUri).toBe(immutableUri);
+    expect(await getCompletedManhua3dSource(view.taskId, 7, "cust_a")).toMatchObject({ gcsUri: immutableUri });
+    expect(await getCompletedManhua3dSource(view.taskId, 7, "cust_a", { prefer: "previs" })).toMatchObject(proxy);
+    expect(submit).not.toHaveBeenCalled();
   });
   it("本地与镜像都没有 → 仍报「回执不存在」，不伪造", async () => {
     await expect(getCompletedManhua3dSource("m3d_none", 7, "cust_a")).rejects.toThrow("本人已完成角色模型或完整来源回执不存在");
