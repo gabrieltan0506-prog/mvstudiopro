@@ -1,3 +1,6 @@
+import { buildAdvisorPrevisShotSource } from "@shared/manhuaAdvisorPrevisShotSource";
+import { adoptStageAnimationAsClip } from "@/lib/manhuaStageAnimationAdoption";
+import { resolveShotsForEpisodeKeyartsResult } from "@/lib/canvasDramaStudio";
 import {requireCurrentStageAnimation} from "@/lib/manhuaStageAnimationBinding";
 import { loadAdvisorReconfirmationEpisodeIndexes, saveSceneProductionBackup } from "@/lib/manhuaSceneProductionBackups";
 import {creativeStudioAudioAssets} from "@/lib/creativeStudioAudio";
@@ -1694,28 +1697,45 @@ function OmniCanvasWorkspace() {
       if (!clip?.previsStudio) throw new Error("本段人物基线尚未保存，请从二级工具的动作白模标签打开顾问。");
       if (clip.previsStudio.pending) throw new Error("本段正在渲染，结束后再调整。");
       const direction = resolveManhuaDirectionCard(activeDirectionCanon, "storyboard", classifyManhuaDirectionSceneType(clip.prompt || ""), { episodeIndex: writerFocusEpisode, segmentIndex: resolveClipLocalSegmentIndex(clip.id, clip.prompt, writerFocusEpisode) });
-      return { target: { ...makeAdvisorPrevisTarget(clip.id, clip.previsStudio, advisorPreviewSelection?.clipId === clip.id ? advisorPreviewSelection.requestId : undefined), ...(direction ? { directionCardId: direction.card.id, directionCardVersion: direction.card.version } : {}) } };
+      return { target: { ...makeAdvisorPrevisTarget(clip.id, advisorPrevisCurrentStudio(clip, blocks), advisorPreviewSelection?.clipId === clip.id ? advisorPreviewSelection.requestId : undefined), ...(direction ? { directionCardId: direction.card.id, directionCardVersion: direction.card.version } : {}) } };
     } catch (e) { return { issue: e instanceof Error ? maskMediaProviderDetails(e.message) : "本段白模暂不能调整" }; }
-  }, [blocks, advisorPrevisClipId, advisorPreviewSelection, activeDirectionCanon, writerFocusEpisode]);
-  const advisorPrevisCurrentStudio = (studio: import("@shared/manhuaPrevis").ManhuaPrevisStudio) => ({
-    ...studio,
-    spec: withRiggedModelSourceAssetRefs(studio.spec, customAssetRefs.map(ref => {
-      const source = resolveManhuaRigSource(ref, customAssetRefs).source;
-      return { id: ref.id, model: source ? { taskId: source.model.taskId, assetRef: source.refId } : undefined };
-    })),
-  });
+  }, [blocks, advisorPrevisClipId, advisorPreviewSelection, activeDirectionCanon, writerFocusEpisode, activePilotVideoModel, explicitWriterVideoModel, customAssetRefs]);
+  function advisorPrevisCurrentStudio(clip: CanvasBlock, currentBlocks: CanvasBlock[] = blocksRef.current): import("@shared/manhuaPrevis").ManhuaPrevisStudio {
+    const studio = clip.previsStudio;
+    if (!studio) throw new Error("本段白模不存在，请重新打开顾问");
+    let advisorShotSource = studio.advisorShotSource;
+    if (advisorShotSource) {
+      const episode = getBlockEpisodeIndex(clip) ?? writerFocusEpisode;
+      const videoModel = resolveManhuaEpisodeClipVideoModel(currentBlocks, episode, explicitWriterVideoModel || undefined);
+      const segmentIndex = resolveClipLocalSegmentIndex(clip.id, clip.prompt, episode);
+      const source = resolveShotsForEpisodeKeyartsResult(currentBlocks, episode);
+      if (source.isFallback || source.sourceErrors.length) throw new Error(source.sourceErrors.join("；") || "当前原稿尚无真实分镜，未使用默认示例");
+      const segment = groupShotsIntoSegments(source.shots, { videoModel }).find(row => row.index === segmentIndex);
+      if (!segment) throw new Error("当前原稿已找不到本段分镜，请重新选择；未使用旧来源");
+      advisorShotSource = buildAdvisorPrevisShotSource(clip.id, segment.shots.map(shot => ({ index: shot.index,
+        durationSec: shot.durationSec, actionZh: shot.actionZh, cameraZh: shot.cameraZh,
+        dialogueZh: shot.dialogueSuppressed ? "无对白" : shot.dialogueZh })));
+    }
+    return { ...studio, ...(advisorShotSource ? { advisorShotSource } : {}),
+      spec: withRiggedModelSourceAssetRefs(studio.spec, customAssetRefs.map(ref => {
+        const source = resolveManhuaRigSource(ref, customAssetRefs).source;
+        return { id: ref.id, model: source ? { taskId: source.model.taskId, assetRef: source.refId } : undefined };
+      })),
+    };
+  }
   const advisorPrevisClip = blocks.find(b => b.id === advisorPrevisClipId && !b.archivedFromPreviousScript);
   const checkAdvisorPrevisReady = (candidate?: AdvisorPrevisCandidate) => {
     if (!canUseManhua3d || factoryBusy) return "当前不能生成白模，请等待正在进行的制作结束。";
     const clip = blocksRef.current.find(b => b.id === (candidate?.target.clipId || advisorPrevisClipId));
-    return checkManhuaAdvisorPrevisLaunch(clip?.previsStudio ? { ...clip, previsStudio: advisorPrevisCurrentStudio(clip.previsStudio) } : clip, candidate);
+    try { return checkManhuaAdvisorPrevisLaunch(clip?.previsStudio ? { ...clip, previsStudio: advisorPrevisCurrentStudio(clip) } : clip, candidate); }
+    catch (e) { return e instanceof Error ? e.message : "当前分镜无法读取，未使用旧来源"; }
   };
   const prepareAdvisorPrevis = (candidate: AdvisorPrevisCandidate): AdvisorPrevisTrial => {
     if (!canUseManhua3d || factoryBusy) throw new Error("当前不能提交白模试看。");
     const clip = blocksRef.current.find(b => b.id === candidate.target.clipId && !b.archivedFromPreviousScript);
     if (!clip?.previsStudio) throw new Error("本段白模不存在，未提交。");
     if (clip.status === "running" || clip.videoTaskStatus === "queued") throw new Error("本段仍在制作，请等待结束。");
-    const trial = prepareAdvisorPrevisTrial(clip.id, advisorPrevisCurrentStudio(clip.previsStudio), candidate);
+    const trial = prepareAdvisorPrevisTrial(clip.id, advisorPrevisCurrentStudio(clip), candidate);
     trial.request.quality = "draft";
     if (clip.previsStudio.audioEnabled === true) trial.request.audio = buildManhuaPrevisAudio(clip.audioStudio, trial.request.spec, clip.previsStudio.audioStartSec ?? 0, clip.previsStudio.loopBgm ?? false);
     return trial;
@@ -1731,7 +1751,7 @@ function OmniCanvasWorkspace() {
       const currentAudio = clip.previsStudio.audioEnabled === true
         ? buildManhuaPrevisAudio(clip.audioStudio, trial.request.spec, clip.previsStudio.audioStartSec ?? 0, clip.previsStudio.loopBgm ?? false) : undefined;
       if (JSON.stringify(currentAudio) !== JSON.stringify(trial.request.audio)) throw new Error("音轨或秒窗已变化，请按当前声音重新试看后再应用；旧视频保留。");
-      const previsStudio = adoptAdvisorPrevisTrial(clip.id, advisorPrevisCurrentStudio(clip.previsStudio), trial, receipt);
+      const previsStudio = adoptAdvisorPrevisTrial(clip.id, advisorPrevisCurrentStudio(clip), trial, receipt);
       const next = current.map(b => b === clip ? { ...b, previsStudio } : b);
       if (!saveCanvasState(next, edges)) throw new Error("配置保存失败，原白模未改动。");
       blocksRef.current = next;
@@ -3620,7 +3640,7 @@ function OmniCanvasWorkspace() {
   }, [vfxScopeKey, vfxPersistenceScope, vfxPersistenceEpoch, syncCloudDraftPayload]);
 
   const artMotionScopeKey = `art:${user?.id || ""}:${projectScope?.projectId || "legacy-workspace"}`;
-  const persistArtMotionBlock = useCallback(async (id: string, state: ArtMotionState, expected: ArtMotionState | null, adopt?: {url:string;gcsUri:string}) => {
+  const persistArtMotionBlock = useCallback(async (id: string, state: ArtMotionState, expected: ArtMotionState | null, adopt?: {url:string;gcsUri:string;useAsSegment?:boolean}) => {
     const scope=vfxPersistenceScope,epoch=vfxPersistenceEpoch;
     const check=()=>{
       if(currentVfxScopeRef.current!==scope||manhuaOutboundEpochRef.current!==epoch||backupOperationRef.current||cloudConflictRef.current||!user?.id||!cloudSyncReady)
@@ -3637,7 +3657,15 @@ function OmniCanvasWorkspace() {
       outputUrl:adopt.url,outputUrls:[adopt.url],status:"done" as const,
       uploadedAssets:[...block.uploadedAssets.filter(a=>a.id!==`art-output-${parsed.request?.id}`),{id:`art-output-${parsed.request?.id}`,url:adopt.url,previewUrl:adopt.url,gcsUri:adopt.gcsUri,fileName:parsed.spec.title||"艺术动画",kind:"video" as const,mimeType:parsed.request?.spec.alpha?"video/quicktime":"video/mp4"}],
     }:{})};
-    const next=old?current.map(b=>b.id===id?updated:b):[...current,updated];
+    let next=old?current.map(b=>b.id===id?updated:b):[...current,updated];
+    if(adopt?.useAsSegment){
+      if(!source || !sourceClip)throw new Error("缺少当前分段来源，未采用到剪辑");
+      const episode=getBlockEpisodeIndex(sourceClip)??1;
+      if(!queuedManhuaClipBlocks(current,episode,resolveManhuaEpisodeClipVideoModel(current,episode)).some(b=>b.id===sourceClip.id))
+        throw new Error("动画来源不属于当前分段计划，未替换剪辑版本");
+      const adoptedClip=adoptStageAnimationAsClip(sourceClip,parsed,adopt);
+      next=next.map(b=>b.id===sourceClip.id?adoptedClip:b);
+    }
     const snap=latestDraftSnapshotRef.current;if(!snap)throw new Error("作品快照尚未就绪，请稍后保存");
     const draft={...snap,blocks:next,clientUpdatedAt:new Date().toISOString()};
     const local=persistManhuaDraftLocally({...draft,blocks:next,edges:snap.edges as CanvasEdge[]});

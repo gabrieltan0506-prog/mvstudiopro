@@ -109,3 +109,21 @@ it("1007场景特效候选保留身份与时长，支持显式清空且拒绝未
  expect(applyAdvisorPrevisPatch(next,{...patch,sceneEffects:[]}).sceneEffects).toEqual([]);
  expect(()=>applyAdvisorPrevisPatch(spec,{...patch,sceneEffects:[{...patch.sceneEffects![0],actorId:"foreign-actor"}]})).toThrow();
 });
+
+
+it("剧情道具和四足倒地经过顾问候选、应用、序列化恢复仍保留", () => {
+  const studio = createManhuaPrevisStudio(5);
+  studio.spec.actors[0].shape = "horse";
+  studio.spec.actors[0].actions = [];
+  studio.spec.actors[0].end = [...studio.spec.actors[0].start];
+  const actorId = studio.spec.actors[0].id;
+  const patch = advisorPrevisPatchSchema.parse({ kind:"previs_edit_v1",summaryZh:"马侧卧保持，袖光位置可见",unsupportedZh:[],
+    actors:[{id:actorId,quadrupedFall:{mode:"hold",side:"left"}}],
+    storyProps:[{id:"glow",kind:"sleeve_glow",keyframes:[0,5].map(timeSec=>({timeSec,anchor:{type:"bone",actorId,bone:"body"}}))}] });
+  const next = applyAdvisorPrevisCandidate("clip",studio,{target:makeAdvisorPrevisTarget("clip",studio),patch});
+  const restored = manhuaPrevisStudioSchema.parse(JSON.parse(JSON.stringify(next)));
+  expect(restored.spec.actors[0].quadrupedFall).toEqual({mode:"hold",side:"left"});
+  expect(restored.spec.storyProps).toHaveLength(1);
+  expect(restored.specHistory?.at(-1)?.spec).toEqual(studio.spec);
+  expect(applyAdvisorPrevisPatch(restored.spec,advisorPrevisPatchSchema.parse({kind:"previs_edit_v1",summaryZh:"清空道具",unsupportedZh:[],storyProps:[]})).storyProps).toEqual([]);
+});

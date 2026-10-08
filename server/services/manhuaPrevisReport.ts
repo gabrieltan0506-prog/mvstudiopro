@@ -1,3 +1,7 @@
+import { storyPropsReportSchema, validateStoryPropsReport } from "./manhuaPrevisStoryPropsReport";
+import { handContactsReportSchema, validateHandContactsReport } from "./manhuaPrevisHandContactsReport";
+import { humanPostureReportsSchema, validateHumanPostureReports } from "./manhuaPrevisHumanPostureReport";
+import { quadrupedFallReportSchema, validateQuadrupedFallReport } from "./manhuaPrevisQuadrupedFallReport";
 /** 渲染与恢复共用的真实报告门禁，不能以存证哈希代替动作验收。 */
 import { z } from "zod";
 import { previsSceneEffectsReportSchema, validatePrevisSceneEffectsReport } from "./manhuaPrevisSceneEffectsReport";
@@ -21,7 +25,7 @@ import {
   type ManhuaPrevisRequest,
 } from "../../shared/manhuaPrevis";
 import { PREVIS_BODY_BONES, PREVIS_QUADRUPED_SOURCE_BONES } from "../../shared/manhuaPrevisRig";
-import { expectedPiggybackMotion, previsPiggybackSlipCatchSchema, previsPiggybackSetDownSchema } from "../../shared/manhuaPrevisPiggyback";
+import { expectedPiggybackMotion, previsPiggybackSlipCatchSchema, previsPiggybackSetDownSchema, previsPiggybackBlockBowlSchema, piggybackBlockAmount } from "../../shared/manhuaPrevisPiggyback";
 
 const point = z.tuple([
   z.number().finite(),
@@ -35,6 +39,7 @@ export const previsReportSchema = z
       passengerId: z.string().min(1),
       slipCatch: previsPiggybackSlipCatchSchema.optional(),
       setDown: previsPiggybackSetDownSchema.optional(),
+      blockBowl: previsPiggybackBlockBowlSchema.optional(),
       samples: z.array(z.object({
         frame: z.number().int().min(1).max(720),
         supportError: z.number().finite().nonnegative().max(30),
@@ -45,6 +50,11 @@ export const previsReportSchema = z
         stage: z.enum(["carried","lowering","supported","released","seated"]).optional(),
         pelvisHeight: z.number().finite().optional(),
         passengerRoot: point.optional(),
+        blockAmount: z.number().finite().min(0).max(1).optional(),
+        supportSide: z.union([z.literal(-1),z.literal(1)]).optional(),
+        blockError: z.number().finite().min(0).max(.005).optional(),
+        blockTarget: point.optional(),
+        blockTip: point.optional(),
       }).strict()).min(48).max(720),
       boundaryZh: z.string().min(1),
     }).strict().optional(),
@@ -169,6 +179,10 @@ export const previsReportSchema = z
       .optional(),
     waterEmergence: waterReportSchema.optional(),
     motionRoutes: routeReportSchema.optional(),
+    quadrupedFalls: quadrupedFallReportSchema.optional(),
+    storyProps: storyPropsReportSchema.optional(),
+    handContacts: handContactsReportSchema.optional(),
+    humanPostures: humanPostureReportsSchema.optional(),
     cameraTiming: cameraTimingReportSchema.optional(),
     effects: effectsReportSchema.optional(),
     sceneEffects: previsSceneEffectsReportSchema.optional(),
@@ -246,11 +260,18 @@ export function validatePrevisReport(
     if (!pair || pair.carrierId !== spec.piggyback.carrierId || pair.passengerId !== spec.piggyback.passengerId ||
         pair.samples.length !== report.frames || pair.samples.some((row, i) => row.frame !== i+1))
       throw new Error("背负逐帧接触证据缺失或人物不一致");
+    const block = spec.piggyback.blockBowl;
+    if (JSON.stringify(block) !== JSON.stringify(pair.blockBowl)) throw new Error("背负挡碗配置与回执不一致");
     const down = spec.piggyback.setDown;
     if (JSON.stringify(down) !== JSON.stringify(pair.setDown)) throw new Error("放下时序与回执不一致");
     let stoppedRoot: number[] | undefined;
     for (const row of pair.samples) {
       const t=(row.frame-1)/24;
+      if(block) {
+        const amount=piggybackBlockAmount(block,row.frame);
+        if(row.blockAmount===undefined || Math.abs(row.blockAmount-amount)>1e-6 || row.supportSide!==-Number(block.hand.slice(4)) || row.blockError===undefined || !row.blockTarget || !row.blockTip || Math.hypot(...row.blockTip.map((v,i)=>v-row.blockTarget![i]))>.005 || Math.abs(Math.hypot(...row.blockTip.map((v,i)=>v-row.blockTarget![i]))-row.blockError)>1e-6)
+          throw new Error("背负挡碗单手目标或另一侧托膝证据不一致");
+      } else if(row.blockAmount!==undefined || row.supportSide!==undefined || row.blockError!==undefined || row.blockTarget || row.blockTip) throw new Error("无挡碗配置却出现单手背负回执");
       if (!down || t<=down.startSec) {
         if (row.supportError>.2 || row.gripError>.005 || row.passengerFootHeight<.1 || row.actualDropMeters !== undefined && (row.actualDropMeters<-.005 || row.actualDropMeters>.2)) throw new Error("背负接触未通过");
       }
@@ -527,6 +548,10 @@ export function validatePrevisReport(
     )
       throw new Error("白模双人交互接触检查未通过");
   }
+  validateStoryPropsReport(report.storyProps, spec);
+  validateHandContactsReport(report.handContacts, spec, report.models);
+  validateHumanPostureReports(report.humanPostures, spec.actors, spec.durationSec);
+  validateQuadrupedFallReport(report.quadrupedFalls, spec, report.models);
   validateWaterReport(report.waterEmergence, spec);
   validateRouteReport(report.motionRoutes, spec, report.models);
   validateCameraTimingReport(report.cameraTiming, spec);

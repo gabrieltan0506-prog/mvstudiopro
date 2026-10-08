@@ -1,4 +1,7 @@
 import { previsAnimationReceipt } from "@shared/manhuaPrevisAnimation";
+import { applyAdvisorPrevisCandidate } from "@shared/manhuaAdvisorPrevisEdit";
+import { ManhuaPrevisPlanImport } from "./ManhuaPrevisPlanImport";
+import { buildAdvisorPrevisShotSource } from "@shared/manhuaAdvisorPrevisShotSource";
 import type { AdvisorEffectsControl, AdvisorEffectsRegistration } from "@shared/manhuaAdvisorEffects";
 import { advisorWorkflowRevision } from "@shared/manhuaAdvisorWorkflowPlan";
 import { ManhuaPrevisSceneEffectsEditor } from "./ManhuaPrevisSceneEffectsEditor";
@@ -98,7 +101,7 @@ type Props = {
     /** assetRef：模型所在 ref（可能是 A-pose 候选图，与人物 id 不同） */
     model?: { taskId: string; assetRef?: string };
   }>;
-  sourceShots?: PrevisSourceShot[];
+  sourceShots?: Array<PrevisSourceShot & {cameraZh?:string;dialogueZh?:string}>;
   /** 0929：本段分镜的景别/机位/运镜原文，用于按分镜自动排运镜（不进草案身份键） */
   directionShots?: ManhuaDirectedShot[];
   /** 本集导演包主卡；只取卡片里已写明、能落到机位上的手法 */
@@ -215,6 +218,14 @@ export function ManhuaPrevisStudioView({
     };
   }, []);
   const pendingId = studio.pending?.requestId;
+  function currentImportStudio() {
+    const current = latest.current;
+    if (!sourceShots.length && current.studio.advisorShotSource)
+      throw new Error("当前分镜来源已移除，不能沿用旧原文保存动作方案");
+    return { ...current.studio, ...(sourceShots.length ? {
+      advisorShotSource: buildAdvisorPrevisShotSource(current.block.id, sourceShots),
+    } : {}) };
+  }
   function publish(next: Studio, reference?: ManhuaSegmentReferenceEntry) {
     const parsed = manhuaPrevisSpecSchema.safeParse(next.spec);
     if (!parsed.success) { setError(`方案未通过白模检查：${parsed.error.issues.map(issue => issue.message).join("；")}`); return false; }
@@ -729,6 +740,16 @@ export function ManhuaPrevisStudioView({
         <button type="button" className={button} disabled={disabled || Boolean(pendingId) || busy} onClick={() => onOpenAdvisor(preview?.requestId)}>让创作顾问调整</button>
       </div>}
       <p className="text-xs text-cyan-100" data-previs-source-scope>{manhuaPrevisSourceLabel(studio.spec)}</p>
+      <ManhuaPrevisPlanImport clipId={block.id} getCurrentStudio={currentImportStudio} disabled={Boolean(disabled || pendingId || busy)} onApply={candidate => {
+        try {
+          const current = latest.current;
+          const liveStudio=currentImportStudio();
+          const next = applyAdvisorPrevisCandidate(current.block.id, liveStudio, candidate);
+          if (!publish(next)) return false;
+          setStatus("已保存确认的动作方案；尚未渲染，原配置和已采用参考均保留。");
+          return true;
+        } catch (e) { setError(e instanceof Error ? e.message : "方案未保存，原配置保留"); return false; }
+      }} />
       <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(280px,1fr)]" data-previs-workspace>
       <div className="min-w-0 self-start xl:sticky xl:top-4">
       {!preview && (

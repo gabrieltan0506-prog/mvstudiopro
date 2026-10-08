@@ -715,6 +715,7 @@ def apply_cough_contact(model, actions, frame_start, frame_end, fps=24):
     from previs_contact_ik import solve_limb
     bpy = _bpy()
     rig, mapping = model["rig"], model["boneMap"]
+    from previs_human_contact import head_contact_target
     coughs = [a for a in actions if a.get("kind") == "cough"]
     if not coughs:
         return []
@@ -758,7 +759,9 @@ def apply_cough_contact(model, actions, frame_start, frame_end, fps=24):
             rows.append({"frame": frame, "targetResidual": 0., "hold": hold})
             continue
         scale = (upper.bone.length+lower.bone.length)/.58
-        target = rig.pose.bones[mapping["head"]].head + Vector((.125, -.025, .055))*scale
+        head = rig.pose.bones[mapping["head"]]
+        head_delta = head.matrix.to_quaternion() @ model["restMatrices"][head.name].to_quaternion().inverted()
+        target = Vector(head_contact_target(tuple(head.head), tuple(tuple(row) for row in head_delta.to_matrix()), scale))
         wrist = original_wrist.lerp(target, hold)
         original_bend = (lower.head-upper.head).normalized()
         bend_hint = original_bend.lerp(Vector((.2, -.15, -1)).normalized(), hold)
@@ -771,7 +774,10 @@ def apply_cough_contact(model, actions, frame_start, frame_end, fps=24):
         aim(lower, elbow, wrist)
         direction = original_hand_direction.lerp(Vector((-.1, .6, .8)).normalized(), hold).normalized()
         aim(hand, wrist, wrist+direction*hand.bone.length)
-        rows.append({"frame": frame, "targetResidual": solution["unreachableDistance"], "hold": hold})
+        actual_residual = (hand.head-wrist).length
+        if actual_residual > .005*scale:
+            raise ValueError("掩口手腕未落到真实接触目标")
+        rows.append({"frame": frame, "targetResidual": actual_residual, "hold": hold})
     model["report"]["coughContact"] = {"frames": len(rows), "meshValidated": False, "normalSpeedValidated": False}
     return rows
 

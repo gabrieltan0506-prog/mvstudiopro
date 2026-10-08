@@ -104,7 +104,7 @@ def validate_piggyback(spec):
     pair = spec.get('piggyback')
     if not pair:
         return None
-    if not {'carrierId','passengerId'}.issubset(pair) or set(pair)-{'carrierId','passengerId','slipCatch','setDown'}:
+    if not {'carrierId','passengerId'}.issubset(pair) or set(pair)-{'carrierId','passengerId','slipCatch','setDown','blockBowl'}:
         raise ValueError('背负关系字段无效')
     event = pair.get('slipCatch')
     if event:
@@ -129,6 +129,30 @@ def validate_piggyback(spec):
         raise ValueError('背负乘员不能叠加独立动作')
     if any(a.get(k) != b.get(k) for k in ('start', 'end', 'facingDeg', 'moveStartSec', 'moveEndSec', 'motionRoute')):
         raise ValueError('背负双方须使用同一站位路线')
+    if any(p.get('grip',{}).get('actorId') in (aid,bid) for p in spec.get('storyProps',[])):
+        raise ValueError('背负双方不能同时参与道具握持')
+    block=pair.get('blockBowl')
+    if block:
+        if set(block)!={'hand','bowlId','startSec','contactSec','releaseSec','endSec','offset'} or block['hand'] not in ('hand-1','hand1'):
+            raise ValueError('背负挡碗字段无效')
+        times=[block[k] for k in ('startSec','contactSec','releaseSec','endSec')]
+        if any(type(t) not in (int,float) or not math.isfinite(t) or abs(t*24-round(t*24))>1e-6 for t in times) or not (0<=times[0] and times[0]+.25<=times[1] and times[1]+.25<=times[2] and times[2]+.25<=times[3]<=spec['durationSec']-1/24):
+            raise ValueError('背负挡碗须完成抬手、挡住、松开、回托膝')
+        offset=block['offset']
+        if not isinstance(offset,list) or len(offset)!=3 or any(type(v) not in (int,float) or not math.isfinite(v) or abs(v)>.3 for v in offset) or math.sqrt(sum(v*v for v in offset))<.14:
+            raise ValueError('背负挡碗掌心须位于碗沿外，不能伸入碗中心')
+        if event or pair.get('setDown'):
+            raise ValueError('背负挡碗不能叠加滑落或放下')
+        props=spec.get('storyProps',[])
+        bowl=next((p for p in props if p['id']==block['bowlId']),None)
+        if bowl and math.sqrt(sum(v*v for v in offset))<.14*max([1]+[k.get('scale',1) for k in bowl.get('keyframes',[])]):
+            raise ValueError('背负挡碗目标须避开按实际尺寸缩放的碗中心')
+        if not bowl or bowl['kind']!='bowl' or not bowl.get('grip') or bowl['grip']['actorId'] in (aid,bid):
+            raise ValueError('背负挡碗须引用另一人物实际持有的碗')
+        route=a.get('motionRoute')
+        moving=any(times[0]<n['timeSec'] and times[3]>route[i-1]['timeSec'] and (n['position']!=route[i-1]['position'] or n['facingDeg']!=route[i-1]['facingDeg']) for i,n in enumerate(route or []) if i>0) if route else (a['start']!=a['end'] and times[0]<a['moveEndSec'] and times[3]>a['moveStartSec'])
+        if moving or any(e['kind']!='idle' and e['startSec']<times[3] and e['endSec']>times[0] for e in a['actions']):
+            raise ValueError('背负挡碗期间须停稳')
     down=pair.get('setDown')
     if down:
         if set(down)!={'startSec','groundSec','releaseSec','endSec'} or not all(isinstance(v,(float,int)) and not isinstance(v,bool) and math.isfinite(v) and abs(v*24-round(v*24))<1e-6 for v in down.values()):
@@ -156,7 +180,7 @@ def apply_piggyback(pair, poses, frame, fixed=None):
     poses[aid], poses[bid], _ = solve_piggyback(poses[aid], poses[bid], drop, gap)
 
 
-def measure_piggyback(pair, rigs, scene, update):
+def measure_piggyback(pair, rigs, scene, update, block_samples=None):
     """逐帧读取最终骨架托腿、抱肩与悬空脚，区别于承载者接地。"""
     by_id = {actor['id']: rig for actor, rig, *_ in rigs}
     a, b = by_id[pair['carrierId']], by_id[pair['passengerId']]
@@ -165,13 +189,17 @@ def measure_piggyback(pair, rigs, scene, update):
         scene.frame_set(frame)
         update()
         support, grip, heights = [], [], []
+        block=pair.get('blockBowl')
+        amount=piggyback_block_amount(block,frame)
+        block_side=int(block['hand'][4:]) if block else None
         for side in (-1, 1):
             key = str(side)
             wrist = a.matrix_world @ a.pose.bones['forearm'+key].tail
             knee_target = b.matrix_world @ (b.pose.bones['lower_leg'+key].head + Vector((0, 0, -.035)))
             hand = b.matrix_world @ b.pose.bones['forearm'+key].tail
             shoulder = a.matrix_world @ (a.pose.bones['upper_arm'+key].head + Vector((.075, 0, .025)))
-            support.append((wrist-knee_target).length)
+            if not block or amount==0 or side!=block_side:
+                support.append((wrist-knee_target).length)
             grip.append((hand-shoulder).length)
             heights.append((b.matrix_world @ b.pose.bones['foot'+key].head).z)
         _, expected_gap = piggyback_motion(pair, frame)
@@ -181,11 +209,13 @@ def measure_piggyback(pair, rigs, scene, update):
         stage=('carried' if t<=down['startSec'] else 'lowering' if t<down['groundSec'] else 'supported' if t<down['releaseSec'] else 'released' if t<down['endSec'] else 'seated') if down else None
         rows.append({'frame': frame, 'supportError': max(support), 'expectedSupportGap': expected_gap,
                      'actualDropMeters': actual_drop, 'gripError': max(grip), 'passengerFootHeight': min(heights),
+                     **measure_block_frame(block,block_samples,a,frame,amount),
                      **({'stage':stage,'pelvisHeight':(b.matrix_world @ b.pose.bones['spine'].head).z,'passengerRoot':list(b.matrix_world.translation)} if down else {})})
     boundary = ('从已背稳到中途滑落、接住并复位的基础人形预演；不含上背、放下或完整衣物网格验收。'
                 if pair.get('slipCatch') else
                 '整段已背稳的基础人形预演；不含上背、放下或完整衣物网格验收。')
     if pair.get('setDown'): boundary='连续降低、落地支撑、松手和起身；乘员留在原地。程序接触检查不代替逐帧画面与常速验收。'
+    if pair.get('blockBowl'): boundary='挡碗时一手托膝、乘员双手抱肩，另一手按实际碗位置挡住再回托膝；几何接触不是承重物理或完整衣物网格验收。'
     return {**pair, 'samples': rows, 'boundaryZh': boundary}
 
 def set_down_pose(pair, carrier, passenger, frame, fixed):
@@ -246,3 +276,78 @@ def set_down_pose(pair, carrier, passenger, frame, fixed):
     if t >= event['endSec']:
         a=copy_pose(current_carrier)
     return a,b
+
+
+def piggyback_block_amount(block, frame):
+    if not block:
+        return 0.
+    t=(frame-1)/24
+    if t<=block['startSec'] or t>=block['endSec']:
+        return 0.
+    def smooth(u): return u*u*(3-2*u)
+    if t<block['contactSec']:
+        return smooth((t-block['startSec'])/(block['contactSec']-block['startSec']))
+    if t<=block['releaseSec']:
+        return 1.
+    return 1-smooth((t-block['releaseSec'])/(block['endSec']-block['releaseSec']))
+
+
+def apply_piggyback_block(pair, rigs, handles, scene):
+    """碗及持碗手已烘焙后，单独解挡碗手；不移动另一托膝手或乘员。"""
+    block=(pair or {}).get('blockBowl')
+    if not block:
+        return None
+    import bpy
+    from previs_bone_basis import rotation_from_rest
+    actor,rig=next((a,r) for a,r,*_ in rigs if a['id']==pair['carrierId'])
+    if actor.get('riggedModel'):
+        raise ValueError('完整人物背负挡碗尚未通过网格验收')
+    handle=next((h for h in handles if h['spec']['id']==block['bowlId']),None)
+    if not handle or handle['spec']['kind']!='bowl':
+        raise ValueError('背负挡碗缺少实际碗对象')
+    obj=handle['objects'][0]
+    side=block['hand'][4:]
+    upper,lower,hand=[rig.pose.bones[name+side] for name in ('upper_arm','forearm','hand')]
+    rows=[]
+    for frame in range(1,scene.frame_end+1):
+        scene.frame_set(frame);bpy.context.view_layer.update()
+        amount=piggyback_block_amount(block,frame)
+        initial=rig.matrix_world @ hand.tail
+        target=initial.copy()
+        if amount>0:
+            if not handle['samples'][frame-1]['visible']:
+                raise ValueError('背负挡碗时实际碗不可见')
+            bowl_target=obj.matrix_world.translation+obj.matrix_world.to_quaternion() @ Vector(block['offset'])
+            target=initial.lerp(bowl_target,amount)
+            local=rig.matrix_world.inverted() @ target
+            direction=(local-upper.head).normalized()
+            wrist_target=local-direction*hand.bone.length
+            solved=solve_limb(upper.head,wrist_target,upper.bone.length,lower.bone.length,(-.3,int(side),-.5))
+            if solved['unreachableDistance']>.005:
+                raise ValueError('背负挡碗手不可达，请调整持碗者位置')
+            elbow,wrist=Vector(solved['joint']),Vector(solved['end'])
+            for bone,start,end in ((upper,upper.head.copy(),elbow),(lower,elbow,wrist),(hand,wrist,wrist+direction*hand.bone.length)):
+                rotation=rotation_from_rest(bone.bone.matrix_local,bone.bone.tail_local-bone.bone.head_local,end-start)
+                bone.rotation_mode='QUATERNION'
+                bone.matrix=Matrix.Translation(start) @ rotation.to_matrix().to_4x4()
+                for key in ('location','rotation_quaternion','scale'):bone.keyframe_insert(key,frame=frame)
+            bpy.context.view_layer.update()
+            if (rig.matrix_world @ hand.tail-target).length>.005:
+                raise ValueError('背负挡碗实际手端未到目标')
+        rows.append({'target':list(target)})
+    scene.frame_set(1)
+    return rows
+
+
+def measure_block_frame(block, rows, rig, frame, amount):
+    if not block:
+        return {}
+    if not rows or len(rows)<frame:
+        raise ValueError('背负挡碗缺少逐帧目标')
+    target=Vector(rows[frame-1]['target'])
+    tip=rig.matrix_world @ rig.pose.bones[block['hand']].tail
+    error=(tip-target).length
+    if error>.005:
+        raise ValueError('背负挡碗实际手端偏离目标')
+    return {'blockAmount':amount,'supportSide':-int(block['hand'][4:]),
+            'blockError':error,'blockTarget':list(target),'blockTip':list(tip)}

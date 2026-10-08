@@ -15,6 +15,10 @@ out.mkdir(parents=True, exist_ok=True)
 for existing in list(bpy.context.scene.objects):
     bpy.data.objects.remove(existing, do_unlink=True)
 scene = bpy.context.scene
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from previs_quadruped_fall import fold_points, fall_roll, validate_fall
+from previs_quadruped_fall_contact import ground_and_measure_fall
+from previs_human_pose import apply_human_posture, validate_human_posture
 water_head_heights={}
 has_routes=any(a.get('motionRoute') for a in spec['actors'])
 if has_routes:
@@ -109,6 +113,7 @@ def position(actor, frame):
                    actor['start'][1]*(1-u)+actor['end'][1]*u, z))
 
 for _actor in spec['actors']:
+    validate_fall(_actor, spec)
     hit=_actor.get('hitReaction')
     if hit:
         attacker=next((a for a in spec['actors'] if a['id']==hit.get('sourceActorId') and a['id']!=_actor['id']),None)
@@ -344,11 +349,17 @@ def points(actor, frame, contacts):
             p['upper_arm'+str(s)]=(shoulder,elbow)
             p['forearm'+str(s)]=(elbow,hand)
             p['hand'+str(s)]=(hand,hand+(hand-elbow).normalized()*.09)
+    if actor.get('quadrupedFall'):
+        p = {name: tuple(Vector(v) for v in pair) for name,pair in fold_points(p,actor['quadrupedFall'],t).items()}
+    if actor.get('humanPosture'):
+        p = {name: tuple(Vector(v) for v in pair) for name,pair in apply_human_posture(p,actor['humanPosture'],t).items()}
     return p
 
 def foot_offsets(actor):
     if actor['shape']=='horse':
         return {str(i):(x,y) for i,(x,y) in enumerate([(-.60,-.25),(.60,.25),(-.60,.25),(.60,-.25)])}
+    if actor.get('humanPosture'):
+        return {'-1':(.32,-.15),'1':(.32,.15)}
     return {'-1':(-.08,-.15),'1':(.08,.15)}
 
 def plan_contacts(actor):
@@ -404,7 +415,7 @@ for _actor in spec['actors']:
         water_head_heights[_actor['id']]=float(points(_neutral,1,_pre_contacts[1])['head'][1].z)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from previs_piggyback import validate_piggyback, apply_piggyback, measure_piggyback, piggyback_motion
+from previs_piggyback import validate_piggyback, apply_piggyback, measure_piggyback, piggyback_motion, apply_piggyback_block
 piggyback=validate_piggyback(spec)
 passenger_id=piggyback['passengerId'] if piggyback else None
 events=[]
@@ -442,8 +453,11 @@ for actor_id in actor_color_ids:
     if actor_id not in actor_colors:
         actor_colors[actor_id] = next(i for i in range(len(actor_palette)) if i not in actor_colors.values())
 for index,actor in enumerate(spec['actors']):
+    validate_human_posture(actor,spec)
     contacts,stance=plan_contacts(actor)
-    rest=points(actor,1,contacts[1])
+    # hold首帧已侧卧，静止骨仍须中立，否则retarget把侧卧误当零增量。
+    neutral_actor={key:value for key,value in actor.items() if key!='quadrupedFall'}
+    rest=points(neutral_actor,1,contacts[1])
     if actor['id'] in water_events:
         water_head_heights[actor['id']]=float(rest['head'][1].z)
         contacts,stance=plan_contacts(actor)
@@ -455,7 +469,7 @@ for index,actor in enumerate(spec['actors']):
     bpy.ops.object.mode_set(mode='EDIT')
     for name,(a,b) in rest.items():
         bone=data.edit_bones.new(name);bone.head=a;bone.tail=b
-        if actor.get('riggedModel'):
+        if actor.get('riggedModel') or actor.get('quadrupedFall'):
             # 带骨来源的静止轴与下方动画轴一致，避免默认roll被当作动作传给真实蒙皮。
             # 只依据rest端点建轴，不拿已烘焙的首帧归零；旧白模、互动和尾翼路径保持原样。
             bone.matrix=Matrix.Translation(a) @ (b-a).to_track_quat('Y','Z').to_matrix().to_4x4()
@@ -489,13 +503,20 @@ for index,actor in enumerate(spec['actors']):
             # 只把静止骨方向摆到本帧方向，保留原roll；基础白模沿用既有矩阵。
             rotation = (rotation_from_rest(pb.bone.matrix_local, pb.bone.tail_local-pb.bone.head_local, d)
                         if actor.get('riggedModel') else d.to_track_quat('Y','Z'))
+            if actor.get('quadrupedFall'):
+                roll = Matrix.Rotation(fall_roll(actor['quadrupedFall'],(frame-1)/24),4,'X').to_quaternion()
+                unrolled = roll.inverted() @ d
+                rotation = roll @ rotation_from_rest(pb.bone.matrix_local,pb.bone.tail_local-pb.bone.head_local,unrolled)
             pb.matrix=Matrix.Translation(a) @ rotation.to_matrix().to_4x4() @ Matrix.Diagonal((1,d.length/pb.bone.length,1,1))
             for prop in ('location','rotation_quaternion','scale'):pb.keyframe_insert(prop,frame=frame)
-            if name.startswith('lower_leg') and actor['id'] != passenger_id:
+            if name.startswith('lower_leg') and actor['id'] != passenger_id and not actor.get('quadrupedFall'):
                 key=name[len('lower_leg'):]
                 max_error=max(max_error,(rig.matrix_world @ b-contacts[frame][key]).length)
     if max_error>.005: raise ValueError('关节落点不可达，请缩短路线或延长移动区间')
     rigs.append((actor,rig,contacts,stance,max_error))
+    if actor.get('humanPosture'):
+        from previs_human_support import build_human_support
+        build_human_support(actor,rig,scene,ground)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from previs_hit_cues import build_hit_cues
@@ -572,7 +593,7 @@ if any(actor.get('riggedModel') for actor in spec['actors']):
         model['report'].update({'actorId':actor['id'],'sourceJobId':row['sourceJobId'],
             'boundaryZh':'真实带骨网格旋转与路径重定向，保留模型原始静止姿态，不自动生成自然站姿；源白模脚底误差不代表角色网格接地，尚未验证双人接触；文戏动作只烘「相对各自静止姿态的旋转增量」、骨盆位移按骨骼跨度比例缩放：'
             '实测（test_previs_drama_rigged.py，1.0 倍与 1.5 倍棍人身高两具夹具）行礼/指向/看向按身高等比转移，'
-            '落座深度比等比值浅 3.4%；坐下因棍人静止姿态屈膝、真模静止姿态直腿，脚会穿地 21—32 厘米，已在提交与渲染两处拒绝；'
+            '落座深度比等比值浅 3.4%；旧诊断曾穿地21—32厘米，现有真实腿长坐姿校正尚待正式人物网格与常速审片，提交与渲染仍保留门禁；'
             '走位抬脚残差 ≤2.0 厘米；看向只转头骨，肩线偏转是位置量、重定向不转移；'+appearance['boundaryZh']})
         if actor['shape'] == 'horse':
             model['report']['boundaryZh'] = '真实四足蒙皮按当前horse驱动映射前后四腿、躯干、颈与头，保持目标骨长；尚未验真实蹄底接地、受伤倒地或人与马接触，不能用白模报告冒充质量验收；'+appearance['boundaryZh']
@@ -583,6 +604,24 @@ if any(actor.get('riggedModel') for actor in spec['actors']):
 if creatures and not models:
     validate_projection_work(sum(len(obj.data.vertices) for handle in creatures for obj in handle['meshes']),
         scene.frame_end,spec['aspect']=='9:16')
+
+# 对实际显示的网格接地；失败停止渲染，不以源骨端点替代真模测量。
+quadruped_falls=[]
+for actor,source_rig,_contacts,_stance,_error in rigs:
+    if not actor.get('quadrupedFall'): continue
+    model=next((item for item in models if item['actorId']==actor['id']),None)
+    if model:
+        measured=ground_and_measure_fall(actor,model['rig'],model['meshes'],scene,model['boneMap'],model['report'])
+        model['report']['boundaryZh'] += ' 本次倒地已按实际网格逐帧检查躯干支撑、四腿折叠和保持位置；常速画面仍须人工验收。'
+    else:
+        measured=ground_and_measure_fall(actor,source_rig,[obj for obj in source_rig.children if obj.type=='MESH'],scene)
+    quadruped_falls.append(measured)
+
+from previs_hand_contacts import apply_hand_contacts
+hand_contact_rows=apply_hand_contacts(spec,rigs,scene,actor_visible,models)
+from previs_story_props import build_story_props
+story_prop_handles=build_story_props(spec,rigs,scene,actor_visible,models)
+piggyback_block_samples=apply_piggyback_block(piggyback,rigs,story_prop_handles,scene)
 
 # 在场窗口真正控制画面网格。模型替身原本恒隐藏；尾翼另有显形曲线，合成时保留其原有可见条件。
 primary_meshes={}
@@ -807,7 +846,7 @@ for actor,rig,contacts,stance,error in rigs:
             visible_frames.append(frame)
         for key in foot_offsets(actor):
             actual=rig.matrix_world @ rig.pose.bones['lower_leg'+key].tail
-            if actor['id'] != passenger_id and key in stance[frame] and key in previous and previous[key][0]==frame-1 and previous[key][1]:
+            if actor['id'] != passenger_id and not actor.get('quadrupedFall') and key in stance[frame] and key in previous and previous[key][0]==frame-1 and previous[key][1]:
                 drift=max(drift,(actual-previous[key][2]).length)
             previous[key]=(frame,key in stance[frame],actual.copy())
         if any(a['kind']=='limp_front_left' for a in actor['actions']):
@@ -824,7 +863,7 @@ for actor,rig,contacts,stance,error in rigs:
     if hit_samples: report['actors'][-1]['hitReaction']={**actor['hitReaction'],'samples':hit_samples}
     if offscreen:report['warnings'].append(actor['nameZh']+'存在头或脚出画，请人工审查镜头覆盖')
 if piggyback:
-    report['piggyback']=measure_piggyback(piggyback,rigs,scene,bpy.context.view_layer.update)
+    report['piggyback']=measure_piggyback(piggyback,rigs,scene,bpy.context.view_layer.update,piggyback_block_samples)
     report['warnings'].append(report['piggyback']['boundaryZh'])
 if events:
     report['interactions']=measure_interactions(events,rigs,scene,bpy.context.view_layer.update)
@@ -869,6 +908,15 @@ if effect_handles:
 if scene_effect_handles:
     report['sceneEffects']=measure_scene_effects(scene_effect_handles,scene)
     report['warnings'].extend(sorted(set(row['boundaryZh'] for row in report['sceneEffects'])))
+if story_prop_handles:
+    report['storyProps']=[{'id':h['spec']['id'],'kind':h['spec']['kind'],'samples':h['samples']} for h in story_prop_handles]
+if hand_contact_rows:
+    report['handContacts']=hand_contact_rows
+if any(actor.get('humanPosture') for actor in spec['actors']):
+    from previs_human_posture_report import measure_human_posture
+    report['humanPostures']=[measure_human_posture(actor,rig,scene,bpy.context.view_layer.update) for actor,rig,*_ in rigs if actor.get('humanPosture')]
+if quadruped_falls:
+    report['quadrupedFalls']=quadruped_falls
 if has_routes:
     report['motionRoutes']=measure_routes(spec,rigs,scene,models)
 if water_handles:
@@ -907,6 +955,9 @@ if spec.get('exportAnimation'):
         for obj in meshes: obj['previs_animation_object']=True
     for handle in effect_handles:
         for obj in handle.get('objects',[]): obj['previs_animation_object']=True
+    # 掌击与伤处也是实际画面对象，导出的逐帧可见表不能遗漏它们。
+    for cue in hit_cues.values():
+        for key in ('pulse', 'wound'): cue[key]['previs_animation_object']=True
 frames=out/'frames';frames.mkdir(exist_ok=True)
 scene.render.filepath=str(frames/'frame-')
 bpy.ops.wm.save_as_mainfile(filepath=str(out/'scene.blend'))

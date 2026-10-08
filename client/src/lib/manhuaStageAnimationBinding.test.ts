@@ -12,3 +12,10 @@ it('adoption requires the currently selected take, unchanged clip motion and cur
  for(const change of [{...clip,id:'other'},{...clip,archivedFromPreviousScript:true},{...clip,previsStudio:{...clip.previsStudio,scopeId:crypto.randomUUID()}},{...clip,previsStudio:{...clip.previsStudio,selectedJobId:'other'}},{...clip,previsStudio:{...clip.previsStudio,spec:{...studio.spec,durationSec:3}}}])expect(()=>requireCurrentStageAnimation([change] as any,[ref],source)).toThrow();
  for(const change of [{...ref,id:'other'},{...ref,gcsUri:'gs://bucket/changed.png'},{...ref,world3d:{...ref.world3d,taskId:'mw-other'}},{...ref,world3d:{...ref.world3d,status:'running'}}])expect(()=>requireCurrentStageAnimation([clip] as any,[change],source)).toThrow();
 });
+
+it('已采用顾问独立试看使用真实来源scope，仍拒绝其他scope',()=>{
+ const trialScope=crypto.randomUUID();
+ const trialClip={...clip,previsStudio:{...clip.previsStudio,history:clip.previsStudio.history.map(t=>({...t,sourceScopeId:trialScope}))}};
+ expect(requireCurrentStageAnimation([trialClip] as any,[ref],{...source,scopeId:trialScope})).toBe(trialClip);
+ expect(()=>requireCurrentStageAnimation([trialClip] as any,[ref],source)).toThrow();
+});

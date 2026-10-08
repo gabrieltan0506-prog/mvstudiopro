@@ -11,6 +11,7 @@ import { maskMediaUrls, maskMediaProviderDetails } from "@/lib/maskMediaUrls";
 import { normalizeManhuaPromptSeconds } from "@shared/manhuaPromptSeconds";
 import { ManhuaSecondaryToolTabs } from "./canvas/ManhuaSecondaryToolTabs";
 import { createAdvisorPrevisStudio, selectPrevisCharacterSlots } from "@shared/manhuaAdvisorPrevisInitial";
+import { buildAdvisorPrevisShotSource } from "@shared/manhuaAdvisorPrevisShotSource";
 import { previsInitialDurationSec } from "@shared/manhuaPrevisScript";
 import { ManhuaPrevisAudioControls } from "./canvas/ManhuaPrevisAudioControls";
 import { summarizeManhuaFinalSegmentEvidence } from "@/lib/manhuaFinalSegmentEvidence";
@@ -3149,6 +3150,11 @@ export default function ManhuaScriptWorkbench({
     if (!activeClip || !onOpenAdvisorPrevis || !onUpdateClipPrevisStudio || factoryBusy || activeClip.status === "running" || activeClip.videoTaskStatus === "queued") return {opened:false,reason:"当前片段未就绪、正在制作或白模入口不可用。"};
     try {
       let studio = preparedStudio || activeClip.previsStudio;
+      const currentSource = resolveShotsForEpisodeKeyartsResult(blocks, focusEpisode);
+      if (currentSource.isFallback || currentSource.sourceErrors.length) throw new Error(currentSource.sourceErrors.join("；") || "本段尚无真实分镜，不能把默认示例交给动画顾问。");
+      const sourceShots = (activeSegment?.shots || []).map(shot => ({ index: shot.index,
+        durationSec: shot.durationSec, actionZh: shot.actionZh, cameraZh: shot.cameraZh,
+        dialogueZh: shot.dialogueSuppressed ? "无对白" : shot.dialogueZh }));
       if (!studio) {
         const shots = (activeSegment?.shots || []).map(shot => ({ index: shot.index, durationSec: shot.durationSec, actionZh: shot.actionZh }));
         const durationSec = previsInitialDurationSec(shots, parseManhuaClipTargetDurationSec(activeClip.prompt || ""));
@@ -3156,6 +3162,8 @@ export default function ManhuaScriptWorkbench({
           transientCharacterNames: ["打手甲", "打手乙"],
           castZh: resolveManhuaSegmentCastZh({ castZh: activeSourceBeat?.castZh, dialogueZh: activeSourceBeat?.dialogueZh, shots: activeSegment?.shots, registry: assetLockRegistry, assetCanon }) });
       }
+      // 每次进入都读取本段当前分镜，防止旧顾问候选沿用已经修改的剧情和秒窗。
+      studio = { ...studio, advisorShotSource: buildAdvisorPrevisShotSource(activeClip.id, sourceShots) };
       // 新打开白模顾问先无声预演；在同一会话切换音轨页后返回，保留用户刚选的带声状态。
       if (!advisorOpen || advisorPrevisActiveClipId !== activeClip.id) studio = { ...studio, audioEnabled: false };
       if (studio !== activeClip.previsStudio && onUpdateClipPrevisStudio(activeClip.id, studio) === false) throw new Error("本段白模设置未保存，请重试。原声音与配置保留。");
@@ -5598,7 +5606,7 @@ clipPromptReviewOpen ? (
                 const source = resolveManhuaRigSource(ref, customAssetRefs).source;
                 return { id: a.id, label: a.labelZh, model: source ? { taskId: source.model.taskId } : undefined };
               }))}
-              sourceShots={activeSegment?.shots.map(shot=>({index:shot.index,durationSec:shot.durationSec,actionZh:shot.actionZh}))}
+              sourceShots={activeSegment?.shots.map(shot=>({index:shot.index,durationSec:shot.durationSec,actionZh:shot.actionZh,cameraZh:shot.cameraZh,dialogueZh:shot.dialogueSuppressed?"无对白":shot.dialogueZh}))}
               directionShots={activeSegment?.shots.map(shot=>({index:shot.index,durationSec:shot.durationSec,cameraZh:shot.cameraZh||"",actionZh:shot.actionZh}))}
               directionCardId={directionCanon?.mainCardId ?? null}
               onOpenAdvisor={onOpenAdvisorPrevis ? openPrevisAdvisor : undefined}

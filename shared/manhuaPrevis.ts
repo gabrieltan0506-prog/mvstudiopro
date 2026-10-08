@@ -1,4 +1,9 @@
+import { previsStoryPropsSchema, storyPropsIssue } from "./manhuaPrevisStoryProps";
+import { previsHandContactsSchema, handContactsIssue } from "./manhuaPrevisHandContacts";
+import { previsHumanPostureSchema, humanPostureIssue } from "./manhuaPrevisHumanPosture";
+import { previsQuadrupedFallSchema, quadrupedFallIssue } from "./manhuaPrevisQuadrupedFall";
 import { previsCameraWindowSchema } from "./manhuaPrevisCameraTiming";
+import { advisorPrevisShotSourceSchema } from "./manhuaAdvisorPrevisShotSource";
 import { manhuaPrevisAudioSchema } from "./manhuaPrevisAudio";
 /** 动作白模配置：只有数据，没有用户 Python／命令／任意素材 URL。 */
 import { z } from "zod";
@@ -200,6 +205,8 @@ export const previsActorSchema = z
     motionRoute: z.array(previsMotionRouteNodeSchema).min(2).max(12).optional(),
     creature: previsCreatureSchema.optional(),
     riggedModel: previsRiggedModelSchema.optional(),
+    quadrupedFall: previsQuadrupedFallSchema.optional(),
+    humanPosture: previsHumanPostureSchema.optional(),
     shape: z.enum(["human", "horse"]),
     start: point,
     end: point,
@@ -242,6 +249,8 @@ const manhuaPrevisSpecBaseSchema = z
     /** 人物、接触、特效和相机统一按源时间变速；不是独立摄影机的子弹时间。 */
     timeMap: manhuaShotTimeMapSchema.optional(),
     actors: z.array(previsActorSchema).min(1).max(PREVIS_MAX_ACTORS),
+    storyProps: previsStoryPropsSchema.optional(),
+    handContacts: previsHandContactsSchema.optional(),
     interactions: z.array(previsInteractionSchema).max(24).optional(),
     piggyback: previsPiggybackSchema.optional(),
     scriptSource: previsScriptSourceSchema.optional(),
@@ -471,7 +480,19 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
     if (capacityIssue) ctx.addIssue({ code: "custom", message: capacityIssue });
     if (new Set(spec.actors.map(a => a.id)).size !== spec.actors.length)
       ctx.addIssue({ code: "custom", message: "角色编号不能重复" });
+    const propsIssue = storyPropsIssue(spec.storyProps, spec.actors, spec.durationSec);
+    if (propsIssue) ctx.addIssue({ code: "custom", message: propsIssue, path: ["storyProps"] });
+    const handIssue = handContactsIssue(spec);
+    if (handIssue) ctx.addIssue({ code: "custom", message: handIssue, path: ["handContacts"] });
     spec.actors.forEach((actor, i) => {
+      const fallIssue = quadrupedFallIssue(actor, spec.durationSec);
+      if (fallIssue) ctx.addIssue({ code: "custom", message: fallIssue, path: ["actors", i, "quadrupedFall"] });
+      const postureIssue = humanPostureIssue(actor, spec.durationSec);
+      if (postureIssue) ctx.addIssue({ code: "custom", message: postureIssue, path: ["actors", i, "humanPosture"] });
+      if (actor.humanPosture && (spec.waterEmergence || (spec.piggyback && [spec.piggyback.carrierId,spec.piggyback.passengerId].includes(actor.id)) || spec.interactions?.some(e=>[e.actorId,e.targetActorId].includes(actor.id)) || spec.handContacts?.some(c=>c.actorId===actor.id) || spec.storyProps?.some(p=>p.grip?.actorId===actor.id)))
+        ctx.addIssue({code:"custom",message:"坐卧演员不能叠加出水、背负或其他手部接触约束",path:["actors",i,"humanPosture"]});
+      if (actor.quadrupedFall && (spec.waterEmergence || spec.interactions?.some(event => [event.actorId, event.targetActorId].includes(actor.id))))
+        ctx.addIssue({ code: "custom", message: "倒地不可与出水或双人交互叠加", path: ["actors", i, "quadrupedFall"] });
       actor.visibleRanges?.forEach((range, j) => {
         if (range.endSec > spec.durationSec || range.startSec >= range.endSec ||
             [range.startSec, range.endSec].some(t => Math.abs(t * PREVIS_BUDGET_FPS - Math.round(t * PREVIS_BUDGET_FPS)) > 1e-6) ||
@@ -969,6 +990,7 @@ export const manhuaPrevisStudioSchema = z
   .object({
     version: z.literal(1),
     audioEnabled: z.boolean().optional(),
+    advisorShotSource: advisorPrevisShotSourceSchema.optional(),
     audioStartSec: z.number().finite().min(0).max(3600).optional(),
     loopBgm: z.boolean().optional(),
     scopeId: z.string().uuid(),
@@ -1074,6 +1096,7 @@ export function formatPrevisMotionGuide(spec: ManhuaPrevisSpec): string {
   if (spec.timeMap) return "白模已按统一时间表变速；以下秒位均为成片呈现时间，直接跟随参考，不重复变速。\n" + formatPrevisMotionGuide(previsPresentationGuideSpec(spec));
   return [
     "参考中的关节姿态、落脚、蓄力—出手—回收及保护反应按对应秒位读取；不继承白模外形。",
+    ...(spec.handContacts??[]).map(c=>`${spec.actors.find(a=>a.id===c.actorId)?.nameZh??c.actorId}用${c.hand==="hand1"?"左":"右"}手在${c.startSec}—${c.contactSec}秒靠近${spec.actors.find(a=>a.id===c.targetActorId)?.nameZh??c.targetActorId}的${c.bone==="head"?"头侧":"颈侧"}，${c.contactSec}—${c.releaseSec}秒保持同一骨锚点，${c.releaseSec}—${c.endSec}秒收手；手指、皮肤形变与额头贴靠未由该约束实现。`),
     ...formatPrevisSceneEffectsGuide(spec.sceneEffects, spec.actors),
     ...spec.cameras.filter(c => c.orbitDeg).map(c => `${c.startSec}—${c.endSec}秒围绕（${c.target.join("，")}）水平环绕${c.orbitDeg}度，${c.orbitRise ? `保持半径，同时${c.orbitRise > 0 ? "升高" : "降低"}${Math.abs(c.orbitRise)}米` : "保持半径和高度"}；${c.motionWindow ? `只在${c.motionWindow.startSec}—${c.motionWindow.endSec}秒环绕，其前后停住；` : ""}人物速度不由环绕改变。`),
     ...spec.cameras.filter(c => c.endLens !== undefined && c.endLens !== c.lens).map(c => `${c.startSec}—${c.endSec}秒焦距从${c.lens}毫米连续${c.endLens! > c.lens ? "推到" : "拉到"}${c.endLens}毫米，${c.lensWindow ? `在${c.lensWindow.startSec}—${c.lensWindow.endSec}秒变焦，其前后停住` : "按整镜平滑起停"}。`),
@@ -1112,7 +1135,13 @@ export function formatPrevisMotionGuide(spec: ManhuaPrevisSpec): string {
       ),
     ...(spec.piggyback ? [`${spec.piggyback.setDown ? `0—${spec.piggyback.setDown.startSec}秒由` : "整段由"}${(spec.actors.find(a => a.id === spec.piggyback!.carrierId)?.nameZh ?? "待重新选择的承载者")}背负${(spec.actors.find(a => a.id === spec.piggyback!.passengerId)?.nameZh ?? "待重新选择的乘员")}；开镜已背稳，乘员抱肩并跟随同一路线且双脚离地。${spec.piggyback.slipCatch
       ? `${spec.piggyback.slipCatch.slipStartSec}秒乘员向下滑落约${spec.piggyback.slipCatch.dropMeters}米，承载者的手短暂失去托腿接触，${spec.piggyback.slipCatch.catchSec}秒重新托住腿，${spec.piggyback.slipCatch.recoverEndSec}秒扶回稳定背负；不新增上背动作。`
-      : "放下前双手托腿。"}${spec.piggyback.setDown ? `${spec.piggyback.setDown.startSec}秒开始完整放下，${spec.piggyback.setDown.groundSec}秒落地坐稳，${spec.piggyback.setDown.releaseSec}秒松手，${spec.piggyback.setDown.endSec}秒承载者起身；乘员此后固定坐在原地点，承载者独立行动。` : "未设置放下，维持背负。"}`] : []),
+      : spec.piggyback.blockBowl ? `${spec.piggyback.blockBowl.startSec}秒起以一手继续托膝、母亲双手继续抱肩，另一手抬起；${spec.piggyback.blockBowl.contactSec}—${spec.piggyback.blockBowl.releaseSec}秒挡住实际碗${spec.piggyback.blockBowl.bowlId}，${spec.piggyback.blockBowl.endSec}秒回托膝，全程乘员双脚离地。` : "放下前双手托腿。"}${spec.piggyback.setDown ? `${spec.piggyback.setDown.startSec}秒开始完整放下，${spec.piggyback.setDown.groundSec}秒落地坐稳，${spec.piggyback.setDown.releaseSec}秒松手，${spec.piggyback.setDown.endSec}秒承载者起身；乘员此后固定坐在原地点，承载者独立行动。` : "未设置放下，维持背负。"}`] : []),
+    ...spec.actors.filter(a=>a.humanPosture).map(a=>{const p=a.humanPosture!;return `${a.nameZh}在${p.supportHeight}米支撑面上${p.mode==="hold"?(p.posture==="sit"?"整段坐稳":`整段后仰${p.reclineDeg}度半躺`):`${p.startSec}—${p.endSec}秒由后仰${p.reclineDeg}度坐起，随后持续坐稳`}；双脚保持地面接触，不自动站起。`;}),
+    ...spec.actors.filter(a=>a.quadrupedFall).map(a=>{
+      const fall=a.quadrupedFall!;
+      return fall.mode==="hold" ? `${a.nameZh}整段保持${fall.side==="left"?"左":"右"}侧卧地，四腿折叠，不自动起身。` : `${a.nameZh}${fall.startSec}秒开始屈腿，${fall.foldSec}秒开始向${fall.side==="left"?"左":"右"}侧倒，${fall.groundSec}秒躯干触地并保持至片尾，四腿折叠，不自动起身。`;
+    }),
+    ...(spec.storyProps??[]).map(p=>`剧情道具${p.id}（${({needle:"飞针",blood_drop:"血滴",bowl:"碗",jar:"血坛",knife:"刀",sleeve_glow:"袖口光"} as const)[p.kind]}）按${p.keyframes.map(k=>`${k.timeSec}秒${k.visible?"显示":"隐藏"}，绑定${k.anchor.type==="bone"?`${k.anchor.actorId}/${k.anchor.bone}`:k.anchor.type==="prop"?k.anchor.propId:`固定位置（${k.anchor.position.join("，")}）`}`).join("；")}读取，落点随同一锚点保持，不重算为施术者方向。`),
     ...spec.actors.filter(a=>a.hitReaction).map(a=>`${a.hitReaction!.contactSec}秒，${a.nameZh}受${spec.actors.find(b=>b.id===a.hitReaction!.sourceActorId)?.nameZh}出掌击中，胸颈快速后缩下沉，支撑脚保持接地，${a.hitReaction!.endSec}秒恢复；原跛行持续。`),
     ...(spec.interactions ?? []).map(event => {
       const actor = spec.actors.find(a => a.id === event.actorId)!;

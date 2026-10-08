@@ -34,17 +34,39 @@ export const previsPiggybackSetDownSchema = z.object({
   endSec: z.number().finite().min(0),
 }).strict();
 
+/** 只释放一侧托膝手，另一侧与乘员抱肩约束保留。 */
+export const previsPiggybackBlockBowlSchema = z.object({
+  hand: z.enum(["hand-1", "hand1"]),
+  bowlId: z.string().min(1).max(80),
+  startSec: z.number().finite().nonnegative(),
+  contactSec: z.number().finite().nonnegative(),
+  releaseSec: z.number().finite().nonnegative(),
+  endSec: z.number().finite().nonnegative(),
+  offset: z.tuple([z.number().finite().min(-.3).max(.3), z.number().finite().min(-.3).max(.3), z.number().finite().min(-.3).max(.3)]),
+}).strict();
+export function piggybackBlockAmount(block: z.infer<typeof previsPiggybackBlockBowlSchema> | undefined, frame: number): number {
+  if (!block) return 0;
+  const t=(frame-1)/24;
+  if(t<=block.startSec || t>=block.endSec)return 0;
+  const smooth=(u:number)=>u*u*(3-2*u);
+  if(t<block.contactSec)return smooth((t-block.startSec)/(block.contactSec-block.startSec));
+  if(t<=block.releaseSec)return 1;
+  return 1-smooth((t-block.releaseSec)/(block.endSec-block.releaseSec));
+}
+
 export const previsPiggybackSchema = z.object({
   carrierId: z.string().min(1).max(100),
   passengerId: z.string().min(1).max(100),
   slipCatch: previsPiggybackSlipCatchSchema.optional(),
   setDown: previsPiggybackSetDownSchema.optional(),
+  blockBowl: previsPiggybackBlockBowlSchema.optional(),
 }).strict();
 
 export function previsPiggybackIssues(spec: {
   piggyback?: z.infer<typeof previsPiggybackSchema>;
   durationSec: number;
   waterEmergence?: unknown;
+  storyProps?: readonly {id:string;kind:string;grip?:{actorId:string};keyframes?:readonly {scale:number}[]}[];
   interactions?: readonly { actorId: string; targetActorId: string }[];
   actors: readonly {
     id: string; shape: string; riggedModel?: unknown; creature?: unknown; weapon?: unknown;
@@ -73,6 +95,23 @@ export function previsPiggybackIssues(spec: {
   if (["start", "end", "facingDeg", "moveStartSec", "moveEndSec", "motionRoute"].some(key =>
     JSON.stringify(carrier[key as keyof typeof carrier]) !== JSON.stringify(passenger[key as keyof typeof passenger])))
     issues.push("乘员须跟随承载者的同一站位与路线，不能同时保留独立位移");
+  const block = pair.blockBowl;
+  if(spec.storyProps?.some(p=>p.grip && [carrier.id,passenger.id].includes(p.grip.actorId)))
+    issues.push("背负双方的手不能同时参与剧情道具握持");
+  if (block) {
+    const times=[block.startSec,block.contactSec,block.releaseSec,block.endSec];
+    if(times.some(t=>Math.abs(t*24-Math.round(t*24))>1e-6) || block.contactSec-block.startSec<.25 || block.releaseSec-block.contactSec<.25 || block.endSec-block.releaseSec<.25 || block.endSec>spec.durationSec-1/24)
+      issues.push("背负挡碗须按24帧依次抬手、挡住、松开、回托膝，各阶段不少于0.25秒且片尾前完成");
+    if(pair.slipCatch || pair.setDown) issues.push("单手挡碗不能与滑落接住或放下同时编排");
+    const bowl=spec.storyProps?.find(p=>p.id===block.bowlId);
+    if(Math.hypot(...block.offset)<.14*Math.max(1,...(bowl?.keyframes?.map(k=>k.scale)??[]))) issues.push("背负挡碗目标须避开按实际尺寸缩放的碗中心");
+    if(!bowl || bowl.kind!=="bowl" || !bowl.grip || [carrier.id,passenger.id].includes(bowl.grip.actorId))
+      issues.push("挡碗须引用另一人物实际持有的碗，不得空挡或由背负双方端碗");
+    const route=carrier.motionRoute;
+    const moving=route?.length ? route.some((node,i)=>i>0 && block.startSec<node.timeSec && block.endSec>route[i-1].timeSec && (node.facingDeg!==route[i-1].facingDeg || node.position.some((v,k)=>v!==route[i-1].position[k]))) : carrier.start.some((v,k)=>v!==carrier.end[k]) && block.startSec<carrier.moveEndSec && block.endSec>carrier.moveStartSec;
+    if(moving || carrier.actions.some(a=>a.kind!=="idle" && a.startSec<block.endSec && a.endSec>block.startSec))
+      issues.push("单手背负挡碗期间须停稳，不叠加走动或独立动作");
+  }
   const slip = pair.slipCatch;
   if (slip && !(slip.slipStartSec + .2 <= slip.catchSec &&
       slip.catchSec + .2 <= slip.recoverEndSec && slip.recoverEndSec <= spec.durationSec))
