@@ -790,8 +790,11 @@ export async function statGcsObjectVersion(params: {
 
 export async function downloadGcsObjectVersioned(params: {
   gcsUri: string;
+  signal?: AbortSignal;
 }): Promise<{ buffer: Buffer; bucket: string; objectName: string; generation: string }> {
+  params.signal?.throwIfAborted();
   const version = await statGcsObjectVersion(params);
+  params.signal?.throwIfAborted();
   const { bucket, objectName, generation } = version;
   const accessToken = await getVertexAccessToken();
   const userProject = getGcsUserProject();
@@ -804,6 +807,7 @@ export async function downloadGcsObjectVersioned(params: {
   mediaUrl.searchParams.set("generation", generation);
   const mediaRes = await fetch(mediaUrl, {
     method: "GET",
+    signal: params.signal,
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!mediaRes.ok) {

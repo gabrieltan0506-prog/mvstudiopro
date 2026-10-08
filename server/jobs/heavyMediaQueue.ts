@@ -8,12 +8,19 @@ import type { RenderWorkflowInput } from "../vercel-api-core/renderTypes";
 import type { NativeDeepReadBatchRunEpisode } from "../services/manhuaNativeDeepReadRunner";
 import type { PreparedNativeVideo } from "../services/manhuaNativeDeepReadRunner";
 
+export type HeavyLearnWork =
+  | { operation: "verify_frames"; frames: import("../../shared/manhuaViralTemplateBank").ManhuaViralTemplateEvidenceFrame[] }
+  | { operation: "key_frames"; input: Omit<Parameters<typeof import("../services/manhuaNativeKeyMomentFrames").extractNativeKeyMomentEvidenceFrames>[0], "abortSignal" | "onFrameUploaded" | "onFrameFailure"> }
+  | { operation: "sweep_frames"; input: Omit<Parameters<typeof import("../services/manhuaNativeSweepFrames").extractSweepFrames>[0], "abortSignal"> }
+  | { operation: "native_report"; input: import("../services/manhuaNativeReportRender").NativeReportFromObjectNamesInput };
+export type HeavyLearnEvent = { frame?: import("../../shared/manhuaViralTemplateBank").ManhuaViralTemplateEvidenceFrame; failure?: { stage: string; reason: string; atSec?: number } };
 export type HeavyMediaRequest =
   | {
       kind: "final_render";
       input: Omit<RenderWorkflowInput, "onSubtitleTimeline">;
     }
   | { kind: "local_probe"; source: string }
+  | { kind: "learn_work"; work: HeavyLearnWork; requestId: string }
   | {
       kind: "learn_source";
       sourceUrl: string;
@@ -45,7 +52,7 @@ export type HeavyCommandResult = {
 };
 export type HeavyMetadataRequest = Extract<
   HeavyMediaRequest,
-  { kind: "learn_command" | "learn_source" }
+  { kind: "learn_command" | "learn_source" | "learn_work" }
 >;
 export type PreparedGroup = {
   segmentIndex: number;
@@ -53,6 +60,8 @@ export type PreparedGroup = {
 }[];
 export type HeavyMediaProgress = {
   message?: string;
+  operationEvents?: HeavyLearnEvent[];
+  callbackProgress?: { sequence: number; events: HeavyLearnEvent[] };
   groups?: PreparedGroup[];
   nodeRequest?: number;
   acknowledgedGroups?: number;
@@ -125,22 +134,35 @@ export async function dispatchHeavyMedia<T>(
     if (!store.reply) throw new Error("Media reply store unavailable");
     await store.reply(id, owner.userId, value);
   };
-  const callbackCommand = async (
-    command: HeavyMetadataRequest
+  let callbackTail: Promise<unknown> = Promise.resolve();
+  const runCallbackCommand = async (
+    command: HeavyMetadataRequest,
+    onEvents?: (events: HeavyLearnEvent[]) => Promise<void>,
   ) => {
     if (request.kind !== "learn_prepare")
       throw new Error("Unexpected native callback");
     const sequence = ++commandSequence;
     await reply({ commandRequest: { sequence, request: command } });
+    let delivered = 0;
     while (true) {
       options.signal?.throwIfAborted();
-      const current = await store.get(id);
+      let current: HeavyMediaRow | null;
+      try { current = await store.get(id); }
+      catch {
+        await (options.wait?.() ?? delay(250, undefined, { signal: options.signal }));
+        continue;
+      }
       if (
         !current ||
         current.userId !== owner.userId ||
         current.status !== "running"
       )
         throw new Error("Native callback task no longer running");
+      const progress = (current.output as { progress?: HeavyMediaProgress })?.progress;
+      if (progress?.callbackProgress?.sequence === sequence && onEvents) {
+        const events = progress.callbackProgress.events;
+        if (events.length > delivered) { await onEvents(events.slice(delivered)); delivered = events.length; }
+      }
       const result = (current.output as { progress?: HeavyMediaProgress })
         ?.progress?.commandResult;
       if (result?.sequence === sequence) {
@@ -151,6 +173,12 @@ export async function dispatchHeavyMedia<T>(
       await (options.wait?.() ??
         delay(250, undefined, { signal: options.signal }));
     }
+  };
+  // 并发分片共用一个持久化回调槽，串行执行避免覆盖请求。
+  const callbackCommand: NonNullable<ReturnType<typeof heavyMediaCallbackCommand.getStore>> = (command, onEvents) => {
+    const result = callbackTail.then(() => runCallbackCommand(command, onEvents));
+    callbackTail = result.catch(() => undefined);
+    return result;
   };
   try {
     while (true) {

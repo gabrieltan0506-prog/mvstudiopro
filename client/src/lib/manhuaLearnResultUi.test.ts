@@ -51,19 +51,18 @@ import {
 } from "./manhuaLearnResultUi";
 
 function installMemoryLocalStorage() {
-  const values = new Map<string, string>();
-  Object.defineProperty(globalThis, "localStorage", {
-    configurable: true,
-    value: {
+  for (const name of ["localStorage", "sessionStorage"]) {
+    const values = new Map<string, string>();
+    Object.defineProperty(globalThis, name, { configurable: true, value: {
       getItem: (key: string) => values.get(key) ?? null,
       setItem: (key: string, value: string) => values.set(key, value),
       removeItem: (key: string) => values.delete(key),
-    },
-  });
+    } });
+  }
 }
-
 afterEach(() => {
   Reflect.deleteProperty(globalThis, "localStorage");
+  Reflect.deleteProperty(globalThis, "sessionStorage");
 });
 
 describe("manhuaLearnResultUi soft-fail", () => {
@@ -137,12 +136,12 @@ describe("manhuaLearnResultUi soft-fail", () => {
         seriesKey: "series_a", nativeSegmentSeconds, nativeVideoFps: 12, savedAt: 100,
       },
     });
-    const stored = localStorage.getItem("mvs-manhua-learn-active-job-v1:user_7");
+    const stored = sessionStorage.getItem("mvs-manhua-learn-active-job-v1:user_7");
     expect(readManhuaLearnActiveJob("user_7")).toMatchObject({
       jobId: "job-existing",
       continuation: { nativeSegmentSeconds: nativeSegmentSeconds === 319 ? 319 : 300, nativeVideoFps: 12 },
     });
-    expect(localStorage.getItem("mvs-manhua-learn-active-job-v1:user_7")).toBe(stored);
+    expect(sessionStorage.getItem("mvs-manhua-learn-active-job-v1:user_7")).toBe(stored);
   });
 
   it("服务端两部剧分别恢复319和默认300秒，并经篮子持久化保留", () => {
@@ -176,11 +175,11 @@ describe("manhuaLearnResultUi soft-fail", () => {
         },
         result: { pipelineMode: "native_deep_read", pendingCount: 1 },
       }]);
-      localStorage.setItem("mvs-manhua-learn-basket-v1:user_7", raw);
+      sessionStorage.setItem("mvs-manhua-learn-basket-v1:user_7", raw);
       expect(readManhuaLearnBasket("user_7")[0]).toMatchObject({
         jobId: "job-old", jobStatus: "running", continuation: { nativeSegmentSeconds: 300, nativeVideoFps: 12 },
       });
-      expect(localStorage.getItem("mvs-manhua-learn-basket-v1:user_7")).toBe(raw);
+      expect(sessionStorage.getItem("mvs-manhua-learn-basket-v1:user_7")).toBe(raw);
     }
   });
 

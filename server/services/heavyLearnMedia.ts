@@ -240,3 +240,21 @@ export async function materializeHeavyMediaSource(
     await rm(dir, { recursive: true, force: true });
   }
 }
+
+/** 当前截图与报告重处理复用备料回调，不排到占用中的父任务后面。 */
+export async function dispatchLearnWork<T>(work: import("../jobs/heavyMediaQueue").HeavyLearnWork, signal?: AbortSignal,
+  onEvents?: (events: import("../jobs/heavyMediaQueue").HeavyLearnEvent[]) => Promise<void>): Promise<T> {
+  signal?.throwIfAborted();
+  const request = { kind: "learn_work" as const, work, requestId: randomUUID() };
+  const callback = heavyMediaCallbackCommand.getStore();
+  let delivered = 0;
+  const result = callback ? await callback(request, onEvents) : await dispatchHeavyMedia<import("../jobs/heavyMediaQueue").HeavyCommandResult>(request, {
+    signal, onProgress: onEvents ? async value => {
+      const events = value.operationEvents ?? [];
+      if (events.length > delivered) { await onEvents(events.slice(delivered)); delivered = events.length; }
+    } : undefined,
+  });
+  signal?.throwIfAborted();
+  if (result.executionError) throw new Error(result.executionError);
+  return JSON.parse(result.stdout) as T;
+}

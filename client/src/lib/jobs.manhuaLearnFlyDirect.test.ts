@@ -50,6 +50,14 @@ describe("漫剧学习任务绕过 Vercel 质询", () => {
     expect(healthGate).toHaveBeenCalledWith("https://api.mvstudiopro.com", expect.any(Function));
   });
 
+  it("页面绑定按精确jobId查询，长任务不会被最近30条其他任务挤掉", async () => {
+    await listManhuaLearnServerJobs("own job/1");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.mvstudiopro.com/api/jobs/manhua-learn?jobId=own%20job%2F1",
+      expect.objectContaining({ method: "GET", credentials: "include" }),
+    );
+  });
+
   it.each([
     ["cancel", () => cancelManhuaLearnServerJob("job /1"), "/cancel"],
     ["skip", () => skipManhuaLearnServerEpisode("job /1"), "/skip"],

@@ -12,7 +12,8 @@ const context = new AsyncLocalStorage<HeavyMediaContext>();
 // This avoids a child queue waiting behind the parent that is waiting for that callback.
 export const heavyMediaCallbackCommand = new AsyncLocalStorage<
   (
-    request: import("./heavyMediaQueue").HeavyMetadataRequest
+    request: import("./heavyMediaQueue").HeavyMetadataRequest,
+    onEvents?: (events: import("./heavyMediaQueue").HeavyLearnEvent[]) => Promise<void>,
   ) => Promise<import("./heavyMediaQueue").HeavyCommandResult>
 >();
 export const heavyMediaSignal = new AsyncLocalStorage<AbortSignal>();

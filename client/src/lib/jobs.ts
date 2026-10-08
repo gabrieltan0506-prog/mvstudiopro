@@ -60,8 +60,8 @@ async function fetchManhuaLearnServer(
   );
 }
 
-export async function listManhuaLearnServerJobs(): Promise<{ maxConcurrent: number; items: ManhuaLearnServerJob[] }> {
-  const response = await fetchManhuaLearnServer("/api/jobs/manhua-learn", {
+export async function listManhuaLearnServerJobs(jobId?: string): Promise<{ maxConcurrent: number; items: ManhuaLearnServerJob[] }> {
+  const response = await fetchManhuaLearnServer(`/api/jobs/manhua-learn${jobId ? `?jobId=${encodeURIComponent(jobId)}` : ""}`, {
     method: "GET",
     cache: "no-store",
   });

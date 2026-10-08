@@ -82,7 +82,7 @@ export const heavyMediaStore: HeavyMediaStore = {
       );
   },
 };
-export async function claimHeavyMediaJob(owner: string) {
+export async function claimHeavyMediaJob(owner: string, allowedKinds?: readonly string[]) {
   const db = await database();
   const [next] = await db
     .select({ id: jobs.id })
@@ -91,7 +91,8 @@ export async function claimHeavyMediaJob(owner: string) {
       and(
         eq(jobs.type, "media_work"),
         eq(jobs.status, "queued"),
-        eq(jobs.attempts, 0)
+        eq(jobs.attempts, 0),
+        allowedKinds ? sql`${jobs.input}::jsonb->'request'->>'kind' in (${sql.join(allowedKinds.map(kind => sql`${kind}`), sql`, `)})` : undefined
       )
     )
     .orderBy(asc(jobs.createdAt))

@@ -1,3 +1,4 @@
+import { ensureManhuaLearnPageOwnership, readManhuaLearnPageJobId, writeManhuaLearnPageJobId, filterManhuaLearnPageJobs } from "@/lib/manhuaLearnPageScope";
 import { confirmManhuaLearnSource } from "@/lib/manhuaLearnRelearn";
 import { KnowledgeCardRecovery, type RecoveredKnowledgeCard } from "@/components/platform/KnowledgeCardRecovery";
 import { KnowledgeCardPageTasks } from "@/lib/knowledgeCardPageTask";
@@ -113,7 +114,6 @@ import {
   createJob,
   getJob,
   hideManhuaLearnServerSeries,
-  clearOtherManhuaLearnSeries,
   isManhuaNativeDeepReadParamsConflict,
   listManhuaLearnServerJobs,
   pollJobUntilTerminal,
@@ -2318,14 +2318,14 @@ function readManhuaLearnContinuation(userKey: string): ManhuaLearnContinuation |
   const storageKey = manhuaLearnContinuationStorageKey(userKey);
   if (!storageKey) return null;
   try {
-    const raw = window.localStorage.getItem(storageKey);
+    const raw = window.sessionStorage.getItem(storageKey);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<ManhuaLearnContinuation>;
     const url = String(parsed.row?.url || "").trim();
     const savedAt = Number(parsed.savedAt);
     const localSource = isManhuaLocalVideoSource(parsed.row || {}, userKey);
     if ((!/^https?:\/\//i.test(url) && !localSource) || !Number.isFinite(savedAt)) {
-      window.localStorage.removeItem(storageKey);
+      window.sessionStorage.removeItem(storageKey);
       return null;
     }
     return {
@@ -2359,10 +2359,10 @@ function writeManhuaLearnContinuation(
     // 私有上传只保存不含服务器路径的来源引用，恢复时仍须向服务端校验本人上传。
     const localSource = value && isManhuaLocalVideoSource(value.row, userKey);
     if (!value || (!/^https?:\/\//i.test(url) && !localSource)) {
-      window.localStorage.removeItem(storageKey);
+      window.sessionStorage.removeItem(storageKey);
       return;
     }
-    window.localStorage.setItem(
+    window.sessionStorage.setItem(
       storageKey,
       JSON.stringify({
         row: {
@@ -2742,6 +2742,10 @@ export default function PlatformPage() {
   const manhuaLearnActiveJobRef = useRef<ManhuaLearnActiveJob | null>(null);
 
   useEffect(() => {
+    let disposed = false;
+    manhuaLearnUserKeyRef.current = manhuaLearnUserKey;
+    void ensureManhuaLearnPageOwnership(manhuaLearnUserKey).then(() => {
+      if (disposed) return;
     manhuaLearnUserKeyRef.current = manhuaLearnUserKey;
     setManhuaPreparedLocalVideo(null);
     manhuaLearnSubmitRef.current = null;
@@ -2833,6 +2837,8 @@ export default function PlatformPage() {
     );
     setTrendInsightTab(decision.tab);
     setManhuaLearnHydratedUserKey(manhuaLearnUserKey);
+    });
+    return () => { disposed = true; };
   }, [manhuaLearnUserKey]);
 
   useEffect(() => {
@@ -3702,9 +3708,12 @@ export default function PlatformPage() {
   const refreshManhuaLearnServerJobs = useCallback(async () => {
     const requestUserKey = manhuaLearnUserKeyRef.current;
     if (!requestUserKey) return { items: [] as ManhuaLearnServerJob[] };
-    const listed = await listManhuaLearnServerJobs();
+    await ensureManhuaLearnPageOwnership(requestUserKey);
+    const pageJobId = readManhuaLearnPageJobId(requestUserKey);
+    const cloudListed = pageJobId ? await listManhuaLearnServerJobs(pageJobId) : { maxConcurrent: 2, items: [] as ManhuaLearnServerJob[] };
+    const listed = { ...cloudListed, items: filterManhuaLearnPageJobs(cloudListed.items, pageJobId) };
     // 账号切换时丢弃旧请求回包，禁止上一账号的选中项、面板或任务写入新页面。
-    if (manhuaLearnUserKeyRef.current !== requestUserKey) {
+    if (manhuaLearnUserKeyRef.current !== requestUserKey || readManhuaLearnPageJobId(requestUserKey) !== pageJobId) {
       return { items: [] as ManhuaLearnServerJob[] };
     }
     setManhuaLearnServerJobs((prev) =>
@@ -3829,8 +3838,9 @@ export default function PlatformPage() {
         await pollJobUntilTerminal(job.jobId, { maxWaitMs: 60_000, intervalMs: 2500 });
       }
       if (manhuaLearnUserKeyRef.current !== ownerKey) return;
-      await createJob({ type: "video", userId: String(user.id), input: { action: "manhua_template_learn", params } });
+      const reshaped = await createJob({ type: "video", userId: String(user.id), input: { action: "manhua_template_learn", params } });
       if (manhuaLearnUserKeyRef.current !== ownerKey) return;
+      writeManhuaLearnPageJobId(ownerKey, reshaped.jobId);
       setManhuaLearnStructuringModel(model);
       writeManhuaLearnStructuringModel(ownerKey, model);
       toast.success(`第 ${episodeIndex} 集仅重新整形已入队`, { description: "只使用已保存的 JSON，进度在学习面板中查看。" });
@@ -4199,6 +4209,7 @@ export default function PlatformPage() {
     (seriesKey: string) => {
       const item = manhuaLearnBasket.find((candidate) => candidate.seriesKey === seriesKey);
       if (!item) return;
+      writeManhuaLearnPageJobId(manhuaLearnUserKey, item.jobId || "");
       const continuation: ManhuaLearnContinuation = {
         ...item.continuation,
         seriesKey: item.seriesKey,
@@ -4275,29 +4286,6 @@ export default function PlatformPage() {
       setManhuaLearnControlBusy(null);
     }
   }, [focusedManhuaLearnBasketItem?.jobId, focusedManhuaLearnServerJob?.jobId, manhuaLearnBasket, manhuaLearnControlBusy, manhuaLearnFocusSeriesKey, manhuaLearnResult?.seriesKey, manhuaLearnUserKey, selectManhuaLearnBasketItem]);
-  /** 0903 用户令「只留缺集找，其他都删」：一键清空列表，服务端真删其余任务行，本地篮子只留当前剧。 */
-  const clearOtherManhuaLearnSeriesFromList = useCallback(async () => {
-    const keepJobId = focusedManhuaLearnServerJob?.jobId || focusedManhuaLearnBasketItem?.jobId;
-    const keepSeriesKey = String(manhuaLearnResult?.seriesKey || manhuaLearnFocusSeriesKey).trim();
-    const userKey = manhuaLearnUserKey;
-    if (!keepJobId || !keepSeriesKey || !userKey || manhuaLearnControlBusy) return;
-    const others = manhuaLearnBasket.filter((item) => item.seriesKey !== keepSeriesKey).length;
-    if (!window.confirm(`只保留当前选中的剧，其余 ${others} 部从列表删除（任务行会真删，已落盘分集、静帧和已批准模板保留）？`)) return;
-    setManhuaLearnControlBusy("clear");
-    try {
-      const cleared = await clearOtherManhuaLearnSeries(keepJobId);
-      const nextBasket = manhuaLearnBasket.filter((item) => item.seriesKey === keepSeriesKey);
-      setManhuaLearnBasket(nextBasket);
-      writeManhuaLearnBasket(userKey, nextBasket);
-      const removed = new Set(cleared.removedJobIds);
-      setManhuaLearnServerJobs((prev) => prev.filter((job) => !removed.has(job.jobId)));
-      toast.success(`已清空 ${cleared.removedJobIds.length} 条`, { description: "只留当前剧；落盘学习成果和已批准模板没有删除。" });
-    } catch (error) {
-      toast.error("清空失败", { description: sanitizePlatformUserMessage(error instanceof Error ? error.message : String(error)) });
-    } finally {
-      setManhuaLearnControlBusy(null);
-    }
-  }, [focusedManhuaLearnServerJob?.jobId, focusedManhuaLearnBasketItem?.jobId, manhuaLearnBasket, manhuaLearnControlBusy, manhuaLearnFocusSeriesKey, manhuaLearnResult?.seriesKey, manhuaLearnUserKey]);
   const [allowBloggerTitle, setAllowBloggerTitle] = useState(() => readAllowBloggerTitleFromLs());
   /** 全案分析确认前：Skill/提示词优先级对话气泡 */
   const [fullAnalysisConfirmOpen, setFullAnalysisConfirmOpen] = useState(false);
@@ -6378,6 +6366,7 @@ export default function PlatformPage() {
           },
         });
         if (manhuaLearnUserKeyRef.current !== requestUserKey) return;
+        writeManhuaLearnPageJobId(requestUserKey, jobId);
         const reusedExactNativePlan = reused === true && reuseMatch === "native_confirmation";
         setManhuaLearnBasket((prev) => {
           const next = upsertManhuaLearnBasketItem(prev, {
@@ -6422,7 +6411,7 @@ export default function PlatformPage() {
             ? "来源与整份确认参数完全一致，因此继续查看原任务。"
             : reused
               ? "旧兼容任务仅按来源复用，请以任务详情中的参数为准。"
-            : "最多同时学习两部，其余自动排队；关闭页面也会继续。",
+            : "最多同时学习两部，每部不超过一小时；本网页只显示本次影片，关闭页面也会继续。",
         });
       } catch (e) {
         if (manhuaLearnUserKeyRef.current !== requestUserKey) return;
@@ -13803,7 +13792,7 @@ export default function PlatformPage() {
                           整形模型：{MANHUA_NATIVE_STRUCTURING_MODEL_LABELS["glm-5.3"]}
                         </span>
                         <span className="rounded-md border border-[#8cefff]/20 bg-black/25 px-2 py-1 text-[10px] font-semibold text-[#8cefff]">
-                          学习模型：{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[manhuaLearnReadModel]} · 原生视频精读
+                          学习模型：{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[manhuaLearnReadModel]} · 原生视频精读 · 最多两部并发，每部一小时内；第二部请在另一网页开始
                         </span>
                       </div>
 
@@ -14066,19 +14055,7 @@ export default function PlatformPage() {
                             >
                               {manhuaLearnControlBusy === "delete" ? "正在删除…" : "删除这部剧"}
                             </button>
-                            <button
-                              type="button"
-                              disabled={
-                                !manhuaLearnFocusSeriesKey
-                                || Boolean(manhuaLearnControlBusy)
-                                || !(focusedManhuaLearnServerJob?.jobId || focusedManhuaLearnBasketItem?.jobId)
-                                || manhuaLearnBasket.length < 2
-                              }
-                              onClick={() => void clearOtherManhuaLearnSeriesFromList()}
-                              className="shrink-0 rounded-lg border border-rose-300/30 bg-rose-500/10 px-2.5 py-1.5 text-[10px] font-semibold text-rose-100 hover:bg-rose-500/20 disabled:opacity-40"
-                            >
-                              {manhuaLearnControlBusy === "clear" ? "正在清空…" : "只留这部·清空其他"}
-                            </button>
+
                           </div>
                           <p className="mt-1.5 text-[10px] text-amber-100/50">
                             每部剧独立续学；刷新后仍保留。删除会停止该剧，但保留已经落盘的成果。

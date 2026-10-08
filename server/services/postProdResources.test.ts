@@ -79,3 +79,24 @@ describe("post-production resource ownership", () => {
     await rejected; expect(cleaned).toBe(true); expect(mocks.release).toHaveBeenCalledOnce();
   });
 });
+
+it("工作机两项学习同时进入，后期独占任务等两项收尾再进入", async () => {
+  vi.stubEnv("JOB_WORKER_ROLE", "rig");
+  const { withPostProdResources, postProdResourcesBusy } = await import("./postProdResources");
+  let endA!: () => void, endB!: () => void;
+  const aGate = new Promise<void>(r => { endA = r; }); const bGate = new Promise<void>(r => { endB = r; });
+  const starts: string[] = [];
+  const signal = new AbortController().signal;
+  const a = withPostProdResources("a", signal, { phase: "new" }, async () => { starts.push("a"); await aGate; }, { parallelLearning: true });
+  const b = withPostProdResources("b", signal, { phase: "new" }, async () => { starts.push("b"); await bGate; }, { parallelLearning: true });
+  const exclusive = withPostProdResources("post", signal, { phase: "new" }, async () => { starts.push("post"); });
+  await vi.waitFor(() => expect(starts).toEqual(["a", "b"]));
+  endA(); await a; expect(postProdResourcesBusy()).toBe(true); expect(starts).toEqual(["a", "b"]);
+  endB(); await b; await exclusive; expect(starts).toEqual(["a", "b", "post"]); expect(postProdResourcesBusy()).toBe(false);
+});
+it("网站机不能开启并发媒体重处理", async () => {
+  const { withPostProdResources } = await import("./postProdResources");
+  const work = vi.fn();
+  await expect(withPostProdResources("forbidden", new AbortController().signal, { phase: "new" }, work, { parallelLearning: true })).rejects.toThrow("仅允许在工作机");
+  expect(work).not.toHaveBeenCalled();
+});

@@ -1,3 +1,4 @@
+import { MANHUA_LEARN_ACTIVE_JOB_LIMIT } from "../../shared/manhuaLearningAdmission.js";
 import { BLENDER_POST_PROD_ACTIONS, type PostProdClaimFilter } from "./workerRole.js";
 import { and, asc, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { isDeepStrictEqual } from "node:util";
@@ -301,6 +302,7 @@ export async function recoverInterruptedManhuaBgmJobsOnStartup(): Promise<{
 export async function listManhuaTemplateLearnJobsForUser(
   userId: string,
   limit = 30,
+  jobId?: string,
 ): Promise<NormalizedJob[]> {
   const db = await getDb();
   if (!db) return [];
@@ -311,6 +313,7 @@ export async function listManhuaTemplateLearnJobsForUser(
       .where(
         and(
           eq(jobs.userId, String(userId)),
+          jobId ? eq(jobs.id, jobId) : undefined,
           eq(jobs.type, "video"),
           sql`(${jobs.input}::jsonb->>'action') = 'manhua_template_learn'`,
           sql`coalesce(${jobs.input}::jsonb->>'hiddenAt', '') = ''`,
@@ -845,6 +848,43 @@ export async function insertRunningCompositeSheetProgressJob(data: {
   } as InsertJob);
 }
 
+/** 跨实例原子准入：可串行化事务保护真实在途数量，第三部不会插入占位。 */
+export async function createManhuaLearnJobWithAdmission(data: {
+  id: string; userId: string; type: JobType; provider: string; input: unknown;
+}): Promise<string> {
+  if (data.type !== "video" || getVideoJobAction(data.input) !== "manhua_template_learn") {
+    return createJob(data);
+  }
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable — cannot admit learning job");
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const results = await db.$client.transaction(tx => [tx`
+        WITH existing AS (
+          SELECT id FROM jobs WHERE id = ${data.id} AND "userId" = ${data.userId}
+            AND type = 'video' AND input::jsonb->>'action' = 'manhua_template_learn'
+        ), inserted AS (
+          INSERT INTO jobs (id, "userId", type, provider, status, input, attempts)
+          SELECT ${data.id}, ${data.userId}, ${data.type}, ${data.provider}, 'queued', ${JSON.stringify(data.input)}::json, 0
+          WHERE NOT EXISTS (SELECT 1 FROM jobs WHERE id = ${data.id})
+            AND (SELECT count(*) FROM jobs
+                 WHERE type = 'video' AND status IN ('queued', 'running')
+                   AND input::jsonb->>'action' = 'manhua_template_learn') < ${MANHUA_LEARN_ACTIVE_JOB_LIMIT}
+          RETURNING id
+        ) SELECT id FROM existing UNION ALL SELECT id FROM inserted
+      `], { isolationLevel: "Serializable", fullResults: false, arrayMode: false });
+      const rows = results[0] as Array<{ id: string }>;
+      if (rows?.some(row => row.id === data.id)) return data.id;
+      throw Object.assign(new Error("最多同时学习两部，请等待其中一部结束后再开始；现有学习继续运行。"), { code: "MANHUA_LEARN_CAPACITY_FULL" });
+    } catch (error) {
+      // 冲突只重试原子建单，不重试媒体/模型；提交结果不明的网络错误不自动再发。
+      if (error && typeof error === "object" && "code" in error && error.code === "40001" && attempt < 2) continue;
+      throw error;
+    }
+  }
+  throw new Error("学习准入冲突，请稍后重试");
+}
+
 export async function createJob(data: {
   id: string;
   userId: string;
@@ -852,6 +892,7 @@ export async function createJob(data: {
   provider: string;
   input: unknown;
 }): Promise<string> {
+  if (data.type === "video" && getVideoJobAction(data.input) === "manhua_template_learn") return createManhuaLearnJobWithAdmission(data);
   const db = await getDb();
   if (!db) throw new Error("Database unavailable — cannot create job");
 

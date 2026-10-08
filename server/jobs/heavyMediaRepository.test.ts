@@ -179,3 +179,10 @@ describe("heavy media uses real offline Postgres semantics", () => {
     expect(await claimHeavyMediaJob("worker-b")).toBeNull();
   });
 });
+
+it("第二学习槽仅领取学习任务，不与排在前面的正式渲染并行", async () => {
+  await heavyMediaStore.enqueue("exclusive_render", "7", { action: "heavy_media", version: 1, request: { kind: "final_render", input: {} } });
+  await heavyMediaStore.enqueue("learning_source", "7", { action: "heavy_media", version: 1, request: { kind: "learn_source", sourceUrl: "https://fixture.invalid", refreshId: "test" } });
+  expect((await claimHeavyMediaJob("worker-learning", ["learn_source", "learn_command", "learn_prepare", "learn_work"]))?.id).toBe("learning_source");
+  expect((await heavyMediaStore.get("exclusive_render"))?.status).toBe("queued");
+});

@@ -153,6 +153,7 @@ export type NativeDeepReadExecutionDeps = {
   readFrameSources?: (objectName: string) => Promise<PreparedNativeVideo[] | undefined>;
   writeFrameSources?: (objectName: string, videos: readonly PreparedNativeVideo[]) => Promise<void>;
   verifyFrame?: (frame: ManhuaViralTemplateEvidenceFrame) => Promise<boolean>;
+  verifyFrames?: (frames: ManhuaViralTemplateEvidenceFrame[], signal?: AbortSignal) => Promise<boolean[]>;
   waitFrameRetry?: (signal?: AbortSignal) => Promise<void>;
 };
 
@@ -194,9 +195,9 @@ const defaultDeps: NativeDeepReadExecutionDeps = {
   writeFrameSources: async (objectName, videos) => {
     await uploadBufferToGcs({ objectName, buffer: Buffer.from(JSON.stringify(videos)), contentType: "application/json" });
   },
-  verifyFrame: async (frame) => {
-    const { buffer } = await downloadGcsObject({ gcsUri: `gs://${getGcsBucketName()}/${frame.objectName}` });
-    return buffer.length === frame.bytes && crypto.createHash("sha256").update(buffer).digest("hex") === frame.sha256;
+  verifyFrames: async (frames, signal) => {
+    const { verifyNativeEvidenceFrames } = await import("./manhuaNativeFrameVerification");
+    return verifyNativeEvidenceFrames(frames, signal);
   },
   waitFrameRetry: async (signal) => { await waitFrameRetry(1000, undefined, { signal }); },
   writeFrameManifest: async (objectName, frames) => {
@@ -254,9 +255,12 @@ function createSegmentFrameCollector(episode: NativeDeepReadEpisodeExecution, de
     const wanted = new Set(keyMoments.map(moment => moment.atSec));
     const found = new Map<number, ManhuaViralTemplateEvidenceFrame>();
     const retain = async (rows: ManhuaViralTemplateEvidenceFrame[]) => {
-      for (const frame of rows) {
-        if (!wanted.has(frame.atSec) || !valid(frame)) continue;
-        const usable = deps.verifyFrame ? await deps.verifyFrame(frame).catch(() => false) : true;
+      const candidates = rows.filter(frame => wanted.has(frame.atSec) && valid(frame));
+      const verified = deps.verifyFrames ? await deps.verifyFrames(candidates, episode.abortSignal) : undefined;
+      if (verified && verified.length !== candidates.length) throw frameEvidenceError("截图校验回执数量不完整");
+      for (let index = 0; index < candidates.length; index++) {
+        const frame = candidates[index]!;
+        const usable = verified ? verified[index] === true : deps.verifyFrame ? await deps.verifyFrame(frame).catch(() => false) : true;
         if (usable) found.set(frame.atSec, frame);
       }
     };

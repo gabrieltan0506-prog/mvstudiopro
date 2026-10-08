@@ -261,15 +261,10 @@ const GROWTH_CAMP_JOB_WORKER_CONCURRENCY = Math.max(
 );
 let growthAnalyzeJobsActive = 0;
 let growthAnalyzeTimer: NodeJS.Timeout | null = null;
-/**
- * 漫剧学习并发池：默认 **1（串行）**——生产是单机双核，一个 learn job 已经会
- * 拉起 yt-dlp+ffmpeg+ffprobe 多进程，双开会打满 CPU 拖垮健康检查（2026-08-11 用户拍板）。
- * 升级机器后可用 env MANHUA_LEARN_JOB_WORKER_CONCURRENCY 调高（上限 2）。
- * 任务已在 Neon jobs 持久化，关页/刷新不影响。
- */
+/** 两部短片原生学习可并发；重媒体只在工作机，环境配置仍可向下限流。 */
 export const MANHUA_LEARN_JOB_WORKER_CONCURRENCY = Math.max(
   1,
-  Math.min(2, Number(process.env.MANHUA_LEARN_JOB_WORKER_CONCURRENCY || 1) || 1),
+  Math.min(2, Number(process.env.MANHUA_LEARN_JOB_WORKER_CONCURRENCY || 2) || 2),
 );
 let manhuaLearnJobsActive = 0;
 let manhuaLearnTimer: NodeJS.Timeout | null = null;
@@ -785,7 +780,8 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
   }
 
   if (input.action === "manhua_template_learn") {
-    const { runManhuaTemplateLearn } = await import("../services/manhuaTemplateLearnService");
+    const { runManhuaTemplateLearn, assertManhuaNativeLearningExecution } = await import("../services/manhuaTemplateLearnService");
+    assertManhuaNativeLearningExecution(params);
     const {
       MANHUA_LEARN_STAGE,
       appendManhuaLearnProgressLine,

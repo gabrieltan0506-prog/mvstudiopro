@@ -24,13 +24,15 @@ import { withPostProdResources } from "../services/postProdResources";
 
 import { execHeavyMedia } from "../services/heavyMediaProcess";
 const exec = execHeavyMedia;
-let activeController: AbortController | undefined;
+const activeControllers = new Set<AbortController>();
+let activeCount = 0;
+let claiming = false;
+let exclusiveActive = false;
+const learningKinds = ["learn_source", "learn_command", "learn_prepare", "learn_work"] as const;
 let shuttingDown = false;
 export async function drainHeavyMediaOnShutdown() {
   shuttingDown = true;
-  activeController?.abort(
-    new Error("Worker shutting down; no automatic retry")
-  );
+  for (const controller of Array.from(activeControllers)) controller.abort(new Error("工作机正在退出；不自动重试"));
   while (heavyWorkerState.active) await delay(100);
 }
 const owner = `${process.env.FLY_MACHINE_ID || "local"}/${randomUUID()}`;
@@ -86,6 +88,47 @@ export async function executeHeavyMedia(
         "../services/manhuaLocalVideoUploadService"
       );
       return materializeHeavyMediaSource(request.source, probeVideo);
+    }
+    case "learn_work": {
+      const events: import("./heavyMediaQueue").HeavyLearnEvent[] = [];
+      let eventTail = Promise.resolve();
+      const emit = (event: import("./heavyMediaQueue").HeavyLearnEvent) => {
+        events.push(event);
+        const snapshot = [...events];
+        eventTail = eventTail.then(() => progress({ operationEvents: snapshot }));
+        void eventTail.catch(() => undefined);
+        return eventTail;
+      };
+      let result: unknown;
+      try {
+        switch (request.work.operation) {
+          case "key_frames": {
+            const { extractNativeKeyMomentEvidenceFramesLocally } = await import("../services/manhuaNativeKeyMomentFrames");
+            result = await extractNativeKeyMomentEvidenceFramesLocally({ ...request.work.input, abortSignal: signal,
+              onFrameUploaded: frame => emit({ frame }), onFrameFailure: failure => { void emit({ failure }); } });
+            break;
+          }
+          case "sweep_frames": {
+            const { extractSweepFramesLocally } = await import("../services/manhuaNativeSweepFrames");
+            result = await extractSweepFramesLocally({ ...request.work.input, abortSignal: signal });
+            break;
+          }
+          case "verify_frames": {
+            const { verifyNativeEvidenceFramesLocally } = await import("../services/manhuaNativeFrameVerification");
+            result = await verifyNativeEvidenceFramesLocally(request.work.frames, signal);
+            break;
+          }
+          case "native_report": {
+            const { renderNativeEvidenceReportFromObjectNamesLocally } = await import("../services/manhuaNativeReportRender");
+            result = await renderNativeEvidenceReportFromObjectNamesLocally(request.work.input);
+            break;
+          }
+          default: throw new Error("不支持的学习重处理任务");
+        }
+        await eventTail;
+        signal.throwIfAborted();
+        return { stdout: JSON.stringify(result), stderr: "" };
+      } finally { await eventTail; }
     }
     case "learn_source": {
       const { fetchManhua0996EpisodePlaybackLocally, describeManhuaSourceFetchFailure } =
@@ -158,14 +201,14 @@ export async function executeHeavyMedia(
           const value = await exchange.readReply();
           const command = value.commandRequest;
           if (command && command.sequence > commandSequence) {
-            if (command.request.kind !== "learn_command" && command.request.kind !== "learn_source")
+            if (command.request.kind !== "learn_command" && command.request.kind !== "learn_source" && command.request.kind !== "learn_work")
               throw new Error("Invalid native callback command");
             let response: NonNullable<HeavyMediaProgress["commandResult"]>;
             try {
               const result = (await executeHeavyMedia(
                 command.request,
                 signal,
-                async () => {}
+                async value => { await report({ callbackProgress: { sequence: command.sequence, events: value.operationEvents ?? [] } }); }
               )) as { stdout: string; stderr: string };
               response = { sequence: command.sequence, result };
             } catch (error) {
@@ -189,6 +232,8 @@ export async function executeHeavyMedia(
       };
       const limits = {
         ...request.limits,
+        cutConcurrency: Math.min(2, Math.max(1, request.limits?.cutConcurrency ?? 2)),
+        uploadConcurrency: Math.min(2, Math.max(1, request.limits?.uploadConcurrency ?? 2)),
         onSourceFetchProgress: (message: string) => report({ message, groups }),
         onPreparedGroup: async (rows: readonly PreparedGroup[number][]) => {
           groups.push([...rows]);
@@ -257,30 +302,42 @@ export async function processHeavyMediaOnce(
   if (
     shuttingDown ||
     !heavyWorkerState.ready ||
-    heavyWorkerState.active ||
+    activeCount >= 2 || claiming || exclusiveActive ||
     blocked()
   )
     return;
-  heavyWorkerState.active = true; // set before asynchronous claim, so idle stop cannot pass
+  claiming = true;
+  activeCount++;
+  heavyWorkerState.active = true; // 异步领取前占槽，空闲停机不得穿透。
+  let controller: AbortController | undefined;
+  let ownsExclusive = false;
+  let ownsClaim = true;
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   let heartbeatPending: Promise<void> | undefined;
   try {
-    const job = await claimHeavyMediaJob(owner);
+    const job = await claimHeavyMediaJob(owner, activeCount > 1 ? learningKinds : undefined);
+    claiming = false;
+    ownsClaim = false;
     if (!job) return;
     const input = job.input as {
       version: number;
       request: HeavyMediaRequest;
       parentJobId?: string;
     };
-    const controller = new AbortController();
-    activeController = controller;
+    const currentController = new AbortController();
+    controller = currentController;
+    activeControllers.add(currentController);
+    if (shuttingDown) currentController.abort(new Error("工作机正在退出"));
+    const parallelLearning = learningKinds.includes(input.request.kind as typeof learningKinds[number]);
+    ownsExclusive = !parallelLearning;
+    if (ownsExclusive) exclusiveActive = true;
     let lastHeartbeatAt = Date.now();
     let lastWarningAt = Date.now();
     const pulse = async () => {
       const flags = await writeHeavyMediaProgress(job.id, owner);
       lastHeartbeatAt = Date.now();
       if (flags.cancelRequested)
-        controller.abort(new Error("用户已停止媒体处理"));
+        currentController.abort(new Error("用户已停止媒体处理"));
       if (input.parentJobId) {
         const parent = await getJobByIdStrict(input.parentJobId);
         if (
@@ -289,7 +346,7 @@ export async function processHeavyMediaOnce(
           parent.status === "failed" ||
           (parent.input as { cancelRequestedAt?: unknown })?.cancelRequestedAt
         ) {
-          controller.abort(new Error("原任务已停止，媒体子任务收尾"));
+          currentController.abort(new Error("原任务已停止，媒体子任务收尾"));
         }
       }
     };
@@ -302,7 +359,7 @@ export async function processHeavyMediaOnce(
         lastWarningAt = Date.now();
       }
       if (Date.now() - lastHeartbeatAt >= 10 * 60_000)
-        controller.abort(new Error("媒体任务连续10分钟无法保存心跳"));
+        currentController.abort(new Error("媒体任务连续10分钟无法保存心跳"));
       if (!heartbeatPending)
         heartbeatPending = pulse()
           .catch(() => {
@@ -322,7 +379,7 @@ export async function processHeavyMediaOnce(
         throw new Error("Unsupported media task contract");
       result = await withPostProdResources(
         job.id,
-        controller.signal,
+        currentController.signal,
         { phase: "heavy_media" },
         signal =>
           withHeavyMediaContext(
@@ -353,11 +410,12 @@ export async function processHeavyMediaOnce(
                   }
                 )
               )
-          )
+          ),
+        { parallelLearning }
       );
-      controller.signal.throwIfAborted();
+      currentController.signal.throwIfAborted();
     } catch {
-      failure = controller.signal.aborted
+      failure = currentController.signal.aborted
         ? "媒体处理已停止，原素材和回执保留；未自动重做"
         : "媒体处理失败，原素材和回执保留；未自动重做";
     }
@@ -383,8 +441,11 @@ export async function processHeavyMediaOnce(
   } finally {
     if (heartbeat) clearInterval(heartbeat);
     await heartbeatPending;
-    activeController = undefined;
-    heavyWorkerState.active = false;
+    if (controller) activeControllers.delete(controller);
+    if (ownsClaim) claiming = false;
+    if (ownsExclusive) exclusiveActive = false;
+    activeCount--;
+    heavyWorkerState.active = activeCount > 0;
   }
 }
 export async function recoverHeavyMediaResult(id: string, userId: string) {
