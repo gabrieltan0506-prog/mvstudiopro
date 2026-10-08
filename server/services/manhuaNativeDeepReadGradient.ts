@@ -32,8 +32,8 @@ export const NATIVE_DEEP_READ_ESCALATION_TEMPERATURES = deepFreezeGradient(
 
 /** 单条证据段硬上限（0920 用户令：30→60，只留一层）。 */
 export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC = 60;
-/** 门禁数值容差（0920 用户令：15%→20%）。 */
-export const NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO = 0.20;
-/** 单镜拒收线 = 硬上限 × (1 + 容差) = 72 秒。 */
+/** 门禁数值容差（1008 用户令：20%→30%）。 */
+export const NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO = 0.30;
+/** 单镜拒收线 = 硬上限 × (1 + 容差) = 78 秒。 */
 export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC =
   NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC * (1 + NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO);

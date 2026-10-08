@@ -1130,15 +1130,15 @@ describe("v11 · 截断段豁免（classification 在 responseSchema 最末，�
     })).toThrow("classification 缺失");
   });
 
-  // 🔴 0920 用户令：单条证据段上限 30→60、容差 15%→20% ⇒ 拒收线 **72 秒**。
-  // 期望值在此写死（72 / 72.5），不从被测常量反推——否则阈值再改一次这条又会恒真。
-  it("截断段守相同长镜边界：72秒合格，72.5秒拒收（0920 上限 60 + 容差 20% → 72 秒线）", () => {
+  // 🔴 1008 用户令：单条证据段上限 30→60、容差 15%→30% ⇒ 拒收线 **78 秒**。
+  // 期望值在此写死（78 / 78.5），不从被测常量反推——否则阈值再改一次这条又会恒真。
+  it("截断段守相同长镜边界：78秒合格，78.5秒拒收（1008 上限 60 + 容差 30% → 78 秒线）", () => {
     const raw = makeSegmentPayload({ ...base });
     const shot = (raw.shots as Array<Record<string, unknown>>)[0]!;
-    raw.shots = [{ ...shot, startSec: 0, endSec: 72 }, { ...shot, startSec: 72, endSec: 100 }];
+    raw.shots = [{ ...shot, startSec: 0, endSec: 78 }, { ...shot, startSec: 78, endSec: 100 }];
     expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw, truncated: true })).not.toThrow();
-    raw.shots = [{ ...shot, startSec: 0, endSec: 72.5 }, { ...shot, startSec: 72.5, endSec: 100 }];
-    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw, truncated: true })).toThrow(/72 秒/);
+    raw.shots = [{ ...shot, startSec: 0, endSec: 78.5 }, { ...shot, startSec: 78.5, endSec: 100 }];
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw, truncated: true })).toThrow(/78 秒/);
   });
 
   it("🔒 截断段照样守逐镜 17 字段：缺字段仍拒收", () => {
@@ -1263,18 +1263,18 @@ describe("覆盖率与缓存复验回归", () => {
     expect(nativeDeepReadSegmentMeetsThreeItemLine({ ...base, endSec: 60, hasAudio: true, raw })).toBe(false);
   });
 
-  // 0920 上限 60 + 容差 20% ⇒ 72 秒拒收线。段长必须大于 72 才装得下这样一条长镜；
+  // 1008 上限 60 + 容差 30% ⇒ 78 秒拒收线。段长必须大于 78 才装得下这样一条长镜；
   // 镜数补到 12 条（≥ 120 秒段的离谱地板 ceil(120/10)=12），否则测出来的是密度不是长镜。
-  it("超过72秒证据段不能被缓存的单项放行吞掉", () => {
+  it("超过78秒证据段不能被缓存的单项放行吞掉", () => {
     const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 120, hasAudio: false });
     const shot = (raw.shots as Array<Record<string, unknown>>)[0]!;
-    const rest = (120 - 73) / 11;
+    const rest = (120 - 79) / 11;
     raw.shots = [
-      { ...shot, startSec: 0, endSec: 73 },
+      { ...shot, startSec: 0, endSec: 79 },
       ...Array.from({ length: 11 }, (_, i) => ({
         ...shot,
-        startSec: Math.round((73 + i * rest) * 100) / 100,
-        endSec: i === 10 ? 120 : Math.round((73 + (i + 1) * rest) * 100) / 100,
+        startSec: Math.round((79 + i * rest) * 100) / 100,
+        endSec: i === 10 ? 120 : Math.round((79 + (i + 1) * rest) * 100) / 100,
       })),
     ];
     expect(nativeDeepReadSegmentMeetsThreeItemLine({ ...base, endSec: 120, raw })).toBe(false);
@@ -1285,7 +1285,7 @@ describe("覆盖率与缓存复验回归", () => {
    * 0831 加回 shot_density_low 之后，原来的 2 镜 fixture 会被密度判据带偏，
    * 测出来的就不再是「长镜边界」这一件事了。
    */
-  it.each([[30, true], [72, true], [72.5, false]] as const)("长镜边界%s秒，缓存可用=%s", (firstEnd, accepted) => {
+  it.each([[30, true], [72.5, true], [78, true], [78.5, false]] as const)("长镜边界%s秒，缓存可用=%s", (firstEnd, accepted) => {
     const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 120, hasAudio: false });
     const shot = (raw.shots as Array<Record<string, unknown>>)[0]!;
     const step = (120 - firstEnd) / 11;
@@ -4119,7 +4119,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     }
   });
 
-  it("必填证据不合格即重跑，数值容差固定20%（0920 用户令）", async () => {
+  it("必填证据不合格即重跑，数值容差固定30%（1008 用户令）", async () => {
     // 造 2 项：音轨 1 段（地板 5，偏差 80%）+ 声音事件 1 条（地板 5，偏差 80%）
     // 60 秒段的地板：音轨 max(1,ceil(60/60))=1 ⇒ 需要更长的段才能压出偏差，
     // 故直接用 audioTrackOverride 制造，并断言「重跑发生」这一行为本身。
@@ -4142,7 +4142,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     try {
       await runManhuaNativeDeepReadBatch({ episodes: [twoSegmentEpisode] }, deps);
       // 常量本身是看守重点：改动它即改变重买行为
-      expect(NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO).toBe(0.20);
+      expect(NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO).toBe(0.30);
       // 🔒 白名单看守（用户 0830 晚圈定）：音轨段数与镜头覆盖进 20% 判据，
       // 声音事件条数（≈音轨长度密度）不进——安静段落天然少，不该为此重买。
       expect(NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES.has("audio_track_thin")).toBe(true);
@@ -5568,11 +5568,11 @@ describe("0907 · 八坑补齐：费用闸 / 集级留存率不可达 / 三稿�
     expect(subs).not.toContain(span.endSec + 50);
   });
 
-  it("提示词参考值仍按 10%（进缓存指纹），门禁判定线 20%（0920 用户令，不进指纹）", async () => {
+  it("提示词参考值仍按 10%（进缓存指纹），门禁判定线 30%（1008 用户令，不进指纹）", async () => {
     const m = await import("./manhuaNativeDeepReadRunner");
     expect(m.NATIVE_DEEP_READ_PROMPT_SHOT_FLOOR_RATIO).toBe(0.10);
-    expect(m.NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO).toBe(0.20);
-    expect(m.NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO).toBe(0.20);
+    expect(m.NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO).toBe(0.30);
+    expect(m.NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO).toBe(0.30);
     expect(m.resolveNativeDeepReadDensityContract(300).minStoryShots).toBe(Math.ceil(30 * 0.9));
   });
 });

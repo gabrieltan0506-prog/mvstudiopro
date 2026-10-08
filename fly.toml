@@ -136,7 +136,7 @@ kill_timeout = 300
 # 部署前核对既有机器及在途任务，不通过增加副本或新建机器替代绑定目标。
 [processes]
   app = "env MANHUA_HEAVY_WORKER_SPLIT=1 MANHUA_HEAVY_MACHINE_ID=7812595b294778 MANHUA_RIG_WORKER_SPLIT=1 node --max-old-space-size=6144 --import tsx server/_core/index.ts"
-  rig = "env MANHUA_HEAVY_WORKER_SPLIT=1 MANHUA_HEAVY_MACHINE_ID=7812595b294778 JOB_WORKER_ROLE=rig MANHUA_RIG_WORKER_SPLIT=1 DISABLE_GROWTH_TREND_SCHEDULER=1 NODE_OPTIONS=--max-old-space-size=4096 pnpm exec tsx server/_core/index.ts"
+  rig = "sh /app/scripts/start-heavy-worker.sh env MANHUA_HEAVY_WORKER_SPLIT=1 MANHUA_HEAVY_MACHINE_ID=7812595b294778 JOB_WORKER_ROLE=rig MANHUA_RIG_WORKER_SPLIT=1 DISABLE_GROWTH_TREND_SCHEDULER=1 NODE_OPTIONS=--max-old-space-size=4096 pnpm exec tsx server/_core/index.ts"
 
 [http_service]
   internal_port = 3000

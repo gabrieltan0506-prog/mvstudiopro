@@ -1,0 +1,38 @@
+[
+  {
+    "at": "2026-10-08T14:04:49.407Z",
+    "machine": "7812595b294778",
+    "sourcePage": "https://0996zp.com/vod/play/146259/sid/1313635",
+    "prefix": "post-prod/1/isolated-probes/learning-dns-1008-1791468289407",
+    "modelCalls": 0,
+    "candidates": [
+      {
+        "index": 0,
+        "host": "ppvod01.kqgfbs.com",
+        "metadataEvidence": {
+          "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/1/isolated-probes/learning-dns-1008-1791468289407/metadata-0.raw.json",
+          "bytes": 168,
+          "sha256": "aa84214c2c0332325872dae35b2ff060cb641f3f81647614f8fb94da555f0557"
+        },
+        "duration": 2918.416717,
+        "streams": [
+          "video",
+          "audio"
+        ],
+        "decode": true
+      }
+    ],
+    "sourceEvidence": {
+      "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/1/isolated-probes/learning-dns-1008-1791468289407/source.parsed.json",
+      "bytes": 882,
+      "sha256": "108164488273442fcc7f7f9f9714a7c489ebc9798df3bcb0f6fabf7d9afba422"
+    },
+    "candidateCount": 3,
+    "ok": true,
+    "receipt": {
+      "gcsUri": "gs://mv-studio-pro-vertex-video-temp/post-prod/1/isolated-probes/learning-dns-1008-1791468289407/receipt.json",
+      "bytes": 828,
+      "sha256": "39a2f2a0fa90533aa2116d83860f5ffcea9facbfb85d51e3861f8207d5e18b52"
+    }
+  }
+]

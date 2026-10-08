@@ -15,6 +15,7 @@ import { hasNativeAttemptSelection } from "./manhuaNativeDeepReadAttemptSelectio
  * 3. **中止立刻停**，且不把中止记成「这集失败了」
  */
 import crypto from "node:crypto";
+import { setTimeout as waitFrameRetry } from "node:timers/promises";
 import { MANHUA_LEARN_MAX_DURATION_SEC } from "../../shared/manhuaTemplateLearnSeries.js";
 import {
   isManhuaNativeDeepReadEnabled,
@@ -98,6 +99,7 @@ export type NativeDeepReadEpisodeExecution = {
    * 主链会先把 `gs://` 换成 7 天签名 HTTPS —— 那种短链带 Signature/Expires，
    * 写进永久卡就是一条几天后必然失效、还泄露签名的溯源记录。
    */
+  onMediaProgressZh?: (zh: string) => void | Promise<void>;
   retainedEvidenceFrames?: import("../../shared/manhuaViralTemplateBank.js").ManhuaViralTemplateEvidenceFrame[];
   sourceUrl: string;
   /**
@@ -148,6 +150,10 @@ export type NativeDeepReadExecutionDeps = {
   extractKeyMomentFrames: typeof extractNativeKeyMomentEvidenceFrames;
   readFrameManifest?: (objectName: string) => Promise<ManhuaViralTemplateEvidenceFrame[] | undefined>;
   writeFrameManifest?: (objectName: string, frames: ManhuaViralTemplateEvidenceFrame[]) => Promise<void>;
+  readFrameSources?: (objectName: string) => Promise<PreparedNativeVideo[] | undefined>;
+  writeFrameSources?: (objectName: string, videos: readonly PreparedNativeVideo[]) => Promise<void>;
+  verifyFrame?: (frame: ManhuaViralTemplateEvidenceFrame) => Promise<boolean>;
+  waitFrameRetry?: (signal?: AbortSignal) => Promise<void>;
 };
 
 const defaultDeps: NativeDeepReadExecutionDeps = {
@@ -174,99 +180,171 @@ const defaultDeps: NativeDeepReadExecutionDeps = {
       throw error;
     }
   },
+  readFrameSources: async (objectName) => {
+    try {
+      const { buffer } = await downloadGcsObject({ gcsUri: `gs://${getGcsBucketName()}/${objectName}` });
+      const videos = JSON.parse(buffer.toString("utf8"));
+      if (!Array.isArray(videos)) throw new Error("截图分片索引格式错误");
+      return videos;
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("gcs_download_failed:404:")) return undefined;
+      throw error;
+    }
+  },
+  writeFrameSources: async (objectName, videos) => {
+    await uploadBufferToGcs({ objectName, buffer: Buffer.from(JSON.stringify(videos)), contentType: "application/json" });
+  },
+  verifyFrame: async (frame) => {
+    const { buffer } = await downloadGcsObject({ gcsUri: `gs://${getGcsBucketName()}/${frame.objectName}` });
+    return buffer.length === frame.bytes && crypto.createHash("sha256").update(buffer).digest("hex") === frame.sha256;
+  },
+  waitFrameRetry: async (signal) => { await waitFrameRetry(1000, undefined, { signal }); },
   writeFrameManifest: async (objectName, frames) => {
     await uploadBufferToGcs({ objectName, buffer: Buffer.from(JSON.stringify(frames)), contentType: "application/json" });
   },
 };
 
-/** 每片 keyMoments 返回即抽帧并保存独立索引；后续整形只汇总，失败恢复可复用已存截图。 */
+/** 每次读片有 keyMoments 即抽帧；截图重试独立于读片品质门禁。 */
+export const NATIVE_FRAME_RETRY_MAX = 5;
+function frameEvidenceError(message: string): Error {
+  const error = new Error(`截图未完成，禁止进入整形：${message}；已保留读片JSON与分片，不重新调用读片模型`);
+  error.name = "NativeDeepReadFrameEvidenceError";
+  return error;
+}
+
 function createSegmentFrameCollector(episode: NativeDeepReadEpisodeExecution, deps: NativeDeepReadExecutionDeps) {
+  type SegmentRead = Parameters<NonNullable<Parameters<typeof runManhuaNativeDeepRead>[0]["onSegmentRead"]>>[0];
   const bySegment = new Map<number, ManhuaViralTemplateEvidenceFrame[]>();
-  const byIdentity = new Map<string, ManhuaViralTemplateEvidenceFrame[]>();
+  const attempts = new Map<string, number>();
+  const persisted = new Set<string>();
+  let progressChain = Promise.resolve();
+  const progress = (zh: string) => {
+    progressChain = progressChain.then(async () => {
+      try { await episode.onMediaProgressZh?.(zh); }
+      catch (error) { console.warn(`[nativeDeepRead] 截图进度回写失败：${describeManhuaSourceFetchFailure(error)}`); }
+    });
+    return progressChain;
+  };
+  const valid = (frame: ManhuaViralTemplateEvidenceFrame) => Boolean(frame?.objectName && /^[a-f0-9]{64}$/.test(frame.sha256) && frame.bytes > 0);
+  const momentsFor = (segment: SegmentRead) => {
+    const span = episode.segments[segment.segmentIndex];
+    if (!span) throw frameEvidenceError("分片时间范围缺失");
+    // 广告不入卡的规则保留；不以读片品质门禁是否通过决定截图。
+    return mergeNativeKeyMomentsBySecond(Array.isArray(segment.raw.keyMoments) ? segment.raw.keyMoments : []).filter(moment =>
+      moment.atSec >= span.startSec && moment.atSec < span.endSec
+      && !(Array.isArray(segment.raw.shots) && segment.raw.shots.some(shot =>
+        shot?.evidenceRole === "non_story_ad" && moment.atSec >= shot.startSec && moment.atSec < shot.endSec)));
+  };
+  const collect = async (segment: SegmentRead, required: boolean) => {
+    episode.abortSignal?.throwIfAborted();
+    const span = episode.segments[segment.segmentIndex]!;
+    const keyMoments = momentsFor(segment);
+    const label = `第 ${episode.episodeIndex} 集 · 分片 ${segment.segmentIndex + 1}/${episode.segments.length}`;
+    if (!keyMoments.length) {
+      await progress(`${label} · 没有可截图的有效关键时刻${required ? "，已阻止整形" : ""}`);
+      if (required) throw frameEvidenceError(`第${segment.segmentIndex + 1}片没有有效keyMoments，无法补截`);
+      return;
+    }
+    const identityInput = { seriesKey: episode.seriesKey, episodeIndex: episode.episodeIndex,
+      sourceDigest: segment.sourceDigest, segmentIndex: segment.segmentIndex, span };
+    const sourceIdentity = crypto.createHash("sha256").update(JSON.stringify(identityInput)).digest("hex");
+    const identity = crypto.createHash("sha256").update(JSON.stringify({ ...identityInput, keyMoments })).digest("hex");
+    const objectName = `manhua-template-learn/native-frame-manifests/${identity}.json`;
+    const sourceName = `manhua-template-learn/native-frame-sources/${sourceIdentity}.json`;
+    const wanted = new Set(keyMoments.map(moment => moment.atSec));
+    const found = new Map<number, ManhuaViralTemplateEvidenceFrame>();
+    const retain = async (rows: ManhuaViralTemplateEvidenceFrame[]) => {
+      for (const frame of rows) {
+        if (!wanted.has(frame.atSec) || !valid(frame)) continue;
+        const usable = deps.verifyFrame ? await deps.verifyFrame(frame).catch(() => false) : true;
+        if (usable) found.set(frame.atSec, frame);
+      }
+    };
+    await retain([...(bySegment.get(segment.segmentIndex) || []), ...(episode.retainedEvidenceFrames || [])]);
+    if (!persisted.has(identity)) {
+      try { await retain(await deps.readFrameManifest?.(objectName) || []); }
+      catch (error) { console.warn(`[nativeDeepRead] 截图索引读取失败，继续补图：${describeManhuaSourceFetchFailure(error)}`); }
+    }
+    if (found.size === keyMoments.length && persisted.has(identity)) {
+      if (required) await progress(`${label} · 整形前核对：截图 ${found.size}/${keyMoments.length} 已保存`);
+      return;
+    }
+    await progress(`${label} · ${required ? "整形前补截" : "正在截取关键时刻"} · 已有 ${found.size}/${keyMoments.length} 张`);
+    // 1008 用户要求：整形前发现缺图，再开启独立补截轮（首试+最多5次重试）。
+    if (required) attempts.delete(identity);
+    let preparedVideos = segment.preparedVideos;
+    let lastError = "缺少可用GCS分片或截图";
+    let sourceSaved = false;
+    for (let attempt = attempts.get(identity) || 0; attempt <= NATIVE_FRAME_RETRY_MAX; attempt += 1) {
+      episode.abortSignal?.throwIfAborted();
+      attempts.set(identity, attempt + 1);
+      if (attempt > 0) {
+        console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集第${segment.segmentIndex + 1}片补截图重试 ${attempt}/${NATIVE_FRAME_RETRY_MAX}，缺 ${keyMoments.length - found.size} 张`);
+        await progress(`${label} · 截图重试 ${attempt}/${NATIVE_FRAME_RETRY_MAX} · 缺 ${keyMoments.length - found.size} 张 · ${lastError}`);
+        await deps.waitFrameRetry?.(episode.abortSignal);
+      }
+      try {
+        if (found.size < keyMoments.length) {
+          if (!preparedVideos.length) preparedVideos = await deps.readFrameSources?.(sourceName) || [];
+          preparedVideos = preparedVideos.filter(video => video.gsUri?.startsWith("gs://")
+            && Math.abs(video.startSec - span.startSec) < 0.01 && Math.abs(video.endSec - span.endSec) < 0.01);
+          if (!preparedVideos.length) throw new Error("没有可用GCS分片，未回源或重读模型");
+          if (!sourceSaved) { await deps.writeFrameSources?.(sourceName, preparedVideos); sourceSaved = true; }
+          const missing = keyMoments.filter(moment => !found.has(moment.atSec));
+          const uploaded = new Set(found.keys());
+          const captured = await deps.extractKeyMomentFrames({ seriesKey: episode.seriesKey,
+            episodeIndex: episode.episodeIndex, sourceDigest: segment.sourceDigest,
+            mediaNodes: [], preparedSegments: preparedVideos, keyMoments: missing, abortSignal: episode.abortSignal,
+            onFrameFailure: ({ stage, reason, atSec }) => {
+              lastError = `${stage} / ${reason}${atSec === undefined ? "" : ` / ${atSec}秒`}`;
+              void progress(`${label} · 截图失败：${lastError}`);
+            },
+            onFrameUploaded: async (frame) => {
+              uploaded.add(frame.atSec);
+              await progress(`${label} · 截图已上传 ${uploaded.size}/${keyMoments.length} 张，正在保存索引`);
+            } });
+          await retain(captured);
+        }
+        const frames = [...found.values()].sort((a, b) => a.atSec - b.atSec);
+        bySegment.set(segment.segmentIndex, frames);
+        // 部分成功也落盘，下一轮仅补缺图；索引保存失败不得标记完成。
+        if (frames.length) await deps.writeFrameManifest?.(objectName, frames);
+        if (frames.length === keyMoments.length) {
+          persisted.add(identity);
+          await progress(`${label} · 截图 ${frames.length}/${keyMoments.length} 已保存${required ? "，整形前核对通过" : ""}`);
+          console.info(`[nativeDeepRead] 第${episode.episodeIndex}集第${segment.segmentIndex + 1}片截图已保存 ${frames.length}/${keyMoments.length}`);
+          return;
+        }
+        lastError = `缺少 ${keyMoments.length - frames.length}/${keyMoments.length} 张截图（${lastError}）`.slice(0, 400);
+      } catch (error) {
+        episode.abortSignal?.throwIfAborted();
+        lastError = describeManhuaSourceFetchFailure(error);
+      }
+    }
+    bySegment.set(segment.segmentIndex, [...found.values()].sort((a, b) => a.atSec - b.atSec));
+    await progress(`${label} · ${required ? "截图补齐失败，已阻止整形" : "截图未齐，整形前将再次补截"} · ${lastError}`);
+    if (required) throw frameEvidenceError(`第${segment.segmentIndex + 1}片首试及5次重试后仍未完成：${lastError}`);
+    console.warn(`[nativeDeepRead] 第${segment.segmentIndex + 1}片截图待补，保留分析，整形前必须补齐：${lastError}`);
+  };
   return {
     frames: (moments: NativeDeepReadRunResult["keyMoments"]) => {
       const available = new Map(Array.from(bySegment.values()).flat().map(frame => [frame.atSec, frame]));
-      const expected = mergeNativeKeyMomentsBySecond(moments || []);
-      const frames = expected.flatMap(moment => {
+      return mergeNativeKeyMomentsBySecond(moments || []).flatMap(moment => {
         const frame = available.get(moment.atSec);
         return frame ? [{ ...frame, ...moment }] : [];
       });
-      if (frames.length < expected.length) console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集截图 ${frames.length}/${expected.length}，已保留分析；未回源或重新调用模型`);
-      return frames;
     },
-    onSegmentRead: async (segment: Parameters<NonNullable<Parameters<typeof runManhuaNativeDeepRead>[0]["onSegmentRead"]>>[0]) => {
-      const span = episode.segments[segment.segmentIndex];
-      if (!span) throw new Error("分片截图缺少对应时间范围");
-      const rawMoments = Array.isArray(segment.raw.keyMoments) ? segment.raw.keyMoments : [];
-      const keyMoments = mergeNativeKeyMomentsBySecond(rawMoments).filter(moment =>
-        moment.atSec >= span.startSec && moment.atSec < span.endSec
-        && !(Array.isArray(segment.raw.shots) && segment.raw.shots.some(shot =>
-          shot?.evidenceRole === "non_story_ad" && moment.atSec >= shot.startSec && moment.atSec < shot.endSec)));
-      const identity = crypto.createHash("sha256").update(JSON.stringify({
-        seriesKey: episode.seriesKey, episodeIndex: episode.episodeIndex, sourceDigest: segment.sourceDigest,
-        segmentIndex: segment.segmentIndex, span, keyMoments,
-      })).digest("hex");
-      const inMemory = byIdentity.get(identity);
-      if (inMemory) { bySegment.set(segment.segmentIndex, inMemory); return; }
-      const objectName = `manhua-template-learn/native-frame-manifests/${identity}.json`;
-      try {
-        let saved: ManhuaViralTemplateEvidenceFrame[] = [];
-        try {
-          saved = await deps.readFrameManifest?.(objectName) || [];
-        } catch (error) {
-          // 索引是恢复加速层；读取失败不应阻止消费仍可用的本轮 GCS 分片。
-          console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集第${segment.segmentIndex + 1}片截图索引读取失败，继续检查现有分片：${describeManhuaSourceFetchFailure(error)}`);
-        }
-        const wanted = new Set(keyMoments.map(moment => moment.atSec));
-        const retained = saved.filter(frame => wanted.has(frame.atSec) && frame.objectName && frame.sha256 && frame.bytes > 0);
-        const missing = keyMoments.filter(moment => !retained.some(frame => frame.atSec === moment.atSec));
-        const captured = missing.length ? await extractPreparedSegmentEvidenceFrames({ episode, deps,
-          sourceDigest: segment.sourceDigest, keyMoments: missing, preparedVideos: segment.preparedVideos,
-        }) || [] : [];
-        const frames = [...retained, ...captured].sort((a, b) => a.atSec - b.atSec);
-        bySegment.set(segment.segmentIndex, frames);
-        byIdentity.set(identity, frames);
-        if (captured.length) await deps.writeFrameManifest?.(objectName, frames);
-        if (frames.length) console.info(`[nativeDeepRead] 第${episode.episodeIndex}集第${segment.segmentIndex + 1}片截图已保存 ${frames.length}/${keyMoments.length}`);
-        if (frames.length < keyMoments.length) console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集第${segment.segmentIndex + 1}片截图缺失 ${keyMoments.length - frames.length}/${keyMoments.length}`);
-      } catch (error) {
-        console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集第${segment.segmentIndex + 1}片截图索引未完成：${describeManhuaSourceFetchFailure(error)}`);
+    onSegmentRead: (segment: SegmentRead) => collect(segment, false),
+    beforeStructuring: async (input: { segments: SegmentRead[] }) => {
+      await progress(`第 ${episode.episodeIndex} 集 · 整形前核对全部分片截图`);
+      if (!input.segments.some(segment => momentsFor(segment).length)) {
+        await progress(`第 ${episode.episodeIndex} 集 · 没有有效关键时刻截图，已阻止整形`);
+        throw frameEvidenceError("没有有效关键时刻截图");
       }
+      for (const segment of input.segments) await collect(segment, true);
+      await progress(`第 ${episode.episodeIndex} 集 · 全部分片截图已补齐保存，允许进入整形`);
     },
   };
-}
-
-async function extractPreparedSegmentEvidenceFrames(input: {
-  episode: NativeDeepReadEpisodeExecution;
-  keyMoments: NonNullable<NativeDeepReadRunResult["keyMoments"]>;
-  sourceDigest?: string;
-  deps: NativeDeepReadExecutionDeps;
-  preparedVideos: readonly PreparedNativeVideo[];
-}) {
-  if (!input.keyMoments.length) return [];
-  try {
-    const preparedSegments = input.preparedVideos || [];
-    // 截图只消费已备好的 GCS 分片；旧缓存没有分片时明确缺图，绝不回源或重新读模型。
-    if (!preparedSegments.length) {
-      console.warn(`[nativeDeepRead] 第${input.episode.episodeIndex}集缺少可用GCS分片及截图，已保留分析，未回源补抽`);
-      return [];
-    }
-    const frames = await input.deps.extractKeyMomentFrames({
-      seriesKey: input.episode.seriesKey,
-      episodeIndex: input.episode.episodeIndex,
-      sourceDigest: input.sourceDigest,
-      mediaNodes: [],
-      preparedSegments,
-      keyMoments: input.keyMoments,
-      abortSignal: input.episode.abortSignal,
-    });
-    if (!frames.length) console.warn(`[nativeDeepRead] 第${input.episode.episodeIndex}集截图缺失，已保存模型分析，未生成完整图文报告`);
-    return frames;
-  } catch (error) {
-    // 关键帧是审批证据增强层：失败时省略全部/部分帧，已付费的完整卡仍必须入库。
-    console.warn(`[nativeDeepRead] 第${input.episode.episodeIndex}集关键时刻抽帧未完成，卡片继续入库：${describeManhuaSourceFetchFailure(error)}`);
-    return undefined;
-  }
 }
 
 function extractDouyinAwemeId(sourceRef: string): string | undefined {
@@ -604,6 +682,7 @@ export async function executeAndIngestNativeDeepReadEpisode(
       segments: input.segments,
       sourceDurationSec: input.durationSec,
       onSegmentRead: frameCollector.onSegmentRead,
+      beforeStructuring: frameCollector.beforeStructuring,
       hintZh: input.laneHintZh,
       videoFps: input.videoFps,
       abortSignal: input.abortSignal,
@@ -1088,9 +1167,10 @@ export async function runNativeDeepReadBatch(input: {
           );
         }
       }
-      const frameCollector = createSegmentFrameCollector({ ...episode, seriesKey: input.seriesKey, abortSignal: input.abortSignal }, deps);
+      const frameCollector = createSegmentFrameCollector({ ...episode, seriesKey: input.seriesKey, abortSignal: input.abortSignal, onMediaProgressZh: input.onMediaProgressZh }, deps);
       const visualBatch = await deps.runBatch({
-        onSegmentRead: input.structuringOnly ? undefined : frameCollector.onSegmentRead,
+        onSegmentRead: frameCollector.onSegmentRead,
+        beforeStructuring: frameCollector.beforeStructuring,
         episodes: [{
           episodeIndex: episode.episodeIndex,
           resolveNodes: episode.resolveNodes,
@@ -1191,7 +1271,7 @@ export async function runNativeDeepReadBatch(input: {
       if (!gate.ok) {
         throw new Error(`第${episode.episodeIndex}集未通过入库门禁：${gate.reasonZh}`);
       }
-      const evidenceFrames = input.structuringOnly ? episode.retainedEvidenceFrames : frameCollector.frames(result.keyMoments);
+      const evidenceFrames = frameCollector.frames(result.keyMoments);
       input.abortSignal?.throwIfAborted();
       const stored = await deps.ingest({
         abortSignal: input.abortSignal,

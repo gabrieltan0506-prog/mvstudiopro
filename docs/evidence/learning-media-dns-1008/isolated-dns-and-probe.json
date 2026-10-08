@@ -1,0 +1,125 @@
+[
+  {
+    "at": "2026-10-08T14:00:15.515Z",
+    "mode": "before",
+    "machine": "7812595b294778",
+    "checks": [
+      {
+        "host": "ppvod021.zyxsuntech.com",
+        "error": "ENOTFOUND"
+      },
+      {
+        "host": "0996zp.com",
+        "error": "ENOTFOUND"
+      },
+      {
+        "host": "d892541f602228.vm.mvstudiopro.internal",
+        "error": "ENOTFOUND"
+      }
+    ]
+  },
+  {
+    "at": "2026-10-08T14:00:15.616Z",
+    "mode": "after",
+    "machine": "7812595b294778",
+    "checks": [
+      {
+        "host": "ppvod021.zyxsuntech.com",
+        "addresses": [
+          {
+            "address": "23.251.120.79",
+            "family": 4
+          },
+          {
+            "address": "129.227.87.48",
+            "family": 4
+          },
+          {
+            "address": "162.128.161.60",
+            "family": 4
+          }
+        ]
+      },
+      {
+        "host": "0996zp.com",
+        "addresses": [
+          {
+            "address": "103.231.15.213",
+            "family": 4
+          },
+          {
+            "address": "103.231.15.218",
+            "family": 4
+          },
+          {
+            "address": "103.246.244.116",
+            "family": 4
+          },
+          {
+            "address": "103.246.244.135",
+            "family": 4
+          },
+          {
+            "address": "123.254.108.225",
+            "family": 4
+          },
+          {
+            "address": "45.125.14.218",
+            "family": 4
+          },
+          {
+            "address": "45.125.32.173",
+            "family": 4
+          },
+          {
+            "address": "45.125.32.174",
+            "family": 4
+          },
+          {
+            "address": "45.125.32.177",
+            "family": 4
+          },
+          {
+            "address": "45.125.35.217",
+            "family": 4
+          },
+          {
+            "address": "45.125.35.244",
+            "family": 4
+          }
+        ]
+      },
+      {
+        "host": "d892541f602228.vm.mvstudiopro.internal",
+        "addresses": [
+          {
+            "address": "fdaa:50:6acf:a7b:6bb:29a4:58b2:2",
+            "family": 6
+          }
+        ]
+      }
+    ],
+    "inputKeys": [
+      "action",
+      "version",
+      "request",
+      "parentJobId"
+    ],
+    "requestKeys": [
+      "kind",
+      "command",
+      "args",
+      "timeoutMs",
+      "maxBuffer"
+    ],
+    "ffprobe": {
+      "ok": true,
+      "duration": "8166.074954",
+      "streams": [
+        "video",
+        "audio"
+      ],
+      "stderrPresent": false
+    }
+  }
+]

@@ -1228,6 +1228,8 @@ describe("GCS截图接入正式入库", () => {
     const preparedVideos = [{ gsUri: "gs://b/seg1.mp4", startSec: 300, endSec: 600,
       temporaryGcs: { bucket: "b", objectName: "seg1.mp4" }, bytes: 100, hasAudio: true }];
     const resolveNodes = vi.fn(async () => { throw new Error("原站已不可用"); });
+    deps.extractKeyMomentFrames = vi.fn(async () => [{ atSec: 305, kindZh: "剧情", noteZh: "长片后段",
+      objectName: "manhua-template-learn/native-frames/s/305.jpg", mimeType: "image/jpeg", bytes: 10, sha256: "b".repeat(64) }]);
     deps.run = vi.fn(async (input) => {
       await input.onSegmentRead?.({ episodeIndex: 1, segmentIndex: 1, raw: { keyMoments: [{ atSec: 305, kindZh: "剧情", noteZh: "长片后段" }] }, sourceDigest: "a".repeat(64), preparedVideos });
       return result;
@@ -1297,18 +1299,19 @@ describe("分片截图持久化与不重复读片", () => {
     expect(deps.ingest).toHaveBeenCalledWith(expect.objectContaining({ evidenceFrames: [frame] }));
   });
 
-  it("截图失败保留已付费分析，不调用runner重读，也不在整集结束后补抽", async () => {
+  it("逐片截图首试加5次重试，整形前再次补截仍失败则阻止入库，不重读", async () => {
     deps.extractKeyMomentFrames = vi.fn(async () => { throw new Error("抽帧失败"); });
     deps.run = vi.fn(async input => {
       await input.onSegmentRead?.(event);
       await input.onSegmentRead?.(event);
+      expect(deps.extractKeyMomentFrames).toHaveBeenCalledTimes(6);
+      await input.beforeStructuring?.({ segments: [event] });
       return makeResult({ keyMoments: [moment] }) as never;
     });
-    const output = await executeAndIngestNativeDeepReadEpisode({ ...episode, seriesKey: "s" }, deps);
+    await expect(executeAndIngestNativeDeepReadEpisode({ ...episode, seriesKey: "s" }, deps)).rejects.toThrow("禁止进入整形");
     expect(deps.run).toHaveBeenCalledTimes(1);
-    expect(deps.extractKeyMomentFrames).toHaveBeenCalledTimes(1);
-    expect(deps.ingest).toHaveBeenCalledWith(expect.objectContaining({ evidenceFrames: [] }));
-    expect(output.costCny).toBe(0.5);
+    expect(deps.extractKeyMomentFrames).toHaveBeenCalledTimes(12);
+    expect(deps.ingest).not.toHaveBeenCalled();
   });
 });
 
