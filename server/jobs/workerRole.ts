@@ -30,3 +30,8 @@ export function resolvePostProdClaimFilter(env: NodeJS.ProcessEnv = process.env)
 export function heavyWorkerSplitEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return String(env.MANHUA_HEAVY_WORKER_SPLIT || "").trim() === "1";
 }
+
+/** 分机时由工作机直接领取整条学习任务；单机部署仍由 app 领取。 */
+export function shouldConsumeManhuaLearning(env: NodeJS.ProcessEnv = process.env): boolean {
+  return heavyWorkerSplitEnabled(env) ? resolveJobWorkerRole(env) === "rig" : resolveJobWorkerRole(env) === "app";
+}

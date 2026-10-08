@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { constants } from "node:fs";
 import { mkdir, open, lstat, rename, statfs } from "node:fs/promises";
 import path from "node:path";
@@ -441,7 +442,17 @@ export async function resolveOwnedManhuaLocalVideoUpload(input: {
   uploadId: string;
 }) {
   try {
-    return await manhuaLocalVideoUploadService.resolveOwned(input);
+    const { heavyWorkerSplitEnabled, resolveJobWorkerRole } = await import("../jobs/workerRole");
+    if (heavyWorkerSplitEnabled() && resolveJobWorkerRole() === "rig") {
+      const source = portableLocalSource.getStore();
+      if (!source || source.userId !== String(input.userId) || source.uploadId !== input.uploadId) {
+        throw new LocalVideoUploadError(503, "SOURCE_UNAVAILABLE", "工作机缺少已核验的上传来源");
+      }
+      return source;
+    }
+    const source = await manhuaLocalVideoUploadService.resolveOwned(input);
+    if (heavyWorkerSplitEnabled()) await publishPortableManhuaSource(source);
+    return source;
   } catch (error) {
     if (error instanceof LocalVideoUploadError) throw error;
     // worker 会把异常写入任务回执，磁盘与解析错误不得携带本地路径进入回执。
@@ -451,4 +462,52 @@ export async function resolveOwnedManhuaLocalVideoUpload(input: {
       "原视频暂不可读取，请稍后重试"
     );
   }
+}
+
+
+type OwnedLocalSource = Awaited<ReturnType<typeof manhuaLocalVideoUploadService.resolveOwned>>;
+const portableLocalSource = new AsyncLocalStorage<OwnedLocalSource>();
+const portableSourceSchema = manifestSchema.pick({ userId: true, uploadId: true, fileName: true, bytes: true })
+  .extend({ sha256: z.string().regex(/^[0-9a-f]{64}$/), durationSec: z.number().finite().positive(), sourceRef: z.string(), gcsUri: z.string() }).strict();
+function portableSourceReceiptId(userId: string, uploadId: string): string {
+  return `local_${createHash("sha256").update(`${userId}/${uploadId}`).digest("hex").slice(0, 55)}`;
+}
+/** 入队前备份已核上传文件；身份回执不可覆盖，视频始终在 Fly/GCS 内。 */
+async function publishPortableManhuaSource(source: OwnedLocalSource) {
+  const { assertManhuaNewLearningVideoDuration } = await import("../../shared/manhuaLearningAdmission");
+  assertManhuaNewLearningVideoDuration(source.durationSec);
+  const { readHeavyMediaResult, saveHeavyMediaResult } = await import("./heavyMediaEvidence");
+  const { withHeavyMediaRequest } = await import("../jobs/heavyMediaContext");
+  const { stageHeavyMediaFile } = await import("./heavyLearnMedia");
+  const id = portableSourceReceiptId(source.userId, source.uploadId);
+  const existing = await readHeavyMediaResult(id, source.userId);
+  if (existing) {
+    const stored = portableSourceSchema.parse(existing);
+    if (stored.uploadId !== source.uploadId || stored.sha256 !== source.sha256 || stored.bytes !== source.bytes
+      || stored.durationSec !== source.durationSec || stored.sourceRef !== source.sourceRef) throw new Error("上传来源备份与原文件冲突");
+    return;
+  }
+  const gcsUri = await withHeavyMediaRequest(source.userId, () => stageHeavyMediaFile(source.localPath, heavyMediaSignal.getStore()));
+  const { userId, uploadId, fileName, bytes, sha256, durationSec, sourceRef } = source;
+  await saveHeavyMediaResult(id, userId, { userId, uploadId, fileName, bytes, sha256, durationSec, sourceRef, gcsUri });
+}
+/** 一条父学习任务只下载一次，计划/备料共用临时文件，终态后清理。 */
+export async function withPortableManhuaLocalVideoSource<T>(userId: string, input: unknown, work: () => Promise<T>): Promise<T> {
+  const params = (input as { params?: Record<string, unknown> })?.params;
+  if (!params?.localVideoUploadId || params.nativeStructuringOnly === true) return work();
+  const uploadId = String(params.localVideoUploadId);
+  if (!/^[1-9][0-9]*$/.test(userId) || !MANHUA_LOCAL_VIDEO_UPLOAD_ID.test(uploadId)) throw new Error("上传来源身份无效");
+  const { readHeavyMediaResult } = await import("./heavyMediaEvidence");
+  const { getGcsBucketName } = await import("./gcs");
+  const { materializeHeavyMediaSource } = await import("./heavyLearnMedia");
+  const source = portableSourceSchema.parse(await readHeavyMediaResult(portableSourceReceiptId(userId, uploadId), userId));
+  if (source.userId !== userId || source.uploadId !== uploadId || source.sourceRef !== buildManhuaLocalVideoSourceRef({ userId, uploadId, sha256: source.sha256 })
+    || source.sourceRef !== params.url || source.gcsUri !== `gs://${getGcsBucketName()}/heavy-media-sources/u${userId}/${source.sha256}.mp4`) {
+    throw new Error("上传来源归属或指纹不一致");
+  }
+  return await materializeHeavyMediaSource(source.gcsUri, async localPath => {
+    if ((await lstat(localPath)).size !== source.bytes) throw new Error("上传来源长度不一致");
+    const { gcsUri: _, ...metadata } = source;
+    return portableLocalSource.run({ ...metadata, localPath }, work);
+  }) as T;
 }

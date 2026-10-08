@@ -117,6 +117,7 @@ describe("原生精读任务墙钟", () => {
       videoFps: 12,
       readModel: "gemini-3.1-pro-preview",
       structuringModel: "glm-5.3",
+      structuringGateway: "openrouter",
       seriesKey: undefined,
       learnLlm: "gpt",
     });
@@ -270,4 +271,14 @@ describe("新读片唯一Flash入口", () => {
       nativeStructuringOnly: true, nativeStructuringEpisodeIndex: 1, nativeStructuringPreviousJobId: "old-job-12345" };
     expect(parseNewNativeDeepReadJobConfirmation(old)).toEqual(parseNativeDeepReadJobConfirmation(old));
   });
+});
+
+
+it("指定整形路由冻结进契约，另一页不同路由不得复用同任务", () => {
+  const params = { url: "https://www.douyin.com/video/12345", batchSize: 1, nativeDeepReadConfirmed: true,
+    nativeMaxCalls: 10, nativePlanLimit: 1, nativeStructuringGateway: "evolink_glm" };
+  const selected = parseNativeDeepReadJobConfirmation(params);
+  expect(selected.structuringGateway).toBe("evolink_glm");
+  expect(sameNativeDeepReadJobConfirmation(selected, { ...selected, structuringGateway: "openrouter" })).toBe(false);
+  expect(() => parseNativeDeepReadJobConfirmation({ ...params, nativeStructuringGateway: "qwen" })).toThrow("整形路由");
 });

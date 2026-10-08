@@ -1,3 +1,6 @@
+import { shouldConsumeManhuaLearning } from "../server/jobs/workerRole";
+import { shouldDispatchHeavyMedia } from "../server/jobs/heavyMediaContext";
+import { nativeDeepReadStructuringGatewayOrder } from "../server/services/manhuaNativeDeepReadRunner";
 import { neon } from "@neondatabase/serverless";
 import { downloadGcsObject, getGcsBucketName } from "../server/services/gcs";
 import { nativeDeepReadProposalObjectName } from "../server/services/manhuaNativeDeepReadIngest";
@@ -16,6 +19,11 @@ if (!job.seriesKey) throw new Error("本轮没有可核对的系列键，不读�
 const signal = AbortSignal.timeout(120_000);
 const receipt: Record<string, unknown> = { at: new Date().toISOString(), machine: process.env.FLY_MACHINE_ID,
   learningJob: "B39Nhgt_cH4LjpJs", learningStatus: job?.status, source: "本批正式修改源码", modelCalls: 0, mediaSubmissions: 0 };
+receipt.workerOwnsLearning = shouldConsumeManhuaLearning();
+receipt.noWebsiteDispatch = !shouldDispatchHeavyMedia();
+receipt.selectedRoutesStayFixed = ["openrouter", "evolink_glm"].every(gateway => [0, 1, 4].every(batch =>
+  JSON.stringify(nativeDeepReadStructuringGatewayOrder("structuring_chain", batch, gateway as "openrouter" | "evolink_glm")) === JSON.stringify([gateway])));
+if (!receipt.workerOwnsLearning || !receipt.noWebsiteDispatch || !receipt.selectedRoutesStayFixed) throw new Error("工作机领取或路由检查失败");
 try { assertManhuaNativeLearningExecution({}); receipt.retiredEntryBlocked = false; }
 catch (error) { receipt.retiredEntryBlocked = (error as Error).message.includes("旧抽帧学习"); }
 assertManhuaNativeLearningExecution({ nativeDeepReadConfirmed: true });

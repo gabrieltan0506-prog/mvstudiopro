@@ -22,3 +22,11 @@ describe("0917 Blender 独立进程组角色", () => {
     expect(isBlenderPostProdAction(undefined)).toBe(false);
   });
 });
+
+import { shouldConsumeManhuaLearning } from "./workerRole";
+it("父学习分机仅rig领取；单机仅app领取", () => {
+  expect(shouldConsumeManhuaLearning({ MANHUA_HEAVY_WORKER_SPLIT: "1", JOB_WORKER_ROLE: "app" })).toBe(false);
+  expect(shouldConsumeManhuaLearning({ MANHUA_HEAVY_WORKER_SPLIT: "1", JOB_WORKER_ROLE: "rig" })).toBe(true);
+  expect(shouldConsumeManhuaLearning({ JOB_WORKER_ROLE: "app" })).toBe(true);
+  expect(shouldConsumeManhuaLearning({ JOB_WORKER_ROLE: "rig" })).toBe(false);
+});

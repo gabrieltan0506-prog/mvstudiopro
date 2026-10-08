@@ -128,6 +128,17 @@ export async function claimNextGrowthCampAnalyzeJob(): Promise<NormalizedJob | n
   return claimQueuedJobById(db, next, "claimNextGrowthCampAnalyzeJob");
 }
 
+/** 自动启停必须包含父学习任务，不能只数媒体子队列；查询失败向上传播。 */
+export async function countPendingManhuaLearnJobs(includeRunning = true): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("学习队列状态不可确认");
+  const rows = await db.select({ count: sql<number>`count(*)::int` }).from(jobs).where(and(
+    eq(jobs.type, "video"), inArray(jobs.status, includeRunning ? ["queued", "running"] : ["queued"]),
+    sql`(${jobs.input}::jsonb->>'action') = 'manhua_template_learn'`,
+  ));
+  return Number(rows[0]?.count || 0);
+}
+
 /** 漫剧学习专用持久队列；由独立双并发 worker 领取，关页后仍继续。 */
 export async function claimNextManhuaTemplateLearnJob(): Promise<NormalizedJob | null> {
   const db = await getDb();

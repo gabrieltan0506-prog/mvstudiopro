@@ -1022,6 +1022,7 @@ export async function runNativeDeepReadBatch(input: {
   /** 0903 双模型：读片主模型；缺省＝3.1 Pro。 */
   readModel?: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeDeepReadModelId;
   /** 0905 整形开关 */
+  structuringGateway?: "openrouter" | "evolink_glm";
   structuringModel?: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeStructuringModelId;
   episodes: readonly NativeDeepReadBatchEpisode[];
   segmentSeconds?: number;
@@ -1189,6 +1190,7 @@ export async function runNativeDeepReadBatch(input: {
         relearnRequestId: episode.relearnRequestId,
         readModel: input.readModel,
         structuringModel: input.structuringModel,
+        structuringGateway: input.structuringGateway,
         structuringOnly: input.structuringOnly,
         abortSignal: input.abortSignal,
         onSegmentSnapshotCommitted: async (snapshot) => {

@@ -152,6 +152,7 @@ export type ManhuaTemplateLearnInput = {
   /** 0905 整形开关 */
   nativeStructuringOnly?: boolean;
   nativeStructuringSource?: import("./manhuaNativeStructuringOnly.js").NativeStructuringStoredSource;
+  nativeStructuringGateway?: "openrouter" | "evolink_glm";
   nativeStructuringModel?: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeStructuringModelId;
   /** 0901「整支即全集」：与计划层同一声明——忽略 mixId，按独立长视频单源学习 */
   nativeStandaloneSource?: boolean;
@@ -1461,7 +1462,7 @@ export async function runManhuaTemplateLearn(
     await input.onProgress?.(MANHUA_LEARN_STAGE.vision, "正在复用已保存JSON重新整形，不读取源视频…");
     let nativeUsage: ManhuaNativeDeepReadUsageReceipt | undefined;
     const batch = await runNativeDeepReadBatch({ seriesKey: source.seriesKey, structuringOnly: true,
-      readModel: input.nativeReadModel, structuringModel: input.nativeStructuringModel,
+      readModel: input.nativeReadModel, structuringModel: input.nativeStructuringModel, structuringGateway: input.nativeStructuringGateway,
       segmentSeconds: source.segmentSeconds, episodes: [episode], abortSignal: input.abortSignal,
       onModelCheckpoint: input.onNativeModelReceipt,
       onMediaProgressZh: async zh => { await input.onProgress?.(MANHUA_LEARN_STAGE.vision, zh); },
@@ -1841,7 +1842,7 @@ export async function runManhuaTemplateLearn(
     const batchResult = await runNativeDeepReadBatch({
       seriesKey,
       readModel: input.nativeReadModel,
-      structuringModel: input.nativeStructuringModel,
+      structuringModel: input.nativeStructuringModel, structuringGateway: input.nativeStructuringGateway,
       structuringOnly: input.nativeStructuringOnly,
       segmentSeconds: confirmedNativePlan?.segmentSeconds,
       episodes: executionPlans.map(({ seriesKey: _seriesKey, abortSignal: _abortSignal, ...plan }) => plan),

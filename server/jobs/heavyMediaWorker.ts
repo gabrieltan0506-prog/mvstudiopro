@@ -297,7 +297,8 @@ export async function executeHeavyMedia(
 }
 /** One claim, one execution. No crash/timeout retry, including ambiguous result persistence. */
 export async function processHeavyMediaOnce(
-  blocked: () => boolean
+  blocked: () => boolean,
+  allowedKinds?: readonly string[]
 ): Promise<void> {
   if (
     shuttingDown ||
@@ -315,7 +316,7 @@ export async function processHeavyMediaOnce(
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   let heartbeatPending: Promise<void> | undefined;
   try {
-    const job = await claimHeavyMediaJob(owner, activeCount > 1 ? learningKinds : undefined);
+    const job = await claimHeavyMediaJob(owner, allowedKinds ?? (activeCount > 1 ? learningKinds : undefined));
     claiming = false;
     ownsClaim = false;
     if (!job) return;
