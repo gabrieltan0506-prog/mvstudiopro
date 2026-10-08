@@ -1,0 +1,24 @@
+{
+  "at": "2026-10-08T16:30:01.397Z",
+  "machine": "7812595b294778",
+  "sourceUrl": "https://0996zp.com/vod/play/146259/sid/1313645",
+  "candidates": 3,
+  "host": "ppvod01.kqgfbs.com",
+  "durationSec": 2858.750066,
+  "sequence": [
+    "learn_source",
+    "learn_command"
+  ],
+  "sourceSha256": {
+    "server/jobs/heavyMediaContext.ts": "2cd24280d9e491181cf15028ba1dbfa74713a5740bcb573a618bc11a2f36da8e",
+    "server/jobs/heavyMediaQueue.ts": "8fc06ec1a184eed8c29dbf641b5853c19b82f5b6e49e97ade073a572902bb317",
+    "server/jobs/heavyMediaWorker.ts": "3fe9121b62c4d1e5d7e910ebf9fbd2e4bf115ef8ee0a3f0e1449696b3e624ec0",
+    "server/services/heavyLearnMedia.ts": "0717b1fbd8b8251499f868ef8d33d7bc6638806ca27190d9fe5525fa4aad6304",
+    "server/services/manhuaLearn0996Source.ts": "455ad9214e2d803b467449082c608c44c66e1691c75c043e6fc5a6ab16902b16"
+  },
+  "boundary": "工作机独立源码目录；正式函数与真实源站、ffprobe；回调传输为进程内适配，未执行持久队列/完整学习/截图/模型",
+  "saved": {
+    "created": true,
+    "generation": "1791477002720562"
+  }
+}

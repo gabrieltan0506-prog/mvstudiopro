@@ -2,7 +2,8 @@ import { createReadStream } from "node:fs";
 import { Readable, Transform } from "node:stream";
 import { stat, statfs } from "node:fs/promises";
 import { MANHUA_LOCAL_VIDEO_MAX_BYTES } from "../../shared/manhuaLocalVideoUpload";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import type { Manhua0996Playback } from "../../shared/manhuaLearn0996Source";
 import { dispatchHeavyMedia } from "../jobs/heavyMediaQueue";
 import {
   heavyMediaCallbackCommand,
@@ -138,6 +139,35 @@ export async function dispatchLocalVideoProbe(
     { kind: "local_probe", source },
     { signal }
   );
+}
+
+/** 签名绑定出口：取得媒体地址也在工作机执行，凭证不进入队列。 */
+export async function dispatchLearnSourcePlayback(
+  sourceUrl: string,
+  signal?: AbortSignal,
+): Promise<Manhua0996Playback> {
+  signal?.throwIfAborted();
+  // 每次显式刷新独立身份；同次入队后的轮询仍沿用原任务，不能复用重启前的签名。
+  const request = { kind: "learn_source" as const, sourceUrl, refreshId: randomUUID() };
+  const callback = heavyMediaCallbackCommand.getStore();
+  const result = callback
+    ? await callback(request)
+    : await dispatchHeavyMedia<import("../jobs/heavyMediaQueue").HeavyCommandResult>(request, { signal });
+  signal?.throwIfAborted();
+  if (result.executionError) throw new Error(result.executionError);
+  let playback: Manhua0996Playback;
+  try {
+    playback = JSON.parse(result.stdout) as Manhua0996Playback;
+  } catch {
+    throw new Error("工作机返回的媒体来源回执不是有效 JSON");
+  }
+  if (!playback || !Array.isArray(playback.playbackUrls) || !playback.playbackUrls.length
+    || !playback.playbackUrls.every(url => typeof url === "string" && url.startsWith("https://"))
+    || !playback.playbackUrls.includes(playback.playbackUrl)
+    || typeof playback.referer !== "string" || !Array.isArray(playback.markers)) {
+    throw new Error("工作机返回的媒体来源回执不完整");
+  }
+  return playback;
 }
 export { shouldDispatchHeavyMedia, signGsUriV4ReadUrl };
 

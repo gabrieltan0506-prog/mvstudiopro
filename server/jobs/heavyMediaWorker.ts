@@ -87,6 +87,17 @@ export async function executeHeavyMedia(
       );
       return materializeHeavyMediaSource(request.source, probeVideo);
     }
+    case "learn_source": {
+      const { fetchManhua0996EpisodePlaybackLocally, describeManhuaSourceFetchFailure } =
+        await import("../services/manhuaLearn0996Source");
+      try {
+        const playback = await fetchManhua0996EpisodePlaybackLocally(request.sourceUrl, signal);
+        return { stdout: JSON.stringify(playback), stderr: "" };
+      } catch (error) {
+        signal.throwIfAborted();
+        return { stdout: "", stderr: "", executionError: describeManhuaSourceFetchFailure(error) || "工作机来源解析失败" };
+      }
+    }
     case "learn_command": {
       assertHeavyLearnCommand(request.command, request.args);
       const args = request.args.map(value =>
@@ -147,7 +158,7 @@ export async function executeHeavyMedia(
           const value = await exchange.readReply();
           const command = value.commandRequest;
           if (command && command.sequence > commandSequence) {
-            if (command.request.kind !== "learn_command")
+            if (command.request.kind !== "learn_command" && command.request.kind !== "learn_source")
               throw new Error("Invalid native callback command");
             let response: NonNullable<HeavyMediaProgress["commandResult"]>;
             try {
