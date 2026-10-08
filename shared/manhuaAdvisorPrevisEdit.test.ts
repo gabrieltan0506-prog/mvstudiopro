@@ -127,3 +127,24 @@ it("剧情道具和四足倒地经过顾问候选、应用、序列化恢复仍�
   expect(restored.specHistory?.at(-1)?.spec).toEqual(studio.spec);
   expect(applyAdvisorPrevisPatch(restored.spec,advisorPrevisPatchSchema.parse({kind:"previs_edit_v1",summaryZh:"清空道具",unsupportedZh:[],storyProps:[]})).storyProps).toEqual([]);
 });
+
+it("导入建立开镜已背稳关系，经原保存与恢复保留身份和旧稿，拒绝换人及错误路线", () => {
+  const studio = createManhuaPrevisStudio(5);
+  const base = {...studio.spec.actors[0], start:[0,0] as [number,number],end:[0,0] as [number,number],actions:[]};
+  studio.spec.actors = [{...base,id:"daughter",assetRef:"daughter-asset"},{...base,id:"mother",assetRef:"mother-asset"},{...base,id:"doctor",assetRef:"doctor-asset"}];
+  const before = JSON.stringify(studio);
+  const patch=advisorPrevisPatchSchema.parse({kind:"previs_edit_v1",summaryZh:"阿菁开镜已背稳娘，保留原人物",unsupportedZh:[],piggyback:{carrierId:"daughter",passengerId:"mother"}});
+  const next=applyAdvisorPrevisCandidate("clip",studio,{target:makeAdvisorPrevisTarget("clip",studio),patch});
+  const restored=manhuaPrevisStudioSchema.parse(JSON.parse(JSON.stringify(next)));
+  expect(restored.spec.piggyback).toEqual(patch.piggyback);
+  expect(restored.spec.actors).toEqual(studio.spec.actors);
+  expect(restored.specHistory?.at(-1)?.spec).toEqual(studio.spec);
+  expect(JSON.stringify(studio)).toBe(before);
+  for(const passengerId of ["doctor","daughter","missing"]){
+    expect(()=>applyAdvisorPrevisPatch(restored.spec,{...patch,piggyback:{carrierId:"daughter",passengerId}})).toThrow("身份已锁定");
+  }
+  for(const passengerId of ["daughter","missing"]){
+    expect(()=>applyAdvisorPrevisPatch(studio.spec,{...patch,piggyback:{carrierId:"daughter",passengerId}})).toThrow("两名不同的在场人物");
+  }
+  expect(()=>applyAdvisorPrevisPatch(studio.spec,{...patch,actors:[{id:"mother",start:[1,0]}]})).toThrow("同一站位与路线");
+});

@@ -48,3 +48,9 @@ ANIM02 PARTIAL：取消固定六人门槛、按原预算跨层校验；打手甲
 
 ### 2026-10-08T18:16:10+08:00 · 最终类型回执
 pnpm exec tsc --noEmit --incremental false，session44509 exit0，/tmp/ep2-tsc-reviewed-1815.log为空。此回执覆盖来源移除及采用/背负冲突小修；线上、媒体、CI和全模边界不变。
+
+## 2026-10-08T18:33:13+08:00 · ANIM-10 定向入口遗漏复验
+目标：S28—34通过原方案导入建立已有两名角色的背负关系。证据：patch白名单没有piggyback，apply只允许在spec.piggyback存在时加setDown/blockBowl；渲染器、报告、云草稿已有完整piggyback消费者。修复范围限定顾问patch生产者与导入应用，不改人物/模型身份、不放宽带衣真模接触门禁、不渲染、不改计费。旧关系双方锁定；新关系须通过原spec完整schema和明确对照保存，历史保留。验证需覆盖新关系序列化恢复、非在场/重复/换人拒绝、路线冲突与现有接触报告回归。状态：REOPENED（入口未接通，非渲染器回归）。
+
+### 2026-10-08T18:35:44+08:00 · ANIM-10 入口定向验证
+新增piggyback候选生产字段，经原apply/spec/schema/publish进入保存及历史；已有双方ID锁定，不增加演员或替换模型。26项定向回归通过；真实React导入组件离线1/1（submits=0，原关系不存在→确认后关系保存，旧稿和旧片保留，源变化仍拒覆盖）；最终tsc --noEmit --incremental false exit0，diff检查通过。入口遗漏已闭合；全模与线上画面验收仍OPEN，不把离线组件与数值冒作成片。仅新增4文件diff复核，未重复渲染器探针。
