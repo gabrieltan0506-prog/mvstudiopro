@@ -436,7 +436,7 @@ def _export_rigged(objects, rig, path, **export_extra):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest(), sum(count for _, count in summary)
 
 
-def orientation_check(obj):
+def orientation_check(obj, pose="T"):
     """
     廉价朝向自检（不改任何阈值、不阻断）：归一后人物应面朝 +X。
     - 选错 90°（如 Tripo 实际 +X 却选 -Y）：手臂落到 X 轴，contract 的展臂检查会明确报错；
@@ -454,7 +454,7 @@ def orientation_check(obj):
             torso.append(vertex.co.x)
     feet_forward = (sum(feet) / len(feet) - sum(torso) / len(torso)) if feet and torso else 0.0
     depth, width = high[0] - low[0], high[1] - low[1]
-    return orientation_verdict(feet_forward, depth, width, height)
+    return orientation_verdict(feet_forward, depth, width, height, pose)
 
 
 REQUEST_DIGEST_VERSION = "request-v1|proxy=%d|mid=%d|rig=%d" % (PROXY_MAX_VERTICES, MID_MAX_VERTICES, RIG_MAX_VERTICES)
@@ -479,7 +479,7 @@ def request_digest(source_sha256, settings):
 ORIENTATION_NOISE_RATIO = 0.02
 
 
-def orientation_verdict(feet_forward, depth, width, height):
+def orientation_verdict(feet_forward, depth, width, height, pose="T"):
     """
     纯判定，便于不开 Blender 单测。0916 阿菁 A-pose 真跑：feetForwardMeters = -0.0104（1 厘米）就被判「背对 +X」，
     而正面预览明明是正脸——脚与躯干质心几乎同一垂直线时，正负号只是噪声。
@@ -491,7 +491,9 @@ def orientation_verdict(feet_forward, depth, width, height):
         reasons.append("脚部质心在躯干后方，人物可能背对 +X（前向轴选反 180°）")
     elif abs(feet_forward) <= noise:
         notes.append("脚部与躯干质心几乎同一垂直线（%.1f 厘米，噪声线 %.1f 厘米内），无法从脚判朝向，请以正面预览为准" % (feet_forward * 100, noise * 100))
-    if depth >= width:
+    if pose == "bent_arms":
+        notes.append("屈臂轮廓不适用展臂宽深检测，请对照正面和侧面确认朝向与左右关节")
+    elif depth >= width:
         reasons.append("深度不小于宽度，展臂可能落在 X 轴（前向轴选错 90°）")
     return {"suspect": bool(reasons), "feetForwardMeters": round(feet_forward, 4), "noiseFloorMeters": round(noise, 4),
             "depthMeters": round(depth, 4), "widthMeters": round(width, 4), "reasons": reasons, "notes": notes}
@@ -507,6 +509,10 @@ def suggestions(bounds, pose):
         for name, fraction, z in (("shoulder", .20, .75), ("elbow", .55, .75 if pose == "T" else .64),
                                   ("wrist", .86, .75 if pose == "T" else .54), ("handTip", .98, .75 if pose == "T" else .48)):
             result[name + side] = [0, sign * width * fraction, h * z]
+        if pose == "bent_arms":
+            # 仅比例建议；胸前持物姿态必须在前侧视图中重新校正全部关节。
+            for name, xyz in {"shoulder": [0, sign*h*.11, h*.75], "elbow": [h*.025, sign*h*.15, h*.59], "wrist": [h*.11, sign*h*.06, h*.71], "handTip": [h*.12, sign*h*.04, h*.75]}.items():
+                result[name+side] = xyz
         for name, z in (("hip", .46), ("knee", .25), ("ankle", .055)):
             result[name + side] = [0, sign * h * .07, h * z]
         result["toe" + side] = [min(high[0] * .95, h * .1), sign * h * .07, h * .055]
@@ -573,14 +579,14 @@ def run(request_file, source_file, output_dir):
         result = {"version": 1, "stage": "inspect", "sourceDigest": digest,
                   "sourceSha256": sha, "vertices": len(source.data.vertices),
                   "bounds": bounds_of(source), "settings": settings,
-                  "limitations": ["初始点是比例建议，必须对照模型人工校正", "仅封闭连通A/T人体，不含眼骨和表情", "本次合并%d个数值重合接缝点，原云模型保持不变" % merged]}
+                  "limitations": ["初始点是比例建议，必须对照模型人工校正", "仅封闭连通直立人体（A/T或屈臂），不含眼骨和表情", "本次合并%d个数值重合接缝点，原云模型保持不变" % merged]}
         result["limitations"].append("骨架在无材质的独立求解副本上求解（%d→%d 顶点），权重转回原模；原模字节、材质、UV、贴图不动" % (proxy_info["originalVertices"], proxy_info["proxyVertices"]))
         result["weightTransfer"] = proxy_info
         if settings["pose"] == "quadruped":
             result["limitations"][1] = "仅单个四足站姿无骨网格，不含嘴部/眼骨/表情；比例关节必须人工校正"
             result["orientationCheck"] = {"suspect":False,"feetForwardMeters":0.,"depthMeters":result["bounds"][1][0]-result["bounds"][0][0],"widthMeters":result["bounds"][1][1]-result["bounds"][0][1],"reasons":[],"notes":["四足不适用人体展臂/脚尖朝向检测，请对照前侧视图确认马头朝+X与四腿位置"]}
         else:
-            result["orientationCheck"] = orientation_check(source)
+            result["orientationCheck"] = orientation_check(source, settings["pose"])
         if result["orientationCheck"]["suspect"]:
             result["limitations"].append("疑似前向轴不符：" + "；".join(result["orientationCheck"]["reasons"]) + "。请核对正面预览，必要时改 forwardAxis 重新检查")
         # 噪声线内不判朝向，但要把「为什么没判」说给用户听，避免以为自检没跑

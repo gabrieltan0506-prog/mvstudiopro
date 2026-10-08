@@ -26,7 +26,7 @@ type Props = {
     id: string,
     state: ArtMotionState,
     expected: ArtMotionState,
-    adopt?: { url: string; gcsUri: string }
+    adopt?: { url: string; gcsUri: string; useAsSegment?: boolean }
   ): Promise<void>;
 };
 const field =
@@ -1014,6 +1014,13 @@ export function ArtMotionStudio({ scopeKey, blocks, onCreate, onSave }: Props) {
                   >
                     采用到画布
                   </button>
+                  {draft.stageAnimation && <button className={button} disabled={busy || JSON.stringify(draft)!==JSON.stringify(target.artMotion.request?.spec)} onClick={()=>void run(async()=>{
+                    const state=target.artMotion;
+                    if(!state || state.request?.id!==candidate.requestId || JSON.stringify(state.spec)!==JSON.stringify(state.request.spec))throw new Error("方案已变化，请重新核对候选");
+                    if(!window.confirm("把已播放检查的这份动画作为原分段的当前剪辑版本？原视频版本与音轨配置仍保留。"))return;
+                    await onSave(target.id,state,state,{...candidate,useAsSegment:true});
+                    toast.success("已采用为本段剪辑版本，可在整集剪辑中查看");
+                  })}>采用为本段剪辑版本</button>}
                 </div>
               )}
             </>

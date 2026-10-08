@@ -388,3 +388,12 @@ it("有全模的历史候选仍可恢复原模型，不读取候选文件或重�
   expect(f.inspected).toEqual([]);
   expect(f.calls).toEqual([]);
 });
+
+
+it("直立屈臂使用同源原号保护与姿态摘要，不当作A/T恢复或重复绑定", async () => {
+ const f=fixture();const bent={...request,settings:{...request.settings,pose:'bent_arms' as const}};
+ expect(autoRigRequestSchema.parse(bent).settings.pose).toBe('bent_arms');
+ await submitAutoRigTask(1,bent,f.deps);await submitAutoRigTask(1,bent,f.deps);
+ expect(f.counts().inserts).toBe(1);const row=Array.from(f.rows.values())[0];expect((row.input as any).params.settings.pose).toBe('bent_arms');
+ expect(autoRigSha(JSON.stringify(bent))).not.toBe(autoRigSha(JSON.stringify(request)));
+});

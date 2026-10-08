@@ -159,9 +159,9 @@ export default function ManhuaCreativeAdvisorPanel(props: {
   const previsVoiceControl = useRef<AdvisorPrevisVoiceControl | null>(null);
   const [autoPrevisStart, setAutoPrevisStart] = useState(false);
   const [previsActionHost, setPrevisActionHost] = useState<HTMLDivElement | null>(null);
-  const candidateMatches = Boolean(previsCandidate && props.previsTarget && previsCandidate.target.clipId === props.previsTarget.clipId && previsCandidate.target.specJson === props.previsTarget.specJson);
+  const candidateMatches = Boolean(previsCandidate && props.previsTarget && previsCandidate.target.clipId === props.previsTarget.clipId && previsCandidate.target.specJson === props.previsTarget.specJson && JSON.stringify(previsCandidate.target.shotSource) === JSON.stringify(props.previsTarget.shotSource));
   const [savedPreviews, setSavedPreviews] = useState<Array<{ key: string; trial: AdvisorPrevisTrial }>>([]);
-  useEffect(() => { setAutoPrevisStart(false); }, [props.previsTarget?.clipId, props.previsTarget?.specJson]);
+  useEffect(() => { setAutoPrevisStart(false); }, [props.previsTarget?.clipId, props.previsTarget?.specJson, props.previsTarget?.shotSource]);
   const rewriteKey = sessionKey ? `${sessionKey}:rewrite` : null;
   const [initialRewrite] = useState(() => {
     try { const raw = rewriteKey && localStorage.getItem(rewriteKey); return { candidate: raw ? advisorRewriteCandidateSchema.parse(JSON.parse(raw)) : null, error: "" }; }

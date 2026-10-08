@@ -1,6 +1,7 @@
 /** 分段运动的实际根矩阵回执，生成和恢复采用同一轨迹门禁。 */
 import { z } from "zod";
 import {
+  PREVIS_MAX_ACTORS,
   previsShortestAngleDeg,
   type ManhuaPrevisSpec,
 } from "../../shared/manhuaPrevis";
@@ -10,6 +11,14 @@ export const routeReportSchema = z
     z
       .object({
         actorId: z.string().min(1),
+        rootSource: z.discriminatedUnion("kind", [
+          z.object({ kind: z.literal("sourceRig") }).strict(),
+          z.object({
+            kind: z.literal("riggedModel"),
+            sourceJobId: z.string().min(1),
+            sha256: z.string().regex(/^[a-f0-9]{64}$/),
+          }).strict(),
+        ]).optional(),
         samples: z
           .array(
             z
@@ -25,10 +34,11 @@ export const routeReportSchema = z
       })
       .strict()
   )
-  .max(6);
+  .max(PREVIS_MAX_ACTORS);
 export function validateRouteReport(
   raw: z.infer<typeof routeReportSchema> | undefined,
-  spec: ManhuaPrevisSpec
+  spec: ManhuaPrevisSpec,
+  models: readonly { actorId: string; sourceJobId: string; sha256: string }[] = []
 ) {
   const actors = spec.actors.filter(a => a.motionRoute);
   if (!actors.length) {
@@ -46,6 +56,17 @@ export function validateRouteReport(
       nodes = actor.motionRoute!;
     if (!row || row.samples.length !== spec.durationSec * 24)
       throw Error("运动轨逐帧回执缺失");
+    if (actor.riggedModel) {
+      const matches = models.filter(model => model.actorId === actor.id);
+      const source = row.rootSource;
+      if (source?.kind !== "riggedModel" || matches.length !== 1 ||
+          source.sourceJobId !== actor.riggedModel.sourceJobId ||
+          matches[0].sourceJobId !== source.sourceJobId ||
+          matches[0].sha256 !== source.sha256)
+        throw Error("带骨运动轨必须来自同一真实模型根");
+    } else if (row.rootSource && row.rootSource.kind !== "sourceRig") {
+      throw Error("白模运动轨来源类型不一致");
+    }
     for (let i = 0; i < row.samples.length; i++) {
       const s = row.samples[i],
         t = spec.piggyback?.passengerId === actor.id && spec.piggyback.setDown

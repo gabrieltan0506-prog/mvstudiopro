@@ -4,7 +4,7 @@ import { trpc } from "@/lib/trpc";
 import { manhuaPrevisMediaUrl } from "@/lib/manhuaPrevisMediaUrl";
 import type { PrevisResponse } from "./ManhuaPrevisStudio";
 import { useState, useRef, useEffect, type MutableRefObject } from "react";
-import { advisorPrevisCandidateSchema, applyAdvisorPrevisPatch, validateAdvisorPrevisReceipt, advisorPrevisTrialSchema, type AdvisorPrevisTrial, type AdvisorPrevisReceipt, type AdvisorPrevisCandidate, type AdvisorPrevisVideoSource, advisorPrevisSpecJson } from "@shared/manhuaAdvisorPrevisEdit";
+import { advisorPrevisCandidateSchema, applyAdvisorPrevisPatch, validateAdvisorPrevisShotCoverage, validateAdvisorPrevisReceipt, advisorPrevisTrialSchema, type AdvisorPrevisTrial, type AdvisorPrevisReceipt, type AdvisorPrevisCandidate, type AdvisorPrevisVideoSource, advisorPrevisSpecJson } from "@shared/manhuaAdvisorPrevisEdit";
 import { manhuaPrevisSpecSchema, PREVIS_ACTION_LABELS, type ManhuaPrevisSpec } from "@shared/manhuaPrevis";
 
 function Configuration({ spec }: { spec: ManhuaPrevisSpec }) {
@@ -57,7 +57,7 @@ export function ManhuaAdvisorPrevisComparison({ voiceControl, candidate, storage
   const busy = useRef(false), started = useRef(false), alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   let before: ManhuaPrevisSpec | undefined, after: ManhuaPrevisSpec | undefined, issue = "";
-  try { before = manhuaPrevisSpecSchema.parse(JSON.parse(candidate.target.specJson)); after = applyAdvisorPrevisPatch(before, candidate.patch); }
+  try { before = manhuaPrevisSpecSchema.parse(JSON.parse(candidate.target.specJson)); validateAdvisorPrevisShotCoverage(candidate.target, candidate.patch); after = applyAdvisorPrevisPatch(before, candidate.patch); }
   catch (e) { issue = e instanceof Error ? e.message : "候选未通过检查"; }
   const currentHost = previewHost?.dataset.clipId === candidate.target.clipId ? previewHost : null;
   const currentReadiness = onCheckReady?.(candidate) || "";

@@ -1,3 +1,4 @@
+import { manhuaPrevisAnimationSource } from "@shared/manhuaPrevisAnimationSource";
 import type {ArtMotionSpec} from "@shared/artMotion";
 import type { AdvisorEffectsRegistration } from "@shared/manhuaAdvisorEffects";
 import type { ManhuaAdvisorStudioContext } from "@shared/manhuaAdvisorStudioContext";
@@ -10,6 +11,7 @@ import { maskMediaUrls, maskMediaProviderDetails } from "@/lib/maskMediaUrls";
 import { normalizeManhuaPromptSeconds } from "@shared/manhuaPromptSeconds";
 import { ManhuaSecondaryToolTabs } from "./canvas/ManhuaSecondaryToolTabs";
 import { createAdvisorPrevisStudio, selectPrevisCharacterSlots } from "@shared/manhuaAdvisorPrevisInitial";
+import { buildAdvisorPrevisShotSource } from "@shared/manhuaAdvisorPrevisShotSource";
 import { previsInitialDurationSec } from "@shared/manhuaPrevisScript";
 import { ManhuaPrevisAudioControls } from "./canvas/ManhuaPrevisAudioControls";
 import { summarizeManhuaFinalSegmentEvidence } from "@/lib/manhuaFinalSegmentEvidence";
@@ -3033,7 +3035,11 @@ export default function ManhuaScriptWorkbench({
     if (!manhuaActionPlan) return [];
     const prefix = `ap_shot_e${focusEpisode}_s${activeSegNo}_`;
     const { shots } = splitManhuaActionPlanForPrevis(manhuaActionPlan);
-    const links = resolveManhuaPrevisCharacterLinks(manhuaActionPlan.actors, assetLockRegistry.byRole.character);
+    const links = resolveManhuaPrevisCharacterLinks(manhuaActionPlan.actors,
+      selectPrevisCharacterSlots(assetLockRegistry.byRole.character).map(asset => {
+        const anchor = assetCanon?.characters.find(character => character.id === (asset.seedLibraryId || asset.id));
+        return { ...asset, shape: /黑马|白马|骏马|马身|马体|四足|马匹|horse/i.test(anchor?.lookZh || "") ? "horse" as const : "human" as const };
+      }));
     const aspect = activeClip?.previsStudio?.spec.aspect === "9:16" ? ("9:16" as const) : ("16:9" as const);
     // PR-6：段意图（可拍表）+ 导演包主卡 + 是否有接触事件 → 节奏档；用户在白模区手改的风格档覆盖 tempo.style
     const intentZh = getManhuaSegmentIntentZh(shootablePlan, activeSegNo);
@@ -3045,7 +3051,7 @@ export default function ManhuaScriptWorkbench({
         const tempo = resolveManhuaCameraTempo({ intentZh, directionCardId: directionCanon?.mainCardId ?? null, hasContact });
         return manhuaPrevisDraftFromExecutableShot({ plan: manhuaActionPlan, shot, resolvedCamera: null, aspect, links, tempo, cameraStyle, actionRecipeId, dialogueZh: getManhuaSegmentDialogueZh(shootablePlan, activeSegNo) });
       });
-  }, [manhuaActionPlan, focusEpisode, activeSegNo, assetLockRegistry.byRole.character, activeClip?.previsStudio?.spec.aspect, activeClip?.previsStudio?.cameraStyle, actionRecipeId, shootablePlan, directionCanon?.mainCardId]);
+  }, [manhuaActionPlan, focusEpisode, activeSegNo, assetLockRegistry.byRole.character, assetCanon, activeClip?.previsStudio?.spec.aspect, activeClip?.previsStudio?.cameraStyle, actionRecipeId, shootablePlan, directionCanon?.mainCardId]);
   const modelStudioCharacters = useMemo(
     () =>
       assetLockRegistry.byRole.character.map((a) => {
@@ -3124,6 +3130,8 @@ export default function ManhuaScriptWorkbench({
     };
   }, [customAssetRefs, focusEpisode, activeSegNo, stageFrameShotOptions, stageFrameAdoptContext]);
   const previsStatusParts = [
+    activeClip?.previsStudio?.spec.actors.some(actor => !actor.assetRef && /^打手[甲乙]$/.test(actor.nameZh))
+      ? "打手甲乙按独立临时基础人形预演，不建立专属资产" : "",
     activeClip?.previsStudio?.selectedJobId ? "已有采用参考，请核对是否对应当前配置" : "",
     activeClip?.previsStudio?.pending ? "有待查询的渲染任务，请回白模面板查原编号" : "",
     !activeClip?.previsStudio?.selectedJobId && activeClip?.previsStudio?.history.length
@@ -3142,11 +3150,20 @@ export default function ManhuaScriptWorkbench({
     if (!activeClip || !onOpenAdvisorPrevis || !onUpdateClipPrevisStudio || factoryBusy || activeClip.status === "running" || activeClip.videoTaskStatus === "queued") return {opened:false,reason:"当前片段未就绪、正在制作或白模入口不可用。"};
     try {
       let studio = preparedStudio || activeClip.previsStudio;
+      const currentSource = resolveShotsForEpisodeKeyartsResult(blocks, focusEpisode);
+      if (currentSource.isFallback || currentSource.sourceErrors.length) throw new Error(currentSource.sourceErrors.join("；") || "本段尚无真实分镜，不能把默认示例交给动画顾问。");
+      const sourceShots = (activeSegment?.shots || []).map(shot => ({ index: shot.index,
+        durationSec: shot.durationSec, actionZh: shot.actionZh, cameraZh: shot.cameraZh,
+        dialogueZh: shot.dialogueSuppressed ? "无对白" : shot.dialogueZh }));
       if (!studio) {
         const shots = (activeSegment?.shots || []).map(shot => ({ index: shot.index, durationSec: shot.durationSec, actionZh: shot.actionZh }));
         const durationSec = previsInitialDurationSec(shots, parseManhuaClipTargetDurationSec(activeClip.prompt || ""));
-        studio = createAdvisorPrevisStudio({ durationSec, characters: previsStudioCharacters, shots, castZh: resolveManhuaSegmentCastZh({ castZh: activeSourceBeat?.castZh, dialogueZh: activeSourceBeat?.dialogueZh, shots: activeSegment?.shots, registry: assetLockRegistry, assetCanon }) });
+        studio = createAdvisorPrevisStudio({ durationSec, characters: previsStudioCharacters, shots,
+          transientCharacterNames: ["打手甲", "打手乙"],
+          castZh: resolveManhuaSegmentCastZh({ castZh: activeSourceBeat?.castZh, dialogueZh: activeSourceBeat?.dialogueZh, shots: activeSegment?.shots, registry: assetLockRegistry, assetCanon }) });
       }
+      // 每次进入都读取本段当前分镜，防止旧顾问候选沿用已经修改的剧情和秒窗。
+      studio = { ...studio, advisorShotSource: buildAdvisorPrevisShotSource(activeClip.id, sourceShots) };
       // 新打开白模顾问先无声预演；在同一会话切换音轨页后返回，保留用户刚选的带声状态。
       if (!advisorOpen || advisorPrevisActiveClipId !== activeClip.id) studio = { ...studio, audioEnabled: false };
       if (studio !== activeClip.previsStudio && onUpdateClipPrevisStudio(activeClip.id, studio) === false) throw new Error("本段白模设置未保存，请重试。原声音与配置保留。");
@@ -5550,17 +5567,12 @@ clipPromptReviewOpen ? (
             onRemove={onRemoveSceneWorld}
             stageCharacters={worldStageCharacters}
             onRenderStageAnimation={onRenderStageAnimation}
-            previsAnimationSource={(() => {
-              const studio=activeClip?.previsStudio;
-              const take=studio?.history.find(row=>row.jobId===studio.selectedJobId);
-              return take?.animation && activeClip && JSON.stringify(take.spec)===JSON.stringify(studio?.spec)
-                ? {previsJobId:take.jobId,scopeId:studio!.scopeId,clipId:activeClip.id,duration:take.durationSec,aspect:take.spec.aspect} : undefined;
-            })()}
+            previsAnimationSource={manhuaPrevisAnimationSource(activeClip?.previsStudio, activeClip?.id)}
             previsStatusZh={previsStatusZh}
             stageAnimation={(() => {
               const studio=activeClip?.previsStudio;
               const take=studio?.history.find(row=>row.jobId===studio.selectedJobId);
-              return take?.animation && JSON.stringify(take.spec)===JSON.stringify(studio?.spec)
+              return take?.animation && manhuaPrevisAnimationSource(studio, activeClip?.id)
                 ? {jobId:take.jobId,requestId:take.requestId,...take.animation} : undefined;
             })()}
             onOpenPrevis={onUpdateClipPrevisStudio ? () => selectSecondaryTool("previs") : undefined}
@@ -5594,7 +5606,7 @@ clipPromptReviewOpen ? (
                 const source = resolveManhuaRigSource(ref, customAssetRefs).source;
                 return { id: a.id, label: a.labelZh, model: source ? { taskId: source.model.taskId } : undefined };
               }))}
-              sourceShots={activeSegment?.shots.map(shot=>({index:shot.index,durationSec:shot.durationSec,actionZh:shot.actionZh}))}
+              sourceShots={activeSegment?.shots.map(shot=>({index:shot.index,durationSec:shot.durationSec,actionZh:shot.actionZh,cameraZh:shot.cameraZh,dialogueZh:shot.dialogueSuppressed?"无对白":shot.dialogueZh}))}
               directionShots={activeSegment?.shots.map(shot=>({index:shot.index,durationSec:shot.durationSec,cameraZh:shot.cameraZh||"",actionZh:shot.actionZh}))}
               directionCardId={directionCanon?.mainCardId ?? null}
               onOpenAdvisor={onOpenAdvisorPrevis ? openPrevisAdvisor : undefined}
