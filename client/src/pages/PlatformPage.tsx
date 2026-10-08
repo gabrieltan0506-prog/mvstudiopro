@@ -6417,7 +6417,7 @@ export default function PlatformPage() {
             ? "来源与整份确认参数完全一致，因此继续查看原任务。"
             : reused
               ? "旧兼容任务仅按来源复用，请以任务详情中的参数为准。"
-            : "最多同时学习两部，每部不超过一小时；本网页只显示本次影片，关闭页面也会继续。",
+            : "最多同时学习两部，整片时长不限，按当前设置切片学习；本网页只显示本次影片，关闭页面也会继续。",
         });
       } catch (e) {
         if (manhuaLearnUserKeyRef.current !== requestUserKey) return;
@@ -13808,7 +13808,7 @@ export default function PlatformPage() {
                           <option value="openrouter">OpenRouter（Z.AI）</option><option value="evolink_glm">EvoLink</option>
                         </select>
                         <span className="rounded-md border border-[#8cefff]/20 bg-black/25 px-2 py-1 text-[10px] font-semibold text-[#8cefff]">
-                          学习模型：{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[manhuaLearnReadModel]} · 原生视频精读 · 最多两部并发，每部一小时内；第二部请在另一网页开始
+                          学习模型：{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[manhuaLearnReadModel]} · 原生视频精读 · 最多两部并发，整片时长不限、按设置切片；第二部请在另一网页开始
                         </span>
                       </div>
 

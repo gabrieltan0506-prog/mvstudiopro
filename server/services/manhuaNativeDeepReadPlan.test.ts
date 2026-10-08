@@ -1115,16 +1115,18 @@ describe("单集16重学不跳17", () => {
 });
 
 
-describe("新学习一小时边界与历史JSON兼容", () => {
-  it("超过一小时的真实来源在模型/claim之前拒绝，3600秒允许", async () => {
-    const input = { url: "https://www.douyin.com/collection/123456", limit: 1 };
-    await expect(buildNativeDeepReadPlanPreview(input, deps({ probeDurationSec: vi.fn(async () => 3600.01) }))).rejects.toThrow("一小时内");
-    const plan = await buildNativeDeepReadPlanPreview(input, deps({ probeDurationSec: vi.fn(async () => 3600) }));
-    expect(plan.totalDurationSec).toBe(3600);
+describe("长片切片与历史JSON兼容", () => {
+  it.each([3600.01, 18001])("%s秒原片完整进入计划并通过执行校验", async duration => {
+    const plan = await buildNativeDeepReadPlanPreview({ url: "https://www.douyin.com/collection/123456", limit: 1, segmentSeconds: 600 },
+      deps({ probeDurationSec: vi.fn(async () => duration) }));
+    expect(plan.totalDurationSec).toBe(Math.round(duration));
+    expect(plan.episodes[0].segments.at(-1)?.endSec).toBe(Math.round(duration));
+    expect(plan.episodes[0].segments).toHaveLength(Math.ceil(Math.round(duration) / 600));
   });
-  it("多集计划不能以每集不到一小时绕过每部计划总时长边界", async () => {
-    await expect(buildNativeDeepReadPlanPreview({ url: "https://www.douyin.com/collection/123456", limit: 2 },
-      deps({ probeDurationSec: vi.fn(async () => 2000) }))).rejects.toThrow("一小时内");
+  it("多集累计超过一小时仍可学习", async () => {
+    const plan = await buildNativeDeepReadPlanPreview({ url: "https://www.douyin.com/collection/123456", limit: 2 },
+      deps({ probeDurationSec: vi.fn(async () => 2000) }));
+    expect(plan.totalDurationSec).toBe(4000);
   });
   it("只重新整形旧长片仍允许读取完整历史计划，不裁成3600秒", async () => {
     const plan = await buildNativeDeepReadPlanPreview({ url: "https://www.douyin.com/collection/123456", limit: 1, structuringEpisodeIndex: 2 },
