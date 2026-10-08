@@ -39,6 +39,7 @@ import {
 } from "./manhuaStoryDistill.js";
 import { resolveManhuaSeedanceLayoutProfile } from "./manhuaSeedanceLayout.js";
 import { normalizeManhuaImportText } from "./manhuaScriptTextNormalize.js";
+import { splitManhuaEpisodeStoryText } from "./manhuaAdvisorRewrite.js";
 
 export const MANHUA_WRITER_EPISODE_MIN = 2;
 export const MANHUA_WRITER_EPISODE_MAX = 6;
@@ -716,6 +717,8 @@ export function importManhuaWriterPackFromText(
   return { ok: true, pack, via: "episode_markers" };
 }
 
+export const MANHUA_STORYBOARD_REVIEW_MARKER = "【分镜复核】";
+
 /** 确认进编导后，灌进工厂故事/角色/节拍的上下文块 */
 export function composeWriterPackFactoryContext(
   pack: ManhuaWriterPack,
@@ -724,8 +727,12 @@ export function composeWriterPackFactoryContext(
 ): string {
   const ep = pack.episodes.find((e) => e.index === focusEpisode) || pack.episodes[0];
   const addon = String(opts?.assetCanonAddonZh || "").trim();
+  // 旧技术材料保留在存档供复核；改过剧情后不得再作为本次工厂生产输入。
+  const currentBody = ep?.storyboardNeedsReview
+    ? splitManhuaEpisodeStoryText(ep.body || "").story
+    : ep?.body || "";
   const segmentPlan = ep
-    ? parseManhuaEpisodeSegmentPlanFromMarkdown(ep.body || "")
+    ? parseManhuaEpisodeSegmentPlanFromMarkdown(currentBody)
     : null;
   const segmentBlock = formatManhuaEpisodeSegmentPlanBeatsBlock(segmentPlan);
   return [
@@ -746,7 +753,10 @@ export function composeWriterPackFactoryContext(
     ep
       ? [
           `## 本集优先：第${ep.index}集《${ep.title}》`,
-          ep.body,
+          currentBody,
+          ep.storyboardNeedsReview
+            ? `${MANHUA_STORYBOARD_REVIEW_MARKER}本集剧情已修改。只按以上当前正文重新编排分镜；已保留的旧技术材料尚未采用，不得恢复旧对白、旧动作或旧段表。`
+            : "",
           segmentBlock,
           `片尾钩子：${ep.endHook}`,
           "本轮制作按本集原稿自动分段，保留全部剧情、对白和动作；段数由原稿及当前引擎单次时长决定。钩子留给下一集，勿在本集拍穿。",
