@@ -44,7 +44,7 @@ export const fileConversionRouter = router({
     assertConversionSource(source, userId, input.formatId, true); validateLane(input.lane, input.bytes);
     const ipHash = input.lane === "free" ? fileConversionIpHash(ctx.req, day) : undefined;
     const ticket = await conversionUploadByObject(source.objectName);
-    if (!ticket || ticket.userId !== userId || !ticket.source || !["uploaded", "checked"].includes(ticket.status)
+    if (!ticket || ticket.userId !== userId || !ticket.source || !["uploaded", "checked", "expired"].includes(ticket.status)
       || ticket.lane !== input.lane || ticket.fileName !== input.fileName || ticket.formatId !== input.formatId || Number(ticket.bytes) !== input.bytes)
       throw new TRPCError({ code: "BAD_REQUEST", message: "上传文件的实际大小不符或授权未完成，请查询原文件。" });
     Object.assign(source, ticket.source);

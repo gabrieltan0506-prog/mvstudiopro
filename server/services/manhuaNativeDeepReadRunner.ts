@@ -4969,6 +4969,7 @@ export async function invokeNativeDeepReadGlmStructuring(
       };
     }
   }
+  context?.assertCanDispatch?.();
   // 0906 实弹：给了显式链序时首选档必须是链序第一档，否则 bailianChat 会按旧轮询把首选档提前（007 探针本该 OpenRouter 首发却走了 EvoLink）
   const preferredGlmGateway = (context?.preferredGlmGateway
     || context?.gatewayOrder?.[0]
@@ -4980,6 +4981,7 @@ export async function invokeNativeDeepReadGlmStructuring(
   let store = createNativeDeepReadGlmEvidenceStore({ ...context, preferredGlmGateway }, deps?.evidence);
   for (let version = 2; ; version += 1) {
     try {
+      context?.assertCanDispatch?.();
       await store.writeRequest(request);
       break;
     } catch (error) {
@@ -4989,7 +4991,10 @@ export async function invokeNativeDeepReadGlmStructuring(
       store = createNativeDeepReadGlmEvidenceStore({ ...context, callId: `${context.callId}-v${version}`, preferredGlmGateway }, deps?.evidence);
     }
   }
+  context?.assertCanDispatch?.();
   await context?.onBeforePaidCall?.();
+  context?.assertCanDispatch?.();
+  context?.onPaidCallDispatch?.();
   const response = await (deps?.invoke ?? invokeGlmJsonChatWithGatewayFallback)({
     ...request,
     abortSignal,
@@ -5712,6 +5717,7 @@ async function executeNativeDeepReadBatch(
         };
       };
 
+      let restoringCachedSegments = true;
       let proposalCommitChain = Promise.resolve();
       let proposalCommitFailure: unknown;
       let stopSchedulingSegments = false;
@@ -5735,6 +5741,7 @@ async function executeNativeDeepReadBatch(
               && readCurrentQwenAttemptSelection(entry.raw)?.selectedPassedGate !== false;
             if (
               params.onSegmentSnapshotCommitted
+              && !restoringCachedSegments
               && committedIndexes.length < segmentCount
               && !proposalCommitFailure
               && passedGate
@@ -6685,6 +6692,14 @@ async function executeNativeDeepReadBatch(
         });
       };
 
+      // 先把所有同源、同指纹且已过当前门禁的旧缓存纳入累计集合，避免[0]覆盖旧[4]。
+      for (const index of Array.from(cachedSegments.keys())) await processSegment(index);
+      restoringCachedSegments = false;
+      if (params.onSegmentSnapshotCommitted && committedIndexes.length > 0 && committedIndexes.length < segmentCount
+        && committedIndexes.some(index => !hasNativeAttemptSelection(committedEntries.get(index)!)
+          && readCurrentQwenAttemptSelection(committedEntries.get(index)!.raw)?.selectedPassedGate !== false)) {
+        await params.onSegmentSnapshotCommitted(buildCommittedSnapshot());
+      }
       const segmentFailures: Array<{ segmentIndex: number; error: unknown }> = [];
       const scheduledSegmentIndexes = selectedSegmentIndexes ?? episode.segments.map((_, index) => index);
       let nextSegmentIndex = 0;
@@ -6705,6 +6720,7 @@ async function executeNativeDeepReadBatch(
           nextSegmentIndex += 1;
           if (position >= scheduledSegmentIndexes.length) return;
           const segmentIndex = scheduledSegmentIndexes[position]!;
+          if (committedIndexes.includes(segmentIndex)) continue;
           try {
             await processSegment(segmentIndex);
           } catch (error) {
@@ -6848,7 +6864,14 @@ async function executeNativeDeepReadBatch(
       const glmEvidenceCallIds: string[] = [];
       const canCacheStructuring = Boolean(params.segmentCacheSeriesKey && episode.cacheSourceDigest);
       const structuringGatewayPolicy = nativeDeepReadStructuringPolicyForModel(params.structuringModel);
+      let stopStructuringDispatch = false;
+      const assertStructuringDispatch = () => {
+        params.abortSignal?.throwIfAborted();
+        if (stopStructuringDispatch) throw new Error("同批整形已停止派发，未发出新请求");
+      };
       const glmStructure = async (input: {
+        beforePaidDispatch?: () => Promise<void>;
+        onPaidDispatch?: () => void;
         prompt: ReturnType<typeof buildNativeDeepReadGlmStructuringPrompt>;
         videoCount: number;
         segmentIndexes: readonly number[];
@@ -6898,12 +6921,22 @@ async function executeNativeDeepReadBatch(
           startedAt = now;
         };
         try {
+          assertStructuringDispatch();
           const structured = await deps.invokeGlmStructuring(
             input.prompt,
             params.abortSignal,
             { seriesKey: params.segmentCacheSeriesKey, sourceDigest: episode.cacheSourceDigest,
               episodeIndex: episode.episodeIndex, batchRequestId: episodeRequestId, callId,
-              recoverExisting: canCacheStructuring, onBeforePaidCall: emitPaidCallStarted,
+              recoverExisting: canCacheStructuring,
+              assertCanDispatch: assertStructuringDispatch,
+              onBeforePaidCall: async () => {
+                assertStructuringDispatch();
+                await input.beforePaidDispatch?.();
+                assertStructuringDispatch();
+                await emitPaidCallStarted();
+                assertStructuringDispatch();
+              },
+              onPaidCallDispatch: input.onPaidDispatch,
               gatewayPolicy: structuringGatewayPolicy,
               gatewayOrder,
               temperature: input.temperature,
@@ -7072,6 +7105,8 @@ async function executeNativeDeepReadBatch(
         return /(?:HTTP\s*(?:429|5\d\d)|\b429\b|\b5\d\d\b|timeout|timed out|network|fetch failed|server busy|resource[_ ]exhausted|服务器繁忙|服务暂不可用|网络)/i.test(error.message);
       };
       const runStructuringOrLocalFallback = async (input: {
+        beforePaidDispatch?: () => Promise<void>;
+        onPaidDispatch?: () => void;
         prompt: ReturnType<typeof buildNativeDeepReadGlmStructuringPrompt>;
         videoCount: number;
         segmentIndexes: readonly number[];
@@ -7086,6 +7121,7 @@ async function executeNativeDeepReadBatch(
       }): Promise<NativeDeepReadGlmStructuringResult | { raw: Record<string, unknown>; localFallback: true }> => {
         try {
           return await glmStructure({
+            beforePaidDispatch: input.beforePaidDispatch, onPaidDispatch: input.onPaidDispatch,
             prompt: input.prompt,
             videoCount: input.videoCount,
             segmentIndexes: input.segmentIndexes,
@@ -7119,6 +7155,8 @@ async function executeNativeDeepReadBatch(
       };
       /** 0916：内容门禁失败按原稿本地恢复；仅传输失败保留外层重试。 */
       const structureBatchWithLockRetry = async (input: {
+        beforePaidDispatch?: () => Promise<void>;
+        onPaidDispatch?: () => void;
         prompt: ReturnType<typeof buildNativeDeepReadGlmStructuringPrompt>;
         videoCount: number;
         segmentIndexes: readonly number[];
@@ -7227,6 +7265,7 @@ async function executeNativeDeepReadBatch(
       ): Promise<T> => {
         for (let dispatchRetry = 0; ; dispatchRetry += 1) {
           try {
+            assertStructuringDispatch();
             return await operation(dispatchRetry);
           } catch (error) {
             params.abortSignal?.throwIfAborted();
@@ -7410,15 +7449,15 @@ async function executeNativeDeepReadBatch(
         const routeFirstLaunch = Array.from({ length: 2 }, () => {
           let release!: () => void;
           const promise = new Promise<void>(resolve => { release = resolve; });
-          return { promise, release };
+          return { promise, release, startedAt: undefined as number | undefined };
         });
         let nextGroupIndex = 0;
-        let stopDispatch = false;
+
         const runStructuringLane = async (laneOrdinal: number): Promise<void> => {
           const routeOrdinal = fourBatchDispatch ? Math.floor(laneOrdinal / 2) : laneOrdinal;
           const secondOnRoute = fourBatchDispatch && laneOrdinal % 2 === 1;
           let staggered = false;
-          while (!stopDispatch) {
+          while (!stopStructuringDispatch) {
             // await之前占住批次；四路启动时按原顺序保留各自的片号。
             const groupIndex = nextGroupIndex;
             nextGroupIndex += 1;
@@ -7459,26 +7498,38 @@ async function executeNativeDeepReadBatch(
                   if (!secondOnRoute) routeFirstLaunch[routeOrdinal]?.release();
                   return cached;
                 }
-                if (secondOnRoute && !staggered) {
-                  await routeFirstLaunch[routeOrdinal]!.promise;
-                  params.abortSignal?.throwIfAborted();
-                  if (stopDispatch) throw new Error("同批整形已停止派发，未发出错峰请求");
-                  await deps.waitForRetry(4_000, params.abortSignal);
-                  params.abortSignal?.throwIfAborted();
-                  if (stopDispatch) throw new Error("同批整形已停止派发，未发出错峰请求");
-                  staggered = true;
-                }
-                if (!secondOnRoute) routeFirstLaunch[routeOrdinal]?.release();
+                assertStructuringDispatch();
                 return structureBatchWithLockRetry({
                   ...batchInput,
                   dispatchRetry,
+                  beforePaidDispatch: async () => {
+                    assertStructuringDispatch();
+                    if (secondOnRoute && !staggered) {
+                      const first = routeFirstLaunch[routeOrdinal]!;
+                      await first.promise;
+                      assertStructuringDispatch();
+                      const remaining = first.startedAt === undefined ? 0 : Math.max(0, first.startedAt + 4_000 - Date.now());
+                      if (remaining > 0) await deps.waitForRetry(remaining, params.abortSignal);
+                      assertStructuringDispatch();
+                      staggered = true;
+                    }
+                  },
+                  onPaidDispatch: () => {
+                    assertStructuringDispatch();
+                    if (!secondOnRoute) {
+                      const first = routeFirstLaunch[routeOrdinal]!;
+                      first.startedAt ??= Date.now();
+                      first.release();
+                    }
+                  },
                   allowLocalFallback: false,
                 });
               });
+              if (!secondOnRoute) routeFirstLaunch[routeOrdinal]?.release();
             } catch (error) {
               // 只有补发三次仍失败或遇到不可重试错误才停派；另一条已在途调用继续收口。
-              stopDispatch = true;
-              routeFirstLaunch[routeOrdinal]?.release();
+              stopStructuringDispatch = true;
+              for (const first of routeFirstLaunch) first.release();
               throw error;
             }
           }

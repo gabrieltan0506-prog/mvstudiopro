@@ -22,7 +22,7 @@ async function authorizedObject(input: ConversionObject) {
   assertConversionObject(input);
   if (input.objectName.startsWith(`file-conversion/u${input.userId}/sources/`)) {
     const upload = await conversionUploadByObject(input.objectName);
-    if (!upload || upload.userId !== input.userId || !["receiving", "uploaded", "checked"].includes(upload.status)) throw new Error("上传归属无效");
+    if (!upload || upload.userId !== input.userId || !["receiving", "uploaded", "checked", "expired"].includes(upload.status)) throw new Error("上传归属无效");
     if (input.bytes !== undefined && input.bytes !== Number(upload.bytes)) throw new Error("原件长度无效");
   } else {
     const job = await getConversionJob(input.taskId || "");
@@ -33,6 +33,9 @@ async function authorizedObject(input: ConversionObject) {
 export function registerFileConversionTransfer(app: Express) {
   // 必须在body parser前注册，不能让超大申报先被全量缓冲。
   app.put("/api/file-conversion/upload/:id", async (req, res) => {
+    const disconnected = new AbortController();
+    const onDisconnect = () => { if (!res.writableEnded) disconnected.abort(new Error("用户断开上传")); };
+    req.once("aborted", onDisconnect); res.once("close", onDisconnect);
     let ticket: Awaited<ReturnType<typeof claimConversionUpload>> = null;
     try {
       const user = await sdk.authenticateRequest(req);
@@ -43,7 +46,7 @@ export function registerFileConversionTransfer(app: Express) {
       if (maximum > (ticket.lane === "free" ? FILE_CONVERSION_FREE_MAX_BYTES : conversionMemoryBudget())) throw new Error("原文件超过当前上传资源限制");
       if (req.headers["content-length"] && Number(req.headers["content-length"]) !== maximum) throw new Error("上传实际大小与授权不符");
       const buffer = await receiveConversionBytes(req, maximum);
-      const saved = await saveConversionObject({ userId: ticket.userId, objectName: ticket.objectName }, buffer, "application/octet-stream", AbortSignal.timeout(30_000));
+      const saved = await saveConversionObject({ userId: ticket.userId, objectName: ticket.objectName }, buffer, "application/octet-stream", AbortSignal.any([disconnected.signal, AbortSignal.timeout(65_000)]));
       const source = { objectName: ticket.objectName, fileName: ticket.fileName, bytes: buffer.length, sha256: conversionSha(buffer), ...saved };
       await finishConversionUpload(ticket, source);
       res.json({ ok: true });
@@ -55,7 +58,7 @@ export function registerFileConversionTransfer(app: Express) {
           ? sizeRejected ? "上传实际大小不符或超过授权，未写入超限文件" : "上传保存暂不可用，未创建转换或扣积分"
           : "请先登录" });
       }
-    }
+    } finally { req.off("aborted", onDisconnect); res.off("close", onDisconnect); }
   });
   app.get("/api/file-conversion/download/:id", async (req, res) => {
     try {

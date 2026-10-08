@@ -107,7 +107,7 @@ export async function releaseFreeConversionFile(job: ConversionJob, db?: SqlDb) 
   if (job.lane !== "free" || !job.sourceSha) return;
   await (db || await conversionDb()).execute(sql`WITH released AS (DELETE FROM file_conversion_free_slots WHERE "userId"=${job.userId} AND day=${job.input.day}::date AND sha256=${job.sourceSha} AND consumed=false
     AND NOT EXISTS(SELECT 1 FROM file_conversion_jobs other WHERE other."userId"=${job.userId} AND other."sourceSha"=${job.sourceSha}
-      AND other.input->>'day'=${job.input.day} AND other.id<>${job.id} AND other.status IN ('queued','running','receipt_pending')) RETURNING "userId",day,sha256)
+      AND other.input->>'day'=${job.input.day} AND other.id<>${job.id} AND (other.status IN ('queued','running','receipt_pending') OR (other.status='succeeded' AND other.output->>'type'='converted'))) RETURNING "userId",day,sha256)
     DELETE FROM file_conversion_free_ip_slots ip USING released r WHERE ip."userId"=r."userId" AND ip.day=r.day AND ip.sha256=r.sha256`);
 }
 export async function countPaidConversions(includeRunning = true) {
@@ -200,9 +200,13 @@ export async function deferConversionReceipt(job: ConversionJob, output: FileCon
 }
 export async function completeConversionReceipt(job: ConversionJob) {
   const db = await conversionDb();
-  const [saved] = rows<ConversionJob>(await db.execute(sql`UPDATE file_conversion_jobs SET
+  const [saved] = rows<ConversionJob>(await db.execute(sql`WITH finished AS (UPDATE file_conversion_jobs SET
     status=CASE WHEN "cancelRequested" OR error IS NOT NULL THEN 'failed' ELSE 'succeeded' END,
-    "updatedAt"=now() WHERE id=${job.id} AND status='receipt_pending' RETURNING *`));
+    "updatedAt"=now() WHERE id=${job.id} AND status='receipt_pending' RETURNING *), consumed AS (
+      UPDATE file_conversion_free_slots q SET consumed=true FROM finished f
+      WHERE f.lane='free' AND f.status='succeeded' AND f.output->>'type'='converted'
+        AND q."userId"=f."userId" AND q.day=(f.input->>'day')::date AND q.sha256=f."sourceSha" RETURNING q.sha256)
+    SELECT * FROM finished`));
   return saved || await getConversionJob(job.id);
 }
 

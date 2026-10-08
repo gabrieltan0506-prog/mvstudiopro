@@ -65,3 +65,31 @@ it("F3：写入成功但读取GCS版本故障，保留同内容网站件，不�
  expect(result).toEqual({storage:"website_data",generation:"1"});
  expect((await readConversionSource("7",{...source,...result},{maxBytes:100})).sha256).toBe(source.sha256);
 });
+
+vi.mock("../_core/sdk",()=>({sdk:{authenticateRequest:async()=>({id:7})}}));
+vi.mock("../jobs/fileConversionUploads",()=>({
+ claimConversionUpload:async()=>({id:"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",userId:"7",objectName:"file-conversion/u7/sources/timeout",bytes:17,lane:"free",fileName:"test.txt"}),
+ finishConversionUpload:vi.fn(),conversionUploadByObject:vi.fn(),
+}));
+vi.mock("../jobs/fileConversionRepository",()=>({getConversionJob:vi.fn()}));
+vi.mock("./fileConversion",()=>({conversionMemoryBudget:()=>20_000_000}));
+it("F3：正式HTTP上传入口GCS真实超时后仍有网站落盘预算",async()=>{
+ const {default:express}=await import("express"),{createServer}=await import("node:http");
+ const {registerFileConversionTransfer}=await import("../routers/fileConversionTransfer"),{apiCorsMiddleware}=await import("../_core/apiCors");
+ const originalTimeout=AbortSignal.timeout.bind(AbortSignal),durations:number[]=[];
+ // 时间同比缩短；真实AbortSignal到期触发GCS拒绝，非立即抛错。
+ const timer=vi.spyOn(AbortSignal,"timeout").mockImplementation(ms=>{durations.push(ms);return originalTimeout(ms/100);});
+ m.write.mockImplementation(({signal})=>new Promise((_resolve,reject)=>signal.addEventListener("abort",()=>reject(signal.reason),{once:true})));
+ const app=express();app.use("/api",apiCorsMiddleware);registerFileConversionTransfer(app);
+ const server=createServer(app).listen(0,"127.0.0.1");await new Promise<void>(resolve=>server.once("listening",resolve));
+ try{
+  const response=await fetch(`http://127.0.0.1:${(server.address() as any).port}/api/file-conversion/upload/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa`,{method:"PUT",body:new Uint8Array(data)});
+  expect(response.status).toBe(200);expect(durations).toContain(65_000);expect(durations).toContain(30_000);
+  expect(await fs.readFile(path.join(m.root,"file-conversion/u7/sources/timeout"))).toEqual(data);
+ }finally{timer.mockRestore();server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
+});
+it("F3：用户取消保持终止，不因GCS报错转写网站",async()=>{
+ const abort=new AbortController();m.write.mockImplementation(async()=>{abort.abort(new Error("用户取消"));throw abort.signal.reason;});
+ await expect(saveConversionObject({userId:"7",objectName},data,"text/plain",abort.signal)).rejects.toThrow("用户取消");
+ expect(m.mounts).not.toHaveBeenCalled();
+});

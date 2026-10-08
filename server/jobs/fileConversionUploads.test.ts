@@ -33,3 +33,19 @@ it("F2：失败授权也计入每日上限，避免检查失败反复存原件�
  expect((await createConversionUpload({...args,lane:"paid"})).uploadUrl).toMatch(/^\/api\/file-conversion\/upload\//);
  expect((await createConversionUpload({...args,day:"2026-10-10"})).objectName).toMatch(/^file-conversion\/u7\/sources\//);
 });
+
+it("F2：三份成功上传弃置超时释放活跃槽，跨日可上传，原件与每日授权账目保留",async()=>{
+ const originals=[];
+ for(let n=0;n<3;n++){
+  const upload=await createConversionUpload(args),ticket=(await claimConversionUpload(upload.uploadUrl.split("/").at(-1)!,"7"))!;
+  const source={objectName:upload.objectName,fileName:args.fileName,bytes:12,generation:"123",sha256:"b".repeat(64),storage:"gcs" as const};
+  await finishConversionUpload(ticket,source);originals.push(source);
+ }
+ await expect(createConversionUpload(args)).rejects.toThrow("授权已达上限");
+ await pg.exec(`UPDATE file_conversion_uploads SET "expiresAt"=now()-interval '1 minute'`);
+ await createConversionUpload({...args,day:"2026-10-10"});
+ for(const source of originals)expect(await conversionUploadByObject(source.objectName)).toMatchObject({status:"expired",source});
+ expect((await pg.query(`SELECT count(*)::integer n FROM file_conversion_uploads WHERE day='2026-10-09'`)).rows).toEqual([{n:3}]);
+ await createConversionUpload(args);
+ expect((await pg.query(`SELECT count(*)::integer n FROM file_conversion_uploads WHERE day='2026-10-09'`)).rows).toEqual([{n:4}]);
+});

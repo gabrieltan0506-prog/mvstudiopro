@@ -41,7 +41,7 @@ export async function readConversionWebsite(input: ConversionObject, root = ROOT
   return readFile(path.join(root, input.objectName));
 }
 async function bridge(input: ConversionObject, data?: Buffer, signal?: AbortSignal): Promise<Buffer> {
-  assertConversionObject(input);
+  assertConversionObject(input); signal?.throwIfAborted();
   if (resolveJobWorkerRole() === "app") {
     await assertConversionWebsiteVolume();
     if (data) { await writeConversionWebsite(input, data); return Buffer.alloc(0); }

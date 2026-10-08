@@ -10,13 +10,14 @@ vi.mock("../services/fileConversion",()=>({conversionMemoryBudget:()=>20_000_000
 vi.mock("../services/fileConversionStorage",async original=>({...(await original<any>()),saveConversionObject:m.save,readConversionObject:m.read,
  assertConversionWebsiteVolume:m.mount,writeConversionWebsite:m.writeWebsite,readConversionWebsite:m.readWebsite}));
 import { registerFileConversionTransfer,receiveConversionBytes } from "./fileConversionTransfer";
+import { apiCorsMiddleware } from "../_core/apiCors";
 import { artEvidenceSignature } from "../services/artMotionEvidence";
 import { CONVERSION_STORE_ROUTE,conversionSha } from "../services/fileConversionStorage";
 const id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",objectName=`file-conversion/u7/sources/${id}`,data=Buffer.from("test");
 const nativeFetch=globalThis.fetch;
 async function request(route:string,method:string,body?:Buffer,headers:Record<string,string>={}) {
- const app=express();registerFileConversionTransfer(app);const server=createServer(app).listen(0,"127.0.0.1");await once(server,"listening");
- try {const r=await nativeFetch(`http://127.0.0.1:${(server.address() as any).port}${route}`,{method,headers,body:body?new Uint8Array(body):undefined});return{status:r.status,body:await r.text()};}
+ const app=express();app.use("/api",apiCorsMiddleware);registerFileConversionTransfer(app);const server=createServer(app).listen(0,"127.0.0.1");await once(server,"listening");
+ try {const r=await nativeFetch(`http://127.0.0.1:${(server.address() as any).port}${route}`,{method,headers,body:body?new Uint8Array(body):undefined});return{status:r.status,body:await r.text(),...(method==="OPTIONS"?{cors:r.headers.get("access-control-allow-methods"),origin:r.headers.get("access-control-allow-origin")}: {})};}
  finally{server.closeAllConnections();await new Promise<void>(done=>server.close(()=>done()));}
 }
 beforeEach(()=>{vi.clearAllMocks();m.user=7;m.finish.mockResolvedValue(undefined);m.claim.mockResolvedValue({id,userId:"7",objectName,bytes:4,lane:"free",fileName:"test.txt"});m.save.mockResolvedValue({storage:"gcs",generation:"123"});
@@ -61,4 +62,12 @@ it("F2：实际大小正确但存储故障，明确返回503并保留失败上�
  const result=await request(`/api/file-conversion/upload/${id}`,"PUT",data);
  expect(result.status).toBe(503);expect(result.body).toContain("保存暂不可用");
  expect(m.finish).toHaveBeenCalledWith(expect.objectContaining({id}),null);
+});
+
+it("F5：生产全局CORS先于转换处理器，正式域PUT预检允许且其他路径和外域不放宽",async()=>{
+ const headers={Origin:"https://mvstudiopro.com","Access-Control-Request-Method":"PUT"};
+ expect(await request(`/api/file-conversion/upload/${id}`,"OPTIONS",undefined,headers)).toMatchObject({status:204,cors:"PUT,OPTIONS",origin:headers.Origin});
+ expect(await request(`/api/file-conversion/upload/${id}`,"OPTIONS",undefined,{...headers,Origin:"https://untrusted.example"})).toMatchObject({status:204,cors:null,origin:null});
+ expect(await request("/api/unrelated","OPTIONS",undefined,headers)).toMatchObject({cors:"GET,POST,OPTIONS"});
+ expect(m.claim).not.toHaveBeenCalled();
 });

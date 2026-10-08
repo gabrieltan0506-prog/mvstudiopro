@@ -22,7 +22,7 @@ async function db() {
 export async function createConversionUpload(input: Omit<ConversionUpload, "id" | "objectName" | "status" | "source">) {
   const store = await db(), id = randomUUID(), objectName = `file-conversion/u${input.userId}/sources/${id}`;
   // 三个未完成授权；免费每日最多九次上传授权（含失败），约束不进入检查的存储滥用。
-  await store.execute(sql`UPDATE file_conversion_uploads SET status='expired' WHERE status='issued' AND "expiresAt"<now()`);
+  await store.execute(sql`UPDATE file_conversion_uploads SET status='expired' WHERE status IN ('issued','uploaded') AND "expiresAt"<now()`);
   await store.execute(sql`UPDATE file_conversion_uploads SET status='failed' WHERE status='receiving' AND "createdAt"<now()-interval '30 minutes'`);
   let ticket: ConversionUpload | undefined;
   for (let attempt=0; attempt<4 && !ticket; attempt++) {
@@ -46,7 +46,7 @@ export async function claimConversionUpload(id: string, userId: string): Promise
     WHERE id=${id}::uuid AND "userId"=${userId} AND status='issued' AND "expiresAt">now() RETURNING *`))[0] || null;
 }
 export async function finishConversionUpload(ticket: ConversionUpload, source: FileConversionSource | null) {
-  await (await db()).execute(sql`UPDATE file_conversion_uploads SET status=${source ? "uploaded" : "failed"},source=${JSON.stringify(source)}::jsonb
+  await (await db()).execute(sql`UPDATE file_conversion_uploads SET status=${source ? "uploaded" : "failed"},source=${JSON.stringify(source)}::jsonb,"expiresAt"=now()+interval '30 minutes'
     WHERE id=${ticket.id}::uuid AND "userId"=${ticket.userId} AND status='receiving'`);
 }
 export async function markConversionUploadChecked(objectName: string, userId: string) {
