@@ -1,0 +1,35 @@
+{
+  "at": "2026-10-08T01:24:36.112Z",
+  "machine": {
+    "id": "7812595b294778",
+    "cpuKind": "performance",
+    "vcpus": 4,
+    "memoryMb": 8192
+  },
+  "method": "从当前源码AST提取采用函数，Fly Linux Node虚构依赖隔离验证；不是生产接口调用",
+  "source": {
+    "file": "server/services/manhuaAutoRigTask.ts",
+    "sha256": "bbde3029c16155c12ac1a3249790c89b893bb09625284368dd006955e09d1b83"
+  },
+  "checks": [
+    "采用全模并保留低模代理",
+    "旧任务沿用原契约",
+    "恢复不读取候选或新建模型",
+    "跨用户全模拒绝",
+    "全模摘要不符拒绝",
+    "超限不读全模或降级",
+    "全模缺失不降级"
+  ],
+  "passed": 7,
+  "modelCalls": 0,
+  "productionAssetWrites": 0,
+  "productionAcceptance": "尚未线上验收",
+  "postProbeGate": {
+    "at": "2026-10-08T01:25:11.670Z",
+    "jobs": 0,
+    "workflows": 0,
+    "steps": 0,
+    "mediaProcesses": 0
+  },
+  "afterProbeMachineState": "stopped"
+}
