@@ -206,7 +206,7 @@ if '--contact-correction-only' in arguments:
     text = renderer.read_text()
     for sentence in (
         "raise ValueError('带骨角色咳嗽暂未通过掩口和收手位置验收，请使用基础白模预演')",
-        "raise ValueError('带骨角色暂不支持坐下：静止姿态差会让脚穿地（1.70 米约 21 厘米），待重定向补偿后开放（PR-F）；棍人角色可以坐下，带骨角色的看向/转身/行礼不受影响')",
+        "raise ValueError('带骨角色暂不支持坐下：真实人物的坐姿网格接触与常速质量尚未通过正式验收；合成夹具测试不等于真实人物验收。可使用基础白模或站立类动作，现有模型保留')",
     ):
         if text.count(sentence) != 1:
             raise AssertionError('诊断副本门禁定位变化，停止，不修改生产脚本')
@@ -363,7 +363,7 @@ def run_with(folder, runner):
             del sys.modules[name]
 
 
-SIT_GATE = "        raise ValueError('带骨角色暂不支持坐下：静止姿态差会让脚穿地（1.70 米约 21 厘米），待重定向补偿后开放（PR-F）；棍人角色可以坐下，带骨角色的看向/转身/行礼不受影响')"
+SIT_GATE = "        raise ValueError('带骨角色暂不支持坐下：真实人物的坐姿网格接触与常速质量尚未通过正式验收；合成夹具测试不等于真实人物验收。可使用基础白模或站立类动作，现有模型保留')"
 SIT_GATE_OFF = "        pass  # TEST_ONLY 诊断副本检查真实接触"
 nogate = patched_scripts('TEST_ONLY-sit-gate-off-scripts',
                          [('render-manhua-previs.py', SIT_GATE, SIT_GATE_OFF)])

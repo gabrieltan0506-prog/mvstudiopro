@@ -624,19 +624,14 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
               "走位动作必须落在角色实际位移区间内；原地不动请改用其它动作或先设好起止站位",
             path: ["actors", i, "actions", j],
           });
-        // 0917 三轮审查实测（server/scripts/test_previs_drama_rigged.py）：
-        // retarget_from_source 只烘「相对各自静止姿态的旋转增量」。棍人的静止姿态腿本来就
-        // 屈着 31.3°（站位 IK 的结果），真模的静止姿态腿是直的，于是坐下只传过去 28.3° 的
-        // 增量——腿够不着地，脚直接扎进地板：1.7 米模型 −21.4 厘米、2.55 米模型 −32.2 厘米，
-        // 与身高成正比，不是夹具特例。走位实测只有 +2.0 厘米抬脚残差，不受影响。
-        // 落脚校正上线之前，宁可拒绝提交，也不渲一个脚在地里的片子。
+        // 合成夹具校正通过不代表真实人物网格和常速质量验收；保留完整人物门禁。
         if (action.kind === "cough" && actor.riggedModel)
-          ctx.addIssue({ code: "custom", message: "咳嗽目前仅支持基础白模人物；完整人物的掩口和收手位置还未修正，请先使用基础白模预演。", path: ["actors", i, "actions", j] });
+          ctx.addIssue({ code: "custom", message: "咳嗽目前仅支持基础白模人物；完整人物的掩口和收手位置尚未通过真实模型验收，请先使用基础白模预演。", path: ["actors", i, "actions", j] });
         if (action.kind === "sit" && actor.riggedModel)
           ctx.addIssue({
             code: "custom",
             message:
-              "带骨角色暂不支持坐下：真模静止是直腿、棍人静止屈腿 31.3°，重定向只传旋转增量，实测脚会穿地（1.70 米角色约 21 厘米，2.55 米约 32 厘米）。待重定向补偿静止姿态差后开放（PR-F）。现在可以：把这一镜换成不带骨的棍人角色，或改用站立类动作；带骨角色的站位、看向、转身、行礼都不受影响。",
+              "带骨角色暂不支持坐下：真实人物的坐姿网格接触与常速质量尚未通过正式验收；合成夹具测试不等于真实人物验收。可使用基础白模或站立类动作，现有模型保留",
             path: ["actors", i, "actions", j],
           });
         // 转身与运动轨迹是两套朝向真源，同时给会互相覆盖，先拒绝。

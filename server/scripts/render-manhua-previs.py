@@ -134,12 +134,12 @@ for _actor in spec['actors']:
     # 是「有轨迹就走轨迹」静默丢掉转身——白模不转，报告也不说，等于撒谎。这里硬失败。
     if _actor.get('motionRoute') and any(a['kind']=='turn' for a in _actor['actions']):
         raise ValueError('转身动作与分段运动轨迹不能同时给，朝向请写进轨迹节点')
-    # 0917 三轮审查：带骨真模坐下会穿地（实测 1.7 米 −21.4 厘米 / 2.55 米 −32.2 厘米，
-    # 见 test_previs_drama_rigged.py）。schema 已拒，渲染层再硬失败一次，旧存稿绕不过去。
+    # 合成夹具的落脚校正已通过；真实人物网格和常速质量尚未验收。
+    # schema 与渲染层保留同一门禁，旧存稿也不能绕过。
     if _actor.get('riggedModel') and any(a['kind']=='cough' for a in _actor['actions']):
         raise ValueError('带骨角色咳嗽暂未通过掩口和收手位置验收，请使用基础白模预演')
     if _actor.get('riggedModel') and any(a['kind']=='sit' for a in _actor['actions']):
-        raise ValueError('带骨角色暂不支持坐下：静止姿态差会让脚穿地（1.70 米约 21 厘米），待重定向补偿后开放（PR-F）；棍人角色可以坐下，带骨角色的看向/转身/行礼不受影响')
+        raise ValueError('带骨角色暂不支持坐下：真实人物的坐姿网格接触与常速质量尚未通过正式验收；合成夹具测试不等于真实人物验收。可使用基础白模或站立类动作，现有模型保留')
 
 def turn_facing(actor, t):
     """0917 PR-E：转身动作按时间插值出朝向。动作已按 schema 排序且不重叠。
