@@ -49,7 +49,20 @@ export async function queueArtMotion(
     id = artMotionTaskId(userId, input.requestId);
   let row = await deps.load(id);
   if (!row) {
-    if(input.params.stageAnimation){const {resolveManhuaStageAnimationSource}=await import("./manhuaStageAnimationSource");await resolveManhuaStageAnimationSource(userId,input.params,input.requestId);}
+    if (input.params.stageAnimation) {
+      const { resolveManhuaStageAnimationSource } = await import(
+        "./manhuaStageAnimationSource"
+      );
+      const { archiveStageWorldSnapshot } = await import(
+        "./manhuaStageWorldSnapshot"
+      );
+      const source = await resolveManhuaStageAnimationSource(
+        userId,
+        input.params,
+        input.requestId
+      );
+      await archiveStageWorldSnapshot(userId, input, source.world);
+    }
     await deps.insert(id, userId, input);
     row = await deps.load(id);
   }

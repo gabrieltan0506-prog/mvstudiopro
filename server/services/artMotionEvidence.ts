@@ -9,7 +9,7 @@ import { artMotionTaskId } from "./artMotionTask";
 
 const ROOT = "/data/growth/art-motion-evidence";
 const ROUTE = "/api/internal/art-motion-evidence";
-const MAX = 4 * 1024 * 1024;
+const MAX = 24 * 1024 * 1024;
 const names = new Set([
   "request.raw.json",
   "request.normalized.json",
@@ -17,6 +17,11 @@ const names = new Set([
   "frames.partial.json",
   "probe.raw.json",
   "probe.parsed.json",
+  "source.json",
+  "animation.frames.raw.json",
+  "animation.frames.parsed.json",
+  "result.json",
+  "execution.raw.json",
 ]);
 const requestSchema = z
   .object({
@@ -59,15 +64,15 @@ export function validArtEvidenceSignature(
 export function decodeArtEvidence(body: Buffer) {
   const input = requestSchema.parse(JSON.parse(body.toString("utf8")));
   const match =
-    /^post-prod\/([1-9][0-9]*)\/art-motion-evidence\/([a-f0-9-]{36})\/([a-z.]+)$/.exec(
+    /^post-prod\/([1-9][0-9]*)\/art-motion-evidence\/([a-f0-9-]{36})\/([a-z0-9.-]+)$/.exec(
       input.objectName
     );
-  if (!match || match[1] !== input.userId || !names.has(match[3]))
+  if (!match || match[1] !== input.userId || !(names.has(match[3]) || /^audio-probe-[1-9]\d{0,2}(?:\.parsed)?\.json$/.test(match[3])))
     throw new Error("Invalid evidence identity");
   const bytes = Buffer.from(input.bytes, "base64");
   if (
     !bytes.length ||
-    bytes.length > 2 * 1024 * 1024 ||
+    bytes.length > 16 * 1024 * 1024 ||
     bytes.toString("base64") !== input.bytes
   )
     throw new Error("Invalid evidence bytes");
@@ -139,7 +144,7 @@ export function registerArtMotionEvidence(app: Express) {
     }
   );
 }
-/** Existing Fly credentials remain only server-side; this never starts or changes a machine. */
+/** 仅在 GCS 写入失败后回退网站持久卷；工作机永不写 /data。 */
 export async function backupArtMotionEvidence(
   userId: string,
   requestId: string,

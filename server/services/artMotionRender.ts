@@ -1,4 +1,7 @@
-import { backupArtMotionEvidence } from "./artMotionEvidence";
+import {
+  persistArtMotionEvidence,
+  type ArtMotionEvidenceReceipt,
+} from "./artMotionEvidenceStore";
 import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -9,7 +12,6 @@ import { once } from "node:events";
 import puppeteer from "puppeteer";
 import sharp from "sharp";
 import { artMotionJobSchema } from "../../shared/artMotion";
-import { uploadBufferToGcs } from "./gcs";
 import {
   fetchPostProdSourceToFile,
   runMediaTool,
@@ -24,17 +26,17 @@ export async function renderArtMotion(
   signal: AbortSignal
 ) {
   signal.throwIfAborted();
-  const parsed=artMotionJobSchema.parse(raw);
-  if(parsed.params.stageAnimation){const {renderManhuaStageAnimation}=await import("./manhuaStageAnimationRender");return renderManhuaStageAnimation(parsed,userId,signal);}
+  const parsed = artMotionJobSchema.parse(raw);
+  if (parsed.params.stageAnimation) {
+    const { renderManhuaStageAnimation } = await import(
+      "./manhuaStageAnimationRender"
+    );
+    return renderManhuaStageAnimation(parsed, userId, signal);
+  }
   const root = await mkdtemp(path.join(tmpdir(), "art-motion-"));
   const engine = path.resolve("client/public/art-motion/engine");
   const prefix = `post-prod/${userId.replace(/[^0-9A-Za-z_-]/g, "")}/art-motion-evidence/${randomUUID()}`;
-  const evidence: Array<{
-    name: string;
-    gcsUri: string;
-    bytes: number;
-    sha256: string;
-  }> = [];
+  const evidence: Array<ArtMotionEvidenceReceipt & { name: string }> = [];
   const requestId =
     typeof raw === "object" && raw !== null && "requestId" in raw
       ? String(raw.requestId)
@@ -47,33 +49,13 @@ export async function renderArtMotion(
       } catch {
         evidenceFailure = true;
       }
-      let backupFailed = false;
-      try {
-        await backupArtMotionEvidence(
-          userId,
-          requestId,
-          `${prefix}/${name}`,
-          bytes
-        );
-      } catch {
-        backupFailed = true;
-      }
-      // A website outage must not prevent the independent permanent GCS copy.
-
-      const saved = await uploadBufferToGcs({
-        objectName: `${prefix}/${name}`,
-        buffer: bytes,
-        contentType: "application/json",
-        signal: AbortSignal.timeout(120000),
-      });
-      if (backupFailed && name === "request.raw.json")
-        throw new Error("永久备份预检失败；原请求已存GCS，未启动渲染");
-      evidence.push({
-        name,
-        gcsUri: saved.gcsUri,
-        bytes: bytes.length,
-        sha256: createHash("sha256").update(bytes).digest("hex"),
-      });
+      const saved = await persistArtMotionEvidence(
+        userId,
+        requestId,
+        `${prefix}/${name}`,
+        bytes
+      );
+      evidence.push({ name, ...saved });
     } catch (e) {
       evidenceFailure = true;
       throw e;

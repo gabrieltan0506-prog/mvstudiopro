@@ -136,3 +136,14 @@ Blender5.2.1真实内存数据13项PASS，无渲染/导出媒体；验证真实�
 
 ## 2026-10-09T00:46:48+08:00 · 主代理 · ANIM-10扶坐正式运行与逐帧补验
 被审生产HEAD ec139c2eb88c4e816c9f80ab38839e47c533cb0e；本次追加只有证据文档，无新生产补丁。用户在已展示四秒内容上要求继续，未变化站位/模型范围/时窗/镜头。正式测试run-HNSTne 1/1PASS64.237秒：Source归属拒错用户→实际GLB准备→正式renderer→最终双手96帧蒙皮/腕点及来源SHA→GLB→MP4/ffprobe→取回哈希全部一致。视频H264960x540/96帧4秒/56313bytes/静音；videoSHA b31383648fa7f9c87673e35922ccd833bfff3ec9ea662d1a7316a383bc1f5996，animationSHA9eee3cbd23e97ec65167218e98151feeb96d380cbbbb771580f3d44e1e65530f。最大表面误差左0.000304mm、右0.000246mm，完整接触帧13–85。96张实际解码图逐张读取（1–8至89–96共12批），未见明显跳帧或模型部件消失；遮挡、方块夹具不支持真实人体穿插/承重/衣物判断，常速感知与正式UI仍未验。专机870253a03d2ee8 shared4/8GB已destroy并列表回读不存在。CI37810356309对应ec139c2e仍运行，不重复dispatch，不合并、不部署。
+
+
+## 2026-10-09T04:42:42+08:00 · ANIM-13 · 工作机正常路径独立于网站机（增量）
+
+被审原HEAD da7a6e772fe982990e913d0bb5a5076980998f84；开发 Agent 模型：GPT6 Astra（用户指定标注）。本次主代理独立施工，用户明确追加PR1685；不新增或唤醒子代理。
+
+- 根因：工作机读取世界任务及每份JSON备份都同步等待网站app，GCS正常且网站失联也会阻断渲染。
+- FIXED/开发定向复验：入队前由网站验证完整来源、封存账号/requestId/完整请求摘要/世界版本摘要的GCS不可覆盖快照；工作机沿DB同任务读取GCS，正常路径不查网站。仅GCS读写失败才使用原鉴权网站/data，工作机不创建/data。摘要规范化兼容JSONB键序；冲突、跨账号、请求/版本篡改不借fallback绕过。
+- 所有艺术/场景动画JSON证据统一先写GCS；失败才等待网站持久卷及字节/SHA回执。结果明确区分gcs/website_data，不伪造GCS URI。现有音轨audio-probe序号文件纳入严格白名单，来源/时长/混音门禁保留。两个存储都失败即停止，保留原片/原音轨与任务。
+- 原6套14项证据复用 `/tmp/animation-independence-tests.log`。增量2项renderer归档调用链通过，puppeteer启动被拦截、没有渲染/生成媒体；日志 `/tmp/animation-independent-render-preserve-tests.log`。最后因稳定摘要与白名单变化，定向复验快照6项及身份鉴权1项共7通过；日志 `/tmp/animation-independence-final-targeted-tests.log`。类型检查exit0，diff检查通过。新增键序夹具初版错误填入stage不允许的data字段而失败，改为真实合法请求键序复验，不放宽原schema。
+- CLOSED范围仅本次源码开发证据：网站离线/GCS故障、永久卷真实回执和正式动画/BGM仍未线上实跑，未工作机探针/渲染/付费/合并/部署。不能据此宣布整集34镜或正式线上验收通过。

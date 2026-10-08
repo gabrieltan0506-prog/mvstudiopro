@@ -17,26 +17,24 @@ import {marbleToStageTransform} from '../../shared/manhuaWorldStage';
 import {resolveManhuaStageAnimationSource} from './manhuaStageAnimationSource';
 import {validatePrevisAnimation} from './manhuaPrevisAnimation';
 import {fetchPostProdSourceToFile,runMediaTool,uploadResult} from './postProduction';
-import {uploadBufferToGcs} from './gcs';
-import {backupArtMotionEvidence} from './artMotionEvidence';
+import {persistArtMotionEvidence,type ArtMotionEvidenceReceipt} from './artMotionEvidenceStore';
 import {boundMediaThreads,mediaRuntime} from './postProdResources';
 const sha=(bytes:Buffer)=>createHash('sha256').update(bytes).digest('hex');
 export async function renderManhuaStageAnimation(raw:ArtMotionJob,userId:string,signal:AbortSignal,
- deps={resolveSource:resolveManhuaStageAnimationSource,backup:backupArtMotionEvidence}){
+ deps={resolveSource:resolveManhuaStageAnimationSource,persist:persistArtMotionEvidence}){
  const input=artMotionJobSchema.parse(raw),spec=input.params;
  signal.throwIfAborted();
  const root=await mkdtemp(path.join(tmpdir(),'manhua-stage-'));
  const prefix=`post-prod/${userId}/art-motion-evidence/${input.requestId}`;
- const evidence:Array<{name:string;gcsUri:string;bytes:number;sha256:string}>=[];
+ const evidence:Array<ArtMotionEvidenceReceipt & {name:string}>=[];
  let browser:Awaited<ReturnType<typeof puppeteer.launch>>|undefined,server:ReturnType<typeof createServer>|undefined;
  let encoder:ReturnType<typeof spawn>|undefined,closed:Promise<void>|undefined,failedEvidence=false,framesArchived=false;
  const frames:Array<{frame:number;timeSec:number;sha256:string}>=[],errors:string[]=[];
  const preserve=async(name:string,bytes:Buffer)=>{
   await writeFile(path.join(root,name),bytes);
   try{
-   const saved=await uploadBufferToGcs({objectName:`${prefix}/${name}`,buffer:bytes,contentType:'application/json',signal:AbortSignal.timeout(120_000)});
-   evidence.push({name,gcsUri:saved.gcsUri,bytes:bytes.length,sha256:sha(bytes)});
-   if(['request.raw.json','request.normalized.json','frames.json','frames.partial.json','probe.raw.json','probe.parsed.json'].includes(name))await deps.backup(userId,input.requestId,`${prefix}/${name}`,bytes);
+   const saved=await deps.persist(userId,input.requestId,`${prefix}/${name}`,bytes);
+   evidence.push({name,...saved});
   }catch(error){failedEvidence=true;throw error;}
  };
  const abort=()=>{encoder?.kill('SIGKILL');void browser?.close().catch(()=>{});};

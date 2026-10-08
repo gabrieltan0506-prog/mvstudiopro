@@ -152,9 +152,11 @@ it("renders transparent MOV with real audio muxing", async () => {
     download.mockRestore();
   }
 }, 120000);
-it("raw JSON reaches the durable backup before a failing cloud upload and before rendering", async () => {
+it("GCS失败才回退网站证据，回退后在浏览器启动前保留原请求", async () => {
   const { backupArtMotionEvidence } = await import("./artMotionEvidence");
   const { uploadBufferToGcs } = await import("./gcs");
+  const puppeteer = (await import("puppeteer")).default;
+  const launch = vi.spyOn(puppeteer, "launch").mockRejectedValueOnce(new Error("测试在渲染前停止"));
   const events: string[] = [];
   vi.mocked(backupArtMotionEvidence).mockImplementationOnce(async () => {
     events.push("durable");
@@ -163,21 +165,27 @@ it("raw JSON reaches the durable backup before a failing cloud upload and before
     events.push("cloud");
     throw new Error("offline storage outage");
   });
-  await expect(
-    renderArtMotion(input(), "offline", new AbortController().signal)
-  ).rejects.toThrow("offline storage outage");
-  expect(events).toEqual(["durable", "cloud"]);
-  expect(archive.size).toBe(0);
+  try {
+    await expect(
+      renderArtMotion(input(), "offline", new AbortController().signal)
+    ).rejects.toThrow("测试在渲染前停止");
+    expect(events).toEqual(["cloud", "durable"]);
+    expect(backupArtMotionEvidence).toHaveBeenCalled();
+    expect(launch).toHaveBeenCalledTimes(1);
+  } finally { launch.mockRestore(); }
 });
-it("failed website preflight still archives raw to GCS and never starts rendering", async () => {
+it("GCS成功且网站失联时不做网站预检，原请求保存后进入浏览器准备", async () => {
   const { backupArtMotionEvidence } = await import("./artMotionEvidence");
-  vi.mocked(backupArtMotionEvidence).mockRejectedValueOnce(
-    new Error("website unreachable")
-  );
-  await expect(
-    renderArtMotion(input(), "offline", new AbortController().signal)
-  ).rejects.toThrow("预检失败");
-  expect(
-    Array.from(archive.keys()).filter(k => k.endsWith("request.raw.json"))
-  ).toHaveLength(1);
+  vi.mocked(backupArtMotionEvidence).mockClear();
+  vi.mocked(backupArtMotionEvidence).mockRejectedValue(new Error("website unreachable"));
+  const puppeteer = (await import("puppeteer")).default;
+  const launch = vi.spyOn(puppeteer, "launch").mockRejectedValueOnce(new Error("测试在渲染前停止"));
+  try {
+    await expect(
+      renderArtMotion(input(), "offline", new AbortController().signal)
+    ).rejects.toThrow("测试在渲染前停止");
+    expect(backupArtMotionEvidence).not.toHaveBeenCalled();
+    expect(Array.from(archive.keys()).filter(k => k.endsWith("request.raw.json"))).toHaveLength(1);
+    expect(launch).toHaveBeenCalledTimes(1);
+  } finally { launch.mockRestore(); }
 });
