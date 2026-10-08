@@ -5334,11 +5334,40 @@ export async function runManhuaEpisodeStoryboard(input: {
   const produced = result.blocks.find(b => b.id === reverse.id);
   const text = produced?.outputText?.trim();
   if (result.errors.length || !result.completedIds.includes(reverse.id) || !text || !produced) throw new Error(result.errors.map(e=>e.message).join("；") || "未取得完整分镜，原稿保留。");
+  return materializeManhuaStoryboardResult(graph, result.blocks, reverse.id, episode, ensureOptions);
+}
+
+/** 已审原文只经共同解析/铺板，不经过任何模型、签名或媒体请求。 */
+export function importManhuaEpisodeStoryboard(input: {
+  graph: { blocks: CanvasBlock[]; edges: CanvasEdge[] };
+  episode: number;
+  text: string;
+  ensureOptions: ManhuaFragmentClipEnsureOptions;
+}): { text: string; blocks: CanvasBlock[]; edges: CanvasEdge[] } {
+  const text = input.text.trim();
+  const timed = readManhuaTimedStoryboard(text);
+  if (!timed.recognized || timed.errors.length || timed.rows.length < 2)
+    throw new Error(`请导入至少两镜完整秒位分镜表；不自动补时长。${timed.errors.join("；")}原稿未修改。`);
+  const reverse = input.graph.blocks.find(block => !block.archivedFromPreviousScript && block.id.startsWith("reverse-") && (getBlockEpisodeIndex(block) ?? 1) === input.episode);
+  if (!reverse) throw new Error("本集分镜生产节点未就绪，原稿未修改。");
+  const produced = input.graph.blocks.map(block => block.id === reverse.id
+    ? { ...block, outputText: text, status: "done" as const, error: undefined } : block);
+  return materializeManhuaStoryboardResult(input.graph, produced, reverse.id, input.episode, input.ensureOptions);
+}
+
+/** 生成与免费导入使用同一消费契约，并保留其他集的完整对象。 */
+function materializeManhuaStoryboardResult(
+  graph: { blocks: CanvasBlock[]; edges: CanvasEdge[] }, producedBlocks: CanvasBlock[], reverseId: string,
+  episode: number, ensureOptions?: ManhuaFragmentClipEnsureOptions,
+): { text: string; blocks: CanvasBlock[]; edges: CanvasEdge[] } {
+  const produced = producedBlocks.find(block => block.id === reverseId);
+  const text = produced?.outputText?.trim();
+  if (!produced || !text) throw new Error("未取得完整分镜，原稿保留。");
   const parsed = resolveShotsForEpisodeKeyartsResult([produced], episode);
   if (parsed.isFallback || parsed.sourceErrors.length || !parsed.shots.length) throw new Error("本次分镜输出不完整或秒位无效，原稿保留。");
   // 消费者优先读 beats；新反推与节拍必须指向同一份已验证输出。
-  const coherent = result.blocks.map(b => b.id.startsWith("beats-") && (getBlockEpisodeIndex(b) ?? 1) === episode ? {...b,outputText:text,status:"done" as const,error:undefined} : b);
-  const expanded = expandManhuaShotKeyartsAfterReverse(coherent, graph.edges, reverse.id, ensureOptions);
+  const coherent = producedBlocks.map(b => b.id.startsWith("beats-") && (getBlockEpisodeIndex(b) ?? 1) === episode ? {...b,outputText:text,status:"done" as const,error:undefined} : b);
+  const expanded = expandManhuaShotKeyartsAfterReverse(coherent, graph.edges, reverseId, ensureOptions);
   // 旧流水线末尾会布局整张画布；本集分镜执行不能改动其他集的位置或内容。
   const belongs = (b: CanvasBlock) => (getBlockEpisodeIndex(b) ?? 1) === episode;
   const original = new Map(graph.blocks.map(b => [b.id,b]));
