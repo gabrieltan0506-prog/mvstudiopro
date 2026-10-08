@@ -1,3 +1,4 @@
+import { nativeLearnLiveProposalState } from "./manhuaLearnResultUi";
 import { mergeNativeProposalListAndDetail } from "./manhuaLearnResultUi";
 import { resolveFocusedManhuaLearnBasketItem as resolveFocused0917, manhuaLearnResultFromStart as fromStart0917, type ManhuaLearnBasketItem as BasketItem0917 } from "./manhuaLearnResultUi";
 import { afterEach, describe, expect, it } from "vitest";
@@ -51,19 +52,18 @@ import {
 } from "./manhuaLearnResultUi";
 
 function installMemoryLocalStorage() {
-  const values = new Map<string, string>();
-  Object.defineProperty(globalThis, "localStorage", {
-    configurable: true,
-    value: {
+  for (const name of ["localStorage", "sessionStorage"]) {
+    const values = new Map<string, string>();
+    Object.defineProperty(globalThis, name, { configurable: true, value: {
       getItem: (key: string) => values.get(key) ?? null,
       setItem: (key: string, value: string) => values.set(key, value),
       removeItem: (key: string) => values.delete(key),
-    },
-  });
+    } });
+  }
 }
-
 afterEach(() => {
   Reflect.deleteProperty(globalThis, "localStorage");
+  Reflect.deleteProperty(globalThis, "sessionStorage");
 });
 
 describe("manhuaLearnResultUi soft-fail", () => {
@@ -137,12 +137,12 @@ describe("manhuaLearnResultUi soft-fail", () => {
         seriesKey: "series_a", nativeSegmentSeconds, nativeVideoFps: 12, savedAt: 100,
       },
     });
-    const stored = localStorage.getItem("mvs-manhua-learn-active-job-v1:user_7");
+    const stored = sessionStorage.getItem("mvs-manhua-learn-active-job-v1:user_7");
     expect(readManhuaLearnActiveJob("user_7")).toMatchObject({
       jobId: "job-existing",
       continuation: { nativeSegmentSeconds: nativeSegmentSeconds === 319 ? 319 : 300, nativeVideoFps: 12 },
     });
-    expect(localStorage.getItem("mvs-manhua-learn-active-job-v1:user_7")).toBe(stored);
+    expect(sessionStorage.getItem("mvs-manhua-learn-active-job-v1:user_7")).toBe(stored);
   });
 
   it("服务端两部剧分别恢复319和默认300秒，并经篮子持久化保留", () => {
@@ -176,11 +176,11 @@ describe("manhuaLearnResultUi soft-fail", () => {
         },
         result: { pipelineMode: "native_deep_read", pendingCount: 1 },
       }]);
-      localStorage.setItem("mvs-manhua-learn-basket-v1:user_7", raw);
+      sessionStorage.setItem("mvs-manhua-learn-basket-v1:user_7", raw);
       expect(readManhuaLearnBasket("user_7")[0]).toMatchObject({
         jobId: "job-old", jobStatus: "running", continuation: { nativeSegmentSeconds: 300, nativeVideoFps: 12 },
       });
-      expect(localStorage.getItem("mvs-manhua-learn-basket-v1:user_7")).toBe(raw);
+      expect(sessionStorage.getItem("mvs-manhua-learn-basket-v1:user_7")).toBe(raw);
     }
   });
 
@@ -1254,5 +1254,25 @@ describe("0917 焦点项兜底：服务端换 seriesKey 后学习面板仍能跟
   });
   it("没有焦点 key 时返回 null，交给自动聚焦 effect", () => {
     expect(resolveFocused0917({ items: [item("tpl_a", A, "j1")], focusSeriesKey: "", jobs: [running("j1", A)] })).toBeNull();
+  });
+});
+
+
+describe("待审模板从入队到分片保存实时显示", () => {
+  const base = { jobId: "this-page", status: "queued" as const, input: { params: { nativeDeepReadConfirmed: true, title: "本页影片" } } };
+  it("真实入队立即给学习状态，无卡也不等待刷新，不产生可批准卡", () => {
+    expect(nativeLearnLiveProposalState(base)).toMatchObject({ jobId: "this-page", titleZh: "本页影片", completedSegments: 0, totalSegments: 0 });
+    expect(nativeLearnLiveProposalState(base)?.reference).toBeUndefined();
+    expect(nativeLearnLiveProposalState({ ...base, input: { params: {} } })).toBeNull();
+  });
+  it("计划0/9到已保存7/9绑定同一集，无需终态或整形完成", () => {
+    const output = { nativeSeriesKey: "real-series", nativeStoredPlan: { episodes: [{ episodeIndex: 35, segments: Array(9).fill({}) }] } };
+    expect(nativeLearnLiveProposalState({ ...base, output })).toMatchObject({ reference: { seriesKey: "real-series", episodeIndex: 35 }, completedSegments: 0, totalSegments: 9 });
+    expect(nativeLearnLiveProposalState({ ...base, status: "running", output: { ...output, nativePartialProposalCheckpoint: { episodeIndex: 35, completedSegments: 7, totalSegments: 9 } } })).toMatchObject({ completedSegments: 7, totalSegments: 9 });
+  });
+  it("另一集开始时不拿上一集检查点冒充本集进度", () => {
+    const state = nativeLearnLiveProposalState({ ...base, status: "running", output: { nativeSeriesKey: "real-series", currentEpisodeIndex: 36,
+      nativeStoredPlan: { episodes: [{ episodeIndex: 36, segments: Array(5).fill({}) }] }, nativePartialProposalCheckpoint: { episodeIndex: 35, completedSegments: 9, totalSegments: 9 } } });
+    expect(state).toMatchObject({ reference: { seriesKey: "real-series", episodeIndex: 36 }, completedSegments: 0, totalSegments: 5 });
   });
 });

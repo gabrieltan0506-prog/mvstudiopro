@@ -133,6 +133,7 @@ export const NATIVE_DEEP_READ_JOB_FIELDS = [
   "nativeStandaloneSource",
   "nativeReadModel",
   "nativeStructuringModel",
+  "nativeStructuringGateway",
   "nativeStructuringOnly",
   "nativeStructuringEpisodeIndex",
   "nativeStructuringPreviousJobId",
@@ -157,6 +158,7 @@ export type NativeDeepReadJobConfirmation = {
   readModel: ManhuaNativeDeepReadModelId;
   /** 0905：整形首发模型；缺省 GLM-5.3。 */
   structuringModel: ManhuaNativeStructuringModelId;
+  structuringGateway: "openrouter" | "evolink_glm";
   structuringOnly?: boolean;
   structuringEpisodeIndex?: number;
   structuringPreviousJobId?: string;
@@ -186,6 +188,7 @@ export function sameNativeDeepReadJobConfirmation(
     && left.structuringEpisodeIndex === right.structuringEpisodeIndex
     && left.structuringPreviousJobId === right.structuringPreviousJobId
     && left.structuringModel === right.structuringModel
+    && left.structuringGateway === right.structuringGateway
     && left.seriesKey === right.seriesKey
     && left.learnLlm === right.learnLlm;
 }
@@ -222,6 +225,8 @@ export function parseNativeDeepReadJobConfirmation(
   const standaloneSource = standaloneRaw === true || standaloneRaw === "true";
   const readModel = parseNativeDeepReadModel(params.nativeReadModel);
   const structuringModel = parseNativeStructuringModel(params.nativeStructuringModel);
+  const structuringGateway = params.nativeStructuringGateway ?? "openrouter";
+  if (structuringGateway !== "openrouter" && structuringGateway !== "evolink_glm") throw new Error("整形路由只允许 OpenRouter 或 EvoLink");
   const structuringOnly = params.nativeStructuringOnly === true;
   const structuringEpisodeIndex = Number(params.nativeStructuringEpisodeIndex);
   const structuringPreviousJobId = String(params.nativeStructuringPreviousJobId || "").trim();
@@ -277,6 +282,7 @@ export function parseNativeDeepReadJobConfirmation(
     standaloneSource,
     readModel,
     structuringModel,
+    structuringGateway,
     ...(structuringOnly ? { structuringOnly: true, structuringEpisodeIndex, structuringPreviousJobId } : {}),
     seriesKey: seriesKey || undefined,
     learnLlm:

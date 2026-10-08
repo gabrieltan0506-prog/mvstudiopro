@@ -846,7 +846,7 @@ export function readManhuaLearnFocusSeriesKey(userKey: string): string {
   const storageKey = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_SERIES_KEY, userKey);
   if (!storageKey) return "";
   try {
-    return String(localStorage.getItem(storageKey) || "").trim();
+    return String(sessionStorage.getItem(storageKey) || "").trim();
   } catch {
     return "";
   }
@@ -857,8 +857,8 @@ export function writeManhuaLearnFocusSeriesKey(userKey: string, seriesKey: strin
   if (!storageKey) return;
   const key = String(seriesKey || "").trim();
   try {
-    if (key) localStorage.setItem(storageKey, key);
-    else localStorage.removeItem(storageKey);
+    if (key) sessionStorage.setItem(storageKey, key);
+    else sessionStorage.removeItem(storageKey);
   } catch {
     /* ignore */
   }
@@ -872,7 +872,7 @@ export function readManhuaLearnActiveJob(userKey: string): ManhuaLearnActiveJobR
   const storageKey = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_ACTIVE_JOB, userKey);
   if (!storageKey) return null;
   try {
-    const raw = localStorage.getItem(storageKey);
+    const raw = sessionStorage.getItem(storageKey);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<ManhuaLearnActiveJobRecord>;
     const continuation = parsed.continuation;
@@ -884,7 +884,7 @@ export function readManhuaLearnActiveJob(userKey: string): ManhuaLearnActiveJobR
     const localSource = isManhuaLocalVideoSource(row || {}, userKey);
     const validSource = /^https?:\/\//i.test(url) || /^gs:\/\//i.test(gcsUri) || localSource;
     if (!jobId || !validSource || !Number.isFinite(savedAt)) {
-      localStorage.removeItem(storageKey);
+      sessionStorage.removeItem(storageKey);
       return null;
     }
     const learnLlm =
@@ -926,10 +926,10 @@ export function writeManhuaLearnActiveJob(
   const storageKey = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_ACTIVE_JOB, userKey);
   if (!storageKey) return;
   try {
-    if (value) localStorage.setItem(storageKey, JSON.stringify(value));
-    else localStorage.removeItem(storageKey);
+    if (value) sessionStorage.setItem(storageKey, JSON.stringify(value));
+    else sessionStorage.removeItem(storageKey);
   } catch {
-    // localStorage 禁用时仍保留当前会话状态；不阻断服务端任务。
+    // sessionStorage 禁用时仍保留当前会话状态；不阻断服务端任务。
   }
 }
 
@@ -938,11 +938,11 @@ export function readManhuaLearnResult(userKey: string): ManhuaLearnResultUi | nu
   const storageKey = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_RESULT, userKey);
   if (!storageKey) return null;
   try {
-    const raw = localStorage.getItem(storageKey);
+    const raw = sessionStorage.getItem(storageKey);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<ManhuaLearnResultUi>;
     if (!String(parsed.seriesKey || "").trim()) {
-      localStorage.removeItem(storageKey);
+      sessionStorage.removeItem(storageKey);
       return null;
     }
     return {
@@ -967,8 +967,8 @@ export function writeManhuaLearnResult(userKey: string, value: ManhuaLearnResult
   const storageKey = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_RESULT, userKey);
   if (!storageKey) return;
   try {
-    if (value) localStorage.setItem(storageKey, JSON.stringify(value));
-    else localStorage.removeItem(storageKey);
+    if (value) sessionStorage.setItem(storageKey, JSON.stringify(value));
+    else sessionStorage.removeItem(storageKey);
   } catch {
     // 存储空间不足时不影响当前学习任务与 GCS 检查点。
   }
@@ -978,7 +978,7 @@ export function readManhuaLearnMissingDismissedKeys(userKey: string): string[] {
   const storageKey = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_MISSING_DISMISSED, userKey);
   if (!storageKey) return [];
   try {
-    const parsed = JSON.parse(localStorage.getItem(storageKey) || "[]");
+    const parsed = JSON.parse(sessionStorage.getItem(storageKey) || "[]");
     return Array.isArray(parsed)
       ? parsed.map((key) => String(key || "").trim()).filter(Boolean).slice(-100)
       : [];
@@ -995,8 +995,8 @@ export function writeManhuaLearnMissingDismissedKeys(
   if (!storageKey) return;
   try {
     const normalized = Array.from(new Set(keys.map((key) => String(key || "").trim()).filter(Boolean))).slice(-100);
-    if (normalized.length) localStorage.setItem(storageKey, JSON.stringify(normalized));
-    else localStorage.removeItem(storageKey);
+    if (normalized.length) sessionStorage.setItem(storageKey, JSON.stringify(normalized));
+    else sessionStorage.removeItem(storageKey);
   } catch {
     /* ignore */
   }
@@ -1011,7 +1011,7 @@ export function readManhuaLearnBasket(userKey: string): ManhuaLearnBasketItem[] 
   const storageKey = manhuaLearnBasketStorageKey(userKey);
   if (!storageKey) return [];
   try {
-    const raw = localStorage.getItem(storageKey);
+    const raw = sessionStorage.getItem(storageKey);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -1064,9 +1064,9 @@ export function writeManhuaLearnBasket(userKey: string, items: ManhuaLearnBasket
       )
       .slice(0, 30);
     if (pending.length) {
-      localStorage.setItem(storageKey, JSON.stringify(pending));
+      sessionStorage.setItem(storageKey, JSON.stringify(pending));
     } else {
-      localStorage.removeItem(storageKey);
+      sessionStorage.removeItem(storageKey);
     }
   } catch {
     // 篮子写入失败不阻断真实后台任务与 GCS 检查点。
@@ -1175,6 +1175,25 @@ export type ManhuaLearnServerJobSnapshot = {
   error?: string;
   updatedAt?: string;
 };
+
+/** 待审区从真实任务开始展示；无卡时只显示学习状态，不伪造可批准模板。 */
+export function nativeLearnLiveProposalState(job: ManhuaLearnServerJobSnapshot | null | undefined) {
+  if (job?.input?.params?.nativeDeepReadConfirmed !== true) return null;
+  const output = job.output || {};
+  const checkpoint = output.nativePartialProposalCheckpoint as Record<string, unknown> | undefined;
+  const plan = output.nativeStoredPlan as { episodes?: Array<{ episodeIndex?: number; segments?: unknown[] }> } | undefined;
+  const episodeIndex = Number(output.currentEpisodeIndex || checkpoint?.episodeIndex || plan?.episodes?.[0]?.episodeIndex) || 0;
+  const episode = plan?.episodes?.find(row => row.episodeIndex === episodeIndex);
+  const currentCheckpoint = Number(checkpoint?.episodeIndex) === episodeIndex ? checkpoint : undefined;
+  const totalSegments = Math.max(0, Number(currentCheckpoint?.totalSegments) || episode?.segments?.length || 0);
+  const completedSegments = Math.min(totalSegments, Math.max(0, Number(currentCheckpoint?.completedSegments) || 0));
+  const seriesKey = String(output.nativeSeriesKey || output.seriesKey || "");
+  const reference = /^[0-9A-Za-z_-]{1,40}$/.test(seriesKey) && Number.isInteger(episodeIndex) && episodeIndex >= 1 && episodeIndex <= 999
+    ? { seriesKey, episodeIndex } : undefined;
+  return { jobId: job.jobId, status: job.status, reference, completedSegments, totalSegments,
+    titleZh: String(job.input?.params?.title || "本次影片"),
+    detailZh: String(output.analysisStageLabel || (job.status === "queued" ? "已入队，正在准备学习" : "正在解析学习计划")) };
+}
 
 /**
  * 轮询后找焦点项（0917 用户实测：面板停在「已入队」不动）。

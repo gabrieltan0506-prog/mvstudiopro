@@ -26,6 +26,7 @@ import { resolveManhuaAssembleAccess, hasCurrentManhuaAssembleBillingContract } 
 import { serveStatic, setupVite } from "./vite";
 import {
   createJob,
+  createManhuaLearnJobWithAdmission,
   findActiveManhuaTemplateLearnJobForSource,
   getJobById,
   hideManhuaTemplateLearnSeriesForUser,
@@ -380,10 +381,13 @@ async function startServer() {
           resolveSiteOwnerOnlyAllowed,
         } = await import("../services/access-policy");
         if (!resolvePlatformSupervisorOpsAllowed(ctx.user, ctx.supervisorSession)) {
-          return res.status(403).json({ error: "学节奏为监管专用（下片+语音+读帧成本较高）" });
+          return res.status(403).json({ error: "学节奏为监管专用（视频音频学习有模型成本）" });
         }
         resolvedUserId = String(ctx.user.id);
         const learnParams = (input as any)?.params || {};
+        if (learnParams.nativeDeepReadConfirmed !== true || learnParams.refreshPreviewFrames === true) {
+          return res.status(400).json({ error: "旧抽帧学习已停用；请重新预览并确认原生视频音频学习，历史结果仍可查看。", code: "MANHUA_LEGACY_LEARNING_RETIRED" });
+        }
         if (learnParams.operation === "aggregate_series") return res.status(400).json({ error: "学习只生成分集结果，不再生成额外系列模板" });
         const importedGcsUri = String(learnParams.gcsUri || "").trim();
         const {
@@ -553,7 +557,7 @@ async function startServer() {
       }
 
       const jobId = nanoid(16);
-      await createJob({
+      await (action === "manhua_template_learn" ? createManhuaLearnJobWithAdmission : createJob)({
         id: jobId,
         userId: resolvedUserId,
         type,
@@ -571,6 +575,9 @@ async function startServer() {
 
       return res.status(200).json({ jobId, status: "queued" });
     } catch (error) {
+      if (error && typeof error === "object" && "code" in error && error.code === "MANHUA_LEARN_CAPACITY_FULL") {
+        return res.status(409).json({ error: error instanceof Error ? error.message : "学习并发已满", code: "MANHUA_LEARN_CAPACITY_FULL" });
+      }
       console.error("[Jobs] POST /api/jobs failed:", error);
       return res.status(500).json({
         error: "Failed to create job",
@@ -722,9 +729,10 @@ async function startServer() {
         return res.status(403).json({ error: "学节奏为监管专用" });
       }
       const ownerAllowed = resolveSiteOwnerOnlyAllowed(ctx.user);
-      const rows = await listManhuaTemplateLearnJobsForUser(String(ctx.user.id), 30);
+      const pageJobId = typeof req.query.jobId === "string" ? req.query.jobId.trim() : undefined;
+      const rows = await listManhuaTemplateLearnJobsForUser(String(ctx.user.id), 30, pageJobId);
       return res.status(200).json({
-        // 与 worker 闸门同一真源（默认 1 串行；单机双核，双开会打满 CPU）
+        // 与 worker 执行槽位同一真源；入队另受真实在途最多两部限制。
         maxConcurrent: MANHUA_LEARN_JOB_WORKER_CONCURRENCY,
         items: rows.map((job) => {
           const rawInput = job.input && typeof job.input === "object" && !Array.isArray(job.input)
@@ -1096,10 +1104,13 @@ async function startServer() {
         // 不起 stale reaper：reaper 判 manhua_assemble_final 活性要读 /data 上的 paidJobLedger，
         // rig 没挂卷会读到空账本，把 app 上仍在心跳的合成任务误判失活且退不了款；app 的 reaper
         // 只看 updatedAt，足以清理 rig 崩掉留下的 post_prod running 行。
-        console.warn("[boot] JOB_WORKER_ROLE=rig：跳过学习/配乐启动恢复与 stale reaper，启动已配置的 rig 媒体 worker");
+        console.warn("[boot] JOB_WORKER_ROLE=rig：恢复学习队列，跳过配乐账本与 stale reaper，启动已配置工作机");
         const { heavyWorkerSplitEnabled } = await import("../jobs/workerRole");
         if (heavyWorkerSplitEnabled()) {
-          try { await (await import("../jobs/heavyMediaWorker")).assertHeavyWorkerReady(); }
+          try {
+            await (await import("../jobs/heavyMediaWorker")).assertHeavyWorkerReady();
+            await recoverInterruptedManhuaTemplateLearnJobsOnStartup();
+          }
           catch {
             console.error("[heavy-worker] not ready; no jobs claimed");
             setTimeout(() => { void recoverManhuaThenStartWorkers(); }, 30_000).unref();
@@ -1118,8 +1129,10 @@ async function startServer() {
             if (mirror.mirrored > 0) console.warn(`[manhua3d] startup record mirror: mirrored=${mirror.mirrored} skipped=${mirror.skipped}`);
           })
           .catch(error => console.warn("[manhua3d] startup record mirror failed:", error));
-        const { requeued, cancelled, completed, exhausted } =
-          await recoverInterruptedManhuaTemplateLearnJobsOnStartup();
+        const { heavyWorkerSplitEnabled } = await import("../jobs/workerRole");
+        const { requeued, cancelled, completed, exhausted } = heavyWorkerSplitEnabled()
+          ? { requeued: 0, cancelled: 0, completed: 0, exhausted: 0 }
+          : await recoverInterruptedManhuaTemplateLearnJobsOnStartup();
         if (requeued > 0 || cancelled > 0 || completed > 0 || exhausted > 0) {
           console.warn(
             `[manhua-learn] startup recovery: requeued=${requeued} cancelled=${cancelled} completed=${completed} exhausted=${exhausted}`,
@@ -1128,7 +1141,7 @@ async function startServer() {
         // 0902：部署重启即扫孤儿精读占位（旧进程必死），用户不必再等 45 分钟判死。
         // 清扫失败只警告不阻塞——判死兜底与面板「弃置」仍在。
         try {
-          const claimSweep = await sweepOrphanNativeDeepReadClaimsOnStartup();
+          const claimSweep = heavyWorkerSplitEnabled() ? { swept: 0, kept: 0 } : await sweepOrphanNativeDeepReadClaimsOnStartup();
           if (claimSweep.swept > 0) {
             console.warn(
               `[manhua-learn] startup claim sweep: swept=${claimSweep.swept} kept=${claimSweep.kept}`,

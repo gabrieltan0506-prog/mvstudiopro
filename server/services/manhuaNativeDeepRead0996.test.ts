@@ -10,7 +10,7 @@ import {
 const sourceUrl = "https://0996zp.com/vod/play/146259/sid/1311527";
 
 describe("第三方播放页 → 原生精读双向接线", () => {
-  it("计划按页面真实当前集号起跑，媒体只在待执行集按需刷新", async () => {
+  it("单集入口只学习页面指定集，媒体只在待执行集按需刷新", async () => {
     const refreshSourcePlayback = vi.fn(async (episodeUrl: string) => ({
       playbackUrls: [`https://ppvod01.kqgfbs.com/${new URL(episodeUrl).pathname.split("/").pop()}.m3u8`],
       referer: "https://0996zp.com/",
@@ -46,9 +46,9 @@ describe("第三方播放页 → 原生精读双向接线", () => {
       resolveSeriesKey,
       isExecutionEnabled: () => true,
     });
-    expect(plan.episodes.map((episode) => episode.episodeIndex)).toEqual([20, 21]);
+    expect(plan.episodes.map((episode) => episode.episodeIndex)).toEqual([20]);
     expect(plan.episodes.every((episode) => episode.segments.length === 2)).toBe(true);
-    expect(refreshSourcePlayback).toHaveBeenCalledTimes(2);
+    expect(refreshSourcePlayback).toHaveBeenCalledTimes(1);
     expect(resolveSeriesKey).toHaveBeenCalledWith({
       sourceIdentity: sourceUrl,
       mixId: "0996:0996zp.com:146259",

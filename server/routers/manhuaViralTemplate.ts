@@ -431,11 +431,15 @@ export const manhuaViralTemplateRouter = router({
 
   /** 监管：待审提案（GCS proposals，含已批准副本） */
   listProposals: protectedProcedure
-    .query(async ({ ctx }) => {
+    .input(z.object({ seriesKey: z.string().regex(/^[0-9A-Za-z_-]{1,40}$/), episodeIndex: z.number().int().min(1).max(999) }).optional())
+    .query(async ({ ctx, input }) => {
       const ownerAllowed = resolveSiteOwnerOnlyAllowed(ctx.user);
       if (!ownerAllowed) assertSupervisorOps(ctx.user, ctx.supervisorSession);
-      const { listGcsManhuaViralProposals } = await import("../services/manhuaViralTemplateStore");
-      const items = (await listGcsManhuaViralProposals()).filter(
+      const { listGcsManhuaViralProposals, getGcsManhuaViralProposal } = await import("../services/manhuaViralTemplateStore");
+      const { nativeDeepReadProposalId } = await import("../services/manhuaNativeDeepReadIngest");
+      // 学习页只读本集轻量行；首次落卡前返回空列表，界面由真实job展示学习状态。
+      const card = input ? await getGcsManhuaViralProposal(nativeDeepReadProposalId(input.seriesKey, input.episodeIndex)) : null;
+      const items = (input ? card ? [card] : [] : await listGcsManhuaViralProposals()).filter(
         (card) => !card.revision || ownerAllowed,
       );
       // 0905 实测：68 张卡整份带节拍/字幕/音轨约 20MB，页面每次重拉都卡死几秒；

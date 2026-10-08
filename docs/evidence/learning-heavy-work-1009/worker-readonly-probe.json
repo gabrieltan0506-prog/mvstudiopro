@@ -1,0 +1,30 @@
+{
+  "at": "2026-10-08T18:23:50.827Z",
+  "machine": "7812595b294778",
+  "learningJob": "B39Nhgt_cH4LjpJs",
+  "learningStatus": "succeeded",
+  "source": "本批正式修改源码",
+  "modelCalls": 0,
+  "mediaSubmissions": 0,
+  "workerOwnsLearning": true,
+  "noWebsiteDispatch": true,
+  "selectedRoutesStayFixed": true,
+  "retiredEntryBlocked": true,
+  "nativeEntryAccepted": true,
+  "frameEpisodeIndex": 35,
+  "verifiedFrames": [
+    true,
+    true,
+    true
+  ],
+  "corruptedDigestRejected": true,
+  "cancelRejected": true,
+  "emptyReportRejected": true,
+  "testedSourceCommit": "9d177112",
+  "productionCodeCommit": "c0e033b1",
+  "executionDirectory": "/tmp/learning-heavy-work-c0e033b1",
+  "readOnly": true,
+  "databaseWrites": 0,
+  "upstreamModelCalls": 0,
+  "scopeLimitation": "只读正式函数与现有帧验证；非完整学习/真实两部并发/网站停机持续处理验收"
+}

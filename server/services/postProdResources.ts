@@ -54,17 +54,23 @@ export async function readResourceSnapshot(state?: MediaRuntime) {
 }
 
 // 所有后期通道共用一条本机通道，避免视频编码与三条 BGM 渲染同时占满内存。
-let tail: Promise<void> = Promise.resolve();
+let exclusiveTail: Promise<void> = Promise.resolve();
+const learningRuns = new Set<Promise<void>>();
 let activeResources = 0;
 export function postProdResourcesBusy() { return activeResources > 0; }
-export async function waitForPostProdResources() { await tail; }
+export async function waitForPostProdResources() { await Promise.all([exclusiveTail, ...Array.from(learningRuns)]); }
 export async function withPostProdResources<T>(
   jobId: string, signal: AbortSignal, state: MediaRuntime, work: (signal: AbortSignal) => Promise<T>,
+  options: { parallelLearning?: boolean } = {},
 ): Promise<T> {
+  const parallelLearning = options.parallelLearning === true;
+  if (parallelLearning && process.env.JOB_WORKER_ROLE !== "rig") throw new Error("并发媒体学习仅允许在工作机运行");
   activeResources++;
-  const previous = tail;
+  const previous = parallelLearning ? exclusiveTail : Promise.all([exclusiveTail, ...Array.from(learningRuns)]);
   let release!: () => void;
-  tail = new Promise<void>(resolve => { release = resolve; });
+  const owned = new Promise<void>(resolve => { release = resolve; });
+  if (parallelLearning) learningRuns.add(owned);
+  else exclusiveTail = owned;
   // 被取消的等待者也须等前任释放再交接，不能让后续任务穿透互斥。
   await previous;
   let releasePriority: (() => Promise<void>) | undefined;
@@ -105,6 +111,6 @@ export async function withPostProdResources<T>(
         onLeaseLost: () => controller.abort(new Error("后期存储互斥租约续期失败，已停止本任务")) }));
   } finally {
     if (monitor) clearInterval(monitor);
-    try { await releasePriority?.(); } catch { console.warn("[post-prod] priority lease cleanup deferred"); } finally { activeResources--; release(); }
+    try { await releasePriority?.(); } catch { console.warn("[post-prod] priority lease cleanup deferred"); } finally { activeResources--; learningRuns.delete(owned); release(); }
   }
 }

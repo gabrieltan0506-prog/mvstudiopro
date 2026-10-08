@@ -1,3 +1,4 @@
+import { assertManhuaNewLearningVideoDuration } from "../../shared/manhuaLearningAdmission.js";
 import { parseNativeDeepReadRelearn, type NativeDeepReadRelearn } from "../../shared/manhuaNativeRelearn.js";
 import { buildManhuaLocalVideoSourceRef, parseManhuaLocalVideoSourceRef } from "../../shared/manhuaLocalVideoUpload.js";
 /**
@@ -910,6 +911,7 @@ export async function buildNativeDeepReadPlanPreview(
       deps,
       input.abortSignal,
     );
+    if (!input.structuringEpisodeIndex) assertManhuaNewLearningVideoDuration(probedDurationSec);
     const sameEpisodeRecord = ingestedState.records.find((record) =>
       record.episodeIndex === e.index && !record.complete && !relearn);
     if (
@@ -947,6 +949,10 @@ export async function buildNativeDeepReadPlanPreview(
       ...(sourceEpisodeIndex === e.index && !relearn ? { recoverMisplacedSourceCache: true } : {}),
       ...(restored ? { resumeStoredSegmentPlan: true } : {}),
     });
+  }
+
+  if (!input.structuringEpisodeIndex && episodes.length) {
+    assertManhuaNewLearningVideoDuration(episodes.reduce((total, episode) => total + episode.durationSec, 0));
   }
 
   // ── 5. 用发车脚本同一个校验器验一遍

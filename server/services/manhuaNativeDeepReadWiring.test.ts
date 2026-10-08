@@ -10,6 +10,8 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import {
+  assertManhuaNativeLearningExecution,
+  runManhuaTemplateLearn,
   buildNativeDeepReadEpisodeExecution,
   buildNativeDeepReadLearnResult,
   isManhuaLearnEpisodeAlreadyLearned,
@@ -267,7 +269,7 @@ describe("素材接入层 → 原生精读的接缝", () => {
   it("超长片按策略拒绝，且**在建 claim 之前**就拒——不进付费流程", async () => {
     await expect(
       buildNativeDeepReadEpisodeExecution({ seriesKey: "s1", ep: ep() }, deps(999_999)),
-    ).rejects.toThrow(/超过|跳过策略外片/);
+    ).rejects.toThrow("一小时内");
   });
 
   it("时长探不出来直接拒，不拿 0 秒去建单", async () => {
@@ -660,5 +662,23 @@ describe("刷新后按当前产物代际恢复完成数", () => {
       progress: null,
       completedDigestCount: 6,
     })).toEqual({ pipelineMode: "audio_dense_frames", completedCount: 6 });
+  });
+});
+
+
+describe("旧抽帧学习执行退役", () => {
+  it.each([undefined, false, "true", 1])("缺少原生确认时在读取来源之前明确拒绝：%s", async confirmation => {
+    const onProgress = vi.fn();
+    await expect(runManhuaTemplateLearn({
+      url: "https://invalid.example/no-media", nativeDeepReadConfirmed: confirmation as never, onProgress,
+    })).rejects.toMatchObject({ code: "MANHUA_LEGACY_LEARNING_RETIRED" });
+    expect(onProgress).not.toHaveBeenCalled();
+  });
+  it("旧补帧动作不再进入抽帧学习执行，也不静默改成原生付费", () => {
+    expect(() => assertManhuaNativeLearningExecution({ nativeDeepReadConfirmed: true, refreshPreviewFrames: true }))
+      .toThrow("旧抽帧学习已停用");
+  });
+  it("原生确认保持可执行，不附加拒绝当前原生任务的条件", () => {
+    expect(() => assertManhuaNativeLearningExecution({ nativeDeepReadConfirmed: true })).not.toThrow();
   });
 });

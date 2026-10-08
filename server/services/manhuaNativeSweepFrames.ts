@@ -8,7 +8,6 @@
  * 🔑 为什么秒位不用 LLM 定：切点与有声区间是纯信号，ffmpeg 测得出；
  * 「这一帧精不精彩」才需要理解内容，那是 GLM 的活，不是这里的活。
  */
-import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -41,17 +40,14 @@ export type SweepFrameDeps = {
 };
 
 /** 跑 ffmpeg 并把 stderr 收回来（信号检测的结果都在 stderr）。 */
-function runFfmpegCapture(args: string[], abortSignal?: AbortSignal): Promise<string> {
-  return new Promise((resolve) => {
-    execFile("ffmpeg", args, { maxBuffer: 32 * 1024 * 1024, timeout: SWEEP_FFMPEG_TIMEOUT_MS, signal: abortSignal },
-      (_error, _stdout, stderr) => resolve(String(stderr || "")));
-  });
+async function runFfmpegCapture(args: string[], abortSignal?: AbortSignal): Promise<string> {
+  const { execHeavyMedia } = await import("./heavyMediaProcess");
+  const result = await execHeavyMedia("ffmpeg", args, { maxBuffer: 32 * 1024 * 1024, timeout: SWEEP_FFMPEG_TIMEOUT_MS, signal: abortSignal });
+  return result.stderr;
 }
-function runFfmpeg(args: string[], abortSignal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    execFile("ffmpeg", args, { maxBuffer: 8 * 1024 * 1024, timeout: SWEEP_FFMPEG_TIMEOUT_MS, signal: abortSignal },
-      (error) => error ? reject(new Error("补扫抽帧未完成")) : resolve());
-  });
+async function runFfmpeg(args: string[], abortSignal?: AbortSignal): Promise<void> {
+  const { execHeavyMedia } = await import("./heavyMediaProcess");
+  await execHeavyMedia("ffmpeg", args, { maxBuffer: 8 * 1024 * 1024, timeout: SWEEP_FFMPEG_TIMEOUT_MS, signal: abortSignal });
 }
 
 async function mapConcurrent<T, R>(rows: readonly T[], limit: number, fn: (row: T, i: number) => Promise<R>): Promise<R[]> {
@@ -101,7 +97,7 @@ export async function probeSweepSignals(input: {
 /**
  * 抽帧 → GCS → 签名 URL。失败的单帧跳过，不抛。
  */
-export async function extractSweepFrames(input: {
+export async function extractSweepFramesLocally(input: {
   seriesKey: string;
   episodeIndex: number;
   segmentIndex: number;
@@ -148,7 +144,9 @@ export async function extractSweepFrames(input: {
         const objectName = `manhua-template-learn/sweep-frames/${input.seriesKey}/ep${
           String(input.episodeIndex).padStart(3, "0")}/seg${
           String(input.segmentIndex).padStart(3, "0")}/${sha.slice(0, 16)}.jpg`;
+        input.abortSignal?.throwIfAborted();
         await upload({
+          signal: input.abortSignal,
           bucket, objectName, buffer, contentType: "image/jpeg",
           metadata: { atSecLocal: String(atSecLocal), segmentIndex: String(input.segmentIndex) },
         });
@@ -168,4 +166,13 @@ export async function extractSweepFrames(input: {
   } finally {
     await remove(tempDir, true).catch(() => undefined);
   }
+}
+
+export async function extractSweepFrames(input: Parameters<typeof extractSweepFramesLocally>[0], deps?: SweepFrameDeps): Promise<SweepFrame[]> {
+  const { shouldDispatchHeavyMedia, dispatchLearnWork } = await import("./heavyLearnMedia");
+  if (!deps && shouldDispatchHeavyMedia()) {
+    const { abortSignal, ...payload } = input;
+    return dispatchLearnWork<SweepFrame[]>({ operation: "sweep_frames", input: payload }, abortSignal);
+  }
+  return extractSweepFramesLocally(input, deps);
 }

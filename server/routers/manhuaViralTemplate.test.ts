@@ -825,3 +825,28 @@ describe("学习来源只读检查", () => {
     expect(learnSourcePlan).toHaveBeenLastCalledWith(expect.objectContaining({ inspectSourceOnly: true, readModel: "gemini-3.8-flash", userId: "7" }));
   });
 });
+
+describe("待审卡本集实时查询", () => {
+  it("首次卡未保存返回空，后续读取本集且不遍历全库", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    const caller = (await loadRouter()).createCaller(makeCtx("user", undefined, "owner-open-id"));
+    const store = await import("../services/manhuaViralTemplateStore");
+    vi.mocked(store.listGcsManhuaViralProposals).mockClear();
+    proposalForRouter = null;
+    expect((await caller.listProposals({ seriesKey: "live-series", episodeIndex: 35 })).items).toEqual([]);
+    proposalForRouter = { ...revisionCard, id: "tpl_native_live-series_ep035" };
+    const result = await caller.listProposals({ seriesKey: "live-series", episodeIndex: 35 });
+    expect(result.items[0]?.id).toBe("tpl_native_live-series_ep035");
+    expect(result.items[0]).not.toHaveProperty("beatGrid");
+    expect(store.getGcsManhuaViralProposal).toHaveBeenLastCalledWith("tpl_native_live-series_ep035");
+    expect(store.listGcsManhuaViralProposals).not.toHaveBeenCalled();
+  });
+  it("精确查询仍受现有owner/监管权限和系列集号校验", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    const router = await loadRouter();
+    await expect(router.createCaller(makeCtx("user")).listProposals({ seriesKey: "live-series", episodeIndex: 35 })).rejects.toThrow();
+    const owner = router.createCaller(makeCtx("user", undefined, "owner-open-id"));
+    await expect(owner.listProposals({ seriesKey: "../other", episodeIndex: 35 })).rejects.toThrow();
+    await expect(owner.listProposals({ seriesKey: "live-series", episodeIndex: 0 })).rejects.toThrow();
+  });
+});

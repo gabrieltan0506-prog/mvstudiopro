@@ -1,4 +1,3 @@
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -24,6 +23,7 @@ type UploadFrame = (params: {
   buffer: Buffer;
   contentType: "image/jpeg";
   metadata: Record<string, string>;
+  signal?: AbortSignal;
 }) => Promise<{ created: boolean; generation?: string }>;
 
 export type NativeKeyMomentFrameDeps = {
@@ -71,21 +71,10 @@ async function withFrameProcessSlot<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 
-function runFfmpeg(args: string[], abortSignal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      "ffmpeg",
-      args,
-      {
-        maxBuffer: 8 * 1024 * 1024,
-        timeout: KEY_MOMENT_FRAME_TIMEOUT_MS,
-        signal: abortSignal,
-      },
-      (error, _stdout, stderr) => error
-        ? reject(new Error(abortSignal?.aborted ? "用户已停止关键时刻抽帧" : `关键时刻抽帧未完成：${describeNativeFrameFailure({ ...error, stderr })}`))
-        : resolve(),
-    );
-  });
+async function runFfmpeg(args: string[], abortSignal?: AbortSignal): Promise<void> {
+  const { execHeavyMedia } = await import("./heavyMediaProcess");
+  try { await execHeavyMedia("ffmpeg", args, { maxBuffer: 8 * 1024 * 1024, timeout: KEY_MOMENT_FRAME_TIMEOUT_MS, signal: abortSignal }); }
+  catch (error) { throw new Error(abortSignal?.aborted ? "用户已停止关键时刻抽帧" : `关键时刻抽帧未完成：${describeNativeFrameFailure(error)}`); }
 }
 
 const defaultDeps: NativeKeyMomentFrameDeps = {
@@ -204,7 +193,7 @@ async function mapConcurrent<T, R>(
 /**
  * 正式关键时刻抽帧；返回实际成功帧，协调器负责缺图重试和整形前强门禁。
  */
-export async function extractNativeKeyMomentEvidenceFrames(input: {
+export async function extractNativeKeyMomentEvidenceFramesLocally(input: {
   seriesKey: string;
   episodeIndex: number;
   sourceDigest?: string;
@@ -296,7 +285,9 @@ export async function extractNativeKeyMomentEvidenceFrames(input: {
         + `/ep${String(input.episodeIndex).padStart(3, "0")}`
         + `/${Math.round(moment.atSec * 10)}ds-${sha256.slice(0, 24)}.jpg`;
       try {
+        input.abortSignal?.throwIfAborted();
         await deps.uploadFrame({
+          signal: input.abortSignal,
           bucket: deps.bucket(),
           objectName,
           buffer,
@@ -330,4 +321,18 @@ export async function extractNativeKeyMomentEvidenceFrames(input: {
   } finally {
     await deps.removePath(tempDir, true).catch(() => undefined);
   }
+}
+
+export async function extractNativeKeyMomentEvidenceFrames(input: Parameters<typeof extractNativeKeyMomentEvidenceFramesLocally>[0], deps?: NativeKeyMomentFrameDeps) {
+  const { shouldDispatchHeavyMedia, dispatchLearnWork } = await import("./heavyLearnMedia");
+  if (!deps && shouldDispatchHeavyMedia()) {
+    const { abortSignal, onFrameUploaded, onFrameFailure, ...payload } = input;
+    return dispatchLearnWork<ManhuaViralTemplateEvidenceFrame[]>({ operation: "key_frames", input: payload }, abortSignal, async events => {
+      for (const event of events) {
+        if (event.frame) await onFrameUploaded?.(event.frame);
+        if (event.failure) onFrameFailure?.(event.failure);
+      }
+    });
+  }
+  return extractNativeKeyMomentEvidenceFramesLocally(input, deps);
 }

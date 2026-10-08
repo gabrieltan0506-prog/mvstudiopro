@@ -6127,3 +6127,13 @@ it("GCS截图时序契约：同次模型响应截图，再整形，最后清理�
   expect(events).toContain("structured");
   expect(events.indexOf("cleanup")).toBeGreaterThan(events.lastIndexOf("structured"));
 });
+
+it("所选整形路由覆盖批次序号且显示不含轮换或淘汰模型", async () => {
+  const m = await import("./manhuaNativeDeepReadRunner");
+  for (const gateway of ["openrouter", "evolink_glm"] as const) {
+    for (const batch of [0, 1, 4]) expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain", batch, gateway)).toEqual([gateway]);
+    const label = m.nativeDeepReadStructuringStartedLabel("structuring_chain", gateway);
+    expect(label).toContain(gateway === "openrouter" ? "OpenRouter" : "EvoLink");
+    expect(label).not.toMatch(/Qwen|第[12]批|→/);
+  }
+});

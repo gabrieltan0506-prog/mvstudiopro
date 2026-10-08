@@ -1,0 +1,53 @@
+# 学习重处理迁移、旧链退役与双页并发证据
+
+开发 Agent 模型：GPT6 Astra（用户指定标注，主代理与获授权子代理）。
+
+## 本批范围
+
+旧音频提取/密集帧学习与旧CLI停止，API、runner、service在副作用前拒绝退休入口。历史digest、模板卡、报告与长片JSON重整形继续读取；当前Gemini直接视频音频学习保留。
+
+当前关键时刻截图、辅助补扫、帧SHA/长度批量校验与报告下载/HTML打包走工作机learn_work。备料等待模型时沿同一learn_prepare槽执行回调，串行交换避免覆盖及额外入队死锁；逐帧上传进度保留。GCS引用跨机，不传本机文件路径或凭证。
+
+工作机允许两项学习重处理并发，其他媒体保持独占。切片/上传每项最多两并发，取消等待子进程收尾，心跳保存成功才续期，空闲停机等待全部槽位释放。新学习任务全站最多两项，Neon Serializable准入；每部及本次来源计划总时长不超过3600秒。页面独立缓存及jobId、复制/导航身份隔离、准确本人任务恢复避免跨页面串面板；第三项拒绝，不取消既有任务。
+
+## 验证
+
+- 重处理队列、回调、路由与报告模拟：50项通过。
+- 两工作槽、资源并行/独占、领取：14项通过；额外领取种类过滤1项通过。
+- 页面缓存/隔离与PGlite准入SQL适配器：77项通过。
+- 原生计划/接线及一小时边界、历史7200秒JSON重整形：105项通过。
+- 精准本人jobId读取、复制/导航隔离、迟到回包定向验证通过。旧断言已按基线真实单集计划与现有按钮文字修正，已通过项未重复。
+- Vite正式产物构建通过，22.79秒；现有大chunk告警保留。最终 `pnpm build --incremental false` 完整类型构建退出0，日志 `/tmp/learning-heavy-final-all-build.log`。
+- 完整diff与上下游入口、队列、worker、GCS、恢复、取消和历史消费已审查，git diff --check通过。
+
+## 真实证据与未验边界
+
+用户实际任务B39Nhgt_cH4LjpJs，PR1688生产版本，35集47:39，九分片备料完成；17:38:14UTC第七分片6/6截图保存。这只证明当前旧版本线上链路，不证明本批迁移上线。
+
+新代码真实工作机探针等该任务结束且全库无在途任务后执行。scripts/probe-learning-heavy-work-1009.mts调用正式executeHeavyMedia与真实GCS完整性校验，仅只读，不提交模型/截图/报告产物。尚未执行；首次命令传参超长没有运行探针。
+
+真实Neon SSI双请求、Production双页面/复制/刷新、迁移后逐帧进度/截图及带图报告均尚未线上验收。PGlite、模拟测试和构建不替代这些证据。用户本人合并；本轮学习结束前不合并、不部署、不取消或重提交，不新增付费调用。
+
+## 待审模板即时更新追加
+
+用户要求学习一开始显示待审区，每个分片有数据时自动更新，不依赖刷新。UI从真实本人job显示准备/0/N/已保存X/N状态，不创建空的可批准模板；实际卡保存后读取本集内容。listProposals新增可选seriesKey+episodeIndex，仍走现有owner/监管权限，精确读取一张卡的轻量行；五秒自动刷新及检查点变化立即重拉，详情随卡版本更新。无参历史列表仍支持，其他网页来源不会并入当前进度，GLM请求链不变。
+
+新增状态验证3项通过（入队无卡、0/9→7/9、下一集不继承上一集进度）；路由/权限/旧调用与UI接线61项通过；完整类型检查退出0；前端Vite构建22.63秒通过。原始日志 `/tmp/learning-realtime-proposal-tests.log`、`/tmp/learning-realtime-proposal-route-tests.log`、`/tmp/learning-realtime-proposal-build.log`、`/tmp/learning-realtime-vite-build.log`。真实Production不刷新自动出现与持续更新仍尚未线上验收。
+
+
+## 1009 追加：完整父学习迁至工作机与固定整形路由
+- 入口/队列：分机部署仅rig领取manhua_template_learn父任务；app只提交、查询和展示。父任务完整执行计划、来源、Gemini视频音频、GLM补扫保险、整形、截图及报告；本机媒体函数不再回调app。领取前占双槽并串行CAS；父学习运行时后期编码不领取，轻量来源元数据仍可工作。
+- 持久化/恢复：网站入队前把核验过的本地上传原片和不可覆盖身份回执保存到私有GCS；rig校验user/upload/SHA/长度/精确地址，每条任务只下载一次供计划与备料共用、终态清理。网站启动不再重排学习或扫工作机活跃claims；学习启动恢复移到rig，沿用原恢复契约，不增加新的失联窗口或付费重试。
+- 资源/取消：父任务持有工作机资源保护和停机busy状态，工作机唤醒计数包含queued/running父学习；每5秒读取本人任务取消，服务退出信号沿同一AbortSignal停止模型/子进程。切片和上传各最多2并发，读片模型扇出保持原合同。
+- 路由：新任务页面可选OpenRouter（Z.AI）或EvoLink，同一任务所有整形批次只用所选单一路由，不自动切另一供应商；旧任务无字段默认OpenRouter。契约包含route并纳入同源幂等；仅JSON重整形同样使用本次选择。模型仍GLM-5.3 FlashX，显示去掉第一/第二批、切换箭头和Qwen说明，保留20分钟失联窗口/有效心跳续期。历史Qwen证据识别保留。
+- 新增定向验证：首跑67项中66通过，1项原精确契约断言补上新增route；该项及新增route冻结/非法路由拒绝2项定向复验通过。固定路由/严格schema透传2项通过，6文件资源/工作机/心跳回归25项通过。新增上传来源3项覆盖私有身份、不泄漏路径、只物化一次、跨用户拒绝、错SHA地址拒绝和仅JSON不依赖原片。全类型最后版本检查日志learning-full-worker-last-build.log；Vite构建24.87秒通过（既有大chunk警告）。
+- 未验：真实Neon两部SSI、正式双网页与复制刷新、迁移后完整付费学习、网站停机期间持续模型处理、完整截帧/报告内容质量仍尚未线上验收。只读工作机探针将检查正式函数与现有真实帧，不替代以上验收。代理不合并、不部署，不生成媒体/模型；用户本人合并前须无在途任务。
+- 开发 Agent 模型：GPT6 Astra（用户确认本轮为Astra；保留前轮参与记录）。
+
+
+## 1009 工作机正式源码只读探针回执
+- 时间：2026-10-09T02:23:50.827+08:00；工作机7812595b294778，实际performance4vCPU8192MB，started/hostok。生产修改c0e033b1、脚本兼容修正9d177112，隔离目录/tmp/learning-heavy-work-c0e033b1，不修改/app、不部署、不重启。执行前同库在途任务为空，原学习B39Nhgt_cH4LjpJs已succeeded。
+- 第1轮：守卫准确阻止无nativeSeriesKey的最终结果；从同一任务实时确认final seriesKey后补coalesce，未读其他项目、未生成媒体。
+- 第2轮：正式脚本退出0，workerOwnsLearning/noWebsiteDispatch/selectedRoutesStayFixed/retiredEntryBlocked/nativeEntryAccepted全true。真实第35集3张帧verifiedFrames=[true,true,true]；corruptedDigestRejected/cancelRejected/emptyReportRejected全true。原始JSON见worker-readonly-probe.json。
+- 0模型调用、0媒体提交、0数据库写操作。运行库有既有punycode弃用警告，不影响本次结果。
+- 边界：角色检查证明本进程选择正式本机执行路径，不证明全父任务实际领取/完成；固定路由检查不调用供应商。探针未重新截帧、未打包完整HTML、未实跑付费Gemini/GLM、未证明真实双部并发或网站停机后继续处理。以上均尚未线上验收。参考用户成功HTML：538镜/59重点时刻/89精选画面，保留本次成功产物，无重学。

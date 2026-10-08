@@ -1,3 +1,4 @@
+import { heavyMediaSignal } from "../jobs/heavyMediaContext";
 import { createHash } from "node:crypto";
 import { isNativeStructuredCardObjectName } from "../../shared/manhuaNativeStructuredCard.js";
 import { hasNativeAttemptSelection, type NativeDeepReadAttemptSelection } from "./manhuaNativeDeepReadAttemptSelection.js";
@@ -153,7 +154,7 @@ function makeSigner() {
 /** 0902 用户拍板：帧图内嵌 data URI——报告自包含、可直接发客户，不外泄存储与链接细节。 */
 async function embedFrameImage(bucket: string, objectName: string): Promise<string | null> {
   try {
-    const { buffer } = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${objectName}` });
+    const { buffer } = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${objectName}`, signal: heavyMediaSignal.getStore() });
     const mime = objectName.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg";
     return `data:${mime};base64,${buffer.toString("base64")}`;
   } catch {
@@ -178,7 +179,7 @@ async function mapWithConcurrency<T, R>(items: readonly T[], limit: number, work
 
 async function tryJson(bucket: string, objectName: string): Promise<Record<string, unknown> | null> {
   try {
-    const { buffer } = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${objectName}` });
+    const { buffer } = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${objectName}`, signal: heavyMediaSignal.getStore() });
     return JSON.parse(buffer.toString("utf8")) as Record<string, unknown>;
   } catch {
     return null;
@@ -189,7 +190,7 @@ async function tryJson(bucket: string, objectName: string): Promise<Record<strin
 async function mustJson(bucket: string, objectName: string): Promise<Record<string, unknown>> {
   let buffer: Buffer;
   try {
-    ({ buffer } = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${objectName}` }));
+    ({ buffer } = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${objectName}`, signal: heavyMediaSignal.getStore() }));
   } catch (e) {
     throw new Error(`证据对象缺失或不可读：${objectName}（${e instanceof Error ? e.message : String(e)}）`);
   }
@@ -1018,7 +1019,9 @@ ${section("🎧 声音节点区域", audioSections)}
 <details style="margin-top:22px;background:#fffdf6;border:1px solid #b8452f33;border-top:4px solid #b8452f;border-radius:14px;padding:14px 20px;box-shadow:0 2px 10px rgba(150,110,60,.10)" open><summary style="color:#b8452f;font-weight:600;font-size:1.1em;cursor:pointer">重点镜头表 · ${highlightShotCount} 镜（全片 ${shots.length} 镜中只列重点时刻与技巧镜）</summary><div style="margin:8px 0 4px;font-size:.8em;color:#7a6f5d">图例：<span style="background:#b8452f14;border-left:3px solid #b8452f;padding:1px 8px;font-weight:700;color:#8a2a1a">剧情亮点/转折</span>　<span style="background:#3a7bd514;border-left:3px solid #3a7bd5;padding:1px 8px;font-weight:700;color:#2a5da8">运镜/剪辑技巧</span></div><div class="table-scroll" style="overflow-x:auto;max-height:70vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.8em"><tr><th style="position:sticky;left:0;background:#efe5cc">秒位</th>${FIELDS.map((f) => `<th style="padding:4px 8px;color:#7a6f5d">${fieldLabel(f)}</th>`).join("")}</tr>${shotRows}</table></div></details>
 <div class="colophon" style="text-align:center;margin-top:36px"><span style="display:inline-block;background:#fdf3dd;border:1.5px solid #e8823a;border-radius:999px;padding:8px 22px;color:#b25a1a;font-size:.85em">⭐ 逐帧精炼审读整理，仅作学习拆解，影视版权归原出品方所有</span></div></div></body></html>`;
 
+  heavyMediaSignal.getStore()?.throwIfAborted();
   await uploadBufferToGcs({
+    signal: heavyMediaSignal.getStore(),
     bucket,
     objectName: input.reportObjectName,
     contentType: "text/html; charset=utf-8",
@@ -1063,7 +1066,7 @@ export type NativeReportFromObjectNamesInput = {
  * sourceDigest 合法（64 位 hex）、全一致且与卡片 provenance 一致。
  * 任一不满足即抛错，不上传半成品。
  */
-export async function renderNativeEvidenceReportFromObjectNames(
+export async function renderNativeEvidenceReportFromObjectNamesLocally(
   input: NativeReportFromObjectNamesInput,
 ): Promise<NativeReportRenderResult> {
   const bucket = getGcsBucketName();
@@ -1245,4 +1248,10 @@ export async function renderNativeEvidenceReport(input: NativeReportRenderInput)
     framesPrefix: input.framesPrefix,
     reportObjectName: input.reportObjectName,
   });
+}
+
+export async function renderNativeEvidenceReportFromObjectNames(input: NativeReportFromObjectNamesInput): Promise<NativeReportRenderResult> {
+  const { shouldDispatchHeavyMedia, dispatchLearnWork } = await import("./heavyLearnMedia");
+  if (shouldDispatchHeavyMedia()) return dispatchLearnWork<NativeReportRenderResult>({ operation: "native_report", input });
+  return renderNativeEvidenceReportFromObjectNamesLocally(input);
 }

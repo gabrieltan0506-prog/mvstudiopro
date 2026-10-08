@@ -261,17 +261,14 @@ const GROWTH_CAMP_JOB_WORKER_CONCURRENCY = Math.max(
 );
 let growthAnalyzeJobsActive = 0;
 let growthAnalyzeTimer: NodeJS.Timeout | null = null;
-/**
- * 漫剧学习并发池：默认 **1（串行）**——生产是单机双核，一个 learn job 已经会
- * 拉起 yt-dlp+ffmpeg+ffprobe 多进程，双开会打满 CPU 拖垮健康检查（2026-08-11 用户拍板）。
- * 升级机器后可用 env MANHUA_LEARN_JOB_WORKER_CONCURRENCY 调高（上限 2）。
- * 任务已在 Neon jobs 持久化，关页/刷新不影响。
- */
+/** 两部短片原生学习可并发；重媒体只在工作机，环境配置仍可向下限流。 */
 export const MANHUA_LEARN_JOB_WORKER_CONCURRENCY = Math.max(
   1,
-  Math.min(2, Number(process.env.MANHUA_LEARN_JOB_WORKER_CONCURRENCY || 1) || 1),
+  Math.min(2, Number(process.env.MANHUA_LEARN_JOB_WORKER_CONCURRENCY || 2) || 2),
 );
 let manhuaLearnJobsActive = 0;
+let manhuaLearnClaiming = false;
+const activeManhuaLearnRuns = new Set<Promise<void>>();
 let manhuaLearnTimer: NodeJS.Timeout | null = null;
 const manhuaLearnAbortControllers = new Map<string, AbortController>();
 
@@ -785,7 +782,8 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
   }
 
   if (input.action === "manhua_template_learn") {
-    const { runManhuaTemplateLearn } = await import("../services/manhuaTemplateLearnService");
+    const { runManhuaTemplateLearn, assertManhuaNativeLearningExecution } = await import("../services/manhuaTemplateLearnService");
+    assertManhuaNativeLearningExecution(params);
     const {
       MANHUA_LEARN_STAGE,
       appendManhuaLearnProgressLine,
@@ -895,11 +893,25 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
     }
     const abortController = new AbortController();
     if (jobId) manhuaLearnAbortControllers.set(jobId, abortController);
+    const resourceSignal = (await import("./heavyMediaContext")).heavyMediaSignal.getStore();
+    const resourceAbort = () => abortController.abort(resourceSignal?.reason);
+    resourceSignal?.addEventListener("abort", resourceAbort, { once: true });
+    if (resourceSignal?.aborted) resourceAbort();
+    let cancelPollPending = false;
+    const cancelPoll = jobId ? setInterval(() => {
+      if (cancelPollPending || abortController.signal.aborted) return;
+      cancelPollPending = true;
+      void isManhuaTemplateLearnJobCancelRequested(jobId).then(cancelled => {
+        if (cancelled) abortController.abort(new Error("用户已停止学习，已保存证据保留"));
+      }).catch(() => undefined).finally(() => { cancelPollPending = false; });
+    }, 5_000) : undefined;
+    cancelPoll?.unref?.();
     let result: Awaited<ReturnType<typeof runManhuaTemplateLearn>>;
     const nativeConfirmed = params.nativeDeepReadConfirmed === true;
     try {
       let localVideoUpload: import("../services/manhuaNativeDeepReadPlan.js").NativeDeepReadLocalVideoSource | undefined;
       let nativeReadModel: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeDeepReadModelId | undefined;
+      let nativeStructuringGateway: "openrouter" | "evolink_glm" | undefined;
       let nativeStructuringModel: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeStructuringModelId | undefined;
       let nativeStructuringSource: import("../services/manhuaNativeStructuringOnly.js").NativeStructuringStoredSource | undefined;
       let nativePlanPreview: Awaited<ReturnType<
@@ -940,6 +952,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         abortController.signal.throwIfAborted();
         nativeReadModel = confirmation.readModel;
         nativeStructuringModel = confirmation.structuringModel;
+        nativeStructuringGateway = confirmation.structuringGateway;
         if (!confirmation.structuringOnly) {
         const { buildNativeDeepReadPlanPreviewFromServices } = await import(
           "../services/manhuaNativeDeepReadPlanRuntime.js"
@@ -1010,6 +1023,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
       nativeDeepReadConfirmed: nativeConfirmed,
       nativeReadModel,
       nativeStructuringModel,
+      nativeStructuringGateway,
       nativeStructuringOnly: params.nativeStructuringOnly === true,
       nativeStructuringSource,
       nativePlanPreview,
@@ -1076,6 +1090,8 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
       }
       throw wrapped;
     } finally {
+      if (cancelPoll) clearInterval(cancelPoll);
+      resourceSignal?.removeEventListener("abort", resourceAbort);
       if (jobId) manhuaLearnAbortControllers.delete(jobId);
     }
     let learnProgressLog: ReturnType<typeof appendManhuaLearnProgressLine> | undefined;
@@ -3790,8 +3806,16 @@ async function runClaimedJob(
         : undefined;
     if (!distillHeartbeat) stopWorkerHeartbeat = startWorkerHeartbeat(job.id, timeoutMs);
     const { output, provider } = await withTimeout(
-      withHeavyMediaContext({ userId: String(job.userId), executionId: job.id, parentJobId: job.id },
-        () => executeJob(jobType, job.input, timeoutMs, String(job.userId), job.id)),
+      withHeavyMediaContext({ userId: String(job.userId), executionId: job.id, parentJobId: job.id }, async () => {
+        const execute = () => executeJob(jobType, job.input, timeoutMs, String(job.userId), job.id);
+        if (!manhuaLearnJob || !heavyWorkerSplitEnabled() || resolveJobWorkerRole() !== "rig") return execute();
+        const { withPostProdResources } = await import("../services/postProdResources");
+        const { heavyMediaSignal } = await import("./heavyMediaContext");
+        const { withPortableManhuaLocalVideoSource } = await import("../services/manhuaLocalVideoUploadService");
+        return withPostProdResources(job.id, postProdShutdown.signal, { phase: "native_learning" }, signal =>
+          heavyMediaSignal.run(signal, () => withPortableManhuaLocalVideoSource(String(job.userId), job.input, execute)),
+          { parallelLearning: true });
+      }),
       timeoutMs,
       `${job.type} job timed out after ${timeoutMs}ms`,
       manhuaLearnJob
@@ -4251,16 +4275,29 @@ export async function processGrowthAnalyzeJobsOnce() {
 }
 
 async function processOneManhuaLearnJob(): Promise<boolean> {
-  if (manhuaLearnJobsActive >= MANHUA_LEARN_JOB_WORKER_CONCURRENCY) return false;
-  const job = await claimNextManhuaTemplateLearnJob();
-  if (!job) return false;
-
-  manhuaLearnJobsActive += 1;
-  void runClaimedJob(job).finally(() => {
-    manhuaLearnJobsActive = Math.max(0, manhuaLearnJobsActive - 1);
-    void processManhuaLearnJobsOnce();
-  });
-  return true;
+  const { shouldConsumeManhuaLearning } = await import("./workerRole");
+  if (!shouldConsumeManhuaLearning() || postProdShutdown.signal.aborted || rigStopGate.requested
+    || manhuaLearnClaiming || manhuaLearnJobsActive >= MANHUA_LEARN_JOB_WORKER_CONCURRENCY) return false;
+  if (heavyWorkerSplitEnabled() && (!heavyWorkerState.ready || postProdProcessing || heavyWorkerState.active)) return false;
+  // 异步 CAS 前占槽；轮询和完成回调并发也不能超领。
+  manhuaLearnClaiming = true;
+  manhuaLearnJobsActive++;
+  let transferred = false;
+  try {
+    const job = await claimNextManhuaTemplateLearnJob();
+    if (!job) return false;
+    const run = runClaimedJob(job).finally(() => {
+      manhuaLearnJobsActive--;
+      activeManhuaLearnRuns.delete(run);
+      void processManhuaLearnJobsOnce().catch(error => console.warn("[native-learning] 领取失败", error));
+    });
+    activeManhuaLearnRuns.add(run);
+    transferred = true;
+    return true;
+  } finally {
+    manhuaLearnClaiming = false;
+    if (!transferred) manhuaLearnJobsActive--;
+  }
 }
 
 export async function processManhuaLearnJobsOnce() {
@@ -4325,7 +4362,7 @@ export async function drainPostProdOnShutdown() {
   stopJobWorker();
   postProdShutdown.abort(new Error("服务更新中，本任务已停止，原素材和回执保留；未自动重做"));
   await (await import("./heavyMediaWorker")).drainHeavyMediaOnShutdown();
-  await Promise.allSettled(Array.from(activePostProdRuns));
+  await Promise.allSettled([...Array.from(activePostProdRuns), ...Array.from(activeManhuaLearnRuns)]);
   const { waitForPostProdResources } = await import("../services/postProdResources");
   await waitForPostProdResources();
 }
@@ -4409,7 +4446,7 @@ async function processOnePostProdJobImpl(filter: PostProdClaimFilter = resolvePo
 /** 队列领取方式保留；实际媒体处理由资源通道互斥，rig按分流配置领取任务。 */
 export async function processPostProdJobsOnce() {
   if (heavyWorkerSplitEnabled() && resolveJobWorkerRole() === "rig" && !heavyWorkerState.ready) return;
-  if (postProdProcessing || heavyWorkerState.active || rigStopGate.requested || resolvePostProdClaimFilter() === "none") return;
+  if (postProdProcessing || heavyWorkerState.active || manhuaLearnJobsActive > 0 || manhuaLearnClaiming || rigStopGate.requested || resolvePostProdClaimFilter() === "none") return;
   postProdProcessing = true;
   try {
     const filter = resolvePostProdClaimFilter();
@@ -4453,12 +4490,12 @@ async function rigAutoscaleDeps(
   } = {},
 ) {
   const { resolveRigAutoscaleDeps } = await import("./rigAutoscale.js");
-  const { countPendingBlenderPostProdJobs } = await import("./repository.js");
+  const { countPendingBlenderPostProdJobs, countPendingManhuaLearnJobs } = await import("./repository.js");
   const { countHeavyWorkerJobs } = await import("./heavyMediaRepository");
   return resolveRigAutoscaleDeps(
     {
-      queuedBlenderJobs: () => heavyWorkerSplitEnabled() ? countHeavyWorkerJobs(false) : countPendingBlenderPostProdJobs({ includeRunning: false }),
-      pendingBlenderJobs: () => heavyWorkerSplitEnabled() ? countHeavyWorkerJobs() : countPendingBlenderPostProdJobs(),
+      queuedBlenderJobs: async () => heavyWorkerSplitEnabled() ? (await countHeavyWorkerJobs(false)) + (await countPendingManhuaLearnJobs(false)) : countPendingBlenderPostProdJobs({ includeRunning: false }),
+      pendingBlenderJobs: async () => heavyWorkerSplitEnabled() ? (await countHeavyWorkerJobs()) + (await countPendingManhuaLearnJobs()) : countPendingBlenderPostProdJobs(),
     },
     hooks,
   );
@@ -4534,7 +4571,7 @@ async function rigIdleTick() {
   const { hasPendingPostProdResults } = await import("./postProdRecovery");
   const { heavyMediaChildrenBusy } = await import("../services/heavyMediaProcess");
   const outcome = await maybeStopIdleRig(deps, rigIdleState, () => heavyMediaChildrenBusy() || postProdProcessing || heavyWorkerState.active
-    || activePostProdRuns.size > 0 || postProdResourcesBusy() || hasPendingPostProdResults());
+    || activePostProdRuns.size > 0 || manhuaLearnJobsActive > 0 || manhuaLearnClaiming || activeManhuaLearnRuns.size > 0 || postProdResourcesBusy() || hasPendingPostProdResults());
   if (outcome.action === "error") console.warn("[rig-autoscale] 停机判定异常：", outcome.message);
 }
 
@@ -4551,12 +4588,14 @@ export function startJobWorker() {
   if (workerStarted) return;
   workerStarted = true;
 
-  // 0917：rig 进程组只消化 Blender 后期任务，其他队列一律不碰（避免与 app 双领）
+  // 分机时 rig 同时领取完整学习父任务；网站不领取学习，其他业务队列仍仅在 app。
   if (resolveJobWorkerRole() === "rig") {
     console.warn("[runner] JOB_WORKER_ROLE=rig：按分流配置消费后期/内部媒体任务");
     const work = async () => {
       if (heavyWorkerSplitEnabled()) {
-        await processHeavyMediaOnce(() => postProdProcessing || rigStopGate.requested || postProdShutdown.signal.aborted);
+        await processManhuaLearnJobsOnce();
+        await processHeavyMediaOnce(() => postProdProcessing || manhuaLearnClaiming || rigStopGate.requested || postProdShutdown.signal.aborted,
+          manhuaLearnJobsActive > 0 ? ["learn_source", "learn_command"] : undefined);
       }
       await processPostProdJobsOnce();
     };

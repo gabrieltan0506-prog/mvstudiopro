@@ -101,7 +101,7 @@ describe("原生精读页面接线", () => {
   it("owner 面板使用原生精读说明与直接开始按钮", () => {
     expect(PAGE).toContain("nativeDeepRead: ownerNativeDeepReadPanel");
     expect(PAGE).toContain("学习模型：{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[manhuaLearnReadModel]} · 原生视频精读");
-    expect(PAGE).toContain("开始精读 ${manhuaLearnBatchSize} 集");
+    expect(PAGE).toContain('? "开始精读"');
     expect(PAGE).not.toContain("预演并精读 ${manhuaLearnBatchSize} 集");
     expect(PAGE).not.toContain("旧抽帧任务");
   });
