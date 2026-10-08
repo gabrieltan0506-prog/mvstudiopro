@@ -1,0 +1,30 @@
+{
+  "runtime": "Fly现有工作机/Linux Node 24.13.1",
+  "machine": "7812595b294778",
+  "cpu_kind": "performance",
+  "vcpus": 4,
+  "memory_mb": 8192,
+  "source_sha256": {
+    "client/src/lib/canvasDramaStudio.ts": "62cbfb7aa2f594ab012855f9615db6515db493ddbe35ef14bb8ad5243df4a23a",
+    "client/src/pages/OmniCanvas.tsx": "0380e281ede3c987344a671b879247c7a9f2e2d993b023bcd0b9d29f9dcd845f",
+    "client/src/components/canvas/ManhuaStoryboardImportEditor.tsx": "cde8a4d9749b8c1b0b286b48014a761bceebb9aa4b7c2a9c72535003563d96a4"
+  },
+  "bundle_sha256": "b3e9c1388e4f9121452f7bc10ab41ab755f306df12f3d46cbcddd153ae7f0264",
+  "remote_hash_verified": true,
+  "exit_code": 0,
+  "receipt": {
+    "at": "2026-10-08T05:19:29.733Z",
+    "checks": [
+      "真实物化保留全部34镜及源画布",
+      "其他集完整对象不变",
+      "旧媒体保留但不冒充新稿当前图",
+      "缺秒位和坏行明确拒绝",
+      "原固定容量明确阻断超长分镜，不默删镜",
+      "实际AST宿主保存候选且拒绝覆盖已有请求",
+      "保存失败不展示可采用候选且解锁"
+    ],
+    "count": 7,
+    "hostSha256": "1ff3c41b7c67fa57ed3614f87ded6c894b401c428320d3f54526f8979dd1e90a",
+    "scope": "纯虚构夹具；无生产素材、数据库、上游或媒体生成调用"
+  }
+}

@@ -12,6 +12,7 @@ import { runManhuaStoryAssetRefresh, readManhuaStoryAssetRefreshRun, ManhuaStory
 import { formatManhuaWriterPackMarkdown } from "@shared/manhuaWriterRoom";
 import { getJob } from "@/lib/jobs";
 import ManhuaEpisodeTextEditor from "@/components/canvas/ManhuaEpisodeTextEditor";
+import ManhuaStoryboardImportEditor from "@/components/canvas/ManhuaStoryboardImportEditor";
 import { splitManhuaEpisodeStoryText } from "@shared/manhuaAdvisorRewrite";
 import { archiveVoiceStoryboard, voiceStoryboardResultState, normalizeVoiceStoryboardSource, saveVoiceStoryboard, requireVoiceStoryboardCandidate, voiceStoryboardSource, type VoiceStoryboardCandidate } from "@/lib/creativeVoiceStoryboard";
 import { resolveAdvisorMediaReferenceUrl } from "@/lib/advisorMediaImageJob";
@@ -281,6 +282,7 @@ import {
   resolveManhuaClipRelatedAssetNodeIds,
   runManhuaDramaFactoryPipeline,
   runManhuaEpisodeStoryboard,
+  importManhuaEpisodeStoryboard,
   prepareManhuaKeyartShotTarget,
   sanitizeManhuaClipBlocksPrompts,
   sanitizeManhuaRecapUpstreamLinks,
@@ -10267,6 +10269,37 @@ function OmniCanvasWorkspace() {
     return `第${episode}集文字分镜已采用并保存，旧稿已备份；图片和视频没有生成。`;
   }
 
+  function prepareImportedStoryboard(episode: number, text: string): void {
+    if (!voiceStoryboardScope || !writerConfirmed || !writerPack?.episodes.some(item => item.index === episode)) throw new Error("请先确认当前作品本集正文，导入草稿保留。");
+    if (voiceStoryboardLock.current || abortRef.current || writerBusy || factoryBusy || cloudConflict || advisorRewriteHasActiveWork(blocksRef.current)) throw new Error("仍有制作任务或云端冲突，导入草稿保留，未采用。");
+    const raw = localStorage.getItem(voiceStoryboardKey);
+    const previous = raw ? JSON.parse(raw) as VoiceStoryboardCandidate : voiceStoryboard;
+    if (previous) {
+      if (previous.scope !== voiceStoryboardScope) throw new Error("原候选不属于当前作品，未覆盖。");
+      setVoiceStoryboard(previous); setVoiceStoryboardVisible(true);
+      throw new Error("已有分镜候选或待核实请求，请先查看原结果，保留记录后归档；不会被导入覆盖。");
+    }
+    voiceStoryboardLock.current = true;
+    try {
+      const body = writerPack.episodes.find(item => item.index === episode)!.body;
+      const source = voiceStoryboardSource(blocksRef.current, edges, JSON.stringify({body,templateReferences:writerPack.episodes.find(ep=>ep.index===episode)?.templateReferences,projectBible,publicTemplateId,writerModel,customAssetRefs,explicitWriterVideoModel,characterLookSets,segmentLookBindings,segmentCapacityMode:getManhuaSegmentCapacityMode(segmentCapacityModeByEpisode,episode),writerLengthTierId}));
+      const graph = ensureStudioSpawned(factoryTopic, episode);
+      const result = importManhuaEpisodeStoryboard({ graph, episode, text, ensureOptions: {
+        storyEmotionLineByEpisodeSegment, directionCanon: activeDirectionCanon, assetCanon: projectBible?.assetCanon,
+        characterSheetUrlById: collectManhuaCharacterSheetUrlById(graph.blocks, projectBible?.assetCanon),
+        propImageUrlById: collectManhuaPropImageUrlById(customAssetRefs, projectBible?.assetCanon), customRefs: consumableCustomAssetRefs,
+        segmentPlan: null, characterLookSets, lookRefs: customAssetRefs, segmentLookBindings,
+        directorBoardUrlByEpisode, directorBoardUrlByEpisodeSegment, directorBoardMotionOverlayByEpisodeSegment: directorBoardMotionOverlayBySegment,
+        videoModel: explicitWriterVideoModel || undefined, segmentCapacityMode: getManhuaSegmentCapacityMode(segmentCapacityModeByEpisode, episode), lengthTierId: writerLengthTierId,
+      }});
+      const candidate: VoiceStoryboardCandidate = { id: crypto.randomUUID(), scope: voiceStoryboardScope, episode,
+        source, requestSource: source, status: "ready", resultState: "returned", question: "导入已审文字分镜（免费，不调用模型）", ...result };
+      if (localStorage.getItem(voiceStoryboardKey) !== raw) throw new Error("校验期间另一窗口已保存分镜请求，导入草稿保留，未覆盖原请求。");
+      saveVoiceStoryboard(localStorage, voiceStoryboardKey, candidate);
+      setVoiceStoryboard(candidate); setVoiceStoryboardVisible(true);
+    } finally { voiceStoryboardLock.current = false; }
+  }
+
   async function prepareVoiceStoryboard(episode: number, question: string, signal: AbortSignal, resume = false, reconcile = false): Promise<string> {
     if (!voiceStoryboardScope || !writerConfirmed || !writerPack?.episodes.some(e => e.index === episode)) throw new Error("请先确认当前作品本集剧本，未生成分镜。");
     if (voiceStoryboardLock.current || abortRef.current || writerBusy || factoryBusy || cloudConflict || advisorRewriteHasActiveWork(blocksRef.current)) throw new Error("仍有制作任务或云端冲突，未重复提交。");
@@ -10610,9 +10643,16 @@ function OmniCanvasWorkspace() {
   }
 
   function renderEpisodeTextEditor(episode: NonNullable<typeof writerPack>["episodes"][number]) {
-    return <ManhuaEpisodeTextEditor key={`${voiceStoryboardScope}:${episode.index}`} scopeKey={voiceStoryboardScope}
-      episode={episode} busyReason={writerBusy || factoryBusy || advisorRewriteHasActiveWork(blocks) ? "制作任务仍在执行，可继续编辑草稿，待回执后再确认写回。" : undefined}
-      onApplyEdit={(edit,options)=>applyTemplateRewriteCandidates([],edit,options)} />;
+    const busyReason = writerBusy || factoryBusy || advisorRewriteHasActiveWork(blocks) ? "制作任务仍在执行，可继续编辑草稿，待回执后再确认写回。" : undefined;
+    return <div className="space-y-3"><ManhuaEpisodeTextEditor key={`${voiceStoryboardScope}:${episode.index}`} scopeKey={voiceStoryboardScope}
+      episode={episode} busyReason={busyReason}
+      onApplyEdit={(edit,options)=>applyTemplateRewriteCandidates([],edit,options)} />
+      <ManhuaStoryboardImportEditor scopeKey={voiceStoryboardScope} episode={episode}
+        capacityMode={getManhuaSegmentCapacityMode(segmentCapacityModeByEpisode, episode.index)}
+        onChangeCapacityMode={mode => setSegmentCapacityModeForEpisode(episode.index, mode)}
+        busyReason={busyReason || (!writerConfirmed ? "请先确认本集正文" : cloudConflict ? "请先处理云端版本冲突" : undefined)}
+        onPrepare={text => prepareImportedStoryboard(episode.index, text)} />
+    </div>;
   }
 
   const advisorInWorkflowRail = manhuaUiMode === "workbench" && !(immersiveWorkbench && immersiveExtrasOpen);
