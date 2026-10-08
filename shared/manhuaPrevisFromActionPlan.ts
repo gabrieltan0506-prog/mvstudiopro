@@ -9,7 +9,7 @@
  *   - 相机：计划相机没有位置信息 → 给一台默认机位覆盖整段并写明；不假称已解析。
  *   - 产出先过生产 schema：不过就把原因带回，UI 不得静默套用。
  */
-import { manhuaPrevisSpecSchema, type ManhuaPrevisSpec, type ManhuaPrevisStudio } from "./manhuaPrevis";
+import { PREVIS_MAX_ACTORS, manhuaPrevisSpecSchema, type ManhuaPrevisSpec, type ManhuaPrevisStudio } from "./manhuaPrevis";
 import { compileManhuaShotSnapshot, type ManhuaActionPlan, type ManhuaActionEvent } from "./manhuaActionPlan";
 import type { ManhuaExecutableShot } from "./manhuaActionPlanSplit";
 import type { ManhuaResolvedCameraSource } from "./manhuaActionPlanBindings";
@@ -99,7 +99,7 @@ export function manhuaPrevisDraftFromExecutableShot(input: {
   const linkOf = (id: string) => input.links?.find((l) => l.actorId === id);
 
   const onstage = shot.onstageActorIds;
-  if (onstage.length > 6) issuesZh.push(`在场 ${onstage.length} 人，白模一段最多 6 人，请回拆镜器再拆`);
+  if (onstage.length > PREVIS_MAX_ACTORS) issuesZh.push(`在场 ${onstage.length} 人，白模一段最多 ${PREVIS_MAX_ACTORS} 人，请回拆镜器再拆`);
   const formation = defaultFormation(onstage.length);
   const actors: ManhuaPrevisSpec["actors"] = onstage.map((actorId, i) => {
     const st = snapshot[actorId];

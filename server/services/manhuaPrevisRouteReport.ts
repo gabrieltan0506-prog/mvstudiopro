@@ -1,6 +1,7 @@
 /** 分段运动的实际根矩阵回执，生成和恢复采用同一轨迹门禁。 */
 import { z } from "zod";
 import {
+  PREVIS_MAX_ACTORS,
   previsShortestAngleDeg,
   type ManhuaPrevisSpec,
 } from "../../shared/manhuaPrevis";
@@ -33,7 +34,7 @@ export const routeReportSchema = z
       })
       .strict()
   )
-  .max(6);
+  .max(PREVIS_MAX_ACTORS);
 export function validateRouteReport(
   raw: z.infer<typeof routeReportSchema> | undefined,
   spec: ManhuaPrevisSpec,

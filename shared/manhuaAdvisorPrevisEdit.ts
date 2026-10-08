@@ -2,7 +2,7 @@ import { previsPiggybackSetDownSchema } from "./manhuaPrevisPiggyback";
 import { z } from "zod";
 import { previsAnimationReceipt } from "./manhuaPrevisAnimation";
 import { previsPlaybackDuration } from "./manhuaPrevisPlayback";
-import { manhuaPrevisSpecSchema, previsActorSchema, PREVIS_ACTION_KINDS, type ManhuaPrevisSpec, type ManhuaPrevisStudio, manhuaPrevisRequestSchema, type ManhuaPrevisRequest } from "./manhuaPrevis";
+import { PREVIS_MAX_ACTORS, manhuaPrevisSpecSchema, previsActorSchema, PREVIS_ACTION_KINDS, type ManhuaPrevisSpec, type ManhuaPrevisStudio, manhuaPrevisRequestSchema, type ManhuaPrevisRequest } from "./manhuaPrevis";
 
 const safeText = (max: number) => z.string().trim().min(1).max(max).refine(v => !/(?:https?|gs|data|blob):|\bbearer\s|\bsk-[a-z0-9_-]{12,}/i.test(v), "调度上下文不得包含媒体地址或凭证");
 export const advisorPrevisTargetSchema = z.object({
@@ -49,7 +49,7 @@ export const advisorPrevisPatchSchema = z.object({
   kind: z.literal("previs_edit_v1"), summaryZh: safeText(1200),
   unsupportedZh: z.array(safeText(300)).max(12),
   cameras: manhuaPrevisSpecSchema.shape.cameras.optional(),
-  actors: z.array(actorEdit).max(6).optional(),
+  actors: z.array(actorEdit).max(PREVIS_MAX_ACTORS).optional(),
   setDown: previsPiggybackSetDownSchema.optional(),
   sceneEffects: manhuaPrevisSpecSchema.shape.sceneEffects,
   interactions: manhuaPrevisSpecSchema.shape.interactions,

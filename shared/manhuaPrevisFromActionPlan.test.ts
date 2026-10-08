@@ -214,10 +214,10 @@ describe("PR-6 · 套用草案带上运镜句", () => {
  });
 
 
-it("超容量草案不截掉第七人后冒充有效规格", () => {
+it("超容量草案不截掉任何人物后冒充有效规格", () => {
  const plan=buildBoatFight();const shot=splitManhuaActionPlanForPrevis(plan).shots[0];
- const draft=manhuaPrevisDraftFromExecutableShot({plan,shot:{...shot,onstageActorIds:[MAN,WOMAN,A,B,'extra-1','extra-2','extra-3']},aspect:'16:9'});
- expect(draft.spec).toBeNull();expect(draft.issuesZh.join('；')).toContain('最多 6 人');expect(draft.summaryZh.join('；')).toContain('extra-3');
+ const draft=manhuaPrevisDraftFromExecutableShot({plan,shot:{...shot,onstageActorIds:[MAN,WOMAN,A,B,...Array.from({length:55},(_,i)=>`extra-${i}`)]},aspect:'16:9'});
+ expect(draft.spec).toBeNull();expect(draft.issuesZh.join('；')).toContain('最多 58 人');expect(draft.summaryZh.join('；')).toContain('extra-54');
 });
 it("套用动作计划保留同资产已准备模型和原片，不复用另一资产", () => {
  const studio=createManhuaPrevisStudio(5);studio.spec.actors[0].assetRef='hero';studio.spec.actors[0].riggedModel={sourceJobId:'m3d_current',forwardAxis:'+X',targetHeight:1.7};

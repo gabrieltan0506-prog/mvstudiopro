@@ -430,16 +430,17 @@ if spec.get('interactions') or has_swords or piggyback:
 
 rigs=[]
 # 与 shared/manhuaPrevisColors.ts 同源契约；颜色随身份固定，不随演员顺序变化。
-actor_palette = ['38bdf8', 'fb923c', 'c084fc', 'facc15', '34d399', 'f472b6']
+from previs_actor_colors import actor_color_hex
+actor_palette = [actor_color_hex(i) for i in range(max(len(spec['actors']), 1+max(a.get('colorIndex', -1) for a in spec['actors'])))]
 actor_color_ids = sorted((a['id'] for a in spec['actors']), key=lambda value: value.encode('utf-16-be'))
 actor_colors = {}
 for actor_id in actor_color_ids:
     value = next(a.get('colorIndex') for a in spec['actors'] if a['id'] == actor_id)
-    if isinstance(value, int) and 0 <= value < 6 and value not in actor_colors.values():
+    if isinstance(value, int) and 0 <= value < len(actor_palette) and value not in actor_colors.values():
         actor_colors[actor_id] = value
 for actor_id in actor_color_ids:
     if actor_id not in actor_colors:
-        actor_colors[actor_id] = next(i for i in range(6) if i not in actor_colors.values())
+        actor_colors[actor_id] = next(i for i in range(len(actor_palette)) if i not in actor_colors.values())
 for index,actor in enumerate(spec['actors']):
     contacts,stance=plan_contacts(actor)
     rest=points(actor,1,contacts[1])

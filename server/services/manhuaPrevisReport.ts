@@ -15,6 +15,7 @@ import {
   validateWaterReport,
 } from "./manhuaPrevisWaterReport";
 import {
+  PREVIS_MAX_ACTORS,
   previsCreatureSchema,
   previsActorVisibleAtFrame,
   type ManhuaPrevisRequest,
@@ -64,7 +65,7 @@ export const previsReportSchema = z
           .passthrough()
       )
       .min(1)
-      .max(6),
+      .max(PREVIS_MAX_ACTORS),
     warnings: z.array(z.string()),
     portraitFraming: z.enum(["tight", "auto", "landscape"]).optional(),
     models: z
@@ -132,7 +133,7 @@ export const previsReportSchema = z
           })
           .strict()
       )
-      .max(6)
+      .max(PREVIS_MAX_ACTORS)
       .optional(),
     creatures: z
       .array(
@@ -164,7 +165,7 @@ export const previsReportSchema = z
           })
           .strict()
       )
-      .max(6)
+      .max(PREVIS_MAX_ACTORS)
       .optional(),
     waterEmergence: waterReportSchema.optional(),
     motionRoutes: routeReportSchema.optional(),
@@ -198,7 +199,7 @@ export const previsReportSchema = z
           })
           .strict()
       )
-      .max(6)
+      .max(PREVIS_MAX_ACTORS)
       .optional(),
     interactions: z
       .array(

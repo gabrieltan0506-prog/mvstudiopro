@@ -14,6 +14,9 @@ import { previsSceneEffectsSchema, validatePrevisSceneEffects, formatPrevisScene
 
 import { previsPiggybackSchema, previsPiggybackIssues } from "./manhuaPrevisPiggyback";
 
+import { PREVIS_MAX_ACTORS, PREVIS_RENDER_UNIT_BUDGET, PREVIS_BUDGET_FPS, PREVIS_MIN_DURATION_SEC } from "./manhuaPrevisLimits";
+export { PREVIS_MAX_ACTORS, PREVIS_RENDER_UNIT_BUDGET, PREVIS_BUDGET_FPS } from "./manhuaPrevisLimits";
+
 const point = z.tuple([
   z.number().finite().min(-12).max(12),
   z.number().finite().min(-12).max(12),
@@ -185,7 +188,7 @@ export const previsActorSchema = z
     id: z.string().min(1).max(100),
     nameZh: z.string().trim().min(1).max(80),
     /** 角色在白模中的身份色；旧稿缺省时按身份分配。 */
-    colorIndex: z.number().int().min(0).max(5).optional(),
+    colorIndex: z.number().int().min(0).max(PREVIS_MAX_ACTORS - 1).optional(),
     /** 仅标明对应的项目角色；不声称为无骨骼 GLB 自动蒙皮。 */
     assetRef: z.string().max(160).optional(),
     /** 半开在场区间，边界对齐24fps；缺省表示整段在场。 */
@@ -234,11 +237,11 @@ const cameraPoint = z.tuple([
 const manhuaPrevisSpecBaseSchema = z
   .object({
     version: z.literal(1),
-    durationSec: z.number().int().min(2).max(30),
+    durationSec: z.number().int().min(PREVIS_MIN_DURATION_SEC).max(30),
     aspect: z.enum(["16:9", "9:16"]),
     /** 人物、接触、特效和相机统一按源时间变速；不是独立摄影机的子弹时间。 */
     timeMap: manhuaShotTimeMapSchema.optional(),
-    actors: z.array(previsActorSchema).min(1).max(6),
+    actors: z.array(previsActorSchema).min(1).max(PREVIS_MAX_ACTORS),
     interactions: z.array(previsInteractionSchema).max(24).optional(),
     piggyback: previsPiggybackSchema.optional(),
     scriptSource: previsScriptSourceSchema.optional(),
@@ -351,7 +354,7 @@ export const manhuaPrevisDraftSchema = manhuaPrevisSpecBaseSchema.extend({
           .max(12),
       })
     )
-    .max(6),
+    .max(PREVIS_MAX_ACTORS),
   cameras: z
     .array(
       z
@@ -393,12 +396,12 @@ export const manhuaPrevisDraftSchema = manhuaPrevisSpecBaseSchema.extend({
 /** 原尺寸渲染的已验上限；更高负荷仅走服务端降采样渲染并恢复标准视频尺寸。 */
 export const PREVIS_FULL_RES_RENDER_UNIT_BUDGET = 2700;
 /** 75% 隔离探针在 2784 单位完成逐帧渲染；先只放行到 2800，完整编码仍须实测。 */
-export const PREVIS_RENDER_UNIT_BUDGET = 2800;
+
 /** 出水预演硬限：人数与秒数。拆镜器（manhuaActionPlanSplit）从这里读，不重抄数字。 */
 export const PREVIS_WATER_MAX_ACTORS = 3;
 export const PREVIS_WATER_MAX_SEC = 8;
 /** 预算换算用的采样帧率（与 previsRenderCostUnits 一致） */
-export const PREVIS_BUDGET_FPS = 24;
+
 
 /** 保守容量单位：完整帧数 × 总角色数。在场隐藏尚未证明可降低端到端渲染开销。 */
 export function previsRenderCostUnits(spec: {

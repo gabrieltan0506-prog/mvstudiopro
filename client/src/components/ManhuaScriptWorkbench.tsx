@@ -3129,6 +3129,8 @@ export default function ManhuaScriptWorkbench({
     };
   }, [customAssetRefs, focusEpisode, activeSegNo, stageFrameShotOptions, stageFrameAdoptContext]);
   const previsStatusParts = [
+    activeClip?.previsStudio?.spec.actors.some(actor => !actor.assetRef && /^打手[甲乙]$/.test(actor.nameZh))
+      ? "打手甲乙按独立临时基础人形预演，不建立专属资产" : "",
     activeClip?.previsStudio?.selectedJobId ? "已有采用参考，请核对是否对应当前配置" : "",
     activeClip?.previsStudio?.pending ? "有待查询的渲染任务，请回白模面板查原编号" : "",
     !activeClip?.previsStudio?.selectedJobId && activeClip?.previsStudio?.history.length
@@ -3150,7 +3152,9 @@ export default function ManhuaScriptWorkbench({
       if (!studio) {
         const shots = (activeSegment?.shots || []).map(shot => ({ index: shot.index, durationSec: shot.durationSec, actionZh: shot.actionZh }));
         const durationSec = previsInitialDurationSec(shots, parseManhuaClipTargetDurationSec(activeClip.prompt || ""));
-        studio = createAdvisorPrevisStudio({ durationSec, characters: previsStudioCharacters, shots, castZh: resolveManhuaSegmentCastZh({ castZh: activeSourceBeat?.castZh, dialogueZh: activeSourceBeat?.dialogueZh, shots: activeSegment?.shots, registry: assetLockRegistry, assetCanon }) });
+        studio = createAdvisorPrevisStudio({ durationSec, characters: previsStudioCharacters, shots,
+          transientCharacterNames: ["打手甲", "打手乙"],
+          castZh: resolveManhuaSegmentCastZh({ castZh: activeSourceBeat?.castZh, dialogueZh: activeSourceBeat?.dialogueZh, shots: activeSegment?.shots, registry: assetLockRegistry, assetCanon }) });
       }
       // 新打开白模顾问先无声预演；在同一会话切换音轨页后返回，保留用户刚选的带声状态。
       if (!advisorOpen || advisorPrevisActiveClipId !== activeClip.id) studio = { ...studio, audioEnabled: false };

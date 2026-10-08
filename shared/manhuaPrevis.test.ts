@@ -152,7 +152,7 @@ describe("白模配置与旧引用兼容", () => {
     const excess = [
       {
         ...spec,
-        actors: [...spec.actors, { ...spec.actors[0], id: "actor-7" }],
+        actors: [...spec.actors, ...Array.from({ length: 53 }, (_, i) => ({ ...spec.actors[0], id: `extra-${i}` }))],
       },
       { ...spec, cameras: [...spec.cameras, spec.cameras[0]] },
       {
