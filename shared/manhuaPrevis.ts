@@ -1005,6 +1005,7 @@ export const manhuaPrevisStudioSchema = z
       z
         .object({
           jobId: z.string().max(100),
+          sourceScopeId: z.string().uuid().optional(),
           requestId: z.string().uuid(),
           gcsUri: z.string().max(2048),
           url: z.string().max(8192),

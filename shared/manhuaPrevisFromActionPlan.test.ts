@@ -5,6 +5,7 @@ import { manhuaPrevisSpecSchema } from "./manhuaPrevis";
 import { applyManhuaPrevisDraftToStudio, manhuaPrevisDraftFromExecutableShot, resolveManhuaPrevisCharacterLinks } from "./manhuaPrevisFromActionPlan";
 import { createManhuaPrevisStudio } from "./manhuaPrevis";
 import { resolveManhuaCameraTempo } from "./manhuaCameraTempo";
+import { selectPrevisCharacterSlots } from "./manhuaAdvisorPrevisInitial";
 
 const cam = (endSec: number) => ({
   source: "previs_cameras" as const,
@@ -233,4 +234,23 @@ it("共用资产的两个演员分别保留本人配置，新增实例不猜配�
  expect(result.spec.actors.map(actor=>actor.riggedModel)).toEqual(studio.spec.actors.map(actor=>actor.riggedModel));
  next.actors[0].id='attacker-new';expect(applyManhuaPrevisDraftToStudio(studio,next).spec.actors[0].riggedModel).toBeUndefined();
  expect(studio.spec.actors[0].id).toBe('attacker-a');
+});
+
+it("四足身份经脸图全身图选择、动作草案和套用保留同源骨骼", () => {
+ const plan=buildBoatFight();plan.actors.find(a=>a.actorId===MAN)!.canonAnchorId='horse-anchor';plan.initialStates[MAN].heldProps=[];
+ const assets=selectPrevisCharacterSlots([
+   {id:'horse-face',seedLibraryId:'horse-anchor',duty:'identity' as const,shape:'horse' as const},
+   {id:'horse-body',seedLibraryId:'horse-anchor',duty:'look' as const,shape:'horse' as const},
+ ]);
+ const links=resolveManhuaPrevisCharacterLinks(plan.actors,assets);
+ expect(links).toEqual([{actorId:MAN,assetRef:'horse-body',shape:'horse'}]);
+ const source=splitManhuaActionPlanForPrevis(plan).shots[0];
+ const draft=manhuaPrevisDraftFromExecutableShot({plan,shot:{...source,events:[],onstageActorIds:[MAN]},aspect:'16:9',links});
+ expect(draft.spec?.actors[0].shape).toBe('horse');
+ const studio=createManhuaPrevisStudio(draft.spec!.durationSec);
+ studio.spec.actors=[{...draft.spec!.actors[0],riggedModel:{rigKind:'quadruped',sourceJobId:'m3d_horse',sourceAssetRef:'horse-body',forwardAxis:'+X',targetHeight:1.7}}];
+ const result=applyManhuaPrevisDraftToStudio(studio,draft.spec!);
+ expect(result.spec.actors[0].riggedModel).toEqual(studio.spec.actors[0].riggedModel);
+ expect(result.specHistory?.[0].spec).toEqual(studio.spec);
+ expect(resolveManhuaPrevisCharacterLinks(plan.actors,[{id:'horse-body',seedLibraryId:'horse-anchor',shape:'horse'},{id:'horse-body',seedLibraryId:'horse-anchor',shape:'human'}])).toEqual([]);
 });

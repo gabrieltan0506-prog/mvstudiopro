@@ -205,6 +205,7 @@ def action_amounts(actor, t):
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from previs_camera_timing import camera_progress
+from previs_bone_basis import rotation_from_rest
 
 def camera_lens(shot, frame):
     """焦距独立卡点；没有终点焦距就是常量。"""
@@ -483,7 +484,11 @@ for index,actor in enumerate(spec['actors']):
             pb=rig.pose.bones[name]
             d=b-a
             pb.rotation_mode='QUATERNION'
-            pb.matrix=Matrix.Translation(a) @ d.to_track_quat('Y','Z').to_matrix().to_4x4() @ Matrix.Diagonal((1,d.length/pb.bone.length,1,1))
+            # 带骨模型需要稳定的扭转轴；全局Z上轴在直立骨处退化，轻微俯身也会使肩线翻90度。
+            # 只把静止骨方向摆到本帧方向，保留原roll；基础白模沿用既有矩阵。
+            rotation = (rotation_from_rest(pb.bone.matrix_local, pb.bone.tail_local-pb.bone.head_local, d)
+                        if actor.get('riggedModel') else d.to_track_quat('Y','Z'))
+            pb.matrix=Matrix.Translation(a) @ rotation.to_matrix().to_4x4() @ Matrix.Diagonal((1,d.length/pb.bone.length,1,1))
             for prop in ('location','rotation_quaternion','scale'):pb.keyframe_insert(prop,frame=frame)
             if name.startswith('lower_leg') and actor['id'] != passenger_id:
                 key=name[len('lower_leg'):]
@@ -864,7 +869,7 @@ if scene_effect_handles:
     report['sceneEffects']=measure_scene_effects(scene_effect_handles,scene)
     report['warnings'].extend(sorted(set(row['boundaryZh'] for row in report['sceneEffects'])))
 if has_routes:
-    report['motionRoutes']=measure_routes(spec,rigs,scene)
+    report['motionRoutes']=measure_routes(spec,rigs,scene,models)
 if water_handles:
     report['waterEmergence']=measure_water(water_handles,rigs,scene)
     report['warnings'].append(report['waterEmergence']['boundaryZh'])

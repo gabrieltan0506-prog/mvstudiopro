@@ -1,3 +1,4 @@
+import { manhuaPrevisAnimationSource } from "@shared/manhuaPrevisAnimationSource";
 import type {ArtMotionSpec} from "@shared/artMotion";
 import type { AdvisorEffectsRegistration } from "@shared/manhuaAdvisorEffects";
 import type { ManhuaAdvisorStudioContext } from "@shared/manhuaAdvisorStudioContext";
@@ -3033,7 +3034,11 @@ export default function ManhuaScriptWorkbench({
     if (!manhuaActionPlan) return [];
     const prefix = `ap_shot_e${focusEpisode}_s${activeSegNo}_`;
     const { shots } = splitManhuaActionPlanForPrevis(manhuaActionPlan);
-    const links = resolveManhuaPrevisCharacterLinks(manhuaActionPlan.actors, assetLockRegistry.byRole.character);
+    const links = resolveManhuaPrevisCharacterLinks(manhuaActionPlan.actors,
+      selectPrevisCharacterSlots(assetLockRegistry.byRole.character).map(asset => {
+        const anchor = assetCanon?.characters.find(character => character.id === (asset.seedLibraryId || asset.id));
+        return { ...asset, shape: /黑马|白马|骏马|马身|马体|四足|马匹|horse/i.test(anchor?.lookZh || "") ? "horse" as const : "human" as const };
+      }));
     const aspect = activeClip?.previsStudio?.spec.aspect === "9:16" ? ("9:16" as const) : ("16:9" as const);
     // PR-6：段意图（可拍表）+ 导演包主卡 + 是否有接触事件 → 节奏档；用户在白模区手改的风格档覆盖 tempo.style
     const intentZh = getManhuaSegmentIntentZh(shootablePlan, activeSegNo);
@@ -3045,7 +3050,7 @@ export default function ManhuaScriptWorkbench({
         const tempo = resolveManhuaCameraTempo({ intentZh, directionCardId: directionCanon?.mainCardId ?? null, hasContact });
         return manhuaPrevisDraftFromExecutableShot({ plan: manhuaActionPlan, shot, resolvedCamera: null, aspect, links, tempo, cameraStyle, actionRecipeId, dialogueZh: getManhuaSegmentDialogueZh(shootablePlan, activeSegNo) });
       });
-  }, [manhuaActionPlan, focusEpisode, activeSegNo, assetLockRegistry.byRole.character, activeClip?.previsStudio?.spec.aspect, activeClip?.previsStudio?.cameraStyle, actionRecipeId, shootablePlan, directionCanon?.mainCardId]);
+  }, [manhuaActionPlan, focusEpisode, activeSegNo, assetLockRegistry.byRole.character, assetCanon, activeClip?.previsStudio?.spec.aspect, activeClip?.previsStudio?.cameraStyle, actionRecipeId, shootablePlan, directionCanon?.mainCardId]);
   const modelStudioCharacters = useMemo(
     () =>
       assetLockRegistry.byRole.character.map((a) => {
@@ -5550,17 +5555,12 @@ clipPromptReviewOpen ? (
             onRemove={onRemoveSceneWorld}
             stageCharacters={worldStageCharacters}
             onRenderStageAnimation={onRenderStageAnimation}
-            previsAnimationSource={(() => {
-              const studio=activeClip?.previsStudio;
-              const take=studio?.history.find(row=>row.jobId===studio.selectedJobId);
-              return take?.animation && activeClip && JSON.stringify(take.spec)===JSON.stringify(studio?.spec)
-                ? {previsJobId:take.jobId,scopeId:studio!.scopeId,clipId:activeClip.id,duration:take.durationSec,aspect:take.spec.aspect} : undefined;
-            })()}
+            previsAnimationSource={manhuaPrevisAnimationSource(activeClip?.previsStudio, activeClip?.id)}
             previsStatusZh={previsStatusZh}
             stageAnimation={(() => {
               const studio=activeClip?.previsStudio;
               const take=studio?.history.find(row=>row.jobId===studio.selectedJobId);
-              return take?.animation && JSON.stringify(take.spec)===JSON.stringify(studio?.spec)
+              return take?.animation && manhuaPrevisAnimationSource(studio, activeClip?.id)
                 ? {jobId:take.jobId,requestId:take.requestId,...take.animation} : undefined;
             })()}
             onOpenPrevis={onUpdateClipPrevisStudio ? () => selectSecondaryTool("previs") : undefined}

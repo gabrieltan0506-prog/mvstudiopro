@@ -12,6 +12,28 @@ function receipt(trial: AdvisorPrevisTrial) {
   return { jobId: "previs-test-job", status: "succeeded", params: trial.request, output: { requestId: trial.request.requestId, clipId: "clip-1", gcsUri: "gs://test/preview.mp4", url: "/api/manhua-previs-media/test/preview", durationSec: 5 } };
 }
 describe("顾问独立试看与确认写回边界", () => {
+  it("动画导出经顾问确认后保留到存储恢复，缺失或串任务回执不覆盖旧稿", () => {
+    const { studio, candidate } = setup();
+    studio.spec.exportAnimation = true;
+    candidate.target = makeAdvisorPrevisTarget("clip-1", studio);
+    const before = JSON.stringify(studio);
+    const trial = prepareAdvisorPrevisTrial("clip-1", studio, candidate);
+    const jobId = `prv_${"a".repeat(48)}`;
+    const animation = { glbUrl: `/api/manhua-previs-media/${jobId}/animation`, framesUrl: `/api/manhua-previs-media/${jobId}/animation-frames`, sha256: "b".repeat(64), framesSha256: "c".repeat(64) };
+    const good = { ...receipt(trial), jobId, output: { ...receipt(trial).output, animation } };
+    expect(trial.request.spec.exportAnimation).toBe(true);
+    const restored = manhuaPrevisStudioSchema.parse(JSON.parse(JSON.stringify(adoptAdvisorPrevisTrial("clip-1", studio, trial, good))));
+    const take = restored.history.find(h => h.requestId === trial.request.requestId)!;
+    expect(take.animation).toEqual(animation);
+    expect(take.sourceScopeId).toBe(trial.request.scopeId);
+    expect(take.sourceScopeId).not.toBe(studio.scopeId);
+    expect(restored.selectedJobId).toBe(take.jobId);
+    expect(take.spec).toEqual(restored.spec);
+    for (const invalid of [undefined, { ...animation, framesSha256: "" }, { ...animation, glbUrl: animation.glbUrl.replace(jobId, `prv_${"d".repeat(48)}`) }]) {
+      expect(() => adoptAdvisorPrevisTrial("clip-1", studio, trial, { ...good, output: { ...good.output, animation: invalid } })).toThrow("动画回执");
+    }
+    expect(JSON.stringify(studio)).toBe(before);
+  });
   it("给模型的上下文排除素材身份，非法模型字段和地址不能进入候选", () => {
     const { studio, candidate } = setup();
     expect(advisorPrevisSpecJson(studio.spec)).not.toContain("character-existing");

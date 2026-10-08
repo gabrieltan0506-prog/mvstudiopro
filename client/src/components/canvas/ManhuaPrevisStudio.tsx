@@ -243,6 +243,7 @@ export function ManhuaPrevisStudioView({
     const current = latest.current;
     const adoptedTrial = current.studio.history.some(t =>
       t.jobId === response.jobId && t.requestId === response.params.requestId &&
+      (!t.sourceScopeId || t.sourceScopeId === response.params.scopeId) &&
       JSON.stringify(t.spec) === JSON.stringify(response.params.spec) &&
       JSON.stringify(t.audio) === JSON.stringify(response.params.audio) &&
       t.quality === response.params.quality
@@ -300,6 +301,7 @@ export function ManhuaPrevisStudioView({
       const old = current.studio.history.find(t => t.jobId === response.jobId);
       const take = {
         jobId: response.jobId,
+        sourceScopeId: response.params.scopeId,
         requestId: response.params.requestId,
         gcsUri: result.gcsUri,
         url: result.url,
@@ -515,6 +517,7 @@ export function ManhuaPrevisStudioView({
             continue;
           const take = {
             jobId: response.jobId,
+            sourceScopeId: response.params.scopeId,
             requestId: response.params.requestId,
             gcsUri: result.gcsUri,
             url: result.url,

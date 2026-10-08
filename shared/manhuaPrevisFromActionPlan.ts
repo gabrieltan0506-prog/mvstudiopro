@@ -29,14 +29,17 @@ export type ManhuaPrevisCharacterLink = {
 /** 计划人物与资产卡使用不同 ID，仅通过明确身份锚点桥接；歧义不猜。 */
 export function resolveManhuaPrevisCharacterLinks(
   actors: ManhuaActionPlan["actors"],
-  assets: Array<{ id: string; seedLibraryId?: string | null }>,
+  assets: Array<{ id: string; seedLibraryId?: string | null; shape?: "human" | "horse" }>,
 ): ManhuaPrevisCharacterLink[] {
   return actors.flatMap(actor => {
     const direct = assets.filter(asset => asset.id === actor.actorId);
     const matches = direct.length ? direct : assets.filter(asset => Boolean(actor.canonAnchorId) &&
       (asset.id === actor.canonAnchorId || asset.seedLibraryId === actor.canonAnchorId));
     const ids = Array.from(new Set(matches.map(asset => asset.id)));
-    return ids.length === 1 ? [{ actorId: actor.actorId, assetRef: ids[0] }] : [];
+    if (ids.length !== 1) return [];
+    const shapes = Array.from(new Set(matches.map(asset => asset.shape).filter(Boolean)));
+    if (shapes.length > 1) return [];
+    return [{ actorId: actor.actorId, assetRef: ids[0], ...(shapes[0] ? { shape: shapes[0] } : {}) }];
   });
 }
 

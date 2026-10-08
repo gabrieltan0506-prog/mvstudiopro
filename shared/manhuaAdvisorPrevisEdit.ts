@@ -1,5 +1,6 @@
 import { previsPiggybackSetDownSchema } from "./manhuaPrevisPiggyback";
 import { z } from "zod";
+import { previsAnimationReceipt } from "./manhuaPrevisAnimation";
 import { previsPlaybackDuration } from "./manhuaPrevisPlayback";
 import { manhuaPrevisSpecSchema, previsActorSchema, PREVIS_ACTION_KINDS, type ManhuaPrevisSpec, type ManhuaPrevisStudio, manhuaPrevisRequestSchema, type ManhuaPrevisRequest } from "./manhuaPrevis";
 
@@ -125,6 +126,7 @@ export function validateAdvisorPrevisReceipt(request: ManhuaPrevisRequest, raw: 
   const res = advisorPrevisReceiptSchema.parse(raw);
   if (JSON.stringify(res.params) !== JSON.stringify(manhuaPrevisRequestSchema.parse(request)) || res.output.requestId !== request.requestId || res.output.clipId !== request.clipId || Math.abs(res.output.durationSec - previsPlaybackDuration(request.spec)) > 0.05) throw new Error("试看回执与当前请求不一致，不能应用");
   if (JSON.stringify(res.output.audio) !== JSON.stringify(request.audio) || res.output.quality !== request.quality) throw new Error("试看音轨或画质回执不一致，不能应用");
+  if (request.spec.exportAnimation && !previsAnimationReceipt(res.output.animation, res.jobId)) throw new Error("试看缺少本任务的完整动画回执，不能应用；原配置保留");
   return res;
 }
 /** 独立 scope 保证未确认试看不会混入原片段恢复历史。只读现有工作流。 */
@@ -137,11 +139,14 @@ export function adoptAdvisorPrevisTrial(clipId: string, studio: ManhuaPrevisStud
   const next = applyAdvisorPrevisCandidate(clipId, studio, trial.candidate);
   if (JSON.stringify(next.spec) !== JSON.stringify(trial.request.spec)) throw new Error("试看使用的配置不一致，不能应用");
   const confirmedAt = new Date().toISOString();
+  const animation = previsAnimationReceipt(receipt.output.animation, receipt.jobId);
   const specHistory = [...(next.specHistory || [])];
   specHistory[specHistory.length - 1] = { spec: studio.spec, createdAt: confirmedAt, reasonZh: `用户确认应用顾问试看 ${trial.request.requestId}；${trial.candidate.patch.summaryZh}` };
-  return { ...next, specHistory, history: [...next.history.filter(h => h.requestId !== receipt.params.requestId), {
+  return { ...next, specHistory, selectedJobId: receipt.jobId, history: [...next.history.filter(h => h.requestId !== receipt.params.requestId), {
     jobId: receipt.jobId, requestId: receipt.params.requestId, gcsUri: receipt.output.gcsUri, url: receipt.output.url,
+    sourceScopeId: receipt.params.scopeId,
     durationSec: receipt.output.durationSec, createdAt: new Date().toISOString(), spec: receipt.params.spec,
+    ...(animation ? { animation } : {}),
     ...(receipt.params.audio ? { audio: receipt.params.audio } : {}), ...(receipt.params.quality ? { quality: receipt.params.quality } : {}),
   }] };
 }

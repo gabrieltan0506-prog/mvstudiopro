@@ -527,7 +527,7 @@ export function validatePrevisReport(
       throw new Error("白模双人交互接触检查未通过");
   }
   validateWaterReport(report.waterEmergence, spec);
-  validateRouteReport(report.motionRoutes, spec);
+  validateRouteReport(report.motionRoutes, spec, report.models);
   validateCameraTimingReport(report.cameraTiming, spec);
   validateEffectsReport(report.effects, spec);
   validatePrevisSceneEffectsReport(report.sceneEffects, spec);
