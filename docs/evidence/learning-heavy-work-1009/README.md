@@ -43,3 +43,11 @@
 - 新增定向验证：首跑67项中66通过，1项原精确契约断言补上新增route；该项及新增route冻结/非法路由拒绝2项定向复验通过。固定路由/严格schema透传2项通过，6文件资源/工作机/心跳回归25项通过。新增上传来源3项覆盖私有身份、不泄漏路径、只物化一次、跨用户拒绝、错SHA地址拒绝和仅JSON不依赖原片。全类型最后版本检查日志learning-full-worker-last-build.log；Vite构建24.87秒通过（既有大chunk警告）。
 - 未验：真实Neon两部SSI、正式双网页与复制刷新、迁移后完整付费学习、网站停机期间持续模型处理、完整截帧/报告内容质量仍尚未线上验收。只读工作机探针将检查正式函数与现有真实帧，不替代以上验收。代理不合并、不部署，不生成媒体/模型；用户本人合并前须无在途任务。
 - 开发 Agent 模型：GPT6 Astra（用户确认本轮为Astra；保留前轮参与记录）。
+
+
+## 1009 工作机正式源码只读探针回执
+- 时间：2026-10-09T02:23:50.827+08:00；工作机7812595b294778，实际performance4vCPU8192MB，started/hostok。生产修改c0e033b1、脚本兼容修正9d177112，隔离目录/tmp/learning-heavy-work-c0e033b1，不修改/app、不部署、不重启。执行前同库在途任务为空，原学习B39Nhgt_cH4LjpJs已succeeded。
+- 第1轮：守卫准确阻止无nativeSeriesKey的最终结果；从同一任务实时确认final seriesKey后补coalesce，未读其他项目、未生成媒体。
+- 第2轮：正式脚本退出0，workerOwnsLearning/noWebsiteDispatch/selectedRoutesStayFixed/retiredEntryBlocked/nativeEntryAccepted全true。真实第35集3张帧verifiedFrames=[true,true,true]；corruptedDigestRejected/cancelRejected/emptyReportRejected全true。原始JSON见worker-readonly-probe.json。
+- 0模型调用、0媒体提交、0数据库写操作。运行库有既有punycode弃用警告，不影响本次结果。
+- 边界：角色检查证明本进程选择正式本机执行路径，不证明全父任务实际领取/完成；固定路由检查不调用供应商。探针未重新截帧、未打包完整HTML、未实跑付费Gemini/GLM、未证明真实双部并发或网站停机后继续处理。以上均尚未线上验收。参考用户成功HTML：538镜/59重点时刻/89精选画面，保留本次成功产物，无重学。
