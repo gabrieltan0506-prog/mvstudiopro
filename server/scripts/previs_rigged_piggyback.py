@@ -7,7 +7,7 @@ def _source(model):
     return {'actorId':model['actorId'],'sourceJobId':row['sourceJobId'],'sha256':row['sha256']}
 
 
-def _zone(model, names):
+def _zone(model, names, context='背负'):
     import bpy
     graph=bpy.context.evaluated_depsgraph_get()
     points=[]
@@ -16,11 +16,11 @@ def _zone(model, names):
         ids={v.index for v in obj.data.vertices if sum(g.weight for g in v.groups if g.group in groups)>=.35}
         evaluated=obj.evaluated_get(graph);mesh=evaluated.to_mesh()
         try:
-            if mesh is None or len(mesh.vertices)!=len(obj.data.vertices):raise ValueError('背负实际蒙皮拓扑变化')
-            points.extend(evaluated.matrix_world @ mesh.vertices[i].co for i in ids)
+            if mesh is None or len(mesh.vertices)!=len(obj.data.vertices):raise ValueError(f'{context}实际蒙皮拓扑变化')
+            points.extend(evaluated.matrix_world @ mesh.vertices[i].co for i in sorted(ids))
         finally:evaluated.to_mesh_clear()
     if len(points)<3 or any(not all(math.isfinite(x) for x in p) for p in points):
-        raise ValueError('背负缺少实际手、膝、肩或脚部蒙皮权重')
+        raise ValueError(f'{context}缺少实际接触区域蒙皮权重')
     return points
 
 

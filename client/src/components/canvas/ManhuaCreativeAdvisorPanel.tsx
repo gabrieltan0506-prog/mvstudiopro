@@ -23,8 +23,7 @@ import { requestsAdvisorPrevisRender } from "@/lib/manhuaAdvisorPrevisIntent";
 import { createPortal } from "react-dom";
 import { streamManhuaAdvisor } from "@/lib/manhuaAdvisorStream";
 import { advisorPrevisTrialSchema } from "@shared/manhuaAdvisorPrevisEdit";
-import { manhuaPrevisSpecSchema } from "@shared/manhuaPrevis";
-import { advisorPrevisCandidateSchema, parseAdvisorPrevisPatch, type AdvisorPrevisCandidate, type AdvisorPrevisTarget, type AdvisorPrevisTrial, type AdvisorPrevisReceipt, applyAdvisorPrevisPatch, advisorPrevisSpecJson } from "@shared/manhuaAdvisorPrevisEdit";
+import { advisorPrevisCandidateSchema, parseAdvisorPrevisPatch, type AdvisorPrevisCandidate, type AdvisorPrevisTarget, type AdvisorPrevisTrial, type AdvisorPrevisReceipt, prepareAdvisorPrevisComparison } from "@shared/manhuaAdvisorPrevisEdit";
 import { ManhuaAdvisorPrevisComparison, type AdvisorPrevisVoiceControl } from "./ManhuaAdvisorPrevisComparison";
 import { ManhuaRewriteComparison } from "./ManhuaRewriteComparison";
 /** 项目顾问：读取证据、提出模板改写建议；正式稿仅经显式对比采用。 */
@@ -510,7 +509,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     if (props.previsIssue && !rewriting && !mediaRequest && !filmReview && !worldOverride && !operationRequest) { toast.error(props.previsIssue); return; }
     let previsEdit = props.previsTarget && !rewriting && !mediaRequest && !filmReview && !worldOverride && !operationRequest ? withAdvisorPrevisVideo(props.previsTarget, previewVideoSource) : undefined;
     if (previsEdit && !previsEdit.previousPreviewRequestId && previsCandidate?.target.clipId === previsEdit.clipId && previsCandidate.target.specJson === previsEdit.specJson) {
-      try { previsEdit = { ...previsEdit, previousPreviewSpecJson: advisorPrevisSpecJson(applyAdvisorPrevisPatch(manhuaPrevisSpecSchema.parse(JSON.parse(previsEdit.specJson)), previsCandidate.patch)) }; } catch { /* 未支持要求不继承为已执行配置。 */ }
+      try { previsEdit = { ...previsEdit, previousPreviewSpecJson: prepareAdvisorPrevisComparison(previsCandidate).afterContextJson }; } catch { /* 未支持要求不继承为已执行配置。 */ }
     }
     let questionContext = project?.context;
     if (episode && questionContext) questionContext = {...questionContext,episodeIndex:episode.index,episodeTitle:episode.title,episodeBody:episode.body,episodeEndHook:episode.endHook||"",activeStudio:questionContext.activeStudio?.episodeIndex===episode.index?questionContext.activeStudio:undefined};

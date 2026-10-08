@@ -1082,7 +1082,7 @@ export function formatPrevisMotionGuide(spec: ManhuaPrevisSpec): string {
   if (spec.timeMap) return "白模已按统一时间表变速；以下秒位均为成片呈现时间，直接跟随参考，不重复变速。\n" + formatPrevisMotionGuide(previsPresentationGuideSpec(spec));
   return [
     "参考中的关节姿态、落脚、蓄力—出手—回收及保护反应按对应秒位读取；不继承白模外形。",
-    ...(spec.handContacts??[]).map(c=>`${spec.actors.find(a=>a.id===c.actorId)?.nameZh??c.actorId}用${c.hand==="hand1"?"左":"右"}手在${c.startSec}—${c.contactSec}秒靠近${spec.actors.find(a=>a.id===c.targetActorId)?.nameZh??c.targetActorId}的${c.bone==="head"?"头侧":"颈侧"}，${c.contactSec}—${c.releaseSec}秒保持同一骨锚点，${c.releaseSec}—${c.endSec}秒收手；手指、皮肤形变与额头贴靠未由该约束实现。`),
+    ...(spec.handContacts??[]).map(c=>`${spec.actors.find(a=>a.id===c.actorId)?.nameZh??c.actorId}用${c.hand==="hand1"?"左":"右"}手在${c.startSec}—${c.contactSec}秒靠近${spec.actors.find(a=>a.id===c.targetActorId)?.nameZh??c.targetActorId}的${c.bone==="head"?"头侧":c.bone==="neck"?"颈侧":c.bone==="upper_arm1"?"左上臂表面":"右上臂表面"}，${c.contactSec}—${c.releaseSec}秒保持${c.bone.startsWith("upper_arm")?"实际蒙皮表面接触":"同一骨锚点"}，${c.releaseSec}—${c.endSec}秒收手；手指、皮肤形变与额头贴靠未由该约束实现。`),
     ...formatPrevisSceneEffectsGuide(spec.sceneEffects, spec.actors),
     ...spec.cameras.filter(c => c.orbitDeg).map(c => `${c.startSec}—${c.endSec}秒围绕（${c.target.join("，")}）水平环绕${c.orbitDeg}度，${c.orbitRise ? `保持半径，同时${c.orbitRise > 0 ? "升高" : "降低"}${Math.abs(c.orbitRise)}米` : "保持半径和高度"}；${c.motionWindow ? `只在${c.motionWindow.startSec}—${c.motionWindow.endSec}秒环绕，其前后停住；` : ""}人物速度不由环绕改变。`),
     ...spec.cameras.filter(c => c.endLens !== undefined && c.endLens !== c.lens).map(c => `${c.startSec}—${c.endSec}秒焦距从${c.lens}毫米连续${c.endLens! > c.lens ? "推到" : "拉到"}${c.endLens}毫米，${c.lensWindow ? `在${c.lensWindow.startSec}—${c.lensWindow.endSec}秒变焦，其前后停住` : "按整镜平滑起停"}。`),

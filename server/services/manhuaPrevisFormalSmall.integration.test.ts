@@ -1,4 +1,4 @@
-/** 需确认后显式运行：正式来源、准备、渲染、报告、GLB 导出及编码的两秒小样。
+/** 需分别确认后显式运行：正式来源、准备、渲染、报告、GLB 导出及编码的坐姿/扶坐小样。
  * 只隔离任务记录及对象存储 I/O；不替换生产算法、校验器或子进程命令。
  */
 import { afterEach, expect, it, vi } from "vitest";
@@ -14,13 +14,16 @@ import { renderManhuaPrevis, runPrevisProcess } from "./manhuaPrevisRender";
 import { validatePrevisAnimation } from "./manhuaPrevisAnimation";
 
 const enabled = process.env.PREVIS_FORMAL_SMALL_MEDIA_CONFIRMED === "1";
+const assisted = process.env.PREVIS_ASSISTED_SIT_MEDIA_CONFIRMED === "1";
 const sha = (value: Buffer) => createHash("sha256").update(value).digest("hex");
 afterEach(() => {
   resetManhua3dTaskDependenciesForTests();
   vi.unstubAllEnvs();
 });
 
-it.skipIf(!enabled)("正式生产路径：两身高坐姿48帧、报告、带骨动画及可解码视频一致", async () => {
+it.skipIf(!enabled&&!assisted)(assisted?"正式生产路径：双手扶坐96帧及最终蒙皮报告、动画、视频一致":"正式生产路径：两身高坐姿48帧、报告、带骨动画及可解码视频一致", async () => {
+  if(enabled&&assisted)throw Error("每次只确认一种小样内容，禁止合并两次媒体提交");
+  const durationSec=assisted?4:2,frameCount=durationSec*24;
   const base = process.env.PREVIS_TEST_OUTPUT || path.join(tmpdir(), "previs-formal-small");
   await mkdir(base, { recursive: true });
   const root = await mkdtemp(path.join(base, "run-"));
@@ -56,16 +59,18 @@ it.skipIf(!enabled)("正式生产路径：两身高坐姿48帧、报告、带骨
       byteLength: bytes.length, sha256: sha(bytes), header: bytes.subarray(0, 20) };
   };
   const input = manhuaPrevisRequestSchema.parse({
-    requestId: "33333333-3333-4333-8333-333333331008",
-    scopeId: "11111111-1111-4111-8111-111111111008", clipId: "TEST_ONLY-formal-sit",
-    spec: { version: 1, durationSec: 2, aspect: "16:9", exportAnimation: true,
-      actors: [1.7, 2.55].map((height, i) => ({ id: i ? "高个" : "矮个", nameZh: i ? "高个" : "矮个",
+    requestId: assisted?"33333333-3333-4333-8333-333333331009":"33333333-3333-4333-8333-333333331008",
+    scopeId: "11111111-1111-4111-8111-111111111008", clipId: assisted?"TEST_ONLY-assisted-sit":"TEST_ONLY-formal-sit",
+    spec: { version: 1, durationSec, aspect: "16:9", exportAnimation: true,
+      actors: (assisted?[1.7,1.6]:[1.7, 2.55]).map((height, i) => ({ id: assisted?(i?"被扶者":"扶助者"):(i ? "高个" : "矮个"), nameZh: assisted?(i?"被扶者":"扶助者"):(i ? "高个" : "矮个"),
         shape: "human", assetRef: `TEST_ONLY-char-${i ? "b" : "a"}`,
-        start: [i ? 1.1 : -1.1, 0], end: [i ? 1.1 : -1.1, 0],
-        moveStartSec: 0, moveEndSec: 2, facingDeg: 0,
-        actions: [{ kind: "sit", startSec: 0, endSec: 2 }],
+        start: [assisted?(i?0:-.55):(i ? 1.1 : -1.1), 0], end: [assisted?(i?0:-.55):(i ? 1.1 : -1.1), 0],
+        moveStartSec: 0, moveEndSec: durationSec, facingDeg: 0,
+        actions: assisted?[]:[{ kind: "sit", startSec: 0, endSec: 2 }],
+        ...(assisted&&i?{humanPosture:{mode:"rise_to_sit",startSec:.5,endSec:2.5,supportHeight:.45,reclineDeg:45}}:{}),
         riggedModel: { sourceJobId: `m3d_TEST_ONLY_formal_${i ? "b" : "a"}`, forwardAxis: "+X", targetHeight: height } })),
-      cameras: [{ startSec: 0, endSec: 2, position: [4, -11, 3.2], target: [0, 0, 1.3], lens: 35 }] },
+      ...(assisted?{handContacts:["-1","1"].map(side=>({id:`扶坐${side}`,actorId:"扶助者",targetActorId:"被扶者",hand:`hand${side}`,bone:`upper_arm${side}`,along:.5,offset:[0,0,0],startSec:0,contactSec:.5,releaseSec:3.5,endSec:4}))}:{}),
+      cameras: [{ startSec: 0, endSec: durationSec, position: assisted?[3,-7,2.5]:[4, -11, 3.2], target: assisted?[0,0,.9]:[0, 0, 1.3], lens: 35 }] },
   });
   await writeFile(path.join(root, "input.json"), JSON.stringify(input, null, 2));
   // 同一正式来源函数拒绝错用户；不通过自造成功回执跳过身份校验。
@@ -87,7 +92,7 @@ it.skipIf(!enabled)("正式生产路径：两身高坐姿48帧、报告、带骨
       return { bucket: "test-only", objectName, gcsUri: `gs://test-only/${objectName}` };
     },
   });
-  expect(result.report.frames).toBe(48);
+  expect(result.report.frames).toBe(frameCount);
   expect(result.report.actors).toHaveLength(2);
   expect(result.bytes).toBeGreaterThan(1000);
   expect(result.animation).toBeDefined();
@@ -100,20 +105,29 @@ it.skipIf(!enabled)("正式生产路径：两身高坐姿48帧、报告、带骨
   const probe = JSON.parse(probeBytes.toString());
   const videoStreams = probe.streams.filter((stream: { codec_type: string }) => stream.codec_type === "video");
   expect(videoStreams).toHaveLength(1);
-  expect(Number(videoStreams[0].nb_read_frames)).toBe(48);
-  expect(Number(probe.format.duration)).toBeCloseTo(2, 1);
+  expect(Number(videoStreams[0].nb_read_frames)).toBe(frameCount);
+  expect(Number(probe.format.duration)).toBeCloseTo(durationSec, 1);
   expect(probe.streams.some((stream: { codec_type: string }) => stream.codec_type === "audio")).toBe(false);
   const glb = await artifact(result.animation!.glbGcsUri);
   const frames = await artifact(result.animation!.framesGcsUri);
   expect(sha(glb)).toBe(result.animation!.sha256);
   expect(sha(frames)).toBe(result.animation!.framesSha256);
-  expect(validatePrevisAnimation(JSON.parse(frames.toString()), glb, input.spec).frames).toHaveLength(48);
+  expect(validatePrevisAnimation(JSON.parse(frames.toString()), glb, input.spec).frames).toHaveLength(frameCount);
+  if(assisted){
+    expect(result.report.handContacts).toHaveLength(2);
+    for(const row of result.report.handContacts!){
+      expect(row.samples).toHaveLength(frameCount);
+      expect(row.source.kind).toBe("riggedModel");expect(row.targetSource.kind).toBe("riggedModel");
+      expect(row.samples.every(sample=>sample.surface&&sample.surface.residual<=.005)).toBe(true);
+    }
+  }
   const scripts = commands.flatMap(({ args }) => args.filter(arg => arg.endsWith(".py")));
   expect(scripts).toContain(path.resolve("server/scripts/render-manhua-previs.py"));
   expect(scripts).toContain(path.resolve("server/scripts/export_previs_animation.py"));
   expect(scripts.every(script => script.startsWith(path.resolve("server/scripts") + path.sep))).toBe(true);
   await writeFile(path.join(root, "result.json"), JSON.stringify(result, null, 2));
-  console.log("FORMAL_SMALL_PASS", JSON.stringify({ root, frames: 48, bytes: result.bytes,
-    animationSha: result.animation!.sha256, productionRendererUnmodified: true,
+  console.log("FORMAL_SMALL_PASS", JSON.stringify({ root, frames: frameCount, bytes: result.bytes,
+    animationSha: result.animation!.sha256, productionRendererDirect: true,
+    productionRendererSha256:sha(await readFile(path.resolve("server/scripts/render-manhua-previs.py"))),
     productionUiValidated: false, projectCharactersValidated: false }));
 }, 660_000);

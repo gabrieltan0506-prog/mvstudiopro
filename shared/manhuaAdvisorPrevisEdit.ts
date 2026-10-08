@@ -6,6 +6,18 @@ import { previsPlaybackDuration } from "./manhuaPrevisPlayback";
 import { PREVIS_MAX_ACTORS, manhuaPrevisSpecSchema, previsActorSchema, PREVIS_ACTION_KINDS, type ManhuaPrevisSpec, type ManhuaPrevisStudio, manhuaPrevisRequestSchema, type ManhuaPrevisRequest } from "./manhuaPrevis";
 
 const safeText = (max: number) => z.string().trim().min(1).max(max).refine(v => !/(?:https?|gs|data|blob):|\bbearer\s|\bsk-[a-z0-9_-]{12,}/i.test(v), "调度上下文不得包含媒体地址或凭证");
+/** 上下文只传是否绑定模型；临时标记仅供合同校验，绝不作为生成请求或来源回执。 */
+function parseAdvisorContextSpec(raw:string):ManhuaPrevisSpec {
+  const value=JSON.parse(raw);
+  if(value.scriptSource||!Array.isArray(value.actors))throw Error("顾问上下文不接受素材身份");
+  const actors=value.actors.map((actor:Record<string,unknown>)=>{
+    const {hasRiggedModel,...rest}=actor;
+    if(actor.assetRef!==undefined||actor.riggedModel!==undefined||(hasRiggedModel!==undefined&&hasRiggedModel!==true))throw Error("顾问上下文不接受模型身份");
+    return hasRiggedModel ? {...rest,assetRef:"CONTEXT_VALIDATION_ONLY",riggedModel:{sourceJobId:"m3d_CONTEXT_VALIDATION_ONLY",forwardAxis:"+X",targetHeight:1.7,...(actor.shape==="horse"?{rigKind:"quadruped"}:{})}} : rest;
+  });
+  const validated=manhuaPrevisSpecSchema.parse({...value,actors});
+  return validated;
+}
 export const advisorPrevisTargetSchema = z.object({
   directionCardId: safeText(100).optional(), directionCardVersion: safeText(100).optional(),
   clipId: safeText(160), scopeId: z.string().uuid(), specJson: safeText(30000),
@@ -18,8 +30,7 @@ export const advisorPrevisTargetSchema = z.object({
       ctx.addIssue({ code: "custom", message: "分镜来源与当前片段或时长不一致，请重新打开顾问" });
     }
     for (const raw of [v.specJson, v.previousPreviewSpecJson].filter(Boolean)) {
-      const spec = manhuaPrevisSpecSchema.parse(JSON.parse(raw!));
-      if (spec.scriptSource || spec.actors.some(a => a.assetRef || a.riggedModel)) throw new Error("白模上下文不接受素材或模型身份");
+      parseAdvisorContextSpec(raw!);
     }
   }
   catch { ctx.addIssue({ code: "custom", message: "当前白模规格未通过检查，请先修正配置" }); }
@@ -29,7 +40,7 @@ export type AdvisorPrevisTarget = z.infer<typeof advisorPrevisTargetSchema>;
 /** 白名单投影：保留动作条件，排除模型任务、素材身份与媒体位置。 */
 export function advisorPrevisSpecJson(spec: ManhuaPrevisStudio["spec"]): string {
   const { scriptSource: _source, ...rest } = spec;
-  return JSON.stringify({ ...rest, actors: spec.actors.map(({ assetRef: _asset, riggedModel: _rig, ...actor }) => actor) });
+  return JSON.stringify({ ...rest, actors: spec.actors.map(({ assetRef: _asset, riggedModel: rig, ...actor }) => ({...actor,...(rig?{hasRiggedModel:true}:{})})) });
 }
 export function makeAdvisorPrevisTarget(clipId: string, studio: ManhuaPrevisStudio, previewRequestId?: string): AdvisorPrevisTarget {
   const specJson = advisorPrevisSpecJson(studio.spec);
@@ -90,7 +101,7 @@ export function validateAdvisorPrevisShotCoverage(target: AdvisorPrevisTarget, p
   const rows = patch.shotCoverage;
   if (!rows || rows.length !== target.shotSource.shots.length || new Set(rows.map(row => row.index)).size !== rows.length ||
     rows.some(row => !target.shotSource!.shots.some(shot => shot.index === row.index))) throw new Error("顾问未逐镜覆盖本段原文，请补齐每镜计划或明确未支持项");
-  const spec = manhuaPrevisSpecSchema.parse(JSON.parse(target.specJson));
+  const spec = parseAdvisorContextSpec(target.specJson);
   if (rows.some(row => new Set(row.actorIds).size !== row.actorIds.length || row.actorIds.some(id => !spec.actors.some(actor => actor.id === id)))) throw new Error("逐镜计划引用了重复或不存在的人物，未应用");
   const unsupported = rows.filter(row => row.status === "unsupported");
   if (!allowUnsupported && unsupported.length) throw new Error(`仍有未支持的分镜：${unsupported.map(row => `镜${row.index}：${row.reasonZh}`).join("；")}。原配置保留`);
@@ -127,6 +138,16 @@ export function applyAdvisorPrevisPatch(spec: ManhuaPrevisSpec, patch: AdvisorPr
   });
   if (JSON.stringify(next) === JSON.stringify(manhuaPrevisSpecSchema.parse(spec))) throw new Error("顾问没有给出实际配置变化");
   return next;
+}
+
+/** 只读比较卡与追问上下文；临时校验标记不会返回到生成入口或工作流。 */
+export function prepareAdvisorPrevisComparison(candidate:AdvisorPrevisCandidate):{before:ManhuaPrevisSpec;after:ManhuaPrevisSpec;afterContextJson:string} {
+  const value=advisorPrevisCandidateSchema.parse(candidate);
+  validateAdvisorPrevisShotCoverage(value.target,value.patch);
+  const before=parseAdvisorContextSpec(value.target.specJson);
+  const after=applyAdvisorPrevisPatch(before,value.patch);
+  const strip=(spec:ManhuaPrevisSpec):ManhuaPrevisSpec=>({...spec,actors:spec.actors.map(({assetRef:_asset,riggedModel:_rig,...actor})=>actor)});
+  return {before:strip(before),after:strip(after),afterContextJson:advisorPrevisSpecJson(after)};
 }
 
 /** 应用仍须走宿主持久化；历史、已采用参考和任务均保留。 */
@@ -190,7 +211,8 @@ export const ADVISOR_PREVIS_EDIT_INSTRUCTIONS = `\n【白模调度候选模式�
 持续搀扶可用interactions完整替换数组：{id,kind:"support_walk",actorId:扶助者ID,targetActorId:被扶者ID,startSec:开始抬手秒,contactSec:扶稳秒,endSec:本段时长}。至少1秒扶稳，持续至片尾。双方须未持械的基础人体，不能同时背负/出水，不支持带衣模型接触。被扶者靠近侧手搭扶助者肩，扶助者手托对方前臂；双方只可叠加walk或idle。路线先接近并站稳，扶稳后同步同向走，维持横向间距约0.65米与前后偏差小于0.1米，不转弯；先结束坐下/咳嗽再扶稳。双方动作walk秒窗和位移秒窗对齐，不能把尚坐着的角色直接平移。interactions必须保留其他已有事件；不可达会拒绝渲染。
 动作类型：${PREVIS_ACTION_KINDS.join("、")}。动作不能重叠；look需要lookAtId（本段角色ID或camera），turn需要facingDeg，其他动作不填这些字段。有motionRoute的角色禁止在actions中输出turn；所有转身只能写入motionRoute节点的facingDeg，不可重复表达。移动路线2–12点、按秒严格递增，从0到时长-1/24；坐标范围±12米、朝向±180度；路线首节点为0秒，末节点必须为(durationSec*24-1)/24秒（允许四位小数，程序只归一舍入误差）。路线起末点同步start/end，省略这些冗余字段时由路线补齐。路线节点间至少0.25秒，平滑移动峰值1.5×距离/间隔不得超过1.2米/秒，平滑转向峰值1.5×角度/间隔不得超过120度/秒。需要停立时必须给出相同位置的两个时间节点，idle动作不会停止motionRoute位移。背负承载者在放下前只走位/静立，乘员不独立行动。完整放下用answer对象的setDown:{startSec,groundSec,releaseSec,endSec}：依次为降低开始、落地坐稳、松手、起身结束，各阶段至少0.75/0.25/0.25秒，按24帧对齐，endSec不晚于时长-1/24。期间承载者须停止位移与转身，动作表不要叠加walk；之后可独立走位，乘员自动留在放下地点坐稳。双方路线仍必须相同，乘员落地后的固定由渲染器执行。四足limp_front_left覆盖整段；四足受击另用该actor的hitReaction:{sourceActorId,startSec,contactSec,endSec}，绑定本段出掌者和其strike窗口中的接触时刻。受击不会取消跛行或套用人体动作。
 人马扶颈用handContacts完整替换数组，每项{id,actorId,hand:"hand-1"或"hand1",targetActorId,bone:"head"或"neck",along,offset,startSec,contactSec,releaseSec,endSec}。绑定真实马骨并保持手腕接触；伸/收手各至少0.25秒，接触保持至少0.25秒，按24帧对齐。开镜已接触可startSec=contactSec=0，持续到片尾可releaseSec=endSec=片长。不能叠加同手端碗、背负双方、其他双人接触或独立手臂动作，双方全窗在场；额头贴靠、摸皮肤表面与马毛变形尚未支持，不能宣称已实现。
-人体半躺/坐稳用actor.humanPosture:{mode:"hold",posture:"sit"或"recline",supportHeight:0.25至0.65米,reclineDeg:25至70度}；坐起并保持用{mode:"rise_to_sit",startSec,endSec,supportHeight,reclineDeg}，转换至少0.5秒且末帧前结束。演员原地整段在场、只idle，不支持位移/其他接触叠加；真实带骨模型逐帧核对骨盆蒙皮支撑和双脚网格，失败时保留旧片，不降级人偶。衣物、支撑面实际场景与常速仍须审片；没有扶助者手部约束时不能宣称已扶起。
+双人扶坐也用handContacts完整替换数组，双方须绑定真实模型，目标已有humanPosture坐起或坐稳。须恰好两项：同一扶助者与目标、分别hand-1/hand1和upper_arm-1/upper_arm1，四个秒位完全相同，offset长度不超过0.2米；contactSec不晚于目标坐起startSec，releaseSec不早于目标坐起endSec。渲染器按实际蒙皮顶点求解并在最终动画逐帧复测，不用手腕到骨点距离冒充体表接触。双方不得同时背负、参与其他双人接触或被扶者持握道具；扶助者双手不能叠加其他手臂动作或道具。超出本人骨长可达范围或缺少蒙皮权重会失败；尚不代表承重、衣物互穿或手指抓握已验收。
+人体半躺/坐稳用actor.humanPosture:{mode:"hold",posture:"sit"或"recline",supportHeight:0.25至0.65米,reclineDeg:25至70度}；坐起并保持用{mode:"rise_to_sit",startSec,endSec,supportHeight,reclineDeg}，转换至少0.5秒且末帧前结束。演员原地整段在场、只idle，不支持位移，除上述双手扶坐外不能叠加其他接触；真实带骨模型逐帧核对骨盆蒙皮支撑和双脚网格，失败时保留旧片，不降级人偶。衣物、支撑面实际场景与常速仍须审片；没有扶助者手部约束时不能宣称已扶起。
 四足倒地使用actor.quadrupedFall:{mode:"collapse",side:"left"或"right",startSec,foldSec,groundSec}；屈腿至少0.25秒、侧落至少0.5秒，秒位对齐24帧，groundSec不晚于最后一帧。后续保持倒地用{mode:"hold",side}，不可位移或自动站起。collapse可原地或行进中倒地：行进时沿已有start/end，必须moveStartSec<startSec<moveEndSec<=groundSec，移动秒位也须对齐24帧；屈腿开始后平滑减速至零，减速前峰速不超过1.2米/秒，不得触地后继续滑行。整段在场的horse可用，actions只允许idle，不叠加motionRoute、hitReaction或creature。
 剧情道具使用storyProps完整替换数组（清空用[]），最多32项，每项{id,kind:"needle"或"blood_drop"或"bowl"或"jar"或"knife"或"sleeve_glow",keyframes:[{timeSec,anchor,visible,scale,rotation,fill}]}。每项至少两帧，首帧0、末帧durationSec，按24帧严格递增。anchor为{type:"bone",actorId,bone,along,offset}或{type:"prop",propId,offset}或{type:"world",position:[x,y,z]}；world位置各轴±10米，prop只能引用前面已声明道具。人骨名spine/neck/head/hand-1/hand1/lower_leg-1/lower_leg1，马骨名body/head/neck/lower_leg0/lower_leg1/lower_leg2/lower_leg3；offset是骨局部米坐标。飞针从手锚过渡到指定落针骨锚后固定；血滴到碗锚；显隐由visible明确表达。道具没有grip时只按锚点轨迹运动；端碗/端坛/持刀须用grip执行手臂约束，不能把碗飞到嘴边称为端碗动作。bowl/jar/knife可用grip:{actorId,hand:"hand-1"或"hand1",offset:[0,0,-0.02]}绑定握点，可另加成对startSec/endSec限定持握窗口（24帧对齐），窗外释放，省略表示全段持握。站位和道具轨迹必须在手臂可达范围；超范围会失败，同手握持窗口不能重叠。bowl/jar每帧fill为0到1，.5表示半碗/半坛，倒血须同时给血滴轨迹与两容器fill变化，不会自动模拟流体守恒。袖光仅是光点，不代表已模拟袖布滑动。
 相机1–8个，连续覆盖0到本段时长；startSec/endSec，position/target是[x,y,z]米，x/y±30、z0.2–15；lens/endLens是18–65mm整数（焦距增大视角收紧）；可填endPosition/endTarget，或orbitDeg±180与orbitRise±8（须与非零环绕同用），两种运动写法二选一：直线模式只填endPosition/endTarget，不填orbitDeg/orbitRise；环绕模式只填orbitDeg/orbitRise，删除endPosition/endTarget。零值也不能作为兼容占位。时序对齐24fps，贴合当前人物真实位置、朝向及动作目标。不能每镜机械套FOV/下降/旋转，需有剧情触发并保持轴线。

@@ -632,7 +632,7 @@ for actor,source_rig,_contacts,_stance,_error in rigs:
 from previs_rigged_piggyback import apply_rigged_piggyback, apply_rigged_piggyback_block, measure_rigged_piggyback
 rigged_piggyback=apply_rigged_piggyback(piggyback,models,scene)
 
-from previs_hand_contacts import apply_hand_contacts
+from previs_hand_contacts import apply_hand_contacts, measure_hand_contacts
 hand_contact_rows=apply_hand_contacts(spec,rigs,scene,actor_visible,models)
 from previs_story_props import build_story_props
 story_prop_handles=build_story_props(spec,rigs,scene,actor_visible,models)
@@ -933,7 +933,7 @@ if scene_effect_handles:
 if story_prop_handles:
     report['storyProps']=[{'id':h['spec']['id'],'kind':h['spec']['kind'],'samples':h['samples']} for h in story_prop_handles]
 if hand_contact_rows:
-    report['handContacts']=hand_contact_rows
+    report['handContacts']=measure_hand_contacts(hand_contact_rows,models,scene)
 if any(actor.get('humanPosture') and not actor.get('riggedModel') for actor in spec['actors']):
     from previs_human_posture_report import measure_human_posture
     report['humanPostures']=[measure_human_posture(actor,rig,scene,bpy.context.view_layer.update) for actor,rig,*_ in rigs if actor.get('humanPosture') and not actor.get('riggedModel')]

@@ -127,3 +127,9 @@ Blender5.2.1真实内存数据13项PASS，无渲染/导出媒体；验证真实�
 新增仅小样测试与原夹具导出分支，不改生产算法。正向：测试Source归属校验→preparePrevisModels真实hash/GLB校验→renderManhuaPrevis正式Python→实际报告与48帧→export_previs_animation→ffmpeg/ffprobe→I/O隔离存储→MP4/GLB/hash断言。反向：取回实际MP4/GLB/帧数据/报告/解码回执，与同一requestId33333333-3333-4333-8333-333333331008和保存SHA闭合；错误用户8被正式来源函数拒绝。Linux1/1通过，所有48帧逐张读取，无角色消失；常速感知、正式衣物、正式UI/采用恢复及34镜整集未验。默认CI测试跳过媒体，完整diff审查及新增类型检查通过。专机784579dae70408为本任务专属shared4/8GB，清理回执另附。
 
 本次专机清理：784579dae70408已destroy成功，机器列表回读不存在；实际MP4/GLB/帧数据/报告/ffprobe及Linux日志已保留在当日产物目录，所有hash一致。未操作app/rig工作机。
+
+## 2026-10-09T00:22:32+08:00 · 主代理 · ANIM-10 双手扶坐增量，部分验证
+开发 Agent 模型：GPT6 Astra（按用户指定）。稳定条目ANIM-10沿用；旧坐卧/背负证据不覆盖本次新增扶坐。新增diff从484ae4b0之上逐文件审查，原报告/源人偶门禁不撤销。双手→两侧上臂同窗覆盖坐起→真实蒙皮顶点及本人骨长IK→最终姿态复测→同sourceJob/SHA逐帧严格报告→原GLB/MP4消费者；反向追查产物报告必须含双方真实来源和全部surface帧，缺失/伪残差/错来源/单手拒绝。顾问strip身份后新增hasRiggedModel能力标记，仅在合同校验内使用临时值，返回比较/追问上下文均剔除；真实生成仍走宿主onPrepare的原studio。
+已通过上下文/顾问/原视频读取回归39项；随后单扶助者守卫和新原视频对账增加后定向19项通过。默认媒体测试1 skipped；Python纯时窗1 PASS，AST/diff PASS。最终类型及UI构建待收回执。本次未建机、未渲染，四秒输入已展示待确认；不是正式媒体或线上验收通过。合并仅用户本人。
+
+2026-10-09T00:24:41+08:00 · 当前增量最终回执：tsc --noEmit --incremental（任务独立buildinfo）exit0；Vite production build exit0，40.49秒、既有包体警告。新增测试输出元数据SHA后最终类型再次exit0。Python三文件AST及diff通过；生产蒙皮求解运行时未执行，四秒媒体仍待本次确认。
