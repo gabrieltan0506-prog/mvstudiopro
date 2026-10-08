@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 
 out = Path(sys.argv[sys.argv.index('--') + 1])
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from previs_animation_materials import restore_animation_materials
 scene = bpy.context.scene
 objects = [obj for obj in scene.objects if obj.get('previs_animation_object')]
 if not objects or not scene.camera:
@@ -31,6 +33,9 @@ raw = {'version':1, 'fps':scene.render.fps, 'frames':frames,
     'coordinateSystem':'stage-z-up-meters',
     'boundaryZh':'沿用实际白模网格、骨骼与逐帧相机；未替换高清贴图，不包含高斯场景、声音或影视特效验收。'}
 (out/'animation.raw.json').write_text(json.dumps(raw,ensure_ascii=False))
+# WORKBENCH基础色副本没有完整PBR节点；导出独立进程恢复原材质和UV。
+# 磁盘scene.blend不回写，后续预演渲染仍使用已验证的基础色副本。
+restore_animation_materials(objects)
 selected = set(objects)
 for obj in list(selected):
     parent = obj.parent

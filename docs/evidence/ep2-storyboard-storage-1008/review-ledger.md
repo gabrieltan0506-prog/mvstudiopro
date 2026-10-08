@@ -77,3 +77,11 @@ pnpm exec tsc --noEmit --incremental false，session44509 exit0，/tmp/ep2-tsc-r
 
 ## 拆分完整性
 动画生产代码与c3577f6e逐字节一致，存储修复仍由前置PR1684承接；本草稿未新增算法，仅恢复并保留既有动画成果。第一张合并后须改回main基线并复核。
+
+## 2026-10-08T19:49:14+08:00 · ANIM-12 · 动画导出材质丢失改前证据
+用户继续施工，范围仅PR1685；不动12文件PR1684。真实入口exportAnimation→render-manhua-previs.py→prepare_workbench_appearance把原材质换成基础色副本（清空PBR节点，仅留未连接纹理）→scene.blend→export_previs_animation.py直接导出同副本→animation.glb→场景播放。原材质未损坏但未恢复给最终导出消费者，故正式外观输入也可能丢贴图。
+修复：副本持有原材质ID引用，保存预演前UV状态；导出独立进程按真实选择对象先完整校验再恢复原材质/UV。白模渲染继续原预演副本；不改源GLB、费用、所有权、schema、模型容量或动作门禁。验证：纯内存材质/UV替换事务正负例及导出调用顺序；实际Blender导出贴图、真实人物与线上仍未验。禁止用本机渲染冒充正式验收。
+
+### 2026-10-08T19:52:13+08:00 · ANIM-12 定向开发回执
+Blender5.2.1真实内存数据13项PASS，无渲染/导出媒体；验证真实材质ID存活引用、原PBR节点、UV恢复、所有对象先验再写、损坏/缺失证据拒绝、共享网格及旧无材质路径。动画/场景来源合同5/5 PASS。5个Python AST与完整增量diff检查通过。Docker加入同一无媒体内存测试；既有外观CI在原save/reopen处新增5项原材质/UV恢复断言，不新增媒体种类或渲染次数。
+正向：prepare工作台副本保留原ID/UV→受控scene.blend→独立export进程在glTF导出前恢复原槽；反向animation.glb消费者的选中mesh回到原模型材质，同一骨骼/ID/相机不变。原raw证据仍先保存；恢复出错直接中止，旧GLB和原资产不变。尚未验证Linux旧版Blender的持久化/构建、实际GLB贴图或正式人物在线动画，不能称修好或完成。

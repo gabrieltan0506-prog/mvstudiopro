@@ -7,6 +7,8 @@ from pathlib import Path
 import sys
 import bpy
 from mathutils import Vector
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from previs_animation_materials import SOURCE_MATERIAL_KEY, SOURCE_UV_KEY, restore_animation_materials
 
 
 def load(name):
@@ -307,6 +309,22 @@ bpy.ops.wm.open_mainfile(filepath=str(out / "TEST_ONLY-appearance.blend"))
 scene = bpy.context.scene
 target = bpy.data.objects[target_name]
 legacy = bpy.data.objects[legacy_name]
+# 复用既有save/reopen验证原材质ID确实跨进程场景持久化；不新增渲染。
+export_check = target.copy()
+export_check.data = target.data.copy()
+saved_previews = list(target.data.materials)
+saved_sources = [mat.get(SOURCE_MATERIAL_KEY) for mat in saved_previews]
+check(all(isinstance(mat, bpy.types.Material) for mat in saved_sources),
+      "重开后导出原材质ID引用仍完整")
+check(SOURCE_UV_KEY in export_check.data, "重开后导出UV快照仍完整")
+check(restore_animation_materials([export_check]) == 1, "保存重开后的导出对象成功恢复")
+check(list(export_check.data.materials) == saved_sources and
+      all(any(node.type == "BSDF_PRINCIPLED" for node in mat.node_tree.nodes) for mat in saved_sources),
+      "动画导出读取原PBR输出节点而非预演单图片节点")
+check(list(target.data.materials) == saved_previews, "导出恢复不改变用于预演的原场景网格")
+export_check_mesh = export_check.data
+bpy.data.objects.remove(export_check, do_unlink=True)
+bpy.data.meshes.remove(export_check_mesh)
 for mat in target.data.materials:
     if mat.node_tree and mat.node_tree.nodes.active and mat.node_tree.nodes.active.type == "TEX_IMAGE":
         active = mat.node_tree.nodes.active
