@@ -21,9 +21,11 @@ const receipt: Record<string, unknown> = { at: new Date().toISOString(), machine
   learningJob: "B39Nhgt_cH4LjpJs", learningStatus: job?.status, source: "本批正式修改源码", modelCalls: 0, mediaSubmissions: 0 };
 receipt.workerOwnsLearning = shouldConsumeManhuaLearning();
 receipt.noWebsiteDispatch = !shouldDispatchHeavyMedia();
-receipt.selectedRoutesStayFixed = ["openrouter", "evolink_glm"].every(gateway => [0, 1, 4].every(batch =>
-  JSON.stringify(nativeDeepReadStructuringGatewayOrder("structuring_chain", batch, gateway as "openrouter" | "evolink_glm")) === JSON.stringify([gateway])));
-if (!receipt.workerOwnsLearning || !receipt.noWebsiteDispatch || !receipt.selectedRoutesStayFixed) throw new Error("工作机领取或路由检查失败");
+// 旧版把“锁定单路”当通过条件，是本次事故的错误验收目标；历史回执保留。
+receipt.parallelRoutesKeepFallback = ["openrouter", "evolink_glm"].every(legacyGateway => [0, 1, 4].every(lane =>
+  JSON.stringify(nativeDeepReadStructuringGatewayOrder("structuring_chain", lane, legacyGateway as "openrouter" | "evolink_glm"))
+    === JSON.stringify(lane % 2 ? ["evolink_glm", "openrouter"] : ["openrouter", "evolink_glm"])));
+if (!receipt.workerOwnsLearning || !receipt.noWebsiteDispatch || !receipt.parallelRoutesKeepFallback) throw new Error("工作机领取或双路分流/fallback检查失败");
 try { assertManhuaNativeLearningExecution({}); receipt.retiredEntryBlocked = false; }
 catch (error) { receipt.retiredEntryBlocked = (error as Error).message.includes("旧抽帧学习"); }
 assertManhuaNativeLearningExecution({ nativeDeepReadConfirmed: true });

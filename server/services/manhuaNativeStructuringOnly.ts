@@ -11,9 +11,16 @@ export type NativeStructuringStoredSource = {
   sourceUrl?: string; expectedSegmentCount?: number; storedPlan?: unknown;
 };
 
-/** 只读取持久卡片的原计划与帧；绝不重新解析源网站、探视频或抽帧。 */
-export async function loadNativeStructuringOnlyEpisode(input: NativeStructuringStoredSource, deps: { download: typeof downloadGcsObjectVersioned; getBucket: typeof getGcsBucketName; readCache?: typeof readNativeDeepReadSegmentCacheEntry } = { download: downloadGcsObjectVersioned, getBucket: getGcsBucketName, readCache: readNativeDeepReadSegmentCacheEntry }): Promise<NativeDeepReadEpisodeExecution> {
+/** 先恢复原计划和帧；只有 Runner 判定缺片时才惰性解析同源原片。 */
+export async function loadNativeStructuringOnlyEpisode(input: NativeStructuringStoredSource, deps: { download: typeof downloadGcsObjectVersioned; getBucket: typeof getGcsBucketName; readCache?: typeof readNativeDeepReadSegmentCacheEntry; resolveNodes?: (source: { episodeIndex: number; sourceUrl: string; durationSec: number }) => Promise<Array<{ url: string; referer?: string }>> } = { download: downloadGcsObjectVersioned, getBucket: getGcsBucketName, readCache: readNativeDeepReadSegmentCacheEntry }): Promise<NativeDeepReadEpisodeExecution> {
   if (!/^[a-z0-9_-]{1,40}$/i.test(input.seriesKey)) throw new Error("原任务未保存有效系列身份，不能仅重新整形");
+  const resolveMissingNodes = (sourceUrl: string, durationSec: number) => async () => {
+    if (parseManhuaLocalVideoSourceRef(sourceUrl)) throw new Error("本地上传由归属核验入口读取，不进入远端解析");
+    const source = { episodeIndex: input.episodeIndex, sourceUrl, durationSec };
+    if (deps.resolveNodes) return deps.resolveNodes(source);
+    const { resolveNativeDeepReadStoredSourceNodes } = await import("./manhuaTemplateLearnService.js");
+    return resolveNativeDeepReadStoredSourceNodes(source);
+  };
   const id = nativeDeepReadProposalId(input.seriesKey, input.episodeIndex);
   const read = async (directory: string) => {
     try {
@@ -47,7 +54,7 @@ export async function loadNativeStructuringOnlyEpisode(input: NativeStructuringS
     return { ...storedEpisode, localVideoUpload: parseManhuaLocalVideoSourceRef(storedEpisode.sourceUrl) || undefined,
       seriesKey: input.seriesKey, segmentSeconds: input.segmentSeconds,
       retainedEvidenceFrames: matchingCard?.evidenceFrames,
-      resolveNodes: async () => { throw new Error("仅重新整形禁止读取源视频"); } };
+      resolveNodes: resolveMissingNodes(storedEpisode.sourceUrl, storedEpisode.durationSec) };
   }
   if (!card) {
     // 历史单集任务尚未落卡：用原回执声明段数读取完整缓存信封，再按稳定来源摘要核验。
@@ -65,7 +72,7 @@ export async function loadNativeStructuringOnlyEpisode(input: NativeStructuringS
       return { seriesKey: input.seriesKey, episodeIndex: input.episodeIndex, sourceUrl,
         localVideoUpload: parseManhuaLocalVideoSourceRef(sourceUrl) || undefined,
         durationSec: segments.at(-1)!.endSec, videoFps: input.videoFps, segmentSeconds: input.segmentSeconds, segments,
-        resolveNodes: async () => { throw new Error("仅重新整形禁止读取源视频"); } };
+        resolveNodes: resolveMissingNodes(sourceUrl, segments.at(-1)!.endSec) };
     }
   }
   if (!card || card.id !== id || !native?.segmentSpans?.length || !native.sourceDurationSec
@@ -80,5 +87,5 @@ export async function loadNativeStructuringOnlyEpisode(input: NativeStructuringS
     durationSec: native.sourceDurationSec, segments: native.segmentSpans.map(row => ({ ...row })),
     segmentSeconds: input.segmentSeconds, videoFps: native.videoFps, retainedEvidenceFrames: frames,
     sourceMarkers: card.provenance?.sourceMarkers,
-    resolveNodes: async () => { throw new Error("仅重新整形禁止读取源视频"); } };
+    resolveNodes: resolveMissingNodes(card.sourceRefs[0].url, native.sourceDurationSec) };
 }

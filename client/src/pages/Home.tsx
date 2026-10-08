@@ -13,6 +13,7 @@ import { LaunchCountdownBanner } from "../components/LaunchCountdownBanner";
 import HomeModelShowcase from "../components/HomeModelShowcase";
 import HomeUpdateTicker from "../components/HomeUpdateTicker";
 import HomePlatformHighlights from "../components/HomePlatformHighlights";
+import HomeFileConversion from "../components/HomeFileConversion";
 import HomePhotoTools from "../components/HomePhotoTools";
 
 /**
@@ -40,6 +41,7 @@ export default function HomePage() {
         <HomePlatformHighlights />
         <HomeBlogShowcase />
         <HomePhotoTools />
+        <HomeFileConversion />
 
         <HomeMyWorks />
 

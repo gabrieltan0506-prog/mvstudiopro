@@ -502,7 +502,7 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
       : qwenOnly
         ? generalGateways.filter((g) => !GLM_MODEL_GATEWAYS.has(g.name))
         : generalGateways;
-  // 0905 用户令：并发批次必须分流到不同通道真并行（同通道有租约会排队＝串行），
+  // 并发批次分流到不同供应商；同通道本地租约已取消，不据此推断供应商排队。
   // 首发档由调度器按批次轮流指定；失败仍按链序逐档往下切。
   const preferred = params.preferredGlmGateway;
   const gateways = preferred
@@ -653,6 +653,8 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
       ? `GLM-5.3 两档(${glmOrderZh || "未配置"})全部失败：${trace.map((t) => `${t.gateway}=${t.outcome}`).join(",") || "通道未配置"}`
       : qwenOnly
         ? `Qwen 3.8 Max 两档全部失败：${trace.map((t) => `${t.gateway}=${t.outcome}`).join(",") || "通道未配置"}`
+      : structuringChain
+        ? `GLM 整形路由 ${glmOrderZh || "未配置"} 全部失败：${trace.map((t) => `${t.gateway}=${t.outcome}`).join(",") || "无可用网关"}`
       : `GLM 兜底全链失败(含 Qwen 末档)：${trace.map((t) => `${t.gateway}=${t.outcome}`).join(",") || "无可用网关"}`,
     trace,
     accumulatedUsage,

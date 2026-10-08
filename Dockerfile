@@ -49,6 +49,11 @@ ENV LIBGL_ALWAYS_SOFTWARE=1
 
 RUN npm install -g pnpm@10.4.1
 
+# OCR独立缓存层仅随锁定依赖变更；位于业务COPY/CACHEBUST之前，不重复安装现有Blender。
+COPY server/scripts/file_conversion_ocr.requirements.txt /tmp/file_conversion_ocr.requirements.txt
+RUN pip3 install --no-cache-dir --target /opt/file-conversion-ocr -r /tmp/file_conversion_ocr.requirements.txt \
+ && PYTHONPATH=/opt/file-conversion-ocr python3 -c "import pathlib, rapidocr_onnxruntime as r; p=pathlib.Path(r.__file__).parent/'models'; assert len(list(p.glob('*.onnx')))==3, 'OCR models missing'"
+
 # Fly remote builders 可能長期命中舊的 COPY 快取（建置上下文未變更 checksum 時仍用舊原始碼）。
 # 透過 fly.toml [build.args].CACHEBUST 手動遞增，可強制重新 COPY 與後續 RUN。
 ARG CACHEBUST=0

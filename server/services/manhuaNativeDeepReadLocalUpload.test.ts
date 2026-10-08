@@ -92,7 +92,7 @@ describe("本地原片错误与纯JSON恢复", () => {
     expect(episode.sourceUrl).toBe(source.sourceRef);
     expect(validateNativeDeepReadBatchPlan([episode], { seriesKey: plan.seriesKey, segmentSeconds: 3 }).totalSegments).toBe(3);
     expect(download).toHaveBeenCalledTimes(2);
-    await expect(episode.resolveNodes()).rejects.toThrow("禁止读取源视频");
+    await expect(episode.resolveNodes()).rejects.toThrow("本地上传由归属核验入口读取");
   });
 
   it("本地切片错误不携带原片绝对路径，持久原片不被unlink", async () => {

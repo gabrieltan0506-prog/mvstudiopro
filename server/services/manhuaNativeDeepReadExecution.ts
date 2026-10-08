@@ -547,8 +547,13 @@ export type NativeDeepReadEpisodeOutcomeCost = {
 export function buildNativeDeepReadDirectAudioAnalysis(input: {
   durationSec: number;
   segments: readonly NativeDeepReadSegmentSpec[];
+  /** 部分提案使用原计划片号；不能按子数组位置重新编号。 */
+  segmentIndexes?: readonly number[];
   visualResult: NativeDeepReadRunResult;
 }): ManhuaNativeAudioAnalysis {
+  if (input.segmentIndexes && (input.segmentIndexes.length !== input.segments.length
+    || new Set(input.segmentIndexes).size !== input.segmentIndexes.length
+    || input.segmentIndexes.some(index => !Number.isInteger(index) || index < 0))) throw new Error("部分视频分片编号无效");
   // 0906：只要有一段走了 AI Studio 兜底，音轨路由就不能按 Vertex 口径硬要「音频 token > 0」
   const route: ManhuaNativeAudioDirectRoute =
     (input.visualResult.degradedFpsSegmentIndexes?.length ?? 0) > 0
@@ -575,13 +580,14 @@ export function buildNativeDeepReadDirectAudioAnalysis(input: {
   return finalizeManhuaNativeDirectAudioAnalysis({
     durationSec: input.durationSec,
     chunks: input.segments.map((segment, index) => ({
-      index,
+      index: input.segmentIndexes?.[index] ?? index,
       startSec: segment.startSec,
       endSec: segment.endSec,
     })),
     resolvedChunks: input.visualResult.resolvedAudioChunks,
     usage,
     route,
+    partial: input.segmentIndexes !== undefined,
   });
 }
 
@@ -973,6 +979,7 @@ export type NativeDeepReadBatchOutcome = {
   gcsUri?: string;
   errorZh?: string;
   completedSegments?: number;
+  completedSegmentIndexes?: number[];
   totalSegments?: number;
   /** 实际发生的模型费用；**门禁拒收也要记**，钱已经花了 */
   costCny: number;
@@ -1209,6 +1216,7 @@ export async function runNativeDeepReadBatch(input: {
           const audioAnalysis = buildNativeDeepReadDirectAudioAnalysis({
             durationSec: snapshot.learnedThroughSec,
             segments: completedSegments,
+            segmentIndexes: snapshot.completedSegmentIndexes,
             visualResult: snapshot.result,
           });
           const partialResult = { ...snapshot.result, audioAnalysis };
@@ -1244,6 +1252,7 @@ export async function runNativeDeepReadBatch(input: {
             // 续跑重放 1/5、2/5 时，GCS 可能已经保有 3/5；面板必须显示实际存量，
             // 不能把无害的旧前缀显示成进度倒退。
             completedSegments: displayedCompletedSegments,
+            completedSegmentIndexes: storedNativeProgress?.completedSegmentIndexes ?? snapshot.completedSegmentIndexes,
             totalSegments: episode.segments.length,
             costCny: 0,
             elapsedMs: Date.now() - episodeStartedAt,

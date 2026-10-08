@@ -1187,10 +1187,28 @@ export function nativeLearnLiveProposalState(job: ManhuaLearnServerJobSnapshot |
   const currentCheckpoint = Number(checkpoint?.episodeIndex) === episodeIndex ? checkpoint : undefined;
   const totalSegments = Math.max(0, Number(currentCheckpoint?.totalSegments) || episode?.segments?.length || 0);
   const completedSegments = Math.min(totalSegments, Math.max(0, Number(currentCheckpoint?.completedSegments) || 0));
+  // 通过门禁的分片各自已持久化回执；乱序成功不等待连续部分卡，不将HTTP返回当成功。
+  const checkpointIndexes = currentCheckpoint?.completedSegmentIndexes;
+  const knownIndexes = Array.isArray(checkpointIndexes) && checkpointIndexes.length === completedSegments
+    && new Set(checkpointIndexes).size === completedSegments
+    && checkpointIndexes.every(index => typeof index === "number" && Number.isInteger(index) && index >= 0 && index < totalSegments)
+      ? checkpointIndexes as number[] : Array.from({ length: completedSegments }, (_, index) => index);
+  const passedIndexes = new Set<number>(knownIndexes);
+  if (Array.isArray(output.nativeModelReceipts)) {
+    for (const raw of output.nativeModelReceipts) {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+      const receipt = raw as Record<string, unknown>, index = Number(receipt.chunkIndex);
+      if (receipt.stage !== "visual_parse" || receipt.route !== "local_schema_gate" || receipt.status !== "completed"
+        || !Array.isArray(receipt.episodeIndexes) || !receipt.episodeIndexes.includes(episodeIndex)
+        || typeof receipt.chunkIndex !== "number" || !Number.isInteger(index) || index < 0 || index >= totalSegments) continue;
+      passedIndexes.add(index);
+    }
+  }
+  const readCompletedSegments = passedIndexes.size;
   const seriesKey = String(output.nativeSeriesKey || output.seriesKey || "");
   const reference = /^[0-9A-Za-z_-]{1,40}$/.test(seriesKey) && Number.isInteger(episodeIndex) && episodeIndex >= 1 && episodeIndex <= 999
     ? { seriesKey, episodeIndex } : undefined;
-  return { jobId: job.jobId, status: job.status, reference, completedSegments, totalSegments,
+  return { jobId: job.jobId, status: job.status, reference, completedSegments, readCompletedSegments, totalSegments,
     titleZh: String(job.input?.params?.title || "本次影片"),
     detailZh: String(output.analysisStageLabel || (job.status === "queued" ? "已入队，正在准备学习" : "正在解析学习计划")) };
 }

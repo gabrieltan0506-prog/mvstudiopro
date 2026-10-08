@@ -127,7 +127,7 @@ function assertSegmentEvidenceObjectNamesForProvenance(input: {
   episodeIndex: number;
   names: string[];
   attemptedSegments: number;
-  completedCount: number;
+  completedIndexes: number[];
   complete: boolean;
 }): string[] {
   const names = input.names.map((value) => String(value || "").trim());
@@ -144,12 +144,13 @@ function assertSegmentEvidenceObjectNamesForProvenance(input: {
   if (segIndexes.some((value, index) => index > 0 && value <= segIndexes[index - 1]!)) {
     throw new Error(`第${input.episodeIndex}集段证据对象名未按段号严格递增，拒绝写入 provenance`);
   }
-  const expectedCount = input.complete ? input.attemptedSegments : input.completedCount;
+  const expectedCount = input.complete ? input.attemptedSegments : input.completedIndexes.length;
   if (names.length !== expectedCount) {
     throw new Error(
       `第${input.episodeIndex}集段证据对象名数量(${names.length})与进度(${expectedCount})不一致，拒绝写入 provenance`,
     );
   }
+  if (!sameNumbers(segIndexes, input.completedIndexes)) throw new Error(`第${input.episodeIndex}集段证据与真实完成片号不一致`);
   return names;
 }
 
@@ -252,7 +253,9 @@ export function checkNativeDeepReadIngestable(
   if (!result || !Array.isArray(result.beatGrid)) {
     return { ok: false, reasonZh: "精读产出为空" };
   }
-  const audio = parseManhuaNativeAudioAnalysis(result.audioAnalysis);
+  const audio = parseManhuaNativeAudioAnalysis(result.audioAnalysis, {
+    allowPartial: result.assemblyComplete === false && result.segmentCount < result.attemptedSegments,
+  });
   if (!audio) {
     return { ok: false, reasonZh: "声音结构缺失或秒位未通过标尺校验" };
   }
@@ -291,11 +294,13 @@ export function checkNativeDeepReadIngestable(
   ) {
     return { ok: false, reasonZh: "部分段提案缺少可验证的段号、来源摘要或快照" };
   }
-  if (
-    progress.completed.some((value, index) => value !== index)
-  ) {
-    return { ok: false, reasonZh: "已完成分片不是从第1片开始的连续断点，拒绝入库" };
-  }
+  const suppliedIndexes = result.completedSegmentIndexes;
+  if (suppliedIndexes !== undefined && (!Array.isArray(suppliedIndexes)
+    || suppliedIndexes.length !== segmentCount || new Set(suppliedIndexes).size !== suppliedIndexes.length
+    || suppliedIndexes.some(index => !Number.isInteger(index) || index < 0 || index >= attemptedSegments)))
+    return { ok: false, reasonZh: "已完成分片编号重复、越界或与成功数量不一致" };
+  if (audio.coveredChunks && !sameNumbers(audio.coveredChunks.map(row => row.index).sort((a,b)=>a-b), progress.completed))
+    return { ok: false, reasonZh: "声音记录与已完成视频片号不一致" };
   // 计数自相矛盾说明上游装配出错，此时写出来的 provenance 是假账，宁可拒收
   if (
     !Number.isInteger(failedSegmentCount)
@@ -326,7 +331,7 @@ export function checkNativeDeepReadIngestable(
     return { ok: false, reasonZh: error instanceof Error ? error.message : String(error) };
   }
   // 0907 用户问「没有 keyMoments 为何还能放行」：抽帧全靠重点时刻，零条 = 报告没有画面，不许入库
-  // 中间快照（segmentCount < attemptedSegments）只含已完成前缀，首段整段广告时合法为空，不在这里判
+  // 中间快照只含已完成片段，允许乱序或空洞；整集时才要求重点时刻。
   if (segmentCount >= attemptedSegments && (!Array.isArray(result.keyMoments) || result.keyMoments.length === 0)) {
     return { ok: false, reasonZh: "重点时刻为零，抽不出任何画面，拒绝入库（整形输出漏掉 keyMoments 且读片稿也没有）" };
   }
@@ -372,8 +377,8 @@ export function buildNativeDeepReadProposalCard(
     || "开场即进冲突（原生精读未取到首镜描述）";
 
   const durSec = Math.max(0, Math.floor(Number(input.durationSec) || 0));
-  const audio = parseManhuaNativeAudioAnalysis(r.audioAnalysis)!;
   const progress = nativeProgress(r);
+  const audio = parseManhuaNativeAudioAnalysis(r.audioAnalysis, { allowPartial: !progress.complete })!;
   const storedSegmentPlan = normalizeSegmentPlanForProvenance({
     episodeIndex: input.episodeIndex,
     attemptedSegments: r.attemptedSegments,
@@ -382,6 +387,10 @@ export function buildNativeDeepReadProposalCard(
     segmentSpans: input.segmentSpans,
     videoFps: input.videoFps,
   });
+  if (audio.coveredChunks?.some(chunk => {
+    const span = storedSegmentPlan?.segmentSpans[chunk.index];
+    return !span || Math.abs(span.startSec - chunk.startSec) > 0.01 || Math.abs(span.endSec - chunk.endSec) > 0.01;
+  })) throw new Error("部分声音记录与原视频分片秒窗不一致");
   const factsZh = [
     `原生精读${r.beatGrid.length}镜`,
     `${r.segmentCount}/${r.attemptedSegments}段${progress.complete ? "已完成" : "已入库，余段待续"}`,
@@ -462,7 +471,7 @@ export function buildNativeDeepReadProposalCard(
               episodeIndex: input.episodeIndex,
               names: r.segmentEvidenceObjectNames,
               attemptedSegments: r.attemptedSegments,
-              completedCount: progress.completed.length,
+              completedIndexes: progress.completed,
               complete: progress.complete,
             })
           : undefined,
@@ -762,9 +771,8 @@ export async function ingestNativeDeepReadEpisode(
     if (!previous.complete && previous.segmentPlan !== next.segmentPlan) {
       throw new Error(`第${input.episodeIndex}集原分片计划发生变化，拒绝覆盖既有部分学习卡`);
     }
-    // 同源续跑会先按连续前缀重放已验缓存，例如对象已是 3/5，runner 仍会依次
-    // 提交 1/5、2/5、3/5，再补到 4/5。较短前缀不含新信息，保留现有对象即可；
-    // 不能把这种幂等重放当成倒退并中断后续 4/5、5/5。这里只允许真子集，
+    // 同源续跑可以任意顺序重放已验片，例如对象已含[0,2,4]，先收到[2]时保留现有卡。
+    // 较小完成集合不含新信息；这里只允许真子集，
     // 同长度不同快照与互有不同分片的真分叉仍由下面的门禁关闭式拒绝。
     if (!completeRelearn && isStrictProgressSubset(next.completed, previous.completed)) {
       return { card: existing, gcsUri, objectName, created: false };

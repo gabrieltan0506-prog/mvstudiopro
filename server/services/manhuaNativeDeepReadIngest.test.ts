@@ -248,17 +248,15 @@ describe("入库门禁", () => {
     })).toThrow("原分片计划不完整");
   });
 
-  it("部分提案只接受从第一片开始的连续断点，禁止用错位段冒充进度", () => {
-    const result = checkNativeDeepReadIngestable(makeResult({
-      segmentCount: 1,
-      failedSegmentCount: 5,
-      completedSegmentIndexes: [1],
-      sourceDigest: "a".repeat(64),
-      segmentSnapshotSha256: "b".repeat(64),
-      assemblyComplete: false,
-    }));
-    expect(result.ok).toBe(false);
-    expect(result.ok === false && result.reasonZh).toContain("不是从第1片开始");
+  it("乱序保存：部分提案可从任意已完成片号开始，重复或越界仍拒绝", () => {
+    const partial = makeResult({ segmentCount: 1, failedSegmentCount: 5,
+      completedSegmentIndexes: [1], sourceDigest: "a".repeat(64),
+      segmentSnapshotSha256: "b".repeat(64), assemblyComplete: false });
+    expect(checkNativeDeepReadIngestable(partial)).toEqual({ ok: true });
+    for (const indexes of [[1, 1], [-1], [6], [1.5]])
+      expect(checkNativeDeepReadIngestable({ ...partial, completedSegmentIndexes: indexes }).ok).toBe(false);
+    const card = buildNativeDeepReadProposalCard({ ...baseInput, result: partial });
+    expect(parseManhuaViralTemplateCard(JSON.parse(JSON.stringify(card)))?.provenance?.nativeVideoDeepRead?.completedSegmentIndexes).toEqual([1]);
   });
 });
 
