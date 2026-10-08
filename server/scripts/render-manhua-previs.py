@@ -16,7 +16,8 @@ for existing in list(bpy.context.scene.objects):
     bpy.data.objects.remove(existing, do_unlink=True)
 scene = bpy.context.scene
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from previs_quadruped_fall import fold_points, fall_roll, validate_fall
+from previs_quadruped_fall import fold_points, fall_roll, validate_fall, fall_moves, fall_movement_progress
+fall_contact_anchors={}
 from previs_quadruped_fall_contact import ground_and_measure_fall
 from previs_human_pose import apply_human_posture, validate_human_posture
 water_head_heights={}
@@ -108,6 +109,8 @@ def position(actor, frame):
     if actor['id']==pair.get('passengerId') and pair.get('setDown'): t=min(t,pair['setDown']['startSec'])
     if actor.get('motionRoute'): return route_pose(actor,t)[0]
     u = max(0., min(1., (t-actor['moveStartSec'])/(actor['moveEndSec']-actor['moveStartSec'])))
+    if actor.get('quadrupedFall') and fall_moves(actor):
+        u = fall_movement_progress(actor,t)
     z=root_z(water_events[actor['id']],t,water_head_heights[actor['id']]) if actor['id'] in water_head_heights else 0
     return Vector((actor['start'][0]*(1-u)+actor['end'][0]*u,
                    actor['start'][1]*(1-u)+actor['end'][1]*u, z))
@@ -266,6 +269,10 @@ def hit_amount(actor,t):
 
 def points(actor, frame, contacts):
     t = (frame-1)/24
+    fall=actor.get('quadrupedFall')
+    if fall and fall['mode']=='collapse' and fall_moves(actor) and t>=fall['startSec']:
+        # 侧落不能继续换脚；固定起倒那一帧的局部姿态，再按真实时间折腿侧落。
+        frame,contacts=fall_contact_anchors[actor['id']]
     amounts = action_amounts(actor,t)
     horse = actor['shape'] == 'horse'
     keys = list(contacts)
@@ -395,6 +402,10 @@ def plan_contacts(actor):
                 result[f]['1']=transform(actor,f) @ Vector((injured_x,.25,injured_z))
             stance[f]=[key for key in keys if key!=chosen or not moving]
         if moving: anchors[chosen]=goal
+    fall=actor.get('quadrupedFall')
+    if fall and fall['mode']=='collapse' and fall_moves(actor):
+        start_frame=round(fall['startSec']*24)+1
+        fall_contact_anchors[actor['id']]=(start_frame,result[start_frame])
     return result,stance
 
 # 0917 二轮审查：出水角色的头高原本是懒算的——只有轮到它自己建骨时才写进 water_head_heights。

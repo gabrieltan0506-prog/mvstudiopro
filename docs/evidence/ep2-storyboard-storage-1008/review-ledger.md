@@ -85,3 +85,10 @@ pnpm exec tsc --noEmit --incremental false，session44509 exit0，/tmp/ep2-tsc-r
 ### 2026-10-08T19:52:13+08:00 · ANIM-12 定向开发回执
 Blender5.2.1真实内存数据13项PASS，无渲染/导出媒体；验证真实材质ID存活引用、原PBR节点、UV恢复、所有对象先验再写、损坏/缺失证据拒绝、共享网格及旧无材质路径。动画/场景来源合同5/5 PASS。5个Python AST与完整增量diff检查通过。Docker加入同一无媒体内存测试；既有外观CI在原save/reopen处新增5项原材质/UV恢复断言，不新增媒体种类或渲染次数。
 正向：prepare工作台副本保留原ID/UV→受控scene.blend→独立export进程在glTF导出前恢复原槽；反向animation.glb消费者的选中mesh回到原模型材质，同一骨骼/ID/相机不变。原raw证据仍先保存；恢复出错直接中止，旧GLB和原资产不变。尚未验证Linux旧版Blender的持久化/构建、实际GLB贴图或正式人物在线动画，不能称修好或完成。
+
+## 2026-10-08T19:58:31+08:00 · ANIM-08 · 行进中倒地改前追链
+原文第29镜行进中倒地，现quadrupedFallIssue与Python拒绝一切位移；根position线性且报告锁actor.start，直接放开会在侧落后继续滑行并复用步态改变躯干。范围：同collapse模式接已有start/end/moveStart/moveEnd，不新增人物/字段/媒体；下限为moveStart<fall.start<moveEnd<=ground，峰速<=1.2m/s，屈腿开始后用连续减速至零，固定起倒瞬间的局部姿态后折腿侧落；hold仍原地。顾问patch→schema→driver→实际根/网格逐帧→报告→保存/时间映射全链检查。禁止跛行/路线/受击与倒地混用，不放宽真模网格门禁。验证仅纯数值与生产renderer截断到报告的无媒体探针，实际真模/常速仍未验。
+
+## 2026-10-08T21:14:52+08:00 · 主代理 · PR1685恢复施工与移动倒地验证
+用户要求赶紧继续完成PR1685，已恢复本地材质提交6a20d8ea及11文件移动倒地修正。39项TS定向测试、Python4项、Blender5.2.1生产renderer内存逐帧探针通过；collapse96/hold48/moving96/moving_hold48帧，移动末点0.8000000119米，触地误差5.96e-8米，与后镜保持无跳。tsc --noEmit --incremental false退出0，diff检查通过。无渲染、无导出媒体、无付费；真实带衣模型/常速/正式线上未验。
+正反追链：顾问已有字段→schema→根减速和起倒姿态冻结→网格逐帧报告→报告消费者→存储恢复及变速。拒绝hold位移、触地后位移和峰速超限。原main已fetch到6ba2832e；下一步保存改动并合入main，再更新同一草稿PR的基线，继续真模动作缺口。只用户本人合并。摘要同步，非完整聊天记录。

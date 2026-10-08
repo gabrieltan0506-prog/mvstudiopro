@@ -1134,7 +1134,8 @@ export function formatPrevisMotionGuide(spec: ManhuaPrevisSpec): string {
     ...spec.actors.filter(a=>a.humanPosture).map(a=>{const p=a.humanPosture!;return `${a.nameZh}在${p.supportHeight}米支撑面上${p.mode==="hold"?(p.posture==="sit"?"整段坐稳":`整段后仰${p.reclineDeg}度半躺`):`${p.startSec}—${p.endSec}秒由后仰${p.reclineDeg}度坐起，随后持续坐稳`}；双脚保持地面接触，不自动站起。`;}),
     ...spec.actors.filter(a=>a.quadrupedFall).map(a=>{
       const fall=a.quadrupedFall!;
-      return fall.mode==="hold" ? `${a.nameZh}整段保持${fall.side==="left"?"左":"右"}侧卧地，四腿折叠，不自动起身。` : `${a.nameZh}${fall.startSec}秒开始屈腿，${fall.foldSec}秒开始向${fall.side==="left"?"左":"右"}侧倒，${fall.groundSec}秒躯干触地并保持至片尾，四腿折叠，不自动起身。`;
+      const moving=a.start.some((v,i)=>Math.abs(v-a.end[i])>1e-6);
+      return fall.mode==="hold" ? `${a.nameZh}整段保持${fall.side==="left"?"左":"右"}侧卧地，四腿折叠，不自动起身。` : `${a.nameZh}${fall.startSec}秒开始屈腿，${fall.foldSec}秒开始向${fall.side==="left"?"左":"右"}侧倒，${fall.groundSec}秒躯干触地并保持至片尾，四腿折叠，不自动起身。${moving?`屈腿开始后持续减速，${a.moveEndSec}秒停止位移，落点固定在（${a.end.join("，")}）。`:""}`;
     }),
     ...(spec.storyProps??[]).map(p=>`剧情道具${p.id}（${({needle:"飞针",blood_drop:"血滴",bowl:"碗",jar:"血坛",knife:"刀",sleeve_glow:"袖口光"} as const)[p.kind]}）按${p.keyframes.map(k=>`${k.timeSec}秒${k.visible?"显示":"隐藏"}，绑定${k.anchor.type==="bone"?`${k.anchor.actorId}/${k.anchor.bone}`:k.anchor.type==="prop"?k.anchor.propId:`固定位置（${k.anchor.position.join("，")}）`}`).join("；")}读取，落点随同一锚点保持，不重算为施术者方向。`),
     ...spec.actors.filter(a=>a.hitReaction).map(a=>`${a.hitReaction!.contactSec}秒，${a.nameZh}受${spec.actors.find(b=>b.id===a.hitReaction!.sourceActorId)?.nameZh}出掌击中，胸颈快速后缩下沉，支撑脚保持接地，${a.hitReaction!.endSec}秒恢复；原跛行持续。`),

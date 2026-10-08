@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { PREVIS_MAX_ACTORS, type ManhuaPrevisSpec } from "../../shared/manhuaPrevis";
-import { quadrupedFallProgress, type PrevisQuadrupedFall } from "../../shared/manhuaPrevisQuadrupedFall";
+import { quadrupedFallProgress, quadrupedFallMovementProgress, type PrevisQuadrupedFall } from "../../shared/manhuaPrevisQuadrupedFall";
 type FallSpec = Omit<ManhuaPrevisSpec,"actors"> & { actors:(ManhuaPrevisSpec["actors"][number] & {quadrupedFall?:PrevisQuadrupedFall})[] };
 const n=z.number().finite();
 export const quadrupedFallReportSchema=z.array(z.object({
@@ -22,7 +22,9 @@ export function validateQuadrupedFallReport(raw:z.infer<typeof quadrupedFallRepo
     let heldRoot:number[]|undefined;
     row.samples.forEach((s,i)=>{
       const progress=quadrupedFallProgress(actor.quadrupedFall!,i/24);
-      if(Math.abs(s.root[0]-actor.start[0])>.005 || Math.abs(s.root[1]-actor.start[1])>.005 || s.frame!==i+1 || s.held!==progress.held || s.minimumHeight<-.005 || s.torsoMinimumHeight<s.minimumHeight-.001 || (progress.fold>0 && Math.abs(s.minimumHeight)>.005)) throw Error("倒地实际网格接地或时序不一致");
+      const move=quadrupedFallMovementProgress(actor,i/24);
+      const expected=actor.start.map((v,j)=>v+(actor.end[j]-v)*move);
+      if(Math.abs(s.root[0]-expected[0])>.005 || Math.abs(s.root[1]-expected[1])>.005 || s.frame!==i+1 || s.held!==progress.held || s.minimumHeight<-.005 || s.torsoMinimumHeight<s.minimumHeight-.001 || (progress.fold>0 && Math.abs(s.minimumHeight)>.005)) throw Error("倒地实际网格接地或时序不一致");
       if(progress.held){
         const yaw=actor.facingDeg*Math.PI/180, side=actor.quadrupedFall!.side==="left"?1:-1;
         // +X朝前、+Y为左：向左倒时躯干上轴指向+Y。

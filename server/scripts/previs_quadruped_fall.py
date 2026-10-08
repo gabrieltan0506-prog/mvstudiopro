@@ -2,6 +2,27 @@
 import math
 
 
+def fall_moves(actor):
+    return any(abs(a-b) > 1e-6 for a,b in zip(actor['start'], actor['end']))
+
+
+def fall_movement_progress(actor, t):
+    """根位移在屈腿开始前匀速，随后平滑减速，触地前停稳并保持。"""
+    fall = actor.get('quadrupedFall')
+    if not fall or fall['mode'] != 'collapse' or not fall_moves(actor):
+        return 0.
+    start, end = actor['moveStartSec'], actor['moveEndSec']
+    if t <= start: return 0.
+    if t >= end: return 1.
+    cruise, brake = fall['startSec']-start, end-fall['startSec']
+    if t <= fall['startSec']:
+        elapsed = t-start
+    else:
+        u = (t-fall['startSec'])/brake
+        elapsed = cruise+brake*(u-u**3+.5*u**4)
+    return elapsed/(cruise+brake/2)
+
+
 def fall_progress(fall, t):
     def smooth(value):
         u = max(0., min(1., value))
@@ -65,13 +86,20 @@ def validate_fall(actor, spec):
         raise ValueError('倒地字段不完整或含未知字段')
     if (actor['shape'] != 'horse' or any(actor.get(key) is not None for key in ('creature', 'hitReaction', 'motionRoute', 'visibleRanges'))
             or any(a['kind'] != 'idle' for a in actor['actions'])
-            or any(abs(a-b) > 1e-6 for a,b in zip(actor['start'],actor['end']))
             or spec.get('waterEmergence')
             or any(actor['id'] in (e['actorId'],e['targetActorId']) for e in spec.get('interactions', []))):
-        raise ValueError('倒地须为原地四足、整段在场，不得叠加其他动作、出水或交互')
+        raise ValueError('倒地须为整段在场四足，不得叠加其他动作、出水或交互')
     if fall['mode'] == 'collapse':
         times = [fall[key] for key in ('startSec', 'foldSec', 'groundSec')]
         if (any(type(t) not in (int, float) or not math.isfinite(t) or t < 0 or abs(t*24-round(t*24)) > 1e-6 for t in times)
                 or times[1]-times[0] < .25 or times[2]-times[1] < .5
                 or times[2] > (spec['durationSec']*24-1)/24):
             raise ValueError('倒地秒窗须按24帧对齐并在片尾前完成屈腿、侧落与保持')
+    if fall_moves(actor):
+        start, end = actor.get('moveStartSec'), actor.get('moveEndSec')
+        if (fall['mode'] != 'collapse'
+            or any(type(t) not in (int,float) or not math.isfinite(t) or t < 0 or abs(t*24-round(t*24))>1e-6 for t in (start,end))
+            or not start < fall['startSec'] < end <= fall['groundSec']):
+            raise ValueError('移动倒地须在行进中开始，移动秒位对齐24帧，且触地前停止；保持不可位移')
+        if math.dist(actor['start'],actor['end'])/(fall['startSec']-start+(end-fall['startSec'])/2)>1.2+1e-8:
+            raise ValueError('移动倒地减速前峰值不能超过每秒1.2米')
