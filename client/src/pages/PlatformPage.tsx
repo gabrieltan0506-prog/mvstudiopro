@@ -1,3 +1,4 @@
+import { nativeLearnLiveProposalState } from "@/lib/manhuaLearnResultUi";
 import { ensureManhuaLearnPageOwnership, readManhuaLearnPageJobId, writeManhuaLearnPageJobId, filterManhuaLearnPageJobs } from "@/lib/manhuaLearnPageScope";
 import { confirmManhuaLearnSource } from "@/lib/manhuaLearnRelearn";
 import { KnowledgeCardRecovery, type RecoveredKnowledgeCard } from "@/components/platform/KnowledgeCardRecovery";
@@ -3602,24 +3603,25 @@ export default function PlatformPage() {
     [trpcUtils],
   );
 
+  const liveManhuaProposal = nativeLearnLiveProposalState(focusedManhuaLearnServerJob);
   const manhuaViralProposalsQuery = trpc.manhuaViralTemplate.listProposals.useQuery(
-    undefined,
+    liveManhuaProposal?.reference,
     {
       enabled:
         trendInsightTab === "ai_manhua" &&
-        (hasSupervisorOpsAccess || ownerTemplateOptimizeAllowed),
+        (hasSupervisorOpsAccess || ownerTemplateOptimizeAllowed)
+        && (!liveManhuaProposal || Boolean(liveManhuaProposal.reference)),
       staleTime: 30_000,
       retry: false,
-      // 0905 用户令「中途过门禁也要更新」：有任务在跑就定时重拉，待审卡的 k/M 段进度不再停在开页那一刻
-      // 0905 夜实测：30 秒重拉 68 张大卡（约 20MB）会把页面卡死，导出点不动；放宽到 2 分钟，分片进度靠签名触发即时重拉
-      refetchInterval: manhuaLearnServerJobs.some((job) => job.status === "running" || job.status === "queued")
-        ? 120_000
+      // 只轮询本集轻量行，检查点变化另即时触发；不重复下载全部模板。
+      refetchInterval: liveManhuaProposal?.reference && focusedManhuaLearnJobActive
+        ? 5_000
         : false,
     },
   );
   const pendingManhuaViralProposals = useMemo(
-    () => (manhuaViralProposalsQuery.data?.items || []).filter((item) => item.status !== "approved"),
-    [manhuaViralProposalsQuery.data?.items],
+    () => (liveManhuaProposal && !liveManhuaProposal.reference ? [] : manhuaViralProposalsQuery.data?.items || []).filter((item) => item.status !== "approved"),
+    [manhuaViralProposalsQuery.data?.items, liveManhuaProposal?.jobId, liveManhuaProposal?.reference?.seriesKey, liveManhuaProposal?.reference?.episodeIndex],
   );
   /**
    * tRPC query result 对象会随 render 换引用；轮询 callback 若依赖整个对象，
@@ -15059,6 +15061,16 @@ export default function PlatformPage() {
                         />
                       ) : null}
 
+                      {liveManhuaProposal && !selectedManhuaProposal ? (
+                        <div role="status" aria-live="polite" className="mt-3 rounded-xl border border-[#8cefff]/20 bg-[rgba(140,239,255,0.07)] px-3 py-2.5 text-xs text-[#c9c0e6]">
+                          <div className="font-semibold">待审模板 · {liveManhuaProposal.titleZh}</div>
+                          <div className="mt-1">{liveManhuaProposal.reference ? `第 ${liveManhuaProposal.reference.episodeIndex} 集 · ` : ""}
+                            {liveManhuaProposal.totalSegments ? `${liveManhuaProposal.completedSegments}/${liveManhuaProposal.totalSegments} 段已保存` : "正在准备分片"}
+                          </div>
+                          <div className="mt-1 text-[#c9c0e6]/70">{liveManhuaProposal.detailZh}</div>
+                          <div className="mt-1 text-[#c9c0e6]/60">分片保存后自动显示学习内容；整形完成后可批准。</div>
+                        </div>
+                      ) : null}
                       {pendingManhuaViralProposals.length > 0 && selectedManhuaProposal ? (
                         <div className="mt-3 rounded-xl border border-[#8cefff]/20 bg-[rgba(140,239,255,0.07)] px-3 py-2.5 text-[10px] text-[#c9c0e6]/70">
                           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">

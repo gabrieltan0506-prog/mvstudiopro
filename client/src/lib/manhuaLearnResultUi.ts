@@ -1176,6 +1176,25 @@ export type ManhuaLearnServerJobSnapshot = {
   updatedAt?: string;
 };
 
+/** 待审区从真实任务开始展示；无卡时只显示学习状态，不伪造可批准模板。 */
+export function nativeLearnLiveProposalState(job: ManhuaLearnServerJobSnapshot | null | undefined) {
+  if (job?.input?.params?.nativeDeepReadConfirmed !== true) return null;
+  const output = job.output || {};
+  const checkpoint = output.nativePartialProposalCheckpoint as Record<string, unknown> | undefined;
+  const plan = output.nativeStoredPlan as { episodes?: Array<{ episodeIndex?: number; segments?: unknown[] }> } | undefined;
+  const episodeIndex = Number(output.currentEpisodeIndex || checkpoint?.episodeIndex || plan?.episodes?.[0]?.episodeIndex) || 0;
+  const episode = plan?.episodes?.find(row => row.episodeIndex === episodeIndex);
+  const currentCheckpoint = Number(checkpoint?.episodeIndex) === episodeIndex ? checkpoint : undefined;
+  const totalSegments = Math.max(0, Number(currentCheckpoint?.totalSegments) || episode?.segments?.length || 0);
+  const completedSegments = Math.min(totalSegments, Math.max(0, Number(currentCheckpoint?.completedSegments) || 0));
+  const seriesKey = String(output.nativeSeriesKey || output.seriesKey || "");
+  const reference = /^[0-9A-Za-z_-]{1,40}$/.test(seriesKey) && Number.isInteger(episodeIndex) && episodeIndex >= 1 && episodeIndex <= 999
+    ? { seriesKey, episodeIndex } : undefined;
+  return { jobId: job.jobId, status: job.status, reference, completedSegments, totalSegments,
+    titleZh: String(job.input?.params?.title || "本次影片"),
+    detailZh: String(output.analysisStageLabel || (job.status === "queued" ? "已入队，正在准备学习" : "正在解析学习计划")) };
+}
+
 /**
  * 轮询后找焦点项（0917 用户实测：面板停在「已入队」不动）。
  * 服务端起跑后会把临时 key 换成真实 seriesKey，basket 项原位升级、焦点 key 却还是旧值，

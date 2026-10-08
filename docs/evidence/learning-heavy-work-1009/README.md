@@ -27,3 +27,9 @@
 新代码真实工作机探针等该任务结束且全库无在途任务后执行。scripts/probe-learning-heavy-work-1009.mts调用正式executeHeavyMedia与真实GCS完整性校验，仅只读，不提交模型/截图/报告产物。尚未执行；首次命令传参超长没有运行探针。
 
 真实Neon SSI双请求、Production双页面/复制/刷新、迁移后逐帧进度/截图及带图报告均尚未线上验收。PGlite、模拟测试和构建不替代这些证据。用户本人合并；本轮学习结束前不合并、不部署、不取消或重提交，不新增付费调用。
+
+## 待审模板即时更新追加
+
+用户要求学习一开始显示待审区，每个分片有数据时自动更新，不依赖刷新。UI从真实本人job显示准备/0/N/已保存X/N状态，不创建空的可批准模板；实际卡保存后读取本集内容。listProposals新增可选seriesKey+episodeIndex，仍走现有owner/监管权限，精确读取一张卡的轻量行；五秒自动刷新及检查点变化立即重拉，详情随卡版本更新。无参历史列表仍支持，其他网页来源不会并入当前进度，GLM请求链不变。
+
+新增状态验证3项通过（入队无卡、0/9→7/9、下一集不继承上一集进度）；路由/权限/旧调用与UI接线61项通过；完整类型检查退出0；前端Vite构建22.63秒通过。原始日志 `/tmp/learning-realtime-proposal-tests.log`、`/tmp/learning-realtime-proposal-route-tests.log`、`/tmp/learning-realtime-proposal-build.log`、`/tmp/learning-realtime-vite-build.log`。真实Production不刷新自动出现与持续更新仍尚未线上验收。
