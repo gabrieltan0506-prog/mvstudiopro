@@ -7350,7 +7350,8 @@ async function executeNativeDeepReadBatch(
       };
       const structuredEpisodeRaw = async (): Promise<Record<string, unknown>> => {
         // 1007 用户指定：不足十片双路均分，每路最多五片；超过十片的尾组同样均分。
-        // 两个固定 worker 分别由 OpenRouter / EvoLink 首发，谁先返回谁立即领取下一批，不等另一边。
+        // 1009 用户确认：20片内最多四批，两条路由各承接两批，同路第二批错开4秒。
+        // 超过20片仍沿两worker动态领取；历史付费批次分组保留。
         const allSegmentIndexes = episode.segments.map((_, index) => index);
         let groups = nativeDeepReadStructuringGroups(segmentCount);
         const legacyGroups = legacyNativeDeepReadStructuringGroups(segmentCount);
@@ -7403,11 +7404,22 @@ async function executeNativeDeepReadBatch(
         }
 
         const groupRows: Record<string, unknown>[] = new Array(groups.length);
+        const fourBatchDispatch = segmentCount <= 20 && groups.length > 2
+          && structuringGatewayPolicy === "structuring_chain";
+        const laneCount = Math.min(fourBatchDispatch ? 4 : 2, groups.length);
+        const routeFirstLaunch = Array.from({ length: 2 }, () => {
+          let release!: () => void;
+          const promise = new Promise<void>(resolve => { release = resolve; });
+          return { promise, release };
+        });
         let nextGroupIndex = 0;
         let stopDispatch = false;
         const runStructuringLane = async (laneOrdinal: number): Promise<void> => {
+          const routeOrdinal = fourBatchDispatch ? Math.floor(laneOrdinal / 2) : laneOrdinal;
+          const secondOnRoute = fourBatchDispatch && laneOrdinal % 2 === 1;
+          let staggered = false;
           while (!stopDispatch) {
-            // JS 同步取号；任何 await 之前先占住批次，两个 worker 不会领取同一组。
+            // await之前占住批次；四路启动时按原顺序保留各自的片号。
             const groupIndex = nextGroupIndex;
             nextGroupIndex += 1;
             if (groupIndex >= groups.length) return;
@@ -7433,8 +7445,8 @@ async function executeNativeDeepReadBatch(
               rows: groupInputs,
               fallbackRows: groupCanonicalRows,
               labelZh: `第${episode.episodeIndex}集第${segmentIndexes[0]! + 1}—${segmentIndexes.at(-1)! + 1}片批次整形`,
-              // 路由归属跟 worker 固定，而非跟批次编号轮换：先返回的路继续领下一批。
-              batchOrdinal: laneOrdinal,
+              // 四批首发顺序为OR、OR、Evo、Evo；fallback仍由原网关链处理。
+              batchOrdinal: routeOrdinal,
             };
             try {
               groupRows[groupIndex] = await withStructuringDispatchRetry(batchInput, async (dispatchRetry) => {
@@ -7443,7 +7455,20 @@ async function executeNativeDeepReadBatch(
                   groupInputs,
                   `整形批次 ${segmentIndexes.join(",")} `,
                 );
-                if (cached) return cached;
+                if (cached) {
+                  if (!secondOnRoute) routeFirstLaunch[routeOrdinal]?.release();
+                  return cached;
+                }
+                if (secondOnRoute && !staggered) {
+                  await routeFirstLaunch[routeOrdinal]!.promise;
+                  params.abortSignal?.throwIfAborted();
+                  if (stopDispatch) throw new Error("同批整形已停止派发，未发出错峰请求");
+                  await deps.waitForRetry(4_000, params.abortSignal);
+                  params.abortSignal?.throwIfAborted();
+                  if (stopDispatch) throw new Error("同批整形已停止派发，未发出错峰请求");
+                  staggered = true;
+                }
+                if (!secondOnRoute) routeFirstLaunch[routeOrdinal]?.release();
                 return structureBatchWithLockRetry({
                   ...batchInput,
                   dispatchRetry,
@@ -7453,12 +7478,13 @@ async function executeNativeDeepReadBatch(
             } catch (error) {
               // 只有补发三次仍失败或遇到不可重试错误才停派；另一条已在途调用继续收口。
               stopDispatch = true;
+              routeFirstLaunch[routeOrdinal]?.release();
               throw error;
             }
           }
         };
         const laneOutcomes = await Promise.allSettled(Array.from(
-          { length: Math.min(2, groups.length) },
+          { length: laneCount },
           (_, laneOrdinal) => runStructuringLane(laneOrdinal),
         ));
         const failedLane = laneOutcomes.find((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
