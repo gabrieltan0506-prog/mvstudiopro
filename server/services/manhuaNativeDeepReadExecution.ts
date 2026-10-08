@@ -305,7 +305,7 @@ function createSegmentFrameCollector(episode: NativeDeepReadEpisodeExecution, de
             } });
           await retain(captured);
         }
-        const frames = [...found.values()].sort((a, b) => a.atSec - b.atSec);
+        const frames = Array.from(found.values()).sort((a, b) => a.atSec - b.atSec);
         bySegment.set(segment.segmentIndex, frames);
         // 部分成功也落盘，下一轮仅补缺图；索引保存失败不得标记完成。
         if (frames.length) await deps.writeFrameManifest?.(objectName, frames);
@@ -321,7 +321,7 @@ function createSegmentFrameCollector(episode: NativeDeepReadEpisodeExecution, de
         lastError = describeManhuaSourceFetchFailure(error);
       }
     }
-    bySegment.set(segment.segmentIndex, [...found.values()].sort((a, b) => a.atSec - b.atSec));
+    bySegment.set(segment.segmentIndex, Array.from(found.values()).sort((a, b) => a.atSec - b.atSec));
     await progress(`${label} · ${required ? "截图补齐失败，已阻止整形" : "截图未齐，整形前将再次补截"} · ${lastError}`);
     if (required) throw frameEvidenceError(`第${segment.segmentIndex + 1}片首试及5次重试后仍未完成：${lastError}`);
     console.warn(`[nativeDeepRead] 第${segment.segmentIndex + 1}片截图待补，保留分析，整形前必须补齐：${lastError}`);
