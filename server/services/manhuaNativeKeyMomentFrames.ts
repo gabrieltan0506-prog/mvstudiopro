@@ -202,7 +202,7 @@ async function mapConcurrent<T, R>(
 }
 
 /**
- * 正式卡关键时刻抽帧。任一帧双策略失败或上传失败都只省略该行，不阻断卡片入库。
+ * 正式关键时刻抽帧；返回实际成功帧，协调器负责缺图重试和整形前强门禁。
  */
 export async function extractNativeKeyMomentEvidenceFrames(input: {
   seriesKey: string;
@@ -212,11 +212,15 @@ export async function extractNativeKeyMomentEvidenceFrames(input: {
   preparedSegments?: readonly { gsUri: string; startSec: number; endSec: number }[];
   localVideoUpload?: NonNullable<ReturnType<typeof parseManhuaLocalVideoSourceRef>>;
   keyMoments?: readonly NativeDeepReadKeyMoment[];
+  onFrameUploaded?: (frame: ManhuaViralTemplateEvidenceFrame) => void | Promise<void>;
+  onFrameFailure?: (failure: { stage: string; reason: string; atSec?: number }) => void;
   abortSignal?: AbortSignal;
 }, deps: NativeKeyMomentFrameDeps = defaultDeps): Promise<ManhuaViralTemplateEvidenceFrame[]> {
-  const warn = (stage: string, error?: unknown, atSec?: number) => console.warn(
-    `[nativeKeyMomentFrames] ep=${input.episodeIndex} stage=${stage}${atSec == null ? "" : ` atSec=${atSec}`} reason=${describeNativeFrameFailure(error)}`,
-  );
+  const warn = (stage: string, error?: unknown, atSec?: number) => {
+    const reason = describeNativeFrameFailure(error);
+    console.warn(`[nativeKeyMomentFrames] ep=${input.episodeIndex} stage=${stage}${atSec == null ? "" : ` atSec=${atSec}`} reason=${reason}`);
+    try { input.onFrameFailure?.({ stage, reason, atSec }); } catch { /* 进度异常不丢失截图 */ }
+  };
   const moments = mergeNativeKeyMomentsBySecond(input.keyMoments || []);
   if (!moments.length) return [];
   let node = input.mediaNodes.find((candidate) => /^https?:\/\//i.test(String(candidate?.url || "")));
@@ -311,13 +315,16 @@ export async function extractNativeKeyMomentEvidenceFrames(input: {
         warn("upload", error, moment.atSec);
         return undefined;
       }
-      return {
+      const frame = {
         ...moment,
         objectName,
         mimeType: "image/jpeg" as const,
         bytes: buffer.byteLength,
         sha256,
       };
+      try { await input.onFrameUploaded?.(frame); }
+      catch (error) { warn("progress", error, moment.atSec); }
+      return frame;
     });
     return rows.filter((row): row is ManhuaViralTemplateEvidenceFrame => Boolean(row));
   } finally {

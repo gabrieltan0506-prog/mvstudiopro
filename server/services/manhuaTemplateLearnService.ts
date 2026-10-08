@@ -107,6 +107,7 @@ import {
   extractRemoteManhuaAudio,
   extractRemoteManhuaDenseFrames,
   probeRemoteManhuaMediaDecodability,
+  classifyRemoteFfmpegFailure,
   type ManhuaRemoteMediaSource,
 } from "./manhuaRemoteMediaSampler.js";
 import {
@@ -809,8 +810,9 @@ async function ffprobeRemoteMedia(url: string, referer = DOUYIN_PLAYBACK_REFERER
       ],
       { timeout: 20_000 },
     ));
-  } catch {
-    throw new Error("播放地址探测失败（超时或节点拒绝）");
+  } catch (error) {
+    const stderr = error && typeof error === "object" && "stderr" in error ? error.stderr : "";
+    throw new Error(classifyRemoteFfmpegFailure(stderr, "播放地址探测失败（超时或节点拒绝）"));
   }
   let parsed: { format?: { duration?: string }; streams?: Array<{ codec_type?: string }> };
   try {
@@ -865,6 +867,7 @@ async function probeEpisodeDurationWithSourceFailover(
   ep: ListedEpisode,
   state: EpisodeSourceState,
 ): Promise<number> {
+  let dnsFailed = false;
   const source = episodeDownloadSource(ep, state);
   if (!source.viaPlayback) {
     if (
@@ -884,6 +887,7 @@ async function probeEpisodeDurationWithSourceFailover(
       state.triedStreamUrls = [source.url];
       return durationSec;
     } catch (error) {
+      dnsFailed ||= error instanceof Error && error.message === "媒体域名暂时无法解析";
       console.warn(
         "[manhuaTemplateLearn] playback probe failed, refreshing detail:",
         ep.index,
@@ -907,7 +911,8 @@ async function probeEpisodeDurationWithSourceFailover(
         fallbackUrls[index]!,
       ]));
       return durationSec;
-    } catch {
+    } catch (error) {
+      dnsFailed ||= error instanceof Error && error.message === "媒体域名暂时无法解析";
       console.warn(
         "[manhuaTemplateLearn] refreshed playback probe failed, trying next:",
         ep.index,
@@ -916,6 +921,9 @@ async function probeEpisodeDurationWithSourceFailover(
     }
   }
   state.playbackDead = true;
+  if (dnsFailed) {
+    throw new Error("媒体域名暂时无法解析，未启动语音与高密度抽帧；已暂跳该集");
+  }
   if (state.playbackRefreshError) {
     throw new Error(`第三方媒体流不可用：${state.playbackRefreshError}`);
   }
@@ -2109,6 +2117,7 @@ export async function runManhuaTemplateLearn(
       readModel: input.nativeReadModel, structuringModel: input.nativeStructuringModel,
       segmentSeconds: source.segmentSeconds, episodes: [episode], abortSignal: input.abortSignal,
       onModelCheckpoint: input.onNativeModelReceipt,
+      onMediaProgressZh: async zh => { await input.onProgress?.(MANHUA_LEARN_STAGE.vision, zh); },
       onProgress: async outcome => {
         if (outcome.usage) {
           nativeUsage = mergeManhuaNativeDeepReadUsage(nativeUsage, { ...outcome.usage, elapsedMs: outcome.elapsedMs });

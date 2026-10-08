@@ -28,3 +28,16 @@ describe("manhua remote media failure classification", () => {
     )).toBe("媒体地址已失效");
   });
 });
+
+// The incident returned valid header metadata before a DNS failure in decoding.
+describe("media DNS regression", () => {
+  it.each([
+    "[tcp] Failed to resolve hostname cdn.example: Name or service not known",
+    "Temporary failure in name resolution",
+    "getaddrinfo ENOTFOUND cdn.example",
+    "getaddrinfo EAI_AGAIN cdn.example",
+  ])("preserves DNS classification without exposing signed input: %s", detail => {
+    expect(classifyRemoteFfmpegFailure(detail + " https://cdn.example/a?token=TEST_ONLY", "媒体数据体损坏或不可解码"))
+      .toBe("媒体域名暂时无法解析");
+  });
+});

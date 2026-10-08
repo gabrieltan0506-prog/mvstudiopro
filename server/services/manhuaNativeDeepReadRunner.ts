@@ -474,8 +474,8 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = deepFreezeNativeContract({
 
 /** 兼容旧诊断导出；0906 起任一必需证据缺陷即拒收，不再凑满三项。 */
 export const NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES = 1;
-/** 0920 用户令「百分之十五放寬到百分之二十」：数值偏差最多 20%。只进门禁判定，不进提示词。 */
-export const NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO = 0.20;
+/** 1008 用户明确要求：数值容差20%→30%；不改模型提示词、采样或覆盖目标。 */
+export const NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO = 0.30;
 /**
  * 提示词/schema 里「story 至少 N 条」「平均镜长 ≤ M 秒」的参考值仍按 10% 算：这段文字进段缓存指纹，
  * 改它＝全部已付费分片失配重买。门禁放宽只改判定线（15%），提示词照旧。
@@ -1693,7 +1693,8 @@ export function nativeDeepReadFrozenContractSha256(): string {
 // 覆盖线保持 90%（用户原话「覆蓋率要百分之九十這條不變，不要求到百分之百」）。
 // 0920 追加解冻（用户原话「重試改成間隔三十秒，不要六十秒了」）：降温重试间隔 60→30 秒；
 // 历史已付费分片按 legacyBefore0920 复原旧 60 秒身份（实测叠旗标后指纹逐位相同）。
-export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "4e7ee4fe001e912931c03b8738e759af6c062c59afd4f4e01b8868eefa529656" as const;
+// 1008 用户当轮授权只放宽门禁容差20%→30%；请求参数与提示词不变。
+export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "0c5fb32380caa654dde34ae18cc0fd3eb23bfce5b2374097c02905412e00dbd6" as const;
 
 export function assertNativeDeepReadFrozenContract(): void {
   const actual = nativeDeepReadFrozenContractSha256();
@@ -5237,6 +5238,8 @@ export type NativeDeepReadBatchRunParams = {
     sourceDigest?: string;
     preparedVideos: readonly PreparedNativeVideo[];
   }) => void | Promise<void>;
+  /** 正式入口强制截图门禁：使用最终整形输入，含重试合稿及补扫新增时刻。 */
+  beforeStructuring?: (input: { segments: Array<Parameters<NonNullable<NativeDeepReadBatchRunParams["onSegmentRead"]>>[0]> }) => Promise<void>;
   onModelReceipt?: (receipt: NativeDeepReadVisualModelReceipt) => void | Promise<void>;
   /** 传入即启用段级恢复与永久证据；生产 execution 和单集入口都必须传稳定 seriesKey。 */
   segmentCacheSeriesKey?: string;
@@ -5338,6 +5341,7 @@ async function executeNativeDeepReadBatch(
     cachedSegments: Map<number, NativeDeepReadSegmentCacheEntry>;
   }> = [];
   const episodes: NativeDeepReadBatchRunResult["episodes"] = [];
+  const frameEvidenceComplete = new Set<number>();
   try {
     for (const episode of validated) {
       const cachedSegments = new Map<number, NativeDeepReadSegmentCacheEntry>();
@@ -6012,11 +6016,6 @@ async function executeNativeDeepReadBatch(
             );
             throw enriched;
           }
-          if (!selectedSegmentIndexes) await params.onSegmentRead?.({
-            episodeIndex: episode.episodeIndex, segmentIndex: input.segmentIndex,
-            raw, sourceDigest: episode.cacheSourceDigest,
-            preparedVideos: videosBySegment.has(input.segmentIndex) ? [videosBySegment.get(input.segmentIndex)!] : [],
-          });
           // 解析原稿先永久落盘，再跑schema/覆盖/长镜门禁或添加标记；拒收不是删除付费证据的理由。
           if (params.segmentCacheSeriesKey && episode.cacheSourceDigest) {
             try {
@@ -6062,6 +6061,11 @@ async function executeNativeDeepReadBatch(
               throw failure;
             }
           }
+          if (!selectedSegmentIndexes) await params.onSegmentRead?.({
+            episodeIndex: episode.episodeIndex, segmentIndex: input.segmentIndex,
+            raw, sourceDigest: episode.cacheSourceDigest,
+            preparedVideos: videosBySegment.has(input.segmentIndex) ? [videosBySegment.get(input.segmentIndex)!] : [],
+          });
           let gated: ReturnType<typeof assertNativeDeepReadSegmentDensity>;
           try {
             const decision = evaluateNativeDeepReadSegmentAcceptance({
@@ -6820,6 +6824,12 @@ async function executeNativeDeepReadBatch(
         );
       }
 
+      // 截图与品质门禁分开；补齐最终 keyMoments 后才允许任何整形调用/缓存消费。
+      await params.beforeStructuring?.({ segments: completeRawSegments.map((raw, segmentIndex) => ({
+        episodeIndex: episode.episodeIndex, segmentIndex, raw, sourceDigest: episode.cacheSourceDigest,
+        preparedVideos: videosBySegment.has(segmentIndex) ? [videosBySegment.get(segmentIndex)!] : [],
+      })) });
+      frameEvidenceComplete.add(episode.episodeIndex);
       const glmStructuringInputs = completeRawSegments;
 
       // 段卡合并成集卡：0829 起**每集一律走 GLM 5.3 结构化整形**（去重 + 结构化），
@@ -7705,7 +7715,8 @@ async function executeNativeDeepReadBatch(
   } finally {
     const cleanupTargets = params.preservePreparedVideos
       ? []
-      : preparedByEpisode.flatMap((row) => row.videos);
+      : preparedByEpisode.filter(row => !params.beforeStructuring || frameEvidenceComplete.has(row.episode.episodeIndex))
+        .flatMap((row) => row.videos);
     const cleanupResults = await Promise.allSettled(
       cleanupTargets.map((video) => deps.remove(video.temporaryGcs)),
     );
@@ -7844,6 +7855,7 @@ export async function runManhuaNativeDeepRead(params: {
    * 走这条路的调用方（含验收探针）一条回执都拿不到，只能去翻 result 里的私有字段。
    */
   onSegmentRead?: NativeDeepReadBatchRunParams["onSegmentRead"];
+  beforeStructuring?: NativeDeepReadBatchRunParams["beforeStructuring"];
   onModelReceipt?: (receipt: NativeDeepReadVisualModelReceipt) => void | Promise<void>;
 }, deps: NativeDeepReadBatchRunnerDeps = defaultBatchRunnerDeps): Promise<NativeDeepReadRunResult> {
   const duration = Number(params.sourceDurationSec);
@@ -7866,6 +7878,7 @@ export async function runManhuaNativeDeepRead(params: {
     preservePreparedVideos: params.preservePreparedVideos,
     onModelReceipt: params.onModelReceipt,
     onSegmentRead: params.onSegmentRead,
+    beforeStructuring: params.beforeStructuring,
     // 并发上限必须一路转发——单集入口不转发＝探针设了也不生效（空壳参数）。
     mediaCutConcurrency: params.mediaCutConcurrency,
     mediaUploadConcurrency: params.mediaUploadConcurrency,

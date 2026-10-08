@@ -101,6 +101,12 @@ RUN NODE_OPTIONS=--max-old-space-size=4096 pnpm build \
  && mkdir -p server/_core/public \
  && cp -R client/dist/. server/_core/public/
 
+# Install only the resolver binary (no system service / DHCP daemon).
+# Keep the large Blender and base-media layers reusable for this hotfix.
+RUN apt-get update \
+ && apt-get install --no-install-recommends -y dnsmasq-base \
+ && rm -rf /var/lib/apt/lists/*
+
 EXPOSE 3000
 
 # Fly / 容器內必須監聽 0.0.0.0；PORT 與 fly.toml internal_port / 健康檢查一致

@@ -45,6 +45,9 @@ function remoteInputArgs(source: ManhuaRemoteMediaSource, startSec: number): str
 
 export function classifyRemoteFfmpegFailure(stderr: unknown, fallbackZh: string): string {
   const detail = String(stderr || "").toLowerCase();
+  if (/failed to resolve hostname|name or service not known|temporary failure in name resolution|nodename nor servname|enotfound|eai_again/.test(detail)) {
+    return "媒体域名暂时无法解析";
+  }
   if (/server returned 403|http error 403|error 403/.test(detail)) {
     return "媒体节点拒绝访问";
   }
