@@ -11,6 +11,7 @@ import { epubAttribute, readEpubPackage } from "../../shared/epubPackage";
 import { requireHeavyMediaContext } from "../jobs/heavyMediaContext";
 import { resolveJobWorkerRole } from "../jobs/workerRole";
 import { getGcsBucketName, inspectGcsObjectBounded, uploadBufferToGcsIfAbsent } from "./gcs";
+import { readConversionSource, saveConversionObject } from "./fileConversionStorage";
 import { execHeavyMedia } from "./heavyMediaProcess";
 import { buildEpubPrintHtml, parseEpub, splitEpubChaptersIntoShards } from "./knowledgeCardEpubToPdf";
 
@@ -166,7 +167,8 @@ export async function executeFileConversion(request: FileConversionRequest, sign
   const dir = await mkdtemp(path.join(tmpdir(), "file-conversion-"));
   try {
     const chunks: Buffer[] = [];
-    const checked = await (io.read || inspectGcsObjectBounded)({ gcsUri: `gs://${getGcsBucketName()}/${request.source.objectName}`, generation: request.source.generation,
+    const readSource: typeof inspectGcsObjectBounded = io.read || (options => readConversionSource(owner.userId, request.source, options));
+    const checked = await readSource({ gcsUri: `gs://${getGcsBucketName()}/${request.source.objectName}`, generation: request.source.generation,
       maxBytes: request.lane === "free" ? FILE_CONVERSION_FREE_MAX_BYTES : conversionMemoryBudget(), signal, onChunk: chunk => chunks.push(Buffer.from(chunk)) });
     if ((request.source.sha256 && checked.sha256 !== request.source.sha256) || checked.byteLength !== request.source.bytes) reject("原文件内容或大小已变化，请重新选择；本次未转换、未扣积分");
     await io.onSource?.(checked.sha256);
@@ -255,10 +257,11 @@ export async function executeFileConversion(request: FileConversionRequest, sign
     io.onStage?.("converted", { bytes: output.length });
     const outputSha = sha(output);
     const objectName = `file-conversion/u${owner.userId}/results/${owner.executionId}/${outputSha}.${format.to}`;
-    await (io.save || uploadBufferToGcsIfAbsent)({ objectName, buffer: output, contentType: mimeFor(format.to), signal,
-      metadata: { userId: owner.userId, sourceSha256: checked.sha256, sha256: outputSha } });
+    const saved = io.save ? (await io.save({ objectName, buffer: output, contentType: mimeFor(format.to), signal,
+      metadata: { userId: owner.userId, sourceSha256: checked.sha256, sha256: outputSha } }), { storage: "gcs" as const })
+      : await saveConversionObject({ userId: owner.userId, taskId: owner.executionId, objectName }, output, mimeFor(format.to), signal);
     io.onStage?.("saved", { bytes: output.length });
-    return { type: "converted", objectName, fileName: request.source.fileName.replace(/\.[^.]+$/, "") + "." + format.to,
+    return { type: "converted", storage: saved.storage, objectName, fileName: request.source.fileName.replace(/\.[^.]+$/, "") + "." + format.to,
       mimeType: mimeFor(format.to), bytes: output.length, sha256: outputSha, sourceSha256: checked.sha256, credits: billing.credits!, ...(needsOcr ? { notice: "扫描文字识别稿：已保留低置信度文字并标注待核；复杂多栏阅读顺序、专名和错字请对照原件校对，不代表原版式Word。" } : {}) };
   } catch (error) {
     signal.throwIfAborted();

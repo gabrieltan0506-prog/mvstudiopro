@@ -6,6 +6,7 @@ import "dotenv/config";
 import { resolveJobWorkerRole } from "../jobs/workerRole.js";
 // 必须在任何图像处理模块之前载入：全局限制 sharp/libvips 内存（0911 OOM 事故）
 import "./sharpLimits.js";
+import { registerFileConversionTransfer } from "../routers/fileConversionTransfer";
 import { registerGcsTransfer } from "../routers/gcsTransfer";
 import { registerArtMotionEvidence } from "../services/artMotionEvidence";
 import express from "express";
@@ -256,6 +257,7 @@ async function startServer() {
     }
     next();
   });
+  registerFileConversionTransfer(app);
   registerGcsTransfer(app);
   registerArtMotionEvidence(app);
   registerManhuaStageWorldBridge(app);

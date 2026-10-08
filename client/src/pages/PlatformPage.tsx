@@ -12914,7 +12914,7 @@ export default function PlatformPage() {
       && Date.now() - new Date(job.updatedAt || 0).getTime() < 30 * 60_000;
     if (!focusedActive && !focusedFailedRecently && runningCount + queuedCount === 0) return null;
     const output = (job?.output ?? {}) as Record<string, unknown>;
-    const partial = (output.nativePartialProposalCheckpoint ?? null) as Record<string, unknown> | null;
+    const reading = nativeLearnLiveProposalState(job);
     // 焦点任务之外还有别的剧在跑/排队时才报全局数，避免同一任务被数两遍
     const othersRunning = runningCount - (job?.status === "running" ? 1 : 0);
     const othersQueued = queuedCount - (job?.status === "queued" ? 1 : 0);
@@ -12925,8 +12925,8 @@ export default function PlatformPage() {
             <span className={job.status === "running" ? "font-bold text-emerald-200" : job.status === "failed" ? "font-bold text-rose-300" : "font-bold text-amber-200"}>
               {job.status === "running" ? "运行中" : job.status === "failed" ? "刚失败" : "排队中"}
             </span>
-            {partial
-              ? ` · 第${Number(partial.episodeIndex) || 1}集 · ${Number(partial.completedSegments) || 0}/${Number(partial.totalSegments) || 0} 片`
+            {reading && reading.totalSegments > 0
+              ? ` · 第${reading.reference?.episodeIndex || Number(output.currentEpisodeIndex) || 1}集 · ${reading.readCompletedSegments}/${reading.totalSegments} 片门禁通过`
               : ""}
             {job.status === "failed" && job.error ? ` · 死因：${String(job.error).slice(0, 90)}` : ""}
           </>
@@ -15068,10 +15068,10 @@ export default function PlatformPage() {
                         <div role="status" aria-live="polite" className="mt-3 rounded-xl border border-[#8cefff]/20 bg-[rgba(140,239,255,0.07)] px-3 py-2.5 text-xs text-[#c9c0e6]">
                           <div className="font-semibold">待审模板 · {liveManhuaProposal.titleZh}</div>
                           <div className="mt-1">{liveManhuaProposal.reference ? `第 ${liveManhuaProposal.reference.episodeIndex} 集 · ` : ""}
-                            {liveManhuaProposal.totalSegments ? `${liveManhuaProposal.completedSegments}/${liveManhuaProposal.totalSegments} 段已保存` : "正在准备分片"}
+                            {liveManhuaProposal.totalSegments ? `${liveManhuaProposal.readCompletedSegments}/${liveManhuaProposal.totalSegments} 片门禁通过` : "正在准备分片"}
                           </div>
                           <div className="mt-1 text-[#c9c0e6]/70">{liveManhuaProposal.detailZh}</div>
-                          <div className="mt-1 text-[#c9c0e6]/60">分片保存后自动显示学习内容；整形完成后可批准。</div>
+                          <div className="mt-1 text-[#c9c0e6]/60">每片门禁通过即更新进度；整形完成后可批准。</div>
                         </div>
                       ) : null}
                       {pendingManhuaViralProposals.length > 0 && selectedManhuaProposal ? (

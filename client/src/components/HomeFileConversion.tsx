@@ -2,10 +2,10 @@ import { useState } from "react";
 import { Download, FileInput, Loader2 } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
-import { gcsTransferUrl } from "@/lib/gcsTransfer";
+import { flyDownloadUrl } from "@/lib/gcsTransfer";
 import { FILE_CONVERSION_FREE_MAX_BYTES, type FileConversionLane, FILE_CONVERSION_FORMATS, fileConversionFormat, validateConversionFile } from "@shared/fileConversion";
 
-const stateLabels: Record<string, string> = { queued: "排队中", running: "处理中", succeeded: "处理结束", failed: "未完成", refund_pending: "退款处理中" };
+const stateLabels: Record<string, string> = { queued: "排队中", running: "处理中", succeeded: "处理结束", failed: "未完成", receipt_pending: "结果保存待恢复", refund_pending: "退款处理中" };
 export default function HomeFileConversion() {
   const { user } = useAuth();
   const [lane, setLane] = useState<FileConversionLane>("free");
@@ -15,8 +15,8 @@ export default function HomeFileConversion() {
   const [message, setMessage] = useState("");
   const catalog = trpc.fileConversion.formats.useQuery(undefined, { enabled: !!user, retry: false });
   const history = trpc.fileConversion.history.useQuery(undefined, { enabled: !!user, retry: false,
-    refetchInterval: query => query.state.data?.some(item => ["queued", "running", "refund_pending"].includes(item.status)) ? 3000 : false });
-  const quota = trpc.fileConversion.quota.useQuery(undefined, { enabled: !!user, retry: false, refetchInterval: history.data?.some(item => ["queued", "running", "refund_pending"].includes(item.status)) ? 3000 : false });
+    refetchInterval: query => query.state.data?.some(item => ["queued", "running", "receipt_pending", "refund_pending"].includes(item.status)) ? 3000 : false });
+  const quota = trpc.fileConversion.quota.useQuery(undefined, { enabled: !!user, retry: false, refetchInterval: history.data?.some(item => ["queued", "running", "receipt_pending", "refund_pending"].includes(item.status)) ? 3000 : false });
   const upload = trpc.fileConversion.upload.useMutation();
   const inspect = trpc.fileConversion.inspect.useMutation();
   const convert = trpc.fileConversion.convert.useMutation();
@@ -36,7 +36,7 @@ export default function HomeFileConversion() {
     validateConversionFile(formatId, selected.name, selected.size);
     if (lane === "free" && selected.size > FILE_CONVERSION_FREE_MAX_BYTES) throw new Error("免费转换每个原文件最多 3 MB，请选择付费转换。");
     const receipt = await upload.mutateAsync({ fileName: selected.name, bytes: selected.size, formatId, lane });
-    const response = await fetch(gcsTransferUrl(receipt.uploadUrl), { method: "PUT", credentials: "include", headers: { "Content-Type": "application/octet-stream", ...receipt.requiredHeaders }, body: selected });
+    const response = await fetch(flyDownloadUrl(receipt.uploadUrl), { method: "PUT", credentials: "include", headers: { "Content-Type": "application/octet-stream", ...receipt.requiredHeaders }, body: selected });
     if (!response.ok) throw new Error("文件上传未完成，请重试上传；未扣积分。");
     await inspect.mutateAsync({ objectName: receipt.objectName, fileName: selected.name, bytes: selected.size, formatId, lane });
     setMessage("已提交文件检查。检查后会显示本次内容与费用，点击转换才开始生成文件。");
@@ -77,10 +77,10 @@ export default function HomeFileConversion() {
             <p className="mt-1 text-xs text-white/50">{fileConversionFormat(item.formatId).label} · {item.lane === "free" ? "免费" : "付费"} · {item.phase === "inspect" ? "文件检查" : "文件转换"}</p>
             {waiting && <p className="mt-2 text-xs text-indigo-200">{item.lane === "free" ? `前方等待 ${item.ahead} 人` : "独立付费通道 · 等待可用处理资源"}</p>}
             {result?.type === "inspection" && <><p className="mt-3 text-sm leading-6 text-white/70">{result.notice}</p><p className="mt-2 text-xs text-white/50">原文件 {(result.source.bytes / 1_000_000).toFixed(2)} MB · {result.billing.credits === null ? "费率尚未开放" : `${result.billing.needsOcr ? `${result.billing.billableMb} MB 计费量 · ` : ""}本次转换 ${result.billing.credits} 积分`}</p>
-              {result.billing.available && <button disabled={busy} className="mt-3 rounded-lg bg-indigo-500 px-4 py-2 text-sm disabled:opacity-50" onClick={() => void action(async () => { await convert.mutateAsync({ id: item.id, confirmedCredits: result.billing.credits! }); setMessage("已确认所示原文件、格式与费用，转换已入队。重复点击恢复同一任务。"); })}>确认内容与费用，开始转换</button>}</>}
-            {result?.type === "converted" && <><p className="mt-3 break-all text-sm text-emerald-200">{result.fileName} · {(result.bytes / 1_000_000).toFixed(2)} MB · {result.credits} 积分</p>{result.notice && <p className="mt-2 text-xs leading-5 text-amber-200">{result.notice}</p>}<button disabled={busy} className="mt-3 inline-flex items-center gap-2 rounded-lg border border-white/20 px-4 py-2 text-sm" onClick={() => void action(async () => { const out = await download.mutateAsync({ id: item.id }); const anchor = document.createElement("a"); anchor.href = gcsTransferUrl(out.url); anchor.download = out.fileName; document.body.appendChild(anchor); anchor.click(); anchor.remove(); })}><Download className="h-4 w-4" />下载转换文件</button></>}
+              {result.billing.available && <button disabled={busy} className="mt-3 rounded-lg bg-indigo-500 px-4 py-2 text-sm disabled:opacity-50" onClick={() => void action(async () => { const receipt = await convert.mutateAsync({ id: item.id, confirmedCredits: result.billing.credits! }); setMessage(receipt.status === "queued" ? "已确认所示内容与费用，转换已入队。" : `已恢复原任务：${stateLabels[receipt.status] || receipt.status}；未重复提交转换。`); })}>确认内容与费用，开始转换</button>}</>}
+            {result?.type === "converted" && <><p className="mt-3 break-all text-sm text-emerald-200">{result.fileName} · {(result.bytes / 1_000_000).toFixed(2)} MB · {result.credits} 积分</p>{result.notice && <p className="mt-2 text-xs leading-5 text-amber-200">{result.notice}</p>}<button disabled={busy} className="mt-3 inline-flex items-center gap-2 rounded-lg border border-white/20 px-4 py-2 text-sm" onClick={() => void action(async () => { const out = await download.mutateAsync({ id: item.id }); const anchor = document.createElement("a"); anchor.href = flyDownloadUrl(out.url); anchor.download = out.fileName; document.body.appendChild(anchor); anchor.click(); anchor.remove(); })}><Download className="h-4 w-4" />下载转换文件</button></>}
             {(item.error || result?.type === "rejected") && <p className="mt-3 text-sm text-amber-200">{result?.type === "rejected" ? result.message : item.error}</p>}
-            {(waiting || result?.type === "inspection") && <button disabled={busy} className="mt-3 text-xs text-white/65 underline" onClick={() => void action(async () => { await cancel.mutateAsync({ id: item.id }); })}>{waiting ? "停止此任务" : "撤销检查并释放预留名额"}</button>}
+            {(waiting || item.status === "receipt_pending" || result?.type === "inspection") && <button disabled={busy} className="mt-3 text-xs text-white/65 underline" onClick={() => void action(async () => { await cancel.mutateAsync({ id: item.id }); })}>{waiting || item.status === "receipt_pending" ? "停止此任务" : "撤销检查并释放预留名额"}</button>}
             <details className="mt-3 text-xs text-white/40"><summary>任务编号</summary><code className="break-all">{item.id}</code></details>
           </article>;
         })}</div>

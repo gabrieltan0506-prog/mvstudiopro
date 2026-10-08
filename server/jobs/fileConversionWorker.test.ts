@@ -5,7 +5,7 @@ const m=vi.hoisted(()=>({deduct:vi.fn(),refund:vi.fn(),settle:vi.fn(),mark:vi.fn
 vi.mock("../credits",()=>({deductCreditsAmount:m.deduct,refundChargeByKey:m.refund}));
 vi.mock("./fileConversionRepository",()=>({settleFreeConversion:m.settle,markConversionSettled:m.mark}));
 vi.mock("../services/fileConversion",()=>({executeFileConversion:vi.fn()}));
-vi.mock("../services/heavyMediaEvidence",()=>({readHeavyMediaResult:vi.fn(),saveHeavyMediaResult:vi.fn()}));
+vi.mock("../services/fileConversionStorage",()=>({readConversionReceipt:vi.fn(),saveConversionReceipt:vi.fn()}));
 vi.mock("../services/postProdResources",()=>({withPostProdResources:vi.fn()}));
 import{chargeConversionJob,settleConversionJob}from"./fileConversionWorker";
 const pricing={version:"test-only",standardCredits:1,scanCreditsPerMb:1};

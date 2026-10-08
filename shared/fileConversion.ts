@@ -57,10 +57,10 @@ export function conversionBilling(bytes: number, needsOcr: boolean, lane: FileCo
     minimumScanCredits: minimum, scanRoundingCredits: increment,
     cnyPerCredit: 0.65, pricingVersion: pricing.version, available: lane === "free" ? !needsOcr : credits !== null };
 }
-export type FileConversionSource = { objectName: string; generation: string; sha256: string; bytes: number; fileName: string };
+export type FileConversionSource = { storage?: "gcs" | "website_data"; objectName: string; generation: string; sha256: string; bytes: number; fileName: string };
 export type FileConversionRequest = { kind: "file_conversion"; phase: "inspect" | "convert"; formatId: string; source: FileConversionSource; lane: FileConversionLane; day: string; ipHash?: string; quote?: { credits: number; pricingVersion: string } };
 export type FileConversionInspection = { type: "inspection"; source: FileConversionSource; formatId: string; pages: number; billing: ReturnType<typeof conversionBilling>; notice: string };
-export type FileConversionResult = { type: "converted"; objectName: string; fileName: string; mimeType: string; bytes: number; sha256: string; sourceSha256: string; credits: number; notice?: string };
+export type FileConversionResult = { storage?: "gcs" | "website_data"; type: "converted"; objectName: string; fileName: string; mimeType: string; bytes: number; sha256: string; sourceSha256: string; credits: number; notice?: string };
 export type FileConversionOutcome = FileConversionInspection | FileConversionResult | { type: "rejected"; message: string };
 export function conversionSourcePrefix(userId: string | number) { return `file-conversion/u${userId}/sources/`; }
 export function assertConversionSource(source: FileConversionSource, userId: string, formatId: string, allowUnhashed = false) {
