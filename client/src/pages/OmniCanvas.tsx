@@ -1526,6 +1526,8 @@ function OmniCanvasWorkspace() {
   const [advisor3dContext, setAdvisor3dContext] = useState<{ directionCardId?: string; directionCardVersion?: string; worldTarget?: AdvisorWorldTarget } | undefined>();
   const [advisorPreviewHost, setAdvisorPreviewHost] = useState<HTMLDivElement | null>(null);
   const [advisorDockHost, setAdvisorDockHost] = useState<HTMLDivElement | null>(null);
+  const [vfxAdvisorDockHost, setVfxAdvisorDockHost] = useState<HTMLDivElement | null>(null);
+  const effectiveAdvisorDockHost = vfxAdvisorDockHost ?? advisorDockHost;
   const [advisorPrevisClipId, setAdvisorPrevisClipId] = useState<string | null>(null);
   const [advisorPrevisRequest,setAdvisorPrevisRequest] = useState<{id:string;clipId:string;episode:number;segment:number;tool?:"scene"|"generative"}|null>(null);
   const voicePrevisReceipt = useRef<{id:string;finish:(opened:boolean,reason?:string)=>void}|null>(null);
@@ -11370,7 +11372,7 @@ async function runAdvisorWriterTrial() {
   return (
     <div
       data-manhua-theme={canvasMode === "manhua" ? "cream" : undefined}
-      data-advisor-sidebar={canvasMode === "manhua" && advisorOpen && !advisorDockHost ? "open" : undefined}
+      data-advisor-sidebar={canvasMode === "manhua" && advisorOpen && !effectiveAdvisorDockHost ? "open" : undefined}
       className={
         immersiveWorkbench
           ? "flex h-dvh flex-col overflow-hidden bg-transparent text-white"
@@ -14315,6 +14317,8 @@ async function runAdvisorWriterTrial() {
               {/* 后期工坊(蓝图二):三件套已上线,卡内只挂真实工序;按用户挂载防串单 */}
               {user?.id ? (
                 <PostProdWorkshopCard
+                  advisorOpen={advisorOpen}
+                  onVfxAdvisorDockChange={setVfxAdvisorDockHost}
                   onStudioFocus={reportPostprodStudio}
                   onOpenAdvisor={() => {setAdvisorDockHost(null);chooseAdvisorVisibility(true);}}
                   onAdvisorControl={registerAdvisorScoringControl}
@@ -14827,7 +14831,7 @@ async function runAdvisorWriterTrial() {
           if (block) { setCanvasSelectedBlockId(block.id); setFocusBlockId(block.id); }
           return JSON.stringify({episode: writerPack.episodes.find(e => e.index === target.episode), shot: block ? {id:block.id,prompt:block.prompt} : null, note:"以本集当前正文为准，不沿用之前集数的内容；未改正文。"});
         }}
-        dockHost={advisorDockHost}
+        dockHost={effectiveAdvisorDockHost}
         previewHost={advisorPreviewHost}
         studio3d={advisor3dContext}
         worldTarget={advisor3dContext?.worldTarget}

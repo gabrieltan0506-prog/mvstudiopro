@@ -5,7 +5,7 @@ import struct
 from pathlib import Path
 
 KINDS = frozenset(('sword_trail', 'impact_burst', 'particle_aura', 'shield', 'spirit',
-                   'fire_burst', 'smoke_plume', 'lightning', 'shockwave', 'speed_lines', 'magic_circle', 'image_overlay'))
+                   'fire_burst', 'smoke_plume', 'lightning', 'shockwave', 'speed_lines', 'magic_circle', 'image_overlay', 'digital_rain'))
 VERSION = 'manhua-vfx-screen-1'
 BOUNDARY = '画面坐标特效层与手动轨迹；不包含自动跟踪、人物遮挡、场景受光或物理仿真。'
 
@@ -64,7 +64,14 @@ def validate_spec(spec, asset_root=None):
     for effect in spec['effects']:
         fields=('id', 'kind', 'startSec', 'durationSec', 'color', 'scale', 'intensity', 'anchor')
         if isinstance(effect,dict) and effect.get('kind')=='image_overlay':fields+=('imageUri','imagePath')
-        keys(effect, fields)
+        keys(effect, fields, ('rain',) if isinstance(effect,dict) and effect.get('kind')=='digital_rain' else ())
+        if 'rain' in effect:
+            rain=effect['rain']
+            keys(rain, ('columns','speed','trail'))
+            for field,lo,hi in (('columns',8,36),('speed',.05,1),('trail',4,16)):
+                number(rain[field],lo,hi,'digital rain '+field)
+                if field!='speed' and not isinstance(rain[field],int):
+                    raise ValueError('Digital rain counts must be integers')
         if not isinstance(effect['id'], str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', effect['id']) or effect['id'] in seen:
             raise ValueError('Invalid or duplicate effect id')
         seen.add(effect['id'])

@@ -167,6 +167,8 @@ type PostProdWorkshopCardProps = {
   onAdvisorEffectsControl?: AdvisorEffectsRegistration;
   onStudioFocus?: (context: ManhuaAdvisorStudioContext) => void;
   onOpenAdvisor?: () => void;
+  advisorOpen?: boolean;
+  onVfxAdvisorDockChange?: (host: HTMLDivElement | null) => void;
   blocks: CanvasBlock[];
   onAdvisorControl?: AdvisorScoringRegistration;
   advisorContext?: ManhuaCreativeAdvisorContext;
@@ -225,6 +227,8 @@ export default function PostProdWorkshopCard({
   onAdvisorEffectsControl,
   onStudioFocus,
   onOpenAdvisor,
+  advisorOpen,
+  onVfxAdvisorDockChange,
   blocks,
   advisorContext,
   onAdvisorControl,
@@ -1718,12 +1722,12 @@ export default function PostProdWorkshopCard({
         </details>
       ) : null}
 
-      <div className="mt-4 grid min-w-0 gap-4 xl:grid-cols-[140px_minmax(0,1.4fr)_minmax(280px,1fr)]" data-postprod-workspace>
+      <div className={`mt-4 grid min-w-0 gap-4 ${activeTool === "vfx" ? "xl:grid-cols-[140px_minmax(0,1fr)]" : "xl:grid-cols-[140px_minmax(0,1.4fr)_minmax(280px,1fr)]"}`} data-postprod-workspace>
         <nav aria-label="后期任务" className="flex flex-wrap content-start gap-2 xl:flex-col">
           {(Object.entries(POSTPROD_TOOLS) as [PostProdTool,string][]).map(([tool,label]) => <button type="button" key={tool} aria-pressed={activeTool===tool} className={`rounded-lg border px-3 py-3 text-left text-sm ${activeTool===tool ? "border-cyan-300/50 bg-cyan-500/15 text-cyan-50" : "border-white/15 text-white/65"}`} onClick={() => {setActiveTool(tool);setPreviewResult(null);focusStudio(tool);}}>{label}</button>)}
           {onOpenAdvisor && <button type="button" className="rounded-lg border border-white/20 px-3 py-3 text-left text-xs text-cyan-100" onClick={() => {focusStudio();onOpenAdvisor();}}>与顾问讨论／语音</button>}
         </nav>
-        <section aria-label="后期当前预览" className="min-w-0 self-start rounded-xl border border-white/15 bg-black/30 p-3 xl:sticky xl:top-4">
+        <section hidden={activeTool === "vfx"} aria-label="后期当前预览" className="min-w-0 self-start rounded-xl border border-white/15 bg-black/30 p-3 xl:sticky xl:top-4">
           <h3 className="mb-3 text-sm font-semibold text-white">{previewResult ? `${previewResult.label} · 结果预览` : `${POSTPROD_TOOLS[activeTool]} · 原片预览`}</h3>
           {previewResult?.url || sourcePreview ? <video key={previewResult?.url || sourcePreview} controls playsInline preload="metadata" src={gcsTransferUrl(previewResult?.url || sourcePreview)} className="aspect-video max-h-[60vh] w-full bg-black object-contain" aria-label={previewResult ? "后期结果视频" : "后期原片视频"} /> : <p className="flex min-h-64 items-center justify-center p-4 text-center text-sm text-white/55">先在右侧选择原片{activeTool === "concat" ? "；此处预览拼接清单的第一段" : ""}。</p>}
           <p className="mt-3 text-xs text-white/55">{previewResult ? "正在查看已有任务结果，尚未替换原片。" : "正在查看本工具选中的原片；参数修改不会直接改动影片。"}</p>
@@ -1882,7 +1886,7 @@ export default function PostProdWorkshopCard({
           </div>
         </div>
 
-        <div hidden={activeTool !== "vfx"}><ManhuaVfxEditor key={vfxScopeKey} scopeKey={vfxScopeKey} onOpenAdvisor={onOpenAdvisor ? () => { focusStudio(); onOpenAdvisor(); } : undefined} onAdvisorEffectsControl={onAdvisorEffectsControl} state={vfxState} onStateChange={onVfxStateChange} clips={vfxSourceClips} imageOptions={vfxImageOptions} jobs={vfxJobs} busy={busy} onSourceChange={onVfxSourceChange} onPreview={(url, label) => setPreviewResult({ url, label })} onSubmit={input => submit(input, "漫剧特效候选", true)} /></div>
+        <div hidden={activeTool !== "vfx"}><ManhuaVfxEditor active={activeTool === "vfx"} advisorOpen={advisorOpen} onAdvisorDockChange={onVfxAdvisorDockChange} key={vfxScopeKey} scopeKey={vfxScopeKey} onOpenAdvisor={onOpenAdvisor ? () => { focusStudio(); onOpenAdvisor(); } : undefined} onAdvisorEffectsControl={onAdvisorEffectsControl} state={vfxState} onStateChange={onVfxStateChange} clips={vfxSourceClips} imageOptions={vfxImageOptions} jobs={vfxJobs} busy={busy} onSourceChange={onVfxSourceChange} onPreview={(url, label) => setPreviewResult({ url, label })} onSubmit={input => submit(input, "漫剧特效候选", true)} /></div>
         <div hidden={activeTool !== "subtitle"}><PostProdSubtitleCard effectsScopeKey={vfxScopeKey} onAdvisorEffectsControl={onAdvisorEffectsControl} onSourceChange={setSubtitleSource} key={projectScopeKey} context={advisorContext} storageKey={`${storageKey}:${projectScopeKey}:subtitle`} clips={clipOptions} busy={busy || scopedJobs.some(job => job.action === "burn_subtitle" && (job.status === "queued" || job.status === "running"))} onSubmit={async (params, label) => { return await submit({ action: "burn_subtitle", params }, label || (params.effect === "none" ? "对白字幕成片" : `对白字幕成片 · ${SUBTITLE_EFFECT_OPTIONS.find(option => option.id === params.effect)?.label ?? "字幕特效"}`),true); }} /></div>
 
         {/* BGM 贴装 */}

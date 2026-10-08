@@ -1,14 +1,21 @@
 /** Executes the production save callback; injected storage is offline evidence, not cloud acceptance. */
 import { readFileSync } from "node:fs";
+import ts from "typescript";
 import { transformSync } from "esbuild";
 import { expect, it, vi } from "vitest";
 import { manhuaVfxStateSchema, mergeManhuaVfxState, type ManhuaVfxState } from "@shared/manhuaVfx";
 
 function setup() {
   const source = readFileSync("client/src/pages/OmniCanvas.tsx", "utf8");
-  const start = source.indexOf("  const persistManhuaVfxState = useCallback(");
-  const end = source.indexOf("\n\n  const backupOperationRef", start);
-  if (start < 0 || end < 0) throw new Error("Production save callback not found");
+  // 按AST只提取真实保存回调，避免邻近新增功能被文本终点一并执行。
+  const ast = ts.createSourceFile("OmniCanvas.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let declaration: ts.VariableDeclaration | undefined;
+  const visit = (node: ts.Node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === "persistManhuaVfxState") declaration = node;
+    ts.forEachChild(node, visit);
+  };
+  visit(ast);
+  if (!declaration) throw new Error("Production save callback not found");
   const env = {
     useCallback: (fn: unknown) => fn,
     user: { id: 7 }, projectScope: { projectId: "project-a" }, vfxScopeKey: "scope-a",
@@ -25,7 +32,7 @@ function setup() {
     setManhuaVfxByScope: vi.fn(), syncCloudDraftPayload: vi.fn(async (_snapshot: unknown) => true),
     buildLocalCloudDraftSnapshot: (snapshot: unknown) => snapshot,
   };
-  const js = transformSync(source.slice(start, end), { loader: "ts", target: "es2022" }).code;
+  const js = transformSync(`const ${declaration.getText(ast)};`, { loader: "ts", target: "es2022" }).code;
   const persist = new Function(...Object.keys(env), `${js}\nreturn persistManhuaVfxState;`)(...Object.values(env)) as (state: ManhuaVfxState) => Promise<ManhuaVfxState>;
   const state: ManhuaVfxState = { version: 1, scopeKey: "scope-a", requests: {} };
   return { env, persist, state };

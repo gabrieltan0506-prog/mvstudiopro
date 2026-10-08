@@ -1,12 +1,14 @@
 import { z } from "zod";
 
 /** A versioned, bounded effect recipe. Screen trajectories are authored, not inferred tracking. */
-export const MANHUA_VFX_KINDS = ["sword_trail", "impact_burst", "particle_aura", "shield", "spirit", "fire_burst", "smoke_plume", "lightning", "shockwave", "speed_lines", "magic_circle", "image_overlay"] as const;
+export const MANHUA_VFX_KINDS = ["sword_trail", "impact_burst", "particle_aura", "shield", "spirit", "fire_burst", "smoke_plume", "lightning", "shockwave", "speed_lines", "magic_circle", "image_overlay", "digital_rain"] as const;
 export const MANHUA_VFX_PRESET_LABELS: Record<typeof MANHUA_VFX_KINDS[number], string> = {
-  image_overlay: "图片叠加", sword_trail: "剑气拖尾", impact_burst: "命中冲击", particle_aura: "粒子聚散",
+  digital_rain: "数字雨", image_overlay: "图片叠加", sword_trail: "剑气拖尾", impact_burst: "命中冲击", particle_aura: "粒子聚散",
   shield: "能量护盾", spirit: "灵体光晕",
   fire_burst: "火焰爆发", smoke_plume: "烟尘", lightning: "电弧", shockwave: "冲击波", speed_lines: "速度线", magic_circle: "法阵",
 };
+export const MANHUA_VFX_RAIN_DEFAULTS = { columns: 24, speed: 0.28, trail: 12 } as const;
+const rainSchema = z.object({ columns: z.number().int().min(8).max(36), speed: z.number().finite().min(0.05).max(1), trail: z.number().int().min(4).max(16) }).strict();
 const coordinate = z.number().finite().min(0).max(1);
 const time = z.number().finite().min(0).max(30);
 const trajectorySchema = z.array(z.object({ timeSec: time, x: coordinate, y: coordinate }).strict())
@@ -21,6 +23,7 @@ export const manhuaVfxEffectSchema = z.object({
   kind: z.enum(MANHUA_VFX_KINDS),
   startSec: time,
   durationSec: z.number().finite().min(1 / 60).max(30),
+  rain: rainSchema.optional(),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
   imageUri: z.string().trim().min(1).max(2048).regex(/^gs:\/\/[^/]+\/.+/).optional(),
   scale: z.number().finite().min(0.02).max(2),
@@ -36,6 +39,8 @@ export const manhuaVfxCompositionSchema = z.object({
   recipe.effects.forEach((effect, index) => {
     if (ids.has(effect.id)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["effects", index, "id"], message: "特效编号重复" });
     ids.add(effect.id);
+    if (effect.rain && effect.kind !== "digital_rain")
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["effects", index, "rain"], message: "数字雨参数只适用于数字雨图层" });
     if ((effect.kind === "image_overlay") !== Boolean(effect.imageUri))
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["effects", index, "imageUri"], message: "图片叠加须选择已保存的图片，其他特效不接收图片" });
     if (effect.startSec + effect.durationSec > 30 + 1e-9)

@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from manhua_vfx_math import BOUNDARY, VERSION, srgb, state_at, position_at, validate_spec
 from manhua_vfx_extras import EXTRA_KINDS, build_extra, update_extra
 from manhua_vfx_image import build_image_overlay
+from manhua_vfx_rain import build_digital_rain, update_digital_rain
 
 MAX_RENDER_BYTES = 2 * 1024**3
 
@@ -128,6 +129,7 @@ def build_vfx(spec, scene, asset_root=None):
         extra = None
         image_opacity = None
         image_receipt = None
+        rain = None
         if kind == 'sword_trail':
             for j, m in enumerate((mat, core)):
                 strips.append(ribbon(event['id'] + '_blade_%d' % j, scene, m))
@@ -160,6 +162,9 @@ def build_vfx(spec, scene, asset_root=None):
         elif kind == 'image_overlay':
             image_obj,image_opacity,image_receipt=build_image_overlay(event,spec,scene,asset_root)
             objects.append(image_obj)
+        elif kind == 'digital_rain':
+            rain=build_digital_rain(event,spec,scene,material,color)
+            objects += rain['objects']
         elif kind in EXTRA_KINDS:
             extra=build_extra(event,scene,(mat,core,glow),rng,(ribbon,glow_quad,material,color))
             objects += extra['objects']
@@ -167,7 +172,7 @@ def build_vfx(spec, scene, asset_root=None):
         for obj in objects:
             obj.parent = root
         handles.append({'event': event, 'root': root, 'objects': objects, 'rings': rings, 'strips': strips,
-                        'particles': particles, 'opacity': opacity, 'coreOpacity': core_opacity,
+                        'rain': rain, 'particles': particles, 'opacity': opacity, 'coreOpacity': core_opacity,
                         'glowOpacity': glow_opacity, 'extra':extra, 'imageOpacity':image_opacity, 'imageAsset':image_receipt, 'rimOpacity': rim_opacity if kind == 'shield' else None})
     return handles
 
@@ -263,6 +268,8 @@ def update_vfx(handles, spec, time):
                 set_strip(obj, points, [.003 if j else .008]*65, .52+j*.001)
         elif kind == 'image_overlay':
             h['imageOpacity'].default_value=min(1.,fade*2)
+        elif kind == 'digital_rain':
+            update_digital_rain(h['rain'],e,time,state)
         elif h.get('extra'):
             update_extra(h,spec,time,state,set_strip)
         states.append({'id':e['id'],'kind':kind,**state})

@@ -1,3 +1,4 @@
+import { MANHUA_VFX_RAIN_DEFAULTS } from "@shared/manhuaVfx";
 import { manhuaVfxCompositionSchema, type ManhuaVfxComposition, type ManhuaVfxEffect, type ManhuaVfxState } from "@shared/manhuaVfx";
 import type { ClipOption, TrackedJob } from "./postProdWorkshop";
 import type { CanvasBlock } from "./canvasTypes";
@@ -48,7 +49,8 @@ export function sameManhuaVfxComposition(a: unknown, b: unknown): boolean {
 export function makeManhuaVfxEffect(kind: ManhuaVfxEffect["kind"], id: string): ManhuaVfxEffect {
   return {
     id, kind, startSec: 0, durationSec: 1,
-    color: kind === "impact_burst" ? "#FFB35C" : "#67E8F9", scale: kind === "shield" ? 0.4 : 0.25, intensity: 1,
+    color: kind === "digital_rain" ? "#35FF82" : kind === "impact_burst" ? "#FFB35C" : "#67E8F9", scale: kind === "digital_rain" ? 1 : kind === "shield" ? 0.4 : 0.25, intensity: 1,
+    ...(kind === "digital_rain" ? { rain: { ...MANHUA_VFX_RAIN_DEFAULTS } } : {}),
     anchor: { space: "screen", position: [0.5, 0.5] },
   };
 }
