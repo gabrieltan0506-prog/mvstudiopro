@@ -14,7 +14,8 @@ import { getJob } from "@/lib/jobs";
 import ManhuaEpisodeTextEditor from "@/components/canvas/ManhuaEpisodeTextEditor";
 import ManhuaStoryboardImportEditor from "@/components/canvas/ManhuaStoryboardImportEditor";
 import { splitManhuaEpisodeStoryText } from "@shared/manhuaAdvisorRewrite";
-import { archiveVoiceStoryboard, voiceStoryboardResultState, normalizeVoiceStoryboardSource, saveVoiceStoryboard, requireVoiceStoryboardCandidate, voiceStoryboardSource, type VoiceStoryboardCandidate } from "@/lib/creativeVoiceStoryboard";
+import { readVoiceStoryboardRaw, saveVoiceStoryboardDurable, archiveVoiceStoryboardDurable } from "@/lib/creativeVoiceStoryboardStore";
+import { voiceStoryboardResultState, normalizeVoiceStoryboardSource, requireVoiceStoryboardCandidate, voiceStoryboardSource, type VoiceStoryboardCandidate } from "@/lib/creativeVoiceStoryboard";
 import { resolveAdvisorMediaReferenceUrl } from "@/lib/advisorMediaImageJob";
 import { CANVAS_IMAGE_CREDITS_PER_SHOT, CANVAS_IMAGE_CREDITS_BATCH } from "@shared/canvasGenerationPricing";
 import { isAdvisorMediaSourceUrl, assertAdvisorMediaSource, type AdvisorMediaPlan, type AdvisorMediaSource } from "@shared/manhuaAdvisorMediaEdit";
@@ -10244,45 +10245,64 @@ function OmniCanvasWorkspace() {
   const [voiceStoryboard, setVoiceStoryboard] = useState<VoiceStoryboardCandidate | null>(null);
   const [voiceStoryboardVisible, setVoiceStoryboardVisible] = useState(false);
   const voiceStoryboardLock = useRef(false);
+  const [voiceStoryboardLoading, setVoiceStoryboardLoading] = useState(true);
+  const currentVoiceStoryboardSource = useRef<(episode: number) => string>(() => "");
+  currentVoiceStoryboardSource.current = episode => {
+    const body = writerPack?.episodes.find(item => item.index === episode)?.body || "";
+    return voiceStoryboardSource(blocksRef.current, edges, JSON.stringify({body,templateReferences:writerPack?.episodes.find(ep=>ep.index===episode)?.templateReferences,projectBible,publicTemplateId,writerModel,customAssetRefs,explicitWriterVideoModel,characterLookSets,segmentLookBindings,segmentCapacityMode:getManhuaSegmentCapacityMode(segmentCapacityModeByEpisode,episode),writerLengthTierId}));
+  };
   const currentVoiceStoryboardScope = useRef(voiceStoryboardScope);
   currentVoiceStoryboardScope.current = voiceStoryboardScope;
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(voiceStoryboardKey);
-      const candidate = raw ? JSON.parse(raw) as VoiceStoryboardCandidate : null;
-      setVoiceStoryboard(candidate?.scope === voiceStoryboardScope ? candidate : null);
-    } catch { setVoiceStoryboard(null); }
-    setVoiceStoryboardVisible(false);
+    let cancelled = false;
+    setVoiceStoryboard(null); setVoiceStoryboardVisible(false); setVoiceStoryboardLoading(true);
+    if (!voiceStoryboardScope) { setVoiceStoryboardLoading(false); return; }
+    void readVoiceStoryboardRaw(localStorage, voiceStoryboardKey).then(raw => {
+      if (!cancelled) setVoiceStoryboard(raw ? JSON.parse(raw) as VoiceStoryboardCandidate : null);
+    }).catch(error => {
+      if (!cancelled) toast.error(error instanceof Error ? error.message : "分镜候选未能读取，原请求保留。");
+    }).finally(() => { if (!cancelled) setVoiceStoryboardLoading(false); });
+    return () => { cancelled = true; };
   }, [voiceStoryboardKey, voiceStoryboardScope]);
 
-  function applyVoiceStoryboard(episode: number): string {
-    if (writerBusy || factoryBusy || cloudConflict || advisorRewriteHasActiveWork(blocksRef.current)) throw new Error("仍有任务或云端冲突，未采用分镜。");
-    const body = writerPack?.episodes.find(e => e.index === episode)?.body || "";
-    const candidate = requireVoiceStoryboardCandidate(voiceStoryboard, voiceStoryboardScope, episode, voiceStoryboardSource(blocksRef.current, edges, JSON.stringify({body,templateReferences:writerPack?.episodes.find(ep=>ep.index===episode)?.templateReferences,projectBible,publicTemplateId,writerModel,customAssetRefs,explicitWriterVideoModel,characterLookSets,segmentLookBindings,segmentCapacityMode:getManhuaSegmentCapacityMode(segmentCapacityModeByEpisode,episode),writerLengthTierId})));
-    if (!window.confirm(`采用第${episode}集完整文字分镜？旧画布会先备份，已有图片和视频保留；不会提交图片或视频生成。`)) return "用户取消，原分镜保留。";
-    backupVoiceProduction(episode);
-    if (!saveCanvasState(candidate.blocks, candidate.edges)) throw new Error("分镜写回保存失败，原稿及候选保留。");
-    blocksRef.current = candidate.blocks;
-    setBlocks(candidate.blocks); setEdges(candidate.edges); bumpManhuaOutboundEpoch();
-    setWriterFocusEpisode(episode); setWorkflowPhase("storyboard"); setManhuaUiMode("workbench"); setImmersiveWorkspaceView("workbench");
-    setVoiceStoryboardVisible(false);
-    return `第${episode}集文字分镜已采用并保存，旧稿已备份；图片和视频没有生成。`;
+  async function applyVoiceStoryboard(episode: number): Promise<string> {
+    if (voiceStoryboardLoading || voiceStoryboardLock.current || writerBusy || factoryBusy || cloudConflict || advisorRewriteHasActiveWork(blocksRef.current)) throw new Error("仍有任务或云端冲突，未采用分镜。");
+    const scope = voiceStoryboardScope, key = voiceStoryboardKey;
+    voiceStoryboardLock.current = true;
+    try {
+      const raw = await readVoiceStoryboardRaw(localStorage, key);
+      if (scope !== currentVoiceStoryboardScope.current || raw !== JSON.stringify(voiceStoryboard)) throw new Error("当前分镜候选或作品已变化，请重新查看后采用。");
+      const candidate = requireVoiceStoryboardCandidate(voiceStoryboard, scope, episode, currentVoiceStoryboardSource.current(episode));
+      if (!window.confirm(`采用第${episode}集完整文字分镜？旧画布会先备份，已有图片和视频保留；不会提交图片或视频生成。`)) return "用户取消，原分镜保留。";
+      await backupSceneProduction(undefined, episode);
+      const persisted = await readVoiceStoryboardRaw(localStorage, key);
+      if (scope !== currentVoiceStoryboardScope.current || persisted !== raw || writerBusy || factoryBusy || cloudConflict || advisorRewriteHasActiveWork(blocksRef.current)) throw new Error("备份期间作品、请求或制作状态已变化，未采用分镜。");
+      requireVoiceStoryboardCandidate(candidate, scope, episode, currentVoiceStoryboardSource.current(episode));
+      if (!saveCanvasState(candidate.blocks, candidate.edges)) throw new Error("分镜写回保存失败，原稿及候选保留。");
+      blocksRef.current = candidate.blocks;
+      setBlocks(candidate.blocks); setEdges(candidate.edges); bumpManhuaOutboundEpoch();
+      setWriterFocusEpisode(episode); setWorkflowPhase("storyboard"); setManhuaUiMode("workbench"); setImmersiveWorkspaceView("workbench");
+      setVoiceStoryboardVisible(false);
+      return `第${episode}集文字分镜已采用并保存，旧稿已备份；图片和视频没有生成。`;
+    } finally { voiceStoryboardLock.current = false; }
   }
 
-  function prepareImportedStoryboard(episode: number, text: string): void {
+  async function prepareImportedStoryboard(episode: number, text: string): Promise<void> {
     if (!voiceStoryboardScope || !writerConfirmed || !writerPack?.episodes.some(item => item.index === episode)) throw new Error("请先确认当前作品本集正文，导入草稿保留。");
-    if (voiceStoryboardLock.current || abortRef.current || writerBusy || factoryBusy || cloudConflict || advisorRewriteHasActiveWork(blocksRef.current)) throw new Error("仍有制作任务或云端冲突，导入草稿保留，未采用。");
-    const raw = localStorage.getItem(voiceStoryboardKey);
+    if (voiceStoryboardLoading || voiceStoryboardLock.current || abortRef.current || writerBusy || factoryBusy || cloudConflict || advisorRewriteHasActiveWork(blocksRef.current)) throw new Error("仍有制作任务或云端冲突，导入草稿保留，未采用。");
+    voiceStoryboardLock.current = true;
+    const scope = voiceStoryboardScope, key = voiceStoryboardKey;
+    const sourceAtEntry = currentVoiceStoryboardSource.current(episode);
+    try {
+    const raw = await readVoiceStoryboardRaw(localStorage, key);
+    if (scope !== currentVoiceStoryboardScope.current || sourceAtEntry !== currentVoiceStoryboardSource.current(episode)) throw new Error("读取候选期间作品或画布已变化，导入草稿保留。");
     const previous = raw ? JSON.parse(raw) as VoiceStoryboardCandidate : voiceStoryboard;
     if (previous) {
       if (previous.scope !== voiceStoryboardScope) throw new Error("原候选不属于当前作品，未覆盖。");
       setVoiceStoryboard(previous); setVoiceStoryboardVisible(true);
       throw new Error("已有分镜候选或待核实请求，请先查看原结果，保留记录后归档；不会被导入覆盖。");
     }
-    voiceStoryboardLock.current = true;
-    try {
-      const body = writerPack.episodes.find(item => item.index === episode)!.body;
-      const source = voiceStoryboardSource(blocksRef.current, edges, JSON.stringify({body,templateReferences:writerPack.episodes.find(ep=>ep.index===episode)?.templateReferences,projectBible,publicTemplateId,writerModel,customAssetRefs,explicitWriterVideoModel,characterLookSets,segmentLookBindings,segmentCapacityMode:getManhuaSegmentCapacityMode(segmentCapacityModeByEpisode,episode),writerLengthTierId}));
+      const source = sourceAtEntry;
       const graph = ensureStudioSpawned(factoryTopic, episode);
       const result = importManhuaEpisodeStoryboard({ graph, episode, text, ensureOptions: {
         storyEmotionLineByEpisodeSegment, directionCanon: activeDirectionCanon, assetCanon: projectBible?.assetCanon,
@@ -10294,16 +10314,21 @@ function OmniCanvasWorkspace() {
       }});
       const candidate: VoiceStoryboardCandidate = { id: crypto.randomUUID(), scope: voiceStoryboardScope, episode,
         source, requestSource: source, status: "ready", resultState: "returned", question: "导入已审文字分镜（免费，不调用模型）", ...result };
-      if (localStorage.getItem(voiceStoryboardKey) !== raw) throw new Error("校验期间另一窗口已保存分镜请求，导入草稿保留，未覆盖原请求。");
-      saveVoiceStoryboard(localStorage, voiceStoryboardKey, candidate);
+      if (await readVoiceStoryboardRaw(localStorage, key) !== raw) throw new Error("校验期间另一窗口已保存分镜请求，导入草稿保留，未覆盖原请求。");
+      await saveVoiceStoryboardDurable(localStorage, key, candidate, { expectedRaw: raw });
+      if (scope !== currentVoiceStoryboardScope.current) throw new Error("候选已保留在原作品，当前作品已切换，未采用。");
       setVoiceStoryboard(candidate); setVoiceStoryboardVisible(true);
     } finally { voiceStoryboardLock.current = false; }
   }
 
   async function prepareVoiceStoryboard(episode: number, question: string, signal: AbortSignal, resume = false, reconcile = false): Promise<string> {
     if (!voiceStoryboardScope || !writerConfirmed || !writerPack?.episodes.some(e => e.index === episode)) throw new Error("请先确认当前作品本集剧本，未生成分镜。");
-    if (voiceStoryboardLock.current || abortRef.current || writerBusy || factoryBusy || cloudConflict || advisorRewriteHasActiveWork(blocksRef.current)) throw new Error("仍有制作任务或云端冲突，未重复提交。");
-    const previousRaw = localStorage.getItem(voiceStoryboardKey);
+    if (voiceStoryboardLoading || voiceStoryboardLock.current || abortRef.current || writerBusy || factoryBusy || cloudConflict || advisorRewriteHasActiveWork(blocksRef.current)) throw new Error("仍有制作任务或云端冲突，未重复提交。");
+    voiceStoryboardLock.current = true;
+    const sourceAtEntry = currentVoiceStoryboardSource.current(episode);
+    try {
+    const previousRaw = await readVoiceStoryboardRaw(localStorage, voiceStoryboardKey);
+    if (currentVoiceStoryboardScope.current !== voiceStoryboardScope || sourceAtEntry !== currentVoiceStoryboardSource.current(episode)) throw new Error("读取原请求期间作品或画布已变化，未提交。");
     const persisted = previousRaw ? JSON.parse(previousRaw) as VoiceStoryboardCandidate : null;
     // 存储容量不足时屏幕上的原文可能比磁盘记录完整；只恢复同一请求，不覆盖另一请求。
     const previous = reconcile && voiceStoryboard?.id === persisted?.id && voiceStoryboard?.scope === voiceStoryboardScope && voiceStoryboard?.text?.trim() ? voiceStoryboard : persisted;
@@ -10321,7 +10346,7 @@ function OmniCanvasWorkspace() {
     if (!resume && !window.confirm(`按第${episode}集已确认正文生成完整文字分镜候选？沿用现有文字生成入口及费用规则，原稿保留，不自动重试。\n\n${question}`)) return "用户取消，未提交。";
     if (signal.aborted) return "语音已结束，未提交。";
     const body = writerPack.episodes.find(e => e.index === episode)!.body;
-    const source = voiceStoryboardSource(blocksRef.current, edges, JSON.stringify({body,templateReferences:writerPack?.episodes.find(ep=>ep.index===episode)?.templateReferences,projectBible,publicTemplateId,writerModel,customAssetRefs,explicitWriterVideoModel,characterLookSets,segmentLookBindings,segmentCapacityMode:getManhuaSegmentCapacityMode(segmentCapacityModeByEpisode,episode),writerLengthTierId}));
+    const source = sourceAtEntry;
     const scope = voiceStoryboardScope, key = voiceStoryboardKey;
     if (resume && (!previous || previous.scope !== scope || previous.episode !== episode)) throw new Error("原任务不属于当前作品本集，未覆盖、未重提。");
     if (resume && !reconcile && !previous?.upstreamTaskId) throw new Error("原请求没有可续查的任务编号；已有原文请使用免费重建，未知结果不得重投。");
@@ -10329,12 +10354,21 @@ function OmniCanvasWorkspace() {
     if (reconcile) {
       if (!resume || !previous?.text?.trim() || voiceStoryboardResultState(previous) !== "returned") throw new Error("请先取回原任务完整结果。");
       if (!window.confirm(`${sourceChanged ? "当前正文或画布已变化。" : ""}按当前画布核对这份已返回的分镜？只重建候选，不调用模型、不扣费；请逐项核对候选仍符合当前正文，确认采用前不会写回。`)) return "取消核对，原结果保留。";
-      saveVoiceStoryboard(localStorage,`${key}:history:${previous.id}:before-reconcile:${crypto.randomUUID()}`,previous);
+      await saveVoiceStoryboardDurable(localStorage,`${key}:history:${previous.id}:before-reconcile:${crypto.randomUUID()}`,previous);
     }
     const requestId=resume ? previous!.id : crypto.randomUUID();
     const candidate: VoiceStoryboardCandidate = resume ? {...previous!,status:"pending",requestSource:previous!.requestSource || previous!.source,source:reconcile?source:previous!.source,error:undefined} : {id:requestId, scope, episode, source, requestSource:source, question, status:"pending",resultState:"unknown"};
-    saveVoiceStoryboard(localStorage, key, candidate);
-    voiceStoryboardLock.current = true; setFactoryBusy(true); setVoiceStoryboard(candidate); setVoiceStoryboardVisible(true);
+    await saveVoiceStoryboardDurable(localStorage, key, candidate, { expectedRaw: previousRaw });
+    if (scope !== currentVoiceStoryboardScope.current || signal.aborted || sourceAtEntry !== currentVoiceStoryboardSource.current(episode)) {
+      const unsent: VoiceStoryboardCandidate = {...candidate,status:"failed",resultState:"failed",error:"保存期间作品/画布改变或等待取消，本次没有提交生成。"};
+      if (!resume) {
+        try { await saveVoiceStoryboardDurable(localStorage,key,unsent,{expectedRaw:JSON.stringify(candidate)}); }
+        catch { /* 原请求仍保留；作品切换时不写入另一作品。 */ }
+        if (scope === currentVoiceStoryboardScope.current) { setVoiceStoryboard(unsent); setVoiceStoryboardVisible(true); }
+      }
+      throw new Error("原请求已保留，作品切换、画布改变或等待已结束，未提交生成。");
+    }
+    setFactoryBusy(true); setVoiceStoryboard(candidate); setVoiceStoryboardVisible(true);
     const ac = new AbortController(); abortRef.current = ac;
     let completedCandidate: VoiceStoryboardCandidate | undefined = candidate.text?.trim() ? candidate : undefined;
     try {
@@ -10346,7 +10380,7 @@ function OmniCanvasWorkspace() {
         candidate.text = task.result?.result.optimizedMarkdown || candidate.text;
         candidate.error = task.status === "succeeded" ? "原结果已取回；原稿或画布已变化，请先核对后再采用。不会重新生成。" : task.error || (task.status === "failed" ? "原任务已明确失败，可保留记录后归档，不会自动重新生成。" : "原任务仍在执行，可继续查询同一编号。");
         completedCandidate = candidate.text ? candidate : undefined;
-        saveVoiceStoryboard(localStorage,key,candidate);
+        await saveVoiceStoryboardDurable(localStorage,key,candidate);
         if(currentVoiceStoryboardScope.current===scope)setVoiceStoryboard(candidate);
         return candidate.error;
       }
@@ -10366,13 +10400,17 @@ function OmniCanvasWorkspace() {
           if (reconcile) return previous!.text!;
           if (!resume) {
             candidate.requestInput = input;
-            saveVoiceStoryboard(localStorage,key,candidate);
+            await saveVoiceStoryboardDurable(localStorage,key,candidate);
+            if (scope !== currentVoiceStoryboardScope.current || signal.aborted || sourceAtEntry !== currentVoiceStoryboardSource.current(episode)) {
+              candidate.resultState = "failed";
+              throw new Error("保存实际输入期间作品或画布改变，未提交生成。");
+            }
             const text = await runDeps.optimizeCopy(input);
             // 先保存已付费取得的原文，后续结构校验失败也能查看，不靠重生成找回。
             candidate.text = text;
             candidate.resultState = "returned";
             completedCandidate = candidate;
-            saveVoiceStoryboard(localStorage,key,candidate);
+            await saveVoiceStoryboardDurable(localStorage,key,candidate);
             if (currentVoiceStoryboardScope.current === scope) setVoiceStoryboard({...candidate});
             return text;
           }
@@ -10390,13 +10428,13 @@ function OmniCanvasWorkspace() {
           if(task.status!=="succeeded"||!task.result)throw new Error(task.error||"原分镜任务未成功");
           candidate.text = task.result.result.optimizedMarkdown;
           completedCandidate = candidate;
-          saveVoiceStoryboard(localStorage,key,candidate);
+          await saveVoiceStoryboardDurable(localStorage,key,candidate);
           return candidate.text;
         },
       },ensureOptions,signal:ac.signal});
       const ready: VoiceStoryboardCandidate = {...candidate,status:"ready",...result,text:candidate.text ?? result.text};
       completedCandidate = ready;
-      saveVoiceStoryboard(localStorage,key,ready);
+      await saveVoiceStoryboardDurable(localStorage,key,ready);
       if (currentVoiceStoryboardScope.current === scope) setVoiceStoryboard(ready);
       return JSON.stringify({status:"candidate_ready",episode,note:"完整文字分镜候选已保存并展示；当前作品未改，用户确认后applyStoryboard。未生成图片或视频。"});
     } catch (error) {
@@ -10407,24 +10445,31 @@ function OmniCanvasWorkspace() {
         : `未确认完整结果：${error instanceof Error ? error.message : "请求中断"}。保留原请求记录，不重复提交。`};
       if (currentVoiceStoryboardScope.current === scope) setVoiceStoryboard(failed);
       // 容量不足时保留屏幕上的完整结果；不能用第二次存储错误抹掉已付费产物。
-      try { saveVoiceStoryboard(localStorage,key,failed); } catch { /* 原 pending 记录仍保留，禁止自动重提。 */ }
+      try { await saveVoiceStoryboardDurable(localStorage,key,failed); } catch { /* 原 pending 记录仍保留，禁止自动重提。 */ }
       throw error;
-    } finally { voiceStoryboardLock.current=false; if(abortRef.current===ac)abortRef.current=null;setFactoryBusy(false); }
+    } finally { if(abortRef.current===ac)abortRef.current=null;setFactoryBusy(false); }
+    } finally { voiceStoryboardLock.current = false; }
   }
 
-  function archiveVoiceStoryboardCandidate(): void {
+  async function archiveVoiceStoryboardCandidate(): Promise<void> {
     if (!voiceStoryboard || voiceStoryboard.scope !== voiceStoryboardScope || currentVoiceStoryboardScope.current !== voiceStoryboardScope) throw new Error("候选不属于当前作品，未归档。");
     if (factoryBusy || writerBusy || voiceStoryboardLock.current || abortRef.current || cloudConflict || advisorRewriteHasActiveWork(blocksRef.current)) throw new Error("仍有任务或冲突，未归档。");
     if (voiceStoryboardResultState(voiceStoryboard) === "unknown") throw new Error("原请求结果未知，不能解除后重新生成。");
     if (!window.confirm("保留原文、原请求与历史版本后归档这份候选？当前画布不变。再次生成必须重新确认并可能计费，不会自动提交。")) return;
-    const persisted = JSON.parse(localStorage.getItem(voiceStoryboardKey) || "null") as VoiceStoryboardCandidate | null;
+    voiceStoryboardLock.current = true;
+    const scope = voiceStoryboardScope;
+    try {
+    const persistedRaw = await readVoiceStoryboardRaw(localStorage, voiceStoryboardKey);
+    const persisted = JSON.parse(persistedRaw || "null") as VoiceStoryboardCandidate | null;
     if (!persisted || persisted.id !== voiceStoryboard.id || persisted.scope !== voiceStoryboardScope) throw new Error("当前请求已变化，未归档。");
-    if (JSON.stringify(persisted) !== JSON.stringify(voiceStoryboard)) saveVoiceStoryboard(localStorage,`${voiceStoryboardKey}:history:${persisted.id}:before-archive:${crypto.randomUUID()}`,persisted);
+    if (JSON.stringify(persisted) !== JSON.stringify(voiceStoryboard)) await saveVoiceStoryboardDurable(localStorage,`${voiceStoryboardKey}:history:${persisted.id}:before-archive:${crypto.randomUUID()}`,persisted);
     // 若先前保存失败，必须先保全屏幕上的完整结果，不能只归档旧 pending 空壳。
-    saveVoiceStoryboard(localStorage,voiceStoryboardKey,voiceStoryboard);
-    archiveVoiceStoryboard(localStorage,voiceStoryboardKey,voiceStoryboard.id,voiceStoryboardScope);
+    await saveVoiceStoryboardDurable(localStorage,voiceStoryboardKey,voiceStoryboard,{expectedRaw:persistedRaw});
+    await archiveVoiceStoryboardDurable(localStorage,voiceStoryboardKey,voiceStoryboard);
+    if (currentVoiceStoryboardScope.current !== scope) return;
     setVoiceStoryboard(null); setVoiceStoryboardVisible(false);
     toast.message("原请求与结果已归档；如需生成，请重新发出要求并确认。");
+    } finally { voiceStoryboardLock.current = false; }
   }
 
   function backupVoiceProduction(episodeIndex = writerFocusEpisode) {
@@ -10436,11 +10481,11 @@ function OmniCanvasWorkspace() {
     if(localStorage.getItem(key)!==json) throw new Error("改前备份未完整保存，未执行制作。");
     return key;
   }
-  async function backupSceneProduction(signal?: AbortSignal) {
+  async function backupSceneProduction(signal?: AbortSignal, episodeIndex = writerFocusEpisode) {
     if (!writerPack || !user?.id || !latestDraftSnapshotRef.current) throw new Error("缺少当前作品或账户，未提交生成。");
     const scope = currentVoiceStoryboardScope.current;
     const key = `manhua-advisor-rewrite-backup:${user.id}:${crypto.randomUUID()}`;
-    const json = JSON.stringify({createdAt:new Date().toISOString(),episodeIndex:writerFocusEpisode,changes:["3D制作前完整备份"],writerPack,projectBible:projectBible||null,restorableDraft:buildLocalCloudDraftSnapshot(latestDraftSnapshotRef.current)});
+    const json = JSON.stringify({createdAt:new Date().toISOString(),episodeIndex,changes:["制作前完整备份"],writerPack,projectBible:projectBible||null,restorableDraft:buildLocalCloudDraftSnapshot(latestDraftSnapshotRef.current)});
     await saveSceneProductionBackup(String(user.id), key, json);
     signal?.throwIfAborted();
     if (currentVoiceStoryboardScope.current !== scope) throw new Error("备份期间作品已切换，未提交生成；旧备份保留。");
@@ -10996,7 +11041,7 @@ async function runAdvisorWriterTrial() {
           if (action.action === "storyboardRecovery") {
             if(!voiceStoryboard || voiceStoryboard.episode!==action.episode || voiceStoryboard.scope!==voiceStoryboardScope) throw new Error("当前作品没有这集的可恢复分镜记录。");
             if(action.operation === "inspect") return JSON.stringify({id:voiceStoryboard.id,episode:voiceStoryboard.episode,status:voiceStoryboard.status,resultState:voiceStoryboardResultState(voiceStoryboard),hasFullText:Boolean(voiceStoryboard.text),taskId:voiceStoryboard.upstreamTaskId,error:voiceStoryboard.error});
-            if(action.operation === "archive") {archiveVoiceStoryboardCandidate();return "原分镜归档入口已处理，原请求保留，没有自动重新生成。";}
+            if(action.operation === "archive") {await archiveVoiceStoryboardCandidate();return "原分镜归档入口已处理，原请求保留，没有自动重新生成。";}
             return prepareVoiceStoryboard(action.episode,voiceStoryboard.question||"核对原分镜结果",signal,true,true);
           }
           if (action.action === "generate") {
@@ -14717,12 +14762,12 @@ async function runAdvisorWriterTrial() {
         {!voiceStoryboardVisible && <button type="button" className="fixed bottom-4 left-4 z-40 rounded bg-cyan-800 px-4 py-2 text-white" onClick={()=>setVoiceStoryboardVisible(true)}>查看分镜候选</button>}
         {voiceStoryboardVisible && <div role="dialog" aria-modal="true" aria-label="文字分镜候选" className="fixed inset-8 z-[100] flex flex-col rounded-xl border border-cyan-300/40 bg-slate-950 p-5 text-white shadow-xl">
           <div className="flex justify-between"><strong>第{voiceStoryboard.episode}集 · 文字分镜候选</strong><button type="button" onClick={()=>setVoiceStoryboardVisible(false)}>收起</button></div>
-          <p className="my-2 text-sm">{voiceStoryboard.status === "pending" ? voiceStoryboard.error || "正在生成，原稿保留；请勿重复提交。" : voiceStoryboard.status === "failed" ? voiceStoryboard.error : "完整候选已保存。确认采用后才写回，旧画布可从顾问改前备份还原。"}</p>
+          <p className="my-2 text-sm">{voiceStoryboard.status === "pending" ? voiceStoryboard.error || "正在生成，原稿保留；请勿重复提交。" : voiceStoryboard.status === "failed" ? voiceStoryboard.error : "完整候选已保存。确认采用后才写回；旧画布完整备份可从顾问改前备份下载，并经导入备份恢复。"}</p>
           <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap text-sm">{voiceStoryboard.text || ""}</pre>
           {voiceStoryboard.status === "pending" && voiceStoryboard.upstreamTaskId && <button type="button" disabled={factoryBusy || writerBusy} onClick={()=>{void prepareVoiceStoryboard(voiceStoryboard.episode,voiceStoryboard.question||"恢复原分镜结果",new AbortController().signal,true).catch(error=>toast.error(error instanceof Error?error.message:"续查失败"));}}>续查原分镜任务（不重新生成）</button>}
           {voiceStoryboard.text?.trim() && voiceStoryboardResultState(voiceStoryboard) === "returned" && <button type="button" disabled={factoryBusy || writerBusy || Boolean(cloudConflict)} onClick={()=>{void prepareVoiceStoryboard(voiceStoryboard.episode,voiceStoryboard.question||"核对原分镜结果",new AbortController().signal,true,true).catch(error=>toast.error(error instanceof Error?error.message:"核对失败"));}}>按当前画布核对原结果（不生成、不扣费）</button>}
-          {voiceStoryboardResultState(voiceStoryboard) !== "unknown" && <button type="button" disabled={factoryBusy || writerBusy || voiceStoryboardLock.current || Boolean(cloudConflict)} onClick={()=>{try{archiveVoiceStoryboardCandidate();}catch(error){toast.error(error instanceof Error?error.message:"原记录未保存，不能归档");}}}>保留记录并归档候选</button>}
-          {voiceStoryboard.status === "ready" && <div className="mt-3 flex gap-4"><button type="button" disabled={factoryBusy || writerBusy || Boolean(cloudConflict)} onClick={()=>{try{toast.success(applyVoiceStoryboard(voiceStoryboard.episode));}catch(error){toast.error(error instanceof Error?error.message:"未采用");}}}>确认采用完整分镜</button></div>}
+          {voiceStoryboardResultState(voiceStoryboard) !== "unknown" && <button type="button" disabled={factoryBusy || writerBusy || voiceStoryboardLock.current || Boolean(cloudConflict)} onClick={()=>{void archiveVoiceStoryboardCandidate().catch(error=>toast.error(error instanceof Error?error.message:"原记录未保存，不能归档"));}}>保留记录并归档候选</button>}
+          {voiceStoryboard.status === "ready" && <div className="mt-3 flex gap-4"><button type="button" disabled={factoryBusy || writerBusy || Boolean(cloudConflict)} onClick={()=>{void applyVoiceStoryboard(voiceStoryboard.episode).then(result=>toast.success(result)).catch(error=>toast.error(error instanceof Error?error.message:"未采用"));}}>确认采用完整分镜</button></div>}
         </div>}
       </>}
       <ManhuaCreativeAdvisorPanel

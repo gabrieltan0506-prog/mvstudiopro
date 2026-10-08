@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { NativeDeepReadKeyMoment } from "../../shared/manhuaNativeDeepRead.js";
 import type { ManhuaViralTemplateEvidenceFrame } from "../../shared/manhuaViralTemplateBank.js";
 import { buildManhuaLocalVideoSourceRef, parseManhuaLocalVideoSourceRef } from "../../shared/manhuaLocalVideoUpload.js";
-import { getGcsBucketName, uploadBufferToGcsIfAbsent } from "./gcs.js";
+import { getGcsBucketName, signGsUriV4ReadUrl, uploadBufferToGcsIfAbsent } from "./gcs.js";
 
 const KEY_MOMENT_FRAME_MAX_CONCURRENCY = 4;
 const KEY_MOMENT_FRAME_TIMEOUT_MS = 60_000;
@@ -27,6 +27,7 @@ type UploadFrame = (params: {
 }) => Promise<{ created: boolean; generation?: string }>;
 
 export type NativeKeyMomentFrameDeps = {
+  signPreparedVideo?: (gsUri: string) => string;
   resolveLocalUpload?: (input: { userId: string; uploadId: string }) => Promise<{
     localPath: string; sourceRef: string; sha256: string;
   }>;
@@ -38,6 +39,38 @@ export type NativeKeyMomentFrameDeps = {
   bucket: () => string;
 };
 
+/** 只记录分类，不回传含签名URL的命令行或stderr。 */
+export function describeNativeFrameFailure(error: unknown): string {
+  const row = error as { code?: unknown; killed?: boolean; message?: unknown; stderr?: unknown } | null;
+  const text = `${String(row?.message || "")} ${String(row?.stderr || "")}`;
+  if (row?.killed || /timed? ?out|timeout/i.test(text)) return "timeout";
+  if (/ENOTFOUND|EAI_AGAIN|Name or service not known|resolve.*host|DNS/i.test(text)) return "dns";
+  if (/403|Forbidden/i.test(text)) return "http_403";
+  if (/404|Not Found/i.test(text)) return "http_404";
+  if (/401|Unauthorized/i.test(text)) return "http_401";
+  if (/Connection reset|ECONNRESET/i.test(text)) return "connection_reset";
+  if (/Invalid data|moov atom|decode|JPEG/i.test(text)) return "invalid_media";
+  if (/ENOSPC|No space left/i.test(text)) return "disk_full";
+  if (row?.code === "ENOENT") return "file_or_executable_missing";
+  if (/http_40[134]|connection_reset|invalid_media|disk_full|file_or_executable_missing/.test(text)) return text.match(/http_40[134]|connection_reset|invalid_media|disk_full|file_or_executable_missing/)![0];
+  return "unknown";
+}
+
+// 多片并发返回时仍共享四个 ffmpeg 名额，不能把逐片上限相乘。
+let activeFrameProcesses = 0;
+const frameProcessWaiters: Array<() => void> = [];
+async function withFrameProcessSlot<T>(work: () => Promise<T>): Promise<T> {
+  if (activeFrameProcesses >= KEY_MOMENT_FRAME_MAX_CONCURRENCY) {
+    await new Promise<void>(resolve => frameProcessWaiters.push(resolve));
+  } else activeFrameProcesses += 1;
+  try { return await work(); }
+  finally {
+    const next = frameProcessWaiters.shift();
+    if (next) next();
+    else activeFrameProcesses -= 1;
+  }
+}
+
 function runFfmpeg(args: string[], abortSignal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     execFile(
@@ -48,14 +81,15 @@ function runFfmpeg(args: string[], abortSignal?: AbortSignal): Promise<void> {
         timeout: KEY_MOMENT_FRAME_TIMEOUT_MS,
         signal: abortSignal,
       },
-      (error) => error
-        ? reject(new Error(abortSignal?.aborted ? "用户已停止关键时刻抽帧" : "关键时刻抽帧未完成"))
+      (error, _stdout, stderr) => error
+        ? reject(new Error(abortSignal?.aborted ? "用户已停止关键时刻抽帧" : `关键时刻抽帧未完成：${describeNativeFrameFailure({ ...error, stderr })}`))
         : resolve(),
     );
   });
 }
 
 const defaultDeps: NativeKeyMomentFrameDeps = {
+  signPreparedVideo: signGsUriV4ReadUrl,
   resolveLocalUpload: async (input) => {
     const { resolveOwnedManhuaLocalVideoUpload } = await import("./manhuaLocalVideoUploadService.js");
     return resolveOwnedManhuaLocalVideoUpload(input);
@@ -175,50 +209,78 @@ export async function extractNativeKeyMomentEvidenceFrames(input: {
   episodeIndex: number;
   sourceDigest?: string;
   mediaNodes: readonly NativeKeyMomentFrameMediaNode[];
+  preparedSegments?: readonly { gsUri: string; startSec: number; endSec: number }[];
   localVideoUpload?: NonNullable<ReturnType<typeof parseManhuaLocalVideoSourceRef>>;
   keyMoments?: readonly NativeDeepReadKeyMoment[];
   abortSignal?: AbortSignal;
 }, deps: NativeKeyMomentFrameDeps = defaultDeps): Promise<ManhuaViralTemplateEvidenceFrame[]> {
+  const warn = (stage: string, error?: unknown, atSec?: number) => console.warn(
+    `[nativeKeyMomentFrames] ep=${input.episodeIndex} stage=${stage}${atSec == null ? "" : ` atSec=${atSec}`} reason=${describeNativeFrameFailure(error)}`,
+  );
   const moments = mergeNativeKeyMomentsBySecond(input.keyMoments || []);
   if (!moments.length) return [];
   let node = input.mediaNodes.find((candidate) => /^https?:\/\//i.test(String(candidate?.url || "")));
-  if (input.localVideoUpload) {
-    // 仅内部核验后取得的路径进入 ffmpeg；外部媒体节点仍只接受 HTTP(S)。
-    if (!deps.resolveLocalUpload) throw new Error("本地视频抽帧读取器缺失");
-    const source = await deps.resolveLocalUpload(input.localVideoUpload);
-    if (source.sourceRef !== buildManhuaLocalVideoSourceRef(input.localVideoUpload)
-      || source.sha256 !== input.localVideoUpload.sha256) throw new Error("本地视频抽帧来源已改变");
-    node = { url: source.localPath };
+  let localSourceReady = false;
+  const needsOriginal = moments.some((moment) => !input.preparedSegments?.some(
+    (row) => moment.atSec >= row.startSec && moment.atSec < row.endSec,
+  ));
+  if (input.localVideoUpload && needsOriginal) {
+    // 已缓存的分片可能无本轮媒体；原片不可读时仍保住本轮可用分片的截图。
+    try {
+      if (!deps.resolveLocalUpload) throw new Error("本地视频抽帧读取器缺失");
+      const source = await deps.resolveLocalUpload(input.localVideoUpload);
+      if (source.sourceRef !== buildManhuaLocalVideoSourceRef(input.localVideoUpload)
+        || source.sha256 !== input.localVideoUpload.sha256) throw new Error("本地视频抽帧来源已改变");
+      node = { url: source.localPath };
+      localSourceReady = true;
+    } catch (error) {
+      if (!input.preparedSegments?.length) throw error;
+    }
   }
-  if (!node) return [];
+  if (!node && !input.preparedSegments?.length) { warn("source_missing"); return []; }
 
   let tempDir: string;
   try {
     tempDir = await deps.makeTempDir();
-  } catch {
+  } catch (error) {
+    warn("temporary_directory", error);
     return [];
   }
 
   try {
     const rows = await mapConcurrent(moments, KEY_MOMENT_FRAME_MAX_CONCURRENCY, async (moment, index) => {
       const outputPath = join(tempDir, `km-${String(index).padStart(4, "0")}.jpg`);
+      const segment = input.preparedSegments?.find((row) => moment.atSec >= row.startSec && moment.atSec < row.endSec);
+      // 签名只在服务端内存中使用，不进卡片、日志或前端；落盘秒位保持整片绝对时间。
+      let frameNode = node;
+      if (segment) {
+        try {
+          if (!deps.signPreparedVideo) throw new Error("分片签名器缺失");
+          frameNode = { url: deps.signPreparedVideo(segment.gsUri) };
+        } catch (error) { warn("segment_sign", error, moment.atSec); return undefined; }
+      }
+      if (!frameNode) { warn("source_missing", undefined, moment.atSec); return undefined; }
       let buffer: Buffer | undefined;
       for (const seek of ["fast", "accurate"] as const) {
         if (input.abortSignal?.aborted) break;
         await deps.removePath(outputPath).catch(() => undefined);
         try {
-          await deps.runFfmpeg(buildNativeKeyMomentFrameArgs({
-            node,
-            atSec: moment.atSec,
-            outputPath,
-            seek,
-            trustedLocalSource: Boolean(input.localVideoUpload),
-          }), input.abortSignal);
+          await withFrameProcessSlot(async () => {
+            input.abortSignal?.throwIfAborted();
+            await deps.runFfmpeg(buildNativeKeyMomentFrameArgs({
+              node: frameNode!,
+              atSec: segment ? Math.round((moment.atSec - segment.startSec) * 10) / 10 : moment.atSec,
+              outputPath,
+              seek,
+              trustedLocalSource: localSourceReady && !segment,
+            }), input.abortSignal);
+          });
           const candidate = await deps.readFrame(outputPath);
           assertJpeg(candidate);
           buffer = candidate;
           break;
-        } catch {
+        } catch (error) {
+          if (seek === "accurate") warn("extract_or_decode", error, moment.atSec);
           // 单帧仅允许快速/准确两种策略；第二次仍失败便省略，不制造失败行。
         }
       }
@@ -245,7 +307,8 @@ export async function extractNativeKeyMomentEvidenceFrames(input: {
             ...(input.sourceDigest ? { sourceDigest: String(input.sourceDigest) } : {}),
           },
         });
-      } catch {
+      } catch (error) {
+        warn("upload", error, moment.atSec);
         return undefined;
       }
       return {

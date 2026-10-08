@@ -1,0 +1,85 @@
+# matrix 截图接线修复与审查记录
+
+开发 Agent 模型：GPT6 Astra（按用户指定标注）。
+
+## 需求及改前证据
+
+| 项目 | 核实结果 |
+|---|---|
+| 最终结果 | 同一分片读片响应取得 keyMoments 即使用已备好的 GCS 分片截图、保存；整形完成后沿原时序清理 |
+| 范围 | 只改截图接线、恢复索引、错误定位及缺图提示；不修改整形分组、路由、模型、温度、schema 或旧整形断言 |
+| 原入口 | 单集 executeAndIngestNativeDeepReadEpisode 与批次 runNativeDeepReadBatch |
+| 原生产者 | runner 将分片上传 GCS；同一 Gemini 响应产出绝对秒位 keyMoments |
+| 原断点 | runner 完成整形后在 finally 清理分片并返回；execution 此时才 resolveNodes 回源探测并抽帧 |
+| 原结果 | matrix 报告 136.1 分钟、27 片、1657 镜、194 个重点时刻、0 张截图；任务 NDuwBOzKWt3A8yUT succeeded |
+| 生产证据 | 镜像 438ece8978b831d32c518610f7c37b0a1bd83c26；2026-10-08T19:51:54+08:00 外层“关键时刻抽帧未完成，卡片继续入库” |
+| 历史定位 | 2026-09-01T09:26:58+08:00，bf56c8eab8f7414ccb90535a3acdb8dfd2ba7720 引入回源截图；PR1328 于09:29:04合并。09-12只加本地上传例外 |
+| 权限与费用 | 不增加读片模型调用，不回源补抽，不改收费或重试规则；未新增媒体生成、机器、合并或部署 |
+
+历史低层异常被 catch 丢弃，不能确证当时是 DNS、播放地址失效还是媒体预检失败。后续只读重放出现一次媒体域 ENOTFOUND、另一次成功，不可替代历史原因。单帧 ffmpeg 与 GCS 上传异常由内层处理，不产生本次外层警告；证据定位到回源解析/预检入口。
+
+## 双向追链
+
+正向：正式学习入口 → 单集/批次 execution → runner 同发响应解析 keyMoments → onSegmentRead → 该段 preparedVideos → 局部 seek（绝对秒减分片起点）→ JPEG 校验与 GCS 永久图片 → 段截图索引 → 整集整形 → 原 finally 清理 → 最终卡 evidenceFrames → 图文报告。
+
+反向：报告图片 → 最终卡 evidenceFrames → 按最终 keyMoments 的秒位汇总、按同片身份保存的索引 → GCS 图片 sha256/bytes/绝对秒 → 同一已备分片与原响应秒位。整形后新增而没有原截图的秒位不以邻帧冒充，不回源、不调用模型补读。
+
+- 新响应取得秒位即截；缓存恢复优先复用持久化索引。重复回调在同一任务内去重。
+- 缓存及 GCS 分片均缺失时保留已付费分析并明确缺图，不重新解析源站或模型读片。
+- 批次乱序完成按最终秒位汇总；仅重新整形沿用既有图片，不触发截图。
+- 多片并发共享四个 ffmpeg 进程名额，不把每片上限相乘。
+- 截图错误记录阶段与固定分类，不记录签名地址、命令行或生产凭证。
+- 图片/索引失败不触发模型重读；中止沿既有 abortSignal 传递。
+
+## 追加式审查台账
+
+被审基线：43621862b6ee82354f4c2fd2916b049690ee482c。生产基线：438ece8978b831d32c518610f7c37b0a1bd83c26。
+
+| ID | 状态 | 根因与修正 | 验证边界 |
+|---|---|---|---|
+| MATRIX-FRAME-01 | 已验证（开发），尚未线上验收 | 截图位于清理之后且只获源站解析器；改为响应即消费同批 GCS | 模拟链路验证截图→整形→清理顺序及模型调用次数；未生成真实媒体 |
+| MATRIX-FRAME-02 | 已验证（开发），尚未线上验收 | 只有内存截图不能恢复；新增按来源、集、分片和秒位内容绑定的独立索引 | 缓存复用、同片去重、批次乱序、缺分片不回源及失败保留分析 |
+| MATRIX-FRAME-03 | 已验证（开发），尚未线上验收 | 原错误吞掉、无图报告仍可导出 | 错误分类脱敏、无图警示；历史报告未补图 |
+
+## 不在本次修改范围的基线失败
+
+完整 runner 测试有16项失败；在未修改的43621862独立源码快照重现完全相同的16项，无新增失败。15项涉及旧单批假设与现有双路均分行为不一致，包括把第二批误认作0.75温度重试；1项是旧整形schema哈希。分组来源为2e88161f（PR1674，2026-10-07），schema后续新增methodBrief。用户明确要求整形部分不改，保留相关代码和断言，不以修改期望值掩盖失败。
+
+## 交付边界
+
+代码及离线验证不能替代线上验收。本轮没有重新学习matrix，没有生成或补抽真实截图，没有更新旧报告；PR保留给用户本人合并。本轮曾误跑既有真实ffmpeg夹具（2秒合成测试片及JPEG，随后删除），已记录并停止；后续全部明确过滤该用例，只跑模拟媒体测试。
+
+## 验证回执
+
+- `pnpm exec vitest run server/services/manhuaNativeDeepReadRunner.test.ts server/services/manhuaNativeDeepReadExecution.test.ts`：384 passed / 16 failed（400项）；两个新增时序测试均通过。
+- 在未修改43621862源码快照运行同一runner：327 passed / 16 failed（343项）；16个失败用例名称集合完全相同，新增失败0。
+- 后续新增批次乱序测试1 passed，以及最终GCS入口定向测试1 passed。
+- `pnpm exec vitest run server/services/manhuaNativeKeyMomentFrames.test.ts -t '正式卡关键时刻抽帧|关键时刻抽帧纯函数|本地原片关键时刻证据|分片截图错误定位与全局并发'`：14 passed / 1 skipped；跳过真实ffmpeg媒体用例。
+- execution及report目标套件前一轮97 passed（54+43）；此后仅execution截图消费端调整，已由上方全文件及新增定向测试覆盖，report未变化，不重复运行。
+- 最终 `pnpm exec tsc --noEmit --incremental false`：退出0、无输出。过程中两处新增测试夹具类型问题已修正（sourceDigest推断、回调参数显式类型），未修改生产参数。
+- `git diff --check`：无输出、退出0。
+
+所有上述媒体操作均为注入的测试实现；不代表真实JPEG质量、线上GCS访问或线上报告验收。
+
+## 1008 用户追加：整形首发及三次补发温度
+
+用户在截图交付后明确允许改温度与对应断言：每批首发0.7，首发之外三次传输失败补发0.7→0.65→0.6；两并发批次最多8次调用/6次等待。内容缺失仍从原稿确定性恢复，不增加重试次数或改动路由、读片模型参数。
+
+增量涉及runner调度/默认请求参数、永久证据温度兼容及两份测试。正向：dispatchRetry索引→每批温度→context→供应商请求→request证据；反向：证据temperature与实际gateway参数逐值一致。读片历史契约中的整形温度固定为历史0.8，读片指纹保持原值；旧整形0.8/0.75仅在其余请求和完整证据身份一致时复用，原始证据不改写，避免重买。其他提示词/容量/未授权温度差异仍拒绝恢复。
+
+MATRIX-TEMP-01：已实现且定向验证；全局调用序号不能当批次重试号。双批各自[0.7,0.7,0.65,0.6]与8调用、6等待通过。
+MATRIX-TEMP-02：已实现且定向验证；首次调整曾触发历史契约漂移，已保留读片旧指纹；当前及历史0.8/0.75付费整形恢复零外呼通过，错提示词/容量/未知温度负例通过。
+
+验证：runner+永久证据完整套件阶段结果348 passed/15 failed；修正其中两个误把第二并发批次当0.75重试的旧测试后，定向2 passed；另最终温度/恢复/错误路径定向14 passed。原16失败中的8次断言与两个温度断言已通过，其余13旧分批/旧schema断言保留，未宣称全仓通过。无真实上游调用、媒体、合并或部署，尚未线上验收。
+
+本增量最终 `pnpm exec tsc --noEmit --incremental false` 退出0（/tmp/matrix-retry-final-tsc.log）；`git diff --check`通过。前端无变更，沿用20:40的Vite打包通过，不重复构建；未跑Docker全镜像或全仓测试。
+
+## 1008 用户要求截图复查：MATRIX-FRAME-04
+
+基于c76ec82b复查分片响应→截图→永久索引→清理→最终卡→报告图片双向链。确认绝对秒减分片起点、同秒去重、分片边界、全局四进程名额、完整JPEG上传、报告读取永久objectName并内嵌图片，不把签名地址写卡片。单集/批次入口均接同一collector，纯整形保留既有图片。没有运行真实ffmpeg/媒体任务。
+
+发现并修正：旧截图索引下载503或JSON损坏时，原collector外层catch把本轮可用GCS分片截图一起跳过。把索引读取失败隔离为可恢复路径，仍从当前已备GCS分片抽帧并保存新索引，不回源或重读模型。回归测试先在修复前得到2 FAIL（抽帧0次），修复后通过并断言仅一个runner调用、只截一次、写索引及最终入库图片一致。
+
+回执：execution58项+report43项共101 PASS；帧服务14项模拟+runner截图顺序2项共16 PASS，真实ffmpeg用例未选入。日志/tmp/matrix-manifest-read-red.log、/tmp/matrix-screenshot-review-execution-report.log、/tmp/matrix-screenshot-review-frames-order.log。完整增量diff及真实下游card正规化、report图片读取已复核。线上GCS/真实JPEG质量/旧matrix报告补图仍未验；其余13项整形旧断言不是本次截图复查通过结论的一部分。
+
+本次最终全量类型检查 `pnpm exec tsc --noEmit --incremental false` 退出0（/tmp/matrix-screenshot-review-tsc.log），diffcheck通过。前端未修改，不重复已过Vite构建。MATRIX-FRAME-04开发验证CLOSED，线上未验。

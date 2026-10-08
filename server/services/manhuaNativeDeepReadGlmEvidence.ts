@@ -39,7 +39,7 @@ export type NativeDeepReadGlmEvidenceContext = {
   gatewayPolicy?: "structuring_chain" | "structuring_chain_qwen_first";
   /** 稳定调用身份下先回读已付费证据；仅正式可恢复整形使用。 */
   recoverExisting?: boolean;
-  /** 0906 用户令：镜数不合/过不了观察锁 → 同档降温重试（0.8→0.75）；给了就覆盖冻结配置里的 temperature，证据 request 里原样记录。 */
+  /** 1008 用户指定：每批首发 0.7，三次传输失败补发依次 0.7/0.65/0.6；在 request 证据中原样记录。 */
   temperature?: number;
   /** 请求证据落盘后、真正调用上游前发运行回执；恢复命中时不会调用。 */
   onBeforePaidCall?: () => Promise<void>;
@@ -210,7 +210,17 @@ export async function readNativeDeepReadGlmRecoveredEvidence(input: {
   };
   // responseJsonSchema 只影响 Qwen 档的 response_format，不改提示词与冻结参数；比对身份时剔除，旧证据仍可恢复
   const stripSchema = (r: unknown) => { const o = { ...(r as Record<string, unknown>) }; delete o.responseJsonSchema; return o; };
-  if (canonicalJson(stripSchema(requestPayload.request)) !== canonicalJson(stripSchema(expectedRequest))) {
+  const storedRequest = stripSchema(requestPayload.request);
+  const currentRequest = stripSchema(expectedRequest);
+  // 1008 仅温度调整不能让已有付费整形重新购买；其余请求字段和全部证据身份仍须严格一致。
+  const compatibleHistoricalTemperature = typeof storedRequest.temperature === "number"
+    && typeof currentRequest.temperature === "number"
+    && [0.8, 0.75].includes(storedRequest.temperature)
+    && [0.7, 0.65, 0.6].includes(currentRequest.temperature);
+  const comparableStoredRequest = compatibleHistoricalTemperature
+    ? { ...storedRequest, temperature: currentRequest.temperature }
+    : storedRequest;
+  if (canonicalJson(comparableStoredRequest) !== canonicalJson(currentRequest)) {
     throw new Error("整集GLM request证据与当前冻结请求不一致，已停止以避免重复付费");
   }
   const requestReceipt = receiptFromDownload(requestObjectName, requestDownloaded);

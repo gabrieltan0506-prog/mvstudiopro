@@ -21,7 +21,9 @@ it("离线提取宿主函数：严格分镜校验失败前保存完整原文，�
   const noop = () => {};
   const context = {
     Error, AbortController, crypto: { randomUUID: () => "test-receipt-id" }, window: { confirm: () => true },
-    localStorage: storage, saveVoiceStoryboard, voiceStoryboardSource, voiceStoryboardResultState, normalizeVoiceStoryboardSource,
+    localStorage: storage, readVoiceStoryboardRaw: async (storage: Storage,key: string)=>storage.getItem(key),
+    saveVoiceStoryboardDurable: async (storage: Storage,key: string,candidate: Parameters<typeof saveVoiceStoryboard>[2])=>saveVoiceStoryboard(storage,key,candidate), voiceStoryboardLoading: false,
+    currentVoiceStoryboardSource: { current: () => voiceStoryboardSource(graph.blocks, graph.edges, "原剧情") }, voiceStoryboardSource, voiceStoryboardResultState, normalizeVoiceStoryboardSource,
     voiceStoryboard: null, writerBusy: false, factoryBusy: false, cloudConflict: null,
     voiceStoryboardScope: "1:project", currentVoiceStoryboardScope: { current: "1:project" }, voiceStoryboardKey: "candidate",
     writerConfirmed: true, writerPack: { episodes: [{ index: 1, body: "原剧情", templateReferences: [{}, {}, {}] }] },
@@ -50,4 +52,27 @@ it("离线提取宿主函数：严格分镜校验失败前保存完整原文，�
   await expect(run(1, "生成分镜", new AbortController().signal)).rejects.toThrow("不能重复提交");
   expect(optimizeCopy).toHaveBeenCalledTimes(1);
   expect(graph).toEqual({ blocks: [], edges: [] });
+  // 初次记录落盘后输入发生变化时，本次尚未调用上游，保留明确未提交状态。
+  values.clear(); optimizeCopy.mockClear();
+  const currentSource = context.currentVoiceStoryboardSource.current;
+  let writes = 0;
+  context.saveVoiceStoryboardDurable = async (storage, key, candidate) => {
+    saveVoiceStoryboard(storage, key, candidate);
+    if (++writes === 1) context.currentVoiceStoryboardSource.current = () => "输入已变化";
+  };
+  await expect(run(1, "生成分镜", new AbortController().signal)).rejects.toThrow(/未提交生成/);
+  expect(optimizeCopy).not.toHaveBeenCalled();
+  expect(JSON.parse(storage.getItem("candidate")!)).toMatchObject({status:"failed",resultState:"failed"});
+  expect(context.voiceStoryboardLock.current).toBe(false);
+  context.currentVoiceStoryboardSource.current = currentSource;
+  // 实际发送参数落盘也会等待；期间切换输入时仍不得调用上游。
+  values.clear(); optimizeCopy.mockClear(); writes = 0;
+  context.saveVoiceStoryboardDurable = async (storage, key, candidate) => {
+    saveVoiceStoryboard(storage, key, candidate);
+    if (++writes === 2) context.currentVoiceStoryboardSource.current = () => "发送参数等待期间变化";
+  };
+  await expect(run(1, "生成分镜", new AbortController().signal)).rejects.toThrow(/未提交生成/);
+  expect(optimizeCopy).not.toHaveBeenCalled();
+  expect(JSON.parse(storage.getItem("candidate")!)).toMatchObject({resultState:"failed"});
+  expect(context.voiceStoryboardLock.current).toBe(false);
 });

@@ -1,0 +1,24 @@
+{
+  "at": "2026-10-08T06:47:52.985Z",
+  "status": "passed",
+  "checks": [
+    {
+      "name": "本地存储满时完整大候选仍可事务保存，刷新恢复且旧记录不删除",
+      "status": "passed"
+    },
+    {
+      "name": "旧未知请求阻断覆盖，已知结果原子归档，旧页面新写请求仍阻断",
+      "status": "passed"
+    },
+    {
+      "name": "跨窗口竞争仅一个新请求落盘，旧历史不可改写，事务写失败保留原请求",
+      "status": "passed"
+    },
+    {
+      "name": "作品命名空间隔离，错误账号/作用域拒绝，读取失败不当作空请求",
+      "status": "passed"
+    }
+  ],
+  "formalWorkflowAccepted": false,
+  "paidProviderCalls": 0
+}
