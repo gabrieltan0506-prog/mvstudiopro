@@ -1229,7 +1229,7 @@ describe("GCS截图接入正式入库", () => {
       temporaryGcs: { bucket: "b", objectName: "seg1.mp4" }, bytes: 100, hasAudio: true }];
     const resolveNodes = vi.fn(async () => { throw new Error("原站已不可用"); });
     deps.extractKeyMomentFrames = vi.fn(async () => [{ atSec: 305, kindZh: "剧情", noteZh: "长片后段",
-      objectName: "manhua-template-learn/native-frames/s/305.jpg", mimeType: "image/jpeg", bytes: 10, sha256: "b".repeat(64) }]);
+      objectName: "manhua-template-learn/native-frames/s/305.jpg", mimeType: "image/jpeg" as const, bytes: 10, sha256: "b".repeat(64) }]);
     deps.run = vi.fn(async (input) => {
       await input.onSegmentRead?.({ episodeIndex: 1, segmentIndex: 1, raw: { keyMoments: [{ atSec: 305, kindZh: "剧情", noteZh: "长片后段" }] }, sourceDigest: "a".repeat(64), preparedVideos });
       return result;
