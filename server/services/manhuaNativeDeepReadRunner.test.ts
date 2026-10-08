@@ -142,8 +142,17 @@ describe("整集GLM消费前永久取证", () => {
     expect(result.evidence?.raw).toHaveLength(2);
     expect(result.evidence?.selectedRawObjectName).toContain("raw-2.json");
     expect(f.saved[3]).toMatchObject({ episodeIndex: 2, batchRequestId: "batch-test", parsed: result.raw });
-    expect(f.saved[0].request).toMatchObject({ system: "系统", user: "全部分片", maxTokens: 131072, gatewayPolicy: "structuring_chain" });
+    expect(f.saved[0].request).toMatchObject({ system: "系统", user: "全部分片", maxTokens: 131072, gatewayPolicy: "structuring_chain", temperature: 0.7 });
+    expect(f.invoke.mock.calls[0]![0].temperature).toBe(0.7);
     expect(f.saved[0].request).not.toHaveProperty("abortSignal");
+  });
+
+  it.each([0.7, 0.65, 0.6])("重试温度 %s 同时传入供应商与永久请求证据", async (temperature) => {
+    const f = fixture();
+    await invokeNativeDeepReadGlmStructuring({ system: "系统", user: "全部分片" }, undefined,
+      { callId: "test-temperature", temperature }, f.deps);
+    expect(f.invoke.mock.calls[0]![0].temperature).toBe(temperature);
+    expect(f.saved[0].request.temperature).toBe(temperature);
   });
 
   it("0906 拆冻结：旧证据身份不一致 → 不硬停，改为新发整形；同编号已被旧 request 占用 → 顺延 -v2 另起证据链", async () => {
@@ -203,7 +212,7 @@ describe("整集GLM消费前永久取证", () => {
     expect(f.saved).toHaveLength(3);
   });
 
-  it("结构缓存缺失但永久GLM证据完整时零外呼恢复，历史用量只作证据不重买", async () => {
+  it.each([0.7, 0.8, 0.75])("结构缓存缺失但永久GLM证据完整时零外呼恢复，历史温度 %s 不重买", async (historicalTemperature) => {
     const f = fixture();
     const prompt = { system: "系统", user: "全部分片" };
     const context = {
@@ -214,7 +223,7 @@ describe("整集GLM消费前永久取证", () => {
       callId: `native-structuring-${"b".repeat(64)}`,
       preferredGlmGateway: "openrouter" as const,
     };
-    const first = await invokeNativeDeepReadGlmStructuring(prompt, undefined, context, f.deps);
+    const first = await invokeNativeDeepReadGlmStructuring(prompt, undefined, { ...context, temperature: historicalTemperature }, f.deps);
     expect(first.inputTokens).toBe(100);
     f.invoke.mockClear();
     f.upload.mockClear();
@@ -3755,7 +3764,8 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
         for (const chunk of raw.audioResolution as Array<{ analysis: Record<string, unknown> }>) { delete chunk.analysis.reusableAudioZh; delete chunk.analysis.genAudioHintZh; }
         return { ...result, gateway: "openrouter", raw };
       }
-      expect(context.temperature).toBe(0.75);
+      // 第二个并发批次也是首发，不是第一批的重试。
+      expect(context.temperature).toBe(0.7);
       return { ...result, gateway: "openrouter" };
     });
     const receipts: Array<Record<string, unknown>> = [];
@@ -3765,7 +3775,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentCacheSeriesKey: "schema_retry",
       onModelReceipt: (receipt) => { receipts.push(receipt as unknown as Record<string, unknown>); },
     }, deps);
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
     expect(receipts.some((row) => row.route === "structuring_retry_pending")).toBe(false);
     expect(result.episodes[0]!.result.segmentCount).toBe(3);
   });
@@ -3975,7 +3985,13 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
   });
 
   it("两条GLM供应商因网络与HTTP故障全败时补发三次，仍失败则停止而不伪造本地整形", async () => {
-    const invokeGlmStructuring = vi.fn(async () => {
+    const temperaturesByBatch = new Map<number, number[]>();
+    const invokeGlmStructuring = vi.fn(async (prompt: { user: string }, _signal: unknown, context: { temperature?: number }) => {
+      const rows = readRawSegmentsFromGlmPrompt(prompt.user);
+      const startSec = Number((rows[0]!.shots as Array<{ startSec: number }>)[0]!.startSec);
+      const temperatures = temperaturesByBatch.get(startSec) ?? [];
+      temperatures.push(context.temperature!);
+      temperaturesByBatch.set(startSec, temperatures);
       throw new GlmGatewayError("两档失败", [
         { gateway: "evolink_glm", model: "glm-5.3", outcome: "network_error" },
         { gateway: "openrouter", model: "z-ai/glm-5.3", outcome: "http_error" },
@@ -3987,8 +4003,13 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     });
     await expect(runManhuaNativeDeepReadBatch({ episodes: [twoSegmentEpisode] }, deps))
       .rejects.toThrow("两档失败");
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(4);
-    expect(deps.waitForRetry).toHaveBeenCalledTimes(3);
+    // 两个并发批次各首发一次、传输失败补发三次。
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(8);
+    expect(deps.waitForRetry).toHaveBeenCalledTimes(6);
+    expect(Array.from(temperaturesByBatch.keys()).sort((a, b) => a - b)).toEqual([0, 60]);
+    for (const temperatures of Array.from(temperaturesByBatch.values())) {
+      expect(temperatures).toEqual([0.7, 0.7, 0.65, 0.6]);
+    }
     expect(deps.writeStructuredBatchCache).not.toHaveBeenCalled();
   });
 
@@ -5634,7 +5655,8 @@ describe("0907 · 整形输出音轨块编号对不上段号", () => {
         raw.audioResolution.push({ ...raw.audioResolution[0]!, chunkIndex: 4 });
         return { ...result, gateway: "openrouter", raw };
       }
-      expect(context.temperature).toBe(0.75);
+      // 第二个并发批次也是首发，不是第一批的重试。
+      expect(context.temperature).toBe(0.7);
       return { ...result, gateway: "openrouter" };
     });
     const deps = makeRunnerDeps({ postVertex: makeSuccessfulEpisodePostVertex(segments) as never, invokeGlmStructuring: invokeGlmStructuring as never });
@@ -5642,7 +5664,7 @@ describe("0907 · 整形输出音轨块编号对不上段号", () => {
       episodes: [{ episodeIndex: 9, resolveNodes: async () => [], segments, sourceDurationSec: 180, cacheSourceDigest: "8".repeat(64) }],
       segmentCacheSeriesKey: "chunk_index_retry",
     }, deps);
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
     expect(result.episodes[0]!.result.segmentCount).toBe(3);
   });
 });
@@ -6055,4 +6077,53 @@ it("FlashX completion labels preserve the actual historical model identity", asy
   expect(glmGatewayDisplayLabel("openrouter", "z-ai/glm-5.3-flashx")).toBe("GLM-5.3 FlashX · OpenRouter");
   expect(glmGatewayDisplayLabel("openrouter", "z-ai/glm-5.3-flash")).toBe("GLM-5.3 Flash · OpenRouter");
   expect(glmGatewayDisplayLabel("openrouter", "z-ai/glm-5.3")).toBe("GLM-5.3 · OpenRouter");
+});
+
+
+describe("截图与GCS分片清理生命周期", () => {
+  it("先等待截图消费与保存，再清理同一批分片", async () => {
+    const segments = [{ startSec: 0, endSec: 60 }];
+    const order: string[] = [];
+    const deps = makeRunnerDeps({ postVertex: makeSuccessfulEpisodePostVertex(segments) as never,
+      remove: vi.fn(async () => { order.push("cleanup"); }) });
+    await runManhuaNativeDeepReadBatch({ episodes: [{ episodeIndex: 1, resolveNodes: async () => [],
+      segments, sourceDurationSec: 60 }], onSegmentRead: async ({ raw, preparedVideos }) => {
+      expect(raw).toHaveProperty("keyMoments");
+      expect(preparedVideos).toHaveLength(1);
+      expect(preparedVideos[0]!.gsUri).toBe("gs://test-bucket/seg-0.mp4");
+      expect(deps.remove).not.toHaveBeenCalled();
+      await Promise.resolve();
+      order.push("frames-persisted");
+    } }, deps);
+    expect(order).toEqual(["frames-persisted", "cleanup"]);
+    expect(deps.postVertex).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+it("GCS截图时序契约：同次模型响应截图，再整形，最后清理分片", async () => {
+  const segments = [{ startSec: 0, endSec: 60 }, { startSec: 60, endSec: 120 }];
+  const events: string[] = [];
+  const glm = makeGlmStructuringStub();
+  const deps = makeRunnerDeps({
+    postVertex: makeSuccessfulEpisodePostVertex(segments) as never,
+    invokeGlmStructuring: vi.fn(async (...args: Parameters<typeof glm>) => {
+      expect(events.filter(event => event.startsWith("frame-"))).toHaveLength(2);
+      const result = await glm(...args);
+      events.push("structured");
+      return result;
+    }) as never,
+    remove: vi.fn(async () => { events.push("cleanup"); }),
+  });
+  await runManhuaNativeDeepReadBatch({ episodes: [{ episodeIndex: 1, resolveNodes: async () => [],
+    segments, sourceDurationSec: 120 }], onSegmentRead: async ({ segmentIndex, preparedVideos }) => {
+      expect(deps.remove).not.toHaveBeenCalled();
+      expect(deps.invokeGlmStructuring).not.toHaveBeenCalled();
+      expect(preparedVideos[0]?.gsUri).toBe(`gs://test-bucket/seg-${segmentIndex}.mp4`);
+      events.push(`frame-${segmentIndex}`);
+    } }, deps);
+  expect(deps.postVertex).toHaveBeenCalledTimes(2);
+  expect(deps.postEvolink).not.toHaveBeenCalled();
+  expect(events).toContain("structured");
+  expect(events.indexOf("cleanup")).toBeGreaterThan(events.lastIndexOf("structured"));
 });

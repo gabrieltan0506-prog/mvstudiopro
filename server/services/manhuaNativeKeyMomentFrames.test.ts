@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import {
+  describeNativeFrameFailure,
   buildNativeKeyMomentFrameArgs,
   extractNativeKeyMomentEvidenceFrames,
   mergeNativeKeyMomentsBySecond,
@@ -26,6 +27,49 @@ function fakeDeps(over: Partial<NativeKeyMomentFrameDeps> = {}): NativeKeyMoment
 }
 
 describe("正式卡关键时刻抽帧", () => {
+  it("136分钟长片的194个时刻直接读取27个GCS分片，seek使用分片内秒位而落盘保留绝对秒位", async () => {
+    const preparedSegments = Array.from({ length: 27 }, (_, i) => ({
+      gsUri: `gs://test-bucket/seg-${i}.mp4`, startSec: i * 303, endSec: Math.min((i + 1) * 303, 8166),
+    }));
+    const keyMoments = Array.from({ length: 194 }, (_, i) => ({
+      atSec: Math.round(i * 8165 / 193 * 10) / 10, kindZh: "剧情", noteZh: "长片重点时刻",
+    }));
+    const deps = fakeDeps({ signPreparedVideo: vi.fn(gsUri => gsUri.replace("gs://", "https://storage.example/")) });
+    const rows = await extractNativeKeyMomentEvidenceFrames({
+      seriesKey: "long-film", episodeIndex: 1, mediaNodes: [], preparedSegments, keyMoments,
+    }, deps);
+    expect(rows.map(row => row.atSec)).toEqual(keyMoments.map(row => row.atSec));
+    const calls = vi.mocked(deps.runFfmpeg).mock.calls;
+    expect(calls).toHaveLength(194);
+    for (const [args] of calls) {
+      const source = args[args.indexOf("-i") + 1]!;
+      const index = Number(/seg-(\d+)/.exec(source)![1]);
+      const relativeSec = Number(args[args.indexOf("-ss") + 1]);
+      expect(relativeSec).toBeGreaterThanOrEqual(0);
+      expect(relativeSec).toBeLessThan(preparedSegments[index]!.endSec - preparedSegments[index]!.startSec);
+    }
+    expect(rows.at(-1)?.atSec).toBe(8165);
+  });
+
+  it("分片边界属于下一片，缓存缺片只用原片补齐对应秒位", async () => {
+    const deps = fakeDeps({ signPreparedVideo: vi.fn(() => "https://storage.example/second.mp4") });
+    const rows = await extractNativeKeyMomentEvidenceFrames({
+      seriesKey: "mixed", episodeIndex: 1, mediaNodes: [{ url: "https://source.example/full.mp4" }],
+      preparedSegments: [{ gsUri: "gs://b/second.mp4", startSec: 303, endSec: 606 }],
+      keyMoments: [302.9, 303, 605.9, 700].map(atSec => ({ atSec, kindZh: "剧情", noteZh: "边界" })),
+    }, deps);
+    expect(rows).toHaveLength(4);
+    const calls = vi.mocked(deps.runFfmpeg).mock.calls.map(([args]) => ({
+      input: args[args.indexOf("-i") + 1], seek: Number(args[args.indexOf("-ss") + 1]),
+    }));
+    expect(calls).toEqual(expect.arrayContaining([
+      { input: "https://source.example/full.mp4", seek: 302.9 },
+      { input: "https://storage.example/second.mp4", seek: 0 },
+      { input: "https://storage.example/second.mp4", seek: 302.9 },
+      { input: "https://source.example/full.mp4", seek: 700 },
+    ]));
+  });
+
   it("同一 0.1 秒位合并类别与说明，只上传一张并附对象 metadata", async () => {
     const deps = fakeDeps();
     const rows = await extractNativeKeyMomentEvidenceFrames({
@@ -220,3 +264,30 @@ it("真实本地视频产生可解码JPEG，保留原片", async () => {
     expect((await stat(localPath)).size).toBeGreaterThan(0);
   } finally { await rm(directory, { force: true, recursive: true }); }
 }, 30_000);
+
+
+describe("分片截图错误定位与全局并发", () => {
+  it("记录失败分类但绝不泄露签名地址和凭证", () => {
+    const secret = "https://storage.example/v.mp4?token=production-secret";
+    expect(describeNativeFrameFailure({ message: `ffmpeg ${secret}`, stderr: "HTTP error 403 Forbidden" })).toBe("http_403");
+    expect(describeNativeFrameFailure({ stderr: `Failed to resolve host ${secret}: Name or service not known` })).toBe("dns");
+    expect(describeNativeFrameFailure({ killed: true, message: secret })).toBe("timeout");
+    expect(describeNativeFrameFailure({ message: secret })).toBe("unknown");
+  });
+
+  it("多分片同时抽帧也最多四个ffmpeg，不按分片倍增", async () => {
+    let active = 0;
+    let peak = 0;
+    const deps = fakeDeps({ runFfmpeg: vi.fn(async () => {
+      active += 1; peak = Math.max(peak, active);
+      await new Promise(resolve => setTimeout(resolve, 1));
+      active -= 1;
+    }) });
+    await Promise.all(Array.from({ length: 3 }, (_, segmentIndex) => extractNativeKeyMomentEvidenceFrames({
+      seriesKey: "s", episodeIndex: 1, mediaNodes: [{ url: "https://example.com/v.mp4" }],
+      keyMoments: Array.from({ length: 7 }, (_, i) => ({ atSec: segmentIndex * 300 + i, kindZh: "剧情", noteZh: "转折" })),
+    }, deps)));
+    expect(peak).toBe(4);
+    expect(deps.runFfmpeg).toHaveBeenCalledTimes(21);
+  });
+});
