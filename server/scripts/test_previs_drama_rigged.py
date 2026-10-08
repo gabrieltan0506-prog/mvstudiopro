@@ -109,6 +109,12 @@ fixture_b = root/'TEST_ONLY-drama-rigged-b.glb'
 export_fixture(fixture_a)
 shutil.copyfile(fixture_a, fixture_b)
 
+# 仅恢复本脚本已有的测试输入，供正式 TypeScript 渲染入口的小规模集成测试使用。
+# 不执行下方诊断副本或改写生产 renderer；仍属于需事先展示确认的模型导出。
+if '--fixtures-only' in arguments:
+    print(json.dumps({'fixtures': [str(fixture_a), str(fixture_b)], 'testOnly': True}))
+    raise SystemExit(0)
+
 
 # ---------------------------------------------------------------- 场景
 BASE = {'version': 1, 'durationSec': 2, 'aspect': '16:9',

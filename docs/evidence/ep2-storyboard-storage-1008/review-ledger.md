@@ -122,3 +122,8 @@ Blender5.2.1真实内存数据13项PASS，无渲染/导出媒体；验证真实�
 
 ### 本批最终本地与隔离回执
 全仓类型最终 `tsc --noEmit --incremental --tsBuildInfoFile /tmp/ep2-pr1685-final.tsbuildinfo` exit0；代码主体一致，随后仅纠正顾问背负/挡碗旧文案（从“不能用真模”更新为双方真模运行时蒙皮检查），定向顾问测试回执另附。`vite build` exit0，有既有大包警告；本次Linux前端构建因本机Fly多版本agent反复断开未完成，不冒称Linux前端通过。Linux六组Blender检查已完成且保存日志，专用机286d6d2f411038已删除，API回读不再存在。只清理本次专机。默认PR构建禁自动媒体夹具；保留原check名称以免破坏required-check契约。
+
+## 2026-10-08T23:49:41+08:00 · 正式小样生产路径验证
+新增仅小样测试与原夹具导出分支，不改生产算法。正向：测试Source归属校验→preparePrevisModels真实hash/GLB校验→renderManhuaPrevis正式Python→实际报告与48帧→export_previs_animation→ffmpeg/ffprobe→I/O隔离存储→MP4/GLB/hash断言。反向：取回实际MP4/GLB/帧数据/报告/解码回执，与同一requestId33333333-3333-4333-8333-333333331008和保存SHA闭合；错误用户8被正式来源函数拒绝。Linux1/1通过，所有48帧逐张读取，无角色消失；常速感知、正式衣物、正式UI/采用恢复及34镜整集未验。默认CI测试跳过媒体，完整diff审查及新增类型检查通过。专机784579dae70408为本任务专属shared4/8GB，清理回执另附。
+
+本次专机清理：784579dae70408已destroy成功，机器列表回读不存在；实际MP4/GLB/帧数据/报告/ffprobe及Linux日志已保留在当日产物目录，所有hash一致。未操作app/rig工作机。
