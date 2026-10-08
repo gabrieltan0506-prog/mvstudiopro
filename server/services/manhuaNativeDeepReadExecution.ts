@@ -16,7 +16,6 @@ import { hasNativeAttemptSelection } from "./manhuaNativeDeepReadAttemptSelectio
  */
 import crypto from "node:crypto";
 import { setTimeout as waitFrameRetry } from "node:timers/promises";
-import { MANHUA_LEARN_MAX_DURATION_SEC } from "../../shared/manhuaTemplateLearnSeries.js";
 import {
   isManhuaNativeDeepReadEnabled,
   NATIVE_DEEP_READ_AUDIO_CUE_FLOOR_INTERVAL_SEC,
@@ -797,8 +796,6 @@ export const NATIVE_DEEP_READ_DEFAULT_BATCH_EPISODES = 20;
 
 /** 失控保险：清单误写成几千集时兜底，正常发车碰不到 */
 export const NATIVE_DEEP_READ_BATCH_HARD_CEILING = 200;
-/** 单集时长上限挂学习策略总开关（#1361 抬到 4 小时）；此前写死 120 分钟导致整片电影被执行层拦下。 */
-export const NATIVE_DEEP_READ_MAX_EPISODE_SEC = MANHUA_LEARN_MAX_DURATION_SEC;
 /** 配置可到两小时；每次任务的实际分片上限由其自定义 segmentSeconds 决定。 */
 export const NATIVE_DEEP_READ_MAX_SEGMENT_SEC = NATIVE_DEEP_READ_MAX_SEGMENT_SECONDS;
 
@@ -870,9 +867,6 @@ export function validateNativeDeepReadBatchPlan(
       : parseNativeDeepReadSegmentSeconds(configuredSegmentSeconds);
     parseNativeDeepReadVideoFps(episode.videoFps);
     if (!Number.isFinite(duration) || duration <= 0) throw new Error(`第${ep}集时长无效`);
-    if (duration > NATIVE_DEEP_READ_MAX_EPISODE_SEC) {
-      throw new Error(`第${ep}集超过 ${Math.round(NATIVE_DEEP_READ_MAX_EPISODE_SEC / 60)} 分钟学习上限`);
-    }
     const segments = validateNativeDeepReadSegments(episode.segments);
     for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
       const segment = segments[segmentIndex]!;
@@ -893,7 +887,7 @@ export function validateNativeDeepReadBatchPlan(
       }
       if (len > NATIVE_DEEP_READ_MAX_SEGMENT_SEC) {
         throw new Error(
-          `第${ep}集单片 ${Math.round(len)}s 超过整片 ${NATIVE_DEEP_READ_MAX_SEGMENT_SEC}s 策略上限`,
+          `第${ep}集单片 ${Math.round(len)}s 超过单片 ${NATIVE_DEEP_READ_MAX_SEGMENT_SEC}s 参数上限`,
         );
       }
       if (

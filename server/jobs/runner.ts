@@ -4164,7 +4164,7 @@ async function runClaimedJob(
         job.id,
         userCancelled
           ? "用户已停止学习；已入库内容与费用回执保留"
-          : `${message}；已入库内容保留，未自动重跑`,
+          : `${message}；未自动重跑`,
         failureOutputPatch,
       );
       if (!failedPersisted) {
