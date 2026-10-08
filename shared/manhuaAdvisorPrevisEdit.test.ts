@@ -12,28 +12,6 @@ function receipt(trial: AdvisorPrevisTrial) {
   return { jobId: "previs-test-job", status: "succeeded", params: trial.request, output: { requestId: trial.request.requestId, clipId: "clip-1", gcsUri: "gs://test/preview.mp4", url: "/api/manhua-previs-media/test/preview", durationSec: 5 } };
 }
 describe("顾问独立试看与确认写回边界", () => {
-  it("动画导出经顾问确认后保留到存储恢复，缺失或串任务回执不覆盖旧稿", () => {
-    const { studio, candidate } = setup();
-    studio.spec.exportAnimation = true;
-    candidate.target = makeAdvisorPrevisTarget("clip-1", studio);
-    const before = JSON.stringify(studio);
-    const trial = prepareAdvisorPrevisTrial("clip-1", studio, candidate);
-    const jobId = `prv_${"a".repeat(48)}`;
-    const animation = { glbUrl: `/api/manhua-previs-media/${jobId}/animation`, framesUrl: `/api/manhua-previs-media/${jobId}/animation-frames`, sha256: "b".repeat(64), framesSha256: "c".repeat(64) };
-    const good = { ...receipt(trial), jobId, output: { ...receipt(trial).output, animation } };
-    expect(trial.request.spec.exportAnimation).toBe(true);
-    const restored = manhuaPrevisStudioSchema.parse(JSON.parse(JSON.stringify(adoptAdvisorPrevisTrial("clip-1", studio, trial, good))));
-    const take = restored.history.find(h => h.requestId === trial.request.requestId)!;
-    expect(take.animation).toEqual(animation);
-    expect(take.sourceScopeId).toBe(trial.request.scopeId);
-    expect(take.sourceScopeId).not.toBe(studio.scopeId);
-    expect(restored.selectedJobId).toBe(take.jobId);
-    expect(take.spec).toEqual(restored.spec);
-    for (const invalid of [undefined, { ...animation, framesSha256: "" }, { ...animation, glbUrl: animation.glbUrl.replace(jobId, `prv_${"d".repeat(48)}`) }]) {
-      expect(() => adoptAdvisorPrevisTrial("clip-1", studio, trial, { ...good, output: { ...good.output, animation: invalid } })).toThrow("动画回执");
-    }
-    expect(JSON.stringify(studio)).toBe(before);
-  });
   it("给模型的上下文排除素材身份，非法模型字段和地址不能进入候选", () => {
     const { studio, candidate } = setup();
     expect(advisorPrevisSpecJson(studio.spec)).not.toContain("character-existing");
@@ -108,43 +86,4 @@ it("1007场景特效候选保留身份与时长，支持显式清空且拒绝未
  expect(next.sceneEffects).toHaveLength(1);
  expect(applyAdvisorPrevisPatch(next,{...patch,sceneEffects:[]}).sceneEffects).toEqual([]);
  expect(()=>applyAdvisorPrevisPatch(spec,{...patch,sceneEffects:[{...patch.sceneEffects![0],actorId:"foreign-actor"}]})).toThrow();
-});
-
-
-it("剧情道具和四足倒地经过顾问候选、应用、序列化恢复仍保留", () => {
-  const studio = createManhuaPrevisStudio(5);
-  studio.spec.actors[0].shape = "horse";
-  studio.spec.actors[0].actions = [];
-  studio.spec.actors[0].end = [...studio.spec.actors[0].start];
-  const actorId = studio.spec.actors[0].id;
-  const patch = advisorPrevisPatchSchema.parse({ kind:"previs_edit_v1",summaryZh:"马侧卧保持，袖光位置可见",unsupportedZh:[],
-    actors:[{id:actorId,quadrupedFall:{mode:"hold",side:"left"}}],
-    storyProps:[{id:"glow",kind:"sleeve_glow",keyframes:[0,5].map(timeSec=>({timeSec,anchor:{type:"bone",actorId,bone:"body"}}))}] });
-  const next = applyAdvisorPrevisCandidate("clip",studio,{target:makeAdvisorPrevisTarget("clip",studio),patch});
-  const restored = manhuaPrevisStudioSchema.parse(JSON.parse(JSON.stringify(next)));
-  expect(restored.spec.actors[0].quadrupedFall).toEqual({mode:"hold",side:"left"});
-  expect(restored.spec.storyProps).toHaveLength(1);
-  expect(restored.specHistory?.at(-1)?.spec).toEqual(studio.spec);
-  expect(applyAdvisorPrevisPatch(restored.spec,advisorPrevisPatchSchema.parse({kind:"previs_edit_v1",summaryZh:"清空道具",unsupportedZh:[],storyProps:[]})).storyProps).toEqual([]);
-});
-
-it("导入建立开镜已背稳关系，经原保存与恢复保留身份和旧稿，拒绝换人及错误路线", () => {
-  const studio = createManhuaPrevisStudio(5);
-  const base = {...studio.spec.actors[0], start:[0,0] as [number,number],end:[0,0] as [number,number],actions:[]};
-  studio.spec.actors = [{...base,id:"daughter",assetRef:"daughter-asset"},{...base,id:"mother",assetRef:"mother-asset"},{...base,id:"doctor",assetRef:"doctor-asset"}];
-  const before = JSON.stringify(studio);
-  const patch=advisorPrevisPatchSchema.parse({kind:"previs_edit_v1",summaryZh:"阿菁开镜已背稳娘，保留原人物",unsupportedZh:[],piggyback:{carrierId:"daughter",passengerId:"mother"}});
-  const next=applyAdvisorPrevisCandidate("clip",studio,{target:makeAdvisorPrevisTarget("clip",studio),patch});
-  const restored=manhuaPrevisStudioSchema.parse(JSON.parse(JSON.stringify(next)));
-  expect(restored.spec.piggyback).toEqual(patch.piggyback);
-  expect(restored.spec.actors).toEqual(studio.spec.actors);
-  expect(restored.specHistory?.at(-1)?.spec).toEqual(studio.spec);
-  expect(JSON.stringify(studio)).toBe(before);
-  for(const passengerId of ["doctor","daughter","missing"]){
-    expect(()=>applyAdvisorPrevisPatch(restored.spec,{...patch,piggyback:{carrierId:"daughter",passengerId}})).toThrow("身份已锁定");
-  }
-  for(const passengerId of ["daughter","missing"]){
-    expect(()=>applyAdvisorPrevisPatch(studio.spec,{...patch,piggyback:{carrierId:"daughter",passengerId}})).toThrow("两名不同的在场人物");
-  }
-  expect(()=>applyAdvisorPrevisPatch(studio.spec,{...patch,actors:[{id:"mother",start:[1,0]}]})).toThrow("同一站位与路线");
 });

@@ -14,7 +14,6 @@ const f=globalThis.fixture={submits:[],queries:[],writes:[],ready:false};
 const studio=createManhuaPrevisStudio(5,'11111111-1111-4111-8111-111111111111');
 studio.spec.actors.push({...structuredClone(studio.spec.actors[0]),id:'mother',nameZh:'娘',start:[-1,.65],end:[-1,.65]});
 const candidate={target:makeAdvisorPrevisTarget('clip-1',studio),patch:{kind:'previs_edit_v1',summaryZh:'缓推到人物近景',unsupportedZh:[],interactions:[{id:'support',kind:'support_walk',actorId:'actor-1',targetActorId:'mother',startSec:0,contactSec:1,endSec:5}],cameras:studio.spec.cameras.map(c=>({...c,endLens:60}))}};
-if(globalThis.unsupportedSourceFixture){studio.advisorShotSource={version:1,clipId:'clip-1',shots:[{index:8,startSec:0,endSec:5,actionZh:'先生取血入碗'}]};candidate.target=makeAdvisorPrevisTarget('clip-1',studio);candidate.patch.shotCoverage=[{index:8,status:'unsupported',actorIds:['actor-1'],reasonZh:'刀刃伤肩与陶碗接触尚不支持'}];}
 f.voice={current:null};f.allow=true;window.confirm=()=>f.allow;f.studio=studio;f.original=JSON.stringify(studio);f.videoSources=[];
 f.response=request=>({jobId:'previs-test-job',status:f.failed?'failed':f.ready?'succeeded':'queued',params:request,output:f.ready?{requestId:request.requestId,clipId:request.clipId,gcsUri:'gs://test/preview.mp4',url:'/api/manhua-previs-media/test/preview',durationSec:5}:null});
 createRoot(document.getElementById('root')).render(<ManhuaAdvisorPrevisComparison voiceControl={f.voice} candidate={candidate} onPreviewReady={source=>f.videoSources.push(source)} storageKey='test:trial' previewHost={document.getElementById('preview')} autoStart onPrepare={c=>prepareAdvisorPrevisTrial('clip-1',f.studio,c)} onApply={(trial,res)=>{f.studio=adoptAdvisorPrevisTrial('clip-1',f.studio,trial,res);f.writes.push(trial.request.requestId);return true;}}/>);
@@ -89,18 +88,3 @@ it("明确失败的白模可确认重试，原任务保留，取消和运行中�
  expect(await page.evaluate((id)=>Boolean(localStorage.getItem('test:trial:'+id)),before[0])).toBe(true);expect(await page.evaluate(()=>(globalThis as any).fixture.writes)).toEqual([]);
  }finally{await context.close()}
 },20000);
-
-
-it("逐镜能力不足直接显示原因并阻止自动试看，原场景不变", async () => {
- const context = await browser.createBrowserContext(); const page = await context.newPage(); await page.setRequestInterception(true);
- page.on("request", r => r.isNavigationRequest() ? void r.respond({ status: 200, contentType: "text/html", body: '<main id="preview" data-clip-id="clip-1"></main><div id="root"></div>' }) : void r.abort());
- try {
-  await page.goto("http://localhost:41828/");
-  await page.evaluate(() => { (globalThis as any).unsupportedSourceFixture = true; });
-  await page.addScriptTag({ content: bundle });
-  await page.waitForFunction(() => document.body.textContent?.includes("镜8：刀刃伤肩与陶碗接触尚不支持"));
-  expect(await page.evaluate(() => (globalThis as any).fixture.submits)).toEqual([]);
-  expect(await page.evaluate(() => (globalThis as any).fixture.writes)).toEqual([]);
-  expect(await page.evaluate(() => JSON.stringify((globalThis as any).fixture.studio) === (globalThis as any).fixture.original)).toBe(true);
- } finally { await context.close(); }
-}, 20000);

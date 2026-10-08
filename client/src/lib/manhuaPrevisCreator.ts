@@ -143,7 +143,6 @@ export function usePreparedRig(
   profile: PreparedRigProfile,
   context: {
     assetRef?: string;
-    sourceAssetRef?: string;
     taskId?: string;
     durationSec: number;
     spec?: ManhuaPrevisSpec;
@@ -154,13 +153,12 @@ export function usePreparedRig(
     !context.assetRef ||
     profile.assetRef !== context.assetRef ||
     profile.sourceJobId !== context.taskId ||
-    profile.riggedModel.sourceJobId !== context.taskId ||
-    Boolean(profile.riggedModel.sourceAssetRef && context.sourceAssetRef && profile.riggedModel.sourceAssetRef !== context.sourceAssetRef)
+    profile.riggedModel.sourceJobId !== context.taskId
   ) {
     throw new Error("角色或模型版本不匹配，请重新准备当前模型");
   }
   const { controller, ...base } = profile.riggedModel;
-  const next = createRigForm(base, context.taskId, context.sourceAssetRef);
+  const next = createRigForm(base, context.taskId);
   if (!controller)
     return form.sourceJobId === context.taskId
       ? {

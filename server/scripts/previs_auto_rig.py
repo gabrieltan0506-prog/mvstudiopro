@@ -1,6 +1,6 @@
 """第六步独立蒙皮内核：确认关节→热权重→严格重导入，第四/第五步接口不变。
 
-本模块不联网。支持单人直立A/T或屈臂、四足站姿的封闭连通无骨网格；
+本模块不联网。支持范围仍为单人A/T、封闭连通、100至50000顶点无骨网格；
 产生待人工检查的新候选，不把权重/运动数值检查当作美术质量验收。
 """
 import hashlib
@@ -139,8 +139,8 @@ def rig_confirmed_mesh(source, landmarks, confirmation, output_path, *, checkpoi
         required.add("singleQuadruped")
     if not isinstance(confirmation, dict) or set(confirmation) != required:
         raise ValueError("请先确认单个模型姿态和当前模型的关节点")
-    if confirmation.get("landmarksManuallyConfirmed") is not True or (quadruped and (confirmation.get("singleHuman") is not False or confirmation.get("singleQuadruped") is not True)) or (not quadruped and (confirmation.get("singleHuman") is not True or confirmation.get("pose") not in ("A", "T", "bent_arms"))):
-        raise ValueError("只接受已人工确认关节的单人直立 A/T、屈臂或单个四足站姿网格")
+    if confirmation.get("landmarksManuallyConfirmed") is not True or (quadruped and (confirmation.get("singleHuman") is not False or confirmation.get("singleQuadruped") is not True)) or (not quadruped and (confirmation.get("singleHuman") is not True or confirmation.get("pose") not in ("A", "T"))):
+        raise ValueError("只接受已人工确认关节的单人 A/T 或单个四足站姿网格")
     if source.type != "MESH" or source.mode != "OBJECT":
         raise ValueError("请使用物体模式下的独立无骨网格")
     original_digest = source_digest(source)
@@ -173,8 +173,20 @@ def rig_confirmed_mesh(source, landmarks, confirmation, output_path, *, checkpoi
         from previs_quadruped import validate_landmarks
         validate_landmarks(points)
     else:
-        from previs_human_pose import validate_human_arm_pose
-        validate_human_arm_pose(points, confirmation["pose"])
+        for side in (-1, 1):
+            suffix = str(side)
+            upper, forearm, hand = (points[key + suffix] for key in ("upper_arm", "forearm", "hand"))
+            if any((a[1] - b[0]).length > .005 for a, b in ((upper, forearm), (forearm, hand))):
+                raise ValueError("人工手臂关节必须连续")
+            arm = hand[1] - upper[0]
+            if arm.y * side < .25 or abs(arm.x) > .15 or arm.z > .05 or arm.z < -.7:
+                raise ValueError("人工关节点不符合 +X 朝向的 A/T 展臂范围")
+            if confirmation["pose"] == "T" and abs(arm.z) > .08:
+                raise ValueError("T 型手臂必须接近水平")
+            for key in ("upper_leg", "lower_leg"):
+                head, tail = points[key + suffix]
+                if tail.z >= head.z:
+                    raise ValueError("腿部关节点必须符合直立姿态")
     bm = bmesh.new()
     try:
         bm.from_mesh(source.data)
@@ -366,7 +378,7 @@ def rig_confirmed_mesh(source, landmarks, confirmation, output_path, *, checkpoi
                 "truncationBendMaxDeltaMeters": {name: row["maxDeltaMeters"] for name, row in truncation_errors.items()}, "auditDirectory": str(audit_dir),
                 "bendMaxDeltaMeters": bends, "stage4Reimport": imported["report"],
                 "reimportBendMaxDeltaMeters": reimport_bends,
-                "limitations": ["人工关节点，不自动识别人形", "仅封闭连通直立人体或四足站姿网格和基础 PBR/图片材质节点", "须检查变形与外观，不含眼骨和表情控制器", "数值通过不代表美术质量通过"]}
+                "limitations": ["人工关节点，不自动识别人形", "仅封闭连通 A/T 网格和基础 PBR/图片材质节点", "须检查变形与外观，不含眼骨和表情控制器", "数值通过不代表美术质量通过"]}
         # 成功回执先持久保留，排他发布成功后才返回；失败候选/回执始终可审计。
         _write_json(audit_dir / "candidate-report.json", receipt)
         os.link(candidate, path)

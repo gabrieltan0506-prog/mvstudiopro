@@ -23,7 +23,7 @@ import {
 
 type Props = {
   actor: ManhuaPrevisSpec["actors"][number];
-  model?: { taskId: string; assetRef?: string };
+  model?: { taskId: string };
   durationSec: number;
   disabled?: boolean;
   spec?: ManhuaPrevisSpec;
@@ -80,16 +80,16 @@ export function ManhuaPrevisRigControls({
 }: Props) {
   const appliedKey = JSON.stringify(actor.riggedModel ?? null);
   const [form, setForm] = useState(() =>
-    createRigForm(actor.riggedModel, model?.taskId, model?.assetRef)
+    createRigForm(actor.riggedModel, model?.taskId)
   );
   const [mode, setMode] = useState<"create" | "prepare">("create");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   useEffect(() => {
-    setForm(createRigForm(actor.riggedModel, model?.taskId, model?.assetRef));
+    setForm(createRigForm(actor.riggedModel, model?.taskId));
     setError("");
     setNotice("");
-  }, [actor.id, appliedKey, model?.taskId, model?.assetRef]);
+  }, [actor.id, appliedKey, model?.taskId]);
   const incompatible = !!actor.creature;
   const updateCue = (index: number, patch: Partial<RigCueForm>) =>
     setForm(f => ({
@@ -101,7 +101,6 @@ export function ManhuaPrevisRigControls({
     try {
       const value = applyRigForm(form, {
         taskId: model?.taskId,
-        sourceAssetRef: model?.assetRef,
         durationSec,
         shape: actor.shape,
         hasCreature: !!actor.creature,
@@ -149,7 +148,6 @@ export function ManhuaPrevisRigControls({
         usePreparedRig(form, profile, {
           assetRef: actor.assetRef,
           taskId: model?.taskId,
-          sourceAssetRef: model?.assetRef,
           durationSec,
           spec,
           actorId: actor.id,
@@ -516,7 +514,7 @@ export function ManhuaPrevisRigControls({
                       className={button}
                       onClick={() =>
                         setForm({
-                          ...createRigForm(undefined, model.taskId, model.assetRef),
+                          ...createRigForm(undefined, model.taskId),
                           enabled: true,
                         })
                       }
@@ -779,7 +777,7 @@ export function ManhuaPrevisRigControls({
             type="button"
             className={button}
             onClick={() => {
-              setForm(createRigForm(actor.riggedModel, model?.taskId, model?.assetRef));
+              setForm(createRigForm(actor.riggedModel, model?.taskId));
               setError("");
               setNotice("已取消编辑，保留已应用配置。");
             }}

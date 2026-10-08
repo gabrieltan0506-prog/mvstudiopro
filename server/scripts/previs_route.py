@@ -24,28 +24,13 @@ def route_pose(actor, t):
     return Vector((*node['position'], 0)), node['facingDeg']
 
 
-def measure_routes(spec, rigs, scene, models=()):
+def measure_routes(spec, rigs, scene):
     rows = []
     original = scene.frame_current
     try:
         for actor, rig, *_ in rigs:
             if not actor.get('motionRoute'):
                 continue
-            root_source = {'kind': 'sourceRig'}
-            if actor.get('riggedModel'):
-                matches = [model for model in models if model.get('actorId') == actor['id']]
-                if len(matches) != 1:
-                    raise ValueError('带骨路线缺少唯一真实模型根')
-                model = matches[0]
-                report = model.get('report', {})
-                if (model.get('rig') is None or model['rig'] is rig or
-                        report.get('actorId') != actor['id'] or
-                        report.get('sourceJobId') != actor['riggedModel']['sourceJobId'] or
-                        not report.get('sha256')):
-                    raise ValueError('带骨路线真实模型身份不一致')
-                rig = model['rig']
-                root_source = {'kind': 'riggedModel', 'sourceJobId': report['sourceJobId'],
-                               'sha256': report['sha256']}
             samples = []
             for frame in range(1, scene.frame_end+1):
                 scene.frame_set(frame)
@@ -53,7 +38,7 @@ def measure_routes(spec, rigs, scene, models=()):
                 matrix = rig.matrix_world
                 facing = math.degrees(math.atan2(matrix[1][0], matrix[0][0]))
                 samples.append({'frame': frame, 'root': list(matrix.translation), 'facingDeg': facing})
-            rows.append({'actorId': actor['id'], 'rootSource': root_source, 'samples': samples})
+            rows.append({'actorId': actor['id'], 'samples': samples})
     finally:
         scene.frame_set(original)
         bpy.context.view_layer.update()

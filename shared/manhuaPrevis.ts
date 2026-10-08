@@ -1,9 +1,4 @@
-import { previsStoryPropsSchema, storyPropsIssue } from "./manhuaPrevisStoryProps";
-import { previsHandContactsSchema, handContactsIssue } from "./manhuaPrevisHandContacts";
-import { previsHumanPostureSchema, humanPostureIssue } from "./manhuaPrevisHumanPosture";
-import { previsQuadrupedFallSchema, quadrupedFallIssue } from "./manhuaPrevisQuadrupedFall";
 import { previsCameraWindowSchema } from "./manhuaPrevisCameraTiming";
-import { advisorPrevisShotSourceSchema } from "./manhuaAdvisorPrevisShotSource";
 import { manhuaPrevisAudioSchema } from "./manhuaPrevisAudio";
 /** 动作白模配置：只有数据，没有用户 Python／命令／任意素材 URL。 */
 import { z } from "zod";
@@ -18,9 +13,6 @@ import { previsRiggedModelSchema } from "./manhuaPrevisRig";
 import { previsSceneEffectsSchema, validatePrevisSceneEffects, formatPrevisSceneEffectsGuide } from "./manhuaPrevisSceneEffects";
 
 import { previsPiggybackSchema, previsPiggybackIssues } from "./manhuaPrevisPiggyback";
-
-import { PREVIS_MAX_ACTORS, PREVIS_RENDER_UNIT_BUDGET, PREVIS_BUDGET_FPS, PREVIS_MIN_DURATION_SEC } from "./manhuaPrevisLimits";
-export { PREVIS_MAX_ACTORS, PREVIS_RENDER_UNIT_BUDGET, PREVIS_BUDGET_FPS } from "./manhuaPrevisLimits";
 
 const point = z.tuple([
   z.number().finite().min(-12).max(12),
@@ -193,7 +185,7 @@ export const previsActorSchema = z
     id: z.string().min(1).max(100),
     nameZh: z.string().trim().min(1).max(80),
     /** 角色在白模中的身份色；旧稿缺省时按身份分配。 */
-    colorIndex: z.number().int().min(0).max(PREVIS_MAX_ACTORS - 1).optional(),
+    colorIndex: z.number().int().min(0).max(5).optional(),
     /** 仅标明对应的项目角色；不声称为无骨骼 GLB 自动蒙皮。 */
     assetRef: z.string().max(160).optional(),
     /** 半开在场区间，边界对齐24fps；缺省表示整段在场。 */
@@ -205,8 +197,6 @@ export const previsActorSchema = z
     motionRoute: z.array(previsMotionRouteNodeSchema).min(2).max(12).optional(),
     creature: previsCreatureSchema.optional(),
     riggedModel: previsRiggedModelSchema.optional(),
-    quadrupedFall: previsQuadrupedFallSchema.optional(),
-    humanPosture: previsHumanPostureSchema.optional(),
     shape: z.enum(["human", "horse"]),
     start: point,
     end: point,
@@ -244,13 +234,11 @@ const cameraPoint = z.tuple([
 const manhuaPrevisSpecBaseSchema = z
   .object({
     version: z.literal(1),
-    durationSec: z.number().int().min(PREVIS_MIN_DURATION_SEC).max(30),
+    durationSec: z.number().int().min(2).max(30),
     aspect: z.enum(["16:9", "9:16"]),
     /** 人物、接触、特效和相机统一按源时间变速；不是独立摄影机的子弹时间。 */
     timeMap: manhuaShotTimeMapSchema.optional(),
-    actors: z.array(previsActorSchema).min(1).max(PREVIS_MAX_ACTORS),
-    storyProps: previsStoryPropsSchema.optional(),
-    handContacts: previsHandContactsSchema.optional(),
+    actors: z.array(previsActorSchema).min(1).max(6),
     interactions: z.array(previsInteractionSchema).max(24).optional(),
     piggyback: previsPiggybackSchema.optional(),
     scriptSource: previsScriptSourceSchema.optional(),
@@ -363,7 +351,7 @@ export const manhuaPrevisDraftSchema = manhuaPrevisSpecBaseSchema.extend({
           .max(12),
       })
     )
-    .max(PREVIS_MAX_ACTORS),
+    .max(6),
   cameras: z
     .array(
       z
@@ -405,12 +393,12 @@ export const manhuaPrevisDraftSchema = manhuaPrevisSpecBaseSchema.extend({
 /** 原尺寸渲染的已验上限；更高负荷仅走服务端降采样渲染并恢复标准视频尺寸。 */
 export const PREVIS_FULL_RES_RENDER_UNIT_BUDGET = 2700;
 /** 75% 隔离探针在 2784 单位完成逐帧渲染；先只放行到 2800，完整编码仍须实测。 */
-
+export const PREVIS_RENDER_UNIT_BUDGET = 2800;
 /** 出水预演硬限：人数与秒数。拆镜器（manhuaActionPlanSplit）从这里读，不重抄数字。 */
 export const PREVIS_WATER_MAX_ACTORS = 3;
 export const PREVIS_WATER_MAX_SEC = 8;
 /** 预算换算用的采样帧率（与 previsRenderCostUnits 一致） */
-
+export const PREVIS_BUDGET_FPS = 24;
 
 /** 保守容量单位：完整帧数 × 总角色数。在场隐藏尚未证明可降低端到端渲染开销。 */
 export function previsRenderCostUnits(spec: {
@@ -480,19 +468,7 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
     if (capacityIssue) ctx.addIssue({ code: "custom", message: capacityIssue });
     if (new Set(spec.actors.map(a => a.id)).size !== spec.actors.length)
       ctx.addIssue({ code: "custom", message: "角色编号不能重复" });
-    const propsIssue = storyPropsIssue(spec.storyProps, spec.actors, spec.durationSec);
-    if (propsIssue) ctx.addIssue({ code: "custom", message: propsIssue, path: ["storyProps"] });
-    const handIssue = handContactsIssue(spec);
-    if (handIssue) ctx.addIssue({ code: "custom", message: handIssue, path: ["handContacts"] });
     spec.actors.forEach((actor, i) => {
-      const fallIssue = quadrupedFallIssue(actor, spec.durationSec);
-      if (fallIssue) ctx.addIssue({ code: "custom", message: fallIssue, path: ["actors", i, "quadrupedFall"] });
-      const postureIssue = humanPostureIssue(actor, spec.durationSec);
-      if (postureIssue) ctx.addIssue({ code: "custom", message: postureIssue, path: ["actors", i, "humanPosture"] });
-      if (actor.humanPosture && (spec.waterEmergence || (spec.piggyback && [spec.piggyback.carrierId,spec.piggyback.passengerId].includes(actor.id)) || spec.interactions?.some(e=>[e.actorId,e.targetActorId].includes(actor.id)) || spec.handContacts?.some(c=>c.actorId===actor.id) || spec.storyProps?.some(p=>p.grip?.actorId===actor.id)))
-        ctx.addIssue({code:"custom",message:"坐卧演员不能叠加出水、背负或其他手部接触约束",path:["actors",i,"humanPosture"]});
-      if (actor.quadrupedFall && (spec.waterEmergence || spec.interactions?.some(event => [event.actorId, event.targetActorId].includes(actor.id))))
-        ctx.addIssue({ code: "custom", message: "倒地不可与出水或双人交互叠加", path: ["actors", i, "quadrupedFall"] });
       actor.visibleRanges?.forEach((range, j) => {
         if (range.endSec > spec.durationSec || range.startSec >= range.endSec ||
             [range.startSec, range.endSec].some(t => Math.abs(t * PREVIS_BUDGET_FPS - Math.round(t * PREVIS_BUDGET_FPS)) > 1e-6) ||
@@ -624,14 +600,19 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
               "走位动作必须落在角色实际位移区间内；原地不动请改用其它动作或先设好起止站位",
             path: ["actors", i, "actions", j],
           });
-        // 合成夹具校正通过不代表真实人物网格和常速质量验收；保留完整人物门禁。
+        // 0917 三轮审查实测（server/scripts/test_previs_drama_rigged.py）：
+        // retarget_from_source 只烘「相对各自静止姿态的旋转增量」。棍人的静止姿态腿本来就
+        // 屈着 31.3°（站位 IK 的结果），真模的静止姿态腿是直的，于是坐下只传过去 28.3° 的
+        // 增量——腿够不着地，脚直接扎进地板：1.7 米模型 −21.4 厘米、2.55 米模型 −32.2 厘米，
+        // 与身高成正比，不是夹具特例。走位实测只有 +2.0 厘米抬脚残差，不受影响。
+        // 落脚校正上线之前，宁可拒绝提交，也不渲一个脚在地里的片子。
         if (action.kind === "cough" && actor.riggedModel)
-          ctx.addIssue({ code: "custom", message: "咳嗽目前仅支持基础白模人物；完整人物的掩口和收手位置尚未通过真实模型验收，请先使用基础白模预演。", path: ["actors", i, "actions", j] });
+          ctx.addIssue({ code: "custom", message: "咳嗽目前仅支持基础白模人物；完整人物的掩口和收手位置还未修正，请先使用基础白模预演。", path: ["actors", i, "actions", j] });
         if (action.kind === "sit" && actor.riggedModel)
           ctx.addIssue({
             code: "custom",
             message:
-              "带骨角色暂不支持坐下：真实人物的坐姿网格接触与常速质量尚未通过正式验收；合成夹具测试不等于真实人物验收。可使用基础白模或站立类动作，现有模型保留",
+              "带骨角色暂不支持坐下：真模静止是直腿、棍人静止屈腿 31.3°，重定向只传旋转增量，实测脚会穿地（1.70 米角色约 21 厘米，2.55 米约 32 厘米）。待重定向补偿静止姿态差后开放（PR-F）。现在可以：把这一镜换成不带骨的棍人角色，或改用站立类动作；带骨角色的站位、看向、转身、行礼都不受影响。",
             path: ["actors", i, "actions", j],
           });
         // 转身与运动轨迹是两套朝向真源，同时给会互相覆盖，先拒绝。
@@ -985,7 +966,6 @@ export const manhuaPrevisStudioSchema = z
   .object({
     version: z.literal(1),
     audioEnabled: z.boolean().optional(),
-    advisorShotSource: advisorPrevisShotSourceSchema.optional(),
     audioStartSec: z.number().finite().min(0).max(3600).optional(),
     loopBgm: z.boolean().optional(),
     scopeId: z.string().uuid(),
@@ -1025,7 +1005,6 @@ export const manhuaPrevisStudioSchema = z
       z
         .object({
           jobId: z.string().max(100),
-          sourceScopeId: z.string().uuid().optional(),
           requestId: z.string().uuid(),
           gcsUri: z.string().max(2048),
           url: z.string().max(8192),
@@ -1091,7 +1070,6 @@ export function formatPrevisMotionGuide(spec: ManhuaPrevisSpec): string {
   if (spec.timeMap) return "白模已按统一时间表变速；以下秒位均为成片呈现时间，直接跟随参考，不重复变速。\n" + formatPrevisMotionGuide(previsPresentationGuideSpec(spec));
   return [
     "参考中的关节姿态、落脚、蓄力—出手—回收及保护反应按对应秒位读取；不继承白模外形。",
-    ...(spec.handContacts??[]).map(c=>`${spec.actors.find(a=>a.id===c.actorId)?.nameZh??c.actorId}用${c.hand==="hand1"?"左":"右"}手在${c.startSec}—${c.contactSec}秒靠近${spec.actors.find(a=>a.id===c.targetActorId)?.nameZh??c.targetActorId}的${c.bone==="head"?"头侧":"颈侧"}，${c.contactSec}—${c.releaseSec}秒保持同一骨锚点，${c.releaseSec}—${c.endSec}秒收手；手指、皮肤形变与额头贴靠未由该约束实现。`),
     ...formatPrevisSceneEffectsGuide(spec.sceneEffects, spec.actors),
     ...spec.cameras.filter(c => c.orbitDeg).map(c => `${c.startSec}—${c.endSec}秒围绕（${c.target.join("，")}）水平环绕${c.orbitDeg}度，${c.orbitRise ? `保持半径，同时${c.orbitRise > 0 ? "升高" : "降低"}${Math.abs(c.orbitRise)}米` : "保持半径和高度"}；${c.motionWindow ? `只在${c.motionWindow.startSec}—${c.motionWindow.endSec}秒环绕，其前后停住；` : ""}人物速度不由环绕改变。`),
     ...spec.cameras.filter(c => c.endLens !== undefined && c.endLens !== c.lens).map(c => `${c.startSec}—${c.endSec}秒焦距从${c.lens}毫米连续${c.endLens! > c.lens ? "推到" : "拉到"}${c.endLens}毫米，${c.lensWindow ? `在${c.lensWindow.startSec}—${c.lensWindow.endSec}秒变焦，其前后停住` : "按整镜平滑起停"}。`),
@@ -1130,13 +1108,7 @@ export function formatPrevisMotionGuide(spec: ManhuaPrevisSpec): string {
       ),
     ...(spec.piggyback ? [`${spec.piggyback.setDown ? `0—${spec.piggyback.setDown.startSec}秒由` : "整段由"}${(spec.actors.find(a => a.id === spec.piggyback!.carrierId)?.nameZh ?? "待重新选择的承载者")}背负${(spec.actors.find(a => a.id === spec.piggyback!.passengerId)?.nameZh ?? "待重新选择的乘员")}；开镜已背稳，乘员抱肩并跟随同一路线且双脚离地。${spec.piggyback.slipCatch
       ? `${spec.piggyback.slipCatch.slipStartSec}秒乘员向下滑落约${spec.piggyback.slipCatch.dropMeters}米，承载者的手短暂失去托腿接触，${spec.piggyback.slipCatch.catchSec}秒重新托住腿，${spec.piggyback.slipCatch.recoverEndSec}秒扶回稳定背负；不新增上背动作。`
-      : spec.piggyback.blockBowl ? `${spec.piggyback.blockBowl.startSec}秒起以一手继续托膝、母亲双手继续抱肩，另一手抬起；${spec.piggyback.blockBowl.contactSec}—${spec.piggyback.blockBowl.releaseSec}秒挡住实际碗${spec.piggyback.blockBowl.bowlId}，${spec.piggyback.blockBowl.endSec}秒回托膝，全程乘员双脚离地。` : "放下前双手托腿。"}${spec.piggyback.setDown ? `${spec.piggyback.setDown.startSec}秒开始完整放下，${spec.piggyback.setDown.groundSec}秒落地坐稳，${spec.piggyback.setDown.releaseSec}秒松手，${spec.piggyback.setDown.endSec}秒承载者起身；乘员此后固定坐在原地点，承载者独立行动。` : "未设置放下，维持背负。"}`] : []),
-    ...spec.actors.filter(a=>a.humanPosture).map(a=>{const p=a.humanPosture!;return `${a.nameZh}在${p.supportHeight}米支撑面上${p.mode==="hold"?(p.posture==="sit"?"整段坐稳":`整段后仰${p.reclineDeg}度半躺`):`${p.startSec}—${p.endSec}秒由后仰${p.reclineDeg}度坐起，随后持续坐稳`}；双脚保持地面接触，不自动站起。`;}),
-    ...spec.actors.filter(a=>a.quadrupedFall).map(a=>{
-      const fall=a.quadrupedFall!;
-      return fall.mode==="hold" ? `${a.nameZh}整段保持${fall.side==="left"?"左":"右"}侧卧地，四腿折叠，不自动起身。` : `${a.nameZh}${fall.startSec}秒开始屈腿，${fall.foldSec}秒开始向${fall.side==="left"?"左":"右"}侧倒，${fall.groundSec}秒躯干触地并保持至片尾，四腿折叠，不自动起身。`;
-    }),
-    ...(spec.storyProps??[]).map(p=>`剧情道具${p.id}（${({needle:"飞针",blood_drop:"血滴",bowl:"碗",jar:"血坛",knife:"刀",sleeve_glow:"袖口光"} as const)[p.kind]}）按${p.keyframes.map(k=>`${k.timeSec}秒${k.visible?"显示":"隐藏"}，绑定${k.anchor.type==="bone"?`${k.anchor.actorId}/${k.anchor.bone}`:k.anchor.type==="prop"?k.anchor.propId:`固定位置（${k.anchor.position.join("，")}）`}`).join("；")}读取，落点随同一锚点保持，不重算为施术者方向。`),
+      : "放下前双手托腿。"}${spec.piggyback.setDown ? `${spec.piggyback.setDown.startSec}秒开始完整放下，${spec.piggyback.setDown.groundSec}秒落地坐稳，${spec.piggyback.setDown.releaseSec}秒松手，${spec.piggyback.setDown.endSec}秒承载者起身；乘员此后固定坐在原地点，承载者独立行动。` : "未设置放下，维持背负。"}`] : []),
     ...spec.actors.filter(a=>a.hitReaction).map(a=>`${a.hitReaction!.contactSec}秒，${a.nameZh}受${spec.actors.find(b=>b.id===a.hitReaction!.sourceActorId)?.nameZh}出掌击中，胸颈快速后缩下沉，支撑脚保持接地，${a.hitReaction!.endSec}秒恢复；原跛行持续。`),
     ...(spec.interactions ?? []).map(event => {
       const actor = spec.actors.find(a => a.id === event.actorId)!;

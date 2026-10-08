@@ -93,7 +93,7 @@ export const autoRigJointsSchema = z
 export type AutoRigJoints = z.infer<typeof autoRigJointsSchema>;
 export const autoRigSettingsSchema = z
   .object({
-    pose: z.enum(["A", "T", "bent_arms", "quadruped"]),
+    pose: z.enum(["A", "T", "quadruped"]),
     forwardAxis: z.enum(["+X", "-X", "+Y", "-Y"]),
     targetHeight: z.number().finite().min(0.5).max(3),
   })

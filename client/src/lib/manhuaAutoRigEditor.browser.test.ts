@@ -74,7 +74,7 @@ async function open(setup?: string) {
   if (setup)
     await p.addScriptTag({ content: `globalThis.fixtureSetup=${setup}` });
   await p.addScriptTag({ content: bundle });
-  await p.waitForSelector('[aria-label="角色模型绑骨"]');
+  await p.waitForSelector('[aria-label="人体模型绑骨"]');
   return p;
 }
 async function click(p: Page, label: string) {
@@ -180,7 +180,7 @@ it("关闭重开从本地原编号恢复，不自动重排", async () => {
     await p.waitForSelector("[role=alert]");
     await click(p, "关闭");
     await p.waitForFunction(
-      () => !document.querySelector('[aria-label="角色模型绑骨"]')
+      () => !document.querySelector('[aria-label="人体模型绑骨"]')
     );
     await p.evaluate(() => (window as any).fixture.mount());
     await p.waitForFunction(() => (window as any).fixture.gets.length > 0);
@@ -229,7 +229,7 @@ it("本机记录损坏仍继续读服务端历史", async () => {
   try {
     await click(p, "关闭");
     await p.waitForFunction(
-      () => !document.querySelector('[aria-label="角色模型绑骨"]')
+      () => !document.querySelector('[aria-label="人体模型绑骨"]')
     );
     await p.evaluate(() => {
       localStorage.setItem("manhua-auto-rig:person:v1", "{broken");
@@ -241,7 +241,7 @@ it("本机记录损坏仍继续读服务端历史", async () => {
       0
     );
     expect(
-      await p.$eval('[aria-label="角色模型绑骨"]', e => e.textContent)
+      await p.$eval('[aria-label="人体模型绑骨"]', e => e.textContent)
     ).toContain("本机记录无法读取");
   } finally {
     await p.close();
@@ -501,19 +501,3 @@ it("0917 重开编辑器自动载入最近一次成功检查（同模型），�
     await p.close();
   }
 }, 20000);
-
-
-it("直立屈臂沿同一检查绑定链路，人工确认前不建绑骨单，换姿态撤销旧检查", async () => {
- const p=await open();try {
-  await p.select('[aria-label="绑骨姿态"]','bent_arms');
-  expect(await p.evaluate(()=>(window as any).fixture.submits.length)).toBe(0);
-  await click(p,'检查当前模型');
-  await p.waitForFunction(()=>document.querySelector<HTMLInputElement>('input[type=checkbox]')?.disabled===false);
-  expect(await p.evaluate(()=>(window as any).fixture.submits.map((r:any)=>({stage:r.stage,pose:r.settings.pose})))).toEqual([{stage:'inspect',pose:'bent_arms'}]);
-  const bind=await p.evaluate(()=>Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='按确认的关节生成带骨候选')?.disabled);expect(bind).toBe(true);
-  await check(p,0);await click(p,'按确认的关节生成带骨候选');
-  await p.waitForFunction(()=>(window as any).fixture.submits.length===2);
-  expect(await p.evaluate(()=>{const r=(window as any).fixture.submits[1];return {stage:r.stage,pose:r.settings.pose,singleHuman:r.singleHuman,confirmed:r.landmarksManuallyConfirmed,asset:r.assetRef,source:r.sourceJobId};})).toEqual({stage:'bind',pose:'bent_arms',singleHuman:true,confirmed:true,asset:'person',source:'m3d_original'});
-  expect(await p.evaluate(()=>(window as any).fixture.applies.length)).toBe(0);
- }finally{await p.close();}
-},20000);

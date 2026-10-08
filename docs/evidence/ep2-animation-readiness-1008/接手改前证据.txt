@@ -1,8 +1,0 @@
-ANIM-01/04 改前证据：正式入口ManhuaScriptWorkbench previsDraftsFromPlan -> resolveManhuaPrevisCharacterLinks -> manhuaPrevisDraftFromExecutableShot -> applyManhuaPrevisDraftToStudio -> studio保存 -> server schema/renderer。
-当前resolver输入assetLockRegistry原槽，无shape且同人物脸/全身槽产生歧义；输出shape缺失导致草案默认human；apply按shape匹配旧配置，从而马配置无法保留。现有顾问入口用selectPrevisCharacterSlots去重并读assetCanon.lookZh判四足，两入口不一致。
-范围：复用同一槽选择和形态判据，模型ID/来源/权限和计费不改；旧草稿失败保留、恢复历史继续原链。相关测试shared/manhuaPrevisFromActionPlan.test.ts及advisor初始化合同。未执行模型或线上验收。
-
-ANIM-07 改前证据：OmniCanvas prepareAdvisorPrevis -> prepareAdvisorPrevisTrial 分配独立scope -> manhuaPrevis API/worker 返回animation -> adoptAdvisorPrevisTrial只存视频且不选中 -> Workbench读取selectedJobId与studio.scopeId -> manhuaStageAnimationSource严格核scope，形成动画丢失和来源不匹配两处断点。
-改动：导出请求要求匹配本job的GLB与frames回执，保存动画及sourceScopeId并选中；共享helper向舞台返回真实来源，正常生成/列表/查询恢复也保留该字段。旧非顾问历史回退原scope；旧顾问记录须重新查询原单补source，不能自动重生成。服务端用户/clip/scope/GS归属门禁不改。
-反向：舞台source ->已选history->validated receipt->独立trial.params.scopeId；云草稿schema保留新字段，原配置/specHistory和原视频referenceHistory保留。
-ANIM-06：已实现测真实model.rig根和sourceJobId/SHA回执，不再只测驱动白模。原riggedModel+route/双人接触等生产门禁保留，未经真模/常速验收不能宣称支持。

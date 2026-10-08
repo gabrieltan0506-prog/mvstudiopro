@@ -1,7 +1,0 @@
-import { expect,it } from "vitest";
-import { previsHandContactsSchema,handContactsIssue,handContactAmount } from "./manhuaPrevisHandContacts";
-const contacts=previsHandContactsSchema.parse([{id:"touch",actorId:"girl",hand:"hand1",targetActorId:"horse",bone:"neck",startSec:0,contactSec:.5,releaseSec:1.5,endSec:2}]);
-const spec={durationSec:2,actors:[{id:"girl",shape:"human"},{id:"horse",shape:"horse"}],handContacts:contacts};
-it("扶颈真实双方、保持与回收及跨段保持",()=>{expect(handContactsIssue(spec)).toBeNull();expect([0,.5,1,1.5,2].map(t=>handContactAmount(contacts[0],t))).toEqual([0,1,1,1,0]);expect(handContactAmount({...contacts[0],contactSec:0,releaseSec:2},0)).toBe(1);expect(handContactAmount({...contacts[0],contactSec:0,releaseSec:2},2)).toBe(1);});
-it("拒绝不存在目标、窗口隐藏和同手端碗/背负",()=>{expect(handContactsIssue({...spec,actors:[spec.actors[0]]})).toMatch(/另一匹马/);expect(handContactsIssue({...spec,storyProps:[{grip:{actorId:"girl",hand:"hand1"}}]})).toMatch(/端碗/);expect(handContactsIssue({...spec,piggyback:{carrierId:"girl",passengerId:"mom"}})).toMatch(/背负/);expect(handContactsIssue({...spec,actors:[{...spec.actors[0],visibleRanges:[{startSec:0,endSec:1}]},spec.actors[1]]})).toMatch(/在场/);});
-it("拒绝同手重叠和非帧秒位",()=>{expect(handContactsIssue({...spec,handContacts:[...contacts,{...contacts[0],id:"other"}]})).toMatch(/重叠/);expect(handContactsIssue({...spec,handContacts:[{...contacts[0],contactSec:.51}]})).toMatch(/24帧/);});

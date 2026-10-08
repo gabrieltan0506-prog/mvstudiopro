@@ -8,9 +8,12 @@ test_previs_drama_actions.py 只量棍人。棍人对了不等于真模对了：
   ② 坐下时**脚底相对站立的升降**（离地/穿地多少米），阈值写死
   ③ 膝关节朝向与源棍人同号且明显弯曲（反例：绝不允许反向顶出）
 
-旧版重定向曾产生明显穿地，当前已增加真实腿长坐姿校正。本脚本同时验证生产门禁仍在、
-校正后的逐帧蒙皮落地与双脚踝点稳定，并在诊断副本中停用校正，确认接触判据能够抓住回归。
-通过几何判据不代表正式人物、衣服网格或常速画面验收，因此不自动开放生产门禁。
+实测结论（本机 Blender，两具夹具）：**带骨真模坐下会穿地**。棍人的静止姿态腿本来就屈着
+31.3°（站位 IK 的结果），真模的静止姿态腿是直的，重定向只传「相对各自静止姿态的旋转增量」，
+于是只传过去 28.3°，腿够不着地：1.7 米模型 −21.4 厘米、2.55 米模型 −32.2 厘米，与身高成正比。
+因此坐下在提交 schema 与渲染层两处对带骨角色**直接拒绝**；本脚本既验拒绝，也在去掉门禁的
+副本里把真实穿地深度量出来留档——不量就等于拿免责声明代替判据。走位实测抬脚残差 ≤2.0 厘米、
+不穿地，行礼/指向/看向按身高等比转移，均照常放行。
 
 运行：blender -b --factory-startup --python-exit-code 1 --python 此脚本 -- 输出目录
 不联网、不渲染视频；夹具 GLB、spec、report 全部保留在输出目录供复核。
@@ -200,68 +203,6 @@ def source_height(actor_id):
             - min(b.head_local.z for b in rig.data.bones))
 
 
-# 本分支生成受控诊断场景，调用前须展示并获得本次媒体确认。
-if '--contact-correction-only' in arguments:
-    diagnostic = root/'TEST_ONLY-contact-correction-renderer.py'
-    text = renderer.read_text()
-    for sentence in (
-        "raise ValueError('带骨角色咳嗽暂未通过掩口和收手位置验收，请使用基础白模预演')",
-        "raise ValueError('带骨角色暂不支持坐下：真实人物的坐姿网格接触与常速质量尚未通过正式验收；合成夹具测试不等于真实人物验收。可使用基础白模或站立类动作，现有模型保留')",
-    ):
-        if text.count(sentence) != 1:
-            raise AssertionError('诊断副本门禁定位变化，停止，不修改生产脚本')
-        text = text.replace(sentence, "pass  # TEST_ONLY 本次人工确认的接触诊断副本")
-    diagnostic.write_text(text)
-    cases = []
-    for kind in ('idle', 'sit', 'cough'):
-        report = with_actions('contact-corrected-'+kind,
-            {actor['id']: [{'kind':kind,'startSec':0,'endSec':2}] for actor in BASE['actors']}, diagnostic)
-        rows = []
-        for actor in BASE['actors']:
-            actor_id = actor['id']
-            rig = target_rig(actor_id)
-            floors = [mesh_min_z(actor_id, frame) for frame in range(1, 49)]
-            hands = [tuple(bone_head(rig, 'hand-1', frame)) for frame in range(1, 49)]
-            pelvis = [tuple(bone_head(rig, 'pelvis', frame)) for frame in range(1, 49)]
-            row = {'actorId':actor_id,'frames':48,'minMeshFloor':min(floors),'maxMeshFloor':max(floors),
-                   'handReturnDistance':math.dist(hands[0],hands[-1]),'pelvisSink':pelvis[24][2]-pelvis[0][2],
-                   'boneSamples':[], 'meshValidated':False, 'normalSpeedValidated':False}
-            for frame in range(1, 49):
-                at(frame)
-                lengths = {name:(rig.pose.bones[name].tail-rig.pose.bones[name].head).length for name in rig.pose.bones.keys()}
-                for name, length in lengths.items():
-                    assert abs(length-rig.data.bones[name].length)<.0001, ('骨长改变',kind,actor_id,frame,name)
-                row['boneSamples'].append({'frame':frame,'lengths':lengths,'meshFloor':floors[frame-1]})
-            assert min(floors)>=-.005, ('真实蒙皮穿地',kind,actor_id,min(floors))
-            if kind=='sit':
-                assert row['pelvisSink']<-.1, ('坐姿未下沉',actor_id,row['pelvisSink'])
-                assert report['models'][BASE['actors'].index(actor)]['sitContact']['frames']==48
-            if kind=='cough':
-                assert row['handReturnDistance']<.02*(actor['riggedModel']['targetHeight']/1.7), ('掩口后未回收',actor_id,row['handReturnDistance'])
-                assert report['models'][BASE['actors'].index(actor)]['coughContact']['frames']==48
-            rows.append(row)
-        cases.append({'kind':kind,'actors':rows,'scene':str(root/('contact-corrected-'+kind)/'scene.blend')})
-    (root/'contact-correction-receipt.json').write_text(json.dumps({'blender':bpy.app.version_string,
-        'testFixturesOnly':True,'productionGatesRetained':True,'cases':cases,
-        'meshValidated':False,'normalSpeedValidated':False},ensure_ascii=False,indent=2))
-    if '--render-correction-preview' in arguments:
-        import subprocess
-        for case in cases:
-            scene_path = Path(case['scene'])
-            bpy.ops.wm.open_mainfile(filepath=str(scene_path))
-            bpy.context.scene.render.filepath = str(scene_path.parent/'frames'/'frame-')
-            bpy.ops.render.render(animation=True)
-            video = scene_path.parent/'contact-preview.mp4'
-            subprocess.run(['ffmpeg','-nostdin','-hide_banner','-loglevel','error','-y',
-                '-framerate','24','-i',str(scene_path.parent/'frames'/'frame-%04d.png'),
-                '-c:v','libx264','-pix_fmt','yuv420p','-an',str(video)],check=True,timeout=120)
-            case['previewVideo'] = str(video)
-        (root/'contact-correction-receipt.json').write_text(json.dumps({'blender':bpy.app.version_string,
-            'testFixturesOnly':True,'productionGatesRetained':True,'cases':cases,
-            'meshValidated':False,'normalSpeedValidated':False},ensure_ascii=False,indent=2))
-    print('CONTACT_CORRECTION_NUMERIC_OK',len(cases))
-    raise SystemExit(0)
-
 # 咳嗽只验证新增动作，不重复运行已通过的坐下等旧用例。
 if '--cough-only' in arguments:
     error = None
@@ -296,7 +237,7 @@ assert abs(scale['高个']/scale['矮个'] - 1.5) <= 0.001, ('夹具身高倍数
 
 # ---------------------------------------------------------------- ② 坐下
 def measure_sit(label, renderer_path=None):
-    report = with_actions(label, {'矮个': [{'kind': 'sit', 'startSec': 0, 'endSec': 2}],
+    with_actions(label, {'矮个': [{'kind': 'sit', 'startSec': 0, 'endSec': 2}],
                          '高个': [{'kind': 'sit', 'startSec': 0, 'endSec': 2}]}, renderer_path)
     row = {}
     for actor_id in ('矮个', '高个'):
@@ -308,13 +249,7 @@ def measure_sit(label, renderer_path=None):
         stick_knee = bone_head(stick, 'lower_leg-1', 25)
         stick_hip = bone_head(stick, 'upper_leg-1', 25)
         stick_ankle = bone_tail(stick, 'lower_leg-1', 25)
-        floors = [mesh_min_z(actor_id, frame) for frame in range(1, 49)]
-        ankle_drift = max((bone_head(rig, 'foot'+side, frame)-bone_head(rig, 'foot'+side, 1)).length
-                          for side in ('-1', '1') for frame in range(1, 49))
         row[actor_id] = {
-            'minFrameFloorZ': min(floors), 'maxFrameFloorZ': max(floors),
-            'maxAnkleDrift': ankle_drift,
-            'contactFrames': next((m.get('sitContact', {}).get('frames', 0) for m in report.get('models', []) if m['actorId']==actor_id), 0),
             'pelvisSink': bone_head(rig, 'pelvis', 25).z - idle_pelvis[actor_id],
             'stickPelvisSink': bone_head(stick, 'pelvis', 25).z - idle_stick_pelvis[actor_id],
             'floorShift': mesh_min_z(actor_id, 25) - idle_floor[actor_id],
@@ -336,7 +271,7 @@ results.append({'case': 'sit-rigged-rejected', 'raised': sit_rejected})
 # 反例对照：同一场去掉坐下必须跑得通，证明红的是坐下门禁而不是这个场景本身
 with_actions('sit-rejected-negative-control', {'矮个': [{'kind': 'idle', 'startSec': 0, 'endSec': 2}]})
 
-# ②-A 诊断副本中检验校正后的逐帧接触；生产门禁仍等待正式人物网格与常速验收。
+# ②-A 门禁拦掉之后，穿地到底有多深还是要量出来并留档——不量就等于拿免责声明代替判据。
 # 在输出目录的**副本**里去掉门禁（server/scripts 原文件一个字节不动），跑同一场量真实数值。
 def patched_scripts(label, replacements):
     folder = root/label
@@ -363,8 +298,8 @@ def run_with(folder, runner):
             del sys.modules[name]
 
 
-SIT_GATE = "        raise ValueError('带骨角色暂不支持坐下：真实人物的坐姿网格接触与常速质量尚未通过正式验收；合成夹具测试不等于真实人物验收。可使用基础白模或站立类动作，现有模型保留')"
-SIT_GATE_OFF = "        pass  # TEST_ONLY 诊断副本检查真实接触"
+SIT_GATE = "        raise ValueError('带骨角色暂不支持坐下：静止姿态差会让脚穿地（1.70 米约 21 厘米），待重定向补偿后开放（PR-F）；棍人角色可以坐下，带骨角色的看向/转身/行礼不受影响')"
+SIT_GATE_OFF = "        pass  # TEST_ONLY 去掉门禁，只为量出真实穿地深度"
 nogate = patched_scripts('TEST_ONLY-sit-gate-off-scripts',
                          [('render-manhua-previs.py', SIT_GATE, SIT_GATE_OFF)])
 sit = run_with(nogate, lambda renderer_path: measure_sit('sit-gate-off-measured', renderer_path))
@@ -391,14 +326,6 @@ broken_ratio = broken['高个']['pelvisSink']/broken['矮个']['pelvisSink']
 results.append({'case': 'sit-broken-ratio-negative-control', 'sinkRatio': round(broken_ratio, 5),
                 'pelvisSink': {k: round(v['pelvisSink'], 5) for k, v in broken.items()},
                 'note': '比例缩放钉成 1 时两个模型下沉量相同，下沉比≈1，上面的 1.5 倍判据必须红'})
-
-# 停用生产坐姿校正必须让同一接触判据失败，避免只把历史坏值改成宽松阈值。
-CONTACT_MARKER = "            apply_grounded_sit_contact(model,actor['actions'],scene.frame_start,scene.frame_end,24)"
-no_contact_dir = patched_scripts('TEST_ONLY-no-sit-contact-scripts', [
-    ('render-manhua-previs.py', SIT_GATE, SIT_GATE_OFF),
-    ('render-manhua-previs.py', CONTACT_MARKER, '            pass  # TEST_ONLY 停用坐姿落脚校正')])
-no_contact = run_with(no_contact_dir, lambda renderer_path: measure_sit('sit-no-contact-negative-control', renderer_path))
-results.append({'case': 'sit-no-contact-negative-control', **no_contact})
 
 # ---------------------------------------------------------------- ③-B 走位：脚必须踩在地上
 walk_spec = copy.deepcopy(BASE)
@@ -489,7 +416,7 @@ def expect(condition, label, *values):
 
 
 expect(sit_rejected is not None and '坐下' in sit_rejected,
-       '带骨角色坐下未保留正式人物网格与常速验收门禁', sit_rejected)
+       '带骨角色坐下没有被拒绝：会渲出一个脚在地里的片子', sit_rejected)
 for actor_id in ('矮个', '高个'):
     r = sit[actor_id]
     # ②-1 坐下必须真的坐下去
@@ -502,15 +429,13 @@ for actor_id in ('矮个', '高个'):
     expect(r['kneeForward'] > 0.02, '真模膝关节没有前顶或已反向：'+actor_id, r['kneeForward'])
     expect(r['kneeForward']*r['stickKneeForward'] > 0, '真模膝关节与棍人反向：'+actor_id,
            r['kneeForward'], r['stickKneeForward'])
-    # 同时量可见蒙皮与实际目标骨骼；只量隐藏源骨或中间帧会漏掉瞬间穿地。
-    expect(r['minFrameFloorZ'] >= -.005 and r['maxFrameFloorZ'] <= .03,
-           '校正后坐姿逐帧网格穿地或悬空：'+actor_id, r['minFrameFloorZ'], r['maxFrameFloorZ'])
-    expect(abs(r['floorShift']) <= .005, '坐姿脚底偏离自身站立基准：'+actor_id, r['floorShift'])
-    expect(r['maxAnkleDrift'] <= .005, '坐姿双脚踝点未锁定：'+actor_id, r['maxAnkleDrift'])
-    expect(r['contactFrames']==48, '坐姿接触生产者未覆盖全帧：'+actor_id, r['contactFrames'])
-    broken_contact = no_contact[actor_id]
-    expect(broken_contact['minFrameFloorZ'] < -.005 or broken_contact['maxAnkleDrift'] > .005,
-           '停用坐姿校正未被同一接触判据检出：'+actor_id, broken_contact)
+    # ②-4 脚底：坐下相对自己站立的升降。实测**会穿地**——阈值按实测边界写死并写进回执边界，
+    # 不允许悄悄放宽；真模身材与棍人不同时这项必须人工复核。
+    # ②-4 脚底：实测**会穿地**，深度与身高成正比。这条不是「应该是 0」，而是把已知的坏
+    # 值钉死：门禁一旦被误删、或落脚校正上线后穿地消失，这条都会红，逼着同步门禁与边界文案。
+    expect(-0.66*abs(r['pelvisSink']) >= r['floorShift'] >= -0.72*abs(r['pelvisSink']),
+           '带骨坐下的穿地深度变了：请同步坐下门禁与回执 boundaryZh 的实测数值：'+actor_id,
+           r['floorShift'], r['pelvisSink'], r['floorShift']/abs(r['pelvisSink']))
 expect(abs(sink_ratio-1.5) <= 0.01, '高个的下沉量不是矮个的 1.5 倍', sink_ratio)
 expect(abs(broken_ratio-1.5) > 0.05, '反例对照没红：去掉比例缩放后下沉比仍是 1.5', broken_ratio)
 for actor_id in ('矮个', '高个'):

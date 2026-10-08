@@ -105,14 +105,3 @@ describe("角色表单显式应用边界", () => {
     expect(() => applyRigForm(f, context)).toThrow("完全相同");
   });
 });
-
-
-it("模型源资产引用在手动配置、保存重开中保留，已变来源拒绝套旧配置", () => {
- const current = {...context,sourceAssetRef:"full-body-ref"};
- const form={...createRigForm(undefined,context.taskId,"full-body-ref"),enabled:true};
- const applied=applyRigForm(form,current)!;
- expect(applied.sourceAssetRef).toBe("full-body-ref");
- expect(applyRigForm(createRigForm(applied,context.taskId),current)).toEqual(applied);
- expect(()=>applyRigForm(form,{...current,sourceAssetRef:"changed-ref"})).toThrow("模型所在资产已变化");
- expect(applyRigForm(basic(),current)?.sourceAssetRef).toBe("full-body-ref");
-});

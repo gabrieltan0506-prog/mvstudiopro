@@ -86,11 +86,3 @@ describe("项目角色准备配置", () => {
     ).toEqual([]);
   });
 });
-
-
-it("跨图保存的模型源引用不被配置收集器剥掉，错误来源配置不复用", () => {
- const source=fixture();source.previsStudio.spec.actors[0].riggedModel!.sourceAssetRef="rig-look-ref";
- const current=[{...characters[0],model:{taskId:"m3d_current",assetRef:"rig-look-ref"}}];
- expect(collectPreparedRigProfiles([source],current)[0].riggedModel.sourceAssetRef).toBe("rig-look-ref");
- expect(collectPreparedRigProfiles([source],[{...current[0],model:{...current[0].model,assetRef:"other-ref"}}])).toEqual([]);
-});
