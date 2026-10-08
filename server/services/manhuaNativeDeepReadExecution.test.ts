@@ -1278,6 +1278,25 @@ describe("分片截图持久化与不重复读片", () => {
     expect(deps.ingest).toHaveBeenCalledWith(expect.objectContaining({ evidenceFrames: [frame] }));
   });
 
+  it.each([new Error("gcs_download_failed:503:unavailable"), new SyntaxError("索引JSON损坏")])("索引读取失败仍从现有GCS分片截图，不回源或重读模型：%s", async (error) => {
+    deps.readFrameManifest = vi.fn(async () => { throw error; });
+    deps.extractKeyMomentFrames = vi.fn(async () => [frame]);
+    deps.writeFrameManifest = vi.fn(async () => {});
+    const resolveNodes = vi.fn(async () => { throw new Error("不应重新解析源站"); });
+    deps.run = vi.fn(async input => {
+      await input.onSegmentRead?.(event);
+      await input.onSegmentRead?.(event);
+      return makeResult({ keyMoments: [moment] }) as never;
+    });
+    await executeAndIngestNativeDeepReadEpisode({ ...episode, seriesKey: "s", resolveNodes }, deps);
+    expect(resolveNodes).not.toHaveBeenCalled();
+    expect(deps.run).toHaveBeenCalledTimes(1);
+    expect(deps.extractKeyMomentFrames).toHaveBeenCalledTimes(1);
+    expect(deps.extractKeyMomentFrames).toHaveBeenCalledWith(expect.objectContaining({ mediaNodes: [], preparedSegments: event.preparedVideos }));
+    expect(deps.writeFrameManifest).toHaveBeenCalledWith(expect.any(String), [frame]);
+    expect(deps.ingest).toHaveBeenCalledWith(expect.objectContaining({ evidenceFrames: [frame] }));
+  });
+
   it("截图失败保留已付费分析，不调用runner重读，也不在整集结束后补抽", async () => {
     deps.extractKeyMomentFrames = vi.fn(async () => { throw new Error("抽帧失败"); });
     deps.run = vi.fn(async input => {

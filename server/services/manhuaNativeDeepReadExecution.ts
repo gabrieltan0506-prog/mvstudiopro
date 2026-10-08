@@ -210,7 +210,13 @@ function createSegmentFrameCollector(episode: NativeDeepReadEpisodeExecution, de
       if (inMemory) { bySegment.set(segment.segmentIndex, inMemory); return; }
       const objectName = `manhua-template-learn/native-frame-manifests/${identity}.json`;
       try {
-        const saved = await deps.readFrameManifest?.(objectName) || [];
+        let saved: ManhuaViralTemplateEvidenceFrame[] = [];
+        try {
+          saved = await deps.readFrameManifest?.(objectName) || [];
+        } catch (error) {
+          // 索引是恢复加速层；读取失败不应阻止消费仍可用的本轮 GCS 分片。
+          console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集第${segment.segmentIndex + 1}片截图索引读取失败，继续检查现有分片：${describeManhuaSourceFetchFailure(error)}`);
+        }
         const wanted = new Set(keyMoments.map(moment => moment.atSec));
         const retained = saved.filter(frame => wanted.has(frame.atSec) && frame.objectName && frame.sha256 && frame.bytes > 0);
         const missing = keyMoments.filter(moment => !retained.some(frame => frame.atSec === moment.atSec));

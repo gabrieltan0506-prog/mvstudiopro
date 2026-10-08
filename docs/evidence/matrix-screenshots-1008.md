@@ -73,3 +73,13 @@ MATRIX-TEMP-02：已实现且定向验证；首次调整曾触发历史契约漂
 验证：runner+永久证据完整套件阶段结果348 passed/15 failed；修正其中两个误把第二并发批次当0.75重试的旧测试后，定向2 passed；另最终温度/恢复/错误路径定向14 passed。原16失败中的8次断言与两个温度断言已通过，其余13旧分批/旧schema断言保留，未宣称全仓通过。无真实上游调用、媒体、合并或部署，尚未线上验收。
 
 本增量最终 `pnpm exec tsc --noEmit --incremental false` 退出0（/tmp/matrix-retry-final-tsc.log）；`git diff --check`通过。前端无变更，沿用20:40的Vite打包通过，不重复构建；未跑Docker全镜像或全仓测试。
+
+## 1008 用户要求截图复查：MATRIX-FRAME-04
+
+基于c76ec82b复查分片响应→截图→永久索引→清理→最终卡→报告图片双向链。确认绝对秒减分片起点、同秒去重、分片边界、全局四进程名额、完整JPEG上传、报告读取永久objectName并内嵌图片，不把签名地址写卡片。单集/批次入口均接同一collector，纯整形保留既有图片。没有运行真实ffmpeg/媒体任务。
+
+发现并修正：旧截图索引下载503或JSON损坏时，原collector外层catch把本轮可用GCS分片截图一起跳过。把索引读取失败隔离为可恢复路径，仍从当前已备GCS分片抽帧并保存新索引，不回源或重读模型。回归测试先在修复前得到2 FAIL（抽帧0次），修复后通过并断言仅一个runner调用、只截一次、写索引及最终入库图片一致。
+
+回执：execution58项+report43项共101 PASS；帧服务14项模拟+runner截图顺序2项共16 PASS，真实ffmpeg用例未选入。日志/tmp/matrix-manifest-read-red.log、/tmp/matrix-screenshot-review-execution-report.log、/tmp/matrix-screenshot-review-frames-order.log。完整增量diff及真实下游card正规化、report图片读取已复核。线上GCS/真实JPEG质量/旧matrix报告补图仍未验；其余13项整形旧断言不是本次截图复查通过结论的一部分。
+
+本次最终全量类型检查 `pnpm exec tsc --noEmit --incremental false` 退出0（/tmp/matrix-screenshot-review-tsc.log），diffcheck通过。前端未修改，不重复已过Vite构建。MATRIX-FRAME-04开发验证CLOSED，线上未验。
