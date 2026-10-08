@@ -7,8 +7,12 @@ import {
   type HeavyMediaRequest,
 } from "./heavyMediaQueue";
 import { withHeavyMediaContext } from "./heavyMediaContext";
-import { dispatchLearnCommand } from "../services/heavyLearnMedia";
-const state = vi.hoisted(() => ({ prepare: vi.fn(), exec: vi.fn() }));
+import { dispatchLearnCommand, dispatchLearnSourcePlayback } from "../services/heavyLearnMedia";
+const state = vi.hoisted(() => ({ prepare: vi.fn(), exec: vi.fn(), source: vi.fn() }));
+vi.mock("../services/manhuaLearn0996Source", () => ({
+  fetchManhua0996EpisodePlaybackLocally: state.source,
+  describeManhuaSourceFetchFailure: () => "已脱敏的来源错误",
+}));
 vi.mock("../services/manhuaNativeDeepReadRunner", () => ({
   prepareEpisodeVideos: state.prepare,
   defaultMediaPreparationDeps: {},
@@ -244,4 +248,87 @@ it("a resumed owner advances persisted command identity and sees acknowledged gr
     })
   );
   expect(store.enqueue).toHaveBeenCalledOnce();
+});
+
+const sourceUrl = "https://0996zp.com/vod/play/146259/sid/1313645";
+const playback = {
+  playbackUrl: "https://ppvod01.kqgfbs.com/fixture.m3u8?whip=worker&sign=test",
+  playbackUrls: ["https://ppvod01.kqgfbs.com/fixture.m3u8?whip=worker&sign=test"],
+  referer: "https://0996zp.com/",
+  markers: [],
+};
+
+it("备料已占工作机时，来源解析和探测在同一回调槽执行且不另建子队列", async () => {
+  state.source.mockResolvedValue(playback);
+  state.exec.mockResolvedValue({ stdout: '{"duration":60}', stderr: "" });
+  let status = "running";
+  let output: unknown = { progress: { nodeRequest: 1 } };
+  const handled: string[] = [];
+  const store = {
+    enqueue: vi.fn(), cancel: vi.fn(),
+    get: vi.fn(async () => ({ id: "prepare", userId: "7", input: {}, output, status, error: null, updatedAt: new Date() })),
+    reply: vi.fn(async (_id: string, _user: string, value: HeavyMediaReply) => {
+      if (!value.commandRequest) return;
+      handled.push(value.commandRequest.request.kind);
+      const result = await executeHeavyMedia(value.commandRequest.request, new AbortController().signal, async () => {});
+      output = { progress: { nodeRequest: 1, commandResult: { sequence: value.commandRequest.sequence, result } } };
+    }),
+  };
+  await withHeavyMediaContext({ userId: "7", executionId: "source-affinity" }, () => dispatchHeavyMedia(request, {
+    store, wait: async () => {}, onProgress: async () => {
+      const resolved = await dispatchLearnSourcePlayback(sourceUrl);
+      expect(resolved).toEqual(playback);
+      await dispatchLearnCommand("ffprobe", [resolved.playbackUrl], {});
+      status = "succeeded"; output = { result: [] };
+    },
+  }));
+  expect(handled).toEqual(["learn_source", "learn_command"]);
+  expect(store.enqueue).toHaveBeenCalledOnce();
+  expect(state.source).toHaveBeenCalledWith(sourceUrl, expect.any(AbortSignal));
+  expect(state.exec).toHaveBeenCalledWith("ffprobe", [playback.playbackUrl], expect.any(Object));
+  expect(store.cancel).not.toHaveBeenCalled();
+});
+
+it("工作机备料等待来源时接受新的解析回调并先保存回执", async () => {
+  state.source.mockResolvedValue(playback);
+  let reply: HeavyMediaReply = {};
+  const saved = vi.fn();
+  state.prepare.mockImplementation(async episode => {
+    expect(await episode.resolveNodes()).toEqual([{ url: playback.playbackUrl, referer: playback.referer }]);
+    return [];
+  });
+  await executeHeavyMedia(request, new AbortController().signal, async value => {
+    if (value.nodeRequest && !value.commandResult) reply = {
+      commandRequest: { sequence: 1, request: { kind: "learn_source", sourceUrl, refreshId: "fixture-refresh" } },
+    };
+    if (value.commandResult) {
+      expect(saved).toHaveBeenCalledOnce();
+      expect(JSON.parse(value.commandResult.result!.stdout)).toEqual(playback);
+      reply.nodeResponse = { sequence: value.nodeRequest!, nodes: [{ url: playback.playbackUrl, referer: playback.referer }] };
+    }
+  }, { readReply: async () => reply, saveCommand: saved });
+  expect(state.source).toHaveBeenCalledOnce();
+});
+
+it("显式刷新不复用已持久化签名，取消和错误不回退到网站机", async () => {
+  const { heavyMediaCallbackCommand } = await import("./heavyMediaContext");
+  const bridge = vi.fn(async () => ({ stdout: JSON.stringify(playback), stderr: "" }));
+  await heavyMediaCallbackCommand.run(bridge, async () => {
+    await dispatchLearnSourcePlayback(sourceUrl);
+    await dispatchLearnSourcePlayback(sourceUrl);
+    const c = new AbortController(); c.abort(new Error("已停止"));
+    await expect(dispatchLearnSourcePlayback(sourceUrl, c.signal)).rejects.toThrow("已停止");
+  });
+  expect(bridge).toHaveBeenCalledTimes(2);
+  const calls = bridge.mock.calls as unknown as [[{ refreshId: string }], [{ refreshId: string }]];
+  expect(calls[0][0].refreshId).not.toBe(calls[1][0].refreshId);
+  expect(Object.keys(calls[0][0]).sort()).toEqual(["kind", "refreshId", "sourceUrl"]);
+  await expect(heavyMediaCallbackCommand.run(async () => ({ stdout: "", stderr: "", executionError: "来源拒绝" }),
+    () => dispatchLearnSourcePlayback(sourceUrl))).rejects.toThrow("来源拒绝");
+});
+
+it("工作机来源失败仅返回脱敏错误，不能作为空解析成功", async () => {
+  state.source.mockRejectedValueOnce(new Error("https://fixture.invalid/?sign=test-secret"));
+  await expect(executeHeavyMedia({ kind: "learn_source", sourceUrl, refreshId: "failure" }, new AbortController().signal, async () => {}))
+    .resolves.toEqual({ stdout: "", stderr: "", executionError: "已脱敏的来源错误" });
 });

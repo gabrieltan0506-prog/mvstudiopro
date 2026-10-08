@@ -15,6 +15,11 @@ export type HeavyMediaRequest =
     }
   | { kind: "local_probe"; source: string }
   | {
+      kind: "learn_source";
+      sourceUrl: string;
+      refreshId: string;
+    }
+  | {
       kind: "learn_command";
       command: "ffprobe" | "ffmpeg" | "yt-dlp";
       args: string[];
@@ -38,6 +43,10 @@ export type HeavyCommandResult = {
   stderr: string;
   executionError?: string;
 };
+export type HeavyMetadataRequest = Extract<
+  HeavyMediaRequest,
+  { kind: "learn_command" | "learn_source" }
+>;
 export type PreparedGroup = {
   segmentIndex: number;
   video: PreparedNativeVideo;
@@ -57,7 +66,7 @@ export type HeavyMediaProgress = {
 export type HeavyMediaReply = {
   commandRequest?: {
     sequence: number;
-    request: Extract<HeavyMediaRequest, { kind: "learn_command" }>;
+    request: HeavyMetadataRequest;
   };
   consumedGroups?: number;
   nodeResponse?: {
@@ -117,7 +126,7 @@ export async function dispatchHeavyMedia<T>(
     await store.reply(id, owner.userId, value);
   };
   const callbackCommand = async (
-    command: Extract<HeavyMediaRequest, { kind: "learn_command" }>
+    command: HeavyMetadataRequest
   ) => {
     if (request.kind !== "learn_prepare")
       throw new Error("Unexpected native callback");

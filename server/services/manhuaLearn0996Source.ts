@@ -3,6 +3,7 @@ import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { Agent, fetch as undiciFetch } from "undici";
 import { discoverSourceMedia } from "./manhuaSourceMediaDiscovery.js";
+import { shouldDispatchHeavyMedia } from "../jobs/heavyMediaContext.js";
 import {
   MANHUA_0996_SOURCE_HOSTS,
   isTrustedManhua0996MediaUrl,
@@ -370,6 +371,23 @@ export async function fetchManhua0996EpisodePlayback(
   signal?: AbortSignal,
   fetchImpl: FetchLike = defaultSourceFetch,
 ): Promise<Manhua0996Playback> {
+  signal?.throwIfAborted();
+  if (shouldDispatchHeavyMedia()) {
+    const source = parseManhua0996SourceUrl(rawUrl, readManhuaLearnExtraSourceHosts());
+    if (!source) throw new Error("第三方播放页链接无效或不在可信站点内");
+    const { dispatchLearnSourcePlayback } = await import("./heavyLearnMedia.js");
+    return dispatchLearnSourcePlayback(source.canonicalUrl, signal);
+  }
+  return fetchManhua0996EpisodePlaybackLocally(rawUrl, signal, fetchImpl);
+}
+
+/** 工作机在自己的出口取签名；回调处理中不得再次派发到工作机队列。 */
+export async function fetchManhua0996EpisodePlaybackLocally(
+  rawUrl: string,
+  signal?: AbortSignal,
+  fetchImpl: FetchLike = defaultSourceFetch,
+): Promise<Manhua0996Playback> {
+  signal?.throwIfAborted();
   const source = parseManhua0996SourceUrl(rawUrl, readManhuaLearnExtraSourceHosts());
   if (!source) throw new Error("第三方播放页链接无效或不在可信站点内");
   /**
