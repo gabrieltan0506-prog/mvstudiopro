@@ -7,6 +7,7 @@ vi.mock("../services/fileConversionIp", () => ({ conversionDay: () => "2026-10-0
 vi.mock("../jobs/workerRole", () => ({ heavyWorkerSplitEnabled: () => true }));
 vi.mock("../credits", () => ({ getCredits: async () => ({ totalAvailable: 100 }) }));
 import { fileConversionRouter } from "./fileConversion";
+import { FILE_CONVERSION_PRICING } from "../../shared/fileConversion";
 const caller = (id: number | null = 7) => fileConversionRouter.createCaller({ user: id ? { id, role: "user" } : null } as TrpcContext);
 const id = `conv_${"a".repeat(59)}`;
 const source = { objectName: "file-conversion/u7/sources/fixture", generation: "123", sha256: "b".repeat(64), bytes: 12, fileName: "test.pdf" };
@@ -37,7 +38,7 @@ describe("文件转换受保护入口", () => {
   it("确认使用检查结果的SHA/实际费用，去掉结算标记并绑定报价版本", async () => {
     mocks.get.mockResolvedValue({ ...row(), input: { ...request, settled: true } });
     await caller().convert({ id, confirmedCredits: 0 });
-    expect(mocks.enqueue).toHaveBeenCalledWith("7", { ...request, phase: "convert", quote: { credits: 0, pricingVersion: "pending-2026-10-09" } });
+    expect(mocks.enqueue).toHaveBeenCalledWith("7", { ...request, phase: "convert", quote: { credits: 0, pricingVersion: FILE_CONVERSION_PRICING.version } });
     await expect(caller().convert({ id, confirmedCredits: 1 })).rejects.toThrow("报价");
   });
   it("跨日确认按确认当天预约，不能借旧检查绕过今日额度", async () => {
@@ -53,8 +54,22 @@ describe("文件转换受保护入口", () => {
     expect(mocks.enqueue).toHaveBeenCalledWith("7", request);
   });
   it("未批准费率不开放付费上传或检查", async () => {
-    await expect(caller().upload({ fileName: "a.pdf", bytes: 12, formatId: "pdf-docx", lane: "paid" })).rejects.toThrow("费率尚未开放");
-    expect(mocks.upload).not.toHaveBeenCalled();
+    const approved = { ...FILE_CONVERSION_PRICING };
+    Object.assign(FILE_CONVERSION_PRICING, { standardCredits: null, scanCreditsPerMb: null });
+    try {
+      await expect(caller().upload({ fileName: "a.pdf", bytes: 12, formatId: "pdf-docx", lane: "paid" })).rejects.toThrow("费率尚未开放");
+      expect(mocks.upload).not.toHaveBeenCalled();
+    } finally { Object.assign(FILE_CONVERSION_PRICING, approved); }
+  });
+  it("付费扫描报价确认后仍入付费车道，伪造更低金额拒绝", async () => {
+    const paid = { ...request, lane: "paid", source: { ...source, bytes: 20_000_001 } };
+    mocks.get.mockResolvedValue({ ...row(), lane: "paid", input: paid,
+      output: { type: "inspection", source: paid.source, billing: { needsOcr: true, available: true, credits: 6 } } });
+    await expect(caller().convert({ id, confirmedCredits: 4 })).rejects.toThrow("报价");
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    await caller().convert({ id, confirmedCredits: 6 });
+    expect(mocks.enqueue).toHaveBeenCalledWith("7", expect.objectContaining({ lane: "paid", phase: "convert",
+      quote: { credits: 6, pricingVersion: FILE_CONVERSION_PRICING.version } }));
   });
   it("下载不签发他人结果或未完成输出", async () => {
     mocks.get.mockResolvedValue({ ...row(), output: { type: "converted", objectName: "file-conversion/u8/results/stolen/x.pdf" } });

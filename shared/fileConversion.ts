@@ -29,19 +29,33 @@ export function validateConversionFile(formatId: string, name: string, bytes: nu
 }
 export const FILE_CONVERSION_FREE_LIMIT = 3;
 export const FILE_CONVERSION_FREE_LIMIT_MESSAGE = "今日免费转换已达上限，如需继续使用，请充值。";
-/** 待用户明确批准后在此单一真源改价；当前关闭付费，不能猜测收费。 */
-export const FILE_CONVERSION_PRICING: { version: string; standardCredits: number | null; scanCreditsPerMb: number | null } = {
-  version: "pending-2026-10-09", standardCredits: null, scanCreditsPerMb: null,
+export type FileConversionPricing = {
+  version: string;
+  standardCredits: number | null;
+  scanCreditsPerMb: number | null;
+  scanMinimumCredits?: number;
+  scanRoundingCredits?: number;
+};
+/** 1009用户确认：原报价取整后全部乘两倍，扫描每10MB一档，最低4积分。 */
+export const FILE_CONVERSION_PRICING: FileConversionPricing = {
+  version: "approved-2026-10-09-double-v1", standardCredits: 4, scanCreditsPerMb: 0.2,
+  scanMinimumCredits: 4, scanRoundingCredits: 2,
 };
 export type FileConversionLane = "free" | "paid";
 export function conversionBilling(bytes: number, needsOcr: boolean, lane: FileConversionLane = "free", pricing = FILE_CONVERSION_PRICING) {
   if (!Number.isSafeInteger(bytes) || bytes < 1) throw new Error("文件大小无效");
   const billableMb = Math.max(1, Math.ceil(bytes / 1_000_000));
   const rate = needsOcr ? pricing.scanCreditsPerMb : pricing.standardCredits;
-  const configured = rate !== null && Number.isSafeInteger(rate) && rate > 0;
-  const credits = lane === "free" && !needsOcr ? 0 : configured ? (needsOcr ? billableMb * rate! : rate!) : null;
+  const minimum = pricing.scanMinimumCredits ?? 1;
+  const increment = pricing.scanRoundingCredits ?? 1;
+  const configured = rate !== null && Number.isFinite(rate) && rate > 0
+    && (needsOcr ? Number.isSafeInteger(minimum) && minimum > 0 && Number.isSafeInteger(increment) && increment > 0
+      : Number.isSafeInteger(rate));
+  const charged = configured ? (needsOcr ? Math.max(minimum, Math.ceil(billableMb * rate! / increment) * increment) : rate!) : null;
+  const credits = lane === "free" ? (needsOcr ? null : 0) : charged !== null && Number.isSafeInteger(charged) ? charged : null;
   return { originalBytes: bytes, billableMb, needsOcr, credits, rateCreditsPerMb: pricing.scanCreditsPerMb,
-    cnyPerCredit: 0.65, pricingVersion: pricing.version, available: lane === "free" ? !needsOcr : configured };
+    minimumScanCredits: minimum, scanRoundingCredits: increment,
+    cnyPerCredit: 0.65, pricingVersion: pricing.version, available: lane === "free" ? !needsOcr : credits !== null };
 }
 export type FileConversionSource = { objectName: string; generation: string; sha256: string; bytes: number; fileName: string };
 export type FileConversionRequest = { kind: "file_conversion"; phase: "inspect" | "convert"; formatId: string; source: FileConversionSource; lane: FileConversionLane; day: string; ipHash?: string; quote?: { credits: number; pricingVersion: string } };

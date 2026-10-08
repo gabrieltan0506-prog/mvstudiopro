@@ -270,3 +270,11 @@ describe("原生精读页面接线", () => {
     expect(PAGE).not.toMatch(/VITE_[A-Z0-9_]*(?:API_?KEY|SECRET|TOKEN)/);
   });
 });
+
+// 只要求解释路由时，不得增加改变调度策略的选择器。
+it("整形面板仅说明真实并发与fallback，新学习和仅重新整形都不提交锁路由参数", () => {
+  expect(PAGE).toContain("OpenRouter（Z.AI）与 EvoLink 并发分流，失败后互为备用");
+  expect(PAGE).not.toContain('select id="manhua-structuring-gateway"');
+  expect(PAGE).not.toContain("setManhuaLearnStructuringGateway");
+  expect(PAGE).not.toContain("nativeStructuringGateway:");
+});

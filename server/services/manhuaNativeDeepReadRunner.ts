@@ -1476,16 +1476,16 @@ export const NATIVE_DEEP_READ_STRUCTURING_JSON_SCHEMA_NAME = "native_structuring
 export function nativeDeepReadStructuringGatewayOrder(
   policy: "structuring_chain" | "structuring_chain_qwen_first",
   batchOrdinal: number,
-  selectedGateway?: "openrouter" | "evolink_glm",
+  _legacySelectedGateway?: "openrouter" | "evolink_glm",
 ): readonly GlmGatewayName[] {
-  if (selectedGateway) return [selectedGateway];
+  // 旧任务保存的页面选择仅作兼容；不能覆盖原有分流或删掉备用网关。
   const odd = batchOrdinal % 2 === 1;
   if (policy === "structuring_chain_qwen_first") {
     return odd ? ["plan_sg_qwen", "openrouter", "evolink_glm"] : ["plan_bj_qwen", "evolink_glm", "openrouter"];
   }
   // 0906 用户令「不走 Qwen」：GLM 链只剩 OpenRouter（钉 Z.AI）与 EvoLink 两档，不再切 Qwen；判坏重试仍按每档两次
   // 0907 用户令「一路走 OpenRouter 一路走 EvoLink」：并发批次分流首发，第 1 批 OpenRouter→EvoLink，第 2 批 EvoLink→OpenRouter
-  // 🔒 **分流不能去掉**：两条 lane 若同时首发同一网关，会撞上同通道租约排队＝并发整形退化成串行
+  // 分流避免两份负载同时压到同一供应商；同通道本地租约已取消，不声称同网关必然串行。
   //    （用户 0920：「一般來說我都是併發整形的」）。0920「open router 打折」落在模型换 Flash 与
   //    OpenRouter 留在链上，不改这条分流。
   return odd ? ["evolink_glm", "openrouter"] : ["openrouter", "evolink_glm"];
@@ -4249,8 +4249,8 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE = "openrouter_glm_structurin
  */
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL = `${EVOLINK_GLM_FLASHX_MODEL}→${OPENROUTER_GLM_FLASHX_MODEL}`;
 /** 开始/失败回执的人话链路标签（0905：用户看了几百次「z-ai/glm-5.3」以为一直走 OpenRouter）。 */
-/** 当前整形显示所选路由；批次并发不再决定供应商。 */
-export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 FlashX · OpenRouter（Z.AI）（连续20分钟无心跳才超时，有心跳即续期）";
+/** 页面说明保留双路分流；每次开始回执按调度得到的真实首发网关显示。 */
+export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 FlashX · OpenRouter（Z.AI）与 EvoLink 并发分流，失败后互为备用（连续20分钟无心跳才超时，有心跳即续期）";
 /** 0916：该产品链只允许 GLM；旧 Qwen 值在进入路由前明确拒绝。 */
 export function nativeDeepReadStructuringPolicyForModel(
   model: unknown,
@@ -4262,7 +4262,7 @@ export function nativeDeepReadStructuringPolicyForModel(
   return "structuring_chain";
 }
 export function nativeDeepReadStructuringStartedLabel(_policy: "structuring_chain" | "structuring_chain_qwen_first", gateway: "openrouter" | "evolink_glm" = "openrouter"): string {
-  return `GLM-5.3 FlashX · ${gateway === "evolink_glm" ? "EvoLink" : "OpenRouter（Z.AI）"}（连续20分钟无心跳才超时，有心跳即续期）`;
+  return `GLM-5.3 FlashX · 当前路由：${gateway === "evolink_glm" ? "EvoLink" : "OpenRouter（Z.AI）"}；失败后切换 ${gateway === "evolink_glm" ? "OpenRouter（Z.AI）" : "EvoLink"}（连续20分钟无心跳才超时，有心跳即续期）`;
 }
 /** 完成回执按实际网关写人话名，面板一眼看出这一发走的是哪家。 */
 /** 整形链可接受的网关集合（缓存校验与通道锁共用）。 */
@@ -4330,10 +4330,16 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG = deepFreezeNativeContract(
   requireFinishReasonStop: true,
 } as const);
 
-/** 未带所选路由的内部调用默认 OpenRouter，不做轮询。 */
+/** 未显式携带 lane 的内部整形调用仍交替首发，不锁定单一网关。 */
+const structuringRoundRobin = new Map<string, number>();
 export function nextNativeDeepReadGlmPreferredGateway(
-  _policy: "structuring_chain" | "structuring_chain_qwen_first" = "structuring_chain",
-): GlmGatewayName { return "openrouter"; }
+  policy: "structuring_chain" | "structuring_chain_qwen_first" = "structuring_chain",
+): GlmGatewayName {
+  const pair = nativeDeepReadStructuringGatewayOrder(policy, 0).slice(0, 2);
+  const next = (structuringRoundRobin.get(policy) ?? 0) % pair.length;
+  structuringRoundRobin.set(policy, next + 1);
+  return pair[next]!;
+}
 
 /**
  * 🔒 0902 用户三次当场授权的解冻均已改毕，**现已重新冻结**：
@@ -5249,7 +5255,7 @@ export type NativeDeepReadBatchRunParams = {
   ) => void | Promise<void>;
   /** 媒体备料（整片拉取）进度中文行，旁路写面板；不影响模型链。 */
   onMediaProgressZh?: (zh: string) => void | Promise<void>;
-  /** 当前整形仅 GLM；本次所选路由随父任务冻结。 */
+  /** 当前整形仅 GLM；历史路由字段可回读，不覆盖并发分流与 fallback。 */
   structuringModel?: ManhuaNativeStructuringModelId;
   structuringGateway?: "openrouter" | "evolink_glm";
 };
@@ -6854,7 +6860,7 @@ async function executeNativeDeepReadBatch(
           })
           : crypto.randomUUID();
         const callId = input.lockRetry ? `${baseCallId}-lockretry${input.lockRetry}` : baseCallId;
-        const baseOrder = nativeDeepReadStructuringGatewayOrder(structuringGatewayPolicy, input.batchOrdinal ?? 0, params.structuringGateway ?? "openrouter");
+        const baseOrder = nativeDeepReadStructuringGatewayOrder(structuringGatewayPolicy, input.batchOrdinal ?? 0);
         const bad = new Set(input.badGateways ?? []);
         const gatewayOrder = [...baseOrder.filter((g) => !bad.has(g)), ...baseOrder.filter((g) => bad.has(g))];
         let startedAt: number | undefined;
@@ -6864,7 +6870,7 @@ async function executeNativeDeepReadBatch(
           await emitVisualModelReceipt({
             callId,
             // 0905：开始行明说链路顺序；完成/失败行改记实际网关，面板不再把 EvoLink 显示成 OpenRouter
-            model: nativeDeepReadStructuringStartedLabel(structuringGatewayPolicy, params.structuringGateway ?? "openrouter"),
+            model: nativeDeepReadStructuringStartedLabel(structuringGatewayPolicy, gatewayOrder[0] as "openrouter" | "evolink_glm"),
             route: NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
             stage: "visual_parse",
             status: "started",
@@ -6905,7 +6911,9 @@ async function executeNativeDeepReadBatch(
                 if (startedAt === undefined) return;
                 await emitVisualModelReceipt({
                   callId,
-                  model: `${glmGatewayDisplayLabel(info.gateway)} 失败（${String(info.detail || info.outcome).slice(0, 60)}），保留当前路由，不自动换路`,
+                  model: `${glmGatewayDisplayLabel(info.gateway)} 失败（${String(info.detail || info.outcome).slice(0, 60)}），${gatewayOrder[gatewayOrder.indexOf(info.gateway as GlmGatewayName) + 1]
+                    ? `切换 ${glmGatewayDisplayLabel(gatewayOrder[gatewayOrder.indexOf(info.gateway as GlmGatewayName) + 1]!)}`
+                    : "本轮路由已耗尽，按既有重试规则处理"}`,
                   route: NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
                   stage: "visual_parse",
                   status: "started",
@@ -6974,7 +6982,7 @@ async function executeNativeDeepReadBatch(
           }
           await emitVisualModelReceipt({
             callId,
-            model: nativeDeepReadStructuringStartedLabel(structuringGatewayPolicy, params.structuringGateway ?? "openrouter"),
+            model: nativeDeepReadStructuringStartedLabel(structuringGatewayPolicy, gatewayOrder[0] as "openrouter" | "evolink_glm"),
             route: NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
             stage: "visual_parse",
             status: "failed",

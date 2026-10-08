@@ -53,6 +53,7 @@ export default function HomeFileConversion() {
         {user && quota.data?.remaining === 0 && lane === "free" && <p role="status" className="text-sm text-amber-200">今日免费转换已达上限，如需继续使用，请充值。</p>}
         {quota.error && lane === "free" && <p className="text-sm text-amber-200">来源额度暂不可确认，请稍后重试。</p>}
         {lane === "paid" && !catalog.data?.paidAvailable && <p className="text-sm text-amber-200">付费费率尚未开放，不会扣除积分。</p>}
+        {catalog.data?.paidAvailable && <p className="text-sm leading-6 text-indigo-200">普通付费转换 4 积分/次；扫描 PDF/EPUB 每 MB 0.2 积分，最低 4 积分，每 2 积分向上取整。原文件大小不足 1 MB 按 1 MB。</p>}
         <label className="block text-sm">转换格式<select aria-label="转换格式" value={formatId} onChange={e => { setFormatId(e.target.value); setFile(null); setMessage(""); }} disabled={busy} className="mt-2 w-full rounded-lg border border-white/20 bg-[#151322] p-3">
           {["文档", "电子书", "图片"].map(group => <optgroup key={group} label={group}>{FILE_CONVERSION_FORMATS.filter(item => item.group === group).map(item => <option value={item.id} key={item.id}>{item.label}</option>)}</optgroup>)}
         </select></label>

@@ -100,6 +100,28 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     expect(result.gatewayTrace.map((row) => row.gateway)).toEqual(["openrouter", "evolink_glm"]);
   });
 
+  it.each([0, 1])("正式整形第%s路JSON无法修复时由另一路接住，保留真实调用轨迹", async (lane) => {
+    const { nativeDeepReadStructuringGatewayOrder } = await import("./manhuaNativeDeepReadRunner");
+    const gatewayOrder = nativeDeepReadStructuringGatewayOrder("structuring_chain", lane, "openrouter");
+    const events: string[] = [];
+    const calls = stubFetchSeq([
+      () => ({ ok: true, status: 200, body: okBody("<html>not JSON</html>") }),
+      () => ({ ok: true, status: 200, body: okBody(GOOD) }),
+    ]);
+    const result = await invokeGlmJsonChatWithGatewayFallback({
+      system: "test", user: "test", gatewayPolicy: "structuring_chain", gatewayOrder,
+      preferredGlmGateway: gatewayOrder[0], validateContent: content => { JSON.parse(content); },
+      onGatewayFallback: async info => { events.push(info.gateway); },
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.url).toContain(lane ? "api.evolink.ai" : "openrouter.ai");
+    expect(calls[1]!.url).toContain(lane ? "openrouter.ai" : "api.evolink.ai");
+    expect(result.gatewayTrace.map(item => item.gateway)).toEqual(gatewayOrder);
+    expect(result.gatewayTrace[0]!.outcome).toBe("content_invalid");
+    expect(result.gateway).toBe(gatewayOrder[1]);
+    expect(events).toEqual([gatewayOrder[0]]);
+  });
+
   it("glm_only 失败时关闭式停止：EvoLink→OpenRouter 两档都试，绝不回退 Qwen", async () => {
     const calls = stubFetchSeq([() => ({ ok: false, status: 503, body: "openrouter down" })]);
     const err = await invokeGlmJsonChatWithGatewayFallback({

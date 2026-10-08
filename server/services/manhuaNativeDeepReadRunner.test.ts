@@ -3311,7 +3311,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     for (const count of [0, -1, 1.5, NaN, Infinity]) expect(() => groups(count)).toThrow("正整数");
   });
 
-  it("超过九片只维持两路，先返回的EvoLink立即领取剩余批次且不等待OpenRouter", async () => {
+  it.each(["openrouter", "evolink_glm"] as const)("保留原有并发：旧选择%s不能挤掉另一网关，先返回的EvoLink继续领下一批", async (legacyGateway) => {
     const segments = Array.from({ length: 13 }, (_, index) => ({
       startSec: index * 60,
       endSec: (index + 1) * 60,
@@ -3351,6 +3351,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
         cacheSourceDigest: "d".repeat(64),
       }],
       segmentCacheSeriesKey: "dynamic_two_lane_queue",
+      structuringGateway: legacyGateway,
     }, deps);
 
     expect(maxActive).toBe(2);
@@ -6128,12 +6129,18 @@ it("GCS截图时序契约：同次模型响应截图，再整形，最后清理�
   expect(events.indexOf("cleanup")).toBeGreaterThan(events.lastIndexOf("structured"));
 });
 
-it("所选整形路由覆盖批次序号且显示不含轮换或淘汰模型", async () => {
+it("历史页面路由值不能限制并发分流或移除fallback，显示实际首发与备用", async () => {
   const m = await import("./manhuaNativeDeepReadRunner");
-  for (const gateway of ["openrouter", "evolink_glm"] as const) {
-    for (const batch of [0, 1, 4]) expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain", batch, gateway)).toEqual([gateway]);
-    const label = m.nativeDeepReadStructuringStartedLabel("structuring_chain", gateway);
-    expect(label).toContain(gateway === "openrouter" ? "OpenRouter" : "EvoLink");
-    expect(label).not.toMatch(/Qwen|第[12]批|→/);
+  for (const legacyGateway of ["openrouter", "evolink_glm"] as const) {
+    for (const lane of [0, 1, 4]) {
+      const order = m.nativeDeepReadStructuringGatewayOrder("structuring_chain", lane, legacyGateway);
+      expect(order).toEqual(lane % 2 ? ["evolink_glm", "openrouter"] : ["openrouter", "evolink_glm"]);
+      const label = m.nativeDeepReadStructuringStartedLabel("structuring_chain", order[0] as "openrouter" | "evolink_glm");
+      expect(label).toContain(`当前路由：${order[0] === "openrouter" ? "OpenRouter（Z.AI）" : "EvoLink"}`);
+      expect(label).toContain(`失败后切换 ${order[1] === "openrouter" ? "OpenRouter（Z.AI）" : "EvoLink"}`);
+      expect(label).not.toMatch(/Qwen|第[12]批/);
+    }
   }
+  const first = m.nextNativeDeepReadGlmPreferredGateway();
+  expect(m.nextNativeDeepReadGlmPreferredGateway()).not.toBe(first);
 });
