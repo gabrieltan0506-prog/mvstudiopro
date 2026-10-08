@@ -111,9 +111,9 @@ describe("整集GLM永久原始与解析证据", () => {
     };
     const { store, saved } = fixture(context);
     const expectedRequestWithoutPreferredGateway = {
-      system: "系统", user: "分片 3-5", maxTokens: 131072, gatewayPolicy: "structuring_chain_qwen_first",
+      system: "系统", user: "分片 3-5", maxTokens: 131072, gatewayPolicy: "structuring_chain_qwen_first", temperature: 0.7,
     };
-    await store.writeRequest({ ...expectedRequestWithoutPreferredGateway, preferredGlmGateway: "plan_bj_qwen" });
+    await store.writeRequest({ ...expectedRequestWithoutPreferredGateway, temperature: 0.8, preferredGlmGateway: "plan_bj_qwen" });
     const raw = { ...rawEvent("plan_bj_qwen"), model: "qwen3.8-max" };
     await store.writeRawResponse(raw);
     await store.writeParsed({ shots: [{ startSec: 0, endSec: 12 }] }, {
@@ -133,6 +133,13 @@ describe("整集GLM永久原始与解析证据", () => {
     });
     expect(recovered?.response.gateway).toBe("plan_bj_qwen");
     expect(recovered?.parsed).toEqual({ shots: [{ startSec: 0, endSec: 12 }] });
+    for (const changed of [{ user: "其他分片" }, { temperature: 0.9 }, { maxTokens: 99 }]) {
+      await expect(readNativeDeepReadGlmRecoveredEvidence({
+        context,
+        expectedRequestWithoutPreferredGateway: { ...expectedRequestWithoutPreferredGateway, ...changed },
+        deps: { upload: vi.fn() as never, getBucket: () => "mv-studio-pro-vertex-video-temp", download: download as never },
+      })).rejects.toThrow("冻结请求不一致");
+    }
   });
 
   it("稳定callId可跨批次回读完整解析证据，且不伪造当前批次身份", async () => {

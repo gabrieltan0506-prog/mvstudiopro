@@ -721,9 +721,9 @@ export const NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS = 30_000;
 export const NATIVE_DEEP_READ_RESOURCE_RETRY_MAX = 4;
 /** 整形批次遇到网络抖动、429/5xx 或服务端暂时繁忙时，初次失败后再补发 3 次。 */
 export const NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_INTERVAL_MS = 30_000;
-export const NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_MAX = 3;
-/** 0906 用户令：整形判坏（镜数不合/过不了观察锁）同档降温重试用的温度（首发 0.8 → 重试 0.75），再坏才换路由。 */
-export const NATIVE_DEEP_READ_STRUCTURING_RETRY_TEMPERATURE = 0.75;
+/** 1008 用户指定：首发之外的三次传输失败补发温度；内容缺失仍从原稿恢复。 */
+export const NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_TEMPERATURES = Object.freeze([0.7, 0.65, 0.6] as const);
+export const NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_MAX = NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_TEMPERATURES.length;
 /**
  * 0907 费用闸：一批整形的判坏重试累计费用（含首发）超过此线就停，不再往下一档烧。
  * GLM 一批 4 片约 ¥3–4，按最坏两档各两次算上限 ¥16；闸设 ¥20 留余量。触发即整集停并写明累计费用。
@@ -1664,7 +1664,9 @@ export function nativeDeepReadFrozenContractSha256(): string {
       primaryRepairFeedbackVersion: "visual_audio_gaps_v2",
       advertisementActionExempt: true,
     },
-    glmStructuringConfig: NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG,
+    // 1008 仅调整后续整形温度；读片身份保留历史温度，避免已付费分片失配重读。
+    // 实际整形请求及其独立永久证据仍使用当前温度配置。
+    glmStructuringConfig: { ...NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG, temperature: 0.8 },
     baseResponseSchema: NATIVE_DEEP_READ_RESPONSE_SCHEMA,
     animationResponseSchema: buildNativeDeepReadResponseSchema(animationContext),
     liveResponseSchema: buildNativeDeepReadResponseSchema(liveContext),
@@ -4289,12 +4291,8 @@ export function glmGatewayDisplayLabel(gateway: string, model?: string): string 
  * 官方表（百炼 GLM-5.3）最大输出 131,072，按此定死。
  */
 const GLM_STRUCTURING_MAX_TOKENS = 131_072;
-/**
- * 🔒 整形链采样温度（0829 晚用户拍板 0.8）。
- * 不传＝EvoLink 默认 1.0（太飘）；0.2 又太死板，会变成照抄不敢取舍——
- * 而整形的核心动作恰恰是「同秒位多版本里取信息更全的那条」，需要判断力。
- */
-export const NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE = 0.8;
+/** 1008 用户指定：整形首次请求温度 0.7，显式传入所有供应商请求。 */
+export const NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE = 0.7;
 /**
  * 🔒 整形链思考档位（0901 用户拍板恢复 **high**）。
  *
@@ -7116,7 +7114,13 @@ async function executeNativeDeepReadBatch(
         const attempt = 0;
         {
           const retryOrdinal = (input.dispatchRetry ?? 0) * 100;
-          const result = await runStructuringOrLocalFallback({ ...input, lockRetry: retryOrdinal || undefined });
+          const result = await runStructuringOrLocalFallback({
+            ...input,
+            lockRetry: retryOrdinal || undefined,
+            temperature: (input.dispatchRetry ?? 0) > 0
+              ? NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_TEMPERATURES[input.dispatchRetry! - 1]!
+              : NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE,
+          });
           result.raw = unwrapNativeDeepReadStructuredAnswerEnvelope(result.raw);
           if ("localFallback" in result) {
             // 0907 复审：本地拼接的 keyMoments 只来自输入稿，单段集三档全空时同样要造兜底，否则终审拒收整集死
