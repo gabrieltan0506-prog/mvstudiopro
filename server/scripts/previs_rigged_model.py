@@ -776,6 +776,66 @@ def apply_cough_contact(model, actions, frame_start, frame_end, fps=24):
     return rows
 
 
+def apply_grounded_sit_contact(model, actions, frame_start, frame_end, fps=24):
+    """坐姿按目标真实腿长解双腿；落脚锁目标静止踝点，仍须网格和常速审片。"""
+    from mathutils import Matrix, Vector
+    from previs_contact_ik import solve_limb
+    sits = [action for action in actions if action.get("kind") == "sit"]
+    if not sits:
+        return []
+    if not math.isfinite(fps) or fps <= 0 or type(frame_start) is not int or type(frame_end) is not int or not 1 <= frame_start <= frame_end <= 720:
+        raise ValueError("坐姿落脚修正帧范围无效")
+    if any(not 0 <= action["startSec"] < action["endSec"] or action["endSec"]-action["startSec"] < .5 for action in sits):
+        raise ValueError("坐姿落脚动作时间无效")
+    bpy = _bpy()
+    rig, mapping, rest = model["rig"], model["boneMap"], model["restMatrices"]
+    rows = []
+
+    def set_pose(bone, matrix, frame):
+        bone.rotation_mode = "QUATERNION"
+        bone.matrix = matrix
+        bpy.context.view_layer.update()
+        for prop in ("location", "rotation_quaternion", "scale"):
+            bone.keyframe_insert(prop, frame=frame)
+
+    def aim(bone, start, end, frame):
+        rotation = bone.matrix.to_quaternion()
+        direction = end-start
+        if direction.length < 1e-8:
+            raise ValueError("坐姿腿骨目标退化")
+        rotation = (rotation @ Vector((0, 1, 0))).rotation_difference(direction.normalized()) @ rotation
+        set_pose(bone, Matrix.Translation(start) @ rotation.to_matrix().to_4x4(), frame)
+
+    for frame in range(frame_start, frame_end+1):
+        t = (frame-1)/fps
+        active = [action for action in sits if action["startSec"] <= t <= action["endSec"]]
+        if not active:
+            continue
+        if len(active) != 1:
+            raise ValueError("同一人物坐姿窗口重叠")
+        bpy.context.scene.frame_set(frame)
+        bpy.context.view_layer.update()
+        for side in ("-1", "1"):
+            upper, lower, foot = [rig.pose.bones[mapping[key+side]] for key in ("upper_leg", "lower_leg", "foot")]
+            root = upper.head.copy()
+            # 静止踝点与足骨朝向来自同一目标骨架，不能复用棍人脚点或拉伸骨长。
+            foot_rest = rest[foot.name]
+            ankle = foot_rest.translation.copy()
+            solved = solve_limb(tuple(root), tuple(ankle), upper.bone.length, lower.bone.length, (1, 0, 0))
+            if solved["unreachableDistance"] > .005:
+                raise ValueError("坐姿落脚超过真实腿长，须修正骨盆或站位")
+            knee, end = Vector(solved["joint"]), Vector(solved["end"])
+            aim(upper, root, knee, frame)
+            aim(lower, knee, end, frame)
+            set_pose(foot, Matrix.Translation(end) @ foot_rest.to_quaternion().to_matrix().to_4x4(), frame)
+            residual = (foot.head-ankle).length
+            if residual > .005:
+                raise ValueError("坐姿踝点未落到实际目标")
+            rows.append({"frame": frame, "side": side, "ankleResidual": residual})
+    model["report"]["sitContact"] = {"frames": len(rows)//2, "maxAnkleResidual": max((row["ankleResidual"] for row in rows), default=0.), "meshValidated": False, "normalSpeedValidated": False}
+    return rows
+
+
 def retarget_from_source(source_rig, model, frame_start, frame_end, source_bone_map=None):
     """逐帧烘焙旋转到真实骨架，保目标骨长和层级；不是逐点复制拉断关节。
 

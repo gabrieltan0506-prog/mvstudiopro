@@ -18,6 +18,7 @@ export type RigCueForm = Record<NumericCueKey, string> & {
 export type RigForm = {
   enabled: boolean;
   sourceJobId: string;
+  sourceAssetRef?: string;
   forwardAxis: PrevisRiggedModel["forwardAxis"];
   targetHeight: string;
   boneMap: Partial<Record<(typeof PREVIS_BODY_BONES)[number], string>>;
@@ -41,12 +42,14 @@ export function newRigCue(start = 0, end = 1): RigCueForm {
 }
 export function createRigForm(
   value?: PrevisRiggedModel,
-  taskId?: string
+  taskId?: string,
+  sourceAssetRef?: string
 ): RigForm {
   const p = value?.performance;
   return {
     enabled: !!value,
     sourceJobId: value?.sourceJobId ?? taskId ?? "",
+    sourceAssetRef: value?.sourceAssetRef ?? sourceAssetRef,
     forwardAxis: value?.forwardAxis ?? "-Y",
     targetHeight: String(value?.targetHeight ?? 1.7),
     boneMap: { ...value?.boneMap },
@@ -82,6 +85,7 @@ export function applyRigForm(
   form: RigForm,
   context: {
     taskId?: string;
+    sourceAssetRef?: string;
     durationSec: number;
     shape: "human" | "horse";
     hasCreature?: boolean;
@@ -92,6 +96,9 @@ export function applyRigForm(
     throw new Error("带骨角色不能与魔化预设同时应用");
   if (!context.taskId || form.sourceJobId !== context.taskId)
     throw new Error("当前角色没有匹配版本的已成功3D模型，请重新选择当前模型");
+  if (form.sourceAssetRef && context.sourceAssetRef && form.sourceAssetRef !== context.sourceAssetRef)
+    throw new Error("模型所在资产已变化，请重新准备当前模型配置");
+  const sourceAssetRef = context.sourceAssetRef ?? form.sourceAssetRef;
   const boneMap = Object.fromEntries(
     Object.entries(form.boneMap)
       .map(([key, value]) => [key, value?.trim()])
@@ -100,6 +107,7 @@ export function applyRigForm(
   const data: Record<string, unknown> = {
     ...(context.shape === "horse" ? {rigKind:"quadruped"} : {}),
     sourceJobId: form.sourceJobId,
+    ...(sourceAssetRef ? { sourceAssetRef } : {}),
     forwardAxis: form.forwardAxis,
     targetHeight: numeric(form.targetHeight, "模型高度"),
     ...(Object.keys(boneMap).length ? { boneMap } : {}),

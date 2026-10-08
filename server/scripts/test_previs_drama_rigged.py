@@ -203,6 +203,68 @@ def source_height(actor_id):
             - min(b.head_local.z for b in rig.data.bones))
 
 
+# 本分支生成受控诊断场景，调用前须展示并获得本次媒体确认。
+if '--contact-correction-only' in arguments:
+    diagnostic = root/'TEST_ONLY-contact-correction-renderer.py'
+    text = renderer.read_text()
+    for sentence in (
+        "raise ValueError('带骨角色咳嗽暂未通过掩口和收手位置验收，请使用基础白模预演')",
+        "raise ValueError('带骨角色暂不支持坐下：静止姿态差会让脚穿地（1.70 米约 21 厘米），待重定向补偿后开放（PR-F）；棍人角色可以坐下，带骨角色的看向/转身/行礼不受影响')",
+    ):
+        if text.count(sentence) != 1:
+            raise AssertionError('诊断副本门禁定位变化，停止，不修改生产脚本')
+        text = text.replace(sentence, "pass  # TEST_ONLY 本次人工确认的接触诊断副本")
+    diagnostic.write_text(text)
+    cases = []
+    for kind in ('idle', 'sit', 'cough'):
+        report = with_actions('contact-corrected-'+kind,
+            {actor['id']: [{'kind':kind,'startSec':0,'endSec':2}] for actor in BASE['actors']}, diagnostic)
+        rows = []
+        for actor in BASE['actors']:
+            actor_id = actor['id']
+            rig = target_rig(actor_id)
+            floors = [mesh_min_z(actor_id, frame) for frame in range(1, 49)]
+            hands = [tuple(bone_head(rig, 'hand-1', frame)) for frame in range(1, 49)]
+            pelvis = [tuple(bone_head(rig, 'pelvis', frame)) for frame in range(1, 49)]
+            row = {'actorId':actor_id,'frames':48,'minMeshFloor':min(floors),'maxMeshFloor':max(floors),
+                   'handReturnDistance':math.dist(hands[0],hands[-1]),'pelvisSink':pelvis[24][2]-pelvis[0][2],
+                   'boneSamples':[], 'meshValidated':False, 'normalSpeedValidated':False}
+            for frame in range(1, 49):
+                at(frame)
+                lengths = {name:(rig.pose.bones[name].tail-rig.pose.bones[name].head).length for name in rig.pose.bones.keys()}
+                for name, length in lengths.items():
+                    assert abs(length-rig.data.bones[name].length)<.0001, ('骨长改变',kind,actor_id,frame,name)
+                row['boneSamples'].append({'frame':frame,'lengths':lengths,'meshFloor':floors[frame-1]})
+            assert min(floors)>=-.005, ('真实蒙皮穿地',kind,actor_id,min(floors))
+            if kind=='sit':
+                assert row['pelvisSink']<-.1, ('坐姿未下沉',actor_id,row['pelvisSink'])
+                assert report['models'][BASE['actors'].index(actor)]['sitContact']['frames']==48
+            if kind=='cough':
+                assert row['handReturnDistance']<.02*(actor['riggedModel']['targetHeight']/1.7), ('掩口后未回收',actor_id,row['handReturnDistance'])
+                assert report['models'][BASE['actors'].index(actor)]['coughContact']['frames']==48
+            rows.append(row)
+        cases.append({'kind':kind,'actors':rows,'scene':str(root/('contact-corrected-'+kind)/'scene.blend')})
+    (root/'contact-correction-receipt.json').write_text(json.dumps({'blender':bpy.app.version_string,
+        'testFixturesOnly':True,'productionGatesRetained':True,'cases':cases,
+        'meshValidated':False,'normalSpeedValidated':False},ensure_ascii=False,indent=2))
+    if '--render-correction-preview' in arguments:
+        import subprocess
+        for case in cases:
+            scene_path = Path(case['scene'])
+            bpy.ops.wm.open_mainfile(filepath=str(scene_path))
+            bpy.context.scene.render.filepath = str(scene_path.parent/'frames'/'frame-')
+            bpy.ops.render.render(animation=True)
+            video = scene_path.parent/'contact-preview.mp4'
+            subprocess.run(['ffmpeg','-nostdin','-hide_banner','-loglevel','error','-y',
+                '-framerate','24','-i',str(scene_path.parent/'frames'/'frame-%04d.png'),
+                '-c:v','libx264','-pix_fmt','yuv420p','-an',str(video)],check=True,timeout=120)
+            case['previewVideo'] = str(video)
+        (root/'contact-correction-receipt.json').write_text(json.dumps({'blender':bpy.app.version_string,
+            'testFixturesOnly':True,'productionGatesRetained':True,'cases':cases,
+            'meshValidated':False,'normalSpeedValidated':False},ensure_ascii=False,indent=2))
+    print('CONTACT_CORRECTION_NUMERIC_OK',len(cases))
+    raise SystemExit(0)
+
 # 咳嗽只验证新增动作，不重复运行已通过的坐下等旧用例。
 if '--cough-only' in arguments:
     error = None

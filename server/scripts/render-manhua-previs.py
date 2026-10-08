@@ -513,7 +513,7 @@ if any(actor.get('creature') for actor in spec['actors']):
                 interaction_poses[f][a['id']] if events or has_swords or piggyback else points(a,f,c[f]))
             creatures.append(handle)
 if any(actor.get('riggedModel') for actor in spec['actors']):
-    from previs_rigged_model import inspect_glb, import_rigged_model, retarget_from_source, apply_performance
+    from previs_rigged_model import inspect_glb, import_rigged_model, retarget_from_source, apply_performance, apply_grounded_sit_contact, apply_cough_contact
     from previs_workbench_appearance import prepare_workbench_appearance
     if len(args)!=3: raise ValueError('角色模型服务端侧载清单缺失')
     manifest_path=Path(args[2]).resolve()
@@ -556,6 +556,9 @@ if any(actor.get('riggedModel') for actor in spec['actors']):
         if config.get('performance'):
             apply_performance(model,config['performance']['controller'],config['performance']['cues'],
                 scene.frame_start,scene.frame_end,24)
+        if actor['shape'] == 'human':
+            apply_grounded_sit_contact(model,actor['actions'],scene.frame_start,scene.frame_end,24)
+            apply_cough_contact(model,actor['actions'],scene.frame_start,scene.frame_end,24)
         # 原白模仅作驱动证据；显示真实导入网格，不在画面中叠加替身。
         for obj in list(source_rig.children):
             if obj.type=='MESH': obj.hide_render=True

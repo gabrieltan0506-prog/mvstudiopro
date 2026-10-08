@@ -666,7 +666,7 @@ export function ManhuaAutoRigEditorView({
         </button>
       </header>
       <p className="mb-3 text-sm text-muted-foreground">
-        支持单人 A / T 姿态或单个四足站姿的封闭连通无骨模型。不会生成眼骨或表情，也不会删除原模型。关闭后，已提交任务仍在后台运行。
+        支持单人直立 A / T、屈臂持物姿态或单个四足站姿的封闭连通无骨模型。不会生成眼骨或表情，也不会删除原模型。关闭后，已提交任务仍在后台运行。
       </p>
       <fieldset disabled={active} className="grid gap-3 sm:grid-cols-3">
         <label>
@@ -684,6 +684,7 @@ export function ManhuaAutoRigEditorView({
           >
             <option value="T">T形 · 双臂平举</option>
             <option value="A">A形 · 双臂斜向下展开</option>
+            <option value="bent_arms">直立屈臂 · 胸前持物或垂臂</option>
             <option value="quadruped">四足 · 四蹄着地站姿</option>
           </select>
         </label>
@@ -841,7 +842,7 @@ export function ManhuaAutoRigEditorView({
               disabled={active || !imagesReady}
               onChange={e => setConfirmed(e.target.checked)}
             />
-            我已确认{settings.pose === "quadruped" ? "这是单个四足站姿模型" : `这是单人直立 ${settings.pose} 姿态`}，并核对正面、侧面全部关节点
+            我已确认{settings.pose === "quadruped" ? "这是单个四足站姿模型" : settings.pose === "bent_arms" ? "这是单人直立屈臂姿态，手臂关节点已按原模型校正" : `这是单人直立 ${settings.pose} 姿态`}，并核对正面、侧面全部关节点
           </label>
           <button
             className={button}

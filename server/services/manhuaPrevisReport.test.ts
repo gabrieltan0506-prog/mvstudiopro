@@ -237,6 +237,31 @@ function modelFixture() {
   return { spec: f.spec, report, sources: [source] };
 }
 describe("带骨模型报告与侧载存证", () => {
+  it("落脚修正必须匹配实际动作帧窗，超差及虚报网格通过拒收", () => {
+    const f = modelFixture();
+    Object.assign(f.report.models[0], {sitContact:{frames:48,maxAnkleResidual:.001,meshValidated:false,normalSpeedValidated:false}});
+    expect(() => validatePrevisReport(f.report,f.spec,f.sources)).toThrow("动作帧窗");
+    f.spec.actors[0].actions = [{kind:"sit",startSec:0,endSec:2}];
+    expect(validatePrevisReport(f.report,f.spec,f.sources).models?.[0].sitContact?.frames).toBe(48);
+    for (const patch of [{frames:47},{maxAnkleResidual:.006},{meshValidated:true},{normalSpeedValidated:true}]) {
+      const original = structuredClone((f.report.models[0] as any).sitContact);
+      Object.assign((f.report.models[0] as any).sitContact,patch);
+      expect(() => validatePrevisReport(f.report,f.spec,f.sources)).toThrow();
+      Object.assign(f.report.models[0],{sitContact:original});
+    }
+    Reflect.deleteProperty(f.report.models[0],"sitContact");
+    expect(() => validatePrevisReport(f.report,f.spec,f.sources)).toThrow("动作帧窗");
+  });
+  it("掩口修正仅匹配真实人体掩口窗，缺失或截短不能收作成功", () => {
+    const f = modelFixture();
+    f.spec.actors[0].actions = [{kind:"cough",startSec:.5,endSec:2}];
+    expect(() => validatePrevisReport(f.report,f.spec,f.sources)).toThrow("动作帧窗");
+    Object.assign(f.report.models[0],{coughContact:{frames:36,meshValidated:false,normalSpeedValidated:false}});
+    expect(validatePrevisReport(f.report,f.spec,f.sources).models?.[0].coughContact?.frames).toBe(36);
+    Object.assign((f.report.models[0] as any).coughContact,{frames:35});
+    expect(() => validatePrevisReport(f.report,f.spec,f.sources)).toThrow("动作帧窗");
+  });
+
   it("四足报告保存真实前后肢映射，缺失或把后腿当前腿时拒收", () => {
     const f = modelFixture();
     f.spec.actors[0].shape = "horse";

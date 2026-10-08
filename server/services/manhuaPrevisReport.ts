@@ -101,6 +101,17 @@ export const previsReportSchema = z
               "rest-corrected-rotation-preserve-target-lengths"
             ),
             contactValidated: z.literal(false),
+            coughContact: z.object({
+              frames: z.number().int().min(1).max(720),
+              meshValidated: z.literal(false),
+              normalSpeedValidated: z.literal(false),
+            }).strict().optional(),
+            sitContact: z.object({
+              frames: z.number().int().min(1).max(720),
+              maxAnkleResidual: z.number().finite().min(0).max(.005),
+              meshValidated: z.literal(false),
+              normalSpeedValidated: z.literal(false),
+            }).strict().optional(),
             sourceBoneMap: z.record(z.enum(PREVIS_BODY_BONES), z.string().min(1).max(128)).optional(),
             boundaryZh: z.string().min(1),
             offscreenFrames: z.array(z.number().int().min(1).max(720)).max(720),
@@ -365,6 +376,17 @@ export function validatePrevisReport(
         source.sourceJobId !== model.sourceJobId
       )
         throw new Error("带骨角色报告与下载存证不一致");
+    }
+    for (const kind of ["sit", "cough"] as const) {
+      const actions = actor.actions.filter(action => action.kind === kind);
+      const contact = kind === "sit" ? model.sitContact : model.coughContact;
+      let frames = 0;
+      for (let frame = 1; frame <= report.frames; frame++) {
+        const t = (frame - 1) / 24;
+        if (actions.some(action => t >= action.startSec && t <= action.endSec)) frames++;
+      }
+      if (frames ? !contact || actor.shape !== "human" || contact.frames !== frames : Boolean(contact))
+        throw new Error("角色落脚或掩口修正回执与实际动作帧窗不一致");
     }
     if (config.performance) {
       const performance = model.performance;

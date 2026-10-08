@@ -98,7 +98,7 @@ export function manhuaPrevisDraftFromExecutableShot(input: {
   const onstage = shot.onstageActorIds;
   if (onstage.length > 6) issuesZh.push(`在场 ${onstage.length} 人，白模一段最多 6 人，请回拆镜器再拆`);
   const formation = defaultFormation(onstage.length);
-  const actors: ManhuaPrevisSpec["actors"] = onstage.slice(0, 6).map((actorId, i) => {
+  const actors: ManhuaPrevisSpec["actors"] = onstage.map((actorId, i) => {
     const st = snapshot[actorId];
     const link = linkOf(actorId);
     const focus = st?.focusActorId ? onstage.indexOf(st.focusActorId) : -1;
@@ -250,9 +250,16 @@ export function applyManhuaPrevisDraftToStudio(
   draft?: Pick<ManhuaPrevisDraftFromPlan, "cameraPromptZh" | "tempoZh">,
 ): ManhuaPrevisStudio {
   const { draftCameraPromptZh: _p, draftTempoZh: _t, ...rest } = studio;
+  // 动作计划只产出动作，不能清除用户在同一资产上准备的骨骼配置。
+  const nextSpec = manhuaPrevisSpecSchema.parse({ ...spec, actors: spec.actors.map(actor => {
+    const matches = actor.assetRef ? studio.spec.actors.filter(previous => previous.assetRef === actor.assetRef && previous.shape === actor.shape) : [];
+    const sameActor = matches.find(previous => previous.id === actor.id);
+    const riggedModel = actor.riggedModel ?? (sameActor ?? (matches.length === 1 ? matches[0] : undefined))?.riggedModel;
+    return riggedModel ? { ...actor, riggedModel } : actor;
+  }) });
   return {
     ...rest,
-    spec: { ...spec, actors: assignPrevisActorColors(spec.actors, assignPrevisActorColors(studio.spec.actors)) },
+    spec: { ...nextSpec, actors: assignPrevisActorColors(nextSpec.actors, assignPrevisActorColors(studio.spec.actors)) },
     specHistory: [
       ...(studio.specHistory ?? []),
       { spec: studio.spec, createdAt: nowIso, reasonZh: "套用动作计划草案前的配置" },

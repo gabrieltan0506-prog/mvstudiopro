@@ -211,3 +211,26 @@ describe("PR-6 · 套用草案带上运镜句", () => {
    expect(resolveManhuaPrevisCharacterLinks(plan.actors, [{id:"cust_a",seedLibraryId:"wa_char_man"},{id:"cust_b",seedLibraryId:"wa_char_man"}])).toEqual([]);
    expect(resolveManhuaPrevisCharacterLinks(plan.actors, [{id:plan.actors[0]!.nameZh}])).toEqual([]);
  });
+
+
+it("超容量草案不截掉第七人后冒充有效规格", () => {
+ const plan=buildBoatFight();const shot=splitManhuaActionPlanForPrevis(plan).shots[0];
+ const draft=manhuaPrevisDraftFromExecutableShot({plan,shot:{...shot,onstageActorIds:[MAN,WOMAN,A,B,'extra-1','extra-2','extra-3']},aspect:'16:9'});
+ expect(draft.spec).toBeNull();expect(draft.issuesZh.join('；')).toContain('最多 6 人');expect(draft.summaryZh.join('；')).toContain('extra-3');
+});
+it("套用动作计划保留同资产已准备模型和原片，不复用另一资产", () => {
+ const studio=createManhuaPrevisStudio(5);studio.spec.actors[0].assetRef='hero';studio.spec.actors[0].riggedModel={sourceJobId:'m3d_current',forwardAxis:'+X',targetHeight:1.7};
+ const before=structuredClone(studio);const next=createManhuaPrevisStudio(5).spec;next.actors[0].id='new-plan-id';next.actors[0].assetRef='hero';next.actors[0].actions=[{kind:'bow',startSec:1,endSec:3}];
+ const result=applyManhuaPrevisDraftToStudio(studio,next);expect(result.spec.actors[0].riggedModel).toEqual(studio.spec.actors[0].riggedModel);expect(result.spec.actors[0].actions).toEqual(next.actors[0].actions);expect(result.specHistory?.[0].spec).toEqual(before.spec);expect(studio).toEqual(before);
+ next.actors[0].assetRef='different';expect(applyManhuaPrevisDraftToStudio(studio,next).spec.actors[0].riggedModel).toBeUndefined();
+});
+
+it("共用资产的两个演员分别保留本人配置，新增实例不猜配置", () => {
+ const studio=createManhuaPrevisStudio(5);const base=studio.spec.actors[0];
+ studio.spec.actors=['attacker-a','attacker-b'].map((id,index)=>({...base,id,assetRef:'shared-attacker',riggedModel:{sourceJobId:'m3d_current',forwardAxis:'+X' as const,targetHeight:1.7+index*.1}}));
+ const next={...studio.spec,actors:studio.spec.actors.map(({riggedModel,...actor})=>actor)};
+ const result=applyManhuaPrevisDraftToStudio(studio,next);
+ expect(result.spec.actors.map(actor=>actor.riggedModel)).toEqual(studio.spec.actors.map(actor=>actor.riggedModel));
+ next.actors[0].id='attacker-new';expect(applyManhuaPrevisDraftToStudio(studio,next).spec.actors[0].riggedModel).toBeUndefined();
+ expect(studio.spec.actors[0].id).toBe('attacker-a');
+});

@@ -18,7 +18,7 @@ export type PreparedRigProfile = {
 /** 仅复用本项目同一模型的准备配置；历史表演时段不跨段带入。 */
 export function collectPreparedRigProfiles(
   blocks: CanvasBlock[],
-  characters: Array<{ id: string; label: string; model?: { taskId: string } }>
+  characters: Array<{ id: string; label: string; model?: { taskId: string; assetRef?: string } }>
 ): PreparedRigProfile[] {
   const current = new Map(characters.map(row => [row.id, row]));
   const found = new Map<string, PreparedRigProfile>();
@@ -43,13 +43,15 @@ export function collectPreparedRigProfiles(
         if (
           !character?.model ||
           !parsed.success ||
-          parsed.data.sourceJobId !== character.model.taskId
+          parsed.data.sourceJobId !== character.model.taskId ||
+          Boolean(parsed.data.sourceAssetRef && character.model.assetRef && parsed.data.sourceAssetRef !== character.model.assetRef)
         )
           continue;
         const rig = parsed.data;
         const riggedModel: PreparedRigModel = {
           ...(rig.rigKind ? {rigKind:rig.rigKind} : {}),
           sourceJobId: rig.sourceJobId,
+          ...(rig.sourceAssetRef ? { sourceAssetRef: rig.sourceAssetRef } : {}),
           forwardAxis: rig.forwardAxis,
           targetHeight: rig.targetHeight,
           ...(rig.boneMap ? { boneMap: { ...rig.boneMap } } : {}),
