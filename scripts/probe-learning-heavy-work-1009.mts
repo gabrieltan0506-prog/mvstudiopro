@@ -11,7 +11,7 @@ import { heavyMediaSignal } from "../server/jobs/heavyMediaContext";
 // 探针只调用本批正式函数；不替换实现，不提交学习、截图或模型任务。
 if (!process.env.FLY_MACHINE_ID || process.env.FLY_MACHINE_ID !== process.env.MANHUA_HEAVY_MACHINE_ID) throw new Error("探针仅允许在已配置Fly工作机执行");
 const sql = neon(process.env.DATABASE_URL!);
-const [job] = await sql.query(`select status, output->>'nativeSeriesKey' as "seriesKey" from jobs where id='B39Nhgt_cH4LjpJs'`);
+const [job] = await sql.query(`select status, coalesce(output->>'nativeSeriesKey', output->>'seriesKey') as "seriesKey" from jobs where id='B39Nhgt_cH4LjpJs'`);
 if (!job || ["queued", "running"].includes(String(job.status))) throw new Error("本轮学习尚未结束，暂缓探针");
 const active = await sql.query(`select id from jobs where status in ('queued','running') limit 1`);
 if (active.length) throw new Error("仍有在途任务，暂缓工作机探针");
