@@ -78,7 +78,7 @@ export function getManhuaLearnPipelineMeta(
       analysisMin: MANHUA_LEARN_ANALYSIS_MIN,
       analysisTarget: MANHUA_LEARN_ANALYSIS_TARGET,
       summaryZh:
-        `有合集 id 时优先展开多集；单条大合集最长约 ${Math.round(MANHUA_LEARN_MAX_DURATION_SEC / 60)} 分钟，按同一剧名并入原剧。不落 MP4，模型直接读取视频本身（不抽帧、不做语音转写），逐镜学到景别／机位／运镜／光影／动作／转场，外加可复用手法与生成要素。**每集单独入库成一张待审卡**，跑过的集不重跑、不重复计费。连续失败 ${MANHUA_LEARN_CONSECUTIVE_FAIL_STOP} 次才停本轮。`,
+        `有合集 id 时优先展开多集；整片时长不限，按已确认的分片设置学习，按同一剧名并入原剧。不落 MP4，模型直接读取视频本身（不抽帧、不做语音转写），逐镜学到景别／机位／运镜／光影／动作／转场，外加可复用手法与生成要素。**每集单独入库成一张待审卡**，跑过的集不重跑、不重复计费。连续失败 ${MANHUA_LEARN_CONSECUTIVE_FAIL_STOP} 次才停本轮。`,
       stepsZh: [
         "解析可学剧集列表（有合集 id 优先展开多集）",
         `按用户设置顺序采本轮剧集（可选 ${MANHUA_LEARN_BATCH_MIN}–${MANHUA_LEARN_BATCH_MAX} 集，默认 ${MANHUA_LEARN_BATCH_DEFAULT} 集）；已入库的集跳过`,

@@ -27,12 +27,10 @@ import {
   type DouyinListedEpisode,
 } from "../../shared/manhuaLearnDouyinWebApi.js";
 import {
-  NATIVE_DEEP_READ_MAX_EPISODE_SEC,
   NATIVE_DEEP_READ_MAX_SEGMENT_SEC,
   NATIVE_DEEP_READ_BATCH_HARD_CEILING,
   validateNativeDeepReadBatchPlan,
 } from "./manhuaNativeDeepReadExecution.js";
-import { MANHUA_LEARN_MAX_DURATION_SEC } from "../../shared/manhuaTemplateLearnSeries.js";
 import type { ManhuaTemplateLearnLlmProvider } from "../../shared/manhuaTemplateLearnFrameVision.js";
 import {
   NATIVE_DEEP_READ_JOB_MAX_CALLS,
@@ -255,9 +253,6 @@ export function splitNativeDeepReadSegments(
   const length = parseNativeDeepReadSegmentSeconds(segmentSeconds);
   // ffprobe 常返回小数秒；统一四舍五入后再切段，避免计划片长与末段终点相差近 1 秒。
   const total = normalizeNativeDeepReadDurationSec(durationSec);
-  if (total > NATIVE_DEEP_READ_MAX_EPISODE_SEC) {
-    throw new Error(`素材超过 ${Math.round(NATIVE_DEEP_READ_MAX_EPISODE_SEC / 60)} 分钟学习上限`);
-  }
   if (Math.ceil(total / length) > 32) {
     throw new Error(`当前分片时长将产生 ${Math.ceil(total / length)} 片，超过单集 32 片上限，请增加分片秒数`);
   }
@@ -929,11 +924,6 @@ export async function buildNativeDeepReadPlanPreview(
       : undefined;
     const durationSec = restored?.durationSec
       ?? normalizeNativeDeepReadDurationSec(probedDurationSec);
-    if (durationSec > MANHUA_LEARN_MAX_DURATION_SEC) {
-      throw new Error(
-        `第${e.index}集超过 ${Math.round(MANHUA_LEARN_MAX_DURATION_SEC / 60)} 分钟，超出学习策略上限`,
-      );
-    }
     episodes.push({
       ...(localSource ? { localVideoUpload: {
         userId: localSource.userId, uploadId: localSource.uploadId, sha256: localSource.sha256,

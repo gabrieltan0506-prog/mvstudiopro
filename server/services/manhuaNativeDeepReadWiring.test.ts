@@ -266,10 +266,14 @@ describe("素材接入层 → 原生精读的接缝", () => {
     ]);
   });
 
-  it("超长片按策略拒绝，且**在建 claim 之前**就拒——不进付费流程", async () => {
-    await expect(
-      buildNativeDeepReadEpisodeExecution({ seriesKey: "s1", ep: ep() }, deps(999_999)),
-    ).rejects.toThrow("一小时内");
+  it("超过一小时和旧四小时整片上限仍完整切片执行", async () => {
+    for (const duration of [3601, 18001]) {
+      const plan = await buildNativeDeepReadEpisodeExecution({ seriesKey: "s1", ep: ep(), segmentSeconds: 600 }, deps(duration));
+      expect(plan.durationSec).toBe(duration);
+      expect(plan.segments[0].startSec).toBe(0);
+      expect(plan.segments.at(-1)?.endSec).toBe(duration);
+      expect(plan.segments).toHaveLength(Math.ceil(duration / 600));
+    }
   });
 
   it("时长探不出来直接拒，不拿 0 秒去建单", async () => {
