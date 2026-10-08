@@ -60,6 +60,34 @@ describe('模型来源解析与本机生产隔离',()=>{
     vi.mocked(d.source).mockResolvedValue({...source});
     await expect(resolvePrevisModels(spec,7,d)).rejects.toThrow(/来源/);
   });
+  it('场景动画从入队到worker均读取已采用主模型，不选择去材质代理',async()=>{
+    const {spec,d,source}=fixture();spec.exportAnimation=true;
+    spec.actors[0].riggedModel!.sourceAssetRef='asset-apose';
+    vi.mocked(d.source).mockImplementation(async(_id,_user,ref,options)=>{
+      if(options)throw new Error('场景动画禁止代理');
+      return {...source,assetRef:ref,gcsUri:'gs://test-only/full-model.glb'};
+    });
+    expect((await resolvePrevisModels(spec,7,d))[0].source.gcsUri).toBe('gs://test-only/full-model.glb');
+    const prepared=await preparePrevisModels(spec,7,'/test-output',new AbortController().signal,d);
+    expect(prepared[0]).toMatchObject({sourceJobId:'m3d_test',sha256:source.sha256});
+    expect(d.source).toHaveBeenCalledTimes(2);
+    expect(d.source).toHaveBeenNthCalledWith(1,'m3d_test',7,'asset-apose',undefined);
+    expect(d.source).toHaveBeenNthCalledWith(2,'m3d_test',7,'asset-apose',undefined);
+    expect(d.inspect).toHaveBeenCalledWith(expect.objectContaining({gcsUri:'gs://test-only/full-model.glb'}));
+  });
+  it('场景动画主模型读取失败不重试低模，也不写候选文件',async()=>{
+    const {spec,d}=fixture();spec.exportAnimation=true;
+    vi.mocked(d.source).mockRejectedValue(new Error('主模型暂不可读'));
+    await expect(preparePrevisModels(spec,7,'/test-output',new AbortController().signal,d)).rejects.toThrow('主模型暂不可读');
+    expect(d.source).toHaveBeenCalledTimes(1);expect(d.inspect).not.toHaveBeenCalled();expect(writeFile).not.toHaveBeenCalled();
+  });
+  it('完整模型超预算保留原来源并明确拒绝，不自动降级外观',async()=>{
+    const {spec,d,source}=fixture();spec.exportAnimation=true;
+    vi.mocked(d.source).mockResolvedValue({...source,vertices:2_000_000});
+    await expect(preparePrevisModels(spec,7,'/test-output',new AbortController().signal,d)).rejects.toThrow('不会改用无材质代理');
+    expect(d.source).toHaveBeenCalledTimes(1);expect(d.source).toHaveBeenCalledWith('m3d_test',7,'asset-test',undefined);
+    expect(d.inspect).not.toHaveBeenCalled();expect(writeFile).not.toHaveBeenCalled();
+  });
   it('没有assetRef在来源调用前拒绝',async()=>{
     const {spec,d}=fixture();delete spec.actors[0].assetRef;
     await expect(resolvePrevisModels(spec,7,d)).rejects.toThrow();expect(d.source).not.toHaveBeenCalled();

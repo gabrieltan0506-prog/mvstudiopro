@@ -60,3 +60,9 @@ pnpm exec tsc --noEmit --incremental false，session44509 exit0，/tmp/ep2-tsc-r
 
 ### 2026-10-08T18:58:47+08:00 · 文案定向检查
 101项schema/草案编译测试通过；两Python文件去除字符串后的AST与c037完全一致，拒绝条件和解算未变；对应诊断替换字符串同步，diff检查通过。掩口提示同样改为未通过真实模型验收，避免把代码修改与质量验收混为一谈。CI原始11张合成PNG已逐张查看并在本地index.html展示，未加工，不是第二集产物。
+
+## 2026-10-08T19:17:49+08:00 · ANIM-11 正式外观来源接线（补记此前改前检查）
+用户最新要求动画除对白外比照正式视频。入口：白模勾选exportAnimation→submit/worker；生产者：已有带纹理主模型，另有去材质previsProxy；转换：resolvePrevisModels固定prefer=previs使导出仍消费代理；存储：已验真本人的m3d回执/SHA；最终消费者：display_meshes→animation.glb→场景动画。修复仅exportAnimation时读取主模型，普通白模沿用低模；保留64MB/128MB/顶点帧预算、所有权/SHA、失败旧稿恢复，不新建模型、不放宽动作门禁。定向验证需覆盖入队与worker同源、全模失败不降级、候选图身份及旧白模不变。真实正式素材/线上动画仍未验。
+
+### 2026-10-08T19:20:56+08:00 · ANIM-11 定向验证
+49项来源/worker准备/场景消费测试通过，tsc --noEmit --incremental false exit0；新3文件完整增量diff与双向追链已审。入队与worker同读主模型；GLB导出消费实际display_meshes，场景动画回读同预演scope/clip和SHA。未放宽大小/顶点帧预算；现有完整模型可能超限，仍未做真实材质/动作/线上验收。普通白模回归通过，存储及失败保留规则未变。
