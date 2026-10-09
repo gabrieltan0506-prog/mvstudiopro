@@ -323,7 +323,9 @@ def process_video(spec_path, source_path, output_path):
         raise InterruptedError('原片像素处理已取消：' + str(signum))
     try:
         for name in (signal.SIGTERM, signal.SIGINT):
-            previous_signals[name] = signal.signal(name, cancel)
+            previous = signal.signal(name, cancel)
+            # Blender 的 C 层处理器在 Python 中可能显示为 None；恢复时须用合法默认值。
+            previous_signals[name] = signal.SIG_DFL if previous is None else previous
         # 子进程沿用launcher进程组；日志落临时文件，不让stderr管道堵塞。
         with tempfile.TemporaryFile() as decode_log, tempfile.TemporaryFile() as encode_log:
             decode_args, encode_args = ffmpeg_commands(source, partial, spec)
@@ -362,14 +364,16 @@ def process_video(spec_path, source_path, output_path):
             completed = True
             return info
     finally:
-        for name, handler in previous_signals.items():
-            signal.signal(name, handler)
-        stop_process(decoder)
-        stop_process(encoder)
-        if not completed:
-            partial.unlink(missing_ok=True)
-            output.unlink(missing_ok=True)
-            receipt.unlink(missing_ok=True)
+        try:
+            for name, handler in previous_signals.items():
+                signal.signal(name, handler)
+        finally:
+            stop_process(decoder)
+            stop_process(encoder)
+            if not completed:
+                partial.unlink(missing_ok=True)
+                output.unlink(missing_ok=True)
+                receipt.unlink(missing_ok=True)
 
 
 if __name__ == '__main__':
