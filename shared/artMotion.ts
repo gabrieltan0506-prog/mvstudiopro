@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { manhuaPrevisAudioSchema } from "./manhuaPrevisAudio";
 import { ART_MOTION_GRAMMARS, ART_MOTION_STYLES } from "./artMotionCatalog";
 
 const id = z.string().min(1).max(80);
@@ -96,6 +97,7 @@ export const artMotionSpecSchema = z
       scopeId:z.string().uuid(),clipId:z.string().min(1).max(160),
       worldTaskId:z.string().min(1).max(200),sceneRef:z.string().min(1).max(200),worldSourceVersion:z.string().min(1).max(200),
     }).strict().optional(),
+    audioTimeline: manhuaPrevisAudioSchema.optional(),
     audioUri: z
       .string()
       .regex(/^gs:\/\//)
@@ -133,6 +135,8 @@ export const artMotionSpecSchema = z
       fail("艺术段落总时长必须等于片长");
     if (v.mode === "art" && v.alpha)
       fail("艺术场景使用完整背景，透明输出仅用于解说动画");
+    if(v.audioTimeline && (!v.stageAnimation || v.audioUri || v.audioTimeline.durationSec!==v.duration || v.audioTimeline.dialogueCount!==0))
+      fail("场景动画配乐须与本段时长一致，不含对白，且不能与旧单条音轨同时使用");
     if(v.stageAnimation && (v.mode!=="animation" || v.alpha || v.fps!==24 || v.duration>30 || v.cues.length || Object.keys(v.data).length || v.scenes.length))
       fail("3D场景动画只消费原白模动作：常速24帧、最多30秒，不叠加解说动画数据");
     if (v.mode === "animation" && !v.stageAnimation && !v.cues.length && !Object.keys(v.data).length)

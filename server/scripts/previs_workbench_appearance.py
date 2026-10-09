@@ -1,5 +1,7 @@
 """已验证带骨网格的基础色预演材质；不联网、不改引擎、不修改原材质或报告schema。"""
 import math
+import json
+from previs_animation_materials import SOURCE_MATERIAL_KEY, SOURCE_UV_KEY
 
 
 def _fail(message):
@@ -135,6 +137,8 @@ def prepare_workbench_appearance(model):
         for material, plan in plans.items():
             preview = material.copy()
             copies[material] = preview
+            # ID引用随scene.blend保存，并保留原PBR节点与内嵌图片的存活引用。
+            preview[SOURCE_MATERIAL_KEY] = material
             preview.name = "PREVIS_BASE_COLOR_" + material.name
             preview.diffuse_color = plan["color"]
             preview.metallic, preview.roughness = 0, .5
@@ -149,7 +153,13 @@ def prepare_workbench_appearance(model):
                 preview.node_tree.nodes.active = texture
         for obj, uv in object_plans:
             previous.append((obj, list(obj.data.materials), obj.data.uv_layers.active_index,
-                             [layer.active_render for layer in obj.data.uv_layers]))
+                             [layer.active_render for layer in obj.data.uv_layers],
+                             obj.data.get(SOURCE_UV_KEY)))
+            obj.data[SOURCE_UV_KEY] = json.dumps({
+                "names": [layer.name for layer in obj.data.uv_layers],
+                "active": obj.data.uv_layers.active_index,
+                "render": [layer.active_render for layer in obj.data.uv_layers],
+            })
             for index, material in enumerate(list(obj.data.materials)):
                 if material is not None:
                     obj.data.materials[index] = copies[material]
@@ -166,13 +176,18 @@ def prepare_workbench_appearance(model):
                 "boundaryZh": "仅基础色预演，非完整PBR；透明度/遮挡排序近似，不作为最终材质质量验收。",
                 "qualityAccepted": False}
     except Exception:
-        for obj, materials, active_index, render_flags in reversed(previous):
+        for obj, materials, active_index, render_flags, previous_uv in reversed(previous):
             for index, material in enumerate(materials):
                 obj.data.materials[index] = material
             if obj.data.uv_layers:
                 obj.data.uv_layers.active_index = active_index
                 for layer, active_render in zip(obj.data.uv_layers, render_flags):
                     layer.active_render = active_render
+            if previous_uv is None:
+                if SOURCE_UV_KEY in obj.data:
+                    del obj.data[SOURCE_UV_KEY]
+            else:
+                obj.data[SOURCE_UV_KEY] = previous_uv
         for preview in copies.values():
             if preview.users == 0:
                 bpy.data.materials.remove(preview)

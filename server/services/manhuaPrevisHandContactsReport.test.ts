@@ -1,0 +1,26 @@
+import { expect,it } from "vitest";
+import { previsHandContactsSchema,handContactAmount } from "../../shared/manhuaPrevisHandContacts";
+import { handContactsReportSchema,validateHandContactsReport } from "./manhuaPrevisHandContactsReport";
+const contacts=previsHandContactsSchema.parse([{id:"touch",actorId:"girl",hand:"hand1",targetActorId:"horse",bone:"neck",startSec:0,contactSec:.5,releaseSec:1.5,endSec:2}]);
+const spec={durationSec:2,actors:[{id:"girl"},{id:"horse"}],handContacts:contacts};
+const report=()=>handContactsReportSchema.parse([{id:"touch",actorId:"girl",hand:"hand1",targetActorId:"horse",bone:"neck",source:{kind:"sourceRig"},targetSource:{kind:"sourceRig"},samples:Array.from({length:48},(_,i)=>{const a=handContactAmount(contacts[0],i/24);return {frame:i+1,amount:a,original:[0,0,0],target:[1,0,0],desired:[a,0,0],wrist:[a,0,0],residual:0};})}]);
+it("严格检查缺报告、错手与真实腕点残差",()=>{expect(()=>validateHandContactsReport(report(),spec)).not.toThrow();expect(()=>validateHandContactsReport(undefined,spec)).toThrow(/数量/);const bad=report();bad[0].samples[24].wrist[0]=2;expect(()=>validateHandContactsReport(bad,spec)).toThrow(/手腕/);bad[0].hand="hand-1";expect(()=>validateHandContactsReport(bad,spec)).toThrow(/错配/);});
+it("真实模型不能沿用源白模回执",()=>{expect(()=>validateHandContactsReport(report(),{...spec,actors:[{id:"girl",riggedModel:{sourceJobId:"real-girl"}},{id:"horse"}]})).toThrow(/真实模型/);});
+const supports=previsHandContactsSchema.parse(["-1","1"].map(side=>({id:`support${side}`,actorId:"girl",hand:`hand${side}`,targetActorId:"mom",bone:`upper_arm${side}`,startSec:0,contactSec:.5,releaseSec:1.5,endSec:2})));
+const supportSpec={durationSec:2,actors:[{id:"girl",riggedModel:{sourceJobId:"real-girl"}},{id:"mom",riggedModel:{sourceJobId:"real-mom"}}],handContacts:supports};
+const models=[{actorId:"girl",sourceJobId:"real-girl",sha256:"a".repeat(64)},{actorId:"mom",sourceJobId:"real-mom",sha256:"b".repeat(64)}];
+const supportReport=()=>handContactsReportSchema.parse(supports.map((c,i)=>({id:c.id,actorId:c.actorId,targetActorId:c.targetActorId,hand:c.hand,bone:c.bone,source:{kind:"riggedModel",sourceJobId:models[0].sourceJobId,sha256:models[0].sha256},targetSource:{kind:"riggedModel",sourceJobId:models[1].sourceJobId,sha256:models[1].sha256},samples:Array.from({length:48},(_,f)=>{const a=handContactAmount(supports[i],f/24);return {frame:f+1,amount:a,original:[0,0,0],target:[1,0,0],desired:[a,.1,0],wrist:[a,.1,0],residual:0,surface:{original:[0,0,0],target:[1,0,0],desired:[a,0,0],hand:[a,0,0],residual:0}};})})));
+it("扶坐报告逐帧核对双手真实模型和表面，不强套骨锚插值",()=>{
+ expect(()=>validateHandContactsReport(supportReport(),supportSpec,models)).not.toThrow();
+ expect(()=>validateHandContactsReport(supportReport(),{...supportSpec,handContacts:[supports[0]]},models)).toThrow(/数量/);
+ expect(()=>validateHandContactsReport(supportReport().slice(0,1),{...supportSpec,handContacts:[supports[0]]},models)).toThrow(/同窗双手/);
+ const missing=supportReport();delete missing[0].samples[12].surface;
+ expect(()=>validateHandContactsReport(missing,supportSpec,models)).toThrow(/逐帧真实蒙皮/);
+ const fake=supportReport();fake[0].samples[24].surface!.hand[0]=2;
+ expect(()=>validateHandContactsReport(fake,supportSpec,models)).toThrow(/实际蒙皮/);
+ const timing=supportReport();timing[0].samples[6].surface!.desired[0]=1;
+ expect(()=>validateHandContactsReport(timing,supportSpec,models)).toThrow(/表面时序/);
+ const wrong=supportReport();wrong[1].targetSource={kind:"riggedModel",sourceJobId:"real-mom",sha256:"c".repeat(64)};
+ expect(()=>validateHandContactsReport(wrong,supportSpec,models)).toThrow(/同一真实模型/);
+ expect(()=>validateHandContactsReport(supportReport(),{...supportSpec,actors:[{id:"girl"},{id:"mom"}]},models)).toThrow(/真实模型来源/);
+});

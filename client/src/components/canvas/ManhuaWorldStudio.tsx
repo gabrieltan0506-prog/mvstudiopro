@@ -1,3 +1,6 @@
+import { buildManhuaStageBgmAudio, type ManhuaPrevisAudio } from "@shared/manhuaPrevisAudio";
+import { getSelectedAudioTake, type CanvasAudioStudio } from "@shared/canvasAudioStudio";
+import type { ManhuaPrevisStudio as PrevisStudio } from "@shared/manhuaPrevis";
 import {artMotionSpecSchema,type ArtMotionSpec} from "@shared/artMotion";
 import type { PrevisStageAnimation } from "@shared/manhuaPrevisAnimation";
 import type { AdvisorWorldControl } from "@/lib/manhuaAdvisorWorkflowControl";
@@ -58,6 +61,8 @@ type Props = {
   stageAnimation?: PrevisStageAnimation;
   previsAnimationSource?: {previsJobId:string;scopeId:string;clipId:string;duration:number;aspect:"9:16"|"16:9"};
   onRenderStageAnimation?: (spec:ArtMotionSpec)=>Promise<void>;
+  previsStudio?: PrevisStudio;
+  stageAudioStudio?: CanvasAudioStudio;
   onOpenPrevis?: () => void;
   savedFrameCount?: number;
   adoptedFrameCount?: number;
@@ -152,6 +157,12 @@ export function ManhuaWorldStudio(props: Props) {
           const world = s.eligibility.currentWorld3d;
           const assets = world?.assets;
           const canView = stage === "ready" && Boolean(assets);
+          let audioTimeline:ManhuaPrevisAudio|undefined;
+          let audioIssue="";
+          if(props.previsAnimationSource){
+            try{audioTimeline=buildManhuaStageBgmAudio(props.stageAudioStudio,props.previsAnimationSource.duration,props.previsStudio?.audioStartSec??0,props.previsStudio?.loopBgm??false);}
+            catch(error){audioIssue=error instanceof Error?error.message:"配乐配置未通过检查";}
+          }
           return (
             <li key={s.id} className={`flex min-w-0 flex-wrap items-center gap-3 rounded-xl p-3 text-xs ${canView ? "bg-white/5" : "bg-white/[0.02] text-white/55"}`} data-scene-id={s.id} data-stage={stage}>
               {s.thumbUrl ? <img src={s.thumbUrl} alt={s.labelZh} className="h-12 w-20 rounded object-cover" /> : <span className="h-8 w-12 rounded bg-white/10" />}
@@ -170,20 +181,41 @@ export function ManhuaWorldStudio(props: Props) {
                 ) : null}
               </span>
               {openPreviewId !== s.id || !canView ? <div className="flex min-h-80 w-full flex-col items-center justify-center rounded-xl border border-white/10 bg-black/30 p-3" data-world-reference-preview>{s.thumbUrl ? <img src={s.thumbUrl} alt={`${s.labelZh}场景参考图`} className="max-h-[55vh] max-w-full object-contain" /> : <p>尚无场景参考图</p>}<p className="mt-3 text-xs text-white/55">当前为场景参考图{canView ? "，点击查看场景载入真实3D空间。" : "；世界就绪后可检查空间与保存机位。"}</p></div> : null}
-              {canView && props.onRenderStageAnimation ? <div className="w-full rounded border border-cyan-300/30 p-3">
-                <button type="button" className={btnPrimary} disabled={disabled||animationBusy||!props.previsAnimationSource} onClick={async()=>{
-                  if(animationLock.current||!props.previsAnimationSource||!world)return;
+              {canView && props.onRenderStageAnimation ? <div className="w-full space-y-2 rounded border border-cyan-300/30 p-3" data-stage-animation-submission>
+                <p className="font-medium">本次场景动画提交内容</p>
+                <p>场景：{s.labelZh} · 版本 {world?.taskId}；动作工程：{props.previsAnimationSource?.previsJobId??"尚未采用"}；{props.previsAnimationSource?.duration??"—"} 秒 · 720p／24fps。保留原角色、动作、特效和运镜，本次不含对白。</p>
+                <p>费用：不调用视频模型，无新增视频模型费用；渲染计算按现有记账。复用已采用BGM，不新生成音乐。</p>
+                {audioIssue?<p role="alert" className="text-amber-100">{audioIssue}</p>:audioTimeline?<div data-stage-animation-audio-review>
+                  <p>本次已采用配乐 {audioTimeline.bgmCount} 条，共 {audioTimeline.clips.length} 个裁片；本段 {audioTimeline.startSec}—{audioTimeline.startSec+audioTimeline.durationSec} 秒。</p>
+                  {audioTimeline.clips.map((clip,index)=>{
+                    const cue=props.stageAudioStudio?.cues.find(c=>getSelectedAudioTake(c)?.gcsUri===clip.audioUri);
+                    const take=cue&&getSelectedAudioTake(cue);
+                    return <p key={index}>{cue?.labelZh||"已采用BGM"} · 版本 {take?.id??"来源见方案"}：源 {clip.sourceStartSec.toFixed(3)}—{clip.sourceEndSec.toFixed(3)} 秒 → 片内 {clip.startSec.toFixed(3)}—{(clip.startSec+clip.sourceEndSec-clip.sourceStartSec).toFixed(3)} 秒；音量 {clip.volume}，淡入 {clip.fadeInSec} 秒，淡出 {clip.fadeOutSec} 秒。</p>;
+                  })}
+                </div>:props.previsAnimationSource?<p data-stage-animation-silent>当前片段在这个秒窗没有启用BGM，本次按留白输出无声音轨；需要配乐时请先到对白与BGM绑定已有采用音轨。</p>:null}
+                {props.previsStudio?<details open><summary>本次逐镜原文、人物动作与相机输入</summary>
+                  <div className="space-y-3 py-2">{props.previsStudio.advisorShotSource?.shots.map(shot=><div key={shot.index} className="rounded border border-white/15 p-2">
+                    <p className="font-medium">第{shot.index}镜 · {shot.startSec}—{shot.endSec}秒</p><p className="whitespace-pre-wrap">剧情动作：{shot.actionZh}</p>
+                    <p className="whitespace-pre-wrap">运镜：{shot.cameraZh||"沿用下方已采用相机工程"}</p>
+                    {shot.dialogueZh?<p className="whitespace-pre-wrap">原对白（本次不生成声音）：{shot.dialogueZh}</p>:<p>本镜无对白。</p>}
+                  </div>)}</div>
+                  <p>工程人物：{props.previsStudio.spec.actors.map(actor=>actor.id).join("、")}</p>
+                  <p>相机秒窗：{props.previsStudio.spec.cameras.map(camera=>`${camera.startSec}—${camera.endSec}秒，${camera.lens}mm${camera.endLens?`→${camera.endLens}mm`:""}`).join("；")}</p>
+                  <pre className="max-h-80 overflow-auto whitespace-pre-wrap">{JSON.stringify({shots:props.previsStudio.advisorShotSource?.shots??[],spec:props.previsStudio.spec},null,2)}</pre>
+                </details>:null}
+                <button type="button" className={btnPrimary} disabled={disabled||animationBusy||!props.previsAnimationSource||Boolean(audioIssue)} onClick={async()=>{
+                  if(animationLock.current||!props.previsAnimationSource||!world||audioIssue)return;
                   animationLock.current=true;setAnimationBusy(true);setAnimationError("");
                   try{
                     const source=props.previsAnimationSource;
                     const spec=artMotionSpecSchema.parse({version:1,mode:"animation",grammar:"y5_kinetic_type",duration:source.duration,
                       width:source.aspect==="9:16"?720:1280,height:source.aspect==="9:16"?1280:720,fps:24,title:s.labelZh+" · 本段场景动画",cues:[],data:{},scenes:[],
-                      stageAnimation:{previsJobId:source.previsJobId,scopeId:source.scopeId,clipId:source.clipId,worldTaskId:world.taskId,sceneRef:s.id,worldSourceVersion:world.sourceVersion}});
+                      stageAnimation:{previsJobId:source.previsJobId,scopeId:source.scopeId,clipId:source.clipId,worldTaskId:world.taskId,sceneRef:s.id,worldSourceVersion:world.sourceVersion},...(audioTimeline?{audioTimeline}:{})});
                     await props.onRenderStageAnimation!(spec);
                   }catch(error){setAnimationError(error instanceof Error?error.message:"场景动画提交未确认，请续查原任务");}
                   finally{animationLock.current=false;setAnimationBusy(false);}
-                }}>{animationBusy?"保存原请求并提交…":"输出本段场景动画视频"}</button>
-                <p className="mt-2 text-xs text-white/70">先在白模勾选导出场景动画并采用当前候选；输出沿用原动作与相机，720p／24fps，不调用视频模型。配乐可在动画任务里选择已有音轨；不会自动采用成片。</p>
+                }}>{animationBusy?"保存原请求并提交…":"确认以上内容并生成本段场景动画"}</button>
+                <p className="mt-2 text-xs text-white/70">先在白模勾选导出场景动画并采用当前候选；输出沿用原动作与相机，720p／24fps，不调用视频模型。配乐按上方已采用版本及全部裁片随首次提交；不会自动采用成片。</p>
                 {animationError?<p role="alert">{animationError}</p>:null}
               </div>:null}
               {openPreviewId === s.id && canView && assets ? (

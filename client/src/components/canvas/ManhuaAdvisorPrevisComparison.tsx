@@ -4,13 +4,14 @@ import { trpc } from "@/lib/trpc";
 import { manhuaPrevisMediaUrl } from "@/lib/manhuaPrevisMediaUrl";
 import type { PrevisResponse } from "./ManhuaPrevisStudio";
 import { useState, useRef, useEffect, type MutableRefObject } from "react";
-import { advisorPrevisCandidateSchema, applyAdvisorPrevisPatch, validateAdvisorPrevisReceipt, advisorPrevisTrialSchema, type AdvisorPrevisTrial, type AdvisorPrevisReceipt, type AdvisorPrevisCandidate, type AdvisorPrevisVideoSource, advisorPrevisSpecJson } from "@shared/manhuaAdvisorPrevisEdit";
-import { manhuaPrevisSpecSchema, PREVIS_ACTION_LABELS, type ManhuaPrevisSpec } from "@shared/manhuaPrevis";
+import { advisorPrevisCandidateSchema, prepareAdvisorPrevisComparison, validateAdvisorPrevisReceipt, advisorPrevisTrialSchema, type AdvisorPrevisTrial, type AdvisorPrevisReceipt, type AdvisorPrevisCandidate, type AdvisorPrevisVideoSource, advisorPrevisSpecJson } from "@shared/manhuaAdvisorPrevisEdit";
+import { PREVIS_ACTION_LABELS, type ManhuaPrevisSpec } from "@shared/manhuaPrevis";
 
 function Configuration({ spec }: { spec: ManhuaPrevisSpec }) {
   return <div className="space-y-3 text-xs leading-5">
     {spec.piggyback?.setDown && <p>完整放下：{spec.piggyback.setDown.startSec}秒开始降低 → {spec.piggyback.setDown.groundSec}秒落地坐稳 → {spec.piggyback.setDown.releaseSec}秒松手 → {spec.piggyback.setDown.endSec}秒起身；乘员留在原地。</p>}
     {spec.interactions?.filter(e=>e.kind==="support_walk").map(e=><p key={e.id}>搀扶：{spec.actors.find(a=>a.id===e.actorId)?.nameZh}扶着{spec.actors.find(a=>a.id===e.targetActorId)?.nameZh}；{e.startSec}秒抬手，{e.contactSec}秒扶稳，保持搭肩与扶臂接触至{e.endSec}秒。</p>)}
+    {spec.handContacts?.map(c=><p key={c.id}>{spec.actors.find(a=>a.id===c.actorId)?.nameZh}用{c.hand==="hand1"?"左":"右"}手扶{spec.actors.find(a=>a.id===c.targetActorId)?.nameZh}的{c.bone==="head"?"头侧":c.bone==="neck"?"颈侧":c.bone==="upper_arm1"?"左上臂":"右上臂"}：{c.startSec}—{c.contactSec}秒伸手，保持至{c.releaseSec}秒，{c.endSec}秒收回。</p>)}
     <ol className="list-decimal pl-4">{spec.cameras.map((c, i) => <li key={i} className="mb-2">
       <b>{c.startSec.toFixed(2)}—{c.endSec.toFixed(2)}秒 · {c.lens}{c.endLens && c.endLens !== c.lens ? `→${c.endLens}` : ""}mm</b>
       <p>机位 {c.position.join("，")}{c.endPosition ? ` → ${c.endPosition.join("，")}` : ""}；看向 {c.target.join("，")}{c.endTarget ? ` → ${c.endTarget.join("，")}` : ""}</p>
@@ -20,6 +21,7 @@ function Configuration({ spec }: { spec: ManhuaPrevisSpec }) {
       <p>路径：{a.motionRoute?.map(n => `${n.timeSec.toFixed(2)}秒 (${n.position.join("，")}) 朝向${n.facingDeg}°`).join(" → ") || `${a.start.join("，")} → ${a.end.join("，")}`}</p>
       {a.hitReaction && <p>受击：{a.hitReaction.startSec}—{a.hitReaction.endSec}秒，{a.hitReaction.contactSec}秒受击；出手者：{spec.actors.find(b=>b.id===a.hitReaction!.sourceActorId)?.nameZh}</p>}
       <p>动作：{a.actions.map(v => `${v.startSec.toFixed(2)}—${v.endSec.toFixed(2)}秒 ${PREVIS_ACTION_LABELS[v.kind]}`).join("；") || "无独立动作"}</p>
+      {a.humanPosture&&<p>{a.humanPosture.mode==="rise_to_sit"?`${a.humanPosture.startSec}—${a.humanPosture.endSec}秒坐起，随后坐稳`:a.humanPosture.posture==="sit"?"全段坐稳":"全段半躺"}；支撑高度{a.humanPosture.supportHeight}米，半躺角度{a.humanPosture.reclineDeg}°。</p>}
     </section>)}
   </div>;
 }
@@ -57,7 +59,7 @@ export function ManhuaAdvisorPrevisComparison({ voiceControl, candidate, storage
   const busy = useRef(false), started = useRef(false), alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   let before: ManhuaPrevisSpec | undefined, after: ManhuaPrevisSpec | undefined, issue = "";
-  try { before = manhuaPrevisSpecSchema.parse(JSON.parse(candidate.target.specJson)); after = applyAdvisorPrevisPatch(before, candidate.patch); }
+  try { ({before,after}=prepareAdvisorPrevisComparison(candidate)); }
   catch (e) { issue = e instanceof Error ? e.message : "候选未通过检查"; }
   const currentHost = previewHost?.dataset.clipId === candidate.target.clipId ? previewHost : null;
   const currentReadiness = onCheckReady?.(candidate) || "";

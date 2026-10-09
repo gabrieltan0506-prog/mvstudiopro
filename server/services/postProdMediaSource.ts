@@ -337,6 +337,7 @@ export async function resolvePostProdInputSources(
   if (job.action === "art_motion") {
     for (const cue of job.params.cues ?? []) if (cue.imageUri && await resolve(cue.imageUri) !== cue.imageUri) throw new Error("动画图片来源身份不一致");
     if (job.params.audioUri && await resolve(job.params.audioUri) !== job.params.audioUri) throw new Error("动画音轨来源身份不一致");
+    for(const uri of Array.from(new Set(job.params.audioTimeline?.clips.map(clip=>clip.audioUri)??[]))) if(await resolve(uri)!==uri)throw new Error("场景动画配乐时间轴来源身份不一致");
     return postProdJobInputSchema.parse(job);
   }
   if (job.action === "manhua_previs") {

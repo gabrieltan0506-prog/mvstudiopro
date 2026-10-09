@@ -2,8 +2,8 @@ import { getJobByIdStrict } from "../jobs/repository";
 import { previsTaskId } from "./manhuaPrevisTask";
 import { resolveManhuaPrevisMedia } from "./manhuaPrevisMedia";
 import { inspectGcsObjectBounded } from "./gcs";
-import { manhuaPrevisRequestSchema, manhuaPrevisSpecSchema } from "../../shared/manhuaPrevis";
-import { advisorPrevisSpecJson, type AdvisorPrevisTarget } from "../../shared/manhuaAdvisorPrevisEdit";
+import { manhuaPrevisRequestSchema } from "../../shared/manhuaPrevis";
+import { advisorPrevisSpecJson, advisorPrevisTargetSchema, type AdvisorPrevisTarget } from "../../shared/manhuaAdvisorPrevisEdit";
 import { previsPlaybackDuration } from "../../shared/manhuaPrevisPlayback";
 
 /** 只在服务器内读取完整视频字节；有界下载，不向客户端暴露私有位置。 */
@@ -23,9 +23,10 @@ export async function resolveAdvisorPrevisVideo(userId: number, target: AdvisorP
   if (!media || !job) throw new Error("所选白模视频尚未完成或无权读取，请恢复本段已生成版本");
   const input = job.input as { params?: unknown };
   const request = manhuaPrevisRequestSchema.parse(input.params);
-  const expected = manhuaPrevisSpecSchema.parse(JSON.parse(target.previousPreviewSpecJson || target.specJson));
+  const validatedTarget = advisorPrevisTargetSchema.parse(target);
+  const expected = JSON.stringify(JSON.parse(validatedTarget.previousPreviewSpecJson || validatedTarget.specJson));
   if (request.requestId !== target.previousPreviewRequestId || request.clipId !== target.clipId
-      || advisorPrevisSpecJson(request.spec) !== advisorPrevisSpecJson(expected)) {
+      || advisorPrevisSpecJson(request.spec) !== expected) {
     throw new Error("白模视频与本段修改基线不一致，请重新选择实际试看版本");
   }
   const output = job.output as Record<string, unknown>;

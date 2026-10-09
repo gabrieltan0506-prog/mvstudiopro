@@ -1,6 +1,7 @@
 /** Native owned whitebox animation + archived GS -> same deterministic browser renderer -> video.
  * No upstream generation call, user HTML, provider token in Chromium, or client supplied URLs.
  */
+import {prepareStageAnimationAudio} from './manhuaStageAnimationAudio';
 import {createHash} from 'node:crypto';
 import {createServer} from 'node:http';
 import {createRequire} from 'node:module';
@@ -16,26 +17,24 @@ import {marbleToStageTransform} from '../../shared/manhuaWorldStage';
 import {resolveManhuaStageAnimationSource} from './manhuaStageAnimationSource';
 import {validatePrevisAnimation} from './manhuaPrevisAnimation';
 import {fetchPostProdSourceToFile,runMediaTool,uploadResult} from './postProduction';
-import {uploadBufferToGcs} from './gcs';
-import {backupArtMotionEvidence} from './artMotionEvidence';
+import {persistArtMotionEvidence,type ArtMotionEvidenceReceipt} from './artMotionEvidenceStore';
 import {boundMediaThreads,mediaRuntime} from './postProdResources';
 const sha=(bytes:Buffer)=>createHash('sha256').update(bytes).digest('hex');
 export async function renderManhuaStageAnimation(raw:ArtMotionJob,userId:string,signal:AbortSignal,
- deps={resolveSource:resolveManhuaStageAnimationSource,backup:backupArtMotionEvidence}){
+ deps={resolveSource:resolveManhuaStageAnimationSource,persist:persistArtMotionEvidence}){
  const input=artMotionJobSchema.parse(raw),spec=input.params;
  signal.throwIfAborted();
  const root=await mkdtemp(path.join(tmpdir(),'manhua-stage-'));
  const prefix=`post-prod/${userId}/art-motion-evidence/${input.requestId}`;
- const evidence:Array<{name:string;gcsUri:string;bytes:number;sha256:string}>=[];
+ const evidence:Array<ArtMotionEvidenceReceipt & {name:string}>=[];
  let browser:Awaited<ReturnType<typeof puppeteer.launch>>|undefined,server:ReturnType<typeof createServer>|undefined;
  let encoder:ReturnType<typeof spawn>|undefined,closed:Promise<void>|undefined,failedEvidence=false,framesArchived=false;
  const frames:Array<{frame:number;timeSec:number;sha256:string}>=[],errors:string[]=[];
  const preserve=async(name:string,bytes:Buffer)=>{
   await writeFile(path.join(root,name),bytes);
   try{
-   const saved=await uploadBufferToGcs({objectName:`${prefix}/${name}`,buffer:bytes,contentType:'application/json',signal:AbortSignal.timeout(120_000)});
-   evidence.push({name,gcsUri:saved.gcsUri,bytes:bytes.length,sha256:sha(bytes)});
-   if(['request.raw.json','request.normalized.json','frames.json','frames.partial.json','probe.raw.json','probe.parsed.json'].includes(name))await deps.backup(userId,input.requestId,`${prefix}/${name}`,bytes);
+   const saved=await deps.persist(userId,input.requestId,`${prefix}/${name}`,bytes);
+   evidence.push({name,...saved});
   }catch(error){failedEvidence=true;throw error;}
  };
  const abort=()=>{encoder?.kill('SIGKILL');void browser?.close().catch(()=>{});};
@@ -44,6 +43,10 @@ export async function renderManhuaStageAnimation(raw:ArtMotionJob,userId:string,
   await preserve('request.raw.json',Buffer.from(JSON.stringify(raw)));
   await preserve('request.normalized.json',Buffer.from(JSON.stringify(input)));
   const source=await deps.resolveSource(userId,spec,input.requestId);
+  const timelineAudio=await prepareStageAnimationAudio(spec,source.input,userId,root,signal,{
+   run:async(command,args,innerSignal)=>{if(command!=='ffmpeg'&&command!=='ffprobe')throw Error('不支持的音轨处理命令');return (await runMediaTool(command,args,innerSignal)).stdout;},
+   archive:preserve,
+  });
   await preserve('source.json',Buffer.from(JSON.stringify({previsJobId:spec.stageAnimation!.previsJobId,previsRequestId:source.input.requestId,
    scopeId:source.input.scopeId,clipId:source.input.clipId,worldTaskId:source.world.taskId,worldSourceVersion:source.world.sourceVersion,animation:source.animation,
    boundaryZh:'原白模外观与动作置于真实3DGS空间；不是视频模型成片，尚待画面验收。'})));
@@ -105,14 +108,15 @@ export async function renderManhuaStageAnimation(raw:ArtMotionJob,userId:string,
   await preserve('frames.json',Buffer.from(JSON.stringify({complete:true,frameCount:count,frames,errors})));framesArchived=true;
   if(errors.length)throw new Error('场景动画执行错误，未采用');
   let output=video;
-  if(spec.audioUri){const audio=path.join(root,'audio');await fetchPostProdSourceToFile(spec.audioUri,audio,{signal});output=path.join(root,'result.mp4');
+  if(timelineAudio || spec.audioUri){const audio=timelineAudio??path.join(root,'audio');if(!timelineAudio)await fetchPostProdSourceToFile(spec.audioUri!,audio,{signal});output=path.join(root,'result.mp4');
    await runMediaTool('ffmpeg',['-hide_banner','-loglevel','error','-y','-i',video,'-i',audio,'-filter_complex',`[1:a]atrim=duration=${spec.duration},apad,atrim=duration=${spec.duration}[a]`,'-map','0:v:0','-map','[a]','-c:v','copy','-c:a','aac','-t',String(spec.duration),output],signal);}
   const probe=await runMediaTool('ffprobe',['-v','error','-count_frames','-show_streams','-show_format','-of','json',output],signal);
   await preserve('probe.raw.json',Buffer.from(probe.stdout));const parsed=JSON.parse(probe.stdout);await preserve('probe.parsed.json',Buffer.from(JSON.stringify(parsed)));
   const stream=parsed.streams?.find((s:any)=>s.codec_type==='video');
+  if((spec.audioTimeline||spec.audioUri) && !parsed.streams?.some((s:any)=>s.codec_type==='audio'))throw new Error('场景动画配乐缺失，未采用无声结果');
   if(!stream || Number(stream.nb_read_frames)!==count || stream.width!==spec.width || stream.height!==spec.height || Math.abs(Number(parsed.format?.duration)-spec.duration)>.05)throw new Error('场景动画帧数画幅或片长不一致');
   const uploaded=await uploadResult({filePath:output,userId,kind:'manhua-stage-animation',ext:'mp4',contentType:'video/mp4',signal});
-  const result={...uploaded,requestId:input.requestId,durationSec:spec.duration,width:spec.width,height:spec.height,fps:24,frameCount:count,alpha:false,stageAnimation:spec.stageAnimation,evidence};
+  const result={...uploaded,requestId:input.requestId,durationSec:spec.duration,width:spec.width,height:spec.height,fps:24,frameCount:count,alpha:false,stageAnimation:spec.stageAnimation,...(spec.audioTimeline?{audioTimeline:spec.audioTimeline}:{}),evidence};
   await preserve('result.json',Buffer.from(JSON.stringify(result)));return result;
  }finally{
   await preserve('execution.raw.json',Buffer.from(JSON.stringify({framesRendered:frames.length,errors,complete:framesArchived}))).catch(()=>{failedEvidence=true;});

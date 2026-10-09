@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { assignPrevisActorColors, PREVIS_ACTOR_COLORS, previsActorColor } from "./manhuaPrevisColors";
 
 describe("白模角色颜色", () => {
@@ -13,7 +13,7 @@ describe("白模角色颜色", () => {
     const actors = ["d", "b", "f", "a", "c", "e"].map(id => ({ id }));
     expect(new Set(actors.map(a => previsActorColor(a.id, actors).hex)).size).toBe(6);
     for (const actor of actors) expect(previsActorColor(actor.id, actors)).toEqual(previsActorColor(actor.id, [...actors].reverse()));
-    const renderer = readFileSync("server/scripts/render-manhua-previs.py", "utf8");
-    expect(renderer).toContain(`actor_palette = [${PREVIS_ACTOR_COLORS.map(c => `'${c.hex.slice(1)}'`).join(", ")}]`);
+    const colors = JSON.parse(execFileSync("python3", ["-c", `import sys,json;sys.path.insert(0,'server/scripts');from previs_actor_colors import actor_color_hex;print(json.dumps([actor_color_hex(i) for i in range(${PREVIS_ACTOR_COLORS.length})]))`], {encoding:"utf8"}));
+    expect(colors).toEqual(PREVIS_ACTOR_COLORS.map(c => c.hex.slice(1)));
   });
 });

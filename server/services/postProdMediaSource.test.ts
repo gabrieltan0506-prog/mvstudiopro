@@ -362,3 +362,12 @@ it("带项目标识的拼接在素材规范化后保留范围，不能借范围�
   } });
   await expect(resolvePostProdInputSources({ userId: "8", input }, deps())).rejects.toThrow("素材尚未登记");
 });
+it('场景动画BGM时序每个音源按本人登记核对且保留全部裁片',async()=>{
+ const {defaultArtMotionSpec,artMotionSpecSchema}=await import('../../shared/artMotion');
+ const params={...defaultArtMotionSpec(),duration:2,cues:[],data:{},scenes:[],fps:24 as const,stageAnimation:{previsJobId:'prv_'+'a'.repeat(48),scopeId:crypto.randomUUID(),clipId:'test',worldTaskId:'mw-test',sceneRef:'s',worldSourceVersion:'gs://bucket-a/scene.png'},audioTimeline:{version:1 as const,startSec:0,durationSec:2,sourceKey:'bgm',dialogueCount:0,bgmCount:2,clips:[7,8].map(uid=>({audioUri:`gs://bucket-a/uploads/u${uid}/a.wav`,sourceStartSec:0,sourceEndSec:1,startSec:0,volume:.5,fadeInSec:0,fadeOutSec:0}))}};
+ await expect(resolvePostProdInputSources({userId:'7',input:{action:'art_motion',scopeKey:'test',requestId:'11111111-1111-4111-8111-111111111111',params}},deps())).rejects.toThrow('素材尚未登记');
+ params.audioTimeline.clips[1].audioUri='gs://bucket-a/uploads/u7/b.wav';
+ await expect(resolvePostProdInputSources({userId:'7',input:{action:'art_motion',scopeKey:'test',requestId:'11111111-1111-4111-8111-111111111111',params}},deps())).resolves.toMatchObject({params:{audioTimeline:params.audioTimeline}});
+ expect(artMotionSpecSchema.safeParse({...params,audioUri:'gs://bucket-a/uploads/u7/c.wav'}).success).toBe(false);
+ expect(artMotionSpecSchema.safeParse({...params,audioTimeline:undefined,audioUri:'gs://bucket-a/uploads/u7/c.wav'}).success).toBe(true);
+});

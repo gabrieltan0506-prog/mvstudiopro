@@ -1,3 +1,8 @@
+import { riggedPiggybackReportSchema, validateRiggedPiggybackReport } from "./manhuaPrevisRiggedPiggybackReport";
+import { storyPropsReportSchema, validateStoryPropsReport } from "./manhuaPrevisStoryPropsReport";
+import { handContactsReportSchema, validateHandContactsReport } from "./manhuaPrevisHandContactsReport";
+import { humanPostureReportsSchema, validateHumanPostureReports } from "./manhuaPrevisHumanPostureReport";
+import { quadrupedFallReportSchema, validateQuadrupedFallReport } from "./manhuaPrevisQuadrupedFallReport";
 /** 渲染与恢复共用的真实报告门禁，不能以存证哈希代替动作验收。 */
 import { z } from "zod";
 import { previsSceneEffectsReportSchema, validatePrevisSceneEffectsReport } from "./manhuaPrevisSceneEffectsReport";
@@ -15,25 +20,38 @@ import {
   validateWaterReport,
 } from "./manhuaPrevisWaterReport";
 import {
+  PREVIS_MAX_ACTORS,
   previsCreatureSchema,
   previsActorVisibleAtFrame,
   type ManhuaPrevisRequest,
 } from "../../shared/manhuaPrevis";
 import { PREVIS_BODY_BONES, PREVIS_QUADRUPED_SOURCE_BONES } from "../../shared/manhuaPrevisRig";
-import { expectedPiggybackMotion, previsPiggybackSlipCatchSchema, previsPiggybackSetDownSchema } from "../../shared/manhuaPrevisPiggyback";
+import { expectedPiggybackMotion, previsPiggybackSlipCatchSchema, previsPiggybackSetDownSchema, previsPiggybackBlockBowlSchema, piggybackBlockAmount } from "../../shared/manhuaPrevisPiggyback";
 
 const point = z.tuple([
   z.number().finite(),
   z.number().finite(),
   z.number().finite(),
 ]);
+const contactMeshMeasurementSchema = z.object({
+  footVertices: z.tuple([z.number().int().min(3), z.number().int().min(3)]),
+  meshMeasured: z.literal(true),
+  samples: z.array(z.object({
+    frame: z.number().int().min(1).max(720),
+    minimumHeight: z.number().finite().min(-.005),
+    soleHeights: z.tuple([z.number().finite().min(-.005).max(.03), z.number().finite().min(-.005).max(.03)]),
+  }).strict()).min(1).max(720),
+}).strict();
+
 export const previsReportSchema = z
   .object({
+    riggedPiggyback: riggedPiggybackReportSchema.optional(),
     piggyback: z.object({
       carrierId: z.string().min(1),
       passengerId: z.string().min(1),
       slipCatch: previsPiggybackSlipCatchSchema.optional(),
       setDown: previsPiggybackSetDownSchema.optional(),
+      blockBowl: previsPiggybackBlockBowlSchema.optional(),
       samples: z.array(z.object({
         frame: z.number().int().min(1).max(720),
         supportError: z.number().finite().nonnegative().max(30),
@@ -44,6 +62,11 @@ export const previsReportSchema = z
         stage: z.enum(["carried","lowering","supported","released","seated"]).optional(),
         pelvisHeight: z.number().finite().optional(),
         passengerRoot: point.optional(),
+        blockAmount: z.number().finite().min(0).max(1).optional(),
+        supportSide: z.union([z.literal(-1),z.literal(1)]).optional(),
+        blockError: z.number().finite().min(0).max(.005).optional(),
+        blockTarget: point.optional(),
+        blockTip: point.optional(),
       }).strict()).min(48).max(720),
       boundaryZh: z.string().min(1),
     }).strict().optional(),
@@ -64,7 +87,7 @@ export const previsReportSchema = z
           .passthrough()
       )
       .min(1)
-      .max(6),
+      .max(PREVIS_MAX_ACTORS),
     warnings: z.array(z.string()),
     portraitFraming: z.enum(["tight", "auto", "landscape"]).optional(),
     models: z
@@ -101,6 +124,36 @@ export const previsReportSchema = z
               "rest-corrected-rotation-preserve-target-lengths"
             ),
             contactValidated: z.literal(false),
+            postureContact: z.object({
+              actorId: z.string().min(1), sourceJobId: z.string().min(1), sha256: z.string().regex(/^[a-f0-9]{64}$/),
+              mode: z.enum(["hold", "rise_to_sit"]), frames: z.number().int().min(48).max(720),
+              meshValidated: z.literal(false), normalSpeedValidated: z.literal(false),
+              meshMeasurement: contactMeshMeasurementSchema,
+              samples: z.array(z.object({frame: z.number().int().min(1).max(720), supportGap:z.number().finite().min(-.005).max(.005),
+                spineLeanRad:z.number().finite(), maxBoneLengthError:z.number().finite().min(0).max(.001)}).strict()).min(48).max(720),
+            }).strict().optional(),
+            coughContact: z.object({
+              handMeasurement: z.object({
+                handVertices: z.number().int().min(3).max(250000),
+                meshMeasured: z.literal(true), anchorKind: z.literal("head-relative-estimate"), mouthAnatomyValidated: z.literal(false),
+                samples: z.array(z.object({
+                  frame: z.number().int().min(1).max(720), scale: z.number().finite().positive(),
+                  hold: z.number().finite().min(0).max(1), handTargetGap: z.number().finite().min(0),
+                  handWristGap: z.number().finite().min(0), recoveryError: z.number().finite().min(0),
+                }).strict()).min(1).max(720),
+              }).strict(),
+              meshMeasurement: contactMeshMeasurementSchema,
+              frames: z.number().int().min(1).max(720),
+              meshValidated: z.literal(false),
+              normalSpeedValidated: z.literal(false),
+            }).strict().optional(),
+            sitContact: z.object({
+              meshMeasurement: contactMeshMeasurementSchema,
+              frames: z.number().int().min(1).max(720),
+              maxAnkleResidual: z.number().finite().min(0).max(.005),
+              meshValidated: z.literal(false),
+              normalSpeedValidated: z.literal(false),
+            }).strict().optional(),
             sourceBoneMap: z.record(z.enum(PREVIS_BODY_BONES), z.string().min(1).max(128)).optional(),
             boundaryZh: z.string().min(1),
             offscreenFrames: z.array(z.number().int().min(1).max(720)).max(720),
@@ -121,7 +174,7 @@ export const previsReportSchema = z
           })
           .strict()
       )
-      .max(6)
+      .max(PREVIS_MAX_ACTORS)
       .optional(),
     creatures: z
       .array(
@@ -153,10 +206,14 @@ export const previsReportSchema = z
           })
           .strict()
       )
-      .max(6)
+      .max(PREVIS_MAX_ACTORS)
       .optional(),
     waterEmergence: waterReportSchema.optional(),
     motionRoutes: routeReportSchema.optional(),
+    quadrupedFalls: quadrupedFallReportSchema.optional(),
+    storyProps: storyPropsReportSchema.optional(),
+    handContacts: handContactsReportSchema.optional(),
+    humanPostures: humanPostureReportsSchema.optional(),
     cameraTiming: cameraTimingReportSchema.optional(),
     effects: effectsReportSchema.optional(),
     sceneEffects: previsSceneEffectsReportSchema.optional(),
@@ -187,7 +244,7 @@ export const previsReportSchema = z
           })
           .strict()
       )
-      .max(6)
+      .max(PREVIS_MAX_ACTORS)
       .optional(),
     interactions: z
       .array(
@@ -229,16 +286,27 @@ export function validatePrevisReport(
     report.actors.length !== spec.actors.length
   )
     throw new Error("白模帧数或角色数量不一致");
-  if (spec.piggyback) {
+  const riggedPair = Boolean(spec.piggyback && spec.actors.some(actor =>
+    [spec.piggyback!.carrierId,spec.piggyback!.passengerId].includes(actor.id) && actor.riggedModel));
+  validateRiggedPiggybackReport(report.riggedPiggyback, spec, report.models ?? [], report.frames);
+  if (riggedPair && report.piggyback) throw new Error("真实背负不能使用源人偶报告替代");
+  if (spec.piggyback && !riggedPair) {
     const pair = report.piggyback;
     if (!pair || pair.carrierId !== spec.piggyback.carrierId || pair.passengerId !== spec.piggyback.passengerId ||
         pair.samples.length !== report.frames || pair.samples.some((row, i) => row.frame !== i+1))
       throw new Error("背负逐帧接触证据缺失或人物不一致");
+    const block = spec.piggyback.blockBowl;
+    if (JSON.stringify(block) !== JSON.stringify(pair.blockBowl)) throw new Error("背负挡碗配置与回执不一致");
     const down = spec.piggyback.setDown;
     if (JSON.stringify(down) !== JSON.stringify(pair.setDown)) throw new Error("放下时序与回执不一致");
     let stoppedRoot: number[] | undefined;
     for (const row of pair.samples) {
       const t=(row.frame-1)/24;
+      if(block) {
+        const amount=piggybackBlockAmount(block,row.frame);
+        if(row.blockAmount===undefined || Math.abs(row.blockAmount-amount)>1e-6 || row.supportSide!==-Number(block.hand.slice(4)) || row.blockError===undefined || !row.blockTarget || !row.blockTip || Math.hypot(...row.blockTip.map((v,i)=>v-row.blockTarget![i]))>.005 || Math.abs(Math.hypot(...row.blockTip.map((v,i)=>v-row.blockTarget![i]))-row.blockError)>1e-6)
+          throw new Error("背负挡碗单手目标或另一侧托膝证据不一致");
+      } else if(row.blockAmount!==undefined || row.supportSide!==undefined || row.blockError!==undefined || row.blockTarget || row.blockTip) throw new Error("无挡碗配置却出现单手背负回执");
       if (!down || t<=down.startSec) {
         if (row.supportError>.2 || row.gripError>.005 || row.passengerFootHeight<.1 || row.actualDropMeters !== undefined && (row.actualDropMeters<-.005 || row.actualDropMeters>.2)) throw new Error("背负接触未通过");
       }
@@ -366,6 +434,58 @@ export function validatePrevisReport(
       )
         throw new Error("带骨角色报告与下载存证不一致");
     }
+    for (const kind of ["sit", "cough"] as const) {
+      const actions = actor.actions.filter(action => action.kind === kind);
+      const contact = kind === "sit" ? model.sitContact : model.coughContact;
+      const expectedFrames: number[] = [];
+      let frames = 0;
+      for (let frame = 1; frame <= report.frames; frame++) {
+        const t = (frame - 1) / 24;
+        if (actions.some(action => t >= action.startSec && t < action.endSec)) { frames++; expectedFrames.push(frame); }
+      }
+      if (frames ? !contact || actor.shape !== "human" || contact.frames !== frames : Boolean(contact))
+        throw new Error("角色落脚或掩口修正回执与实际动作帧窗不一致");
+      if (contact?.meshMeasurement) {
+        const samples = contact.meshMeasurement.samples;
+        if (samples.length !== frames || samples.some((row, i) => row.frame !== expectedFrames[i]
+          || row.soleHeights.some(z => z < row.minimumHeight - 1e-6)))
+          throw new Error("角色接触网格测量与实际动作帧窗或脚底不一致");
+      }
+    }
+    if (model.coughContact) {
+      const rows = model.coughContact.handMeasurement.samples;
+      const feet = model.coughContact.meshMeasurement.samples;
+      const scale = model.targetHeight / 1.7;
+      const smooth = (value: number) => { const u = Math.max(0, Math.min(1, value)); return u*u*(3-2*u); };
+      if (rows.length !== feet.length) throw new Error("掩口手部逐帧测量不完整");
+      for (let i=0; i<rows.length; i++) {
+        const row=rows[i], t=(row.frame-1)/24;
+        const action=actor.actions.find(action => action.kind === "cough" && t >= action.startSec && t < action.endSec);
+        const sampledEnd=action ? (Math.ceil(action.endSec*24)-1)/24 : 0;
+        const u=action ? (t-action.startSec)/Math.max(1/24,sampledEnd-action.startSec) : -1;
+        const hold=smooth(u/.22)*(1-smooth((u-.76)/.24));
+        if (!action || row.frame !== feet[i].frame || Math.abs(row.scale-scale)>1e-6 || Math.abs(row.hold-hold)>1e-6
+          || row.handWristGap>.12*scale || (hold>.99 && row.handTargetGap>.12*scale)
+          || (hold<.025 && row.recoveryError>.025*scale))
+          throw new Error("掩口手部蒙皮或收手测量与实际动作不一致");
+      }
+    }
+    if (actor.humanPosture) {
+      const row = model.postureContact, posture = actor.humanPosture;
+      if (!row || row.actorId !== actor.id || row.sourceJobId !== model.sourceJobId || row.sha256 !== model.sha256
+        || row.mode !== posture.mode || row.frames !== report.frames || row.samples.length !== report.frames
+        || row.meshMeasurement.samples.length !== report.frames)
+        throw new Error("真实坐卧报告身份或逐帧测量不完整");
+      for (let i = 0; i < report.frames; i++) {
+        const sample = row.samples[i], mesh = row.meshMeasurement.samples[i];
+        const u = posture.mode === "rise_to_sit" ? Math.max(0, Math.min(1, (i/24-posture.startSec)/(posture.endSec-posture.startSec))) : 0;
+        const angle = (posture.mode === "hold" && posture.posture === "sit" ? 0 : posture.reclineDeg*Math.PI/180)
+          * (posture.mode === "rise_to_sit" ? 1-u*u*(3-2*u) : 1);
+        if (sample.frame !== i+1 || mesh.frame !== i+1 || Math.abs(sample.spineLeanRad-angle) > .02
+          || mesh.soleHeights.some(z => z < mesh.minimumHeight-1e-6))
+          throw new Error("真实坐卧姿态或脚底测量不符");
+      }
+    } else if (model.postureContact) throw new Error("未配置坐卧却返回真实坐卧回执");
     if (config.performance) {
       const performance = model.performance;
       const eyes = config.performance.controller.eyeBones;
@@ -504,8 +624,12 @@ export function validatePrevisReport(
     )
       throw new Error("白模双人交互接触检查未通过");
   }
+  validateStoryPropsReport(report.storyProps, spec);
+  validateHandContactsReport(report.handContacts, spec, report.models);
+  validateHumanPostureReports(report.humanPostures, spec.actors, spec.durationSec);
+  validateQuadrupedFallReport(report.quadrupedFalls, spec, report.models);
   validateWaterReport(report.waterEmergence, spec);
-  validateRouteReport(report.motionRoutes, spec);
+  validateRouteReport(report.motionRoutes, spec, report.models);
   validateCameraTimingReport(report.cameraTiming, spec);
   validateEffectsReport(report.effects, spec);
   validatePrevisSceneEffectsReport(report.sceneEffects, spec);
