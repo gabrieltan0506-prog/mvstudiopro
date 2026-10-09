@@ -5,7 +5,7 @@ import struct
 from pathlib import Path
 
 KINDS = frozenset(('sword_trail', 'impact_burst', 'particle_aura', 'shield', 'spirit',
-                   'fire_burst', 'smoke_plume', 'lightning', 'shockwave', 'speed_lines', 'magic_circle', 'image_overlay', 'digital_rain', 'liquid_mirror', 'motion_ghost', 'wall_fracture'))
+                   'fire_burst', 'smoke_plume', 'lightning', 'shockwave', 'speed_lines', 'magic_circle', 'image_overlay', 'digital_rain', 'liquid_mirror', 'motion_ghost', 'wall_fracture', 'bullet_wave', 'directed_blast'))
 VERSION = 'manhua-vfx-screen-1'
 BOUNDARY = '画面坐标特效层与手动轨迹；不包含自动跟踪、人物遮挡、场景受光或物理仿真。'
 
@@ -65,16 +65,23 @@ def validate_spec(spec, asset_root=None):
         fields=('id', 'kind', 'startSec', 'durationSec', 'color', 'scale', 'intensity', 'anchor')
         kind=effect.get('kind') if isinstance(effect,dict) else None
         extra={'image_overlay':('imageUri','imagePath'),'liquid_mirror':('roi','liquid'),
-               'motion_ghost':('roi','ghost'),'wall_fracture':('wall',)}
+               'motion_ghost':('roi','ghost'),'wall_fracture':('wall',),'bullet_wave':('wave',),'directed_blast':('blast',)}
         fields+=extra.get(kind,())
         keys(effect, fields, ('rain',) if kind=='digital_rain' else ())
-        if kind in ('liquid_mirror','motion_ghost'):
+        if kind in ('liquid_mirror','motion_ghost','bullet_wave'):
             from manhua_vfx_liquid_ghost import validate_pixel_effect
             validate_pixel_effect(effect)
             if kind=='motion_ghost':
                 active_frames=math.ceil((effect['startSec']+effect['durationSec'])*spec['fps']-1e-9)-math.ceil(effect['startSec']*spec['fps']-1e-9)
                 if active_frames<=max(1,round(effect['ghost']['spacingSec']*spec['fps'])):
                     raise ValueError('残影时间窗不足以取得历史帧')
+        elif kind=='directed_blast':
+            from manhua_vfx_action_math import validate_blast
+            validate_blast(effect['blast'],effect['durationSec'])
+            ignition=effect['startSec']+effect['blast']['ignitionSec']
+            end=effect['startSec']+effect['durationSec']
+            if not any(ignition<=frame/spec['fps']<end for frame in range(math.floor(ignition*spec['fps']),math.ceil(end*spec['fps'])+1)):
+                raise ValueError('起爆后没有可见视频帧')
         elif kind=='wall_fracture':
             from manhua_vfx_wall_bullettime_math import validate_wall
             validate_wall(effect['wall'],effect['durationSec'])
@@ -127,7 +134,7 @@ def validate_spec(spec, asset_root=None):
                 if point['timeSec'] <= previous:
                     raise ValueError('Trajectory times must increase')
                 previous = point['timeSec']
-    pixels=('liquid_mirror','motion_ghost')
+    pixels=('liquid_mirror','motion_ghost','bullet_wave')
     for index,effect in enumerate(spec['effects']):
         if effect['kind'] not in pixels:continue
         for earlier in spec['effects'][:index]:

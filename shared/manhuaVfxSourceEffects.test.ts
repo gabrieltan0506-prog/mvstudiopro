@@ -5,7 +5,7 @@ import { creativeVoiceProductionSchema } from "./creativeVoiceProduction";
 import { manhuaVfxCompositionSchema, manhuaVfxStateSchema, validateManhuaVfxSource } from "./manhuaVfx";
 import { queueManhuaVfx, type VfxQueueDeps } from "../server/services/manhuaVfxTask";
 
-it.each(["liquid_mirror", "motion_ghost", "wall_fracture"] as const)("%s顾问/保存JSON/幂等任务与真实Python消费者参数一致", async kind => {
+it.each(["liquid_mirror", "motion_ghost", "wall_fracture", "bullet_wave", "directed_blast"] as const)("%s顾问/保存JSON/幂等任务与真实Python消费者参数一致", async kind => {
   const effect = makeManhuaVfxEffect(kind, "source-effect");
   const composition = manhuaVfxCompositionSchema.parse({ version: 1, seed: 42, effects: [effect] });
   expect(creativeVoiceProductionSchema.parse({ action: "effects", tool: "vfx", operation: "configure", sourceKey: "current", sourceIds: ["clip"], vfxRecipe: composition })).toMatchObject({ vfxRecipe: composition });
@@ -45,4 +45,16 @@ it("三维环绕拒绝旧单片参数、空场景、短窗及二维效果重叠"
   expect(() => validateManhuaVfxSource({ ...recipe, effects: [{ ...bullet, durationSec: .1 }] }, { durationSec: 3, fps: 24, width: 640, height: 360 })).toThrow("过短");
   expect(manhuaVfxCompositionSchema.safeParse({ ...recipe, effects: [{ ...bullet, bullet: { freezeSec: 0, yawDeg: 8, pushIn: .08 } }] }).success).toBe(false);
   expect(manhuaVfxCompositionSchema.safeParse({ ...recipe, effects: [bullet, makeManhuaVfxEffect("shield", "shield")] }).success).toBe(false);
+});
+
+it("动作特效拒绝串用参数、错误层序和起爆后无帧", () => {
+  const wave = makeManhuaVfxEffect("bullet_wave", "wave"), blast = makeManhuaVfxEffect("directed_blast", "blast");
+  const recipe = (effects: unknown[]) => ({ version: 1, seed: 1, effects });
+  for (const bad of [{ ...wave, blast: blast.blast }, { ...blast, wave: wave.wave }, { ...wave, wave: { ...wave.wave, rings: 11 } }, { ...blast, blast: { ...blast.blast, ignitionSec: 1 } }]) {
+    expect(manhuaVfxCompositionSchema.safeParse(recipe([bad])).success).toBe(false);
+  }
+  expect(manhuaVfxCompositionSchema.safeParse(recipe([blast, wave])).success).toBe(false);
+  expect(manhuaVfxCompositionSchema.safeParse(recipe([wave, blast])).success).toBe(true);
+  const nearEnd = manhuaVfxCompositionSchema.parse(recipe([{ ...blast, blast: { ...blast.blast, ignitionSec: .99 } }]));
+  expect(() => validateManhuaVfxSource(nearEnd, { durationSec: 2, fps: 24, width: 640, height: 360 })).toThrow("起爆后");
 });

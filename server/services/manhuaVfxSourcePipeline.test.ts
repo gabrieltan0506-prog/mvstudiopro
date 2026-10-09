@@ -49,7 +49,7 @@ async function pipeline(effect: ManhuaVfxEffect, failPixels = false) {
   });
   return { result, calls, archives, compositeArgs };
 }
-it.each(["liquid_mirror", "motion_ghost"] as const)("%s进入实际像素处理调用后合成，原声映射原始文件", async kind => {
+it.each(["liquid_mirror", "motion_ghost", "bullet_wave"] as const)("%s进入实际像素处理调用后合成，原声映射原始文件", async kind => {
   const effect = makeManhuaVfxEffect(kind, "pixel"); const p = await pipeline(effect);
   expect(p.calls).toEqual(["manhua_vfx_liquid_ghost.py", "manhua_vfx.py", "composite", "upload-result"]);
   expect(p.compositeArgs[p.compositeArgs.indexOf("-map") + 3]).toBe("2:a?");

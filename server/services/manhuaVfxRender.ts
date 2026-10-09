@@ -182,7 +182,7 @@ export async function renderManhuaVfx(raw: unknown, userId: string, signal: Abor
     const specPath = path.join(root, "spec.normalized.json");
     const state = mediaRuntime.getStore();
     let compositeSource = source;
-    if (input.params.composition.effects.some(effect => ["liquid_mirror", "motion_ghost"].includes(effect.kind))) {
+    if (input.params.composition.effects.some(effect => ["liquid_mirror", "motion_ghost", "bullet_wave"].includes(effect.kind))) {
       if (state) state.phase = "vfx_source_pixels";
       const processed = path.join(root, "processed.mkv");
       const pixelLaunch = blenderLaunchCommand({ blender: process.env.BLENDER_BIN || "blender", useXvfb: process.platform === "linux", lowPriority: blenderLowPriorityDefault() },
@@ -197,7 +197,7 @@ export async function renderManhuaVfx(raw: unknown, userId: string, signal: Abor
         }
       }
       const pixelReceipt = z.object({ version: z.literal(1), frames: z.number().int(), width: z.number().int(), height: z.number().int(), fps: z.number(), audio: z.literal("original-source-only"), bytes: z.number().int().positive().max(8 * 1024 ** 3), effects: z.array(z.string()), decodedOutputSha256: z.string().regex(/^[a-f0-9]{64}$/) }).passthrough().parse(JSON.parse(await readFile(processed + ".json", "utf8")));
-      const expectedIds = input.params.composition.effects.filter(effect => ["liquid_mirror", "motion_ghost"].includes(effect.kind)).map(effect => effect.id);
+      const expectedIds = input.params.composition.effects.filter(effect => ["liquid_mirror", "motion_ghost", "bullet_wave"].includes(effect.kind)).map(effect => effect.id);
       if (pixelReceipt.frames !== Math.ceil(meta.durationSec * meta.fps) || pixelReceipt.width !== meta.width || pixelReceipt.height !== meta.height || pixelReceipt.fps !== meta.fps || JSON.stringify(pixelReceipt.effects) !== JSON.stringify(expectedIds) || (await stat(processed)).size !== pixelReceipt.bytes)
         throw new Error("原片像素处理回执与本次方案不一致");
       const pixelProbe = await deps.runMedia("ffprobe", [...probeArgs, processed], signal);

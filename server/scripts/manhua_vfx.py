@@ -19,6 +19,7 @@ from manhua_vfx_math import BOUNDARY, VERSION, srgb, state_at, position_at, vali
 from manhua_vfx_extras import EXTRA_KINDS, build_extra, update_extra
 from manhua_vfx_image import build_image_overlay
 from manhua_vfx_rain import build_digital_rain, update_digital_rain
+from manhua_vfx_directed_blast import build_directed_blast, update_directed_blast
 from manhua_vfx_wall_bullettime import build_wall_fracture, update_wall_fracture
 
 MAX_RENDER_BYTES = 2 * 1024**3
@@ -132,6 +133,7 @@ def build_vfx(spec, scene, asset_root=None):
         image_receipt = None
         rain = None
         wall = None
+        blast = None
         if kind == 'sword_trail':
             for j, m in enumerate((mat, core)):
                 strips.append(ribbon(event['id'] + '_blade_%d' % j, scene, m))
@@ -167,6 +169,9 @@ def build_vfx(spec, scene, asset_root=None):
         elif kind == 'digital_rain':
             rain=build_digital_rain(event,spec,scene,material,color)
             objects += rain['objects']
+        elif kind == 'directed_blast':
+            blast=build_directed_blast(event,spec,scene,color)
+            objects += blast['objects']
         elif kind == 'wall_fracture':
             wall=build_wall_fracture(event,spec,scene,material,color)
             objects += wall['objects']
@@ -177,7 +182,7 @@ def build_vfx(spec, scene, asset_root=None):
         for obj in objects:
             obj.parent = root
         handles.append({'event': event, 'root': root, 'objects': objects, 'rings': rings, 'strips': strips,
-                        'rain': rain, 'wall': wall, 'particles': particles, 'opacity': opacity, 'coreOpacity': core_opacity,
+                        'rain': rain, 'wall': wall, 'blast': blast, 'particles': particles, 'opacity': opacity, 'coreOpacity': core_opacity,
                         'glowOpacity': glow_opacity, 'extra':extra, 'imageOpacity':image_opacity, 'imageAsset':image_receipt, 'rimOpacity': rim_opacity if kind == 'shield' else None})
     return handles
 
@@ -277,7 +282,9 @@ def update_vfx(handles, spec, time):
             update_digital_rain(h['rain'],e,time,state)
         elif kind == 'wall_fracture':
             state.update(update_wall_fracture(h['wall'],e,time,state))
-        elif kind in ('liquid_mirror','motion_ghost'):
+        elif kind == 'directed_blast':
+            state.update(update_directed_blast(h['blast'],e,time,state))
+        elif kind in ('liquid_mirror','motion_ghost','bullet_wave'):
             state['mode']='source-pixels-before-overlay'
         elif h.get('extra'):
             update_extra(h,spec,time,state,set_strip)

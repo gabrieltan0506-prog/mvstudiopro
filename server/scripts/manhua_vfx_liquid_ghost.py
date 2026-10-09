@@ -18,7 +18,7 @@ import numpy as np
 
 from manhua_vfx_math import keys, number, position_at
 
-PIXEL_KINDS = frozenset(('liquid_mirror', 'motion_ghost'))
+PIXEL_KINDS = frozenset(('liquid_mirror', 'motion_ghost', 'bullet_wave'))
 VERSION = 'manhua-vfx-source-pixels-1'
 MAX_HISTORY_BYTES = 512 * 1024 * 1024
 MAX_OUTPUT_BYTES = 8 * 1024 * 1024 * 1024
@@ -29,6 +29,10 @@ def validate_pixel_effect(effect):
     """供主渲染校验器复用；公共字段仍由共享校验器验证。"""
     if effect.get('kind') not in PIXEL_KINDS:
         raise ValueError('不支持的原片像素效果')
+    if effect['kind'] == 'bullet_wave':
+        from manhua_vfx_action_math import validate_wave
+        validate_wave(effect.get('wave'))
+        return
     roi = effect.get('roi')
     keys(roi, ('shape', 'width', 'height', 'feather'))
     if roi['shape'] not in ('ellipse', 'rectangle'):
@@ -105,6 +109,16 @@ def validate_processing_spec(spec):
                 if p['timeSec'] <= previous:
                     raise ValueError('手动轨迹时间必须递增')
                 previous = p['timeSec']
+    samples = 0
+    for e in pixels:
+        if e['kind'] != 'bullet_wave': continue
+        p = e['wave']; angle = math.radians(p['angleDeg'])
+        radius = p['radius'] * e['scale'] * 1.35 * h
+        bx = 1.35 * math.hypot(.24 * radius * math.cos(angle), radius * math.sin(angle))
+        by = 1.35 * math.hypot(.24 * radius * math.sin(angle), radius * math.cos(angle))
+        samples += min(w * h, (2 * bx + 2) * (2 * by + 2)) * p['rings'] * math.ceil(e['durationSec'] * spec['fps'])
+    if samples > 1_200_000_000:
+        raise ValueError('弹道折射采样预算超限，请缩短时窗、减小波纹或减少圈数')
     history = max((math.ceil(e['ghost']['copies'] * e['ghost']['spacingSec'] * spec['fps']) for e in pixels if e['kind'] == 'motion_ghost'), default=0)
     if (history + 1) * w * h * 3 > MAX_HISTORY_BYTES:
         raise ValueError('历史帧缓存超出512MiB预算')
@@ -219,6 +233,9 @@ class PixelProcessor:
             return result
         if effect['kind'] == 'liquid_mirror':
             return liquid_frame(result, effect, time)
+        if effect['kind'] == 'bullet_wave':
+            from manhua_vfx_bullet_wave import bullet_wave_frame
+            return bullet_wave_frame(result, effect, time, strength)
         ghost = effect['ghost']
         current = roi_mask(effect, time, self.width, self.height)
         # 从最老副本画起，保留当前主体区域；历史ROI可能包含背景，明确展示此限制。

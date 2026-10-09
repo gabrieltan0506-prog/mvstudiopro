@@ -350,7 +350,7 @@ export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], sce
         <select aria-label="添加特效" className={`${controlClass} w-auto`} disabled={locked || draft.composition.effects.length >= 12} value="" onChange={event => {
           const effect = makeManhuaVfxEffect(event.target.value as ManhuaVfxEffect["kind"], crypto.randomUUID());
           if (effect.kind === "bullet_time") effect.startSec = Math.max(0, ...draft.composition.effects.map(item => item.startSec + item.durationSec));
-          const effects = ["liquid_mirror", "motion_ghost"].includes(effect.kind) ? [effect, ...draft.composition.effects] : [...draft.composition.effects, effect];
+          const effects = ["liquid_mirror", "motion_ghost", "bullet_wave"].includes(effect.kind) ? [effect, ...draft.composition.effects] : [...draft.composition.effects, effect];
           setDraft({ ...draft, composition: { ...draft.composition, effects } }); setSelectedEffectId(effect.id);
         }}><option value="">＋ 添加特效</option>{Object.entries(LABELS).map(([kind, label]) => <option key={kind} value={kind}>{label}</option>)}</select>
       </div>

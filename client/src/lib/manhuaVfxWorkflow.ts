@@ -1,4 +1,4 @@
-import { MANHUA_VFX_ROI_DEFAULTS, MANHUA_VFX_LIQUID_DEFAULTS, MANHUA_VFX_GHOST_DEFAULTS, MANHUA_VFX_WALL_DEFAULTS, MANHUA_VFX_BULLET_DEFAULTS } from "@shared/manhuaVfxPixelParameters";
+import { MANHUA_VFX_WAVE_DEFAULTS, MANHUA_VFX_BLAST_DEFAULTS, MANHUA_VFX_ROI_DEFAULTS, MANHUA_VFX_LIQUID_DEFAULTS, MANHUA_VFX_GHOST_DEFAULTS, MANHUA_VFX_WALL_DEFAULTS, MANHUA_VFX_BULLET_DEFAULTS } from "@shared/manhuaVfxPixelParameters";
 import { MANHUA_VFX_RAIN_DEFAULTS } from "@shared/manhuaVfx";
 import { manhuaVfxCompositionSchema, type ManhuaVfxComposition, type ManhuaVfxEffect, type ManhuaVfxState } from "@shared/manhuaVfx";
 import type { ClipOption, TrackedJob } from "./postProdWorkshop";
@@ -50,14 +50,16 @@ export function sameManhuaVfxComposition(a: unknown, b: unknown): boolean {
 export function makeManhuaVfxEffect(kind: ManhuaVfxEffect["kind"], id: string): ManhuaVfxEffect {
   return {
     id, kind, startSec: 0, durationSec: 1,
-    color: kind === "digital_rain" ? "#35FF82" : kind === "impact_burst" ? "#FFB35C" : "#67E8F9", scale: ["digital_rain", "liquid_mirror", "motion_ghost", "wall_fracture", "bullet_time"].includes(kind) ? 1 : kind === "shield" ? 0.4 : 0.25, intensity: 1,
+    color: kind === "digital_rain" ? "#35FF82" : ["impact_burst", "directed_blast"].includes(kind) ? "#FFB35C" : "#67E8F9", scale: ["digital_rain", "liquid_mirror", "motion_ghost", "wall_fracture", "bullet_time", "bullet_wave", "directed_blast"].includes(kind) ? 1 : kind === "shield" ? 0.4 : 0.25, intensity: 1,
+    ...(kind === "bullet_wave" ? { wave: { ...MANHUA_VFX_WAVE_DEFAULTS } } : {}),
+    ...(kind === "directed_blast" ? { blast: { ...MANHUA_VFX_BLAST_DEFAULTS } } : {}),
     ...(kind === "digital_rain" ? { rain: { ...MANHUA_VFX_RAIN_DEFAULTS } } : {}),
     ...(["liquid_mirror", "motion_ghost"].includes(kind) ? { roi: { ...MANHUA_VFX_ROI_DEFAULTS } } : {}),
     ...(kind === "liquid_mirror" ? { liquid: { ...MANHUA_VFX_LIQUID_DEFAULTS } } : {}),
     ...(kind === "motion_ghost" ? { ghost: { ...MANHUA_VFX_GHOST_DEFAULTS } } : {}),
     ...(kind === "wall_fracture" ? { wall: { ...MANHUA_VFX_WALL_DEFAULTS, contact: { ...MANHUA_VFX_WALL_DEFAULTS.contact } } } : {}),
     ...(kind === "bullet_time" ? { bullet: { ...MANHUA_VFX_BULLET_DEFAULTS } } : {}),
-    anchor: { space: "screen", position: [0.5, 0.5] },
+    anchor: { space: "screen", position: [kind === "bullet_wave" ? .15 : .5, 0.5] },
   };
 }
 
