@@ -1,0 +1,132 @@
+{
+  "time": "2026-10-09T17:06:40.630575+08:00",
+  "sourceHead": "3ff15a6f027cfc406569364829cf52953148cc44",
+  "base": "ab12bc9921d4cabe1ef01461d617c540cf6f14d0",
+  "branch": "feat/inception-vfx-1009",
+  "agentModel": "GPT6 Astra（项目指定标注）",
+  "actualRuntimeModel": "gpt-6.1-sol",
+  "actualEffort": "high",
+  "reference": {
+    "path": "/Users/tangenjie/Downloads/inception.html",
+    "sha256": "5dff243216b380435cd346e27c9a3579b788fabcd79c8ee36c75bed1cd522c32",
+    "usage": "只借鉴镜面纵深、悬浮纸页的效果方向；无影片帧或素材进入产物、证据或源码"
+  },
+  "tests": [
+    {
+      "command": "pnpm exec vitest run shared/manhuaVfxSourceEffects.test.ts server/services/manhuaVfxSourcePipeline.test.ts client/src/lib/manhuaVfxSourceParameters.browser.test.ts -t 'mirror_corridor|floating_paper|梦境效果'",
+      "result": "9 passed / 20 skipped / 3 files",
+      "exit": 0
+    },
+    {
+      "command": "python3 -m unittest manhua_vfx_dream_pixels_test",
+      "cwd": "server/scripts",
+      "result": "5 passed",
+      "exit": 0
+    },
+    {
+      "command": "python3 -m unittest manhua_vfx_liquid_ghost_test",
+      "cwd": "server/scripts",
+      "result": "20 passed",
+      "exit": 0
+    },
+    {
+      "command": "pnpm exec vitest run shared/manhuaVfxSourceEffects.test.ts -t '梦境效果'",
+      "result": "预算边界修改后定向1 passed / 10 skipped，已计入原9项，不重复计数",
+      "exit": 0
+    },
+    {
+      "command": "python3 -m unittest manhua_vfx_dream_pixels_test.DreamPixelsTest.test_rejects_wrong_fields_counts_seed_and_work_budget_before_processing",
+      "cwd": "server/scripts",
+      "result": "预算修改后定向1 passed，已计入原5项",
+      "exit": 0
+    },
+    {
+      "command": "pnpm exec tsc --noEmit --incremental --tsBuildInfoFile /tmp/inception-vfx-1009.tsbuildinfo",
+      "result": "修改前和最后修改后均无输出/退出0",
+      "exit": 0
+    },
+    {
+      "command": "pnpm exec vite build",
+      "result": "built in 1m 14s；已有动态/静态混用及大包警告",
+      "exit": 0
+    },
+    {
+      "command": "/Applications/Blender.app/Contents/MacOS/Blender --background --factory-startup --python-exit-code 1 --python /private/tmp/inception-blender-runtime-probe.py",
+      "result": "Blender5.2.1 LTS / NumPy2.3.4；镜面6716、纸页363个RGB像素变化；未渲染文件",
+      "exit": 0
+    }
+  ],
+  "uniqueTestCases": 34,
+  "renderedMediaFiles": 0,
+  "paidCalls": 0,
+  "logs": [
+    {
+      "name": "inception-vfx-1009-target.log",
+      "bytes": 1362,
+      "sha256": "5c1e7033733f3d4d538df9dde18c75d76b57a6e9be1a9c0e56c9e916d54896c3"
+    },
+    {
+      "name": "inception-vfx-1009-python.log",
+      "bytes": 103,
+      "sha256": "a539ee0c76b3a48adc357f7750a2d7e874c854af3ab0e914a5e009d0cf58f1c1"
+    },
+    {
+      "name": "inception-vfx-1009-types.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "inception-vfx-1009-budget-final.log",
+      "bytes": 441,
+      "sha256": "6ed0f9c531d8ff14148837fc0aa479a60a5c03b47c1b2449e8ec19fb75918911"
+    },
+    {
+      "name": "inception-vfx-1009-python-budget-final.log",
+      "bytes": 98,
+      "sha256": "a626407facf1102b512cc38f00f6e7d889aa6280a5c03d1722ac6d1c4eb08dc5"
+    },
+    {
+      "name": "inception-vfx-1009-types-final.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "inception-vfx-1009-runtime.log",
+      "bytes": 506,
+      "sha256": "9071105b7dc110a4db15f7bfd9658763c8545787d5df127041560615d6052e25"
+    },
+    {
+      "name": "inception-vfx-1009-build.log",
+      "bytes": 82250,
+      "sha256": "1d3af51173c04c89161d2009731d333d9076656bc65d6a358601df0d207e031b"
+    },
+    {
+      "name": "inception-vfx-1009-pixel-regression.log",
+      "bytes": 119,
+      "sha256": "6bb5221579383304abc4c6c062b740a7438a0278a2ce0433518b4801defb0d59"
+    },
+    {
+      "name": "inception-blender-runtime-probe.py",
+      "bytes": 1135,
+      "sha256": "101ab9205f8b9d6fcd57d4ad363d845c31cad86879478730b3f5d5b7fec41934"
+    }
+  ],
+  "validation": {
+    "requirements": "已验证：用户要求独立特效PR，线上验收后续执行",
+    "entry": "已验证（开发）：真实Editor新增、修改、保存、重挂载、提交参数",
+    "producer": "已验证（开发）：真实RGB处理；参数/种子/时间/轨迹改变实际像素；镜面ROI外逐像素不变",
+    "contract": "已验证（开发）：顾问与持久化schema、TS/Python严格参数、预算和层序",
+    "service": "部分验证：真实服务分派和失败保留用例使用注入进程/存储；无真实线上服务调用",
+    "storage": "部分验证：JSON和组件恢复验证；未验证生产数据库/GCS保存恢复",
+    "consumer": "部分验证：实际BlenderPython导入、建层状态和RGB消费者；无视频CLI全流程",
+    "static": "已验证：类型/构建/定向测试/diff检查",
+    "realWorkflow": "尚未线上验收：未执行Production渲染、采用、刷新恢复、计费退款或成片审片"
+  },
+  "limitations": [
+    "镜面是二维原片区域缩小和交替镜像，不是三维镜廊重建",
+    "纸页是二维程序曲边/折痕叠加，不改变角色重力或计算人物遮挡",
+    "Linux Production的FFmpeg/Blender完整视频CLI未实跑",
+    "本次无媒体生成或付费；未合并、部署或运行Blender Smoke",
+    "用户宣布切换Astra后最新运行元数据仍为gpt-6.1-sol，不冒称Astra已生效"
+  ]
+}
