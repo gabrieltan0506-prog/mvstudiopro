@@ -1,0 +1,88 @@
+{
+  "timestamp": "2026-10-09T15:31:26.020017+08:00",
+  "finding": "ANIM-14",
+  "status": "CLOSED_DEV_TARGETED",
+  "base": "6ba2832eabb17c405435a4addcbfd34da49b896f",
+  "previousHead": "84f22f57b6812ea8b706295522e9a072c924a318",
+  "reviewedCodeHead": "479039ca00d27100633916f6be7507250cf202e7",
+  "red": {
+    "exitCode": 1,
+    "failed": 2,
+    "passed": 1,
+    "reason": "正式ask入口拒绝hasRiggedModel，正常相机/扶坐进入修复重试"
+  },
+  "green": {
+    "exitCode": 0,
+    "passed": 3,
+    "skipped": 59,
+    "assertions": [
+      "正常相机/双手扶坐各一次调用",
+      "正式请求/保存恢复无校验身份或能力投影",
+      "原模型assetRef/sourceJobId保持不变",
+      "原工作区未被问答修改",
+      "混入模型身份时调用前拒绝"
+    ]
+  },
+  "regression": {
+    "initialExitCode": 1,
+    "initialPassed": 5,
+    "initialFailed": 1,
+    "failedReason": "旧断言对消息数组使用字符串toContain，真实修复提示内容正确",
+    "repairedCaseExitCode": 0,
+    "repairedCasePassed": 1,
+    "uniquePassedTotal": 6
+  },
+  "types": {
+    "command": "pnpm exec tsc --noEmit --incremental --tsBuildInfoFile /tmp/pr1685-anim14.tsbuildinfo",
+    "exitCode": 0,
+    "outputBytes": 0
+  },
+  "diffCheck": {
+    "exitCode": 0
+  },
+  "productionModelCalls": 0,
+  "paidCalls": 0,
+  "mediaRenders": 0,
+  "machineOperations": 0,
+  "ciWorkflowState": {
+    "PR Blender Smoke": "disabled_manually",
+    "PR Heavy Media Offline": "disabled_manually"
+  },
+  "notVerified": [
+    "正式线上问答/采用/刷新恢复",
+    "真实人物动画/BGM及34镜整集",
+    "新HEAD的CI/Production发布"
+  ],
+  "recorder": "继续PAUSED；本次不恢复十分钟自动记录或云同步",
+  "rawLogs": {
+    "archive": "anim14-raw-logs.zip",
+    "sha256": "87552f4ffe5e1f3662c9c467834e1fc3713306e8c431de2052c49f4c9c7427ca",
+    "files": [
+      {
+        "name": "anim14-green-initial-assertion.log",
+        "sha256": "8dd75e7cd1612d1e4665e6e305ce29522b1044748279a1d8137ba803b24edf3e"
+      },
+      {
+        "name": "anim14-green.log",
+        "sha256": "89a02a72ac65205ce702efc17f448b940f9be32a449b950c650d1e282340899c"
+      },
+      {
+        "name": "anim14-red.log",
+        "sha256": "312e196a0e1d287cbb3638b07e53a5013971cea50b8183af2e56309d970fcbdf"
+      },
+      {
+        "name": "anim14-regression-initial.log",
+        "sha256": "63f92759aaa75407a5e5f5837bd8b0d531dbba5dd7e709fb7111d5dc7f55c96d"
+      },
+      {
+        "name": "anim14-types.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "anim14-video-repair.log",
+        "sha256": "a27dfdbacd5d40215cfa07eed495d5ebc7d6a94c7278c40ac30b8ed96c21e38e"
+      }
+    ],
+    "byteIdentityVerified": true
+  }
+}

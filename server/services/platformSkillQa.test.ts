@@ -1,3 +1,4 @@
+import { buildAdvisorPrevisShotSource } from "../../shared/manhuaAdvisorPrevisShotSource";
 import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -44,8 +45,8 @@ import {
 } from "./platformSkillQa";
 import type { ManhuaCreativeAdvisorContext } from "../../shared/manhuaCreativeAdvisor";
 import { MANHUA_DIRECTOR_STRATEGY_APPROVED_MANIFEST_VERSION } from "../../shared/manhuaDirectorStrategy";
-import { createManhuaPrevisStudio } from "../../shared/manhuaPrevis";
-import { makeAdvisorPrevisTarget, parseAdvisorPrevisPatch } from "../../shared/manhuaAdvisorPrevisEdit";
+import { createManhuaPrevisStudio, manhuaPrevisSpecSchema, manhuaPrevisStudioSchema } from "../../shared/manhuaPrevis";
+import { applyAdvisorPrevisCandidate, makeAdvisorPrevisTarget, parseAdvisorPrevisPatch, prepareAdvisorPrevisComparison, prepareAdvisorPrevisTrial } from "../../shared/manhuaAdvisorPrevisEdit";
 import { TEMPLATE_REWRITE_MARKER } from "../../shared/manhuaAdvisorRewrite";
 import { TEMPLATE_CATALOG_REQUEST_MARKER } from "../../shared/manhuaTemplateCraft";
 
@@ -99,6 +100,67 @@ beforeEach(() => {
   invokeLLMMock.mockResolvedValue(llmJson());
   resolvePlatformSkillsPromptMock.mockReset();
   resolvePlatformSkillsPromptMock.mockResolvedValue("");
+});
+
+describe("ANIM-14 正式问答入口的真实模型能力上下文", () => {
+  function boundStudio() {
+    const studio = createManhuaPrevisStudio(2);
+    const actor = studio.spec.actors[0];
+    studio.spec = manhuaPrevisSpecSchema.parse({ ...studio.spec, actors: [
+      { ...actor, id: "girl", assetRef: "test-girl", riggedModel: { sourceJobId: "m3d_test_girl", forwardAxis: "+X", targetHeight: 1.7 } },
+      { ...actor, id: "mom", assetRef: "test-mom", riggedModel: { sourceJobId: "m3d_test_mom", forwardAxis: "+X", targetHeight: 1.6 }, humanPosture: { mode: "rise_to_sit", startSec: .5, endSec: 1.5, supportHeight: .45, reclineDeg: 45 } },
+    ] });
+    return studio;
+  }
+
+  it.each(["相机", "双手扶坐"] as const)("%s建议一次返回，校验身份不进入正式输入或保存恢复", async (kind) => {
+    const studio = boundStudio();
+    const original = JSON.stringify(studio);
+    const target = makeAdvisorPrevisTarget("clip-test", studio);
+    const patch = parseAdvisorPrevisPatch(JSON.stringify({
+      kind: "previs_edit_v1", summaryZh: `${kind}调整`, unsupportedZh: [],
+      ...(kind === "相机" ? { cameras: studio.spec.cameras.map(camera => ({ ...camera, endLens: 60 })) } : {
+        handContacts: ["-1", "1"].map(side => ({ id: `support${side}`, actorId: "girl", hand: `hand${side}`, targetActorId: "mom", bone: `upper_arm${side}`, startSec: 0, contactSec: .5, releaseSec: 1.5, endSec: 2 })),
+      }),
+    }));
+    expect(target.specJson).toContain('"hasRiggedModel":true');
+    expect(target.specJson).not.toContain("m3d_test");
+    invokeLLMMock.mockResolvedValue(llmJson(patch));
+
+    const result = await askPlatformSkillQa({ userId: 7, isAdmin: true, question: `请修改${kind}`, manhuaContext: manhuaContext({ previsEdit: target }) });
+    expect(invokeLLMMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(result.answer)).toEqual(patch);
+    expect(JSON.stringify(invokeLLMMock.mock.calls[0][0].messages)).not.toContain("m3d_test");
+
+    const candidate = { target, patch: parseAdvisorPrevisPatch(result.answer) };
+    const comparison = prepareAdvisorPrevisComparison(candidate);
+    expect(JSON.stringify(comparison)).not.toContain("CONTEXT_VALIDATION_ONLY");
+    expect(comparison.after.actors.every(actor => !actor.assetRef && !actor.riggedModel)).toBe(true);
+    expect(comparison.afterContextJson).toContain('"hasRiggedModel":true');
+
+    const trial = prepareAdvisorPrevisTrial("clip-test", studio, candidate);
+    const restored = manhuaPrevisStudioSchema.parse(JSON.parse(JSON.stringify(applyAdvisorPrevisCandidate("clip-test", studio, candidate))));
+    for (const spec of [trial.request.spec, restored.spec, restored.specHistory!.at(-1)!.spec]) {
+      expect(spec.actors.map(actor => actor.riggedModel?.sourceJobId)).toEqual(["m3d_test_girl", "m3d_test_mom"]);
+      expect(spec.actors.map(actor => actor.assetRef)).toEqual(["test-girl", "test-mom"]);
+    }
+    expect(JSON.stringify({ result, request: trial.request, restored })).not.toMatch(/CONTEXT_VALIDATION_ONLY|hasRiggedModel/);
+    expect(JSON.stringify(trial)).not.toContain("CONTEXT_VALIDATION_ONLY");
+    expect(JSON.stringify(studio)).toBe(original);
+    expect(restored.specHistory!.at(-1)!.spec).toEqual(studio.spec);
+    expect(() => makeAdvisorPrevisTarget("clip-test", restored)).not.toThrow();
+    // 能力投影不能直接作为正式规格，严格场景契约仍拒绝该标记。
+    expect(manhuaPrevisSpecSchema.safeParse(JSON.parse(target.specJson)).success).toBe(false);
+  });
+
+  it("上下文混入真实模型身份时在模型调用前拒绝", async () => {
+    const studio = boundStudio();
+    const target = makeAdvisorPrevisTarget("clip-test", studio);
+    const raw = JSON.parse(target.specJson);
+    raw.actors[0].riggedModel = studio.spec.actors[0].riggedModel;
+    await expect(askPlatformSkillQa({ userId: 7, isAdmin: true, question: "调整相机", manhuaContext: manhuaContext({ previsEdit: { ...target, specJson: JSON.stringify(raw) } }) })).rejects.toThrow();
+    expect(invokeLLMMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("整集改稿完整文本合同", () => {
@@ -238,7 +300,7 @@ describe("漫剧工厂创作顾问上下文", () => {
     const first = invokeLLMMock.mock.calls[0][0], second = invokeLLMMock.mock.calls[1][0];
     expect(second.modelName).toBe(first.modelName);
     expect(second.openAiGateway).toBe(first.openAiGateway);
-    expect(second.messages.at(-1).content).toContain("最后机位须覆盖到片尾");
+    expect(JSON.stringify(second.messages.at(-1).content)).toContain("最后机位须覆盖到片尾");
     expect(second.messages.some((message: {content: unknown}) => Array.isArray(message.content) && message.content.some((part: {type: string}) => part.type === "video_url"))).toBe(true);
   });
   it("视频通道传输失败不自动重送", async () => {
@@ -707,4 +769,20 @@ it("1007普通顾问同读冻结导演包、指定模板和真实功能边界，
  const plan={kind:"workflow_operation_v1",summaryZh:"更新知识目录，不改作品",action:{action:"knowledge",operation:"refresh"}};
  expect(parseAskJson(JSON.stringify(plan)).answer).toContain('"refresh"');
  expect(()=>parseAskJson(JSON.stringify({...plan,action:{...plan.action,confirmPaid:true}}))).toThrow();
+});
+
+
+it("逐镜来源完整送入顾问专用消息，能力不足原样提示且不自动重试或渲染", async () => {
+  const studio = createManhuaPrevisStudio(5);
+  studio.advisorShotSource = buildAdvisorPrevisShotSource("clip-1", [{ index: 8, durationSec: 5, actionZh: "先生到墨屠原伤肩旁取血，刀刃离开伤肩后停住。", cameraZh: "肩侧近景，不翻过伤口轴线", dialogueZh: "无对白" }]);
+  const target = makeAdvisorPrevisTarget("clip-1", studio);
+  const patch = { kind: "previs_edit_v1", summaryZh: "取血接触尚不能完整预演", unsupportedZh: [], shotCoverage: [{ index: 8, status: "unsupported", actorIds: ["actor-1"], reasonZh: "缺少刀刃、伤肩及陶碗的完整接触动作" }], cameras: studio.spec.cameras };
+  invokeLLMMock.mockResolvedValue(llmJson(JSON.stringify(patch)));
+  const result = await askPlatformSkillQa({ userId: 7, question: "逐镜落实本段原文", isAdmin: true, manhuaContext: manhuaContext({ previsEdit: target }) });
+  expect(JSON.parse(result.answer)).toEqual(patch);
+  expect(invokeLLMMock).toHaveBeenCalledTimes(1);
+  const input = invokeLLMMock.mock.calls[0][0];
+  expect(input.messages[1].content).toContain(JSON.stringify(target.shotSource));
+  expect(input.messages[0].content).toContain("不得用静立/转头/指点冒充");
+  expect(input).toMatchObject({ modelName: "z-ai/glm-5.3-flashx", reasoningEffort: "low", max_tokens: 16_384 });
 });

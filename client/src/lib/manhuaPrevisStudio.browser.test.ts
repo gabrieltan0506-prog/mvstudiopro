@@ -27,7 +27,7 @@ beforeAll(async () => {
       f.makeBlock=(scope='11111111-1111-4111-8111-111111111111')=>({id:'clip-e01-g01',audioStudio,previsStudio:{...createManhuaPrevisStudio(10,scope),audioEnabled:false},manhuaSegmentRefs:{previs:f.old}});
       f.response=(input)=>({jobId:'prv_test_job',status:'succeeded',params:input,output:{requestId:input.requestId,clipId:input.clipId,spec:input.spec,audio:input.audio,quality:input.quality,durationSec:input.spec.durationSec,gcsUri:'gs://test/unrelated-storage-folder/output.mp4',url:'https://offline.invalid/new.mp4',report:{warnings:['离线测试，不代表动作质量验收']},...(input.spec.exportLayers?{layerBundle:{gcsUri:'gs://test/layer-bundle.zip',url:'https://offline.invalid/layers.zip',format:'previs-layers-v1',bytes:1234,sha256:'a'.repeat(64)}}:{})}});
       const services={submit:async input=>{f.submits.push(structuredClone(input));if(f.mode==='defer')return new Promise(resolve=>f.resolveSubmit=resolve);if(f.mode==='unknown')throw Error('离线模拟断网');const response=f.response(input);if(globalThis.keyedFixture)f.getResult=response;return response;},get:async id=>{f.gets.push(id);return f.getResult;},list:async (...args)=>{f.lists.push(args);if(f.mode==='defer-list')return new Promise(resolve=>f.resolveList=resolve);return {items:[],nextCursor:null};}};
-      function App(){const [block,setBlock]=useState(()=>globalThis.keyedFixture?{...f.makeBlock(),previsStudio:undefined}:f.makeBlock());const [characters,setCharacters]=useState([{id:'character-mo',label:'墨屠'}]);const [shots,setShots]=useState([]);const [directionShots,setDirectionShots]=useState([]);f.setDirectionShots=setDirectionShots;f.block=block;f.setBlock=setBlock;f.characters=characters;f.setCharacters=setCharacters;f.shots=shots;f.setShots=setShots;return <ManhuaPrevisStudioView key={globalThis.keyedFixture?block.id+':'+(block.previsStudio?.scopeId??'new'):undefined} block={block} characters={characters} sourceShots={shots} directionShots={directionShots} services={services} onChange={(studio,reference)=>{f.updates.push({studio:structuredClone(studio),reference});if(f.rejectSave)return false;setBlock(current=>({...current,previsStudio:studio,manhuaSegmentRefs:reference?{...current.manhuaSegmentRefs,previs:reference}:current.manhuaSegmentRefs}));return true;}}/>;}
+      function App(){const [block,setBlock]=useState(()=>globalThis.keyedFixture?{...f.makeBlock(),previsStudio:undefined}:f.makeBlock());const [characters,setCharacters]=useState([{id:'character-mo',label:'墨屠'}]);const [profiles,setProfiles]=useState([]);f.setProfiles=setProfiles;const [shots,setShots]=useState([]);const [directionShots,setDirectionShots]=useState([]);f.setDirectionShots=setDirectionShots;f.block=block;f.setBlock=setBlock;f.characters=characters;f.setCharacters=setCharacters;f.shots=shots;f.setShots=setShots;return <ManhuaPrevisStudioView key={globalThis.keyedFixture?block.id+':'+(block.previsStudio?.scopeId??'new'):undefined} block={block} characters={characters} profiles={profiles} sourceShots={shots} directionShots={directionShots} services={services} onChange={(studio,reference)=>{f.updates.push({studio:structuredClone(studio),reference});if(f.rejectSave)return false;setBlock(current=>({...current,previsStudio:studio,manhuaSegmentRefs:reference?{...current.manhuaSegmentRefs,previs:reference}:current.manhuaSegmentRefs}));return true;}}/>;}
       createRoot(document.getElementById('root')).render(globalThis.strictFixture?<StrictMode><App/></StrictMode>:<App/>);
       `,
     },
@@ -882,4 +882,38 @@ it("打开已应用的顾问独立历史即载入最近渲染，播放器先于�
 
 it("顾问入口替代所有坐标表单，打开现有配置不生成或替换参考", async () => {
  const page=await open();try {expect(await page.$('[data-previs-tune]')).toBeNull();expect(await page.$('input[type=number]')).toBeNull();expect(await page.$('[data-previs-layout-preview]')).toBeNull();expect(await page.evaluate(()=>(window as any).fixture.submits)).toEqual([]);expect(await page.evaluate(()=>(window as any).fixture.block.manhuaSegmentRefs.previs.url)).toBe('https://offline.invalid/old.mp4');}finally{await page.close();}
+});
+
+
+it("四足角色可沿用当前模型配置，换版本和保存失败不替换旧方案", async () => {
+ const page=await open();try {
+  await page.evaluate(()=>{const f=(window as any).fixture; const b=f.makeBlock(); b.previsStudio.spec.actors=[{...b.previsStudio.spec.actors[0],shape:'horse',id:'horse',nameZh:'墨屠',assetRef:'character-mo'}];f.setBlock(b);f.setCharacters([{id:'character-mo',label:'墨屠',shape:'horse',model:{taskId:'m3d_horse'}}]);f.setProfiles([{assetRef:'character-mo',sourceJobId:'m3d_horse',label:'墨屠',originLabel:'测试原已保存配置',riggedModel:{rigKind:'quadruped',sourceJobId:'m3d_horse',forwardAxis:'+X',targetHeight:1.6,boneMap:{head:'HorseHead'}}}]);});
+  await page.waitForFunction(()=>Array.from(document.querySelectorAll('button')).some(b=>b.textContent?.includes('沿用墨屠的已准备模型')));
+  await page.evaluate(()=>{(window as any).fixture.rejectSave=true;});
+  await click(page,'沿用墨屠的已准备模型 · 测试原已保存配置');
+  expect(await page.evaluate(()=>(window as any).fixture.block.previsStudio.spec.actors[0].riggedModel??null)).toBeNull();
+  await page.evaluate(()=>{(window as any).fixture.rejectSave=false;});
+  await click(page,'沿用墨屠的已准备模型 · 测试原已保存配置');
+  await page.waitForFunction(()=>(window as any).fixture.block.previsStudio.spec.actors[0].riggedModel?.rigKind==='quadruped');
+  expect(await page.evaluate(()=>{const f=(window as any).fixture;return {rig:f.block.previsStudio.spec.actors[0].riggedModel,history:f.block.previsStudio.specHistory.length,old:f.block.manhuaSegmentRefs.previs.url,submitted:f.submits.length};})).toEqual({rig:{rigKind:'quadruped',sourceJobId:'m3d_horse',forwardAxis:'+X',targetHeight:1.6,boneMap:{head:'HorseHead'}},history:1,old:'https://offline.invalid/old.mp4',submitted:0});
+  await page.evaluate(()=>{(window as any).fixture.setCharacters([{id:'character-mo',label:'墨屠',shape:'horse',model:{taskId:'m3d_new'}}]);});
+  await page.waitForFunction(()=>!Array.from(document.querySelectorAll('button')).some(b=>b.textContent?.includes('沿用墨屠的已准备模型')));
+  expect(await page.evaluate(()=>(window as any).fixture.block.previsStudio.spec.actors[0].riggedModel.sourceJobId)).toBe('m3d_horse');
+ }finally{await page.close();}
+});
+
+
+it("未有复用档案也可显式启用已采用马模型，失败不保存且不自动渲染", async () => {
+ const page=await open();try {
+  await page.evaluate(()=>{const f=(window as any).fixture;const b=f.makeBlock();b.previsStudio.spec.actors=[{...b.previsStudio.spec.actors[0],shape:'horse',id:'horse',nameZh:'墨屠',assetRef:'character-mo'}];f.setBlock(b);f.setCharacters([{id:'character-mo',label:'墨屠',shape:'horse',model:{taskId:'m3d_horse',assetRef:'horse-full-ref'}}]);});
+  await page.waitForSelector('[data-previs-model-config="horse"] > summary');
+  expect(await page.$('input[type=number]')).toBeNull();
+  await page.click('[data-previs-model-config="horse"] > summary');await page.waitForSelector('[data-previs-role-editor]');
+  await click(page,'角色准备');
+  await page.evaluate(()=>{const e=Array.from(document.querySelectorAll('label')).find(e=>e.textContent?.includes('启用当前角色的已有带骨模型'))?.querySelector<HTMLInputElement>('input[type=checkbox]');if(!e)throw Error('缺启用控件');e.click();(window as any).fixture.rejectSave=true;});
+  await click(page,'保存角色配置');expect(await page.evaluate(()=>(window as any).fixture.block.previsStudio.spec.actors[0].riggedModel??null)).toBeNull();
+  await page.evaluate(()=>{(window as any).fixture.rejectSave=false;});await click(page,'保存角色配置');
+  await page.waitForFunction(()=>(window as any).fixture.block.previsStudio.spec.actors[0].riggedModel?.rigKind==='quadruped');
+  expect(await page.evaluate(()=>{const f=(window as any).fixture;return {job:f.block.previsStudio.spec.actors[0].riggedModel.sourceJobId,sourceAssetRef:f.block.previsStudio.spec.actors[0].riggedModel.sourceAssetRef,submits:f.submits.length,history:f.block.previsStudio.specHistory.length,old:f.block.manhuaSegmentRefs.previs.url};})).toEqual({job:'m3d_horse',sourceAssetRef:'horse-full-ref',submits:0,history:1,old:'https://offline.invalid/old.mp4'});
+ }finally{await page.close();}
 });

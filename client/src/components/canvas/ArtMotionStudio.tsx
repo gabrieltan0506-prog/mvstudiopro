@@ -26,7 +26,7 @@ type Props = {
     id: string,
     state: ArtMotionState,
     expected: ArtMotionState,
-    adopt?: { url: string; gcsUri: string }
+    adopt?: { url: string; gcsUri: string; useAsSegment?: boolean }
   ): Promise<void>;
 };
 const field =
@@ -134,7 +134,7 @@ export function ArtMotionStudio({ scopeKey, blocks, onCreate, onSave }: Props) {
     identity.current.blockId === id;
   const rememberMedia = (spec: ArtMotionSpec) => {
     const selected = new Set(
-      [spec.audioUri, ...spec.cues.map(c => c.imageUri)].filter(Boolean)
+      [spec.audioUri, ...(spec.audioTimeline?.clips.map(c=>c.audioUri)??[]), ...spec.cues.map(c => c.imageUri)].filter(Boolean)
     );
     const old = target?.artMotion?.media ?? [];
     return [
@@ -206,7 +206,8 @@ export function ArtMotionStudio({ scopeKey, blocks, onCreate, onSave }: Props) {
     )
       throw new Error("任务不属于当前动画方案");
     const status = normalizeArtMotionJobStatus(job.status);
-    const output = job.output as { url?: unknown; gcsUri?: unknown; stageAnimation?: unknown } | null;
+    const output = job.output as { url?: unknown; gcsUri?: unknown; stageAnimation?: unknown; audioTimeline?: unknown } | null;
+    if(status === "succeeded" && request.spec.audioTimeline && JSON.stringify(output?.audioTimeline)!==JSON.stringify(request.spec.audioTimeline))throw Error("动画配乐回执与提交时序不一致，未采用");
     if (status === "succeeded" && request.spec.stageAnimation && (!output?.stageAnimation || typeof output.stageAnimation!=="object" || Object.entries(request.spec.stageAnimation).some(([key,value])=>(output.stageAnimation as Record<string,unknown>)[key]!==value)))
       throw new Error("场景动画回执来源不一致，未采用候选");
     const uri = typeof output?.gcsUri === "string" ? output.gcsUri : undefined;
@@ -807,7 +808,7 @@ export function ArtMotionStudio({ scopeKey, blocks, onCreate, onSave }: Props) {
                   </button>
                 </>
               )}
-              <label className="block">
+              {draft.audioTimeline ? <div className="rounded-xl border p-3 text-sm">已采用配乐：{draft.audioTimeline.bgmCount}条，保留选段、音量、留白和淡入淡出。{draft.audioTimeline.clips.map((c,i)=><p key={i}>BGM {i+1}：源{c.sourceStartSec}–{c.sourceEndSec}秒 → 影片{c.startSec}秒，音量{c.volume}，淡入{c.fadeInSec}秒／淡出{c.fadeOutSec}秒</p>)}</div> : <label className="block">
                 配音或音乐
                 <select
                   className={field + " ml-2"}
@@ -823,7 +824,7 @@ export function ArtMotionStudio({ scopeKey, blocks, onCreate, onSave }: Props) {
                     </option>
                   ))}
                 </select>
-              </label>
+              </label>}
               <div className="flex flex-wrap gap-2">
                 <button
                   className={button}
@@ -1014,6 +1015,13 @@ export function ArtMotionStudio({ scopeKey, blocks, onCreate, onSave }: Props) {
                   >
                     采用到画布
                   </button>
+                  {draft.stageAnimation && <button className={button} disabled={busy || JSON.stringify(draft)!==JSON.stringify(target.artMotion.request?.spec)} onClick={()=>void run(async()=>{
+                    const state=target.artMotion;
+                    if(!state || state.request?.id!==candidate.requestId || JSON.stringify(state.spec)!==JSON.stringify(state.request.spec))throw new Error("方案已变化，请重新核对候选");
+                    if(!window.confirm("把已播放检查的这份动画作为原分段的当前剪辑版本？原视频版本与音轨配置仍保留。"))return;
+                    await onSave(target.id,state,state,{...candidate,useAsSegment:true});
+                    toast.success("已采用为本段剪辑版本，可在整集剪辑中查看");
+                  })}>采用为本段剪辑版本</button>}
                 </div>
               )}
             </>

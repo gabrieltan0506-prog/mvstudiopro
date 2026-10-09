@@ -1,7 +1,11 @@
 import { previsAnimationReceipt } from "@shared/manhuaPrevisAnimation";
+import { applyAdvisorPrevisCandidate } from "@shared/manhuaAdvisorPrevisEdit";
+import { ManhuaPrevisPlanImport } from "./ManhuaPrevisPlanImport";
+import { buildAdvisorPrevisShotSource } from "@shared/manhuaAdvisorPrevisShotSource";
 import type { AdvisorEffectsControl, AdvisorEffectsRegistration } from "@shared/manhuaAdvisorEffects";
 import { advisorWorkflowRevision } from "@shared/manhuaAdvisorWorkflowPlan";
 import { ManhuaPrevisSceneEffectsEditor } from "./ManhuaPrevisSceneEffectsEditor";
+import { ManhuaPrevisRigControls } from "./ManhuaPrevisRigControls";
 import { usePreparedRig } from "@/lib/manhuaPrevisCreator";
 import { createRigForm, applyRigForm } from "@/lib/manhuaPrevisRigForm";
 import { buildManhuaPrevisAudio, type ManhuaPrevisAudio } from "@shared/manhuaPrevisAudio";
@@ -97,7 +101,7 @@ type Props = {
     /** assetRef：模型所在 ref（可能是 A-pose 候选图，与人物 id 不同） */
     model?: { taskId: string; assetRef?: string };
   }>;
-  sourceShots?: PrevisSourceShot[];
+  sourceShots?: Array<PrevisSourceShot & {cameraZh?:string;dialogueZh?:string}>;
   /** 0929：本段分镜的景别/机位/运镜原文，用于按分镜自动排运镜（不进草案身份键） */
   directionShots?: ManhuaDirectedShot[];
   /** 本集导演包主卡；只取卡片里已写明、能落到机位上的手法 */
@@ -177,6 +181,7 @@ export function ManhuaPrevisStudioView({
   latest.current = { studio, onChange, services, disabled, block };
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
+  const [openModelConfigs, setOpenModelConfigs] = useState<string[]>([]);
   const [preview, setPreview] = useState<Result | null>(null);
   const previewVideo = useRef<HTMLVideoElement>(null);
   const previewRequestVersion = useRef(0);
@@ -213,6 +218,14 @@ export function ManhuaPrevisStudioView({
     };
   }, []);
   const pendingId = studio.pending?.requestId;
+  function currentImportStudio() {
+    const current = latest.current;
+    if (!sourceShots.length && current.studio.advisorShotSource)
+      throw new Error("当前分镜来源已移除，不能沿用旧原文保存动作方案");
+    return { ...current.studio, ...(sourceShots.length ? {
+      advisorShotSource: buildAdvisorPrevisShotSource(current.block.id, sourceShots),
+    } : {}) };
+  }
   function publish(next: Studio, reference?: ManhuaSegmentReferenceEntry) {
     const parsed = manhuaPrevisSpecSchema.safeParse(next.spec);
     if (!parsed.success) { setError(`方案未通过白模检查：${parsed.error.issues.map(issue => issue.message).join("；")}`); return false; }
@@ -241,6 +254,7 @@ export function ManhuaPrevisStudioView({
     const current = latest.current;
     const adoptedTrial = current.studio.history.some(t =>
       t.jobId === response.jobId && t.requestId === response.params.requestId &&
+      (!t.sourceScopeId || t.sourceScopeId === response.params.scopeId) &&
       JSON.stringify(t.spec) === JSON.stringify(response.params.spec) &&
       JSON.stringify(t.audio) === JSON.stringify(response.params.audio) &&
       t.quality === response.params.quality
@@ -298,6 +312,7 @@ export function ManhuaPrevisStudioView({
       const old = current.studio.history.find(t => t.jobId === response.jobId);
       const take = {
         jobId: response.jobId,
+        sourceScopeId: response.params.scopeId,
         requestId: response.params.requestId,
         gcsUri: result.gcsUri,
         url: result.url,
@@ -513,6 +528,7 @@ export function ManhuaPrevisStudioView({
             continue;
           const take = {
             jobId: response.jobId,
+            sourceScopeId: response.params.scopeId,
             requestId: response.params.requestId,
             gcsUri: result.gcsUri,
             url: result.url,
@@ -724,6 +740,16 @@ export function ManhuaPrevisStudioView({
         <button type="button" className={button} disabled={disabled || Boolean(pendingId) || busy} onClick={() => onOpenAdvisor(preview?.requestId)}>让创作顾问调整</button>
       </div>}
       <p className="text-xs text-cyan-100" data-previs-source-scope>{manhuaPrevisSourceLabel(studio.spec)}</p>
+      <ManhuaPrevisPlanImport clipId={block.id} getCurrentStudio={currentImportStudio} disabled={Boolean(disabled || pendingId || busy)} onApply={candidate => {
+        try {
+          const current = latest.current;
+          const liveStudio=currentImportStudio();
+          const next = applyAdvisorPrevisCandidate(current.block.id, liveStudio, candidate);
+          if (!publish(next)) return false;
+          setStatus("已保存确认的动作方案；尚未渲染，原配置和已采用参考均保留。");
+          return true;
+        } catch (e) { setError(e instanceof Error ? e.message : "方案未保存，原配置保留"); return false; }
+      }} />
       <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(280px,1fr)]" data-previs-workspace>
       <div className="min-w-0 self-start xl:sticky xl:top-4">
       {!preview && (
@@ -847,25 +873,48 @@ export function ManhuaPrevisStudioView({
         <strong>已保存动作节奏</strong>
         {actionPlanDrafts.map(draft => <div key={draft.executableShotId} className="space-y-1 border-t border-white/10 pt-2"><p>{draft.summaryZh.join("；")}</p><p className="text-amber-100">{draft.issuesZh.join("；")}</p><button type="button" className={button} disabled={disabled || busy || Boolean(pendingId) || !draft.spec || !onOpenAdvisor} onClick={() => {
           if (!draft.spec) return;
-          const next = applyManhuaPrevisDraftToStudio(studio, draft.spec, new Date().toISOString(), draft);
-          if (publish(next)) onOpenAdvisor?.(undefined, next);
+          try {
+            if (latest.current.disabled || latest.current.studio.pending || busy || lock.current) return;
+            if (previsSpecKey(latest.current.studio.spec) !== previsSpecKey(studio.spec)) throw new Error("白模方案已更新，请重新读取动作计划。");
+            const next = applyManhuaPrevisDraftToStudio(studio, draft.spec, new Date().toISOString(), draft);
+            if (publish(next)) onOpenAdvisor?.(undefined, next);
+          } catch (error) { setError(error instanceof Error ? error.message : "动作计划未应用，原配置保留。"); }
         }}>沿用这份节奏，向顾问描述后续调整</button></div>)}
       </section>}
       {block.previsStudio && <section id="previs-cast" className="space-y-2 rounded border border-cyan-300/20 p-3" data-previs-cast>
         <p className="text-sm font-medium text-cyan-50">当前方案人物</p>
         <p className="text-xs text-cyan-100">渲染容量：{previsRenderCostUnits(studio.spec)} / {PREVIS_RENDER_UNIT_BUDGET}</p>
         <div className="flex flex-wrap gap-3">{studio.spec.actors.map(actor => <span key={actor.id} className="text-xs"><span className="mr-1 inline-block h-3 w-3 rounded-full" style={{ backgroundColor: previsActorColor(actor.id, studio.spec.actors).hex }} aria-hidden="true" />{actor.nameZh} · {actor.shape === "horse" ? "四足" : "人形"}</span>)}</div>
-        {studio.spec.actors.filter(actor => actor.shape === "human" && !actor.creature).map(actor => {
+        {studio.spec.actors.filter(actor => !actor.creature).map(actor => {
           const model = characters.find(c => c.id === actor.assetRef)?.model;
           return profiles.filter(profile => profile.assetRef === actor.assetRef && profile.sourceJobId === model?.taskId).map((profile, index) => <button key={`${actor.id}:${index}`} type="button" className={button} disabled={disabled || busy || Boolean(pendingId)} onClick={() => {
             try {
-              const form = usePreparedRig(createRigForm(actor.riggedModel, model?.taskId), profile, { assetRef: actor.assetRef, taskId: model?.taskId, durationSec: studio.spec.durationSec, spec: studio.spec, actorId: actor.id });
-              const riggedModel = applyRigForm(form, { taskId: model?.taskId, durationSec: studio.spec.durationSec, shape: actor.shape, hasCreature: Boolean(actor.creature) });
+              if (latest.current.disabled || busy || pendingId || lock.current) return;
+              if (previsSpecKey(latest.current.studio.spec) !== previsSpecKey(studio.spec)) throw new Error("白模方案已更新，请重新读取当前角色配置。");
+              const form = usePreparedRig(createRigForm(actor.riggedModel, model?.taskId, model?.assetRef), profile, { assetRef: actor.assetRef, sourceAssetRef: model?.assetRef, taskId: model?.taskId, durationSec: studio.spec.durationSec, spec: studio.spec, actorId: actor.id });
+              const riggedModel = applyRigForm(form, { taskId: model?.taskId, sourceAssetRef: model?.assetRef, durationSec: studio.spec.durationSec, shape: actor.shape, hasCreature: Boolean(actor.creature) });
               const next = { ...studio, spec: { ...studio.spec, actors: studio.spec.actors.map(row => row.id === actor.id ? { ...row, riggedModel } : row) }, specHistory: [...(studio.specHistory || []), { spec: studio.spec, createdAt: new Date().toISOString(), reasonZh: "沿用项目已准备模型前的配置" }] };
               if (publish(next)) setStatus(`已沿用${actor.nameZh}的项目模型配置；尚未渲染，当前段动作由顾问继续调整。`);
             } catch (error) { setError(error instanceof Error ? error.message : "模型配置未应用"); }
           }}>沿用{actor.nameZh}的已准备模型 · {profile.originLabel}</button>);
         })}
+        {studio.spec.actors.filter(actor => !actor.creature).map(actor => <details key={actor.id} className="rounded border border-white/15 p-2" data-previs-model-config={actor.id} onToggle={event => {
+          const open = event.currentTarget.open;
+          setOpenModelConfigs(current => open ? current.includes(actor.id) ? current : [...current, actor.id] : current.filter(id => id !== actor.id));
+        }}>
+          <summary className="cursor-pointer text-xs">{actor.nameZh} · 检查已采用模型的骨骼配置</summary>
+          {openModelConfigs.includes(actor.id) && <ManhuaPrevisRigControls actor={actor} model={characters.find(c => c.id === actor.assetRef)?.model} durationSec={studio.spec.durationSec} spec={studio.spec} profiles={profiles} disabled={disabled || busy || Boolean(pendingId)} onChange={riggedModel => {
+            const current = latest.current;
+            if (current.disabled || busy || current.studio.pending || lock.current) return false;
+            if (previsSpecKey(current.studio.spec) !== previsSpecKey(studio.spec)) { setError("白模方案已更新，请重新读取当前角色配置。"); return false; }
+            const model = characters.find(c => c.id === actor.assetRef)?.model;
+            if (riggedModel && riggedModel.sourceJobId !== model?.taskId) { setError("模型版本已变化，未应用旧骨骼配置。"); return false; }
+            const next = { ...current.studio, spec: { ...current.studio.spec, actors: current.studio.spec.actors.map(row => row.id === actor.id ? { ...row, riggedModel } : row) }, specHistory: [...(current.studio.specHistory || []), { spec: current.studio.spec, createdAt: new Date().toISOString(), reasonZh: "调整已采用模型骨骼配置前的方案" }] };
+            if (!publish(next)) return false;
+            setStatus(`已保存${actor.nameZh}的模型配置；尚未渲染。`);
+            return true;
+          }} />}
+        </details>)}
         <p className="text-xs text-white/65">人物、动作与运镜请向创作顾问描述；原配置和已采用参考保留。</p>
       </section>}
       <ManhuaPrevisSceneEffectsEditor key={`${studio.scopeId}:${block.id}`} spec={studio.spec} disabled={disabled || busy || Boolean(pendingId)} onApply={spec => {

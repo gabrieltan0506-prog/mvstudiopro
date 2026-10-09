@@ -710,15 +710,16 @@ def import_rigged_model(local_path, actor_id, bone_map=None, forward_axis="-Y", 
 
 
 def apply_cough_contact(model, actions, frame_start, frame_end, fps=24):
-    """按真实骨长修正掩口；仅供受控诊断，生产门禁须在网格审片后解除。"""
+    """按真实骨长修正掩口并测实际蒙皮；头部经验锚点不冒充嘴部解剖识别。"""
     from mathutils import Matrix, Vector
     from previs_contact_ik import solve_limb
     bpy = _bpy()
     rig, mapping = model["rig"], model["boneMap"]
+    from previs_human_contact import head_contact_target
     coughs = [a for a in actions if a.get("kind") == "cough"]
     if not coughs:
         return []
-    if not math.isfinite(fps) or fps <= 0 or not 1 <= frame_start <= frame_end <= 720:
+    if not math.isfinite(fps) or fps <= 0 or type(frame_start) is not int or type(frame_end) is not int or not 1 <= frame_start <= frame_end <= 720:
         raise ValueError("掩口修正帧范围无效")
     for action in coughs:
         if not 0 <= action["startSec"] < action["endSec"] or action["endSec"]-action["startSec"] < 1.2:
@@ -737,16 +738,22 @@ def apply_cough_contact(model, actions, frame_start, frame_end, fps=24):
         for prop in ("location", "rotation_quaternion", "scale"):
             bone.keyframe_insert(prop, frame=bpy.context.scene.frame_current)
 
+    target_height = model["report"].get("targetHeight")
+    if not isinstance(target_height, (int, float)) or not math.isfinite(target_height) or target_height <= 0:
+        raise ValueError("掩口测量缺少实际模型标准化身高")
+    tolerance_scale = target_height/1.7
     rows = []
     for frame in range(frame_start, frame_end+1):
         t = (frame-1)/fps
-        active = [a for a in coughs if a["startSec"] <= t <= a["endSec"]]
+        active = [a for a in coughs if a["startSec"] <= t < a["endSec"]]
         if not active:
             continue
         if len(active) != 1:
             raise ValueError("同一人物掩口动作窗口重叠")
         action = active[0]
-        u = (t-action["startSec"])/(action["endSec"]-action["startSec"])
+        # 最后一个实际采样帧完成收手，不能把收手终点留在片尾之外。
+        sampled_end = (math.ceil(action["endSec"]*fps)-1)/fps
+        u = (t-action["startSec"])/max(1/fps,sampled_end-action["startSec"])
         hold = smooth(u/.22)*(1-smooth((u-.76)/.24))
         bpy.context.scene.frame_set(frame)
         bpy.context.view_layer.update()
@@ -754,11 +761,14 @@ def apply_cough_contact(model, actions, frame_start, frame_end, fps=24):
         # 使用该帧原始腕点作回收基准，不能把上一帧修正结果作为新基准。
         original_wrist = hand.head.copy()
         original_hand_direction = (hand.tail-hand.head).normalized()
-        if hold < 1e-8:
-            rows.append({"frame": frame, "targetResidual": 0., "hold": hold})
-            continue
         scale = (upper.bone.length+lower.bone.length)/.58
-        target = rig.pose.bones[mapping["head"]].head + Vector((.125, -.025, .055))*scale
+        head = rig.pose.bones[mapping["head"]]
+        head_delta = head.matrix.to_quaternion() @ model["restMatrices"][head.name].to_quaternion().inverted()
+        target = Vector(head_contact_target(tuple(head.head), tuple(tuple(row) for row in head_delta.to_matrix()), scale))
+        measurement = {"frame": frame, "hold": hold, "scale": tolerance_scale, "target": tuple(target), "baselineWrist": tuple(original_wrist)}
+        if hold < 1e-8:
+            rows.append({**measurement, "targetResidual": 0.})
+            continue
         wrist = original_wrist.lerp(target, hold)
         original_bend = (lower.head-upper.head).normalized()
         bend_hint = original_bend.lerp(Vector((.2, -.15, -1)).normalized(), hold)
@@ -771,8 +781,77 @@ def apply_cough_contact(model, actions, frame_start, frame_end, fps=24):
         aim(lower, elbow, wrist)
         direction = original_hand_direction.lerp(Vector((-.1, .6, .8)).normalized(), hold).normalized()
         aim(hand, wrist, wrist+direction*hand.bone.length)
-        rows.append({"frame": frame, "targetResidual": solution["unreachableDistance"], "hold": hold})
-    model["report"]["coughContact"] = {"frames": len(rows), "meshValidated": False, "normalSpeedValidated": False}
+        actual_residual = (hand.head-wrist).length
+        if actual_residual > .005*scale:
+            raise ValueError("掩口手腕未落到真实接触目标")
+        rows.append({**measurement, "targetResidual": actual_residual})
+    from previs_rigged_contact_mesh import measure_contact_mesh
+    measured = measure_contact_mesh(model, [row["frame"] for row in rows])
+    from previs_cough_measurement import measure_cough_hand
+    hand_measured = measure_cough_hand(model, rows)
+    model["report"]["coughContact"] = {"handMeasurement": hand_measured, "frames": len(rows), "meshValidated": False, "normalSpeedValidated": False, "meshMeasurement": measured}
+    return rows
+
+
+def apply_grounded_sit_contact(model, actions, frame_start, frame_end, fps=24):
+    """坐姿按目标真实腿长解双腿；落脚锁目标静止踝点，仍须网格和常速审片。"""
+    from mathutils import Matrix, Vector
+    from previs_contact_ik import solve_limb
+    sits = [action for action in actions if action.get("kind") == "sit"]
+    if not sits:
+        return []
+    if not math.isfinite(fps) or fps <= 0 or type(frame_start) is not int or type(frame_end) is not int or not 1 <= frame_start <= frame_end <= 720:
+        raise ValueError("坐姿落脚修正帧范围无效")
+    if any(not 0 <= action["startSec"] < action["endSec"] or action["endSec"]-action["startSec"] < .5 for action in sits):
+        raise ValueError("坐姿落脚动作时间无效")
+    bpy = _bpy()
+    rig, mapping, rest = model["rig"], model["boneMap"], model["restMatrices"]
+    rows = []
+
+    def set_pose(bone, matrix, frame):
+        bone.rotation_mode = "QUATERNION"
+        bone.matrix = matrix
+        bpy.context.view_layer.update()
+        for prop in ("location", "rotation_quaternion", "scale"):
+            bone.keyframe_insert(prop, frame=frame)
+
+    def aim(bone, start, end, frame):
+        rotation = bone.matrix.to_quaternion()
+        direction = end-start
+        if direction.length < 1e-8:
+            raise ValueError("坐姿腿骨目标退化")
+        rotation = (rotation @ Vector((0, 1, 0))).rotation_difference(direction.normalized()) @ rotation
+        set_pose(bone, Matrix.Translation(start) @ rotation.to_matrix().to_4x4(), frame)
+
+    for frame in range(frame_start, frame_end+1):
+        t = (frame-1)/fps
+        active = [action for action in sits if action["startSec"] <= t < action["endSec"]]
+        if not active:
+            continue
+        if len(active) != 1:
+            raise ValueError("同一人物坐姿窗口重叠")
+        bpy.context.scene.frame_set(frame)
+        bpy.context.view_layer.update()
+        for side in ("-1", "1"):
+            upper, lower, foot = [rig.pose.bones[mapping[key+side]] for key in ("upper_leg", "lower_leg", "foot")]
+            root = upper.head.copy()
+            # 静止踝点与足骨朝向来自同一目标骨架，不能复用棍人脚点或拉伸骨长。
+            foot_rest = rest[foot.name]
+            ankle = foot_rest.translation.copy()
+            solved = solve_limb(tuple(root), tuple(ankle), upper.bone.length, lower.bone.length, (1, 0, 0))
+            if solved["unreachableDistance"] > .005:
+                raise ValueError("坐姿落脚超过真实腿长，须修正骨盆或站位")
+            knee, end = Vector(solved["joint"]), Vector(solved["end"])
+            aim(upper, root, knee, frame)
+            aim(lower, knee, end, frame)
+            set_pose(foot, Matrix.Translation(end) @ foot_rest.to_quaternion().to_matrix().to_4x4(), frame)
+            residual = (foot.head-ankle).length
+            if residual > .005:
+                raise ValueError("坐姿踝点未落到实际目标")
+            rows.append({"frame": frame, "side": side, "ankleResidual": residual})
+    from previs_rigged_contact_mesh import measure_contact_mesh
+    measured = measure_contact_mesh(model, sorted({row["frame"] for row in rows}))
+    model["report"]["sitContact"] = {"meshMeasurement": measured, "frames": len(rows)//2, "maxAnkleResidual": max((row["ankleResidual"] for row in rows), default=0.), "meshValidated": False, "normalSpeedValidated": False}
     return rows
 
 

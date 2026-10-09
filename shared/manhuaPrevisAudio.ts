@@ -26,7 +26,7 @@ export const manhuaPrevisAudioSchema = z.object({
 export type ManhuaPrevisAudio = z.infer<typeof manhuaPrevisAudioSchema>;
 
 /** 从本段已采用音轨取明确秒窗，不调配音API，也不把整段的第0秒套到后半段。 */
-export function buildManhuaPrevisAudio(studio: CanvasAudioStudio | undefined, spec: ManhuaPrevisSpec, startSec = 0, loopBgm = false): ManhuaPrevisAudio {
+export function buildManhuaPrevisAudio(studio: CanvasAudioStudio | undefined, spec: Pick<ManhuaPrevisSpec,"durationSec"|"timeMap">, startSec = 0, loopBgm = false): ManhuaPrevisAudio {
   if (spec.timeMap?.spans.some(s => s.rate !== 1)) throw new Error("对白/BGM按原秒位对齐；请先恢复正常速度，变速音画需重新编排后再试看。");
   if (!studio) throw new Error("本段尚未配置音轨，请在本页对白与BGM中采用已有声音后生成。");
   const source = canvasAudioStudioSchema.parse(studio);
@@ -73,4 +73,13 @@ export function buildManhuaPrevisAudio(studio: CanvasAudioStudio | undefined, sp
   return manhuaPrevisAudioSchema.parse({ version: 1, startSec, durationSec: spec.durationSec,
     sourceKey: JSON.stringify([startSec, spec.durationSec, loopBgm, identities]),
     dialogueCount: dialogue.length, bgmCount: cues.filter(c => c.kind === "bgm").length, clips });
+}
+
+/** 场景动画只复用已采用BGM；未采用或过期条目由原音轨合同明确拒绝。 */
+export function buildManhuaStageBgmAudio(studio: CanvasAudioStudio | undefined, durationSec:number, startSec=0, loopBgm=false): ManhuaPrevisAudio | undefined {
+  if(!studio)return undefined;
+  const source=canvasAudioStudioSchema.parse(studio);
+  const bgm=source.cues.filter(c=>c.kind==="bgm");
+  if(!bgm.some(c=>c.enabled && c.startSec<startSec+durationSec && c.endSec>startSec))return undefined;
+  return buildManhuaPrevisAudio({...source,cues:bgm},{durationSec},startSec,loopBgm);
 }

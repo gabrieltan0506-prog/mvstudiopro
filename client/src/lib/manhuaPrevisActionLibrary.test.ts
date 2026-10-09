@@ -41,11 +41,13 @@ describe("动作库沿原白模合同添加", () => {
     expect(addPrevisLibraryAction(studio.spec,"actor-1","cough").error).toContain("1.2 秒");
   });
 
-  it("咳嗽未验收的带骨组合不能保存或提交", () => {
+  it("带骨咳嗽保留模型进入实际掩口与脚底运行时检查", () => {
     const studio = createManhuaPrevisStudio(6);
     studio.spec.actors[0].assetRef = "char-a";
     studio.spec.actors[0].riggedModel = {sourceJobId:"m3d_test",targetHeight:1.7,forwardAxis:"+X"};
-    expect(addPrevisLibraryAction(studio.spec,"actor-1","cough").error).toContain("咳嗽目前仅支持基础白模");
+    const result=addPrevisLibraryAction(studio.spec,"actor-1","cough");
+    expect(result.error).toBeUndefined();
+    expect(result.spec?.actors[0].riggedModel).toEqual(studio.spec.actors[0].riggedModel);
   });
 
 });

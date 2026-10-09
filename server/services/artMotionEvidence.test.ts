@@ -37,10 +37,17 @@ it("internal evidence authentication binds exact bytes, timestamp and fixed arti
   ).toBe(false);
   expect(validArtEvidenceSignature("", time, signature, body)).toBe(false);
   expect(decodeArtEvidence(body).bytes.toString()).toBe('{"original":true}');
+  for (const name of ["audio-probe-1.json", "audio-probe-99.parsed.json"]) {
+    const audioBody = Buffer.from(JSON.stringify({ userId: "7", requestId,
+      objectName: objectName.replace("request.raw.json", name), bytes: "e30=" }));
+    expect(decodeArtEvidence(audioBody).bytes.toString()).toBe("{}");
+  }
   for (const name of [
     "../secret.json",
     objectName.replace("post-prod/7/", "post-prod/8/"),
     objectName.replace("request.raw.json", "other.json"),
+    objectName.replace("request.raw.json", "audio-probe-0.json"),
+    objectName.replace("request.raw.json", "audio-probe-1000.json"),
   ])
     expect(() =>
       decodeArtEvidence(

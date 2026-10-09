@@ -367,12 +367,6 @@ export function compilePrevisScriptDraft(input: {
       reject("四足角色不能套人体动作");
       continue;
     }
-    // 与提交门禁同一条边界：带骨真模坐下会穿地（实测 21—32 厘米），草案就不要排出来
-    // 让用户到提交时才被拒。判据在 manhuaPrevisSpecSchema，这里只是提前退回未映射。
-    if (kind === "sit" && actor.riggedModel) {
-      reject("带骨角色暂不支持坐下：静止姿态差会让脚穿地（1.70 米约 21 厘米），待重定向补偿后开放（PR-F）；棍人角色可以坐下，带骨角色的看向/转身/行礼不受影响");
-      continue;
-    }
     const targetText = whole[1] ?? "";
     // 0917 审查：只有「看向」能把目标真的落进 spec。走位/指向的目标白模表达不了
     // （走位不改站位、指向只按角色自身朝向抬手），映射了等于把原文的调度信息吞掉，

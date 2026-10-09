@@ -1,5 +1,5 @@
 # PR 构建探针：用生产 Dockerfile 在 linux/amd64 上只构建、不推镜像、不部署、不读生产 secrets，
-# 然后在构建出的容器里真实跑低模绑骨自测（含预览渲染，走 xvfb），把日志/预览图/回执存成 artifact。
+# 默认只跑内存骨骼、蒙皮与契约检查；旧媒体夹具须展示具体内容并确认后手动开启。
 # 口径：CI 通过只证明该容器里的合成模型链路通过；不证明 74 万顶点真模、材质保真、内存峰值与形变质量。
 name: PR Blender Smoke
 on:
@@ -10,6 +10,12 @@ on:
       - shared/manhuaAutoRig.ts
       - .github/workflows/pr-blender-smoke.yml
   workflow_dispatch:
+    inputs:
+      media_smoke_confirmed:
+        description: "已向用户展示并获得本次旧媒体夹具生成确认"
+        type: boolean
+        required: true
+        default: false
 
 permissions:
   contents: read
@@ -27,8 +33,9 @@ jobs:
       - uses: docker/setup-buildx-action@v3
       - name: Build production image (linux/amd64, no push)
         run: |
-          docker buildx build --platform linux/amd64 --load -t mvstudiopro-pr-smoke:${{ github.sha }} .
+          docker buildx build --build-arg RUN_MEDIA_SMOKE=${{ github.event_name == 'workflow_dispatch' && inputs.media_smoke_confirmed && '1' || '0' }} --platform linux/amd64 --load -t mvstudiopro-pr-smoke:${{ github.sha }} .
       - name: Run auto-rig smoke inside the built image
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.media_smoke_confirmed }}
         timeout-minutes: 20
         run: |
           set -o pipefail
@@ -53,6 +60,7 @@ jobs:
           grep -q "^Blender " artifacts/auto-rig-smoke/blender-version.txt
           echo "== TEST_OK =="; grep "^TEST_OK" artifacts/auto-rig-smoke/smoke.log
       - name: Verify sustained support contact inside the built image
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.media_smoke_confirmed }}
         timeout-minutes: 5
         run: |
           mkdir -p artifacts/support-walk
@@ -63,6 +71,7 @@ jobs:
               --python server/scripts/test-previs-support-walk.py -- /out
           sudo chmod -R a+rX artifacts/support-walk
       - name: Run drama-action previs smoke inside the built image
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.media_smoke_confirmed }}
         timeout-minutes: 20
         run: |
           set -o pipefail
@@ -78,6 +87,7 @@ jobs:
           grep -q "^TEST_OK" artifacts/drama-actions/smoke.log
           echo "== 文戏动作实测 =="; cat artifacts/drama-actions/run/report.json
       - name: Run drama-action RIGGED-MODEL smoke inside the built image
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.media_smoke_confirmed }}
         timeout-minutes: 30
         run: |
           set -o pipefail
@@ -94,7 +104,7 @@ jobs:
           grep -q "^TEST_OK" artifacts/drama-rigged/smoke.log
           echo "== 真模文戏实测 =="; cat artifacts/drama-rigged/run/report.json
       - name: Upload drama-action rigged artifacts
-        if: always()
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.media_smoke_confirmed }}
         uses: actions/upload-artifact@v4
         with:
           name: drama-rigged-${{ github.event.pull_request.head.sha || github.sha }}
@@ -105,7 +115,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
       - name: Upload drama-action artifacts
-        if: always()
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.media_smoke_confirmed }}
         uses: actions/upload-artifact@v4
         with:
           name: drama-actions-${{ github.event.pull_request.head.sha || github.sha }}
@@ -116,7 +126,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
       - name: Upload smoke artifacts (log, previews, receipts)
-        if: always()
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.media_smoke_confirmed }}
         uses: actions/upload-artifact@v4
         with:
           name: auto-rig-smoke-${{ github.event.pull_request.head.sha || github.sha }}

@@ -37,7 +37,8 @@ export async function resolvePrevisModels(
       actor.riggedModel.sourceJobId,
       userId,
       modelAssetRef,
-      { prefer: "previs" }
+      // 场景动画消费导出的实际网格，不能把去材质代理当作正式角色外观。
+      spec.exportAnimation ? undefined : { prefer: "previs" }
     );
     if (
       source.taskId !== actor.riggedModel.sourceJobId ||
@@ -69,7 +70,9 @@ export async function resolvePrevisModels(
       throw new Manhua3dSourceRejectedError("角色模型顶点回执无效");
     vertices += modelVertices;
     if (vertices * spec.durationSec * 24 * (spec.aspect === "9:16" ? 3 : 1) > 12_000_000)
-      throw new Manhua3dSourceRejectedError("本段角色模型合计超出1200万顶点帧预算，请缩短片段、改横屏或使用低模代理");
+      throw new Manhua3dSourceRejectedError(spec.exportAnimation
+        ? "本段完整角色模型超出1200万顶点帧预算，尚不能导出此段场景动画；已保留原模型，不会改用无材质代理"
+        : "本段角色模型合计超出1200万顶点帧预算，请缩短片段、改横屏或使用低模代理");
     total += source.bytes;
     if (total > PREVIS_MODEL_MAX_BYTES * 2)
       throw new Manhua3dSourceRejectedError("本段角色模型总量超过128MB，请分段预演");

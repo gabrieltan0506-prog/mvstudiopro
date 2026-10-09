@@ -482,7 +482,7 @@ describe("文戏草案 · 0917 三轮审查补漏", () => {
     expect(actionsOf(compile("阿菁看向镜头。"))[0].lookAtId).toBe("camera");
   });
 
-  it("带骨角色的坐下不再排进草案（与提交门禁同一条边界）", () => {
+  it("带骨角色坐下草案进入实际网格运行时检查", () => {
     const spec = createManhuaPrevisStudio(4).spec;
     spec.actors[0] = {
       ...spec.actors[0],
@@ -493,7 +493,7 @@ describe("文戏草案 · 0917 三轮审查补漏", () => {
         targetHeight: 1.7,
       },
     };
-    expect(compile("阿菁坐下。", { spec }).mappedShotIndices).toEqual([]);
+    expect(compile("阿菁坐下。", { spec }).mappedShotIndices).toEqual([7]);
     // 反例对照：同一句在不带骨的角色上仍然映射得出来
     expect(compile("阿菁坐下。").mappedShotIndices).toEqual([7]);
     // 反例对照：带骨角色的其它文戏动作照常映射，不是被整条跳过
