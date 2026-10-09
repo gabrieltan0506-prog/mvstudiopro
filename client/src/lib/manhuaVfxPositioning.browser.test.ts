@@ -24,7 +24,8 @@ it("视频画面定位排除黑边并按播放秒位记录手动轨迹", async (
     await page.setRequestInterception(true);
     page.on("request", request => request.respond({ status: 200, body: "" }));
     await page.goto("http://localhost/");
-    await page.setContent('<div id="root"></div><style>[data-vfx-position-frame]{position:relative;width:300px;height:300px}[data-vfx-position-frame] video{width:300px;height:300px;object-fit:contain}[aria-label="在原片上定位特效"]{position:absolute;inset:0;width:100%;height:100%;background:transparent}</style>');
+    // 整数像素画布排除字体行高导致的坐标量化，仍以真实鼠标核对黑边和画面位置。
+    await page.setContent('<div id="root"></div><style>[data-vfx-position-frame]{position:fixed;top:100px;left:100px;width:300px;height:300px}[data-vfx-position-frame] video{width:300px;height:300px;object-fit:contain}[aria-label="在原片上定位特效"]{position:absolute;inset:0;width:100%;height:100%;background:transparent}</style>');
     await page.addScriptTag({ content: bundle.outputFiles[0]!.text });
     await page.waitForSelector("video");
     await page.$eval("video", video => {

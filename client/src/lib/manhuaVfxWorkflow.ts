@@ -1,3 +1,5 @@
+import { MANHUA_VFX_WAVE_DEFAULTS, MANHUA_VFX_BLAST_DEFAULTS, MANHUA_VFX_ROI_DEFAULTS, MANHUA_VFX_LIQUID_DEFAULTS, MANHUA_VFX_GHOST_DEFAULTS, MANHUA_VFX_WALL_DEFAULTS, MANHUA_VFX_BULLET_DEFAULTS } from "@shared/manhuaVfxPixelParameters";
+import { MANHUA_VFX_RAIN_DEFAULTS } from "@shared/manhuaVfx";
 import { manhuaVfxCompositionSchema, type ManhuaVfxComposition, type ManhuaVfxEffect, type ManhuaVfxState } from "@shared/manhuaVfx";
 import type { ClipOption, TrackedJob } from "./postProdWorkshop";
 import type { CanvasBlock } from "./canvasTypes";
@@ -48,8 +50,16 @@ export function sameManhuaVfxComposition(a: unknown, b: unknown): boolean {
 export function makeManhuaVfxEffect(kind: ManhuaVfxEffect["kind"], id: string): ManhuaVfxEffect {
   return {
     id, kind, startSec: 0, durationSec: 1,
-    color: kind === "impact_burst" ? "#FFB35C" : "#67E8F9", scale: kind === "shield" ? 0.4 : 0.25, intensity: 1,
-    anchor: { space: "screen", position: [0.5, 0.5] },
+    color: kind === "digital_rain" ? "#35FF82" : ["impact_burst", "directed_blast"].includes(kind) ? "#FFB35C" : "#67E8F9", scale: ["digital_rain", "liquid_mirror", "motion_ghost", "wall_fracture", "bullet_time", "bullet_wave", "directed_blast"].includes(kind) ? 1 : kind === "shield" ? 0.4 : 0.25, intensity: 1,
+    ...(kind === "bullet_wave" ? { wave: { ...MANHUA_VFX_WAVE_DEFAULTS } } : {}),
+    ...(kind === "directed_blast" ? { blast: { ...MANHUA_VFX_BLAST_DEFAULTS } } : {}),
+    ...(kind === "digital_rain" ? { rain: { ...MANHUA_VFX_RAIN_DEFAULTS } } : {}),
+    ...(["liquid_mirror", "motion_ghost"].includes(kind) ? { roi: { ...MANHUA_VFX_ROI_DEFAULTS } } : {}),
+    ...(kind === "liquid_mirror" ? { liquid: { ...MANHUA_VFX_LIQUID_DEFAULTS } } : {}),
+    ...(kind === "motion_ghost" ? { ghost: { ...MANHUA_VFX_GHOST_DEFAULTS } } : {}),
+    ...(kind === "wall_fracture" ? { wall: { ...MANHUA_VFX_WALL_DEFAULTS, contact: { ...MANHUA_VFX_WALL_DEFAULTS.contact } } } : {}),
+    ...(kind === "bullet_time" ? { bullet: { ...MANHUA_VFX_BULLET_DEFAULTS } } : {}),
+    anchor: { space: "screen", position: [kind === "bullet_wave" ? .15 : .5, 0.5] },
   };
 }
 
@@ -139,4 +149,9 @@ export function manhuaVfxPositionAtTime(effect: ManhuaVfxEffect, timeSec: number
     }
   }
   return [points[points.length - 1].x, points[points.length - 1].y];
+}
+
+/** 仅列出当前作品/集、未归档且已有成功预演回执的真实三维场景。 */
+export function manhuaVfxSceneOptions(blocks: CanvasBlock[], episodeIndex: number) {
+  return blocks.filter(block => !block.archivedFromPreviousScript && isManhuaFactoryArtifactBlock(block) && getBlockEpisodeIndex(block) === episodeIndex).flatMap(block => (block.previsStudio?.history || []).filter(row => /^prv_[a-f0-9]{48}$/.test(row.jobId)).map((row, index) => ({ jobId: row.jobId, scopeId: block.previsStudio!.scopeId, clipId: block.id, label: `${block.id} · 三维版本${index + 1}`, durationSec: row.durationSec })));
 }

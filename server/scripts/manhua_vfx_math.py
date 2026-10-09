@@ -5,7 +5,7 @@ import struct
 from pathlib import Path
 
 KINDS = frozenset(('sword_trail', 'impact_burst', 'particle_aura', 'shield', 'spirit',
-                   'fire_burst', 'smoke_plume', 'lightning', 'shockwave', 'speed_lines', 'magic_circle', 'image_overlay'))
+                   'fire_burst', 'smoke_plume', 'lightning', 'shockwave', 'speed_lines', 'magic_circle', 'image_overlay', 'digital_rain', 'liquid_mirror', 'motion_ghost', 'wall_fracture', 'bullet_wave', 'directed_blast'))
 VERSION = 'manhua-vfx-screen-1'
 BOUNDARY = '画面坐标特效层与手动轨迹；不包含自动跟踪、人物遮挡、场景受光或物理仿真。'
 
@@ -63,8 +63,39 @@ def validate_spec(spec, asset_root=None):
     seen = set()
     for effect in spec['effects']:
         fields=('id', 'kind', 'startSec', 'durationSec', 'color', 'scale', 'intensity', 'anchor')
-        if isinstance(effect,dict) and effect.get('kind')=='image_overlay':fields+=('imageUri','imagePath')
-        keys(effect, fields)
+        kind=effect.get('kind') if isinstance(effect,dict) else None
+        extra={'image_overlay':('imageUri','imagePath'),'liquid_mirror':('roi','liquid'),
+               'motion_ghost':('roi','ghost'),'wall_fracture':('wall',),'bullet_wave':('wave',),'directed_blast':('blast',)}
+        fields+=extra.get(kind,())
+        keys(effect, fields, ('rain',) if kind=='digital_rain' else ())
+        if kind in ('liquid_mirror','motion_ghost','bullet_wave'):
+            from manhua_vfx_liquid_ghost import validate_pixel_effect
+            validate_pixel_effect(effect)
+            if kind=='motion_ghost':
+                active_frames=math.ceil((effect['startSec']+effect['durationSec'])*spec['fps']-1e-9)-math.ceil(effect['startSec']*spec['fps']-1e-9)
+                if active_frames<=max(1,round(effect['ghost']['spacingSec']*spec['fps'])):
+                    raise ValueError('残影时间窗不足以取得历史帧')
+        elif kind=='directed_blast':
+            from manhua_vfx_action_math import validate_blast
+            validate_blast(effect['blast'],effect['durationSec'])
+            ignition=effect['startSec']+effect['blast']['ignitionSec']
+            end=effect['startSec']+effect['durationSec']
+            if not any(ignition<=frame/spec['fps']<end for frame in range(math.floor(ignition*spec['fps']),math.ceil(end*spec['fps'])+1)):
+                raise ValueError('起爆后没有可见视频帧')
+        elif kind=='wall_fracture':
+            from manhua_vfx_wall_bullettime_math import validate_wall
+            validate_wall(effect['wall'],effect['durationSec'])
+        if 'rain' in effect:
+            rain=effect['rain']
+            keys(rain, ('columns','speed','trail'), ('glyphSet','characters','layout','direction','glyphRate'))
+            if rain.get('glyphSet','hex') not in ('hex','ritual','custom') or rain.get('layout','rain') not in ('rain','wall') or rain.get('direction','down') not in ('down','up','left','right'):raise ValueError('流动字符模式无效')
+            if 'glyphRate' in rain:number(rain['glyphRate'],0,20,'字符切换速度')
+            if 'characters' in rain and (not isinstance(rain['characters'],str) or not 1<=len(rain['characters'])<=64 or re.search(r'[\s\x00-\x1f\x7f]',rain['characters'])):raise ValueError('自定义字符无效')
+            if rain.get('glyphSet')=='custom' and not rain.get('characters'):raise ValueError('自定义字符不能为空')
+            for field,lo,hi in (('columns',8,36),('speed',.05,1),('trail',4,16)):
+                number(rain[field],lo,hi,'digital rain '+field)
+                if field!='speed' and not isinstance(rain[field],int):
+                    raise ValueError('Digital rain counts must be integers')
         if not isinstance(effect['id'], str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', effect['id']) or effect['id'] in seen:
             raise ValueError('Invalid or duplicate effect id')
         seen.add(effect['id'])
@@ -103,6 +134,12 @@ def validate_spec(spec, asset_root=None):
                 if point['timeSec'] <= previous:
                     raise ValueError('Trajectory times must increase')
                 previous = point['timeSec']
+    pixels=('liquid_mirror','motion_ghost','bullet_wave')
+    for index,effect in enumerate(spec['effects']):
+        if effect['kind'] not in pixels:continue
+        for earlier in spec['effects'][:index]:
+            if earlier['kind'] not in pixels and max(effect['startSec'],earlier['startSec'])<min(effect['startSec']+effect['durationSec'],earlier['startSec']+earlier['durationSec']):
+                raise ValueError('原片像素效果须排在重叠叠加层前面')
     return spec
 
 
