@@ -4,6 +4,10 @@ import puppeteer from "puppeteer";
 import { expect, it } from "vitest";
 
 it.each([
+  ["prop_scene", "prop-holdDurationSec", "1.3", "prop", "holdDurationSec", 1.3],
+  ["cup_fracture", "prop-spread", "1.7", "prop", "spread", 1.7],
+  ["fruit_stall_fracture", "prop-staggerSec", "0.15", "prop", "staggerSec", .15],
+  ["city_fold", "city-foldDeg", "120", "city", "foldDeg", 120],
   ["mirror_corridor", "mirror-layers", "7", "mirror", "layers", 7],
   ["floating_paper", "paper-count", "36", "paper", "count", 36],
   ["bullet_wave", "wave-refraction", "0.025", "wave", "refraction", .025],
@@ -17,7 +21,7 @@ it.each([
   const bundle = await build({ stdin: { resolveDir: process.cwd(), loader: "tsx", contents: `
     import React from 'react';import {createRoot} from 'react-dom/client';import {ManhuaVfxEditor} from './client/src/components/canvas/ManhuaVfxEditor';
     const clip={id:'source',url:'gs://offline/source.mp4',label:'原片'};
-    const scenes=[{jobId:'${sceneId}',scopeId:'10090000-1234-4234-8234-123456789abc',clipId:'clip',label:'真实三维版本',durationSec:2}];
+    const scenes=[{jobId:'${sceneId}',scopeId:'10090000-1234-4234-8234-123456789abc',clipId:'clip',label:'真实三维版本',durationSec:4}];
     globalThis.saved=undefined;globalThis.submitted=[];HTMLMediaElement.prototype.pause=function(){};
     let root=createRoot(document.getElementById('root'));
     function App(){const[state,setState]=React.useState(globalThis.saved);return <ManhuaVfxEditor scopeKey="parameters" state={state} clips={[clip]} scenes={scenes} jobs={[]} busy={false}
@@ -33,6 +37,7 @@ it.each([
     const metadata = async () => { await page.waitForSelector("video"); await page.$eval("video", video => { for (const [key, value] of Object.entries({ duration: 5, videoWidth: 640, videoHeight: 360 })) Object.defineProperty(video, key, { configurable: true, value }); video.dispatchEvent(new Event("loadedmetadata")); }); };
     const click = async (label: string) => page.evaluate(label => { const button = Array.from(document.querySelectorAll("button")).find(button => button.textContent === label); if (!button || button.disabled) throw Error(label + " unavailable"); button.click(); }, label);
     await page.waitForSelector("select"); await page.select("select:not([aria-label])", "source"); await metadata(); await page.select('[aria-label="添加特效"]', kind);
+    if (kind === "prop_scene") { await page.select('[aria-label="world-scene"]', sceneId); }
     if (kind === "bullet_time") { await page.select('[aria-label="bullet-scene"]', sceneId); expect(await page.evaluate(() => Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(button => button.textContent === "用当前秒位添加轨迹点")?.disabled)).toBe(true); }
     await page.$eval(`[aria-label="${field}"]`, (input, value) => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value); input.dispatchEvent(new Event("input", { bubbles: true })); }, value);
     await click("保存方案"); await page.waitForFunction(() => Boolean((globalThis as any).saved?.draft));
@@ -40,7 +45,7 @@ it.each([
     expect(saved[group][key]).toBe(expected);
     if (kind === "bullet_time") { expect(saved.bullet.sceneJobId).toBe(sceneId); expect(saved.bullet.sweepDeg).toBe(360); expect(saved.bullet.yawDeg).toBeUndefined(); }
     await page.evaluate(() => (globalThis as any).remount()); await metadata();
-    await page.evaluate(kind => { const button = Array.from(document.querySelectorAll<HTMLButtonElement>('[aria-label="特效图层"] button')).find(button => button.textContent?.includes(kind === "mirror_corridor" ? "镜面纵深" : kind === "floating_paper" ? "纸页悬浮" : kind === "liquid_mirror" ? "液态" : kind === "motion_ghost" ? "残影" : kind === "wall_fracture" ? "幕墙" : kind === "bullet_wave" ? "弹道波纹" : kind === "directed_blast" ? "定向爆破" : "子弹时间")); button!.click(); }, kind);
+    await page.evaluate(kind => { const button = Array.from(document.querySelectorAll<HTMLButtonElement>('[aria-label="特效图层"] button')).find(button => button.textContent?.includes(kind === "prop_scene" ? "碎片定格" : kind === "cup_fracture" ? "咖啡杯" : kind === "fruit_stall_fracture" ? "果摊" : kind === "city_fold" ? "街区翻折" : kind === "mirror_corridor" ? "镜面纵深" : kind === "floating_paper" ? "纸页悬浮" : kind === "liquid_mirror" ? "液态" : kind === "motion_ghost" ? "残影" : kind === "wall_fracture" ? "幕墙" : kind === "bullet_wave" ? "弹道波纹" : kind === "directed_blast" ? "定向爆破" : "子弹时间")); button!.click(); }, kind);
     expect(await page.$eval(`[aria-label="${field}"]`, input => (input as HTMLInputElement).value)).toBe(value);
     await click("渲染特效候选"); await page.waitForFunction(() => (globalThis as any).submitted.length === 1);
     expect(await page.evaluate(kind => (globalThis as any).submitted[0].params.composition.effects.find((effect: any) => effect.kind === kind), kind)).toEqual(saved); expect(errors).toEqual([]);

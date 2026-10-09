@@ -20,6 +20,9 @@ from manhua_vfx_extras import EXTRA_KINDS, build_extra, update_extra
 from manhua_vfx_image import build_image_overlay
 from manhua_vfx_rain import build_digital_rain, update_digital_rain
 from manhua_vfx_directed_blast import build_directed_blast, update_directed_blast
+from manhua_vfx_city import configure_city_scene, build_city, update_city
+from manhua_vfx_prop_math import paused_age
+from manhua_vfx_prop import build_prop_fracture, update_prop_fracture
 from manhua_vfx_wall_bullettime import build_wall_fracture, update_wall_fracture
 
 MAX_RENDER_BYTES = 2 * 1024**3
@@ -116,6 +119,8 @@ def glow_quad(name, scene, mat):
 def build_vfx(spec, scene, asset_root=None):
     """Build only new effects. Caller must provide a matching orthographic screen camera."""
     validate_spec(spec,asset_root)
+    if any(event['kind']=='city_fold' for event in spec['effects']) and len(spec['effects'])!=1:
+        raise ValueError('三维街区须由服务端分离到独立渲染层')
     handles = []
     for index, event in enumerate(spec['effects']):
         color = srgb(event['color'])
@@ -134,6 +139,8 @@ def build_vfx(spec, scene, asset_root=None):
         rain = None
         wall = None
         blast = None
+        prop = None
+        city = None
         if kind == 'sword_trail':
             for j, m in enumerate((mat, core)):
                 strips.append(ribbon(event['id'] + '_blade_%d' % j, scene, m))
@@ -172,6 +179,13 @@ def build_vfx(spec, scene, asset_root=None):
         elif kind == 'directed_blast':
             blast=build_directed_blast(event,spec,scene,color)
             objects += blast['objects']
+        elif kind == 'city_fold':
+            city=build_city(event,spec,scene,color)
+            city['hinge'].parent=root
+            objects += city['objects']
+        elif kind in ('cup_fracture','fruit_stall_fracture'):
+            prop=build_prop_fracture(event,spec,scene,material,color)
+            objects += prop['objects']
         elif kind == 'wall_fracture':
             wall=build_wall_fracture(event,spec,scene,material,color)
             objects += wall['objects']
@@ -180,9 +194,9 @@ def build_vfx(spec, scene, asset_root=None):
             objects += extra['objects']
         objects += rings + strips + [p[0] for p in particles]
         for obj in objects:
-            obj.parent = root
+            if obj.parent is None: obj.parent = root
         handles.append({'event': event, 'root': root, 'objects': objects, 'rings': rings, 'strips': strips,
-                        'rain': rain, 'wall': wall, 'blast': blast, 'particles': particles, 'opacity': opacity, 'coreOpacity': core_opacity,
+                        'rain': rain, 'wall': wall, 'blast': blast, 'prop': prop, 'city': city, 'particles': particles, 'opacity': opacity, 'coreOpacity': core_opacity,
                         'glowOpacity': glow_opacity, 'extra':extra, 'imageOpacity':image_opacity, 'imageAsset':image_receipt, 'rimOpacity': rim_opacity if kind == 'shield' else None})
     return handles
 
@@ -193,6 +207,10 @@ def update_vfx(handles, spec, time):
     for order, h in enumerate(handles):
         e = h['event']
         state = state_at(e, time)
+        if e.get('prop'):
+            held_time=e['startSec']+paused_age(time-e['startSec'],e['prop'])
+            state['position']=position_at(e,held_time)
+            state['opacity']=state_at(e,held_time)['opacity'] if state['active'] else 0
         q, fade = state['progress'], state['opacity']
         x, y = state['position']
         h['root'].location = ((x-.5)*aspect, .5-y, order*.015)
@@ -284,6 +302,10 @@ def update_vfx(handles, spec, time):
             state.update(update_wall_fracture(h['wall'],e,time,state))
         elif kind == 'directed_blast':
             state.update(update_directed_blast(h['blast'],e,time,state))
+        elif kind in ('cup_fracture','fruit_stall_fracture'):
+            state.update(update_prop_fracture(h['prop'],e,time,state))
+        elif kind == 'city_fold':
+            state.update(update_city(h['city'],e,time,state))
         elif kind in ('liquid_mirror','motion_ghost','bullet_wave','mirror_corridor','floating_paper'):
             state['mode']='source-pixels-before-overlay'
         elif h.get('extra'):
@@ -326,6 +348,8 @@ def configure_scene(spec):
     obj.location = (0,0,10)
     scene.camera = obj
     scene.frame_start, scene.frame_end = 1, math.ceil(spec['durationSec']*spec['fps'])
+    city=next((event for event in spec['effects'] if event['kind']=='city_fold'),None)
+    if city:configure_city_scene(scene,spec,city)
     return scene
 
 
@@ -361,7 +385,7 @@ def render(spec_path, output):
     scene = configure_scene(spec)
     handles = build_vfx(spec, scene,asset_root)
     manifest = {'version':1,'renderer':VERSION,'blenderVersion':bpy.app.version_string,
-                'implementationSha256':{name:hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest() for name in ('manhua_vfx.py','manhua_vfx_math.py','manhua_vfx_extras.py','manhua_vfx_image.py')},
+                'implementationSha256':{name:hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest() for name in ('manhua_vfx.py','manhua_vfx_math.py','manhua_vfx_extras.py','manhua_vfx_image.py','manhua_vfx_prop.py','manhua_vfx_prop_math.py','manhua_vfx_city.py','manhua_vfx_city_math.py')},
                 'complete':False,'width':spec['width'],'height':spec['height'],'fps':spec['fps'],
                 'frameCount':scene.frame_end,'durationSec':spec['durationSec'],
                 'coordinateSpace':'screen_top_left_normalized','alpha':'straight','colorSpace':'sRGB',

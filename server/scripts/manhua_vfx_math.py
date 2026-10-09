@@ -5,7 +5,7 @@ import struct
 from pathlib import Path
 
 KINDS = frozenset(('sword_trail', 'impact_burst', 'particle_aura', 'shield', 'spirit',
-                   'fire_burst', 'smoke_plume', 'lightning', 'shockwave', 'speed_lines', 'magic_circle', 'image_overlay', 'digital_rain', 'liquid_mirror', 'motion_ghost', 'wall_fracture', 'bullet_wave', 'directed_blast', 'mirror_corridor', 'floating_paper'))
+                   'fire_burst', 'smoke_plume', 'lightning', 'shockwave', 'speed_lines', 'magic_circle', 'image_overlay', 'digital_rain', 'liquid_mirror', 'motion_ghost', 'wall_fracture', 'bullet_wave', 'directed_blast', 'mirror_corridor', 'floating_paper', 'cup_fracture', 'fruit_stall_fracture', 'city_fold'))
 VERSION = 'manhua-vfx-screen-1'
 BOUNDARY = '画面坐标特效层与手动轨迹；不包含自动跟踪、人物遮挡、场景受光或物理仿真。'
 
@@ -60,12 +60,14 @@ def validate_spec(spec, asset_root=None):
         raise ValueError('Resolution exceeds pixel budget')
     if not isinstance(spec['effects'], list) or not 1 <= len(spec['effects']) <= 12:
         raise ValueError('Expected 1..12 effects')
+    if sum(116 if e.get('kind')=='cup_fracture' else 216 if e.get('kind')=='fruit_stall_fracture' else 0 for e in spec['effects'] if isinstance(e,dict))>864:
+        raise ValueError('道具碎裂总片数超过864')
     seen = set()
     for effect in spec['effects']:
         fields=('id', 'kind', 'startSec', 'durationSec', 'color', 'scale', 'intensity', 'anchor')
         kind=effect.get('kind') if isinstance(effect,dict) else None
         extra={'image_overlay':('imageUri','imagePath'),'liquid_mirror':('roi','liquid'),
-               'motion_ghost':('roi','ghost'),'wall_fracture':('wall',),'bullet_wave':('wave',),'directed_blast':('blast',),'mirror_corridor':('roi','mirror'),'floating_paper':('paper',)}
+               'motion_ghost':('roi','ghost'),'wall_fracture':('wall',),'bullet_wave':('wave',),'directed_blast':('blast',),'mirror_corridor':('roi','mirror'),'floating_paper':('paper',),'cup_fracture':('prop',),'fruit_stall_fracture':('prop',),'city_fold':('city',)}
         fields+=extra.get(kind,())
         keys(effect, fields, ('rain',) if kind=='digital_rain' else ())
         if kind in ('liquid_mirror','motion_ghost','bullet_wave','mirror_corridor','floating_paper'):
@@ -75,6 +77,22 @@ def validate_spec(spec, asset_root=None):
                 active_frames=math.ceil((effect['startSec']+effect['durationSec'])*spec['fps']-1e-9)-math.ceil(effect['startSec']*spec['fps']-1e-9)
                 if active_frames<=max(1,round(effect['ghost']['spacingSec']*spec['fps'])):
                     raise ValueError('残影时间窗不足以取得历史帧')
+        elif kind=='city_fold':
+            from manhua_vfx_city_math import validate_city
+            validate_city(effect['city'],effect['durationSec'])
+            if effect['scale']!=1 or effect['intensity']!=1 or effect['anchor'].get('trajectory') or effect['anchor']['position']!=[.5,.5]:
+                raise ValueError('三维场景不接受局部挂点、缩放或轨迹')
+            last=effect['startSec']+effect['city']['foldEndSec'];end=effect['startSec']+effect['durationSec']
+            if not any(last<=frame/spec['fps']<end for frame in range(math.floor(last*spec['fps']),math.ceil(end*spec['fps'])+1)):
+                raise ValueError('翻折完成之后没有可见视频帧')
+        elif kind in ('cup_fracture','fruit_stall_fracture'):
+            from manhua_vfx_prop_math import validate_prop
+            last=effect['startSec']+validate_prop(kind,effect['prop'],effect['durationSec'])
+            end=effect['startSec']+effect['durationSec']
+            hold_start=effect['startSec']+effect['prop']['holdStartSec'];hold_end=hold_start+effect['prop']['holdDurationSec']
+            if sum(hold_start<=frame/spec['fps']<hold_end for frame in range(math.floor(hold_start*spec['fps']),math.ceil(hold_end*spec['fps'])+1))<2:raise ValueError('定格时间窗至少需要两帧')
+            if not any(last<=frame/spec['fps']<end for frame in range(math.floor(last*spec['fps']),math.ceil(end*spec['fps'])+1)):
+                raise ValueError('最后一个爆点之后没有可见视频帧')
         elif kind=='directed_blast':
             from manhua_vfx_action_math import validate_blast
             validate_blast(effect['blast'],effect['durationSec'])
@@ -134,6 +152,11 @@ def validate_spec(spec, asset_root=None):
                 if point['timeSec'] <= previous:
                     raise ValueError('Trajectory times must increase')
                 previous = point['timeSec']
+    if sum(effect['kind']=='city_fold' for effect in spec['effects'])>1:raise ValueError('每次方案只渲染一个三维场景时窗')
+    for effect in spec['effects']:
+        if effect['kind']=='city_fold':
+            for other in spec['effects']:
+                if other is not effect and max(effect['startSec'],other['startSec'])<min(effect['startSec']+effect['durationSec'],other['startSec']+other['durationSec']):raise ValueError('三维时窗须与其他效果分开')
     pixels=('liquid_mirror','motion_ghost','bullet_wave','mirror_corridor','floating_paper')
     for index,effect in enumerate(spec['effects']):
         if effect['kind'] not in pixels:continue

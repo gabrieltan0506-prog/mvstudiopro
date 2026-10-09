@@ -1,3 +1,5 @@
+import { MANHUA_VFX_CITY_DEFAULTS } from "@shared/manhuaVfxCityFold";
+import { MANHUA_VFX_PROP_DEFAULTS, MANHUA_VFX_WORLD_DEFAULTS, isManhuaVfxPropKind } from "@shared/manhuaVfxPropFracture";
 import { MANHUA_VFX_MIRROR_DEFAULTS, MANHUA_VFX_PAPER_DEFAULTS, MANHUA_VFX_WAVE_DEFAULTS, MANHUA_VFX_BLAST_DEFAULTS, MANHUA_VFX_ROI_DEFAULTS, MANHUA_VFX_LIQUID_DEFAULTS, MANHUA_VFX_GHOST_DEFAULTS, MANHUA_VFX_WALL_DEFAULTS, MANHUA_VFX_BULLET_DEFAULTS } from "@shared/manhuaVfxPixelParameters";
 import { MANHUA_VFX_RAIN_DEFAULTS } from "@shared/manhuaVfx";
 import { manhuaVfxCompositionSchema, type ManhuaVfxComposition, type ManhuaVfxEffect, type ManhuaVfxState } from "@shared/manhuaVfx";
@@ -49,8 +51,11 @@ export function sameManhuaVfxComposition(a: unknown, b: unknown): boolean {
 
 export function makeManhuaVfxEffect(kind: ManhuaVfxEffect["kind"], id: string): ManhuaVfxEffect {
   return {
-    id, kind, startSec: 0, durationSec: 1,
-    color: kind === "floating_paper" ? "#FFF5DF" : kind === "digital_rain" ? "#35FF82" : ["impact_burst", "directed_blast"].includes(kind) ? "#FFB35C" : "#67E8F9", scale: ["digital_rain", "liquid_mirror", "motion_ghost", "wall_fracture", "bullet_time", "bullet_wave", "directed_blast", "mirror_corridor", "floating_paper"].includes(kind) ? 1 : kind === "shield" ? 0.4 : 0.25, intensity: 1,
+    id, kind, startSec: 0, durationSec: isManhuaVfxPropKind(kind) || kind === "city_fold" || kind === "prop_scene" ? 3 : 1,
+    color: kind === "city_fold" ? "#C8B396" : isManhuaVfxPropKind(kind) || kind === "prop_scene" ? "#F3E8D4" : kind === "floating_paper" ? "#FFF5DF" : kind === "digital_rain" ? "#35FF82" : ["impact_burst", "directed_blast"].includes(kind) ? "#FFB35C" : "#67E8F9", scale: ["digital_rain", "liquid_mirror", "motion_ghost", "wall_fracture", "bullet_time", "bullet_wave", "directed_blast", "mirror_corridor", "floating_paper", "city_fold", "prop_scene"].includes(kind) ? 1 : kind === "fruit_stall_fracture" ? .65 : kind === "cup_fracture" ? .45 : kind === "shield" ? 0.4 : 0.25, intensity: 1,
+    ...(kind === "city_fold" ? { city: { ...MANHUA_VFX_CITY_DEFAULTS } } : {}),
+    ...(kind === "prop_scene" ? { world: { ...MANHUA_VFX_WORLD_DEFAULTS, position: [...MANHUA_VFX_WORLD_DEFAULTS.position] as [number, number, number] } } : {}),
+    ...(isManhuaVfxPropKind(kind) || kind === "prop_scene" ? { prop: { ...MANHUA_VFX_PROP_DEFAULTS, staggerSec: kind === "cup_fracture" ? 0 : MANHUA_VFX_PROP_DEFAULTS.staggerSec } } : {}),
     ...(kind === "mirror_corridor" ? { mirror: { ...MANHUA_VFX_MIRROR_DEFAULTS }, roi: { shape: "rectangle" as const, width: .8, height: .85, feather: .025 } } : {}),
     ...(kind === "floating_paper" ? { paper: { ...MANHUA_VFX_PAPER_DEFAULTS } } : {}),
     ...(kind === "bullet_wave" ? { wave: { ...MANHUA_VFX_WAVE_DEFAULTS } } : {}),
@@ -139,6 +144,10 @@ export function upsertManhuaVfxTrajectoryPoint(points: Array<{ timeSec: number; 
 
 /** Same linear screen interpolation as the fixed Blender renderer, for the position guide only. */
 export function manhuaVfxPositionAtTime(effect: ManhuaVfxEffect, timeSec: number): [number, number] {
+  if (effect.prop && Number.isFinite(timeSec)) {
+    const { holdStartSec, holdDurationSec } = effect.prop, age = timeSec - effect.startSec;
+    timeSec = effect.startSec + (age < holdStartSec ? age : age < holdStartSec + holdDurationSec ? holdStartSec : age - holdDurationSec);
+  }
   const points = effect.anchor.trajectory;
   if (!points?.length || !Number.isFinite(timeSec) || points.some((point, index) =>
     ![point.timeSec, point.x, point.y].every(Number.isFinite) || point.timeSec < 0 || point.x < 0 || point.x > 1 || point.y < 0 || point.y > 1 || (index > 0 && point.timeSec <= points[index - 1].timeSec))) return effect.anchor.position;

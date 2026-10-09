@@ -1,9 +1,14 @@
+import { manhuaVfxCitySchema, isManhuaVfxSceneKind } from "./manhuaVfxCityFold";
+import { manhuaVfxPropSchema, manhuaVfxPropLastImpact, manhuaVfxWorldSchema } from "./manhuaVfxPropFracture";
 import { z } from "zod";
 import { manhuaVfxRoiSchema, manhuaVfxLiquidSchema, manhuaVfxGhostSchema, manhuaVfxWallSchema, manhuaVfxBulletSchema, manhuaVfxWaveSchema, manhuaVfxBlastSchema, manhuaVfxMirrorSchema, manhuaVfxPaperSchema } from "./manhuaVfxPixelParameters";
 
 /** A versioned, bounded effect recipe. Screen trajectories are authored, not inferred tracking. */
-export const MANHUA_VFX_KINDS = ["sword_trail", "impact_burst", "particle_aura", "shield", "spirit", "fire_burst", "smoke_plume", "lightning", "shockwave", "speed_lines", "magic_circle", "image_overlay", "digital_rain", "liquid_mirror", "motion_ghost", "wall_fracture", "bullet_time", "bullet_wave", "directed_blast", "mirror_corridor", "floating_paper"] as const;
+export const MANHUA_VFX_KINDS = ["sword_trail", "impact_burst", "particle_aura", "shield", "spirit", "fire_burst", "smoke_plume", "lightning", "shockwave", "speed_lines", "magic_circle", "image_overlay", "digital_rain", "liquid_mirror", "motion_ghost", "wall_fracture", "bullet_time", "bullet_wave", "directed_blast", "mirror_corridor", "floating_paper", "cup_fracture", "fruit_stall_fracture", "city_fold", "prop_scene"] as const;
 export const MANHUA_VFX_PRESET_LABELS: Record<typeof MANHUA_VFX_KINDS[number], string> = {
+  prop_scene: "碎片定格·人物活动（三维场景）",
+  city_fold: "街区翻折（三维程序场景）",
+  cup_fracture: "咖啡杯碎裂（三维道具）", fruit_stall_fracture: "果摊连锁碎裂（三维道具）",
   mirror_corridor: "镜面纵深（画面递归）", floating_paper: "纸页悬浮（程序叠加）",
   bullet_wave: "弹道波纹（原片折射）", directed_blast: "定向爆破",
   liquid_mirror: "液态镜面", motion_ghost: "动作残影（手动区域）", wall_fracture: "幕墙撞击（程序墙体）", bullet_time: "子弹时间（三维环绕）",
@@ -30,6 +35,7 @@ export const manhuaVfxEffectSchema = z.object({
   kind: z.enum(MANHUA_VFX_KINDS),
   startSec: time,
   durationSec: z.number().finite().min(1 / 60).max(30),
+  world: manhuaVfxWorldSchema.optional(), city: manhuaVfxCitySchema.optional(), prop: manhuaVfxPropSchema.optional(),
   mirror: manhuaVfxMirrorSchema.optional(), paper: manhuaVfxPaperSchema.optional(),
   rain: rainSchema.optional(), wave: manhuaVfxWaveSchema.optional(), blast: manhuaVfxBlastSchema.optional(),
   roi: manhuaVfxRoiSchema.optional(), liquid: manhuaVfxLiquidSchema.optional(), ghost: manhuaVfxGhostSchema.optional(), wall: manhuaVfxWallSchema.optional(), bullet: manhuaVfxBulletSchema.optional(),
@@ -78,28 +84,34 @@ export function manhuaVfxFrameSpan(startSec: number, durationSec: number, fps: n
 }
 export const isManhuaVfxPixelKind = (kind: string) => ["liquid_mirror", "motion_ghost", "bullet_wave", "mirror_corridor", "floating_paper"].includes(kind);
 export function validateManhuaVfxLayerOrder(effects: ManhuaVfxEffect[], bad: (message: string) => void) {
-  if (effects.filter(effect => effect.kind === "bullet_time").length > 1) bad("每次方案只渲染一个三维环绕时窗，请分段保存候选");
+  if (effects.reduce((count, effect) => count + ((effect.world?.propKind || effect.kind) === "cup_fracture" ? 116 : (effect.world?.propKind || effect.kind) === "fruit_stall_fracture" ? 216 : 0), 0) > 864)
+    bad("道具碎裂总片数超过864，请减少同时渲染的道具图层");
+  if (effects.filter(effect => isManhuaVfxSceneKind(effect.kind)).length > 1) bad("每次方案只渲染一个三维场景时窗，请分段保存候选");
   const pixels = isManhuaVfxPixelKind;
   effects.forEach((effect, index) => effects.slice(0, index).forEach(previous => {
     const overlap = Math.max(effect.startSec, previous.startSec) < Math.min(effect.startSec + effect.durationSec, previous.startSec + previous.durationSec);
     if (!overlap) return;
-    if (effect.kind === "bullet_time" || previous.kind === "bullet_time") bad("三维环绕时窗须与其他效果分开，避免二维与三维画面冲突");
+    if (isManhuaVfxSceneKind(effect.kind) || isManhuaVfxSceneKind(previous.kind)) bad("三维环绕时窗须与其他效果分开，避免二维与三维画面冲突");
     else if (pixels(effect.kind) && !pixels(previous.kind)) bad("重叠时窗的原片变形与残影须排在叠加层前面");
   }));
 }
 /** 工作流与顾问共享同一字段适用性门禁，拒绝静默忽略。 */
 export function validateManhuaVfxEffectParameters(effect: ManhuaVfxEffect, bad: (message: string) => void) {
   if (effect.rain?.glyphSet === "custom" && !effect.rain.characters) bad("自定义字符层须填写实际字符");
-  const contract = { mirror: ["mirror_corridor"], paper: ["floating_paper"], wave: ["bullet_wave"], blast: ["directed_blast"], rain: ["digital_rain"], roi: ["liquid_mirror", "motion_ghost", "mirror_corridor"], liquid: ["liquid_mirror"], ghost: ["motion_ghost"], wall: ["wall_fracture"], bullet: ["bullet_time"] };
+  const contract = { world: ["prop_scene"], city: ["city_fold"], prop: ["cup_fracture", "fruit_stall_fracture", "prop_scene"], mirror: ["mirror_corridor"], paper: ["floating_paper"], wave: ["bullet_wave"], blast: ["directed_blast"], rain: ["digital_rain"], roi: ["liquid_mirror", "motion_ghost", "mirror_corridor"], liquid: ["liquid_mirror"], ghost: ["motion_ghost"], wall: ["wall_fracture"], bullet: ["bullet_time"] };
   for (const [field, kinds] of Object.entries(contract)) {
     const present = effect[field as keyof typeof contract] !== undefined;
     if (present && !kinds.includes(effect.kind)) bad("本图层不接受" + field + "参数");
     if (!present && kinds.includes(effect.kind) && field !== "rain") bad("本图层缺少" + field + "参数");
   }
+  if ((effect.world?.propKind || effect.kind) === "cup_fracture" && effect.prop?.staggerSec !== 0) bad("单个杯体不接受连续爆点间隔");
+  if (effect.prop && manhuaVfxPropLastImpact(effect.world?.propKind || effect.kind, effect.prop) >= effect.durationSec) bad("最后一个爆点须位于图层时间窗内");
+  if (effect.prop && (effect.prop.holdStartSec <= manhuaVfxPropLastImpact(effect.world?.propKind || effect.kind, effect.prop) || effect.prop.holdStartSec + effect.prop.holdDurationSec > effect.durationSec)) bad("定格须晚于全部爆点且不超出图层时间窗");
   if (effect.blast && effect.blast.ignitionSec >= effect.durationSec) bad("起爆秒位须位于图层时间窗内");
   if (effect.wall && effect.wall.impactSec >= effect.durationSec) bad("撞击秒位须位于图层时间窗内");
-  if (effect.kind === "bullet_time" && (effect.scale !== 1 || effect.intensity !== 1 || effect.anchor.position[0] !== .5 || effect.anchor.position[1] !== .5 || effect.anchor.trajectory))
-    bad("三维环绕使用完整画幅，不接受局部位置、轨迹或透明缩放");
+  if (effect.city && (effect.city.foldStartSec >= effect.city.foldEndSec || effect.city.foldEndSec >= effect.durationSec)) bad("翻折结束须晚于开始并早于图层结束");
+  if (isManhuaVfxSceneKind(effect.kind) && (effect.scale !== 1 || effect.intensity !== 1 || effect.anchor.position[0] !== .5 || effect.anchor.position[1] !== .5 || effect.anchor.trajectory))
+    bad("三维场景使用完整画幅，不接受局部位置、轨迹或透明缩放");
 }
 export type ManhuaVfxComposition = z.infer<typeof manhuaVfxCompositionSchema>;
 export type ManhuaVfxParams = z.infer<typeof manhuaVfxParamsSchema>;
@@ -184,6 +196,9 @@ export function validateManhuaVfxSource(recipe: ManhuaVfxComposition, source: { 
   if (dreamSamples > 800_000_000)
     throw new Error("镜面或纸页处理预算超限，请缩短时窗、缩小范围或减少数量");
   for (const effect of recipe.effects) {
+    if (effect.prop) { const held = manhuaVfxFrameSpan(effect.startSec + effect.prop.holdStartSec, effect.prop.holdDurationSec, fps); if (held.stop - held.first < 2) throw new Error("定格时间窗至少需要两帧"); }
+    if (effect.city && manhuaVfxFrameSpan(effect.startSec + effect.city.foldEndSec, effect.durationSec - effect.city.foldEndSec, fps).first >= manhuaVfxFrameSpan(effect.startSec, effect.durationSec, fps).stop) throw new Error("翻折完成之后没有可见视频帧");
+    if (effect.prop && manhuaVfxFrameSpan(effect.startSec + manhuaVfxPropLastImpact(effect.world?.propKind || effect.kind, effect.prop), effect.durationSec - manhuaVfxPropLastImpact(effect.world?.propKind || effect.kind, effect.prop), fps).first >= manhuaVfxFrameSpan(effect.startSec, effect.durationSec, fps).stop) throw new Error("最后一个爆点之后没有可见视频帧");
     if (effect.blast && manhuaVfxFrameSpan(effect.startSec + effect.blast.ignitionSec, effect.durationSec - effect.blast.ignitionSec, fps).first >= manhuaVfxFrameSpan(effect.startSec, effect.durationSec, fps).stop) throw new Error("起爆后没有可见视频帧，请提前起爆或延长时窗");
     if (effect.bullet) {
       const { first, stop } = manhuaVfxFrameSpan(effect.startSec, effect.durationSec, fps);

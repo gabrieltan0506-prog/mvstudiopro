@@ -32,3 +32,11 @@ it("worker下载仅落当前请求scenes目录，核对真实字节SHA；变化�
   await expect(prepareManhuaVfxScene(f.bullet, "bad", "7", root, new AbortController().signal, { ...deps, fetch: async (_uri, target) => { await writeFile(target, Buffer.alloc(1024)); return 1024; } })).rejects.toThrow("SHA");
   await expect(prepareManhuaVfxScene(f.bullet, "cancel", "7", root, AbortSignal.abort(), deps)).rejects.toThrow();
 });
+
+it("人物活动场景复用同一归属门禁，起始时间与片段不能串用", async () => {
+  const f = fixture(), world = { sceneJobId: f.bullet.sceneJobId, sceneScopeId: f.bullet.sceneScopeId, clipId: f.bullet.clipId, sourceStartSec: .5 };
+  expect(await resolveManhuaVfxSceneSource(world, "7", async () => f.job)).toMatchObject({ sha256: f.sha256 });
+  await expect(resolveManhuaVfxSceneSource(world, "8", async () => f.job)).rejects.toThrow();
+  await expect(resolveManhuaVfxSceneSource({ ...world, clipId: "another" }, "7", async () => f.job)).rejects.toThrow();
+  await expect(resolveManhuaVfxSceneSource({ ...world, sourceStartSec: 2 }, "7", async () => f.job)).rejects.toThrow();
+});

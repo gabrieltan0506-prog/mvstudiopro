@@ -11,6 +11,7 @@ import { fetchPostProdSourceToFile, runMediaTool, uploadResult } from "./postPro
 import { blenderLaunchCommand, blenderLowPriorityDefault, runPrevisProcess } from "./manhuaPrevisRender";
 import { mediaRuntime } from "./postProdResources";
 import { prepareManhuaVfxScene } from "./manhuaVfxSceneSource";
+import { isManhuaVfxSceneKind } from "../../shared/manhuaVfxCityFold";
 
 const sha = (value: Buffer) => createHash("sha256").update(value).digest("hex");
 const frameSchema = z.object({ frame: z.number().int(), path: z.string(), bytes: z.number().int().positive().max(32 * 1024 * 1024), sha256: z.string().regex(/^[a-f0-9]{64}$/) });
@@ -71,6 +72,7 @@ export function validateVfxManifest(raw: unknown, recipe: ManhuaVfxComposition, 
   if (manifest.frameCount !== expected || manifest.files.length !== expected || manifest.frames.length !== expected ||
       manifest.width !== meta.width || manifest.height !== meta.height || manifest.fps !== meta.fps)
     throw new Error("特效帧数或画幅不完整，未合成原片");
+  const heldStates = new Map<string, Set<string>>();
   for (let index = 0; index < expected; index++) {
     const row = manifest.frames[index];
     if (row.frame !== index + 1 || Math.abs(row.timeSec - index / meta.fps) > 1e-7 ||
@@ -80,8 +82,53 @@ export function validateVfxManifest(raw: unknown, recipe: ManhuaVfxComposition, 
       const actual = row.effects.find(item => item.id === effect.id);
       const active = row.timeSec >= effect.startSec && row.timeSec < effect.startSec + effect.durationSec;
       if (!actual || actual.kind !== effect.kind || actual.active !== active) throw new Error("特效逐帧证据与本次方案不一致");
+      if (effect.prop) {
+        const cup = (effect.world?.propKind || effect.kind) === "cup_fracture", count = cup ? 116 : 216;
+        const groups = Array.from({ length: cup ? 1 : 4 }, (_, group) => row.timeSec - effect.startSec >= effect.prop!.impactSec + group * effect.prop!.staggerSec).filter(Boolean).length;
+        const proof = z.object({ geometry: z.literal(cup ? "closed-ceramic-and-handle" : "fruit-wedges-crates-petals-paper"), fragmentCount: z.number().int(),
+          explodedFragments: z.number().int(), visibleFragments: z.number().int(), poseSha256: digest, held: z.boolean() }).parse(actual);
+        if (proof.fragmentCount !== count || proof.explodedFragments !== groups * (cup ? 116 : 54) || proof.visibleFragments !== (active && effect.intensity > 0 ? (cup ? 76 + groups * 40 : 168 + groups * 12) : 0))
+          throw new Error("道具实体碎片或连锁起爆证据与本次方案不一致");
+        const age = row.timeSec - effect.startSec;
+        if (proof.held !== (age >= effect.prop.holdStartSec && age < effect.prop.holdStartSec + effect.prop.holdDurationSec)) throw new Error("道具定格时窗与方案不一致");
+        if (active && proof.held) {
+          const states = heldStates.get(effect.id) || new Set<string>();
+          // 三维世界人物/相机仍运动；只比较道具证据与固定画面挂点，不比较整幅画面。
+          states.add(JSON.stringify([proof.poseSha256, actual.position, actual.opacity])); heldStates.set(effect.id, states);
+        }
+      }
+      if (effect.city) {
+        const p = effect.city, q = Math.max(0, Math.min(1, (row.timeSec - effect.startSec - p.foldStartSec) / (p.foldEndSec - p.foldStartSec)));
+        const angle = p.foldDeg * q * q * (3 - 2 * q), radians = angle * Math.PI / 180;
+        const proof = z.object({ geometry: z.literal("procedural-street-hinged-world3d"), meshCount: z.number().int(), vertexCount: z.number().int().positive().max(60_000),
+          foldDeg: z.number().finite(), hingeMatrix: z.array(z.array(z.number().finite()).length(4)).length(4), movingMatrixSha256: digest,
+          camera: z.object({ type: z.literal("PERSP"), lensMm: z.number().finite(), position: xyz }) }).parse(actual);
+        if (proof.meshCount !== 6 + 2 * p.blocks || Math.abs(proof.foldDeg - angle) > .0001 || proof.camera.lensMm !== p.lensMm ||
+            Math.abs(proof.hingeMatrix[1][1] - Math.cos(radians)) > .00001 || Math.abs(proof.hingeMatrix[2][1] - Math.sin(radians)) > .00001)
+          throw new Error("街区三维铰链或透视相机未执行本次参数");
+      }
     }
   }
+  for (const effect of recipe.effects) if (effect.prop && heldStates.get(effect.id)?.size !== 1) throw new Error("道具在定格窗内仍发生位移、旋转或透明度变化");
+  return manifest;
+}
+/** 几何定格与人物运动须同时成立；只有相机运动不能冒充人物在动。 */
+export function validateVfxWorldManifest(raw: unknown, effect: ManhuaVfxEffect & { sceneSha256?: string }, meta: { durationSec: number; width: number; height: number; fps: number }) {
+  const manifest = validateVfxManifest(raw, { version: 1, seed: 0, effects: [effect] }, meta);
+  const source = z.object({ eventId: z.string(), sceneJobId: z.string(), sceneSha256: digest, sourceFps: z.number().finite().positive().max(240),
+    sourceFrameStart: z.number().int(), sourceFrameEnd: z.number().int(), sourceVertices: z.number().int().positive().max(2_000_000), actorMeshes: z.array(z.string().min(1).max(512)).min(1).max(2048) }).parse(raw);
+  if (!effect.world || !effect.prop || source.eventId !== effect.id || source.sceneJobId !== effect.world.sceneJobId || source.sceneSha256 !== effect.sceneSha256 ||
+      source.sourceFrameEnd < source.sourceFrameStart || effect.world.sourceStartSec + effect.durationSec > (source.sourceFrameEnd - source.sourceFrameStart + 1) / source.sourceFps + 1e-9)
+    throw new Error("人物活动三维场景身份或时间轴与本次请求不一致");
+  const heldProps = new Set<string>(), heldActors = new Set<string>();
+  for (const row of manifest.frames) {
+    const proof = z.object({ active: z.boolean(), held: z.boolean(), poseSha256: digest, actorPoseSha256: digest.nullable(), sourceFrame: z.number().finite().nullable(), cameraType: z.literal("PERSP") }).parse(row.effects[0]);
+    const held = row.timeSec - effect.startSec >= effect.prop.holdStartSec && row.timeSec - effect.startSec < effect.prop.holdStartSec + effect.prop.holdDurationSec;
+    if (proof.held !== held || (proof.active ? proof.sourceFrame === null || proof.actorPoseSha256 === null || Math.abs(proof.sourceFrame - (source.sourceFrameStart + (effect.world.sourceStartSec + row.timeSec - effect.startSec) * source.sourceFps)) > 1e-6 : proof.sourceFrame !== null || proof.actorPoseSha256 !== null))
+      throw new Error("人物动画被错误定格、变速或缺少逐帧证据");
+    if (proof.active && proof.held) { heldProps.add(proof.poseSha256); heldActors.add(proof.actorPoseSha256!); }
+  }
+  if (heldProps.size !== 1 || heldActors.size < 2) throw new Error("定格期间必须保持碎片不动且人物持续活动");
   return manifest;
 }
 async function fileDigest(file: string) {
@@ -162,6 +209,13 @@ export async function renderManhuaVfx(raw: unknown, userId: string, signal: Abor
         effects.push({ ...effect, scenePath: scene.scenePath, sceneSha256: scene.sceneSha256 });
         continue;
       }
+      if (effect.world) {
+        const scene = await deps.prepareScene(effect.world, effect.id, userId, root, signal);
+        if (effect.world.sourceStartSec + effect.durationSec > scene.receipt.durationSec + 1e-9) throw new Error("人物活动时窗超出已保存三维动画");
+        await preserve(`scene-source-${effect.id}.json`, Buffer.from(JSON.stringify(scene.receipt)));
+        effects.push({ ...effect, scenePath: scene.scenePath, sceneSha256: scene.sceneSha256 });
+        continue;
+      }
       if (effect.kind !== "image_overlay" || !effect.imageUri) { effects.push(effect); continue; }
       const imageDir = path.join(root, "images"); await mkdir(imageDir, { recursive: true });
       const original = path.join(imageDir, `${effect.id}.source`), imagePath = path.join(imageDir, `${effect.id}.png`);
@@ -209,6 +263,8 @@ export async function renderManhuaVfx(raw: unknown, userId: string, signal: Abor
       compositeSource = processed;
     }
     const bullet = effects.find(effect => effect.kind === "bullet_time");
+    const city = effects.find(effect => effect.kind === "city_fold");
+    const world = effects.find(effect => effect.kind === "prop_scene");
     let sceneLayers: string | undefined;
     if (bullet) {
       if (state) state.phase = "vfx_real3d_orbit";
@@ -226,8 +282,44 @@ export async function renderManhuaVfx(raw: unknown, userId: string, signal: Abor
       await preserve("real3d-manifest.parsed.json", Buffer.from(JSON.stringify(manifest)));
       await validateFrameFiles(sceneLayers, manifest.files, signal, meta);
     }
-    const layerEffects = effects.filter(effect => effect.kind !== "bullet_time");
-    const layerRecipe = { ...input.params.composition, effects: input.params.composition.effects.filter(effect => effect.kind !== "bullet_time") };
+    if (city) {
+      if (state) state.phase = "vfx_real3d_city_fold";
+      sceneLayers = path.join(root, "scene-layers");
+      const citySpec = path.join(root, "spec.city.json");
+      await writeFile(citySpec, JSON.stringify({ ...spec, effects: [city] }));
+      const launch = blenderLaunchCommand({ blender: process.env.BLENDER_BIN || "blender", useXvfb: process.platform === "linux", lowPriority: blenderLowPriorityDefault() },
+        ["--background", "--factory-startup", "--disable-autoexec", "--threads", "2", "--python-exit-code", "1", "--python", path.resolve("server/scripts/manhua_vfx.py"), "--", citySpec, sceneLayers]);
+      try { await deps.runBlender(launch.command, launch.args, signal); }
+      finally {
+        for (const name of ["input.raw.json", "spec.normalized.json", "manifest.json"]) {
+          const file = path.join(sceneLayers, name), info = await stat(file).catch(() => null);
+          if (info) { if (info.size > 32 * 1024 * 1024) { evidenceFailed = true; throw new Error("街区三维证据超过限制"); } await preserve(`city3d-${name}`, await readFile(file)); }
+        }
+      }
+      const manifest = validateVfxManifest(JSON.parse(await readFile(path.join(sceneLayers, "manifest.json"), "utf8")), { ...input.params.composition, effects: [city] }, meta);
+      await preserve("city3d-manifest.parsed.json", Buffer.from(JSON.stringify(manifest)));
+      await validateFrameFiles(sceneLayers, manifest.files, signal, meta);
+    }
+    if (world) {
+      if (state) state.phase = "vfx_world_props_hold";
+      sceneLayers = path.join(root, "scene-layers");
+      const worldSpec = path.join(root, "spec.world.json");
+      await writeFile(worldSpec, JSON.stringify({ ...spec, effects: [world] }));
+      const launch = blenderLaunchCommand({ blender: process.env.BLENDER_BIN || "blender", useXvfb: process.platform === "linux", lowPriority: blenderLowPriorityDefault() },
+        ["--background", "--factory-startup", "--disable-autoexec", "--threads", "2", "--python-exit-code", "1", "--python", path.resolve("server/scripts/manhua_vfx_world_props.py"), "--", worldSpec, world.id, sceneLayers]);
+      try { await deps.runBlender(launch.command, launch.args, signal); }
+      finally {
+        for (const name of ["input.raw.json", "manifest.json"]) {
+          const file = path.join(sceneLayers, name), info = await stat(file).catch(() => null);
+          if (info) { if (info.size > 32 * 1024 * 1024) { evidenceFailed = true; throw new Error("人物活动定格证据超过限制"); } await preserve(`world3d-${name}`, await readFile(file)); }
+        }
+      }
+      const manifest = validateVfxWorldManifest(JSON.parse(await readFile(path.join(sceneLayers, "manifest.json"), "utf8")), world, meta);
+      await preserve("world3d-manifest.parsed.json", Buffer.from(JSON.stringify(manifest)));
+      await validateFrameFiles(sceneLayers, manifest.files, signal, meta);
+    }
+    const layerEffects = effects.filter(effect => !isManhuaVfxSceneKind(effect.kind));
+    const layerRecipe = { ...input.params.composition, effects: input.params.composition.effects.filter(effect => !isManhuaVfxSceneKind(effect.kind)) };
     if (layerEffects.length) {
     const layerSpecPath = path.join(root, "spec.layers.json");
     await writeFile(layerSpecPath, JSON.stringify({ ...spec, effects: layerEffects }));
@@ -264,7 +356,7 @@ export async function renderManhuaVfx(raw: unknown, userId: string, signal: Abor
     const uploaded = await deps.uploadResult({ filePath: outputPath, userId, kind: "vfx", ext: "mp4", contentType: "video/mp4", signal });
     const result = { ...uploaded, ...meta, sha256: await fileDigest(outputPath), sourceIdentity,
       sourceKey: input.params.sourceKey, composition: input.params.composition,
-      requestId: input.requestId, coordinateSpace: bullet ? "screen-and-world3d" : "screen", boundaryZh: bullet ? "三维时窗使用本人场景冻结几何与真实透视相机；其余为画面坐标效果" : "按设定轨迹叠加或手动区域变形，不含自动跟踪或人物遮挡", evidence: [...receipts] };
+      requestId: input.requestId, coordinateSpace: bullet || city || world ? "screen-and-world3d" : "screen", boundaryZh: world ? "本人已保存三维人物动画保持原速，仅新增道具暂停运动，同场渲染遮挡；不从原视频推断未见人物动作" : city ? "三维时窗为程序街区的真实几何翻折与透视拍摄，不重建原片人物或建筑；原声保留" : bullet ? "三维时窗使用本人场景冻结几何与真实透视相机；其余为画面坐标效果" : "按设定轨迹叠加或手动区域变形，不含自动跟踪或人物遮挡", evidence: [...receipts] };
     const resultEvidence = await preserve("result.json", Buffer.from(JSON.stringify(result)));
     success = true;
     return { ...result, resultEvidence };

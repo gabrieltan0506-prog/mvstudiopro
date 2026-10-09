@@ -9,9 +9,10 @@ import { manhuaPrevisRequestSchema } from "../../shared/manhuaPrevis";
 import { manhuaVfxBulletSchema } from "../../shared/manhuaVfxPixelParameters";
 
 type Bullet = z.infer<typeof manhuaVfxBulletSchema>;
+type SceneSelection = Pick<Bullet, "sceneJobId" | "sceneScopeId" | "clipId"> & ({ freezeSec: number } | { sourceStartSec: number });
 type SceneJob = Parameters<typeof resolveManhuaPrevisMedia>[0];
 const MAX_SCENE_BYTES = 512 * 1024 * 1024;
-export async function resolveManhuaVfxSceneSource(bullet: Bullet, userId: string, load: (id: string) => Promise<SceneJob> = getJobByIdStrict) {
+export async function resolveManhuaVfxSceneSource(bullet: SceneSelection, userId: string, load: (id: string) => Promise<SceneJob> = getJobByIdStrict) {
   const sceneJob = await load(bullet.sceneJobId);
   const source = resolveManhuaPrevisMedia(sceneJob, Number(userId), "scene");
   const input = sceneJob?.input as { params?: unknown } | undefined;
@@ -19,12 +20,13 @@ export async function resolveManhuaVfxSceneSource(bullet: Bullet, userId: string
   const output = sceneJob?.output as { sceneSha256?: unknown } | undefined;
   if (!source || !request.success || request.data.scopeId !== bullet.sceneScopeId || request.data.clipId !== bullet.clipId || typeof output?.sceneSha256 !== "string")
     throw new Error("三维场景不属于所选作品片段，或成功回执未闭合");
-  if (bullet.freezeSec >= request.data.spec.durationSec) throw new Error("冻结秒位超出源三维场景");
+  const start = "freezeSec" in bullet ? bullet.freezeSec : bullet.sourceStartSec;
+  if (start >= request.data.spec.durationSec) throw new Error("源三维场景的冻结或起始秒位越界");
   return { ...source, sha256: output.sceneSha256, sourceRequestId: request.data.requestId, sourceScopeId: request.data.scopeId, sourceClipId: request.data.clipId, durationSec: request.data.spec.durationSec };
 }
 
 /** 场景只能来自本人已成功的固定预演产物；客户端不能传路径、URL或任意blend。 */
-export async function prepareManhuaVfxScene(bullet: Bullet, effectId: string, userId: string, root: string, signal: AbortSignal,
+export async function prepareManhuaVfxScene(bullet: SceneSelection, effectId: string, userId: string, root: string, signal: AbortSignal,
   deps = { load: getJobByIdStrict as (id: string) => Promise<SceneJob>, fetch: fetchPostProdSourceToFile }) {
   const source = await resolveManhuaVfxSceneSource(bullet, userId, deps.load);
   signal.throwIfAborted();
