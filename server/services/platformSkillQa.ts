@@ -16,8 +16,7 @@ import { resolveAdvisorPrevisVideo } from "./manhuaAdvisorPrevisVideo";
 import { isSseContentSafetyError } from "./sseChatStream";
 import { buildAdvisorPrevisCraftBlock } from "./manhuaAdvisorPrevisCraft";
 import { manhuaAdvisorReasoningEffort, MANHUA_ADVISOR_HOPS, MANHUA_ADVISOR_REASONING_EFFORT, MANHUA_ADVISOR_MAX_OUTPUT_TOKENS } from "./openrouterDeepSeekV41Flash";
-import { ADVISOR_PREVIS_EDIT_INSTRUCTIONS, parseAdvisorPrevisPatch, applyAdvisorPrevisPatch, validateAdvisorPrevisShotCoverage } from "../../shared/manhuaAdvisorPrevisEdit";
-import { manhuaPrevisSpecSchema } from "../../shared/manhuaPrevis";
+import { ADVISOR_PREVIS_EDIT_INSTRUCTIONS, parseAdvisorPrevisPatch, prepareAdvisorPrevisComparison, validateAdvisorPrevisShotCoverage } from "../../shared/manhuaAdvisorPrevisEdit";
 /**
  * /platform 创作顾问问答：按 Sol/Terra 分桶每日免费额度 + 超额成本×1.6 扣点；
  * 可选单页生图（首张封面九折）。
@@ -952,7 +951,7 @@ export async function askPlatformSkillQa(params: {
       if (manhuaContext?.previsEdit) {
         const patch = parseAdvisorPrevisPatch(parsed.answer);
         validateAdvisorPrevisShotCoverage(manhuaContext.previsEdit, patch, true);
-        if (!patch.unsupportedZh.length && !patch.shotCoverage?.some(row => row.status === "unsupported")) applyAdvisorPrevisPatch(manhuaPrevisSpecSchema.parse(JSON.parse(manhuaContext.previsEdit.specJson)), patch);
+        if (!patch.unsupportedZh.length && !patch.shotCoverage?.some(row => row.status === "unsupported")) prepareAdvisorPrevisComparison({ target: manhuaContext.previsEdit, patch });
       }
       usedModel = hop?.modelName || modelName;
       lastErr = "";
