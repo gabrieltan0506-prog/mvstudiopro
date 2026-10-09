@@ -147,3 +147,16 @@ Blender5.2.1真实内存数据13项PASS，无渲染/导出媒体；验证真实�
 - 所有艺术/场景动画JSON证据统一先写GCS；失败才等待网站持久卷及字节/SHA回执。结果明确区分gcs/website_data，不伪造GCS URI。现有音轨audio-probe序号文件纳入严格白名单，来源/时长/混音门禁保留。两个存储都失败即停止，保留原片/原音轨与任务。
 - 原6套14项证据复用 `/tmp/animation-independence-tests.log`。增量2项renderer归档调用链通过，puppeteer启动被拦截、没有渲染/生成媒体；日志 `/tmp/animation-independent-render-preserve-tests.log`。最后因稳定摘要与白名单变化，定向复验快照6项及身份鉴权1项共7通过；日志 `/tmp/animation-independence-final-targeted-tests.log`。类型检查exit0，diff检查通过。新增键序夹具初版错误填入stage不允许的data字段而失败，改为真实合法请求键序复验，不放宽原schema。
 - CLOSED范围仅本次源码开发证据：网站离线/GCS故障、永久卷真实回执和正式动画/BGM仍未线上实跑，未工作机探针/渲染/付费/合并/部署。不能据此宣布整集34镜或正式线上验收通过。
+
+## 2026-10-09T15:31:26.020017+08:00 · ANIM-14 · 正式顾问上下文适配定向修复
+
+- R2后只处理既有P1阻断；用户提供的84f22f57远端报告已实核。Base为6ba2832eabb17c405435a4addcbfd34da49b896f，被审代码HEAD=479039ca00d27100633916f6be7507250cf202e7；开发 Agent 模型：GPT6 Astra（用户指定，保留原贡献）。本次未新增/唤醒代理。
+- OPEN反证：从makeAdvisorPrevisTarget产生绑定真实模型能力上下文，模拟模型正常相机/扶坐回复，调用真实askPlatformSkillQa。旧代码2项失败，均报hasRiggedModel不识别并进入重试，身份注入负例1项通过。见anim14-red.log。
+- 改前证据：用户结果=绑定真模仍能获取正常修改候选；入口=受保护问答API→askPlatformSkillQa；生产者=makeAdvisorPrevisTarget/advisorPrevisSpecJson投影；契约=专用parseAdvisorContextSpec临时适配及严格patch；存储=候选/原studio/specHistory；消费者=比较卡→宿主prepare/apply→正式request。模型权限/扣费/请求幂等/worker/GCS来源不改；不放宽正式场景schema，不移除能力标记。
+- FIXED：platformSkillQa.ts在支持的候选分支复用prepareAdvisorPrevisComparison，移除对上下文直接用正式场景schema解析。复用现有私有上下文解析器和补丁应用，不导出校验身份、不新建模型，不修改生成入口。unsupported与原修复重试分支保留。
+- 双向闭合：真实studio→能力投影→实际ask问答校验→返回原patch→比较/试看准备/确认应用→schema序列化恢复；反向由正式request和specHistory核对原assetRef、sourceJobId及scope/clip，校验临时身份只存在于适配器内存，不进入返回回答、正式输入或历史。两种受支持建议每次仅1次模拟模型调用，身份混入上下文在调用前拒绝。
+- CLOSED（仅代码及定向开发证据）：新增3项通过，邻接6项通过（首跑5通过/1旧断言失败，后只复验该失败1通过）；TypeScript exit0，diff-check exit0。原断言将多模态消息数组当字符串检查，本次仅改为序列化内容检查；仍核同视频/同通道/两次调用及真实修复提示。新增测试首个绿轮过宽地把trial.candidate的合法能力投影当正式输入，已明确检查trial.request，仍禁止整个trial出现临时身份；中间失败日志保留。所有命令与原始日志见anim14-validation.json及anim14-*.log，9个独立用例；未重复5个已通过回归或旧全量套件。
+- 范围分层：需求/入口/投影契约/补丁消费者/纯序列化保存恢复/静态回归已验证；正式线上入口、真实保存恢复、角色动画/BGM/整集仍未验。UI/worker/权限/费用/自动重试策略未更改，不把模拟LLM开发测试当生产验收。
+- Blender Smoke与Heavy Media Offline已实核GitHub状态disabled_manually；未启用/重跑/作为合并条件。无付费、无渲染、无工作机、新CI手动触发或部署。十分钟记录器/自动云同步继续暂停。仅用户本人合并，本项关闭不代表PR全部功能正式验收完成。
+
+原始日志逐字节封存于anim14-raw-logs.zip（六文件及各SHA见anim14-validation.json），没有规范化或删改日志。日志输出自带尾随空白使首次证据文件diff-check提示，故仅以无损归档提交，原日志本地保留；正式源码diff-check仍通过，无业务改动或新测试。
