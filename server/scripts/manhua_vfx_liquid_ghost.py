@@ -18,11 +18,11 @@ import numpy as np
 
 from manhua_vfx_math import keys, number, position_at
 
-PIXEL_KINDS = frozenset(('liquid_mirror', 'motion_ghost', 'bullet_wave'))
+PIXEL_KINDS = frozenset(('liquid_mirror', 'motion_ghost', 'bullet_wave', 'mirror_corridor', 'floating_paper'))
 VERSION = 'manhua-vfx-source-pixels-1'
 MAX_HISTORY_BYTES = 512 * 1024 * 1024
 MAX_OUTPUT_BYTES = 8 * 1024 * 1024 * 1024
-BOUNDARY = '手动形状ROI及手动轨迹；残影保留ROI内原背景，不是人物分割；液态为画面像素变形和局部镜像，不是三维反射。'
+BOUNDARY = '手动区域及轨迹；液态/残影/镜面纵深处理原片像素，不是人物分割或三维反射；纸页为程序画面叠加，不改变原片角色重力或遮挡。'
 
 
 def validate_pixel_effect(effect):
@@ -33,6 +33,10 @@ def validate_pixel_effect(effect):
         from manhua_vfx_action_math import validate_wave
         validate_wave(effect.get('wave'))
         return
+    if effect['kind'] in ('mirror_corridor', 'floating_paper'):
+        from manhua_vfx_dream_pixels import validate_dream_effect
+        validate_dream_effect(effect)
+        if effect['kind'] == 'floating_paper': return
     roi = effect.get('roi')
     keys(roi, ('shape', 'width', 'height', 'feather'))
     if roi['shape'] not in ('ellipse', 'rectangle'):
@@ -47,7 +51,7 @@ def validate_pixel_effect(effect):
             number(value[field], lo, hi, '液态 ' + field)
         if 'ghost' in effect:
             raise ValueError('液态图层不能含残影参数')
-    else:
+    elif kind == 'motion_ghost':
         value = effect.get('ghost')
         keys(value, ('copies', 'spacingSec', 'decay', 'offsetX', 'offsetY'))
         for field, lo, hi in (('copies', 1, 6), ('spacingSec', 1 / 60, .2), ('decay', .1, .95), ('offsetX', -.25, .25), ('offsetY', -.25, .25)):
@@ -109,6 +113,14 @@ def validate_processing_spec(spec):
                 if p['timeSec'] <= previous:
                     raise ValueError('手动轨迹时间必须递增')
                 previous = p['timeSec']
+    from manhua_vfx_dream_pixels import DREAM_KINDS, MAX_DREAM_SAMPLES, dream_sample_budget
+    dreams = [e for e in pixels if e['kind'] in DREAM_KINDS]
+    if dreams:
+        number(spec.get('seed'), 0, 2147483647, 'seed')
+        if not isinstance(spec['seed'], int) or isinstance(spec['seed'], bool):
+            raise ValueError('种子须为整数')
+        if sum(dream_sample_budget(e, w, h, spec['fps']) for e in dreams) > MAX_DREAM_SAMPLES:
+            raise ValueError('镜面或纸页处理预算超限，请缩短时窗、缩小范围或减少数量')
     samples = 0
     for e in pixels:
         if e['kind'] != 'bullet_wave': continue
@@ -233,6 +245,9 @@ class PixelProcessor:
             return result
         if effect['kind'] == 'liquid_mirror':
             return liquid_frame(result, effect, time)
+        if effect['kind'] in ('mirror_corridor', 'floating_paper'):
+            from manhua_vfx_dream_pixels import dream_frame
+            return dream_frame(result, effect, time, strength, self.spec['seed'])
         if effect['kind'] == 'bullet_wave':
             from manhua_vfx_bullet_wave import bullet_wave_frame
             return bullet_wave_frame(result, effect, time, strength)

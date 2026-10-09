@@ -1,4 +1,4 @@
-import { MANHUA_VFX_WAVE_DEFAULTS, MANHUA_VFX_BLAST_DEFAULTS, MANHUA_VFX_ROI_DEFAULTS, MANHUA_VFX_LIQUID_DEFAULTS, MANHUA_VFX_GHOST_DEFAULTS, MANHUA_VFX_WALL_DEFAULTS, MANHUA_VFX_BULLET_DEFAULTS } from "@shared/manhuaVfxPixelParameters";
+import { MANHUA_VFX_MIRROR_DEFAULTS, MANHUA_VFX_PAPER_DEFAULTS, MANHUA_VFX_WAVE_DEFAULTS, MANHUA_VFX_BLAST_DEFAULTS, MANHUA_VFX_ROI_DEFAULTS, MANHUA_VFX_LIQUID_DEFAULTS, MANHUA_VFX_GHOST_DEFAULTS, MANHUA_VFX_WALL_DEFAULTS, MANHUA_VFX_BULLET_DEFAULTS } from "@shared/manhuaVfxPixelParameters";
 import { MANHUA_VFX_RAIN_DEFAULTS } from "@shared/manhuaVfx";
 import { manhuaVfxCompositionSchema, type ManhuaVfxComposition, type ManhuaVfxEffect, type ManhuaVfxState } from "@shared/manhuaVfx";
 import type { ClipOption, TrackedJob } from "./postProdWorkshop";
@@ -50,7 +50,9 @@ export function sameManhuaVfxComposition(a: unknown, b: unknown): boolean {
 export function makeManhuaVfxEffect(kind: ManhuaVfxEffect["kind"], id: string): ManhuaVfxEffect {
   return {
     id, kind, startSec: 0, durationSec: 1,
-    color: kind === "digital_rain" ? "#35FF82" : ["impact_burst", "directed_blast"].includes(kind) ? "#FFB35C" : "#67E8F9", scale: ["digital_rain", "liquid_mirror", "motion_ghost", "wall_fracture", "bullet_time", "bullet_wave", "directed_blast"].includes(kind) ? 1 : kind === "shield" ? 0.4 : 0.25, intensity: 1,
+    color: kind === "floating_paper" ? "#FFF5DF" : kind === "digital_rain" ? "#35FF82" : ["impact_burst", "directed_blast"].includes(kind) ? "#FFB35C" : "#67E8F9", scale: ["digital_rain", "liquid_mirror", "motion_ghost", "wall_fracture", "bullet_time", "bullet_wave", "directed_blast", "mirror_corridor", "floating_paper"].includes(kind) ? 1 : kind === "shield" ? 0.4 : 0.25, intensity: 1,
+    ...(kind === "mirror_corridor" ? { mirror: { ...MANHUA_VFX_MIRROR_DEFAULTS }, roi: { shape: "rectangle" as const, width: .8, height: .85, feather: .025 } } : {}),
+    ...(kind === "floating_paper" ? { paper: { ...MANHUA_VFX_PAPER_DEFAULTS } } : {}),
     ...(kind === "bullet_wave" ? { wave: { ...MANHUA_VFX_WAVE_DEFAULTS } } : {}),
     ...(kind === "directed_blast" ? { blast: { ...MANHUA_VFX_BLAST_DEFAULTS } } : {}),
     ...(kind === "digital_rain" ? { rain: { ...MANHUA_VFX_RAIN_DEFAULTS } } : {}),

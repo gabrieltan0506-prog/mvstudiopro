@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export const MANHUA_VFX_MIRROR_DEFAULTS = { layers: 5, shrink: .72, drift: .025 };
+export const MANHUA_VFX_PAPER_DEFAULTS = { count: 24, size: .055, drift: .18, flutter: 1.4, spread: .8 };
 const n = (min: number, max: number) => z.number().finite().min(min).max(max);
 export const MANHUA_VFX_ROI_DEFAULTS = { shape: "ellipse" as const, width: .35, height: .65, feather: .12 };
 export const MANHUA_VFX_LIQUID_DEFAULTS = { amplitude: .018, frequency: 4, speed: 1.5, reflection: .35 };
@@ -16,3 +18,6 @@ export const MANHUA_VFX_WAVE_DEFAULTS = { angleDeg: 0, reach: .8, radius: .085, 
 export const MANHUA_VFX_BLAST_DEFAULTS = { angleDeg: -25, spreadDeg: 55, reach: .8, particles: 72, gravity: 1.2, smoke: .65, ignitionSec: .1 };
 export const manhuaVfxWaveSchema = z.object({ angleDeg: n(-360, 360), reach: n(.05, 1.8), radius: n(.02, .22), rings: n(2, 10).int(), trailSec: n(.03, .6), refraction: n(.001, .04), glow: n(0, 1) }).strict();
 export const manhuaVfxBlastSchema = z.object({ angleDeg: n(-360, 360), spreadDeg: n(5, 160), reach: n(.05, 2), particles: n(16, 144).int(), gravity: n(0, 6), smoke: n(0, 1), ignitionSec: n(0, 30) }).strict();
+
+export const manhuaVfxMirrorSchema = z.object({ layers: n(2, 8).int(), shrink: n(.45, .85), drift: n(0, .08) }).strict();
+export const manhuaVfxPaperSchema = z.object({ count: n(6, 64).int(), size: n(.015, .12), drift: n(0, .6), flutter: n(0, 4), spread: n(.1, 1.5) }).strict();

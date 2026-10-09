@@ -284,7 +284,7 @@ def update_vfx(handles, spec, time):
             state.update(update_wall_fracture(h['wall'],e,time,state))
         elif kind == 'directed_blast':
             state.update(update_directed_blast(h['blast'],e,time,state))
-        elif kind in ('liquid_mirror','motion_ghost','bullet_wave'):
+        elif kind in ('liquid_mirror','motion_ghost','bullet_wave','mirror_corridor','floating_paper'):
             state['mode']='source-pixels-before-overlay'
         elif h.get('extra'):
             update_extra(h,spec,time,state,set_strip)

@@ -4,6 +4,8 @@ import puppeteer from "puppeteer";
 import { expect, it } from "vitest";
 
 it.each([
+  ["mirror_corridor", "mirror-layers", "7", "mirror", "layers", 7],
+  ["floating_paper", "paper-count", "36", "paper", "count", 36],
   ["bullet_wave", "wave-refraction", "0.025", "wave", "refraction", .025],
   ["directed_blast", "blast-particles", "96", "blast", "particles", 96],
   ["liquid_mirror", "liquid-amplitude", "0.04", "liquid", "amplitude", .04],
@@ -38,7 +40,7 @@ it.each([
     expect(saved[group][key]).toBe(expected);
     if (kind === "bullet_time") { expect(saved.bullet.sceneJobId).toBe(sceneId); expect(saved.bullet.sweepDeg).toBe(360); expect(saved.bullet.yawDeg).toBeUndefined(); }
     await page.evaluate(() => (globalThis as any).remount()); await metadata();
-    await page.evaluate(kind => { const button = Array.from(document.querySelectorAll<HTMLButtonElement>('[aria-label="特效图层"] button')).find(button => button.textContent?.includes(kind === "liquid_mirror" ? "液态" : kind === "motion_ghost" ? "残影" : kind === "wall_fracture" ? "幕墙" : kind === "bullet_wave" ? "弹道波纹" : kind === "directed_blast" ? "定向爆破" : "子弹时间")); button!.click(); }, kind);
+    await page.evaluate(kind => { const button = Array.from(document.querySelectorAll<HTMLButtonElement>('[aria-label="特效图层"] button')).find(button => button.textContent?.includes(kind === "mirror_corridor" ? "镜面纵深" : kind === "floating_paper" ? "纸页悬浮" : kind === "liquid_mirror" ? "液态" : kind === "motion_ghost" ? "残影" : kind === "wall_fracture" ? "幕墙" : kind === "bullet_wave" ? "弹道波纹" : kind === "directed_blast" ? "定向爆破" : "子弹时间")); button!.click(); }, kind);
     expect(await page.$eval(`[aria-label="${field}"]`, input => (input as HTMLInputElement).value)).toBe(value);
     await click("渲染特效候选"); await page.waitForFunction(() => (globalThis as any).submitted.length === 1);
     expect(await page.evaluate(kind => (globalThis as any).submitted[0].params.composition.effects.find((effect: any) => effect.kind === kind), kind)).toEqual(saved); expect(errors).toEqual([]);

@@ -49,13 +49,16 @@ async function pipeline(effect: ManhuaVfxEffect, failPixels = false) {
   });
   return { result, calls, archives, compositeArgs };
 }
-it.each(["liquid_mirror", "motion_ghost", "bullet_wave"] as const)("%s进入实际像素处理调用后合成，原声映射原始文件", async kind => {
+it.each(["mirror_corridor", "floating_paper", "liquid_mirror", "motion_ghost", "bullet_wave"] as const)("%s进入实际像素处理调用后合成，原声映射原始文件", async kind => {
   const effect = makeManhuaVfxEffect(kind, "pixel"); const p = await pipeline(effect);
   expect(p.calls).toEqual(["manhua_vfx_liquid_ghost.py", "manhua_vfx.py", "composite", "upload-result"]);
   expect(p.compositeArgs[p.compositeArgs.indexOf("-map") + 3]).toBe("2:a?");
   expect(p.compositeArgs.some(arg => arg.endsWith("processed.mkv"))).toBe(true);
   expect(p.result.composition.effects[0]).toEqual(effect);
   expect(p.archives.has("source-pixels.raw.json")).toBe(true); expect(p.archives.has("source-pixels-identity.json")).toBe(true);
+});
+it.each(["mirror_corridor", "floating_paper"] as const)("%s像素处理失败时保留错误证据，不上传或自动重做候选", async kind => {
+  await expect(pipeline(makeManhuaVfxEffect(kind, "dream"), true)).rejects.toThrow("不会自动重做");
 });
 it("真三维单效果只调用三维消费者，不把空二维层当成3D；保留原音轨", async () => {
   const effect = makeManhuaVfxEffect("bullet_time", "orbit"); effect.bullet = { ...effect.bullet!, sceneJobId: `prv_${"a".repeat(48)}`, sceneScopeId: "10090000-1234-4234-8234-123456789abc", clipId: "clip" };

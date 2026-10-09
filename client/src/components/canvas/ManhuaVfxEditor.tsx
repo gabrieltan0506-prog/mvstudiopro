@@ -5,7 +5,7 @@ import { ManhuaVfxEffectParameters, type VfxSceneOption } from "./ManhuaVfxEffec
 import { ManhuaVfxSurface } from "./ManhuaVfxSurface";
 import { ManhuaVfxTimeline } from "./ManhuaVfxTimeline";
 import { ManhuaVfxComparison } from "./ManhuaVfxComparison";
-import { MANHUA_VFX_RAIN_DEFAULTS, MANHUA_VFX_PRESET_LABELS, manhuaVfxCompositionSchema, type ManhuaVfxComposition, type ManhuaVfxEffect, type ManhuaVfxState } from "@shared/manhuaVfx";
+import { isManhuaVfxPixelKind, MANHUA_VFX_RAIN_DEFAULTS, MANHUA_VFX_PRESET_LABELS, manhuaVfxCompositionSchema, type ManhuaVfxComposition, type ManhuaVfxEffect, type ManhuaVfxState } from "@shared/manhuaVfx";
 import { gcsTransferUrl } from "@/lib/gcsTransfer";
 import { maskMediaProviderDetails } from "@/lib/maskMediaUrls";
 import { canAdoptManhuaVfxRequest, manhuaVfxPositionAtTime, manhuaVfxContainedVideoRect, manhuaVfxPositionFromPointer, upsertManhuaVfxTrajectoryPoint, type ManhuaVfxVideoRect, makeManhuaVfxEffect, manhuaVfxSourceKey, manhuaVfxMediaIdentity, parseManhuaVfxTrajectory, validateManhuaVfxDuration } from "@/lib/manhuaVfxWorkflow";
@@ -350,7 +350,7 @@ export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], sce
         <select aria-label="添加特效" className={`${controlClass} w-auto`} disabled={locked || draft.composition.effects.length >= 12} value="" onChange={event => {
           const effect = makeManhuaVfxEffect(event.target.value as ManhuaVfxEffect["kind"], crypto.randomUUID());
           if (effect.kind === "bullet_time") effect.startSec = Math.max(0, ...draft.composition.effects.map(item => item.startSec + item.durationSec));
-          const effects = ["liquid_mirror", "motion_ghost", "bullet_wave"].includes(effect.kind) ? [effect, ...draft.composition.effects] : [...draft.composition.effects, effect];
+          const effects = isManhuaVfxPixelKind(effect.kind) ? [effect, ...draft.composition.effects] : [...draft.composition.effects, effect];
           setDraft({ ...draft, composition: { ...draft.composition, effects } }); setSelectedEffectId(effect.id);
         }}><option value="">＋ 添加特效</option>{Object.entries(LABELS).map(([kind, label]) => <option key={kind} value={kind}>{label}</option>)}</select>
       </div>
@@ -380,7 +380,7 @@ export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], sce
           {([{ key: "startSec", label: "开始秒", min: 0, max: 30, step: 0.05 }, { key: "durationSec", label: "持续秒", min: 0.05, max: 30, step: 0.05 }, { key: "scale", label: "大小（画面高比例）", min: 0.02, max: 2, step: 0.01 }, { key: "intensity", label: "强度", min: 0, max: 2, step: 0.05 }] as const).map(field => <label key={field.key} className="text-[11px] text-white/60">{field.label}<input className={`${controlClass} mt-1`} type="number" disabled={effect.kind === "bullet_time" && (field.key === "scale" || field.key === "intensity")} {...{ min: field.min, max: field.max, step: field.step }} value={effect[field.key]} onChange={event => updateEffect(effect.id, { [field.key]: Number(event.target.value) })} /></label>)}
         </div>
         <div className="grid grid-cols-3 gap-2">
-          {!["image_overlay", "liquid_mirror", "motion_ghost", "bullet_time"].includes(effect.kind) ? <label className="text-[11px] text-white/60">颜色<input className={`${controlClass} mt-1 h-8`} type="color" value={effect.color} onChange={event => updateEffect(effect.id, { color: event.target.value })} /></label> : null}
+          {!["image_overlay", "liquid_mirror", "motion_ghost", "mirror_corridor", "bullet_time"].includes(effect.kind) ? <label className="text-[11px] text-white/60">颜色<input className={`${controlClass} mt-1 h-8`} type="color" value={effect.color} onChange={event => updateEffect(effect.id, { color: event.target.value })} /></label> : null}
           {([0, 1] as const).map(axis => <label key={axis} className="text-[11px] text-white/60">{axis === 0 ? "横向位置（左0 → 右1）" : "纵向位置（上0 → 下1）"}<input disabled={effect.kind === "bullet_time"} type="number" min={0} max={1} step={0.01} className={`${controlClass} mt-1`} value={effect.anchor.position[axis]} onChange={event => { const position: [number, number] = [...effect.anchor.position]; position[axis] = Number(event.target.value); updateEffect(effect.id, { anchor: { ...effect.anchor, position } }); }} /></label>)}
         </div>
         {effect.kind !== "bullet_time" ? <details><summary className="cursor-pointer text-[11px] text-cyan-200">手动运动轨迹（可选）</summary><p className="my-1 text-[11px] text-white/50">每行填写「整片秒数 横向位置 纵向位置」，至少两行且时间递增；位置取0至1。不填写时固定在上方位置。</p><textarea aria-label={`第${index + 1}个特效轨迹`} rows={3} className={controlClass} placeholder="0 0.2 0.5&#10;1 0.8 0.5" value={trajectoryText[effect.id] ?? effect.anchor.trajectory?.map(point => `${point.timeSec} ${point.x} ${point.y}`).join("\n") ?? ""} onChange={event => setTrajectoryText({ ...trajectoryText, [effect.id]: event.target.value })} /></details> : null}

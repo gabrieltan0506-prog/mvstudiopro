@@ -5,7 +5,7 @@ import struct
 from pathlib import Path
 
 KINDS = frozenset(('sword_trail', 'impact_burst', 'particle_aura', 'shield', 'spirit',
-                   'fire_burst', 'smoke_plume', 'lightning', 'shockwave', 'speed_lines', 'magic_circle', 'image_overlay', 'digital_rain', 'liquid_mirror', 'motion_ghost', 'wall_fracture', 'bullet_wave', 'directed_blast'))
+                   'fire_burst', 'smoke_plume', 'lightning', 'shockwave', 'speed_lines', 'magic_circle', 'image_overlay', 'digital_rain', 'liquid_mirror', 'motion_ghost', 'wall_fracture', 'bullet_wave', 'directed_blast', 'mirror_corridor', 'floating_paper'))
 VERSION = 'manhua-vfx-screen-1'
 BOUNDARY = '画面坐标特效层与手动轨迹；不包含自动跟踪、人物遮挡、场景受光或物理仿真。'
 
@@ -65,10 +65,10 @@ def validate_spec(spec, asset_root=None):
         fields=('id', 'kind', 'startSec', 'durationSec', 'color', 'scale', 'intensity', 'anchor')
         kind=effect.get('kind') if isinstance(effect,dict) else None
         extra={'image_overlay':('imageUri','imagePath'),'liquid_mirror':('roi','liquid'),
-               'motion_ghost':('roi','ghost'),'wall_fracture':('wall',),'bullet_wave':('wave',),'directed_blast':('blast',)}
+               'motion_ghost':('roi','ghost'),'wall_fracture':('wall',),'bullet_wave':('wave',),'directed_blast':('blast',),'mirror_corridor':('roi','mirror'),'floating_paper':('paper',)}
         fields+=extra.get(kind,())
         keys(effect, fields, ('rain',) if kind=='digital_rain' else ())
-        if kind in ('liquid_mirror','motion_ghost','bullet_wave'):
+        if kind in ('liquid_mirror','motion_ghost','bullet_wave','mirror_corridor','floating_paper'):
             from manhua_vfx_liquid_ghost import validate_pixel_effect
             validate_pixel_effect(effect)
             if kind=='motion_ghost':
@@ -134,7 +134,7 @@ def validate_spec(spec, asset_root=None):
                 if point['timeSec'] <= previous:
                     raise ValueError('Trajectory times must increase')
                 previous = point['timeSec']
-    pixels=('liquid_mirror','motion_ghost','bullet_wave')
+    pixels=('liquid_mirror','motion_ghost','bullet_wave','mirror_corridor','floating_paper')
     for index,effect in enumerate(spec['effects']):
         if effect['kind'] not in pixels:continue
         for earlier in spec['effects'][:index]:

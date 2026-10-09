@@ -1,9 +1,10 @@
 import { z } from "zod";
-import { manhuaVfxRoiSchema, manhuaVfxLiquidSchema, manhuaVfxGhostSchema, manhuaVfxWallSchema, manhuaVfxBulletSchema, manhuaVfxWaveSchema, manhuaVfxBlastSchema } from "./manhuaVfxPixelParameters";
+import { manhuaVfxRoiSchema, manhuaVfxLiquidSchema, manhuaVfxGhostSchema, manhuaVfxWallSchema, manhuaVfxBulletSchema, manhuaVfxWaveSchema, manhuaVfxBlastSchema, manhuaVfxMirrorSchema, manhuaVfxPaperSchema } from "./manhuaVfxPixelParameters";
 
 /** A versioned, bounded effect recipe. Screen trajectories are authored, not inferred tracking. */
-export const MANHUA_VFX_KINDS = ["sword_trail", "impact_burst", "particle_aura", "shield", "spirit", "fire_burst", "smoke_plume", "lightning", "shockwave", "speed_lines", "magic_circle", "image_overlay", "digital_rain", "liquid_mirror", "motion_ghost", "wall_fracture", "bullet_time", "bullet_wave", "directed_blast"] as const;
+export const MANHUA_VFX_KINDS = ["sword_trail", "impact_burst", "particle_aura", "shield", "spirit", "fire_burst", "smoke_plume", "lightning", "shockwave", "speed_lines", "magic_circle", "image_overlay", "digital_rain", "liquid_mirror", "motion_ghost", "wall_fracture", "bullet_time", "bullet_wave", "directed_blast", "mirror_corridor", "floating_paper"] as const;
 export const MANHUA_VFX_PRESET_LABELS: Record<typeof MANHUA_VFX_KINDS[number], string> = {
+  mirror_corridor: "镜面纵深（画面递归）", floating_paper: "纸页悬浮（程序叠加）",
   bullet_wave: "弹道波纹（原片折射）", directed_blast: "定向爆破",
   liquid_mirror: "液态镜面", motion_ghost: "动作残影（手动区域）", wall_fracture: "幕墙撞击（程序墙体）", bullet_time: "子弹时间（三维环绕）",
   digital_rain: "数字雨", image_overlay: "图片叠加", sword_trail: "剑气拖尾", impact_burst: "命中冲击", particle_aura: "粒子聚散",
@@ -29,6 +30,7 @@ export const manhuaVfxEffectSchema = z.object({
   kind: z.enum(MANHUA_VFX_KINDS),
   startSec: time,
   durationSec: z.number().finite().min(1 / 60).max(30),
+  mirror: manhuaVfxMirrorSchema.optional(), paper: manhuaVfxPaperSchema.optional(),
   rain: rainSchema.optional(), wave: manhuaVfxWaveSchema.optional(), blast: manhuaVfxBlastSchema.optional(),
   roi: manhuaVfxRoiSchema.optional(), liquid: manhuaVfxLiquidSchema.optional(), ghost: manhuaVfxGhostSchema.optional(), wall: manhuaVfxWallSchema.optional(), bullet: manhuaVfxBulletSchema.optional(),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
@@ -74,7 +76,7 @@ export function manhuaVfxFrameSpan(startSec: number, durationSec: number, fps: n
   while (stop > first && (stop - 1) / fps >= end) stop--;
   return { first, stop };
 }
-export const isManhuaVfxPixelKind = (kind: string) => ["liquid_mirror", "motion_ghost", "bullet_wave"].includes(kind);
+export const isManhuaVfxPixelKind = (kind: string) => ["liquid_mirror", "motion_ghost", "bullet_wave", "mirror_corridor", "floating_paper"].includes(kind);
 export function validateManhuaVfxLayerOrder(effects: ManhuaVfxEffect[], bad: (message: string) => void) {
   if (effects.filter(effect => effect.kind === "bullet_time").length > 1) bad("每次方案只渲染一个三维环绕时窗，请分段保存候选");
   const pixels = isManhuaVfxPixelKind;
@@ -88,7 +90,7 @@ export function validateManhuaVfxLayerOrder(effects: ManhuaVfxEffect[], bad: (me
 /** 工作流与顾问共享同一字段适用性门禁，拒绝静默忽略。 */
 export function validateManhuaVfxEffectParameters(effect: ManhuaVfxEffect, bad: (message: string) => void) {
   if (effect.rain?.glyphSet === "custom" && !effect.rain.characters) bad("自定义字符层须填写实际字符");
-  const contract = { wave: ["bullet_wave"], blast: ["directed_blast"], rain: ["digital_rain"], roi: ["liquid_mirror", "motion_ghost"], liquid: ["liquid_mirror"], ghost: ["motion_ghost"], wall: ["wall_fracture"], bullet: ["bullet_time"] };
+  const contract = { mirror: ["mirror_corridor"], paper: ["floating_paper"], wave: ["bullet_wave"], blast: ["directed_blast"], rain: ["digital_rain"], roi: ["liquid_mirror", "motion_ghost", "mirror_corridor"], liquid: ["liquid_mirror"], ghost: ["motion_ghost"], wall: ["wall_fracture"], bullet: ["bullet_time"] };
   for (const [field, kinds] of Object.entries(contract)) {
     const present = effect[field as keyof typeof contract] !== undefined;
     if (present && !kinds.includes(effect.kind)) bad("本图层不接受" + field + "参数");
@@ -167,6 +169,20 @@ export function validateManhuaVfxSource(recipe: ManhuaVfxComposition, source: { 
       width < 16 || height < 16 || width > 1920 || height > 1920 || width * height > 1920 * 1080 || fps < 12 || fps > 60 ||
       width * height * Math.ceil(durationSec * fps) > 1920 * 1080 * 900)
     throw new Error("当前特效支持30秒内、长边不超过1920的高清片段，请选择符合规格的原片");
+  let dreamSamples = 0;
+  for (const effect of recipe.effects) {
+    const frames = Math.ceil(effect.durationSec * fps) + 1;
+    if (effect.mirror && effect.roi) {
+      for (let depth = 1; depth <= effect.mirror.layers; depth++) {
+        const factor = effect.mirror.shrink ** depth;
+        dreamSamples += Math.min(width * height, (effect.roi.width * effect.scale * width * factor + 2) * (effect.roi.height * effect.scale * height * factor + 2)) * frames;
+      }
+    }
+    if (effect.paper)
+      dreamSamples += Math.min(width * height, (2 * effect.paper.size * height * effect.scale + 4) ** 2) * effect.paper.count * frames;
+  }
+  if (dreamSamples > 800_000_000)
+    throw new Error("镜面或纸页处理预算超限，请缩短时窗、缩小范围或减少数量");
   for (const effect of recipe.effects) {
     if (effect.blast && manhuaVfxFrameSpan(effect.startSec + effect.blast.ignitionSec, effect.durationSec - effect.blast.ignitionSec, fps).first >= manhuaVfxFrameSpan(effect.startSec, effect.durationSec, fps).stop) throw new Error("起爆后没有可见视频帧，请提前起爆或延长时窗");
     if (effect.bullet) {
