@@ -13,6 +13,7 @@ import {
 import { toast } from "sonner";
 import { usePhotoAnimationTask } from "@/lib/usePhotoAnimationTask";
 import HomePhotoVideoUpscale from "./HomePhotoVideoUpscale";
+import HomePhotoFlow from "./HomePhotoFlow";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import {
@@ -406,13 +407,13 @@ export default function HomePhotoTools() {
 
   const resultBlock = (result: ImageResult | null) =>
     result ? (
-      <div className="mt-4 overflow-hidden rounded-xl border border-white/10 bg-black/25">
+      <div className="mt-4 overflow-hidden rounded-xl border border-[var(--hp-line)] bg-[var(--hp-input)]">
         <img
           src={result.url}
           alt={result.label}
           className="aspect-video w-full object-contain"
         />
-        <div className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs text-white/65">
+        <div className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs text-[var(--hp-muted)]">
           <span>
             {result.label} · 实扣 {result.credits} 积分
           </span>
@@ -421,7 +422,7 @@ export default function HomePhotoTools() {
             download={resultDownloadName(result.label, "png")}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex items-center gap-1 font-semibold text-cyan-300 hover:text-cyan-200"
+            className="inline-flex items-center gap-1 font-semibold text-[var(--hp-accent)] hover:text-[var(--hp-accent)]"
           >
             <Download className="h-3.5 w-3.5" /> 下载
           </a>
@@ -431,7 +432,7 @@ export default function HomePhotoTools() {
 
   function sourceSelector(tool: PhotoTool) {
     return (
-      <label className="mt-4 flex flex-wrap items-center gap-2 text-xs text-white/65">
+      <label className="mt-4 flex flex-wrap items-center gap-2 text-xs text-[var(--hp-muted)]">
         使用照片
         <select
           aria-label={`${tool === "upscale" ? "高清放大" : tool === "restore" ? "修复上色" : "照片动画"}输入照片`}
@@ -443,7 +444,7 @@ export default function HomePhotoTools() {
               [tool]: event.target.value as SourceChoice,
             }))
           }
-          className="rounded-lg border border-white/15 bg-[#171725] px-3 py-2 text-white"
+          className="rounded-lg border border-[var(--hp-line)] bg-[var(--hp-input)] px-3 py-2 text-[var(--hp-ink)]"
         >
           <option value="original">
             {sourceName ? `上传原图：${sourceName}` : "请先上传照片"}
@@ -463,21 +464,18 @@ export default function HomePhotoTools() {
       className="mx-auto w-full max-w-[1120px] scroll-mt-24 px-5 py-20"
     >
       <div className="mx-auto max-w-3xl text-center">
-        <div className="inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/8 px-3 py-1 text-xs font-bold tracking-[0.14em] text-cyan-200">
-          <Sparkles className="h-3.5 w-3.5" /> 照片工具箱
+        <div className="inline-flex items-center gap-2 rounded-full border border-[var(--hp-accent-line)] bg-[var(--hp-accent-soft)] px-3 py-1 text-xs font-bold tracking-[0.14em] text-[var(--hp-accent)]">
+          <Sparkles className="h-3.5 w-3.5" /> 图片工具箱
         </div>
-        <h2 className="mt-5 text-3xl font-black tracking-tight text-white sm:text-4xl">
+        <h2 className="mt-5 text-3xl font-black tracking-tight text-[var(--hp-ink)] sm:text-4xl">
           让回忆重新穿越，也重新有生命
         </h2>
-        <p className="mt-4 text-sm leading-7 text-white/55 sm:text-base">
+        <p className="mt-4 text-sm leading-7 text-[var(--hp-muted)] sm:text-base">
           上传照片后，自由选择高清放大、修复上色或照片动起来。三个功能都可以单独使用，无需按顺序操作。
-        </p>
-        <p className="mt-2 text-xs text-white/35">
-          原图始终保留。需要继续处理时，在对应功能中自行选择原图、放大结果或上色结果。
         </p>
       </div>
 
-      <div className="mt-10 rounded-3xl border border-white/10 bg-white/[0.035] p-4 shadow-[0_24px_90px_rgba(17,24,39,0.35)] sm:p-6">
+      <div className="mt-10 rounded-3xl border border-[var(--hp-line)] bg-[var(--hp-card)] p-4 shadow-[0_20px_60px_rgba(82,50,29,0.06)] sm:p-6">
         <input
           ref={fileInputRef}
           type="file"
@@ -489,20 +487,20 @@ export default function HomePhotoTools() {
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={activeOperation !== null}
-          className="group flex min-h-40 w-full items-center justify-center overflow-hidden rounded-2xl border border-dashed border-white/15 bg-black/20 transition hover:border-cyan-300/35 hover:bg-cyan-300/[0.04] disabled:opacity-60"
+          className="group flex min-h-40 w-full items-center justify-center overflow-hidden rounded-2xl border border-dashed border-[var(--hp-line)] bg-[var(--hp-input)] transition hover:border-[var(--hp-accent-line)] hover:bg-[var(--hp-accent-soft)] disabled:opacity-60"
         >
           {previewUrl ? (
             <div className="flex w-full flex-col items-center gap-3 p-4 sm:flex-row sm:text-left">
               <img
                 src={previewUrl}
                 alt="已上传照片"
-                className="h-28 w-28 rounded-xl border border-white/10 object-cover"
+                className="h-28 w-28 rounded-xl border border-[var(--hp-line)] object-cover"
               />
               <div>
-                <div className="font-bold text-white">
+                <div className="font-bold text-[var(--hp-ink)]">
                   {sourceName || "已上传照片"}
                 </div>
-                <div className="mt-1 text-xs text-white/45">
+                <div className="mt-1 text-xs text-[var(--hp-muted)]">
                   已安全上传 · 点击可更换照片
                 </div>
               </div>
@@ -510,32 +508,51 @@ export default function HomePhotoTools() {
           ) : (
             <div className="flex flex-col items-center gap-3 px-5 py-8 text-center">
               {uploading ? (
-                <Loader2 className="h-8 w-8 animate-spin text-cyan-300" />
+                <Loader2 className="h-8 w-8 animate-spin text-[var(--hp-accent)]" />
               ) : (
-                <Upload className="h-8 w-8 text-cyan-300" />
+                <Upload className="h-8 w-8 text-[var(--hp-accent)]" />
               )}
-              <div className="font-bold text-white">
+              <div className="font-bold text-[var(--hp-ink)]">
                 {uploading ? "正在上传照片…" : "上传一张照片开始"}
               </div>
-              <div className="text-xs text-white/40">
+              <div className="text-xs text-[var(--hp-muted)]">
                 支持 JPG、PNG、WebP，最大 30MB；各功能提交限制单独检查
               </div>
             </div>
           )}
         </button>
 
+        <HomePhotoFlow
+          originalReady={Boolean(sourceUrl)}
+          upscaleReady={Boolean(upscaleResult?.url)}
+          restoreReady={Boolean(restoreResult?.url)}
+          upscaleBusy={Boolean(upscaleBusy)}
+          restoreBusy={restoreMutation.isPending}
+          animationStatus={animation.pending?.status === "failed" ? "本次未完成" : animation.pending?.status === "reconcile_manual" ? "需要核对" : animation.pending || animateBusy ? "正在制作" : videoResult ? "已有动画" : ""}
+          choices={sourceChoices}
+          locked={activeOperation !== null}
+          onReuse={(tool, source) => {
+            // 仅选中已有素材；沿原确认按钮提交，不在图解入口发起生成或扣分。
+            if (activeOperation !== null || !(source === "upscale" ? upscaleResult?.url : restoreResult?.url)) return;
+            setSourceChoices(current => ({ ...current, [tool]: source }));
+            const target = document.getElementById(`photo-tools-${tool}`);
+            target?.scrollIntoView({ block: "start" });
+            target?.querySelector<HTMLSelectElement>("select")?.focus({ preventScroll: true });
+          }}
+        />
+
         <div className="mt-5 grid gap-4 md:grid-cols-2">
           <article
             id="photo-tools-upscale"
-            className="scroll-mt-24 rounded-2xl border border-white/10 bg-[#10101d] p-5"
+            className="scroll-mt-24 rounded-2xl border border-[var(--hp-line)] bg-[var(--hp-card)] p-5"
           >
             <div className="flex items-start gap-3">
-              <div className="rounded-xl bg-cyan-400/10 p-2.5 text-cyan-300">
+              <div className="rounded-xl bg-[var(--hp-accent-soft)] p-2.5 text-[var(--hp-accent)]">
                 <Maximize2 className="h-5 w-5" />
               </div>
               <div>
-                <h3 className="font-bold text-white">高清放大</h3>
-                <p className="mt-1 text-xs leading-5 text-white/45">
+                <h3 className="font-bold text-[var(--hp-ink)]">高清放大</h3>
+                <p className="mt-1 text-xs leading-5 text-[var(--hp-muted)]">
                   智能提升尺寸与细节，尽量保持人物、文字与构图不变。
                 </p>
               </div>
@@ -551,7 +568,7 @@ export default function HomePhotoTools() {
                     type="button"
                     onClick={() => void runUpscale(factor)}
                     disabled={activeOperation !== null}
-                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-cyan-300/20 bg-cyan-300/8 text-sm font-bold text-cyan-100 transition hover:bg-cyan-300/15 disabled:opacity-45"
+                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[var(--hp-accent-line)] bg-[var(--hp-accent-soft)] text-sm font-bold text-[var(--hp-accent)] transition hover:bg-[var(--hp-accent-soft)] disabled:opacity-45"
                   >
                     {upscaleBusy === factor ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -566,15 +583,15 @@ export default function HomePhotoTools() {
 
           <article
             id="photo-tools-restore"
-            className="scroll-mt-24 rounded-2xl border border-white/10 bg-[#10101d] p-5"
+            className="scroll-mt-24 rounded-2xl border border-[var(--hp-line)] bg-[var(--hp-card)] p-5"
           >
             <div className="flex items-start gap-3">
-              <div className="rounded-xl bg-amber-400/10 p-2.5 text-amber-300">
+              <div className="rounded-xl bg-[var(--hp-accent-soft)] p-2.5 text-[var(--hp-warning)]">
                 <Palette className="h-5 w-5" />
               </div>
               <div>
-                <h3 className="font-bold text-white">老照片修复上色</h3>
-                <p className="mt-1 text-xs leading-5 text-white/45">
+                <h3 className="font-bold text-[var(--hp-ink)]">老照片修复上色</h3>
+                <p className="mt-1 text-xs leading-5 text-[var(--hp-muted)]">
                   自动识别纸质照片边界，再修复划痕、折痕与褪色，锁定原人物身份和构图，自然恢复年代色彩。
                 </p>
               </div>
@@ -584,7 +601,7 @@ export default function HomePhotoTools() {
               type="button"
               onClick={() => void runRestore()}
               disabled={activeOperation !== null}
-              className="mt-5 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-amber-300/20 bg-amber-300/8 text-sm font-bold text-amber-100 transition hover:bg-amber-300/15 disabled:opacity-45"
+              className="mt-5 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[var(--hp-accent-line)] bg-[var(--hp-accent-soft)] text-sm font-bold text-[var(--hp-warning)] transition hover:bg-[var(--hp-accent-soft)] disabled:opacity-45"
             >
               {restoreMutation.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -599,15 +616,15 @@ export default function HomePhotoTools() {
 
         <article
           id="photo-tools-animate"
-          className="mt-4 scroll-mt-24 rounded-2xl border border-violet-300/15 bg-[linear-gradient(135deg,rgba(124,58,237,0.12),rgba(15,15,28,0.96))] p-5 sm:p-6"
+          className="mt-4 scroll-mt-24 rounded-2xl border border-[var(--hp-accent-line)] bg-[linear-gradient(135deg,var(--hp-card),var(--hp-peach))] p-5 sm:p-6"
         >
           <div className="flex items-start gap-3">
-            <div className="rounded-xl bg-violet-400/12 p-2.5 text-violet-300">
+            <div className="rounded-xl bg-[var(--hp-accent-soft)] p-2.5 text-[var(--hp-accent)]">
               <Video className="h-5 w-5" />
             </div>
             <div>
-              <h3 className="font-bold text-white">让照片人物动起来</h3>
-              <p className="mt-1 text-xs leading-5 text-white/45">
+              <h3 className="font-bold text-[var(--hp-ink)]">让照片人物动起来</h3>
+              <p className="mt-1 text-xs leading-5 text-[var(--hp-muted)]">
                 填写你想看到的动作，选择时长与清晰度，快速成片并按秒计费。
               </p>
             </div>
@@ -621,7 +638,7 @@ export default function HomePhotoTools() {
                 setMotionPrompt(event.target.value.slice(0, 500))
               }
               placeholder="例如：人物看向镜头，露出温和的微笑并轻轻挥手；保持脸部、服装和背景稳定。"
-              className="min-h-28 w-full resize-y rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-sm leading-6 text-white outline-none placeholder:text-white/25 focus:border-violet-300/40"
+              className="min-h-28 w-full resize-y rounded-xl border border-[var(--hp-line)] bg-[var(--hp-input)] px-4 py-3 text-sm leading-6 text-[var(--hp-ink)] outline-none placeholder:text-[var(--hp-subtle)] focus:border-[var(--hp-accent-line)]"
             />
             <div className="grid grid-cols-3 gap-2 lg:w-80">
               {HOME_PHOTO_ANIMATE_DURATIONS.map(seconds => (
@@ -632,8 +649,8 @@ export default function HomePhotoTools() {
                   disabled={activeOperation !== null}
                   className={`rounded-xl border px-3 py-3 text-center transition ${
                     duration === seconds
-                      ? "border-violet-300/55 bg-violet-400/18 text-white"
-                      : "border-white/10 bg-white/5 text-white/55 hover:bg-white/8"
+                      ? "border-[var(--hp-accent-line)] bg-[var(--hp-accent-soft)] text-[var(--hp-ink)]"
+                      : "border-[var(--hp-line)] bg-[var(--hp-card)] text-[var(--hp-muted)] hover:bg-[var(--hp-card)]"
                   }`}
                 >
                   <span className="block text-sm font-bold">{seconds} 秒</span>
@@ -645,7 +662,7 @@ export default function HomePhotoTools() {
             </div>
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <span className="mr-1 text-xs font-semibold text-white/45">
+            <span className="mr-1 text-xs font-semibold text-[var(--hp-muted)]">
               生成模型 · 720p
             </span>
             {HOME_PHOTO_VIDEO_MODELS.map(item => (
@@ -656,8 +673,8 @@ export default function HomePhotoTools() {
                 disabled={activeOperation !== null}
                 className={`rounded-lg border px-3 py-2 text-xs font-bold transition ${
                   modelChoice === item
-                    ? "border-violet-300/55 bg-violet-400/18 text-white"
-                    : "border-white/10 bg-white/5 text-white/55 hover:bg-white/8"
+                    ? "border-[var(--hp-accent-line)] bg-[var(--hp-accent-soft)] text-[var(--hp-ink)]"
+                    : "border-[var(--hp-line)] bg-[var(--hp-card)] text-[var(--hp-muted)] hover:bg-[var(--hp-card)]"
                 }`}
               >
                 {HOME_PHOTO_VIDEO_MODEL_LABELS[item]}
@@ -672,7 +689,7 @@ export default function HomePhotoTools() {
               !animation.ready ||
               Boolean(animation.pending)
             }
-            className="mt-3 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[linear-gradient(135deg,#8b5cf6,#ec4899)] px-5 text-sm font-black text-white shadow-lg shadow-violet-950/30 transition hover:brightness-110 disabled:opacity-50"
+            className="mt-3 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[var(--hp-accent)] px-5 text-sm font-semibold text-[#fff] shadow-sm transition hover:brightness-110 disabled:opacity-50"
           >
             {animateBusy ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -684,12 +701,12 @@ export default function HomePhotoTools() {
               : `生成 ${resolution} · ${duration} 秒照片动画 · ${homePhotoAnimateCredits(duration, resolution)} 积分`}
           </button>
           {animation.message && (
-            <p role="status" className="mt-3 text-sm text-white/70">
+            <p role="status" className="mt-3 text-sm text-[var(--hp-muted)]">
               {animation.message}
             </p>
           )}
           {animation.pending?.taskId && (
-            <p className="mt-1 break-all text-xs text-white/45">
+            <p className="mt-1 break-all text-xs text-[var(--hp-muted)]">
               任务编号：{animation.pending.taskId}
             </p>
           )}
@@ -697,20 +714,20 @@ export default function HomePhotoTools() {
             <button
               type="button"
               onClick={animation.clearFailed}
-              className="mt-2 text-sm text-violet-300"
+              className="mt-2 text-sm text-[var(--hp-accent)]"
             >
               已查看失败结果，返回生成
             </button>
           )}
           {videoResult ? (
-            <div className="mt-4 overflow-hidden rounded-xl border border-white/10 bg-black/30">
+            <div className="mt-4 overflow-hidden rounded-xl border border-[var(--hp-line)] bg-[var(--hp-input)]">
               <video
                 src={videoResult.url}
                 controls
                 playsInline
-                className="max-h-[560px] w-full bg-black object-contain"
+                className="max-h-[560px] w-full bg-[var(--hp-input)] object-contain"
               />
-              <div className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs text-white/65">
+              <div className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs text-[var(--hp-muted)]">
                 <span>
                   {videoResult.label} · 实扣 {videoResult.credits} 积分
                 </span>
@@ -719,19 +736,19 @@ export default function HomePhotoTools() {
                   download={resultDownloadName(videoResult.label, "mp4")}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1 font-semibold text-violet-300 hover:text-violet-200"
+                  className="inline-flex items-center gap-1 font-semibold text-[var(--hp-accent)] hover:text-[var(--hp-accent)]"
                 >
                   <Download className="h-3.5 w-3.5" /> 下载视频
                 </a>
               </div>
             </div>
           ) : null}
-          <p className="mt-3 text-center text-[11px] text-white/35">
+          <p className="mt-3 text-center text-[11px] text-[var(--hp-subtle)]">
             成片功能沿用正式会员权限；生成失败会自动退回本次积分。
           </p>
         </article>
       </div>
-      <p className="mt-4 text-sm text-amber-200/80">
+      <p className="mt-4 text-sm text-[var(--hp-warning)]">
         照片和视频在下载空间保留12小时，请及时下载保存；到期自动删除临时副本。
       </p>
       <HomePhotoVideoUpscale generatedVideoUrl={videoResult?.url} />

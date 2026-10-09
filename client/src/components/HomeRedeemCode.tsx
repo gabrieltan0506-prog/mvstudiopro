@@ -35,10 +35,10 @@ export default function HomeRedeemCode() {
   return (
     <section style={{ maxWidth: 600, margin: "0 auto 40px", padding: "0 24px", paddingTop: 8 }}>
       <div style={{
-        background: "rgba(255,107,53,0.08)", border: "1px solid rgba(255,107,53,0.25)",
+        background: "var(--hp-card)", border: "1px solid var(--hp-line)",
         borderRadius: 16, padding: "20px 24px",
       }}>
-        <div style={{ fontSize: 14, fontWeight: 800, color: "#ff6b35", marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: "var(--hp-accent)", marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>
           🎁 兑换邀请码
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -49,8 +49,8 @@ export default function HomeRedeemCode() {
             onChange={e => { setCode(e.target.value.toUpperCase()); setStatus("idle"); }}
             onKeyDown={e => e.key === "Enter" && handleRedeem()}
             style={{
-              flex: 1, background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.15)",
-              borderRadius: 8, padding: "10px 14px", color: "#fff", fontSize: 14,
+              flex: 1, background: "var(--hp-card)", border: "1px solid var(--hp-line)",
+              borderRadius: 8, padding: "10px 14px", color: "var(--hp-ink)", fontSize: 14,
               fontFamily: "monospace", outline: "none", letterSpacing: 1,
             }}
           />
@@ -58,8 +58,8 @@ export default function HomeRedeemCode() {
             onClick={handleRedeem}
             disabled={status === "loading" || !code.trim()}
             style={{
-              background: "#ff6b35", border: "none", borderRadius: 8,
-              padding: "10px 20px", color: "#fff", fontWeight: 700, fontSize: 14,
+              background: "var(--hp-card)", border: "none", borderRadius: 8,
+              padding: "10px 20px", color: "var(--hp-ink)", fontWeight: 700, fontSize: 14,
               cursor: status === "loading" || !code.trim() ? "not-allowed" : "pointer",
               opacity: status === "loading" || !code.trim() ? 0.6 : 1, whiteSpace: "nowrap",
             }}

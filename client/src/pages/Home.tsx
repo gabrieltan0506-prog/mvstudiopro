@@ -10,11 +10,10 @@ import HomeEducation from "../components/HomeEducation";
 import HomeFeedback from "../components/HomeFeedback";
 import HomeBlogShowcase from "../components/HomeBlogShowcase";
 import { LaunchCountdownBanner } from "../components/LaunchCountdownBanner";
-import HomeModelShowcase from "../components/HomeModelShowcase";
-import HomeUpdateTicker from "../components/HomeUpdateTicker";
 import HomePlatformHighlights from "../components/HomePlatformHighlights";
 import HomeFileConversion from "../components/HomeFileConversion";
 import HomePhotoTools from "../components/HomePhotoTools";
+import "../styles/homeProduct.css";
 
 /**
  * 营销首页（方案 A）：导航 + Hero + V3 动效段 + 定价占位 + 试读 + 我的作品；
@@ -22,26 +21,18 @@ import HomePhotoTools from "../components/HomePhotoTools";
  */
 export default function HomePage() {
   return (
-    <div className="relative min-h-dvh bg-[#0a0915]">
-      <div
-        className="relative z-[1] min-h-dvh"
-        style={{
-          background:
-            "radial-gradient(ellipse 80% 50% at 50% -10%, rgba(99,102,241,0.14), transparent 55%), #0a0915",
-        }}
-      >
+    <div data-home-theme="warm" className="home-product relative min-h-dvh">
+      <div className="home-product-content relative z-[1] min-h-dvh">
         <HomeNavbar />
-        <LaunchCountdownBanner />
         <HomeHero />
+        <LaunchCountdownBanner />
         <HomePresentationShowcase />
         {/* 定价置顶（用户 2026-08-12：商业网站先谈钱）；试读样刊区整区下架，换 /blog 实测封面直达生成 */}
         <HomePricing />
-        <HomeUpdateTicker />
-        <HomeModelShowcase />
-        <HomePlatformHighlights />
-        <HomeBlogShowcase />
         <HomePhotoTools />
         <HomeFileConversion />
+        <HomePlatformHighlights />
+        <HomeBlogShowcase />
 
         <HomeMyWorks />
 
@@ -50,12 +41,12 @@ export default function HomePage() {
         <HomeFeedback />
 
         <section className="mx-auto w-full max-w-[720px] px-5 pb-16 pt-6">
-          <details className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 open:pb-4">
-            <summary className="cursor-pointer list-none text-sm font-semibold text-white/70 marker:content-none [&::-webkit-details-marker]:hidden">
+          <details className="rounded-2xl border border-[var(--hp-line)] bg-[var(--hp-card)] px-4 py-3 open:pb-4">
+            <summary className="cursor-pointer list-none text-sm font-semibold text-[var(--hp-muted)] marker:content-none [&::-webkit-details-marker]:hidden">
               邀请码兑换 / 申请内测
-              <span className="ml-2 text-xs font-normal text-white/40">可选 · 点击展开</span>
+              <span className="ml-2 text-xs font-normal text-[var(--hp-muted)]">可选 · 点击展开</span>
             </summary>
-            <div className="mt-4 space-y-4 border-t border-white/8 pt-4">
+            <div className="mt-4 space-y-4 border-t border-[var(--hp-line)] pt-4">
               <div id="redeem-invite" style={{ scrollMarginTop: 80 }} />
               <HomeRedeemCode />
               <HomeInviteApply />

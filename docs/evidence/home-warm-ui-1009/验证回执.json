@@ -1,0 +1,149 @@
+{
+  "status": "本地开发验证通过，尚未线上验收",
+  "base": "ab12bc9921d4cabe1ef01461d617c540cf6f14d0",
+  "branch": "feat/home-warm-ui-1009",
+  "agent_model": "GPT6 Astra",
+  "scope": [
+    "首页暖色主题与模块顺序",
+    "照片素材地图及已有结果复用",
+    "每日3文件额度突出显示且动态剩余值",
+    "前端删除来源IP技术说明",
+    "PWA仅确认supervisor身份可见"
+  ],
+  "diagram_design": {
+    "url": "https://github.com/cathrynlavery/diagram-design",
+    "commit": "f4547ee95f88e5b28a52517feff6b6c11cc657f9",
+    "applied": "架构分层、正交连线、单一焦点；原生React/SVG，状态和复用按钮消费既有照片工具"
+  },
+  "functional_browser_cases": 4,
+  "latest_home_cases": {
+    "command": "pnpm exec vitest run client/src/lib/homeProduct.browser.test.ts -t '完整首页|照片放大与修复'",
+    "result": "2 passed, 1 skipped",
+    "log": "home-warm-diagram-quota-1009.log"
+  },
+  "reused_unchanged_cases": [
+    {
+      "case": "PWA身份/监听器隔离",
+      "result": "1 passed",
+      "log": "home-warm-1009-pwa.log"
+    },
+    {
+      "case": "视频高清确认/提交/恢复/消费",
+      "result": "1 passed, 10 skipped",
+      "log": "home-warm-1009-video-consumer.log"
+    }
+  ],
+  "final_checks": [
+    {
+      "command": "pnpm exec tsc --noEmit --incremental --tsBuildInfoFile /tmp/home-warm-ui-1009-delivery.tsbuildinfo",
+      "exit_code": 0,
+      "log": "home-warm-ui-1009-delivery-types.log"
+    },
+    {
+      "command": "pnpm exec vite build",
+      "exit_code": 0,
+      "log": "home-warm-ui-1009-delivery-build.log"
+    },
+    {
+      "command": "pnpm exec vitest run client/src/lib/homeProduct.browser.test.ts -t '渲染真实首页代码'",
+      "result": "1 passed, 2 skipped",
+      "log": "home-warm-ui-1009-delivery-preview.log"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "earlier_failures": "初期转换用例被headless原生下载/退出阻塞，照片用例当时通过；仅修测试下载边界记录href/fileName并禁止native保存，未修改产品下载逻辑。失败原始日志保留于ZIP。",
+  "limitations": [
+    "浏览器测试仅网络/身份/上传存储边界注入；不证明生产服务/扣退/真实登录恢复",
+    "画面来自当前真实React代码与既有样片，开发预览，未Production部署",
+    "PWA按服务端确认supervisor角色；实际用户正式登录态尚未验证",
+    "不执行Blender Smoke、生产模型/媒体、数据库修改、合并或部署"
+  ],
+  "fees": "无付费/无模型调用",
+  "screenshots": [
+    {
+      "file": "手机-图片工具箱.png",
+      "bytes": 68505,
+      "sha256": "4da7f870182c74dd3d74063bef6a3fbf06e481fb4d11875e5cb52da3514b2ff2"
+    },
+    {
+      "file": "手机-文件转换.png",
+      "bytes": 68962,
+      "sha256": "de9f948f750b78304e065dace174aa4ed1985eb5421a4811d541f1e62fef99b1"
+    },
+    {
+      "file": "手机-首屏.png",
+      "bytes": 219839,
+      "sha256": "af12997db6ce2b6fbd4b6de37c5fc2d3da4e1f085c8454093f3d4b5dfa8a3dd4"
+    },
+    {
+      "file": "桌面-图片工具箱.png",
+      "bytes": 139136,
+      "sha256": "0a005a4823cff6ece164de6e559648f6065aa1a9fbe2669812d2fb21292a9802"
+    },
+    {
+      "file": "桌面-文件转换.png",
+      "bytes": 157922,
+      "sha256": "a06036e1741e778026d442e01f5c64759fb923a7aae1e8ae91cb12609da3b293"
+    },
+    {
+      "file": "桌面-首屏.png",
+      "bytes": 581570,
+      "sha256": "00674be8d32851ab50806b6ebba4e2ced424aacda179418cded41c3d5fb9b035"
+    }
+  ],
+  "raw_log_files": [
+    {
+      "file": "home-warm-diagram-quota-1009.log",
+      "sha256": "12d5c4187e02afa6f7a2393f322cb62d281b64139deb0ffa86ed05104b9243e1",
+      "bytes": 1299
+    },
+    {
+      "file": "home-warm-1009-pwa.log",
+      "sha256": "a3d60f61bd14156c461dd3f42742901f11d151f8ab6ad2a07cb0cb4280d73a09",
+      "bytes": 437
+    },
+    {
+      "file": "home-warm-1009-video-consumer.log",
+      "sha256": "b64ab03fc295e2bc5750499a0b1312bc98921985e7c80c288a00275de2f714e6",
+      "bytes": 445
+    },
+    {
+      "file": "home-warm-ui-1009-delivery-types.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "file": "home-warm-ui-1009-delivery-build.log",
+      "sha256": "0d3f60acc7a094dc66c64f3a1d4c99cc4b549c60a625b89d3accbca9872dc4f4",
+      "bytes": 82363
+    },
+    {
+      "file": "home-warm-ui-1009-delivery-preview.log",
+      "sha256": "8d9c482130b698f738797def22ecec534e219b2aa870bb496c504ca8282a774f",
+      "bytes": 447
+    },
+    {
+      "file": "home-warm-1009-browser.log",
+      "sha256": "67887bef0284e6ee218b01f40656d645f3cd634e4c9184e2d92f538642c41a19",
+      "bytes": 1140
+    },
+    {
+      "file": "home-warm-1009-browser-layout-final.log",
+      "sha256": "e246fa4beb8d7e1f860dd2c3779f13ad0a822ec4adad08322605ee917317a01f",
+      "bytes": 1040
+    },
+    {
+      "file": "home-warm-1009-browser-menu-final.log",
+      "sha256": "dc17dc573079a444261b8577c057ccafb129ddd9ec86fbe67b1e6c8e228989df",
+      "bytes": 1397
+    },
+    {
+      "file": "home-warm-1009-browser-menu-repair.log",
+      "sha256": "cca6c15553aa87f0e984119231f7a4fc6474af8e5260d2c444d487895ac83dcf",
+      "bytes": 1792
+    }
+  ]
+}

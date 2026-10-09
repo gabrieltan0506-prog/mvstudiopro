@@ -1,0 +1,160 @@
+/* 首页独立色域；移动导航门户显式携带同一标记，不影响其他工作台。 */
+:is([data-home-theme="warm"], .home-product-portal) {
+  color-scheme: light;
+  --hp-background: #fbf8f4;
+  --hp-peach: #f6e6d8;
+  --hp-blush: #f3ddd5;
+  --hp-ink: #252321;
+  --hp-muted: #6e625c;
+  --hp-subtle: #786c65;
+  --hp-accent: #a24d2f;
+  --hp-card: rgba(255, 255, 255, 0.78);
+  --hp-input: #f5f0eb;
+  --hp-nav: rgba(251, 248, 244, 0.88);
+  --hp-line: #dfd4cb;
+  --hp-accent-line: #c99c86;
+  --hp-accent-soft: #f3e4d9;
+  --hp-success: #22724b;
+  --hp-warning: #92520b;
+  --hp-danger: #b33337;
+  --background: var(--hp-background);
+  --foreground: var(--hp-ink);
+  --card: #ffffff;
+  --card-foreground: var(--hp-ink);
+  --popover: #fffaf6;
+  --popover-foreground: var(--hp-ink);
+  --primary: var(--hp-accent);
+  --primary-foreground: #fff;
+  --secondary: var(--hp-input);
+  --secondary-foreground: var(--hp-ink);
+  --muted: var(--hp-input);
+  --muted-foreground: var(--hp-muted);
+  --accent: var(--hp-accent-soft);
+  --accent-foreground: var(--hp-ink);
+  --border: var(--hp-line);
+  --input: var(--hp-line);
+  --ring: var(--hp-accent);
+  color: var(--hp-ink);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Helvetica Neue", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.home-product {
+  background:
+    radial-gradient(ellipse 70% 680px at 75% 180px, #f3ddd5 0%, transparent 75%),
+    radial-gradient(ellipse 70% 900px at 10% 460px, #f6e6d8 0%, transparent 70%),
+    linear-gradient(180deg, #fbf8f4 0%, #fffaf6 38%, #f8f3ed 100%);
+}
+
+.home-product-content > section {
+  padding-top: clamp(48px, 6vw, 88px);
+  padding-bottom: clamp(48px, 6vw, 88px);
+}
+
+.home-product h2 {
+  font-size: clamp(28px, 3.1vw, 44px);
+  line-height: 1.18;
+  letter-spacing: -0.045em;
+  font-weight: 650;
+}
+
+.home-product h3 { letter-spacing: -0.02em; }
+.home-product :is(button, input, textarea, select) { font-family: inherit; }
+.home-product :is(input, textarea, select) { accent-color: var(--hp-accent); }
+.home-product :is(input, textarea)::placeholder { color: var(--hp-subtle); opacity: 1; }
+:is(.home-product, .home-product-portal) :is(a, button, input, textarea, select, summary):focus-visible {
+  outline: 2px solid var(--hp-accent);
+  outline-offset: 4px;
+}
+
+.home-product-content > .home-product-hero { padding-top: 0; padding-bottom: 40px; }
+.home-product-intro { text-align: center; padding: clamp(54px, 7vw, 100px) 0 50px; }
+.home-product-eyebrow { font-size: 18px; font-weight: 650; letter-spacing: -0.025em; }
+.home-product-intro h1 {
+  margin-top: 20px;
+  font-size: clamp(44px, 6.2vw, 80px);
+  font-weight: 650;
+  letter-spacing: -0.065em;
+  line-height: 1.1;
+}
+.home-product-intro h1 span {
+  background: linear-gradient(105deg, #a24d2f, #b45e41 55%, #986650);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+.home-product-description { margin: 24px auto 0; color: var(--hp-muted); font-size: clamp(16px, 1.6vw, 21px); line-height: 1.65; }
+.home-product-intro-actions { display: flex; align-items: center; justify-content: center; gap: 28px; flex-wrap: wrap; margin-top: 30px; }
+.home-product-primary { display: inline-flex; align-items: center; gap: 12px; padding: 13px 25px; border-radius: 999px; background: var(--hp-accent); color: #fff; font-size: 15px; font-weight: 600; text-decoration: none; transition: background 180ms ease; }
+.home-product-primary:hover { background: #8c4028; }
+.home-product-link { color: var(--hp-accent); font-size: 15px; font-weight: 600; text-decoration: none; }
+.home-product-link:hover { text-decoration: underline; }
+.home-product-screen { box-shadow: 0 24px 70px rgba(86, 54, 33, 0.14); }
+.home-product .home-liquid-glass { border: 1px solid var(--hp-line); background: var(--hp-card); }
+.home-product .home-liquid-glass[aria-pressed="true"] { border-color: var(--hp-accent); background: var(--hp-accent-soft); }
+.home-product-content > .home-product-launch { padding-top: 24px; padding-bottom: 48px; }
+.home-product-launch > div { border-radius: 28px; background: var(--hp-card); border: 1px solid var(--hp-line); padding: 32px 40px; }
+.home-product-launch h2 { font-size: clamp(25px, 2.5vw, 34px); }
+.home-product-launch a { border-radius: 999px; }
+
+.home-product :is(#photo-tools, #file-conversion) h2 { margin-top: 16px; }
+.home-product #photo-tools > div:first-child > div { letter-spacing: 0.01em; }
+.home-product :is(#photo-tools, #file-conversion) article { box-shadow: 0 6px 22px rgba(86, 54, 33, 0.035); }
+.home-product :is(button, a) { -webkit-tap-highlight-color: transparent; }
+.home-product [disabled] { cursor: not-allowed; }
+body:has([data-home-theme="warm"]) [data-pwa-install-button] button {
+  background-image: none;
+  background-color: #a24d2f;
+  border-color: #c99c86;
+  color: #fff;
+}
+
+.home-photo-flow { margin-top: 28px; padding: 24px 0 8px; border-top: 1px solid var(--hp-line); }
+.home-photo-flow-caption > span { font-size: 16px; font-weight: 600; }
+.home-photo-flow-caption p { margin-top: 8px; font-size: 12px; line-height: 1.7; color: var(--hp-muted); }
+.home-photo-flow-map { position: relative; height: 248px; margin-top: 20px; }
+.home-photo-flow-lines { position: absolute; width: 100%; height: 100%; pointer-events: none; }
+.home-photo-flow-lines > g { stroke: var(--hp-line); stroke-width: 1.2; }
+.home-photo-flow-lines marker path { fill: none; stroke: var(--hp-muted); stroke-width: 1.2; }
+.home-photo-flow-lines-narrow { display: none; }
+.home-photo-flow-sources, .home-photo-flow-tools { position: absolute; top: 8px; width: 23.2%; display: grid; gap: 20px; }
+.home-photo-flow-sources { left: 0; }
+.home-photo-flow-tools { right: 0; }
+.home-photo-flow-node { min-width: 0; height: 64px; display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 8px 16px; border: 1px solid var(--hp-line); border-radius: 8px; background: #fffaf6; color: var(--hp-ink); text-decoration: none; }
+.home-photo-flow-node strong { font-size: 14px; font-weight: 600; }
+.home-photo-flow-node > span { color: var(--hp-muted); font-size: 12px; line-height: 1.35; }
+.home-photo-flow-node[data-ready="false"] { border-style: dashed; }
+.home-photo-flow-tools a:hover { border-color: var(--hp-accent-line); }
+.home-photo-flow-choice { position: absolute; left: 38%; top: 92px; width: 24%; height: 64px; display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 8px; border: 1px solid var(--hp-accent-line); border-radius: 8px; background: var(--hp-accent-soft); text-align: center; }
+.home-photo-flow-choice strong { font-size: 15px; font-weight: 600; color: var(--hp-accent); }
+.home-photo-flow-choice span { color: var(--hp-muted); font-size: 12px; }
+.home-photo-flow-reuse { display: flex; flex-wrap: wrap; gap: 12px 24px; margin-top: 12px; }
+.home-photo-flow-reuse button { min-height: 44px; padding: 8px 0; color: var(--hp-accent); font-size: 13px; font-weight: 600; text-align: left; }
+.home-photo-flow-reuse button:hover { text-decoration: underline; text-underline-offset: 4px; }
+.home-photo-flow-reuse button:disabled { opacity: 0.5; }
+
+@media (max-width: 640px) {
+  .home-photo-flow-lines-wide { display: none; }
+  .home-photo-flow-lines-narrow { display: block; }
+  .home-photo-flow-map { height: 320px; }
+  .home-photo-flow-sources, .home-photo-flow-tools { width: 100%; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3.5714%; }
+  .home-photo-flow-sources { top: 8px; }
+  .home-photo-flow-tools { top: 256px; }
+  .home-photo-flow-node { padding: 6px 4px; text-align: center; }
+  .home-photo-flow-node strong { font-size: 12px; }
+  .home-photo-flow-node > span { font-size: 12px; }
+  .home-photo-flow-choice { left: 24%; top: 128px; width: 52%; }
+  .home-photo-flow-task { display: none; }
+}
+
+@media (max-width: 640px) {
+  .home-product-content > section { padding-left: 20px; padding-right: 20px; }
+  .home-product-intro { padding-top: 52px; padding-bottom: 38px; }
+  .home-product-intro h1 { letter-spacing: -0.055em; }
+  .home-product-launch > div { padding: 26px 22px; }
+  .home-product .home-product-screen { border-radius: 20px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-product *, .home-product-portal * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

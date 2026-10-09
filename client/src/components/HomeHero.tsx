@@ -42,9 +42,18 @@ export default function HomeHero() {
   };
 
   return (
-    <section className="relative mx-auto max-w-[1240px] px-5 pt-7">
+    <section className="home-product-hero relative mx-auto max-w-[1240px] px-5 pt-7">
+      <div className="home-product-intro">
+        <p className="home-product-eyebrow">MV Studio Pro</p>
+        <h1>把灵感，<br className="sm:hidden" />变成<span>作品。</span></h1>
+        <p className="home-product-description">从一张照片、一份文件，到你的下一部成片。<br />创作所需，在这里展开。</p>
+        <div className="home-product-intro-actions">
+          <a href="#photo-tools" className="home-product-primary">开始创作 <span aria-hidden>↗</span></a>
+          <a href="#file-conversion" className="home-product-link">转换文件 <span aria-hidden>→</span></a>
+        </div>
+      </div>
       {/* 视频全幅干净展示：片名切换条放在播放器外，不遮挡画面与播放控制 */}
-      <div className="relative aspect-[16/9] overflow-hidden rounded-3xl border border-white/10 bg-[#0c0b16] md:aspect-[21/9]">
+      <div className="home-product-screen relative aspect-[16/9] overflow-hidden rounded-3xl border border-[var(--hp-line)] bg-[var(--hp-input)] md:aspect-[21/9]">
         <video
           ref={video}
           src={slides[0]!.videoUrl}
@@ -68,13 +77,13 @@ export default function HomeHero() {
               onMouseEnter={() => play(i)}
               aria-pressed={i === idx}
               className={`home-liquid-glass shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
-                i === idx ? "text-white ring-1 ring-white/40" : "text-white/60 hover:text-white"
+                i === idx ? "text-[var(--hp-ink)] ring-1 ring-[var(--hp-line)]" : "text-[var(--hp-muted)] hover:text-[var(--hp-ink)]"
               }`}
             >
               {s.title}
             </button>
           ))}
-        <span role="status" className="ml-2 text-xs text-white/60">{notice || "点击或停留播放 · 默认有声 · 完整播放"}</span>
+        <span role="status" className="ml-2 text-xs text-[var(--hp-muted)]">{notice || "点击或停留播放 · 默认有声 · 完整播放"}</span>
       </div>
 
       {/* 两个工作台入口：视频下方横排一行，不占画面 */}
@@ -83,24 +92,15 @@ export default function HomeHero() {
           <Link
             key={item.href}
             href={item.href}
-            className="home-liquid-glass flex items-baseline justify-between gap-3 rounded-2xl px-5 py-3.5 text-white no-underline transition hover:bg-white/[0.1]"
+            className="home-liquid-glass flex items-baseline justify-between gap-3 rounded-2xl px-5 py-3.5 text-[var(--hp-ink)] no-underline transition hover:bg-[var(--hp-card)]"
           >
             <span className="text-sm font-bold">{item.label}</span>
-            <span className="min-w-0 flex-1 truncate text-right text-[12px] text-white/55">{item.desc}</span>
-            <span aria-hidden className="text-white/40">→</span>
+            <span className="min-w-0 flex-1 truncate text-right text-[12px] text-[var(--hp-muted)]">{item.desc}</span>
+            <span aria-hidden className="text-[var(--hp-muted)]">→</span>
           </Link>
         ))}
       </div>
 
-      <style>{`
-        .home-liquid-glass {
-          background: rgba(255,255,255,0.08);
-          border: 1px solid rgba(255,255,255,0.18);
-          backdrop-filter: blur(14px);
-          -webkit-backdrop-filter: blur(14px);
-          box-shadow: inset 0 1px 0 rgba(255,255,255,0.12);
-        }
-      `}</style>
     </section>
   );
 }
