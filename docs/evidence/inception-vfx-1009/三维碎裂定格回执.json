@@ -1,0 +1,334 @@
+{
+  "sourceHead": "fd8608838e14f8c2f9ca98c9a219a14318b9086b",
+  "status": "部分完成，尚未线上和自然表演验收",
+  "probeId": "DEV_PROBE_PR1694_3D_HOLD_1009",
+  "paidCalls": 0,
+  "modelCalls": 0,
+  "developmentModels": {
+    "GPT6 Astra": "本次三维碎裂、翻折、选择性定格与验证",
+    "GPT6.1 Sol": "此前镜面、纸页及一次媒体探针"
+  },
+  "modifiedFiles": [
+    "client/src/components/canvas/ManhuaVfxEditor.tsx",
+    "client/src/components/canvas/ManhuaVfxEffectParameters.tsx",
+    "client/src/lib/manhuaVfxSourceParameters.browser.test.ts",
+    "client/src/lib/manhuaVfxWorkflow.ts",
+    "server/scripts/manhua_vfx.py",
+    "server/scripts/manhua_vfx_city.py",
+    "server/scripts/manhua_vfx_city_math.py",
+    "server/scripts/manhua_vfx_math.py",
+    "server/scripts/manhua_vfx_prop.py",
+    "server/scripts/manhua_vfx_prop_math.py",
+    "server/scripts/manhua_vfx_prop_test.py",
+    "server/scripts/manhua_vfx_world_props.py",
+    "server/services/manhuaVfxRender.ts",
+    "server/services/manhuaVfxSceneSource.test.ts",
+    "server/services/manhuaVfxSceneSource.ts",
+    "server/services/manhuaVfxSourcePipeline.test.ts",
+    "server/services/manhuaVfxTask.ts",
+    "shared/manhuaAdvisorEffects.ts",
+    "shared/manhuaVfx.ts",
+    "shared/manhuaVfxCityFold.ts",
+    "shared/manhuaVfxPropFracture.test.ts",
+    "shared/manhuaVfxPropFracture.ts",
+    "shared/manhuaVfxSourceEffects.test.ts"
+  ],
+  "tests": {
+    "typescriptUnique": 58,
+    "pythonUnique": 6,
+    "totalUnique": 64,
+    "finalTypecheckExit": 0,
+    "viteBuildExit": 0,
+    "viteDuration": "5m29s",
+    "fullDiffCheckExit": 0
+  },
+  "media": {
+    "videos": [
+      {
+        "file": "咖啡杯果摊连爆与街区翻折-v2.mp4",
+        "frames": 192,
+        "nonemptyFrames": 192,
+        "decodedRgbSha256": "cd43d3adbe6b9b6a3340461fbd39f15e1faf7de409019471c43cc75ddd01c727",
+        "bytes": 1455468,
+        "sha256": "832642cc42bc01dda7942878cc7c4106cee472598f101da35e714742feec84f1"
+      },
+      {
+        "file": "碎片定格人物活动-TEST_ONLY.mp4",
+        "frames": 96,
+        "nonemptyFrames": 96,
+        "decodedRgbSha256": "9e408ebcc3d50aabfb754c39e7b9a45404a16347eba3aa98726c238dcd690f5b",
+        "bytes": 59477,
+        "sha256": "7123a6f31833cd4d577f92e95e36e504dee798bff3700399bc702378b1769a84"
+      }
+    ],
+    "audioSource": "SHA256=129e98a5d33813fc0bff77d29e234f992578f67841b9d5faffa558411f9984bb",
+    "audioFinal": "SHA256=129e98a5d33813fc0bff77d29e234f992578f67841b9d5faffa558411f9984bb",
+    "audioEqual": true,
+    "worldAudio": "测试场景无声，不生成对白",
+    "quality": "道具尺寸修正；世界人物仅TEST_ONLY骨架代理，外观和自然表演未验收"
+  },
+  "manifestGates": [
+    {
+      "name": "overlay",
+      "frames": 192,
+      "complete": true,
+      "gate": "production-manifest-validator"
+    },
+    {
+      "name": "overlay-v2",
+      "frames": 192,
+      "complete": true,
+      "gate": "production-manifest-validator"
+    },
+    {
+      "name": "city",
+      "frames": 192,
+      "complete": true,
+      "gate": "production-manifest-validator"
+    },
+    {
+      "name": "world",
+      "frames": 96,
+      "complete": true,
+      "gate": "production-manifest-validator"
+    }
+  ],
+  "freezeProof": [
+    {
+      "name": "overlay",
+      "verifiedPngs": 192,
+      "held": {
+        "coffee": {
+          "frames": 28,
+          "propPoses": 1,
+          "actorPoses": 0
+        },
+        "fruit": {
+          "frames": 29,
+          "propPoses": 1,
+          "actorPoses": 0
+        }
+      }
+    },
+    {
+      "name": "city",
+      "verifiedPngs": 192,
+      "held": {}
+    },
+    {
+      "name": "world",
+      "verifiedPngs": 96,
+      "held": {
+        "world-probe": {
+          "frames": 43,
+          "propPoses": 1,
+          "actorPoses": 41
+        }
+      }
+    }
+  ],
+  "boundaries": [
+    "本地开发探针，不是正式生产任务ID",
+    "世界模式测试资产较暗且为骨架代理，不能证明正式角色自然活动",
+    "没有人工逐帧与常速质量验收",
+    "未执行正式入口/worker/GCS候选/采用刷新/扣退/部署验收",
+    "未跑全仓Blender Smoke，无付费模型、代理、机器或合并部署"
+  ],
+  "rawFiles": [
+    {
+      "path": "media/输入审查.json",
+      "bytes": 985,
+      "sha256": "8d1f4f8e2766181efc2b57c87eca75979d997828443c5b51a2ccec2a2760408a"
+    },
+    {
+      "path": "media/输入修正-v2.json",
+      "bytes": 313,
+      "sha256": "6426e7942722f1371719f3755804a6aff0255eebc56ec7bad57d4ffa0575be20"
+    },
+    {
+      "path": "media/overlay.json",
+      "bytes": 1143,
+      "sha256": "f4fbefdba76fc491033f2ae0069c6ebcd6176c768fb7b91a41840849731e9718"
+    },
+    {
+      "path": "media/overlay-v2.json",
+      "bytes": 1143,
+      "sha256": "3ed718fa49c49fce463c6ca04d2c8bfd86520806a2ca28d59bc72c6e2a2e1c1e"
+    },
+    {
+      "path": "media/city.json",
+      "bytes": 607,
+      "sha256": "dde128fe677cedf531172020bc57640be2b222b398fb9d144737e4b960cb3c26"
+    },
+    {
+      "path": "media/world.json",
+      "bytes": 1253,
+      "sha256": "7cc85a68be42bd5b3796d03014b1c4557a18518bb4d0169e8468538ec9700ace"
+    },
+    {
+      "path": "media/执行回执.json",
+      "bytes": 3914,
+      "sha256": "2a770c1913ad925d02ee0c303fece5beeab179a5ba885f56e96877a9ec4d91d9"
+    },
+    {
+      "path": "media/修正回执-v2.json",
+      "bytes": 1629,
+      "sha256": "e177c218f240833f760d193da5def199a8df042f7f3ca3312f6b12b1cdc1411d"
+    },
+    {
+      "path": "media/最终媒体校验.json",
+      "bytes": 1029,
+      "sha256": "87b7117c3fdb00d7d0cdbd22a81f203cb5ca82a4cec0d1c85c5a215c80c1482c"
+    },
+    {
+      "path": "media/实际服务端门禁回执.json",
+      "bytes": 467,
+      "sha256": "cea83d4f1b39b7a9d0df97f7013e64c624c9d7b90c9d9071f0a36cee2820ad03"
+    },
+    {
+      "path": "media/逐帧文件与定格校验.json",
+      "bytes": 516,
+      "sha256": "e07ff5db7da51ac57459c388eaf462e9497f1c0312c12c48b6acb61240897d7e"
+    },
+    {
+      "path": "media/run-probe-v1.py",
+      "bytes": 2010,
+      "sha256": "090a480ab5363ebf9bd4932118be011c9fb50b6253c73adc41235a81300f108a"
+    },
+    {
+      "path": "media/run-overlay-v2.py",
+      "bytes": 1335,
+      "sha256": "fd1b598db3d737bbf630096b696da53490b1cd0e4eaf18622841fc575f132f43"
+    },
+    {
+      "path": "media/world-preflight.py",
+      "bytes": 1789,
+      "sha256": "8f645fd2fb85b781f539cc5c27423c4ec64c675a5ad1411c12b0d0e13314ef02"
+    },
+    {
+      "path": "media/validate-real-manifests.ts",
+      "bytes": 869,
+      "sha256": "f896385a99b6a97da7885dd02632dacebbc1a74aa3c51e8165d35dba5f3c32de"
+    },
+    {
+      "path": "media/source.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "media/overlay.log",
+      "bytes": 40144,
+      "sha256": "5f9bacc481f18e1208c0e17f660d98bbd4565d11487ed10174efc1e7fe395827"
+    },
+    {
+      "path": "media/overlay-v2.log",
+      "bytes": 40720,
+      "sha256": "f64ff934cbef4028d90d40995d69ee1090e6e6f1bda302053c261055c5273e05"
+    },
+    {
+      "path": "media/city.log",
+      "bytes": 39568,
+      "sha256": "d728fe9f8be2bafe506b38d71e6d51c1b49b51055f2337051a1796a609849e06"
+    },
+    {
+      "path": "media/world.log",
+      "bytes": 19811,
+      "sha256": "c676c37128a2f043e40ac35de2e46eeea8fb49b2b3ccfa8dc1df022e73c7917f"
+    },
+    {
+      "path": "media/compose.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "media/compose-v2.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "media/world-encode.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "media/overlay-manifest.json",
+      "bytes": 209091,
+      "sha256": "b270e3a8a17c8bdb4b4c91939e4508fed314cd96a79ca1dd4838f21f3a95efef"
+    },
+    {
+      "path": "media/overlay-v2-manifest.json",
+      "bytes": 209083,
+      "sha256": "88e86662809b68794ab50e8e42fb11a8871c14f49f09a97f8a531700592fc42f"
+    },
+    {
+      "path": "media/city-manifest.json",
+      "bytes": 150318,
+      "sha256": "9c79e9cc3ad26e8bf36495c0a49a793ef3f6d67bc190b41370def5abde3f5538"
+    },
+    {
+      "path": "media/world-manifest.json",
+      "bytes": 76496,
+      "sha256": "b23c42d507255bbabc25e67ed58aa20ef8ce0fc11815ccc39b69ac0d6fe529df"
+    },
+    {
+      "path": "logs/vfx-3d-world-contract.log",
+      "bytes": 1788,
+      "sha256": "e92cfa2f779d62fbc4ffc54b341b4f19689cde40d6fb13f9f617dc14757d57bc"
+    },
+    {
+      "path": "logs/vfx-3d-world-browser.log",
+      "bytes": 680,
+      "sha256": "f9117451790af7b1fd29e62b273ec74eba7754a17ac97276417f62b21935adbc"
+    },
+    {
+      "path": "logs/vfx-3d-hold-python.log",
+      "bytes": 104,
+      "sha256": "6ae4c1861326c75b16056e08e55a593522675e75789a32e4904504edd11e75fc"
+    },
+    {
+      "path": "logs/vfx-3d-hold-runtime.log",
+      "bytes": 16058,
+      "sha256": "aaf03644fb9667e4b521b4f9bf0bf510efadf62702983eebf77aa0660f47c3a1"
+    },
+    {
+      "path": "logs/vfx-world-runtime.log",
+      "bytes": 924,
+      "sha256": "8d7d8871c3901a4d86349da34adde5f41ea8ba36e3aeb3bca8b22414d2e67aa0"
+    },
+    {
+      "path": "logs/vfx-world-runtime-v2.log",
+      "bytes": 5623,
+      "sha256": "61681b62e57bb5d96d94946352c25660e47342c3abcad7e0cfd9e777a76953cb"
+    },
+    {
+      "path": "logs/vfx-world-negative.log",
+      "bytes": 507,
+      "sha256": "101b2255f8203611eb07facb54599fcf0a5d7bff05f8cd5c33bd5136779db43b"
+    },
+    {
+      "path": "logs/vfx-world-final-pipeline.log",
+      "bytes": 1674,
+      "sha256": "32b6fff0a870b208975d24bc278ea9779edac6c80dd1c0369f33e58997446139"
+    },
+    {
+      "path": "logs/vfx-world-regression.log",
+      "bytes": 530,
+      "sha256": "9a8348d6dd1ec0c3e77ffe2b34c13d42b0f4d7794fe61bf449f7437531c4336e"
+    },
+    {
+      "path": "logs/vfx-world-final-types.log",
+      "bytes": 95,
+      "sha256": "309f00f3100cb370108a68cf3c47ab032d9a6cdb0c0748b03347734d8f417b89"
+    },
+    {
+      "path": "logs/vfx-world-build.log",
+      "bytes": 114758,
+      "sha256": "b5eceda4d610edc219c093ed01da64343413870a34537295c56900c4a578187d"
+    },
+    {
+      "path": "logs/vfx-world-real-gate-v2.log",
+      "bytes": 347,
+      "sha256": "8d6ae9e6dd7b1a01163f14cab64497d10ff092a68ae12d4199c34a29e7010c9e"
+    }
+  ]
+}
