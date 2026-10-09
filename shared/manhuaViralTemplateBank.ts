@@ -547,6 +547,17 @@ export function parseManhuaViralTemplateCard(raw: unknown): ManhuaViralTemplateC
     .sort((a, b) => a.atSec - b.atSec || a.kindZh.localeCompare(b.kindZh, "zh-CN"));
   // 只要声明了 revision 或使用修订 id，就必须完整通过修订契约，禁止降级成普通提案。
   if ((o.revision != null || /^tpl_revision_/i.test(id)) && !revision) return null;
+  const provenance = parseManhuaViralTemplateProvenance(o.provenance);
+  const nativeProgress = provenance?.nativeVideoDeepRead;
+  const audioStory = parseManhuaNativeAudioAnalysis(o.audioStory, { allowPartial: nativeProgress?.assemblyComplete === false });
+  if (audioStory?.coveredChunks) {
+    if (!nativeProgress || audioStory.coveredChunks.length !== nativeProgress.successSegments
+      || audioStory.coveredChunks.some(chunk => {
+        const span = nativeProgress.segmentSpans?.[chunk.index];
+        return !nativeProgress.completedSegmentIndexes?.includes(chunk.index) || !span
+          || Math.abs(span.startSec - chunk.startSec) > 0.01 || Math.abs(span.endSec - chunk.endSec) > 0.01;
+      })) return null;
+  } else if ((o.audioStory as ManhuaNativeAudioAnalysis | undefined)?.coveredChunks !== undefined) return null;
   return {
     id: id.slice(0, 64),
     nameZh: nameZh.slice(0, 32),
@@ -567,7 +578,7 @@ export function parseManhuaViralTemplateCard(raw: unknown): ManhuaViralTemplateC
     evidenceFrames: evidenceFrames.length ? evidenceFrames : undefined,
     reusableZh: String(o.reusableZh || "").trim() || undefined,
     genPromptHintZh: String(o.genPromptHintZh || "").trim() || undefined,
-    audioStory: parseManhuaNativeAudioAnalysis(o.audioStory),
+    audioStory,
     scenePoolHints: (Array.isArray(o.scenePoolHints) ? o.scenePoolHints : [])
       .map((s) => String(s || "").trim())
       .filter(Boolean),
@@ -601,7 +612,7 @@ export function parseManhuaViralTemplateCard(raw: unknown): ManhuaViralTemplateC
     publicCode: /^[A-Z0-9]{4,16}$/.test(String(o.publicCode || "")) ? String(o.publicCode) : undefined,
     approvedAt: o.approvedAt ? String(o.approvedAt) : undefined,
     updatedAt: o.updatedAt ? String(o.updatedAt) : undefined,
-    provenance: parseManhuaViralTemplateProvenance(o.provenance),
+    provenance,
     revision,
   };
 }

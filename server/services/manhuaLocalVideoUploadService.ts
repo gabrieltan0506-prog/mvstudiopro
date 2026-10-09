@@ -496,6 +496,8 @@ export async function withPortableManhuaLocalVideoSource<T>(userId: string, inpu
   const params = (input as { params?: Record<string, unknown> })?.params;
   if (!params?.localVideoUploadId || params.nativeStructuringOnly === true) return work();
   const uploadId = String(params.localVideoUploadId);
+  const retained = portableLocalSource.getStore();
+  if (retained?.userId === userId && retained.uploadId === uploadId && retained.sourceRef === params.url) return work();
   if (!/^[1-9][0-9]*$/.test(userId) || !MANHUA_LOCAL_VIDEO_UPLOAD_ID.test(uploadId)) throw new Error("上传来源身份无效");
   const { readHeavyMediaResult } = await import("./heavyMediaEvidence");
   const { getGcsBucketName } = await import("./gcs");

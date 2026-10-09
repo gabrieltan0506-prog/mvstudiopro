@@ -1276,3 +1276,33 @@ describe("待审模板从入队到分片保存实时显示", () => {
     expect(state).toMatchObject({ reference: { seriesKey: "real-series", episodeIndex: 36 }, completedSegments: 0, totalSegments: 5 });
   });
 });
+
+describe("逐片门禁通过进度不等连续片号",()=>{
+ const base={jobId:"gate-progress",status:"running" as const,input:{params:{nativeDeepReadConfirmed:true}},output:{currentEpisodeIndex:1,nativeStoredPlan:{episodes:[{episodeIndex:1,segments:Array(4).fill({})}]}}};
+ const pass=(chunkIndex:number,changes:Record<string,unknown>={})=>({stage:"visual_parse",route:"local_schema_gate",status:"completed",episodeIndexes:[1],chunkIndex,...changes});
+ it("第3片先成功立即1/4，第4片再成功立即2/4，不等待第1片或部分卡",()=>{
+  expect(nativeLearnLiveProposalState({...base,output:{...base.output,nativeModelReceipts:[pass(2)]}})).toMatchObject({readCompletedSegments:1,completedSegments:0,totalSegments:4});
+  expect(nativeLearnLiveProposalState({...base,output:{...base.output,nativeModelReceipts:[pass(2),pass(3)]}})).toMatchObject({readCompletedSegments:2,completedSegments:0});
+ });
+ it("只认门禁通过；HTTP返回、校验中、失败、选稿候选、其他集与越界不计",()=>{
+  const receipts=[pass(2),pass(0,{stage:"visual_model"}),pass(1,{status:"started"}),pass(0,{status:"failed"}),pass(1,{route:"qwen_segment_selection"}),pass(1,{episodeIndexes:[2]}),pass(4),pass(-1),pass(0,{chunkIndex:"0"})];
+  expect(nativeLearnLiveProposalState({...base,output:{...base.output,nativeModelReceipts:receipts}})?.readCompletedSegments).toBe(1);
+ });
+ it("重试同片通过不重复计数，旧已通过部分卡与新乱序回执合并去重",()=>{
+  expect(nativeLearnLiveProposalState({...base,output:{...base.output,nativePartialProposalCheckpoint:{episodeIndex:1,completedSegments:2,totalSegments:4},nativeModelReceipts:[pass(0),pass(3),pass(3)]}})).toMatchObject({readCompletedSegments:3,completedSegments:2});
+ });
+ it("正在运行旧任务的23/27真实通过回执可直接显示，不要求补写或重跑",()=>{
+  const success=[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,19,20,23,24,25,26];
+  const output={currentEpisodeIndex:1,nativeStoredPlan:{episodes:[{episodeIndex:1,segments:Array(27).fill({})}]},nativePartialProposalCheckpoint:{episodeIndex:1,completedSegments:17,totalSegments:27},nativeModelReceipts:success.map(n=>pass(n-1))};
+  expect(nativeLearnLiveProposalState({...base,output})).toMatchObject({readCompletedSegments:23,completedSegments:17,totalSegments:27});
+ });
+});
+
+
+it("稀疏检查点使用真实片号去重，不把完成数量猜成连续前缀", () => {
+  const job = { jobId: "sparse", status: "running" as const, input: { params: { nativeDeepReadConfirmed: true } },
+    output: { currentEpisodeIndex: 1, nativeStoredPlan: { episodes: [{ episodeIndex: 1, segments: Array(4).fill({}) }] },
+      nativePartialProposalCheckpoint: { episodeIndex: 1, completedSegments: 2, totalSegments: 4, completedSegmentIndexes: [1, 2] },
+      nativeModelReceipts: [{ stage: "visual_parse", route: "local_schema_gate", status: "completed", episodeIndexes: [1], chunkIndex: 2 }] } };
+  expect(nativeLearnLiveProposalState(job)).toMatchObject({ completedSegments: 2, readCompletedSegments: 2 });
+});

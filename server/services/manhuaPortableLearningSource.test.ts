@@ -32,6 +32,10 @@ describe("父学习跨机上传来源", () => {
       await withPortableManhuaLocalVideoSource("7", { params: { localVideoUploadId: uploadId, url: source.sourceRef } }, async () => {
         expect((await resolveOwnedManhuaLocalVideoUpload({ userId: "7", uploadId })).localPath).toBe(localPath);
         expect((await resolveOwnedManhuaLocalVideoUpload({ userId: "7", uploadId })).sha256).toBe(sha256);
+        await withPortableManhuaLocalVideoSource("7", { params: { localVideoUploadId: uploadId, url: source.sourceRef } }, async () => {
+          expect((await resolveOwnedManhuaLocalVideoUpload({ userId: "7", uploadId })).sha256).toBe(sha256);
+        });
+        expect(state.materialize).toHaveBeenCalledTimes(1);
         await expect(resolveOwnedManhuaLocalVideoUpload({ userId: "8", uploadId })).rejects.toThrow("已核验");
       });
       expect(state.materialize).toHaveBeenCalledTimes(1);

@@ -2639,7 +2639,6 @@ export default function PlatformPage() {
   /** 1007：新读片仅使用 Gemini 3.8 Flash，旧偏好不得恢复 Pro。 */
   const [manhuaLearnReadModel, setManhuaLearnReadModel] = useState<ManhuaNativeDeepReadModelId>(MANHUA_NATIVE_CURRENT_READ_MODEL);
   /** 0916 用户拍板：整形固定 GLM-5.3。 */
-  const [manhuaLearnStructuringGateway, setManhuaLearnStructuringGateway] = useState<"openrouter" | "evolink_glm">("openrouter");
   const [manhuaLearnStructuringModel, setManhuaLearnStructuringModel] = useState<ManhuaNativeStructuringModelId>(MANHUA_NATIVE_STRUCTURING_MODEL);
   const [manhuaRestructureBusy, setManhuaRestructureBusy] = useState(false);
   const manhuaRestructureBusyRef = useRef(false);
@@ -2767,8 +2766,6 @@ export default function PlatformPage() {
     setManhuaLearnVideoFpsError("");
     setManhuaLearnReadModel(readManhuaLearnReadModel(manhuaLearnUserKey));
     setManhuaLearnStructuringModel(readManhuaLearnStructuringModel(manhuaLearnUserKey));
-    try { setManhuaLearnStructuringGateway(sessionStorage.getItem(`manhua-structuring-gateway:${manhuaLearnUserKey}`) === "evolink_glm" ? "evolink_glm" : "openrouter"); }
-    catch { setManhuaLearnStructuringGateway("openrouter"); }
     setManhuaLearnServerJobs([]);
     setManhuaLearnServerJobsHydrated(false);
     setManhuaLearnControlBusy(null);
@@ -3832,12 +3829,12 @@ export default function PlatformPage() {
   const restructureManhuaEpisode = useCallback(async (job: ManhuaLearnServerJob, episodeIndex: number, model: ManhuaNativeStructuringModelId) => {
     if (manhuaRestructureBusyRef.current || !ownerTemplateOptimizeAllowed || !user?.id) return;
     const label = "GLM 5.3";
-    if (!window.confirm(`使用 ${label} 重新整形第 ${episodeIndex} 集？先停止原任务，只复用已保存的读片 JSON；缺片会停止，不重新读视频。新整形单独计费，旧调用可能已有费用，结果仍需批准入库。`)) return;
+    if (!window.confirm(`使用 ${label} 重新整形第 ${episodeIndex} 集？先停止原任务，复用已保存的读片 JSON；缺哪片只补读哪片，再继续整形。补读与新整形按实际调用计费，旧调用可能已有费用，结果仍需批准入库。`)) return;
     const ownerKey = manhuaLearnUserKey;
     manhuaRestructureBusyRef.current = true;
     setManhuaRestructureBusy(true);
     try {
-      const params = { ...buildManhuaRestructureParams(job, episodeIndex, model), nativeStructuringGateway: manhuaLearnStructuringGateway };
+      const params = buildManhuaRestructureParams(job, episodeIndex, model);
       if (job.status === "running" || job.status === "queued") {
         await cancelManhuaLearnServerJob(job.jobId);
         await pollJobUntilTerminal(job.jobId, { maxWaitMs: 60_000, intervalMs: 2500 });
@@ -3848,7 +3845,7 @@ export default function PlatformPage() {
       writeManhuaLearnPageJobId(ownerKey, reshaped.jobId);
       setManhuaLearnStructuringModel(model);
       writeManhuaLearnStructuringModel(ownerKey, model);
-      toast.success(`第 ${episodeIndex} 集仅重新整形已入队`, { description: "只使用已保存的 JSON，进度在学习面板中查看。" });
+      toast.success(`第 ${episodeIndex} 集续读与整形已入队`, { description: "已保存片段直接复用，只补缺片；进度自动更新。" });
       try {
         await refreshManhuaLearnServerJobs();
       } catch (error) {
@@ -3863,7 +3860,7 @@ export default function PlatformPage() {
       setManhuaRestructureBusy(false);
       wakeManhuaLearnSync();
     }
-  }, [manhuaRestructureBusy, ownerTemplateOptimizeAllowed, user?.id, manhuaLearnUserKey, manhuaLearnStructuringGateway, refreshManhuaLearnServerJobs, wakeManhuaLearnSync]);
+  }, [manhuaRestructureBusy, ownerTemplateOptimizeAllowed, user?.id, manhuaLearnUserKey, refreshManhuaLearnServerJobs, wakeManhuaLearnSync]);
 
   const stopFocusedManhuaLearnJob = useCallback(async () => {
     const jobId = focusedManhuaLearnServerJob?.jobId || focusedManhuaLearnBasketItem?.jobId;
@@ -6283,7 +6280,6 @@ export default function PlatformPage() {
           nativeStandaloneSource: localVideoSource || manhuaLearnStandaloneSource,
           nativeReadModel: manhuaLearnReadModel,
           nativeStructuringModel: manhuaLearnStructuringModel,
-          nativeStructuringGateway: manhuaLearnStructuringGateway,
         };
       }
       if (nativeGate === "ready") {
@@ -6511,7 +6507,6 @@ export default function PlatformPage() {
       // 0905 实证：这里漏了读片模型，重选 Flash 后建单闭包仍拿默认 Pro
       manhuaLearnReadModel,
       manhuaLearnStructuringModel,
-      manhuaLearnStructuringGateway,
       manhuaLearnStandaloneSource,
       manhuaLearnBasket,
       manhuaLearnResult,
@@ -12919,7 +12914,7 @@ export default function PlatformPage() {
       && Date.now() - new Date(job.updatedAt || 0).getTime() < 30 * 60_000;
     if (!focusedActive && !focusedFailedRecently && runningCount + queuedCount === 0) return null;
     const output = (job?.output ?? {}) as Record<string, unknown>;
-    const partial = (output.nativePartialProposalCheckpoint ?? null) as Record<string, unknown> | null;
+    const reading = nativeLearnLiveProposalState(job);
     // 焦点任务之外还有别的剧在跑/排队时才报全局数，避免同一任务被数两遍
     const othersRunning = runningCount - (job?.status === "running" ? 1 : 0);
     const othersQueued = queuedCount - (job?.status === "queued" ? 1 : 0);
@@ -12930,8 +12925,8 @@ export default function PlatformPage() {
             <span className={job.status === "running" ? "font-bold text-emerald-200" : job.status === "failed" ? "font-bold text-rose-300" : "font-bold text-amber-200"}>
               {job.status === "running" ? "运行中" : job.status === "failed" ? "刚失败" : "排队中"}
             </span>
-            {partial
-              ? ` · 第${Number(partial.episodeIndex) || 1}集 · ${Number(partial.completedSegments) || 0}/${Number(partial.totalSegments) || 0} 片`
+            {reading && reading.totalSegments > 0
+              ? ` · 第${reading.reference?.episodeIndex || Number(output.currentEpisodeIndex) || 1}集 · ${reading.readCompletedSegments}/${reading.totalSegments} 片门禁通过`
               : ""}
             {job.status === "failed" && job.error ? ` · 死因：${String(job.error).slice(0, 90)}` : ""}
           </>
@@ -13798,15 +13793,9 @@ export default function PlatformPage() {
                         <span className="rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] text-white">
                           整形模型：{MANHUA_NATIVE_STRUCTURING_MODEL_LABELS["glm-5.3"]}
                         </span>
-                        <label className="text-[11px] text-[#c9c0e6]/90" htmlFor="manhua-structuring-gateway">整形路由</label>
-                        <select id="manhua-structuring-gateway" value={manhuaLearnStructuringGateway} disabled={Boolean(manhuaLearnBusyKey)}
-                          onChange={event => {
-                            const gateway = event.target.value === "evolink_glm" ? "evolink_glm" : "openrouter";
-                            setManhuaLearnStructuringGateway(gateway);
-                            try { sessionStorage.setItem(`manhua-structuring-gateway:${manhuaLearnUserKey}`, gateway); } catch { /* 本页当前选择仍随任务提交。 */ }
-                          }} className="rounded-lg border border-white/15 bg-black/40 px-2 py-1 text-[11px] text-white">
-                          <option value="openrouter">OpenRouter（Z.AI）</option><option value="evolink_glm">EvoLink</option>
-                        </select>
+                        <span id="manhua-structuring-gateway" className="text-[11px] text-[#c9c0e6]/90">
+                          整形路由：OpenRouter（Z.AI）与 EvoLink 并发分流，失败后互为备用；进度显示每次实际使用的路由。
+                        </span>
                         <span className="rounded-md border border-[#8cefff]/20 bg-black/25 px-2 py-1 text-[10px] font-semibold text-[#8cefff]">
                           学习模型：{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[manhuaLearnReadModel]} · 原生视频精读 · 最多两部并发，整片时长不限、按设置切片；第二部请在另一网页开始
                         </span>
@@ -15079,10 +15068,10 @@ export default function PlatformPage() {
                         <div role="status" aria-live="polite" className="mt-3 rounded-xl border border-[#8cefff]/20 bg-[rgba(140,239,255,0.07)] px-3 py-2.5 text-xs text-[#c9c0e6]">
                           <div className="font-semibold">待审模板 · {liveManhuaProposal.titleZh}</div>
                           <div className="mt-1">{liveManhuaProposal.reference ? `第 ${liveManhuaProposal.reference.episodeIndex} 集 · ` : ""}
-                            {liveManhuaProposal.totalSegments ? `${liveManhuaProposal.completedSegments}/${liveManhuaProposal.totalSegments} 段已保存` : "正在准备分片"}
+                            {liveManhuaProposal.totalSegments ? `${liveManhuaProposal.readCompletedSegments}/${liveManhuaProposal.totalSegments} 片门禁通过` : "正在准备分片"}
                           </div>
                           <div className="mt-1 text-[#c9c0e6]/70">{liveManhuaProposal.detailZh}</div>
-                          <div className="mt-1 text-[#c9c0e6]/60">分片保存后自动显示学习内容；整形完成后可批准。</div>
+                          <div className="mt-1 text-[#c9c0e6]/60">每片门禁通过即更新进度；整形完成后可批准。</div>
                         </div>
                       ) : null}
                       {pendingManhuaViralProposals.length > 0 && selectedManhuaProposal ? (

@@ -43,6 +43,8 @@ export type NativeDeepReadGlmEvidenceContext = {
   temperature?: number;
   /** 请求证据落盘后、真正调用上游前发运行回执；恢复命中时不会调用。 */
   onBeforePaidCall?: () => Promise<void>;
+  assertCanDispatch?: () => void;
+  onPaidCallDispatch?: () => void;
   /** 0905 用户拍板：本批完整链序（按批次序号分配），给了就逐档立即切换。 */
   gatewayOrder?: readonly string[];
   /** 0905：流式心跳（每 30 秒已收字节数），面板据此显示「还活着」。 */

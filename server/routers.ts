@@ -1,3 +1,4 @@
+import { fileConversionRouter } from "./routers/fileConversion";
 import { optimizationInputSchema } from "../shared/manhuaEpisodeOptimization";
 import { imageWorldRouter } from "./routers/imageWorld";
 import { manhuaWriterExpansionQuote, manhuaWriterModelLabel } from "../shared/manhuaWriterModels";
@@ -3016,6 +3017,7 @@ function buildManhuaBgmJobResponse(
 }
 
 export const appRouter = router({
+  fileConversion: fileConversionRouter,
   novelWorkspace: novelWorkspaceRouter,
   canvasMusicMv: canvasMusicMvRouter,
   canvasMusicMvAssemble: canvasMusicMvAssembleRouter,

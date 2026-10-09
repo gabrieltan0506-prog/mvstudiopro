@@ -100,6 +100,8 @@ export type ManhuaNativeAudioAnalysis = {
     | typeof MANHUA_NATIVE_AUDIO_DIRECT_ALIGNMENT;
   durationSec: number;
   chunkCount: number;
+  /** 部分学习结果仅覆盖这些原视频分片；未读区间不生成声音描述。 */
+  coveredChunks?: ManhuaNativeAudioChunk[];
   audioTrack: ManhuaNativeAudioTrack[];
   audioBeatStructureZh?: string;
   mixNotesZh?: string;
@@ -266,6 +268,26 @@ export function repairTrackCoverage<T extends Pick<ManhuaNativeAudioTrack, "from
   };
 }
 
+/** 只校验已完成视频片的声音记录；每片仍要求原来的90%覆盖，不填补未读片。 */
+function assertCoveredAudioChunks(
+  tracks: readonly Pick<ManhuaNativeAudioTrack, "fromSec" | "toSec">[],
+  chunks: readonly ManhuaNativeAudioChunk[],
+  durationSec: number,
+): ManhuaNativeAudioChunk[] {
+  if (!chunks.length || new Set(chunks.map(row => row.index)).size !== chunks.length) throw new Error("部分声音记录的分片编号为空或重复");
+  const ordered = chunks.map(row => ({ index: row.index, startSec: row.startSec, endSec: row.endSec }))
+    .sort((a, b) => a.startSec - b.startSec);
+  if (ordered.some((row, index) => !Number.isInteger(row.index) || row.index < 0
+    || !Number.isFinite(row.startSec) || !Number.isFinite(row.endSec) || row.startSec < 0
+    || row.endSec <= row.startSec || row.endSec > durationSec + 0.5
+    || index > 0 && row.startSec < ordered[index - 1]!.endSec - 0.01)) throw new Error("部分声音记录的原视频秒窗无效");
+  const belongs = (track: Pick<ManhuaNativeAudioTrack, "fromSec" | "toSec">, chunk: ManhuaNativeAudioChunk) =>
+    track.fromSec >= chunk.startSec - 0.5 && track.toSec <= chunk.endSec + 0.5;
+  if (tracks.some(track => !ordered.some(chunk => belongs(track, chunk)))) throw new Error("声音记录越过已完成的视频分片");
+  for (const chunk of ordered) assertTrackCoverage(tracks.filter(track => belongs(track, chunk)), chunk.startSec, chunk.endSec);
+  return ordered;
+}
+
 /** 校验段内结果并换算为全片绝对秒。 */
 export function normalizeManhuaNativeAudioChunkAnalysis(input: {
   raw: unknown;
@@ -338,28 +360,32 @@ function mergeManhuaNativeAudioChunksCore(input: {
   durationSec: number;
   chunks: readonly ManhuaNativeAudioChunkAnalysis[];
   usage: ManhuaNativeAudioUsage;
+  coveredChunks?: readonly ManhuaNativeAudioChunk[];
 }): Omit<
   ManhuaNativeAudioAnalysis,
   "model" | "resolverModel" | "resolverRoute" | "sourceVariants" | "alignmentMethod"
 > {
   if (!input.chunks.length) throw new Error("音频分析分段为空");
   const durationSec = Math.max(1, Math.floor(Number(input.durationSec) || 0));
-  const repairedAll = repairTrackCoverage(
-    input.chunks.flatMap((row) => row.audioTrack),
-    0,
-    durationSec,
-  );
+  const tracks = input.chunks.flatMap((row) => row.audioTrack);
+  const coveredChunks = input.coveredChunks
+    ? assertCoveredAudioChunks(tracks, input.coveredChunks, durationSec)
+    : undefined;
+  const repairedAll = coveredChunks
+    ? { tracks: [...tracks].sort((a, b) => a.fromSec - b.fromSec || a.toSec - b.toSec), repairs: [] }
+    : repairTrackCoverage(tracks, 0, durationSec);
   if (repairedAll.repairs.length) {
     console.warn(`[nativeAudioAnalysis] 整集音轨时间段修补 ${repairedAll.repairs.length} 处：${repairedAll.repairs.join("；")}`);
   }
   const allTracks = repairedAll.tracks;
-  assertTrackCoverage(allTracks, 0, durationSec);
+  if (!coveredChunks) assertTrackCoverage(allTracks, 0, durationSec);
   const join = (pick: (row: ManhuaNativeAudioChunkAnalysis) => string, max: number) =>
     cut(input.chunks.map(pick).filter(Boolean).join("；"), max);
   return {
     hasAudio: true,
     durationSec,
     chunkCount: input.chunks.length,
+    ...(coveredChunks ? { coveredChunks } : {}),
     // 原始音轨证据必须逐条保留；容量不足由调用方显式失败或切换 fallback，
     // 不允许在已付费结果上合并、抽样或截断。
     audioTrack: allTracks,
@@ -395,6 +421,7 @@ export function mergeManhuaNativeDirectAudioChunks(input: {
   chunks: readonly ManhuaNativeAudioChunkAnalysis[];
   usage: ManhuaNativeAudioUsage;
   route: ManhuaNativeAudioDirectRoute;
+  coveredChunks?: readonly ManhuaNativeAudioChunk[];
 }): ManhuaNativeAudioAnalysis {
   if (!MANHUA_NATIVE_AUDIO_DIRECT_ROUTES.includes(input.route)) {
     throw new Error("原生直读音轨 route 无效");
@@ -440,6 +467,8 @@ export function finalizeManhuaNativeDirectAudioAnalysis(input: {
   resolvedChunks: ReadonlyArray<{ chunkIndex: number; analysis: unknown }>;
   usage: ManhuaNativeAudioUsage;
   route: ManhuaNativeAudioDirectRoute;
+  /** 仅部分提案允许缺少其他原视频分片；整集仍要求完整覆盖。 */
+  partial?: boolean;
 }): ManhuaNativeAudioAnalysis {
   const expectedIndexes = input.chunks.map((row) => row.index).sort((a, b) => a - b);
   const resolvedByIndex = new Map<number, unknown>();
@@ -464,6 +493,7 @@ export function finalizeManhuaNativeDirectAudioAnalysis(input: {
     chunks,
     usage: input.usage,
     route: input.route,
+    coveredChunks: input.partial ? input.chunks : undefined,
   });
 }
 
@@ -483,7 +513,7 @@ export function noAudioManhuaNativeDirectAnalysis(
 }
 
 /** GCS 卡片读取门：来源代际、合并器、时间轴和用量证据缺一不可。两代卡都要能读。 */
-export function parseManhuaNativeAudioAnalysis(raw: unknown): ManhuaNativeAudioAnalysis | undefined {
+export function parseManhuaNativeAudioAnalysis(raw: unknown, options: { allowPartial?: boolean } = {}): ManhuaNativeAudioAnalysis | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const o = raw as Partial<ManhuaNativeAudioAnalysis>;
   const durationSec = Math.max(1, Math.floor(Number(o.durationSec) || 0));
@@ -522,9 +552,16 @@ export function parseManhuaNativeAudioAnalysis(raw: unknown): ManhuaNativeAudioA
     geminiCalls: Math.max(0, Math.floor(Number(u.geminiCalls) || 0)),
   };
   const chunkCount = Math.max(0, Math.floor(Number(o.chunkCount) || 0));
+  let coveredChunks: ManhuaNativeAudioChunk[] | undefined;
+  if (o.coveredChunks !== undefined) {
+    if (!options.allowPartial || !isDirect || !o.hasAudio || !Array.isArray(o.coveredChunks)
+      || o.coveredChunks.length !== chunkCount) return undefined;
+    try { coveredChunks = assertCoveredAudioChunks(audioTrack, o.coveredChunks, durationSec); }
+    catch { return undefined; }
+  }
   if (o.hasAudio) {
     try {
-      assertTrackCoverage(audioTrack, 0, durationSec);
+      if (!coveredChunks) assertTrackCoverage(audioTrack, 0, durationSec);
       for (const track of audioTrack) {
         if (track.cues.some((cue) => cue.atSec < track.fromSec || cue.atSec > track.toSec)) return undefined;
         for (const value of [track.emotionArcZh, track.toneZh, track.sfxZh, track.bgmZh, track.atmosphereZh, track.silenceZh]) {
@@ -561,6 +598,7 @@ export function parseManhuaNativeAudioAnalysis(raw: unknown): ManhuaNativeAudioA
     alignmentMethod: o.alignmentMethod!,
     durationSec,
     chunkCount,
+    ...(coveredChunks ? { coveredChunks } : {}),
     audioTrack,
     audioBeatStructureZh: cut(o.audioBeatStructureZh, 1_000),
     mixNotesZh: cut(o.mixNotesZh, 1_000),

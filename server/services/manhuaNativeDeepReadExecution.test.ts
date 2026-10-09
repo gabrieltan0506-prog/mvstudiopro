@@ -1352,3 +1352,28 @@ it("批次入口按分片响应立即保存，乱序到达仍按最终秒位汇�
   expect(resolveNodes).not.toHaveBeenCalled();
   expect(deps.ingest).toHaveBeenCalledWith(expect.objectContaining({ evidenceFrames: frames }));
 });
+
+
+describe("乱序保存的视频分片内容",()=>{
+ it("第3片先完成即可写入部分提案，声音记录保持chunkIndex2和原秒窗；首片未读不清缓存",async()=>{
+  const {buildNativeDeepReadProposalCard}=await import("./manhuaNativeDeepReadIngest");
+  const {parseManhuaViralTemplateCard}=await import("../../shared/manhuaViralTemplateBank");
+  deps.ingest=vi.fn(async(input)=>{const card=buildNativeDeepReadProposalCard(input);if(!card)throw new Error("真实装卡拒收");return {card,gcsUri:"gs://b/partial.json",objectName:"partial.json",created:true};});
+  deps.runBatch=vi.fn(async(input)=>{
+   await input.onSegmentSnapshotCommitted?.({episodeIndex:1,completedSegmentIndexes:[2],learnedThroughSec:900,
+    result:makeResult({segmentCount:1,attemptedSegments:4,failedSegmentCount:3,completedSegmentIndexes:[2],
+     sourceDigest:"a".repeat(64),segmentSnapshotSha256:"b".repeat(64),assemblyComplete:false,hasAudio:true,audioInputTokens:100,
+     beatGrid:makeResult().beatGrid.map(row=>({...row,atSec:row.atSec+600,endSec:row.endSec+600})),
+     resolvedAudioChunks:[{chunkIndex:2,analysis:{audioTrack:[{fromSec:0,toSec:300,emotionArcZh:"压迫",toneZh:"克制",sfxZh:"",bgmZh:"",atmosphereZh:"",silenceZh:"",cues:[{atSec:5,kind:"sfx",detailZh:"撞击"}]}],audioBeatStructureZh:"持续推进",mixNotesZh:"人声居中",reusableAudioZh:"保留留白",genAudioHintZh:"克制表现"}}]}) as never});
+   throw new Error("首片尚未完成");
+  });
+  const result=await runNativeDeepReadBatch({seriesKey:"s",episodes:[{...episode,videoFps:12}]},deps);
+  expect(result.failedCount).toBe(1);expect(deps.ingest).toHaveBeenCalledTimes(1);
+  const output=await vi.mocked(deps.ingest).mock.results[0]!.value;
+  const card=parseManhuaViralTemplateCard(JSON.parse(JSON.stringify(output.card)));
+  expect(card?.provenance?.nativeVideoDeepRead?.completedSegmentIndexes).toEqual([2]);
+  expect(card?.audioStory?.coveredChunks).toEqual([{index:2,startSec:600,endSec:900}]);
+  expect(card?.audioStory?.audioTrack[0]).toMatchObject({fromSec:600,toSec:900,cues:[{atSec:605,kind:"sfx",detailZh:"撞击"}]});
+  expect(deps.clearSegmentCache).not.toHaveBeenCalled();
+ });
+});
