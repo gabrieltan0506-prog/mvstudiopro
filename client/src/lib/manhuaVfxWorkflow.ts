@@ -164,5 +164,5 @@ export function manhuaVfxPositionAtTime(effect: ManhuaVfxEffect, timeSec: number
 
 /** 仅列出当前作品/集、未归档且已有成功预演回执的真实三维场景。 */
 export function manhuaVfxSceneOptions(blocks: CanvasBlock[], episodeIndex: number) {
-  return blocks.filter(block => !block.archivedFromPreviousScript && isManhuaFactoryArtifactBlock(block) && getBlockEpisodeIndex(block) === episodeIndex).flatMap(block => (block.previsStudio?.history || []).filter(row => /^prv_[a-f0-9]{48}$/.test(row.jobId)).map((row, index) => ({ jobId: row.jobId, scopeId: block.previsStudio!.scopeId, clipId: block.id, label: `${block.id} · 三维版本${index + 1}`, durationSec: row.durationSec })));
+  return blocks.filter(block => !block.archivedFromPreviousScript && isManhuaFactoryArtifactBlock(block) && getBlockEpisodeIndex(block) === episodeIndex).flatMap(block => (block.previsStudio?.history || []).filter(row => /^prv_[a-f0-9]{48}$/.test(row.jobId)).map((row, index) => ({ jobId: row.jobId, scopeId: row.sourceScopeId ?? block.previsStudio!.scopeId, clipId: block.id, label: `${block.id} · 三维版本${index + 1}`, durationSec: row.durationSec, spec: row.spec })));
 }

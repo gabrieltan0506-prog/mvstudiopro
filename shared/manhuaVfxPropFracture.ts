@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { manhuaVfxChoreographySchema, manhuaVfxWorldRenderSchema } from "./manhuaVfxChoreography";
+import { manhuaVfxEnvironmentSchema } from "./manhuaVfxEnvironment";
 
 /** 道具真实分块几何；爆裂速度独立于原片播放速度。 */
 export const MANHUA_VFX_PROP_DEFAULTS = { impactSec: .25, spread: 1.1, slowMotion: .18, gravity: .8, staggerSec: .1, holdStartSec: .8, holdDurationSec: 1.2 };
@@ -12,7 +14,13 @@ export const manhuaVfxWorldSchema = z.object({
   sceneJobId: z.string().regex(/^prv_[a-f0-9]{48}$/), sceneScopeId: z.string().uuid(), clipId: z.string().min(1).max(160),
   sourceStartSec: n(0, 30), propKind: z.enum(["cup_fracture", "fruit_stall_fracture"]),
   position: z.tuple([n(-100, 100), n(-100, 100), n(-100, 100)]), yawDeg: n(-180, 180), size: n(.05, 4),
-}).strict();
+  choreography: manhuaVfxChoreographySchema.optional(),
+  render: manhuaVfxWorldRenderSchema.optional(),
+  environment: manhuaVfxEnvironmentSchema.optional(),
+}).strict().superRefine((world, ctx) => {
+  if (world.environment && (world.render?.quality !== "beauty" || world.render.exportLayers))
+    ctx.addIssue({ code: "custom", path: ["environment"], message: "正式3DGS场景使用完整材质合成，须选择精细受光并关闭同场分层下载" });
+});
 
 export const isManhuaVfxPropKind = (kind: string) => kind === "cup_fracture" || kind === "fruit_stall_fracture";
 export const manhuaVfxPropLastImpact = (kind: string, params: z.infer<typeof manhuaVfxPropSchema>) =>

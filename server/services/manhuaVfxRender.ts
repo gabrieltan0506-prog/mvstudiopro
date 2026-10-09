@@ -12,6 +12,8 @@ import { blenderLaunchCommand, blenderLowPriorityDefault, runPrevisProcess } fro
 import { mediaRuntime } from "./postProdResources";
 import { prepareManhuaVfxScene } from "./manhuaVfxSceneSource";
 import { isManhuaVfxSceneKind } from "../../shared/manhuaVfxCityFold";
+import { composeVfxWorldLayers } from "./manhuaVfxWorldLayers";
+import { renderVfxStageEnvironment } from "./manhuaVfxStageRender";
 
 const sha = (value: Buffer) => createHash("sha256").update(value).digest("hex");
 const frameSchema = z.object({ frame: z.number().int(), path: z.string(), bytes: z.number().int().positive().max(32 * 1024 * 1024), sha256: z.string().regex(/^[a-f0-9]{64}$/) });
@@ -113,22 +115,73 @@ export function validateVfxManifest(raw: unknown, recipe: ManhuaVfxComposition, 
   return manifest;
 }
 /** 几何定格与人物运动须同时成立；只有相机运动不能冒充人物在动。 */
-export function validateVfxWorldManifest(raw: unknown, effect: ManhuaVfxEffect & { sceneSha256?: string }, meta: { durationSec: number; width: number; height: number; fps: number }) {
+export function validateVfxWorldManifest(raw: unknown, effect: ManhuaVfxEffect & { sceneSha256?: string; sceneActors?: Awaited<ReturnType<typeof prepareManhuaVfxScene>>["sceneActors"] }, meta: { durationSec: number; width: number; height: number; fps: number }) {
   const manifest = validateVfxManifest(raw, { version: 1, seed: 0, effects: [effect] }, meta);
   const source = z.object({ eventId: z.string(), sceneJobId: z.string(), sceneSha256: digest, sourceFps: z.number().finite().positive().max(240),
     sourceFrameStart: z.number().int(), sourceFrameEnd: z.number().int(), sourceVertices: z.number().int().positive().max(2_000_000), actorMeshes: z.array(z.string().min(1).max(512)).min(1).max(2048) }).parse(raw);
   if (!effect.world || !effect.prop || source.eventId !== effect.id || source.sceneJobId !== effect.world.sceneJobId || source.sceneSha256 !== effect.sceneSha256 ||
       source.sourceFrameEnd < source.sourceFrameStart || effect.world.sourceStartSec + effect.durationSec > (source.sourceFrameEnd - source.sourceFrameStart + 1) / source.sourceFps + 1e-9)
     throw new Error("人物活动三维场景身份或时间轴与本次请求不一致");
-  const heldProps = new Set<string>(), heldActors = new Set<string>();
+  const detailed = Boolean(effect.world.choreography || effect.world.render);
+  const heldProps = new Set<string>(), heldActors = new Set<string>(), heldWorldProps = new Set<string>();
+  const actorPoses = new Map<string, Set<string>>();
+  if (detailed && (!effect.sceneActors?.length || JSON.stringify(manifest.sceneActors) !== JSON.stringify(effect.sceneActors)))
+    throw new Error("逐角色证据缺少服务端原场景身份，不能仅凭骨架活动交付");
+  if (effect.world.render) {
+    const light = z.object({ engine: z.string(), quality: z.enum(["preview", "beauty"]), samples: z.number(), materialMode: z.literal("source-pbr-and-physical-fragments"), keyEnergy: z.number(), fillRatio: z.number(), exposure: z.number() }).parse(manifest.lighting);
+    const config = effect.world.render;
+    if (light.quality !== config.quality || light.samples !== config.samples || light.keyEnergy !== config.keyEnergy || light.fillRatio !== config.fillRatio || light.exposure !== config.exposure ||
+      (config.quality === "beauty" ? light.engine !== "CYCLES" : !["BLENDER_EEVEE", "BLENDER_EEVEE_NEXT"].includes(light.engine)))
+      throw new Error("实际三维受光与本次画质配置不一致");
+  }
+  if (effect.world.environment) {
+    const stage = z.object({ engine: z.literal("three-spark-same-camera-v1"), worldTaskId: z.string(), worldSourceVersion: z.string(),
+      glbSha256: digest, framesSha256: digest, samples: z.number(), activeFrames: z.number().int().positive(),
+      dynamicReflectionMaps: z.literal(2), shadowGeometry: z.literal("owned-world-collider"), complete: z.literal(true) }).parse(manifest.stage);
+    if (stage.worldTaskId !== effect.world.environment.worldTaskId || stage.worldSourceVersion !== effect.world.environment.sourceVersion ||
+      stage.samples !== effect.world.render?.samples || stage.activeFrames !== manifest.frames.filter(row => (row.effects[0] as { active?: boolean }).active).length)
+      throw new Error("正式场景消费者回执与本次版本或活动帧不一致");
+  }
   for (const row of manifest.frames) {
     const proof = z.object({ active: z.boolean(), held: z.boolean(), poseSha256: digest, actorPoseSha256: digest.nullable(), sourceFrame: z.number().finite().nullable(), cameraType: z.literal("PERSP") }).parse(row.effects[0]);
     const held = row.timeSec - effect.startSec >= effect.prop.holdStartSec && row.timeSec - effect.startSec < effect.prop.holdStartSec + effect.prop.holdDurationSec;
     if (proof.held !== held || (proof.active ? proof.sourceFrame === null || proof.actorPoseSha256 === null || Math.abs(proof.sourceFrame - (source.sourceFrameStart + (effect.world.sourceStartSec + row.timeSec - effect.startSec) * source.sourceFps)) > 1e-6 : proof.sourceFrame !== null || proof.actorPoseSha256 !== null))
       throw new Error("人物动画被错误定格、变速或缺少逐帧证据");
     if (proof.active && proof.held) { heldProps.add(proof.poseSha256); heldActors.add(proof.actorPoseSha256!); }
+    if (detailed && proof.active) {
+      const detail = z.object({ worldPropSha256: digest, clearance: z.object({ method: z.enum(["evaluated-mesh-aabb-conservative", "evaluated-closed-component-aabb-conservative"]), requiredMeters: z.number().finite(), issues: z.array(z.unknown()).max(0),
+        actors: z.array(z.object({ actorId: z.string(), shape: z.enum(["human", "horse"]), rigKind: z.enum(["human", "quadruped"]), visible: z.boolean(), vertices: z.number().int().nonnegative(), poseSha256: digest.nullable(), minimumGapMeters: z.number().finite().nonnegative().nullable() })).min(1).max(58),
+        actorPairs: z.array(z.object({ actorId: z.string(), otherActorId: z.string(), gapMeters: z.number().finite().nonnegative() })).max(1653),
+      }) }).parse(row.effects[0]);
+      const requestedGap = effect.world.choreography?.clearanceMeters ?? (effect.world.render ? .01 : 0);
+      const ids = new Set<string>();
+      if (detail.clearance.requiredMeters !== requestedGap || detail.clearance.actors.length !== effect.sceneActors!.length) throw new Error("逐帧净空角色数量或要求不一致");
+      for (const actor of detail.clearance.actors) {
+        const expected = effect.sceneActors!.find(item => item.actorId === actor.actorId);
+        if (ids.has(actor.actorId) || !expected || expected.shape !== actor.shape || expected.rigKind !== actor.rigKind ||
+          (actor.visible ? !actor.poseSha256 || actor.vertices <= 0 : actor.poseSha256 !== null || actor.vertices !== 0) ||
+          (actor.minimumGapMeters !== null && actor.minimumGapMeters + 1e-7 < requestedGap)) throw new Error("逐帧角色身份、可见状态或净空不符合本次方案");
+        ids.add(actor.actorId);
+        if (proof.held && actor.visible) {
+          if (!actorPoses.has(actor.actorId)) actorPoses.set(actor.actorId, new Set());
+          actorPoses.get(actor.actorId)!.add(actor.poseSha256!);
+        }
+      }
+      const movingIds = new Set(effect.world.choreography?.routes.map(route => route.actorId) ?? []);
+      const visibleIds = detail.clearance.actors.filter(actor => actor.visible).map(actor => actor.actorId);
+      const expectedPairs = new Set(visibleIds.flatMap((id, index) => visibleIds.slice(index + 1).filter(other => movingIds.has(id) || movingIds.has(other)).map(other => JSON.stringify([id, other].sort()))));
+      for (const pair of detail.clearance.actorPairs) {
+        const key = JSON.stringify([pair.actorId, pair.otherActorId].sort());
+        if (!expectedPairs.delete(key) || pair.gapMeters + 1e-7 < requestedGap) throw new Error("角色之间的逐帧净空不完整或不足");
+      }
+      if (expectedPairs.size) throw new Error("角色之间的逐帧净空缺失");
+      if (proof.held) heldWorldProps.add(detail.worldPropSha256);
+    }
   }
   if (heldProps.size !== 1 || heldActors.size < 2) throw new Error("定格期间必须保持碎片不动且人物持续活动");
+  if (detailed && heldWorldProps.size !== 1) throw new Error("定格窗内实际世界碎片几何或透明度发生变化");
+  for (const route of effect.world.choreography?.routes ?? []) if ((actorPoses.get(route.actorId)?.size ?? 0) < 2)
+    throw new Error("指定穿行角色在定格窗内缺少实际动作，不能用其他角色的动作代替");
   return manifest;
 }
 async function fileDigest(file: string) {
@@ -163,9 +216,9 @@ export function buildVfxCompositeArgs(source: string, layers: string | undefined
   if (filters.length) args.push("-filter_complex", filters.join(";"));
   return [...args, "-map", filters.length ? `[${video}]` : video, "-map", `${audioIndex}:a?`, "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", output];
 }
-const renderDeps = { upload: uploadBufferToGcs, fetch: fetchPostProdSourceToFile, runBlender: runPrevisProcess, runMedia: runMediaTool, uploadResult, prepareScene: prepareManhuaVfxScene };
+const renderDeps = { upload: uploadBufferToGcs, fetch: fetchPostProdSourceToFile, runBlender: runPrevisProcess, runMedia: runMediaTool, uploadResult, prepareScene: prepareManhuaVfxScene, runStage: renderVfxStageEnvironment };
 /** One authoritative worker operation. All evidence uploads survive cancellation; no automatic model calls. */
-export async function renderManhuaVfx(raw: unknown, userId: string, signal: AbortSignal, overrides: Omit<typeof renderDeps, "prepareScene"> & Partial<Pick<typeof renderDeps, "prepareScene">> = renderDeps) {
+export async function renderManhuaVfx(raw: unknown, userId: string, signal: AbortSignal, overrides: Omit<typeof renderDeps, "prepareScene" | "runStage"> & Partial<Pick<typeof renderDeps, "prepareScene" | "runStage">> = renderDeps) {
   const deps = { ...renderDeps, ...overrides };
   signal.throwIfAborted();
   const root = await mkdtemp(path.join(tmpdir(), "manhua-vfx-"));
@@ -175,10 +228,10 @@ export async function renderManhuaVfx(raw: unknown, userId: string, signal: Abor
   const preserved = new Set<string>();
   let evidenceFailed = false;
   let success = false;
-  const preserve = async (name: string, bytes: Buffer) => {
+  const preserve = async (name: string, bytes: Buffer, contentType = "application/json") => {
     try {
       await writeFile(path.join(root, name.replaceAll("/", "-")), bytes);
-      const uploaded = await deps.upload({ objectName: `${prefix}/${name}`, buffer: bytes, contentType: "application/json", signal: AbortSignal.timeout(120_000) });
+      const uploaded = await deps.upload({ objectName: `${prefix}/${name}`, buffer: bytes, contentType, signal: AbortSignal.timeout(120_000) });
       preserved.add(name);
       const receipt = { name, gcsUri: uploaded.gcsUri, bytes: bytes.length, sha256: sha(bytes) };
       receipts.push(receipt);
@@ -210,10 +263,19 @@ export async function renderManhuaVfx(raw: unknown, userId: string, signal: Abor
         continue;
       }
       if (effect.world) {
-        const scene = await deps.prepareScene(effect.world, effect.id, userId, root, signal);
+        let scene;
+        try { scene = await deps.prepareScene(effect.world, effect.id, userId, root, signal); }
+        finally {
+          if (effect.world.choreography || effect.world.render?.quality === "beauty") for (const name of ["spec.json", "report.json", "grounded-route.raw.json"]) {
+            const file = path.join(root, "scenes", `choreography-${effect.id}`, name), info = await stat(file).catch(() => null);
+            if (!info) continue;
+            if (info.size > 4 * 1024 * 1024) { evidenceFailed = true; throw new Error("角色穿行原始证据超过限制，本地保留待查"); }
+            await preserve(`choreography-${effect.id}-${name}`, await readFile(file));
+          }
+        }
         if (effect.world.sourceStartSec + effect.durationSec > scene.receipt.durationSec + 1e-9) throw new Error("人物活动时窗超出已保存三维动画");
         await preserve(`scene-source-${effect.id}.json`, Buffer.from(JSON.stringify(scene.receipt)));
-        effects.push({ ...effect, scenePath: scene.scenePath, sceneSha256: scene.sceneSha256 });
+        effects.push({ ...effect, scenePath: scene.scenePath, sceneSha256: scene.sceneSha256, sceneActors: scene.sceneActors });
         continue;
       }
       if (effect.kind !== "image_overlay" || !effect.imageUri) { effects.push(effect); continue; }
@@ -266,6 +328,7 @@ export async function renderManhuaVfx(raw: unknown, userId: string, signal: Abor
     const city = effects.find(effect => effect.kind === "city_fold");
     const world = effects.find(effect => effect.kind === "prop_scene");
     let sceneLayers: string | undefined;
+    let layerBundle: { gcsUri: string; url: string; bytes: number; sha256: string; kind: "same-scene-composite-v1" } | undefined;
     if (bullet) {
       if (state) state.phase = "vfx_real3d_orbit";
       sceneLayers = path.join(root, "scene-layers");
@@ -306,17 +369,43 @@ export async function renderManhuaVfx(raw: unknown, userId: string, signal: Abor
       const worldSpec = path.join(root, "spec.world.json");
       await writeFile(worldSpec, JSON.stringify({ ...spec, effects: [world] }));
       const launch = blenderLaunchCommand({ blender: process.env.BLENDER_BIN || "blender", useXvfb: process.platform === "linux", lowPriority: blenderLowPriorityDefault() },
-        ["--background", "--factory-startup", "--disable-autoexec", "--threads", "2", "--python-exit-code", "1", "--python", path.resolve("server/scripts/manhua_vfx_world_props.py"), "--", worldSpec, world.id, sceneLayers]);
+        ["--background", "--quiet", "--factory-startup", "--disable-autoexec", "--threads", "2", "--python-exit-code", "1", "--python", path.resolve("server/scripts/manhua_vfx_world_props.py"), "--", worldSpec, world.id, sceneLayers]);
       try { await deps.runBlender(launch.command, launch.args, signal); }
       finally {
-        for (const name of ["input.raw.json", "manifest.json"]) {
+        for (const name of ["input.raw.json", "manifest.json", "preflight.raw.json"]) {
           const file = path.join(sceneLayers, name), info = await stat(file).catch(() => null);
           if (info) { if (info.size > 32 * 1024 * 1024) { evidenceFailed = true; throw new Error("人物活动定格证据超过限制"); } await preserve(`world3d-${name}`, await readFile(file)); }
+        }
+      }
+      if (world.world?.environment) {
+        try { await deps.runStage(sceneLayers, input, world, userId, meta, signal); }
+        finally {
+          const animationFile = path.join(sceneLayers, "world-animation.glb");
+          const animationInfo = await stat(animationFile).catch(() => null);
+          if (animationInfo) {
+            if (animationInfo.size > 64 * 1024 ** 2) { evidenceFailed = true; throw new Error("正式场景动画导出超过限制，已保留本地目录"); }
+            await preserve("world3d-animation.glb", await readFile(animationFile), "model/gltf-binary");
+          }
+          for (const name of ["environment-source.json", "world-animation.frames.json", "stage-frames.raw.json", "manifest.json"]) {
+            const file = path.join(sceneLayers, name), info = await stat(file).catch(() => null);
+            if (!info) continue;
+            if (info.size > 16 * 1024 ** 2) { evidenceFailed = true; throw new Error("正式场景原始证据超过限制，已保留本地目录"); }
+            await preserve(`world3d-stage-${name}`, await readFile(file));
+          }
         }
       }
       const manifest = validateVfxWorldManifest(JSON.parse(await readFile(path.join(sceneLayers, "manifest.json"), "utf8")), world, meta);
       await preserve("world3d-manifest.parsed.json", Buffer.from(JSON.stringify(manifest)));
       await validateFrameFiles(sceneLayers, manifest.files, signal, meta);
+      if (world.world?.render?.exportLayers) {
+        if (state) state.phase = "vfx_world_layers_composite";
+        const composed = await composeVfxWorldLayers(sceneLayers, manifest, meta, signal);
+        await preserve("world3d-composition.json", Buffer.from(JSON.stringify(composed.receipt)));
+        const bundle = await deps.uploadResult({ filePath: composed.archive, userId, kind: "vfx-layers", ext: "zip", contentType: "application/zip", maxBytes: 512 * 1024 ** 2, signal });
+        layerBundle = { ...bundle, sha256: await fileDigest(composed.archive), kind: "same-scene-composite-v1" };
+        await preserve("world3d-layer-bundle.json", Buffer.from(JSON.stringify(layerBundle)));
+        sceneLayers = composed.directory;
+      }
     }
     const layerEffects = effects.filter(effect => !isManhuaVfxSceneKind(effect.kind));
     const layerRecipe = { ...input.params.composition, effects: input.params.composition.effects.filter(effect => !isManhuaVfxSceneKind(effect.kind)) };
@@ -354,9 +443,9 @@ export async function renderManhuaVfx(raw: unknown, userId: string, signal: Abor
       Math.abs(actual.durationSec - meta.durationSec) > 1 / meta.fps + 0.001)
       throw new Error("合成后时长、画幅或原音轨不一致，原片仍保留");
     const uploaded = await deps.uploadResult({ filePath: outputPath, userId, kind: "vfx", ext: "mp4", contentType: "video/mp4", signal });
-    const result = { ...uploaded, ...meta, sha256: await fileDigest(outputPath), sourceIdentity,
+    const result = { ...uploaded, ...meta, sha256: await fileDigest(outputPath), sourceIdentity, ...(layerBundle ? { layerBundle } : {}),
       sourceKey: input.params.sourceKey, composition: input.params.composition,
-      requestId: input.requestId, coordinateSpace: bullet || city || world ? "screen-and-world3d" : "screen", boundaryZh: world ? "本人已保存三维人物动画保持原速，仅新增道具暂停运动，同场渲染遮挡；不从原视频推断未见人物动作" : city ? "三维时窗为程序街区的真实几何翻折与透视拍摄，不重建原片人物或建筑；原声保留" : bullet ? "三维时窗使用本人场景冻结几何与真实透视相机；其余为画面坐标效果" : "按设定轨迹叠加或手动区域变形，不含自动跟踪或人物遮挡", evidence: [...receipts] };
+      requestId: input.requestId, coordinateSpace: bullet || city || world ? "screen-and-world3d" : "screen", boundaryZh: world ? "按本次三维人物方案执行动作，仅新增道具暂停运动；同场相机与几何参与遮挡，不从原视频推断未见动作。正式3DGS环境的接收阴影精度受碰撞面限制，仍须审实际画面" : city ? "三维时窗为程序街区的真实几何翻折与透视拍摄，不重建原片人物或建筑；原声保留" : bullet ? "三维时窗使用本人场景冻结几何与真实透视相机；其余为画面坐标效果" : "按设定轨迹叠加或手动区域变形，不含自动跟踪或人物遮挡", evidence: [...receipts] };
     const resultEvidence = await preserve("result.json", Buffer.from(JSON.stringify(result)));
     success = true;
     return { ...result, resultEvidence };

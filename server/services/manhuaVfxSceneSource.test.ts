@@ -40,3 +40,23 @@ it("人物活动场景复用同一归属门禁，起始时间与片段不能串�
   await expect(resolveManhuaVfxSceneSource({ ...world, clipId: "another" }, "7", async () => f.job)).rejects.toThrow();
   await expect(resolveManhuaVfxSceneSource({ ...world, sourceStartSec: 2 }, "7", async () => f.job)).rejects.toThrow();
 });
+
+it("精细受光读取完整角色源，先验原场景SHA，不以预演代理冒充正式外观", async () => {
+  const f = fixture(), actor = f.job.input.params.spec.actors[0];
+  actor.assetRef = "person";
+  actor.riggedModel = { sourceJobId: "m3d_saved", forwardAxis: "+X", targetHeight: 1.7 };
+  const original = structuredClone(f.job.input.params.spec);
+  const root = await mkdtemp(path.join(tmpdir(), "vfx-full-material-contract-"));
+  const world = { sceneJobId: f.bullet.sceneJobId, sceneScopeId: f.bullet.sceneScopeId, clipId: "clip", sourceStartSec: 0, render: { quality: "beauty" as const } };
+  let calls = 0;
+  const deps = { load: async () => f.job, fetch: async (_uri: string, target: string) => { await writeFile(target, f.bytes); return f.bytes.length; },
+    prepareModels: async (spec: typeof original) => {
+      calls++; expect(spec.exportAnimation).toBe(true); expect(spec.actors[0].riggedModel).toEqual(actor.riggedModel);
+      throw new Error("TEST_ONLY：在任何模型加载或渲染前结束");
+    },
+  };
+  await expect(prepareManhuaVfxScene(world, "beauty", "7", root, new AbortController().signal, deps)).rejects.toThrow("TEST_ONLY");
+  expect(calls).toBe(1); expect(f.job.input.params.spec).toEqual(original);
+  await expect(prepareManhuaVfxScene(world, "changed", "7", root, new AbortController().signal, { ...deps, fetch: async (_uri, target) => { await writeFile(target, Buffer.alloc(1024)); return 1024; } })).rejects.toThrow("SHA");
+  expect(calls).toBe(1);
+});

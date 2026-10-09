@@ -471,6 +471,8 @@ for index,actor in enumerate(spec['actors']):
         contacts,stance=plan_contacts(actor)
     data=bpy.data.armatures.new(actor['id'])
     rig=bpy.data.objects.new(actor['id'],data)
+    rig['manhua_actor_id']=actor['id']
+    rig['manhua_actor_binding']='source'
     scene.collection.objects.link(rig)
     bpy.context.view_layer.objects.active=rig
     rig.select_set(True)
@@ -589,6 +591,14 @@ if any(actor.get('riggedModel') for actor in spec['actors']):
             from previs_quadruped import SOURCE_BONE_MAP
             source_bone_map = SOURCE_BONE_MAP
         retarget_from_source(source_rig,model,scene.frame_start,scene.frame_end,source_bone_map)
+        if actor.get('motionRoute'):
+            from previs_rigged_walk import apply_grounded_route
+            try:
+                apply_grounded_route(model,actor,_contacts,_stance,scene)
+            except Exception as error:
+                (out/'grounded-route.raw.json').write_text(json.dumps({'complete':False,'actorId':actor['id'],
+                    'sourceJobId':row['sourceJobId'],'error':str(error),'report':model['report'].get('groundedRoute')},ensure_ascii=False))
+                raise
         if config.get('performance'):
             apply_performance(model,config['performance']['controller'],config['performance']['cues'],
                 scene.frame_start,scene.frame_end,24)
@@ -602,6 +612,8 @@ if any(actor.get('riggedModel') for actor in spec['actors']):
         for obj in list(source_rig.children):
             if obj.type=='MESH': obj.hide_render=True
         model['actorId']=actor['id']
+        model['rig']['manhua_actor_id']=actor['id']
+        model['rig']['manhua_actor_binding']='model'
         model['report'].update({'actorId':actor['id'],'sourceJobId':row['sourceJobId'],
             'boundaryZh':'真实带骨网格旋转与路径重定向，保留模型原始静止姿态，不自动生成自然站姿；源白模脚底误差不代表角色网格接地，尚未验证双人接触；文戏动作只烘「相对各自静止姿态的旋转增量」、骨盆位移按骨骼跨度比例缩放：'
             '实测（test_previs_drama_rigged.py，1.0 倍与 1.5 倍棍人身高两具夹具）行礼/指向/看向按身高等比转移，'
@@ -944,6 +956,14 @@ if has_routes:
 if water_handles:
     report['waterEmergence']=measure_water(water_handles,rigs,scene)
     report['warnings'].append(report['waterEmergence']['boundaryZh'])
+for model in models:
+    if model.get('_verifyGroundedRoute'):
+        from previs_rigged_walk import verify_grounded_route
+        try:verify_grounded_route(model)
+        except Exception as error:
+            (out/'grounded-route.raw.json').write_text(json.dumps({'complete':False,'actorId':model['actorId'],
+                'error':str(error),'report':model['report'].get('groundedRoute')},ensure_ascii=False))
+            raise
 (out/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))
 if water_handles and (report['waterEmergence']['overlaps'] or report['waterEmergence']['offscreenFrames']):
     raise ValueError('独立浪花存在重叠或出画，请调整站位和机位')

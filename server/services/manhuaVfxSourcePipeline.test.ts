@@ -1,3 +1,4 @@
+import { createManhuaPrevisStudio } from "../../shared/manhuaPrevis";
 /** 无媒体验证：注入进程/存储，帧使用仓库既有PNG，不执行FFmpeg或Blender渲染。 */
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -42,7 +43,7 @@ async function pipeline(effect: ManhuaVfxEffect, failPixels = false) {
   const result = await renderManhuaVfx(request, "7", new AbortController().signal, {
     fetch: async (_uri, file) => { await writeFile(file, "source-byte-fixture"); return 19; },
     upload: async ({ objectName, buffer }) => { archives.set(path.basename(objectName), buffer); return { bucket: "test", objectName, gcsUri: `gs://test/${objectName}` }; },
-    prepareScene: async (_params, id, _user, root) => { calls.push("resolve-owned-scene"); return { scenePath: path.join(root, "scenes", `scene-${id}.blend`), sceneSha256: "a".repeat(64), receipt: { gcsUri: "gs://test/scene.blend", contentType: "application/octet-stream", fileName: "scene.blend", sha256: "a".repeat(64), sourceRequestId: "request", sourceScopeId: "scope", sourceClipId: "clip", durationSec: 2, bytes: 1024 } }; },
+    prepareScene: async (_params, id, _user, root) => { calls.push("resolve-owned-scene"); return { scenePath: path.join(root, "scenes", `scene-${id}.blend`), sceneSha256: "a".repeat(64), sceneActors: [], receipt: { fullMaterials: false, spec: createManhuaPrevisStudio(2).spec, gcsUri: "gs://test/scene.blend", contentType: "application/octet-stream", fileName: "scene.blend", sha256: "a".repeat(64), sourceRequestId: "request", sourceScopeId: "scope", sourceClipId: "clip", durationSec: 2, bytes: 1024 } }; },
     runBlender: async (_command, args) => {
       const script = args[args.indexOf("--python") + 1]; calls.push(path.basename(script));
       if (script.endsWith("manhua_vfx_liquid_ghost.py")) {
@@ -126,4 +127,35 @@ it("选择性定格回执拒绝人物静止、碎片漂移、源动画变速与�
     (m: typeof manifest) => { m.frames[3].effects[0].cameraType = "ORTHO"; },
   ];
   for (const change of changes) { const bad = structuredClone(manifest); change(bad); expect(() => validateVfxWorldManifest(bad, request, meta)).toThrow(); }
+});
+
+it("新场景证据必须逐角色、逐活动帧验证净空/受光，不能用其他角色动作代替", async () => {
+  const effect = { ...makeManhuaVfxEffect("prop_scene", "world"), durationSec: 1 };
+  effect.world = { ...effect.world!, sceneJobId: `prv_${"a".repeat(48)}`, sceneScopeId: "10090000-1234-4234-8234-123456789abc", clipId: "clip" };
+  effect.prop = { ...effect.prop!, holdStartSec: .7, holdDurationSec: .2 };
+  const result = await pipeline(effect), manifest = JSON.parse(result.archives.get("world3d-manifest.parsed.json")!.toString());
+  const actors = ["human", "horse"].map((shape, index) => ({ actorId: `actor-${index}`, nameZh: `测试角色${index}`, shape: shape as "human" | "horse", rigKind: (index ? "quadruped" : "human") as "human" | "quadruped", rigName: `actor-${index}`, binding: "source" as const }));
+  const render = { quality: "beauty" as const, samples: 32, exposure: 0, keyEnergy: 1000, fillRatio: .35, exportLayers: false };
+  const request = { ...effect, sceneSha256: "a".repeat(64), sceneActors: actors, world: { ...effect.world!, render,
+    choreography: { clearanceMeters: .08, routes: [{ actorId: "actor-1", points: [{ timeSec: 0, position: [0, 0] as [number, number], facingDeg: 0 }, { timeSec: 47 / 24, position: [1, 0] as [number, number], facingDeg: 0 }] }] } } };
+  manifest.sceneActors = actors; manifest.lighting = { ...render, engine: "CYCLES", materialMode: "source-pbr-and-physical-fragments" };
+  for (const frame of manifest.frames) {
+    frame.effects[0].worldPropSha256 = "d".repeat(64);
+    frame.effects[0].clearance = { method: "evaluated-closed-component-aabb-conservative", requiredMeters: .08, issues: [],
+      actors: actors.map(actor => ({ actorId: actor.actorId, shape: actor.shape, rigKind: actor.rigKind, visible: true, vertices: 100,
+        poseSha256: frame.frame.toString(16).padStart(64, "0"), minimumGapMeters: .1 })),
+      actorPairs: [{ actorId: "actor-0", otherActorId: "actor-1", gapMeters: .1 }] };
+  }
+  expect(() => validateVfxWorldManifest(manifest, request, meta)).not.toThrow();
+  const edits = [
+    (m: typeof manifest) => { m.sceneActors[1].shape = "human"; },
+    (m: typeof manifest) => { m.lighting.engine = "BLENDER_EEVEE"; },
+    (m: typeof manifest) => { m.frames[0].effects[0].clearance.actors[1].minimumGapMeters = .01; },
+    (m: typeof manifest) => { m.frames[1].effects[0].clearance.actorPairs = []; },
+    (m: typeof manifest) => { m.frames[1].effects[0].clearance.actorPairs[0].gapMeters = .01; },
+    (m: typeof manifest) => { m.frames[2].effects[0].clearance.actors[1].actorId = "actor-0"; },
+    (m: typeof manifest) => { m.frames.find((row: any) => row.effects[0].held).effects[0].worldPropSha256 = "e".repeat(64); },
+    (m: typeof manifest) => { for (const row of m.frames) row.effects[0].clearance.actors[1].poseSha256 = "f".repeat(64); },
+  ];
+  for (const edit of edits) { const bad = structuredClone(manifest); edit(bad); expect(() => validateVfxWorldManifest(bad, request, meta)).toThrow(); }
 });

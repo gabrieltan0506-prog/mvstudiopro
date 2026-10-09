@@ -119,6 +119,7 @@ export type ManhuaVfxJob = z.infer<typeof manhuaVfxJobSchema>;
 export type ManhuaVfxOutput = {
   gcsUri: string; url?: string; durationSec?: number; sourceKey: string;
   composition: ManhuaVfxComposition; requestId: string;
+  layerBundle?: { gcsUri: string; url?: string; bytes: number; sha256: string; kind: "same-scene-composite-v1" };
 };
 export type ManhuaVfxDraft = ManhuaVfxParams & { sourceId: string };
 export type ManhuaVfxRequest = ManhuaVfxDraft & {
@@ -134,6 +135,8 @@ const draftSchema = manhuaVfxParamsSchema.extend({ sourceId: z.string().min(1).m
 const outputSchema = z.object({
   gcsUri: z.string().regex(/^gs:\/\//), url: z.string().optional(), durationSec: z.number().finite().positive().optional(),
   sourceKey: z.string().min(1).max(4096), composition: manhuaVfxCompositionSchema, requestId: z.string().uuid(),
+  layerBundle: z.object({ gcsUri: z.string().regex(/^gs:\/\//), url: z.string().optional(), bytes: z.number().int().positive().max(512 * 1024 ** 2),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/), kind: z.literal("same-scene-composite-v1") }).strict().optional(),
 });
 export const manhuaVfxStateSchema = z.object({
   version: z.literal(1), scopeKey: z.string().min(1).max(128), draft: draftSchema.optional(),
@@ -163,12 +166,16 @@ export function mergeManhuaVfxState(previous: ManhuaVfxState | undefined, raw: M
     const old = requests[id];
     if (old) {
       const identity = (item: ManhuaVfxRequest) => JSON.stringify([item.requestId, item.sourceId, item.sourceKey, item.videoUri, item.composition, item.createdAt]);
+      const bundleIdentity = (bundle: NonNullable<ManhuaVfxOutput["layerBundle"]>) => JSON.stringify([bundle.gcsUri, bundle.bytes, bundle.sha256, bundle.kind]);
       if (identity(old) !== identity(request) || (old.jobId && request.jobId && old.jobId !== request.jobId) ||
-          (old.output && request.output && old.output.gcsUri !== request.output.gcsUri))
+          (old.output && request.output && old.output.gcsUri !== request.output.gcsUri) ||
+          (old.output?.layerBundle && request.output?.layerBundle && bundleIdentity(old.output.layerBundle) !== bundleIdentity(request.output.layerBundle)))
         throw new Error("已提交的特效记录不能改写，请保留原请求并另存新方案");
+      const bundle = request.output?.layerBundle ?? old.output?.layerBundle;
+      const output = request.output ? { ...request.output, ...(bundle ? { layerBundle: bundle } : {}) } : old.output;
       const terminal = old.status === "succeeded" || (old.status === "failed" && ["submitting", "unknown", "queued", "running"].includes(request.status));
-      requests[id] = terminal ? { ...old, ...(request.output ? { output: request.output } : {}) }
-        : { ...old, ...request, jobId: request.jobId || old.jobId, output: request.output || old.output };
+      requests[id] = terminal ? { ...old, ...(output ? { output } : {}) }
+        : { ...old, ...request, jobId: request.jobId || old.jobId, output };
     } else requests[id] = request;
   }
   return manhuaVfxStateSchema.parse({ ...next, requests });

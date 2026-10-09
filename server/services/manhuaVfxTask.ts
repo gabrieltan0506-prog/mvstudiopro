@@ -5,6 +5,7 @@ import { getDb } from "../db";
 import { getJobByIdStrict } from "../jobs/repository";
 import { extractSystemObjectName } from "./postProdMediaSource";
 import { resolveManhuaVfxSceneSource } from "./manhuaVfxSceneSource";
+import { archiveVfxEnvironment } from "./manhuaVfxEnvironment";
 
 export function manhuaVfxTaskId(userId: string, requestId: string) {
   return `vfx_${createHash("sha256").update(JSON.stringify([userId, requestId])).digest("hex").slice(0, 48)}`;
@@ -19,6 +20,7 @@ const real: VfxQueueDeps = {
       if (effect.world) {
         const source = await resolveManhuaVfxSceneSource(effect.world, userId);
         if (effect.world.sourceStartSec + effect.durationSec > source.durationSec + 1e-9) throw new Error("人物活动时窗超出已保存三维动画");
+        if (effect.world.environment) await archiveVfxEnvironment(userId, input, effect.id);
       }
     }
     const db = await getDb();

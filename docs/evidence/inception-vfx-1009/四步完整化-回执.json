@@ -1,0 +1,294 @@
+{
+  "scope": "四步代码与两时点开发分层；非完整动画/正式线上验收",
+  "baseHead": "5ccbccc5b4b890a1d6c6b8634b97902272c744f4",
+  "sourceFiles": {
+    "client/src/components/canvas/ManhuaAutoRigEditor.tsx": "0cdf8d2f8aea32e572b8105951738f39cbf7d7b74e3298493cdc6f59081e37d1",
+    "client/src/components/canvas/ManhuaVfxChoreographyEditor.tsx": "3fdd163e90581ba15f0ad99c6d40bc5d4ba7bb1ca5ff684f4df327462cb5d933",
+    "client/src/components/canvas/ManhuaVfxComparison.tsx": "3a5a7baeabd6d98f36cba23dd700d91f9091545f2cd59a08bf9ba32aa0e9345a",
+    "client/src/components/canvas/ManhuaVfxEditor.tsx": "b76f3f8c7df80a82c7f652521c3a32c70ecdc56d04beabbacec56685a84cea7a",
+    "client/src/components/canvas/ManhuaVfxEffectParameters.tsx": "fb14f4bf5a079914ac8245cd0e136a4abc9c64aaa736b19c02cfd6f2296aa509",
+    "client/src/components/canvas/PostProdWorkshopCard.tsx": "07cae2ab314f69c104f6dbdd9e22138af1d597cbd966057ebd04f28fac298878",
+    "client/src/lib/manhuaVfxWorkflow.ts": "147aecf0c7c1f71fdf9bcd5c7cd65c9bc42953bff29496a0c3c16adbbe0b1fbf",
+    "client/src/pages/OmniCanvas.tsx": "9bc5ef382131eb8f962e54c251a03ca4ccfd7471c06e1f6c907787ad3dcef015",
+    "server/scripts/manhua_vfx_prop.py": "bb1a97ceba0d666e43d662bc1017dc3a40398a1b93e7317500ab19f05d8c7b77",
+    "server/scripts/manhua_vfx_stage_export.py": "888564cad0431adfee4dc4e330fdec66d059b3c01a7ab43ebab9b1b4f0d7c139",
+    "server/scripts/manhua_vfx_world_contract.py": "79418d0a20871bdffc56ae9f85b8b7d0281f36e66c6dc158ac3326b9bff78756",
+    "server/scripts/manhua_vfx_world_layers.py": "fdede8020f28627aa77fe13f490e8a7390c72b752811a202b36619edfeb1b241",
+    "server/scripts/manhua_vfx_world_props.py": "ff7f1a8f76bea59ceb1d829a55173578f5b6e8899a0d78e9c822b547a5153bfe",
+    "server/scripts/manhua_vfx_world_quality.py": "7e070cba12ea27997a4f35948d0d8d8c8231b826f6197398227a4d20b3f13a37",
+    "server/scripts/previs_rigged_walk.py": "d27c8b539de6941ceaee10395de923e5f8230538fe87355e41eec47f44e58c0f",
+    "server/scripts/render-manhua-previs.py": "13ad897ad0ace8368bb64698b36b23f5e6d316ed64d3afcab94570db0dedf812",
+    "server/scripts/test_previs_rigged_walk.py": "f37996b4d10cae84759424adbcf1efee20a16a88383e5626914c4f9bbd42f9ff",
+    "server/scripts/test_vfx_closed_components.py": "ff5e7781901f42b807a1bff768ae09fc351423d949bd0e552cd57e5272318fa6",
+    "server/scripts/test_vfx_stage_bake.py": "b495dc647a67053e7156d81b8fb25ef26b4563834c43960a6f9dd6be672df551",
+    "server/scripts/test_vfx_world_layers_state.py": "1481a01fc01062f86c69d6f7426f5c4883e2ec907f09db72c5f984b8f21b8df0",
+    "server/services/manhuaPrevisGroundedRouteReport.test.ts": "cc1d53cc8c466f7575388470d46ebca91727a068efbfa0d1f468052286ca9666",
+    "server/services/manhuaPrevisGroundedRouteReport.ts": "70ad9b2a93e5bb245c5961073acea5853006b7b3035f632b76c903bba26a51fa",
+    "server/services/manhuaPrevisRender.ts": "fc6bdb94bcc1b8584c3d457d46d70f686179e18405c548972682df8ce3d18eda",
+    "server/services/manhuaPrevisReport.ts": "e4fce3a758772b1a7e8ea71fb2e06397ffe5d7459dbb0681649dc032a02ea1d9",
+    "server/services/manhuaVfxEnvironment.test.ts": "6402ad9f8c09a8de8248ae23cb63d9f81de319f01063377b7f0dcd68ba21f1a4",
+    "server/services/manhuaVfxEnvironment.ts": "704e35c14704292ec496f29d8369b48fb327972ba3c76ce88428c6d3be608065",
+    "server/services/manhuaVfxRender.ts": "ecdc494193497d8e76470c1edb3d7f837f89c2161bd18ba713d81bc8877f5a54",
+    "server/services/manhuaVfxSceneSource.test.ts": "f59b65e205352950ba3cd5e5f329b4c76bbac5f1b2e0da1f8c49a4cecb8c4cf2",
+    "server/services/manhuaVfxSceneSource.ts": "089b5c08816498662323e31fe5ba232bb38c1d67432330832927e77103e0dd9b",
+    "server/services/manhuaVfxSourcePipeline.test.ts": "0624145d2df4dd84f947b80cd794276e57d88c1cf2ef2c6d4dc82ca28551c6fd",
+    "server/services/manhuaVfxStagePage.ts": "3e0a9cc7dc9410192b483edbf70000f613e6b9a59699eaa178f5acbe4d6b6a78",
+    "server/services/manhuaVfxStagePipeline.test.ts": "caa0ed6a351c9adfd5980bb246c98f5c8938fb48cf363f09c808459e33c21e34",
+    "server/services/manhuaVfxStageRender.test.ts": "086cd89a1fc430cbad60b69c3ce036839044583a9613d9114c035be2ea443225",
+    "server/services/manhuaVfxStageRender.ts": "2cb257964037288a0c6224da4ce42eeb3082ab7ca1b080bac613ab093ca3f781",
+    "server/services/manhuaVfxTask.ts": "90aa4e2e567cd5c263b48d598c2c4306fef0e9e942cf5ce7a4ede573c46786e9",
+    "server/services/manhuaVfxWorldLayers.test.ts": "b597666bc7fabee6bfbe11324cb5bb9c96f8f88e079fdff67a64244dd6a96e2f",
+    "server/services/manhuaVfxWorldLayers.ts": "fd10251a48a62ab1355220f5a31fadd308d79aa8931913c72d508e1995123db1",
+    "shared/manhuaPrevis.ts": "bf65227e9188e1f6b26f64d72be7dbd05340ddc5a8c7c59279b7fc81d775e285",
+    "shared/manhuaVfx.ts": "739efe412acaad4a09076583b1430de3fe71801a35b1e42b83cc04dc3433e532",
+    "shared/manhuaVfxChoreography.test.ts": "865fd05fd441544ecf794bbcfeb89084c4897fd6919c5ec610a3cf326a5271ce",
+    "shared/manhuaVfxChoreography.ts": "561d75ac915ee51b412dc83df9aee0969ae8673ffd15800feb55f592792d3ae1",
+    "shared/manhuaVfxEnvironment.ts": "2ba9ba82c78dcd96f239b77c530d9915a7439110062c7d0f69acaa23001a7123",
+    "shared/manhuaVfxPropFracture.ts": "220e091dd7b4074d11e5689d9a3ab088bce491c825d322e1c85b7b07136085d4",
+    "shared/manhuaVfxRecovery.test.ts": "6574f4ab836689bb41a5e5186a8f421dbefe3944a81d59c406a7a90c7398d73f"
+  },
+  "records": {
+    "logs/vfx-grounded-final-contract.log": {
+      "bytes": 390,
+      "sha256": "bb79fc16b64d1736699c55a306611b10ac29a362e1be37be99786cdee9a74bc7"
+    },
+    "logs/vfx-grounded-route-contract.log": {
+      "bytes": 426,
+      "sha256": "a3357f2a539ef3b893177fa3158e1803afde7b3bf752fe175d41c148255130b8"
+    },
+    "logs/vfx-grounded-walk-memory-final.log": {
+      "bytes": 463,
+      "sha256": "382e1376ba52846148231bcc58eaf7646bfc3cff953263eca4ec0dac9c34fdd1"
+    },
+    "logs/vfx-four-step-reviewed-tests.log": {
+      "bytes": 2722,
+      "sha256": "1e34998a420a06d2ab439fcfd8e7fd0fadf22a68bd51dac09ffccacaa84c188f"
+    },
+    "logs/vfx-layer-camera-tests.log": {
+      "bytes": 399,
+      "sha256": "d17eac65c4191941d590875653679fc673407754c1b1cf1bb871bfdcc78c90b9"
+    },
+    "logs/vfx-environment-contract-tests.log": {
+      "bytes": 530,
+      "sha256": "8d40ff8082d132adf3eaf5f47bc3717a379dbfcbc80040a52c9400700ac5e768"
+    },
+    "logs/vfx-stage-failure-tests-2.log": {
+      "bytes": 857,
+      "sha256": "856f3bd8655a125f58b303e6c2a4e4ffb25abdf45cb56c0873e9c485c402821e"
+    },
+    "logs/vfx-component-consumer-tests.log": {
+      "bytes": 908,
+      "sha256": "349a2b2e5ee768eb503e35bb63b705f439fd6fe9ef6ab4109c6c198614fa2dbb"
+    },
+    "logs/vfx-stage-bake-memory.log": {
+      "bytes": 551,
+      "sha256": "bd59e5ef5f38fbcdb5e92b84435b56fc38204bbe79652fb5f19a6e1106390e16"
+    },
+    "logs/vfx-world-layer-state-4.log": {
+      "bytes": 403,
+      "sha256": "624bd2f1170c9006a5cbea2ecc3096a2b2ec1a6b16ce6eb32138ad0dbe4efce4"
+    },
+    "logs/vfx-approved-two-frame-probe.log": {
+      "bytes": 1164,
+      "sha256": "a614b446d4aeeb865556f003174dd5499968dc8514e7b3a2adfb0438b8ae9122"
+    },
+    "logs/vfx-approved-two-frame-probe-2.log": {
+      "bytes": 1165,
+      "sha256": "d0986ed99c053c4c8c6a03159ca7cbf5662fbb5883f064918076776cb03b3cb4"
+    },
+    "logs/vfx-approved-two-frame-probe-3.log": {
+      "bytes": 2458,
+      "sha256": "52e4d92e308132d88f0421e746a830727bb2ee3ba32208fab0c88390e3d84005"
+    },
+    "logs/vfx-approved-two-frame-compose.log": {
+      "bytes": 265,
+      "sha256": "56a443dd75e91d566bc7c0f73c9d89e23a0be823c56cf991fd456b8baf05bd96"
+    },
+    "logs/vfx-approved-probe-quality.log": {
+      "bytes": 2172,
+      "sha256": "f39b0b5b9150675e6c6729d3ec3d08ce7597b7639aa4c9726db587648c6da8db"
+    },
+    "logs/vfx-four-step-tsc-7.log": {
+      "bytes": 540,
+      "sha256": "5ad249704e5662811f81ca9c7ac07faf3af86f634b99a0373a83c5b3c732a1cd"
+    },
+    "logs/vfx-four-step-tsc-8.log": {
+      "bytes": 4170,
+      "sha256": "c38e0000d0e53076b24491c67fb3988703e67afe3f3a652213bf787564b20cc8"
+    },
+    "logs/vfx-four-step-tsc-9.log": {
+      "bytes": 95,
+      "sha256": "309f00f3100cb370108a68cf3c47ab032d9a6cdb0c0748b03347734d8f417b89"
+    },
+    "logs/vfx-four-step-tsc-final.log": {
+      "bytes": 95,
+      "sha256": "309f00f3100cb370108a68cf3c47ab032d9a6cdb0c0748b03347734d8f417b89"
+    },
+    "logs/vfx-four-step-vite-native.log": {
+      "bytes": 82250,
+      "sha256": "10a8806fe92ec5ecd2bf5fbee4d61b27f5ad4296383c3178d5c7d3edf64845e7"
+    },
+    "logs/vfx-isolated-frozen-install.log": {
+      "bytes": 6327,
+      "sha256": "289546eda2632a9ba375329e8a6748041872ab5e71de427af1bdde89f6d15bf6"
+    },
+    "approved-two-samples/composed/frame-000001.png": {
+      "bytes": 121069,
+      "sha256": "9929e9f8b326a8eb7d23bbc3a6e23a535da9fb74501a6b5e4146b6bfbeafdcf2"
+    },
+    "approved-two-samples/composed/frame-000002.png": {
+      "bytes": 120978,
+      "sha256": "fbf391253fb88d1776608fa15eedc6615b733ac37f828948e037dbf0f90f61b3"
+    },
+    "approved-two-samples/composition.json": {
+      "bytes": 3234,
+      "sha256": "44834de97a031cb6c52b02aa68816b04949a2db9ec58eb44660c3bb2c02c0829"
+    },
+    "approved-two-samples/frame-000001.png": {
+      "bytes": 180481,
+      "sha256": "36aac91fff4d5009fd0e5c31a6064ee8c40b90e3705cd739bf8cf4934a041fdb"
+    },
+    "approved-two-samples/frame-000002.png": {
+      "bytes": 180681,
+      "sha256": "1f454d15627cf75775f934ea76c7cd6381228ef35d7324026bf98067e352d104"
+    },
+    "approved-two-samples/input.json": {
+      "bytes": 2115,
+      "sha256": "04d5e8ba6c91fdd5cc950b957280d34906eabed307fb9aeb567a3aadd32c6c8c"
+    },
+    "approved-two-samples/preflight.raw.json": {
+      "bytes": 31426,
+      "sha256": "9d93cdcdd86d01b210cc79d1f9167febb3f96028301edd438fed4f046dc6ab16"
+    },
+    "approved-two-samples/probe-manifest.json": {
+      "bytes": 15570,
+      "sha256": "de6e43cc82a662e4de8f12e1b7364fa0e759e7861af1758edab82ec7867bf357"
+    },
+    "approved-two-samples/run-approved-probe.py": {
+      "bytes": 3166,
+      "sha256": "1cca725adf2fe83be9308f0fa3a209f759a8f27ad4033761c65add44463fec49"
+    },
+    "approved-two-samples/separated/actors/frame-000001.png": {
+      "bytes": 2622,
+      "sha256": "f01bc73bc07ac01f0ead706eae89b052fc1f6d3d1242ac5800d027370b96144d"
+    },
+    "approved-two-samples/separated/actors/frame-000002.png": {
+      "bytes": 2640,
+      "sha256": "7b08496207f62eae220bd7e2c2cda650e0e77c72fd796035cc1599b73dddb8e3"
+    },
+    "approved-two-samples/separated/depth/frame-000001.png": {
+      "bytes": 9870,
+      "sha256": "e1a2839a2e01fc4090b34bcd76484475d13936f96e2fb64e7c9b1837a0017387"
+    },
+    "approved-two-samples/separated/depth/frame-000002.png": {
+      "bytes": 9810,
+      "sha256": "dddd20484999ae4ad1dd25b30777e617cea49c054b6023987487210c0c0eefcb"
+    },
+    "approved-two-samples/separated/fragments/frame-000001.png": {
+      "bytes": 51196,
+      "sha256": "bdddee30345fb3f348009c681fd01deaca5d117c449fa8a86e101f8f7a3c3e6c"
+    },
+    "approved-two-samples/separated/fragments/frame-000002.png": {
+      "bytes": 51076,
+      "sha256": "756e1cbee047818b54147ff9c882e0420f249a9ff47bf954f97796df404c7e5f"
+    },
+    "approved-two-samples/separated/plate/frame-000001.png": {
+      "bytes": 174882,
+      "sha256": "cd2b0b9a79a9d39d31b1431be2b53b1de7bc26842818b78d13f963d08ce94249"
+    },
+    "approved-two-samples/separated/plate/frame-000002.png": {
+      "bytes": 175023,
+      "sha256": "eee4bd3e84c28734e8fcaf355a14544ce0cd46fd496be9998580e13b4bbbe1bb"
+    },
+    "approved-two-samples/world-layers.zip": {
+      "bytes": 798181,
+      "sha256": "cd8526d95f34f496b37bad60300b042240308c671007b8e0bfa52fb54dfadb5b"
+    },
+    "approved-two-samples/三角面定位-无媒体.json": {
+      "bytes": 8088,
+      "sha256": "ff0c7307d3d9fada9a5127fa6cd713df3d0b52d17c19a6f446a15b8742479b7e"
+    },
+    "approved-two-samples/两时点重组回执.json": {
+      "bytes": 5571,
+      "sha256": "937b0dfe84004ac1b514f2c6ad1265132b33b959efdd0d9556fd3143e01ce081"
+    },
+    "approved-two-samples/净空定位-无媒体.json": {
+      "bytes": 24437,
+      "sha256": "2b10d1470c7da53e513c4146c47868c16ba419284b2800576673b5884bfd9751"
+    },
+    "approved-two-samples/图层内容验真.json": {
+      "bytes": 4465,
+      "sha256": "a893c2375cb49430db0282ed30956ec16e90f39cab4bf1c98d57b9e47cb981de"
+    },
+    "approved-two-samples/复审-输入不变.json": {
+      "bytes": 2055,
+      "sha256": "f1c94bb46c3e7b021cd6fb743f5c9e59ff3bb92928fb47296cedde33cf4cf93e"
+    },
+    "approved-two-samples/完整四秒预检失败-preflight.raw.json": {
+      "bytes": 31426,
+      "sha256": "9d93cdcdd86d01b210cc79d1f9167febb3f96028301edd438fed4f046dc6ab16"
+    },
+    "approved-two-samples/完整四秒预检失败-probe-manifest.json": {
+      "bytes": 656,
+      "sha256": "9ed0febef46cbb470ec36c9d6ccbbd799aaf3aa739db9041dd49207c95ebd4a0"
+    },
+    "approved-two-samples/开发两时点分层包.zip": {
+      "bytes": 786987,
+      "sha256": "d9edd400c7a80d02f875231b01017685bcf32f395ba4b76e78bc648f76fc6c85"
+    },
+    "approved-two-samples/焊接部件包围盒定位-无媒体.json": {
+      "bytes": 1327,
+      "sha256": "d7a7734ca978389d3d9e9dee5099f0cd6e5b11219a54d3f51a02f1234d2c299c"
+    },
+    "approved-two-samples/输入审查.json": {
+      "bytes": 1855,
+      "sha256": "afce01fe54dd0151b34aa93dd15f3c987534842ff46a6aaebfa967122112d747"
+    },
+    "approved-two-samples/连通部件包围盒定位-无媒体.json": {
+      "bytes": 1327,
+      "sha256": "bddedb35958478a3dcf151719348fad57e6250506acb023f473d311b5f78773d"
+    },
+    "approved-two-samples/首次失败-preflight.raw.json": {
+      "bytes": 3936,
+      "sha256": "abb5e2083560c3f1b2d41d88a2274a1fd6144d0eef14b0c99bc2865dc9fa98a6"
+    },
+    "approved-two-samples/首次失败-probe-manifest.json": {
+      "bytes": 655,
+      "sha256": "0d8e25f42c81a4d704b2ade37206b767e0f8cd206b83eb50b54e5c7dd3ced7a4"
+    }
+  },
+  "rawArchive": {
+    "file": "四步完整化-原始证据.zip",
+    "bytes": 2705298,
+    "sha256": "83c29316e8fc8f6ee9961a05784eb5f3a80b68aeb1f35359f7f1fe07df4a9563"
+  },
+  "render": {
+    "confirmedByUser": true,
+    "sampleTimesSec": [
+      0.9,
+      1.2
+    ],
+    "continuousAnimation": false,
+    "paidModelCalls": 0,
+    "cost": 0,
+    "sourceSceneSha256": "0055d6be392b5a715c2dcdee2134308b6d49c88f04c3e9a1d5f408bae8bce9a1",
+    "imagesProduced": 12,
+    "reconstructedIdenticalPixels": [
+      true,
+      true
+    ]
+  },
+  "unverified": [
+    "完整4秒第52帧净空不足",
+    "实际正式角色自然动作/常速影片",
+    "3DGS路径GLB导出及浏览器实际渲染",
+    "正式线上提交/保存/采用/恢复/用户确认"
+  ],
+  "rules": [
+    "用户本人合并",
+    "无付费自动重试",
+    "无新增代理或云机器",
+    "原片原声原场景保留",
+    "摘要和探针不替代真实验收"
+  ]
+}

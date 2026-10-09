@@ -1,3 +1,4 @@
+import { manhuaVfxEnvironmentOptions } from "@shared/manhuaVfxEnvironment";
 import { buildAdvisorPrevisShotSource } from "@shared/manhuaAdvisorPrevisShotSource";
 import { adoptStageAnimationAsClip, assertCurrentStageAnimationAudio } from "@/lib/manhuaStageAnimationAdoption";
 import { resolveShotsForEpisodeKeyartsResult } from "@/lib/canvasDramaStudio";
@@ -14360,6 +14361,7 @@ async function runAdvisorWriterTrial() {
                   projectScopeKey={postProdScopeKey}
                   vfxScopeKey={vfxScopeKey}
                   vfxState={currentVfxState}
+                  vfxEnvironments={manhuaVfxEnvironmentOptions(customAssetRefs)}
                   onVfxStateChange={persistManhuaVfxState}
                   userRole={userRole}
                   bgmSeedNoteZh={audioReferenceLock?.bgmNoteZh || ""}

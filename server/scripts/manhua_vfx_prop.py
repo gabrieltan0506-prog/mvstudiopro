@@ -2,7 +2,7 @@
 from manhua_vfx_prop_math import prop_fragments, fragment_pose
 
 
-def build_prop_fracture(event, spec, scene, make_material, color):
+def build_prop_fracture(event, spec, scene, make_material, color, physical=False):
     import bpy
     fragments=prop_fragments(event,spec['seed'])
     palette={'ceramic':color,'coffee':(.07,.025,.008),'wood':(.24,.105,.035),
@@ -12,6 +12,15 @@ def build_prop_fracture(event, spec, scene, make_material, color):
     # 基于真实几何法线的受光明暗，每个碎片旋转时更新；无灯光仿真/重照原片的声称。
     for key,rgb in palette.items():
         mat,alpha=make_material(event['id']+'_'+key,rgb)
+        if physical:
+            shader=next(node for node in mat.node_tree.nodes if node.type=='BSDF_PRINCIPLED')
+            shader.inputs['Roughness'].default_value={'ceramic':.18,'coffee':.08,'juice':.12,'wood':.62,'paper':.75}.get(key,.4)
+            if key in ('coffee','juice'):
+                shader.inputs['IOR'].default_value=1.333
+                transmission=shader.inputs.get('Transmission Weight') or shader.inputs.get('Transmission')
+                if transmission:transmission.default_value=.25
+            materials[key]=mat;opacities.append(alpha)
+            continue
         nodes,links=mat.node_tree.nodes,mat.node_tree.links
         geometry=nodes.new('ShaderNodeNewGeometry')
         dot=nodes.new('ShaderNodeVectorMath');dot.operation='DOT_PRODUCT'

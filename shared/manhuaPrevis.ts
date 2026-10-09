@@ -656,8 +656,10 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
             message,
             path: ["actors", i, "motionRoute"],
           });
-        if (spec.waterEmergence || actor.riggedModel || actor.creature)
-          issue("分段路线暂不能与出水、绑定模型或显形混用");
+        if (spec.waterEmergence || actor.creature)
+          issue("分段路线暂不能与出水或显形混用");
+        if (actor.riggedModel && actor.actions.some(action => !["idle", "walk", "limp_front_left"].includes(action.kind)))
+          issue("带骨模型分段路线当前只支持待机、走位与四足跛行，不能覆盖独立表演");
         const first = route[0],
           last = route.at(-1)!;
         if (

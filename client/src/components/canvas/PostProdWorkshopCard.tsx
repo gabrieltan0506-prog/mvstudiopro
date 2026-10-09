@@ -1,3 +1,4 @@
+import type { ManhuaVfxEnvironmentOption } from "@shared/manhuaVfxEnvironment";
 import type { ManhuaVfxState } from "@shared/manhuaVfx";
 import type { AdvisorEffectsControl, AdvisorEffectsRegistration } from "@shared/manhuaAdvisorEffects";
 import { advisorWorkflowRevision } from "@/lib/manhuaAdvisorWorkflowPlan";
@@ -163,6 +164,7 @@ type PostProdTool = keyof typeof POSTPROD_TOOLS;
 type PostProdWorkshopCardProps = {
   vfxScopeKey: string;
   vfxState?: ManhuaVfxState;
+  vfxEnvironments?: ManhuaVfxEnvironmentOption[];
   onVfxStateChange?: (state: ManhuaVfxState) => Promise<ManhuaVfxState | void>;
   onAdvisorEffectsControl?: AdvisorEffectsRegistration;
   onStudioFocus?: (context: ManhuaAdvisorStudioContext) => void;
@@ -223,6 +225,7 @@ function statusBadge(status: PostProdJobStatus): { text: string; cls: string } {
 export default function PostProdWorkshopCard({
   vfxScopeKey,
   vfxState,
+  vfxEnvironments = [],
   onVfxStateChange,
   onAdvisorEffectsControl,
   onStudioFocus,
@@ -1887,7 +1890,7 @@ export default function PostProdWorkshopCard({
           </div>
         </div>
 
-        <div hidden={activeTool !== "vfx"}><ManhuaVfxEditor active={activeTool === "vfx"} advisorOpen={advisorOpen} onAdvisorDockChange={onVfxAdvisorDockChange} key={vfxScopeKey} scopeKey={vfxScopeKey} onOpenAdvisor={onOpenAdvisor ? () => { focusStudio(); onOpenAdvisor(); } : undefined} onAdvisorEffectsControl={onAdvisorEffectsControl} state={vfxState} onStateChange={onVfxStateChange} clips={vfxSourceClips} imageOptions={vfxImageOptions} scenes={vfxScenes} jobs={vfxJobs} busy={busy} onSourceChange={onVfxSourceChange} onPreview={(url, label) => setPreviewResult({ url, label })} onSubmit={input => submit(input, "漫剧特效候选", true)} /></div>
+        <div hidden={activeTool !== "vfx"}><ManhuaVfxEditor active={activeTool === "vfx"} advisorOpen={advisorOpen} onAdvisorDockChange={onVfxAdvisorDockChange} key={vfxScopeKey} scopeKey={vfxScopeKey} onOpenAdvisor={onOpenAdvisor ? () => { focusStudio(); onOpenAdvisor(); } : undefined} onAdvisorEffectsControl={onAdvisorEffectsControl} state={vfxState} onStateChange={onVfxStateChange} clips={vfxSourceClips} imageOptions={vfxImageOptions} scenes={vfxScenes} environments={vfxEnvironments} jobs={vfxJobs} busy={busy} onSourceChange={onVfxSourceChange} onPreview={(url, label) => setPreviewResult({ url, label })} onSubmit={input => submit(input, "漫剧特效候选", true)} /></div>
         <div hidden={activeTool !== "subtitle"}><PostProdSubtitleCard effectsScopeKey={vfxScopeKey} onAdvisorEffectsControl={onAdvisorEffectsControl} onSourceChange={setSubtitleSource} key={projectScopeKey} context={advisorContext} storageKey={`${storageKey}:${projectScopeKey}:subtitle`} clips={clipOptions} busy={busy || scopedJobs.some(job => job.action === "burn_subtitle" && (job.status === "queued" || job.status === "running"))} onSubmit={async (params, label) => { return await submit({ action: "burn_subtitle", params }, label || (params.effect === "none" ? "对白字幕成片" : `对白字幕成片 · ${SUBTITLE_EFFECT_OPTIONS.find(option => option.id === params.effect)?.label ?? "字幕特效"}`),true); }} /></div>
 
         {/* BGM 贴装 */}
