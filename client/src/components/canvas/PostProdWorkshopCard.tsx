@@ -2,7 +2,7 @@ import type { ManhuaVfxState } from "@shared/manhuaVfx";
 import type { AdvisorEffectsControl, AdvisorEffectsRegistration } from "@shared/manhuaAdvisorEffects";
 import { advisorWorkflowRevision } from "@/lib/manhuaAdvisorWorkflowPlan";
 import { ManhuaVfxEditor, type ManhuaVfxSubmitInput } from "./ManhuaVfxEditor";
-import { adoptedManhuaVfxClipOptions, pendingManhuaVfxTrackedJobs, manhuaVfxImageOptions } from "@/lib/manhuaVfxWorkflow";
+import { adoptedManhuaVfxClipOptions, pendingManhuaVfxTrackedJobs, manhuaVfxImageOptions, manhuaVfxSceneOptions } from "@/lib/manhuaVfxWorkflow";
 import type { ManhuaAdvisorStudioContext } from "@shared/manhuaAdvisorStudioContext";
 import { createAdvisorScoringSourceGuard } from "@/lib/manhuaAdvisorScoringSource";
 import type { AdvisorScoringControl, AdvisorScoringRegistration, AdvisorBgmControl } from "@/lib/manhuaAdvisorWorkflowControl";
@@ -276,6 +276,7 @@ export default function PostProdWorkshopCard({
     [currentClipBlocks, focusEpisode]
   );
 
+  const vfxScenes = useMemo(() => focusEpisode == null ? [] : manhuaVfxSceneOptions(blocks, focusEpisode), [blocks, focusEpisode]);
   const vfxImageOptions = useMemo(() => !vfxScopeKey || focusEpisode == null ? [] : manhuaVfxImageOptions(blocks, focusEpisode), [blocks, focusEpisode, vfxScopeKey]);
 
   /** 当前集上传件及音轨工作台的已采用配乐。 */
@@ -1886,7 +1887,7 @@ export default function PostProdWorkshopCard({
           </div>
         </div>
 
-        <div hidden={activeTool !== "vfx"}><ManhuaVfxEditor active={activeTool === "vfx"} advisorOpen={advisorOpen} onAdvisorDockChange={onVfxAdvisorDockChange} key={vfxScopeKey} scopeKey={vfxScopeKey} onOpenAdvisor={onOpenAdvisor ? () => { focusStudio(); onOpenAdvisor(); } : undefined} onAdvisorEffectsControl={onAdvisorEffectsControl} state={vfxState} onStateChange={onVfxStateChange} clips={vfxSourceClips} imageOptions={vfxImageOptions} jobs={vfxJobs} busy={busy} onSourceChange={onVfxSourceChange} onPreview={(url, label) => setPreviewResult({ url, label })} onSubmit={input => submit(input, "漫剧特效候选", true)} /></div>
+        <div hidden={activeTool !== "vfx"}><ManhuaVfxEditor active={activeTool === "vfx"} advisorOpen={advisorOpen} onAdvisorDockChange={onVfxAdvisorDockChange} key={vfxScopeKey} scopeKey={vfxScopeKey} onOpenAdvisor={onOpenAdvisor ? () => { focusStudio(); onOpenAdvisor(); } : undefined} onAdvisorEffectsControl={onAdvisorEffectsControl} state={vfxState} onStateChange={onVfxStateChange} clips={vfxSourceClips} imageOptions={vfxImageOptions} scenes={vfxScenes} jobs={vfxJobs} busy={busy} onSourceChange={onVfxSourceChange} onPreview={(url, label) => setPreviewResult({ url, label })} onSubmit={input => submit(input, "漫剧特效候选", true)} /></div>
         <div hidden={activeTool !== "subtitle"}><PostProdSubtitleCard effectsScopeKey={vfxScopeKey} onAdvisorEffectsControl={onAdvisorEffectsControl} onSourceChange={setSubtitleSource} key={projectScopeKey} context={advisorContext} storageKey={`${storageKey}:${projectScopeKey}:subtitle`} clips={clipOptions} busy={busy || scopedJobs.some(job => job.action === "burn_subtitle" && (job.status === "queued" || job.status === "running"))} onSubmit={async (params, label) => { return await submit({ action: "burn_subtitle", params }, label || (params.effect === "none" ? "对白字幕成片" : `对白字幕成片 · ${SUBTITLE_EFFECT_OPTIONS.find(option => option.id === params.effect)?.label ?? "字幕特效"}`),true); }} /></div>
 
         {/* BGM 贴装 */}

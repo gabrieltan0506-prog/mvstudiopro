@@ -4,6 +4,7 @@ import { jobs } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { getJobByIdStrict } from "../jobs/repository";
 import { extractSystemObjectName } from "./postProdMediaSource";
+import { resolveManhuaVfxSceneSource } from "./manhuaVfxSceneSource";
 
 export function manhuaVfxTaskId(userId: string, requestId: string) {
   return `vfx_${createHash("sha256").update(JSON.stringify([userId, requestId])).digest("hex").slice(0, 48)}`;
@@ -13,6 +14,7 @@ export type VfxQueueDeps = { load(id: string): Promise<Row | null>; insert(id: s
 const real: VfxQueueDeps = {
   load: getJobByIdStrict,
   async insert(id, userId, input) {
+    for (const effect of input.params.composition.effects) if (effect.bullet) await resolveManhuaVfxSceneSource(effect.bullet, userId);
     const db = await getDb();
     if (!db) throw new Error("暂时无法保存任务，请保留原请求编号稍后查询");
     await db.insert(jobs).values({ id, userId, type: "post_prod", provider: "blender-vfx", status: "queued", input, attempts: 0 })

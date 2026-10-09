@@ -24,6 +24,12 @@ GLYPHS = (
 )
 DEFAULTS = {'columns': 24, 'speed': .28, 'trail': 12}
 ROW_STEP = .055
+STYLE_DEFAULTS = {'glyphSet':'hex','layout':'rain','direction':'down','glyphRate':5}
+RITUAL_CHARACTERS = '天地玄黄宇宙洪荒阴阳乾坤'
+
+def glyph_characters(settings):
+    mode=settings.get('glyphSet','hex')
+    return list(dict.fromkeys(settings.get('characters','') if mode=='custom' else RITUAL_CHARACTERS if mode=='ritual' else '0123456789ABCDEF'))
 
 
 def glyph_geometry(index):
@@ -47,10 +53,10 @@ def rain_columns(seed, effect_id, aspect, settings=None):
     rng = random.Random(seed ^ int(hashlib.sha256(effect_id.encode()).hexdigest()[:8], 16))
     count, trail = settings['columns'], settings['trail']
     # 完整拖尾离开下边界后才重入，避免头部回卷时拖尾瞬间消失。
-    period = 1 + trail * ROW_STEP + .12
+    period = 1 if settings.get('layout')=='wall' else 1 + trail * ROW_STEP + .12
     return [{'x': ((i+.5)/count-.5)*aspect, 'speed': settings['speed']*(.7+rng.random()*.6),
              'phase': rng.random()*period, 'period': period, 'trail': trail,
-             'codeSeed': rng.randrange(1, 2**31)} for i in range(count)]
+             'codeSeed': rng.randrange(1, 2**31), 'aspect':aspect, 'layout':settings.get('layout','rain'), 'direction':settings.get('direction','down'), 'glyphRate':settings.get('glyphRate',5), 'glyphCount':len(glyph_characters(settings))} for i in range(count)]
 
 
 def rain_frame(columns, age):
@@ -58,11 +64,17 @@ def rain_frame(columns, age):
     for column in columns:
         distance = (column['phase'] + age*column['speed']) % column['period']
         for tail in range(column['trail']):
-            y = .5 - distance + tail*ROW_STEP
-            tick = math.floor(age*5 + column['phase']*7 + tail*.37)
+            wall=column['layout']=='wall'
+            y=.5-((distance-tail/column['trail'])%1) if wall else .5-distance+tail*ROW_STEP
+            x=column['x']
+            if column['direction']=='up':y=-y
+            elif column['direction'] in ('left','right'):
+                x,y=y*column['aspect'],column['x']/column['aspect']
+                if column['direction']=='right':x=-x
+            tick = math.floor(age*column['glyphRate'] + column['phase']*7 + tail*.37)
             code = (column['codeSeed'] ^ (tail*104729) ^ (tick*2654435761)) & 0xffffffff
             code ^= code >> 16
-            result.append({'x': column['x'], 'y': y, 'glyph': code % len(GLYPHS),
-                           'head': tail == 0, 'alpha': (1-tail/column['trail'])**1.65,
-                           'visible': -.48 <= y <= .48})
+            result.append({'x': x, 'y': y, 'glyph': code % column['glyphCount'],
+                           'head': tail == 0, 'alpha': .7+.3*(1-tail/column['trail']) if wall else (1-tail/column['trail'])**1.65,
+                           'visible': -.5 <= y <= .5 and -column['aspect']/2 <= x <= column['aspect']/2})
     return result

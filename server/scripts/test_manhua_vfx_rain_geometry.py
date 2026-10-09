@@ -22,3 +22,17 @@ for t in [0,.2,.5,1.5,2.2,2.5,.5]:
 assert samples[2]==samples[-1]
 assert all(a.node.inputs[0].is_linked for a in h[0]['rain']['opacity'])
 print('RAIN_GEOMETRY_PASS '+json.dumps({'objects':576,'meshes':32,'samples':samples,'rendered':False}))
+
+# 使用实际字体构建咒语/自定义字形；不是纹理或空方块，不输出媒体。
+for mode,characters in [('ritual',None),('custom','天地乾坤')]:
+ custom={**e,'id':'symbol_'+mode,'rain':{**e['rain'],'glyphSet':mode,'layout':'wall','direction':'left','glyphRate':2}}
+ if characters:custom['rain']['characters']=characters
+ custom_spec={**spec,'effects':[custom]}
+ handles=build_vfx(custom_spec,bpy.context.scene)
+ update_vfx(handles,custom_spec,.5)
+ rain=handles[0]['rain']
+ assert rain['font']['glyphCoverageVerified'] and rain['font']['packed']
+ assert len(rain['objects'])==576 and all(len(mesh.polygons)>0 for bank in rain['meshes'] for mesh in bank)
+ assert len(rain['characters'])==(4 if mode=='custom' else 12)
+ assert all(not obj.hide_render for obj in rain['objects'])
+ print('SYMBOL_WALL_GEOMETRY_PASS '+json.dumps({'mode':mode,'glyphs':rain['characters'],'font':rain['font'],'objects':576,'rendered':False},ensure_ascii=False))

@@ -3,7 +3,7 @@ import { build } from "esbuild";
 import puppeteer from "puppeteer";
 import path from "node:path";
 
-it("数字雨参数经真实编辑器保存、重新挂载恢复并进入同一渲染请求", async () => {
+it("流动字符可切换咒语与自定义符号，保存恢复与提交保留实际参数", async () => {
   const bundle = await build({stdin:{resolveDir:process.cwd(),loader:"tsx",contents:`
     import React from 'react';import {createRoot} from 'react-dom/client';
     import {ManhuaVfxEditor} from './client/src/components/canvas/ManhuaVfxEditor';
@@ -24,8 +24,14 @@ it("数字雨参数经真实编辑器保存、重新挂载恢复并进入同一�
     const click=async(label:string)=>page.evaluate(label=>{const b=Array.from(document.querySelectorAll("button")).find(b=>b.textContent===label);if(!b||b.disabled)throw Error(label+" unavailable");b.click();},label);
     await page.waitForSelector("select");await page.select("select:not([aria-label])","source");await metadata();await page.select('[aria-label="添加特效"]',"digital_rain");
     for(const[label,value]of [["列数","32"],["下落速度","0.47"],["拖尾字符","15"]])await page.$eval('[aria-label="数字雨'+label+'"]',(el,value)=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value")!.set!.call(el,value);el.dispatchEvent(new Event("input",{bubbles:true}));},value);
+    await page.select('[aria-label="流动字符样式"]','ritual');
+    expect(await page.$eval('[aria-label="流动字符排列"]',el=>(el as HTMLSelectElement).value)).toBe('wall');
+    await page.select('[aria-label="流动字符样式"]','custom');
+    await page.select('[aria-label="流动字符方向"]','left');
+    await page.$eval('[aria-label="流动自定义字符"]',el=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!.call(el,'天地乾坤');el.dispatchEvent(new Event('input',{bubbles:true}));});
+    await page.$eval('[aria-label="流动字符切换速度"]',el=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!.call(el,'2');el.dispatchEvent(new Event('input',{bubbles:true}));});
     await click("保存方案");await page.waitForFunction(()=>(globalThis as any).saved?.draft?.composition.effects.some((e:any)=>e.kind==="digital_rain"));
-    const expected={columns:32,speed:.47,trail:15};
+    const expected={columns:32,speed:.47,trail:15,glyphSet:"custom",characters:"天地乾坤",layout:"wall",direction:"left",glyphRate:2};
     expect(await page.evaluate(()=>(globalThis as any).saved.draft.composition.effects.find((e:any)=>e.kind==="digital_rain").rain)).toEqual(expected);
     await page.evaluate(()=>(globalThis as any).remount());await metadata();
     // 保存稿恢复后重新选中该层，不能只检查测试存储里的值。
@@ -33,6 +39,8 @@ it("数字雨参数经真实编辑器保存、重新挂载恢复并进入同一�
     expect(await page.$eval('[aria-label="数字雨列数"]',el=>(el as HTMLInputElement).value)).toBe("32");
     expect(await page.$eval('[aria-label="数字雨下落速度"]',el=>(el as HTMLInputElement).value)).toBe("0.47");
     expect(await page.$eval('[aria-label="数字雨拖尾字符"]',el=>(el as HTMLInputElement).value)).toBe("15");
+    expect(await page.$eval('[aria-label="流动自定义字符"]',el=>(el as HTMLInputElement).value)).toBe('天地乾坤');
+    expect(await page.$eval('[aria-label="流动字符方向"]',el=>(el as HTMLSelectElement).value)).toBe('left');
     await click("渲染特效候选");await page.waitForFunction(()=>(globalThis as any).submitted.length===1);
     expect(await page.evaluate(()=>(globalThis as any).submitted[0].params.composition.effects.find((e:any)=>e.kind==="digital_rain").rain)).toEqual(expected);
     expect(errors).toEqual([]);

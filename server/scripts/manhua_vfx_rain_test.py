@@ -4,7 +4,7 @@ import math
 import unittest
 
 from manhua_vfx_math import validate_spec, state_at
-from manhua_vfx_rain_math import DEFAULTS, GLYPHS, glyph_geometry, rain_columns, rain_frame
+from manhua_vfx_rain_math import DEFAULTS, GLYPHS, glyph_geometry, rain_columns, rain_frame, glyph_characters
 
 
 def fixture():
@@ -56,6 +56,29 @@ class DigitalRainContract(unittest.TestCase):
         self.assertTrue(all(0 < c['alpha'] <= 1 for c in frame))
         self.assertTrue(all(frame[i]['alpha'] > frame[i+1]['alpha'] for i in range(15)))
         self.assertGreater(sum(c['visible'] for c in frame), 0)
+
+    def test_symbol_wall_and_four_flow_directions(self):
+        spec=fixture();settings=spec['effects'][0]['rain']
+        settings.update({'glyphSet':'custom','characters':'天地乾坤天地','layout':'wall','direction':'left','glyphRate':0})
+        validate_spec(spec)
+        self.assertEqual(glyph_characters(settings),list('天地乾坤'))
+        snapshots={}
+        for direction in ('down','up','left','right'):
+            columns=rain_columns(42,'rain',16/9,{**settings,'direction':direction})
+            before,after=rain_frame(columns,.25),rain_frame(columns,.26)
+            self.assertEqual(len(before),24*12)
+            self.assertTrue(all(c['visible'] for c in before))
+            self.assertEqual([c['glyph'] for c in before],[c['glyph'] for c in after])
+            delta=[(b['x']-a['x'],b['y']-a['y']) for a,b in zip(before,after)]
+            axis=1 if direction in ('down','up') else 0
+            values=[d[axis] for d in delta if abs(d[axis])<.1]
+            self.assertTrue(values)
+            self.assertTrue(all(v<0 for v in values) if direction in ('down','left') else all(v>0 for v in values))
+            snapshots[direction]=before
+        self.assertNotEqual(snapshots['down'],snapshots['left'])
+        for bad in ({'glyphSet':'custom','characters':''},{'characters':'有 空格'},{'direction':'diagonal'},{'glyphRate':21}):
+            with self.assertRaises(ValueError):
+                invalid=copy.deepcopy(spec);invalid['effects'][0]['rain'].update(bad);validate_spec(invalid)
 
     def test_schema_rejects_over_budget_and_cross_kind_settings(self):
         good = fixture()
