@@ -39,8 +39,8 @@ export default function HomeFeedback() {
       <div
         style={{
           borderRadius: 28,
-          border: "1.5px solid rgba(73,230,255,0.18)",
-          background: "linear-gradient(135deg,rgba(19,9,46,0.92) 0%,rgba(10,6,25,0.96) 100%)",
+          border: "1.5px solid var(--hp-line)",
+          background: "linear-gradient(135deg, var(--hp-peach), var(--hp-blush))",
           padding: "48px 40px",
           display: "grid",
           gridTemplateColumns: "1fr 1fr",
@@ -57,27 +57,27 @@ export default function HomeFeedback() {
               alignItems: "center",
               gap: 8,
               borderRadius: 999,
-              border: "1px solid rgba(73,230,255,0.25)",
-              background: "rgba(73,230,255,0.08)",
+              border: "1px solid var(--hp-line)",
+              background: "var(--hp-card)",
               padding: "6px 16px",
               marginBottom: 20,
             }}
           >
-            <Gift size={14} style={{ color: "#49e6ff" }} />
-            <span style={{ fontSize: 12, fontWeight: 700, color: "#8cefff", letterSpacing: "0.14em", textTransform: "uppercase" }}>
+            <Gift size={14} style={{ color: "var(--hp-accent)" }} />
+            <span style={{ fontSize: 12, fontWeight: 700, color: "var(--hp-accent)", letterSpacing: "0.14em", textTransform: "uppercase" }}>
               用户回馈
             </span>
           </div>
 
-          <h2 style={{ fontSize: 30, fontWeight: 900, color: "#fff", lineHeight: 1.25, margin: "0 0 16px" }}>
+          <h2 style={{ fontSize: 30, fontWeight: 900, color: "var(--hp-ink)", lineHeight: 1.25, margin: "0 0 16px" }}>
             说说你的想法，
             <br />
-            <span style={{ color: "#49e6ff" }}>被采纳送 100 积分</span>
+            <span style={{ color: "var(--hp-accent)" }}>被采纳送 100 积分</span>
           </h2>
 
-          <p style={{ fontSize: 15, color: "rgba(200,191,231,0.85)", lineHeight: 1.8, margin: 0 }}>
+          <p style={{ fontSize: 15, color: "var(--hp-muted)", lineHeight: 1.8, margin: 0 }}>
             我们真心希望听到你的使用感受。每一条被采纳的建议都会为你帐户发放
-            <strong style={{ color: "#fff" }}> 100 Credits</strong>，
+            <strong style={{ color: "var(--hp-ink)" }}> 100 Credits</strong>，
             可直接用于成长营分析、平台趋势、大师级视频基地等所有功能。
           </p>
 
@@ -88,8 +88,8 @@ export default function HomeFeedback() {
               "行业洞察或内容需求",
             ].map((item) => (
               <div key={item} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <CheckCircle size={16} style={{ color: "#49e6ff", flexShrink: 0 }} />
-                <span style={{ fontSize: 14, color: "rgba(200,191,231,0.8)" }}>{item}</span>
+                <CheckCircle size={16} style={{ color: "var(--hp-accent)", flexShrink: 0 }} />
+                <span style={{ fontSize: 14, color: "var(--hp-muted)" }}>{item}</span>
               </div>
             ))}
           </div>
@@ -103,13 +103,13 @@ export default function HomeFeedback() {
                 textAlign: "center",
                 padding: "40px 24px",
                 borderRadius: 20,
-                border: "1.5px solid rgba(73,230,255,0.2)",
-                background: "rgba(73,230,255,0.06)",
+                border: "1.5px solid var(--hp-line)",
+                background: "var(--hp-card)",
               }}
             >
-              <CheckCircle size={48} style={{ color: "#49e6ff", margin: "0 auto 16px" }} />
-              <p style={{ fontSize: 18, fontWeight: 800, color: "#fff", margin: "0 0 8px" }}>感谢你的反馈！</p>
-              <p style={{ fontSize: 14, color: "rgba(200,191,231,0.75)", margin: 0 }}>
+              <CheckCircle size={48} style={{ color: "var(--hp-accent)", margin: "0 auto 16px" }} />
+              <p style={{ fontSize: 18, fontWeight: 800, color: "var(--hp-ink)", margin: "0 0 8px" }}>感谢你的反馈！</p>
+              <p style={{ fontSize: 14, color: "var(--hp-muted)", margin: 0 }}>
                 我们已收到，若建议被采纳将发放 100 Credits 至你的帐户。
               </p>
             </div>
@@ -119,12 +119,12 @@ export default function HomeFeedback() {
                 textAlign: "center",
                 padding: "40px 24px",
                 borderRadius: 20,
-                border: "1.5px solid rgba(255,255,255,0.1)",
-                background: "rgba(255,255,255,0.03)",
+                border: "1.5px solid var(--hp-line)",
+                background: "var(--hp-card)",
               }}
             >
-              <MessageSquare size={40} style={{ color: "#8cefff", margin: "0 auto 16px" }} />
-              <p style={{ fontSize: 15, color: "rgba(200,191,231,0.8)", margin: "0 0 20px" }}>
+              <MessageSquare size={40} style={{ color: "var(--hp-accent)", margin: "0 auto 16px" }} />
+              <p style={{ fontSize: 15, color: "var(--hp-muted)", margin: "0 0 20px" }}>
                 登录后即可提交回馈，被采纳可得积分奖励
               </p>
               <a
@@ -135,8 +135,8 @@ export default function HomeFeedback() {
                   gap: 8,
                   borderRadius: 999,
                   padding: "12px 28px",
-                  background: "linear-gradient(135deg,#15c8ff,#6a5cff)",
-                  color: "#fff",
+                  background: "linear-gradient(135deg, var(--hp-peach), var(--hp-blush))",
+                  color: "var(--hp-ink)",
                   fontWeight: 700,
                   fontSize: 14,
                   textDecoration: "none",
@@ -148,7 +148,7 @@ export default function HomeFeedback() {
           ) : (
             <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <div>
-                <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "rgba(140,239,255,0.8)", marginBottom: 6, letterSpacing: "0.08em" }}>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "var(--hp-accent)", marginBottom: 6, letterSpacing: "0.08em" }}>
                   标题
                 </label>
                 <input
@@ -161,9 +161,9 @@ export default function HomeFeedback() {
                     width: "100%",
                     padding: "10px 14px",
                     borderRadius: 12,
-                    border: "1.5px solid rgba(255,255,255,0.12)",
-                    background: "rgba(255,255,255,0.05)",
-                    color: "#fff",
+                    border: "1.5px solid var(--hp-line)",
+                    background: "var(--hp-card)",
+                    color: "var(--hp-ink)",
                     fontSize: 14,
                     outline: "none",
                     boxSizing: "border-box",
@@ -172,7 +172,7 @@ export default function HomeFeedback() {
               </div>
 
               <div>
-                <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "rgba(140,239,255,0.8)", marginBottom: 6, letterSpacing: "0.08em" }}>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "var(--hp-accent)", marginBottom: 6, letterSpacing: "0.08em" }}>
                   详细描述
                 </label>
                 <textarea
@@ -185,9 +185,9 @@ export default function HomeFeedback() {
                     width: "100%",
                     padding: "10px 14px",
                     borderRadius: 12,
-                    border: "1.5px solid rgba(255,255,255,0.12)",
-                    background: "rgba(255,255,255,0.05)",
-                    color: "#fff",
+                    border: "1.5px solid var(--hp-line)",
+                    background: "var(--hp-card)",
+                    color: "var(--hp-ink)",
                     fontSize: 14,
                     outline: "none",
                     resize: "vertical",
@@ -208,9 +208,9 @@ export default function HomeFeedback() {
                   borderRadius: 14,
                   border: "none",
                   background: submitMutation.isPending
-                    ? "rgba(73,230,255,0.25)"
-                    : "linear-gradient(135deg,#15c8ff,#6a5cff)",
-                  color: "#fff",
+                    ? "var(--hp-accent-soft)"
+                    : "linear-gradient(135deg, var(--hp-peach), var(--hp-blush))",
+                  color: "var(--hp-ink)",
                   fontWeight: 800,
                   fontSize: 15,
                   cursor: submitMutation.isPending ? "not-allowed" : "pointer",
@@ -224,7 +224,7 @@ export default function HomeFeedback() {
                 )}
               </button>
 
-              <p style={{ fontSize: 12, color: "rgba(140,130,180,0.6)", textAlign: "center", margin: 0 }}>
+              <p style={{ fontSize: 12, color: "var(--hp-muted)", textAlign: "center", margin: 0 }}>
                 建议被采纳后积分自动入帐，邮件通知
               </p>
             </form>

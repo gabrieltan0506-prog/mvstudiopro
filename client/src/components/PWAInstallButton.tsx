@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { trpc } from "@/lib/trpc";
 import {
   Dialog,
   DialogContent,
@@ -40,6 +41,12 @@ function isMobileUa(): boolean {
  * 需引导用户使用系统「添加到主屏幕」。桌面 Chrome 也可能触发 beforeinstallprompt。
  */
 export function PWAInstallButton() {
+  const identity = trpc.auth.me.useQuery(undefined, {
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+  // 只使用已确认的监管身份，不根据本地用户缓存或设备类型开放入口。
+  const canInstall = identity.isSuccess && !identity.isFetching && identity.data?.role === "supervisor";
   const [standalone, setStandalone] = useState(getStandalone);
   const [deferredPrompt, setDeferredPrompt] = useState<unknown>(null);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -52,14 +59,14 @@ export function PWAInstallButton() {
   }, []);
 
   useEffect(() => {
-    if (standalone) return;
+    if (standalone || !canInstall) return;
     const handler = (e: Event) => {
       e.preventDefault();
       setDeferredPrompt(e);
     };
     window.addEventListener("beforeinstallprompt", handler);
     return () => window.removeEventListener("beforeinstallprompt", handler);
-  }, [standalone]);
+  }, [standalone, canInstall]);
 
   const runDeferredInstall = useCallback(async () => {
     const ev = deferredPrompt as null | { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> };
@@ -70,14 +77,15 @@ export function PWAInstallButton() {
   }, [deferredPrompt]);
 
   const onFabClick = useCallback(async () => {
+    if (!canInstall) return;
     if (deferredPrompt) {
       await runDeferredInstall();
       return;
     }
     setHelpOpen(true);
-  }, [deferredPrompt, runDeferredInstall]);
+  }, [canInstall, deferredPrompt, runDeferredInstall]);
 
-  if (standalone) return null;
+  if (standalone || !canInstall) return null;
 
   const showFab = isMobileUa() || !!deferredPrompt;
   if (!showFab) return null;

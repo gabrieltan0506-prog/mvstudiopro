@@ -58,13 +58,13 @@ export default function HomePlatformHighlights() {
   return (
     <section className="mx-auto w-full max-w-[1240px] px-5 py-14">
       <div className="text-center">
-        <span className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/[0.04] px-3 py-1 text-[11px] font-semibold tracking-wide text-white/60">
+        <span className="inline-flex items-center gap-2 rounded-full border border-[var(--hp-line)] bg-[var(--hp-card)] px-3 py-1 text-[11px] font-semibold tracking-wide text-[var(--hp-muted)]">
           平台创作 · 一人全链路
         </span>
-        <h2 className="mt-4 text-[26px] font-extrabold leading-tight text-white sm:text-[34px]">
+        <h2 className="mt-4 text-[26px] font-extrabold leading-tight text-[var(--hp-ink)] sm:text-[34px]">
           一个人，就是一个新媒体部门
         </h2>
-        <p className="mx-auto mt-3 max-w-[640px] text-[13px] leading-relaxed text-white/55 sm:text-sm">
+        <p className="mx-auto mt-3 max-w-[640px] text-[13px] leading-relaxed text-[var(--hp-muted)] sm:text-sm">
           选题、文案、拆片、图文卡、封面分镜——一条流水线跑完，不用再换五个工具。
         </p>
       </div>
@@ -73,32 +73,32 @@ export default function HomePlatformHighlights() {
         {HIGHLIGHTS.map((entry) => (
           <div
             key={entry.title}
-            className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 transition-colors hover:border-white/20 hover:bg-white/[0.05]"
+            className="rounded-2xl border border-[var(--hp-line)] bg-[var(--hp-card)] p-5 transition-colors hover:border-[var(--hp-line)] hover:bg-[var(--hp-card)]"
           >
             <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-[17px] font-bold text-white">{entry.title}</h3>
+              <h3 className="text-[17px] font-bold text-[var(--hp-ink)]">{entry.title}</h3>
               {entry.badge ? (
-                <span className="rounded-full bg-emerald-400/15 px-2 py-0.5 text-[10px] font-bold text-emerald-300">
+                <span className="rounded-full bg-[var(--hp-accent-soft)] px-2 py-0.5 text-[10px] font-bold text-[var(--hp-success)]">
                   {entry.badge}
                 </span>
               ) : null}
             </div>
-            <p className="mt-1.5 text-[12.5px] leading-relaxed text-white/50">{entry.tagline}</p>
+            <p className="mt-1.5 text-[12.5px] leading-relaxed text-[var(--hp-muted)]">{entry.tagline}</p>
 
             <ul className="mt-4 space-y-2">
               {entry.points.map((point) => (
                 <li key={`${entry.title}-${point.label}`}>
                   <Link
                     href={entry.href}
-                    className="group flex flex-col rounded-xl border border-white/8 bg-white/[0.02] px-3.5 py-2.5 transition-colors hover:border-white/18 hover:bg-white/[0.06]"
+                    className="group flex flex-col rounded-xl border border-[var(--hp-line)] bg-[var(--hp-card)] px-3.5 py-2.5 transition-colors hover:border-[var(--hp-line)] hover:bg-[var(--hp-card)]"
                   >
-                    <span className="flex items-center gap-1.5 text-[13px] font-semibold text-white/85 group-hover:text-white">
+                    <span className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--hp-ink)] group-hover:text-[var(--hp-ink)]">
                       {point.label}
-                      <span aria-hidden className="text-white/30 group-hover:text-white/60">
+                      <span aria-hidden className="text-[var(--hp-subtle)] group-hover:text-[var(--hp-muted)]">
                         →
                       </span>
                     </span>
-                    <span className="mt-0.5 text-[11.5px] leading-relaxed text-white/45">
+                    <span className="mt-0.5 text-[11.5px] leading-relaxed text-[var(--hp-muted)]">
                       {point.desc}
                     </span>
                   </Link>
@@ -112,7 +112,7 @@ export default function HomePlatformHighlights() {
       <div className="mt-8 text-center">
         <Link
           href="/platform"
-          className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.06] px-6 py-2.5 text-[14px] font-semibold text-white transition-colors hover:border-white/30 hover:bg-white/[0.1]"
+          className="inline-flex items-center gap-2 rounded-full border border-[var(--hp-line)] bg-[var(--hp-card)] px-6 py-2.5 text-[14px] font-semibold text-[var(--hp-ink)] transition-colors hover:border-[var(--hp-line)] hover:bg-[var(--hp-card)]"
         >
           进入平台创作 <span aria-hidden>→</span>
         </Link>

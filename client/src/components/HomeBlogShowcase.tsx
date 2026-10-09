@@ -84,18 +84,18 @@ export default function HomeBlogShowcase() {
   return (
     <section className="mx-auto w-full max-w-[1240px] px-5 py-14">
       <div className="text-center">
-        <span className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/[0.04] px-3 py-1 text-[11px] font-semibold tracking-wide text-white/60">
+        <span className="inline-flex items-center gap-2 rounded-full border border-[var(--hp-line)] bg-[var(--hp-card)] px-3 py-1 text-[11px] font-semibold tracking-wide text-[var(--hp-muted)]">
           每日实测 · 眼见为实
         </span>
-        <h2 className="mt-4 text-[26px] font-extrabold leading-tight text-white sm:text-[34px]">
+        <h2 className="mt-4 text-[26px] font-extrabold leading-tight text-[var(--hp-ink)] sm:text-[34px]">
           别听我们说，看做出来的东西
         </h2>
-        <p className="mx-auto mt-3 max-w-[640px] text-[13px] leading-relaxed text-white/55 sm:text-sm">
+        <p className="mx-auto mt-3 max-w-[640px] text-[13px] leading-relaxed text-[var(--hp-muted)] sm:text-sm">
           每天换一篇真实生产实测。看中这个效果，点进去直接做同款。
         </p>
       </div>
 
-      <div className="mx-auto mt-9 max-w-[880px] overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] transition-colors hover:border-white/20">
+      <div className="mx-auto mt-9 max-w-[880px] overflow-hidden rounded-2xl border border-[var(--hp-line)] bg-[var(--hp-card)] transition-colors hover:border-[var(--hp-line)]">
         <Link href={s.generateHref} className="group block" aria-label={`${s.title}——去生成同款`}>
           <img
             src={s.cover}
@@ -106,20 +106,20 @@ export default function HomeBlogShowcase() {
         </Link>
         <div className="flex flex-wrap items-center justify-between gap-4 p-5">
           <div className="min-w-[16rem] flex-1">
-            <h3 className="text-[17px] font-bold leading-snug text-white">{s.title}</h3>
-            <p className="mt-1.5 text-[12.5px] leading-relaxed text-white/50">{s.line}</p>
+            <h3 className="text-[17px] font-bold leading-snug text-[var(--hp-ink)]">{s.title}</h3>
+            <p className="mt-1.5 text-[12.5px] leading-relaxed text-[var(--hp-muted)]">{s.line}</p>
           </div>
           <div className="flex shrink-0 items-center gap-3">
             <Link
               href={s.generateHref}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-[13px] font-semibold text-white no-underline transition-colors hover:border-white/30 hover:bg-white/[0.1]"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--hp-line)] bg-[var(--hp-card)] px-4 py-2.5 text-[13px] font-semibold text-[var(--hp-ink)] no-underline transition-colors hover:border-[var(--hp-line)] hover:bg-[var(--hp-card)]"
             >
               {s.generateLabel} <span aria-hidden>→</span>
             </Link>
             {/* /blog 是构建产出的静态页而非 SPA 路由，必须整页跳转（同 HomeNavbar 口径） */}
             <a
               href={s.articleHref}
-              className="text-[12px] text-white/45 no-underline underline-offset-2 hover:text-white/70 hover:underline"
+              className="text-[12px] text-[var(--hp-muted)] no-underline underline-offset-2 hover:text-[var(--hp-muted)] hover:underline"
             >
               看实测过程
             </a>

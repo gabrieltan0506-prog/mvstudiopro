@@ -58,8 +58,8 @@ export default function HomeNavbar() {
         top: 0,
         zIndex: 50,
         backdropFilter: "blur(16px)",
-        background: "rgba(10,8,20,0.70)",
-        borderBottom: "1px solid rgba(255,255,255,0.08)",
+        background: "var(--hp-nav)",
+        borderBottom: "1px solid var(--hp-line)",
       }}
     >
       <div
@@ -75,8 +75,8 @@ export default function HomeNavbar() {
         }}
       >
         <a href="/" style={{ textDecoration: "none" }}>
-          <div style={{ fontSize: isBelowXl ? 22 : 26, fontWeight: 900, color: "white" }}>
-            MV Studio <span style={{ color: "#ff8a5b" }}>Pro</span>
+          <div style={{ fontSize: isBelowXl ? 20 : 22, fontWeight: 650, color: "var(--hp-ink)" }}>
+            MV Studio <span style={{ color: "var(--hp-accent)" }}>Pro</span>
           </div>
         </a>
 
@@ -95,9 +95,9 @@ export default function HomeNavbar() {
                   minWidth: 44,
                   minHeight: 44,
                   borderRadius: 12,
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  background: "rgba(255,255,255,0.06)",
-                  color: "white",
+                  border: "1px solid var(--hp-line)",
+                  background: "var(--hp-card)",
+                  color: "var(--hp-ink)",
                   cursor: "pointer",
                 }}
               >
@@ -106,9 +106,9 @@ export default function HomeNavbar() {
             </SheetTrigger>
             <SheetContent
               side="right"
-              className="w-[85vw] sm:max-w-sm flex flex-col p-0 border-l-0 text-white"
+              className="home-product-portal w-[85vw] sm:max-w-sm flex flex-col p-0 border-l-0 text-[var(--hp-ink)]"
               style={{
-                background: "rgba(15,12,28,0.97)",
+                background: "var(--hp-card)",
                 backdropFilter: "blur(16px)",
               }}
             >
@@ -119,18 +119,18 @@ export default function HomeNavbar() {
               <div
                 style={{
                   padding: "20px 18px 16px",
-                  borderBottom: "1px solid rgba(255,255,255,0.08)",
+                  borderBottom: "1px solid var(--hp-line)",
                 }}
               >
                 <div
                   style={{
                     fontSize: 22,
                     fontWeight: 900,
-                    color: "white",
+                    color: "var(--hp-ink)",
                     marginBottom: isAuthenticated || loading ? 14 : 0,
                   }}
                 >
-                  MV Studio <span style={{ color: "#ff8a5b" }}>Pro</span>
+                  MV Studio <span style={{ color: "var(--hp-accent)" }}>Pro</span>
                 </div>
                 {loading ? (
                   <div
@@ -138,7 +138,7 @@ export default function HomeNavbar() {
                       width: "100%",
                       height: 36,
                       borderRadius: 10,
-                      background: "rgba(255,255,255,0.08)",
+                      background: "var(--hp-card)",
                       animation: "pulse 1.5s infinite",
                     }}
                   />
@@ -149,7 +149,7 @@ export default function HomeNavbar() {
                         width: 32,
                         height: 32,
                         borderRadius: 999,
-                        background: "linear-gradient(135deg,#8b5cf6,#ff4fb3)",
+                        background: "linear-gradient(135deg, var(--hp-peach), var(--hp-blush))",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
@@ -173,7 +173,7 @@ export default function HomeNavbar() {
                         {displayName}
                       </div>
                       {user.credits != null && (
-                        <div style={{ fontSize: 11, color: "rgba(255,185,100,0.9)" }}>
+                        <div style={{ fontSize: 11, color: "var(--hp-accent)" }}>
                           积分：{user.credits}
                         </div>
                       )}
@@ -195,7 +195,7 @@ export default function HomeNavbar() {
                       alignItems: "center",
                       padding: "12px 14px",
                       borderRadius: 10,
-                      color: "white",
+                      color: "var(--hp-ink)",
                       textDecoration: "none",
                       fontWeight: 700,
                       fontSize: 14,
@@ -212,7 +212,7 @@ export default function HomeNavbar() {
                     <div
                       style={{
                         height: 1,
-                        background: "rgba(255,255,255,0.08)",
+                        background: "var(--hp-card)",
                         margin: "8px 4px",
                       }}
                     />
@@ -225,12 +225,12 @@ export default function HomeNavbar() {
                         alignItems: "center",
                         padding: "12px 14px",
                         borderRadius: 10,
-                        color: "#e9d5ff",
+                        color: "var(--hp-accent)",
                         textDecoration: "none",
                         fontWeight: 800,
                         fontSize: 14,
-                        background: "rgba(139,92,246,0.18)",
-                        border: "1px solid rgba(167,139,250,0.30)",
+                        background: "var(--hp-card)",
+                        border: "1px solid var(--hp-line)",
                       }}
                     >
                       充值 · Top up
@@ -244,7 +244,7 @@ export default function HomeNavbar() {
                         alignItems: "center",
                         padding: "12px 14px",
                         borderRadius: 10,
-                        color: "rgba(255,255,255,0.92)",
+                        color: "var(--hp-accent)",
                         textDecoration: "none",
                         fontWeight: 700,
                         fontSize: 14,
@@ -261,7 +261,7 @@ export default function HomeNavbar() {
               <div
                 style={{
                   padding: "12px 14px 16px",
-                  borderTop: "1px solid rgba(255,255,255,0.08)",
+                  borderTop: "1px solid var(--hp-line)",
                 }}
               >
                 {!isAuthenticated || !user ? (
@@ -277,9 +277,9 @@ export default function HomeNavbar() {
                       justifyContent: "center",
                       padding: "12px 16px",
                       borderRadius: 12,
-                      border: "1px solid rgba(255,255,255,0.12)",
-                      background: "linear-gradient(135deg,#ff8a5b,#ff4fb3)",
-                      color: "white",
+                      border: "1px solid var(--hp-line)",
+                      background: "linear-gradient(135deg, var(--hp-peach), var(--hp-blush))",
+                      color: "var(--hp-ink)",
                       fontWeight: 900,
                       textDecoration: "none",
                       fontSize: 14,
@@ -301,8 +301,8 @@ export default function HomeNavbar() {
                       padding: "12px 14px",
                       borderRadius: 10,
                       background: "transparent",
-                      border: "1px solid rgba(255,100,100,0.25)",
-                      color: "rgba(255,100,100,0.95)",
+                      border: "1px solid var(--hp-line)",
+                      color: "var(--hp-danger)",
                       fontSize: 14,
                       fontWeight: 800,
                       cursor: "pointer",
@@ -331,7 +331,7 @@ export default function HomeNavbar() {
                   key={zh}
                   href={href}
                   style={{
-                    color: "white",
+                    color: "var(--hp-ink)",
                     textDecoration: "none",
                     fontWeight: 700,
                     fontSize: 14,
@@ -349,7 +349,7 @@ export default function HomeNavbar() {
                 <a
                   href="/pricing"
                   style={{
-                    color: "#e9d5ff",
+                    color: "var(--hp-accent)",
                     textDecoration: "none",
                     fontWeight: 800,
                     fontSize: 14,
@@ -358,8 +358,8 @@ export default function HomeNavbar() {
                     textAlign: "center",
                     padding: "4px 10px",
                     borderRadius: 12,
-                    background: "rgba(139,92,246,0.22)",
-                    border: "1px solid rgba(167,139,250,0.35)",
+                    background: "var(--hp-card)",
+                    border: "1px solid var(--hp-line)",
                   }}
                 >
                   <span>充值</span>
@@ -375,9 +375,9 @@ export default function HomeNavbar() {
                   style={{
                     padding: "10px 16px",
                     borderRadius: 12,
-                    border: "1px solid rgba(255,255,255,0.12)",
-                    background: "linear-gradient(135deg,#ff8a5b,#ff4fb3)",
-                    color: "white",
+                    border: "1px solid var(--hp-line)",
+                    background: "linear-gradient(135deg, var(--hp-peach), var(--hp-blush))",
+                    color: "var(--hp-ink)",
                     fontWeight: 900,
                     cursor: "pointer",
                     textDecoration: "none",
@@ -395,9 +395,9 @@ export default function HomeNavbar() {
                       gap: 8,
                       padding: "8px 12px",
                       borderRadius: 12,
-                      border: "1px solid rgba(255,255,255,0.12)",
-                      background: "rgba(255,255,255,0.06)",
-                      color: "white",
+                      border: "1px solid var(--hp-line)",
+                      background: "var(--hp-card)",
+                      color: "var(--hp-ink)",
                       cursor: "pointer",
                       fontWeight: 700,
                       fontSize: 14,
@@ -408,7 +408,7 @@ export default function HomeNavbar() {
                         width: 28,
                         height: 28,
                         borderRadius: 999,
-                        background: "linear-gradient(135deg,#8b5cf6,#ff4fb3)",
+                        background: "linear-gradient(135deg, var(--hp-peach), var(--hp-blush))",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
@@ -433,9 +433,9 @@ export default function HomeNavbar() {
                         top: "calc(100% + 8px)",
                         minWidth: 180,
                         borderRadius: 14,
-                        background: "rgba(15,12,28,0.97)",
-                        border: "1px solid rgba(255,255,255,0.12)",
-                        boxShadow: "0 16px 40px rgba(0,0,0,0.5)",
+                        background: "var(--hp-card)",
+                        border: "1px solid var(--hp-line)",
+                        boxShadow: "0 16px 40px rgba(82,50,29,0.10)",
                         overflow: "hidden",
                         zIndex: 100,
                       }}
@@ -443,15 +443,15 @@ export default function HomeNavbar() {
                       <div
                         style={{
                           padding: "12px 14px",
-                          borderBottom: "1px solid rgba(255,255,255,0.08)",
+                          borderBottom: "1px solid var(--hp-line)",
                         }}
                       >
-                        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", marginBottom: 2 }}>已登录</div>
-                        <div style={{ fontSize: 13, color: "white", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis" }}>
+                        <div style={{ fontSize: 12, color: "var(--hp-muted)", marginBottom: 2 }}>已登录</div>
+                        <div style={{ fontSize: 13, color: "var(--hp-ink)", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis" }}>
                           {displayName}
                         </div>
                         {user.credits != null && (
-                          <div style={{ marginTop: 4, fontSize: 11, color: "rgba(255,185,100,0.9)" }}>
+                          <div style={{ marginTop: 4, fontSize: 11, color: "var(--hp-accent)" }}>
                             积分：{user.credits}
                           </div>
                         )}
@@ -459,21 +459,21 @@ export default function HomeNavbar() {
 
                       <a
                         href="/dashboard"
-                        style={{ display: "block", padding: "11px 14px", color: "white", fontSize: 13, textDecoration: "none", fontWeight: 800, background: "rgba(139,92,246,0.15)" }}
+                        style={{ display: "block", padding: "11px 14px", color: "var(--hp-ink)", fontSize: 13, textDecoration: "none", fontWeight: 800, background: "var(--hp-card)" }}
                         onClick={() => setMenuOpen(false)}
                       >
                         个人中心
                       </a>
                       <a
                         href="/my-works"
-                        style={{ display: "block", padding: "11px 14px", color: "rgba(255,255,255,0.9)", fontSize: 13, textDecoration: "none", fontWeight: 700, background: "rgba(99,102,241,0.12)" }}
+                        style={{ display: "block", padding: "11px 14px", color: "var(--hp-accent)", fontSize: 13, textDecoration: "none", fontWeight: 700, background: "var(--hp-card)" }}
                         onClick={() => setMenuOpen(false)}
                       >
                         📁 我的作品
                       </a>
                       <a
                         href="/platform"
-                        style={{ display: "block", padding: "11px 14px", color: "rgba(255,255,255,0.82)", fontSize: 13, textDecoration: "none", fontWeight: 600 }}
+                        style={{ display: "block", padding: "11px 14px", color: "var(--hp-accent)", fontSize: 13, textDecoration: "none", fontWeight: 600 }}
                         onClick={() => setMenuOpen(false)}
                       >
                         平台创作
@@ -481,13 +481,13 @@ export default function HomeNavbar() {
                       {/* 竞品调研内测中：暂不给链接 */}
                       <a
                         href="/canvas"
-                        style={{ display: "block", padding: "11px 14px", color: "rgba(255,255,255,0.82)", fontSize: 13, textDecoration: "none", fontWeight: 600 }}
+                        style={{ display: "block", padding: "11px 14px", color: "var(--hp-accent)", fontSize: 13, textDecoration: "none", fontWeight: 600 }}
                         onClick={() => setMenuOpen(false)}
                       >
                         一战成片
                       </a>
 
-                      <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                      <div style={{ borderTop: "1px solid var(--hp-line)" }}>
                         <button
                           onClick={async () => { setMenuOpen(false); await logout(); window.location.href = "/"; }}
                           style={{
@@ -496,7 +496,7 @@ export default function HomeNavbar() {
                             padding: "11px 14px",
                             background: "transparent",
                             border: "none",
-                            color: "rgba(255,100,100,0.85)",
+                            color: "var(--hp-danger)",
                             fontSize: 13,
                             fontWeight: 700,
                             cursor: "pointer",

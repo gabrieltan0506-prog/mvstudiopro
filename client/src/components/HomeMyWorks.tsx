@@ -41,8 +41,8 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 const SNAPSHOT_GRADIENTS: Record<string, string> = {
-  growth_camp: "linear-gradient(135deg, #3b1f6e 0%, #1a0a35 100%)",
-  platform: "linear-gradient(135deg, #0c3460 0%, #071528 100%)",
+  growth_camp: "linear-gradient(135deg, var(--hp-peach), var(--hp-card))",
+  platform: "linear-gradient(135deg, var(--hp-blush), var(--hp-card))",
 };
 
 const SNAPSHOT_LABELS: Record<string, string> = {
@@ -69,16 +69,16 @@ export default function HomeMyWorks() {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <FolderOpen size={22} color="#a78bfa" />
-          <span style={{ fontSize: 20, fontWeight: 800, color: "#fff", letterSpacing: 1 }}>我的作品</span>
+          <span style={{ fontSize: 20, fontWeight: 800, color: "var(--hp-ink)", letterSpacing: 1 }}>我的作品</span>
           {total > 0 && (
-            <span style={{ fontSize: 12, color: "rgba(167,139,250,0.8)", background: "rgba(139,92,246,0.15)", borderRadius: 99, padding: "2px 10px" }}>
+            <span style={{ fontSize: 12, color: "var(--hp-accent)", background: "var(--hp-card)", borderRadius: 99, padding: "2px 10px" }}>
               共 {total} 件
             </span>
           )}
         </div>
         <a
           href="/my-works"
-          style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13, color: "#a78bfa", textDecoration: "none", fontWeight: 600, opacity: 0.85 }}
+          style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13, color: "var(--hp-accent)", textDecoration: "none", fontWeight: 600, opacity: 0.85 }}
         >
           查看全部 <ArrowRight size={14} />
         </a>
@@ -86,11 +86,11 @@ export default function HomeMyWorks() {
 
       {/* 作品格 */}
       {creationsQuery.isLoading ? (
-        <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 14, textAlign: "center", padding: "40px 0" }}>载入中…</div>
+        <div style={{ color: "var(--hp-muted)", fontSize: 14, textAlign: "center", padding: "40px 0" }}>载入中…</div>
       ) : items.length === 0 ? (
         <div style={{
-          border: "1.5px dashed rgba(139,92,246,0.25)", borderRadius: 16, padding: "48px 20px",
-          textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 14,
+          border: "1.5px dashed var(--hp-line)", borderRadius: 16, padding: "48px 20px",
+          textAlign: "center", color: "var(--hp-muted)", fontSize: 14,
         }}>
           还没有作品，去生成第一件吧！
         </div>
@@ -122,17 +122,17 @@ export default function HomeMyWorks() {
             }
 
             return (
-              <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 10, padding: "10px 14px" }}>
-                <div style={{ width: 44, height: 44, borderRadius: 8, background: "rgba(0,0,0,0.3)", flexShrink: 0, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 12, background: "var(--hp-card)", border: "1px solid var(--hp-line)", borderRadius: 10, padding: "10px 14px" }}>
+                <div style={{ width: 44, height: 44, borderRadius: 8, background: "var(--hp-card)", flexShrink: 0, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
                   {thumb
                     ? <img src={thumb} alt={item.title} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                     : <Icon size={22} color="rgba(167,139,250,0.5)" />}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.85)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title || "未命名"}</div>
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 2 }}>{label} · {formatDateGMT8(item.createdAt, { showTime: false })}</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--hp-accent)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title || "未命名"}</div>
+                  <div style={{ fontSize: 11, color: "var(--hp-muted)", marginTop: 2 }}>{label} · {formatDateGMT8(item.createdAt, { showTime: false })}</div>
                 </div>
-                {isVideo && <div style={{ fontSize: 10, background: "rgba(239,68,68,0.15)", color: "#f87171", border: "1px solid rgba(239,68,68,0.25)", borderRadius: 4, padding: "2px 7px", flexShrink: 0 }}>请下载</div>}
+                {isVideo && <div style={{ fontSize: 10, background: "var(--hp-card)", color: "var(--hp-danger)", border: "1px solid var(--hp-line)", borderRadius: 4, padding: "2px 7px", flexShrink: 0 }}>请下载</div>}
               </div>
             );
           })}
@@ -140,14 +140,14 @@ export default function HomeMyWorks() {
       )}
 
       {items.length === 0 && !creationsQuery.isLoading && (
-        <div style={{ textAlign: "center", padding: "32px 0", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
+        <div style={{ textAlign: "center", padding: "32px 0", color: "var(--hp-muted)", fontSize: 13 }}>
           暂无作品记录，开始分析后会自动保存在这里
         </div>
       )}
 
       {total > 8 && (
         <div style={{ textAlign: "center", marginTop: 20 }}>
-          <a href="/my-works" style={{ fontSize: 13, color: "#a78bfa", textDecoration: "none", fontWeight: 600 }}>
+          <a href="/my-works" style={{ fontSize: 13, color: "var(--hp-accent)", textDecoration: "none", fontWeight: 600 }}>
             查看全部 {total} 件作品 →
           </a>
         </div>
@@ -184,7 +184,7 @@ function SnapshotCard({ item, analysisType, summary, snapshotLabel, snapshotGrad
       <div
         style={{
           background: snapshotGrad,
-          border: "1px solid rgba(255,255,255,0.1)",
+          border: "1px solid var(--hp-line)",
           borderRadius: 12,
           padding: "14px 16px",
           display: "flex",
@@ -198,42 +198,42 @@ function SnapshotCard({ item, analysisType, summary, snapshotLabel, snapshotGrad
       >
         {/* 顶部：标签 + 日期 */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "rgba(255,255,255,0.12)", borderRadius: 6, padding: "3px 9px", fontSize: 10, color: "rgba(255,255,255,0.8)", fontWeight: 700, letterSpacing: "0.06em" }}>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "var(--hp-card)", borderRadius: 6, padding: "3px 9px", fontSize: 10, color: "var(--hp-accent)", fontWeight: 700, letterSpacing: "0.06em" }}>
             {analysisType === "platform" ? <BarChart2 size={10} /> : <FileText size={10} />}
             {snapshotLabel}
           </div>
-          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>{formatDateGMT8(item.createdAt, { showTime: false })}</span>
+          <span style={{ fontSize: 11, color: "var(--hp-muted)" }}>{formatDateGMT8(item.createdAt, { showTime: false })}</span>
         </div>
 
         {/* 标题 */}
-        <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", lineHeight: 1.4 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: "var(--hp-ink)", lineHeight: 1.4 }}>
           {item.title || snapshotLabel}
         </div>
 
         {/* 简介摘要 */}
         {brief && (
-          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", lineHeight: 1.6 }}>
+          <div style={{ fontSize: 12, color: "var(--hp-muted)", lineHeight: 1.6 }}>
             {brief}…
           </div>
         )}
 
         {/* URL + 操作 */}
         <div
-          style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(0,0,0,0.25)", borderRadius: 7, padding: "7px 10px", marginTop: 2 }}
+          style={{ display: "flex", alignItems: "center", gap: 8, background: "var(--hp-card)", borderRadius: 7, padding: "7px 10px", marginTop: 2 }}
           onClick={e => e.preventDefault()}
         >
-          <span style={{ flex: 1, fontSize: 11, color: "rgba(255,255,255,0.35)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "monospace" }}>
+          <span style={{ flex: 1, fontSize: 11, color: "var(--hp-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "monospace" }}>
             {fullUrl}
           </span>
           <button
             onClick={handleCopy}
-            style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 5, border: "1px solid rgba(255,255,255,0.15)", background: copied ? "rgba(52,211,153,0.15)" : "rgba(255,255,255,0.07)", color: copied ? "#6ee7b7" : "rgba(255,255,255,0.55)", fontSize: 11, cursor: "pointer", transition: "all 0.2s", flexShrink: 0 }}
+            style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 5, border: "1px solid var(--hp-line)", background: copied ? "var(--hp-accent-soft)" : "var(--hp-card)", color: copied ? "var(--hp-success)" : "var(--hp-muted)", fontSize: 11, cursor: "pointer", transition: "all 0.2s", flexShrink: 0 }}
           >
             {copied ? <><Check size={11} /> 已复制</> : <><Copy size={11} /> 复制链接</>}
           </button>
           <a
             href={viewUrl}
-            style={{ display: "flex", alignItems: "center", gap: 3, padding: "3px 8px", borderRadius: 5, border: "1px solid rgba(139,92,246,0.3)", background: "rgba(139,92,246,0.1)", color: "#c4b5fd", fontSize: 11, textDecoration: "none", flexShrink: 0 }}
+            style={{ display: "flex", alignItems: "center", gap: 3, padding: "3px 8px", borderRadius: 5, border: "1px solid var(--hp-line)", background: "var(--hp-card)", color: "var(--hp-accent)", fontSize: 11, textDecoration: "none", flexShrink: 0 }}
             onClick={e => e.stopPropagation()}
           >
             <ExternalLink size={11} /> 查看报告

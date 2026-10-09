@@ -34,16 +34,15 @@ export default function HomeEducation() {
           gap: 0,
           borderRadius: 24,
           overflow: "hidden",
-          border: "1px solid rgba(255,255,255,0.08)",
-          background: "rgba(255,255,255,0.03)",
+          border: "1px solid var(--hp-line)",
+          background: "var(--hp-card)",
         }}
       >
         {/* 左：介绍 */}
         <div
           style={{
             padding: "48px 44px",
-            background:
-              "linear-gradient(140deg,rgba(255,107,53,0.14) 0%,rgba(139,92,246,0.10) 60%,transparent 100%)",
+            background: "linear-gradient(135deg, var(--hp-peach), var(--hp-blush))",
             display: "flex",
             flexDirection: "column",
             justifyContent: "center",
@@ -56,8 +55,8 @@ export default function HomeEducation() {
                 width: 48,
                 height: 48,
                 borderRadius: 14,
-                background: "rgba(255,107,53,0.18)",
-                border: "1px solid rgba(255,107,53,0.35)",
+                background: "var(--hp-card)",
+                border: "1px solid var(--hp-line)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -69,7 +68,7 @@ export default function HomeEducation() {
               style={{
                 fontSize: 13,
                 fontWeight: 700,
-                color: "#FF6B35",
+                color: "var(--hp-accent)",
                 letterSpacing: 0.8,
                 textTransform: "uppercase",
               }}
@@ -82,7 +81,7 @@ export default function HomeEducation() {
             style={{
               fontSize: "clamp(24px,3vw,36px)",
               fontWeight: 900,
-              color: "#f7f4ef",
+              color: "var(--hp-ink)",
               lineHeight: 1.25,
               margin: 0,
             }}
@@ -92,7 +91,7 @@ export default function HomeEducation() {
             定制 AI 创作课程
           </h2>
 
-          <p style={{ fontSize: 15, color: "rgba(255,255,255,0.62)", lineHeight: 1.75, margin: 0 }}>
+          <p style={{ fontSize: 15, color: "var(--hp-muted)", lineHeight: 1.75, margin: 0 }}>
             MV Studio Pro 与高校、职业院校及内容创作培训机构深度合作，提供：
           </p>
 
@@ -103,20 +102,20 @@ export default function HomeEducation() {
               "学员作品展示 & 平台流量支持",
               "教学素材库 & 案例课件共创",
             ].map((item) => (
-              <li key={item} style={{ display: "flex", alignItems: "flex-start", gap: 10, fontSize: 14, color: "rgba(255,255,255,0.72)" }}>
-                <span style={{ color: "#FF6B35", fontWeight: 900, marginTop: 1 }}>✓</span>
+              <li key={item} style={{ display: "flex", alignItems: "flex-start", gap: 10, fontSize: 14, color: "var(--hp-muted)" }}>
+                <span style={{ color: "var(--hp-accent)", fontWeight: 900, marginTop: 1 }}>✓</span>
                 {item}
               </li>
             ))}
           </ul>
 
-          <p style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", margin: 0, marginTop: 4 }}>
+          <p style={{ fontSize: 12, color: "var(--hp-muted)", margin: 0, marginTop: 4 }}>
             填写右侧表单，我们将在 1-2 个工作日内联系您
           </p>
         </div>
 
         {/* 右：表单 */}
-        <div style={{ padding: "48px 44px", background: "rgba(0,0,0,0.25)" }}>
+        <div style={{ padding: "48px 44px", background: "var(--hp-card)" }}>
           {done ? (
             <div
               style={{
@@ -130,8 +129,8 @@ export default function HomeEducation() {
               }}
             >
               <CheckCircle size={60} color="#4ade80" />
-              <p style={{ fontSize: 22, fontWeight: 900, color: "#f7f4ef", margin: 0 }}>洽询已提交！</p>
-              <p style={{ fontSize: 14, color: "rgba(255,255,255,0.55)", margin: 0 }}>
+              <p style={{ fontSize: 22, fontWeight: 900, color: "var(--hp-ink)", margin: 0 }}>洽询已提交！</p>
+              <p style={{ fontSize: 14, color: "var(--hp-muted)", margin: 0 }}>
                 我们会在 1-2 个工作日内通过邮件或电话与您联系。
               </p>
               <button
@@ -140,9 +139,9 @@ export default function HomeEducation() {
                   marginTop: 8,
                   padding: "10px 24px",
                   borderRadius: 12,
-                  border: "1px solid rgba(255,255,255,0.15)",
+                  border: "1px solid var(--hp-line)",
                   background: "transparent",
-                  color: "rgba(255,255,255,0.7)",
+                  color: "var(--hp-muted)",
                   cursor: "pointer",
                   fontSize: 14,
                 }}
@@ -152,7 +151,7 @@ export default function HomeEducation() {
             </div>
           ) : (
             <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              <h3 style={{ fontSize: 20, fontWeight: 800, color: "#f7f4ef", margin: 0 }}>留下联系方式</h3>
+              <h3 style={{ fontSize: 20, fontWeight: 800, color: "var(--hp-ink)", margin: 0 }}>留下联系方式</h3>
 
               <div className="grid grid-cols-1 sm:grid-cols-2" style={{ gap: 12 }}>
                 <Field label="姓名 *" value={form.name} onChange={set("name")} placeholder="您的姓名" maxLength={60} />
@@ -165,7 +164,7 @@ export default function HomeEducation() {
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <label style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.6)" }}>合作需求（选填）</label>
+                <label style={{ fontSize: 13, fontWeight: 600, color: "var(--hp-muted)" }}>合作需求（选填）</label>
                 <textarea
                   rows={3}
                   value={form.message}
@@ -173,11 +172,11 @@ export default function HomeEducation() {
                   maxLength={500}
                   placeholder="简述合作场景、学员规模或其他需求..."
                   style={{
-                    background: "rgba(255,255,255,0.06)",
-                    border: "1px solid rgba(255,255,255,0.12)",
+                    background: "var(--hp-card)",
+                    border: "1px solid var(--hp-line)",
                     borderRadius: 12,
                     padding: "10px 14px",
-                    color: "#f7f4ef",
+                    color: "var(--hp-ink)",
                     fontSize: 14,
                     resize: "vertical",
                     outline: "none",
@@ -192,7 +191,7 @@ export default function HomeEducation() {
                 style={{
                   padding: "14px 0",
                   borderRadius: 14,
-                  background: inquiryMutation.isPending ? "rgba(255,107,53,0.5)" : "#FF6B35",
+                  background: inquiryMutation.isPending ? "var(--hp-muted)" : "var(--hp-accent)",
                   color: "#fff",
                   fontWeight: 800,
                   fontSize: 16,
@@ -208,7 +207,7 @@ export default function HomeEducation() {
                 {inquiryMutation.isPending ? "提交中..." : "提交洽询"}
               </button>
 
-              <p style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", textAlign: "center", margin: 0 }}>
+              <p style={{ fontSize: 12, color: "var(--hp-muted)", textAlign: "center", margin: 0 }}>
                 提交即表示同意我们通过邮件或电话回访
               </p>
             </form>
@@ -228,7 +227,7 @@ function Field({
 }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <label style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.6)" }}>{label}</label>
+      <label style={{ fontSize: 13, fontWeight: 600, color: "var(--hp-muted)" }}>{label}</label>
       <input
         type={type}
         value={value}
@@ -236,11 +235,11 @@ function Field({
         maxLength={maxLength}
         placeholder={placeholder}
         style={{
-          background: "rgba(255,255,255,0.06)",
-          border: "1px solid rgba(255,255,255,0.12)",
+          background: "var(--hp-card)",
+          border: "1px solid var(--hp-line)",
           borderRadius: 12,
           padding: "10px 14px",
-          color: "#f7f4ef",
+          color: "var(--hp-ink)",
           fontSize: 14,
           outline: "none",
           fontFamily: "inherit",

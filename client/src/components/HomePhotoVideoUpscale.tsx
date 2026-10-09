@@ -417,7 +417,7 @@ function UpscalePanel({
     }
   }
   return (
-    <section className="space-y-4 rounded-2xl border border-white/10 p-5">
+    <section className="space-y-4 rounded-2xl border border-[var(--hp-line)] p-5">
       <h3 className="text-lg font-semibold">视频高清放大</h3>
       <p className="text-sm text-muted-foreground">
         上传视频、选择照片动画成片，或直接粘贴云端视频网址；原片保留，结果临时保留12小时。
