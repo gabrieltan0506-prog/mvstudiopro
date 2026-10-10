@@ -1,0 +1,19 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ shared/codeMotionSoundAdoption.test.ts > replacing an analysed BGM candidate clears only its obsolete timing and preserves reusable audio
+ ✓ server/services/codeMotionPlan.test.ts > 规划沿指定GLM→DeepSeek路线；模型只收到素材名字和ID
+ ✓ server/services/codeMotionPlan.test.ts > 非法计划不得进入导出；重试次数有界
+ ✓ server/services/codeMotionPlan.test.ts > 安全策略拦截不换模型继续生成
+ ✓ server/services/codeMotionPlan.test.ts > 配音未开放时按无声安排，拒绝模型擅自合成
+ ✓ server/services/codeMotionPlan.test.ts > 无图场景直接编排可见主体与动作；纯文字方案不得冒充场景
+ ✓ server/services/codeMotionSound.test.ts > 已保存镜头→既有Qwen入口→刷新恢复→采用→保存再打开→正式编译消费同一音源
+ ✓ server/services/codeMotionSound.test.ts > 写入失败不发上游，断线仍恢复原请求编号，查询不生成不计费
+ ✓ server/services/codeMotionSound.test.ts > 旧版本或非本镜台词不生成，过长旁白不截断，改词后旧音源不能通过编译
+ ✓ server/services/codeMotionSound.test.ts > BGM复用既有Suno队列，持久化双候选，并允许长音源在正式时间轴裁入片长
+
+ Test Files  3 passed (3)
+      Tests  10 passed (10)
+   Start at  04:29:50
+   Duration  3.40s (transform 1.64s, setup 0ms, collect 4.29s, tests 120ms, environment 2ms, prepare 577ms)
+
