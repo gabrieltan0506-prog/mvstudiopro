@@ -22,3 +22,5 @@ New delegated P1 slice complete: formal sound adoption/save now performs a measu
 - 主代理最終整合／提交；本代理不 commit、push、部署、付費或啟停工作機。23:14 UTC 前凍結產品碼，23:19:22 UTC 為使用者當輪截止。
 
 07:11 北京增量：UI 產品碼與 ArtMotionStudio 導航已完成；子環境本地 listen 明確 EPERM，已補立即 reject，停止未完成 browser runner（0 case PASS）後交父代理主環境執行，未重跑已通過項。22 秒新片正式 compile 的 PREPARE 1 PASS，未渲染；四新配方與原三圖／22 秒 BGM 的工程、請求、來源 hashes 已在 `task/ink-effects-workbench-demo`，待主代理推送確認後才走現有 `renderArtMotion`。本地 storage adapter 限四來源白名單與本地永久回執，沒有雲端寫入或模型呼叫。詳細交接 `docs/evidence/code-motion-1011/effects-workbench/README.md`。
+
+07:13 北京交接：父環境新 UI browser 3 PASS（20.80 秒），四配方採用／編譯／保存重載、免費限制与忙碌／全片覆蓋守門、Art 新頁導航不改 block 全通過。已復用原始 `/tmp/pr1697-effects-menu-test-main.log`，複製到 `effects-workbench/menu-test-main.log`；本代理未重跑。產品碼與文檔凍結，待主代理 commit/push；22 秒 renderer 尚未啟動，不冒稱可播放成片。

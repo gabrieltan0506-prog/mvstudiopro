@@ -8,6 +8,7 @@
 
 - 新增離線真元件 browser：`client/src/lib/codeMotionEffectsMenu.browser.test.ts`。測四配方選擇顯示→真 shared apply→compile→本地保存重載、原視頻鏡頭保留、免費程序效果與付費資產分流、忙碌與全原片禁用、Art 工作台新頁導航不改 block。不呼叫 renderer、模型或遠端 API；這不是線上工作流驗收。
 - 初次命令僅導航因 Vitest min/max worker 設定衝突，**0 tests**；修正旗標後全檔啟動仍卡本地監聽。最小 `http.listen(0,127.0.0.1)` 已明確返回 `EPERM`，補 `server.once('error', reject)` 後停止該次未完成 runner（exit130，沒有案例 PASS）。主環境接手同檔必要驗證；預期原始 log `/tmp/pr1697-effects-menu-test-main.log`，結果在確認後更新，未確認不記為 PASS。
+- **主環境接手結果：3 PASS**，北京 07:10:57 啟動、20.80 秒完成；原始 log 已複製為本目錄 `menu-test-main.log`，逐配方編譯產物及導航結果在 `menu-results.json`。四個新配方都從選單採用並重新 compile，原視頻鏡頭與標題保持，localStorage 重載工程一致。子代理只讀復核該結果，沒有重跑。
 - 新增 `server/services/codeMotionEffectsDemo.real.test.ts` 需要明確環境旗標才執行；未設旗標自動 skip。`INK_EFFECTS_DEMO_PREPARE=1` **1 PASS**，只以正式 compiler 驗證並保存工程，未渲染。原始 `/tmp/pr1697-effects-demo-prepare.log`。
 
 ## 22 秒示範交接
@@ -27,3 +28,5 @@ INK_EFFECTS_DEMO_RENDER=1 pnpm exec vitest run server/services/codeMotionEffects
 完成後以獨立 Range 服務展示（不碰既有 8880 服務）：`node ../ink-effects-workbench-demo/serve-preview.mjs`，由啟動輸出取得實際隨機 port。尚未執行本次新渲染、Range 播放或線上驗收，不將 PREPARE PASS 當成新片完成。
 
 主環境補驗：menu-test-main.log 3/3 PASS（真元件操作、保存恢復與compile、免費3D與付費資產區分、原特效工作台新頁入口）。子代理首輪sandbox EPERM，0 cases，不算產品失敗亦不算PASS。
+
+主代理23:17 UTC收尾：4a199ff3已推送後啟一次新版render，demo-render.log 1PASS，22秒720×1280/30fps/660frame、單AAC音軌。MP4 SHA256 7b20f5ac18b14e747b82d083b80192b91aa89600bfee4cc0accdff3ffe0c6205；主已親看每2秒抽幀並在內置瀏覽器播放readyState4/paused=false。三欄內橫幅照片偏小留白多，尚非使用者視覺認可；未聽音審美驗收，未線上驗收。全庫TS原進程仍未收口，不能宣稱可合併。
