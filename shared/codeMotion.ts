@@ -1,5 +1,16 @@
 import { z } from "zod";
 import { artMotionSpecSchema, type ArtMotionSpec } from "./artMotion";
+import {
+  codeMotionAudioSourceSchema,
+  codeMotionAudioClipSchema,
+  codeMotionAudioClipDraftSchema,
+  codeMotionAudioSchema,
+  validateCodeMotionAudio,
+} from "./codeMotionAudio";
+import {
+  codeMotionPlanSceneSchema,
+  resolveCodeMotionCompositionImages,
+} from "./codeMotionComposition";
 
 const uuid = z.string().uuid();
 export const codeMotionImageSchema = z
@@ -17,10 +28,11 @@ const codeMotionBriefObject = z
     title: z.string().trim().min(1, "请给这条视频起个名字").max(60),
     request: z.string().trim().min(2, "说说你想做什么").max(2000),
     text: z.string().trim().max(4000).default(""),
-    style: z.enum(["words", "cards", "data"]),
-    duration: z.number().int().min(15).max(60),
+    style: z.enum(["words", "cards", "data", "scenes"]),
+    duration: z.number().int().min(15).max(180),
     orientation: z.enum(["landscape", "portrait"]),
     images: z.array(codeMotionImageSchema).max(8).default([]),
+    audios: z.array(codeMotionAudioSourceSchema).max(3).optional(),
     data: z
       .array(
         z
@@ -61,8 +73,11 @@ export const codeMotionBriefSchema = codeMotionBriefObject.superRefine(
       });
     if (v.style === "data" && v.data.length < 2)
       ctx.addIssue({ code: "custom", message: "数据动画至少需要两项真实数据" });
-    if (v.style !== "cards" && v.images.length)
-      ctx.addIssue({ code: "custom", message: "带图片的内容请选择图文介绍" });
+    if (!["cards", "scenes"].includes(v.style) && v.images.length)
+      ctx.addIssue({
+        code: "custom",
+        message: "带图片的内容请选择图文介绍或逐镜创作",
+      });
     if (v.style !== "data" && v.data.length)
       ctx.addIssue({
         code: "custom",
@@ -77,13 +92,23 @@ export const codeMotionPlanSchema = z
   .object({
     version: z.literal(1),
     summary: z.string().trim().min(1).max(400),
+    audioTimeline: z.array(codeMotionAudioClipSchema).max(12).optional(),
     scenes: z
       .array(
         z
           .object({
             heading: z.string().trim().min(1).max(48),
             body: z.string().trim().max(100),
-            duration: z.number().int().min(2).max(60),
+            speech: z
+              .object({
+                text: z.string().trim().max(180),
+                voice: z.enum(["female", "male"]),
+              })
+              .strict()
+              .optional(),
+            duration: z.number().finite().min(0.5).max(180),
+            composition: codeMotionPlanSceneSchema.optional(),
+            direction: z.string().trim().max(400).optional(),
             imageId: uuid.optional(),
           })
           .strict()
@@ -98,7 +123,11 @@ export function validateCodeMotionPlan(
   raw: unknown
 ): CodeMotionPlan {
   const plan = codeMotionPlanSchema.parse(raw);
-  if (plan.scenes.reduce((sum, s) => sum + s.duration, 0) !== brief.duration)
+  if (
+    Math.abs(
+      plan.scenes.reduce((sum, s) => sum + s.duration, 0) - brief.duration
+    ) > 0.000001
+  )
     throw new Error("安排的总时长与本次选择不一致，请重新调整");
   if (
     plan.scenes.some(
@@ -106,13 +135,47 @@ export function validateCodeMotionPlan(
     )
   )
     throw new Error("方案用了未选择的图片，原材料保留");
-  if (brief.images.some(i => !plan.scenes.some(s => s.imageId === i.id)))
+  if (
+    brief.images.some(
+      i =>
+        !plan.scenes.some(s =>
+          brief.style === "scenes"
+            ? s.composition?.elements.some(
+                e => e.type === "image" && e.imageId === i.id
+              )
+            : s.imageId === i.id
+        )
+    )
+  )
     throw new Error("方案遗漏了已选择的图片，请补齐或移除不用的图片");
   if (brief.style === "data" && plan.scenes.length !== 1)
     throw new Error("数据展示使用同一张图，请把说明合在一个画面中");
+  if (brief.style === "scenes") {
+    if (plan.scenes.some(scene => !scene.composition))
+      throw new Error("逐镜创作缺少实际画面编排，请补齐后再预览");
+    if (
+      plan.scenes.some(
+        scene => Math.abs(scene.composition!.duration - scene.duration) > 1e-6
+      )
+    )
+      throw new Error("镜头编排时长与画面安排不一致");
+    resolveCodeMotionCompositionImages(
+      plan.scenes.map(scene => scene.composition!),
+      brief.images
+    );
+  } else if (plan.scenes.some(scene => scene.composition))
+    throw new Error("请切换逐镜创作后使用元素编排，避免内容被忽略");
+  if (brief.audios?.length || plan.audioTimeline?.length) {
+    const audio = codeMotionAudioSchema.parse({
+      sources: brief.audios || [],
+      audioTimeline: plan.audioTimeline || [],
+    });
+    const errors = validateCodeMotionAudio(audio, brief.duration);
+    if (errors.length) throw new Error(errors.join("；"));
+  }
   return plan;
 }
-/** 只编译固定组件和有界数据；数值取自原材料，模型没有改写数值的入口。 */
+/** 编译受控场景与素材身份；只接收数据，不执行模型提供的代码。 */
 export function compileCodeMotion(
   briefInput: unknown,
   planInput: unknown
@@ -120,8 +183,30 @@ export function compileCodeMotion(
   const brief = codeMotionBriefSchema.parse(briefInput);
   const plan = validateCodeMotionPlan(brief, planInput);
   let at = 0;
+  let speechAt = 0;
+  const speechLines = plan.scenes.flatMap(scene => {
+    const start = speechAt;
+    speechAt += scene.duration;
+    return scene.speech?.text.trim()
+      ? [
+          {
+            at: start,
+            duration: scene.duration,
+            text: scene.speech.text.trim(),
+            voice: scene.speech.voice,
+          },
+        ]
+      : [];
+  });
+  const composition =
+    brief.style === "scenes"
+      ? resolveCodeMotionCompositionImages(
+          plan.scenes.map(scene => scene.composition!),
+          brief.images
+        )
+      : undefined;
   const grammar =
-    brief.style === "words"
+    brief.style === "words" || brief.style === "scenes"
       ? "y5_kinetic_type"
       : brief.style === "cards"
         ? "t2_keynote_ui"
@@ -159,6 +244,11 @@ export function compileCodeMotion(
           at += scene.duration;
           return cue;
         });
+  if (composition) {
+    cues.length = 0;
+    for (const image of brief.images)
+      cues.push({ at: 0, kind: "image", imageUri: image.gcsUri });
+  }
   return artMotionSpecSchema.parse({
     version: 1,
     mode: "animation",
@@ -192,6 +282,18 @@ export function compileCodeMotion(
           }
         : {},
     scenes: [],
+    ...(composition ? { composition } : {}),
+    ...(brief.audios?.length
+      ? {
+          codeAudio: {
+            sources: brief.audios,
+            audioTimeline: plan.audioTimeline,
+          },
+        }
+      : {}),
+    ...(speechLines.length
+      ? { inkSpeech: { engine: "kokoro-zh-v1.1", lines: speechLines } }
+      : {}),
   });
 }
 export const codeMotionProjectSchema = z
@@ -218,16 +320,18 @@ export function codeMotionSceneDescription(
   style: CodeMotionBrief["style"],
   withImage: boolean
 ) {
-  return style === "words"
-    ? "文字依次放大进入，色带切换到下一页"
-    : style === "data"
-      ? "按所选图表逐步展开，保留原始数值、单位和数据来源"
-      : withImage
-        ? "图片完整放入画面，标题随卡片进入"
-        : "文字卡片依次进入，同组最多三张并排展示";
+  return style === "scenes"
+    ? "按逐镜编排播放文字、图形、图片、粒子与空间镜头，所有动作沿同一时间轴"
+    : style === "words"
+      ? "文字依次放大进入，色带切换到下一页"
+      : style === "data"
+        ? "按所选图表逐步展开，保留原始数值、单位和数据来源"
+        : withImage
+          ? "图片完整放入画面，标题随卡片进入"
+          : "文字卡片依次进入，同组最多三张并排展示";
 }
 export const CODE_MOTION_COST_NOTE =
-  "整理方案沿用创作顾问的当前额度与积分规则；预览和本次视频导出不扣积分。视频为无声图文动画。";
+  "整理方案沿用创作顾问的当前额度与积分规则；上传原音按确认的秒窗混入视频。逐句合成配音需服务端音源可用，浏览器预览不会提前合成。提交前核对画面、原音及时间轴。";
 
 /** 未完成输入仅作本机草稿，提交仍使用上面的完整检查。 */
 export const codeMotionLocalProjectSchema = z
@@ -249,11 +353,15 @@ export const codeMotionLocalProjectSchema = z
     }),
     plan: codeMotionPlanSchema
       .extend({
+        audioTimeline: z
+          .array(codeMotionAudioClipDraftSchema)
+          .max(12)
+          .optional(),
         scenes: z
           .array(
             codeMotionPlanSchema.shape.scenes.element.extend({
               heading: z.string().max(48),
-              duration: z.number().finite().min(0).max(60),
+              duration: z.number().finite().min(0).max(180),
             })
           )
           .min(1)

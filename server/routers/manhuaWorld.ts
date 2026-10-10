@@ -1,7 +1,8 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { DEPTH_PANO_MAX_WIDTH, DEPTH_PANO_UPLOAD_ENCODING } from "../../shared/manhuaLayoutDepthPano.js";
-import { adminProcedure, router } from "../_core/trpc.js";
+import { adminProcedure, protectedProcedure, router } from "../_core/trpc.js";
+import { assertPaidSceneGenerationAccess, getPaidSceneAccess } from "../services/paidSceneAccess";
 import {
   createManhuaWorldTask,
   deleteManhuaWorldTask,
@@ -70,8 +71,9 @@ export function mapManhuaWorldTaskError(error: unknown): never {
 }
 
 export const manhuaWorldRouter = router({
+  sceneAccess: protectedProcedure.query(({ ctx }) => getPaidSceneAccess(ctx.user)),
   /** 场景参考图 → Marble 世界（扣上游 credits，价按模型档；同人同图同模型同提示词幂等） */
-  submit: adminProcedure
+  submit: protectedProcedure
     .input(
       z.object({
         sceneRef: z.string().trim().min(1).max(160),
@@ -84,13 +86,15 @@ export const manhuaWorldRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      await assertPaidSceneGenerationAccess(ctx.user);
       try {
         return await createManhuaWorldTask({ userId: ctx.user.id, ...input });
       } catch (error) {
         return mapManhuaWorldTaskError(error);
       }
     }),
-  retry: adminProcedure.input(z.object({ taskId: z.string().trim().min(8).max(100) })).mutation(async ({ ctx, input }) => {
+  retry: protectedProcedure.input(z.object({ taskId: z.string().trim().min(8).max(100) })).mutation(async ({ ctx, input }) => {
+    await assertPaidSceneGenerationAccess(ctx.user);
     try {
       const task = await retryManhuaWorldTask(input.taskId, ctx.user.id);
       if (!task) throw new TRPCError({ code: "NOT_FOUND", message: "3D 世界任务不存在" });

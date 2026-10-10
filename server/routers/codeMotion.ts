@@ -1,3 +1,4 @@
+import { inkFreeSpeechEnabled } from "../services/inkFreeSpeechConfig";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "../_core/trpc";
@@ -8,6 +9,11 @@ import {
   CODE_MOTION_COST_NOTE,
 } from "../../shared/codeMotion";
 import { assertCodeMotionImageSource } from "../services/codeMotionImport";
+import { codeMotionAudioSourceSchema } from "../../shared/codeMotionAudio";
+import {
+  importCodeMotionAudio,
+  assertCodeMotionAudioOwnership,
+} from "../services/codeMotionAudio";
 import {
   loadCodeMotion,
   saveCodeMotion,
@@ -20,6 +26,7 @@ import {
 } from "../services/codeMotionTask";
 import { resolveRegisteredPostProdMediaSource } from "../services/postProdMediaSource";
 import { signGsUriV4ReadUrl } from "../services/gcs";
+import { inkSource, quoteInkFree } from "../services/inkFreeQuota";
 const id = z.object({ projectId: z.string().uuid() });
 async function owned(userId: string, projectId: string) {
   const saved = await loadCodeMotion(userId, projectId);
@@ -31,6 +38,9 @@ async function owned(userId: string, projectId: string) {
   return saved;
 }
 export const codeMotionRouter = router({
+  freeQuote: protectedProcedure.query(({ ctx }) =>
+    quoteInkFree(String(ctx.user.id), inkSource(ctx.req))
+  ),
   quote: protectedProcedure.query(async ({ ctx }) => {
     const { countPlatformSkillQaToday } = await import(
       "../services/platformSkillQa"
@@ -48,6 +58,7 @@ export const codeMotionRouter = router({
       : await countPlatformSkillQaToday(ctx.user.id, "terra", false);
     const limit = platformSkillQaDailyFreeLimit("terra");
     return {
+      speechEnabled: inkFreeSpeechEnabled(),
       remainingFreeToday: Math.max(0, limit - used),
       credits:
         privileged || used < limit
@@ -70,6 +81,58 @@ export const codeMotionRouter = router({
             id: image.id,
             name: image.name,
             url: signGsUriV4ReadUrl(uri, 3600),
+          };
+        })
+      );
+    }),
+  importAudio: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.string().uuid(),
+        name: z.string().min(1).max(160),
+        gcsUri: z
+          .string()
+          .regex(/^gs:\/\//)
+          .max(2048),
+      })
+    )
+    .mutation(({ ctx, input }) =>
+      importCodeMotionAudio({ ...input, userId: String(ctx.user.id) })
+    ),
+  resolveAudios: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.string().uuid(),
+        audios: z.array(codeMotionAudioSourceSchema).max(3),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      const userId = String(ctx.user.id);
+      return Promise.all(
+        input.audios.map(async audio => {
+          await assertCodeMotionAudioOwnership({
+            userId,
+            projectId: input.projectId,
+            audio: {
+              sources: [audio],
+              audioTimeline: [
+                {
+                  sourceId: audio.id,
+                  role: "narration",
+                  at: 0,
+                  trimStart: 0,
+                  duration: audio.duration,
+                  volume: 1,
+                  fadeIn: 0,
+                  fadeOut: 0,
+                },
+              ],
+            },
+          });
+          return {
+            id: audio.id,
+            name: audio.name,
+            url: signGsUriV4ReadUrl(audio.gcsUri, 3600),
           };
         })
       );
@@ -118,6 +181,26 @@ export const codeMotionRouter = router({
           source: image.gcsUri,
         });
       }
+      for (const audio of input.project.brief.audios || [])
+        await assertCodeMotionAudioOwnership({
+          userId: String(ctx.user.id),
+          projectId: input.project.id,
+          audio: {
+            sources: [audio],
+            audioTimeline: [
+              {
+                sourceId: audio.id,
+                role: "narration",
+                at: 0,
+                trimStart: 0,
+                duration: audio.duration,
+                volume: 1,
+                fadeIn: 0,
+                fadeOut: 0,
+              },
+            ],
+          },
+        });
       return saveCodeMotion(
         String(ctx.user.id),
         input.project,
@@ -128,6 +211,16 @@ export const codeMotionRouter = router({
     const userId = String(ctx.user.id),
       saved = await owned(userId, input.projectId);
     const identity = codeMotionRenderIdentity(userId, saved.project);
+    if (identity.spec.codeAudio)
+      await assertCodeMotionAudioOwnership({
+        userId,
+        projectId: input.projectId,
+        audio: identity.spec.codeAudio,
+      });
+    const audios = (saved.project.brief.audios || []).map(audio => ({
+      ...audio,
+      url: signGsUriV4ReadUrl(audio.gcsUri, 3600),
+    }));
     const images = await Promise.all(
       saved.project.brief.images.map(async image => {
         assertCodeMotionImageSource(userId, image.gcsUri);
@@ -159,15 +252,19 @@ export const codeMotionRouter = router({
       fingerprint: identity.fingerprint,
       spec: { ...identity.spec, cues },
       images,
+      audios,
       scenes: saved.project.plan!.scenes.map(scene => ({
         ...scene,
-        movement: codeMotionSceneDescription(
-          saved.project.brief.style,
-          !!scene.imageId
-        ),
+        movement:
+          scene.direction ||
+          codeMotionSceneDescription(
+            saved.project.brief.style,
+            !!scene.imageId
+          ),
       })),
       costNote: CODE_MOTION_COST_NOTE,
       credits: 0,
+      freeEligibility: await quoteInkFree(userId, inkSource(ctx.req)),
       requestId: identity.requestId,
       job: await findCodeMotionTask(userId, saved.project),
     };
@@ -200,7 +297,9 @@ export const codeMotionRouter = router({
       return submitCodeMotion(
         String(ctx.user.id),
         saved.project,
-        input.confirmedFingerprint
+        input.confirmedFingerprint,
+        undefined,
+        inkSource(ctx.req)
       );
     }),
 });

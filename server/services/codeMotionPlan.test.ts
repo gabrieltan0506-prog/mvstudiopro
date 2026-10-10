@@ -31,6 +31,7 @@ const plan = {
     {
       heading: "欢迎",
       body: "原文",
+      speech: { text: "原文", voice: "female" },
       duration: 15,
       imageId: brief.images[0].id,
     },
@@ -47,6 +48,7 @@ it("规划沿指定GLM→DeepSeek路线；模型只收到素材名字和ID", asy
     .mockResolvedValueOnce(result(plan));
   const value = await generateCodeMotionPlan(brief, {
     invoke: invoke as CodeMotionPlanDeps["invoke"],
+    speechEnabled: () => true,
   });
   expect(value.modelName).toBe("deepseek/deepseek-v4.1-flash");
   expect(JSON.parse(value.answer)).toEqual(plan);
@@ -66,6 +68,7 @@ it("非法计划不得进入导出；重试次数有界", async () => {
   await expect(
     generateCodeMotionPlan(brief, {
       invoke: invoke as CodeMotionPlanDeps["invoke"],
+      speechEnabled: () => true,
     })
   ).rejects.toThrow("总时长");
   expect(invoke).toHaveBeenCalledTimes(4);
@@ -79,7 +82,28 @@ it("安全策略拦截不换模型继续生成", async () => {
   await expect(
     generateCodeMotionPlan(brief, {
       invoke: invoke as CodeMotionPlanDeps["invoke"],
+      speechEnabled: () => true,
     })
   ).rejects.toBe(err);
   expect(invoke).toHaveBeenCalledTimes(1);
+});
+
+it("配音未开放时按无声安排，拒绝模型擅自合成", async () => {
+  const silent = { ...plan, scenes: plan.scenes.map(({ speech, ...s }) => s) };
+  const invoke = vi.fn().mockResolvedValue(result(silent));
+  const value = await generateCodeMotionPlan(brief, {
+    invoke: invoke as CodeMotionPlanDeps["invoke"],
+    speechEnabled: () => false,
+  });
+  expect(JSON.parse(value.answer).scenes[0].speech).toBeUndefined();
+  expect(
+    JSON.parse(invoke.mock.calls[0][0].messages[1].content).speechEnabled
+  ).toBe(false);
+  invoke.mockResolvedValue(result(plan));
+  await expect(
+    generateCodeMotionPlan(brief, {
+      invoke: invoke as CodeMotionPlanDeps["invoke"],
+      speechEnabled: () => false,
+    })
+  ).rejects.toThrow("尚未开放");
 });

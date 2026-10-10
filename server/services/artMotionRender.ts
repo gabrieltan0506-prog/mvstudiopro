@@ -113,9 +113,25 @@ export async function renderArtMotion(
       cues.push({ ...cue, image: url });
     }
     let audio: string | undefined;
+    if (spec.inkSpeech) {
+      const { assertInkFreeJob } = await import("./inkFreeQuota");
+      const { artMotionTaskId } = await import("./artMotionTask");
+      await assertInkFreeJob(userId, artMotionTaskId(userId, input.requestId), "mp4");
+      const { renderInkFreeSpeech } = await import("./inkFreeSpeech");
+      audio = path.join(root, "ink-dialogue.wav");
+      const receipt = await renderInkFreeSpeech(spec.inkSpeech, spec.duration, audio, signal);
+      await preserve("audio-probe-1.parsed.json", Buffer.from(JSON.stringify(receipt)));
+    }
     if (spec.audioUri) {
       audio = path.join(root, "audio");
       await fetchPostProdSourceToFile(spec.audioUri, audio, { signal });
+    }
+    if (spec.codeAudio) {
+      const { renderCodeMotionAudio } = await import("./codeMotionAudio");
+      const projectId = input.scopeKey.startsWith("code-motion:") ? input.scopeKey.slice("code-motion:".length) : "";
+      const soundtrack = await renderCodeMotionAudio({ userId, projectId, audio: spec.codeAudio, duration: spec.duration, root, speechPath: audio, signal });
+      audio = soundtrack.output;
+      await preserve("code-audio.parsed.json", Buffer.from(JSON.stringify(soundtrack.receipt)));
     }
     // Serve only the pinned engine and this task's normalized images, never arbitrary local paths.
     server = createServer(async (req, res) => {
@@ -344,6 +360,8 @@ export async function renderArtMotion(
     const stream = probe.streams?.find(
       (s: { codec_type: string }) => s.codec_type === "video"
     );
+    if (audio && !probe.streams?.some((s: { codec_type: string }) => s.codec_type === "audio"))
+      throw new Error("成片缺少音轨，未采用无声产物");
     if (
       !stream ||
       Number(stream.nb_read_frames) !== count ||

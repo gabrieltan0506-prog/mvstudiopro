@@ -9,7 +9,11 @@ const GRAMMAR_IDS = ["t2_keynote_ui", "y5_kinetic_type", "y4_storytime", "y2_vox
   if(started)return;started=true;
   if(!spec||!['animation','art'].includes(spec.mode)||!GRAMMAR_IDS.includes(spec.grammar)||!(spec.duration>=1&&spec.duration<=180))throw new Error('动画参数无效');
   if(![[1280,720],[720,1280],[1920,1080],[1080,1920]].some(([w,h])=>w===spec.width&&h===spec.height))throw new Error('画幅无效');
-  if(spec.mode==='art'){
+  if(spec.composition){
+   if(spec.mode!=='animation')throw new Error('逐镜编排只用于动画模式');
+   window.COMPOSITION_SPEC=spec;
+   await load('composition.js');
+  }else if(spec.mode==='art'){
    if(!Array.isArray(spec.scenes)||!spec.scenes.length||spec.scenes.length>35||spec.scenes.some(s=>!STYLE_IDS.includes(s.style)))throw new Error('艺术场景无效');
    window.ERAS=spec.scenes.map((s,i)=>({id:s.style,dur:s.duration,...(i&&s.transition!=='none'?{transition:{type:s.transition==='fade'?'crossfade':s.transition,dur:Math.min(.4,s.duration/3)}}:{})}));
    window.SCENES={};window.__bootErrors=[];

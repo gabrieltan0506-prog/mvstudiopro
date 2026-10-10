@@ -49,6 +49,16 @@ export async function queueArtMotion(
     id = artMotionTaskId(userId, input.requestId);
   let row = await deps.load(id);
   if (!row) {
+    // 映客的新编排必须从已保存作品入口领取名额，通用后期不能绕过该门禁。
+    if (
+      input.scopeKey.startsWith("code-motion:") ||
+      input.params.composition ||
+      input.params.codeAudio ||
+      input.params.inkSpeech
+    )
+      throw new Error(
+        "请从映客已保存作品入口确认并导出，本入口不会新建映客任务"
+      );
     if (input.params.stageAnimation) {
       const { resolveManhuaStageAnimationSource } = await import(
         "./manhuaStageAnimationSource"

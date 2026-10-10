@@ -54,6 +54,18 @@ COPY server/scripts/file_conversion_ocr.requirements.txt /tmp/file_conversion_oc
 RUN pip3 install --no-cache-dir --target /opt/file-conversion-ocr -r /tmp/file_conversion_ocr.requirements.txt \
  && PYTHONPATH=/opt/file-conversion-ocr python3 -c "import pathlib, rapidocr_onnxruntime as r; p=pathlib.Path(r.__file__).parent/'models'; assert len(list(p.glob('*.onnx')))==3, 'OCR models missing'"
 
+# 配音模型安装默认关闭，须完成独立验收后显式启用构建参数。
+ARG INK_FREE_TTS_INSTALL=0
+COPY server/scripts/ink_free_tts.requirements.txt /tmp/ink_free_tts.requirements.txt
+COPY server/scripts/ink_free_tts.py /tmp/ink_free_tts.py
+RUN if [ "$INK_FREE_TTS_INSTALL" = "1" ]; then pip3 install --no-cache-dir --target /opt/ink-tts-runtime -r /tmp/ink_free_tts.requirements.txt \
+ && curl --fail --location --retry 3 https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-multi-lang-v1_1.tar.bz2 -o /tmp/ink-tts.tar.bz2 \
+ && echo 'a1e94694776049035c4f2c6529f003aaece993c76aae9a78995831c3c4dcafc6  /tmp/ink-tts.tar.bz2' | sha256sum --check --strict \
+ && mkdir -p /opt/ink-tts-model \
+ && tar -xjf /tmp/ink-tts.tar.bz2 --strip-components=1 -C /opt/ink-tts-model \
+ && rm /tmp/ink-tts.tar.bz2 \
+ && PYTHONPATH=/opt/ink-tts-runtime python3 /tmp/ink_free_tts.py --model-dir /opt/ink-tts-model --check; fi
+
 # Fly remote builders 可能長期命中舊的 COPY 快取（建置上下文未變更 checksum 時仍用舊原始碼）。
 # 透過 fly.toml [build.args].CACHEBUST 手動遞增，可強制重新 COPY 與後續 RUN。
 ARG CACHEBUST=0

@@ -10,6 +10,7 @@ import {
   statGcsObjectVersion,
   uploadBufferToGcs,
 } from "./gcs";
+export const CODE_MOTION_PROJECT_MAX_BYTES = 512_000;
 const envelopeSchema = z
   .object({
     project: codeMotionProjectSchema,
@@ -49,7 +50,7 @@ const real: CodeMotionStoreDeps = {
     await inspectGcsObjectBounded({
       gcsUri,
       generation: meta.generation,
-      maxBytes: 100_000,
+      maxBytes: CODE_MOTION_PROJECT_MAX_BYTES,
       timeoutMs: 30_000,
       onChunk: b => chunks.push(Buffer.from(b)),
     });
@@ -84,6 +85,8 @@ export async function loadCodeMotion(
 ): Promise<CodeMotionSaved | null> {
   const object = await deps.read(codeMotionObjectName(userId, projectId));
   if (!object) return null;
+  if (object.body.length > CODE_MOTION_PROJECT_MAX_BYTES)
+    throw new Error("作品数据超过保存上限，请减少镜内元素后重试");
   const value = envelopeSchema.parse(JSON.parse(object.body.toString("utf8")));
   if (value.project.id !== projectId) throw new Error("作品身份不一致，未加载");
   return { ...value, generation: object.generation };
@@ -97,9 +100,12 @@ export async function saveCodeMotion(
   const project = codeMotionProjectSchema.parse(projectInput);
   z.string().regex(/^\d+$/).parse(expectedGeneration);
   const updatedAt = new Date().toISOString();
+  const body = Buffer.from(JSON.stringify({ project, updatedAt }));
+  if (body.length > CODE_MOTION_PROJECT_MAX_BYTES)
+    throw new Error("作品数据超过保存上限，请减少镜内元素后重试");
   const generation = await deps.write(
     codeMotionObjectName(userId, project.id),
-    Buffer.from(JSON.stringify({ project, updatedAt })),
+    body,
     expectedGeneration
   );
   return { project, generation, updatedAt };

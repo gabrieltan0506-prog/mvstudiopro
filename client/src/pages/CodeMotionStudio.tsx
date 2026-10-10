@@ -1,3 +1,5 @@
+import { retimeCodeMotionPlanScene } from "@shared/codeMotionComposition";
+import { INK_FREE_POLICY, inkFreeMessage } from "@shared/inkFree";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import {
@@ -14,6 +16,10 @@ import { flyDownloadUrl, gcsTransferUrl } from "@/lib/gcsTransfer";
 import CodeMotionVideoPptx from "@/components/CodeMotionVideoPptx";
 import CodeMotionSpreadsheetPicker from "@/components/code-motion/CodeMotionSpreadsheetPicker";
 import type { CodeMotionWorkbook } from "@shared/codeMotionSpreadsheet";
+import CodeMotionAudioPanel from "@/components/code-motion/CodeMotionAudioPanel";
+import CodeMotionSceneEditor, {
+  makeCodeMotionScene,
+} from "@/components/code-motion/CodeMotionSceneEditor";
 import CodeMotionPreview from "@/components/code-motion/CodeMotionPreview";
 import {
   codeMotionBriefSchema,
@@ -60,7 +66,7 @@ const fresh = (): CodeMotionProject => ({
     title: "我的第一条介绍",
     request: "",
     text: "",
-    style: "words",
+    style: "scenes",
     duration: 30,
     orientation: "landscape",
     images: [],
@@ -153,6 +159,8 @@ export default function CodeMotionStudio() {
           : false,
     }
   );
+  const latestProject = useRef(project);
+  latestProject.current = project;
   const dirty = savedJson !== JSON.stringify(project);
   const status = trpc.codeMotion.status.useQuery(
     { projectId: project.id },
@@ -203,9 +211,16 @@ export default function CodeMotionStudio() {
       try {
         const raw = localStorage.getItem(key);
         if (raw) localStorage.setItem(`${key}:unreadable:${Date.now()}`, raw);
-      } catch { setMessage("本机草稿无法读取或备份，已停止写入，请保留本页并检查浏览器存储。"); return; }
+      } catch {
+        setMessage(
+          "本机草稿无法读取或备份，已停止写入，请保留本页并检查浏览器存储。"
+        );
+        return;
+      }
       setProject(fresh());
-      setMessage("本机草稿无法读取，已保留原始备份；请从已保存作品中打开，没有覆盖云端内容。");
+      setMessage(
+        "本机草稿无法读取，已保留原始备份；请从已保存作品中打开，没有覆盖云端内容。"
+      );
     }
     setHydratedKey(key);
   }, [key]);
@@ -364,10 +379,41 @@ export default function CodeMotionStudio() {
     const sceneDuration = Math.floor(brief.duration / source.length);
     const plan: CodeMotionPlan = {
       version: 1,
-      summary: "按你提供的段落顺序展示，可在下方直接修改文字和时长。",
+      summary: "按你提供的段落顺序展示，可在下方直接修改文字、动作和声音时间。",
+      ...(brief.audios?.length
+        ? {
+            audioTimeline: brief.audios.map((audio, i) => ({
+              sourceId: audio.id,
+              role: i === 0 ? ("narration" as const) : ("bgm" as const),
+              at: 0,
+              trimStart: 0,
+              duration: Math.min(audio.duration, brief.duration),
+              volume: i === 0 ? 1 : 0.2,
+              fadeIn: 0,
+              fadeOut: 0,
+            })),
+          }
+        : {}),
       scenes: source.map((text, i) => ({
         heading: brief.style === "data" ? brief.title : text.slice(0, 48),
         body: brief.style === "data" ? text : text.slice(48),
+        ...(!brief.audios?.length &&
+        brief.duration <= 60 &&
+        quote.data?.speechEnabled
+          ? { speech: { text, voice: "female" as const } }
+          : {}),
+        ...(brief.style === "scenes"
+          ? {
+              composition: makeCodeMotionScene(
+                `scene_${i + 1}`,
+                i === source.length - 1
+                  ? brief.duration - sceneDuration * i
+                  : sceneDuration,
+                text,
+                brief.images[i]?.id
+              ),
+            }
+          : {}),
         duration:
           i === source.length - 1
             ? brief.duration - sceneDuration * i
@@ -459,7 +505,7 @@ export default function CodeMotionStudio() {
     } else if (result.kind === "image") {
       patchBrief({
         images: [...project.brief.images, result.image],
-        style: "cards",
+        style: project.brief.style === "scenes" ? "scenes" : "cards",
         data: [],
       });
       setMessage(result.message);
@@ -753,6 +799,56 @@ export default function CodeMotionStudio() {
                 onChange={e => patchBrief({ text: e.target.value })}
               />
             </label>
+            {output === "video" && (
+              <CodeMotionAudioPanel
+                key={`${user?.id || "guest"}:${project.id}`}
+                projectId={project.id}
+                audios={project.brief.audios || []}
+                timeline={
+                  project.plan ? project.plan.audioTimeline || [] : undefined
+                }
+                duration={project.brief.duration}
+                disabled={editDisabled || !user}
+                onAudios={audios => {
+                  setProject(p => ({
+                    ...p,
+                    brief: { ...p.brief, audios },
+                    plan: p.plan
+                      ? {
+                          ...p.plan,
+                          audioTimeline: (p.plan.audioTimeline || []).filter(
+                            c => audios.some(a => a.id === c.sourceId)
+                          ),
+                        }
+                      : null,
+                  }));
+                  setPrepared(null);
+                  setPreview(false);
+                }}
+                onTimeline={audioTimeline => {
+                  setProject(p => ({
+                    ...p,
+                    plan: p.plan ? { ...p.plan, audioTimeline } : null,
+                  }));
+                  setPrepared(null);
+                  setPreview(false);
+                }}
+                onTranscript={text => {
+                  const combined = [latestProject.current.brief.text, text]
+                    .filter(Boolean)
+                    .join("\n");
+                  if (combined.length > 4000) {
+                    setImported({
+                      name: "录音识别文字",
+                      text,
+                      message: "识别文字已保留，请选择本作品需要的段落。",
+                    });
+                    return;
+                  }
+                  patchBrief({ text: combined });
+                }}
+              />
+            )}
             <div className="grid grid-cols-3 gap-3">
               <label className="text-sm">
                 展示方式
@@ -762,7 +858,8 @@ export default function CodeMotionStudio() {
                   onChange={e => {
                     const style = e.target.value as CodeMotionBrief["style"];
                     if (
-                      (style !== "cards" && project.brief.images.length) ||
+                      (!["cards", "scenes"].includes(style) &&
+                        project.brief.images.length) ||
                       (style !== "data" && project.brief.data.length)
                     ) {
                       setMessage(
@@ -773,6 +870,7 @@ export default function CodeMotionStudio() {
                     patchBrief({ style });
                   }}
                 >
+                  <option value="scenes">逐镜创作</option>
                   <option value="words">动态文字</option>
                   <option value="cards">图文介绍</option>
                   <option value="data">数据展示</option>
@@ -787,7 +885,7 @@ export default function CodeMotionStudio() {
                     patchBrief({ duration: Number(e.target.value) })
                   }
                 >
-                  {[15, 30, 45, 60].map(n => (
+                  {[15, 30, 45, 60, 90, 120, 180].map(n => (
                     <option key={n} value={n}>
                       {n} 秒
                     </option>
@@ -811,7 +909,7 @@ export default function CodeMotionStudio() {
                 </select>
               </label>
             </div>
-            {project.brief.style === "cards" && (
+            {["cards", "scenes"].includes(project.brief.style) && (
               <div>
                 <label className={button + " cursor-pointer"}>
                   <Upload size={15} />
@@ -1155,7 +1253,9 @@ export default function CodeMotionStudio() {
                       第 {index + 1} 个画面
                     </legend>
                     <label className="block text-sm">
-                      主要文字
+                      {scene.composition
+                        ? "镜头名称（下方元素决定实际画面）"
+                        : "主要文字"}
                       <input
                         className={field}
                         value={scene.heading}
@@ -1198,23 +1298,153 @@ export default function CodeMotionStudio() {
                         }}
                       />
                     </label>
+                    {scene.speech &&
+                      (!quote.data?.speechEnabled ||
+                        !!project.brief.audios?.length ||
+                        project.brief.duration > 60) && (
+                        <button
+                          type="button"
+                          className="mt-3 text-sm text-orange-700 underline"
+                          onClick={() => {
+                            setProject(p => ({
+                              ...p,
+                              plan: {
+                                ...p.plan!,
+                                scenes: p.plan!.scenes.map((s, k) => {
+                                  if (k !== index) return s;
+                                  const { speech, ...rest } = s;
+                                  return rest;
+                                }),
+                              },
+                            }));
+                            setPrepared(null);
+                            setPreview(false);
+                          }}
+                        >
+                          移除本镜合成对白，使用原音或无声
+                        </button>
+                      )}
+                    <label className="mt-3 block text-sm">
+                      本镜合成对白（开放后支持60秒内作品）
+                      <textarea
+                        className={field}
+                        maxLength={180}
+                        disabled={
+                          !quote.data?.speechEnabled ||
+                          project.brief.duration > 60 ||
+                          !!project.brief.audios?.length
+                        }
+                        value={scene.speech?.text || ""}
+                        onChange={e => {
+                          setProject(p => ({
+                            ...p,
+                            plan: {
+                              ...p.plan!,
+                              scenes: p.plan!.scenes.map((s, k) =>
+                                k === index
+                                  ? {
+                                      ...s,
+                                      speech: {
+                                        text: e.target.value,
+                                        voice: s.speech?.voice || "female",
+                                      },
+                                    }
+                                  : s
+                              ),
+                            },
+                          }));
+                          setPrepared(null);
+                          setPreview(false);
+                        }}
+                      />
+                    </label>
+                    <label className="mt-2 block text-sm">
+                      合成音色
+                      <select
+                        className={field}
+                        disabled={
+                          !quote.data?.speechEnabled ||
+                          project.brief.duration > 60 ||
+                          !!project.brief.audios?.length
+                        }
+                        value={scene.speech?.voice || "female"}
+                        onChange={e => {
+                          const voice = e.target.value as "female" | "male";
+                          setProject(p => ({
+                            ...p,
+                            plan: {
+                              ...p.plan!,
+                              scenes: p.plan!.scenes.map((s, k) =>
+                                k === index
+                                  ? {
+                                      ...s,
+                                      speech: {
+                                        text: s.speech?.text || "",
+                                        voice,
+                                      },
+                                    }
+                                  : s
+                              ),
+                            },
+                          }));
+                          setPrepared(null);
+                          setPreview(false);
+                        }}
+                      >
+                        <option value="female">标准女声</option>
+                        <option value="male">标准男声</option>
+                      </select>
+                    </label>
+                    <p className="mt-2 text-xs text-stone-500">
+                      {quote.data?.speechEnabled
+                        ? "合成对白限60秒内、合计300字。已有原音时使用原音时间轴。"
+                        : "合成配音暂未开放，可上传音频、直接录音或无声导出。"}{" "}
+                      照片不自动对口型。
+                    </p>
                     <div className="mt-3 flex items-end gap-3">
                       <label className="w-28 text-sm">
                         停留秒数
                         <input
                           type="number"
                           className={field}
-                          min={2}
-                          max={60}
+                          min={0.5}
+                          max={180}
+                          step={0.05}
                           value={scene.duration}
                           onChange={e => {
+                            const seconds = Number(e.target.value);
+                            if (
+                              !Number.isFinite(seconds) ||
+                              seconds < 0 ||
+                              seconds > 180
+                            ) {
+                              setMessage(
+                                "镜头秒数须在0至180之间，已保留原镜头"
+                              );
+                              return;
+                            }
                             setProject(p => ({
                               ...p,
                               plan: {
                                 ...p.plan!,
                                 scenes: p.plan!.scenes.map((s, k) =>
                                   k === index
-                                    ? { ...s, duration: Number(e.target.value) }
+                                    ? {
+                                        ...s,
+                                        duration: Number(e.target.value),
+                                        ...(s.composition
+                                          ? {
+                                              composition:
+                                                Number(e.target.value) >= 0.5 &&
+                                                Number(e.target.value) <= 180
+                                                  ? retimeCodeMotionPlanScene(
+                                                      s.composition,
+                                                      Number(e.target.value)
+                                                    )
+                                                  : s.composition,
+                                            }
+                                          : {}),
+                                      }
                                     : s
                                 ),
                               },
@@ -1259,11 +1489,34 @@ export default function CodeMotionStudio() {
                         </label>
                       )}
                     </div>
+                    {scene.composition && (
+                      <CodeMotionSceneEditor
+                        scene={scene.composition}
+                        previousScene={
+                          project.plan?.scenes[index - 1]?.composition
+                        }
+                        images={project.brief.images}
+                        onChange={composition => {
+                          setProject(p => ({
+                            ...p,
+                            plan: {
+                              ...p.plan!,
+                              scenes: p.plan!.scenes.map((s, k) =>
+                                k === index ? { ...s, composition } : s
+                              ),
+                            },
+                          }));
+                          setPrepared(null);
+                          setPreview(false);
+                        }}
+                      />
+                    )}
                     <p className="mt-3 text-xs leading-5 text-stone-500">
-                      {codeMotionSceneDescription(
-                        project.brief.style,
-                        !!scene.imageId
-                      )}
+                      {scene.direction ||
+                        codeMotionSceneDescription(
+                          project.brief.style,
+                          !!scene.imageId
+                        )}
                     </p>
                   </fieldset>
                 ))}
@@ -1287,7 +1540,12 @@ export default function CodeMotionStudio() {
               <p className="text-sm">
                 {project.brief.title} · {project.brief.duration} 秒 ·{" "}
                 {project.brief.orientation === "portrait" ? "竖屏" : "横屏"} ·
-                720p · 无声
+                720p ·{" "}
+                {prepared.audios.length
+                  ? "使用已选原声"
+                  : prepared.spec.inkSpeech
+                    ? "按本次对白安排"
+                    : "无声"}
               </p>
               <ol className="space-y-3 text-sm">
                 {prepared.scenes.map((s, i) => (
@@ -1295,6 +1553,14 @@ export default function CodeMotionStudio() {
                     <strong>{s.heading}</strong>
                     <span className="ml-2 text-stone-500">{s.duration} 秒</span>
                     <p>{s.body}</p>
+                    <p>
+                      对白：{s.speech?.text || "本镜无对白"} ·{" "}
+                      {s.speech
+                        ? s.speech.voice === "male"
+                          ? "标准男声"
+                          : "标准女声"
+                        : "不合成声音"}
+                    </p>
                     <p className="text-xs leading-5 text-stone-500">
                       {s.movement}
                     </p>
@@ -1307,6 +1573,35 @@ export default function CodeMotionStudio() {
                   </li>
                 ))}
               </ol>
+              {!!prepared.audios.length && (
+                <div className="space-y-2 text-sm">
+                  {prepared.spec.codeAudio?.audioTimeline.map((clip, i) => (
+                    <p key={i}>
+                      {prepared.audios.find(a => a.id === clip.sourceId)?.name}{" "}
+                      ·{" "}
+                      {clip.role === "bgm"
+                        ? "背景音乐"
+                        : clip.role === "sfx"
+                          ? "音效"
+                          : clip.role === "dialogue"
+                            ? "对白"
+                            : "旁白"}{" "}
+                      · 第{clip.at}–
+                      {Number((clip.at + clip.duration).toFixed(2))}秒 · 原音从
+                      {clip.trimStart}秒开始 · 音量{clip.volume}倍
+                    </p>
+                  ))}
+                  {prepared.audios.map(a => (
+                    <audio
+                      key={a.id}
+                      controls
+                      preload="metadata"
+                      src={gcsTransferUrl(a.url)}
+                      className="max-w-full"
+                    />
+                  ))}
+                </div>
+              )}
               {project.brief.style === "data" && (
                 <div className="text-sm">
                   {project.brief.data.map(r => (
@@ -1334,7 +1629,11 @@ export default function CodeMotionStudio() {
                 </div>
               )}
               <p className="text-sm">
-                本次预览与视频导出：0 积分。原图片与材料保留。
+                {INK_FREE_POLICY}
+                <br />
+                {inkFreeMessage(prepared.freeEligibility)}
+                <br />
+                本次符合资格的视频导出：0 积分。原图片与材料保留。
               </p>
               <div className="flex flex-wrap gap-2">
                 <button
@@ -1348,6 +1647,7 @@ export default function CodeMotionStudio() {
                   className={button + " bg-stone-900 text-white"}
                   disabled={
                     busy ||
+                    !prepared.freeEligibility.eligible ||
                     !!(
                       status.data &&
                       [
@@ -1383,6 +1683,10 @@ export default function CodeMotionStudio() {
           {preview && prepared && !dirty && (
             <CodeMotionPreview
               key={prepared.fingerprint}
+              audioSources={prepared.audios.map(a => ({
+                id: a.id,
+                url: gcsTransferUrl(a.url),
+              }))}
               spec={{
                 ...prepared.spec,
                 cues: prepared.spec.cues.map(c => ({
@@ -1511,7 +1815,9 @@ export default function CodeMotionStudio() {
             >
               <PlatformHtmlPptPanel
                 key={`${user?.id}:${project.id}`}
-                draftKey={user ? `yingke:ppt:v1:${user.id}:${project.id}` : undefined}
+                draftKey={
+                  user ? `yingke:ppt:v1:${user.id}:${project.id}` : undefined
+                }
                 disabled={!user || busy}
                 initialContent={{
                   title: project.brief.title,

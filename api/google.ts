@@ -408,9 +408,24 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
     // ---------------- transcribeAudio (Gemini direct, no Vertex needed) ----------------
     if (op === "transcribeAudio") {
-      const audioBase64 = s(b.audioBase64 || "");
-      const mimeType = s(b.mimeType || "audio/webm");
-      if (!audioBase64) return res.status(400).json({ ok: false, error: "missing_audio" });
+      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "method_not_allowed", message: "语音识别只接受 POST 请求" });
+      const viewer = await resolveGoogleGatewayUser(req);
+      if (!viewer) return res.status(401).json({ ok: false, error: "authentication_required", message: "请登录后再识别原音" });
+      const audioBase64 = typeof b.audioBase64 === "string" ? b.audioBase64 : "";
+      const mimeType = s(b.mimeType || "audio/webm").trim().toLowerCase().split(";")[0];
+      if (!audioBase64) return res.status(400).json({ ok: false, error: "missing_audio", message: "没有收到音频" });
+      if (!["audio/webm", "audio/mp4", "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/ogg", "audio/flac", "audio/aac"].includes(mimeType))
+        return res.status(415).json({ ok: false, error: "unsupported_audio_type", message: "音频格式不受支持" });
+      // 先估算再解码；Buffer.from 的宽松行为不能放行损坏或超大的原音。
+      const maxBytes = 8 * 1024 * 1024;
+      const estimatedBytes = audioBase64.length / 4 * 3 - (audioBase64.endsWith("==") ? 2 : audioBase64.endsWith("=") ? 1 : 0);
+      if (audioBase64.length > Math.ceil(maxBytes / 3) * 4 || estimatedBytes > maxBytes)
+        return res.status(413).json({ ok: false, error: "audio_too_large", message: "语音识别每次最多接收 8 MB 音频，原音仍可直接用于视频" });
+      if (audioBase64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(audioBase64))
+        return res.status(400).json({ ok: false, error: "invalid_audio_base64", message: "音频传输内容损坏，请重新选择原音" });
+      const bytes = Buffer.from(audioBase64, "base64");
+      if (!bytes.length || bytes.length > maxBytes || bytes.toString("base64") !== audioBase64)
+        return res.status(400).json({ ok: false, error: "invalid_audio_base64", message: "音频传输内容损坏，请重新选择原音" });
 
       const geminiApiKey = s(process.env.GEMINI_API_KEY).trim();
       if (!geminiApiKey) return res.status(500).json({ ok: false, error: "missing_env", detail: "GEMINI_API_KEY" });
@@ -426,14 +441,24 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         generationConfig: { temperature: 0, maxOutputTokens: 1024 }
       };
 
-      const r = await fetchJson(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`,
-        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
-      );
-
-      if (!r.ok) return res.status(200).json({ ok: true, text: "", fallback: true });
-      const text = (r.json?.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
-      return res.status(200).json({ ok: true, text });
+      try {
+        const r = await fetchJson(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`,
+          { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(120_000) }
+        );
+        if (!r.ok) return res.status(502).json({ ok: false, error: "transcription_upstream_failed", message: "语音识别服务本次未成功，原音保留，请勿连续重试" });
+        const candidate = r.json?.candidates?.[0];
+        if (candidate?.finishReason !== "STOP")
+          return res.status(422).json({ ok: false, error: "transcription_incomplete", message: "识别结果不完整，未将截断文字作为全文，请缩短音频后重新确认" });
+        const parts = candidate.content?.parts;
+        const text = (Array.isArray(parts) ? parts.filter((part: any) => part?.thought !== true && typeof part?.text === "string").map((part: any) => part.text).join("") : "").trim();
+        if (!text || text.length > 12_000)
+          return res.status(422).json({ ok: false, error: "transcription_unusable", message: "本次未取得可用完整文字，原音保留，可手动填写" });
+        return res.status(200).json({ ok: true, text });
+      } catch {
+        // 上游错误可能包含带凭证的请求地址，不能回传或记录原错误。
+        return res.status(502).json({ ok: false, error: "transcription_unavailable", message: "语音识别连接未完成，原音保留，请先确认本次结果" });
+      }
     }
 
     // ---------------- 漫剧学习 A：GCS 签名上传 URL（本机 PUT，Fly 持 SA） ----------------
