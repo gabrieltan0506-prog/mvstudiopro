@@ -219,6 +219,15 @@ export async function renderManhuaPrevis(
     } finally {
       // 报告在渲染前产生。失败或超时也先永久保存原字节，再做解析和门禁。
       // 不复用已经中止的媒体信号；保全独立限时，不重跑渲染。
+      if (input.spec.actors.some(actor => actor.riggedModel && actor.motionRoute)) {
+        const grounding = await readBoundedArtifact(path.join(dir, "grounded-route.raw.json"), 0, 4 * 1024 * 1024,
+          "真实模型落脚证据超过限制，原文件保留待检查").catch(error => {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+          throw error;
+        });
+        if (grounding) await d.upload({ objectName: `${prefix}/grounded-route.raw.json`, buffer: grounding,
+          contentType: "application/json", signal: AbortSignal.timeout(30_000) });
+      }
       if (input.spec.sceneEffects?.length) {
         const simulation = await readBoundedArtifact(path.join(dir, "scene-effects-simulation.json"), 0, 16 * 1024 * 1024,
           "场景特效原始证据体积异常，保留原文件待处理").catch(error => {

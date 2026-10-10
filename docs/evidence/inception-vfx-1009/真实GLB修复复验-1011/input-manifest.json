@@ -1,0 +1,51 @@
+{
+  "head": "6723c1c483c37e15c8da7fba240bd13c3e0a0813",
+  "boundary": "TEST_ONLY same approved two-second scene; production exporter timing fix only; no paid model; no workflow acceptance",
+  "files": [
+    {
+      "file": "manhua_vfx_stage_export.py",
+      "bytes": 7839,
+      "sha256": "c860f3f0abc77c4cf655c4ed14f850248b5614e71b1b41773d65cd1ccdf61434"
+    },
+    {
+      "file": "manhuaVfxStagePage.ts",
+      "bytes": 10249,
+      "sha256": "3e0a9cc7dc9410192b483edbf70000f613e6b9a59699eaa178f5acbe4d6b6a78"
+    },
+    {
+      "file": "test_vfx_stage_bake.py",
+      "bytes": 3269,
+      "sha256": "b495dc647a67053e7156d81b8fb25ef26b4563834c43960a6f9dd6be672df551"
+    },
+    {
+      "file": "package.json",
+      "bytes": 17,
+      "sha256": "6dc1b06d6b093e9cccb20bee06a93836eee0420ae26803ca2ce4065d82f070d1"
+    },
+    {
+      "file": "manhua_vfx_bullet3d.py",
+      "bytes": 18092,
+      "sha256": "f46348a25607d57ba2d097df70ce5f8ae63915e2a27336af9336b61b6b806a91"
+    },
+    {
+      "file": "manhua_vfx_bullet3d_math.py",
+      "bytes": 9529,
+      "sha256": "d5ad51381eb5295951942711f51e20b9b49bbdf02400bd57beff28a4d10ef7e4"
+    },
+    {
+      "file": "gate.cjs",
+      "bytes": 1579,
+      "sha256": "3b0f238e4c1baca35f6f3e57b0316322df8b1ad106c9dc2ebcbb1d811d3e687e"
+    },
+    {
+      "file": "export-probe.py",
+      "bytes": 3548,
+      "sha256": "bfa90afd2dc3563d7cd7c8e2ae0738bbf2413daeda84e7e780797feba12cebd8"
+    },
+    {
+      "file": "browser-probe-v2.mts",
+      "bytes": 7921,
+      "sha256": "1736d3c572e3be2f3290f800f54263ff468d04d0d61d36b211f9ee6737b8613e"
+    }
+  ]
+}

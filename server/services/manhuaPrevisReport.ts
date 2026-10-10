@@ -1,4 +1,5 @@
 import { riggedPiggybackReportSchema, validateRiggedPiggybackReport } from "./manhuaPrevisRiggedPiggybackReport";
+import { groundedRouteReportSchema, validateGroundedRouteReport } from "./manhuaPrevisGroundedRouteReport";
 import { storyPropsReportSchema, validateStoryPropsReport } from "./manhuaPrevisStoryPropsReport";
 import { handContactsReportSchema, validateHandContactsReport } from "./manhuaPrevisHandContactsReport";
 import { humanPostureReportsSchema, validateHumanPostureReports } from "./manhuaPrevisHumanPostureReport";
@@ -124,6 +125,7 @@ export const previsReportSchema = z
               "rest-corrected-rotation-preserve-target-lengths"
             ),
             contactValidated: z.literal(false),
+            groundedRoute: groundedRouteReportSchema.optional(),
             postureContact: z.object({
               actorId: z.string().min(1), sourceJobId: z.string().min(1), sha256: z.string().regex(/^[a-f0-9]{64}$/),
               mode: z.enum(["hold", "rise_to_sit"]), frames: z.number().int().min(48).max(720),
@@ -414,6 +416,7 @@ export function validatePrevisReport(
       || (model.sourceBoneMap && PREVIS_BODY_BONES.some(name =>
         model.sourceBoneMap![name] !== (config.rigKind === "quadruped" ? PREVIS_QUADRUPED_SOURCE_BONES[name] : name))))
       throw new Error("带骨角色前后肢驱动映射缺失或与骨架类型不一致");
+    validateGroundedRouteReport(model.groundedRoute, actor, spec.durationSec);
     const mapped = Object.values(model.boneMap);
     if (
       new Set(mapped).size !== PREVIS_BODY_BONES.length ||

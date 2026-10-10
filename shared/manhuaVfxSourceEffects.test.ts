@@ -5,8 +5,29 @@ import { creativeVoiceProductionSchema } from "./creativeVoiceProduction";
 import { manhuaVfxCompositionSchema, manhuaVfxStateSchema, validateManhuaVfxSource } from "./manhuaVfx";
 import { queueManhuaVfx, type VfxQueueDeps } from "../server/services/manhuaVfxTask";
 
-it.each(["liquid_mirror", "motion_ghost", "wall_fracture", "bullet_wave", "directed_blast"] as const)("%s顾问/保存JSON/幂等任务与真实Python消费者参数一致", async kind => {
+it("梦境效果拒绝缺失/越界/错用参数与错误层序，TS和Python采样预算一致", () => {
+  const meta = { width: 1920, height: 1080, fps: 30, durationSec: 30 };
+  for (const kind of ["mirror_corridor", "floating_paper"] as const) {
+    const effect = makeManhuaVfxEffect(kind, "dream");
+    const group = kind === "mirror_corridor" ? "mirror" : "paper";
+    for (const invalid of [{ ...effect, [group]: undefined }, { ...effect, [group]: { ...effect[group], extra: 1 } }, { ...effect, liquid: { amplitude: 0, frequency: 1, speed: 0, reflection: 0 } }]) {
+      const recipe = { version: 1, seed: 1, effects: [invalid] };
+      expect(manhuaVfxCompositionSchema.safeParse(recipe).success).toBe(false);
+      expect(creativeVoiceProductionSchema.safeParse({ action: "effects", tool: "vfx", operation: "configure", sourceKey: "current", sourceIds: ["clip"], vfxRecipe: recipe }).success).toBe(false);
+    }
+    const reversed = { version: 1, seed: 1, effects: [makeManhuaVfxEffect("shield", "overlay"), effect] };
+    expect(manhuaVfxCompositionSchema.safeParse(reversed).success).toBe(false);
+    expect(creativeVoiceProductionSchema.safeParse({ action: "effects", tool: "vfx", operation: "configure", sourceKey: "current", sourceIds: ["clip"], vfxRecipe: reversed }).success).toBe(false);
+    const large = { ...effect, durationSec: 30, scale: 2, ...(effect.paper ? { paper: { ...effect.paper, count: 64, size: .12 } } : {}) };
+    const recipe = manhuaVfxCompositionSchema.parse({ version: 1, seed: 42, effects: [large] });
+    expect(() => validateManhuaVfxSource(recipe, meta)).toThrow("预算超限");
+    expect(() => execFileSync("python3", ["-c", "import sys,json;sys.path.insert(0,'server/scripts');from manhua_vfx_liquid_ghost import validate_processing_spec;validate_processing_spec(json.load(sys.stdin))"], { input: JSON.stringify({ ...recipe, ...meta }), stdio: ["pipe", "pipe", "pipe"] })).toThrow();
+  }
+});
+
+it.each(["prop_scene", "cup_fracture", "fruit_stall_fracture", "city_fold", "mirror_corridor", "floating_paper", "liquid_mirror", "motion_ghost", "wall_fracture", "bullet_wave", "directed_blast"] as const)("%s顾问/保存JSON/幂等任务与真实Python消费者参数一致", async kind => {
   const effect = makeManhuaVfxEffect(kind, "source-effect");
+  if (effect.world) effect.world = { ...effect.world, sceneJobId: `prv_${"a".repeat(48)}`, sceneScopeId: "10090000-1234-4234-8234-123456789abc", clipId: "clip" };
   const composition = manhuaVfxCompositionSchema.parse({ version: 1, seed: 42, effects: [effect] });
   expect(creativeVoiceProductionSchema.parse({ action: "effects", tool: "vfx", operation: "configure", sourceKey: "current", sourceIds: ["clip"], vfxRecipe: composition })).toMatchObject({ vfxRecipe: composition });
   const id = "10091111-1234-4234-8234-123456789abc", params = { videoUri: "gs://test-bucket/source.mp4", sourceKey: "current", composition };
@@ -17,7 +38,8 @@ it.each(["liquid_mirror", "motion_ghost", "wall_fracture", "bullet_wave", "direc
   const request = { action: "manhua_vfx", requestId: id, scopeKey: "scope", params };
   expect(await queueManhuaVfx("7", request, deps)).toEqual(await queueManhuaVfx("7", request, deps)); expect(writes).toBe(1);
   const spec = { ...composition, durationSec: 3, fps: 24, width: 640, height: 360 };
-  const result = execFileSync("python3", ["-c", "import sys,json;sys.path.insert(0,'server/scripts');from manhua_vfx_math import validate_spec;print(json.dumps(validate_spec(json.load(sys.stdin))))"], { input: JSON.stringify(spec), encoding: "utf8" });
+  const consumer = effect.world ? "import sys,json,tempfile,pathlib,hashlib;sys.path.insert(0,'server/scripts');from manhua_vfx_world_props import validate_world_spec;s=json.load(sys.stdin);e=s['effects'][0];tmp=tempfile.TemporaryDirectory();root=pathlib.Path(tmp.name);(root/'scenes').mkdir();p=root/'scenes'/('scene-'+e['id']+'.blend');p.write_bytes(b'BLENDER_TEST_ONLY');e['scenePath']=str(p);e['sceneSha256']=hashlib.sha256(p.read_bytes()).hexdigest();validate_world_spec(s,e['id'],root);e.pop('scenePath');e.pop('sceneSha256');print(json.dumps(s))" : "import sys,json;sys.path.insert(0,'server/scripts');from manhua_vfx_math import validate_spec;print(json.dumps(validate_spec(json.load(sys.stdin))))";
+  const result = execFileSync("python3", ["-c", consumer], { input: JSON.stringify(spec), encoding: "utf8" });
   expect(JSON.parse(result)).toEqual(spec);
 });
 
