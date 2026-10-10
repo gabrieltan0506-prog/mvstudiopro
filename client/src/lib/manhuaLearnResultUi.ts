@@ -1182,7 +1182,14 @@ export function nativeLearnLiveProposalState(job: ManhuaLearnServerJobSnapshot |
   const output = job.output || {};
   const checkpoint = output.nativePartialProposalCheckpoint as Record<string, unknown> | undefined;
   const plan = output.nativeStoredPlan as { episodes?: Array<{ episodeIndex?: number; segments?: unknown[] }> } | undefined;
-  const episodeIndex = Number(output.currentEpisodeIndex || checkpoint?.episodeIndex || plan?.episodes?.[0]?.episodeIndex) || 0;
+  // 成功终态替换运行快照，持久化契约用 batchIndexes 表示本轮实际落卡集号。
+  // 兼容已完成旧任务，不靠重新学习或保留浏览器内存才能恢复待审卡。
+  const batchIndexes = job.status === "succeeded" && Array.isArray(output.batchIndexes)
+    ? Array.from(new Set(output.batchIndexes.filter((index): index is number =>
+      typeof index === "number" && Number.isInteger(index) && index >= 1 && index <= 999)))
+    : [];
+  const episodeIndex = batchIndexes[0]
+    || Number(output.currentEpisodeIndex || checkpoint?.episodeIndex || plan?.episodes?.[0]?.episodeIndex) || 0;
   const episode = plan?.episodes?.find(row => row.episodeIndex === episodeIndex);
   const currentCheckpoint = Number(checkpoint?.episodeIndex) === episodeIndex ? checkpoint : undefined;
   const totalSegments = Math.max(0, Number(currentCheckpoint?.totalSegments) || episode?.segments?.length || 0);
@@ -1207,7 +1214,7 @@ export function nativeLearnLiveProposalState(job: ManhuaLearnServerJobSnapshot |
   const readCompletedSegments = passedIndexes.size;
   const seriesKey = String(output.nativeSeriesKey || output.seriesKey || "");
   const reference = /^[0-9A-Za-z_-]{1,40}$/.test(seriesKey) && Number.isInteger(episodeIndex) && episodeIndex >= 1 && episodeIndex <= 999
-    ? { seriesKey, episodeIndex } : undefined;
+    ? { seriesKey, episodeIndex, ...(batchIndexes.length > 1 ? { episodeIndexes: batchIndexes } : {}) } : undefined;
   return { jobId: job.jobId, status: job.status, reference, completedSegments, readCompletedSegments, totalSegments,
     titleZh: String(job.input?.params?.title || "本次影片"),
     detailZh: String(output.analysisStageLabel || (job.status === "queued" ? "已入队，正在准备学习" : "正在解析学习计划")) };

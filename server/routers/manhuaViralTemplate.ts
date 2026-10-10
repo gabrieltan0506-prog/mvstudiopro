@@ -431,15 +431,19 @@ export const manhuaViralTemplateRouter = router({
 
   /** 监管：待审提案（GCS proposals，含已批准副本） */
   listProposals: protectedProcedure
-    .input(z.object({ seriesKey: z.string().regex(/^[0-9A-Za-z_-]{1,40}$/), episodeIndex: z.number().int().min(1).max(999) }).optional())
+    .input(z.object({ seriesKey: z.string().regex(/^[0-9A-Za-z_-]{1,40}$/), episodeIndex: z.number().int().min(1).max(999),
+      episodeIndexes: z.array(z.number().int().min(1).max(999)).min(1).max(80).optional(),
+    }).optional())
     .query(async ({ ctx, input }) => {
       const ownerAllowed = resolveSiteOwnerOnlyAllowed(ctx.user);
       if (!ownerAllowed) assertSupervisorOps(ctx.user, ctx.supervisorSession);
       const { listGcsManhuaViralProposals, getGcsManhuaViralProposal } = await import("../services/manhuaViralTemplateStore");
       const { nativeDeepReadProposalId } = await import("../services/manhuaNativeDeepReadIngest");
       // 学习页只读本集轻量行；首次落卡前返回空列表，界面由真实job展示学习状态。
-      const card = input ? await getGcsManhuaViralProposal(nativeDeepReadProposalId(input.seriesKey, input.episodeIndex)) : null;
-      const items = (input ? card ? [card] : [] : await listGcsManhuaViralProposals()).filter(
+      // 终态批量查询也只读本系列本轮集数，不因缺少运行检查点退回全库。
+      const cards = input ? await Promise.all(Array.from(new Set(input.episodeIndexes || [input.episodeIndex]))
+        .map(index => getGcsManhuaViralProposal(nativeDeepReadProposalId(input.seriesKey, index)))) : null;
+      const items = (cards ? cards.filter((card): card is NonNullable<typeof card> => card != null) : await listGcsManhuaViralProposals()).filter(
         (card) => !card.revision || ownerAllowed,
       );
       // 0905 实测：68 张卡整份带节拍/字幕/音轨约 20MB，页面每次重拉都卡死几秒；

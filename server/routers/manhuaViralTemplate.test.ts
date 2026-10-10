@@ -827,6 +827,26 @@ describe("学习来源只读检查", () => {
 });
 
 describe("待审卡本集实时查询", () => {
+  it("完成批次精确取本系列多张卡、去重且不退回全库", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    const caller = (await loadRouter()).createCaller(makeCtx("user", undefined, "owner-open-id"));
+    const store = await import("../services/manhuaViralTemplateStore");
+    const get = vi.mocked(store.getGcsManhuaViralProposal);
+    get.mockClear();
+    vi.mocked(store.listGcsManhuaViralProposals).mockClear();
+    get.mockResolvedValueOnce({ ...revisionCard, id: "tpl_native_batch-series_ep012" })
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ ...revisionCard, id: "tpl_native_batch-series_ep014" });
+    const result = await caller.listProposals({ seriesKey: "batch-series", episodeIndex: 12, episodeIndexes: [12, 13, 14, 12] });
+    expect(get.mock.calls.map(args => args[0])).toEqual([
+      "tpl_native_batch-series_ep012", "tpl_native_batch-series_ep013", "tpl_native_batch-series_ep014",
+    ]);
+    expect(result.items.map(item => item.id)).toEqual(["tpl_native_batch-series_ep012", "tpl_native_batch-series_ep014"]);
+    expect(result.items.every(item => !("beatGrid" in item))).toBe(true);
+    expect(store.listGcsManhuaViralProposals).not.toHaveBeenCalled();
+    await expect(caller.listProposals({ seriesKey: "batch-series", episodeIndex: 12, episodeIndexes: [0] })).rejects.toThrow();
+    await expect(caller.listProposals({ seriesKey: "batch-series", episodeIndex: 12, episodeIndexes: Array(81).fill(12) })).rejects.toThrow();
+  });
   it("首次卡未保存返回空，后续读取本集且不遍历全库", async () => {
     vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
     const caller = (await loadRouter()).createCaller(makeCtx("user", undefined, "owner-open-id"));
