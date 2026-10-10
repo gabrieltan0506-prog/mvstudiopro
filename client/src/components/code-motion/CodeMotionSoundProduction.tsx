@@ -3,6 +3,7 @@ import { trpc } from "@/lib/trpc";
 import type { CodeMotionProject } from "@shared/codeMotion";
 import type { CodeMotionAudioSource } from "@shared/codeMotionAudio";
 import type { CodeMotionSoundRequest } from "@shared/codeMotionMedia";
+import { manhuaBgmArcFromShots } from "@shared/manhuaBgmArcFromShots";
 
 export default function CodeMotionSoundProduction({
   project,
@@ -17,9 +18,10 @@ export default function CodeMotionSoundProduction({
   adopt(source: CodeMotionAudioSource): Promise<void>;
   execute(action: () => Promise<void>): Promise<void>;
 }) {
-  const [direction, setDirection] = useState(
-    "由轻盈铺陈推进到明亮收束，衬托旁白，纯音乐"
-  );
+  const [direction, setDirection] = useState(() => manhuaBgmArcFromShots(
+    (project.plan?.scenes || []).map((scene, index) => ({index:index+1,durationSec:scene.duration,cameraZh:scene.direction || "",actionZh:(scene.direction || scene.heading).slice(0,48),intentZh:scene.heading.slice(0,20),emotionZh:(scene.speech?.emotion || "").slice(0,30),dialogueZh:scene.speech?.text || ""})),
+    project.brief.duration,
+  ).slice(0,1000) || "由轻盈铺陈推进到明亮收束，衬托旁白，纯音乐");
   const [busy, setBusy] = useState(false),
     [message, setMessage] = useState("");
   const lock = useRef(false), mounted = useRef(true);
@@ -82,7 +84,7 @@ export default function CodeMotionSoundProduction({
             if (!mounted.current) return;
             const speech = project.plan!.scenes[sceneIndex].speech;
             if (!speech?.text.trim() || existing.some(r => r.request.kind === "speech" && r.request.sceneIndex === sceneIndex)) continue;
-            await generate.mutateAsync({projectId:project.id,generation:saved.generation,request:{kind:"speech",requestId:crypto.randomUUID(),sceneIndex,text:speech.text.trim(),voice:speech.voice}});
+            await generate.mutateAsync({projectId:project.id,generation:saved.generation,request:{kind:"speech",requestId:crypto.randomUUID(),sceneIndex,text:speech.text.trim(),voice:speech.voice,...(speech.emotion ? {emotion:speech.emotion} : {})}});
           }
           if (mounted.current && !existing.some(r => r.request.kind === "bgm")) await generate.mutateAsync({projectId:project.id,generation:saved.generation,request:{kind:"bgm",requestId:crypto.randomUUID(),direction:direction.trim()}});
         })}>生成尚未制作的旁白与配乐</button>
@@ -92,6 +94,7 @@ export default function CodeMotionSoundProduction({
             <p className="text-sm">
               画面 {sceneIndex + 1}：{scene.speech.text}（
               {scene.speech.voice === "female" ? "女声" : "男声"}）
+              {scene.speech.emotion && <span className="ml-2 text-xs text-stone-600">演绎：{scene.speech.emotion}</span>}
             </p>
             <button
               className={button}
@@ -114,6 +117,7 @@ export default function CodeMotionSoundProduction({
                     sceneIndex,
                     text: scene.speech!.text.trim(),
                     voice: scene.speech!.voice,
+                    ...(scene.speech!.emotion ? { emotion: scene.speech!.emotion } : {}),
                   })
                 )
               }

@@ -1,4 +1,11 @@
 import { z } from "zod";
+import { compileCanvasDialogueInput } from "./canvasDialogueControls";
+
+/** Shares the drama voice library's supported controls; never a new provider parameter. */
+export const codeMotionEmotionSchema = z.string().trim().max(100).superRefine((value, ctx) => {
+  try { compileCanvasDialogueInput("旁白", value); }
+  catch { ctx.addIssue({ code: "custom", message: "请选择漫剧音色库支持的情绪标签" }); }
+});
 
 export const codeMotionSpeechRequestSchema = z
   .object({
@@ -7,6 +14,7 @@ export const codeMotionSpeechRequestSchema = z
     sceneIndex: z.number().int().min(0).max(11),
     text: z.string().trim().min(1).max(180),
     voice: z.enum(["female", "male"]),
+    emotion: codeMotionEmotionSchema.optional(),
   })
   .strict();
 export const codeMotionBgmRequestSchema = z

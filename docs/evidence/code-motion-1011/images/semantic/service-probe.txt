@@ -1,0 +1,15 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ server/services/codeMotionImageSemantic.test.ts > confirmed image semantic pipeline > sends actual native image/audio/video parts, saves raw before parsed, and reuses exactly one result
+ ✓ server/services/codeMotionImageSemantic.test.ts > confirmed image semantic pipeline > recovers preserved raw without repurchase after parsed persistence loss; unknown never retries
+ ✓ server/services/codeMotionImageSemantic.test.ts > confirmed image semantic pipeline > keeps malformed raw and refuses missing coverage, invented source, and invented requirement
+ ✓ server/services/codeMotionImageSemantic.test.ts > confirmed image semantic pipeline > does not redraw based on weak confidence or unreadable input
+ ✓ server/services/codeMotionImageSemantic.test.ts > confirmed image semantic pipeline > free formal prepare→analyze→prepare→submit uses one fixed edit plus missing-image generation
+ ✓ server/services/codeMotionImageSemantic.test.ts > confirmed image semantic pipeline > paid formal prepare→analyze→prepare→submit uses one fixed edit plus missing-image generation
+
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Start at  04:36:38
+   Duration  9.36s (transform 3.07s, setup 0ms, collect 6.74s, tests 617ms, environment 0ms, prepare 272ms)
+

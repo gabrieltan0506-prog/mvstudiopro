@@ -1,3 +1,4 @@
+import { analyzeCodeMotionImageSemantic } from "../services/codeMotionImageSemantic";
 import { analyzeCodeMotionTiming } from "../services/codeMotionTiming";
 import { prepareCodeMotionImages, submitCodeMotionImages, listCodeMotionImages, adoptCodeMotionImage } from "../services/codeMotionImages";
 import { ensureCodeMotionProductionGrant, prepareCodeMotionProductionGrant, getCodeMotionProductionGrant } from "../services/codeMotionProductionGrant";
@@ -69,6 +70,15 @@ export const codeMotionRouter = router({
       const userId = String(ctx.user.id);
       const grant = await prepareCodeMotionProductionGrant(userId, input);
       return prepareCodeMotionImages(userId, { ...input, grantId: grant.id });
+    }),
+  imageAnalyze: protectedProcedure
+    .input(id.extend({ expectedGeneration:z.string().regex(/^\d+$/),grantId:z.string().uuid() }))
+    .mutation(async ({ctx,input})=>{
+      const userId=String(ctx.user.id);
+      const grant=await ensureCodeMotionProductionGrant(userId,{...input,source:inkSource(ctx.req)});
+      if(grant.id!==input.grantId)throw new TRPCError({code:"CONFLICT",message:"图片核对内容已变化"});
+      await analyzeCodeMotionImageSemantic(userId,input);
+      return prepareCodeMotionImages(userId,input);
     }),
   imageSubmit: protectedProcedure
     .input(id.extend({ expectedGeneration: z.string().regex(/^\d+$/), grantId: z.string().uuid(), fingerprint: z.string().regex(/^[a-f0-9]{64}$/) }))

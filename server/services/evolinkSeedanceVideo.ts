@@ -65,6 +65,7 @@ export type EvolinkVideoPollSnapshot =
 export async function pollEvolinkVideoTaskOnce(
   taskId: string,
   label: string,
+  persistTerminalReceipt?: (receipt:{status:number;body:string})=>Promise<void>,
 ): Promise<EvolinkVideoPollSnapshot> {
   const apiKey = String(process.env.EVOLINK_API_KEY || "").trim();
   if (!apiKey) return { state: "failed", error: "EVOLINK_API_KEY 未配置" };
@@ -85,12 +86,14 @@ export async function pollEvolinkVideoTaskOnce(
       status: `transient_fetch_error:${e instanceof Error ? e.name : "unknown"}`,
     };
   }
-  const json = (await r.json().catch(() => ({}))) as EvolinkVideoTask;
+  let raw="";
+  const json = (persistTerminalReceipt ? await (async()=>{raw=await r.text();try{return JSON.parse(raw);}catch{return {};}})() : await r.json().catch(()=>({}))) as EvolinkVideoTask;
   if (!r.ok) {
     return { state: "running", status: `transient_http_${r.status}` };
   }
 
   const status = String(json.status || "").toLowerCase();
+  if (persistTerminalReceipt && ["completed","succeeded","success","failed","cancelled"].includes(status)) await persistTerminalReceipt({status:r.status,body:raw});
   if (status === "completed" || status === "succeeded" || status === "success") {
     const url = extractEvolinkVideoUrl(json);
     if (!url) {

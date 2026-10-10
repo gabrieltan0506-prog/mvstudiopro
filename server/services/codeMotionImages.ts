@@ -1,9 +1,18 @@
 /** Saved shot image batches. Immutable grant and fixed job identities precede queueing. */
+import { loadCodeMotionImageSemantic } from "./codeMotionImageSemantic";
+import {
+  codeMotionSemanticFindingSchema,
+  semanticImageDecision,
+} from "../../shared/codeMotionImageSemantic";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import sharp from "sharp";
-import { decideCodeMotionImagePreflight, codeMotionImageEvidenceSchema, type CodeMotionImageEvidence } from "../../shared/codeMotionImagePreflight";
+import {
+  decideCodeMotionImagePreflight,
+  codeMotionImageEvidenceSchema,
+  type CodeMotionImageEvidence,
+} from "../../shared/codeMotionImagePreflight";
 import {
   codeMotionImageContextSchema,
   codeMotionImagePolicy,
@@ -43,9 +52,26 @@ const shotSchema = z
     requestId: z.string().uuid(),
     jobId: z.string(),
     digest: z.string().regex(/^[a-f0-9]{64}$/),
-    mode:z.enum(["generate","edit","reuse"]).optional(),
-    referenceImageUrls:z.array(z.string().regex(/^gs:\/\//)).max(16).optional(),
-    preflight:z.object({reasons:z.array(z.string()),semanticAssessment:z.literal("not_performed"),images:z.array(codeMotionImageEvidenceSchema)}).optional(),
+    mode: z.enum(["generate", "edit", "reuse"]).optional(),
+    referenceImageUrls: z
+      .array(z.string().regex(/^gs:\/\//))
+      .max(16)
+      .optional(),
+    preflight: z
+      .object({
+        reasons: z.array(z.string()),
+        semanticAssessment: z.enum([
+          "not_performed",
+          "aligned",
+          "conflict",
+          "uncertain",
+        ]),
+        semanticFinding: codeMotionSemanticFindingSchema.optional(),
+        semanticRawSha256: z.string().optional(),
+        semanticLimitations: z.string().optional(),
+        images: z.array(codeMotionImageEvidenceSchema),
+      })
+      .optional(),
   })
   .strict();
 const manifestSchema = z
@@ -73,10 +99,12 @@ export type CodeMotionImagesDeps = {
   resolve: typeof resolveRegisteredPostProdMediaSource;
   imageSize(uri: string): Promise<number>;
   preview(uri: string): Promise<string>;
-  inspectImage?(imageId:string,uri:string):Promise<CodeMotionImageEvidence>;
+  inspectImage?(imageId: string, uri: string): Promise<CodeMotionImageEvidence>;
+  semantic?: typeof loadCodeMotionImageSemantic;
 };
 const real: CodeMotionImagesDeps = {
   storage: codeMotionStorage,
+  semantic: loadCodeMotionImageSemantic,
   grant: getCodeMotionProductionGrant,
   prepareGrant: prepareCodeMotionProductionGrant,
   reserve: reserveCodeMotionProductionSlot,
@@ -85,12 +113,34 @@ const real: CodeMotionImagesDeps = {
   job: getJobByIdStrict,
   importFile: importCodeMotionFile,
   resolve: resolveRegisteredPostProdMediaSource,
-  async inspectImage(imageId,gcsUri) {
-    const chunks:Buffer[]=[];
-    await inspectGcsObjectBounded({gcsUri,maxBytes:8*1024*1024,timeoutMs:30_000,onChunk:b=>{chunks.push(Buffer.from(b));}});
-    const buffer=Buffer.concat(chunks),metadata=await sharp(buffer,{limitInputPixels:16*1024*1024,animated:false}).metadata();
-    await sharp(buffer,{limitInputPixels:16*1024*1024,animated:false,failOn:"warning"}).stats();
-    return codeMotionImageEvidenceSchema.parse({imageId,gcsUri,width:metadata.width,height:metadata.height,bytes:buffer.length,sha256:createHash("sha256").update(buffer).digest("hex")});
+  async inspectImage(imageId, gcsUri) {
+    const chunks: Buffer[] = [];
+    await inspectGcsObjectBounded({
+      gcsUri,
+      maxBytes: 8 * 1024 * 1024,
+      timeoutMs: 30_000,
+      onChunk: b => {
+        chunks.push(Buffer.from(b));
+      },
+    });
+    const buffer = Buffer.concat(chunks),
+      metadata = await sharp(buffer, {
+        limitInputPixels: 16 * 1024 * 1024,
+        animated: false,
+      }).metadata();
+    await sharp(buffer, {
+      limitInputPixels: 16 * 1024 * 1024,
+      animated: false,
+      failOn: "warning",
+    }).stats();
+    return codeMotionImageEvidenceSchema.parse({
+      imageId,
+      gcsUri,
+      width: metadata.width,
+      height: metadata.height,
+      bytes: buffer.length,
+      sha256: createHash("sha256").update(buffer).digest("hex"),
+    });
   },
   async imageSize(gcsUri) {
     let size = 0;
@@ -166,28 +216,70 @@ export async function prepareCodeMotionImages(
     throw new Error("本次生产绑定了另一份分镜，请恢复原任务");
   const aspectRatio =
     saved.project.brief.orientation === "landscape" ? "16:9" : "9:16";
-  const evidence=new Map<string,CodeMotionImageEvidence>();
+  const evidence = new Map<string, CodeMotionImageEvidence>();
   for (const image of saved.project.brief.images) {
-    if(!deps.inspectImage)throw new Error("图片预检暂不可用，原图保留，未提交重绘");
-    const uri=await deps.resolve({userId,source:image.gcsUri});
-    evidence.set(image.id,await deps.inspectImage(image.id,uri));
+    if (!deps.inspectImage)
+      throw new Error("图片预检暂不可用，原图保留，未提交重绘");
+    const uri = await deps.resolve({ userId, source: image.gcsUri });
+    evidence.set(image.id, await deps.inspectImage(image.id, uri));
   }
+  const semantic = deps.semantic
+    ? await deps.semantic(userId, saved.project, input.grantId, deps.storage)
+    : null;
   const shots = codeMotionImagePrompts(saved.project).map(s => {
-    const scene=saved.project.plan!.scenes[s.index];
-    const ids=new Set([scene.imageId,...(scene.composition?.elements.filter(e=>e.type==="image").map(e=>e.type==="image"?e.imageId:undefined)||[])].filter((id):id is string=>!!id));
-    const decision=decideCodeMotionImagePreflight(Array.from(ids).map(id=>evidence.get(id)!).filter(Boolean),saved.project.brief.orientation);
-    const {mode,...preflight}=decision;
-    const referenceImageUrls=decision.images.map(i=>i.gcsUri);
-    const prompt=mode==="edit"?`${s.prompt}\n保留所附原图的人物、物品身份和可用细节，只重绘一次以修复以下可测问题并适配分镜；不得改成无关人物：${decision.reasons.join("；")}`:s.prompt;
+    const scene = saved.project.plan!.scenes[s.index];
+    const ids = new Set(
+      [
+        scene.imageId,
+        ...(scene.composition?.elements
+          .filter(e => e.type === "image")
+          .map(e => (e.type === "image" ? e.imageId : undefined)) || []),
+      ].filter((id): id is string => !!id)
+    );
+    const decision = decideCodeMotionImagePreflight(
+      Array.from(ids)
+        .map(id => evidence.get(id)!)
+        .filter(Boolean),
+      saved.project.brief.orientation
+    );
+    const finding = semantic?.report.findings.find(f => f.index === s.index);
+    const meaning = semanticImageDecision(finding);
+    const mode =
+      decision.mode !== "generate" && meaning.assessment === "conflict"
+        ? "edit"
+        : decision.mode;
+    const preflight = {
+      reasons: [...decision.reasons, ...meaning.reasons],
+      semanticAssessment: meaning.assessment,
+      images: decision.images,
+      ...(finding
+        ? {
+            semanticFinding: finding,
+            semanticRawSha256: semantic!.rawSha256,
+            semanticLimitations: semantic!.report.limitations,
+          }
+        : {}),
+    };
+    const referenceImageUrls = decision.images.map(i => i.gcsUri);
+    const prompt =
+      mode === "edit"
+        ? `${s.prompt}\n保留所附原图的人物、物品身份和可用细节，只重绘一次以修复以下可测问题并适配分镜；不得改成无关人物：${preflight.reasons.join("；")}。${meaning.repair}`
+        : s.prompt;
     const requestId = uuid(`${input.grantId}:image:${s.index}`);
     return {
       ...s,
-      prompt,mode,preflight,referenceImageUrls,
+      prompt,
+      mode,
+      preflight,
+      referenceImageUrls,
       requestId,
       jobId: `inkimage_${requestId.replace(/-/g, "")}`,
       digest: hash({
         ...s,
-        prompt,mode,referenceImageUrls,preflight,
+        prompt,
+        mode,
+        referenceImageUrls,
+        preflight,
         aspectRatio,
         tier: grant.tier,
         model: codeMotionImagePolicy(grant.tier, s.index).model,
@@ -221,10 +313,14 @@ function withQuote(m: Manifest) {
     shots: m.shots.map(s => ({
       ...s,
       ...codeMotionImagePolicy(m.tier, s.index),
-      ...(s.mode==="reuse"?{credits:0}:{}),
+      ...(s.mode === "reuse" ? { credits: 0 } : {}),
     })),
     credits: m.shots.reduce(
-      (sum, s) => sum + (s.mode==="reuse"?0:codeMotionImagePolicy(m.tier, s.index).credits),
+      (sum, s) =>
+        sum +
+        (s.mode === "reuse"
+          ? 0
+          : codeMotionImagePolicy(m.tier, s.index).credits),
       0
     ),
   };
@@ -252,7 +348,9 @@ function jobInput(m: Manifest, s: Manifest["shots"][number]) {
       imageLane: "keyart",
       gcsSubdir: `code-motion/${m.projectId}`,
       batchIndex: s.index,
-      ...(s.mode==="edit"?{referenceImageUrls:s.referenceImageUrls}:{}),
+      ...(s.mode === "edit"
+        ? { referenceImageUrls: s.referenceImageUrls }
+        : {}),
       codeMotionImage: context(m, s),
     },
   };
@@ -267,6 +365,15 @@ export async function submitCodeMotionImages(
     const prepared = await prepareCodeMotionImages(userId, input, deps);
     if (prepared.fingerprint !== input.fingerprint)
       throw new Error("本次场景图内容已变化，请重新核对");
+    if (
+      deps.semantic &&
+      prepared.shots.some(
+        s =>
+          s.preflight?.images.length &&
+          s.preflight.semanticAssessment === "not_performed"
+      )
+    )
+      throw new Error("请先确认原图语义核对，再审阅重绘内容；尚未提交图片生成");
     const { credits: _credits, ...batch } = prepared;
     m = manifestSchema.parse({
       ...batch,
@@ -289,7 +396,7 @@ export async function submitCodeMotionImages(
   const enqueueErrors: Record<string, string> = {};
   // Resume only absent fixed jobs. Failed/unknown jobs never receive a replacement identity.
   for (const s of m.shots) {
-    if(s.mode==="reuse")continue;
+    if (s.mode === "reuse") continue;
     try {
       await deps.reserve(userId, context(m, s));
       const existing = await deps.job(s.jobId);
@@ -348,9 +455,16 @@ export async function getCodeMotionImages(
   if (!m) throw new Error("没有找到这份作品的场景图请求");
   const shots = [];
   for (const s of m.shots) {
-    if(s.mode==="reuse") {
-      const uri=s.referenceImageUrls?.[0];
-      shots.push({...s,status:"reused",error:null,gcsUri:uri||null,previewUrl:uri?await deps.preview(uri):null,canResume:false});
+    if (s.mode === "reuse") {
+      const uri = s.referenceImageUrls?.[0];
+      shots.push({
+        ...s,
+        status: "reused",
+        error: null,
+        gcsUri: uri || null,
+        previewUrl: uri ? await deps.preview(uri) : null,
+        canResume: false,
+      });
       continue;
     }
     const job = await deps.job(s.jobId);
@@ -414,7 +528,12 @@ export async function adoptCodeMotionImage(
   return {
     sceneIndex: shot.index,
     image: { ...result.image, id: shot.requestId },
-    ...(shot.mode==="edit" && shot.preflight?.images[0]?{replacesImageId:shot.preflight.images[0].imageId,replacesImageIds:shot.preflight.images.map(i=>i.imageId)}:{}),
+    ...(shot.mode === "edit" && shot.preflight?.images[0]
+      ? {
+          replacesImageId: shot.preflight.images[0].imageId,
+          replacesImageIds: shot.preflight.images.map(i => i.imageId),
+        }
+      : {}),
   };
 }
 /** Worker trusts only this server-created manifest plus a reserved grant slot. */

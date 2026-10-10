@@ -3,7 +3,10 @@ import {
   codeMotionProjectSchema,
   type CodeMotionProject,
 } from "../../shared/codeMotion";
-import { reviseCodeMotionProject } from "../../shared/codeMotionRevision";
+import {
+  codeMotionRevisionChangeSchema,
+  reviseCodeMotionProject,
+} from "../../shared/codeMotionRevision";
 import {
   codeMotionStorage,
   loadCodeMotion,
@@ -24,19 +27,11 @@ export const codeMotionRevisionInputSchema = z
     projectId: z.string().uuid(),
     expectedGeneration: z.string().regex(/^\d+$/),
     requestId: z.string().uuid(),
-    changes: z
-      .array(
-        z
-          .object({
-            index: z.number().int().min(0).max(5),
-            heading: z.string().trim().min(1).max(48),
-            body: z.string().trim().max(100),
-            direction: z.string().trim().max(400).optional(),
-          })
-          .strict()
-      )
-      .min(1)
-      .max(6),
+    confirmedQuote: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+    changes: z.array(codeMotionRevisionChangeSchema).min(1).max(6),
   })
   .strict();
 type Input = z.infer<typeof codeMotionRevisionInputSchema>;
@@ -47,6 +42,7 @@ type Entry = {
   number: number;
   project: CodeMotionProject;
   createdAt: string;
+  paidQuote?: import("./codeMotionRevisionPricing").CodeMotionRevisionPrice;
 };
 type Ledger = { rootProjectId: string; entries: Entry[] };
 export type RevisionDeps = {
@@ -101,7 +97,7 @@ export async function quoteCodeMotionRevision(
     costCredits: 0,
     mode: "code_only" as const,
     message: c.paid
-      ? "沿用素材的文字与代码画面修改不调用付费模型，工具成本为0。新增模型须另核实际工具成本×2。"
+      ? "文字与代码画面修改工具成本为0；填写动作要求可单镜重做，按确认的工具成本×2换算积分。"
       : "每部成片可免费确认提交2次局部修改；预览不计次。",
   };
 }
@@ -128,6 +124,8 @@ export async function submitCodeMotionRevision(
     if (old) {
       if (old.digest !== digest)
         throw new Error("原修改编号已绑定其他内容，请恢复原修改");
+      if (old.paidQuote && old.paidQuote.fingerprint !== input.confirmedQuote)
+        throw new Error("请恢复原确认报价");
       winner = old;
       break;
     }
@@ -147,11 +145,28 @@ export async function submitCodeMotionRevision(
             scene.body !== change.body ||
             (change.direction !== undefined &&
               scene.direction !== change.direction) ||
-            scene.production?.motion === "natural")
+            scene.production?.motion === "natural" ||
+            !!change.motionPrompt)
         );
       })
     )
       throw new Error("请先修改选定镜头内容，再确认提交");
+    const motion = input.changes.filter(change => change.motionPrompt);
+    let paidQuote:
+      | import("./codeMotionRevisionPricing").CodeMotionRevisionPrice
+      | undefined;
+    if (motion.length) {
+      if (!ctx.paid)
+        throw new Error("动作重新生成需要升级付费方案，未提交、未扣费");
+      if (motion.length !== 1 || input.changes.length !== 1)
+        throw new Error("每次动作修改仅重做一个镜头");
+      const { priceCodeMotionRevision } = await import(
+        "./codeMotionRevisionPricing"
+      );
+      paidQuote = await priceCodeMotionRevision(saved.project, motion[0]);
+      if (input.confirmedQuote !== paidQuote.fingerprint)
+        throw new Error("请先核对并确认本次完整工具报价");
+    }
     const id = codeMotionProductionId(
       `ink-revision:${userId}:${ctx.rootProjectId}:${input.requestId}`
     );
@@ -165,6 +180,7 @@ export async function submitCodeMotionRevision(
       number: ctx.ledger.entries.length + 1,
       project,
       createdAt: new Date().toISOString(),
+      ...(paidQuote ? { paidQuote } : {}),
     };
     try {
       await deps.storage.write(
@@ -199,7 +215,10 @@ export async function submitCodeMotionRevision(
     parentProjectId: winner.parentProjectId,
     number: winner.number,
     sceneIndexes: input.changes.map(c => c.index),
-    mode: "code_only" as const,
+    mode: winner.paidQuote ? ("paid_video" as const) : ("code_only" as const),
+    ...(winner.paidQuote
+      ? { quoteFingerprint: winner.paidQuote.fingerprint }
+      : {}),
   };
   const grant = await deps.writeGrant(
     userId,
@@ -231,9 +250,68 @@ export async function codeMotionRevisionAssetParent(
     kind === "audio"
       ? entry?.project.brief.audios
       : entry?.project.plan?.codeVideo?.assets;
-  return sources?.some(
+  const permitted = sources?.some(
     s => codeMotionProductionDigest(s) === codeMotionProductionDigest(asset)
+  );
+  if (!permitted) return null;
+  let parent = grant.revision.parentProjectId;
+  for (let depth = 0; depth < 50; depth++) {
+    const previous = ledger.entries.find(e => e.project.id === parent);
+    if (!previous)
+      return parent === grant.revision.rootProjectId ? parent : null;
+    const original =
+      kind === "audio"
+        ? previous.project.brief.audios
+        : previous.project.plan?.codeVideo?.assets;
+    if (
+      !original?.some(
+        s => codeMotionProductionDigest(s) === codeMotionProductionDigest(asset)
+      )
+    )
+      return parent;
+    parent = previous.parentProjectId;
+  }
+  throw new Error("素材继承层级过深");
+}
+
+export async function prepareCodeMotionRevision(
+  userId: string,
+  raw: Input,
+  deps = real
+) {
+  const input = codeMotionRevisionInputSchema.parse(raw),
+    c = await context(userId, input.projectId, deps);
+  const saved = await loadCodeMotion(userId, input.projectId, deps.storage);
+  if (!saved || saved.generation !== input.expectedGeneration)
+    throw new Error("作品版本已变化，请先保存");
+  if (!(await deps.completed(userId, saved.project)))
+    throw new Error("请先完成当前版本成片");
+  if (!c.paid || input.changes.length !== 1 || !input.changes[0].motionPrompt)
+    throw new Error("付费动作修改需要选择一个镜头并说明动作");
+  const { priceCodeMotionRevision } = await import(
+    "./codeMotionRevisionPricing"
+  );
+  return priceCodeMotionRevision(saved.project, input.changes[0]);
+}
+export async function getCodeMotionRevisionPrice(
+  userId: string,
+  projectId: string
+) {
+  const grant = await getCodeMotionProductionGrant(userId, projectId);
+  if (
+    !grant?.revision ||
+    grant.revision.mode !== "paid_video" ||
+    grant.tier !== "paid"
   )
-    ? grant.revision.rootProjectId
-    : null;
+    return null;
+  const file = await codeMotionStorage.read(
+    ledgerName(userId, grant.revision.rootProjectId)
+  );
+  const ledger = file ? (JSON.parse(file.body.toString()) as Ledger) : null;
+  const quote = ledger?.entries.find(
+    e => e.project.id === projectId
+  )?.paidQuote;
+  if (!quote || quote.fingerprint !== grant.revision.quoteFingerprint)
+    throw new Error("局部修改费用回执不完整");
+  return quote;
 }

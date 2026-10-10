@@ -17,7 +17,15 @@ export const codeMotionProductionSlotSchema = z
   .object({
     projectId: z.string().uuid(),
     grantId: z.string().uuid(),
-    kind: z.enum(["image", "video", "speech", "bgm", "export", "timing"]),
+    kind: z.enum([
+      "image",
+      "video",
+      "speech",
+      "bgm",
+      "export",
+      "timing",
+      "image_semantic",
+    ]),
     index: z.number().int().min(0).max(5),
     requestId: z.string().min(1).max(160),
     digest: z.string().regex(/^[a-f0-9]{64}$/),
@@ -44,7 +52,11 @@ const grantSchema = z
         parentProjectId: z.string().uuid(),
         number: z.number().int().min(1),
         sceneIndexes: z.array(z.number().int().min(0).max(5)).min(1).max(6),
-        mode: z.literal("code_only"),
+        mode: z.enum(["code_only", "paid_video"]),
+        quoteFingerprint: z
+          .string()
+          .regex(/^[a-f0-9]{64}$/)
+          .optional(),
       })
       .strict()
       .optional(),
@@ -239,14 +251,27 @@ function validateSlot(
   grant: CodeMotionProductionGrant,
   input: CodeMotionProductionSlot
 ) {
-  if (grant.revision && input.kind !== "export")
+  if (
+    grant.revision &&
+    input.kind !== "export" &&
+    !(
+      grant.revision.mode === "paid_video" &&
+      grant.tier === "paid" &&
+      input.kind === "video" &&
+      grant.revision.sceneIndexes.length === 1 &&
+      grant.revision.sceneIndexes[0] === input.index
+    )
+  )
     throw new Error(
       "此局部修改沿用现有素材；新增模型工具需先核对实际成本，尚未提交"
     );
   if (input.grantId !== grant.id || input.projectId !== grant.projectId)
     throw new Error("制作授权身份不一致");
   if (
-    input.kind === "bgm" || input.kind === "export" || input.kind === "timing"
+    input.kind === "bgm" ||
+    input.kind === "export" ||
+    input.kind === "timing" ||
+    input.kind === "image_semantic"
       ? input.index !== 0
       : input.index >= grant.sceneCount
   )
@@ -271,6 +296,14 @@ export async function reserveCodeMotionProductionSlot(
         throw new Error("此制作步骤已占用，请恢复原任务；不会重复付费提交");
       return grant;
     }
+    if (
+      grant.tier === "free" &&
+      input.kind === "video" &&
+      Object.keys(grant.slots).filter(k => k.startsWith("video:")).length >= 2
+    )
+      throw new Error(
+        "免费作品最多生成2个各不超过5秒的动作镜头，请将其余镜头改为代码画面"
+      );
     const saved = await loadCodeMotion(userId, input.projectId, deps.storage);
     if (
       !saved ||

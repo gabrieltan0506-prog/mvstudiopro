@@ -240,3 +240,32 @@ describe("映客整作品制作预算", () => {
     );
   });
 });
+
+it("free concurrent video reservations cap two distinct scenes while same-scene recovery remains allowed", async () => {
+  const { deps } = setup();
+  const grant = await ensureCodeMotionProductionGrant(
+    "7",
+    {
+      projectId,
+      expectedGeneration: "1",
+      source: { day: "2026-10-10", ipHash: "ip" },
+    },
+    deps
+  );
+  const slots = [0, 1, 2].map(index => ({
+    projectId,
+    grantId: grant.id,
+    kind: "video" as const,
+    index,
+    requestId: `scene-${index}`,
+    digest: codeMotionProductionDigest(index),
+  }));
+  const results = await Promise.allSettled(
+    slots.map(slot => reserveCodeMotionProductionSlot("7", slot, deps))
+  );
+  expect(results.filter(r => r.status === "fulfilled")).toHaveLength(2);
+  const first = results.findIndex(r => r.status === "fulfilled");
+  await expect(
+    reserveCodeMotionProductionSlot("7", slots[first], deps)
+  ).resolves.toBeTruthy();
+});

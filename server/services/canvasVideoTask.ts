@@ -698,6 +698,10 @@ async function succeedTask(
   model: string,
   provider: string,
 ): Promise<CanvasVideoTaskRecord> {
+  if (task.inkProduction) {
+    const {settleCodeMotionRevisionCost}=await import("./codeMotionRevisionPricing.js");
+    await settleCodeMotionRevisionCost(task);
+  }
   task.status = "succeeded";
   task.videoUrl = videoUrl;
   task.model = model;
@@ -1406,6 +1410,10 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
         const snap = await pollEvolinkVideoTaskOnce(
           current.evolinkTaskId,
           current.engine === "hailuo-evolink" ? "MiniMax H3" : `Seedance ${current.seedanceVersion || (isMini ? "2.0-mini" : "2.5")}`,
+          current.inkProduction ? async receipt => {
+            const {persistCodeMotionRevisionTerminal}=await import("./codeMotionRevisionPricing.js");
+            await persistCodeMotionRevisionTerminal(current,receipt);
+          } : undefined,
         );
         if (snap.state === "running") {
           if (isTaskHeartbeatStatus(snap.status)) {

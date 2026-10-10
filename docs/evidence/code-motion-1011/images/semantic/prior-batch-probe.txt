@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ server/services/codeMotionImageSemantic.test.ts > does not buy semantic analysis for an already committed image batch
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 6 skipped (7)
+   Start at  04:39:24
+   Duration  7.17s (transform 3.07s, setup 0ms, collect 5.85s, tests 225ms, environment 0ms, prepare 153ms)
+

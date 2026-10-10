@@ -16,7 +16,13 @@ type Pending = {
   projectId: string;
   expectedGeneration: string;
   requestId: string;
-  changes: { index: number; heading: string; body: string }[];
+  changes: {
+    index: number;
+    heading: string;
+    body: string;
+    motionPrompt?: string;
+  }[];
+  confirmedQuote?: string;
 };
 export default function CodeMotionRevision({
   project,
@@ -38,18 +44,27 @@ export default function CodeMotionRevision({
   const [index, setIndex] = useState(0),
     [heading, setHeading] = useState(""),
     [body, setBody] = useState(""),
+    [motionPrompt, setMotionPrompt] = useState(""),
+    [price, setPrice] = useState<{
+      fingerprint: string;
+      credits: number;
+      costUsd: number;
+    } | null>(null),
     [busy, setBusy] = useState(false),
     [message, setMessage] = useState(""),
     [confirmOpen, setConfirmOpen] = useState(false),
     [pending, setPending] = useState<Pending | null>(null);
   const lock = useRef(false);
   const submit = trpc.codeMotionProduction.revisionSubmit.useMutation();
+  const preparePrice = trpc.codeMotionProduction.revisionPrepare.useMutation();
   const quote = trpc.codeMotionProduction.revisionQuote.useQuery(
     { projectId: project.id },
     { enabled: !disabled, retry: false }
   );
   const storageKey = user ? `ink-revision:${user.id}:${project.id}` : null;
   useEffect(() => {
+    setMotionPrompt("");
+    setPrice(null);
     setHeading(project.plan?.scenes[index]?.heading || "");
     setBody(project.plan?.scenes[index]?.body || "");
   }, [project.id, index]);
@@ -91,7 +106,17 @@ export default function CodeMotionRevision({
           projectId: project.id,
           expectedGeneration: generation,
           requestId: crypto.randomUUID(),
-          changes: [{ index, heading, body }],
+          changes: [
+            {
+              index,
+              heading,
+              body,
+              ...(motionPrompt.trim()
+                ? { motionPrompt: motionPrompt.trim() }
+                : {}),
+            },
+          ],
+          ...(price ? { confirmedQuote: price.fingerprint } : {}),
         };
         localStorage.setItem(storageKey, JSON.stringify(input));
         setPending(input);
@@ -117,7 +142,7 @@ export default function CodeMotionRevision({
     >
       <h3 className="font-medium">局部修改</h3>
       <p className="text-xs text-stone-600">
-        修改选定镜头的文字与代码画面，沿用已有场景图、旁白和配乐。其余镜头保留。
+        修改选定镜头，沿用已有场景图、旁白和配乐。付费动作重做只生成本镜4–5秒，其余镜头保留。
       </p>
       <p className="text-xs">
         {quote.data?.message || "完成当前版本成片后可修改。"}
@@ -154,6 +179,20 @@ export default function CodeMotionRevision({
         onChange={e => setBody(e.target.value)}
         maxLength={100}
       />
+      {quote.data?.tier === "paid" && (
+        <textarea
+          aria-label="动作修改要求"
+          disabled={disabled || busy || !!pending}
+          className="block w-full rounded border p-2"
+          value={pending?.changes[0].motionPrompt ?? motionPrompt}
+          onChange={e => {
+            setMotionPrompt(e.target.value);
+            setPrice(null);
+          }}
+          maxLength={1200}
+          placeholder="可选：说明本镜需要重新生成的动作；留空仅修改文字与代码画面"
+        />
+      )}
       <button
         className="rounded border px-3 py-2 disabled:opacity-50"
         disabled={
@@ -166,7 +205,29 @@ export default function CodeMotionRevision({
               !quote.data?.completed ||
               (quote.data.tier === "free" && quote.data.remaining === 0)))
         }
-        onClick={() => setConfirmOpen(true)}
+        onClick={async () => {
+          if (!pending && motionPrompt.trim()) {
+            setBusy(true);
+            setMessage("");
+            try {
+              setPrice(
+                await preparePrice.mutateAsync({
+                  projectId: project.id,
+                  expectedGeneration: generation,
+                  requestId: crypto.randomUUID(),
+                  changes: [
+                    { index, heading, body, motionPrompt: motionPrompt.trim() },
+                  ],
+                })
+              );
+              setConfirmOpen(true);
+            } catch (error) {
+              setMessage(error instanceof Error ? error.message : "报价未确认");
+            } finally {
+              setBusy(false);
+            }
+          } else setConfirmOpen(true);
+        }}
       >
         {busy
           ? "保存局部修改…"
@@ -185,7 +246,9 @@ export default function CodeMotionRevision({
                 ? "恢复原修改使用相同请求，不再消耗免费修改次数。"
                 : quote.data?.tier === "free"
                   ? `本次确认提交将使用1次免费修改，提交后剩余${Math.max(0, (quote.data.remaining ?? 0) - 1)}次。取消不会消耗次数。`
-                  : "本次仅修改文字与代码画面，沿用已有素材，外部工具成本为0，收费0积分。"}
+                  : price
+                    ? `本镜工具成本按官方单价与固定秒数核算为 $${price.costUsd.toFixed(4)}，按成本×2换算收取${price.credits}积分。确认后在动作制作区恢复并提交本镜，使用相同报价；取消不扣费。`
+                    : "本次仅修改文字与代码画面，沿用已有素材，外部工具成本为0，收费0积分。"}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -210,7 +273,7 @@ export default function CodeMotionRevision({
         </p>
       )}
       <p className="text-xs text-stone-500">
-        当前局部修改不重调生成模型，新增工具生成须接入实际成本结算后再提交。
+        动作修改保存后，请在动作制作区生成、恢复及采用本镜；只在正式提交生成时按已确认报价扣费。含视频参考的动作修改暂待完整成本接线。
       </p>
     </section>
   );

@@ -370,3 +370,145 @@ describe("confirmed local revisions", () => {
     expect((queued[0] as any).params.codeVideo.clips[0].at).toBe(0);
   });
 });
+
+describe("paid action revision cost contract", () => {
+  it("locks a single paid scene at actual fixed tool units ×2; restores once and rejects unquoted inputs", async () => {
+    paid = true;
+    const p = project(),
+      imageId = "33333333-3333-4333-8333-333333333333";
+    p.brief.style = "scenes";
+    p.brief.images = [
+      {
+        id: imageId,
+        name: "原场景",
+        gcsUri: `gs://fixture/uploads/u7/code-motion/${"c".repeat(64)}.png`,
+      },
+    ];
+    p.plan!.scenes[1].imageId = imageId;
+    p.plan!.scenes = p.plan!.scenes.map((scene, i) => ({
+      ...scene,
+      composition: {
+        id: `scene${i}`,
+        duration: 5,
+        elements: [
+          { id: "photo", type: "image", imageId, width: 1, height: 1 },
+        ],
+      },
+    })) as any;
+    generation = (await saveCodeMotion("7", p, generation, codeMotionStorage))
+      .generation;
+    const { prepareCodeMotionRevision, getCodeMotionRevisionPrice } =
+      await import("./codeMotionRevision");
+    const {
+      revisionVideoCost,
+      codeMotionRevisionCharge,
+      settleCodeMotionRevisionCost,
+    } = await import("./codeMotionRevisionPricing");
+    expect(revisionVideoCost(5)).toEqual({ costUsd: 1.628, credits: 37 });
+    const raw = {
+      ...input(8),
+      changes: [
+        { ...input(8).changes[0], motionPrompt: "杯中白色蒸汽缓慢上升" },
+      ],
+    };
+    const price = await prepareCodeMotionRevision("7", raw, deps);
+    expect(price.credits).toBe(37);
+    await expect(submitCodeMotionRevision("7", raw, deps)).rejects.toThrow(
+      "确认"
+    );
+    const confirmed = { ...raw, confirmedQuote: price.fingerprint };
+    const child = await submitCodeMotionRevision("7", confirmed, deps);
+    expect(child.grant.revision).toMatchObject({
+      mode: "paid_video",
+      sceneIndexes: [1],
+    });
+    expect(
+      (await submitCodeMotionRevision("7", confirmed, deps)).project.id
+    ).toBe(child.project.id);
+    expect(await getCodeMotionRevisionPrice("7", child.project.id)).toEqual(
+      price
+    );
+    const { codeMotionProductionDigest } = await import(
+      "./codeMotionProductionGrant"
+    );
+    const slot = {
+      projectId: child.project.id,
+      grantId: child.grant.id,
+      kind: "video" as const,
+      index: 1,
+      requestId: "fixed-video",
+      digest: codeMotionProductionDigest(price.shot),
+    };
+    await reserveCodeMotionProductionSlot("7", slot);
+    expect(await codeMotionRevisionCharge("7", slot)).toBe(37);
+    await expect(
+      reserveCodeMotionProductionSlot("7", { ...slot, index: 0 })
+    ).rejects.toThrow();
+    await expect(
+      reserveCodeMotionProductionSlot("7", {
+        ...slot,
+        kind: "image_semantic",
+        index: 0,
+      })
+    ).rejects.toThrow();
+    const { prepareCodeMotionProductionVideo } = await import(
+      "./codeMotionProductionVideo"
+    );
+    const prepared = await prepareCodeMotionProductionVideo("7", {
+      projectId: child.project.id,
+      expectedGeneration: child.generation,
+    });
+    expect(prepared.shots).toHaveLength(1);
+    expect(prepared.totalCredits).toBe(37);
+    const task = {
+      userId: 7,
+      taskId: "cv_revision",
+      inkProduction: slot,
+      creditsCharged: 37,
+      duration: 5,
+      evolinkTaskId: "upstream-original",
+    } as any;
+    await expect(settleCodeMotionRevisionCost(task)).rejects.toThrow(
+      "成功回执"
+    );
+    await codeMotionStorage.write(
+      `code-motion/u7/production/${child.project.id}/video-evidence/1/terminal-raw.json`,
+      Buffer.from('{"status":"completed","id":"upstream-original"}'),
+      "0"
+    );
+    await settleCodeMotionRevisionCost(task);
+    await settleCodeMotionRevisionCost(task);
+    const file = await codeMotionStorage.read(
+      `code-motion/u7/production/${child.project.id}/video-evidence/1/cost-settlement.json`
+    );
+    expect(JSON.parse(file!.body.toString())).toMatchObject({
+      costUsd: 1.628,
+      creditsCharged: 37,
+      basis: "published_rate_fixed_units",
+      status: "settled",
+    });
+    await expect(
+      settleCodeMotionRevisionCost({ ...task, creditsCharged: 130 })
+    ).rejects.toThrow("金额");
+  }, 30000);
+  it("never drops existing video references to fit an incomplete price", async () => {
+    const { priceCodeMotionRevision } = await import(
+      "./codeMotionRevisionPricing"
+    );
+    const p = project();
+    p.plan!.scenes[1].production = {
+      imagePrompt: "场景",
+      motion: "natural",
+      videoPrompt: "动作",
+      referenceVideoIds: ["cv_existing"],
+    };
+    await expect(
+      priceCodeMotionRevision(p, {
+        index: 1,
+        heading: "镜头",
+        body: "",
+        motionPrompt: "新动作",
+      })
+    ).rejects.toThrow("视频参考");
+  }, 30000);
+});

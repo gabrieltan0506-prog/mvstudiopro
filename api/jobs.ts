@@ -1430,7 +1430,8 @@ type CanvasVideoChargeOpts = {
    */
   videoModel?: string | null;
   /** 首页照片人物动起来按秒计费；缺省保持原画布分档计费。 */
-  pricingMode?: "canvas" | "homePhotoAnimate";
+  pricingMode?: "canvas" | "homePhotoAnimate" | "inkRevisionVideo";
+  inkRevisionSlot?: import("../server/services/codeMotionProductionGrant").CodeMotionProductionSlot;
 };
 
 /** 只扣费、立刻返回；异步成片用。失败路径由 canvasVideoTask 退款。 */
@@ -1521,7 +1522,11 @@ export async function chargeCanvasVideoCredits(
   const episodeIndex = Number(opts.episodeIndex);
   const isEpisodeSegment = Number.isFinite(episodeIndex) && episodeIndex > 0;
   let credits: number;
-  if (opts.pricingMode === "homePhotoAnimate") {
+  if (opts.pricingMode === "inkRevisionVideo") {
+    if (!opts.inkRevisionSlot || opts.idempotencyKey!==opts.inkRevisionSlot.requestId) return {ok:false,status:400,error:"局部修改扣费授权不一致"};
+    const {codeMotionRevisionCharge}=await import("../server/services/codeMotionRevisionPricing.js");
+    credits=await codeMotionRevisionCharge(String(viewer.userId),opts.inkRevisionSlot);
+  } else if (opts.pricingMode === "homePhotoAnimate") {
     const {
       HOME_PHOTO_ANIMATE_DEFAULT_RESOLUTION,
       homePhotoAnimateCredits,
@@ -1550,6 +1555,7 @@ export async function chargeCanvasVideoCredits(
   if (marker) {
     const prior = await findPriorChargeByMarker(viewer.userId, marker);
     if (prior) {
+      if (opts.pricingMode === "inkRevisionVideo" && prior.credits !== credits) return {ok:false,status:409,error:"原扣费回执与局部修改报价不一致，请恢复原任务核对"};
       return {
         ok: true,
         credits: prior.credits,

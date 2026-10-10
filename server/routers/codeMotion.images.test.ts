@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const mock = vi.hoisted(() => ({
-  prepare: vi.fn(), submit: vi.fn(), list: vi.fn(), adopt: vi.fn(),
+  analyze: vi.fn(), prepare: vi.fn(), submit: vi.fn(), list: vi.fn(), adopt: vi.fn(),
   ensureGrant: vi.fn(), prepareGrant: vi.fn(), getGrant: vi.fn(),
 }));
+vi.mock("../services/codeMotionImageSemantic",()=>({analyzeCodeMotionImageSemantic:mock.analyze}));
 vi.mock("../services/codeMotionImages", () => ({
   prepareCodeMotionImages: mock.prepare, submitCodeMotionImages: mock.submit,
   listCodeMotionImages: mock.list, adoptCodeMotionImage: mock.adopt,
@@ -38,4 +39,14 @@ it("official submit reserves only after confirmation; restored batch does not re
   mock.getGrant.mockResolvedValue({ id: grantId });
   await api.imageSubmit(input); expect(mock.ensureGrant).toHaveBeenCalledTimes(1);
   await expect(api.imageAdopt({ projectId, grantId, index: 6 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+});
+
+it("confirmed semantic router binds owner, saved generation and grant, then rebuilds the reviewed image content",async()=>{
+ const api=codeMotionRouter.createCaller(ctx),input={projectId,expectedGeneration:"3",grantId};
+ mock.prepare.mockResolvedValue({shots:[{mode:"edit"}],fingerprint:"b".repeat(64)});
+ const result=await api.imageAnalyze(input);
+ expect(mock.analyze).toHaveBeenCalledWith("7",input);expect(mock.prepare).toHaveBeenCalledWith("7",input);expect(result.shots[0].mode).toBe("edit");
+ mock.ensureGrant.mockResolvedValue({id:"99999999-9999-4999-8999-999999999999"});
+ await expect(api.imageAnalyze(input)).rejects.toMatchObject({code:"CONFLICT"});expect(mock.analyze).toHaveBeenCalledTimes(1);
+ await expect(codeMotionRouter.createCaller({...ctx,user:null}).imageAnalyze(input)).rejects.toMatchObject({code:"UNAUTHORIZED"});
 });

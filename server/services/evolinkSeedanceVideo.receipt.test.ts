@@ -59,3 +59,16 @@ describe("EvoLink submit receipt boundary (fake HTTP, no paid generation)", () =
     }
   );
 });
+
+it("archives a completed provider poll before returning success, and persistence failure retains the same upstream task",async()=>{
+ vi.stubEnv("EVOLINK_API_KEY","technical-fixture-not-a-secret");
+ const {pollEvolinkVideoTaskOnce}=await import("./evolinkSeedanceVideo");
+ const body=JSON.stringify({id:"upstream-original",status:"completed",results:["https://example.test/output.mp4"]});
+ const fetch=vi.fn(async()=>new Response(body,{status:200}));vi.stubGlobal("fetch",fetch);
+ const persist=vi.fn(async()=>{});
+ const result=await pollEvolinkVideoTaskOnce("upstream-original","fixture",persist);
+ expect(result).toEqual({state:"completed",sourceUrl:"https://example.test/output.mp4"});
+ expect(persist).toHaveBeenCalledWith({status:200,body});
+ await expect(pollEvolinkVideoTaskOnce("upstream-original","fixture",async()=>{throw Error("storage-unavailable");})).rejects.toThrow("storage-unavailable");
+ expect(fetch.mock.calls).toHaveLength(2);
+});

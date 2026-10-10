@@ -27,6 +27,7 @@ export default function CodeMotionImageProduction({
   const projectId = project.id;
   const prepare = trpc.codeMotion.imagePrepare.useMutation();
   const submit = trpc.codeMotion.imageSubmit.useMutation();
+  const analyze = trpc.codeMotion.imageAnalyze.useMutation();
   const useImage = trpc.codeMotion.imageAdopt.useMutation();
   const batches = trpc.codeMotion.imageList.useQuery(
     { projectId },
@@ -71,6 +72,13 @@ export default function CodeMotionImageProduction({
       lock.current = false;
     }
   }
+  const needsSemantic =
+    !batches.data?.some(b => b.grantId === prepared?.grantId) &&
+    !!prepared?.shots.some(
+      s =>
+        s.preflight?.images.length &&
+        s.preflight.semanticAssessment === "not_performed"
+    );
   const button =
     "rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm disabled:opacity-50";
   return (
@@ -133,23 +141,65 @@ export default function CodeMotionImageProduction({
           </p>
           <p className="text-xs text-stone-600">
             {prepared.tier === "free"
-              ? "每个账号一次，提交生成后绑定本作品；刷新和恢复不会新开任务。"
+              ? "每个账号一次，确认核对或生成后绑定本作品；刷新和恢复不会新开任务。"
               : "沿用现有图片积分规则，仅提交尚未开始的固定任务。"}
           </p>
           <ol className="space-y-3">
             {prepared.shots.map(s => (
               <li key={s.requestId}>
                 <strong className="text-sm">{s.name}</strong>
-                {s.preflight && <p className="text-xs text-stone-600">{s.mode==="edit"?`原图需一次重绘（${s.referenceImageUrls?.length || 0}张参考）`:s.mode==="reuse"?"原图尺寸与画幅可用，沿用原素材，不新增生成":"此镜尚无原图，生成场景图"}。{s.preflight.reasons.join("；")} 已检查文件尺寸与画幅；尚未进行语义内容冲突分析。</p>}
+                {s.preflight && (
+                  <p className="text-xs text-stone-600">
+                    {s.mode === "edit"
+                      ? `原图需一次重绘（${s.referenceImageUrls?.length || 0}张参考）`
+                      : s.mode === "reuse"
+                        ? "原图尺寸与画幅可用，沿用原素材，不新增生成"
+                        : "此镜尚无原图，生成场景图"}
+                    。{s.preflight.reasons.join("；")}{" "}
+                    {s.preflight.semanticAssessment === "not_performed"
+                      ? "已检查文件尺寸与画幅；尚未进行语义内容冲突分析。"
+                      : s.preflight.semanticAssessment === "uncertain"
+                        ? "语义核对不确定，请人工核对，不据此自动重绘。"
+                        : `Gemini 3.8 Flash 已核对实际素材：${s.preflight.semanticAssessment === "conflict" ? "发现明确冲突" : "未发现明确冲突"}。`}
+                    {s.preflight.semanticFinding &&
+                      ` ${s.preflight.semanticFinding.observations.map(o => o.observation).join("；")}`}
+                    {s.preflight.semanticLimitations &&
+                      ` 核对限制：${s.preflight.semanticLimitations}`}
+                  </p>
+                )}
                 <p className="whitespace-pre-wrap text-xs leading-5 text-stone-700">
                   {s.prompt}
                 </p>
               </li>
             ))}
           </ol>
+          {needsSemantic && (
+            <div className="space-y-2 text-xs text-stone-600">
+              <p>
+                核对范围：本作品 {project.brief.images.length}{" "}
+                张原图、已采用原声音窗及参考影片，与已保存的文稿和镜头需求。每个制作授权仅核对一次，包含在本次制作中；有明确证据才建议一次重绘，分析后先展示修改内容。
+              </p>
+              <button
+                className={button}
+                disabled={disabled || busy}
+                onClick={() =>
+                  void run(async () => {
+                    const result = await analyze.mutateAsync({
+                      projectId,
+                      expectedGeneration: prepared.generation,
+                      grantId: prepared.grantId,
+                    });
+                    if (mounted.current) setPrepared(result);
+                  })
+                }
+              >
+                确认核对原图与音画需求
+              </button>
+            </div>
+          )}
           <button
             className={button}
-            disabled={disabled || busy}
+            disabled={disabled || busy || needsSemantic}
             onClick={() =>
               void run(async () => {
                 const result = await submit.mutateAsync({
@@ -204,15 +254,17 @@ export default function CodeMotionImageProduction({
               <div key={shot.jobId} className="space-y-2 rounded-lg border p-3">
                 <p className="text-sm font-medium">{shot.name}</p>
                 <p className="text-xs text-stone-600">
-                  {shot.status === "reused" ? "沿用原素材，未新增模型调用" : shot.status === "succeeded"
-                    ? "已生成，请预览后采用"
-                    : shot.status === "queued"
-                      ? "排队中"
-                      : shot.status === "running"
-                        ? "生成中"
-                        : shot.status === "not_started"
-                          ? "已保存，尚未开始"
-                          : shot.error || "结果待核对，不会自动重复生成"}
+                  {shot.status === "reused"
+                    ? "沿用原素材，未新增模型调用"
+                    : shot.status === "succeeded"
+                      ? "已生成，请预览后采用"
+                      : shot.status === "queued"
+                        ? "排队中"
+                        : shot.status === "running"
+                          ? "生成中"
+                          : shot.status === "not_started"
+                            ? "已保存，尚未开始"
+                            : shot.error || "结果待核对，不会自动重复生成"}
                 </p>
                 {shot.previewUrl && (
                   <a href={shot.previewUrl} target="_blank" rel="noreferrer">

@@ -101,6 +101,26 @@ async function setup() {
   } as unknown as CodeMotionSoundDeps;
   return { deps, storage };
 }
+it("沿漫剧音色库逐镜编译情绪，回执保存语气，改情绪不能复用旧配音", async () => {
+  const { deps, storage } = await setup();
+  const emotional = structuredClone(project);
+  emotional.plan!.scenes[0].speech!.emotion = "[tired][very fast]";
+  await saveCodeMotion("1", emotional, "1", storage);
+  const r = { ...request, emotion: "[tired][very fast]" };
+  await submitCodeMotionSound("1", projectId, "2", r, deps);
+  expect(deps.speech).toHaveBeenCalledWith(1, expect.objectContaining({
+    input: "[tired][very fast]欢迎光临", voice: "longanlingxin", voiceStateZh: "[tired][very fast]",
+  }));
+  const source = await adoptCodeMotionSound("1", projectId, requestId, 0, deps);
+  expect(source.generated?.emotion).toBe(r.emotion);
+  const adopted = adoptCodeMotionSoundInProject(emotional, source);
+  expect(() => compileCodeMotion(adopted.brief, adopted.plan)).not.toThrow();
+  adopted.plan!.scenes[0].speech!.emotion = "[empathetic]";
+  expect(() => compileCodeMotion(adopted.brief, adopted.plan)).toThrow("配音");
+  expect(() => adoptCodeMotionSoundInProject(adopted, source)).toThrow("旁白内容已变化");
+  await expect(submitCodeMotionSound("1", projectId, "2", { ...r, emotion: "[warm]" }, deps)).rejects.toThrow("情绪");
+  expect(deps.speech).toHaveBeenCalledTimes(1);
+});
 it("已保存镜头→既有Qwen入口→刷新恢复→采用→保存再打开→正式编译消费同一音源", async () => {
   const { deps, storage } = await setup();
   await submitCodeMotionSound("1", projectId, "1", request, deps);

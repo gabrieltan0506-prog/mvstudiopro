@@ -1,6 +1,6 @@
 import { codeMotionTimingSchema, validateCodeMotionTimingSource, applyCodeMotionTiming } from "./codeMotionTiming";
 import { z } from "zod";
-import { CODE_MOTION_AUDIO_SOURCE_LIMIT } from "./codeMotionMedia";
+import { CODE_MOTION_AUDIO_SOURCE_LIMIT, codeMotionEmotionSchema } from "./codeMotionMedia";
 import { codeMotionVideoSchema, validateCodeMotionVideo } from "./codeMotionVideo";
 import { artMotionSpecSchema, type ArtMotionSpec } from "./artMotion";
 import {
@@ -111,6 +111,7 @@ export const codeMotionPlanSchema = z
               .object({
                 text: z.string().trim().max(180),
                 voice: z.enum(["female", "male"]),
+                emotion: codeMotionEmotionSchema.optional(),
               })
               .strict()
               .optional(),
@@ -224,7 +225,8 @@ export function compileCodeMotion(
             audio.generated?.kind === "speech" &&
             audio.generated.sceneIndex === index &&
             audio.generated.text === scene.speech!.text.trim() &&
-            audio.generated.voice === scene.speech!.voice
+            audio.generated.voice === scene.speech!.voice &&
+            (audio.generated.emotion || "") === (scene.speech!.emotion || "")
         );
         const clip =
           source &&
@@ -239,7 +241,7 @@ export function compileCodeMotion(
           );
         if (!clip || clip.duration > scene.duration + 1e-6)
           throw new Error(
-            `第${index + 1}镜配音尚未生成并完整选用，或台词/音色/时长已修改；请在声音区处理后再预览或导出`
+            `第${index + 1}镜配音尚未生成并完整选用，或台词/音色/情绪/时长已修改；请在声音区处理后再预览或导出`
           );
       }
       at += scene.duration;

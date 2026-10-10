@@ -1,0 +1,12 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ client/src/lib/codeMotionRevision.browser.test.ts (2 tests) 12583ms
+   ✓ official free revision dialog cancels without a request and confirms once with locked cost or remaining allowance 8113ms
+   ✓ official paid revision dialog cancels without a request and confirms once with locked cost or remaining allowance 4464ms
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  04:38:27
+   Duration  14.47s (transform 86ms, setup 0ms, collect 691ms, tests 12.58s, environment 0ms, prepare 161ms)
+

@@ -1,6 +1,7 @@
 /** 映客音源：先持久化作品绑定，再调用已有的配音／Suno生产与计费路径。 */
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { compileCanvasDialogueInput } from "../../shared/canvasDialogueControls";
 import {
   codeMotionSoundRequestSchema,
   CODE_MOTION_VOICES,
@@ -85,18 +86,18 @@ function speechInput(
 ): CanvasDialogueInput {
   return {
     billingRequestId: r.requestId,
-    input: r.text,
+    input: compileCanvasDialogueInput(r.text, r.emotion || ""),
     voice: CODE_MOTION_VOICES[r.voice],
     speakerZh: `画面${r.sceneIndex + 1}旁白`,
     speakerId: `ink:${projectId}:${r.sceneIndex}`,
-    voiceStateZh: "",
+    voiceStateZh: r.emotion || "",
   };
 }
 function assertScene(project: CodeMotionProject, r: CodeMotionSoundRequest) {
   if (!project.plan) throw new Error("请先完成并保存画面安排");
   if (r.kind === "speech") {
     const speech = project.plan.scenes[r.sceneIndex]?.speech;
-    if (!speech || speech.text.trim() !== r.text || speech.voice !== r.voice)
+    if (!speech || speech.text.trim() !== r.text || speech.voice !== r.voice || (speech.emotion || "") !== (r.emotion || ""))
       throw new Error("旁白已修改，请先保存并核对本次内容");
   }
 }
@@ -262,7 +263,7 @@ export async function adoptCodeMotionSound(
       requestId,
       kind: r.kind,
       ...(r.kind === "speech"
-        ? { sceneIndex: r.sceneIndex, text: r.text, voice: r.voice }
+        ? { sceneIndex: r.sceneIndex, text: r.text, voice: r.voice, ...(r.emotion ? { emotion: r.emotion } : {}) }
         : {}),
     },
   });

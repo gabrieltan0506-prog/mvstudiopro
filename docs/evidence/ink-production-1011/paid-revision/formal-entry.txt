@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ server/services/codeMotionProductionVideo.test.ts (7 tests | 5 skipped) 17ms
+
+ Test Files  1 passed (1)
+      Tests  2 passed | 5 skipped (7)
+   Start at  04:38:02
+   Duration  5.17s (transform 1.59s, setup 0ms, collect 4.02s, tests 17ms, environment 0ms, prepare 264ms)
+

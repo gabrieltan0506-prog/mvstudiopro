@@ -217,7 +217,29 @@ export async function prepareCodeMotionProductionVideo(
     (canUsePaidVideoByPlan(await getUserPlan(Number(userId)))
       ? "paid"
       : "free");
-  const shots = planCodeMotionProductionVideo(saved.project, tier);
+  let shots = planCodeMotionProductionVideo(saved.project, tier);
+  if (tier === "free" && shots.length > 2)
+    throw new Error(
+      "免费作品最多生成2个各不超过5秒的动作镜头，请先将其余镜头改为代码画面"
+    );
+  if (grant?.revision) {
+    shots = shots.filter(s =>
+      grant.revision!.sceneIndexes.includes(s.sceneIndex)
+    );
+    if (grant.revision.mode === "paid_video") {
+      const { getCodeMotionRevisionPrice } = await import(
+        "./codeMotionRevision"
+      );
+      const quote = await getCodeMotionRevisionPrice(userId, input.projectId);
+      if (!quote || shots.length !== 1) throw new Error("局部修改报价无法恢复");
+      shots[0].credits = quote.credits;
+      if (
+        codeMotionProductionDigest(shots[0]) !==
+        codeMotionProductionDigest(quote.shot)
+      )
+        throw new Error("动作修改内容已超出确认报价，请恢复原版本");
+    }
+  }
   const fingerprint = codeMotionProductionDigest({
     projectId: input.projectId,
     shots,
@@ -369,6 +391,12 @@ export async function submitCodeMotionProductionVideo(
             resolution: shot.resolution,
             videoModel: shot.model,
             label: taskInput.label,
+            ...(grant.revision?.mode === "paid_video"
+              ? {
+                  pricingMode: "inkRevisionVideo" as const,
+                  inkRevisionSlot: slot,
+                }
+              : {}),
           });
     if (!charged.ok) {
       await releaseCanvasIntentAfterChargeFailure({
@@ -595,6 +623,16 @@ export async function assertCodeMotionProductionVideoTask(
   const slot = task.inkProduction;
   if (!slot) return;
   const grant = await assertCodeMotionProductionSlot(String(task.userId), slot);
+  if (grant.revision?.mode === "paid_video") {
+    const { codeMotionRevisionCharge } = await import(
+      "./codeMotionRevisionPricing"
+    );
+    if (
+      task.creditsCharged !==
+      (await codeMotionRevisionCharge(String(task.userId), slot))
+    )
+      throw new Error("局部修改扣费未匹配报价，未提交供应商");
+  }
   const manifest = await readManifest(String(task.userId), slot.projectId);
   const shot = manifest?.shots.find(s => s.sceneIndex === slot.index);
   if (
@@ -624,7 +662,9 @@ export async function assertCodeMotionProductionVideoTask(
     JSON.stringify(task.videoUrls || []) !== JSON.stringify(shot.videoUrls) ||
     JSON.stringify(task.audioUrls || []) !==
       JSON.stringify(audio ? [audio.uri] : []) ||
-    (grant.tier === "free" && task.creditsCharged !== 0)
+    (grant.tier === "free" && task.creditsCharged !== 0) ||
+    (grant.revision?.mode === "paid_video" &&
+      task.creditsCharged !== shot.credits)
   )
     throw new Error("视频制作参数或账务与本次授权不一致");
 }

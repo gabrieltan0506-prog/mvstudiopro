@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({
   tier: "free" as "free" | "paid",
+  revisionPrice: null as any,
   project: null as any,
   files: new Map<string, Buffer>(),
   tasks: new Map<string, any>(),
@@ -42,10 +43,11 @@ vi.mock("./codeMotionProductionGrant", async importOriginal => {
     getCodeMotionProductionGrant: vi.fn(async () => ({
       id: "33333333-3333-4333-8333-333333333333",
       tier: state.tier,
+      ...(state.revisionPrice ? {revision:{mode:"paid_video",sceneIndexes:[0],quoteFingerprint:state.revisionPrice.fingerprint}} : {}),
     })),
     ensureCodeMotionProductionGrant: vi.fn(async () => {
       state.calls.push("grant");
-      return { id: "33333333-3333-4333-8333-333333333333", tier: state.tier };
+      return { id: "33333333-3333-4333-8333-333333333333", tier: state.tier,...(state.revisionPrice ? {revision:{mode:"paid_video",sceneIndexes:[0]}} : {}) };
     }),
     reserveCodeMotionProductionSlot: vi.fn(async () => {
       state.calls.push("slot");
@@ -54,6 +56,7 @@ vi.mock("./codeMotionProductionGrant", async importOriginal => {
     assertCodeMotionProductionSlot: vi.fn(async () => ({ tier: state.tier })),
   };
 });
+vi.mock("./codeMotionRevision",()=>({getCodeMotionRevisionPrice:async()=>state.revisionPrice}));
 vi.mock("./codeMotionProductionAudio", () => ({
   codeMotionProductionAudioFingerprint: () => "fixture-audio-hash",
   prepareCodeMotionProductionAudio: vi.fn(
@@ -107,7 +110,7 @@ vi.mock("../../api/jobs", () => ({
   releaseCanvasIntentAfterChargeFailure: vi.fn(),
   chargeCanvasVideoCredits: vi.fn(async () => {
     state.calls.push("charge");
-    return { ok: true, userId: 7, credits: 130 };
+    return { ok: true, userId: 7, credits: state.revisionPrice ? 37 : 130 };
   }),
   refundCanvasChargeOnCreateFail: vi.fn(),
 }));
@@ -168,6 +171,7 @@ function project() {
 beforeEach(() => {
   vi.clearAllMocks();
   state.tier = "free";
+  state.revisionPrice=null;
   state.project = project();
   state.files.clear();
   state.tasks.clear();
@@ -301,4 +305,25 @@ describe("映客正式视频生产入口", () => {
     expect(shot.imageUrls).toEqual([state.project.brief.images[0].gcsUri]);
     expect(shot.missing).not.toContain("请先生成并采用本镜场景图");
   });
+});
+
+it("paid revision submits only its selected shot via original intent/charge/task and restores without a second charge",async()=>{
+ state.tier="paid";
+ const shot=planCodeMotionProductionVideo(state.project,"paid")[0];shot.credits=37;
+ state.revisionPrice={fingerprint:"a".repeat(64),credits:37,shot};
+ state.project.plan.scenes[1]={...state.project.plan.scenes[0],heading:"保留的另一个动作镜"};
+ const prepared=await prepareCodeMotionProductionVideo("7",{projectId:id,expectedGeneration:"1"});
+ expect(prepared.shots).toHaveLength(1);expect(prepared.totalCredits).toBe(37);
+ const input={projectId:id,expectedGeneration:"1",confirmedFingerprint:prepared.fingerprint};
+ await submitCodeMotionProductionVideo("7",input,{} as any);
+ await submitCodeMotionProductionVideo("7",input,{} as any);
+ expect(chargeCanvasVideoCredits).toHaveBeenCalledTimes(1);
+ expect(vi.mocked(chargeCanvasVideoCredits).mock.calls[0][1]).toMatchObject({pricingMode:"inkRevisionVideo",inkRevisionSlot:{kind:"video",index:0}});
+ expect(createCanvasVideoTask).toHaveBeenCalledTimes(1);
+ expect(vi.mocked(createCanvasVideoTask).mock.calls[0][0]).toMatchObject({creditsCharged:37,engine:"seedance25-evolink",resolution:"720p"});
+});
+it("free prepare rejects three natural shots before any intent, charge or upstream work",async()=>{
+ state.project.plan.scenes.forEach((scene:any,index:number)=>{if(index<3){scene.imageId=imageId;scene.production.motion="natural";}});
+ await expect(prepareCodeMotionProductionVideo("7",{projectId:id,expectedGeneration:"1"})).rejects.toThrow("最多生成2");
+ expect(state.calls).toEqual([]);
 });

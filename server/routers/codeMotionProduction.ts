@@ -14,6 +14,7 @@ import {
 import {
   codeMotionRevisionInputSchema,
   quoteCodeMotionRevision,
+  prepareCodeMotionRevision,
   submitCodeMotionRevision,
 } from "../services/codeMotionRevision";
 const project = z.object({ projectId: z.string().uuid() });
@@ -25,6 +26,11 @@ export const codeMotionProductionRouter = router({
     .input(project)
     .query(({ ctx, input }) =>
       quoteCodeMotionRevision(String(ctx.user.id), input.projectId)
+    ),
+  revisionPrepare: protectedProcedure
+    .input(codeMotionRevisionInputSchema)
+    .mutation(({ ctx, input }) =>
+      prepareCodeMotionRevision(String(ctx.user.id), input)
     ),
   revisionSubmit: protectedProcedure
     .input(codeMotionRevisionInputSchema)

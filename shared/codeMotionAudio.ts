@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CODE_MOTION_AUDIO_SOURCE_LIMIT } from "./codeMotionMedia";
+import { CODE_MOTION_AUDIO_SOURCE_LIMIT, codeMotionEmotionSchema } from "./codeMotionMedia";
 
 export const CODE_MOTION_AUDIO_MAX_BYTES = 64 * 1024 * 1024;
 export const CODE_MOTION_AUDIO_MAX_SECONDS = 180;
@@ -32,6 +32,7 @@ export const codeMotionAudioSourceSchema = z
         sceneIndex: z.number().int().min(0).max(11).optional(),
         text: z.string().max(180).optional(),
         voice: z.enum(["female", "male"]).optional(),
+        emotion: codeMotionEmotionSchema.optional(),
       })
       .strict()
       .optional(),

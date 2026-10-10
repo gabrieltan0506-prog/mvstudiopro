@@ -1,4 +1,4 @@
-import { MANHUA_VFX_CREDITS_PER_15_SECONDS, quoteManhuaVfxCredits } from "@shared/manhuaVfxPricing";
+import { MANHUA_VFX_CREDITS_PER_15_SECONDS, manhuaVfxCreditLabel, quoteManhuaVfxCredits } from "@shared/manhuaVfxPricing";
 import type { ManhuaVfxEnvironmentOption } from "@shared/manhuaVfxEnvironment";
 import { deriveManhuaVfxChoreographySpec } from "@shared/manhuaVfxChoreography";
 import { isManhuaVfxSceneKind } from "@shared/manhuaVfxCityFold";
@@ -80,6 +80,7 @@ export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], sce
   const source = draft && clips.find(clip => clip.id === draft.sourceId);
   const currentSource = Boolean(source && draft && manhuaVfxSourceKey(source) === draft.sourceKey);
   const sourceUrl = currentSource ? source!.url : "";
+  const hasUnpricedEffect = draft?.composition.effects.some(effect => MANHUA_VFX_CREDITS_PER_15_SECONDS[effect.kind] == null);
   let creditQuote: ReturnType<typeof quoteManhuaVfxCredits> | undefined;
   try { if (currentSource && draft) creditQuote = quoteManhuaVfxCredits(draft.composition.effects.map(effect => effect.kind), durationSec); }
   catch { /* 时长或草案尚未有效时不展示报价。 */ }
@@ -370,7 +371,7 @@ export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], sce
           if (isManhuaVfxSceneKind(effect.kind)) effect.startSec = Math.max(0, ...draft.composition.effects.map(item => item.startSec + item.durationSec));
           const effects = isManhuaVfxPixelKind(effect.kind) ? [effect, ...draft.composition.effects] : [...draft.composition.effects, effect];
           setDraft({ ...draft, composition: { ...draft.composition, effects } }); setSelectedEffectId(effect.id);
-        }}><option value="">＋ 添加特效</option>{Object.entries(LABELS).map(([kind, label]) => <option key={kind} value={kind}>{label} · {MANHUA_VFX_CREDITS_PER_15_SECONDS[kind as ManhuaVfxEffect["kind"]]}积分/15秒</option>)}</select>
+        }}><option value="">＋ 添加特效</option>{Object.entries(LABELS).map(([kind, label]) => <option key={kind} value={kind}>{label} · {manhuaVfxCreditLabel(kind as ManhuaVfxEffect["kind"])}</option>)}</select>
       </div>
       <div aria-label="特效图层" className="flex flex-wrap gap-1.5">{draft.composition.effects.map((effect, index) => <button key={effect.id} type="button" aria-pressed={effect.id === selectedEffect?.id} className={`rounded border px-2 py-1.5 text-xs ${effect.id === selectedEffect?.id ? "border-cyan-300/50 bg-cyan-400/15 text-cyan-100" : "border-white/15 text-white/55"}`} onClick={() => setSelectedEffectId(effect.id)}>{index + 1}. {LABELS[effect.kind]}</button>)}</div>
       <div className="space-y-2">{draft.composition.effects.map((effect, index) => <fieldset key={effect.id} hidden={effect.id !== selectedEffect?.id} disabled={locked} className={`space-y-2 rounded border p-3 ${selectedEffect?.id === effect.id ? "border-cyan-300/40" : "border-white/15"}`} onFocus={() => setSelectedEffectId(effect.id)}>
@@ -403,7 +404,7 @@ export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], sce
         </div>
         {!isManhuaVfxSceneKind(effect.kind) ? <details><summary className="cursor-pointer text-[11px] text-cyan-200">手动运动轨迹（可选）</summary><p className="my-1 text-[11px] text-white/50">每行填写「整片秒数 横向位置 纵向位置」，至少两行且时间递增；位置取0至1。不填写时固定在上方位置。</p><textarea aria-label={`第${index + 1}个特效轨迹`} rows={3} className={controlClass} placeholder="0 0.2 0.5&#10;1 0.8 0.5" value={trajectoryText[effect.id] ?? effect.anchor.trajectory?.map(point => `${point.timeSec} ${point.x} ${point.y}`).join("\n") ?? ""} onChange={event => setTrajectoryText({ ...trajectoryText, [effect.id]: event.target.value })} /></details> : null}
       </fieldset>)}</div>
-      <p aria-label="特效积分标价" className="text-xs text-white/65">{creditQuote ? `本片标价 ${creditQuote.credits} 积分 · ${durationSec.toFixed(2)}秒` : "读取原片时长后显示本片标价"}。多层取最高单价；超过30秒后的不足15秒尾段半价。当前尚未启用积分扣费。</p>
+      <p aria-label="特效积分标价" className="text-xs text-white/65">{creditQuote ? `本片标价 ${creditQuote.credits} 积分 · ${durationSec.toFixed(2)}秒` : hasUnpricedEffect ? "此方案含未核价特效，暂不提供报价" : "读取原片时长后显示本片标价"}。多层取最高单价；超过30秒后的不足15秒尾段半价。当前尚未启用积分扣费。</p>
       <div className="flex flex-wrap gap-2"><button type="button" className={buttonClass} disabled={locked || !onStateChange} onClick={() => void saveDraft()}>保存方案</button><button type="button" className={buttonClass} disabled={locked || pending || !onStateChange || !currentSource || Boolean(sourceError) || !durationSec} onClick={() => void submit()}>{saving ? <Loader2 className="mr-1 inline h-3 w-3 animate-spin" /> : null}渲染特效候选</button></div>
     </> : <p className="text-xs leading-relaxed text-white/45">选定原片后可添加效果、设置时间与位置，再生成候选。</p>}
     </div></div>

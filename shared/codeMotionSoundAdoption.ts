@@ -17,7 +17,8 @@ export function adoptCodeMotionSoundInProject(
     generated.kind === "speech" &&
     (!scene ||
       scene.speech?.text.trim() !== generated.text ||
-      scene.speech?.voice !== generated.voice)
+      scene.speech?.voice !== generated.voice ||
+      (scene.speech?.emotion || "") !== (generated.emotion || ""))
   )
     throw new Error("旁白内容已变化，请使用对应版本的音源");
   if (scene && source.duration > scene.duration)
