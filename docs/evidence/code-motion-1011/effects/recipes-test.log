@@ -1,0 +1,14 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ shared/codeMotionEffects.test.ts > workbench code effect recipes > keeps columns aligned and annotations accumulated through the formal save/restore/compile path 641ms
+ ✓ shared/codeMotionEffects.test.ts > workbench code effect recipes > retains earlier square full pages while later pages enter in deterministic depth order 746ms
+ ✓ shared/codeMotionEffects.test.ts > workbench code effect recipes > does not touch a scene covered even partially by an original video, or replace the saved video 385ms
+ ✓ shared/codeMotionEffects.test.ts > workbench code effect recipes > rejects missing materials and capacity atomically without inventing content
+ ✓ shared/codeMotionEffects.test.ts > workbench code effect recipes > image reveal preserves original identity, fit and non-reveal motion, including easing collisions 507ms
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  07:05:51
+   Duration  13.88s (transform 2.90s, setup 0ms, collect 5.24s, tests 2.53s, environment 0ms, prepare 559ms)
+

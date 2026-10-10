@@ -9,6 +9,7 @@ const kinds = {
   shape: "图形",
   path: "线条",
   particles: "粒子",
+  pointMorph: "3D粒子变形",
   mesh: "空间几何",
   image: "图片",
 } as const;
@@ -22,6 +23,7 @@ const numeric = [
   "rotationY",
   "opacity",
   "reveal",
+  "morph",
 ] as const;
 export function makeCodeMotionScene(
   id: string,
@@ -134,9 +136,19 @@ export default function CodeMotionSceneEditor({
               }
             : type === "particles"
               ? { seed: 1, motion: "orbit" }
-              : type === "mesh"
-                ? { geometry: "box" }
-                : { imageId: images[0]?.id };
+              : type === "pointMorph"
+                ? {
+                    seed: 1,
+                    from: "sphere",
+                    to: "torus",
+                    keyframes: [
+                      { at: 0, morph: 0 },
+                      { at: scene.duration, morph: 1, ease: "easeInOut" },
+                    ],
+                  }
+                : type === "mesh"
+                  ? { geometry: "box" }
+                  : { imageId: images[0]?.id };
     if (type === "image" && !images.length) return;
     const value = {
       ...scene,
@@ -329,6 +341,28 @@ export default function CodeMotionSceneEditor({
                   <option value="octahedron">八面体</option>
                 </select>
               </label>
+            )}
+            {element.type === "pointMorph" && (
+              <div className="grid grid-cols-2 gap-2">
+                {(["from", "to"] as const).map(key => (
+                  <label className="text-xs" key={key}>
+                    {key === "from" ? "起始形状" : "目标形状"}
+                    <select
+                      aria-label={`元素${i + 1}${key}`}
+                      className={field}
+                      value={element[key]}
+                      onChange={e => update(i, { [key]: e.target.value })}
+                    >
+                      <option value="sphere">球体</option>
+                      <option value="torus">圆环</option>
+                      <option value="helix">螺旋</option>
+                    </select>
+                  </label>
+                ))}
+                <p className="col-span-2 text-xs text-stone-500">
+                  纯代码三维点云；在动作节点中调整变形比例，不生成付费模型。
+                </p>
+              </div>
             )}
             {element.type === "shape" && (
               <label className="block text-xs">
@@ -591,6 +625,7 @@ export default function CodeMotionSceneEditor({
                             rotationY: "左右旋转",
                             opacity: "不透明度",
                             reveal: "显现比例",
+                            morph: "变形比例",
                           }[key]
                         }
                         <input
@@ -642,6 +677,7 @@ export default function CodeMotionSceneEditor({
                         scale: element.transform.scale ?? 1,
                         rotation: element.transform.rotation ?? 0,
                         opacity: 1,
+                        ...(element.type === "pointMorph" ? { morph: 1 } : {}),
                       },
                     ].sort((a, b) => a.at - b.at),
                   })

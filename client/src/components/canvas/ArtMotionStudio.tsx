@@ -309,6 +309,19 @@ export function ArtMotionStudio({ scopeKey, blocks, onCreate, onSave }: Props) {
           {open ? "收起" : "打开工作台"}
         </button>
       </div>
+      <div className="mt-3 rounded-lg border border-stone-200 bg-stone-50 p-3">
+        <a
+          className="text-sm font-medium underline"
+          href="/yingke"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          图片／音讯代码特效 · 打开映客
+        </a>
+        <p className="mt-1 text-xs leading-5 text-stone-600">
+          在新分页选择图片与声音、整理逐镜画面，再采用效果并保存。当前动画方案保留在此，不会自动导入映客。
+        </p>
+      </div>
       {open && (
         <div className="mt-4 space-y-4">
           <div className="flex flex-wrap gap-2">

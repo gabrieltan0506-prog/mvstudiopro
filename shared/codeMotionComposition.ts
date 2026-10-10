@@ -22,6 +22,7 @@ const values = {
   rotationY: n(-3600, 3600).optional(),
   opacity: n(0, 1).optional(),
   reveal: n(0, 1).optional(),
+  morph: n(0, 1).optional(),
   fill: color.optional(),
   stroke: color.optional(),
 };
@@ -81,6 +82,16 @@ const particles = base.extend({
   motion: z.enum(["drift", "burst", "orbit"]).default("drift"),
   depth: n(0, 3).default(0),
 });
+// Procedural XYZ point sets only: no external geometry or executable code.
+const pointMorph = base.extend({
+  type: z.literal("pointMorph"),
+  from: z.enum(["sphere", "torus", "helix"]).default("sphere"),
+  to: z.enum(["sphere", "torus", "helix"]).default("torus"),
+  count: z.number().int().min(1).max(300).default(200),
+  seed: z.number().int().min(0).max(2147483647).default(1),
+  spread: n(0.01, 3).default(0.4),
+  size: n(0.0005, 0.05).default(0.004),
+});
 const mesh = base.extend({
   type: z.literal("mesh"),
   geometry: z.enum(["box", "tetrahedron", "octahedron"]),
@@ -94,6 +105,8 @@ const imageFields = {
   width: n(0.01, 4).default(0.5),
   height: n(0.01, 4).default(0.5),
   fit: z.enum(["contain", "cover"]).default("contain"),
+  // The direction names the edge revealed first; progress uses reveal keyframes.
+  revealDirection: z.enum(["left", "right", "top", "bottom"]).optional(),
 };
 const image = base.extend({
   type: z.literal("image"),
@@ -113,6 +126,7 @@ export const codeMotionElementSchema = z.discriminatedUnion("type", [
   shape,
   path,
   particles,
+  pointMorph,
   mesh,
   image,
 ]);
@@ -121,6 +135,7 @@ export const codeMotionPlanElementSchema = z.discriminatedUnion("type", [
   shape,
   path,
   particles,
+  pointMorph,
   mesh,
   planImage,
 ]);
@@ -131,6 +146,8 @@ const cameraValues = {
   rotationX: n(-85, 85).optional(),
   rotationY: n(-180, 180).optional(),
   zoom: n(0.1, 8).optional(),
+  orbitX: n(-85, 85).optional(),
+  orbitY: n(-3600, 3600).optional(),
 };
 const camera = z
   .object({
@@ -199,7 +216,7 @@ function validateScene(
         transform: Record<string, unknown>;
       };
       return (
-        !["mesh", "particles"].includes(element.type) &&
+        !["mesh", "particles", "pointMorph"].includes(element.type) &&
         [element.transform, ...element.keyframes].some(
           k => "rotationX" in k || "rotationY" in k
         )
@@ -207,6 +224,19 @@ function validateScene(
     })
   )
     fail("二维元素不支持X/Y轴旋转，请改用三维几何体或粒子");
+  if (
+    v.elements.some(e => {
+      const element = e as typeof e & {
+        type: string;
+        transform: Record<string, unknown>;
+      };
+      return (
+        element.type !== "pointMorph" &&
+        [element.transform, ...element.keyframes].some(k => "morph" in k)
+      );
+    })
+  )
+    fail("morph仅支持程序三维点云元素");
   if (v.camera && !ordered(v.camera.keyframes))
     fail("相机关键帧须递增且在本镜头内");
   if (v.transition && v.transition.duration > v.duration / 2)
@@ -238,7 +268,11 @@ export const codeMotionCompositionSchema = z
       v.scenes.some(
         s =>
           s.elements.reduce(
-            (n, e) => n + (e.type === "particles" ? e.count : 0),
+            (n, e) =>
+              n +
+              (["particles", "pointMorph"].includes(e.type) && "count" in e
+                ? e.count
+                : 0),
             0
           ) > 1500
       )
@@ -333,6 +367,7 @@ export function retimeCodeMotionPlanScene(
   });
 }
 /** 模型提示词与渲染器共同遵守的字段说明；时间以每镜起点为0的绝对秒数表达。 */
-export const CODE_MOTION_COMPOSITION_GUIDE = `composition逐镜JSON：{id,duration,background?:#RRGGBB,camera?,transition?,elements:[...]}。禁止代码、HTML、URL、任意字段。元素id跨镜稳定；continuity=carry只承接上一镜同id同type最终变换及粒子运动时钟，否则reset；文字/形状属性和相机仍需逐镜明确提供。每元素start/end和keyframes[].at均为本镜头内绝对秒数，关键帧严格递增。transform与keyframe可设x/y（画幅归一化，默认0.5中心）、z（朝向镜头为正）、scale/scaleX/scaleY、rotation（度），mesh/particles另可设rotationX/rotationY（度）、opacity/reveal（0到1）、fill/stroke（#RRGGBB）；ease为linear/easeIn/easeOut/easeInOut/step，作用于到达该关键帧。layer=-100..100，blend=normal/multiply/screen/add。
-元素type=text：text,fontSize(画布短边比例),font=sans/serif/mono,weight=normal/bold,align=left/center/right,maxWidth(画幅宽比例),lineHeight,letterSpacing(短边比例)，reveal按字符显现。type=shape：shape=rect/ellipse/triangle/line,width/height(画幅比例),radius(短边比例),filled,strokeWidth(短边比例)。type=path：points为相对元素中心的归一化[x,y]数组，closed/filled/strokeWidth，reveal控制描边长度。type=image：imageId必须是本次图片UUID，width/height/fit=contain或cover，禁止模型提供imageUri。type=particles：count<=300,seed固定整数,spread/speed/size,motion=drift/burst/orbit,depth；按绝对时间确定性求值。type=mesh：geometry=box/tetrahedron/octahedron,width/height/depth,wireframe/strokeWidth，受控凸几何三维透视，不含人物骨骼/碰撞物理。
-相机camera可设x/y（默认0.5）,z（默认4，0.2..20）,rotationX(-85..85)/rotationY(-180..180),zoom(0.1..8),keyframes（同字段和at/ease）。transition={type:cut/fade/slideLeft/wipe/zoom,duration<=2且<=镜长一半}用于进入本镜，不增加总片长。每镜<=48元素且粒子总数<=1500、每元素<=64关键帧、path<=128点，映客计划最多12镜、总元素<=512。每镜duration必须等于对应计划时长。`;
+export const CODE_MOTION_COMPOSITION_GUIDE = `composition逐镜JSON：{id,duration,background?:#RRGGBB,camera?,transition?,elements:[...]}。禁止代码、HTML、URL、任意字段。元素id跨镜稳定；continuity=carry只承接上一镜同id同type最终变换及粒子运动时钟，否则reset；文字/形状属性和相机仍需逐镜明确提供。每元素start/end和keyframes[].at均为本镜头内绝对秒数，关键帧严格递增。transform与keyframe可设x/y（画幅归一化，默认0.5中心）、z（朝向镜头为正）、scale/scaleX/scaleY、rotation（度），mesh/particles/pointMorph另可设rotationX/rotationY（度）、opacity/reveal（0到1）、fill/stroke（#RRGGBB）；ease为linear/easeIn/easeOut/easeInOut/step，作用于到达该关键帧。layer=-100..100，blend=normal/multiply/screen/add。
+元素type=text：text,fontSize(画布短边比例),font=sans/serif/mono,weight=normal/bold,align=left/center/right,maxWidth(画幅宽比例),lineHeight,letterSpacing(短边比例)，reveal按字符显现。type=shape：shape=rect/ellipse/triangle/line,width/height(画幅比例),radius(短边比例),filled,strokeWidth(短边比例)。type=path：points为相对元素中心的归一化[x,y]数组，closed/filled/strokeWidth，reveal控制描边长度。type=image：imageId必须是本次图片UUID，width/height/fit=contain或cover，禁止模型提供imageUri。type=particles：count<=300,seed固定整数,spread/speed/size,motion=drift/burst/orbit,depth；按绝对时间确定性求值。type=pointMorph：from/to=sphere/torus/helix,count<=300,seed固定整数,spread/size；真实等点数XYZ按transform/keyframes.morph(0..1)插值，不是GLB或3DGS；未设morph保持起点。type=mesh：geometry=box/tetrahedron/octahedron,width/height/depth,wireframe/strokeWidth，受控凸几何三维透视，不含人物骨骼/碰撞物理。
+图片可选revealDirection=left/right/top/bottom，表示先显露的边；transform/keyframes.reveal从0到1控制图片元素局部矩形揭示，不缩放或挤压图片，保留contain/cover裁切。未设置revealDirection时保留旧行为。前后对比可叠两张同尺寸同位置图片，仅上层启用揭示；这不是整镜转场。
+相机camera可设x/y（默认0.5）,z（默认4，0.2..20）,rotationX(-85..85)/rotationY(-180..180),zoom(0.1..8),orbitX(-85..85)/orbitY(-3600..3600)绕x/y对应的z=0目标环绕，z为距离，keyframes（同字段和at/ease）。transition={type:cut/fade/slideLeft/wipe/zoom,duration<=2且<=镜长一半}用于进入本镜，不增加总片长。每镜<=48元素且粒子总数<=1500、每元素<=64关键帧、path<=128点，映客计划最多12镜、总元素<=512。每镜duration必须等于对应计划时长。`;

@@ -69,6 +69,38 @@ async function number(page: Page, label: string, value: string) {
     { label, value }
   );
 }
+
+it("程序3D粒子可添加、选择形状与保存动画节点", async () => {
+  const { page, errors } = await open();
+  try {
+    await page.evaluate(() => {
+      const button = Array.from(document.querySelectorAll("button")).find(
+        b => b.textContent?.trim() === "添加3D粒子变形"
+      );
+      if (!button) throw Error("missing pointMorph entry");
+      button.click();
+    });
+    await page.waitForSelector('[aria-label="元素4to"]');
+    await page.evaluate(() =>
+      document.querySelectorAll("details").forEach(e => (e.open = true))
+    );
+    await page.select('[aria-label="元素4to"]', "helix");
+    const result = await page.evaluate(() => (window as any).fixture);
+    expect(result.valid).toBe(true);
+    expect(result.scene.elements[3]).toMatchObject({
+      type: "pointMorph",
+      from: "sphere",
+      to: "helix",
+      keyframes: [
+        { at: 0, morph: 0 },
+        { at: 4, morph: 1 },
+      ],
+    });
+    expect(errors).toEqual([]);
+  } finally {
+    await page.close();
+  }
+});
 it("几何、图形、粒子参数及秒窗层级写回真实场景schema", async () => {
   const { page, errors } = await open();
   try {

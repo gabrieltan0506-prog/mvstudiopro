@@ -14,6 +14,7 @@
     rotationY: 0,
     opacity: 1,
     reveal: 1,
+    morph: 0,
     fill: "#26354a",
     stroke: "#26354a",
   };
@@ -24,6 +25,8 @@
     rotationX: 0,
     rotationY: 0,
     zoom: 1,
+    orbitX: 0,
+    orbitY: 0,
   };
   const ease = (t, kind) =>
     kind === "step"
@@ -103,17 +106,26 @@
   function projector(camera, W, H) {
     const U = Math.min(W, H),
       near = 0.025;
-    const cameraSpace = point =>
-      rotate(
+    // Orbit rotates the world around the target before camera distance is
+    // applied. Existing rotationX/Y still control local camera orientation.
+    const cameraSpace = point => {
+      const relative = rotate(
         [
           point[0] - ((camera.x - 0.5) * W) / U,
           point[1] - ((camera.y - 0.5) * H) / U,
-          point[2] - camera.z,
+          point[2],
         ],
+        -(camera.orbitX || 0),
+        -(camera.orbitY || 0),
+        0
+      );
+      return rotate(
+        [relative[0], relative[1], relative[2] - camera.z],
         -camera.rotationX,
         -camera.rotationY,
         0
       );
+    };
     const screen = ([x, y, z]) => {
       const depth = -z,
         scale = (camera.z / depth) * camera.zoom;
@@ -316,6 +328,57 @@
     c.lineCap = "round";
     c.stroke();
   }
+  // Every target has exactly count stable identities. A point's position is
+  // a pure function of seed/index/shape, so reverse seeking cannot accumulate.
+  function pointTarget(shape, seed, index, count) {
+    const u = (index + 0.5) / count,
+      a = hash(seed, index * 2) * Math.PI * 2,
+      b = hash(seed, index * 2 + 1) * Math.PI * 2;
+    if (shape === "sphere") {
+      const y = 1 - 2 * u,
+        r = Math.sqrt(Math.max(0, 1 - y * y));
+      return [r * Math.cos(a), y, r * Math.sin(a)];
+    }
+    if (shape === "torus") {
+      const r = 0.7 + 0.3 * Math.cos(b);
+      return [r * Math.cos(a), 0.3 * Math.sin(b), r * Math.sin(a)];
+    }
+    const turn = u * Math.PI * 6 + hash(seed, 0) * Math.PI * 2;
+    return [0.7 * Math.cos(turn), u * 2 - 1, 0.7 * Math.sin(turn)];
+  }
+  function morphPoints(e, progress) {
+    const p = clamp(progress);
+    return Array.from({ length: e.count }, (_, i) => {
+      const a = pointTarget(e.from, e.seed, i, e.count),
+        b = pointTarget(e.to, e.seed, i, e.count);
+      return a.map((n, axis) => (n + (b[axis] - n) * p) * e.spread);
+    });
+  }
+  function pointMorphDraw(c, e, v, project, W, H) {
+    const center = world(v, W, H),
+      U = Math.min(W, H);
+    const points = morphPoints(e, v.morph)
+      .map(point => {
+        const rotated = rotate(
+          [
+            point[0] * v.scale * v.scaleX,
+            point[1] * v.scale * v.scaleY,
+            point[2] * v.scale,
+          ],
+          v.rotationX,
+          v.rotationY,
+          v.rotation
+        );
+        return project(rotated.map((n, axis) => n + center[axis]));
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.depth - a.depth);
+    for (const p of points) {
+      c.beginPath();
+      c.arc(p.x, p.y, e.size * U * p.scale, 0, Math.PI * 2);
+      c.fill();
+    }
+  }
   function drawElement(c, e, v, t, project, images, W, H) {
     if (v.opacity <= 0 || v.reveal <= 0) return;
     c.save();
@@ -328,6 +391,11 @@
     }[e.blend || "normal"];
     c.fillStyle = v.fill;
     c.strokeStyle = v.stroke;
+    if (e.type === "pointMorph") {
+      pointMorphDraw(c, e, v, project, W, H);
+      c.restore();
+      return;
+    }
     if (e.type === "mesh") {
       meshDraw(c, e, v, project, W, H);
       c.restore();
@@ -415,7 +483,18 @@
         iw = img.width * scale,
         ih = img.height * scale;
       c.beginPath();
-      c.rect(-w / 2, -h / 2, w, h);
+      // Reveal in image-local coordinates. Keep the fitted source unchanged:
+      // cropping a card must not squeeze its photo or affect another element.
+      const progress = e.revealDirection ? clamp(v.reveal) : 1,
+        horizontal = ["left", "right"].includes(e.revealDirection),
+        rw = horizontal ? w * progress : w,
+        rh = e.revealDirection && !horizontal ? h * progress : h;
+      c.rect(
+        e.revealDirection === "right" ? w / 2 - rw : -w / 2,
+        e.revealDirection === "bottom" ? h / 2 - rh : -h / 2,
+        rw,
+        rh
+      );
       c.clip();
       c.drawImage(img, -iw / 2, -ih / 2, iw, ih);
     } else if (e.type === "path") drawPath(c, e, v, W, H);
@@ -464,9 +543,15 @@
       if (
         scene.elements.some(
           e =>
-            !["text", "shape", "path", "particles", "mesh", "image"].includes(
-              e.type
-            )
+            ![
+              "text",
+              "shape",
+              "path",
+              "particles",
+              "pointMorph",
+              "mesh",
+              "image",
+            ].includes(e.type)
         )
       )
         throw new Error("不支持的逐镜元素类型");
@@ -660,6 +745,9 @@
     hash,
     rotate,
     projector,
+    pointTarget,
+    morphPoints,
+    drawElement,
   };
   boot().catch(e => {
     window.__bootFailed = String(e?.message || e);

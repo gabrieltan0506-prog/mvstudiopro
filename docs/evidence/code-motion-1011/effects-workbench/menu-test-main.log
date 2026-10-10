@@ -1,0 +1,13 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ client/src/lib/codeMotionEffectsMenu.browser.test.ts (3 tests) 15421ms
+   ✓ recipe descriptions lead to real edits, preserve original video, and restore the saved result 4265ms
+   ✓ free procedural effects stay available while paid asset options and busy edits are guarded 2063ms
+   ✓ art workbench opens the existing INK route separately without importing or mutating a block 2875ms
+
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+   Start at  07:10:57
+   Duration  20.80s (transform 667ms, setup 0ms, collect 2.11s, tests 15.42s, environment 2ms, prepare 1.35s)
+

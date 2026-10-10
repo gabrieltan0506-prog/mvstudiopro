@@ -1,0 +1,26 @@
+{
+  "baselineHead": "bf42ff4e6ee8a462c86b1e1dc9081288bdf57691",
+  "currentHead": "bf42ff4e6ee8a462c86b1e1dc9081288bdf57691",
+  "files": [
+    {
+      "path": "shared/codeMotionComposition.ts",
+      "sha256": "70bb13019b339fc7ef10d36930fe9704341d7df901fa8a694274f35042aa3d9a"
+    },
+    {
+      "path": "client/public/art-motion/engine/composition.js",
+      "sha256": "ab35320fa283626900ea20743b020ccf69a471dae655d643b04e22f4ddbc11de"
+    },
+    {
+      "path": "client/src/lib/codeMotionImageReveal.browser.test.ts",
+      "sha256": "ad51fc15a7747b2aeb37699e4cde77e45ecf2dc5425b6f369c8517ac5f4f9ed2"
+    },
+    {
+      "path": "client/src/lib/codeMotionPointMorphRuntime.test.ts",
+      "sha256": "08e2748fca1f0f63f705abd017fdb6175b5b721b0d54ad57c673e5206e4d2d3a"
+    },
+    {
+      "path": "client/src/lib/codeMotionPointMorph.browser.test.ts",
+      "sha256": "a62aaf2c4ed8186c8e1fe3210767f31f1761373ae3348d7fc70bd623d4b5fdcd"
+    }
+  ]
+}
