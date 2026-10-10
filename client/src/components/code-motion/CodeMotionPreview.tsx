@@ -51,7 +51,7 @@ export default function CodeMotionPreview({ spec }: { spec: ArtMotionSpec }) {
     <div className="space-y-3">
       <iframe
         ref={frame}
-        title="映刻动画预览"
+        title="映客 INK动画预览"
         src="/art-motion/engine/studio.html"
         onLoad={() => send({ type: "art-motion-init", spec })}
         className="mx-auto max-h-[520px] w-full rounded-xl bg-stone-100"

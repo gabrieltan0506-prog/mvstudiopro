@@ -485,7 +485,7 @@ export default function CodeMotionStudio() {
           回到首页
         </a>
         <div>
-          <span className="text-xl font-semibold">映刻</span>
+          <span className="text-xl font-semibold">映客 INK</span>
           <span className="ml-3 text-sm text-stone-500">让内容动起来</span>
         </div>
         <button
@@ -493,7 +493,7 @@ export default function CodeMotionStudio() {
           onClick={() =>
             downloadJson(
               { ...project, pptData },
-              `${project.brief.title || "映刻"}-工程.json`
+              `${project.brief.title || "映客 INK"}-工程.json`
             )
           }
         >
