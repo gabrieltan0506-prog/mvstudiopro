@@ -94,6 +94,11 @@ export const trpc={useUtils:()=>({codeMotion:{prepare:{fetch:async()=>({generati
         el.click();
       }, text);
     await page.waitForSelector("textarea");
+    const openingText = await page.$eval("body", node => node.textContent || "");
+    expect(openingText).toContain("本次免费整理");
+    expect(openingText).toContain("今日还可免费整理 3 次");
+    expect(openingText).not.toMatch(/主用 GLM|DeepSeek|沿用创作顾问额度|用现有Gemini/);
+
     await page.type("textarea", "温暖介绍门店");
     await page.type(
       'textarea[placeholder="粘贴已有文案。自己安排时，每段一行。"]',

@@ -1117,22 +1117,19 @@ export default function CodeMotionStudio() {
             className="rounded-2xl bg-orange-50 p-4 text-sm leading-6"
           >
             <p>
-              这次整理：
               {!user
                 ? "登录后查看费用"
                 : quote.error
                   ? "费用暂未查到"
                   : quote.data
                     ? quote.data.credits
-                      ? `${quote.data.credits} 积分`
-                      : "不扣积分"
+                      ? `本次整理 ${quote.data.credits} 积分`
+                      : "本次免费整理"
                     : "正在查询…"}
             </p>
             {quote.data && (
               <p className="mt-1 text-xs text-stone-600">
-                沿用创作顾问额度，今日剩余 {quote.data.remainingFreeToday}{" "}
-                次免费整理。主用 GLM，忙时改用
-                DeepSeek；只整理内容，不直接生成视频。
+                今日还可免费整理 {quote.data.remainingFreeToday} 次。先查看方案，确认后再制作视频。
               </p>
             )}
             {!user ? (

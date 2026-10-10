@@ -242,7 +242,7 @@ export default function CodeMotionAudioPanel({
                 disabled={disabled || busy || !url}
                 onClick={() => void transcribe(source)}
               >
-                用现有Gemini识别为文案
+                将录音转成文字
               </button>
               <button
                 type="button"
