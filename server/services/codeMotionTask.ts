@@ -8,13 +8,18 @@ import { artMotionTaskId, queueArtMotion } from "./artMotionTask";
 import { resolvePostProdInputSources } from "./postProdMediaSource";
 import { getJobByIdStrict } from "../jobs/repository";
 import { buildPostProdJobResponse } from "./postProdJobResponse";
+import { enqueueInkFree, type InkSource } from "./inkFreeQuota";
+import { assertCodeMotionAudioOwnership } from "./codeMotionAudio";
+import { assertCodeMotionProductionVideos } from "./codeMotionProductionVideo";
+import { getCodeMotionProductionGrant, ensureCodeMotionProductionGrant, reserveCodeMotionProductionSlot, enqueueCodeMotionProductionExport, codeMotionProductionDigest } from "./codeMotionProductionGrant";
 
 export function codeMotionRenderIdentity(
   userId: string,
-  project: CodeMotionProject
+  project: CodeMotionProject,
+  options: Parameters<typeof compileCodeMotion>[2] = {}
 ) {
   if (!project.plan) throw new Error("请先整理并保存本次内容安排");
-  const spec = compileCodeMotion(project.brief, project.plan);
+  const spec = compileCodeMotion(project.brief, project.plan, options);
   const fingerprint = createHash("sha256")
     .update(JSON.stringify([userId, project.id, spec]))
     .digest("hex");
@@ -30,13 +35,52 @@ export function codeMotionRenderIdentity(
 export type CodeMotionTaskDeps = {
   load: typeof getJobByIdStrict;
   resolve: typeof resolvePostProdInputSources;
-  queue: typeof queueArtMotion;
+  queue(
+    userId: string,
+    input: Parameters<typeof queueArtMotion>[1],
+    source?: InkSource
+  ): Promise<{ jobId: string; status: string }>;
   view: typeof buildPostProdJobResponse;
+  audioOwnership?: typeof assertCodeMotionAudioOwnership;
+  videoOwnership?: typeof assertCodeMotionProductionVideos;
 };
 const real: CodeMotionTaskDeps = {
   load: getJobByIdStrict,
   resolve: resolvePostProdInputSources,
-  queue: queueArtMotion,
+  async queue(userId, raw, source) {
+    if (!source) throw new Error("无法确认免费名额来源，未提交任务");
+    const { artMotionJobSchema } = await import("../../shared/artMotion");
+    const input = artMotionJobSchema.parse(raw);
+    const projectId = input.scopeKey.replace(/^code-motion:/, "");
+    let grant = await getCodeMotionProductionGrant(userId, projectId);
+    if (!grant) {
+      const { loadCodeMotion } = await import("./codeMotionStore");
+      const saved = await loadCodeMotion(userId, projectId);
+      const scenes = saved?.project.plan?.scenes.length ?? 0;
+      if (saved && scenes >= 4 && scenes <= 6 && saved.project.brief.duration <= 60) {
+        const current = codeMotionRenderIdentity(userId, saved.project);
+        if (current.requestId !== input.requestId) throw new Error("作品版本已变化，请重新查看安排");
+        grant = await ensureCodeMotionProductionGrant(userId, { projectId, expectedGeneration: saved.generation, source });
+      }
+    }
+    if (grant) {
+      const request = { id: artMotionTaskId(userId, input.requestId), userId, input, format: "mp4" as const, provider: "canvas-art-motion", type: "post_prod" as const };
+      const slot = { projectId, grantId: grant.id, kind: "export" as const, index: 0, requestId: request.id, digest: codeMotionProductionDigest(input) };
+      await reserveCodeMotionProductionSlot(userId, slot);
+      return enqueueCodeMotionProductionExport(request, slot);
+    }
+    return enqueueInkFree(
+      {
+        id: artMotionTaskId(userId, input.requestId),
+        userId,
+        input,
+        format: "mp4",
+        provider: "canvas-art-motion",
+        type: "post_prod",
+      },
+      source
+    );
+  },
   view: buildPostProdJobResponse,
 };
 export async function findCodeMotionTask(
@@ -68,7 +112,8 @@ export async function submitCodeMotion(
   userId: string,
   project: CodeMotionProject,
   confirmedFingerprint: string,
-  deps = real
+  deps = real,
+  source?: InkSource
 ) {
   const identity = codeMotionRenderIdentity(userId, project);
   if (identity.fingerprint !== confirmedFingerprint)
@@ -76,6 +121,14 @@ export async function submitCodeMotion(
   // 响应丢失或重进页面时只返回原任务；失败也不自动重复渲染。
   const old = await findCodeMotionTask(userId, project, deps);
   if (old) return { jobId: old.jobId, status: old.status };
+  // 画面已由 compileCodeMotion 校验；无声计划沿同一权限、名额和队列导出。
+  if (identity.spec.codeAudio)
+    await (deps.audioOwnership ?? assertCodeMotionAudioOwnership)({
+      userId,
+      projectId: project.id,
+      audio: identity.spec.codeAudio,
+    });
+  if (identity.spec.codeVideo) await (deps.videoOwnership ?? assertCodeMotionProductionVideos)(userId, project.id, identity.spec.codeVideo);
   const input = await deps.resolve({
     userId,
     input: {
@@ -85,7 +138,7 @@ export async function submitCodeMotion(
       params: identity.spec,
     },
   });
-  return deps.queue(userId, input);
+  return source ? deps.queue(userId, input, source) : deps.queue(userId, input);
 }
 
 /** 改稿后仍可取回同一作品先前的视频，最多展示最近二十条，不删除旧结果。 */

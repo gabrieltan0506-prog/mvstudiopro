@@ -1,0 +1,11 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ shared/codeMotionRevision.test.ts > local revision updates selected visible text, preserves original assets and leaves untouched shots exact
+ ✓ shared/codeMotionRevision.test.ts > removes the video container when all generated shots are revised and rejects duplicate/out-of-range edit indexes
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  04:12:22
+   Duration  1.25s (transform 256ms, setup 0ms, collect 451ms, tests 84ms, environment 0ms, prepare 111ms)
+

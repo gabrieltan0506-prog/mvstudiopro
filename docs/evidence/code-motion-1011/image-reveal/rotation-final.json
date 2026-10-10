@@ -1,0 +1,69 @@
+[
+  {
+    "fixture": "client/public/showcase/shenzhen.jpg",
+    "bytes": 1535199,
+    "sha256": "9da0adbd8d846509371261ad02ffe19eef4bb462ab5b5ed6f92053ad24635e70"
+  },
+  {
+    "name": "local-rotation-scale",
+    "direction": "left",
+    "fit": "cover",
+    "rotation": 35,
+    "scale": 0.7,
+    "photoPixels": 255093,
+    "rows": [
+      {
+        "progress": 0.25,
+        "mismatches": 0,
+        "mismatchDetails": [],
+        "checked": 101206,
+        "hash": 3222446784,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.5,
+        "mismatches": 0,
+        "mismatchDetails": [],
+        "checked": 101207,
+        "hash": 3900646143,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.75,
+        "mismatches": 0,
+        "mismatchDetails": [],
+        "checked": 101202,
+        "hash": 3482599089,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.5,
+        "mismatches": 0,
+        "mismatchDetails": [],
+        "checked": 101207,
+        "hash": 3900646143,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      }
+    ]
+  }
+]

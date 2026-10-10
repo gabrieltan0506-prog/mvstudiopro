@@ -1,0 +1,11 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ shared/codeMotionEffects.test.ts > workbench code effect recipes > free 3D recipe writes real point morph and camera orbit while keeping existing camera motion 469ms
+ ✓ shared/codeMotionEffects.test.ts > workbench code effect recipes > keeps the new 3D effect visible over a prior layout and rejects particle overflow without changing the project
+
+ Test Files  1 passed (1)
+      Tests  2 passed | 5 skipped (7)
+   Start at  07:08:19
+   Duration  14.03s (transform 4.34s, setup 0ms, collect 7.63s, tests 645ms, environment 1ms, prepare 1.09s)
+

@@ -1,0 +1,122 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ❯ client/src/lib/codeMotionPointMorphRuntime.test.ts (6 tests | 5 failed) 206ms
+   × formal plan→resolved→spec→runtime retains morph and orbit with no asset fetch 106ms
+     → expected undefined to be true // Object.is equality
+   × each target has equal count, nonzero XYZ extent and exact stable point correspondence 6ms
+     → expected undefined to be true // Object.is equality
+   × orbit fixes target in center while depth and perspective change; absent orbit is legacy 5ms
+     → expected undefined to be true // Object.is equality
+   × reverse and repeated absolute-frame seeks produce identical sorted canvas draws 18ms
+     → expected undefined to be true // Object.is equality
+   × morph changes xyz projection with static camera independently of camera motion 5ms
+     → expected undefined to be true // Object.is equality
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  client/src/lib/codeMotionPointMorphRuntime.test.ts > formal plan→resolved→spec→runtime retains morph and orbit with no asset fetch
+AssertionError: expected undefined to be true // Object.is equality
+
+- Expected: 
+true
+
++ Received: 
+undefined
+
+ ❯ runtime client/src/lib/codeMotionPointMorphRuntime.test.ts:137:26
+    135|   await Promise.resolve();
+    136|   expect(window.__bootFailed).toBeUndefined();
+    137|   expect(window.__ready).toBe(true);
+       |                          ^
+    138|   return {
+    139|     internals: window.CODE_MOTION_COMPOSITION_INTERNALS!,
+ ❯ client/src/lib/codeMotionPointMorphRuntime.test.ts:149:13
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  client/src/lib/codeMotionPointMorphRuntime.test.ts > each target has equal count, nonzero XYZ extent and exact stable point correspondence
+AssertionError: expected undefined to be true // Object.is equality
+
+- Expected: 
+true
+
++ Received: 
+undefined
+
+ ❯ runtime client/src/lib/codeMotionPointMorphRuntime.test.ts:137:26
+    135|   await Promise.resolve();
+    136|   expect(window.__bootFailed).toBeUndefined();
+    137|   expect(window.__ready).toBe(true);
+       |                          ^
+    138|   return {
+    139|     internals: window.CODE_MOTION_COMPOSITION_INTERNALS!,
+ ❯ client/src/lib/codeMotionPointMorphRuntime.test.ts:162:28
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  client/src/lib/codeMotionPointMorphRuntime.test.ts > orbit fixes target in center while depth and perspective change; absent orbit is legacy
+AssertionError: expected undefined to be true // Object.is equality
+
+- Expected: 
+true
+
++ Received: 
+undefined
+
+ ❯ runtime client/src/lib/codeMotionPointMorphRuntime.test.ts:137:26
+    135|   await Promise.resolve();
+    136|   expect(window.__bootFailed).toBeUndefined();
+    137|   expect(window.__ready).toBe(true);
+       |                          ^
+    138|   return {
+    139|     internals: window.CODE_MOTION_COMPOSITION_INTERNALS!,
+ ❯ client/src/lib/codeMotionPointMorphRuntime.test.ts:186:28
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  client/src/lib/codeMotionPointMorphRuntime.test.ts > reverse and repeated absolute-frame seeks produce identical sorted canvas draws
+AssertionError: expected undefined to be true // Object.is equality
+
+- Expected: 
+true
+
++ Received: 
+undefined
+
+ ❯ runtime client/src/lib/codeMotionPointMorphRuntime.test.ts:137:26
+    135|   await Promise.resolve();
+    136|   expect(window.__bootFailed).toBeUndefined();
+    137|   expect(window.__ready).toBe(true);
+       |                          ^
+    138|   return {
+    139|     internals: window.CODE_MOTION_COMPOSITION_INTERNALS!,
+ ❯ client/src/lib/codeMotionPointMorphRuntime.test.ts:203:13
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+ FAIL  client/src/lib/codeMotionPointMorphRuntime.test.ts > morph changes xyz projection with static camera independently of camera motion
+AssertionError: expected undefined to be true // Object.is equality
+
+- Expected: 
+true
+
++ Received: 
+undefined
+
+ ❯ runtime client/src/lib/codeMotionPointMorphRuntime.test.ts:137:26
+    135|   await Promise.resolve();
+    136|   expect(window.__bootFailed).toBeUndefined();
+    137|   expect(window.__ready).toBe(true);
+       |                          ^
+    138|   return {
+    139|     internals: window.CODE_MOTION_COMPOSITION_INTERNALS!,
+ ❯ client/src/lib/codeMotionPointMorphRuntime.test.ts:218:13
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯
+
+ Test Files  1 failed (1)
+      Tests  5 failed | 1 passed (6)
+   Start at  07:07:35
+   Duration  5.34s (transform 953ms, setup 0ms, collect 2.12s, tests 206ms, environment 1ms, prepare 434ms)
+

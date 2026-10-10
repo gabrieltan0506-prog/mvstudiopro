@@ -1,0 +1,8 @@
+{
+  "server/jobs/workerRole.ts": "6f8ed6fcad78a57d99c094ed91bcbc8afbe0abfb7e4d91d662582bae89e7c098",
+  "server/jobs/repository.ts": "5633ba386a65e8dde0720e9fcdbea68c4212372683fc9d479bbd2869f8a45118",
+  "server/jobs/postProdJob.ts": "db78c877873ccb858e978fec60bce2f26e185ae55404fbf3f679b69ac236d455",
+  "server/services/manhuaVfxRender.ts": "7b7db80cc31d43a917a0ebdd52e20dcf469984c21959e04043cd7b0ee5bc41a2",
+  "shared/manhuaVfxPricing.ts": "ff40585a473010c940475ec378fc23d888d57b8b1e50816fcc7c0a89fc2652b7",
+  "shared/manhuaVfx.ts": "17511db3b49278837dcfd9112663754c858cf19c69121a23ef64c75f55830295"
+}

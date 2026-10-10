@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ server/services/codeMotionSoundAdoption.test.ts (8 tests | 4 skipped) 153ms
+
+ Test Files  1 passed (1)
+      Tests  4 passed | 4 skipped (8)
+   Start at  06:20:54
+   Duration  3.14s (transform 1.07s, setup 0ms, collect 2.32s, tests 153ms, environment 0ms, prepare 121ms)
+

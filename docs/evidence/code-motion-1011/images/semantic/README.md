@@ -1,0 +1,11 @@
+# Native image semantic preflight — 2026-10-10
+
+Implementation: `shared/codeMotionImageSemantic.ts`, `server/services/codeMotionImageSemantic.ts`; connected to the existing image prepare/submit service, `codeMotion.imageAnalyze` protected router and the Studio image production panel.
+
+Confirmed image analysis uses exactly Gemini 3.8 Flash via the existing Vertex native transport, original image pixels, bounded adopted audio windows and original video pixels/audio. Original image/video bytes are copied into immutable hash-addressed evidence objects before native reads. The request, source hashes/byte counts, raw HTTP response, parsed findings, model and usage receipt are durably retained. Analysis has a single fixed production grant slot. A response loss or rejected result does not purchase another analysis. A stored raw response can be parsed again without a model call.
+
+Only a confidence >= 0.8 conflict with valid original image observations and an actual quoted saved requirement produces semantic redraw. Incomplete coverage, fabricated source IDs, invented requirements, out-of-range audio/video observations are rejected. Unreadable or low confidence material is marked uncertain. The reviewed repair goes through the existing one-shot Image 2 Edit medium (free) or Image 2.5 Sunburst high (paid) image task; missing scenes retain the existing generation branch. Original materials remain archived.
+
+Evidence: `service-probe.txt` has 6 passing tests including both tier prepare → analyze → prepare → image submit integrations; `router-probe.txt` verifies authentication, owner/generation/grant binding and refreshed review output. Provider and cloud persistence are fixtures in these tests; this is not a real Gemini media-perception result, real paid image output, authenticated deployed browser session, or online acceptance. No semantic model call was made by this test run.
+
+Additional checks: `prior-batch-probe.txt` confirms an existing committed image batch cannot buy another semantic analysis. `studio-regression.txt` passes the actual full Studio save → image preparation → submit → adopt → save → reload path after the new analysis hook was mounted. This browser regression uses intercepted transport and does not itself exercise paid semantic vision.

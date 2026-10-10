@@ -1,0 +1,34 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ server/services/manhuaVfxSourcePipeline.test.ts > mirror_corridor进入实际像素处理调用后合成，原声映射原始文件 465ms
+ ✓ server/services/manhuaVfxSourcePipeline.test.ts > floating_paper进入实际像素处理调用后合成，原声映射原始文件 364ms
+ ✓ server/services/manhuaVfxSourcePipeline.test.ts > liquid_mirror进入实际像素处理调用后合成，原声映射原始文件
+ ✓ server/services/manhuaVfxSourcePipeline.test.ts > motion_ghost进入实际像素处理调用后合成，原声映射原始文件
+ ✓ server/services/manhuaVfxSourcePipeline.test.ts > bullet_wave进入实际像素处理调用后合成，原声映射原始文件
+stderr | server/services/manhuaVfxSourcePipeline.test.ts > mirror_corridor像素处理失败时保留错误证据，不上传或自动重做候选
+[manhua-vfx] render failed pixel process failed
+
+ ✓ server/services/manhuaVfxSourcePipeline.test.ts > mirror_corridor像素处理失败时保留错误证据，不上传或自动重做候选
+stderr | server/services/manhuaVfxSourcePipeline.test.ts > floating_paper像素处理失败时保留错误证据，不上传或自动重做候选
+[manhua-vfx] render failed pixel process failed
+
+ ✓ server/services/manhuaVfxSourcePipeline.test.ts > floating_paper像素处理失败时保留错误证据，不上传或自动重做候选
+ ✓ server/services/manhuaVfxSourcePipeline.test.ts > 真三维单效果只调用三维消费者，不把空二维层当成3D；保留原音轨
+stderr | server/services/manhuaVfxSourcePipeline.test.ts > 原片像素处理失败时不合成、不上传候选；多输入合成映射正确原声
+[manhua-vfx] render failed pixel process failed
+
+ ✓ server/services/manhuaVfxSourcePipeline.test.ts > 原片像素处理失败时不合成、不上传候选；多输入合成映射正确原声
+ ✓ server/services/manhuaVfxSourcePipeline.test.ts > 三维回执拒绝相机不环绕、非透视、朝向错误及冻结几何变化
+ ✓ server/services/manhuaVfxSourcePipeline.test.ts > cup_fracture经既有服务端渲染链消费，保留原音轨和实际参数
+ ✓ server/services/manhuaVfxSourcePipeline.test.ts > fruit_stall_fracture经既有服务端渲染链消费，保留原音轨和实际参数
+ ✓ server/services/manhuaVfxSourcePipeline.test.ts > city_fold经既有服务端渲染链消费，保留原音轨和实际参数
+ ✓ server/services/manhuaVfxSourcePipeline.test.ts > prop_scene经既有服务端渲染链消费，保留原音轨和实际参数
+ ✓ server/services/manhuaVfxSourcePipeline.test.ts > 选择性定格回执拒绝人物静止、碎片漂移、源动画变速与身份错配 492ms
+ ✓ server/services/manhuaVfxSourcePipeline.test.ts > 新场景证据必须逐角色、逐活动帧验证净空/受光，不能用其他角色动作代替 780ms
+
+ Test Files  1 passed (1)
+      Tests  16 passed (16)
+   Start at  04:37:47
+   Duration  19.00s (transform 6.44s, setup 0ms, collect 14.47s, tests 3.59s, environment 1ms, prepare 203ms)
+

@@ -254,3 +254,11 @@ describe("manhuaAdvisorOperation", () => {
     vi.useRealTimers();
   });
 });
+
+it("INK natural revision identity binds the saved source generation and instruction while a replay keeps its fingerprint",()=>{
+ const base={...BASE,manhuaContext:undefined,codeMotionContext:{title:"原片",request:"介绍原片",style:"words",duration:20,orientation:"landscape",images:[],data:[],revisionSource:{projectId:"11111111-1111-4111-8111-111111111111",generation:"1",instruction:"标题改暖色"}}} as any;
+ const original=manhuaAdvisorRequestFingerprint(base);
+ expect(manhuaAdvisorRequestFingerprint(structuredClone(base))).toBe(original);
+ expect(manhuaAdvisorRequestFingerprint({...base,codeMotionContext:{...base.codeMotionContext,revisionSource:{...base.codeMotionContext.revisionSource,generation:"2"}}})).not.toBe(original);
+ expect(manhuaAdvisorRequestFingerprint({...base,codeMotionContext:{...base.codeMotionContext,revisionSource:{...base.codeMotionContext.revisionSource,instruction:"人说话"}}})).not.toBe(original);
+});

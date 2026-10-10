@@ -152,3 +152,28 @@ describe("逐句配音持久操作", () => {
     expect(deps.synthesize).toHaveBeenNthCalledWith(2, expect.objectContaining({ voice: "longanlufeng", input: "[serious][empathetic]别怕。" }));
   });
 });
+
+
+describe("映客制作预算接入原配音入口", () => {
+  const slot = { projectId: "12345678-1234-4123-8123-123456789abe", grantId: "12345678-1234-4123-8123-123456789abf", kind: "speech" as const, index: 0, requestId: input.billingRequestId, digest: canvasDialogueDigest(input) };
+  function grant(tier: "free" | "paid") { return { id: slot.grantId, userId: "7", projectId: slot.projectId, generation: "1", tier, fingerprint: "a".repeat(64), sceneCount: 6, duration: 30, createdAt: new Date().toISOString(), slots: { "speech:0": {requestId: slot.requestId, digest: slot.digest} } }; }
+  it("核实免费制作步骤后零余额可生成；重进恢复不重发或扣费", async () => {
+    const {deps} = harness(); deps.balance = vi.fn(async()=>0); deps.productionGrant = vi.fn(async()=>grant("free"));
+    const first = await generateCanvasDialogue(7,input,deps,slot);
+    const again = await generateCanvasDialogue(7,input,deps,slot);
+    expect(first.status).toBe("succeeded"); expect(again.creditsCost).toBe(0);
+    expect(deps.productionGrant).toHaveBeenCalledWith("7",slot); expect(deps.synthesize).toHaveBeenCalledTimes(1);
+    expect(deps.balance).not.toHaveBeenCalled(); expect(deps.charge).not.toHaveBeenCalled();
+  });
+  it("付费制作保留原实测时长计费", async () => {
+    const {deps} = harness(); deps.productionGrant = vi.fn(async()=>grant("paid"));
+    const result=await generateCanvasDialogue(7,input,deps,slot);
+    expect(result.creditsCost).toBe(28); expect(deps.charge).toHaveBeenCalledWith(7,input.billingRequestId,28);
+  });
+  it("伪造步骤/不匹配内容在上游调用前拒绝", async () => {
+    const {deps} = harness(); deps.productionGrant = vi.fn(async()=>{throw Error("不存在");});
+    await expect(generateCanvasDialogue(7,input,deps,slot)).rejects.toThrow("不存在");
+    await expect(generateCanvasDialogue(7,input,deps,{...slot,digest:"b".repeat(64)})).rejects.toThrow("不一致");
+    expect(deps.synthesize).not.toHaveBeenCalled(); expect(deps.claim).not.toHaveBeenCalled();
+  });
+});

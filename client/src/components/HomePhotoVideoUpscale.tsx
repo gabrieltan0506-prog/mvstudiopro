@@ -160,8 +160,11 @@ const labels: Record<RecordStatus, string> = {
 
 export default function HomePhotoVideoUpscale({
   generatedVideoUrl,
+  projectKey,
 }: {
   generatedVideoUrl?: string;
+  /** 映客复用首页正式提交/计费/恢复链路，仅固定为当前成片。 */
+  projectKey?: string;
 }) {
   const { user, isAuthenticated } = useAuth();
   const [identity, setIdentity] = useState<{
@@ -182,7 +185,9 @@ export default function HomePhotoVideoUpscale({
           valid
             ? {
                 key: String(me.id),
-                storageKey: `home-photo-video-upscale:v1:${me.id}`,
+                storageKey: projectKey
+                  ? `ink-video-upscale:v1:${me.id}:${projectKey}`
+                  : `home-photo-video-upscale:v1:${me.id}`,
               }
             : { key: "session" }
         );
@@ -193,14 +198,15 @@ export default function HomePhotoVideoUpscale({
     return () => {
       cancelled = true;
     };
-  }, [claimedId, isAuthenticated]);
+  }, [claimedId, isAuthenticated, projectKey]);
   if (!identity) return <p>正在确认视频工具身份…</p>;
   return (
     <UpscalePanel
-      key={identity.key}
+      key={`${identity.key}:${projectKey || "home"}`}
       storageKey={identity.storageKey}
       authenticated={isAuthenticated}
       generatedVideoUrl={generatedVideoUrl}
+      fixedSource={!!projectKey}
     />
   );
 }
@@ -209,16 +215,25 @@ function UpscalePanel({
   storageKey,
   authenticated,
   generatedVideoUrl,
+  fixedSource = false,
 }: {
   storageKey?: string;
   authenticated: boolean;
   generatedVideoUrl?: string;
+  fixedSource?: boolean;
 }) {
   const [uploaded, setUploaded] = useState("");
-  const [choice, setChoice] = useState<"uploaded" | "generated" | "cloud">("uploaded");
+  const [choice, setChoice] = useState<"uploaded" | "generated" | "cloud">(
+    "uploaded"
+  );
   const [cloudDraft, setCloudDraft] = useState("");
   const [cloudSource, setCloudSource] = useState("");
-  const source = choice === "generated" ? generatedVideoUrl || "" : choice === "cloud" ? cloudSource : uploaded;
+  const source =
+    fixedSource || choice === "generated"
+      ? generatedVideoUrl || ""
+      : choice === "cloud"
+        ? cloudSource
+        : uploaded;
   const [probed, setProbed] = useState<{
     url: string;
     value: VideoMetadata;
@@ -419,53 +434,67 @@ function UpscalePanel({
   return (
     <section className="space-y-4 rounded-2xl border border-[var(--hp-line)] p-5">
       <h3 className="text-lg font-semibold">视频高清放大</h3>
-      <p className="text-sm text-muted-foreground">
-        上传视频、选择照片动画成片，或直接粘贴云端视频网址；原片保留，结果临时保留12小时。
-      </p>
-      <label className="block">
-        上传视频
-        <input
-          aria-label="上传视频"
-          type="file"
-          accept="video/*,.mp4,.mov,.webm,.m4v"
-          disabled={busy}
-          onChange={e => {
-            const file = e.target.files?.[0];
-            e.target.value = "";
-            void upload(file);
-          }}
-        />
-      </label>
-      <select
-        aria-label="视频来源"
-        value={choice}
-        disabled={busy}
-        onChange={e => setChoice(e.target.value as typeof choice)}
-      >
-        <option value="uploaded">独立上传的视频</option>
-        <option value="cloud">云端视频网址</option>
-        <option value="generated" disabled={!generatedVideoUrl}>
-          照片动画成片
-        </option>
-      </select>
-      <div className="flex flex-wrap gap-2">
-        <input
-          aria-label="云端视频网址"
-          type="url"
-          placeholder="粘贴可播放的 HTTPS 云端视频网址"
-          value={cloudDraft}
-          disabled={busy}
-          onChange={event => setCloudDraft(event.target.value)}
-          className="min-w-0 flex-1 rounded-lg border bg-transparent px-3 py-2"
-        />
-        <button type="button" disabled={busy || !cloudDraft.trim()} className="rounded-lg border px-3 py-2" onClick={() => {
-          const url = cloudDraft.trim();
-          if (!/^https:\/\//i.test(url)) { setError("请粘贴 HTTPS 视频网址"); return; }
-          setCloudSource(url);
-          setChoice("cloud");
-        }}>读取云端视频</button>
-      </div>
-      {source && (
+      {!fixedSource && (
+        <>
+          <p className="text-sm text-muted-foreground">
+            上传视频、选择照片动画成片，或直接粘贴云端视频网址；原片保留，结果临时保留12小时。
+          </p>
+          <label className="block">
+            上传视频
+            <input
+              aria-label="上传视频"
+              type="file"
+              accept="video/*,.mp4,.mov,.webm,.m4v"
+              disabled={busy}
+              onChange={e => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                void upload(file);
+              }}
+            />
+          </label>
+          <select
+            aria-label="视频来源"
+            value={choice}
+            disabled={busy}
+            onChange={e => setChoice(e.target.value as typeof choice)}
+          >
+            <option value="uploaded">独立上传的视频</option>
+            <option value="cloud">云端视频网址</option>
+            <option value="generated" disabled={!generatedVideoUrl}>
+              照片动画成片
+            </option>
+          </select>
+          <div className="flex flex-wrap gap-2">
+            <input
+              aria-label="云端视频网址"
+              type="url"
+              placeholder="粘贴可播放的 HTTPS 云端视频网址"
+              value={cloudDraft}
+              disabled={busy}
+              onChange={event => setCloudDraft(event.target.value)}
+              className="min-w-0 flex-1 rounded-lg border bg-transparent px-3 py-2"
+            />
+            <button
+              type="button"
+              disabled={busy || !cloudDraft.trim()}
+              className="rounded-lg border px-3 py-2"
+              onClick={() => {
+                const url = cloudDraft.trim();
+                if (!/^https:\/\//i.test(url)) {
+                  setError("请粘贴 HTTPS 视频网址");
+                  return;
+                }
+                setCloudSource(url);
+                setChoice("cloud");
+              }}
+            >
+              读取云端视频
+            </button>
+          </div>
+        </>
+      )}
+      {source && !fixedSource && (
         <div>
           <video
             src={source}
@@ -497,6 +526,7 @@ function UpscalePanel({
             }
             onClick={() => void start(target)}
           >
+            {fixedSource ? "超分 " : ""}
             {target.toUpperCase()}
             {metadata
               ? ` · ${canvasVideoUpscaleCredits(target, metadata.durationSec, { freeform: true })} 积分`

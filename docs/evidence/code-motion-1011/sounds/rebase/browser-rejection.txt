@@ -1,0 +1,11 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ client/src/lib/codeMotionSoundRebase.browser.test.ts (2 tests | 1 skipped) 4609ms
+   ✓ explicit pre-submission rejection clears only its local pending identity and allows a fresh saved attempt 4608ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 1 skipped (2)
+   Start at  06:22:56
+   Duration  6.28s (transform 92ms, setup 0ms, collect 359ms, tests 4.61s, environment 0ms, prepare 179ms)
+

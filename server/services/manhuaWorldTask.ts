@@ -218,6 +218,25 @@ function idempotencyDigest(input: { userId: number; sceneRef: string; sourceVers
   return createHash("sha256").update(JSON.stringify([input.userId, input.sceneRef, input.sourceVersion, input.model, input.prompt])).digest("hex");
 }
 
+function normalizeImagePrompt(prompt: Extract<ManhuaWorldPromptRecord, { type: "image" }>): Extract<ManhuaWorldPromptRecord, { type: "image" }> {
+  return { type: "image", isPano: prompt.isPano, ...(prompt.textPrompt?.trim() ? { textPrompt: prompt.textPrompt.trim().slice(0, 2_000) } : {}) };
+}
+
+/** 断网恢复只查同一提交意图的持久记录，不能调用创建或推进任务。 */
+export async function findExistingManhuaWorldImageTask(input: {
+  userId: number;
+  sceneRef: string;
+  sourceVersion: string;
+  model: ManhuaWorld3dModel;
+  prompt: Extract<ManhuaWorldPromptRecord, { type: "image" }>;
+}): Promise<ManhuaWorldTaskView | null> {
+  const sceneRef = String(input.sceneRef || "").trim();
+  const sourceVersion = String(input.sourceVersion || "").trim();
+  if (!Number.isInteger(input.userId) || input.userId <= 0 || !sceneRef || !sourceVersion) throw new Error("invalid_manhua_world_task_input");
+  const digest = idempotencyDigest({ ...input, sceneRef, sourceVersion, prompt: normalizeImagePrompt(input.prompt) });
+  return getManhuaWorldTask(`mw_${digest.slice(0, 24)}`, input.userId);
+}
+
 async function markFailed(record: ManhuaWorldTaskRecord, errorZh: string, internal?: unknown) {
   record.status = "failed";
   record.errorZh = errorZh;
@@ -547,7 +566,7 @@ export async function createManhuaWorldTask(input: {
             depthMeta: (depthMeta as { ok: true; meta: DepthPanoUploadMeta }).meta,
             textPrompt: String(input.prompt.textPrompt).trim().slice(0, 2_000),
           }
-        : { type: "image", isPano: input.prompt.isPano, ...(input.prompt.textPrompt?.trim() ? { textPrompt: input.prompt.textPrompt.trim().slice(0, 2_000) } : {}) };
+        : normalizeImagePrompt(input.prompt);
   const digest = idempotencyDigest({ userId: input.userId, sceneRef, sourceVersion, model: input.model, prompt });
   const taskId = `mw_${digest.slice(0, 24)}`;
   const now = isoNow();

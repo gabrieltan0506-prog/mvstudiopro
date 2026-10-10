@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { buildVideoPptx } from "@shared/htmlPptVideo";
 const MAX_VIDEO_BYTES = 80 * 1024 * 1024;
 export default function CodeMotionVideoPptx({ videoUrl, title, orientation }: { videoUrl: string; title: string; orientation: "landscape" | "portrait" }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
@@ -7,6 +6,7 @@ export default function CodeMotionVideoPptx({ videoUrl, title, orientation }: { 
     if (busy) return;
     setBusy(true); setError("");
     try {
+      const { buildVideoPptx } = await import("@shared/htmlPptVideo");
       const response = await fetch(videoUrl, { credentials: "include", signal: AbortSignal.timeout(120_000) });
       if (!response.ok || !response.body) throw new Error("视频暂时无法读取，请刷新原任务后重试");
       if (Number(response.headers.get("content-length")) > MAX_VIDEO_BYTES) { await response.body.cancel(); throw new Error("视频超过本次PPT嵌入的80MB上限，请下载MP4使用"); }

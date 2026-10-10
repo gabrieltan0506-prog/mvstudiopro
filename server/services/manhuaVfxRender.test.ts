@@ -1,3 +1,6 @@
+import { beforeEach as beforeWorkerTest, afterEach as afterWorkerTest, vi as workerEnv } from "vitest";
+beforeWorkerTest(() => { workerEnv.stubEnv("JOB_WORKER_ROLE", "rig"); workerEnv.stubEnv("FLY_MACHINE_ID", "test-vfx-worker"); workerEnv.stubEnv("MANHUA_HEAVY_MACHINE_ID", "test-vfx-worker"); });
+afterWorkerTest(() => workerEnv.unstubAllEnvs());
 /** Offline pipeline evidence: synthetic source and injected RGBA renderer; no upstream/GCS calls. */
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   codeMotionBriefSchema,
+  codeMotionProjectSchema,
   codeMotionLocalProjectSchema,
   parseCodeMotionTable,
   compileCodeMotion,
@@ -165,4 +166,28 @@ it("两列表格完整读入，空白不变零、额外列及超量不截断", (
       Array.from({ length: 13 }, (_, i) => `项目${i}\t${i}`).join("\n")
     )
   ).toThrow("十二");
+});
+
+
+describe("自然收尾的成片时长", () => {
+  it("按完整镜头总长编译并保存恢复，不强凑30秒", () => {
+    const natural = { ...brief, durationMode: "natural" as const };
+    const longer = { ...plan, scenes: [plan.scenes[0], { ...plan.scenes[1], duration: 19.2 }] };
+    const input = { id: "11111111-1111-4111-8111-111111111111", brief: natural, plan: longer };
+    const rendered = compileCodeMotion(natural, longer);
+    expect(rendered.duration).toBe(34.2);
+    expect(rendered.cues.map(c => c.at)).toEqual([0, 15]);
+    const saved = codeMotionProjectSchema.parse(input);
+    expect(saved.brief.duration).toBe(34.2);
+    expect(codeMotionProjectSchema.parse(JSON.parse(JSON.stringify(saved)))).toEqual(saved);
+    expect(compileCodeMotion(saved.brief, saved.plan).duration).toBe(34.2);
+  });
+  it("自然时长仍核对真实音画边界，固定片长保留精确约束", () => {
+    const shorter = { ...plan, scenes: [plan.scenes[0]] };
+    expect(compileCodeMotion({ ...brief, durationMode: "natural" }, shorter).duration).toBe(15);
+    expect(() => validateCodeMotionPlan({ ...brief, durationMode: "fixed" }, shorter)).toThrow("总时长");
+    expect(() => validateCodeMotionPlan({ ...brief, durationMode: "natural" }, {
+      ...plan, scenes: [{ ...plan.scenes[0], duration: 180 }, { ...plan.scenes[1], duration: 1 }]
+    })).toThrow("总时长");
+  });
 });

@@ -1,0 +1,32 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ❯ server/services/codeMotionRevisionEditMedia.test.ts (0 test)
+ ✓ server/services/canvasVideoTask.audioReference.test.ts (29 tests | 27 skipped) 1015ms
+   ✓ 真实任务写盘到供应商请求的音频交接 > INK free original edit sends original video to correct EvoLink model, no BytePlus or paid upscale 941ms
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/services/codeMotionRevisionEditMedia.test.ts [ server/services/codeMotionRevisionEditMedia.test.ts ]
+Error: [vitest] No "verifyCanvasMediaOwnership" export is defined on the "./canvasMediaOwnership" mock. Did you forget to return it from "vi.mock"?
+If you need to partially mock a module, you can use "importOriginal" helper inside:
+
+vi.mock(import("./canvasMediaOwnership"), async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    // your mocked methods
+  }
+})
+
+ ❯ server/services/seedanceReferenceVideoSize.ts:44:213
+
+ ❯ server/services/codeMotionRevisionEdit.ts:9:31
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  2 passed | 27 skipped (29)
+   Start at  05:42:55
+   Duration  1.39s (transform 678ms, setup 0ms, collect 107ms, tests 1.02s, environment 0ms, prepare 97ms)
+

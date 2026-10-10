@@ -55,3 +55,60 @@ it("deduplicates simultaneous requests, rejects changed input and restores full 
       .gcsUri
   ).toBe("gs://offline/result.mp4");
 });
+
+it("映客新建任务不能从通用后期绕过名额，原任务仍可只读恢复", async () => {
+  const { codeMotionCompositionSchema } = await import(
+    "../../shared/codeMotionComposition"
+  );
+  const spec = defaultArtMotionSpec();
+  const input = {
+    action: "art_motion",
+    scopeKey: "generic",
+    requestId: "c1007000-1234-4234-8234-123456789abe",
+    params: {
+      ...spec,
+      composition: codeMotionCompositionSchema.parse({
+        version: 1,
+        scenes: [
+          {
+            id: "s",
+            duration: spec.duration,
+            elements: [{ id: "t", type: "text", text: "有效画面" }],
+          },
+        ],
+      }),
+    },
+  };
+  let inserted = 0;
+  const deps: ArtMotionQueueDeps = {
+    load: async () => null,
+    insert: async () => {
+      inserted++;
+    },
+  };
+  await expect(queueArtMotion("7", input, deps)).rejects.toThrow(
+    "请从映客已保存作品入口"
+  );
+  await expect(
+    queueArtMotion(
+      "7",
+      { ...input, scopeKey: "code-motion:project", params: spec },
+      deps
+    )
+  ).rejects.toThrow("请从映客已保存作品入口");
+  expect(inserted).toBe(0);
+  const { artMotionJobSchema } = await import("../../shared/artMotion");
+  const parsed = artMotionJobSchema.parse(input);
+  expect(
+    await queueArtMotion("7", input, {
+      ...deps,
+      load: async id => ({
+        id,
+        userId: "7",
+        type: "post_prod",
+        status: "succeeded",
+        input: parsed,
+      }),
+    })
+  ).toMatchObject({ status: "succeeded" });
+});

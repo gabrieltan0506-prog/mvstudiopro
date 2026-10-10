@@ -1,0 +1,90 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+stdout | server/services/paidJobLedger.editSettlement.test.ts > edit settlement pending survives process registration and overdue reaper without a full refund
+[paidJobLedger] ▶︎ register taskType=canvasVideo jobId=cv_edit_pending userId=7 credits=44
+
+stderr | server/services/paidJobLedger.editSettlement.test.ts > edit settlement pending survives process registration and overdue reaper without a full refund
+[paidJobLedger] ⏳ settlement_pending taskType=canvasVideo jobId=cv_edit_pending（业务已成功，等补结算）
+
+stdout | server/services/paidJobLedger.editSettlement.test.ts > edit settlement pending survives process registration and overdue reaper without a full refund
+[paidJobLedger] ▶︎ register taskType=canvasVideo jobId=cv_edit_pending userId=7 credits=44
+
+stdout | server/services/paidJobLedger.editSettlement.test.ts > edit settlement pending survives process registration and overdue reaper without a full refund
+[paidJobLedger] ✓ settled taskType=canvasVideo jobId=cv_edit_pending userId=7 credits=44
+
+ ❯ server/services/codeMotionRevisionEditSettlement.test.ts (0 test)
+stderr | server/services/paidJobLedger.editSettlement.test.ts > edit settlement pending survives process registration and overdue reaper without a full refund
+[paidJobLedger] promptEnhance 孤儿扫描不可用(下轮再试): Database unavailable — cannot scan prompt enhance jobs
+
+stdout | server/services/paidJobLedger.editSettlement.test.ts > edit settlement pending survives process registration and overdue reaper without a full refund
+[paidJobLedger] 🧹 reap done · scanned=1 refunded=0 cancelled=0 errors=0
+
+stderr | server/services/paidJobLedger.editSettlement.test.ts > edit settlement pending survives process registration and overdue reaper without a full refund
+[paidJobLedger] manhuaAdvisor 孤儿扫描不可用(下轮再试): Database unavailable — cannot scan advisor jobs
+
+ ✓ server/services/paidJobLedger.editSettlement.test.ts (1 test) 857ms
+   ✓ edit settlement pending survives process registration and overdue reaper without a full refund 856ms
+ ❯ client/src/lib/codeMotionRevision.browser.test.ts (2 tests | 2 failed) 1220ms
+   × official free revision dialog cancels without a request and confirms once with locked cost or remaining allowance 786ms
+     → Failed to launch the browser process:  Code: null
+
+stderr:
+
+
+TROUBLESHOOTING: https://pptr.dev/troubleshooting
+
+   × official paid revision dialog cancels without a request and confirms once with locked cost or remaining allowance 433ms
+     → Failed to launch the browser process:  Code: null
+
+stderr:
+
+
+TROUBLESHOOTING: https://pptr.dev/troubleshooting
+
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/services/codeMotionRevisionEditSettlement.test.ts [ server/services/codeMotionRevisionEditSettlement.test.ts ]
+Error: [vitest] No "getUserPlan" export is defined on the "../credits" mock. Did you forget to return it from "vi.mock"?
+If you need to partially mock a module, you can use "importOriginal" helper inside:
+
+vi.mock(import("../credits"), async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    // your mocked methods
+  }
+})
+
+ ❯ server/services/codeMotionProductionGrant.ts:111:9
+    109| const real: CodeMotionProductionGrantDeps = {
+    110|   storage: codeMotionStorage,
+    111|   plan: getUserPlan,
+       |         ^
+    112|   claim,
+    113| };
+ ❯ server/services/codeMotionRevisionEditSettlement.ts:5:31
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  client/src/lib/codeMotionRevision.browser.test.ts > official free revision dialog cancels without a request and confirms once with locked cost or remaining allowance
+ FAIL  client/src/lib/codeMotionRevision.browser.test.ts > official paid revision dialog cancels without a request and confirms once with locked cost or remaining allowance
+Error: Failed to launch the browser process:  Code: null
+
+stderr:
+
+
+TROUBLESHOOTING: https://pptr.dev/troubleshooting
+
+ ❯ ChildProcess.onClose ../../../../../../../private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@puppeteer+browsers@2.13.0/node_modules/@puppeteer/browsers/src/launch.ts:537:11
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ Test Files  2 failed | 1 passed (3)
+      Tests  2 failed | 1 passed (3)
+   Start at  05:42:23
+   Duration  2.02s (transform 400ms, setup 0ms, collect 301ms, tests 2.08s, environment 1ms, prepare 235ms)
+

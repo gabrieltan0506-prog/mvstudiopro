@@ -9,7 +9,11 @@ const GRAMMAR_IDS = ["t2_keynote_ui", "y5_kinetic_type", "y4_storytime", "y2_vox
   if(started)return;started=true;
   if(!spec||!['animation','art'].includes(spec.mode)||!GRAMMAR_IDS.includes(spec.grammar)||!(spec.duration>=1&&spec.duration<=180))throw new Error('动画参数无效');
   if(![[1280,720],[720,1280],[1920,1080],[1080,1920]].some(([w,h])=>w===spec.width&&h===spec.height))throw new Error('画幅无效');
-  if(spec.mode==='art'){
+  if(spec.composition){
+   if(spec.mode!=='animation')throw new Error('逐镜编排只用于动画模式');
+   window.COMPOSITION_SPEC=spec;
+   await load('composition.js');
+  }else if(spec.mode==='art'){
    if(!Array.isArray(spec.scenes)||!spec.scenes.length||spec.scenes.length>35||spec.scenes.some(s=>!STYLE_IDS.includes(s.style)))throw new Error('艺术场景无效');
    window.ERAS=spec.scenes.map((s,i)=>({id:s.style,dur:s.duration,...(i&&s.transition!=='none'?{transition:{type:s.transition==='fade'?'crossfade':s.transition,dur:Math.min(.4,s.duration/3)}}:{})}));
    window.SCENES={};window.__bootErrors=[];
@@ -33,6 +37,6 @@ const GRAMMAR_IDS = ["t2_keynote_ui", "y5_kinetic_type", "y4_storytime", "y2_vox
   const tick=now=>{if(playing){position=Math.min(spec.duration-1/spec.fps,(now-anchor)/1000);window.renderFrame(position);if(position>=spec.duration-1/spec.fps)playing=false;}requestAnimationFrame(tick)};requestAnimationFrame(tick);
  }
  const fail=e=>{window.__bootFailed=String(e?.message||e);reply('art-motion-error',{message:window.__bootFailed})};
- addEventListener('message',e=>{if(e.source!==parent||e.origin!==location.origin)return;const m=e.data;if(m?.type==='art-motion-init')start(m.spec).catch(fail);if(m?.type==='art-motion-seek'&&window.__productReady){playing=false;position=Math.max(0,Math.min(window.__total,Number(m.time)||0));window.renderFrame(position)}if(m?.type==='art-motion-play'&&window.__productReady){playing=!playing;if(position>=window.__total-1/30)position=0;anchor=performance.now()-position*1000}});
+ addEventListener('message',e=>{if(e.source!==parent||e.origin!==location.origin)return;const m=e.data;if(m?.type==='art-motion-init')start(m.spec).catch(fail);if(m?.type==='art-motion-seek'&&window.__productReady){playing=false;position=Math.max(0,Math.min(window.__total,Number(m.time)||0));if(m.overlayOnly && window.renderTimingOverlay){document.body.style.background='transparent';document.documentElement.style.background='transparent';window.renderTimingOverlay(position)}else{document.body.style.background='';document.documentElement.style.background='';window.renderFrame(position)}}if(m?.type==='art-motion-play'&&window.__productReady){playing=!playing;if(position>=window.__total-1/30)position=0;anchor=performance.now()-position*1000}});
  if(window.__ART_SPEC)start(window.__ART_SPEC).catch(fail);else reply('art-motion-awaiting');
 })();

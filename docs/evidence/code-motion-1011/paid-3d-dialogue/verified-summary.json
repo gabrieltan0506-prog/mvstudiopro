@@ -1,0 +1,96 @@
+{
+  "sourceHead": "0ad90a8a7b21ffc5d20993657c80c894cd7eadc9",
+  "scope": "Four original paid items plus two approved original TTS lines, one accepted 8-second dialogue video, one explicitly approved Gemini perception. No new-word TTS, no hand-rubbing video resubmit.",
+  "generated": {
+    "image": {
+      "model": "gpt-image-2.5-sunburst",
+      "quality": "high",
+      "sha256": "ae011583942799882dd6e9de04db4fc076788c4c94c5329cd5715945462483a4",
+      "usage": {
+        "inputTokens": 1833,
+        "outputTokens": 1372
+      },
+      "actualUsd": null
+    },
+    "glb": {
+      "taskId": "d7535315684a4bd08cf4d9a9f7e7710b",
+      "sha256": "63342906a16610b0909425d5517084b6e6b0db473d08e6c7d2d791a27bba429a",
+      "actualUsd": null,
+      "officialEstimateUsd": 0.36
+    },
+    "world": {
+      "operationId": "c889ba13-db8c-4fb4-9d4e-74379b6b8514",
+      "worldId": "43db300a-2739-4322-8820-f76094228185",
+      "nativeCredits": 1580,
+      "usdAtPublishedRate": 1.264
+    },
+    "handoffVideo": {
+      "taskId": "task-unified-1791668903-0nkqgaot",
+      "nativeUsd": 1.625,
+      "sha256": "b17a8008b96c4fd5dff35b63642f311a81856ba12aec3e5fb87ebf1d82634592"
+    },
+    "dialogueVideo": {
+      "taskId": "task-unified-1791670053-um8bwqtu",
+      "nativeUsd": 3.167,
+      "nativeCredits": 215.3424,
+      "sha256": "948c930cef833217adf38843f8aaadd87d31aeeffb5725e2647c4429e4769b21",
+      "videoDuration": 8.041667,
+      "containerDuration": 8.064,
+      "frames": 193
+    },
+    "tts": {
+      "male": {
+        "generationId": "gen-tts-1791669966-WVw7RvNdoo8ubOnLJ0Uf",
+        "sha256": "72b11b63d087186893512387ea137518343136b3375a61cc8732d025bb7d0430",
+        "duration": 3.168,
+        "voice": "longanlufeng",
+        "input": "[empathetic]今天真冷，喝杯熱咖啡好嗎？"
+      },
+      "female": {
+        "generationId": "gen-tts-1791669968-rSPImnpqtf1MjTSokeec",
+        "sha256": "c2477f8c9766637e7816078571054a36a57876277243c35f2d5a756ac442cd31",
+        "duration": 2.784,
+        "voice": "longanlingxin",
+        "input": "[empathetic]好啊，正想喝杯熱的。"
+      }
+    },
+    "perception": {
+      "requestId": "44998a95-b535-484e-b008-94caacfc391f",
+      "responseId": "GrnKaqvQFt76juMPyv6lwQ4",
+      "actualModel": "gemini-3.8-flash",
+      "usageMetadata": {
+        "promptTokenCount": 6778,
+        "candidatesTokenCount": 1255,
+        "totalTokenCount": 8033,
+        "promptTokensDetails": [
+          {
+            "modality": "AUDIO",
+            "tokenCount": 202
+          },
+          {
+            "modality": "TEXT",
+            "tokenCount": 240
+          },
+          {
+            "modality": "VIDEO",
+            "tokenCount": 6336
+          }
+        ],
+        "serviceTier": "standard"
+      },
+      "estimateUsdAtPublishedRate": 0.00978975,
+      "actualInvoiceUsd": null
+    }
+  },
+  "costBoundary": "Known video native receipts total USD4.792; World native1580credits converts USD1.264, so verified/converted subtotal6.056. This is NOT total spend: image/Tripo/TTS invoice amounts unknown; Gemini USD0.00978975 is usage-based estimate, not debit.",
+  "contentLimits": [
+    "No hand-rubbing prompt in accepted video; no replacement resubmitted.",
+    "Unrequested final male 嗯 heard by native perception.",
+    "Male mouth synchronization weaker; no forced-alignment proof.",
+    "3D actor dark/profile; winter-rain qualities weak; static model unrigged.",
+    "No enhanced 30-second render/adoption completed after later dialogue scope pause; old finals intact.",
+    "Isolated official services/consumers, not deployed route or ordinary paid-member acceptance."
+  ],
+  "perceptionEvidence": "perception/response.raw.json + receipt.json + analysis.json; original generated file preserved; no user reference recording sent.",
+  "privateEvidence": "All original source media/signed URLs remain private; public PR should use sanitized summary only."
+}

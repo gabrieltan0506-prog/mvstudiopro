@@ -1,0 +1,11 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ server/services/codeMotionRevision.test.ts (8 tests | 7 skipped) 3532ms
+   ✓ paid action revision cost contract > locks a single paid scene at actual fixed tool units ×2; restores once and rejects unquoted inputs 3529ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 7 skipped (8)
+   Start at  04:36:50
+   Duration  7.08s (transform 2.74s, setup 0ms, collect 2.48s, tests 3.53s, environment 0ms, prepare 157ms)
+

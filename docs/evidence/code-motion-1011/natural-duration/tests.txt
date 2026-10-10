@@ -1,0 +1,11 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ shared/codeMotion.test.ts (9 tests) 14ms
+ ✓ server/services/codeMotionPlan.test.ts (5 tests) 14ms
+
+ Test Files  2 passed (2)
+      Tests  14 passed (14)
+   Start at  05:52:31
+   Duration  891ms (transform 252ms, setup 0ms, collect 635ms, tests 28ms, environment 0ms, prepare 133ms)
+

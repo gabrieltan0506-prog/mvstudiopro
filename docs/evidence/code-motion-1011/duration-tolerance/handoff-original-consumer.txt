@@ -1,0 +1,14 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+stdout | server/services/codeMotionVideoDuration.real.test.ts > decodes the new paid coffee handoff original without manually trimming provider bytes
+{"inputSha256":"b17a8008b96c4fd5dff35b63642f311a81856ba12aec3e5fb87ebf1d82634592","decodedFrames":150,"receipt":{"assetId":"handoff","at":5,"duration":5,"sourceStartSec":0,"fit":"cover","firstFrame":150,"frameCount":150,"actualSourceDuration":5.041667,"effectiveSourceStartSec":0,"normalization":"trim_to_timeline","paddedSeconds":0,"decoder":"ffmpeg","audio":"muted"},"unchangedProviderOriginal":true}
+
+ ✓ server/services/codeMotionVideoDuration.real.test.ts (3 tests | 2 skipped) 888ms
+   ✓ decodes the new paid coffee handoff original without manually trimming provider bytes 887ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 2 skipped (3)
+   Start at  05:54:11
+   Duration  1.44s (transform 44ms, setup 0ms, collect 46ms, tests 888ms, environment 0ms, prepare 82ms)
+

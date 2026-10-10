@@ -4,11 +4,16 @@ import os from "node:os";
 import path from "node:path";
 
 const h = vi.hoisted(() => ({
+  editQuote:null as any,
   normalizeVideo: vi.fn(async (url: string, _userId?: number, _record?: any, _save?: any) => url),
   normalizeImage: vi.fn(async (url: string) => url),
-  h3: vi.fn(), h3Unknown: false, evolink: vi.fn(), byteplus: vi.fn(), openrouter: vi.fn(), signed: 0,
+  inkCheck: vi.fn(async()=>{}), inkReceipts:new Map<string,Buffer>(), evolinkUnknown:false, h3: vi.fn(), h3Unknown: false, evolink: vi.fn(), byteplus: vi.fn(), openrouter: vi.fn(), signed: 0,
   byteplusFailure: false, byteplusUnknown: false, byteplusRejected: false, byteplusPollFailed: false, byteplusPollReason: "InputImageSensitiveContentDetected.PrivacyInformation", openrouterEnabled: false,
 }));
+vi.mock("./codeMotionRevision",()=>({getCodeMotionRevisionPrice:async()=>h.editQuote}));
+vi.mock("./codeMotionRevisionEdit",()=>({verifyCodeMotionEditSource:vi.fn()}));
+vi.mock("./codeMotionProductionVideo",()=>({assertCodeMotionProductionVideoTask:h.inkCheck}));
+vi.mock("./codeMotionStore",()=>({codeMotionStorage:{write:async(name:string,body:Buffer)=>{h.inkReceipts.set(name,body);return "1";},read:async(name:string)=>h.inkReceipts.has(name)?{body:h.inkReceipts.get(name),generation:"1"}:null}}));
 vi.mock("./seedanceReferenceVideoSize.js", async original => ({ ...await original<typeof import("./seedanceReferenceVideoSize.js")>(), normalizeSeedanceReferenceVideo: h.normalizeVideo }));
 vi.mock("./seedanceReferenceImageSize.js", () => ({ normalizeSeedanceReferenceImage: h.normalizeImage }));
 vi.mock("./hailuoReferencePreflight.js", () => ({ preflightH3ReferenceMedia: vi.fn(async () => {}) }));
@@ -39,6 +44,8 @@ vi.mock("./evolinkSeedanceVideo.js", async importOriginal => {
   return { ...actual, EVOLINK_SEEDANCE_POLL_INTERVAL_MS: 600000, isEvolinkSeedanceConfigured: () => true,
     submitEvolinkSeedanceVideo: async (input: Parameters<typeof actual.buildEvolinkSeedanceRequest>[0]) => {
       const request = actual.buildEvolinkSeedanceRequest(input); h.evolink(request);
+      if(h.evolinkUnknown)throw new Error("fake-provider-network-response-lost");
+      if(input.persistSubmitReceipt)await input.persistSubmitReceipt({status:200,body:JSON.stringify({id:"ev-local-test",status:"pending"})});
       return { evolinkTaskId: "ev-local-test", model: request.body.model, mode: "reference_to_video" };
     }, pollEvolinkVideoTaskOnce: async () => ({ state: "running", status: "processing" }),
   };
@@ -75,7 +82,7 @@ describe("真实任务写盘到供应商请求的音频交接", () => {
     vi.resetModules();
     vi.clearAllMocks();
     h.evolink.mockReset(); h.byteplus.mockReset(); h.openrouter.mockReset();
-    h.h3.mockReset(); h.h3Unknown = false;
+    h.h3.mockReset(); h.h3Unknown = false; h.evolinkUnknown=false;h.inkReceipts.clear();h.editQuote=null;
     h.normalizeVideo.mockReset().mockImplementation(async (url: string) => url);
     h.normalizeImage.mockReset().mockImplementation(async (url: string) => url);
     h.signed = 0; h.byteplusFailure = false; h.byteplusUnknown = false; h.byteplusRejected = false; h.byteplusPollFailed = false; h.byteplusPollReason = "InputImageSensitiveContentDetected.PrivacyInformation"; h.openrouterEnabled = false;
@@ -323,4 +330,51 @@ describe("真实任务写盘到供应商请求的音频交接", () => {
     expect(task.status).toBe("failed");
     expect(h.evolink).not.toHaveBeenCalled(); expect(h.byteplus).not.toHaveBeenCalled(); expect(h.openrouter).not.toHaveBeenCalled();
   });
+  async function createInk(key="ink-fixed") {
+    const {createCanvasVideoTask}=await import("./canvasVideoTask");
+    const task=await createCanvasVideoTask({userId:7,creditsCharged:0,engine:"seedance-mini-evolink",label:"映客未知回执技术探针",prompt:"技术图自然移动",imageUrls:["https://example.test/reference.png"],audioUrls:["gs://test-bucket/post-prod/7/reference-five-seconds.wav"],duration:5,resolution:"480p",seedanceVersion:"2.0-mini",workMode:"reference_to_video",idempotencyKey:key,inkProduction:{projectId:"11111111-1111-4111-8111-111111111111",grantId:"22222222-2222-4222-8222-222222222222",kind:"video",index:0,requestId:key,digest:"a".repeat(64)}});
+    let saved:any;await vi.waitFor(async()=>{saved=JSON.parse(await fs.readFile(path.join(dir,`${task.taskId}.json`),"utf8"));expect(["running","reconcile_manual","failed"]).toContain(saved.status);});return saved;
+  }
+  it("INK创建未知只对账，原id恢复不重投且不退款",async()=>{
+    h.evolinkUnknown=true;const task=await createInk();expect(task.status).toBe("reconcile_manual");expect(task.inkProductionSubmissionStartedAt).toBeTruthy();await createInk();const {getCanvasVideoTask}=await import("./canvasVideoTask");await getCanvasVideoTask(task.taskId,7);expect(h.evolink).toHaveBeenCalledTimes(1);expect(h.inkCheck).toHaveBeenCalledTimes(1);const {refundCreditsOnFailure}=await import("./paidJobLedger.js");expect(refundCreditsOnFailure).not.toHaveBeenCalled();
+  },30000);
+  it("INK实际provider body包含5秒480p和短参考音，原始与parsed回执均保存；崩溃缺handle不重投",async()=>{
+    const task=await createInk();expect(h.evolink.mock.calls[0][0].body).toMatchObject({duration:5,quality:"480p",model:"seedance-2.0-mini-reference-to-video"});expect(h.evolink.mock.calls[0][0].body.audio_urls).toEqual([expect.stringContaining("reference-five-seconds.wav")]);const names=Array.from(h.inkReceipts.keys());expect(names.some(n=>n.endsWith("submit-raw.json"))).toBe(true);expect(names.some(n=>n.endsWith("submit-parsed.json"))).toBe(true);expect(task.inkProductionEvidence.raw).toMatchObject({sha256:expect.stringMatching(/^[a-f0-9]{64}$/),bytes:expect.any(Number)});expect(task.inkProductionEvidence.parsed.objectName).toContain("submit-parsed.json");delete task.evolinkTaskId;task.status="running";await fs.writeFile(path.join(dir,`${task.taskId}.json`),JSON.stringify(task));const {getCanvasVideoTask}=await import("./canvasVideoTask");expect((await getCanvasVideoTask(task.taskId,7))?.status).toBe("reconcile_manual");expect(h.evolink).toHaveBeenCalledTimes(1);
+  });
+
+  async function createInkByteplus(key="ink-paid-byteplus") {
+    const {createCanvasVideoTask}=await import("./canvasVideoTask");
+    const task=await createCanvasVideoTask({userId:7,creditsCharged:130,engine:"seedance25-byteplus",label:"映客付费假服务探针",prompt:"杯中蒸汽升起",imageUrls:["https://example.test/cup.png"],audioUrls:["gs://test-bucket/post-prod/7/reference-five-seconds.wav"],duration:5,resolution:"720p",workMode:"reference_to_video",idempotencyKey:key,
+      inkProduction:{projectId:"11111111-1111-4111-8111-111111111111",grantId:"22222222-2222-4222-8222-222222222222",kind:"video",index:0,requestId:key,digest:"a".repeat(64)}});
+    let saved:any;await vi.waitFor(async()=>{saved=JSON.parse(await fs.readFile(path.join(dir,`${task.taskId}.json`),"utf8"));expect(["running","failed","reconcile_manual"]).toContain(saved.status);});return saved;
+  }
+  it("INK paid BytePlus unknown result has a durable marker and never falls back, resubmits or refunds",async()=>{
+    h.byteplusUnknown=true;const task=await createInkByteplus();expect(task.status).toBe("reconcile_manual");expect(task.inkProductionByteplusSubmissionStartedAt).toBeTruthy();
+    await createInkByteplus();const {getCanvasVideoTask}=await import("./canvasVideoTask");await getCanvasVideoTask(task.taskId,7);
+    expect(h.byteplus).toHaveBeenCalledTimes(1);expect(h.evolink).not.toHaveBeenCalled();
+    const {refundCreditsOnFailure}=await import("./paidJobLedger.js");expect(refundCreditsOnFailure).not.toHaveBeenCalled();
+  });
+  it("INK paid explicit BytePlus rejection uses the existing EvoLink fallback with all audio references once",async()=>{
+    h.byteplusRejected=true;const task=await createInkByteplus();expect(task.engine).toBe("seedance25-evolink");expect(task.fallbackReason).toContain("AccountOverdue");
+    await createInkByteplus();expect(h.byteplus).toHaveBeenCalledTimes(1);expect(h.evolink).toHaveBeenCalledTimes(1);
+    expect(h.evolink.mock.calls[0][0].body.audio_urls).toEqual([expect.stringContaining("reference-five-seconds.wav")]);
+  });
+  it("INK paid BytePlus process recovery without a handle does not submit again",async()=>{
+    const task=await createInkByteplus();delete task.byteplusTaskId;task.status="running";await fs.writeFile(path.join(dir,`${task.taskId}.json`),JSON.stringify(task));
+    const {getCanvasVideoTask}=await import("./canvasVideoTask");expect((await getCanvasVideoTask(task.taskId,7))?.status).toBe("reconcile_manual");
+    expect(h.byteplus).toHaveBeenCalledTimes(1);expect(h.evolink).not.toHaveBeenCalled();const {refundCreditsOnFailure}=await import("./paidJobLedger.js");expect(refundCreditsOnFailure).not.toHaveBeenCalled();
+  });
+
+  it.each(["free","paid"])("INK %s original edit sends original video to correct EvoLink model, no BytePlus or paid upscale",async tier=>{
+    const uri="gs://test-bucket/uploads/u7/original.mp4",free=tier==="free";
+    h.editQuote={shot:{editSource:{width:1280,height:720}}};
+    const {createCanvasVideoTask}=await import("./canvasVideoTask");
+    const input={userId:7,creditsCharged:free?0:44,engine:free?"seedance20-evolink" as const:"seedance25-evolink" as const,label:"原片编辑",prompt:"保留原片，微调蒸汽",videoUrls:[uri],audioUrls:["gs://test-bucket/post-prod/7/reference-five-seconds.wav"],duration:5,resolution:free?"480p":"720p",workMode:free?"reference_to_video" as const:"video_edit" as const,...(free?{seedanceVersion:"2.0" as const}:{}),idempotencyKey:`ink-edit-${tier}`,inkProduction:{projectId:"11111111-1111-4111-8111-111111111111",grantId:"22222222-2222-4222-8222-222222222222",kind:"video" as const,index:0,requestId:`ink-edit-${tier}`,digest:"a".repeat(64)}};
+    const task=await createCanvasVideoTask(input);
+    await vi.waitFor(()=>expect(h.evolink).toHaveBeenCalledTimes(1));
+    expect(h.evolink.mock.calls[0][0].body).toMatchObject({model:free?"seedance-2.0-reference-to-video":"seedance-2.5-video-edit",duration:free?5:-1,aspect_ratio:free?"16:9":"adaptive",quality:free?"480p":"720p",content_filter:false,video_urls:[expect.stringContaining("original.mp4")],audio_urls:[expect.stringContaining("reference-five-seconds.wav")]});
+    expect(h.normalizeVideo).not.toHaveBeenCalled();expect(h.byteplus).not.toHaveBeenCalled();
+    await createCanvasVideoTask(input);expect(h.evolink).toHaveBeenCalledTimes(1);
+  });
+
 });

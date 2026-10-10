@@ -111,6 +111,9 @@ export function ImageWorldStudio({
   const utils = trpc.useUtils(),
     makeObject = trpc.imageWorld.object.useMutation(),
     makeWorld = trpc.imageWorld.world.useMutation();
+  const sceneAccess = trpc.manhuaWorld.sceneAccess.useQuery(undefined, { retry: false, staleTime: 30_000 });
+  const canGenerateScene = sceneAccess.data?.canGenerate === true;
+  const sceneAccessMessage = sceneAccess.data?.message || (sceneAccess.isError ? "暂时无法确认3D场景权限，请稍后重试。" : "正在确认3D场景权限…");
   useEffect(() => {
     alive.current = true;
     return () => {
@@ -524,6 +527,7 @@ export function ImageWorldStudio({
     ]);
   };
   const make3d = async (objectId?: string) => {
+    if (!objectId && root?.imageWorld?.pending.world) return recoverWorldSubmission();
     const c = context(),
       key = objectId || "world",
       childId = objectId
@@ -556,6 +560,7 @@ export function ImageWorldStudio({
       await refresh3d(objectId);
       return;
     }
+    if (!objectId && !canGenerateScene) throw new Error(sceneAccessMessage);
     const pending = c.state.pending[key];
     const intent = pending ?? {
       kind: objectId ? ("object" as const) : ("world" as const),
@@ -628,6 +633,27 @@ export function ImageWorldStudio({
     };
     await onSave([{ expected: work, next: { ...work, imageWorld: st } }]);
     toast.success("三维任务已登记，可查询原任务");
+  };
+  const recoverWorldSubmission = async () => {
+    const c = context(false);
+    const intent = c.state.pending.world;
+    if (!intent || intent.kind !== "world") throw new Error("尚无待查询的空间提交");
+    const task = await utils.imageWorld.worldStatus.fetch({
+      sceneRef: intent.assetRef,
+      sourceUri: intent.sourceUri,
+      name: intent.name,
+      plan: intent.plan,
+      model: intent.model,
+    });
+    c.assertIdentity();
+    if (!task) throw new Error("尚未找到原空间任务，原提交记录已保留；本次没有重新生成，请稍后再查");
+    const { world: _done, ...pending } = c.state.pending;
+    await onSave([{ expected: c.root, next: { ...c.root, imageWorld: {
+      ...c.state,
+      pending,
+      world: { taskId: task.taskId, status: task.status, sourceVersion: task.sourceVersion, inputKey: JSON.stringify({ plan: intent.plan, model: intent.model }) },
+    } } }]);
+    toast.success("已找回原空间任务，可查询候选");
   };
   const refresh3d = async (objectId?: string, adopt = false) => {
     if (!root?.imageWorld) return;
@@ -1028,8 +1054,8 @@ export function ImageWorldStudio({
                 </select>
                 <button
                   className={button}
-                  disabled={busy || !enabled || !!stale}
-                  onClick={() => void run(() => make3d())}
+                  disabled={busy || (!state.pending.world && (!enabled || !canGenerateScene || !!stale))}
+                  onClick={() => void run(state.pending.world ? recoverWorldSubmission : () => make3d())}
                 >
                   {state.pending.world ? "续查原空间提交" : "建立三维空间"}
                 </button>
@@ -1050,11 +1076,7 @@ export function ImageWorldStudio({
                   采用空间到场景库
                 </button>
               </div>
-              {!enabled && (
-                <p className="text-xs">
-                  三维制作仅对已开放三维权限的账号提供。
-                </p>
-              )}
+              <p className="text-xs" data-scene-access role="status">{sceneAccessMessage}</p>
               <p className="text-xs text-stone-600">
                 物件是独立模型；空间是可浏览的静态场景，碰撞网格不等于完整可编辑模型。采用会保存到当前作品素材库。物件可在本工作台查询、预览和下载；空间可从场景库浏览。环境音可在原声音编辑器导入、裁切、试听与采用，不新增音效生成服务。
               </p>

@@ -1,0 +1,37 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ server/services/evolinkSeedanceVideo.receipt.test.ts (4 tests) 15ms
+stderr | server/services/canvasVideoTask.audioReference.test.ts > 真实任务写盘到供应商请求的音频交接 > Mini明确隐私拒绝才回落同Mini，不切2.5
+[canvasVideoTask] BytePlus Seedance 2.5 提交失败，回落 EvoLink · task=cv_mv2utt3l_d57f7b15 · InputImageSensitiveContentDetected.PrivacyInformation
+
+stderr | server/services/canvasVideoTask.audioReference.test.ts > 真实任务写盘到供应商请求的音频交接 > Mini受理后终态隐私拒绝也回落同Mini
+[canvasVideoTask] BytePlus 任务失败，回落 EvoLink · task=cv_mv2uttb0_25dc24e5 · InputImageSensitiveContentDetected.PrivacyInformation
+
+stderr | server/services/canvasVideoTask.audioReference.test.ts > 真实任务写盘到供应商请求的音频交接 > 2.5明确拒绝转EvoLink，保留原音轨
+[canvasVideoTask] BytePlus Seedance 2.5 提交失败，回落 EvoLink · task=cv_mv2uttg9_ee408e5a · AccountOverdue
+
+stderr | server/services/canvasVideoTask.audioReference.test.ts > 真实任务写盘到供应商请求的音频交接 > 2.5 上游非人脸失败终态只转交一次 EvoLink
+[canvasVideoTask] BytePlus 任务失败，回落 EvoLink · task=cv_mv2uttoa_e21446bf · InvalidParameter: video pixel count
+
+stderr | server/services/canvasVideoTask.audioReference.test.ts > 真实任务写盘到供应商请求的音频交接 > 图片自动放大结果进入BytePlus及拒绝后的EvoLink，视频参考不被当作图片
+[canvasVideoTask] BytePlus Seedance 2.5 提交失败，回落 EvoLink · task=cv_mv2utumq_d08ed52a · InputImageSensitiveContentDetected.PrivacyInformation
+
+stderr | server/services/canvasVideoTask.audioReference.test.ts > 真实任务写盘到供应商请求的音频交接 > BytePlus回落EvoLink重新签名且不覆盖持久身份
+[canvasVideoTask] BytePlus Seedance 2.5 提交失败，回落 EvoLink · task=cv_mv2utuys_e1e271e6 · InputImageSensitiveContentDetected.PrivacyInformation
+
+stderr | server/services/canvasVideoTask.audioReference.test.ts > 真实任务写盘到供应商请求的音频交接 > 人脸拒绝即使OpenRouter可用仍只转EvoLink并保留音频
+[canvasVideoTask] BytePlus Seedance 2.5 提交失败，回落 EvoLink · task=cv_mv2utv4b_1ff6d9ae · InputImageSensitiveContentDetected.PrivacyInformation
+
+ ✓ server/services/canvasVideoTask.audioReference.test.ts (24 tests) 9350ms
+   ✓ 真实任务写盘到供应商请求的音频交接 > H3音频身份写盘、请求现签，原句柄阻止重复建单 3148ms
+   ✓ 真实任务写盘到供应商请求的音频交接 > 2.5 上游非人脸失败终态只转交一次 EvoLink 336ms
+   ✓ 真实任务写盘到供应商请求的音频交接 > 未登记的同桶视频在供应商调用前拒绝 391ms
+   ✓ 真实任务写盘到供应商请求的音频交接 > base64视频在供应商调用前拒绝 534ms
+   ✓ 真实任务写盘到供应商请求的音频交接 > worker拒绝越权素材，三个供应商均零提交 1258ms
+
+ Test Files  2 passed (2)
+      Tests  28 passed (28)
+   Start at  04:36:09
+   Duration  10.23s (transform 1.46s, setup 0ms, collect 531ms, tests 9.36s, environment 1ms, prepare 266ms)
+

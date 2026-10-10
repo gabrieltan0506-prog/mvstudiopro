@@ -1,0 +1,49 @@
+{
+  "gcsUri": "gs://local-demo/ink-effects-22s.mp4",
+  "url": "https://local-demo.invalid/ink-effects-22s.mp4",
+  "durationSec": 22,
+  "width": 720,
+  "height": 1280,
+  "fps": 30,
+  "frameCount": 660,
+  "alpha": false,
+  "requestId": "de101100-1234-4234-8234-123456789abd",
+  "evidence": [
+    {
+      "name": "request.raw.json",
+      "gcsUri": "gs://local-demo/evidence/request.raw.json",
+      "bytes": 12923,
+      "sha256": "a73ac8a383032d7ff3921388223fad86901fd8b4b2b589c96e7c93671f20caa7"
+    },
+    {
+      "name": "request.normalized.json",
+      "gcsUri": "gs://local-demo/evidence/request.normalized.json",
+      "bytes": 12923,
+      "sha256": "540b038f7e17abf998c1d88ec76cef4a627c7192c5bd3ed2bf5082469e37978a"
+    },
+    {
+      "name": "code-audio.parsed.json",
+      "gcsUri": "gs://local-demo/evidence/code-audio.parsed.json",
+      "bytes": 346,
+      "sha256": "14d5ce90a90306a39bf71a395f6f318d851ec67952f9ef4c4e93b6f4e8378e7e"
+    },
+    {
+      "name": "frames.json",
+      "gcsUri": "gs://local-demo/evidence/frames.json",
+      "bytes": 73220,
+      "sha256": "4d3fe5e1c1738655ca589c46d17f3a9ab5cec9a5f83fc224794c132c8402f7e3"
+    },
+    {
+      "name": "probe.raw.json",
+      "gcsUri": "gs://local-demo/evidence/probe.raw.json",
+      "bytes": 4414,
+      "sha256": "80b5219f179772434a2f5185e6562d625cfe1eabcf6daf5c8c8c6cb405d22204"
+    },
+    {
+      "name": "probe.parsed.json",
+      "gcsUri": "gs://local-demo/evidence/probe.parsed.json",
+      "bytes": 2461,
+      "sha256": "13415110f373c2b25409a1a1e4b92263ffa93f18d13927dec48051ee814061d2"
+    }
+  ]
+}

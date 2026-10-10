@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ shared/manhuaVfxPricing.test.ts (20 tests) 16ms
+
+ Test Files  1 passed (1)
+      Tests  20 passed (20)
+   Start at  04:42:58
+   Duration  2.24s (transform 509ms, setup 0ms, collect 788ms, tests 16ms, environment 0ms, prepare 260ms)
+

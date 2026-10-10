@@ -17,6 +17,7 @@ import {
   runMediaTool,
   uploadResult,
 } from "./postProduction";
+import { prepareCodeMotionVideoFrames } from "./codeMotionVideoFrames";
 import { boundMediaThreads, mediaRuntime } from "./postProdResources";
 
 /** The same bundled Canvas runtime produces interactive previews and authoritative video frames. */
@@ -113,84 +114,154 @@ export async function renderArtMotion(
       cues.push({ ...cue, image: url });
     }
     let audio: string | undefined;
+    if (spec.inkSpeech) {
+      const { assertInkFreeJob } = await import("./inkFreeQuota");
+      const { artMotionTaskId } = await import("./artMotionTask");
+      await assertInkFreeJob(
+        userId,
+        artMotionTaskId(userId, input.requestId),
+        "mp4"
+      );
+      const { renderInkFreeSpeech } = await import("./inkFreeSpeech");
+      audio = path.join(root, "ink-dialogue.wav");
+      const receipt = await renderInkFreeSpeech(
+        spec.inkSpeech,
+        spec.duration,
+        audio,
+        signal
+      );
+      await preserve(
+        "audio-probe-1.parsed.json",
+        Buffer.from(JSON.stringify(receipt))
+      );
+    }
     if (spec.audioUri) {
       audio = path.join(root, "audio");
       await fetchPostProdSourceToFile(spec.audioUri, audio, { signal });
     }
-    // Serve only the pinned engine and this task's normalized images, never arbitrary local paths.
-    server = createServer(async (req, res) => {
-      try {
-        const url = new URL(req.url || "/", "http://localhost");
-        const image = images.get(url.pathname);
-        if (image) {
-          res.setHeader("Content-Type", "image/png");
-          res.end(image);
-          return;
-        }
-        const rel = decodeURIComponent(url.pathname).replace(/^\//, "");
-        const target = path.resolve(engine, rel);
-        if (
-          !target.startsWith(engine + path.sep) ||
-          !/^[-\w/.]+$/.test(rel) ||
-          !/[.](html|js|woff2?|json|png)$/.test(rel)
-        ) {
-          res.writeHead(404).end();
-          return;
-        }
-        const mime: Record<string, string> = {
-          ".html": "text/html",
-          ".js": "application/javascript",
-          ".json": "application/json",
-          ".woff": "font/woff",
-          ".woff2": "font/woff2",
-          ".png": "image/png",
-        };
-        res.setHeader("Content-Type", mime[path.extname(target)]);
-        res.end(await readFile(target));
-      } catch {
-        res.writeHead(404).end();
-      }
-    });
-    server.listen(0, "127.0.0.1");
-    await once(server, "listening");
-    const address = server.address();
-    if (!address || typeof address === "string")
-      throw new Error("动画渲染入口未就绪");
-    const origin = `http://127.0.0.1:${address.port}`;
-    browser = await puppeteer.launch({
-      headless: true,
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-      userDataDir: path.join(root, "browser"),
-      env: { PATH: process.env.PATH, LANG: "C.UTF-8", TMPDIR: root },
-      args:
-        process.platform === "linux"
-          ? ["--no-sandbox", "--disable-dev-shm-usage"]
-          : [],
-    });
-    signal.throwIfAborted();
-    const page = await browser.newPage();
-    await page.setRequestInterception(true);
-    page.on("request", r => {
-      void (r.url().startsWith(origin + "/") ? r.continue() : r.abort()).catch(
-        () => {}
+    if (spec.codeAudio) {
+      const { renderCodeMotionAudio } = await import("./codeMotionAudio");
+      const projectId = input.scopeKey.startsWith("code-motion:")
+        ? input.scopeKey.slice("code-motion:".length)
+        : "";
+      const soundtrack = await renderCodeMotionAudio({
+        userId,
+        projectId,
+        audio: spec.codeAudio,
+        duration: spec.duration,
+        root,
+        speechPath: audio,
+        signal,
+      });
+      audio = soundtrack.output;
+      await preserve(
+        "code-audio.parsed.json",
+        Buffer.from(JSON.stringify(soundtrack.receipt))
       );
-    });
-    page.on("pageerror", e => errors.push(String(e)));
-    await page.evaluateOnNewDocument(
-      s => {
-        (window as unknown as { __ART_SPEC: unknown }).__ART_SPEC = s;
-      },
-      { ...spec, cues }
+    }
+    const count = Math.round(spec.duration * spec.fps);
+    const videoFrames = await prepareCodeMotionVideoFrames(
+      spec.codeVideo,
+      spec,
+      root,
+      signal,
+      preserve
     );
-    await page.goto(origin + "/studio.html", {
-      waitUntil: "load",
-      timeout: 120000,
-    });
-    await page.waitForFunction("window.__productReady || window.__bootFailed", {
-      timeout: 120000,
-    });
-    const failed = await page.evaluate("window.__bootFailed");
-    if (failed) throw new Error(String(failed));
+    const timingOverlayFrames = new Set<number>();
+    let sceneStart = 0;
+    for (const scene of spec.composition?.scenes || []) {
+      for (const element of scene.elements.filter(
+        e => e.id.startsWith("timing-word-") || e.id.startsWith("timing-beat-")
+      )) {
+        const first = Math.ceil((sceneStart + element.start) * spec.fps - 1e-6);
+        const end = Math.ceil(
+          (sceneStart + (element.end ?? scene.duration)) * spec.fps - 1e-6
+        );
+        for (let i = first; i < end; i++)
+          if (videoFrames.has(i)) timingOverlayFrames.add(i);
+      }
+      sceneStart += scene.duration;
+    }
+    let page: import("puppeteer").Page | undefined;
+    if (videoFrames.size < count || timingOverlayFrames.size > 0) {
+      // Serve only the pinned engine and this task's normalized images, never arbitrary local paths.
+      server = createServer(async (req, res) => {
+        try {
+          const url = new URL(req.url || "/", "http://localhost");
+          const image = images.get(url.pathname);
+          if (image) {
+            res.setHeader("Content-Type", "image/png");
+            res.end(image);
+            return;
+          }
+          const rel = decodeURIComponent(url.pathname).replace(/^\//, "");
+          const target = path.resolve(engine, rel);
+          if (
+            !target.startsWith(engine + path.sep) ||
+            !/^[-\w/.]+$/.test(rel) ||
+            !/[.](html|js|woff2?|json|png)$/.test(rel)
+          ) {
+            res.writeHead(404).end();
+            return;
+          }
+          const mime: Record<string, string> = {
+            ".html": "text/html",
+            ".js": "application/javascript",
+            ".json": "application/json",
+            ".woff": "font/woff",
+            ".woff2": "font/woff2",
+            ".png": "image/png",
+          };
+          res.setHeader("Content-Type", mime[path.extname(target)]);
+          res.end(await readFile(target));
+        } catch {
+          res.writeHead(404).end();
+        }
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const address = server.address();
+      if (!address || typeof address === "string")
+        throw new Error("动画渲染入口未就绪");
+      const origin = `http://127.0.0.1:${address.port}`;
+      browser = await puppeteer.launch({
+        headless: true,
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+        userDataDir: path.join(root, "browser"),
+        env: { PATH: process.env.PATH, LANG: "C.UTF-8", TMPDIR: root },
+        args:
+          process.platform === "linux"
+            ? ["--no-sandbox", "--disable-dev-shm-usage"]
+            : [],
+      });
+      signal.throwIfAborted();
+      page = await browser.newPage();
+      await page.setRequestInterception(true);
+      page.on("request", r => {
+        void (
+          r.url().startsWith(origin + "/") ? r.continue() : r.abort()
+        ).catch(() => {});
+      });
+      page.on("pageerror", e => errors.push(String(e)));
+      await page.evaluateOnNewDocument(
+        s => {
+          (window as unknown as { __ART_SPEC: unknown }).__ART_SPEC = s;
+        },
+        { ...spec, cues }
+      );
+      await page.goto(origin + "/studio.html", {
+        waitUntil: "load",
+        timeout: 120000,
+      });
+      await page.waitForFunction(
+        "window.__productReady || window.__bootFailed",
+        {
+          timeout: 120000,
+        }
+      );
+      const failed = await page.evaluate("window.__bootFailed");
+      if (failed) throw new Error(String(failed));
+    }
     const video = path.join(root, spec.alpha ? "render.mov" : "render.mp4");
     const args = [
       "-y",
@@ -259,21 +330,40 @@ export async function renderArtMotion(
     encoder.stdin!.on("error", e => {
       encoderError = e;
     });
-    const count = Math.round(spec.duration * spec.fps);
     for (let i = 0; i < count; i++) {
       signal.throwIfAborted();
       if (encoderError) throw encoderError;
-      const encoded = await page.evaluate(async time => {
-        const w = window as unknown as {
-          prepare(t: number): Promise<void>;
-          renderFrame(t: number): void;
-          __canvas: HTMLCanvasElement;
-        };
-        await w.prepare(time);
-        w.renderFrame(time);
-        return w.__canvas.toDataURL("image/png").split(",")[1];
-      }, i / spec.fps);
-      const frame = Buffer.from(encoded, "base64");
+      const videoFrame = videoFrames.get(i);
+      let frame: Buffer;
+      if (videoFrame) {
+        frame = await readFile(videoFrame);
+        if (timingOverlayFrames.has(i)) {
+          const overlay = await page!.evaluate(time => {
+            const w = window as unknown as {
+              renderTimingOverlay(t: number): void;
+              __canvas: HTMLCanvasElement;
+            };
+            w.renderTimingOverlay(time);
+            return w.__canvas.toDataURL("image/png").split(",")[1];
+          }, i / spec.fps);
+          frame = await sharp(frame)
+            .composite([{ input: Buffer.from(overlay, "base64") }])
+            .png()
+            .toBuffer();
+        }
+      } else {
+        const encoded = await page!.evaluate(async time => {
+          const w = window as unknown as {
+            prepare(t: number): Promise<void>;
+            renderFrame(t: number): void;
+            __canvas: HTMLCanvasElement;
+          };
+          await w.prepare(time);
+          w.renderFrame(time);
+          return w.__canvas.toDataURL("image/png").split(",")[1];
+        }, i / spec.fps);
+        frame = Buffer.from(encoded, "base64");
+      }
       frames.push({
         frame: i,
         time: i / spec.fps,
@@ -293,7 +383,15 @@ export async function renderArtMotion(
     await preserve(
       "frames.json",
       Buffer.from(
-        JSON.stringify({ complete: true, frameCount: count, frames, errors })
+        JSON.stringify({
+          complete: true,
+          frameCount: count,
+          ffmpegVideoFrames: videoFrames.size,
+          canvasFrames: count - videoFrames.size,
+          timingOverlayFrames: timingOverlayFrames.size,
+          frames,
+          errors,
+        })
       )
     );
     framesArchived = true;
@@ -344,6 +442,13 @@ export async function renderArtMotion(
     const stream = probe.streams?.find(
       (s: { codec_type: string }) => s.codec_type === "video"
     );
+    if (
+      audio &&
+      !probe.streams?.some(
+        (s: { codec_type: string }) => s.codec_type === "audio"
+      )
+    )
+      throw new Error("成片缺少音轨，未采用无声产物");
     if (
       !stream ||
       Number(stream.nb_read_frames) !== count ||

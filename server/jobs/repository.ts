@@ -1,5 +1,5 @@
 import { MANHUA_LEARN_ACTIVE_JOB_LIMIT } from "../../shared/manhuaLearningAdmission.js";
-import { BLENDER_POST_PROD_ACTIONS, type PostProdClaimFilter } from "./workerRole.js";
+import { BLENDER_POST_PROD_ACTIONS, canRenderManhuaVfx, type PostProdClaimFilter } from "./workerRole.js";
 import { and, asc, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { isDeepStrictEqual } from "node:util";
 import { jobs, type Job, type InsertJob } from "../../drizzle/schema";
@@ -1085,7 +1085,8 @@ export async function claimNextPostProdJob(filter?: PostProdClaimFilter): Promis
     rows = await db
       .select()
       .from(jobs)
-      .where(and(eq(jobs.status, "queued"), eq(jobs.type, "post_prod"), ...(actionClause ? [actionClause] : [])))
+      .where(and(eq(jobs.status, "queued"), eq(jobs.type, "post_prod"), ...(actionClause ? [actionClause] : []),
+        ...(canRenderManhuaVfx() ? [] : [sql`${actionExpr} <> ${"manhua_vfx"}`])))
       .orderBy(asc(jobs.createdAt))
       .limit(1);
   } catch (error) {

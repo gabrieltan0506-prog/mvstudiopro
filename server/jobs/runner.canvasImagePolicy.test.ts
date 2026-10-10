@@ -34,6 +34,14 @@ describe("runner · canvas_gpt_image2 墙钟/重排/退款策略(七审 P0-2)", 
     ).toBe("fail");
   });
 
+  it("映客图片未知提交和外层墙钟超时保留原账待对账，确定失败仍沿原退款路径", () => {
+    const job={type:"image",input:{...CANVAS_INPUT,params:{...CANVAS_INPUT.params,codeMotionImage:{requestId:"fixed"}}},attempts:0};
+    expect(resolveFailedJobDisposition(job,Object.assign(new Error("保存结果未知"),{kind:"unknown"}))).toBe("reconcile_and_fail_paid_image");
+    expect(resolveFailedJobDisposition(job,new Error("image job timed out after 1500000ms"))).toBe("reconcile_and_fail_paid_image");
+    expect(resolveFailedJobDisposition(job,new Error("OpenAI generations HTTP 400: rejected"))).toBe("refund_and_fail_paid_image");
+    expect(resolveFailedJobDisposition({...job,input:CANVAS_INPUT},new Error("image job timed out after 1500000ms"))).toBe("refund_and_fail_paid_image");
+  });
+
   it("退款幂等键:同 job 双路径(processImageJob 内部/runClaimedJob 外层)用同一把钥匙", () => {
     expect(canvasGptImage2RefundKey("job-9")).toBe("refund:canvasGptImage2/job-9");
     expect(canvasGptImage2RefundKey(undefined)).toBe("refund:canvasGptImage2/unknown");

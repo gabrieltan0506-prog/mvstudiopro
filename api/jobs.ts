@@ -1027,7 +1027,7 @@ function assertManhuaPilotMetadataPresent(
  * 决策全部来自 server/services/canvasGenerationIntent.ts；这里只把入参组起来。
  * 摘要由服务端按将要建单的内容字段算（黑名单口径），客户端摘要不作事实。
  */
-async function gateCanvasIntentBeforeCharge(input: {
+export async function gateCanvasIntentBeforeCharge(input: {
   userId: number;
   intentId: string;
   operation: string;
@@ -1050,7 +1050,7 @@ async function gateCanvasIntentBeforeCharge(input: {
 }
 
 /** 裁决要求直接回复时的载荷：existing_task 还原既有任务；其余按 step 给的状态码 */
-async function canvasIntentStepReply(
+export async function canvasIntentStepReply(
   step: CanvasIntentJobStep,
   userId: number,
 ): Promise<{ status: number; body: Record<string, unknown> } | null> {
@@ -1094,7 +1094,7 @@ async function canvasIntentStepReply(
  * **必须停下不建单**——扣费本身按 marker 幂等不会双扣，但若旧执行者继续建单/提交上游，
  * 就成了两个执行者各自推进同一次生成。建单点由静态守门保证检查了返回值。
  */
-async function markCanvasIntentStage(input: {
+export async function markCanvasIntentStage(input: {
   userId: number;
   intentId: string;
   holderId: string;
@@ -1135,7 +1135,7 @@ async function releasePilotOnIntentReject(
  * 扣费失败（402 / 403 / 503）后释放占位租约（R1 1464-08）：下一次点击能立刻接管，不用空等 60 秒。
  * 不动 stage / taskId；503 若其实已扣成功，重试时按 marker 幂等命中，不二扣。
  */
-async function releaseCanvasIntentAfterChargeFailure(input: {
+export async function releaseCanvasIntentAfterChargeFailure(input: {
   userId: number;
   intentId: string;
   holderId: string;
@@ -1430,7 +1430,8 @@ type CanvasVideoChargeOpts = {
    */
   videoModel?: string | null;
   /** 首页照片人物动起来按秒计费；缺省保持原画布分档计费。 */
-  pricingMode?: "canvas" | "homePhotoAnimate";
+  pricingMode?: "canvas" | "homePhotoAnimate" | "inkRevisionVideo";
+  inkRevisionSlot?: import("../server/services/codeMotionProductionGrant").CodeMotionProductionSlot;
 };
 
 /** 只扣费、立刻返回；异步成片用。失败路径由 canvasVideoTask 退款。 */
@@ -1484,7 +1485,7 @@ async function findPriorChargeByMarker(
   }
 }
 
-async function chargeCanvasVideoCredits(
+export async function chargeCanvasVideoCredits(
   req: VercelRequest,
   opts: CanvasVideoChargeOpts,
 ): Promise<
@@ -1521,7 +1522,11 @@ async function chargeCanvasVideoCredits(
   const episodeIndex = Number(opts.episodeIndex);
   const isEpisodeSegment = Number.isFinite(episodeIndex) && episodeIndex > 0;
   let credits: number;
-  if (opts.pricingMode === "homePhotoAnimate") {
+  if (opts.pricingMode === "inkRevisionVideo") {
+    if (!opts.inkRevisionSlot || opts.idempotencyKey!==opts.inkRevisionSlot.requestId) return {ok:false,status:400,error:"局部修改扣费授权不一致"};
+    const {codeMotionRevisionCharge}=await import("../server/services/codeMotionRevisionPricing.js");
+    credits=await codeMotionRevisionCharge(String(viewer.userId),opts.inkRevisionSlot);
+  } else if (opts.pricingMode === "homePhotoAnimate") {
     const {
       HOME_PHOTO_ANIMATE_DEFAULT_RESOLUTION,
       homePhotoAnimateCredits,
@@ -1550,6 +1555,7 @@ async function chargeCanvasVideoCredits(
   if (marker) {
     const prior = await findPriorChargeByMarker(viewer.userId, marker);
     if (prior) {
+      if (opts.pricingMode === "inkRevisionVideo" && prior.credits !== credits) return {ok:false,status:409,error:"原扣费回执与局部修改报价不一致，请恢复原任务核对"};
       return {
         ok: true,
         credits: prior.credits,
@@ -1611,7 +1617,7 @@ async function chargeCanvasVideoCredits(
  *   2) hold 已注册、账本退款失败 → 绝不直退，保持 active/refund_pending 交给 reaper 对账。
  * chargeKey 存在时 jobId 稳定：重试复用旧扣费又失败，不会重复退。
  */
-async function refundCanvasChargeOnCreateFail(
+export async function refundCanvasChargeOnCreateFail(
   charged: { userId: number; credits: number; deduct?: PaidJobDeductSnapshot; chargeKey?: string },
   label: string,
   reasonSuffix = "创建失败退回",

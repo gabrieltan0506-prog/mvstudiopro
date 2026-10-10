@@ -30,3 +30,14 @@ it("父学习分机仅rig领取；单机仅app领取", () => {
   expect(shouldConsumeManhuaLearning({ JOB_WORKER_ROLE: "app" })).toBe(true);
   expect(shouldConsumeManhuaLearning({ JOB_WORKER_ROLE: "rig" })).toBe(false);
 });
+
+import { canRenderManhuaVfx, assertManhuaVfxWorker } from "./workerRole";
+it("特效只认指定工作机，不受分流开关关闭或角色伪配置影响", () => {
+  const worker = { JOB_WORKER_ROLE: "rig", FLY_MACHINE_ID: "test-worker", MANHUA_HEAVY_MACHINE_ID: "test-worker" };
+  expect(canRenderManhuaVfx(worker)).toBe(true);
+  expect(canRenderManhuaVfx({ ...worker, MANHUA_HEAVY_WORKER_SPLIT: "0", MANHUA_RIG_WORKER_SPLIT: "0" })).toBe(true);
+  for (const env of [{}, { ...worker, JOB_WORKER_ROLE: "app" }, { ...worker, FLY_MACHINE_ID: "test-production" }, { ...worker, MANHUA_HEAVY_MACHINE_ID: "" }, { ...worker, FLY_MACHINE_ID: "" }]) {
+    expect(canRenderManhuaVfx(env)).toBe(false);
+    expect(() => assertManhuaVfxWorker(env)).toThrow("不回退生产机");
+  }
+});

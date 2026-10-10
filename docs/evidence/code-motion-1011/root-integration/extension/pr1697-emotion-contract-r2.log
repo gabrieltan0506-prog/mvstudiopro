@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ server/services/codeMotionSound.test.ts > 沿漫剧音色库逐镜编译情绪，回执保存语气，改情绪不能复用旧配音
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 4 skipped (5)
+   Start at  04:30:41
+   Duration  3.02s (transform 1.01s, setup 0ms, collect 2.19s, tests 14ms, environment 0ms, prepare 142ms)
+

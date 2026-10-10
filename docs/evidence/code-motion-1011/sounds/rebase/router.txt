@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ server/routers/codeMotion.sounds.test.ts (4 tests | 3 skipped) 20ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 3 skipped (4)
+   Start at  06:19:45
+   Duration  6.64s (transform 2.81s, setup 0ms, collect 5.60s, tests 20ms, environment 0ms, prepare 181ms)
+
