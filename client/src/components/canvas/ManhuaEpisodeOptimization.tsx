@@ -126,6 +126,13 @@ export default function ManhuaEpisodeOptimization(
         card: PublicManhuaViralTemplateCard;
       } => Boolean(x.card)
     );
+  // 自然语言搭配保存在本集模板参考中；重进页面也能恢复，手动勾选仍保留原机制。
+  const choiceVersion = JSON.stringify({ episode: props.focusEpisode, plans: props.plans.map(p => ({ publicId: p.publicId, selected: p.selected, selectedFeatures: p.selectedFeatures })) });
+  useEffect(() => {
+    if (!props.plans.some(plan => plan.selected !== undefined)) return;
+    const next = Object.fromEntries(props.plans.filter(plan => plan.selected).map(plan => [plan.publicId, plan.selectedFeatures || []]));
+    if (persist({ features: next })) setFeatures(next);
+  }, [choiceVersion]);
   const latest = useRef<Saved>({ selected, features, results, pending });
   latest.current = { selected, features, results, pending };
   const saved = (next: Partial<Saved>) => ({ ...latest.current, ...next });
@@ -512,10 +519,10 @@ export default function ManhuaEpisodeOptimization(
           onClick={() => props.onRecommend(chosen)}
           className="rounded bg-cyan-500/20 px-3 py-2 disabled:opacity-40"
         >
-          为所选剧集推荐3—5个模板
+          推荐一种思路，再看看其他三种
         </button>
         <p className="text-xs opacity-70">
-          推荐以所选列表中第一集为依据；组合优化逐集读取完整正文。
+          顾问逐集参考剧情推荐。可以选一个，也可以混合多个亮点；直接告诉顾问你的想法。
         </p>
         <p className="text-xs opacity-70">
           模板试写今日剩余 {quota.data?.trialsLeftToday ?? "…"} / 3
@@ -543,13 +550,13 @@ export default function ManhuaEpisodeOptimization(
             </select>
           </label>
         )}
-        {cards.map(({ plan, card }) => (
+        {cards.map(({ plan, card }, index) => (
           <section
             key={card.publicId}
             className="space-y-2 rounded border border-white/15 p-3"
           >
             <h4 className="font-semibold">
-              {card.methodBrief?.title || card.nameZh}
+              {index === 0 ? "主推荐" : `另一个思路 ${index}`} · {card.methodBrief?.title || card.nameZh}
             </h4>
             <p>{plan.reason}</p>
             <p className="text-xs opacity-70">保留：{plan.preserve}</p>
@@ -568,7 +575,7 @@ export default function ManhuaEpisodeOptimization(
             >
               试写一集 · 免费
             </button>
-            <p className="font-medium">选择要注入的特色</p>
+            <p className="font-medium">想借用哪些亮点</p>
             {templateFeatureChoices(card).map(f => (
               <label key={f.id} className="flex items-start gap-2 leading-6">
                 <input
@@ -591,7 +598,7 @@ export default function ManhuaEpisodeOptimization(
                 const card = props.templates.find(c => c.publicId === id);
                 return (
                   <div key={id}>
-                    <p>{card?.methodBrief?.title || card?.nameZh || id}</p>
+                    <p>{card?.methodBrief?.title || card?.nameZh || "原模板暂不可用"}</p>
                     {ids.map(feature => (
                       <label key={feature} className="flex gap-2 text-xs">
                         <input

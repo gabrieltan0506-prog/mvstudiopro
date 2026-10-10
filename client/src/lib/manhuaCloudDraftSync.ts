@@ -514,7 +514,7 @@ export function cloudDraftBlocksToCanvas(
       seedance25ReshootToSec: raw.seedance25ReshootToSec,
       lastFrameUrl: localFirstThenCloud(raw.lastFrameUrl),
       // 手动划线标注已废除，历史草稿字段读取处兼容忽略，不再还原进画布节点。
-      textModel: "kimi-k3",
+      textModel: "glm-5.3-flashx",
       imageModel: "gpt-image-2",
       videoModel: raw.videoModel
         ? normalizeCanvasVideoModel(raw.videoModel)

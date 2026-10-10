@@ -25,7 +25,7 @@ type OptimizeModelConfig = {
   labelZh: string;
   provider: NonNullable<InvokeParams["provider"]>;
   modelName: string;
-  reasoningEffort: "medium" | "high" | "max";
+  reasoningEffort: "low" | "medium" | "high" | "max";
   maxTokens: number;
   responseFormat?: InvokeParams["response_format"];
   openRouterProviderPreferences?: InvokeParams["openRouterProviderPreferences"];
@@ -42,11 +42,11 @@ export const MANHUA_VIRAL_TEMPLATE_OPTIMIZE_MODELS: readonly OptimizeModelConfig
     responseFormat: { type: "json_object" },
   },
   {
-    id: "kimi_k3_max",
-    labelZh: "Kimi K3 · Max",
+    id: "glm_53_flashx_low",
+    labelZh: "GLM 5.3 FlashX · Low",
     provider: "openai",
-    modelName: "moonshotai/kimi-k3",
-    reasoningEffort: "max",
+    modelName: "z-ai/glm-5.3-flashx",
+    reasoningEffort: "low",
     maxTokens: 32_768,
     responseFormat: { type: "json_object" },
   },

@@ -155,17 +155,17 @@ export function buildHtmlPptOutlineSystemPrompt(): string {
 图表由前端 SVG 分步动效绘制，你只负责**可量化、可对比、可讲解**的文案与 series，禁止空泛正确废话。
 
 硬性要求（不过关=失败）：
-1. 紧扣用户主题/用途/补充背景里的数字与口径；禁止无关行业模板套话。补充背景有具体数字时，**必须原样或近似写入 series/kpi/note**，不得改成 0–100 假占比而丢掉量级（如 168亿、6万部、181倍）。
+1. 紧扣用户主题/用途/补充背景里的数字与口径；禁止无关行业模板套话。补充背景有具体数字时，**必须准确写入 series/kpi/note（需要换算时写清单位和计算依据）**，不得改成 0–100 假占比而丢掉量级（如 168亿、6万部、181倍）。
 2. **页序**：pages[0] 必须是封面（viz=cover）；pages[1] 必须是目录/议程（viz=steps 或 hub），逐条列出 confirmedThemes 的**中文 themeTitle**（写在 series.label / bullets）；后续页按主题展开。每页 JSON **必须**带 themeId/themeTitle 元数据，但 **themeId 禁止出现在任何可见文案**（title/subtitle/kpi/note/bullets/highlight/series.label），禁止写成 [u_1_xxx]、growth_forecast 市场规模 这类泄漏。
-3. 若 confirmedThemes 含「前景/预测/展望/2026/2030」等未来向主题，**必须至少 1 页 line 或 cards 呈现预测走势/区间**。
-4. 每页一个主判断；标题短而锋利；bullets ≥3 条且含数字/对比/动作；subtitle 写清口径或时间窗。
-5. **≥70% 页面必须带 series**（每页 3–8 项）。value 可以是绝对量级或 0–100 占比/强度；label 用短中文（≤12 字）。
+3. 若 confirmedThemes 含「前景/预测/展望/2026/2030」等未来向主题，只有资料提供预测数值及依据时才能用 line；没有数据就用文字说明待核问题，不编造预测。
+4. 每页一个主判断；标题短而锋利；bullets 说明具体对比或动作，只有原资料有数字才引用；subtitle 写清口径或时间窗。
+5. 只有资料提供同口径真实数字的页面才带 series；不得凑图表比例，不将未知值补成0，不虚构0–100强度或占比。label用短中文，subtitle/note写单位、时间范围、来源及筛选条件。
 6. viz 只能是：cover | ring | bars | columns | steps | cards | line | compare | table | scene_cards | sentiment | hub。
    - table：多维对照表；scene_cards：场景卡片；sentiment：情绪/舆情分布；hub：主题枢纽/目录辐射。
 7. 版式分工：封面 cover；目录/路径 steps 或 hub；结构占比 columns/bars；对照 compare；走势/预测 line；完成度 ring；并列 KPI cards。
-8. **最少同时包含**：1 页 bars + 1 页 columns 或 compare + 1 页 line + 1 页 ring。禁止「全文 steps/纯 bullets」。
+8. 按问题选图：分类比较用bars/columns，连续时间走势用line，真实百分比用ring，多维明细用table；没有相应字段就不使用该图，不为凑种类编数字。
 9. highlight[]：每页 0–3 条需前端高亮闪烁的关键短语（≤20 字，可与 bullets 重叠）。
-10. note 写数据来源或「推演量级/公开研报口径」；kpi 用真人能念的大数字。
+10. note写具体数据来源及日期，无法确认则明确待核；不得用“公开研报口径”伪装来源；kpi 用真人能念的大数字。
 11. 语气像买方尽调看板：对比、拐点、可执行下一步。
 12. **imageMotion（可选）**：仅封面/数据高潮等「值得插图讲解」的关键页可写 3–5 拍；pose 只能是 hero | dock_right | dock_left | dock_bottom。须从 hero@0 起，中间可穿插 dock_* 与再次 hero（强调图细节），收束到 dock_right 或 dock_bottom。多数页不要写（缺省由代码用两拍：hero→dock_right）。
 13. 只输出 JSON（json_object），不要 Markdown 围栏。
@@ -207,13 +207,13 @@ function manhuaMarketSlotBrief(pageCount: number): string {
   const slots = [
     "封面（cover）",
     "议程/五件事（steps 或 hub，挂靠 confirmedThemes）",
-    "当前市场规模（cards，含 168 亿等口径）",
-    "2026 预测走势（line，含 243.6/45%）",
+    "当前市场规模（仅引用本次提供的数据，没有数值则说明待核）",
+    "未来走势（仅在有预测来源与数据时绘制）",
     "品类供给占比（bars）",
-    "流量/渗透（ring，含 35%/×181）",
+    "流量/渗透（仅引用本次提供的口径与数据）",
     "发展历史四阶（steps）",
     "新手入局路径（steps）",
-    "常见坑/风险权重（bars）",
+    "常见风险（没有量化依据时用文字说明，不编权重）",
     "国内平台格局（columns）",
     "国内 vs 出海对照（compare）",
     "政策与平台规则（steps）",
@@ -223,7 +223,7 @@ function manhuaMarketSlotBrief(pageCount: number): string {
   return [
     "【必覆盖槽位｜顺序可微调但主题不可缺】",
     ...pick.map((s, i) => `${i + 1}. ${s}`),
-    "全稿须同时含 bars +（columns 或 compare）+ line + ring；复杂比较禁止纯文字页。",
+    "图表按真实字段选用；只有同口径数据才比较，没有数据的槽位用文字说明待核问题。",
   ].join("\n");
 }
 
@@ -252,7 +252,7 @@ export function buildHtmlPptOutlineUserPrompt(input: HtmlPptOutlineLlmInput): st
     themesBlock,
     brief
       ? `【补充背景/数据/受众】\n${brief}`
-      : "【补充背景】无；请基于主题做合理、具体、可投屏的专业推断，关键数字在 note 标明「推演量级」。",
+      : "【补充背景】无；只安排叙事与待核问题，不编造事实、数值或引用。",
     isManhuaMarketTopic(title, brief) ? manhuaMarketSlotBrief(n) : "",
     themesBlock
       ? "pages[0]=封面(cover)；pages[1]=目录/议程(steps 或 hub)，series/bullets 只写中文 themeTitle；每页 JSON 带 themeId/themeTitle，可见文案禁止出现 themeId。"
@@ -272,7 +272,7 @@ export function buildHtmlPptPagePatchSystemPrompt(): string {
 要求：
 1. 输出单个 page 对象，字段同大纲页：title/subtitle/kpi/note/bullets/viz/series/themeId/themeTitle/highlight，以及可选 imageMotion。
 2. viz 只能是：cover | ring | bars | columns | steps | cards | line | compare | table | scene_cards | sentiment | hub。
-3. 图表页须 series（3–8 项）+ bullets≥3；highlight 0–3 条。
+3. 数值图表只使用已提供的真实series，缺失值不当0，不增加示意数值；标清单位、时间、来源及筛选条件。highlight 0–3条。
 4. 若 patchNote 要求改数字/口径，须落实进 series/kpi/note。
 5. imageMotion：仅当本页值得插图讲解时可写/改写 3–5 拍（pose=hero|dock_right|dock_left|dock_bottom，须含 hero@0）；否则省略，沿用默认两拍。`;
 }
@@ -284,7 +284,7 @@ export function buildHtmlPptPagePatchUserPrompt(input: HtmlPptPagePatchInput): s
   return [
     `【全稿主题】${String(input.title || "").trim().slice(0, 80)}`,
     input.purposeZh ? `【用途】${String(input.purposeZh).trim().slice(0, 80)}` : "",
-    input.briefZh ? `【背景】\n${String(input.briefZh).trim().slice(0, 2000)}` : "",
+    input.briefZh ? `【背景】\n${String(input.briefZh).trim()}` : "",
     `【风格】${styleId} · ${style.labelZh}`,
     formatConfirmedThemes(input.confirmedThemes),
     `【页码】第 ${input.pageIndex + 1}/${input.totalPages} 页`,
@@ -323,10 +323,11 @@ function mapRawPage(r: Record<string, unknown>): HtmlPptPage {
     ? r.series
         .map((s) => {
           const x = (s || {}) as Record<string, unknown>;
+          if (x.value === null || x.value === undefined || String(x.value).trim() === "" || !Number.isFinite(Number(x.value))) throw new Error("图表数值缺失或无效，请补充真实数据");
           const n = Number(x.value);
           return {
             label: String(x.label || "").trim().slice(0, 28),
-            value: Number.isFinite(n) && n >= 0 ? Math.min(100_000_000, n) : 0,
+            value: n,
           };
         })
         .filter((s) => s.label)

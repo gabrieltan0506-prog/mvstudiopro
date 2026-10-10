@@ -1,5 +1,7 @@
 import { trpc } from "@/lib/trpc";
+import { useLongTrpcHttpLink } from "@/lib/trpcTransportRouting";
 import { withFlyHealthGate } from "@/lib/flyHealthGate";
+import { recordTrpcDebugError, withApiDebugFetch } from "@/lib/apiDebugErrors";
 import { longJobsTrpcHealthOrigin, longJobsTrpcHttpUrl } from "@/lib/longJobsFlyOrigin";
 import { UNAUTHED_ERR_MSG } from '@shared/const';
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -69,63 +71,6 @@ const queryClient = new QueryClient();
  * 长耗时 / 大 payload tRPC：打 `longJobsTrpcHttpUrl()`（`VITE_FLY_API_ORIGIN` 或正式预设 API 主机），
  * 避免 `www`→Vercel 反代逾时。含 **专属文案入队**、战略看板、成长快照与生图链。
  */
-const TRPC_LONG_HTTP_LINK_PATHS = new Set([
-  "mvAnalysis.getGrowthSnapshot",
-  "mvAnalysis.getPlatformDashboard",
-  /** 同步全案 Stage2（冒烟/部分入口）；与入队路径同级长耗时，须打 Fly 避免 Vercel 反代超时 */
-  "mvAnalysis.getPlatformContent",
-  "mvAnalysis.generatePlatformTopicShortlist",
-  "mvAnalysis.enqueuePlatformContentJob",
-  "mvAnalysis.enqueueGenerateTopicImage",
-  "mvAnalysis.enqueueTopicCoverAndCompositeBundle",
-  "mvAnalysis.generatePlatformCompositeSheet",
-  "mvAnalysis.generateTopicImage",
-  "mvAnalysis.generateAllPlatformTopicImages",
-  "mvAnalysis.askPlatformFollowUp",
-  "mvAnalysis.createPlatformQAJob",
-  "mvAnalysis.downloadPlatformPdf",
-  "mvAnalysis.generateDecisionIntelligenceReport",
-  "mvAnalysis.generateDecisionIntelTopicExecutionCopy",
-  "mvAnalysis.optimizeCustomCopy",
-  "mvAnalysis.expandManhuaWriterPack",
-  "mvAnalysis.trialManhuaWriterTemplate",
-  "mvAnalysis.optimizeManhuaEpisodes",
-  "mvAnalysis.generateHtmlPptOutline",
-  "mvAnalysis.suggestHtmlPptThemes",
-  "mvAnalysis.patchHtmlPptPage",
-  "mvAnalysis.generateHtmlPptSlideImage",
-  "mvAnalysis.askPlatformSkillQa",
-  "mvAnalysis.confirmPlatformSkillQaImage",
-  "mvAnalysis.getVideoUploadSignedUrl",
-  /** 0908 实弹：75 分钟 15 片报告渲染要一两分钟，走 Vercel 反代必超时；直连 Fly */
-  "manhuaViralTemplate.renderEpisodeReport",
-  // 学习进度与导入区同走已鉴权的 Fly，避免一边直连更新、一边被反代拦截。
-  "manhuaViralTemplate.listProposals",
-  "manhuaViralTemplate.getProposalDetail",
-  "manhuaViralTemplate.getSeriesLearnSnapshot",
-  "manhuaViralTemplate.listApprovedPrivate",
-  /** 图片编辑 / 专用超分均可能运行数分钟，必须绕过 Vercel 同步请求时限。 */
-  "homePhotoTools.restoreOldPhoto",
-  "vertexImage.upscale",
-  "usage.checkFeatureAccess",
-  "ambient.dashboardLive",
-  "ambient.dashboardNews",
-  "ambient.hybridDashboard",
-  "ambient.mascotCareMessage",
-  /** 云端草稿 payload 偏大，走 Fly，避免 www→Vercel 反代回 HTML 导致 JSON 解析失败 */
-  "manhuaCloudDraft.get",
-  "manhuaCloudDraft.upsert",
-  /** 0916 阿菁 A-pose 真跑：绑骨 5 秒轮询走 www 被 Vercel 质询回 HTML → 编辑器报 Unexpected token '<' 停住；同 #1483 学习任务口径直连 Fly */
-  "manhuaAutoRig.submit",
-  "manhuaAutoRig.get",
-  "manhuaAutoRig.list",
-  "manhuaAutoRig.adopt",
-  "manhuaAutoRig.restore",
-]);
-
-function useLongTrpcHttpLink(op: { path: string }) {
-  return op.path.startsWith("fileConversion.") || TRPC_LONG_HTTP_LINK_PATHS.has(op.path);
-}
 
 const redirectToLoginIfUnauthorized = (error: unknown) => {
   if (!(error instanceof TRPCClientError)) return;
@@ -141,6 +86,7 @@ const redirectToLoginIfUnauthorized = (error: unknown) => {
 queryClient.getQueryCache().subscribe((event: any) => {
   if (event.type === "updated" && event.action.type === "error") {
     const error = event.query.state.error;
+    recordTrpcDebugError(error, event.query.queryKey, "查询失败");
     redirectToLoginIfUnauthorized(error);
     console.error("[API Query AlertCircle]", error);
   }
@@ -149,6 +95,7 @@ queryClient.getQueryCache().subscribe((event: any) => {
 queryClient.getMutationCache().subscribe((event: any) => {
   if (event.type === "updated" && event.action.type === "error") {
     const error = event.mutation.state.error;
+    recordTrpcDebugError(error, event.mutation.options.mutationKey, "操作失败");
     redirectToLoginIfUnauthorized(error);
     console.error("[API Mutation AlertCircle]", error);
   }
@@ -165,22 +112,22 @@ const trpcClient = trpc.createClient({
         url: heavyTrpcHttpUrl,
         transformer: superjson,
         fetch(input, init) {
-          return withFlyHealthGate(heavyTrpcHealthOrigin, () =>
+          return withApiDebugFetch(input, () => withFlyHealthGate(heavyTrpcHealthOrigin, () =>
             globalThis.fetch(input, {
               ...(init ?? {}),
               credentials: "include",
             }),
-          );
+          ));
         },
       }),
       false: httpBatchLink({
         url: "/api/trpc",
         transformer: superjson,
         fetch(input, init) {
-          return globalThis.fetch(input, {
+          return withApiDebugFetch(input, () => globalThis.fetch(input, {
             ...(init ?? {}),
             credentials: "include",
-          });
+          }));
         },
       }),
     }),

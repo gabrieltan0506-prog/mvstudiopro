@@ -1,3 +1,4 @@
+import { isRetiredKimiModel, PLATFORM_TEXT_MODEL } from "../../shared/textModelPolicy";
 import crypto from "node:crypto";
 import { assertSseContentSafety, readGlmSseStream } from "../services/sseChatStream";
 import { GoogleGenAI } from "@google/genai";
@@ -45,9 +46,8 @@ import {
   racePrimaryTimeout,
 } from "../../shared/providerPrimaryTimeout";
 import {
-  isOpenRouterKimiK3Model,
-  OPENROUTER_KIMI_K3_REASONING_EFFORT,
-} from "../services/openrouterKimiK3";
+  PLATFORM_TEXT_REASONING_EFFORT,
+} from "../services/platformTextModel";
 
 export type Role = "developer" | "system" | "user" | "assistant" | "tool" | "function";
 
@@ -127,8 +127,7 @@ export type InvokeParams = {
   provider?: Provider;
   modelName?: string;
   /**
-   * 推理强度：GPT-5 系见 OpenAI reasoning；Kimi K3 用 `max`（亦可 `low`/`high`）。
-   * {@link https://platform.kimi.ai/docs/guide/use-reasoning-effort}
+   * 推理强度：GPT-5 系见 OpenAI reasoning；GLM 支持 `low`/`high`/`max`。
    */
   reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   /** When aborted (e.g. client disconnected), in-flight provider requests are cancelled. */
@@ -739,7 +738,7 @@ const resolveTarget = (
     const officialOnly = openAiGateway === "official_only";
     const evolinkPrimary = openAiGateway === "evolink_primary";
 
-    /** 趋势报表等：`moonshotai/kimi-k3` 一类 slug 直连 OpenRouter，避免被归一成 GPT-5.6 */
+    /** 趋势报表等：`z-ai/glm-5.3-flashx` 一类 slug 直连 OpenRouter，避免被归一成 GPT-5.6 */
     if (isDirectOpenRouterModelSlug(candidate)) {
       const gw = resolveOpenRouterChatTarget(candidate);
       return {
@@ -1342,7 +1341,7 @@ export function getOpenAiGpt5ReasoningEffortDiagnostics(): {
 async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target: LlmTarget): Promise<InvokeResult> {
   const normalizedResponseFormat = normalizeResponseFormat(params);
   const modelId = String(target.modelName || "").trim();
-  const isKimiK3 = isOpenRouterKimiK3Model(modelId);
+
   const isDeepSeekV41Flash = isOpenRouterDeepSeekV41FlashModel(modelId) || modelId === "deepseek-v4.1-flash";
   const isFlashStream = isDeepSeekV41Flash || modelId === "glm-5.3-flash" || modelId === "z-ai/glm-5.3-flash" || modelId === "glm-5.3-flashx" || modelId === "z-ai/glm-5.3-flashx";
   const evolinkFlash = params.openAiGateway === "evolink_flash_only";
@@ -1350,8 +1349,7 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
   const isGlm53 = isGlm53Model(modelId);
   /** 推理模型不额外发送采样参数。 */
   const supportsSamplingControls =
-    !isKimiK3
-    && !isDeepSeekV41Flash
+    !isDeepSeekV41Flash
     && !isGlm53
     && !/^gpt-5(?:[.-]|$)/i.test(modelId)
     && !/^openai\/gpt-5/i.test(modelId);
@@ -1362,15 +1360,7 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
   const wantsStructured =
     normalizedResponseFormat?.type === "json_object" || normalizedResponseFormat?.type === "json_schema";
   let reasoningEffort: string | undefined;
-  if (isKimiK3) {
-    const requested = String(params.reasoningEffort || "").trim().toLowerCase();
-    // Evolink/OpenRouter Kimi：最大档 max；非法档位（如 GPT 的 minimal）一律升为 max
-    if (requested === "low" || requested === "high" || requested === "max") {
-      reasoningEffort = requested;
-    } else {
-      reasoningEffort = OPENROUTER_KIMI_K3_REASONING_EFFORT;
-    }
-  } else if (isDeepSeekV41Flash) {
+  if (isDeepSeekV41Flash) {
     // OpenRouter 模型目录列明 low/high/max，默认 high；不发送 GPT 专用档位。
     reasoningEffort = params.reasoningEffort === "low" || params.reasoningEffort === "max" ? params.reasoningEffort : "high";
   } else if (isGlm53) {
@@ -1774,7 +1764,9 @@ async function invokeAnthropic(
 }
 
 export async function invokeLLM(params: InvokeParams & { model?: ModelTier }): Promise<InvokeResult> {
+  if (isRetiredKimiModel(params.modelName)) params = { ...params, provider: "openai", modelName: PLATFORM_TEXT_MODEL, openAiGateway: "auto", reasoningEffort: PLATFORM_TEXT_REASONING_EFFORT };
   const target = resolveTarget(params.model, params.provider, params.modelName, params.openAiGateway);
+  if (isRetiredKimiModel(target.modelName)) throw new Error("该模型已下架，请重新选择当前模型");
 
   let raw: InvokeResult;
   if (target.provider === "vertex") {

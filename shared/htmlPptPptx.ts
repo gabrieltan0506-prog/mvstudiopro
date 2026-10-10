@@ -192,6 +192,7 @@ export async function buildHtmlPptPptxBlob(
 
     const bullets = (page.bullets || []).filter(Boolean).slice(0, 8);
     const series = page.series || [];
+    if (hasImage && series.length > 5) throw new Error(`第${i + 1}页同时含插图和${series.length}项数据；请把插图移到另一页，或分成每页最多5项，未截断导出。`);
     const bulletW = hasImage ? textW : series.length ? 6.4 : 12.2;
 
     if (bullets.length) {
@@ -210,7 +211,14 @@ export async function buildHtmlPptPptxBlob(
       );
     }
 
-    if (series.length && !hasImage) {
+    if (series.length && !hasImage && ["bars", "columns", "line", "compare"].includes(page.viz || "")) {
+      slide.addChart(page.viz === "line" ? pptx.ChartType.line : pptx.ChartType.bar,
+        [{ name: page.subtitle || "原始数据", labels: series.map(s => s.label), values: series.map(s => s.value) }],
+        { x: bullets.length ? 7.3 : 0.5, y: Math.max(cursorY, titleY + 1.1), w: bullets.length ? 5.5 : 12.3, h: Math.min(3.5, 6.65 - Math.max(cursorY, titleY + 1.1)),
+          catAxisLabelColor: text, valAxisLabelColor: muted, chartColors: [accent], showLegend: false, showValue: true,
+          showTitle: false, barDir: page.viz === "bars" ? "bar" : "col",
+          catAxisLabelFontSize: 11, valAxisLabelFontSize: 10, dataLabelColor: text, dataLabelFormatCode: "0.########" });
+    } else if (series.length && !hasImage) {
       const cell = (label: string, opts?: { bold?: boolean }) => ({
         text: label,
         options: {
@@ -223,7 +231,7 @@ export async function buildHtmlPptPptxBlob(
       });
       const rows = [
         [cell("项目", { bold: true }), cell("数值（可改）", { bold: true })],
-        ...series.slice(0, 8).map((s) => [cell(s.label), cell(String(Math.round(s.value * 10) / 10))]),
+        ...series.slice(0, 8).map((s) => [cell(s.label), cell(String(s.value))]),
       ];
       const tableX = bullets.length ? 7.3 : 0.5;
       const tableW = bullets.length ? 5.5 : 12.3;
@@ -250,7 +258,7 @@ export async function buildHtmlPptPptxBlob(
       });
       const rows = [
         [cell("项目", { bold: true }), cell("数值（可改）", { bold: true })],
-        ...series.slice(0, 5).map((s) => [cell(s.label), cell(String(Math.round(s.value * 10) / 10))]),
+        ...series.slice(0, 5).map((s) => [cell(s.label), cell(String(s.value))]),
       ];
       const tableY = Math.min(5.35, cursorY + (bullets.length ? Math.min(2.6, 0.36 * bullets.length) + 0.15 : 0.1));
       slide.addTable(rows, {

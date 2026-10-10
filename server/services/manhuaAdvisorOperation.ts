@@ -2,6 +2,7 @@
  * 漫剧创作顾问同步操作：复用 jobs 表提供请求认领、结果回放与退款对账状态。
  * jobs 只保存请求指纹，不保存原始剧本/上下文；完整项目资料仍只进入本次模型调用。
  */
+import type { CodeMotionBrief } from "../../shared/codeMotion";
 import { createHash } from "node:crypto";
 import { and, eq, lt, sql } from "drizzle-orm";
 import { jobs, type InsertJob } from "../../drizzle/schema";
@@ -54,7 +55,8 @@ export function manhuaAdvisorRequestFingerprint(input: {
   question: string;
   rawQuestion: string;
   qaModel: string;
-  manhuaContext: ManhuaCreativeAdvisorContext;
+  manhuaContext?: ManhuaCreativeAdvisorContext;
+  codeMotionContext?: CodeMotionBrief;
 }): string {
   return createHash("sha256")
     .update(
@@ -62,7 +64,7 @@ export function manhuaAdvisorRequestFingerprint(input: {
         input.qaModel,
         input.question,
         input.rawQuestion,
-        input.manhuaContext,
+        input.codeMotionContext ? { kind: "code-motion", brief: input.codeMotionContext } : input.manhuaContext,
       ]),
     )
     .digest("hex");
@@ -122,6 +124,7 @@ function parseStoredResponse(
   return {
     success: true,
     answer: result.answer,
+    ...(typeof result.modelName === "string" ? { modelName: result.modelName } : {}),
     remainingFreeToday,
     usedToday,
     dailyLimit,
@@ -177,7 +180,8 @@ export async function reserveManhuaAdvisorOperation(input: {
   question: string;
   rawQuestion: string;
   qaModel: string;
-  manhuaContext: ManhuaCreativeAdvisorContext;
+  manhuaContext?: ManhuaCreativeAdvisorContext;
+  codeMotionContext?: CodeMotionBrief;
   allowExecute: boolean;
 }): Promise<ReserveManhuaAdvisorResult> {
   const db = await getDb();

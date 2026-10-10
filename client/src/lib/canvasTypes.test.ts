@@ -25,8 +25,8 @@ describe("canvas spawn + defaults", () => {
     ]);
     expect(defaultCanvasBlock("text", 0, 0).kind).toBe("text");
     expect(defaultCanvasBlock("copy_organize", 0, 0).kind).toBe("copy_organize");
-    expect(DEFAULT_CANVAS_TEXT_MODEL).toBe("kimi-k3");
-    expect(defaultCanvasBlock("text", 0, 0).textModel).toBe("kimi-k3");
+    expect(DEFAULT_CANVAS_TEXT_MODEL).toBe("glm-5.3-flashx");
+    expect(defaultCanvasBlock("text", 0, 0).textModel).toBe("glm-5.3-flashx");
   });
 
   it("exposes the product video engines with formal labels", () => {

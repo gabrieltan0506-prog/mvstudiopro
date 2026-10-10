@@ -1,3 +1,5 @@
+import { MANHUA_ADVISOR_HOPS, manhuaAdvisorReasoningEffort } from "./openrouterDeepSeekV41Flash";
+import { isSseContentSafetyError } from "./sseChatStream";
 /**
  * 人物背景「智能优化」：把用户随手写的一段话理顺，并回问 2–3 件他自己该拍板的事。
  *
@@ -9,7 +11,7 @@
  *
  * 计价与成本账见 canvas `persona-polish-unit-economics`。
  */
-import { extractFirstChoicePlainText, extractJsonString } from "../_core/llm.js";
+import { extractFirstChoicePlainText, extractJsonString, invokeLLM } from "../_core/llm.js";
 import { and, count, eq, gte } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { stripeUsageLogs } from "../../drizzle/schema-stripe.js";
@@ -44,12 +46,7 @@ const EVOLINK_DIRECT_CHAT_URL = String(
   process.env.EVOLINK_DIRECT_CHAT_COMPLETIONS_URL || "https://direct.evolink.ai/v1/chat/completions",
 ).trim();
 
-/**
- * 输出封顶。
- *
- * 这一步的成本几乎全在输出：优秀档输出 $5.295/百万、卓越档 $15/百万。
- * 不封顶一旦推理跑飞，卓越档单次能到 ¥0.40，1 积分就掉到 38% 毛利、破 65% 底线。
- */
+/** 控制人物润色的输出预算；卓越档使用GLM，失败按既定四跳切换。 */
 const POLISH_MAX_TOKENS = 1600;
 const POLISH_TIMEOUT_MS = 60_000;
 
@@ -199,7 +196,7 @@ type PolishFetchTarget = {
  * 各档的主备通道。
  *
  * 优秀档主走 Evolink 的 Qwen（比 OpenRouter 同款便宜约 12%，成本几乎全在输出），
- * 掉线时换 OpenRouter；卓越档主走 OpenRouter 的 Kimi，备道 Evolink 同价。
+ * 掉线时换 OpenRouter；卓越档经共用GLM/DeepSeek流式链。
  */
 function polishTargets(tier: PlatformPersonaPolishTierId): PolishFetchTarget[] {
   const evolinkKey = getEvolinkApiKey();
@@ -365,6 +362,20 @@ export async function polishPlatformPersona(params: {
   tier: PlatformPersonaPolishTierId;
   currentGoal?: string | null;
 }): Promise<PlatformPersonaPolishResult> {
+  if (params.tier === "superb") {
+    for (const hop of MANHUA_ADVISOR_HOPS) {
+      try {
+        const result = await invokeLLM({ provider: "openai", modelName: hop.modelName, openAiGateway: hop.gateway,
+          reasoningEffort: manhuaAdvisorReasoningEffort(hop.modelName), max_tokens: POLISH_MAX_TOKENS,
+          response_format: { type: "json_object" }, abortSignal: AbortSignal.timeout(POLISH_TIMEOUT_MS),
+          messages: [{ role: "system", content: POLISH_SYSTEM }, { role: "user", content: buildPolishUserBlock(params) }] });
+        const raw = extractFirstChoicePlainText(result);
+        if (result.choices?.[0]?.finish_reason === "length" || !String(JSON.parse(extractJsonString(raw)).polished || "").trim()) throw new Error(PLATFORM_PERSONA_POLISH_CAPACITY_MESSAGE);
+        return parsePolishResult(raw, params.persona);
+      } catch (error) { if (isSseContentSafetyError(error)) throw error; }
+    }
+    throw new Error(PLATFORM_PERSONA_POLISH_CAPACITY_MESSAGE);
+  }
   const targets = polishTargets(params.tier);
   if (targets.length === 0) throw new Error(PLATFORM_PERSONA_POLISH_CAPACITY_MESSAGE);
   let lastErr: unknown = null;

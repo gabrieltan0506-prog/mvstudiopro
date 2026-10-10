@@ -334,7 +334,7 @@ export const PLATFORM_SKILL_QA_DAILY_FREE_LIMIT = 15;
 /**
  * 创作顾问 · 标准档每日免费次数。
  *
- * 两档实际推理都已统一走 Kimi K3（见 `server/config/platformSwitches.ts`），单价偏高，
+ * 两档实际推理使用平台文本配置（见 `server/config/platformSwitches.ts`），
  * 用户 2026-08-05 明文把免费次数压到 5 次（原为 15 次，按旧的低成本档估的）。
  */
 export const PLATFORM_SKILL_QA_TERRA_DAILY_FREE = 5;

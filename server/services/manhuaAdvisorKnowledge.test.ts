@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { MANHUA_ADVISOR_CAPABILITIES } from "../../shared/manhuaAdvisorCapabilities";
 import { createManhuaAdvisorKnowledge } from "./manhuaAdvisorKnowledge";
 import type { GcsObjectVersion } from "./gcs";
 
@@ -29,8 +30,8 @@ describe("explicit low-load advisor knowledge snapshot", () => {
     for (const secret of ["PRIVATE", "NEVER CACHE", "tpl_a123", prefix]) expect(text).not.toContain(secret);
     expect(result.snapshot?.templates.every(row => /^[a-f0-9]{64}$/.test(row.contentSha256))).toBe(true);
     expect(result.snapshot?.directors.length).toBeGreaterThan(0);
-    expect(result.snapshot?.capabilities.effects.screen).toHaveLength(12);
-    expect(result.snapshot?.capabilities.effects.scene).toHaveLength(5);
+    expect(result.snapshot?.capabilities.effects.screen).toEqual(MANHUA_ADVISOR_CAPABILITIES.effects.screen);
+    expect(result.snapshot?.capabilities.effects.scene).toEqual(MANHUA_ADVISOR_CAPABILITIES.effects.scene);
     result.snapshot!.templates.length = 0;
     expect(store.inspect().snapshot?.templates).toHaveLength(2);
     expect(store.read).toHaveBeenCalledTimes(2);

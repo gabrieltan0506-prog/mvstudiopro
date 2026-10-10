@@ -204,6 +204,8 @@ export type ManhuaViralTemplateOptimizeField =
 
 export type ManhuaViralTemplateOptimizeModel =
   | "terra_high"
+  | "glm_53_flashx_low"
+  /** 历史回执仅供读取，不能新提交。 */
   | "kimi_k3_max"
   | "claude_opus_5_high"
   /** 0911：DeepSeek V4 Pro 0813 下架，这一档换成 GLM 5.3 */
@@ -217,7 +219,7 @@ export type ManhuaViralTemplateOptimizeModel =
  */
 export const MANHUA_VIRAL_TEMPLATE_OPTIMIZE_REQUEST_MODELS = [
   "terra_high",
-  "kimi_k3_max",
+  "glm_53_flashx_low",
   "claude_opus_5_high",
   "glm_53_high",
 ] as const;
@@ -235,7 +237,7 @@ export type ManhuaViralTemplateRevision = {
   requestId: string;
   model: ManhuaViralTemplateOptimizeModel;
   modelName: string;
-  reasoningEffort: "medium" | "high" | "max";
+  reasoningEffort: "low" | "medium" | "high" | "max";
   promptZh: string;
   changedFields: ManhuaViralTemplateOptimizeField[];
   reasons: ManhuaViralTemplateChangeReason[];
@@ -677,6 +679,7 @@ function parseManhuaViralTemplateRevision(
   const model = o.model;
   const modelValues: readonly ManhuaViralTemplateOptimizeModel[] = [
     "terra_high",
+    "glm_53_flashx_low",
     "kimi_k3_max",
     "claude_opus_5_high",
     "glm_53_high",
@@ -688,7 +691,7 @@ function parseManhuaViralTemplateRevision(
     !/^tpl_[a-z0-9_-]{1,60}$/i.test(parentTemplateId)
     || !/^[a-zA-Z0-9_-]{8,80}$/.test(requestId)
     || !modelValues.includes(model as ManhuaViralTemplateOptimizeModel)
-    || (effort !== "medium" && effort !== "high" && effort !== "max")
+    || (effort !== "low" && effort !== "medium" && effort !== "high" && effort !== "max")
     || !promptZh
     || !modelName
     || modelName.length > 80

@@ -77,7 +77,7 @@ describe("optimizeApprovedManhuaViralTemplate", () => {
     maxTokens: number;
   }> = [
     { model: "terra_high", modelName: "gpt-5.6-terra", effort: "high", maxTokens: 32_768 },
-    { model: "kimi_k3_max", modelName: "moonshotai/kimi-k3", effort: "max", maxTokens: 32_768 },
+    { model: "glm_53_flashx_low", modelName: "z-ai/glm-5.3-flashx", effort: "low", maxTokens: 32_768 },
     { model: "claude_opus_5_high", modelName: "claude-opus-5", effort: "high", maxTokens: 32_768 },
     {
       model: "glm_53_high",

@@ -15,13 +15,13 @@ describe("顾问模板结构化结果", () => {
     expect(buildTemplatePlanQuestion(templates)).toContain("按创作手法推荐模板");
     expect(() => buildTemplatePlanQuestion(templates.slice(0, 2))).toThrow("不足3个");
   });
-  it("改写保留请求时原稿及集数，拒绝截断JSON、空正文、原样正文和超长原稿", () => {
+  it("改写保留请求时原稿及集数，拒绝截断JSON、空正文、原样正文并保留完整长原稿", () => {
     const body = "主角走入船舱，看见敌人手中熟悉的信物。她藏起惊讶，压低声音询问来意；对方没有回答，却将剑指向门外。";
     const answer = JSON.stringify({ kind: "template-rewrite", body, changes: ["前置身份悬念"] });
     expect(parseAdvisorRewrite(answer, 2, "旧稿原文")).toMatchObject({ episodeIndex: 2, originalBody: "旧稿原文", rewrittenBody: body });
     expect(() => parseAdvisorRewrite(answer.slice(0, -2), 2, "旧稿")).toThrow();
     expect(() => parseAdvisorRewrite(answer, 2, body)).toThrow("相同");
-    expect(() => parseAdvisorRewrite(answer, 2, "旧".repeat(8001))).toThrow();
+    expect(parseAdvisorRewrite(answer, 2, "旧".repeat(8001)).originalBody).toHaveLength(8001);
     expect(() => parseAdvisorRewrite('{"kind":"template-rewrite","body":"","changes":["改动"]}', 2, "旧稿")).toThrow();
   });
 });

@@ -1,3 +1,6 @@
+import { templateFeatureChoices } from "../../shared/manhuaEpisodeOptimization";
+import { toPublicManhuaViralTemplateCard } from "../../shared/manhuaViralTemplateBank";
+import { buildManhuaTemplateMethodBrief } from "./manhuaTemplateMethodBrief";
 import { TEMPLATE_CATALOG_REQUEST_MARKER } from "../../shared/manhuaTemplateCraft";
 import { buildTemplateCraftCatalog, formatTemplateCraftCatalog } from "./manhuaTemplateCraftCatalog";
 import { listMergedApprovedManhuaViralTemplates } from "./manhuaViralTemplateStore";
@@ -5,13 +8,16 @@ import { resolveViralTemplateForExpand } from "./manhuaViralTemplateStore.js";
 import { formatManhuaViralTemplateWriterSkillFromCard } from "../../shared/manhuaViralTemplateBank.js";
 import { advisorTemplatePlansSchema } from "../../shared/manhuaAdvisorRewrite";
 import { createHash } from "node:crypto";
-import { resolveManhuaAdvisorKnowledgeTemplate } from "./manhuaAdvisorKnowledge";
+import { retrieveManhuaAdvisorTemplateEvidence, resolveManhuaAdvisorKnowledgeTemplate } from "./manhuaAdvisorKnowledge";
 
 /** 正式分镜逐份消费本集顾问方案；全部校验完才允许进入原扣费和模型入口。 */
 export async function buildManhuaStoryboardTemplateReference(raw: unknown) {
   const parsed = advisorTemplatePlansSchema.shape.plans.safeParse(raw);
   if (!parsed.success) throw new Error("正式分镜需要本集顾问给出的3–5份完整模板参考，请先完成模板分析；未提交分镜。");
-  const plans = parsed.data;
+  const recommendations = parsed.data;
+  const hasSelection = recommendations.some(plan => plan.selected !== undefined);
+  const plans = hasSelection ? recommendations.filter(plan => plan.selected) : recommendations;
+  if (!plans.length) throw new Error("本集还没有选定要借用的亮点，未提交分镜");
   if (new Set(plans.map(plan => plan.publicId.trim().toLowerCase())).size !== plans.length) {
     throw new Error("本集模板参考包含重复编号，需要3–5份不同的真实模板；未提交分镜。");
   }
@@ -23,7 +29,12 @@ export async function buildManhuaStoryboardTemplateReference(raw: unknown) {
     const publicId = resolved.appliedTemplate.publicId;
     if (seen.has(publicId.toLowerCase())) throw new Error("本集模板参考实际指向同一模板，需要3–5份不同模板；未提交分镜。");
     seen.add(publicId.toLowerCase());
-    const capability = formatManhuaViralTemplateWriterSkillFromCard(resolved.card);
+    const publicCard = { ...resolved.card, publicCode: publicId.slice(3).toUpperCase() };
+    const pub = hasSelection ? toPublicManhuaViralTemplateCard(publicCard, null, undefined, buildManhuaTemplateMethodBrief(publicCard)) : null;
+    const choices = pub ? templateFeatureChoices(pub) : [];
+    if (hasSelection && (!plan.selectedFeatures?.length || plan.selectedFeatures.some(id => !choices.some(feature => feature.id === id)))) throw new Error("本集选择的亮点已变化，请顾问重新核对；未提交分镜");
+    const chosenFeatures = choices.filter(feature => plan.selectedFeatures?.includes(feature.id)).map(feature => feature.label);
+    const capability = (hasSelection ? `只采用用户选中的亮点：${chosenFeatures.join("；")}。下方其他方法仅作背景，不自动加入。\n` : "") + formatManhuaViralTemplateWriterSkillFromCard(resolved.card);
     if (!capability.trim()) throw new Error("本集参考模板缺少可用创作能力；未提交分镜。");
     resolvedPlans.push({ plan: { ...plan, ...resolved.appliedTemplate }, capability,
       capabilitySha256: createHash("sha256").update(capability).digest("hex") });
@@ -58,7 +69,7 @@ export function mentionedManhuaTemplateIds(question: string): string[] {
 }
 
 /** 完整能力只进服务端LLM消息；不将私有卡、来源或能力全文返回公开目录。 */
-export async function buildManhuaTemplateAdvisorReference(question: string): Promise<string> {
+export async function buildManhuaTemplateAdvisorReference(question: string, story = ""): Promise<string> {
   if (question.includes(TEMPLATE_CATALOG_REQUEST_MARKER)) {
     const { catalog } = buildTemplateCraftCatalog(await listMergedApprovedManhuaViralTemplates());
     if (catalog.length < 3) throw new Error("可用模板不足3个，未调用顾问模型。");
@@ -66,6 +77,7 @@ export async function buildManhuaTemplateAdvisorReference(question: string): Pro
   }
   const ids = mentionedManhuaTemplateIds(question);
   if (ids.length > 5) throw new Error("一次最多评估5个模板编号，请缩小范围后重试。");
+  if (!ids.length) return retrieveManhuaAdvisorTemplateEvidence(question, story);
   const blocks: string[] = [];
   for (const id of ids) {
     const resolved = await resolveManhuaAdvisorKnowledgeTemplate(id);

@@ -52,6 +52,7 @@ function DomainRedirector() {
 // Lazy load pages for performance
 import Home from "./pages/Home";
 import Login from "./pages/Login";
+const CodeMotionStudio = lazy(() => import("./pages/CodeMotionStudio"));
 const Showcase = lazy(() => import("./pages/Showcase"));
 const GrowthCampPage = lazy(() => import("./pages/MVAnalysis"));
 const GrowthCampRedirect = lazy(() => import("./pages/GrowthCampRedirect"));
@@ -117,6 +118,7 @@ function Router() {
     <Suspense fallback={<PageLoader />}>
       <Switch>
         <Route path={"/"} component={Home} />
+        <Route path={"/yingke"} component={CodeMotionStudio} />
         <Route path={"/showcase"} component={Showcase} />
         <Route path={"/analysis"} component={GrowthCampRedirect} />
         <Route path={"/viral"} component={GrowthCampRedirect} />

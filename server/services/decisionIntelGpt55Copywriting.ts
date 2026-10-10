@@ -1,5 +1,5 @@
 /**
- * 战略全景图 / 决策智库选题扩写：OpenRouter Kimi K3（chat completions · reasoning max）。
+ * 战略全景图 / 决策智库选题扩写：GLM 5.3 FlashX（chat completions · reasoning low）。
  */
 import { getPlatformStage2OpenAiModel } from "../config/platformSwitches.js";
 import { invokeGpt56ResponsesText } from "./gpt56ResponsesClient.js";

@@ -1,3 +1,4 @@
+import { advisorTemplateChoiceSchema, validateAdvisorTemplateChoice, requestsTemplateRecommendations } from "@shared/manhuaAdvisorTemplateChoice";
 import { listSceneProductionBackups } from "@/lib/manhuaSceneProductionBackups";
 import { buildAdvisorComparisonRequest, comparisonEpisodeIndex, requestsAdvisorComparison } from "@/lib/manhuaAdvisorComparisonRequest";
 import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose } from "@/components/ui/dialog";
@@ -45,6 +46,7 @@ import { formatManhuaAdvisorContextIssue, formatManhuaAdvisorError } from "@/lib
 
 type PendingQuestion = AdvisorPendingRequest;
 function readableAdvice(text: string) {
+  try { return advisorTemplateChoiceSchema.parse(JSON.parse(text)).explanation + "\n\n搭配已整理，尚未生成或替换原稿。"; } catch { /* 其他回答按原类型展示。 */ }
   try { const p = parseAdvisorMediaProposal(text); return `素材修改方案 · ${p.blockId}\n\n${p.instruction}\n\n请在图片与视频修改区查看并确认，尚未生成。`; } catch { /* ordinary answer */ }
   try { const r = advisorFilmReviewSchema.parse(JSON.parse(text)); return `${r.summary}\n\n${r.findings.map(f => `${f.atSec.toFixed(1)}–${f.endSec.toFixed(1)}秒 · ${f.category} · ${f.confidence}\n${f.observation}\n建议：${f.suggestion}`).join("\n\n")}\n\n核验范围：${r.limitations}\nGemini Flash · 影片审阅`; } catch { /* other answer */ }
   try { const value = JSON.parse(text); if (value.kind === "world_plan_v1") return value.summaryZh; } catch { /* 普通文本按原路径显示。 */ }
@@ -52,7 +54,7 @@ function readableAdvice(text: string) {
 }
 
 export default function ManhuaCreativeAdvisorPanel(props: {
-  knowledgePanel?: ReactNode;
+  knowledgePanel?: ReactNode | ((prepareQuestion: (question: string) => void) => ReactNode);
   dockHost?: HTMLElement | null;
   previewHost?: HTMLElement | null;
   previsTarget?: AdvisorPrevisTarget;
@@ -437,7 +439,18 @@ export default function ManhuaCreativeAdvisorPanel(props: {
         }
         if (mounted.current) { setPrevisCandidate(candidate); setAutoPrevisStart(!request.voiceConsultOnly && activePrevisTarget.current?.clipId === candidate.target.clipId && activePrevisTarget.current.specJson === candidate.target.specJson && (request.previsRenderRequested === true || requestsAdvisorPrevisRender(request.rawQuestion))); }
       }
-      if (request.rawQuestion === TEMPLATE_PLAN_QUESTION) {
+      let choiceRaw: unknown;
+      try { choiceRaw = JSON.parse(answer); } catch { /* 普通咨询。 */ }
+      if ((choiceRaw as {kind?: string})?.kind === "template-choice") {
+        const choice = validateAdvisorTemplateChoice(choiceRaw, templates, request.manhuaContext?.templateChoiceIds || []);
+        const episode = props.episodeWorkspace?.episodes.find(ep => ep.index === request.manhuaContext?.episodeIndex);
+        const plans = episode?.templateReferences;
+        if (!plans || !props.onTemplateReferences || !request.manhuaContext || plans.some(plan => !request.manhuaContext!.templateChoiceIds?.includes(plan.publicId))) throw new Error("推荐内容已变化，请重新核对搭配；原稿保留");
+        const chosen = new Map(choice.choices.map(item => [item.publicId, item.features]));
+        const next = plans.map(plan => ({ ...plan, selected: chosen.has(plan.publicId), selectedFeatures: chosen.get(plan.publicId) || [] }));
+        if (!props.onTemplateReferences(request.manhuaContext.episodeIndex, request.manhuaContext.episodeBody, next)) throw new Error("搭配暂未保存，原回答保留，请取回本次结果");
+      }
+      if (request.rawQuestion === TEMPLATE_PLAN_QUESTION || request.manhuaContext?.templateRecommendation) {
         const plans = parseAdvisorTemplatePlans(answer, templates);
         if (!plans.length) {
           if (mounted.current) toast.error("本次回答未提供3—5个合法模板方案；原回答已保留供查看。");
@@ -498,6 +511,9 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     }
     if (question.length < 2 || question.length > 1200) { toast.error("请输入 2—1200 字的问题，内容不会被自动截断。"); return; }
     const rewriting = question.startsWith(TEMPLATE_REWRITE_MARKER);
+    const choiceIds = props.episodeWorkspace?.episodes.find(ep => ep.index === (episode?.index || project?.context.episodeIndex))?.templateReferences?.map(plan => plan.publicId);
+    const templateRecommendation = requestsTemplateRecommendations(question);
+    const templateDiscussion = templateRecommendation || question === TEMPLATE_PLAN_QUESTION || /模板|亮点|混搭|混合|搭配|主推荐|备选/.test(question) || Boolean(choiceIds?.length && /选|選|就用|我要|喜欢|喜歡|结合|結合/.test(question));
     const rewriteBody = episode?.body ?? project?.context.episodeBody;
     if (rewriting && (!rewriteBody?.trim() || (!episode && project?.contextNotes.some(note => note.includes("本集正文"))))) {
       toast.error("当前集正文为空或已节选，不能生成完整优化稿，请先打开完整本集。"); return;
@@ -506,8 +522,8 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     const mediaRequest = Boolean(props.mediaWorkspace && question.startsWith("【素材修改】"));
     const mediaEditTarget = mediaRequest ? props.mediaWorkspace?.sources.find(s => question.includes(s.blockId)) : undefined;
     if (mediaRequest && (!mediaEditTarget || !project)) { toast.error("请先选择本作品的素材，未提交咨询"); return; }
-    if (props.previsIssue && !rewriting && !mediaRequest && !filmReview && !worldOverride && !operationRequest) { toast.error(props.previsIssue); return; }
-    let previsEdit = props.previsTarget && !rewriting && !mediaRequest && !filmReview && !worldOverride && !operationRequest ? withAdvisorPrevisVideo(props.previsTarget, previewVideoSource) : undefined;
+    if (props.previsIssue && !templateDiscussion && !rewriting && !mediaRequest && !filmReview && !worldOverride && !operationRequest) { toast.error(props.previsIssue); return; }
+    let previsEdit = props.previsTarget && !templateDiscussion && !rewriting && !mediaRequest && !filmReview && !worldOverride && !operationRequest ? withAdvisorPrevisVideo(props.previsTarget, previewVideoSource) : undefined;
     if (previsEdit && !previsEdit.previousPreviewRequestId && previsCandidate?.target.clipId === previsEdit.clipId && previsCandidate.target.specJson === previsEdit.specJson) {
       try { previsEdit = { ...previsEdit, previousPreviewSpecJson: prepareAdvisorPrevisComparison(previsCandidate).afterContextJson }; } catch { /* 未支持要求不继承为已执行配置。 */ }
     }
@@ -516,7 +532,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     try {
       if (project && questionContext) questionContext = resolveAdvisorVideoPromptContext({ context: questionContext, question, drafts: project.videoPromptDrafts, selectedSegmentIndex: project.selectedSegmentIndex });
     } catch (error) { toast.error(error instanceof Error ? error.message : "无法读取本段提示词"); return; }
-    const result = questionContext ? manhuaCreativeAdvisorContextSchema.safeParse({ ...questionContext, ...(props.projectId ? { projectId: props.projectId } : {}), history: advisorRecentHistory(turns), ...(workflowOperation?{workflowOperation}:{}), ...(previsEdit ? { previsEdit } : {}), ...(!operationRequest && !rewriting && !filmReview && !mediaRequest && props.studio3d ? { studio3d: { directionCardId: props.studio3d.directionCardId, directionCardVersion: props.studio3d.directionCardVersion } } : {}), ...(!operationRequest && !rewriting && !filmReview && !mediaRequest && (worldOverride || props.worldTarget) ? { worldTarget: worldOverride || props.worldTarget } : {}), ...(filmReview ? { filmReview } : {}), ...(mediaEditTarget ? { mediaEditTarget } : {}) }) : null;
+    const result = questionContext ? manhuaCreativeAdvisorContextSchema.safeParse({ ...questionContext, ...(props.projectId ? { projectId: props.projectId } : {}), history: advisorRecentHistory(turns), ...(templateRecommendation ? {templateRecommendation:true} : {}), ...(choiceIds?.length ? { templateChoiceIds: choiceIds } : {}), ...(workflowOperation?{workflowOperation}:{}), ...(previsEdit ? { previsEdit } : {}), ...(!templateDiscussion && !operationRequest && !rewriting && !filmReview && !mediaRequest && props.studio3d ? { studio3d: { directionCardId: props.studio3d.directionCardId, directionCardVersion: props.studio3d.directionCardVersion } } : {}), ...(!templateDiscussion && !operationRequest && !rewriting && !filmReview && !mediaRequest && (worldOverride || props.worldTarget) ? { worldTarget: worldOverride || props.worldTarget } : {}), ...(filmReview ? { filmReview } : {}), ...(mediaEditTarget ? { mediaEditTarget } : {}) }) : null;
     if (result && !result.success) {
       toast.error("当前上下文超出读取范围或包含不适合发送的内容", {
         description: result.error.issues.map(formatManhuaAdvisorContextIssue).join("；"),
@@ -750,7 +766,11 @@ export default function ManhuaCreativeAdvisorPanel(props: {
           {(props.previsIssue || props.previsLaunchIssue) && <p role="status" className="text-amber-100">{props.previsIssue || props.previsLaunchIssue}</p>}
           <button type="button" className="underline" onClick={props.onLeavePrevis}>返回普通咨询</button>
         </section>}
-        {props.knowledgePanel}
+        {typeof props.knowledgePanel === "function" ? props.knowledgePanel(question => {
+          if (draft.length + question.length + 2 > 1200) { toast.error("当前草稿较长，请先发送或整理后再添加资料问题"); return; }
+          setDraft(previous => previous.trim() ? `${previous}\n\n${question}` : question);
+          questionRef.current?.focus();
+        }) : props.knowledgePanel}
         <details className="rounded-lg border border-white/10 p-2 text-xs"><summary className="cursor-pointer text-white/65">咨询额度与快捷提问</summary>
         <button type="button" disabled={!userId || !project || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={() => { setDraft("请结合当前剧情、已更新模板库、导演包与镜头规格，提出剧情、美术与特效整合方案：角色欲望、阻力、代价和反转形成因果，设计独特且服务剧情的视觉记忆点；明确妆发服装材质、场景尺度与空间层次、真实光源和气氛变化；特效分清生成主体与后期增强，不能以叠光冒充法相或电影级场景。逐镜写明一位小数秒窗、摄影机起终位置、移动方向、FOV/景别、焦点与光源变化；说明氛围随事件怎样变化，以及各角色的意图、喜怒哀乐、眼神/微表情、身体和听者反应。区分白模已表达和正式影片还需补充的技巧。保留人物、动作和已确认音轨，只给建议，不生成、重渲染或自动采用。"); questionRef.current?.focus(); }} className="mb-2 rounded-md border border-cyan-300/30 px-3 py-2 text-xs text-cyan-100 hover:bg-cyan-500/10 disabled:opacity-40">优化摄影、氛围与表演</button>
         {!creationMode && <div className="mb-2 flex flex-wrap gap-2">{quick.map(([label, question]) => <button key={label} type="button" disabled={!userId || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={() => send(question!)} className="rounded-md border border-white/15 px-2 py-1.5 text-xs text-white/75 hover:border-cyan-300/60 disabled:opacity-40">{label}</button>)}</div>}
@@ -775,7 +795,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
         </section> : null}
         {!creationMode && props.episodeWorkspace && <section ref={templateSectionRef}><ManhuaEpisodeOptimization key={`${userId}:${props.projectId}`} {...props.episodeWorkspace} userId={userId} projectId={props.projectId} focusEpisode={project?.context.episodeIndex||1} templates={templates} plans={props.episodeWorkspace.episodes.find(ep=>ep.index===(project?.context.episodeIndex||1))?.templateReferences || []} asking={asking||Boolean(pendingPaid)||unresolvedFailed||sessionStorageBlocked} onRecommend={async episodes=>{
           for (const episode of episodes) {
-            const answer = await send(TEMPLATE_PLAN_QUESTION,buildTemplatePlanQuestion(templates)+`\n只根据第${episode.index}集完整剧情与对白，推荐3—5个真实模板并提取适合本集的亮点与特色；不改稿、不重列分段技术表。`,false,episode);
+            const answer = await send(TEMPLATE_PLAN_QUESTION,buildTemplatePlanQuestion(templates)+`\n只根据第${episode.index}集完整剧情与对白，给一个主推荐和另外三个不同模板的亮点，说明适合本集的地方；不改稿、不重列分段技术表。`,false,episode);
             if (!answer || !parseAdvisorTemplatePlans(answer,templates).length) break;
           }
         }}/></section>}
@@ -783,7 +803,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
           <h3 className="font-semibold">用模板优化当前整集</h3>
           <p className="mt-2 text-white/65">生成完整优化稿 → 对比并编辑 → 套用本集。沿用顾问额度，超额先确认；套用已生成稿不再收费。</p>
           {selectedTemplate && <button type="button" disabled={!userId || !project || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={() => send(buildTemplateAdviceQuestion(selectedTemplate))} className="mt-2 rounded bg-emerald-500/20 px-3 py-2 font-semibold text-emerald-100 disabled:opacity-40">用「{selectedTemplate.storyPreview?.teaserTitleZh || selectedTemplate.nameZh}」优化本集</button>}
-          <button type="button" disabled={!userId || !project || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={recommendTemplates} className="mt-2 rounded border border-cyan-300/30 px-3 py-2 disabled:opacity-40">推荐3—5个剧本模板方案</button>
+          <button type="button" disabled={!userId || !project || asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={recommendTemplates} className="mt-2 rounded border border-cyan-300/30 px-3 py-2 disabled:opacity-40">推荐一种思路，再看看其他三种</button>
         </section>}
         {rewrite && <section aria-label="比较稿入口" className="space-y-2 rounded-lg border border-emerald-300/30 p-3 text-xs">
           <h3 className="font-semibold">第 {rewrite.episodeIndex} 集 · 比较稿已保留</h3>
@@ -828,10 +848,10 @@ export default function ManhuaCreativeAdvisorPanel(props: {
         }} />}
         {!turns.length && <p className="text-xs leading-5 text-white/60">结合当前剧本、参考图绑定和选中镜头给建议。只读取当前项目；未查看原图、原片时不会宣称质量通过。</p>}
         {turns.map((turn) => <div key={turn.id} className={turn.role === "user" ? "ml-8" : "mr-3"}>
-          <div className={`whitespace-pre-wrap break-words rounded-lg px-3 py-2.5 text-[15px] leading-7 ${turn.role === "user" ? "bg-cyan-500/15 text-cyan-50" : "border border-white/10 bg-white/[0.035] text-white/85"}`}>{turn.role === "advisor" && parseAdvisorTemplatePlans(turn.text, templates).length ? "已根据当前故事给出以下方案，请选择后查看改写对比。" : turn.role === "advisor" ? <Streamdown>{readableAdvice(turn.text)}</Streamdown> : turn.text.includes(MANHUA_ADVISOR_AUTO_QUESTION) ? `${turn.text.split("\n")[0]}：检查本步骤的剧情、空间与制作建议。` : turn.text === TEMPLATE_PLAN_QUESTION ? "根据当前故事推荐3—5个剧本模板方案。" : turn.text === TEMPLATE_REWRITE_QUESTION ? "按所选方案改写当前集，先查看对比再采用。" : turn.text}</div>
+          <div className={`whitespace-pre-wrap break-words rounded-lg px-3 py-2.5 text-[15px] leading-7 ${turn.role === "user" ? "bg-cyan-500/15 text-cyan-50" : "border border-white/10 bg-white/[0.035] text-white/85"}`}>{turn.role === "advisor" && parseAdvisorTemplatePlans(turn.text, templates).length ? "已根据当前故事给出以下方案，请选择后查看改写对比。" : turn.role === "advisor" ? <Streamdown>{readableAdvice(turn.text)}</Streamdown> : turn.text.includes(MANHUA_ADVISOR_AUTO_QUESTION) ? `${turn.text.split("\n")[0]}：检查本步骤的剧情、空间与制作建议。` : turn.text === TEMPLATE_PLAN_QUESTION ? "根据当前故事推荐一种思路，再看看其他三种。" : turn.text.startsWith(TEMPLATE_REWRITE_MARKER) ? "按所选方案改写当前集，先查看对比再采用。" : turn.text}</div>
           {turn.role === "advisor" && (creationMode || props.previsTarget || props.worldTarget) && <button type="button" onClick={() => void copyAdvice(turn.text)} className="mt-1 min-h-8 rounded px-2 text-xs text-cyan-100 hover:bg-white/10">复制建议</button>}
-          {turn.role === "advisor" && !props.episodeWorkspace && parseAdvisorTemplatePlans(turn.text, templates).map(plan => <section key={plan.publicId} className="mt-2 space-y-2 rounded border border-cyan-300/25 p-3 text-xs">
-            <h3 className="font-semibold">{templates.find(t => t.publicId === plan.publicId)?.nameZh}</h3>
+          {turn.role === "advisor" && !props.episodeWorkspace && parseAdvisorTemplatePlans(turn.text, templates).map((plan, index) => <section key={plan.publicId} className="mt-2 space-y-2 rounded border border-cyan-300/25 p-3 text-xs">
+            <h3 className="font-semibold">{index === 0 ? "主推荐" : `另一个思路 ${index}`} · {templates.find(t => t.publicId === plan.publicId)?.methodBrief?.title || templates.find(t => t.publicId === plan.publicId)?.nameZh}</h3>
             <p>{plan.reason}</p><ul>{plan.changes.map((change, i) => <li key={i}>• {change}</li>)}</ul><p>保留：{plan.preserve}</p>
             <button type="button" disabled={asking || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={() => requestRewrite(plan)} className="rounded border border-cyan-300/40 px-2 py-1 disabled:opacity-40">生成本集完整优化稿</button>
             <button type="button" onClick={() => onRequestTrial(templates.find(t => t.publicId === plan.publicId)!)} className="ml-2 text-cyan-100">免费试写大纲对比</button>

@@ -12,6 +12,7 @@ import HomeBlogShowcase from "../components/HomeBlogShowcase";
 import { LaunchCountdownBanner } from "../components/LaunchCountdownBanner";
 import HomePlatformHighlights from "../components/HomePlatformHighlights";
 import HomeFileConversion from "../components/HomeFileConversion";
+import HomeCodeMotion from "../components/code-motion/HomeCodeMotion";
 import HomePhotoTools from "../components/HomePhotoTools";
 import "../styles/homeProduct.css";
 
@@ -29,6 +30,7 @@ export default function HomePage() {
         <HomePresentationShowcase />
         {/* 定价置顶（用户 2026-08-12：商业网站先谈钱）；试读样刊区整区下架，换 /blog 实测封面直达生成 */}
         <HomePricing />
+        <HomeCodeMotion />
         <HomePhotoTools />
         <HomeFileConversion />
         <HomePlatformHighlights />

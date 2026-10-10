@@ -18,7 +18,7 @@ import {
 type ModelOption = {
   id: ManhuaViralTemplateOptimizeModel;
   labelZh: string;
-  reasoningEffort: "medium" | "high" | "max";
+  reasoningEffort: "low" | "medium" | "high" | "max";
 };
 
 type OptimizeResult = {

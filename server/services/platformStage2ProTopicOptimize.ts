@@ -161,7 +161,7 @@ export async function optimizeStage2TopicsWithPro(params: {
         rawError: "pro_optimize_parse_failed",
       };
     }
-    return { ...normalized, via: "kimi_k3_chat" };
+    return { ...normalized, via: "glm_flash_chat" };
   } catch (e) {
     return {
       ok: false,

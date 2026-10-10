@@ -154,9 +154,9 @@ describe("buildHtmlPptDocument quality gates", () => {
       styleId: "dark_research",
       pages,
     });
-    expect(html).toContain('id="rg-2"');
-    expect(html).toContain("stroke=\"url(#rg-2)\"");
-    expect(html).toContain('data-suffix="亿"');
+    expect(html).not.toContain('id="rg-2"');
+    expect(html).toContain("viz-table");
+    expect(html).toContain("168亿");
     expect(html).not.toMatch(/data-to="168"[^>]*data-suffix="%"/);
   });
 
@@ -220,5 +220,22 @@ describe("buildHtmlPptDocument quality gates", () => {
     expect(html).toContain("dock_left");
     expect(html).toContain("img-pose-dock_left");
     expect(html).toContain("&quot;at&quot;:3");
+  });
+});
+
+it("缺失图表数据不补造，明确提示；空数值不变成0", () => {
+  const html = buildHtmlPptDocument({ title: "数据核对", styleId: "dark_research", pages: [{ title: "分类比较", viz: "bars", bullets: ["项目一", "项目二", "项目三"] }] });
+  expect(html).toContain("尚未提供这张图的数值");
+  expect(() => normalizeHtmlPptPages([{ title: "缺失", series: [{ label: "项目", value: null as unknown as number }] }])).toThrow("缺失");
+  expect(normalizeHtmlPptPages([{ title: "大数", series: [{ label: "金额", value: 987654321.25 }] }])[0].series![0].value).toBe(987654321.25);
+});
+
+
+describe("真实数值导出", () => {
+  it("保留小数原精度，空页面不补样例", () => {
+    const html = buildHtmlPptDocument({ title: "价格", styleId: "dark_research", pages: [{ title: "价格", viz: "bars", series: [{label: "输入", value: 0.37}, {label: "输出", value: 1.25}] }] });
+    expect(html).toContain('data-display="0.37"');
+    expect(html).toContain('data-display="1.25"');
+    expect(() => buildHtmlPptDocument({ title: "空稿", styleId: "dark_research", pages: [] })).toThrow("请先添加页面");
   });
 });

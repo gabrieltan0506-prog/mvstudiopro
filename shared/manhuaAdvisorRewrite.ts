@@ -8,6 +8,8 @@ export const advisorTemplatePlanSchema = z
     reason: text,
     changes: z.array(text).min(2).max(5),
     preserve: text,
+    selected: z.boolean().optional(),
+    selectedFeatures: z.array(z.string().min(1).max(400)).max(30).optional(),
   })
   .strict();
 export const advisorTemplatePlansSchema = z

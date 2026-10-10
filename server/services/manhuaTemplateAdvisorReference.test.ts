@@ -6,6 +6,7 @@ vi.mock("../_core/llm.js", async (original) => {
   const real = await original<typeof import("../_core/llm.js")>();
   return { ...real, invokeLLM: invoke };
 });
+vi.mock("./gcs", async original => ({ ...await original<typeof import("./gcs")>(), listGcsObjectVersions: async () => [], downloadGcsObjectVersioned: vi.fn(), getGcsBucketName: () => "test-bucket" }));
 vi.mock("../db.js", () => ({ getDb: async () => null }));
 import { buildManhuaStoryboardTemplateReference, buildManhuaTemplateAdvisorReference, mentionedManhuaTemplateIds } from "./manhuaTemplateAdvisorReference";
 import { buildManhuaCreativeAdvisorLlmMessages, askPlatformSkillQa } from "./platformSkillQa";
@@ -89,4 +90,26 @@ it("手法推荐标记读取全部服务端方法，不依赖客户端六张列�
  expect(reference).toContain("完整导演手法哨兵");
  expect(reference).toContain("mt_c789");
  expect(reference).not.toContain("来源真名");
+});
+
+it("用户不需要模板编号，普通顾问问题接入审订资料并保留本集正文", async () => {
+  const question = "白平衡和色温怎么配合当前剧情";
+  await askPlatformSkillQa({ userId: 1, isAdmin: true, question, rawQuestion: question, manhuaContext: context() });
+  const request = JSON.stringify(invoke.mock.calls[0]![0].messages);
+  expect(request).toContain("调相机还是描述光源");
+  expect(request).toContain(context().episodeBody);
+  expect(request).toContain("未找到相关原文");
+});
+
+
+it("后续正式分镜只消费用户选中的一个或多个模板亮点，未选内容不自动加入", async () => {
+  const { attachLearnedMethodBrief } = await import("./manhuaTemplateMethodBrief");
+  const selectedCard = attachLearnedMethodBrief({ ...card, beatGrid: [], laneZh: "悬疑权谋" }, { title: "先留下一个疑问", highlights: ["开场只给一半线索", "对话揭开另一半"], useWhen: "主角查明真相" });
+  resolve.mockImplementation(async id => ({ card: { ...selectedCard, publicCode: id.slice(3) }, appliedTemplate: { publicId: id, nameZh: "匿名模板" } }));
+  const plans = ["mt_a123", "mt_b456", "mt_c789", "mt_d012"].map((publicId, i) => ({ publicId, reason: "符合本集追查真相", changes: ["先给线索", "再揭答案"], preserve: "人物与因果", selected: i === 0, selectedFeatures: i === 0 ? ["brief:0:开场只给一半线索"] : [] }));
+  const one = await buildManhuaStoryboardTemplateReference(plans);
+  expect(one.appliedTemplates).toHaveLength(1); expect(one.text).toContain("只采用用户选中的亮点：开场只给一半线索"); expect(one.text).not.toContain("mt_b456");
+  plans[2] = { ...plans[2], selected: true, selectedFeatures: ["brief:1:对话揭开另一半"] };
+  const mixed = await buildManhuaStoryboardTemplateReference(plans); expect(mixed.appliedTemplates).toHaveLength(2);
+  await expect(buildManhuaStoryboardTemplateReference(plans.map(p => ({ ...p, selected: false })))).rejects.toThrow("还没有选定");
 });
